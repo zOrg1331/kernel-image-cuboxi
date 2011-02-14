@@ -61,7 +61,6 @@
 
 /*****************************************************************************/
 
-#include <linux/capability.h>
 #include <linux/module.h>
 #include <linux/ioport.h>
 #include <linux/string.h>
@@ -80,7 +79,7 @@
 
 static const char bc_drvname[] = "baycom_ser_hdx";
 static const char bc_drvinfo[] = KERN_INFO "baycom_ser_hdx: (C) 1996-2000 Thomas Sailer, HB9JNX/AE4WA\n"
-"baycom_ser_hdx: version 0.10 compiled " __TIME__ " " __DATE__ "\n";
+KERN_INFO "baycom_ser_hdx: version 0.10 compiled " __TIME__ " " __DATE__ "\n";
 
 /* --------------------------------------------------------------------- */
 
@@ -374,7 +373,7 @@ static inline void ser12_rx(struct net_device *dev, struct baycom_state *bc)
 
 /* --------------------------------------------------------------------- */
 
-static irqreturn_t ser12_interrupt(int irq, void *dev_id)
+static irqreturn_t ser12_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct net_device *dev = (struct net_device *)dev_id;
 	struct baycom_state *bc = netdev_priv(dev);

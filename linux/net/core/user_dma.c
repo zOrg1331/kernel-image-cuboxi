@@ -27,13 +27,13 @@
 
 #include <linux/dmaengine.h>
 #include <linux/socket.h>
+#include <linux/rtnetlink.h> /* for BUG_TRAP */
 #include <net/tcp.h>
 #include <net/netdma.h>
 
 #define NET_DMA_DEFAULT_COPYBREAK 4096
 
 int sysctl_tcp_dma_copybreak = NET_DMA_DEFAULT_COPYBREAK;
-EXPORT_SYMBOL(sysctl_tcp_dma_copybreak);
 
 /**
  *	dma_skb_copy_datagram_iovec - Copy a datagram to an iovec.
@@ -51,7 +51,6 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 {
 	int start = skb_headlen(skb);
 	int i, copy = start - offset;
-	struct sk_buff *frag_iter;
 	dma_cookie_t cookie = 0;
 
 	/* Copy header. */
@@ -59,7 +58,7 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 		if (copy > len)
 			copy = len;
 		cookie = dma_memcpy_to_iovec(chan, to, pinned_list,
-					    skb->data + offset, copy);
+		                            skb->data + offset, copy);
 		if (cookie < 0)
 			goto fault;
 		len -= copy;
@@ -72,11 +71,11 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
 
-		WARN_ON(start > offset + len);
+		BUG_TRAP(start <= offset + len);
 
 		end = start + skb_shinfo(skb)->frags[i].size;
 		copy = end - offset;
-		if (copy > 0) {
+		if ((copy = end - offset) > 0) {
 			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 			struct page *page = frag->page;
 
@@ -95,28 +94,31 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 		start = end;
 	}
 
-	skb_walk_frags(skb, frag_iter) {
-		int end;
+	if (skb_shinfo(skb)->frag_list) {
+		struct sk_buff *list = skb_shinfo(skb)->frag_list;
 
-		WARN_ON(start > offset + len);
+		for (; list; list = list->next) {
+			int end;
 
-		end = start + frag_iter->len;
-		copy = end - offset;
-		if (copy > 0) {
-			if (copy > len)
-				copy = len;
-			cookie = dma_skb_copy_datagram_iovec(chan, frag_iter,
-							     offset - start,
-							     to, copy,
-							     pinned_list);
-			if (cookie < 0)
-				goto fault;
-			len -= copy;
-			if (len == 0)
-				goto end;
-			offset += copy;
+			BUG_TRAP(start <= offset + len);
+
+			end = start + list->len;
+			copy = end - offset;
+			if (copy > 0) {
+				if (copy > len)
+					copy = len;
+				cookie = dma_skb_copy_datagram_iovec(chan, list,
+				                offset - start, to, copy,
+				                pinned_list);
+				if (cookie < 0)
+					goto fault;
+				len -= copy;
+				if (len == 0)
+					goto end;
+				offset += copy;
+			}
+			start = end;
 		}
-		start = end;
 	}
 
 end:
@@ -126,5 +128,5 @@ end:
 	}
 
 fault:
-	return -EFAULT;
+ 	return -EFAULT;
 }

@@ -1,0 +1,38 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL 5.1 PATCH]: BZ 226876 Reorganize smp_alternatives sections in vmlinuz
+Date: Mon, 19 Feb 2007 11:27:53 -0500
+Bugzilla: 226876
+Message-Id: <20070219162753.12786.27272.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86] Reorganize smp_alternatives sections in vmlinuz
+
+
+Backport of smp_alternatives code from
+
+http://lkml.org/lkml/2006/8/1/149
+
+Resolves BZ 226876.
+
+Successfully tested by me.
+
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/vmlinux.lds.S	2007-02-19 11:18:14.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/vmlinux.lds.S	2007-02-19 11:22:26.000000000 -0500
+@@ -110,12 +110,16 @@ SECTIONS
+ 	__smp_alt_instructions = .;
+ 	*(.smp_altinstructions)
+ 	__smp_alt_instructions_end = .;
+-  	. = ALIGN(4);
++  }
++  . = ALIGN(4);
++  .smp_locks : AT(ADDR(.smp_locks) - LOAD_OFFSET) {
+ 	__smp_locks = .;
+ 	*(.smp_locks)
+ 	__smp_locks_end = .;
++  }
++  . = ALIGN(4);
++  .smp_altinstr_replacement : AT(ADDR(.smp_altinstr_replacement) - LOAD_OFFSET) {
+ 	*(.smp_altinstr_replacement)
+-	. = ALIGN(4096);
+ 	__smp_alt_end = .;
+   }
+ 
+

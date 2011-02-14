@@ -78,6 +78,9 @@
 struct net_device * __init apne_probe(int unit);
 static int apne_probe1(struct net_device *dev, int ioaddr);
 
+static int apne_open(struct net_device *dev);
+static int apne_close(struct net_device *dev);
+
 static void apne_reset_8390(struct net_device *dev);
 static void apne_get_8390_hdr(struct net_device *dev, struct e8390_pkt_hdr *hdr,
 			  int ring_page);
@@ -85,7 +88,7 @@ static void apne_block_input(struct net_device *dev, int count,
 								struct sk_buff *skb, int ring_offset);
 static void apne_block_output(struct net_device *dev, const int count,
 							const unsigned char *buf, const int start_page);
-static irqreturn_t apne_interrupt(int irq, void *dev_id);
+static irqreturn_t apne_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 
 static int init_pcmcia(void);
 
@@ -124,17 +127,14 @@ struct net_device * __init apne_probe(int unit)
 #endif
 	int err;
 
-	if (!MACH_IS_AMIGA)
-		return ERR_PTR(-ENODEV);
-
 	if (apne_owned)
 		return ERR_PTR(-ENODEV);
 
 	if ( !(AMIGAHW_PRESENT(PCMCIA)) )
 		return ERR_PTR(-ENODEV);
-
+                                
 	printk("Looking for PCMCIA ethernet card : ");
-
+                                        
 	/* check if a card is inserted */
 	if (!(PCMCIA_INSERTED)) {
 		printk("NO PCMCIA card inserted\n");
@@ -148,6 +148,7 @@ struct net_device * __init apne_probe(int unit)
 		sprintf(dev->name, "eth%d", unit);
 		netdev_boot_setup_check(dev);
 	}
+	SET_MODULE_OWNER(dev);
 
 	/* disable pcmcia irq for readtuple */
 	pcmcia_disable_irq();
@@ -204,7 +205,7 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
     int neX000, ctron;
 #endif
     static unsigned version_printed;
-
+ 
     if (ei_debug  &&  version_printed++ == 0)
 	printk(version);
 
@@ -246,7 +247,7 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
 	    {0x00,	NE_EN0_RSARHI},
 	    {E8390_RREAD+E8390_START, NE_CMD},
 	};
-	for (i = 0; i < ARRAY_SIZE(program_seq); i++) {
+	for (i = 0; i < sizeof(program_seq)/sizeof(program_seq[0]); i++) {
 	    outb(program_seq[i].value, ioaddr + program_seq[i].offset);
 	}
 
@@ -260,13 +261,13 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
 
     /*	At this point, wordlength *only* tells us if the SA_prom is doubled
 	up or not because some broken PCI cards don't respect the byte-wide
-	request in program_seq above, and hence don't have doubled up values.
+	request in program_seq above, and hence don't have doubled up values. 
 	These broken cards would otherwise be detected as an ne1000.  */
 
     if (wordlength == 2)
 	for (i = 0; i < 16; i++)
 		SA_prom[i] = SA_prom[i+i];
-
+    
     if (wordlength == 2) {
 	/* We must set the 8390 for word mode. */
 	outb(0x49, ioaddr + NE_EN0_DCFG);
@@ -310,19 +311,17 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
 #endif
 
     dev->base_addr = ioaddr;
-    dev->irq = IRQ_AMIGA_PORTS;
-    dev->netdev_ops = &ei_netdev_ops;
 
     /* Install the Interrupt handler */
-    i = request_irq(dev->irq, apne_interrupt, IRQF_SHARED, DRV_NAME, dev);
+    i = request_irq(IRQ_AMIGA_PORTS, apne_interrupt, IRQF_SHARED, DRV_NAME, dev);
     if (i) return i;
 
-    for(i = 0; i < ETHER_ADDR_LEN; i++)
+    for(i = 0; i < ETHER_ADDR_LEN; i++) {
+	printk(" %2.2x", SA_prom[i]);
 	dev->dev_addr[i] = SA_prom[i];
+    }
 
-    printk(" %pM\n", dev->dev_addr);
-
-    printk("%s: %s found.\n", dev->name, name);
+    printk("\n%s: %s found.\n", dev->name, name);
 
     ei_status.name = name;
     ei_status.tx_start_page = start_page;
@@ -335,7 +334,11 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
     ei_status.block_input = &apne_block_input;
     ei_status.block_output = &apne_block_output;
     ei_status.get_8390_hdr = &apne_get_8390_hdr;
-
+    dev->open = &apne_open;
+    dev->stop = &apne_close;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+    dev->poll_controller = ei_poll;
+#endif
     NS8390_init(dev, 0);
 
     pcmcia_ack_int(pcmcia_get_intreq());		/* ack PCMCIA int req */
@@ -343,6 +346,22 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
 
     apne_owned = 1;
 
+    return 0;
+}
+
+static int
+apne_open(struct net_device *dev)
+{
+    ei_open(dev);
+    return 0;
+}
+
+static int
+apne_close(struct net_device *dev)
+{
+    if (ei_debug > 1)
+	printk("%s: Shutting down ethercard.\n", dev->name);
+    ei_close(dev);
     return 0;
 }
 
@@ -524,7 +543,7 @@ apne_block_output(struct net_device *dev, int count,
     return;
 }
 
-static irqreturn_t apne_interrupt(int irq, void *dev_id)
+static irqreturn_t apne_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
     unsigned char pcmcia_intreq;
 
@@ -540,7 +559,7 @@ static irqreturn_t apne_interrupt(int irq, void *dev_id)
     if (ei_debug > 3)
         printk("pcmcia intreq = %x\n", pcmcia_intreq);
     pcmcia_disable_irq();			/* to get rid of the sti() within ei_interrupt */
-    ei_interrupt(irq, dev_id);
+    ei_interrupt(irq, dev_id, regs);
     pcmcia_ack_int(pcmcia_get_intreq());
     pcmcia_enable_irq();
     return IRQ_HANDLED;
@@ -549,7 +568,7 @@ static irqreturn_t apne_interrupt(int irq, void *dev_id)
 #ifdef MODULE
 static struct net_device *apne_dev;
 
-static int __init apne_module_init(void)
+int init_module(void)
 {
 	apne_dev = apne_probe(-1);
 	if (IS_ERR(apne_dev))
@@ -557,7 +576,7 @@ static int __init apne_module_init(void)
 	return 0;
 }
 
-static void __exit apne_module_exit(void)
+void cleanup_module(void)
 {
 	unregister_netdev(apne_dev);
 
@@ -571,8 +590,7 @@ static void __exit apne_module_exit(void)
 
 	free_netdev(apne_dev);
 }
-module_init(apne_module_init);
-module_exit(apne_module_exit);
+
 #endif
 
 static int init_pcmcia(void)

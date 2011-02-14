@@ -1,0 +1,113 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 4 Jun 2009 21:17:05 +1000
+Subject: [tun] use non-linear packets where possible
+Message-id: 20090604111705.GB28526@gondor.apana.org.au
+O-Subject: [RHEL5.4 PATCH 2/2] tun: Use non-linear packets where possible
+Bugzilla: 503309
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+RHEL5 bugzilla 503309
+
+On Thu, Jun 04, 2009 at 09:15:56PM +1000, Herbert Xu wrote:
+
+> This back was incomplete, here's the corrected version.  First we
+> need this patch:
+>
+> net: skb_copy_datagram_from_iovec()
+
+And now,
+
+tun: Use non-linear packets where possible
+
+The tun backport always used linear packets which causes problems
+when memory becomes fragmented as we can no longer allocate enough
+contiguous pages for linear packets longer than a page.  This patch
+backports the current upstream code where we use non-linear packets
+to avoid this.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index 6e66894..b803dba 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -265,8 +265,9 @@ static inline struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
+ 	struct sk_buff *skb;
+ 	int err;
+ 
+-	/* Always linear for now. */
+-	linear = len;
++	/* Under a page?  Don't bother with paged skb. */
++	if (prepad + len < PAGE_SIZE || !linear)
++		linear = len;
+ 
+ 	skb = sock_alloc_send_pskb(sk, prepad + linear, len - linear, noblock,
+ 				   &err);
+@@ -306,6 +307,10 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
+ 		if (memcpy_fromiovec((void *)&gso, iv, sizeof(gso)))
+ 			return -EFAULT;
+ 
++		if ((gso.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
++		    gso.csum_start + gso.csum_offset + 2 > gso.hdr_len)
++			gso.hdr_len = gso.csum_start + gso.csum_offset + 2;
++
+ 		if (gso.hdr_len > len)
+ 			return -EINVAL;
+ 	}
+@@ -320,9 +325,13 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
+ 		return PTR_ERR(skb);
+ 	}
+ 
+-	if (gso.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+-		unsigned int csum = 0;
++	if (skb_copy_datagram_from_iovec(skb, 0, iv, len)) {
++		tun->stats.rx_dropped++;
++		kfree_skb(skb);
++		return -EFAULT;
++	}
+ 
++	if (gso.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+ 		if (gso.csum_start + gso.csum_offset > len - 2) {
+ 			if (net_ratelimit())
+ 				printk(KERN_WARNING
+@@ -333,34 +342,12 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
+ 			return -EINVAL;
+ 		}
+ 
+-		if (memcpy_fromiovec(skb->data, iv, gso.csum_start)) {
+-			tun->stats.rx_dropped++;
+-			kfree_skb(skb);
+-			return -EFAULT;
+-		}
+-
+-		if (csum_partial_copy_fromiovecend(skb->data + gso.csum_start,
+-						   iv, 0, len - gso.csum_start,
+-						   &csum)) {
+-			tun->stats.rx_dropped++;
+-			kfree_skb(skb);
+-			return -EFAULT;
+-		}
+-
+-		*(u16 *)(skb->data + gso.csum_start + gso.csum_offset) =
+-			csum_fold(csum);
+-
++		skb->ip_summed = CHECKSUM_HW;
++		skb->csum = gso.csum_offset;
++		skb->h.raw = skb->data + gso.csum_start;
++		skb_checksum_help(skb, 0);
++	} else if (tun->flags & TUN_NOCHECKSUM)
+ 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+-	} else {
+-		if (memcpy_fromiovec(skb->data, iv, len)) {
+-			tun->stats.rx_dropped++;
+-			kfree_skb(skb);
+-			return -EFAULT;
+-		}
+-
+-		if (tun->flags & TUN_NOCHECKSUM)
+-			skb->ip_summed = CHECKSUM_UNNECESSARY;
+-	}
+ 
+ 	skb->dev = tun->dev;
+ 	switch (tun->flags & TUN_TYPE_MASK) {

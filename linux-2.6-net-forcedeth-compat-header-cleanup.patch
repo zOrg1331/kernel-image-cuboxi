@@ -1,0 +1,174 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:50:56 -0400
+Subject: [net] forcedeth: compat header cleanup
+Message-id: <20100510184840.2781.42869.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24966
+O-Subject: [RHEL5 PATCH 6/27] compat.h cleanup: forcedeth driver changes
+Bugzilla: 546740
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+>From 0e3a9d9121f615fd90d1b20782b516609498b694 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:31:08 -0400
+Subject: [PATCH] forcedeth driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index ab94f9e..82b35d2 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -64,8 +64,6 @@
+ #include <asm/uaccess.h>
+ #include <asm/system.h>
+ 
+-#include "forcedeth_compat.h"
+-
+ #if 0
+ #define dprintk			printk
+ #else
+@@ -2919,7 +2917,6 @@ static int nv_change_mtu(struct net_device *dev, int new_mtu)
+ 		 */
+ 		nv_disable_irq(dev);
+ 		netif_tx_lock_bh(dev);
+-		netif_addr_lock(dev);
+ 		spin_lock(&np->lock);
+ 		/* stop engines */
+ 		nv_stop_rxtx(dev);
+@@ -2944,7 +2941,6 @@ static int nv_change_mtu(struct net_device *dev, int new_mtu)
+ 		/* restart rx engine */
+ 		nv_start_rxtx(dev);
+ 		spin_unlock(&np->lock);
+-		netif_addr_unlock(dev);
+ 		netif_tx_unlock_bh(dev);
+ 		nv_enable_irq(dev);
+ 	}
+@@ -2981,7 +2977,6 @@ static int nv_set_mac_address(struct net_device *dev, void *addr)
+ 
+ 	if (netif_running(dev)) {
+ 		netif_tx_lock_bh(dev);
+-		netif_addr_lock(dev);
+ 		spin_lock_irq(&np->lock);
+ 
+ 		/* stop rx engine */
+@@ -2993,7 +2988,6 @@ static int nv_set_mac_address(struct net_device *dev, void *addr)
+ 		/* restart rx engine */
+ 		nv_start_rx(dev);
+ 		spin_unlock_irq(&np->lock);
+-		netif_addr_unlock(dev);
+ 		netif_tx_unlock_bh(dev);
+ 	} else {
+ 		nv_copy_mac_to_hw(dev);
+@@ -4071,7 +4065,6 @@ static void nv_do_nic_poll(unsigned long data)
+ 		printk(KERN_INFO "forcedeth: MAC in recoverable error state\n");
+ 		if (netif_running(dev)) {
+ 			netif_tx_lock_bh(dev);
+-			netif_addr_lock(dev);
+ 			spin_lock(&np->lock);
+ 			/* stop engines */
+ 			nv_stop_rxtx(dev);
+@@ -4096,7 +4089,6 @@ static void nv_do_nic_poll(unsigned long data)
+ 			/* restart rx engine */
+ 			nv_start_rxtx(dev);
+ 			spin_unlock(&np->lock);
+-			netif_addr_unlock(dev);
+ 			netif_tx_unlock_bh(dev);
+ 		}
+ 	}
+@@ -4304,7 +4296,6 @@ static int nv_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
+ 
+ 		nv_disable_irq(dev);
+ 		netif_tx_lock_bh(dev);
+-		netif_addr_lock(dev);
+ 		/* with plain spinlock lockdep complains */
+ 		spin_lock_irqsave(&np->lock, flags);
+ 		/* stop engines */
+@@ -4318,7 +4309,6 @@ static int nv_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
+ 		 */
+ 		nv_stop_rxtx(dev);
+ 		spin_unlock_irqrestore(&np->lock, flags);
+-		netif_addr_unlock(dev);
+ 		netif_tx_unlock_bh(dev);
+ 	}
+ 
+@@ -4464,12 +4454,10 @@ static int nv_nway_reset(struct net_device *dev)
+ 		if (netif_running(dev)) {
+ 			nv_disable_irq(dev);
+ 			netif_tx_lock_bh(dev);
+-			netif_addr_lock(dev);
+ 			spin_lock(&np->lock);
+ 			/* stop engines */
+ 			nv_stop_rxtx(dev);
+ 			spin_unlock(&np->lock);
+-			netif_addr_unlock(dev);
+ 			netif_tx_unlock_bh(dev);
+ 			printk(KERN_INFO "%s: link down.\n", dev->name);
+ 		}
+@@ -4577,7 +4565,6 @@ static int nv_set_ringparam(struct net_device *dev, struct ethtool_ringparam* ri
+ 	if (netif_running(dev)) {
+ 		nv_disable_irq(dev);
+ 		netif_tx_lock_bh(dev);
+-		netif_addr_lock(dev);
+ 		spin_lock(&np->lock);
+ 		/* stop engines */
+ 		nv_stop_rxtx(dev);
+@@ -4626,7 +4613,6 @@ static int nv_set_ringparam(struct net_device *dev, struct ethtool_ringparam* ri
+ 		/* restart engines */
+ 		nv_start_rxtx(dev);
+ 		spin_unlock(&np->lock);
+-		netif_addr_unlock(dev);
+ 		netif_tx_unlock_bh(dev);
+ 		nv_enable_irq(dev);
+ 	}
+@@ -4664,12 +4650,10 @@ static int nv_set_pauseparam(struct net_device *dev, struct ethtool_pauseparam*
+ 	if (netif_running(dev)) {
+ 		nv_disable_irq(dev);
+ 		netif_tx_lock_bh(dev);
+-		netif_addr_lock(dev);
+ 		spin_lock(&np->lock);
+ 		/* stop engines */
+ 		nv_stop_rxtx(dev);
+ 		spin_unlock(&np->lock);
+-		netif_addr_unlock(dev);
+ 		netif_tx_unlock_bh(dev);
+ 	}
+ 
+@@ -5058,7 +5042,6 @@ static void nv_self_test(struct net_device *dev, struct ethtool_test *test, u64
+ 			netif_poll_disable(dev);
+ #endif
+ 			netif_tx_lock_bh(dev);
+-			netif_addr_lock(dev);
+ 			spin_lock_irq(&np->lock);
+ 			nv_disable_hw_interrupts(dev, np->irqmask);
+ 			if (!(np->msi_flags & NV_MSI_X_ENABLED)) {
+@@ -5072,7 +5055,6 @@ static void nv_self_test(struct net_device *dev, struct ethtool_test *test, u64
+ 			/* drain rx queue */
+ 			nv_drain_rxtx(dev);
+ 			spin_unlock_irq(&np->lock);
+-			netif_addr_unlock(dev);
+ 			netif_tx_unlock_bh(dev);
+ 		}
+ 
+diff --git a/drivers/net/forcedeth_compat.h b/drivers/net/forcedeth_compat.h
+deleted file mode 100644
+index addb243..0000000
+--- a/drivers/net/forcedeth_compat.h
++++ /dev/null
+@@ -1,17 +0,0 @@
+-#ifndef __FORCEDETH_COMPAT_H__
+-#define __FORCEDETH_COMPAT_H__
+-
+-#define MAC_FMT "%02x:%02x:%02x:%02x:%02x:%02x"
+-#define MAC_BUF_SIZE 18
+-#define DECLARE_MAC_BUF(var) char var[MAC_BUF_SIZE]
+-static inline char *print_mac(char *buf, const unsigned char *addr)
+-{
+-	sprintf(buf, MAC_FMT,
+-		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+-	return buf;
+-}
+-
+-#define netif_addr_lock(dev)
+-#define netif_addr_unlock(dev)
+-
+-#endif /* __FORCEDETH_COMPAT_H__ */

@@ -1,0 +1,50 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 17 Jul 2009 04:09:48 -0400
+Subject: [fs] procfs: fix fill all subdirs as DT_UNKNOWN
+Message-id: 20090717080950.12701.35313.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] procfs: fix proc_task_readdir fill all subdirs as DT_UNKNOWN
+Bugzilla: 509713
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+BZ#509713
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=509713
+
+Description:
+/proc/<pid>/task/<tid> are directories, thus scandir() should return DT_DIR.
+But RHEL5 or 2.6.18 kernel returns DT_UNKNOWN.
+
+This bug came from a typo in 2.6.18 kernel, the typo in proc_task_readdir will
+filldir all elements under /proc/<pid>/task/ (except . & ..) with type (DT_DIR < 0).
+Since DT_DIR is always bigger than 0, then DT_UNKNOWN(=0) is filled instead of DT_DIR
+
+Upstream status:
+Later in 2.6.19, filldir was wrapped up with proc_pident_fill_cache for another
+issue, proc_task_readdir then calls proc_pident_fill_cache instead. This bug is
+eliminated naturally.
+
+Brew build#:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1895952
+
+KABI:
+no harm
+
+Test status:
+I confirm this bug is fixed after testing with the reproduce testcase.
+
+Signed-off-by: Danny Feng <dfeng@redhat.com>
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 55daa0a..5f94ca7 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -2632,7 +2632,7 @@ static int proc_task_readdir(struct file * filp, void * dirent, filldir_t filldi
+ 		tid = task->pid;
+ 		len = snprintf(buf, sizeof(buf), "%d", tid);
+ 		ino = fake_ino(tid, PROC_TID_INO);
+-		if (filldir(dirent, buf, len, pos, ino, DT_DIR < 0)) {
++		if (filldir(dirent, buf, len, pos, ino, DT_DIR) < 0) {
+ 			/* returning this tgid failed, save it as the first
+ 			 * pid for the next readir call */
+ 			filp->f_version = tid;

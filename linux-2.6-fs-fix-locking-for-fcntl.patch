@@ -1,0 +1,59 @@
+From: Ed Pollard <epollard@redhat.com>
+Date: Wed, 30 Jan 2008 16:30:03 -0500
+Subject: [fs] fix locking for fcntl
+Message-id: 47A0EC5B.50501@redhat.com
+O-Subject: Re: [RHEL 5.2 patch] fix for fcntl locking tests fail
+Bugzilla: 430596
+
+RHBZ#: 430596
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=430596
+
+Description:
+------------
+Fixes a failure in lpt test suice with fcntl locking. A simple fix
+that removed an errant line in vfs_lock_test
+
+RHEL Version Found:
+------------------
+RHEL5.2
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+NA
+
+Test Status:
+------------
+Don re-ran the ltp testing with this change and it passed.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-73.el5
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+
+diff --git a/fs/locks.c b/fs/locks.c
+index ee06d53..e5ab8fb 100644
+--- a/fs/locks.c
++++ b/fs/locks.c
+@@ -1628,15 +1628,13 @@ asmlinkage long sys_flock(unsigned int fd, unsigned int cmd)
+ /**
+  * vfs_test_lock - test file byte range lock
+  * @filp: The file to test lock for
+- * @fl: The lock to test
+- * @conf: Place to return a copy of the conflicting lock, if found
++ * @fl: The lock to test; also used to hold result
+  *
+  * Returns -ERRNO on failure.  Indicates presence of conflicting lock by
+  * setting conf->fl_type to something other than F_UNLCK.
+  */
+ int vfs_test_lock(struct file *filp, struct file_lock *fl)
+ {
+-	fl->fl_type = F_UNLCK;
+ 	if (filp->f_op && filp->f_op->lock)
+ 		return filp->f_op->lock(filp, F_GETLK, fl);
+ 	posix_test_lock(filp, fl, NULL);

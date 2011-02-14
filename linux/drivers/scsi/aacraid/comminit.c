@@ -1,11 +1,11 @@
 /*
  *	Adaptec AAC series RAID controller driver
- *	(c) Copyright 2001 Red Hat Inc.
+ *	(c) Copyright 2001 Red Hat Inc.	<alan@redhat.com>
  *
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2007 Adaptec, Inc. (aacraid@adaptec.com)
+ * Copyright (c) 2000 Adaptec, Inc. (aacraid@adaptec.com)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
@@ -39,6 +40,7 @@
 #include <linux/completion.h>
 #include <linux/mm.h>
 #include <scsi/scsi_host.h>
+#include <asm/semaphore.h>
 
 #include "aacraid.h"
 
@@ -54,7 +56,6 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
 	const unsigned long printfbufsiz = 256;
 	struct aac_init *init;
 	dma_addr_t phys;
-	unsigned long aac_max_hostphysmempages;
 
 	size = fibsize + sizeof(struct aac_init) + commsize + commalign + printfbufsiz;
 
@@ -91,26 +92,13 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
 	init->AdapterFibsPhysicalAddress = cpu_to_le32((u32)phys);
 	init->AdapterFibsSize = cpu_to_le32(fibsize);
 	init->AdapterFibAlign = cpu_to_le32(sizeof(struct hw_fib));
-	/*
-	 * number of 4k pages of host physical memory. The aacraid fw needs
-	 * this number to be less than 4gb worth of pages. New firmware doesn't
-	 * have any issues with the mapping system, but older Firmware did, and
-	 * had *troubles* dealing with the math overloading past 32 bits, thus
-	 * we must limit this field.
-	 */
-	aac_max_hostphysmempages = dma_get_required_mask(&dev->pdev->dev) >> 12;
-	if (aac_max_hostphysmempages < AAC_MAX_HOSTPHYSMEMPAGES)
-		init->HostPhysMemPages = cpu_to_le32(aac_max_hostphysmempages);
-	else
-		init->HostPhysMemPages = cpu_to_le32(AAC_MAX_HOSTPHYSMEMPAGES);
+	init->HostPhysMemPages = cpu_to_le32(AAC_MAX_HOSTPHYSMEMPAGES);
 
 	init->InitFlags = 0;
-	if (dev->comm_interface == AAC_COMM_MESSAGE) {
+	if (dev->new_comm_interface) {
 		init->InitFlags = cpu_to_le32(INITFLAGS_NEW_COMM_SUPPORTED);
 		dprintk((KERN_WARNING"aacraid: New Comm Interface enabled\n"));
 	}
-	init->InitFlags |= cpu_to_le32(INITFLAGS_DRIVER_USES_UTC_TIME |
-				       INITFLAGS_DRIVER_SUPPORTS_PM);
 	init->MaxIoCommands = cpu_to_le32(dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB);
 	init->MaxIoSize = cpu_to_le32(dev->scsi_host_ptr->max_sectors << 9);
 	init->MaxFibSize = cpu_to_le32(dev->max_fib_size);
@@ -123,7 +111,7 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
 	/*
 	 *	Align the beginning of Headers to commalign
 	 */
-	align = (commalign - ((uintptr_t)(base) & (commalign - 1)));
+	align = (commalign - ((unsigned long)(base) & (commalign - 1)));
 	base = base + align;
 	phys = phys + align;
 	/*
@@ -192,7 +180,7 @@ int aac_send_shutdown(struct aac_dev * dev)
 			  -2 /* Timeout silently */, 1,
 			  NULL, NULL);
 
-	if (status >= 0)
+	if (status == 0)
 		aac_fib_complete(fibctx);
 	aac_fib_free(fibctx);
 	return status;
@@ -309,24 +297,27 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
 		- sizeof(struct aac_fibhdr)
 		- sizeof(struct aac_write) + sizeof(struct sgentry))
 			/ sizeof(struct sgentry);
-	dev->comm_interface = AAC_COMM_PRODUCER;
+	dev->new_comm_interface = 0;
 	dev->raw_io_64 = 0;
 	if ((!aac_adapter_sync_cmd(dev, GET_ADAPTER_PROPERTIES,
 		0, 0, 0, 0, 0, 0, status+0, status+1, status+2, NULL, NULL)) &&
 	 		(status[0] == 0x00000001)) {
-		if (status[1] & le32_to_cpu(AAC_OPT_NEW_COMM_64))
+		if (status[1] & AAC_OPT_NEW_COMM_64)
 			dev->raw_io_64 = 1;
-		if (dev->a_ops.adapter_comm &&
-		    (status[1] & le32_to_cpu(AAC_OPT_NEW_COMM)))
-			dev->comm_interface = AAC_COMM_MESSAGE;
-		if ((dev->comm_interface == AAC_COMM_MESSAGE) &&
-		    (status[2] > dev->base_size)) {
-			aac_adapter_ioremap(dev, 0);
+		if (status[1] & AAC_OPT_NEW_COMM)
+			dev->new_comm_interface = dev->a_ops.adapter_send != 0;
+		if (dev->new_comm_interface && (status[2] > dev->base_size)) {
+			iounmap(dev->regs.sa);
 			dev->base_size = status[2];
-			if (aac_adapter_ioremap(dev, status[2])) {
+			dprintk((KERN_DEBUG "ioremap(%lx,%d)\n",
+			  host->base, status[2]));
+			dev->regs.sa = ioremap(host->base, status[2]);
+			if (dev->regs.sa == NULL) {
 				/* remap failed, go back ... */
-				dev->comm_interface = AAC_COMM_PRODUCER;
-				if (aac_adapter_ioremap(dev, AAC_MIN_FOOTPRINT_SIZE)) {
+				dev->new_comm_interface = 0;
+				dev->regs.sa = ioremap(host->base, 
+						AAC_MIN_FOOTPRINT_SIZE);
+				if (dev->regs.sa == NULL) {	
 					printk(KERN_WARNING
 					  "aacraid: unable to map adapter.\n");
 					return NULL;
@@ -400,11 +391,12 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
 	 *	Ok now init the communication subsystem
 	 */
 
-	dev->queues = kzalloc(sizeof(struct aac_queue_block), GFP_KERNEL);
+	dev->queues = (struct aac_queue_block *) kmalloc(sizeof(struct aac_queue_block), GFP_KERNEL);
 	if (dev->queues == NULL) {
 		printk(KERN_ERR "Error could not allocate comm region.\n");
 		return NULL;
 	}
+	memset(dev->queues, 0, sizeof(struct aac_queue_block));
 
 	if (aac_comm_init(dev)<0){
 		kfree(dev->queues);

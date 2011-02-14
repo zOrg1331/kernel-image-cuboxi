@@ -6,7 +6,7 @@
  * Copyright (C) 1994 - 2000, 2001, 2003 Ralf Baechle
  * Copyright (C) 1999, 2000 Silicon Graphics, Inc.
  * Copyright (C) 2001 MIPS Technologies, Inc.
- * Copyright (C) 2002, 2007  Maciej W. Rozycki
+ * Copyright (C) 2002 Maciej W. Rozycki
  */
 #include <linux/init.h>
 
@@ -19,8 +19,6 @@
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
 #include <asm/war.h>
-#include <asm/page.h>
-#include <asm/thread_info.h>
 
 #define PANIC_PIC(msg)					\
 		.set push;				\
@@ -127,81 +125,14 @@ handle_vcei:
 
 	__FINIT
 
-	.align	5	/* 32 byte rollback region */
-LEAF(r4k_wait)
-	.set	push
-	.set	noreorder
-	/* start of rollback region */
-	LONG_L	t0, TI_FLAGS($28)
-	nop
-	andi	t0, _TIF_NEED_RESCHED
-	bnez	t0, 1f
-	 nop
-	nop
-	nop
-	.set	mips3
-	wait
-	/* end of rollback region (the region size must be power of two) */
-	.set	pop
-1:
-	jr	ra
-	END(r4k_wait)
-
-	.macro	BUILD_ROLLBACK_PROLOGUE handler
-	FEXPORT(rollback_\handler)
-	.set	push
-	.set	noat
-	MFC0	k0, CP0_EPC
-	PTR_LA	k1, r4k_wait
-	ori	k0, 0x1f	/* 32 byte rollback region */
-	xori	k0, 0x1f
-	bne	k0, k1, 9f
-	MTC0	k0, CP0_EPC
-9:
-	.set pop
-	.endm
-
 	.align  5
-BUILD_ROLLBACK_PROLOGUE handle_int
 NESTED(handle_int, PT_SIZE, sp)
-#ifdef CONFIG_TRACE_IRQFLAGS
-	/*
-	 * Check to see if the interrupted code has just disabled
-	 * interrupts and ignore this interrupt for now if so.
-	 *
-	 * local_irq_disable() disables interrupts and then calls
-	 * trace_hardirqs_off() to track the state. If an interrupt is taken
-	 * after interrupts are disabled but before the state is updated
-	 * it will appear to restore_all that it is incorrectly returning with
-	 * interrupts disabled
-	 */
-	.set	push
-	.set	noat
-	mfc0	k0, CP0_STATUS
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
-	and	k0, ST0_IEP
-	bnez	k0, 1f
-
-	mfc0	k0, CP0_EPC
-	.set	noreorder
-	j	k0
-	rfe
-#else
-	and	k0, ST0_IE
-	bnez	k0, 1f
-
-	eret
-#endif
-1:
-	.set pop
-#endif
 	SAVE_ALL
 	CLI
 	TRACE_IRQS_OFF
 
-	LONG_L	s0, TI_REGS($28)
-	LONG_S	sp, TI_REGS($28)
 	PTR_LA	ra, ret_from_irq
+	move	a0, sp
 	j	plat_irq_dispatch
 	END(handle_int)
 
@@ -237,7 +168,6 @@ NESTED(except_vec_ejtag_debug, 0, sp)
  * This prototype is copied to ebase + n*IntCtl.VS and patched
  * to invoke the handler
  */
-BUILD_ROLLBACK_PROLOGUE except_vec_vi
 NESTED(except_vec_vi, 0, sp)
 	SAVE_SOME
 	SAVE_AT
@@ -249,13 +179,13 @@ NESTED(except_vec_vi, 0, sp)
 	 * during service by SMTC kernel, we also want to
 	 * pass the IM value to be cleared.
 	 */
-FEXPORT(except_vec_vi_mori)
+EXPORT(except_vec_vi_mori)
 	ori	a0, $0, 0
 #endif /* CONFIG_MIPS_MT_SMTC */
-FEXPORT(except_vec_vi_lui)
+EXPORT(except_vec_vi_lui)
 	lui	v0, 0		/* Patched */
 	j	except_vec_vi_handler
-FEXPORT(except_vec_vi_ori)
+EXPORT(except_vec_vi_ori)
 	 ori	v0, 0		/* Patched */
 	.set	pop
 	END(except_vec_vi)
@@ -280,32 +210,18 @@ NESTED(except_vec_vi_handler, 0, sp)
 	 */
 	mfc0	t1, CP0_STATUS
 	and	t0, a0, t1
-#ifdef CONFIG_MIPS_MT_SMTC_IM_BACKSTOP
 	mfc0	t2, CP0_TCCONTEXT
-	or	t2, t0, t2
-	mtc0	t2, CP0_TCCONTEXT
-#endif /* CONFIG_MIPS_MT_SMTC_IM_BACKSTOP */
+	or	t0, t0, t2
+	mtc0	t0, CP0_TCCONTEXT
 	xor	t1, t1, t0
 	mtc0	t1, CP0_STATUS
 	_ehb
 #endif /* CONFIG_MIPS_MT_SMTC */
 	CLI
-#ifdef CONFIG_TRACE_IRQFLAGS
-	move	s0, v0
-#ifdef CONFIG_MIPS_MT_SMTC
-	move	s1, a0
-#endif
 	TRACE_IRQS_OFF
-#ifdef CONFIG_MIPS_MT_SMTC
-	move	a0, s1
-#endif
-	move	v0, s0
-#endif
-
-	LONG_L	s0, TI_REGS($28)
-	LONG_S	sp, TI_REGS($28)
-	PTR_LA	ra, ret_from_irq
-	jr	v0
+	move	a0, sp
+	jalr	v0
+	j	ret_from_irq
 	END(except_vec_vi_handler)
 
 /*
@@ -385,14 +301,10 @@ NESTED(nmi_handler, PT_SIZE, sp)
 	.endm
 
 	.macro	__build_clear_fpe
-	.set	push
-	/* gas fails to assemble cfc1 for some archs (octeon).*/ \
-	.set	mips1
 	cfc1	a1, fcr31
 	li	a2, ~(0x3f << 12)
 	and	a2, a1
 	ctc1	a2, fcr31
-	.set	pop
 	TRACE_IRQS_ON
 	STI
 	.endm
@@ -437,8 +349,8 @@ NESTED(nmi_handler, PT_SIZE, sp)
 	.set	at
 	__BUILD_\verbose \exception
 	move	a0, sp
-	PTR_LA	ra, ret_from_exception
-	j	do_\handler
+	jal	do_\handler
+	j	ret_from_exception
 	END(handle_\exception)
 	.endm
 
@@ -457,87 +369,11 @@ NESTED(nmi_handler, PT_SIZE, sp)
 	BUILD_HANDLER tr tr sti silent			/* #13 */
 	BUILD_HANDLER fpe fpe fpe silent		/* #15 */
 	BUILD_HANDLER mdmx mdmx sti silent		/* #22 */
-#ifdef 	CONFIG_HARDWARE_WATCHPOINTS
-	/*
-	 * For watch, interrupts will be enabled after the watch
-	 * registers are read.
-	 */
-	BUILD_HANDLER watch watch cli silent		/* #23 */
-#else
 	BUILD_HANDLER watch watch sti verbose		/* #23 */
-#endif
 	BUILD_HANDLER mcheck mcheck cli verbose		/* #24 */
 	BUILD_HANDLER mt mt sti silent			/* #25 */
 	BUILD_HANDLER dsp dsp sti silent		/* #26 */
 	BUILD_HANDLER reserved reserved sti verbose	/* others */
-
-	.align	5
-	LEAF(handle_ri_rdhwr_vivt)
-#ifdef CONFIG_MIPS_MT_SMTC
-	PANIC_PIC("handle_ri_rdhwr_vivt called")
-#else
-	.set	push
-	.set	noat
-	.set	noreorder
-	/* check if TLB contains a entry for EPC */
-	MFC0	k1, CP0_ENTRYHI
-	andi	k1, 0xff	/* ASID_MASK */
-	MFC0	k0, CP0_EPC
-	PTR_SRL	k0, PAGE_SHIFT + 1
-	PTR_SLL	k0, PAGE_SHIFT + 1
-	or	k1, k0
-	MTC0	k1, CP0_ENTRYHI
-	mtc0_tlbw_hazard
-	tlbp
-	tlb_probe_hazard
-	mfc0	k1, CP0_INDEX
-	.set	pop
-	bltz	k1, handle_ri	/* slow path */
-	/* fall thru */
-#endif
-	END(handle_ri_rdhwr_vivt)
-
-	LEAF(handle_ri_rdhwr)
-	.set	push
-	.set	noat
-	.set	noreorder
-	/* 0x7c03e83b: rdhwr v1,$29 */
-	MFC0	k1, CP0_EPC
-	lui	k0, 0x7c03
-	lw	k1, (k1)
-	ori	k0, 0xe83b
-	.set	reorder
-	bne	k0, k1, handle_ri	/* if not ours */
-	/* The insn is rdhwr.  No need to check CAUSE.BD here. */
-	get_saved_sp	/* k1 := current_thread_info */
-	.set	noreorder
-	MFC0	k0, CP0_EPC
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
-	ori	k1, _THREAD_MASK
-	xori	k1, _THREAD_MASK
-	LONG_L	v1, TI_TP_VALUE(k1)
-	LONG_ADDIU	k0, 4
-	jr	k0
-	 rfe
-#else
-#ifndef CONFIG_CPU_DADDI_WORKAROUNDS
-	LONG_ADDIU	k0, 4		/* stall on $k0 */
-#else
-	.set	at=v1
-	LONG_ADDIU	k0, 4
-	.set	noat
-#endif
-	MTC0	k0, CP0_EPC
-	/* I hope three instructions between MTC0 and ERET are enough... */
-	ori	k1, _THREAD_MASK
-	xori	k1, _THREAD_MASK
-	LONG_L	v1, TI_TP_VALUE(k1)
-	.set	mips3
-	eret
-	.set	mips0
-#endif
-	.set	pop
-	END(handle_ri_rdhwr)
 
 #ifdef CONFIG_64BIT
 /* A temporary overflow handler used by check_daddi(). */

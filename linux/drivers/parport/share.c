@@ -1,4 +1,4 @@
-/*
+/* $Id: parport_share.c,v 1.15 1998/01/11 12:06:17 philip Exp $
  * Parallel-port resource manager code.
  * 
  * Authors: David Campbell <campbell@tirian.che.curtin.edu.au>
@@ -365,11 +365,6 @@ void parport_announce_port (struct parport *port)
 	parport_daisy_init(port);
 #endif
 
-	if (!port->dev)
-		printk(KERN_WARNING "%s: fix this legacy "
-				"no-device port driver!\n",
-				port->name);
-
 	parport_proc_register(port);
 	mutex_lock(&registration_lock);
 	spin_lock_irq(&parportlist_lock);
@@ -524,7 +519,7 @@ void parport_remove_port(struct parport *port)
 struct pardevice *
 parport_register_device(struct parport *port, const char *name,
 			int (*pf)(void *), void (*kf)(void *),
-			void (*irq_func)(void *), 
+			void (*irq_func)(int, void *, struct pt_regs *), 
 			int flags, void *handle)
 {
 	struct pardevice *tmp;
@@ -614,10 +609,7 @@ parport_register_device(struct parport *port, const char *name,
 	 * pardevice fields. -arca
 	 */
 	port->ops->init_state(tmp, tmp->state);
-	if (!test_and_set_bit(PARPORT_DEVPROC_REGISTERED, &port->devflags)) {
-		port->proc_device = tmp;
-		parport_device_proc_register(tmp);
-	}
+	parport_device_proc_register(tmp);
 	return tmp;
 
  out_free_all:
@@ -649,13 +641,9 @@ void parport_unregister_device(struct pardevice *dev)
 	}
 #endif
 
-	port = dev->port->physport;
+	parport_device_proc_unregister(dev);
 
-	if (port->proc_device == dev) {
-		port->proc_device = NULL;
-		clear_bit(PARPORT_DEVPROC_REGISTERED, &port->devflags);
-		parport_device_proc_unregister(dev);
-	}
+	port = dev->port->physport;
 
 	if (port->cad == dev) {
 		printk(KERN_DEBUG "%s: %s forgot to release port\n",
@@ -1002,15 +990,6 @@ void parport_release(struct pardevice *dev)
 	}
 }
 
-irqreturn_t parport_irq_handler(int irq, void *dev_id)
-{
-	struct parport *port = dev_id;
-
-	parport_generic_irq(port);
-
-	return IRQ_HANDLED;
-}
-
 /* Exported symbols for modules. */
 
 EXPORT_SYMBOL(parport_claim);
@@ -1027,6 +1006,5 @@ EXPORT_SYMBOL(parport_get_port);
 EXPORT_SYMBOL(parport_put_port);
 EXPORT_SYMBOL(parport_find_number);
 EXPORT_SYMBOL(parport_find_base);
-EXPORT_SYMBOL(parport_irq_handler);
 
 MODULE_LICENSE("GPL");

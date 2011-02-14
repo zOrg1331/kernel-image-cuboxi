@@ -1,0 +1,51 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 22 Jul 2010 10:17:36 -0400
+Subject: [net] be2net: increase POST timeout for EEH recovery
+Message-id: <1279793856-6681-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 27021
+O-Subject: [RHEL5.6 PATCH] be2net: increase POST timeout for EEH recovery
+Bugzilla: 616512
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+BZs:
+#616512 - Update be2net to version 2.102.404r
+
+Description:
+This patch increases the timeout value for POST completion
+because BE sometimes requires longer time after an EEH reset.
+
+Test status:
+No problem found
+
+Upstream commits:
+d938a70 - be2net: increase POST timeout for EEH recovery
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/benet/be.h b/drivers/net/benet/be.h
+index eeb33b6..654dd62 100644
+--- a/drivers/net/benet/be.h
++++ b/drivers/net/benet/be.h
+@@ -33,7 +33,7 @@
+ 
+ #include "be_hw.h"
+ 
+-#define DRV_VER			"2.102.348r"
++#define DRV_VER			"2.102.404r"
+ #define DRV_NAME		"be2net"
+ #define BE_NAME			"ServerEngines BladeEngine2 10Gbps NIC"
+ #define BE3_NAME		"ServerEngines BladeEngine3 10Gbps NIC"
+diff --git a/drivers/net/benet/be_cmds.c b/drivers/net/benet/be_cmds.c
+index 667ce65..f78d67c 100644
+--- a/drivers/net/benet/be_cmds.c
++++ b/drivers/net/benet/be_cmds.c
+@@ -393,7 +393,7 @@ int be_cmd_POST(struct be_adapter *adapter)
+ 		} else {
+ 			return 0;
+ 		}
+-	} while (timeout < 20);
++	} while (timeout < 40);
+ 
+ 	dev_err(&adapter->pdev->dev, "POST timeout; stage=0x%x\n", stage);
+ 	return -1;

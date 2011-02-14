@@ -1,0 +1,116 @@
+From: Jim Paradis <jparadis@redhat.com>
+Date: Wed, 7 Oct 2009 16:59:15 -0400
+Subject: [x86_64] fix hugepage memory tracking
+Message-id: 20091007205915.14356.25143.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.5 PATCH] Fix hugepage memory tracking
+Bugzilla: 518671
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=518671
+
+This bug is the RHEL5 equivalent of Bug 497204, where unmap_page_range was
+incorrectly calling mm_track_pte() rather than mm_track_pmd() when tracking
+a hugepage.  This patch fixes.  Although we add new routines to handle
+hugepages, if memory tracking is not enabled then these routines execute
+exatly the same code as before.
+
+ mach-xen/asm/pgtable.h |   21 +++++++++++++++++++++
+ page.h                 |    2 ++
+ pgtable.h              |   18 ++++++++++++++++++
+ 3 files changed, 41 insertions(+)
+
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index be9deec..ee0570d 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -107,6 +107,12 @@ static inline void set_pte(pte_t *dst, pte_t val)
+ 	*dst = val;
+ }
+ 
++static inline void set_huge_pte(pte_t *dst, pte_t val)
++{
++	mm_track_pmd( (pmd_t *)dst);
++	*dst = val;
++} 
++
+ static inline void set_pmd(pmd_t *pmdptr, pmd_t pmdval)
+ {
+ 	mm_track_pmd(pmdptr);
+@@ -154,6 +160,13 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+ 	return __pte_ma(xchg(&(xp)->pte, 0));
+ }
+ 
++static inline pte_t huge_ptep_get_and_clear(struct mm_struct *mm,
++					    unsigned long addr, pte_t *xp)
++{
++	mm_track_pmd( (pmd_t *)xp);
++	return __pte_ma(xchg(&(xp)->pte, 0));
++}
++
+ #if 0
+ static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *xp)
+ {
+@@ -319,6 +332,14 @@ static inline unsigned long pud_bad(pud_t pud)
+ 		set_pte((ptep), (pteval));				\
+ } while (0)
+ 
++static inline void set_huge_pte_at(struct mm_struct *_mm, unsigned long addr,
++				   pte_t *ptep, pte_t pteval)
++{
++	if (((_mm) != current->mm && (_mm) != &init_mm) ||
++	    HYPERVISOR_update_va_mapping((addr), (pteval), 0))
++		set_huge_pte(ptep, pteval);
++}
++
+ #define pte_none(x)	(!(x).pte)
+ #define pte_present(x)	((x).pte & (_PAGE_PRESENT | _PAGE_PROTNONE))
+ #define pte_clear(mm,addr,xp)	do { set_pte_at(mm, addr, xp, __pte(0)); } while (0)
+diff --git a/include/asm-x86_64/page.h b/include/asm-x86_64/page.h
+index 383747f..5beb71d 100644
+--- a/include/asm-x86_64/page.h
++++ b/include/asm-x86_64/page.h
+@@ -38,6 +38,8 @@
+ #define HPAGE_MASK	(~(HPAGE_SIZE - 1))
+ #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
+ 
++#define ARCH_HAS_SETCLEAR_HUGE_PTE
++
+ #ifndef __ASSEMBLY__
+ 
+ extern unsigned long end_pfn;
+diff --git a/include/asm-x86_64/pgtable.h b/include/asm-x86_64/pgtable.h
+index e61d0d8..eb55ef5 100644
+--- a/include/asm-x86_64/pgtable.h
++++ b/include/asm-x86_64/pgtable.h
+@@ -83,6 +83,18 @@ static inline void set_pte(pte_t *dst, pte_t val)
+ } 
+ #define set_pte_at(mm,addr,ptep,pteval) set_pte(ptep,pteval)
+ 
++static inline void set_huge_pte(pte_t *dst, pte_t val)
++{
++	mm_track_pmd( (pmd_t *)dst);
++	pte_val(*dst) = pte_val(val);
++} 
++
++static inline void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
++                                   pte_t *ptep, pte_t pte)
++{
++	set_huge_pte(ptep, pte);
++} 
++
+ static inline void set_pmd(pmd_t *dst, pmd_t val)
+ {
+ 	mm_track_pmd(dst);
+@@ -120,6 +132,12 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+ 	return __pte(xchg(&(xp)->pte, 0));
+ }
+ 
++static inline pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *xp)
++{
++	mm_track_pmd( (pmd_t *)xp);
++	return __pte(xchg(&(xp)->pte, 0));
++}
++
+ struct mm_struct;
+ 
+ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long addr, pte_t *ptep, int full)

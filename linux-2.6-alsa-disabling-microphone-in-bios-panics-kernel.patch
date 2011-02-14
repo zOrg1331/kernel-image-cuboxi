@@ -1,0 +1,249 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Wed, 19 Dec 2007 15:21:26 -0500
+Subject: [alsa] disabling microphone in bios panics kernel
+Message-id: 47697D46.2040805@redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH] Disable microphone in bios and panic kernel
+Bugzilla: 240783
+
+bugzilla 254067
+FEAT PPORT: Disable microphone via BIOS and kernel will panic
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=254067
+
+Description of problem:
+The Dell Fila and Converse Mobile Precision laptops have an
+option to disable the built-in microphone. When one does disables
+the microphone, the kernel will panic on boot.
+
+Solution:
+Four upstream patches are required to fix this problem. Two add
+the logic to handle the Fila, another provides support for the
+Converse, and the last one modifies the way the gpio is
+handled. The gpio patch is needed by the other patches. The
+patches intermingle to some extent so below is the combined
+patch.
+
+Note: The gpio logic was added by the patch for bz240783
+"Support S/PDIF" so there is a dependency.
+
+ From the upstream patchs:
+1. Fila support:
+"This patch adds more support for Dell systems with Stac9205 codecs.
+Tested against a couple of different systems (with different pin
+configs), but the others should also work. Also cleaned up some of the
+9205 patch code."
+http://hg-mirror.alsa-project.org/alsa-kernel/annotate/919eb497be46/pci/hda/patch_sigmatel.c
+
+2. More Fila support -   hda: BIOS changing subsystem id
+"Some laptop BIOS change the subsystem id for STAC9205 cards if the
+microphone isn't toggled on/off in the settings."
+http://hg-mirror.alsa-project.org/alsa-kernel/rev/5d6195eec6ef
+
+3. Add Converse support - hda: More subsystem id BIOS changes
+"More laptop BIOS changes the subsystem id for STAC9205 cards if the
+microphone is toggled on/off in the settings. The patch removes the
+old STAC_9205_M43xx and use STAC_9205_DELL_M43."
+http://hg-mirror.alsa-project.org/alsa-kernel/diff/0028e39ead78/pci/hda/patch_sigmatel.c
+
+4. Fix gpio (specifically required by patch #1)
+hda-codec - Fix GPIO in resume
+"Reinitialize GPIO in resume callback if necessary."
+http://hg-mirror.alsa-project.org/alsa-kernel/diff/3c6048d11c71/pci/hda/patch_sigmatel.c
+
+All patches can be found in Linus' tree, in addition to ALSA.
+
+Testing:
+I have tested this patch on both the Converse and Fila. There
+is no panic on boot and there is sound when the microphone is
+enabled in BIOS.
+
+Waiting for Dell to test the complete patch with Brew-built
+RHEL5.2 rpms and will provide an update when it is received.
+
+Acks would be appreciated, thanks.
+
+--------------000600070603030906040804
+Content-Type: text/plain;
+ name="biospanic.diff"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline;
+ filename="biospanic.diff"
+
+diff --git a/sound/pci/hda/patch_sigmatel.c b/sound/pci/hda/patch_sigmatel.c
+index 12a4205..3dddcd7 100644
+--- a/sound/pci/hda/patch_sigmatel.c
++++ b/sound/pci/hda/patch_sigmatel.c
+@@ -44,7 +44,8 @@ enum {
+ 
+ enum {
+ 	STAC_9205_REF,
+-	STAC_M43xx,
++	STAC_9205_DELL_M43,
++	STAC_9205_DELL_M44,
+ 	STAC_9205_MODELS
+ };
+ 
+@@ -85,6 +86,8 @@ struct sigmatel_spec {
+ 	unsigned int hp_detect: 1;
+ 	unsigned int gpio_mute: 1;
+ 
++	unsigned int gpio_mask, gpio_data;
++
+ 	/* playback */
+ 	struct hda_multi_out multiout;
+ 	hda_nid_t dac_nids[5];
+@@ -702,23 +705,60 @@ static unsigned int ref9205_pin_configs[12] = {
+ 	0x90a000f0, 0x90a000f0, 0x01441030, 0x01c41030
+ };
+ 
++static unsigned int dell_m43_9205_pin_configs[12] = {
++	0x0321101f, 0x03a11020, 0x90a70330, 0x90170310,
++	0x400000fe, 0x400000ff, 0x400000fd, 0x40f000f9,
++	0x400000fa, 0x400000fc, 0x0144131f, 0x40c003f8,
++};
++
++static unsigned int dell_m44_9205_pin_configs[12] = {
++	0x0421101f, 0x04a11020, 0x400003fa, 0x90170310,
++	0x400003fb, 0x400003fc, 0x400003fd, 0x400003f9,
++	0x90a60330, 0x400003ff, 0x01441340, 0x40c003fe,
++};
++ 
+ static unsigned int *stac9205_brd_tbl[STAC_9205_MODELS] = {
+-	[STAC_REF] = ref9205_pin_configs,
+-	[STAC_M43xx] = NULL,
++	[STAC_9205_REF] = ref9205_pin_configs,
++	[STAC_9205_DELL_M43] = dell_m43_9205_pin_configs,
++	[STAC_9205_DELL_M44] = dell_m44_9205_pin_configs,
+ };
+ 
+ static const char *stac9205_models[STAC_9205_MODELS] = {
+ 	[STAC_9205_REF] = "ref",
++	[STAC_9205_DELL_M43] = "dell-m43",
++	[STAC_9205_DELL_M44] = "dell-m44",
+ };
+ 
+ static struct snd_pci_quirk stac9205_cfg_tbl[] = {
+ 	/* SigmaTel reference board */
+ 	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x2668,
+ 		      "DFI LanParty", STAC_9205_REF),
+-	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x01f8,
+-		      "Dell Precision", STAC_M43xx),
+-	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x01ff,
+-		      "Dell Precision", STAC_M43xx),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01f8,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x021b,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x021c,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01f9,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01fa,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01fe,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01ff,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x0206,
++		      "Dell Precision", STAC_9205_DELL_M43),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01f1,
++		      "Dell Inspiron", STAC_9205_DELL_M44),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01f2,
++		      "Dell Inspiron", STAC_9205_DELL_M44),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01fc,
++		      "Dell Inspiron", STAC_9205_DELL_M44),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x01fd,
++		      "Dell Inspiron", STAC_9205_DELL_M44),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_DELL, 0x021f,
++		      "Dell Inspiron", STAC_9205_DELL_M44),
+ 	{} /* terminator */
+ };
+ 
+@@ -783,20 +823,20 @@ static void stac92xx_set_config_regs(struct hda_codec *codec)
+ 				     spec->pin_configs[i]);
+ }
+ 
+-static void stac92xx_enable_gpio_mask(struct hda_codec *codec,
+-				       int gpio_mask, int gpio_data)
++static void stac92xx_enable_gpio_mask(struct hda_codec *codec)
+ {
++	struct sigmatel_spec *spec = codec->spec;
+ 	/* Configure GPIOx as output */
+ 	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_DIRECTION, gpio_mask);
++			    AC_VERB_SET_GPIO_DIRECTION, spec->gpio_mask);
+ 	/* Configure GPIOx as CMOS */
+ 	snd_hda_codec_write(codec, codec->afg, 0, 0x7e7, 0x00000000);
+ 	/* Assert GPIOx */
+ 	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_DATA, gpio_data);
++			    AC_VERB_SET_GPIO_DATA, spec->gpio_data);
+ 	/* Enable GPIOx */
+ 	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_MASK, gpio_mask);
++			    AC_VERB_SET_GPIO_MASK, spec->gpio_mask);
+ }
+ 
+ /*
+@@ -1828,8 +1868,10 @@ static int stac92xx_resume(struct hda_codec *codec)
+ 	struct sigmatel_spec *spec = codec->spec;
+ 	int i;
+ 
+-	stac92xx_init(codec);
+ 	stac92xx_set_config_regs(codec);
++	if (spec->gpio_mask && spec->gpio_data)
++	    stac92xx_enable_gpio_mask(codec);
++	stac92xx_init(codec);
+ 	for (i = 0; i < spec->num_mixers; i++)
+ 		snd_hda_resume_ctls(codec, spec->mixers[i]);
+ 	if (spec->multiout.dig_out_nid)
+@@ -2095,7 +2137,8 @@ static int patch_stac927x(struct hda_codec *codec)
+ 
+ 	spec->multiout.dac_nids = spec->dac_nids;
+ 	/* GPIO0 High = Enable EAPD */
+-	stac92xx_enable_gpio_mask(codec, 0x00000001, 0x00000001);
++	spec->gpio_mask = spec->gpio_data = 0x00000001;
++	stac92xx_enable_gpio_mask(codec);
+ 
+ 	err = stac92xx_parse_auto_config(codec, 0x1e, 0x20);
+ 	if (!err) {
+@@ -2120,7 +2163,7 @@ static int patch_stac927x(struct hda_codec *codec)
+ static int patch_stac9205(struct hda_codec *codec)
+ {
+ 	struct sigmatel_spec *spec;
+-	int err, gpio_mask, gpio_data;
++	int err;
+ 
+ 	spec  = kzalloc(sizeof(*spec), GFP_KERNEL);
+ 	if (spec == NULL)
+@@ -2158,19 +2201,25 @@ static int patch_stac9205(struct hda_codec *codec)
+ 
+ 	spec->multiout.dac_nids = spec->dac_nids;
+ 
+-	if (spec->board_config == STAC_M43xx) {
++	switch (spec->board_config) {
++	case STAC_9205_DELL_M43:
+ 	    /* Enable SPDIF in/out */
+ 	    stac92xx_set_config_reg(codec, 0x1f, 0x01441030);
+ 	    stac92xx_set_config_reg(codec, 0x20, 0x1c410030);
+ 
+-	    gpio_mask = 0x00000007; /* GPIO0-2 */
++	    spec->gpio_mask = 0x00000007; /* GPIO0-2 */
+ 	    /* GPIO0 High = EAPD, GPIO1 Low = DRM,
+ 	     * GPIO2 High = Headphone Mute
+ 	     */
+-	    gpio_data = 0x00000005;
+-	} else
+-	    gpio_mask = gpio_data = 0x00000001; /* GPIO0 High = EAPD */
+-	stac92xx_enable_gpio_mask(codec, gpio_mask, gpio_data);
++	    spec->gpio_data = 0x00000005;
++	    break;
++	default:
++	    /* GPIO0 High = EAPD */
++	    spec->gpio_mask = spec->gpio_data = 0x00000001;
++	    break;
++	} 
++
++	stac92xx_enable_gpio_mask(codec);
+ 	err = stac92xx_parse_auto_config(codec, 0x1f, 0x20);
+ 	if (!err) {
+ 		if (spec->board_config < 0) {

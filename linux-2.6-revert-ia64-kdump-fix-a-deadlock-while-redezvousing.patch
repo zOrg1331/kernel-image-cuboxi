@@ -1,0 +1,382 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 2 Mar 2010 15:39:56 -0500
+Subject: Revert: [ia64] kdump: fix a deadlock while redezvousing
+Message-id: <20100302153956.GE16969@hmsreliant.think-freely.org>
+Patchwork-id: 23468
+O-Subject: Re: [RHEL 5.5 PATCH] kdump: Fix deadlock on ia64 if INIT is received
+	on a core while redezvousing (bz 506694)
+Bugzilla: 506694
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+On Tue, Mar 02, 2010 at 03:40:11PM +1000, Norm Murray wrote:
+> ----- "Neil Horman" <nhorman@redhat.com> wrote:
+>
+> > hey all-
+> > 	This is a backport of the following commits:
+> > 0cced40e7c58b1105aef3ca446da7b158a18a9a6
+> > 5959906ee9dee602a46e49c868a7e543e050d605
+> > 1726b0883dd08636705ea55d577eb0ec314ba427
+> > 68cb14c7c46d9204ba451a534f15a8bc12c88e28
+> > 6cc3efcdf01cf874ffe770919395918a3ee9365b
+> > 07a6a4ae827b54cec4c1b1d92bed1cc9176b45ec
+> > 4295ab34883d2070b1145e14f4619478e9788807
+> >
+> > They refactor large parts of the ia64 MCE redezvous code that synchronizes
+> > processor state during traps, which is what kdump uses to stop all the other
+> > cores on an ia64 system.  Preveously it was possible to submit an NMI early
+> > during kdump kernel boot, and place the processors in a state where they would
+> > deadlock.  This patch prevents that from occuring.  Tested by Fujitsu with good
+> > results.
+>
+>From Fujitsu today:
+> When the patch is applied, kdump is not called in MCA handler and
+> the system keeps running so that the customers cannot even notice
+> the MCA, which may end up with an wrong results of their computation.
+> It is even worse than system panic.
+>
+> This is not only different from the operation to RHEL5.4 but
+> also is very serious regression.
+>
+> Please backout the patch from the source code of the snapshot kernels
+> immediately.
+
+Reverting patch due to the serious regression introduced, original bug
+will have to be addressed by a later reworked patch.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/ia64/kernel/crash.c b/arch/ia64/kernel/crash.c
+index c943d3c..c50b9d5 100644
+--- a/arch/ia64/kernel/crash.c
++++ b/arch/ia64/kernel/crash.c
+@@ -25,7 +25,6 @@ int kdump_status[NR_CPUS];
+ atomic_t kdump_cpu_freezed;
+ int kdump_on_init = 1;
+ atomic_t kdump_in_progress;
+-static int kdump_freeze_monarch;
+ 
+ ssize_t
+ copy_oldmem_page(unsigned long pfn, char *buf,
+@@ -127,39 +126,13 @@ machine_crash_shutdown(struct pt_regs *pt)
+ 	 */
+ 	kexec_disable_iosapic();
+ #ifdef CONFIG_SMP
+-	/*
+-	 * If kdump_on_init is set and an INIT is asserted here, kdump will
+-	 * be started again via INIT monarch.
+-	 */
+-	local_irq_disable();
+-	ia64_set_psr_mc();	/* mask MCA/INIT */
+-	if (atomic_inc_return(&kdump_in_progress) != 1)
+-		unw_init_running(kdump_cpu_freeze, NULL);
+-
+-	/*
+-	 * Now this cpu is ready for kdump.
+-	 * Stop all others by IPI or INIT.  They could receive INIT from
+-	 * outside and might be INIT monarch, but only thing they have to
+-	 * do is falling into kdump_cpu_freeze().
+-	 *
+-	 * If an INIT is asserted here:
+-	 * - All receivers might be slaves, since some of cpus could already
+-	 *   be frozen and INIT might be masked on monarch.  In this case,
+-	 *   all slaves will be frozen soon since kdump_in_progress will let
+-	 *   them into DIE_INIT_SLAVE_LEAVE.
+-	 * - One might be a monarch, but INIT rendezvous will fail since
+-	 *   at least this cpu already have INIT masked so it never join
+-	 *   to the rendezvous.  In this case, all slaves and monarch will
+-	 *   be frozen soon with no wait since the INIT rendezvous is skipped
+-	 *   by kdump_in_progress.
+-	 */
+ 	kdump_smp_send_stop();
+-	if (kdump_wait_cpu_freeze()) {
++	if (kdump_wait_cpu_freeze() && kdump_on_init) 	{
++		//not all cpu response to IPI, send INIT to freeze them
++		kdump_sending_init = 1;
++		mb();
+ 		kdump_smp_send_init();
+-		/* wait again, don't go ahead if possible */
+-		kdump_wait_cpu_freeze();
+ 	}
+-
+ #endif
+ }
+ 
+@@ -180,12 +153,16 @@ kdump_cpu_freeze(struct unw_frame_info *info, void *arg)
+ 	local_irq_disable();
+ 	crash_save_this_cpu();
+ 	current->thread.ksp = (__u64)info->sw - 16;
+-	ia64_set_psr_mc();      /* mask MCA/INIT and stop reentrance */
+ 	atomic_inc(&kdump_cpu_freezed);
+ 	kdump_status[cpuid] = 1;
+ 	mb();
+-	for (;;)
+-		cpu_relax();
++        /* return cpus (except cpu0) to SAL slave loop */
++        if (cpuid == 0) {
++                for (;;)
++                        cpu_relax();
++        } else {
++                ia64_jump_to_sal(&sal_boot_rendez_state[cpuid]);
++        }
+ }
+ 
+ static int
+@@ -194,20 +171,6 @@ kdump_init_notifier(struct notifier_block *self, unsigned long val, void *data)
+ 	struct ia64_mca_notify_die *nd;
+ 	struct die_args *args = data;
+ 
+-	if (atomic_read(&kdump_in_progress)) {
+-		switch (val) {
+-		case DIE_INIT_MONARCH_LEAVE:
+-			if (!kdump_freeze_monarch)
+-				break;
+-			/* fall through */
+-		case DIE_INIT_SLAVE_LEAVE:
+-		case DIE_INIT_MONARCH_ENTER:
+-		case DIE_MCA_RENDZVOUS_LEAVE:
+-			unw_init_running(kdump_cpu_freeze, NULL);
+-			break;
+-		}
+-	}
+-
+ 	if (!kdump_on_init)
+ 		return NOTIFY_DONE;
+ 
+@@ -220,32 +183,41 @@ kdump_init_notifier(struct notifier_block *self, unsigned long val, void *data)
+ 	}
+ 
+ 	if (val != DIE_INIT_MONARCH_LEAVE &&
++	    val != DIE_INIT_SLAVE_LEAVE &&
+ 	    val != DIE_INIT_MONARCH_PROCESS &&
++	    val != DIE_MCA_RENDZVOUS_LEAVE &&
+ 	    val != DIE_MCA_MONARCH_LEAVE)
+ 		return NOTIFY_DONE;
+ 
+ 	nd = (struct ia64_mca_notify_die *)args->err;
++	/* Reason code 1 means machine check rendezous*/
++	if ((val == DIE_INIT_MONARCH_LEAVE || val == DIE_INIT_SLAVE_LEAVE
++	    || val == DIE_INIT_MONARCH_PROCESS) && nd->sos->rv_rc == 1)
++		return NOTIFY_DONE;
+ 
+ 	if (kdump_sending_init)
+ 		unw_init_running(kdump_cpu_freeze, NULL);
+ 
+ 	switch (val) {
+ 		case DIE_INIT_MONARCH_PROCESS:
+-			/* Reason code 1 means machine check rendezvous*/
+-			if (kdump_on_init && (nd->sos->rv_rc != 1)) {
+-				if (atomic_inc_return(&kdump_in_progress) != 1)
+-					kdump_freeze_monarch = 1;
+-			}
++			atomic_set(&kdump_in_progress, 1);
++			*(nd->monarch_cpu) = -1;
+ 			break;
+ 		case DIE_INIT_MONARCH_LEAVE:
+-			/* Reason code 1 means machine check rendezvous*/
+-			if (kdump_on_init && (nd->sos->rv_rc != 1))
+-				machine_kdump_on_init();
++			machine_kdump_on_init();
++			break;
++		case DIE_INIT_SLAVE_LEAVE:
++			if (atomic_read(&kdump_in_progress))
++				unw_init_running(kdump_cpu_freeze, NULL);
++			break;
++		case DIE_MCA_RENDZVOUS_LEAVE:
++			if (atomic_read(&kdump_in_progress))
++				unw_init_running(kdump_cpu_freeze, NULL);
+ 			break;
+ 		case DIE_MCA_MONARCH_LEAVE:
+-			if (atomic_inc_return(&kdump_in_progress) == 1)
++			/* die_register->signr indicate if MCA is recoverable */
++			if (!args->signr)
+ 				machine_kdump_on_init();
+-			/* We got fatal MCA while kdump!? No way!! */
+ 			break;
+ 	}
+ 	return NOTIFY_DONE;
+diff --git a/arch/ia64/kernel/head.S b/arch/ia64/kernel/head.S
+index 0e9a617..bd9d2da 100644
+--- a/arch/ia64/kernel/head.S
++++ b/arch/ia64/kernel/head.S
+@@ -1154,7 +1154,7 @@ GLOBAL_ENTRY(ia64_jump_to_sal)
+ 	movl r16=SAL_PSR_BITS_TO_SET;;
+ 	mov cr.ipsr=r16
+ 	mov cr.ifs=r0;;
+-	rfi;;			// note: this unmask MCA/INIT (psr.mc)
++	rfi;;
+ 1:
+ 	/*
+ 	 * Invalidate all TLB data/inst
+diff --git a/arch/ia64/kernel/machine_kexec.c b/arch/ia64/kernel/machine_kexec.c
+index eaca026..30338e5 100644
+--- a/arch/ia64/kernel/machine_kexec.c
++++ b/arch/ia64/kernel/machine_kexec.c
+@@ -22,8 +22,6 @@
+ #include <asm/processor.h>
+ #include <linux/numa.h>
+ #include <linux/mmzone.h>
+-#include <asm/sal.h>
+-#include <asm/mca.h>
+ 
+ typedef void (*relocate_new_kernel_t)(unsigned long, unsigned long,
+ 		struct ia64_boot_param *, unsigned long);
+@@ -101,26 +99,13 @@ static void ia64_machine_kexec(struct unw_frame_info *info, void *arg)
+ 	unsigned long code_addr = (unsigned long)page_address(image->control_code_page);
+ 	unsigned long vector;
+ 	int ii;
+-	u64 fp, gp;
+-	ia64_fptr_t *init_handler = (ia64_fptr_t *)ia64_os_init_on_kdump;
+ 
+ 	BUG_ON(!image);
+ 	if (image->type == KEXEC_TYPE_CRASH) {
+ 		crash_save_this_cpu();
+ 		current->thread.ksp = (__u64)info->sw - 16;
+-
+-		/* Register noop init handler */
+-		fp = ia64_tpa(init_handler->fp);
+-		gp = ia64_tpa(ia64_getreg(_IA64_REG_GP));
+-		ia64_sal_set_vectors(SAL_VECTOR_OS_INIT, fp, gp, 0, fp, gp, 0);
+-	} else {
+-		/* Unregister init handlers of current kernel */
+-		ia64_sal_set_vectors(SAL_VECTOR_OS_INIT, 0, 0, 0, 0, 0, 0);
+ 	}
+ 
+-	/* Unregister mca handler - No more recovery on current kernel */
+-	ia64_sal_set_vectors(SAL_VECTOR_OS_MCA, 0, 0, 0, 0, 0, 0);
+-
+ 	/* Interrupts aren't acceptable while we reboot */
+ 	local_irq_disable();
+ 
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index a1c42f6..07746ea 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -1641,27 +1641,16 @@ ia64_init_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 
+ 	if (!sos->monarch) {
+ 		ia64_mc_info.imi_rendez_checkin[cpu] = IA64_MCA_RENDEZ_CHECKIN_INIT;
+-
+-#ifdef CONFIG_KEXEC
+-		while (monarch_cpu == -1 && !atomic_read(&kdump_in_progress))
+-			udelay(1000);
+-#else
+ 		while (monarch_cpu == -1)
+ 		       cpu_relax();	/* spin until monarch enters */
+-#endif
+ 		if (notify_die(DIE_INIT_SLAVE_ENTER, "INIT", regs, (long)&nd, 0, 0)
+ 				== NOTIFY_STOP)
+ 			ia64_mca_spin(__FUNCTION__);
+ 		if (notify_die(DIE_INIT_SLAVE_PROCESS, "INIT", regs, (long)&nd, 0, 0)
+ 				== NOTIFY_STOP)
+ 			ia64_mca_spin(__FUNCTION__);
+-#ifdef CONFIG_KEXEC
+-		while (monarch_cpu != -1 && !atomic_read(&kdump_in_progress))
+-			udelay(1000);
+-#else
+ 		while (monarch_cpu != -1)
+ 		       cpu_relax();	/* spin until monarch leaves */
+-#endif
+ 		if (notify_die(DIE_INIT_SLAVE_LEAVE, "INIT", regs, (long)&nd, 0, 0)
+ 				== NOTIFY_STOP)
+ 			ia64_mca_spin(__FUNCTION__);
+diff --git a/arch/ia64/kernel/mca_asm.S b/arch/ia64/kernel/mca_asm.S
+index 8b06607..c469ab5 100644
+--- a/arch/ia64/kernel/mca_asm.S
++++ b/arch/ia64/kernel/mca_asm.S
+@@ -36,7 +36,6 @@
+ 
+ 	.global ia64_do_tlb_purge
+ 	.global ia64_os_mca_dispatch
+-	.global ia64_os_init_on_kdump
+ 	.global ia64_os_init_dispatch_monarch
+ 	.global ia64_os_init_dispatch_slave
+ 
+@@ -315,25 +314,6 @@ END(ia64_os_mca_virtual_begin)
+ //StartMain////////////////////////////////////////////////////////////////////
+ 
+ //
+-// NOP init handler for kdump.  In panic situation, we may receive INIT
+-// while kernel transition.  Since we initialize registers on leave from
+-// current kernel, no longer monarch/slave handlers of current kernel in
+-// virtual mode are called safely.
+-// We can unregister these init handlers from SAL, however then the INIT
+-// will result in warmboot by SAL and we cannot retrieve the crashdump.
+-// Therefore register this NOP function to SAL, to prevent entering virtual
+-// mode and resulting warmboot by SAL.
+-//
+-ia64_os_init_on_kdump:
+-	mov		r8=r0		// IA64_INIT_RESUME
+-	mov             r9=r10		// SAL_GP
+-	mov		r22=r17		// *minstate
+-	;;
+-	mov		r10=r0		// return to same context
+-	mov		b0=r12		// SAL_CHECK return address
+-	br		b0
+-
+-//
+ // SAL to OS entry point for INIT on all processors.  This has been defined for
+ // registration purposes with SAL as a part of ia64_mca_init.  Monarch and
+ // slave INIT have identical processing, except for the value of the
+@@ -1109,30 +1089,3 @@ GLOBAL_ENTRY(ia64_get_rnat)
+ 	mov ar.rsc=3
+ 	br.ret.sptk.many rp
+ END(ia64_get_rnat)
+-
+-
+-// void ia64_set_psr_mc(void)
+-//
+-// Set psr.mc bit to mask MCA/INIT.
+-GLOBAL_ENTRY(ia64_set_psr_mc)
+-	rsm psr.i | psr.ic		// disable interrupts
+-	;;
+-	srlz.d
+-	;;
+-	mov r14 = psr			// get psr{36:35,31:0}
+-	movl r15 = 1f
+-	;;
+-	dep r14 = -1, r14, PSR_MC, 1	// set psr.mc
+-	;;
+-	dep r14 = -1, r14, PSR_IC, 1	// set psr.ic
+-	;;
+-	dep r14 = -1, r14, PSR_BN, 1	// keep bank1 in use
+-	;;
+-	mov cr.ipsr = r14
+-	mov cr.ifs = r0
+-	mov cr.iip = r15
+-	;;
+-	rfi
+-1:
+-	br.ret.sptk.many rp
+-END(ia64_set_psr_mc)
+diff --git a/arch/ia64/kernel/relocate_kernel.S b/arch/ia64/kernel/relocate_kernel.S
+index e8d238d..5639960 100644
+--- a/arch/ia64/kernel/relocate_kernel.S
++++ b/arch/ia64/kernel/relocate_kernel.S
+@@ -54,7 +54,7 @@ GLOBAL_ENTRY(relocate_new_kernel)
+ 	srlz.i
+ 	;;
+ 	mov ar.rnat=r18
+-	rfi				// note: this unmask MCA/INIT (psr.mc)
++	rfi
+ 	;;
+ 1:
+ 	//physical mode code begin
+diff --git a/include/asm-ia64/mca.h b/include/asm-ia64/mca.h
+index d2ed2ac..d8973ab 100644
+--- a/include/asm-ia64/mca.h
++++ b/include/asm-ia64/mca.h
+@@ -145,14 +145,12 @@ extern void ia64_mca_ucmc_handler(struct pt_regs *, struct ia64_sal_os_state *);
+ extern void ia64_init_handler(struct pt_regs *,
+ 			      struct switch_stack *,
+ 			      struct ia64_sal_os_state *);
+-extern void ia64_os_init_on_kdump(void);
+ extern void ia64_monarch_init_handler(void);
+ extern void ia64_slave_init_handler(void);
+ extern void ia64_mca_cmc_vector_setup(void);
+ extern int  ia64_reg_MCA_extension(int (*fn)(void *, struct ia64_sal_os_state *));
+ extern void ia64_unreg_MCA_extension(void);
+ extern u64 ia64_get_rnat(u64 *);
+-extern void ia64_set_psr_mc(void);
+ 
+ struct ia64_mca_notify_die {
+ 	struct ia64_sal_os_state *sos;

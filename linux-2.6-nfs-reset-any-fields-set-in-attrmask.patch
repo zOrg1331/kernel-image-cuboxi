@@ -1,0 +1,118 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 26 Sep 2007 09:24:20 -0400
+Subject: [nfs] reset any fields set in attrmask
+Message-id: 200709261324.l8QDOKmv031563@barsoom.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH 2/2] BZ#242482: for NFS4_CREATE_EXCLUSIVE, reset any fields set in attrmask
+Bugzilla: 242482
+
+The Linux NFS4 client simply skips over the bitmask in an O_EXCL open
+call and so it doesn't bother to reset any fields that may be holding
+the verifier. This patch has us save the first two words of the bitmask
+(which is all the current client has #defines for). The client then
+later checks this bitmask and turns on the appropriate flags in the
+sattr->ia_verify field for the following SETATTR call.
+
+This patch only currently checks to see if the server used the atime and
+mtime slots for the verifier (which is what the Linux server uses for
+this). I'm not sure of what other fields the server could reasonably
+use, but adding checks for others should be trivial.
+
+This patch went upstream in early June. Verified with a simple
+reproducer that checks the mtime after doing an O_EXCL create.
+
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index b4922c5..b7250ab 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -948,6 +948,22 @@ static struct nfs4_state *nfs4_open_delegated(struct inode *inode, int flags, st
+ }
+ 
+ /*
++ * on an EXCLUSIVE create, the server should send back a bitmask with FATTR4-*
++ * fields corresponding to attributes that were used to store the verifier.
++ * Make sure we clobber those fields in the later setattr call
++ */
++static inline void nfs4_exclusive_attrset(struct nfs4_opendata *opendata, struct iattr *sattr)
++{
++	if ((opendata->o_res.attrset[1] & FATTR4_WORD1_TIME_ACCESS) &&
++	    !(sattr->ia_valid & ATTR_ATIME_SET))
++		sattr->ia_valid |= ATTR_ATIME;
++
++	if ((opendata->o_res.attrset[1] & FATTR4_WORD1_TIME_MODIFY) &&
++	    !(sattr->ia_valid & ATTR_MTIME_SET))
++		sattr->ia_valid |= ATTR_MTIME;
++}
++
++/*
+  * Returns a referenced nfs4_state
+  */
+ static int _nfs4_do_open(struct inode *dir, struct path *path, int flags, struct iattr *sattr, struct rpc_cred *cred, struct nfs4_state **res)
+@@ -978,6 +994,9 @@ static int _nfs4_do_open(struct inode *dir, struct path *path, int flags, struct
+ 	if (status != 0)
+ 		goto err_opendata_free;
+ 
++	if (opendata->o_arg.open_flags & O_EXCL)
++		nfs4_exclusive_attrset(opendata, sattr);
++
+ 	status = -ENOMEM;
+ 	state = nfs4_opendata_to_nfs4_state(opendata);
+ 	if (state == NULL)
+@@ -1912,6 +1931,7 @@ nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
+ 		status = nfs4_do_setattr(state->inode, &fattr, sattr, state);
+ 		if (status == 0)
+ 			nfs_setattr_update_inode(state->inode, sattr);
++		nfs_post_op_update_inode(state->inode, &fattr);
+ 	}
+ 	if (status == 0 && (nd->flags & LOOKUP_OPEN))
+ 		status = nfs4_intent_set_file(nd, &path, state);
+diff --git a/fs/nfs/nfs4xdr.c b/fs/nfs/nfs4xdr.c
+index 713693f..c70826f 100644
+--- a/fs/nfs/nfs4xdr.c
++++ b/fs/nfs/nfs4xdr.c
+@@ -3262,7 +3262,7 @@ static int decode_delegation(struct xdr_stream *xdr, struct nfs_openres *res)
+ static int decode_open(struct xdr_stream *xdr, struct nfs_openres *res)
+ {
+         uint32_t *p;
+-        uint32_t bmlen;
++        uint32_t savewords, bmlen, i;
+         int status;
+ 
+         status = decode_op_hdr(xdr, OP_OPEN);
+@@ -3280,7 +3280,12 @@ static int decode_open(struct xdr_stream *xdr, struct nfs_openres *res)
+                 goto xdr_error;
+ 
+         READ_BUF(bmlen << 2);
+-        p += bmlen;
++	savewords = min_t(uint32_t, bmlen, NFS4_BITMAP_SIZE);
++	for (i = 0; i < savewords; ++i) 
++		READ32(res->attrset[i]);
++	for (; i < NFS4_BITMAP_SIZE; i++)
++		res->attrset[i] = 0;
++
+ 	return decode_delegation(xdr, res);
+ xdr_error:
+ 	dprintk("%s: Bitmap too large! Length = %u\n", __FUNCTION__, bmlen);
+diff --git a/include/linux/nfs4.h b/include/linux/nfs4.h
+index db05182..d5e67e6 100644
+--- a/include/linux/nfs4.h
++++ b/include/linux/nfs4.h
+@@ -15,6 +15,7 @@
+ 
+ #include <linux/types.h>
+ 
++#define NFS4_BITMAP_SIZE	2
+ #define NFS4_VERIFIER_SIZE	8
+ #define NFS4_FHSIZE		128
+ #define NFS4_MAXPATHLEN		PATH_MAX
+diff --git a/include/linux/nfs_xdr.h b/include/linux/nfs_xdr.h
+index 30d5a64..fe2980d 100644
+--- a/include/linux/nfs_xdr.h
++++ b/include/linux/nfs_xdr.h
+@@ -145,6 +145,7 @@ struct nfs_openres {
+ 	nfs4_stateid		delegation;
+ 	__u32			do_recall;
+ 	__u64			maxsize;
++	__u32			attrset[NFS4_BITMAP_SIZE];
+ };
+ 
+ /*

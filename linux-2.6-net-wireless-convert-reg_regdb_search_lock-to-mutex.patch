@@ -1,0 +1,85 @@
+From: John Linville <linville@redhat.com>
+Date: Fri, 28 May 2010 17:08:34 -0400
+Subject: [net] wireless: convert reg_regdb_search_lock to mutex
+Message-id: <20100528170834.GC30834@redhat.com>
+Patchwork-id: 25897
+O-Subject: [RHEL5 PATCH] wireless: convert reg_regdb_search_lock to mutex
+Bugzilla: 597334
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+BZ597334
+
+Backport of the following upstream commit...
+
+commit 368d06f5b0eefcbf37d677d3b65381310a251f03
+Author: John W. Linville <linville@tuxdriver.com>
+Date:   Tue Mar 16 15:40:59 2010 -0400
+
+    wireless: convert reg_regdb_search_lock to mutex
+
+    Stanse discovered that kmalloc is being called with GFP_KERNEL while
+    holding this spinlock.  The spinlock can be a mutex instead, which also
+    enables the removal of the unlock/lock around the lock/unlock of
+    cfg80211_mutex and the call to set_regdom.
+
+    Reported-by: Jiri Slaby <jirislaby@gmail.com>
+    Cc: stable@kernel.org
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index cdca8b7..e24e9de 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -367,7 +367,7 @@ struct reg_regdb_search_request {
+ };
+ 
+ static LIST_HEAD(reg_regdb_search_list);
+-static DEFINE_SPINLOCK(reg_regdb_search_lock);
++static DEFINE_MUTEX(reg_regdb_search_mutex);
+ 
+ static void reg_regdb_search(void *unused)
+ {
+@@ -375,7 +375,7 @@ static void reg_regdb_search(void *unused)
+ 	const struct ieee80211_regdomain *curdom, *regdom;
+ 	int i, r;
+ 
+-	spin_lock(&reg_regdb_search_lock);
++	mutex_lock(&reg_regdb_search_mutex);
+ 	while (!list_empty(&reg_regdb_search_list)) {
+ 		request = list_first_entry(&reg_regdb_search_list,
+ 					   struct reg_regdb_search_request,
+@@ -389,18 +389,16 @@ static void reg_regdb_search(void *unused)
+ 				r = reg_copy_regd(&regdom, curdom);
+ 				if (r)
+ 					break;
+-				spin_unlock(&reg_regdb_search_lock);
+ 				mutex_lock(&cfg80211_mutex);
+ 				set_regdom(regdom);
+ 				mutex_unlock(&cfg80211_mutex);
+-				spin_lock(&reg_regdb_search_lock);
+ 				break;
+ 			}
+ 		}
+ 
+ 		kfree(request);
+ 	}
+-	spin_unlock(&reg_regdb_search_lock);
++	mutex_unlock(&reg_regdb_search_mutex);
+ }
+ 
+ static DECLARE_WORK(reg_regdb_work, reg_regdb_search, NULL);
+@@ -418,9 +416,9 @@ static void reg_regdb_query(const char *alpha2)
+ 
+ 	memcpy(request->alpha2, alpha2, 2);
+ 
+-	spin_lock(&reg_regdb_search_lock);
++	mutex_lock(&reg_regdb_search_mutex);
+ 	list_add_tail(&request->list, &reg_regdb_search_list);
+-	spin_unlock(&reg_regdb_search_lock);
++	mutex_unlock(&reg_regdb_search_mutex);
+ 
+ 	schedule_work(&reg_regdb_work);
+ }

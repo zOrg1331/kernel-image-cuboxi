@@ -107,7 +107,7 @@ struct net_local {
 static int	netcard_probe1(struct net_device *dev, int ioaddr);
 static int	net_open(struct net_device *dev);
 static int	net_send_packet(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t net_interrupt(int irq, void *dev_id);
+static irqreturn_t net_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 static void	net_rx(struct net_device *dev);
 static int	net_close(struct net_device *dev);
 static struct	net_device_stats *net_get_stats(struct net_device *dev);
@@ -133,6 +133,8 @@ static int __init do_netcard_probe(struct net_device *dev)
 	int base_addr = dev->base_addr;
 	int irq = dev->irq;
 
+	SET_MODULE_OWNER(dev);
+
 	if (base_addr > 0x1ff)    /* Check a single specified location. */
 		return netcard_probe1(dev, base_addr);
 	else if (base_addr != 0)  /* Don't probe at all. */
@@ -147,7 +149,7 @@ static int __init do_netcard_probe(struct net_device *dev)
 
 	return -ENODEV;
 }
-
+ 
 static void cleanup_card(struct net_device *dev)
 {
 #ifdef jumpered_dma
@@ -181,18 +183,6 @@ out:
 }
 #endif
 
-static const struct net_device_ops netcard_netdev_ops = {
-	.ndo_open		= net_open,
-	.ndo_stop		= net_close,
-	.ndo_start_xmit		= net_send_packet,
-	.ndo_get_stats		= net_get_stats,
-	.ndo_set_multicast_list	= set_multicast_list,
-	.ndo_tx_timeout		= net_tx_timeout,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address	= eth_mac_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-};
-
 /*
  * This is the real probe routine. Linux has a history of friendly device
  * probes on the ISA bus. A good device probes avoids doing writes, and
@@ -210,10 +200,10 @@ static int __init netcard_probe1(struct net_device *dev, int ioaddr)
 		return -EBUSY;
 
 	/*
-	 * For ethernet adaptors the first three octets of the station address
+	 * For ethernet adaptors the first three octets of the station address 
 	 * contains the manufacturer's unique code. That might be a good probe
 	 * method. Ideally you would add additional checks.
-	 */
+	 */ 
 	if (inb(ioaddr + 0) != SA_ADDR0
 		||	 inb(ioaddr + 1) != SA_ADDR1
 		||	 inb(ioaddr + 2) != SA_ADDR2)
@@ -229,9 +219,7 @@ static int __init netcard_probe1(struct net_device *dev, int ioaddr)
 
 	/* Retrieve and print the ethernet address. */
 	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = inb(ioaddr + i);
-
-	printk("%pM", dev->dev_addr);
+		printk(" %2.2x", dev->dev_addr[i] = inb(ioaddr + i));
 
 	err = -EAGAIN;
 #ifdef jumpered_interrupts
@@ -304,7 +292,7 @@ static int __init netcard_probe1(struct net_device *dev, int ioaddr)
 		if (i <= 0) {
 			printk("DMA probe failed.\n");
 			goto out1;
-		}
+		} 
 		if (request_dma(dev->dma, cardname)) {
 			printk("probed DMA %d allocation failed.\n", dev->dma);
 			goto out1;
@@ -315,8 +303,14 @@ static int __init netcard_probe1(struct net_device *dev, int ioaddr)
 	np = netdev_priv(dev);
 	spin_lock_init(&np->lock);
 
-        dev->netdev_ops		= &netcard_netdev_ops;
-        dev->watchdog_timeo	= MY_TX_TIMEOUT;
+	dev->open		= net_open;
+	dev->stop		= net_close;
+	dev->hard_start_xmit	= net_send_packet;
+	dev->get_stats		= net_get_stats;
+	dev->set_multicast_list = &set_multicast_list;
+
+        dev->tx_timeout		= &net_tx_timeout;
+        dev->watchdog_timeo	= MY_TX_TIMEOUT; 
 
 	err = register_netdev(dev);
 	if (err)
@@ -430,8 +424,7 @@ static int net_send_packet(struct sk_buff *skb, struct net_device *dev)
 	 * hardware interrupt handler.  Queue flow control is
 	 * thus managed under this lock as well.
 	 */
-	unsigned long flags;
-	spin_lock_irqsave(&np->lock, flags);
+	spin_lock_irq(&np->lock);
 
 	add_to_tx_ring(np, skb, length);
 	dev->trans_start = jiffies;
@@ -447,7 +440,7 @@ static int net_send_packet(struct sk_buff *skb, struct net_device *dev)
 	 * is when the transmit statistics are updated.
 	 */
 
-	spin_unlock_irqrestore(&np->lock, flags);
+	spin_unlock_irq(&np->lock);
 #else
 	/* This is the case for older hardware which takes
 	 * a single transmit buffer at a time, and it is
@@ -468,7 +461,7 @@ static int net_send_packet(struct sk_buff *skb, struct net_device *dev)
 	dev_kfree_skb (skb);
 #endif
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 #if TX_RING
@@ -511,7 +504,7 @@ void net_tx(struct net_device *dev)
  * The typical workload of the driver:
  * Handle the network interface interrupts.
  */
-static irqreturn_t net_interrupt(int irq, void *dev_id)
+static irqreturn_t net_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
 	struct net_device *dev = dev_id;
 	struct net_local *np;
@@ -558,7 +551,7 @@ net_rx(struct net_device *dev)
 	do {
 		int status = inw(ioaddr);
 		int pkt_len = inw(ioaddr);
-
+	  
 		if (pkt_len == 0)		/* Read all the frames? */
 			break;			/* Done for now */
 
@@ -573,7 +566,7 @@ net_rx(struct net_device *dev)
 			struct sk_buff *skb;
 
 			lp->stats.rx_bytes+=pkt_len;
-
+			
 			skb = dev_alloc_skb(pkt_len);
 			if (skb == NULL) {
 				printk(KERN_NOTICE "%s: Memory squeeze, dropping packet.\n",
@@ -590,6 +583,7 @@ net_rx(struct net_device *dev)
 			insw(ioaddr, skb->data, (pkt_len + 1) >> 1);
 
 			netif_rx(skb);
+			dev->last_rx = jiffies;
 			lp->stats.rx_packets++;
 			lp->stats.rx_bytes += pkt_len;
 		}
@@ -669,7 +663,7 @@ set_multicast_list(struct net_device *dev)
 
 		outw(MULTICAST, ioaddr);
 	}
-	else
+	else 
 		outw(0, ioaddr);
 }
 
@@ -716,3 +710,15 @@ cleanup_module(void)
 }
 
 #endif /* MODULE */
+
+/*
+ * Local variables:
+ *  compile-command:
+ *	gcc -D__KERNEL__ -Wall -Wstrict-prototypes -Wwrite-strings
+ *	-Wredundant-decls -O2 -m486 -c skeleton.c
+ *  version-control: t
+ *  kept-new-versions: 5
+ *  tab-width: 4
+ *  c-indent-level: 4
+ * End:
+ */

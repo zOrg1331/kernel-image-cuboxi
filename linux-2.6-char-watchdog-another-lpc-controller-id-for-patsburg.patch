@@ -1,0 +1,57 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 18 Nov 2010 20:40:56 -0500
+Subject: [char] watchdog: another LPC Controller ID for Patsburg
+Message-id: <1290112856-1796-10-git-send-email-dmilburn@redhat.com>
+Patchwork-id: 29501
+O-Subject: [RHEL5.6 PATCH 9/9] BZ 570868 additional LPC Controller DeviceID for
+	Intel Patsburg PCH for TCO Watchdog
+Bugzilla: 570868
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+http://marc.info/?l=linux-kernel&m=129002187819530&w=2
+
+BZ 570868
+
+diff --git a/drivers/char/watchdog/i8xx_tco.c b/drivers/char/watchdog/i8xx_tco.c
+index 6518f15..88829eb 100644
+--- a/drivers/char/watchdog/i8xx_tco.c
++++ b/drivers/char/watchdog/i8xx_tco.c
+@@ -32,6 +32,7 @@
+  *	document number 322169-001, 322170-003: 5 Series, 3400 Series (PCH)
+  *	document number 320066-003, 320257-008: EP80597 (IICH)
+  *	document number TBD                   : Cougar Point (CPT)
++ *	document number TBD                   : Patsburg (PBG)
+  */
+ 
+ /*
+@@ -146,7 +147,8 @@ enum iTCO_chipsets {
+ 	TCO_CPT29,	/* Cougar Point */
+ 	TCO_CPT30,	/* Cougar Point */
+ 	TCO_CPT31,	/* Cougar Point */
+-	TCO_PBG,	/* Patsburg */
++	TCO_PBG1,	/* Patsburg */
++	TCO_PBG2,	/* Patsburg */
+ };
+ 
+ static struct {
+@@ -235,6 +237,7 @@ static struct {
+ 	{"Cougar Point", 2},
+ 	{"Cougar Point", 2},
+ 	{"Patsburg", 2},
++	{"Patsburg", 2},
+ 	{NULL, 0}
+ };
+ 
+@@ -350,7 +353,8 @@ static struct pci_device_id iTCO_wdt_pci_tbl[] = {
+ 	{ ITCO_PCI_DEVICE(0x1c5d,				TCO_CPT29)},
+ 	{ ITCO_PCI_DEVICE(0x1c5e,				TCO_CPT30)},
+ 	{ ITCO_PCI_DEVICE(0x1c5f,				TCO_CPT31)},
+-	{ ITCO_PCI_DEVICE(0x1d40,				TCO_PBG)},
++	{ ITCO_PCI_DEVICE(0x1d40,				TCO_PBG1)},
++	{ ITCO_PCI_DEVICE(0x1d41,				TCO_PBG2)},
+ 	{ 0, },			/* End of list */
+ };
+ MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);

@@ -1,0 +1,46 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Wed, 22 Sep 2010 20:11:16 -0400
+Subject: [net] netxen: fix a race in netxen_nic_get_stats()
+Message-id: <20100922201116.2527.28641.sendpatchset@localhost.localdomain>
+Patchwork-id: 28347
+O-Subject: [RHEL 5.6 PATCH 4/6] netxen: fix a race in netxen_nic_get_stats()
+Bugzilla: 625079
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 625079 (https://bugzilla.redhat.com/show_bug.cgi?id=625079)
+
+Upstream Status
+---------------
+
+net-2.6 commit id 502820a3161e2f228125977d133dd80eea2932d1
+
+Description
+-----------
+
+>From e271a3910bb3a03c6c4bbd832c0e806db79496b0 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <eric.dumazet@gmail.com>
+Date: Wed, 18 Aug 2010 02:29:30 +0000
+Subject: [PATCH] netxen: fix a race in netxen_nic_get_stats()
+
+Dont clear netdev->stats, it might give transient wrong values to
+concurrent stat readers.
+
+Signed-off-by: Eric Dumazet <eric.dumazet@gmail.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 335539f..d45f489 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -2067,8 +2067,6 @@ struct net_device_stats *netxen_nic_get_stats(struct net_device *netdev)
+ 	struct netxen_adapter *adapter = netdev_priv(netdev);
+ 	struct net_device_stats *stats = &adapter->net_stats;
+ 
+-	memset(stats, 0, sizeof(*stats));
+-
+ 	stats->rx_packets = adapter->stats.rx_pkts + adapter->stats.lro_pkts;
+ 	stats->tx_packets = adapter->stats.xmitfinished;
+ 	stats->rx_bytes = adapter->stats.rxbytes;

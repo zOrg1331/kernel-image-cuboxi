@@ -25,11 +25,8 @@
 #define __ETH1394_H
 
 #include <linux/netdevice.h>
-#include <linux/skbuff.h>
-#include <asm/byteorder.h>
 
 #include "ieee1394.h"
-#include "ieee1394_types.h"
 
 /* Register for incoming packets. This is 4096 bytes, which supports up to
  * S3200 (per Table 16-3 of IEEE 1394b-2002). */
@@ -37,15 +34,22 @@
 
 /* GASP identifier numbers for IPv4 over IEEE 1394 */
 #define ETHER1394_GASP_SPECIFIER_ID	0x00005E
-#define ETHER1394_GASP_SPECIFIER_ID_HI	((0x00005E >> 8) & 0xffff)
-#define ETHER1394_GASP_SPECIFIER_ID_LO	(0x00005E & 0xff)
+#define ETHER1394_GASP_SPECIFIER_ID_HI	((ETHER1394_GASP_SPECIFIER_ID >> 8) & 0xffff)
+#define ETHER1394_GASP_SPECIFIER_ID_LO	(ETHER1394_GASP_SPECIFIER_ID & 0xff)
 #define ETHER1394_GASP_VERSION		1
 
-#define ETHER1394_GASP_OVERHEAD	(2 * sizeof(quadlet_t))	/* for GASP header */
+#define ETHER1394_GASP_OVERHEAD (2 * sizeof(quadlet_t))  /* GASP header overhead */
 
-#define ETHER1394_GASP_BUFFERS	16
+#define ETHER1394_GASP_BUFFERS 16
 
-#define NODE_SET		(ALL_NODES + 1)		/* Node set == 64 */
+/* rawiso buffer size - due to a limitation in rawiso, we must limit each
+ * GASP buffer to be less than PAGE_SIZE. */
+#define ETHER1394_ISO_BUF_SIZE	ETHER1394_GASP_BUFFERS *                        \
+				   min((unsigned int)PAGE_SIZE,                 \
+				       2 * (1U << (priv->host->csr.max_rec + 1)))
+
+/* Node set == 64 */
+#define NODE_SET			(ALL_NODES + 1)
 
 enum eth1394_bc_states { ETHER1394_BC_ERROR,
 			 ETHER1394_BC_RUNNING,
@@ -54,6 +58,7 @@ enum eth1394_bc_states { ETHER1394_BC_ERROR,
 
 /* Private structure for our ethernet driver */
 struct eth1394_priv {
+	struct net_device_stats stats;	/* Device stats			 */
 	struct hpsb_host *host;		/* The card for this dev	 */
 	u16 bc_maxpayload;		/* Max broadcast payload	 */
 	u8 bc_sspd;			/* Max broadcast speed		 */
@@ -65,10 +70,6 @@ struct eth1394_priv {
 	int bc_dgl;			/* Outgoing broadcast datagram label */
 	struct list_head ip_node_list;	/* List of IP capable nodes	 */
 	struct unit_directory *ud_list[ALL_NODES]; /* Cached unit dir list */
-
-	struct work_struct wake;	/* Wake up after xmit failure	 */
-	struct net_device *wake_dev;	/* Stupid backlink for .wake	 */
-	nodeid_t wake_node;		/* Destination of failed xmit	 */
 };
 
 
@@ -81,30 +82,35 @@ struct eth1394_priv {
 
 struct eth1394hdr {
 	unsigned char	h_dest[ETH1394_ALEN];	/* destination eth1394 addr	*/
-	__be16		h_proto;		/* packet type ID field	*/
+	unsigned short	h_proto;		/* packet type ID field	*/
 }  __attribute__((packed));
+
+#ifdef __KERNEL__
+#include <linux/skbuff.h>
 
 static inline struct eth1394hdr *eth1394_hdr(const struct sk_buff *skb)
 {
-	return (struct eth1394hdr *)skb_mac_header(skb);
+	return (struct eth1394hdr *)skb->mac.raw;
 }
+#endif
 
 typedef enum {ETH1394_GASP, ETH1394_WRREQ} eth1394_tx_type;
 
 /* IP1394 headers */
+#include <asm/byteorder.h>
 
 /* Unfragmented */
 #if defined __BIG_ENDIAN_BITFIELD
 struct eth1394_uf_hdr {
 	u16 lf:2;
 	u16 res:14;
-	__be16 ether_type;		/* Ethernet packet type */
+	u16 ether_type;		/* Ethernet packet type */
 } __attribute__((packed));
 #elif defined __LITTLE_ENDIAN_BITFIELD
 struct eth1394_uf_hdr {
 	u16 res:14;
 	u16 lf:2;
-	__be16 ether_type;
+	u16 ether_type;
 } __attribute__((packed));
 #else
 #error Unknown bit field type
@@ -116,7 +122,7 @@ struct eth1394_ff_hdr {
 	u16 lf:2;
 	u16 res1:2;
 	u16 dg_size:12;		/* Datagram size */
-	__be16 ether_type;		/* Ethernet packet type */
+	u16 ether_type;		/* Ethernet packet type */
 	u16 dgl;		/* Datagram label */
 	u16 res2;
 } __attribute__((packed));
@@ -125,7 +131,7 @@ struct eth1394_ff_hdr {
 	u16 dg_size:12;
 	u16 res1:2;
 	u16 lf:2;
-	__be16 ether_type;
+	u16 ether_type;
 	u16 dgl;
 	u16 res2;
 } __attribute__((packed));
@@ -206,11 +212,11 @@ struct eth1394_arp {
 	u16 opcode;		/* ARP Opcode	*/
 	/* Above is exactly the same format as struct arphdr */
 
-	__be64 s_uniq_id;	/* Sender's 64bit EUI		*/
+	u64 s_uniq_id;		/* Sender's 64bit EUI			*/
 	u8 max_rec;		/* Sender's max packet size		*/
 	u8 sspd;		/* Sender's max speed			*/
-	__be16 fifo_hi;		/* hi 16bits of sender's FIFO addr	*/
-	__be32 fifo_lo;		/* lo 32bits of sender's FIFO addr	*/
+	u16 fifo_hi;		/* hi 16bits of sender's FIFO addr	*/
+	u32 fifo_lo;		/* lo 32bits of sender's FIFO addr	*/
 	u32 sip;		/* Sender's IP Address			*/
 	u32 tip;		/* IP Address of requested hw addr	*/
 };

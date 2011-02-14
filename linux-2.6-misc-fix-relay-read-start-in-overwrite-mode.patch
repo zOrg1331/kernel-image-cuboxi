@@ -1,0 +1,76 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Fri, 7 Sep 2007 15:47:46 -0400
+Subject: [misc] Fix relay read start in overwrite mode
+Message-id: 46E1AAE2.4060109@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/2] Fix relay read() start position in overwrite mode
+Bugzilla: 250706
+
+Hello,
+
+This patch fixes a bug in the relay read interface causing the
+number of consumed bytes to be set incorrectly on overwrite mode.
+
+A relay file consists on several sub-buffers. These buffers are used
+in sequence. If all buffers are filled with data and no buffers
+are read, it stops writing to the buffer on normal(non-overwrite) mode.
+On this mode, the difference between the number of consumed(read)
+buffers and the number of produced(written) buffers are less than
+the number of total sub-buffers.
+However, the sub-buffers are cyclically used on overwrite mode.
+This means, the difference between the number of consumed(read)
+buffers and the number of produced(written) buffers could be more
+than the number of total sub-buffers.
+Since the relay miss-calculates the consumed buffers in this situation,
+it drops some buffers which are never read.
+
+To solve this problem, this patch fixes relay_file_read_avail() to
+adjust the consumed buffers, and fixes relay_file_read_consume() to
+calculate the read position based on the adjusted consumed buffers.
+
+The original patch was merged into upstream kernel.
+Commit:     a66e356c04ece4a96f44b942b68234c3de8ec3f5
+http://www.mail-archive.com/git-commits-head@vger.kernel.org/msg14970.html
+
+This patch can be applied for 2.6.18-44.el5 and resolves bz #250706.
+
+Testing: I made a test script for this patch based on the method below,
+
+http://www.uwsg.iu.edu/hypermail/linux/kernel/0706.2/1747.html
+
+and tested it with the latest snapshot package of the systemtap.
+
+( Since the systemtap package in RHEL5.1 is old and does not support
+ overwrite mode yet, you need the latest snapshot which you can download from
+ ftp://sources.redhat.com/pub/systemtap/snapshots/systemtap-20070901.tar.bz2
+ for this test.)
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/kernel/relay.c b/kernel/relay.c
+index 026dee7..03fa02b 100644
+--- a/kernel/relay.c
++++ b/kernel/relay.c
+@@ -746,7 +746,10 @@ static void relay_file_read_consume(struct rchan_buf *buf,
+ 	}
+ 
+ 	buf->bytes_consumed += bytes_consumed;
+-	read_subbuf = read_pos / buf->chan->subbuf_size;
++	if (!read_pos)
++		read_subbuf = buf->subbufs_consumed % n_subbufs;
++	else
++		read_subbuf = read_pos / buf->chan->subbuf_size;
+ 	if (buf->bytes_consumed + buf->padding[read_subbuf] == subbuf_size) {
+ 		if ((read_subbuf == buf->subbufs_produced % n_subbufs) &&
+ 		    (buf->offset == subbuf_size))
+@@ -775,8 +778,9 @@ static int relay_file_read_avail(struct rchan_buf *buf, size_t read_pos)
+ 	}
+ 
+ 	if (unlikely(produced - consumed >= n_subbufs)) {
+-		consumed = (produced / n_subbufs) * n_subbufs;
++		consumed = produced - n_subbufs + 1;
+ 		buf->subbufs_consumed = consumed;
++		buf->bytes_consumed = 0;
+ 	}
+ 	
+ 	produced = (produced % n_subbufs) * subbuf_size + buf->offset;

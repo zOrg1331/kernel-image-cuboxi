@@ -1,0 +1,149 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [PATCH RHEL-5] 2/2 bz237889 SPI DV fixup
+Date: Mon, 7 May 2007 15:42:58 -0400 (EDT)
+Bugzilla: 237889
+Message-Id: <Pine.LNX.4.64.0705071534100.3723@bogart.boston.redhat.com>
+Changelog: [scsi] SPI DV fixup
+
+
+
+This is the second of two unrelated patches associated with one bugzilla, 
+237889.  This one fixes a problem with SPI domain validation.  Quoting 
+from the bugzilla:
+
+"Domain Validation tests are starting with a sync factor that is too fast 
+for devices attached to U320 controllers.  Due to this problem, some end 
+devices will be sent with a negotiation rate higher than what is 
+supported, resulting in commands timing out, or settling with a 
+negotiation less than its capabable of. This problem is due to the spi 
+transport layer settling for the max and min sync rates provided by the 
+scsi lld driver, containing the bios negotition default parameters.  The 
+mpt fusion sometimes reports U320 speeds in the bios settings for all 
+devices, even those that are not capable of those speeds.
+
+This patch solves this problem by taking into account the capabilities of 
+the end device based on parameters provided in the inquiry data."
+
+The "spi_dv_in_progress" checks a bit flag, and so is KABI neutral.
+
+Upstream in Linus' git tree; compiles and runs here.
+    
+    commit dfdc58ba354adb80d67c99f7be84f95a8e02e466
+    Author: James Bottomley <James.Bottomley@steeleye.com>
+    Date:   Wed Sep 20 12:00:18 2006 -0400
+    
+        [SCSI] SPI transport class: misc DV fixes
+    
+        Key more of the domain validation settings off the inquiry data from
+        the disk (in particular, don't try IU or DT unless the disk claims to
+        support them.
+    
+        Also add a new dv_in_progress flag to prevent recursive DV.
+    
+        Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+diff --git a/drivers/scsi/scsi_transport_spi.c b/drivers/scsi/scsi_transport_spi.c
+index 7afe87b..5409b46 100644
+--- a/drivers/scsi/scsi_transport_spi.c
++++ b/drivers/scsi/scsi_transport_spi.c
+@@ -47,6 +47,7 @@
+ 
+ /* Private data accessors (keep these out of the header file) */
+ #define spi_dv_pending(x) (((struct spi_transport_attrs *)&(x)->starget_data)->dv_pending)
++#define spi_dv_in_progress(x) (((struct spi_transport_attrs *)&(x)->starget_data)->dv_in_progress)
+ #define spi_dv_mutex(x) (((struct spi_transport_attrs *)&(x)->starget_data)->dv_mutex)
+ 
+ struct spi_internal {
+@@ -240,6 +241,7 @@ static int spi_setup_transport_attrs(struct transport_container *tc,
+ 	spi_pcomp_en(starget) = 0;
+ 	spi_hold_mcs(starget) = 0;
+ 	spi_dv_pending(starget) = 0;
++	spi_dv_in_progress(starget) = 0;
+ 	spi_initial_dv(starget) = 0;
+ 	mutex_init(&spi_dv_mutex(starget));
+ 
+@@ -830,28 +832,37 @@ spi_dv_device_internal(struct scsi_device *sdev, u8 *buffer)
+ 	DV_SET(period, spi_min_period(starget));
+ 	/* try QAS requests; this should be harmless to set if the
+ 	 * target supports it */
+-	if (scsi_device_qas(sdev))
++	if (scsi_device_qas(sdev)) {
+ 		DV_SET(qas, 1);
+-	/* Also try IU transfers */
+-	if (scsi_device_ius(sdev))
++	} else {
++		DV_SET(qas, 0);
++	}
++
++	if (scsi_device_ius(sdev) && spi_min_period(starget) < 9) {
++		/* This u320 (or u640). Set IU transfers */
+ 		DV_SET(iu, 1);
+-	if (spi_min_period(starget) < 9) {
+-		/* This u320 (or u640). Ignore the coupled parameters
+-		 * like DT and IU, but set the optional ones */
++		/* Then set the optional parameters */
+ 		DV_SET(rd_strm, 1);
+ 		DV_SET(wr_flow, 1);
+ 		DV_SET(rti, 1);
+ 		if (spi_min_period(starget) == 8)
+ 			DV_SET(pcomp_en, 1);
++	} else {
++		DV_SET(iu, 0);
+ 	}
++
+ 	/* now that we've done all this, actually check the bus
+ 	 * signal type (if known).  Some devices are stupid on
+ 	 * a SE bus and still claim they can try LVD only settings */
+ 	if (i->f->get_signalling)
+ 		i->f->get_signalling(shost);
+ 	if (spi_signalling(shost) == SPI_SIGNAL_SE ||
+-	    spi_signalling(shost) == SPI_SIGNAL_HVD)
++	    spi_signalling(shost) == SPI_SIGNAL_HVD ||
++	    !scsi_device_dt(sdev)) {
+ 		DV_SET(dt, 0);
++	} else {
++		DV_SET(dt, 1);
++	}
+ 	/* Do the read only INQUIRY tests */
+ 	spi_dv_retrain(sdev, buffer, buffer + sdev->inquiry_len,
+ 		       spi_dv_device_compare_inquiry);
+@@ -907,6 +918,10 @@ spi_dv_device(struct scsi_device *sdev)
+ 	if (unlikely(scsi_device_get(sdev)))
+ 		return;
+ 
++	if (unlikely(spi_dv_in_progress(starget)))
++		return;
++	spi_dv_in_progress(starget) = 1;
++
+ 	buffer = kzalloc(len, GFP_KERNEL);
+ 
+ 	if (unlikely(!buffer))
+@@ -938,6 +953,7 @@ spi_dv_device(struct scsi_device *sdev)
+  out_free:
+ 	kfree(buffer);
+  out_put:
++	spi_dv_in_progress(starget) = 0;
+ 	scsi_device_put(sdev);
+ }
+ EXPORT_SYMBOL(spi_dv_device);
+diff --git a/include/scsi/scsi_transport_spi.h b/include/scsi/scsi_transport_spi.h
+index 302680c..da180f7 100644
+--- a/include/scsi/scsi_transport_spi.h
++++ b/include/scsi/scsi_transport_spi.h
+@@ -53,7 +53,8 @@ struct spi_transport_attrs {
+ 	unsigned int support_ius; /* support Information Units */
+ 	unsigned int support_qas; /* supports quick arbitration and selection */
+ 	/* Private Fields */
+-	unsigned int dv_pending:1; /* Internal flag */
++	unsigned int dv_pending:1; /* Internal flag: DV Requested */
++	unsigned int dv_in_progress:1;	/* Internal: DV started */
+ 	struct mutex dv_mutex; /* semaphore to serialise dv */
+ };
+ 
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

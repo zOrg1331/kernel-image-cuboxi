@@ -1,0 +1,36 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 15 Jun 2007 10:06:29 -0400
+Subject: [misc] Remove non-existing SB600 raid define
+Message-id: 20070615140629.15528.74527.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH]: Remove non-existing SB600 raid define
+Bugzilla: 244038
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c65ec1c25dc23123040efdc4ada46071431723e3;hp=a51d644af6eb0a93bc383e5f005faa445c87f335
+
+This define is not used in the RHEL5 kernel.  Successfully compile & boot
+tested by me.
+
+Resolves BZ 244038.
+
+Acked-by: Alan Cox <alan@redhat.com>
+---
+ include/linux/pci_ids.h |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 1b63128..1911de0 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -364,7 +364,6 @@
+ #define PCI_DEVICE_ID_ATI_IXP400_SATA   0x4379
+ #define PCI_DEVICE_ID_ATI_IXP400_SATA2	0x437a
+ #define PCI_DEVICE_ID_ATI_IXP600_SATA	0x4380
+-#define PCI_DEVICE_ID_ATI_IXP600_SRAID	0x4381
+ #define PCI_DEVICE_ID_ATI_IXP600_SMBUS	0x4385
+ #define PCI_DEVICE_ID_ATI_IXP600_IDE	0x438c
+ #define PCI_DEVICE_ID_ATI_IXP700_SATA	0x4390
+-- 
+1.5.3.5.645.gbb47
+

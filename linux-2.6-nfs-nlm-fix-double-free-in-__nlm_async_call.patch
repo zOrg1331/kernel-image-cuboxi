@@ -1,0 +1,72 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1] [PATCH] NFS/NLM - Fix double free in __nlm_async_call
+Date: Wed, 30 May 2007 13:51:25 -0400
+Bugzilla: 223248
+Message-Id: <465DB99D.6030108@RedHat.com>
+Changelog: [nfs] NFS/NLM - Fix double free in __nlm_async_call
+
+
+Here is a backported upstream patch that eliminates a
+double free in the NLM locking code. The double free
+happens during an error condition which I tried
+but was unsuccessful in duplicating. So I spent the
+majority of testing time on ensuring things did
+indeed get freed during the normal locking paths
+
+I tested with th e cthon test suite as well as with
+simply having different process trying to lock the
+same lock...
+
+steved.
+
+
+commit a995e9eb3258df6ab2e9f958e08003978e50d568
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+    NLM: Fix double free in __nlm_async_call
+    
+    rpc_call_async() will always call rpc_release_calldata(), so it is an
+    error for __nlm_async_call() to do so as well.
+    
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+--- linux-2.6.18.i686/fs/lockd/clntproc.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/fs/lockd/clntproc.c	2007-05-30 12:32:10.000000000 -0400
+@@ -357,7 +357,6 @@
+ {
+ 	struct nlm_host	*host = req->a_host;
+ 	struct rpc_clnt	*clnt;
+-	int status = -ENOLCK;
+ 
+ 	dprintk("lockd: call procedure %d on %s (async)\n",
+ 			(int)proc, host->h_name);
+@@ -369,12 +368,10 @@
+ 	msg->rpc_proc = &clnt->cl_procinfo[proc];
+ 
+         /* bootstrap and kick off the async RPC call */
+-        status = rpc_call_async(clnt, msg, RPC_TASK_ASYNC, tk_ops, req);
+-	if (status == 0)
+-		return 0;
++	return rpc_call_async(clnt, msg, RPC_TASK_ASYNC, tk_ops, req);
+ out_err:
+-	nlm_release_call(req);
+-	return status;
++	tk_ops->rpc_release(req);
++	return -ENOLCK;
+ }
+ 
+ int nlm_async_call(struct nlm_rqst *req, u32 proc, const struct rpc_call_ops *tk_ops)
+--- linux-2.6.18.i686/fs/lockd/svclock.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/fs/lockd/svclock.c	2007-05-30 13:16:45.000000000 -0400
+@@ -611,9 +611,7 @@
+ 
+ 	/* Call the client */
+ 	kref_get(&block->b_count);
+-	if (nlm_async_call(block->b_call, NLMPROC_GRANTED_MSG,
+-						&nlmsvc_grant_ops) < 0)
+-		nlmsvc_release_block(block);
++	nlm_async_call(block->b_call, NLMPROC_GRANTED_MSG, &nlmsvc_grant_ops);
+ }
+ 
+ /*
+

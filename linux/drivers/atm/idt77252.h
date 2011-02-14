@@ -1,4 +1,8 @@
 /******************************************************************* 
+ * ident "$Id: idt77252.h,v 1.2 2001/11/11 08:13:54 ecd Exp $"
+ *
+ * $Author: ecd $
+ * $Date: 2001/11/11 08:13:54 $
  *
  * Copyright (c) 2000 ATecoM GmbH 
  *
@@ -33,7 +37,7 @@
 #include <linux/ptrace.h>
 #include <linux/skbuff.h>
 #include <linux/workqueue.h>
-#include <linux/mutex.h>
+
 
 /*****************************************************************************/
 /*                                                                           */
@@ -173,8 +177,10 @@ struct scq_info
 };
 
 struct rx_pool {
-	struct sk_buff_head	queue;
+	struct sk_buff		*first;
+	struct sk_buff		**last;
 	unsigned int		len;
+	unsigned int		count;
 };
 
 struct aal1 {
@@ -353,7 +359,7 @@ struct idt77252_dev
 	unsigned long		srambase;	/* SAR's sram  base address */
 	void __iomem		*fbq[4];	/* FBQ fill addresses */
 
-	struct mutex		mutex;
+	struct semaphore	mutex;
 	spinlock_t		cmd_lock;	/* for r/w utility/sram */
 
 	unsigned long		softstat;

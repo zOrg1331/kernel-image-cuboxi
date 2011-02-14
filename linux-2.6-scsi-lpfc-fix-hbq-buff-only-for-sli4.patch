@@ -1,0 +1,60 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:24 -0500
+Subject: [scsi] lpfc: Fix hbq buff only for sli4
+Message-id: <20100104225231.24386.49093.sendpatchset@localhost.localdomain>
+Patchwork-id: 22303
+O-Subject: [RHEL5.5 PATCH 11/18] Fixed hbq buff only for sli4
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fixed hbq buff only for sli4
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 647e352..ed13f5d 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -1361,8 +1361,8 @@ static struct lpfc_hbq_init lpfc_els_hbq = {
+ 	.profile = 0,
+ 	.ring_mask = (1 << LPFC_ELS_RING),
+ 	.buffer_count = 0,
+-	.init_count = 256,
+-	.add_count = 0,
++	.init_count = 40,
++	.add_count = 40,
+ };
+ 
+ static struct lpfc_hbq_init lpfc_extra_hbq = {
+@@ -1454,8 +1454,11 @@ err:
+ int
+ lpfc_sli_hbqbuf_add_hbqs(struct lpfc_hba *phba, uint32_t qno)
+ {
+-	return(lpfc_sli_hbqbuf_fill_hbqs(phba, qno,
+-					 lpfc_hbq_defs[qno]->add_count));
++	if (phba->sli_rev == LPFC_SLI_REV4)
++		return 0;
++	else
++		return lpfc_sli_hbqbuf_fill_hbqs(phba, qno,
++					 lpfc_hbq_defs[qno]->add_count);
+ }
+ 
+ /**
+@@ -1470,8 +1473,12 @@ lpfc_sli_hbqbuf_add_hbqs(struct lpfc_hba *phba, uint32_t qno)
+ static int
+ lpfc_sli_hbqbuf_init_hbqs(struct lpfc_hba *phba, uint32_t qno)
+ {
+-	return(lpfc_sli_hbqbuf_fill_hbqs(phba, qno,
+-					 lpfc_hbq_defs[qno]->init_count));
++	if (phba->sli_rev == LPFC_SLI_REV4)
++		return lpfc_sli_hbqbuf_fill_hbqs(phba, qno,
++					 lpfc_hbq_defs[qno]->entry_count);
++	else
++		return lpfc_sli_hbqbuf_fill_hbqs(phba, qno,
++					 lpfc_hbq_defs[qno]->init_count);
+ }
+ 
+ /**

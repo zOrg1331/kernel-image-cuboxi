@@ -3,9 +3,7 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
 #include <asm/uaccess.h>
-#include "oss/sound_firmware.h"
 
 static int do_mod_firmware_load(const char *fn, char **fp)
 {
@@ -20,7 +18,7 @@ static int do_mod_firmware_load(const char *fn, char **fp)
 		printk(KERN_INFO "Unable to load '%s'.\n", fn);
 		return 0;
 	}
-	l = filp->f_path.dentry->d_inode->i_size;
+	l = filp->f_dentry->d_inode->i_size;
 	if (l <= 0 || l > 131072)
 	{
 		printk(KERN_INFO "Invalid firmware '%s'\n", fn);
@@ -61,7 +59,8 @@ static int do_mod_firmware_load(const char *fn, char **fp)
  *	value zero on a failure.
  *
  *	Caution: This API is not recommended. Firmware should be loaded via
- *	request_firmware.
+ *	an ioctl call and a setup application. This function may disappear
+ *	in future.
  */
  
 int mod_firmware_load(const char *fn, char **fp)
@@ -74,6 +73,4 @@ int mod_firmware_load(const char *fn, char **fp)
 	set_fs(fs);
 	return r;
 }
-EXPORT_SYMBOL(mod_firmware_load);
 
-MODULE_LICENSE("GPL");

@@ -52,11 +52,12 @@ int jsm_debug;
 module_param(jsm_debug, int, 0);
 MODULE_PARM_DESC(jsm_debug, "Driver debugging level");
 
-static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+static int jsm_probe_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int rc = 0;
 	struct jsm_board *brd;
 	static int adapter_count = 0;
+	int retval;
 
 	rc = pci_enable_device(pdev);
 	if (rc) {
@@ -70,28 +71,25 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 		goto out_disable_device;
 	}
 
-	brd = kzalloc(sizeof(struct jsm_board), GFP_KERNEL);
+	brd = kmalloc(sizeof(struct jsm_board), GFP_KERNEL);
 	if (!brd) {
 		dev_err(&pdev->dev,
 			"memory allocation for board structure failed\n");
 		rc = -ENOMEM;
 		goto out_release_regions;
 	}
+	memset(brd, 0, sizeof(struct jsm_board));
 
 	/* store the info for the board we've found */
 	brd->boardnum = adapter_count++;
 	brd->pci_dev = pdev;
-	if (pdev->device == PCIE_DEVICE_ID_NEO_4_IBM)
-		brd->maxports = 4;
-	else if (pdev->device == PCI_DEVICE_ID_DIGI_NEO_8)
-		brd->maxports = 8;
-	else
-		brd->maxports = 2;
+	brd->maxports = 2;
 
+	spin_lock_init(&brd->bd_lock);
 	spin_lock_init(&brd->bd_intr_lock);
 
 	/* store which revision we have */
-	brd->rev = pdev->revision;
+	pci_read_config_byte(pdev, PCI_REVISION_ID, &brd->rev);
 
 	brd->irq = pdev->irq;
 
@@ -132,7 +130,7 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 	rc = jsm_tty_init(brd);
 	if (rc < 0) {
 		dev_err(&pdev->dev, "Can't init tty devices (%d)\n", rc);
-		rc = -ENXIO;
+		retval = -ENXIO;
 		goto out_free_irq;
 	}
 
@@ -140,7 +138,7 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 	if (rc < 0) {
 		/* XXX: leaking all resources from jsm_tty_init here! */
 		dev_err(&pdev->dev, "Can't init uart port (%d)\n", rc);
-		rc = -ENXIO;
+		retval = -ENXIO;
 		goto out_free_irq;
 	}
 
@@ -154,14 +152,15 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 	 * Okay to malloc with GFP_KERNEL, we are not at interrupt
 	 * context, and there are no locks held.
 	 */
-	brd->flipbuf = kzalloc(MYFLIPLEN, GFP_KERNEL);
+	brd->flipbuf = kmalloc(MYFLIPLEN, GFP_KERNEL);
 	if (!brd->flipbuf) {
 		/* XXX: leaking all resources from jsm_tty_init and
 		 	jsm_uart_port_init here! */
 		dev_err(&pdev->dev, "memory allocation for flipbuf failed\n");
-		rc = -ENOMEM;
+		retval = -ENOMEM;
 		goto out_free_irq;
 	}
+	memset(brd->flipbuf, 0, MYFLIPLEN);
 
 	pci_set_drvdata(pdev, brd);
 
@@ -180,7 +179,7 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 	return rc;
 }
 
-static void __devexit jsm_remove_one(struct pci_dev *pdev)
+static void jsm_remove_one(struct pci_dev *pdev)
 {
 	struct jsm_board *brd = pci_get_drvdata(pdev);
 	int i = 0;
@@ -211,8 +210,6 @@ static struct pci_device_id jsm_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2DB9PRI), 0, 0, 1 },
 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2RJ45), 0, 0, 2 },
 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2RJ45PRI), 0, 0, 3 },
-	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCIE_DEVICE_ID_NEO_4_IBM), 0, 0, 4 },
-	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_DIGI_NEO_8), 0, 0, 5 },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, jsm_pci_tbl);

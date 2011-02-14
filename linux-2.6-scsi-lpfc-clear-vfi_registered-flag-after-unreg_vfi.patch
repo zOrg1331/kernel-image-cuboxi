@@ -1,0 +1,37 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:46 -0400
+Subject: [scsi] lpfc: clear VFI_REGISTERED flag after UNREG_VFI
+Message-id: <1286288695-20754-15-git-send-email-revers@redhat.com>
+Patchwork-id: 28604
+O-Subject: [RHEL5.6 PATCH 14/23] Clear VFI_REGISTERED flag when UNREG_VFI
+	completes
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Clear VFI_REGISTERED flag when UNREG_VFI completes
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index f40c5dd..f136882 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -5345,6 +5345,7 @@ static void
+ lpfc_unregister_vfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ {
+ 	struct lpfc_vport *vport = mboxq->vport;
++	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
+ 
+ 	if (mboxq->u.mb.mbxStatus) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+@@ -5352,6 +5353,9 @@ lpfc_unregister_vfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 			"HBA state x%x\n",
+ 			mboxq->u.mb.mbxStatus, vport->port_state);
+ 	}
++	spin_lock_irq(shost->host_lock);
++	phba->pport->fc_flag &= ~FC_VFI_REGISTERED;
++	spin_unlock_irq(shost->host_lock);
+ 	mempool_free(mboxq, phba->mbox_mem_pool);
+ 	return;
+ }

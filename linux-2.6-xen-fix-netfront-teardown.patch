@@ -1,0 +1,180 @@
+From: Glauber de Oliveira Costa <gcosta@redhat.com>
+Subject: Re: [PATCH RHEL5] Fix netfront teardown
+Date: Thu, 21 Dec 2006 20:57:07 -0200
+Bugzilla: 219563
+Message-Id: <20061221225707.GA27427@redhat.com>
+Changelog: [xen] Fix netfront teardown
+
+
+On Thu, Dec 21, 2006 at 03:12:40PM -0500, James Morris wrote:
+> On Thu, 21 Dec 2006, Glauber de Oliveira Costa wrote:
+> 
+> > It is crucial that between netif_disconnect_backend() and free_netdev()
+> > there is a call to unregister_netdev(). The first triggers carrier
+> > watches , that can be handled only after free. unregister_netdev()
+> > makes sures that all pending events are handled, so after that, we're
+> > safe.
+> > 
+> > ACKS?
+> 
+> Ack.
+
+-- 
+Glauber de Oliveira Costa
+Red Hat Inc.
+"Free as in Freedom"
+
+--- linux-2.6.18.x86_64/drivers/xen/netfront/netfront.c.orig	2006-12-21 18:28:42.000000000 -0500
++++ linux-2.6.18.x86_64/drivers/xen/netfront/netfront.c	2006-12-21 18:49:31.000000000 -0500
+@@ -232,12 +232,8 @@ static inline grant_ref_t xennet_get_rx_
+ static int setup_device(struct xenbus_device *, struct netfront_info *);
+ static struct net_device *create_netdev(struct xenbus_device *);
+ 
+-static void netfront_closing(struct xenbus_device *);
+-
+ static void end_access(int, void *);
+ static void netif_disconnect_backend(struct netfront_info *);
+-static int open_netdev(struct netfront_info *);
+-static void close_netdev(struct netfront_info *);
+ static void netif_free(struct netfront_info *);
+ 
+ static int network_connect(struct net_device *);
+@@ -282,9 +278,20 @@ static int __devinit netfront_probe(stru
+ 	info = netdev_priv(netdev);
+ 	dev->dev.driver_data = info;
+ 
+-	err = open_netdev(info);
+-	if (err)
++	err = register_netdev(info->netdev);
++	if (err) {
++		printk(KERN_WARNING "%s: register_netdev err=%d\n",
++		       __FUNCTION__, err);
++		goto fail;
++	}
++
++	err = xennet_sysfs_addif(info->netdev);
++	if (err) {
++		unregister_netdev(info->netdev);
++		printk(KERN_WARNING "%s: add sysfs failed err=%d\n",
++		       __FUNCTION__, err);
+ 		goto fail;
++	}
+ 
+ 	return 0;
+ 
+@@ -294,6 +301,24 @@ static int __devinit netfront_probe(stru
+ 	return err;
+ }
+ 
++static int __devexit netfront_remove(struct xenbus_device *dev)
++{
++	struct netfront_info *info = dev->dev.driver_data;
++
++	DPRINTK("%s\n", dev->nodename);
++
++	netif_disconnect_backend(info);
++
++	del_timer_sync(&info->rx_refill_timer);
++
++	xennet_sysfs_delif(info->netdev);
++
++	unregister_netdev(info->netdev);
++
++	free_netdev(info->netdev);
++
++	return 0;
++}
+ 
+ /**
+  * We are reconnecting to the backend, due to a suspend/resume, or a backend
+@@ -518,7 +543,7 @@ static void backend_changed(struct xenbu
+ 		break;
+ 
+ 	case XenbusStateClosing:
+-		netfront_closing(dev);
++ 		xenbus_frontend_closed(dev);
+ 		break;
+ 	}
+ }
+@@ -1973,70 +1998,6 @@ inetdev_notify(struct notifier_block *th
+ }
+ 
+ 
+-/* ** Close down ** */
+-
+-
+-/**
+- * Handle the change of state of the backend to Closing.  We must delete our
+- * device-layer structures now, to ensure that writes are flushed through to
+- * the backend.  Once is this done, we can switch to Closed in
+- * acknowledgement.
+- */
+-static void netfront_closing(struct xenbus_device *dev)
+-{
+-	struct netfront_info *info = dev->dev.driver_data;
+-
+-	DPRINTK("%s\n", dev->nodename);
+-
+-	close_netdev(info);
+-	xenbus_frontend_closed(dev);
+-}
+-
+-
+-static int __devexit netfront_remove(struct xenbus_device *dev)
+-{
+-	struct netfront_info *info = dev->dev.driver_data;
+-
+-	DPRINTK("%s\n", dev->nodename);
+-
+-	netif_disconnect_backend(info);
+-	free_netdev(info->netdev);
+-
+-	return 0;
+-}
+-
+-
+-static int open_netdev(struct netfront_info *info)
+-{
+-	int err;
+-	
+-	err = register_netdev(info->netdev);
+-	if (err) {
+-		printk(KERN_WARNING "%s: register_netdev err=%d\n",
+-		       __FUNCTION__, err);
+-		return err;
+-	}
+-
+-	err = xennet_sysfs_addif(info->netdev);
+-	if (err) {
+-		unregister_netdev(info->netdev);
+-		printk(KERN_WARNING "%s: add sysfs failed err=%d\n",
+-		       __FUNCTION__, err);
+-		return err;
+-	}
+-
+-	return 0;
+-}
+-
+-static void close_netdev(struct netfront_info *info)
+-{
+-	del_timer_sync(&info->rx_refill_timer);
+-
+-	xennet_sysfs_delif(info->netdev);
+-	unregister_netdev(info->netdev);
+-}
+-
+-
+ static void netif_disconnect_backend(struct netfront_info *info)
+ {
+ 	/* Stop old i/f to prevent errors whilst we rebuild the state. */
+
+--- linux-2.6.18.noarch/drivers/xen/netfront/netfront.c.orig	2007-04-20 16:01:53.000000000 -0400
++++ linux-2.6.18.noarch/drivers/xen/netfront/netfront.c	2007-04-20 16:02:03.000000000 -0400
+@@ -2023,7 +2023,6 @@
+ 
+ static void netif_free(struct netfront_info *info)
+ {
+-	close_netdev(info);
+ 	netif_disconnect_backend(info);
+ 	free_netdev(info->netdev);
+ }

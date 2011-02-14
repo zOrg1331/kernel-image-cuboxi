@@ -1,0 +1,100 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 29 Jun 2010 14:13:39 -0400
+Subject: [fs] nfsd: don't break lease while servicing COMMIT call
+Message-id: <1277820819-23693-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26607
+O-Subject: [RHEL5.6 PATCH] BZ#575817: nfsd: don't break lease while servicing a
+	COMMIT call
+Bugzilla: 575817
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+We had a user report a problem where his NFSv4 client and server would
+stall out in some situations. By looking at network captures, I found
+that the client and server would "deadlock" for a certain period of
+time. The client held a delegation on a file and was attempting to issue
+a COMMIT against that file, but the server wouldn't service the COMMIT
+until the delegation had been returned.
+
+A NFS COMMIT call is done against a filehandle, not a particular open
+file. When such a call comes in, the server will currently open the file
+and in the process break leases associated with it. Since the server is
+just opening a file in order to do a fsync against it, there's no need
+to break leases for it.
+
+This is backported from an upstream patch that's already in RHEL6. I've
+had it in my RHEL5 test kernels for several months and it seems to be
+fine.  Unfortunately the person who reported the problem wasn't
+particularly helpful with testing to report whether it fixed it, so I
+have no confirmation there. Still it seems like a reasonable change to
+make.
+
+--------------------------[snip]---------------------
+
+This is the second attempt to fix the problem whereby a COMMIT call
+causes a lease break and triggers a possible delegation return. The
+first patch attempted to deal with this by eliminating the open of the
+file altogether and simply had nfsd_commit pass a NULL file pointer to
+the vfs_fsync_range.
+
+That approach would conflict with some work in progress by Christoph
+Hellwig, so this patch takes a different one. This declares a new
+NFSD_MAY_NOT_BREAK_LEASE flag that indicates to nfsd_open that it
+should not break any leases when opening the file.
+
+This should allow us to still get a file pointer but will work around
+the problems caused by having a COMMIT break a lease.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index f6ef393..9f636e2 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -61,6 +61,8 @@
+ #define NFSDDBG_FACILITY		NFSDDBG_FILEOP
+ #define NFSD_PARANOIA
+ 
++/* private NFSD access flag */
++#define NFSD_MAY_NOT_BREAK_LEASE	512
+ 
+ /* We must ignore files (but only files) which might have mandatory
+  * locks on them because there is no way to know if the accesser has
+@@ -663,6 +665,9 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
+ 	struct dentry	*dentry;
+ 	struct inode	*inode;
+ 	int		flags = O_RDONLY|O_LARGEFILE, err;
++	bool		do_break_lease = !(access & NFSD_MAY_NOT_BREAK_LEASE);
++
++	access &= ~NFSD_MAY_NOT_BREAK_LEASE;
+ 
+ 	/*
+ 	 * If we get here, then the client has already done an "open",
+@@ -692,11 +697,14 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
+ 	 * Check to see if there are any leases on this file.
+ 	 * This may block while leases are broken.
+ 	 */
+-	err = break_lease(inode, O_NONBLOCK | ((access & MAY_WRITE) ? FMODE_WRITE : 0));
+-	if (err == -EWOULDBLOCK)
+-		err = -ETIMEDOUT;
+-	if (err) /* NOMEM or WOULDBLOCK */
+-		goto out_nfserr;
++	err = 0;
++	if (do_break_lease) {
++		err = break_lease(inode, O_NONBLOCK | ((access & MAY_WRITE) ? FMODE_WRITE : 0));
++		if (err == -EWOULDBLOCK)
++			err = -ETIMEDOUT;
++		if (err) /* NOMEM or WOULDBLOCK */
++			goto out_nfserr;
++	}
+ 
+ 	if (access & MAY_WRITE) {
+ 		if (access & MAY_READ)
+@@ -1092,7 +1100,7 @@ nfsd_commit(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	if ((u64)count > ~(u64)offset)
+ 		return nfserr_inval;
+ 
+-	if ((err = nfsd_open(rqstp, fhp, S_IFREG, MAY_WRITE, &file)) != 0)
++	if ((err = nfsd_open(rqstp, fhp, S_IFREG, MAY_WRITE|NFSD_MAY_NOT_BREAK_LEASE, &file)) != 0)
+ 		return err;
+ 	if (EX_ISSYNC(fhp->fh_export)) {
+ 		if (file->f_op && file->f_op->fsync) {

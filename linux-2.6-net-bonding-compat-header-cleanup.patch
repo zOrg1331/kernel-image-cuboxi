@@ -1,0 +1,34 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:52:17 -0400
+Subject: [net] bonding: compat header cleanup
+Message-id: <20100510185001.2781.94953.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24979
+O-Subject: [RHEL5 PATCH 19/27] compat.h cleanup: bonding driver changes
+Bugzilla: 546740
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+>From 0bae9f148ff898555e7b6cfedeb2ba7715c49902 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:49:04 -0400
+Subject: [PATCH] bonding driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/bonding/bond_ipv6.c b/drivers/net/bonding/bond_ipv6.c
+index 914b1dd..4a75f57 100644
+--- a/drivers/net/bonding/bond_ipv6.c
++++ b/drivers/net/bonding/bond_ipv6.c
+@@ -27,12 +27,6 @@
+ #include <net/addrconf.h>
+ #include "bonding.h"
+ 
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-						       int vlan_id)
+-{
+-	return vg->vlan_devices[vlan_id];
+-}
+-
+ /*
+  * Assign bond->master_ipv6 to the next IPv6 address in the list, or
+  * zero it out if there are none.

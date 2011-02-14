@@ -1,0 +1,87 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Mon, 29 Nov 2010 20:51:57 -0500
+Subject: [net] netxen: fix kdump
+Message-id: <20101129205157.8187.474.sendpatchset@localhost.localdomain>
+Patchwork-id: 29672
+O-Subject: [RHEL 5.6 PATCH v2 1/2] netxen: fix kdump
+Bugzilla: 643254
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+Bugzilla
+--------
+
+Bug 643254 (https://bugzilla.redhat.com/show_bug.cgi?id=643254)
+
+Upstream Status
+---------------
+
+net-2.6 commit id 683b65f89a7c26d9a9180d25066815ef5a31bd71
+
+Description
+-----------
+
+>From 683b65f89a7c26d9a9180d25066815ef5a31bd71 Mon Sep 17 00:00:00 2001
+From: Rajesh Borundia <rajesh.borundia@qlogic.com>
+Date: Tue, 26 Oct 2010 22:51:50 +0000
+Subject: [PATCH 1/4] netxen: fix kdump
+
+Reset the whole hw instead of freeing hw resources
+consumed by each pci function.
+
+Signed-off-by: Rajesh Borundia <rajesh.borundia@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_ctx.c b/drivers/net/netxen/netxen_nic_ctx.c
+index 1261212..f7d06cb 100644
+--- a/drivers/net/netxen/netxen_nic_ctx.c
++++ b/drivers/net/netxen/netxen_nic_ctx.c
+@@ -255,19 +255,6 @@ out_free_rq:
+ }
+ 
+ static void
+-nx_fw_cmd_reset_ctx(struct netxen_adapter *adapter)
+-{
+-
+-	netxen_issue_cmd(adapter, adapter->ahw.pci_func, NXHAL_VERSION,
+-			adapter->ahw.pci_func, NX_DESTROY_CTX_RESET, 0,
+-			NX_CDRP_CMD_DESTROY_RX_CTX);
+-
+-	netxen_issue_cmd(adapter, adapter->ahw.pci_func, NXHAL_VERSION,
+-			adapter->ahw.pci_func, NX_DESTROY_CTX_RESET, 0,
+-			NX_CDRP_CMD_DESTROY_TX_CTX);
+-}
+-
+-static void
+ nx_fw_cmd_destroy_rx_ctx(struct netxen_adapter *adapter)
+ {
+ 	struct netxen_recv_context *recv_ctx = &adapter->recv_ctx;
+@@ -698,8 +685,6 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
+ 	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
+ 		if (test_and_set_bit(__NX_FW_ATTACHED, &adapter->state))
+ 			goto done;
+-		if (reset_devices)
+-			nx_fw_cmd_reset_ctx(adapter);
+ 		err = nx_fw_cmd_create_rx_ctx(adapter);
+ 		if (err)
+ 			goto err_out_free;
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 36cad7b..9221afc 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -1360,6 +1360,13 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 		break;
+ 	}
+ 
++	if (reset_devices) {
++		if (adapter->portnum == 0) {
++			NXWR32(adapter, NX_CRB_DEV_REF_COUNT, 0);
++			adapter->need_fw_reset = 1;
++		}
++	}
++
+ 	err = netxen_start_firmware(adapter);
+ 	if (err)
+ 		goto err_out_decr_ref;

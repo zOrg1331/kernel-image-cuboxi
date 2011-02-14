@@ -1,6 +1,6 @@
 /*
  *  Digital Audio (PCM) abstract layer
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -19,6 +19,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -51,14 +52,12 @@ void snd_pcm_timer_resolution_change(struct snd_pcm_substream *substream)
 	
         mult = 1000000000;
 	rate = runtime->rate;
-	if (snd_BUG_ON(!rate))
-		return;
+	snd_assert(rate != 0, return);
 	l = gcd(mult, rate);
 	mult /= l;
 	rate /= l;
 	fsize = runtime->period_size;
-	if (snd_BUG_ON(!fsize))
-		return;
+	snd_assert(fsize != 0, return);
 	l = gcd(rate, fsize);
 	rate /= l;
 	fsize /= l;
@@ -85,19 +84,25 @@ static unsigned long snd_pcm_timer_resolution(struct snd_timer * timer)
 
 static int snd_pcm_timer_start(struct snd_timer * timer)
 {
+	unsigned long flags;
 	struct snd_pcm_substream *substream;
 	
 	substream = snd_timer_chip(timer);
+	spin_lock_irqsave(&substream->timer_lock, flags);
 	substream->timer_running = 1;
+	spin_unlock_irqrestore(&substream->timer_lock, flags);
 	return 0;
 }
 
 static int snd_pcm_timer_stop(struct snd_timer * timer)
 {
+	unsigned long flags;
 	struct snd_pcm_substream *substream;
 	
 	substream = snd_timer_chip(timer);
+	spin_lock_irqsave(&substream->timer_lock, flags);
 	substream->timer_running = 0;
+	spin_unlock_irqrestore(&substream->timer_lock, flags);
 	return 0;
 }
 

@@ -1,0 +1,82 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 3 Nov 2008 11:26:09 -0600
+Subject: [sata] libata is broken with large disks
+Message-id: 20081103172609.GA4918@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.3 PATCH] libata is broken with large disks (1.5TB)
+Bugzilla: 469715
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+On Fri, Oct 31, 2008 at 07:00:25PM -0400, Chuck Ebbert wrote:
+> Per this commit headed for upstream:
+>
+> From: Roland Dreier <rdreier@cisco.com>
+> Date: Tue, 28 Oct 2008 23:52:20 +0000 (-0700)
+> Subject: libata: Avoid overflow in ata_tf_to_lba48() when tf->hba_lbal > 127
+> X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fjgarzik%2Flibata-dev.git;a=commitdiff_plain;h=ba14a9c291aa867896a90b3571fcc1c3759942ff
+>
+> libata: Avoid overflow in ata_tf_to_lba48() when tf->hba_lbal > 127
+>
+> In ata_tf_to_lba48(), when evaluating
+>
+> 	(tf->hob_lbal & 0xff) << 24
+>
+> the expression is promoted to signed int (since int can hold all values
+> of u8).  However, if hob_lbal is 128 or more, then it is treated as a
+> negative signed value and sign-extended when promoted to u64 to | into
+> sectors, which leads to the MSB 32 bits of section getting set
+> incorrectly.
+>
+> For example, Phillip O'Donnell <phillip.odonnell@gmail.com> reported
+> that a 1.5GB drive caused:
+>
+>     ata3.00: HPA detected: current 2930277168, native 18446744072344861488
+>
+> where 2930277168 == 0xAEA87B30 and 18446744072344861488 == 0xffffffffaea87b30
+> which shows the problem when hob_lbal is 0xae.
+>
+> Fix this by adding a cast to u64, just as is used by for hob_lbah and
+> hob_lbam in the function.
+>
+> Reported-by: Phillip O'Donnell <phillip.odonnell@gmail.com>
+> Signed-off-by: Roland Dreier <rolandd@cisco.com>
+> Signed-off-by: Jeff Garzik <jgarzik@redhat.com>
+> ---
+>
+> diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+> index e398df1..8824c8d 100644
+> --- a/drivers/ata/libata-core.c
+> +++ b/drivers/ata/libata-core.c
+> @@ -1268,7 +1268,7 @@ u64 ata_tf_to_lba48(const struct ata_taskfile *tf)
+>
+>  	sectors |= ((u64)(tf->hob_lbah & 0xff)) << 40;
+>  	sectors |= ((u64)(tf->hob_lbam & 0xff)) << 32;
+> -	sectors |= (tf->hob_lbal & 0xff) << 24;
+> +	sectors |= ((u64)(tf->hob_lbal & 0xff)) << 24;
+>  	sectors |= (tf->lbah & 0xff) << 16;
+>  	sectors |= (tf->lbam & 0xff) << 8;
+>  	sectors |= (tf->lbal & 0xff);
+>
+
+Thanks Chuck, opened up BZ 469715 and rediff'd against
+rhel5.
+
+David
+
+ drivers/ata/libata-core.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index ca76707..2f46fcd 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -1197,7 +1197,7 @@ u64 ata_tf_to_lba48(const struct ata_taskfile *tf)
+ 
+ 	sectors |= ((u64)(tf->hob_lbah & 0xff)) << 40;
+ 	sectors |= ((u64)(tf->hob_lbam & 0xff)) << 32;
+-	sectors |= (tf->hob_lbal & 0xff) << 24;
++	sectors |= ((u64)(tf->hob_lbal & 0xff)) << 24;
+ 	sectors |= (tf->lbah & 0xff) << 16;
+ 	sectors |= (tf->lbam & 0xff) << 8;
+ 	sectors |= (tf->lbal & 0xff);

@@ -1,0 +1,78 @@
+From: Sachin S. Prabhu <sprabhu@redhat.com>
+Date: Fri, 13 Mar 2009 15:58:27 +0000
+Subject: [nfs] add 'lookupcache' mount option for nfs shares
+Message-id: 49BA82A3.3090504@redhat.com
+O-Subject: Re: [RHEL5.4 PATCH 2/2]: Add fine grain control for lookup cache in nfs
+Bugzilla: 489285
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Sachin S. Prabhu wrote:
+> Backport of the following upstream patch to add finer grained control
+> over the lookup cache.
+>
+> --
+> commit 4eec952e42314b53e48fef1f54dd89cbf9789734
+> Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+> Date:   Tue Jul 15 17:58:13 2008 -0400
+>
+>     NFS: Add options for finer control of the lookup cache
+>
+>     Add the flag NFS_MOUNT_LOOKUP_CACHE_NONEG to turn off the caching of
+>     negative dentries. In reality what we do is to force
+>     nfs_lookup_revalidate() to always discard negative dentries.
+>
+>     Add the flag NFS_MOUNT_LOOKUP_CACHE_NONE for enforcing stricter
+>     revalidation of dentries. It forces the revalidate code to always do a
+>     lookup instead of just checking the cached mtime of the parent
+> directory.
+>
+>     Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+> --
+>
+>
+
+Backport of the following upstream patch to add lookupcache mount option to the nfs client to control the lookup cache.
+
+diff --git a/fs/nfs/nfsroot.c b/fs/nfs/nfsroot.c
+index 330e4e9..c3860d1 100644
+--- a/fs/nfs/nfsroot.c
++++ b/fs/nfs/nfsroot.c
+@@ -123,7 +123,9 @@ enum {
+ 	Opt_soft, Opt_hard, Opt_intr,
+ 	Opt_nointr, Opt_posix, Opt_noposix, Opt_cto, Opt_nocto, Opt_ac, 
+ 	Opt_noac, Opt_lock, Opt_nolock, Opt_v2, Opt_v3, Opt_udp, Opt_tcp,
+-	Opt_acl, Opt_noacl,
++	Opt_acl, Opt_noacl, Opt_lookupcache_all, Opt_lookupcache_positive,
++	Opt_lookupcache_none,
++	
+ 	/* Error token */
+ 	Opt_err
+ };
+@@ -160,6 +162,10 @@ static match_table_t __initdata tokens = {
+ 	{Opt_tcp, "tcp"},
+ 	{Opt_acl, "acl"},
+ 	{Opt_noacl, "noacl"},
++	{Opt_lookupcache_all, "lookupcache=all" },
++	{Opt_lookupcache_positive, "lookupcache=pos" },
++	{Opt_lookupcache_positive, "lookupcache=positive" },
++	{Opt_lookupcache_none, "lookupcache=none" },
+ 	{Opt_err, NULL}
+ 	
+ };
+@@ -274,6 +280,16 @@ static int __init root_nfs_parse(char *name, char *buf)
+ 			case Opt_noacl:
+ 				nfs_data.flags |= NFS_MOUNT_NOACL;
+ 				break;
++			case Opt_lookupcache_all:
++				nfs_data.flags &= ~(NFS_MOUNT_LOOKUP_CACHE_NONEG|NFS_MOUNT_LOOKUP_CACHE_NONE);
++				break;
++			case Opt_lookupcache_positive:
++				nfs_data.flags &= ~NFS_MOUNT_LOOKUP_CACHE_NONE;
++				nfs_data.flags |= NFS_MOUNT_LOOKUP_CACHE_NONEG;
++				break;
++			case Opt_lookupcache_none:
++				nfs_data.flags |= NFS_MOUNT_LOOKUP_CACHE_NONEG|NFS_MOUNT_LOOKUP_CACHE_NONE;
++				break;
+ 			default:
+ 				printk(KERN_WARNING "Root-NFS: unknown "
+ 					"option: %s\n", p);

@@ -1,0 +1,188 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Wed, 24 Feb 2010 19:32:14 -0500
+Subject: [net] mlx4: pass eth attributes down to vlan interfaces
+Message-id: <4B857EBE.9040703@redhat.com>
+Patchwork-id: 23422
+O-Subject: [Patch RHEL5.5] net: pass eth attributes down to vlan interfaces
+Bugzilla: 557109
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+There are a few ethernet interface options that, when passed down to
+vlan child interfaces, greatly effect vlan performance.  This patch adds
+a couple flags to the capability bits for eth interfaces and then for
+the mlx4 interface passes them on down.  I hear there are other eth
+cards that would support this too, but I don't deal with this and made
+no attempt to modify their setups.
+
+I should note that this patch was originally very kABI problematic.  The
+version here is as unproblematic as we could make it, but it still makes
+use of bits that used to be masked off and reserved.  For the most part,
+driver authors are smart enough not to use reserved bits for their own
+purposes, but if there are any drivers out there that *did* do so, this
+could be a problem for them.  However, this was deemed by Andy to be a
+"not very likely and not much to worry about" event.  I tend to agree.
+
+Resolves bz557109, and is currently being reviewed for acks.  If it
+doesn't get approved for rhel5.5, then I'll repost for 5.6.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/mlx4/en_netdev.c b/drivers/net/mlx4/en_netdev.c
+index cfee71f..6c554cf 100644
+--- a/drivers/net/mlx4/en_netdev.c
++++ b/drivers/net/mlx4/en_netdev.c
+@@ -1077,6 +1077,7 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
+ 	 */
+ 	dev->features |= NETIF_F_SG;
+ 	dev->features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
++	dev->features |= NETIF_F_VLAN_CSUM;
+ 	dev->features |= NETIF_F_HIGHDMA;
+ 	dev->features |= NETIF_F_HW_VLAN_TX |
+ 			 NETIF_F_HW_VLAN_RX |
+@@ -1086,6 +1087,7 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
+ 	if (mdev->LSO_support) {
+ 		dev->features |= NETIF_F_TSO;
+ 		dev->features |= NETIF_F_TSO6;
++		dev->features |= NETIF_F_VLAN_TSO;
+ 	}
+ 
+ 	dev->tx_queue_len = 100;
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index c2f9726..41d52e4 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -348,9 +348,15 @@ struct net_device
+ #define NETIF_F_LLTX		4096	/* LockLess TX */
+ #define NETIF_F_GRO		16384	/* Generic receive offload */
+ 
++/* Go to the end of the bit field and count backwards when adding new entries
++ * so we don't cause the calculated fields below to shift.  Also don't forget
++ * to update GSO_MASK below to exclude added bits */
++#define NETIF_F_VLAN_TSO	1 << 31	/* Supports TSO for VLANs */
++#define NETIF_F_VLAN_CSUM	1 << 30	/* Supports TX checksumming for VLANs */
++
+ 	/* Segmentation offload features */
+ #define NETIF_F_GSO_SHIFT	16
+-#define NETIF_F_GSO_MASK	0xffff0000
++#define NETIF_F_GSO_MASK	0x3fff0000
+ #define NETIF_F_TSO		(SKB_GSO_TCPV4 << NETIF_F_GSO_SHIFT)
+ #define NETIF_F_UFO		(SKB_GSO_UDP << NETIF_F_GSO_SHIFT)
+ #define NETIF_F_GSO_ROBUST	(SKB_GSO_DODGY << NETIF_F_GSO_SHIFT)
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index 0ade055..b6c9f6c 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -23,6 +23,7 @@
+ #include <linux/module.h>
+ #include <linux/netdevice.h>
+ #include <linux/skbuff.h>
++#include <linux/ethtool.h>
+ #include <net/datalink.h>
+ #include <linux/mm.h>
+ #include <linux/in.h>
+@@ -318,10 +319,26 @@ static int unregister_vlan_device(const char *vlan_IF_name)
+ 	return ret;
+ }
+ 
++static u32 vlan_ethtool_get_rx_csum(struct net_device *dev)
++{
++	const struct vlan_dev_info *vlan = VLAN_DEV_INFO(dev);
++	struct net_device *real_dev = vlan->real_dev;
++
++	if (real_dev->ethtool_ops == NULL ||
++	    real_dev->ethtool_ops->get_rx_csum == NULL)
++		return 0;
++	return real_dev->ethtool_ops->get_rx_csum(real_dev);
++}
++
++static const struct ethtool_ops vlan_ethtool_ops = {
++	.get_link		= ethtool_op_get_link,
++	.get_rx_csum		= vlan_ethtool_get_rx_csum,
++};
++
+ static void vlan_setup(struct net_device *new_dev)
+ {
+ 	SET_MODULE_OWNER(new_dev);
+-	    
++
+ 	/* new_dev->ifindex = 0;  it will be set when added to
+ 	 * the global list.
+ 	 * iflink is set as well.
+@@ -344,6 +361,7 @@ static void vlan_setup(struct net_device *new_dev)
+ 	new_dev->set_multicast_list = vlan_dev_set_multicast_list;
+ 	new_dev->destructor = free_netdev;
+ 	new_dev->do_ioctl = vlan_dev_ioctl;
++	new_dev->ethtool_ops = &vlan_ethtool_ops;
+ }
+ 
+ static void vlan_transfer_operstate(const struct net_device *dev, struct net_device *vlandev)
+@@ -483,6 +501,11 @@ static struct net_device *register_vlan_device(const char *eth_IF_name,
+ 					     (1<<__LINK_STATE_DORMANT))) |
+ 			 (1<<__LINK_STATE_PRESENT); 
+ 
++	if (real_dev->features & NETIF_F_VLAN_TSO)
++		new_dev->features |= real_dev->features & VLAN_TSO_FEATURES;
++	if (real_dev->features & NETIF_F_VLAN_CSUM)
++		new_dev->features |= real_dev->features & NETIF_F_ALL_CSUM;
++
+ 	/* need 4 bytes for extra VLAN header info,
+ 	 * hope the underlying device can handle it.
+ 	 */
+@@ -592,6 +615,24 @@ out_ret_null:
+ 	return NULL;
+ }
+ 
++static void vlan_transfer_features(struct net_device *dev,
++				   struct net_device *vlandev)
++{
++	unsigned long old_features = vlandev->features;
++
++	if (dev->features & NETIF_F_VLAN_TSO) {
++		vlandev->features &= ~VLAN_TSO_FEATURES;
++		vlandev->features |= dev->features & VLAN_TSO_FEATURES;
++	}
++	if (dev->features & NETIF_F_VLAN_CSUM) {
++		vlandev->features &= ~NETIF_F_ALL_CSUM;
++		vlandev->features |= dev->features & NETIF_F_ALL_CSUM;
++	}
++
++	if (old_features != vlandev->features)
++		netdev_features_change(vlandev);
++}
++
+ static int vlan_device_event(struct notifier_block *unused, unsigned long event, void *ptr)
+ {
+ 	struct net_device *dev = ptr;
+@@ -618,6 +659,18 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
+ 		}
+ 		break;
+ 
++	case NETDEV_FEAT_CHANGE:
++		/* Propagate device features to underlying device */
++		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
++			vlandev = grp->vlan_devices[i];
++			if (!vlandev)
++				continue;
++
++			vlan_transfer_features(dev, vlandev);
++		}
++
++		break;
++
+ 	case NETDEV_DOWN:
+ 		/* Put all VLANs for this dev in the down state too.  */
+ 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+diff --git a/net/8021q/vlan.h b/net/8021q/vlan.h
+index 9ae3a14..4ef1fbe 100644
+--- a/net/8021q/vlan.h
++++ b/net/8021q/vlan.h
+@@ -34,6 +34,8 @@ extern unsigned short vlan_name_type;
+ #define VLAN_GRP_HASH_SIZE	(1 << VLAN_GRP_HASH_SHIFT)
+ #define VLAN_GRP_HASH_MASK	(VLAN_GRP_HASH_SIZE - 1)
+ 
++#define VLAN_TSO_FEATURES	(NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_SG)
++
+ /*  Find a VLAN device by the MAC address of its Ethernet device, and
+  *  it's VLAN ID.  The default configuration is to have VLAN's scope
+  *  to be box-wide, so the MAC will be ignored.  The mac will only be

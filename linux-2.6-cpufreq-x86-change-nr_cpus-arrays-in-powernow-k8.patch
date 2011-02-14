@@ -1,0 +1,140 @@
+From: Alex Chiang <achiang@redhat.com>
+Date: Wed, 23 Sep 2009 21:02:55 -0400
+Subject: [cpufreq] x86: change NR_CPUS arrays in powernow-k8
+Message-id: <20090923210255.GC30562@algore>
+Patchwork-id: 20949
+O-Subject: [RHEL 5.5 BZ523505 Patch 2/5] x86: change NR_CPUS arrays in
+	powernow-k8
+Bugzilla: 523505
+RH-Acked-by: Dave Jones <davej@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+This patch is mostly the following upstream commit. I had to
+make one small change because RHEL5 does not have upstream's
+c2d1cec1 (x86: cleanup remaining cpumask_t ops in smpboot code)
+which means we're still accessing cpu_core_map as a static array.
+
+	commit 2c6b8c030cfca334c3d700ee504036c585c4c6a3
+	Author: Mike Travis <travis@sgi.com>
+
+	x86: change NR_CPUS arrays in powernow-k8
+
+	Change the following static arrays sized by NR_CPUS to
+	per_cpu data variables:
+
+		powernow_k8_data *powernow_data[NR_CPUS];
+
+	Signed-off-by: Mike Travis <travis@sgi.com>
+	Reviewed-by: Christoph Lameter <clameter@sgi.com>
+	Signed-off-by: Ingo Molnar <mingo@elte.hu>
+	Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+
+However, the RHEL5 tree also has this commit:
+
+	commit 41a2e5033c0ed30fde75a81b0833c03d45a1da40
+	Author: Don Zickus <dzickus@redhat.com>
+
+	x86_64: opterons synchronize p-state using TSC
+
+So I patched the code introduced by 41a2e503 too.
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 43b8b57..57cd0a3 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -54,7 +54,7 @@
+ /* serialize freq changes  */
+ static DEFINE_MUTEX(fidvid_mutex);
+ 
+-static struct powernow_k8_data *powernow_data[NR_CPUS];
++static DEFINE_PER_CPU(struct powernow_k8_data *, powernow_data);
+ static int *req_state = NULL;
+ static int tscsync = 0;
+ 
+@@ -1071,9 +1071,9 @@ static int transition_frequency_fidvid(struct powernow_k8_data *data, unsigned i
+ 	}
+ 	if (tscsync) 
+ 		for_each_online_cpu(i)
+-			if (powernow_data[i]) {
+-				powernow_data[i]->currfid = data->currfid;
+-				powernow_data[i]->currvid = data->currvid;
++			if (per_cpu(powernow_data, i)) {
++				per_cpu(powernow_data, i)->currfid = data->currfid;
++				per_cpu(powernow_data, i)->currvid = data->currvid;
+ 			}
+ 	return res;
+ }
+@@ -1113,7 +1113,7 @@ static int transition_frequency_pstate(struct powernow_k8_data *data, unsigned i
+ static int powernowk8_target(struct cpufreq_policy *pol, unsigned targfreq, unsigned relation)
+ {
+ 	cpumask_t oldmask = CPU_MASK_ALL;
+-	struct powernow_k8_data *data = powernow_data[pol->cpu];
++	struct powernow_k8_data *data = per_cpu(powernow_data, pol->cpu);
+ 	u32 checkfid;
+ 	u32 checkvid;
+ 	unsigned int newstate;
+@@ -1188,7 +1188,7 @@ err_out:
+ /* Driver entry point to verify the policy and range of frequencies */
+ static int powernowk8_verify(struct cpufreq_policy *pol)
+ {
+-	struct powernow_k8_data *data = powernow_data[pol->cpu];
++	struct powernow_k8_data *data = per_cpu(powernow_data, pol->cpu);
+ 
+ 	if (!data)
+ 		return -EINVAL;
+@@ -1204,22 +1204,22 @@ static int powernowk8_verify(struct cpufreq_policy *pol)
+ static void sync_tables(int curcpu)
+ {
+ 	int j;
+-	for (j = 0; j < powernow_data[curcpu]->numps; j++) {
++	for (j = 0; j < per_cpu(powernow_data, curcpu)->numps; j++) {
+ 		int i;
+ 		int maxvid = 0;
+ 		for_each_online_cpu(i) {
+ 			int testvid;
+-			if (!powernow_data[i] || !powernow_data[i]->powernow_table)
++			if (!per_cpu(powernow_data, i) || !per_cpu(powernow_data, i)->powernow_table)
+ 				continue;
+-			testvid = powernow_data[i]->powernow_table[j].index & 0xff00;
++			testvid = per_cpu(powernow_data, i)->powernow_table[j].index & 0xff00;
+ 			if (testvid > maxvid)
+ 				maxvid = testvid;
+ 		}	
+ 		for_each_online_cpu(i) {
+-			if (!powernow_data[i] || ! powernow_data[i]->powernow_table)
++			if (!per_cpu(powernow_data, i) || !per_cpu(powernow_data, i)->powernow_table)
+ 				continue;
+-			powernow_data[i]->powernow_table[j].index &= 0xff;
+-			powernow_data[i]->powernow_table[j].index |= maxvid;
++			per_cpu(powernow_data, i)->powernow_table[j].index &= 0xff;
++			per_cpu(powernow_data, i)->powernow_table[j].index |= maxvid;
+ 		}
+ 	}
+ }
+@@ -1323,7 +1323,7 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ 		dprintk("cpu_init done, current fid 0x%x, vid 0x%x\n",
+ 			data->currfid, data->currvid);
+ 
+-	powernow_data[pol->cpu] = data;
++	per_cpu(powernow_data, pol->cpu) = data;
+ 
+ #ifdef CONFIG_SMP
+ 	if (tscsync && (cpu_family == CPU_OPTERON)) {
+@@ -1349,7 +1349,7 @@ err_out:
+ 
+ static int __devexit powernowk8_cpu_exit (struct cpufreq_policy *pol)
+ {
+-	struct powernow_k8_data *data = powernow_data[pol->cpu];
++	struct powernow_k8_data *data = per_cpu(powernow_data, pol->cpu);
+ 
+ 	if (!data)
+ 		return -EINVAL;
+@@ -1370,7 +1370,7 @@ static unsigned int powernowk8_get (unsigned int cpu)
+ 	cpumask_t oldmask = current->cpus_allowed;
+ 	unsigned int khz = 0;
+ 
+-	data = powernow_data[first_cpu(cpu_core_map[cpu])];
++	data = per_cpu(powernow_data, first_cpu(cpu_core_map[cpu]));
+ 
+ 	if (!data)
+ 		return -EINVAL;

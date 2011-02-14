@@ -1,0 +1,28 @@
+# HG changeset patch
+# User quintela@elfo.mitica
+# Node ID ed87076d010ee2f549658308cf2298fd888ba94a
+# Parent  7bad01eaf8f795b08be97187c9ed41891cca9bab
+crash xen bits
+
+diff -r 7bad01eaf8f7 -r ed87076d010e arch/i386/mm/init-xen.c
+--- a/arch/i386/mm/init-xen.c	Thu Jul 27 02:44:10 2006 +0200
++++ b/arch/i386/mm/init-xen.c	Thu Jul 27 02:50:45 2006 +0200
+@@ -275,6 +275,7 @@ int page_is_ram(unsigned long pagenr)
+ 	}
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(page_is_ram);
+ 
+ /*
+  * devmem_is_allowed() checks to see if /dev/mem access to a certain address is
+diff -r 7bad01eaf8f7 -r ed87076d010e arch/x86_64/mm/init-xen.c
+--- a/arch/x86_64/mm/init-xen.c	Thu Jul 27 02:44:10 2006 +0200
++++ b/arch/x86_64/mm/init-xen.c	Thu Jul 27 02:50:45 2006 +0200
+@@ -964,6 +964,7 @@ static inline int page_is_ram (unsigned 
+ {
+ 	return 1;
+ }
++EXPORT_SYMBOL_GPL(page_is_ram);
+ 
+ /*
+  * devmem_is_allowed() checks to see if /dev/mem access to a certain address is

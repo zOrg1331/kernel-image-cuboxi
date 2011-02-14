@@ -1,0 +1,73 @@
+From: Vivek Goyal <vgoyal@redhat.com>
+Subject: [PATCH][RHEL5] BZ#215417: x86_64: kdump mptable reservation fix on  unisys es7000 machines
+Date: Tue, 28 Nov 2006 14:17:36 -0500
+Bugzilla: 215417
+Message-Id: <456C8B50.5040305@redhat.com>
+Changelog: x86_64: kdump mptable reservation fix 
+
+
+Hi,
+
+This patch fixes a issue with kdump on unisys ES7000 machines. 
+Basically, on ES7000 machines, mptables are not located in first 640K 
+instead there are located somewhere too high in the memory (Because of 
+MP tables being too big, ~240K). Kernel tries to reserve that memory but 
+panics because second kernel boots from a very limited memory area and 
+does not even see that physical memory.
+
+This patch sorts of checks, if the pfn you trying to reserve, then give 
+a warning but continue.
+
+This patch is already upstream in 2.6.19-rc6. Patch was attached to the 
+bug by Amul Shah. I have just taken that patch and posting it here so 
+that RHEL5 kenrels can have it.
+
+Thanks
+Vivek
+
+
+
+Handle reserve_bootmem_generic beyond end_pfn
+
+This can happen on kexec kernels with some configurations, in particularly
+on Unisys ES7000 systems.
+
+Analysis by Amul Shah 
+
+Cc: Amul Shah <amul.shah@unisys.com>
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+---
+
+ arch/x86_64/mm/init.c |   15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff -puN arch/x86_64/mm/init.c~kdump_mptables_to_high_andikleen arch/x86_64/mm/init.c
+--- linux-2.6.18.x86_64-2747/arch/x86_64/mm/init.c~kdump_mptables_to_high_andikleen	2006-11-27 21:01:38.000000000 -0500
++++ linux-2.6.18.x86_64-2747-root/arch/x86_64/mm/init.c	2006-11-27 21:02:50.000000000 -0500
+@@ -754,9 +754,22 @@ void free_initrd_mem(unsigned long start
+ 
+ void __init reserve_bootmem_generic(unsigned long phys, unsigned len) 
+ { 
+-	/* Should check here against the e820 map to avoid double free */ 
+ #ifdef CONFIG_NUMA
+ 	int nid = phys_to_nid(phys);
++#endif
++	unsigned long pfn = phys >> PAGE_SHIFT;
++	if (pfn >= end_pfn) {
++		/* This can happen with kdump kernels when accessing firmware
++		   tables. */
++		if (pfn < end_pfn_map)
++			return;
++		printk(KERN_ERR "reserve_bootmem: illegal reserve %lx %u\n",
++				phys, len);
++		return;
++	}
++
++	/* Should check here against the e820 map to avoid double free */
++#ifdef CONFIG_NUMA
+   	reserve_bootmem_node(NODE_DATA(nid), phys, len);
+ #else       		
+ 	reserve_bootmem(phys, len);    
+_
+

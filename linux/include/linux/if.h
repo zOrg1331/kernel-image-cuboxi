@@ -24,7 +24,6 @@
 #include <linux/compiler.h>		/* for "__user" et al           */
 
 #define	IFNAMSIZ	16
-#define	IFALIASZ	256
 #include <linux/hdlc/ioctl.h>
 
 /* Standard interface flags (netdevice->flags). */
@@ -51,9 +50,7 @@
 #define IFF_LOWER_UP	0x10000		/* driver signals L1 up		*/
 #define IFF_DORMANT	0x20000		/* driver signals dormant	*/
 
-#define IFF_ECHO	0x40000		/* echo sent packets		*/
-
-#define IFF_VOLATILE	(IFF_LOOPBACK|IFF_POINTOPOINT|IFF_BROADCAST|IFF_ECHO|\
+#define IFF_VOLATILE	(IFF_LOOPBACK|IFF_POINTOPOINT|IFF_BROADCAST|\
 		IFF_MASTER|IFF_SLAVE|IFF_RUNNING|IFF_LOWER_UP|IFF_DORMANT)
 
 /* Private (from user) interface flags (netdevice->priv_flags). */
@@ -62,16 +59,6 @@
 #define IFF_SLAVE_INACTIVE	0x4	/* bonding slave not the curr. active */
 #define IFF_MASTER_8023AD	0x8	/* bonding master, 802.3ad. 	*/
 #define IFF_MASTER_ALB	0x10		/* bonding master, balance-alb.	*/
-#define IFF_BONDING	0x20		/* bonding master or slave	*/
-#define IFF_SLAVE_NEEDARP 0x40		/* need ARPs for validation	*/
-#define IFF_ISATAP	0x80		/* ISATAP interface (RFC4214)	*/
-#define IFF_MASTER_ARPMON 0x100		/* bonding master, ARP mon in use */
-#define IFF_WAN_HDLC	0x200		/* WAN HDLC device		*/
-#define IFF_XMIT_DST_RELEASE 0x400	/* dev_hard_start_xmit() is allowed to
-					 * release skb->dst
-					 */
-#define IFF_IN_NETPOLL 0x800		/* whether we are processing netpoll */
-#define IFF_DISABLE_NETPOLL    0x1000	/* disable netpoll at run-time */
 
 #define IF_GET_IFACE	0x0001		/* for querying only */
 #define IF_GET_PROTO	0x0002
@@ -224,5 +211,6 @@ struct ifconf
 };
 #define	ifc_buf	ifc_ifcu.ifcu_buf		/* buffer address	*/
 #define	ifc_req	ifc_ifcu.ifcu_req		/* array of structures	*/
+
 
 #endif /* _LINUX_IF_H */

@@ -1,0 +1,67 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 19 Nov 2009 22:29:09 -0500
+Subject: [fs] ecryptfs: copy lower attrs before dentry instantiate
+Message-id: <4B05C6B5.6060800@redhat.com>
+Patchwork-id: 21445
+O-Subject: [PATCH RHEL5.5] eCryptfs: Copy lower inode attrs before dentry
+	instantiation
+Bugzilla: 489774
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This is for
+https://bugzilla.redhat.com/show_bug.cgi?id=489774
+Bug 489774 - AVC denied 0x100000 for a directory with eCryptFS and Apache
+
+It's a straightforward upstream commit backport.
+
+Thanks,
+-Eric
+
+From: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Date: Thu, 12 Mar 2009 05:19:46 +0000 (-0500)
+Subject: eCryptfs: Copy lower inode attrs before dentry instantiation
+X-Git-Tag: v2.6.30-rc4~55^2~6
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=ae6e84596e7b321d9a08e81679c6a3f799634636
+
+eCryptfs: Copy lower inode attrs before dentry instantiation
+
+Copies the lower inode attributes to the upper inode before passing the
+upper inode to d_instantiate().  This is important for
+security_d_instantiate().
+
+The problem was discovered by a user seeing SELinux denials like so:
+
+type=AVC msg=audit(1236812817.898:47): avc:  denied  { 0x100000 } for
+pid=3584 comm="httpd" name="testdir" dev=ecryptfs ino=943872
+scontext=root:system_r:httpd_t:s0
+tcontext=root:object_r:httpd_sys_content_t:s0 tclass=file
+
+Notice target class is file while testdir is really a directory,
+confusing the permission translation (0x100000) due to the wrong i_mode.
+
+Signed-off-by: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index ff49fe1..c8af6cc 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -193,14 +193,14 @@ int ecryptfs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
+ 		init_special_inode(inode, lower_inode->i_mode,
+ 				   lower_inode->i_rdev);
+ 	dentry->d_op = &ecryptfs_dops;
+-	if (flags & ECRYPTFS_INTERPOSE_FLAG_D_ADD)
+-		d_add(dentry, inode);
+-	else
+-		d_instantiate(dentry, inode);
+ 	fsstack_copy_attr_all(inode, lower_inode, NULL);
+ 	/* This size will be overwritten for real files w/ headers and
+ 	 * other metadata */
+ 	fsstack_copy_inode_size(inode, lower_inode);
++	if (flags & ECRYPTFS_INTERPOSE_FLAG_D_ADD)
++		d_add(dentry, inode);
++	else
++		d_instantiate(dentry, inode);
+ out:
+ 	return rc;
+ }

@@ -82,7 +82,7 @@ static int AmiSetVolume(int volume);
 static int AmiSetTreble(int treble);
 static void AmiPlayNextFrame(int index);
 static void AmiPlay(void);
-static irqreturn_t AmiInterrupt(int irq, void *dummy);
+static irqreturn_t AmiInterrupt(int irq, void *dummy, struct pt_regs *fp);
 
 #ifdef CONFIG_HEARTBEAT
 
@@ -90,6 +90,10 @@ static irqreturn_t AmiInterrupt(int irq, void *dummy);
      *  Heartbeat interferes with sound since the 7 kHz low-pass filter and the
      *  power LED are controlled by the same line.
      */
+
+#ifdef CONFIG_APUS
+#define mach_heartbeat	ppc_md.heartbeat
+#endif
 
 static void (*saved_heartbeat)(int) = NULL;
 
@@ -552,7 +556,7 @@ static void AmiPlay(void)
 }
 
 
-static irqreturn_t AmiInterrupt(int irq, void *dummy)
+static irqreturn_t AmiInterrupt(int irq, void *dummy, struct pt_regs *fp)
 {
 	int minframes = 1;
 
@@ -710,7 +714,7 @@ static MACHINE machAmiga = {
 /*** Config & Setup **********************************************************/
 
 
-static int __init dmasound_paula_init(void)
+int __init dmasound_paula_init(void)
 {
 	int err;
 

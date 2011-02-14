@@ -10,6 +10,8 @@
  * Copyright 2006 Greg Ungerer <gerg@snapgear.com>
  */
 
+#include <linux/config.h>
+
 .global _start
 .global _buserr
 .global trap

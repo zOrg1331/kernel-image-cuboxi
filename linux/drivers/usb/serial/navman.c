@@ -6,10 +6,6 @@
  *	This program is free software; you can redistribute it and/or
  *	modify it under the terms of the GNU General Public License
  *	version 2 as published by the Free Software Foundation.
- *
- * TODO:
- *	Add termios method that uses copy_hw but also kills all echo
- *	flags as the navman is rx only so cannot echo.
  */
 
 #include <linux/kernel.h>
@@ -36,15 +32,14 @@ static struct usb_driver navman_driver = {
 	.no_dynamic_id = 	1,
 };
 
-static void navman_read_int_callback(struct urb *urb)
+static void navman_read_int_callback(struct urb *urb, struct pt_regs *regs)
 {
 	struct usb_serial_port *port = urb->context;
 	unsigned char *data = urb->transfer_buffer;
 	struct tty_struct *tty;
-	int status = urb->status;
 	int result;
 
-	switch (status) {
+	switch (urb->status) {
 	case 0:
 		/* success */
 		break;
@@ -53,66 +48,70 @@ static void navman_read_int_callback(struct urb *urb)
 	case -ESHUTDOWN:
 		/* this urb is terminated, clean up */
 		dbg("%s - urb shutting down with status: %d",
-		    __func__, status);
+		    __FUNCTION__, urb->status);
 		return;
 	default:
 		dbg("%s - nonzero urb status received: %d",
-		    __func__, status);
+		    __FUNCTION__, urb->status);
 		goto exit;
 	}
 
-	usb_serial_debug_data(debug, &port->dev, __func__,
+	usb_serial_debug_data(debug, &port->dev, __FUNCTION__,
 			      urb->actual_length, data);
 
-	tty = tty_port_tty_get(&port->port);
+	tty = port->tty;
 	if (tty && urb->actual_length) {
 		tty_buffer_request_room(tty, urb->actual_length);
 		tty_insert_flip_string(tty, data, urb->actual_length);
 		tty_flip_buffer_push(tty);
 	}
-	tty_kref_put(tty);
 
 exit:
 	result = usb_submit_urb(urb, GFP_ATOMIC);
 	if (result)
 		dev_err(&urb->dev->dev,
 			"%s - Error %d submitting interrupt urb\n",
-			__func__, result);
+			__FUNCTION__, result);
 }
 
-static int navman_open(struct tty_struct *tty, struct usb_serial_port *port)
+static int navman_open(struct usb_serial_port *port, struct file *filp)
 {
 	int result = 0;
 
-	dbg("%s - port %d", __func__, port->number);
+	dbg("%s - port %d", __FUNCTION__, port->number);
 
 	if (port->interrupt_in_urb) {
-		dbg("%s - adding interrupt input for treo", __func__);
+		dbg("%s - adding interrupt input for treo", __FUNCTION__);
 		result = usb_submit_urb(port->interrupt_in_urb, GFP_KERNEL);
 		if (result)
 			dev_err(&port->dev,
 				"%s - failed submitting interrupt urb, error %d\n",
-				__func__, result);
+				__FUNCTION__, result);
 	}
 	return result;
 }
 
-static void navman_close(struct usb_serial_port *port)
+static void navman_close(struct usb_serial_port *port, struct file *filp)
 {
-	dbg("%s - port %d", __func__, port->number);
+	dbg("%s - port %d", __FUNCTION__, port->number);
 
-	usb_kill_urb(port->interrupt_in_urb);
+	if (port->interrupt_in_urb)
+		usb_kill_urb(port->interrupt_in_urb);
 }
 
-static int navman_write(struct tty_struct *tty, struct usb_serial_port *port,
+static int navman_write(struct usb_serial_port *port,
 			const unsigned char *buf, int count)
 {
-	dbg("%s - port %d", __func__, port->number);
+	dbg("%s - port %d", __FUNCTION__, port->number);
 
 	/*
 	 * This device can't write any data, only read from the device
+	 * so we just silently eat all data sent to us and say it was
+	 * successfully sent.
+	 * Evil, I know, but do you have a better idea?
 	 */
-	return -EOPNOTSUPP;
+
+	return count;
 }
 
 static struct usb_serial_driver navman_device = {
@@ -121,7 +120,9 @@ static struct usb_serial_driver navman_device = {
 		.name =		"navman",
 	},
 	.id_table =		id_table,
-	.usb_driver =		&navman_driver,
+	.num_interrupt_in =	NUM_DONT_CARE,
+	.num_bulk_in =		NUM_DONT_CARE,
+	.num_bulk_out =		NUM_DONT_CARE,
 	.num_ports =		1,
 	.open =			navman_open,
 	.close = 		navman_close,

@@ -1,0 +1,45 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5.1 PATCH] - mqueue: nested locking annotation
+Date: Thu, 12 Apr 2007 10:27:23 -0500
+Bugzilla: NONE
+Message-Id: <461E4FDB.5080609@redhat.com>
+Changelog: [ipc] mqueue nested locking annotation
+
+
+For bug 235675, LSPP:  INFO: possible recursive locking detected
+
+Upstream already thanks to Peter.
+
+Thanks,
+-Eric
+
+X-Git-Tag: v2.6.21-rc3~40
+X-Git-Url: 
+http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=7a434814c7a6500b08bf4419ba8712b152d08d08
+
+[PATCH] mqueue: nested locking annotation
+
+Fix http://bugzilla.kernel.org/show_bug.cgi?id=8130
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+Index: linux-2.6.18-13.el5/ipc/mqueue.c
+===================================================================
+--- linux-2.6.18-13.el5.orig/ipc/mqueue.c
++++ linux-2.6.18-13.el5/ipc/mqueue.c
+@@ -729,7 +729,8 @@ asmlinkage long sys_mq_unlink(const char
+	if (IS_ERR(name))
+		return PTR_ERR(name);
+
+-	mutex_lock(&mqueue_mnt->mnt_root->d_inode->i_mutex);
++	mutex_lock_nested(&mqueue_mnt->mnt_root->d_inode->i_mutex,
++			I_MUTEX_PARENT);
+	dentry = lookup_one_len(name, mqueue_mnt->mnt_root, strlen(name));
+	if (IS_ERR(dentry)) {
+
+
+		err = PTR_ERR(dentry);
+

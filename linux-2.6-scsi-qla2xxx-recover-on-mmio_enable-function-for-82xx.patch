@@ -1,0 +1,44 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 3 Sep 2010 21:43:52 -0400
+Subject: [scsi] qla2xxx: recover on mmio_enable function for 82XX
+Message-id: <20100903214352.2831.42740.sendpatchset@localhost.localdomain>
+Patchwork-id: 28155
+O-Subject: [RHEL 5.6 PATCH 2/2] qla2xxx: AER Support-Return recovered from
+	mmio_enable function for 82XX.
+Bugzilla: 613134
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bugzilla
+--------
+
+Bug 613134 (https://bugzilla.redhat.com/show_bug.cgi?id=613134)
+
+Upstream Status
+---------------
+
+Will be submitted upstream as part of our next upstream submission.
+
+Description
+-----------
+
+>From 8b207d2d111cdc68d6b2bcf96e38407a76ea48f9 Mon Sep 17 00:00:00 2001
+From: Saurav Kashyap <saurav.kashyap@qlogic.com>
+Date: Thu, 26 Aug 2010 15:56:44 +0530
+Subject: [PATCH] qla2xxx: AER Support-Return recovered from mmio_enable function for 82XX.
+
+Return recovered from pci_mmio_enabled function if it is 82XX.
+
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 080bdf8..0d1438e 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -3695,6 +3695,9 @@ qla2xxx_pci_mmio_enabled(struct pci_dev *pdev)
+ 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+ 	struct device_reg_24xx __iomem *reg24 = &ha->iobase->isp24;
+ 
++	if (IS_QLA82XX(ha))
++		return PCI_ERS_RESULT_RECOVERED;
++
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	if (IS_QLA2100(ha) || IS_QLA2200(ha)){
+ 		stat = RD_REG_DWORD(&reg->hccr);

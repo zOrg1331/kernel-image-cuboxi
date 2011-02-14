@@ -1,0 +1,47 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 20 Feb 2008 17:16:57 -0500
+Subject: [x86] blacklist systems that need nommconf
+Message-id: 47BCA6D9.7030104@redhat.com
+O-Subject: Re: [RHEL 5 PATCH]: Blacklist Montpelier & Johannesburg Systems to disable mmconf
+Bugzilla: 433671
+
+RHGD requires that these two systems boot.  Currently, they only boot if
+pci=nommconf is specified on the command line.
+
+DMI match on the board names of these systems and automatically disable
+mmconf.
+
+Tested on the Montpelier & Johannesburg systems by me.
+
+Resolves BZ 433671.
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/pci/mmconfig.c b/arch/i386/pci/mmconfig.c
+index 3759775..e8da038 100644
+--- a/arch/i386/pci/mmconfig.c
++++ b/arch/i386/pci/mmconfig.c
+@@ -205,6 +205,22 @@ static struct dmi_system_id __devinitdata nommconf_dmi_table[] = {
+ 				"HP Compaq dc5700 Microtower"),
+ 		},
+ 	},
++	{
++		.callback = disable_mmconf,
++		.ident = "DQ35MPE",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME,
++				  "DQ35MPE"),
++		},
++	},
++	{
++		.callback = disable_mmconf,
++		.ident = "DQ35JO",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME,
++				  "DQ35JO"),
++		},
++	},
+ 
+ 	{}
+ };

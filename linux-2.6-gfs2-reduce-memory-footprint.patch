@@ -1,0 +1,819 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Tue, 5 Feb 2008 14:10:17 -0600
+Subject: [gfs2] reduce memory footprint
+Message-id: 1202242217.7223.7.camel@technetium.msp.redhat.com
+O-Subject: [RHEL5.2 PATCH][GFS2] bz 349271: GFS2: oom kill in large single node test
+Bugzilla: 349271
+
+Hi,
+
+This patch is for GFS2 bug #349271.  This patch combines several
+upstream patches designed to reduce the overall memory
+requirements of GFS2 file systems.  There are still some corner
+cases where we can recreate out-of-memory conditions, even with
+this patch, but those are now rare and have multiple circumventions.
+
+This was version tested on system "kool".
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index 0c0fe6c..677a6bb 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -1009,9 +1009,7 @@ static int trunc_end(struct gfs2_inode *ip)
+ 
+ 	if (!ip->i_di.di_size) {
+ 		ip->i_height = 0;
+-		ip->i_di.di_goal_meta =
+-			ip->i_di.di_goal_data =
+-			ip->i_no_addr;
++		ip->i_goal = ip->i_no_addr;
+ 		gfs2_buffer_clear_tail(dibh, sizeof(struct gfs2_dinode));
+ 	}
+ 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 12034ba..515b241 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -338,8 +338,6 @@ int gfs2_glock_get(struct gfs2_sbd *sdp, u64 number,
+ 	gl->gl_ip = 0;
+ 	gl->gl_ops = glops;
+ 	gl->gl_req_gh = NULL;
+-	gl->gl_req_bh = NULL;
+-	gl->gl_vn = 0;
+ 	gl->gl_stamp = jiffies;
+ 	gl->gl_tchange = jiffies;
+ 	gl->gl_object = NULL;
+@@ -606,11 +604,12 @@ static void run_queue(struct gfs2_glock *gl)
+ 			blocked = rq_mutex(gh);
+ 		} else if (test_bit(GLF_DEMOTE, &gl->gl_flags)) {
+ 			blocked = rq_demote(gl);
+-			if (gl->gl_waiters2 && !blocked) {
++			if (test_bit(GLF_WAITERS2, &gl->gl_flags) &&
++				     !blocked) {
+ 				set_bit(GLF_DEMOTE, &gl->gl_flags);
+ 				gl->gl_demote_state = LM_ST_UNLOCKED;
+ 			}
+-			gl->gl_waiters2 = 0;
++			clear_bit(GLF_WAITERS2, &gl->gl_flags);
+ 		} else if (!list_empty(&gl->gl_waiters3)) {
+ 			gh = list_entry(gl->gl_waiters3.next,
+ 					struct gfs2_holder, gh_list);
+@@ -722,7 +721,7 @@ static void handle_callback(struct gfs2_glock *gl, unsigned int state,
+ 	} else if (gl->gl_demote_state != LM_ST_UNLOCKED &&
+ 			gl->gl_demote_state != state) {
+ 		if (test_bit(GLF_DEMOTE_IN_PROGRESS,  &gl->gl_flags)) 
+-			gl->gl_waiters2 = 1;
++			set_bit(GLF_WAITERS2, &gl->gl_flags);
+ 		else 
+ 			gl->gl_demote_state = LM_ST_UNLOCKED;
+ 	}
+@@ -755,6 +754,50 @@ static void state_change(struct gfs2_glock *gl, unsigned int new_state)
+ }
+ 
+ /**
++ * drop_bh - Called after a lock module unlock completes
++ * @gl: the glock
++ * @ret: the return status
++ *
++ * Doesn't wake up the process waiting on the struct gfs2_holder (if any)
++ * Doesn't drop the reference on the glock the top half took out
++ *
++ */
++
++static void drop_bh(struct gfs2_glock *gl, unsigned int ret)
++{
++	struct gfs2_sbd *sdp = gl->gl_sbd;
++	const struct gfs2_glock_operations *glops = gl->gl_ops;
++	struct gfs2_holder *gh = gl->gl_req_gh;
++
++	gfs2_assert_warn(sdp, test_bit(GLF_LOCK, &gl->gl_flags));
++	gfs2_assert_warn(sdp, list_empty(&gl->gl_holders));
++	gfs2_assert_warn(sdp, !ret);
++
++	state_change(gl, LM_ST_UNLOCKED);
++
++	if (glops->go_inval)
++		glops->go_inval(gl, DIO_METADATA);
++
++	if (gh) {
++		spin_lock(&gl->gl_spin);
++		list_del_init(&gh->gh_list);
++		gh->gh_error = 0;
++		spin_unlock(&gl->gl_spin);
++	}
++
++	spin_lock(&gl->gl_spin);
++	gfs2_demote_wake(gl);
++	gl->gl_req_gh = NULL;
++	clear_bit(GLF_LOCK, &gl->gl_flags);
++	spin_unlock(&gl->gl_spin);
++
++	gfs2_glock_put(gl);
++
++	if (gh)
++		gfs2_holder_wake(gh);
++}
++
++/**
+  * xmote_bh - Called after the lock module is done acquiring a lock
+  * @gl: The glock in question
+  * @ret: the int returned from the lock module
+@@ -769,6 +812,11 @@ static void xmote_bh(struct gfs2_glock *gl, unsigned int ret)
+ 	int prev_state = gl->gl_state;
+ 	int op_done = 1;
+ 
++	if ((ret & LM_OUT_ST_MASK) == LM_ST_UNLOCKED) {
++		drop_bh(gl, ret);
++		return;
++	}
++
+ 	gfs2_assert_warn(sdp, test_bit(GLF_LOCK, &gl->gl_flags));
+ 	gfs2_assert_warn(sdp, list_empty(&gl->gl_holders));
+ 	gfs2_assert_warn(sdp, !(ret & LM_OUT_ASYNC));
+@@ -794,7 +842,6 @@ static void xmote_bh(struct gfs2_glock *gl, unsigned int ret)
+ 		} else {
+ 			spin_lock(&gl->gl_spin);
+ 			if (gl->gl_state != gl->gl_demote_state) {
+-				gl->gl_req_bh = NULL;
+ 				spin_unlock(&gl->gl_spin);
+ 				gfs2_glock_drop_th(gl);
+ 				gfs2_glock_put(gl);
+@@ -836,7 +883,6 @@ out:
+ 	if (op_done) {
+ 		spin_lock(&gl->gl_spin);
+ 		gl->gl_req_gh = NULL;
+-		gl->gl_req_bh = NULL;
+ 		clear_bit(GLF_LOCK, &gl->gl_flags);
+ 		spin_unlock(&gl->gl_spin);
+ 	}
+@@ -875,7 +921,6 @@ static void gfs2_glock_xmote_th(struct gfs2_glock *gl, struct gfs2_holder *gh)
+ 	gfs2_assert_warn(sdp, state != gl->gl_state);
+ 
+ 	gfs2_glock_hold(gl);
+-	gl->gl_req_bh = xmote_bh;
+ 
+ 	lck_ret = gfs2_lm_lock(sdp, gl->gl_lock, gl->gl_state, state, lck_flags);
+ 
+@@ -889,51 +934,6 @@ static void gfs2_glock_xmote_th(struct gfs2_glock *gl, struct gfs2_holder *gh)
+ }
+ 
+ /**
+- * drop_bh - Called after a lock module unlock completes
+- * @gl: the glock
+- * @ret: the return status
+- *
+- * Doesn't wake up the process waiting on the struct gfs2_holder (if any)
+- * Doesn't drop the reference on the glock the top half took out
+- *
+- */
+-
+-static void drop_bh(struct gfs2_glock *gl, unsigned int ret)
+-{
+-	struct gfs2_sbd *sdp = gl->gl_sbd;
+-	const struct gfs2_glock_operations *glops = gl->gl_ops;
+-	struct gfs2_holder *gh = gl->gl_req_gh;
+-
+-	gfs2_assert_warn(sdp, test_bit(GLF_LOCK, &gl->gl_flags));
+-	gfs2_assert_warn(sdp, list_empty(&gl->gl_holders));
+-	gfs2_assert_warn(sdp, !ret);
+-
+-	state_change(gl, LM_ST_UNLOCKED);
+-
+-	if (glops->go_inval)
+-		glops->go_inval(gl, DIO_METADATA);
+-
+-	if (gh) {
+-		spin_lock(&gl->gl_spin);
+-		list_del_init(&gh->gh_list);
+-		gh->gh_error = 0;
+-		spin_unlock(&gl->gl_spin);
+-	}
+-
+-	spin_lock(&gl->gl_spin);
+-	gfs2_demote_wake(gl);
+-	gl->gl_req_gh = NULL;
+-	gl->gl_req_bh = NULL;
+-	clear_bit(GLF_LOCK, &gl->gl_flags);
+-	spin_unlock(&gl->gl_spin);
+-
+-	gfs2_glock_put(gl);
+-
+-	if (gh)
+-		gfs2_holder_wake(gh);
+-}
+-
+-/**
+  * gfs2_glock_drop_th - call into the lock module to unlock a lock
+  * @gl: the glock
+  *
+@@ -953,7 +953,6 @@ static void gfs2_glock_drop_th(struct gfs2_glock *gl)
+ 	gfs2_assert_warn(sdp, gl->gl_state != LM_ST_UNLOCKED);
+ 
+ 	gfs2_glock_hold(gl);
+-	gl->gl_req_bh = drop_bh;
+ 
+ 	ret = gfs2_lm_unlock(sdp, gl->gl_lock, gl->gl_state);
+ 
+@@ -982,8 +981,7 @@ static void do_cancels(struct gfs2_holder *gh)
+ 	while (gl->gl_req_gh != gh &&
+ 	       !test_bit(HIF_HOLDER, &gh->gh_iflags) &&
+ 	       !list_empty(&gh->gh_list)) {
+-		if (gl->gl_req_bh && !(gl->gl_req_gh &&
+-				     (gl->gl_req_gh->gh_flags & GL_NOCANCEL))) {
++		if (!(gl->gl_req_gh && (gl->gl_req_gh->gh_flags & GL_NOCANCEL))) {
+ 			spin_unlock(&gl->gl_spin);
+ 			gfs2_lm_cancel(gl->gl_sbd, gl->gl_lock);
+ 			msleep(100);
+@@ -1053,7 +1051,6 @@ static int glock_wait_internal(struct gfs2_holder *gh)
+ 
+ 		spin_lock(&gl->gl_spin);
+ 		gl->gl_req_gh = NULL;
+-		gl->gl_req_bh = NULL;
+ 		clear_bit(GLF_LOCK, &gl->gl_flags);
+ 		run_queue(gl);
+ 		spin_unlock(&gl->gl_spin);
+@@ -1546,8 +1543,7 @@ void gfs2_glock_cb(void *cb_data, unsigned int type, void *data)
+ 		gl = gfs2_glock_find(sdp, &async->lc_name);
+ 		if (gfs2_assert_warn(sdp, gl))
+ 			return;
+-		if (!gfs2_assert_warn(sdp, gl->gl_req_bh))
+-			gl->gl_req_bh(gl, async->lc_ret);
++		xmote_bh(gl, async->lc_ret);
+ 		if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 			gfs2_glock_put(gl);
+ 		up_read(&gfs2_umount_flush_sem);
+@@ -1909,7 +1905,6 @@ static int dump_glock(struct glock_iter *gi, struct gfs2_glock *gl)
+ 		print_dbg(gi, "  gl_owner = -1\n");
+ 	print_dbg(gi, "  gl_ip = %lu\n", gl->gl_ip);
+ 	print_dbg(gi, "  req_gh = %s\n", (gl->gl_req_gh) ? "yes" : "no");
+-	print_dbg(gi, "  req_bh = %s\n", (gl->gl_req_bh) ? "yes" : "no");
+ 	print_dbg(gi, "  lvb_count = %d\n", atomic_read(&gl->gl_lvb_count));
+ 	print_dbg(gi, "  object = %s\n", (gl->gl_object) ? "yes" : "no");
+ 	print_dbg(gi, "  le = %s\n",
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 775b66f..563f026 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -152,7 +152,13 @@ static void meta_go_inval(struct gfs2_glock *gl, int flags)
+ 		return;
+ 
+ 	gfs2_meta_inval(gl);
+-	gl->gl_vn++;
++	if (gl->gl_object == GFS2_I(gl->gl_sbd->sd_rindex))
++		gl->gl_sbd->sd_rindex_uptodate = 0;
++	else if (gl->gl_ops == &gfs2_rgrp_glops && gl->gl_object) {
++		struct gfs2_rgrpd *rgd = (struct gfs2_rgrpd *)gl->gl_object;
++
++		rgd->rd_flags &= ~GFS2_RDF_UPTODATE;
++	}
+ }
+ 
+ /**
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index e193b23..a434e90 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -69,7 +69,6 @@ struct gfs2_bitmap {
+ };
+ 
+ struct gfs2_rgrp_host {
+-	u32 rg_flags;
+ 	u32 rg_free;
+ 	u32 rg_dinodes;
+ 	u64 rg_igeneration;
+@@ -86,17 +85,17 @@ struct gfs2_rgrpd {
+ 	u32 rd_data;			/* num of data blocks in rgrp */
+ 	u32 rd_bitbytes;		/* number of bytes in data bitmaps */
+ 	struct gfs2_rgrp_host rd_rg;
+-	u64 rd_rg_vn;
+ 	struct gfs2_bitmap *rd_bits;
+ 	unsigned int rd_bh_count;
+ 	struct mutex rd_mutex;
+ 	u32 rd_free_clone;
+ 	struct gfs2_log_element rd_le;
+-	u32 rd_last_alloc_data;
+-	u32 rd_last_alloc_meta;
++	u32 rd_last_alloc;
+ 	struct gfs2_sbd *rd_sbd;
+-	unsigned long rd_flags;
+-#define GFS2_RDF_CHECK        0x0001          /* Need to check for unlinked inodes */
++	unsigned char rd_flags;
++#define GFS2_RDF_CHECK        0x01      /* Need to check for unlinked inodes */
++#define GFS2_RDF_NOALLOC      0x02      /* rg prohibits allocation */
++#define GFS2_RDF_UPTODATE     0x04      /* rg is up to date */
+ };
+ 
+ enum gfs2_state_bits {
+@@ -170,6 +169,8 @@ enum {
+ 	GLF_PENDING_DEMOTE	= 4,
+ 	GLF_DIRTY		= 5,
+ 	GLF_DEMOTE_IN_PROGRESS	= 6,
++	GLF_LFLUSH              = 7,
++	GLF_WAITERS2            = 8,
+ };
+ 
+ struct gfs2_glock {
+@@ -189,18 +190,15 @@ struct gfs2_glock {
+ 	struct list_head gl_holders;
+ 	struct list_head gl_waiters1;	/* HIF_MUTEX */
+ 	struct list_head gl_waiters3;	/* HIF_PROMOTE */
+-	int gl_waiters2;		/* GIF_DEMOTE */
+ 
+ 	const struct gfs2_glock_operations *gl_ops;
+ 
+ 	struct gfs2_holder *gl_req_gh;
+-	gfs2_glop_bh_t gl_req_bh;
+ 
+ 	void *gl_lock;
+ 	char *gl_lvb;
+ 	atomic_t gl_lvb_count;
+ 
+-	u64 gl_vn;
+ 	unsigned long gl_stamp;
+ 	unsigned long gl_tchange;
+ 	void *gl_object;
+@@ -246,8 +244,6 @@ enum {
+ struct gfs2_dinode_host {
+ 	u64 di_size;		/* number of bytes in file */
+ 	u64 di_blocks;		/* number of blocks in file */
+-	u64 di_goal_meta;	/* rgrp to alloc from next */
+-	u64 di_goal_data;	/* data block goal */
+ 	u64 di_generation;	/* generation number for NFS */
+ 	u32 di_flags;		/* GFS2_DIF_... */
+ 	/* These only apply to directories  */
+@@ -268,8 +264,7 @@ struct gfs2_inode {
+ 	struct gfs2_holder i_iopen_gh;
+ 	struct gfs2_holder i_gh; /* for prepare/commit_write only */
+ 	struct gfs2_alloc *i_alloc;
+-	u64 i_last_rg_alloc;
+-
++	u64 i_goal;	/* goal block for allocations */
+ 	struct rw_semaphore i_rw_mutex;
+ 	u8 i_height;
+ };
+@@ -549,7 +544,7 @@ struct gfs2_sbd {
+ 
+ 	/* Resource group stuff */
+ 
+-	u64 sd_rindex_vn;
++	int sd_rindex_uptodate;
+ 	spinlock_t sd_rindex_spin;
+ 	struct mutex sd_rindex_mutex;
+ 	struct list_head sd_rindex_list;
+@@ -655,9 +650,6 @@ struct gfs2_sbd {
+ 
+ 	/* Counters */
+ 
+-	atomic_t sd_glock_count;
+-	atomic_t sd_glock_held_count;
+-	atomic_t sd_inode_count;
+ 	atomic_t sd_reclaimed;
+ 
+ 	char sd_fsname[GFS2_FSNAME_LEN];
+diff --git a/fs/gfs2/inode.c b/fs/gfs2/inode.c
+index 8ff4b78..948baeb 100644
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -283,8 +283,7 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
+ 	ip->i_inode.i_ctime.tv_sec = be64_to_cpu(str->di_ctime);
+ 	ip->i_inode.i_ctime.tv_nsec = be32_to_cpu(str->di_ctime_nsec);
+ 
+-	di->di_goal_meta = be64_to_cpu(str->di_goal_meta);
+-	di->di_goal_data = be64_to_cpu(str->di_goal_data);
++	ip->i_goal = be64_to_cpu(str->di_goal_meta);
+ 	di->di_generation = be64_to_cpu(str->di_generation);
+ 
+ 	di->di_flags = be32_to_cpu(str->di_flags);
+@@ -1401,8 +1400,8 @@ void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
+ 	str->di_mtime = cpu_to_be64(ip->i_inode.i_mtime.tv_sec);
+ 	str->di_ctime = cpu_to_be64(ip->i_inode.i_ctime.tv_sec);
+ 
+-	str->di_goal_meta = cpu_to_be64(di->di_goal_meta);
+-	str->di_goal_data = cpu_to_be64(di->di_goal_data);
++	str->di_goal_meta = cpu_to_be64(ip->i_goal);
++	str->di_goal_data = cpu_to_be64(ip->i_goal);
+ 	str->di_generation = cpu_to_be64(di->di_generation);
+ 
+ 	str->di_flags = cpu_to_be32(di->di_flags);
+@@ -1430,10 +1429,8 @@ void gfs2_dinode_print(const struct gfs2_inode *ip)
+ 	printk(KERN_INFO "  di_size = %llu\n", (unsigned long long)di->di_size);
+ 	printk(KERN_INFO "  di_blocks = %llu\n",
+ 	       (unsigned long long)di->di_blocks);
+-	printk(KERN_INFO "  di_goal_meta = %llu\n",
+-	       (unsigned long long)di->di_goal_meta);
+-	printk(KERN_INFO "  di_goal_data = %llu\n",
+-	       (unsigned long long)di->di_goal_data);
++	printk(KERN_INFO "  i_goal = %llu\n",
++	       (unsigned long long)ip->i_goal);
+ 	printk(KERN_INFO "  di_flags = 0x%.8X\n", di->di_flags);
+ 	printk(KERN_INFO "  i_height = %u\n", ip->i_height);
+ 	printk(KERN_INFO "  di_depth = %u\n", di->di_depth);
+diff --git a/fs/gfs2/lops.c b/fs/gfs2/lops.c
+index f328092..20170eb 100644
+--- a/fs/gfs2/lops.c
++++ b/fs/gfs2/lops.c
+@@ -445,8 +445,10 @@ static int revoke_lo_scan_elements(struct gfs2_jdesc *jd, unsigned int start,
+ 			blkno = be64_to_cpu(*(__be64 *)(bh->b_data + offset));
+ 
+ 			error = gfs2_revoke_add(sdp, blkno, start);
+-			if (error < 0)
++			if (error < 0) {
++				brelse(bh);
+ 				return error;
++			}
+ 			else if (error)
+ 				sdp->sd_found_revokes++;
+ 
+diff --git a/fs/gfs2/main.c b/fs/gfs2/main.c
+index 1674a1c..1d6c85b 100644
+--- a/fs/gfs2/main.c
++++ b/fs/gfs2/main.c
+@@ -93,6 +93,12 @@ static int __init init_gfs2_fs(void)
+ 	if (!gfs2_bufdata_cachep)
+ 		goto fail;
+ 
++	gfs2_rgrpd_cachep = kmem_cache_create("gfs2_rgrpd",
++					      sizeof(struct gfs2_rgrpd),
++					      0, 0, NULL, NULL);
++	if (!gfs2_rgrpd_cachep)
++		goto fail;
++
+ 	error = register_filesystem(&gfs2_fs_type);
+ 	if (error)
+ 		goto fail;
+@@ -112,6 +118,9 @@ fail_unregister:
+ fail:
+ 	gfs2_glock_exit();
+ 
++	if (gfs2_rgrpd_cachep)
++		kmem_cache_destroy(gfs2_rgrpd_cachep);
++
+ 	if (gfs2_bufdata_cachep)
+ 		kmem_cache_destroy(gfs2_bufdata_cachep);
+ 
+@@ -137,6 +146,7 @@ static void __exit exit_gfs2_fs(void)
+ 	unregister_filesystem(&gfs2_fs_type);
+ 	unregister_filesystem(&gfs2meta_fs_type);
+ 
++	kmem_cache_destroy(gfs2_rgrpd_cachep);
+ 	kmem_cache_destroy(gfs2_bufdata_cachep);
+ 	kmem_cache_destroy(gfs2_inode_cachep);
+ 	kmem_cache_destroy(gfs2_glock_cachep);
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index 6847479..b0ed5c8 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -541,7 +541,7 @@ static int init_inodes(struct gfs2_sbd *sdp, int undo)
+ 	}
+ 	ip = GFS2_I(sdp->sd_rindex);
+ 	set_bit(GLF_STICKY, &ip->i_gl->gl_flags);
+-	sdp->sd_rindex_vn = ip->i_gl->gl_vn - 1;
++	sdp->sd_rindex_uptodate = 0;
+ 
+ 	/* Read in the quota inode */
+ 	sdp->sd_quota_inode = gfs2_lookup_simple(sdp->sd_master_dir, "quota");
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index c47db94..f390803 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -353,7 +353,7 @@ static void clear_rgrpdi(struct gfs2_sbd *sdp)
+ 		}
+ 
+ 		kfree(rgd->rd_bits);
+-		kfree(rgd);
++		kmem_cache_free(gfs2_rgrpd_cachep, rgd);
+ 	}
+ }
+ 
+@@ -516,7 +516,7 @@ static int read_rindex_entry(struct gfs2_inode *ip,
+ 		return error;
+ 	}
+ 
+-	rgd = kzalloc(sizeof(struct gfs2_rgrpd), GFP_NOFS);
++	rgd = kmem_cache_zalloc(gfs2_rgrpd_cachep, GFP_NOFS);
+ 	error = -ENOMEM;
+ 	if (!rgd)
+ 		return error;
+@@ -539,7 +539,7 @@ static int read_rindex_entry(struct gfs2_inode *ip,
+ 		return error;
+ 
+ 	rgd->rd_gl->gl_object = rgd;
+-	rgd->rd_rg_vn = rgd->rd_gl->gl_vn - 1;
++	rgd->rd_flags &= ~GFS2_RDF_UPTODATE;
+ 	rgd->rd_flags |= GFS2_RDF_CHECK;
+ 	return error;
+ }
+@@ -575,7 +575,7 @@ static int gfs2_ri_update(struct gfs2_inode *ip)
+ 		}
+ 	}
+ 
+-	sdp->sd_rindex_vn = ip->i_gl->gl_vn;
++	sdp->sd_rindex_uptodate = 1;
+ 	return 0;
+ }
+ 
+@@ -609,7 +609,7 @@ static int gfs2_ri_update_special(struct gfs2_inode *ip)
+ 		}
+ 	}
+ 
+-	sdp->sd_rindex_vn = ip->i_gl->gl_vn;
++	sdp->sd_rindex_uptodate = 1;
+ 	return 0;
+ }
+ 
+@@ -642,9 +642,9 @@ int gfs2_rindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ri_gh)
+ 		return error;
+ 
+ 	/* Read new copy from disk if we don't have the latest */
+-	if (sdp->sd_rindex_vn != gl->gl_vn) {
++	if (!sdp->sd_rindex_uptodate) {
+ 		mutex_lock(&sdp->sd_rindex_mutex);
+-		if (sdp->sd_rindex_vn != gl->gl_vn) {
++		if (!sdp->sd_rindex_uptodate) {
+ 			error = gfs2_ri_update(ip);
+ 			if (error)
+ 				gfs2_glock_dq_uninit(ri_gh);
+@@ -655,21 +655,31 @@ int gfs2_rindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ri_gh)
+ 	return error;
+ }
+ 
+-static void gfs2_rgrp_in(struct gfs2_rgrp_host *rg, const void *buf)
++static void gfs2_rgrp_in(struct gfs2_rgrpd *rgd, const void *buf)
+ {
+ 	const struct gfs2_rgrp *str = buf;
++	struct gfs2_rgrp_host *rg = &rgd->rd_rg;
++	u32 rg_flags;
+ 
+-	rg->rg_flags = be32_to_cpu(str->rg_flags);
++	rg_flags = be32_to_cpu(str->rg_flags);
++	if (rg_flags & GFS2_RGF_NOALLOC)
++		rgd->rd_flags |= GFS2_RDF_NOALLOC;
++	else
++		rgd->rd_flags &= ~GFS2_RDF_NOALLOC;
+ 	rg->rg_free = be32_to_cpu(str->rg_free);
+ 	rg->rg_dinodes = be32_to_cpu(str->rg_dinodes);
+ 	rg->rg_igeneration = be64_to_cpu(str->rg_igeneration);
+ }
+ 
+-static void gfs2_rgrp_out(const struct gfs2_rgrp_host *rg, void *buf)
++static void gfs2_rgrp_out(struct gfs2_rgrpd *rgd, void *buf)
+ {
+ 	struct gfs2_rgrp *str = buf;
++	struct gfs2_rgrp_host *rg = &rgd->rd_rg;
++	u32 rg_flags = 0;
+ 
+-	str->rg_flags = cpu_to_be32(rg->rg_flags);
++	if (rgd->rd_flags & GFS2_RDF_NOALLOC)
++		rg_flags |= GFS2_RGF_NOALLOC;
++	str->rg_flags = cpu_to_be32(rg_flags);
+ 	str->rg_free = cpu_to_be32(rg->rg_free);
+ 	str->rg_dinodes = cpu_to_be32(rg->rg_dinodes);
+ 	str->__pad = cpu_to_be32(0);
+@@ -726,9 +736,9 @@ int gfs2_rgrp_bh_get(struct gfs2_rgrpd *rgd)
+ 		}
+ 	}
+ 
+-	if (rgd->rd_rg_vn != gl->gl_vn) {
+-		gfs2_rgrp_in(&rgd->rd_rg, (rgd->rd_bits[0].bi_bh)->b_data);
+-		rgd->rd_rg_vn = gl->gl_vn;
++	if (!(rgd->rd_flags & GFS2_RDF_UPTODATE)) {
++		gfs2_rgrp_in(rgd, (rgd->rd_bits[0].bi_bh)->b_data);
++		rgd->rd_flags |= GFS2_RDF_UPTODATE;
+ 	}
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+@@ -840,7 +850,7 @@ static int try_rgrp_fit(struct gfs2_rgrpd *rgd, struct gfs2_alloc *al)
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 	int ret = 0;
+ 
+-	if (rgd->rd_rg.rg_flags & GFS2_RGF_NOALLOC)
++	if (rgd->rd_flags & GFS2_RDF_NOALLOC)
+ 		return 0;
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+@@ -904,24 +914,20 @@ static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked)
+ static struct gfs2_rgrpd *recent_rgrp_first(struct gfs2_sbd *sdp,
+ 					    u64 rglast)
+ {
+-	struct gfs2_rgrpd *rgd = NULL;
++	struct gfs2_rgrpd *rgd;
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 
+-	if (list_empty(&sdp->sd_rindex_recent_list))
+-		goto out;
+-
+-	if (!rglast)
+-		goto first;
+-
+-	list_for_each_entry(rgd, &sdp->sd_rindex_recent_list, rd_recent) {
+-		if (rgd->rd_addr == rglast)
+-			goto out;
++	if (rglast) {
++		list_for_each_entry(rgd, &sdp->sd_rindex_recent_list, rd_recent) {
++			if (rgrp_contains_block(rgd, rglast))
++				goto out;
++		}
+ 	}
+-
+-first:
+-	rgd = list_entry(sdp->sd_rindex_recent_list.next, struct gfs2_rgrpd,
+-			 rd_recent);
++	rgd = NULL;
++	if (!list_empty(&sdp->sd_rindex_recent_list))
++		rgd = list_entry(sdp->sd_rindex_recent_list.next,
++				 struct gfs2_rgrpd, rd_recent);
+ out:
+ 	spin_unlock(&sdp->sd_rindex_spin);
+ 	return rgd;
+@@ -1067,7 +1073,7 @@ static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 
+ 	/* Try recently successful rgrps */
+ 
+-	rgd = recent_rgrp_first(sdp, ip->i_last_rg_alloc);
++	rgd = recent_rgrp_first(sdp, ip->i_goal);
+ 
+ 	while (rgd) {
+ 		rg_locked = 0;
+@@ -1151,8 +1157,6 @@ static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 	}
+ 
+ out:
+-	ip->i_last_rg_alloc = rgd->rd_addr;
+-
+ 	if (begin) {
+ 		recent_rgrp_add(rgd);
+ 		rgd = gfs2_rgrpd_get_next(rgd);
+@@ -1415,23 +1419,23 @@ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ 	u32 goal, blk;
+ 	u64 block;
+ 
+-	if (rgrp_contains_block(rgd, ip->i_di.di_goal_data))
+-		goal = ip->i_di.di_goal_data - rgd->rd_data0;
++	if (rgrp_contains_block(rgd, ip->i_goal))
++		goal = ip->i_goal - rgd->rd_data0;
+ 	else
+-		goal = rgd->rd_last_alloc_data;
++		goal = rgd->rd_last_alloc;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
+ 	BUG_ON(blk == BFITNOENT);
+-	rgd->rd_last_alloc_data = blk;
++	rgd->rd_last_alloc = blk;
+ 
+ 	block = rgd->rd_data0 + blk;
+-	ip->i_di.di_goal_data = block;
++	ip->i_goal = block;
+ 
+ 	gfs2_assert_withdraw(sdp, rgd->rd_rg.rg_free);
+ 	rgd->rd_rg.rg_free--;
+ 
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	al->al_alloced++;
+ 
+@@ -1460,23 +1464,23 @@ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ 	u32 goal, blk;
+ 	u64 block;
+ 
+-	if (rgrp_contains_block(rgd, ip->i_di.di_goal_meta))
+-		goal = ip->i_di.di_goal_meta - rgd->rd_data0;
++	if (rgrp_contains_block(rgd, ip->i_goal))
++		goal = ip->i_goal - rgd->rd_data0;
+ 	else
+-		goal = rgd->rd_last_alloc_meta;
++		goal = rgd->rd_last_alloc;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
+ 	BUG_ON(blk == BFITNOENT);
+-	rgd->rd_last_alloc_meta = blk;
++	rgd->rd_last_alloc = blk;
+ 
+ 	block = rgd->rd_data0 + blk;
+-	ip->i_di.di_goal_meta = block;
++	ip->i_goal = block;
+ 
+ 	gfs2_assert_withdraw(sdp, rgd->rd_rg.rg_free);
+ 	rgd->rd_rg.rg_free--;
+ 
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	al->al_alloced++;
+ 
+@@ -1506,11 +1510,11 @@ u64 gfs2_alloc_di(struct gfs2_inode *dip, u64 *generation)
+ 	u32 blk;
+ 	u64 block;
+ 
+-	blk = rgblk_search(rgd, rgd->rd_last_alloc_meta,
++	blk = rgblk_search(rgd, rgd->rd_last_alloc,
+ 			   GFS2_BLKST_FREE, GFS2_BLKST_DINODE);
+ 	BUG_ON(blk == BFITNOENT);
+ 
+-	rgd->rd_last_alloc_meta = blk;
++	rgd->rd_last_alloc = blk;
+ 
+ 	block = rgd->rd_data0 + blk;
+ 
+@@ -1519,7 +1523,7 @@ u64 gfs2_alloc_di(struct gfs2_inode *dip, u64 *generation)
+ 	rgd->rd_rg.rg_dinodes++;
+ 	*generation = rgd->rd_rg.rg_igeneration++;
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	al->al_alloced++;
+ 
+@@ -1553,7 +1557,7 @@ void gfs2_free_data(struct gfs2_inode *ip, u64 bstart, u32 blen)
+ 	rgd->rd_rg.rg_free += blen;
+ 
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	gfs2_trans_add_rg(rgd);
+ 
+@@ -1581,7 +1585,7 @@ void gfs2_free_meta(struct gfs2_inode *ip, u64 bstart, u32 blen)
+ 	rgd->rd_rg.rg_free += blen;
+ 
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	gfs2_trans_add_rg(rgd);
+ 
+@@ -1601,7 +1605,7 @@ void gfs2_unlink_di(struct inode *inode)
+ 	if (!rgd)
+ 		return;
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 	gfs2_trans_add_rg(rgd);
+ }
+ 
+@@ -1621,7 +1625,7 @@ static void gfs2_free_uninit_di(struct gfs2_rgrpd *rgd, u64 blkno)
+ 	rgd->rd_rg.rg_free++;
+ 
+ 	gfs2_trans_add_bh(rgd->rd_gl, rgd->rd_bits[0].bi_bh, 1);
+-	gfs2_rgrp_out(&rgd->rd_rg, rgd->rd_bits[0].bi_bh->b_data);
++	gfs2_rgrp_out(rgd, rgd->rd_bits[0].bi_bh->b_data);
+ 
+ 	gfs2_statfs_change(sdp, 0, +1, -1);
+ 	gfs2_trans_add_rg(rgd);
+diff --git a/fs/gfs2/sys.c b/fs/gfs2/sys.c
+index 0f9ebf2..e0eacef 100644
+--- a/fs/gfs2/sys.c
++++ b/fs/gfs2/sys.c
+@@ -332,15 +332,9 @@ static ssize_t name##_show(struct gfs2_sbd *sdp, char *buf)                 \
+ }                                                                           \
+ static struct counters_attr counters_attr_##name = __ATTR_RO(name)
+ 
+-COUNTERS_ATTR(glock_count,      "%u\n");
+-COUNTERS_ATTR(glock_held_count, "%u\n");
+-COUNTERS_ATTR(inode_count,      "%u\n");
+ COUNTERS_ATTR(reclaimed,        "%u\n");
+ 
+ static struct attribute *counters_attrs[] = {
+-	&counters_attr_glock_count.attr,
+-	&counters_attr_glock_held_count.attr,
+-	&counters_attr_inode_count.attr,
+ 	&counters_attr_reclaimed.attr,
+ 	NULL,
+ };
+diff --git a/fs/gfs2/util.c b/fs/gfs2/util.c
+index 424a077..fe9c28e 100644
+--- a/fs/gfs2/util.c
++++ b/fs/gfs2/util.c
+@@ -25,6 +25,7 @@
+ struct kmem_cache *gfs2_glock_cachep __read_mostly;
+ struct kmem_cache *gfs2_inode_cachep __read_mostly;
+ struct kmem_cache *gfs2_bufdata_cachep __read_mostly;
++struct kmem_cache *gfs2_rgrpd_cachep __read_mostly;
+ 
+ void gfs2_assert_i(struct gfs2_sbd *sdp)
+ {
+diff --git a/fs/gfs2/util.h b/fs/gfs2/util.h
+index 28938a4..ac0c567 100644
+--- a/fs/gfs2/util.h
++++ b/fs/gfs2/util.h
+@@ -147,6 +147,7 @@ gfs2_io_error_bh_i((sdp), (bh), __FUNCTION__, __FILE__, __LINE__);
+ extern struct kmem_cache *gfs2_glock_cachep;
+ extern struct kmem_cache *gfs2_inode_cachep;
+ extern struct kmem_cache *gfs2_bufdata_cachep;
++extern struct kmem_cache *gfs2_rgrpd_cachep;
+ 
+ static inline unsigned int gfs2_tune_get_i(struct gfs2_tune *gt,
+ 					   unsigned int *p)

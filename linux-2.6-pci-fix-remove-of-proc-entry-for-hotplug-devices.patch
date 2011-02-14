@@ -1,0 +1,39 @@
+From: Wade Mealing <wmealing@redhat.com>
+Date: Mon, 26 Jul 2010 07:42:49 -0400
+Subject: [pci] fix remove of proc entry for hotplug devices
+Message-id: <1280130169-10728-1-git-send-email-wmealing@redhat.com>
+Patchwork-id: 27088
+O-Subject: [PATCH] [RHEL 5.5] BZ 618114 - remove proc entry for hotplug devices,
+	ignoring use count.
+Bugzilla: 618114
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+The /proc/bus/pci/xx/yy is not removed when the device is hot removed
+if the file is open.  Reading the file after the device is removed
+causes a kernel panic.
+
+Because the pci_proc_detach_device() doesn't call remove_proc_entry()
+if struct proc_dir_entry->count > 1, access to /proc/bus/pci/XX/YY
+would refer to struct pci_dev that was already freed.
+
+Though I don't know why the check for proc_dir_entry->count was added,
+I don't think it is needed. Removing this check fixes the problem.
+
+This is a backport of the patch from https://patchwork.kernel.org/patch/107556/
+which has been accepted and applied to the linux-next tree.
+
+diff --git a/drivers/pci/proc.c b/drivers/pci/proc.c
+index 99cf333..d515093 100644
+--- a/drivers/pci/proc.c
++++ b/drivers/pci/proc.c
+@@ -417,8 +417,6 @@ int pci_proc_detach_device(struct pci_dev *dev)
+ 	struct proc_dir_entry *e;
+ 
+ 	if ((e = dev->procent)) {
+-		if (atomic_read(&e->count))
+-			return -EBUSY;
+ 		remove_proc_entry(e->name, dev->bus->procdir);
+ 		dev->procent = NULL;
+ 	}

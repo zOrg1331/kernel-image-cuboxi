@@ -8,6 +8,7 @@
 
 #include <linux/types.h>
 #include <linux/sched.h>
+#include <linux/utsname.h>
 #include <linux/nfs.h>
 
 #include <linux/sunrpc/xdr.h>
@@ -15,6 +16,7 @@
 #include <linux/sunrpc/svc.h>
 #include <linux/sunrpc/stats.h>
 #include <linux/lockd/lockd.h>
+#include <linux/lockd/sm_inter.h>
 
 #define NLMDBG_FACILITY		NLMDBG_XDR
 
@@ -41,7 +43,7 @@ loff_t_to_s32(loff_t offset)
 /*
  * XDR functions for basic NLM types
  */
-static __be32 *nlm_decode_cookie(__be32 *p, struct nlm_cookie *c)
+static u32 *nlm_decode_cookie(u32 *p, struct nlm_cookie *c)
 {
 	unsigned int	len;
 
@@ -60,16 +62,15 @@ static __be32 *nlm_decode_cookie(__be32 *p, struct nlm_cookie *c)
 	}
 	else 
 	{
-		dprintk("lockd: bad cookie size %d (only cookies under "
-			"%d bytes are supported.)\n",
-				len, NLM_MAXCOOKIELEN);
+		printk(KERN_NOTICE
+			"lockd: bad cookie size %d (only cookies under %d bytes are supported.)\n", len, NLM_MAXCOOKIELEN);
 		return NULL;
 	}
 	return p;
 }
 
-static inline __be32 *
-nlm_encode_cookie(__be32 *p, struct nlm_cookie *c)
+static inline u32 *
+nlm_encode_cookie(u32 *p, struct nlm_cookie *c)
 {
 	*p++ = htonl(c->len);
 	memcpy(p, c->data, c->len);
@@ -77,13 +78,14 @@ nlm_encode_cookie(__be32 *p, struct nlm_cookie *c)
 	return p;
 }
 
-static __be32 *
-nlm_decode_fh(__be32 *p, struct nfs_fh *f)
+static u32 *
+nlm_decode_fh(u32 *p, struct nfs_fh *f)
 {
 	unsigned int	len;
 
 	if ((len = ntohl(*p++)) != NFS2_FHSIZE) {
-		dprintk("lockd: bad fhandle size %d (should be %d)\n",
+		printk(KERN_NOTICE
+			"lockd: bad fhandle size %d (should be %d)\n",
 			len, NFS2_FHSIZE);
 		return NULL;
 	}
@@ -93,8 +95,8 @@ nlm_decode_fh(__be32 *p, struct nfs_fh *f)
 	return p + XDR_QUADLEN(NFS2_FHSIZE);
 }
 
-static inline __be32 *
-nlm_encode_fh(__be32 *p, struct nfs_fh *f)
+static inline u32 *
+nlm_encode_fh(u32 *p, struct nfs_fh *f)
 {
 	*p++ = htonl(NFS2_FHSIZE);
 	memcpy(p, f->data, NFS2_FHSIZE);
@@ -104,20 +106,20 @@ nlm_encode_fh(__be32 *p, struct nfs_fh *f)
 /*
  * Encode and decode owner handle
  */
-static inline __be32 *
-nlm_decode_oh(__be32 *p, struct xdr_netobj *oh)
+static inline u32 *
+nlm_decode_oh(u32 *p, struct xdr_netobj *oh)
 {
 	return xdr_decode_netobj(p, oh);
 }
 
-static inline __be32 *
-nlm_encode_oh(__be32 *p, struct xdr_netobj *oh)
+static inline u32 *
+nlm_encode_oh(u32 *p, struct xdr_netobj *oh)
 {
 	return xdr_encode_netobj(p, oh);
 }
 
-static __be32 *
-nlm_decode_lock(__be32 *p, struct nlm_lock *lock)
+static u32 *
+nlm_decode_lock(u32 *p, struct nlm_lock *lock)
 {
 	struct file_lock	*fl = &lock->fl;
 	s32			start, len, end;
@@ -151,8 +153,8 @@ nlm_decode_lock(__be32 *p, struct nlm_lock *lock)
 /*
  * Encode a lock as part of an NLM call
  */
-static __be32 *
-nlm_encode_lock(__be32 *p, struct nlm_lock *lock)
+static u32 *
+nlm_encode_lock(u32 *p, struct nlm_lock *lock)
 {
 	struct file_lock	*fl = &lock->fl;
 	__s32			start, len;
@@ -182,8 +184,8 @@ nlm_encode_lock(__be32 *p, struct nlm_lock *lock)
 /*
  * Encode result of a TEST/TEST_MSG call
  */
-static __be32 *
-nlm_encode_testres(__be32 *p, struct nlm_res *resp)
+static u32 *
+nlm_encode_testres(u32 *p, struct nlm_res *resp)
 {
 	s32		start, len;
 
@@ -219,7 +221,7 @@ nlm_encode_testres(__be32 *p, struct nlm_res *resp)
  * First, the server side XDR functions
  */
 int
-nlmsvc_decode_testargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
+nlmsvc_decode_testargs(struct svc_rqst *rqstp, u32 *p, nlm_args *argp)
 {
 	u32	exclusive;
 
@@ -236,7 +238,7 @@ nlmsvc_decode_testargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
 }
 
 int
-nlmsvc_encode_testres(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
+nlmsvc_encode_testres(struct svc_rqst *rqstp, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_encode_testres(p, resp)))
 		return 0;
@@ -244,7 +246,7 @@ nlmsvc_encode_testres(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
 }
 
 int
-nlmsvc_decode_lockargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
+nlmsvc_decode_lockargs(struct svc_rqst *rqstp, u32 *p, nlm_args *argp)
 {
 	u32	exclusive;
 
@@ -264,7 +266,7 @@ nlmsvc_decode_lockargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
 }
 
 int
-nlmsvc_decode_cancargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
+nlmsvc_decode_cancargs(struct svc_rqst *rqstp, u32 *p, nlm_args *argp)
 {
 	u32	exclusive;
 
@@ -280,7 +282,7 @@ nlmsvc_decode_cancargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
 }
 
 int
-nlmsvc_decode_unlockargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
+nlmsvc_decode_unlockargs(struct svc_rqst *rqstp, u32 *p, nlm_args *argp)
 {
 	if (!(p = nlm_decode_cookie(p, &argp->cookie))
 	 || !(p = nlm_decode_lock(p, &argp->lock)))
@@ -290,7 +292,7 @@ nlmsvc_decode_unlockargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
 }
 
 int
-nlmsvc_decode_shareargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
+nlmsvc_decode_shareargs(struct svc_rqst *rqstp, u32 *p, nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -311,7 +313,7 @@ nlmsvc_decode_shareargs(struct svc_rqst *rqstp, __be32 *p, nlm_args *argp)
 }
 
 int
-nlmsvc_encode_shareres(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
+nlmsvc_encode_shareres(struct svc_rqst *rqstp, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_encode_cookie(p, &resp->cookie)))
 		return 0;
@@ -321,7 +323,7 @@ nlmsvc_encode_shareres(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
 }
 
 int
-nlmsvc_encode_res(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
+nlmsvc_encode_res(struct svc_rqst *rqstp, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_encode_cookie(p, &resp->cookie)))
 		return 0;
@@ -330,7 +332,7 @@ nlmsvc_encode_res(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
 }
 
 int
-nlmsvc_decode_notify(struct svc_rqst *rqstp, __be32 *p, struct nlm_args *argp)
+nlmsvc_decode_notify(struct svc_rqst *rqstp, u32 *p, struct nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -342,33 +344,35 @@ nlmsvc_decode_notify(struct svc_rqst *rqstp, __be32 *p, struct nlm_args *argp)
 }
 
 int
-nlmsvc_decode_reboot(struct svc_rqst *rqstp, __be32 *p, struct nlm_reboot *argp)
+nlmsvc_decode_reboot(struct svc_rqst *rqstp, u32 *p, struct nlm_reboot *argp)
 {
 	if (!(p = xdr_decode_string_inplace(p, &argp->mon, &argp->len, SM_MAXSTRLEN)))
 		return 0;
 	argp->state = ntohl(*p++);
-	memcpy(&argp->priv.data, p, sizeof(argp->priv.data));
-	p += XDR_QUADLEN(SM_PRIV_SIZE);
+	/* Preserve the address in network byte order */
+	argp->addr = *p++;
+	argp->vers = *p++;
+	argp->proto = *p++;
 	return xdr_argsize_check(rqstp, p);
 }
 
 int
-nlmsvc_decode_res(struct svc_rqst *rqstp, __be32 *p, struct nlm_res *resp)
+nlmsvc_decode_res(struct svc_rqst *rqstp, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_decode_cookie(p, &resp->cookie)))
 		return 0;
-	resp->status = *p++;
+	resp->status = ntohl(*p++);
 	return xdr_argsize_check(rqstp, p);
 }
 
 int
-nlmsvc_decode_void(struct svc_rqst *rqstp, __be32 *p, void *dummy)
+nlmsvc_decode_void(struct svc_rqst *rqstp, u32 *p, void *dummy)
 {
 	return xdr_argsize_check(rqstp, p);
 }
 
 int
-nlmsvc_encode_void(struct svc_rqst *rqstp, __be32 *p, void *dummy)
+nlmsvc_encode_void(struct svc_rqst *rqstp, u32 *p, void *dummy)
 {
 	return xdr_ressize_check(rqstp, p);
 }
@@ -385,7 +389,7 @@ nlmclt_decode_void(struct rpc_rqst *req, u32 *p, void *ptr)
 #endif
 
 static int
-nlmclt_encode_testargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
+nlmclt_encode_testargs(struct rpc_rqst *req, u32 *p, nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -399,12 +403,12 @@ nlmclt_encode_testargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
 }
 
 static int
-nlmclt_decode_testres(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
+nlmclt_decode_testres(struct rpc_rqst *req, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_decode_cookie(p, &resp->cookie)))
 		return -EIO;
-	resp->status = *p++;
-	if (resp->status == nlm_lck_denied) {
+	resp->status = ntohl(*p++);
+	if (resp->status == NLM_LCK_DENIED) {
 		struct file_lock	*fl = &resp->lock.fl;
 		u32			excl;
 		s32			start, len, end;
@@ -434,7 +438,7 @@ nlmclt_decode_testres(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
 
 
 static int
-nlmclt_encode_lockargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
+nlmclt_encode_lockargs(struct rpc_rqst *req, u32 *p, nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -451,7 +455,7 @@ nlmclt_encode_lockargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
 }
 
 static int
-nlmclt_encode_cancargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
+nlmclt_encode_cancargs(struct rpc_rqst *req, u32 *p, nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -466,7 +470,7 @@ nlmclt_encode_cancargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
 }
 
 static int
-nlmclt_encode_unlockargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
+nlmclt_encode_unlockargs(struct rpc_rqst *req, u32 *p, nlm_args *argp)
 {
 	struct nlm_lock	*lock = &argp->lock;
 
@@ -479,7 +483,7 @@ nlmclt_encode_unlockargs(struct rpc_rqst *req, __be32 *p, nlm_args *argp)
 }
 
 static int
-nlmclt_encode_res(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
+nlmclt_encode_res(struct rpc_rqst *req, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_encode_cookie(p, &resp->cookie)))
 		return -EIO;
@@ -489,7 +493,7 @@ nlmclt_encode_res(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
 }
 
 static int
-nlmclt_encode_testres(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
+nlmclt_encode_testres(struct rpc_rqst *req, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_encode_testres(p, resp)))
 		return -EIO;
@@ -498,28 +502,25 @@ nlmclt_encode_testres(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
 }
 
 static int
-nlmclt_decode_res(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
+nlmclt_decode_res(struct rpc_rqst *req, u32 *p, struct nlm_res *resp)
 {
 	if (!(p = nlm_decode_cookie(p, &resp->cookie)))
 		return -EIO;
-	resp->status = *p++;
+	resp->status = ntohl(*p++);
 	return 0;
 }
-
-#if (NLMCLNT_OHSIZE > XDR_MAX_NETOBJ)
-#  error "NLM host name cannot be larger than XDR_MAX_NETOBJ!"
-#endif
 
 /*
  * Buffer requirements for NLM
  */
 #define NLM_void_sz		0
 #define NLM_cookie_sz		1+XDR_QUADLEN(NLM_MAXCOOKIELEN)
-#define NLM_caller_sz		1+XDR_QUADLEN(NLMCLNT_OHSIZE)
-#define NLM_owner_sz		1+XDR_QUADLEN(NLMCLNT_OHSIZE)
+#define NLM_caller_sz		1+XDR_QUADLEN(sizeof(system_utsname.nodename))
+#define NLM_netobj_sz		1+XDR_QUADLEN(XDR_MAX_NETOBJ)
+/* #define NLM_owner_sz		1+XDR_QUADLEN(NLM_MAXOWNER) */
 #define NLM_fhandle_sz		1+XDR_QUADLEN(NFS2_FHSIZE)
-#define NLM_lock_sz		3+NLM_caller_sz+NLM_owner_sz+NLM_fhandle_sz
-#define NLM_holder_sz		4+NLM_owner_sz
+#define NLM_lock_sz		3+NLM_caller_sz+NLM_netobj_sz+NLM_fhandle_sz
+#define NLM_holder_sz		4+NLM_netobj_sz
 
 #define NLM_testargs_sz		NLM_cookie_sz+1+NLM_lock_sz
 #define NLM_lockargs_sz		NLM_cookie_sz+4+NLM_lock_sz
@@ -529,6 +530,10 @@ nlmclt_decode_res(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
 #define NLM_testres_sz		NLM_cookie_sz+1+NLM_holder_sz
 #define NLM_res_sz		NLM_cookie_sz+1
 #define NLM_norep_sz		0
+
+#ifndef MAX
+# define MAX(a, b)		(((a) > (b))? (a) : (b))
+#endif
 
 /*
  * For NLM, a void procedure really returns nothing
@@ -540,8 +545,7 @@ nlmclt_decode_res(struct rpc_rqst *req, __be32 *p, struct nlm_res *resp)
 	.p_proc      = NLMPROC_##proc,					\
 	.p_encode    = (kxdrproc_t) nlmclt_encode_##argtype,		\
 	.p_decode    = (kxdrproc_t) nlmclt_decode_##restype,		\
-	.p_arglen    = NLM_##argtype##_sz,				\
-	.p_replen    = NLM_##restype##_sz,				\
+	.p_bufsiz    = MAX(NLM_##argtype##_sz, NLM_##restype##_sz) << 2,	\
 	.p_statidx   = NLMPROC_##proc,					\
 	.p_name      = #proc,						\
 	}
@@ -582,6 +586,10 @@ static struct rpc_version	nlm_version3 = {
 		.procs		= nlm_procedures,
 };
 
+#ifdef 	CONFIG_LOCKD_V4
+extern struct rpc_version nlm_version4;
+#endif
+
 static struct rpc_version *	nlm_versions[] = {
 	[1] = &nlm_version1,
 	[3] = &nlm_version3,
@@ -608,7 +616,8 @@ const char *nlmdbg_cookie2a(const struct nlm_cookie *cookie)
 	 * called with BKL held.
 	 */
 	static char buf[2*NLM_MAXCOOKIELEN+1];
-	unsigned int i, len = sizeof(buf);
+	int i;
+	int len = sizeof(buf);
 	char *p = buf;
 
 	len--;	/* allow for trailing \0 */

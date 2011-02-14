@@ -1,0 +1,36 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 29 Apr 2009 09:43:45 +0100
+Subject: [gfs2] NFSv2 support
+Message-id: 1240994625.3375.5.camel@localhost.localdomain
+O-Subject: [RHEL 5.4] NFSv2 support for GFS2 (bz #497954)
+Bugzilla: 497954
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Hi,
+
+Here is a one-liner bug fix to the export ops for GFS2 provided by and
+tested by our customer. The bug fix is already in the upstream kernels,
+and has been there for some time. It allows exporting of a GFS2
+filesystem via NFSv2. I've checked that there are no other obstacles to
+getting NFSv2 exports working with GFS2: the core NFS code always leaves
+a minimum of 16 bytes of the filehandle for the filesystem's use.
+
+This is for bugzilla #497954
+
+Steve.
+
+diff --git a/fs/gfs2/ops_export.c b/fs/gfs2/ops_export.c
+index 2ae1b94..1a5dd36 100644
+--- a/fs/gfs2/ops_export.c
++++ b/fs/gfs2/ops_export.c
+@@ -41,7 +41,7 @@ static struct dentry *gfs2_decode_fh(struct super_block *sb,
+ 
+ 	memset(&parent, 0, sizeof(struct gfs2_inum));
+ 
+-	switch (fh_len) {
++	switch (fh_type) {
+ 	case GFS2_LARGE_FH_SIZE:
+ 		parent.no_formal_ino = ((u64)be32_to_cpu(fh[4])) << 32;
+ 		parent.no_formal_ino |= be32_to_cpu(fh[5]);

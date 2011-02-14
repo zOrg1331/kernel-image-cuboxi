@@ -1,0 +1,55 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Sat, 7 Aug 2010 07:16:46 -0400
+Subject: [virtio] fix BAD_RING, START_US and END_USE macros
+Message-id: <4c53ce6fb71aac8393fadef787c8f9a63ab17ffe.1281129816.git.amit.shah@redhat.com>
+Patchwork-id: 27462
+O-Subject: [RHEL5.6 PATCH 1/9] virtio: fix BAD_RING, START_US and END_USE macros
+Bugzilla: 620037
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+From: Roel Kluin <roel.kluin@gmail.com>
+
+Impact: cleanup
+
+fix BAD_RING, START_US and END_USE macros
+
+When these macros aren't called with a variable named vq as first
+argument, this would result in a build failure.
+
+Signed-off-by: Roel Kluin <roel.kluin@gmail.com>
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+(cherry picked from commit 3a35ce7dcefe9e80a00603a195269fbaf6e7d901)
+
+(rhel5: picked up because this code is touched by future patches. And
+it's just a cleanup.)
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+index 7da8fb8..7f6eff6 100644
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -24,15 +24,15 @@
+ 
+ #ifdef DEBUG
+ /* For development, we want to crash whenever the ring is screwed. */
+-#define BAD_RING(vq, fmt...)			\
+-	do { dev_err(&vq->vq.vdev->dev, fmt); BUG(); } while(0)
+-#define START_USE(vq) \
+-	do { if ((vq)->in_use) panic("in_use = %i\n", (vq)->in_use); (vq)->in_use = __LINE__; mb(); } while(0)
+-#define END_USE(vq) \
+-	do { BUG_ON(!(vq)->in_use); (vq)->in_use = 0; mb(); } while(0)
++#define BAD_RING(_vq, fmt...)			\
++	do { dev_err(&_vq->vq.vdev->dev, fmt); BUG(); } while(0)
++#define START_USE(_vq) \
++	do { if ((_vq)->in_use) panic("in_use = %i\n", (_vq)->in_use); (_vq)->in_use = __LINE__; mb(); } while(0)
++#define END_USE(_vq) \
++	do { BUG_ON(!(_vq)->in_use); (_vq)->in_use = 0; mb(); } while(0)
+ #else
+-#define BAD_RING(vq, fmt...)			\
+-	do { dev_err(&vq->vq.vdev->dev, fmt); (vq)->broken = true; } while(0)
++#define BAD_RING(_vq, fmt...)			\
++	do { dev_err(&_vq->vq.vdev->dev, fmt); (_vq)->broken = true; } while(0)
+ #define START_USE(vq)
+ #define END_USE(vq)
+ #endif

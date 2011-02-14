@@ -104,9 +104,9 @@ out:
  */
 extern unsigned long do_csum(const unsigned char *, long);
 
-__wsum
-csum_partial_copy_from_user(const void __user *src, void *dst,
-				int len, __wsum psum, int *errp)
+static unsigned int
+do_csum_partial_copy_from_user (const unsigned char __user *src, unsigned char *dst,
+				int len, unsigned int psum, int *errp)
 {
 	unsigned long result;
 
@@ -122,19 +122,30 @@ csum_partial_copy_from_user(const void __user *src, void *dst,
 	result = do_csum(dst, len);
 
 	/* add in old sum, and carry.. */
-	result += (__force u32)psum;
+	result += psum;
 	/* 32+c bits -> 32 bits */
 	result = (result & 0xffffffff) + (result >> 32);
-	return (__force __wsum)result;
+	return result;
 }
 
-EXPORT_SYMBOL(csum_partial_copy_from_user);
-
-__wsum
-csum_partial_copy_nocheck(const void *src, void *dst, int len, __wsum sum)
+unsigned int
+csum_partial_copy_from_user (const unsigned char __user *src, unsigned char *dst,
+			     int len, unsigned int sum, int *errp)
 {
-	return csum_partial_copy_from_user((__force const void __user *)src,
-					   dst, len, sum, NULL);
+	if (!access_ok(VERIFY_READ, src, len)) {
+		*errp = -EFAULT;
+		memset(dst, 0, len);
+		return sum;
+	}
+
+	return do_csum_partial_copy_from_user(src, dst, len, sum, errp);
+}
+
+unsigned int
+csum_partial_copy_nocheck(const unsigned char __user *src, unsigned char *dst,
+			  int len, unsigned int sum)
+{
+	return do_csum_partial_copy_from_user(src, dst, len, sum, NULL);
 }
 
 EXPORT_SYMBOL(csum_partial_copy_nocheck);

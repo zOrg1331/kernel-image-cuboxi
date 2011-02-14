@@ -12,12 +12,23 @@
  * as published by the Free Software Foundation; either version
  * 2 of the License, or (at your option) any later version.
  */
+
+#include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/rtc.h>
 #include <linux/init.h>
+#include <linux/fs.h>
 #include <linux/interrupt.h>
+#include <linux/string.h>
+#include <linux/pm.h>
+
 #include <linux/amba/bus.h>
-#include <linux/io.h>
+
+#include <asm/io.h>
+#include <asm/bitops.h>
+#include <asm/hardware.h>
+#include <asm/irq.h>
+#include <asm/rtc.h>
 
 /*
  * Register definitions
@@ -36,13 +47,25 @@ struct pl031_local {
 	void __iomem *base;
 };
 
-static irqreturn_t pl031_interrupt(int irq, void *dev_id)
+static irqreturn_t pl031_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct rtc_device *rtc = dev_id;
 
-	rtc_update_irq(rtc, 1, RTC_AF);
+	rtc_update_irq(&rtc->class_dev, 1, RTC_AF);
 
 	return IRQ_HANDLED;
+}
+
+static int pl031_open(struct device *dev)
+{
+	/*
+	 * We request IRQ in pl031_probe, so nothing to do here...
+	 */
+	return 0;
+}
+
+static void pl031_release(struct device *dev)
+{
 }
 
 static int pl031_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
@@ -105,7 +128,9 @@ static int pl031_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 	return 0;
 }
 
-static const struct rtc_class_ops pl031_ops = {
+static struct rtc_class_ops pl031_ops = {
+	.open = pl031_open,
+	.release = pl031_release,
 	.ioctl = pl031_ioctl,
 	.read_time = pl031_read_time,
 	.set_time = pl031_set_time,
@@ -117,38 +142,36 @@ static int pl031_remove(struct amba_device *adev)
 {
 	struct pl031_local *ldata = dev_get_drvdata(&adev->dev);
 
-	amba_set_drvdata(adev, NULL);
-	free_irq(adev->irq[0], ldata->rtc);
-	rtc_device_unregister(ldata->rtc);
-	iounmap(ldata->base);
-	kfree(ldata);
-	amba_release_regions(adev);
+	if (ldata) {
+		dev_set_drvdata(&adev->dev, NULL);
+		free_irq(adev->irq[0], ldata->rtc);
+		rtc_device_unregister(ldata->rtc);
+		iounmap(ldata->base);
+		kfree(ldata);
+	}
 
 	return 0;
 }
 
-static int pl031_probe(struct amba_device *adev, struct amba_id *id)
+static int pl031_probe(struct amba_device *adev, void *id)
 {
 	int ret;
 	struct pl031_local *ldata;
 
-	ret = amba_request_regions(adev, NULL);
-	if (ret)
-		goto err_req;
 
 	ldata = kmalloc(sizeof(struct pl031_local), GFP_KERNEL);
 	if (!ldata) {
 		ret = -ENOMEM;
 		goto out;
 	}
+	dev_set_drvdata(&adev->dev, ldata);
 
-	ldata->base = ioremap(adev->res.start, resource_size(&adev->res));
+	ldata->base = ioremap(adev->res.start,
+			      adev->res.end - adev->res.start + 1);
 	if (!ldata->base) {
 		ret = -ENOMEM;
 		goto out_no_remap;
 	}
-
-	amba_set_drvdata(adev, ldata);
 
 	if (request_irq(adev->irq[0], pl031_interrupt, IRQF_DISABLED,
 			"rtc-pl031", ldata->rtc)) {
@@ -169,12 +192,10 @@ out_no_rtc:
 	free_irq(adev->irq[0], ldata->rtc);
 out_no_irq:
 	iounmap(ldata->base);
-	amba_set_drvdata(adev, NULL);
 out_no_remap:
+	dev_set_drvdata(&adev->dev, NULL);
 	kfree(ldata);
 out:
-	amba_release_regions(adev);
-err_req:
 	return ret;
 }
 

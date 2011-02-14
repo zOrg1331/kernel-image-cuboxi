@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2001-2008 LSI Corporation.
+ *  Copyright (c) 2001-2005 LSI Logic Corporation.
  *
  *
  *           Name:  mpi_tool.h

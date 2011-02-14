@@ -1,0 +1,50 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 24 Jan 2008 12:52:01 -0600
+Subject: [scsi] iscsi: set host template
+Message-id: 1201200721.4674.9.camel@max
+O-Subject: [RHEL 5.2 PATCH] set scsi host template in iscsi modules
+Bugzilla: 430130
+
+This is for BZ 430130.
+
+I know this is after the cut off. I hit this while testing the code that
+is going in the beta, and am in the process of getting the all the
+bugzilla flags set.
+
+The iscsi modules do not set the scsi_host_template module reference, so
+when a device is opened it does not increment the module refcount. If
+someone then decides to open a device, log iscsi out, then close the
+device we will oops. This problem is common with multipath where we see
+users adding and removing iscsi sessions (what multipath sees as paths
+to storage) while multipath still has a references to devices.
+
+This has been tested by creating a session, then opening the device, and
+while the device is open, destroying the session.
+
+This patch is upstream here:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=7974392c0b0d4e7a2a17ca3597d51a29b9841aa5
+
+diff --git a/drivers/infiniband/ulp/iser/iscsi_iser.c b/drivers/infiniband/ulp/iser/iscsi_iser.c
+index 53cce70..28d86ae 100644
+--- a/drivers/infiniband/ulp/iser/iscsi_iser.c
++++ b/drivers/infiniband/ulp/iser/iscsi_iser.c
+@@ -542,6 +542,7 @@ iscsi_iser_ep_disconnect(__u64 ep_handle)
+ }
+ 
+ static struct scsi_host_template iscsi_iser_sht = {
++	.module			= THIS_MODULE,
+ 	.name                   = "iSCSI Initiator over iSER, v." DRV_VER,
+ 	.queuecommand           = iscsi_queuecommand,
+ 	.can_queue		= ISCSI_XMIT_CMDS_MAX - 1,
+diff --git a/drivers/scsi/iscsi_tcp.c b/drivers/scsi/iscsi_tcp.c
+index 8114207..86a7aea 100644
+--- a/drivers/scsi/iscsi_tcp.c
++++ b/drivers/scsi/iscsi_tcp.c
+@@ -2282,6 +2282,7 @@ static int iscsi_tcp_slave_configure(struct scsi_device *sdev)
+ }
+ 
+ static struct scsi_host_template iscsi_sht = {
++	.module			= THIS_MODULE,
+ 	.name			= "iSCSI Initiator over TCP/IP",
+ 	.queuecommand           = iscsi_queuecommand,
+ 	.change_queue_depth	= iscsi_change_queue_depth,

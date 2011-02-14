@@ -1,0 +1,67 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:43:41 -0500
+Subject: [pci] intel-iommu: set dmar_disabled when DMAR at zero
+Message-id: <4B15AA2D.2020507@redhat.com>
+Patchwork-id: 21636
+O-Subject: [RHEL5.5 PATCH V2] 8/9:  intel-iommu: set dmar_disabled when DMAR
+	at zero
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2:  cleaned out indent fixes (moved to 1/9 or 2/9) so
+      it's just the original patch backported.
+
+bz 516727.
+
+The attachment makes one wonder what upstream testers
+tested!
+David Woodhouse doesn't understand how patch 4/9 could
+have worked without this patch.
+Kept is spearate since that's how it was done, and easy to backport in.
+
+0/9 states build & tests.
+
+Please review and ACK.
+
+- Don
+>From 61f48a1787d14e44fe8ec291ca2d94d58d02902b Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Fri, 20 Nov 2009 14:45:43 -0500
+Subject: [PATCH 8/9] intel-iommu: set dmar_disabled when DMAR at zero
+
+>From email to Linus, fwd by David Woodhouse;
+patch for bz 533952 (for F12).
+
+Commit 86cf898e1d0fca245173980e3897580db38569a8 ("intel-iommu: Check for
+'DMAR at zero' BIOS error earlier.") was supposed to work by pretending
+not to detect an IOMMU if it was actually being reported by the BIOS at
+physical address zero.
+
+However, the IOMMU detection and init code is all a little baroque, and
+the IOMMU ended up getting initialised _anyway_.
+
+I don't have one of the offending machines to hand, at least three
+testers reported that the original patch did actually fix the problem
+and allow their machines to boot.
+
+I have no clue how they came to that conclusion.
+
+This patch also sets the dmar_disabled flag when the error is detected,
+so that when we're later asked to initialise the IOMMU that we never
+claimed to have detected, we refuse to do so.
+
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index aa96ce2..228198c 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -595,6 +595,9 @@ int __init check_zero_address(void)
+ 					dmi_get_system_info(DMI_BIOS_VENDOR),
+ 					dmi_get_system_info(DMI_BIOS_VERSION),
+ 					dmi_get_system_info(DMI_PRODUCT_VERSION));
++#ifdef CONFIG_DMAR
++				dmar_disabled = 1;
++#endif
+ 				return 0;
+ 			}
+ 			break;

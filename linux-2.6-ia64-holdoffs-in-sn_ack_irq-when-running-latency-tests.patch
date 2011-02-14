@@ -1,0 +1,362 @@
+From: Jonathan Lim <jolim@redhat.com>
+Date: Thu, 22 May 2008 15:34:13 -0400
+Subject: [ia64] holdoffs in sn_ack_irq when running latency tests
+Message-id: 20080522193413.GA21865@dhcp-100-2-194.bos.redhat.com
+O-Subject: Re: [RHEL5.3 PATCH] BZ 447838: Holdoffs in sn_ack_irq() when running latency tests
+Bugzilla: 447838
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Holdoffs are seen in sn_ack_irq() when running latency tests on IA64 with
+RHEL5.2.  Adding an optional method to purge the TLB appears to fix the
+problem.
+
+The patch has been tested on IA64 and is upstream:
+
+http://git2.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=3be44b9cc33d26930cb3bb014f35f582
+c6522481
+
+diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
+index 819f495..25a0e8f 100644
+--- a/arch/ia64/kernel/irq_ia64.c
++++ b/arch/ia64/kernel/irq_ia64.c
+@@ -41,6 +41,7 @@
+ #include <asm/machvec.h>
+ #include <asm/pgtable.h>
+ #include <asm/system.h>
++#include <asm/tlbflush.h>
+ 
+ #ifdef CONFIG_PERFMON
+ # include <asm/perfmon.h>
+@@ -124,8 +125,10 @@ reserve_irq_vector (int vector)
+ 
+ #ifdef CONFIG_SMP
+ #	define IS_RESCHEDULE(vec)	(vec == IA64_IPI_RESCHEDULE)
++#	define IS_LOCAL_TLB_FLUSH(vec)	(vec == IA64_IPI_LOCAL_TLB_FLUSH)
+ #else
+ #	define IS_RESCHEDULE(vec)	(0)
++#	define IS_LOCAL_TLB_FLUSH(vec)	(0)
+ #endif
+ /*
+  * That's where the IVT branches when we get an external
+@@ -176,7 +179,10 @@ ia64_handle_irq (ia64_vector vector, struct pt_regs *regs)
+ 	saved_tpr = ia64_getreg(_IA64_REG_CR_TPR);
+ 	ia64_srlz_d();
+ 	while (vector != IA64_SPURIOUS_INT_VECTOR) {
+-		if (!IS_RESCHEDULE(vector)) {
++		if (IS_LOCAL_TLB_FLUSH(vector)) {
++			smp_local_flush_tlb();
++			kstat_this_cpu.irqs[vector]++;
++		} else if (!IS_RESCHEDULE(vector)) {
+ 			ia64_setreg(_IA64_REG_CR_TPR, vector);
+ 			ia64_srlz_d();
+ 
+@@ -220,7 +226,9 @@ void ia64_process_pending_intr(void)
+ 	  * Perform normal interrupt style processing
+ 	  */
+ 	while (vector != IA64_SPURIOUS_INT_VECTOR) {
+-		if (!IS_RESCHEDULE(vector)) {
++		if (IS_LOCAL_TLB_FLUSH(vector))
++			smp_local_flush_tlb();
++		else if (!IS_RESCHEDULE(vector)) {
+ 			ia64_setreg(_IA64_REG_CR_TPR, vector);
+ 			ia64_srlz_d();
+ 
+@@ -249,6 +257,16 @@ void ia64_process_pending_intr(void)
+ 
+ #ifdef CONFIG_SMP
+ extern irqreturn_t handle_IPI (int irq, void *dev_id, struct pt_regs *regs);
++static irqreturn_t dummy_handler (int irq, void *dev_id, struct pt_regs *regs)
++{
++	BUG();
++}
++
++static struct irqaction tlb_irqaction = {
++	.handler =	dummy_handler,
++	.flags =	SA_INTERRUPT,
++	.name =		"tlb_flush"
++};
+ 
+ static struct irqaction ipi_irqaction = {
+ 	.handler =	handle_IPI,
+@@ -554,6 +572,7 @@ init_IRQ (void)
+ 	register_percpu_irq(IA64_SPURIOUS_INT_VECTOR, NULL);
+ #ifdef CONFIG_SMP
+ 	register_percpu_irq(IA64_IPI_VECTOR, &ipi_irqaction);
++	register_percpu_irq(IA64_IPI_LOCAL_TLB_FLUSH, &tlb_irqaction);
+ #endif
+ #ifdef CONFIG_PERFMON
+ 	pfm_init_percpu();
+diff --git a/arch/ia64/kernel/smp.c b/arch/ia64/kernel/smp.c
+index 96e1ae9..a79e453 100644
+--- a/arch/ia64/kernel/smp.c
++++ b/arch/ia64/kernel/smp.c
+@@ -49,6 +49,8 @@
+ #include <asm/unistd.h>
+ #include <asm/mca.h>
+ 
++static DEFINE_PER_CPU(unsigned short, local_flush_count) ____cacheline_aligned;
++
+ /*
+  * Structure and data for smp_call_function(). This is designed to minimise static memory
+  * requirements. It also looks cleaner.
+@@ -276,6 +278,64 @@ smp_send_reschedule (int cpu)
+ 	platform_send_ipi(cpu, IA64_IPI_RESCHEDULE, IA64_IPI_DM_INT, 0);
+ }
+ 
++/*
++ * Called with preeemption disabled.
++ */
++static void
++smp_send_local_flush_tlb (int cpu)
++{
++	platform_send_ipi(cpu, IA64_IPI_LOCAL_TLB_FLUSH, IA64_IPI_DM_INT, 0);
++}
++
++void
++smp_local_flush_tlb(void)
++{
++	__ia64_per_cpu_var(local_flush_count)++;
++	local_flush_tlb_all();
++}
++
++/*
++ * Flush counts are kept in a "short" to preserve stack space. It is possible (but
++ * highly unlikely) that a count could wrap & the flush would not be seen as complete.
++ * Retry the flush IPI after a long time...
++ */
++#define FLUSH_RETRY_COUNT	10000
++
++void
++smp_flush_tlb_cpumask (cpumask_t xcpumask)
++{
++	unsigned short counts[NR_CPUS];
++	cpumask_t cpumask = xcpumask;
++	int count, mycpu, cpu, flush_mycpu = 0;
++
++	preempt_disable();
++	mycpu = smp_processor_id();
++
++	for_each_cpu_mask(cpu, cpumask) {
++		counts[cpu] = per_cpu(local_flush_count, cpu);
++		mb();
++		if (cpu == mycpu)
++			flush_mycpu = 1;
++		else
++			smp_send_local_flush_tlb(cpu);
++	}
++
++	if (flush_mycpu)
++		smp_local_flush_tlb();
++
++	for_each_cpu_mask(cpu, cpumask) {
++		count = 0;
++		while(counts[cpu] == per_cpu(local_flush_count, cpu)) {
++			udelay(1);
++			if (count++ >= FLUSH_RETRY_COUNT) {
++				count = 0;
++				smp_send_local_flush_tlb(cpu);
++			}
++		}
++	}
++	preempt_enable();
++}
++
+ void
+ smp_flush_tlb_all (void)
+ {
+diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+index d9d306c..927b2f8 100644
+--- a/arch/ia64/sn/kernel/sn2/sn2_smp.c
++++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+@@ -46,6 +46,9 @@ DECLARE_PER_CPU(struct ptc_stats, ptcstats);
+ 
+ static  __cacheline_aligned DEFINE_SPINLOCK(sn2_global_ptc_lock);
+ 
++/* 0 = old algorithm (no IPI flushes), 1 = ipi deadlock flush, 2 = ipi instead of SHUB ptc, >2 = always ipi */
++static int sn2_flush_opt = 0;
++
+ extern unsigned long
+ sn2_ptc_deadlock_recovery_core(volatile unsigned long *, unsigned long,
+ 			       volatile unsigned long *, unsigned long,
+@@ -76,6 +79,8 @@ struct ptc_stats {
+ 	unsigned long shub_itc_clocks;
+ 	unsigned long shub_itc_clocks_max;
+ 	unsigned long shub_ptc_flushes_not_my_mm;
++	unsigned long shub_ipi_flushes;
++	unsigned long shub_ipi_flushes_itc_clocks;
+ };
+ 
+ #define sn2_ptctest	0
+@@ -121,6 +126,18 @@ void sn_tlb_migrate_finish(struct mm_struct *mm)
+ 		flush_tlb_mm(mm);
+ }
+ 
++static void
++sn2_ipi_flush_all_tlb(struct mm_struct *mm)
++{
++	unsigned long itc;
++
++	itc = ia64_get_itc();
++	smp_flush_tlb_cpumask(mm->cpu_vm_mask);
++	itc = ia64_get_itc() - itc;
++	__get_cpu_var(ptcstats).shub_ipi_flushes_itc_clocks += itc;
++	__get_cpu_var(ptcstats).shub_ipi_flushes++;
++}
++
+ /**
+  * sn2_global_tlb_purge - globally purge translation cache of virtual address range
+  * @mm: mm_struct containing virtual address range
+@@ -154,7 +171,12 @@ sn2_global_tlb_purge(struct mm_struct *mm, unsigned long start,
+ 	unsigned long itc, itc2, flags, data0 = 0, data1 = 0, rr_value, old_rr = 0;
+ 	short nasids[MAX_NUMNODES], nix;
+ 	nodemask_t nodes_flushed;
+-	int active, max_active, deadlock;
++	int active, max_active, deadlock, flush_opt = sn2_flush_opt;
++
++	if (flush_opt > 2) {
++		sn2_ipi_flush_all_tlb(mm);
++		return;
++	}
+ 
+ 	nodes_clear(nodes_flushed);
+ 	i = 0;
+@@ -189,6 +211,11 @@ sn2_global_tlb_purge(struct mm_struct *mm, unsigned long start,
+ 		return;
+ 	}
+ 
++	if (flush_opt == 2) {
++		sn2_ipi_flush_all_tlb(mm);
++		return;
++	}
++
+ 	itc = ia64_get_itc();
+ 	nix = 0;
+ 	for_each_node_mask(cnode, nodes_flushed)
+@@ -256,6 +283,8 @@ sn2_global_tlb_purge(struct mm_struct *mm, unsigned long start,
+ 			}
+ 			if (active >= max_active || i == (nix - 1)) {
+ 				if ((deadlock = wait_piowc())) {
++					if (flush_opt == 1)
++						goto done;
+ 					sn2_ptc_deadlock_recovery(nasids, ibegin, i, mynasid, ptc0, data0, ptc1, data1);
+ 					if (reset_max_active_on_deadlock())
+ 						max_active = 1;
+@@ -267,6 +296,7 @@ sn2_global_tlb_purge(struct mm_struct *mm, unsigned long start,
+ 		start += (1UL << nbits);
+ 	} while (start < end);
+ 
++done:
+ 	itc2 = ia64_get_itc() - itc2;
+ 	__get_cpu_var(ptcstats).shub_itc_clocks += itc2;
+ 	if (itc2 > __get_cpu_var(ptcstats).shub_itc_clocks_max)
+@@ -279,6 +309,11 @@ sn2_global_tlb_purge(struct mm_struct *mm, unsigned long start,
+ 
+ 	spin_unlock_irqrestore(PTC_LOCK(shub1), flags);
+ 
++	if (flush_opt == 1 && deadlock) {
++		__get_cpu_var(ptcstats).deadlocks++;
++		sn2_ipi_flush_all_tlb(mm);
++	}
++
+ 	preempt_enable();
+ }
+ 
+@@ -425,24 +460,42 @@ static int sn2_ptc_seq_show(struct seq_file *file, void *data)
+ 
+ 	if (!cpu) {
+ 		seq_printf(file,
+-			   "# cpu ptc_l newrid ptc_flushes nodes_flushed deadlocks lock_nsec shub_nsec shub_nsec_max not_my_mm deadlock2\n");
+-		seq_printf(file, "# ptctest %d\n", sn2_ptctest);
++			   "# cpu ptc_l newrid ptc_flushes nodes_flushed deadlocks lock_nsec shub_nsec shub_nsec_max not_my_mm deadlock2 ipi_fluches ipi_nsec\n");
++		seq_printf(file, "# ptctest %d, flushopt %d\n", sn2_ptctest, sn2_flush_opt);
+ 	}
+ 
+ 	if (cpu < NR_CPUS && cpu_online(cpu)) {
+ 		stat = &per_cpu(ptcstats, cpu);
+-		seq_printf(file, "cpu %d %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld\n", cpu, stat->ptc_l,
++		seq_printf(file, "cpu %d %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld\n", cpu, stat->ptc_l,
+ 				stat->change_rid, stat->shub_ptc_flushes, stat->nodes_flushed,
+ 				stat->deadlocks,
+ 				1000 * stat->lock_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec,
+ 				1000 * stat->shub_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec,
+ 				1000 * stat->shub_itc_clocks_max / per_cpu(cpu_info, cpu).cyc_per_usec,
+ 				stat->shub_ptc_flushes_not_my_mm,
+-				stat->deadlocks2);
++				stat->deadlocks2,
++				stat->shub_ipi_flushes,
++				1000 * stat->shub_ipi_flushes_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec);
+ 	}
+ 	return 0;
+ }
+ 
++static ssize_t sn2_ptc_proc_write(struct file *file, const char __user *user, size_t count, loff_t *data)
++{
++	int cpu;
++	char optstr[64];
++
++	if (copy_from_user(optstr, user, count))
++		return -EFAULT;
++	optstr[count - 1] = '\0';
++	sn2_flush_opt = simple_strtoul(optstr, NULL, 0);
++
++	for_each_cpu_mask(cpu, cpu_possible_map)
++		memset(&per_cpu(ptcstats, cpu), 0, sizeof(struct ptc_stats));
++
++	return count;
++}
++
+ static struct seq_operations sn2_ptc_seq_ops = {
+ 	.start = sn2_ptc_seq_start,
+ 	.next = sn2_ptc_seq_next,
+@@ -458,6 +511,7 @@ static int sn2_ptc_proc_open(struct inode *inode, struct file *file)
+ static struct file_operations proc_sn2_ptc_operations = {
+ 	.open = sn2_ptc_proc_open,
+ 	.read = seq_read,
++	.write = sn2_ptc_proc_write,
+ 	.llseek = seq_lseek,
+ 	.release = seq_release,
+ };
+diff --git a/include/asm-ia64/hw_irq.h b/include/asm-ia64/hw_irq.h
+index d990e9e..324aae7 100644
+--- a/include/asm-ia64/hw_irq.h
++++ b/include/asm-ia64/hw_irq.h
+@@ -70,6 +70,7 @@ extern int ia64_last_device_vector;
+ #define IA64_PERFMON_VECTOR		0xee	/* performanc monitor interrupt vector */
+ #define IA64_TIMER_VECTOR		0xef	/* use highest-prio group 15 interrupt for timer */
+ #define	IA64_MCA_WAKEUP_VECTOR		0xf0	/* MCA wakeup (must be >MCA_RENDEZ_VECTOR) */
++#define IA64_IPI_LOCAL_TLB_FLUSH	0xfc	/* SMP reschedule */
+ #define IA64_IPI_RESCHEDULE		0xfd	/* SMP reschedule */
+ #define IA64_IPI_VECTOR			0xfe	/* inter-processor interrupt vector */
+ 
+diff --git a/include/asm-ia64/tlbflush.h b/include/asm-ia64/tlbflush.h
+index cf9acb9..9bbc1e1 100644
+--- a/include/asm-ia64/tlbflush.h
++++ b/include/asm-ia64/tlbflush.h
+@@ -27,9 +27,11 @@ extern void local_flush_tlb_all (void);
+ #ifdef CONFIG_SMP
+   extern void smp_flush_tlb_all (void);
+   extern void smp_flush_tlb_mm (struct mm_struct *mm);
++  extern void smp_flush_tlb_cpumask (cpumask_t xcpumask);
+ # define flush_tlb_all()	smp_flush_tlb_all()
+ #else
+ # define flush_tlb_all()	local_flush_tlb_all()
++# define smp_flush_tlb_cpumask() local_flush_tlb_all()
+ #endif
+ 
+ static inline void
+@@ -94,6 +96,15 @@ flush_tlb_pgtables (struct mm_struct *mm, unsigned long start, unsigned long end
+ 	 */
+ }
+ 
++/*
++ * Flush the local TLB. Invoked from another cpu using an IPI.
++ */
++#ifdef CONFIG_SMP
++void smp_local_flush_tlb(void);
++#else
++#define smp_local_flush_tlb()
++#endif
++
+ #define flush_tlb_kernel_range(start, end)	flush_tlb_all()	/* XXX fix me */
+ 
+ #endif /* _ASM_IA64_TLBFLUSH_H */

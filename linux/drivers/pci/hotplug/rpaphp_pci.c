@@ -42,7 +42,7 @@ int rpaphp_get_sensor_state(struct slot *slot, int *state)
 	if (rc < 0) {
 		if (rc == -EFAULT || rc == -EEXIST) {
 			dbg("%s: slot must be power up to get sensor-state\n",
-			    __func__);
+			    __FUNCTION__);
 
 			/* some slots have to be powered up 
 			 * before get-sensor will succeed.
@@ -51,86 +51,164 @@ int rpaphp_get_sensor_state(struct slot *slot, int *state)
 						  &setlevel);
 			if (rc < 0) {
 				dbg("%s: power on slot[%s] failed rc=%d.\n",
-				    __func__, slot->name, rc);
+				    __FUNCTION__, slot->name, rc);
 			} else {
 				rc = rtas_get_sensor(DR_ENTITY_SENSE,
 						     slot->index, state);
 			}
 		} else if (rc == -ENODEV)
-			info("%s: slot is unusable\n", __func__);
+			info("%s: slot is unusable\n", __FUNCTION__);
 		else
-			err("%s failed to get sensor state\n", __func__);
+			err("%s failed to get sensor state\n", __FUNCTION__);
 	}
 	return rc;
 }
 
 /**
- * rpaphp_enable_slot - record slot state, config pci device
- * @slot: target &slot
- *
- * Initialize values in the slot, and the hotplug_slot info
- * structures to indicate if there is a pci card plugged into
- * the slot. If the slot is not empty, run the pcibios routine
- * to get pcibios stuff correctly set up.
+ * get_pci_adapter_status - get the status of a slot
+ * 
+ * 0-- slot is empty
+ * 1-- adapter is configured
+ * 2-- adapter is not configured
+ * 3-- not valid
  */
-int rpaphp_enable_slot(struct slot *slot)
+int rpaphp_get_pci_adapter_status(struct slot *slot, int is_init, u8 * value)
 {
-	int rc, level, state;
 	struct pci_bus *bus;
-	struct hotplug_slot_info *info = slot->hotplug_slot->info;
+	int state, rc;
 
-	info->adapter_status = NOT_VALID;
-	slot->state = EMPTY;
-
-	/* Find out if the power is turned on for the slot */
-	rc = rtas_get_power_level(slot->power_domain, &level);
-	if (rc)
-		return rc;
-	info->power_status = level;
-
-	/* Figure out if there is an adapter in the slot */
+	*value = NOT_VALID;
 	rc = rpaphp_get_sensor_state(slot, &state);
 	if (rc)
-		return rc;
+		goto exit;
 
-	bus = pcibios_find_pci_bus(slot->dn);
-	if (!bus) {
-		err("%s: no pci_bus for dn %s\n", __func__, slot->dn->full_name);
+ 	if (state == EMPTY)
+ 		*value = EMPTY;
+ 	else if (state == PRESENT) {
+		if (!is_init) {
+			/* at run-time slot->state can be changed by */
+			/* config/unconfig adapter */
+			*value = slot->state;
+		} else {
+			bus = pcibios_find_pci_bus(slot->dn);
+			if (bus && !list_empty(&bus->devices))
+				*value = CONFIGURED;
+			else
+				*value = NOT_CONFIGURED;
+		}
+	}
+exit:
+	return rc;
+}
+
+static void print_slot_pci_funcs(struct pci_bus *bus)
+{
+	struct device_node *dn;
+	struct pci_dev *dev;
+
+	dn = pci_bus_to_OF_node(bus);
+	if (!dn)
+		return;
+
+	dbg("%s: pci_devs of slot[%s]\n", __FUNCTION__, dn->full_name);
+	list_for_each_entry (dev, &bus->devices, bus_list)
+		dbg("\t%s\n", pci_name(dev));
+	return;
+}
+
+static int setup_pci_hotplug_slot_info(struct slot *slot)
+{
+	struct hotplug_slot_info *hotplug_slot_info = slot->hotplug_slot->info;
+
+	dbg("%s Initilize the PCI slot's hotplug->info structure ...\n",
+	    __FUNCTION__);
+	rpaphp_get_power_status(slot, &hotplug_slot_info->power_status);
+	rpaphp_get_pci_adapter_status(slot, 1,
+				      &hotplug_slot_info->adapter_status);
+	if (hotplug_slot_info->adapter_status == NOT_VALID) {
+		err("%s: NOT_VALID: skip dn->full_name=%s\n",
+		    __FUNCTION__, slot->dn->full_name);
 		return -EINVAL;
 	}
+	return 0;
+}
 
-	info->adapter_status = EMPTY;
-	slot->bus = bus;
-	slot->pci_devs = &bus->devices;
+static void set_slot_name(struct slot *slot)
+{
+	struct pci_bus *bus = slot->bus;
+	struct pci_dev *bridge;
 
-	/* if there's an adapter in the slot, go add the pci devices */
-	if (state == PRESENT) {
-		info->adapter_status = NOT_CONFIGURED;
-		slot->state = NOT_CONFIGURED;
+	bridge = bus->self;
+	if (bridge)
+		strcpy(slot->name, pci_name(bridge));
+	else
+		sprintf(slot->name, "%04x:%02x:00.0", pci_domain_nr(bus),
+			bus->number);
+}
 
-		/* non-empty slot has to have child */
-		if (!slot->dn->child) {
-			err("%s: slot[%s]'s device_node doesn't have child for adapter\n",
-			    __func__, slot->name);
-			return -EINVAL;
-		}
+static int setup_pci_slot(struct slot *slot)
+{
+	struct device_node *dn = slot->dn;
+	struct pci_bus *bus;
 
-		if (list_empty(&bus->devices))
-			pcibios_add_pci_devices(bus);
-
-		if (!list_empty(&bus->devices)) {
-			info->adapter_status = CONFIGURED;
-			slot->state = CONFIGURED;
-		}
-
-		if (rpaphp_debug) {
-			struct pci_dev *dev;
-			dbg("%s: pci_devs of slot[%s]\n", __func__, slot->dn->full_name);
-			list_for_each_entry (dev, &bus->devices, bus_list)
-				dbg("\t%s\n", pci_name(dev));
-		}
+	BUG_ON(!dn);
+	bus = pcibios_find_pci_bus(dn);
+	if (!bus) {
+		err("%s: no pci_bus for dn %s\n", __FUNCTION__, dn->full_name);
+		goto exit_rc;
 	}
 
+	slot->bus = bus;
+	slot->pci_devs = &bus->devices;
+	set_slot_name(slot);
+
+	/* find slot's pci_dev if it's not empty */
+	if (slot->hotplug_slot->info->adapter_status == EMPTY) {
+		slot->state = EMPTY;	/* slot is empty */
+	} else {
+		/* slot is occupied */
+		if (!dn->child) {
+			/* non-empty slot has to have child */
+			err("%s: slot[%s]'s device_node doesn't have child for adapter\n", 
+				__FUNCTION__, slot->name);
+			goto exit_rc;
+		}
+
+		if (slot->hotplug_slot->info->adapter_status == NOT_CONFIGURED) {
+			dbg("%s CONFIGURING pci adapter in slot[%s]\n",  
+				__FUNCTION__, slot->name);
+			pcibios_add_pci_devices(slot->bus);
+
+		} else if (slot->hotplug_slot->info->adapter_status != CONFIGURED) {
+			err("%s: slot[%s]'s adapter_status is NOT_VALID.\n",
+				__FUNCTION__, slot->name);
+			goto exit_rc;
+		}
+		print_slot_pci_funcs(slot->bus);
+		if (!list_empty(slot->pci_devs)) {
+			slot->state = CONFIGURED;
+		} else {
+			/* DLPAR add as opposed to 
+		 	 * boot time */
+			slot->state = NOT_CONFIGURED;
+		}
+	}
 	return 0;
+exit_rc:
+	dealloc_slot_struct(slot);
+	return -EINVAL;
+}
+
+int rpaphp_register_pci_slot(struct slot *slot)
+{
+	int rc = -EINVAL;
+
+	if (setup_pci_hotplug_slot_info(slot))
+		goto exit_rc;
+	if (setup_pci_slot(slot))
+		goto exit_rc;
+	rc = rpaphp_register_slot(slot);
+exit_rc:
+	return rc;
 }
 

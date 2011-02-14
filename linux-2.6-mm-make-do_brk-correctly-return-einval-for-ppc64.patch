@@ -1,0 +1,35 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5.1 patch] make sure do_brk() correctly returns EINVAL for ppc64.  
+Date: Mon, 09 Apr 2007 16:58:35 -0400
+Bugzilla: 224261
+Message-Id: <461AA8FB.4030604@redhat.com>
+Changelog: [mm] make do_brk() correctly return EINVAL for ppc64.  
+
+
+do_brk() doesn't check if the newly allocated address space intersects 
+a hugepage region.  This means it could create a normal page VMA which 
+extends into a hugepage-only address region on powerpc instead of returning
+EINVAL. 
+
+The following upstream patch fixes this problem by making sure addr+len 
+doesnt
+extend into a hugepage region.  Fixes BZ 224261.
+
+
+
+
+
+
+--- linux-2.6.18.noarch/mm/mmap.c.orig
++++ linux-2.6.18.noarch/mm/mmap.c
+@@ -1966,7 +1966,8 @@ unsigned long do_brk(unsigned long addr,
+ 	if (!len)
+ 		return addr;
+ 
+-	if ((addr + len) > TASK_SIZE || (addr + len) < addr)
++	if (((addr + len) > TASK_SIZE) || ((addr + len) < addr) ||
++			is_hugepage_only_range(mm, addr, len))
+ 		return -EINVAL;
+ 
+ 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
+

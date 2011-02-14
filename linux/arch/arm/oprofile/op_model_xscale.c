@@ -20,9 +20,8 @@
 #include <linux/sched.h>
 #include <linux/oprofile.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
-
-#include <asm/cputype.h>
+#include <asm/irq.h>
+#include <asm/system.h>
 
 #include "op_counter.h"
 #include "op_arm_model.h"
@@ -34,11 +33,14 @@
 #define PMU_CNT64	0x008	/* Make CCNT count every 64th cycle */
 
 /* TODO do runtime detection */
-#ifdef CONFIG_ARCH_IOP32X
-#define XSCALE_PMU_IRQ  IRQ_IOP32X_CORE_PMU
+#ifdef CONFIG_ARCH_IOP310
+#define XSCALE_PMU_IRQ  IRQ_XS80200_PMU
 #endif
-#ifdef CONFIG_ARCH_IOP33X
-#define XSCALE_PMU_IRQ  IRQ_IOP33X_CORE_PMU
+#ifdef CONFIG_ARCH_IOP321
+#define XSCALE_PMU_IRQ  IRQ_IOP321_CORE_PMU
+#endif
+#ifdef CONFIG_ARCH_IOP331
+#define XSCALE_PMU_IRQ  IRQ_IOP331_CORE_PMU
 #endif
 #ifdef CONFIG_ARCH_PXA
 #define XSCALE_PMU_IRQ  IRQ_PMU
@@ -86,7 +88,7 @@ static struct pmu_counter results[MAX_COUNTERS];
 /*
  * There are two versions of the PMU in current XScale processors
  * with differing register layouts and number of performance counters.
- * e.g. IOP32x is xsc1 whilst IOP33x is xsc2.
+ * e.g. IOP321 is xsc1 whilst IOP331 is xsc2.
  * We detect which register layout to use in xscale_detect_pmu()
  */
 enum { PMU_XSC1, PMU_XSC2 };
@@ -342,7 +344,7 @@ static void inline __xsc2_check_ctrs(void)
 	__asm__ __volatile__ ("mcr p14, 0, %0, c5, c1, 0" : : "r" (flag));
 }
 
-static irqreturn_t xscale_pmu_interrupt(int irq, void *arg)
+static irqreturn_t xscale_pmu_interrupt(int irq, void *arg, struct pt_regs *regs)
 {
 	int i;
 	u32 pmnc;
@@ -357,7 +359,7 @@ static irqreturn_t xscale_pmu_interrupt(int irq, void *arg)
 			continue;
 
 		write_counter(i, -(u32)results[i].reset_counter);
-		oprofile_add_sample(get_irq_regs(), i);
+		oprofile_add_sample(regs, i);
 		results[i].ovf--;
 	}
 

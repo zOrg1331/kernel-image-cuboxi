@@ -1,0 +1,41 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 5 Aug 2010 12:57:20 -0400
+Subject: [nfs] sunrpc: cancel task_cleanup work in xprt_destroy
+Message-id: <1281013040-6021-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 27409
+O-Subject: [RHEL5 PATCH] BZ#611938: sunrpc: cancel task_cleanup workqueue job in
+	xprt_destroy
+Bugzilla: 611938
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+We had a report of a panic in xprt_autoclose. After some great analysis
+by Flavio in SEG, he determined that the problem appeared to be a use
+after free.
+
+The task_cleanup workqueue job takes a pointer to an rpc_xprt as an arg.
+I don't see anything however that guarantees that that xprt will still
+be valid by the time the work runs. It doesn't hold a reference and the
+work isn't canceled when the xprt is torn down.
+
+Have xprt_destroy cancel any pending task_cleanup job that's running
+prior to tearing down the xprt.
+
+This is also an upstream problem and Bruce has sent a patch to Trond to
+fix it there. This patch is a backport of that. We don't have a clear
+reproducer for this problem -- it seems to be a very uncommon race, but
+I've run kernels with this patch through the usual gamut of tests and
+haven't seen problems with it.
+
+diff --git a/net/sunrpc/xprt.c b/net/sunrpc/xprt.c
+index 919b2b5..cf4a647 100644
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -972,6 +972,7 @@ static void xprt_destroy(struct kref *kref)
+ 	dprintk("RPC:      destroying transport %p\n", xprt);
+ 	xprt->shutdown = 1;
+ 	del_timer_sync(&xprt->timer);
++	cancel_work_sync(&xprt->task_cleanup);
+ 	xprt->ops->destroy(xprt);
+ 	kfree(xprt);
+ }

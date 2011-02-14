@@ -1,0 +1,75 @@
+From: Steve Best <sbest@redhat.com>
+Date: Tue, 9 Feb 2010 15:02:28 -0500
+Subject: [net] netfilter: allow changing queue length via netlink
+Message-id: <20100209145512.3326.17567.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 23208
+O-Subject: [PATCH RHEL5.5 BZ562945] NETFILTER: nfnetlink_queue: allow changing
+	queue length through netlink
+Bugzilla: 562945
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=562945
+
+Description:
+============
+Allow changing queue length through netlink
+
+RHEL Version Found:
+===================
+RHEL 5.5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2247997
+
+Upstream Status:
+================
+patch has been accepted upstream in 2.6.20.
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff_plain;h=829e17a1a602572ffa3beefe582dc103ee9fb9c7;hp=7b621c1ea64a54f77b8a841b16dc4c9fee3ecf48
+
+Test Status:
+============
+Tested by IBM test team
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/netfilter/nfnetlink_queue.h b/include/linux/netfilter/nfnetlink_queue.h
+index 9e77437..22ffac0 100644
+--- a/include/linux/netfilter/nfnetlink_queue.h
++++ b/include/linux/netfilter/nfnetlink_queue.h
+@@ -82,6 +82,7 @@ enum nfqnl_attr_config {
+ 	NFQA_CFG_UNSPEC,
+ 	NFQA_CFG_CMD,			/* nfqnl_msg_config_cmd */
+ 	NFQA_CFG_PARAMS,		/* nfqnl_msg_config_params */
++	NFQA_CFG_QUEUE_MAXLEN,		/* u_int32_t */
+ 	__NFQA_CFG_MAX
+ };
+ #define NFQA_CFG_MAX (__NFQA_CFG_MAX-1)
+diff --git a/net/netfilter/nfnetlink_queue.c b/net/netfilter/nfnetlink_queue.c
+index 49ef41e..c3ee308 100644
+--- a/net/netfilter/nfnetlink_queue.c
++++ b/net/netfilter/nfnetlink_queue.c
+@@ -947,6 +947,14 @@ nfqnl_recv_config(struct sock *ctnl, struct sk_buff *skb,
+ 				ntohl(params->copy_range));
+ 	}
+ 
++	if (nfqa[NFQA_CFG_QUEUE_MAXLEN-1]) {
++		__be32 *queue_maxlen;
++		queue_maxlen = NFA_DATA(nfqa[NFQA_CFG_QUEUE_MAXLEN-1]);
++		spin_lock_bh(&queue->lock);
++		queue->queue_maxlen = ntohl(*queue_maxlen);
++		spin_unlock_bh(&queue->lock);
++	}
++
+ out_put:
+ 	instance_put(queue);
+ 	return ret;

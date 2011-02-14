@@ -1,0 +1,52 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 26 Mar 2008 13:44:03 -0400
+Subject: [ppc64] oprofile: add support for Power5+ and later
+Message-id: 47EA8B63.1030308@redhat.com
+O-Subject: [RHEL 5.2 Patch 1/1] Adds support for Power5+ Revision 3.0 and later to oprofile
+Bugzilla: 244719
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=244719
+
+Description:
+------------
+Adds support for Power5+ Revision 3.0 and later to oprofile with a new entry to cputable.c
+
+Upstream Status:
+----------------
+Commit #: 31a12cece7c71c47e61ab8ed45bbff5aac4c1931
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+
+diff --git a/arch/powerpc/kernel/cputable.c b/arch/powerpc/kernel/cputable.c
+index 8828315..0af93f4 100644
+--- a/arch/powerpc/kernel/cputable.c
++++ b/arch/powerpc/kernel/cputable.c
+@@ -284,6 +284,21 @@ static struct cpu_spec cpu_specs[] = {
+ 			POWER6_MMCRA_OTHER,
+ 		.platform		= "power5+",
+ 	},
++	{	/* Power5++ */
++		.pvr_mask		= 0xffff0000,
++		.pvr_value		= 0x003b0300,
++		.cpu_name		= "POWER5+ (gs)",
++		.cpu_features		= CPU_FTRS_POWER5,
++		.cpu_user_features	= COMMON_USER_POWER5_PLUS,
++		.icache_bsize		= 128,
++		.dcache_bsize		= 128,
++		.num_pmcs		= 6,
++		.oprofile_cpu_type	= "ppc64/power5++",
++		.oprofile_type		= PPC_OPROFILE_POWER4,
++		.oprofile_mmcra_sihv	= MMCRA_SIHV,
++		.oprofile_mmcra_sipr	= MMCRA_SIPR,
++		.platform		= "power5+",
++	},
+ 	{	/* Power6 */
+ 		.pvr_mask		= 0xffff0000,
+ 		.pvr_value		= 0x003e0000,

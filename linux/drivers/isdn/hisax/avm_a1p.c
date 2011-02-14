@@ -140,7 +140,7 @@ WriteHSCXfifo(struct IsdnCardState *cs, int hscx, u_char * data, int size)
 #include "hscx_irq.c"
 
 static irqreturn_t
-avm_a1p_interrupt(int intno, void *dev_id)
+avm_a1p_interrupt(int intno, void *dev_id, struct pt_regs *regs)
 {
 	struct IsdnCardState *cs = dev_id;
 	u_char val, sval;
@@ -213,7 +213,8 @@ AVM_card_msg(struct IsdnCardState *cs, int mt, void *arg)
 	return 0;
 }
 
-int __devinit setup_avm_a1_pcmcia(struct IsdnCard *card)
+int
+setup_avm_a1_pcmcia(struct IsdnCard *card)
 {
 	u_char model, vers;
 	struct IsdnCardState *cs = card->cs;

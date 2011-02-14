@@ -1,0 +1,79 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 10 Nov 2009 19:16:15 -0500
+Subject: [nfs] make sure dprintk() macro works everywhere
+Message-id: <1257880575-1276-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21351
+O-Subject: [RHEL5.5 PATCH] BZ#532701: NFS: make sure dprintk() macro works
+	everywhere
+Bugzilla: 532701
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Benny Halevy <bhalevy@panasas.com>
+
+On occasion, we ask people to turn up nfs_debug and collect debugging
+output. I noticed recently when I was doing some debugging of my own
+however that some of the printks were missing.
+
+It turns out that this was fixed upstream soon after 2.6.18 was
+released, but we never took in the patch for RHEL5. It should be fairly
+harmless, and it's better to have the ability to collect complete
+debugging info when you need it.
+
+Tested by turning up nfs_debug, and doing operations that caused
+dprintk's in fs/nfs/file.c to fire.
+
+Original patch description follows:
+
+---------------------------[snip]------------------------
+
+(Upstream commit 4dc2eaecd4cf0687727e418540bccf956a62ebcf)
+
+	Trond, looks like the changes to include/linux/nfs_fs.h in 2.6.18 that
+	moved the #include's of sunrpc header files into the #ifdef __KERNEL__
+	block disabled nfs debugging for all nfs c file not including any sunrpc
+	header.
+
+	The following patch moves the definition down, right before its use for
+	defining ifdebug.
+
+	Signed-off-by: Benny Halevy <bhalevy@panasas.com>
+	(Moved definition further down into the __KERNEL__ section: Trond)
+	Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 1362ab2..4fc3a1d 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -9,14 +9,6 @@
+ #ifndef _LINUX_NFS_FS_H
+ #define _LINUX_NFS_FS_H
+ 
+-/*
+- * Enable debugging support for nfs client.
+- * Requires RPC_DEBUG.
+- */
+-#ifdef RPC_DEBUG
+-# define NFS_DEBUG
+-#endif
+-
+ /* Default timeout values */
+ #define NFS_MAX_UDP_TIMEOUT	(60*HZ)
+ #define NFS_MAX_TCP_TIMEOUT	(600*HZ)
+@@ -598,6 +590,15 @@ extern void * nfs_root_data(void);
+ #define NFSDBG_ALL		0xFFFF
+ 
+ #ifdef __KERNEL__
++
++/*
++ * Enable debugging support for nfs client.
++ * Requires RPC_DEBUG.
++ */
++#ifdef RPC_DEBUG
++# define NFS_DEBUG
++#endif
++
+ # undef ifdebug
+ # ifdef NFS_DEBUG
+ #  define ifdebug(fac)		if (unlikely(nfs_debug & NFSDBG_##fac))

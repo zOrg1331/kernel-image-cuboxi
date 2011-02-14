@@ -109,7 +109,7 @@ static struct cpia_camera_ops cpia_usb_ops = {
 static LIST_HEAD(cam_list);
 static spinlock_t cam_list_lock_usb;
 
-static void cpia_usb_complete(struct urb *urb)
+static void cpia_usb_complete(struct urb *urb, struct pt_regs *regs)
 {
 	int i;
 	char *cdata;
@@ -170,7 +170,7 @@ static void cpia_usb_complete(struct urb *urb)
 	/* resubmit */
 	urb->dev = ucpia->dev;
 	if ((i = usb_submit_urb(urb, GFP_ATOMIC)) != 0)
-		printk(KERN_ERR "%s: usb_submit_urb ret %d\n", __func__,  i);
+		printk(KERN_ERR "%s: usb_submit_urb ret %d\n", __FUNCTION__,  i);
 }
 
 static int cpia_usb_open(void *privdata)

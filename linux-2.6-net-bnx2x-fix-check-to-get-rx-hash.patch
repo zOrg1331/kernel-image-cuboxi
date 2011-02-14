@@ -1,0 +1,36 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:43:13 -0400
+Subject: [net] bnx2x: fix check to get RX hash
+Message-id: <20100903164313.25415.12936.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28100
+O-Subject: [RHEL5.6 BZ572012 PATCH 25/46] bnx2x: Fix check to get RX hash
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Flag used in check to get rxhash out of the descriptor is incorrect one.
+Fix to use the proper features flag.
+
+Signed-off-by: Tom Herbert <therbert@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit 4447957a825031b3faf3b5bc2013afe35eff492b)
+
+RHEL: it's under #if 0, no effect here
+
+Conflicts:
+
+	drivers/net/bnx2x_main.c
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index b8a5431..b7d515f 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -1723,7 +1723,7 @@ reuse_rx:
+ 			skb->protocol = eth_type_trans(skb, bp->dev);
+ 
+ #if 0 /* not in RHEL */
+-			if ((bp->dev->features & ETH_FLAG_RXHASH) &&
++			if ((bp->dev->features & NETIF_F_RXHASH) &&
+ 			    (cqe_fp_status_flags &
+ 			     ETH_FAST_PATH_RX_CQE_RSS_HASH_FLG))
+ 				skb->rxhash = le32_to_cpu(

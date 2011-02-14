@@ -9,7 +9,6 @@
 #include <linux/sysctl.h>
 
 #include "scsi_logging.h"
-#include "scsi_priv.h"
 
 
 static ctl_table scsi_table[] = {
@@ -42,7 +41,7 @@ static struct ctl_table_header *scsi_table_header;
 
 int __init scsi_init_sysctl(void)
 {
-	scsi_table_header = register_sysctl_table(scsi_root_table);
+	scsi_table_header = register_sysctl_table(scsi_root_table, 1);
 	if (!scsi_table_header)
 		return -ENOMEM;
 	return 0;

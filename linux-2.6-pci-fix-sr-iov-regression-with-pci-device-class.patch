@@ -1,0 +1,33 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Tue, 2 Jun 2009 15:58:35 -0600
+Subject: [pci] fix sr-iov regression with PCI device class
+Message-id: 200906022158.n52LwZZR011420@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH] BZ 503826: fix sr-iov regression with PCI device class
+Bugzilla: 503826
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+The device class may be changed during the early fixup. So need to
+re-read the device class from pci_dev after the fixup.
+
+The patch "PCI: centralize device setup code" wrongly cleaned up the
+device class re-read. This patch reverts that change.
+
+Upstream status: Posted to the LKML (scheduled for the 2.6.30 release)
+
+Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index e378ffe..59ca63a 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -749,6 +749,7 @@ int pci_setup_device(struct pci_dev * dev)
+ 
+ 	/* Early fixups, before probing the BARs */
+ 	pci_fixup_device(pci_fixup_early, dev);
++	class = dev->class >> 8;
+ 
+ 	switch (dev->hdr_type) {		    /* header type */
+ 	case PCI_HEADER_TYPE_NORMAL:		    /* standard header */

@@ -32,13 +32,12 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: mthca_provider.c 4859 2006-01-09 21:55:10Z roland $
  */
 
 #include <rdma/ib_smi.h>
-#include <rdma/ib_umem.h>
 #include <rdma/ib_user_verbs.h>
-
-#include <linux/sched.h>
 #include <linux/mm.h>
 
 #include "mthca_dev.h"
@@ -60,7 +59,7 @@ static int mthca_query_device(struct ib_device *ibdev,
 	struct ib_smp *in_mad  = NULL;
 	struct ib_smp *out_mad = NULL;
 	int err = -ENOMEM;
-	struct mthca_dev *mdev = to_mdev(ibdev);
+	struct mthca_dev* mdev = to_mdev(ibdev);
 
 	u8 status;
 
@@ -125,7 +124,7 @@ static int mthca_query_device(struct ib_device *ibdev,
 		props->max_map_per_fmr = 255;
 	else
 		props->max_map_per_fmr =
-			(1 << (32 - ilog2(mdev->limits.num_mpts))) - 1;
+			(1 << (32 - long_log2(mdev->limits.num_mpts))) - 1;
 
 	err = 0;
  out:
@@ -180,8 +179,6 @@ static int mthca_query_port(struct ib_device *ibdev,
 	props->max_mtu           = out_mad->data[41] & 0xf;
 	props->active_mtu        = out_mad->data[36] >> 4;
 	props->subnet_timeout    = out_mad->data[51] & 0x1f;
-	props->max_vl_num        = out_mad->data[37] >> 4;
-	props->init_type_reply   = out_mad->data[41] >> 4;
 
  out:
 	kfree(in_mad);
@@ -334,9 +331,6 @@ static struct ib_ucontext *mthca_alloc_ucontext(struct ib_device *ibdev,
 	struct mthca_ucontext           *context;
 	int                              err;
 
-	if (!(to_mdev(ibdev)->active))
-		return ERR_PTR(-EAGAIN);
-
 	memset(&uresp, 0, sizeof uresp);
 
 	uresp.qp_tab_size = to_mdev(ibdev)->limits.num_qps;
@@ -369,8 +363,6 @@ static struct ib_ucontext *mthca_alloc_ucontext(struct ib_device *ibdev,
 		kfree(context);
 		return ERR_PTR(-EFAULT);
 	}
-
-	context->reg_mr_warned = 0;
 
 	return &context->ibucontext;
 }
@@ -545,9 +537,6 @@ static struct ib_qp *mthca_create_qp(struct ib_pd *pd,
 	struct mthca_qp *qp;
 	int err;
 
-	if (init_attr->create_flags)
-		return ERR_PTR(-EINVAL);
-
 	switch (init_attr->qp_type) {
 	case IB_QPT_RC:
 	case IB_QPT_UC:
@@ -672,7 +661,6 @@ static int mthca_destroy_qp(struct ib_qp *qp)
 }
 
 static struct ib_cq *mthca_create_cq(struct ib_device *ibdev, int entries,
-				     int comp_vector,
 				     struct ib_ucontext *context,
 				     struct ib_udata *udata)
 {
@@ -826,7 +814,7 @@ static int mthca_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *uda
 		lkey = ucmd.lkey;
 	}
 
-	ret = mthca_RESIZE_CQ(dev, cq->cqn, lkey, ilog2(entries), &status);
+	ret = mthca_RESIZE_CQ(dev, cq->cqn, lkey, long_log2(entries), &status);
 	if (status)
 		ret = -EINVAL;
 
@@ -917,8 +905,6 @@ static struct ib_mr *mthca_get_dma_mr(struct ib_pd *pd, int acc)
 		return ERR_PTR(err);
 	}
 
-	mr->umem = NULL;
-
 	return &mr->ibmr;
 }
 
@@ -931,13 +917,17 @@ static struct ib_mr *mthca_reg_phys_mr(struct ib_pd       *pd,
 	struct mthca_mr *mr;
 	u64 *page_list;
 	u64 total_size;
-	unsigned long mask;
+	u64 mask;
 	int shift;
 	int npages;
 	int err;
 	int i, j, n;
 
-	mask = buffer_list[0].addr ^ *iova_start;
+	/* First check that we have enough alignment */
+	if ((*iova_start & ~PAGE_MASK) != (buffer_list[0].addr & ~PAGE_MASK))
+		return ERR_PTR(-EINVAL);
+
+	mask = 0;
 	total_size = 0;
 	for (i = 0; i < num_phys_buf; ++i) {
 		if (i != 0)
@@ -951,7 +941,17 @@ static struct ib_mr *mthca_reg_phys_mr(struct ib_pd       *pd,
 	if (mask & ~PAGE_MASK)
 		return ERR_PTR(-EINVAL);
 
-	shift = __ffs(mask | 1 << 31);
+	/* Find largest page shift we can use to cover buffers */
+	for (shift = PAGE_SHIFT; shift < 31; ++shift)
+		if (num_phys_buf > 1) {
+			if ((1ULL << shift) & mask)
+				break;
+		} else {
+			if (1ULL << shift >=
+			    buffer_list[0].size +
+			    (buffer_list[0].addr & ((1ULL << shift) - 1)))
+				break;
+		}
 
 	buffer_list[0].size += buffer_list[0].addr & ((1ULL << shift) - 1);
 	buffer_list[0].addr &= ~0ull << shift;
@@ -1000,57 +1000,34 @@ static struct ib_mr *mthca_reg_phys_mr(struct ib_pd       *pd,
 	}
 
 	kfree(page_list);
-	mr->umem = NULL;
-
 	return &mr->ibmr;
 }
 
-static struct ib_mr *mthca_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
-				       u64 virt, int acc, struct ib_udata *udata)
+static struct ib_mr *mthca_reg_user_mr(struct ib_pd *pd, struct ib_umem *region,
+				       int acc, struct ib_udata *udata)
 {
 	struct mthca_dev *dev = to_mdev(pd->device);
 	struct ib_umem_chunk *chunk;
 	struct mthca_mr *mr;
-	struct mthca_reg_mr ucmd;
 	u64 *pages;
 	int shift, n, len;
 	int i, j, k;
 	int err = 0;
-	int write_mtt_size;
 
-	if (udata->inlen - sizeof (struct ib_uverbs_cmd_hdr) < sizeof ucmd) {
-		if (!to_mucontext(pd->uobject->context)->reg_mr_warned) {
-			mthca_warn(dev, "Process '%s' did not pass in MR attrs.\n",
-				   current->comm);
-			mthca_warn(dev, "  Update libmthca to fix this.\n");
-		}
-		++to_mucontext(pd->uobject->context)->reg_mr_warned;
-		ucmd.mr_attrs = 0;
-	} else if (ib_copy_from_udata(&ucmd, udata, sizeof ucmd))
-		return ERR_PTR(-EFAULT);
+	shift = ffs(region->page_size) - 1;
 
 	mr = kmalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
-	mr->umem = ib_umem_get(pd->uobject->context, start, length, acc,
-			       ucmd.mr_attrs & MTHCA_MR_DMASYNC);
-
-	if (IS_ERR(mr->umem)) {
-		err = PTR_ERR(mr->umem);
-		goto err;
-	}
-
-	shift = ffs(mr->umem->page_size) - 1;
-
 	n = 0;
-	list_for_each_entry(chunk, &mr->umem->chunk_list, list)
+	list_for_each_entry(chunk, &region->chunk_list, list)
 		n += chunk->nents;
 
 	mr->mtt = mthca_alloc_mtt(dev, n);
 	if (IS_ERR(mr->mtt)) {
 		err = PTR_ERR(mr->mtt);
-		goto err_umem;
+		goto err;
 	}
 
 	pages = (u64 *) __get_free_page(GFP_KERNEL);
@@ -1061,20 +1038,21 @@ static struct ib_mr *mthca_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 
 	i = n = 0;
 
-	write_mtt_size = min(mthca_write_mtt_size(dev), (int) (PAGE_SIZE / sizeof *pages));
-
-	list_for_each_entry(chunk, &mr->umem->chunk_list, list)
+	list_for_each_entry(chunk, &region->chunk_list, list)
 		for (j = 0; j < chunk->nmap; ++j) {
 			len = sg_dma_len(&chunk->page_list[j]) >> shift;
 			for (k = 0; k < len; ++k) {
 				pages[i++] = sg_dma_address(&chunk->page_list[j]) +
-					mr->umem->page_size * k;
+					region->page_size * k;
 				/*
-				 * Be friendly to write_mtt and pass it chunks
-				 * of appropriate size.
+				 * Be friendly to WRITE_MTT command
+				 * and leave two empty slots for the
+				 * index and reserved fields of the
+				 * mailbox.
 				 */
-				if (i == write_mtt_size) {
-					err = mthca_write_mtt(dev, mr->mtt, n, pages, i);
+				if (i == PAGE_SIZE / sizeof (u64) - 2) {
+					err = mthca_write_mtt(dev, mr->mtt,
+							      n, pages, i);
 					if (err)
 						goto mtt_done;
 					n += i;
@@ -1090,8 +1068,8 @@ mtt_done:
 	if (err)
 		goto err_mtt;
 
-	err = mthca_mr_alloc(dev, to_mpd(pd)->pd_num, shift, virt, length,
-			     convert_access(acc), mr);
+	err = mthca_mr_alloc(dev, to_mpd(pd)->pd_num, shift, region->virt_base,
+			     region->length, convert_access(acc), mr);
 
 	if (err)
 		goto err_mtt;
@@ -1101,9 +1079,6 @@ mtt_done:
 err_mtt:
 	mthca_free_mtt(dev, mr->mtt);
 
-err_umem:
-	ib_umem_release(mr->umem);
-
 err:
 	kfree(mr);
 	return ERR_PTR(err);
@@ -1112,12 +1087,8 @@ err:
 static int mthca_dereg_mr(struct ib_mr *mr)
 {
 	struct mthca_mr *mmr = to_mmr(mr);
-
 	mthca_free_mr(to_mdev(mr->device), mmr);
-	if (mmr->umem)
-		ib_umem_release(mmr->umem);
 	kfree(mmr);
-
 	return 0;
 }
 
@@ -1189,29 +1160,23 @@ static int mthca_unmap_fmr(struct list_head *fmr_list)
 	return 0;
 }
 
-static ssize_t show_rev(struct device *device, struct device_attribute *attr,
-			char *buf)
+static ssize_t show_rev(struct class_device *cdev, char *buf)
 {
-	struct mthca_dev *dev =
-		container_of(device, struct mthca_dev, ib_dev.dev);
+	struct mthca_dev *dev = container_of(cdev, struct mthca_dev, ib_dev.class_dev);
 	return sprintf(buf, "%x\n", dev->rev_id);
 }
 
-static ssize_t show_fw_ver(struct device *device, struct device_attribute *attr,
-			   char *buf)
+static ssize_t show_fw_ver(struct class_device *cdev, char *buf)
 {
-	struct mthca_dev *dev =
-		container_of(device, struct mthca_dev, ib_dev.dev);
+	struct mthca_dev *dev = container_of(cdev, struct mthca_dev, ib_dev.class_dev);
 	return sprintf(buf, "%d.%d.%d\n", (int) (dev->fw_ver >> 32),
 		       (int) (dev->fw_ver >> 16) & 0xffff,
 		       (int) dev->fw_ver & 0xffff);
 }
 
-static ssize_t show_hca(struct device *device, struct device_attribute *attr,
-			char *buf)
+static ssize_t show_hca(struct class_device *cdev, char *buf)
 {
-	struct mthca_dev *dev =
-		container_of(device, struct mthca_dev, ib_dev.dev);
+	struct mthca_dev *dev = container_of(cdev, struct mthca_dev, ib_dev.class_dev);
 	switch (dev->pdev->device) {
 	case PCI_DEVICE_ID_MELLANOX_TAVOR:
 		return sprintf(buf, "MT23108\n");
@@ -1227,24 +1192,22 @@ static ssize_t show_hca(struct device *device, struct device_attribute *attr,
 	}
 }
 
-static ssize_t show_board(struct device *device, struct device_attribute *attr,
-			  char *buf)
+static ssize_t show_board(struct class_device *cdev, char *buf)
 {
-	struct mthca_dev *dev =
-		container_of(device, struct mthca_dev, ib_dev.dev);
+	struct mthca_dev *dev = container_of(cdev, struct mthca_dev, ib_dev.class_dev);
 	return sprintf(buf, "%.*s\n", MTHCA_BOARD_ID_LEN, dev->board_id);
 }
 
-static DEVICE_ATTR(hw_rev,   S_IRUGO, show_rev,    NULL);
-static DEVICE_ATTR(fw_ver,   S_IRUGO, show_fw_ver, NULL);
-static DEVICE_ATTR(hca_type, S_IRUGO, show_hca,    NULL);
-static DEVICE_ATTR(board_id, S_IRUGO, show_board,  NULL);
+static CLASS_DEVICE_ATTR(hw_rev,   S_IRUGO, show_rev,    NULL);
+static CLASS_DEVICE_ATTR(fw_ver,   S_IRUGO, show_fw_ver, NULL);
+static CLASS_DEVICE_ATTR(hca_type, S_IRUGO, show_hca,    NULL);
+static CLASS_DEVICE_ATTR(board_id, S_IRUGO, show_board,  NULL);
 
-static struct device_attribute *mthca_dev_attributes[] = {
-	&dev_attr_hw_rev,
-	&dev_attr_fw_ver,
-	&dev_attr_hca_type,
-	&dev_attr_board_id
+static struct class_device_attribute *mthca_class_attributes[] = {
+	&class_device_attr_hw_rev,
+	&class_device_attr_fw_ver,
+	&class_device_attr_hca_type,
+	&class_device_attr_board_id
 };
 
 static int mthca_init_node_data(struct mthca_dev *dev)
@@ -1286,8 +1249,6 @@ static int mthca_init_node_data(struct mthca_dev *dev)
 		goto out;
 	}
 
-	if (mthca_is_memfree(dev))
-		dev->rev_id = be32_to_cpup((__be32 *) (out_mad->data + 32));
 	memcpy(&dev->ib_dev.node_guid, out_mad->data + 12, 8);
 
 out:
@@ -1327,10 +1288,10 @@ int mthca_register_device(struct mthca_dev *dev)
 		(1ull << IB_USER_VERBS_CMD_DESTROY_QP)		|
 		(1ull << IB_USER_VERBS_CMD_ATTACH_MCAST)	|
 		(1ull << IB_USER_VERBS_CMD_DETACH_MCAST);
-	dev->ib_dev.node_type            = RDMA_NODE_IB_CA;
+	dev->ib_dev.node_type            = IB_NODE_CA;
 	dev->ib_dev.phys_port_cnt        = dev->limits.num_ports;
-	dev->ib_dev.num_comp_vectors     = 1;
 	dev->ib_dev.dma_device           = &dev->pdev->dev;
+	dev->ib_dev.class_dev.dev        = &dev->pdev->dev;
 	dev->ib_dev.query_device         = mthca_query_device;
 	dev->ib_dev.query_port           = mthca_query_port;
 	dev->ib_dev.modify_device        = mthca_modify_device;
@@ -1406,9 +1367,9 @@ int mthca_register_device(struct mthca_dev *dev)
 	if (ret)
 		return ret;
 
-	for (i = 0; i < ARRAY_SIZE(mthca_dev_attributes); ++i) {
-		ret = device_create_file(&dev->ib_dev.dev,
-					 mthca_dev_attributes[i]);
+	for (i = 0; i < ARRAY_SIZE(mthca_class_attributes); ++i) {
+		ret = class_device_create_file(&dev->ib_dev.class_dev,
+					       mthca_class_attributes[i]);
 		if (ret) {
 			ib_unregister_device(&dev->ib_dev);
 			return ret;

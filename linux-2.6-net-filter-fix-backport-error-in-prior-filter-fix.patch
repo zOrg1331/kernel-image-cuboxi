@@ -1,0 +1,95 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Wed, 1 Dec 2010 16:17:40 -0500
+Subject: [net] filter: fix backport error in prior filter fix
+Message-id: <20101201161740.GA28647@redhat.com>
+Patchwork-id: 29766
+O-Subject: Re: [RHEL5.6 patch] BZ651703 CVE-2010-4158 net: filter: make sure
+	filters dont read uninitialized memory
+Bugzilla: 651703
+
+On Wed, Nov 24, 2010 at 05:24:16PM +0100, Jiri Pirko wrote:
+> BZ651703
+> https://bugzilla.redhat.com/show_bug.cgi?id=651703
+>
+> Description:
+> There is a possibility malicious users can get limited information about
+> uninitialized stack mem array. Even if sk_run_filter() result is bound
+> to packet length (0 .. 65535), we could imagine this can be used by
+> hostile user.
+>
+> Initializing mem[] array, like Dan Rosenberg suggested in his patch is
+> expensive since most filters dont even use this array.
+>
+> Its hard to make the filter validation in sk_chk_filter(), because of
+> the jumps. This might be done later.
+>
+> In this patch, I use a bitmap (a single long var) so that only filters
+> using mem[] loads/stores pay the price of added security checks.
+>
+> For other filters, additional cost is a single instruction.
+>
+> [ Since we access fentry->k a lot now, cache it in a local variable
+>   and mark filter entry pointer as const. -DaveM ]
+>
+> Upstream:
+> http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=57fe93b374a6b8711995c2d466c502af9f3a08bb
+>
+> Brew:
+> https://brewweb.devel.redhat.com/taskinfo?taskID=2911659
+>
+> Tested with bz-referenced reproducer
+>
+> Jirka
+>
+> Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+>
+> diff --git a/net/core/filter.c b/net/core/filter.c
+> index 5b4486a..2f11521 100644
+> --- a/net/core/filter.c
+> +++ b/net/core/filter.c
+> @@ -77,39 +77,41 @@ static inline void *load_pointer(struct sk_buff *skb, int k,
+>   */
+>  unsigned int sk_run_filter(struct sk_buff *skb, struct sock_filter *filter, int flen)
+>  {
+> -	struct sock_filter *fentry;	/* We walk down these */
+>  	void *ptr;
+>  	u32 A = 0;			/* Accumulator */
+>  	u32 X = 0;			/* Index Register */
+>  	u32 mem[BPF_MEMWORDS];		/* Scratch Memory Store */
+> +	unsigned long memvalid = 0;
+>  	u32 tmp;
+>  	int k;
+>  	int pc;
+>
+> +	BUILD_BUG_ON(BPF_MEMWORDS > BITS_PER_LONG);
+>  	/*
+>  	 * Process array of filter instructions.
+>  	 */
+>  	for (pc = 0; pc < flen; pc++) {
+> -		fentry = &filter[pc];
+> -
+> +		const struct sock_filter *fentry = &filter[pc];
+> +		u32 f_k = f_k;
+> +
+
+There's a bit of a brown paper bag bug that managed to slip past reviewers
+(and which I should have picked up on sooner, but I blame missing it on
+the holiday and being sick). That should be u32 f_k = fentry->k; there. As
+it is now, bridge interfaces are unable to acquire IP addresses, and thus
+all kvm testing in rhts is failing. Obvious one-line patch (which matches
+upstream) to fix it, which we've verified in rhts:
+
+
+diff --git a/net/core/filter.c b/net/core/filter.c
+index 2f11521..dcdae0c 100644
+--- a/net/core/filter.c
++++ b/net/core/filter.c
+@@ -92,7 +92,7 @@ unsigned int sk_run_filter(struct sk_buff *skb, struct sock_filter *filter, int
+ 	 */
+ 	for (pc = 0; pc < flen; pc++) {
+ 		const struct sock_filter *fentry = &filter[pc];
+-		u32 f_k = f_k;
++		u32 f_k = fentry->k;
+ 
+ 		switch (fentry->code) {
+ 		case BPF_ALU|BPF_ADD|BPF_X:

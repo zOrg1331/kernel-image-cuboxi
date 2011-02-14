@@ -3,7 +3,7 @@
 
 /*
  *  Main header file for the ALSA driver
- *  Copyright (c) 1994-2001 by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) 1994-2001 by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -22,26 +22,18 @@
  *
  */
 
-#include <linux/module.h>
 #include <linux/sched.h>		/* wake_up() */
 #include <linux/mutex.h>		/* struct mutex */
 #include <linux/rwsem.h>		/* struct rw_semaphore */
+#include <linux/workqueue.h>		/* struct workqueue_struct */
 #include <linux/pm.h>			/* pm_message_t */
-#include <linux/device.h>
-#include <linux/stringify.h>
-
-/* number of supported soundcards */
-#ifdef CONFIG_SND_DYNAMIC_MINORS
-#define SNDRV_CARDS 32
-#else
-#define SNDRV_CARDS 8		/* don't change - minor numbers */
-#endif
-
-#define CONFIG_SND_MAJOR	116	/* standard configuration */
 
 /* forward declarations */
 #ifdef CONFIG_PCI
 struct pci_dev;
+#endif
+#ifdef CONFIG_SBUS
+struct sbus_dev;
 #endif
 
 /* device allocation stuff */
@@ -61,7 +53,6 @@ typedef int __bitwise snd_device_type_t;
 #define	SNDRV_DEV_INFO		((__force snd_device_type_t) 0x1006)
 #define	SNDRV_DEV_BUS		((__force snd_device_type_t) 0x1007)
 #define	SNDRV_DEV_CODEC		((__force snd_device_type_t) 0x1008)
-#define	SNDRV_DEV_JACK          ((__force snd_device_type_t) 0x1009)
 #define	SNDRV_DEV_LOWLEVEL	((__force snd_device_type_t) 0x2000)
 
 typedef int __bitwise snd_device_state_t;
@@ -80,6 +71,7 @@ struct snd_device_ops {
 	int (*dev_free)(struct snd_device *dev);
 	int (*dev_register)(struct snd_device *dev);
 	int (*dev_disconnect)(struct snd_device *dev);
+	int (*dev_unregister)(struct snd_device *dev);
 };
 
 struct snd_device {
@@ -93,6 +85,15 @@ struct snd_device {
 
 #define snd_device(n) list_entry(n, struct snd_device, list)
 
+/* monitor files for graceful shutdown (hotplug) */
+
+struct snd_monitor_file {
+	struct file *file;
+	struct snd_monitor_file *next;
+};
+
+struct snd_shutdown_f_ops;	/* define it later in init.c */
+
 /* main structure for soundcard */
 
 struct snd_card {
@@ -104,7 +105,7 @@ struct snd_card {
 	char shortname[32];		/* short name of this soundcard */
 	char longname[80];		/* name of this soundcard */
 	char mixername[80];		/* mixer name */
-	char components[128];		/* card components delimited with
+	char components[80];		/* card components delimited with
 								space */
 	struct module *module;		/* top-level module */
 
@@ -125,17 +126,14 @@ struct snd_card {
 	struct snd_info_entry *proc_id;	/* the card id */
 	struct proc_dir_entry *proc_root_link;	/* number link to real id */
 
-	struct list_head files_list;	/* all files associated to this card */
+	struct snd_monitor_file *files; /* all files associated to this card */
 	struct snd_shutdown_f_ops *s_f_ops; /* file operations in the shutdown
 								state */
 	spinlock_t files_lock;		/* lock the files for this card */
 	int shutdown;			/* this card is going down */
-	int free_on_last_close;		/* free in context of file_release */
 	wait_queue_head_t shutdown_sleep;
-	struct device *dev;		/* device assigned to this card */
-#ifndef CONFIG_SYSFS_DEPRECATED
-	struct device *card_dev;	/* cardX object for sysfs */
-#endif
+	struct work_struct free_workq;	/* for free in workqueue */
+	struct device *dev;
 
 #ifdef CONFIG_PM
 	unsigned int power_state;	/* power state */
@@ -190,65 +188,20 @@ struct snd_minor {
 	int device;			/* device number */
 	const struct file_operations *f_ops;	/* file operations */
 	void *private_data;		/* private data for f_ops->open */
-	struct device *dev;		/* device for sysfs */
 };
-
-/* return a device pointer linked to each sound device as a parent */
-static inline struct device *snd_card_get_device_link(struct snd_card *card)
-{
-#ifdef CONFIG_SYSFS_DEPRECATED
-	return card ? card->dev : NULL;
-#else
-	return card ? card->card_dev : NULL;
-#endif
-}
 
 /* sound.c */
 
 extern int snd_major;
 extern int snd_ecards_limit;
-extern struct class *sound_class;
 
 void snd_request_card(int card);
 
-int snd_register_device_for_dev(int type, struct snd_card *card,
-				int dev,
-				const struct file_operations *f_ops,
-				void *private_data,
-				const char *name,
-				struct device *device);
-
-/**
- * snd_register_device - Register the ALSA device file for the card
- * @type: the device type, SNDRV_DEVICE_TYPE_XXX
- * @card: the card instance
- * @dev: the device index
- * @f_ops: the file operations
- * @private_data: user pointer for f_ops->open()
- * @name: the device file name
- *
- * Registers an ALSA device file for the given card.
- * The operators have to be set in reg parameter.
- *
- * This function uses the card's device pointer to link to the
- * correct &struct device.
- *
- * Returns zero if successful, or a negative error code on failure.
- */
-static inline int snd_register_device(int type, struct snd_card *card, int dev,
-				      const struct file_operations *f_ops,
-				      void *private_data,
-				      const char *name)
-{
-	return snd_register_device_for_dev(type, card, dev, f_ops,
-					   private_data, name,
-					   snd_card_get_device_link(card));
-}
-
+int snd_register_device(int type, struct snd_card *card, int dev,
+			const struct file_operations *f_ops, void *private_data,
+			const char *name);
 int snd_unregister_device(int type, struct snd_card *card, int dev);
 void *snd_lookup_minor_data(unsigned int minor, int type);
-int snd_add_device_sysfs_file(int type, struct snd_card *card, int dev,
-			      struct device_attribute *attr);
 
 #ifdef CONFIG_SND_OSSEMUL
 int snd_register_oss_device(int type, struct snd_card *card, int dev,
@@ -267,8 +220,8 @@ int snd_minor_info_done(void);
 int snd_minor_info_oss_init(void);
 int snd_minor_info_oss_done(void);
 #else
-static inline int snd_minor_info_oss_init(void) { return 0; }
-static inline int snd_minor_info_oss_done(void) { return 0; }
+#define snd_minor_info_oss_init() /*NOP*/
+#define snd_minor_info_oss_done() /*NOP*/
 #endif
 
 /* memory.c */
@@ -287,14 +240,11 @@ int snd_card_locked(int card);
 extern int (*snd_mixer_oss_notify_callback)(struct snd_card *card, int cmd);
 #endif
 
-int snd_card_create(int idx, const char *id,
-		    struct module *module, int extra_size,
-		    struct snd_card **card_ret);
-
+struct snd_card *snd_card_new(int idx, const char *id,
+			 struct module *module, int extra_size);
 int snd_card_disconnect(struct snd_card *card);
 int snd_card_free(struct snd_card *card);
-int snd_card_free_when_closed(struct snd_card *card);
-void snd_card_set_id(struct snd_card *card, const char *id);
+int snd_card_free_in_thread(struct snd_card *card);
 int snd_card_register(struct snd_card *card);
 int snd_card_info_init(void);
 int snd_card_info_done(void);
@@ -302,7 +252,9 @@ int snd_component_add(struct snd_card *card, const char *component);
 int snd_card_file_add(struct snd_card *card, struct file *file);
 int snd_card_file_remove(struct snd_card *card, struct file *file);
 
-#define snd_card_set_dev(card, devptr) ((card)->dev = (devptr))
+#ifndef snd_card_set_dev
+#define snd_card_set_dev(card,devptr) ((card)->dev = (devptr))
+#endif
 
 /* device.c */
 
@@ -329,87 +281,91 @@ unsigned int snd_dma_pointer(unsigned long dma, unsigned int size);
 struct resource;
 void release_and_free_resource(struct resource *res);
 
-/* --- */
-
-#if defined(CONFIG_SND_DEBUG) || defined(CONFIG_SND_VERBOSE_PRINTK)
-void __snd_printk(unsigned int level, const char *file, int line,
-		  const char *format, ...)
-     __attribute__ ((format (printf, 4, 5)));
-#else
-#define __snd_printk(level, file, line, format, args...) \
-	printk(format, ##args)
+#ifdef CONFIG_SND_VERBOSE_PRINTK
+void snd_verbose_printk(const char *file, int line, const char *format, ...)
+     __attribute__ ((format (printf, 3, 4)));
+#endif
+#if defined(CONFIG_SND_DEBUG) && defined(CONFIG_SND_VERBOSE_PRINTK)
+void snd_verbose_printd(const char *file, int line, const char *format, ...)
+     __attribute__ ((format (printf, 3, 4)));
 #endif
 
+/* --- */
+
+#ifdef CONFIG_SND_VERBOSE_PRINTK
 /**
  * snd_printk - printk wrapper
  * @fmt: format string
  *
- * Works like printk() but prints the file and the line of the caller
+ * Works like print() but prints the file and the line of the caller
  * when configured with CONFIG_SND_VERBOSE_PRINTK.
  */
 #define snd_printk(fmt, args...) \
-	__snd_printk(0, __FILE__, __LINE__, fmt, ##args)
+	snd_verbose_printk(__FILE__, __LINE__, fmt ,##args)
+#else
+#define snd_printk(fmt, args...) \
+	printk(fmt ,##args)
+#endif
 
 #ifdef CONFIG_SND_DEBUG
+
+#define __ASTRING__(x) #x
+
+#ifdef CONFIG_SND_VERBOSE_PRINTK
 /**
  * snd_printd - debug printk
  * @fmt: format string
  *
- * Works like snd_printk() for debugging purposes.
+ * Compiled only when Works like snd_printk() for debugging purpose.
  * Ignored when CONFIG_SND_DEBUG is not set.
  */
 #define snd_printd(fmt, args...) \
-	__snd_printk(1, __FILE__, __LINE__, fmt, ##args)
-
+	snd_verbose_printd(__FILE__, __LINE__, fmt ,##args)
+#else
+#define snd_printd(fmt, args...) \
+	printk(fmt ,##args)
+#endif
 /**
- * snd_BUG - give a BUG warning message and stack trace
+ * snd_assert - run-time assertion macro
+ * @expr: expression
  *
- * Calls WARN() if CONFIG_SND_DEBUG is set.
- * Ignored when CONFIG_SND_DEBUG is not set.
+ * This macro checks the expression in run-time and invokes the commands
+ * given in the rest arguments if the assertion is failed.
+ * When CONFIG_SND_DEBUG is not set, the expression is executed but
+ * not checked.
  */
-#define snd_BUG()		WARN(1, "BUG?\n")
+#define snd_assert(expr, args...) do {					\
+	if (unlikely(!(expr))) {					\
+		snd_printk(KERN_ERR "BUG? (%s)\n", __ASTRING__(expr));	\
+		dump_stack();						\
+		args;							\
+	}								\
+} while (0)
 
-/**
- * snd_BUG_ON - debugging check macro
- * @cond: condition to evaluate
- *
- * When CONFIG_SND_DEBUG is set, this macro evaluates the given condition,
- * and call WARN() and returns the value if it's non-zero.
- * 
- * When CONFIG_SND_DEBUG is not set, this just returns zero, and the given
- * condition is ignored.
- *
- * NOTE: the argument won't be evaluated at all when CONFIG_SND_DEBUG=n.
- * Thus, don't put any statement that influences on the code behavior,
- * such as pre/post increment, to the argument of this macro.
- * If you want to evaluate and give a warning, use standard WARN_ON().
- */
-#define snd_BUG_ON(cond)	WARN((cond), "BUG? (%s)\n", __stringify(cond))
+#define snd_BUG() do {				\
+	snd_printk(KERN_ERR "BUG?\n");		\
+	dump_stack();				\
+} while (0)
 
 #else /* !CONFIG_SND_DEBUG */
 
-#define snd_printd(fmt, args...)	do { } while (0)
-#define snd_BUG()			do { } while (0)
-static inline int __snd_bug_on(int cond)
-{
-	return 0;
-}
-#define snd_BUG_ON(cond)	__snd_bug_on(0 && (cond))  /* always false */
+#define snd_printd(fmt, args...)	/* nothing */
+#define snd_assert(expr, args...)	(void)(expr)
+#define snd_BUG()			/* nothing */
 
 #endif /* CONFIG_SND_DEBUG */
 
-#ifdef CONFIG_SND_DEBUG_VERBOSE
+#ifdef CONFIG_SND_DEBUG_DETECT
 /**
  * snd_printdd - debug printk
  * @format: format string
  *
- * Works like snd_printk() for debugging purposes.
- * Ignored when CONFIG_SND_DEBUG_VERBOSE is not set.
+ * Compiled only when Works like snd_printk() for debugging purpose.
+ * Ignored when CONFIG_SND_DEBUG_DETECT is not set.
  */
-#define snd_printdd(format, args...) \
-	__snd_printk(2, __FILE__, __LINE__, format, ##args)
+#define snd_printdd(format, args...) snd_printk(format, ##args)
 #else
-#define snd_printdd(format, args...)	do { } while (0)
+#define snd_printdd(format, args...) /* nothing */
 #endif
 
 
@@ -417,49 +373,13 @@ static inline int __snd_bug_on(int cond)
 
 /* for easier backward-porting */
 #if defined(CONFIG_GAMEPORT) || defined(CONFIG_GAMEPORT_MODULE)
+#ifndef gameport_set_dev_parent
 #define gameport_set_dev_parent(gp,xdev) ((gp)->dev.parent = (xdev))
 #define gameport_set_port_data(gp,r) ((gp)->port_data = (r))
 #define gameport_get_port_data(gp) (gp)->port_data
 #endif
-
-/* PCI quirk list helper */
-struct snd_pci_quirk {
-	unsigned short subvendor;	/* PCI subvendor ID */
-	unsigned short subdevice;	/* PCI subdevice ID */
-	unsigned short subdevice_mask;	/* bitmask to match */
-	int value;			/* value */
-#ifdef CONFIG_SND_DEBUG_VERBOSE
-	const char *name;		/* name of the device (optional) */
-#endif
-};
-
-#define _SND_PCI_QUIRK_ID_MASK(vend, mask, dev)	\
-	.subvendor = (vend), .subdevice = (dev), .subdevice_mask = (mask)
-#define _SND_PCI_QUIRK_ID(vend, dev) \
-	_SND_PCI_QUIRK_ID_MASK(vend, 0xffff, dev)
-#define SND_PCI_QUIRK_ID(vend,dev) {_SND_PCI_QUIRK_ID(vend, dev)}
-#ifdef CONFIG_SND_DEBUG_VERBOSE
-#define SND_PCI_QUIRK(vend,dev,xname,val) \
-	{_SND_PCI_QUIRK_ID(vend, dev), .value = (val), .name = (xname)}
-#define SND_PCI_QUIRK_VENDOR(vend, xname, val)			\
-	{_SND_PCI_QUIRK_ID_MASK(vend, 0, 0), .value = (val), .name = (xname)}
-#define SND_PCI_QUIRK_MASK(vend, mask, dev, xname, val)			\
-	{_SND_PCI_QUIRK_ID_MASK(vend, mask, dev),			\
-			.value = (val), .name = (xname)}
-#else
-#define SND_PCI_QUIRK(vend,dev,xname,val) \
-	{_SND_PCI_QUIRK_ID(vend, dev), .value = (val)}
-#define SND_PCI_QUIRK_MASK(vend, mask, dev, xname, val)			\
-	{_SND_PCI_QUIRK_ID_MASK(vend, mask, dev), .value = (val)}
-#define SND_PCI_QUIRK_VENDOR(vend, xname, val)			\
-	{_SND_PCI_QUIRK_ID_MASK(vend, 0, 0), .value = (val)}
 #endif
 
-const struct snd_pci_quirk *
-snd_pci_quirk_lookup(struct pci_dev *pci, const struct snd_pci_quirk *list);
-
-const struct snd_pci_quirk *
-snd_pci_quirk_lookup_id(u16 vendor, u16 device,
-			const struct snd_pci_quirk *list);
+#include "typedefs.h"
 
 #endif /* __SOUND_CORE_H */

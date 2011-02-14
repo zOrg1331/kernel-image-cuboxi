@@ -1,0 +1,117 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Wed, 25 Mar 2009 13:50:26 -0400
+Subject: [i2c] add support for SB800 SMBus
+Message-id: 20090325175025.13395.12932.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH] Add support for SB800 SMBus
+Bugzilla: 488746
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Resolves BZ 488746
+
+This patch adds support for the AMD SB800 family of products. Major changes
+include the changes to addressing the SMBUS registers at different location,
+from previous compatible parts from AMD such as SB400/SB600/SB700.   For
+SB800, the main features and register definitions of SMBUS and other
+interfaces are still compatible with the previous products with the
+only change being in how to access the internal registers for these
+blocks.
+
+The patch has been accepted upstream and will appear in 2.6.30 kernel.
+http://marc.info/?l=linux-i2c&m=123575347413022&w=2
+
+Here is the final accepted patch:
+ftp://ftp.kernel.org/pub/linux/kernel/people/jdelvare/linux-2.6/jdelvare-i2c/i2c-piix4-add-support-for-sb800.patch
+
+The brew build has been successfully tested on SB800 internal reference
+board.
+
+Please review and ACK for RHEL5.4.
+
+diff --git a/drivers/i2c/busses/i2c-piix4.c b/drivers/i2c/busses/i2c-piix4.c
+index dfaab59..a0a5c2c 100644
+--- a/drivers/i2c/busses/i2c-piix4.c
++++ b/drivers/i2c/busses/i2c-piix4.c
+@@ -207,6 +207,67 @@ static int __devinit piix4_setup(struct pci_dev *PIIX4_dev,
+ 	return 0;
+ }
+ 
++static int __devinit piix4_setup_sb800(struct pci_dev *PIIX4_dev,
++				const struct pci_device_id *id)
++{
++	unsigned short smba_idx = 0xcd6;
++	u8 smba_en_lo, smba_en_hi, i2ccfg, i2ccfg_offset = 0x10, smb_en = 0x2c;
++
++	/* SB800 SMBus does not support forcing address */
++	if (force || force_addr) {
++		dev_err(&PIIX4_dev->dev, "SB800 SMBus does not support "
++			"forcing address!\n");
++		return -EINVAL;
++	}
++
++	/* Determine the address of the SMBus areas */
++	if (!request_region(smba_idx, 2, "smba_idx")) {
++		dev_err(&PIIX4_dev->dev, "SMBus base address index region "
++			"0x%x already in use!\n", smba_idx);
++		return -EBUSY;
++	}
++	outb_p(smb_en, smba_idx);
++	smba_en_lo = inb_p(smba_idx + 1);
++	outb_p(smb_en + 1, smba_idx);
++	smba_en_hi = inb_p(smba_idx + 1);
++	release_region(smba_idx, 2);
++
++	if ((smba_en_lo & 1) == 0) {
++		dev_err(&PIIX4_dev->dev,
++			"Host SMBus controller not enabled!\n");
++		return -ENODEV;
++	}
++
++	piix4_smba = ((smba_en_hi << 8) | smba_en_lo) & 0xffe0;
++	if (!request_region(piix4_smba, SMBIOSIZE, piix4_driver.name)) {
++		dev_err(&PIIX4_dev->dev, "SMBus region 0x%x already in use!\n",
++			piix4_smba);
++		return -EBUSY;
++	}
++
++	/* Request the SMBus I2C bus config region */
++	if (!request_region(piix4_smba + i2ccfg_offset, 1, "i2ccfg")) {
++		dev_err(&PIIX4_dev->dev, "SMBus I2C bus config region "
++			"0x%x already in use!\n", piix4_smba + i2ccfg_offset);
++		release_region(piix4_smba, SMBIOSIZE);
++		piix4_smba = 0;
++		return -EBUSY;
++	}
++	i2ccfg = inb_p(piix4_smba + i2ccfg_offset);
++	release_region(piix4_smba + i2ccfg_offset, 1);
++
++	if (i2ccfg & 1)
++		dev_dbg(&PIIX4_dev->dev, "Using IRQ for SMBus.\n");
++	else
++		dev_dbg(&PIIX4_dev->dev, "Using SMI# for SMBus.\n");
++
++	dev_info(&PIIX4_dev->dev,
++		 "SMBus Host Controller at 0x%x, revision %d\n",
++		 piix4_smba, i2ccfg >> 4);
++
++	return 0;
++}
++
+ /* Another internally used function */
+ static int piix4_transaction(void)
+ {
+@@ -423,7 +484,14 @@ static int __devinit piix4_probe(struct pci_dev *dev,
+ {
+ 	int retval;
+ 
+-	retval = piix4_setup(dev, id);
++	if ((dev->vendor == PCI_VENDOR_ID_ATI) &&
++	    (dev->device == PCI_DEVICE_ID_ATI_SBX00_SMBUS) &&
++	    (dev->revision >= 0x40))
++		/* base address location etc changed in SB800 */
++		retval = piix4_setup_sb800(dev, id);
++	else
++		retval = piix4_setup(dev, id);
++
+ 	if (retval)
+ 		return retval;
+ 

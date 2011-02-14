@@ -1,0 +1,64 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 15 Feb 2008 14:28:01 +0800
+Subject: [net] ipv6: fix IPsec datagram fragmentation
+Message-id: 20080215062800.GA11245@gondor.apana.org.au
+O-Subject: Re: [RHEL5.2 PATCH] [IPV6]: Fix IPsec datagram fragmentation
+Bugzilla: 432314
+
+[IPV6]: Fix IPsec datagram fragmentation
+
+This is a long-standing bug in the IPsec IPv6 code that breaks
+when we emit a IPsec tunnel-mode datagram packet.  The problem
+is that the code the emits the packet assumes the IPv6 stack
+will fragment it later, but the IPv6 stack assumes that whoever
+is emitting the packet is going to pre-fragment the packet.
+
+In the long term we need to fix both sides, e.g., to get the
+datagram code to pre-fragment as well as to get the IPv6 stack
+to fragment locally generated tunnel-mode packet.
+
+For now this patch does the second part which should make it
+work for the IPsec host case.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Cheers,
+--
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index e69d424..373cc8a 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1287,6 +1287,10 @@ int ip6_push_pending_frames(struct sock *sk)
+ 		tmp_skb->sk = NULL;
+ 	}
+ 
++	/* Allow local fragmentation. */
++	if (np->pmtudisc < IPV6_PMTUDISC_DO)
++		skb->local_df = 1;
++
+ 	ipv6_addr_copy(final_dst, &fl->fl6_dst);
+ 	__skb_pull(skb, skb->h.raw - skb->nh.raw);
+ 	if (opt && opt->opt_flen)
+diff --git a/net/ipv6/xfrm6_output.c b/net/ipv6/xfrm6_output.c
+index 70c3888..f2b4a46 100644
+--- a/net/ipv6/xfrm6_output.c
++++ b/net/ipv6/xfrm6_output.c
+@@ -26,7 +26,7 @@ static int xfrm6_tunnel_check_size(struct sk_buff *skb)
+ 	if (mtu < IPV6_MIN_MTU)
+ 		mtu = IPV6_MIN_MTU;
+ 
+-	if (skb->len > mtu) {
++	if (!skb->local_df && skb->len > mtu) {
+ 		skb->dev = dst->dev;
+ 		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+ 		ret = -EMSGSIZE;

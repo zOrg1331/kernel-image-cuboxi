@@ -1,0 +1,51 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 19 Aug 2009 16:37:14 +0200
+Subject: [net] ipv6: do not fwd pkts with the unspecified saddr
+Message-id: 20090819143713.GG3870@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.5 patch] BZ517899 net: ipv6: Do not forward packets with the unspecified source address.
+Bugzilla: 517899
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+BZ517899
+https://bugzilla.redhat.com/show_bug.cgi?id=517899
+
+Description:
+RFC3513:2.5.2
+The Unspecified Address
+An IPv6 packet with a source address of unspecified must never be forwarded
+by an IPv6 router.
+
+According to RFC, An IPv6 packet with a source address of unspecified must
+never be forwarded by an IPv6 router. The problem is that RHEL does forward
+the packet which source address is ipv6 unspecified address. This patch
+corrects this.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=f81b2e7d8cf8c6a52b7a5224c3b89cee5aeb6811
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1932247
+
+Test:
+Booted on x86_64, tested by the reproducer.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 27e39ec..56b1c1a 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -413,7 +413,8 @@ int ip6_forward(struct sk_buff *skb)
+ 		int addrtype = ipv6_addr_type(&hdr->saddr);
+ 
+ 		/* This check is security critical. */
+-		if (addrtype & (IPV6_ADDR_MULTICAST|IPV6_ADDR_LOOPBACK))
++		if (addrtype == IPV6_ADDR_ANY ||
++		    addrtype & (IPV6_ADDR_MULTICAST | IPV6_ADDR_LOOPBACK))
+ 			goto error;
+ 		if (addrtype & IPV6_ADDR_LINKLOCAL) {
+ 			icmpv6_send(skb, ICMPV6_DEST_UNREACH,

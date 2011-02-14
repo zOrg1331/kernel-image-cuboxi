@@ -8,14 +8,14 @@
  *
  */
 
-typedef void (*mts_scsi_cmnd_callback)(struct scsi_cmnd *);
+typedef void (*mts_scsi_cmnd_callback)(Scsi_Cmnd *);
 
 
 struct mts_transfer_context
 {
 	struct mts_desc* instance;
 	mts_scsi_cmnd_callback final_callback;
-	struct scsi_cmnd *srb;
+	Scsi_Cmnd *srb;
 	
 	void* data;
 	unsigned data_length;
@@ -39,6 +39,7 @@ struct mts_desc {
 	u8 ep_image;
 
 	struct Scsi_Host * host;
+	struct semaphore lock;
 
 	struct urb *urb;
 	struct mts_transfer_context context;

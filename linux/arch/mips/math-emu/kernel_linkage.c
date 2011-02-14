@@ -24,7 +24,6 @@
 #include <asm/signal.h>
 #include <asm/uaccess.h>
 
-#include <asm/fpu.h>
 #include <asm/fpu_emulator.h>
 
 #define SIGNALLING_NAN 0x7ff800007ff80000LL
@@ -52,7 +51,7 @@ void fpu_emulator_init_fpu(void)
  * with appropriate macros from uaccess.h
  */
 
-int fpu_emulator_save_context(struct sigcontext __user *sc)
+int fpu_emulator_save_context(struct sigcontext *sc)
 {
 	int i;
 	int err = 0;
@@ -66,7 +65,7 @@ int fpu_emulator_save_context(struct sigcontext __user *sc)
 	return err;
 }
 
-int fpu_emulator_restore_context(struct sigcontext __user *sc)
+int fpu_emulator_restore_context(struct sigcontext *sc)
 {
 	int i;
 	int err = 0;
@@ -85,7 +84,7 @@ int fpu_emulator_restore_context(struct sigcontext __user *sc)
  * This is the o32 version
  */
 
-int fpu_emulator_save_context32(struct sigcontext32 __user *sc)
+int fpu_emulator_save_context32(struct sigcontext32 *sc)
 {
 	int i;
 	int err = 0;
@@ -99,7 +98,7 @@ int fpu_emulator_save_context32(struct sigcontext32 __user *sc)
 	return err;
 }
 
-int fpu_emulator_restore_context32(struct sigcontext32 __user *sc)
+int fpu_emulator_restore_context32(struct sigcontext32 *sc)
 {
 	int i;
 	int err = 0;

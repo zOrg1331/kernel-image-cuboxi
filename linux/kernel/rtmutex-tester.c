@@ -6,6 +6,7 @@
  *  Copyright (C) 2006, Timesys Corp., Thomas Gleixner <tglx@timesys.com>
  *
  */
+#include <linux/config.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -13,7 +14,6 @@
 #include <linux/spinlock.h>
 #include <linux/sysdev.h>
 #include <linux/timer.h>
-#include <linux/freezer.h>
 
 #include "rtmutex.h"
 
@@ -260,7 +260,6 @@ static int test_func(void *data)
 	int ret;
 
 	current->flags |= PF_MUTEX_TESTER;
-	set_freezable();
 	allow_signal(SIGHUP);
 
 	for(;;) {
@@ -297,8 +296,8 @@ static int test_func(void *data)
  *
  * opcode:data
  */
-static ssize_t sysfs_test_command(struct sys_device *dev, struct sysdev_attribute *attr,
-				  const char *buf, size_t count)
+static ssize_t sysfs_test_command(struct sys_device *dev, const char *buf,
+				  size_t count)
 {
 	struct sched_param schedpar;
 	struct test_thread_data *td;
@@ -360,8 +359,7 @@ static ssize_t sysfs_test_command(struct sys_device *dev, struct sysdev_attribut
  * @dev:	thread to query
  * @buf:	char buffer to be filled with thread status info
  */
-static ssize_t sysfs_test_status(struct sys_device *dev, struct sysdev_attribute *attr,
-				 char *buf)
+static ssize_t sysfs_test_status(struct sys_device *dev, char *buf)
 {
 	struct test_thread_data *td;
 	struct task_struct *tsk;
@@ -395,7 +393,7 @@ static SYSDEV_ATTR(status, 0600, sysfs_test_status, NULL);
 static SYSDEV_ATTR(command, 0600, NULL, sysfs_test_command);
 
 static struct sysdev_class rttest_sysclass = {
-	.name = "rttest",
+	set_kset_name("rttest"),
 };
 
 static int init_test_thread(int id)

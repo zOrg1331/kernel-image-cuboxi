@@ -1,0 +1,46 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Tue, 17 Nov 2009 13:25:45 -0500
+Subject: [net] gro: fix illegal merging of trailer trash
+Message-id: <20091117132545.GA15436@gondor.apana.org.au>
+Patchwork-id: 21395
+O-Subject: [RHEL5.5 PATCH] gro: Fix illegal merging of trailer trash
+Bugzilla: 537876
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+RHEL5 Bugzilla #537876
+
+This patch fixes a crash when using GRO with certain NICs.  It
+has been accepted upstream.
+
+gro: Fix illegal merging of trailer trash
+
+When we've merged skb's with page frags, and subsequently receive
+a trailer skb (< MSS) that is not completely non-linear (this can
+occur on Intel NICs if the packet size falls below the threshold),
+GRO ends up producing an illegal GSO skb with a frag_list.
+
+This is harmless unless the skb is then forwarded through an
+interface that requires software GSO, whereupon the GSO code
+will BUG.
+
+This patch detects this case in GRO and avoids merging the
+trailer skb.
+
+Reported-by: Mark Wagner <mwagner@redhat.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 9752e02..a476fbe 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2125,7 +2125,8 @@ int skb_gro_receive(struct sk_buff **head, struct sk_buff *skb)
+ 
+ 		NAPI_GRO_CB(skb)->free = 1;
+ 		goto done;
+-	}
++	} else if (skb_gro_len(p) != pinfo->gso_size)
++		return -E2BIG;
+ 
+ 	headroom = skb_headroom(p);
+ 	nskb = netdev_alloc_skb(p->dev, headroom + skb_gro_offset(p));

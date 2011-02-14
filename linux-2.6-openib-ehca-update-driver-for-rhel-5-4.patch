@@ -1,0 +1,552 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 14 Apr 2009 15:23:32 -0400
+Subject: [openib] ehca: update driver for RHEL-5.4
+Message-id: 1239737023-31222-6-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5.4 05/16] [ehca] Update echa driver
+Bugzilla: 466086
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/hw/ehca/ehca_av.c b/drivers/infiniband/hw/ehca/ehca_av.c
+index dd4de2f..4561f08 100644
+--- a/drivers/infiniband/hw/ehca/ehca_av.c
++++ b/drivers/infiniband/hw/ehca/ehca_av.c
+@@ -1,7 +1,7 @@
+ /*
+  *  IBM eServer eHCA Infiniband device driver for Linux on POWER
+  *
+- *  adress vector functions
++ *  address vector functions
+  *
+  *  Authors: Hoang-Nam Nguyen <hnguyen@de.ibm.com>
+  *           Khadija Souissi <souissik@de.ibm.com>
+diff --git a/drivers/infiniband/hw/ehca/ehca_classes.h b/drivers/infiniband/hw/ehca/ehca_classes.h
+index e1c25eb..f72959c 100644
+--- a/drivers/infiniband/hw/ehca/ehca_classes.h
++++ b/drivers/infiniband/hw/ehca/ehca_classes.h
+@@ -168,10 +168,10 @@ struct ehca_qmap_entry {
+ };
+ 
+ struct ehca_queue_map {
+-	struct ehca_qmap_entry *map; /* list of qmap entries */
+-	unsigned int entries;        /* number of qmap entries */
+-	unsigned int tail;           /* tail pointer */
+-	unsigned int left_to_poll;   /* CQEs to poll before gen. flush CQEs */
++	struct ehca_qmap_entry *map;
++	unsigned int entries;
++	unsigned int tail;
++	unsigned int left_to_poll;
+ 	unsigned int next_wqe_idx;   /* Idx to first wqe to be flushed */
+ };
+ 
+diff --git a/drivers/infiniband/hw/ehca/ehca_irq.c b/drivers/infiniband/hw/ehca/ehca_irq.c
+index 4c57161..3bf50a8 100644
+--- a/drivers/infiniband/hw/ehca/ehca_irq.c
++++ b/drivers/infiniband/hw/ehca/ehca_irq.c
+@@ -359,33 +359,43 @@ static void notify_port_conf_change(struct ehca_shca *shca, int port_num)
+ 	*old_attr = new_attr;
+ }
+ 
++/* replay modify_qp for sqps -- return 0 if all is well, 1 if AQP1 destroyed */
++static int replay_modify_qp(struct ehca_sport *sport)
++{
++	int aqp1_destroyed;
++	unsigned long flags;
++
++	spin_lock_irqsave(&sport->mod_sqp_lock, flags);
++
++	aqp1_destroyed = !sport->ibqp_sqp[IB_QPT_GSI];
++
++	if (sport->ibqp_sqp[IB_QPT_SMI])
++		ehca_recover_sqp(sport->ibqp_sqp[IB_QPT_SMI]);
++	if (!aqp1_destroyed)
++		ehca_recover_sqp(sport->ibqp_sqp[IB_QPT_GSI]);
++
++	spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
++
++	return aqp1_destroyed;
++}
++
+ static void parse_ec(struct ehca_shca *shca, u64 eqe)
+ {
+ 	u8 ec   = EHCA_BMASK_GET(NEQE_EVENT_CODE, eqe);
+ 	u8 port = EHCA_BMASK_GET(NEQE_PORT_NUMBER, eqe);
+ 	u8 spec_event;
+ 	struct ehca_sport *sport = &shca->sport[port - 1];
+-	unsigned long flags;
+ 
+ 	switch (ec) {
+ 	case 0x30: /* port availability change */
+ 		if (EHCA_BMASK_GET(NEQE_PORT_AVAILABILITY, eqe)) {
+-			/* perform recovery only for port auto-detect mode */
+-			if (ehca_nr_ports == -1) {
+-				int suppress_event;
+-				/* replay modify_qp for sqps */
+-				spin_lock_irqsave(&sport->mod_sqp_lock, flags);
+-				suppress_event = !sport->ibqp_sqp[IB_QPT_GSI];
+-				if (sport->ibqp_sqp[IB_QPT_SMI])
+-					ehca_recover_sqp(sport->ibqp_sqp[IB_QPT_SMI]);
+-				if (!suppress_event)
+-					ehca_recover_sqp(sport->ibqp_sqp[IB_QPT_GSI]);
+-				spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
+-
+-				/* AQP1 was destroyed, ignore this event */
+-				if (suppress_event)
++			/* only replay modify_qp calls in autodetect mode;
++			 * if AQP1 was destroyed, the port is already down
++			 * again and we can drop the event.
++			 */
++			if (ehca_nr_ports < 0)
++				if (replay_modify_qp(sport))
+ 					break;
+-			}
+ 
+ 			sport->port_state = IB_PORT_ACTIVE;
+ 			dispatch_port_event(shca, port, IB_EVENT_PORT_ACTIVE,
+diff --git a/drivers/infiniband/hw/ehca/ehca_main.c b/drivers/infiniband/hw/ehca/ehca_main.c
+index d78db80..c57e9f6 100644
+--- a/drivers/infiniband/hw/ehca/ehca_main.c
++++ b/drivers/infiniband/hw/ehca/ehca_main.c
+@@ -923,6 +923,7 @@ static struct of_device_id ehca_device_table[] =
+ 	},
+ 	{},
+ };
++MODULE_DEVICE_TABLE(of, ehca_device_table);
+ 
+ static struct ibmebus_driver ehca_driver = {
+ 	.name     = "ehca",
+diff --git a/drivers/infiniband/hw/ehca/ehca_mrmw.c b/drivers/infiniband/hw/ehca/ehca_mrmw.c
+index 46ae4eb..f974367 100644
+--- a/drivers/infiniband/hw/ehca/ehca_mrmw.c
++++ b/drivers/infiniband/hw/ehca/ehca_mrmw.c
+@@ -323,7 +323,7 @@ struct ib_mr *ehca_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+ 	}
+ 
+ 	e_mr->umem = ib_umem_get(pd->uobject->context, start, length,
+-				 mr_access_flags);
++				 mr_access_flags, 0);
+ 	if (IS_ERR(e_mr->umem)) {
+ 		ib_mr = (void *)e_mr->umem;
+ 		goto reg_user_mr_exit1;
+diff --git a/drivers/infiniband/hw/ehca/ehca_qp.c b/drivers/infiniband/hw/ehca/ehca_qp.c
+index 0b3caec..e3537e2 100644
+--- a/drivers/infiniband/hw/ehca/ehca_qp.c
++++ b/drivers/infiniband/hw/ehca/ehca_qp.c
+@@ -415,6 +415,8 @@ void ehca_add_to_err_list(struct ehca_qp *qp, int on_sq)
+ 
+ 	if (list_empty(node))
+ 		list_add_tail(node, list);
++
++	return;
+ }
+ 
+ static void del_from_err_list(struct ehca_cq *cq, struct list_head *node)
+@@ -475,6 +477,11 @@ static struct ehca_qp *internal_create_qp(
+ 		return ERR_PTR(-ENOSPC);
+ 	}
+ 
++	if (init_attr->create_flags) {
++		atomic_dec(&shca->num_qps);
++		return ERR_PTR(-EINVAL);
++	}
++
+ 	memset(&parms, 0, sizeof(parms));
+ 	qp_type = init_attr->qp_type;
+ 
+@@ -759,7 +766,7 @@ static struct ehca_qp *internal_create_qp(
+ 		my_qp->sq_map.entries = my_qp->ipz_squeue.queue_length /
+ 			 my_qp->ipz_squeue.qe_size;
+ 		my_qp->sq_map.map = vmalloc(my_qp->sq_map.entries *
+-					    sizeof(struct ehca_qmap_entry));
++					sizeof(struct ehca_qmap_entry));
+ 		if (!my_qp->sq_map.map) {
+ 			ehca_err(pd->device, "Couldn't allocate squeue "
+ 				 "map ret=%i", ret);
+@@ -783,10 +790,10 @@ static struct ehca_qp *internal_create_qp(
+ 		my_qp->rq_map.entries = my_qp->ipz_rqueue.queue_length /
+ 			my_qp->ipz_rqueue.qe_size;
+ 		my_qp->rq_map.map = vmalloc(my_qp->rq_map.entries *
+-					    sizeof(struct ehca_qmap_entry));
++				sizeof(struct ehca_qmap_entry));
+ 		if (!my_qp->rq_map.map) {
+ 			ehca_err(pd->device, "Couldn't allocate squeue "
+-				 "map ret=%i", ret);
++					"map ret=%i", ret);
+ 			goto create_qp_exit5;
+ 		}
+ 		INIT_LIST_HEAD(&my_qp->rq_err_node);
+@@ -1121,7 +1128,7 @@ static int calc_left_cqes(u64 wqe_p, struct ipz_queue *ipz_queue,
+ 
+ 	if (ipz_queue_abs_to_offset(ipz_queue, wqe_p, &q_ofs)) {
+ 		ehca_gen_err("Invalid offset for calculating left cqes "
+-			     "wqe_p=%#lx wqe_v=%p\n", wqe_p, wqe_v);
++				"wqe_p=%#lx wqe_v=%p\n", wqe_p, wqe_v);
+ 		return -EFAULT;
+ 	}
+ 
+@@ -1151,10 +1158,8 @@ static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+ 	if (my_qp->ext_type != EQPT_SRQBASE) {
+ 		/* get send and receive wqe pointer */
+ 		h_ret = hipz_h_disable_and_get_wqe(shca->ipz_hca_handle,
+-						   my_qp->ipz_qp_handle,
+-						   &my_qp->pf,
+-						   &send_wqe_p, &recv_wqe_p,
+-						   4);
++				my_qp->ipz_qp_handle, &my_qp->pf,
++				&send_wqe_p, &recv_wqe_p, 4);
+ 		if (h_ret != H_SUCCESS) {
+ 			ehca_err(&shca->ib_device, "disable_and_get_wqe() "
+ 				 "failed ehca_qp=%p qp_num=%x h_ret=%li",
+@@ -1169,7 +1174,7 @@ static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+ 		 */
+ 		spin_lock_irqsave(&my_qp->send_cq->spinlock, flags);
+ 		ret = calc_left_cqes((u64)send_wqe_p, &my_qp->ipz_squeue,
+-				     &my_qp->sq_map);
++				&my_qp->sq_map);
+ 		spin_unlock_irqrestore(&my_qp->send_cq->spinlock, flags);
+ 		if (ret)
+ 			return ret;
+@@ -1177,7 +1182,7 @@ static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+ 
+ 		spin_lock_irqsave(&my_qp->recv_cq->spinlock, flags);
+ 		ret = calc_left_cqes((u64)recv_wqe_p, &my_qp->ipz_rqueue,
+-				     &my_qp->rq_map);
++				&my_qp->rq_map);
+ 		spin_unlock_irqrestore(&my_qp->recv_cq->spinlock, flags);
+ 		if (ret)
+ 			return ret;
+@@ -1197,7 +1202,7 @@ static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+ 
+ 	/* this assures flush cqes being generated only for pending wqes */
+ 	if ((my_qp->sq_map.left_to_poll == 0) &&
+-	    (my_qp->rq_map.left_to_poll == 0)) {
++				(my_qp->rq_map.left_to_poll == 0)) {
+ 		spin_lock_irqsave(&my_qp->send_cq->spinlock, flags);
+ 		ehca_add_to_err_list(my_qp, 1);
+ 		spin_unlock_irqrestore(&my_qp->send_cq->spinlock, flags);
+@@ -1206,7 +1211,7 @@ static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+ 			spin_lock_irqsave(&my_qp->recv_cq->spinlock, flags);
+ 			ehca_add_to_err_list(my_qp, 0);
+ 			spin_unlock_irqrestore(&my_qp->recv_cq->spinlock,
+-					       flags);
++					flags);
+ 		}
+ 	}
+ 
+@@ -1743,8 +1748,6 @@ static int internal_modify_qp(struct ib_qp *ibqp,
+ 	if (attr_mask & IB_QP_QKEY)
+ 		my_qp->qkey = attr->qkey;
+ 
+-	my_qp->state = qp_new_state;
+-
+ modify_qp_exit2:
+ 	if (squeue_locked) { /* this means: sqe -> rts */
+ 		spin_unlock_irqrestore(&my_qp->spinlock_s, flags);
+@@ -1760,6 +1763,8 @@ modify_qp_exit1:
+ int ehca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
+ 		   struct ib_udata *udata)
+ {
++	int ret = 0;
++
+ 	struct ehca_shca *shca = container_of(ibqp->device, struct ehca_shca,
+ 					      ib_device);
+ 	struct ehca_qp *my_qp = container_of(ibqp, struct ehca_qp, ib_qp);
+@@ -1806,12 +1811,18 @@ int ehca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
+ 				 attr->qp_state, my_qp->init_attr.port_num,
+ 				 ibqp->qp_type);
+ 			spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
+-			return 0;
++			goto out;
+ 		}
+ 		spin_unlock_irqrestore(&sport->mod_sqp_lock, flags);
+ 	}
+ 
+-	return internal_modify_qp(ibqp, attr, attr_mask, 0);
++	ret = internal_modify_qp(ibqp, attr, attr_mask, 0);
++
++out:
++	if ((ret == 0) && (attr_mask & IB_QP_STATE))
++		my_qp->state = attr->qp_state;
++
++	return ret;
+ }
+ 
+ void ehca_recover_sqp(struct ib_qp *sqp)
+@@ -2157,9 +2168,6 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 	if (HAS_SQ(my_qp))
+ 		del_from_err_list(my_qp->send_cq, &my_qp->sq_err_node);
+ 
+-        /* now wait until all pending events have completed */
+-	wait_event(my_qp->wait_completion, !atomic_read(&my_qp->nr_events));
+-
+ 	/* now wait until all pending events have completed */
+ 	wait_event(my_qp->wait_completion, !atomic_read(&my_qp->nr_events));
+ 
+@@ -2185,7 +2193,7 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 	if (qp_type == IB_QPT_GSI) {
+ 		struct ib_event event;
+ 		ehca_info(dev, "device %s: port %x is inactive.",
+-			  shca->ib_device.name, port_num);
++				shca->ib_device.name, port_num);
+ 		event.device = &shca->ib_device;
+ 		event.event = IB_EVENT_PORT_ERR;
+ 		event.element.port_num = port_num;
+@@ -2195,10 +2203,12 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 
+ 	if (HAS_RQ(my_qp)) {
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
++
+ 		vfree(my_qp->rq_map.map);
+ 	}
+ 	if (HAS_SQ(my_qp)) {
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
++
+ 		vfree(my_qp->sq_map.map);
+ 	}
+ 	kmem_cache_free(qp_cache, my_qp);
+@@ -2220,7 +2230,6 @@ int ehca_destroy_srq(struct ib_srq *srq)
+ 				   srq->uobject);
+ }
+ 
+-
+ int ehca_init_qp_cache(void)
+ {
+ 	qp_cache = kmem_cache_create("ehca_cache_qp",
+diff --git a/drivers/infiniband/hw/ehca/ehca_reqs.c b/drivers/infiniband/hw/ehca/ehca_reqs.c
+index 6be07ce..c711268 100644
+--- a/drivers/infiniband/hw/ehca/ehca_reqs.c
++++ b/drivers/infiniband/hw/ehca/ehca_reqs.c
+@@ -42,7 +42,7 @@
+  */
+ 
+ 
+-#include <asm-powerpc/system.h>
++#include <asm/system.h>
+ #include "ehca_classes.h"
+ #include "ehca_tools.h"
+ #include "ehca_qes.h"
+@@ -212,7 +212,7 @@ static inline int ehca_write_swqe(struct ehca_qp *qp,
+ 	if (send_wr->opcode == IB_WR_SEND_WITH_IMM ||
+ 	    send_wr->opcode == IB_WR_RDMA_WRITE_WITH_IMM) {
+ 		/* this might not work as long as HW does not support it */
+-		wqe_p->immediate_data = be32_to_cpu(send_wr->imm_data);
++		wqe_p->immediate_data = be32_to_cpu(send_wr->ex.imm_data);
+ 		wqe_p->wr_flag |= WQE_WRFLAG_IMM_DATA_PRESENT;
+ 	}
+ 
+@@ -553,7 +553,7 @@ static int internal_post_recv(struct ehca_qp *my_qp,
+ 
+ 		/* write a RECV WQE into the QUEUE */
+ 		ret = ehca_write_rwqe(&my_qp->ipz_rqueue, wqe_p, cur_recv_wr,
+-				      rq_map_idx);
++				rq_map_idx);
+ 		/*
+ 		 * if something failed,
+ 		 * reset the free entry pointer to the start value
+@@ -591,8 +591,16 @@ int ehca_post_recv(struct ib_qp *qp,
+ 		   struct ib_recv_wr *recv_wr,
+ 		   struct ib_recv_wr **bad_recv_wr)
+ {
+-	return internal_post_recv(container_of(qp, struct ehca_qp, ib_qp),
+-				  qp->device, recv_wr, bad_recv_wr);
++	struct ehca_qp *my_qp = container_of(qp, struct ehca_qp, ib_qp);
++
++	/* Reject WR if QP is in RESET state */
++	if (unlikely(my_qp->state == IB_QPS_RESET)) {
++		ehca_err(qp->device, "Invalid QP state  qp_state=%d qpn=%x",
++			 my_qp->state, qp->qp_num);
++		return -EINVAL;
++	}
++
++	return internal_post_recv(my_qp, qp->device, recv_wr, bad_recv_wr);
+ }
+ 
+ int ehca_post_srq_recv(struct ib_srq *srq,
+@@ -630,7 +638,7 @@ static inline int ehca_poll_cq_one(struct ib_cq *cq, struct ib_wc *wc)
+ 	struct ehca_queue_map *qmap;
+ 	int cqe_count = 0, is_error;
+ 
+-poll_cq_one_read_cqe:
++repoll:
+ 	cqe = (struct ehca_cqe *)
+ 		ipz_qeit_get_inc_valid(&my_cq->ipz_queue);
+ 	if (!cqe) {
+@@ -658,7 +666,7 @@ poll_cq_one_read_cqe:
+ 			ehca_dmp(cqe, 64, "cq_num=%x qp_num=%x",
+ 				 my_cq->cq_number, cqe->local_qp_number);
+ 			/* ignore this purged cqe */
+-			goto poll_cq_one_read_cqe;
++			goto repoll;
+ 		}
+ 		spin_lock_irqsave(&qp->spinlock_s, flags);
+ 		purgeflag = qp->sqerr_purgeflag;
+@@ -677,7 +685,7 @@ poll_cq_one_read_cqe:
+ 			 * that caused sqe and turn off purge flag
+ 			 */
+ 			qp->sqerr_purgeflag = 0;
+-			goto poll_cq_one_read_cqe;
++			goto repoll;
+ 		}
+ 	}
+ 
+@@ -699,11 +707,9 @@ poll_cq_one_read_cqe:
+ 	my_qp = idr_find(&ehca_qp_idr, cqe->qp_token);
+ 	read_unlock(&ehca_qp_idr_lock);
+ 	if (!my_qp)
+-		goto poll_cq_one_read_cqe;
++		goto repoll;
+ 	wc->qp = &my_qp->ib_qp;
+ 
+-	is_error = cqe->status & WC_STATUS_ERROR_BIT;
+-
+ 	qmap_tail_idx = get_app_wr_id(cqe->work_request_id);
+ 	if (!(cqe->w_completion_flags & WC_SEND_RECEIVE_BIT))
+ 		/* We got a send completion. */
+@@ -735,9 +741,9 @@ poll_cq_one_read_cqe:
+ 	qmap_entry = &qmap->map[qmap_tail_idx];
+ 	if (qmap_entry->reported) {
+ 		ehca_warn(cq->device, "Double cqe on qp_num=%#x",
+-			  my_qp->real_qp_num);
++				my_qp->real_qp_num);
+ 		/* found a double cqe, discard it and read next one */
+-		goto poll_cq_one_read_cqe;
++		goto repoll;
+ 	}
+ 
+ 	wc->wr_id = replace_wr_id(cqe->work_request_id, qmap_entry->app_wr_id);
+@@ -747,7 +753,7 @@ poll_cq_one_read_cqe:
+ 	if (qmap->left_to_poll > 0) {
+ 		qmap->left_to_poll--;
+ 		if ((my_qp->sq_map.left_to_poll == 0) &&
+-		    (my_qp->rq_map.left_to_poll == 0)) {
++				(my_qp->rq_map.left_to_poll == 0)) {
+ 			ehca_add_to_err_list(my_qp, 1);
+ 			if (HAS_RQ(my_qp))
+ 				ehca_add_to_err_list(my_qp, 0);
+@@ -764,7 +770,7 @@ poll_cq_one_read_cqe:
+ 		ehca_dmp(cqe, 64, "ehca_cq=%p cq_num=%x",
+ 			 my_cq, my_cq->cq_number);
+ 		/* update also queue adder to throw away this entry!!! */
+-		goto poll_cq_one_read_cqe;
++		goto repoll;
+ 	}
+ 
+ 	/* eval ib_wc_status */
+@@ -781,7 +787,7 @@ poll_cq_one_read_cqe:
+ 	wc->dlid_path_bits = cqe->dlid;
+ 	wc->src_qp = cqe->remote_qp_number;
+ 	wc->wc_flags = cqe->w_completion_flags;
+-	wc->imm_data = cpu_to_be32(cqe->immediate_data);
++	wc->ex.imm_data = cpu_to_be32(cqe->immediate_data);
+ 	wc->sl = cqe->service_level;
+ 
+ poll_cq_one_exit0:
+@@ -837,14 +843,14 @@ static int generate_flush_cqes(struct ehca_qp *my_qp, struct ib_cq *cq,
+ 				break;
+ 			default:
+ 				ehca_err(cq->device, "Invalid optype=%x",
+-					 wqe->optype);
++						wqe->optype);
+ 				return nr;
+ 			}
+ 		} else
+ 			wc->opcode = IB_WC_RECV;
+ 
+ 		if (wqe->wr_flag & WQE_WRFLAG_IMM_DATA_PRESENT) {
+-			wc->imm_data = wqe->immediate_data;
++			wc->ex.imm_data = wqe->immediate_data;
+ 			wc->wc_flags |= IB_WC_WITH_IMM;
+ 		}
+ 
+@@ -862,6 +868,7 @@ static int generate_flush_cqes(struct ehca_qp *my_qp, struct ib_cq *cq,
+ 	}
+ 
+ 	return nr;
++
+ }
+ 
+ int ehca_poll_cq(struct ib_cq *cq, int num_entries, struct ib_wc *wc)
+@@ -886,7 +893,7 @@ int ehca_poll_cq(struct ib_cq *cq, int num_entries, struct ib_wc *wc)
+ 	/* generate flush cqes for send queues */
+ 	list_for_each_entry(err_qp, &my_cq->sqp_err_list, sq_err_node) {
+ 		nr = generate_flush_cqes(err_qp, cq, current_wc, entries_left,
+-					 &err_qp->ipz_squeue, 1);
++				&err_qp->ipz_squeue, 1);
+ 		entries_left -= nr;
+ 		current_wc += nr;
+ 
+@@ -897,7 +904,7 @@ int ehca_poll_cq(struct ib_cq *cq, int num_entries, struct ib_wc *wc)
+ 	/* generate flush cqes for receive queues */
+ 	list_for_each_entry(err_qp, &my_cq->rqp_err_list, rq_err_node) {
+ 		nr = generate_flush_cqes(err_qp, cq, current_wc, entries_left,
+-					 &err_qp->ipz_rqueue, 0);
++				&err_qp->ipz_rqueue, 0);
+ 		entries_left -= nr;
+ 		current_wc += nr;
+ 
+diff --git a/drivers/infiniband/hw/ehca/ehca_tools.h b/drivers/infiniband/hw/ehca/ehca_tools.h
+index 4a8346a..21f7d06 100644
+--- a/drivers/infiniband/hw/ehca/ehca_tools.h
++++ b/drivers/infiniband/hw/ehca/ehca_tools.h
+@@ -54,7 +54,6 @@
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+ #include <linux/vmalloc.h>
+-#include <linux/version.h>
+ #include <linux/notifier.h>
+ #include <linux/cpu.h>
+ #include <linux/device.h>
+@@ -73,37 +72,37 @@ extern int ehca_debug_level;
+ 		if (unlikely(ehca_debug_level)) \
+ 			dev_printk(KERN_DEBUG, (ib_dev)->dma_device, \
+ 				   "PU%04x EHCA_DBG:%s " format "\n", \
+-				   raw_smp_processor_id(), __FUNCTION__, \
++				   raw_smp_processor_id(), __func__, \
+ 				   ## arg); \
+ 	} while (0)
+ 
+ #define ehca_info(ib_dev, format, arg...) \
+ 	dev_info((ib_dev)->dma_device, "PU%04x EHCA_INFO:%s " format "\n", \
+-		 raw_smp_processor_id(), __FUNCTION__, ## arg)
++		 raw_smp_processor_id(), __func__, ## arg)
+ 
+ #define ehca_warn(ib_dev, format, arg...) \
+ 	dev_warn((ib_dev)->dma_device, "PU%04x EHCA_WARN:%s " format "\n", \
+-		 raw_smp_processor_id(), __FUNCTION__, ## arg)
++		 raw_smp_processor_id(), __func__, ## arg)
+ 
+ #define ehca_err(ib_dev, format, arg...) \
+ 	dev_err((ib_dev)->dma_device, "PU%04x EHCA_ERR:%s " format "\n", \
+-		raw_smp_processor_id(), __FUNCTION__, ## arg)
++		raw_smp_processor_id(), __func__, ## arg)
+ 
+ /* use this one only if no ib_dev available */
+ #define ehca_gen_dbg(format, arg...) \
+ 	do { \
+ 		if (unlikely(ehca_debug_level)) \
+ 			printk(KERN_DEBUG "PU%04x EHCA_DBG:%s " format "\n", \
+-			       raw_smp_processor_id(), __FUNCTION__, ## arg); \
++			       raw_smp_processor_id(), __func__, ## arg); \
+ 	} while (0)
+ 
+ #define ehca_gen_warn(format, arg...) \
+ 	printk(KERN_INFO "PU%04x EHCA_WARN:%s " format "\n", \
+-	       raw_smp_processor_id(), __FUNCTION__, ## arg)
++	       raw_smp_processor_id(), __func__, ## arg)
+ 
+ #define ehca_gen_err(format, arg...) \
+ 	printk(KERN_ERR "PU%04x EHCA_ERR:%s " format "\n", \
+-	       raw_smp_processor_id(), __FUNCTION__, ## arg)
++	       raw_smp_processor_id(), __func__, ## arg)
+ 
+ /**
+  * ehca_dmp - printk a memory block, whose length is n*8 bytes.
+@@ -118,7 +117,7 @@ extern int ehca_debug_level;
+ 		for (x = 0; x < l; x += 16) { \
+ 			printk(KERN_INFO "EHCA_DMP:%s " format \
+ 			       " adr=%p ofs=%04x %016lx %016lx\n", \
+-			       __FUNCTION__, ##args, deb, x, \
++			       __func__, ##args, deb, x, \
+ 			       *((u64 *)&deb[0]), *((u64 *)&deb[8])); \
+ 			deb += 16; \
+ 		} \

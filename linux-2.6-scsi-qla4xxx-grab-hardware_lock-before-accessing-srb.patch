@@ -1,0 +1,53 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:45 -0500
+Subject: [scsi] qla4xxx: grab hardware_lock before accessing srb
+Message-id: <20101130195945.10450.91842.sendpatchset@localhost.localdomain>
+Patchwork-id: 29701
+O-Subject: [RHEL 5.6 PATCH 10/28] qla4xxx: grab hardware_lock in eh_abort before
+	accessing srb
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 92b3e5bbbebe86dd0071ccf23c1b21031f74bf56
+
+Description
+-----------
+
+>From 48d4d9c4c4c8710dcc9bd948c4590ab5ff0d6acb Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Sat, 20 Nov 2010 14:26:47 -0800
+Subject: [PATCH 11/29] qla4xxx: grab hardware_lock in eh_abort before accessing srb
+
+grab hardware_lock in eh_abort before accessing srb to avoid
+race between command completion and get refcount on srb.
+
+Signed-off-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index fe53e8d..449b550 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -2268,12 +2268,15 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
+ 		return SUCCESS;
+ 	}
+ 
++	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	srb = (struct srb *) cmd->SCp.ptr;
+ 	if (!srb) {
+ 		DEBUG2(printk("scsi%ld: ABORT - cmd already completed.\n",
+ 				ha->host_no));
++		spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 		return SUCCESS;
+ 	}
++	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 
+ 	dev_info(&ha->pdev->dev, "scsi%ld:%d:%d:%d: ABORT ISSUED "
+ 		 "cmd=%p, pid=%ld, ref=%d\n", ha->host_no, channel, id, lun,

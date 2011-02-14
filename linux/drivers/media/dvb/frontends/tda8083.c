@@ -27,6 +27,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
@@ -68,7 +69,7 @@ static int tda8083_writereg (struct tda8083_state* state, u8 reg, u8 data)
 
 	if (ret != 1)
 		dprintk ("%s: writereg error (reg %02x, ret == %i)\n",
-			__func__, reg, ret);
+			__FUNCTION__, reg, ret);
 
 	return (ret != 1) ? -1 : 0;
 }
@@ -83,7 +84,7 @@ static int tda8083_readregs (struct tda8083_state* state, u8 reg1, u8 *b, u8 len
 
 	if (ret != 2)
 		dprintk ("%s: readreg error (reg %02x, ret == %i)\n",
-			__func__, reg1, ret);
+			__FUNCTION__, reg1, ret);
 
 	return ret == 2 ? 0 : -1;
 }
@@ -261,25 +262,8 @@ static int tda8083_read_status(struct dvb_frontend* fe, fe_status_t* status)
 	if (sync & 0x10)
 		*status |= FE_HAS_SYNC;
 
-	if (sync & 0x20) /* frontend can not lock */
-		*status |= FE_TIMEDOUT;
-
 	if ((sync & 0x1f) == 0x1f)
 		*status |= FE_HAS_LOCK;
-
-	return 0;
-}
-
-static int tda8083_read_ber(struct dvb_frontend* fe, u32* ber)
-{
-	struct tda8083_state* state = fe->demodulator_priv;
-	int ret;
-	u8 buf[3];
-
-	if ((ret = tda8083_readregs(state, 0x0b, buf, sizeof(buf))))
-		return ret;
-
-	*ber = ((buf[0] & 0x1f) << 16) | (buf[1] << 8) | buf[2];
 
 	return 0;
 }
@@ -300,17 +284,6 @@ static int tda8083_read_snr(struct dvb_frontend* fe, u16* snr)
 
 	u8 _snr = tda8083_readreg (state, 0x08);
 	*snr = (_snr << 8) | _snr;
-
-	return 0;
-}
-
-static int tda8083_read_ucblocks(struct dvb_frontend* fe, u32* ucblocks)
-{
-	struct tda8083_state* state = fe->demodulator_priv;
-
-	*ucblocks = tda8083_readreg(state, 0x0f);
-	if (*ucblocks == 0xff)
-		*ucblocks = 0xffffffff;
 
 	return 0;
 }
@@ -417,7 +390,7 @@ struct dvb_frontend* tda8083_attach(const struct tda8083_config* config,
 	struct tda8083_state* state = NULL;
 
 	/* allocate memory for the internal state */
-	state = kzalloc(sizeof(struct tda8083_state), GFP_KERNEL);
+	state = kmalloc(sizeof(struct tda8083_state), GFP_KERNEL);
 	if (state == NULL) goto error;
 
 	/* setup the state */
@@ -442,12 +415,12 @@ static struct dvb_frontend_ops tda8083_ops = {
 	.info = {
 		.name			= "Philips TDA8083 DVB-S",
 		.type			= FE_QPSK,
-		.frequency_min		= 920000,     /* TDA8060 */
-		.frequency_max		= 2200000,    /* TDA8060 */
+		.frequency_min		= 950000,     /* FIXME: guessed! */
+		.frequency_max		= 1400000,    /* FIXME: guessed! */
 		.frequency_stepsize	= 125,   /* kHz for QPSK frontends */
 	/*      .frequency_tolerance	= ???,*/
-		.symbol_rate_min	= 12000000,
-		.symbol_rate_max	= 30000000,
+		.symbol_rate_min	= 1000000,   /* FIXME: guessed! */
+		.symbol_rate_max	= 45000000,  /* FIXME: guessed! */
 	/*      .symbol_rate_tolerance	= ???,*/
 		.caps = FE_CAN_INVERSION_AUTO |
 			FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4 |
@@ -467,8 +440,6 @@ static struct dvb_frontend_ops tda8083_ops = {
 	.read_status = tda8083_read_status,
 	.read_signal_strength = tda8083_read_signal_strength,
 	.read_snr = tda8083_read_snr,
-	.read_ber = tda8083_read_ber,
-	.read_ucblocks = tda8083_read_ucblocks,
 
 	.diseqc_send_master_cmd = tda8083_send_diseqc_msg,
 	.diseqc_send_burst = tda8083_diseqc_send_burst,

@@ -1,0 +1,78 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:55 -0400
+Subject: [block] cciss: make device attributes static
+Message-id: <1283097002-3341-57-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27911
+O-Subject: [RHEL6 PATCH 56/63] cciss: make device attributes static
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+make device attributes static.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index bb84cba..49cd634 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -577,7 +577,7 @@ static ssize_t dev_show_unique_id(struct device *dev,
+ 				uid[8], uid[9], uid[10], uid[11],
+ 				uid[12], uid[13], uid[14], uid[15]);
+ }
+-DEVICE_ATTR(unique_id, S_IRUGO, dev_show_unique_id, NULL);
++static DEVICE_ATTR(unique_id, S_IRUGO, dev_show_unique_id, NULL);
+ 
+ static ssize_t dev_show_vendor(struct device *dev,
+ 			       struct device_attribute *attr,
+@@ -601,7 +601,7 @@ static ssize_t dev_show_vendor(struct device *dev,
+ 	else
+ 		return snprintf(buf, sizeof(vendor) + 1, "%s\n", drv->vendor);
+ }
+-DEVICE_ATTR(vendor, S_IRUGO, dev_show_vendor, NULL);
++static DEVICE_ATTR(vendor, S_IRUGO, dev_show_vendor, NULL);
+ 
+ static ssize_t dev_show_model(struct device *dev,
+ 			      struct device_attribute *attr,
+@@ -625,7 +625,7 @@ static ssize_t dev_show_model(struct device *dev,
+ 	else
+ 		return snprintf(buf, sizeof(model) + 1, "%s\n", drv->model);
+ }
+-DEVICE_ATTR(model, S_IRUGO, dev_show_model, NULL);
++static DEVICE_ATTR(model, S_IRUGO, dev_show_model, NULL);
+ 
+ static ssize_t dev_show_rev(struct device *dev,
+ 			    struct device_attribute *attr,
+@@ -649,7 +649,7 @@ static ssize_t dev_show_rev(struct device *dev,
+ 	else
+ 		return snprintf(buf, sizeof(rev) + 1, "%s\n", drv->rev);
+ }
+-DEVICE_ATTR(rev, S_IRUGO, dev_show_rev, NULL);
++static DEVICE_ATTR(rev, S_IRUGO, dev_show_rev, NULL);
+ 
+ static ssize_t cciss_show_lunid(struct device *dev,
+ 				struct device_attribute *attr, char *buf)
+@@ -675,7 +675,7 @@ static ssize_t cciss_show_lunid(struct device *dev,
+ 			lunid[4], lunid[5], lunid[6], lunid[7]);
+ 
+ }
+-DEVICE_ATTR(lunid, S_IRUGO, cciss_show_lunid, NULL);
++static DEVICE_ATTR(lunid, S_IRUGO, cciss_show_lunid, NULL);
+ 
+ static ssize_t cciss_show_raid_level(struct device *dev,
+ 				     struct device_attribute *attr, char *buf)
+@@ -698,7 +698,7 @@ static ssize_t cciss_show_raid_level(struct device *dev,
+ 	return snprintf(buf, strlen(raid_label[raid]) + 7, "RAID %s\n",
+ 			raid_label[raid]);
+ }
+-DEVICE_ATTR(raid_level, S_IRUGO | S_IWUSR, cciss_show_raid_level, NULL);
++static DEVICE_ATTR(raid_level, S_IRUGO | S_IWUSR, cciss_show_raid_level, NULL);
+ 
+ static ssize_t cciss_show_usage_count(struct device *dev,
+ 				      struct device_attribute *attr, char *buf)
+@@ -717,7 +717,7 @@ static ssize_t cciss_show_usage_count(struct device *dev,
+ 	spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+ 	return snprintf(buf, 20, "%d\n", count);
+ }
+-DEVICE_ATTR(usage_count, S_IRUGO, cciss_show_usage_count, NULL);
++static DEVICE_ATTR(usage_count, S_IRUGO, cciss_show_usage_count, NULL);
+ 
+ struct device_attribute *cciss_dev_attrs[] = {
+ 	&dev_attr_unique_id,

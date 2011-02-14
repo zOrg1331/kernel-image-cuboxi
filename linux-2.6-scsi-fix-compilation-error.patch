@@ -1,0 +1,90 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Thu, 14 May 2009 01:00:17 -0400
+Subject: [scsi] fix compilation error
+Message-id: 20090514045726.10947.68461.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 8/10 BZ489582] Fix compilation error
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+This patch removes unnecessary static definitions in the header file,
+which generate compile time errors when CONFIG_SCSI_DH is not defined.
+
+This patch doesn't apply to mainline, as these two APIs are defined
+_only_ in RHEL 5.3 for avoiding ABI issues.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1794596
+
+Upstream Status:
+================
+This patch doesn't apply to mainline, as these two APIs are defined
+_only_ in RHEL 5.3 for avoiding ABI issues.
+
+Test Status:
+============
+This patch has been tested by Chandra Seetharaman at IBM
+(sekharan@us.ibm.com).
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-136.el5.
+
+diff --git a/include/scsi/scsi_dh.h b/include/scsi/scsi_dh.h
+index 0ee2f05..fce4e8b 100644
+--- a/include/scsi/scsi_dh.h
++++ b/include/scsi/scsi_dh.h
+@@ -57,11 +57,12 @@ enum {
+ 	SCSI_DH_DRIVER_MAX,
+ };
+ 
++extern void store_scsi_dh_data(struct scsi_device *, struct scsi_dh_data *);
++extern struct scsi_dh_data *retrieve_scsi_dh_data(struct scsi_device *);
++
+ #if defined(CONFIG_SCSI_DH) || defined(CONFIG_SCSI_DH_MODULE)
+ extern int scsi_dh_activate(struct request_queue *);
+ extern int scsi_dh_handler_exist(const char *);
+-extern void store_scsi_dh_data(struct scsi_device *, struct scsi_dh_data *);
+-extern struct scsi_dh_data *retrieve_scsi_dh_data(struct scsi_device *);
+ extern int scsi_dh_attach(struct request_queue *, const char *);
+ extern void scsi_dh_detach(struct request_queue *);
+ #else
+@@ -73,14 +74,6 @@ static inline int scsi_dh_handler_exist(const char *name)
+ {
+ 	return 0;
+ }
+-static inline void store_scsi_dh_data(struct scsi_device *sdev,
+-				struct scsi_dh_data *scsi_dh_data)
+-{
+-}
+-static inline struct scsi_dh_data *retrieve_scsi_dh_data(struct scsi_device *sdev)
+-{
+-	return NULL;
+-}
+ static inline int scsi_dh_attach(struct request_queue *req, const char *name)
+ {
+ 	return SCSI_DH_NOSYS;

@@ -1,0 +1,165 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] netlabel: BZ 213062: disallow editing of ip options 	on packets with cipso options
+Date: Fri, 10 Nov 2006 12:22:57 -0500
+Bugzilla: 213062
+Message-Id: <1163179377.12271.4.camel@localhost.localdomain>
+Changelog: netlabel: disallow editing of ip options on packets with cipso options
+
+
+This patch makes two changes to protect applications from either
+removing or tampering with the CIPSOv4 IP option on a socket.  The first
+is the requirement that applications have the CAP_NET_RAW capability to
+set an IPOPT_CIPSO option on a socket; this prevents untrusted
+applications from setting their own CIPSOv4 security attributes on the
+packets they send.  The second change is to SELinux and it prevents
+applications from setting any IPv4 options when there is an IPOPT_CIPSO
+option already present on the socket; this prevents applications from
+removing CIPSOv4 security attributes from the packets they send.
+
+This has been in the lspp testing kernel for a couple weeks and has been
+shown to protect the cipso information by HP.  This is part of the
+ongoing labeled networking work needed for LSPP certification.
+
+BZ 213062
+
+ net/ipv4/cipso_ipv4.c                       |    7 ++---
+ net/ipv4/ip_options.c                       |    2 -
+ security/selinux/hooks.c                    |    8 +++++-
+ security/selinux/include/selinux_netlabel.h |   10 +++++++
+ security/selinux/ss/services.c              |   37 ++++++++++++++++++++++++++++
+ 5 files changed, 58 insertions(+), 6 deletions(-)
+
+
+Index: latest/security/selinux/hooks.c
+===================================================================
+--- latest.orig/security/selinux/hooks.c
++++ latest/security/selinux/hooks.c
+@@ -3309,7 +3309,13 @@ static int selinux_socket_getpeername(st
+ 
+ static int selinux_socket_setsockopt(struct socket *sock,int level,int optname)
+ {
+-	return socket_has_perm(current, sock, SOCKET__SETOPT);
++	int err;
++
++	err = socket_has_perm(current, sock, SOCKET__SETOPT);
++	if (err)
++		return err;
++
++	return selinux_netlbl_socket_setsockopt(sock, level, optname);
+ }
+ 
+ static int selinux_socket_getsockopt(struct socket *sock, int level,
+Index: latest/security/selinux/ss/services.c
+===================================================================
+--- latest.orig/security/selinux/ss/services.c
++++ latest/security/selinux/ss/services.c
+@@ -2682,4 +2682,41 @@ u32 selinux_netlbl_socket_getpeersec_dgr
+ 
+ 	return peer_sid;
+ }
++
++/**
++ * selinux_netlbl_socket_setsockopt - Do not allow users to remove a NetLabel
++ * @sock: the socket
++ * @level: the socket level or protocol
++ * @optname: the socket option name
++ *
++ * Description:
++ * Check the setsockopt() call and if the user is trying to replace the IP
++ * options on a socket and a NetLabel is in place for the socket deny the
++ * access; otherwise allow the access.  Returns zero when the access is
++ * allowed, -EACCES when denied, and other negative values on error.
++ *
++ */
++int selinux_netlbl_socket_setsockopt(struct socket *sock,
++				     int level,
++				     int optname)
++{
++	int rc = 0;
++	struct inode *inode = SOCK_INODE(sock);
++	struct sk_security_struct *sksec = sock->sk->sk_security;
++	struct inode_security_struct *isec = inode->i_security;
++	struct netlbl_lsm_secattr secattr;
++
++	down(&isec->sem);
++	if (level == IPPROTO_IP && optname == IP_OPTIONS &&
++	    sksec->nlbl_state == NLBL_LABELED) {
++		netlbl_secattr_init(&secattr);
++		rc = netlbl_socket_getattr(sock, &secattr);
++		if (rc == 0 && (secattr.cache || secattr.mls_lvl_vld))
++			rc = -EACCES;
++		netlbl_secattr_destroy(&secattr);
++	}
++	up(&isec->sem);
++
++	return rc;
++}
+ #endif /* CONFIG_NETLABEL */
+Index: latest/security/selinux/include/selinux_netlabel.h
+===================================================================
+--- latest.orig/security/selinux/include/selinux_netlabel.h
++++ latest/security/selinux/include/selinux_netlabel.h
+@@ -53,6 +53,9 @@ void selinux_netlbl_sk_security_init(str
+ void selinux_netlbl_sk_clone_security(struct sk_security_struct *ssec,
+ 				      struct sk_security_struct *newssec);
+ int selinux_netlbl_inode_permission(struct inode *inode, int mask);
++int selinux_netlbl_socket_setsockopt(struct socket *sock,
++				     int level,
++				     int optname);
+ #else
+ static inline void selinux_netlbl_cache_invalidate(void)
+ {
+@@ -114,6 +117,13 @@ static inline int selinux_netlbl_inode_p
+ {
+ 	return 0;
+ }
++
++static inline int selinux_netlbl_socket_setsockopt(struct socket *sock,
++						   int level,
++						   int optname)
++{
++	return 0;
++}
+ #endif /* CONFIG_NETLABEL */
+ 
+ #endif
+Index: latest/net/ipv4/ip_options.c
+===================================================================
+--- latest.orig/net/ipv4/ip_options.c
++++ latest/net/ipv4/ip_options.c
+@@ -443,7 +443,7 @@ int ip_options_compile(struct ip_options
+ 				opt->router_alert = optptr - iph;
+ 			break;
+ 		      case IPOPT_CIPSO:
+-		        if (opt->cipso) {
++			if ((!skb && !capable(CAP_NET_RAW)) || opt->cipso) {
+ 				pp_ptr = optptr;
+ 				goto error;
+ 			}
+Index: latest/net/ipv4/cipso_ipv4.c
+===================================================================
+--- latest.orig/net/ipv4/cipso_ipv4.c
++++ latest/net/ipv4/cipso_ipv4.c
+@@ -1307,7 +1307,8 @@ int cipso_v4_socket_setattr(const struct
+ 
+ 	/* We can't use ip_options_get() directly because it makes a call to
+ 	 * ip_options_get_alloc() which allocates memory with GFP_KERNEL and
+-	 * we can't block here. */
++	 * we won't always have CAP_NET_RAW even though we _always_ want to
++	 * set the IPOPT_CIPSO option. */
+ 	opt_len = (buf_len + 3) & ~3;
+ 	opt = kzalloc(sizeof(*opt) + opt_len, GFP_ATOMIC);
+ 	if (opt == NULL) {
+@@ -1317,11 +1318,9 @@ int cipso_v4_socket_setattr(const struct
+ 	memcpy(opt->__data, buf, buf_len);
+ 	opt->optlen = opt_len;
+ 	opt->is_data = 1;
++	opt->cipso = sizeof(struct iphdr);
+ 	kfree(buf);
+ 	buf = NULL;
+-	ret_val = ip_options_compile(opt, NULL);
+-	if (ret_val != 0)
+-		goto socket_setattr_failure;
+ 
+ 	sk_inet = inet_sk(sk);
+ 	if (sk_inet->is_icsk) {

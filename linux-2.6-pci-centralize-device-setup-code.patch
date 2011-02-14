@@ -1,0 +1,129 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:19 -0600
+Subject: [pci] centralize device setup code
+Message-id: 200904021446.n32EkJRm017167@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 13/17] BZ493152: Backport: PCI: centralize device setup code
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit 480b93b7837fb3cf0579a42f4953ac463a5b9e1e
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Fri Mar 20 11:25:14 2009 +0800
+
+    PCI: centralize device setup code
+
+    Move the device setup stuff into pci_setup_device() which will be used
+    to setup the Virtual Function later.
+
+    Reviewed-by: Matthew Wilcox <willy@linux.intel.com>
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 7fa8de8..be77c94 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -99,6 +99,7 @@ enum pci_bar_type {
+ 	pci_bar_mem64,		/* A 64-bit memory BAR */
+ };
+ 
++extern int pci_setup_device(struct pci_dev *dev);
+ extern int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
+ 				struct resource *res, unsigned int reg);
+ extern int pci_resource_bar(struct pci_dev *dev, int resno,
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 1329273..255b1bc 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -695,12 +695,28 @@ static void pci_read_irq(struct pci_dev *dev)
+  * Initialize the device structure with information about the device's 
+  * vendor,class,memory and IO-space addresses,IRQ lines etc.
+  * Called at initialisation of the PCI subsystem and by CardBus services.
+- * Returns 0 on success and -1 if unknown type of device (not normal, bridge
+- * or CardBus).
++ * Returns 0 on success and negative if unknown type of device (not normal,
++ * bridge or CardBus).
+  */
+-static int pci_setup_device(struct pci_dev * dev)
++int pci_setup_device(struct pci_dev * dev)
+ {
+ 	u32 class;
++	u8 hdr_type;
++
++	if (pci_read_config_byte(dev, PCI_HEADER_TYPE, &hdr_type))
++		return -EIO;
++
++	dev->sysdata = dev->bus->sysdata;
++	dev->dev.parent = dev->bus->bridge;
++	dev->dev.bus = &pci_bus_type;
++	dev->hdr_type = hdr_type & 0x7f;
++	dev->multifunction = !!(hdr_type & 0x80);
++	dev->cfg_size = pci_cfg_space_size(dev);
++	dev->error_state = pci_channel_io_normal;
++
++	/* Assume 32-bit PCI; let 64-bit PCI cards (which are far rarer)
++	   set this higher, assuming the system even supports it.  */
++	dev->dma_mask = 0xffffffff;
+ 
+ 	sprintf(pci_name(dev), "%04x:%02x:%02x.%d", pci_domain_nr(dev->bus),
+ 		dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
+@@ -719,7 +735,6 @@ static int pci_setup_device(struct pci_dev * dev)
+ 
+ 	/* Early fixups, before probing the BARs */
+ 	pci_fixup_device(pci_fixup_early, dev);
+-	class = dev->class >> 8;
+ 
+ 	switch (dev->hdr_type) {		    /* header type */
+ 	case PCI_HEADER_TYPE_NORMAL:		    /* standard header */
+@@ -754,7 +769,7 @@ static int pci_setup_device(struct pci_dev * dev)
+ 	default:				    /* unknown header */
+ 		printk(KERN_ERR "PCI: device %s has unknown header type %02x, ignoring.\n",
+ 			pci_name(dev), dev->hdr_type);
+-		return -1;
++		return -EIO;
+ 
+ 	bad:
+ 		printk(KERN_ERR "PCI: %s: class %x doesn't match header type %02x. Ignoring class.\n",
+@@ -834,7 +849,6 @@ pci_scan_device(struct pci_bus *bus, int devfn)
+ {
+ 	struct pci_dev *dev;
+ 	u32 l;
+-	u8 hdr_type;
+ 	int delay = 1;
+ 
+ 	if (pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID, &l))
+@@ -861,29 +875,16 @@ pci_scan_device(struct pci_bus *bus, int devfn)
+ 		}
+ 	}
+ 
+-	if (pci_bus_read_config_byte(bus, devfn, PCI_HEADER_TYPE, &hdr_type))
+-		return NULL;
+-
+ 	dev = kzalloc(sizeof(struct pci_dev), GFP_KERNEL);
+ 	if (!dev)
+ 		return NULL;
+ 
+ 	dev->bus = bus;
+-	dev->sysdata = bus->sysdata;
+-	dev->dev.parent = bus->bridge;
+-	dev->dev.bus = &pci_bus_type;
+ 	dev->devfn = devfn;
+-	dev->hdr_type = hdr_type & 0x7f;
+-	dev->multifunction = !!(hdr_type & 0x80);
+ 	dev->vendor = l & 0xffff;
+ 	dev->device = (l >> 16) & 0xffff;
+-	dev->cfg_size = pci_cfg_space_size(dev);
+-	dev->error_state = pci_channel_io_normal;
+ 
+-	/* Assume 32-bit PCI; let 64-bit PCI cards (which are far rarer)
+-	   set this higher, assuming the system even supports it.  */
+-	dev->dma_mask = 0xffffffff;
+-	if (pci_setup_device(dev) < 0) {
++	if (pci_setup_device(dev)) {
+ 		kfree(dev);
+ 		return NULL;
+ 	}

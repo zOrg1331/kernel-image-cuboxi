@@ -27,18 +27,16 @@ static int affs_file_release(struct inode *inode, struct file *filp);
 
 const struct file_operations affs_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read		= do_sync_read,
-	.aio_read	= generic_file_aio_read,
-	.write		= do_sync_write,
-	.aio_write	= generic_file_aio_write,
+	.read		= generic_file_read,
+	.write		= generic_file_write,
 	.mmap		= generic_file_mmap,
 	.open		= affs_file_open,
 	.release	= affs_file_release,
-	.fsync		= affs_file_fsync,
-	.splice_read	= generic_file_splice_read,
+	.fsync		= file_fsync,
+	.sendfile	= generic_file_sendfile,
 };
 
-const struct inode_operations affs_file_inode_operations = {
+struct inode_operations affs_file_inode_operations = {
 	.truncate	= affs_truncate,
 	.setattr	= affs_notify_change,
 };
@@ -46,25 +44,22 @@ const struct inode_operations affs_file_inode_operations = {
 static int
 affs_file_open(struct inode *inode, struct file *filp)
 {
-	pr_debug("AFFS: open(%lu,%d)\n",
-		 inode->i_ino, atomic_read(&AFFS_I(inode)->i_opencnt));
-	atomic_inc(&AFFS_I(inode)->i_opencnt);
+	if (atomic_read(&filp->f_count) != 1)
+		return 0;
+	pr_debug("AFFS: open(%d)\n", AFFS_I(inode)->i_opencnt);
+	AFFS_I(inode)->i_opencnt++;
 	return 0;
 }
 
 static int
 affs_file_release(struct inode *inode, struct file *filp)
 {
-	pr_debug("AFFS: release(%lu, %d)\n",
-		 inode->i_ino, atomic_read(&AFFS_I(inode)->i_opencnt));
-
-	if (atomic_dec_and_test(&AFFS_I(inode)->i_opencnt)) {
-		mutex_lock(&inode->i_mutex);
-		if (inode->i_size != AFFS_I(inode)->mmu_private)
-			affs_truncate(inode);
+	if (atomic_read(&filp->f_count) != 0)
+		return 0;
+	pr_debug("AFFS: release(%d)\n", AFFS_I(inode)->i_opencnt);
+	AFFS_I(inode)->i_opencnt--;
+	if (!AFFS_I(inode)->i_opencnt)
 		affs_free_prealloc(inode);
-		mutex_unlock(&inode->i_mutex);
-	}
 
 	return 0;
 }
@@ -183,7 +178,7 @@ affs_get_extblock(struct inode *inode, u32 ext)
 	/* inline the simplest case: same extended block as last time */
 	struct buffer_head *bh = AFFS_I(inode)->i_ext_bh;
 	if (ext == AFFS_I(inode)->i_ext_last)
-		get_bh(bh);
+		atomic_inc(&bh->b_count);
 	else
 		/* we have to do more (not inlined) */
 		bh = affs_get_extblock_slow(inode, ext);
@@ -309,7 +304,7 @@ store_ext:
 	affs_brelse(AFFS_I(inode)->i_ext_bh);
 	AFFS_I(inode)->i_ext_last = ext;
 	AFFS_I(inode)->i_ext_bh = bh;
-	get_bh(bh);
+	atomic_inc(&bh->b_count);
 
 	return bh;
 
@@ -327,7 +322,9 @@ affs_get_block(struct inode *inode, sector_t block, struct buffer_head *bh_resul
 
 	pr_debug("AFFS: get_block(%u, %lu)\n", (u32)inode->i_ino, (unsigned long)block);
 
-	BUG_ON(block > (sector_t)0x7fffffffUL);
+
+	if (block > (sector_t)0x7fffffffUL)
+		BUG();
 
 	if (block >= AFFS_I(inode)->i_blkcnt) {
 		if (block > AFFS_I(inode)->i_blkcnt || !create)
@@ -396,33 +393,25 @@ static int affs_writepage(struct page *page, struct writeback_control *wbc)
 {
 	return block_write_full_page(page, affs_get_block, wbc);
 }
-
 static int affs_readpage(struct file *file, struct page *page)
 {
 	return block_read_full_page(page, affs_get_block);
 }
-
-static int affs_write_begin(struct file *file, struct address_space *mapping,
-			loff_t pos, unsigned len, unsigned flags,
-			struct page **pagep, void **fsdata)
+static int affs_prepare_write(struct file *file, struct page *page, unsigned from, unsigned to)
 {
-	*pagep = NULL;
-	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
-				affs_get_block,
-				&AFFS_I(mapping->host)->mmu_private);
+	return cont_prepare_write(page, from, to, affs_get_block,
+		&AFFS_I(page->mapping->host)->mmu_private);
 }
-
 static sector_t _affs_bmap(struct address_space *mapping, sector_t block)
 {
 	return generic_block_bmap(mapping,block,affs_get_block);
 }
-
 const struct address_space_operations affs_aops = {
 	.readpage = affs_readpage,
 	.writepage = affs_writepage,
 	.sync_page = block_sync_page,
-	.write_begin = affs_write_begin,
-	.write_end = generic_write_end,
+	.prepare_write = affs_prepare_write,
+	.commit_write = generic_commit_write,
 	.bmap = _affs_bmap
 };
 
@@ -494,7 +483,8 @@ affs_do_readpage_ofs(struct file *file, struct page *page, unsigned from, unsign
 	u32 tmp;
 
 	pr_debug("AFFS: read_page(%u, %ld, %d, %d)\n", (u32)inode->i_ino, page->index, from, to);
-	BUG_ON(from > to || to > PAGE_CACHE_SIZE);
+	if (from > to || to > PAGE_CACHE_SIZE)
+		BUG();
 	kmap(page);
 	data = page_address(page);
 	bsize = AFFS_SB(sb)->s_data_blksize;
@@ -507,7 +497,8 @@ affs_do_readpage_ofs(struct file *file, struct page *page, unsigned from, unsign
 		if (IS_ERR(bh))
 			return PTR_ERR(bh);
 		tmp = min(bsize - boff, to - from);
-		BUG_ON(from + tmp > to || tmp > bsize);
+		if (from + tmp > to || tmp > bsize)
+			BUG();
 		memcpy(data + from, AFFS_DATA(bh) + boff, tmp);
 		affs_brelse(bh);
 		bidx++;
@@ -539,9 +530,10 @@ affs_extent_file_ofs(struct inode *inode, u32 newsize)
 		if (IS_ERR(bh))
 			return PTR_ERR(bh);
 		tmp = min(bsize - boff, newsize - size);
-		BUG_ON(boff + tmp > bsize || tmp > bsize);
+		if (boff + tmp > bsize || tmp > bsize)
+			BUG();
 		memset(AFFS_DATA(bh) + boff, 0, tmp);
-		be32_add_cpu(&AFFS_DATA_HEAD(bh)->size, tmp);
+		AFFS_DATA_HEAD(bh)->size = cpu_to_be32(be32_to_cpu(AFFS_DATA_HEAD(bh)->size) + tmp);
 		affs_fix_checksum(sb, bh);
 		mark_buffer_dirty_inode(bh, inode);
 		size += tmp;
@@ -558,7 +550,8 @@ affs_extent_file_ofs(struct inode *inode, u32 newsize)
 		if (IS_ERR(bh))
 			goto out;
 		tmp = min(bsize, newsize - size);
-		BUG_ON(tmp > bsize);
+		if (tmp > bsize)
+			BUG();
 		AFFS_DATA_HEAD(bh)->ptype = cpu_to_be32(T_DATA);
 		AFFS_DATA_HEAD(bh)->key = cpu_to_be32(inode->i_ino);
 		AFFS_DATA_HEAD(bh)->sequence = cpu_to_be32(bidx);
@@ -608,65 +601,58 @@ affs_readpage_ofs(struct file *file, struct page *page)
 	return err;
 }
 
-static int affs_write_begin_ofs(struct file *file, struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned flags,
-				struct page **pagep, void **fsdata)
+static int affs_prepare_write_ofs(struct file *file, struct page *page, unsigned from, unsigned to)
 {
-	struct inode *inode = mapping->host;
-	struct page *page;
-	pgoff_t index;
+	struct inode *inode = page->mapping->host;
+	u32 size, offset;
+	u32 tmp;
 	int err = 0;
 
-	pr_debug("AFFS: write_begin(%u, %llu, %llu)\n", (u32)inode->i_ino, (unsigned long long)pos, (unsigned long long)pos + len);
-	if (pos > AFFS_I(inode)->mmu_private) {
-		/* XXX: this probably leaves a too-big i_size in case of
-		 * failure. Should really be updating i_size at write_end time
-		 */
-		err = affs_extent_file_ofs(inode, pos);
+	pr_debug("AFFS: prepare_write(%u, %ld, %d, %d)\n", (u32)inode->i_ino, page->index, from, to);
+	offset = page->index << PAGE_CACHE_SHIFT;
+	if (offset + from > AFFS_I(inode)->mmu_private) {
+		err = affs_extent_file_ofs(inode, offset + from);
 		if (err)
 			return err;
 	}
-
-	index = pos >> PAGE_CACHE_SHIFT;
-	page = grab_cache_page_write_begin(mapping, index, flags);
-	if (!page)
-		return -ENOMEM;
-	*pagep = page;
+	size = inode->i_size;
 
 	if (PageUptodate(page))
 		return 0;
 
-	/* XXX: inefficient but safe in the face of short writes */
-	err = affs_do_readpage_ofs(file, page, 0, PAGE_CACHE_SIZE);
-	if (err) {
-		unlock_page(page);
-		page_cache_release(page);
+	if (from) {
+		err = affs_do_readpage_ofs(file, page, 0, from);
+		if (err)
+			return err;
+	}
+	if (to < PAGE_CACHE_SIZE) {
+		char *kaddr = kmap_atomic(page, KM_USER0);
+
+		memset(kaddr + to, 0, PAGE_CACHE_SIZE - to);
+		flush_dcache_page(page);
+		kunmap_atomic(kaddr, KM_USER0);
+		if (size > offset + to) {
+			if (size < offset + PAGE_CACHE_SIZE)
+				tmp = size & ~PAGE_CACHE_MASK;
+			else
+				tmp = PAGE_CACHE_SIZE;
+			err = affs_do_readpage_ofs(file, page, to, tmp);
+		}
 	}
 	return err;
 }
 
-static int affs_write_end_ofs(struct file *file, struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned copied,
-				struct page *page, void *fsdata)
+static int affs_commit_write_ofs(struct file *file, struct page *page, unsigned from, unsigned to)
 {
-	struct inode *inode = mapping->host;
+	struct inode *inode = page->mapping->host;
 	struct super_block *sb = inode->i_sb;
 	struct buffer_head *bh, *prev_bh;
 	char *data;
 	u32 bidx, boff, bsize;
-	unsigned from, to;
 	u32 tmp;
 	int written;
 
-	from = pos & (PAGE_CACHE_SIZE - 1);
-	to = pos + len;
-	/*
-	 * XXX: not sure if this can handle short copies (len < copied), but
-	 * we don't have to, because the page should always be uptodate here,
-	 * due to write_begin.
-	 */
-
-	pr_debug("AFFS: write_begin(%u, %llu, %llu)\n", (u32)inode->i_ino, (unsigned long long)pos, (unsigned long long)pos + len);
+	pr_debug("AFFS: commit_write(%u, %ld, %d, %d)\n", (u32)inode->i_ino, page->index, from, to);
 	bsize = AFFS_SB(sb)->s_data_blksize;
 	data = page_address(page);
 
@@ -680,9 +666,10 @@ static int affs_write_end_ofs(struct file *file, struct address_space *mapping,
 		if (IS_ERR(bh))
 			return PTR_ERR(bh);
 		tmp = min(bsize - boff, to - from);
-		BUG_ON(boff + tmp > bsize || tmp > bsize);
+		if (boff + tmp > bsize || tmp > bsize)
+			BUG();
 		memcpy(AFFS_DATA(bh) + boff, data + from, tmp);
-		be32_add_cpu(&AFFS_DATA_HEAD(bh)->size, tmp);
+		AFFS_DATA_HEAD(bh)->size = cpu_to_be32(be32_to_cpu(AFFS_DATA_HEAD(bh)->size) + tmp);
 		affs_fix_checksum(sb, bh);
 		mark_buffer_dirty_inode(bh, inode);
 		written += tmp;
@@ -728,7 +715,8 @@ static int affs_write_end_ofs(struct file *file, struct address_space *mapping,
 		if (IS_ERR(bh))
 			goto out;
 		tmp = min(bsize, to - from);
-		BUG_ON(tmp > bsize);
+		if (tmp > bsize)
+			BUG();
 		memcpy(AFFS_DATA(bh), data + from, tmp);
 		if (buffer_new(bh)) {
 			AFFS_DATA_HEAD(bh)->ptype = cpu_to_be32(T_DATA);
@@ -762,9 +750,6 @@ done:
 	if (tmp > inode->i_size)
 		inode->i_size = AFFS_I(inode)->mmu_private = tmp;
 
-	unlock_page(page);
-	page_cache_release(page);
-
 	return written;
 
 out:
@@ -778,8 +763,8 @@ const struct address_space_operations affs_aops_ofs = {
 	.readpage = affs_readpage_ofs,
 	//.writepage = affs_writepage_ofs,
 	//.sync_page = affs_sync_page_ofs,
-	.write_begin = affs_write_begin_ofs,
-	.write_end = affs_write_end_ofs
+	.prepare_write = affs_prepare_write_ofs,
+	.commit_write = affs_commit_write_ofs
 };
 
 /* Free any preallocated blocks. */
@@ -822,15 +807,18 @@ affs_truncate(struct inode *inode)
 	if (inode->i_size > AFFS_I(inode)->mmu_private) {
 		struct address_space *mapping = inode->i_mapping;
 		struct page *page;
-		void *fsdata;
-		u32 size = inode->i_size;
+		u32 size = inode->i_size - 1;
 		int res;
 
-		res = mapping->a_ops->write_begin(NULL, mapping, size, 0, 0, &page, &fsdata);
+		page = grab_cache_page(mapping, size >> PAGE_CACHE_SHIFT);
+		if (!page)
+			return;
+		size = (size & (PAGE_CACHE_SIZE - 1)) + 1;
+		res = mapping->a_ops->prepare_write(NULL, page, size, size);
 		if (!res)
-			res = mapping->a_ops->write_end(NULL, mapping, size, 0, 0, page, fsdata);
-		else
-			inode->i_size = AFFS_I(inode)->mmu_private;
+			res = mapping->a_ops->commit_write(NULL, page, size, size);
+		unlock_page(page);
+		page_cache_release(page);
 		mark_inode_dirty(inode);
 		return;
 	} else if (inode->i_size == AFFS_I(inode)->mmu_private)
@@ -866,7 +854,6 @@ affs_truncate(struct inode *inode)
 		blk++;
 	} else
 		AFFS_HEAD(ext_bh)->first_data = 0;
-	AFFS_HEAD(ext_bh)->block_count = cpu_to_be32(i);
 	size = AFFS_SB(sb)->s_hashsize;
 	if (size > blkcnt - blk + i)
 		size = blkcnt - blk + i;
@@ -914,16 +901,4 @@ affs_truncate(struct inode *inode)
 		affs_brelse(ext_bh);
 	}
 	affs_free_prealloc(inode);
-}
-
-int affs_file_fsync(struct file *filp, struct dentry *dentry, int datasync)
-{
-	struct inode * inode = dentry->d_inode;
-	int ret, err;
-
-	ret = write_inode_now(inode, 0);
-	err = sync_blockdev(inode->i_sb->s_bdev);
-	if (!ret)
-		ret = err;
-	return ret;
 }

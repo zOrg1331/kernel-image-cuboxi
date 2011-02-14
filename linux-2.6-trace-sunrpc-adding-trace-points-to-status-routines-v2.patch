@@ -1,0 +1,26 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Fri, 15 May 2009 09:40:09 -0400
+Subject: [trace] sunrpc: adding trace points to status routines
+Message-id: 4A0D70B9.9050105@RedHat.com
+O-Subject: Re: [PATCH 5.4] sunrpc: Adding trace points to status routines.
+Bugzilla: 499008
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+A SystemTap regression was found with the 2.6.18-146.el5
+kernel. The attched patch fixes that regression.
+
+steved.
+
+diff --git a/include/trace/sunrpc.h b/include/trace/sunrpc.h
+index 35b2944..b3ca201 100644
+--- a/include/trace/sunrpc.h
++++ b/include/trace/sunrpc.h
+@@ -2,6 +2,7 @@
+ #define _TRACE_SUNRPC_H
+ 
+ #include <linux/tracepoint.h>
++#include <linux/sunrpc/sched.h>
+ 
+ DEFINE_TRACE(rpc_call_status,
+ 	TPPROTO(struct rpc_task *task), TPARGS(task));

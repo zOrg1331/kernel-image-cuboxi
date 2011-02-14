@@ -1,9 +1,11 @@
 #ifndef _ASM_GENERIC_FUTEX_H
 #define _ASM_GENERIC_FUTEX_H
 
+#ifdef __KERNEL__
+
 #include <linux/futex.h>
-#include <linux/uaccess.h>
 #include <asm/errno.h>
+#include <asm/uaccess.h>
 
 static inline int
 futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
@@ -19,7 +21,7 @@ futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
 	if (! access_ok (VERIFY_WRITE, uaddr, sizeof(int)))
 		return -EFAULT;
 
-	pagefault_disable();
+	inc_preempt_count();
 
 	switch (op) {
 	case FUTEX_OP_SET:
@@ -31,7 +33,7 @@ futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
 		ret = -ENOSYS;
 	}
 
-	pagefault_enable();
+	dec_preempt_count();
 
 	if (!ret) {
 		switch (cmp) {
@@ -53,4 +55,5 @@ futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
 	return -ENOSYS;
 }
 
+#endif
 #endif

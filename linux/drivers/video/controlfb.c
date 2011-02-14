@@ -94,7 +94,7 @@ static inline int VAR_MATCH(struct fb_var_screeninfo *x, struct fb_var_screeninf
 struct fb_info_control {
 	struct fb_info		info;
 	struct fb_par_control	par;
-	u32			pseudo_palette[16];
+	u32			pseudo_palette[17];
 		
 	struct cmap_regs	__iomem *cmap_regs;
 	unsigned long		cmap_regs_phys;
@@ -179,14 +179,12 @@ MODULE_LICENSE("GPL");
 int init_module(void)
 {
 	struct device_node *dp;
-	int ret = -ENXIO;
 
-	dp = of_find_node_by_name(NULL, "control");
+	dp = find_devices("control");
 	if (dp != 0 && !control_of_init(dp))
-		ret = 0;
-	of_node_put(dp);
+		return 0;
 
-	return ret;
+	return -ENXIO;
 }
 
 void cleanup_module(void)
@@ -298,10 +296,10 @@ static int controlfb_mmap(struct fb_info *info,
                        return -EINVAL;
                start = info->fix.mmio_start;
                len = PAGE_ALIGN((start & ~PAGE_MASK)+info->fix.mmio_len);
-	       vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+               pgprot_val(vma->vm_page_prot) |= _PAGE_NO_CACHE|_PAGE_GUARDED;
        } else {
                /* framebuffer */
-	       vma->vm_page_prot = pgprot_cached_wthru(vma->vm_page_prot);
+               pgprot_val(vma->vm_page_prot) |= _PAGE_WRITETHRU;
        }
        start &= PAGE_MASK;
        if ((vma->vm_end - vma->vm_start + off) > len)
@@ -417,15 +415,13 @@ static int __init init_control(struct fb_info_control *p)
 	full = p->total_vram == 0x400000;
 
 	/* Try to pick a video mode out of NVRAM if we have one. */
-#ifdef CONFIG_NVRAM
 	if (default_cmode == CMODE_NVRAM){
 		cmode = nvram_read_byte(NV_CMODE);
 		if(cmode < CMODE_8 || cmode > CMODE_32)
 			cmode = CMODE_8;
 	} else
-#endif
 		cmode=default_cmode;
-#ifdef CONFIG_NVRAM
+
 	if (default_vmode == VMODE_NVRAM) {
 		vmode = nvram_read_byte(NV_VMODE);
 		if (vmode < 1 || vmode > VMODE_MAX ||
@@ -436,9 +432,7 @@ static int __init init_control(struct fb_info_control *p)
 			if (control_mac_modes[vmode - 1].m[full] < cmode)
 				vmode = VMODE_640_480_60;
 		}
-	} else
-#endif
-	{
+	} else {
 		vmode=default_vmode;
 		if (control_mac_modes[vmode - 1].m[full] < cmode) {
 			if (cmode > CMODE_8)
@@ -591,18 +585,16 @@ static int __init control_init(void)
 {
 	struct device_node *dp;
 	char *option = NULL;
-	int ret = -ENXIO;
 
 	if (fb_get_options("controlfb", &option))
 		return -ENODEV;
 	control_setup(option);
 
-	dp = of_find_node_by_name(NULL, "control");
+	dp = find_devices("control");
 	if (dp != 0 && !control_of_init(dp))
-		ret = 0;
-	of_node_put(dp);
+		return 0;
 
-	return ret;
+	return -ENXIO;
 }
 
 module_init(control_init);
@@ -700,10 +692,11 @@ static int __init control_of_init(struct device_node *dp)
 		printk(KERN_ERR "can't get 2 addresses for control\n");
 		return -ENXIO;
 	}
-	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p = kmalloc(sizeof(*p), GFP_KERNEL);
 	if (p == 0)
 		return -ENXIO;
 	control_fb = p;	/* save it for cleanups */
+	memset(p, 0, sizeof(*p));
 
 	/* Map in frame buffer and registers */
 	p->fb_orig_base = fb_res.start;

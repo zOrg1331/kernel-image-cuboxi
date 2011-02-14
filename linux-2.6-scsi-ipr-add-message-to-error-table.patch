@@ -1,0 +1,56 @@
+From: Steve Best <sbest@redhat.com>
+Date: Thu, 22 Apr 2010 18:22:41 -0400
+Subject: [scsi] ipr: add message to error table
+Message-id: <20100422181349.16224.52767.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 24595
+O-Subject: [PATCH RHEL5.6 BZ563589 v2 4/15] ipr: add message to error table
+Bugzilla: 563589
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=563589
+
+Description:
+============
+Patch 4/15: ipr: add message to error table
+
+commit: 2cf22be045ee1b29f9ce5cf4f4552811bb24916a
+
+Expose the debug and fastfail parameters to /sys/module/ipr/parameters such
+that they can be enabled/disabled at run time.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+
+Brew:
+=====
+Built on all platforms. All patches brewed together.
+https://brewweb.devel.redhat.com/taskinfo?taskID=2396559
+
+===============================================================
+Steve Best
+IBM on-site partner
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 6d1fe02..4b705cb 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -151,13 +151,13 @@ module_param_named(log_level, ipr_log_level, uint, 0);
+ MODULE_PARM_DESC(log_level, "Set to 0 - 4 for increasing verbosity of device driver");
+ module_param_named(testmode, ipr_testmode, int, 0);
+ MODULE_PARM_DESC(testmode, "DANGEROUS!!! Allows unsupported configurations");
+-module_param_named(fastfail, ipr_fastfail, int, 0);
++module_param_named(fastfail, ipr_fastfail, int, S_IRUGO | S_IWUSR);
+ MODULE_PARM_DESC(fastfail, "Reduce timeouts and retries");
+ module_param_named(transop_timeout, ipr_transop_timeout, int, 0);
+ MODULE_PARM_DESC(transop_timeout, "Time in seconds to wait for adapter to come operational (default: 300)");
+ module_param_named(enable_cache, ipr_enable_cache, int, 0);
+ MODULE_PARM_DESC(enable_cache, "Enable adapter's non-volatile write cache (default: 1)");
+-module_param_named(debug, ipr_debug, int, 0);
++module_param_named(debug, ipr_debug, int, S_IRUGO | S_IWUSR);
+ MODULE_PARM_DESC(debug, "Enable device driver debugging logging. Set to 1 to enable. (default: 0)");
+ module_param_named(dual_ioa_raid, ipr_dual_ioa_raid, int, 0);
+ MODULE_PARM_DESC(dual_ioa_raid, "Enable dual adapter RAID support. Set to 1 to enable. (default: 1)");

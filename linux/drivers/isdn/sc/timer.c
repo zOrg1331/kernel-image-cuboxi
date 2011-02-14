@@ -20,6 +20,14 @@
 #include "message.h"
 #include "card.h"
 
+extern board *sc_adapter[];
+
+extern void flushreadfifo(int);
+extern int  startproc(int);
+extern int  indicate_status(int, int, unsigned long, char *);
+extern int  sendmessage(int, unsigned int, unsigned int, unsigned int,
+        unsigned int, unsigned int, unsigned int, unsigned int *);
+
 
 /*
  * Write the proper values into the I/O ports following a reset
@@ -43,7 +51,7 @@ static void setup_ports(int card)
  * Then, check to see if the signate has been set. Next, set the
  * signature to a known value and issue a startproc if needed.
  */
-void sc_check_reset(unsigned long data)
+void check_reset(unsigned long data)
 {
 	unsigned long flags;
 	unsigned long sig;
@@ -68,7 +76,7 @@ void sc_check_reset(unsigned long data)
 		if (sc_adapter[card]->StartOnReset)
 			startproc(card);
 	} else  {
-		pr_debug("%s: No signature yet, waiting another %lu jiffies.\n",
+		pr_debug("%s: No signature yet, waiting another %d jiffies.\n", 
 			sc_adapter[card]->devicename, CHECKRESET_TIME);
 		mod_timer(&sc_adapter[card]->reset_timer, jiffies+CHECKRESET_TIME);
 		spin_unlock_irqrestore(&sc_adapter[card]->lock, flags);

@@ -1,0 +1,43 @@
+From: John W. Linville <linville@redhat.com>
+Subject: [rhel5 patch] iwlwifi: avoid BUG_ON in tx cmd queue processing
+Date: Wed, 26 Sep 2007 14:28:46 -0400
+Bugzilla: 306831
+Message-Id: <20070926182846.GB26776@redhat.com>
+Changelog: [net] iwlwifi: avoid BUG_ON in tx cmd queue processing
+
+
+A bug in the iwlwifi queue management code can lead to a BUG_ON.
+Later upstream versions of the driver seem to have a real fix for
+the problem, but it isn't immediately clear what was changed to fix
+the problem.  Intel proposed a work-around, which changed the BUG_ON
+to a WARN_ON, prints some debug information, and goes on with its life.
+This avoids the crash and the device seems to work well afterwards.
+
+--- linux-2.6.18.noarch/drivers/net/wireless/iwlwifi/base.c.orig	2007-09-26 13:55:06.000000000 -0400
++++ linux-2.6.18.noarch/drivers/net/wireless/iwlwifi/base.c	2007-09-26 13:57:49.000000000 -0400
+@@ -3793,7 +3793,12 @@
+ 	/* If a Tx command is being handled and it isn't in the actual
+ 	 * command queue then there a command routing bug has been introduced
+ 	 * in the queue management code. */
+-	BUG_ON(txq_id != IWL_CMD_QUEUE_NUM);
++	WARN_ON(txq_id != IWL_CMD_QUEUE_NUM);
++	if (txq_id != IWL_CMD_QUEUE_NUM) {
++		IWL_ERROR("Kernel BUG! Please report below info:\n");
++		IWL_ERROR("Error wrong command queue %d command id 0x%X\n",
++			  txq_id, pkt->hdr.cmd);
++	}
+ 
+ 	cmd_index = get_next_cmd_index(&priv->txq[IWL_CMD_QUEUE_NUM].q, index,
+ 				       is_huge);
+@@ -4245,6 +4250,7 @@
+ #if IWL == 4965
+ 			(pkt->hdr.cmd != REPLY_RX_PHY_CMD) &&
+ #endif
++			(pkt->hdr.cmd != STATISTICS_NOTIFICATION) &&
+ 			(pkt->hdr.cmd != REPLY_TX);
+ 
+ 		/* Based on type of command response or notification,
+-- 
+John W. Linville
+linville@redhat.com
+

@@ -1,0 +1,89 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Fri, 4 Jan 2008 15:31:18 -0500
+Subject: [misc] increase softlockup timeout maximum
+Message-id: 477E9796.3010505@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] increase softlockup timeout maximum
+Bugzilla: 253124
+
+This is BZ#253124
+
+Most of the need for this was obviated by Prarit's patch to allow the
+softlockup threshold to be adjusted via /proc/sys/kernel/softlockup_thresh
+which was backported from upstream.
+
+This patch increases just the maximum threshold that can be
+set and is only necessary for systems >128p and 512Gb --- and
+then only if the systems are severely stressed.
+
+NOTE: if the hwcert team decides to reduce the amount of
+ swapping needed to certify large systems this probably won't
+ be needed.
+
+NOTE: I am working on a patch to reduce the lock contention
+ with swapping but it isn't ready for prime time yet.
+
+Please comment or ACK.
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 5d06c4b..d248271 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -83,6 +83,12 @@ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+ 				  void __user *, size_t *, loff_t *);
+ #endif
+ 
++#ifdef CONFIG_DETECT_SOFTLOCKUP
++int proc_dointvec_minmax_softlockup(
++                  ctl_table *table, int write, struct file *filp,
++		  void __user *buffer, size_t *lenp, loff_t *ppos);
++#endif
++
+ extern unsigned int vdso_enabled, vdso_populate;
+ 
+ int exec_shield = (1<<0);
+@@ -109,6 +115,7 @@ __setup("exec-shield=", setup_exec_shield);
+ #ifdef CONFIG_DETECT_SOFTLOCKUP
+ static int one = 1;
+ static int sixty = 60;
++static int threehundred = 300;
+ #endif
+ 
+ static int zero;
+@@ -794,7 +801,7 @@ static ctl_table kern_table[] = {
+ 		.data		= &softlockup_thresh,
+ 		.maxlen		= sizeof(int),
+ 		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec_minmax,
++		.proc_handler	= &proc_dointvec_minmax_softlockup,
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &one,
+ 		.extra2		= &sixty,
+@@ -2064,6 +2071,26 @@ int proc_dointvec_minmax(ctl_table *table, int write, struct file *filp,
+ 				do_proc_dointvec_minmax_conv, &param);
+ }
+ 
++#ifdef CONFIG_DETECT_SOFTLOCKUP
++/*
++ * proc_dointvec_minmax_softlockup -- add conditional to handle
++ * large systems.
++ */
++int proc_dointvec_minmax_softlockup(
++                  ctl_table *table, int write, struct file *filp,
++		  void __user *buffer, size_t *lenp, loff_t *ppos)
++{
++	struct do_proc_dointvec_minmax_conv_param param = {
++		.min = (int *) table->extra1,
++		.max = (int *) table->extra2,
++	};
++	if (num_online_cpus() > 128)
++		param.max = &threehundred;
++	return do_proc_dointvec(table, write, filp, buffer, lenp, ppos,
++				do_proc_dointvec_minmax_conv, &param);
++}
++#endif
++
+ static int do_proc_doulongvec_minmax(ctl_table *table, int write,
+ 				     struct file *filp,
+ 				     void __user *buffer,

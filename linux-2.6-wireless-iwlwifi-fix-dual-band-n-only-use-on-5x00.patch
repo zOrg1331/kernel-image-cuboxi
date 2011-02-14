@@ -1,0 +1,169 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Tue, 23 Feb 2010 18:21:44 -0500
+Subject: [wireless] iwlwifi: fix dual band N-only use on 5x00
+Message-id: <20100223192144.6e7e48bc@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 23407
+O-Subject: [RHEL5 PATCH] iwlwifi: fix dual band N-only netwlork connection on
+	5x00
+Bugzilla: 566696
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ#566696
+
+Description:
+Without patch wireless connection dies in few seconds after association
+without any error message, when working with dual band AP (WRT610N V1)
+configured in N-only mode. Below detailed description from upstream
+commits.
+
+When receive reply_tx and ready to decrement the count for number of
+tfds in queue, do error checking to prevent error condition and
+tfds_in_queue become negative number.
+
+Check the frame control for ieee80211_is_data_qos() is true before
+counting the number of tfds can be free, the tfds_in_queue only
+increment when ieee80211_is_data_qos() is true before transmit; so it
+should only decrement if the type match.
+
+Remove ieee80211_is_data_qos check for frame_ctrl in tx_resp to avoid
+invalid information pass from uCode.
+
+Upstream:
+Patch is backport of two commits from net-2.6 tree.
+
+commit a120e912eb51e347f36c71b60a1d13af74d30e83
+Author: Stanislaw Gruszka <sgruszka@redhat.com>
+Date:   Fri Feb 19 15:47:33 2010 -0800
+
+    iwlwifi: sanity check before counting number of tfds can be free
+
+commit a239a8b47cc0e5e6d7416a89f340beac06d5edaa
+Author: Wey-Yi Guy <wey-yi.w.guy@intel.com>
+Date:   Fri Feb 19 15:47:32 2010 -0800
+
+    iwlwifi: error checking for number of tfds in queue
+
+Testing:
+I tested patch against regression on two machines with 5x00 adapters
+with a few different AP settings.
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index a730f72..caf253a 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -2135,7 +2135,7 @@ static void iwl4965_rx_reply_tx(struct iwl_priv *priv,
+ 			IWL_DEBUG_TX_REPLY(priv, "Retry scheduler reclaim scd_ssn "
+ 					   "%d index %d\n", scd_ssn , index);
+ 			freed = iwl_tx_queue_reclaim(priv, txq_id, index);
+-			priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++			iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
+ 
+ 			if (priv->mac80211_registered &&
+ 			    (iwl_queue_space(&txq->q) > txq->q.low_mark) &&
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index d4c248d..e011564 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -1270,7 +1270,7 @@ static void iwl5000_rx_reply_tx(struct iwl_priv *priv,
+ 					scd_ssn , index, txq_id, txq->swq_id);
+ 
+ 			freed = iwl_tx_queue_reclaim(priv, txq_id, index);
+-			priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++			iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
+ 
+ 			if (priv->mac80211_registered &&
+ 			    (iwl_queue_space(&txq->q) > txq->q.low_mark) &&
+@@ -1299,16 +1299,14 @@ static void iwl5000_rx_reply_tx(struct iwl_priv *priv,
+ 				   tx_resp->failure_frame);
+ 
+ 		freed = iwl_tx_queue_reclaim(priv, txq_id, index);
+-		if (ieee80211_is_data_qos(tx_resp->frame_ctrl))
+-			priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
+ 
+ 		if (priv->mac80211_registered &&
+ 		    (iwl_queue_space(&txq->q) > txq->q.low_mark))
+ 			iwl_wake_queue(priv, txq_id);
+ 	}
+ 
+-	if (ieee80211_is_data_qos(tx_resp->frame_ctrl))
+-		iwl_txq_check_empty(priv, sta_id, tid, txq_id);
++	iwl_txq_check_empty(priv, sta_id, tid, txq_id);
+ 
+ 	if (iwl_check_bits(status, TX_ABORT_REQUIRED_MSK))
+ 		IWL_ERR(priv, "TODO:  Implement Tx ABORT REQUIRED!!!\n");
+diff --git a/drivers/net/wireless/iwlwifi/iwl-core.h b/drivers/net/wireless/iwlwifi/iwl-core.h
+index 4294736..556b1dc 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-core.h
++++ b/drivers/net/wireless/iwlwifi/iwl-core.h
+@@ -410,6 +410,8 @@ void iwl_hw_txq_ctx_free(struct iwl_priv *priv);
+ int iwl_hw_tx_queue_init(struct iwl_priv *priv,
+ 			 struct iwl_tx_queue *txq);
+ int iwl_txq_update_write_ptr(struct iwl_priv *priv, struct iwl_tx_queue *txq);
++void iwl_free_tfds_in_queue(struct iwl_priv *priv,
++			    int sta_id, int tid, int freed);
+ int iwl_tx_queue_init(struct iwl_priv *priv, struct iwl_tx_queue *txq,
+ 		      int slots_num, u32 txq_id);
+ void iwl_tx_queue_free(struct iwl_priv *priv, int txq_id);
+diff --git a/drivers/net/wireless/iwlwifi/iwl-tx.c b/drivers/net/wireless/iwlwifi/iwl-tx.c
+index 97c3fbb..0d60996 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-tx.c
++++ b/drivers/net/wireless/iwlwifi/iwl-tx.c
+@@ -123,6 +123,20 @@ int iwl_txq_update_write_ptr(struct iwl_priv *priv, struct iwl_tx_queue *txq)
+ EXPORT_SYMBOL(iwl_txq_update_write_ptr);
+ 
+ 
++void iwl_free_tfds_in_queue(struct iwl_priv *priv,
++			    int sta_id, int tid, int freed)
++{
++	if (priv->stations[sta_id].tid[tid].tfds_in_queue >= freed)
++		priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++	else {
++		IWL_ERR(priv, "free more than tfds_in_queue (%u:%d)\n",
++			priv->stations[sta_id].tid[tid].tfds_in_queue,
++			freed);
++		priv->stations[sta_id].tid[tid].tfds_in_queue = 0;
++	}
++}
++EXPORT_SYMBOL(iwl_free_tfds_in_queue);
++
+ /**
+  * iwl_tx_queue_free - Deallocate DMA queue.
+  * @txq: Transmit queue to deallocate.
+@@ -1065,6 +1079,7 @@ int iwl_tx_queue_reclaim(struct iwl_priv *priv, int txq_id, int index)
+ 	struct iwl_queue *q = &txq->q;
+ 	struct iwl_tx_info *tx_info;
+ 	int nfreed = 0;
++	struct ieee80211_hdr *hdr;
+ 
+ 	if ((index >= q->n_bd) || (iwl_queue_used(q, index) == 0)) {
+ 		IWL_ERR(priv, "Read index for DMA queue txq id (%d), index %d, "
+@@ -1079,13 +1094,16 @@ int iwl_tx_queue_reclaim(struct iwl_priv *priv, int txq_id, int index)
+ 
+ 		tx_info = &txq->txb[txq->q.read_ptr];
+ 		ieee80211_tx_status_irqsafe(priv->hw, tx_info->skb[0]);
++
++		hdr = (struct ieee80211_hdr *)tx_info->skb[0]->data;
++		if (hdr && ieee80211_is_data_qos(hdr->frame_control))
++			nfreed++;
+ 		tx_info->skb[0] = NULL;
+ 
+ 		if (priv->cfg->ops->lib->txq_inval_byte_cnt_tbl)
+ 			priv->cfg->ops->lib->txq_inval_byte_cnt_tbl(priv, txq);
+ 
+ 		priv->cfg->ops->lib->txq_free_tfd(priv, txq);
+-		nfreed++;
+ 	}
+ 	return nfreed;
+ }
+@@ -1495,7 +1513,7 @@ void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
+ 	if (txq->q.read_ptr != (ba_resp_scd_ssn & 0xff)) {
+ 		/* calculate mac80211 ampdu sw queue to wake */
+ 		int freed = iwl_tx_queue_reclaim(priv, scd_flow, index);
+-		priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
+ 
+ 		if ((iwl_queue_space(&txq->q) > txq->q.low_mark) &&
+ 		    priv->mac80211_registered &&

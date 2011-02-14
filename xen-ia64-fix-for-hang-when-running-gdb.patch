@@ -1,0 +1,130 @@
+From: Doug Chapman <dchapman@redhat.com>
+Subject: [RHEL5.1 patch][xen] fix for hang when running gdb under xen
+Date: Wed, 08 Aug 2007 13:56:41 -0400
+Bugzilla: 246482
+Message-Id: <1186595801.24308.10.camel@deimos.americas.hpqcorp.net>
+Changelog: [XEN] ia64: fix for hang when running gdb
+
+
+Fix for BZ 246482: dom0 hang when running gdb testsuite
+
+This patch is already upstream in xen-unstable
+http://lists.xensource.com/archives/html/xen-changelog/2007-07/msg00186.html
+
+It touches only ia64 xen code and I have tested this by running the gdb
+test suite.  The gdb suite now shows no regressions over the bare metal
+RHEL5.1 kernel.  Without this patch any user can hang the entire system
+by using watchpoints in gdb.
+
+Note, formatting of the is consistent with the rest of xen code.
+
+- Doug
+
+
+--- xen/include/asm-ia64/linux-xen/asm/ptrace.h.gdbhang	2007-08-08 11:18:43.000000000 -0400
++++ xen/include/asm-ia64/linux-xen/asm/ptrace.h	2007-08-08 11:16:35.000000000 -0400
+@@ -265,6 +265,9 @@
+   /* given a pointer to a task_struct, return the user's pt_regs */
+ # define ia64_task_regs(t)		(((struct pt_regs *) ((char *) (t) + IA64_STK_OFFSET)) - 1)
+ # define ia64_psr(regs)			((struct ia64_psr *) &(regs)->cr_ipsr)
++#ifdef XEN
++# define guest_kernel_mode(regs)	(ia64_psr(regs)->cpl == 2)
++#endif
+ # define user_mode(regs)		(((struct ia64_psr *) &(regs)->cr_ipsr)->cpl != 0)
+ # define user_stack(task,regs)	((long) regs - (long) task == IA64_STK_OFFSET - sizeof(*regs))
+ # define fsys_mode(task,regs)					\
+--- xen/include/asm-ia64/debugger.h.gdbhang	2007-05-03 03:40:19.000000000 -0400
++++ xen/include/asm-ia64/debugger.h	2007-08-08 11:17:34.000000000 -0400
+@@ -56,13 +56,6 @@
+ #ifdef CRASH_DEBUG
+ // crash_debug=y
+ 
+-/* The main trap handlers use these helper macros which include early bail. */
+-static inline int debugger_trap_entry(
+-    unsigned int vector, struct cpu_user_regs *regs)
+-{
+-    return 0;
+-}
+-
+ extern int __trap_to_cdb(struct cpu_user_regs *r);
+ static inline int debugger_trap_fatal(
+     unsigned int vector, struct cpu_user_regs *regs)
+@@ -80,16 +73,7 @@
+ #define smp_send_stop()	/* nothing */
+ #endif
+ 
+-#elif defined DOMU_DEBUG
+-// domu_debug=y
+-#warning "domu_debug is not implemented yet."
+-/* The main trap handlers use these helper macros which include early bail. */
+-static inline int debugger_trap_entry(
+-    unsigned int vector, struct cpu_user_regs *regs)
+-{
+-    return 0;
+-}
+-
++#else
+ static inline int debugger_trap_fatal(
+     unsigned int vector, struct cpu_user_regs *regs)
+ {
+@@ -97,22 +81,21 @@
+ }
+ 
+ #define debugger_trap_immediate()		((void)0)
+-#else
+-/* The main trap handlers use these helper macros which include early bail. */
++#endif
++
+ static inline int debugger_trap_entry(
+     unsigned int vector, struct cpu_user_regs *regs)
+ {
+-    return 0;
+-}
++    struct vcpu *v = current;
++
++    if (guest_kernel_mode(regs) && v->domain->debugger_attached) {
++        domain_pause_for_debugger();
++        return 1;
++    }
+ 
+-static inline int debugger_trap_fatal(
+-    unsigned int vector, struct cpu_user_regs *regs)
+-{
+     return 0;
+ }
+ 
+-#define debugger_trap_immediate()		((void)0)
+-#endif
+ #endif // __ASSEMBLLY__
+ 
+ #endif /* __ASM_DEBUGGER_H__ */
+--- xen/arch/ia64/xen/faults.c.gdbhang	2007-05-03 03:40:19.000000000 -0400
++++ xen/arch/ia64/xen/faults.c	2007-08-08 11:15:06.000000000 -0400
+@@ -674,6 +674,11 @@
+ 		PSCB(current, iim) = iim;
+ 		vector = IA64_SPECULATION_VECTOR;
+ 		break;
++	case 29:
++		vector = IA64_DEBUG_VECTOR;
++		if (debugger_trap_entry(vector, regs))
++			return;
++		break;
+ 	case 30:
+ 		// FIXME: Should we handle unaligned refs in Xen??
+ 		vector = IA64_UNALIGNED_REF_VECTOR;
+@@ -707,10 +712,14 @@
+ 	case 35:
+ 		printk("ia64_handle_reflection: handling taken branch trap\n");
+ 		vector = IA64_TAKEN_BRANCH_TRAP_VECTOR;
++		if (debugger_trap_entry(vector,regs))
++			return;
+ 		break;
+ 	case 36:
+ 		printk("ia64_handle_reflection: handling single step trap\n");
+ 		vector = IA64_SINGLE_STEP_TRAP_VECTOR;
++		if (debugger_trap_entry(vector,regs))
++			return;
+ 		break;
+ 
+ 	default:
+

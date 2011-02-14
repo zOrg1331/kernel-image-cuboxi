@@ -1,0 +1,47 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:49:33 -0400
+Subject: [net] netxen: fix tx ring memory leak
+Message-id: <20100803134649.2239.82286.sendpatchset@localhost.localdomain>
+Patchwork-id: 27316
+O-Subject: [RHEL 5.6 PATCH 14/44] netxen: fix tx ring memory leak
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 011f4ea09768fdf6f95e3781cba2ed681a2ac710
+
+Description
+===========
+
+>From bfd9cb5eccfdcf91f456f3721af7548f083630bc Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Thu, 7 Jan 2010 22:10:14 +0000
+Subject: [PATCH] netxen: fix tx ring memory leak
+
+o While unloading driver or resetting the context, tx ring was not
+  getting free.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_init.c b/drivers/net/netxen/netxen_nic_init.c
+index c686253..30a561e 100644
+--- a/drivers/net/netxen/netxen_nic_init.c
++++ b/drivers/net/netxen/netxen_nic_init.c
+@@ -184,6 +184,8 @@ skip_rds:
+ 
+ 	tx_ring = adapter->tx_ring;
+ 	vfree(tx_ring->cmd_buf_arr);
++	kfree(tx_ring);
++	adapter->tx_ring = NULL;
+ }
+ 
+ int netxen_alloc_sw_resources(struct netxen_adapter *adapter)

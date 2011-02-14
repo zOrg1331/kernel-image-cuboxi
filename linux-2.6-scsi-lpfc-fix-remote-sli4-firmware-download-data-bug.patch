@@ -1,0 +1,66 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 24 Nov 2010 21:24:05 -0500
+Subject: [scsi] lpfc: fix remote SLI4 firmware download data bug
+Message-id: <1290633848-10834-5-git-send-email-revers@redhat.com>
+Patchwork-id: 29616
+O-Subject: [RHEL5.6 PATCH 4/7] lpfc: Fix bug with remote SLI4 firmware download
+	data not being transmitted. (CR 10883)
+Bugzilla: 655119
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=655119
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 7df3ab1..b8cd3f4 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -5907,6 +5907,8 @@ lpfc_sli4_bpl2sgl(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq,
+ 	IOCB_t *icmd;
+ 	int numBdes = 0;
+ 	int i = 0;
++	uint32_t offset = 0; /* accumulated offset in the sg request list */
++	int inbound = 0; /* number of sg reply entries inbound from firmware */
+ 
+ 	if (!piocbq || !sglq)
+ 		return xritag;
+@@ -5943,6 +5945,20 @@ lpfc_sli4_bpl2sgl(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq,
+ 			 */
+ 			bde.tus.w = le32_to_cpu(bpl->tus.w);
+ 			sgl->sge_len = cpu_to_le32(bde.tus.f.bdeSize);
++			/* The offsets in the sgl need to be accumulated
++			 * separately for the request and reply lists.
++			 * The request is always first, the reply follows.
++			 */
++			if (piocbq->iocb.ulpCommand == CMD_GEN_REQUEST64_CR) {
++				/* add up the reply sg entries */
++				if (bpl->tus.f.bdeFlags == BUFF_TYPE_BDE_64I)
++					inbound++;
++				/* first inbound? reset the offset */
++				if (inbound == 1)
++					offset = 0;
++				bf_set(lpfc_sli4_sge_offset, sgl, offset);
++				offset += bde.tus.f.bdeSize;
++			}
+ 			bpl++;
+ 			sgl++;
+ 		}
+@@ -6174,6 +6190,18 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
+ 		bf_set(lpfc_wqe_gen_pu, &wqe->generic, 0);
+ 	break;
+ 	case CMD_GEN_REQUEST64_CR:
++		/* For this command calculate the xmit length of the
++		 * request bde.
++		 */
++		xmit_len = 0;
++		numBdes = iocbq->iocb.un.genreq64.bdl.bdeSize /
++			sizeof(struct ulp_bde64);
++		for (i = 0; i < numBdes; i++) {
++			if (bpl[i].tus.f.bdeFlags != BUFF_TYPE_BDE_64)
++				break;
++			bde.tus.w = le32_to_cpu(bpl[i].tus.w);
++			xmit_len += bde.tus.f.bdeSize;
++		}
+ 		/* word3 command length is described as byte offset to the
+ 		 * rsp_data. Would always be 16, sizeof(struct sli4_sge)
+ 		 * sgl[0] = cmnd

@@ -1,0 +1,42 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 27 Feb 2008 13:40:53 -0500
+Subject: [ppc64] permit pci error state recovery
+Message-id: 47C5AEB5.7040302@redhat.com
+O-Subject: [RHEL 5.2 PATCH 1/2] - Permits pci error state recovery
+Bugzilla: 434857
+
+  RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=434857
+
+Overview:
+
+Backport from mainline; initializes error_state to
+pci_channel_io_normal. Without this change, the driver is essentially doing:
+
+if (np->s.device->error_state != pci_channel_io_normal)
+    return IRQ_NONE;
+
+Subject: rhel5.2: Initialize error_state to pci_channel_io_normal
+
+From: Mike Anderson <andmike@linux.vnet.ibm.com>
+
+This patch is a back port from mainline to initialize error_state to
+pci_channel_io_normal.
+
+Signed-off-by: Mike Anderson <andmike@linux.vnet.ibm.com>
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/powerpc/kernel/pci_64.c b/arch/powerpc/kernel/pci_64.c
+index 6f3b856..6a56b45 100644
+--- a/arch/powerpc/kernel/pci_64.c
++++ b/arch/powerpc/kernel/pci_64.c
+@@ -388,6 +388,7 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
+ 	DBG("    class: 0x%x\n", dev->class);
+ 
+ 	dev->current_state = 4;		/* unknown power state */
++	dev->error_state = pci_channel_io_normal;
+ 
+ 	if (!strcmp(type, "pci") || !strcmp(type, "pciex")) {
+ 		/* a PCI-PCI bridge */

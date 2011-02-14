@@ -1,0 +1,146 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:16:49 -0400
+Subject: [x86_64] nmi: introduce do_nmi_callback
+Message-id: 20080820171647.255361000@redhat.com
+O-Subject: [RHEL5.3 PATCH 03/25] nmi: introduce do_nmi_callback
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+Instead of repeating the test for unknown nmi types, simplify
+unknown_nmi_panic_callback() and only call it when it's needed.
+
+using do_nmi_callback2() as name because of existing do_nmi_callback()
+
+Upstream: 3adbbcce9a49b900d4cc118cdccfdefa78bf1afb
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index 85f2fff..effad06 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -345,32 +345,21 @@ static void clear_msr_range(unsigned int base, unsigned int n)
+ 
+ void setup_apic_nmi_watchdog(void)
+ {
+-	switch (boot_cpu_data.x86_vendor) {
+-	case X86_VENDOR_AMD:
+-		if ((boot_cpu_data.x86 != 15) && (boot_cpu_data.x86 != 16))
+-			return;
+-		if (strstr(boot_cpu_data.x86_model_id, "Screwdriver"))
+-			return;
+-		setup_k7_watchdog();
+-		break;
+-	case X86_VENDOR_INTEL:
+-		if (cpu_has(&boot_cpu_data, X86_FEATURE_ARCH_PERFMON)) {
+-			if (!setup_intel_arch_watchdog())
+-				return;
+-		} else if (boot_cpu_data.x86 == 15) {
+-			if (!setup_p4_watchdog())
+-				return;
+-		} else {
++	if (__get_cpu_var(wd_enabled) == 1)
++ 		return;
++
++	switch (nmi_watchdog) {
++	case NMI_LOCAL_APIC:
++		__get_cpu_var(wd_enabled) = 1;
++		if (lapic_watchdog_init(nmi_hz) < 0) {
++			__get_cpu_var(wd_enabled) = 0;
+ 			return;
+ 		}
+-
+-		break;
+-
+-	default:
+-		return;
+-	}
+-	lapic_nmi_owner = LAPIC_NMI_WATCHDOG;
+-	nmi_active = 1;
++		/* FALL THROUGH */
++	case NMI_IO_APIC:
++		__get_cpu_var(wd_enabled) = 1;
++		atomic_inc(&nmi_active);
++ 	}
+ }
+ 
+ /*
+@@ -498,6 +487,16 @@ void unset_nmi_callback(void)
+ }
+ EXPORT_SYMBOL_GPL(unset_nmi_callback);
+ 
++static int unknown_nmi_panic_callback(struct pt_regs *regs, int cpu);
++int do_nmi_callback2(struct pt_regs *regs, int cpu)
++{
++#ifdef CONFIG_SYSCTL
++	if (unknown_nmi_panic)
++		unknown_nmi_panic_callback(regs, cpu);
++#endif
++	return 0;
++}
++
+ #ifdef CONFIG_SYSCTL
+ 
+ static int unknown_nmi_panic_callback(struct pt_regs *regs, int cpu)
+@@ -505,10 +504,9 @@ static int unknown_nmi_panic_callback(struct pt_regs *regs, int cpu)
+ 	unsigned char reason = get_nmi_reason();
+ 	char buf[64];
+ 
+-	if (!(reason & 0xc0)) {
+-		sprintf(buf, "NMI received for unknown reason %02x\n", reason);
+-		die_nmi(buf,regs);
+-	}
++	sprintf(buf, "NMI received for unknown reason %02x\n", reason);
++	die_nmi(buf,regs);
++
+ 	return 0;
+ }
+ 
+@@ -529,13 +527,10 @@ int proc_unknown_nmi_panic(struct ctl_table *table, int write, struct file *file
+ 		if (reserve_lapic_nmi() < 0) {
+ 			unknown_nmi_panic = 0;
+ 			return -EBUSY;
+-		} else {
+-			set_nmi_callback(unknown_nmi_panic_callback);
+ 		}
+-	} else {
++	} else
+ 		release_lapic_nmi();
+-		unset_nmi_callback();
+-	}
++
+ 	return 0;
+ }
+ 
+diff --git a/arch/x86_64/kernel/traps.c b/arch/x86_64/kernel/traps.c
+index 97a7b4b..9274241 100644
+--- a/arch/x86_64/kernel/traps.c
++++ b/arch/x86_64/kernel/traps.c
+@@ -804,7 +804,8 @@ asmlinkage __kprobes void default_do_nmi(struct pt_regs *regs)
+ 			return;
+ 		}
+ #endif
+-		unknown_nmi_error(reason, regs);
++		if (!do_nmi_callback2(regs, cpu))
++			unknown_nmi_error(reason, regs);
+ 		return;
+ 	}
+ 	if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT) == NOTIFY_STOP)
+diff --git a/include/asm-x86_64/nmi.h b/include/asm-x86_64/nmi.h
+index 2974e5c..b5060dd 100644
+--- a/include/asm-x86_64/nmi.h
++++ b/include/asm-x86_64/nmi.h
+@@ -26,6 +26,14 @@ void set_nmi_callback(nmi_callback_t callback);
+  */
+ void unset_nmi_callback(void);
+ 
++/**
++ * do_nmi_callback2
++ *
++ * Check to see if a callback exists and execute it. Return 1
++ * if the handler exists and was handled successfully.
++ */
++int do_nmi_callback2(struct pt_regs *regs, int cpu);
++
+ #ifdef CONFIG_PM
+  
+ /** Replace the PM callback routine for NMI. */

@@ -1,0 +1,75 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 225435, elevator: move clearing of unplug flag  earlier
+Date: Thu, 29 Mar 2007 16:21:51 -0500
+Bugzilla: 225435
+Message-Id: <460C2DEF.4070702@redhat.com>
+Changelog: [elevator] move clearing of unplug flag  earlier
+
+
+For Bugzilla Bug 225435: LTC31512-Backport of patch to elevator code
+
+Changelog below says it well.  It's in Linus' tree since late January.
+
+Thanks,
+
+-Eric
+
+------------
+
+X-Git-Tag: v2.6.20-rc6~28
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=95543179f158b4891c5dc49004853ce081e8d794
+
+[PATCH] elevator: move clearing of unplug flag earlier
+
+A flag was recently added to the elevator code to avoid
+performing an unplug when reuests are being re-queued.
+The goal of this flag was to avoid a deep recursion that
+can occur when re-queueing requests after a SCSI device/host
+reset.  See http://lkml.org/lkml/2006/5/17/254
+
+However, that fix added the flag near the bottom of a case
+statement, where an earlier break (in an if statement) could
+transport one out of the case, without setting the flag.
+This patch sets the flag earlier in the case statement.
+
+I re-discovered the deep recursion recently during testing;
+I was told that it was a known problem, and the fix to it was
+in the kernel I was testing. Indeed it was ... but it didn't
+fix the bug. With the patch below, I no longer see the bug.
+
+Signed-off by: Linas Vepstas <linas@austin.ibm.com>
+Signed-off-by: Jens Axboe <axboe@suse.de>
+Cc: Chris Wright <chrisw@sous-sol.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+Index: linux-2.6.18-13.el5/block/elevator.c
+===================================================================
+--- linux-2.6.18-13.el5.orig/block/elevator.c
++++ linux-2.6.18-13.el5/block/elevator.c
+@@ -389,6 +389,12 @@ void elv_insert(request_queue_t *q, stru
+ 		 */
+ 		rq->flags |= REQ_SOFTBARRIER;
+ 
++		/*
++		 * Most requeues happen because of a busy condition,
++		 * don't force unplug of the queue for that case.
++		 */
++		unplug_it = 0;
++
+ 		if (q->ordseq == 0) {
+ 			list_add(&rq->queuelist, &q->queue_head);
+ 			break;
+@@ -403,11 +409,6 @@ void elv_insert(request_queue_t *q, stru
+ 		}
+ 
+ 		list_add_tail(&rq->queuelist, pos);
+-		/*
+-		 * most requeues happen because of a busy condition, don't
+-		 * force unplug of the queue for that case.
+-		 */
+-		unplug_it = 0;
+ 		break;
+ 
+ 	default:
+

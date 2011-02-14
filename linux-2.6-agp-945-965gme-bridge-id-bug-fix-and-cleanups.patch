@@ -1,0 +1,375 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Subject: [RHEL5.1 PATCH] agp bridge id, bug fix, and cleanups (bz 251166)
+Date: Tue, 7 Aug 2007 12:00:46 -0400
+Bugzilla: 251166
+Message-Id: <20070807160046.GA12027@samurai.boston.redhat.com>
+Changelog: [agp] 945/965GME: bridge id, bug fix, and cleanups
+
+
+I've split this into three parts in case you want to exercise line-item veto.
+
+The first patch cleans up some identifiers to match upstream. It's optional,
+but trivial, and Intel recommends you take this.
+
+The second patch adds a bridge ID for the 945/965GME chipsets. This was a late-
+breaking additional SKU and the actual chipset is using a new bridge ID. So
+this was added already but won't really work without this fix.
+
+The third patch fixes a bug where non-Intel add-in cards present on systems
+with 915 or later chipsets can cause X not to start up. The upstream code here
+has been reorganized, but also fixed this bug.
+
+These have been tested by Austin Zhang at Intel against 2.6.18-37.
+
+- Geoff
+
+diff -Naurp linux-2.6.18.x86_64-orig/drivers/char/agp/agp.h linux-2.6.18.x86_64-agp/drivers/char/agp/agp.h
+--- linux-2.6.18.x86_64-orig/drivers/char/agp/agp.h	2007-07-09 05:25:46.000000000 +0800
++++ linux-2.6.18.x86_64-agp/drivers/char/agp/agp.h	2007-07-09 05:26:51.000000000 +0800
+@@ -229,9 +229,9 @@ struct agp_bridge_data {
+ #define I965_PGETBL_SIZE_512KB	(0 << 1)
+ #define I965_PGETBL_SIZE_256KB	(1 << 1)
+ #define I965_PGETBL_SIZE_128KB	(2 << 1)
+-#define VTD_PGETBL_SIZE_MASK	(3 << 8)
+-#define VTD_PGETBL_SIZE_1M	(1 << 8)
+-#define VTD_PGETBL_SIZE_2M	(2 << 8)
++#define G33_PGETBL_SIZE_MASK	(3 << 8)
++#define G33_PGETBL_SIZE_1M	(1 << 8)
++#define G33_PGETBL_SIZE_2M	(2 << 8)
+ #define I810_DRAM_CTL		0x3000
+ #define I810_DRAM_ROW_0		0x00000001
+ #define I810_DRAM_ROW_0_SDRAM	0x00000001
+diff -Naurp linux-2.6.18.x86_64-orig/drivers/char/agp/intel-agp.c linux-2.6.18.x86_64-agp/drivers/char/agp/intel-agp.c
+--- linux-2.6.18.x86_64-orig/drivers/char/agp/intel-agp.c	2007-07-09 05:25:46.000000000 +0800
++++ linux-2.6.18.x86_64-agp/drivers/char/agp/intel-agp.c	2007-07-09 05:31:13.000000000 +0800
+@@ -60,8 +60,8 @@
+ #define I915_PTEADDR	0x1C
+ #define I915_GMCH_GMS_STOLEN_48M	(0x6 << 4)
+ #define I915_GMCH_GMS_STOLEN_64M	(0x7 << 4)
+-#define I915_GMCH_GMS_STOLEN_128M	(0x8 << 4)
+-#define I915_GMCH_GMS_STOLEN_256M	(0x9 << 4)
++#define G33_GMCH_GMS_STOLEN_128M	(0x8 << 4)
++#define G33_GMCH_GMS_STOLEN_256M	(0x9 << 4)
+ 
+ /* Intel 965G registers */
+ #define I965_MSAC 0x62
+@@ -435,16 +435,16 @@ static void intel_i830_init_gtt_entries(
+ 		/* G33's GTT size defined in gmch_ctrl, which has two options:
+ 		* 1M (no VT-d mode) and 2M (VT-d mode)
+ 		*/
+-		switch (gmch_ctrl & VTD_PGETBL_SIZE_MASK) {
+-		case VTD_PGETBL_SIZE_1M:
++		switch (gmch_ctrl & G33_PGETBL_SIZE_MASK) {
++		case G33_PGETBL_SIZE_1M:
+ 			size = 1024;
+ 			break;
+-		case VTD_PGETBL_SIZE_2M:
++		case G33_PGETBL_SIZE_2M:
+ 			size = 2048;
+ 			break;
+ 		default:
+ 			printk(KERN_INFO PFX "Unknown page table size 0x%x, "
+-				"assuming 512KB\n", (gmch_ctrl & VTD_PGETBL_SIZE_MASK));
++				"assuming 512KB\n", (gmch_ctrl & G33_PGETBL_SIZE_MASK));
+ 			size = 512;
+ 		}
+ 		size += 4;
+@@ -516,13 +516,13 @@ static void intel_i830_init_gtt_entries(
+ 			else
+ 				gtt_entries = 0;
+ 			break;
+-		case I915_GMCH_GMS_STOLEN_128M:
++		case G33_GMCH_GMS_STOLEN_128M:
+ 			if (IS_G33)
+ 				gtt_entries = MB(128) - KB(size);
+ 			else
+ 				gtt_entries = 0;
+ 			break;
+-		case I915_GMCH_GMS_STOLEN_256M:
++		case G33_GMCH_GMS_STOLEN_256M:
+ 			if (IS_G33)
+ 				gtt_entries = MB(256) - KB(size);
+ 			else
+
+
+diff -Naurp linux-2.6.18.x86_64-agp/drivers/char/agp/intel-agp.c linux-2.6.18.x86_64-agp-fix945965bridgeID/drivers/char/agp/intel-agp.c
+--- linux-2.6.18.x86_64-agp/drivers/char/agp/intel-agp.c	2007-07-09 05:31:13.000000000 +0800
++++ linux-2.6.18.x86_64-agp-fix945965bridgeID/drivers/char/agp/intel-agp.c	2007-07-24 16:43:38.000000000 +0800
+@@ -19,7 +19,9 @@
+ #define PCI_DEVICE_ID_INTEL_82965G_IG       0x29A2
+ #define PCI_DEVICE_ID_INTEL_82965GM_HB      0x2A00
+ #define PCI_DEVICE_ID_INTEL_82965GM_IG      0x2A02
++#define PCI_DEVICE_ID_INTEL_82965GME_HB     0x2A10
+ #define PCI_DEVICE_ID_INTEL_82965GME_IG     0x2A12
++#define PCI_DEVICE_ID_INTEL_82945GME_HB     0x27AC
+ #define PCI_DEVICE_ID_INTEL_G33_HB          0x29C0
+ #define PCI_DEVICE_ID_INTEL_G33_IG          0x29C2
+ #define PCI_DEVICE_ID_INTEL_Q35_HB          0x29B0
+@@ -31,7 +33,8 @@
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_1_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965Q_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_HB || \
+-                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965GM_HB)
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965GM_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965GME_HB)
+ 
+ #define IS_G33	(agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G33_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_Q35_HB || \
+@@ -500,6 +503,7 @@ static void intel_i830_init_gtt_entries(
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GME_HB ||
+ 			    IS_I965 || IS_G33)
+ 				gtt_entries = MB(48) - KB(size);
+ 			else
+@@ -511,6 +515,7 @@ static void intel_i830_init_gtt_entries(
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GME_HB ||
+ 			    IS_I965 || IS_G33)
+ 				gtt_entries = MB(64) - KB(size);
+ 			else
+@@ -1882,14 +1887,18 @@ static int __devinit agp_intel_probe(str
+ 		name = "945G";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82945GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG)) {
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG)) 
+ 			bridge->driver = &intel_915_driver;
+-			name = "945GM";
+-		} else if (find_i830(PCI_DEVICE_ID_INTEL_82945GME_IG)) {
++		else
++			bridge->driver = &intel_845_driver;
++		name = "945GM";
++		break;
++	case PCI_DEVICE_ID_INTEL_82945GME_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945GME_IG)) 
+ 			bridge->driver = &intel_915_driver;
+-			name = "945GME";
+-		} else
++		else
+ 			bridge->driver = &intel_845_driver;
++		name = "945GME";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82946GZ_HB:
+ 		if (find_i830(PCI_DEVICE_ID_INTEL_82946GZ_IG))
+@@ -1920,14 +1929,18 @@ static int __devinit agp_intel_probe(str
+ 		name = "965G";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG)) {
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG)) 
+ 			bridge->driver = &intel_i965_driver;
+-			name = "965GM";
+-		} else if (find_i830(PCI_DEVICE_ID_INTEL_82965GME_IG)) {
++		else
++			bridge->driver = &intel_845_driver;
++		name = "965GM";
++		break;
++	case PCI_DEVICE_ID_INTEL_82965GME_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GME_IG)) 
+ 			bridge->driver = &intel_i965_driver;
+-			name = "965GME/GLE";
+-		} else
++		else
+ 			bridge->driver = &intel_845_driver;
++		name = "965GME/GLE";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_G33_HB:
+ 		if (find_i830(PCI_DEVICE_ID_INTEL_G33_IG))
+@@ -2105,11 +2118,13 @@ static struct pci_device_id agp_intel_pc
+ 	ID(PCI_DEVICE_ID_INTEL_82915GM_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82945G_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82945GM_HB),
++	ID(PCI_DEVICE_ID_INTEL_82945GME_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82946GZ_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965G_1_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965Q_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965G_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965GM_HB),
++	ID(PCI_DEVICE_ID_INTEL_82965GME_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_G33_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_Q35_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_Q33_HB),
+
+
+diff -Naurp linux-2.6.18.x86_64-agp-fix945965bridgeID/drivers/char/agp/intel-agp.c linux-2.6.18.x86_64-agp-fixNonIntelAddonCard/drivers/char/agp/intel-agp.c
+--- linux-2.6.18.x86_64-agp-fix945965bridgeID/drivers/char/agp/intel-agp.c	2007-07-24 16:43:38.000000000 +0800
++++ linux-2.6.18.x86_64-agp-fixNonIntelAddonCard/drivers/char/agp/intel-agp.c	2007-07-26 11:32:06.000000000 +0800
+@@ -1866,102 +1866,102 @@ static int __devinit agp_intel_probe(str
+ 		name = "i875";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82915G_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82915G_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82915G_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "915G";
++			name = "915G";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82915GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82915GM_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82915GM_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "915GM";
++			name = "915GM";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82945G_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82945G_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945G_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "945G";
++			name = "945G";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82945GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG)) 
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "945GM";
++			name = "945GM";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82945GME_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82945GME_IG)) 
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945GME_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "945GME";
++			name = "945GME";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82946GZ_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82946GZ_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82946GZ_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "946GZ";
++			name = "946GZ";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965G_1_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_1_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_1_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "965G";
++			name = "965G";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965Q_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965Q_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965Q_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "965Q";
++			name = "965Q";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965G_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "965G";
++			name = "965G";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG)) 
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "965GM";
++			name = "965GM";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965GME_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965GME_IG)) 
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GME_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "965GME/GLE";
++			name = "965GME/GLE";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_G33_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_G33_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_G33_IG)) {
+ 			bridge->driver = &intel_g33_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "G33";
++			name = "G33";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_Q35_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_Q35_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_Q35_IG)) {
+ 			bridge->driver = &intel_g33_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "Q35";
++			name = "Q35";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_Q33_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_Q33_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_Q33_IG)) {
+ 			bridge->driver = &intel_g33_driver;
+-		else
+-			bridge->driver = &intel_845_driver;
+-		name = "Q33";
++			name = "Q33";
++		} else
++			bridge->driver = NULL;
+ 		break;
+ 
+ 	case PCI_DEVICE_ID_INTEL_7505_0:
+@@ -1980,6 +1980,14 @@ static int __devinit agp_intel_probe(str
+ 		return -ENODEV;
+ 	};
+ 
++	if (bridge->driver == NULL) {
++		/* bridge has no AGP and no IGD detected */
++		if (cap_ptr)
++			printk(KERN_WARNING PFX "Failed to find bridge device. \n");
++		agp_put_bridge(bridge);
++		return -ENODEV;
++	}
++
+ 	bridge->dev = pdev;
+ 	bridge->capndx = cap_ptr;
+ 
+

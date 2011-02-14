@@ -1,0 +1,486 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 18 Dec 2007 10:06:51 -0500
+Subject: [xen] x86: make HV respect the e820 map < 16M
+Message-id: 4767E20B.4020902@redhat.com
+O-Subject: [RHEL5.2 PATCH]: Make Xen HV respect the e820 map < 16M
+Bugzilla: 410811
+
+All,
+     Attached is a patch that makes the Xen 3.1.2 hypervisor respect the e820
+map below the 16MB boundary.  Before this patch, on x86_64, the hypervisor would
+just blindly add all pages between 1MB and 16MB to the boot allocator, without
+respect for the e820 map.  This causes problems on the Stratus platform, in
+particular, since they have a reserved region around the 15MB mark.
+
+This patch is actually a combination of 3 xen-3.1-testing.hg changesets: 15545,
+15546, and 15557.
+
+This patch was tested by Stratus with successful results.
+
+This resolves BZ 410811.  Please review and ACK.
+
+Chris Lalancette
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1197134286 0
+# Node ID 49fa281c89721b623203bfa0548d451b846c0728
+# Parent  0069a86da1040fd6ebba5734f28f8dee56cc5eaf
+x86: force DMI table to not be in E820 RAM region
+
+In order for Dom0 to be able to map the DMI table, it must not be in
+E820 RAM; since some BIOS versions apparently fail to set the type
+correctly for the page(s) containing this table, adjust it before
+starting to consume memory.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+Signed-off-by: Keir Fraser <keir@xensource.com>
+xen-unstable changeset:   15964:80277ff19c9c
+xen-unstable date:        Wed Sep 26 14:14:16 2007 +0100
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/x86/dmi_scan.c b/arch/x86/dmi_scan.c
+index b867feb..1d87dd7 100644
+--- a/arch/x86/dmi_scan.c
++++ b/arch/x86/dmi_scan.c
+@@ -102,23 +102,32 @@ inline static int __init dmi_checksum(u8 *buf)
+ 	return (sum==0);
+ }
+ 
++int __init dmi_get_table(u32 *base, u32 *len)
++{
++	u8 buf[15];
++	char __iomem *p, *q;
++
++	p = maddr_to_virt(0xF0000);
++	for (q = p; q < p + 0x10000; q += 16) {
++		memcpy_fromio(buf, q, 15);
++		if (memcmp(buf, "_DMI_", 5)==0 && dmi_checksum(buf)) {
++			*base=buf[11]<<24|buf[10]<<16|buf[9]<<8|buf[8];
++			*len=buf[7]<<8|buf[6];
++			return 0;
++		}
++	}
++	return -1;
++}
++
+ static int __init dmi_iterate(void (*decode)(struct dmi_header *))
+ {
+ 	u8 buf[15];
+ 	char __iomem *p, *q;
+ 
+-	/*
+-	 * no iounmap() for that ioremap(); it would be a no-op, but it's
+-	 * so early in setup that sucker gets confused into doing what
+-	 * it shouldn't if we actually call it.
+-	 */
+-	p = ioremap(0xF0000, 0x10000);
+-	if (p == NULL)
+-		return -1;
++	p = maddr_to_virt(0xF0000);
+ 	for (q = p; q < p + 0x10000; q += 16) {
+ 		memcpy_fromio(buf, q, 15);
+-		if(memcmp(buf, "_DMI_", 5)==0 && dmi_checksum(buf))
+-		{
++		if (memcmp(buf, "_DMI_", 5)==0 && dmi_checksum(buf)) {
+ 			u16 num=buf[13]<<8|buf[12];
+ 			u16 len=buf[7]<<8|buf[6];
+ 			u32 base=buf[11]<<24|buf[10]<<16|buf[9]<<8|buf[8];
+diff --git a/arch/x86/e820.c b/arch/x86/e820.c
+index 54ebd32..33678db 100644
+--- a/arch/x86/e820.c
++++ b/arch/x86/e820.c
+@@ -2,6 +2,7 @@
+ #include <xen/init.h>
+ #include <xen/lib.h>
+ #include <xen/compat.h>
++#include <xen/dmi.h>
+ #include <asm/e820.h>
+ #include <asm/page.h>
+ 
+@@ -367,6 +368,15 @@ static void __init clip_mem(void)
+     }
+ }
+ 
++static void __init reserve_dmi_region(void)
++{
++    u32 base, len;
++    if ( (dmi_get_table(&base, &len) == 0) && ((base + len) > base) &&
++         reserve_e820_ram(&e820, base, base + len) )
++        printk("WARNING: DMI table located in E820 RAM %08x-%08x. Fixed.\n",
++               base, base+len);
++}
++
+ static void __init machine_specific_memory_setup(
+     struct e820entry *raw, int *raw_nr)
+ {
+@@ -376,6 +386,73 @@ static void __init machine_specific_memory_setup(
+     (void)copy_e820_map(raw, nr);
+     clip_4gb();
+     clip_mem();
++    reserve_dmi_region();
++}
++
++/* Reserve RAM area (@s,@e) in the specified e820 map. */
++int __init reserve_e820_ram(struct e820map *e820, uint64_t s, uint64_t e)
++{
++    uint64_t rs = 0, re = 0;
++    int i;
++
++    for ( i = 0; i < e820->nr_map; i++ )
++    {
++        /* Have we found the e820 region that includes the specified range? */
++        rs = e820->map[i].addr;
++        re = rs + e820->map[i].size;
++        if ( (s >= rs) && (e <= re) )
++            break;
++    }
++
++    if ( (i == e820->nr_map) || (e820->map[i].type != E820_RAM) )
++        return 0;
++
++    if ( (s == rs) && (e == re) )
++    {
++        /* Complete excision. */
++        memmove(&e820->map[i], &e820->map[i+1],
++                (e820->nr_map-i-1) * sizeof(e820->map[0]));
++        e820->nr_map--;
++    }
++    else if ( s == rs )
++    {
++        /* Truncate start. */
++        e820->map[i].addr += e - s;
++        e820->map[i].size -= e - s;
++    }
++    else if ( e == re )
++    {
++        /* Truncate end. */
++        e820->map[i].size -= e - s;
++    }
++    else if ( e820->nr_map < ARRAY_SIZE(e820->map) )
++    {
++        /* Split in two. */
++        memmove(&e820->map[i+1], &e820->map[i],
++                (e820->nr_map-i) * sizeof(e820->map[0]));
++        e820->nr_map++;
++        e820->map[i].size = s - rs;
++        i++;
++        e820->map[i].addr = e;
++        e820->map[i].size = re - e;
++    }
++    else
++    {
++        /* e820map is at maximum size. We have to leak some space. */
++        if ( (s - rs) > (re - e) )
++        {
++            printk("e820 overflow: leaking RAM %"PRIx64"-%"PRIx64"\n", e, re);
++            e820->map[i].size = s - rs;
++        }
++        else
++        {
++            printk("e820 overflow: leaking RAM %"PRIx64"-%"PRIx64"\n", rs, s);
++            e820->map[i].addr = e;
++            e820->map[i].size = re - e;
++        }
++    }
++
++    return 1;
+ }
+ 
+ unsigned long __init init_e820(
+diff --git a/arch/x86/setup.c b/arch/x86/setup.c
+index 9acd796..f9b25d5 100644
+--- a/arch/x86/setup.c
++++ b/arch/x86/setup.c
+@@ -19,6 +19,7 @@
+ #include <xen/numa.h>
+ #include <xen/rcupdate.h>
+ #include <xen/vga.h>
++#include <xen/dmi.h>
+ #include <public/version.h>
+ #ifdef CONFIG_COMPAT
+ #include <compat/platform.h>
+@@ -44,7 +45,6 @@
+ #define maddr_to_bootstrap_virt(m) ((void *)(long)(m))
+ #endif
+ 
+-extern void dmi_scan_machine(void);
+ extern void generic_apic_probe(void);
+ extern void numa_initmem_init(unsigned long start_pfn, unsigned long end_pfn);
+ 
+@@ -314,41 +314,6 @@ static void __init move_memory(
+ /* A temporary copy of the e820 map that we can mess with during bootstrap. */
+ static struct e820map __initdata boot_e820;
+ 
+-/* Reserve area (@s,@e) in the temporary bootstrap e820 map. */
+-static int __init reserve_in_boot_e820(unsigned long s, unsigned long e)
+-{
+-    uint64_t rs, re;
+-    int i;
+-
+-    for ( i = 0; i < boot_e820.nr_map; i++ )
+-    {
+-        /* Have we found the e820 region that includes the specified range? */
+-        rs = boot_e820.map[i].addr;
+-        re = rs + boot_e820.map[i].size;
+-        if ( (s >= rs) && (e <= re) )
+-            goto found;
+-    }
+-
+-    return 0;
+-
+- found:
+-    /* Start fragment. */
+-    boot_e820.map[i].size = s - rs;
+-
+-    /* End fragment. */
+-    if ( e < re )
+-    {
+-        memmove(&boot_e820.map[i+1], &boot_e820.map[i],
+-                (boot_e820.nr_map-i) * sizeof(boot_e820.map[0]));
+-        boot_e820.nr_map++;
+-        i++;
+-        boot_e820.map[i].addr = e;
+-        boot_e820.map[i].size = re - e;
+-    }
+-
+-    return 1;
+-}
+-
+ struct boot_video_info {
+     u8  orig_x;             /* 0x00 */
+     u8  orig_y;             /* 0x01 */
+@@ -411,6 +376,32 @@ static void __init parse_video_info(void)
+     }
+ }
+ 
++void __init kexec_reserve_area(struct e820map *e820)
++{
++    unsigned long kdump_start = kexec_crash_area.start;
++    unsigned long kdump_size  = kexec_crash_area.size;
++    static int is_reserved = 0;
++
++    kdump_size = (kdump_size + PAGE_SIZE - 1) & PAGE_MASK;
++
++    if ( (kdump_start == 0) || (kdump_size == 0) || is_reserved )
++        return;
++
++    is_reserved = 1;
++
++    if ( !reserve_e820_ram(e820, kdump_start, kdump_size) )
++    {
++        printk("Kdump: DISABLED (failed to reserve %luMB (%lukB) at 0x%lx)"
++               "\n", kdump_size >> 20, kdump_size >> 10, kdump_start);
++        kexec_crash_area.start = kexec_crash_area.size = 0;
++    }
++    else
++    {
++        printk("Kdump: %luMB (%lukB) at 0x%lx\n",
++               kdump_size >> 20, kdump_size >> 10, kdump_start);
++    }
++}
++
+ void init_done(void)
+ {
+     extern char __init_begin[], __init_end[];
+@@ -582,7 +573,7 @@ void __init __start_xen(unsigned long mbi_p)
+     else if ( mbi->flags & MBI_MEMMAP )
+     {
+         memmap_type = "Multiboot-e820";
+-        while ( bytes < mbi->mmap_length )
++        while ( (bytes < mbi->mmap_length) && (e820_raw_nr < E820MAX) )
+         {
+             memory_map_t *map = __va(mbi->mmap_addr + bytes);
+ 
+@@ -633,47 +624,14 @@ void __init __start_xen(unsigned long mbi_p)
+         EARLY_FAIL("Bootloader provided no memory information.\n");
+     }
+ 
+-    /* Ensure that all E820 RAM regions are page-aligned and -sized. */
+-    for ( i = 0; i < e820_raw_nr; i++ )
+-    {
+-        uint64_t s, e;
+-
+-        if ( e820_raw[i].type != E820_RAM )
+-            continue;
+-        s = PFN_UP(e820_raw[i].addr);
+-        e = PFN_DOWN(e820_raw[i].addr + e820_raw[i].size);
+-        e820_raw[i].size = 0; /* discarded later */
+-        if ( s < e )
+-        {
+-            e820_raw[i].addr = s << PAGE_SHIFT;
+-            e820_raw[i].size = (e - s) << PAGE_SHIFT;
+-        }
+-    }
+-
+     /* Sanitise the raw E820 map to produce a final clean version. */
+     max_page = init_e820(memmap_type, e820_raw, &e820_raw_nr);
+ 
+-    /*
+-     * Create a temporary copy of the E820 map. Truncate it to above 16MB
+-     * as anything below that is already mapped and has a statically-allocated
+-     * purpose.
+-     */
++    /* Create a temporary copy of the E820 map. */
+     memcpy(&boot_e820, &e820, sizeof(e820));
+-    for ( i = 0; i < boot_e820.nr_map; i++ )
+-    {
+-        uint64_t s, e, min = 16 << 20; /* 16MB */
+-        s = boot_e820.map[i].addr;
+-        e = boot_e820.map[i].addr + boot_e820.map[i].size;
+-        if ( s >= min )
+-            continue;
+-        if ( e > min )
+-        {
+-            boot_e820.map[i].addr = min;
+-            boot_e820.map[i].size = e - min;
+-        }
+-        else
+-            boot_e820.map[i].type = E820_RESERVED;
+-    }
++
++    /* Early kexec reservation (explicit static start address). */
++    kexec_reserve_area(&boot_e820);
+ 
+     /*
+      * Iterate backwards over all superpage-aligned RAM regions.
+@@ -693,9 +651,10 @@ void __init __start_xen(unsigned long mbi_p)
+     {
+         uint64_t s, e, mask = (1UL << L2_PAGETABLE_SHIFT) - 1;
+ 
+-        /* Superpage-aligned chunks up to BOOTSTRAP_DIRECTMAP_END, please. */
++        /* Superpage-aligned chunks from 16MB to BOOTSTRAP_DIRECTMAP_END. */
+         s = (boot_e820.map[i].addr + mask) & ~mask;
+         e = (boot_e820.map[i].addr + boot_e820.map[i].size) & ~mask;
++        s = max_t(uint64_t, s, 16 << 20);
+         e = min_t(uint64_t, e, BOOTSTRAP_DIRECTMAP_END);
+         if ( (boot_e820.map[i].type != E820_RAM) || (s >= e) )
+             continue;
+@@ -796,71 +755,61 @@ void __init __start_xen(unsigned long mbi_p)
+ 
+     if ( !initial_images_start )
+         EARLY_FAIL("Not enough memory to relocate the dom0 kernel image.\n");
+-    reserve_in_boot_e820(initial_images_start, initial_images_end);
++    reserve_e820_ram(&boot_e820, initial_images_start, initial_images_end);
+ 
+-    /*
+-     * With modules (and Xen itself, on x86/64) relocated out of the way, we
+-     * can now initialise the boot allocator with some memory.
+-     */
++    /* Initialise Xen heap and boot heap. */
+     xenheap_phys_start = init_boot_allocator(__pa(&_end));
+     xenheap_phys_end   = opt_xenheap_megabytes << 20;
+ #if defined(CONFIG_X86_64)
+     if ( !xen_phys_start )
+         EARLY_FAIL("Not enough memory to relocate Xen.\n");
+     xenheap_phys_end += xen_phys_start;
+-    reserve_in_boot_e820(xen_phys_start,
+-                         xen_phys_start + (opt_xenheap_megabytes<<20));
+-    init_boot_pages(1<<20, 16<<20); /* Initial seed: 15MB */
+-#else
+-    init_boot_pages(xenheap_phys_end, 16<<20); /* Initial seed: 4MB */
++    reserve_e820_ram(&boot_e820, xen_phys_start,
++                     xen_phys_start + (opt_xenheap_megabytes<<20));
+ #endif
+ 
+-    if ( kexec_crash_area.size != 0 )
+-    {
+-        unsigned long kdump_start = kexec_crash_area.start;
+-        unsigned long kdump_size  = kexec_crash_area.size;
+-
+-        kdump_size = (kdump_size + PAGE_SIZE - 1) & PAGE_MASK;
+-
+-        if ( !reserve_in_boot_e820(kdump_start, kdump_size) )
+-        {
+-            printk("Kdump: DISABLED (failed to reserve %luMB (%lukB) at 0x%lx)"
+-                   "\n", kdump_size >> 20, kdump_size >> 10, kdump_start);
+-            kexec_crash_area.start = kexec_crash_area.size = 0;
+-        }
+-        else
+-        {
+-            printk("Kdump: %luMB (%lukB) at 0x%lx\n",
+-                   kdump_size >> 20, kdump_size >> 10, kdump_start);
+-        }
+-    }
++    /* Late kexec reservation (dynamic start address). */
++    kexec_reserve_area(&boot_e820);
+ 
+     /*
+-     * With the boot allocator now seeded, we can walk every RAM region and
+-     * map it in its entirety (on x86/64, at least) and notify it to the
++     * With the boot allocator now initialised, we can walk every RAM region
++     * and map it in its entirety (on x86/64, at least) and notify it to the
+      * boot allocator.
+      */
+     for ( i = 0; i < boot_e820.nr_map; i++ )
+     {
+-        uint64_t s, e, map_e, mask = PAGE_SIZE - 1;
++        uint64_t s, e, map_s, map_e, mask = PAGE_SIZE - 1;
+ 
+         /* Only page alignment required now. */
+         s = (boot_e820.map[i].addr + mask) & ~mask;
+         e = (boot_e820.map[i].addr + boot_e820.map[i].size) & ~mask;
++#if defined(CONFIG_X86_32)
++        s = max_t(uint64_t, s, xenheap_phys_end);
++#else
++        s = max_t(uint64_t, s, 1<<20);
++#endif
+         if ( (boot_e820.map[i].type != E820_RAM) || (s >= e) )
+             continue;
+ 
+-        /* Perform the mapping (truncated in 32-bit mode). */
++        /* Need to create mappings above 16MB. */
++        map_s = max_t(uint64_t, s, 16<<20);
+         map_e = e;
+-#if defined(CONFIG_X86_32)
++#if defined(CONFIG_X86_32) /* mappings are truncated on x86_32 */
+         map_e = min_t(uint64_t, map_e, BOOTSTRAP_DIRECTMAP_END);
+ #endif
+-        if ( s < map_e )
++
++        /* Pass mapped memory to allocator /before/ creating new mappings. */
++        init_boot_pages(s, min_t(uint64_t, map_s, e));
++
++        /* Create new mappings /before/ passing memory to the allocator. */
++        if ( map_s < map_e )
+             map_pages_to_xen(
+-                (unsigned long)maddr_to_bootstrap_virt(s),
+-                s >> PAGE_SHIFT, (map_e-s) >> PAGE_SHIFT, PAGE_HYPERVISOR);
++                (unsigned long)maddr_to_bootstrap_virt(map_s),
++                map_s >> PAGE_SHIFT, (map_e-map_s) >> PAGE_SHIFT,
++                PAGE_HYPERVISOR);
+ 
+-        init_boot_pages(s, e);
++        /* Pass remainder of this memory chunk to the allocator. */
++        init_boot_pages(map_s, e);
+     }
+ 
+     memguard_init();
+diff --git a/include/asm-x86/e820.h b/include/asm-x86/e820.h
+index 1d3a981..22265e1 100644
+--- a/include/asm-x86/e820.h
++++ b/include/asm-x86/e820.h
+@@ -22,6 +22,7 @@ struct e820map {
+     struct e820entry map[E820MAX];
+ };
+ 
++extern int reserve_e820_ram(struct e820map *e820, uint64_t s, uint64_t e);
+ extern unsigned long init_e820(const char *, struct e820entry *, int *);
+ extern struct e820map e820;
+ 
+diff --git a/include/xen/dmi.h b/include/xen/dmi.h
+index ba42456..c1a28c8 100644
+--- a/include/xen/dmi.h
++++ b/include/xen/dmi.h
+@@ -34,5 +34,7 @@ struct dmi_system_id {
+ 
+ extern int dmi_check_system(struct dmi_system_id *list);
+ extern char * dmi_get_system_info(int field);
++extern void dmi_scan_machine(void);
++extern int dmi_get_table(u32 *base, u32 *len);
+ 
+ #endif	/* __DMI_H__ */

@@ -1,0 +1,44 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Tue, 13 Apr 2010 08:04:00 -0400
+Subject: [mm] fix boot on s390x after bootmem overlap patch
+Message-id: <4BC42570.9090502@redhat.com>
+Patchwork-id: 24111
+O-Subject: Re: [PATCH RHEL5] bootmem: don't allow reserved
+	memory	to	be	overlapped with bootmem_map
+Bugzilla: 550974
+
+After checking the code again, I think my own fix which
+is different from upstream is not needed, because the upstream code needs
+every arch to call reserve_bootmem(bootmap, ...); explicitly. This is ugly,
+because it should be done by the bootmem allocator itself. But since upstream
+already chose this way, we do it too.
+
+Below is the updated patch, which lets s390x boot normally again.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/bootmem.c b/mm/bootmem.c
+index c5ab67e..72ea5e2 100644
+--- a/mm/bootmem.c
++++ b/mm/bootmem.c
+@@ -108,8 +108,6 @@ static int __init can_reserve_bootmem_core(bootmem_data_t *bdata,
+ {
+ 	unsigned long sidx, eidx;
+ 	unsigned long i;
+-	unsigned long boot_map = (unsigned long)bdata->node_bootmem_map;
+-	unsigned long boot_map_size;
+ 
+ 	BUG_ON(!size);
+ 
+@@ -126,11 +124,6 @@ static int __init can_reserve_bootmem_core(bootmem_data_t *bdata,
+ 	else
+ 		sidx = 0;
+ 
+-	boot_map_size = ((bdata->node_low_pfn-(bdata->node_boot_start >> PAGE_SHIFT))/8 + PAGE_SIZE -1)/PAGE_SIZE;
+-	boot_map_size *= PAGE_SIZE;
+-	if (!(addr + size < boot_map || addr >=  boot_map + boot_map_size))
+-		return -EBUSY;
+-
+ 	eidx = PFN_UP(addr + size - bdata->node_boot_start);
+ 	if (eidx > bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start))
+ 		eidx = bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start);

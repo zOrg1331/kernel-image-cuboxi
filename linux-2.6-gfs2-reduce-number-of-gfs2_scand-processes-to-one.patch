@@ -1,0 +1,311 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Reduce number of gfs2_scand processes to one (bz 	#249905)
+Date: Fri, 03 Aug 2007 10:22:59 +0100
+Bugzilla: 249905
+Message-Id: <1186132979.8765.665.camel@quoit>
+Changelog: [GFS2] Reduce number of gfs2_scand processes to one
+
+
+Hi,
+
+The following patch (from upstream, with a modification to one include
+in glock.c so it compiles under RHEL 5.1) reduces the number of
+gfs2_scand processes to one. This means that when running with large
+numbers of filesystems (in the bz, that means 56) at once, we don't
+needlessly use cpu time scanning glock, since only a single glock
+scanner is required for all the filesystems, rather than one each.
+
+This has been confirmed to result in a dramatic improvement in
+performance reaching 22,000 ops/sec with 56 filesystems in parallel, for
+more details see bz #249905.
+
+Steve.
+
+
+--------------------------------------------------------------------
+diff -Npru linux-rhel-base/fs/gfs2/daemon.c linux-2.6.18.noarch/fs/gfs2/daemon.c
+--- linux-rhel-base/fs/gfs2/daemon.c	2007-08-03 09:57:12.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/daemon.c	2007-08-03 10:09:59.000000000 +0100
+@@ -34,30 +34,6 @@
+    The kthread functions used to start these daemons block and flush signals. */
+ 
+ /**
+- * gfs2_scand - Look for cached glocks and inodes to toss from memory
+- * @sdp: Pointer to GFS2 superblock
+- *
+- * One of these daemons runs, finding candidates to add to sd_reclaim_list.
+- * See gfs2_glockd()
+- */
+-
+-int gfs2_scand(void *data)
+-{
+-	struct gfs2_sbd *sdp = data;
+-	unsigned long t;
+-
+-	while (!kthread_should_stop()) {
+-		gfs2_scand_internal(sdp);
+-		t = gfs2_tune_get(sdp, gt_scand_secs) * HZ;
+-		if (freezing(current))
+-			refrigerator();
+-		schedule_timeout_interruptible(t);
+-	}
+-
+-	return 0;
+-}
+-
+-/**
+  * gfs2_glockd - Reclaim unused glock structures
+  * @sdp: Pointer to GFS2 superblock
+  *
+diff -Npru linux-rhel-base/fs/gfs2/daemon.h linux-2.6.18.noarch/fs/gfs2/daemon.h
+--- linux-rhel-base/fs/gfs2/daemon.h	2007-08-03 09:56:58.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/daemon.h	2007-08-03 09:59:27.000000000 +0100
+@@ -10,7 +10,6 @@
+ #ifndef __DAEMON_DOT_H__
+ #define __DAEMON_DOT_H__
+ 
+-int gfs2_scand(void *data);
+ int gfs2_glockd(void *data);
+ int gfs2_recoverd(void *data);
+ int gfs2_logd(void *data);
+diff -Npru linux-rhel-base/fs/gfs2/glock.c linux-2.6.18.noarch/fs/gfs2/glock.c
+--- linux-rhel-base/fs/gfs2/glock.c	2007-08-03 09:57:13.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/glock.c	2007-08-03 10:09:59.000000000 +0100
+@@ -27,6 +27,7 @@
+ #include <linux/debugfs.h>
+ #include <linux/module.h>
+ #include <linux/kallsyms.h>
++#include <linux/kthread.h>
+ 
+ #include "gfs2.h"
+ #include "incore.h"
+@@ -66,6 +67,8 @@ static DECLARE_RWSEM(gfs2_umount_flush_s
+ 
+ static struct gfs2_gl_hash_bucket gl_hash_table[GFS2_GL_HASH_SIZE];
+ static struct dentry *gfs2_root;
++static struct task_struct *scand_process;
++static unsigned int scand_secs = 5;
+ 
+ /*
+  * Despite what you might think, the numbers below are not arbitrary :-)
+@@ -1628,7 +1631,7 @@ static int examine_bucket(glock_examiner
+ 		goto out;
+ 	gl = list_entry(head->first, struct gfs2_glock, gl_list);
+ 	while(1) {
+-		if (gl->gl_sbd == sdp) {
++		if (!sdp || gl->gl_sbd == sdp) {
+ 			gfs2_glock_hold(gl);
+ 			read_unlock(gl_lock_addr(hash));
+ 			if (prev)
+@@ -1646,6 +1649,7 @@ out:
+ 	read_unlock(gl_lock_addr(hash));
+ 	if (prev)
+ 		gfs2_glock_put(prev);
++	cond_resched();
+ 	return has_entries;
+ }
+ 
+@@ -1674,20 +1678,6 @@ out_schedule:
+ }
+ 
+ /**
+- * gfs2_scand_internal - Look for glocks and inodes to toss from memory
+- * @sdp: the filesystem
+- *
+- */
+-
+-void gfs2_scand_internal(struct gfs2_sbd *sdp)
+-{
+-	unsigned int x;
+-
+-	for (x = 0; x < GFS2_GL_HASH_SIZE; x++)
+-		examine_bucket(scan_glock, sdp, x);
+-}
+-
+-/**
+  * clear_glock - look at a glock and see if we can free it from glock cache
+  * @gl: the glock to look at
+  *
+@@ -1974,6 +1964,35 @@ static int gfs2_dump_lockstate(struct gf
+ 	return error;
+ }
+ 
++/**
++ * gfs2_scand - Look for cached glocks and inodes to toss from memory
++ * @sdp: Pointer to GFS2 superblock
++ *
++ * One of these daemons runs, finding candidates to add to sd_reclaim_list.
++ * See gfs2_glockd()
++ */
++
++static int gfs2_scand(void *data)
++{
++	unsigned x;
++	unsigned delay;
++
++	while (!kthread_should_stop()) {
++		for (x = 0; x < GFS2_GL_HASH_SIZE; x++)
++			examine_bucket(scan_glock, NULL, x);
++		if (freezing(current))
++			refrigerator();
++		delay = scand_secs;
++		if (delay < 1)
++			delay = 1;
++		schedule_timeout_interruptible(delay * HZ);
++	}
++
++	return 0;
++}
++
++
++
+ int __init gfs2_glock_init(void)
+ {
+ 	unsigned i;
+@@ -1985,9 +2004,22 @@ int __init gfs2_glock_init(void)
+ 		rwlock_init(&gl_hash_locks[i]);
+ 	}
+ #endif
++
++	scand_process = kthread_run(gfs2_scand, NULL, "gfs2_scand");
++	if (IS_ERR(scand_process))
++		return PTR_ERR(scand_process);
++
+ 	return 0;
+ }
+ 
++void gfs2_glock_exit(void)
++{
++	kthread_stop(scand_process);
++}
++
++module_param(scand_secs, uint, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(scand_secs, "The number of seconds between scand runs");
++
+ static int gfs2_glock_iter_next(struct glock_iter *gi)
+ {
+ 	struct gfs2_glock *gl;
+diff -Npru linux-rhel-base/fs/gfs2/glock.h linux-2.6.18.noarch/fs/gfs2/glock.h
+--- linux-rhel-base/fs/gfs2/glock.h	2007-08-03 09:57:09.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/glock.h	2007-08-03 09:59:27.000000000 +0100
+@@ -131,11 +131,11 @@ void gfs2_glock_cb(void *cb_data, unsign
+ 
+ void gfs2_glock_schedule_for_reclaim(struct gfs2_glock *gl);
+ void gfs2_reclaim_glock(struct gfs2_sbd *sdp);
+-
+-void gfs2_scand_internal(struct gfs2_sbd *sdp);
+ void gfs2_gl_hash_clear(struct gfs2_sbd *sdp, int wait);
+ 
+ int __init gfs2_glock_init(void);
++void gfs2_glock_exit(void);
++
+ int gfs2_create_debugfs_file(struct gfs2_sbd *sdp);
+ void gfs2_delete_debugfs_file(struct gfs2_sbd *sdp);
+ int gfs2_register_debugfs(void);
+diff -Npru linux-rhel-base/fs/gfs2/incore.h linux-2.6.18.noarch/fs/gfs2/incore.h
+--- linux-rhel-base/fs/gfs2/incore.h	2007-08-03 09:57:12.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/incore.h	2007-08-03 09:59:27.000000000 +0100
+@@ -429,7 +429,6 @@ struct gfs2_tune {
+ 	unsigned int gt_log_flush_secs;
+ 	unsigned int gt_jindex_refresh_secs; /* Check for new journal index */
+ 
+-	unsigned int gt_scand_secs;
+ 	unsigned int gt_recoverd_secs;
+ 	unsigned int gt_logd_secs;
+ 	unsigned int gt_quotad_secs;
+@@ -574,7 +573,6 @@ struct gfs2_sbd {
+ 
+ 	/* Daemon stuff */
+ 
+-	struct task_struct *sd_scand_process;
+ 	struct task_struct *sd_recoverd_process;
+ 	struct task_struct *sd_logd_process;
+ 	struct task_struct *sd_quotad_process;
+diff -Npru linux-rhel-base/fs/gfs2/main.c linux-2.6.18.noarch/fs/gfs2/main.c
+--- linux-rhel-base/fs/gfs2/main.c	2007-08-03 09:57:07.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/main.c	2007-08-03 10:09:59.000000000 +0100
+@@ -111,6 +111,8 @@ static int __init init_gfs2_fs(void)
+ fail_unregister:
+ 	unregister_filesystem(&gfs2_fs_type);
+ fail:
++	gfs2_glock_exit();
++
+ 	if (gfs2_bufdata_cachep)
+ 		kmem_cache_destroy(gfs2_bufdata_cachep);
+ 
+@@ -131,6 +133,7 @@ fail:
+ 
+ static void __exit exit_gfs2_fs(void)
+ {
++	gfs2_glock_exit();
+ 	gfs2_unregister_debugfs();
+ 	unregister_filesystem(&gfs2_fs_type);
+ 	unregister_filesystem(&gfs2meta_fs_type);
+diff -Npru linux-rhel-base/fs/gfs2/ops_fstype.c linux-2.6.18.noarch/fs/gfs2/ops_fstype.c
+--- linux-rhel-base/fs/gfs2/ops_fstype.c	2007-08-03 09:57:12.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_fstype.c	2007-08-03 10:09:59.000000000 +0100
+@@ -161,14 +161,6 @@ static int init_locking(struct gfs2_sbd 
+ 	if (undo)
+ 		goto fail_trans;
+ 
+-	p = kthread_run(gfs2_scand, sdp, "gfs2_scand");
+-	error = IS_ERR(p);
+-	if (error) {
+-		fs_err(sdp, "can't start scand thread: %d\n", error);
+-		return error;
+-	}
+-	sdp->sd_scand_process = p;
+-
+ 	for (sdp->sd_glockd_num = 0;
+ 	     sdp->sd_glockd_num < sdp->sd_args.ar_num_glockd;
+ 	     sdp->sd_glockd_num++) {
+@@ -229,7 +221,6 @@ fail:
+ 	while (sdp->sd_glockd_num--)
+ 		kthread_stop(sdp->sd_glockd_process[sdp->sd_glockd_num]);
+ 
+-	kthread_stop(sdp->sd_scand_process);
+ 	return error;
+ }
+ 
+diff -Npru linux-rhel-base/fs/gfs2/ops_super.c linux-2.6.18.noarch/fs/gfs2/ops_super.c
+--- linux-rhel-base/fs/gfs2/ops_super.c	2007-08-03 09:57:09.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_super.c	2007-08-03 10:09:59.000000000 +0100
+@@ -92,7 +92,6 @@ static void gfs2_put_super(struct super_
+ 	kthread_stop(sdp->sd_recoverd_process);
+ 	while (sdp->sd_glockd_num--)
+ 		kthread_stop(sdp->sd_glockd_process[sdp->sd_glockd_num]);
+-	kthread_stop(sdp->sd_scand_process);
+ 
+ 	if (!(sb->s_flags & MS_RDONLY)) {
+ 		error = gfs2_make_fs_ro(sdp);
+diff -Npru linux-rhel-base/fs/gfs2/super.c linux-2.6.18.noarch/fs/gfs2/super.c
+--- linux-rhel-base/fs/gfs2/super.c	2007-08-03 09:57:08.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/super.c	2007-08-03 10:09:59.000000000 +0100
+@@ -58,7 +58,6 @@ void gfs2_tune_init(struct gfs2_tune *gt
+ 	gt->gt_incore_log_blocks = 1024;
+ 	gt->gt_log_flush_secs = 60;
+ 	gt->gt_jindex_refresh_secs = 60;
+-	gt->gt_scand_secs = 15;
+ 	gt->gt_recoverd_secs = 60;
+ 	gt->gt_logd_secs = 1;
+ 	gt->gt_quotad_secs = 5;
+diff -Npru linux-rhel-base/fs/gfs2/sys.c linux-2.6.18.noarch/fs/gfs2/sys.c
+--- linux-rhel-base/fs/gfs2/sys.c	2007-08-03 09:57:07.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/sys.c	2007-08-03 10:09:59.000000000 +0100
+@@ -443,7 +443,6 @@ TUNE_ATTR(quota_simul_sync, 1);
+ TUNE_ATTR(quota_cache_secs, 1);
+ TUNE_ATTR(stall_secs, 1);
+ TUNE_ATTR(statfs_quantum, 1);
+-TUNE_ATTR_DAEMON(scand_secs, scand_process);
+ TUNE_ATTR_DAEMON(recoverd_secs, recoverd_process);
+ TUNE_ATTR_DAEMON(logd_secs, logd_process);
+ TUNE_ATTR_DAEMON(quotad_secs, quotad_process);
+@@ -465,7 +464,6 @@ static struct attribute *tune_attrs[] = 
+ 	&tune_attr_quota_cache_secs.attr,
+ 	&tune_attr_stall_secs.attr,
+ 	&tune_attr_statfs_quantum.attr,
+-	&tune_attr_scand_secs.attr,
+ 	&tune_attr_recoverd_secs.attr,
+ 	&tune_attr_logd_secs.attr,
+ 	&tune_attr_quotad_secs.attr,
+

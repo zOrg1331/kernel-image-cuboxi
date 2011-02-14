@@ -1,0 +1,125 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Mon, 17 Aug 2009 11:40:44 -0400
+Subject: [x86] suspend-resume: work on large logical CPU systems
+Message-id: 20090817154044.GA3117@linuxjohn.usersys.redhat.com
+O-Subject: [RHEL5.5 BZ499271] Make suspend-resume work on systems with lots of logical CPUs
+Bugzilla: 499271
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Patch for RHEL 5.5 based on the 2.6.18-153 kernel
+
+Bugzilla 499271 Make suspend-resume work on systems with lots of logical CPUs
+(e.g. Boxboro-EX which has 64 logical CPUs).
+https://bugzilla.redhat.com/show_bug.cgi?id=499271
+
+No equivalent upstream because upstream works differently now.
+
+Brew build, all builds passed:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1929443
+
+Testing: This has been tested on a system with 64 virtual CPUs (32 physical
+plus hyperthreading) and C3 states (deep c-states) enabled.  Without the patch
+the system hangs in suspend, with the patch the system does not hang.
+
+Also did an RHTS kernel test pass:
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=84862
+All tests passed.  The s390x test failed because the OS failed to
+install.  Previous RHTS tests I did, did pass on that architecture.
+
+[PATCH] Make suspend-resume work on system with lot of logical CPUs
+
+Validation team reported "softlockup" on S4 suspend resume on a system with
+lot of logical CPUs and when CPU deep C-state is enables. The softlockup would
+not happen when deep C-states are disabled. This softlockup during S4 suspend
+(and also during S4 resume) was root caused to smp_send_timer_broadcast_ipi()
+function.
+
+In RHEL 5.2, this function used
+		send_IPI_mask(mask, LOCAL_TIMER_VECTOR);
+
+In RHEL 5.3, this was changed to
+	if (cpus_equal(cpu_online_map, timer_interrupt_broadcast_ipi_mask)) {
+		__send_IPI_shortcut(APIC_DEST_ALLINC, LOCAL_TIMER_VECTOR,
+					APIC_DEST_LOGICAL);
+	else
+		send_IPI_mask(mask, LOCAL_TIMER_VECTOR);
+
+The reason for the above change was that send_IPI_mask sends IPIs to CPUs one
+after another and if those CPUs that have to receive these IPIs are in deep
+C-state, then the CPU sending the IPI waits until the receiving CPU wakes up
+(which will be the order of 50-100us). The above fix in 5.3 was done to
+eliminate this waiting for each individual CPU and send IPI_shortcut sends IPI
+once. The above issue was identified on a DP server, with one CPU spending too
+much time waiting for IPIs to be sent.
+
+Now, on more recent systems with 32 or 64 logical CPUs, they do use this
+IPI_shortcut during normal run time. But, on entry/exit from S1/S3/S4, RHEL5.3
+offlines all the secondary CPUs one-by-one and we get into "else" part in the
+above code. The else part does the old "send IPI to each CPU in the mask one
+after another" logic and 50-100us latency to send IPI to one CPU multiply that
+by 30 or 62 CPUs (assuming 1 CPU is offline and one is actually sending the
+IPI), we will end up with the function taking more than 1 ms, by the time 1000
+HZ kernel will be ready with next timer interrupt which again wants to send
+IPI to all the non-idle CPUs. Thus system fails to make any forward progress
+during suspend/resume once one CPU is offline, eventually ending up with
+"softlockup interrupt"
+
+The fix below, changes the function to always use __send_IPI_shortcut. This
+means we will never have to do the sequential IPI. The offline CPUs will have
+there APIC disabled, int disabled and will not be affected by this broadcast.
+
+This patch fixes S1/S3/S4 on systems with large number of logical CPUs and
+when those CPUs support deep C-state.
+
+diff --git a/arch/i386/kernel/apic.c b/arch/i386/kernel/apic.c
+index 5dc606e..47a4e02 100644
+--- a/arch/i386/kernel/apic.c
++++ b/arch/i386/kernel/apic.c
+@@ -1307,16 +1307,10 @@ static void up_apic_timer_interrupt_call(struct pt_regs *regs)
+ void smp_send_timer_broadcast_ipi(struct pt_regs *regs)
+ {
+ #ifdef CONFIG_SMP
+-	cpumask_t mask;
+-
+-	if (cpus_equal(cpu_online_map, timer_bcast_ipi)) {
+-		__send_IPI_shortcut(APIC_DEST_ALLINC, LOCAL_TIMER_VECTOR);
++	/* If none of the CPUs are using IPI then no need to continue */
++	if (cpus_empty(timer_bcast_ipi))
+ 		return;
+-	}
+-	cpus_and(mask, cpu_online_map, timer_bcast_ipi);
+-	if (!cpus_empty(mask)) {
+-		send_IPI_mask(mask, LOCAL_TIMER_VECTOR);
+-	}
++	__send_IPI_shortcut(APIC_DEST_ALLINC, LOCAL_TIMER_VECTOR);
+ #else
+ 	if (!cpus_empty(timer_bcast_ipi)) {
+ 		/*
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 940f365..de9f6a4 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -926,18 +926,11 @@ EXPORT_SYMBOL(switch_APIC_timer_to_ipi);
+ 
+ void smp_send_timer_broadcast_ipi(void)
+ {
+-	cpumask_t mask;
+-
+-	if (cpus_equal(cpu_online_map, timer_interrupt_broadcast_ipi_mask)) {
+-		__send_IPI_shortcut(APIC_DEST_ALLINC, LOCAL_TIMER_VECTOR,
+-					APIC_DEST_LOGICAL);
++	/* If none of the CPUs are using IPI then no need to continue */
++	if (cpus_empty(timer_interrupt_broadcast_ipi_mask))
+ 		return;
+-	}
+-
+-	cpus_and(mask, cpu_online_map, timer_interrupt_broadcast_ipi_mask);
+-	if (!cpus_empty(mask)) {
+-		send_IPI_mask(mask, LOCAL_TIMER_VECTOR);
+-	}
++	__send_IPI_shortcut(APIC_DEST_ALLINC, LOCAL_TIMER_VECTOR,
++				APIC_DEST_LOGICAL);
+ }
+ 
+ void switch_ipi_to_APIC_timer(void *cpumask)

@@ -1,0 +1,41 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 3 Mar 2009 17:27:31 +0100
+Subject: [misc] IO accounting: read accounting cifs fix
+Message-id: 20090303162958.659015546@dhcp-0-152.brq.redhat.com
+O-Subject: [RHEL5.4 Patch 09/12] IO accounting: read accounting cifs fix
+Bugzilla: 461636
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+bz461636
+
+CIFS implements ->readpages and doesn't use read_cache_pages().  So wire the
+read IO accounting up within CIFS.
+
+Patch is upstream:
+commit 6f88cc2e9c29c181557b477ee396375906acbc90
+
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 96a2e99..b2b0d7c 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -33,9 +33,7 @@
+ #include <linux/mpage.h>
+ #include <linux/pagevec.h>
+ #include <linux/writeback.h>
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
+ #include <linux/task_io_accounting_ops.h>
+-#endif /* 2.6.19 */
+ #endif
+ #include <asm/uaccess.h>
+ #ifndef FL_SLEEP
+@@ -2220,9 +2218,7 @@ static int cifs_readpages(struct file *file, struct address_space *mapping,
+ 			cFYI(1, ("Read error in readpages: %d", rc));
+ 			break;
+ 		} else if (bytes_read > 0) {
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
+ 			task_io_account_read(bytes_read);
+-#endif
+ 			pSMBr = (struct smb_com_read_rsp *)smb_read_data;
+ 			cifs_copy_cache_pages(mapping, page_list, bytes_read,
+ 				smb_read_data + 4 /* RFC1001 hdr */ +

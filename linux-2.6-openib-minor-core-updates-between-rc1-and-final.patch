@@ -1,0 +1,267 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 24 Mar 2008 14:24:30 -0400
+Subject: [openib] minor core updates between rc1 and final
+Message-id: 1206383072-7299-10-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5 09/10] Infiniband: Minor core updates between rc1 and final
+Bugzilla: 253023
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/core/cm.c b/drivers/infiniband/core/cm.c
+index c1ed77d..dc3bc17 100644
+--- a/drivers/infiniband/core/cm.c
++++ b/drivers/infiniband/core/cm.c
+@@ -3513,6 +3513,7 @@ static void cm_remove_one(struct ib_device *device)
+ 		port = &cm_dev->port[i-1];
+ 		ib_modify_port(device, port->port_num, 0, &port_modify);
+ 		ib_unregister_mad_agent(port->mad_agent);
++		flush_workqueue(cm.wq);
+ 	}
+ 	kfree(cm_dev);
+ }
+@@ -3558,6 +3559,7 @@ static void __exit ib_cm_cleanup(void)
+ 		cancel_delayed_work(&timewait_info->work.work);
+ 	spin_unlock_irq(&cm.lock);
+ 
++	ib_unregister_client(&cm_client);
+ 	destroy_workqueue(cm.wq);
+ 
+ 	list_for_each_entry_safe(timewait_info, tmp, &cm.timewait_list, list) {
+@@ -3565,7 +3567,6 @@ static void __exit ib_cm_cleanup(void)
+ 		kfree(timewait_info);
+ 	}
+ 
+-	ib_unregister_client(&cm_client);
+ 	idr_destroy(&cm.local_id_table);
+ }
+ 
+diff --git a/drivers/infiniband/core/cma.c b/drivers/infiniband/core/cma.c
+index 9f2b329..19f75d2 100644
+--- a/drivers/infiniband/core/cma.c
++++ b/drivers/infiniband/core/cma.c
+@@ -1108,7 +1108,6 @@ static int cma_req_handler(struct ib_cm_id *cm_id, struct ib_cm_event *ib_event)
+ 		event.param.ud.private_data_len =
+ 				IB_CM_SIDR_REQ_PRIVATE_DATA_SIZE - offset;
+ 	} else {
+-		ib_send_cm_mra(cm_id, CMA_CM_MRA_SETTING, NULL, 0);
+ 		conn_id = cma_new_conn_id(&listen_id->id, ib_event);
+ 		cma_set_req_event_data(&event, &ib_event->param.req_rcvd,
+ 				       ib_event->private_data, offset);
+@@ -1131,6 +1130,15 @@ static int cma_req_handler(struct ib_cm_id *cm_id, struct ib_cm_event *ib_event)
+ 
+ 	ret = conn_id->id.event_handler(&conn_id->id, &event);
+ 	if (!ret) {
++		/*
++		 * Acquire mutex to prevent user executing rdma_destroy_id()
++		 * while we're accessing the cm_id.
++		 */
++		mutex_lock(&lock);
++		if (cma_comp(conn_id, CMA_CONNECT) &&
++		    !cma_is_ud_ps(conn_id->id.ps))
++			ib_send_cm_mra(cm_id, CMA_CM_MRA_SETTING, NULL, 0);
++		mutex_unlock(&lock);
+ 		cma_enable_remove(conn_id);
+ 		goto out;
+ 	}
+diff --git a/drivers/infiniband/core/mad.c b/drivers/infiniband/core/mad.c
+index 6f42877..d079ebb 100644
+--- a/drivers/infiniband/core/mad.c
++++ b/drivers/infiniband/core/mad.c
+@@ -679,8 +679,7 @@ static int handle_outgoing_dr_smp(struct ib_mad_agent_private *mad_agent_priv,
+ 	struct ib_wc mad_wc;
+ 	struct ib_send_wr *send_wr = &mad_send_wr->send_wr;
+ 
+-	if (device->node_type == RDMA_NODE_IB_SWITCH &&
+-	    smp->mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE)
++	if (device->node_type == RDMA_NODE_IB_SWITCH)
+ 		port_num = send_wr->wr.ud.port_num;
+ 	else
+ 		port_num = mad_agent_priv->agent.port_num;
+@@ -691,9 +690,10 @@ static int handle_outgoing_dr_smp(struct ib_mad_agent_private *mad_agent_priv,
+ 	 * If we are at the start of the LID routed part, don't update the
+ 	 * hop_ptr or hop_cnt.  See section 14.2.2, Vol 1 IB spec.
+ 	 */
+-	if ((ib_get_smp_direction(smp) ? smp->dr_dlid : smp->dr_slid) ==
+-	     IB_LID_PERMISSIVE &&
+-	     smi_handle_dr_smp_send(smp, device->node_type, port_num) ==
++	if ((ib_get_smp_direction(smp) ? smp->dr_dlid : smp->dr_slid) !=
++	     IB_LID_PERMISSIVE)
++		goto out;
++	if (smi_handle_dr_smp_send(smp, device->node_type, port_num) ==
+ 	     IB_SMI_DISCARD) {
+ 		ret = -EINVAL;
+ 		printk(KERN_ERR PFX "Invalid directed route\n");
+@@ -701,7 +701,8 @@ static int handle_outgoing_dr_smp(struct ib_mad_agent_private *mad_agent_priv,
+ 	}
+ 
+ 	/* Check to post send on QP or process locally */
+-	if (smi_check_local_smp(smp, device) == IB_SMI_DISCARD)
++	if (smi_check_local_smp(smp, device) == IB_SMI_DISCARD &&
++	    smi_check_local_returning_smp(smp, device) == IB_SMI_DISCARD)
+ 		goto out;
+ 
+ 	local = kmalloc(sizeof *local, GFP_ATOMIC);
+@@ -752,8 +753,7 @@ static int handle_outgoing_dr_smp(struct ib_mad_agent_private *mad_agent_priv,
+ 		port_priv = ib_get_mad_port(mad_agent_priv->agent.device,
+ 					    mad_agent_priv->agent.port_num);
+ 		if (port_priv) {
+-			mad_priv->mad.mad.mad_hdr.tid =
+-				((struct ib_mad *)smp)->mad_hdr.tid;
++			memcpy(&mad_priv->mad.mad, smp, sizeof(struct ib_mad));
+ 			recv_mad_agent = find_mad_agent(port_priv,
+ 						        &mad_priv->mad.mad);
+ 		}
+diff --git a/drivers/infiniband/core/sa_query.c b/drivers/infiniband/core/sa_query.c
+index 946d674..8994118 100644
+--- a/drivers/infiniband/core/sa_query.c
++++ b/drivers/infiniband/core/sa_query.c
+@@ -1135,13 +1135,10 @@ int ib_sa_informinfo_query(struct ib_sa_client *client,
+ 	if (!query)
+ 		return -ENOMEM;
+ 
+-	query->sa_query.mad_buf = ib_create_send_mad(agent, 1, 0,
+-						     0, IB_MGMT_SA_HDR,
+-						     IB_MGMT_SA_DATA, gfp_mask);
+-	if (!query->sa_query.mad_buf) {
+-		ret = -ENOMEM;
++	query->sa_query.port     = port;
++	ret = alloc_mad(&query->sa_query, gfp_mask);
++	if (ret)
+ 		goto err1;
+-	}
+ 
+ 	ib_sa_client_get(client);
+ 	query->sa_query.client = client;
+@@ -1169,7 +1166,7 @@ int ib_sa_informinfo_query(struct ib_sa_client *client,
+ err2:
+ 	*sa_query = NULL;
+ 	ib_sa_client_put(query->sa_query.client);
+-	ib_free_send_mad(query->sa_query.mad_buf);
++	free_mad(&query->sa_query);
+ err1:
+ 	kfree(query);
+ 	return ret;
+diff --git a/drivers/infiniband/core/smi.h b/drivers/infiniband/core/smi.h
+index 1cfc298..aff96ba 100644
+--- a/drivers/infiniband/core/smi.h
++++ b/drivers/infiniband/core/smi.h
+@@ -59,7 +59,8 @@ extern enum smi_action smi_handle_dr_smp_send(struct ib_smp *smp,
+ 					      u8 node_type, int port_num);
+ 
+ /*
+- * Return 1 if the SMP should be handled by the local SMA/SM via process_mad
++ * Return IB_SMI_HANDLE if the SMP should be handled by the local SMA/SM
++ * via process_mad
+  */
+ static inline enum smi_action smi_check_local_smp(struct ib_smp *smp,
+ 						  struct ib_device *device)
+@@ -71,4 +72,19 @@ static inline enum smi_action smi_check_local_smp(struct ib_smp *smp,
+ 		(smp->hop_ptr == smp->hop_cnt + 1)) ?
+ 		IB_SMI_HANDLE : IB_SMI_DISCARD);
+ }
++
++/*
++ * Return IB_SMI_HANDLE if the SMP should be handled by the local SMA/SM
++ * via process_mad
++ */
++static inline enum smi_action smi_check_local_returning_smp(struct ib_smp *smp,
++						   struct ib_device *device)
++{
++	/* C14-13:3 -- We're at the end of the DR segment of path */
++	/* C14-13:4 -- Hop Pointer == 0 -> give to SM */
++	return ((device->process_mad &&
++		ib_get_smp_direction(smp) &&
++		!smp->hop_ptr) ? IB_SMI_HANDLE : IB_SMI_DISCARD);
++}
++
+ #endif	/* __SMI_H_ */
+diff --git a/include/rdma/ib_local_sa.h b/include/rdma/ib_local_sa.h
+deleted file mode 100644
+index 0ce084b..0000000
+--- a/include/rdma/ib_local_sa.h
++++ /dev/null
+@@ -1,84 +0,0 @@
+-/*
+- * Copyright (c) 2006 Intel Corporation.  All rights reserved.
+- *
+- * This software is available to you under a choice of one of two
+- * licenses.  You may choose to be licensed under the terms of the GNU
+- * General Public License (GPL) Version 2, available from the file
+- * COPYING in the main directory of this source tree, or the
+- * OpenIB.org BSD license below:
+- *
+- *     Redistribution and use in source and binary forms, with or
+- *     without modification, are permitted provided that the following
+- *     conditions are met:
+- *
+- *      - Redistributions of source code must retain the above
+- *        copyright notice, this list of conditions and the following
+- *        disclaimer.
+- *
+- *      - Redistributions in binary form must reproduce the above
+- *        copyright notice, this list of conditions and the following
+- *        disclaimer in the documentation and/or other materials
+- *        provided with the distribution.
+- *
+- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+- * SOFTWARE.
+- */
+-
+-#ifndef IB_LOCAL_SA_H
+-#define IB_LOCAL_SA_H
+-
+-#include <rdma/ib_sa.h>
+-
+-/**
+- * ib_get_path_rec - Query the local SA database for path information.
+- * @device: The local device to query.
+- * @port_num: The port of the local device being queried.
+- * @sgid: The source GID of the path record.
+- * @dgid: The destination GID of the path record.
+- * @pkey: The protection key of the path record.
+- * @rec: A reference to a path record structure that will receive a copy of
+- *   the response.
+- *
+- * Returns a copy of a path record meeting the specified criteria to the
+- * location referenced by %rec.  A return value < 0 indicates that an error
+- * occurred processing the request, or no path record was found.
+- */
+-int ib_get_path_rec(struct ib_device *device, u8 port_num, union ib_gid *sgid,
+-		    union ib_gid *dgid, u16 pkey, struct ib_sa_path_rec *rec);
+-
+-/**
+- * ib_create_path_iter - Create an iterator that may be used to walk through
+- *   a list of path records.
+- * @device: The local device to retrieve path records for.
+- * @port_num: The port of the local device.
+- * @dgid: The destination GID of the path record.
+- *
+- * This call allocates an iterator that is used to walk through a list of
+- * cached path records.  All path records accessed by the iterator will have the
+- * specified DGID.  User should not hold the iterator for an extended period of
+- * time, and must free it by calling ib_free_sa_iter.
+- */
+-struct ib_sa_iterator *ib_create_path_iter(struct ib_device *device,
+-					   u8 port_num, union ib_gid *dgid);
+-
+-/**
+- * ib_free_sa_iter - Release an iterator.
+- * @iter: The iterator to free.
+- */
+-void ib_free_sa_iter(struct ib_sa_iterator *iter);
+-
+-/**
+- * ib_get_next_sa_attr - Retrieve the next SA attribute referenced by an
+- *   iterator.
+- * @iter: A reference to an iterator that points to the next attribute to
+- *   retrieve.
+- */
+-void *ib_get_next_sa_attr(struct ib_sa_iterator **iter);
+-
+-#endif /* IB_LOCAL_SA_H */

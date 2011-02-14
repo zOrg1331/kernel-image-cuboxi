@@ -1,0 +1,40 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 24 Nov 2010 21:24:06 -0500
+Subject: [scsi] lpfc: fix NULL deref duing allocation failure
+Message-id: <1290633848-10834-6-git-send-email-revers@redhat.com>
+Patchwork-id: 29619
+O-Subject: [RHEL5.6 PATCH 5/7] lpfc: Fixed a NULL pointer dereference duing
+	memory allocation failure. (CR: 111997)
+Bugzilla: 655119
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=655119
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 76fe75e..57572ec 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -4193,6 +4193,11 @@ lpfc_unreg_hba_rpis(struct lpfc_hba *phba)
+ 	int i;
+ 
+ 	vports = lpfc_create_vport_work_array(phba);
++	if (!vports) {
++		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY,
++			"2884 Vport array allocation failed \n");
++		return;
++	}
+ 	for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
+ 		shost = lpfc_shost_from_vport(vports[i]);
+ 		spin_lock_irq(shost->host_lock);
+@@ -5502,6 +5507,10 @@ lpfc_fcf_inuse(struct lpfc_hba *phba)
+ 
+ 	vports = lpfc_create_vport_work_array(phba);
+ 
++	/* If driver cannot allocate memory, indicate fcf is in use */
++	if (!vports)
++		return 1;
++
+ 	for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
+ 		shost = lpfc_shost_from_vport(vports[i]);
+ 		spin_lock_irq(shost->host_lock);

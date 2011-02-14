@@ -1,0 +1,54 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:31 -0400
+Subject: [block] cciss: fix raid label related magic number
+Message-id: <1283097002-3341-33-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27881
+O-Subject: [RHEL6 PATCH 32/63] cciss: fix raid label related magic number
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+fix raid_label[] related magic number (off by one error)
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index d8ec45c..5e8e70d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -268,11 +268,11 @@ static void cciss_hba_release(struct device *dev)
+  */
+ #define ENG_GIG 1000000000
+ #define ENG_GIG_FACTOR (ENG_GIG/512)
+-#define RAID_UNKNOWN 6
+ #define ENGAGE_SCSI	"engage scsi"
+ static const char *raid_label[] = { "0", "4", "1(1+0)", "5", "5+1", "ADG",
+ 	"UNKNOWN"
+ };
++#define RAID_UNKNOWN (sizeof(raid_label) / sizeof(raid_label[0]) - 1)
+ 
+ static struct proc_dir_entry *proc_cciss;
+ 
+@@ -346,7 +346,7 @@ static int cciss_seq_show(struct seq_file *seq, void *v)
+ 	vol_sz_frac *= 100;
+ 	sector_div(vol_sz_frac, ENG_GIG_FACTOR);
+ 
+-	if (drv->raid_level > 5)
++	if (drv->raid_level < 0 || drv->raid_level > RAID_UNKNOWN)
+ 		drv->raid_level = RAID_UNKNOWN;
+ 	seq_printf(seq, "cciss/c%dd%d:"
+ 			"\t%4u.%02uGB\tRAID %s\n",
+@@ -422,7 +422,6 @@ cciss_proc_write(struct file *file, const char __user *buf,
+ 	if (copy_from_user(buffer, buf, length))
+ 		goto out;
+ 	buffer[length] = '\0';
+-
+ 	if (strncmp(ENGAGE_SCSI, buffer, sizeof ENGAGE_SCSI - 1) == 0) {
+ 		rc = cciss_engage_scsi(h->ctlr);
+ 		if (rc != 0)
+@@ -619,7 +618,7 @@ static ssize_t cciss_show_raid_level(struct device *dev,
+ 	}
+ 	raid = drv->raid_level;
+ 	spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+-	if (raid < 0 || raid > 5)
++	if (raid < 0 || raid > RAID_UNKNOWN)
+ 		raid = RAID_UNKNOWN;
+ 
+ 	return snprintf(buf, strlen(raid_label[raid]) + 7, "RAID %s\n",

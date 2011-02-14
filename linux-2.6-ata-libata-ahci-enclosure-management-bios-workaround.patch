@@ -1,0 +1,93 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Wed, 8 Apr 2009 11:47:47 -0500
+Subject: [ata] libata: ahci enclosure management bios workaround
+Message-id: 20090408164747.GA5898@dhcp-210.hsv.redhat.com
+O-Subject: Re: [RHEL5.4 PATCH] libata: ahci enclosure management bios workaround
+Bugzilla: 488471
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+> >During driver initialization ahci_start_port may not be
+> >able to turn LEDs off because the hardware may still be
+> >transmitting a message. And since the BIOS may not be
+> >setting the LEDs to off the drive LEDs may end up in a
+> >fault state. This has been seen on ICH9r and ICH10r when
+> >configured in AHCI mode instead of RAID mode, this patch
+> >doesn't key off a specific set of device IDs but will
+> >give the EM transmit bit a chance to clear if busy.
+> >
+> >commit 4c1e9aa41b2f9afe8f26e2efe5bb4695f6c40772
+> >
+> >This also includes a fix to ahci_transmit_led_message
+> >where the saved off led_state included the OR'd in
+> >port number, this caused ahci_led_show to report an
+> >incorrect value.
+> >
+> >commit 208f2a886a2f6cf329c9fcbf8d29a0dd245cc763
+> >
+> >This fixes BZ 488471, Intel and Sun have verified
+> >this fix with a -137.el5 test kernel, please review and
+> >ACK.
+> >
+> >Thanks,
+> >David
+> >
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index fb31aa3..0599d98 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -73,6 +73,7 @@ static ssize_t ahci_led_store(struct ata_port *ap, const char *buf,
+ static ssize_t ahci_transmit_led_message(struct ata_port *ap, u32 state,
+ 					ssize_t size);
+ #define MAX_SLOTS 8
++#define MAX_RETRY 15
+ 
+ enum {
+ 	AHCI_PCI_BAR		= 5,
+@@ -1073,6 +1074,8 @@ static void ahci_start_port(struct ata_port *ap)
+ 	struct ahci_port_priv *pp = ap->private_data;
+ 	struct ata_link *link;
+ 	struct ahci_em_priv *emp;
++	ssize_t rc;
++	int i;
+ 
+ 	/* enable FIS reception */
+ 	ahci_start_fis_rx(ap);
+@@ -1084,7 +1087,17 @@ static void ahci_start_port(struct ata_port *ap)
+ 	if (ap->flags & ATA_FLAG_EM) {
+ 		ata_port_for_each_link(link, ap) {
+ 			emp = &pp->em_priv[link->pmp];
+-			ahci_transmit_led_message(ap, emp->led_state, 4);
++
++			/* EM Transmit bit maybe busy during init */
++			for (i = 0; i < MAX_RETRY; i++) {
++				rc = ahci_transmit_led_message(ap,
++							       emp->led_state,
++							       4);
++				if (rc == -EBUSY)
++					udelay(100);
++				else
++					break;
++			}
+ 		}
+ 	}
+ 
+@@ -1286,7 +1299,7 @@ static ssize_t ahci_transmit_led_message(struct ata_port *ap, u32 state,
+ 	em_ctl = readl(mmio + HOST_EM_CTL);
+ 	if (em_ctl & EM_CTL_TM) {
+ 		spin_unlock_irqrestore(ap->lock, flags);
+-		return -EINVAL;
++		return -EBUSY;
+ 	}
+ 
+ 	/*
+@@ -1303,7 +1316,7 @@ static ssize_t ahci_transmit_led_message(struct ata_port *ap, u32 state,
+ 	writel(message[1], mmio + hpriv->em_loc+4);
+ 
+ 	/* save off new led state for port/slot */
+-	emp->led_state = message[1];
++	emp->led_state = state;
+ 
+ 	/*
+ 	 * tell hardware to transmit the message

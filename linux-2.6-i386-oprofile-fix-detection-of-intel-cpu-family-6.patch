@@ -1,0 +1,115 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Mon, 19 Apr 2010 15:10:36 -0400
+Subject: [i386] oprofile: fix detection of Intel CPU family 6
+Message-id: <20100419151036.GA11526@linuxjohn.usersys.redhat.com>
+Patchwork-id: 24230
+O-Subject: [RHEL5.6 PATCH] BZ581919 Fix Oprofile detection of Intel CPU family 6
+Bugzilla: 581919
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Fix Oprofile detection of Intel CPU family 6:
+https://bugzilla.redhat.com/show_bug.cgi?id=581919
+
+This fixes a bug in the kernel where in the oprofile code it was reporting
+certain processors as "i386/p6", which the oprofile userspace package does
+recognize.  It should have reported them as either "i386/piii" or
+"i386/p6_mobile".
+
+The processors affected are:
+    CPU Family = 6 and
+    (CPU Model >= 10 or CPU Model <= 13)
+
+This affects about 180 Intel processor models.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2377175
+
+RHTS tests:
+
+KernelTier1 test:
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=148840
+
+/tools/oprofile/testsuite test:
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=148841
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=148842
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=148843
+
+Backport of:
+Upstream commit 3d337c653c94be50f11a45fb14a2afa8a8a1a618
+Upstream Author: William Cohen <wcohen@redhat.com>
+Upstream Date:   Sun Nov 30 15:39:10 2008 -0500
+
+    x86/oprofile: fix Intel cpu family 6 detection
+
+    Alan Jenkins wrote:
+    > This is on an EeePC 701, /proc/cpuinfo as attached.
+    >
+    > Is this expected?  Will the next release work?
+    >
+    > Thanks, Alan
+    >
+    > # opcontrol --setup --no-vmlinux
+    > cpu_type 'unset' is not valid
+    > you should upgrade oprofile or force the use of timer mode
+    >
+    > # opcontrol -v
+    > opcontrol: oprofile 0.9.4 compiled on Nov 29 2008 22:44:10
+    >
+    > # cat /dev/oprofile/cpu_type
+    > i386/p6
+    > # uname -r
+    > 2.6.28-rc6eeepc
+
+    Hi Alan,
+
+    Looking at the kernel driver code for oprofile it can return the "i386/p6" for
+    the cpu_type. However, looking at the user-space oprofile code there isn't the
+    matching entry in libop/op_cpu_type.c or the events/unit_mask files in
+    events/i386 directory.
+
+    The Intel AP-485 says this is a "Intel Pentium M processor model D". Seems like
+    the oprofile kernel driver should be identifying the processor as "i386/p6_mobile"
+
+    The driver identification code doesn't look quite right in nmi_init.c
+
+    http://git.kernel.org/?p=linux/kernel/git/sfr/linux-next.git;a=blob;f=arch/x86/oprofile/nmi_int.c;h=022cd41ea9b4106e5884277096e80e9088a7c7a9;hb=HEAD
+
+    has:
+
+    409         case 10 ... 13:
+    410                 *cpu_type = "i386/p6";
+    411                 break;
+
+    Referring to the Intel AP-485:
+    case 10 and 11 should produce "i386/piii"
+    case 13 should produce "i386/p6_mobile"
+
+    I didn't see anything for case 12.
+
+    Something like the attached patch. I don't have a celeron machine to verify that
+    changes in this area of the kernel fix thing.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/oprofile/nmi_int.c b/arch/i386/oprofile/nmi_int.c
+index 0ebe4cf..9307d94 100644
+--- a/arch/i386/oprofile/nmi_int.c
++++ b/arch/i386/oprofile/nmi_int.c
+@@ -432,14 +432,13 @@ static int __init ppro_init(char **cpu_type)
+ 		*cpu_type = "i386/pii";
+ 		break;
+ 	case 6 ... 8:
++	case 10 ... 11:
+ 		*cpu_type = "i386/piii";
+ 		break;
+ 	case 9:
++	case 13:
+ 		*cpu_type = "i386/p6_mobile";
+ 		break;
+-	case 10 ... 13:
+-		*cpu_type = "i386/p6";
+-		break;
+ 	case 14:
+ 		*cpu_type = "i386/core";
+ 		break;

@@ -25,30 +25,22 @@
  */
 
 #include <linux/fs.h>
-#include <linux/mm.h>
-#include <linux/ramfs.h>
-
-#include "internal.h"
 
 const struct address_space_operations ramfs_aops = {
 	.readpage	= simple_readpage,
-	.write_begin	= simple_write_begin,
-	.write_end	= simple_write_end,
-	.set_page_dirty = __set_page_dirty_no_writeback,
+	.prepare_write	= simple_prepare_write,
+	.commit_write	= simple_commit_write
 };
 
 const struct file_operations ramfs_file_operations = {
-	.read		= do_sync_read,
-	.aio_read	= generic_file_aio_read,
-	.write		= do_sync_write,
-	.aio_write	= generic_file_aio_write,
+	.read		= generic_file_read,
+	.write		= generic_file_write,
 	.mmap		= generic_file_mmap,
 	.fsync		= simple_sync_file,
-	.splice_read	= generic_file_splice_read,
-	.splice_write	= generic_file_splice_write,
+	.sendfile	= generic_file_sendfile,
 	.llseek		= generic_file_llseek,
 };
 
-const struct inode_operations ramfs_file_inode_operations = {
+struct inode_operations ramfs_file_inode_operations = {
 	.getattr	= simple_getattr,
 };

@@ -1,0 +1,44 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: RHEL5.1 [PATCH]: Identifies correct number of processors in powernow-k8  driver
+Date: Fri, 16 Mar 2007 13:01:44 -0400
+Bugzilla: 229716
+Message-Id: <45FACD78.8050208@redhat.com>
+Changelog: [cpufreq] Identifies correct number of processors in powernow-k8
+
+
+BZ 229716
+
+While booting a system with Dual Core AMD processors, powernow-k8 incorrectly
+identifies the number of dual-core processors in the system.  The print 
+statement
+has been fixed to print out the number of processors and the number of cores 
+to
+remove any guess work.
+
+This patch fixes a customer request and an in-house observation during 
+testing.
+I have sent the patch to AMD and will be submitted to cpu-freq mailing list 
+upstream.
+
+Testing done on single processor quad core, dual processor dual cores 
+systems some results are in the bugzilla.  Ask if you need more testing data.
+
+Please ACK.
+
+
+
+
+--- linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c.orig	2007-03-15 05:53:12.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2007-03-17 04:40:49.000000000 -0400
+@@ -1425,8 +1425,8 @@ static int __cpuinit powernowk8_init(voi
+ 			}
+ 		}
+ 		printk(KERN_INFO PFX "Found %d %s "
+-			"processors (" VERSION ")\n", supported_cpus,
+-			boot_cpu_data.x86_model_id);
++			"processors (%d cpu cores) (" VERSION ")\n", supported_cpus/cpu_data[0].booted_cores,
++			boot_cpu_data.x86_model_id, supported_cpus);
+ 		return cpufreq_register_driver(&cpufreq_amd64_driver);
+ 	}
+ 
+

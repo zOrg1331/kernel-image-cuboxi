@@ -26,7 +26,6 @@
 #include <linux/types.h>
 #include <linux/bootmem.h>
 #include <linux/highmem.h>
-#include <linux/module.h>
 
 #include <asm/setup.h>
 #include <asm/segment.h>
@@ -57,9 +56,38 @@ DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
  */
 static unsigned long empty_bad_page_table;
 static unsigned long empty_bad_page;
-
 unsigned long empty_zero_page;
-EXPORT_SYMBOL(empty_zero_page);
+
+/*****************************************************************************/
+/*
+ *
+ */
+void show_mem(void)
+{
+	unsigned long i;
+	int free = 0, total = 0, reserved = 0, shared = 0;
+
+	printk("\nMem-info:\n");
+	show_free_areas();
+	i = max_mapnr;
+	while (i-- > 0) {
+		struct page *page = &mem_map[i];
+
+		total++;
+		if (PageReserved(page))
+			reserved++;
+		else if (!page_count(page))
+			free++;
+		else
+			shared += page_count(page) - 1;
+	}
+
+	printk("%d pages of RAM\n",total);
+	printk("%d free pages\n",free);
+	printk("%d reserved pages\n",reserved);
+	printk("%d pages shared\n",shared);
+
+} /* end show_mem() */
 
 /*****************************************************************************/
 /*
@@ -70,7 +98,7 @@ EXPORT_SYMBOL(empty_zero_page);
  */
 void __init paging_init(void)
 {
-	unsigned long zones_size[MAX_NR_ZONES] = {0, };
+	unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};
 
 	/* allocate some pages for kernel housekeeping tasks */
 	empty_bad_page_table	= (unsigned long) alloc_bootmem_pages(PAGE_SIZE);
@@ -87,6 +115,8 @@ void __init paging_init(void)
 
 		pkmap_page_table = alloc_bootmem_pages(PAGE_SIZE);
 
+		memset(pkmap_page_table, 0, PAGE_SIZE);
+
 		pge = swapper_pg_dir + pgd_index_k(PKMAP_BASE);
 		pue = pud_offset(pge, PKMAP_BASE);
 		pme = pmd_offset(pue, PKMAP_BASE);
@@ -96,7 +126,8 @@ void __init paging_init(void)
 
 	/* distribute the allocatable pages across the various zones and pass them to the allocator
 	 */
-	zones_size[ZONE_NORMAL]  = max_low_pfn - min_low_pfn;
+	zones_size[ZONE_DMA]     = max_low_pfn - min_low_pfn;
+	zones_size[ZONE_NORMAL]  = 0;
 #ifdef CONFIG_HIGHMEM
 	zones_size[ZONE_HIGHMEM] = num_physpages - num_mappedpages;
 #endif
@@ -167,7 +198,7 @@ void __init mem_init(void)
 /*
  * free the memory that was only required for initialisation
  */
-void free_initmem(void)
+void __init free_initmem(void)
 {
 #if defined(CONFIG_RAMKERNEL) && !defined(CONFIG_PROTECT_KERNEL)
 	unsigned long start, end, addr;

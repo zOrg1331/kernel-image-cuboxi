@@ -1,0 +1,100 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5 PATCH] - fix ext2 overflows on filesystems > 8T
+Date: Wed, 23 May 2007 11:40:55 -0500
+Bugzilla: 237188
+Message-Id: <46546E97.4020709@redhat.com>
+Changelog: [fs] fix ext2 overflows on filesystems > 8T
+
+
+Since we want to fully support ext3 at 16T in RHEL5, we should also
+make sure ext2 won't fall down on large filesystems - today, there are
+overflows above 8T (31 bits of blocks) in the ext2 allocator code.
+
+This has had some basic testing, and should get further testing as we
+shake out ext[23] at 16T for formal support.
+
+This one isn't upstream, because 
+ftp://ftp.kernel.org/pub/linux/kernel/people/akpm/patches/2.6/2.6.22-rc2/2.6.22-rc2-mm1/broken-out/ext2-reservations.patch
+makes it irrelevant, by significantly reworking the allocator, and
+introducing ext2_fsblk_t as appropriate to fix overflows in the new
+allocation code.
+
+Thanks,
+-Eric
+
+Index: linux-2.6.18-20.EL/fs/ext2/balloc.c
+===================================================================
+--- linux-2.6.18-20.EL.orig/fs/ext2/balloc.c
++++ linux-2.6.18-20.EL/fs/ext2/balloc.c
+@@ -323,7 +323,7 @@ got_it:
+  * bitmap, and then for any free bit if that fails.
+  * This function also updates quota and i_blocks field.
+  */
+-int ext2_new_block(struct inode *inode, unsigned long goal,
++unsigned long ext2_new_block(struct inode *inode, unsigned long goal,
+ 			u32 *prealloc_count, u32 *prealloc_block, int *err)
+ {
+ 	struct buffer_head *bitmap_bh = NULL;
+@@ -332,8 +332,8 @@ int ext2_new_block(struct inode *inode, 
+ 	int group_no;			/* i */
+ 	int ret_block;			/* j */
+ 	int group_idx;			/* k */
+-	int target_block;		/* tmp */
+-	int block = 0;
++	unsigned long target_block;	/* tmp */
++	unsigned long block = 0;
+ 	struct super_block *sb = inode->i_sb;
+ 	struct ext2_sb_info *sbi = EXT2_SB(sb);
+ 	struct ext2_super_block *es = sbi->s_es;
+@@ -460,7 +460,7 @@ got_block:
+ 		      sbi->s_itb_per_group))
+ 		ext2_error (sb, "ext2_new_block",
+ 			    "Allocating block in system zone - "
+-			    "block = %u", target_block);
++			    "block = %lu", target_block);
+ 
+ 	if (target_block >= le32_to_cpu(es->s_blocks_count)) {
+ 		ext2_error (sb, "ext2_new_block",
+Index: linux-2.6.18-20.EL/fs/ext2/ext2.h
+===================================================================
+--- linux-2.6.18-20.EL.orig/fs/ext2/ext2.h
++++ linux-2.6.18-20.EL/fs/ext2/ext2.h
+@@ -91,7 +91,7 @@ static inline struct ext2_inode_info *EX
+ /* balloc.c */
+ extern int ext2_bg_has_super(struct super_block *sb, int group);
+ extern unsigned long ext2_bg_num_gdb(struct super_block *sb, int group);
+-extern int ext2_new_block (struct inode *, unsigned long,
++extern unsigned long ext2_new_block (struct inode *, unsigned long,
+ 			   __u32 *, __u32 *, int *);
+ extern void ext2_free_blocks (struct inode *, unsigned long,
+ 			      unsigned long);
+Index: linux-2.6.18-20.EL/fs/ext2/inode.c
+===================================================================
+--- linux-2.6.18-20.EL.orig/fs/ext2/inode.c
++++ linux-2.6.18-20.EL/fs/ext2/inode.c
+@@ -107,7 +107,7 @@ void ext2_discard_prealloc (struct inode
+ #endif
+ }
+ 
+-static int ext2_alloc_block (struct inode * inode, unsigned long goal, int *err)
++static unsigned long ext2_alloc_block (struct inode * inode, unsigned long goal, int *err)
+ {
+ #ifdef EXT2FS_DEBUG
+ 	static unsigned long alloc_hits, alloc_attempts;
+@@ -425,13 +425,13 @@ static int ext2_alloc_branch(struct inod
+ 	int n = 0;
+ 	int err;
+ 	int i;
+-	int parent = ext2_alloc_block(inode, goal, &err);
++	unsigned long parent = ext2_alloc_block(inode, goal, &err);
+ 
+ 	branch[0].key = cpu_to_le32(parent);
+ 	if (parent) for (n = 1; n < num; n++) {
+ 		struct buffer_head *bh;
+ 		/* Allocate the next block */
+-		int nr = ext2_alloc_block(inode, parent, &err);
++		unsigned long nr = ext2_alloc_block(inode, parent, &err);
+ 		if (!nr)
+ 			break;
+ 		branch[n].key = cpu_to_le32(nr);
+

@@ -1,0 +1,74 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 30 Aug 2010 16:46:29 -0400
+Subject: [xen] xm trigger NMI support for HVM guests
+Message-id: <1283186789-20909-5-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 27934
+O-Subject: [RHEL5.6 XEN PATCH 4/4] "xm trigger" NMI support for HVM guests
+Bugzilla: 625902
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=625902
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg/rev/15589
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2719051
+
+A simple backport of upstream changeset 15589, it allows testing parts
+of patch 2 on Linux guests too.  NMI injection can also be useful because
+it breaks into the kernel debugger (if attached) on Windows guests.
+
+---
+ arch/x86/domctl.c |   39 +++++++++++++++++++++++++++++++++++++++
+ 1 files changed, 39 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/domctl.c b/arch/x86/domctl.c
+index 33f4eb0..dd07d83 100644
+--- a/arch/x86/domctl.c
++++ b/arch/x86/domctl.c
+@@ -711,6 +711,45 @@ long arch_do_domctl(
+     }
+     break;
+ 
++    case XEN_DOMCTL_sendtrigger:
++    {
++        struct domain *d;
++        struct vcpu *v;
++
++        ret = -ESRCH;
++        if ( (d = rcu_lock_domain_by_id(domctl->domain)) == NULL )
++            break;
++
++        ret = -EINVAL;
++        if ( domctl->u.sendtrigger.vcpu >= MAX_VIRT_CPUS )
++            goto sendtrigger_out;
++
++        ret = -ESRCH;
++        if ( (v = d->vcpu[domctl->u.sendtrigger.vcpu]) == NULL )
++            goto sendtrigger_out;
++
++        switch ( domctl->u.sendtrigger.trigger )
++        {
++        case XEN_DOMCTL_SENDTRIGGER_NMI:
++        {
++            ret = -ENOSYS;
++            if ( !is_hvm_domain(d) )
++                break;
++
++            ret = 0;
++            if ( !test_and_set_bool(v->arch.hvm_vcpu.nmi_pending) )
++                vcpu_kick(v);
++        }
++        break;
++
++        default:
++            ret = -ENOSYS;
++        }
++
++    sendtrigger_out:
++        rcu_unlock_domain(d);
++    }
++    break;
+ 
+     default:
+         ret = -ENOSYS;

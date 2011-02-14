@@ -15,6 +15,8 @@
 
 #include <linux/types.h>
 
+#define __packed __attribute__ ((packed))
+
 /* Some constants */
 #define HFSPLUS_SECTOR_SIZE        512
 #define HFSPLUS_SECTOR_SHIFT         9

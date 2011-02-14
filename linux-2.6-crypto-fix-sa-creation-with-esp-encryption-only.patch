@@ -1,0 +1,37 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Mon, 10 Mar 2008 16:21:48 +0100
+Subject: [crypto] fix SA creation with ESP encryption-only
+Message-id: 20080310152148.GC17931@lsx.localdomain
+O-Subject: [RHEL5.2 PATCH] BZ436267: Fix SA creation with ESP encryption-only
+Bugzilla: 436267
+
+Straight upstream back port of a fix required to allow SAs with only
+encryption enabled. Required to meet DoD requirements.
+
+commit ce5bd4aca3c467936370846119b7f3daf9ccea78
+Author: Herbert Xu <herbert@gondor.apana.org.au>
+Date:   Fri Dec 14 00:28:40 2007 +0800
+
+    [CRYPTO] null: Allow setkey on digest_null
+
+    We need to allow setkey on digest_null if it is to be used directly by
+    authenc instead of through hmac.
+
+    Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Please ACK.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/crypto_null.c b/crypto/crypto_null.c
+index a0d956b..ae2b167 100644
+--- a/crypto/crypto_null.c
++++ b/crypto/crypto_null.c
+@@ -77,6 +77,7 @@ static struct crypto_alg digest_null = {
+ 	.cra_list		=       LIST_HEAD_INIT(digest_null.cra_list),	
+ 	.cra_u			=	{ .digest = {
+ 	.dia_digestsize		=	NULL_DIGEST_SIZE,
++	.dia_setkey   		=	null_setkey,
+ 	.dia_init   		=	null_init,
+ 	.dia_update 		=	null_update,
+ 	.dia_final  		=	null_final } }

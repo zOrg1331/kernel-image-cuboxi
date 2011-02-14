@@ -1,0 +1,108 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Thu, 11 Nov 2010 18:03:01 -0500
+Subject: [misc] kernel: remove yield from stop_machine paths
+Message-id: <20101111180301.GB9269@redhat.com>
+Patchwork-id: 29155
+O-Subject: [RHEL5 BZ 634454 PATCH 1/1]: remove yield() from stop_machine() paths
+Bugzilla: 634454
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+See https://bugzilla.redhat.com/show_bug.cgi?id=634454
+
+stop_machine() yield()s in a tight loop to allow other stopmachine()
+threads bound to the same cpu migrate themselves. Given that the caller
+is SCHED_FIFO task this doesn't differ too much from lock(rq->lock) +
+unlock(rq->lock) in a loop. Since spinlocks are unfair, it is possible
+that other CPUs can never have a chance to see the "unlocked" state and
+take this lock.
+
+This leads to livelock. Say, try_to_wake_up() in interrupt on another
+CPU can spin forever trying to take rq->lock. If this irq interrupts
+the thread we are waiting the ack from, stop_machine() can't pass the
+initial STOPMACHINE_WAIT state.
+
+In short, this patch moves set_cpus_allowed() from the "callee" to the
+"caller", the main thread. This way there is no reason to yield(), all
+other threads are bound to other CPUs from the very beginning.
+
+The patch also adds migration_done completion to ensure that the new
+child can't preempt the main thread and monopolize CPU. I don't think
+this is really possible with SCHED_FIFO, but this way we should not
+worry about possible races. Each thread blocks on this completion before
+anything else, when the main thread does complete_all() we know that
+no other stopmachine thread can share cpu with us.
+
+This also means we can kill another yield in stopmachine(). In fact
+I think it was never needed, at least the comment is certainly wrong.
+In any case, by the time stopmachine() starts the main loop nobody
+else needs this CPU and yield() can't help.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/stop_machine.c b/kernel/stop_machine.c
+index ff6dd9f..8a34208 100644
+--- a/kernel/stop_machine.c
++++ b/kernel/stop_machine.c
+@@ -26,16 +26,14 @@ static unsigned int stopmachine_num_threads;
+ static atomic_t stopmachine_thread_ack;
+ static DECLARE_MUTEX(stopmachine_mutex);
+ 
++static struct completion migration_done;
++
+ static int stopmachine(void *cpu)
+ {
+ 	int irqs_disabled = 0;
+ 	int prepared = 0;
+ 
+-	set_cpus_allowed(current, cpumask_of_cpu((int)(long)cpu));
+-
+-	/* Ack: we are alive */
+-	smp_mb(); /* Theoretically the ack = 0 might not be on this CPU yet. */
+-	atomic_inc(&stopmachine_thread_ack);
++	wait_for_completion(&migration_done);
+ 
+ 	/* Simple state machine */
+ 	while (stopmachine_state != STOPMACHINE_EXIT) {
+@@ -54,12 +52,8 @@ static int stopmachine(void *cpu)
+ 			smp_mb(); /* Must read state first. */
+ 			atomic_inc(&stopmachine_thread_ack);
+ 		}
+-		/* Yield in first stage: migration threads need to
+-		 * help our sisters onto their CPUs. */
+-		if (!prepared && !irqs_disabled)
+-			yield();
+-		else
+-			cpu_relax();
++
++		cpu_relax();
+ 	}
+ 
+ 	/* Ack: we are exiting. */
+@@ -92,22 +86,19 @@ static int stop_machine(void)
+ 	stopmachine_num_threads = 0;
+ 	stopmachine_state = STOPMACHINE_WAIT;
+ 
++	init_completion(&migration_done);
++
+ 	for_each_online_cpu(i) {
+ 		if (i == raw_smp_processor_id())
+ 			continue;
+ 		ret = kernel_thread(stopmachine, (void *)(long)i,CLONE_KERNEL);
+ 		if (ret < 0)
+ 			break;
++		set_cpus_allowed(find_task_by_pid(ret), cpumask_of_cpu(i));
+ 		stopmachine_num_threads++;
+ 	}
+ 
+-	/* Wait for them all to come to life. */
+-	while (atomic_read(&stopmachine_thread_ack) != stopmachine_num_threads){
+-		yield();
+-		/* add in a barrier to avoid kstopmachine
+-		   causing lock starvation issues for other threads */
+-		smp_mb();
+-	}
++	complete_all(&migration_done);
+ 
+ 	/* If some failed, kill them all. */
+ 	if (ret < 0) {

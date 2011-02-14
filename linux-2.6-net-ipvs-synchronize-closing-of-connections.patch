@@ -1,0 +1,95 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 26 Nov 2009 11:06:46 -0500
+Subject: [net] ipvs: synchronize closing of connections
+Message-id: <20091126110712.17569.46851.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 21517
+O-Subject: [PATCH RHEL5.5] [IPVS]: Synchronize closing of Connections
+Bugzilla: 492942
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=492942
+
+Description:
+This bz reports two issues about lvs. The first one is LVS connection timeout
+hard-coded on slave server, which is resolved in bz524129 by Neil.
+
+The "connection state" wasn't replicated correctly between Master and Slave servers,
+is the second issue. For example, When a connection is closed, on Master server
+connection's state is CLOSE_WAIT and after few seconds, TIME_WAIT. On the Slave server,
+connection's state remains ESTABLISHED until the connection timeout value is reached.
+
+Upstream status:
+commit efac527 is the fix, almost the same as upstream patches. The only different line
+is already added in Neil's patch.
+
+KABI:
+no harm
+
+Brew Build#:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2106061
+
+Please review, any comments are welcome.
+
+diff --git a/include/net/ip_vs.h b/include/net/ip_vs.h
+index 6f0c2ea..8616dab 100644
+--- a/include/net/ip_vs.h
++++ b/include/net/ip_vs.h
+@@ -520,7 +520,10 @@ struct ip_vs_conn {
+ 	spinlock_t              lock;           /* lock for state transition */
+ 	volatile __u16          flags;          /* status flags */
+ 	volatile __u16          state;          /* state info */
+-
++	volatile __u16          old_state;      /* old state, to be used for   
++						 * state transition triggerd   
++						 * synchronization             
++						 */
+ 	/* Control members */
+ 	struct ip_vs_conn       *control;       /* Master control connection */
+ 	atomic_t                n_control;      /* Number of controlled ones */
+diff --git a/net/ipv4/ipvs/ip_vs_core.c b/net/ipv4/ipvs/ip_vs_core.c
+index 95d1e93..4efefd9 100644
+--- a/net/ipv4/ipvs/ip_vs_core.c
++++ b/net/ipv4/ipvs/ip_vs_core.c
+@@ -1033,15 +1033,23 @@ ip_vs_in(unsigned int hooknum, struct sk_buff **pskb,
+ 		ret = NF_ACCEPT;
+ 	}
+ 
+-	/* increase its packet counter and check if it is needed
+-	   to be synchronized */
++	/* Increase its packet counter and check if it is needed               
++	 * to be synchronized                                                  
++	 *                                                                     
++	 * Sync connection if it is about to close to                          
++	 * encorage the standby servers to update the connections timeout      
++	 */
+ 	atomic_inc(&cp->in_pkts);
+ 	if ((ip_vs_sync_state & IP_VS_STATE_MASTER) &&
+-	    (cp->protocol != IPPROTO_TCP ||
+-	     cp->state == IP_VS_TCP_S_ESTABLISHED) &&
+-	    (atomic_read(&cp->in_pkts) % sysctl_ip_vs_sync_threshold[1]
+-	     == sysctl_ip_vs_sync_threshold[0]))
++	    (((cp->protocol != IPPROTO_TCP ||
++	       cp->state == IP_VS_TCP_S_ESTABLISHED) &&
++	      (atomic_read(&cp->in_pkts) % sysctl_ip_vs_sync_threshold[1]
++	       == sysctl_ip_vs_sync_threshold[0])) ||
++	     ((cp->protocol == IPPROTO_TCP) && (cp->old_state != cp->state) &&
++	      ((cp->state == IP_VS_TCP_S_FIN_WAIT) ||
++	       (cp->state == IP_VS_TCP_S_CLOSE)))))
+ 		ip_vs_sync_conn(cp);
++	cp->old_state = cp->state;
+ 
+ 	ip_vs_conn_put(cp);
+ 	return ret;
+diff --git a/net/ipv4/ipvs/ip_vs_sync.c b/net/ipv4/ipvs/ip_vs_sync.c
+index 03fcde8..6caa10b 100644
+--- a/net/ipv4/ipvs/ip_vs_sync.c
++++ b/net/ipv4/ipvs/ip_vs_sync.c
+@@ -371,7 +371,6 @@ static void ip_vs_process_message(const char *buffer, const size_t buflen)
+ 			}
+ 		} else if (!cp->dest) {
+ 			/* it is an entry created by the synchronization */
+-			cp->state = ntohs(s->state);
+ 			cp->flags = flags | IP_VS_CONN_F_HASHED;
+ 		}	/* Note that we don't touch its state and flags
+ 			   if it is a normal entry. */

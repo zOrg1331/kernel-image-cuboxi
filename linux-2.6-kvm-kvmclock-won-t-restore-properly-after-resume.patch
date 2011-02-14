@@ -1,0 +1,38 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Mon, 25 Jan 2010 17:41:19 -0500
+Subject: [kvm] kvmclock won't restore properly after resume
+Message-id: <1264441279-12593-1-git-send-email-glommer@redhat.com>
+Patchwork-id: 22798
+O-Subject: [PATCH] RHEL5.5 BZ539521 kvmclock won't restore properly after resume
+Bugzilla: 539521
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+All other time sources grab their value explicitly after a suspend/resume
+cycle, and can thus, calculate how much time they went down.
+kvmclock is currently not doing it, which will result in the guest's
+notion of time getting awkward after a suspend/resume cycle.
+
+Slowness and even crashes were seen.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+RH-Bugzilla: 539521
+RH-Upstream-status: N/A
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 2f5a849..48cd2e1 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1606,7 +1606,10 @@ static int timer_resume(struct sys_device *dev)
+ 	write_seqlock_irqsave(&xtime_lock,flags);
+ 	xtime.tv_sec = sec;
+ 	xtime.tv_nsec = 0;
+-	if (vxtime.mode == VXTIME_HPET) {
++	if (vxtime.mode == VXTIME_KVM) {
++		vxtime.last_kvm = kvm_clock_read();
++		vxtime.last_tsc = get_cycles_sync();
++	} else if (vxtime.mode == VXTIME_HPET) {
+ 		if (hpet_use_timer)
+ 			vxtime.last = hpet_readl(HPET_T0_CMP) - hpet_tick_real;
+ 		else

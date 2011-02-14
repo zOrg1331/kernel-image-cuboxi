@@ -1,0 +1,53 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 17 Nov 2009 12:06:34 -0500
+Subject: [cifs] no CIFSGetSrvInodeNumber in is_path_accessible
+Message-id: <1258459594-29184-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21394
+O-Subject: [RHEL5.5 PATCH] BZ#529431: cifs: don't use CIFSGetSrvInodeNumber in
+	is_path_accessible
+Bugzilla: 529431
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Bugzilla #529431
+
+Because it's lighter weight, CIFS tries to use CIFSGetSrvInodeNumber to
+verify the accessibility of the root inode and then falls back to doing
+a full QPathInfo if that fails with -EOPNOTSUPP. I have at least a
+report of a server that returns NT_STATUS_INTERNAL_ERROR rather than
+something that translates to EOPNOTSUPP.
+
+Rather than trying to be clever with that call, just have
+is_path_accessible do a normal QPathInfo. That call is widely supported
+and it shouldn't increase the overhead significantly.
+
+Unfortunately, the customer who reported this never came back with test
+results from this patch so I don't have confirmation that this fixed
+their problem. Based on the packet captures they provided however, it
+appears that it will. Even if it doesn't though, I don't believe it'll
+have any adverse effects.
+
+Cc: Stable <stable@kernel.org>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index e9e3a93..24e83db 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -2266,16 +2266,8 @@ is_path_accessible(int xid, struct cifsTconInfo *tcon,
+ 		   struct cifs_sb_info *cifs_sb, const char *full_path)
+ {
+ 	int rc;
+-	__u64 inode_num;
+ 	FILE_ALL_INFO *pfile_info;
+ 
+-	rc = CIFSGetSrvInodeNumber(xid, tcon, full_path, &inode_num,
+-				   cifs_sb->local_nls,
+-				   cifs_sb->mnt_cifs_flags &
+-						CIFS_MOUNT_MAP_SPECIAL_CHR);
+-	if (rc != -EOPNOTSUPP)
+-		return rc;
+-
+ 	pfile_info = kmalloc(sizeof(FILE_ALL_INFO), GFP_KERNEL);
+ 	if (pfile_info == NULL)
+ 		return -ENOMEM;

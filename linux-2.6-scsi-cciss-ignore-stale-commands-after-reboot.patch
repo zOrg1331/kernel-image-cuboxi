@@ -1,0 +1,66 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Fri, 9 Oct 2009 18:04:12 +0200
+Subject: [scsi] cciss: ignore stale commands after reboot
+Message-id: 4ACF5EFC.4050101@redhat.com
+O-Subject: [RHEL5.5 Patch 2/3] cciss: ignore stale commands after reboot
+Bugzilla: 525440
+
+upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b59e64d0ddb756af57ea032383bfd393a286a8e8
+
+"When doing an unexpected shutdown like kexec the cciss
+firmware might still have some commands in flight, which
+it is trying to complete.
+The driver is doing it's best on resetting the HBA,
+but sadly there's a firmware issue causing the firmware
+_not_ to abort or drop old commands.
+So the firmware will send us commands which we haven't
+accounted for, causing the driver to panic.
+
+With this patch we're just ignoring these commands as
+there is nothing we could be doing with them anyway."
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 0a334fa..f5fca94 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -222,8 +222,17 @@ static inline void addQ(struct hlist_head *list, CommandList_struct *c)
+ 
+ static inline void removeQ(CommandList_struct *c)
+ {
++	/*
++	 * After kexec/dump some commands might still
++	 * be in flight, which the firmware will try
++	 * to complete. Resetting the firmware doesn't work
++	 * with old fw revisions, so we have to mark
++	 * them off as 'stale' to prevent the driver from
++	 * falling over.
++	 */
+ 	if (hlist_unhashed(&c->list)) {
+ 		WARN_ON(1);
++		c->cmd_type = CMD_MSG_STALE;
+ 		return;
+ 	}
+ 
+@@ -4357,7 +4366,8 @@ static void fail_all_cmds(unsigned long ctlr)
+ 	while (!hlist_empty(&h->cmpQ)) {
+ 		c = hlist_entry(h->cmpQ.first, CommandList_struct, list);
+ 		removeQ(c);
+-		c->err_info->CommandStatus = CMD_HARDWARE_ERR;
++		if (c->cmd_type != CMD_MSG_STALE)
++			c->err_info->CommandStatus = CMD_HARDWARE_ERR;
+ 		if (c->cmd_type == CMD_RWREQ) {
+ 			complete_command(h, c, 0);
+ 		} else if (c->cmd_type == CMD_IOCTL_PEND)
+diff --git a/drivers/block/cciss_cmd.h b/drivers/block/cciss_cmd.h
+index 4ba8fb0..3063c06 100644
+--- a/drivers/block/cciss_cmd.h
++++ b/drivers/block/cciss_cmd.h
+@@ -272,6 +272,7 @@ typedef struct _ErrorInfo_struct {
+ #define CMD_SCSI	0x03
+ #define CMD_MSG_DONE	0x04
+ #define CMD_MSG_TIMEOUT 0x05
++#define CMD_MSG_STALE	0xff
+ 
+ /* This structure needs to be divisible by 8 for new
+  * indexing method.

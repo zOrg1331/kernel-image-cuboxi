@@ -1,0 +1,81 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 2 Sep 2010 19:01:44 -0400
+Subject: [fs] ext3: flush disk caches on fsync when needed
+Message-id: <4C7FF498.80101@redhat.com>
+Patchwork-id: 28028
+O-Subject: [PATCH RHEL5.6] ext3: Flush disk caches on fsync when needed
+Bugzilla: 592961
+
+For:
+Bug 592961 - ext3: fsync() does not flush disk caches
+
+Straightforward backport of the following upstream commit.
+
+This will have a significant impact on fsync performance when
+barriers are enabled - but remember barriers are not on by
+default for ext3 in RHEL5.  This data integrity will have to
+come at the cost of performance when barriers are enabled
+on a write-back cache device.
+
+There have been subsequent (post-RHEL6) patches upstream which
+test whether the journal commit may have already issued a flush,
+but it's all a lot more invasive, and I'm not that inclined
+to make all those changes now for RHEL5.6.  So just sending this
+simple patch.
+
+Thanks,
+-Eric
+
+commit 56fcad29d4b3cbcbb2ed47a9d3ceca3f57175417
+Author: Jan Kara <jack@suse.cz>
+Date:   Tue Sep 8 14:59:42 2009 +0200
+
+    ext3: Flush disk caches on fsync when needed
+
+    In case we fsync() a file and inode is not dirty, we don't force a transaction
+    to disk and hence don't flush disk caches. Thus file data could be just in disk
+    caches and not on persistent storage. Fix the problem by flushing disk caches
+    if we didn't force a transaction commit.
+
+    Signed-off-by: Jan Kara <jack@suse.cz>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/ext3/fsync.c b/fs/ext3/fsync.c
+index b98095d..a0f3672 100644
+--- a/fs/ext3/fsync.c
++++ b/fs/ext3/fsync.c
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include <linux/time.h>
++#include <linux/blkdev.h>
+ #include <linux/fs.h>
+ #include <linux/sched.h>
+ #include <linux/writeback.h>
+@@ -73,7 +74,7 @@ int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
+ 	}
+ 
+ 	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
+-		goto out;
++		goto flush;
+ 
+ 	/*
+ 	 * The VFS has written the file data.  If the inode is unaltered
+@@ -85,7 +86,16 @@ int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
+ 			.nr_to_write = 0, /* sys_fsync did this */
+ 		};
+ 		ret = sync_inode(inode, &wbc);
++		goto out;
+ 	}
++flush:
++	/*
++	 * In case we didn't commit a transaction, we have to flush
++	 * disk caches manually so that data really is on persistent
++	 * storage
++	 */
++	if (test_opt(inode->i_sb, BARRIER))
++		blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
+ out:
+ 	return ret;
+ }

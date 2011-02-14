@@ -1,0 +1,30 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ#220538: DLM Clear othercon pointers when a 	connection is closed
+Date: Wed, 18 Jul 2007 15:39:11 -0500
+Bugzilla: 220538
+Message-Id: <20070718203911.GA31029@redhat.com>
+Changelog: [DLM] Clear othercon pointers when a connection is closed
+
+
+> On Fri, Jul 13, 2007 at 04:25:57PM +0100, Patrick Caulfield wrote:
+> > Patrick Caulfield wrote:
+> > > This patch clears the othercon pointer and frees the memory when a
+> > > connnection is closed. This could cause a small memory leak when
+> > > nodes leave the cluster.
+> > > 
+> > > Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+Index: linux-rhel51-quilt/fs/dlm/lowcomms.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lowcomms.c	2007-06-08 10:23:26.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/lowcomms.c	2007-07-18 15:37:06.000000000 -0500
+@@ -327,6 +327,8 @@
+ 	if (con->othercon && and_other) {
+ 		/* Will only re-enter once. */
+ 		close_connection(con->othercon, 0);
++		kmem_cache_free(con_cache, con->othercon);
++		con->othercon = NULL;
+ 	}
+ 	if (con->rx_page) {
+ 		__free_page(con->rx_page);
+

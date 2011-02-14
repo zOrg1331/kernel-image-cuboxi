@@ -1,0 +1,52 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 17 Jun 2010 16:44:15 -0400
+Subject: [message] mptsas: fix disk add failing due to timeout
+Message-id: <20100617164058.7375.81599.sendpatchset@localhost.localdomain>
+Patchwork-id: 26285
+O-Subject: [RHEL5.6 PATCH] mptsas: The addition of SAS disk fails because of the
+	timeout
+Bugzilla: 542892
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=542892
+
+This patch addresses a case where a /dev/sd is deleted via
+'echo 1 > /sys/class/scsi_device/a:b:c:d/device/delete'
+and a subsequent power cycle of the disk results in the disk
+not being reconfigured.
+
+The patch is provided by LSI
+
+The patch was tested by LSI and confirmed as functioning correctly
+in the reported failing case, and the case of simply powering the disk
+off and on, and seeing the disk be reconfigured as expected in both
+cases.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/message/fusion/mptsas.c b/drivers/message/fusion/mptsas.c
+index 4b2a2f3..c620283 100644
+--- a/drivers/message/fusion/mptsas.c
++++ b/drivers/message/fusion/mptsas.c
+@@ -1098,10 +1098,8 @@ mptsas_target_reset_queue(MPT_ADAPTER *ioc,
+ 	id = sas_event_data->TargetID;
+ 	channel = sas_event_data->Bus;
+ 
+-	if (!(vtarget = mptsas_find_vtarget(ioc, channel, id)))
+-		return;
+-
+-	vtarget->deleted = 1; /* block IO */
++	if ((vtarget = mptsas_find_vtarget(ioc, channel, id)))
++		vtarget->deleted = 1; /* block IO */
+ 
+ 	target_reset_list = kzalloc(sizeof(struct mptsas_target_reset_event),
+ 	    GFP_ATOMIC);
+@@ -1207,7 +1205,7 @@ mptsas_taskmgmt_complete(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
+ 	 * enable work queue to remove device from upper layers
+ 	 */
+ 	list_del(&target_reset_list->list);
+-	if ((mptsas_find_vtarget(ioc, channel, id)) && !ioc->fw_events_off)
++	if (!ioc->fw_events_off)
+ 		mptsas_queue_device_delete(ioc,
+ 			&target_reset_list->sas_event_data);
+ 

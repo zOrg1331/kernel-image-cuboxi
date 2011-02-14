@@ -1,0 +1,179 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Date: Mon, 31 Mar 2008 09:40:35 -0400
+Subject: [pci] hotplug: PCI Express problems with bad DLLPs
+Message-id: 47F0E9D3.90100@redhat.com
+O-Subject: [RHEL5.2][PATCH] Fix PCI Express hotplug driver problem (Bad DLLP)
+Bugzilla: 433355
+
+bz433355
+https://bugzilla.redhat.com/show_bug.cgi?id=433355
+
+Description:
+
+  Bad DLLP error sometimes occurs when turning off the power of a adapter
+  card on a hot pluggable PCI Express slot while hot-plug operation of PCI
+  Express adapter cards is performed repeatedly.  It would cause #SERR and
+  a system down eventually on Fujitsu PRIMEQUEST server.
+
+  The cause of the error is that PCI Express 1.0a spec doesn't have the
+  following consideration which has been added to PCI Express 1.1 spec.
+
+    "If the port is associated with a hot-pluggable slot (Hot-Plug
+    Capable bit in the Slot Capabilities register set to 1b), and Power
+    Controller Control bit in Slot Control register is 1b(Off), then any
+    transition to DL Inactive must not be considered an error.
+
+  The patch is against 2.6.18-85 (snapshot1 kernel,) but confirmed that
+  it also applied to 2.6.18-86 (snapshot2 kernel) cleanly.
+
+Upstream Status:
+
+  Merged to upstream kernel (2.6.25-rc1).
+
+Test/kABI Status:
+
+  Brew: Built on all platforms and no kABI breakage found.
+  Tested on Fujitsu PRIMEQUEST and PCI Express hotplug worked without
+  trouble or regression.
+
+Thanks,
+Kei
+--
+Kei Tokunaga
+Fujitsu on-site partner
+
+This is a patch for back porting the following pciehp driver fixes
+from upstream kernel. Those fixes had been get merged to upstream
+kernel at 2.6.25-rc1.
+
+- PCI: hotplug: pciehp: wait for 1 second after power off slot
+  (commit: 5b57a6cea464fc686a6bc446f667c05901fa9734)
+
+  According to the specification, we must wait for at least 1 second
+  after turning power off before taking any action that relies on
+  power having been removed from the slot/adapter.
+
+- pciehp: wait for 1000ms before LED operation after power off
+  (commit: 8bb7c7af1ff2a9e9e0936dbdd15901c80329c7af)
+
+  After turning power off, we must wait for at least 1 second *before*
+  LED operation.
+
+- pciehp: workaround against Bad DLLP during power off
+  (commit: f1050a35cd99d6cfded7ce1273757dca84e92f9b)
+
+  Set Bad DLLP Mask bit in Correctable Error Mask Register during
+  turning power off the slot.
+
+  This is the workaround against Bad DLLP error that sometimes happen
+  during turning power off on the slot which conforms to PCI Express
+  1.0a spec. The cause of this error seems that PCI Express 1.0a spec
+  doesn't have the following consideration that was added to PCI
+  Express 1.1 spec.
+
+      "If the port is associated with a hot-pluggable slot (Hot-Plug
+      Capable bit in the Slot Capabilities register set to 1b), and
+      Power Controller Control bit in Slot Control register is
+      1b(Off), then any transition to DL Inactive must not be
+      considered an error."
+
+- pci: hotplug: pciehp: fix error code path in hpc_power_off_slot
+  (commit: c1ef5cbd03921047c2eafb998132e562043678a7)
+
+  Fix the error code path in hpc_power_off_slot().
+  The Bad DLLP Mask bit must be restored before return.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/pci/hotplug/pciehp_hpc.c b/drivers/pci/hotplug/pciehp_hpc.c
+index 2eb4462..a47ce33 100644
+--- a/drivers/pci/hotplug/pciehp_hpc.c
++++ b/drivers/pci/hotplug/pciehp_hpc.c
+@@ -805,13 +805,47 @@ static int hpc_power_on_slot(struct slot * slot)
+ 	return retval;
+ }
+ 
++static inline int pcie_mask_bad_dllp(struct controller *ctrl)
++{
++	struct pci_dev *dev = ctrl->pci_dev;
++	int pos;
++	u32 reg;
++
++	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
++	if (!pos)
++		return 0;
++	pci_read_config_dword(dev, pos + PCI_ERR_COR_MASK, &reg);
++	if (reg & PCI_ERR_COR_BAD_DLLP)
++		return 0;
++	reg |= PCI_ERR_COR_BAD_DLLP;
++	pci_write_config_dword(dev, pos + PCI_ERR_COR_MASK, reg);
++	return 1;
++}
++
++static inline void pcie_unmask_bad_dllp(struct controller *ctrl)
++{
++	struct pci_dev *dev = ctrl->pci_dev;
++	u32 reg;
++	int pos;
++
++	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
++	if (!pos)
++		return;
++	pci_read_config_dword(dev, pos + PCI_ERR_COR_MASK, &reg);
++	if (!(reg & PCI_ERR_COR_BAD_DLLP))
++		return;
++	reg &= ~PCI_ERR_COR_BAD_DLLP;
++	pci_write_config_dword(dev, pos + PCI_ERR_COR_MASK, reg);
++}
++
+ static int hpc_power_off_slot(struct slot * slot)
+ {
+ 	struct php_ctlr_state_s *php_ctlr = slot->ctrl->hpc_ctlr_handle;
++  	struct controller *ctrl = slot->ctrl;
+ 	u16 slot_cmd;
+ 	u16 slot_ctrl;
+-
+ 	int retval = 0;
++	int changed;
+ 
+ 	DBG_ENTER_ROUTINE 
+ 
+@@ -833,6 +867,14 @@ static int hpc_power_off_slot(struct slot * slot)
+ 		return retval;
+ 	}
+ 
++	/*
++	 * Set Bad DLLP Mask bit in Correctable Error Mask
++	 * Register. This is the workaround against Bad DLLP error
++	 * that sometimes happens during turning power off the slot
++	 * which conforms to PCI Express 1.0a spec.
++	 */
++	changed = pcie_mask_bad_dllp(ctrl);
++
+ 	slot_cmd = (slot_ctrl & ~PWR_CTRL) | POWER_OFF;
+ 
+ 	/*
+@@ -852,10 +894,21 @@ static int hpc_power_off_slot(struct slot * slot)
+ 
+ 	if (retval) {
+ 		err("%s: Write command failed!\n", __FUNCTION__);
+-		return -1;
++		retval = -1;
++		goto out;
+ 	}
+ 	dbg("%s: SLOT_CTRL %x write cmd %x\n",__FUNCTION__, SLOT_CTRL(slot->ctrl->cap_base), slot_cmd);
+ 
++	/*
++	 * After turning power off, we must wait for at least 1 second
++	 * before taking any action that relies on power having been
++	 * removed from the slot/adapter.
++	 */
++	msleep(1000);
++out:
++	if (changed)
++		pcie_unmask_bad_dllp(ctrl);
++
+ 	DBG_LEAVE_ROUTINE
+ 
+ 	return retval;

@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <asm/byteorder.h>
+#include <asm/scatterlist.h>
 #include <linux/crypto.h>
 #include <linux/types.h>
 
@@ -45,10 +46,16 @@ struct xtea_ctx {
 };
 
 static int tea_setkey(struct crypto_tfm *tfm, const u8 *in_key,
-		      unsigned int key_len)
+		      unsigned int key_len, u32 *flags)
 {
 	struct tea_ctx *ctx = crypto_tfm_ctx(tfm);
 	const __le32 *key = (const __le32 *)in_key;
+	
+	if (key_len != 16)
+	{
+		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+		return -EINVAL;
+	}
 
 	ctx->KEY[0] = le32_to_cpu(key[0]);
 	ctx->KEY[1] = le32_to_cpu(key[1]);
@@ -118,10 +125,16 @@ static void tea_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 }
 
 static int xtea_setkey(struct crypto_tfm *tfm, const u8 *in_key,
-		       unsigned int key_len)
+		       unsigned int key_len, u32 *flags)
 {
 	struct xtea_ctx *ctx = crypto_tfm_ctx(tfm);
 	const __le32 *key = (const __le32 *)in_key;
+	
+	if (key_len != 16)
+	{
+		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+		return -EINVAL;
+	}
 
 	ctx->KEY[0] = le32_to_cpu(key[0]);
 	ctx->KEY[1] = le32_to_cpu(key[1]);
@@ -267,7 +280,7 @@ static struct crypto_alg xeta_alg = {
 	.cia_decrypt		=	xeta_decrypt } }
 };
 
-static int __init tea_mod_init(void)
+static int __init init(void)
 {
 	int ret = 0;
 	
@@ -292,7 +305,7 @@ out:
 	return ret;
 }
 
-static void __exit tea_mod_fini(void)
+static void __exit fini(void)
 {
 	crypto_unregister_alg(&tea_alg);
 	crypto_unregister_alg(&xtea_alg);
@@ -302,8 +315,8 @@ static void __exit tea_mod_fini(void)
 MODULE_ALIAS("xtea");
 MODULE_ALIAS("xeta");
 
-module_init(tea_mod_init);
-module_exit(tea_mod_fini);
+module_init(init);
+module_exit(fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("TEA, XTEA & XETA Cryptographic Algorithms");

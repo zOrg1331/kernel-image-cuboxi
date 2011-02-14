@@ -10,7 +10,7 @@
  *      - Madge Smart 16/4 PCI Mk2
  *
  *  Maintainer(s):
- *    AF	Adam Fritzler
+ *    AF	Adam Fritzler		mid@auk.cx
  *
  *  Modification History:
  *	30-Dec-99	AF	Split off from the tms380tr driver.
@@ -92,14 +92,12 @@ static void abyss_sifwritew(struct net_device *dev, unsigned short val, unsigned
 	outw(val, dev->base_addr + reg);
 }
 
-static struct net_device_ops abyss_netdev_ops;
-
 static int __devinit abyss_attach(struct pci_dev *pdev, const struct pci_device_id *ent)
 {	
 	static int versionprinted;
 	struct net_device *dev;
 	struct net_local *tp;
-	int ret, pci_irq_line;
+	int i, ret, pci_irq_line;
 	unsigned long pci_ioaddr;
 	
 	if (versionprinted++ == 0)
@@ -117,6 +115,8 @@ static int __devinit abyss_attach(struct pci_dev *pdev, const struct pci_device_
 	dev = alloc_trdev(sizeof(struct net_local));
 	if (!dev)
 		return -ENOMEM;
+
+	SET_MODULE_OWNER(dev);
 
 	if (!request_region(pci_ioaddr, ABYSS_IO_EXTENT, dev->name)) {
 		ret = -EBUSY;
@@ -147,8 +147,12 @@ static int __devinit abyss_attach(struct pci_dev *pdev, const struct pci_device_
 	}
 
 	abyss_read_eeprom(dev);
-
-	printk("%s:    Ring Station Address: %pM\n", dev->name, dev->dev_addr);
+		
+	printk("%s:    Ring Station Address: ", dev->name);
+	printk("%2.2x", dev->dev_addr[0]);
+	for (i = 1; i < 6; i++)
+		printk(":%2.2x", dev->dev_addr[i]);
+	printk("\n");
 
 	tp = netdev_priv(dev);
 	tp->setnselout = abyss_setnselout_pins;
@@ -159,7 +163,8 @@ static int __devinit abyss_attach(struct pci_dev *pdev, const struct pci_device_
 
 	memcpy(tp->ProductID, "Madge PCI 16/4 Mk2", PROD_ID_SIZE + 1);
 		
-	dev->netdev_ops = &abyss_netdev_ops;
+	dev->open = abyss_open;
+	dev->stop = abyss_close;
 
 	pci_set_drvdata(pdev, dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
@@ -451,11 +456,6 @@ static struct pci_driver abyss_driver = {
 
 static int __init abyss_init (void)
 {
-	abyss_netdev_ops = tms380tr_netdev_ops;
-
-	abyss_netdev_ops.ndo_open = abyss_open;
-	abyss_netdev_ops.ndo_stop = abyss_close;
-
 	return pci_register_driver(&abyss_driver);
 }
 

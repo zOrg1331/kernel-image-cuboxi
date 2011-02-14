@@ -1,0 +1,50 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: [RHEL5.0] : /proc/mtrr interface MTRR bug fix
+Date: Tue, 23 Jan 2007 09:04:59 -0500
+Bugzilla: 223821
+Message-Id: <45B6160B.6090503@redhat.com>
+Changelog: x86: /proc/mtrr interface MTRR bug fix
+
+
+This patch fixes two bugs in /proc/mtrr interface and addressess BZ 223821:
+1) If physical address size crosses the 44 bit boundary size_or_mask is 
+evaluated
+incorrectly.
+2) size_and_mask limits physical base address for an MTRR to be less 
+than 44 bit.
+
+
+--- linux-2.6.18.x86_64/arch/i386/kernel/cpu/mtrr/main.c.orig	2007-01-23 08:54:46.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/cpu/mtrr/main.c	2007-01-23 08:57:18.000000000 -0500
+@@ -50,7 +50,7 @@ u32 num_var_ranges = 0;
+ unsigned int *usage_table;
+ static DEFINE_MUTEX(mtrr_mutex);
+ 
+-u32 size_or_mask, size_and_mask;
++u64 size_or_mask, size_and_mask;
+ 
+ static struct mtrr_ops * mtrr_ops[X86_VENDOR_NUM] = {};
+ 
+@@ -633,8 +633,8 @@ void __init mtrr_bp_init(void)
+ 			     boot_cpu_data.x86_mask == 0x4))
+ 				phys_addr = 36;
+ 
+-			size_or_mask = ~((1 << (phys_addr - PAGE_SHIFT)) - 1);
+-			size_and_mask = ~size_or_mask & 0xfff00000;
++			size_or_mask = ~((1ULL << (phys_addr - PAGE_SHIFT)) - 1);
++			size_and_mask = ~size_or_mask & 0xfffff00000ULL;
+ 		} else if (boot_cpu_data.x86_vendor == X86_VENDOR_CENTAUR &&
+ 			   boot_cpu_data.x86 == 6) {
+ 			/* VIA C* family have Intel style MTRRs, but
+--- linux-2.6.18.x86_64/arch/i386/kernel/cpu/mtrr/mtrr.h.orig	2007-01-23 08:54:58.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/cpu/mtrr/mtrr.h	2007-01-23 08:57:43.000000000 -0500
+@@ -83,7 +83,7 @@ void get_mtrr_state(void);
+ 
+ extern void set_mtrr_ops(struct mtrr_ops * ops);
+ 
+-extern u32 size_or_mask, size_and_mask;
++extern u64 size_or_mask, size_and_mask;
+ extern struct mtrr_ops * mtrr_if;
+ 
+ #define is_cpu(vnd)	(mtrr_if && mtrr_if->vendor == X86_VENDOR_##vnd)
+

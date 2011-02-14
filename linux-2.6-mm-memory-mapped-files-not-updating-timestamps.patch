@@ -1,0 +1,55 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Tue, 26 Jan 2010 16:01:00 -0500
+Subject: [mm] memory mapped files not updating timestamps
+Message-id: <4B5F11BC.9010508@redhat.com>
+Patchwork-id: 22905
+O-Subject: [RHEL-5.5 PATCH] bz452129 memory mapped files not updating timestamps
+Bugzilla: 452129
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Hi.
+
+Here is a patch to address bz452129, "memory mapped files not
+updating timestamps".  This bz describes that the system does not
+update the modification time on files when they have been updated
+via mmap'd regions.  This, in turn, can cause corruption of backups
+which use the modification time on the file to decide whether or
+not to backup the file.
+
+The resolution is that the system should update the mtime on the
+file when it's contents have been modified, whether by the write
+system call or by a modification to an mmap'd region.
+
+These changes were patterned from the changes accepted upstream.
+
+	Thanx...
+
+		ps
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 5cd8e42..1ebc53e 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -1900,6 +1900,9 @@ unlock:
+ 		if (flush_mmap_pages || !dirty_pte)
+ 			set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
++
++		if (vma->vm_file)
++			file_update_time(vma->vm_file);
+ 	}
+ 	return ret;
+ oom:
+@@ -2561,6 +2564,9 @@ unlock:
+ 		if (flush_mmap_pages || !dirty_pte)
+ 			set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
++
++		if (vma->vm_file)
++			file_update_time(vma->vm_file);
+ 	}
+ 	return ret;
+ oom:

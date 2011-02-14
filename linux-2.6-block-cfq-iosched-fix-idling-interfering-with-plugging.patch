@@ -1,0 +1,65 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:45 -0500
+Subject: [block] cfq-iosched: fix idling interfering with plugging
+Message-id: 1257266206-24003-12-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 11/12] cfq-iosched: don't let idling interfere with plugging
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+This commit is necessary to get any semblance of reasonable sequential
+read throughput.  It should help workloads other than just the close
+cooperators.
+
+commit b029195dda0129b427c6e579a3bb3ae752da3a93
+Author: Jens Axboe <jens.axboe@oracle.com>
+Date:   Tue Apr 7 11:38:31 2009 +0200
+
+    cfq-iosched: don't let idling interfere with plugging
+
+    When CFQ is waiting for a new request from a process, currently it'll
+    immediately restart queuing when it sees such a request. This doesn't
+    work very well with streamed IO, since we then end up splitting IO
+    that would otherwise have been merged nicely. For a simple dd test,
+    this causes 10x as many requests to be issued as we should have.
+    Normally this goes unnoticed due to the low overhead of requests
+    at the device side, but some hardware is very sensitive to request
+    sizes and there it can cause big slow downs.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 08275c1..b95f605 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -854,6 +854,7 @@ __cfq_set_active_queue(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ 		cfqq->slice_start = jiffies;
+ 		cfqq->slice_end = 0;
+ 		cfqq->slice_left = 0;
++		cfq_clear_cfqq_must_dispatch(cfqq);
+ 		cfq_clear_cfqq_must_alloc_slice(cfqq);
+ 		cfq_clear_cfqq_fifo_expire(cfqq);
+ 	}
+@@ -2102,15 +2103,13 @@ cfq_crq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
+ 
+ 	if (cfqq == cfqd->active_queue) {
+ 		/*
+-		 * if we are waiting for a request for this queue, let it rip
+-		 * immediately and flag that we must not expire this queue
+-		 * just now
++		 * Remember that we saw a request from this process, but
++		 * don't start queuing just yet. Otherwise we risk seeing lots
++		 * of tiny requests, because we disrupt the normal plugging
++		 * and merging.
+ 		 */
+-		if (cfq_cfqq_wait_request(cfqq)) {
++		if (cfq_cfqq_wait_request(cfqq))
+ 			cfq_mark_cfqq_must_dispatch(cfqq);
+-			del_timer(&cfqd->idle_slice_timer);
+-			cfq_start_queueing(cfqd, cfqq);
+-		}
+ 	} else if (cfq_should_preempt(cfqd, cfqq, crq)) {
+ 		/*
+ 		 * not the active queue - expire current slice if it is

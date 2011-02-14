@@ -1,0 +1,51 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:23:18 -0400
+Subject: [scsi] lpfc: fix a BUG_ON in lpfc_abort_handler
+Message-id: <1288192999-24221-27-git-send-email-revers@redhat.com>
+Patchwork-id: 28951
+O-Subject: [RHEL5.6 PATCH 26/27] lpfc: Fixed crashes for BUG_ONs hit in the
+	lpfc_abort_handler. (CR: 110994)
+Bugzilla: 639028
+
+lpfc: Fixed crashes for BUG_ONs hit in the lpfc_abort_handler. (CR: 110994)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index dc3448e..c99cae8 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -524,6 +524,7 @@ lpfc_new_scsi_buf_s3(struct lpfc_vport *vport, int num_to_alloc)
+ 		iocb->ulpClass = CLASS3;
+ 		psb->status = IOSTAT_SUCCESS;
+ 		/* Put it back into the SCSI buffer list */
++		psb->cur_iocbq.context1  = psb;
+ 		lpfc_release_scsi_buf_s3(phba, psb);
+ 	}
+ 
+@@ -773,6 +774,7 @@ lpfc_new_scsi_buf_s4(struct lpfc_vport *vport, int num_to_alloc)
+ 		iocb->ulpBdeCount = 1;
+ 		iocb->ulpLe = 1;
+ 		iocb->ulpClass = CLASS3;
++		psb->cur_iocbq.context1  = psb;
+ 		if (phba->cfg_sg_dma_buf_size > SGL_PAGE_SIZE)
+ 			pdma_phys_bpl1 = pdma_phys_bpl + SGL_PAGE_SIZE;
+ 		else
+@@ -2274,7 +2276,14 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
+ 
+ 	lpfc_block_error_handler(cmnd);
+ 	lpfc_cmd = (struct lpfc_scsi_buf *)cmnd->host_scribble;
+-	BUG_ON(!lpfc_cmd);
++	if (!lpfc_cmd) {
++		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
++			 "2873 SCSI Layer I/O Abort Request IO CMPL Status "
++			 "x%x ID %d "
++			 "LUN %d snum %#lx\n", ret, cmnd->device->id,
++			 cmnd->device->lun, cmnd->serial_number);
++		return SUCCESS;
++	}
+ 
+ 	/*
+ 	 * If pCmd field of the corresponding lpfc_scsi_buf structure

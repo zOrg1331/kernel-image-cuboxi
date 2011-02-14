@@ -1,0 +1,321 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [PATCH][RHEL5]  Unable to mount more that 1 Secure NFS mount
+Date: Mon, 22 Jan 2007 09:57:00 -0500
+Bugzilla: 220649
+Message-Id: <45B4D0BC.4010300@RedHat.com>
+Changelog: nfs: Unable to mount more than 1 Secure NFS mount
+
+
+This is a late breaking fix that allows more than one Secure NFS
+mount to be mounted. There are three upstream patches that are
+needed to  fix this problem.
+
+The first patch clones RPC client structures that allow more
+that one connection which basically fixes the problem... but...
+Unfortunately the cloning code is a bit challenged....
+
+So the second patch, fixes the cloning process by adding
+referents counts to xptr structures (structures that are used
+for connections) and to stop the freeing of freed memory...
+(which is always a good thing... ;-) )
+
+The third patch fixes a BUG_ON() from popping due to a
+mis-configured krb5 environment or a selinux denial which
+is a very common problem when people start to use secured
+mounts
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220649
+
+steved.
+
+commit 3e32a5d99a467b9d4d416323c8c292479b4915e5
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+    SUNRPC: Give cloned RPC clients their own rpc_pipefs directory
+
+	    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+--------------
+
+--- linux-2.6.18.i686/include/linux/sunrpc/clnt.h.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/include/linux/sunrpc/clnt.h	2007-01-17 13:48:10.000000000 -0500
+@@ -66,6 +66,7 @@ struct rpc_clnt {
+ 	struct rpc_rtt		cl_rtt_default;
+ 	struct rpc_portmap	cl_pmap_default;
+ 	char			cl_inline_name[32];
++	struct rpc_program *	cl_program;
+ };
+ #define cl_timeout		cl_xprt->timeout
+ #define cl_prog			cl_pmap->pm_prog
+--- linux-2.6.18.i686/net/sunrpc/clnt.c.orig	2007-01-15 06:13:14.000000000 -0500
++++ linux-2.6.18.i686/net/sunrpc/clnt.c	2007-01-17 13:53:44.000000000 -0500
+@@ -154,6 +154,7 @@ rpc_new_client(struct rpc_xprt *xprt, ch
+ 	clnt->cl_prot     = xprt->prot;
+ 	clnt->cl_stats    = program->stats;
+ 	clnt->cl_metrics  = rpc_alloc_iostats(clnt);
++	clnt->cl_program  = program;
+ 	rpc_init_wait_queue(&clnt->cl_pmap_default.pm_bindwait, "bindwait");
+ 
+ 	if (!clnt->cl_port)
+@@ -235,6 +236,7 @@ struct rpc_clnt *
+ rpc_clone_client(struct rpc_clnt *clnt)
+ {
+ 	struct rpc_clnt *new;
++	int err;
+ 
+ 	new = kmalloc(sizeof(*new), GFP_KERNEL);
+ 	if (!new)
+@@ -242,6 +244,11 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	memcpy(new, clnt, sizeof(*new));
+ 	atomic_set(&new->cl_count, 1);
+ 	atomic_set(&new->cl_users, 0);
++	err = rpc_setup_pipedir(new, clnt->cl_program->pipe_dir_name);
++	if (err != 0) {
++		kfree(new);
++		return ERR_PTR(err);
++	}
+ 	new->cl_parent = clnt;
+ 	atomic_inc(&clnt->cl_count);
+ 	/* Duplicate portmapper */
+@@ -250,8 +257,6 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	new->cl_autobind = 0;
+ 	new->cl_oneshot = 0;
+ 	new->cl_dead = 0;
+-	if (!IS_ERR(new->cl_dentry))
+-		dget(new->cl_dentry);
+ 	rpc_init_rtt(&new->cl_rtt_default, clnt->cl_xprt->timeout.to_initval);
+ 	if (new->cl_auth)
+ 		atomic_inc(&new->cl_auth->au_count);
+@@ -313,12 +318,6 @@ rpc_destroy_client(struct rpc_clnt *clnt
+ 		rpcauth_destroy(clnt->cl_auth);
+ 		clnt->cl_auth = NULL;
+ 	}
+-	if (clnt->cl_parent != clnt) {
+-		if (!IS_ERR(clnt->cl_dentry))
+-			dput(clnt->cl_dentry);
+-		rpc_destroy_client(clnt->cl_parent);
+-		goto out_free;
+-	}
+ 	if (!IS_ERR(clnt->cl_dentry)) {
+ 		rpc_rmdir(clnt->cl_dentry);
+ 		rpc_put_mount();
+@@ -327,6 +326,10 @@ rpc_destroy_client(struct rpc_clnt *clnt
+ 		xprt_destroy(clnt->cl_xprt);
+ 		clnt->cl_xprt = NULL;
+ 	}
++	if (clnt->cl_parent != clnt) {
++		rpc_destroy_client(clnt->cl_parent);
++		goto out_free;
++	}
+ 	if (clnt->cl_server != clnt->cl_inline_name)
+ 		kfree(clnt->cl_server);
+ out_free:
+
+commit 6b6ca86b77b62b798cf9ca2599036420abce7796
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+    SUNRPC: Add refcounting to the struct rpc_xprt
+
+    In a subsequent patch, this will allow the portmapper to take a reference
+    to the rpc_xprt for which it is updating the port number, fixing an Oops.
+
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+------------------------------------------------------
+--- linux-2.6.18.noarch/include/linux/sunrpc/xprt.h.orig	2007-01-20 06:37:30.000000000 -0500
++++ linux-2.6.18.noarch/include/linux/sunrpc/xprt.h	2007-01-20 06:37:59.000000000 -0500
+@@ -12,6 +12,7 @@
+ #include <linux/uio.h>
+ #include <linux/socket.h>
+ #include <linux/in.h>
++#include <linux/kref.h>
+ #include <linux/sunrpc/sched.h>
+ #include <linux/sunrpc/xdr.h>
+ 
+@@ -119,6 +120,7 @@ struct rpc_xprt_ops {
+ };
+ 
+ struct rpc_xprt {
++	struct kref		kref;		/* Reference count */
+ 	struct rpc_xprt_ops *	ops;		/* transport methods */
+ 	struct socket *		sock;		/* BSD socket layer */
+ 	struct sock *		inet;		/* INET layer */
+@@ -234,7 +236,8 @@ int			xprt_adjust_timeout(struct rpc_rqs
+ void			xprt_release_xprt(struct rpc_xprt *xprt, struct rpc_task *task);
+ void			xprt_release_xprt_cong(struct rpc_xprt *xprt, struct rpc_task *task);
+ void			xprt_release(struct rpc_task *task);
+-int			xprt_destroy(struct rpc_xprt *xprt);
++struct rpc_xprt *	xprt_get(struct rpc_xprt *xprt);
++void			xprt_put(struct rpc_xprt *xprt);
+ 
+ static inline u32 *xprt_skip_transport_header(struct rpc_xprt *xprt, u32 *p)
+ {
+--- linux-2.6.18.noarch/net/sunrpc/clnt.c.orig	2007-01-20 06:35:28.000000000 -0500
++++ linux-2.6.18.noarch/net/sunrpc/clnt.c	2007-01-20 06:40:09.000000000 -0500
+@@ -192,7 +192,7 @@ out_no_path:
+ 		kfree(clnt->cl_server);
+ 	kfree(clnt);
+ out_err:
+-	xprt_destroy(xprt);
++	xprt_put(xprt);
+ out_no_xprt:
+ 	return ERR_PTR(err);
+ }
+@@ -244,11 +244,24 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	memcpy(new, clnt, sizeof(*new));
+ 	atomic_set(&new->cl_count, 1);
+ 	atomic_set(&new->cl_users, 0);
++	if (clnt->cl_server != clnt->cl_inline_name) {
++		new->cl_server = kstrdup(clnt->cl_server, GFP_KERNEL);
++		if (new->cl_server == NULL) {
++			kfree(new);
++			return ERR_PTR(-ENOMEM);
++		}
++	} else
++		new->cl_server = new->cl_inline_name;
++
+ 	err = rpc_setup_pipedir(new, clnt->cl_program->pipe_dir_name);
+ 	if (err != 0) {
++		if (new->cl_server != new->cl_inline_name)
++			kfree(new->cl_server);
+ 		kfree(new);
+ 		return ERR_PTR(err);
+ 	}
++
++	new->cl_xprt = xprt_get(clnt->cl_xprt);
+ 	new->cl_parent = clnt;
+ 	atomic_inc(&clnt->cl_count);
+ 	/* Duplicate portmapper */
+@@ -322,10 +335,6 @@ rpc_destroy_client(struct rpc_clnt *clnt
+ 		rpc_rmdir(clnt->cl_dentry);
+ 		rpc_put_mount();
+ 	}
+-	if (clnt->cl_xprt) {
+-		xprt_destroy(clnt->cl_xprt);
+-		clnt->cl_xprt = NULL;
+-	}
+ 	if (clnt->cl_parent != clnt) {
+ 		rpc_destroy_client(clnt->cl_parent);
+ 		goto out_free;
+@@ -335,6 +344,7 @@ rpc_destroy_client(struct rpc_clnt *clnt
+ out_free:
+ 	rpc_free_iostats(clnt->cl_metrics);
+ 	clnt->cl_metrics = NULL;
++	xprt_put(clnt->cl_xprt);
+ 	kfree(clnt);
+ 	return 0;
+ }
+--- linux-2.6.18.noarch/net/sunrpc/xprt.c.orig	2007-01-20 06:37:43.000000000 -0500
++++ linux-2.6.18.noarch/net/sunrpc/xprt.c	2007-01-20 06:37:59.000000000 -0500
+@@ -916,6 +916,7 @@ static struct rpc_xprt *xprt_setup(int p
+ 		return ERR_PTR(result);
+ 	}
+ 
++	kref_init(&xprt->kref);
+ 	spin_lock_init(&xprt->transport_lock);
+ 	spin_lock_init(&xprt->reserve_lock);
+ 
+@@ -966,16 +967,36 @@ struct rpc_xprt *xprt_create_proto(int p
+ 
+ /**
+  * xprt_destroy - destroy an RPC transport, killing off all requests.
+- * @xprt: transport to destroy
++ * @kref: kref for the transport to destroy
+  *
+  */
+-int xprt_destroy(struct rpc_xprt *xprt)
++static void xprt_destroy(struct kref *kref)
+ {
++	struct rpc_xprt *xprt = container_of(kref, struct rpc_xprt, kref);
++
+ 	dprintk("RPC:      destroying transport %p\n", xprt);
+ 	xprt->shutdown = 1;
+ 	del_timer_sync(&xprt->timer);
+ 	xprt->ops->destroy(xprt);
+ 	kfree(xprt);
++}
++/**
++ * xprt_put - release a reference to an RPC transport.
++ * @xprt: pointer to the transport
++ *
++ */
++void xprt_put(struct rpc_xprt *xprt)
++{
++	kref_put(&xprt->kref, xprt_destroy);
++}
+ 
+-	return 0;
++/**
++ * xprt_get - return a reference to an RPC transport.
++ * @xprt: pointer to the transport
++ *
++ */
++struct rpc_xprt *xprt_get(struct rpc_xprt *xprt)
++{
++	kref_get(&xprt->kref);
++	return xprt;
+ }
+
+We shouldn't be calling rpc_release_task() for tasks that are not active.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+-------------
+--- linux-2.6.18.i686/include/linux/sunrpc/sched.h.orig	2007-01-21 05:40:37.000000000 -0500
++++ linux-2.6.18.i686/include/linux/sunrpc/sched.h	2007-01-21 15:06:11.000000000 -0500
+@@ -253,7 +253,6 @@ void		rpc_init_task(struct rpc_task *tas
+ 				int flags, const struct rpc_call_ops *ops,
+ 				void *data);
+ void		rpc_put_task(struct rpc_task *);
+-void		rpc_release_task(struct rpc_task *);
+ void		rpc_exit_task(struct rpc_task *);
+ void		rpc_killall_tasks(struct rpc_clnt *);
+ int		rpc_execute(struct rpc_task *);
+--- linux-2.6.18.i686/net/sunrpc/clnt.c.orig	2007-01-21 05:40:37.000000000 -0500
++++ linux-2.6.18.i686/net/sunrpc/clnt.c	2007-01-21 15:06:11.000000000 -0500
+@@ -479,16 +479,14 @@ int rpc_call_sync(struct rpc_clnt *clnt,
+ 
+ 	/* Set up the call info struct and execute the task */
+ 	status = task->tk_status;
+-	if (status != 0) {
+-		rpc_release_task(task);
++	if (status != 0)
+ 		goto out;
+-	}
+ 	atomic_inc(&task->tk_count);
+ 	status = rpc_execute(task);
+ 	if (status == 0)
+ 		status = task->tk_status;
+-	rpc_put_task(task);
+ out:
++	rpc_put_task(task);
+ 	rpc_restore_sigmask(&oldset);
+ 	return status;
+ }
+@@ -526,7 +524,7 @@ rpc_call_async(struct rpc_clnt *clnt, st
+ 	if (status == 0)
+ 		rpc_execute(task);
+ 	else
+-		rpc_release_task(task);
++		rpc_put_task(task);
+ 
+ 	rpc_restore_sigmask(&oldset);		
+ 	return status;
+--- linux-2.6.18.i686/net/sunrpc/sched.c.orig	2007-01-21 15:04:14.000000000 -0500
++++ linux-2.6.18.i686/net/sunrpc/sched.c	2007-01-21 15:07:09.000000000 -0500
+@@ -43,6 +43,7 @@ static mempool_t	*rpc_buffer_mempool __r
+ static void			__rpc_default_timer(struct rpc_task *task);
+ static void			rpciod_killall(void);
+ static void			rpc_async_schedule(void *);
++static void			 rpc_release_task(struct rpc_task *task);
+ 
+ /*
+  * RPC tasks that create another task (e.g. for contacting the portmapper)
+@@ -909,7 +910,7 @@ void rpc_put_task(struct rpc_task *task)
+ }
+ EXPORT_SYMBOL(rpc_put_task);
+ 
+-void rpc_release_task(struct rpc_task *task)
++static void rpc_release_task(struct rpc_task *task)
+ {
+ #ifdef RPC_DEBUG
+ 	BUG_ON(task->tk_magic != RPC_TASK_MAGIC_ID);
+

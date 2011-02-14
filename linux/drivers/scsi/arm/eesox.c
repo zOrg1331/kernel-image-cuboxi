@@ -27,6 +27,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/sched.h>
 #include <linux/proc_fs.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -137,9 +138,10 @@ eesoxscsi_terminator_ctl(struct Scsi_Host *host, int on_off)
  * Purpose  : handle interrupts from EESOX SCSI card
  * Params   : irq    - interrupt number
  *	      dev_id - user-defined (Scsi_Host structure)
+ *	      regs   - processor registers at interrupt
  */
 static irqreturn_t
-eesoxscsi_intr(int irq, void *dev_id)
+eesoxscsi_intr(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct eesoxscsi_info *info = dev_id;
 
@@ -175,10 +177,10 @@ eesoxscsi_dma_setup(struct Scsi_Host *host, struct scsi_pointer *SCp,
 			map_dir = DMA_FROM_DEVICE,
 			dma_dir = DMA_MODE_READ;
 
-		dma_map_sg(dev, info->sg, bufs, map_dir);
+		dma_map_sg(dev, info->sg, bufs + 1, map_dir);
 
 		disable_dma(dmach);
-		set_dma_sg(dmach, info->sg, bufs);
+		set_dma_sg(dmach, info->sg, bufs + 1);
 		set_dma_mode(dmach, dma_dir);
 		enable_dma(dmach);
 		return fasdma_real_all;
@@ -196,7 +198,7 @@ static void eesoxscsi_buffer_in(void *buf, int length, void __iomem *base)
 	const void __iomem *reg_fas = base + EESOX_FAS216_OFFSET;
 	const void __iomem *reg_dmastat = base + EESOX_DMASTAT;
 	const void __iomem *reg_dmadata = base + EESOX_DMADATA;
-	register const unsigned long mask = 0xffff;
+	const register unsigned long mask = 0xffff;
 
 	do {
 		unsigned int status;
@@ -508,8 +510,7 @@ static struct scsi_host_template eesox_template = {
 	.eh_abort_handler		= fas216_eh_abort,
 	.can_queue			= 1,
 	.this_id			= 7,
-	.sg_tablesize			= SCSI_MAX_SG_CHAIN_SEGMENTS,
-	.dma_boundary			= IOMD_DMA_BOUNDARY,
+	.sg_tablesize			= SG_ALL,
 	.cmd_per_lun			= 1,
 	.use_clustering			= DISABLE_CLUSTERING,
 	.proc_name			= "eesox",
@@ -520,6 +521,7 @@ eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 {
 	struct Scsi_Host *host;
 	struct eesoxscsi_info *info;
+	unsigned long resbase, reslen;
 	void __iomem *base;
 	int ret;
 
@@ -527,7 +529,9 @@ eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 	if (ret)
 		goto out;
 
-	base = ecardm_iomap(ec, ECARD_RES_IOCFAST, 0, 0);
+	resbase = ecard_resource_start(ec, ECARD_RES_IOCFAST);
+	reslen = ecard_resource_len(ec, ECARD_RES_IOCFAST);
+	base = ioremap(resbase, reslen);
 	if (!base) {
 		ret = -ENOMEM;
 		goto out_region;
@@ -537,7 +541,7 @@ eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 			       sizeof(struct eesoxscsi_info));
 	if (!host) {
 		ret = -ENOMEM;
-		goto out_region;
+		goto out_unmap;
 	}
 
 	ecard_set_drvdata(ec, host);
@@ -567,8 +571,8 @@ eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 
 	ec->irqaddr	= base + EESOX_DMASTAT;
 	ec->irqmask	= EESOX_STAT_INTR;
-
-	ecard_setirq(ec, &eesoxscsi_ops, info);
+	ec->irq_data	= info;
+	ec->ops		= &eesoxscsi_ops;
 
 	device_create_file(&ec->dev, &dev_attr_bus_term);
 
@@ -610,6 +614,9 @@ eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 	device_remove_file(&ec->dev, &dev_attr_bus_term);
 	scsi_host_put(host);
 
+ out_unmap:
+	iounmap(base);
+
  out_region:
 	ecard_release_resources(ec);
 
@@ -630,6 +637,8 @@ static void __devexit eesoxscsi_remove(struct expansion_card *ec)
 	free_irq(ec->irq, info);
 
 	device_remove_file(&ec->dev, &dev_attr_bus_term);
+
+	iounmap(info->base);
 
 	fas216_release(host);
 	scsi_host_put(host);

@@ -1,7 +1,7 @@
 /*
 * cypress_cy7c63.c
 *
-* Copyright (c) 2006-2007 Oliver Bock (bock@tfh-berlin.de)
+* Copyright (c) 2006 Oliver Bock (o.bock@fh-wolfenbuettel.de)
 *
 *	This driver is based on the Cypress USB Driver by Marcus Maul
 *	(cyport) and the 2.0 version of Greg Kroah-Hartman's
@@ -21,9 +21,6 @@
 *	Supported functions:	Read/Write Ports
 *
 *
-*	For up-to-date information please visit:
-*	http://www.obock.de/kernel/cypress
-*
 *	This program is free software; you can redistribute it and/or
 *	modify it under the terms of the GNU General Public License as
 *	published by the Free Software Foundation, version 2.
@@ -34,7 +31,7 @@
 #include <linux/kernel.h>
 #include <linux/usb.h>
 
-#define DRIVER_AUTHOR		"Oliver Bock (bock@tfh-berlin.de)"
+#define DRIVER_AUTHOR		"Oliver Bock (o.bock@fh-wolfenbuettel.de)"
 #define DRIVER_DESC		"Cypress CY7C63xxx USB driver"
 
 #define CYPRESS_VENDOR_ID	0xa2c
@@ -212,7 +209,7 @@ static int cypress_probe(struct usb_interface *interface,
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (dev == NULL) {
 		dev_err(&interface->dev, "Out of memory!\n");
-		goto error_mem;
+		goto error;
 	}
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
@@ -221,26 +218,15 @@ static int cypress_probe(struct usb_interface *interface,
 	usb_set_intfdata(interface, dev);
 
 	/* create device attribute files */
-	retval = device_create_file(&interface->dev, &dev_attr_port0);
-	if (retval)
-		goto error;
-	retval = device_create_file(&interface->dev, &dev_attr_port1);
-	if (retval)
-		goto error;
+	device_create_file(&interface->dev, &dev_attr_port0);
+	device_create_file(&interface->dev, &dev_attr_port1);
 
 	/* let the user know that the device is now attached */
 	dev_info(&interface->dev,
 		 "Cypress CY7C63xxx device now attached\n");
-	return 0;
 
+	retval = 0;
 error:
-	device_remove_file(&interface->dev, &dev_attr_port0);
-	device_remove_file(&interface->dev, &dev_attr_port1);
-	usb_set_intfdata(interface, NULL);
-	usb_put_dev(dev->udev);
-	kfree(dev);
-
-error_mem:
 	return retval;
 }
 
@@ -249,13 +235,11 @@ static void cypress_disconnect(struct usb_interface *interface)
 	struct cypress *dev;
 
 	dev = usb_get_intfdata(interface);
+	usb_set_intfdata(interface, NULL);
 
 	/* remove device attribute files */
 	device_remove_file(&interface->dev, &dev_attr_port0);
 	device_remove_file(&interface->dev, &dev_attr_port1);
-	/* the intfdata can be set to NULL only after the
-	 * device files have been removed */
-	usb_set_intfdata(interface, NULL);
 
 	usb_put_dev(dev->udev);
 
@@ -278,9 +262,9 @@ static int __init cypress_init(void)
 
 	/* register this driver with the USB subsystem */
 	result = usb_register(&cypress_driver);
-	if (result)
-		printk(KERN_ERR KBUILD_MODNAME ": usb_register failed! "
-		       "Error number: %d\n", result);
+	if (result) {
+		err("Function usb_register failed! Error number: %d\n", result);
+	}
 
 	return result;
 }

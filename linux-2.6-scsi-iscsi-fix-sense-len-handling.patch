@@ -1,0 +1,49 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL5] fix iscsi sense len handling take 2
+Date: Tue, 02 Jan 2007 17:16:50 -0600
+Bugzilla: 217933
+Message-Id: <459AE7E2.5060404@redhat.com>
+Changelog: scsi: fix iscsi sense len handling
+
+
+This is for BZ 217933.
+
+This implements Dave Miller's request to use get_unaligned(). I tested
+the patch against a modified software iscsi target that throws sense on
+every X commands.
+
+--- linux-2.6.18.noarch.orig/drivers/scsi/libiscsi.c	2007-01-02 09:53:09.000000000 -0600
++++ linux-2.6.18.noarch.sense/drivers/scsi/libiscsi.c	2007-01-02 10:22:39.000000000 -0600
+@@ -25,6 +25,7 @@
+ #include <linux/mutex.h>
+ #include <linux/kfifo.h>
+ #include <linux/delay.h>
++#include <asm/unaligned.h>
+ #include <net/tcp.h>
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_device.h>
+@@ -260,7 +261,7 @@ static int iscsi_scsi_cmd_rsp(struct isc
+ 	}
+ 
+ 	if (rhdr->cmd_status == SAM_STAT_CHECK_CONDITION) {
+-		int senselen;
++		uint16_t senselen;
+ 
+ 		if (datalen < 2) {
+ invalid_datalen:
+@@ -270,12 +271,12 @@ invalid_datalen:
+ 			goto out;
+ 		}
+ 
+-		senselen = (data[0] << 8) | data[1];
++		senselen = be16_to_cpu(get_unaligned((__be16 *) data));
+ 		if (datalen < senselen)
+ 			goto invalid_datalen;
+ 
+ 		memcpy(sc->sense_buffer, data + 2,
+-		       min(senselen, SCSI_SENSE_BUFFERSIZE));
++		       min_t(uint16_t, senselen, SCSI_SENSE_BUFFERSIZE));
+ 		debug_scsi("copied %d bytes of sense\n",
+ 			   min(senselen, SCSI_SENSE_BUFFERSIZE));
+ 	}
+

@@ -1,0 +1,74 @@
+From: Chris Snook <csnook@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 230171 fix dasd reservations
+Date: Tue, 20 Mar 2007 00:36:28 -0400
+Bugzilla: 230171
+Message-Id: <45FF64CC.7060306@redhat.com>
+Changelog: [s390] fix dasd reservations
+
+
+Hey folks --
+
+	The DASD reservation feature is currently broken because it bails 
+	out on a non-fatal error which will always be returned if another guest has 
+previously reserved it.  The attached patch, written and tested by IBM, 
+enables retries, which are always successful unless the device is really 
+already reserved by another guest.
+
+	Fixes BZ 230171.  Please ack.
+
+	-- Chris
+
+diff -Naurp linux-2.6.18.s390x/drivers/s390/block/dasd.c linux-2.6.18.s390x-new/drivers/s390/block/dasd.c
+--- linux-2.6.18.s390x/drivers/s390/block/dasd.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390x-new/drivers/s390/block/dasd.c	2007-01-31 17:23:38.000000000 +0100
+@@ -1023,8 +1023,6 @@ dasd_int_handler(struct ccw_device *cdev
+ 		 irb->scsw.cstat == 0 &&
+ 		 !irb->esw.esw0.erw.cons)
+ 		era = dasd_era_none;
+-	else if (!test_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags))
+- 	        era = dasd_era_fatal; /* don't recover this request */
+ 	else if (irb->esw.esw0.erw.cons)
+ 		era = device->discipline->examine_error(cqr, irb);
+ 	else
+@@ -1128,7 +1126,9 @@ restart:
+ 				cqr->status = DASD_CQR_FAILED;
+ 				cqr->stopclk = get_clock();
+ 			} else {
+-				if (cqr->irb.esw.esw0.erw.cons) {
++				if (cqr->irb.esw.esw0.erw.cons &&
++				    test_bit(DASD_CQR_FLAGS_USE_ERP,
++					     &cqr->flags)) {
+ 					erp_fn = device->discipline->
+ 						erp_action(cqr);
+ 					erp_fn(cqr);
+diff -Naurp linux-2.6.18.s390x/drivers/s390/block/dasd_eckd.c linux-2.6.18.s390x-new/drivers/s390/block/dasd_eckd.c
+--- linux-2.6.18.s390x/drivers/s390/block/dasd_eckd.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390x-new/drivers/s390/block/dasd_eckd.c	2007-01-31 17:24:21.000000000 +0100
+@@ -1380,7 +1380,7 @@ dasd_eckd_release(struct dasd_device *de
+ 	cqr->device = device;
+ 	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);
+ 	set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+-	cqr->retries = 0;
++	cqr->retries = 2;	/* set retry counter to enable basic ERP */
+ 	cqr->expires = 2 * HZ;
+ 	cqr->buildclk = get_clock();
+ 	cqr->status = DASD_CQR_FILLED;
+@@ -1420,7 +1420,7 @@ dasd_eckd_reserve(struct dasd_device *de
+ 	cqr->device = device;
+ 	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);
+ 	set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+-	cqr->retries = 0;
++	cqr->retries = 2;	/* set retry counter to enable basic ERP */
+ 	cqr->expires = 2 * HZ;
+ 	cqr->buildclk = get_clock();
+ 	cqr->status = DASD_CQR_FILLED;
+@@ -1459,7 +1459,7 @@ dasd_eckd_steal_lock(struct dasd_device 
+ 	cqr->device = device;
+ 	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);
+ 	set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+-	cqr->retries = 0;
++	cqr->retries = 2;	/* set retry counter to enable basic ERP */
+ 	cqr->expires = 2 * HZ;
+ 	cqr->buildclk = get_clock();
+ 	cqr->status = DASD_CQR_FILLED;
+

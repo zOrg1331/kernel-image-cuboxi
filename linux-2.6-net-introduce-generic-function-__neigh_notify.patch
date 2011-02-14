@@ -1,0 +1,79 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 25 Aug 2009 06:44:09 -0400
+Subject: [net] introduce generic function __neigh_notify
+Message-id: <20090825064420.28685.20585.sendpatchset@danny>
+Patchwork-id: 20795
+O-Subject: [PATCH RHEL5.5 1/2] [NETLINK]: introduce generic function
+	__neigh_notify
+Bugzilla: 516589
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=516589
+
+Description:
+Derived from upstream commit b86733, introduce generic function __neigh_notify
+to support notify different types (e.g RTM_NEWNEIGH/RTM_DELNEIGH/RTM_GETNEIGH)
+and flags (NLM_F_REQUEST etc). This function can be called without CONFIG_ARPD.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6-stable.git;a=commitdiff;h=b8673311804ca29680dd584bd08352001fcbe2f8
+
+diff --git a/net/core/neighbour.c b/net/core/neighbour.c
+index 32a4c4f..96841cc 100644
+--- a/net/core/neighbour.c
++++ b/net/core/neighbour.c
+@@ -2345,8 +2345,7 @@ static struct file_operations neigh_stat_seq_fops = {
+ 
+ #endif /* CONFIG_PROC_FS */
+ 
+-#ifdef CONFIG_ARPD
+-void neigh_app_ns(struct neighbour *n)
++static void __neigh_notify(struct neighbour *n, int type, int flags)
+ {
+ 	struct nlmsghdr  *nlh;
+ 	int size = NLMSG_SPACE(sizeof(struct ndmsg) + 256);
+@@ -2355,32 +2354,25 @@ void neigh_app_ns(struct neighbour *n)
+ 	if (!skb)
+ 		return;
+ 
+-	if (neigh_fill_info(skb, n, 0, 0, RTM_GETNEIGH, 0) < 0) {
++	if (neigh_fill_info(skb, n, 0, 0, type, 0) < 0) {
+ 		kfree_skb(skb);
+ 		return;
+ 	}
+ 	nlh			   = (struct nlmsghdr *)skb->data;
+-	nlh->nlmsg_flags	   = NLM_F_REQUEST;
++	nlh->nlmsg_flags	   = flags;
+ 	NETLINK_CB(skb).dst_group  = RTNLGRP_NEIGH;
+ 	netlink_broadcast(rtnl, skb, 0, RTNLGRP_NEIGH, GFP_ATOMIC);
+ }
+ 
+-static void neigh_app_notify(struct neighbour *n)
++#ifdef CONFIG_ARPD
++void neigh_app_ns(struct neighbour *n)
+ {
+-	struct nlmsghdr *nlh;
+-	int size = NLMSG_SPACE(sizeof(struct ndmsg) + 256);
+-	struct sk_buff *skb = alloc_skb(size, GFP_ATOMIC);
+-
+-	if (!skb)
+-		return;
++	__neigh_notify(n, RTM_GETNEIGH, NLM_F_REQUEST);
++}
+ 
+-	if (neigh_fill_info(skb, n, 0, 0, RTM_NEWNEIGH, 0) < 0) {
+-		kfree_skb(skb);
+-		return;
+-	}
+-	nlh			   = (struct nlmsghdr *)skb->data;
+-	NETLINK_CB(skb).dst_group  = RTNLGRP_NEIGH;
+-	netlink_broadcast(rtnl, skb, 0, RTNLGRP_NEIGH, GFP_ATOMIC);
++static void neigh_app_notify(struct neighbour *n)
++{
++	__neigh_notify(n, RTM_NEWNEIGH, 0);
+ }
+ 
+ #endif /* CONFIG_ARPD */

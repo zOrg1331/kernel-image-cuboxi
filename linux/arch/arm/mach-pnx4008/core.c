@@ -25,9 +25,9 @@
 #include <linux/serial_8250.h>
 #include <linux/device.h>
 #include <linux/spi/spi.h>
-#include <linux/io.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/setup.h>
 #include <asm/mach-types.h>
 #include <asm/pgtable.h>
@@ -38,9 +38,9 @@
 #include <asm/mach/map.h>
 #include <asm/mach/time.h>
 
-#include <mach/irq.h>
-#include <mach/clock.h>
-#include <mach/dma.h>
+#include <asm/arch/irq.h>
+#include <asm/arch/clock.h>
+#include <asm/arch/dma.h>
 
 struct resource spipnx_0_resources[] = {
 	{
@@ -133,79 +133,10 @@ static struct platform_device serial_device = {
 	},
 };
 
-static struct platform_device nand_flash_device = {
-	.name = "pnx4008-flash",
-	.id = -1,
-	.dev = {
-		.coherent_dma_mask = 0xFFFFFFFF,
-	},
-};
-
-/* The dmamask must be set for OHCI to work */
-static u64 ohci_dmamask = ~(u32) 0;
-
-static struct resource ohci_resources[] = {
-	{
-		.start = IO_ADDRESS(PNX4008_USB_CONFIG_BASE),
-		.end = IO_ADDRESS(PNX4008_USB_CONFIG_BASE + 0x100),
-		.flags = IORESOURCE_MEM,
-	}, {
-		.start = USB_HOST_INT,
-		.flags = IORESOURCE_IRQ,
-	},
-};
-
-static struct platform_device ohci_device = {
-	.name = "pnx4008-usb-ohci",
-	.id = -1,
-	.dev = {
-		.dma_mask = &ohci_dmamask,
-		.coherent_dma_mask = 0xffffffff,
-		},
-	.num_resources = ARRAY_SIZE(ohci_resources),
-	.resource = ohci_resources,
-};
-
-static struct platform_device sdum_device = {
-	.name = "pnx4008-sdum",
-	.id = 0,
-	.dev = {
-		.coherent_dma_mask = 0xffffffff,
-	},
-};
-
-static struct platform_device rgbfb_device = {
-	.name = "pnx4008-rgbfb",
-	.id = 0,
-	.dev = {
-		.coherent_dma_mask = 0xffffffff,
-	}
-};
-
-struct resource watchdog_resources[] = {
-	{
-		.start = PNX4008_WDOG_BASE,
-		.end = PNX4008_WDOG_BASE + SZ_4K - 1,
-		.flags = IORESOURCE_MEM,
-	},
-};
-
-static struct platform_device watchdog_device = {
-	.name = "pnx4008-watchdog",
-	.id = -1,
-	.num_resources = ARRAY_SIZE(watchdog_resources),
-	.resource = watchdog_resources,
-};
-
 static struct platform_device *devices[] __initdata = {
 	&spipnx_1,
 	&spipnx_2,
 	&serial_device,
-	&ohci_device,
-	&nand_flash_device,
-	&sdum_device,
-	&rgbfb_device,
-	&watchdog_device,
 };
 
 

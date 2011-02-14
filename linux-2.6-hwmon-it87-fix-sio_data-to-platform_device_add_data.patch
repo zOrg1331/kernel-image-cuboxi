@@ -1,0 +1,33 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 12 Feb 2010 17:14:42 -0500
+Subject: [hwmon] it87: fix sio_data to platform_device_add_data
+Message-id: <20100212171441.3355.63491.send-patch@aqua>
+Patchwork-id: 23260
+O-Subject: [RHEL5.6 PATCH 3/5] hwmon: it87: fix passing of &sio_data to
+	platform_device_add_data()
+Bugzilla: 559950
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Resolves RHBZ 559950.
+
+The call to platform_device_add_data() passes '&sio_data' as the second arg.
+This results in an "Unable to handle kernel paging request at ..." type panic
+when a 'modprobe it87' is executed on a system with the relevant chip.
+
+The upstream version of this driver passes 'sio_data' minus the '&'.
+
+
+diff --git a/drivers/hwmon/it87.c b/drivers/hwmon/it87.c
+index 5e2d314..e7fe91b 100644
+--- a/drivers/hwmon/it87.c
++++ b/drivers/hwmon/it87.c
+@@ -1501,7 +1501,7 @@ static int __init it87_device_add(unsigned short address,
+ 		goto exit_device_put;
+ 	}
+ 
+-	err = platform_device_add_data(pdev, &sio_data,
++	err = platform_device_add_data(pdev, sio_data,
+ 				       sizeof(struct it87_sio_data));
+ 	if (err) {
+ 		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");

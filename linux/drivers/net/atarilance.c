@@ -224,6 +224,7 @@ struct lance_private {
 	int			dirty_tx;		/* Ring entries to be freed. */
 				/* copy function */
 	void			*(*memcpy_f)( void *, const void *, size_t );
+	struct net_device_stats stats;
 /* This must be long for set_bit() */
 	long			tx_full;
 	spinlock_t		devlock;
@@ -243,7 +244,7 @@ struct lance_private {
 
 /* Possible memory/IO addresses for probing */
 
-static struct lance_addr {
+struct lance_addr {
 	unsigned long	memaddr;
 	unsigned long	ioaddr;
 	int				slow_flag;
@@ -262,7 +263,7 @@ static struct lance_addr {
 									   (highest byte stripped) */
 };
 
-#define	N_LANCE_ADDR	ARRAY_SIZE(lance_addr_list)
+#define	N_LANCE_ADDR	(sizeof(lance_addr_list)/sizeof(*lance_addr_list))
 
 
 /* Definitions for the Lance */
@@ -336,14 +337,17 @@ static struct lance_addr {
 
 /***************************** Prototypes *****************************/
 
+static int addr_accessible( volatile void *regp, int wordflag, int
+                            writeflag );
 static unsigned long lance_probe1( struct net_device *dev, struct lance_addr
                                    *init_rec );
 static int lance_open( struct net_device *dev );
 static void lance_init_ring( struct net_device *dev );
 static int lance_start_xmit( struct sk_buff *skb, struct net_device *dev );
-static irqreturn_t lance_interrupt( int irq, void *dev_id );
+static irqreturn_t lance_interrupt( int irq, void *dev_id, struct pt_regs *fp );
 static int lance_rx( struct net_device *dev );
 static int lance_close( struct net_device *dev );
+static struct net_device_stats *lance_get_stats( struct net_device *dev );
 static void set_multicast_list( struct net_device *dev );
 static int lance_set_mac_address( struct net_device *dev, void *addr );
 static void lance_tx_timeout (struct net_device *dev);
@@ -352,7 +356,7 @@ static void lance_tx_timeout (struct net_device *dev);
 
 
 
-
+
 
 static void *slow_memcpy( void *dst, const void *src, size_t len )
 
@@ -386,6 +390,7 @@ struct net_device * __init atarilance_probe(int unit)
 		sprintf(dev->name, "eth%d", unit);
 		netdev_boot_setup_check(dev);
 	}
+	SET_MODULE_OWNER(dev);
 
 	for( i = 0; i < N_LANCE_ADDR; ++i ) {
 		if (lance_probe1( dev, &lance_addr_list[i] )) {
@@ -404,8 +409,7 @@ struct net_device * __init atarilance_probe(int unit)
 
 /* Derived from hwreg_present() in atari/config.c: */
 
-static noinline int __init addr_accessible(volatile void *regp, int wordflag,
-					   int writeflag)
+static int __init addr_accessible( volatile void *regp, int wordflag, int writeflag )
 {
 	int		ret;
 	long	flags;
@@ -453,16 +457,6 @@ static noinline int __init addr_accessible(volatile void *regp, int wordflag,
 	return( ret );
 }
 
-static const struct net_device_ops lance_netdev_ops = {
-	.ndo_open		= lance_open,
-	.ndo_stop		= lance_close,
-	.ndo_start_xmit		= lance_start_xmit,
-	.ndo_set_multicast_list	= set_multicast_list,
-	.ndo_set_mac_address	= lance_set_mac_address,
-	.ndo_tx_timeout		= lance_tx_timeout,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-};
 
 static unsigned long __init lance_probe1( struct net_device *dev,
 					   struct lance_addr *init_rec )
@@ -530,7 +524,7 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 	return( 0 );
 
   probe_ok:
-	lp = netdev_priv(dev);
+	lp = (struct lance_private *)dev->priv;
 	MEM = (struct lance_memory *)memaddr;
 	IO = lp->iobase = (struct lance_ioreg *)ioaddr;
 	dev->base_addr = (unsigned long)ioaddr; /* informational only */
@@ -555,7 +549,7 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 		memaddr == (unsigned short *)0xffe00000) {
 		/* PAMs card and Riebl on ST use level 5 autovector */
 		if (request_irq(IRQ_AUTO_5, lance_interrupt, IRQ_TYPE_PRIO,
-		            "PAM/Riebl-ST Ethernet", dev)) {
+		            "PAM/Riebl-ST Ethernet", dev)) { 
 			printk( "Lance: request for irq %d failed\n", IRQ_AUTO_5 );
 			return( 0 );
 		}
@@ -604,7 +598,8 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 		i = IO->mem;
 		break;
 	}
-	printk("%pM\n", dev->dev_addr);
+	for( i = 0; i < 6; ++i )
+		printk( "%02x%s", dev->dev_addr[i], (i < 5) ? ":" : "\n" );
 	if (lp->cardtype == OLD_RIEBL) {
 		printk( "%s: Warning: This is a default ethernet address!\n",
 				dev->name );
@@ -633,18 +628,32 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 	if (did_version++ == 0)
 		DPRINTK( 1, ( version ));
 
-	dev->netdev_ops = &lance_netdev_ops;
+	/* The LANCE-specific entries in the device structure. */
+	dev->open = &lance_open;
+	dev->hard_start_xmit = &lance_start_xmit;
+	dev->stop = &lance_close;
+	dev->get_stats = &lance_get_stats;
+	dev->set_multicast_list = &set_multicast_list;
+	dev->set_mac_address = &lance_set_mac_address;
 
 	/* XXX MSch */
+	dev->tx_timeout = lance_tx_timeout;
 	dev->watchdog_timeo = TX_TIMEOUT;
+			
+
+#if 0
+	dev->start = 0;
+#endif
+
+	memset( &lp->stats, 0, sizeof(lp->stats) );
 
 	return( 1 );
 }
 
-
+
 static int lance_open( struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	struct lance_ioreg	 *IO = lp->iobase;
 	int i;
 
@@ -684,8 +693,8 @@ static int lance_open( struct net_device *dev )
 /* Initialize the LANCE Rx and Tx rings. */
 
 static void lance_init_ring( struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	int i;
 	unsigned offset;
 
@@ -733,9 +742,9 @@ static void lance_init_ring( struct net_device *dev )
 
 static void lance_tx_timeout (struct net_device *dev)
 {
-	struct lance_private *lp = netdev_priv(dev);
+	struct lance_private *lp = (struct lance_private *) dev->priv;
 	struct lance_ioreg	 *IO = lp->iobase;
-
+	
 	AREG = CSR0;
 	DPRINTK( 1, ( "%s: transmit timed out, status %04x, resetting.\n",
 			  dev->name, DREG ));
@@ -745,7 +754,7 @@ static void lance_tx_timeout (struct net_device *dev)
 	 * little endian mode.
 	 */
 	REGA( CSR3 ) = CSR3_BSWP | (lp->cardtype == PAM_CARD ? CSR3_ACON : 0);
-	dev->stats.tx_errors++;
+	lp->stats.tx_errors++;
 #ifndef final_version
 		{	int i;
 			DPRINTK( 2, ( "Ring data: dirty_tx %d cur_tx %d%s cur_rx %d\n",
@@ -763,7 +772,7 @@ static void lance_tx_timeout (struct net_device *dev)
 							  -MEM->tx_head[i].length,
 							  MEM->tx_head[i].misc ));
 		}
-#endif
+#endif 	 
 	/* XXX MSch: maybe purge/reinit ring here */
 	/* lance_restart, essentially */
 	lance_init_ring(dev);
@@ -775,8 +784,8 @@ static void lance_tx_timeout (struct net_device *dev)
 /* XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX */
 
 static int lance_start_xmit( struct sk_buff *skb, struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	struct lance_ioreg	 *IO = lp->iobase;
 	int entry, len;
 	struct lance_tx_head *head;
@@ -793,21 +802,27 @@ static int lance_start_xmit( struct sk_buff *skb, struct net_device *dev )
 	/* PAM-Card has a bug: Can only send packets with even number of bytes! */
 	else if (lp->cardtype == PAM_CARD && (len & 1))
 		++len;
-
+		
 	if (len > skb->len) {
 		if (skb_padto(skb, len))
-			return NETDEV_TX_OK;
+			return 0;
 	}
-
+		
 	netif_stop_queue (dev);
 
 	/* Fill in a Tx ring entry */
 	if (lance_debug >= 3) {
-		printk( "%s: TX pkt type 0x%04x from %pM to %pM"
-				" data at 0x%08x len %d\n",
-				dev->name, ((u_short *)skb->data)[6],
-				&skb->data[6], skb->data,
-				(int)skb->data, (int)skb->len );
+		u_char *p;
+		int i;
+		printk( "%s: TX pkt type 0x%04x from ", dev->name,
+				((u_short *)skb->data)[6]);
+		for( p = &((u_char *)skb->data)[6], i = 0; i < 6; i++ )
+			printk("%02x%s", *p++, i != 5 ? ":" : "" );
+		printk(" to ");
+		for( p = (u_char *)skb->data, i = 0; i < 6; i++ )
+			printk("%02x%s", *p++, i != 5 ? ":" : "" );
+		printk(" data at 0x%08x len %d\n", (int)skb->data,
+			   (int)skb->len );
 	}
 
 	/* We're not prepared for the int until the last flags are set/reset. And
@@ -827,7 +842,7 @@ static int lance_start_xmit( struct sk_buff *skb, struct net_device *dev )
 	head->misc = 0;
 	lp->memcpy_f( PKTBUF_ADDR(head), (void *)skb->data, skb->len );
 	head->flag = TMD1_OWN_CHIP | TMD1_ENP | TMD1_STP;
-	dev->stats.tx_bytes += skb->len;
+	lp->stats.tx_bytes += skb->len;
 	dev_kfree_skb( skb );
 	lp->cur_tx++;
 	while( lp->cur_tx >= TX_RING_SIZE && lp->dirty_tx >= TX_RING_SIZE ) {
@@ -846,12 +861,12 @@ static int lance_start_xmit( struct sk_buff *skb, struct net_device *dev )
 		lp->tx_full = 1;
 	spin_unlock_irqrestore (&lp->devlock, flags);
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 /* The LANCE interrupt handler. */
 
-static irqreturn_t lance_interrupt( int irq, void *dev_id )
+static irqreturn_t lance_interrupt( int irq, void *dev_id, struct pt_regs *fp)
 {
 	struct net_device *dev = dev_id;
 	struct lance_private *lp;
@@ -864,7 +879,7 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 		return IRQ_NONE;
 	}
 
-	lp = netdev_priv(dev);
+	lp = (struct lance_private *)dev->priv;
 	IO = lp->iobase;
 	spin_lock (&lp->devlock);
 
@@ -898,13 +913,13 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 				if (status & TMD1_ERR) {
 					/* There was an major error, log it. */
 					int err_status = MEM->tx_head[entry].misc;
-					dev->stats.tx_errors++;
-					if (err_status & TMD3_RTRY) dev->stats.tx_aborted_errors++;
-					if (err_status & TMD3_LCAR) dev->stats.tx_carrier_errors++;
-					if (err_status & TMD3_LCOL) dev->stats.tx_window_errors++;
+					lp->stats.tx_errors++;
+					if (err_status & TMD3_RTRY) lp->stats.tx_aborted_errors++;
+					if (err_status & TMD3_LCAR) lp->stats.tx_carrier_errors++;
+					if (err_status & TMD3_LCOL) lp->stats.tx_window_errors++;
 					if (err_status & TMD3_UFLO) {
 						/* Ackk!  On FIFO errors the Tx unit is turned off! */
-						dev->stats.tx_fifo_errors++;
+						lp->stats.tx_fifo_errors++;
 						/* Remove this verbosity later! */
 						DPRINTK( 1, ( "%s: Tx FIFO error! Status %04x\n",
 									  dev->name, csr0 ));
@@ -913,8 +928,8 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 					}
 				} else {
 					if (status & (TMD1_MORE | TMD1_ONE | TMD1_DEF))
-						dev->stats.collisions++;
-					dev->stats.tx_packets++;
+						lp->stats.collisions++;
+					lp->stats.tx_packets++;
 				}
 
 				/* XXX MSch: free skb?? */
@@ -941,8 +956,8 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 		}
 
 		/* Log misc errors. */
-		if (csr0 & CSR0_BABL) dev->stats.tx_errors++; /* Tx babble. */
-		if (csr0 & CSR0_MISS) dev->stats.rx_errors++; /* Missed a Rx frame. */
+		if (csr0 & CSR0_BABL) lp->stats.tx_errors++; /* Tx babble. */
+		if (csr0 & CSR0_MISS) lp->stats.rx_errors++; /* Missed a Rx frame. */
 		if (csr0 & CSR0_MERR) {
 			DPRINTK( 1, ( "%s: Bus master arbitration failure (?!?), "
 						  "status %04x.\n", dev->name, csr0 ));
@@ -964,8 +979,8 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 
 
 static int lance_rx( struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	int entry = lp->cur_rx & RX_RING_MOD_MASK;
 	int i;
 
@@ -983,11 +998,11 @@ static int lance_rx( struct net_device *dev )
 			   buffers it's possible for a jabber packet to use two
 			   buffers, with only the last correctly noting the error. */
 			if (status & RMD1_ENP)	/* Only count a general error at the */
-				dev->stats.rx_errors++; /* end of a packet.*/
-			if (status & RMD1_FRAM) dev->stats.rx_frame_errors++;
-			if (status & RMD1_OFLO) dev->stats.rx_over_errors++;
-			if (status & RMD1_CRC) dev->stats.rx_crc_errors++;
-			if (status & RMD1_BUFF) dev->stats.rx_fifo_errors++;
+				lp->stats.rx_errors++; /* end of a packet.*/
+			if (status & RMD1_FRAM) lp->stats.rx_frame_errors++;
+			if (status & RMD1_OFLO) lp->stats.rx_over_errors++;
+			if (status & RMD1_CRC) lp->stats.rx_crc_errors++;
+			if (status & RMD1_BUFF) lp->stats.rx_fifo_errors++;
 			head->flag &= (RMD1_ENP|RMD1_STP);
 		} else {
 			/* Malloc up new buffer, compatible with net-3. */
@@ -996,7 +1011,7 @@ static int lance_rx( struct net_device *dev )
 
 			if (pkt_len < 60) {
 				printk( "%s: Runt packet!\n", dev->name );
-				dev->stats.rx_errors++;
+				lp->stats.rx_errors++;
 			}
 			else {
 				skb = dev_alloc_skb( pkt_len+2 );
@@ -1009,7 +1024,7 @@ static int lance_rx( struct net_device *dev )
 							break;
 
 					if (i > RX_RING_SIZE - 2) {
-						dev->stats.rx_dropped++;
+						lp->stats.rx_dropped++;
 						head->flag |= RMD1_OWN_CHIP;
 						lp->cur_rx++;
 					}
@@ -1017,25 +1032,30 @@ static int lance_rx( struct net_device *dev )
 				}
 
 				if (lance_debug >= 3) {
-					u_char *data = PKTBUF_ADDR(head);
-
-					printk(KERN_DEBUG "%s: RX pkt type 0x%04x from %pM to %pM "
-						   "data %02x %02x %02x %02x %02x %02x %02x %02x "
+					u_char *data = PKTBUF_ADDR(head), *p;
+					printk( "%s: RX pkt type 0x%04x from ", dev->name,
+							((u_short *)data)[6]);
+					for( p = &data[6], i = 0; i < 6; i++ )
+						printk("%02x%s", *p++, i != 5 ? ":" : "" );
+					printk(" to ");
+					for( p = data, i = 0; i < 6; i++ )
+						printk("%02x%s", *p++, i != 5 ? ":" : "" );
+					printk(" data %02x %02x %02x %02x %02x %02x %02x %02x "
 						   "len %d\n",
-						   dev->name, ((u_short *)data)[6],
-						   &data[6], data,
 						   data[15], data[16], data[17], data[18],
 						   data[19], data[20], data[21], data[22],
-						   pkt_len);
+						   pkt_len );
 				}
 
+				skb->dev = dev;
 				skb_reserve( skb, 2 );	/* 16 byte align */
 				skb_put( skb, pkt_len );	/* Make room */
 				lp->memcpy_f( skb->data, PKTBUF_ADDR(head), pkt_len );
 				skb->protocol = eth_type_trans( skb, dev );
 				netif_rx( skb );
-				dev->stats.rx_packets++;
-				dev->stats.rx_bytes += pkt_len;
+				dev->last_rx = jiffies;
+				lp->stats.rx_packets++;
+				lp->stats.rx_bytes += pkt_len;
 			}
 		}
 
@@ -1053,8 +1073,8 @@ static int lance_rx( struct net_device *dev )
 
 
 static int lance_close( struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	struct lance_ioreg	 *IO = lp->iobase;
 
 	netif_stop_queue (dev);
@@ -1072,6 +1092,14 @@ static int lance_close( struct net_device *dev )
 }
 
 
+static struct net_device_stats *lance_get_stats( struct net_device *dev )
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
+
+	return &lp->stats;
+}
+
+
 /* Set or clear the multicast filter for this adaptor.
    num_addrs == -1		Promiscuous mode, receive all packets
    num_addrs == 0		Normal mode, clear multicast list
@@ -1080,8 +1108,8 @@ static int lance_close( struct net_device *dev )
  */
 
 static void set_multicast_list( struct net_device *dev )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	struct lance_ioreg	 *IO = lp->iobase;
 
 	if (netif_running(dev))
@@ -1093,7 +1121,7 @@ static void set_multicast_list( struct net_device *dev )
 
 	if (dev->flags & IFF_PROMISC) {
 		/* Log any net taps. */
-		DPRINTK( 2, ( "%s: Promiscuous mode enabled.\n", dev->name ));
+		DPRINTK( 1, ( "%s: Promiscuous mode enabled.\n", dev->name ));
 		REGA( CSR15 ) = 0x8000; /* Set promiscuous mode */
 	} else {
 		short multicast_table[4];
@@ -1122,8 +1150,8 @@ static void set_multicast_list( struct net_device *dev )
 /* This is needed for old RieblCards and possible for new RieblCards */
 
 static int lance_set_mac_address( struct net_device *dev, void *addr )
-{
-	struct lance_private *lp = netdev_priv(dev);
+
+{	struct lance_private *lp = (struct lance_private *)dev->priv;
 	struct sockaddr *saddr = addr;
 	int i;
 
@@ -1147,11 +1175,11 @@ static int lance_set_mac_address( struct net_device *dev, void *addr )
 	return( 0 );
 }
 
-
+
 #ifdef MODULE
 static struct net_device *atarilance_dev;
 
-static int __init atarilance_module_init(void)
+int init_module(void)
 {
 	atarilance_dev = atarilance_probe(-1);
 	if (IS_ERR(atarilance_dev))
@@ -1159,16 +1187,15 @@ static int __init atarilance_module_init(void)
 	return 0;
 }
 
-static void __exit atarilance_module_exit(void)
+void cleanup_module(void)
 {
 	unregister_netdev(atarilance_dev);
 	free_irq(atarilance_dev->irq, atarilance_dev);
 	free_netdev(atarilance_dev);
 }
-module_init(atarilance_module_init);
-module_exit(atarilance_module_exit);
-#endif /* MODULE */
 
+#endif /* MODULE */
+
 
 /*
  * Local variables:

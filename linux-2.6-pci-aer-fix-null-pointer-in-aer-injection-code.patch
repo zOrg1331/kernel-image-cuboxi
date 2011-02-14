@@ -1,0 +1,40 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 30 Oct 2009 12:47:48 -0400
+Subject: [pci] aer: fix NULL pointer in aer injection code
+Message-id: <20091030124627.6431.41323.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21270
+O-Subject: [RHEL5 PATCH 6/8]: AER: Fix NULL pointer in AER injection code [v2]
+Bugzilla: 514442 517093
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+The proper way to fix this is to backport
+
+0927678f55c9a50c296f7e6dae85e87b8236e155
+part of 1bf83e558cb29d163f4bc6decbc3800ecf4db195
+and http://article.gmane.org/gmane.linux.kernel.pci/5853
+
+However, that results in kabi breakage.
+
+I considered some ugly hackery to map pcie_devs and pci_devs but rejected that
+for being ... well, unreview-able.
+
+So that leaves this simple patch that resolves the panic, and that will
+maintain kabi.
+
+Resolves BZ 517093 and 514442.
+
+diff --git a/drivers/pci/pcie/aer/aer_inject.c b/drivers/pci/pcie/aer/aer_inject.c
+index ca982b7..834df05 100644
+--- a/drivers/pci/pcie/aer/aer_inject.c
++++ b/drivers/pci/pcie/aer/aer_inject.c
+@@ -413,7 +413,7 @@ static int aer_inject(struct aer_error_inj *einj)
+ 	if (ret)
+ 		goto out_put;
+ 
+-	if (find_aer_device(rpdev, &edev))
++	if (find_aer_device(rpdev, &edev) && get_service_data(edev))
+ 		aer_irq(-1, edev, NULL);
+ 	else
+ 		ret = -EINVAL;

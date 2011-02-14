@@ -1,0 +1,1523 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Subject: [RHEL-5 Patch 1/2] Update xen paravirt framebuffer to upstream protocol, attempt #2
+Date: Fri, 15 Dec 2006 15:02:54 +0000
+Bugzilla: 218048
+Message-Id: <1166194974.6246.21.camel@sisko.scot.redhat.com>
+Changelog: xen: Update xen paravirt framebuffer to upstream protocol
+
+
+Hi all,
+
+This is the 2nd posting of the xen PV-FB patch, updated to apply
+cleanly against current RHEL-5 CVS HEAD.  Addresses kernel side of
+blocker bug 218048.
+
+Patch below is equivalent to the four combined patches posted on
+Wednesday.  They don't actually make sense separated out into multiple
+diffs, as they end up modifying bits of the same files in interdependent
+ways.
+
+This patch should simply be dropped into CVS as a direct replacement for
+the existing linux-2.6-xen-pvfb.patch.
+
+The removal of the zap_page_range export from the PV-FB patch means that
+it will break the build of blktap unless that export is moved to another
+place (blocker bug 218476, already ACKed.)
+
+--Stephen
+
+
+--- linux-2.6.18.noarch/arch/i386/kernel/setup-xen.c.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/arch/i386/kernel/setup-xen.c	2006-12-15 14:31:33.000000000 +0000
+@@ -1790,8 +1790,9 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ #endif
+ 	} else {
+-		extern int console_use_vt;
+-		console_use_vt = 0;
++#if defined(CONFIG_VT) && defined(CONFIG_DUMMY_CONSOLE)
++		conswitchp = &dummy_con;
++#endif
+ 	}
+ #ifdef CONFIG_X86_TSC
+ 	tsc_init();
+--- linux-2.6.18.noarch/arch/ia64/kernel/setup.c.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/arch/ia64/kernel/setup.c	2006-12-15 14:31:33.000000000 +0000
+@@ -622,9 +622,9 @@ setup_arch (char **cmdline_p)
+ 		       xen_start_info->nr_pages, xen_start_info->flags);
+ 
+ 		if (!is_initial_xendomain()) {
+-			extern int console_use_vt;
++#if !defined(CONFIG_VT) || !defined(CONFIG_DUMMY_CONSOLE)
+ 			conswitchp = NULL;
+-			console_use_vt = 0;
++#endif
+ 		}
+ 	}
+ #endif
+--- linux-2.6.18.noarch/arch/x86_64/kernel/setup-xen.c.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/arch/x86_64/kernel/setup-xen.c	2006-12-15 14:31:33.000000000 +0000
+@@ -930,9 +930,10 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ #endif
+ 		} else {
+-			extern int console_use_vt;
+-			console_use_vt = 0;
+-		}
++#if defined(CONFIG_VT) && defined(CONFIG_DUMMY_CONSOLE)
++                    conswitchp = &dummy_con;
++#endif
++                }
+ 	}
+ #else	/* CONFIG_XEN */
+ 
+--- linux-2.6.18.noarch/drivers/char/tty_io.c.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/drivers/char/tty_io.c	2006-12-15 14:31:33.000000000 +0000
+@@ -130,8 +130,6 @@ LIST_HEAD(tty_drivers);			/* linked list
+    vt.c for deeply disgusting hack reasons */
+ DEFINE_MUTEX(tty_mutex);
+ 
+-int console_use_vt = 1;
+-
+ #ifdef CONFIG_UNIX98_PTYS
+ extern struct tty_driver *ptm_driver;	/* Unix98 pty masters; for /dev/ptmx */
+ extern int pty_limit;		/* Config limit on Unix98 ptys */
+@@ -2485,7 +2483,7 @@ retry_open:
+ 		goto got_driver;
+ 	}
+ #ifdef CONFIG_VT
+-	if (console_use_vt && (device == MKDEV(TTY_MAJOR,0))) {
++	if (device == MKDEV(TTY_MAJOR,0)) {
+ 		extern struct tty_driver *console_driver;
+ 		driver = console_driver;
+ 		index = fg_console;
+@@ -3911,8 +3909,6 @@ static int __init tty_init(void)
+ #endif
+ 
+ #ifdef CONFIG_VT
+-	if (!console_use_vt)
+-		goto out_vt;
+ 	cdev_init(&vc0_cdev, &console_fops);
+ 	if (cdev_add(&vc0_cdev, MKDEV(TTY_MAJOR, 0), 1) ||
+ 	    register_chrdev_region(MKDEV(TTY_MAJOR, 0), 1, "/dev/vc/0") < 0)
+--- linux-2.6.18.noarch/drivers/xen/Kconfig.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/Kconfig	2006-12-15 14:30:49.000000000 +0000
+@@ -172,6 +172,29 @@ config XEN_NETDEV_FRONTEND
+ 	  dedicated device-driver domain, or your master control domain
+ 	  (domain 0), then you almost certainly want to say Y here.
+ 
++config XEN_FRAMEBUFFER
++	tristate "Framebuffer-device frontend driver"
++	depends on XEN && FB
++	select FB_CFB_FILLRECT
++	select FB_CFB_COPYAREA
++	select FB_CFB_IMAGEBLIT
++	default y
++	help
++	  The framebuffer-device frontend drivers allows the kernel to create a
++	  virtual framebuffer.  This framebuffer can be viewed in another
++	  domain.  Unless this domain has access to a real video card, you
++	  probably want to say Y here.
++
++config XEN_KEYBOARD
++	tristate "Keyboard-device frontend driver"
++	depends on XEN && XEN_FRAMEBUFFER && INPUT
++	default y
++	help
++	  The keyboard-device frontend driver allows the kernel to create a
++	  virtual keyboard.  This keyboard can then be driven by another
++	  domain.  If you've said Y to CONFIG_XEN_FRAMEBUFFER, you probably
++	  want to say Y here.
++
+ config XEN_SCRUB_PAGES
+ 	bool "Scrub memory before freeing it to Xen"
+ 	default y
+--- linux-2.6.18.noarch/drivers/xen/Makefile.~1~	2006-12-15 14:30:16.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/Makefile	2006-12-15 14:30:49.000000000 +0000
+@@ -15,3 +15,5 @@ obj-$(CONFIG_XEN_BLKDEV_FRONTEND)	+= blk
+ obj-$(CONFIG_XEN_NETDEV_FRONTEND)	+= netfront/
+ obj-$(CONFIG_XEN_PCIDEV_BACKEND)	+= pciback/
+ obj-$(CONFIG_XEN_PCIDEV_FRONTEND)	+= pcifront/
++obj-$(CONFIG_XEN_FRAMEBUFFER)		+= fbfront/
++obj-$(CONFIG_XEN_KEYBOARD)		+= fbfront/
+--- linux-2.6.18.noarch/drivers/xen/console/console.c.~1~	2006-12-15 14:30:36.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/console/console.c	2006-12-15 14:31:33.000000000 +0000
+@@ -57,6 +57,7 @@
+ #include <xen/interface/event_channel.h>
+ #include <asm/hypervisor.h>
+ #include <xen/evtchn.h>
++#include <xen/xenbus.h>
+ #include <xen/xencons.h>
+ 
+ /*
+@@ -64,14 +65,21 @@
+  *  'xencons=off'  [XC_OFF]:     Console is disabled.
+  *  'xencons=tty'  [XC_TTY]:     Console attached to '/dev/tty[0-9]+'.
+  *  'xencons=ttyS' [XC_SERIAL]:  Console attached to '/dev/ttyS[0-9]+'.
++ *  'xencons=xvc'  [XC_XVC]:     Console attached to '/dev/xvc0'.
+  *                 [XC_DEFAULT]: DOM0 -> XC_SERIAL ; all others -> XC_TTY.
+  * 
+  * NB. In mode XC_TTY, we create dummy consoles for tty2-63. This suppresses
+  * warnings from standard distro startup scripts.
+  */
+-static enum { XC_OFF, XC_DEFAULT, XC_TTY, XC_SERIAL } xc_mode = XC_DEFAULT;
++static enum {
++	XC_OFF, XC_DEFAULT, XC_TTY, XC_SERIAL, XC_XVC
++} xc_mode = XC_DEFAULT;
+ static int xc_num = -1;
+ 
++/* /dev/xvc0 device number allocated by lanana.org. */
++#define XEN_XVC_MAJOR 204
++#define XEN_XVC_MINOR 191
++
+ #ifdef CONFIG_MAGIC_SYSRQ
+ static unsigned long sysrq_requested;
+ extern int sysrq_enabled;
+@@ -82,28 +90,24 @@ static int __init xencons_setup(char *st
+ 	char *q;
+ 	int n;
+ 
+-	if (!strncmp(str, "ttyS", 4))
++	if (!strncmp(str, "ttyS", 4)) {
+ 		xc_mode = XC_SERIAL;
+-	else if (!strncmp(str, "tty", 3))
++		str += 4;
++	} else if (!strncmp(str, "tty", 3)) {
+ 		xc_mode = XC_TTY;
+-	else if (!strncmp(str, "off", 3))
++		str += 3;
++	} else if (!strncmp(str, "xvc", 3)) {
++		xc_mode = XC_XVC;
++		str += 3;
++	} else if (!strncmp(str, "off", 3)) {
+ 		xc_mode = XC_OFF;
+-
+-	switch (xc_mode) {
+-	case XC_SERIAL:
+-		n = simple_strtol(str+4, &q, 10);
+-		if (q > (str + 4))
+-			xc_num = n;
+-		break;
+-	case XC_TTY:
+-		n = simple_strtol(str+3, &q, 10);
+-		if (q > (str + 3))
+-			xc_num = n;
+-		break;
+-	default:
+-		break;
++		str += 3;
+ 	}
+ 
++	n = simple_strtol(str, &q, 10);
++	if (q != str)
++		xc_num = n;
++
+ 	return 1;
+ }
+ __setup("xencons=", xencons_setup);
+@@ -196,11 +200,17 @@ static int __init xen_console_init(void)
+ 		if (!xen_start_info->console.domU.evtchn)
+ 			goto out;
+ 		if (xc_mode == XC_DEFAULT)
+-			xc_mode = XC_TTY;
++			xc_mode = XC_XVC;
+ 		kcons_info.write = kcons_write;
+ 	}
+ 
+ 	switch (xc_mode) {
++	case XC_XVC:
++		strcpy(kcons_info.name, "xvc");
++		if (xc_num == -1)
++			xc_num = 0;
++		break;
++
+ 	case XC_SERIAL:
+ 		strcpy(kcons_info.name, "ttyS");
+ 		if (xc_num == -1)
+@@ -305,7 +315,7 @@ void dom0_init_screen_info(const struct 
+ /******************** User-space console driver (/dev/console) ************/
+ 
+ #define DRV(_d)         (_d)
+-#define DUMMY_TTY(_tty) ((xc_mode != XC_SERIAL) &&		\
++#define DUMMY_TTY(_tty) ((xc_mode == XC_TTY) &&		\
+ 			 ((_tty)->index != (xc_num - 1)))
+ 
+ static struct termios *xencons_termios[MAX_NR_CONSOLES];
+@@ -628,8 +638,8 @@ static int __init xencons_init(void)
+ 			return rc;
+ 	}
+ 
+-	xencons_driver = alloc_tty_driver((xc_mode == XC_SERIAL) ?
+-					  1 : MAX_NR_CONSOLES);
++	xencons_driver = alloc_tty_driver((xc_mode == XC_TTY) ?
++					  MAX_NR_CONSOLES : 1);
+ 	if (xencons_driver == NULL)
+ 		return -ENOMEM;
+ 
+@@ -644,14 +654,23 @@ static int __init xencons_init(void)
+ 	DRV(xencons_driver)->termios         = xencons_termios;
+ 	DRV(xencons_driver)->termios_locked  = xencons_termios_locked;
+ 
+-	if (xc_mode == XC_SERIAL) {
++	switch (xc_mode) {
++	case XC_XVC:
++		DRV(xencons_driver)->name        = "xvc";
++		DRV(xencons_driver)->major       = XEN_XVC_MAJOR;
++		DRV(xencons_driver)->minor_start = XEN_XVC_MINOR;
++		DRV(xencons_driver)->name_base   = xc_num;
++		break;
++	case XC_SERIAL:
+ 		DRV(xencons_driver)->name        = "ttyS";
+ 		DRV(xencons_driver)->minor_start = 64 + xc_num;
+-		DRV(xencons_driver)->name_base   = 0 + xc_num;
+-	} else {
++		DRV(xencons_driver)->name_base   = xc_num;
++		break;
++	default:
+ 		DRV(xencons_driver)->name        = "tty";
+ 		DRV(xencons_driver)->minor_start = 1;
+ 		DRV(xencons_driver)->name_base   = 1;
++		break;
+ 	}
+ 
+ 	tty_set_operations(xencons_driver, &xencons_ops);
+@@ -680,6 +699,15 @@ static int __init xencons_init(void)
+ 	printk("Xen virtual console successfully installed as %s%d\n",
+ 	       DRV(xencons_driver)->name, xc_num);
+ 
++        /* Check about framebuffer messing up the console */
++        if (!is_initial_xendomain() &&
++	    !xenbus_exists(XBT_NIL, "device", "vfb")) {
++		/* FIXME: this is ugly */
++		unregister_console(&kcons_info);
++		kcons_info.flags |= CON_CONSDEV;
++		register_console(&kcons_info);
++	}
++
+ 	return 0;
+ }
+ 
+--- linux-2.6.18.noarch/drivers/xen/fbfront/Makefile.~1~	2006-12-15 14:30:49.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/fbfront/Makefile	2006-12-15 14:30:49.000000000 +0000
+@@ -0,0 +1,2 @@
++obj-$(CONFIG_XEN_FRAMEBUFFER)	:= xenfb.o
++obj-$(CONFIG_XEN_KEYBOARD)	+= xenkbd.o
+--- linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c.~1~	2006-12-15 14:30:49.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c	2006-12-15 14:30:49.000000000 +0000
+@@ -0,0 +1,682 @@
++/*
++ * linux/drivers/video/xenfb.c -- Xen para-virtual frame buffer device
++ *
++ * Copyright (C) 2005-2006 Anthony Liguori <aliguori@us.ibm.com>
++ * Copyright (C) 2006 Red Hat, Inc., Markus Armbruster <armbru@redhat.com>
++ *
++ *  Based on linux/drivers/video/q40fb.c
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License. See the file COPYING in the main directory of this archive for
++ *  more details.
++ */
++
++/*
++ * TODO:
++ *
++ * Switch to grant tables when they become capable of dealing with the
++ * frame buffer.
++ */
++
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/fb.h>
++#include <linux/module.h>
++#include <linux/vmalloc.h>
++#include <linux/mm.h>
++#include <asm/hypervisor.h>
++#include <xen/evtchn.h>
++#include <xen/interface/io/fbif.h>
++#include <xen/xenbus.h>
++#include <linux/kthread.h>
++
++struct xenfb_mapping
++{
++	struct list_head	link;
++	struct vm_area_struct	*vma;
++	atomic_t		map_refs;
++	int			faults;
++	struct xenfb_info	*info;
++};
++
++struct xenfb_info
++{
++	struct task_struct	*kthread;
++	wait_queue_head_t	wq;
++
++	unsigned char		*fb;
++	struct fb_info		*fb_info;
++	struct timer_list	refresh;
++	int			dirty;
++	int			x1, y1, x2, y2;	/* dirty rectangle,
++						   protected by mm_lock */
++	spinlock_t		mm_lock;
++	int			nr_pages;
++	struct page		**pages;
++	struct list_head	mappings; /* protected by mm_lock */
++
++	unsigned		evtchn;
++	int			irq;
++	struct xenfb_page	*page;
++	unsigned long 		*mfns;
++	int			update_wanted; /* XENFB_TYPE_UPDATE wanted */
++
++	struct xenbus_device	*xbdev;
++};
++
++static int xenfb_fps = 20;
++static unsigned long xenfb_mem_len = XENFB_WIDTH * XENFB_HEIGHT * XENFB_DEPTH / 8;
++
++static int xenfb_remove(struct xenbus_device *);
++static void xenfb_init_shared_page(struct xenfb_info *);
++static int xenfb_connect_backend(struct xenbus_device *, struct xenfb_info *);
++static void xenfb_disconnect_backend(struct xenfb_info *);
++
++static void xenfb_do_update(struct xenfb_info *info,
++			    int x, int y, int w, int h)
++{
++	union xenfb_out_event event;
++	__u32 prod;
++
++	event.type = XENFB_TYPE_UPDATE;
++	event.update.x = x;
++	event.update.y = y;
++	event.update.width = w;
++	event.update.height = h;
++
++	prod = info->page->out_prod;
++	/* caller ensures !xenfb_queue_full() */
++	mb();			/* ensure ring space available */
++	XENFB_OUT_RING_REF(info->page, prod) = event;
++	wmb();			/* ensure ring contents visible */
++	info->page->out_prod = prod + 1;
++
++	notify_remote_via_evtchn(info->evtchn);
++}
++
++static int xenfb_queue_full(struct xenfb_info *info)
++{
++	__u32 cons, prod;
++
++	prod = info->page->out_prod;
++	cons = info->page->out_cons;
++	return prod - cons == XENFB_OUT_RING_LEN;
++}
++
++static void xenfb_update_screen(struct xenfb_info *info)
++{
++	unsigned long flags;
++	int y1, y2, x1, x2;
++	struct xenfb_mapping *map;
++
++	if (!info->update_wanted)
++		return;
++	if (xenfb_queue_full(info))
++		return;
++
++	spin_lock_irqsave(&info->mm_lock, flags);
++
++	y1 = info->y1;
++	y2 = info->y2;
++	x1 = info->x1;
++	x2 = info->x2;
++	info->x1 = info->y1 = INT_MAX;
++	info->x2 = info->y2 = 0;
++
++	list_for_each_entry(map, &info->mappings, link) {
++		if (!map->faults)
++			continue;
++		zap_page_range(map->vma, map->vma->vm_start,
++			       map->vma->vm_end - map->vma->vm_start, NULL);
++		map->faults = 0;
++	}
++
++	spin_unlock_irqrestore(&info->mm_lock, flags);
++
++	xenfb_do_update(info, x1, y1, x2 - x1, y2 - y1);
++}
++
++static int xenfb_thread(void *data)
++{
++	struct xenfb_info *info = data;
++
++	while (!kthread_should_stop()) {
++		if (info->dirty) {
++			info->dirty = 0;
++			xenfb_update_screen(info);
++		}
++		wait_event_interruptible(info->wq,
++			kthread_should_stop() || info->dirty);
++		try_to_freeze();
++	}
++	return 0;
++}
++
++static int xenfb_setcolreg(unsigned regno, unsigned red, unsigned green,
++			   unsigned blue, unsigned transp,
++			   struct fb_info *info)
++{
++	u32 v;
++
++	if (regno > info->cmap.len)
++		return 1;
++
++	red   >>= (16 - info->var.red.length);
++	green >>= (16 - info->var.green.length);
++	blue  >>= (16 - info->var.blue.length);
++
++	v = (red << info->var.red.offset) |
++	    (green << info->var.green.offset) |
++	    (blue << info->var.blue.offset);
++
++	/* FIXME is this sane?  check against xxxfb_setcolreg()!  */
++	switch (info->var.bits_per_pixel) {
++	case 16:
++	case 24:
++	case 32:
++		((u32 *)info->pseudo_palette)[regno] = v;
++		break;
++	}
++	
++	return 0;
++}
++
++static void xenfb_timer(unsigned long data)
++{
++	struct xenfb_info *info = (struct xenfb_info *)data;
++	info->dirty = 1;
++	wake_up(&info->wq);
++}
++
++static void __xenfb_refresh(struct xenfb_info *info,
++			    int x1, int y1, int w, int h)
++{
++	int y2, x2;
++
++	y2 = y1 + h;
++	x2 = x1 + w;
++
++	if (info->y1 > y1)
++		info->y1 = y1;
++	if (info->y2 < y2)
++		info->y2 = y2;
++	if (info->x1 > x1)
++		info->x1 = x1;
++	if (info->x2 < x2)
++		info->x2 = x2;
++
++	if (timer_pending(&info->refresh))
++		return;
++
++	mod_timer(&info->refresh, jiffies + HZ/xenfb_fps);
++}
++
++static void xenfb_refresh(struct xenfb_info *info,
++			  int x1, int y1, int w, int h)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&info->mm_lock, flags);
++	__xenfb_refresh(info, x1, y1, w, h);
++	spin_unlock_irqrestore(&info->mm_lock, flags);
++}
++
++static void xenfb_fillrect(struct fb_info *p, const struct fb_fillrect *rect)
++{
++	struct xenfb_info *info = p->par;
++
++	cfb_fillrect(p, rect);
++	xenfb_refresh(info, rect->dx, rect->dy, rect->width, rect->height);
++}
++
++static void xenfb_imageblit(struct fb_info *p, const struct fb_image *image)
++{
++	struct xenfb_info *info = p->par;
++
++	cfb_imageblit(p, image);
++	xenfb_refresh(info, image->dx, image->dy, image->width, image->height);
++}
++
++static void xenfb_copyarea(struct fb_info *p, const struct fb_copyarea *area)
++{
++	struct xenfb_info *info = p->par;
++
++	cfb_copyarea(p, area);
++	xenfb_refresh(info, area->dx, area->dy, area->width, area->height);
++}
++
++static void xenfb_vm_open(struct vm_area_struct *vma)
++{
++	struct xenfb_mapping *map = vma->vm_private_data;
++	atomic_inc(&map->map_refs);
++}
++
++static void xenfb_vm_close(struct vm_area_struct *vma)
++{
++	struct xenfb_mapping *map = vma->vm_private_data;
++	struct xenfb_info *info = map->info;
++	unsigned long flags;
++
++	spin_lock_irqsave(&info->mm_lock, flags);
++	if (atomic_dec_and_test(&map->map_refs)) {
++		list_del(&map->link);
++		kfree(map);
++	}
++	spin_unlock_irqrestore(&info->mm_lock, flags);
++}
++
++static struct page *xenfb_vm_nopage(struct vm_area_struct *vma,
++				    unsigned long vaddr, int *type)
++{
++	struct xenfb_mapping *map = vma->vm_private_data;
++	struct xenfb_info *info = map->info;
++	int pgnr = (vaddr - vma->vm_start) >> PAGE_SHIFT;
++	unsigned long flags;
++	struct page *page;
++	int y1, y2;
++
++	if (pgnr >= info->nr_pages)
++		return NOPAGE_SIGBUS;
++
++	spin_lock_irqsave(&info->mm_lock, flags);
++	page = info->pages[pgnr];
++	get_page(page);
++	map->faults++;
++
++	y1 = pgnr * PAGE_SIZE / info->fb_info->fix.line_length;
++	y2 = (pgnr * PAGE_SIZE + PAGE_SIZE - 1) / info->fb_info->fix.line_length;
++	if (y2 > info->fb_info->var.yres)
++		y2 = info->fb_info->var.yres;
++	__xenfb_refresh(info, 0, y1, info->fb_info->var.xres, y2 - y1);
++	spin_unlock_irqrestore(&info->mm_lock, flags);
++
++	if (type)
++		*type = VM_FAULT_MINOR;
++
++	return page;
++}
++
++static struct vm_operations_struct xenfb_vm_ops = {
++	.open	= xenfb_vm_open,
++	.close	= xenfb_vm_close,
++	.nopage	= xenfb_vm_nopage,
++};
++
++static int xenfb_mmap(struct fb_info *fb_info, struct vm_area_struct *vma)
++{
++	struct xenfb_info *info = fb_info->par;
++	unsigned long flags;
++	struct xenfb_mapping *map;
++	int map_pages;
++
++	if (!(vma->vm_flags & VM_WRITE))
++		return -EINVAL;
++	if (!(vma->vm_flags & VM_SHARED))
++		return -EINVAL;
++	if (vma->vm_pgoff != 0)
++		return -EINVAL;
++
++	map_pages = (vma->vm_end - vma->vm_start + PAGE_SIZE-1) >> PAGE_SHIFT;
++	if (map_pages > info->nr_pages)
++		return -EINVAL;
++
++	map = kzalloc(sizeof(*map), GFP_KERNEL);
++	if (map == NULL)
++		return -ENOMEM;
++
++	map->vma = vma;
++	map->faults = 0;
++	map->info = info;
++	atomic_set(&map->map_refs, 1);
++
++	spin_lock_irqsave(&info->mm_lock, flags);
++	list_add(&map->link, &info->mappings);
++	spin_unlock_irqrestore(&info->mm_lock, flags);
++
++	vma->vm_ops = &xenfb_vm_ops;
++	vma->vm_flags |= (VM_DONTEXPAND | VM_RESERVED);
++	vma->vm_private_data = map;
++
++	return 0;
++}
++
++static struct fb_ops xenfb_fb_ops = {
++	.owner		= THIS_MODULE,
++	.fb_setcolreg	= xenfb_setcolreg,
++	.fb_fillrect	= xenfb_fillrect,
++	.fb_copyarea	= xenfb_copyarea,
++	.fb_imageblit	= xenfb_imageblit,
++	.fb_mmap	= xenfb_mmap,
++};
++
++static irqreturn_t xenfb_event_handler(int rq, void *dev_id,
++				       struct pt_regs *regs)
++{
++	/*
++	 * No in events recognized, simply ignore them all.
++	 * If you need to recognize some, see xenbkd's input_handler()
++	 * for how to do that.
++	 */
++	struct xenfb_info *info = dev_id;
++	struct xenfb_page *page = info->page;
++
++	if (page->in_cons != page->in_prod) {
++		info->page->in_cons = info->page->in_prod;
++		notify_remote_via_evtchn(info->evtchn);
++	}
++	return IRQ_HANDLED;
++}
++
++static unsigned long vmalloc_to_mfn(void *address)
++{
++	return pfn_to_mfn(vmalloc_to_pfn(address));
++}
++
++static int __devinit xenfb_probe(struct xenbus_device *dev,
++				 const struct xenbus_device_id *id)
++{
++	struct xenfb_info *info;
++	struct fb_info *fb_info;
++	int ret;
++
++	info = kzalloc(sizeof(*info), GFP_KERNEL);
++	if (info == NULL) {
++		xenbus_dev_fatal(dev, -ENOMEM, "allocating info structure");
++		return -ENOMEM;
++	}
++	dev->dev.driver_data = info;
++	info->xbdev = dev;
++	info->irq = -1;
++	info->x1 = info->y1 = INT_MAX;
++	spin_lock_init(&info->mm_lock);
++	init_waitqueue_head(&info->wq);
++	init_timer(&info->refresh);
++	info->refresh.function = xenfb_timer;
++	info->refresh.data = (unsigned long)info;
++	INIT_LIST_HEAD(&info->mappings);
++
++	info->fb = vmalloc(xenfb_mem_len);
++	if (info->fb == NULL)
++		goto error_nomem;
++	memset(info->fb, 0, xenfb_mem_len);
++
++	info->nr_pages = (xenfb_mem_len + PAGE_SIZE - 1) >> PAGE_SHIFT;
++
++	info->pages = kmalloc(sizeof(struct page *) * info->nr_pages,
++			      GFP_KERNEL);
++	if (info->pages == NULL)
++		goto error_nomem;
++
++	info->mfns = vmalloc(sizeof(unsigned long) * info->nr_pages);
++	if (!info->mfns)
++		goto error_nomem;
++
++	/* set up shared page */
++	info->page = (void *)__get_free_page(GFP_KERNEL);
++	if (!info->page)
++		goto error_nomem;
++
++	xenfb_init_shared_page(info);
++
++	fb_info = framebuffer_alloc(sizeof(u32) * 256, NULL);
++				/* see fishy hackery below */
++	if (fb_info == NULL)
++		goto error_nomem;
++
++	/* FIXME fishy hackery */
++	fb_info->pseudo_palette = fb_info->par;
++	fb_info->par = info;
++	/* /FIXME */
++	fb_info->screen_base = info->fb;
++
++	fb_info->fbops = &xenfb_fb_ops;
++	fb_info->var.xres_virtual = fb_info->var.xres = info->page->width;
++	fb_info->var.yres_virtual = fb_info->var.yres = info->page->height;
++	fb_info->var.bits_per_pixel = info->page->depth;
++
++	fb_info->var.red = (struct fb_bitfield){16, 8, 0};
++	fb_info->var.green = (struct fb_bitfield){8, 8, 0};
++	fb_info->var.blue = (struct fb_bitfield){0, 8, 0};
++
++	fb_info->var.activate = FB_ACTIVATE_NOW;
++	fb_info->var.height = -1;
++	fb_info->var.width = -1;
++	fb_info->var.vmode = FB_VMODE_NONINTERLACED;
++
++	fb_info->fix.visual = FB_VISUAL_TRUECOLOR;
++	fb_info->fix.line_length = info->page->line_length;
++	fb_info->fix.smem_start = 0;
++	fb_info->fix.smem_len = xenfb_mem_len;
++	strcpy(fb_info->fix.id, "xen");
++	fb_info->fix.type = FB_TYPE_PACKED_PIXELS;
++	fb_info->fix.accel = FB_ACCEL_NONE;
++
++	fb_info->flags = FBINFO_FLAG_DEFAULT;
++
++	ret = fb_alloc_cmap(&fb_info->cmap, 256, 0);
++	if (ret < 0) {
++		framebuffer_release(fb_info);
++		xenbus_dev_fatal(dev, ret, "fb_alloc_cmap");
++		goto error;
++	}
++
++	ret = register_framebuffer(fb_info);
++	if (ret) {
++		fb_dealloc_cmap(&info->fb_info->cmap);
++		framebuffer_release(fb_info);
++		xenbus_dev_fatal(dev, ret, "register_framebuffer");
++		goto error;
++	}
++	info->fb_info = fb_info;
++
++	/* FIXME should this be delayed until backend XenbusStateConnected? */
++	info->kthread = kthread_run(xenfb_thread, info, "xenfb thread");
++	if (IS_ERR(info->kthread)) {
++		ret = PTR_ERR(info->kthread);
++		info->kthread = NULL;
++		xenbus_dev_fatal(dev, ret, "register_framebuffer");
++		goto error;
++	}
++
++	ret = xenfb_connect_backend(dev, info);
++	if (ret < 0)
++		goto error;
++
++	return 0;
++
++ error_nomem:
++	ret = -ENOMEM;
++	xenbus_dev_fatal(dev, ret, "allocating device memory");
++ error:
++	xenfb_remove(dev);
++	return ret;
++}
++
++static int xenfb_resume(struct xenbus_device *dev)
++{
++	struct xenfb_info *info = dev->dev.driver_data;
++
++	xenfb_disconnect_backend(info);
++	xenfb_init_shared_page(info);
++	return xenfb_connect_backend(dev, info);
++}
++
++static int xenfb_remove(struct xenbus_device *dev)
++{
++	struct xenfb_info *info = dev->dev.driver_data;
++
++	del_timer(&info->refresh);
++	if (info->kthread)
++		kthread_stop(info->kthread);
++	xenfb_disconnect_backend(info);
++	if (info->fb_info) {
++		unregister_framebuffer(info->fb_info);
++		fb_dealloc_cmap(&info->fb_info->cmap);
++		framebuffer_release(info->fb_info);
++	}
++	free_page((unsigned long)info->page);
++	vfree(info->mfns);
++	kfree(info->pages);
++	vfree(info->fb);
++	kfree(info);
++
++	return 0;
++}
++
++static void xenfb_init_shared_page(struct xenfb_info *info)
++{
++	int i;
++
++	for (i = 0; i < info->nr_pages; i++)
++		info->pages[i] = vmalloc_to_page(info->fb + i * PAGE_SIZE);
++
++	for (i = 0; i < info->nr_pages; i++)
++		info->mfns[i] = vmalloc_to_mfn(info->fb + i * PAGE_SIZE);
++
++	info->page->pd[0] = vmalloc_to_mfn(info->mfns);
++	info->page->pd[1] = 0;
++	info->page->width = XENFB_WIDTH;
++	info->page->height = XENFB_HEIGHT;
++	info->page->depth = XENFB_DEPTH;
++	info->page->line_length = (info->page->depth / 8) * info->page->width;
++	info->page->mem_length = xenfb_mem_len;
++	info->page->in_cons = info->page->in_prod = 0;
++	info->page->out_cons = info->page->out_prod = 0;
++}
++
++static int xenfb_connect_backend(struct xenbus_device *dev,
++				 struct xenfb_info *info)
++{
++	int ret;
++	struct xenbus_transaction xbt;
++
++	ret = xenbus_alloc_evtchn(dev, &info->evtchn);
++	if (ret)
++		return ret;
++	ret = bind_evtchn_to_irqhandler(info->evtchn, xenfb_event_handler,
++					0, "xenfb", info);
++	if (ret < 0) {
++		xenbus_free_evtchn(dev, info->evtchn);
++		xenbus_dev_fatal(dev, ret, "bind_evtchn_to_irqhandler");
++		return ret;
++	}
++	info->irq = ret;
++
++ again:
++	ret = xenbus_transaction_start(&xbt);
++	if (ret) {
++		xenbus_dev_fatal(dev, ret, "starting transaction");
++		return ret;
++	}
++	ret = xenbus_printf(xbt, dev->nodename, "page-ref", "%lu",
++			    virt_to_mfn(info->page));
++	if (ret)
++		goto error_xenbus;
++	ret = xenbus_printf(xbt, dev->nodename, "event-channel", "%u",
++			    info->evtchn);
++	if (ret)
++		goto error_xenbus;
++	ret = xenbus_printf(xbt, dev->nodename, "feature-update", "1");
++	if (ret)
++		goto error_xenbus;
++	ret = xenbus_transaction_end(xbt, 0);
++	if (ret) {
++		if (ret == -EAGAIN)
++			goto again;
++		xenbus_dev_fatal(dev, ret, "completing transaction");
++		return ret;
++	}
++
++	xenbus_switch_state(dev, XenbusStateInitialised);
++	return 0;
++
++ error_xenbus:
++	xenbus_transaction_end(xbt, 1);
++	xenbus_dev_fatal(dev, ret, "writing xenstore");
++	return ret;
++}
++
++static void xenfb_disconnect_backend(struct xenfb_info *info)
++{
++	if (info->irq >= 0)
++		unbind_from_irqhandler(info->irq, info);
++	info->irq = -1;
++}
++
++static void xenfb_backend_changed(struct xenbus_device *dev,
++				  enum xenbus_state backend_state)
++{
++	struct xenfb_info *info = dev->dev.driver_data;
++	int val;
++
++	switch (backend_state) {
++	case XenbusStateInitialising:
++	case XenbusStateInitialised:
++	case XenbusStateUnknown:
++	case XenbusStateClosed:
++		break;
++
++	case XenbusStateInitWait:
++	InitWait:
++		xenbus_switch_state(dev, XenbusStateConnected);
++		break;
++
++	case XenbusStateConnected:
++		/*
++		 * Work around xenbus race condition: If backend goes
++		 * through InitWait to Connected fast enough, we can
++		 * get Connected twice here.
++		 */
++		if (dev->state != XenbusStateConnected)
++			goto InitWait; /* no InitWait seen yet, fudge it */
++
++		if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
++				 "request-update", "%d", &val) < 0)
++			val = 0;
++		if (val)
++			info->update_wanted = 1;
++		break;
++
++	case XenbusStateClosing:
++		// FIXME is this safe in any dev->state?
++		xenbus_frontend_closed(dev);
++		break;
++	}
++}
++
++static struct xenbus_device_id xenfb_ids[] = {
++	{ "vfb" },
++	{ "" }
++};
++
++static struct xenbus_driver xenfb = {
++	.name = "vfb",
++	.owner = THIS_MODULE,
++	.ids = xenfb_ids,
++	.probe = xenfb_probe,
++	.remove = xenfb_remove,
++	.resume = xenfb_resume,
++	.otherend_changed = xenfb_backend_changed,
++};
++
++static int __init xenfb_init(void)
++{
++	if (!is_running_on_xen())
++		return -ENODEV;
++
++	/* Nothing to do if running in dom0. */
++	if (is_initial_xendomain())
++		return -ENODEV;
++
++	return xenbus_register_frontend(&xenfb);
++}
++
++static void __exit xenfb_cleanup(void)
++{
++	return xenbus_unregister_driver(&xenfb);
++}
++
++module_init(xenfb_init);
++module_exit(xenfb_cleanup);
++
++MODULE_LICENSE("GPL");
+--- linux-2.6.18.noarch/drivers/xen/fbfront/xenkbd.c.~1~	2006-12-15 14:30:49.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/fbfront/xenkbd.c	2006-12-15 14:30:49.000000000 +0000
+@@ -0,0 +1,300 @@
++/*
++ * linux/drivers/input/keyboard/xenkbd.c -- Xen para-virtual input device
++ *
++ * Copyright (C) 2005 Anthony Liguori <aliguori@us.ibm.com>
++ * Copyright (C) 2006 Red Hat, Inc., Markus Armbruster <armbru@redhat.com>
++ *
++ *  Based on linux/drivers/input/mouse/sermouse.c
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License. See the file COPYING in the main directory of this archive for
++ *  more details.
++ */
++
++/*
++ * TODO:
++ *
++ * Switch to grant tables together with xenfb.c.
++ */
++
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/module.h>
++#include <linux/input.h>
++#include <asm/hypervisor.h>
++#include <xen/evtchn.h>
++#include <xen/interface/io/fbif.h>
++#include <xen/interface/io/kbdif.h>
++#include <xen/xenbus.h>
++
++struct xenkbd_info
++{
++	struct input_dev *dev;
++	struct xenkbd_page *page;
++	unsigned evtchn;
++	int irq;
++	struct xenbus_device *xbdev;
++};
++
++static int xenkbd_remove(struct xenbus_device *);
++static int xenkbd_connect_backend(struct xenbus_device *, struct xenkbd_info *);
++static void xenkbd_disconnect_backend(struct xenkbd_info *);
++
++/*
++ * Note: if you need to send out events, see xenfb_do_update() for how
++ * to do that.
++ */
++
++static irqreturn_t input_handler(int rq, void *dev_id, struct pt_regs *regs)
++{
++	struct xenkbd_info *info = dev_id;
++	struct xenkbd_page *page = info->page;
++	__u32 cons, prod;
++
++	prod = page->in_prod;
++	if (prod == page->out_cons)
++		return IRQ_HANDLED;
++	rmb();			/* ensure we see ring contents up to prod */
++	for (cons = page->in_cons; cons != prod; cons++) {
++		union xenkbd_in_event *event;
++		event = &XENKBD_IN_RING_REF(page, cons);
++
++		switch (event->type) {
++		case XENKBD_TYPE_MOTION:
++			input_report_rel(info->dev, REL_X, event->motion.rel_x);
++			input_report_rel(info->dev, REL_Y, event->motion.rel_y);
++			break;
++		case XENKBD_TYPE_KEY:
++			input_report_key(info->dev, event->key.keycode, event->key.pressed);
++			break;
++		case XENKBD_TYPE_POS:
++			input_report_abs(info->dev, ABS_X, event->pos.abs_x);
++			input_report_abs(info->dev, ABS_Y, event->pos.abs_y);
++			break;
++		}
++	}
++	input_sync(info->dev);
++	mb();			/* ensure we got ring contents */
++	page->in_cons = cons;
++	notify_remote_via_evtchn(info->evtchn);
++
++	return IRQ_HANDLED;
++}
++
++int __devinit xenkbd_probe(struct xenbus_device *dev,
++			   const struct xenbus_device_id *id)
++{
++	int ret, i;
++	struct xenkbd_info *info;
++	struct input_dev *input_dev;
++
++	info = kzalloc(sizeof(*info), GFP_KERNEL);
++	if (!info) {
++		xenbus_dev_fatal(dev, -ENOMEM, "allocating info structure");
++		return -ENOMEM;
++	}
++	dev->dev.driver_data = info;
++	info->xbdev = dev;
++
++	info->page = (void *)__get_free_page(GFP_KERNEL);
++	if (!info->page)
++		goto error_nomem;
++	info->page->in_cons = info->page->in_prod = 0;
++	info->page->out_cons = info->page->out_prod = 0;
++
++	input_dev = input_allocate_device();
++	if (!input_dev)
++		goto error_nomem;
++
++	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REL) | BIT(EV_ABS);
++	input_dev->keybit[LONG(BTN_MOUSE)]
++		= BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
++	/* TODO additional buttons */
++	input_dev->relbit[0] = BIT(REL_X) | BIT(REL_Y);
++
++	/* FIXME not sure this is quite right */
++	for (i = 0; i < 256; i++)
++		set_bit(i, input_dev->keybit);
++
++	input_dev->name = "Xen Virtual Keyboard/Mouse";
++
++	input_set_abs_params(input_dev, ABS_X, 0, XENFB_WIDTH, 0, 0);
++	input_set_abs_params(input_dev, ABS_Y, 0, XENFB_HEIGHT, 0, 0);
++
++	ret = input_register_device(input_dev);
++	if (ret) {
++		input_free_device(input_dev);
++		xenbus_dev_fatal(dev, ret, "input_register_device");
++		goto error;
++	}
++	info->dev = input_dev;
++
++	ret = xenkbd_connect_backend(dev, info);
++	if (ret < 0)
++		goto error;
++
++	return 0;
++
++ error_nomem:
++	ret = -ENOMEM;
++	xenbus_dev_fatal(dev, ret, "allocating device memory");
++ error:
++	xenkbd_remove(dev);
++	return ret;
++}
++
++static int xenkbd_resume(struct xenbus_device *dev)
++{
++	struct xenkbd_info *info = dev->dev.driver_data;
++
++	xenkbd_disconnect_backend(info);
++	return xenkbd_connect_backend(dev, info);
++}
++
++static int xenkbd_remove(struct xenbus_device *dev)
++{
++	struct xenkbd_info *info = dev->dev.driver_data;
++
++	xenkbd_disconnect_backend(info);
++	input_unregister_device(info->dev);
++	free_page((unsigned long)info->page);
++	kfree(info);
++	return 0;
++}
++
++static int xenkbd_connect_backend(struct xenbus_device *dev,
++				  struct xenkbd_info *info)
++{
++	int ret;
++	struct xenbus_transaction xbt;
++
++	ret = xenbus_alloc_evtchn(dev, &info->evtchn);
++	if (ret)
++		return ret;
++	ret = bind_evtchn_to_irqhandler(info->evtchn, input_handler, 0,
++					"xenkbd", info);
++	if (ret < 0) {
++		xenbus_free_evtchn(dev, info->evtchn);
++		xenbus_dev_fatal(dev, ret, "bind_evtchn_to_irqhandler");
++		return ret;
++	}
++	info->irq = ret;
++
++ again:
++	ret = xenbus_transaction_start(&xbt);
++	if (ret) {
++		xenbus_dev_fatal(dev, ret, "starting transaction");
++		return ret;
++	}
++	ret = xenbus_printf(xbt, dev->nodename, "page-ref", "%lu",
++			    virt_to_mfn(info->page));
++	if (ret)
++		goto error_xenbus;
++	ret = xenbus_printf(xbt, dev->nodename, "event-channel", "%u",
++			    info->evtchn);
++	if (ret)
++		goto error_xenbus;
++	ret = xenbus_transaction_end(xbt, 0);
++	if (ret) {
++		if (ret == -EAGAIN)
++			goto again;
++		xenbus_dev_fatal(dev, ret, "completing transaction");
++		return ret;
++	}
++
++	xenbus_switch_state(dev, XenbusStateInitialised);
++	return 0;
++
++ error_xenbus:
++	xenbus_transaction_end(xbt, 1);
++	xenbus_dev_fatal(dev, ret, "writing xenstore");
++	return ret;
++}
++
++static void xenkbd_disconnect_backend(struct xenkbd_info *info)
++{
++	if (info->irq >= 0)
++		unbind_from_irqhandler(info->irq, info);
++	info->irq = -1;
++}
++
++static void xenkbd_backend_changed(struct xenbus_device *dev,
++				   enum xenbus_state backend_state)
++{
++	struct xenkbd_info *info = dev->dev.driver_data;
++	int ret, val;
++
++	switch (backend_state) {
++	case XenbusStateInitialising:
++	case XenbusStateInitialised:
++	case XenbusStateUnknown:
++	case XenbusStateClosed:
++		break;
++
++	case XenbusStateInitWait:
++	InitWait:
++		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
++				   "feature-abs-pointer", "%d", &val);
++		if (ret < 0)
++			val = 0;
++		if (val) {
++			ret = xenbus_printf(XBT_NIL, info->xbdev->nodename,
++					    "request-abs-pointer", "1");
++			if (ret)
++				; /* FIXME */
++		}
++		xenbus_switch_state(dev, XenbusStateConnected);
++		break;
++
++	case XenbusStateConnected:
++		/*
++		 * Work around xenbus race condition: If backend goes
++		 * through InitWait to Connected fast enough, we can
++		 * get Connected twice here.
++		 */
++		if (dev->state != XenbusStateConnected)
++			goto InitWait; /* no InitWait seen yet, fudge it */
++		break;
++
++	case XenbusStateClosing:
++		xenbus_frontend_closed(dev);
++		break;
++	}
++}
++
++static struct xenbus_device_id xenkbd_ids[] = {
++	{ "vkbd" },
++	{ "" }
++};
++
++static struct xenbus_driver xenkbd = {
++	.name = "vkbd",
++	.owner = THIS_MODULE,
++	.ids = xenkbd_ids,
++	.probe = xenkbd_probe,
++	.remove = xenkbd_remove,
++	.resume = xenkbd_resume,
++	.otherend_changed = xenkbd_backend_changed,
++};
++
++static int __init xenkbd_init(void)
++{
++	if (!is_running_on_xen())
++		return -ENODEV;
++
++	/* Nothing to do if running in dom0. */
++	if (is_initial_xendomain())
++		return -ENODEV;
++
++	return xenbus_register_frontend(&xenkbd);
++}
++
++static void __exit xenkbd_cleanup(void)
++{
++	return xenbus_unregister_driver(&xenkbd);
++}
++
++module_init(xenkbd_init);
++module_exit(xenkbd_cleanup);
++
++MODULE_LICENSE("GPL");
+--- linux-2.6.18.noarch/include/xen/interface/io/fbif.h.~1~	2006-12-15 14:30:49.000000000 +0000
++++ linux-2.6.18.noarch/include/xen/interface/io/fbif.h	2006-12-15 14:30:49.000000000 +0000
+@@ -0,0 +1,116 @@
++/*
++ * fbif.h -- Xen virtual frame buffer device
++ *
++ * Copyright (C) 2005 Anthony Liguori <aliguori@us.ibm.com>
++ * Copyright (C) 2006 Red Hat, Inc., Markus Armbruster <armbru@redhat.com>
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License. See the file COPYING in the main directory of this archive for
++ *  more details.
++ */
++
++#ifndef __XEN_PUBLIC_IO_FBIF_H__
++#define __XEN_PUBLIC_IO_FBIF_H__
++
++#include <asm/types.h>
++
++/* Out events (frontend -> backend) */
++
++/*
++ * Out events may be sent only when requested by backend, and receipt
++ * of an unknown out event is an error.
++ */
++
++/* Event type 1 currently not used */
++/*
++ * Framebuffer update notification event
++ * Capable frontend sets feature-update in xenstore.
++ * Backend requests it by setting request-update in xenstore.
++ */
++#define XENFB_TYPE_UPDATE 2
++
++struct xenfb_update
++{
++	__u8 type;		/* XENFB_TYPE_UPDATE */
++	__s32 x;		/* source x */
++	__s32 y;		/* source y */
++	__s32 width;		/* rect width */
++	__s32 height;		/* rect height */
++};
++
++#define XENFB_OUT_EVENT_SIZE 40
++
++union xenfb_out_event
++{
++	__u8 type;
++	struct xenfb_update update;
++	char pad[XENFB_OUT_EVENT_SIZE];
++};
++
++/* In events (backend -> frontend) */
++
++/*
++ * Frontends should ignore unknown in events.
++ * No in events currently defined.
++ */
++
++#define XENFB_IN_EVENT_SIZE 40
++
++union xenfb_in_event
++{
++	__u8 type;
++	char pad[XENFB_IN_EVENT_SIZE];
++};
++
++/* shared page */
++
++#define XENFB_IN_RING_SIZE 1024
++#define XENFB_IN_RING_LEN (XENFB_IN_RING_SIZE / XENFB_IN_EVENT_SIZE)
++#define XENFB_IN_RING_OFFS 1024
++#define XENFB_IN_RING(page) \
++    ((union xenfb_in_event *)((char *)(page) + XENFB_IN_RING_OFFS))
++#define XENFB_IN_RING_REF(page, idx) \
++    (XENFB_IN_RING((page))[(idx) % XENFB_IN_RING_LEN])
++
++#define XENFB_OUT_RING_SIZE 2048
++#define XENFB_OUT_RING_LEN (XENFB_OUT_RING_SIZE / XENFB_OUT_EVENT_SIZE)
++#define XENFB_OUT_RING_OFFS (XENFB_IN_RING_OFFS + XENFB_IN_RING_SIZE)
++#define XENFB_OUT_RING(page) \
++    ((union xenfb_out_event *)((char *)(page) + XENFB_OUT_RING_OFFS))
++#define XENFB_OUT_RING_REF(page, idx) \
++    (XENFB_OUT_RING((page))[(idx) % XENFB_OUT_RING_LEN])
++
++struct xenfb_page
++{
++	__u32 in_cons, in_prod;
++	__u32 out_cons, out_prod;
++
++	__s32 width;         /* the width of the framebuffer (in pixels) */
++	__s32 height;        /* the height of the framebuffer (in pixels) */
++	__u32 line_length;   /* the length of a row of pixels (in bytes) */
++	__u32 mem_length;    /* the length of the framebuffer (in bytes) */
++	__u8 depth;          /* the depth of a pixel (in bits) */
++
++	/*
++	 * Framebuffer page directory
++	 *
++	 * Each directory page holds PAGE_SIZE / sizeof(*pd)
++	 * framebuffer pages, and can thus map up to PAGE_SIZE *
++	 * PAGE_SIZE / sizeof(*pd) bytes.  With PAGE_SIZE == 4096 and
++	 * sizeof(unsigned long) == 4, that's 4 Megs.  Two directory
++	 * pages should be enough for a while.
++	 */
++	unsigned long pd[2];
++};
++
++/*
++ * Wart: xenkbd needs to know resolution.  Put it here until a better
++ * solution is found, but don't leak it to the backend.
++ */
++#ifdef __KERNEL__
++#define XENFB_WIDTH 800
++#define XENFB_HEIGHT 600
++#define XENFB_DEPTH 32
++#endif
++
++#endif
+--- linux-2.6.18.noarch/include/xen/interface/io/kbdif.h.~1~	2006-12-15 14:30:49.000000000 +0000
++++ linux-2.6.18.noarch/include/xen/interface/io/kbdif.h	2006-12-15 14:30:49.000000000 +0000
+@@ -0,0 +1,108 @@
++/*
++ * kbdif.h -- Xen virtual keyboard/mouse
++ *
++ * Copyright (C) 2005 Anthony Liguori <aliguori@us.ibm.com>
++ * Copyright (C) 2006 Red Hat, Inc., Markus Armbruster <armbru@redhat.com>
++ *
++ *  This file is subject to the terms and conditions of the GNU General Public
++ *  License. See the file COPYING in the main directory of this archive for
++ *  more details.
++ */
++
++#ifndef __XEN_PUBLIC_IO_KBDIF_H__
++#define __XEN_PUBLIC_IO_KBDIF_H__
++
++#include <asm/types.h>
++
++/* In events (backend -> frontend) */
++
++/*
++ * Frontends should ignore unknown in events.
++ */
++
++/* Pointer movement event */
++#define XENKBD_TYPE_MOTION  1
++/* Event type 2 currently not used */
++/* Key event (includes pointer buttons) */
++#define XENKBD_TYPE_KEY     3
++/*
++ * Pointer position event
++ * Capable backend sets feature-abs-pointer in xenstore.
++ * Frontend requests ot instead of XENKBD_TYPE_MOTION by setting
++ * request-abs-update in xenstore.
++ */
++#define XENKBD_TYPE_POS     4
++
++struct xenkbd_motion
++{
++	__u8 type;         /* XENKBD_TYPE_MOTION */
++	__s32 rel_x;       /* relative X motion */
++	__s32 rel_y;       /* relative Y motion */
++};
++
++struct xenkbd_key
++{
++	__u8 type;         /* XENKBD_TYPE_KEY */
++	__u8 pressed;      /* 1 if pressed; 0 otherwise */
++	__u32 keycode;     /* KEY_* from linux/input.h */
++};
++
++struct xenkbd_position
++{
++	__u8 type;         /* XENKBD_TYPE_POS */
++	__s32 abs_x;       /* absolute X position (in FB pixels) */
++	__s32 abs_y;       /* absolute Y position (in FB pixels) */
++};
++
++#define XENKBD_IN_EVENT_SIZE 40
++
++union xenkbd_in_event
++{
++	__u8 type;
++	struct xenkbd_motion motion;
++	struct xenkbd_key key;
++	struct xenkbd_position pos;
++	char pad[XENKBD_IN_EVENT_SIZE];
++};
++
++/* Out events (frontend -> backend) */
++
++/*
++ * Out events may be sent only when requested by backend, and receipt
++ * of an unknown out event is an error.
++ * No out events currently defined.
++ */
++
++#define XENKBD_OUT_EVENT_SIZE 40
++
++union xenkbd_out_event
++{
++	__u8 type;
++	char pad[XENKBD_OUT_EVENT_SIZE];
++};
++
++/* shared page */
++
++#define XENKBD_IN_RING_SIZE 2048
++#define XENKBD_IN_RING_LEN (XENKBD_IN_RING_SIZE / XENKBD_IN_EVENT_SIZE)
++#define XENKBD_IN_RING_OFFS 1024
++#define XENKBD_IN_RING(page) \
++    ((union xenkbd_in_event *)((char *)(page) + XENKBD_IN_RING_OFFS))
++#define XENKBD_IN_RING_REF(page, idx) \
++    (XENKBD_IN_RING((page))[(idx) % XENKBD_IN_RING_LEN])
++
++#define XENKBD_OUT_RING_SIZE 1024
++#define XENKBD_OUT_RING_LEN (XENKBD_OUT_RING_SIZE / XENKBD_OUT_EVENT_SIZE)
++#define XENKBD_OUT_RING_OFFS (XENKBD_IN_RING_OFFS + XENKBD_IN_RING_SIZE)
++#define XENKBD_OUT_RING(page) \
++    ((union xenkbd_out_event *)((char *)(page) + XENKBD_OUT_RING_OFFS))
++#define XENKBD_OUT_RING_REF(page, idx) \
++    (XENKBD_OUT_RING((page))[(idx) % XENKBD_OUT_RING_LEN])
++
++struct xenkbd_page
++{
++	__u32 in_cons, in_prod;
++	__u32 out_cons, out_prod;
++};
++
++#endif
+

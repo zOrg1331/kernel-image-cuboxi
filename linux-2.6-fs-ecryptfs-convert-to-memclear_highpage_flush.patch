@@ -1,0 +1,34 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:12:31 -0600
+Subject: [fs] ecryptfs: convert to memclear_highpage_flush
+Message-id: 47680D8F.6040608@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 8/15: eCryptfs: backport zero_user_page to memclear_highpage_flush
+Bugzilla: 228341
+
+Backport to use RHEL5's memclear_highpage_flush vs.
+upstream's zero_user_page
+
+diff --git a/fs/ecryptfs/mmap.c b/fs/ecryptfs/mmap.c
+index c1f1454..dbfb805 100644
+--- a/fs/ecryptfs/mmap.c
++++ b/fs/ecryptfs/mmap.c
+@@ -257,8 +257,8 @@ static int fill_zeros_to_end_of_page(struct page *page, unsigned int to)
+ 	end_byte_in_page = i_size_read(inode) % PAGE_CACHE_SIZE;
+ 	if (to > end_byte_in_page)
+ 		end_byte_in_page = to;
+-	zero_user_page(page, end_byte_in_page,
+-		PAGE_CACHE_SIZE - end_byte_in_page, KM_USER0);
++	memclear_highpage_flush(page, end_byte_in_page,
++		PAGE_CACHE_SIZE - end_byte_in_page);
+ out:
+ 	return 0;
+ }
+@@ -298,7 +298,7 @@ static int ecryptfs_prepare_write(struct file *file, struct page *page,
+ 			}
+ 		}
+ 		if (end_of_prev_pg_pos + 1 > i_size_read(page->mapping->host))
+-			zero_user_page(page, 0, PAGE_CACHE_SIZE, KM_USER0);
++			memclear_highpage_flush(page, 0, PAGE_CACHE_SIZE);
+ 	}
+ out:
+ 	return rc;

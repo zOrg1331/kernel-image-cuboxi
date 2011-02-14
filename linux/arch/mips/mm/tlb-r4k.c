@@ -10,9 +10,7 @@
  */
 #include <linux/init.h>
 #include <linux/sched.h>
-#include <linux/smp.h>
 #include <linux/mm.h>
-#include <linux/hugetlb.h>
 
 #include <asm/cpu.h>
 #include <asm/bootinfo.h>
@@ -27,6 +25,11 @@ extern void build_tlb_refill_handler(void);
  * MIPS32 will take revenge ...
  */
 #define UNIQUE_ENTRYHI(idx) (CKSEG0 + ((idx) << (PAGE_SHIFT + 1)))
+
+/* CP0 hazard avoidance. */
+#define BARRIER __asm__ __volatile__(".set noreorder\n\t" \
+				     "nop; nop; nop; nop; nop; nop;\n\t" \
+				     ".set reorder\n\t")
 
 /* Atomicity and interruptability */
 #ifdef CONFIG_MIPS_MT_SMTC
@@ -49,22 +52,6 @@ extern void build_tlb_refill_handler(void);
 #define EXIT_CRITICAL(flags) local_irq_restore(flags)
 
 #endif /* CONFIG_MIPS_MT_SMTC */
-
-#if defined(CONFIG_CPU_LOONGSON2)
-/*
- * LOONGSON2 has a 4 entry itlb which is a subset of dtlb,
- * unfortrunately, itlb is not totally transparent to software.
- */
-#define FLUSH_ITLB write_c0_diag(4);
-
-#define FLUSH_ITLB_VM(vma) { if ((vma)->vm_flags & VM_EXEC)  write_c0_diag(4); }
-
-#else
-
-#define FLUSH_ITLB
-#define FLUSH_ITLB_VM(vma)
-
-#endif
 
 void local_flush_tlb_all(void)
 {
@@ -91,7 +78,6 @@ void local_flush_tlb_all(void)
 	}
 	tlbw_use_hazard();
 	write_c0_entryhi(old_ctx);
-	FLUSH_ITLB;
 	EXIT_CRITICAL(flags);
 }
 
@@ -119,11 +105,13 @@ void local_flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 	int cpu = smp_processor_id();
 
 	if (cpu_context(cpu, mm) != 0) {
-		unsigned long size, flags;
+		unsigned long flags;
+		int size;
 
 		ENTER_CRITICAL(flags);
 		size = (end - start + (PAGE_SIZE - 1)) >> PAGE_SHIFT;
 		size = (size + 1) >> 1;
+		local_irq_save(flags);
 		if (size <= current_cpu_data.tlbsize/2) {
 			int oldpid = read_c0_entryhi();
 			int newpid = cpu_asid(cpu, mm);
@@ -138,7 +126,7 @@ void local_flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 				start += (PAGE_SIZE << 1);
 				mtc0_tlbw_hazard();
 				tlb_probe();
-				tlb_probe_hazard();
+				BARRIER;
 				idx = read_c0_index();
 				write_c0_entrylo0(0);
 				write_c0_entrylo1(0);
@@ -154,14 +142,14 @@ void local_flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 		} else {
 			drop_mmu_context(mm, cpu);
 		}
-		FLUSH_ITLB;
 		EXIT_CRITICAL(flags);
 	}
 }
 
 void local_flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
-	unsigned long size, flags;
+	unsigned long flags;
+	int size;
 
 	ENTER_CRITICAL(flags);
 	size = (end - start + (PAGE_SIZE - 1)) >> PAGE_SHIFT;
@@ -180,7 +168,7 @@ void local_flush_tlb_kernel_range(unsigned long start, unsigned long end)
 			start += (PAGE_SIZE << 1);
 			mtc0_tlbw_hazard();
 			tlb_probe();
-			tlb_probe_hazard();
+			BARRIER;
 			idx = read_c0_index();
 			write_c0_entrylo0(0);
 			write_c0_entrylo1(0);
@@ -196,7 +184,6 @@ void local_flush_tlb_kernel_range(unsigned long start, unsigned long end)
 	} else {
 		local_flush_tlb_all();
 	}
-	FLUSH_ITLB;
 	EXIT_CRITICAL(flags);
 }
 
@@ -215,7 +202,7 @@ void local_flush_tlb_page(struct vm_area_struct *vma, unsigned long page)
 		write_c0_entryhi(page | newpid);
 		mtc0_tlbw_hazard();
 		tlb_probe();
-		tlb_probe_hazard();
+		BARRIER;
 		idx = read_c0_index();
 		write_c0_entrylo0(0);
 		write_c0_entrylo1(0);
@@ -229,7 +216,6 @@ void local_flush_tlb_page(struct vm_area_struct *vma, unsigned long page)
 
 	finish:
 		write_c0_entryhi(oldpid);
-		FLUSH_ITLB_VM(vma);
 		EXIT_CRITICAL(flags);
 	}
 }
@@ -249,7 +235,7 @@ void local_flush_tlb_one(unsigned long page)
 	write_c0_entryhi(page);
 	mtc0_tlbw_hazard();
 	tlb_probe();
-	tlb_probe_hazard();
+	BARRIER;
 	idx = read_c0_index();
 	write_c0_entrylo0(0);
 	write_c0_entrylo1(0);
@@ -261,7 +247,7 @@ void local_flush_tlb_one(unsigned long page)
 		tlbw_use_hazard();
 	}
 	write_c0_entryhi(oldpid);
-	FLUSH_ITLB;
+
 	EXIT_CRITICAL(flags);
 }
 
@@ -293,47 +279,26 @@ void __update_tlb(struct vm_area_struct * vma, unsigned long address, pte_t pte)
 	pgdp = pgd_offset(vma->vm_mm, address);
 	mtc0_tlbw_hazard();
 	tlb_probe();
-	tlb_probe_hazard();
+	BARRIER;
 	pudp = pud_offset(pgdp, address);
 	pmdp = pmd_offset(pudp, address);
 	idx = read_c0_index();
-#ifdef CONFIG_HUGETLB_PAGE
-	/* this could be a huge page  */
-	if (pmd_huge(*pmdp)) {
-		unsigned long lo;
-		write_c0_pagemask(PM_HUGE_MASK);
-		ptep = (pte_t *)pmdp;
-		lo = pte_val(*ptep) >> 6;
-		write_c0_entrylo0(lo);
-		write_c0_entrylo1(lo + (HPAGE_SIZE >> 7));
+	ptep = pte_offset_map(pmdp, address);
 
-		mtc0_tlbw_hazard();
-		if (idx < 0)
-			tlb_write_random();
-		else
-			tlb_write_indexed();
-		write_c0_pagemask(PM_DEFAULT_MASK);
-	} else
-#endif
-	{
-		ptep = pte_offset_map(pmdp, address);
-
-#if defined(CONFIG_64BIT_PHYS_ADDR) && defined(CONFIG_CPU_MIPS32)
-		write_c0_entrylo0(ptep->pte_high);
-		ptep++;
-		write_c0_entrylo1(ptep->pte_high);
+#if defined(CONFIG_64BIT_PHYS_ADDR) && defined(CONFIG_CPU_MIPS32_R1)
+	write_c0_entrylo0(ptep->pte_high);
+	ptep++;
+	write_c0_entrylo1(ptep->pte_high);
 #else
-		write_c0_entrylo0(pte_val(*ptep++) >> 6);
-		write_c0_entrylo1(pte_val(*ptep) >> 6);
+	write_c0_entrylo0(pte_val(*ptep++) >> 6);
+	write_c0_entrylo1(pte_val(*ptep) >> 6);
 #endif
-		mtc0_tlbw_hazard();
-		if (idx < 0)
-			tlb_write_random();
-		else
-			tlb_write_indexed();
-	}
+	mtc0_tlbw_hazard();
+	if (idx < 0)
+		tlb_write_random();
+	else
+		tlb_write_indexed();
 	tlbw_use_hazard();
-	FLUSH_ITLB_VM(vma);
 	EXIT_CRITICAL(flags);
 }
 
@@ -355,7 +320,7 @@ static void r4k_update_mmu_cache_hwbug(struct vm_area_struct * vma,
 	pgdp = pgd_offset(vma->vm_mm, address);
 	mtc0_tlbw_hazard();
 	tlb_probe();
-	tlb_probe_hazard();
+	BARRIER;
 	pmdp = pmd_offset(pgdp, address);
 	idx = read_c0_index();
 	ptep = pte_offset_map(pmdp, address);
@@ -386,7 +351,7 @@ void __init add_wired_entry(unsigned long entrylo0, unsigned long entrylo1,
 	wired = read_c0_wired();
 	write_c0_wired(wired + 1);
 	write_c0_index(wired);
-	tlbw_use_hazard();	/* What is the hazard here? */
+	BARRIER;
 	write_c0_pagemask(pagemask);
 	write_c0_entryhi(entryhi);
 	write_c0_entrylo0(entrylo0);
@@ -396,7 +361,7 @@ void __init add_wired_entry(unsigned long entrylo0, unsigned long entrylo1,
 	tlbw_use_hazard();
 
 	write_c0_entryhi(old_ctx);
-	tlbw_use_hazard();	/* What is the hazard here? */
+	BARRIER;
 	write_c0_pagemask(old_pagemask);
 	local_flush_tlb_all();
 	EXIT_CRITICAL(flags);
@@ -408,7 +373,7 @@ void __init add_wired_entry(unsigned long entrylo0, unsigned long entrylo1,
  * lifetime of the system
  */
 
-static int temp_tlb_entry __cpuinitdata;
+static int temp_tlb_entry __initdata;
 
 __init int add_temporary_entry(unsigned long entrylo0, unsigned long entrylo1,
 			       unsigned long entryhi, unsigned long pagemask)
@@ -447,7 +412,7 @@ out:
 	return ret;
 }
 
-static void __cpuinit probe_tlb(unsigned long config)
+static void __init probe_tlb(unsigned long config)
 {
 	struct cpuinfo_mips *c = &current_cpu_data;
 	unsigned int reg;
@@ -475,7 +440,7 @@ static void __cpuinit probe_tlb(unsigned long config)
 	c->tlbsize = ((reg >> 25) & 0x3f) + 1;
 }
 
-static int __cpuinitdata ntlb;
+static int __initdata ntlb = 0;
 static int __init set_ntlb(char *str)
 {
 	get_option(&str, &ntlb);
@@ -484,7 +449,7 @@ static int __init set_ntlb(char *str)
 
 __setup("ntlb=", set_ntlb);
 
-void __cpuinit tlb_init(void)
+void __init tlb_init(void)
 {
 	unsigned int config = read_c0_config();
 
@@ -493,15 +458,12 @@ void __cpuinit tlb_init(void)
 	 *   - On R4600 1.7 the tlbp never hits for pages smaller than
 	 *     the value in the c0_pagemask register.
 	 *   - The entire mm handling assumes the c0_pagemask register to
-	 *     be set to fixed-size pages.
+	 *     be set for 4kb pages.
 	 */
 	probe_tlb(config);
 	write_c0_pagemask(PM_DEFAULT_MASK);
 	write_c0_wired(0);
-	if (current_cpu_type() == CPU_R10000 ||
-	    current_cpu_type() == CPU_R12000 ||
-	    current_cpu_type() == CPU_R14000)
-		write_c0_framemask(0);
+	write_c0_framemask(0);
 	temp_tlb_entry = current_cpu_data.tlbsize - 1;
 
         /* From this point on the ARC firmware is dead.  */
@@ -514,7 +476,7 @@ void __cpuinit tlb_init(void)
 			int wired = current_cpu_data.tlbsize - ntlb;
 			write_c0_wired(wired);
 			write_c0_index(wired-1);
-			printk("Restricting TLB to %d entries\n", ntlb);
+			printk ("Restricting TLB to %d entries\n", ntlb);
 		} else
 			printk("Ignoring invalid argument ntlb=%d\n", ntlb);
 	}

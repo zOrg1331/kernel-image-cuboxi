@@ -1,0 +1,136 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:49:21 -0400
+Subject: [net] netxen: move && and || to end of previous line
+Message-id: <20100803134637.2239.45398.sendpatchset@localhost.localdomain>
+Patchwork-id: 27314
+O-Subject: [RHEL 5.6 PATCH 12/44] drivers/net: Move && and || to end of previous
+	line
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 8e95a2026f3b43f7c3d676adaccd2de9532e8dcc
+
+Description
+===========
+
+>From 12910c7b1300882331f8e5b107c51f678f2b3eee Mon Sep 17 00:00:00 2001
+From: Joe Perches <joe@perches.com>
+Date: Thu, 3 Dec 2009 07:58:21 +0000
+Subject: [PATCH] drivers/net: Move && and || to end of previous line
+
+Only files where David Miller is the primary git-signer.
+wireless, wimax, ixgbe, etc are not modified.
+
+Compile tested x86 allyesconfig only
+Not all files compiled (not x86 compatible)
+
+Added a few > 80 column lines, which I ignored.
+Existing checkpatch complaints ignored.
+
+Signed-off-by: Joe Perches <joe@perches.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_ethtool.c b/drivers/net/netxen/netxen_nic_ethtool.c
+index 1a9f484..76492ce 100644
+--- a/drivers/net/netxen/netxen_nic_ethtool.c
++++ b/drivers/net/netxen/netxen_nic_ethtool.c
+@@ -259,18 +259,18 @@ netxen_nic_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
+ 	/* read which mode */
+ 	if (adapter->ahw.port_type == NETXEN_NIC_GBE) {
+ 		/* autonegotiation */
+-		if (adapter->phy_write
+-		    && adapter->phy_write(adapter,
+-					  NETXEN_NIU_GB_MII_MGMT_ADDR_AUTONEG,
+-					  ecmd->autoneg) != 0)
++		if (adapter->phy_write &&
++		    adapter->phy_write(adapter,
++				       NETXEN_NIU_GB_MII_MGMT_ADDR_AUTONEG,
++				       ecmd->autoneg) != 0)
+ 			return -EIO;
+ 		else
+ 			adapter->link_autoneg = ecmd->autoneg;
+ 
+-		if (adapter->phy_read
+-		    && adapter->phy_read(adapter,
+-					 NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
+-					 &status) != 0)
++		if (adapter->phy_read &&
++		    adapter->phy_read(adapter,
++				      NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
++				      &status) != 0)
+ 			return -EIO;
+ 
+ 		/* speed */
+@@ -290,10 +290,10 @@ netxen_nic_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
+ 			netxen_clear_phy_duplex(status);
+ 		if (ecmd->duplex == DUPLEX_FULL)
+ 			netxen_set_phy_duplex(status);
+-		if (adapter->phy_write
+-		    && adapter->phy_write(adapter,
+-					  NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
+-					  *((int *)&status)) != 0)
++		if (adapter->phy_write &&
++		    adapter->phy_write(adapter,
++				       NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
++				       *((int *)&status)) != 0)
+ 			return -EIO;
+ 		else {
+ 			adapter->link_speed = ecmd->speed;
+@@ -392,10 +392,10 @@ static u32 netxen_nic_test_link(struct net_device *dev)
+ 
+ 	/* read which mode */
+ 	if (adapter->ahw.port_type == NETXEN_NIC_GBE) {
+-		if (adapter->phy_read
+-		    && adapter->phy_read(adapter,
+-					 NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
+-					 &status) != 0)
++		if (adapter->phy_read &&
++		    adapter->phy_read(adapter,
++				      NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
++				      &status) != 0)
+ 			return -EIO;
+ 		else {
+ 			val = netxen_get_phy_link(status);
+diff --git a/drivers/net/netxen/netxen_nic_hw.c b/drivers/net/netxen/netxen_nic_hw.c
+index 2a7595e..51f316d 100644
+--- a/drivers/net/netxen/netxen_nic_hw.c
++++ b/drivers/net/netxen/netxen_nic_hw.c
+@@ -1921,10 +1921,10 @@ void netxen_nic_set_link_parameters(struct netxen_adapter *adapter)
+ 			return;
+ 		}
+ 
+-		if (adapter->phy_read
+-		    && adapter->phy_read(adapter,
+-			     NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
+-			     &status) == 0) {
++		if (adapter->phy_read &&
++		    adapter->phy_read(adapter,
++				      NETXEN_NIU_GB_MII_MGMT_ADDR_PHY_STATUS,
++				      &status) == 0) {
+ 			if (netxen_get_phy_link(status)) {
+ 				switch (netxen_get_phy_speed(status)) {
+ 				case 0:
+@@ -1951,10 +1951,10 @@ void netxen_nic_set_link_parameters(struct netxen_adapter *adapter)
+ 					adapter->link_duplex = -1;
+ 					break;
+ 				}
+-				if (adapter->phy_read
+-				    && adapter->phy_read(adapter,
+-					     NETXEN_NIU_GB_MII_MGMT_ADDR_AUTONEG,
+-					     &autoneg) != 0)
++				if (adapter->phy_read &&
++				    adapter->phy_read(adapter,
++				      NETXEN_NIU_GB_MII_MGMT_ADDR_AUTONEG,
++						      &autoneg) != 0)
+ 					adapter->link_autoneg = autoneg;
+ 			} else
+ 				goto link_down;

@@ -1,0 +1,121 @@
+Date: Wed, 20 Sep 2006 15:24:58 -0500
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL5] modify qla4xxx so it does not rely on userpsace for
+ error handling
+
+For BZ 206063.
+
+qla4xxx does not need to hook into the userspace parts of the iscsi
+transport class for its error handling because it is a hw iscsi driver
+and its state model is completely in FW and the kernel. And since iscsid
+may not always be running like in the BZ, qla4xxx should not have to
+rely on iscsid at all. This patch just has qla4xxx call the kernel
+transport class pieces it needs to so it does not have to rely on userspace.
+
+This patch will be going upstream shortly.
+
+Patch was made over the FC6 kernel and was tested by us and IBM, but
+running IO and doing cable pulls to set off the session/connection
+management code.
+
+For BZ 206063.
+
+qla4xxx does not need to hook into the userspace parts of the iscsi transport
+class for its error handling because it is a hw iscsi driver.
+And since iscsid may not always be running like in the BZ, qla4xxx should not
+have to rely on iscsid. This patch just has qla4xxx call the kernel transport
+class pieces it needs to so it does not have to rely on userspace.
+
+This patch will be going upstream shortly.
+
+diff -aurp linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_glbl.h linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_glbl.h
+--- linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_glbl.h	2006-09-01 05:08:22.000000000 -0500
++++ linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_glbl.h	2006-09-14 14:57:39.000000000 -0500
+@@ -8,6 +8,9 @@
+ #ifndef __QLA4x_GBL_H
+ #define	__QLA4x_GBL_H
+ 
++struct iscsi_cls_conn;
++
++int qla4xxx_conn_start(struct iscsi_cls_conn *conn);
+ int qla4xxx_send_tgts(struct scsi_qla_host *ha, char *ip, uint16_t port);
+ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb);
+ int qla4xxx_initialize_adapter(struct scsi_qla_host * ha,
+diff -aurp linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_init.c linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_init.c
+--- linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_init.c	2006-09-01 05:08:22.000000000 -0500
++++ linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_init.c	2006-09-14 14:58:11.000000000 -0500
+@@ -1312,7 +1312,7 @@ int qla4xxx_process_ddb_changed(struct s
+ 		atomic_set(&ddb_entry->relogin_timer, 0);
+ 		clear_bit(DF_RELOGIN, &ddb_entry->flags);
+ 		clear_bit(DF_NO_RELOGIN, &ddb_entry->flags);
+-		iscsi_if_create_session_done(ddb_entry->conn);
++		qla4xxx_conn_start(ddb_entry->conn);
+ 		/*
+ 		 * Change the lun state to READY in case the lun TIMEOUT before
+ 		 * the device came back.
+diff -aurp linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_os.c linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_os.c
+--- linux-2.6.17.noarch/drivers/scsi/qla4xxx/ql4_os.c	2006-09-01 05:08:22.000000000 -0500
++++ linux-2.6.17.noarch.qla4xxx-eh/drivers/scsi/qla4xxx/ql4_os.c	2006-09-14 14:56:49.000000000 -0500
+@@ -55,8 +55,6 @@ static int qla4xxx_conn_get_param(struct
+ 				  enum iscsi_param param, char *buf);
+ static int qla4xxx_sess_get_param(struct iscsi_cls_session *sess,
+ 				  enum iscsi_param param, char *buf);
+-static void qla4xxx_conn_stop(struct iscsi_cls_conn *conn, int flag);
+-static int qla4xxx_conn_start(struct iscsi_cls_conn *conn);
+ static void qla4xxx_recovery_timedout(struct iscsi_cls_session *session);
+ 
+ /*
+@@ -102,8 +100,6 @@ static struct iscsi_transport qla4xxx_is
+ 	.tgt_dscvr		= qla4xxx_tgt_dscvr,
+ 	.get_conn_param		= qla4xxx_conn_get_param,
+ 	.get_session_param	= qla4xxx_sess_get_param,
+-	.start_conn		= qla4xxx_conn_start,
+-	.stop_conn		= qla4xxx_conn_stop,
+ 	.session_recovery_timedout = qla4xxx_recovery_timedout,
+ };
+ 
+@@ -126,7 +122,7 @@ static void qla4xxx_recovery_timedout(st
+ 	queue_work(ha->dpc_thread, &ha->dpc_work);
+ }
+ 
+-static int qla4xxx_conn_start(struct iscsi_cls_conn *conn)
++int qla4xxx_conn_start(struct iscsi_cls_conn *conn)
+ {
+ 	struct iscsi_cls_session *session;
+ 	struct ddb_entry *ddb_entry;
+@@ -340,7 +336,8 @@ void qla4xxx_mark_device_missing(struct 
+ 	DEBUG3(printk("scsi%d:%d:%d: index [%d] marked MISSING\n",
+ 		      ha->host_no, ddb_entry->bus, ddb_entry->target,
+ 		      ddb_entry->fw_ddb_index));
+-	iscsi_conn_error(ddb_entry->conn, ISCSI_ERR_CONN_FAILED);
++
++	qla4xxx_conn_stop(ddb_entry->conn, STOP_CONN_RECOVER);
+ }
+ 
+ static struct srb* qla4xxx_get_new_srb(struct scsi_qla_host *ha,
+
+Signed-off-by: Andreas Herrmann <aherrman@de.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+---
+
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -551,7 +551,15 @@ static void scsi_run_queue(struct reques
+ 		list_del_init(&sdev->starved_entry);
+ 		spin_unlock_irqrestore(shost->host_lock, flags);
+ 
+-		blk_run_queue(sdev->request_queue);
++
++		if (test_bit(QUEUE_FLAG_REENTER, &q->queue_flags) &&
++		    !test_and_set_bit(QUEUE_FLAG_REENTER,
++				      &sdev->request_queue->queue_flags)) {
++			blk_run_queue(sdev->request_queue);
++			clear_bit(QUEUE_FLAG_REENTER,
++				  &sdev->request_queue->queue_flags);
++		} else
++			blk_run_queue(sdev->request_queue);
+ 
+ 		spin_lock_irqsave(shost->host_lock, flags);
+ 		if (unlikely(!list_empty(&sdev->starved_entry)))
+
+

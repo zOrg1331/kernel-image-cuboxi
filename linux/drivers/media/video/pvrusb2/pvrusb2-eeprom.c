@@ -1,5 +1,6 @@
 /*
  *
+ *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
@@ -101,8 +102,9 @@ static u8 *pvr2_eeprom_fetch(struct pvr2_hdw *hdw)
 		}
 		msg[1].len = pcnt;
 		msg[1].buf = eeprom+tcnt;
-		if ((ret = i2c_transfer(&hdw->i2c_adap,
-					msg,ARRAY_SIZE(msg))) != 2) {
+		if ((ret = i2c_transfer(
+			     &hdw->i2c_adap,
+			     msg,sizeof(msg)/sizeof(msg[0]))) != 2) {
 			pvr2_trace(PVR2_TRACE_ERROR_LEGS,
 				   "eeprom fetch set offs err=%d",ret);
 			kfree(eeprom);
@@ -143,7 +145,6 @@ int pvr2_eeprom_analyze(struct pvr2_hdw *hdw)
 	trace_eeprom("serial_number=%d",tvdata.serial_number);
 	trace_eeprom("rev_str=%s",tvdata.rev_str);
 	hdw->tuner_type = tvdata.tuner_type;
-	hdw->tuner_updated = !0;
 	hdw->serial_number = tvdata.serial_number;
 	hdw->std_mask_eeprom = tvdata.tuner_formats;
 

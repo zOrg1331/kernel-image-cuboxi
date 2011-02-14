@@ -1,0 +1,85 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz238465 [PPC] handle <.symbol> lookup for kprobes
+Date: Fri, 25 May 2007 10:44:57 -0400 (EDT)
+Bugzilla: 238465
+Message-Id: <Pine.LNX.4.64.0705251043410.5134@squad5-lp1.lab.boston.redhat.com>
+Changelog: [PPC] handle <.symbol> lookup for kprobes
+
+
+RHBZ#: 238465
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=238465
+
+Description:
+------------
+  [POWERPC] Transparently handle <.symbol> lookup for kprobes
+  
+  When data symbols are not present in kernel image, user needs to add
+  dot(".") before function name explicitly, that he wants to probe in kprobe
+  module on ppc64.
+  
+  for ex:-
+  When data symbols are missing on ppc64,
+  ====================
+  [root@llm27lp1 ~]# cat /proc/kallsyms | grep do_fork
+  c00000000006283c T .do_fork
+  ==============================
+  User needs add "." to "do_fork"
+  
+  kp.symbol_name = ".do_fork";
+  ============================
+  
+  This makes kprobe module source unportable.  This fixes the problem.
+  
+  Signed-off-by: Srinivasa Ds <srinivasa@in.ibm.com>
+  Signed-off-by: Ananth N Mavinakayanahalli <ananth@in.ibm.com>
+  Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+
+RHEL Version Found:
+-------------------
+bug against 5.0
+
+Upstream Status:
+----------------
+This code is upstream for 2.6.22
+git commit [1] eb609e52d188775da738a1ffd1e982e6212c77d7
+
+
+Test Status:
+------------
+These patches have been built against 2.6.18-19.el5, and successfully
+built in brew task 794835 [2].
+
+Test has been done by Srinivasa Ds of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=eb609e52d188775da738a1ffd1e982e6212c77d7
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=794835
+
+---
+ include/asm-powerpc/kprobes.h |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+Index: b/include/asm-powerpc/kprobes.h
+===================================================================
+--- a/include/asm-powerpc/kprobes.h
++++ b/include/asm-powerpc/kprobes.h
+@@ -63,6 +63,12 @@ typedef unsigned int kprobe_opcode_t;
+ 				addr = *(kprobe_opcode_t **)addr;	\
+ 		} else if (name[0] != '.')				\
+ 			addr = *(kprobe_opcode_t **)addr;		\
++	} else {							\
++		char dot_name[KSYM_NAME_LEN+1];				\
++		dot_name[0] = '.';					\
++		dot_name[1] = '\0';					\
++		strncat(dot_name, name, KSYM_NAME_LEN);			\
++		addr = (kprobe_opcode_t *)kallsyms_lookup_name(dot_name); \
+ 	}								\
+ }
+ 
+

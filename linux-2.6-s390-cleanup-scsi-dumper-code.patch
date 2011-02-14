@@ -1,0 +1,62 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 2 Nov 2007 14:43:59 +0100
+Subject: [s390] cleanup SCSI dumper code
+Message-id: 20071102134359.GB13909@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/7] FEAT: s390 Cleanup SCSI dumper code for upstream integration - kernel part (1/2)
+Bugzilla: 253104
+
+Description
+============
+
+Define EX_TABLE macro for exception tables in inline assemblies.
+
+This patch is required for the SCSI stand alone dumper
+
+Bugzilla
+=========
+
+BZ 253104
+https://bugzilla.redhat.com/show_bug.cgi?id=253104
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit de1a3f1ce6c4c3b2b14cf9157a22d6b4c64f708e
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/include/asm-s390/processor.h b/include/asm-s390/processor.h
+index 5b71d37..a3a4e5f 100644
+--- a/include/asm-s390/processor.h
++++ b/include/asm-s390/processor.h
+@@ -339,4 +339,21 @@ int unregister_idle_notifier(struct notifier_block *nb);
+ 
+ #endif
+ 
++/*
++ * Helper macro for exception table entries
++ */
++#ifndef __s390x__
++#define EX_TABLE(_fault,_target)			\
++	".section __ex_table,\"a\"\n"			\
++	"	.align 4\n"				\
++	"	.long  " #_fault "," #_target "\n"	\
++	".previous\n"
++#else
++#define EX_TABLE(_fault,_target)			\
++	".section __ex_table,\"a\"\n"			\
++	"	.align 8\n"				\
++	"	.quad  " #_fault "," #_target "\n"	\
++	".previous\n"
++#endif
++
+ #endif                                 /* __ASM_S390_PROCESSOR_H           */

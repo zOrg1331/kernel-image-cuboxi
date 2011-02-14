@@ -1,0 +1,77 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 13 Aug 2010 09:46:37 -0400
+Subject: [scsi] bnx2i: fix protocol violation on nopout responses
+Message-id: <1281692802-2810-10-git-send-email-mchristi@redhat.com>
+Patchwork-id: 27547
+O-Subject: [RHEL5.6 PATCH 09/14] BNX2I: Fixed a protocol violation on nopout
+	responses
+Bugzilla: 568606
+
+From: Eddie Wai <eddie.wai@broadcom.com>
+
+For bz 568606.
+
+According to RFC3720, nopout packet sent in response to unsolicited
+nopin packet requesting a response must retain the TTT of the requester.
+
+http://marc.info/?l=linux-scsi&m=128166115804868&w=2
+
+diff --git a/drivers/scsi/bnx2i/bnx2i.h b/drivers/scsi/bnx2i/bnx2i.h
+index dffba80..90f8ba3 100644
+--- a/drivers/scsi/bnx2i/bnx2i.h
++++ b/drivers/scsi/bnx2i/bnx2i.h
+@@ -755,7 +755,7 @@ extern int bnx2i_send_iscsi_tmf(struct bnx2i_conn *conn,
+ extern int bnx2i_send_iscsi_scsicmd(struct bnx2i_conn *conn,
+ 				    struct bnx2i_cmd *cmnd);
+ extern int bnx2i_send_iscsi_nopout(struct bnx2i_conn *conn,
+-				   struct iscsi_task *mtask, u32 ttt,
++				   struct iscsi_task *mtask,
+ 				   char *datap, int data_len, int unsol);
+ extern int bnx2i_send_iscsi_logout(struct bnx2i_conn *conn,
+ 				   struct iscsi_task *mtask);
+diff --git a/drivers/scsi/bnx2i/bnx2i_hwi.c b/drivers/scsi/bnx2i/bnx2i_hwi.c
+index 74869cf..23dea1f 100644
+--- a/drivers/scsi/bnx2i/bnx2i_hwi.c
++++ b/drivers/scsi/bnx2i/bnx2i_hwi.c
+@@ -463,7 +463,6 @@ int bnx2i_send_iscsi_scsicmd(struct bnx2i_conn *bnx2i_conn,
+  * @conn:		iscsi connection
+  * @cmd:		driver command structure which is requesting
+  *			a WQE to sent to chip for further processing
+- * @ttt:		TTT to be used when building pdu header
+  * @datap:		payload buffer pointer
+  * @data_len:		payload data length
+  * @unsol:		indicated whether nopout pdu is unsolicited pdu or
+@@ -472,7 +471,7 @@ int bnx2i_send_iscsi_scsicmd(struct bnx2i_conn *bnx2i_conn,
+  * prepare and post a nopout request WQE to CNIC firmware
+  */
+ int bnx2i_send_iscsi_nopout(struct bnx2i_conn *bnx2i_conn,
+-			    struct iscsi_task *task, u32 ttt,
++			    struct iscsi_task *task,
+ 			    char *datap, int data_len, int unsol)
+ {
+ 	struct bnx2i_endpoint *ep = bnx2i_conn->ep;
+@@ -497,7 +496,7 @@ int bnx2i_send_iscsi_nopout(struct bnx2i_conn *bnx2i_conn,
+ 	nopout_wqe->itt = ((u16)task->itt |
+ 			   (ISCSI_TASK_TYPE_MPATH <<
+ 			    ISCSI_TMF_REQUEST_TYPE_SHIFT));
+-	nopout_wqe->ttt = ttt;
++	nopout_wqe->ttt = nopout_hdr->ttt;
+ 	nopout_wqe->flags = 0;
+ 	if (!unsol)
+ 		nopout_wqe->flags = ISCSI_NOP_OUT_REQUEST_LOCAL_COMPLETION;
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index f24ec2e..4a64372 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -1077,11 +1077,9 @@ static int bnx2i_iscsi_send_generic_request(struct iscsi_task *task)
+ 		buf = bnx2i_conn->gen_pdu.req_buf;
+ 		if (data_len)
+ 			rc = bnx2i_send_iscsi_nopout(bnx2i_conn, task,
+-						     RESERVED_ITT,
+ 						     buf, data_len, 1);
+ 		else
+ 			rc = bnx2i_send_iscsi_nopout(bnx2i_conn, task,
+-						     RESERVED_ITT,
+ 						     NULL, 0, 1);
+ 		break;
+ 	case ISCSI_OP_LOGOUT:

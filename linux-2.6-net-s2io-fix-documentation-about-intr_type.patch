@@ -1,0 +1,44 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 27 Jun 2008 15:50:22 +0200
+Subject: [net] s2io: fix documentation about intr_type
+Message-id: 20080627155022.7de5d21e@brian.englab.brq.redhat.com
+O-Subject: Re: [RHEL5.3 PATCH] s2io: fix documentation about intr_type
+Bugzilla: 450921
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=450921
+
+Description:
+The documentation for intr_type module parameter of the s2io driver is
+not consistent with the code. The comments in drivers/net/s2io.c are
+OK, but Documentation/networking/s2io.txt is wrong.
+Pointed out by Andrew Hecox.
+
+Upstream status:
+The patch is in DaveM's net-2.6 git tree, queued for vanilla.
+
+Testing:
+It only changes documentation, not code.
+
+Michal
+
+ Documentation/networking/s2io.txt |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/networking/s2io.txt b/Documentation/networking/s2io.txt
+index bd528ff..2b4531b 100644
+--- a/Documentation/networking/s2io.txt
++++ b/Documentation/networking/s2io.txt
+@@ -83,9 +83,9 @@ Valid range: Limited by memory on system
+ Default: 30 
+ 
+ e. intr_type
+-Specifies interrupt type. Possible values 1(INTA), 2(MSI), 3(MSI-X)
+-Valid range: 1-3
+-Default: 1 
++Specifies interrupt type. Possible values 0(INTA), 2(MSI-X)
++Valid values: 0, 2
++Default: 0
+ 
+ 5.  Performance suggestions
+ General:

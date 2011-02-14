@@ -16,7 +16,6 @@
 #define _INET_TIMEWAIT_SOCK_
 
 
-#include <linux/kmemcheck.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/timer.h>
@@ -67,7 +66,7 @@ struct inet_hashinfo;
 struct inet_timewait_death_row {
 	/* Short-time timewait calendar */
 	int			twcal_hand;
-	unsigned long		twcal_jiffie;
+	int			twcal_jiffie;
 	struct timer_list	twcal_timer;
 	struct hlist_head	twcal_row[INET_TWDR_RECYCLE_SLOTS];
 
@@ -85,7 +84,7 @@ struct inet_timewait_death_row {
 };
 
 extern void inet_twdr_hangman(unsigned long data);
-extern void inet_twdr_twkill_work(struct work_struct *work);
+extern void inet_twdr_twkill_work(void *data);
 extern void inet_twdr_twcal_tick(unsigned long data);
 
 #if (BITS_PER_LONG == 64)
@@ -111,39 +110,35 @@ struct inet_timewait_sock {
 #define tw_state		__tw_common.skc_state
 #define tw_reuse		__tw_common.skc_reuse
 #define tw_bound_dev_if		__tw_common.skc_bound_dev_if
-#define tw_node			__tw_common.skc_nulls_node
+#define tw_node			__tw_common.skc_node
 #define tw_bind_node		__tw_common.skc_bind_node
 #define tw_refcnt		__tw_common.skc_refcnt
 #define tw_hash			__tw_common.skc_hash
 #define tw_prot			__tw_common.skc_prot
-#define tw_net			__tw_common.skc_net
-	int			tw_timeout;
 	volatile unsigned char	tw_substate;
 	/* 3 bits hole, try to pack */
 	unsigned char		tw_rcv_wscale;
 	/* Socket demultiplex comparisons on incoming packets. */
 	/* these five are in inet_sock */
-	__be16			tw_sport;
-	__be32			tw_daddr __attribute__((aligned(INET_TIMEWAIT_ADDRCMP_ALIGN_BYTES)));
-	__be32			tw_rcv_saddr;
-	__be16			tw_dport;
+	__u16			tw_sport;
+	__u32			tw_daddr __attribute__((aligned(INET_TIMEWAIT_ADDRCMP_ALIGN_BYTES)));
+	__u32			tw_rcv_saddr;
+	__u16			tw_dport;
 	__u16			tw_num;
-	kmemcheck_bitfield_begin(flags);
 	/* And these are ours. */
-	unsigned int		tw_ipv6only     : 1,
-				tw_transparent  : 1,
-				tw_pad		: 14,	/* 14 bits hole */
-				tw_ipv6_offset  : 16;
-	kmemcheck_bitfield_end(flags);
+	__u8			tw_ipv6only:1;
+	/* 15 bits hole, try to pack */
+	__u16			tw_ipv6_offset;
+	int			tw_timeout;
 	unsigned long		tw_ttd;
 	struct inet_bind_bucket	*tw_tb;
 	struct hlist_node	tw_death_node;
 };
 
-static inline void inet_twsk_add_node_rcu(struct inet_timewait_sock *tw,
-				      struct hlist_nulls_head *list)
+static inline void inet_twsk_add_node(struct inet_timewait_sock *tw,
+				      struct hlist_head *list)
 {
-	hlist_nulls_add_head_rcu(&tw->tw_node, list);
+	hlist_add_head(&tw->tw_node, list);
 }
 
 static inline void inet_twsk_add_bind_node(struct inet_timewait_sock *tw,
@@ -178,7 +173,7 @@ static inline int inet_twsk_del_dead_node(struct inet_timewait_sock *tw)
 }
 
 #define inet_twsk_for_each(tw, node, head) \
-	hlist_nulls_for_each_entry(tw, node, head, tw_node)
+	hlist_for_each_entry(tw, node, head, tw_node)
 
 #define inet_twsk_for_each_inmate(tw, node, jail) \
 	hlist_for_each_entry(tw, node, jail, tw_death_node)
@@ -191,16 +186,30 @@ static inline struct inet_timewait_sock *inet_twsk(const struct sock *sk)
 	return (struct inet_timewait_sock *)sk;
 }
 
-static inline __be32 inet_rcv_saddr(const struct sock *sk)
+static inline u32 inet_rcv_saddr(const struct sock *sk)
 {
 	return likely(sk->sk_state != TCP_TIME_WAIT) ?
 		inet_sk(sk)->rcv_saddr : inet_twsk(sk)->tw_rcv_saddr;
 }
 
-extern void inet_twsk_put(struct inet_timewait_sock *tw);
+static inline void inet_twsk_put(struct inet_timewait_sock *tw)
+{
+	if (atomic_dec_and_test(&tw->tw_refcnt)) {
+		struct module *owner = tw->tw_prot->owner;
+#ifdef SOCK_REFCNT_DEBUG
+		printk(KERN_DEBUG "%s timewait_sock %p released\n",
+		       tw->tw_prot->name, tw);
+#endif
+		kmem_cache_free(tw->tw_prot->twsk_prot->twsk_slab, tw);
+		module_put(owner);
+	}
+}
 
 extern struct inet_timewait_sock *inet_twsk_alloc(const struct sock *sk,
 						  const int state);
+
+extern void __inet_twsk_kill(struct inet_timewait_sock *tw,
+			     struct inet_hashinfo *hashinfo);
 
 extern void __inet_twsk_hashdance(struct inet_timewait_sock *tw,
 				  struct sock *sk,
@@ -211,25 +220,4 @@ extern void inet_twsk_schedule(struct inet_timewait_sock *tw,
 			       const int timeo, const int timewait_len);
 extern void inet_twsk_deschedule(struct inet_timewait_sock *tw,
 				 struct inet_timewait_death_row *twdr);
-
-extern void inet_twsk_purge(struct net *net, struct inet_hashinfo *hashinfo,
-			    struct inet_timewait_death_row *twdr, int family);
-
-static inline
-struct net *twsk_net(const struct inet_timewait_sock *twsk)
-{
-#ifdef CONFIG_NET_NS
-	return twsk->tw_net;
-#else
-	return &init_net;
-#endif
-}
-
-static inline
-void twsk_net_set(struct inet_timewait_sock *twsk, struct net *net)
-{
-#ifdef CONFIG_NET_NS
-	twsk->tw_net = net;
-#endif
-}
 #endif	/* _INET_TIMEWAIT_SOCK_ */

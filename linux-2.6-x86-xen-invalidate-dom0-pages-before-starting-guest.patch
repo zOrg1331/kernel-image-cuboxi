@@ -1,0 +1,58 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Thu, 21 Jan 2010 19:59:54 -0500
+Subject: [x86] xen: invalidate dom0 pages before starting guest
+Message-id: <4B58B23A.2060901@redhat.com>
+Patchwork-id: 22696
+O-Subject: [RHEL5.5 Xen PATCH]: Invalidate dom0 page-cache before starting a
+	guest
+Bugzilla: 466681
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+All,
+     We've had a long standing issue with certain Xen setups not properly
+seeing updated guest information.  The sequence of events is:
+
+1)  Start up a guest with pygrub
+2)  Edit /boot/grub/grub.conf inside the guest
+3)  Shutdown the guest
+4)  Start up a guest with pygrub
+
+In certain circumstances, the changes made in 3) were not being reflected
+in 4).  After quite a bit of discussion with Michal Novotny, hch, Ric Wheeler,
+and Eric Sandeen (thanks!), we determined that the problem is in the way
+that Xen blkback submits data to the block layer.  In particular it submits
+bio's directly to the block layer instead of going through the normal
+mechanisms, which means it doesn't properly invalidate the page cache.
+     The solution is fairly simple; when we first start up a blkback kernel
+thread to handle I/O, we flush the in-memory cache for that device before
+doing anything else.  This ensures that the data that pygrub (on the dom0)
+sees is consistent with what the guest wrote.
+     I couldn't reproduce the problem myself, so my testing was just basic
+smoke testing to make sure things worked.  One of the reporters on the BZ
+downloaded my test kernel and confirmed that this patch fixes his problem.
+     This was committed to upstream linux-2.6.18-xen.hg as c/s 986, and
+should resolve BZ 466681.  Please review and ACK.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/xen/blkback/xenbus.c b/drivers/xen/blkback/xenbus.c
+index 49aa93f..4da2651 100644
+--- a/drivers/xen/blkback/xenbus.c
++++ b/drivers/xen/blkback/xenbus.c
+@@ -87,6 +87,13 @@ static void update_blkif_status(blkif_t *blkif)
+ 		return;
+ 	}
+ 
++	err = filemap_write_and_wait(blkif->vbd.bdev->bd_inode->i_mapping);
++	if (err) {
++		xenbus_dev_error(blkif->be->dev, err, "block flush");
++		return;
++	}
++	invalidate_inode_pages2(blkif->vbd.bdev->bd_inode->i_mapping);
++
+ 	blkif->xenblkd = kthread_run(blkif_schedule, blkif, name);
+ 	if (IS_ERR(blkif->xenblkd)) {
+ 		err = PTR_ERR(blkif->xenblkd);

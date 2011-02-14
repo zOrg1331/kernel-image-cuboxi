@@ -1,0 +1,29 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5] fix nosegneg detection
+Date: Wed, 03 Jan 2007 12:59:10 -0500
+Bugzilla: 220675
+Message-Id: <459BEEEE.2060006@redhat.com>
+Changelog: xen: fix nosegneg detection
+
+
+The attached patch fixes bug 220675, by placing the nosegneg flag
+exactly where glibc expects it to be.  I swear I fixed this bug
+before once or twice, but the fix must have gotten lost somewhere.
+
+Please apply.
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+--- linux-2.6.18.x86_64/arch/i386/kernel/vsyscall-note-xen.S.220675	2007-01-03 12:56:38.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/vsyscall-note-xen.S	2007-01-03 12:56:47.000000000 -0500
+@@ -28,5 +28,5 @@
+ #define NOTE_KERNELCAP_END ASM_ELF_NOTE_END
+ 
+ NOTE_KERNELCAP_BEGIN(1, 1)
+-NOTE_KERNELCAP(1, "nosegneg")  /* Change 1 back to 0 when glibc is fixed! */
++NOTE_KERNELCAP(0, "nosegneg")
+ NOTE_KERNELCAP_END
+

@@ -13,14 +13,14 @@
 
 #ifdef EXT3FS_DEBUG
 
-static const int nibblemap[] = {4, 3, 3, 2, 3, 2, 2, 1, 3, 2, 2, 1, 2, 1, 1, 0};
+static int nibblemap[] = {4, 3, 3, 2, 3, 2, 2, 1, 3, 2, 2, 1, 2, 1, 1, 0};
 
 unsigned long ext3_count_free (struct buffer_head * map, unsigned int numchars)
 {
 	unsigned int i;
 	unsigned long sum = 0;
 
-	if (!map)
+	if (!map) 
 		return (0);
 	for (i = 0; i < numchars; i++)
 		sum += nibblemap[map->b_data[i] & 0xf] +

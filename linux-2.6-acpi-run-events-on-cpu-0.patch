@@ -1,0 +1,49 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Tue, 10 Nov 2009 19:33:03 -0500
+Subject: [acpi] run events on cpu 0
+Message-id: <1257881583-1907-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 21353
+O-Subject: [PATCH] [RHEL 5.5] acpi: Run events on CPU 0
+Bugzilla: 485016
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Some ACPI events will trigger SMIs. Some machines (such as HP laptops) are
+unable to cope with SMIs being triggered on CPUs other than CPU 0, and fail
+to restore state correctly resulting in a crash. This is a backport of
+the upstream code to bind the event runqueues to CPU 0.
+
+diff --git a/drivers/acpi/osl.c b/drivers/acpi/osl.c
+index 261621d..b6971a1 100644
+--- a/drivers/acpi/osl.c
++++ b/drivers/acpi/osl.c
+@@ -74,6 +74,21 @@ static acpi_osd_handler acpi_irq_handler;
+ static void *acpi_irq_context;
+ static struct workqueue_struct *kacpid_wq;
+ 
++static void bind_to_cpu0(void *context)
++{
++	set_cpus_allowed(current, cpumask_of_cpu(0));
++	kfree(context);
++}
++
++static void bind_workqueue(struct workqueue_struct *wq)
++{
++	struct work_struct *work;
++
++	work = kzalloc(sizeof(struct work_struct), GFP_KERNEL);
++	INIT_WORK(work, bind_to_cpu0, work);
++	queue_work(wq, work);
++}
++
+ acpi_status acpi_os_initialize(void)
+ {
+ 	return AE_OK;
+@@ -92,6 +107,7 @@ acpi_status acpi_os_initialize1(void)
+ 	}
+ 	kacpid_wq = create_singlethread_workqueue("kacpid");
+ 	BUG_ON(!kacpid_wq);
++	bind_workqueue(kacpid_wq);
+ 
+ 	return AE_OK;
+ }

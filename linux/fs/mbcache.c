@@ -85,7 +85,7 @@ struct mb_cache {
 #ifndef MB_CACHE_INDEXES_COUNT
 	int				c_indexes_count;
 #endif
-	struct kmem_cache			*c_entry_cache;
+	kmem_cache_t			*c_entry_cache;
 	struct list_head		*c_block_hash;
 	struct list_head		*c_indexes_hash[0];
 };
@@ -100,6 +100,7 @@ struct mb_cache {
 static LIST_HEAD(mb_cache_list);
 static LIST_HEAD(mb_cache_lru_list);
 static DEFINE_SPINLOCK(mb_cache_spinlock);
+static struct shrinker *mb_shrinker;
 
 static inline int
 mb_cache_indexes(struct mb_cache *cache)
@@ -115,12 +116,8 @@ mb_cache_indexes(struct mb_cache *cache)
  * What the mbcache registers as to get shrunk dynamically.
  */
 
-static int mb_cache_shrink_fn(struct shrinker *shrink, int nr_to_scan, gfp_t gfp_mask);
+static int mb_cache_shrink_fn(int nr_to_scan, gfp_t gfp_mask);
 
-static struct shrinker mb_cache_shrinker = {
-	.shrink = mb_cache_shrink_fn,
-	.seeks = DEFAULT_SEEKS,
-};
 
 static inline int
 __mb_cache_entry_is_hashed(struct mb_cache_entry *ce)
@@ -163,7 +160,6 @@ __mb_cache_entry_forget(struct mb_cache_entry *ce, gfp_t gfp_mask)
 
 static void
 __mb_cache_entry_release_unlock(struct mb_cache_entry *ce)
-	__releases(mb_cache_spinlock)
 {
 	/* Wake up all processes queuing for this cache entry. */
 	if (ce->e_queued)
@@ -191,14 +187,13 @@ forget:
  * This function is called by the kernel memory management when memory
  * gets low.
  *
- * @shrink: (ignored)
  * @nr_to_scan: Number of objects to scan
  * @gfp_mask: (ignored)
  *
  * Returns the number of objects which are present in the cache.
  */
 static int
-mb_cache_shrink_fn(struct shrinker *shrink, int nr_to_scan, gfp_t gfp_mask)
+mb_cache_shrink_fn(int nr_to_scan, gfp_t gfp_mask)
 {
 	LIST_HEAD(free_list);
 	struct list_head *l, *ltmp;
@@ -293,7 +288,7 @@ mb_cache_create(const char *name, struct mb_cache_op *cache_op,
 			INIT_LIST_HEAD(&cache->c_indexes_hash[m][n]);
 	}
 	cache->c_entry_cache = kmem_cache_create(name, entry_size, 0,
-		SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD, NULL);
+		SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD, NULL, NULL);
 	if (!cache->c_entry_cache)
 		goto fail;
 
@@ -400,13 +395,13 @@ mb_cache_destroy(struct mb_cache *cache)
  * if no more memory was available.
  */
 struct mb_cache_entry *
-mb_cache_entry_alloc(struct mb_cache *cache, gfp_t gfp_flags)
+mb_cache_entry_alloc(struct mb_cache *cache)
 {
 	struct mb_cache_entry *ce;
 
-	ce = kmem_cache_alloc(cache->c_entry_cache, gfp_flags);
+	atomic_inc(&cache->c_entry_count);
+	ce = kmem_cache_alloc(cache->c_entry_cache, GFP_KERNEL);
 	if (ce) {
-		atomic_inc(&cache->c_entry_count);
 		INIT_LIST_HEAD(&ce->e_lru_list);
 		INIT_LIST_HEAD(&ce->e_block_list);
 		ce->e_cache = cache;
@@ -666,13 +661,13 @@ mb_cache_entry_find_next(struct mb_cache_entry *prev, int index,
 
 static int __init init_mbcache(void)
 {
-	register_shrinker(&mb_cache_shrinker);
+	mb_shrinker = set_shrinker(DEFAULT_SEEKS, mb_cache_shrink_fn);
 	return 0;
 }
 
 static void __exit exit_mbcache(void)
 {
-	unregister_shrinker(&mb_cache_shrinker);
+	remove_shrinker(mb_shrinker);
 }
 
 module_init(init_mbcache)

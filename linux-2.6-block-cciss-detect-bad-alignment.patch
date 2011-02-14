@@ -1,0 +1,30 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:45 -0400
+Subject: [block] cciss: detect bad alignment
+Message-id: <1283097002-3341-47-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27878
+O-Subject: [RHEL6 PATCH 46/63] cciss: detect bad alignment
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+detect bad alignment during compile
+
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index 51b5096..dde65a1 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -203,9 +203,11 @@ scsi_cmd_stack_setup(int ctlr, struct cciss_scsi_adapter_data_t *sa)
+ 	stk = &sa->cmd_stack; 
+ 	size = sizeof(struct cciss_scsi_cmd_stack_elem_t) * CMD_STACK_SIZE;
+ 
+-	// pci_alloc_consistent guarantees 32-bit DMA address will
+-	// be used
+-
++	/* Check alignment, see cciss_cmd.h near CommandList_struct def. */
++	BUILD_BUG_ON((sizeof(struct cciss_scsi_cmd_stack_elem_t) % 8) != 0);
++	/* pci_alloc_consistent guarantees 32-bit DMA address will
++	 * be used
++	 */
+ 	stk->pool = (struct cciss_scsi_cmd_stack_elem_t *)
+ 		pci_alloc_consistent(hba[ctlr]->pdev, size, &stk->cmd_pool_handle);
+ 

@@ -50,7 +50,7 @@ aic7770_map_registers(struct ahc_softc *ahc, u_int port)
 	/*
 	 * Lock out other contenders for our i/o space.
 	 */
-	if (!request_region(port, AHC_EISA_IOSIZE, "aic7xxx"))
+	if (request_region(port, AHC_EISA_IOSIZE, "aic7xxx") == 0)
 		return (ENOMEM);
 	ahc->tag = BUS_SPACE_PIO;
 	ahc->bsh.ioport = port;
@@ -132,8 +132,7 @@ static struct eisa_device_id aic7770_ids[] = {
 	{ "ADP7770", 5 }, /* AIC7770 generic */
 	{ "" }
 };
-MODULE_DEVICE_TABLE(eisa, aic7770_ids);
-
+  
 static struct eisa_driver aic7770_driver = {
 	.id_table	= aic7770_ids,
 	.driver = {

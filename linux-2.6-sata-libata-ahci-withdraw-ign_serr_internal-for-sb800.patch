@@ -1,0 +1,72 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Fri, 20 Feb 2009 14:28:16 -0600
+Subject: [sata] libata: ahci withdraw IGN_SERR_INTERNAL for SB800
+Message-id: 20090220202816.GA5849@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.4 PATCH] libata: ahci withdraw IGN_SERR_INTERNAL for SB800
+Bugzilla: 474301
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+This patch is from Shane Huang (AMD) and it resolves
+BZ 474301. The work-around to ignore false host internal
+errors leading to many sata error messages is only needed
+on SB600/SB700 and should be removed for SB800. Similiar
+code was applied to RHEL4 (.81.EL) and this patch is a
+backport of the following upstream commit. AMD has verified on
+SB700 and SB800 platform running 2.6.18-131.el5 test kernel
+built with this patch.
+
+Please review and ACK.
+
+Thanks,
+David
+
+commit e427fe042cf90c0652eed9a85e57a8fd8af89890
+Author: Shane Huang <shane.huang@amd.com>
+Date:   Tue Dec 30 10:53:41 2008 +0800
+
+    [libata] ahci: Withdraw IGN_SERR_INTERNAL for SB800 SATA
+
+    There is an issue in ATI SB600/SB700 SATA that PxSERR.E should not be
+    set on some conditions, which will lead to many SATA ODD error messages.
+    commit 55a61604cd1354e1783364e1c901034f2f474b7d is the workaround.
+    Since SB800 fixed this HW issue, IGN_SERR_INTERNAL should be withdrawn
+    for SB800.
+
+ drivers/ata/ahci.c |    8 ++++++--
+ 1 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index f200f3e..fb31aa3 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -105,7 +105,7 @@ enum {
+ 	board_ahci_ign_iferr	= 2,
+ 	board_ahci_sb600	= 3,
+ 	board_ahci_mv		= 4,
+-	board_ahci_sb700	= 5,
++	board_ahci_sb700	= 5, /* for SB700 and SB800 */
+ 
+ 	/* global controller registers */
+ 	HOST_CAP		= 0x00, /* host capabilities */
+@@ -435,7 +435,7 @@ static const struct ata_port_info ahci_port_info[] = {
+ 		.udma_mask	= ATA_UDMA6,
+ 		.port_ops	= &ahci_ops,
+ 	},
+-	/* board_ahci_sb700 */
++	/* board_ahci_sb700, for SB700 and SB800 */
+ 	{
+ 		AHCI_HFLAGS	(AHCI_HFLAG_IGN_SERR_INTERNAL),
+ 		.flags		= AHCI_FLAG_COMMON,
+@@ -2573,6 +2573,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 		return -ENOMEM;
+ 	hpriv->flags |= (unsigned long)pi.private_data;
+ 
++	/* SB800 does NOT need the workaround to ignore SERR_INTERNAL */
++	if (ent->driver_data == board_ahci_sb700 && pdev->revision >= 0x40)
++		hpriv->flags &= ~AHCI_HFLAG_IGN_SERR_INTERNAL;
++
+ 	if ((hpriv->flags & AHCI_HFLAG_NO_MSI) || pci_enable_msi(pdev))
+ 		pci_intx(pdev, 1);
+ 

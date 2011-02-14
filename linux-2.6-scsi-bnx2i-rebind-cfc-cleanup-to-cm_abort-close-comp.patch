@@ -1,0 +1,41 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 13 Aug 2010 09:46:39 -0400
+Subject: [scsi] bnx2i: rebind CFC cleanup to cm_abort/close comp
+Message-id: <1281692802-2810-12-git-send-email-mchristi@redhat.com>
+Patchwork-id: 27546
+O-Subject: [RHEL5.6 PATCH 11/14] BNX2I: Recouple the CFC delete cleanup with
+	cm_abort/close completion
+Bugzilla: 568606
+
+From: Eddie Wai <eddie.wai@broadcom.com>
+
+For bz 568606.
+
+Specific to the Broadcom 10g chipset, the CFC delete operation must be
+coupled with the cm_abort/close with does the SRC delete/terminate offload
+operation prior.
+
+http://marc.info/?t=128166129800001&r=1&w=2
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index 4a64372..5396c7d 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -2010,11 +2010,13 @@ int bnx2i_hw_ep_disconnect(struct bnx2i_endpoint *bnx2i_ep)
+ 	else
+ 		close_ret = cnic->cm_abort(bnx2i_ep->cm_sk);
+ 
++	/* No longer allow CFC delete if cm_close/abort fails the request */
+ 	if (close_ret)
+-		bnx2i_ep->state = EP_STATE_DISCONN_COMPL;
+-
+-	/* wait for option-2 conn teardown */
+-	wait_event_interruptible(bnx2i_ep->ofld_wait,
++		printk(KERN_ALERT "bnx2i: %s close/abort(%d) returned %d\n",
++			bnx2i_ep->hba->netdev->name, close, close_ret);
++	else
++		/* wait for option-2 conn teardown */
++		wait_event_interruptible(bnx2i_ep->ofld_wait,
+ 				 bnx2i_ep->state != EP_STATE_DISCONN_START);
+ 
+ 	if (signal_pending(current))

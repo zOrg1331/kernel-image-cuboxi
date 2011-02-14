@@ -1,0 +1,43 @@
+From: Abhijith Das <adas@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] GFS2 - bz 250772: GFS2: assertion 	failure gfs2_block_map
+Date: Mon, 20 Aug 2007 11:37:54 -0500
+Bugzilla: 250772
+Message-Id: <46C9C362.6010101@redhat.com>
+Changelog: [gfs2] unstuff quota inode
+
+Hi,
+This patch forcibly unstuffs (if stuffed) the hidden quota inode at the
+first available opportunity. In any practical scenario the quota inode
+won't be stuffed, so this is ok to do. Unstuffing the quota inode allows
+us to ignore the case of a stuffed quota inode in gfs2_adjust_quota().
+
+This patch is upstream:
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commit;h=79cdc1550364ea51c9220f629d7dd015561fb26d
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Index: linux-rhel51-quilt/fs/gfs2/quota.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/gfs2/quota.c    2007-08-15
+17:34:41.000000000 -0500
++++ linux-rhel51-quilt/fs/gfs2/quota.c    2007-08-16 14:11:09.000000000
+-0500
+@@ -617,6 +617,16 @@
+	s64 value;
+	int err = -EIO;
+
++	if (gfs2_is_stuffed(ip)) {
++		struct gfs2_alloc *al = NULL;
++		al = gfs2_alloc_get(ip);
++		/* just request 1 blk */
++		al->al_requested = 1;
++		gfs2_inplace_reserve(ip);
++		gfs2_unstuff_dinode(ip, NULL);
++		gfs2_inplace_release(ip);
++		gfs2_alloc_put(ip);
++	}
+	page = grab_cache_page(mapping, index);
+	if (!page)
+		return -ENOMEM;
+

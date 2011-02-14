@@ -7,10 +7,11 @@
 #include <linux/kallsyms.h>
 #include <linux/sched.h>
 
-notrace unsigned int debug_smp_processor_id(void)
+unsigned int debug_smp_processor_id(void)
 {
 	unsigned long preempt_count = preempt_count();
 	int this_cpu = raw_smp_processor_id();
+	cpumask_t this_mask;
 
 	if (likely(preempt_count))
 		goto out;
@@ -22,7 +23,9 @@ notrace unsigned int debug_smp_processor_id(void)
 	 * Kernel threads bound to a single CPU can safely use
 	 * smp_processor_id():
 	 */
-	if (cpumask_equal(&current->cpus_allowed, cpumask_of(this_cpu)))
+	this_mask = cpumask_of_cpu(this_cpu);
+
+	if (cpus_equal(current->cpus_allowed, this_mask))
 		goto out;
 
 	/*
@@ -34,19 +37,17 @@ notrace unsigned int debug_smp_processor_id(void)
 	/*
 	 * Avoid recursion:
 	 */
-	preempt_disable_notrace();
+	preempt_disable();
 
 	if (!printk_ratelimit())
 		goto out_enable;
 
-	printk(KERN_ERR "BUG: using smp_processor_id() in preemptible [%08x] "
-			"code: %s/%d\n",
-			preempt_count() - 1, current->comm, current->pid);
+	printk(KERN_ERR "BUG: using smp_processor_id() in preemptible [%08x] code: %s/%d\n", preempt_count(), current->comm, current->pid);
 	print_symbol("caller is %s\n", (long)__builtin_return_address(0));
 	dump_stack();
 
 out_enable:
-	preempt_enable_no_resched_notrace();
+	preempt_enable_no_resched();
 out:
 	return this_cpu;
 }

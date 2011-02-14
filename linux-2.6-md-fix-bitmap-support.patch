@@ -1,0 +1,52 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 4 Dec 2007 12:40:07 -0500
+Subject: [md] fix bitmap support
+Message-id: 1196790007.11746.46.camel@firewall.xsintricity.com
+O-Subject: [Patch RHEL5] Fix md bitmap support (bz219338 and bz210178)
+Bugzilla: 210178
+
+There are two patches in one here.  They both are needed to get our md
+bitmap support operational on ppc64 kernels.  The first problem is that
+our 64bit kernels are missing a couple 32bit compat ioctls related to
+bitmaps (bz219338).  No big deal everywhere except ppc where by default
+we have a 64bit kernel and 32bit userland.  I tested the compat ioctl
+stuff by running the i386 mdadm on an x86_64 kernel with the patch
+applied (plus it's all upstream too, as well as having been tested by
+both IBM and Steeleye).  The second patch is related to big endian
+machines.  Specifically, find_first_bit on big endian machines doesn't
+find the least significant bit first (bz210178).  However, find first
+zero of the ~ does find the right item.  The second patch does that.  I
+don't have the means to test this, but it's upstream, it's a common
+practice in the kernel in general to use ffz(~variable); to find the
+least significant bit when the code will run on big endian machines, and
+the people at Steeleye have tested this.
+
+First patch:
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index ecc5676..3d0e764 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -1430,8 +1430,7 @@ int bitmap_create(mddev_t *mddev)
+ 	if (err)
+ 		goto error;
+ 
+-	bitmap->chunkshift = find_first_bit(&bitmap->chunksize,
+-					sizeof(bitmap->chunksize));
++	bitmap->chunkshift = ffz(~bitmap->chunksize);
+ 
+ 	/* now that chunksize and chunkshift are set, we can use these macros */
+  	chunks = (blocks + CHUNK_BLOCK_RATIO(bitmap) - 1) /
+diff --git a/include/linux/compat_ioctl.h b/include/linux/compat_ioctl.h
+index bea0255..a044316 100644
+--- a/include/linux/compat_ioctl.h
++++ b/include/linux/compat_ioctl.h
+@@ -124,6 +124,8 @@ ULONG_IOCTL(START_ARRAY)
+ COMPATIBLE_IOCTL(STOP_ARRAY)
+ COMPATIBLE_IOCTL(STOP_ARRAY_RO)
+ COMPATIBLE_IOCTL(RESTART_ARRAY_RW)
++ULONG_IOCTL(SET_BITMAP_FILE)
++COMPATIBLE_IOCTL(GET_BITMAP_FILE)
+ /* DM */
+ COMPATIBLE_IOCTL(DM_VERSION_32)
+ COMPATIBLE_IOCTL(DM_REMOVE_ALL_32)

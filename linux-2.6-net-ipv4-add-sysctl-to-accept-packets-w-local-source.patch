@@ -1,0 +1,249 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Mon, 21 Jun 2010 02:26:28 -0400
+Subject: [net] ipv4: add sysctl to accept packets w/local source
+Message-id: <1277087188-7660-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 26336
+O-Subject: [PATCH RHEL5] BZ#601370 net: add sysctl to accept packets with local
+	source addresses
+Bugzilla: 601370
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla: 601370
+https://bugzilla.redhat.com/show_bug.cgi?id=601370
+
+Description:
+============
+Customer requested a sysctl implementation to enable system to accept packets
+with local source addresses.
+
+Upstream status:
+================
+Backported following patch:
+- ipv4: add sysctl to accept packets with local source addresses
+  commit 8ec1e0ebe26087bfc5c0394ada5feb5758014fc8
+  Author: Patrick McHardy <kaber@trash.net>
+
+KABI
+  workaround the KABI breakage (new field in the struct ipv4_devconf)
+  using the net_device_extended space for the new accept_local argument.
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2525432
+
+Tested:
+=======
+tested by customer
+https://bugzilla.redhat.com/show_bug.cgi?id=601370#c7
+
+wbr,
+jirka
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/Documentation/networking/ip-sysctl.txt b/Documentation/networking/ip-sysctl.txt
+index ee2aac2..08ad56c 100644
+--- a/Documentation/networking/ip-sysctl.txt
++++ b/Documentation/networking/ip-sysctl.txt
+@@ -618,6 +618,12 @@ accept_source_route - BOOLEAN
+ 	default TRUE (router)
+ 		FALSE (host)
+ 
++accept_local - BOOLEAN
++	Accept packets with local source addresses. In combination with
++	suitable routing, this can be used to direct packets between two
++	local interfaces over the wire and have them accepted properly.
++	default FALSE
++
+ rp_filter - BOOLEAN
+ 	1 - do source validation by reversed path, as specified in RFC1812
+ 	    Recommended option for single homed hosts and stub network
+diff --git a/include/linux/inetdevice.h b/include/linux/inetdevice.h
+index 92297ff..8ca236b 100644
+--- a/include/linux/inetdevice.h
++++ b/include/linux/inetdevice.h
+@@ -64,6 +64,8 @@ struct in_device
+ #define IN_DEV_MFORWARD(in_dev)		(ipv4_devconf.mc_forwarding && (in_dev)->cnf.mc_forwarding)
+ #define IN_DEV_RPFILTER(in_dev)		(ipv4_devconf.rp_filter && (in_dev)->cnf.rp_filter)
+ #define IN_DEV_SOURCE_ROUTE(in_dev)	(ipv4_devconf.accept_source_route && (in_dev)->cnf.accept_source_route)
++#define IN_DEV_ACCEPT_LOCAL(in_dev)	(ipv4_devconf_ext.accept_local || \
++					 dev_extended(in_dev->dev)->ipv4_devconf_ext.accept_local)
+ #define IN_DEV_BOOTP_RELAY(in_dev)	(ipv4_devconf.bootp_relay && (in_dev)->cnf.bootp_relay)
+ 
+ #define IN_DEV_LOG_MARTIANS(in_dev)	(ipv4_devconf.log_martians || (in_dev)->cnf.log_martians)
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index eb52d84..56e085f 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -599,10 +599,18 @@ struct ipv6_devconf_extensions {
+ 	s32 accept_dad;
+ };
+ 
++struct ipv4_devconf_extensions {
++	int accept_local;
++};
++
+ struct net_device_extended {
++	struct ipv4_devconf_extensions ipv4_devconf_ext;
+ 	struct ipv6_devconf_extensions ipv6_devconf_ext;
+ };
+ 
++extern struct ipv4_devconf_extensions ipv4_devconf_ext;
++
++
+ #define	NETDEV_ALIGN		32
+ #define	NETDEV_ALIGN_CONST	(NETDEV_ALIGN - 1)
+ 
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index ad0a4ab..2e5afe1 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -506,6 +506,7 @@ enum
+ 	NET_IPV4_CONF_ARP_IGNORE=19,
+ 	NET_IPV4_CONF_PROMOTE_SECONDARIES=20,
+ 	NET_IPV4_CONF_ARP_ACCEPT=21,
++	NET_IPV4_CONF_ACCEPT_LOCAL=22,
+ 	__NET_IPV4_CONF_MAX
+ };
+ 
+diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
+index 7cd5900..ead41ab 100644
+--- a/net/ipv4/devinet.c
++++ b/net/ipv4/devinet.c
+@@ -79,6 +79,14 @@ static struct ipv4_devconf ipv4_devconf_dflt = {
+ 	.accept_source_route = 1,
+ };
+ 
++struct ipv4_devconf_extensions ipv4_devconf_ext = {
++	.accept_local = 0,
++};
++
++static struct ipv4_devconf_extensions ipv4_devconf_dflt_ext = {
++	.accept_local = 0,
++};
++
+ static void rtmsg_ifa(int event, struct in_ifaddr *);
+ 
+ static BLOCKING_NOTIFIER_HEAD(inetaddr_chain);
+@@ -137,6 +145,7 @@ void in_dev_finish_destroy(struct in_device *idev)
+ struct in_device *inetdev_init(struct net_device *dev)
+ {
+ 	struct in_device *in_dev;
++	struct net_device_extended *ext = dev ? dev_extended(dev) : NULL;
+ 
+ 	ASSERT_RTNL();
+ 
+@@ -145,6 +154,10 @@ struct in_device *inetdev_init(struct net_device *dev)
+ 		goto out;
+ 	INIT_RCU_HEAD(&in_dev->rcu_head);
+ 	memcpy(&in_dev->cnf, &ipv4_devconf_dflt, sizeof(in_dev->cnf));
++	if (ext)
++		memcpy(&ext->ipv4_devconf_ext, &ipv4_devconf_dflt_ext,
++		       sizeof(ipv4_devconf_dflt_ext));
++
+ 	in_dev->cnf.sysctl = NULL;
+ 	in_dev->dev = dev;
+ 	if ((in_dev->arp_parms = neigh_parms_alloc(dev, &arp_tbl)) == NULL)
+@@ -1412,6 +1425,14 @@ static struct devinet_sysctl_table {
+ 			.proc_handler	= &proc_dointvec,
+ 		},
+ 		{
++			.ctl_name	= NET_IPV4_CONF_ACCEPT_LOCAL,
++			.procname	= "accept_local",
++			.data		= &ipv4_devconf_ext.accept_local,
++			.maxlen		= sizeof(int),
++			.mode		= 0644,
++			.proc_handler	= &proc_dointvec,
++		},
++		{
+ 			.ctl_name	= NET_IPV4_CONF_NOXFRM,
+ 			.procname	= "disable_xfrm",
+ 			.data		= &ipv4_devconf.no_xfrm,
+@@ -1482,6 +1503,39 @@ static struct devinet_sysctl_table {
+ 	},
+ };
+ 
++/*
++ * Check for conf attribute inside the net_device_extended struct,
++ * and prepares their the value storage.
++ *
++ * Returns 1 if the attribute was extented, 0 otherwise.
++ */
++static int check_ext_conf(ctl_table *t, struct in_device *in_dev, int dflt)
++{
++	struct net_device *dev = in_dev ? in_dev->dev : NULL;
++	struct net_device_extended *ext = dev ? dev_extended(dev) : NULL;
++
++	if (t->ctl_name != NET_IPV4_CONF_ACCEPT_LOCAL)
++		return 0;
++
++	if (ext)
++		t->data += (char*) &ext->ipv4_devconf_ext -
++			   (char*) &ipv4_devconf_ext;
++	else if (dflt)
++		t->data = &ipv4_devconf_dflt_ext.accept_local;
++	else {
++		/*
++		 * We're registering an interface here that
++		 * doesn't have an extended segment, so we
++		 * register the extra sysctls, but we give them
++		 * no permissions so that we can't write to them
++		 */
++		t->mode = 0444;
++	}
++
++	t->de = NULL;
++	return 1;
++}
++
+ static void devinet_sysctl_register(struct in_device *in_dev,
+ 				    struct ipv4_devconf *p)
+ {
+@@ -1494,6 +1548,11 @@ static void devinet_sysctl_register(struct in_device *in_dev,
+ 		return;
+ 	memcpy(t, &devinet_sysctl, sizeof(*t));
+ 	for (i = 0; i < ARRAY_SIZE(t->devinet_vars) - 1; i++) {
++
++		if (check_ext_conf(&t->devinet_vars[i], in_dev,
++				   p == &ipv4_devconf_dflt))
++			continue;
++
+ 		t->devinet_vars[i].data += (char *)p - (char *)&ipv4_devconf;
+ 		t->devinet_vars[i].de = NULL;
+ 	}
+diff --git a/net/ipv4/fib_frontend.c b/net/ipv4/fib_frontend.c
+index 02b6ea9..253a503 100644
+--- a/net/ipv4/fib_frontend.c
++++ b/net/ipv4/fib_frontend.c
+@@ -190,15 +190,16 @@ int fib_validate_source(u32 src, u32 dst, u8 tos, int oif,
+ 					.tos = tos } },
+ 			    .iif = oif };
+ 	struct fib_result res;
+-	int no_addr, rpf;
++	int no_addr, rpf, accept_local;
+ 	int ret;
+ 
+-	no_addr = rpf = 0;
++	no_addr = rpf = accept_local = 0;
+ 	rcu_read_lock();
+ 	in_dev = __in_dev_get_rcu(dev);
+ 	if (in_dev) {
+ 		no_addr = in_dev->ifa_list == NULL;
+ 		rpf = IN_DEV_RPFILTER(in_dev);
++		accept_local = IN_DEV_ACCEPT_LOCAL(in_dev);
+ 	}
+ 	rcu_read_unlock();
+ 
+@@ -207,8 +208,10 @@ int fib_validate_source(u32 src, u32 dst, u8 tos, int oif,
+ 
+ 	if (fib_lookup(&fl, &res))
+ 		goto last_resort;
+-	if (res.type != RTN_UNICAST)
+-		goto e_inval_res;
++	if (res.type != RTN_UNICAST) {
++		if (res.type != RTN_LOCAL || !accept_local)
++			goto e_inval_res;
++	}
+ 	*spec_dst = FIB_RES_PREFSRC(res);
+ 	fib_combine_itag(itag, &res);
+ #ifdef CONFIG_IP_ROUTE_MULTIPATH

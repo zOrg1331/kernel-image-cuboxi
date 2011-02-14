@@ -1,0 +1,46 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Tue, 7 Dec 2010 13:23:29 -0500
+Subject: [net] igb: only use vlan_gro_receive if vlans registered
+Message-id: <4CFE3551.9070105@redhat.com>
+Patchwork-id: 29938
+O-Subject: [RHEL 5.6 PATCH] igb: only use vlan_gro_receive if vlans are
+	registered
+Bugzilla: 660190
+CVE: CVE-2010-4263
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=660190
+
+Description:
+If igb's SRIOV and promiscuous mode are enabled and the interface
+receives a tag VLAN packet, the system panics.
+
+Upstream Status:
+http://git.kernel.org/linus/31b24b955c3ebbb6f3008a6374e61cf7c05a193c
+
+Brew Build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2947179
+
+Test Status:
+Could not reproduce this locally with a 82580 NIC, but the fix is
+straight forward.
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index c6bdb38..0da7188 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -5107,7 +5107,7 @@ static void igb_receive_skb(struct igb_q_vector *q_vector,
+ {
+ 	struct igb_adapter *adapter = q_vector->adapter;
+ 
+-	if (vlan_tag)
++	if (vlan_tag && adapter->vlgrp)
+ 		vlan_gro_receive(&q_vector->napi, adapter->vlgrp,
+ 		                 vlan_tag, skb);
+ 	else

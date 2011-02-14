@@ -1,0 +1,47 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Fri, 20 Nov 2009 09:45:05 -0500
+Subject: [net] call cond_resched in rt_run_flush
+Message-id: <20091120094800.4435.52517.sendpatchset@localhost.localdomain>
+Patchwork-id: 21449
+O-Subject: [v2 PATCH RHEL5.x] net: call cond_resched() in rt_run_flush()
+Bugzilla: 517588
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=517588
+
+Description:
+While the network interface is under heavy load, doing
+
+ #time ifconfig eth1 up
+
+could trigger a soft lockup, like the one shown in BZ.
+
+The problem is that, in rt_run_flush(), we don't give
+the current process a chance to be rescheduled even it can be
+marked as TIF_NEED_RESCHED in call_rcu_bh(), in this case
+the process's needs can't be satisfied and could be stuck.
+
+Test status:
+Built by GSS people, tested by customer.
+
+Upstream status:
+Upstream has a different form of fix, please check commit beb659bd.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 4e3580a..f902549 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -751,6 +751,8 @@ static void rt_run_flush(unsigned long dummy)
+ 	get_random_bytes(&rt_hash_rnd, 4);
+ 
+ 	for (i = rt_hash_mask; i >= 0; i--) {
++		if (!in_softirq() && need_resched())
++			cond_resched();
+ 		spin_lock_bh(rt_hash_lock_addr(i));
+ 		rth = rt_hash_table[i].chain;
+ 		if (rth)

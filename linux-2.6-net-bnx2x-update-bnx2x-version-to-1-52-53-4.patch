@@ -1,0 +1,35 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:44:54 -0400
+Subject: [net] bnx2x: update bnx2x version to 1.52.53-4
+Message-id: <20100903164454.25415.84625.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28118
+O-Subject: [RHEL5.6 BZ572012 PATCH 44/46] bnx2x: Update bnx2x version to
+	1.52.53-4
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+From: Yaniv Rosner <yanivr@broadcom.com>
+
+Update bnx2x version to 1.52.53-4
+
+Signed-off-by: Yaniv Rosner <yanivr@broadcom.com>
+Signed-off-by: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit 96ac4f6b326450af496e82347e207b0fca7a9090)
+
+diff --git a/drivers/net/bnx2x/bnx2x.h b/drivers/net/bnx2x/bnx2x.h
+index 14502ac..8407f2f 100644
+--- a/drivers/net/bnx2x/bnx2x.h
++++ b/drivers/net/bnx2x/bnx2x.h
+@@ -20,8 +20,8 @@
+  * (you will need to reboot afterwards) */
+ /* #define BNX2X_STOP_ON_ERROR */
+ 
+-#define DRV_MODULE_VERSION      "1.52.53-3"
+-#define DRV_MODULE_RELDATE      "2010/18/04"
++#define DRV_MODULE_VERSION      "1.52.53-4"
++#define DRV_MODULE_RELDATE      "2010/16/08"
+ #define BNX2X_BC_VER            0x040200
+ 
+ #if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)

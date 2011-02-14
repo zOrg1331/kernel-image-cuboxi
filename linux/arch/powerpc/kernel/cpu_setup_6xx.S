@@ -15,20 +15,9 @@
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
 #include <asm/cache.h>
-#include <asm/mmu.h>
 
 _GLOBAL(__setup_cpu_603)
-	mflr	r4
-BEGIN_MMU_FTR_SECTION
-	li	r10,0
-	mtspr	SPRN_SPRG_603_LRU,r10		/* init SW LRU tracking */
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_NEED_DTLB_SW_LRU)
-BEGIN_FTR_SECTION
-	bl	__init_fpu_registers
-END_FTR_SECTION_IFCLR(CPU_FTR_FPU_UNAVAILABLE)
-	bl	setup_common_caches
-	mtlr	r4
-	blr
+	b	setup_common_caches
 _GLOBAL(__setup_cpu_604)
 	mflr	r4
 	bl	setup_common_caches
@@ -124,7 +113,7 @@ setup_604_hid0:
  * around #3 and with the same fix we use. We may want to
  * check if the CPU is using 60x bus mode in which case
  * the workaround for errata #4 is useless. Also, we may
- * want to explicitly clear HID0_NOPDST as this is not
+ * want to explicitely clear HID0_NOPDST as this is not
  * needed once we have applied workaround #5 (though it's
  * not set by Apple's firmware at least).
  */
@@ -239,9 +228,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_L3CR)
 	ori	r11,r11,HID0_SGE | HID0_FOLD | HID0_BHTE
 	ori	r11,r11,HID0_LRSTK | HID0_BTIC
 	oris	r11,r11,HID0_DPM@h
-BEGIN_MMU_FTR_SECTION
-	oris	r11,r11,HID0_HIGH_BAT@h
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_USE_HIGH_BATS)
 BEGIN_FTR_SECTION
 	xori	r11,r11,HID0_BTIC
 END_FTR_SECTION_IFSET(CPU_FTR_NO_BTIC)

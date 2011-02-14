@@ -1,0 +1,172 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Thu, 30 Apr 2009 17:45:41 -0400
+Subject: [crypto] add rng self-test infra
+Message-id: 200904301745.41869.jarod@redhat.com
+O-Subject: [RHEL5.4 PATCH 1/2] crypto: add rng self-test infra
+Bugzilla: 497891
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla #497891: [FIPS140][RHEL 5.4] need self-test for ansi_cprng
+https://bugzilla.redhat.com/show_bug.cgi?id=497891
+
+Part 1 of 2.
+
+Add some necessary infrastructure to make it possible to run
+self-tests for ansi_cprng. The bits are likely very specific
+to the ANSI X9.31 CPRNG in AES mode, and thus perhaps should
+be named more specifically if/when we grow additional CPRNG
+support...
+
+Upstream submission: http://lkml.org/lkml/2009/4/28/627
+
+diff --git a/crypto/testmgr.c b/crypto/testmgr.c
+index 59bba47..ca25607 100644
+--- a/crypto/testmgr.c
++++ b/crypto/testmgr.c
+@@ -25,6 +25,7 @@
+ #include <linux/slab.h>
+ #include <linux/string.h>
+ #include <crypto/internal/aead.h>
++#include <crypto/rng.h>
+ 
+ #include "ninternal.h"
+ #include "testmgr.h"
+@@ -83,6 +84,11 @@ struct hash_test_suite {
+ 	unsigned int count;
+ };
+ 
++struct cprng_test_suite {
++	struct cprng_testvec *vecs;
++	unsigned int count;
++};
++
+ struct alg_test_desc {
+ 	const char *alg;
+ 	int (*test)(const struct alg_test_desc *desc, const char *driver,
+@@ -93,6 +99,7 @@ struct alg_test_desc {
+ 		struct cipher_test_suite cipher;
+ 		struct comp_test_suite comp;
+ 		struct hash_test_suite hash;
++		struct cprng_test_suite cprng;
+ 	} suite;
+ };
+ 
+@@ -826,6 +833,67 @@ out:
+ 	return ret;
+ }
+ 
++static int test_cprng(struct crypto_rng *tfm, struct cprng_testvec *template,
++		      unsigned int tcount)
++{
++	const char *algo = ncrypto_tfm_alg_driver_name(crypto_rng_tfm(tfm));
++	int err, i, j, seedsize;
++	u8 *seed;
++	char result[32];
++
++	seedsize = crypto_rng_seedsize(tfm);
++
++	seed = kmalloc(seedsize, GFP_KERNEL);
++	if (!seed) {
++		printk(KERN_ERR "alg: cprng: Failed to allocate seed space "
++		       "for %s\n", algo);
++		return -ENOMEM;
++	}
++
++	for (i = 0; i < tcount; i++) {
++		memset(result, 0, 32);
++
++		memcpy(seed, template[i].v, template[i].vlen);
++		memcpy(seed + template[i].vlen, template[i].key,
++		       template[i].klen);
++		memcpy(seed + template[i].vlen + template[i].klen,
++		       template[i].dt, template[i].dtlen);
++
++		err = crypto_rng_reset(tfm, seed, seedsize);
++		if (err) {
++			printk(KERN_ERR "alg: cprng: Failed to reset rng "
++			       "for %s\n", algo);
++		        goto out;
++		}
++
++		for (j = 0; j < template[i].loops; j++) {
++		        err = crypto_rng_get_bytes(tfm, result,
++						   template[i].rlen);
++		        if (err != template[i].rlen) {
++				printk(KERN_ERR "alg: cprng: Failed to obtain "
++				       "the correct amount of random data for "
++				       "%s (requested %d, got %d)\n", algo,
++				       template[i].rlen, err);
++				goto out;
++			}
++		}
++
++		err = memcmp(result, template[i].result,
++			     template[i].rlen);
++		if (err) {
++			printk(KERN_ERR "alg: cprng: Test %d failed for %s\n",
++			       i, algo);
++			hexdump(result, template[i].rlen);
++			err = -EINVAL;
++			goto out;
++		}
++	}
++
++out:
++	kfree(seed);
++	return err;
++}
++
+ static int alg_test_aead(const struct alg_test_desc *desc, const char *driver,
+ 			 u32 type, u32 mask)
+ {
+@@ -932,6 +1000,27 @@ static int alg_test_hash(const struct alg_test_desc *desc, const char *driver,
+ 	return err;
+ }
+ 
++static int alg_test_cprng(const struct alg_test_desc *desc, const char *driver,
++			  u32 type, u32 mask)
++{
++	struct crypto_rng *rng;
++	int err;
++
++	rng = crypto_alloc_rng(driver, type, mask);
++	if (IS_ERR(rng)) {
++		printk(KERN_ERR "alg: cprng: Failed to load transform for %s: "
++		       "%ld\n", driver, PTR_ERR(rng));
++		return PTR_ERR(rng);
++	}
++
++	err = test_cprng(rng, desc->suite.cprng.vecs, desc->suite.cprng.count);
++
++	crypto_free_rng(rng);
++
++	return err;
++}
++
++
+ /* Please keep this list sorted by algorithm name. */
+ static const struct alg_test_desc alg_test_descs[] = {
+ 	{
+diff --git a/crypto/testmgr.h b/crypto/testmgr.h
+index 98ef18e..49c34d5 100644
+--- a/crypto/testmgr.h
++++ b/crypto/testmgr.h
+@@ -69,6 +69,18 @@ struct aead_testvec {
+ 	unsigned short rlen;
+ };
+ 
++struct cprng_testvec {
++	char *key;
++	char *dt;
++	char *v;
++	char *result;
++	unsigned char klen;
++	unsigned short dtlen;
++	unsigned short vlen;
++	unsigned short rlen;
++	unsigned short loops;
++};
++
+ static char zeroed_string[48];
+ 
+ #define XCBC_AES_TEST_VECTORS 6

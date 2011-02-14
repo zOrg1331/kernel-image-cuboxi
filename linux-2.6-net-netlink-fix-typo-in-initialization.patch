@@ -1,0 +1,42 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 8 Oct 2009 11:11:17 -0400
+Subject: [net] netlink: fix typo in initialization
+Message-id: <20091008111117.GD3255@psychotron.lab.eng.brq.redhat.com>
+Patchwork-id: 21063
+O-Subject: [RHEL5.5 patch] BZ527906 net: netlink: fix typo in initialization
+Bugzilla: 527906
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ527906
+https://bugzilla.redhat.com/show_bug.cgi?id=527906
+
+Description:
+Commit 9ef1d4c7c7aca1cd436612b6ca785b726ffb8ed8 introduced a typo in
+initialization. This patch fixes this.
+
+Upstream:
+http://patchwork.ozlabs.org/patch/35412/
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2020560
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/sched/cls_api.c b/net/sched/cls_api.c
+index 37a1840..116c421 100644
+--- a/net/sched/cls_api.c
++++ b/net/sched/cls_api.c
+@@ -331,7 +331,7 @@ tcf_fill_node(struct sk_buff *skb, struct tcf_proto *tp, unsigned long fh,
+ 	tcm = NLMSG_DATA(nlh);
+ 	tcm->tcm_family = AF_UNSPEC;
+ 	tcm->tcm__pad1 = 0;
+-	tcm->tcm__pad1 = 0;
++	tcm->tcm__pad2 = 0;
+ 	tcm->tcm_ifindex = tp->q->dev->ifindex;
+ 	tcm->tcm_parent = tp->classid;
+ 	tcm->tcm_info = TC_H_MAKE(tp->prio, tp->protocol);

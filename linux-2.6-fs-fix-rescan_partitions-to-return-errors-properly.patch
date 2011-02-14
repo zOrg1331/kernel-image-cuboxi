@@ -1,0 +1,64 @@
+From: David Milburn <dmilburn@redhat.com>
+Subject: [RHEL5 PATCH 1/2] fix-rescan_partitions-to-return-errors-properly  (BZ 210234)
+Date: Wed, 08 Nov 2006 12:43:30 -0600
+Bugzilla: 210234
+Message-Id: <45522552.3000802@redhat.com>
+Changelog: fix rescan_partitions to return errors properly
+
+
+
+BZ 210234 / IT 103831
+
+Here is a patch developed and verified by IBM that has been committed to 
+2.6.19-rc1-mm tree:
+
+http://www.kernel.org/pub/linux/kernel/people/akpm/patches/2.6/2.6.19-rc1/2.6.19-rc1-mm1/broken-out/fix-rescan_partitions-to-return-errors-properly.patch
+
+
+The current rescan_partition implementation ignores the errors that 
+comes from the lower layer.  It reports success for unknown partitions 
+as well as I/O error cases while reading the partition information.
+
+The unknown partition is not (and will not be) considered as an error in 
+the kernel, since there are legal users of it (e.g, members of a RAID5 
+MD Device or a new disk which is not partitioned at all ).  Changing 
+this behaviour would scare the user about a serious problem with their 
+disk and is not recommended.  Thus for both "unknown partitions" to the 
+Linux (eg., DEC VMS,Novell Netware) and the legal users of NULL 
+partition, would still be reported as "SUCCESS".
+
+The patch attached here, scares the user about something which he does 
+need to worry about.  i.e, returning -EIO on disk I/O errors while 
+reading the partition information.
+
+Signed-off-by: Suzuki K P <suzuki@in.ibm.com>
+Cc: Erik Mouw <erik@harddisk-recovery.com>
+Cc: Christoph Hellwig <hch@lst.de>
+Cc: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+
+Thanks,
+David
+
+
+--- linux-2.6.18.i386/fs/partitions/check.c.rescan
++++ linux-2.6.18.i386/fs/partitions/check.c
+@@ -177,7 +177,7 @@ check_partition(struct gendisk *hd, stru
+ 	else if (warn_no_part)
+ 		printk(" unable to read partition table\n");
+ 	kfree(state);
+-	return NULL;
++	return ERR_PTR(res);
+ }
+ 
+ /*
+@@ -460,6 +460,8 @@ int rescan_partitions(struct gendisk *di
+ 		disk->fops->revalidate_disk(disk);
+ 	if (!get_capacity(disk) || !(state = check_partition(disk, bdev)))
+ 		return 0;
++	if (IS_ERR(state))      /* I/O error reading the partition table */
++		return PTR_ERR(state);	
+ 	for (p = 1; p < state->limit; p++) {
+ 		sector_t size = state->parts[p].size;
+ 		sector_t from = state->parts[p].from;
+

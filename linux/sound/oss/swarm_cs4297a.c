@@ -75,8 +75,8 @@
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/poll.h>
+#include <linux/smp_lock.h>
 #include <linux/mutex.h>
-#include <linux/kernel.h>
 
 #include <asm/byteorder.h>
 #include <asm/dma.h>
@@ -109,6 +109,9 @@ static void start_adc(struct cs4297a_state *s);
 // to not underrun the dma buffer as easily.  As default, use 32k (order=3)
 // rather than 64k as some of the games work more responsively.
 // log base 2( buff sz = 32k).
+
+//static unsigned long defaultorder = 3;
+//MODULE_PARM(defaultorder, "i");
 
 //
 // Turn on/off debugging compilation by commenting out "#define CSDEBUG"
@@ -292,7 +295,7 @@ struct cs4297a_state {
 	struct mutex open_mutex;
 	struct mutex open_sem_adc;
 	struct mutex open_sem_dac;
-	fmode_t open_mode;
+	mode_t open_mode;
 	wait_queue_head_t open_wait;
 	wait_queue_head_t open_wait_adc;
 	wait_queue_head_t open_wait_dac;
@@ -612,23 +615,25 @@ static int init_serdma(serdma_t *dma)
 
         /* Descriptors */
         dma->ringsz = DMA_DESCR;
-        dma->descrtab = kzalloc(dma->ringsz * sizeof(serdma_descr_t), GFP_KERNEL);
+        dma->descrtab = kmalloc(dma->ringsz * sizeof(serdma_descr_t), GFP_KERNEL);
         if (!dma->descrtab) {
-                printk(KERN_ERR "cs4297a: kzalloc descrtab failed\n");
+                printk(KERN_ERR "cs4297a: kmalloc descrtab failed\n");
                 return -1;
         }
+        memset(dma->descrtab, 0, dma->ringsz * sizeof(serdma_descr_t));
         dma->descrtab_end = dma->descrtab + dma->ringsz;
 	/* XXX bloddy mess, use proper DMA API here ...  */
 	dma->descrtab_phys = CPHYSADDR((long)dma->descrtab);
         dma->descr_add = dma->descr_rem = dma->descrtab;
 
         /* Frame buffer area */
-        dma->dma_buf = kzalloc(DMA_BUF_SIZE, GFP_KERNEL);
+        dma->dma_buf = kmalloc(DMA_BUF_SIZE, GFP_KERNEL);
         if (!dma->dma_buf) {
-                printk(KERN_ERR "cs4297a: kzalloc dma_buf failed\n");
+                printk(KERN_ERR "cs4297a: kmalloc dma_buf failed\n");
                 kfree(dma->descrtab);
                 return -1;
         }
+        memset(dma->dma_buf, 0, DMA_BUF_SIZE);
         dma->dma_buf_phys = CPHYSADDR((long)dma->dma_buf);
 
         /* Samples buffer area */
@@ -720,7 +725,7 @@ static int serdma_reg_access(struct cs4297a_state *s, u64 data)
         serdma_t *d = &s->dma_dac;
         u64 *data_p;
         unsigned swptr;
-        unsigned long flags;
+        int flags;
         serdma_descr_t *descr;
 
         if (s->reg_request) {
@@ -1577,7 +1582,7 @@ static int cs4297a_ioctl_mixdev(struct inode *inode, struct file *file,
 // ******************************************************************************************
 //   Mixer file operations struct.
 // ******************************************************************************************
-static const struct file_operations cs4297a_mixer_fops = {
+static /*const */ struct file_operations cs4297a_mixer_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.ioctl		= cs4297a_ioctl_mixdev,
@@ -2197,9 +2202,7 @@ static int cs4297a_ioctl(struct inode *inode, struct file *file,
 				    sizeof(abinfo)) ? -EFAULT : 0;
 
 	case SNDCTL_DSP_NONBLOCK:
-		spin_lock(&file->f_lock);
 		file->f_flags |= O_NONBLOCK;
-		spin_unlock(&file->f_lock);
 		return 0;
 
 	case SNDCTL_DSP_GETODELAY:
@@ -2490,7 +2493,7 @@ static int cs4297a_open(struct inode *inode, struct file *file)
 // ******************************************************************************************
 //   Wave (audio) file operations struct.
 // ******************************************************************************************
-static const struct file_operations cs4297a_audio_fops = {
+static /*const */ struct file_operations cs4297a_audio_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.read		= cs4297a_read,
@@ -2502,7 +2505,7 @@ static const struct file_operations cs4297a_audio_fops = {
 	.release	= cs4297a_release,
 };
 
-static void cs4297a_interrupt(int irq, void *dev_id)
+static void cs4297a_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct cs4297a_state *s = (struct cs4297a_state *) dev_id;
         u32 status;
@@ -2615,11 +2618,12 @@ static int __init cs4297a_init(void)
         udelay(100);
 #endif
 
-	if (!(s = kzalloc(sizeof(struct cs4297a_state), GFP_KERNEL))) {
+	if (!(s = kmalloc(sizeof(struct cs4297a_state), GFP_KERNEL))) {
 		CS_DBGOUT(CS_ERROR, 1, printk(KERN_ERR
 		      "cs4297a: probe() no memory for state struct.\n"));
 		return -1;
 	}
+	memset(s, 0, sizeof(struct cs4297a_state));
         s->magic = CS4297a_MAGIC;
 	init_waitqueue_head(&s->dma_adc.wait);
 	init_waitqueue_head(&s->dma_dac.wait);
@@ -2672,7 +2676,7 @@ static int __init cs4297a_init(void)
 #if 0
                 val = SOUND_MASK_LINE;
                 mixer_ioctl(s, SOUND_MIXER_WRITE_RECSRC, (unsigned long) &val);
-                for (i = 0; i < ARRAY_SIZE(initvol); i++) {
+                for (i = 0; i < sizeof(initvol) / sizeof(initvol[0]); i++) {
                         val = initvol[i].vol;
                         mixer_ioctl(s, initvol[i].mixch, (unsigned long) &val);
                 }

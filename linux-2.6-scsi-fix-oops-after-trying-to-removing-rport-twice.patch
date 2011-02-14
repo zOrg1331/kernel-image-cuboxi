@@ -1,0 +1,51 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 16 Oct 2008 15:05:07 -0400
+Subject: [scsi] fix oops after trying to removing rport twice
+Message-id: 20081016190507.18595.99856.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] scsi_transport_fc - don't call fc_terminate_rport_io after removing the rport
+Bugzilla: 465945
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ 465945
+
+scsi_transport_fc - don't call fc_terminate_rport_io after removing the rport
+
+Code was recently added to the scsi FC transport layer that used the LLDD's
+callback for device loss timeout. After this call another call was made to
+the LLDD's terminate rport IO callback. This second call caused an Oops as the rport
+had already been removed.
+
+Comments in the code clearly state that one or the other operation should be
+performed. This patch, from Mike Christie, inserts an else and corrects this problem.
+
+This patch has been tested by an original reporter of the problem and confimed to work.
+It has also been confirmed by QLogic.
+
+It builds and loads cleanly on kernel-118.
+
+===============
+
+diff --git a/drivers/scsi/scsi_transport_fc.c b/drivers/scsi/scsi_transport_fc.c
+index 3893f7b..3b18179 100644
+--- a/drivers/scsi/scsi_transport_fc.c
++++ b/drivers/scsi/scsi_transport_fc.c
+@@ -1776,7 +1776,8 @@ fc_starget_delete(void *data)
+ 	 */
+ 	if (i->f->dev_loss_tmo_callbk)
+ 		i->f->dev_loss_tmo_callbk(rport);
+-	fc_terminate_rport_io(rport);
++	else
++		fc_terminate_rport_io(rport);
+ 
+ 	spin_lock_irqsave(shost->host_lock, flags);
+ 	if (rport->flags & FC_RPORT_DEVLOSS_PENDING) {
+@@ -1820,7 +1821,8 @@ fc_rport_final_delete(void *data)
+ 		fc_starget_delete(data);
+ 	else if (i->f->dev_loss_tmo_callbk)
+ 		i->f->dev_loss_tmo_callbk(rport);
+-	fc_terminate_rport_io(rport);
++	else
++		fc_terminate_rport_io(rport);
+ 
+ 	transport_remove_device(dev);
+ 	device_del(dev);

@@ -71,7 +71,6 @@ MODULE_PARM_DESC(dst_algo, "tuning algo: default is 0=(SW), 1=(HW)");
 	}								\
 } while(0)
 
-static int dst_command(struct dst_state *state, u8 *data, u8 len);
 
 static void dst_packsize(struct dst_state *state, int psize)
 {
@@ -81,8 +80,7 @@ static void dst_packsize(struct dst_state *state, int psize)
 	bt878_device_control(state->bt, DST_IG_TS, &bits);
 }
 
-static int dst_gpio_outb(struct dst_state *state, u32 mask, u32 enbb,
-			 u32 outhigh, int delay)
+int dst_gpio_outb(struct dst_state *state, u32 mask, u32 enbb, u32 outhigh, int delay)
 {
 	union dst_gpio_packet enb;
 	union dst_gpio_packet bits;
@@ -111,8 +109,9 @@ static int dst_gpio_outb(struct dst_state *state, u32 mask, u32 enbb,
 
 	return 0;
 }
+EXPORT_SYMBOL(dst_gpio_outb);
 
-static int dst_gpio_inb(struct dst_state *state, u8 *result)
+int dst_gpio_inb(struct dst_state *state, u8 *result)
 {
 	union dst_gpio_packet rd_packet;
 	int err;
@@ -126,6 +125,7 @@ static int dst_gpio_inb(struct dst_state *state, u8 *result)
 
 	return 0;
 }
+EXPORT_SYMBOL(dst_gpio_inb);
 
 int rdc_reset_state(struct dst_state *state)
 {
@@ -145,7 +145,7 @@ int rdc_reset_state(struct dst_state *state)
 }
 EXPORT_SYMBOL(rdc_reset_state);
 
-static int rdc_8820_reset(struct dst_state *state)
+int rdc_8820_reset(struct dst_state *state)
 {
 	dprintk(verbose, DST_DEBUG, 1, "Resetting DST");
 	if (dst_gpio_outb(state, RDC_8820_RESET, RDC_8820_RESET, 0, NO_DELAY) < 0) {
@@ -160,8 +160,9 @@ static int rdc_8820_reset(struct dst_state *state)
 
 	return 0;
 }
+EXPORT_SYMBOL(rdc_8820_reset);
 
-static int dst_pio_enable(struct dst_state *state)
+int dst_pio_enable(struct dst_state *state)
 {
 	if (dst_gpio_outb(state, ~0, RDC_8820_PIO_0_ENABLE, 0, NO_DELAY) < 0) {
 		dprintk(verbose, DST_ERROR, 1, "dst_gpio_outb ERROR !");
@@ -171,6 +172,7 @@ static int dst_pio_enable(struct dst_state *state)
 
 	return 0;
 }
+EXPORT_SYMBOL(dst_pio_enable);
 
 int dst_pio_disable(struct dst_state *state)
 {
@@ -609,7 +611,7 @@ static int dst_type_print(struct dst_state *state, u8 type)
 	return 0;
 }
 
-static struct tuner_types tuner_list[] = {
+struct tuner_types tuner_list[] = {
 	{
 		.tuner_type = TUNER_TYPE_L64724,
 		.tuner_name = "L 64724",
@@ -917,7 +919,9 @@ static int dst_get_mac(struct dst_state *state)
 	}
 	memset(&state->mac_address, '\0', 8);
 	memcpy(&state->mac_address, &state->rxbuffer, 6);
-	dprintk(verbose, DST_ERROR, 1, "MAC Address=[%pM]", state->mac_address);
+	dprintk(verbose, DST_ERROR, 1, "MAC Address=[%02x:%02x:%02x:%02x:%02x:%02x]",
+		state->mac_address[0], state->mac_address[1], state->mac_address[2],
+		state->mac_address[4], state->mac_address[5], state->mac_address[6]);
 
 	return 0;
 }
@@ -1059,7 +1063,7 @@ static int dst_get_tuner_info(struct dst_state *state)
 		dprintk(verbose, DST_ERROR, 1, "DST type has TS=188");
 	}
 	if (state->board_info[0] == 0xbc) {
-		if (state->dst_type != DST_TYPE_IS_ATSC)
+		if (state->type_flags != DST_TYPE_IS_ATSC)
 			state->type_flags |= DST_TYPE_HAS_TS188;
 		else
 			state->type_flags |= DST_TYPE_HAS_NEWTUNE_2;
@@ -1157,7 +1161,7 @@ static int dst_get_device_id(struct dst_state *state)
 		}
 	}
 
-	if (i >= ARRAY_SIZE(dst_tlist)) {
+	if (i >= sizeof (dst_tlist) / sizeof (dst_tlist [0])) {
 		dprintk(verbose, DST_ERROR, 1, "Unable to recognize %s or %s", &state->rxbuffer[0], &state->rxbuffer[1]);
 		dprintk(verbose, DST_ERROR, 1, "please email linux-dvb@linuxtv.org with this type in");
 		use_dst_type = DST_TYPE_IS_SAT;
@@ -1220,7 +1224,7 @@ static int dst_probe(struct dst_state *state)
 	return 0;
 }
 
-static int dst_command(struct dst_state *state, u8 *data, u8 len)
+int dst_command(struct dst_state *state, u8 *data, u8 len)
 {
 	u8 reply;
 
@@ -1242,7 +1246,7 @@ static int dst_command(struct dst_state *state, u8 *data, u8 len)
 		goto error;
 	}
 	if (state->type_flags & DST_TYPE_HAS_FW_1)
-		mdelay(3);
+		udelay(3000);
 	if (read_dst(state, &reply, GET_ACK)) {
 		dprintk(verbose, DST_DEBUG, 1, "Trying to recover.. ");
 		if ((dst_error_recovery(state)) < 0) {
@@ -1258,7 +1262,7 @@ static int dst_command(struct dst_state *state, u8 *data, u8 len)
 	if (len >= 2 && data[0] == 0 && (data[1] == 1 || data[1] == 3))
 		goto error;
 	if (state->type_flags & DST_TYPE_HAS_FW_1)
-		mdelay(3);
+		udelay(3000);
 	else
 		udelay(2000);
 	if (!dst_wait_dst_ready(state, NO_DELAY))
@@ -1283,12 +1287,13 @@ error:
 	return -EIO;
 
 }
+EXPORT_SYMBOL(dst_command);
 
 static int dst_get_signal(struct dst_state *state)
 {
 	int retval;
 	u8 get_signal[] = { 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfb };
-	//dprintk("%s: Getting Signal strength and other parameters\n", __func__);
+	//dprintk("%s: Getting Signal strength and other parameters\n", __FUNCTION__);
 	if ((state->diseq_flags & ATTEMPT_TUNE) == 0) {
 		state->decode_lock = state->decode_strength = state->decode_snr = 0;
 		return 0;
@@ -1647,7 +1652,7 @@ static int dst_set_frontend(struct dvb_frontend *fe, struct dvb_frontend_paramet
 static int dst_tune_frontend(struct dvb_frontend* fe,
 			    struct dvb_frontend_parameters* p,
 			    unsigned int mode_flags,
-			    unsigned int *delay,
+			    int *delay,
 			    fe_status_t *status)
 {
 	struct dst_state *state = fe->demodulator_priv;
@@ -1683,7 +1688,7 @@ static int dst_tune_frontend(struct dvb_frontend* fe,
 
 static int dst_get_tuning_algo(struct dvb_frontend *fe)
 {
-	return dst_algo ? DVBFE_ALGO_HW : DVBFE_ALGO_SW;
+	return dst_algo;
 }
 
 static int dst_get_frontend(struct dvb_frontend *fe, struct dvb_frontend_parameters *p)
@@ -1710,12 +1715,6 @@ static int dst_get_frontend(struct dvb_frontend *fe, struct dvb_frontend_paramet
 static void dst_release(struct dvb_frontend *fe)
 {
 	struct dst_state *state = fe->demodulator_priv;
-	if (state->dst_ca) {
-		dvb_unregister_device(state->dst_ca);
-#ifdef CONFIG_MEDIA_ATTACH
-		symbol_put(dst_ca_attach);
-#endif
-	}
 	kfree(state);
 }
 

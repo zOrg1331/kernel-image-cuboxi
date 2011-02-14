@@ -1,0 +1,36 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 2 Mar 2010 16:17:49 -0500
+Subject: [dvb] fix endless loop when decoding ULE at dvb-core
+Message-id: <4B8D3A2D.8060509@redhat.com>
+Patchwork-id: 23469
+O-Subject: [RHEL 5.6] Fix endless loop when decoding ULE at dvb-core
+Bugzilla: 569242
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+BZ#569242
+
+Upstream patch: 29e1fa3565a7951cc415c634eb2b78dbdbee151d
+
+ULE (Unidirectional Lightweight Encapsulation RFC 4326) decapsulation has a bug
+that causes endless loop when Payload Pointer of MPEG2-TS frame is 182 or 183.
+Anyone who sends malicious MPEG2-TS frame will cause the receiver of ULE SNDU
+to go into endless loop.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/media/dvb/dvb-core/dvb_net.c b/drivers/media/dvb/dvb-core/dvb_net.c
+index 8859ab7..756302f 100644
+--- a/drivers/media/dvb/dvb-core/dvb_net.c
++++ b/drivers/media/dvb/dvb-core/dvb_net.c
+@@ -507,6 +507,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
+ 				       "bytes left in TS.  Resyncing.\n", ts_remain);
+ 				priv->ule_sndu_len = 0;
+ 				priv->need_pusi = 1;
++				ts += TS_SZ;
+ 				continue;
+ 			}
+ 

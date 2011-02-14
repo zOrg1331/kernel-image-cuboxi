@@ -1,7 +1,7 @@
 /**
  * attrib.c - NTFS attribute operations.  Part of the Linux-NTFS project.
  *
- * Copyright (c) 2001-2007 Anton Altaparmakov
+ * Copyright (c) 2001-2006 Anton Altaparmakov
  * Copyright (c) 2002 Richard Russon
  *
  * This program/include file is free software; you can redistribute it and/or
@@ -67,7 +67,7 @@
  * the attribute has zero allocated size, i.e. there simply is no runlist.
  *
  * WARNING: If @ctx is supplied, regardless of whether success or failure is
- *	    returned, you need to check IS_ERR(@ctx->mrec) and if 'true' the @ctx
+ *	    returned, you need to check IS_ERR(@ctx->mrec) and if TRUE the @ctx
  *	    is no longer valid, i.e. you need to either call
  *	    ntfs_attr_reinit_search_ctx() or ntfs_attr_put_search_ctx() on it.
  *	    In that case PTR_ERR(@ctx->mrec) will give you the error code for
@@ -90,7 +90,7 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 	runlist_element *rl;
 	struct page *put_this_page = NULL;
 	int err = 0;
-	bool ctx_is_temporary, ctx_needs_reset;
+	BOOL ctx_is_temporary, ctx_needs_reset;
 	ntfs_attr_search_ctx old_ctx = { NULL, };
 
 	ntfs_debug("Mapping runlist part containing vcn 0x%llx.",
@@ -100,7 +100,7 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 	else
 		base_ni = ni->ext.base_ntfs_ino;
 	if (!ctx) {
-		ctx_is_temporary = ctx_needs_reset = true;
+		ctx_is_temporary = ctx_needs_reset = TRUE;
 		m = map_mft_record(base_ni);
 		if (IS_ERR(m))
 			return PTR_ERR(m);
@@ -115,7 +115,7 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 		BUG_ON(IS_ERR(ctx->mrec));
 		a = ctx->attr;
 		BUG_ON(!a->non_resident);
-		ctx_is_temporary = false;
+		ctx_is_temporary = FALSE;
 		end_vcn = sle64_to_cpu(a->data.non_resident.highest_vcn);
 		read_lock_irqsave(&ni->size_lock, flags);
 		allocated_size_vcn = ni->allocated_size >>
@@ -136,7 +136,7 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 				ni->name, ni->name_len) &&
 				sle64_to_cpu(a->data.non_resident.lowest_vcn)
 				<= vcn && end_vcn >= vcn))
-			ctx_needs_reset = false;
+			ctx_needs_reset = FALSE;
 		else {
 			/* Save the old search context. */
 			old_ctx = *ctx;
@@ -158,7 +158,7 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 			 * needed attribute extent.
 			 */
 			ntfs_attr_reinit_search_ctx(ctx);
-			ctx_needs_reset = true;
+			ctx_needs_reset = TRUE;
 		}
 	}
 	if (ctx_needs_reset) {
@@ -179,7 +179,10 @@ int ntfs_map_runlist_nolock(ntfs_inode *ni, VCN vcn, ntfs_attr_search_ctx *ctx)
 	 * ntfs_mapping_pairs_decompress() fails.
 	 */
 	end_vcn = sle64_to_cpu(a->data.non_resident.highest_vcn) + 1;
-	if (unlikely(vcn && vcn >= end_vcn)) {
+	if (!a->data.non_resident.lowest_vcn && end_vcn == 1)
+		end_vcn = sle64_to_cpu(a->data.non_resident.allocated_size) >>
+				ni->vol->cluster_size_bits;
+	if (unlikely(vcn >= end_vcn)) {
 		err = -ENOENT;
 		goto err_out;
 	}
@@ -333,16 +336,16 @@ int ntfs_map_runlist(ntfs_inode *ni, VCN vcn)
  *  LCN_EIO	Critical error (runlist/file is corrupt, i/o error, etc).
  *
  * Locking: - The runlist must be locked on entry and is left locked on return.
- *	    - If @write_locked is 'false', i.e. the runlist is locked for reading,
+ *	    - If @write_locked is FALSE, i.e. the runlist is locked for reading,
  *	      the lock may be dropped inside the function so you cannot rely on
  *	      the runlist still being the same when this function returns.
  */
 LCN ntfs_attr_vcn_to_lcn_nolock(ntfs_inode *ni, const VCN vcn,
-		const bool write_locked)
+		const BOOL write_locked)
 {
 	LCN lcn;
 	unsigned long flags;
-	bool is_retry = false;
+	BOOL is_retry = FALSE;
 
 	ntfs_debug("Entering for i_ino 0x%lx, vcn 0x%llx, %s_locked.",
 			ni->mft_no, (unsigned long long)vcn,
@@ -387,7 +390,7 @@ retry_remap:
 			down_read(&ni->runlist.lock);
 		}
 		if (likely(!err)) {
-			is_retry = true;
+			is_retry = TRUE;
 			goto retry_remap;
 		}
 		if (err == -ENOENT)
@@ -446,7 +449,7 @@ retry_remap:
  *	-EIO	- Critical error (runlist/file is corrupt, i/o error, etc).
  *
  * WARNING: If @ctx is supplied, regardless of whether success or failure is
- *	    returned, you need to check IS_ERR(@ctx->mrec) and if 'true' the @ctx
+ *	    returned, you need to check IS_ERR(@ctx->mrec) and if TRUE the @ctx
  *	    is no longer valid, i.e. you need to either call
  *	    ntfs_attr_reinit_search_ctx() or ntfs_attr_put_search_ctx() on it.
  *	    In that case PTR_ERR(@ctx->mrec) will give you the error code for
@@ -466,7 +469,7 @@ runlist_element *ntfs_attr_find_vcn_nolock(ntfs_inode *ni, const VCN vcn,
 	unsigned long flags;
 	runlist_element *rl;
 	int err = 0;
-	bool is_retry = false;
+	BOOL is_retry = FALSE;
 
 	ntfs_debug("Entering for i_ino 0x%lx, vcn 0x%llx, with%s ctx.",
 			ni->mft_no, (unsigned long long)vcn, ctx ? "" : "out");
@@ -515,7 +518,7 @@ retry_remap:
 			 */
 			err = ntfs_map_runlist_nolock(ni, vcn, ctx);
 			if (likely(!err)) {
-				is_retry = true;
+				is_retry = TRUE;
 				goto retry_remap;
 			}
 		}
@@ -555,8 +558,8 @@ retry_remap:
  * On actual error, ntfs_attr_find() returns -EIO.  In this case @ctx->attr is
  * undefined and in particular do not rely on it not changing.
  *
- * If @ctx->is_first is 'true', the search begins with @ctx->attr itself.  If it
- * is 'false', the search begins after @ctx->attr.
+ * If @ctx->is_first is TRUE, the search begins with @ctx->attr itself.  If it
+ * is FALSE, the search begins after @ctx->attr.
  *
  * If @ic is IGNORE_CASE, the @name comparisson is not case sensitive and
  * @ctx->ntfs_ino must be set to the ntfs inode to which the mft record
@@ -596,11 +599,11 @@ static int ntfs_attr_find(const ATTR_TYPE type, const ntfschar *name,
 
 	/*
 	 * Iterate over attributes in mft record starting at @ctx->attr, or the
-	 * attribute following that, if @ctx->is_first is 'true'.
+	 * attribute following that, if @ctx->is_first is TRUE.
 	 */
 	if (ctx->is_first) {
 		a = ctx->attr;
-		ctx->is_first = false;
+		ctx->is_first = FALSE;
 	} else
 		a = (ATTR_RECORD*)((u8*)ctx->attr +
 				le32_to_cpu(ctx->attr->length));
@@ -887,11 +890,11 @@ static int ntfs_external_attr_find(const ATTR_TYPE type,
 		ctx->al_entry = (ATTR_LIST_ENTRY*)al_start;
 	/*
 	 * Iterate over entries in attribute list starting at @ctx->al_entry,
-	 * or the entry following that, if @ctx->is_first is 'true'.
+	 * or the entry following that, if @ctx->is_first is TRUE.
 	 */
 	if (ctx->is_first) {
 		al_entry = ctx->al_entry;
-		ctx->is_first = false;
+		ctx->is_first = FALSE;
 	} else
 		al_entry = (ATTR_LIST_ENTRY*)((u8*)ctx->al_entry +
 				le16_to_cpu(ctx->al_entry->length));
@@ -1124,7 +1127,7 @@ not_found:
 	ctx->mrec = ctx->base_mrec;
 	ctx->attr = (ATTR_RECORD*)((u8*)ctx->mrec +
 			le16_to_cpu(ctx->mrec->attrs_offset));
-	ctx->is_first = true;
+	ctx->is_first = TRUE;
 	ctx->ntfs_ino = base_ni;
 	ctx->base_ntfs_ino = NULL;
 	ctx->base_mrec = NULL;
@@ -1221,7 +1224,7 @@ static inline void ntfs_attr_init_search_ctx(ntfs_attr_search_ctx *ctx,
 		/* Sanity checks are performed elsewhere. */
 		.attr = (ATTR_RECORD*)((u8*)mrec +
 				le16_to_cpu(mrec->attrs_offset)),
-		.is_first = true,
+		.is_first = TRUE,
 		.ntfs_ino = ni,
 	};
 }
@@ -1240,7 +1243,7 @@ void ntfs_attr_reinit_search_ctx(ntfs_attr_search_ctx *ctx)
 {
 	if (likely(!ctx->base_ntfs_ino)) {
 		/* No attribute list. */
-		ctx->is_first = true;
+		ctx->is_first = TRUE;
 		/* Sanity checks are performed elsewhere. */
 		ctx->attr = (ATTR_RECORD*)((u8*)ctx->mrec +
 				le16_to_cpu(ctx->mrec->attrs_offset));
@@ -1269,7 +1272,7 @@ ntfs_attr_search_ctx *ntfs_attr_get_search_ctx(ntfs_inode *ni, MFT_RECORD *mrec)
 {
 	ntfs_attr_search_ctx *ctx;
 
-	ctx = kmem_cache_alloc(ntfs_attr_ctx_cache, GFP_NOFS);
+	ctx = kmem_cache_alloc(ntfs_attr_ctx_cache, SLAB_NOFS);
 	if (ctx)
 		ntfs_attr_init_search_ctx(ctx, ni, mrec);
 	return ctx;
@@ -1582,7 +1585,7 @@ int ntfs_attr_make_non_resident(ntfs_inode *ni, const u32 data_size)
 			return -ENOMEM;
 		/* Start by allocating clusters to hold the attribute value. */
 		rl = ntfs_cluster_alloc(vol, 0, new_size >>
-				vol->cluster_size_bits, -1, DATA_ZONE, true);
+				vol->cluster_size_bits, -1, DATA_ZONE, TRUE);
 		if (IS_ERR(rl)) {
 			err = PTR_ERR(rl);
 			ntfs_debug("Failed to allocate cluster%s, error code "
@@ -1916,9 +1919,9 @@ s64 ntfs_attr_extend_allocation(ntfs_inode *ni, s64 new_alloc_size,
 	unsigned long flags;
 	int err, mp_size;
 	u32 attr_len = 0; /* Silence stupid gcc warning. */
-	bool mp_rebuilt;
+	BOOL mp_rebuilt;
 
-#ifdef DEBUG
+#ifdef NTFS_DEBUG
 	read_lock_irqsave(&ni->size_lock, flags);
 	allocated_size = ni->allocated_size;
 	read_unlock_irqrestore(&ni->size_lock, flags);
@@ -2219,7 +2222,7 @@ first_alloc:
 	rl2 = ntfs_cluster_alloc(vol, allocated_size >> vol->cluster_size_bits,
 			(new_alloc_size - allocated_size) >>
 			vol->cluster_size_bits, (rl && (rl->lcn >= 0)) ?
-			rl->lcn + rl->length : -1, DATA_ZONE, true);
+			rl->lcn + rl->length : -1, DATA_ZONE, TRUE);
 	if (IS_ERR(rl2)) {
 		err = PTR_ERR(rl2);
 		if (start < 0 || start >= allocated_size)
@@ -2262,7 +2265,7 @@ first_alloc:
 	BUG_ON(!rl2);
 	BUG_ON(!rl2->length);
 	BUG_ON(rl2->lcn < LCN_HOLE);
-	mp_rebuilt = false;
+	mp_rebuilt = FALSE;
 	/* Get the size for the new mapping pairs array for this extent. */
 	mp_size = ntfs_get_size_for_mapping_pairs(vol, rl2, ll, -1);
 	if (unlikely(mp_size <= 0)) {
@@ -2297,7 +2300,7 @@ first_alloc:
 		err = -EOPNOTSUPP;
 		goto undo_alloc;
 	}
-	mp_rebuilt = true;
+	mp_rebuilt = TRUE;
 	/* Generate the mapping pairs array directly into the attr record. */
 	err = ntfs_mapping_pairs_build(vol, (u8*)a +
 			le16_to_cpu(a->data.non_resident.mapping_pairs_offset),
@@ -2497,7 +2500,7 @@ int ntfs_attr_set(ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 val)
 	struct page *page;
 	u8 *kaddr;
 	pgoff_t idx, end;
-	unsigned start_ofs, end_ofs, size;
+	unsigned int start_ofs, end_ofs, size;
 
 	ntfs_debug("Entering for ofs 0x%llx, cnt 0x%llx, val 0x%hx.",
 			(long long)ofs, (long long)cnt, val);
@@ -2529,7 +2532,14 @@ int ntfs_attr_set(ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 val)
 		page = read_mapping_page(mapping, idx, NULL);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb, "Failed to read first partial "
-					"page (error, index 0x%lx).", idx);
+					"page (sync error, index 0x%lx).", idx);
+			return PTR_ERR(page);
+		}
+		wait_on_page_locked(page);
+		if (unlikely(!PageUptodate(page))) {
+			ntfs_error(vol->sb, "Failed to read first partial page "
+					"(async error, index 0x%lx).", idx);
+			page_cache_release(page);
 			return PTR_ERR(page);
 		}
 		/*
@@ -2545,8 +2555,6 @@ int ntfs_attr_set(ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 val)
 		kunmap_atomic(kaddr, KM_USER0);
 		set_page_dirty(page);
 		page_cache_release(page);
-		balance_dirty_pages_ratelimited(mapping);
-		cond_resched();
 		if (idx == end)
 			goto done;
 		idx++;
@@ -2594,7 +2602,14 @@ int ntfs_attr_set(ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 val)
 		page = read_mapping_page(mapping, idx, NULL);
 		if (IS_ERR(page)) {
 			ntfs_error(vol->sb, "Failed to read last partial page "
-					"(error, index 0x%lx).", idx);
+					"(sync error, index 0x%lx).", idx);
+			return PTR_ERR(page);
+		}
+		wait_on_page_locked(page);
+		if (unlikely(!PageUptodate(page))) {
+			ntfs_error(vol->sb, "Failed to read last partial page "
+					"(async error, index 0x%lx).", idx);
+			page_cache_release(page);
 			return PTR_ERR(page);
 		}
 		kaddr = kmap_atomic(page, KM_USER0);
@@ -2603,8 +2618,6 @@ int ntfs_attr_set(ntfs_inode *ni, const s64 ofs, const s64 cnt, const u8 val)
 		kunmap_atomic(kaddr, KM_USER0);
 		set_page_dirty(page);
 		page_cache_release(page);
-		balance_dirty_pages_ratelimited(mapping);
-		cond_resched();
 	}
 done:
 	ntfs_debug("Done.");

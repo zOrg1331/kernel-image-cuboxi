@@ -1,4 +1,5 @@
-/*
+/* $Id: pci.c,v 1.6 2000/01/29 00:12:05 grundler Exp $
+ *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
@@ -193,13 +194,37 @@ void __init pcibios_init_bus(struct pci_bus *bus)
 	pci_write_config_word(dev, PCI_BRIDGE_CONTROL, bridge_ctl);
 }
 
+
+/* KLUGE: Link the child and parent resources - generic PCI didn't */
+static void
+pcibios_link_hba_resources( struct resource *hba_res, struct resource *r)
+{
+	if (!r->parent) {
+		printk(KERN_EMERG "PCI: resource not parented! [%lx-%lx]\n",
+				r->start, r->end);
+		r->parent = hba_res;
+
+		/* reverse link is harder *sigh*  */
+		if (r->parent->child) {
+			if (r->parent->sibling) {
+				struct resource *next = r->parent->sibling;
+				while (next->sibling)
+					 next = next->sibling;
+				next->sibling = r;
+			} else {
+				r->parent->sibling = r;
+			}
+		} else
+			r->parent->child = r;
+	}
+}
+
 /* called by drivers/pci/setup-bus.c:pci_setup_bridge().  */
 void __devinit pcibios_resource_to_bus(struct pci_dev *dev,
 		struct pci_bus_region *region, struct resource *res)
 {
-#ifdef CONFIG_64BIT
-	struct pci_hba_data *hba = HBA_DATA(dev->bus->bridge->platform_data);
-#endif
+	struct pci_bus *bus = dev->bus;
+	struct pci_hba_data *hba = HBA_DATA(bus->bridge->platform_data);
 
 	if (res->flags & IORESOURCE_IO) {
 		/*
@@ -218,15 +243,23 @@ void __devinit pcibios_resource_to_bus(struct pci_dev *dev,
 	}
 
 	DBG_RES("pcibios_resource_to_bus(%02x %s [%lx,%lx])\n",
-		dev->bus->number, res->flags & IORESOURCE_IO ? "IO" : "MEM",
+		bus->number, res->flags & IORESOURCE_IO ? "IO" : "MEM",
 		region->start, region->end);
+
+	/* KLUGE ALERT
+	** if this resource isn't linked to a "parent", then it seems
+	** to be a child of the HBA - lets link it in.
+	*/
+	pcibios_link_hba_resources(&hba->io_space, bus->resource[0]);
+	pcibios_link_hba_resources(&hba->lmmio_space, bus->resource[1]);
 }
 
 void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
 			      struct pci_bus_region *region)
 {
 #ifdef CONFIG_64BIT
-	struct pci_hba_data *hba = HBA_DATA(dev->bus->bridge->platform_data);
+	struct pci_bus *bus = dev->bus;
+	struct pci_hba_data *hba = HBA_DATA(bus->bridge->platform_data);
 #endif
 
 	if (res->flags & IORESOURCE_MEM) {
@@ -257,7 +290,7 @@ EXPORT_SYMBOL(pcibios_bus_to_resource);
 void pcibios_align_resource(void *data, struct resource *res,
 				resource_size_t size, resource_size_t alignment)
 {
-	resource_size_t mask, align;
+	unsigned long mask, align;
 
 	DBG_RES("pcibios_align_resource(%s, (%p) [%lx,%lx]/%x, 0x%lx, 0x%lx)\n",
 		pci_name(((struct pci_dev *) data)),
@@ -286,15 +319,23 @@ void pcibios_align_resource(void *data, struct resource *res,
  */
 int pcibios_enable_device(struct pci_dev *dev, int mask)
 {
-	int err;
-	u16 cmd, old_cmd;
-
-	err = pci_enable_resources(dev, mask);
-	if (err < 0)
-		return err;
+	u16 cmd;
+	int idx;
 
 	pci_read_config_word(dev, PCI_COMMAND, &cmd);
-	old_cmd = cmd;
+
+	for (idx = 0; idx < DEVICE_COUNT_RESOURCE; idx++) {
+		struct resource *r = &dev->resource[idx];
+
+		/* only setup requested resources */
+		if (!(mask & (1<<idx)))
+			continue;
+
+		if (r->flags & IORESOURCE_IO)
+			cmd |= PCI_COMMAND_IO;
+		if (r->flags & IORESOURCE_MEM)
+			cmd |= PCI_COMMAND_MEMORY;
+	}
 
 	cmd |= (PCI_COMMAND_SERR | PCI_COMMAND_PARITY);
 
@@ -303,12 +344,8 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	if (dev->bus->bridge_ctl & PCI_BRIDGE_CTL_FAST_BACK)
 		cmd |= PCI_COMMAND_FAST_BACK;
 #endif
-
-	if (cmd != old_cmd) {
-		dev_info(&dev->dev, "enabling SERR and PARITY (%04x -> %04x)\n",
-			old_cmd, cmd);
-		pci_write_config_word(dev, PCI_COMMAND, cmd);
-	}
+	DBGC("PCIBIOS: Enabling device %s cmd 0x%04x\n", pci_name(dev), cmd);
+	pci_write_config_word(dev, PCI_COMMAND, cmd);
 	return 0;
 }
 

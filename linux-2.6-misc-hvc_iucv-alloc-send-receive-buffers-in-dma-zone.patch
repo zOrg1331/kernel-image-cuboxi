@@ -1,0 +1,74 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Thu, 18 Feb 2010 08:19:30 -0500
+Subject: [misc] hvc_iucv: alloc send/receive buffers in DMA zone
+Message-id: <20100218081929.GB17446@redhat.com>
+Patchwork-id: 23327
+O-Subject: [RHEL5.5 PATCH 1/1] [s390] hvc_iucv: allocate IUCV send/receive
+	buffers in DMA zone
+Bugzilla: 566202
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+When a terminal connection to the z/VM IUCV HVC device driver
+is established with iucvconn, the session hangs immediately.
+If the getty process running on the hvc terminal is killed,
+iucvconn might report the following message:
+"iucvterm: The version of the received data message is not supported".
+
+The device driver must allocate memory for IUCV buffers with GFP_DMA,
+because IUCV cannot address memory above 2GB (31bit addresses only).
+Because IUCV ignores the higher bits of the address, sending and
+receiving IUCV data with this driver might cause memory corruptions.
+
+Ensure to allocate the IUCV send and receive buffers in the DMA zone,
+using the GFP_DMA flag.
+
+Bugzilla
+--------
+BZ 566202
+https://bugzilla.redhat.com/show_bug.cgi?id=566202
+
+Upstream status of the patch
+----------------------------
+The patch is currently queued for the upcoming merge window and
+will be upstream as of kernel version 2.6.34.
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/char/hvc_iucv.c b/drivers/char/hvc_iucv.c
+index 7b28044..ace02ce 100644
+--- a/drivers/char/hvc_iucv.c
++++ b/drivers/char/hvc_iucv.c
+@@ -142,6 +142,8 @@ struct hvc_iucv_private *hvc_iucv_get_private(uint32_t num)
+  *
+  * This function allocates a new struct iucv_tty_buffer element and, optionally,
+  * allocates an internal data buffer with the specified size @size.
++ * The internal data buffer is always allocated with GFP_DMA which is
++ * required for receiving and sending data with IUCV.
+  * Note: The total message size arises from the internal buffer size and the
+  *	 members of the iucv_tty_msg structure.
+  * The function returns NULL if memory allocation has failed.
+@@ -157,7 +159,7 @@ static struct iucv_tty_buffer *alloc_tty_buffer(size_t size, gfp_t flags)
+ 
+ 	if (size > 0) {
+ 		bufp->msg.length = MSG_SIZE(size);
+-		bufp->mbuf = kmalloc(bufp->msg.length, flags);
++		bufp->mbuf = kmalloc(bufp->msg.length, flags | GFP_DMA);
+ 		if (!bufp->mbuf) {
+ 			mempool_free(bufp, hvc_iucv_mempool);
+ 			return NULL;
+@@ -240,7 +242,7 @@ static int hvc_iucv_write(struct hvc_iucv_private *priv,
+ 	if (!rb->mbuf) { /* message not yet received ... */
+ 		/* allocate mem to store msg data; if no memory is available
+ 		 * then leave the buffer on the list and re-try later */
+-		rb->mbuf = kmalloc(rb->msg.length, GFP_ATOMIC);
++		rb->mbuf = kmalloc(rb->msg.length, GFP_ATOMIC | GFP_DMA);
+ 		if (!rb->mbuf)
+ 			return -ENOMEM;
+ 

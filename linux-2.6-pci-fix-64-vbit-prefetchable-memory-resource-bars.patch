@@ -1,0 +1,46 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:04 -0600
+Subject: [pci] fix 64-vbit prefetchable memory resource BARs
+Message-id: 200904021446.n32Ek4xL017104@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 3/17] BZ493152: Backport: PCI: fix 64-vbit prefetchable memory resource BARs
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit e354597cce8d219d135d65e585dc4f30323486b9
+    Author: Peter Chubb <peterc@gelato.unsw.edu.au>
+    Date:   Mon Oct 13 11:49:04 2008 +1100
+
+    PCI: fix 64-vbit prefetchable memory resource BARs
+
+    Since patch 6ac665c63dcac8fcec534a1d224ecbb8b867ad59 my infiniband
+    controller hasn't worked.  This is because it has 64-bit prefetchable
+    memory, which was mistakenly being  taken to be 32-bit memory.  The
+    resource flags in this case are PCI_BASE_ADDRESS_MEM_TYPE_64 |
+    PCI_BASE_ADDRESS_MEM_PREFETCH.
+
+    This patch checks only for the PCI_BASE_ADDRESS_MEM_TYPE_64 bit; thus
+    whether the region is prefetchable or not is ignored.  This fixes my
+    Infiniband.
+
+    Reviewed-by: Matthew Wilcox <matthew@wil.cx>
+    Signed-off-by: Peter Chubb <peterc@gelato.unsw.edu.au>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index fc42efe..fc6f8d7 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -169,7 +169,7 @@ static inline enum pci_bar_type decode_bar(struct resource *res, u32 bar)
+ 
+ 	res->flags = bar & ~PCI_BASE_ADDRESS_MEM_MASK;
+ 
+-	if (res->flags == PCI_BASE_ADDRESS_MEM_TYPE_64)
++	if (res->flags & PCI_BASE_ADDRESS_MEM_TYPE_64)
+ 		return pci_bar_mem64;
+ 	return pci_bar_mem32;
+ }

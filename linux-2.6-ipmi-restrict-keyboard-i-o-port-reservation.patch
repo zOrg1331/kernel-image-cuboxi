@@ -1,0 +1,120 @@
+From: peterm@redhat.com <peterm@redhat.com>
+Date: Mon, 28 Jul 2008 13:16:45 -0400
+Subject: [ipmi] restrict keyboard I/O port reservation
+Message-id: 200807281716.m6SHGjxR005299@dhcp-100-18-167.bos.redhat.com
+O-Subject: [RHEL 5.3 Patch] IPMI:Restrict keyboard I/O port reservation
+Bugzilla: 456300
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Hello,
+
+This patch modifies the keyboard setup code for x86/x86_64.  The changes are required
+to limit the number of I/O ports reserved for keyboards to allow x86 based SBCs with IPMI
+support to work through the KCS interface.  The git entry can be reviewed here:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=9096bd7a66efbe406910365c5206a32eed3875af
+
+The Xen setup code path was modified to keep the bare metal and Xen kernels
+in sync.  Markus submitted the Xen changes to xen-devel.
+
+Details from the commit message:
+
+<start>
+x86: restrict keyboard io ports reservation to make ipmi driver work
+
+On some of our (single board computer) boards (x86) we are using an
+IPMI controller that uses I/O ports 0x62 and 0x66 for a KCS (keyboard
+controller style) IPMI system interface.
+
+Trying to load the openipmi driver fails, because the ports
+(0x62/0x66) are reserved for keyboard. keyboard reserves the full
+range 0x60-0x6F while it doesn't need to.
+
+Reserve only ports 0x60 and 0x64 for the legacy PS/2 i8042 keyboad
+controller instead of 0x60-0x6F to allow the openipmi driver to work.
+
+[ tglx: added 64bit fixup ]
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Acked-by: H. Peter Anvin <hpa@zytor.com>
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+<end>
+
+Testing: Both the bare metal and Xen kernels were tested in house with no
+regressions to report, (I did not have the affected SBC to test on so my testing
+was limited to regression testing only).
+
+Brew build info: Task 1407062
+
+This resolves Bugzilla 456300.
+
+Peter-
+
+diff --git a/arch/i386/kernel/setup-xen.c b/arch/i386/kernel/setup-xen.c
+index 2633cd7..0f55451 100644
+--- a/arch/i386/kernel/setup-xen.c
++++ b/arch/i386/kernel/setup-xen.c
+@@ -277,7 +277,12 @@ static struct resource standard_io_resources[] = { {
+ }, {
+ 	.name	= "keyboard",
+ 	.start	= 0x0060,
+-	.end	= 0x006f,
++	.end	= 0x0060,
++	.flags	= IORESOURCE_BUSY | IORESOURCE_IO
++}, {
++	.name	= "keyboard",
++	.start	= 0x0064,
++	.end	= 0x0064,
+ 	.flags	= IORESOURCE_BUSY | IORESOURCE_IO
+ }, {
+ 	.name	= "dma page reg",
+diff --git a/arch/i386/kernel/setup.c b/arch/i386/kernel/setup.c
+index 34b515d..2e63328 100644
+--- a/arch/i386/kernel/setup.c
++++ b/arch/i386/kernel/setup.c
+@@ -262,7 +262,12 @@ static struct resource standard_io_resources[] = { {
+ }, {
+ 	.name	= "keyboard",
+ 	.start	= 0x0060,
+-	.end	= 0x006f,
++	.end	= 0x0060,
++	.flags	= IORESOURCE_BUSY | IORESOURCE_IO
++}, {
++	.name	= "keyboard",
++	.start	= 0x0064,
++	.end	= 0x0064,
+ 	.flags	= IORESOURCE_BUSY | IORESOURCE_IO
+ }, {
+ 	.name	= "dma page reg",
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index cb774cd..93efadf 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -170,7 +170,9 @@ struct resource standard_io_resources[] = {
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+ 	{ .name = "timer1", .start = 0x50, .end = 0x53,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+-	{ .name = "keyboard", .start = 0x60, .end = 0x6f,
++	{ .name = "keyboard", .start = 0x60, .end = 0x60,
++		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
++	{ .name = "keyboard", .start = 0x64, .end = 0x64,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+ 	{ .name = "dma page reg", .start = 0x80, .end = 0x8f,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 98b9b25..53c31fd 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -125,7 +125,9 @@ struct resource standard_io_resources[] = {
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+ 	{ .name = "timer1", .start = 0x50, .end = 0x53,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+-	{ .name = "keyboard", .start = 0x60, .end = 0x6f,
++	{ .name = "keyboard", .start = 0x60, .end = 0x60,
++		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
++	{ .name = "keyboard", .start = 0x64, .end = 0x64,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },
+ 	{ .name = "dma page reg", .start = 0x80, .end = 0x8f,
+ 		.flags = IORESOURCE_BUSY | IORESOURCE_IO },

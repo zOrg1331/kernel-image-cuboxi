@@ -12,6 +12,7 @@
 #include <asm/pgalloc.h>
 #include <asm/irq.h>
 #include <asm/io.h>
+#include <asm/semaphore.h>
 #include <asm/checksum.h>
 #include <asm/current.h>
 #include <asm/gpio.h>
@@ -38,7 +39,7 @@ EXPORT_SYMBOL(enable_irq);
 EXPORT_SYMBOL(disable_irq);
 
 /* Networking helper routines. */
-EXPORT_SYMBOL(csum_partial_copy_nocheck);
+EXPORT_SYMBOL(csum_partial_copy);
 
 /* The following are special because they're not called
    explicitly (the C compiler generates them).  Fortunately,

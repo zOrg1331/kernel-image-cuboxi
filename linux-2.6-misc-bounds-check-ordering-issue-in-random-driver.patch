@@ -1,0 +1,53 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ275971: CVE-2007-3105 Bound check ordering issue in 	random driver
+Date: Wed, 05 Sep 2007 10:56:46 +0200
+Bugzilla: 275971
+Message-Id: <h8r6ldqylt.fsf@pepelac.englab.brq.redhat.com>
+Changelog: [misc] Bounds check ordering issue in random driver
+
+
+BZ#275971:
+  https://bugzilla.redhat.com/show_bug.cgi?id=275971
+
+Description:
+  If root raised the default wakeup threshold over the size of the output pool, the pool transfer function could overflow the stack with RNG bytes, causing a DoS or potential privilege escalation.
+
+Upstream status:
+  commit# 5a021e9ffd56c22700133ebc37d607f95be8f7bd
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=5a021e9ffd56c22700133ebc37d607f95be8f7bd
+
+Test status:
+  Kernel has been tested for compilation and boot.
+  http://porkchop.redhat.com/brewroot/cratch/aarapov/task_951386/
+
+Notice:
+  BZ275951 - RHEL4.6 Clone of this bug
+
+==
+diff -urpN linux-2.6.18.noarch.orig/drivers/char/random.c linux-2.6.18.noarch/drivers/char/random.c
+--- linux-2.6.18.noarch.orig/drivers/char/random.c	2007-09-05 07:06:41.000000000 +0200
++++ linux-2.6.18.noarch/drivers/char/random.c	2007-09-05 07:08:34.000000000 +0200
+@@ -690,9 +690,14 @@ static void xfer_secondary_pool(struct e
+ 
+ 	if (r->pull && r->entropy_count < nbytes * 8 &&
+ 	    r->entropy_count < r->poolinfo->POOLBITS) {
+-		int bytes = max_t(int, random_read_wakeup_thresh / 8,
+-				min_t(int, nbytes, sizeof(tmp)));
++		/* If we're limited, always leave two wakeup worth's BITS */
+ 		int rsvd = r->limit ? 0 : random_read_wakeup_thresh/4;
++		int bytes = nbytes;
++
++		/* pull at least as many as BYTES as wakeup BITS */
++		bytes = max_t(int, bytes, random_read_wakeup_thresh / 8);
++		/* but never more than the buffer size */
++		bytes = min_t(int, bytes, sizeof(tmp));
+ 
+ 		DEBUG_ENT("going to reseed %s with %d bits "
+ 			  "(%d of %d requested)\n",
+
+-- 
+Anton Arapov, <aarapov@redhat.com>
+Kernel Development, Red Hat
+GPG Key ID: 0x6FA8C812
+
+

@@ -17,20 +17,21 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/hardware/ssp.h>
 
 #define TIMEOUT 100000
 
-static irqreturn_t ssp_interrupt(int irq, void *dev_id)
+static irqreturn_t ssp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned int status = Ser4SSSR;
 
-	if (status & SSSR_ROR)
+	if (status & SSSR_ROR) {
 		printk(KERN_WARNING "SSP: receiver overrun\n");
+	}
 
 	Ser4SSSR = SSSR_ROR;
 

@@ -1,0 +1,43 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ218348] act_gact: division by zero
+Date: Tue, 2 Jan 2007 21:06:35 +0100
+Bugzilla: 218348
+Message-Id: <20070102200635.GA6541@lsx.localdomain>
+Changelog: net: act_gact: division by zero
+
+
+Based on:
+
+commit a163148c1bec895c1332ea5be497bcda8ce110df
+Author: Kim Nordlund <kim.nordlund@nokia.com>
+
+    [PKT_SCHED] act_gact: division by zero
+    
+    Not returning -EINVAL, because someone might want to use the value
+    zero in some future gact_prob algorithm?
+    
+    Signed-off-by: Kim Nordlund <kim.nordlund@nokia.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/sched/act_gact.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/sched/act_gact.c	2007-01-02 21:03:33.000000000 +0100
++++ linux-2.6.18.noarch/net/sched/act_gact.c	2007-01-02 21:04:16.000000000 +0100
+@@ -54,14 +54,14 @@ static DEFINE_RWLOCK(gact_lock);
+ #ifdef CONFIG_GACT_PROB
+ static int gact_net_rand(struct tcf_gact *p)
+ {
+-	if (net_random()%p->pval)
++	if (!p->pval || net_random() % p->pval)
+ 		return p->action;
+ 	return p->paction;
+ }
+ 
+ static int gact_determ(struct tcf_gact *p)
+ {
+-	if (p->bstats.packets%p->pval)
++	if (!p->pval || p->bstats.packets % p->pval)
+ 		return p->action;
+ 	return p->paction;
+ }
+

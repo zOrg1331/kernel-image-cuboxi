@@ -1,0 +1,69 @@
+diff -urp ./fs/gfs/ops_inode.c fs/gfs/ops_inode.c
+--- ./fs/gfs/ops_inode.c	2007-05-20 00:43:03.000000000 +0400
++++ ./fs/gfs/ops_inode.c	2007-06-06 12:52:55.000000000 +0400
+@@ -1450,6 +1450,7 @@ gfs_setattr(struct dentry *dentry, struc
+ 	struct gfs_inode *ip = get_v2ip(inode);
+ 	struct gfs_sbd *sdp = ip->i_sbd;
+ 	struct gfs_holder i_gh;
++	unsigned int ia_valid = attr->ia_valid;
+ 	int error;
+ 
+ 	atomic_inc(&sdp->sd_ops_inode);
+@@ -1473,13 +1474,13 @@ gfs_setattr(struct dentry *dentry, struc
+ 	 *
+ 	 * wcheng@redhat.com 10/14/06  
+ 	 */ 
+-	if (attr->ia_valid & ATTR_SIZE) {
++	if (ia_valid & ATTR_SIZE) {
+ 		up_write(&dentry->d_inode->i_alloc_sem); 
+ 	}
+ 	
+ 	error = gfs_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &i_gh);
+ 
+-	if (attr->ia_valid & ATTR_SIZE) {
++	if (ia_valid & ATTR_SIZE) {
+ 		down_write(&dentry->d_inode->i_alloc_sem); 
+ 	}
+ 	
+@@ -1495,7 +1496,7 @@ gfs_setattr(struct dentry *dentry, struc
+ 	if (error)
+ 		goto fail;
+ 
+-	if (attr->ia_valid & ATTR_SIZE) {
++	if (ia_valid & ATTR_SIZE) {
+ 		error = permission(inode, MAY_WRITE, NULL);
+ 		if (error)
+ 			goto fail;
+@@ -1516,9 +1517,11 @@ gfs_setattr(struct dentry *dentry, struc
+ 		if ((sdp->sd_vfs->s_flags & MS_SYNCHRONOUS) &&
+ 		    !gfs_is_jdata(ip))
+ 			i_gh.gh_flags |= GL_SYNC;
++
++		ia_valid &= ~ATTR_SIZE;
+ 	}
+ 
+-	else if (attr->ia_valid & (ATTR_UID | ATTR_GID)) {
++	if (ia_valid & (ATTR_UID | ATTR_GID)) {
+ 		struct gfs_alloc *al;
+ 		struct buffer_head *dibh;
+ 		uint32_t ouid, ogid, nuid, ngid;
+@@ -1578,15 +1581,17 @@ gfs_setattr(struct dentry *dentry, struc
+ 
+ 		gfs_quota_unlock_m(ip);
+ 		gfs_alloc_put(ip);
++		ia_valid &= ~(ATTR_UID | ATTR_GID);
+ 	}
+ 
+-	else if ((attr->ia_valid & ATTR_MODE) && IS_POSIXACL(inode)) {
++	if ((ia_valid & ATTR_MODE) && IS_POSIXACL(inode)) {
+ 		error = gfs_acl_chmod(ip, attr);
+ 		if (error)
+ 			goto fail;
++		ia_valid &= ~ATTR_MODE;
+ 	}
+ 
+-	else {
++	if (ia_valid & (ATTR_MODE|ATTR_ATIME|ATTR_CTIME|ATTR_MTIME)) {
+ 		error = gfs_setattr_simple(ip, attr);
+ 		if (error)
+ 			goto fail;

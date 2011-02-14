@@ -1,0 +1,93 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 20 May 2009 17:11:06 +0200
+Subject: [net] tun: allow group ownership of TUN/TAP devices
+Message-id: 20090520151106.GI5299@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.5 patch] BZ497955 net: tun: Allow group ownership of TUN/TAP devices.
+Bugzilla: 497955
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+
+BZ497955
+https://bugzilla.redhat.com/show_bug.cgi?id=497955
+
+Description:
+Introduce a new syscall TUNSETGROUP for group ownership setting of tap
+devices. The user now is allowed to send packages if either his euid or
+his egid matches the one specified via tunctl (via -u or -g
+respecitvely). If both, gid and uid, are set via tunctl, both have to
+match.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=8c644623fe7e41f59fe97cdf666cba3cb7ced7d8
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1807439
+
+Test:
+Booted and tested on x86_64.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index 785ef15..c73f5cf 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -600,6 +600,7 @@ static void tun_setup(struct net_device *dev)
+ 	init_waitqueue_head(&tun->read_wait);
+ 
+ 	tun->owner = -1;
++	tun->group = -1;
+ 
+ 	SET_MODULE_OWNER(dev);
+ 	dev->open = tun_net_open;
+@@ -664,8 +665,11 @@ static int tun_set_iff(struct file *file, struct ifreq *ifr)
+ 			return -EBUSY;
+ 
+ 		/* Check permissions */
+-		if (tun->owner != -1 &&
+-		    current->euid != tun->owner && !capable(CAP_NET_ADMIN))
++		if (((tun->owner != -1 &&
++		      current->euid != tun->owner) ||
++		     (tun->group != -1 &&
++		      current->egid != tun->group)) &&
++		     !capable(CAP_NET_ADMIN))
+ 			return -EPERM;
+ 	} 
+ 	else if (__dev_get_by_name(ifr->ifr_name)) 
+@@ -920,6 +924,13 @@ static int tun_chr_ioctl(struct inode *inode, struct file *file,
+ 		DBG(KERN_INFO "%s: owner set to %d\n", tun->dev->name, tun->owner);
+ 		break;
+ 
++	case TUNSETGROUP:
++		/* Set group of the device */
++		tun->group= (gid_t) arg;
++
++		DBG(KERN_INFO "%s: group set to %d\n", tun->dev->name, tun->group);
++		break;
++
+ 	case TUNSETLINK:
+ 		/* Only allow setting the type when the interface is down */
+ 		if (tun->dev->flags & IFF_UP) {
+diff --git a/include/linux/if_tun.h b/include/linux/if_tun.h
+index 25660dd..f6a73cd 100644
+--- a/include/linux/if_tun.h
++++ b/include/linux/if_tun.h
+@@ -38,6 +38,7 @@ struct tun_struct {
+ 	unsigned long 		flags;
+ 	int			attached;
+ 	uid_t			owner;
++	gid_t			group;
+ 
+ 	wait_queue_head_t	read_wait;
+ 	struct sk_buff_head	readq;
+@@ -84,6 +85,7 @@ struct tun_struct {
+ #define TUNSETPERSIST _IOW('T', 203, int) 
+ #define TUNSETOWNER   _IOW('T', 204, int)
+ #define TUNSETLINK    _IOW('T', 205, int)
++#define TUNSETGROUP   _IOW('T', 206, int)
+ #define TUNGETFEATURES _IOR('T', 207, unsigned int)
+ #define TUNSETOFFLOAD _IOW('T', 208, unsigned int)
+ #define TUNGETIFF      _IOR('T', 210, unsigned int)

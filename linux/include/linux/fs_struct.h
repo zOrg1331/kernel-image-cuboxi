@@ -1,24 +1,28 @@
 #ifndef _LINUX_FS_STRUCT_H
 #define _LINUX_FS_STRUCT_H
 
-#include <linux/path.h>
+struct dentry;
+struct vfsmount;
 
 struct fs_struct {
-	int users;
+	atomic_t count;
 	rwlock_t lock;
 	int umask;
-	int in_exec;
-	struct path root, pwd;
+	struct dentry * root, * pwd, * altroot;
+	struct vfsmount * rootmnt, * pwdmnt, * altrootmnt;
 };
 
-extern struct kmem_cache *fs_cachep;
+#define INIT_FS {				\
+	.count		= ATOMIC_INIT(1),	\
+	.lock		= RW_LOCK_UNLOCKED,	\
+	.umask		= 0022, \
+}
 
 extern void exit_fs(struct task_struct *);
-extern void set_fs_root(struct fs_struct *, struct path *);
-extern void set_fs_pwd(struct fs_struct *, struct path *);
+extern void set_fs_altroot(void);
+extern void set_fs_root(struct fs_struct *, struct vfsmount *, struct dentry *);
+extern void set_fs_pwd(struct fs_struct *, struct vfsmount *, struct dentry *);
 extern struct fs_struct *copy_fs_struct(struct fs_struct *);
-extern void free_fs_struct(struct fs_struct *);
-extern void daemonize_fs_struct(void);
-extern int unshare_fs_struct(void);
+extern void put_fs_struct(struct fs_struct *);
 
 #endif /* _LINUX_FS_STRUCT_H */

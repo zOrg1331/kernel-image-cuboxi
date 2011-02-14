@@ -1,0 +1,44 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5.1 PATCH] [XEN] netfront: Better fix for netfront_tx_slot_available().
+Date: Wed, 11 Apr 2007 16:33:43 +1000
+Bugzilla: 224558
+Message-Id: <20070411063343.GA17151@gondor.apana.org.au>
+Changelog: [XEN] Better fix for netfront_tx_slot_available().
+
+
+Hi:
+
+RHEL5.1 BZ 224558
+
+This is an upstream patch which fixes an accounting error in determining
+whether enough resources are available for transmission of network packets.
+As a direct result this can cause the frontend network driver to BUG which
+brings down the guest OS.
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID e19f9d6a2ff594c948b66c7dc43dd70fecab1d3f
+# Parent  fec1a697558853ffc61e1d8047a5dc2fa965e6a8
+netfront: Better fix for netfront_tx_slot_available().
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+--- linux-2.6.18.noarch/drivers/xen/netfront/netfront.c.orig	2007-04-11 15:33:06.000000000 +1000
++++ linux-2.6.18.noarch/drivers/xen/netfront/netfront.c	2007-04-11 16:18:47.000000000 +1000
+@@ -575,7 +575,8 @@
+ 
+ static inline int netfront_tx_slot_available(struct netfront_info *np)
+ {
+-	return RING_FREE_REQUESTS(&np->tx) >= MAX_SKB_FRAGS + 2;
++	return ((np->tx.req_prod_pvt - np->tx.rsp_cons) <
++		(TX_MAX_TARGET - MAX_SKB_FRAGS - 2));
+ }
+ 
+ static inline void network_maybe_wake_tx(struct net_device *dev)
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+

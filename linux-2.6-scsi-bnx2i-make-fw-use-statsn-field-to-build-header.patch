@@ -1,0 +1,55 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 9 Sep 2010 22:45:51 -0400
+Subject: [scsi] bnx2i: make fw use statsn field to build header
+Message-id: <1284072352-13848-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28197
+O-Subject: [RHEL 5.6 PATCH 1/2] bnx2i: make firmware use statsn field when
+	constructing header
+Bugzilla: 578005
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ: 578005.
+
+>From upstream commit:
+commit 2e15efc7e1f99f56896b89fad9d13baac3c635f9
+Author: Anil Veerabhadrappa <anilgv@broadcom.com>
+Date:   Thu Mar 25 10:54:40 2010 -0700
+
+    [SCSI] bnx2i: make firmware use statsn field when constructing
+header
+
+    instruct firmware to use driver/iscsid provided expected statsn
+field
+    while constructing login pdu header.
+
+    Initialize 'flags' to instruct chip to use driver/iscsid provided
+    ExpStatSN value while constructing iSCSI login PDU header
+
+Broadcom and I have tested the patch by forcing relogins.
+
+Patch was made over these patches:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2010-August/msg00769.html
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_hwi.c b/drivers/scsi/bnx2i/bnx2i_hwi.c
+index f4ad1bd..df59102 100644
+--- a/drivers/scsi/bnx2i/bnx2i_hwi.c
++++ b/drivers/scsi/bnx2i/bnx2i_hwi.c
+@@ -346,6 +346,7 @@ int bnx2i_send_iscsi_login(struct bnx2i_conn *bnx2i_conn,
+ 
+ 	login_wqe->cmd_sn = be32_to_cpu(login_hdr->cmdsn);
+ 	login_wqe->exp_stat_sn = be32_to_cpu(login_hdr->exp_statsn);
++	login_wqe->flags = ISCSI_LOGIN_REQUEST_UPDATE_EXP_STAT_SN;
+ 
+ 	login_wqe->resp_bd_list_addr_lo = (u32) bnx2i_conn->gen_pdu.resp_bd_dma;
+ 	login_wqe->resp_bd_list_addr_hi =
+@@ -355,7 +356,6 @@ int bnx2i_send_iscsi_login(struct bnx2i_conn *bnx2i_conn,
+ 		 (bnx2i_conn->gen_pdu.resp_buf_size <<
+ 		  ISCSI_LOGIN_REQUEST_RESP_BUFFER_LENGTH_SHIFT));
+ 	login_wqe->resp_buffer = dword;
+-	login_wqe->flags = 0;
+ 	login_wqe->bd_list_addr_lo = (u32) bnx2i_conn->gen_pdu.req_bd_dma;
+ 	login_wqe->bd_list_addr_hi =
+ 		(u32) ((u64) bnx2i_conn->gen_pdu.req_bd_dma >> 32);

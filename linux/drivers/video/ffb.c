@@ -16,10 +16,11 @@
 #include <linux/fb.h>
 #include <linux/mm.h>
 #include <linux/timer.h>
-#include <linux/of_device.h>
 
 #include <asm/io.h>
 #include <asm/upa.h>
+#include <asm/prom.h>
+#include <asm/of_device.h>
 #include <asm/fbio.h>
 
 #include "sbuslib.h"
@@ -31,6 +32,7 @@
 static int ffb_setcolreg(unsigned, unsigned, unsigned, unsigned,
 			 unsigned, struct fb_info *);
 static int ffb_blank(int, struct fb_info *);
+static void ffb_init_fix(struct fb_info *);
 
 static void ffb_imageblit(struct fb_info *, const struct fb_image *);
 static void ffb_fillrect(struct fb_info *, const struct fb_fillrect *);
@@ -169,17 +171,17 @@ static struct fb_ops ffb_ops = {
 #define FFB_PPC_CS_VAR		0x000002
 #define FFB_PPC_CS_CONST	0x000003
 
-#define FFB_ROP_NEW		0x83
-#define FFB_ROP_OLD		0x85
-#define FFB_ROP_NEW_XOR_OLD	0x86
+#define FFB_ROP_NEW                  0x83
+#define FFB_ROP_OLD                  0x85
+#define FFB_ROP_NEW_XOR_OLD          0x86
 
-#define FFB_UCSR_FIFO_MASK	0x00000fff
-#define FFB_UCSR_FB_BUSY	0x01000000
-#define FFB_UCSR_RP_BUSY	0x02000000
-#define FFB_UCSR_ALL_BUSY	(FFB_UCSR_RP_BUSY|FFB_UCSR_FB_BUSY)
-#define FFB_UCSR_READ_ERR	0x40000000
-#define FFB_UCSR_FIFO_OVFL	0x80000000
-#define FFB_UCSR_ALL_ERRORS	(FFB_UCSR_READ_ERR|FFB_UCSR_FIFO_OVFL)
+#define FFB_UCSR_FIFO_MASK     0x00000fff
+#define FFB_UCSR_FB_BUSY       0x01000000
+#define FFB_UCSR_RP_BUSY       0x02000000
+#define FFB_UCSR_ALL_BUSY      (FFB_UCSR_RP_BUSY|FFB_UCSR_FB_BUSY)
+#define FFB_UCSR_READ_ERR      0x40000000
+#define FFB_UCSR_FIFO_OVFL     0x80000000
+#define FFB_UCSR_ALL_ERRORS    (FFB_UCSR_READ_ERR|FFB_UCSR_FIFO_OVFL)
 
 struct ffb_fbc {
 	/* Next vertex registers */
@@ -195,7 +197,7 @@ struct ffb_fbc {
 	u32	ryf;
 	u32	rxf;
 	u32	xxx3[2];
-
+	
 	u32	dmyf;
 	u32	dmxf;
 	u32	xxx4[2];
@@ -209,13 +211,13 @@ struct ffb_fbc {
 	u32	bh;
 	u32	bw;
 	u32	xxx6[2];
-
+	
 	u32	xxx7[32];
-
+	
 	/* Setup unit vertex state register */
 	u32	suvtx;
 	u32	xxx8[63];
-
+	
 	/* Control registers */
 	u32	ppc;
 	u32	wid;
@@ -233,7 +235,7 @@ struct ffb_fbc {
 	u32	dcsb;
 	u32	dczf;
 	u32	dczb;
-
+	
 	u32	xxx9;
 	u32	blendc;
 	u32	blendc1;
@@ -250,7 +252,7 @@ struct ffb_fbc {
 	u32	fbcfg1;
 	u32	fbcfg2;
 	u32	fbcfg3;
-
+	
 	u32	ppcfg;
 	u32	pick;
 	u32	fillmode;
@@ -267,7 +269,7 @@ struct ffb_fbc {
 	u32	clip2max;
 	u32	clip3min;
 	u32	clip3max;
-
+	
 	/* New 3dRAM III support regs */
 	u32	rawblend2;
 	u32	rawpreblend;
@@ -285,7 +287,7 @@ struct ffb_fbc {
 	u32	rawcmp;
 	u32	rawwac;
 	u32	fbramid;
-
+	
 	u32	drawop;
 	u32	xxx10[2];
 	u32	fontlpat;
@@ -300,7 +302,7 @@ struct ffb_fbc {
 	u32	stencil;
 	u32	stencilctl;
 
-	u32	xxx13[4];
+	u32	xxx13[4];	
 	u32	dcss1;
 	u32	dcss2;
 	u32	dcss3;
@@ -313,17 +315,17 @@ struct ffb_fbc {
 	u32	dcd3;
 	u32	dcd4;
 	u32	xxx15;
-
+	
 	u32	pattern[32];
-
+	
 	u32	xxx16[256];
-
+	
 	u32	devid;
 	u32	xxx17[63];
-
+	
 	u32	ucsr;
 	u32	xxx18[31];
-
+	
 	u32	mer;
 };
 
@@ -334,30 +336,14 @@ struct ffb_dac {
 	u32	value2;
 };
 
-#define FFB_DAC_UCTRL		0x1001 /* User Control */
-#define FFB_DAC_UCTRL_MANREV	0x00000f00 /* 4-bit Manufacturing Revision */
-#define FFB_DAC_UCTRL_MANREV_SHIFT 8
-#define FFB_DAC_TGEN		0x6000 /* Timing Generator */
-#define FFB_DAC_TGEN_VIDE	0x00000001 /* Video Enable */
-#define FFB_DAC_DID		0x8000 /* Device Identification */
-#define FFB_DAC_DID_PNUM	0x0ffff000 /* Device Part Number */
-#define FFB_DAC_DID_PNUM_SHIFT	12
-#define FFB_DAC_DID_REV		0xf0000000 /* Device Revision */
-#define FFB_DAC_DID_REV_SHIFT	28
-
-#define FFB_DAC_CUR_CTRL	0x100
-#define FFB_DAC_CUR_CTRL_P0	0x00000001
-#define FFB_DAC_CUR_CTRL_P1	0x00000002
-
 struct ffb_par {
 	spinlock_t		lock;
 	struct ffb_fbc __iomem	*fbc;
 	struct ffb_dac __iomem	*dac;
 
 	u32			flags;
-#define FFB_FLAG_AFB		0x00000001 /* AFB m3 or m6 */
-#define FFB_FLAG_BLANKED	0x00000002 /* screen is blanked */
-#define FFB_FLAG_INVCURSOR	0x00000004 /* DAC has inverted cursor logic */
+#define FFB_FLAG_AFB		0x00000001
+#define FFB_FLAG_BLANKED	0x00000002
 
 	u32			fg_cache __attribute__((aligned (8)));
 	u32			bg_cache;
@@ -368,9 +354,8 @@ struct ffb_par {
 	unsigned long		physbase;
 	unsigned long		fbsize;
 
+	int			dac_rev;
 	int			board_type;
-
-	u32			pseudo_palette[16];
 };
 
 static void FFBFifo(struct ffb_par *par, int n)
@@ -380,9 +365,7 @@ static void FFBFifo(struct ffb_par *par, int n)
 
 	if (cache - n < 0) {
 		fbc = par->fbc;
-		do {
-			cache = (upa_readl(&fbc->ucsr) & FFB_UCSR_FIFO_MASK);
-			cache -= 8;
+		do {	cache = (upa_readl(&fbc->ucsr) & FFB_UCSR_FIFO_MASK) - 8;
 		} while (cache - n < 0);
 	}
 	par->fifo_cache = cache - n;
@@ -401,12 +384,12 @@ static void FFBWait(struct ffb_par *par)
 			upa_writel(FFB_UCSR_ALL_ERRORS, &fbc->ucsr);
 		}
 		udelay(10);
-	} while (--limit > 0);
+	} while(--limit > 0);
 }
 
 static int ffb_sync(struct fb_info *p)
 {
-	struct ffb_par *par = (struct ffb_par *)p->par;
+	struct ffb_par *par = (struct ffb_par *) p->par;
 
 	FFBWait(par);
 	return 0;
@@ -431,8 +414,8 @@ static void ffb_switch_from_graph(struct ffb_par *par)
 	FFBWait(par);
 	par->fifo_cache = 0;
 	FFBFifo(par, 7);
-	upa_writel(FFB_PPC_VCE_DISABLE | FFB_PPC_TBE_OPAQUE |
-		   FFB_PPC_APE_DISABLE | FFB_PPC_CS_CONST,
+	upa_writel(FFB_PPC_VCE_DISABLE|FFB_PPC_TBE_OPAQUE|
+		   FFB_PPC_APE_DISABLE|FFB_PPC_CS_CONST,
 		   &fbc->ppc);
 	upa_writel(0x2000707f, &fbc->fbc);
 	upa_writel(par->rop_cache, &fbc->rop);
@@ -443,19 +426,18 @@ static void ffb_switch_from_graph(struct ffb_par *par)
 	FFBWait(par);
 
 	/* Disable cursor.  */
-	upa_writel(FFB_DAC_CUR_CTRL, &dac->type2);
-	if (par->flags & FFB_FLAG_INVCURSOR)
+	upa_writel(0x100, &dac->type2);
+	if (par->dac_rev <= 2)
 		upa_writel(0, &dac->value2);
 	else
-		upa_writel((FFB_DAC_CUR_CTRL_P0 |
-			    FFB_DAC_CUR_CTRL_P1), &dac->value2);
+		upa_writel(3, &dac->value2);
 
 	spin_unlock_irqrestore(&par->lock, flags);
 }
 
 static int ffb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 
 	/* We just use this to catch switches out of
 	 * graphics mode.
@@ -468,14 +450,16 @@ static int ffb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 }
 
 /**
- *	ffb_fillrect - Draws a rectangle on the screen.
+ *      ffb_fillrect - REQUIRED function. Can use generic routines if 
+ *                     non acclerated hardware and packed pixel based.
+ *                     Draws a rectangle on the screen.               
  *
- *	@info: frame buffer structure that represents a single frame buffer
- *	@rect: structure defining the rectagle and operation.
+ *      @info: frame buffer structure that represents a single frame buffer
+ *      @rect: structure defining the rectagle and operation.
  */
 static void ffb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 	struct ffb_fbc __iomem *fbc = par->fbc;
 	unsigned long flags;
 	u32 fg;
@@ -492,9 +476,9 @@ static void ffb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 		par->fg_cache = fg;
 	}
 
-	ffb_rop(par, rect->rop == ROP_COPY ?
-		     FFB_ROP_NEW :
-		     FFB_ROP_NEW_XOR_OLD);
+	ffb_rop(par, (rect->rop == ROP_COPY ?
+		      FFB_ROP_NEW :
+		      FFB_ROP_NEW_XOR_OLD));
 
 	FFBFifo(par, 5);
 	upa_writel(FFB_DRAWOP_RECTANGLE, &fbc->drawop);
@@ -507,15 +491,18 @@ static void ffb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 }
 
 /**
- *	ffb_copyarea - Copies on area of the screen to another area.
+ *      ffb_copyarea - REQUIRED function. Can use generic routines if
+ *                     non acclerated hardware and packed pixel based.
+ *                     Copies on area of the screen to another area.
  *
- *	@info: frame buffer structure that represents a single frame buffer
- *	@area: structure defining the source and destination.
+ *      @info: frame buffer structure that represents a single frame buffer
+ *      @area: structure defining the source and destination.
  */
 
-static void ffb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
+static void
+ffb_copyarea(struct fb_info *info, const struct fb_copyarea *area) 
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 	struct ffb_fbc __iomem *fbc = par->fbc;
 	unsigned long flags;
 
@@ -542,14 +529,16 @@ static void ffb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 }
 
 /**
- *	ffb_imageblit - Copies a image from system memory to the screen.
+ *      ffb_imageblit - REQUIRED function. Can use generic routines if
+ *                      non acclerated hardware and packed pixel based.
+ *                      Copies a image from system memory to the screen. 
  *
- *	@info: frame buffer structure that represents a single frame buffer
- *	@image: structure defining the image.
+ *      @info: frame buffer structure that represents a single frame buffer
+ *      @image: structure defining the image.
  */
 static void ffb_imageblit(struct fb_info *info, const struct fb_image *image)
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 	struct ffb_fbc __iomem *fbc = par->fbc;
 	const u8 *data = image->data;
 	unsigned long flags;
@@ -637,14 +626,13 @@ static void ffb_fixup_var_rgb(struct fb_var_screeninfo *var)
 }
 
 /**
- *	ffb_setcolreg - Sets a color register.
- *
- *	@regno: boolean, 0 copy local, 1 get_user() function
- *	@red: frame buffer colormap structure
- *	@green: The green value which can be up to 16 bits wide
- *	@blue:  The blue value which can be up to 16 bits wide.
- *	@transp: If supported the alpha value which can be up to 16 bits wide.
- *	@info: frame buffer info structure
+ *      ffb_setcolreg - Optional function. Sets a color register.
+ *      @regno: boolean, 0 copy local, 1 get_user() function
+ *      @red: frame buffer colormap structure
+ *      @green: The green value which can be up to 16 bits wide
+ *      @blue:  The blue value which can be up to 16 bits wide.
+ *      @transp: If supported the alpha value which can be up to 16 bits wide.
+ *      @info: frame buffer info structure
  */
 static int ffb_setcolreg(unsigned regno,
 			 unsigned red, unsigned green, unsigned blue,
@@ -652,7 +640,7 @@ static int ffb_setcolreg(unsigned regno,
 {
 	u32 value;
 
-	if (regno >= 16)
+	if (regno >= 256)
 		return 1;
 
 	red >>= 8;
@@ -666,27 +654,28 @@ static int ffb_setcolreg(unsigned regno,
 }
 
 /**
- *	ffb_blank - Optional function.  Blanks the display.
- *	@blank_mode: the blank mode we want.
- *	@info: frame buffer structure that represents a single frame buffer
+ *      ffb_blank - Optional function.  Blanks the display.
+ *      @blank_mode: the blank mode we want.
+ *      @info: frame buffer structure that represents a single frame buffer
  */
-static int ffb_blank(int blank, struct fb_info *info)
+static int
+ffb_blank(int blank, struct fb_info *info)
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 	struct ffb_dac __iomem *dac = par->dac;
 	unsigned long flags;
-	u32 val;
-	int i;
+	u32 tmp;
 
 	spin_lock_irqsave(&par->lock, flags);
 
 	FFBWait(par);
 
-	upa_writel(FFB_DAC_TGEN, &dac->type);
-	val = upa_readl(&dac->value);
 	switch (blank) {
 	case FB_BLANK_UNBLANK: /* Unblanking */
-		val |= FFB_DAC_TGEN_VIDE;
+		upa_writel(0x6000, &dac->type);
+		tmp = (upa_readl(&dac->value) | 0x1);
+		upa_writel(0x6000, &dac->type);
+		upa_writel(tmp, &dac->value);
 		par->flags &= ~FFB_FLAG_BLANKED;
 		break;
 
@@ -694,15 +683,12 @@ static int ffb_blank(int blank, struct fb_info *info)
 	case FB_BLANK_VSYNC_SUSPEND: /* VESA blank (vsync off) */
 	case FB_BLANK_HSYNC_SUSPEND: /* VESA blank (hsync off) */
 	case FB_BLANK_POWERDOWN: /* Poweroff */
-		val &= ~FFB_DAC_TGEN_VIDE;
+		upa_writel(0x6000, &dac->type);
+		tmp = (upa_readl(&dac->value) & ~0x1);
+		upa_writel(0x6000, &dac->type);
+		upa_writel(tmp, &dac->value);
 		par->flags |= FFB_FLAG_BLANKED;
 		break;
-	}
-	upa_writel(FFB_DAC_TGEN, &dac->type);
-	upa_writel(val, &dac->value);
-	for (i = 0; i < 10; i++) {
-		upa_writel(FFB_DAC_TGEN, &dac->type);
-		upa_readl(&dac->value);
 	}
 
 	spin_unlock_irqrestore(&par->lock, flags);
@@ -860,7 +846,7 @@ static int ffb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 
 static int ffb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
-	struct ffb_par *par = (struct ffb_par *)info->par;
+	struct ffb_par *par = (struct ffb_par *) info->par;
 
 	return sbusfb_ioctl_helper(cmd, arg, info,
 				   FBTYPE_CREATOR, 24, par->fbsize);
@@ -870,7 +856,8 @@ static int ffb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
  *  Initialisation
  */
 
-static void ffb_init_fix(struct fb_info *info)
+static void
+ffb_init_fix(struct fb_info *info)
 {
 	struct ffb_par *par = (struct ffb_par *)info->par;
 	const char *ffb_type_name;
@@ -894,155 +881,142 @@ static void ffb_init_fix(struct fb_info *info)
 	info->fix.accel = FB_ACCEL_SUN_CREATOR;
 }
 
-static int __devinit ffb_probe(struct of_device *op,
-			       const struct of_device_id *match)
+struct all_info {
+	struct fb_info info;
+	struct ffb_par par;
+	u32 pseudo_palette[256];
+};
+
+static int ffb_init_one(struct of_device *op)
 {
 	struct device_node *dp = op->node;
 	struct ffb_fbc __iomem *fbc;
 	struct ffb_dac __iomem *dac;
-	struct fb_info *info;
-	struct ffb_par *par;
-	u32 dac_pnum, dac_rev, dac_mrev;
+	struct all_info *all;
 	int err;
 
-	info = framebuffer_alloc(sizeof(struct ffb_par), &op->dev);
+	all = kzalloc(sizeof(*all), GFP_KERNEL);
+	if (!all)
+		return -ENOMEM;
 
-	err = -ENOMEM;
-	if (!info)
-		goto out_err;
+	spin_lock_init(&all->par.lock);
+	all->par.fbc = of_ioremap(&op->resource[2], 0,
+				  sizeof(struct ffb_fbc), "ffb fbc");
+	if (!all->par.fbc) {
+		kfree(all);
+		return -ENOMEM;
+	}
 
-	par = info->par;
+	all->par.dac = of_ioremap(&op->resource[1], 0,
+				  sizeof(struct ffb_dac), "ffb dac");
+	if (!all->par.dac) {
+		of_iounmap(all->par.fbc, sizeof(struct ffb_fbc));
+		kfree(all);
+		return -ENOMEM;
+	}
 
-	spin_lock_init(&par->lock);
-	par->fbc = of_ioremap(&op->resource[2], 0,
-			      sizeof(struct ffb_fbc), "ffb fbc");
-	if (!par->fbc)
-		goto out_release_fb;
-
-	par->dac = of_ioremap(&op->resource[1], 0,
-			      sizeof(struct ffb_dac), "ffb dac");
-	if (!par->dac)
-		goto out_unmap_fbc;
-
-	par->rop_cache = FFB_ROP_NEW;
-	par->physbase = op->resource[0].start;
+	all->par.rop_cache = FFB_ROP_NEW;
+	all->par.physbase = op->resource[0].start;
 
 	/* Don't mention copyarea, so SCROLL_REDRAW is always
 	 * used.  It is the fastest on this chip.
 	 */
-	info->flags = (FBINFO_DEFAULT |
-		       /* FBINFO_HWACCEL_COPYAREA | */
-		       FBINFO_HWACCEL_FILLRECT |
-		       FBINFO_HWACCEL_IMAGEBLIT);
+	all->info.flags = (FBINFO_DEFAULT |
+			   /* FBINFO_HWACCEL_COPYAREA | */
+			   FBINFO_HWACCEL_FILLRECT |
+			   FBINFO_HWACCEL_IMAGEBLIT);
+	all->info.fbops = &ffb_ops;
+	all->info.screen_base = (char *) all->par.physbase + FFB_DFB24_POFF;
+	all->info.par = &all->par;
+	all->info.pseudo_palette = all->pseudo_palette;
 
-	info->fbops = &ffb_ops;
+	sbusfb_fill_var(&all->info.var, dp->node, 32);
+	all->par.fbsize = PAGE_ALIGN(all->info.var.xres *
+				     all->info.var.yres *
+				     4);
+	ffb_fixup_var_rgb(&all->info.var);
 
-	info->screen_base = (char *) par->physbase + FFB_DFB24_POFF;
-	info->pseudo_palette = par->pseudo_palette;
-
-	sbusfb_fill_var(&info->var, dp, 32);
-	par->fbsize = PAGE_ALIGN(info->var.xres * info->var.yres * 4);
-	ffb_fixup_var_rgb(&info->var);
-
-	info->var.accel_flags = FB_ACCELF_TEXT;
+	all->info.var.accel_flags = FB_ACCELF_TEXT;
 
 	if (!strcmp(dp->name, "SUNW,afb"))
-		par->flags |= FFB_FLAG_AFB;
+		all->par.flags |= FFB_FLAG_AFB;
 
-	par->board_type = of_getintprop_default(dp, "board_type", 0);
+	all->par.board_type = of_getintprop_default(dp, "board_type", 0);
 
-	fbc = par->fbc;
+	fbc = all->par.fbc;
 	if ((upa_readl(&fbc->ucsr) & FFB_UCSR_ALL_ERRORS) != 0)
 		upa_writel(FFB_UCSR_ALL_ERRORS, &fbc->ucsr);
 
-	dac = par->dac;
-	upa_writel(FFB_DAC_DID, &dac->type);
-	dac_pnum = upa_readl(&dac->value);
-	dac_rev = (dac_pnum & FFB_DAC_DID_REV) >> FFB_DAC_DID_REV_SHIFT;
-	dac_pnum = (dac_pnum & FFB_DAC_DID_PNUM) >> FFB_DAC_DID_PNUM_SHIFT;
+	ffb_switch_from_graph(&all->par);
 
-	upa_writel(FFB_DAC_UCTRL, &dac->type);
-	dac_mrev = upa_readl(&dac->value);
-	dac_mrev = (dac_mrev & FFB_DAC_UCTRL_MANREV) >>
-		FFB_DAC_UCTRL_MANREV_SHIFT;
+	dac = all->par.dac;
+	upa_writel(0x8000, &dac->type);
+	all->par.dac_rev = upa_readl(&dac->value) >> 0x1c;
 
 	/* Elite3D has different DAC revision numbering, and no DAC revisions
-	 * have the reversed meaning of cursor enable.  Otherwise, Pacifica 1
-	 * ramdacs with manufacturing revision less than 3 have inverted
-	 * cursor logic.  We identify Pacifica 1 as not Pacifica 2, the
-	 * latter having a part number value of 0x236e.
+	 * have the reversed meaning of cursor enable.
 	 */
-	if ((par->flags & FFB_FLAG_AFB) || dac_pnum == 0x236e) {
-		par->flags &= ~FFB_FLAG_INVCURSOR;
-	} else {
-		if (dac_mrev < 3)
-			par->flags |= FFB_FLAG_INVCURSOR;
-	}
-
-	ffb_switch_from_graph(par);
+	if (all->par.flags & FFB_FLAG_AFB)
+		all->par.dac_rev = 10;
 
 	/* Unblank it just to be sure.  When there are multiple
 	 * FFB/AFB cards in the system, or it is not the OBP
 	 * chosen console, it will have video outputs off in
 	 * the DAC.
 	 */
-	ffb_blank(FB_BLANK_UNBLANK, info);
+	ffb_blank(0, &all->info);
 
-	if (fb_alloc_cmap(&info->cmap, 256, 0))
-		goto out_unmap_dac;
+	if (fb_alloc_cmap(&all->info.cmap, 256, 0)) {
+		printk(KERN_ERR "ffb: Could not allocate color map.\n");
+		kfree(all);
+		return -ENOMEM;
+	}
 
-	ffb_init_fix(info);
+	ffb_init_fix(&all->info);
 
-	err = register_framebuffer(info);
-	if (err < 0)
-		goto out_dealloc_cmap;
+	err = register_framebuffer(&all->info);
+	if (err < 0) {
+		printk(KERN_ERR "ffb: Could not register framebuffer.\n");
+		fb_dealloc_cmap(&all->info.cmap);
+		kfree(all);
+		return err;
+	}
 
-	dev_set_drvdata(&op->dev, info);
+	dev_set_drvdata(&op->dev, all);
 
-	printk(KERN_INFO "%s: %s at %016lx, type %d, "
-	       "DAC pnum[%x] rev[%d] manuf_rev[%d]\n",
+	printk("%s: %s at %016lx, type %d, DAC revision %d\n",
 	       dp->full_name,
-	       ((par->flags & FFB_FLAG_AFB) ? "AFB" : "FFB"),
-	       par->physbase, par->board_type,
-	       dac_pnum, dac_rev, dac_mrev);
+	       ((all->par.flags & FFB_FLAG_AFB) ? "AFB" : "FFB"),
+	       all->par.physbase, all->par.board_type, all->par.dac_rev);
 
 	return 0;
-
-out_dealloc_cmap:
-	fb_dealloc_cmap(&info->cmap);
-
-out_unmap_dac:
-	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
-
-out_unmap_fbc:
-	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
-
-out_release_fb:
-	framebuffer_release(info);
-
-out_err:
-	return err;
 }
 
-static int __devexit ffb_remove(struct of_device *op)
+static int __devinit ffb_probe(struct of_device *dev, const struct of_device_id *match)
 {
-	struct fb_info *info = dev_get_drvdata(&op->dev);
-	struct ffb_par *par = info->par;
+	struct of_device *op = to_of_device(&dev->dev);
 
-	unregister_framebuffer(info);
-	fb_dealloc_cmap(&info->cmap);
+	return ffb_init_one(op);
+}
 
-	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
-	of_iounmap(&op->resource[1], par->dac, sizeof(struct ffb_dac));
+static int __devexit ffb_remove(struct of_device *dev)
+{
+	struct all_info *all = dev_get_drvdata(&dev->dev);
 
-	framebuffer_release(info);
+	unregister_framebuffer(&all->info);
+	fb_dealloc_cmap(&all->info.cmap);
 
-	dev_set_drvdata(&op->dev, NULL);
+	of_iounmap(all->par.fbc, sizeof(struct ffb_fbc));
+	of_iounmap(all->par.dac, sizeof(struct ffb_dac));
+
+	kfree(all);
+
+	dev_set_drvdata(&dev->dev, NULL);
 
 	return 0;
 }
 
-static const struct of_device_id ffb_match[] = {
+static struct of_device_id ffb_match[] = {
 	{
 		.name = "SUNW,ffb",
 	},
@@ -1060,7 +1034,7 @@ static struct of_platform_driver ffb_driver = {
 	.remove		= __devexit_p(ffb_remove),
 };
 
-static int __init ffb_init(void)
+int __init ffb_init(void)
 {
 	if (fb_get_options("ffb", NULL))
 		return -ENODEV;
@@ -1068,7 +1042,7 @@ static int __init ffb_init(void)
 	return of_register_driver(&ffb_driver, &of_bus_type);
 }
 
-static void __exit ffb_exit(void)
+void __exit ffb_exit(void)
 {
 	of_unregister_driver(&ffb_driver);
 }

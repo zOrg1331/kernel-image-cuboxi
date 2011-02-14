@@ -1,0 +1,67 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5.1 PATCH] GATT pages must be uncacheable
+Date: Wed, 2 May 2007 14:54:10 -0400 (EDT)
+Bugzilla: 238709
+Message-Id: <Pine.LNX.4.64.0705021108180.2424@bogart.boston.redhat.com>
+Changelog: [x86_64] GATT pages must be uncacheable
+
+
+
+Description:
+
+If the CPU is updating a GART PTE while a device is (nearly)
+simultaneously performing a table walk during a DMA operation, it is
+possible for the device to use a stale PTE while the updated one still
+sits in CPU cache.  This bug was discovered on RHEL-4, and manifests
+itself as silent data corruption when running with certain nVidia SATA
+controllers.
+
+Bugzilla:
+
+bz238709
+see also bz223238 for RHEL-4
+
+Testing:
+
+Compiles and runs.
+
+Upstream status:
+
+commit cf6387daf8858bdcb3e123034ca422e8979d73f1
+Author: Joachim Deguara <joachim.deguara@amd.com>
+
+    [PATCH] x86-64: make GART PTEs uncacheable
+    
+    This patches fixes the silent data corruption problems being seen using the
+    GART iommu where 4kB of data where incorrect (seen mostly on Nvidia CK804
+    systems).  This fix, to mark the memory regin the GART PTEs reside on as
+    uncacheable, also brings the code in line with the AGP specification.
+    
+    Signed-off-by: Joachim Deguara <joachim.deguara@amd.com>
+    Signed-off-by: Andi Kleen <ak@suse.de>
+
+RHEL-5 Patch:
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/pci-gart.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/pci-gart.c	2007-05-02 10:45:39.508421000 -0400
+@@ -522,7 +522,11 @@ static __init int init_k8_gatt(struct ag
+ 	gatt_size = (aper_size >> PAGE_SHIFT) * sizeof(u32); 
+ 	gatt = (void *)__get_free_pages(GFP_KERNEL, get_order(gatt_size)); 
+ 	if (!gatt) 
+-		panic("Cannot allocate GATT table"); 
++		panic("Cannot allocate GATT table");
++	if (change_page_attr_addr((unsigned long)gatt, gatt_size >> PAGE_SHIFT, PAGE_KERNEL_NOCACHE))
++		panic("Could not set GART PTEs to uncacheable pages");
++	global_flush_tlb();
++
+ 	memset(gatt, 0, gatt_size); 
+ 	agp_gatt_table = gatt;
+ 
+Chip
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

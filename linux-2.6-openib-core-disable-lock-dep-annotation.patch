@@ -1,0 +1,24 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Tue, 14 Apr 2009 15:23:31 -0400
+Subject: [openib] core: disable lock dep annotation
+Message-id: 1239737023-31222-5-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5.4 04/16] [infiniband/core] Update core code to OFED 1.4.1-rc3
+Bugzilla: 476301
+
+Lock dep doesn't seem to be happy with per cpu annotations.  It doesn't harm
+anything to turn it off for now.  Only really affects -debug kernels anyway.
+
+diff --git a/drivers/infiniband/core/namespace.c b/drivers/infiniband/core/namespace.c
+index a33f9e9..281502d 100644
+--- a/drivers/infiniband/core/namespace.c
++++ b/drivers/infiniband/core/namespace.c
+@@ -21,7 +21,8 @@ int __init init_mnt_writers(void)
+ 	for_each_possible_cpu(cpu) {
+ 		struct mnt_writer *writer = &per_cpu(mnt_writers, cpu);
+ 		spin_lock_init(&writer->lock);
+-		lockdep_set_class(&writer->lock, &writer->lock_class);
++		/* causes issues on RHEL-5 -debug kernels */
++		//lockdep_set_class(&writer->lock, &writer->lock_class);
+ 		writer->count = 0;
+ 	}
+ 	return 0;

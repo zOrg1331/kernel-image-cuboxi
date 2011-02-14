@@ -1,0 +1,32 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 3 Jan 2008 17:22:13 -0500
+Subject: [x86] fix build warning for command_line_size
+Message-id: 20080103222213.14303.28397.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL5 PATCH] Fix build warning on i686
+Bugzilla: 427423
+
+I introduced a build warning :(.
+
+I forgot that i386 has a duplicate declaration of COMMAND_LINE_SIZE in
+include/asm-i386/params.h.
+
+Resolves BZ 427423.
+
+Don, please apply ASAP to restore "clean" builds ...
+
+Compile and boot tested by me.
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/include/asm-i386/param.h b/include/asm-i386/param.h
+index 745dc5b..5e8e5c4 100644
+--- a/include/asm-i386/param.h
++++ b/include/asm-i386/param.h
+@@ -18,6 +18,6 @@
+ #endif
+ 
+ #define MAXHOSTNAMELEN	64	/* max length of hostname */
+-#define COMMAND_LINE_SIZE 256
++#define COMMAND_LINE_SIZE 2048
+ 
+ #endif

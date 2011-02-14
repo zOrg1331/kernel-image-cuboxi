@@ -1,0 +1,287 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 7 Nov 2007 11:50:22 -0500
+Subject: [misc] pass regs struct to softlockup_tick
+Message-id: 20071107165022.18571.15563.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH 2/4]: pass regs struct to softlockup_tick()
+Bugzilla: 336541
+
+- Upstream no longer passes regs into interrupt handlers as RHEL5 currently
+does.  This required changes to the code to pass regs into the softlockup_tick
+code.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/i386/kernel/apic.c b/arch/i386/kernel/apic.c
+index da06723..449b586 100644
+--- a/arch/i386/kernel/apic.c
++++ b/arch/i386/kernel/apic.c
+@@ -1189,7 +1189,7 @@ inline void smp_local_timer_interrupt(struct pt_regs * regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		profile_tick(CPU_PROFILING, regs);
+ #ifdef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs));
++		update_process_times(user_mode_vm(regs), regs);
+ #endif
+ 	}
+ 
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index c3798a7..a43d912 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -736,7 +736,7 @@ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 		touch_softlockup_watchdog();
+ 
+ 	/* Local timer processing (see update_process_times()). */
+-	run_local_timers();
++	run_local_timers(regs);
+ 	if (rcu_pending(cpu))
+ 		rcu_check_callbacks(cpu, user_mode(regs));
+ 	scheduler_tick();
+diff --git a/arch/i386/mach-voyager/voyager_smp.c b/arch/i386/mach-voyager/voyager_smp.c
+index 6c86575..5c1457f 100644
+--- a/arch/i386/mach-voyager/voyager_smp.c
++++ b/arch/i386/mach-voyager/voyager_smp.c
+@@ -1295,7 +1295,7 @@ smp_local_timer_interrupt(struct pt_regs * regs)
+ 						per_cpu(prof_counter, cpu);
+ 		}
+ 
+-		update_process_times(user_mode_vm(regs));
++		update_process_times(user_mode_vm(regs), regs);
+ 	}
+ 
+ 	if( ((1<<cpu) & voyager_extended_vic_processors) == 0)
+diff --git a/arch/ia64/kernel/time.c b/arch/ia64/kernel/time.c
+index e9d72d8..e036828 100644
+--- a/arch/ia64/kernel/time.c
++++ b/arch/ia64/kernel/time.c
+@@ -118,7 +118,7 @@ consider_steal_time(unsigned long new_itm, struct pt_regs *regs)
+ 	if (stolen > 0 || blocked > 0) {
+ 		account_steal_time(NULL, jiffies_to_cputime(stolen)); 
+ 		account_steal_time(idle_task(cpu), jiffies_to_cputime(blocked)); 
+-		run_local_timers();
++		run_local_timers(regs);
+ 
+ 		if (rcu_pending(cpu))
+ 			rcu_check_callbacks(cpu, user_mode(regs));
+@@ -173,7 +173,7 @@ timer_interrupt (int irq, void *dev_id, struct pt_regs *regs)
+ 	}
+ 
+ 	while (1) {
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ 
+ 		new_itm += local_cpu_data->itm_delta;
+ 
+diff --git a/arch/powerpc/kernel/time.c b/arch/powerpc/kernel/time.c
+index 73e73dd..94f0066 100644
+--- a/arch/powerpc/kernel/time.c
++++ b/arch/powerpc/kernel/time.c
+@@ -208,7 +208,7 @@ static void account_process_time(struct pt_regs *regs)
+ 	int cpu = smp_processor_id();
+ 
+ 	account_process_vtime(current);
+-	run_local_timers();
++	run_local_timers(regs);
+ 	if (rcu_pending(cpu))
+ 		rcu_check_callbacks(cpu, user_mode(regs));
+ 	scheduler_tick();
+@@ -297,7 +297,7 @@ static void snapshot_purr(void)
+ 
+ #else /* ! CONFIG_VIRT_CPU_ACCOUNTING */
+ #define calc_cputime_factors()
+-#define account_process_time(regs)	update_process_times(user_mode(regs))
++#define account_process_time(regs)	update_process_times(user_mode(regs), regs)
+ #define calculate_steal_time()		do { } while (0)
+ #endif
+ 
+diff --git a/arch/ppc/kernel/time.c b/arch/ppc/kernel/time.c
+index 6ab8cc7..f4f3789 100644
+--- a/arch/ppc/kernel/time.c
++++ b/arch/ppc/kernel/time.c
+@@ -145,7 +145,7 @@ void timer_interrupt(struct pt_regs * regs)
+ 		jiffy_stamp += tb_ticks_per_jiffy;
+ 		
+ 		profile_tick(CPU_PROFILING, regs);
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ 
+ 	  	if (smp_processor_id())
+ 			continue;
+diff --git a/arch/s390/kernel/time.c b/arch/s390/kernel/time.c
+index 74e6178..812886e 100644
+--- a/arch/s390/kernel/time.c
++++ b/arch/s390/kernel/time.c
+@@ -225,7 +225,7 @@ void account_ticks(struct pt_regs *regs)
+ 	account_tick_vtime(current);
+ #else
+ 	while (ticks--)
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ #endif
+ 
+ 	s390_do_profile(regs);
+diff --git a/arch/s390/kernel/vtime.c b/arch/s390/kernel/vtime.c
+index 2306cd8..cbfed29 100644
+--- a/arch/s390/kernel/vtime.c
++++ b/arch/s390/kernel/vtime.c
+@@ -64,7 +64,7 @@ void account_tick_vtime(struct task_struct *tsk)
+ 		account_steal_time(tsk, cputime);
+ 	}
+ 
+-	run_local_timers();
++	run_local_timers(task_pt_regs(tsk));
+ 	if (rcu_pending(smp_processor_id()))
+ 		rcu_check_callbacks(smp_processor_id(), rcu_user_flag);
+ 	scheduler_tick();
+diff --git a/arch/x86_64/kernel/apic-xen.c b/arch/x86_64/kernel/apic-xen.c
+index 40f9fc1..97eec60 100644
+--- a/arch/x86_64/kernel/apic-xen.c
++++ b/arch/x86_64/kernel/apic-xen.c
+@@ -67,7 +67,7 @@ void smp_local_timer_interrupt(struct pt_regs *regs)
+ 	profile_tick(CPU_PROFILING, regs);
+ #ifndef CONFIG_XEN
+ #ifdef CONFIG_SMP
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ #endif
+ #endif
+ 	/*
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 4016818..32cf9f7 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -945,7 +945,7 @@ void smp_local_timer_interrupt(struct pt_regs *regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		profile_tick(CPU_PROFILING, regs);
+ #ifdef CONFIG_SMP
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ #endif
+ 	}
+ 	if (apic_runs_main_timer > 1 && smp_processor_id() == boot_cpu_id)
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index e9c9f5b..8b9e227 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -450,7 +450,7 @@ void main_timer_handler(struct pt_regs *regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
+ #ifndef CONFIG_SMP
+-		update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs), regs);
+ #endif
+ 
+ 	/*
+diff --git a/include/asm-i386/mach-default/do_timer.h b/include/asm-i386/mach-default/do_timer.h
+index 9b86c74..e73f1e4 100644
+--- a/include/asm-i386/mach-default/do_timer.h
++++ b/include/asm-i386/mach-default/do_timer.h
+@@ -20,7 +20,7 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
+ #ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs));
++		update_process_times(user_mode_vm(regs), regs);
+ #endif
+ 	}
+ /*
+diff --git a/include/asm-i386/mach-visws/do_timer.h b/include/asm-i386/mach-visws/do_timer.h
+index 0cca07a..4747092 100644
+--- a/include/asm-i386/mach-visws/do_timer.h
++++ b/include/asm-i386/mach-visws/do_timer.h
+@@ -13,7 +13,7 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
+ #ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs));
++		update_process_times(user_mode_vm(regs), regs);
+ #endif
+ 	}
+ /*
+diff --git a/include/asm-i386/mach-voyager/do_timer.h b/include/asm-i386/mach-voyager/do_timer.h
+index 79d9f4d..53cfa6f 100644
+--- a/include/asm-i386/mach-voyager/do_timer.h
++++ b/include/asm-i386/mach-voyager/do_timer.h
+@@ -7,7 +7,7 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
+ #ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs));
++		update_process_times(user_mode_vm(regs), regs);
+ #endif
+ 		voyager_timer_interrupt(regs);
+ 	}
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index b722fdf..b69d4a2 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -209,16 +209,17 @@ long io_schedule_timeout(long timeout);
+ 
+ extern void cpu_init (void);
+ extern void trap_init(void);
+-extern void update_process_times(int user);
++extern void update_process_times(int user, struct pt_regs *regs);
+ extern void scheduler_tick(void);
+ 
+ #ifdef CONFIG_DETECT_SOFTLOCKUP
+-extern void softlockup_tick(void);
++extern void softlockup_tick(struct pt_regs *regs);
+ extern void spawn_softlockup_task(void);
+ extern void touch_softlockup_watchdog(void);
+ extern void touch_all_softlockup_watchdogs(void);
++extern int softlockup_thresh;
+ #else
+-static inline void softlockup_tick(void)
++static inline void softlockup_tick(struct pt_regs *regs)
+ {
+ }
+ static inline void spawn_softlockup_task(void)
+diff --git a/include/linux/timer.h b/include/linux/timer.h
+index c0a774f..0a87f6d 100644
+--- a/include/linux/timer.h
++++ b/include/linux/timer.h
+@@ -94,7 +94,7 @@ static inline void add_timer(struct timer_list *timer)
+ #define del_singleshot_timer_sync(t) del_timer_sync(t)
+ 
+ extern void init_timers(void);
+-extern void run_local_timers(void);
++extern void run_local_timers(struct pt_regs *regs);
+ struct hrtimer;
+ extern int it_real_fn(struct hrtimer *);
+ 
+diff --git a/kernel/timer.c b/kernel/timer.c
+index 48fe6c5..a8d3320 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -1299,7 +1299,7 @@ static void update_wall_time(void)
+  * Called from the timer interrupt handler to charge one tick to the current 
+  * process.  user_tick is 1 if the tick is user time, 0 for system.
+  */
+-void update_process_times(int user_tick)
++void update_process_times(int user_tick, struct pt_regs *regs)
+ {
+ 	struct task_struct *p = current;
+ 	int cpu = smp_processor_id();
+@@ -1309,7 +1309,7 @@ void update_process_times(int user_tick)
+ 		account_user_time(p, jiffies_to_cputime(1));
+ 	else
+ 		account_system_time(p, HARDIRQ_OFFSET, jiffies_to_cputime(1));
+-	run_local_timers();
++	run_local_timers(regs);
+ 	if (rcu_pending(cpu))
+ 		rcu_check_callbacks(cpu, user_tick);
+ 	scheduler_tick();
+@@ -1383,10 +1383,10 @@ static void run_timer_softirq(struct softirq_action *h)
+ /*
+  * Called by the local, per-CPU timer interrupt on SMP.
+  */
+-void run_local_timers(void)
++void run_local_timers(struct pt_regs *regs)
+ {
+ 	raise_softirq(TIMER_SOFTIRQ);
+-	softlockup_tick();
++	softlockup_tick(regs);
+ }
+ 
+ /*

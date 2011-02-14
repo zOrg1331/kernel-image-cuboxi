@@ -1,5 +1,6 @@
 /*
  *
+ *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *
@@ -18,41 +19,27 @@
  *
  */
 
-#include <linux/i2c.h>
 #include "pvrusb2-i2c-core.h"
 #include "pvrusb2-hdw-internal.h"
 #include "pvrusb2-debug.h"
-#include "pvrusb2-fx2-cmd.h"
-#include "pvrusb2.h"
 
 #define trace_i2c(...) pvr2_trace(PVR2_TRACE_I2C,__VA_ARGS__)
 
 /*
 
   This module attempts to implement a compliant I2C adapter for the pvrusb2
-  device.
+  device.  By doing this we can then make use of existing functionality in
+  V4L (e.g. tuner.c) rather than rolling our own.
 
 */
 
-static unsigned int i2c_scan;
+static unsigned int i2c_scan = 0;
 module_param(i2c_scan, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(i2c_scan,"scan i2c bus at insmod time");
 
-static int ir_mode[PVR_NUM] = { [0 ... PVR_NUM-1] = 1 };
-module_param_array(ir_mode, int, NULL, 0444);
-MODULE_PARM_DESC(ir_mode,"specify: 0=disable IR reception, 1=normal IR");
-
-static int pvr2_disable_ir_video;
-module_param_named(disable_autoload_ir_video, pvr2_disable_ir_video,
-		   int, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(disable_autoload_ir_video,
-		 "1=do not try to autoload ir_video IR receiver");
-
-/* Mapping of IR schemes to known I2C addresses - if any */
-static const unsigned char ir_video_addresses[] = {
-	[PVR2_IR_SCHEME_29XXX] = 0x18,
-	[PVR2_IR_SCHEME_24XXX] = 0x18,
-};
+static unsigned int pvr2_i2c_client_describe(struct pvr2_i2c_client *cp,
+					     unsigned int detail,
+					     char *buf,unsigned int maxlen);
 
 static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 			  u8 i2c_addr,      /* I2C address we're talking to */
@@ -79,7 +66,7 @@ static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 	memset(hdw->cmd_buffer, 0, sizeof(hdw->cmd_buffer));
 
 	/* Set up command buffer for an I2C write */
-	hdw->cmd_buffer[0] = FX2CMD_I2C_WRITE;      /* write prefix */
+	hdw->cmd_buffer[0] = 0x08;      /* write prefix */
 	hdw->cmd_buffer[1] = i2c_addr;  /* i2c addr of chip */
 	hdw->cmd_buffer[2] = length;    /* length of what follows */
 	if (length) memcpy(hdw->cmd_buffer + 3, data, length);
@@ -141,7 +128,7 @@ static int pvr2_i2c_read(struct pvr2_hdw *hdw, /* Context */
 	memset(hdw->cmd_buffer, 0, sizeof(hdw->cmd_buffer));
 
 	/* Set up command buffer for an I2C write followed by a read */
-	hdw->cmd_buffer[0] = FX2CMD_I2C_READ;  /* read prefix */
+	hdw->cmd_buffer[0] = 0x09;  /* read prefix */
 	hdw->cmd_buffer[1] = dlen;  /* arg length */
 	hdw->cmd_buffer[2] = rlen;  /* answer length. Device will send one
 				       more byte (status). */
@@ -198,78 +185,7 @@ static int pvr2_i2c_basic_op(struct pvr2_hdw *hdw,
 	}
 }
 
-
-/* This is a special entry point for cases of I2C transaction attempts to
-   the IR receiver.  The implementation here simulates the IR receiver by
-   issuing a command to the FX2 firmware and using that response to return
-   what the real I2C receiver would have returned.  We use this for 24xxx
-   devices, where the IR receiver chip has been removed and replaced with
-   FX2 related logic. */
-static int i2c_24xxx_ir(struct pvr2_hdw *hdw,
-			u8 i2c_addr,u8 *wdata,u16 wlen,u8 *rdata,u16 rlen)
-{
-	u8 dat[4];
-	unsigned int stat;
-
-	if (!(rlen || wlen)) {
-		/* This is a probe attempt.  Just let it succeed. */
-		return 0;
-	}
-
-	/* We don't understand this kind of transaction */
-	if ((wlen != 0) || (rlen == 0)) return -EIO;
-
-	if (rlen < 3) {
-		/* Mike Isely <isely@pobox.com> Appears to be a probe
-		   attempt from lirc.  Just fill in zeroes and return.  If
-		   we try instead to do the full transaction here, then bad
-		   things seem to happen within the lirc driver module
-		   (version 0.8.0-7 sources from Debian, when run under
-		   vanilla 2.6.17.6 kernel) - and I don't have the patience
-		   to chase it down. */
-		if (rlen > 0) rdata[0] = 0;
-		if (rlen > 1) rdata[1] = 0;
-		return 0;
-	}
-
-	/* Issue a command to the FX2 to read the IR receiver. */
-	LOCK_TAKE(hdw->ctl_lock); do {
-		hdw->cmd_buffer[0] = FX2CMD_GET_IR_CODE;
-		stat = pvr2_send_request(hdw,
-					 hdw->cmd_buffer,1,
-					 hdw->cmd_buffer,4);
-		dat[0] = hdw->cmd_buffer[0];
-		dat[1] = hdw->cmd_buffer[1];
-		dat[2] = hdw->cmd_buffer[2];
-		dat[3] = hdw->cmd_buffer[3];
-	} while (0); LOCK_GIVE(hdw->ctl_lock);
-
-	/* Give up if that operation failed. */
-	if (stat != 0) return stat;
-
-	/* Mangle the results into something that looks like the real IR
-	   receiver. */
-	rdata[2] = 0xc1;
-	if (dat[0] != 1) {
-		/* No code received. */
-		rdata[0] = 0;
-		rdata[1] = 0;
-	} else {
-		u16 val;
-		/* Mash the FX2 firmware-provided IR code into something
-		   that the normal i2c chip-level driver expects. */
-		val = dat[1];
-		val <<= 8;
-		val |= dat[2];
-		val >>= 1;
-		val &= ~0x0003;
-		val |= 0x8000;
-		rdata[0] = (val >> 8) & 0xffu;
-		rdata[1] = val & 0xffu;
-	}
-
-	return 0;
-}
+#ifdef CONFIG_VIDEO_PVRUSB2_24XXX
 
 /* This is a special entry point that is entered if an I2C operation is
    attempted to a wm8775 chip on model 24xxx hardware.  Autodetect of this
@@ -283,15 +199,6 @@ static int i2c_hack_wm8775(struct pvr2_hdw *hdw,
 		return 0;
 	}
 	return pvr2_i2c_basic_op(hdw,i2c_addr,wdata,wlen,rdata,rlen);
-}
-
-/* This is an entry point designed to always fail any attempt to perform a
-   transfer.  We use this to cause certain I2C addresses to not be
-   probed. */
-static int i2c_black_hole(struct pvr2_hdw *hdw,
-			   u8 i2c_addr,u8 *wdata,u16 wlen,u8 *rdata,u16 rlen)
-{
-	return -EIO;
 }
 
 /* This is a special entry point that is entered if an I2C operation is
@@ -382,6 +289,8 @@ static int i2c_hack_cx25840(struct pvr2_hdw *hdw,
 	return -EIO;
 }
 
+#endif /* CONFIG_VIDEO_PVRUSB2_24XXX */
+
 /* This is a very, very limited I2C adapter implementation.  We can only
    support what we actually know will work on the device... */
 static int pvr2_i2c_xfer(struct i2c_adapter *i2c_adap,
@@ -394,6 +303,10 @@ static int pvr2_i2c_xfer(struct i2c_adapter *i2c_adap,
 
 	if (!num) {
 		ret = -EINVAL;
+		goto done;
+	}
+	if ((msgs[0].flags & I2C_M_NOSTART)) {
+		trace_i2c("i2c refusing I2C_M_NOSTART");
 		goto done;
 	}
 	if (msgs[0].addr < PVR2_I2C_FUNC_CNT) {
@@ -497,12 +410,14 @@ static int pvr2_i2c_xfer(struct i2c_adapter *i2c_adap,
 			cnt = msgs[idx].len;
 			printk(KERN_INFO
 			       "pvrusb2 i2c xfer %u/%u:"
-			       " addr=0x%x len=%d %s",
+			       " addr=0x%x len=%d %s%s",
 			       idx+1,num,
 			       msgs[idx].addr,
 			       cnt,
 			       (msgs[idx].flags & I2C_M_RD ?
-				"read" : "write"));
+				"read" : "write"),
+			       (msgs[idx].flags & I2C_M_NOSTART ?
+				" nostart" : ""));
 			if ((ret > 0) || !(msgs[idx].flags & I2C_M_RD)) {
 				if (cnt > 8) cnt = 8;
 				printk(" [");
@@ -527,131 +442,484 @@ static int pvr2_i2c_xfer(struct i2c_adapter *i2c_adap,
 	return ret;
 }
 
+static int pvr2_i2c_control(struct i2c_adapter *adapter,
+			    unsigned int cmd, unsigned long arg)
+{
+	return 0;
+}
+
 static u32 pvr2_i2c_functionality(struct i2c_adapter *adap)
 {
-	return I2C_FUNC_SMBUS_EMUL | I2C_FUNC_I2C;
+	return I2C_FUNC_SMBUS_EMUL | I2C_FUNC_I2C | I2C_FUNC_SMBUS_BYTE_DATA;
+}
+
+static int pvr2_i2c_core_singleton(struct i2c_client *cp,
+				   unsigned int cmd,void *arg)
+{
+	int stat;
+	if (!cp) return -EINVAL;
+	if (!(cp->driver)) return -EINVAL;
+	if (!(cp->driver->command)) return -EINVAL;
+	if (!try_module_get(cp->driver->driver.owner)) return -EAGAIN;
+	stat = cp->driver->command(cp,cmd,arg);
+	module_put(cp->driver->driver.owner);
+	return stat;
+}
+
+int pvr2_i2c_client_cmd(struct pvr2_i2c_client *cp,unsigned int cmd,void *arg)
+{
+	int stat;
+	if (pvrusb2_debug & PVR2_TRACE_I2C_CMD) {
+		char buf[100];
+		unsigned int cnt;
+		cnt = pvr2_i2c_client_describe(cp,PVR2_I2C_DETAIL_DEBUG,
+					       buf,sizeof(buf));
+		pvr2_trace(PVR2_TRACE_I2C_CMD,
+			   "i2c COMMAND (code=%u 0x%x) to %.*s",
+			   cmd,cmd,cnt,buf);
+	}
+	stat = pvr2_i2c_core_singleton(cp->client,cmd,arg);
+	if (pvrusb2_debug & PVR2_TRACE_I2C_CMD) {
+		char buf[100];
+		unsigned int cnt;
+		cnt = pvr2_i2c_client_describe(cp,PVR2_I2C_DETAIL_DEBUG,
+					       buf,sizeof(buf));
+		pvr2_trace(PVR2_TRACE_I2C_CMD,
+			   "i2c COMMAND to %.*s (ret=%d)",cnt,buf,stat);
+	}
+	return stat;
+}
+
+int pvr2_i2c_core_cmd(struct pvr2_hdw *hdw,unsigned int cmd,void *arg)
+{
+	struct list_head *item,*nc;
+	struct pvr2_i2c_client *cp;
+	int stat = -EINVAL;
+
+	if (!hdw) return stat;
+
+	mutex_lock(&hdw->i2c_list_lock);
+	list_for_each_safe(item,nc,&hdw->i2c_clients) {
+		cp = list_entry(item,struct pvr2_i2c_client,list);
+		if (!cp->recv_enable) continue;
+		mutex_unlock(&hdw->i2c_list_lock);
+		stat = pvr2_i2c_client_cmd(cp,cmd,arg);
+		mutex_lock(&hdw->i2c_list_lock);
+	}
+	mutex_unlock(&hdw->i2c_list_lock);
+	return stat;
+}
+
+
+static int handler_check(struct pvr2_i2c_client *cp)
+{
+	struct pvr2_i2c_handler *hp = cp->handler;
+	if (!hp) return 0;
+	if (!hp->func_table->check) return 0;
+	return hp->func_table->check(hp->func_data) != 0;
+}
+
+#define BUFSIZE 500
+
+void pvr2_i2c_core_sync(struct pvr2_hdw *hdw)
+{
+	unsigned long msk;
+	unsigned int idx;
+	struct list_head *item,*nc;
+	struct pvr2_i2c_client *cp;
+
+	if (!hdw->i2c_linked) return;
+	if (!(hdw->i2c_pend_types & PVR2_I2C_PEND_ALL)) {
+		return;
+	}
+	mutex_lock(&hdw->i2c_list_lock); do {
+		pvr2_trace(PVR2_TRACE_I2C_CORE,"i2c: core_sync BEGIN");
+		if (hdw->i2c_pend_types & PVR2_I2C_PEND_DETECT) {
+			/* One or more I2C clients have attached since we
+			   last synced.  So scan the list and identify the
+			   new clients. */
+			char *buf;
+			unsigned int cnt;
+			unsigned long amask = 0;
+			buf = kmalloc(BUFSIZE,GFP_KERNEL);
+			pvr2_trace(PVR2_TRACE_I2C_CORE,"i2c: PEND_DETECT");
+			hdw->i2c_pend_types &= ~PVR2_I2C_PEND_DETECT;
+			list_for_each(item,&hdw->i2c_clients) {
+				cp = list_entry(item,struct pvr2_i2c_client,
+						list);
+				if (!cp->detected_flag) {
+					cp->ctl_mask = 0;
+					pvr2_i2c_probe(hdw,cp);
+					cp->detected_flag = !0;
+					msk = cp->ctl_mask;
+					cnt = 0;
+					if (buf) {
+						cnt = pvr2_i2c_client_describe(
+							cp,
+							PVR2_I2C_DETAIL_ALL,
+							buf,BUFSIZE);
+					}
+					trace_i2c("Probed: %.*s",cnt,buf);
+					if (handler_check(cp)) {
+						hdw->i2c_pend_types |=
+							PVR2_I2C_PEND_CLIENT;
+					}
+					cp->pend_mask = msk;
+					hdw->i2c_pend_mask |= msk;
+					hdw->i2c_pend_types |=
+						PVR2_I2C_PEND_REFRESH;
+				}
+				amask |= cp->ctl_mask;
+			}
+			hdw->i2c_active_mask = amask;
+			if (buf) kfree(buf);
+		}
+		if (hdw->i2c_pend_types & PVR2_I2C_PEND_STALE) {
+			/* Need to do one or more global updates.  Arrange
+			   for this to happen. */
+			unsigned long m2;
+			pvr2_trace(PVR2_TRACE_I2C_CORE,
+				   "i2c: PEND_STALE (0x%lx)",
+				   hdw->i2c_stale_mask);
+			hdw->i2c_pend_types &= ~PVR2_I2C_PEND_STALE;
+			list_for_each(item,&hdw->i2c_clients) {
+				cp = list_entry(item,struct pvr2_i2c_client,
+						list);
+				m2 = hdw->i2c_stale_mask;
+				m2 &= cp->ctl_mask;
+				m2 &= ~cp->pend_mask;
+				if (m2) {
+					pvr2_trace(PVR2_TRACE_I2C_CORE,
+						   "i2c: cp=%p setting 0x%lx",
+						   cp,m2);
+					cp->pend_mask |= m2;
+				}
+			}
+			hdw->i2c_pend_mask |= hdw->i2c_stale_mask;
+			hdw->i2c_stale_mask = 0;
+			hdw->i2c_pend_types |= PVR2_I2C_PEND_REFRESH;
+		}
+		if (hdw->i2c_pend_types & PVR2_I2C_PEND_CLIENT) {
+			/* One or more client handlers are asking for an
+			   update.  Run through the list of known clients
+			   and update each one. */
+			pvr2_trace(PVR2_TRACE_I2C_CORE,"i2c: PEND_CLIENT");
+			hdw->i2c_pend_types &= ~PVR2_I2C_PEND_CLIENT;
+			list_for_each_safe(item,nc,&hdw->i2c_clients) {
+				cp = list_entry(item,struct pvr2_i2c_client,
+						list);
+				if (!cp->handler) continue;
+				if (!cp->handler->func_table->update) continue;
+				pvr2_trace(PVR2_TRACE_I2C_CORE,
+					   "i2c: cp=%p update",cp);
+				mutex_unlock(&hdw->i2c_list_lock);
+				cp->handler->func_table->update(
+					cp->handler->func_data);
+				mutex_lock(&hdw->i2c_list_lock);
+				/* If client's update function set some
+				   additional pending bits, account for that
+				   here. */
+				if (cp->pend_mask & ~hdw->i2c_pend_mask) {
+					hdw->i2c_pend_mask |= cp->pend_mask;
+					hdw->i2c_pend_types |=
+						PVR2_I2C_PEND_REFRESH;
+				}
+			}
+		}
+		if (hdw->i2c_pend_types & PVR2_I2C_PEND_REFRESH) {
+			const struct pvr2_i2c_op *opf;
+			unsigned long pm;
+			/* Some actual updates are pending.  Walk through
+			   each update type and perform it. */
+			pvr2_trace(PVR2_TRACE_I2C_CORE,"i2c: PEND_REFRESH"
+				   " (0x%lx)",hdw->i2c_pend_mask);
+			hdw->i2c_pend_types &= ~PVR2_I2C_PEND_REFRESH;
+			pm = hdw->i2c_pend_mask;
+			hdw->i2c_pend_mask = 0;
+			for (idx = 0, msk = 1; pm; idx++, msk <<= 1) {
+				if (!(pm & msk)) continue;
+				pm &= ~msk;
+				list_for_each(item,&hdw->i2c_clients) {
+					cp = list_entry(item,
+							struct pvr2_i2c_client,
+							list);
+					if (cp->pend_mask & msk) {
+						cp->pend_mask &= ~msk;
+						cp->recv_enable = !0;
+					} else {
+						cp->recv_enable = 0;
+					}
+				}
+				opf = pvr2_i2c_get_op(idx);
+				if (!opf) continue;
+				mutex_unlock(&hdw->i2c_list_lock);
+				opf->update(hdw);
+				mutex_lock(&hdw->i2c_list_lock);
+			}
+		}
+		pvr2_trace(PVR2_TRACE_I2C_CORE,"i2c: core_sync END");
+	} while (0); mutex_unlock(&hdw->i2c_list_lock);
+}
+
+int pvr2_i2c_core_check_stale(struct pvr2_hdw *hdw)
+{
+	unsigned long msk,sm,pm;
+	unsigned int idx;
+	const struct pvr2_i2c_op *opf;
+	struct list_head *item;
+	struct pvr2_i2c_client *cp;
+	unsigned int pt = 0;
+
+	pvr2_trace(PVR2_TRACE_I2C_CORE,"pvr2_i2c_core_check_stale BEGIN");
+
+	pm = hdw->i2c_active_mask;
+	sm = 0;
+	for (idx = 0, msk = 1; pm; idx++, msk <<= 1) {
+		if (!(msk & pm)) continue;
+		pm &= ~msk;
+		opf = pvr2_i2c_get_op(idx);
+		if (!opf) continue;
+		if (opf->check(hdw)) {
+			sm |= msk;
+		}
+	}
+	if (sm) pt |= PVR2_I2C_PEND_STALE;
+
+	list_for_each(item,&hdw->i2c_clients) {
+		cp = list_entry(item,struct pvr2_i2c_client,list);
+		if (!handler_check(cp)) continue;
+		pt |= PVR2_I2C_PEND_CLIENT;
+	}
+
+	if (pt) {
+		mutex_lock(&hdw->i2c_list_lock); do {
+			hdw->i2c_pend_types |= pt;
+			hdw->i2c_stale_mask |= sm;
+			hdw->i2c_pend_mask |= hdw->i2c_stale_mask;
+		} while (0); mutex_unlock(&hdw->i2c_list_lock);
+	}
+
+	pvr2_trace(PVR2_TRACE_I2C_CORE,
+		   "i2c: types=0x%x stale=0x%lx pend=0x%lx",
+		   hdw->i2c_pend_types,
+		   hdw->i2c_stale_mask,
+		   hdw->i2c_pend_mask);
+	pvr2_trace(PVR2_TRACE_I2C_CORE,"pvr2_i2c_core_check_stale END");
+
+	return (hdw->i2c_pend_types & PVR2_I2C_PEND_ALL) != 0;
+}
+
+static unsigned int pvr2_i2c_client_describe(struct pvr2_i2c_client *cp,
+					     unsigned int detail,
+					     char *buf,unsigned int maxlen)
+{
+	unsigned int ccnt,bcnt;
+	int spcfl = 0;
+	const struct pvr2_i2c_op *opf;
+
+	ccnt = 0;
+	if (detail & PVR2_I2C_DETAIL_DEBUG) {
+		bcnt = scnprintf(buf,maxlen,
+				 "ctxt=%p ctl_mask=0x%lx",
+				 cp,cp->ctl_mask);
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		spcfl = !0;
+	}
+	bcnt = scnprintf(buf,maxlen,
+			 "%s%s @ 0x%x",
+			 (spcfl ? " " : ""),
+			 cp->client->name,
+			 cp->client->addr);
+	ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+	if ((detail & PVR2_I2C_DETAIL_HANDLER) &&
+	    cp->handler && cp->handler->func_table->describe) {
+		bcnt = scnprintf(buf,maxlen," (");
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		bcnt = cp->handler->func_table->describe(
+			cp->handler->func_data,buf,maxlen);
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		bcnt = scnprintf(buf,maxlen,")");
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+	}
+	if ((detail & PVR2_I2C_DETAIL_CTLMASK) && cp->ctl_mask) {
+		unsigned int idx;
+		unsigned long msk,sm;
+		int spcfl;
+		bcnt = scnprintf(buf,maxlen," [");
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		sm = 0;
+		spcfl = 0;
+		for (idx = 0, msk = 1; msk; idx++, msk <<= 1) {
+			if (!(cp->ctl_mask & msk)) continue;
+			opf = pvr2_i2c_get_op(idx);
+			if (opf) {
+				bcnt = scnprintf(buf,maxlen,"%s%s",
+						 spcfl ? " " : "",
+						 opf->name);
+				ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+				spcfl = !0;
+			} else {
+				sm |= msk;
+			}
+		}
+		if (sm) {
+			bcnt = scnprintf(buf,maxlen,"%s%lx",
+					 idx != 0 ? " " : "",sm);
+			ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		}
+		bcnt = scnprintf(buf,maxlen,"]");
+		ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+	}
+	return ccnt;
+}
+
+unsigned int pvr2_i2c_report(struct pvr2_hdw *hdw,
+			     char *buf,unsigned int maxlen)
+{
+	unsigned int ccnt,bcnt;
+	struct list_head *item;
+	struct pvr2_i2c_client *cp;
+	ccnt = 0;
+	mutex_lock(&hdw->i2c_list_lock); do {
+		list_for_each(item,&hdw->i2c_clients) {
+			cp = list_entry(item,struct pvr2_i2c_client,list);
+			bcnt = pvr2_i2c_client_describe(
+				cp,
+				(PVR2_I2C_DETAIL_HANDLER|
+				 PVR2_I2C_DETAIL_CTLMASK),
+				buf,maxlen);
+			ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+			bcnt = scnprintf(buf,maxlen,"\n");
+			ccnt += bcnt; buf += bcnt; maxlen -= bcnt;
+		}
+	} while (0); mutex_unlock(&hdw->i2c_list_lock);
+	return ccnt;
+}
+
+static int pvr2_i2c_attach_inform(struct i2c_client *client)
+{
+	struct pvr2_hdw *hdw = (struct pvr2_hdw *)(client->adapter->algo_data);
+	struct pvr2_i2c_client *cp;
+	int fl = !(hdw->i2c_pend_types & PVR2_I2C_PEND_ALL);
+	cp = kmalloc(sizeof(*cp),GFP_KERNEL);
+	trace_i2c("i2c_attach [client=%s @ 0x%x ctxt=%p]",
+		  client->name,
+		  client->addr,cp);
+	if (!cp) return -ENOMEM;
+	memset(cp,0,sizeof(*cp));
+	INIT_LIST_HEAD(&cp->list);
+	cp->client = client;
+	mutex_lock(&hdw->i2c_list_lock); do {
+		list_add_tail(&cp->list,&hdw->i2c_clients);
+		hdw->i2c_pend_types |= PVR2_I2C_PEND_DETECT;
+	} while (0); mutex_unlock(&hdw->i2c_list_lock);
+	if (fl) pvr2_hdw_poll_trigger_unlocked(hdw);
+	return 0;
+}
+
+static int pvr2_i2c_detach_inform(struct i2c_client *client)
+{
+	struct pvr2_hdw *hdw = (struct pvr2_hdw *)(client->adapter->algo_data);
+	struct pvr2_i2c_client *cp;
+	struct list_head *item,*nc;
+	unsigned long amask = 0;
+	int foundfl = 0;
+	mutex_lock(&hdw->i2c_list_lock); do {
+		list_for_each_safe(item,nc,&hdw->i2c_clients) {
+			cp = list_entry(item,struct pvr2_i2c_client,list);
+			if (cp->client == client) {
+				trace_i2c("pvr2_i2c_detach"
+					  " [client=%s @ 0x%x ctxt=%p]",
+					  client->name,
+					  client->addr,cp);
+				if (cp->handler &&
+				    cp->handler->func_table->detach) {
+					cp->handler->func_table->detach(
+						cp->handler->func_data);
+				}
+				list_del(&cp->list);
+				kfree(cp);
+				foundfl = !0;
+				continue;
+			}
+			amask |= cp->ctl_mask;
+		}
+		hdw->i2c_active_mask = amask;
+	} while (0); mutex_unlock(&hdw->i2c_list_lock);
+	if (!foundfl) {
+		trace_i2c("pvr2_i2c_detach [client=%s @ 0x%x ctxt=<unknown>]",
+			  client->name,
+			  client->addr);
+	}
+	return 0;
 }
 
 static struct i2c_algorithm pvr2_i2c_algo_template = {
 	.master_xfer   = pvr2_i2c_xfer,
+	.algo_control  = pvr2_i2c_control,
 	.functionality = pvr2_i2c_functionality,
 };
 
 static struct i2c_adapter pvr2_i2c_adap_template = {
 	.owner         = THIS_MODULE,
-	.class	       = 0,
+	.class	   = I2C_CLASS_TV_ANALOG,
+	.id            = I2C_HW_B_BT848,
+	.client_register = pvr2_i2c_attach_inform,
+	.client_unregister = pvr2_i2c_detach_inform,
 };
 
-
-/* Return true if device exists at given address */
-static int do_i2c_probe(struct pvr2_hdw *hdw, int addr)
+static void do_i2c_scan(struct pvr2_hdw *hdw)
 {
 	struct i2c_msg msg[1];
-	int rc;
+	int i,rc;
 	msg[0].addr = 0;
 	msg[0].flags = I2C_M_RD;
 	msg[0].len = 0;
 	msg[0].buf = NULL;
-	msg[0].addr = addr;
-	rc = i2c_transfer(&hdw->i2c_adap, msg, ARRAY_SIZE(msg));
-	return rc == 1;
-}
-
-static void do_i2c_scan(struct pvr2_hdw *hdw)
-{
-	int i;
-	printk(KERN_INFO "%s: i2c scan beginning\n", hdw->name);
+	printk("%s: i2c scan beginning\n",hdw->name);
 	for (i = 0; i < 128; i++) {
-		if (do_i2c_probe(hdw, i)) {
-			printk(KERN_INFO "%s: i2c scan: found device @ 0x%x\n",
-			       hdw->name, i);
-		}
+		msg[0].addr = i;
+		rc = i2c_transfer(&hdw->i2c_adap,msg,
+				  sizeof(msg)/sizeof(msg[0]));
+		if (rc != 1) continue;
+		printk("%s: i2c scan: found device @ 0x%x\n",hdw->name,i);
 	}
-	printk(KERN_INFO "%s: i2c scan done.\n", hdw->name);
-}
-
-static void pvr2_i2c_register_ir(struct pvr2_hdw *hdw)
-{
-	struct i2c_board_info info;
-	unsigned char addr = 0;
-	if (pvr2_disable_ir_video) {
-		pvr2_trace(PVR2_TRACE_INFO,
-			   "Automatic binding of ir_video has been disabled.");
-		return;
-	}
-	if (hdw->ir_scheme_active < ARRAY_SIZE(ir_video_addresses)) {
-		addr = ir_video_addresses[hdw->ir_scheme_active];
-	}
-	if (!addr) {
-		/* The device either doesn't support I2C-based IR or we
-		   don't know (yet) how to operate IR on the device. */
-		return;
-	}
-	pvr2_trace(PVR2_TRACE_INFO,
-		   "Binding ir_video to i2c address 0x%02x.", addr);
-	memset(&info, 0, sizeof(struct i2c_board_info));
-	strlcpy(info.type, "ir_video", I2C_NAME_SIZE);
-	info.addr = addr;
-	i2c_new_device(&hdw->i2c_adap, &info);
+	printk("%s: i2c scan done.\n",hdw->name);
 }
 
 void pvr2_i2c_core_init(struct pvr2_hdw *hdw)
 {
 	unsigned int idx;
 
-	/* The default action for all possible I2C addresses is just to do
-	   the transfer normally. */
+	// The default action for all possible I2C addresses is just to do
+	// the transfer normally.
 	for (idx = 0; idx < PVR2_I2C_FUNC_CNT; idx++) {
 		hdw->i2c_func[idx] = pvr2_i2c_basic_op;
 	}
 
-	/* However, deal with various special cases for 24xxx hardware. */
-	if (ir_mode[hdw->unit_number] == 0) {
-		printk(KERN_INFO "%s: IR disabled\n",hdw->name);
-		hdw->i2c_func[0x18] = i2c_black_hole;
-	} else if (ir_mode[hdw->unit_number] == 1) {
-		if (hdw->ir_scheme_active == PVR2_IR_SCHEME_24XXX) {
-			/* Set up translation so that our IR looks like a
-			   29xxx device */
-			hdw->i2c_func[0x18] = i2c_24xxx_ir;
-		}
-	}
-	if (hdw->hdw_desc->flag_has_cx25840) {
+#ifdef CONFIG_VIDEO_PVRUSB2_24XXX
+	// If however we're dealing with new hardware, insert some hacks in
+	// the I2C transfer stack to let things work better.
+	if (hdw->hdw_type == PVR2_HDW_TYPE_24XXX) {
+		hdw->i2c_func[0x1b] = i2c_hack_wm8775;
 		hdw->i2c_func[0x44] = i2c_hack_cx25840;
 	}
-	if (hdw->hdw_desc->flag_has_wm8775) {
-		hdw->i2c_func[0x1b] = i2c_hack_wm8775;
-	}
+#endif
 
 	// Configure the adapter and set up everything else related to it.
 	memcpy(&hdw->i2c_adap,&pvr2_i2c_adap_template,sizeof(hdw->i2c_adap));
 	memcpy(&hdw->i2c_algo,&pvr2_i2c_algo_template,sizeof(hdw->i2c_algo));
 	strlcpy(hdw->i2c_adap.name,hdw->name,sizeof(hdw->i2c_adap.name));
-	hdw->i2c_adap.dev.parent = &hdw->usb_dev->dev;
 	hdw->i2c_adap.algo = &hdw->i2c_algo;
 	hdw->i2c_adap.algo_data = hdw;
+	hdw->i2c_pend_mask = 0;
+	hdw->i2c_stale_mask = 0;
+	hdw->i2c_active_mask = 0;
+	INIT_LIST_HEAD(&hdw->i2c_clients);
+	mutex_init(&hdw->i2c_list_lock);
 	hdw->i2c_linked = !0;
-	i2c_set_adapdata(&hdw->i2c_adap, &hdw->v4l2_dev);
 	i2c_add_adapter(&hdw->i2c_adap);
-	if (hdw->i2c_func[0x18] == i2c_24xxx_ir) {
-		/* Probe for a different type of IR receiver on this
-		   device.  This is really the only way to differentiate
-		   older 24xxx devices from 24xxx variants that include an
-		   IR blaster.  If the IR blaster is present, the IR
-		   receiver is part of that chip and thus we must disable
-		   the emulated IR receiver. */
-		if (do_i2c_probe(hdw, 0x71)) {
-			pvr2_trace(PVR2_TRACE_INFO,
-				   "Device has newer IR hardware;"
-				   " disabling unneeded virtual IR device");
-			hdw->i2c_func[0x18] = NULL;
-			/* Remember that this is a different device... */
-			hdw->ir_scheme_active = PVR2_IR_SCHEME_24XXX_MCE;
-		}
-	}
 	if (i2c_scan) do_i2c_scan(hdw);
-
-	pvr2_i2c_register_ir(hdw);
 }
 
 void pvr2_i2c_core_done(struct pvr2_hdw *hdw)

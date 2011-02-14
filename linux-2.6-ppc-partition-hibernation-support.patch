@@ -1,0 +1,537 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 2 Aug 2010 20:48:23 -0400
+Subject: [ppc] partition hibernation support
+Message-id: <20100802203713.18096.83409.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27296
+O-Subject: [PATCH RHEL5.6 BZ565570 9/9] powerpc: Partition hibernation support
+Bugzilla: 565570
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=565570
+
+Description:
+============
+Partition hibernation will use some of the same code as is
+currently used for Live Partition Migration. This function
+further abstracts this code such that code outside of rtas.c
+can utilize it. It also changes the error field in the suspend
+me data structure to be an atomic type, since it is set and
+checked on different cpus without any barriers or locking.
+
+Enables support for HMC initiated partition hibernation. This is
+a firmware assisted hibernation, since the firmware handles writing
+the memory out to disk, along with other partition information,
+so we just mimic suspend to ram.
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+RHEL Version Found:
+===================
+5.6
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2642470
+
+Upstream Status:
+================
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/benh/powerpc.git;a=commitdiff;h=8fe93f8d850a24581e9d47df5814b257fe451052
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/benh/powerpc.git;a=commitdiff;h=32d8ad4e621d6620e925cf540ef1d35aa6fa5a7b
+
+===============================================================
+Steve Best
+IBM on-site partner
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/powerpc/kernel/rtas.c b/arch/powerpc/kernel/rtas.c
+index e97f516..3602dc5 100644
+--- a/arch/powerpc/kernel/rtas.c
++++ b/arch/powerpc/kernel/rtas.c
+@@ -45,15 +45,7 @@ struct rtas_t rtas = {
+ };
+ EXPORT_SYMBOL(rtas);
+ 
+-struct rtas_suspend_me_data {
+-	int joined;
+-	atomic_t working;
+-	struct rtas_args *args;
+-	struct completion done;
+-	int error;
+-};
+-
+-static void rtas_suspend_me_data_init(struct rtas_suspend_me_data *rsmd,
++void rtas_suspend_me_data_init(struct rtas_suspend_me_data *rsmd,
+ 				      struct rtas_args *args)
+ {
+ 	rsmd->joined = 0;
+@@ -319,6 +311,12 @@ int rtas_token(const char *service)
+ }
+ EXPORT_SYMBOL(rtas_token);
+ 
++int rtas_service_present(const char *service)
++{
++	return rtas_token(service) != RTAS_UNKNOWN_SERVICE;
++}
++EXPORT_SYMBOL(rtas_service_present);
++
+ #ifdef CONFIG_RTAS_ERROR_LOGGING
+ /*
+  * Return the firmware-specified size of the error log buffer
+@@ -664,13 +662,59 @@ void rtas_os_term(char *str)
+ 
+ static int ibm_suspend_me_token = RTAS_UNKNOWN_SERVICE;
+ #ifdef CONFIG_PPC_PSERIES
+-static void rtas_percpu_suspend_me(void *info)
++int rtas_suspend_last_cpu(struct rtas_suspend_me_data *data)
++{
++	int rc = H_MULTI_THREADS_ACTIVE;
++	long flags;
++	u16 slb_size = mmu_slb_size;
++
++	/*
++	 * We use data->joined to indicate our state.  As long
++	 * as it is false, we are still trying to all join up.
++	 * If it is true, we have successfully joined up and
++	 * one thread got H_CONTINUE.
++	 */
++	local_irq_save(flags);
++	atomic_inc(&data->working);
++	slb_set_size(SLB_MIN_SIZE);
++	printk("Linux suspends from hypervisor at %lld "
++	       "(cpu %u (hwid%u)).\n", sched_clock(),
++	       smp_processor_id(), hard_smp_processor_id());
++
++	smp_rmb();
++	while (rc == H_MULTI_THREADS_ACTIVE && !data->joined && !data->error) {
++		rc = rtas_call(ibm_suspend_me_token, 0, 1, NULL);
++		smp_rmb();
++	}
++
++	if (rc || data->error) {
++		printk(KERN_DEBUG "ibm,suspend-me returned %d\n", rc);
++		slb_set_size(slb_size);
++	}
++
++	/* this cpu does the join */
++	data->args->args[data->args->nargs] = rc;
++	data->joined = 1;
++
++	printk("Linux reconnects with hypervisor at %lld "
++	       "(cpu %u (hwid%u)).\n", sched_clock(),
++	       smp_processor_id(), hard_smp_processor_id());
++
++	/* this cpu updated data->joined or data->error */
++	smp_wmb();
++
++out:
++	if (atomic_dec_return(&data->working) == 0)
++		complete(&data->done);
++	local_irq_restore(flags);
++	return rc;
++}
++
++void rtas_suspend_cpu(struct rtas_suspend_me_data *data)
+ {
+ 	int i;
+ 	long rc;
+ 	long flags;
+-	struct rtas_suspend_me_data *data =
+-		(struct rtas_suspend_me_data *)info;
+ 
+ 	/*
+ 	 * We use data->joined to indicate our state.  As long
+@@ -721,7 +765,11 @@ out:
+ 	if (atomic_dec_return(&data->working) == 0)
+ 		complete(&data->done);
+ 	local_irq_restore(flags);
+-	return;
++}
++
++static void rtas_percpu_suspend_me(void *info)
++{
++	rtas_suspend_cpu((struct rtas_suspend_me_data *)info);
+ }
+ 
+ static DEFINE_MUTEX(rsm_lock); /* protects rsm_data */
+diff --git a/arch/powerpc/platforms/pseries/Makefile b/arch/powerpc/platforms/pseries/Makefile
+index 167492e..69b8a75 100644
+--- a/arch/powerpc/platforms/pseries/Makefile
++++ b/arch/powerpc/platforms/pseries/Makefile
+@@ -12,3 +12,7 @@ obj-$(CONFIG_EEH)	+= eeh.o eeh_cache.o eeh_driver.o eeh_event.o
+ 
+ obj-$(CONFIG_HVC_CONSOLE)	+= hvconsole.o
+ obj-$(CONFIG_HVCS)		+= hvcserver.o
++
++ifeq ($(CONFIG_PPC_PSERIES),y)
++obj-$(CONFIG_PM)		+= suspend.o
++endif
+diff --git a/arch/powerpc/platforms/pseries/plpar_wrappers.h b/arch/powerpc/platforms/pseries/plpar_wrappers.h
+index 826f8e6..c8117d9 100644
+--- a/arch/powerpc/platforms/pseries/plpar_wrappers.h
++++ b/arch/powerpc/platforms/pseries/plpar_wrappers.h
+@@ -139,4 +139,10 @@ static inline long plpar_put_term_char(unsigned long termno, unsigned long len,
+ 			lbuf[1]);
+ }
+ 
++#ifdef CONFIG_PM
++void pseries_suspend_cpu(void);
++#else
++static inline pseries_suspend_cpu(void) { }
++#endif
++
+ #endif /* _PSERIES_PLPAR_WRAPPERS_H */
+diff --git a/arch/powerpc/platforms/pseries/rtasd.c b/arch/powerpc/platforms/pseries/rtasd.c
+index 83db911..abb3f70 100644
+--- a/arch/powerpc/platforms/pseries/rtasd.c
++++ b/arch/powerpc/platforms/pseries/rtasd.c
+@@ -451,6 +451,7 @@ static int rtasd(void *unused)
+ 	}
+ 
+ 	printk(KERN_DEBUG "RTAS daemon started\n");
++	current->flags |= PF_NOFREEZE;
+ 
+ 	DEBUG("will sleep for %d milliseconds\n", (30000/rtas_event_scan_rate));
+ 
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index b2d4e37..d290e33 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -387,6 +387,7 @@ static void pSeries_mach_cpu_die(void)
+ 
+ 	if (get_preferred_offline_state(cpu) == CPU_STATE_INACTIVE) {
+ 		set_cpu_current_state(cpu, CPU_STATE_INACTIVE);
++		pseries_suspend_cpu();
+ 
+ 		cede_latency_hint = 2;
+ 		get_lppaca()->idle = 1;
+diff --git a/arch/powerpc/platforms/pseries/suspend.c b/arch/powerpc/platforms/pseries/suspend.c
+new file mode 100644
+index 0000000..4fdc7c5
+--- /dev/null
++++ b/arch/powerpc/platforms/pseries/suspend.c
+@@ -0,0 +1,245 @@
++/*
++  * Copyright (C) 2010 Brian King IBM Corporation
++  *
++  * This program is free software; you can redistribute it and/or modify
++  * it under the terms of the GNU General Public License as published by
++  * the Free Software Foundation; either version 2 of the License, or
++  * (at your option) any later version.
++  *
++  * This program is distributed in the hope that it will be useful,
++  * but WITHOUT ANY WARRANTY; without even the implied warranty of
++  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++  * GNU General Public License for more details.
++  *
++  * You should have received a copy of the GNU General Public License
++  * along with this program; if not, write to the Free Software
++  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++  */
++
++#include <linux/capability.h>
++#include <linux/cpumask.h>
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/mutex.h>
++#include <linux/pm.h>
++#include <linux/sched.h>
++#include <linux/smp.h>
++#include <linux/stat.h>
++#include <linux/string.h>
++#include <linux/sysdev.h>
++#include <asm/firmware.h>
++#include <asm/hvcall.h>
++#include <asm/machdep.h>
++#include <asm/mmu.h>
++#include <asm/rtas.h>
++#include <asm/time.h>
++
++#include "offline_states.h"
++
++static u64 stream_id;
++static struct sys_device suspend_sysdev;
++static DEFINE_MUTEX(suspend_lock);
++static struct rtas_suspend_me_data suspend_data;
++static struct rtas_args suspend_args;
++static int suspending;
++
++/**
++ * pseries_suspend_begin - First phase of hibernation
++ *
++ * Check to ensure we are in a valid state to hibernate
++ *
++ * Return value:
++ * 	0 on success / other on failure
++ **/
++static int pseries_suspend_begin(void)
++{
++	long vasi_state, rc;
++	unsigned long dummy;
++
++	/* Make sure the state is valid */
++	rc = plpar_hcall(H_VASI_STATE, stream_id, 0, 0, 0, &vasi_state, &dummy, &dummy);
++
++	if (rc) {
++		printk(KERN_ERR "pseries_suspend_begin: vasi_state returned %ld\n",rc);
++		return rc;
++	} else if (vasi_state == H_VASI_ENABLED) {
++		return -EAGAIN;
++	} else if (vasi_state != H_VASI_SUSPENDING) {
++		printk(KERN_ERR "pseries_suspend_begin: vasi_state returned state %ld\n",
++		       vasi_state);
++		return -EIO;
++	}
++
++	return 0;
++}
++
++/**
++ * pseries_suspend_enter - Final phase of hibernation
++ *
++ * Return value:
++ * 	0 on success / other on failure
++ **/
++static int pseries_suspend_enter(suspend_state_t state)
++{
++	return rtas_suspend_last_cpu(&suspend_data);
++}
++
++/**
++ * pseries_suspend_cpu - Join a single hardware thread
++ *
++ **/
++void pseries_suspend_cpu(void)
++{
++	if (suspending) {
++		smp_rmb();
++		rtas_suspend_cpu(&suspend_data);
++	}
++}
++
++/**
++ * pseries_suspend_prepare - Prepare for a suspend
++ *
++ * This function joins all hardware threads to a single thread
++ *
++ * Return value:
++ * 	0 if success / other on failure
++ **/
++static int pseries_suspend_prepare(suspend_state_t state)
++{
++	if (!suspending) {
++		smp_rmb();
++		return -EINVAL;
++	}
++
++	return pseries_suspend_begin();
++}
++
++/**
++ * pseries_suspend_valid - Only suspend to RAM is supported
++ *
++ * Return value:
++ * 	1 if valid / other if invalid
++ **/
++static int pseries_suspend_valid(suspend_state_t state)
++{
++	if (state == PM_SUSPEND_MEM)
++		return 1;
++
++	return 0;
++}
++
++/**
++ * store_hibernate - Initiate partition hibernation
++ * @classdev:	sysdev class struct
++ * @buf:		buffer
++ * @count:		buffer size
++ *
++ * Write the stream ID received from the HMC to this file
++ * to trigger hibernating the partition
++ *
++ * Return value:
++ * 	number of bytes printed to buffer / other on failure
++ **/
++static ssize_t store_hibernate(struct sysdev_class *classdev,
++			       const char *buf, size_t count)
++{
++	int rc;
++	unsigned int cpu;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
++	mutex_lock(&suspend_lock);
++	stream_id = simple_strtoul(buf, NULL, 16);
++
++	do {
++		rc = pseries_suspend_begin();
++		if (rc == -EAGAIN)
++			ssleep(1);
++	} while (rc == -EAGAIN);
++
++	if (!rc) {
++		memset(&suspend_args, 0, sizeof(suspend_args));
++		rtas_suspend_me_data_init(&suspend_data, &suspend_args);
++		suspending = 1;
++		for_each_online_cpu(cpu)
++			if (cpu)
++				set_preferred_offline_state(cpu, CPU_STATE_INACTIVE);
++
++		smp_wmb();
++
++		rc = pm_suspend(PM_SUSPEND_MEM);
++		suspending = 0;
++		smp_wmb();
++	}
++
++	stream_id = 0;
++	mutex_unlock(&suspend_lock);
++
++	if (!rc)
++		rc = count;
++	return rc;
++}
++
++static SYSDEV_CLASS_ATTR(hibernate, S_IWUSR, NULL, store_hibernate);
++
++static struct sysdev_class suspend_sysdev_class = {
++	set_kset_name("power"),
++};
++
++static struct pm_ops pseries_suspend_ops = {
++	.valid		= pseries_suspend_valid,
++	.prepare		= pseries_suspend_prepare,
++	.enter		= pseries_suspend_enter,
++};
++
++/**
++ * pseries_suspend_sysfs_register - Register with sysfs
++ *
++ * Return value:
++ * 	0 on success / other on failure
++ **/
++static int pseries_suspend_sysfs_register(struct sys_device *sysdev)
++{
++	int rc;
++
++	if ((rc = sysdev_class_register(&suspend_sysdev_class)))
++		return rc;
++
++	sysdev->id = 0;
++	sysdev->cls = &suspend_sysdev_class;
++
++	if ((rc = sysdev_class_create_file(&suspend_sysdev_class, &attr_hibernate)))
++		goto class_unregister;
++
++	return 0;
++
++class_unregister:
++	sysdev_class_unregister(&suspend_sysdev_class);
++	return rc;
++}
++
++/**
++ * pseries_suspend_init - initcall for pSeries suspend
++ *
++ * Return value:
++ * 	0 on success / other on failure
++ **/
++static int __init pseries_suspend_init(void)
++{
++	int rc;
++
++	if (!machine_is(pseries) || !firmware_has_feature(FW_FEATURE_LPAR))
++		return 0;
++
++	if (!rtas_service_present("ibm,suspend-me"))
++		return 0;
++
++	if ((rc = pseries_suspend_sysfs_register(&suspend_sysdev)))
++		return rc;
++
++	pm_set_ops(&pseries_suspend_ops);
++	return 0;
++}
++
++__initcall(pseries_suspend_init);
+diff --git a/include/asm-powerpc/hvcall.h b/include/asm-powerpc/hvcall.h
+index aefb08a..1aa246e 100644
+--- a/include/asm-powerpc/hvcall.h
++++ b/include/asm-powerpc/hvcall.h
+@@ -74,6 +74,7 @@
+ #define H_NOT_ENOUGH_RESOURCES -44
+ #define H_R_STATE       -45
+ #define H_RESCINDEND    -46
++#define H_MULTI_THREADS_ACTIVE -9005
+ 
+ 
+ /* Long Busy is a condition that can be returned by the firmware
+diff --git a/include/asm-powerpc/rtas.h b/include/asm-powerpc/rtas.h
+index 4c7e8e0..2aa6021 100644
+--- a/include/asm-powerpc/rtas.h
++++ b/include/asm-powerpc/rtas.h
+@@ -2,7 +2,9 @@
+ #define _POWERPC_RTAS_H
+ #ifdef __KERNEL__
+ 
++#include <linux/completion.h>
+ #include <linux/spinlock.h>
++#include <asm/atomic.h>
+ #include <asm/page.h>
+ 
+ /*
+@@ -151,6 +153,14 @@ struct rtas_error_log {
+ 	unsigned char buffer[1];
+ };
+ 
++struct rtas_suspend_me_data {
++	int joined;
++	atomic_t working;
++	struct rtas_args *args;
++	struct completion done;
++	int error;
++};
++
+ /*
+  * This can be set by the rtas_flash module so that it can get called
+  * as the absolutely last thing before the kernel terminates.
+@@ -161,6 +171,7 @@ extern struct rtas_t rtas;
+ 
+ extern void enter_rtas(unsigned long);
+ extern int rtas_token(const char *service);
++extern int rtas_service_present(const char *service);
+ extern int rtas_call(int token, int, int, int *, ...);
+ extern void rtas_restart(char *cmd);
+ extern void rtas_power_off(void);
+@@ -173,6 +184,10 @@ extern int rtas_set_indicator(int indicator, int index, int new_value);
+ extern int rtas_set_indicator_fast(int indicator, int index, int new_value);
+ extern void rtas_progress(char *s, unsigned short hex);
+ extern void rtas_initialize(void);
++extern void rtas_suspend_me_data_init(struct rtas_suspend_me_data *rsmd,
++				      struct rtas_args *args);
++extern void rtas_suspend_cpu(struct rtas_suspend_me_data *data);
++extern int rtas_suspend_last_cpu(struct rtas_suspend_me_data *data);
+ 
+ struct rtc_time;
+ extern unsigned long rtas_get_boot_time(void);
+diff --git a/kernel/power/Kconfig b/kernel/power/Kconfig
+index 619ecab..ced166e 100644
+--- a/kernel/power/Kconfig
++++ b/kernel/power/Kconfig
+@@ -106,5 +106,5 @@ config PM_STD_PARTITION
+ 
+ config SUSPEND_SMP
+ 	bool
+-	depends on HOTPLUG_CPU && X86 && PM
++	depends on HOTPLUG_CPU && (X86 || PPC_PSERIES) && PM
+ 	default y

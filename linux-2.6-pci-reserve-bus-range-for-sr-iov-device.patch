@@ -1,0 +1,111 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:17 -0600
+Subject: [pci] reserve bus range for SR-IOV device
+Message-id: 200904021446.n32EkHRa017160@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 12/17] BZ493152: Backport: PCI: reserve bus range for SR-IOV device
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit a28724b0fb909d247229a70761c90bb37b13366a
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Fri Mar 20 11:25:13 2009 +0800
+
+    PCI: reserve bus range for SR-IOV device
+
+    Reserve the bus number range used by the Virtual Function when
+    pcibios_assign_all_busses() returns true.
+
+    Reviewed-by: Matthew Wilcox <willy@linux.intel.com>
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/iov.c b/drivers/pci/iov.c
+index fc809a4..2ac1ac0 100644
+--- a/drivers/pci/iov.c
++++ b/drivers/pci/iov.c
+@@ -14,6 +14,18 @@
+ #include "pci.h"
+ 
+ 
++static inline u8 virtfn_bus(struct pci_dev *dev, int id)
++{
++	return dev->bus->number + ((dev->devfn + dev->sriov->offset +
++				    dev->sriov->stride * id) >> 8);
++}
++
++static inline u8 virtfn_devfn(struct pci_dev *dev, int id)
++{
++	return (dev->devfn + dev->sriov->offset +
++		dev->sriov->stride * id) & 0xff;
++}
++
+ static int sriov_init(struct pci_dev *dev, int pos)
+ {
+ 	int i;
+@@ -187,3 +199,27 @@ void pci_restore_iov_state(struct pci_dev *dev)
+ 	if (dev->is_physfn)
+ 		sriov_restore_state(dev);
+ }
++
++/**
++ * pci_iov_bus_range - find bus range used by Virtual Function
++ * @bus: the PCI bus
++ *
++ * Returns max number of buses (exclude current one) used by Virtual
++ * Functions.
++ */
++int pci_iov_bus_range(struct pci_bus *bus)
++{
++	int max = 0;
++	u8 busnr;
++	struct pci_dev *dev;
++
++	list_for_each_entry(dev, &bus->devices, bus_list) {
++		if (!dev->is_physfn)
++			continue;
++		busnr = virtfn_bus(dev, dev->sriov->total - 1);
++		if (busnr > max)
++			max = busnr;
++	}
++
++	return max ? max - bus->number : 0;
++}
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 57524e1..7fa8de8 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -137,6 +137,7 @@ extern void pci_iov_release(struct pci_dev *dev);
+ extern int pci_iov_resource_bar(struct pci_dev *dev, int resno,
+ 				enum pci_bar_type *type);
+ extern void pci_restore_iov_state(struct pci_dev *dev);
++extern int pci_iov_bus_range(struct pci_bus *bus);
+ #else
+ static inline int pci_iov_init(struct pci_dev *dev)
+ {
+@@ -154,4 +155,8 @@ static inline int pci_iov_resource_bar(struct pci_dev *dev, int resno,
+ static inline void pci_restore_iov_state(struct pci_dev *dev)
+ {
+ }
++static inline int pci_iov_bus_range(struct pci_bus *bus)
++{
++	return 0;
++}
+ #endif /* CONFIG_PCI_IOV */
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 68c79bc..1329273 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -987,6 +987,9 @@ unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
+ 	for (devfn = 0; devfn < 0x100; devfn += 8)
+ 		pci_scan_slot(bus, devfn);
+ 
++	/* Reserve buses for SR-IOV capability. */
++	max += pci_iov_bus_range(bus);
++
+ 	/*
+ 	 * After performing arch-dependent fixup of the bus, look behind
+ 	 * all PCI-to-PCI bridges on this bus.

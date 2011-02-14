@@ -13,6 +13,7 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -43,10 +44,10 @@
  *	Callsign/UID mapper. This is in kernel space for security on multi-amateur machines.
  */
 
-static HLIST_HEAD(ax25_uid_list);
+HLIST_HEAD(ax25_uid_list);
 static DEFINE_RWLOCK(ax25_uid_lock);
 
-int ax25_uid_policy;
+int ax25_uid_policy = 0;
 
 EXPORT_SYMBOL(ax25_uid_policy);
 
@@ -144,17 +145,12 @@ int ax25_uid_ioctl(int cmd, struct sockaddr_ax25 *sax)
 #ifdef CONFIG_PROC_FS
 
 static void *ax25_uid_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(ax25_uid_lock)
 {
 	struct ax25_uid_assoc *pt;
 	struct hlist_node *node;
-	int i = 1;
+	int i = 0;
 
 	read_lock(&ax25_uid_lock);
-
-	if (*pos == 0)
-		return SEQ_START_TOKEN;
-
 	ax25_uid_for_each(pt, node, &ax25_uid_list) {
 		if (i == *pos)
 			return pt;
@@ -166,15 +162,12 @@ static void *ax25_uid_seq_start(struct seq_file *seq, loff_t *pos)
 static void *ax25_uid_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	++*pos;
-	if (v == SEQ_START_TOKEN)
-		return ax25_uid_list.first;
-	else
-		return hlist_entry(((ax25_uid_assoc *)v)->uid_node.next,
-			   ax25_uid_assoc, uid_node);
+
+	return hlist_entry(((ax25_uid_assoc *)v)->uid_node.next,
+	                   ax25_uid_assoc, uid_node);
 }
 
 static void ax25_uid_seq_stop(struct seq_file *seq, void *v)
-	__releases(ax25_uid_lock)
 {
 	read_unlock(&ax25_uid_lock);
 }
@@ -193,7 +186,7 @@ static int ax25_uid_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations ax25_uid_seqops = {
+static struct seq_operations ax25_uid_seqops = {
 	.start = ax25_uid_seq_start,
 	.next = ax25_uid_seq_next,
 	.stop = ax25_uid_seq_stop,
@@ -205,7 +198,7 @@ static int ax25_uid_info_open(struct inode *inode, struct file *file)
 	return seq_open(file, &ax25_uid_seqops);
 }
 
-const struct file_operations ax25_uid_fops = {
+struct file_operations ax25_uid_fops = {
 	.owner = THIS_MODULE,
 	.open = ax25_uid_info_open,
 	.read = seq_read,
@@ -224,11 +217,9 @@ void __exit ax25_uid_free(void)
 	struct hlist_node *node;
 
 	write_lock(&ax25_uid_lock);
-again:
 	ax25_uid_for_each(ax25_uid, node, &ax25_uid_list) {
 		hlist_del_init(&ax25_uid->uid_node);
 		ax25_uid_put(ax25_uid);
-		goto again;
 	}
 	write_unlock(&ax25_uid_lock);
 }

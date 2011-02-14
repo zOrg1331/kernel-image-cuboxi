@@ -1,0 +1,187 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Wed, 19 Mar 2008 17:28:48 -0400
+Subject: [scsi] lpfc: update driver to 8.2.0.21
+Message-id: 1205962129-21432-1-git-send-email-coldwell@redhat.com
+O-Subject: [RHEL-5.2 PATCH 1/2] BZ437050: Update lpfc driver from 8.2.0.20 to 8.2.0.21
+Bugzilla: 437050
+
+This patch updates lpfc 8.2.0.20 to 8.2.0.21.  It contains 6 bugfixes found in
+our test cycle:
+
+* Changed version number to 8.2.0.21
+* Fix unexpected devloss during fc swap test with vports (CR 29031)
+* Fix crashes seen in lpfc_sli_validate_fcp_iocb when aborting iocbs (CR 28988)
+* Back out change made to reset board after Hardware error 5 (CR 22882)
+* Fix premature devloss timeout during lip testing (CR 28934)
+* Fix crash while creating and deleting vports (CR 28941)
+* Correct misspelled word unsolicited in message 0146 (CR 28293)
+
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_ct.c b/drivers/scsi/lpfc/lpfc_ct.c
+index 2278ed7..29b91d5 100644
+--- a/drivers/scsi/lpfc/lpfc_ct.c
++++ b/drivers/scsi/lpfc/lpfc_ct.c
+@@ -63,7 +63,7 @@ lpfc_ct_ignore_hbq_buffer(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq,
+ {
+ 	if (!mp) {
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_ELS,
+-				"0146 Ignoring unsolicted CT No HBQ "
++				"0146 Ignoring unsolicited CT No HBQ "
+ 				"status = x%x\n",
+ 				piocbq->iocb.ulpStatus);
+ 	}
+diff --git a/drivers/scsi/lpfc/lpfc_disc.h b/drivers/scsi/lpfc/lpfc_disc.h
+index 1133e45..7112e08 100644
+--- a/drivers/scsi/lpfc/lpfc_disc.h
++++ b/drivers/scsi/lpfc/lpfc_disc.h
+@@ -93,6 +93,7 @@ struct lpfc_nodelist {
+ 	unsigned long last_ramp_up_time;        /* jiffy of last ramp up */
+ 	unsigned long last_q_full_time;		/* jiffy of last queue full */
+ 	struct kref     kref;
++	unsigned long unreg_time;		/* Last time ndlp was unreged */
+ };
+ 
+ /* Defines for nlp_flag (uint32) */
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 0347290..901fd9c 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -259,8 +259,36 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 		return;
+ 	}
+ 
+-	if (ndlp->nlp_state == NLP_STE_MAPPED_NODE)
++	if (ndlp->nlp_state == NLP_STE_MAPPED_NODE) {
++		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
++				 "0219 Devloss timeout Ignored on "
++				 "WWPN %x:%x:%x:%x:%x:%x:%x:%x "
++				 "NPort x%x\n",
++				 *name, *(name+1), *(name+2), *(name+3),
++				 *(name+4), *(name+5), *(name+6), *(name+7),
++				 ndlp->nlp_DID);
++		return;
++	}
++	/*
++	 * This is a workaround for an issue seen in the transport. If the
++	 * driver removes, then adds, and then removes the rport again whithin
++	 * devloss_tmo the transport may call devloss_tmo for the original
++	 * remove even though it should have reset the timer.
++	 */
++	if (ndlp->nlp_sid != NLP_NO_SID &&
++	    time_after(ndlp->unreg_time +
++		       msecs_to_jiffies(vport->cfg_devloss_tmo * 1000),
++		       jiffies)) {
++		lpfc_printf_vlog(vport, KERN_WARNING, LOG_DISCOVERY,
++				 "0213 Devloss timeout Skipped on "
++				 "WWPN %x:%x:%x:%x:%x:%x:%x:%x "
++				 "NPort x%x Time %d\n",
++				 *name, *(name+1), *(name+2), *(name+3),
++				 *(name+4), *(name+5), *(name+6), *(name+7),
++				 ndlp->nlp_DID,
++				 jiffies_to_msecs(jiffies-ndlp->unreg_time));
+ 		return;
++	}
+ 
+ 	if (ndlp->nlp_type & NLP_FABRIC) {
+ 		/* We will clean up these Nodes in linkup */
+@@ -1609,6 +1637,7 @@ lpfc_unregister_remote_port(struct lpfc_nodelist *ndlp)
+ 		"rport delete:    did:x%x flg:x%x type x%x",
+ 		ndlp->nlp_DID, ndlp->nlp_flag, ndlp->nlp_type);
+ 
++	ndlp->unreg_time = jiffies;
+ 	fc_remote_port_delete(rport);
+ 
+ 	return;
+@@ -1852,6 +1881,7 @@ lpfc_enable_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 	ndlp->nlp_reauth_tmr.function = lpfc_reauth_node;
+ 	ndlp->nlp_reauth_tmr.data = (unsigned long)ndlp;
+ 
++	ndlp->unreg_time = jiffies;
+ 	ndlp->nlp_DID = did;
+ 	ndlp->vport = vport;
+ 	ndlp->nlp_sid = NLP_NO_SID;
+@@ -2404,7 +2434,8 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
+ 		return ndlp;
+ 	}
+ 
+-	if (vport->fc_flag & FC_RSCN_MODE) {
++	if ((vport->fc_flag & FC_RSCN_MODE) &&
++	    !(vport->fc_flag & FC_NDISC_ACTIVE)) {
+ 		if (lpfc_rscn_payload_check(vport, did)) {
+ 			/* If we've already recieved a PLOGI from this NPort
+ 			 * we don't need to try to discover it again.
+@@ -3176,6 +3207,7 @@ lpfc_nlp_init(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 	ndlp->nlp_reauth_tmr.function = lpfc_reauth_node;
+ 	ndlp->nlp_reauth_tmr.data = (unsigned long)ndlp;
+ 
++	ndlp->unreg_time = jiffies;
+ 	ndlp->nlp_DID = did;
+ 	ndlp->vport = vport;
+ 	ndlp->nlp_sid = NLP_NO_SID;
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 366474c..3532e3c 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -794,8 +794,7 @@ lpfc_handle_eratt(struct lpfc_hba *phba)
+ 	if (!phba->cfg_enable_hba_reset)
+ 		return;
+ 
+-	if (phba->work_hs & HS_FFER6 ||
+-	    phba->work_hs & HS_FFER5) {
++	if (phba->work_hs & HS_FFER6) {
+ 		/* Re-establishing Link */
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_LINK_EVENT,
+ 				"1301 Re-establishing Link "
+@@ -1859,7 +1858,7 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
+ 	vport->els_tmofunc.data = (unsigned long)vport;
+ 
+ 	error = scsi_add_host(shost, dev);
+-	if (error)
++	if (error || !shost->shost_data || !shost->work_q)
+ 		goto out_put_shost;
+ 	if (!shost->shost_classdev.kobj.dentry)
+ 		goto out_put_shost;
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index 08bd081..ef25645 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -653,6 +653,9 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
+ 	result = cmd->result;
+ 	sdev = cmd->device;
+ 	lpfc_scsi_unprep_dma_buf(phba, lpfc_cmd);
++	spin_lock_irqsave(sdev->host->host_lock, flags);
++	lpfc_cmd->pCmd = NULL;	/* This must be done before scsi_done */
++	spin_unlock_irqrestore(sdev->host->host_lock, flags);
+ 	cmd->scsi_done(cmd);
+ 
+ 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
+@@ -661,7 +664,6 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
+ 		 * wake up the thread.
+ 		 */
+ 		spin_lock_irqsave(sdev->host->host_lock, flags);
+-		lpfc_cmd->pCmd = NULL;
+ 		if (lpfc_cmd->waitq)
+ 			wake_up(lpfc_cmd->waitq);
+ 		spin_unlock_irqrestore(sdev->host->host_lock, flags);
+@@ -734,7 +736,6 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
+ 	 * wake up the thread.
+ 	 */
+ 	spin_lock_irqsave(sdev->host->host_lock, flags);
+-	lpfc_cmd->pCmd = NULL;
+ 	if (lpfc_cmd->waitq)
+ 		wake_up(lpfc_cmd->waitq);
+ 	spin_unlock_irqrestore(sdev->host->host_lock, flags);
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index d66e61b..5077c59 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.20"
++#define LPFC_DRIVER_VERSION "8.2.0.21"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 

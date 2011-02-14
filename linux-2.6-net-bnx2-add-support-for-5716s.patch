@@ -1,0 +1,64 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Mon, 17 Nov 2008 11:46:04 -0500
+Subject: [net] bnx2: add support for 5716s
+Message-id: 20081117164604.GE5201@gospo.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] bnx2: add support for 5716s
+Bugzilla: 471903
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+This is a small patch to add support for 5716s.  This was added upstream
+_last week_ so we didn't have much time to add it before then.
+
+    commit 1caacecb7cb2b72e798f06a32b5061075cf397fa
+    Author: Michael Chan <mchan@broadcom.com>
+    Date:   Wed Nov 12 16:01:12 2008 -0800
+
+        bnx2: Add PCI ID for 5716S.
+
+        Signed-off-by: Michael Chan <mchan@broadcom.com>
+        Signed-off-by: Matt Carlson <mcarlson@broadcom.com>
+        Signed-off-by: Benjamin Li <benli@broadcom.com>
+        Signed-off-by: David S. Miller <davem@davemloft.net>
+
+This will resolve RHBZ 471903.
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index 9106ea7..00acdd3 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -55,7 +55,7 @@
+ #define FW_BUF_SIZE		0x10000
+ #define DRV_MODULE_NAME		"bnx2"
+ #define PFX DRV_MODULE_NAME	": "
+-#define DRV_MODULE_VERSION	"1.7.9"
++#define DRV_MODULE_VERSION	"1.7.9-1"
+ #define DRV_MODULE_RELDATE	"July 18, 2008"
+ 
+ #define RUN_AT(x) (jiffies + (x))
+@@ -87,6 +87,7 @@ typedef enum {
+ 	BCM5709,
+ 	BCM5709S,
+ 	BCM5716,
++	BCM5716S,
+ } board_t;
+ 
+ /* indexed by board_t, above */
+@@ -103,6 +104,7 @@ static struct {
+ 	{ "Broadcom NetXtreme II BCM5709 1000Base-T" },
+ 	{ "Broadcom NetXtreme II BCM5709 1000Base-SX" },
+ 	{ "Broadcom NetXtreme II BCM5716 1000Base-T" },
++	{ "Broadcom NetXtreme II BCM5716 1000Base-SX" },
+ 	};
+ 
+ static struct pci_device_id bnx2_pci_tbl[] = {
+@@ -126,6 +128,8 @@ static struct pci_device_id bnx2_pci_tbl[] = {
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, BCM5709S },
+ 	{ PCI_VENDOR_ID_BROADCOM, 0x163b,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, BCM5716 },
++	{ PCI_VENDOR_ID_BROADCOM, 0x163c,
++	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, BCM5716 },
+ 	{ 0, }
+ };
+ 

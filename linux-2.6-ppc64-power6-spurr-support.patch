@@ -1,0 +1,138 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 11 Dec 2007 16:35:25 -0500
+Subject: [ppc64] power6 SPURR support
+Message-id: Pine.LNX.4.64.0712111634120.19799@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz253114 POWER6 SPURR support
+Bugzilla: 253114
+
+Bug 253114 [1]
+---------------
+
+Description:
+-----------
+POWER6 manages power and thermal issues by varying the processor clock
+frequency and/or throttling instruction dispatch. In order to measure the
+consumption of effective CPU resources more accurately under these
+conditions, POWER6 added a Scaled Processor Utilization of Resources
+Register (SPURR). This feature adds code to read the SPURR at appropriate
+times in order to be able to report scaled CPU time usage to programs that
+need it.
+
+This adds just the basic SPURR read support via /sysfs.  It is non-invasive,
+unlike the previous patch.  This basic support has been requested by the
+EnergyScale(EMPATH) team and numerous customers.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-58
+
+Upstream Status:
+---------------
+This is a simple basic-function-only backport of SPURR support
+that already exists upstream in git commit
+f050982a9b7c4edc414f0d5543c3cb24504223c6.
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-58 at [2].
+
+Mike Wolf of IBM has tested the above kernel on a POWER6 system and verified
+sane functionality.  Please see the bug for more information.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=253114
+[2]:http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1070129
+--
+ arch/powerpc/kernel/prom.c     |    1 +
+ arch/powerpc/kernel/sysfs.c    |    6 ++++++
+ include/asm-powerpc/cputable.h |    3 ++-
+ include/asm-powerpc/reg.h      |    1 +
+ 4 files changed, 10 insertions(+), 1 deletion(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/kernel/prom.c b/arch/powerpc/kernel/prom.c
+index 4bb5798..2e01f2f 100644
+--- a/arch/powerpc/kernel/prom.c
++++ b/arch/powerpc/kernel/prom.c
+@@ -599,6 +599,7 @@ static struct feature_property {
+ #ifdef CONFIG_PPC64
+ 	{"ibm,dfp", 1, 0, PPC_FEATURE_HAS_DFP},
+ 	{"ibm,purr", 1, CPU_FTR_PURR, 0},
++	{"ibm,spurr", 1, CPU_FTR_SPURR, 0},
+ #endif /* CONFIG_PPC64 */
+ };
+ 
+diff --git a/arch/powerpc/kernel/sysfs.c b/arch/powerpc/kernel/sysfs.c
+index b1ca7e2..0edb176 100644
+--- a/arch/powerpc/kernel/sysfs.c
++++ b/arch/powerpc/kernel/sysfs.c
+@@ -181,6 +181,7 @@ SYSFS_PMCSETUP(pmc6, SPRN_PMC6);
+ SYSFS_PMCSETUP(pmc7, SPRN_PMC7);
+ SYSFS_PMCSETUP(pmc8, SPRN_PMC8);
+ SYSFS_PMCSETUP(purr, SPRN_PURR);
++SYSFS_PMCSETUP(spurr, SPRN_SPURR);
+ 
+ static SYSDEV_ATTR(mmcr0, 0600, show_mmcr0, store_mmcr0);
+ static SYSDEV_ATTR(mmcr1, 0600, show_mmcr1, store_mmcr1);
+@@ -194,6 +195,7 @@ static SYSDEV_ATTR(pmc6, 0600, show_pmc6, store_pmc6);
+ static SYSDEV_ATTR(pmc7, 0600, show_pmc7, store_pmc7);
+ static SYSDEV_ATTR(pmc8, 0600, show_pmc8, store_pmc8);
+ static SYSDEV_ATTR(purr, 0600, show_purr, NULL);
++static SYSDEV_ATTR(spurr, 0600, show_spurr, NULL);
+ 
+ static void register_cpu_online(unsigned int cpu)
+ {
+@@ -232,6 +234,8 @@ static void register_cpu_online(unsigned int cpu)
+ 
+ 	if (cpu_has_feature(CPU_FTR_SMT))
+ 		sysdev_create_file(s, &attr_purr);
++	if (cpu_has_feature(CPU_FTR_SPURR))
++		sysdev_create_file(s, &attr_spurr);
+ }
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
+@@ -274,6 +278,8 @@ static void unregister_cpu_online(unsigned int cpu)
+ 
+ 	if (cpu_has_feature(CPU_FTR_SMT))
+ 		sysdev_remove_file(s, &attr_purr);
++	if (cpu_has_feature(CPU_FTR_SPURR))
++		sysdev_remove_file(s, &attr_spurr);
+ }
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
+diff --git a/include/asm-powerpc/cputable.h b/include/asm-powerpc/cputable.h
+index c00e20d..c3c68c1 100644
+--- a/include/asm-powerpc/cputable.h
++++ b/include/asm-powerpc/cputable.h
+@@ -146,6 +146,7 @@ extern void do_feature_fixups(unsigned long value, void *fixup_start,
+ #define CPU_FTR_PAUSE_ZERO		LONG_ASM_CONST(0x0000200000000000)
+ #define CPU_FTR_PURR			LONG_ASM_CONST(0x0000400000000000)
+ #define CPU_FTR_CELL_TB_BUG		LONG_ASM_CONST(0x0000800000000000)
++#define CPU_FTR_SPURR			LONG_ASM_CONST(0x0001000000000000)
+ 
+ #ifndef __ASSEMBLY__
+ 
+@@ -329,7 +330,7 @@ extern void do_feature_fixups(unsigned long value, void *fixup_start,
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | \
+ 	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
+ 	    CPU_FTR_COHERENT_ICACHE | CPU_FTR_LOCKLESS_TLBIE | \
+-	    CPU_FTR_PURR | CPU_FTR_REAL_LE)
++	    CPU_FTR_PURR | CPU_FTR_REAL_LE | CPU_FTR_SPURR)
+ #define CPU_FTRS_CELL	(CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | \
+ 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
+diff --git a/include/asm-powerpc/reg.h b/include/asm-powerpc/reg.h
+index 7e9f364..a22bcca 100644
+--- a/include/asm-powerpc/reg.h
++++ b/include/asm-powerpc/reg.h
+@@ -163,6 +163,7 @@
+ #define SPRN_TBRU	0x10D	/* Time Base Read Upper Register (user, R/O) */
+ #define SPRN_TBWL	0x11C	/* Time Base Lower Register (super, R/W) */
+ #define SPRN_TBWU	0x11D	/* Time Base Upper Register (super, R/W) */
++#define SPRN_SPURR	0x134	/* Scaled PURR */
+ #define SPRN_HIOR	0x137	/* 970 Hypervisor interrupt offset */
+ #define SPRN_DBAT0L	0x219	/* Data BAT 0 Lower Register */
+ #define SPRN_DBAT0U	0x218	/* Data BAT 0 Upper Register */

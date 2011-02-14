@@ -1,0 +1,46 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Mon, 27 Sep 2010 20:35:11 -0400
+Subject: [net] qlcnic: fix diag resource allocation
+Message-id: <20100927203510.3859.51994.sendpatchset@localhost.localdomain>
+Patchwork-id: 28432
+O-Subject: [RHEL 5.6 PATCH 4/6] qlcnic: fix diag resource allocation
+Bugzilla: 625084
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Bugzilla
+--------
+
+Bug 625084 (https://bugzilla.redhat.com/show_bug.cgi?id=625084)
+
+Upstream Status
+---------------
+
+net-2.6 commit id 57e46248a71bfcafb3937a7a5ed8ad324c9fc4f0
+
+Description
+-----------
+
+>From 851d2e7abef1fede13ab86419b295f37082aa241 Mon Sep 17 00:00:00 2001
+From: Sony Chacko <sony.chacko@qlogic.com>
+Date: Sat, 24 Jul 2010 18:32:18 +0000
+Subject: [PATCH] qlcnic: fix diag resource allocation
+
+netif_device_attach missing from error path in qlcnic_diag_alloc_res
+
+Signed-off-by: Sony Chacko <sony.chacko@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/qlcnic/qlcnic_main.c b/drivers/net/qlcnic/qlcnic_main.c
+index 01f09e7..f6c5d8c 100644
+--- a/drivers/net/qlcnic/qlcnic_main.c
++++ b/drivers/net/qlcnic/qlcnic_main.c
+@@ -1176,6 +1176,7 @@ int qlcnic_diag_alloc_res(struct net_device *netdev, int test)
+ 	ret = qlcnic_fw_create_ctx(adapter);
+ 	if (ret) {
+ 		qlcnic_detach(adapter);
++		netif_device_attach(netdev);
+ 		return ret;
+ 	}
+ 

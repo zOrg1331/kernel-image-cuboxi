@@ -1,6 +1,6 @@
 /*
   FUSE: Filesystem in Userspace
-  Copyright (C) 2001-2008  Miklos Szeredi <miklos@szeredi.hu>
+  Copyright (C) 2001-2006  Miklos Szeredi <miklos@szeredi.hu>
 
   This program can be distributed under the terms of the GNU GPL.
   See the file COPYING.
@@ -23,7 +23,7 @@ static struct fuse_conn *fuse_ctl_file_conn_get(struct file *file)
 {
 	struct fuse_conn *fc;
 	mutex_lock(&fuse_mutex);
-	fc = file->f_path.dentry->d_inode->i_private;
+	fc = file->f_dentry->d_inode->u.generic_ip;
 	if (fc)
 		fc = fuse_conn_get(fc);
 	mutex_unlock(&fuse_mutex);
@@ -48,132 +48,15 @@ static ssize_t fuse_conn_waiting_read(struct file *file, char __user *buf,
 	size_t size;
 
 	if (!*ppos) {
-		long value;
 		struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
 		if (!fc)
 			return 0;
 
-		value = atomic_read(&fc->num_waiting);
-		file->private_data = (void *)value;
+		file->private_data=(void *)(long)atomic_read(&fc->num_waiting);
 		fuse_conn_put(fc);
 	}
 	size = sprintf(tmp, "%ld\n", (long)file->private_data);
 	return simple_read_from_buffer(buf, len, ppos, tmp, size);
-}
-
-static ssize_t fuse_conn_limit_read(struct file *file, char __user *buf,
-				    size_t len, loff_t *ppos, unsigned val)
-{
-	char tmp[32];
-	size_t size = sprintf(tmp, "%u\n", val);
-
-	return simple_read_from_buffer(buf, len, ppos, tmp, size);
-}
-
-static ssize_t fuse_conn_limit_write(struct file *file, const char __user *buf,
-				     size_t count, loff_t *ppos, unsigned *val,
-				     unsigned global_limit)
-{
-	unsigned long t;
-	char tmp[32];
-	unsigned limit = (1 << 16) - 1;
-	int err;
-
-	if (*ppos || count >= sizeof(tmp) - 1)
-		return -EINVAL;
-
-	if (copy_from_user(tmp, buf, count))
-		return -EINVAL;
-
-	tmp[count] = '\0';
-
-	err = strict_strtoul(tmp, 0, &t);
-	if (err)
-		return err;
-
-	if (!capable(CAP_SYS_ADMIN))
-		limit = min(limit, global_limit);
-
-	if (t > limit)
-		return -EINVAL;
-
-	*val = t;
-
-	return count;
-}
-
-static ssize_t fuse_conn_max_background_read(struct file *file,
-					     char __user *buf, size_t len,
-					     loff_t *ppos)
-{
-	struct fuse_conn *fc;
-	unsigned val;
-
-	fc = fuse_ctl_file_conn_get(file);
-	if (!fc)
-		return 0;
-
-	val = fc->max_background;
-	fuse_conn_put(fc);
-
-	return fuse_conn_limit_read(file, buf, len, ppos, val);
-}
-
-static ssize_t fuse_conn_max_background_write(struct file *file,
-					      const char __user *buf,
-					      size_t count, loff_t *ppos)
-{
-	unsigned val;
-	ssize_t ret;
-
-	ret = fuse_conn_limit_write(file, buf, count, ppos, &val,
-				    max_user_bgreq);
-	if (ret > 0) {
-		struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
-		if (fc) {
-			fc->max_background = val;
-			fuse_conn_put(fc);
-		}
-	}
-
-	return ret;
-}
-
-static ssize_t fuse_conn_congestion_threshold_read(struct file *file,
-						   char __user *buf, size_t len,
-						   loff_t *ppos)
-{
-	struct fuse_conn *fc;
-	unsigned val;
-
-	fc = fuse_ctl_file_conn_get(file);
-	if (!fc)
-		return 0;
-
-	val = fc->congestion_threshold;
-	fuse_conn_put(fc);
-
-	return fuse_conn_limit_read(file, buf, len, ppos, val);
-}
-
-static ssize_t fuse_conn_congestion_threshold_write(struct file *file,
-						    const char __user *buf,
-						    size_t count, loff_t *ppos)
-{
-	unsigned val;
-	ssize_t ret;
-
-	ret = fuse_conn_limit_write(file, buf, count, ppos, &val,
-				    max_user_congthresh);
-	if (ret > 0) {
-		struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
-		if (fc) {
-			fc->congestion_threshold = val;
-			fuse_conn_put(fc);
-		}
-	}
-
-	return ret;
 }
 
 static const struct file_operations fuse_ctl_abort_ops = {
@@ -186,23 +69,11 @@ static const struct file_operations fuse_ctl_waiting_ops = {
 	.read = fuse_conn_waiting_read,
 };
 
-static const struct file_operations fuse_conn_max_background_ops = {
-	.open = nonseekable_open,
-	.read = fuse_conn_max_background_read,
-	.write = fuse_conn_max_background_write,
-};
-
-static const struct file_operations fuse_conn_congestion_threshold_ops = {
-	.open = nonseekable_open,
-	.read = fuse_conn_congestion_threshold_read,
-	.write = fuse_conn_congestion_threshold_write,
-};
-
 static struct dentry *fuse_ctl_add_dentry(struct dentry *parent,
 					  struct fuse_conn *fc,
 					  const char *name,
 					  int mode, int nlink,
-					  const struct inode_operations *iop,
+					  struct inode_operations *iop,
 					  const struct file_operations *fop)
 {
 	struct dentry *dentry;
@@ -227,7 +98,7 @@ static struct dentry *fuse_ctl_add_dentry(struct dentry *parent,
 		inode->i_op = iop;
 	inode->i_fop = fop;
 	inode->i_nlink = nlink;
-	inode->i_private = fc;
+	inode->u.generic_ip = fc;
 	d_add(dentry, inode);
 	return dentry;
 }
@@ -245,8 +116,8 @@ int fuse_ctl_add_conn(struct fuse_conn *fc)
 		return 0;
 
 	parent = fuse_control_sb->s_root;
-	inc_nlink(parent->d_inode);
-	sprintf(name, "%u", fc->dev);
+	parent->d_inode->i_nlink++;
+	sprintf(name, "%llu", (unsigned long long) fc->id);
 	parent = fuse_ctl_add_dentry(parent, fc, name, S_IFDIR | 0500, 2,
 				     &simple_dir_inode_operations,
 				     &simple_dir_operations);
@@ -254,14 +125,9 @@ int fuse_ctl_add_conn(struct fuse_conn *fc)
 		goto err;
 
 	if (!fuse_ctl_add_dentry(parent, fc, "waiting", S_IFREG | 0400, 1,
-				 NULL, &fuse_ctl_waiting_ops) ||
+				NULL, &fuse_ctl_waiting_ops) ||
 	    !fuse_ctl_add_dentry(parent, fc, "abort", S_IFREG | 0200, 1,
-				 NULL, &fuse_ctl_abort_ops) ||
-	    !fuse_ctl_add_dentry(parent, fc, "max_background", S_IFREG | 0600,
-				 1, NULL, &fuse_conn_max_background_ops) ||
-	    !fuse_ctl_add_dentry(parent, fc, "congestion_threshold",
-				 S_IFREG | 0600, 1, NULL,
-				 &fuse_conn_congestion_threshold_ops))
+				 NULL, &fuse_ctl_abort_ops))
 		goto err;
 
 	return 0;
@@ -284,11 +150,11 @@ void fuse_ctl_remove_conn(struct fuse_conn *fc)
 
 	for (i = fc->ctl_ndents - 1; i >= 0; i--) {
 		struct dentry *dentry = fc->ctl_dentry[i];
-		dentry->d_inode->i_private = NULL;
+		dentry->d_inode->u.generic_ip = NULL;
 		d_drop(dentry);
 		dput(dentry);
 	}
-	drop_nlink(fuse_control_sb->s_root->d_inode);
+	fuse_control_sb->s_root->d_inode->i_nlink--;
 }
 
 static int fuse_ctl_fill_super(struct super_block *sb, void *data, int silent)
@@ -327,12 +193,8 @@ static int fuse_ctl_get_sb(struct file_system_type *fs_type, int flags,
 
 static void fuse_ctl_kill_sb(struct super_block *sb)
 {
-	struct fuse_conn *fc;
-
 	mutex_lock(&fuse_mutex);
 	fuse_control_sb = NULL;
-	list_for_each_entry(fc, &fuse_conn_list, entry)
-		fc->ctl_ndents = 0;
 	mutex_unlock(&fuse_mutex);
 
 	kill_litter_super(sb);

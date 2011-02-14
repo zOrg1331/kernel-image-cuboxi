@@ -1,0 +1,88 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch] Fix broken AltSysrq-F (Force OOM kill functionality)
+Date: Thu, 12 Jul 2007 14:12:10 -0400
+Bugzilla: 251731
+Message-Id: <46966EFA.1070504@redhat.com>
+Changelog: [misc] Fix broken AltSysrq-F
+
+
+
+Back in RHEL5-GA timeframe I ported the RHEL4 out_of_memory() logic
+to RHEL5 because it OOM killed much to aggressively.   That change broke
+the new AltSysrq-F/Force OOM kill functionality that was introduce in the
+2.6.17 timeframe.  Actually it didnt "break" the functionality, it 
+"changed" it
+so that multiple AltSysrq-F keystrokes are required to manually OOM kill
+a task.  This isnt a very big deal since no one is going to be forcing 
+OOM kills
+via AltSysrq so its not worth respinning for just this but, it is broken 
+and should
+be fixed some time.  The following patch fixes that problem:
+
+
+
+--- linux-2.6.18.noarch/drivers/char/sysrq.c.orig
++++ linux-2.6.18.noarch/drivers/char/sysrq.c
+@@ -252,7 +252,7 @@ static struct sysrq_key_op sysrq_term_op
+ static void moom_callback(void *ignored)
+ {
+ 	out_of_memory(&NODE_DATA(0)->node_zonelists[ZONE_NORMAL],
+-			GFP_KERNEL, 0);
++			GFP_KERNEL, 0, 1);
+ }
+ 
+ static DECLARE_WORK(moom_work, moom_callback, NULL);
+--- linux-2.6.18.noarch/include/linux/swap.h.orig
++++ linux-2.6.18.noarch/include/linux/swap.h
+@@ -159,7 +159,7 @@ struct swap_list_t {
+ #define vm_swap_full() (nr_swap_pages*2 < total_swap_pages)
+ 
+ /* linux/mm/oom_kill.c */
+-extern void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order);
++extern void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order, int force);
+ extern int register_oom_notifier(struct notifier_block *nb);
+ extern int unregister_oom_notifier(struct notifier_block *nb);
+ 
+--- linux-2.6.18.noarch/mm/oom_kill.c.orig
++++ linux-2.6.18.noarch/mm/oom_kill.c
+@@ -443,7 +443,7 @@ EXPORT_SYMBOL_GPL(unregister_oom_notifie
+  * OR try to be smart about which process to kill. Note that we
+  * don't have to be perfect here, we just have to be good.
+  */
+-void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
++void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order, int force)
+ {
+ 	struct task_struct *p;
+ 	unsigned long points = 0;
+@@ -454,6 +454,9 @@ void out_of_memory(struct zonelist *zone
+ 		/* Got some memory back in the last second. */
+ 		return;
+ 
++	if (!should_oom_kill() && !force)
++		return;
++
+ 	if (printk_ratelimit()) {
+ 		printk(KERN_WARNING "%s invoked oom-killer: "
+ 		"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
+@@ -462,9 +465,6 @@ void out_of_memory(struct zonelist *zone
+ 		show_mem();
+ 	}
+ 
+-	if (!should_oom_kill())
+-		return;
+-
+ 	cpuset_lock();
+ 	read_lock(&tasklist_lock);
+ 
+--- linux-2.6.18.noarch/mm/page_alloc.c.orig
++++ linux-2.6.18.noarch/mm/page_alloc.c
+@@ -1026,7 +1026,7 @@ rebalance:
+ 		if (page)
+ 			goto got_pg;
+ 
+-		out_of_memory(zonelist, gfp_mask, order);
++		out_of_memory(zonelist, gfp_mask, order, 0);
+ 		goto restart;
+ 	}
+ 
+

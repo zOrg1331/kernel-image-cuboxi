@@ -1,0 +1,38 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 10 Nov 2009 13:25:29 -0500
+Subject: [pci] aer: fix ppc64 compile - no msi support
+Message-id: <4AF969C9.2050802@redhat.com>
+Patchwork-id: 21343
+O-Subject: Re: [RHEL5 PATCH 8/8]: AER: Fix ppc64 compile - no msi support [v2]
+Bugzilla: 514442 517093
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Make sure ppc64 compiles properly.
+
+Successfully compiled by me.
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2067649
+
+Resolves BZ 517093 and 514442.
+
+diff --git a/arch/powerpc/kernel/msi.c b/arch/powerpc/kernel/msi.c
+index d4d96a0..42ef6e7 100644
+--- a/arch/powerpc/kernel/msi.c
++++ b/arch/powerpc/kernel/msi.c
+@@ -752,3 +752,15 @@ void pci_scan_msi_device(struct pci_dev *dev)
+ {
+ 	return;
+ }
++
++/**
++ * pci_msi_enabled - is MSI enabled?
++ *
++ * Returns true if MSI has not been disabled by the command-line option
++ * pci=nomsi.
++ **/
++int pci_msi_enabled(void)
++{
++	return pci_msi_enable;
++}
++EXPORT_SYMBOL(pci_msi_enabled);

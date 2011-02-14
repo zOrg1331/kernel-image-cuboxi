@@ -1,0 +1,34 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Wed, 20 Aug 2008 11:08:33 -0400
+Subject: [sound] HDMI Audio: new PCI device ID
+Message-id: 20080820151004.11997.40669.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH]: AMD - New PCI Device ID to ensure HDMI Audio support
+Bugzilla: 459221
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Resolves BZ 459221
+
+Adding support (device ID only) for AMD RS880 HDMI audio ensure HDMI support
+we added into RHEL5.2 can be utilized and continues to work on AMD systems with
+a newer ATI board.
+
+Code upstream (accepted by ALSA):
+http://git.alsa-project.org/?p=alsa-kernel.git;a=blobdiff;f=sound/pci/hda/hda_intel.c;h=a73d6ca0a90655104c48b7ea50b4089815de5b70;hp=ef9f072b47fcc65749729d22fa8e1390c1f8a8de;hb=45fc3c4d9b7ab12798af43a73aea53eeecd16acf;hpb=96348852cf8ff5597a39e866838679b3a9a38947
+
+Please review and ACK.
+
+diff --git a/sound/pci/hda/hda_intel.c b/sound/pci/hda/hda_intel.c
+index b008ad3..490ac59 100644
+--- a/sound/pci/hda/hda_intel.c
++++ b/sound/pci/hda/hda_intel.c
+@@ -2279,6 +2279,7 @@ static struct pci_device_id azx_ids[] = {
+ 	{ PCI_DEVICE(0x1002, 0x793b), .driver_data = AZX_DRIVER_ATIHDMI },
+ 	{ PCI_DEVICE(0x1002, 0x7919), .driver_data = AZX_DRIVER_ATIHDMI },
+ 	{ PCI_DEVICE(0x1002, 0x960f), .driver_data = AZX_DRIVER_ATIHDMI },
++	{ PCI_DEVICE(0x1002, 0x970f), .driver_data = AZX_DRIVER_ATIHDMI },
+ 	{ PCI_DEVICE(0x1002, 0xaa00), .driver_data = AZX_DRIVER_ATIHDMI },
+ 	{ PCI_DEVICE(0x1002, 0xaa08), .driver_data = AZX_DRIVER_ATIHDMI },
+ 	{ PCI_DEVICE(0x1002, 0xaa10), .driver_data = AZX_DRIVER_ATIHDMI },

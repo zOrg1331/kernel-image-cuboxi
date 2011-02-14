@@ -1,0 +1,45 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Tue, 18 Mar 2008 15:59:46 -0400
+Subject: [x86] fix 4 bit apicid assumption
+Message-id: 20080318195946.GA17749@samurai.boston.redhat.com
+O-Subject: [RHEL5.2] i386: fix 4 bit apicid assumption (bz 437820)
+Bugzilla: 437820
+
+HP reported that on a new Thurley dual-socket system, if they installed only
+one chip, the i386 kernel boots if it's one one socket, but not if it's in the
+other. Intel tracked this down to needing >4-bit apic ids. This patch follows
+upstream to extend them to 8 bits.
+
+HP took my test kernels and verified the fix.
+
+Please ACK.
+
+- Geoff
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/include/asm-i386/mach-default/mach_apicdef.h b/include/asm-i386/mach-default/mach_apicdef.h
+index 7bcb350..ae98413 100644
+--- a/include/asm-i386/mach-default/mach_apicdef.h
++++ b/include/asm-i386/mach-default/mach_apicdef.h
+@@ -1,11 +1,17 @@
+ #ifndef __ASM_MACH_APICDEF_H
+ #define __ASM_MACH_APICDEF_H
+ 
++#include <asm/apic.h>
++
+ #define		APIC_ID_MASK		(0xF<<24)
+ 
+ static inline unsigned get_apic_id(unsigned long x) 
+ { 
+-	return (((x)>>24)&0xF);
++	unsigned int ver = GET_APIC_VERSION(apic_read(APIC_LVR));
++	if (APIC_XAPIC(ver))
++		return (((x)>>24)&0xFF);
++	else
++		return (((x)>>24)&0xF);
+ } 
+ 
+ #define		GET_APIC_ID(x)	get_apic_id(x)

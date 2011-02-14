@@ -1,0 +1,62 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Thu, 23 Apr 2009 16:00:50 -0400
+Subject: [trace] add 'success' to sched_wakeup/sched_wakeup_new
+Message-id: 20090423200050.GC3118@redhat.com
+O-Subject: [5.4 patch] add 'success' to sched_wakeup and sched_wakeup_new tracepoints
+Bugzilla: 497414
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+hi,
+
+Currently we don't know whether or not a scheduler 'wakeup' is
+successful or not via the tracepoints. Add, a new 'success' argument to
+give us this information. This matches what is already upstream.
+resolves bz #497414.
+
+thanks,
+
+-Jason
+
+diff --git a/include/trace/sched.h b/include/trace/sched.h
+index c22f968..66c0889 100644
+--- a/include/trace/sched.h
++++ b/include/trace/sched.h
+@@ -13,11 +13,11 @@ DEFINE_TRACE(deactivate_task,
+ 	TPPROTO(struct task_struct *p, struct rq *rq),
+ 	TPARGS(p, rq));
+ DEFINE_TRACE(sched_wakeup,
+-	TPPROTO(struct rq *rq, struct task_struct *p),
+-	TPARGS(rq, p));
++	TPPROTO(struct rq *rq, struct task_struct *p, int success),
++	TPARGS(rq, p, success));
+ DEFINE_TRACE(sched_wakeup_new,
+-	TPPROTO(struct rq *rq, struct task_struct *p),
+-	TPARGS(rq, p));
++	TPPROTO(struct rq *rq, struct task_struct *p, int success),
++	TPARGS(rq, p, success));
+ DEFINE_TRACE(sched_switch,
+ 	TPPROTO(struct rq *rq, struct task_struct *prev,
+ 		struct task_struct *next),
+diff --git a/kernel/sched.c b/kernel/sched.c
+index c375fe0..7a62c3e 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -1582,7 +1582,7 @@ out_activate:
+ 	success = 1;
+ 
+ out_running:
+-	trace_sched_wakeup(rq, p);
++	trace_sched_wakeup(rq, p, success);
+ 	p->state = TASK_RUNNING;
+ out:
+ 	task_rq_unlock(rq, &flags);
+@@ -1748,7 +1748,7 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
+ 	}
+ 	current->sleep_avg = JIFFIES_TO_NS(CURRENT_BONUS(current) *
+ 		PARENT_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
+-	trace_sched_wakeup_new(this_rq, p);
++	trace_sched_wakeup_new(this_rq, p, 1);
+ 	task_rq_unlock(this_rq, &flags);
+ }
+ 

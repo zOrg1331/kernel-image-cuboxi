@@ -1,0 +1,71 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 7 Dec 2009 22:25:54 -0500
+Subject: Revert: [scsi] fix inconsistent usage of max_lun
+Message-id: <20091207222554.GA6033@dhcp-210.hsv.redhat.com>
+Patchwork-id: 21741
+O-Subject: [RHEL5.5 PATCH] revert SCSI: fix inconsistent usage of max_lun
+Bugzilla: 531488
+
+Patch has been reverted upstream, please revert patch
+for BZ 531488.
+
+http://www.spinics.net/lists/linux_scsi/msg40958.html
+
+Thanks,
+David
+
+ drivers/scsi/3w-xxxx.c           |    2 +-
+ drivers/scsi/scsi_scan.c         |    4 ++--
+ drivers/scsi/scsi_transport_fc.c |    2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/scsi/3w-xxxx.c b/drivers/scsi/3w-xxxx.c
+index 77f1ac3..89addb8 100644
+--- a/drivers/scsi/3w-xxxx.c
++++ b/drivers/scsi/3w-xxxx.c
+@@ -2385,7 +2385,7 @@ static int __devinit tw_probe(struct pci_dev *pdev, const struct pci_device_id *
+ 	host->max_cmd_len = TW_MAX_CDB_LEN;
+ 
+ 	/* Luns and channels aren't supported by adapter */
+-	host->max_lun = 1;
++	host->max_lun = 0;
+ 	host->max_channel = 0;
+ 
+ 	/* Register the card with the kernel SCSI layer */
+diff --git a/drivers/scsi/scsi_scan.c b/drivers/scsi/scsi_scan.c
+index d2b22ea..3569200 100644
+--- a/drivers/scsi/scsi_scan.c
++++ b/drivers/scsi/scsi_scan.c
+@@ -1317,7 +1317,7 @@ static int scsi_report_lun_scan(struct scsi_target *starget, int bflags,
+ 			for (i = 0; i < sizeof(struct scsi_lun); i++)
+ 				printk("%02x", data[i]);
+ 			printk(" has a LUN larger than currently supported.\n");
+-		} else if (lun >= sdev->host->max_lun) {
++		} else if (lun > sdev->host->max_lun) {
+ 			printk(KERN_WARNING "scsi: %s lun%d has a LUN larger"
+ 			       " than allowed by the host adapter\n",
+ 			       devname, lun);
+@@ -1521,7 +1521,7 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
+ 
+ 	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
+ 	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
+-	    ((lun != SCAN_WILD_CARD) && (lun >= shost->max_lun)))
++	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&shost->scan_mutex);
+diff --git a/drivers/scsi/scsi_transport_fc.c b/drivers/scsi/scsi_transport_fc.c
+index 042d027..0534988 100644
+--- a/drivers/scsi/scsi_transport_fc.c
++++ b/drivers/scsi/scsi_transport_fc.c
+@@ -1494,7 +1494,7 @@ fc_user_scan(struct Scsi_Host *shost, uint channel, uint id, uint lun)
+ 
+ 	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
+ 	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
+-	    ((lun != SCAN_WILD_CARD) && (lun >= shost->max_lun)))
++	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
+ 		return -EINVAL;
+ 
+ 	if (channel == SCAN_WILD_CARD) {

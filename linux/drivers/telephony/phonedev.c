@@ -8,7 +8,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Author:      Alan Cox, <alan@lxorguk.ukuu.org.uk>
+ * Author:      Alan Cox, <alan@redhat.com>
  *
  * Fixes:       Mar 01 2000 Thomas Sparr, <thomas.l.sparr@telia.com>
  *              phone_register_device now works with unit!=PHONE_UNIT_ANY
@@ -120,13 +120,14 @@ int phone_register_device(struct phone_device *p, int unit)
 void phone_unregister_device(struct phone_device *pfd)
 {
 	mutex_lock(&phone_lock);
-	if (likely(phone_device[pfd->minor] == pfd))
-		phone_device[pfd->minor] = NULL;
+	if (phone_device[pfd->minor] != pfd)
+		panic("phone: bad unregister");
+	phone_device[pfd->minor] = NULL;
 	mutex_unlock(&phone_lock);
 }
 
 
-static const struct file_operations phone_fops =
+static struct file_operations phone_fops =
 {
 	.owner		= THIS_MODULE,
 	.open		= phone_open,

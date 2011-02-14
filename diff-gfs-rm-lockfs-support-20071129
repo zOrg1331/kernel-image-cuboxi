@@ -1,0 +1,13 @@
+diff --git a/fs/gfs/ops_super.c b/fs/gfs/ops_super.c
+index 52338ef..9963bf9 100644
+--- a/fs/gfs/ops_super.c
++++ b/fs/gfs/ops_super.c
+@@ -485,8 +485,6 @@ struct super_operations gfs_super_ops = {
+ 	.put_inode = gfs_put_inode,
+ 	.put_super = gfs_put_super,
+ 	.write_super = gfs_write_super,
+-	.write_super_lockfs = gfs_write_super_lockfs,
+-	.unlockfs = gfs_unlockfs,
+ 	.statfs = gfs_statfs,
+ 	.remount_fs = gfs_remount_fs,
+ 	.delete_inode = gfs_delete_inode,

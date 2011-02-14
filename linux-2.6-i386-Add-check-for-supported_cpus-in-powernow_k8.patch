@@ -1,0 +1,97 @@
+From 1a6ba2fd5245635580f98719684bd358d50a7aa2 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 3 Jul 2008 16:45:23 -0400
+Subject: [PATCH] [i386]: Add check for supported_cpus in powernow_k8 driver
+
+Message-id: <20080529183246.25038.2421.sendpatchset@prarit.bos.redhat.com>
+O-Subject: [RHEL5 PATCH 2/2]: Add check for supported_cpus in powernow_k8 driver
+Bugzilla: 443853
+
+
+Rework powernowk8_init function so that it bails immediately if
+supported_cpus != num_online_cpus.
+
+Upstream code is very simple, does not perform the blacklist check, and
+we've already significantly diverged from it.
+
+Resolves BZ 443853.
+
+Compile tested by me.  Testing ongoing by notting.
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+Acked-by: Brian Maly <bmaly@redhat.com>
+---
+ arch/i386/kernel/cpu/cpufreq/powernow-k8.c |   46 +++++++++++++--------------
+ 1 files changed, 22 insertions(+), 24 deletions(-)
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index f2e17da..e478246 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -1421,6 +1421,9 @@ static int __cpuinit powernowk8_init(void)
+ 			supported_cpus++;
+ 	}
+ 
++	if (supported_cpus != num_online_cpus())
++		return -ENODEV;
++
+ 	/* AMD provides AGESA library modules for use in their BIOS. The
+ 	   default AGESA code creates the _PSD with the assumption the APICs
+ 	   are numbered per the BKDG HOWEVER, there is a callback
+@@ -1454,34 +1457,29 @@ static int __cpuinit powernowk8_init(void)
+ 	tscsync = 0;
+ #endif
+ 
+-	if (supported_cpus == num_online_cpus()) {
+-		if (tscsync) {
+-			req_state = kzalloc(sizeof(int)*NR_CPUS, GFP_KERNEL);
+-			if (!req_state) {
+-				printk(KERN_ERR PFX "Unable to allocate memory!\n");
+-				return -ENOMEM;
+-			}
+-			/* necessary for dual-cores (99=just a large number) */
+-			for(i=0; i < num_possible_cpus(); i++)
+-				req_state[i] = 99;
++	if (tscsync) {
++		req_state = kzalloc(sizeof(int)*NR_CPUS, GFP_KERNEL);
++		if (!req_state) {
++			printk(KERN_ERR PFX "Unable to allocate memory!\n");
++			return -ENOMEM;
+ 		}
+-		if (powernow_k8_cpu_preinit_acpi())
+-			printk(KERN_ERR PFX "Pre-initialization of ACPI failed"
+-			       "\n");
++		/* necessary for dual-cores (99=just a large number) */
++		for(i=0; i < num_possible_cpus(); i++)
++			req_state[i] = 99;
++	}
++	if (powernow_k8_cpu_preinit_acpi())
++		printk(KERN_ERR PFX "Pre-initialization of ACPI failed\n");
+ #ifdef CONFIG_SMP
+-		printk(KERN_INFO PFX "Found %d %s "
+-		       "processors (%d cpu cores) (" VERSION ")\n",
+-		       supported_cpus/cpu_data[0].booted_cores,
+-		       boot_cpu_data.x86_model_id, supported_cpus);
++	printk(KERN_INFO PFX "Found %d %s "
++	       "processors (%d cpu cores) (" VERSION ")\n",
++	       supported_cpus/cpu_data[0].booted_cores,
++	       boot_cpu_data.x86_model_id, supported_cpus);
+ #else
+-		printk(KERN_INFO PFX "Found 1 %s "
+-		       "processors (%d cpu cores) (" VERSION ")\n",
+-		       boot_cpu_data.x86_model_id, supported_cpus);
++	printk(KERN_INFO PFX "Found 1 %s "
++	       "processors (%d cpu cores) (" VERSION ")\n",
++	       boot_cpu_data.x86_model_id, supported_cpus);
+ #endif
+-		return cpufreq_register_driver(&cpufreq_amd64_driver);
+-	}
+-
+-	return -ENODEV;
++	return cpufreq_register_driver(&cpufreq_amd64_driver);
+ }
+ 
+ /* driver entry point for term */
+-- 
+1.5.5.1
+

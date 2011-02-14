@@ -60,12 +60,9 @@ SECTIONS {
 #endif
 
 	.text : {
-		_text = .;
 		_stext = . ;
-		HEAD_TEXT
-		TEXT_TEXT
+        	*(.text)
 		SCHED_TEXT
-		LOCK_TEXT
         	*(.text.lock)
 
 		. = ALIGN(16);          /* Exception table              */
@@ -75,7 +72,6 @@ SECTIONS {
 
 		*(.rodata) *(.rodata.*)
 		*(__vermagic)		/* Kernel version magic */
-		*(__markers_strings)
 		*(.rodata1)
 		*(.rodata.str1.1)
 
@@ -89,16 +85,6 @@ SECTIONS {
 		__start___ksymtab_gpl = .;
 		*(__ksymtab_gpl)
 		__stop___ksymtab_gpl = .;
-
-		/* Kernel symbol table: Normal unused symbols */
-		__start___ksymtab_unused = .;
-		*(__ksymtab_unused)
-		__stop___ksymtab_unused = .;
-
-		/* Kernel symbol table: GPL-only unused symbols */
-		__start___ksymtab_unused_gpl = .;
-		*(__ksymtab_unused_gpl)
-		__stop___ksymtab_unused_gpl = .;
 
 		/* Kernel symbol table: GPL-future symbols */
 		__start___ksymtab_gpl_future = .;
@@ -114,16 +100,6 @@ SECTIONS {
 		__start___kcrctab_gpl = .;
 		*(__kcrctab_gpl)
 		__stop___kcrctab_gpl = .;
-
-		/* Kernel symbol table: Normal unused symbols */
-		__start___kcrctab_unused = .;
-		*(__kcrctab_unused)
-		__stop___kcrctab_unused = .;
-
-		/* Kernel symbol table: GPL-only unused symbols */
-		__start___kcrctab_unused_gpl = .;
-		*(__kcrctab_unused_gpl)
-		__stop___kcrctab_unused_gpl = .;
 
 		/* Kernel symbol table: GPL-future symbols */
 		__start___kcrctab_gpl_future = .;
@@ -146,9 +122,7 @@ SECTIONS {
 	.data DATA_ADDR : {
 		. = ALIGN(4);
 		_sdata = . ;
-		DATA_DATA
-		. = ALIGN(32);
-		*(.data.cacheline_aligned)
+		*(.data)
 		. = ALIGN(8192) ;
 		*(.data.init_task)
 		_edata = . ;
@@ -158,15 +132,21 @@ SECTIONS {
 		. = ALIGN(4096);
 		__init_begin = .;
 		_sinittext = .;
-		INIT_TEXT
+		*(.init.text)
 		_einittext = .;
-		INIT_DATA
+		*(.init.data)
 		. = ALIGN(16);
 		__setup_start = .;
 		*(.init.setup)
 		__setup_end = .;
 		__initcall_start = .;
-		INITCALLS
+		*(.initcall1.init)
+		*(.initcall2.init)
+		*(.initcall3.init)
+		*(.initcall4.init)
+		*(.initcall5.init)
+		*(.initcall6.init)
+		*(.initcall7.init)
 		__initcall_end = .;
 		__con_initcall_start = .;
 		*(.con_initcall.init)
@@ -174,15 +154,19 @@ SECTIONS {
 		__security_initcall_start = .;
 		*(.security_initcall.init)
 		__security_initcall_end = .;
-#ifdef CONFIG_BLK_DEV_INITRD
 		. = ALIGN(4);
 		__initramfs_start = .;
 		*(.init.ramfs)
 		__initramfs_end = .;
-#endif
 		. = ALIGN(4096);
 		__init_end = .;
 	} > INIT
+
+	/DISCARD/ : {
+		*(.exit.text)
+		*(.exit.data)
+		*(.exitcall.exit)
+	}
 
 	.bss : {
 		. = ALIGN(4);
@@ -191,9 +175,7 @@ SECTIONS {
 		*(COMMON)
 		. = ALIGN(4) ;
 		_ebss = . ;
-	 	_end = . ;
 	} > BSS
 
-	DISCARDS
 }
 

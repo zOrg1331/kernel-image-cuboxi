@@ -1,0 +1,164 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 11 Jan 2008 16:22:34 -0500
+Subject: [xen] hvm: evtchn to fake pci interrupt propagation
+Message-id: 4787DE1A.6050501@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen][2/4]: High Intr and Softintr rate in HVM's with pv-on-hvm drivers
+Bugzilla: 412721
+
+Patch 2/4: hvm-evtchn-to-fake-pci-intr-3-1.patch
+
+This is the core/major portion of the fix.
+
+It is the xen-3.1-testing upstream patch verbatim, cset 15991:
+   http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev/5a64f1bf9460
+
+It is a backport of the xen-unstable evtchn-to-fake pci interrupt patch,
+which resolved the problem for xen-3.2.0 hypervisor.
+
+Please review & ACK.
+
+- Don
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1199965759 0
+# Node ID 48c800d5a3718a4a8115c02fc0b76d16f85d35f8
+# Parent 337dc1a3f7ca3663d7c057576acb293b08e7a70f
+hvm: Fix evtchn-to-fake-pci interrupt propagation.
+
+Previously the evtchn_upcall_pending flag would only ever be sampled
+on VCPU0, possibly leading to long delays in deasserting the
+fake-pci-device INTx line if the interrupt is actually delivered to
+other than VCPU0.
+
+Diagnosed by Ian Jackson <ian.jackson@eu.citrix.com>
+
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+xen-unstable changeset:   16692:9865d5e82802fda2ac842c0c28a0833f2126551f
+xen-unstable date:        Tue Jan 08 15:55:29 2008 +0000
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/irq.c b/arch/x86/hvm/irq.c
+index 6b5f387..25ada54 100644
+--- a/arch/x86/hvm/irq.c
++++ b/arch/x86/hvm/irq.c
+@@ -125,17 +125,13 @@ void hvm_isa_irq_deassert(
+     spin_unlock(&d->arch.hvm_domain.irq_lock);
+ }
+ 
+-void hvm_set_callback_irq_level(void)
++static void hvm_set_callback_irq_level(struct vcpu *v)
+ {
+-    struct vcpu *v = current;
+     struct domain *d = v->domain;
+     struct hvm_irq *hvm_irq = &d->arch.hvm_domain.irq;
+     unsigned int gsi, pdev, pintx, asserted;
+ 
+-    /* Fast lock-free tests. */
+-    if ( (v->vcpu_id != 0) ||
+-         (hvm_irq->callback_via_type == HVMIRQ_callback_none) )
+-        return;
++    ASSERT(v->vcpu_id == 0);
+ 
+     spin_lock(&d->arch.hvm_domain.irq_lock);
+ 
+@@ -177,6 +173,22 @@ void hvm_set_callback_irq_level(void)
+     spin_unlock(&d->arch.hvm_domain.irq_lock);
+ }
+ 
++void hvm_maybe_deassert_evtchn_irq(void)
++{
++    struct domain *d = current->domain;
++    struct hvm_irq *hvm_irq = &d->arch.hvm_domain.irq;
++
++    if ( hvm_irq->callback_via_asserted &&
++         !vcpu_info(d->vcpu[0], evtchn_upcall_pending) )
++        hvm_set_callback_irq_level(d->vcpu[0]);
++}
++
++void hvm_assert_evtchn_irq(struct vcpu *v)
++{
++    if ( v->vcpu_id == 0 )
++        hvm_set_callback_irq_level(v);
++}
++
+ void hvm_set_pci_link_route(struct domain *d, u8 link, u8 isa_irq)
+ {
+     struct hvm_irq *hvm_irq = &d->arch.hvm_domain.irq;
+@@ -337,15 +349,10 @@ int is_isa_irq_masked(struct vcpu *v, int isa_irq)
+             domain_vioapic(v->domain)->redirtbl[gsi].fields.mask);
+ }
+ 
+-/*
+- * TODO: 1. Should not need special treatment of event-channel events.
+- *       2. Should take notice of interrupt shadows (or clear them).
+- */
+ int hvm_local_events_need_delivery(struct vcpu *v)
+ {
+-    int pending;
++    int pending = cpu_has_pending_irq(v);
+ 
+-    pending = (vcpu_info(v, evtchn_upcall_pending) || cpu_has_pending_irq(v));
+     if ( unlikely(pending) )
+         pending = hvm_interrupts_enabled(v); 
+ 
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index e9325e8..4965376 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -124,7 +124,7 @@ asmlinkage void svm_intr_assist(void)
+ 
+     /* Crank the handle on interrupt state and check for new interrrupts. */
+     pt_update_irq(v);
+-    hvm_set_callback_irq_level();
++    hvm_maybe_deassert_evtchn_irq();
+     if ( !cpu_has_pending_irq(v) )
+         goto out;
+ 
+diff --git a/arch/x86/hvm/vmx/intr.c b/arch/x86/hvm/vmx/intr.c
+index 92e0f9c..0f6a0e2 100644
+--- a/arch/x86/hvm/vmx/intr.c
++++ b/arch/x86/hvm/vmx/intr.c
+@@ -115,7 +115,7 @@ asmlinkage void vmx_intr_assist(void)
+ 
+     pt_update_irq(v);
+ 
+-    hvm_set_callback_irq_level();
++    hvm_maybe_deassert_evtchn_irq();
+ 
+     update_tpr_threshold(vcpu_vlapic(v));
+ 
+diff --git a/include/asm-x86/event.h b/include/asm-x86/event.h
+index 32b157b..340ec44 100644
+--- a/include/asm-x86/event.h
++++ b/include/asm-x86/event.h
+@@ -31,7 +31,12 @@ static inline void vcpu_kick(struct vcpu *v)
+ 
+ static inline void vcpu_mark_events_pending(struct vcpu *v)
+ {
+-    if ( !test_and_set_bit(0, &vcpu_info(v, evtchn_upcall_pending)) )
++    if ( test_and_set_bit(0, &vcpu_info(v, evtchn_upcall_pending)) )
++        return;
++
++    if ( is_hvm_vcpu(v) )
++        hvm_assert_evtchn_irq(v);
++    else
+         vcpu_kick(v);
+ }
+ 
+diff --git a/include/asm-x86/hvm/irq.h b/include/asm-x86/hvm/irq.h
+index 1095e86..e46bdb4 100644
+--- a/include/asm-x86/hvm/irq.h
++++ b/include/asm-x86/hvm/irq.h
+@@ -112,7 +112,8 @@ void hvm_isa_irq_deassert(
+ 
+ void hvm_set_pci_link_route(struct domain *d, u8 link, u8 isa_irq);
+ 
+-void hvm_set_callback_irq_level(void);
++void hvm_maybe_deassert_evtchn_irq(void);
++void hvm_assert_evtchn_irq(struct vcpu *v);
+ void hvm_set_callback_via(struct domain *d, uint64_t via);
+ 
+ int cpu_get_interrupt(struct vcpu *v, int *type);

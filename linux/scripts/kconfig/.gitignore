@@ -6,11 +6,6 @@ lex.*.c
 *.tab.c
 *.tab.h
 zconf.hash.c
-*.moc
-lkc_defs.h
-gconf.glade.h
-*.pot
-*.mo
 
 #
 # configuration programs

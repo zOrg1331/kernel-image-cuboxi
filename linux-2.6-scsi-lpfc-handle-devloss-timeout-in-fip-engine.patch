@@ -1,0 +1,1177 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 17 Nov 2010 22:15:17 -0500
+Subject: [scsi] lpfc: handle devloss timeout in FIP engine
+Message-id: <1290032123-5584-3-git-send-email-revers@redhat.com>
+Patchwork-id: 29479
+O-Subject: [RHEL5.6 PATCH 2/8] lpfc: Properly handle devloss timeout during
+	various phases of FIP engine state transactions (CR: 109955)
+Bugzilla: 649489
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=649489
+
+diff --git a/drivers/scsi/lpfc/lpfc.h b/drivers/scsi/lpfc/lpfc.h
+index 4600ea2..84c4383 100644
+--- a/drivers/scsi/lpfc/lpfc.h
++++ b/drivers/scsi/lpfc/lpfc.h
+@@ -669,9 +669,11 @@ struct lpfc_hba {
+ #define ELS_XRI_ABORT_EVENT	0x40
+ #define ASYNC_EVENT		0x80
+ #define LINK_DISABLED		0x100 /* Link disabled by user */
+-#define FCF_DISC_INPROGRESS	0x200 /* FCF discovery in progress */
+-#define HBA_FIP_SUPPORT		0x400 /* FIP support in HBA */
+-#define HBA_AER_ENABLED         0x800 /* AER enabled with HBA */
++#define FCF_TS_INPROG           0x200 /* FCF table scan in progress */
++#define FCF_RR_INPROG           0x400 /* FCF roundrobin flogi in progress */
++#define HBA_FIP_SUPPORT		0x800 /* FIP support in HBA */
++#define HBA_AER_ENABLED		0x1000 /* AER enabled with HBA */
++#define HBA_DEVLOSS_TMO         0x2000 /* HBA in devloss timeout */
+ 	dma_addr_t slim2p_mapping;
+ 	uint32_t fcp_ring_in_use; /* When polling test if intr-hndlr active*/
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index b5c2cfd..1e595e0 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -160,7 +160,6 @@ void lpfc_els_retry_delay(unsigned long);
+ void lpfc_els_retry_delay_handler(struct lpfc_nodelist *);
+ void lpfc_reauth_node(unsigned long);
+ void lpfc_reauthentication_handler(struct lpfc_nodelist *);
+-void lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *);
+ void lpfc_els_unsol_event(struct lpfc_hba *, struct lpfc_sli_ring *,
+ 			  struct lpfc_iocbq *);
+ int lpfc_els_handle_rscn(struct lpfc_vport *);
+@@ -249,6 +248,7 @@ void lpfc_sli4_fcf_dead_failthrough(struct lpfc_hba *);
+ uint16_t lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *);
+ int lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *, uint16_t);
+ void lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *, uint16_t);
++int lpfc_sli4_fcf_rr_next_proc(struct lpfc_vport *, uint16_t);
+ 
+ int lpfc_mem_alloc(struct lpfc_hba *, int align);
+ void lpfc_mem_free(struct lpfc_hba *);
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index d50d217..cf2875c 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -800,7 +800,7 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 
+ 	if (irsp->ulpStatus) {
+ 		/*
+-		 * In case of FIP mode, perform round robin FCF failover
++		 * In case of FIP mode, perform roundrobin FCF failover
+ 		 * due to new FCF discovery
+ 		 */
+ 		if ((phba->hba_flag & HBA_FIP_SUPPORT) &&
+@@ -808,48 +808,16 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 		    (irsp->ulpStatus != IOSTAT_LOCAL_REJECT) &&
+ 		    (irsp->un.ulpWord[4] != IOERR_SLI_ABORTED)) {
+ 			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP | LOG_ELS,
+-					"2611 FLOGI failed on registered "
+-					"FCF record fcf_index(%d), status: "
+-					"x%x/x%x, tmo:x%x, trying to perform "
+-					"round robin failover\n",
++					"2611 FLOGI failed on FCF (x%x), "
++					"status:x%x/x%x, tmo:x%x, perform "
++					"roundrobin FCF failover\n",
+ 					phba->fcf.current_rec.fcf_indx,
+ 					irsp->ulpStatus, irsp->un.ulpWord[4],
+ 					irsp->ulpTimeout);
+ 			fcf_index = lpfc_sli4_fcf_rr_next_index_get(phba);
+-			if (fcf_index == LPFC_FCOE_FCF_NEXT_NONE) {
+-				/*
+-				 * Exhausted the eligible FCF record list,
+-				 * fail through to retry FLOGI on current
+-				 * FCF record.
+-				 */
+-				lpfc_printf_log(phba, KERN_WARNING,
+-						LOG_FIP | LOG_ELS,
+-						"2760 Completed one round "
+-						"of FLOGI FCF round robin "
+-						"failover list, retry FLOGI "
+-						"on currently registered "
+-						"FCF index:%d\n",
+-						phba->fcf.current_rec.fcf_indx);
+-			} else {
+-				lpfc_printf_log(phba, KERN_INFO,
+-						LOG_FIP | LOG_ELS,
+-						"2794 FLOGI FCF round robin "
+-						"failover to FCF index x%x\n",
+-						fcf_index);
+-				rc = lpfc_sli4_fcf_rr_read_fcf_rec(phba,
+-								   fcf_index);
+-				if (rc)
+-					lpfc_printf_log(phba, KERN_WARNING,
+-							LOG_FIP | LOG_ELS,
+-							"2761 FLOGI round "
+-							"robin FCF failover "
+-							"read FCF failed "
+-							"rc:x%x, fcf_index:"
+-							"%d\n", rc,
+-						phba->fcf.current_rec.fcf_indx);
+-				else
+-					goto out;
+-			}
++			rc = lpfc_sli4_fcf_rr_next_proc(vport, fcf_index);
++			if (rc)
++				goto out;
+ 		}
+ 
+ 		/* FLOGI failure */
+@@ -956,6 +924,7 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			lpfc_nlp_put(ndlp);
+ 			spin_lock_irq(&phba->hbalock);
+ 			phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
++			phba->hba_flag &= ~(FCF_RR_INPROG | HBA_DEVLOSS_TMO);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			goto out;
+ 		}
+@@ -964,13 +933,12 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			if (phba->hba_flag & HBA_FIP_SUPPORT)
+ 				lpfc_printf_vlog(vport, KERN_INFO, LOG_FIP |
+ 						LOG_ELS,
+-						"2769 FLOGI successful on FCF "
+-						"record: current_fcf_index:"
+-						"x%x, terminate FCF round "
+-						"robin failover process\n",
++						"2769 FLOGI to FCF (x%x) "
++						"completed successfully\n",
+ 						phba->fcf.current_rec.fcf_indx);
+ 			spin_lock_irq(&phba->hbalock);
+ 			phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
++			phba->hba_flag &= ~(FCF_RR_INPROG | HBA_DEVLOSS_TMO);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			goto out;
+ 		}
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index a95dcfd..a351f43 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -20,6 +20,7 @@
+  *******************************************************************/
+ 
+ #include <linux/blkdev.h>
++#include <linux/delay.h>
+ #include <linux/slab.h>
+ #include <linux/pci.h>
+ #include <linux/kthread.h>
+@@ -65,6 +66,7 @@ extern void lpfc_check_menlo_cfg(struct lpfc_hba *phba);
+ 
+ static void lpfc_disc_timeout_handler(struct lpfc_vport *);
+ static void lpfc_unregister_fcfi_cmpl(struct lpfc_hba *, LPFC_MBOXQ_t *);
++static int lpfc_fcf_inuse(struct lpfc_hba *);
+ 
+ extern void lpfc_dev_loss_delay(unsigned long ptr);
+ 
+@@ -192,11 +194,17 @@ lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
+ 	return;
+ }
+ 
+-/*
+- * This function is called from the worker thread when dev_loss_tmo
+- * expire.
+- */
+-void
++/**
++ * lpfc_dev_loss_tmo_handler - Remote node devloss timeout handler
++ * @ndlp: Pointer to remote node object.
++ *
++ * This function is called from the worker thread when devloss timeout timer
++ * expires. For SLI4 host, this routine shall return 1 when at lease one
++ * remote node, including this @ndlp, is still in use of FCF; otherwise, this
++ * routine shall return 0 when there is no remote node is still in use of FCF
++ * when devloss timeout happened to this @ndlp.
++ **/
++static int
+ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ {
+ 	struct lpfc_rport_data *rdata;
+@@ -207,17 +215,21 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 	int  put_node;
+ 	int  put_rport;
+ 	int warn_on = 0;
++	int fcf_inuse = 0;
+ 
+ 	rport = ndlp->rport;
+ 
+ 	if (!rport)
+-		return;
++		return fcf_inuse;
+ 
+ 	rdata = rport->dd_data;
+ 	name = (uint8_t *) &ndlp->nlp_portname;
+ 	vport = ndlp->vport;
+ 	phba  = vport->phba;
+ 
++	if (phba->sli_rev == LPFC_SLI_REV4)
++		fcf_inuse = lpfc_fcf_inuse(phba);
++
+ 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_RPORT,
+ 		"rport devlosstmo:did:x%x type:x%x id:x%x",
+ 		ndlp->nlp_DID, ndlp->nlp_type, rport->scsi_target_id);
+@@ -241,7 +253,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 			lpfc_nlp_put(ndlp);
+ 		if (put_rport)
+ 			put_device(&rport->dev);
+-		return;
++		return fcf_inuse;
+ 	}
+ 
+ 	if (ndlp->nlp_state == NLP_STE_MAPPED_NODE) {
+@@ -252,7 +264,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 				 *name, *(name+1), *(name+2), *(name+3),
+ 				 *(name+4), *(name+5), *(name+6), *(name+7),
+ 				 ndlp->nlp_DID);
+-		return;
++		return fcf_inuse;
+ 	}
+ 	/*
+ 	 * This is a workaround for an issue seen in the transport. If the
+@@ -272,7 +284,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 				 *(name+4), *(name+5), *(name+6), *(name+7),
+ 				 ndlp->nlp_DID,
+ 				 jiffies_to_msecs(jiffies-ndlp->unreg_time));
+-		return;
++		return fcf_inuse;
+ 	}
+ 
+ 	if (ndlp->nlp_type & NLP_FABRIC) {
+@@ -285,7 +297,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 			lpfc_nlp_put(ndlp);
+ 		if (put_rport)
+ 			put_device(&rport->dev);
+-		return;
++		return fcf_inuse;
+ 	}
+ 
+ 	if (!phba->cfg_dev_loss_initiator && rport->scsi_target_id == -1) {
+@@ -307,7 +319,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 			put_device(&rport->dev);
+ 		mod_timer(&ndlp->nlp_initiator_tmr,
+ 			  jiffies + HZ * vport->cfg_devloss_tmo);
+-		return;
++		return fcf_inuse;
+ 	}
+ 
+ 	if (ndlp->nlp_sid != NLP_NO_SID) {
+@@ -353,21 +365,75 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 	    (ndlp->nlp_state != NLP_STE_REG_LOGIN_ISSUE) &&
+ 	    (ndlp->nlp_state != NLP_STE_PRLI_ISSUE))
+ 		lpfc_disc_state_machine(vport, ndlp, NULL, NLP_EVT_DEVICE_RM);
++
++	return fcf_inuse;
+ }
+ 
+ /**
+  * lpfc_sli4_post_dev_loss_tmo_handler - SLI4 post devloss timeout handler
+  * @phba: Pointer to hba context object.
++ * @fcf_inuse: SLI4 FCF in-use state reported from devloss timeout handler.
++ * @nlp_did: remote node identifer with devloss timeout.
+  *
+- * This function is called from the worker thread post invoking devloss
+- * timeout handler and release the reference for the ndlp with which the
+- * devloss timeout was handled for SLI4 device. For the last remote node
+- * devloss timeout, when this rountine is invoked, it should be guaranteed
+- * that none of the remote are in-use with the FCF.
++ * This function is called from the worker thread after invoking devloss
++ * timeout handler and releasing the reference count for the ndlp with
++ * which the devloss timeout was handled for SLI4 host. For the devloss
++ * timeout of the last remote node which had been in use of FCF, when this
++ * routine is invoked, it shall be guaranteed that none of the remote are
++ * in-use of FCF. When devloss timeout to the last remote using the FCF,
++ * if the FIP engine is neither in FCF table scan process nor roundrobin
++ * failover process, the in-use FCF shall be unregistered. If the FIP
++ * engine is in FCF discovery process, the devloss timeout state shall
++ * be set for either the FCF table scan process or roundrobin failover
++ * process to unregister the in-use FCF.
+  **/
+ static void
+-lpfc_sli4_post_dev_loss_tmo_handler(struct lpfc_hba *phba)
++lpfc_sli4_post_dev_loss_tmo_handler(struct lpfc_hba *phba, int fcf_inuse,
++				    uint32_t nlp_did)
+ {
++	/* If devloss timeout happened to a remote node when FCF had no
++	 * longer been in-use, do nothing.
++	 */
++	if (!fcf_inuse)
++		return;
++
++	if ((phba->hba_flag & HBA_FIP_SUPPORT) && !lpfc_fcf_inuse(phba)) {
++		spin_lock_irq(&phba->hbalock);
++		if (phba->fcf.fcf_flag & FCF_DISCOVERY) {
++			if (phba->hba_flag & HBA_DEVLOSS_TMO) {
++				spin_unlock_irq(&phba->hbalock);
++				return;
++			}
++			phba->hba_flag |= HBA_DEVLOSS_TMO;
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2847 Last remote node (x%x) using "
++					"FCF devloss tmo\n", nlp_did);
++		}
++		if (phba->fcf.fcf_flag & FCF_REDISC_PROG) {
++			spin_unlock_irq(&phba->hbalock);
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2868 Devloss tmo to FCF rediscovery "
++					"in progress\n");
++			return;
++		}
++		if (!(phba->hba_flag & (FCF_TS_INPROG | FCF_RR_INPROG))) {
++			spin_unlock_irq(&phba->hbalock);
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2869 Devloss tmo to idle FIP engine, "
++					"unreg in-use FCF and rescan.\n");
++			/* Unregister in-use FCF and rescan */
++			lpfc_unregister_fcf_rescan(phba);
++			return;
++		}
++		spin_unlock_irq(&phba->hbalock);
++		if (phba->hba_flag & FCF_TS_INPROG)
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2870 FCF table scan in progress\n");
++		if (phba->hba_flag & FCF_RR_INPROG)
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2871 FLOGI roundrobin FCF failover "
++					"in progress\n");
++	}
+ 	lpfc_unregister_unused_fcf(phba);
+ }
+ 
+@@ -497,6 +563,8 @@ lpfc_work_list_done(struct lpfc_hba *phba)
+ 	struct lpfc_nodelist  *ndlp;
+ 	struct lpfc_vport     *vport;
+ 	int free_evt;
++	int fcf_inuse;
++	uint32_t nlp_did;
+ 
+ 	spin_lock_irq(&phba->hbalock);
+ 	while (!list_empty(&phba->work_list)) {
+@@ -552,14 +620,17 @@ lpfc_work_list_done(struct lpfc_hba *phba)
+ 			break;
+ 		case LPFC_EVT_DEV_LOSS:
+ 			ndlp = (struct lpfc_nodelist *)(evtp->evt_arg1);
+-			lpfc_dev_loss_tmo_handler(ndlp);
++			fcf_inuse = lpfc_dev_loss_tmo_handler(ndlp);
+ 			free_evt = 0;
+ 			/* decrement the node reference count held for
+ 			 * this queued work
+ 			 */
++			nlp_did = ndlp->nlp_DID;
+ 			lpfc_nlp_put(ndlp);
+ 			if (phba->sli_rev == LPFC_SLI_REV4)
+-				lpfc_sli4_post_dev_loss_tmo_handler(phba);
++				lpfc_sli4_post_dev_loss_tmo_handler(phba,
++								    fcf_inuse,
++								    nlp_did);
+ 			break;
+ 		case LPFC_EVT_ONLINE:
+ 			if (phba->link_state < LPFC_LINK_DOWN)
+@@ -1174,8 +1245,7 @@ lpfc_mbx_cmpl_reg_fcfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 			 "2017 REG_FCFI mbxStatus error x%x "
+ 			 "HBA state x%x\n",
+ 			 mboxq->u.mb.mbxStatus, vport->port_state);
+-		mempool_free(mboxq, phba->mbox_mem_pool);
+-		return;
++		goto fail_out;
+ 	}
+ 
+ 	/* Start FCoE discovery by sending a FLOGI. */
+@@ -1184,20 +1254,30 @@ lpfc_mbx_cmpl_reg_fcfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	spin_lock_irq(&phba->hbalock);
+ 	phba->fcf.fcf_flag |= FCF_REGISTERED;
+ 	spin_unlock_irq(&phba->hbalock);
++
+ 	/* If there is a pending FCoE event, restart FCF table scan. */
+-	if (lpfc_check_pending_fcoe_event(phba, 1)) {
+-		mempool_free(mboxq, phba->mbox_mem_pool);
+-		return;
+-	}
++	if (lpfc_check_pending_fcoe_event(phba, LPFC_UNREG_FCF))
++		goto fail_out;
++
++	/* Mark successful completion of FCF table scan */
+ 	spin_lock_irq(&phba->hbalock);
+ 	phba->fcf.fcf_flag |= (FCF_SCAN_DONE | FCF_IN_USE);
+-	phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+-	spin_unlock_irq(&phba->hbalock);
+-	if (vport->port_state != LPFC_FLOGI)
++	phba->hba_flag &= ~FCF_TS_INPROG;
++	if (vport->port_state != LPFC_FLOGI) {
++		phba->hba_flag |= FCF_RR_INPROG;
++		spin_unlock_irq(&phba->hbalock);
+ 		lpfc_initial_flogi(vport);
++		goto out;
++	}
++	spin_unlock_irq(&phba->hbalock);
++	goto out;
+ 
++fail_out:
++	spin_lock_irq(&phba->hbalock);
++	phba->hba_flag &= ~FCF_RR_INPROG;
++	spin_unlock_irq(&phba->hbalock);
++out:
+ 	mempool_free(mboxq, phba->mbox_mem_pool);
+-	return;
+ }
+ 
+ /**
+@@ -1394,10 +1474,9 @@ lpfc_register_fcf(struct lpfc_hba *phba)
+ 	int rc;
+ 
+ 	spin_lock_irq(&phba->hbalock);
+-
+ 	/* If the FCF is not availabe do nothing. */
+ 	if (!(phba->fcf.fcf_flag & FCF_AVAILABLE)) {
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
+ 		spin_unlock_irq(&phba->hbalock);
+ 		return;
+ 	}
+@@ -1405,19 +1484,22 @@ lpfc_register_fcf(struct lpfc_hba *phba)
+ 	/* The FCF is already registered, start discovery */
+ 	if (phba->fcf.fcf_flag & FCF_REGISTERED) {
+ 		phba->fcf.fcf_flag |= (FCF_SCAN_DONE | FCF_IN_USE);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+-		spin_unlock_irq(&phba->hbalock);
+-		if (phba->pport->port_state != LPFC_FLOGI)
++		phba->hba_flag &= ~FCF_TS_INPROG;
++		if (phba->pport->port_state != LPFC_FLOGI) {
++			phba->hba_flag |= FCF_RR_INPROG;
++			spin_unlock_irq(&phba->hbalock);
+ 			lpfc_initial_flogi(phba->pport);
++			return;
++		}
++		spin_unlock_irq(&phba->hbalock);
+ 		return;
+ 	}
+ 	spin_unlock_irq(&phba->hbalock);
+ 
+-	fcf_mbxq = mempool_alloc(phba->mbox_mem_pool,
+-		GFP_KERNEL);
++	fcf_mbxq = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 	if (!fcf_mbxq) {
+ 		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
+ 		spin_unlock_irq(&phba->hbalock);
+ 		return;
+ 	}
+@@ -1428,7 +1510,7 @@ lpfc_register_fcf(struct lpfc_hba *phba)
+ 	rc = lpfc_sli_issue_mbox(phba, fcf_mbxq, MBX_NOWAIT);
+ 	if (rc == MBX_NOT_FINISHED) {
+ 		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
+ 		spin_unlock_irq(&phba->hbalock);
+ 		mempool_free(fcf_mbxq, phba->mbox_mem_pool);
+ 	}
+@@ -1646,7 +1728,7 @@ lpfc_check_pending_fcoe_event(struct lpfc_hba *phba, uint8_t unreg_fcf)
+ 	 * FCF discovery, no need to restart FCF discovery.
+ 	 */
+ 	if ((phba->link_state  >= LPFC_LINK_UP) &&
+-		(phba->fcoe_eventtag == phba->fcoe_eventtag_at_fcf_scan))
++	    (phba->fcoe_eventtag == phba->fcoe_eventtag_at_fcf_scan))
+ 		return 0;
+ 
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+@@ -1670,14 +1752,14 @@ lpfc_check_pending_fcoe_event(struct lpfc_hba *phba, uint8_t unreg_fcf)
+ 		lpfc_sli4_fcf_scan_read_fcf_rec(phba, LPFC_FCOE_FCF_GET_FIRST);
+ 	} else {
+ 		/*
+-		 * Do not continue FCF discovery and clear FCF_DISC_INPROGRESS
++		 * Do not continue FCF discovery and clear FCF_TS_INPROG
+ 		 * flag
+ 		 */
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
+ 				"2833 Stop FCF discovery process due to link "
+ 				"state change (x%x)\n", phba->link_state);
+ 		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
+ 		phba->fcf.fcf_flag &= ~(FCF_REDISC_FOV | FCF_DISCOVERY);
+ 		spin_unlock_irq(&phba->hbalock);
+ 	}
+@@ -1882,6 +1964,65 @@ lpfc_sli4_fcf_record_match(struct lpfc_hba *phba,
+ }
+ 
+ /**
++ * lpfc_sli4_fcf_rr_next_proc - processing next roundrobin fcf
++ * @vport: Pointer to vport object.
++ * @fcf_index: index to next fcf.
++ *
++ * This function processing the roundrobin fcf failover to next fcf index.
++ * When this function is invoked, there will be a current fcf registered
++ * for flogi.
++ * Return: 0 for continue retrying flogi on currently registered fcf;
++ *         1 for stop flogi on currently registered fcf;
++ */
++int lpfc_sli4_fcf_rr_next_proc(struct lpfc_vport *vport, uint16_t fcf_index)
++{
++	struct lpfc_hba *phba = vport->phba;
++	int rc;
++
++	if (fcf_index == LPFC_FCOE_FCF_NEXT_NONE) {
++		spin_lock_irq(&phba->hbalock);
++		if (phba->hba_flag & HBA_DEVLOSS_TMO) {
++			spin_unlock_irq(&phba->hbalock);
++			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++					"2872 Devloss tmo with no eligible "
++					"FCF, unregister in-use FCF (x%x) "
++					"and rescan FCF table\n",
++					phba->fcf.current_rec.fcf_indx);
++			lpfc_unregister_fcf_rescan(phba);
++			goto stop_flogi_current_fcf;
++		}
++		/* Mark the end to FLOGI roundrobin failover */
++		phba->hba_flag &= ~FCF_RR_INPROG;
++		/* Allow action to new fcf asynchronous event */
++		phba->fcf.fcf_flag &= ~(FCF_AVAILABLE | FCF_SCAN_DONE);
++		spin_unlock_irq(&phba->hbalock);
++		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++				"2865 No FCF available, stop roundrobin FCF "
++				"failover and change port state:x%x/x%x\n",
++				phba->pport->port_state, LPFC_VPORT_UNKNOWN);
++		phba->pport->port_state = LPFC_VPORT_UNKNOWN;
++		goto stop_flogi_current_fcf;
++	} else {
++		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_ELS,
++				"2794 Try FLOGI roundrobin FCF failover to "
++				"(x%x)\n", fcf_index);
++		rc = lpfc_sli4_fcf_rr_read_fcf_rec(phba, fcf_index);
++		if (rc)
++			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP | LOG_ELS,
++					"2761 FLOGI roundrobin FCF failover "
++					"failed (rc:x%x) to read FCF (x%x)\n",
++					rc, phba->fcf.current_rec.fcf_indx);
++		else
++			goto stop_flogi_current_fcf;
++	}
++	return 0;
++
++stop_flogi_current_fcf:
++	lpfc_can_disctmo(vport);
++	return 1;
++}
++
++/**
+  * lpfc_mbx_cmpl_fcf_scan_read_fcf_rec - fcf scan read_fcf mbox cmpl handler.
+  * @phba: pointer to lpfc hba data structure.
+  * @mboxq: pointer to mailbox object.
+@@ -1909,7 +2050,7 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	int rc;
+ 
+ 	/* If there is pending FCoE event restart FCF table scan */
+-	if (lpfc_check_pending_fcoe_event(phba, 0)) {
++	if (lpfc_check_pending_fcoe_event(phba, LPFC_SKIP_UNREG_FCF)) {
+ 		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+ 		return;
+ 	}
+@@ -1918,12 +2059,12 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	new_fcf_record = lpfc_sli4_fcf_rec_mbox_parse(phba, mboxq,
+ 						      &next_fcf_index);
+ 	if (!new_fcf_record) {
+-		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
++		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
+ 				"2765 Mailbox command READ_FCF_RECORD "
+ 				"failed to retrieve a FCF record.\n");
+ 		/* Let next new FCF event trigger fast failover */
+ 		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~FCF_TS_INPROG;
+ 		spin_unlock_irq(&phba->hbalock);
+ 		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+ 		return;
+@@ -1940,13 +2081,12 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	/*
+ 	 * If the fcf record does not match with connect list entries
+ 	 * read the next entry; otherwise, this is an eligible FCF
+-	 * record for round robin FCF failover.
++	 * record for roundrobin FCF failover.
+ 	 */
+ 	if (!rc) {
+ 		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+-				"2781 FCF record (x%x) failed FCF "
+-				"connection list check, fcf_avail:x%x, "
+-				"fcf_valid:x%x\n",
++				"2781 FCF (x%x) failed connection "
++				"list check: (x%x/x%x)\n",
+ 				bf_get(lpfc_fcf_record_fcf_index,
+ 				       new_fcf_record),
+ 				bf_get(lpfc_fcf_record_fcf_avail,
+@@ -1976,9 +2116,8 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 			    !(phba->fcf.fcf_flag & FCF_REDISC_FOV)) {
+ 				lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+ 						"2835 Invalid in-use FCF "
+-						"record (x%x) reported, "
+-						"entering fast FCF failover "
+-						"mode scanning.\n",
++						"(x%x), enter FCF failover "
++						"table scan.\n",
+ 						phba->fcf.current_rec.fcf_indx);
+ 				spin_lock_irq(&phba->hbalock);
+ 				phba->fcf.fcf_flag |= FCF_REDISC_FOV;
+@@ -2123,8 +2262,8 @@ lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	 */
+ 	if (fcf_rec) {
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-				"2840 Update current FCF record "
+-				"with initial FCF record (x%x)\n",
++				"2840 Update initial FCF candidate "
++				"with FCF (x%x)\n",
+ 				bf_get(lpfc_fcf_record_fcf_index,
+ 				       new_fcf_record));
+ 		__lpfc_update_fcf_record(phba, fcf_rec, new_fcf_record,
+@@ -2154,20 +2293,28 @@ read_next_fcf:
+ 			 */
+ 			if (!(phba->fcf.failover_rec.flag & RECORD_VALID)) {
+ 				lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+-					       "2782 No suitable FCF record "
+-					       "found during this round of "
+-					       "post FCF rediscovery scan: "
+-					       "fcf_evt_tag:x%x, fcf_index: "
+-					       "x%x\n",
++					       "2782 No suitable FCF found: "
++					       "(x%x/x%x)\n",
+ 					       phba->fcoe_eventtag_at_fcf_scan,
+ 					       bf_get(lpfc_fcf_record_fcf_index,
+ 						      new_fcf_record));
++				spin_lock_irq(&phba->hbalock);
++				if (phba->hba_flag & HBA_DEVLOSS_TMO) {
++					phba->hba_flag &= ~FCF_TS_INPROG;
++					spin_unlock_irq(&phba->hbalock);
++					/* Unregister in-use FCF and rescan */
++					lpfc_printf_log(phba, KERN_INFO,
++							LOG_FIP,
++							"2864 On devloss tmo "
++							"unreg in-use FCF and "
++							"rescan FCF table\n");
++					lpfc_unregister_fcf_rescan(phba);
++					return;
++				}
+ 				/*
+-				 * Let next new FCF event trigger fast
+-				 * failover
++				 * Let next new FCF event trigger fast failover
+ 				 */
+-				spin_lock_irq(&phba->hbalock);
+-				phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++				phba->hba_flag &= ~FCF_TS_INPROG;
+ 				spin_unlock_irq(&phba->hbalock);
+ 				return;
+ 			}
+@@ -2185,9 +2332,8 @@ read_next_fcf:
+ 
+ 			/* Replace in-use record with the new record */
+ 			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-					"2842 Replace the current in-use "
+-					"FCF record (x%x) with failover FCF "
+-					"record (x%x)\n",
++					"2842 Replace in-use FCF (x%x) "
++					"with failover FCF (x%x)\n",
+ 					phba->fcf.current_rec.fcf_indx,
+ 					phba->fcf.failover_rec.fcf_indx);
+ 			memcpy(&phba->fcf.current_rec,
+@@ -2199,15 +2345,8 @@ read_next_fcf:
+ 			 * FCF failover.
+ 			 */
+ 			spin_lock_irq(&phba->hbalock);
+-			phba->fcf.fcf_flag &=
+-					~(FCF_REDISC_FOV | FCF_REDISC_RRU);
++			phba->fcf.fcf_flag &= ~FCF_REDISC_FOV;
+ 			spin_unlock_irq(&phba->hbalock);
+-			/*
+-			 * Set up the initial registered FCF index for FLOGI
+-			 * round robin FCF failover.
+-			 */
+-			phba->fcf.fcf_rr_init_indx =
+-					phba->fcf.failover_rec.fcf_indx;
+ 			/* Register to the new FCF record */
+ 			lpfc_register_fcf(phba);
+ 		} else {
+@@ -2239,26 +2378,6 @@ read_next_fcf:
+ 						LPFC_FCOE_FCF_GET_FIRST);
+ 				return;
+ 			}
+-
+-			/*
+-			 * Otherwise, initial scan or post linkdown rescan,
+-			 * register with the best FCF record found so far
+-			 * through the FCF scanning process.
+-			 */
+-
+-			/*
+-			 * Set stage for the first round of the roundrobin
+-			 * FCF failover.
+-			 */
+-			spin_lock_irq(&phba->hbalock);
+-			phba->fcf.fcf_flag &= ~FCF_REDISC_RRU;
+-			spin_unlock_irq(&phba->hbalock);
+-			/*
+-			 * Set up the initial registered FCF index for FLOGI
+-			 * round robin FCF failover
+-			 */
+-			phba->fcf.fcf_rr_init_indx =
+-					phba->fcf.current_rec.fcf_indx;
+ 			/* Register to the new FCF record */
+ 			lpfc_register_fcf(phba);
+ 		}
+@@ -2274,11 +2393,11 @@ out:
+ }
+ 
+ /**
+- * lpfc_mbx_cmpl_fcf_rr_read_fcf_rec - fcf round robin read_fcf mbox cmpl hdler
++ * lpfc_mbx_cmpl_fcf_rr_read_fcf_rec - fcf roundrobin read_fcf mbox cmpl hdler
+  * @phba: pointer to lpfc hba data structure.
+  * @mboxq: pointer to mailbox object.
+  *
+- * This is the callback function for FLOGI failure round robin FCF failover
++ * This is the callback function for FLOGI failure roundrobin FCF failover
+  * read FCF record mailbox command from the eligible FCF record bmask for
+  * performing the failover. If the FCF read back is not valid/available, it
+  * fails through to retrying FLOGI to the currently registered FCF again.
+@@ -2293,17 +2412,18 @@ lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ {
+ 	struct fcf_record *new_fcf_record;
+ 	uint32_t boot_flag, addr_mode;
+-	uint16_t next_fcf_index;
++	uint16_t next_fcf_index, fcf_index;
+ 	uint16_t current_fcf_index;
+ 	uint16_t vlan_id;
++	int rc;
+ 
+-	/* If link state is not up, stop the round robin failover process */
++	/* If link state is not up, stop the roundrobin failover process */
+ 	if (phba->link_state < LPFC_LINK_UP) {
+ 		spin_lock_irq(&phba->hbalock);
+ 		phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
++		phba->hba_flag &= ~FCF_RR_INPROG;
+ 		spin_unlock_irq(&phba->hbalock);
+-		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+-		return;
++		goto out;
+ 	}
+ 
+ 	/* Parse the FCF record from the non-embedded mailbox command */
+@@ -2313,23 +2433,47 @@ lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+ 				"2766 Mailbox command READ_FCF_RECORD "
+ 				"failed to retrieve a FCF record.\n");
+-		goto out;
++		goto error_out;
+ 	}
+ 
+ 	/* Get the needed parameters from FCF record */
+-	lpfc_match_fcf_conn_list(phba, new_fcf_record, &boot_flag,
+-				 &addr_mode, &vlan_id);
++	rc = lpfc_match_fcf_conn_list(phba, new_fcf_record, &boot_flag,
++				      &addr_mode, &vlan_id);
+ 
+ 	/* Log the FCF record information if turned on */
+ 	lpfc_sli4_log_fcf_record_info(phba, new_fcf_record, vlan_id,
+ 				      next_fcf_index);
+ 
++	fcf_index = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
++	if (!rc) {
++		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++				"2848 Remove ineligible FCF (x%x) from "
++				"from roundrobin bmask\n", fcf_index);
++		/* Clear roundrobin bmask bit for ineligible FCF */
++		lpfc_sli4_fcf_rr_index_clear(phba, fcf_index);
++		/* Perform next round of roundrobin FCF failover */
++		fcf_index = lpfc_sli4_fcf_rr_next_index_get(phba);
++		rc = lpfc_sli4_fcf_rr_next_proc(phba->pport, fcf_index);
++		if (rc)
++			goto out;
++		goto error_out;
++	}
++
++	if (fcf_index == phba->fcf.current_rec.fcf_indx) {
++		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++				"2760 Perform FLOGI roundrobin FCF failover: "
++				"FCF (x%x) back to FCF (x%x)\n",
++				phba->fcf.current_rec.fcf_indx, fcf_index);
++		/* Wait 500 ms before retrying FLOGI to current FCF */
++		msleep(500);
++		lpfc_initial_flogi(phba->pport);
++		goto out;
++	}
++
+ 	/* Upload new FCF record to the failover FCF record */
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2834 Update the current FCF record (x%x) "
+-			"with the next FCF record (x%x)\n",
+-			phba->fcf.failover_rec.fcf_indx,
+-			bf_get(lpfc_fcf_record_fcf_index, new_fcf_record));
++			"2834 Update current FCF (x%x) with new FCF (x%x)\n",
++			phba->fcf.failover_rec.fcf_indx, fcf_index);
+ 	spin_lock_irq(&phba->hbalock);
+ 	__lpfc_update_fcf_record(phba, &phba->fcf.failover_rec,
+ 				 new_fcf_record, addr_mode, vlan_id,
+@@ -2346,14 +2490,13 @@ lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	       sizeof(struct lpfc_fcf_rec));
+ 
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2783 FLOGI round robin FCF failover from FCF "
+-			"(x%x) to FCF (x%x).\n",
+-			current_fcf_index,
+-			bf_get(lpfc_fcf_record_fcf_index, new_fcf_record));
++			"2783 Perform FLOGI roundrobin FCF failover: FCF "
++			"(x%x) to FCF (x%x)\n", current_fcf_index, fcf_index);
+ 
++error_out:
++	lpfc_register_fcf(phba);
+ out:
+ 	lpfc_sli4_mbox_cmd_free(phba, mboxq);
+-	lpfc_register_fcf(phba);
+ }
+ 
+ /**
+@@ -2362,10 +2505,10 @@ out:
+  * @mboxq: pointer to mailbox object.
+  *
+  * This is the callback function of read FCF record mailbox command for
+- * updating the eligible FCF bmask for FLOGI failure round robin FCF
++ * updating the eligible FCF bmask for FLOGI failure roundrobin FCF
+  * failover when a new FCF event happened. If the FCF read back is
+  * valid/available and it passes the connection list check, it updates
+- * the bmask for the eligible FCF record for round robin failover.
++ * the bmask for the eligible FCF record for roundrobin failover.
+  */
+ void
+ lpfc_mbx_cmpl_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+@@ -2805,7 +2948,7 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, READ_LA_VAR *la)
+ 		 * and get the FCF Table.
+ 		 */
+ 		spin_lock_irq(&phba->hbalock);
+-		if (phba->hba_flag & FCF_DISC_INPROGRESS) {
++		if (phba->hba_flag & FCF_TS_INPROG) {
+ 			spin_unlock_irq(&phba->hbalock);
+ 			return;
+ 		}
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 075b87c..291bc68 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3029,8 +3029,7 @@ lpfc_sli4_fcf_redisc_wait_tmo(unsigned long ptr)
+ 	phba->fcf.fcf_flag |= FCF_REDISC_EVT;
+ 	spin_unlock_irq(&phba->hbalock);
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2776 FCF rediscover wait timer expired, post "
+-			"a worker thread event for FCF table scan\n");
++			"2776 FCF rediscover quiescent timer expired\n");
+ 	/* wake up worker thread */
+ 	lpfc_worker_wake_up(phba);
+ }
+@@ -3405,35 +3404,34 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 		if (event_type == LPFC_FCOE_EVENT_TYPE_NEW_FCF)
+ 			lpfc_printf_log(phba, KERN_ERR, LOG_FIP |
+ 					LOG_DISCOVERY,
+-					"2546 New FCF found event: "
+-					"evt_tag:x%x, fcf_index:x%x\n",
++					"2546 New FCF event, evt_tag:x%x, "
++					"index:x%x\n",
+ 					acqe_fcoe->event_tag,
+ 					acqe_fcoe->index);
+ 		else
+ 			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP |
+ 					LOG_DISCOVERY,
+-					"2788 FCF parameter modified event: "
+-					"evt_tag:x%x, fcf_index:x%x\n",
++					"2788 FCF param modified event, "
++					"evt_tag:x%x, index:x%x\n",
+ 					acqe_fcoe->event_tag,
+ 					acqe_fcoe->index);
+ 		if (phba->fcf.fcf_flag & FCF_DISCOVERY) {
+ 			/*
+ 			 * During period of FCF discovery, read the FCF
+ 			 * table record indexed by the event to update
+-			 * FCF round robin failover eligible FCF bmask.
++			 * FCF roundrobin failover eligible FCF bmask.
+ 			 */
+ 			lpfc_printf_log(phba, KERN_INFO, LOG_FIP |
+ 					LOG_DISCOVERY,
+-					"2779 Read new FCF record with "
+-					"fcf_index:x%x for updating FCF "
+-					"round robin failover bmask\n",
++					"2779 Read FCF (x%x) for updating "
++					"roundrobin FCF failover bmask\n",
+ 					acqe_fcoe->index);
+ 			rc = lpfc_sli4_read_fcf_rec(phba, acqe_fcoe->index);
+ 		}
+ 
+ 		/* If the FCF discovery is in progress, do nothing. */
+ 		spin_lock_irq(&phba->hbalock);
+-		if (phba->hba_flag & FCF_DISC_INPROGRESS) {
++		if (phba->hba_flag & FCF_TS_INPROG) {
+ 			spin_unlock_irq(&phba->hbalock);
+ 			break;
+ 		}
+@@ -3452,15 +3450,15 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 
+ 		/* Otherwise, scan the entire FCF table and re-discover SAN */
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
+-				"2770 Start FCF table scan due to new FCF "
+-				"event: evt_tag:x%x, fcf_index:x%x\n",
++				"2770 Start FCF table scan per async FCF "
++				"event, evt_tag:x%x, index:x%x\n",
+ 				acqe_fcoe->event_tag, acqe_fcoe->index);
+ 		rc = lpfc_sli4_fcf_scan_read_fcf_rec(phba,
+ 						     LPFC_FCOE_FCF_GET_FIRST);
+ 		if (rc)
+ 			lpfc_printf_log(phba, KERN_ERR, LOG_FIP | LOG_DISCOVERY,
+ 					"2547 Issue FCF scan read FCF mailbox "
+-					"command failed 0x%x\n", rc);
++					"command failed (x%x)\n", rc);
+ 		break;
+ 
+ 	case LPFC_FCOE_EVENT_TYPE_FCF_TABLE_FULL:
+@@ -3472,9 +3470,8 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 
+ 	case LPFC_FCOE_EVENT_TYPE_FCF_DEAD:
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP | LOG_DISCOVERY,
+-			"2549 FCF disconnected from network index 0x%x"
+-			" tag 0x%x\n", acqe_fcoe->index,
+-			acqe_fcoe->event_tag);
++			"2549 FCF (x%x) disconnected from network, "
++			"tag:x%x\n", acqe_fcoe->index, acqe_fcoe->event_tag);
+ 		/*
+ 		 * If we are in the middle of FCF failover process, clear
+ 		 * the corresponding FCF bit in the roundrobin bitmap.
+@@ -3588,9 +3585,8 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 			spin_unlock_irq(&phba->hbalock);
+ 			lpfc_printf_log(phba, KERN_INFO, LOG_FIP |
+ 					LOG_DISCOVERY,
+-					"2773 Start FCF fast failover due "
+-					"to CVL event: evt_tag:x%x\n",
+-					acqe_fcoe->event_tag);
++					"2773 Start FCF failover per CVL, "
++					"evt_tag:x%x\n", acqe_fcoe->event_tag);
+ 			rc = lpfc_sli4_redisc_fcf_table(phba);
+ 			if (rc) {
+ 				lpfc_printf_log(phba, KERN_ERR, LOG_FIP |
+@@ -3740,8 +3736,7 @@ void lpfc_sli4_fcf_redisc_event_proc(struct lpfc_hba *phba)
+ 
+ 	/* Scan FCF table from the first entry to re-discover SAN */
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
+-			"2777 Start FCF table scan after FCF "
+-			"rediscovery quiescent period over\n");
++			"2777 Start post-quiescent FCF table scan\n");
+ 	rc = lpfc_sli4_fcf_scan_read_fcf_rec(phba, LPFC_FCOE_FCF_GET_FIRST);
+ 	if (rc)
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP | LOG_DISCOVERY,
+@@ -4246,7 +4241,7 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
+ 		goto out_free_active_sgl;
+ 	}
+ 
+-	/* Allocate eligible FCF bmask memory for FCF round robin failover */
++	/* Allocate eligible FCF bmask memory for FCF roundrobin failover */
+ 	longs = (LPFC_SLI4_FCF_TBL_INDX_MAX + BITS_PER_LONG - 1)/BITS_PER_LONG;
+ 	phba->fcf.fcf_rr_bmask = kzalloc(longs * sizeof(unsigned long),
+ 					 GFP_KERNEL);
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 9d7b043..64dbc62 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -5967,7 +5967,7 @@ lpfc_sli4_bpl2sgl(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq,
+  * lpfc_sli4_scmd_to_wqidx_distr - scsi command to SLI4 WQ index distribution
+  * @phba: Pointer to HBA context object.
+  *
+- * This routine performs a round robin SCSI command to SLI4 FCP WQ index
++ * This routine performs a roundrobin SCSI command to SLI4 FCP WQ index
+  * distribution.  This is called by __lpfc_sli_issue_iocb_s4() with the hbalock
+  * held.
+  *
+@@ -12303,13 +12303,15 @@ lpfc_sli4_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, uint16_t fcf_index)
+ 	/* Issue the mailbox command asynchronously */
+ 	mboxq->vport = phba->pport;
+ 	mboxq->mbox_cmpl = lpfc_mbx_cmpl_fcf_scan_read_fcf_rec;
++
++	spin_lock_irq(&phba->hbalock);
++	phba->hba_flag |= FCF_TS_INPROG;
++	spin_unlock_irq(&phba->hbalock);
++
+ 	rc = lpfc_sli_issue_mbox(phba, mboxq, MBX_NOWAIT);
+ 	if (rc == MBX_NOT_FINISHED)
+ 		error = -EIO;
+ 	else {
+-		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag |= FCF_DISC_INPROGRESS;
+-		spin_unlock_irq(&phba->hbalock);
+ 		/* Reset eligible FCF count for new scan */
+ 		if (fcf_index == LPFC_FCOE_FCF_GET_FIRST)
+ 			phba->fcf.eligible_fcf_cnt = 0;
+@@ -12319,21 +12321,21 @@ fail_fcf_scan:
+ 	if (error) {
+ 		if (mboxq)
+ 			lpfc_sli4_mbox_cmd_free(phba, mboxq);
+-		/* FCF scan failed, clear FCF_DISC_INPROGRESS flag */
++		/* FCF scan failed, clear FCF_TS_INPROG flag */
+ 		spin_lock_irq(&phba->hbalock);
+-		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
++		phba->hba_flag &= ~FCF_TS_INPROG;
+ 		spin_unlock_irq(&phba->hbalock);
+ 	}
+ 	return error;
+ }
+ 
+ /**
+- * lpfc_sli4_fcf_rr_read_fcf_rec - Read hba fcf record for round robin fcf.
++ * lpfc_sli4_fcf_rr_read_fcf_rec - Read hba fcf record for roundrobin fcf.
+  * @phba: pointer to lpfc hba data structure.
+  * @fcf_index: FCF table entry offset.
+  *
+  * This routine is invoked to read an FCF record indicated by @fcf_index
+- * and to use it for FLOGI round robin FCF failover.
++ * and to use it for FLOGI roundrobin FCF failover.
+  *
+  * Return 0 if the mailbox command is submitted sucessfully, none 0
+  * otherwise.
+@@ -12379,7 +12381,7 @@ fail_fcf_read:
+  * @fcf_index: FCF table entry offset.
+  *
+  * This routine is invoked to read an FCF record indicated by @fcf_index to
+- * determine whether it's eligible for FLOGI round robin failover list.
++ * determine whether it's eligible for FLOGI roundrobin failover list.
+  *
+  * Return 0 if the mailbox command is submitted sucessfully, none 0
+  * otherwise.
+@@ -12425,7 +12427,7 @@ fail_fcf_read:
+  *
+  * This routine is to get the next eligible FCF record index in a round
+  * robin fashion. If the next eligible FCF record index equals to the
+- * initial round robin FCF record index, LPFC_FCOE_FCF_NEXT_NONE (0xFFFF)
++ * initial roundrobin FCF record index, LPFC_FCOE_FCF_NEXT_NONE (0xFFFF)
+  * shall be returned, otherwise, the next eligible FCF record's index
+  * shall be returned.
+  **/
+@@ -12453,28 +12455,10 @@ lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *phba)
+ 		return LPFC_FCOE_FCF_NEXT_NONE;
+ 	}
+ 
+-	/* Check roundrobin failover index bmask stop condition */
+-	if (next_fcf_index == phba->fcf.fcf_rr_init_indx) {
+-		if (!(phba->fcf.fcf_flag & FCF_REDISC_RRU)) {
+-			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+-					"2847 Round robin failover FCF index "
+-					"search hit stop condition:x%x\n",
+-					next_fcf_index);
+-			return LPFC_FCOE_FCF_NEXT_NONE;
+-		}
+-		/* The roundrobin failover index bmask updated, start over */
+-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-				"2848 Round robin failover FCF index bmask "
+-				"updated, start over\n");
+-		spin_lock_irq(&phba->hbalock);
+-		phba->fcf.fcf_flag &= ~FCF_REDISC_RRU;
+-		spin_unlock_irq(&phba->hbalock);
+-		return phba->fcf.fcf_rr_init_indx;
+-	}
+-
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2845 Get next round robin failover "
+-			"FCF index x%x\n", next_fcf_index);
++			"2845 Get next roundrobin failover FCF (x%x)\n",
++			next_fcf_index);
++
+ 	return next_fcf_index;
+ }
+ 
+@@ -12483,7 +12467,7 @@ lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *phba)
+  * @phba: pointer to lpfc hba data structure.
+  *
+  * This routine sets the FCF record index in to the eligible bmask for
+- * round robin failover search. It checks to make sure that the index
++ * roundrobin failover search. It checks to make sure that the index
+  * does not go beyond the range of the driver allocated bmask dimension
+  * before setting the bit.
+  *
+@@ -12495,22 +12479,16 @@ lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *phba, uint16_t fcf_index)
+ {
+ 	if (fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
+-				"2610 HBA FCF index reached driver's "
+-				"book keeping dimension: fcf_index:%d, "
+-				"driver_bmask_max:%d\n",
++				"2610 FCF (x%x) reached driver's book "
++				"keeping dimension:x%x\n",
+ 				fcf_index, LPFC_SLI4_FCF_TBL_INDX_MAX);
+ 		return -EINVAL;
+ 	}
+ 	/* Set the eligible FCF record index bmask */
+ 	set_bit(fcf_index, phba->fcf.fcf_rr_bmask);
+ 
+-	/* Set the roundrobin index bmask updated */
+-	spin_lock_irq(&phba->hbalock);
+-	phba->fcf.fcf_flag |= FCF_REDISC_RRU;
+-	spin_unlock_irq(&phba->hbalock);
+-
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2790 Set FCF index x%x to round robin failover "
++			"2790 Set FCF (x%x) to roundrobin FCF failover "
+ 			"bmask\n", fcf_index);
+ 
+ 	return 0;
+@@ -12521,7 +12499,7 @@ lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *phba, uint16_t fcf_index)
+  * @phba: pointer to lpfc hba data structure.
+  *
+  * This routine clears the FCF record index from the eligible bmask for
+- * round robin failover search. It checks to make sure that the index
++ * roundrobin failover search. It checks to make sure that the index
+  * does not go beyond the range of the driver allocated bmask dimension
+  * before clearing the bit.
+  **/
+@@ -12530,9 +12508,8 @@ lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *phba, uint16_t fcf_index)
+ {
+ 	if (fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
+-				"2762 HBA FCF index goes beyond driver's "
+-				"book keeping dimension: fcf_index:%d, "
+-				"driver_bmask_max:%d\n",
++				"2762 FCF (x%x) reached driver's book "
++				"keeping dimension:x%x\n",
+ 				fcf_index, LPFC_SLI4_FCF_TBL_INDX_MAX);
+ 		return;
+ 	}
+@@ -12540,7 +12517,7 @@ lpfc_sli4_fcf_rr_index_clear(struct lpfc_hba *phba, uint16_t fcf_index)
+ 	clear_bit(fcf_index, phba->fcf.fcf_rr_bmask);
+ 
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-			"2791 Clear FCF index x%x from round robin failover "
++			"2791 Clear FCF (x%x) from roundrobin failover "
+ 			"bmask\n", fcf_index);
+ }
+ 
+@@ -12591,8 +12568,7 @@ lpfc_mbx_cmpl_redisc_fcf_table(struct lpfc_hba *phba, LPFC_MBOXQ_t *mbox)
+ 		}
+ 	} else {
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+-				"2775 Start FCF rediscovery quiescent period "
+-				"wait timer before scaning FCF table\n");
++				"2775 Start FCF rediscover quiescent timer\n");
+ 		/*
+ 		 * Start FCF rediscovery wait timer for pending FCF
+ 		 * before rescan FCF record table.
+diff --git a/drivers/scsi/lpfc/lpfc_sli4.h b/drivers/scsi/lpfc/lpfc_sli4.h
+index 21690ec..d0dd92d 100644
+--- a/drivers/scsi/lpfc/lpfc_sli4.h
++++ b/drivers/scsi/lpfc/lpfc_sli4.h
+@@ -23,6 +23,9 @@
+ #define LPFC_GET_QE_REL_INT			32
+ #define LPFC_RPI_LOW_WATER_MARK			10
+ 
++#define LPFC_UNREG_FCF                          1
++#define LPFC_SKIP_UNREG_FCF                     0
++
+ /* Amount of time in seconds for waiting FCF rediscovery to complete */
+ #define LPFC_FCF_REDISCOVER_WAIT_TMO		2000 /* msec */
+ 
+@@ -163,9 +166,8 @@ struct lpfc_fcf {
+ #define FCF_REDISC_PEND	0x80 /* FCF rediscovery pending */
+ #define FCF_REDISC_EVT	0x100 /* FCF rediscovery event to worker thread */
+ #define FCF_REDISC_FOV	0x200 /* Post FCF rediscovery fast failover */
+-#define FCF_REDISC_RRU	0x400 /* Roundrobin bitmap updated */
++#define FCF_REDISC_PROG (FCF_REDISC_PEND | FCF_REDISC_EVT)
+ 	uint32_t addr_mode;
+-	uint16_t fcf_rr_init_indx;
+ 	uint32_t eligible_fcf_cnt;
+ 	struct lpfc_fcf_rec current_rec;
+ 	struct lpfc_fcf_rec failover_rec;

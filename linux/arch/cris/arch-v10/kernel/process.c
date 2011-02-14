@@ -1,4 +1,5 @@
-/*
+/* $Id: process.c,v 1.12 2004/12/27 11:18:32 starvik Exp $
+ * 
  *  linux/arch/cris/kernel/process.c
  *
  *  Copyright (C) 1995  Linus Torvalds
@@ -14,7 +15,7 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <arch/svinto.h>
+#include <asm/arch/svinto.h>
 #include <linux/init.h>
 
 #ifdef CONFIG_ETRAX_GPIO
@@ -63,7 +64,7 @@ void hard_reset_now (void)
 #if defined(CONFIG_ETRAX_WATCHDOG) && !defined(CONFIG_SVINTO_SIM)
 	cause_of_death = 0xbedead;
 #else
-	/* Since we dont plan to keep on resetting the watchdog,
+	/* Since we dont plan to keep on reseting the watchdog,
 	   the key can be arbitrary hence three */
 	*R_WATCHDOG = IO_FIELD(R_WATCHDOG, key, 3) |
 		IO_STATE(R_WATCHDOG, enable, start);
@@ -115,7 +116,7 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
  */
 asmlinkage void ret_from_fork(void);
 
-int copy_thread(unsigned long clone_flags, unsigned long usp,
+int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 		unsigned long unused,
 		struct task_struct *p, struct pt_regs *regs)
 {

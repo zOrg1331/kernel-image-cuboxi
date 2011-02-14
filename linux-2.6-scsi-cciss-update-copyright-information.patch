@@ -1,0 +1,118 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 19 Dec 2007 16:15:01 +0100
+Subject: [scsi] cciss: update copyright information
+Message-id: 47693575.5030802@redhat.com
+O-Subject: [RHEL5.2 PATCH 3/8] RHEL 5.2: Cciss driver update copyright information updated per HP Legal
+Bugzilla: 423841
+
+This patch resolves the bz#423841: Cciss driver update: copyright information updated per HP Legal
+
+Comment from HP:
+This patch updates copyright info and changes the wording to match what HP
+legal and the Open Source Review Board recommend.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+
+ drivers/block/cciss.c      |   10 +++++-----
+ drivers/block/cciss_scsi.c |   12 ++++++------
+ drivers/block/cciss_scsi.h |   16 +++++++++-------
+ 3 files changed, 20 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index e25983f..8fd1abc 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1,11 +1,10 @@
+ /*
+- *    Disk Array driver for HP SA 5xxx and 6xxx Controllers
+- *    Copyright 2000, 2006 Hewlett-Packard Development Company, L.P.
++ *    Disk Array driver for HP Smart Array Controllers
++ *    Copyright 2000, 2008 Hewlett-Packard Development Company, L.P.
+  *
+  *    This program is free software; you can redistribute it and/or modify
+  *    it under the terms of the GNU General Public License as published by
+- *    the Free Software Foundation; either version 2 of the License, or
+- *    (at your option) any later version.
++ *    the Free Software Foundation; version 2 of the License.
+  *
+  *    This program is distributed in the hope that it will be useful,
+  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+@@ -14,7 +13,8 @@
+  *
+  *    You should have received a copy of the GNU General Public License
+  *    along with this program; if not, write to the Free Software
+- *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++ *    02111-1307, USA.
+  *
+  *    Questions/Comments/Bugfixes to iss_storagedev@hp.com
+  *
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index ae1a756..b8bca81 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -1,20 +1,20 @@
+ /*
+- *    Disk Array driver for Compaq SA53xx Controllers, SCSI Tape module
+- *    Copyright 2001 Compaq Computer Corporation
++ *    Disk Array driver for HP Smart Array Controllers, SCSI Tape Module
++ *    (C) Copyright 2000, 2008 Hewlett-Packard Development Company, L.P.
+  *
+  *    This program is free software; you can redistribute it and/or modify
+  *    it under the terms of the GNU General Public License as published by
+- *    the Free Software Foundation; either version 2 of the License, or
+- *    (at your option) any later version.
++ *    the Free Software Foundation; version 2 of the License.
+  *
+  *    This program is distributed in the hope that it will be useful,
+  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+  *    MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
+- *    NON INFRINGEMENT.  See the GNU General Public License for more details.
++ *    NON INFRINGEMENT. See the GNU General Public License for more details.
+  *
+  *    You should have received a copy of the GNU General Public License
+  *    along with this program; if not, write to the Free Software
+- *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++ *    02111-1307, USA.
+  *
+  *    Questions/Comments/Bugfixes to iss_storagedev@hp.com
+  *    
+diff --git a/drivers/block/cciss_scsi.h b/drivers/block/cciss_scsi.h
+index 5e7e06c..00b581e 100644
+--- a/drivers/block/cciss_scsi.h
++++ b/drivers/block/cciss_scsi.h
+@@ -1,24 +1,26 @@
+ /*
+- *    Disk Array driver for Compaq SA53xx Controllers, SCSI Tape module
+- *    Copyright 2001 Compaq Computer Corporation
++ *    Disk Array driver for HP Smart Array Controllers, SCSI Tape Module
++ *    (C) Copyright 2000, 2008 Hewlett-Packard Development Company, L.P.
+  *
+  *    This program is free software; you can redistribute it and/or modify
+  *    it under the terms of the GNU General Public License as published by
+- *    the Free Software Foundation; either version 2 of the License, or
+- *    (at your option) any later version.
++ *    the Free Software Foundation; version 2 of the License.
+  *
+  *    This program is distributed in the hope that it will be useful,
+  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *    MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
+- *    NON INFRINGEMENT.  See the GNU General Public License for more details.
++ *    MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ *    General Public License for more details.
+  *
+  *    You should have received a copy of the GNU General Public License
+  *    along with this program; if not, write to the Free Software
+- *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++ *    02111-1307, USA.
+  *
+  *    Questions/Comments/Bugfixes to iss_storagedev@hp.com
+  *
++ *    Author: Stephen M. Cameron
+  */
++
+ #ifdef CONFIG_CISS_SCSI_TAPE
+ #ifndef _CCISS_SCSI_H_
+ #define _CCISS_SCSI_H_

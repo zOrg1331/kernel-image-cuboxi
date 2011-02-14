@@ -1,6 +1,7 @@
 /*
 	drivers/net/tulip/timer.c
 
+	Maintained by Jeff Garzik <jgarzik@pobox.com>
 	Copyright 2000,2001  The Linux Kernel Team
 	Written/copyright 1994-2001 by Donald Becker.
 
@@ -8,24 +9,22 @@
 	of the GNU General Public License, incorporated herein by reference.
 
 	Please refer to Documentation/DocBook/tulip-user.{pdf,ps,html}
-	for more information on this driver.
+	for more information on this driver, or visit the project
+	Web page at http://sourceforge.net/projects/tulip/
 
-	Please submit bugs to http://bugzilla.kernel.org/ .
 */
 
-
+#include <linux/pci.h>
 #include "tulip.h"
 
 
-void tulip_media_task(struct work_struct *work)
+void tulip_timer(unsigned long data)
 {
-	struct tulip_private *tp =
-		container_of(work, struct tulip_private, media_work);
-	struct net_device *dev = tp->dev;
+	struct net_device *dev = (struct net_device *)data;
+	struct tulip_private *tp = netdev_priv(dev);
 	void __iomem *ioaddr = tp->base_addr;
 	u32 csr12 = ioread32(ioaddr + CSR12);
 	int next_tick = 2*HZ;
-	unsigned long flags;
 
 	if (tulip_debug > 2) {
 		printk(KERN_DEBUG "%s: Media selection tick, %s, status %8.8x mode"
@@ -127,15 +126,6 @@ void tulip_media_task(struct work_struct *work)
 	}
 	break;
 	}
-
-
-	spin_lock_irqsave(&tp->lock, flags);
-	if (tp->timeout_recovery) {
-		tulip_tx_timeout_complete(tp, ioaddr);
-		tp->timeout_recovery = 0;
-	}
-	spin_unlock_irqrestore(&tp->lock, flags);
-
 	/* mod_timer synchronizes us with potential add_timer calls
 	 * from interrupts.
 	 */

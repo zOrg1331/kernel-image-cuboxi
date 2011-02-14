@@ -1,4 +1,4 @@
-/* include/asm-generic/tlb.h
+/* asm-generic/tlb.h
  *
  *	Generic TLB shootdown code
  *
@@ -123,24 +123,24 @@ static inline void tlb_remove_page(struct mmu_gather *tlb, struct page *page)
 		__tlb_remove_tlb_entry(tlb, ptep, address);	\
 	} while (0)
 
-#define pte_free_tlb(tlb, ptep, address)			\
+#define pte_free_tlb(tlb, ptep)					\
 	do {							\
 		tlb->need_flush = 1;				\
-		__pte_free_tlb(tlb, ptep, address);		\
+		__pte_free_tlb(tlb, ptep);			\
 	} while (0)
 
 #ifndef __ARCH_HAS_4LEVEL_HACK
-#define pud_free_tlb(tlb, pudp, address)			\
+#define pud_free_tlb(tlb, pudp)					\
 	do {							\
 		tlb->need_flush = 1;				\
-		__pud_free_tlb(tlb, pudp, address);		\
+		__pud_free_tlb(tlb, pudp);			\
 	} while (0)
 #endif
 
-#define pmd_free_tlb(tlb, pmdp, address)			\
+#define pmd_free_tlb(tlb, pmdp)					\
 	do {							\
 		tlb->need_flush = 1;				\
-		__pmd_free_tlb(tlb, pmdp, address);		\
+		__pmd_free_tlb(tlb, pmdp);			\
 	} while (0)
 
 #define tlb_migrate_finish(mm) do {} while (0)

@@ -66,25 +66,18 @@ noritake_startup_irq(unsigned int irq)
 	return 0;
 }
 
-static void
-noritake_end_irq(unsigned int irq)
-{
-        if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS)))
-                noritake_enable_irq(irq);
-}
-
-static struct irq_chip noritake_irq_type = {
-	.name		= "NORITAKE",
+static struct hw_interrupt_type noritake_irq_type = {
+	.typename	= "NORITAKE",
 	.startup	= noritake_startup_irq,
 	.shutdown	= noritake_disable_irq,
 	.enable		= noritake_enable_irq,
 	.disable	= noritake_disable_irq,
 	.ack		= noritake_disable_irq,
-	.end		= noritake_end_irq,
+	.end		= noritake_enable_irq,
 };
 
 static void 
-noritake_device_interrupt(unsigned long vector)
+noritake_device_interrupt(unsigned long vector, struct pt_regs *regs)
 {
 	unsigned long pld;
 	unsigned int i;
@@ -103,15 +96,15 @@ noritake_device_interrupt(unsigned long vector)
 		i = ffz(~pld);
 		pld &= pld - 1; /* clear least bit set */
 		if (i < 16) {
-			isa_device_interrupt(vector);
+			isa_device_interrupt(vector, regs);
 		} else {
-			handle_irq(i);
+			handle_irq(i, regs);
 		}
 	}
 }
 
 static void 
-noritake_srm_device_interrupt(unsigned long vector)
+noritake_srm_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -129,7 +122,7 @@ noritake_srm_device_interrupt(unsigned long vector)
 	if (irq >= 16)
 		irq = irq + 1;
 
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 static void __init
@@ -257,7 +250,7 @@ noritake_swizzle(struct pci_dev *dev, u8 *pinp)
 				slot = PCI_SLOT(dev->devfn) + 15;
 				break;
 			}
-			pin = pci_swizzle_interrupt_pin(dev, pin);
+			pin = bridge_swizzle(pin, PCI_SLOT(dev->devfn)) ;
 
 			/* Move up the chain of bridges.  */
 			dev = dev->bus->self;
@@ -271,7 +264,8 @@ noritake_swizzle(struct pci_dev *dev, u8 *pinp)
 
 #if defined(CONFIG_ALPHA_GENERIC) || !defined(CONFIG_ALPHA_PRIMO)
 static void
-noritake_apecs_machine_check(unsigned long vector, unsigned long la_ptr)
+noritake_apecs_machine_check(unsigned long vector, unsigned long la_ptr,
+			     struct pt_regs * regs)
 {
 #define MCHK_NO_DEVSEL 0x205U
 #define MCHK_NO_TABT 0x204U
@@ -290,7 +284,7 @@ noritake_apecs_machine_check(unsigned long vector, unsigned long la_ptr)
         mb();
 
         code = mchk_header->code;
-        process_mcheck_info(vector, la_ptr, "NORITAKE APECS",
+        process_mcheck_info(vector, la_ptr, regs, "NORITAKE APECS",
                             (mcheck_expected(0)
                              && (code == MCHK_NO_DEVSEL
                                  || code == MCHK_NO_TABT)));

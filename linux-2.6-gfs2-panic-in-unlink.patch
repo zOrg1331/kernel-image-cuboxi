@@ -1,0 +1,205 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] GFS2: panic in unlink (bz #239737) [1/2]
+Date: Tue, 19 Jun 2007 16:05:31 +0100
+Bugzilla: 239737
+Message-Id: <1182265531.8765.88.camel@quoit>
+Changelog: [gfs2] panic in unlink
+
+
+Hi,
+
+This is the first part of two which fixes bz #239737. This part
+simplifies and also fixes a bug relating to the acquisition of multiple
+glocks. The first part of this patch is taken from the GFS2 -nmw git
+tree. The second part of the patch fixes a problem in the kernel's
+sort() library function which can cause it to do more comparisons than
+is strictly required resulting in both a slow-down whenever this
+function is used and also triggering the BUG_ON() in one of the GFS2
+comparison functions which doesn't take kindly to being asked to compare
+an item with itself. The second part of the patch is taken from the
+upstream kernel and its been upstream since October last year. It is the
+only upstream patch affecting the sort() function since that time.
+
+The patches in combination have been tested to ensure that they do fix
+the original bug as seen. Also the first part of the patch has been
+tested on its own to ensure that it does not result in any performance
+regression for the postmark benchmark on GFS2.
+
+Steve.
+
+------------------------------------------------------------------
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fsteve%2Fgfs2-2.6-nmw.git;a=commitdiff_plain;h=a0cf94cbbb0f60b37be626a4aca3054583adf841
+
+[GFS2] Simplify multiple glock aquisition
+
+There is a bug in the code which acquires multiple glocks where if the
+initial out-of-order attempt fails part way though we can land up trying
+to acquire the wrong number of glocks. This is part of the fix for red
+hat bz #239737. The other part of the bz doesn't apply to upstream
+kernels since it was fixed by:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d3717bdf8f08a0e1039158c8bab2c24d20f492b6
+
+Since the out-of-order code doesn't appear to add anything to the
+performance of GFS2, this patch just removed it rather than trying to
+fix it. It should be much easier to see whats going on here now. In
+addition, we don't allocate any memory unless we are using a lot of
+glocks (which is a relatively uncommon case).
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 384cae6..3f0974e 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -1327,10 +1327,6 @@ static int nq_m_sync(unsigned int num_gh, struct gfs2_holder *ghs,
+  * @num_gh: the number of structures
+  * @ghs: an array of struct gfs2_holder structures
+  *
+- * Figure out how big an impact this function has.  Either:
+- * 1) Replace this code with code that calls gfs2_glock_prefetch()
+- * 2) Forget async stuff and just call nq_m_sync()
+- * 3) Leave it like it is
+  *
+  * Returns: 0 on success (all glocks acquired),
+  *          errno on failure (no glocks acquired)
+@@ -1338,62 +1334,28 @@ static int nq_m_sync(unsigned int num_gh, struct gfs2_holder *ghs,
+ 
+ int gfs2_glock_nq_m(unsigned int num_gh, struct gfs2_holder *ghs)
+ {
+-	int *e;
+-	unsigned int x;
+-	int borked = 0, serious = 0;
++	struct gfs2_holder *tmp[4];
++	struct gfs2_holder **pph = tmp;
+ 	int error = 0;
+ 
+-	if (!num_gh)
++	switch(num_gh) {
++	case 0:
+ 		return 0;
+-
+-	if (num_gh == 1) {
++	case 1:
+ 		ghs->gh_flags &= ~(LM_FLAG_TRY | GL_ASYNC);
+ 		return gfs2_glock_nq(ghs);
+-	}
+-
+-	e = kcalloc(num_gh, sizeof(struct gfs2_holder *), GFP_KERNEL);
+-	if (!e)
+-		return -ENOMEM;
+-
+-	for (x = 0; x < num_gh; x++) {
+-		ghs[x].gh_flags |= LM_FLAG_TRY | GL_ASYNC;
+-		error = gfs2_glock_nq(&ghs[x]);
+-		if (error) {
+-			borked = 1;
+-			serious = error;
+-			num_gh = x;
++	default:
++		if (num_gh <= 4)
+ 			break;
+-		}
++		pph = kmalloc(num_gh * sizeof(struct gfs2_holder *), GFP_NOFS);
++		if (!pph)
++			return -ENOMEM;
+ 	}
+ 
+-	for (x = 0; x < num_gh; x++) {
+-		error = e[x] = glock_wait_internal(&ghs[x]);
+-		if (error) {
+-			borked = 1;
+-			if (error != GLR_TRYFAILED && error != GLR_CANCELED)
+-				serious = error;
+-		}
+-	}
+-
+-	if (!borked) {
+-		kfree(e);
+-		return 0;
+-	}
+-
+-	for (x = 0; x < num_gh; x++)
+-		if (!e[x])
+-			gfs2_glock_dq(&ghs[x]);
+-
+-	if (serious)
+-		error = serious;
+-	else {
+-		for (x = 0; x < num_gh; x++)
+-			gfs2_holder_reinit(ghs[x].gh_state, ghs[x].gh_flags,
+-					  &ghs[x]);
+-		error = nq_m_sync(num_gh, ghs, (struct gfs2_holder **)e);
+-	}
++	error = nq_m_sync(num_gh, ghs, pph);
+ 
+-	kfree(e);
++	if (pph != tmp)
++		kfree(pph);
+ 
+ 	return error;
+ }
+
+Hi,
+
+This is the second part of the fix for bz #239737. Please see the first
+part for a full explanation,
+
+Steve.
+-----------------------------------------------------------------
+From: keios <keios.cn@gmail.com>
+Date: Tue, 3 Oct 2006 08:13:49 +0000 (-0700)
+Subject: [PATCH] low performance of lib/sort.c
+X-Git-Tag: v2.6.19-rc1~361
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=d3717bdf8f08a0e1039158c8bab2c24d20f492b6
+
+[PATCH] low performance of lib/sort.c
+
+It is a non-standard heap-sort algorithm implementation because the index
+of child node is wrong .  The sort function still outputs right result, but
+the performance is O( n * ( log(n) + 1 ) ) , about 10% ~ 20% worse than
+standard algorithm.
+
+Signed-off-by: keios <keios.cn@gmail.com>
+Acked-by: Matt Mackall <mpm@selenic.com>
+Acked-by: Zou Nan hai <nanhai.zou@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+---
+
+diff --git a/lib/sort.c b/lib/sort.c
+index 5f3b51f..488788b 100644
+--- a/lib/sort.c
++++ b/lib/sort.c
+@@ -49,15 +49,15 @@ void sort(void *base, size_t num, size_t size,
+ 	  void (*swap)(void *, void *, int size))
+ {
+ 	/* pre-scale counters for performance */
+-	int i = (num/2) * size, n = num * size, c, r;
++	int i = (num/2 - 1) * size, n = num * size, c, r;
+ 
+ 	if (!swap)
+ 		swap = (size == 4 ? u32_swap : generic_swap);
+ 
+ 	/* heapify */
+ 	for ( ; i >= 0; i -= size) {
+-		for (r = i; r * 2 < n; r  = c) {
+-			c = r * 2;
++		for (r = i; r * 2 + size < n; r  = c) {
++			c = r * 2 + size;
+ 			if (c < n - size && cmp(base + c, base + c + size) < 0)
+ 				c += size;
+ 			if (cmp(base + r, base + c) >= 0)
+@@ -69,8 +69,8 @@ void sort(void *base, size_t num, size_t size,
+ 	/* sort */
+ 	for (i = n - size; i >= 0; i -= size) {
+ 		swap(base, base + i, size);
+-		for (r = 0; r * 2 < i; r = c) {
+-			c = r * 2;
++		for (r = 0; r * 2 + size < i; r = c) {
++			c = r * 2 + size;
+ 			if (c < i - size && cmp(base + c, base + c + size) < 0)
+ 				c += size;
+ 			if (cmp(base + r, base + c) >= 0)
+

@@ -1,0 +1,305 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 10 Jul 2009 17:20:38 -0400
+Subject: [pci] kvm: PCI FLR support for device assignment
+Message-id: 4A57B0A6.9080109@redhat.com
+O-Subject: [RHEL5.4 PATCH] PCI FLR support for KVM guest device assignment
+Bugzilla: 510805
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+BZ 510805
+
+KVM guests can be given control of PCI devices via
+the device assignment support in qemu-kvm, KVM & VT-d in the kernel.
+VT-d provides security by isolating device DMA to only
+be directed to guest memory, while the guest owns the device.
+
+But prior to the guest gaining control of the device,
+and after the guest is shutdown and the device is assumed
+to be owned by the host, the PCI(e) device may still
+be DMA-ing to memory under a couple of conditions:
+(a) driver error, crashing the guest, but leaving the device
+    DMA-ing to memory.
+(b) guest is 'destroyed' by controlling host, but a
+    clean (driver) shutdown of the device is not implemented.
+
+Once the memory associated with the guest is given back
+to the host, the still (badly) running DMA engine could
+corrupt host memory, and cause a host crash.
+
+PCI FLR provides a standard method for hosts to
+reset a PCI device ensuring it is in a quiesced
+state.  This ensures errors and/or sudden guest
+shutdowns with PCI devices assigned to the guests
+don't cause an ensuing host crash.
+
+Backport of upstream:
+8dd7f8036c123296fc4214f9d8810eb485570422  PCI: add support for function level reset
+1df8fb3d5f078f9cab901b6106ef2c9b74eef7df  PCI: Fix disable IRQ 0 in pci_reset_function()
+d91cdc745524a1b1ff537712a62803b8413c12d6  PCI: refactor pci_reset_function()
+f7b7baae6b30ff04124259ff8d7c0c0d281320e6  PCI: add PCI Advanced Feature Capability defines
+1ca887970a3971a22e4875b7c6ad5ae3ce49f61a  PCI: Extend pci_reset_function() to support PCI Advanced Features
+
+This provides similar FLR support that is in kernel-xen
+for PCI device assignment to HVM guests.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1879240
+
+Testing:
+Built another version of this backport with additional printk's,
+since proving a device is reset would require:
+(a) a failing scenario, that we don't have,
+    and running the code on it so the failure doesn't occur
+or
+(b) a darn, neat PCIe link analyzer to decode the
+    packets performing the FLR setting, and watching the
+    link reset correctly.
+brew build (for x86_64-only, since KVM only supports that):
+ http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1883818
+
+The instrumented FLR code generated printk's to show that it was
+being invoked and the proper steps were occurring to a device that
+has FLR support on it.
+(Thanks to Chris Wright for that testing.)
+
+Please review and ack.
+
+- Don
+
+ drivers/pci/pci.c        |  153 ++++++++++++++++++++++++++++++++++++++++++++++
+ include/linux/pci.h      |    2 +
+ include/linux/pci_regs.h |   14 ++++
+ 4 files changed, 170 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 4452dda..042dcfa 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -16,6 +16,7 @@
+ #include <linux/module.h>
+ #include <linux/spinlock.h>
+ #include <linux/string.h>
++#include <linux/interrupt.h>
+ #include <asm/dma.h>	/* isa_dma_bridge_buggy */
+ #include "pci.h"
+ 
+@@ -1382,6 +1383,158 @@ pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask)
+ }
+ #endif
+ 
++static int __pcie_flr(struct pci_dev *dev, int probe)
++{
++	u16 status;
++	u32 cap;
++	int exppos = pci_find_capability(dev, PCI_CAP_ID_EXP);
++
++	if (!exppos)
++		return -ENOTTY;
++	pci_read_config_dword(dev, exppos + PCI_EXP_DEVCAP, &cap);
++	if (!(cap & PCI_EXP_DEVCAP_FLR))
++		return -ENOTTY;
++
++	if (probe)
++		return 0;
++
++	pci_block_user_cfg_access(dev);
++
++	/* Wait for Transaction Pending bit clean */
++	msleep(100);
++	pci_read_config_word(dev, exppos + PCI_EXP_DEVSTA, &status);
++	if (status & PCI_EXP_DEVSTA_TRPND) {
++		dev_info(&dev->dev, "Busy after 100ms while trying to reset; "
++			"sleeping for 1 second\n");
++		ssleep(1);
++		pci_read_config_word(dev, exppos + PCI_EXP_DEVSTA, &status);
++		if (status & PCI_EXP_DEVSTA_TRPND)
++			dev_info(&dev->dev, "Still busy after 1s; "
++				"proceeding with reset anyway\n");
++	}
++
++	pci_write_config_word(dev, exppos + PCI_EXP_DEVCTL,
++				PCI_EXP_DEVCTL_BCR_FLR);
++	mdelay(100);
++
++	pci_unblock_user_cfg_access(dev);
++	return 0;
++}
++
++static int __pci_af_flr(struct pci_dev *dev, int probe)
++{
++	int cappos = pci_find_capability(dev, PCI_CAP_ID_AF);
++	u8 status;
++	u8 cap;
++
++	if (!cappos)
++		return -ENOTTY;
++	pci_read_config_byte(dev, cappos + PCI_AF_CAP, &cap);
++	if (!(cap & PCI_AF_CAP_TP) || !(cap & PCI_AF_CAP_FLR))
++		return -ENOTTY;
++
++	if (probe)
++		return 0;
++
++	pci_block_user_cfg_access(dev);
++
++	/* Wait for Transaction Pending bit clean */
++	msleep(100);
++	pci_read_config_byte(dev, cappos + PCI_AF_STATUS, &status);
++	if (status & PCI_AF_STATUS_TP) {
++		dev_info(&dev->dev, "Busy after 100ms while trying to"
++				" reset; sleeping for 1 second\n");
++		ssleep(1);
++		pci_read_config_byte(dev,
++				cappos + PCI_AF_STATUS, &status);
++		if (status & PCI_AF_STATUS_TP)
++			dev_info(&dev->dev, "Still busy after 1s; "
++					"proceeding with reset anyway\n");
++	}
++	pci_write_config_byte(dev, cappos + PCI_AF_CTRL, PCI_AF_CTRL_FLR);
++	mdelay(100);
++
++	pci_unblock_user_cfg_access(dev);
++	return 0;
++}
++
++static int __pci_reset_function(struct pci_dev *pdev, int probe)
++{
++	int res;
++
++	res = __pcie_flr(pdev, probe);
++	if (res != -ENOTTY)
++		return res;
++
++	res = __pci_af_flr(pdev, probe);
++	if (res != -ENOTTY)
++		return res;
++
++	return res;
++}
++
++/**
++ * pci_execute_reset_function() - Reset a PCI device function
++ * @dev: Device function to reset
++ *
++ * Some devices allow an individual function to be reset without affecting
++ * other functions in the same device.  The PCI device must be responsive
++ * to PCI config space in order to use this function.
++ *
++ * The device function is presumed to be unused when this function is called.
++ * Resetting the device will make the contents of PCI configuration space
++ * random, so any caller of this must be prepared to reinitialise the
++ * device including MSI, bus mastering, BARs, decoding IO and memory spaces,
++ * etc.
++ *
++ * Returns 0 if the device function was successfully reset or -ENOTTY if the
++ * device doesn't support resetting a single function.
++ */
++int pci_execute_reset_function(struct pci_dev *dev)
++{
++	return __pci_reset_function(dev, 0);
++}
++EXPORT_SYMBOL_GPL(pci_execute_reset_function);
++
++/**
++ * pci_reset_function() - quiesce and reset a PCI device function
++ * @dev: Device function to reset
++ *
++ * Some devices allow an individual function to be reset without affecting
++ * other functions in the same device.  The PCI device must be responsive
++ * to PCI config space in order to use this function.
++ *
++ * This function does not just reset the PCI portion of a device, but
++ * clears all the state associated with the device.  This function differs
++ * from pci_execute_reset_function in that it saves and restores device state
++ * over the reset.
++ *
++ * Returns 0 if the device function was successfully reset or -ENOTTY if the
++ * device doesn't support resetting a single function.
++ */
++int pci_reset_function(struct pci_dev *dev)
++{
++	int r = __pci_reset_function(dev, 1);
++
++	if (r < 0)
++		return r;
++
++	if (!dev->msi_enabled && !dev->msix_enabled && dev->irq != 0)
++		disable_irq(dev->irq);
++	pci_save_state(dev);
++
++	pci_write_config_word(dev, PCI_COMMAND, PCI_COMMAND_INTX_DISABLE);
++
++	r = pci_execute_reset_function(dev);
++
++	pci_restore_state(dev);
++	if (!dev->msi_enabled && !dev->msix_enabled && dev->irq != 0)
++		enable_irq(dev->irq);
++
++	return r;
++}
++EXPORT_SYMBOL_GPL(pci_reset_function);
++
+ /**
+  * pcix_get_max_mmrbc - get PCI-X maximum designed memory read byte count
+  * @dev: PCI device to query
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 072da63..fd5e2a6 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -586,6 +586,8 @@ int pcix_get_max_mmrbc(struct pci_dev *dev);
+ int pcix_get_mmrbc(struct pci_dev *dev);
+ int pcix_set_mmrbc(struct pci_dev *dev, int mmrbc);
+ int pcie_set_readrq(struct pci_dev *dev, int rq);
++int pci_reset_function(struct pci_dev *dev);
++int pci_execute_reset_function(struct pci_dev *dev);
+ void pci_update_resource(struct pci_dev *dev, struct resource *res, int resno);
+ int pci_assign_resource(struct pci_dev *dev, int i);
+ int pci_assign_resource_fixed(struct pci_dev *dev, int i);
+diff --git a/include/linux/pci_regs.h b/include/linux/pci_regs.h
+index ecb52aa..ef0370b 100644
+--- a/include/linux/pci_regs.h
++++ b/include/linux/pci_regs.h
+@@ -206,6 +206,7 @@
+ #define  PCI_CAP_ID_SHPC 	0x0C	/* PCI Standard Hot-Plug Controller */
+ #define  PCI_CAP_ID_EXP 	0x10	/* PCI Express */
+ #define  PCI_CAP_ID_MSIX	0x11	/* MSI-X */
++#define  PCI_CAP_ID_AF		0x13	/* PCI Advanced Features */
+ #define PCI_CAP_LIST_NEXT	1	/* Next capability in the list */
+ #define PCI_CAP_FLAGS		2	/* Capability defined flags (16 bits) */
+ #define PCI_CAP_SIZEOF		4
+@@ -311,6 +312,17 @@
+ #define  PCI_CHSWP_EXT		0x40	/* ENUM# status - extraction */
+ #define  PCI_CHSWP_INS		0x80	/* ENUM# status - insertion */
+ 
++/* PCI Advanced Feature registers */
++
++#define PCI_AF_LENGTH		2
++#define PCI_AF_CAP		3
++#define  PCI_AF_CAP_TP		0x01
++#define  PCI_AF_CAP_FLR		0x02
++#define PCI_AF_CTRL		4
++#define  PCI_AF_CTRL_FLR	0x01
++#define PCI_AF_STATUS		5
++#define  PCI_AF_STATUS_TP	0x01
++
+ /* PCI-X registers */
+ 
+ #define PCI_X_CMD		2	/* Modes & Features */
+@@ -359,6 +371,7 @@
+ #define  PCI_EXP_DEVCAP_PWR_IND	0x4000	/* Power Indicator Present */
+ #define  PCI_EXP_DEVCAP_PWR_VAL	0x3fc0000 /* Slot Power Limit Value */
+ #define  PCI_EXP_DEVCAP_PWR_SCL	0xc000000 /* Slot Power Limit Scale */
++#define  PCI_EXP_DEVCAP_FLR     0x10000000 /* Function Level Reset */
+ #define PCI_EXP_DEVCTL		8	/* Device Control */
+ #define  PCI_EXP_DEVCTL_CERE	0x0001	/* Correctable Error Reporting En. */
+ #define  PCI_EXP_DEVCTL_NFERE	0x0002	/* Non-Fatal Error Reporting Enable */
+@@ -371,6 +384,7 @@
+ #define  PCI_EXP_DEVCTL_AUX_PME	0x0400	/* Auxiliary Power PM Enable */
+ #define  PCI_EXP_DEVCTL_NOSNOOP_EN 0x0800  /* Enable No Snoop */
+ #define  PCI_EXP_DEVCTL_READRQ	0x7000	/* Max_Read_Request_Size */
++#define  PCI_EXP_DEVCTL_BCR_FLR 0x8000  /* Bridge Configuration Retry / FLR */
+ #define PCI_EXP_DEVSTA		10	/* Device Status */
+ #define  PCI_EXP_DEVSTA_CED	0x01	/* Correctable Error Detected */
+ #define  PCI_EXP_DEVSTA_NFED	0x02	/* Non-Fatal Error Detected */

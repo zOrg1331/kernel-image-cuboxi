@@ -1,0 +1,85 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Fri, 11 Dec 2009 04:30:39 -0500
+Subject: [usb] support lexar expresscard
+Message-id: <20091210213039.191c1686@redhat.com>
+Patchwork-id: 21873
+O-Subject: [RHEL 5.5 patch] Support Lexar ExpressCard, v2
+Bugzilla: 511374
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This message is a repost, which incorporates Jarod's request to stay closer
+to the upstream. The patch should be _exactly_ the same functionally, only
+it uses the value from a module parameter instead of a build-time constant.
+Also, I forgot to change the comment the first time around.
+
+Again, this fix permits Lexar ExpressCard to be recognized by RHEL 5.
+
+A "Lexar ExpressCard" is exactly the same as a USB stick, but it plugs
+into an ExpressCard socket on a laptop with PCIe bus. It uses USB
+pins that are routed alongside PCIe pins.
+
+The problem is that the card takes whole 2s (TWO SECONDS) to come
+out of reset. The bugzilla report has usbmon traces that show it very
+clearly. The fix is to up the timeout, like in later 2.6.
+
+Since the change was in 2.6 for quite a while, and there's no violation
+of a USB.org standard or accepted practices, I consider it safe.
+Admittedly, it touches a sensitive code fragment.
+
+A kernel with a previous version of this patch was tested and resolves
+the problem (not this one yet though -- I only built it in Brew and
+uploaded for test). What I really want reviewers to ponder is if this
+is as safe as I claim.
+
+Please ack (the original had 1 ack by Prarit).
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=511374
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 26c8cb5..926c965 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -51,6 +51,17 @@ module_param (blinkenlights, bool, S_IRUGO);
+ MODULE_PARM_DESC (blinkenlights, "true to cycle leds on hubs");
+ 
+ /*
++ * Device SATA8000 FW1.0 from DATAST0R Technology Corp requires about
++ * 10 seconds to send reply for the initial 64-byte descriptor request.
++ */
++/* define initial 64-byte descriptor request timeout in milliseconds */
++static int initial_descriptor_timeout = USB_CTRL_GET_TIMEOUT;
++module_param(initial_descriptor_timeout, int, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(initial_descriptor_timeout,
++		"initial 64-byte descriptor request timeout in milliseconds "
++		"(default 5000 - 5.0 seconds)");
++
++/*
+  * As of 2.6.10 we introduce a new USB device initialization scheme which
+  * closely resembles the way Windows works.  Hopefully it will be compatible
+  * with a wider range of devices than the old scheme.  However some previously
+@@ -2311,20 +2322,14 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
+ 				continue;
+ 			}
+ 
+-			/* Use a short timeout the first time through,
+-			 * so that recalcitrant full-speed devices with
+-			 * 8- or 16-byte ep0-maxpackets won't slow things
+-			 * down tremendously by NAKing the unexpectedly
+-			 * early status stage.  Also, retry on all errors;
+-			 * some devices are flakey.
+-			 */
++			/* Retry on all errors; some devices are flakey. */
+ 			for (j = 0; j < 3; ++j) {
+ 				buf->bMaxPacketSize0 = 0;
+ 				r = usb_control_msg(udev, usb_rcvaddr0pipe(),
+ 					USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
+ 					USB_DT_DEVICE << 8, 0,
+ 					buf, GET_DESCRIPTOR_BUFSIZE,
+-					(i ? USB_CTRL_GET_TIMEOUT : 1000));
++					initial_descriptor_timeout);
+ 				switch (buf->bMaxPacketSize0) {
+ 				case 8: case 16: case 32: case 64:
+ 					if (buf->bDescriptorType ==

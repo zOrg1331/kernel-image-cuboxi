@@ -1,6 +1,7 @@
 /*
    Common Flash Interface probe code.
    (C) 2000 Red Hat. GPL'd.
+   $Id: cfi_probe.c,v 1.86 2005/11/29 14:48:31 gleixner Exp $
 */
 
 #include <linux/module.h>
@@ -38,20 +39,23 @@ struct mtd_info *cfi_probe(struct map_info *map);
 #define xip_allowed(base, map) \
 do { \
 	(void) map_read(map, base); \
-	xip_iprefetch(); \
+	asm volatile (".rep 8; nop; .endr"); \
 	local_irq_enable(); \
 } while (0)
 
 #define xip_enable(base, map, cfi) \
 do { \
-	cfi_qry_mode_off(base, map, cfi);		\
+	cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL); \
+	cfi_send_gen_cmd(0xFF, 0, base, map, cfi, cfi->device_type, NULL); \
 	xip_allowed(base, map); \
 } while (0)
 
 #define xip_disable_qry(base, map, cfi) \
 do { \
 	xip_disable(); \
-	cfi_qry_mode_on(base, map, cfi); \
+	cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL); \
+	cfi_send_gen_cmd(0xFF, 0, base, map, cfi, cfi->device_type, NULL); \
+	cfi_send_gen_cmd(0x98, 0x55, base, map, cfi, cfi->device_type, NULL); \
 } while (0)
 
 #else
@@ -67,6 +71,32 @@ do { \
    in: interleave,type,mode
    ret: table index, <0 for error
  */
+static int __xipram qry_present(struct map_info *map, __u32 base,
+				struct cfi_private *cfi)
+{
+	int osf = cfi->interleave * cfi->device_type;	// scale factor
+	map_word val[3];
+	map_word qry[3];
+
+	qry[0] = cfi_build_cmd('Q', map, cfi);
+	qry[1] = cfi_build_cmd('R', map, cfi);
+	qry[2] = cfi_build_cmd('Y', map, cfi);
+
+	val[0] = map_read(map, base + osf*0x10);
+	val[1] = map_read(map, base + osf*0x11);
+	val[2] = map_read(map, base + osf*0x12);
+
+	if (!map_word_equal(map, qry[0], val[0]))
+		return 0;
+
+	if (!map_word_equal(map, qry[1], val[1]))
+		return 0;
+
+	if (!map_word_equal(map, qry[2], val[2]))
+		return 0;
+
+	return 1; 	// "QRY" found
+}
 
 static int __xipram cfi_probe_chip(struct map_info *map, __u32 base,
 				   unsigned long *chip_map, struct cfi_private *cfi)
@@ -87,7 +117,11 @@ static int __xipram cfi_probe_chip(struct map_info *map, __u32 base,
 	}
 
 	xip_disable();
-	if (!cfi_qry_mode_on(base, map, cfi)) {
+	cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL);
+	cfi_send_gen_cmd(0xFF, 0, base, map, cfi, cfi->device_type, NULL);
+	cfi_send_gen_cmd(0x98, 0x55, base, map, cfi, cfi->device_type, NULL);
+
+	if (!qry_present(map,base,cfi)) {
 		xip_enable(base, map, cfi);
 		return 0;
 	}
@@ -108,13 +142,14 @@ static int __xipram cfi_probe_chip(struct map_info *map, __u32 base,
  		start = i << cfi->chipshift;
 		/* This chip should be in read mode if it's one
 		   we've already touched. */
-		if (cfi_qry_present(map, start, cfi)) {
+		if (qry_present(map, start, cfi)) {
 			/* Eep. This chip also had the QRY marker.
 			 * Is it an alias for the new one? */
-			cfi_qry_mode_off(start, map, cfi);
+			cfi_send_gen_cmd(0xF0, 0, start, map, cfi, cfi->device_type, NULL);
+			cfi_send_gen_cmd(0xFF, 0, start, map, cfi, cfi->device_type, NULL);
 
 			/* If the QRY marker goes away, it's an alias */
-			if (!cfi_qry_present(map, start, cfi)) {
+			if (!qry_present(map, start, cfi)) {
 				xip_allowed(base, map);
 				printk(KERN_DEBUG "%s: Found an alias at 0x%x for the chip at 0x%lx\n",
 				       map->name, base, start);
@@ -124,9 +159,10 @@ static int __xipram cfi_probe_chip(struct map_info *map, __u32 base,
 			 * unfortunate. Stick the new chip in read mode
 			 * too and if it's the same, assume it's an alias. */
 			/* FIXME: Use other modes to do a proper check */
-			cfi_qry_mode_off(base, map, cfi);
+			cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL);
+			cfi_send_gen_cmd(0xFF, 0, start, map, cfi, cfi->device_type, NULL);
 
-			if (cfi_qry_present(map, base, cfi)) {
+			if (qry_present(map, base, cfi)) {
 				xip_allowed(base, map);
 				printk(KERN_DEBUG "%s: Found an alias at 0x%x for the chip at 0x%lx\n",
 				       map->name, base, start);
@@ -141,7 +177,8 @@ static int __xipram cfi_probe_chip(struct map_info *map, __u32 base,
 	cfi->numchips++;
 
 	/* Put it back into Read Mode */
-	cfi_qry_mode_off(base, map, cfi);
+	cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL);
+	cfi_send_gen_cmd(0xFF, 0, base, map, cfi, cfi->device_type, NULL);
 	xip_allowed(base, map);
 
 	printk(KERN_INFO "%s: Found %d x%d devices at 0x%x in %d-bit bank\n",
@@ -195,13 +232,10 @@ static int __xipram cfi_chip_setup(struct map_info *map,
 	cfi->mfr = cfi_read_query16(map, base);
 	cfi->id = cfi_read_query16(map, base + ofs_factor);
 
-	/* Get AMD/Spansion extended JEDEC ID */
-	if (cfi->mfr == CFI_MFR_AMD && (cfi->id & 0xff) == 0x7e)
-		cfi->id = cfi_read_query(map, base + 0xe * ofs_factor) << 8 |
-			  cfi_read_query(map, base + 0xf * ofs_factor);
-
 	/* Put it back into Read Mode */
-	cfi_qry_mode_off(base, map, cfi);
+	cfi_send_gen_cmd(0xF0, 0, base, map, cfi, cfi->device_type, NULL);
+	/* ... even if it's an Intel chip */
+	cfi_send_gen_cmd(0xFF, 0, base, map, cfi, cfi->device_type, NULL);
 	xip_allowed(base, map);
 
 	/* Do any necessary byteswapping */
@@ -336,27 +370,27 @@ static void print_cfi_ident(struct cfi_ident *cfip)
 	printk("Device size: 0x%X bytes (%d MiB)\n", 1 << cfip->DevSize, 1<< (cfip->DevSize - 20));
 	printk("Flash Device Interface description: 0x%4.4X\n", cfip->InterfaceDesc);
 	switch(cfip->InterfaceDesc) {
-	case CFI_INTERFACE_X8_ASYNC:
+	case 0:
 		printk("  - x8-only asynchronous interface\n");
 		break;
 
-	case CFI_INTERFACE_X16_ASYNC:
+	case 1:
 		printk("  - x16-only asynchronous interface\n");
 		break;
 
-	case CFI_INTERFACE_X8_BY_X16_ASYNC:
+	case 2:
 		printk("  - supports x8 and x16 via BYTE# with asynchronous interface\n");
 		break;
 
-	case CFI_INTERFACE_X32_ASYNC:
+	case 3:
 		printk("  - x32-only asynchronous interface\n");
 		break;
 
-	case CFI_INTERFACE_X16_BY_X32_ASYNC:
+	case 4:
 		printk("  - supports x16 and x32 via Word# with asynchronous interface\n");
 		break;
 
-	case CFI_INTERFACE_NOT_ALLOWED:
+	case 65535:
 		printk("  - Not Allowed / Reserved\n");
 		break;
 

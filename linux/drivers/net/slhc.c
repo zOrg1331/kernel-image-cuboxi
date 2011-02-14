@@ -42,7 +42,7 @@
  *                      Modularization.
  *	- Jan 1995	Bjorn Ekwall
  *			Use ip_fast_csum from ip.h
- *	- July 1995	Christos A. Polyzols
+ *	- July 1995	Christos A. Polyzols 
  *			Spotted bug in tcp option checking
  *
  *
@@ -94,23 +94,27 @@ slhc_init(int rslots, int tslots)
 	register struct cstate *ts;
 	struct slcompress *comp;
 
-	comp = kzalloc(sizeof(struct slcompress), GFP_KERNEL);
+	comp = (struct slcompress *)kmalloc(sizeof(struct slcompress),
+					    GFP_KERNEL);
 	if (! comp)
 		goto out_fail;
+	memset(comp, 0, sizeof(struct slcompress));
 
 	if ( rslots > 0  &&  rslots < 256 ) {
 		size_t rsize = rslots * sizeof(struct cstate);
-		comp->rstate = kzalloc(rsize, GFP_KERNEL);
+		comp->rstate = (struct cstate *) kmalloc(rsize, GFP_KERNEL);
 		if (! comp->rstate)
 			goto out_free;
+		memset(comp->rstate, 0, rsize);
 		comp->rslot_limit = rslots - 1;
 	}
 
 	if ( tslots > 0  &&  tslots < 256 ) {
 		size_t tsize = tslots * sizeof(struct cstate);
-		comp->tstate = kzalloc(tsize, GFP_KERNEL);
+		comp->tstate = (struct cstate *) kmalloc(tsize, GFP_KERNEL);
 		if (! comp->tstate)
 			goto out_free2;
+		memset(comp->tstate, 0, tsize);
 		comp->tslot_limit = tslots - 1;
 	}
 
@@ -137,9 +141,9 @@ slhc_init(int rslots, int tslots)
 	return comp;
 
 out_free2:
-	kfree(comp->rstate);
+	kfree((unsigned char *)comp->rstate);
 out_free:
-	kfree(comp);
+	kfree((unsigned char *)comp);
 out_fail:
 	return NULL;
 }
@@ -174,7 +178,7 @@ put16(unsigned char *cp, unsigned short x)
 
 
 /* Encode a number */
-static unsigned char *
+unsigned char *
 encode(unsigned char *cp, unsigned short n)
 {
 	if(n >= 256 || n == 0){
@@ -199,7 +203,7 @@ pull16(unsigned char **cpp)
 }
 
 /* Decode a number */
-static long
+long
 decode(unsigned char **cpp)
 {
 	register int x;
@@ -233,16 +237,15 @@ slhc_compress(struct slcompress *comp, unsigned char *icp, int isize,
 	register unsigned char *cp = new_seq;
 	struct iphdr *ip;
 	struct tcphdr *th, *oth;
-	__sum16 csum;
 
 
 	/*
 	 *	Don't play with runt packets.
 	 */
-
+	 
 	if(isize<sizeof(struct iphdr))
 		return isize;
-
+		
 	ip = (struct iphdr *) icp;
 
 	/* Bail if this packet isn't TCP, or is an IP fragment */
@@ -429,7 +432,7 @@ found:
 	/* Grab the cksum before we overwrite it below.  Then update our
 	 * state with this packet's header.
 	 */
-	csum = th->check;
+	deltaA = ntohs(th->check);
 	memcpy(&cs->cs_ip,ip,20);
 	memcpy(&cs->cs_tcp,th,20);
 	/* We want to use the original packet as our compressed packet.
@@ -450,8 +453,7 @@ found:
 		*cpp = ocp;
 		*cp++ = changes;
 	}
-	*(__sum16 *)cp = csum;
-	cp += 2;
+	cp = put16(cp,(short)deltaA);	/* Write TCP checksum */
 /* deltaS is now the size of the change section of the compressed header */
 	memcpy(cp,new_seq,deltaS);	/* Write list of deltas */
 	memcpy(cp+deltaS,icp+hlen,isize-hlen);
@@ -521,8 +523,10 @@ slhc_uncompress(struct slcompress *comp, unsigned char *icp, int isize)
 	thp = &cs->cs_tcp;
 	ip = &cs->cs_ip;
 
-	thp->check = *(__sum16 *)cp;
-	cp += 2;
+	if((x = pull16(&cp)) == -1) {	/* Read the TCP checksum */
+		goto bad;
+        }
+	thp->check = htons(x);
 
 	thp->psh = (changes & TCP_PUSH_BIT) ? 1 : 0;
 /*
@@ -696,6 +700,20 @@ EXPORT_SYMBOL(slhc_compress);
 EXPORT_SYMBOL(slhc_uncompress);
 EXPORT_SYMBOL(slhc_toss);
 
+#ifdef MODULE
+
+int init_module(void)
+{
+	printk(KERN_INFO "CSLIP: code copyright 1989 Regents of the University of California\n");
+	return 0;
+}
+
+void cleanup_module(void)
+{
+	return;
+}
+
+#endif /* MODULE */
 #else /* CONFIG_INET */
 
 

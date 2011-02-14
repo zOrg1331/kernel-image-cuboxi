@@ -37,16 +37,13 @@
 #include <linux/agpgart.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
-#include <linux/fs.h>
-#include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include "agp.h"
 
-struct agp_front_data agp_fe;
+static struct agp_front_data agp_fe;
 
-struct agp_memory *agp_find_mem_by_key(int key)
+static struct agp_memory *agp_find_mem_by_key(int key)
 {
 	struct agp_memory *curr;
 
@@ -154,15 +151,38 @@ static void agp_add_seg_to_client(struct agp_client *client,
 	client->segments = seg;
 }
 
+/* Originally taken from linux/mm/mmap.c from the array
+ * protection_map.
+ * The original really should be exported to modules, or
+ * some routine which does the conversion for you
+ */
+
+static const pgprot_t my_protect_map[16] =
+{
+	__P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
+	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
+};
+
 static pgprot_t agp_convert_mmap_flags(int prot)
 {
-	unsigned long prot_bits;
+#define _trans(x,bit1,bit2) \
+((bit1==bit2)?(x&bit1):(x&bit1)?bit2:0)
 
-	prot_bits = calc_vm_prot_bits(prot) | VM_SHARED;
-	return vm_get_page_prot(prot_bits);
+	unsigned long prot_bits;
+	pgprot_t temp;
+
+	prot_bits = _trans(prot, PROT_READ, VM_READ) |
+	    _trans(prot, PROT_WRITE, VM_WRITE) |
+	    _trans(prot, PROT_EXEC, VM_EXEC);
+
+	prot_bits |= VM_SHARED;
+
+	temp = my_protect_map[prot_bits & 0x0000000f];
+
+	return temp;
 }
 
-int agp_create_segment(struct agp_client *client, struct agp_region *region)
+static int agp_create_segment(struct agp_client *client, struct agp_region *region)
 {
 	struct agp_segment_priv **ret_seg;
 	struct agp_segment_priv *seg;
@@ -214,7 +234,7 @@ static void agp_insert_into_pool(struct agp_memory * temp)
 
 /* File private list routines */
 
-struct agp_file_private *agp_find_private(pid_t pid)
+static struct agp_file_private *agp_find_private(pid_t pid)
 {
 	struct agp_file_private *curr;
 
@@ -269,13 +289,13 @@ static void agp_remove_file_private(struct agp_file_private * priv)
  * Wrappers for agp_free_memory & agp_allocate_memory
  * These make sure that internal lists are kept updated.
  */
-void agp_free_memory_wrap(struct agp_memory *memory)
+static void agp_free_memory_wrap(struct agp_memory *memory)
 {
 	agp_remove_from_pool(memory);
 	agp_free_memory(memory);
 }
 
-struct agp_memory *agp_allocate_memory_wrap(size_t pg_count, u32 type)
+static struct agp_memory *agp_allocate_memory_wrap(size_t pg_count, u32 type)
 {
 	struct agp_memory *memory;
 
@@ -396,7 +416,7 @@ static int agp_remove_controller(struct agp_controller *controller)
 
 	if (agp_fe.current_controller == controller) {
 		agp_fe.current_controller = NULL;
-		agp_fe.backend_acquired = false;
+		agp_fe.backend_acquired = FALSE;
 		agp_backend_release(agp_bridge);
 	}
 	kfree(controller);
@@ -444,7 +464,7 @@ static void agp_controller_release_current(struct agp_controller *controller,
 	}
 
 	agp_fe.current_controller = NULL;
-	agp_fe.used_by_controller = false;
+	agp_fe.used_by_controller = FALSE;
 	agp_backend_release(agp_bridge);
 }
 
@@ -487,7 +507,7 @@ static struct agp_controller *agp_find_controller_for_client(pid_t id)
 	return NULL;
 }
 
-struct agp_client *agp_find_client_by_pid(pid_t id)
+static struct agp_client *agp_find_client_by_pid(pid_t id)
 {
 	struct agp_client *temp;
 
@@ -512,7 +532,7 @@ static void agp_insert_client(struct agp_client *client)
 	agp_fe.current_controller->num_clients++;
 }
 
-struct agp_client *agp_create_client(pid_t id)
+static struct agp_client *agp_create_client(pid_t id)
 {
 	struct agp_client *new_client;
 
@@ -525,7 +545,7 @@ struct agp_client *agp_create_client(pid_t id)
 	return new_client;
 }
 
-int agp_remove_client(pid_t id)
+static int agp_remove_client(pid_t id)
 {
 	struct agp_client *client;
 	struct agp_client *prev_client;
@@ -574,7 +594,7 @@ static int agp_mmap(struct file *file, struct vm_area_struct *vma)
 
 	mutex_lock(&(agp_fe.agp_mutex));
 
-	if (agp_fe.backend_acquired != true)
+	if (agp_fe.backend_acquired != TRUE)
 		goto out_eperm;
 
 	if (!(test_bit(AGP_FF_IS_VALID, &priv->access_flags)))
@@ -678,7 +698,6 @@ static int agp_open(struct inode *inode, struct file *file)
 	struct agp_client *client;
 	int rc = -ENXIO;
 
-	lock_kernel();
 	mutex_lock(&(agp_fe.agp_mutex));
 
 	if (minor != AGPGART_MINOR)
@@ -691,7 +710,7 @@ static int agp_open(struct inode *inode, struct file *file)
 	set_bit(AGP_FF_ALLOW_CLIENT, &priv->access_flags);
 	priv->my_pid = current->pid;
 
-	if (capable(CAP_SYS_RAWIO)) {
+	if ((current->uid == 0) || (current->suid == 0)) {
 		/* Root priv, can be controller */
 		set_bit(AGP_FF_ALLOW_CONTROLLER, &priv->access_flags);
 	}
@@ -705,14 +724,12 @@ static int agp_open(struct inode *inode, struct file *file)
 	agp_insert_file_private(priv);
 	DBG("private=%p, client=%p", priv, client);
 	mutex_unlock(&(agp_fe.agp_mutex));
-	unlock_kernel();
 	return 0;
 
 err_out_nomem:
 	rc = -ENOMEM;
 err_out:
 	mutex_unlock(&(agp_fe.agp_mutex));
-	unlock_kernel();
 	return rc;
 }
 
@@ -752,7 +769,7 @@ static int agpioc_info_wrap(struct agp_file_private *priv, void __user *arg)
 	return 0;
 }
 
-int agpioc_acquire_wrap(struct agp_file_private *priv)
+static int agpioc_acquire_wrap(struct agp_file_private *priv)
 {
 	struct agp_controller *controller;
 
@@ -772,7 +789,7 @@ int agpioc_acquire_wrap(struct agp_file_private *priv)
 
 	atomic_inc(&agp_bridge->agp_in_use);
 
-	agp_fe.backend_acquired = true;
+	agp_fe.backend_acquired = TRUE;
 
 	controller = agp_find_controller_by_pid(priv->my_pid);
 
@@ -782,7 +799,7 @@ int agpioc_acquire_wrap(struct agp_file_private *priv)
 		controller = agp_create_controller(priv->my_pid);
 
 		if (controller == NULL) {
-			agp_fe.backend_acquired = false;
+			agp_fe.backend_acquired = FALSE;
 			agp_backend_release(agp_bridge);
 			return -ENOMEM;
 		}
@@ -795,14 +812,14 @@ int agpioc_acquire_wrap(struct agp_file_private *priv)
 	return 0;
 }
 
-int agpioc_release_wrap(struct agp_file_private *priv)
+static int agpioc_release_wrap(struct agp_file_private *priv)
 {
 	DBG("");
 	agp_controller_release_current(agp_fe.current_controller, priv);
 	return 0;
 }
 
-int agpioc_setup_wrap(struct agp_file_private *priv, void __user *arg)
+static int agpioc_setup_wrap(struct agp_file_private *priv, void __user *arg)
 {
 	struct agp_setup mode;
 
@@ -882,7 +899,7 @@ static int agpioc_reserve_wrap(struct agp_file_private *priv, void __user *arg)
 	return -EINVAL;
 }
 
-int agpioc_protect_wrap(struct agp_file_private *priv)
+static int agpioc_protect_wrap(struct agp_file_private *priv)
 {
 	DBG("");
 	/* This function is not currently implemented */
@@ -897,9 +914,6 @@ static int agpioc_allocate_wrap(struct agp_file_private *priv, void __user *arg)
 	DBG("");
 	if (copy_from_user(&alloc, arg, sizeof(struct agp_allocate)))
 		return -EFAULT;
-
-	if (alloc.type >= AGP_USER_TYPES)
-		return -EINVAL;
 
 	memory = agp_allocate_memory_wrap(alloc.pg_count, alloc.type);
 
@@ -916,7 +930,7 @@ static int agpioc_allocate_wrap(struct agp_file_private *priv, void __user *arg)
 	return 0;
 }
 
-int agpioc_deallocate_wrap(struct agp_file_private *priv, int arg)
+static int agpioc_deallocate_wrap(struct agp_file_private *priv, int arg)
 {
 	struct agp_memory *memory;
 
@@ -964,14 +978,7 @@ static int agpioc_unbind_wrap(struct agp_file_private *priv, void __user *arg)
 	return agp_unbind_memory(memory);
 }
 
-int agpioc_chipset_flush_wrap(struct agp_file_private *priv)
-{
-	DBG("");
-	agp_flush_chipset(agp_bridge);
-	return 0;
-}
-
-static long agp_ioctl(struct file *file,
+static int agp_ioctl(struct inode *inode, struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
 	struct agp_file_private *curr_priv = file->private_data;
@@ -985,7 +992,7 @@ static long agp_ioctl(struct file *file,
 		ret_val = -EINVAL;
 		goto ioctl_out;
 	}
-	if ((agp_fe.backend_acquired != true) &&
+	if ((agp_fe.backend_acquired != TRUE) &&
 	    (cmd != AGPIOC_ACQUIRE)) {
 		ret_val = -EBUSY;
 		goto ioctl_out;
@@ -1044,10 +1051,6 @@ static long agp_ioctl(struct file *file,
 	case AGPIOC_UNBIND:
 		ret_val = agpioc_unbind_wrap(curr_priv, (void __user *) arg);
 		break;
-	       
-	case AGPIOC_CHIPSET_FLUSH:
-		ret_val = agpioc_chipset_flush_wrap(curr_priv);
-		break;
 	}
 
 ioctl_out:
@@ -1062,10 +1065,7 @@ static const struct file_operations agp_fops =
 	.llseek		= no_llseek,
 	.read		= agp_read,
 	.write		= agp_write,
-	.unlocked_ioctl	= agp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= compat_agp_ioctl,
-#endif
+	.ioctl		= agp_ioctl,
 	.mmap		= agp_mmap,
 	.open		= agp_open,
 	.release	= agp_release,

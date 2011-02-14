@@ -1,0 +1,65 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL 5.1 PATCH] igmp: check for NULL return when allocating skbs with GFP_ATOMIC
+Date: Tue, 28 Aug 2007 16:20:33 -0400
+Bugzilla: 252404
+Message-Id: <20070828202033.GA14602@hmsendeavour.rdu.redhat.com>
+Changelog: [net] igmp: check for NULL when allocating GFP_ATOMIC skbs
+
+
+Hey-
+	Backport of commit:
+cc63f70b8b410eb653449151821f6b8b9af6ca42
+Which verifies that add_grhead managed to allocate an skb, avoiding an oops on
+dereference in the event that it didn't.  Fixes bz 252404
+
+Regards
+Neil
+
+
+commit cc63f70b8b410eb653449151821f6b8b9af6ca42
+Author: Alexey Dobriyan <adobriyan@openvz.org>
+
+    [IPV4/IPV6] multicast: Check add_grhead() return value
+    
+    add_grhead() allocates memory with GFP_ATOMIC and in at least two places skb
+    from it passed to skb_put() without checking.
+    
+    Signed-off-by: Alexey Dobriyan <adobriyan@openvz.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv4/igmp.c b/net/ipv4/igmp.c
+index 0017ccb..024ae56 100644
+--- a/net/ipv4/igmp.c
++++ b/net/ipv4/igmp.c
+@@ -455,6 +455,8 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ip_mc_list *pmc,
+ 			skb = add_grhead(skb, pmc, type, &pgr);
+ 			first = 0;
+ 		}
++		if (!skb)
++			return NULL;
+ 		psrc = (u32 *)skb_put(skb, sizeof(u32));
+ 		*psrc = psf->sf_inaddr;
+ 		scount++; stotal++;
+diff --git a/net/ipv6/mcast.c b/net/ipv6/mcast.c
+index 882cde4..e3ec216 100644
+--- a/net/ipv6/mcast.c
++++ b/net/ipv6/mcast.c
+@@ -1582,6 +1582,8 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
+ 			skb = add_grhead(skb, pmc, type, &pgr);
+ 			first = 0;
+ 		}
++		if (!skb)
++			return NULL;
+ 		psrc = (struct in6_addr *)skb_put(skb, sizeof(*psrc));
+ 		*psrc = psf->sf_addr;
+ 		scount++; stotal++;
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

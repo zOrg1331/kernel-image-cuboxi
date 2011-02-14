@@ -1,0 +1,375 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 18 Jun 2010 15:50:24 -0400
+Subject: [scsi] qla2xxx: more upstream updates for RHEL 5.6
+Message-id: <20100618071536.2527.60024.sendpatchset@localhost.localdomain>
+Patchwork-id: 26320
+O-Subject: [RHEL 5.6 PATCH 4/5] qla2xxx: Updates from upstream for RHEL 5.6
+	(part 2)
+Bugzilla: 567428
+
+>From ab38c8f55f1e816e21d21ebe780fac683b7541a3 Mon Sep 17 00:00:00 2001
+From: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Date: Wed, 2 Jun 2010 19:43:35 +0530
+Subject: [PATCH] More fixes from upstream
+
+Check for empty slot in request queue before posting Command type 6 request.
+        For ISP82xx, the check for empty slot in request queue before posting command type 6
+        request was missing. This could lead to request queue entry corruptions causing
+        IO timeouts.
+
+Remove duplicate macro QLA82XX_CRB_DEV_PART_INFO
+
+Do not enable VP in non fabric topology.
+        After topology change ISP is reset and VPs are re-enabled.
+        If the topology is not fabric, VPs could falsely get enabled.
+
+Handle outstanding mbx cmds on hung f/w scenarios.
+
+Fix flash write failure on ISP82XX
+        Driver was not unprotecting correctly, use correct bits
+        to unprotect the flash on ISP 82xx.
+
+Log proper messages on loop down and port update AEN (This is RHEL 5.x specific)
+        Currently due to usage of same function qla2x00_set_loop_down for
+        loop down and port update AEN same message was logged into messages file.
+        Moved the debug statements out of the common function to log proper
+        message for loop down and port update AEN.
+
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index dc09132..9ec8dd0 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -2377,6 +2377,8 @@ typedef struct scsi_qla_host {
+ 		uint32_t        fac_supported		:1;
+ 		uint32_t        eeh_busy		:1;
+ 		uint32_t        fcp_prio_enabled	:1;
++		uint32_t	fw_hung			:1;
++		/* 28 bits */
+ 	} flags;
+ 
+ 	atomic_t	loop_state;
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index a2691df..cd26aac 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -1486,7 +1486,8 @@ qla2x00_fw_ready(scsi_qla_host_t *ha)
+ 			}
+ 		} else {
+ 			/* Mailbox cmd failed. Timeout on min_wait. */
+-			if (time_after_eq(jiffies, mtime))
++			if (time_after_eq(jiffies, mtime) ||
++			    (IS_QLA82XX(ha) && ha->flags.fw_hung))
+ 				break;
+ 		}
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_iocb.c b/drivers/scsi/qla2xxx/qla_iocb.c
+index f16e338..8876010 100644
+--- a/drivers/scsi/qla2xxx/qla_iocb.c
++++ b/drivers/scsi/qla2xxx/qla_iocb.c
+@@ -1114,6 +1114,17 @@ qla82xx_start_scsi(srb_t *sp)
+ 
+ sufficient_dsds:
+ 		req_cnt = 1;
++		if (ha->req_q_cnt < (req_cnt + 2)) {
++			cnt = (uint16_t)RD_REG_DWORD_RELAXED(
++					&reg->req_q_out[0]);
++			if (ha->req_ring_index < cnt)
++				ha->req_q_cnt = cnt - ha->req_ring_index;
++			else
++				ha->req_q_cnt = ha->request_q_length -
++					(ha->req_ring_index - cnt);
++		}
++		if (ha->req_q_cnt < (req_cnt + 2))
++			goto queuing_error;
+ 
+ 		ctx = sp->ctx = mempool_alloc(ha->ctx_mempool, GFP_ATOMIC);
+ 		if (!sp->ctx) {
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 1972fe2..f7cbcd9 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -482,6 +482,11 @@ skip_rio:
+ 
+ 	case MBA_LOOP_DOWN:		/* Loop Down Event */
+ 		ha->current_topology = 0;
++		DEBUG2(printk(KERN_INFO
++		    "scsi(%ld): Asynchronous LOOP DOWN "
++		    "(%x %x %x).\n", ha->host_no, mb[1], mb[2], mb[3]));
++		qla_printk(KERN_INFO, ha, "LOOP DOWN detected (%x %x %x).\n",
++		    mb[1], mb[2], mb[3]);
+ 		qla2x00_set_loop_down( ha, mb );
+ 		if (ql2xfdmienable)
+ 			set_bit(REGISTER_FDMI_NEEDED, &ha->dpc_flags);
+@@ -605,6 +610,12 @@ skip_rio:
+ 
+                 /* Global event -- port logout or port unavailable. */
+                 if (mb[1] == 0xffff && mb[2] == 0x7) {
++			DEBUG2(printk(KERN_INFO
++			    "scsi(%ld): Asynchronous PORT UPDATE "
++			    "(%x %x %x).\n", ha->host_no, mb[1], mb[2], mb[3]));
++			qla_printk(KERN_INFO, ha,
++			    "Port database changed (%x %x %x).\n",
++			    mb[1], mb[2], mb[3]);
+ 			qla2x00_set_loop_down( ha, mb );
+ 			break;
+                 }
+diff --git a/drivers/scsi/qla2xxx/qla_mbx.c b/drivers/scsi/qla2xxx/qla_mbx.c
+index 17560a8..c497512 100644
+--- a/drivers/scsi/qla2xxx/qla_mbx.c
++++ b/drivers/scsi/qla2xxx/qla_mbx.c
+@@ -36,7 +36,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 	device_reg_t __iomem *reg;
+ 	uint8_t		abort_active;
+ 	uint8_t		io_lock_on;
+-	uint16_t	command;
++	uint16_t	command = 0;
+ 	uint16_t	*iptr;
+ 	uint16_t __iomem *optr;
+ 	uint32_t	cnt;
+@@ -78,6 +78,14 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 		return QLA_FUNCTION_TIMEOUT;
+ 	}
+ 
++	if (IS_QLA82XX(ha) && ha->flags.fw_hung) {
++		/* Setting Link-Down error */
++		mcp->mb[0] = MBS_LINK_DOWN_ERROR;
++		rval = QLA_FUNCTION_FAILED;
++
++		goto premature_exit;
++	}
++
+ 	ha->flags.mbox_busy = 1;
+ 	/* Save mailbox command for debug */
+ 	ha->mcp = mcp;
+@@ -145,7 +153,9 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 				DEBUG2_3_11(printk(KERN_INFO
+ 				    "%s(%ld): Pending Mailbox timeout. "
+ 				    "Exiting.\n", __func__, ha->host_no));
+-				return QLA_FUNCTION_TIMEOUT;
++				rval = QLA_FUNCTION_TIMEOUT;
++				goto premature_exit;
++
+ 			}
+ 			WRT_REG_DWORD(&reg->isp82.hint, HINT_MBX_INT_PENDING);
+ 		} else if (IS_FWI2_CAPABLE(ha))
+@@ -169,7 +179,8 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 				DEBUG2_3_11(printk(KERN_INFO
+ 				    "%s(%ld): Pending Mailbox timeout. "
+ 				    "Exiting.\n", __func__, ha->host_no));
+-				return QLA_FUNCTION_TIMEOUT;
++				rval = QLA_FUNCTION_TIMEOUT;
++				goto premature_exit;
+ 			}
+ 			WRT_REG_DWORD(&reg->isp82.hint, HINT_MBX_INT_PENDING);
+ 		} else if (IS_FWI2_CAPABLE(ha))
+@@ -207,6 +218,16 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 		ha->flags.mbox_int = 0;
+ 		clear_bit(MBX_INTERRUPT, &ha->mbx_cmd_flags);
+ 
++		if (IS_QLA82XX(ha) && ha->flags.fw_hung) {
++			ha->flags.mbox_busy = 0;
++			/* Setting Link-Down error */
++			mcp->mb[0] = MBS_LINK_DOWN_ERROR;
++			ha->mcp = NULL;
++			rval = QLA_FUNCTION_FAILED;
++
++			goto premature_exit;
++		}
++
+ 		if (ha->mailbox_out[0] != MBS_COMMAND_COMPLETE)
+ 			rval = QLA_FUNCTION_FAILED;
+ 
+@@ -270,35 +291,50 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
+ 			    "isp_abort_needed.\n", __func__, ha->host_no));
+ 			DEBUG2_3_11(printk("%s(%ld): timeout schedule "
+ 			    "isp_abort_needed.\n", __func__, ha->host_no));
+-			qla_printk(KERN_WARNING, ha,
+-			    "Mailbox command timeout occured. Scheduling ISP "
+-			    "abort. eeh_busy: 0x%x\n", ha->flags.eeh_busy);
+-			set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+-			qla2xxx_wake_dpc(ha);
++
++			if (!test_bit(ISP_ABORT_NEEDED, &ha->dpc_flags) &&
++			    !test_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags) &&
++			    !test_bit(ISP_ABORT_RETRY, &ha->dpc_flags)) {
++
++				qla_printk(KERN_WARNING, ha,
++				    "Mailbox command timeout occured. "
++				    "Scheduling ISP " "abort. eeh_busy: 0x%x\n",
++				    ha->flags.eeh_busy);
++				set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
++				qla2xxx_wake_dpc(ha);
++			}
+ 		} else if (!abort_active) {
+ 			/* call abort directly since we are in the DPC thread */
+ 			DEBUG(printk("%s(%ld): timeout calling abort_isp\n",
+ 			    __func__, ha->host_no));
+ 			DEBUG2_3_11(printk("%s(%ld): timeout calling "
+ 			    "abort_isp\n", __func__, ha->host_no));
+-			qla_printk(KERN_WARNING, ha,
+-			    "Mailbox command timeout occured. Issuing ISP "
+-			    "abort.\n");
+-
+-			set_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
+-			clear_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+-			if (ha->isp_ops->abort_isp(ha)) {
+-				/* Failed. retry later. */
+-				set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
++			if (!test_bit(ISP_ABORT_NEEDED, &ha->dpc_flags) &&
++			    !test_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags) &&
++			    !test_bit(ISP_ABORT_RETRY, &ha->dpc_flags)) {
++
++				qla_printk(KERN_WARNING, ha,
++				    "Mailbox command timeout occured. "
++				    "Issuing ISP abort.\n");
++
++				set_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
++				clear_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
++				if (ha->isp_ops->abort_isp(ha)) {
++					/* Failed. retry later. */
++					set_bit(ISP_ABORT_NEEDED,
++					    &ha->dpc_flags);
++				}
++				clear_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
++				DEBUG(printk("%s(%ld): finished abort_isp\n",
++				    __func__, ha->host_no));
++				DEBUG2_3_11(printk(
++				    "%s(%ld): finished abort_isp\n",
++				    __func__, ha->host_no));
+ 			}
+-			clear_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
+-			DEBUG(printk("%s(%ld): finished abort_isp\n", __func__,
+-			    ha->host_no));
+-			DEBUG2_3_11(printk("%s(%ld): finished abort_isp\n",
+-			    __func__, ha->host_no));
+ 		}
+ 	}
+ 
++premature_exit:
+ 	/* Allow next mbx cmd to come in. */
+ 	complete(&ha->mbx_cmd_comp);
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_mid.c b/drivers/scsi/qla2xxx/qla_mid.c
+index d721aac..ece1dea 100644
+--- a/drivers/scsi/qla2xxx/qla_mid.c
++++ b/drivers/scsi/qla2xxx/qla_mid.c
+@@ -156,7 +156,8 @@ qla24xx_enable_vp(scsi_qla_host_t *vha)
+ 
+ 	/* Check if physical ha port is Up */
+ 	if (atomic_read(&ha->loop_state) == LOOP_DOWN  ||
+-		atomic_read(&ha->loop_state) == LOOP_DEAD ) {
++	    atomic_read(&ha->loop_state) == LOOP_DEAD ||
++	    !(ha->current_topology & ISP_CFG_F)) {
+ 		vha->vp_err_state =  VP_ERR_PORTDWN;
+ 		atomic_set(&vha->vport_last_state,
+ 		    atomic_read(&vha->vport_state));
+diff --git a/drivers/scsi/qla2xxx/qla_nx.c b/drivers/scsi/qla2xxx/qla_nx.c
+index d4aadd6..c4e2d3f 100644
+--- a/drivers/scsi/qla2xxx/qla_nx.c
++++ b/drivers/scsi/qla2xxx/qla_nx.c
+@@ -1110,6 +1110,8 @@ done_write:
+ 	return ret;
+ }
+ 
++#define BLOCK_PROTECT_BITS 0x0F
++
+ /*
+  * Reset all block protect bits
+  */
+@@ -1129,10 +1131,10 @@ qla82xx_unprotect_flash(scsi_qla_host_t *ha)
+ 	if (ret < 0)
+ 		goto done_unprotect;
+ 
+-	val &= ~(0x7 << 2);
++	val &= ~(BLOCK_PROTECT_BITS << 2);
+ 	ret = qla82xx_write_status_reg(ha, val);
+ 	if (ret < 0) {
+-		val |= (0x7 << 2);
++		val |= (BLOCK_PROTECT_BITS << 2);
+ 		qla82xx_write_status_reg(ha, val);
+ 	}
+ 
+@@ -1159,7 +1161,7 @@ qla82xx_protect_flash(scsi_qla_host_t *ha)
+ 	if (ret < 0)
+ 		goto done_protect;
+ 
+-	val |= (0x7 << 2);
++	val |= (BLOCK_PROTECT_BITS << 2);
+ 	/* LOCK all sectors */
+ 	ret = qla82xx_write_status_reg(ha, val);
+ 	if (ret < 0)
+@@ -2510,6 +2512,14 @@ qla82xx_check_fw_alive(scsi_qla_host_t *ha)
+ 				set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+ 			}
+ 			qla2xxx_wake_dpc(ha);
++			if (ha->flags.mbox_busy) {
++				ha->flags.fw_hung = 1;
++				ha->flags.mbox_int = 1;
++				DEBUG2(qla_printk(KERN_ERR, ha,
++				    "Due to fw hung, doing premature "
++				    "completion of mbx command\n"));
++				complete(&ha->mbx_intr_comp);
++			}
+ 		}
+ 	}
+ 
+@@ -2613,6 +2623,14 @@ void qla82xx_watchdog(scsi_qla_host_t *ha)
+ 			     "%s(): Adapter reset needed!\n", __func__);
+ 			set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+ 			qla2xxx_wake_dpc(ha);
++			if (ha->flags.mbox_busy) {
++				ha->flags.fw_hung = 1;
++				ha->flags.mbox_int = 1;
++				DEBUG2(qla_printk(KERN_ERR, ha,
++				    "Need reset, doing premature "
++				    "completion of mbx command\n"));
++				complete(&ha->mbx_intr_comp);
++			}
+ 		} else {
+ 			qla82xx_check_fw_alive(ha);
+ 		}
+@@ -2668,8 +2686,10 @@ qla82xx_abort_isp(scsi_qla_host_t *ha)
+ 	qla82xx_clear_rst_ready(ha);
+ 	qla82xx_idc_unlock(ha);
+ 
+-	if (rval == QLA_SUCCESS)
++	if (rval == QLA_SUCCESS) {
++		ha->flags.fw_hung = 0;
+ 		rval = qla82xx_restart_isp(ha);
++	}
+ 
+ 	if (rval) {
+ 		ha->flags.online = 1;
+diff --git a/drivers/scsi/qla2xxx/qla_nx.h b/drivers/scsi/qla2xxx/qla_nx.h
+index a6205b3..fa72de9 100644
+--- a/drivers/scsi/qla2xxx/qla_nx.h
++++ b/drivers/scsi/qla2xxx/qla_nx.h
+@@ -484,11 +484,10 @@
+ /* Driver Coexistence Defines */
+ #define QLA82XX_CRB_DRV_ACTIVE		(QLA82XX_CAM_RAM(0x138))
+ #define QLA82XX_CRB_DEV_STATE		(QLA82XX_CAM_RAM(0x140))
+-#define QLA82XX_CRB_DEV_PART_INFO	(QLA82XX_CAM_RAM(0x14c))
+-#define QLA82XX_CRB_DRV_IDC_VERSION	(QLA82XX_CAM_RAM(0x174))
+ #define QLA82XX_CRB_DRV_STATE		(QLA82XX_CAM_RAM(0x144))
+ #define QLA82XX_CRB_DRV_SCRATCH		(QLA82XX_CAM_RAM(0x148))
+ #define QLA82XX_CRB_DEV_PART_INFO	(QLA82XX_CAM_RAM(0x14c))
++#define QLA82XX_CRB_DRV_IDC_VERSION	(QLA82XX_CAM_RAM(0x174))
+ 
+ /* Every driver should use these Device State */
+ #define QLA82XX_DEV_COLD		1
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 07ca7f8..8ce44f7 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -2442,11 +2442,6 @@ qla2x00_schedule_rport_del(struct scsi_qla_host *ha, fc_port_t *fcport,
+ void
+ qla2x00_set_loop_down(scsi_qla_host_t *ha, uint16_t *mb)
+ {
+-	DEBUG2(printk("scsi(%ld): Asynchronous LOOP DOWN "
+-	    "(%x %x %x).\n", ha->host_no, mb[1], mb[2], mb[3]));
+-	qla_printk(KERN_INFO, ha, "LOOP DOWN detected (%x %x %x).\n",
+-	    mb[1], mb[2], mb[3]);
+-
+ 	if (atomic_read(&ha->loop_state) != LOOP_DOWN) {
+ 		atomic_set(&ha->loop_state, LOOP_DOWN);
+ 		atomic_set(&ha->loop_down_timer, LOOP_DOWN_TIME);

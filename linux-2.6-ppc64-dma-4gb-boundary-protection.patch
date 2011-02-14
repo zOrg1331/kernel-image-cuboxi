@@ -1,0 +1,131 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz239569 [PPC] DMA 4GB boundary protection 
+Date: Wed, 6 Jun 2007 14:36:37 -0400 (EDT)
+Bugzilla: 239569
+Message-Id: <Pine.LNX.4.64.0705291606070.5134@squad5-lp1.lab.boston.redhat.com>
+Changelog: [PPC64] DMA 4GB boundary protection 
+
+
+RHBZ#: 239569
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=239569
+
+Description:
+------------
+  [POWERPC] DMA 4GB boundary protection
+
+  There are many adapters which cannot handle DMAing across any 4 GB
+  boundary.  For instance, the latest Emulex adapters.
+
+  This normally is not an issue as firmware gives dma-windows under
+  4gigs.  However, some of the new System-P boxes have dma-windows above
+  4gigs, and this present a problem.
+
+  During initialization of the IOMMU tables, the last entry at each 4GB
+  boundary is marked as used.  Thus no mappings can cross the boundary.
+  If a table ends at a 4GB boundary, the entry is not marked as used.
+
+  A boot option to remove this 4GB protection is given w/ protect4gb=off.
+  This exposes the potential issue for driver and hardware development
+  purposes.
+
+  Signed-off-by: Jake Moilanen <moilanen@austin.ibm.com>
+  Acked-by: Olof Johansson <olof@lixom.net>
+  Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+RHEL Version Found:
+-------------------
+bug against 5.0
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.22 [1]
+
+Test Status:
+------------
+These patches have been built against 2.6.18-19.el5, and successfully
+built in brew task 794835 [2].
+
+This patch has been tested by Jake Moilanen and Manoj Iyler of IBM.  The
+JS21 was failing after ~10 minutes without this code.  With the patch
+applied it stayed up for more than 2 hours (before being taken down for
+non-releated reasons)
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=569975591c5530fdc9c7a3c45122e5e46f075a74
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=794835
+
+---
+ arch/powerpc/kernel/iommu.c |   33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+Index: b/arch/powerpc/kernel/iommu.c
+===================================================================
+--- a/arch/powerpc/kernel/iommu.c
++++ b/arch/powerpc/kernel/iommu.c
+@@ -58,6 +58,18 @@ static inline unsigned long iommu_num_pa
+ 	return npages;
+ }
+ 
++static int protect4gb = 1;
++
++static int __init setup_protect4gb(char *str)
++{
++	if (strcmp(str, "on") == 0)
++		protect4gb = 1;
++	else if (strcmp(str, "off") == 0)
++		protect4gb = 0;
++
++	return 1;
++}
++
+ static int __init setup_iommu(char *str)
+ {
+ 	if (!strcmp(str, "novmerge"))
+@@ -67,6 +79,7 @@ static int __init setup_iommu(char *str)
+ 	return 1;
+ }
+ 
++__setup("protect4gb=", setup_protect4gb);
+ __setup("iommu=", setup_iommu);
+ 
+ static unsigned long iommu_range_alloc(struct iommu_table *tbl,
+@@ -429,6 +442,9 @@ void iommu_unmap_sg(struct iommu_table *
+ struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
+ {
+ 	unsigned long sz;
++	unsigned long start_index, end_index;
++	unsigned long entries_per_4g;
++	unsigned long index;
+ 	static int welcomed = 0;
+ 	struct page *page;
+ 
+@@ -480,6 +496,23 @@ struct iommu_table *iommu_init_table(str
+ 	ppc_md.tce_free(tbl, tbl->it_offset, tbl->it_size);
+ #endif
+ 
++	/*
++	 * DMA cannot cross 4 GB boundary.  Mark last entry of each 4
++	 * GB chunk as reserved.
++	 */
++	if (protect4gb) {
++		entries_per_4g = 0x100000000l >> PAGE_SHIFT;
++
++		/* Mark the last bit before a 4GB boundary as used */
++		start_index = tbl->it_offset | (entries_per_4g - 1);
++		start_index -= tbl->it_offset;
++
++		end_index = tbl->it_size;
++
++		for (index = start_index; index < end_index - 1; index += entries_per_4g)
++			__set_bit(index, tbl->it_map);
++	}
++
+ 	if (!welcomed) {
+ 		printk(KERN_INFO "IOMMU table initialized, virtual merging %s\n",
+ 		       novmerge ? "disabled" : "enabled");
+

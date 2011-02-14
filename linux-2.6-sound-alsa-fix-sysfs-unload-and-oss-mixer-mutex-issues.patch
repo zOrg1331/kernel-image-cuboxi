@@ -1,0 +1,105 @@
+From: Jaroslav Kysela <jkysela@redhat.com>
+Date: Thu, 11 Nov 2010 08:39:10 -0500
+Subject: [sound] ALSA: fix sysfs unload and OSS mixer mutex issues
+Message-id: <201011110839.oAB8dAFg024670@int-mx02.intmail.prod.int.phx2.redhat.com>
+Patchwork-id: 29139
+O-Subject: [RHEL 5.6 PATCH] ALSA - fix sysfs unloading issue and OSS mixer mutex
+	issue
+Bugzilla: 652165
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Bugzilla
+========
+BZ#652165
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=652165
+
+Description
+===========
+In current RHEL 5.6 kernel, the ALSA device nodes in sysfs are not destroyed
+correctly when the sound modules are unloaded. It prevents sound module
+reloading (sysfs reports EEXIST error when new ALSA device node is created).
+
+Also the OSS mixer emulation contains mutex bugs so all audio applications
+using mixer API can be blocked until system reboot.
+
+Upstream Status of the patch
+============================
+Both changes are in upstream.
+
+Test Status
+===========
+I and Dreamworks tested both patches intensively (for the audio delay
+project).
+
+diff --git a/sound/core/oss/mixer_oss.c b/sound/core/oss/mixer_oss.c
+index 74a2923..83f5f59 100644
+--- a/sound/core/oss/mixer_oss.c
++++ b/sound/core/oss/mixer_oss.c
+@@ -611,8 +611,10 @@ static void snd_mixer_oss_put_volume1_vol(struct snd_mixer_oss_file *fmixer,
+ 	if (numid == ID_UNKNOWN)
+ 		return;
+ 	down_read(&card->controls_rwsem);
+-	if ((kctl = snd_ctl_find_numid(card, numid)) == NULL)
++	if ((kctl = snd_ctl_find_numid(card, numid)) == NULL) {
++		up_read(&card->controls_rwsem);
+ 		return;
++	}
+ 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
+ 	uctl = kzalloc(sizeof(*uctl), GFP_KERNEL);
+ 	if (uinfo == NULL || uctl == NULL)
+@@ -651,7 +653,7 @@ static void snd_mixer_oss_put_volume1_sw(struct snd_mixer_oss_file *fmixer,
+ 		return;
+ 	down_read(&card->controls_rwsem);
+ 	if ((kctl = snd_ctl_find_numid(card, numid)) == NULL) {
+-		up_read(&fmixer->card->controls_rwsem);
++		up_read(&card->controls_rwsem);
+ 		return;
+ 	}
+ 	uinfo = kzalloc(sizeof(*uinfo), GFP_KERNEL);
+@@ -779,7 +781,7 @@ static int snd_mixer_oss_get_recsrc2(struct snd_mixer_oss_file *fmixer, unsigned
+ 	uctl = kzalloc(sizeof(*uctl), GFP_KERNEL);
+ 	if (uinfo == NULL || uctl == NULL) {
+ 		err = -ENOMEM;
+-		goto __unlock;
++		goto __free_only;
+ 	}
+ 	down_read(&card->controls_rwsem);
+ 	kctl = snd_mixer_oss_test_id(mixer, "Capture Source", 0);
+@@ -808,6 +810,7 @@ static int snd_mixer_oss_get_recsrc2(struct snd_mixer_oss_file *fmixer, unsigned
+ 	err = 0;
+       __unlock:
+      	up_read(&card->controls_rwsem);
++      __free_only:
+       	kfree(uctl);
+       	kfree(uinfo);
+       	return err;
+@@ -829,7 +832,7 @@ static int snd_mixer_oss_put_recsrc2(struct snd_mixer_oss_file *fmixer, unsigned
+ 	uctl = kzalloc(sizeof(*uctl), GFP_KERNEL);
+ 	if (uinfo == NULL || uctl == NULL) {
+ 		err = -ENOMEM;
+-		goto __unlock;
++		goto __free_only;
+ 	}
+ 	down_read(&card->controls_rwsem);
+ 	kctl = snd_mixer_oss_test_id(mixer, "Capture Source", 0);
+@@ -862,6 +865,7 @@ static int snd_mixer_oss_put_recsrc2(struct snd_mixer_oss_file *fmixer, unsigned
+ 	err = 0;
+       __unlock:
+ 	up_read(&card->controls_rwsem);
++      __free_only:
+ 	kfree(uctl);
+ 	kfree(uinfo);
+ 	return err;
+diff --git a/sound/core/sound.c b/sound/core/sound.c
+index f9b0180..bc9054f 100644
+--- a/sound/core/sound.c
++++ b/sound/core/sound.c
+@@ -311,7 +311,7 @@ int snd_unregister_device(int type, struct snd_card *card, int dev)
+ 		return -EINVAL;
+ 	}
+ 
+-	class_device_destroy(sound_class, MKDEV(major, minor));
++	device_destroy(sound_class, MKDEV(major, minor));
+ 
+ 	snd_minors[minor] = NULL;
+ 	mutex_unlock(&sound_mutex);

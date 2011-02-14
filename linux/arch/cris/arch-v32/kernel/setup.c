@@ -54,10 +54,12 @@ show_cpuinfo(struct seq_file *m, void *v)
 {
 	int i;
 	int cpu = (int)v - 1;
+	int entries;
 	unsigned long revision;
 	struct cpu_info *info;
 
-	info = &cpinfo[ARRAY_SIZE(cpinfo) - 1];
+	entries = sizeof cpinfo / sizeof(struct cpu_info);
+	info = &cpinfo[entries - 1];
 
 #ifdef CONFIG_SMP
 	if (!cpu_online(cpu))
@@ -66,7 +68,7 @@ show_cpuinfo(struct seq_file *m, void *v)
 
 	revision = rdvr();
 
-	for (i = 0; i < ARRAY_SIZE(cpinfo); i++) {
+	for (i = 0; i < entries; i++) {
 		if (cpinfo[i].rev == revision) {
 			info = &cpinfo[i];
 			break;

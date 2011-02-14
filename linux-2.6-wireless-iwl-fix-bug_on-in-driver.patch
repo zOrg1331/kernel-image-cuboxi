@@ -1,0 +1,44 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 22 Dec 2008 16:25:11 -0500
+Subject: [wireless] iwl: fix BUG_ON in driver
+Message-id: 20081222212511.GN24221@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.4 PATCH] fix BUG_ON in iwl wireless driver (bz 477671)
+Bugzilla: 477671
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Hey all-
+	Benl just hit a bug halt on his laptop using the iwl3945 wireless
+driver.  This is a backport of the upstream fix for the problem (commit number
+55d6a3cd0cc85ed90c39cf32e16f622bd003117b.  Resolves  bz 477671
+Neil
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-tx.c b/drivers/net/wireless/iwlwifi/iwl-tx.c
+index 9cbcc9a..f46844d 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-tx.c
++++ b/drivers/net/wireless/iwlwifi/iwl-tx.c
+@@ -27,6 +27,7 @@
+  *
+  *****************************************************************************/
+ 
++#include <linux/kernel.h>
+ #include <linux/etherdevice.h>
+ #include <net/mac80211.h>
+ #include "iwl-eeprom.h"
+@@ -1198,10 +1199,10 @@ void iwl_tx_cmd_complete(struct iwl_priv *priv, struct iwl_rx_mem_buffer *rxb)
+ 	/* If a Tx command is being handled and it isn't in the actual
+ 	 * command queue then there a command routing bug has been introduced
+ 	 * in the queue management code. */
+-	if (txq_id != IWL_CMD_QUEUE_NUM)
+-		IWL_ERROR("Error wrong command queue %d command id 0x%X\n",
+-			  txq_id, pkt->hdr.cmd);
+-	BUG_ON(txq_id != IWL_CMD_QUEUE_NUM);
++	if (txq_id != IWL_CMD_QUEUE_NUM) {
++		printk(KERN_WARNING, "wrong command queue %d, command id 0x%X\n", txq_id, pkt->hdr.cmd);
++		return;
++	}
+ 
+ 	cmd_index = get_cmd_index(&priv->txq[IWL_CMD_QUEUE_NUM].q, index, huge);
+ 	cmd = priv->txq[IWL_CMD_QUEUE_NUM].cmd[cmd_index];

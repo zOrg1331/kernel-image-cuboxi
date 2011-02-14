@@ -1,0 +1,41 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 13 Jan 2009 12:55:36 -0500
+Subject: [nfs] create rpc clients with proper auth flavor
+Message-id: 1231869336-10995-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#465456: nfs: create rpc clients with proper auth flavor
+Bugzilla: 465456
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Backported from upstream commit 41877d207c46f050b709f452703ade20c3b4a096
+
+nfs_create_rpc_client gets called with a "flavor" parameter, but it's
+basically ignored and ends up unconditionally creating the RPC client
+with an AUTH_UNIX flavor. This causes problems on AUTH_GSS mounts
+when we need to refresh the credentials. The credops won't match
+the auth type and it will end up dereferencing a bogus part of the
+AUTH_UNIX rpc_auth struct.
+
+This patch is loosely based on an upstream commit that changed
+nfs_create_rpc_client to use the newer rpc_create() API. Prior to
+that patch, the RPC client was always created with the RPC_AUTH_UNIX
+flavor. Afterward, the flavor arg was passed appropriately to the
+RPC client creation function.
+
+Tested by the reporter and by myself with the provided reproducer.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index 9584028..dfb5351 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -414,7 +414,7 @@ static int nfs_create_rpc_client(struct nfs_client *clp, int proto,
+ 	xprt->resvport = 1;
+ 	/* Create the client RPC handle */
+ 	clnt = rpc_create_client(xprt, clp->cl_hostname, &nfs_program,
+-				 clp->rpc_ops->version, RPC_AUTH_UNIX);
++				 clp->rpc_ops->version, flavor);
+ 	if (IS_ERR(clnt)) {
+ 		dprintk("%s: cannot create RPC client. Error = %ld\n",
+ 				__FUNCTION__, PTR_ERR(clnt));

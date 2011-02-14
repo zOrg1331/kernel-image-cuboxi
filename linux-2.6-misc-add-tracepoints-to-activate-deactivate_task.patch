@@ -1,0 +1,109 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Tue, 23 Sep 2008 15:00:54 -0400
+Subject: [misc] add tracepoints to activate/deactivate_task
+Message-id: 20080923190054.GD3117@redhat.com
+O-Subject: [RHEL5 patch] - add tracepoints to activate/deactivate_task()
+Bugzilla: 461966
+
+hi,
+
+The following patch adds tracepoints to 'activate_task()' and
+'deactivat_task()'. The patch satisfies a request from Alcatel Lucent.
+The tracepoints are not invasive but do pose a potential performance
+issue...however, we have not found any performance issues in regression
+testing...resolves bz #461966.
+
+thanks,
+
+-Jason
+
+diff --git a/include/trace/sched.h b/include/trace/sched.h
+index 363b7f5..c22f968 100644
+--- a/include/trace/sched.h
++++ b/include/trace/sched.h
+@@ -6,6 +6,12 @@
+ 
+ struct rq;
+ 
++DEFINE_TRACE(activate_task,
++	TPPROTO(struct task_struct *p, struct rq *rq),
++	TPARGS(p, rq));
++DEFINE_TRACE(deactivate_task,
++	TPPROTO(struct task_struct *p, struct rq *rq),
++	TPARGS(p, rq));
+ DEFINE_TRACE(sched_wakeup,
+ 	TPPROTO(struct rq *rq, struct task_struct *p),
+ 	TPARGS(rq, p));
+diff --git a/kernel/kernel-trace.c b/kernel/kernel-trace.c
+index 720ef1a..9b211f8 100644
+--- a/kernel/kernel-trace.c
++++ b/kernel/kernel-trace.c
+@@ -20,6 +20,18 @@ static void probe_irq_exit(unsigned int id, irqreturn_t retval)
+ 	trace_mark(kernel_irq_exit, "irq_id %u retval %ld", id, (long)retval);
+ }
+ 
++static void probe_activate_task(struct task_struct *p, struct rq *rq)
++{
++	trace_mark(kernel_activate_task, "pid %d state %ld cpu_id %u",
++		p->pid, p->state, task_cpu(p));
++}
++
++static void probe_deactivate_task(struct task_struct *p, struct rq *rq)
++{
++	trace_mark(kernel_deactivate_task, "pid %d state %ld cpu_id %u",
++		p->pid, p->state, task_cpu(p));
++}
++
+ static void probe_sched_wakeup(struct rq *rq, struct task_struct *p)
+ {
+ 	trace_mark(kernel_sched_wakeup, "pid %d state %ld cpu_id %u",
+@@ -111,6 +123,12 @@ int __init kernel_trace_init(void)
+ 	WARN_ON(ret);
+ 	ret = register_trace_irq_exit(probe_irq_exit);
+ 	WARN_ON(ret);
++	ret = register_trace_activate_task(
++		probe_activate_task);
++	WARN_ON(ret);
++	ret = register_trace_deactivate_task(
++		probe_deactivate_task);
++	WARN_ON(ret);
+ 	ret = register_trace_sched_wakeup(
+ 		probe_sched_wakeup);
+ 	WARN_ON(ret);
+@@ -171,6 +189,8 @@ void __exit kernel_trace_exit(void)
+ 		probe_sched_wakeup_new);
+ 	unregister_trace_sched_wakeup(
+ 		probe_sched_wakeup);
++	unregister_trace_deactivate_task(probe_deactivate_task);
++	unregister_trace_activate_task(probe_activate_task);
+ 	unregister_trace_irq_exit(probe_irq_exit);
+ 	unregister_trace_irq_entry(probe_irq_entry);
+ }
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 4037e50..acccea6 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -845,6 +845,7 @@ static void __activate_task(struct task_struct *p, struct rq *rq)
+ {
+ 	struct prio_array *target = rq->active;
+ 
++	trace_activate_task(p, rq);
+ 	if (batch_task(p))
+ 		target = rq->expired;
+ 	enqueue_task(p, target);
+@@ -987,6 +988,7 @@ static void deactivate_task(struct task_struct *p, struct rq *rq)
+ {
+ 	dec_nr_running(p, rq);
+ 	dequeue_task(p, p->array);
++	trace_deactivate_task(p, rq);
+ 	p->array = NULL;
+ }
+ 
+@@ -1705,6 +1707,7 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
+ 			if (unlikely(!current->array))
+ 				__activate_task(p, rq);
+ 			else {
++				trace_activate_task(p, rq);
+ 				p->prio = current->prio;
+ 				p->normal_prio = current->normal_prio;
+ 				list_add_tail(&p->run_list, &current->run_list);

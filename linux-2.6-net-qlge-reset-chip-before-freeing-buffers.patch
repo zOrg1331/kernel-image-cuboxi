@@ -1,0 +1,51 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 19 Nov 2010 18:25:24 -0500
+Subject: [net] qlge: reset chip before freeing buffers
+Message-id: <20101119182524.6308.54848.sendpatchset@localhost.localdomain>
+Patchwork-id: 29520
+O-Subject: [RHEL 5.6 PATCH 2/5] qlge: reset the chip before freeing the buffers.
+Bugzilla: 654420
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 654420 (https://bugzilla.redhat.com/show_bug.cgi?id=654420)
+
+Upstream Status
+---------------
+
+net-2.6 commit id fe5f098055ed7f701bfb16f8f87378cf67de9a0e
+
+Description
+-----------
+
+>From 12b9c5120f1622f7ddd459ef2e50129694b94fa7 Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Thu, 14 Oct 2010 13:54:46 -0700
+Subject: [PATCH 2/5] 	qlge: reset the chip before freeing the buffers.
+
+	Qlge is freeing the buffers before stopping the card DMA, and
+	this can cause some severe error, as a EEH event on PPC.
+
+	This patch just stop the card and then free the resources.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index 3391f12..d10de66 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -3688,11 +3688,11 @@ static int ql_adapter_down(struct ql_adapter *qdev)
+ 	ql_disable_interrupts(qdev);
+ 
+ 	ql_tx_ring_clean(qdev);
+-	ql_free_rx_buffers(qdev);
+ 	status = ql_adapter_reset(qdev);
+ 	if (status)
+ 		QPRINTK(qdev, IFDOWN, ERR, "reset(func #%d) FAILED!\n",
+ 			qdev->func);
++	ql_free_rx_buffers(qdev);
+ 	return status;
+ }
+ 

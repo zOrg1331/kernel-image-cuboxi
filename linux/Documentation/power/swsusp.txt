@@ -48,7 +48,7 @@ before suspend (it is limited to 500 MB by default).
 
 Article about goals and implementation of Software Suspend for Linux
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Author: GÂ‚Ã¡bor Kuti
+Author: G‚ábor Kuti
 Last revised: 2003-10-20 by Pavel Machek
 
 Idea and goals to achieve
@@ -140,13 +140,24 @@ should be sent to the mailing list available through the suspend2
 website, and not to the Linux Kernel Mailing List. We are working
 toward merging suspend2 into the mainline kernel.
 
-Q: What is the freezing of tasks and why are we using it?
+Q: A kernel thread must voluntarily freeze itself (call 'refrigerator').
+I found some kernel threads that don't do it, and they don't freeze
+so the system can't sleep. Is this a known behavior?
 
-A: The freezing of tasks is a mechanism by which user space processes and some
-kernel threads are controlled during hibernation or system-wide suspend (on some
-architectures).  See freezing-of-tasks.txt for details.
+A: All such kernel threads need to be fixed, one by one. Select the
+place where the thread is safe to be frozen (no kernel semaphores
+should be held at that point and it must be safe to sleep there), and
+add:
 
-Q: What is the difference between "platform" and "shutdown"?
+       try_to_freeze();
+
+If the thread is needed for writing the image to storage, you should
+instead set the PF_NOFREEZE process flag when creating the thread (and
+be very carefull).
+
+
+Q: What is the difference between between "platform", "shutdown" and
+"firmware" in /sys/power/disk?
 
 A:
 
@@ -155,14 +166,17 @@ shutdown: save state in linux, then tell bios to powerdown
 platform: save state in linux, then tell bios to powerdown and blink
           "suspended led"
 
-"platform" is actually right thing to do where supported, but
-"shutdown" is most reliable (except on ACPI systems).
+firmware: tell bios to save state itself [needs BIOS-specific suspend
+	  partition, and has very little to do with swsusp]
+
+"platform" is actually right thing to do, but "shutdown" is most
+reliable.
 
 Q: I do not understand why you have such strong objections to idea of
 selective suspend.
 
-A: Do selective suspend during runtime power management, that's okay. But
-it's useless for suspend-to-disk. (And I do not see how you could use
+A: Do selective suspend during runtime power managment, that's okay. But
+its useless for suspend-to-disk. (And I do not see how you could use
 it for suspend-to-ram, I hope you do not want that).
 
 Lets see, so you suggest to
@@ -197,7 +211,7 @@ slowness may not matter to you. It can always be fixed later.
 For devices like disk it does matter, you do not want to spindown for
 FREEZE.
 
-Q: After resuming, system is paging heavily, leading to very bad interactivity.
+Q: After resuming, system is paging heavilly, leading to very bad interactivity.
 
 A: Try running
 
@@ -283,12 +297,20 @@ system is shut down or suspended. Additionally use the encrypted
 suspend image to prevent sensitive data from being stolen after
 resume.
 
-Q: Can I suspend to a swap file?
+Q: Why can't we suspend to a swap file?
 
-A: Generally, yes, you can.  However, it requires you to use the "resume=" and
-"resume_offset=" kernel command line parameters, so the resume from a swap file
-cannot be initiated from an initrd or initramfs image.  See
-swsusp-and-swap-files.txt for details.
+A: Because accessing swap file needs the filesystem mounted, and
+filesystem might do something wrong (like replaying the journal)
+during mount.
+
+There are few ways to get that fixed:
+
+1) Probably could be solved by modifying every filesystem to support
+some kind of "really read-only!" option. Patches welcome.
+
+2) suspend2 gets around that by storing absolute positions in on-disk
+image (and blocksize), with resume parameter pointing directly to
+suspend header.
 
 Q: Is there a maximum system RAM size that is supported by swsusp?
 
@@ -374,22 +396,14 @@ while the system is asleep, maintaining the connection, using true sleep
 modes like "suspend-to-RAM" or "standby".  (Don't write "disk" to the
 /sys/power/state file; write "standby" or "mem".)  We've not seen any
 hardware that can use these modes through software suspend, although in
-theory some systems might support "platform" modes that won't break the
-USB connections.
+theory some systems might support "platform" or "firmware" modes that
+won't break the USB connections.
 
 Remember that it's always a bad idea to unplug a disk drive containing a
 mounted filesystem.  That's true even when your system is asleep!  The
 safest thing is to unmount all filesystems on removable media (such USB,
 Firewire, CompactFlash, MMC, external SATA, or even IDE hotplug bays)
 before suspending; then remount them after resuming.
-
-There is a work-around for this problem.  For more information, see
-Documentation/usb/persist.txt.
-
-Q: Can I suspend-to-disk using a swap partition under LVM?
-
-A: No. You can suspend successfully, but you'll not be able to
-resume. uswsusp should be able to work with LVM. See suspend.sf.net.
 
 Q: I upgraded the kernel from 2.6.15 to 2.6.16. Both kernels were
 compiled with the similar configuration files. Anyway I found that

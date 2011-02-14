@@ -13,7 +13,13 @@
 #include <asm/ppc_asm.h>
 
 	.section __ex_table,"a"
-	PPC_LONG_ALIGN
+#ifdef CONFIG_PPC64
+	.align	3
+#define EXTBL	.llong
+#else
+	.align	2
+#define EXTBL	.long
+#endif
 	.text
 	
 _GLOBAL(strcpy)
@@ -28,7 +34,7 @@ _GLOBAL(strcpy)
 /* This clears out any unused part of the destination buffer,
    just as the libc version does.  -- paulus */
 _GLOBAL(strncpy)
-	PPC_LCMPI 0,r5,0
+	cmpwi	0,r5,0
 	beqlr
 	mtctr	r5
 	addi	r6,r3,-1
@@ -39,7 +45,7 @@ _GLOBAL(strncpy)
 	bdnzf	2,1b		/* dec ctr, branch if ctr != 0 && !cr0.eq */
 	bnelr			/* if we didn't hit a null char, we're done */
 	mfctr	r5
-	PPC_LCMPI 0,r5,0	/* any space left in destination buffer? */
+	cmpwi	0,r5,0		/* any space left in destination buffer? */
 	beqlr			/* we know r0 == 0 here */
 2:	stbu	r0,1(r6)	/* clear it out if so */
 	bdnz	2b
@@ -69,22 +75,6 @@ _GLOBAL(strcmp)
 	beq	1b
 	blr
 
-_GLOBAL(strncmp)
-	PPC_LCMPI 0,r5,0
-	beq-	2f
-	mtctr	r5
-	addi	r5,r3,-1
-	addi	r4,r4,-1
-1:	lbzu	r3,1(r5)
-	cmpwi	1,r3,0
-	lbzu	r0,1(r4)
-	subf.	r3,r0,r3
-	beqlr	1
-	bdnzt	eq,1b
-	blr
-2:	li	r3,0
-	blr
-
 _GLOBAL(strlen)
 	addi	r4,r3,-1
 1:	lbzu	r0,1(r4)
@@ -94,8 +84,8 @@ _GLOBAL(strlen)
 	blr
 
 _GLOBAL(memcmp)
-	PPC_LCMPI 0,r5,0
-	beq-	2f
+	cmpwi	0,r5,0
+	ble-	2f
 	mtctr	r5
 	addi	r6,r3,-1
 	addi	r4,r4,-1
@@ -108,8 +98,8 @@ _GLOBAL(memcmp)
 	blr
 
 _GLOBAL(memchr)
-	PPC_LCMPI 0,r5,0
-	beq-	2f
+	cmpwi	0,r5,0
+	ble-	2f
 	mtctr	r5
 	addi	r3,r3,-1
 1:	lbzu	r0,1(r3)
@@ -156,9 +146,9 @@ _GLOBAL(__clear_user)
 	blr
 
 	.section __ex_table,"a"
-	PPC_LONG	11b,90b
-	PPC_LONG	1b,91b
-	PPC_LONG	8b,92b
+	EXTBL	11b,90b
+	EXTBL	1b,91b
+	EXTBL	8b,92b
 	.text
 
 _GLOBAL(__strncpy_from_user)
@@ -179,7 +169,7 @@ _GLOBAL(__strncpy_from_user)
 	blr
 
 	.section __ex_table,"a"
-	PPC_LONG	1b,99b
+	EXTBL	1b,99b
 	.text
 
 /* r3 = str, r4 = len (> 0), r5 = top (highest addr) */
@@ -204,4 +194,4 @@ _GLOBAL(__strnlen_user)
 	blr
 
 	.section __ex_table,"a"
-	PPC_LONG	1b,99b
+	EXTBL	1b,99b

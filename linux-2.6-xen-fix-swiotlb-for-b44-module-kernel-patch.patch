@@ -1,0 +1,63 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Subject: [RHEL5 patch 1/2] Fix xen swiotlb for b44 module --- kernel patch
+Date: Thu, 07 Dec 2006 13:09:37 +0000
+Bugzilla: 216472
+Message-Id: <1165496977.6309.18.camel@sisko.scot.redhat.com>
+Changelog: xen: Fix xen swiotlb for b44 module
+
+
+Hi,
+
+In conjunction with the following patch (xen hypervisor patch for same
+bug), fixes blocker bug:
+
+	Bugzilla Bug 216472: b44 module doesn't work with xen kernel
+	https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=216472
+
+The b44 module will not load under xen, failing with the error
+
+        b44 0000:03:00.0: No usable DMA configuration, aborting.
+        ACPI: PCI interrupt for device 0000:03:00.0 disabled
+        b44: probe of 0000:03:00.0 failed with error -5
+        
+The trouble is that b44 requests a pci dma mask of 0x3fffffff (ie. 30
+usable address lines).  Xen has basic support for this sort of thing,
+via a swiotlb in the kernel which is allocated pages from a hypervisor
+pool that is restricted to the bottom 2^N bits of physical memory.  But
+unfortunately, in RHEL-5, it's only using N=31, not N=30, so it can't
+guarantee to give the b44 device pages satisfying that hardware
+restriction.
+
+The fix is very simple --- change the swiotlb to request pages
+constrained to 2^30 instead of 2^31 (ie. below 1GB instead of 2GB max
+physical address), and correspondingly change the hypervisor's DMADOM
+memory pool to be constrained to the same limit.  
+
+Patch has been tested and verified by multiple users on FC-6 kernels in
+bug 208242, and was merged upstream on Nov. 28.
+
+Please ACK.
+
+--Stephen
+
+commit ae88790a072231867c8104674190a52cbc2f2867
+Author: Stephen Tweedie <sct@redhat.com>
+
+    Use 30 bits (1GB) swiotlb physical mapping limit, for b44
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 7ae10ad..93a4d6c 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -47,8 +47,8 @@ #define IO_TLB_SEGSIZE	128
+  */
+ #define IO_TLB_SHIFT 11
+ 
+-/* Width of DMA addresses in the IO TLB. 31 bits is an aacraid limitation. */
+-#define IO_TLB_DMA_BITS 31
++/* Width of DMA addresses in the IO TLB. 30 bits is a b44 limitation. */
++#define IO_TLB_DMA_BITS 30
+ 
+ int swiotlb_force;
+ static char *iotlb_virt_start;
+

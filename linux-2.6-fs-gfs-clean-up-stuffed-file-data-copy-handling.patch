@@ -1,0 +1,87 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Tue, 3 Aug 2010 18:51:30 -0400
+Subject: [fs] gfs: clean up stuffed file data copy handling
+Message-id: <663854996.1154931280861490799.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 27356
+O-Subject: Re: [RHEL5.6 PATCH][GFS2] - GFS2: Clean up stuffed file data copy
+	handling
+Bugzilla: 580867
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+If the file size of a stuffed file is corrupt on disk, this can lead to trying
+to read or write beyond the end of a page cache page. This will almost
+certainly result in a kernel crash. This fix prevents the crash from occurring
+by truncating the size of copies to the end of the page cache page. There is no
+way to reproduce this bug without a filesystem which has incorrect inode sizes
+for stuffed files.
+
+Resolves: rhbz#580867
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index 2b411ab..d39a1ab 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -72,11 +72,13 @@ static int gfs2_unstuffer_page(struct gfs2_inode *ip, struct buffer_head *dibh,
+ 
+ 	if (!PageUptodate(page)) {
+ 		void *kaddr = kmap(page);
++		u64 dsize = i_size_read(inode);
++ 
++		if (dsize > (dibh->b_size - sizeof(struct gfs2_dinode)))
++			dsize = dibh->b_size - sizeof(struct gfs2_dinode);
+ 
+-		memcpy(kaddr, dibh->b_data + sizeof(struct gfs2_dinode),
+-		       ip->i_disksize);
+-		memset(kaddr + ip->i_disksize, 0,
+-		       PAGE_CACHE_SIZE - ip->i_disksize);
++		memcpy(kaddr, dibh->b_data + sizeof(struct gfs2_dinode), dsize);
++		memset(kaddr + dsize, 0, PAGE_CACHE_SIZE - dsize);
+ 		kunmap(page);
+ 
+ 		SetPageUptodate(page);
+@@ -922,13 +924,15 @@ static int trunc_start(struct gfs2_inode *ip, u64 size)
+ 		goto out;
+ 
+ 	if (gfs2_is_stuffed(ip)) {
++		u64 dsize = size + sizeof(struct gfs2_dinode);
+ 		ip->i_disksize = size;
+ 		ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
+ 		gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+ 		gfs2_dinode_out(ip, dibh->b_data);
+-		gfs2_buffer_clear_tail(dibh, sizeof(struct gfs2_dinode) + size);
++		if (dsize > dibh->b_size)
++			dsize = dibh->b_size;
++		gfs2_buffer_clear_tail(dibh, dsize);
+ 		error = 1;
+-
+ 	} else {
+ 		if (size & (u64)(sdp->sd_sb.sb_bsize - 1))
+ 			error = gfs2_block_truncate_page(ip->i_inode.i_mapping);
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 538f426..d305997 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -426,6 +426,7 @@ static int gfs2_jdata_writepages(struct address_space *mapping,
+ static int stuffed_readpage(struct gfs2_inode *ip, struct page *page)
+ {
+ 	struct buffer_head *dibh;
++	u64 dsize = i_size_read(&ip->i_inode);
+ 	void *kaddr;
+ 	int error;
+ 
+@@ -448,9 +449,10 @@ static int stuffed_readpage(struct gfs2_inode *ip, struct page *page)
+ 		return error;
+ 
+ 	kaddr = kmap_atomic(page, KM_USER0);
+-	memcpy(kaddr, dibh->b_data + sizeof(struct gfs2_dinode),
+-	       ip->i_disksize);
+-	memset(kaddr + ip->i_disksize, 0, PAGE_CACHE_SIZE - ip->i_disksize);
++	if (dsize > (dibh->b_size - sizeof(struct gfs2_dinode)))
++		dsize = (dibh->b_size - sizeof(struct gfs2_dinode));
++	memcpy(kaddr, dibh->b_data + sizeof(struct gfs2_dinode), dsize);
++	memset(kaddr + dsize, 0, PAGE_CACHE_SIZE - dsize);
+ 	kunmap_atomic(kaddr, KM_USER0);
+ 	flush_dcache_page(page);
+ 	brelse(dibh);

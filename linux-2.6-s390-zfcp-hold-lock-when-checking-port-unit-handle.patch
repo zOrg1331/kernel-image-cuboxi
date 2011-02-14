@@ -1,0 +1,86 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 3 Apr 2008 15:37:24 +0200
+Subject: [s390] zfcp: hold lock when checking port/unit handle
+Message-id: 20080403133724.GE10542@redhat.com
+O-Subject: [RHEL5 U3 PATCH 3/7] s390 - zfcp: Hold queue lock when checking port/unit handle for abort command
+Bugzilla: 434953
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+We need to hold the queue-lock when checking whether we still have a valid
+unit/port handle for the abort command, i.e whether we can issue this request
+for this unit/port. If the error recovery is about to close this unit/port,
+then it competes for the queue-lock. If the close request issued by the error
+recovery wins, then it is guaranteed that this unit/port has been blocked for
+other requests.
+
+Bugzilla
+=========
+
+BZ 434953
+https://bugzilla.redhat.com/show_bug.cgi?id=434953
+
+Upstream status of the patch:
+=============================
+
+Patch included in linux-2.6 as git commit 951f746fece2e24a26853b3872d16e9013b6fe0b
+
+Test status:
+============
+
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+ drivers/s390/scsi/zfcp_fsf.c |   23 +++++++++--------------
+ 1 files changed, 9 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/s390/scsi/zfcp_fsf.c b/drivers/s390/scsi/zfcp_fsf.c
+index e26f607..59edf96 100644
+--- a/drivers/s390/scsi/zfcp_fsf.c
++++ b/drivers/s390/scsi/zfcp_fsf.c
+@@ -1117,6 +1117,10 @@ zfcp_fsf_abort_fcp_command(unsigned long old_req_id,
+ 		goto out;
+ 	}
+ 
++	if (unlikely(!atomic_test_mask(ZFCP_STATUS_COMMON_UNBLOCKED,
++			&unit->status)))
++		goto unit_blocked;
++
+ 	sbale = zfcp_qdio_sbale_req(fsf_req, fsf_req->sbal_curr, 0);
+         sbale[0].flags |= SBAL_FLAGS0_TYPE_READ;
+         sbale[1].flags |= SBAL_FLAGS_LAST_ENTRY;
+@@ -1132,22 +1136,13 @@ zfcp_fsf_abort_fcp_command(unsigned long old_req_id,
+ 
+ 	zfcp_fsf_start_timer(fsf_req, ZFCP_SCSI_ER_TIMEOUT);
+ 	retval = zfcp_fsf_req_send(fsf_req);
+-	if (retval) {
+-		ZFCP_LOG_INFO("error: Failed to send abort command request "
+-			      "on adapter %s, port 0x%016Lx, unit 0x%016Lx\n",
+-			      zfcp_get_busid_by_adapter(adapter),
+-			      unit->port->wwpn, unit->fcp_lun);
+-		zfcp_fsf_req_free(fsf_req);
+-		fsf_req = NULL;
++	if (!retval)
+ 		goto out;
+-	}
+ 
+-	ZFCP_LOG_DEBUG("Abort FCP Command request initiated "
+-		       "(adapter%s, port d_id=0x%08x, "
+-		       "unit x%016Lx, old_req_id=0x%lx)\n",
+-		       zfcp_get_busid_by_adapter(adapter),
+-		       unit->port->d_id,
+-		       unit->fcp_lun, old_req_id);
++ unit_blocked:
++	zfcp_fsf_req_free(fsf_req);
++	fsf_req = NULL;
++
+  out:
+ 	write_unlock_irqrestore(&adapter->request_queue.queue_lock, lock_flags);
+ 	return fsf_req;

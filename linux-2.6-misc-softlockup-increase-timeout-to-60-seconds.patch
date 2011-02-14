@@ -1,0 +1,71 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 25 Oct 2010 19:13:06 -0400
+Subject: [misc] softlockup: increase timeout to 60 seconds
+Message-id: <1288033986-22392-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 28908
+O-Subject: [RHEL5 PATCH V2] softlockup: increase timeout to 60 seconds
+Bugzilla: 643707
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=643707
+
+The current timeout of 10 seconds can block the nmi_watchdog from panic'ing
+a system.  Lengthening to 60 seconds allows the nmi_watchdog to do its
+thing before the softlockup comes along and does a touch_nmi_watchdog
+and resets the nmi_watchdog count.
+
+The bug was found during a QE test that loads a kernel module that does
+a double spinlock with irqs disabled.  The point of the test was to force
+the nmi_watchdog to panic the box.
+
+However, the timing of the load coincided with the mce timer scheduling
+its periodic (every 5 minutes) check on the mce logs on each cpu.
+Because cpuA was spinning in a tight loop with irqs disabled (to force
+the panic), the IPI could not be delivered to that cpu.  This forced
+cpuB (the one sending the IPIs to everyone) to spin waiting for cpuA
+to deliver its IPI.  As a result, the softlockup kicked in for cpuB
+(which is fine and makes sense).
+
+Now the problem begins.  The act of writing to the console and dumping
+a stack trace on the console, both cause a call to touch_nmi_watchdog().
+This call resets the nmi_watchdog alert count.  With the softlockup code
+checking every 10 seconds and the nmi_watchdog set to 30 seconds, you
+can start to see that the nmi_watchdog will _never_ panic in this scenario.
+
+One can probably start to imagine all the strange possibilities that could
+happen if the act of writing to the console (which includes dump a stack
+trace) could reset the nmi_watchdog count.
+
+Solving this problem correctly, probably invovles modifying how the
+touch_nmi_watchdog code works.  Instead of touch _all_ the cpus,
+perhaps touching the current cpu is more appropriate.  Anyway, that
+change needs to be vetted upstream to see what falls out.
+
+For RHEL-5, the safe change is to modify the softlockup timer to run
+every 60 seconds (this matches upstream).  This allows the nmi_watchdog
+to do its thing in between the periods of the softlockup messages.
+
+This patch is just a workaround for the issue until it can be resolved better
+upstream.
+
+V2:
+  make prarit happy
+
+Cheers,
+Don
+
+diff --git a/kernel/softlockup.c b/kernel/softlockup.c
+index 7f55472..4be5b29 100644
+--- a/kernel/softlockup.c
++++ b/kernel/softlockup.c
+@@ -22,7 +22,7 @@ static DEFINE_PER_CPU(unsigned long, print_timestamp);
+ static DEFINE_PER_CPU(struct task_struct *, watchdog_task);
+ 
+ static int did_panic = 0;
+-unsigned long softlockup_thresh = 10;
++unsigned long softlockup_thresh = 60;
+ 
+ /*
+  * Should we panic (and reboot, if panic_timeout= is set) when a

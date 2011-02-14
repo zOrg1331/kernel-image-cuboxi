@@ -1,0 +1,83 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:33 -0400
+Subject: [scsi] scsi_dh_rdac: move init code around
+Message-id: 20090930210531.22936.22631.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 5/7] scsi_dh_rdac: move the init code from rdac_activate to rdac_bus_attach
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+>From patchwork Fri Sep  4 03:42:15 2009
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [1/3, RESUBMIT] scsi_dh_rdac: move the init code from rdac_activate to
+	rdac_bus_attach
+Date: Fri, 04 Sep 2009 03:42:15 -0000
+From: Moger, Babu <Babu.Moger@lsi.com>
+X-Patchwork-Id: 45506
+
+Moving the initialization code from rdac_activate to rdac_bus_attach
+which is more efficient.
+We don't have to collect all the information during every activate.
+
+Signed-off-by: Babu Moger <babu.moger@lsi.com>
+Reviewed-by: Vijay Chauhan <vijay.chauhan@lsi.com>
+Reviewed-by: Bob Stankey <Robert.stankey@lsi.com>
+Acked-by: Chandra Seetharaman <sekharan@us.ibm.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 107e675..8d69084 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -526,17 +526,6 @@ static int rdac_activate(struct scsi_device *sdev)
+ 	if (err != SCSI_DH_OK)
+ 		goto done;
+ 
+-	if (!h->ctlr) {
+-		err = initialize_controller(sdev, h);
+-		if (err != SCSI_DH_OK)
+-			goto done;
+-	}
+-
+-	if (h->ctlr->use_ms10 == -1) {
+-		err = set_mode_select(sdev, h);
+-		if (err != SCSI_DH_OK)
+-			goto done;
+-	}
+ 	if (h->lun_state == RDAC_LUN_UNOWNED)
+ 		err = send_mode_select(sdev, h);
+ done:
+@@ -684,12 +673,20 @@ static int rdac_bus_attach(struct scsi_device *sdev)
+ 	if (err != SCSI_DH_OK)
+ 		goto failed;
+ 
+-	err = check_ownership(sdev, h);
++	err = initialize_controller(sdev, h);
+ 	if (err != SCSI_DH_OK)
+ 		goto failed;
+ 
++	err = check_ownership(sdev, h);
++	if (err != SCSI_DH_OK)
++		goto clean_ctlr;
++
++	err = set_mode_select(sdev, h);
++	if (err != SCSI_DH_OK)
++		goto clean_ctlr;
++
+ 	if (!try_module_get(THIS_MODULE))
+-		goto failed;
++		goto clean_ctlr;
+ 
+ 	spin_lock_irqsave(sdev->request_queue->queue_lock, flags);
+ 	store_scsi_dh_data(sdev, scsi_dh_data);
+@@ -699,6 +696,9 @@ static int rdac_bus_attach(struct scsi_device *sdev)
+ 			RDAC_NAME, h->lun, lun_state[(int)h->lun_state]);
+ 	return 0;
+ 
++clean_ctlr:
++	kref_put(&h->ctlr->kref, release_controller);
++
+ failed:
+ 	kfree(scsi_dh_data);
+ 	sdev_printk(KERN_ERR, sdev, "%s: not attached\n", RDAC_NAME);

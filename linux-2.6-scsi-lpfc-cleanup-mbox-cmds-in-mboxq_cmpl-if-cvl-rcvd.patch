@@ -1,0 +1,86 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 24 Nov 2010 21:24:02 -0500
+Subject: [scsi] lpfc: cleanup mbox cmds in mboxq_cmpl if CVL rcvd
+Message-id: <1290633848-10834-2-git-send-email-revers@redhat.com>
+Patchwork-id: 29614
+O-Subject: [RHEL5.6 PATCH 1/7] lpfc: Cleanup mailbox commands in mboxq_cmpl when
+	CVL is received. (CR: 111515)
+Bugzilla: 655119
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+Without this fix, the driver will send a PLOGI to the nameserver using an old MAC address after a CVL
+https://bugzilla.redhat.com/show_bug.cgi?id=655119
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index a351f43..76fe75e 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -4307,6 +4307,16 @@ lpfc_cleanup_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
+ 	}
+ 
+ 	spin_lock_irq(&phba->hbalock);
++	/* Cleanup REG_LOGIN completions which are not yet processed */
++	list_for_each_entry(mb, &phba->sli.mboxq_cmpl, list) {
++		if ((mb->u.mb.mbxCommand != MBX_REG_LOGIN64) ||
++			(ndlp != (struct lpfc_nodelist *) mb->context2))
++			continue;
++
++		mb->context2 = NULL;
++		mb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
++	}
++
+ 	list_for_each_entry_safe(mb, nextmb, &phba->sli.mboxq, list) {
+ 		if ((mb->u.mb.mbxCommand == MBX_REG_LOGIN64) &&
+ 		    (ndlp == (struct lpfc_nodelist *) mb->context2)) {
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 8debdaa..7df3ab1 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -12901,6 +12901,7 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
+ 	struct lpfc_nodelist *act_mbx_ndlp = NULL;
+ 	struct Scsi_Host  *shost = lpfc_shost_from_vport(vport);
+ 	LIST_HEAD(mbox_cmd_list);
++	uint8_t restart_loop;
+ 
+ 	/* Clean up internally queued mailbox commands with the vport */
+ 	spin_lock_irq(&phba->hbalock);
+@@ -12929,6 +12930,38 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
+ 			mb->mbox_flag |= LPFC_MBX_IMED_UNREG;
+ 		}
+ 	}
++	/* Cleanup any mailbox completions which are not yet processed */
++	do {
++		restart_loop = 0;
++		list_for_each_entry(mb, &phba->sli.mboxq_cmpl, list) {
++			/*
++			 * If this mailox is already processed or it is
++			 * for another vport ignore it.
++			 */
++			if ((mb->vport != vport) ||
++				(mb->mbox_flag & LPFC_MBX_IMED_UNREG))
++				continue;
++
++			if ((mb->u.mb.mbxCommand != MBX_REG_LOGIN64) &&
++				(mb->u.mb.mbxCommand != MBX_REG_VPI))
++				continue;
++
++			mb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
++			if (mb->u.mb.mbxCommand == MBX_REG_LOGIN64) {
++				ndlp = (struct lpfc_nodelist *)mb->context2;
++				/* Unregister the RPI when mailbox complete */
++				mb->mbox_flag |= LPFC_MBX_IMED_UNREG;
++				restart_loop = 1;
++				spin_unlock_irq(&phba->hbalock);
++				spin_lock(shost->host_lock);
++				ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
++				spin_unlock(shost->host_lock);
++				spin_lock_irq(&phba->hbalock);
++				break;
++			}
++		}
++	} while (restart_loop);
++
+ 	spin_unlock_irq(&phba->hbalock);
+ 
+ 	/* Release the cleaned-up mailbox commands */

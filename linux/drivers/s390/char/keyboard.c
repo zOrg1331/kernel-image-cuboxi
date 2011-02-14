@@ -11,7 +11,6 @@
 #include <linux/sched.h>
 #include <linux/sysrq.h>
 
-#include <linux/consolemap.h>
 #include <linux/kbd_kern.h>
 #include <linux/kbd_diacr.h>
 #include <asm/uaccess.h>
@@ -83,11 +82,11 @@ kbd_alloc(void) {
 	if (!kbd->fn_handler)
 		goto out_func;
 	kbd->accent_table =
-		kmalloc(sizeof(struct kbdiacruc)*MAX_DIACR, GFP_KERNEL);
+		kmalloc(sizeof(struct kbdiacr)*MAX_DIACR, GFP_KERNEL);
 	if (!kbd->accent_table)
 		goto out_fn_handler;
 	memcpy(kbd->accent_table, accent_table,
-	       sizeof(struct kbdiacruc)*MAX_DIACR);
+	       sizeof(struct kbdiacr)*MAX_DIACR);
 	kbd->accent_table_size = accent_table_size;
 	return kbd;
 
@@ -149,7 +148,6 @@ kbd_ascebc(struct kbd_data *kbd, unsigned char *ascebc)
 	}
 }
 
-#if 0
 /*
  * Generate ebcdic -> ascii translation table from kbd_data.
  */
@@ -175,7 +173,6 @@ kbd_ebcasc(struct kbd_data *kbd, unsigned char *ebcasc)
 		}
 	}
 }
-#endif
 
 /*
  * We have a combining character DIACR here, followed by the character CH.
@@ -184,8 +181,8 @@ kbd_ebcasc(struct kbd_data *kbd, unsigned char *ebcasc)
  * Otherwise, conclude that DIACR was not combining after all,
  * queue it and return CH.
  */
-static unsigned int
-handle_diacr(struct kbd_data *kbd, unsigned int ch)
+static unsigned char
+handle_diacr(struct kbd_data *kbd, unsigned char ch)
 {
 	int i, d;
 
@@ -307,7 +304,7 @@ kbd_keycode(struct kbd_data *kbd, unsigned int keycode)
 		if (kbd->sysrq) {
 			if (kbd->sysrq == K(KT_LATIN, '-')) {
 				kbd->sysrq = 0;
-				handle_sysrq(value, kbd->tty);
+				handle_sysrq(value, NULL, kbd->tty);
 				return;
 			}
 			if (value == '-') {
@@ -380,7 +377,7 @@ do_kdsk_ioctl(struct kbd_data *kbd, struct kbentry __user *user_kbe,
 		if (!(key_map = kbd->key_maps[tmp.kb_table])) {
 			int j;
 
-			key_map = kmalloc(sizeof(plain_map),
+			key_map = (ushort *) kmalloc(sizeof(plain_map),
 						     GFP_KERNEL);
 			if (!key_map)
 				return -ENOMEM;
@@ -461,6 +458,7 @@ int
 kbd_ioctl(struct kbd_data *kbd, struct file *file,
 	  unsigned int cmd, unsigned long arg)
 {
+	struct kbdiacrs __user *a;
 	void __user *argp;
 	int ct, perm;
 
@@ -481,40 +479,17 @@ kbd_ioctl(struct kbd_data *kbd, struct file *file,
 	case KDSKBSENT:
 		return do_kdgkb_ioctl(kbd, argp, cmd, perm);
 	case KDGKBDIACR:
-	{
-		struct kbdiacrs __user *a = argp;
-		struct kbdiacr diacr;
-		int i;
+		a = argp;
 
 		if (put_user(kbd->accent_table_size, &a->kb_cnt))
 			return -EFAULT;
-		for (i = 0; i < kbd->accent_table_size; i++) {
-			diacr.diacr = kbd->accent_table[i].diacr;
-			diacr.base = kbd->accent_table[i].base;
-			diacr.result = kbd->accent_table[i].result;
-			if (copy_to_user(a->kbdiacr + i, &diacr, sizeof(struct kbdiacr)))
-			return -EFAULT;
-		}
-		return 0;
-	}
-	case KDGKBDIACRUC:
-	{
-		struct kbdiacrsuc __user *a = argp;
-
 		ct = kbd->accent_table_size;
-		if (put_user(ct, &a->kb_cnt))
-			return -EFAULT;
-		if (copy_to_user(a->kbdiacruc, kbd->accent_table,
-				 ct * sizeof(struct kbdiacruc)))
+		if (copy_to_user(a->kbdiacr, kbd->accent_table,
+				 ct * sizeof(struct kbdiacr)))
 			return -EFAULT;
 		return 0;
-	}
 	case KDSKBDIACR:
-	{
-		struct kbdiacrs __user *a = argp;
-		struct kbdiacr diacr;
-		int i;
-
+		a = argp;
 		if (!perm)
 			return -EPERM;
 		if (get_user(ct, &a->kb_cnt))
@@ -522,31 +497,10 @@ kbd_ioctl(struct kbd_data *kbd, struct file *file,
 		if (ct >= MAX_DIACR)
 			return -EINVAL;
 		kbd->accent_table_size = ct;
-		for (i = 0; i < ct; i++) {
-			if (copy_from_user(&diacr, a->kbdiacr + i, sizeof(struct kbdiacr)))
-				return -EFAULT;
-			kbd->accent_table[i].diacr = diacr.diacr;
-			kbd->accent_table[i].base = diacr.base;
-			kbd->accent_table[i].result = diacr.result;
-		}
-		return 0;
-	}
-	case KDSKBDIACRUC:
-	{
-		struct kbdiacrsuc __user *a = argp;
-
-		if (!perm)
-			return -EPERM;
-		if (get_user(ct, &a->kb_cnt))
-			return -EFAULT;
-		if (ct >= MAX_DIACR)
-			return -EINVAL;
-		kbd->accent_table_size = ct;
-		if (copy_from_user(kbd->accent_table, a->kbdiacruc,
-				   ct * sizeof(struct kbdiacruc)))
+		if (copy_from_user(kbd->accent_table, a->kbdiacr,
+				   ct * sizeof(struct kbdiacr)))
 			return -EFAULT;
 		return 0;
-	}
 	default:
 		return -ENOIOCTLCMD;
 	}

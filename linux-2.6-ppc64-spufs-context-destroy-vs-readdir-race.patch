@@ -1,0 +1,64 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Thu, 6 Dec 2007 14:14:26 -0500
+Subject: [ppc64] spufs: context destroy vs readdir race
+Message-id: Pine.LNX.4.64.0712061410510.19799@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz387841 Kernel oops from spufs context create vs readdir on spufs mountpoint
+Bugzilla: 387841
+
+Bug 387841 [1]
+---------------
+
+Description:
+-----------
+spufs: fix context destroy vs /spu readdir race
+
+We can currently cause an oops by repeatedly creating and destroying
+contexts, while doing getdents() calls on the "/spu" directory.
+
+This is due to the context's top-level dentry remaining hashed while
+the context is being destroyed.
+
+Fix this by unhashing the context's dentry with the
+dentry->d_inode->i_mutex held. This way, we'll hit the check for
+d_unhashed in dentry_readdir, and won't be included in the
+list of subdirs for /spu.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-56
+
+Upstream Status:
+---------------
+http://ozlabs.org/pipermail/cbe-oss-dev/2007-November/003530.html
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-56 at [2].
+
+I've tested this the kernel listed above with the spufs testsuite at [3].
+Withouth this patch, the 01-spu_create/07-destroy-vs-readdir-race test would
+fail.  With this patch applied all tests run successfully.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=387841
+[3]:http://git.kernel.org/?p=linux/kernel/git/jk/spufs-testsuite.git;a=summary
+--
+ arch/powerpc/platforms/cell/spufs/inode.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/spufs/inode.c b/arch/powerpc/platforms/cell/spufs/inode.c
+index 7555057..d9d211f 100644
+--- a/arch/powerpc/platforms/cell/spufs/inode.c
++++ b/arch/powerpc/platforms/cell/spufs/inode.c
+@@ -171,6 +171,7 @@ static int spufs_rmdir(struct inode *parent, struct dentry *dir)
+ {
+ 	/* remove all entries */
+ 	spufs_prune_dir(dir);
++	d_drop(dir);
+ 
+ 	return simple_rmdir(parent, dir);
+ }

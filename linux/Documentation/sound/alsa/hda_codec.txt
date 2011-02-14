@@ -49,9 +49,6 @@ struct hda_bus_ops {
 		       unsigned int verb, unsigned int parm);
 	unsigned int (*get_response)(struct hda_codec *codec);
 	void (*private_free)(struct hda_bus *);
-#ifdef CONFIG_SND_HDA_POWER_SAVE
-	void (*pm_notify)(struct hda_codec *codec);
-#endif
 };
 
 The command callback is called when the codec module needs to send a
@@ -59,15 +56,8 @@ VERB to the controller.  It's always a single command.
 The get_response callback is called when the codec requires the answer
 for the last command.  These two callbacks are mandatory and have to
 be given.
-The third, private_free callback, is optional.  It's called in the
+The last, private_free callback, is optional.  It's called in the
 destructor to release any necessary data in the lowlevel driver.
-
-The pm_notify callback is available only with
-CONFIG_SND_HDA_POWER_SAVE kconfig.  It's called when the codec needs
-to power up or may power down.  The controller should check the all
-belonging codecs on the bus whether they are actually powered off
-(check codec->power_on), and optionally the driver may power down the
-controller side, too.
 
 The bus instance is created via snd_hda_bus_new().  You need to pass
 the card instance, the template, and the pointer to store the
@@ -96,8 +86,10 @@ resultant codec instance (can be NULL if not needed).
 The codec is stored in a linked list of bus instance.  You can follow
 the codec list like:
 
+	struct list_head *p;
 	struct hda_codec *codec;
-	list_for_each_entry(codec, &bus->codec_list, list) {
+	list_for_each(p, &bus->codec_list) {
+		codec = list_entry(p, struct hda_codec, list);
 		...
 	}
 
@@ -108,14 +100,9 @@ initialization sequence is called when the controls are built later.
 Codec Access
 ============
 
-To access codec, use snd_hda_codec_read() and snd_hda_codec_write().
+To access codec, use snd_codec_read() and snd_codec_write().
 snd_hda_param_read() is for reading parameters.
 For writing a sequence of verbs, use snd_hda_sequence_write().
-
-There are variants of cached read/write, snd_hda_codec_write_cache(),
-snd_hda_sequence_write_cache().  These are used for recording the
-register states for the power-management resume.  When no PM is needed,
-these are equivalent with non-cached version.
 
 To retrieve the number of sub nodes connected to the given node, use
 snd_hda_get_sub_nodes().  The connection list can be obtained via
@@ -252,10 +239,6 @@ set the codec->patch_ops field.  This is defined as below:
 		int (*suspend)(struct hda_codec *codec, pm_message_t state);
 		int (*resume)(struct hda_codec *codec);
 	#endif
-	#ifdef CONFIG_SND_HDA_POWER_SAVE
-		int (*check_power_status)(struct hda_codec *codec,
-					  hda_nid_t nid);
-	#endif
 	};
 
 The build_controls callback is called from snd_hda_build_controls().
@@ -268,18 +251,6 @@ The unsol_event callback is called when an unsolicited event is
 received.
 
 The suspend and resume callbacks are for power management.
-They can be NULL if no special sequence is required.  When the resume
-callback is NULL, the driver calls the init callback and resumes the
-registers from the cache.  If other handling is needed, you'd need to
-write your own resume callback.  There, the amp values can be resumed
-via
-	void snd_hda_codec_resume_amp(struct hda_codec *codec);
-and the other codec registers via
-	void snd_hda_codec_resume_cache(struct hda_codec *codec);
-
-The check_power_status callback is called when the amp value of the
-given widget NID is changed.  The codec code can turn on/off the power
-appropriately from this information.
 
 Each entry can be NULL if not necessary to be called.
 
@@ -296,7 +267,8 @@ Digital I/O
 ===========
 
 Call snd_hda_create_spdif_out_ctls() from the patch to create controls
-related with SPDIF out.
+related with SPDIF out.  In the patch resume callback, call
+snd_hda_resume_spdif().
 
 
 Helper Functions
@@ -305,14 +277,19 @@ Helper Functions
 snd_hda_get_codec_name() stores the codec name on the given string.
 
 snd_hda_check_board_config() can be used to obtain the configuration
-information matching with the device.  Define the model string table
-and the table with struct snd_pci_quirk entries (zero-terminated),
-and pass it to the function.  The function checks the modelname given
-as a module parameter, and PCI subsystem IDs.  If the matching entry
-is found, it returns the config field value.
+information matching with the device.  Define the table with struct
+hda_board_config entries (zero-terminated), and pass it to the
+function.  The function checks the modelname given as a module
+parameter, and PCI subsystem IDs.  If the matching entry is found, it
+returns the config field value.
 
 snd_hda_add_new_ctls() can be used to create and add control entries.
-Pass the zero-terminated array of struct snd_kcontrol_new
+Pass the zero-terminated array of struct snd_kcontrol_new.  The same array
+can be passed to snd_hda_resume_ctls() for resume.
+Note that this will call control->put callback of these entries.  So,
+put callback should check codec->in_resume and force to restore the
+given value if it's non-zero even if the value is identical with the
+cached value.
 
 Macros HDA_CODEC_VOLUME(), HDA_CODEC_MUTE() and their variables can be
 used for the entry of struct snd_kcontrol_new.

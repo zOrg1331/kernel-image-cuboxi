@@ -64,6 +64,7 @@
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
+#include <linux/pci.h>
 
 #include <asm/grfioctl.h>	/* for HP-UX compatibility */
 #include <asm/uaccess.h>
@@ -164,11 +165,11 @@ static int __initdata stifb_bpp_pref[MAX_STI_ROMS];
 # define  DEBUG_ON()  debug_on=1
 # define WRITE_BYTE(value,fb,reg)	do { if (debug_on) \
 						printk(KERN_DEBUG "%30s: WRITE_BYTE(0x%06x) = 0x%02x (old=0x%02x)\n", \
-							__func__, reg, value, READ_BYTE(fb,reg)); 		  \
+							__FUNCTION__, reg, value, READ_BYTE(fb,reg)); 		  \
 					gsc_writeb((value),(fb)->info.fix.mmio_start + (reg)); } while (0)
 # define WRITE_WORD(value,fb,reg)	do { if (debug_on) \
 						printk(KERN_DEBUG "%30s: WRITE_WORD(0x%06x) = 0x%08x (old=0x%08x)\n", \
-							__func__, reg, value, READ_WORD(fb,reg)); 		  \
+							__FUNCTION__, reg, value, READ_WORD(fb,reg)); 		  \
 					gsc_writel((value),(fb)->info.fix.mmio_start + (reg)); } while (0)
 #endif /* DEBUG_STIFB_REGS */
 
@@ -505,24 +506,16 @@ ngleSetupAttrPlanes(struct stifb_info *fb, int BufferNumber)
 static void
 rattlerSetupPlanes(struct stifb_info *fb)
 {
-	int saved_id, y;
-
- 	/* Write RAMDAC pixel read mask register so all overlay
-	 * planes are display-enabled.  (CRX24 uses Bt462 pixel
-	 * read mask register for overlay planes, not image planes).
-	 */
 	CRX24_SETUP_RAMDAC(fb);
     
-	/* change fb->id temporarily to fool SETUP_FB() */
-	saved_id = fb->id;
-	fb->id = CRX24_OVERLAY_PLANES;
-	SETUP_FB(fb);
-	fb->id = saved_id;
+	/* replacement for: SETUP_FB(fb, CRX24_OVERLAY_PLANES); */
+	WRITE_WORD(0x83000300, fb, REG_14);
+	SETUP_HW(fb);
+	WRITE_BYTE(1, fb, REG_16b1);
 
-	for (y = 0; y < fb->info.var.yres; ++y)
-		memset(fb->info.screen_base + y * fb->info.fix.line_length,
-			0xff, fb->info.var.xres * fb->info.var.bits_per_pixel/8);
-
+	fb_memset((void*)fb->info.fix.smem_start, 0xff,
+		fb->info.var.yres*fb->info.fix.line_length);
+    
 	CRX24_SET_OVLY_MASK(fb);
 	SETUP_FB(fb);
 }
@@ -1078,7 +1071,8 @@ static struct fb_ops stifb_ops = {
  *  Initialization
  */
 
-static int __init stifb_init_fb(struct sti_struct *sti, int bpp_pref)
+int __init
+stifb_init_fb(struct sti_struct *sti, int bpp_pref)
 {
 	struct fb_fix_screeninfo *fix;
 	struct fb_var_screeninfo *var;
@@ -1107,17 +1101,13 @@ static int __init stifb_init_fb(struct sti_struct *sti, int bpp_pref)
 	/* only supported cards are allowed */
 	switch (fb->id) {
 	case CRT_ID_VISUALIZE_EG:
-		/* Visualize cards can run either in "double buffer" or
- 		  "standard" mode. Depending on the mode, the card reports
-		  a different device name, e.g. "INTERNAL_EG_DX1024" in double
-		  buffer mode and "INTERNAL_EG_X1024" in standard mode.
-		  Since this driver only supports standard mode, we check
-		  if the device name contains the string "DX" and tell the
-		  user how to reconfigure the card. */
-		if (strstr(sti->outptr.dev_name, "DX")) {
-		   printk(KERN_WARNING
-"WARNING: stifb framebuffer driver does not support '%s' in double-buffer mode.\n"
-"WARNING: Please disable the double-buffer mode in IPL menu (the PARISC-BIOS).\n",
+		/* look for a double buffering device like e.g. the 
+		   "INTERNAL_EG_DX1024" in the RDI precisionbook laptop
+		   which won't work. The same device in non-double 
+		   buffering mode returns "INTERNAL_EG_X1024". */
+		if (strstr(sti->outptr.dev_name, "EG_DX")) {
+		   printk(KERN_WARNING 
+			"stifb: ignoring '%s'. Disable double buffering in IPL menu.\n",
 			sti->outptr.dev_name);
 		   goto out_err0;
 		}
@@ -1261,25 +1251,24 @@ static int __init stifb_init_fb(struct sti_struct *sti, int bpp_pref)
 	info->flags = FBINFO_DEFAULT;
 	info->pseudo_palette = &fb->pseudo_palette;
 
-	/* This has to be done !!! */
-	if (fb_alloc_cmap(&info->cmap, NR_PALETTE, 0))
-		goto out_err1;
+	/* This has to been done !!! */
+	fb_alloc_cmap(&info->cmap, NR_PALETTE, 0);
 	stifb_init_display(fb);
 
 	if (!request_mem_region(fix->smem_start, fix->smem_len, "stifb fb")) {
 		printk(KERN_ERR "stifb: cannot reserve fb region 0x%04lx-0x%04lx\n",
 				fix->smem_start, fix->smem_start+fix->smem_len);
-		goto out_err2;
+		goto out_err1;
 	}
 		
 	if (!request_mem_region(fix->mmio_start, fix->mmio_len, "stifb mmio")) {
 		printk(KERN_ERR "stifb: cannot reserve sti mmio region 0x%04lx-0x%04lx\n",
 				fix->mmio_start, fix->mmio_start+fix->mmio_len);
-		goto out_err3;
+		goto out_err2;
 	}
 
 	if (register_framebuffer(&fb->info) < 0)
-		goto out_err4;
+		goto out_err3;
 
 	sti->info = info; /* save for unregister_framebuffer() */
 
@@ -1297,14 +1286,12 @@ static int __init stifb_init_fb(struct sti_struct *sti, int bpp_pref)
 	return 0;
 
 
-out_err4:
-	release_mem_region(fix->mmio_start, fix->mmio_len);
 out_err3:
-	release_mem_region(fix->smem_start, fix->smem_len);
+	release_mem_region(fix->mmio_start, fix->mmio_len);
 out_err2:
-	fb_dealloc_cmap(&info->cmap);
+	release_mem_region(fix->smem_start, fix->smem_len);
 out_err1:
-	iounmap(info->screen_base);
+	fb_dealloc_cmap(&info->cmap);
 out_err0:
 	kfree(fb);
 	return -ENXIO;
@@ -1315,7 +1302,8 @@ static int stifb_disabled __initdata;
 int __init
 stifb_setup(char *options);
 
-static int __init stifb_init(void)
+int __init
+stifb_init(void)
 {
 	struct sti_struct *sti;
 	struct sti_struct *def_sti;
@@ -1376,10 +1364,8 @@ stifb_cleanup(void)
 			unregister_framebuffer(sti->info);
 			release_mem_region(info->fix.mmio_start, info->fix.mmio_len);
 		        release_mem_region(info->fix.smem_start, info->fix.smem_len);
-				if (info->screen_base)
-					iounmap(info->screen_base);
 		        fb_dealloc_cmap(&info->cmap);
-		        framebuffer_release(info);
+		        kfree(info); 
 		}
 		sti->info = NULL;
 	}

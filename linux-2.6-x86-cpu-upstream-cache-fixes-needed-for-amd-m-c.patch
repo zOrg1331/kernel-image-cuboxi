@@ -1,0 +1,62 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 9 Nov 2009 20:40:01 -0500
+Subject: [x86] cpu: upstream cache fixes needed for amd m-c
+Message-id: <4AF87E21.6060400@redhat.com>
+Patchwork-id: 21333
+O-Subject: Re: [RHEL5.5 PATCH 2/3] Upstream cache fixes needed for M-C patch
+Bugzilla: 526315
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+
+Resolves BZ 526315
+
+RHEL5.x is missing some upstream cache settings that M-C would require.  The switch statement
+doesn't adequately cover all cache sizes, but has removed the switch statement and assign
+a large enough size_in_kb.
+
+This error was detected through RHEL5.4 experimental kernel testing, and this fix is being
+submitted for RHEL5.5 support.
+
+Please review and ACK.
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index c9b9a22..f2fe534 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -172,11 +172,19 @@ union l3_cache {
+ };
+ 
+ static const unsigned short assocs[] = {
+-	[1] = 1, [2] = 2, [4] = 4, [6] = 8,
+-	[8] = 16, [0xa] = 32, [0xb] = 48,
++	[1] = 1,
++	[2] = 2,
++	[4] = 4,
++	[6] = 8,
++	[8] = 16,
++	[0xa] = 32,
++	[0xb] = 48,
+ 	[0xc] = 64,
+-	[0xf] = 0xffff // ??
++	[0xd] = 96,
++	[0xe] = 128,
++	[0xf] = 0xffff /* fully associative - no way to show this currently */
+ };
++
+ static const unsigned char levels[] = { 1, 1, 2, 3 };
+ static const unsigned char types[] = { 1, 2, 3, 3 };
+ 
+@@ -224,12 +232,7 @@ static void __cpuinit amd_cpuid4(int leaf, union _cpuid4_leaf_eax *eax,
+ 		assoc = assocs[l3.assoc];
+ 		line_size = l3.line_size;
+ 		lines_per_tag = l3.lines_per_tag;
+-		switch (l3.size_encoded) {
+-		case 4:  size_in_kb = 2 * 1024; break;
+-		case 8:  size_in_kb = 4 * 1024; break;
+-		case 12: size_in_kb = 6 * 1024; break;
+-		default: size_in_kb = 0; break;
+-		}
++		size_in_kb = l3.size_encoded * 512;
+ 		if (boot_cpu_has(X86_FEATURE_AMD_DCM)) {
+ 			size_in_kb = size_in_kb >> 1;
+ 			assoc = assoc >> 1;

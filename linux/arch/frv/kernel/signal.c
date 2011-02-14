@@ -13,6 +13,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/errno.h>
@@ -20,8 +21,7 @@
 #include <linux/ptrace.h>
 #include <linux/unistd.h>
 #include <linux/personality.h>
-#include <linux/freezer.h>
-#include <linux/tracehook.h>
+#include <linux/suspend.h>
 #include <asm/ucontext.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -298,7 +298,7 @@ static int setup_frame(int sig, struct k_sigaction *ka, sigset_t *set)
 	__frame->lr   = (unsigned long) &frame->retcode;
 	__frame->gr8  = sig;
 
-	if (current->personality & FDPIC_FUNCPTRS) {
+	if (get_personality & FDPIC_FUNCPTRS) {
 		struct fdpic_func_descriptor __user *funcptr =
 			(struct fdpic_func_descriptor __user *) ka->sa.sa_handler;
 		__get_user(__frame->pc, &funcptr->text);
@@ -397,7 +397,7 @@ static int setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 	__frame->gr8 = sig;
 	__frame->gr9 = (unsigned long) &frame->info;
 
-	if (current->personality & FDPIC_FUNCPTRS) {
+	if (get_personality & FDPIC_FUNCPTRS) {
 		struct fdpic_func_descriptor __user *funcptr =
 			(struct fdpic_func_descriptor __user *) ka->sa.sa_handler;
 		__get_user(__frame->pc, &funcptr->text);
@@ -517,9 +517,6 @@ static void do_signal(void)
 			 * clear the TIF_RESTORE_SIGMASK flag */
 			if (test_thread_flag(TIF_RESTORE_SIGMASK))
 				clear_thread_flag(TIF_RESTORE_SIGMASK);
-
-			tracehook_signal_handler(signr, &info, &ka, __frame,
-						 test_thread_flag(TIF_SINGLESTEP));
 		}
 
 		return;
@@ -527,7 +524,7 @@ static void do_signal(void)
 
 no_signal:
 	/* Did we come from a system call? */
-	if (__frame->syscallno != -1) {
+	if (__frame->syscallno >= 0) {
 		/* Restart the system call - no handlers present */
 		switch (__frame->gr8) {
 		case -ERESTARTNOHAND:
@@ -567,13 +564,5 @@ asmlinkage void do_notify_resume(__u32 thread_info_flags)
 	/* deal with pending signal delivery */
 	if (thread_info_flags & (_TIF_SIGPENDING | _TIF_RESTORE_SIGMASK))
 		do_signal();
-
-	/* deal with notification on about to resume userspace execution */
-	if (thread_info_flags & _TIF_NOTIFY_RESUME) {
-		clear_thread_flag(TIF_NOTIFY_RESUME);
-		tracehook_notify_resume(__frame);
-		if (current->replacement_session_keyring)
-			key_replace_session_keyring();
-	}
 
 } /* end do_notify_resume() */

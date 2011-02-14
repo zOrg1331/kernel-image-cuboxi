@@ -118,7 +118,7 @@ static ssize_t set_brightness(struct device *dev, struct device_attribute *attr,
 				cytherm->brightness, buffer, 8);
 	if (retval)
 		dev_dbg(&cytherm->udev->dev, "retval = %d\n", retval);
-	/* Inform ÂµC that we have changed the brightness setting */
+	/* Inform µC that we have changed the brightness setting */
 	retval = vendor_command(cytherm->udev, WRITE_RAM, BRIGHTNESS_SEM,
 				0x01, buffer, 8);
 	if (retval)
@@ -353,7 +353,7 @@ static int cytherm_probe(struct usb_interface *interface,
 	dev = kzalloc (sizeof(struct usb_cytherm), GFP_KERNEL);
 	if (dev == NULL) {
 		dev_err (&interface->dev, "Out of memory\n");
-		goto error_mem;
+		goto error;
 	}
 
 	dev->udev = usb_get_dev(udev);
@@ -362,35 +362,18 @@ static int cytherm_probe(struct usb_interface *interface,
 
 	dev->brightness = 0xFF;
 
-	retval = device_create_file(&interface->dev, &dev_attr_brightness);
-	if (retval)
-		goto error;
-	retval = device_create_file(&interface->dev, &dev_attr_temp);
-	if (retval)
-		goto error;
-	retval = device_create_file(&interface->dev, &dev_attr_button);
-	if (retval)
-		goto error;
-	retval = device_create_file(&interface->dev, &dev_attr_port0);
-	if (retval)
-		goto error;
-	retval = device_create_file(&interface->dev, &dev_attr_port1);
-	if (retval)
-		goto error;
+	device_create_file(&interface->dev, &dev_attr_brightness);   
+	device_create_file(&interface->dev, &dev_attr_temp);
+	device_create_file(&interface->dev, &dev_attr_button);
+	device_create_file(&interface->dev, &dev_attr_port0);
+	device_create_file(&interface->dev, &dev_attr_port1);
 
-	dev_info (&interface->dev,
+	dev_info (&interface->dev, 
 		  "Cypress thermometer device now attached\n");
 	return 0;
-error:
-	device_remove_file(&interface->dev, &dev_attr_brightness);
-	device_remove_file(&interface->dev, &dev_attr_temp);
-	device_remove_file(&interface->dev, &dev_attr_button);
-	device_remove_file(&interface->dev, &dev_attr_port0);
-	device_remove_file(&interface->dev, &dev_attr_port1);
-	usb_set_intfdata (interface, NULL);
-	usb_put_dev(dev->udev);
+
+ error:
 	kfree(dev);
-error_mem:
 	return retval;
 }
 
@@ -399,15 +382,13 @@ static void cytherm_disconnect(struct usb_interface *interface)
 	struct usb_cytherm *dev;
 
 	dev = usb_get_intfdata (interface);
+	usb_set_intfdata (interface, NULL);
 
 	device_remove_file(&interface->dev, &dev_attr_brightness);
 	device_remove_file(&interface->dev, &dev_attr_temp);
 	device_remove_file(&interface->dev, &dev_attr_button);
 	device_remove_file(&interface->dev, &dev_attr_port0);
 	device_remove_file(&interface->dev, &dev_attr_port1);
-
-	/* first remove the files, then NULL the pointer */
-	usb_set_intfdata (interface, NULL);
 
 	usb_put_dev(dev->udev);
 
@@ -422,14 +403,13 @@ static int __init usb_cytherm_init(void)
 	int result;
 
 	result = usb_register(&cytherm_driver);
-	if (result) {
-		printk(KERN_ERR KBUILD_MODNAME ": usb_register failed! "
-		       "Error number: %d\n", result);
+	if (result) 
+	{	
+		err("usb_register failed. Error number %d", result);
 		return result;
 	}
 
-	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
-	       DRIVER_DESC "\n");
+	info(DRIVER_VERSION ":" DRIVER_DESC);
 	return 0;
 }
 

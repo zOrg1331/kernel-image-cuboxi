@@ -1,0 +1,62 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 16/21] Skip MCA setup on domU
+Date: Thu, 07 Jun 2007 03:45:30 -0400
+Bugzilla: 242143
+Message-Id: <4667B79A.1060404@redhat.com>
+Changelog: [xen] ia64: Skip MCA setup on domU
+
+
+bz242143
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242143
+
+Backport of cset#14805.
+
+This effectively automates passing the nomca flag to
+domUs, preventing them from setting up CMC/CPE interrupts.
+This saves 3 dynamic IRQs per processor and allows us
+to get domUs up to 64 vCPUs without increasing the number
+of dynamic IRQs available.
+
+Thanks,
+Kei
+
+
+rh bug 242143
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1176298109 21600
+# Node ID a6800d989059304f7b4b0e55eec297b5af8bce15
+# Parent  7158623a1b3dd28f86f908fce7e8e56c37a49179
+[IA64] Skip MCA setup on domU
+
+This effectively automates passing the nomca flag to domUs,
+preventing them from setting up CMC/CPE interrupts.  This saves
+3 dynamic IRQs per processor and allows us to get domUs up to 64
+vCPUs without increasing the number of dynamic IRQs available.
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/setup.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff -puN arch/ia64/kernel/setup.c~14805-IA64_Skip_MCA_setup_on_domU arch/ia64/kernel/setup.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/kernel/setup.c~14805-IA64_Skip_MCA_setup_on_domU	2007-06-07 02:44:33.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/setup.c	2007-06-07 02:44:33.000000000 -0400
+@@ -656,6 +656,10 @@ setup_arch (char **cmdline_p)
+ #endif
+ 
+ 	/* enable IA-64 Machine Check Abort Handling unless disabled */
++#ifdef CONFIG_XEN
++	if (is_running_on_xen() && !is_initial_xendomain())
++		nomca = 1;
++#endif
+ 	if (!nomca)
+ 		ia64_mca_init();
+ 
+
+_
+

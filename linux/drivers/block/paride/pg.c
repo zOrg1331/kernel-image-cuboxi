@@ -162,7 +162,6 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_SLV, D_DLY};
 #include <linux/pg.h>
 #include <linux/device.h>
 #include <linux/sched.h>	/* current, TASK_* */
-#include <linux/smp_lock.h>
 #include <linux/jiffies.h>
 
 #include <asm/uaccess.h>
@@ -228,7 +227,7 @@ static struct class *pg_class;
 
 /* kernel glue structures */
 
-static const struct file_operations pg_fops = {
+static struct file_operations pg_fops = {
 	.owner = THIS_MODULE,
 	.read = pg_read,
 	.write = pg_write,
@@ -422,7 +421,7 @@ static void xs(char *buf, char *targ, int len)
 
 	for (k = 0; k < len; k++) {
 		char c = *buf++;
-		if (c != ' ' && c != l)
+		if (c != ' ' || c != l)
 			l = *targ++ = c;
 	}
 	if (l == ' ')
@@ -516,18 +515,12 @@ static int pg_open(struct inode *inode, struct file *file)
 {
 	int unit = iminor(inode) & 0x7f;
 	struct pg *dev = &devices[unit];
-	int ret = 0;
 
-	lock_kernel();
-	if ((unit >= PG_UNITS) || (!dev->present)) {
-		ret = -ENODEV;
-		goto out;
-	}
+	if ((unit >= PG_UNITS) || (!dev->present))
+		return -ENODEV;
 
-	if (test_and_set_bit(0, &dev->access)) {
-		ret = -EBUSY;
-		goto out;
-	}
+	if (test_and_set_bit(0, &dev->access))
+		return -EBUSY;
 
 	if (dev->busy) {
 		pg_reset(dev);
@@ -540,15 +533,12 @@ static int pg_open(struct inode *inode, struct file *file)
 	if (dev->bufptr == NULL) {
 		clear_bit(0, &dev->access);
 		printk("%s: buffer allocation failed\n", dev->name);
-		ret = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 
 	file->private_data = dev;
 
-out:
-	unlock_kernel();
-	return ret;
+	return 0;
 }
 
 static int pg_release(struct inode *inode, struct file *file)
@@ -656,14 +646,14 @@ static int __init pg_init(void)
 	int err;
 
 	if (disable){
-		err = -EINVAL;
+		err = -1;
 		goto out;
 	}
 
 	pg_init_units();
 
 	if (pg_detect()) {
-		err = -ENODEV;
+		err = -1;
 		goto out;
 	}
 
@@ -686,8 +676,8 @@ static int __init pg_init(void)
 	for (unit = 0; unit < PG_UNITS; unit++) {
 		struct pg *dev = &devices[unit];
 		if (dev->present)
-			device_create(pg_class, NULL, MKDEV(major, unit), NULL,
-				      "pg%u", unit);
+			class_device_create(pg_class, NULL, MKDEV(major, unit),
+					NULL, "pg%u", unit);
 	}
 	err = 0;
 	goto out;
@@ -705,7 +695,7 @@ static void __exit pg_exit(void)
 	for (unit = 0; unit < PG_UNITS; unit++) {
 		struct pg *dev = &devices[unit];
 		if (dev->present)
-			device_destroy(pg_class, MKDEV(major, unit));
+			class_device_destroy(pg_class, MKDEV(major, unit));
 	}
 	class_destroy(pg_class);
 	unregister_chrdev(major, name);

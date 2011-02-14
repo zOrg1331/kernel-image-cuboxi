@@ -1,0 +1,83 @@
+From: Roland McGrath <roland@redhat.com>
+Date: Tue, 4 Dec 2007 16:07:56 -0800
+Subject: [ppc64] utrace: fix PTRACE_GETVRREGS data
+Message-id: 20071205000756.16EE326F8D9@magilla.localdomain
+O-Subject: [RHEL5.2 patch] RHBZ#367221 utrace powerpc altivec
+Bugzilla: 367221
+
+This fixes RHBZ#367221, where the final slot of the PTRACE_GETVRREGS data
+would be wrong.  This is a regression from upstream 2.6.18.  It is not
+technically a regression from RHEL4, but only because the original RHEL4
+backport of PTRACE_GETVRREGS was botched so it never worked (RHBZ#367061).
+
+This is still waiting for qa_ack + to get rhel-5.2.0 + flags.
+But it has a simple win/lose test case already available in a handy
+regression test suite (might already be in RHTS, in fact), so I don't
+know why it should be held up.
+
+Thanks,
+Roland
+
+diff --git a/arch/powerpc/kernel/ptrace.c b/arch/powerpc/kernel/ptrace.c
+index 3f8536e..3d2df91 100644
+--- a/arch/powerpc/kernel/ptrace.c
++++ b/arch/powerpc/kernel/ptrace.c
+@@ -159,15 +159,26 @@ vrregs_get(struct task_struct *target,
+ 	   unsigned int pos, unsigned int count,
+ 	   void *kbuf, void __user *ubuf)
+ {
++	int ret;
++
+ 	BUILD_BUG_ON(offsetof(struct thread_struct, vscr)
+ 		     != offsetof(struct thread_struct, vr[32]));
+-	BUILD_BUG_ON(offsetof(struct thread_struct, vscr) + sizeof(vector128)
+-		     != offsetof(struct thread_struct, vrsave));
+ 
+ 	flush_altivec_to_thread(target);
+ 
+-	return utrace_regset_copyout(&pos, &count, &kbuf, &ubuf,
+-				     &target->thread.vr, 0, -1);
++	ret = utrace_regset_copyout(&pos, &count, &kbuf, &ubuf,
++				    &target->thread.vr,
++				    0, 33 * sizeof(vector128));
++	if (ret == 0 && count > 0) {
++		/*
++		 * Copy out only the low-order word of vrsave.
++		 */
++		u32 vrsave = target->thread.vrsave;
++		ret = utrace_regset_copyout(&pos, &count, &kbuf, &ubuf, &vrsave,
++					    33 * sizeof(vector128), -1);
++	}
++
++	return ret;
+ }
+ 
+ static int
+@@ -176,10 +187,25 @@ vrregs_set(struct task_struct *target,
+ 	    unsigned int pos, unsigned int count,
+ 	    const void *kbuf, const void __user *ubuf)
+ {
++	int ret;
++
+ 	flush_altivec_to_thread(target);
+ 
+-	return utrace_regset_copyin(&pos, &count, &kbuf, &ubuf,
+-				    &target->thread.vr, 0, -1);
++	ret = utrace_regset_copyin(&pos, &count, &kbuf, &ubuf,
++				   &target->thread.vr,
++				   0, 33 * sizeof(vector128));
++	if (ret == 0 && count > 0) {
++		/*
++		 * Copy in only the low-order word of vrsave.
++		 */
++		u32 vrsave;
++		ret = utrace_regset_copyin(&pos, &count, &kbuf, &ubuf, &vrsave,
++					   33 * sizeof(vector128), -1);
++		if (ret == 0)
++			target->thread.vrsave = vrsave;
++	}
++
++	return ret;
+ }
+ #endif	/* CONFIG_ALTIVEC */
+ 

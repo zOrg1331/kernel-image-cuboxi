@@ -1,20 +1,20 @@
-/* SCTP kernel implementation
+/* SCTP kernel reference Implementation
  * (C) Copyright IBM Corp. 2001, 2004
  * Copyright (c) 1999-2000 Cisco, Inc.
  * Copyright (c) 1999-2001 Motorola, Inc.
  * Copyright (c) 2001-2003 Intel Corp.
  *
- * This file is part of the SCTP kernel implementation
+ * This file is part of the SCTP kernel reference Implementation
  *
  * The base lksctp header.
  *
- * This SCTP implementation is free software;
+ * The SCTP reference implementation is free software;
  * you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by
  * the Free Software Foundation; either version 2, or (at your option)
  * any later version.
  *
- * This SCTP implementation is distributed in the hope that it
+ * The SCTP reference implementation is distributed in the hope that it
  * will be useful, but WITHOUT ANY WARRANTY; without even the implied
  *                 ************************
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -61,6 +61,14 @@
  *   and into the test frame headers.   This is not perfect in any sense
  *   and will continue to evolve.
  */
+
+
+
+#ifdef TEST_FRAME
+#undef CONFIG_PROC_FS
+#undef CONFIG_SCTP_DBG_OBJCNT
+#undef CONFIG_SYSCTL
+#endif /* TEST_FRAME */
 
 #include <linux/types.h>
 #include <linux/slab.h>
@@ -115,7 +123,6 @@
  * sctp/protocol.c
  */
 extern struct sock *sctp_get_ctl_sock(void);
-extern void sctp_local_addr_free(struct rcu_head *head);
 extern int sctp_copy_local_addr_list(struct sctp_bind_addr *,
 				     sctp_scope_t, gfp_t gfp,
 				     int flags);
@@ -130,10 +137,6 @@ int sctp_inet_listen(struct socket *sock, int backlog);
 void sctp_write_space(struct sock *sk);
 unsigned int sctp_poll(struct file *file, struct socket *sock,
 		poll_table *wait);
-void sctp_sock_rfree(struct sk_buff *skb);
-void sctp_copy_sock(struct sock *newsk, struct sock *sk,
-		    struct sctp_association *asoc);
-extern struct percpu_counter sctp_sockets_allocated;
 
 /*
  * sctp/primitive.c
@@ -144,6 +147,14 @@ int sctp_primitive_ABORT(struct sctp_association *, void *arg);
 int sctp_primitive_SEND(struct sctp_association *, void *arg);
 int sctp_primitive_REQUESTHEARTBEAT(struct sctp_association *, void *arg);
 int sctp_primitive_ASCONF(struct sctp_association *, void *arg);
+
+/*
+ * sctp/crc32c.c
+ */
+__u32 sctp_start_cksum(__u8 *ptr, __u16 count);
+__u32 sctp_update_cksum(__u8 *ptr, __u16 count, __u32 cksum);
+__u32 sctp_end_cksum(__u32 cksum);
+__u32 sctp_update_copy_cksum(__u8 *, __u8 *, __u16 count, __u32 cksum);
 
 /*
  * sctp/input.c
@@ -165,29 +176,6 @@ void sctp_icmp_proto_unreachable(struct sock *sk,
 				 struct sctp_transport *t);
 void sctp_backlog_migrate(struct sctp_association *assoc,
 			  struct sock *oldsk, struct sock *newsk);
-
-/*
- * sctp/proc.c
- */
-int sctp_snmp_proc_init(void);
-void sctp_snmp_proc_exit(void);
-int sctp_eps_proc_init(void);
-void sctp_eps_proc_exit(void);
-int sctp_assocs_proc_init(void);
-void sctp_assocs_proc_exit(void);
-int sctp_remaddr_proc_init(void);
-void sctp_remaddr_proc_exit(void);
-
-
-/*
- * Module global variables
- */
-
- /*
-  * sctp/protocol.c
-  */
-extern struct kmem_cache *sctp_chunk_cachep __read_mostly;
-extern struct kmem_cache *sctp_bucket_cachep __read_mostly;
 
 /*
  *  Section:  Macros, externs, and inlines
@@ -216,6 +204,8 @@ extern struct kmem_cache *sctp_bucket_cachep __read_mostly;
 #define sctp_release_sock(sk)    release_sock(sk)
 #define sctp_bh_lock_sock(sk)    bh_lock_sock(sk)
 #define sctp_bh_unlock_sock(sk)  bh_unlock_sock(sk)
+#define SCTP_SOCK_SLEEP_PRE(sk)  SOCK_SLEEP_PRE(sk)
+#define SCTP_SOCK_SLEEP_POST(sk) SOCK_SLEEP_POST(sk)
 
 /* SCTP SNMP MIB stats handlers */
 DECLARE_SNMP_STAT(struct sctp_mib, sctp_statistics);
@@ -225,51 +215,6 @@ DECLARE_SNMP_STAT(struct sctp_mib, sctp_statistics);
 #define SCTP_DEC_STATS(field)      SNMP_DEC_STATS(sctp_statistics, field)
 
 #endif /* !TEST_FRAME */
-
-/* sctp mib definitions */
-enum
-{
-	SCTP_MIB_NUM = 0,
-	SCTP_MIB_CURRESTAB,			/* CurrEstab */
-	SCTP_MIB_ACTIVEESTABS,			/* ActiveEstabs */
-	SCTP_MIB_PASSIVEESTABS,			/* PassiveEstabs */
-	SCTP_MIB_ABORTEDS,			/* Aborteds */
-	SCTP_MIB_SHUTDOWNS,			/* Shutdowns */
-	SCTP_MIB_OUTOFBLUES,			/* OutOfBlues */
-	SCTP_MIB_CHECKSUMERRORS,		/* ChecksumErrors */
-	SCTP_MIB_OUTCTRLCHUNKS,			/* OutCtrlChunks */
-	SCTP_MIB_OUTORDERCHUNKS,		/* OutOrderChunks */
-	SCTP_MIB_OUTUNORDERCHUNKS,		/* OutUnorderChunks */
-	SCTP_MIB_INCTRLCHUNKS,			/* InCtrlChunks */
-	SCTP_MIB_INORDERCHUNKS,			/* InOrderChunks */
-	SCTP_MIB_INUNORDERCHUNKS,		/* InUnorderChunks */
-	SCTP_MIB_FRAGUSRMSGS,			/* FragUsrMsgs */
-	SCTP_MIB_REASMUSRMSGS,			/* ReasmUsrMsgs */
-	SCTP_MIB_OUTSCTPPACKS,			/* OutSCTPPacks */
-	SCTP_MIB_INSCTPPACKS,			/* InSCTPPacks */
-	SCTP_MIB_T1_INIT_EXPIREDS,
-	SCTP_MIB_T1_COOKIE_EXPIREDS,
-	SCTP_MIB_T2_SHUTDOWN_EXPIREDS,
-	SCTP_MIB_T3_RTX_EXPIREDS,
-	SCTP_MIB_T4_RTO_EXPIREDS,
-	SCTP_MIB_T5_SHUTDOWN_GUARD_EXPIREDS,
-	SCTP_MIB_DELAY_SACK_EXPIREDS,
-	SCTP_MIB_AUTOCLOSE_EXPIREDS,
-	SCTP_MIB_T1_RETRANSMITS,
-	SCTP_MIB_T3_RETRANSMITS,
-	SCTP_MIB_PMTUD_RETRANSMITS,
-	SCTP_MIB_FAST_RETRANSMITS,
-	SCTP_MIB_IN_PKT_SOFTIRQ,
-	SCTP_MIB_IN_PKT_BACKLOG,
-	SCTP_MIB_IN_PKT_DISCARDS,
-	SCTP_MIB_IN_DATA_CHUNK_DISCARDS,
-	__SCTP_MIB_MAX
-};
-
-#define SCTP_MIB_MAX    __SCTP_MIB_MAX
-struct sctp_mib {
-        unsigned long   mibs[SCTP_MIB_MAX];
-} __SNMP_MIB_ALIGN__;
 
 
 /* Print debugging messages.  */
@@ -281,15 +226,15 @@ extern int sctp_debug_flag;
 	if (sctp_debug_flag) { \
 		if (saddr->sa.sa_family == AF_INET6) { \
 			printk(KERN_DEBUG \
-			       lead "%pI6" trail, \
+			       lead NIP6_FMT trail, \
 			       leadparm, \
-			       &saddr->v6.sin6_addr, \
+			       NIP6(saddr->v6.sin6_addr), \
 			       otherparms); \
 		} else { \
 			printk(KERN_DEBUG \
-			       lead "%pI4" trail, \
+			       lead NIPQUAD_FMT trail, \
 			       leadparm, \
-			       &saddr->v4.sin_addr.s_addr, \
+			       NIPQUAD(saddr->v4.sin_addr.s_addr), \
 			       otherparms); \
 		} \
 	}
@@ -299,7 +244,7 @@ extern int sctp_debug_flag;
 #define SCTP_ASSERT(expr, str, func) \
 	if (!(expr)) { \
 		SCTP_DEBUG_PRINTK("Assertion Failed: %s(%s) at %s:%s:%d\n", \
-			str, (#expr), __FILE__, __func__, __LINE__); \
+			str, (#expr), __FILE__, __FUNCTION__, __LINE__); \
 		func; \
 	}
 
@@ -329,7 +274,6 @@ extern atomic_t sctp_dbg_objcnt_bind_bucket;
 extern atomic_t sctp_dbg_objcnt_addr;
 extern atomic_t sctp_dbg_objcnt_ssnmap;
 extern atomic_t sctp_dbg_objcnt_datamsg;
-extern atomic_t sctp_dbg_objcnt_keys;
 
 /* Macros to atomically increment/decrement objcnt counters.  */
 #define SCTP_DBG_OBJCNT_INC(name) \
@@ -364,6 +308,11 @@ void sctp_sysctl_unregister(void);
 #else
 static inline void sctp_sysctl_register(void) { return; }
 static inline void sctp_sysctl_unregister(void) { return; }
+static inline int sctp_sysctl_jiffies_ms(ctl_table *table, int __user *name, int nlen,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen, void **context) {
+	return -ENOSYS;
+}
 #endif
 
 /* Size of Supported Address Parameter for 'x' address types. */
@@ -371,23 +320,26 @@ static inline void sctp_sysctl_unregister(void) { return; }
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 
-void sctp_v6_pf_init(void);
-void sctp_v6_pf_exit(void);
-int sctp_v6_protosw_init(void);
-void sctp_v6_protosw_exit(void);
-int sctp_v6_add_protocol(void);
-void sctp_v6_del_protocol(void);
+int sctp_v6_init(void);
+void sctp_v6_exit(void);
 
 #else /* #ifdef defined(CONFIG_IPV6) */
 
-static inline void sctp_v6_pf_init(void) { return; }
-static inline void sctp_v6_pf_exit(void) { return; }
-static inline int sctp_v6_protosw_init(void) { return 0; }
-static inline void sctp_v6_protosw_exit(void) { return; }
-static inline int sctp_v6_add_protocol(void) { return 0; }
-static inline void sctp_v6_del_protocol(void) { return; }
+static inline int sctp_v6_init(void) { return 0; }
+static inline void sctp_v6_exit(void) { return; }
 
 #endif /* #if defined(CONFIG_IPV6) */
+
+/* Some wrappers, in case crypto not available. */
+#if defined (CONFIG_CRYPTO_HMAC)
+#define sctp_crypto_alloc_tfm crypto_alloc_tfm
+#define sctp_crypto_free_tfm crypto_free_tfm
+#define sctp_crypto_hmac crypto_hmac
+#else
+#define sctp_crypto_alloc_tfm(x...) NULL
+#define sctp_crypto_free_tfm(x...)
+#define sctp_crypto_hmac(x...)
+#endif
 
 
 /* Map an association to an assoc_id. */
@@ -402,7 +354,10 @@ struct sctp_association *sctp_id2assoc(struct sock *sk, sctp_assoc_t id);
 
 /* A macro to walk a list of skbs.  */
 #define sctp_skb_for_each(pos, head, tmp) \
-	skb_queue_walk_safe(head, pos, tmp)
+for (pos = (head)->next;\
+     tmp = (pos)->next, pos != ((struct sk_buff *)(head));\
+     pos = tmp)
+
 
 /* A helper to append an entire skb list (list) to another (head). */
 static inline void sctp_skb_list_tail(struct sk_buff_head *list,
@@ -413,7 +368,10 @@ static inline void sctp_skb_list_tail(struct sk_buff_head *list,
 	sctp_spin_lock_irqsave(&head->lock, flags);
 	sctp_spin_lock(&list->lock);
 
-	skb_queue_splice_tail_init(list, head);
+	list_splice((struct list_head *)list, (struct list_head *)head->prev);
+
+	head->qlen += list->qlen;
+	list->qlen = 0;
 
 	sctp_spin_unlock(&list->lock);
 	sctp_spin_unlock_irqrestore(&head->lock, flags);
@@ -438,24 +396,6 @@ static inline struct list_head *sctp_list_dequeue(struct list_head *list)
 		INIT_LIST_HEAD(result);
 	}
 	return result;
-}
-
-/* SCTP version of skb_set_owner_r.  We need this one because
- * of the way we have to do receive buffer accounting on bundled
- * chunks.
- */
-static inline void sctp_skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
-{
-	struct sctp_ulpevent *event = sctp_skb2event(skb);
-
-	skb_orphan(skb);
-	skb->sk = sk;
-	skb->destructor = sctp_sock_rfree;
-	atomic_add(event->rmem_len, &sk->sk_rmem_alloc);
-	/*
-	 * This mimics the behavior of skb_set_owner_r
-	 */
-	sk->sk_forward_alloc -= event->rmem_len;
 }
 
 /* Tests if the list has one and only one entry. */
@@ -486,27 +426,19 @@ static inline __s32 sctp_jitter(__u32 rto)
 }
 
 /* Break down data chunks at this point.  */
-static inline int sctp_frag_point(const struct sctp_association *asoc, int pmtu)
+static inline int sctp_frag_point(const struct sctp_sock *sp, int pmtu)
 {
-	struct sctp_sock *sp = sctp_sk(asoc->base.sk);
 	int frag = pmtu;
 
 	frag -= sp->pf->af->net_header_len;
 	frag -= sizeof(struct sctphdr) + sizeof(struct sctp_data_chunk);
 
-	if (asoc->user_frag)
-		frag = min_t(int, frag, asoc->user_frag);
+	if (sp->user_frag)
+		frag = min_t(int, frag, sp->user_frag);
 
 	frag = min_t(int, frag, SCTP_MAX_CHUNK_LEN);
 
 	return frag;
-}
-
-static inline void sctp_assoc_pending_pmtu(struct sctp_association *asoc)
-{
-
-	sctp_assoc_sync_pmtu(asoc);
-	asoc->pmtu_pending = 0;
 }
 
 /* Walk through a list of TLV parameters.  Don't trust the
@@ -593,7 +525,7 @@ static inline int ipver2af(__u8 ipver)
 }
 
 /* Convert from an address parameter type to an address family.  */
-static inline int param_type2af(__be16 type)
+static inline int param_type2af(__u16 type)
 {
 	switch (type) {
 	case SCTP_PARAM_IPV4_ADDRESS:
@@ -646,9 +578,6 @@ static inline int sctp_vtag_hashfn(__u16 lport, __u16 rport, __u32 vtag)
 	h ^= vtag;
 	return (h & (sctp_assoc_hashsize-1));
 }
-
-#define sctp_for_each_hentry(epb, node, head) \
-	hlist_for_each_entry(epb, node, head, node)
 
 /* Is a socket of this style? */
 #define sctp_style(sk, style) __sctp_style((sk), (SCTP_SOCKET_##style))

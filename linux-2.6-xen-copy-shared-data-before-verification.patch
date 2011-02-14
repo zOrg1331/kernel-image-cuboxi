@@ -1,0 +1,85 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: Re: [RHEL5 PATCH] [BLKTAP]: Copy shared data before verification
+Date: Thu, 7 Dec 2006 08:46:06 +1100
+Bugzilla: 217992
+Message-Id: <20061206214606.GA11262@gondor.apana.org.au>
+Changelog: Xen: Copy shared data before verification
+
+
+On Thu, Dec 07, 2006 at 08:32:10AM +1100, Herbert Xu wrote:
+> On Thu, Dec 07, 2006 at 08:23:26AM +1100, Herbert Xu wrote:
+> > Hi:
+> > 
+> > BZ 217992
+> > 
+> > This patch is from xen-unstable changeset 11824.  It fixes a security
+> > issue in the blktap module.
+> 
+> Reposting as -p1 patch.
+
+Reposting again with the blktap => blktapmain rename.
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID fc0a87fdf980af3e050e73f8babcdbd05a402112
+# Parent  57635264b6c2ebf9d9d00d32333e6a91b8f7a80d
+[BLKTAP]: Copy shared data before verification
+
+As it is blktap verifies the metadata from the frontend in place.
+This means we run the risk of the frontend changing the data after
+we've verified it.  This patch copies the data onto the stack before
+verifying and using it to ensure we see a consistent snapshot.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff -r 57635264b6c2 -r fc0a87fdf980 linux-2.6-xen-sparse/drivers/xen/blktap/blktap.c
+--- a/drivers/xen/blktap/blktapmain.c	Thu Oct 19 14:38:34 2006 +0100
++++ b/drivers/xen/blktap/blktapmain.c	Thu Oct 19 14:50:47 2006 +0100
+@@ -1030,7 +1030,7 @@ static int do_block_io_op(blkif_t *blkif
+ static int do_block_io_op(blkif_t *blkif)
+ {
+ 	blkif_back_ring_t *blk_ring = &blkif->blk_ring;
+-	blkif_request_t *req;
++	blkif_request_t req;
+ 	pending_req_t *pending_req;
+ 	RING_IDX rc, rp;
+ 	int more_to_do = 0;
+@@ -1082,24 +1082,24 @@ static int do_block_io_op(blkif_t *blkif
+ 			break;
+ 		}
+ 
+-		req = RING_GET_REQUEST(blk_ring, rc);
++		memcpy(&req, RING_GET_REQUEST(blk_ring, rc), sizeof(req));
+ 		blk_ring->req_cons = ++rc; /* before make_response() */	
+ 
+-		switch (req->operation) {
++		switch (req.operation) {
+ 		case BLKIF_OP_READ:
+ 			blkif->st_rd_req++;
+-			dispatch_rw_block_io(blkif, req, pending_req);
++			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
+ 
+ 		case BLKIF_OP_WRITE:
+ 			blkif->st_wr_req++;
+-			dispatch_rw_block_io(blkif, req, pending_req);
++			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
+ 
+ 		default:
+ 			WPRINTK("unknown operation [%d]\n",
+-				req->operation);
+-			make_response(blkif, req->id, req->operation,
++				req.operation);
++			make_response(blkif, req.id, req.operation,
+ 				      BLKIF_RSP_ERROR);
+ 			free_req(pending_req);
+ 			break;
+

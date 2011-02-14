@@ -1,4 +1,6 @@
 /*
+ * $Id: grip_mp.c,v 1.9 2002/07/20 19:28:45 bonnland Exp $
+ *
  *  Driver for the Gravis Grip Multiport, a gamepad "hub" that
  *  connects up to four 9-pin digital gamepads/joysticks.
  *  Driver tested on SMP and UP kernel versions 2.4.18-4 and 2.4.18-5.
@@ -318,10 +320,10 @@ static int multiport_io(struct gameport* gameport, int sendflags, int sendcode, 
 
 static int dig_mode_start(struct gameport *gameport, u32 *packet)
 {
-	int i;
+	int i, seq_len = sizeof(init_seq)/sizeof(int);
 	int flags, tries = 0, bads = 0;
 
-	for (i = 0; i < ARRAY_SIZE(init_seq); i++) {     /* Send magic sequence */
+	for (i = 0; i < seq_len; i++) {     /* Send magic sequence */
 		if (init_seq[i])
 			gameport_trigger(gameport);
 		udelay(GRIP_INIT_DELAY);
@@ -421,10 +423,7 @@ static int get_and_decode_packet(struct grip_mp *grip, int flags)
 
 		if (!port->registered) {
 			dbg("New Grip pad in multiport slot %d.\n", slot);
-			if (register_slot(slot, grip)) {
-				port->mode = GRIP_MODE_RESET;
-				port->dirty = 0;
-			}
+			register_slot(slot, grip);
 		}
 		return flags;
 	}
@@ -560,7 +559,7 @@ static void grip_poll(struct gameport *gameport)
 
 static int grip_open(struct input_dev *dev)
 {
-	struct grip_mp *grip = input_get_drvdata(dev);
+	struct grip_mp *grip = dev->private;
 
 	gameport_start_polling(grip->gameport);
 	return 0;
@@ -572,9 +571,9 @@ static int grip_open(struct input_dev *dev)
 
 static void grip_close(struct input_dev *dev)
 {
-	struct grip_mp *grip = input_get_drvdata(dev);
+	struct grip_mp *grip = dev->private;
 
-	gameport_stop_polling(grip->gameport);
+	gameport_start_polling(grip->gameport);
 }
 
 /*
@@ -586,7 +585,6 @@ static int register_slot(int slot, struct grip_mp *grip)
 	struct grip_port *port = grip->port[slot];
 	struct input_dev *input_dev;
 	int j, t;
-	int err;
 
 	port->dev = input_dev = input_allocate_device();
 	if (!input_dev)
@@ -597,14 +595,13 @@ static int register_slot(int slot, struct grip_mp *grip)
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_GRAVIS;
 	input_dev->id.product = 0x0100 + port->mode;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &grip->gameport->dev;
-
-	input_set_drvdata(input_dev, grip);
+	input_dev->cdev.dev = &grip->gameport->dev;
+	input_dev->private = grip;
 
 	input_dev->open = grip_open;
 	input_dev->close = grip_close;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (j = 0; (t = grip_abs[port->mode][j]) >= 0; j++)
 		input_set_abs_params(input_dev, t, -1, 1, 0, 0);
@@ -613,12 +610,7 @@ static int register_slot(int slot, struct grip_mp *grip)
 		if (t > 0)
 			set_bit(t, input_dev->keybit);
 
-	err = input_register_device(port->dev);
-	if (err) {
-		input_free_device(port->dev);
-		return err;
-	}
-
+	input_register_device(port->dev);
 	port->registered = 1;
 
 	if (port->dirty)	            /* report initial state, if any */
@@ -689,7 +681,8 @@ static struct gameport_driver grip_drv = {
 
 static int __init grip_init(void)
 {
-	return gameport_register_driver(&grip_drv);
+	gameport_register_driver(&grip_drv);
+	return 0;
 }
 
 static void __exit grip_exit(void)

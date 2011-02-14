@@ -1,0 +1,32 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 9 Jul 2010 13:27:09 -0400
+Subject: [infiniband] check local reserved ports
+Message-id: <4C3723AD.5040304@redhat.com>
+Patchwork-id: 26805
+O-Subject: [Patch RHEL5 4/4] infiniband: check local reserved ports
+Bugzilla: 557884
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=557884
+
+Prevent the use of local reserved ports by automatic port assignments
+of infiniband.
+
+Upstream status:
+Not upstream yet
+
+
+diff --git a/drivers/infiniband/core/cma.c b/drivers/infiniband/core/cma.c
+index be1d4bc..700c13f 100644
+--- a/drivers/infiniband/core/cma.c
++++ b/drivers/infiniband/core/cma.c
+@@ -1988,6 +1988,7 @@ static int cma_alloc_any_port(struct idr *ps, struct rdma_id_private *id_priv)
+ 	rover = net_random() % remaining + low;
+ retry:
+ 	if (last_used_port != rover &&
++	    !inet_is_reserved_local_port(rover) &&
+ 	    !idr_find(ps, (unsigned short) rover)) {
+ 		int ret = cma_alloc_port(ps, id_priv, rover);
+ 		/*

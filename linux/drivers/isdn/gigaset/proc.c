@@ -16,18 +16,23 @@
 #include "gigaset.h"
 #include <linux/ctype.h>
 
-static ssize_t show_cidmode(struct device *dev,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_cidmode(struct class_device *class, char *buf)
 {
-	struct cardstate *cs = dev_get_drvdata(dev);
+	int ret;
+	unsigned long flags;
+	struct cardstate *cs = class_get_devdata(class);
 
-	return sprintf(buf, "%u\n", cs->cidmode);
+	spin_lock_irqsave(&cs->lock, flags);
+	ret = sprintf(buf, "%u\n", cs->cidmode);
+	spin_unlock_irqrestore(&cs->lock, flags);
+
+	return ret;
 }
 
-static ssize_t set_cidmode(struct device *dev, struct device_attribute *attr,
+static ssize_t set_cidmode(struct class_device *class,
 			   const char *buf, size_t count)
 {
-	struct cardstate *cs = dev_get_drvdata(dev);
+	struct cardstate *cs = class_get_devdata(class);
 	long int value;
 	char *end;
 
@@ -59,25 +64,24 @@ static ssize_t set_cidmode(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static DEVICE_ATTR(cidmode, S_IRUGO|S_IWUSR, show_cidmode, set_cidmode);
+static CLASS_DEVICE_ATTR(cidmode, S_IRUGO|S_IWUSR, show_cidmode, set_cidmode);
 
 /* free sysfs for device */
 void gigaset_free_dev_sysfs(struct cardstate *cs)
 {
-	if (!cs->tty_dev)
+	if (!cs->class)
 		return;
 
 	gig_dbg(DEBUG_INIT, "removing sysfs entries");
-	device_remove_file(cs->tty_dev, &dev_attr_cidmode);
+	class_device_remove_file(cs->class, &class_device_attr_cidmode);
 }
 
 /* initialize sysfs for device */
 void gigaset_init_dev_sysfs(struct cardstate *cs)
 {
-	if (!cs->tty_dev)
+	if (!cs->class)
 		return;
 
 	gig_dbg(DEBUG_INIT, "setting up sysfs");
-	if (device_create_file(cs->tty_dev, &dev_attr_cidmode))
-		pr_err("could not create sysfs attribute\n");
+	class_device_create_file(cs->class, &class_device_attr_cidmode);
 }

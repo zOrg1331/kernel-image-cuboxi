@@ -1,0 +1,74 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 19 May 2008 15:47:23 -0400
+Subject: [openib] small ipoib packet can cause an oops
+Message-id: 4831D94B.1030102@redhat.com
+O-Subject: [Patch RHEL5.2.z] Fix IPoIB oops
+Bugzilla: 445731
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+Bug reference is
+
+https://bugzilla.redhat.com/show_bug.cgi?id=445731
+
+Short story, when copying a small ipoib packet from the original skb it
+was received in to a new, smaller skb, they failed to init all the
+fields on the new skb and based upon the garbage in one of the fields
+the kernel would eventually oops when the garbage was at a correct
+value.  There are two fixes to this issue.  The first one, which is the
+fix in the bug report, is not the final fix version from the upstream
+bug report.  I'm attaching the final fix from the upstream bug report,
+and that's why this isn't the one line fix that the bug report mentions.
+
+I never ran into this bug (it can take a long time to trigger), upstream
+has reported that it is confirmed to solve the problem.  I'm running a
+test of the fixed kernel, but it will be a while before I would declare
+my own testing to have confirmed the fix.
+
+It is not expected that this bug fix is necessary for rhel5.3 since, if
+we do as we have for the first couple updates and rev the IB stack, the
+fix will be included that way.
+
+- --
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+	      http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+	      http://people.redhat.com/dledford/Infiniband
+
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_cm.c b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+index 7c34ac0..ce3b4ca 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_cm.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+@@ -612,13 +612,11 @@ void ipoib_cm_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ 	}
+ 
+ 	if (wc->byte_len < SKB_TSHOLD) {
+-		int dlen = wc->byte_len - IPOIB_ENCAP_LEN;
++		int dlen = wc->byte_len;
+ 
+ 		small_skb = dev_alloc_skb(dlen);
+ 		if (small_skb) {
+-			small_skb->protocol = ((struct ipoib_header *)skb->data)->proto;
+-			skb_copy_from_linear_data_offset(skb, IPOIB_ENCAP_LEN,
+-							 small_skb->data, dlen);
++			skb_copy_from_linear_data(skb, small_skb->data, dlen);
+ 			skb_put(small_skb, dlen);
+ 			skb = small_skb;
+ 			goto copied;
+@@ -647,11 +645,11 @@ void ipoib_cm_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ 
+ 	skb_put_frags(skb, IPOIB_CM_HEAD_SIZE, wc->byte_len, newskb);
+ 
++copied:
+ 	skb->protocol = ((struct ipoib_header *) skb->data)->proto;
+ 	skb_reset_mac_header(skb);
+ 	skb_pull(skb, IPOIB_ENCAP_LEN);
+ 
+-copied:
+ 	dev->last_rx = jiffies;
+ 	++priv->stats.rx_packets;
+ 	priv->stats.rx_bytes += skb->len;

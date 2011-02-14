@@ -28,21 +28,21 @@ struct hdr_ui {
 	uint8_t ssap;
 	uint8_t ctrl;
 	uint8_t orig[3];
-	__be16 type;
+	uint16_t type;
 };
 
 struct hdr_ni {
 	uint8_t dsap;
 	uint8_t ssap;
-	__be16 ctrl;
+	uint16_t ctrl;
 	uint8_t  orig[3];
-	__be16 type;
+	uint16_t type;
 };
 
 struct ebt_802_3_hdr {
 	uint8_t  daddr[6];
 	uint8_t  saddr[6];
-	__be16 len;
+	uint16_t len;
 	union {
 		struct hdr_ui ui;
 		struct hdr_ni ni;
@@ -54,14 +54,14 @@ struct ebt_802_3_hdr {
 
 static inline struct ebt_802_3_hdr *ebt_802_3_hdr(const struct sk_buff *skb)
 {
-	return (struct ebt_802_3_hdr *)skb_mac_header(skb);
+	return (struct ebt_802_3_hdr *)skb->mac.raw;
 }
 #endif
 
 struct ebt_802_3_info 
 {
 	uint8_t  sap;
-	__be16 type;
+	uint16_t type;
 	uint8_t  bitmask;
 	uint8_t  invflags;
 };

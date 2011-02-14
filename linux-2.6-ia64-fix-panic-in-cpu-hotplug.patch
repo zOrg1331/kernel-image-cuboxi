@@ -1,0 +1,61 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5 PATCH]: BZ 213455 Fix panic in CPU hotplug
+Date: Fri, 3 Nov 2006 09:15:47 -0500
+Bugzilla: 213455
+Message-Id: <20061103141547.13414.75512.sendpatchset@prarit.boston.redhat.com>
+Changelog: Fix panic in CPU hotplug on ia64
+
+
+Backport straight into RHEL5.
+
+Fixing the confliction between CPU hot-add and IPI.
+
+Successfully tested by Kei on Fujitsu box.
+
+Fixes BZ 213445.
+
+Signed-off-by: Kenji Kaneshige <kaneshige.kenji@jp.fujitsu.com>
+Acked-by: Satoru Takeuchi <takeuchi_satoru@jp.fujitsu.com>
+Acked-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+
+Index: linux-2.6.19-rc3/arch/ia64/kernel/smp.c
+===================================================================
+
+
+---
+
+ linux-2.6.18-1.2740.el5-kei/arch/ia64/kernel/smp.c |   10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff -puN arch/ia64/kernel/smp.c~bz213455-fix-panic-cpuhp arch/ia64/kernel/smp.c
+--- linux-2.6.18-1.2740.el5/arch/ia64/kernel/smp.c~bz213455-fix-panic-cpuhp	2006-11-01 23:36:02.000000000 -0500
++++ linux-2.6.18-1.2740.el5-kei/arch/ia64/kernel/smp.c	2006-11-01 23:37:57.000000000 -0500
+@@ -382,10 +382,14 @@ int
+ smp_call_function (void (*func) (void *info), void *info, int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+-	int cpus = num_online_cpus()-1;
++	int cpus;
+ 
+-	if (!cpus)
++	spin_lock(&call_lock);
++	cpus = num_online_cpus() - 1;
++	if (!cpus) {
++		spin_unlock(&call_lock);
+ 		return 0;
++	}
+ 
+ 	/* Can deadlock when called with interrupts disabled */
+ 	WARN_ON(irqs_disabled());
+@@ -397,8 +401,6 @@ smp_call_function (void (*func) (void *i
+ 	if (wait)
+ 		atomic_set(&data.finished, 0);
+ 
+-	spin_lock(&call_lock);
+-
+ 	call_data = &data;
+ 	mb();	/* ensure store to call_data precedes setting of IPI_CALL_FUNC */
+ 	send_IPI_allbutself(IPI_CALL_FUNC);
+
+_
+

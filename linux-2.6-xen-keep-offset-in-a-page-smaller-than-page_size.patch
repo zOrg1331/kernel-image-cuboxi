@@ -1,0 +1,33 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:28:55 -0500
+Subject: [xen] keep offset in a page smaller than PAGE_SIZE
+Message-id: 20071220182855.7320.50449.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 3/6] Keep offset in a page strictly smaller than PAGE_SIZE
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1184007619 -3600
+# Node ID f7eed71281eadea31909e2728d783f7c97af6ea8
+# Parent  e4c8041605b2e7dfc1746e558c96c28fd0b51644
+swiotlb: Keep offset in a page strictly smaller than PAGE_SIZE.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+linux-2.6.18-xen changeset: 100:5a4e93508aa03799989b63f8413aeae7df87c576
+linux-2.6.18-xen date: Mon Jul 09 20:00:19 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 3194db4..497ae67 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -336,7 +336,7 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	for (i = 0; i < nslots; i++) {
+ 		io_tlb_orig_addr[index+i] = slot_buf;
+ 		slot_buf.offset += 1 << IO_TLB_SHIFT;
+-		if (slot_buf.offset > PAGE_SIZE) {
++		if (slot_buf.offset >= PAGE_SIZE) {
+ 			slot_buf.page++;
+ 			slot_buf.offset -= PAGE_SIZE;
+ 		}

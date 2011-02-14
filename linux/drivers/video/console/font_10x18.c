@@ -5133,14 +5133,14 @@ static const unsigned char fontdata_10x18[FONTDATAMAX] = {
 
 
 const struct font_desc font_10x18 = {
-	.idx	= FONT10x18_IDX,
-	.name	= "10x18",
-	.width	= 10,
-	.height	= 18,
-	.data	= fontdata_10x18,
+	FONT10x18_IDX,
+	"10x18",
+	10,
+	18,
+	fontdata_10x18,
 #ifdef __sparc__
-	.pref	= 5,
+	5
 #else
-	.pref	= -1,
+	-1
 #endif
 };

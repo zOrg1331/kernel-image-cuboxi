@@ -1,0 +1,382 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 1 Jul 2008 15:13:07 +0200
+Subject: [s390] cio: fix unusable zfcp device after vary off/on
+Message-id: 20080701131307.GD20922@redhat.com
+O-Subject: [RHEL5 U3 PATCH 4/6] s390 - cio: fix unusable zfcp device after vary off/on
+Bugzilla: 451223
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+After some cycles of vary off/on on a fcp chpid, the
+zfcp adapter on that chpid shows an availability of
+no path, even though the chpid is online again.
+The problem is caused by a missing locking and
+serialization in the chpid state change handling code.
+
+Adding a  proper locking and serialization in chpid state
+change handling code fixes this problem.
+
+Bugzilla
+=========
+
+BZ 451223
+https://bugzilla.redhat.com/show_bug.cgi?id=451223
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 spread across the following
+git commit ids:
+
+2470b648e17e0216922bb78c7f05b4668402459a
+ee04bbccdeb11bdbc54015be8dca30a0deeca5e4
+7c8427c3fa1b2e77c5bd8cf219c1d55dccd0f167
+3f4cf6e72f9f6a0b046b32881acc4f829f3aaa46
+
+Some parts of the patch are not contained upstream, because the upstream
+code base is different.
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index 8cc32d1..2c87998 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -283,6 +283,8 @@ void chsc_chp_offline(struct chp_id chpid)
+ 
+ 	if (chp_get_status(chpid) <= 0)
+ 		return;
++	/* Wait until previous actions have settled. */
++	css_wait_for_slow_path();
+ 	bus_for_each_dev(&css_bus_type, NULL, &chpid,
+ 			 s390_subchannel_remove_chpid);
+ 
+@@ -409,7 +411,8 @@ s390_process_res_acc (struct res_acc_data *res_data)
+ 		sprintf(dbf_txt, "fla%x", res_data->fla);
+ 		CIO_TRACE_EVENT( 2, dbf_txt);
+ 	}
+-
++	/* Wait until previous actions have settled. */
++	css_wait_for_slow_path();
+ 	/*
+ 	 * I/O resources may have become accessible.
+ 	 * Scan through all subchannels that may be concerned and
+@@ -719,6 +722,8 @@ int chsc_chp_online(struct chp_id chpid)
+ 
+ 	if (chp_get_status(chpid) == 0)
+ 		return 0;
++	/* Wait until previous actions have settled. */
++	css_wait_for_slow_path();
+ 	rc = for_each_subchannel(__chp_add, &chpid);
+ 	if (css_slow_subchannels_exist())
+ 		rc = -EAGAIN;
+@@ -839,6 +844,8 @@ __s390_vary_chpid_on(struct subchannel_id schid, void *data)
+  */
+ int chsc_chp_vary(struct chp_id chpid, int on)
+ {
++	/* Wait until previous actions have settled. */
++	css_wait_for_slow_path();
+ 	/*
+ 	 * Redo PathVerification on the devices the chpid connects to
+ 	 */
+diff --git a/drivers/s390/cio/css.c b/drivers/s390/cio/css.c
+index 651117e..8caf089 100644
+--- a/drivers/s390/cio/css.c
++++ b/drivers/s390/cio/css.c
+@@ -241,8 +241,10 @@ static int css_evaluate_known_subchannel(struct subchannel *sch, int slow)
+ 			spin_unlock_irqrestore(&sch->lock, flags);
+ 			ret = sch->driver->notify(&sch->dev, event);
+ 			spin_lock_irqsave(&sch->lock, flags);
+-			if (ret)
++			if (ret) {
+ 				action = NONE;
++				device_wake_up_wait_q(sch);
++			}
+ 		}
+ 		break;
+ 	case CIO_REVALIDATE:
+@@ -364,6 +366,33 @@ typedef void (*workfunc)(void *);
+ DECLARE_WORK(slow_path_work, (workfunc)css_trigger_slow_path, NULL);
+ struct workqueue_struct *slow_path_wq;
+ 
++static int css_end_grace_period(struct device *dev, void *data)
++{
++	struct subchannel *sch = to_subchannel(dev);
++	int wait = 0;
++
++	spin_lock_irq(&sch->lock);
++	if (device_in_grace_period(sch)) {
++		device_kill_io(sch);
++		wait = 1;
++	}
++	spin_unlock_irq(&sch->lock);
++	if (wait)
++		device_wait_for_final_state(sch);
++
++	return 0;
++}
++
++void css_wait_for_slow_path(void)
++{
++	/* First flush outstanding notifications. */
++	flush_workqueue(ccw_device_notify_work);
++	/* Then deal with devices in the grace period. */
++	bus_for_each_dev(&css_bus_type, NULL, NULL, css_end_grace_period);
++	/* Now let pending slow work complete. */
++	flush_workqueue(slow_path_wq);
++}
++
+ /* Reprobe subchannel if unregistered. */
+ static int reprobe_subchannel(struct subchannel_id schid, void *data)
+ {
+diff --git a/drivers/s390/cio/css.h b/drivers/s390/cio/css.h
+index b999cb0..2f55aaf 100644
+--- a/drivers/s390/cio/css.h
++++ b/drivers/s390/cio/css.h
+@@ -177,6 +177,9 @@ void device_kill_io(struct subchannel *);
+ void device_set_waiting(struct subchannel *);
+ void device_set_intretry(struct subchannel *sch);
+ int device_trigger_verify(struct subchannel *sch);
++int device_in_grace_period(struct subchannel *sch);
++void device_wait_for_final_state(struct subchannel *sch);
++void device_wake_up_wait_q(struct subchannel *sch);
+ 
+ /* Machine check helper function. */
+ void device_kill_pending_timer(struct subchannel *);
+@@ -190,4 +193,5 @@ extern int need_rescan;
+ 
+ extern struct workqueue_struct *slow_path_wq;
+ extern struct work_struct slow_path_work;
++void css_wait_for_slow_path(void);
+ #endif
+diff --git a/drivers/s390/cio/device.c b/drivers/s390/cio/device.c
+index ce01b63..a46ba66 100644
+--- a/drivers/s390/cio/device.c
++++ b/drivers/s390/cio/device.c
+@@ -848,6 +848,11 @@ io_subchannel_probe (struct subchannel *sch)
+ 			get_device(&cdev->dev);
+ 		return 0;
+ 	}
++	/* Check if we have a disconnected device with this devno. */
++	cdev = get_disc_ccwdev_by_devno(sch->schib.pmcw.dev, sch->schid.ssid,
++					NULL);
++	if (cdev)
++		ccw_device_remove_disconnected(cdev);
+ 	cdev = kzalloc (sizeof(*cdev), GFP_KERNEL);
+ 	if (!cdev)
+ 		return -ENOMEM;
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index ff267ea..842bf2c 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -121,6 +121,34 @@ static void device_set_timer(struct ccw_device *cdev, unsigned long delay,
+ 	}
+ }
+ 
++int device_in_grace_period(struct subchannel *sch)
++{
++	struct ccw_device *cdev;
++
++	cdev = sch->dev.driver_data;
++	return (cdev && (cdev->private->state == DEV_STATE_WAIT4IO));
++}
++
++void device_wait_for_final_state(struct subchannel *sch)
++{
++	struct ccw_device *cdev;
++
++	cdev = sch->dev.driver_data;
++	if (cdev)
++		wait_event(cdev->private->wait_q,
++			   dev_fsm_final_state(cdev) ||
++			cdev->private->state == DEV_STATE_DISCONNECTED);
++}
++
++void device_wake_up_wait_q(struct subchannel *sch)
++{
++	struct ccw_device *cdev;
++
++	cdev = sch->dev.driver_data;
++	if (cdev)
++		wake_up(&cdev->private->wait_q);
++}
++
+ /*
+  * Timeout function. It just triggers a DEV_EVENT_TIMEOUT.
+  */
+@@ -197,8 +225,8 @@ ccw_device_cancel_halt_clear(struct ccw_device *cdev)
+ 	ret = stsch(sch->schid, &sch->schib);
+ 	if (ret || !sch->schib.pmcw.dnv)
+ 		return -ENODEV; 
+-	if (!sch->schib.pmcw.ena || sch->schib.scsw.actl == 0)
+-		/* Not operational or no activity -> done. */
++	if (!sch->schib.pmcw.ena)
++		/* Not operational -> done. */
+ 		return 0;
+ 	/* Stage 1: cancel io. */
+ 	if (!(sch->schib.scsw.actl & SCSW_ACTL_HALT_PEND) &&
+@@ -397,19 +425,28 @@ ccw_device_oper_notify(void *data)
+ 	struct ccw_device *cdev;
+ 	struct subchannel *sch;
+ 	int ret;
++	unsigned long flags;
+ 
+ 	cdev = (struct ccw_device *)data;
++	spin_lock_irqsave(cdev->ccwlock, flags);
+ 	sch = to_subchannel(cdev->dev.parent);
+-	ret = (sch->driver && sch->driver->notify) ?
+-		sch->driver->notify(&sch->dev, CIO_OPER) : 0;
+-	if (!ret)
+-		/* Driver doesn't want device back. */
+-		ccw_device_do_unreg_rereg((void *)cdev);
+-	else {
++	if (sch->driver && sch->driver->notify) {
++		spin_unlock_irqrestore(cdev->ccwlock, flags);
++		ret = sch->driver->notify(&sch->dev, CIO_OPER);
++		spin_lock_irqsave(cdev->ccwlock, flags);
++	} else
++		ret = 0;
++	if (ret) {
+ 		/* Reenable channel measurements, if needed. */
++		spin_unlock_irqrestore(cdev->ccwlock, flags);
+ 		cmf_reenable(cdev);
++		spin_lock_irqsave(cdev->ccwlock, flags);
+ 		wake_up(&cdev->private->wait_q);
+ 	}
++	spin_unlock_irqrestore(cdev->ccwlock, flags);
++	if (!ret)
++		/* Driver doesn't want device back. */
++		ccw_device_do_unreg_rereg((void *)cdev);
+ }
+ 
+ /*
+@@ -632,8 +669,10 @@ ccw_device_verify_done(struct ccw_device *cdev, int err)
+ 	default:
+ 		/* Reset oper notify indication after verify error. */
+ 		cdev->private->flags.donotify = 0;
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-		ccw_device_done(cdev, DEV_STATE_NOT_OPER);
++		if (cdev->online)
++			dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
++		else
++			ccw_device_done(cdev, DEV_STATE_NOT_OPER);
+ 		break;
+ 	}
+ }
+@@ -764,6 +803,7 @@ static void ccw_device_generic_notoper(struct ccw_device *cdev,
+ 		css_clear_subchannel_slow_list();
+ 		need_rescan = 1;
+ 	}
++	queue_work(slow_path_wq, &slow_path_work);
+ }
+ 
+ /*
+@@ -945,16 +985,12 @@ ccw_device_killing_irq(struct ccw_device *cdev, enum dev_event dev_event)
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	ccw_device_set_timeout(cdev, 0);
++	/* Start delayed path verification. */
++	ccw_device_online_verify(cdev, 0);
+ 	/* OK, i/o is dead now. Call interrupt handler. */
+-	cdev->private->state = DEV_STATE_ONLINE;
+ 	if (cdev->handler)
+ 		cdev->handler(cdev, cdev->private->intparm,
+ 			      ERR_PTR(-ETIMEDOUT));
+-	if (!sch->lpm)
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-	else if (cdev->private->flags.doverify)
+-		/* Start delayed path verification. */
+-		ccw_device_online_verify(cdev, 0);
+ }
+ 
+ static void
+@@ -967,12 +1003,8 @@ ccw_device_killing_timeout(struct ccw_device *cdev, enum dev_event dev_event)
+ 		ccw_device_set_timeout(cdev, 3*HZ);
+ 		return;
+ 	}
+-	if (ret == -ENODEV) {
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-		return;
+-	}
+-	//FIXME: Can we get here?
+-	cdev->private->state = DEV_STATE_ONLINE;
++	/* Start delayed path verification. */
++	ccw_device_online_verify(cdev, 0);
+ 	if (cdev->handler)
+ 		cdev->handler(cdev, cdev->private->intparm,
+ 			      ERR_PTR(-ETIMEDOUT));
+@@ -989,17 +1021,10 @@ void device_kill_io(struct subchannel *sch)
+ 		cdev->private->state = DEV_STATE_TIMEOUT_KILL;
+ 		return;
+ 	}
+-	if (ret == -ENODEV) {
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-		return;
+-	}
++	/* Start delayed path verification. */
++	ccw_device_online_verify(cdev, 0);
+ 	if (cdev->handler)
+ 		cdev->handler(cdev, cdev->private->intparm, ERR_PTR(-EIO));
+-	if (!sch->lpm)
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-	else
+-		/* Start delayed path verification. */
+-		ccw_device_online_verify(cdev, 0);
+ }
+ 
+ static void
+@@ -1023,15 +1048,15 @@ ccw_device_wait4io_irq(struct ccw_device *cdev, enum dev_event dev_event)
+ 
+ 	/* Iff device is idle, reset timeout. */
+ 	sch = to_subchannel(cdev->dev.parent);
+-	if (!stsch(sch->schid, &sch->schib))
+-		if (sch->schib.scsw.actl == 0)
++	if (!stsch(sch->schid, &sch->schib)) {
++		if (sch->schib.scsw.actl == 0) {
+ 			ccw_device_set_timeout(cdev, 0);
++			/* Start delayed path verification. */
++			ccw_device_online_verify(cdev, 0);
++		}
++	}
+ 	/* Call the handler. */
+ 	ccw_device_call_handler(cdev);
+-	if (!sch->lpm)
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-	else
+-		ccw_device_online_verify(cdev, 0);
+ }
+ 
+ static void
+@@ -1048,18 +1073,11 @@ ccw_device_wait4io_timeout(struct ccw_device *cdev, enum dev_event dev_event)
+ 		cdev->private->state = DEV_STATE_TIMEOUT_KILL;
+ 		return;
+ 	}
+-	if (ret == -ENODEV) {
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-		return;
+-	}
++	/* Start delayed path verification. */
++	ccw_device_online_verify(cdev, 0);
+ 	if (cdev->handler)
+ 		cdev->handler(cdev, cdev->private->intparm,
+ 			      ERR_PTR(-ETIMEDOUT));
+-	if (!sch->lpm)
+-		dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-	else if (cdev->private->flags.doverify)
+-		/* Start delayed path verification. */
+-		ccw_device_online_verify(cdev, 0);
+ }
+ 
+ static void

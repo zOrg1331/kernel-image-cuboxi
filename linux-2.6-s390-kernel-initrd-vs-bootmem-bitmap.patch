@@ -1,0 +1,239 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Mon, 5 Jul 2010 10:49:50 -0400
+Subject: [s390] kernel: initrd vs bootmem bitmap
+Message-id: <20100705104950.GB26477@redhat.com>
+Patchwork-id: 26708
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] kernel: initrd vs bootmem bitmap
+Bugzilla: 610837
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+When the system has a large amount of memory the kernel panics
+on IPL.
+
+The different IPL methods put the kernel and an initial ram disk
+into memory before the kernel gets started. When the kernel starts
+it will use memory behind the kernel image for a bitmap used by
+the bootmem allocator. The size of the bitmap depends on the
+amonunt of memory the system has. If the system has a lot of memory
+it may happen that the bitmap gets very large and overwrites parts
+of the initrd before it gets used. Later usage of the initrd will
+then result in a kernel panic because of the corrupted contents of
+the initrd.
+
+Let the kernel move the initrd if the bitmap of the bootmem
+allocator would overwrite it or if parts of the initrd were put
+into the bss section of the kernel.
+In addition this patch sets the default size and address of the
+initrd to zero. Therefore all boot loaders must set the initrd
+size and address correctly. This is especially relevant for ftp
+boot via HMC/SE, where this change requires a special patch file
+entry in the .ins file which sets these two values contained at
+address 0x10408 and 0x10410.
+
+Bugzilla
+--------
+BZ 610837
+https://bugzilla.redhat.com/show_bug.cgi?id=610837
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.19 and 2.6.27.
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=65912a84c0f33304fa5ea004c7b6ee58d5f5572e
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=761cdf6aacdb76f819050f4938cdab1f4cdcb945
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/arch/s390/kernel/head.S b/arch/s390/kernel/head.S
+index 9ac410b..897c675 100644
+--- a/arch/s390/kernel/head.S
++++ b/arch/s390/kernel/head.S
+@@ -274,7 +274,7 @@ iplstart:
+ # load parameter file from ipl device
+ #
+ .Lagain1:
+- 	l     %r2,INITRD_START+ARCH_OFFSET-PARMAREA(%r12) # ramdisk loc. is temp
++	l     %r2,.Linitrd                     # ramdisk loc. is temp
+         bas   %r14,.Lloader                    # load parameter file
+         ltr   %r2,%r2                          # got anything ?
+         bz    .Lnopf
+@@ -282,7 +282,7 @@ iplstart:
+ 	bnh   .Lnotrunc
+ 	la    %r2,895
+ .Lnotrunc:
+-	l     %r4,INITRD_START+ARCH_OFFSET-PARMAREA(%r12)
++	l     %r4,.Linitrd
+ 	clc   0(3,%r4),.L_hdr		       # if it is HDRx
+ 	bz    .Lagain1			       # skip dataset header
+ 	clc   0(3,%r4),.L_eof		       # if it is EOFx
+@@ -325,14 +325,15 @@ iplstart:
+ # load ramdisk from ipl device
+ #	
+ .Lagain2:
+- 	l     %r2,INITRD_START+ARCH_OFFSET-PARMAREA(%r12) # addr of ramdisk
++	l     %r2,.Linitrd		       # addr of ramdisk
++	st    %r2,INITRD_START+ARCH_OFFSET-PARMAREA(%r12)
+         bas   %r14,.Lloader                    # load ramdisk
+  	st    %r2,INITRD_SIZE+ARCH_OFFSET-PARMAREA(%r12) # store size of ramdisk
+         ltr   %r2,%r2
+         bnz   .Lrdcont
+         st    %r2,INITRD_START+ARCH_OFFSET-PARMAREA(%r12) # no ramdisk found
+ .Lrdcont:
+-	l     %r2,INITRD_START+ARCH_OFFSET-PARMAREA(%r12)
++	l     %r2,.Linitrd
+ 
+ 	clc   0(3,%r2),.L_hdr		       # skip HDRx and EOFx 
+ 	bz    .Lagain2
+@@ -381,6 +382,7 @@ iplstart:
+         l     %r1,.Lstartup
+         br    %r1
+ 
++.Linitrd:.long _end			       # default address of initrd
+ .Lparm:	.long  PARMAREA
+ .Lstartup: .long startup
+ .Lcvtab:.long  _ebcasc                         # ebcdic to ascii table
+diff --git a/arch/s390/kernel/head31.S b/arch/s390/kernel/head31.S
+index b227b37..4ea73bb 100644
+--- a/arch/s390/kernel/head31.S
++++ b/arch/s390/kernel/head31.S
+@@ -26,8 +26,8 @@ startup:basr	%r13,0			# get base
+ #
+ 	.org	PARMAREA
+ 	.long	0,0			# IPL_DEVICE
+-	.long	0,RAMDISK_ORIGIN	# INITRD_START
+-	.long	0,RAMDISK_SIZE		# INITRD_SIZE
++	.long	0,0			# INITRD_START
++	.long	0,0			# INITRD_SIZE
+ 
+ 	.org	COMMAND_LINE
+ 	.byte	"root=/dev/ram0 ro"
+diff --git a/arch/s390/kernel/head64.S b/arch/s390/kernel/head64.S
+index 5446d81..b91945f 100644
+--- a/arch/s390/kernel/head64.S
++++ b/arch/s390/kernel/head64.S
+@@ -26,8 +26,8 @@ startup:basr  %r13,0			 # get base
+ #
+ 	.org   PARMAREA
+ 	.quad  0			# IPL_DEVICE
+-	.quad  RAMDISK_ORIGIN		# INITRD_START
+-	.quad  RAMDISK_SIZE		# INITRD_SIZE
++	.quad  0			# INITRD_START
++	.quad  0			# INITRD_SIZE
+ 
+ 	.org   COMMAND_LINE
+ 	.byte  "root=/dev/ram0 ro"
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index 6152d6c..fbcebe7 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -417,6 +417,23 @@ static __init void detect_machine_type(void)
+ 		machine_flags |= 4;
+ }
+ 
++static __init void rescue_initrd(void)
++{
++#ifdef CONFIG_BLK_DEV_INITRD
++	/*
++	 * Move the initrd right behind the bss section in case it starts
++	 * within the bss section. So we don't overwrite it when the bss
++	 * section gets cleared.
++	 */
++	if (!INITRD_START || !INITRD_SIZE)
++		return;
++	if (INITRD_START >= (unsigned long) __bss_stop)
++		return;
++	memmove(__bss_stop, (void *) INITRD_START, INITRD_SIZE);
++	INITRD_START = (unsigned long) __bss_stop;
++#endif
++}
++
+ /*
+  * Save ipl parameters, clear bss memory, initialize storage keys
+  * and create a kernel NSS at startup if the SAVESYS= parm is defined
+@@ -424,6 +441,7 @@ static __init void detect_machine_type(void)
+ void __init startup_init(void)
+ {
+ 	ipl_save_parameters();
++	rescue_initrd();
+ 	clear_bss_section();
+ 	init_kernel_storage_key();
+ 	detect_machine_type();
+@@ -686,6 +704,39 @@ setup_memory(void)
+ 	start_pfn = (__pa(&_end) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+ 	end_pfn = max_pfn = memory_end >> PAGE_SHIFT;
+ 
++#ifdef CONFIG_BLK_DEV_INITRD
++	/*
++	 * Move the initrd in case the bitmap of the bootmem allocater
++	 * would overwrite it.
++	 */
++
++	if (INITRD_START && INITRD_SIZE) {
++		unsigned long bmap_size;
++		unsigned long start;
++
++		bmap_size = bootmem_bootmap_pages(end_pfn - start_pfn + 1);
++		bmap_size = PFN_PHYS(bmap_size);
++
++		if (PFN_PHYS(start_pfn) + bmap_size > INITRD_START) {
++			start = PFN_PHYS(start_pfn) + bmap_size + PAGE_SIZE;
++			if (start + INITRD_SIZE > memory_end) {
++				printk("initrd extends beyond end of memory "
++				       "(0x%08lx > 0x%08lx)\n"
++				       "disabling initrd\n",
++				       start + INITRD_SIZE, memory_end);
++				INITRD_START = INITRD_SIZE = 0;
++			} else {
++				printk("Moving initrd (0x%08lx -> 0x%08lx, "
++				       "size: %ld)\n",
++				       INITRD_START, start, INITRD_SIZE);
++				memmove((void *) start, (void *) INITRD_START,
++					INITRD_SIZE);
++				INITRD_START = start;
++			}
++		}
++	}
++#endif
++
+ 	/*
+ 	 * Initialize the boot-time allocator (with low memory only):
+ 	 */
+@@ -738,7 +789,7 @@ setup_memory(void)
+ 	reserve_bootmem(start_pfn << PAGE_SHIFT, bootmap_size, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+-	if (INITRD_START) {
++	if (INITRD_START && INITRD_SIZE) {
+ 		if (INITRD_START + INITRD_SIZE <= memory_end) {
+ 			reserve_bootmem(INITRD_START, INITRD_SIZE,
+ 					BOOTMEM_DEFAULT);
+diff --git a/include/asm-s390/page.h b/include/asm-s390/page.h
+index eddeb1b..c572207 100644
+--- a/include/asm-s390/page.h
++++ b/include/asm-s390/page.h
+@@ -194,6 +194,7 @@ page_get_storage_key(unsigned long addr)
+ #define PAGE_ALIGN(addr)        (((addr)+PAGE_SIZE-1)&PAGE_MASK)
+ #define PFN_UP(x)		(((x) + PAGE_SIZE-1) >> PAGE_SHIFT)
+ #define PFN_DOWN(x)		((x) >> PAGE_SHIFT)
++#define PFN_PHYS(x)		((x) << PAGE_SHIFT)
+ 
+ #define __PAGE_OFFSET           0x0UL
+ #define PAGE_OFFSET             0x0UL
+diff --git a/include/asm-s390/setup.h b/include/asm-s390/setup.h
+index 7449513..e137f80 100644
+--- a/include/asm-s390/setup.h
++++ b/include/asm-s390/setup.h
+@@ -17,8 +17,6 @@
+ #include <asm/types.h>
+ 
+ #define PARMAREA		0x10400
+-#define RAMDISK_ORIGIN		0x800000
+-#define RAMDISK_SIZE		0x800000
+ #define MEMORY_CHUNKS		16	/* max 0x7fff */
+ 
+ #ifndef __ASSEMBLY__

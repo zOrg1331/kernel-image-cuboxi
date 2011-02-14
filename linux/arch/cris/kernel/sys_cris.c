@@ -13,18 +13,62 @@
 #include <linux/sched.h>
 #include <linux/syscalls.h>
 #include <linux/mm.h>
-#include <linux/fs.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/sem.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
 #include <linux/stat.h>
 #include <linux/mman.h>
 #include <linux/file.h>
-#include <linux/ipc.h>
 
 #include <asm/uaccess.h>
+#include <asm/ipc.h>
 #include <asm/segment.h>
+
+/*
+ * sys_pipe() is the normal C calling standard for creating
+ * a pipe. It's not the way Unix traditionally does this, though.
+ */
+asmlinkage int sys_pipe(unsigned long __user * fildes)
+{
+        int fd[2];
+        int error;
+
+        lock_kernel();
+        error = do_pipe(fd);
+        unlock_kernel();
+        if (!error) {
+                if (copy_to_user(fildes, fd, 2*sizeof(int)))
+                        error = -EFAULT;
+        }
+        return error;
+}
+
+/* common code for old and new mmaps */
+static inline long
+do_mmap2(unsigned long addr, unsigned long len, unsigned long prot,
+        unsigned long flags, unsigned long fd, unsigned long pgoff)
+{
+        int error = -EBADF;
+        struct file * file = NULL;
+
+        flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
+        if (!(flags & MAP_ANONYMOUS)) {
+                file = fget(fd);
+                if (!file)
+                        goto out;
+        }
+
+        down_write(&current->mm->mmap_sem);
+        error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
+        up_write(&current->mm->mmap_sem);
+
+        if (file)
+                fput(file);
+out:
+        return error;
+}
 
 asmlinkage unsigned long old_mmap(unsigned long __user *args)
 {        
@@ -38,7 +82,7 @@ asmlinkage unsigned long old_mmap(unsigned long __user *args)
 	if (buffer[5] & ~PAGE_MASK) /* verify that offset is on page boundary */
 		goto out;
 
-	err = sys_mmap_pgoff(buffer[0], buffer[1], buffer[2], buffer[3],
+	err = do_mmap2(buffer[0], buffer[1], buffer[2], buffer[3],
                        buffer[4], buffer[5] >> PAGE_SHIFT);
 out:
 	return err;
@@ -48,8 +92,7 @@ asmlinkage long
 sys_mmap2(unsigned long addr, unsigned long len, unsigned long prot,
           unsigned long flags, unsigned long fd, unsigned long pgoff)
 {
-	/* bug(?): 8Kb pages here */
-        return sys_mmap_pgoff(addr, len, prot, flags, fd, pgoff);
+        return do_mmap2(addr, len, prot, flags, fd, pgoff);
 }
 
 /*

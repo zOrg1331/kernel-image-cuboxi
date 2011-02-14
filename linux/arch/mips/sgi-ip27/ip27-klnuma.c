@@ -4,7 +4,6 @@
  * Copyright 2000 - 2001 Kanoj Sarcar (kanoj@sgi.com)
  */
 #include <linux/init.h>
-#include <linux/mm.h>
 #include <linux/mmzone.h>
 #include <linux/kernel.h>
 #include <linux/nodemask.h>
@@ -12,6 +11,7 @@
 
 #include <asm/page.h>
 #include <asm/sections.h>
+#include <asm/smp.h>
 #include <asm/sn/types.h>
 #include <asm/sn/arch.h>
 #include <asm/sn/gda.h>
@@ -26,8 +26,10 @@ static cpumask_t ktext_repmask;
  * kernel.  For example, we should never put a copy on a headless node,
  * and we should respect the topology of the machine.
  */
-void __init setup_replication_mask(void)
+void __init setup_replication_mask()
 {
+	cnodeid_t	cnode;
+
 	/* Set only the master cnode's bit.  The master cnode is always 0. */
 	cpus_clear(ktext_repmask);
 	cpu_set(0, ktext_repmask);
@@ -36,15 +38,11 @@ void __init setup_replication_mask(void)
 #ifndef CONFIG_MAPPED_KERNEL
 #error Kernel replication works with mapped kernel support. No calias support.
 #endif
-	{
-		cnodeid_t	cnode;
-
-		for_each_online_node(cnode) {
-			if (cnode == 0)
-				continue;
-			/* Advertise that we have a copy of the kernel */
-			cpu_set(cnode, ktext_repmask);
-		}
+	for_each_online_node(cnode) {
+		if (cnode == 0)
+			continue;
+		/* Advertise that we have a copy of the kernel */
+		cpu_set(cnode, ktext_repmask);
 	}
 #endif
 	/* Set up a GDA pointer to the replication mask. */

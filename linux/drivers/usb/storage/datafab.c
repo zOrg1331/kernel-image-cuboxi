@@ -1,5 +1,7 @@
 /* Driver for Datafab USB Compact Flash reader
  *
+ * $Id: datafab.c,v 1.7 2002/02/25 00:40:13 mdharm Exp $
+ *
  * datafab driver v0.1:
  *
  * First release
@@ -48,8 +50,8 @@
  * in that routine.
  */
 
+#include <linux/sched.h>
 #include <linux/errno.h>
-#include <linux/module.h>
 #include <linux/slab.h>
 
 #include <scsi/scsi.h>
@@ -59,63 +61,10 @@
 #include "transport.h"
 #include "protocol.h"
 #include "debug.h"
-
-MODULE_DESCRIPTION("Driver for Datafab USB Compact Flash reader");
-MODULE_AUTHOR("Jimmie Mayfield <mayfield+datafab@sackheads.org>");
-MODULE_LICENSE("GPL");
-
-struct datafab_info {
-	unsigned long   sectors;	/* total sector count */
-	unsigned long   ssize;		/* sector size in bytes */
-	signed char	lun;		/* used for dual-slot readers */
-
-	/* the following aren't used yet */
-	unsigned char   sense_key;
-	unsigned long   sense_asc;	/* additional sense code */
-	unsigned long   sense_ascq;	/* additional sense code qualifier */
-};
+#include "datafab.h"
 
 static int datafab_determine_lun(struct us_data *us,
 				 struct datafab_info *info);
-
-
-/*
- * The table of devices
- */
-#define UNUSUAL_DEV(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax, \
-		    vendorName, productName, useProtocol, useTransport, \
-		    initFunction, flags) \
-{ USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
-  .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
-
-struct usb_device_id datafab_usb_ids[] = {
-#	include "unusual_datafab.h"
-	{ }		/* Terminating entry */
-};
-MODULE_DEVICE_TABLE(usb, datafab_usb_ids);
-
-#undef UNUSUAL_DEV
-
-/*
- * The flags table
- */
-#define UNUSUAL_DEV(idVendor, idProduct, bcdDeviceMin, bcdDeviceMax, \
-		    vendor_name, product_name, use_protocol, use_transport, \
-		    init_function, Flags) \
-{ \
-	.vendorName = vendor_name,	\
-	.productName = product_name,	\
-	.useProtocol = use_protocol,	\
-	.useTransport = use_transport,	\
-	.initFunction = init_function,	\
-}
-
-static struct us_unusual_dev datafab_unusual_dev_list[] = {
-#	include "unusual_datafab.h"
-	{ }		/* Terminating entry */
-};
-
-#undef UNUSUAL_DEV
 
 
 static inline int
@@ -150,8 +99,7 @@ static int datafab_read_data(struct us_data *us,
 	unsigned char  thistime;
 	unsigned int totallen, alloclen;
 	int len, result;
-	unsigned int sg_offset = 0;
-	struct scatterlist *sg = NULL;
+	unsigned int sg_idx = 0, sg_offset = 0;
 
 	// we're working in LBA mode.  according to the ATA spec, 
 	// we can support up to 28-bit addressing.  I don't know if Datafab
@@ -208,7 +156,7 @@ static int datafab_read_data(struct us_data *us,
 
 		// Store the data in the transfer buffer
 		usb_stor_access_xfer_buf(buffer, len, us->srb,
-				 &sg, &sg_offset, TO_XFER_BUF);
+				 &sg_idx, &sg_offset, TO_XFER_BUF);
 
 		sector += thistime;
 		totallen -= len;
@@ -234,8 +182,7 @@ static int datafab_write_data(struct us_data *us,
 	unsigned char thistime;
 	unsigned int totallen, alloclen;
 	int len, result;
-	unsigned int sg_offset = 0;
-	struct scatterlist *sg = NULL;
+	unsigned int sg_idx = 0, sg_offset = 0;
 
 	// we're working in LBA mode.  according to the ATA spec, 
 	// we can support up to 28-bit addressing.  I don't know if Datafab
@@ -271,7 +218,7 @@ static int datafab_write_data(struct us_data *us,
 
 		// Get the data from the transfer buffer
 		usb_stor_access_xfer_buf(buffer, len, us->srb,
-				&sg, &sg_offset, FROM_XFER_BUF);
+				&sg_idx, &sg_offset, FROM_XFER_BUF);
 
 		command[0] = 0;
 		command[1] = thistime;
@@ -334,7 +281,7 @@ static int datafab_determine_lun(struct us_data *us,
 	unsigned char *buf;
 	int count = 0, rc;
 
-	if (!info)
+	if (!us || !info)
 		return USB_STOR_TRANSPORT_ERROR;
 
 	memcpy(command, scommand, 8);
@@ -399,7 +346,7 @@ static int datafab_id_device(struct us_data *us,
 	unsigned char *reply;
 	int rc;
 
-	if (!info)
+	if (!us || !info)
 		return USB_STOR_TRANSPORT_ERROR;
 
 	if (info->lun == -1) {
@@ -554,7 +501,7 @@ static void datafab_info_destructor(void *extra)
 
 // Transport for the Datafab MDCFE-B
 //
-static int datafab_transport(struct scsi_cmnd *srb, struct us_data *us)
+int datafab_transport(struct scsi_cmnd * srb, struct us_data *us)
 {
 	struct datafab_info *info;
 	int rc;
@@ -719,49 +666,3 @@ static int datafab_transport(struct scsi_cmnd *srb, struct us_data *us)
 	info->sense_ascq = 0x00;
 	return USB_STOR_TRANSPORT_FAILED;
 }
-
-static int datafab_probe(struct usb_interface *intf,
-			 const struct usb_device_id *id)
-{
-	struct us_data *us;
-	int result;
-
-	result = usb_stor_probe1(&us, intf, id,
-			(id - datafab_usb_ids) + datafab_unusual_dev_list);
-	if (result)
-		return result;
-
-	us->transport_name  = "Datafab Bulk-Only";
-	us->transport = datafab_transport;
-	us->transport_reset = usb_stor_Bulk_reset;
-	us->max_lun = 1;
-
-	result = usb_stor_probe2(us);
-	return result;
-}
-
-static struct usb_driver datafab_driver = {
-	.name =		"ums-datafab",
-	.probe =	datafab_probe,
-	.disconnect =	usb_stor_disconnect,
-	.suspend =	usb_stor_suspend,
-	.resume =	usb_stor_resume,
-	.reset_resume =	usb_stor_reset_resume,
-	.pre_reset =	usb_stor_pre_reset,
-	.post_reset =	usb_stor_post_reset,
-	.id_table =	datafab_usb_ids,
-	.soft_unbind =	1,
-};
-
-static int __init datafab_init(void)
-{
-	return usb_register(&datafab_driver);
-}
-
-static void __exit datafab_exit(void)
-{
-	usb_deregister(&datafab_driver);
-}
-
-module_init(datafab_init);
-module_exit(datafab_exit);

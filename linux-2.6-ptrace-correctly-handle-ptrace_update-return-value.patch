@@ -1,0 +1,54 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Thu, 19 Feb 2009 14:17:00 +0100
+Subject: [ptrace] correctly handle ptrace_update return value
+Message-id: 499D5BCC.7010206@redhat.com
+O-Subject: [RHEL5.4 Patch] BZ483814: correctly handle ptrace_update() return value
+Bugzilla: 483814
+
+Description:
+We hit a kernel BUG at kernel/ptrace.c:1068, trying to do a
+ptrace(PTRACE_SINGLESTEP,...) when the target exits. In that case, in
+ptrace_common(), the call to ptrace_update() returns -EALREADY when we
+expect nothing else than 0 or -ESRCH.
+The same could happen when doing PTRACE_SETOPTIONS although that may
+have never been hit (at least, I never did).
+
+Solution:
+Ignore the EALREADY error as it's already done for ESRCH.
+
+Upstream status:
+The bug is utrace specific. Upstream is not affected.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1695481
+
+Test status:
+Successfully tested by me using the the reproducer available on BZ.
+Only the PTRACE_SINGLESTEP case was tested for I have no reproducer
+for it.
+
+Regards,
+Jerome
+
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 53aa435..84e2488 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -1066,7 +1066,7 @@ ptrace_common(long request, struct task_struct *child,
+ 			flags |= UTRACE_ACTION_BLOCKSTEP;
+ 		ret = ptrace_update(child, state, flags, 1);
+ 		if (ret)
+-			BUG_ON(ret != -ESRCH);
++			BUG_ON(ret != -ESRCH && ret != -EALREADY);
+ 		ret = 0;
+ 		break;
+ 
+@@ -1080,7 +1080,7 @@ ptrace_common(long request, struct task_struct *child,
+ 		state->options = data;
+ 		ret = ptrace_update(child, state, UTRACE_ACTION_QUIESCE, 1);
+ 		if (ret)
+-			BUG_ON(ret != -ESRCH);
++			BUG_ON(ret != -ESRCH && ret != -EALREADY);
+ 		ret = 0;
+ 		break;
+ 	}

@@ -1,0 +1,1098 @@
+Date: Wed, 19 Jul 2006 00:03:33 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: Re: [RHEL5][PATCH 1/8] mm: tracking shared dirty pages
+
+Respin against current Rawhide kernel.
+
+The other patches apply with a little offset/fuzz but end up rightly.
+It even compiles :-)
+
+Don, is this enough, or would you like me to repost the whole series
+(minus 8/8) fuzzless?
+
+---
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+Tracking of dirty pages in shared writeable mmap()s.
+
+The idea is simple: write protect clean shared writeable pages, catch the
+write-fault, make writeable and set dirty.  On page write-back clean all
+the PTE dirty bits and write protect them once again.
+
+The implementation is a tad harder, mainly because the default
+backing_dev_info capabilities were too loosely maintained. Hence it is
+not enough to test the backing_dev_info for cap_account_dirty.
+
+The current heuristic is as follows, a VMA is eligible when:
+ - its shared writeable
+    (vm_flags & (VM_WRITE|VM_SHARED)) == (VM_WRITE|VM_SHARED)
+ - it is not a 'special' mapping
+    (vm_flags & (VM_PFNMAP|VM_INSERTPAGE)) == 0
+ - the backing_dev_info is cap_account_dirty
+    mapping_cap_account_dirty(vma->vm_file->f_mapping)
+ - f_op->mmap() didn't change the default page protection
+
+Page from remap_pfn_range() are explicitly excluded because their
+COW semantics are already horrid enough (see vm_normal_page() in
+do_wp_page()) and because they don't have a backing store anyway.
+
+mprotect() is taught about the new behaviour as well. However it
+fudges the last condition.
+
+Cleaning the pages on write-back is done with page_mkclean() a new
+rmap call. It cleans and wrprotects all PTEs of dirty accountable
+pages.
+
+Finally, in fs/buffers.c:try_to_free_buffers(); remove clear_page_dirty()
+from under ->private_lock. This seems to be safe, since ->private_lock
+is used to serialize access to the buffers, not the page itself.
+This is needed because clear_page_dirty() will call into page_mkclean()
+and would thereby violate locking order.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Hugh Dickins <hugh@veritas
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ fs/buffer.c          |    2 -
+ include/linux/mm.h   |   34 ++++++++++++++++++++++++++
+ include/linux/rmap.h |    8 ++++++
+ mm/memory.c          |   29 ++++++++++++++++++----
+ mm/mmap.c            |   10 +++----
+ mm/mprotect.c        |   21 ++++++----------
+ mm/page-writeback.c  |   17 ++++++++++---
+ mm/rmap.c            |   65 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 156 insertions(+), 30 deletions(-)
+
+Index: latest/fs/buffer.c
+===================================================================
+--- latest.orig/fs/buffer.c
++++ latest/fs/buffer.c
+@@ -2984,6 +2984,7 @@ int try_to_free_buffers(struct page *pag
+ 
+ 	spin_lock(&mapping->private_lock);
+ 	ret = drop_buffers(page, &buffers_to_free);
++	spin_unlock(&mapping->private_lock);
+ 	if (ret) {
+ 		/*
+ 		 * If the filesystem writes its buffers by hand (eg ext3)
+@@ -2995,7 +2996,6 @@ int try_to_free_buffers(struct page *pag
+ 		 */
+ 		clear_page_dirty(page);
+ 	}
+-	spin_unlock(&mapping->private_lock);
+ out:
+ 	if (buffers_to_free) {
+ 		struct buffer_head *bh = buffers_to_free;
+Index: latest/include/linux/mm.h
+===================================================================
+--- latest.orig/include/linux/mm.h
++++ latest/include/linux/mm.h
+@@ -15,6 +15,7 @@
+ #include <linux/fs.h>
+ #include <linux/mutex.h>
+ #include <linux/debug_locks.h>
++#include <linux/backing-dev.h>
+ 
+ struct mempolicy;
+ struct anon_vma;
+@@ -801,6 +802,39 @@ struct shrinker;
+ extern struct shrinker *set_shrinker(int, shrinker_t);
+ extern void remove_shrinker(struct shrinker *shrinker);
+ 
++/*
++ * Some shared mappigns will want the pages marked read-only
++ * to track write events. If so, we'll downgrade vm_page_prot
++ * to the private version (using protection_map[] without the
++ * VM_SHARED bit).
++ */
++static inline int vma_wants_writenotify(struct vm_area_struct *vma)
++{
++	unsigned int vm_flags = vma->vm_flags;
++
++	/* If it was private or non-writable, the write bit is already clear */
++	if ((vm_flags & (VM_WRITE|VM_SHARED)) != ((VM_WRITE|VM_SHARED)))
++		return 0;
++
++	/* The backer wishes to know when pages are first written to? */
++	if (vma->vm_ops && vma->vm_ops->page_mkwrite)
++		return 1;
++
++	/* The open routine did something to the protections already? */
++	if (pgprot_val(vma->vm_page_prot) !=
++	    pgprot_val(protection_map[vm_flags &
++		    (VM_READ|VM_WRITE|VM_EXEC|VM_SHARED)]))
++		return 0;
++
++	/* Specialty mapping? */
++	if (vm_flags & (VM_PFNMAP|VM_INSERTPAGE))
++		return 0;
++
++	/* Can the mapping track the dirty pages? */
++	return vma->vm_file && vma->vm_file->f_mapping &&
++		mapping_cap_account_dirty(vma->vm_file->f_mapping);
++}
++
+ extern pte_t *FASTCALL(get_locked_pte(struct mm_struct *mm, unsigned long addr, spinlock_t **ptl));
+ 
+ int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address);
+Index: latest/include/linux/rmap.h
+===================================================================
+--- latest.orig/include/linux/rmap.h
++++ latest/include/linux/rmap.h
+@@ -103,6 +103,14 @@ pte_t *page_check_address(struct page *,
+  */
+ unsigned long page_address_in_vma(struct page *, struct vm_area_struct *);
+ 
++/*
++ * Cleans the PTEs of shared mappings.
++ * (and since clean PTEs should also be readonly, write protects them too)
++ *
++ * returns the number of cleaned PTEs.
++ */
++int page_mkclean(struct page *);
++
+ #else	/* !CONFIG_MMU */
+ 
+ #define anon_vma_init()		do {} while (0)
+Index: latest/mm/memory.c
+===================================================================
+--- latest.orig/mm/memory.c
++++ latest/mm/memory.c
+@@ -1458,14 +1458,19 @@ static int do_wp_page(struct mm_struct *
+ {
+ 	struct page *old_page, *new_page;
+ 	pte_t entry;
+-	int reuse, ret = VM_FAULT_MINOR;
++	int reuse = 0, ret = VM_FAULT_MINOR;
++	struct page *dirty_page = NULL;
+ 
+ 	old_page = vm_normal_page(vma, address, orig_pte);
+ 	if (!old_page)
+ 		goto gotten;
+ 
+-	if (unlikely((vma->vm_flags & (VM_SHARED|VM_WRITE)) ==
+-				(VM_SHARED|VM_WRITE))) {
++	/*
++	 * Only catch write-faults on shared writable pages, read-only
++	 * shared pages can get COWed by get_user_pages(.write=1, .force=1).
++	 */
++	if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
++					(VM_WRITE|VM_SHARED))) {
+ 		if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
+ 			/*
+ 			 * Notify the address space that the page is about to
+@@ -1494,13 +1499,12 @@ static int do_wp_page(struct mm_struct *
+ 			if (!pte_same(*page_table, orig_pte))
+ 				goto unlock;
+ 		}
+-
++		dirty_page = old_page;
++		get_page(dirty_page);
+ 		reuse = 1;
+ 	} else if (PageAnon(old_page) && !TestSetPageLocked(old_page)) {
+ 		reuse = can_share_swap_page(old_page);
+ 		unlock_page(old_page);
+-	} else {
+-		reuse = 0;
+ 	}
+ 
+ 	if (reuse) {
+@@ -1566,6 +1570,10 @@ gotten:
+ 		page_cache_release(old_page);
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
++	if (dirty_page) {
++		set_page_dirty(dirty_page);
++		put_page(dirty_page);
++	}
+ 	return ret;
+ oom:
+ 	if (old_page)
+@@ -2098,6 +2106,7 @@ static int do_no_page(struct mm_struct *
+ 	unsigned int sequence = 0;
+ 	int ret = VM_FAULT_MINOR;
+ 	int anon = 0;
++	struct page *dirty_page = NULL;
+ 
+ 	pte_unmap(page_table);
+ 	BUG_ON(vma->vm_flags & VM_PFNMAP);
+@@ -2192,6 +2201,10 @@ retry:
+ 		} else {
+ 			inc_mm_counter(mm, file_rss);
+ 			page_add_file_rmap(new_page);
++			if (write_access) {
++				dirty_page = new_page;
++				get_page(dirty_page);
++			}
+ 		}
+ 	} else {
+ 		/* One of our sibling threads was faster, back out. */
+@@ -2204,6 +2217,10 @@ retry:
+ 	lazy_mmu_prot_update(entry);
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
++	if (dirty_page) {
++		set_page_dirty(dirty_page);
++		put_page(dirty_page);
++	}
+ 	return ret;
+ oom:
+ 	page_cache_release(new_page);
+Index: latest/mm/mmap.c
+===================================================================
+--- latest.orig/mm/mmap.c
++++ latest/mm/mmap.c
+@@ -1097,12 +1097,6 @@ munmap_back:
+ 			goto free_vma;
+ 	}
+ 
+-	/* Don't make the VMA automatically writable if it's shared, but the
+-	 * backer wishes to know when pages are first written to */
+-	if (vma->vm_ops && vma->vm_ops->page_mkwrite)
+-		vma->vm_page_prot =
+-			protection_map[vm_flags & (VM_READ|VM_WRITE|VM_EXEC)];
+-
+ 	/* We set VM_ACCOUNT in a shared mapping's vm_flags, to inform
+ 	 * shmem_zero_setup (perhaps called through /dev/zero's ->mmap)
+ 	 * that memory reservation must be checked; but that reservation
+@@ -1120,6 +1114,10 @@ munmap_back:
+ 	pgoff = vma->vm_pgoff;
+ 	vm_flags = vma->vm_flags;
+ 
++	if (vma_wants_writenotify(vma))
++		vma->vm_page_prot =
++			protection_map[vm_flags & (VM_READ|VM_WRITE|VM_EXEC)];
++
+ 	if (!file || !vma_merge(mm, prev, addr, vma->vm_end,
+ 			vma->vm_flags, NULL, file, pgoff, vma_policy(vma))) {
+ 		file = vma->vm_file;
+Index: latest/mm/mprotect.c
+===================================================================
+--- latest.orig/mm/mprotect.c
++++ latest/mm/mprotect.c
+@@ -124,8 +124,6 @@ mprotect_fixup(struct vm_area_struct *vm
+ 	unsigned long oldflags = vma->vm_flags;
+ 	long nrpages = (end - start) >> PAGE_SHIFT;
+ 	unsigned long charged = 0, old_end = vma->vm_end;
+-	unsigned int mask;
+-	pgprot_t newprot;
+ 	pgoff_t pgoff;
+ 	int error;
+ 
+@@ -177,26 +175,23 @@ mprotect_fixup(struct vm_area_struct *vm
+ 	}
+ 
+ success:
+-	/* Don't make the VMA automatically writable if it's shared, but the
+-	 * backer wishes to know when pages are first written to */
+-	mask = VM_READ|VM_WRITE|VM_EXEC|VM_SHARED;
+-	if (vma->vm_ops && vma->vm_ops->page_mkwrite)
+-		mask &= ~VM_SHARED;
+-
+-	newprot = protection_map[newflags & mask];
+-
+ 	/*
+ 	 * vm_flags and vm_page_prot are protected by the mmap_sem
+ 	 * held in write mode.
+ 	 */
+ 	vma->vm_flags = newflags;
+-	vma->vm_page_prot = newprot;
+ 	if (oldflags & VM_EXEC)
+ 		arch_remove_exec_range(current->mm, old_end);
++	vma->vm_page_prot = protection_map[newflags &
++		(VM_READ|VM_WRITE|VM_EXEC|VM_SHARED)];
++	if (vma_wants_writenotify(vma))
++		vma->vm_page_prot = protection_map[newflags &
++			(VM_READ|VM_WRITE|VM_EXEC)];
++
+ 	if (is_vm_hugetlb_page(vma))
+-		hugetlb_change_protection(vma, start, end, newprot);
++		hugetlb_change_protection(vma, start, end, vma->vm_page_prot);
+ 	else
+-		change_protection(vma, start, end, newprot);
++		change_protection(vma, start, end, vma->vm_page_prot);
+ 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
+ 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+ 	return 0;
+Index: latest/mm/page-writeback.c
+===================================================================
+--- latest.orig/mm/page-writeback.c
++++ latest/mm/page-writeback.c
+@@ -29,6 +29,7 @@
+ #include <linux/sysctl.h>
+ #include <linux/cpu.h>
+ #include <linux/syscalls.h>
++#include <linux/rmap.h>
+ 
+ /*
+  * The maximum number of pages to writeout in a single bdflush/kupdate
+@@ -550,7 +551,7 @@ int do_writepages(struct address_space *
+ 		return 0;
+ 	wbc->for_writepages = 1;
+ 	if (mapping->a_ops->writepages)
+-		ret =  mapping->a_ops->writepages(mapping, wbc);
++		ret = mapping->a_ops->writepages(mapping, wbc);
+ 	else
+ 		ret = generic_writepages(mapping, wbc);
+ 	wbc->for_writepages = 0;
+@@ -712,9 +713,15 @@ int test_clear_page_dirty(struct page *p
+ 			radix_tree_tag_clear(&mapping->page_tree,
+ 						page_index(page),
+ 						PAGECACHE_TAG_DIRTY);
+-			if (mapping_cap_account_dirty(mapping))
+-				__dec_zone_page_state(page, NR_FILE_DIRTY);
+ 			write_unlock_irqrestore(&mapping->tree_lock, flags);
++			/*
++			 * We can continue to use `mapping' here because the
++			 * page is locked, which pins the address_space
++			 */
++			if (mapping_cap_account_dirty(mapping)) {
++				page_mkclean(page);
++				dec_zone_page_state(page, NR_FILE_DIRTY);
++			}
+ 			return 1;
+ 		}
+ 		write_unlock_irqrestore(&mapping->tree_lock, flags);
+@@ -744,8 +751,10 @@ int clear_page_dirty_for_io(struct page 
+ 
+ 	if (mapping) {
+ 		if (TestClearPageDirty(page)) {
+-			if (mapping_cap_account_dirty(mapping))
++			if (mapping_cap_account_dirty(mapping)) {
++				page_mkclean(page);
+ 				dec_zone_page_state(page, NR_FILE_DIRTY);
++			}
+ 			return 1;
+ 		}
+ 		return 0;
+Index: latest/mm/rmap.c
+===================================================================
+--- latest.orig/mm/rmap.c
++++ latest/mm/rmap.c
+@@ -434,6 +434,71 @@ int page_referenced(struct page *page, i
+ 	return referenced;
+ }
+ 
++static int page_mkclean_one(struct page *page, struct vm_area_struct *vma)
++{
++	struct mm_struct *mm = vma->vm_mm;
++	unsigned long address;
++	pte_t *pte, entry;
++	spinlock_t *ptl;
++	int ret = 0;
++
++	address = vma_address(page, vma);
++	if (address == -EFAULT)
++		goto out;
++
++	pte = page_check_address(page, mm, address, &ptl);
++	if (!pte)
++		goto out;
++
++	if (!pte_dirty(*pte) && !pte_write(*pte))
++		goto unlock;
++
++	entry = ptep_get_and_clear(mm, address, pte);
++	entry = pte_mkclean(entry);
++	entry = pte_wrprotect(entry);
++	ptep_establish(vma, address, pte, entry);
++	lazy_mmu_prot_update(entry);
++	ret = 1;
++
++unlock:
++	pte_unmap_unlock(pte, ptl);
++out:
++	return ret;
++}
++
++static int page_mkclean_file(struct address_space *mapping, struct page *page)
++{
++	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
++	struct vm_area_struct *vma;
++	struct prio_tree_iter iter;
++	int ret = 0;
++
++	BUG_ON(PageAnon(page));
++
++	spin_lock(&mapping->i_mmap_lock);
++	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, pgoff, pgoff) {
++		if (vma->vm_flags & VM_SHARED)
++			ret += page_mkclean_one(page, vma);
++	}
++	spin_unlock(&mapping->i_mmap_lock);
++	return ret;
++}
++
++int page_mkclean(struct page *page)
++{
++	int ret = 0;
++
++	BUG_ON(!PageLocked(page));
++
++	if (page_mapped(page)) {
++		struct address_space *mapping = page_mapping(page);
++		if (mapping)
++			ret = page_mkclean_file(mapping, page);
++	}
++
++	return ret;
++}
++
+ /**
+  * page_set_anon_rmap - setup new anonymous rmap
+  * @page:	the page to add the mapping to
+Date: Mon, 17 Jul 2006 20:32:34 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 2/8] mm: balance dirty pages
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+Now that we can detect writers of shared mappings, throttle them.  Avoids OOM
+by surprise.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ include/linux/writeback.h |    1 +
+ mm/memory.c               |    5 +++--
+ mm/page-writeback.c       |   10 ++++++++++
+ 3 files changed, 14 insertions(+), 2 deletions(-)
+
+Index: latest/include/linux/writeback.h
+===================================================================
+--- latest.orig/include/linux/writeback.h
++++ latest/include/linux/writeback.h
+@@ -115,6 +115,7 @@ int sync_page_range(struct inode *inode,
+ 			loff_t pos, loff_t count);
+ int sync_page_range_nolock(struct inode *inode, struct address_space *mapping,
+ 			   loff_t pos, loff_t count);
++void set_page_dirty_balance(struct page *page);
+ 
+ /* pdflush.c */
+ extern int nr_pdflush_threads;	/* Global so it can be exported to sysctl
+Index: latest/mm/memory.c
+===================================================================
+--- latest.orig/mm/memory.c
++++ latest/mm/memory.c
+@@ -49,6 +49,7 @@
+ #include <linux/module.h>
+ #include <linux/delayacct.h>
+ #include <linux/init.h>
++#include <linux/writeback.h>
+ 
+ #include <asm/pgalloc.h>
+ #include <asm/uaccess.h>
+@@ -1571,7 +1572,7 @@ gotten:
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
+ 	if (dirty_page) {
+-		set_page_dirty(dirty_page);
++		set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
+ 	}
+ 	return ret;
+@@ -2218,7 +2219,7 @@ retry:
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
+ 	if (dirty_page) {
+-		set_page_dirty(dirty_page);
++		set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
+ 	}
+ 	return ret;
+Index: latest/mm/page-writeback.c
+===================================================================
+--- latest.orig/mm/page-writeback.c
++++ latest/mm/page-writeback.c
+@@ -244,6 +244,16 @@ static void balance_dirty_pages(struct a
+ 		pdflush_operation(background_writeout, 0);
+ }
+ 
++void set_page_dirty_balance(struct page *page)
++{
++	if (set_page_dirty(page)) {
++		struct address_space *mapping = page_mapping(page);
++
++		if (mapping)
++			balance_dirty_pages_ratelimited(mapping);
++	}
++}
++
+ /**
+  * balance_dirty_pages_ratelimited_nr - balance dirty memory state
+  * @mapping: address_space which was dirtied
+Date: Mon, 17 Jul 2006 20:32:41 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 3/8] mm: optimize the new mprotect code a bit
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+mprotect() resets the page protections, which could result in extra write
+faults for those pages whose dirty state we track using write faults
+and are dirty already.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+ mm/mprotect.c |   31 ++++++++++++++++++++++---------
+ 1 file changed, 22 insertions(+), 9 deletions(-)
+
+Index: latest/mm/mprotect.c
+===================================================================
+--- latest.orig/mm/mprotect.c
++++ latest/mm/mprotect.c
+@@ -28,7 +28,8 @@
+ #include <asm/tlbflush.h>
+ 
+ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
+-		unsigned long addr, unsigned long end, pgprot_t newprot)
++		unsigned long addr, unsigned long end, pgprot_t newprot,
++		int dirty_accountable)
+ {
+ 	pte_t *pte, oldpte;
+ 	spinlock_t *ptl;
+@@ -43,7 +44,14 @@ static void change_pte_range(struct mm_s
+ 			 * bits by wiping the pte and then setting the new pte
+ 			 * into place.
+ 			 */
+-			ptent = pte_modify(ptep_get_and_clear(mm, addr, pte), newprot);
++			ptent = ptep_get_and_clear(mm, addr, pte);
++			ptent = pte_modify(ptent, newprot);
++			/*
++			 * Avoid taking write faults for pages we know to be
++			 * dirty.
++			 */
++			if (dirty_accountable && pte_dirty(ptent))
++				ptent = pte_mkwrite(ptent);
+ 			set_pte_at(mm, addr, pte, ptent);
+ 			lazy_mmu_prot_update(ptent);
+ #ifdef CONFIG_MIGRATION
+@@ -67,7 +75,8 @@ static void change_pte_range(struct mm_s
+ }
+ 
+ static inline void change_pmd_range(struct mm_struct *mm, pud_t *pud,
+-		unsigned long addr, unsigned long end, pgprot_t newprot)
++		unsigned long addr, unsigned long end, pgprot_t newprot,
++		int dirty_accountable)
+ {
+ 	pmd_t *pmd;
+ 	unsigned long next;
+@@ -77,12 +86,13 @@ static inline void change_pmd_range(stru
+ 		next = pmd_addr_end(addr, end);
+ 		if (pmd_none_or_clear_bad(pmd))
+ 			continue;
+-		change_pte_range(mm, pmd, addr, next, newprot);
++		change_pte_range(mm, pmd, addr, next, newprot, dirty_accountable);
+ 	} while (pmd++, addr = next, addr != end);
+ }
+ 
+ static inline void change_pud_range(struct mm_struct *mm, pgd_t *pgd,
+-		unsigned long addr, unsigned long end, pgprot_t newprot)
++		unsigned long addr, unsigned long end, pgprot_t newprot,
++		int dirty_accountable)
+ {
+ 	pud_t *pud;
+ 	unsigned long next;
+@@ -92,12 +102,13 @@ static inline void change_pud_range(stru
+ 		next = pud_addr_end(addr, end);
+ 		if (pud_none_or_clear_bad(pud))
+ 			continue;
+-		change_pmd_range(mm, pud, addr, next, newprot);
++		change_pmd_range(mm, pud, addr, next, newprot, dirty_accountable);
+ 	} while (pud++, addr = next, addr != end);
+ }
+ 
+ static void change_protection(struct vm_area_struct *vma,
+-		unsigned long addr, unsigned long end, pgprot_t newprot)
++		unsigned long addr, unsigned long end, pgprot_t newprot,
++		int dirty_accountable)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	pgd_t *pgd;
+@@ -111,7 +122,7 @@ static void change_protection(struct vm_
+ 		next = pgd_addr_end(addr, end);
+ 		if (pgd_none_or_clear_bad(pgd))
+ 			continue;
+-		change_pud_range(mm, pgd, addr, next, newprot);
++		change_pud_range(mm, pgd, addr, next, newprot, dirty_accountable);
+ 	} while (pgd++, addr = next, addr != end);
+ 	flush_tlb_range(vma, start, end);
+ }
+@@ -126,6 +137,7 @@ mprotect_fixup(struct vm_area_struct *vm
+ 	unsigned long charged = 0, old_end = vma->vm_end;
+ 	pgoff_t pgoff;
+ 	int error;
++	int dirty_accountable = 0;
+ 
+ 	if (newflags == oldflags) {
+ 		*pprev = vma;
+@@ -184,14 +196,16 @@ success:
+ 		arch_remove_exec_range(current->mm, old_end);
+ 	vma->vm_page_prot = protection_map[newflags &
+ 		(VM_READ|VM_WRITE|VM_EXEC|VM_SHARED)];
+-	if (vma_wants_writenotify(vma))
++	if (vma_wants_writenotify(vma)) {
+ 		vma->vm_page_prot = protection_map[newflags &
+ 			(VM_READ|VM_WRITE|VM_EXEC)];
++		dirty_accountable = 1;
++	}
+ 
+ 	if (is_vm_hugetlb_page(vma))
+ 		hugetlb_change_protection(vma, start, end, vma->vm_page_prot);
+ 	else
+-		change_protection(vma, start, end, vma->vm_page_prot);
++		change_protection(vma, start, end, vma->vm_page_prot, dirty_accountable);
+ 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
+ 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+ 	return 0;
+Date: Mon, 17 Jul 2006 20:32:49 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 4/8] mm: small cleanup of install_page()
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+Smallish cleanup to install_page(), could save a memory read (haven't checked
+the asm output) and sure looks nicer.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/fremap.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+Index: latest/mm/fremap.c
+===================================================================
+--- latest.orig/mm/fremap.c
++++ latest/mm/fremap.c
+@@ -81,9 +81,9 @@ int install_page(struct mm_struct *mm, s
+ 		inc_mm_counter(mm, file_rss);
+ 
+ 	flush_icache_page(vma, page);
+-	set_pte_at(mm, addr, pte, mk_pte(page, prot));
++	pte_val = mk_pte(page, prot);
++	set_pte_at(mm, addr, pte, pte_val);
+ 	page_add_file_rmap(page);
+-	pte_val = *pte;
+ 	update_mmu_cache(vma, addr, pte_val);
+ 	lazy_mmu_prot_update(pte_val);
+ 	err = 0;
+Date: Mon, 17 Jul 2006 20:32:56 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 5/8] mm: fixup do_wp_page()
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+Wrt. the recent modifications in do_wp_page() Hugh Dickins pointed out:
+
+"I now realize it's right to the first
+order (normal case) and to the second order (ptrace poke), but not
+to the third order (ptrace poke anon page here to be COWed -
+perhaps can't occur without intervening mprotects)."
+
+This patch restores the old COW behaviour for anonymous pages.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/memory.c |   19 +++++++++++++------
+ 1 files changed, 13 insertions(+), 6 deletions(-)
+
+Index: latest/mm/memory.c
+===================================================================
+--- latest.orig/mm/memory.c
++++ latest/mm/memory.c
+@@ -1467,11 +1467,21 @@ static int do_wp_page(struct mm_struct *
+ 		goto gotten;
+ 
+ 	/*
+-	 * Only catch write-faults on shared writable pages, read-only
+-	 * shared pages can get COWed by get_user_pages(.write=1, .force=1).
++	 * Take out anonymous pages first, anonymous shared vmas are
++	 * not dirty accountable.
+ 	 */
+-	if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
++	if (PageAnon(old_page)) {
++		if (!TestSetPageLocked(old_page)) {
++			reuse = can_share_swap_page(old_page);
++			unlock_page(old_page);
++		}
++	} else if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
+ 					(VM_WRITE|VM_SHARED))) {
++		/*
++		 * Only catch write-faults on shared writable pages,
++		 * read-only shared pages can get COWed by
++		 * get_user_pages(.write=1, .force=1).
++		 */
+ 		if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
+ 			/*
+ 			 * Notify the address space that the page is about to
+@@ -1503,9 +1513,6 @@ static int do_wp_page(struct mm_struct *
+ 		dirty_page = old_page;
+ 		get_page(dirty_page);
+ 		reuse = 1;
+-	} else if (PageAnon(old_page) && !TestSetPageLocked(old_page)) {
+-		reuse = can_share_swap_page(old_page);
+-		unlock_page(old_page);
+ 	}
+ 
+ 	if (reuse) {
+Date: Mon, 17 Jul 2006 20:33:03 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 6/8] mm: msync cleanup
+
+
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+With the tracking of dirty pages properly done now, msync doesn't need to scan
+the PTEs anymore to determine the dirty status.
+
+From: Hugh Dickins <hugh@veritas.com>
+
+In looking to do that, I made some other tidyups: can remove several
+#includes, and sys_msync loop termination not quite right.
+
+Most of those points are criticisms of the existing sys_msync, not of your
+patch.  In particular, the loop termination errors were introduced in 2.6.17:
+I did notice this shortly before it came out, but decided I was more likely to
+get it wrong myself, and make matters worse if I tried to rush a last-minute
+fix in.  And it's not terribly likely to go wrong, nor disastrous if it does
+go wrong (may miss reporting an unmapped area; may also fsync file of a
+following vma).
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/msync.c |  196 ++++++++-------------------------------------------
+ 1 file changed, 33 insertions(+), 163 deletions(-)
+
+Index: latest/mm/msync.c
+===================================================================
+--- latest.orig/mm/msync.c
++++ latest/mm/msync.c
+@@ -7,149 +7,33 @@
+ /*
+  * The msync() system call.
+  */
+-#include <linux/slab.h>
+-#include <linux/pagemap.h>
+ #include <linux/fs.h>
+ #include <linux/mm.h>
+ #include <linux/mman.h>
+-#include <linux/hugetlb.h>
+-#include <linux/writeback.h>
+ #include <linux/file.h>
+ #include <linux/syscalls.h>
+ 
+-#include <asm/pgtable.h>
+-#include <asm/tlbflush.h>
+-
+-static unsigned long msync_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+-				unsigned long addr, unsigned long end)
+-{
+-	pte_t *pte;
+-	spinlock_t *ptl;
+-	int progress = 0;
+-	unsigned long ret = 0;
+-
+-again:
+-	pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
+-	do {
+-		struct page *page;
+-
+-		if (progress >= 64) {
+-			progress = 0;
+-			if (need_resched() || need_lockbreak(ptl))
+-				break;
+-		}
+-		progress++;
+-		if (!pte_present(*pte))
+-			continue;
+-		if (!pte_maybe_dirty(*pte))
+-			continue;
+-		page = vm_normal_page(vma, addr, *pte);
+-		if (!page)
+-			continue;
+-		if (ptep_clear_flush_dirty(vma, addr, pte) ||
+-				page_test_and_clear_dirty(page))
+-			ret += set_page_dirty(page);
+-		progress += 3;
+-	} while (pte++, addr += PAGE_SIZE, addr != end);
+-	pte_unmap_unlock(pte - 1, ptl);
+-	cond_resched();
+-	if (addr != end)
+-		goto again;
+-	return ret;
+-}
+-
+-static inline unsigned long msync_pmd_range(struct vm_area_struct *vma,
+-			pud_t *pud, unsigned long addr, unsigned long end)
+-{
+-	pmd_t *pmd;
+-	unsigned long next;
+-	unsigned long ret = 0;
+-
+-	pmd = pmd_offset(pud, addr);
+-	do {
+-		next = pmd_addr_end(addr, end);
+-		if (pmd_none_or_clear_bad(pmd))
+-			continue;
+-		ret += msync_pte_range(vma, pmd, addr, next);
+-	} while (pmd++, addr = next, addr != end);
+-	return ret;
+-}
+-
+-static inline unsigned long msync_pud_range(struct vm_area_struct *vma,
+-			pgd_t *pgd, unsigned long addr, unsigned long end)
+-{
+-	pud_t *pud;
+-	unsigned long next;
+-	unsigned long ret = 0;
+-
+-	pud = pud_offset(pgd, addr);
+-	do {
+-		next = pud_addr_end(addr, end);
+-		if (pud_none_or_clear_bad(pud))
+-			continue;
+-		ret += msync_pmd_range(vma, pud, addr, next);
+-	} while (pud++, addr = next, addr != end);
+-	return ret;
+-}
+-
+-static unsigned long msync_page_range(struct vm_area_struct *vma,
+-				unsigned long addr, unsigned long end)
+-{
+-	pgd_t *pgd;
+-	unsigned long next;
+-	unsigned long ret = 0;
+-
+-	/* For hugepages we can't go walking the page table normally,
+-	 * but that's ok, hugetlbfs is memory based, so we don't need
+-	 * to do anything more on an msync().
+-	 */
+-	if (vma->vm_flags & VM_HUGETLB)
+-		return 0;
+-
+-	BUG_ON(addr >= end);
+-	pgd = pgd_offset(vma->vm_mm, addr);
+-	flush_cache_range(vma, addr, end);
+-	do {
+-		next = pgd_addr_end(addr, end);
+-		if (pgd_none_or_clear_bad(pgd))
+-			continue;
+-		ret += msync_pud_range(vma, pgd, addr, next);
+-	} while (pgd++, addr = next, addr != end);
+-	return ret;
+-}
+-
+ /*
+  * MS_SYNC syncs the entire file - including mappings.
+  *
+- * MS_ASYNC does not start I/O (it used to, up to 2.5.67).  Instead, it just
+- * marks the relevant pages dirty.  The application may now run fsync() to
++ * MS_ASYNC does not start I/O (it used to, up to 2.5.67).
++ * Nor does it marks the relevant pages dirty (it used to up to 2.6.17).
++ * Now it doesn't do anything, since dirty pages are properly tracked.
++ *
++ * The application may now run fsync() to
+  * write out the dirty pages and wait on the writeout and check the result.
+  * Or the application may run fadvise(FADV_DONTNEED) against the fd to start
+  * async writeout immediately.
+  * So by _not_ starting I/O in MS_ASYNC we provide complete flexibility to
+  * applications.
+  */
+-static int msync_interval(struct vm_area_struct *vma, unsigned long addr,
+-			unsigned long end, int flags,
+-			unsigned long *nr_pages_dirtied)
+-{
+-	struct file *file = vma->vm_file;
+-
+-	if ((flags & MS_INVALIDATE) && (vma->vm_flags & VM_LOCKED))
+-		return -EBUSY;
+-
+-	if (file && (vma->vm_flags & VM_SHARED))
+-		*nr_pages_dirtied = msync_page_range(vma, addr, end);
+-	return 0;
+-}
+-
+ asmlinkage long sys_msync(unsigned long start, size_t len, int flags)
+ {
+ 	unsigned long end;
++	struct mm_struct *mm = current->mm;
+ 	struct vm_area_struct *vma;
+ 	int unmapped_error = 0;
+ 	int error = -EINVAL;
+-	int done = 0;
+ 
+ 	if (flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC))
+ 		goto out;
+@@ -169,64 +53,50 @@ asmlinkage long sys_msync(unsigned long 
+ 	 * If the interval [start,end) covers some unmapped address ranges,
+ 	 * just ignore them, but return -ENOMEM at the end.
+ 	 */
+-	down_read(&current->mm->mmap_sem);
+-	vma = find_vma(current->mm, start);
+-	if (!vma) {
+-		error = -ENOMEM;
+-		goto out_unlock;
+-	}
+-	do {
+-		unsigned long nr_pages_dirtied = 0;
++	down_read(&mm->mmap_sem);
++	vma = find_vma(mm, start);
++	for (;;) {
+ 		struct file *file;
+ 
++		/* Still start < end. */
++		error = -ENOMEM;
++		if (!vma)
++			goto out_unlock;
+ 		/* Here start < vma->vm_end. */
+ 		if (start < vma->vm_start) {
+-			unmapped_error = -ENOMEM;
+ 			start = vma->vm_start;
++			if (start >= end)
++				goto out_unlock;
++			unmapped_error = -ENOMEM;
+ 		}
+ 		/* Here vma->vm_start <= start < vma->vm_end. */
+-		if (end <= vma->vm_end) {
+-			if (start < end) {
+-				error = msync_interval(vma, start, end, flags,
+-							&nr_pages_dirtied);
+-				if (error)
+-					goto out_unlock;
+-			}
+-			error = unmapped_error;
+-			done = 1;
+-		} else {
+-			/* Here vma->vm_start <= start < vma->vm_end < end. */
+-			error = msync_interval(vma, start, vma->vm_end, flags,
+-						&nr_pages_dirtied);
+-			if (error)
+-				goto out_unlock;
++		if ((flags & MS_INVALIDATE) &&
++				(vma->vm_flags & VM_LOCKED)) {
++			error = -EBUSY;
++			goto out_unlock;
+ 		}
+ 		file = vma->vm_file;
+ 		start = vma->vm_end;
+-		if ((flags & MS_ASYNC) && file && nr_pages_dirtied) {
+-			get_file(file);
+-			up_read(&current->mm->mmap_sem);
+-			balance_dirty_pages_ratelimited_nr(file->f_mapping,
+-							nr_pages_dirtied);
+-			fput(file);
+-			down_read(&current->mm->mmap_sem);
+-			vma = find_vma(current->mm, start);
+-		} else if ((flags & MS_SYNC) && file &&
++		if ((flags & MS_SYNC) && file &&
+ 				(vma->vm_flags & VM_SHARED)) {
+ 			get_file(file);
+-			up_read(&current->mm->mmap_sem);
++			up_read(&mm->mmap_sem);
+ 			error = do_fsync(file, 0);
+ 			fput(file);
+-			down_read(&current->mm->mmap_sem);
+-			if (error)
+-				goto out_unlock;
+-			vma = find_vma(current->mm, start);
++			if (error || start >= end)
++				goto out;
++			down_read(&mm->mmap_sem);
++			vma = find_vma(mm, start);
+ 		} else {
++			if (start >= end) {
++				error = 0;
++				goto out_unlock;
++			}
+ 			vma = vma->vm_next;
+ 		}
+-	} while (vma && !done);
++	}
+ out_unlock:
+-	up_read(&current->mm->mmap_sem);
++	up_read(&mm->mmap_sem);
+ out:
+-	return error;
++	return error ? : unmapped_error;
+ }
+Date: Mon, 17 Jul 2006 20:33:11 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 7/8] mm: tracking shared dirty pages checks
+
+
+From: Andrew Morton <akpm@osdl.org>
+
+Cc: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/page-writeback.c |    2 ++
+ 1 files changed, 2 insertions(+)
+
+Index: latest/mm/page-writeback.c
+===================================================================
+--- latest.orig/mm/page-writeback.c
++++ latest/mm/page-writeback.c
+@@ -717,6 +717,7 @@ int test_clear_page_dirty(struct page *p
+ 	struct address_space *mapping = page_mapping(page);
+ 	unsigned long flags;
+ 
++	WARN_ON_ONCE(!PageLocked(page));
+ 	if (mapping) {
+ 		write_lock_irqsave(&mapping->tree_lock, flags);
+ 		if (TestClearPageDirty(page)) {
+@@ -759,6 +760,7 @@ int clear_page_dirty_for_io(struct page 
+ {
+ 	struct address_space *mapping = page_mapping(page);
+ 
++	WARN_ON_ONCE(!PageLocked(page));
+ 	if (mapping) {
+ 		if (TestClearPageDirty(page)) {
+ 			if (mapping_cap_account_dirty(mapping)) {
+Date: Mon, 17 Jul 2006 20:33:18 +0200
+From: pzijlstr@redhat.com
+Subject: [RHEL5][PATCH 8/8] mm: tracking shared dirty pages wimp.patch
+
+
+From: Andrew Morton <akpm@osdl.org>
+
+I'm not so sure, and if this is wrong, we wreck an -mm release.  Please don't
+wreck -mm releases.
+
+Cc: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/rmap.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+Index: latest/mm/rmap.c
+===================================================================
+--- latest.orig/mm/rmap.c
++++ latest/mm/rmap.c
+@@ -488,7 +488,7 @@ int page_mkclean(struct page *page)
+ {
+ 	int ret = 0;
+ 
+-	BUG_ON(!PageLocked(page));
++	WARN_ON_ONCE(!PageLocked(page));
+ 
+ 	if (page_mapped(page)) {
+ 		struct address_space *mapping = page_mapping(page);

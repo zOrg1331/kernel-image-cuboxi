@@ -5,13 +5,14 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
-#include <mach/neponset.h>
+#include <asm/arch/neponset.h>
 #include <asm/hardware/sa1111.h>
 
 #include "sa1111_generic.h"
@@ -59,7 +60,7 @@ neponset_pcmcia_configure_socket(struct soc_pcmcia_socket *skt, const socket_sta
 			ncr_set = NCR_A0VPP;
 		else {
 			printk(KERN_ERR "%s(): unrecognized VPP %u\n",
-			       __func__, state->Vpp);
+			       __FUNCTION__, state->Vpp);
 			return -1;
 		}
 		break;
@@ -71,7 +72,7 @@ neponset_pcmcia_configure_socket(struct soc_pcmcia_socket *skt, const socket_sta
 
 		if (state->Vpp != state->Vcc && state->Vpp != 0) {
 			printk(KERN_ERR "%s(): CF slot cannot support VPP %u\n",
-			       __func__, state->Vpp);
+			       __FUNCTION__, state->Vpp);
 			return -1;
 		}
 		break;
@@ -123,7 +124,7 @@ static struct pcmcia_low_level neponset_pcmcia_ops = {
 	.socket_suspend 	= sa1111_pcmcia_socket_suspend,
 };
 
-int pcmcia_neponset_init(struct sa1111_dev *sadev)
+int __init pcmcia_neponset_init(struct sa1111_dev *sadev)
 {
 	int ret = -ENODEV;
 

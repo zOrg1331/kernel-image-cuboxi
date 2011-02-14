@@ -1,0 +1,91 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 29 Jan 2008 17:46:56 -0500
+Subject: [net] e1000e: disable hw crc stripping
+Message-id: 20080129224656.GA25430@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] e1000e: disable hw crc stripping
+Bugzilla: 430722
+
+It appears that this commit:
+
+commit 140a74802894e9db57e5cd77ccff77e590ece5f3
+Author: Auke Kok <auke-jan.h.kok@intel.com>
+Date:   Thu Oct 25 13:57:58 2007 -0700
+
+    e1000e: Re-enable SECRC - crc stripping
+
+    This workaround code performed software stripping instead of the
+    hardware which can do it much faster. None of the e1000e target
+    hardware has issues with this feature and should work fine. This
+    gives us some performance back on receive, and removes some
+    kludging stripping the 4 bytes.
+
+    Signed-off-by: Auke Kok <auke-jan.h.kok@intel.com>
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+isn't working quite as well as Intel hoped.  It was discovered that
+when running a Xen kernel and using bridging they end up 4 bytes larger
+than they should be.  I've confirmed with Intel that there is only a
+performance penalty with this patch, so it seems safe to remove.
+
+Herbert was the one that did the leg work to figure out the e1000e
+update I posted earlier was the problem and that an 'extra' FCS appeared
+on frames coming through the xen bridge.
+
+With that in mind, I tried reverting the above patch, and found it
+resolves our issue on one of the systems in the Westford lab.
+
+This resolves BZ 430722.
+
+Acked-by: "John W. Linville" <linville@redhat.com>
+
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index 9914578..27db90a 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -406,6 +406,10 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
+ 			goto next_desc;
+ 		}
+ 
++		/* adjust length to remove Ethernet CRC */
++		length -= 4;
++
++		/* probably a little skewed due to removing CRC */
+ 		total_rx_bytes += length;
+ 		total_rx_packets++;
+ 
+@@ -699,7 +703,8 @@ static bool e1000_clean_rx_irq_ps(struct e1000_adapter *adapter,
+ 			kunmap_atomic(vaddr, KM_SKB_DATA_SOFTIRQ);
+ 			pci_dma_sync_single_for_device(pdev, ps_page->dma,
+ 				PAGE_SIZE, PCI_DMA_FROMDEVICE);
+-
++			/* remove the CRC */
++			l1 -= 4;
+ 			skb_put(skb, l1);
+ 			goto copydone;
+ 		} /* if */
+@@ -721,6 +726,10 @@ static bool e1000_clean_rx_irq_ps(struct e1000_adapter *adapter,
+ 			skb->truesize += length;
+ 		}
+ 
++		/* strip the ethernet crc, problem is we're using pages now so
++		 * this whole operation can get a little cpu intensive */
++		pskb_trim(skb, skb->len - 4);
++
+ copydone:
+ 		total_rx_bytes += skb->len;
+ 		total_rx_packets++;
+@@ -1764,11 +1773,9 @@ static void e1000_setup_rctl(struct e1000_adapter *adapter)
+ 
+ 		ew32(RFCTL, rfctl);
+ 
+-		/* Enable Packet split descriptors */
+-		rctl |= E1000_RCTL_DTYP_PS;
+-		
+-		/* Enable hardware CRC frame stripping */
+-		rctl |= E1000_RCTL_SECRC;
++		/* disable the stripping of CRC because it breaks
++		 * BMC firmware connected over SMBUS */
++		rctl |= E1000_RCTL_DTYP_PS /* | E1000_RCTL_SECRC */;
+ 
+ 		psrctl |= adapter->rx_ps_bsize0 >>
+ 			E1000_PSRCTL_BSIZE0_SHIFT;

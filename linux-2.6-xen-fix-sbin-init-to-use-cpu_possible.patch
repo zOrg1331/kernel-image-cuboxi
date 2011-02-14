@@ -1,0 +1,47 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Mon, 28 Jan 2008 11:29:00 -0500
+Subject: [xen] fix /sbin/init to use cpu_possible
+Message-id: 479E02CC.40804@redhat.com
+O-Subject: [RHEL5.2 PATCH]: Fix /sbin/init to use cpu_possible
+Bugzilla: 430310
+
+All,
+     Attached is a patch to fix BZ 430310.  Back in October, a patch to force
+/sbin/init off of isolated cpus was posted/merged:
+
+http://post-office.corp.redhat.com/archives/rhkernel-list/2007-October/msg00248.html
+
+However, this patch causes problems in paravirtualized SMP Xen guests.  The
+problem boils down to the use of cpu_online_map to determine the
+non_isolated_cpus; Xen PV guests technically start up UP, and then hotplug the
+processors in.  However, this happens *after* the sched_init_smp() has forced
+/sbin/init onto processor 0 only, which means that all further processes will be
+on 0 unless you explicitly taskset them.  Upstream Linux has already fixed this
+here by using cpu_possible_map instead of cpu_online_map:
+
+http://git2.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=e5e5673f828623e58a401862b33173591faaeaff
+
+The attached patch is just a simple re-diff of this patch, and fixes the issue
+in my testing and Barry Marson's performance testing.
+
+Please review and ACK.
+
+Chris Lalancette
+
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 293db1f..0d71173 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -6760,7 +6760,7 @@ void __init sched_init_smp(void)
+ 
+ 	lock_cpu_hotplug();
+ 	arch_init_sched_domains(&cpu_online_map);
+-	cpus_andnot(non_isolated_cpus, cpu_online_map, cpu_isolated_map);
++	cpus_andnot(non_isolated_cpus, cpu_possible_map, cpu_isolated_map);
+ 	if (cpus_empty(non_isolated_cpus))
+ 		cpu_set(smp_processor_id(), non_isolated_cpus);
+ 	unlock_cpu_hotplug();

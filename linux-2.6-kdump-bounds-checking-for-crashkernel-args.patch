@@ -1,0 +1,151 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5 PATCH]: Simple bounds checking for crashkernel args
+Date: Mon, 15 Jan 2007 09:49:13 -0500
+Bugzilla: 222314
+Message-Id: <45AB9469.6070905@redhat.com>
+Changelog: [kdump]: Simple bounds checking for crashkernel args
+
+Sanity check memory ranges for crash kernel on x86_64 and i386.
+
+Sanity check must be performed during bootmem allocation.
+
+Resolves BZ 222314 (which is only for i386, but effects x86_64 as well.  The
+other archs already have simple error checking in place ...)
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+
+diff -urNp linux-2.6.18.orig/arch/i386/kernel/setup.c linux-2.6.18/arch/i386/kernel/setup.c
+--- linux-2.6.18.orig/arch/i386/kernel/setup.c	2007-01-15 09:56:55.000000000 -0500
++++ linux-2.6.18/arch/i386/kernel/setup.c	2007-01-15 10:07:10.000000000 -0500
+@@ -885,9 +885,6 @@ static void __init parse_cmdline_early (
+ 			size = memparse(from+12, &from);
+ 			if (*from == '@') {
+ 				base = memparse(from+1, &from);
+-				/* FIXME: Do I want a sanity check
+-				 * to validate the memory range?
+-				 */
+ 				crashk_res.start = base;
+ 				crashk_res.end   = base + size - 1;
+ 			}
+@@ -1277,9 +1274,18 @@ void __init setup_bootmem_allocator(void
+ 	}
+ #endif
+ #ifdef CONFIG_KEXEC
+-	if (crashk_res.start != crashk_res.end)
++	if ((crashk_res.start < crashk_res.end) &&
++	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem(crashk_res.start,
+-			crashk_res.end - crashk_res.start + 1);
++				crashk_res.end - crashk_res.start + 1);
++	}
++	else {
++		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
++		       "within permissible range\ndisabling kdump\n",
++		       crashk_res.start, crashk_res.end);
++		crashk_res.end = 0;
++		crashk_res.start = 0;
++	}
+ #endif
+ }
+ 
+diff -urNp linux-2.6.18.orig/arch/i386/kernel/setup-xen.c linux-2.6.18/arch/i386/kernel/setup-xen.c
+--- linux-2.6.18.orig/arch/i386/kernel/setup-xen.c	2007-01-15 09:56:55.000000000 -0500
++++ linux-2.6.18/arch/i386/kernel/setup-xen.c	2007-01-15 10:07:33.000000000 -0500
+@@ -938,9 +938,6 @@ static void __init parse_cmdline_early (
+ 			size = memparse(from+12, &from);
+ 			if (*from == '@') {
+ 				base = memparse(from+1, &from);
+-				/* FIXME: Do I want a sanity check
+-				 * to validate the memory range?
+-				 */
+ 				crashk_res.start = base;
+ 				crashk_res.end   = base + size - 1;
+ 			}
+@@ -1345,9 +1342,18 @@ void __init setup_bootmem_allocator(void
+ 	}
+ #endif
+ #ifdef CONFIG_KEXEC
+-	if (crashk_res.start != crashk_res.end)
++	if ((crashk_res.start < crashk_res.end) &&
++	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem(crashk_res.start,
+-			crashk_res.end - crashk_res.start + 1);
++				crashk_res.end - crashk_res.start + 1);
++	}
++	else {
++		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
++		       "within permissible range\ndisabling kdump\n",
++		       crashk_res.start, crashk_res.end);
++		crashk_res.end = 0;
++		crashk_res.start = 0;
++	}
+ #endif
+ 
+ 	if (!xen_feature(XENFEAT_auto_translated_physmap))
+diff -urNp linux-2.6.18.orig/arch/x86_64/kernel/setup.c linux-2.6.18/arch/x86_64/kernel/setup.c
+--- linux-2.6.18.orig/arch/x86_64/kernel/setup.c	2007-01-15 09:56:54.000000000 -0500
++++ linux-2.6.18/arch/x86_64/kernel/setup.c	2007-01-15 10:10:02.000000000 -0500
+@@ -416,9 +416,6 @@ static __init void parse_cmdline_early (
+ 			size = memparse(from+12, &from);
+ 			if (*from == '@') {
+ 				base = memparse(from+1, &from);
+-				/* FIXME: Do I want a sanity check
+-				 * to validate the memory range?
+-				 */
+ 				crashk_res.start = base;
+ 				crashk_res.end   = base + size - 1;
+ 			}
+@@ -643,9 +640,17 @@ void __init setup_arch(char **cmdline_p)
+ 	}
+ #endif
+ #ifdef CONFIG_KEXEC
+-	if (crashk_res.start != crashk_res.end) {
++	if ((crashk_res.start < crashk_res.end) &&
++	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem_generic(crashk_res.start,
+-			crashk_res.end - crashk_res.start + 1);
++					crashk_res.end - crashk_res.start + 1);
++	}
++	else {
++		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
++		       "within permissible range\ndisabling kdump\n",
++		       crashk_res.start, crashk_res.end);
++		crashk_res.end = 0;
++		crashk_res.start = 0;
+ 	}
+ #endif
+ 
+diff -urNp linux-2.6.18.orig/arch/x86_64/kernel/setup-xen.c linux-2.6.18/arch/x86_64/kernel/setup-xen.c
+--- linux-2.6.18.orig/arch/x86_64/kernel/setup-xen.c	2007-01-15 09:56:54.000000000 -0500
++++ linux-2.6.18/arch/x86_64/kernel/setup-xen.c	2007-01-15 10:08:09.000000000 -0500
+@@ -468,9 +468,6 @@ static __init void parse_cmdline_early (
+ 			size = memparse(from+12, &from);
+ 			if (*from == '@') {
+ 				base = memparse(from+1, &from);
+-				/* FIXME: Do I want a sanity check
+-				 * to validate the memory range?
+-				 */
+ 				crashk_res.start = base;
+ 				crashk_res.end   = base + size - 1;
+ 			}
+@@ -761,9 +758,17 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ #endif	/* !CONFIG_XEN */
+ #ifdef CONFIG_KEXEC
+-	if (crashk_res.start != crashk_res.end) {
++	if ((crashk_res.start < crashk_res.end) &&
++	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem_generic(crashk_res.start,
+-			crashk_res.end - crashk_res.start + 1);
++					crashk_res.end - crashk_res.start + 1);
++	}
++	else {
++		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
++		       "within permissible range\ndisabling kdump\n",
++		       crashk_res.start, crashk_res.end);
++		crashk_res.end = 0;
++		crashk_res.start = 0;
+ 	}
+ #endif
+ 
+

@@ -1,0 +1,44 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Tue, 2 Feb 2010 08:12:26 -0500
+Subject: [net] igb: fix warning in igb_ethtool.c
+Message-id: <4B67DE6A.7030700@redhat.com>
+Patchwork-id: 23085
+O-Subject: [RHEL 5.5 PATCH] igb: fix warning in
+	drivers/net/igb/igb_ethtool.c:2090
+Bugzilla: 561076
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla 561076
+
+Description:
+Fix the following warning
+  CC [M]  drivers/net/igb/igb_ethtool.o
+drivers/net/igb/igb_ethtool.c: In function igb_set_ethtool_ops:
+drivers/net/igb/igb_ethtool.c:2090: warning: assignment discards qualifiers from pointer target type
+
+Upstream Status:
+no upstream, warning introduced during the igb 5.5 update.
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2237157
+
+Test Status:
+Tested-by: Stefan Assmann <sassmann@redhat.com>
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_ethtool.c b/drivers/net/igb/igb_ethtool.c
+index 2286e98..4b5c78a 100644
+--- a/drivers/net/igb/igb_ethtool.c
++++ b/drivers/net/igb/igb_ethtool.c
+@@ -2049,7 +2049,7 @@ static void igb_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
+ 	}
+ }
+ 
+-static const struct ethtool_ops igb_ethtool_ops = {
++static struct ethtool_ops igb_ethtool_ops = {
+ 	.get_settings           = igb_get_settings,
+ 	.set_settings           = igb_set_settings,
+ 	.get_drvinfo            = igb_get_drvinfo,

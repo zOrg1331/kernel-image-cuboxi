@@ -1,0 +1,85 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH RHEL5.1] fix time going backwards in Xen gettimeofday
+Date: Thu, 12 Jul 2007 16:25:08 -0400
+Bugzilla: 245761
+Message-Id: <46968E24.6070006@redhat.com>
+Changelog: [XEN] fix time going backwards in gettimeofday
+
+
+The attached patch is a simple fix to make sure gettimeofday in
+x86 and x86-64 Xen is monotonically increasing.  x86-64 is fixed
+because it also compiles the arch/i386 file through Makefile
+magic.
+
+This patch is in the upstream Xen codebase.
+
+Fixes bug 245761
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1182263776 -3600
+# Node ID 87bb8705768a66ceabb15a419c5f86580bffb6bf
+# Parent a413dd61e7e5e1bba11bab447184cf5e6b43513a
+x86 time: Ensure gettimeofday() is monotonically increasing.
+Signed-off-by: Atsushi SAKAI <sakaia@jp.fujitsu.com>
+
+--- a/arch/i386/kernel/time-xen.c	Fri Jun 15 13:33:47 2007 -0600
++++ b/arch/i386/kernel/time-xen.c	Tue Jun 19 15:36:16 2007 +0100
+@@ -113,6 +113,9 @@ static struct timespec shadow_tv;
+ static struct timespec shadow_tv;
+ static u32 shadow_tv_version;
+ 
++static struct timeval monotonic_tv;
++static spinlock_t monotonic_lock = SPIN_LOCK_UNLOCKED;
++
+ /* Keep track of last time we did processing/updating of jiffies and xtime. */
+ static u64 processed_system_time;   /* System time (ns) at last processing. */
+ static DEFINE_PER_CPU(u64, processed_system_time);
+@@ -363,6 +366,7 @@ void do_gettimeofday(struct timeval *tv)
+ 	unsigned long seq;
+ 	unsigned long usec, sec;
+ 	unsigned long max_ntp_tick;
++	unsigned long flags;
+ 	s64 nsec;
+ 	unsigned int cpu;
+ 	struct shadow_time_info *shadow;
+@@ -423,6 +427,18 @@ void do_gettimeofday(struct timeval *tv)
+ 		sec++;
+ 	}
+ 
++	spin_lock_irqsave(&monotonic_lock, flags);
++	if ((sec > monotonic_tv.tv_sec) ||
++	    ((sec == monotonic_tv.tv_sec) && (usec > monotonic_tv.tv_usec)))
++	{
++		monotonic_tv.tv_sec = sec;
++		monotonic_tv.tv_usec = usec;
++	} else {
++		sec = monotonic_tv.tv_sec;
++		usec = monotonic_tv.tv_usec;
++	}
++	spin_unlock_irqrestore(&monotonic_lock, flags);
++
+ 	tv->tv_sec = sec;
+ 	tv->tv_usec = usec;
+ }
+@@ -471,6 +487,12 @@ int do_settimeofday(struct timespec *tv)
+ 		__normalize_time(&sec, &nsec);
+ 		__update_wallclock(sec, nsec);
+ 	}
++
++	/* Reset monotonic gettimeofday() timeval. */
++	spin_lock(&monotonic_lock);
++	monotonic_tv.tv_sec = 0;
++	monotonic_tv.tv_usec = 0;
++	spin_unlock(&monotonic_lock);
+ 
+ 	write_sequnlock_irq(&xtime_lock);
+ 
+
+

@@ -1,0 +1,829 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 Aug 2008 10:18:39 +1000
+Subject: [CRYPTO] rng: RNG interface and implementation
+Message-id: E1KY8kB-0002I0-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 17/19] crypto: rng - RNG interface and implementation
+Bugzilla: 446526
+
+RHEL5 bugzilla #446526
+
+crypto: rng - RNG interface and implementation
+
+This patch adds a random number generator interface as well as a
+cryptographic pseudo-random number generator based on AES.  It is
+meant to be used in cases where a deterministic CPRNG is required.
+
+One of the first applications will be as an input in the IPsec IV
+generation process.
+
+Signed-off-by: Neil Horman <nhorman@tuxdriver.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/crypto/Kconfig b/crypto/Kconfig
+index 499e1db..45f196b 100644
+--- a/crypto/Kconfig
++++ b/crypto/Kconfig
+@@ -55,6 +55,10 @@ config CRYPTO_HASH
+ 	depends on CRYPTO
+ 	select CRYPTO_ALGAPI
+ 
++config CRYPTO_RNG
++	tristate
++	select CRYPTO_ALGAPI
++
+ config CRYPTO_MANAGER
+ 	tristate "Cryptographic algorithm manager"
+ 	depends on CRYPTO
+@@ -506,6 +510,18 @@ config S390_PRNG
+           ANSI X9.17 standard. The PRNG is usable via the char device
+           /dev/prandom.
+ 
++comment "Random Number Generation"
++
++config CRYPTO_ANSI_CPRNG
++	tristate "Pseudo Random Number Generation for Cryptographic modules"
++	select CRYPTO_AES
++	select CRYPTO_RNG
++	select CRYPTO_FIPS
++	help
++	  This option enables the generic pseudo random number generator
++	  for cryptographic modules.  Uses the Algorithm specified in
++	  ANSI X9.31 A.2.4
++
+ source "drivers/crypto/Kconfig"
+ endmenu
+ 
+diff --git a/crypto/Makefile b/crypto/Makefile
+index 9ec2d1b..70ab0a7 100644
+--- a/crypto/Makefile
++++ b/crypto/Makefile
+@@ -58,7 +58,9 @@ obj-$(CONFIG_CRYPTO_DEFLATE) += deflate.o
+ obj-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
+ obj-$(CONFIG_CRYPTO_CRC32C) += crc32c.o
+ obj-$(CONFIG_CRYPTO_AUTHENC) += authenc.o
+-
++obj-$(CONFIG_CRYPTO_RNG) += rng.o
++obj-$(CONFIG_CRYPTO_RNG) += krng.o
++obj-$(CONFIG_CRYPTO_ANSI_CPRNG) += ansi_cprng.o
+ obj-$(CONFIG_CRYPTO_TEST) += tcrypt.o
+ 
+ obj-$(CONFIG_CRYPTO_SIGNATURE) += signature/
+diff --git a/crypto/ansi_cprng.c b/crypto/ansi_cprng.c
+new file mode 100644
+index 0000000..4efa632
+--- /dev/null
++++ b/crypto/ansi_cprng.c
+@@ -0,0 +1,415 @@
++/*
++ * PRNG: Pseudo Random Number Generator
++ *       Based on NIST Recommended PRNG From ANSI X9.31 Appendix A.2.4 using
++ *       AES 128 cipher
++ *
++ *  (C) Neil Horman <nhorman@tuxdriver.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License as published by the
++ *  Free Software Foundation; either version 2 of the License, or (at your
++ *  any later version.
++ *
++ *
++ */
++
++#include <crypto/internal/rng.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/string.h>
++
++#include "ninternal.h"
++
++#define DEFAULT_PRNG_KEY "0123456789abcdef"
++#define DEFAULT_PRNG_KSZ 16
++#define DEFAULT_BLK_SZ 16
++#define DEFAULT_V_SEED "zaybxcwdveuftgsh"
++
++/*
++ * Flags for the prng_context flags field
++ */
++
++#define PRNG_FIXED_SIZE 0x1
++#define PRNG_NEED_RESET 0x2
++
++/*
++ * Note: DT is our counter value
++ *	 I is our intermediate value
++ *	 V is our seed vector
++ * See http://csrc.nist.gov/groups/STM/cavp/documents/rng/931rngext.pdf
++ * for implementation details
++ */
++
++
++struct prng_context {
++	spinlock_t prng_lock;
++	unsigned char rand_data[DEFAULT_BLK_SZ];
++	unsigned char last_rand_data[DEFAULT_BLK_SZ];
++	unsigned char DT[DEFAULT_BLK_SZ];
++	unsigned char I[DEFAULT_BLK_SZ];
++	unsigned char V[DEFAULT_BLK_SZ];
++	u32 rand_data_valid;
++	struct crypto_cipher *tfm;
++	u32 flags;
++};
++
++static int dbg;
++
++static void hexdump(char *note, unsigned char *buf, unsigned int len)
++{
++	if (dbg) {
++		printk(KERN_CRIT "%s", note);
++		print_hex_dump("", "", DUMP_PREFIX_OFFSET,
++				16, 1,
++				buf, len, false);
++	}
++}
++
++#define dbgprint(format, args...) do {\
++if (dbg)\
++	printk(format, ##args);\
++} while (0)
++
++static void xor_vectors(unsigned char *in1, unsigned char *in2,
++			unsigned char *out, unsigned int size)
++{
++	int i;
++
++	for (i = 0; i < size; i++)
++		out[i] = in1[i] ^ in2[i];
++
++}
++/*
++ * Returns DEFAULT_BLK_SZ bytes of random data per call
++ * returns 0 if generation succeded, <0 if something went wrong
++ */
++static int _get_more_prng_bytes(struct prng_context *ctx)
++{
++	int i;
++	unsigned char tmp[DEFAULT_BLK_SZ];
++	unsigned char *output = NULL;
++
++
++	dbgprint(KERN_CRIT "Calling _get_more_prng_bytes for context %p\n",
++		ctx);
++
++	hexdump("Input DT: ", ctx->DT, DEFAULT_BLK_SZ);
++	hexdump("Input I: ", ctx->I, DEFAULT_BLK_SZ);
++	hexdump("Input V: ", ctx->V, DEFAULT_BLK_SZ);
++
++	/*
++	 * This algorithm is a 3 stage state machine
++	 */
++	for (i = 0; i < 3; i++) {
++
++		switch (i) {
++		case 0:
++			/*
++			 * Start by encrypting the counter value
++			 * This gives us an intermediate value I
++			 */
++			memcpy(tmp, ctx->DT, DEFAULT_BLK_SZ);
++			output = ctx->I;
++			hexdump("tmp stage 0: ", tmp, DEFAULT_BLK_SZ);
++			break;
++		case 1:
++
++			/*
++			 * Next xor I with our secret vector V
++			 * encrypt that result to obtain our
++			 * pseudo random data which we output
++			 */
++			xor_vectors(ctx->I, ctx->V, tmp, DEFAULT_BLK_SZ);
++			hexdump("tmp stage 1: ", tmp, DEFAULT_BLK_SZ);
++			output = ctx->rand_data;
++			break;
++		case 2:
++			/*
++			 * First check that we didn't produce the same
++			 * random data that we did last time around through this
++			 */
++			if (!memcmp(ctx->rand_data, ctx->last_rand_data,
++					DEFAULT_BLK_SZ)) {
++				printk(KERN_ERR
++					"ctx %p Failed repetition check!\n",
++					ctx);
++				ctx->flags |= PRNG_NEED_RESET;
++				return -EINVAL;
++			}
++			memcpy(ctx->last_rand_data, ctx->rand_data,
++				DEFAULT_BLK_SZ);
++
++			/*
++			 * Lastly xor the random data with I
++			 * and encrypt that to obtain a new secret vector V
++			 */
++			xor_vectors(ctx->rand_data, ctx->I, tmp,
++				DEFAULT_BLK_SZ);
++			output = ctx->V;
++			hexdump("tmp stage 2: ", tmp, DEFAULT_BLK_SZ);
++			break;
++		}
++
++
++		/* do the encryption */
++		crypto_cipher_encrypt_one(ctx->tfm, output, tmp);
++
++	}
++
++	/*
++	 * Now update our DT value
++	 */
++	for (i = 0; i < DEFAULT_BLK_SZ; i++) {
++		ctx->DT[i] += 1;
++		if (ctx->DT[i] != 0)
++			break;
++	}
++
++	dbgprint("Returning new block for context %p\n", ctx);
++	ctx->rand_data_valid = 0;
++
++	hexdump("Output DT: ", ctx->DT, DEFAULT_BLK_SZ);
++	hexdump("Output I: ", ctx->I, DEFAULT_BLK_SZ);
++	hexdump("Output V: ", ctx->V, DEFAULT_BLK_SZ);
++	hexdump("New Random Data: ", ctx->rand_data, DEFAULT_BLK_SZ);
++
++	return 0;
++}
++
++/* Our exported functions */
++static int get_prng_bytes(char *buf, size_t nbytes, struct prng_context *ctx)
++{
++	unsigned long flags;
++	unsigned char *ptr = buf;
++	unsigned int byte_count = (unsigned int)nbytes;
++	int err;
++
++
++	if (nbytes < 0)
++		return -EINVAL;
++
++	spin_lock_irqsave(&ctx->prng_lock, flags);
++
++	err = -EINVAL;
++	if (ctx->flags & PRNG_NEED_RESET)
++		goto done;
++
++	/*
++	 * If the FIXED_SIZE flag is on, only return whole blocks of
++	 * pseudo random data
++	 */
++	err = -EINVAL;
++	if (ctx->flags & PRNG_FIXED_SIZE) {
++		if (nbytes < DEFAULT_BLK_SZ)
++			goto done;
++		byte_count = DEFAULT_BLK_SZ;
++	}
++
++	err = byte_count;
++
++	dbgprint(KERN_CRIT "getting %d random bytes for context %p\n",
++		byte_count, ctx);
++
++
++remainder:
++	if (ctx->rand_data_valid == DEFAULT_BLK_SZ) {
++		if (_get_more_prng_bytes(ctx) < 0) {
++			memset(buf, 0, nbytes);
++			err = -EINVAL;
++			goto done;
++		}
++	}
++
++	/*
++	 * Copy up to the next whole block size
++	 */
++	if (byte_count < DEFAULT_BLK_SZ) {
++		for (; ctx->rand_data_valid < DEFAULT_BLK_SZ;
++			ctx->rand_data_valid++) {
++			*ptr = ctx->rand_data[ctx->rand_data_valid];
++			ptr++;
++			byte_count--;
++			if (byte_count == 0)
++				goto done;
++		}
++	}
++
++	/*
++	 * Now copy whole blocks
++	 */
++	for (; byte_count >= DEFAULT_BLK_SZ; byte_count -= DEFAULT_BLK_SZ) {
++		if (_get_more_prng_bytes(ctx) < 0) {
++			memset(buf, 0, nbytes);
++			err = -EINVAL;
++			goto done;
++		}
++		memcpy(ptr, ctx->rand_data, DEFAULT_BLK_SZ);
++		ctx->rand_data_valid += DEFAULT_BLK_SZ;
++		ptr += DEFAULT_BLK_SZ;
++	}
++
++	/*
++	 * Now copy any extra partial data
++	 */
++	if (byte_count)
++		goto remainder;
++
++done:
++	spin_unlock_irqrestore(&ctx->prng_lock, flags);
++	dbgprint(KERN_CRIT "returning %d from get_prng_bytes in context %p\n",
++		err, ctx);
++	return err;
++}
++
++static void free_prng_context(struct prng_context *ctx)
++{
++	crypto_free_cipher(ctx->tfm);
++}
++
++static int reset_prng_context(struct prng_context *ctx,
++			      unsigned char *key, size_t klen,
++			      unsigned char *V, unsigned char *DT)
++{
++	int ret;
++	int rc = -EINVAL;
++	unsigned char *prng_key;
++
++	spin_lock(&ctx->prng_lock);
++	ctx->flags |= PRNG_NEED_RESET;
++
++	prng_key = (key != NULL) ? key : (unsigned char *)DEFAULT_PRNG_KEY;
++
++	if (!key)
++		klen = DEFAULT_PRNG_KSZ;
++
++	if (V)
++		memcpy(ctx->V, V, DEFAULT_BLK_SZ);
++	else
++		memcpy(ctx->V, DEFAULT_V_SEED, DEFAULT_BLK_SZ);
++
++	if (DT)
++		memcpy(ctx->DT, DT, DEFAULT_BLK_SZ);
++	else
++		memset(ctx->DT, 0, DEFAULT_BLK_SZ);
++
++	memset(ctx->rand_data, 0, DEFAULT_BLK_SZ);
++	memset(ctx->last_rand_data, 0, DEFAULT_BLK_SZ);
++
++	if (ctx->tfm)
++		crypto_free_cipher(ctx->tfm);
++
++	ctx->tfm = crypto_alloc_cipher("aes", 0, 0);
++	if (IS_ERR(ctx->tfm)) {
++		dbgprint(KERN_CRIT "Failed to alloc tfm for context %p\n",
++			ctx);
++		ctx->tfm = NULL;
++		goto out;
++	}
++
++	ctx->rand_data_valid = DEFAULT_BLK_SZ;
++
++	ret = crypto_cipher_setkey(ctx->tfm, prng_key, klen);
++	if (ret) {
++		dbgprint(KERN_CRIT "PRNG: setkey() failed flags=%x\n",
++			crypto_cipher_get_flags(ctx->tfm));
++		crypto_free_cipher(ctx->tfm);
++		goto out;
++	}
++
++	rc = 0;
++	ctx->flags &= ~PRNG_NEED_RESET;
++out:
++	spin_unlock(&ctx->prng_lock);
++
++	return rc;
++
++}
++
++static int cprng_init(struct ncrypto_tfm *tfm)
++{
++	struct prng_context *ctx = ncrypto_tfm_ctx(tfm);
++
++	spin_lock_init(&ctx->prng_lock);
++
++	return reset_prng_context(ctx, NULL, DEFAULT_PRNG_KSZ, NULL, NULL);
++}
++
++static void cprng_exit(struct ncrypto_tfm *tfm)
++{
++	free_prng_context(ncrypto_tfm_ctx(tfm));
++}
++
++static int cprng_get_random(struct crypto_rng *tfm, u8 *rdata,
++			    unsigned int dlen)
++{
++	struct prng_context *prng = crypto_rng_ctx(tfm);
++
++	return get_prng_bytes(rdata, dlen, prng);
++}
++
++static int cprng_reset(struct crypto_rng *tfm, u8 *seed, unsigned int slen)
++{
++	struct prng_context *prng = crypto_rng_ctx(tfm);
++	u8 *key = seed + DEFAULT_PRNG_KSZ;
++
++	if (slen < DEFAULT_PRNG_KSZ + DEFAULT_BLK_SZ)
++		return -EINVAL;
++
++	reset_prng_context(prng, key, DEFAULT_PRNG_KSZ, seed, NULL);
++
++	if (prng->flags & PRNG_NEED_RESET)
++		return -EINVAL;
++	return 0;
++}
++
++static struct ncrypto_alg rng_alg = {
++	.cra_name		= "stdrng",
++	.cra_driver_name	= "ansi_cprng",
++	.cra_priority		= 100,
++	.cra_flags		= NCRYPTO_ALG_TYPE_RNG,
++	.cra_ctxsize		= sizeof(struct prng_context),
++	.cra_type		= &crypto_rng_type,
++	.cra_module		= THIS_MODULE,
++	.cra_list		= LIST_HEAD_INIT(rng_alg.cra_list),
++	.cra_init		= cprng_init,
++	.cra_exit		= cprng_exit,
++};
++
++
++/* Module initalization */
++static int __init prng_mod_init(void)
++{
++	struct rng_alg *alg = (struct rng_alg *)&rng_alg.cra_u;
++	int ret = 0;
++
++	if (fips_enabled)
++		rng_alg.cra_priority += 200;
++
++	alg->rng_make_random = cprng_get_random;
++	alg->rng_reset = cprng_reset;
++	alg->seedsize = DEFAULT_PRNG_KSZ + DEFAULT_BLK_SZ;
++
++	ret = ncrypto_register_alg(&rng_alg);
++
++	if (ret)
++		goto out;
++out:
++	return 0;
++}
++
++static void __exit prng_mod_fini(void)
++{
++	ncrypto_unregister_alg(&rng_alg);
++	return;
++}
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Software Pseudo Random Number Generator");
++MODULE_AUTHOR("Neil Horman <nhorman@tuxdriver.com>");
++module_param(dbg, int, 0);
++MODULE_PARM_DESC(dbg, "Boolean to enable debugging (0/1 == off/on)");
++module_init(prng_mod_init);
++module_exit(prng_mod_fini);
++MODULE_ALIAS("stdrng");
+diff --git a/crypto/krng.c b/crypto/krng.c
+new file mode 100644
+index 0000000..45d1c0b
+--- /dev/null
++++ b/crypto/krng.c
+@@ -0,0 +1,64 @@
++/*
++ * RNG implementation using standard kernel RNG.
++ *
++ * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2 of the License, or (at your
++ * any later version.
++ *
++ */
++
++#include <crypto/internal/rng.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/random.h>
++
++static int krng_get_random(struct crypto_rng *tfm, u8 *rdata, unsigned int dlen)
++{
++	get_random_bytes(rdata, dlen);
++	return 0;
++}
++
++static int krng_reset(struct crypto_rng *tfm, u8 *seed, unsigned int slen)
++{
++	return 0;
++}
++
++static struct ncrypto_alg krng_alg = {
++	.cra_name		= "stdrng",
++	.cra_driver_name	= "krng",
++	.cra_priority		= 200,
++	.cra_flags		= NCRYPTO_ALG_TYPE_RNG,
++	.cra_ctxsize		= 0,
++	.cra_type		= &crypto_rng_type,
++	.cra_module		= THIS_MODULE,
++	.cra_list		= LIST_HEAD_INIT(krng_alg.cra_list),
++};
++
++
++/* Module initalization */
++static int __init krng_mod_init(void)
++{
++	struct rng_alg *alg = (struct rng_alg *)&krng_alg.cra_u;
++
++	alg->rng_make_random = krng_get_random;
++	alg->rng_reset = krng_reset;
++
++	return ncrypto_register_alg(&krng_alg);
++}
++
++static void __exit krng_mod_fini(void)
++{
++	ncrypto_unregister_alg(&krng_alg);
++	return;
++}
++
++module_init(krng_mod_init);
++module_exit(krng_mod_fini);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Kernel Random Number Generator");
++MODULE_ALIAS("stdrng");
+diff --git a/crypto/rng.c b/crypto/rng.c
+new file mode 100644
+index 0000000..de82046
+--- /dev/null
++++ b/crypto/rng.c
+@@ -0,0 +1,127 @@
++/*
++ * Cryptographic API.
++ *
++ * RNG operations.
++ *
++ * Copyright (c) 2008 Neil Horman <nhorman@tuxdriver.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#include <asm/atomic.h>
++#include <crypto/internal/rng.h>
++#include <linux/err.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/random.h>
++#include <linux/seq_file.h>
++#include <linux/string.h>
++
++static DEFINE_MUTEX(crypto_default_rng_lock);
++struct crypto_rng *crypto_default_rng;
++EXPORT_SYMBOL_GPL(crypto_default_rng);
++static int crypto_default_rng_refcnt;
++
++static int rngapi_reset(struct crypto_rng *tfm, u8 *seed, unsigned int slen)
++{
++	u8 *buf = NULL;
++	int err;
++
++	if (!seed && slen) {
++		buf = kmalloc(slen, GFP_KERNEL);
++		if (!buf)
++			return -ENOMEM;
++
++		get_random_bytes(buf, slen);
++		seed = buf;
++	}
++
++	err = crypto_rng_alg(tfm)->rng_reset(tfm, seed, slen);
++
++	kfree(buf);
++	return err;
++}
++
++static int crypto_init_rng_ops(struct ncrypto_tfm *tfm, u32 type, u32 mask)
++{
++	struct rng_alg *alg = (struct rng_alg *)&tfm->__crt_alg->cra_u;
++	struct rng_tfm *ops = (struct rng_tfm *)&tfm->crt_u;
++
++	ops->rng_gen_random = alg->rng_make_random;
++	ops->rng_reset = rngapi_reset;
++
++	return 0;
++}
++
++static void crypto_rng_show(struct seq_file *m, struct ncrypto_alg *alg)
++	__attribute__ ((unused));
++static void crypto_rng_show(struct seq_file *m, struct ncrypto_alg *alg)
++{
++	seq_printf(m, "type         : rng\n");
++	seq_printf(m, "seedsize     : %u\n",
++		   ((struct rng_alg *)&alg->cra_u)->seedsize);
++}
++
++static unsigned int crypto_rng_ctxsize(struct ncrypto_alg *alg, u32 type,
++				       u32 mask)
++{
++	return alg->cra_ctxsize;
++}
++
++const struct crypto_type crypto_rng_type = {
++	.ctxsize = crypto_rng_ctxsize,
++	.init = crypto_init_rng_ops,
++#ifdef CONFIG_PROC_FS
++	.show = crypto_rng_show,
++#endif
++};
++EXPORT_SYMBOL_GPL(crypto_rng_type);
++
++int crypto_get_default_rng(void)
++{
++	struct crypto_rng *rng;
++	int err;
++
++	mutex_lock(&crypto_default_rng_lock);
++	if (!crypto_default_rng) {
++		rng = crypto_alloc_rng("stdrng", 0, 0);
++		err = PTR_ERR(rng);
++		if (IS_ERR(rng))
++			goto unlock;
++
++		err = crypto_rng_reset(rng, NULL, crypto_rng_seedsize(rng));
++		if (err) {
++			crypto_free_rng(rng);
++			goto unlock;
++		}
++
++		crypto_default_rng = rng;
++	}
++
++	crypto_default_rng_refcnt++;
++	err = 0;
++
++unlock:
++	mutex_unlock(&crypto_default_rng_lock);
++
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_get_default_rng);
++
++void crypto_put_default_rng(void)
++{
++	mutex_lock(&crypto_default_rng_lock);
++	if (!--crypto_default_rng_refcnt) {
++		crypto_free_rng(crypto_default_rng);
++		crypto_default_rng = NULL;
++	}
++	mutex_unlock(&crypto_default_rng_lock);
++}
++EXPORT_SYMBOL_GPL(crypto_put_default_rng);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Random Number Genertor");
+diff --git a/include/crypto/internal/rng.h b/include/crypto/internal/rng.h
+new file mode 100644
+index 0000000..2b687d1
+--- /dev/null
++++ b/include/crypto/internal/rng.h
+@@ -0,0 +1,26 @@
++/*
++ * RNG: Random Number Generator  algorithms under the crypto API
++ *
++ * Copyright (c) 2008 Neil Horman <nhorman@tuxdriver.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#ifndef _CRYPTO_INTERNAL_RNG_H
++#define _CRYPTO_INTERNAL_RNG_H
++
++#include <crypto/algapi.h>
++#include <crypto/rng.h>
++
++extern const struct crypto_type crypto_rng_type;
++
++static inline void *crypto_rng_ctx(struct crypto_rng *tfm)
++{
++	return ncrypto_tfm_ctx(&tfm->base);
++}
++
++#endif
+diff --git a/include/crypto/rng.h b/include/crypto/rng.h
+new file mode 100644
+index 0000000..8edc163
+--- /dev/null
++++ b/include/crypto/rng.h
+@@ -0,0 +1,97 @@
++/*
++ * RNG: Random Number Generator  algorithms under the crypto API
++ *
++ * Copyright (c) 2008 Neil Horman <nhorman@tuxdriver.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#ifndef _CRYPTO_RNG_H
++#define _CRYPTO_RNG_H
++
++#include <linux/crypto.h>
++
++#define NCRYPTO_ALG_TYPE_RNG		0x0000000c
++
++struct crypto_rng;
++
++struct rng_alg {
++	int (*rng_make_random)(struct crypto_rng *tfm, u8 *rdata,
++			       unsigned int dlen);
++	int (*rng_reset)(struct crypto_rng *tfm, u8 *seed, unsigned int slen);
++
++	unsigned int seedsize;
++};
++
++struct rng_tfm {
++	int (*rng_gen_random)(struct crypto_rng *tfm, u8 *rdata,
++			      unsigned int dlen);
++	int (*rng_reset)(struct crypto_rng *tfm, u8 *seed, unsigned int slen);
++};
++
++struct crypto_rng {
++	struct ncrypto_tfm base;
++};
++
++extern struct crypto_rng *crypto_default_rng;
++
++int crypto_get_default_rng(void);
++void crypto_put_default_rng(void);
++
++static inline struct crypto_rng *__crypto_rng_cast(struct ncrypto_tfm *tfm)
++{
++	return (struct crypto_rng *)tfm;
++}
++
++static inline struct crypto_rng *crypto_alloc_rng(const char *alg_name,
++						  u32 type, u32 mask)
++{
++	type &= ~NCRYPTO_ALG_TYPE_MASK;
++	type |= NCRYPTO_ALG_TYPE_RNG;
++	mask |= NCRYPTO_ALG_TYPE_MASK;
++
++	return __crypto_rng_cast(crypto_alloc_base(alg_name, type, mask));
++}
++
++static inline struct ncrypto_tfm *crypto_rng_tfm(struct crypto_rng *tfm)
++{
++	return &tfm->base;
++}
++
++static inline struct rng_alg *crypto_rng_alg(struct crypto_rng *tfm)
++{
++	return (struct rng_alg *)&crypto_rng_tfm(tfm)->__crt_alg->cra_u;
++}
++
++static inline struct rng_tfm *crypto_rng_crt(struct crypto_rng *tfm)
++{
++	return (struct rng_tfm *)&crypto_rng_tfm(tfm)->crt_u;
++}
++
++static inline void crypto_free_rng(struct crypto_rng *tfm)
++{
++	ncrypto_free_tfm(crypto_rng_tfm(tfm));
++}
++
++static inline int crypto_rng_get_bytes(struct crypto_rng *tfm,
++				       u8 *rdata, unsigned int dlen)
++{
++	return crypto_rng_crt(tfm)->rng_gen_random(tfm, rdata, dlen);
++}
++
++static inline int crypto_rng_reset(struct crypto_rng *tfm,
++				   u8 *seed, unsigned int slen)
++{
++	return crypto_rng_crt(tfm)->rng_reset(tfm, seed, slen);
++}
++
++static inline int crypto_rng_seedsize(struct crypto_rng *tfm)
++{
++	return crypto_rng_alg(tfm)->seedsize;
++}
++
++#endif

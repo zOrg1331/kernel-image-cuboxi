@@ -1,0 +1,47 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 2 Feb 2010 08:34:19 -0500
+Subject: [fs] proc: make errno values consistent when race occurs
+Message-id: <20100202083431.32257.9907.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 23086
+O-Subject: [PATCH RHEL5.5 BZ556545] procfs: make errno values consistent when
+	open pident vs exit(2) race occurs
+Bugzilla: 556545
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=556545
+
+Description:
+The open(/proc/PID/xxx) system call fails with EINVAL errno if the PID process
+is exiting at the same time, even though it should be ENOENT.
+
+upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=bd6daba909d8484bd2ccf6017db4028d7a420927
+
+commit 444ceed extracts some codes in proc_pident_lookup to proc_pident_instantiate. Back to proc_pident_lookup in rhel5
+kernel, error is already assigned to ERR_PTR(-ENOENT) before changed to -EINVAL, so removing the EINVAL code will fix the
+problem for rhel5
+
+KABI:
+no breakage is found
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2238630
+
+Test status:
+The reproducer runs forever, never break with "open(/proc/PID/stat) failed with errno: 22"
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 5f94ca7..6e1e6c0 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -1954,7 +1954,6 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
+ 	if (!p->name)
+ 		goto out;
+ 
+-	error = ERR_PTR(-EINVAL);
+ 	inode = proc_pid_make_inode(dir->i_sb, task, p->type);
+ 	if (!inode)
+ 		goto out;

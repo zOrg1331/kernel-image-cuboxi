@@ -1,0 +1,256 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 22 Apr 2009 02:44:55 +0200
+Subject: [net] e1000e: fix false link detection
+Message-id: 20090422024455.4b7aae40@hammerfall
+O-Subject: [RHEL5.4 PATCH] BZ492270: e1000e: fix false link detection
+Bugzilla: 492270
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=492270
+
+HP reported that NC364m cards (based on Intel 82571) in BL860c/BL870c
+ia64 blades detected the link falsely while the port was disabled on
+the switch. They experienced link flap - the link appeared to go up and
+down rapidly and continuously.
+False link will cause customers to misinterpret the true state of their
+network, which is unacceptable in a highly available environment.
+Furthermore, this will break things such as bonding.
+
+They identified two commits from net-next-2.6 git tree which fixed the
+issue in upstream and in RHEL5:
+
+e1000e: Serdes - attempt autoneg when link restored.
+commit c9523379d6000f379a84b6b970efb8782c128071
+
+e1000e: remove RXSEQ link monitoring for serdes
+commit 573cca8c6fdbf6bd2dae8f9e9b66931990849c83
+
+Upstream status:
+In Linus's tree since 2.6.30-rc1.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1765425
+
+Testing:
+The patches were tested successfully by the reporter - they saw no more
+link flap and the link status was detected correctly.
+
+KABI:
+no change
+
+Michal
+
+diff --git a/drivers/net/e1000e/82571.c b/drivers/net/e1000e/82571.c
+index 2ab36c9..c76535b 100644
+--- a/drivers/net/e1000e/82571.c
++++ b/drivers/net/e1000e/82571.c
+@@ -60,6 +60,7 @@
+ static s32 e1000_get_phy_id_82571(struct e1000_hw *hw);
+ static s32 e1000_setup_copper_link_82571(struct e1000_hw *hw);
+ static s32 e1000_setup_fiber_serdes_link_82571(struct e1000_hw *hw);
++static s32 e1000_check_for_serdes_link_82571(struct e1000_hw *hw);
+ static s32 e1000_write_nvm_eewr_82571(struct e1000_hw *hw, u16 offset,
+ 				      u16 words, u16 *data);
+ static s32 e1000_fix_nvm_checksum_82571(struct e1000_hw *hw);
+@@ -249,7 +250,7 @@ static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
+ 	case e1000_media_type_internal_serdes:
+ 		func->setup_physical_interface =
+ 			e1000_setup_fiber_serdes_link_82571;
+-		func->check_for_link = e1000e_check_for_serdes_link;
++		func->check_for_link = e1000_check_for_serdes_link_82571;
+ 		func->get_link_up_info =
+ 			e1000e_get_speed_and_duplex_fiber_serdes;
+ 		break;
+@@ -828,6 +829,10 @@ static s32 e1000_reset_hw_82571(struct e1000_hw *hw)
+ 		hw->dev_spec.e82571.alt_mac_addr_is_present)
+ 			e1000e_set_laa_state_82571(hw, 1);
+ 
++	/* Reinitialize the 82571 serdes link state machine */
++	if (hw->phy.media_type == e1000_media_type_internal_serdes)
++		hw->mac.serdes_link_state = e1000_serdes_link_down;
++
+ 	return 0;
+ }
+ 
+@@ -1197,6 +1202,131 @@ static s32 e1000_setup_fiber_serdes_link_82571(struct e1000_hw *hw)
+ }
+ 
+ /**
++ *  e1000_check_for_serdes_link_82571 - Check for link (Serdes)
++ *  @hw: pointer to the HW structure
++ *
++ *  Checks for link up on the hardware.  If link is not up and we have
++ *  a signal, then we need to force link up.
++ **/
++s32 e1000_check_for_serdes_link_82571(struct e1000_hw *hw)
++{
++	struct e1000_mac_info *mac = &hw->mac;
++	u32 rxcw;
++	u32 ctrl;
++	u32 status;
++	s32 ret_val = 0;
++
++	ctrl = er32(CTRL);
++	status = er32(STATUS);
++	rxcw = er32(RXCW);
++
++	if ((rxcw & E1000_RXCW_SYNCH) && !(rxcw & E1000_RXCW_IV)) {
++
++		/* Receiver is synchronized with no invalid bits.  */
++		switch (mac->serdes_link_state) {
++		case e1000_serdes_link_autoneg_complete:
++			if (!(status & E1000_STATUS_LU)) {
++				/*
++				 * We have lost link, retry autoneg before
++				 * reporting link failure
++				 */
++				mac->serdes_link_state =
++				    e1000_serdes_link_autoneg_progress;
++				hw_dbg(hw, "AN_UP     -> AN_PROG\n");
++			}
++		break;
++
++		case e1000_serdes_link_forced_up:
++			/*
++			 * If we are receiving /C/ ordered sets, re-enable
++			 * auto-negotiation in the TXCW register and disable
++			 * forced link in the Device Control register in an
++			 * attempt to auto-negotiate with our link partner.
++			 */
++			if (rxcw & E1000_RXCW_C) {
++				/* Enable autoneg, and unforce link up */
++				ew32(TXCW, mac->txcw);
++				ew32(CTRL,
++				    (ctrl & ~E1000_CTRL_SLU));
++				mac->serdes_link_state =
++				    e1000_serdes_link_autoneg_progress;
++				hw_dbg(hw, "FORCED_UP -> AN_PROG\n");
++			}
++			break;
++
++		case e1000_serdes_link_autoneg_progress:
++			/*
++			 * If the LU bit is set in the STATUS register,
++			 * autoneg has completed sucessfully. If not,
++			 * try foring the link because the far end may be
++			 * available but not capable of autonegotiation.
++			 */
++			if (status & E1000_STATUS_LU)  {
++				mac->serdes_link_state =
++				    e1000_serdes_link_autoneg_complete;
++				hw_dbg(hw, "AN_PROG   -> AN_UP\n");
++			} else {
++				/*
++				 * Disable autoneg, force link up and
++				 * full duplex, and change state to forced
++				 */
++				ew32(TXCW,
++				    (mac->txcw & ~E1000_TXCW_ANE));
++				ctrl |= (E1000_CTRL_SLU | E1000_CTRL_FD);
++				ew32(CTRL, ctrl);
++
++				/* Configure Flow Control after link up. */
++				ret_val =
++				    e1000e_config_fc_after_link_up(hw);
++				if (ret_val) {
++					hw_dbg(hw, "Error config flow control\n");
++					break;
++				}
++				mac->serdes_link_state =
++				    e1000_serdes_link_forced_up;
++				hw_dbg(hw, "AN_PROG   -> FORCED_UP\n");
++			}
++			mac->serdes_has_link = true;
++			break;
++
++		case e1000_serdes_link_down:
++		default:
++			/* The link was down but the receiver has now gained
++			 * valid sync, so lets see if we can bring the link
++			 * up. */
++			ew32(TXCW, mac->txcw);
++			ew32(CTRL,
++			    (ctrl & ~E1000_CTRL_SLU));
++			mac->serdes_link_state =
++			    e1000_serdes_link_autoneg_progress;
++			hw_dbg(hw, "DOWN      -> AN_PROG\n");
++			break;
++		}
++	} else {
++		if (!(rxcw & E1000_RXCW_SYNCH)) {
++			mac->serdes_has_link = false;
++			mac->serdes_link_state = e1000_serdes_link_down;
++			hw_dbg(hw, "ANYSTATE  -> DOWN\n");
++		} else {
++			/*
++			 * We have sync, and can tolerate one
++			 * invalid (IV) codeword before declaring
++			 * link down, so reread to look again
++			 */
++			udelay(10);
++			rxcw = er32(RXCW);
++			if (rxcw & E1000_RXCW_IV) {
++				mac->serdes_link_state = e1000_serdes_link_down;
++				mac->serdes_has_link = false;
++				hw_dbg(hw, "ANYSTATE  -> DOWN\n");
++			}
++		}
++	}
++
++	return ret_val;
++}
++
++/**
+  *  e1000_valid_led_default_82571 - Verify a valid default LED config
+  *  @hw: pointer to the HW structure
+  *  @data: pointer to the NVM (EEPROM)
+diff --git a/drivers/net/e1000e/hw.h b/drivers/net/e1000e/hw.h
+index c4ffd4b..a6f43d1 100644
+--- a/drivers/net/e1000e/hw.h
++++ b/drivers/net/e1000e/hw.h
+@@ -458,6 +458,13 @@ enum e1000_smart_speed {
+ 	e1000_smart_speed_off
+ };
+ 
++enum e1000_serdes_link_state {
++	e1000_serdes_link_down = 0,
++	e1000_serdes_link_autoneg_progress,
++	e1000_serdes_link_autoneg_complete,
++	e1000_serdes_link_forced_up
++};
++
+ /* Receive Descriptor */
+ struct e1000_rx_desc {
+ 	__le64 buffer_addr; /* Address of the descriptor's data buffer */
+@@ -785,6 +792,7 @@ struct e1000_mac_info {
+ 	bool in_ifs_mode;
+ 	bool serdes_has_link;
+ 	bool tx_pkt_filtering;
++	enum e1000_serdes_link_state serdes_link_state;
+ };
+ 
+ struct e1000_phy_info {
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index b39d878..16acc38 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -1133,7 +1133,7 @@ static irqreturn_t e1000_intr_msi(int irq, void *data, struct pt_regs *regs)
+ 	 * read ICR disables interrupts using IAM
+ 	 */
+ 
+-	if (icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
++	if (icr & E1000_ICR_LSC) {
+ 		hw->mac.get_link_status = 1;
+ 		/*
+ 		 * ICH8 workaround-- Call gig speed drop workaround on cable
+@@ -1199,7 +1199,7 @@ static irqreturn_t e1000_intr(int irq, void *data, struct pt_regs *regs)
+ 	 * IMC write
+ 	 */
+ 
+-	if (icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
++	if (icr & E1000_ICR_LSC) {
+ 		hw->mac.get_link_status = 1;
+ 		/*
+ 		 * ICH8 workaround-- Call gig speed drop workaround on cable

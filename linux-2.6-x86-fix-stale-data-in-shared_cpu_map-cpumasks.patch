@@ -1,0 +1,75 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 8 Dec 2009 18:41:56 -0500
+Subject: [x86] fix stale data in shared_cpu_map cpumasks
+Message-id: <20091208183854.6756.83274.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21748
+O-Subject: [RHEL5 PATCH]: Fix stale data in shared_cpu_map cpumasks
+Bugzilla: 541953
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+While executing random cpu hotplug events a panic was noticed by QA.
+
+The panic is caused by an inconsistency in the shared_cpu_map cpumask.  The
+patch below resolves the problem by
+
+a) verifying a cpu is actually online before adding it to the shared_cpu_map
+of a cpu,
+b) only examining cpus that are part of the same lower level cache,
+c) updating other siblings lower level cache maps when a cpu is added.
+d) unrelated code cleanup of an extra whitespace that is no longer upstream.
+
+There is some minor contention about this patch upstream.  The author of this
+code wants to implement a fix such that the shared_cpu_map remains inconsistent
+but the panic is avoided by a NULL pointer check in cache_remove_shared_cpu_map.
+
+I have sent him a counter-proposal which is based on the patch below, so this
+patch is not upstream.
+
+This patch is required for the latest 5.4.z kernel and is blocking its release.
+
+Resolves BZ 541953.
+
+Tested for several hour long tests, limited by another panic that can be
+reproduced on RHEL5.4 (-164.el5) -- see 544895.  Without this patch the
+test fails usually within a few minutes.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index f2fe534..2a00fa4 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -468,15 +468,19 @@ static void __cpuinit cache_shared_cpu_map_setup(unsigned int cpu, int index)
+ {
+ 	struct _cpuid4_info	*this_leaf, *sibling_leaf;
+ 	unsigned long num_threads_sharing;
+-	int index_msb, i;
++	int index_msb, i, sibling;
+ 	struct cpuinfo_x86 *c = cpu_data;
+ 
+ 	if ((index == 3) && (c->x86_vendor == X86_VENDOR_AMD)) {
+-		for_each_online_cpu(i) {
++		for_each_cpu_mask(i, c[cpu].llc_shared_map) {
+ 			if (cpuid4_info[i] == NULL)
+ 				continue;
+ 			this_leaf = CPUID4_INFO_IDX(i, index);
+-			this_leaf->shared_cpu_map = c[i].llc_shared_map;
++			for_each_cpu_mask(sibling, c[cpu].llc_shared_map) {
++				if (!cpu_online(sibling))
++					continue;
++				cpu_set(sibling, this_leaf->shared_cpu_map);
++			}
+ 		}
+ 		return;
+ 	}
+@@ -508,7 +512,7 @@ static void __cpuinit cache_remove_shared_cpu_map(unsigned int cpu, int index)
+ 
+ 	this_leaf = CPUID4_INFO_IDX(cpu, index);
+ 	for_each_cpu_mask(sibling, this_leaf->shared_cpu_map) {
+-		sibling_leaf = CPUID4_INFO_IDX(sibling, index);	
++		sibling_leaf = CPUID4_INFO_IDX(sibling, index);
+ 		cpu_clear(cpu, sibling_leaf->shared_cpu_map);
+ 	}
+ }

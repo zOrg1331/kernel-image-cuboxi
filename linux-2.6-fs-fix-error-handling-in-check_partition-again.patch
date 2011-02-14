@@ -1,0 +1,54 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5 PATCH] - Fix error handling in check_partition(), again
+Date: Thu, 08 Mar 2007 15:13:00 -0600
+Bugzilla: 231518
+Message-Id: <45F07C5C.4080804@redhat.com>
+Changelog: [fs] - Fix error handling in check_partition(), again
+
+
+For Bug 231518: Fix error handling in check_partition(), again
+
+Backport of:
+
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=9bebff6ca5871e07b665cdaf71028ea21eb0bf0e;hp=f6dfb4fd7dd94429ef1d5233688aaed2a63f856b
+
+[PATCH] check_partition(): fix error check
+
+Fix inverted check introduced in 57881dd9df40b76dc7fc6a0d13fd75f337accb32 "Fix
+check_partition routines".
+
+Signed-off-by: Suzuki K P <suzuki@in.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+as well as another change which will be sent up, to return -EIO rather
+than PTR_ERR(state) which would essentially return a -1, which
+looks like -EPERM in most places, not -EIO.
+
+Thanks,
+
+-Eric
+
+Index: linux-2.6.18-6.el5/fs/partitions/check.c
+===================================================================
+--- linux-2.6.18-6.el5.orig/fs/partitions/check.c
++++ linux-2.6.18-6.el5/fs/partitions/check.c
+@@ -180,7 +180,7 @@ check_partition(struct gendisk *hd, stru
+ 	}
+ 	if (res > 0)
+ 		return state;
+-	if (!err)
++	if (err)
+ 	/* The partition is unrecognized. So report I/O errors if there were any */
+ 		res = err;
+ 	if (!res)
+@@ -472,7 +472,7 @@ int rescan_partitions(struct gendisk *di
+ 	if (!get_capacity(disk) || !(state = check_partition(disk, bdev)))
+ 		return 0;
+ 	if (IS_ERR(state))      /* I/O error reading the partition table */
+-		return PTR_ERR(state);	
++		return -EIO;
+ 	for (p = 1; p < state->limit; p++) {
+ 		sector_t size = state->parts[p].size;
+ 		sector_t from = state->parts[p].from;
+

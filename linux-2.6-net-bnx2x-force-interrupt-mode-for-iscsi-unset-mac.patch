@@ -1,0 +1,129 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 29 Nov 2010 17:33:15 -0500
+Subject: [net] bnx2x: force interrupt mode for iscsi unset mac
+Message-id: <20101129183315.4a6b2db3@brian.englab.brq.redhat.com>
+Patchwork-id: 29659
+O-Subject: [RHEL5.6 PATCH v2] bnx2x: force interrupt mode for iscsi unset mac
+Bugzilla: 655885
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=655885
+
+This fixes a race condition resulting in kernel panic.
+bnx2x_wait_ramrod() when called from bnx2x_unregister_cnic() could
+touch the RX rings while NAPI was processing them at the same time.
+The bug can be reproduced by loading/unloading the cnic module while rx
+traffic is going on.
+
+The patch adds an additional argument "force_int" to the function. When
+set, the function is forced to wait using an interrupt, instead of
+polling the bnx2x fastpath directly, thus preventing the collision with
+NAPI.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2919358
+
+Tested by me on hp-bl495cg5-01.rhts.bos.redhat.com.
+
+Upstream status:
+Fixed in upstream since commit 523224a3b3cd407ce4e6731a087194e13a90db18:
+  Author: Dmitry Kravkov <dmitry@broadcom.com>
+  Date:   Wed Oct 6 03:23:26 2010 +0000
+
+      bnx2x, cnic, bnx2i: use new FW/HSI
+
+This is a different, minimal fix.
+Patch by Dmitry Kravkov.
+
+[v1->v2: only added a comment for the force_int argument (suggested by
+Dean Nelson)]
+
+Thanks,
+Michal
+
+diff --git a/drivers/net/bnx2x/bnx2x_cmn.c b/drivers/net/bnx2x/bnx2x_cmn.c
+index ae21df8..93c55a1 100644
+--- a/drivers/net/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/bnx2x/bnx2x_cmn.c
+@@ -1414,7 +1414,7 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
+ 		/* Set iSCSI L2 MAC */
+ 		mutex_lock(&bp->cnic_mutex);
+ 		if (bp->cnic_eth_dev.drv_state & CNIC_DRV_STATE_REGD) {
+-			bnx2x_set_iscsi_eth_mac_addr(bp, 1);
++			bnx2x_set_iscsi_eth_mac_addr(bp, 1, 0);
+ 			bp->cnic_flags |= BNX2X_CNIC_FLAG_MAC_SET;
+ 			bnx2x_init_sb(bp, bp->cnic_sb, bp->cnic_sb_mapping,
+ 				      CNIC_SB_ID(bp));
+diff --git a/drivers/net/bnx2x/bnx2x_cmn.h b/drivers/net/bnx2x/bnx2x_cmn.h
+index 2e75df7..f5ee274 100644
+--- a/drivers/net/bnx2x/bnx2x_cmn.h
++++ b/drivers/net/bnx2x/bnx2x_cmn.h
+@@ -246,10 +246,11 @@ void bnx2x_set_eth_mac_addr_e1(struct bnx2x *bp, int set);
+  *
+  * @param bp driver handle
+  * @param set set or clear the CAM entry
++ * @param force_int use interrupt for the wait (forbid direct polling of fp)
+  *
+  * @return 0 if cussess, -ENODEV if ramrod doesn't return.
+  */
+-int bnx2x_set_iscsi_eth_mac_addr(struct bnx2x *bp, int set);
++int bnx2x_set_iscsi_eth_mac_addr(struct bnx2x *bp, int set, int force_int);
+ #endif
+ 
+ /**
+diff --git a/drivers/net/bnx2x/bnx2x_main.c b/drivers/net/bnx2x/bnx2x_main.c
+index edff0d2..379acb2 100644
+--- a/drivers/net/bnx2x/bnx2x_main.c
++++ b/drivers/net/bnx2x/bnx2x_main.c
+@@ -4929,10 +4929,11 @@ void bnx2x_set_eth_mac_addr_e1(struct bnx2x *bp, int set)
+  *
+  * @param bp driver handle
+  * @param set set or clear the CAM entry
++ * @param force_int use interrupt for the wait (forbid direct polling of fp)
+  *
+  * @return 0 if cussess, -ENODEV if ramrod doesn't return.
+  */
+-int bnx2x_set_iscsi_eth_mac_addr(struct bnx2x *bp, int set)
++int bnx2x_set_iscsi_eth_mac_addr(struct bnx2x *bp, int set, int force_int)
+ {
+ 	u32 cl_bit_vec = (1 << BCM_ISCSI_ETH_CL_ID);
+ 
+@@ -4953,7 +4954,7 @@ int bnx2x_set_iscsi_eth_mac_addr(struct bnx2x *bp, int set)
+ 				   cl_bit_vec, E1H_FUNC_MAX + BP_FUNC(bp));
+ 
+ 	/* Wait for a completion when setting */
+-	bnx2x_wait_ramrod(bp, 0, 0, &bp->set_mac_pending, set ? 0 : 1);
++	bnx2x_wait_ramrod(bp, 0, 0, &bp->set_mac_pending, force_int ? 0 : (set ? 0 : 1));
+ 
+ 	return 0;
+ }
+@@ -5240,7 +5241,7 @@ void bnx2x_chip_cleanup(struct bnx2x *bp, int unload_mode)
+ 	/* Clear iSCSI L2 MAC */
+ 	mutex_lock(&bp->cnic_mutex);
+ 	if (bp->cnic_flags & BNX2X_CNIC_FLAG_MAC_SET) {
+-		bnx2x_set_iscsi_eth_mac_addr(bp, 0);
++		bnx2x_set_iscsi_eth_mac_addr(bp, 0, 0);
+ 		bp->cnic_flags &= ~BNX2X_CNIC_FLAG_MAC_SET;
+ 	}
+ 	mutex_unlock(&bp->cnic_mutex);
+@@ -8015,8 +8016,10 @@ static int bnx2x_register_cnic(struct net_device *dev, struct cnic_ops *ops,
+ 	bnx2x_init_sb(bp, bp->cnic_sb, bp->cnic_sb_mapping, CNIC_SB_ID(bp));
+ 
+ 	bnx2x_setup_cnic_irq_info(bp);
+-	bnx2x_set_iscsi_eth_mac_addr(bp, 1);
++
++	bnx2x_set_iscsi_eth_mac_addr(bp, 1, 1);
+ 	bp->cnic_flags |= BNX2X_CNIC_FLAG_MAC_SET;
++
+ 	rcu_assign_pointer(bp->cnic_ops, ops);
+ 
+ 	return 0;
+@@ -8030,7 +8033,7 @@ static int bnx2x_unregister_cnic(struct net_device *dev)
+ 	mutex_lock(&bp->cnic_mutex);
+ 	if (bp->cnic_flags & BNX2X_CNIC_FLAG_MAC_SET) {
+ 		bp->cnic_flags &= ~BNX2X_CNIC_FLAG_MAC_SET;
+-		bnx2x_set_iscsi_eth_mac_addr(bp, 0);
++		bnx2x_set_iscsi_eth_mac_addr(bp, 0, 1);
+ 	}
+ 	cp->drv_state = 0;
+ 	rcu_assign_pointer(bp->cnic_ops, NULL);

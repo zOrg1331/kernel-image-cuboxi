@@ -65,6 +65,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/dma-mapping.h>
 
 /* -------------------- TUNABLE PARAMATERS: */
 
@@ -245,8 +246,8 @@ struct lanai_vcc {
 };
 
 enum lanai_type {
-	lanai2	= PCI_DEVICE_ID_EF_ATM_LANAI2,
-	lanaihb	= PCI_DEVICE_ID_EF_ATM_LANAIHB
+	lanai2	= PCI_VENDOR_ID_EF_ATM_LANAI2,
+	lanaihb	= PCI_VENDOR_ID_EF_ATM_LANAIHB
 };
 
 struct lanai_dev_stats {
@@ -292,6 +293,7 @@ struct lanai_dev {
 	struct atm_vcc *cbrvcc;
 	int number;
 	int board_rev;
+	u8 pci_revision;
 /* TODO - look at race conditions with maintence of conf1/conf2 */
 /* TODO - transmit locking: should we use _irq not _irqsave? */
 /* TODO - organize above in some rational fashion (see <asm/cache.h>) */
@@ -551,8 +553,8 @@ static inline void sram_write(const struct lanai_dev *lanai,
 	writel(val, sram_addr(lanai, offset));
 }
 
-static int __devinit sram_test_word(const struct lanai_dev *lanai,
-				    int offset, u32 pattern)
+static int __init sram_test_word(
+	const struct lanai_dev *lanai, int offset, u32 pattern)
 {
 	u32 readback;
 	sram_write(lanai, pattern, offset);
@@ -901,7 +903,7 @@ static int __devinit eeprom_read(struct lanai_dev *lanai)
 		clock_l(); udelay(5);
 		for (i = 128; i != 0; i >>= 1) {   /* write command out */
 			tmp = (lanai->conf1 & ~CONFIG1_PROMDATA) |
-			    ((data & i) ? CONFIG1_PROMDATA : 0);
+			    (data & i) ? CONFIG1_PROMDATA : 0;
 			if (lanai->conf1 != tmp) {
 				set_config1(tmp);
 				udelay(5);	/* Let new data settle */
@@ -1480,10 +1482,16 @@ static inline void vcc_table_deallocate(const struct lanai_dev *lanai)
 static inline struct lanai_vcc *new_lanai_vcc(void)
 {
 	struct lanai_vcc *lvcc;
-	lvcc =  kzalloc(sizeof(*lvcc), GFP_KERNEL);
+	lvcc = (struct lanai_vcc *) kmalloc(sizeof(*lvcc), GFP_KERNEL);
 	if (likely(lvcc != NULL)) {
+		lvcc->vbase = NULL;
+		lvcc->rx.atmvcc = lvcc->tx.atmvcc = NULL;
+		lvcc->nref = 0;
+		memset(&lvcc->stats, 0, sizeof lvcc->stats);
+		lvcc->rx.buf.start = lvcc->tx.buf.start = NULL;
 		skb_queue_head_init(&lvcc->tx.backlog);
 #ifdef DEBUG
+		lvcc->tx.unqueue = NULL;
 		lvcc->vci = -1;
 #endif
 	}
@@ -1888,10 +1896,12 @@ static inline void lanai_int_1(struct lanai_dev *lanai, u32 reason)
 		reg_write(lanai, ack, IntAck_Reg);
 }
 
-static irqreturn_t lanai_int(int irq, void *devid)
+static irqreturn_t lanai_int(int irq, void *devid, struct pt_regs *regs)
 {
-	struct lanai_dev *lanai = devid;
+	struct lanai_dev *lanai = (struct lanai_dev *) devid;
 	u32 reason;
+
+	(void) irq; (void) regs;	/* unused variables */
 
 #ifdef USE_POWERDOWN
 	/*
@@ -1957,15 +1967,23 @@ static int __devinit lanai_pci_start(struct lanai_dev *lanai)
 		return -ENXIO;
 	}
 	pci_set_master(pci);
-	if (pci_set_dma_mask(pci, DMA_BIT_MASK(32)) != 0) {
+	if (pci_set_dma_mask(pci, DMA_32BIT_MASK) != 0) {
 		printk(KERN_WARNING DEV_LABEL
 		    "(itf %d): No suitable DMA available.\n", lanai->number);
 		return -EBUSY;
 	}
-	if (pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(32)) != 0) {
+	if (pci_set_consistent_dma_mask(pci, DMA_32BIT_MASK) != 0) {
 		printk(KERN_WARNING DEV_LABEL
 		    "(itf %d): No suitable DMA available.\n", lanai->number);
 		return -EBUSY;
+	}
+	/* Get the pci revision byte */
+	result = pci_read_config_byte(pci, PCI_REVISION_ID,
+	    &lanai->pci_revision);
+	if (result != PCIBIOS_SUCCESSFUL) {
+		printk(KERN_ERR DEV_LABEL "(itf %d): can't read "
+		    "PCI_REVISION_ID: %d\n", lanai->number, result);
+		return -EINVAL;
 	}
 	result = pci_read_config_word(pci, PCI_SUBSYSTEM_ID, &w);
 	if (result != PCIBIOS_SUCCESSFUL) {
@@ -2244,7 +2262,7 @@ static int __devinit lanai_dev_open(struct atm_dev *atmdev)
 	lanai_timed_poll_start(lanai);
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): rev.%d, base=0x%lx, irq=%u "
 	    "(%02X-%02X-%02X-%02X-%02X-%02X)\n", lanai->number,
-	    (int) lanai->pci->revision, (unsigned long) lanai->base,
+	    (int) lanai->pci_revision, (unsigned long) lanai->base,
 	    lanai->pci->irq,
 	    atmdev->esi[0], atmdev->esi[1], atmdev->esi[2],
 	    atmdev->esi[3], atmdev->esi[4], atmdev->esi[5]);
@@ -2481,7 +2499,7 @@ static int lanai_proc_read(struct atm_dev *atmdev, loff_t *pos, char *page)
 		    (unsigned int) lanai->magicno, lanai->num_vci);
 	if (left-- == 0)
 		return sprintf(page, "revision: board=%d, pci_if=%d\n",
-		    lanai->board_rev, (int) lanai->pci->revision);
+		    lanai->board_rev, (int) lanai->pci_revision);
 	if (left-- == 0)
 		return sprintf(page, "EEPROM ESI: "
 		    "%02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -2592,7 +2610,7 @@ static int __devinit lanai_init_one(struct pci_dev *pci,
 	struct atm_dev *atmdev;
 	int result;
 
-	lanai = kmalloc(sizeof(*lanai), GFP_KERNEL);
+	lanai = (struct lanai_dev *) kmalloc(sizeof(*lanai), GFP_KERNEL);
 	if (lanai == NULL) {
 		printk(KERN_ERR DEV_LABEL
 		       ": couldn't allocate dev_data structure!\n");
@@ -2621,8 +2639,14 @@ static int __devinit lanai_init_one(struct pci_dev *pci,
 }
 
 static struct pci_device_id lanai_pci_tbl[] = {
-	{ PCI_VDEVICE(EF, PCI_DEVICE_ID_EF_ATM_LANAI2) },
-	{ PCI_VDEVICE(EF, PCI_DEVICE_ID_EF_ATM_LANAIHB) },
+	{
+		PCI_VENDOR_ID_EF, PCI_VENDOR_ID_EF_ATM_LANAI2,
+		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0
+	},
+	{
+		PCI_VENDOR_ID_EF, PCI_VENDOR_ID_EF_ATM_LANAIHB,
+		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0
+	},
 	{ 0, }	/* terminal entry */
 };
 MODULE_DEVICE_TABLE(pci, lanai_pci_tbl);

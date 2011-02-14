@@ -12,7 +12,6 @@
 
 #include <asm/addrspace.h>
 #include <asm/bug.h>
-#include <asm/cacheflush.h>
 
 #ifndef CKSEG2
 #define CKSEG2 CKSSEG
@@ -36,7 +35,7 @@
  * values, so we can avoid sharing the same stack area between a cached
  * and the uncached mode.
  */
-unsigned long __cpuinit run_uncached(void *func)
+unsigned long __init run_uncached(void *func)
 {
 	register long sp __asm__("$sp");
 	register long ret __asm__("$2");
@@ -45,24 +44,20 @@ unsigned long __cpuinit run_uncached(void *func)
 
 	if (sp >= (long)CKSEG0 && sp < (long)CKSEG2)
 		usp = CKSEG1ADDR(sp);
-#ifdef CONFIG_64BIT
-	else if ((long long)sp >= (long long)PHYS_TO_XKPHYS(0, 0) &&
-		 (long long)sp < (long long)PHYS_TO_XKPHYS(8, 0))
-		usp = PHYS_TO_XKPHYS(K_CALG_UNCACHED,
+	else if ((long long)sp >= (long long)PHYS_TO_XKPHYS(0LL, 0) &&
+		 (long long)sp < (long long)PHYS_TO_XKPHYS(8LL, 0))
+		usp = PHYS_TO_XKPHYS((long long)K_CALG_UNCACHED,
 				     XKPHYS_TO_PHYS((long long)sp));
-#endif
 	else {
 		BUG();
 		usp = sp;
 	}
 	if (lfunc >= (long)CKSEG0 && lfunc < (long)CKSEG2)
 		ufunc = CKSEG1ADDR(lfunc);
-#ifdef CONFIG_64BIT
-	else if ((long long)lfunc >= (long long)PHYS_TO_XKPHYS(0, 0) &&
-		 (long long)lfunc < (long long)PHYS_TO_XKPHYS(8, 0))
-		ufunc = PHYS_TO_XKPHYS(K_CALG_UNCACHED,
+	else if ((long long)lfunc >= (long long)PHYS_TO_XKPHYS(0LL, 0) &&
+		 (long long)lfunc < (long long)PHYS_TO_XKPHYS(8LL, 0))
+		ufunc = PHYS_TO_XKPHYS((long long)K_CALG_UNCACHED,
 				       XKPHYS_TO_PHYS((long long)lfunc));
-#endif
 	else {
 		BUG();
 		ufunc = lfunc;

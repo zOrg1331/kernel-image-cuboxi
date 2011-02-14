@@ -1,0 +1,102 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 28 Sep 2010 14:34:17 -0400
+Subject: [edac] i7300_edac: backport driver to RHEL5.6 codebase
+Message-id: <20100928113417.1dc793d5@pedra>
+Patchwork-id: 28455
+O-Subject: [PATCH RHEL5 24/27] i7300: Port driver to RHEL5
+Bugzilla: 487428
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7300_edac.c b/drivers/edac/i7300_edac.c
+index 38920c0..fa4c284 100644
+--- a/drivers/edac/i7300_edac.c
++++ b/drivers/edac/i7300_edac.c
+@@ -22,11 +22,9 @@
+ #include <linux/init.h>
+ #include <linux/pci.h>
+ #include <linux/pci_ids.h>
+-#include <linux/slab.h>
+-#include <linux/edac.h>
+ #include <linux/mmzone.h>
+ 
+-#include "edac_core.h"
++#include "edac_mc.h"
+ 
+ /*
+  * Alter this version for the I7300 module when modifications are made
+@@ -114,9 +112,6 @@ struct i7300_pvt {
+ 	char *tmp_prt_buffer;
+ };
+ 
+-/* FIXME: Why do we need to have this static? */
+-static struct edac_pci_ctl_info *i7300_pci;
+-
+ /***************************************************
+  * i7300 Register definitions for memory enumeration
+  ***************************************************/
+@@ -1073,7 +1068,7 @@ static int __devinit i7300_init_one(struct pci_dev *pdev,
+ 		__func__, num_channels, num_dimms_per_channel, num_csrows);
+ 
+ 	/* allocate a new MC control structure */
+-	mci = edac_mc_alloc(sizeof(*pvt), num_csrows, num_channels, 0);
++	mci = edac_mc_alloc(sizeof(*pvt), num_csrows, num_channels);
+ 
+ 	if (mci == NULL)
+ 		return -ENOMEM;
+@@ -1121,7 +1116,7 @@ static int __devinit i7300_init_one(struct pci_dev *pdev,
+ 	}
+ 
+ 	/* add this new MC control structure to EDAC's list of MCs */
+-	if (edac_mc_add_mc(mci)) {
++	if (edac_mc_add_mc(mci, 0)) {
+ 		debugf0("MC: " __FILE__
+ 			": %s(): failed edac_mc_add_mc()\n", __func__);
+ 		/* FIXME: perhaps some code should go here that disables error
+@@ -1132,17 +1127,6 @@ static int __devinit i7300_init_one(struct pci_dev *pdev,
+ 
+ 	i7300_clear_error(mci);
+ 
+-	/* allocating generic PCI control info */
+-	i7300_pci = edac_pci_create_generic_ctl(&pdev->dev, EDAC_MOD_STR);
+-	if (!i7300_pci) {
+-		printk(KERN_WARNING
+-			"%s(): Unable to create PCI control\n",
+-			__func__);
+-		printk(KERN_WARNING
+-			"%s(): PCI error report via EDAC not setup\n",
+-			__func__);
+-	}
+-
+ 	return 0;
+ 
+ 	/* Error exit unwinding stack */
+@@ -1167,9 +1151,6 @@ static void __devexit i7300_remove_one(struct pci_dev *pdev)
+ 
+ 	debugf0(__FILE__ ": %s()\n", __func__);
+ 
+-	if (i7300_pci)
+-		edac_pci_release_generic_ctl(i7300_pci);
+-
+ 	mci = edac_mc_del_mc(&pdev->dev);
+ 	if (!mci)
+ 		return;
+@@ -1214,9 +1195,6 @@ static int __init i7300_init(void)
+ 
+ 	debugf2("MC: " __FILE__ ": %s()\n", __func__);
+ 
+-	/* Ensure that the OPSTATE is set correctly for POLL or NMI */
+-	opstate_init();
+-
+ 	pci_rc = pci_register_driver(&i7300_driver);
+ 
+ 	return (pci_rc < 0) ? pci_rc : 0;
+@@ -1239,6 +1217,3 @@ MODULE_AUTHOR("Mauro Carvalho Chehab <mchehab@redhat.com>");
+ MODULE_AUTHOR("Red Hat Inc. (http://www.redhat.com)");
+ MODULE_DESCRIPTION("MC Driver for Intel I7300 memory controllers - "
+ 		   I7300_REVISION);
+-
+-module_param(edac_op_state, int, 0444);
+-MODULE_PARM_DESC(edac_op_state, "EDAC Error Reporting state: 0=Poll,1=NMI");

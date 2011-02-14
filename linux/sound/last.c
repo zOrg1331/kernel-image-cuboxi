@@ -1,6 +1,6 @@
 /*
  *  Advanced Linux Sound Architecture
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -20,6 +20,7 @@
  */
 
 #define SNDRV_MAIN_OBJECT_FILE
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <sound/core.h>
 

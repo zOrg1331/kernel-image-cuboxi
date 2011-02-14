@@ -1,0 +1,34 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Thu, 15 May 2008 15:56:36 -0400
+Subject: [scsi] BusLogic: typedef bool to boolean for compiler
+Message-id: alpine.LFD.1.10.0805151556200.10708@barcelona.usersys.redhat.com
+O-Subject: Re: [RHEL5 PATCH]: Replace boolean with bool in BusLogic module
+Bugzilla: 445095
+
+On Tue, 6 May 2008, Don Zickus wrote:
+
+> On Tue, May 06, 2008 at 08:04:15AM -0400, Prarit Bhargava wrote:
+> > Backport of
+> >
+> > http://marc.info/?l=git-commits-head&m=117122477703016&w=2
+> >
+> > Even though we do not ship the BusLogic module in RHEL5, we should make sure it
+> > does compile.
+>
+
+diff --git a/drivers/scsi/BusLogic.h b/drivers/scsi/BusLogic.h
+index 9792e5a..d6d1d56 100644
+--- a/drivers/scsi/BusLogic.h
++++ b/drivers/scsi/BusLogic.h
+@@ -237,10 +237,7 @@ enum BusLogic_BIOS_DiskGeometryTranslation {
+   Define a Boolean data type.
+ */
+ 
+-typedef enum {
+-	false,
+-	true
+-} PACKED boolean;
++typedef bool boolean;
+ 
+ /*
+   Define a 10^18 Statistics Byte Counter data type.

@@ -1,0 +1,36 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Sun, 22 Aug 2010 19:58:05 -0400
+Subject: [net] vxge: update version to reflect RHEL5.6 changes
+Message-id: <20100822195805.24928.10434.sendpatchset@bob-desktop>
+Patchwork-id: 27766
+O-Subject: [RHEL5.7 PATCH 7/7] vxge: Version update.
+Bugzilla: 580413
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From b8ba796808c107f8fe6bcd318836972536d28eb0 Mon Sep 17 00:00:00 2001
+From: Sreenivasa Honnur <Sreenivasa.Honnur@neterion.com>
+Date: Sun, 28 Mar 2010 22:13:13 +0000
+Subject: [PATCH 7/7] vxge: Version update.
+
+- Version update
+
+Signed-off-by: Sreenivasa Honnur <sreenivasa.honnur@neterion.com>
+Signed-off-by: Ramkrishna Vepa <ram.vepa@neterion.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/vxge/vxge-version.h b/drivers/net/vxge/vxge-version.h
+index 77c2a75..4875139 100644
+--- a/drivers/net/vxge/vxge-version.h
++++ b/drivers/net/vxge/vxge-version.h
+@@ -17,7 +17,7 @@
+ 
+ #define VXGE_VERSION_MAJOR	"2"
+ #define VXGE_VERSION_MINOR	"0"
+-#define VXGE_VERSION_FIX	"6"
+-#define VXGE_VERSION_BUILD	"18937"
++#define VXGE_VERSION_FIX	"7"
++#define VXGE_VERSION_BUILD	"20144"
+ #define VXGE_VERSION_FOR	"k"
+ #endif

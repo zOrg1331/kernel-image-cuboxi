@@ -1,4 +1,6 @@
 /*
+ * $Id: gf2k.c,v 1.19 2002/01/22 20:27:43 vojtech Exp $
+ *
  *  Copyright (c) 1998-2001 Vojtech Pavlik
  */
 
@@ -218,7 +220,7 @@ static void gf2k_poll(struct gameport *gameport)
 
 static int gf2k_open(struct input_dev *dev)
 {
-	struct gf2k *gf2k = input_get_drvdata(dev);
+	struct gf2k *gf2k = dev->private;
 
 	gameport_start_polling(gf2k->gameport);
 	return 0;
@@ -226,7 +228,7 @@ static int gf2k_open(struct input_dev *dev)
 
 static void gf2k_close(struct input_dev *dev)
 {
-	struct gf2k *gf2k = input_get_drvdata(dev);
+	struct gf2k *gf2k = dev->private;
 
 	gameport_stop_polling(gf2k->gameport);
 }
@@ -306,14 +308,12 @@ static int gf2k_connect(struct gameport *gameport, struct gameport_driver *drv)
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_GENIUS;
 	input_dev->id.product = gf2k->id;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &gameport->dev;
-
-	input_set_drvdata(input_dev, gf2k);
+	input_dev->cdev.dev = &gameport->dev;
+	input_dev->private = gf2k;
 
 	input_dev->open = gf2k_open;
 	input_dev->close = gf2k_close;
-
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; i < gf2k_axes[gf2k->id]; i++)
 		set_bit(gf2k_abs[i], input_dev->absbit);
@@ -341,9 +341,7 @@ static int gf2k_connect(struct gameport *gameport, struct gameport_driver *drv)
 		input_dev->absflat[gf2k_abs[i]] = (i < 2) ? 24 : 0;
 	}
 
-	err = input_register_device(gf2k->dev);
-	if (err)
-		goto fail2;
+	input_register_device(gf2k->dev);
 
 	return 0;
 
@@ -375,7 +373,8 @@ static struct gameport_driver gf2k_drv = {
 
 static int __init gf2k_init(void)
 {
-	return gameport_register_driver(&gf2k_drv);
+	gameport_register_driver(&gf2k_drv);
+	return 0;
 }
 
 static void __exit gf2k_exit(void)

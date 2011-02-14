@@ -1,0 +1,44 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: fix size of STATUS_REPLY message
+Date: Mon, 27 Nov 2006 11:49:08 -0600
+Bugzilla: 215430
+Message-Id: <20061127174908.GD18093@redhat.com>
+Changelog: dlm: fix size of STATUS_REPLY message
+
+
+bz 215430
+patch 1 of 2
+
+When the not_ready routine sends a "fake" status reply with blank status
+flags, it needs to use the correct size for a normal STATUS_REPLY by
+including the size of the would-be config parameters.  We also fill in the
+non-existant config parameters with an invalid lvblen value so it's easier
+to notice if these invalid paratmers are ever being used.
+
+
+Index: latest/fs/dlm/rcom.c
+===================================================================
+--- latest.orig/fs/dlm/rcom.c
++++ latest/fs/dlm/rcom.c
+@@ -394,9 +394,10 @@ static void receive_rcom_lock_reply(stru
+ static int send_ls_not_ready(int nodeid, struct dlm_rcom *rc_in)
+ {
+ 	struct dlm_rcom *rc;
++	struct rcom_config *rf;
+ 	struct dlm_mhandle *mh;
+ 	char *mb;
+-	int mb_len = sizeof(struct dlm_rcom);
++	int mb_len = sizeof(struct dlm_rcom) + sizeof(struct rcom_config);
+ 
+ 	mh = dlm_lowcomms_get_buffer(nodeid, mb_len, GFP_KERNEL, &mb);
+ 	if (!mh)
+@@ -415,6 +416,9 @@ static int send_ls_not_ready(int nodeid,
+ 	rc->rc_id = rc_in->rc_id;
+ 	rc->rc_result = -ESRCH;
+ 
++	rf = (struct rcom_config *) rc->rc_buf;
++	rf->rf_lvblen = -1;
++
+ 	dlm_rcom_out(rc);
+ 	dlm_lowcomms_commit_buffer(mh);
+ 

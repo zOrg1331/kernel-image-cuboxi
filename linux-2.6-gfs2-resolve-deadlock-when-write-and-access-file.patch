@@ -1,0 +1,63 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] [GFS2] Fix bz 231380: GFS2 will hang if you run iozone on one node and do a du -h on another node
+Date: Thu, 05 Apr 2007 11:13:59 +0100
+Bugzilla: 231380
+Message-Id: <1175768039.1636.238.camel@quoit.chygwyn.com>
+Changelog: [GFS2] resolve deadlock when writing and accessing a file
+
+
+Hi,
+
+This patch (from Josef Whiter) fixes the problem that we have been
+having with deadlocks during unlocking a glock when there is a queued,
+pending demote request. Its already in the upstream kernel and has been
+verified to fix the bug.
+
+
+Steve.
+
+
+I'm not entirely sure if this is the best fix for this problem, so I'm open for
+suggetions.  If we are writing a file, and in the middle of writing the file
+another node attempts to get a shared lock on that file (by doing a du for
+example) the process doing the writing will hang waiting on lock_page.  The
+reason for this is because when we have waiters on a exclusive glock, we will go
+through and flush out all dirty pages associated with that inode and release the
+lock.  The problem is that when we flush the dirty pages, we could hit a page
+that we have locked durring the generic_file_buffered_write part of this
+operation.  This patch unlocks the page before we go to dequeue the lock and
+locks it immediatly afterwards, since generic_file_buffered_write needs the page
+locked when the commit_write is completed.  This patch resolves the problem,
+however if somebody sees a better way to do this please don't hesistate to yell.
+Thank you,
+
+Josef
+
+
+Signed-off-by: Josef Whiter <jwhiter@redhat.com>
+
+
+--- gfs2-2.6-nmw/fs/gfs2/ops_address.c.josef	2007-03-08 15:04:10.000000000 -0500
++++ gfs2-2.6-nmw/fs/gfs2/ops_address.c	2007-03-12 17:23:24.000000000 -0400
+@@ -507,7 +507,9 @@
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+ 	}
++	unlock_page(page);
+ 	gfs2_glock_dq_m(1, &ip->i_gh);
++	lock_page(page);
+ 	gfs2_holder_uninit(&ip->i_gh);
+ 	return 0;
+ 
+@@ -520,7 +522,9 @@
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+ 	}
++	unlock_page(page);
+ 	gfs2_glock_dq_m(1, &ip->i_gh);
++	lock_page(page);
+ 	gfs2_holder_uninit(&ip->i_gh);
+ fail_nounlock:
+ 	ClearPageUptodate(page);
+
+

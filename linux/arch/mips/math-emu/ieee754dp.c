@@ -57,7 +57,6 @@ ieee754dp ieee754dp_xcpt(ieee754dp r, const char *op, ...)
 	ax.rv.dp = r;
 	va_start(ax.ap, op);
 	ieee754_xcpt(&ax);
-	va_end(ax.ap);
 	return ax.rv.dp;
 }
 
@@ -84,7 +83,6 @@ ieee754dp ieee754dp_nanxcpt(ieee754dp r, const char *op, ...)
 	ax.rv.dp = r;
 	va_start(ax.ap, op);
 	ieee754_xcpt(&ax);
-	va_end(ax.ap);
 	return ax.rv.dp;
 }
 

@@ -35,14 +35,8 @@
 
 #include "budget.h"
 #include "stv0299.h"
-#include "stb0899_drv.h"
-#include "stb0899_reg.h"
-#include "stb0899_cfg.h"
-#include "tda8261.h"
-#include "tda8261_cfg.h"
-#include "tda1002x.h"
+#include "tda10021.h"
 #include "tda1004x.h"
-#include "tua6100.h"
 #include "dvb-pll.h"
 #include <media/saa7146_vv.h>
 #include <linux/module.h>
@@ -62,8 +56,6 @@
 #define SLOTSTATUS_READY        8
 #define SLOTSTATUS_OCCUPIED     (SLOTSTATUS_PRESENT|SLOTSTATUS_RESET|SLOTSTATUS_READY)
 
-DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
-
 struct budget_av {
 	struct budget budget;
 	struct video_device *vd;
@@ -73,6 +65,9 @@ struct budget_av {
 	int slot_status;
 	struct dvb_ca_en50221 ca;
 	u8 reinitialise_demod:1;
+	u8 tda10021_poclkp:1;
+	u8 tda10021_ts_enabled;
+	int (*tda10021_set_frontend)(struct dvb_frontend *fe, struct dvb_frontend_parameters *p);
 };
 
 static int ciintf_slot_shutdown(struct dvb_ca_en50221 *ca, int slot);
@@ -185,7 +180,7 @@ static int ciintf_read_cam_control(struct dvb_ca_en50221 *ca, int slot, u8 addre
 	udelay(1);
 
 	result = ttpci_budget_debiread(&budget_av->budget, DEBICICAM, address & 3, 1, 0, 0);
-	if (result == -ETIMEDOUT) {
+	if ((result == -ETIMEDOUT) || ((result == 0xff) && ((address & 3) < 2))) {
 		ciintf_slot_shutdown(ca, slot);
 		printk(KERN_INFO "budget-av: cam ejected 3\n");
 		return -ETIMEDOUT;
@@ -238,6 +233,12 @@ static int ciintf_slot_reset(struct dvb_ca_en50221 *ca, int slot)
 	if (budget_av->reinitialise_demod)
 		dvb_frontend_reinitialise(budget_av->budget.dvb_frontend);
 
+	/* set tda10021 back to original clock configuration on reset */
+	if (budget_av->tda10021_poclkp) {
+		tda10021_write_byte(budget_av->budget.dvb_frontend, 0x12, 0xa0);
+		budget_av->tda10021_ts_enabled = 0;
+	}
+
 	return 0;
 }
 
@@ -254,6 +255,11 @@ static int ciintf_slot_shutdown(struct dvb_ca_en50221 *ca, int slot)
 	ttpci_budget_set_video_port(saa, BUDGET_VIDEO_PORTB);
 	budget_av->slot_status = SLOTSTATUS_NONE;
 
+	/* set tda10021 back to original clock configuration when cam removed */
+	if (budget_av->tda10021_poclkp) {
+		tda10021_write_byte(budget_av->budget.dvb_frontend, 0x12, 0xa0);
+		budget_av->tda10021_ts_enabled = 0;
+	}
 	return 0;
 }
 
@@ -268,6 +274,12 @@ static int ciintf_slot_ts_enable(struct dvb_ca_en50221 *ca, int slot)
 	dprintk(1, "ciintf_slot_ts_enable: %d\n", budget_av->slot_status);
 
 	ttpci_budget_set_video_port(saa, BUDGET_VIDEO_PORTA);
+
+	/* tda10021 seems to need a different TS clock config when data is routed to the CAM */
+	if (budget_av->tda10021_poclkp) {
+		tda10021_write_byte(budget_av->budget.dvb_frontend, 0x12, 0xa1);
+		budget_av->tda10021_ts_enabled = 1;
+	}
 
 	return 0;
 }
@@ -347,7 +359,7 @@ static int ciintf_init(struct budget_av *budget_av)
 	saa7146_setgpio(saa, 3, SAA7146_GPIO_OUTLO);
 
 	/* Enable DEBI pins */
-	saa7146_write(saa, MC1, MASK_27 | MASK_11);
+	saa7146_write(saa, MC1, saa7146_read(saa, MC1) | (0x800 << 16) | 0x800);
 
 	/* register CI interface */
 	budget_av->ca.owner = THIS_MODULE;
@@ -373,7 +385,7 @@ static int ciintf_init(struct budget_av *budget_av)
 	return 0;
 
 error:
-	saa7146_write(saa, MC1, MASK_27);
+	saa7146_write(saa, MC1, saa7146_read(saa, MC1) | (0x800 << 16));
 	return result;
 }
 
@@ -390,7 +402,7 @@ static void ciintf_deinit(struct budget_av *budget_av)
 	dvb_ca_en50221_release(&budget_av->ca);
 
 	/* disable DEBI pins */
-	saa7146_write(saa, MC1, MASK_27);
+	saa7146_write(saa, MC1, saa7146_read(saa, MC1) | (0x800 << 16));
 }
 
 
@@ -536,6 +548,144 @@ static int philips_su1278_ty_ci_tuner_set_params(struct dvb_frontend *fe,
 	return 0;
 }
 
+#define MIN2(a,b) ((a) < (b) ? (a) : (b))
+#define MIN3(a,b,c) MIN2(MIN2(a,b),c)
+
+static int philips_su1278sh2_tua6100_tuner_set_params(struct dvb_frontend *fe,
+						      struct dvb_frontend_parameters *params)
+{
+	u8 reg0 [2] = { 0x00, 0x00 };
+	u8 reg1 [4] = { 0x01, 0x00, 0x00, 0x00 };
+	u8 reg2 [3] = { 0x02, 0x00, 0x00 };
+	int _fband;
+	int first_ZF;
+	int R, A, N, P, M;
+	struct i2c_msg msg = {.addr = 0x60,.flags = 0,.buf = NULL,.len = 0 };
+	int freq = params->frequency;
+	struct budget *budget = (struct budget *) fe->dvb->priv;
+
+	first_ZF = (freq) / 1000;
+
+	if (abs(MIN2(abs(first_ZF-1190),abs(first_ZF-1790))) <
+		   abs(MIN3(abs(first_ZF-1202),abs(first_ZF-1542),abs(first_ZF-1890))))
+		_fband = 2;
+	else
+		_fband = 3;
+
+	if (_fband == 2) {
+		if (((first_ZF >= 950) && (first_ZF < 1350)) ||
+				    ((first_ZF >= 1430) && (first_ZF < 1950)))
+			reg0[1] = 0x07;
+		else if (((first_ZF >= 1350) && (first_ZF < 1430)) ||
+					 ((first_ZF >= 1950) && (first_ZF < 2150)))
+			reg0[1] = 0x0B;
+	}
+
+	if(_fband == 3) {
+		if (((first_ZF >= 950) && (first_ZF < 1350)) ||
+				    ((first_ZF >= 1455) && (first_ZF < 1950)))
+			reg0[1] = 0x07;
+		else if (((first_ZF >= 1350) && (first_ZF < 1420)) ||
+					 ((first_ZF >= 1950) && (first_ZF < 2150)))
+			reg0[1] = 0x0B;
+		else if ((first_ZF >= 1420) && (first_ZF < 1455))
+			reg0[1] = 0x0F;
+	}
+
+	if (first_ZF > 1525)
+		reg1[1] |= 0x80;
+	else
+		reg1[1] &= 0x7F;
+
+	if (_fband == 2) {
+		if (first_ZF > 1430) { /* 1430MHZ */
+			reg1[1] &= 0xCF; /* N2 */
+			reg2[1] &= 0xCF; /* R2 */
+			reg2[1] |= 0x10;
+		} else {
+			reg1[1] &= 0xCF; /* N2 */
+			reg1[1] |= 0x20;
+			reg2[1] &= 0xCF; /* R2 */
+			reg2[1] |= 0x10;
+		}
+	}
+
+	if (_fband == 3) {
+		if ((first_ZF >= 1455) &&
+				   (first_ZF < 1630)) {
+			reg1[1] &= 0xCF; /* N2 */
+			reg1[1] |= 0x20;
+			reg2[1] &= 0xCF; /* R2 */
+				   } else {
+					   if (first_ZF < 1455) {
+						   reg1[1] &= 0xCF; /* N2 */
+						   reg1[1] |= 0x20;
+						   reg2[1] &= 0xCF; /* R2 */
+						   reg2[1] |= 0x10;
+					   } else {
+						   if (first_ZF >= 1630) {
+							   reg1[1] &= 0xCF; /* N2 */
+							   reg2[1] &= 0xCF; /* R2 */
+							   reg2[1] |= 0x10;
+						   }
+					   }
+				   }
+	}
+
+	/* set ports, enable P0 for symbol rates > 4Ms/s */
+	if (params->u.qpsk.symbol_rate >= 4000000)
+		reg1[1] |= 0x0c;
+	else
+		reg1[1] |= 0x04;
+
+	reg2[1] |= 0x0c;
+
+	R = 64;
+	A = 64;
+	P = 64;	 //32
+
+	M = (freq * R) / 4;		/* in Mhz */
+	N = (M - A * 1000) / (P * 1000);
+
+	reg1[1] |= (N >> 9) & 0x03;
+	reg1[2]	 = (N >> 1) & 0xff;
+	reg1[3]	 = (N << 7) & 0x80;
+
+	reg2[1] |= (R >> 8) & 0x03;
+	reg2[2]	 = R & 0xFF;	/* R */
+
+	reg1[3] |= A & 0x7f;	/* A */
+
+	if (P == 64)
+		reg1[1] |= 0x40; /* Prescaler 64/65 */
+
+	reg0[1] |= 0x03;
+
+	/* already enabled - do not reenable i2c repeater or TX fails */
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+	msg.buf = reg0;
+	msg.len = sizeof(reg0);
+	if (i2c_transfer(&budget->i2c_adap, &msg, 1) != 1)
+		return -EIO;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+	msg.buf = reg1;
+	msg.len = sizeof(reg1);
+	if (i2c_transfer(&budget->i2c_adap, &msg, 1) != 1)
+		return -EIO;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+	msg.buf = reg2;
+	msg.len = sizeof(reg2);
+	if (i2c_transfer(&budget->i2c_adap, &msg, 1) != 1)
+		return -EIO;
+
+	return 0;
+}
+
 static u8 typhoon_cinergy1200s_inittab[] = {
 	0x01, 0x15,
 	0x02, 0x30,
@@ -584,7 +734,7 @@ static struct stv0299_config typhoon_config = {
 	.mclk = 88000000UL,
 	.invert = 0,
 	.skip_reinit = 0,
-	.lock_output = STV0299_LOCKOUTPUT_1,
+	.lock_output = STV0229_LOCKOUTPUT_1,
 	.volt13_op0_op1 = STV0299_VOLT13_OP0,
 	.min_delay_ms = 100,
 	.set_symbol_rate = philips_su1278_ty_ci_set_symbol_rate,
@@ -597,7 +747,7 @@ static struct stv0299_config cinergy_1200s_config = {
 	.mclk = 88000000UL,
 	.invert = 0,
 	.skip_reinit = 0,
-	.lock_output = STV0299_LOCKOUTPUT_0,
+	.lock_output = STV0229_LOCKOUTPUT_0,
 	.volt13_op0_op1 = STV0299_VOLT13_OP0,
 	.min_delay_ms = 100,
 	.set_symbol_rate = philips_su1278_ty_ci_set_symbol_rate,
@@ -609,7 +759,7 @@ static struct stv0299_config cinergy_1200s_1894_0010_config = {
 	.mclk = 88000000UL,
 	.invert = 1,
 	.skip_reinit = 0,
-	.lock_output = STV0299_LOCKOUTPUT_1,
+	.lock_output = STV0229_LOCKOUTPUT_1,
 	.volt13_op0_op1 = STV0299_VOLT13_OP0,
 	.min_delay_ms = 100,
 	.set_symbol_rate = philips_su1278_ty_ci_set_symbol_rate,
@@ -618,66 +768,32 @@ static struct stv0299_config cinergy_1200s_1894_0010_config = {
 static int philips_cu1216_tuner_set_params(struct dvb_frontend *fe, struct dvb_frontend_parameters *params)
 {
 	struct budget *budget = (struct budget *) fe->dvb->priv;
-	u8 buf[6];
+	u8 buf[4];
 	struct i2c_msg msg = {.addr = 0x60,.flags = 0,.buf = buf,.len = sizeof(buf) };
-	int i;
 
-#define CU1216_IF 36125000
 #define TUNER_MUL 62500
 
-	u32 div = (params->frequency + CU1216_IF + TUNER_MUL / 2) / TUNER_MUL;
+	u32 div = (params->frequency + 36125000 + TUNER_MUL / 2) / TUNER_MUL;
 
 	buf[0] = (div >> 8) & 0x7f;
 	buf[1] = div & 0xff;
-	buf[2] = 0xce;
+	buf[2] = 0x86;
 	buf[3] = (params->frequency < 150000000 ? 0x01 :
 		  params->frequency < 445000000 ? 0x02 : 0x04);
-	buf[4] = 0xde;
-	buf[5] = 0x20;
 
 	if (fe->ops.i2c_gate_ctrl)
 		fe->ops.i2c_gate_ctrl(fe, 1);
 	if (i2c_transfer(&budget->i2c_adap, &msg, 1) != 1)
 		return -EIO;
-
-	/* wait for the pll lock */
-	msg.flags = I2C_M_RD;
-	msg.len = 1;
-	for (i = 0; i < 20; i++) {
-		if (fe->ops.i2c_gate_ctrl)
-			fe->ops.i2c_gate_ctrl(fe, 1);
-		if (i2c_transfer(&budget->i2c_adap, &msg, 1) == 1 && (buf[0] & 0x40))
-			break;
-		msleep(10);
-	}
-
-	/* switch the charge pump to the lower current */
-	msg.flags = 0;
-	msg.len = 2;
-	msg.buf = &buf[2];
-	buf[2] &= ~0x40;
-	if (fe->ops.i2c_gate_ctrl)
-		fe->ops.i2c_gate_ctrl(fe, 1);
-	if (i2c_transfer(&budget->i2c_adap, &msg, 1) != 1)
-		return -EIO;
-
 	return 0;
 }
 
-static struct tda1002x_config philips_cu1216_config = {
+static struct tda10021_config philips_cu1216_config = {
 	.demod_address = 0x0c,
-	.invert = 1,
 };
 
-static struct tda1002x_config philips_cu1216_config_altaddress = {
-	.demod_address = 0x0d,
-	.invert = 0,
-};
 
-static struct tda10023_config philips_cu1216_tda10023_config = {
-	.demod_address = 0x0c,
-	.invert = 1,
-};
+
 
 static int philips_tu1216_tuner_init(struct dvb_frontend *fe)
 {
@@ -840,6 +956,29 @@ static u8 philips_sd1878_inittab[] = {
 	0xff, 0xff
 };
 
+static int philips_sd1878_tda8261_tuner_set_params(struct dvb_frontend *fe,
+						   struct dvb_frontend_parameters *params)
+{
+	u8              buf[4];
+	int             rc;
+	struct i2c_msg  tuner_msg = {.addr=0x60,.flags=0,.buf=buf,.len=sizeof(buf)};
+	struct budget *budget = (struct budget *) fe->dvb->priv;
+
+	if((params->frequency < 950000) || (params->frequency > 2150000))
+		return -EINVAL;
+
+	rc=dvb_pll_configure(&dvb_pll_philips_sd1878_tda8261, buf,
+			params->frequency, 0);
+	if(rc < 0) return rc;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+	if(i2c_transfer(&budget->i2c_adap, &tuner_msg, 1) != 1)
+		return -EIO;
+
+    return 0;
+}
+
 static int philips_sd1878_ci_set_symbol_rate(struct dvb_frontend *fe,
 		u32 srate, u32 ratio)
 {
@@ -881,285 +1020,10 @@ static struct stv0299_config philips_sd1878_config = {
 	.mclk = 88000000UL,
 	.invert = 0,
 	.skip_reinit = 0,
-	.lock_output = STV0299_LOCKOUTPUT_1,
+	.lock_output = STV0229_LOCKOUTPUT_1,
 	.volt13_op0_op1 = STV0299_VOLT13_OP0,
 	.min_delay_ms = 100,
 	.set_symbol_rate = philips_sd1878_ci_set_symbol_rate,
-};
-
-/* KNC1 DVB-S (STB0899) Inittab	*/
-static const struct stb0899_s1_reg knc1_stb0899_s1_init_1[] = {
-
-	{ STB0899_DEV_ID		, 0x81 },
-	{ STB0899_DISCNTRL1		, 0x32 },
-	{ STB0899_DISCNTRL2		, 0x80 },
-	{ STB0899_DISRX_ST0		, 0x04 },
-	{ STB0899_DISRX_ST1		, 0x00 },
-	{ STB0899_DISPARITY		, 0x00 },
-	{ STB0899_DISFIFO		, 0x00 },
-	{ STB0899_DISSTATUS		, 0x20 },
-	{ STB0899_DISF22		, 0x8c },
-	{ STB0899_DISF22RX		, 0x9a },
-	{ STB0899_SYSREG		, 0x0b },
-	{ STB0899_ACRPRESC		, 0x11 },
-	{ STB0899_ACRDIV1		, 0x0a },
-	{ STB0899_ACRDIV2		, 0x05 },
-	{ STB0899_DACR1			, 0x00 },
-	{ STB0899_DACR2			, 0x00 },
-	{ STB0899_OUTCFG		, 0x00 },
-	{ STB0899_MODECFG		, 0x00 },
-	{ STB0899_IRQSTATUS_3		, 0x30 },
-	{ STB0899_IRQSTATUS_2		, 0x00 },
-	{ STB0899_IRQSTATUS_1		, 0x00 },
-	{ STB0899_IRQSTATUS_0		, 0x00 },
-	{ STB0899_IRQMSK_3		, 0xf3 },
-	{ STB0899_IRQMSK_2		, 0xfc },
-	{ STB0899_IRQMSK_1		, 0xff },
-	{ STB0899_IRQMSK_0		, 0xff },
-	{ STB0899_IRQCFG		, 0x00 },
-	{ STB0899_I2CCFG		, 0x88 },
-	{ STB0899_I2CRPT		, 0x58 }, /* Repeater=8, Stop=disabled */
-	{ STB0899_IOPVALUE5		, 0x00 },
-	{ STB0899_IOPVALUE4		, 0x20 },
-	{ STB0899_IOPVALUE3		, 0xc9 },
-	{ STB0899_IOPVALUE2		, 0x90 },
-	{ STB0899_IOPVALUE1		, 0x40 },
-	{ STB0899_IOPVALUE0		, 0x00 },
-	{ STB0899_GPIO00CFG		, 0x82 },
-	{ STB0899_GPIO01CFG		, 0x82 },
-	{ STB0899_GPIO02CFG		, 0x82 },
-	{ STB0899_GPIO03CFG		, 0x82 },
-	{ STB0899_GPIO04CFG		, 0x82 },
-	{ STB0899_GPIO05CFG		, 0x82 },
-	{ STB0899_GPIO06CFG		, 0x82 },
-	{ STB0899_GPIO07CFG		, 0x82 },
-	{ STB0899_GPIO08CFG		, 0x82 },
-	{ STB0899_GPIO09CFG		, 0x82 },
-	{ STB0899_GPIO10CFG		, 0x82 },
-	{ STB0899_GPIO11CFG		, 0x82 },
-	{ STB0899_GPIO12CFG		, 0x82 },
-	{ STB0899_GPIO13CFG		, 0x82 },
-	{ STB0899_GPIO14CFG		, 0x82 },
-	{ STB0899_GPIO15CFG		, 0x82 },
-	{ STB0899_GPIO16CFG		, 0x82 },
-	{ STB0899_GPIO17CFG		, 0x82 },
-	{ STB0899_GPIO18CFG		, 0x82 },
-	{ STB0899_GPIO19CFG		, 0x82 },
-	{ STB0899_GPIO20CFG		, 0x82 },
-	{ STB0899_SDATCFG		, 0xb8 },
-	{ STB0899_SCLTCFG		, 0xba },
-	{ STB0899_AGCRFCFG		, 0x08 }, /* 0x1c */
-	{ STB0899_GPIO22		, 0x82 }, /* AGCBB2CFG */
-	{ STB0899_GPIO21		, 0x91 }, /* AGCBB1CFG */
-	{ STB0899_DIRCLKCFG		, 0x82 },
-	{ STB0899_CLKOUT27CFG		, 0x7e },
-	{ STB0899_STDBYCFG		, 0x82 },
-	{ STB0899_CS0CFG		, 0x82 },
-	{ STB0899_CS1CFG		, 0x82 },
-	{ STB0899_DISEQCOCFG		, 0x20 },
-	{ STB0899_GPIO32CFG		, 0x82 },
-	{ STB0899_GPIO33CFG		, 0x82 },
-	{ STB0899_GPIO34CFG		, 0x82 },
-	{ STB0899_GPIO35CFG		, 0x82 },
-	{ STB0899_GPIO36CFG		, 0x82 },
-	{ STB0899_GPIO37CFG		, 0x82 },
-	{ STB0899_GPIO38CFG		, 0x82 },
-	{ STB0899_GPIO39CFG		, 0x82 },
-	{ STB0899_NCOARSE		, 0x15 }, /* 0x15 = 27 Mhz Clock, F/3 = 198MHz, F/6 = 99MHz */
-	{ STB0899_SYNTCTRL		, 0x02 }, /* 0x00 = CLK from CLKI, 0x02 = CLK from XTALI */
-	{ STB0899_FILTCTRL		, 0x00 },
-	{ STB0899_SYSCTRL		, 0x00 },
-	{ STB0899_STOPCLK1		, 0x20 },
-	{ STB0899_STOPCLK2		, 0x00 },
-	{ STB0899_INTBUFSTATUS		, 0x00 },
-	{ STB0899_INTBUFCTRL		, 0x0a },
-	{ 0xffff			, 0xff },
-};
-
-static const struct stb0899_s1_reg knc1_stb0899_s1_init_3[] = {
-	{ STB0899_DEMOD			, 0x00 },
-	{ STB0899_RCOMPC		, 0xc9 },
-	{ STB0899_AGC1CN		, 0x41 },
-	{ STB0899_AGC1REF		, 0x08 },
-	{ STB0899_RTC			, 0x7a },
-	{ STB0899_TMGCFG		, 0x4e },
-	{ STB0899_AGC2REF		, 0x33 },
-	{ STB0899_TLSR			, 0x84 },
-	{ STB0899_CFD			, 0xee },
-	{ STB0899_ACLC			, 0x87 },
-	{ STB0899_BCLC			, 0x94 },
-	{ STB0899_EQON			, 0x41 },
-	{ STB0899_LDT			, 0xdd },
-	{ STB0899_LDT2			, 0xc9 },
-	{ STB0899_EQUALREF		, 0xb4 },
-	{ STB0899_TMGRAMP		, 0x10 },
-	{ STB0899_TMGTHD		, 0x30 },
-	{ STB0899_IDCCOMP		, 0xfb },
-	{ STB0899_QDCCOMP		, 0x03 },
-	{ STB0899_POWERI		, 0x3b },
-	{ STB0899_POWERQ		, 0x3d },
-	{ STB0899_RCOMP			, 0x81 },
-	{ STB0899_AGCIQIN		, 0x80 },
-	{ STB0899_AGC2I1		, 0x04 },
-	{ STB0899_AGC2I2		, 0xf5 },
-	{ STB0899_TLIR			, 0x25 },
-	{ STB0899_RTF			, 0x80 },
-	{ STB0899_DSTATUS		, 0x00 },
-	{ STB0899_LDI			, 0xca },
-	{ STB0899_CFRM			, 0xf1 },
-	{ STB0899_CFRL			, 0xf3 },
-	{ STB0899_NIRM			, 0x2a },
-	{ STB0899_NIRL			, 0x05 },
-	{ STB0899_ISYMB			, 0x17 },
-	{ STB0899_QSYMB			, 0xfa },
-	{ STB0899_SFRH			, 0x2f },
-	{ STB0899_SFRM			, 0x68 },
-	{ STB0899_SFRL			, 0x40 },
-	{ STB0899_SFRUPH		, 0x2f },
-	{ STB0899_SFRUPM		, 0x68 },
-	{ STB0899_SFRUPL		, 0x40 },
-	{ STB0899_EQUAI1		, 0xfd },
-	{ STB0899_EQUAQ1		, 0x04 },
-	{ STB0899_EQUAI2		, 0x0f },
-	{ STB0899_EQUAQ2		, 0xff },
-	{ STB0899_EQUAI3		, 0xdf },
-	{ STB0899_EQUAQ3		, 0xfa },
-	{ STB0899_EQUAI4		, 0x37 },
-	{ STB0899_EQUAQ4		, 0x0d },
-	{ STB0899_EQUAI5		, 0xbd },
-	{ STB0899_EQUAQ5		, 0xf7 },
-	{ STB0899_DSTATUS2		, 0x00 },
-	{ STB0899_VSTATUS		, 0x00 },
-	{ STB0899_VERROR		, 0xff },
-	{ STB0899_IQSWAP		, 0x2a },
-	{ STB0899_ECNT1M		, 0x00 },
-	{ STB0899_ECNT1L		, 0x00 },
-	{ STB0899_ECNT2M		, 0x00 },
-	{ STB0899_ECNT2L		, 0x00 },
-	{ STB0899_ECNT3M		, 0x00 },
-	{ STB0899_ECNT3L		, 0x00 },
-	{ STB0899_FECAUTO1		, 0x06 },
-	{ STB0899_FECM			, 0x01 },
-	{ STB0899_VTH12			, 0xf0 },
-	{ STB0899_VTH23			, 0xa0 },
-	{ STB0899_VTH34			, 0x78 },
-	{ STB0899_VTH56			, 0x4e },
-	{ STB0899_VTH67			, 0x48 },
-	{ STB0899_VTH78			, 0x38 },
-	{ STB0899_PRVIT			, 0xff },
-	{ STB0899_VITSYNC		, 0x19 },
-	{ STB0899_RSULC			, 0xb1 }, /* DVB = 0xb1, DSS = 0xa1 */
-	{ STB0899_TSULC			, 0x42 },
-	{ STB0899_RSLLC			, 0x40 },
-	{ STB0899_TSLPL			, 0x12 },
-	{ STB0899_TSCFGH		, 0x0c },
-	{ STB0899_TSCFGM		, 0x00 },
-	{ STB0899_TSCFGL		, 0x0c },
-	{ STB0899_TSOUT			, 0x0d }, /* 0x0d for CAM */
-	{ STB0899_RSSYNCDEL		, 0x00 },
-	{ STB0899_TSINHDELH		, 0x02 },
-	{ STB0899_TSINHDELM		, 0x00 },
-	{ STB0899_TSINHDELL		, 0x00 },
-	{ STB0899_TSLLSTKM		, 0x00 },
-	{ STB0899_TSLLSTKL		, 0x00 },
-	{ STB0899_TSULSTKM		, 0x00 },
-	{ STB0899_TSULSTKL		, 0xab },
-	{ STB0899_PCKLENUL		, 0x00 },
-	{ STB0899_PCKLENLL		, 0xcc },
-	{ STB0899_RSPCKLEN		, 0xcc },
-	{ STB0899_TSSTATUS		, 0x80 },
-	{ STB0899_ERRCTRL1		, 0xb6 },
-	{ STB0899_ERRCTRL2		, 0x96 },
-	{ STB0899_ERRCTRL3		, 0x89 },
-	{ STB0899_DMONMSK1		, 0x27 },
-	{ STB0899_DMONMSK0		, 0x03 },
-	{ STB0899_DEMAPVIT		, 0x5c },
-	{ STB0899_PLPARM		, 0x1f },
-	{ STB0899_PDELCTRL		, 0x48 },
-	{ STB0899_PDELCTRL2		, 0x00 },
-	{ STB0899_BBHCTRL1		, 0x00 },
-	{ STB0899_BBHCTRL2		, 0x00 },
-	{ STB0899_HYSTTHRESH		, 0x77 },
-	{ STB0899_MATCSTM		, 0x00 },
-	{ STB0899_MATCSTL		, 0x00 },
-	{ STB0899_UPLCSTM		, 0x00 },
-	{ STB0899_UPLCSTL		, 0x00 },
-	{ STB0899_DFLCSTM		, 0x00 },
-	{ STB0899_DFLCSTL		, 0x00 },
-	{ STB0899_SYNCCST		, 0x00 },
-	{ STB0899_SYNCDCSTM		, 0x00 },
-	{ STB0899_SYNCDCSTL		, 0x00 },
-	{ STB0899_ISI_ENTRY		, 0x00 },
-	{ STB0899_ISI_BIT_EN		, 0x00 },
-	{ STB0899_MATSTRM		, 0x00 },
-	{ STB0899_MATSTRL		, 0x00 },
-	{ STB0899_UPLSTRM		, 0x00 },
-	{ STB0899_UPLSTRL		, 0x00 },
-	{ STB0899_DFLSTRM		, 0x00 },
-	{ STB0899_DFLSTRL		, 0x00 },
-	{ STB0899_SYNCSTR		, 0x00 },
-	{ STB0899_SYNCDSTRM		, 0x00 },
-	{ STB0899_SYNCDSTRL		, 0x00 },
-	{ STB0899_CFGPDELSTATUS1	, 0x10 },
-	{ STB0899_CFGPDELSTATUS2	, 0x00 },
-	{ STB0899_BBFERRORM		, 0x00 },
-	{ STB0899_BBFERRORL		, 0x00 },
-	{ STB0899_UPKTERRORM		, 0x00 },
-	{ STB0899_UPKTERRORL		, 0x00 },
-	{ 0xffff			, 0xff },
-};
-
-/* STB0899 demodulator config for the KNC1 and clones */
-static struct stb0899_config knc1_dvbs2_config = {
-	.init_dev		= knc1_stb0899_s1_init_1,
-	.init_s2_demod		= stb0899_s2_init_2,
-	.init_s1_demod		= knc1_stb0899_s1_init_3,
-	.init_s2_fec		= stb0899_s2_init_4,
-	.init_tst		= stb0899_s1_init_5,
-
-	.postproc		= NULL,
-
-	.demod_address		= 0x68,
-//	.ts_output_mode		= STB0899_OUT_PARALLEL,	/* types = SERIAL/PARALLEL	*/
-	.block_sync_mode	= STB0899_SYNC_FORCED,	/* DSS, SYNC_FORCED/UNSYNCED	*/
-//	.ts_pfbit_toggle	= STB0899_MPEG_NORMAL,	/* DirecTV, MPEG toggling seq	*/
-
-	.xtal_freq		= 27000000,
-	.inversion		= IQ_SWAP_OFF, /* 1 */
-
-	.lo_clk			= 76500000,
-	.hi_clk			= 90000000,
-
-	.esno_ave		= STB0899_DVBS2_ESNO_AVE,
-	.esno_quant		= STB0899_DVBS2_ESNO_QUANT,
-	.avframes_coarse	= STB0899_DVBS2_AVFRAMES_COARSE,
-	.avframes_fine		= STB0899_DVBS2_AVFRAMES_FINE,
-	.miss_threshold		= STB0899_DVBS2_MISS_THRESHOLD,
-	.uwp_threshold_acq	= STB0899_DVBS2_UWP_THRESHOLD_ACQ,
-	.uwp_threshold_track	= STB0899_DVBS2_UWP_THRESHOLD_TRACK,
-	.uwp_threshold_sof	= STB0899_DVBS2_UWP_THRESHOLD_SOF,
-	.sof_search_timeout	= STB0899_DVBS2_SOF_SEARCH_TIMEOUT,
-
-	.btr_nco_bits		= STB0899_DVBS2_BTR_NCO_BITS,
-	.btr_gain_shift_offset	= STB0899_DVBS2_BTR_GAIN_SHIFT_OFFSET,
-	.crl_nco_bits		= STB0899_DVBS2_CRL_NCO_BITS,
-	.ldpc_max_iter		= STB0899_DVBS2_LDPC_MAX_ITER,
-
-	.tuner_get_frequency	= tda8261_get_frequency,
-	.tuner_set_frequency	= tda8261_set_frequency,
-	.tuner_set_bandwidth	= NULL,
-	.tuner_get_bandwidth	= tda8261_get_bandwidth,
-	.tuner_set_rfsiggain	= NULL
-};
-
-/*
- * SD1878/SHA tuner config
- * 1F, Single I/P, Horizontal mount, High Sensitivity
- */
-static const struct tda8261_config sd1878c_config = {
-//	.name		= "SD1878/SHA",
-	.addr		= 0x60,
-	.step_size	= TDA8261_STEP_1000 /* kHz */
 };
 
 static u8 read_pwm(struct budget_av *budget_av)
@@ -1177,34 +1041,40 @@ static u8 read_pwm(struct budget_av *budget_av)
 	return pwm;
 }
 
-#define SUBID_DVBS_KNC1			0x0010
-#define SUBID_DVBS_KNC1_PLUS		0x0011
-#define SUBID_DVBS_TYPHOON		0x4f56
-#define SUBID_DVBS_CINERGY1200		0x1154
-#define SUBID_DVBS_CYNERGY1200N 	0x1155
-#define SUBID_DVBS_TV_STAR		0x0014
-#define SUBID_DVBS_TV_STAR_PLUS_X4	0x0015
-#define SUBID_DVBS_TV_STAR_CI		0x0016
-#define SUBID_DVBS2_KNC1		0x0018
-#define SUBID_DVBS2_KNC1_OEM		0x0019
-#define SUBID_DVBS_EASYWATCH_1  	0x001a
-#define SUBID_DVBS_EASYWATCH_2  	0x001b
-#define SUBID_DVBS2_EASYWATCH		0x001d
-#define SUBID_DVBS_EASYWATCH		0x001e
+#define SUBID_DVBS_KNC1		0x0010
+#define SUBID_DVBS_KNC1_PLUS	0x0011
+#define SUBID_DVBS_TYPHOON	0x4f56
+#define SUBID_DVBS_CINERGY1200	0x1154
+#define SUBID_DVBS_CYNERGY1200N 0x1155
 
-#define SUBID_DVBC_EASYWATCH		0x002a
-#define SUBID_DVBC_EASYWATCH_MK3	0x002c
-#define SUBID_DVBC_KNC1			0x0020
-#define SUBID_DVBC_KNC1_PLUS		0x0021
-#define SUBID_DVBC_KNC1_MK3		0x0022
-#define SUBID_DVBC_KNC1_PLUS_MK3	0x0023
-#define SUBID_DVBC_CINERGY1200		0x1156
-#define SUBID_DVBC_CINERGY1200_MK3	0x1176
+#define SUBID_DVBS_TV_STAR	0x0014
+#define SUBID_DVBS_TV_STAR_CI	0x0016
+#define SUBID_DVBS_EASYWATCH_1  0x001a
+#define SUBID_DVBS_EASYWATCH	0x001e
+#define SUBID_DVBC_KNC1		0x0020
+#define SUBID_DVBC_KNC1_PLUS	0x0021
+#define SUBID_DVBC_CINERGY1200	0x1156
 
-#define SUBID_DVBT_EASYWATCH		0x003a
-#define SUBID_DVBT_KNC1_PLUS		0x0031
-#define SUBID_DVBT_KNC1			0x0030
-#define SUBID_DVBT_CINERGY1200		0x1157
+#define SUBID_DVBT_KNC1_PLUS	0x0031
+#define SUBID_DVBT_KNC1		0x0030
+#define SUBID_DVBT_CINERGY1200	0x1157
+
+
+static int tda10021_set_frontend(struct dvb_frontend *fe,
+				 struct dvb_frontend_parameters *p)
+{
+	struct budget_av* budget_av = fe->dvb->priv;
+	int result;
+
+	result = budget_av->tda10021_set_frontend(fe, p);
+	if (budget_av->tda10021_ts_enabled) {
+		tda10021_write_byte(budget_av->budget.dvb_frontend, 0x12, 0xa1);
+	} else {
+		tda10021_write_byte(budget_av->budget.dvb_frontend, 0x12, 0xa0);
+	}
+
+	return result;
+}
 
 static void frontend_init(struct budget_av *budget_av)
 {
@@ -1214,19 +1084,11 @@ static void frontend_init(struct budget_av *budget_av)
 	/* Enable / PowerON Frontend */
 	saa7146_setgpio(saa, 0, SAA7146_GPIO_OUTLO);
 
-	/* Wait for PowerON */
-	msleep(100);
-
 	/* additional setup necessary for the PLUS cards */
 	switch (saa->pci->subsystem_device) {
 		case SUBID_DVBS_KNC1_PLUS:
 		case SUBID_DVBC_KNC1_PLUS:
 		case SUBID_DVBT_KNC1_PLUS:
-		case SUBID_DVBC_EASYWATCH:
-		case SUBID_DVBC_KNC1_PLUS_MK3:
-		case SUBID_DVBS2_KNC1:
-		case SUBID_DVBS2_KNC1_OEM:
-		case SUBID_DVBS2_EASYWATCH:
 			saa7146_setgpio(saa, 3, SAA7146_GPIO_OUTHI);
 			break;
 	}
@@ -1234,22 +1096,15 @@ static void frontend_init(struct budget_av *budget_av)
 	switch (saa->pci->subsystem_device) {
 
 	case SUBID_DVBS_KNC1:
-		/*
-		 * maybe that setting is needed for other dvb-s cards as well,
-		 * but so far it has been only confirmed for this type
-		 */
-		budget_av->reinitialise_demod = 1;
-		/* fall through */
-	case SUBID_DVBS_KNC1_PLUS:
 	case SUBID_DVBS_EASYWATCH_1:
 		if (saa->pci->subsystem_vendor == 0x1894) {
-			fe = dvb_attach(stv0299_attach, &cinergy_1200s_1894_0010_config,
+			fe = stv0299_attach(&cinergy_1200s_1894_0010_config,
 					     &budget_av->budget.i2c_adap);
 			if (fe) {
-				dvb_attach(tua6100_attach, fe, 0x60, &budget_av->budget.i2c_adap);
+				fe->ops.tuner_ops.set_params = philips_su1278sh2_tua6100_tuner_set_params;
 			}
 		} else {
-			fe = dvb_attach(stv0299_attach, &typhoon_config,
+			fe = stv0299_attach(&typhoon_config,
 					     &budget_av->budget.i2c_adap);
 			if (fe) {
 				fe->ops.tuner_ops.set_params = philips_su1278_ty_ci_tuner_set_params;
@@ -1258,37 +1113,27 @@ static void frontend_init(struct budget_av *budget_av)
 		break;
 
 	case SUBID_DVBS_TV_STAR:
-	case SUBID_DVBS_TV_STAR_PLUS_X4:
 	case SUBID_DVBS_TV_STAR_CI:
 	case SUBID_DVBS_CYNERGY1200N:
 	case SUBID_DVBS_EASYWATCH:
-	case SUBID_DVBS_EASYWATCH_2:
-		fe = dvb_attach(stv0299_attach, &philips_sd1878_config,
+		fe = stv0299_attach(&philips_sd1878_config,
 				&budget_av->budget.i2c_adap);
 		if (fe) {
-			dvb_attach(dvb_pll_attach, fe, 0x60,
-				   &budget_av->budget.i2c_adap,
-				   DVB_PLL_PHILIPS_SD1878_TDA8261);
+			fe->ops.tuner_ops.set_params = philips_sd1878_tda8261_tuner_set_params;
 		}
 		break;
 
+	case SUBID_DVBS_KNC1_PLUS:
 	case SUBID_DVBS_TYPHOON:
-		fe = dvb_attach(stv0299_attach, &typhoon_config,
+		fe = stv0299_attach(&typhoon_config,
 				    &budget_av->budget.i2c_adap);
 		if (fe) {
 			fe->ops.tuner_ops.set_params = philips_su1278_ty_ci_tuner_set_params;
 		}
 		break;
-	case SUBID_DVBS2_KNC1:
-	case SUBID_DVBS2_KNC1_OEM:
-	case SUBID_DVBS2_EASYWATCH:
-		budget_av->reinitialise_demod = 1;
-		if ((fe = dvb_attach(stb0899_attach, &knc1_dvbs2_config, &budget_av->budget.i2c_adap)))
-			dvb_attach(tda8261_attach, fe, &sd1878c_config, &budget_av->budget.i2c_adap);
 
-		break;
 	case SUBID_DVBS_CINERGY1200:
-		fe = dvb_attach(stv0299_attach, &cinergy_1200s_config,
+		fe = stv0299_attach(&cinergy_1200s_config,
 				    &budget_av->budget.i2c_adap);
 		if (fe) {
 			fe->ops.tuner_ops.set_params = philips_su1278_ty_ci_tuner_set_params;
@@ -1296,44 +1141,34 @@ static void frontend_init(struct budget_av *budget_av)
 		break;
 
 	case SUBID_DVBC_KNC1:
-	case SUBID_DVBC_KNC1_PLUS:
-	case SUBID_DVBC_CINERGY1200:
-	case SUBID_DVBC_EASYWATCH:
 		budget_av->reinitialise_demod = 1;
-		budget_av->budget.dev->i2c_bitrate = SAA7146_I2C_BUS_BIT_RATE_240;
-		fe = dvb_attach(tda10021_attach, &philips_cu1216_config,
+		fe = tda10021_attach(&philips_cu1216_config,
 				     &budget_av->budget.i2c_adap,
 				     read_pwm(budget_av));
-		if (fe == NULL)
-			fe = dvb_attach(tda10021_attach, &philips_cu1216_config_altaddress,
-					     &budget_av->budget.i2c_adap,
-					     read_pwm(budget_av));
 		if (fe) {
 			fe->ops.tuner_ops.set_params = philips_cu1216_tuner_set_params;
 		}
 		break;
 
-	case SUBID_DVBC_EASYWATCH_MK3:
-	case SUBID_DVBC_CINERGY1200_MK3:
-	case SUBID_DVBC_KNC1_MK3:
-	case SUBID_DVBC_KNC1_PLUS_MK3:
+	case SUBID_DVBC_KNC1_PLUS:
+	case SUBID_DVBC_CINERGY1200:
 		budget_av->reinitialise_demod = 1;
-		budget_av->budget.dev->i2c_bitrate = SAA7146_I2C_BUS_BIT_RATE_240;
-		fe = dvb_attach(tda10023_attach,
-			&philips_cu1216_tda10023_config,
-			&budget_av->budget.i2c_adap,
-			read_pwm(budget_av));
+		fe = tda10021_attach(&philips_cu1216_config,
+				     &budget_av->budget.i2c_adap,
+				     read_pwm(budget_av));
 		if (fe) {
+			budget_av->tda10021_poclkp = 1;
+			budget_av->tda10021_set_frontend = fe->ops.set_frontend;
+			fe->ops.set_frontend = tda10021_set_frontend;
 			fe->ops.tuner_ops.set_params = philips_cu1216_tuner_set_params;
 		}
 		break;
 
-	case SUBID_DVBT_EASYWATCH:
 	case SUBID_DVBT_KNC1:
 	case SUBID_DVBT_KNC1_PLUS:
 	case SUBID_DVBT_CINERGY1200:
 		budget_av->reinitialise_demod = 1;
-		fe = dvb_attach(tda10046_attach, &philips_tu1216_config,
+		fe = tda10046_attach(&philips_tu1216_config,
 				     &budget_av->budget.i2c_adap);
 		if (fe) {
 			fe->ops.tuner_ops.init = philips_tu1216_tuner_init;
@@ -1344,7 +1179,7 @@ static void frontend_init(struct budget_av *budget_av)
 
 	if (fe == NULL) {
 		printk(KERN_ERR "budget-av: A frontend driver was not found "
-				"for device [%04x:%04x] subsystem [%04x:%04x]\n",
+				"for device %04x/%04x subsystem %04x/%04x\n",
 		       saa->pci->vendor,
 		       saa->pci->device,
 		       saa->pci->subsystem_vendor,
@@ -1357,7 +1192,8 @@ static void frontend_init(struct budget_av *budget_av)
 	if (dvb_register_frontend(&budget_av->budget.dvb_adapter,
 				  budget_av->budget.dvb_frontend)) {
 		printk(KERN_ERR "budget-av: Frontend registration failed!\n");
-		dvb_frontend_detach(budget_av->budget.dvb_frontend);
+		if (budget_av->budget.dvb_frontend->ops.release)
+			budget_av->budget.dvb_frontend->ops.release(budget_av->budget.dvb_frontend);
 		budget_av->budget.dvb_frontend = NULL;
 	}
 }
@@ -1386,57 +1222,18 @@ static int budget_av_detach(struct saa7146_dev *dev)
 		msleep(200);
 
 		saa7146_unregister_device(&budget_av->vd, dev);
-
-		saa7146_vv_release(dev);
 	}
 
 	if (budget_av->budget.ci_present)
 		ciintf_deinit(budget_av);
 
-	if (budget_av->budget.dvb_frontend != NULL) {
+	if (budget_av->budget.dvb_frontend != NULL)
 		dvb_unregister_frontend(budget_av->budget.dvb_frontend);
-		dvb_frontend_detach(budget_av->budget.dvb_frontend);
-	}
 	err = ttpci_budget_deinit(&budget_av->budget);
 
 	kfree(budget_av);
 
 	return err;
-}
-
-#define KNC1_INPUTS 2
-static struct v4l2_input knc1_inputs[KNC1_INPUTS] = {
-	{0, "Composite", V4L2_INPUT_TYPE_TUNER, 1, 0, V4L2_STD_PAL_BG | V4L2_STD_NTSC_M, 0},
-	{1, "S-Video", V4L2_INPUT_TYPE_CAMERA, 2, 0, V4L2_STD_PAL_BG | V4L2_STD_NTSC_M, 0},
-};
-
-static int vidioc_enum_input(struct file *file, void *fh, struct v4l2_input *i)
-{
-	dprintk(1, "VIDIOC_ENUMINPUT %d.\n", i->index);
-	if (i->index >= KNC1_INPUTS)
-		return -EINVAL;
-	memcpy(i, &knc1_inputs[i->index], sizeof(struct v4l2_input));
-	return 0;
-}
-
-static int vidioc_g_input(struct file *file, void *fh, unsigned int *i)
-{
-	struct saa7146_dev *dev = ((struct saa7146_fh *)fh)->dev;
-	struct budget_av *budget_av = (struct budget_av *)dev->ext_priv;
-
-	*i = budget_av->cur_input;
-
-	dprintk(1, "VIDIOC_G_INPUT %d.\n", *i);
-	return 0;
-}
-
-static int vidioc_s_input(struct file *file, void *fh, unsigned int input)
-{
-	struct saa7146_dev *dev = ((struct saa7146_fh *)fh)->dev;
-	struct budget_av *budget_av = (struct budget_av *)dev->ext_priv;
-
-	dprintk(1, "VIDIOC_S_INPUT %d.\n", input);
-	return saa7113_setinput(budget_av, input);
 }
 
 static struct saa7146_ext_vv vv_data;
@@ -1457,9 +1254,7 @@ static int budget_av_attach(struct saa7146_dev *dev, struct saa7146_pci_extensio
 
 	dev->ext_priv = budget_av;
 
-	err = ttpci_budget_init(&budget_av->budget, dev, info, THIS_MODULE,
-				adapter_nr);
-	if (err) {
+	if ((err = ttpci_budget_init(&budget_av->budget, dev, info, THIS_MODULE))) {
 		kfree(budget_av);
 		return err;
 	}
@@ -1477,14 +1272,10 @@ static int budget_av_attach(struct saa7146_dev *dev, struct saa7146_pci_extensio
 			ERR(("cannot init vv subsystem.\n"));
 			return err;
 		}
-		vv_data.ops.vidioc_enum_input = vidioc_enum_input;
-		vv_data.ops.vidioc_g_input = vidioc_g_input;
-		vv_data.ops.vidioc_s_input = vidioc_s_input;
 
 		if ((err = saa7146_register_device(&budget_av->vd, dev, "knc1", VFL_TYPE_GRABBER))) {
 			/* fixme: proper cleanup here */
 			ERR(("cannot register capture v4l2 device.\n"));
-			saa7146_vv_release(dev);
 			return err;
 		}
 
@@ -1518,6 +1309,54 @@ static int budget_av_attach(struct saa7146_dev *dev, struct saa7146_pci_extensio
 	return 0;
 }
 
+#define KNC1_INPUTS 2
+static struct v4l2_input knc1_inputs[KNC1_INPUTS] = {
+	{0, "Composite", V4L2_INPUT_TYPE_TUNER, 1, 0, V4L2_STD_PAL_BG | V4L2_STD_NTSC_M, 0},
+	{1, "S-Video", V4L2_INPUT_TYPE_CAMERA, 2, 0, V4L2_STD_PAL_BG | V4L2_STD_NTSC_M, 0},
+};
+
+static struct saa7146_extension_ioctls ioctls[] = {
+	{VIDIOC_ENUMINPUT, SAA7146_EXCLUSIVE},
+	{VIDIOC_G_INPUT, SAA7146_EXCLUSIVE},
+	{VIDIOC_S_INPUT, SAA7146_EXCLUSIVE},
+	{0, 0}
+};
+
+static int av_ioctl(struct saa7146_fh *fh, unsigned int cmd, void *arg)
+{
+	struct saa7146_dev *dev = fh->dev;
+	struct budget_av *budget_av = (struct budget_av *) dev->ext_priv;
+
+	switch (cmd) {
+	case VIDIOC_ENUMINPUT:{
+		struct v4l2_input *i = arg;
+
+		dprintk(1, "VIDIOC_ENUMINPUT %d.\n", i->index);
+		if (i->index < 0 || i->index >= KNC1_INPUTS) {
+			return -EINVAL;
+		}
+		memcpy(i, &knc1_inputs[i->index], sizeof(struct v4l2_input));
+		return 0;
+	}
+	case VIDIOC_G_INPUT:{
+		int *input = (int *) arg;
+
+		*input = budget_av->cur_input;
+
+		dprintk(1, "VIDIOC_G_INPUT %d.\n", *input);
+		return 0;
+	}
+	case VIDIOC_S_INPUT:{
+		int input = *(int *) arg;
+		dprintk(1, "VIDIOC_S_INPUT %d.\n", input);
+		return saa7113_setinput(budget_av, input);
+	}
+	default:
+		return -ENOIOCTLCMD;
+	}
+	return 0;
+}
+
 static struct saa7146_standard standard[] = {
 	{.name = "PAL",.id = V4L2_STD_PAL,
 	 .v_offset = 0x17,.v_field = 288,
@@ -1535,33 +1374,25 @@ static struct saa7146_ext_vv vv_data = {
 	.capabilities = 0,	// perhaps later: V4L2_CAP_VBI_CAPTURE, but that need tweaking with the saa7113
 	.flags = 0,
 	.stds = &standard[0],
-	.num_stds = ARRAY_SIZE(standard),
+	.num_stds = sizeof(standard) / sizeof(struct saa7146_standard),
+	.ioctls = &ioctls[0],
+	.ioctl = av_ioctl,
 };
 
 static struct saa7146_extension budget_extension;
 
 MAKE_BUDGET_INFO(knc1s, "KNC1 DVB-S", BUDGET_KNC1S);
-MAKE_BUDGET_INFO(knc1s2,"KNC1 DVB-S2", BUDGET_KNC1S2);
-MAKE_BUDGET_INFO(sates2,"Satelco EasyWatch DVB-S2", BUDGET_KNC1S2);
 MAKE_BUDGET_INFO(knc1c, "KNC1 DVB-C", BUDGET_KNC1C);
 MAKE_BUDGET_INFO(knc1t, "KNC1 DVB-T", BUDGET_KNC1T);
 MAKE_BUDGET_INFO(kncxs, "KNC TV STAR DVB-S", BUDGET_TVSTAR);
 MAKE_BUDGET_INFO(satewpls, "Satelco EasyWatch DVB-S light", BUDGET_TVSTAR);
 MAKE_BUDGET_INFO(satewpls1, "Satelco EasyWatch DVB-S light", BUDGET_KNC1S);
-MAKE_BUDGET_INFO(satewps, "Satelco EasyWatch DVB-S", BUDGET_KNC1S);
-MAKE_BUDGET_INFO(satewplc, "Satelco EasyWatch DVB-C", BUDGET_KNC1CP);
-MAKE_BUDGET_INFO(satewcmk3, "Satelco EasyWatch DVB-C MK3", BUDGET_KNC1C_MK3);
-MAKE_BUDGET_INFO(satewt, "Satelco EasyWatch DVB-T", BUDGET_KNC1T);
 MAKE_BUDGET_INFO(knc1sp, "KNC1 DVB-S Plus", BUDGET_KNC1SP);
-MAKE_BUDGET_INFO(knc1spx4, "KNC1 DVB-S Plus X4", BUDGET_KNC1SP);
 MAKE_BUDGET_INFO(knc1cp, "KNC1 DVB-C Plus", BUDGET_KNC1CP);
-MAKE_BUDGET_INFO(knc1cmk3, "KNC1 DVB-C MK3", BUDGET_KNC1C_MK3);
-MAKE_BUDGET_INFO(knc1cpmk3, "KNC1 DVB-C Plus MK3", BUDGET_KNC1CP_MK3);
 MAKE_BUDGET_INFO(knc1tp, "KNC1 DVB-T Plus", BUDGET_KNC1TP);
 MAKE_BUDGET_INFO(cin1200s, "TerraTec Cinergy 1200 DVB-S", BUDGET_CIN1200S);
 MAKE_BUDGET_INFO(cin1200sn, "TerraTec Cinergy 1200 DVB-S", BUDGET_CIN1200S);
 MAKE_BUDGET_INFO(cin1200c, "Terratec Cinergy 1200 DVB-C", BUDGET_CIN1200C);
-MAKE_BUDGET_INFO(cin1200cmk3, "Terratec Cinergy 1200 DVB-C MK3", BUDGET_CIN1200C_MK3);
 MAKE_BUDGET_INFO(cin1200t, "Terratec Cinergy 1200 DVB-T", BUDGET_CIN1200T);
 
 static struct pci_device_id pci_tbl[] = {
@@ -1569,29 +1400,17 @@ static struct pci_device_id pci_tbl[] = {
 	MAKE_EXTENSION_PCI(knc1s, 0x1131, 0x0010),
 	MAKE_EXTENSION_PCI(knc1s, 0x1894, 0x0010),
 	MAKE_EXTENSION_PCI(knc1sp, 0x1131, 0x0011),
-	MAKE_EXTENSION_PCI(knc1sp, 0x1894, 0x0011),
 	MAKE_EXTENSION_PCI(kncxs, 0x1894, 0x0014),
-	MAKE_EXTENSION_PCI(knc1spx4, 0x1894, 0x0015),
 	MAKE_EXTENSION_PCI(kncxs, 0x1894, 0x0016),
-	MAKE_EXTENSION_PCI(knc1s2, 0x1894, 0x0018),
-	MAKE_EXTENSION_PCI(knc1s2, 0x1894, 0x0019),
-	MAKE_EXTENSION_PCI(sates2, 0x1894, 0x001d),
 	MAKE_EXTENSION_PCI(satewpls, 0x1894, 0x001e),
 	MAKE_EXTENSION_PCI(satewpls1, 0x1894, 0x001a),
-	MAKE_EXTENSION_PCI(satewps, 0x1894, 0x001b),
-	MAKE_EXTENSION_PCI(satewplc, 0x1894, 0x002a),
-	MAKE_EXTENSION_PCI(satewcmk3, 0x1894, 0x002c),
-	MAKE_EXTENSION_PCI(satewt, 0x1894, 0x003a),
 	MAKE_EXTENSION_PCI(knc1c, 0x1894, 0x0020),
 	MAKE_EXTENSION_PCI(knc1cp, 0x1894, 0x0021),
-	MAKE_EXTENSION_PCI(knc1cmk3, 0x1894, 0x0022),
-	MAKE_EXTENSION_PCI(knc1cpmk3, 0x1894, 0x0023),
 	MAKE_EXTENSION_PCI(knc1t, 0x1894, 0x0030),
 	MAKE_EXTENSION_PCI(knc1tp, 0x1894, 0x0031),
 	MAKE_EXTENSION_PCI(cin1200s, 0x153b, 0x1154),
 	MAKE_EXTENSION_PCI(cin1200sn, 0x153b, 0x1155),
 	MAKE_EXTENSION_PCI(cin1200c, 0x153b, 0x1156),
-	MAKE_EXTENSION_PCI(cin1200cmk3, 0x153b, 0x1176),
 	MAKE_EXTENSION_PCI(cin1200t, 0x153b, 0x1157),
 	{
 	 .vendor = 0,
@@ -1602,7 +1421,7 @@ MODULE_DEVICE_TABLE(pci, pci_tbl);
 
 static struct saa7146_extension budget_extension = {
 	.name = "budget_av",
-	.flags = SAA7146_USE_I2C_IRQ,
+	.flags = SAA7146_I2C_SHORT_DELAY,
 
 	.pci_tbl = pci_tbl,
 

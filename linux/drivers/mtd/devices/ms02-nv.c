@@ -5,6 +5,8 @@
  *	modify it under the terms of the GNU General Public License
  *	as published by the Free Software Foundation; either version
  *	2 of the License, or (at your option) any later version.
+ *
+ *	$Id: ms02-nv.c,v 1.11 2005/11/14 13:41:47 macro Exp $
  */
 
 #include <linux/init.h>
@@ -129,10 +131,11 @@ static int __init ms02nv_init_one(ulong addr)
 	int ret = -ENODEV;
 
 	/* The module decodes 8MiB of address space. */
-	mod_res = kzalloc(sizeof(*mod_res), GFP_KERNEL);
+	mod_res = kmalloc(sizeof(*mod_res), GFP_KERNEL);
 	if (!mod_res)
 		return -ENOMEM;
 
+	memset(mod_res, 0, sizeof(*mod_res));
 	mod_res->name = ms02nv_name;
 	mod_res->start = addr;
 	mod_res->end = addr + MS02NV_SLOT_SIZE - 1;
@@ -150,21 +153,24 @@ static int __init ms02nv_init_one(ulong addr)
 	}
 
 	ret = -ENOMEM;
-	mtd = kzalloc(sizeof(*mtd), GFP_KERNEL);
+	mtd = kmalloc(sizeof(*mtd), GFP_KERNEL);
 	if (!mtd)
 		goto err_out_mod_res_rel;
-	mp = kzalloc(sizeof(*mp), GFP_KERNEL);
+	memset(mtd, 0, sizeof(*mtd));
+	mp = kmalloc(sizeof(*mp), GFP_KERNEL);
 	if (!mp)
 		goto err_out_mtd;
+	memset(mp, 0, sizeof(*mp));
 
 	mtd->priv = mp;
 	mp->resource.module = mod_res;
 
 	/* Firmware's diagnostic NVRAM area. */
-	diag_res = kzalloc(sizeof(*diag_res), GFP_KERNEL);
+	diag_res = kmalloc(sizeof(*diag_res), GFP_KERNEL);
 	if (!diag_res)
 		goto err_out_mp;
 
+	memset(diag_res, 0, sizeof(*diag_res));
 	diag_res->name = ms02nv_res_diag_ram;
 	diag_res->start = addr;
 	diag_res->end = addr + MS02NV_RAM - 1;
@@ -174,10 +180,11 @@ static int __init ms02nv_init_one(ulong addr)
 	mp->resource.diag_ram = diag_res;
 
 	/* User-available general-purpose NVRAM area. */
-	user_res = kzalloc(sizeof(*user_res), GFP_KERNEL);
+	user_res = kmalloc(sizeof(*user_res), GFP_KERNEL);
 	if (!user_res)
 		goto err_out_diag_res;
 
+	memset(user_res, 0, sizeof(*user_res));
 	user_res->name = ms02nv_res_user_ram;
 	user_res->start = addr + MS02NV_RAM;
 	user_res->end = addr + size - 1;
@@ -187,10 +194,11 @@ static int __init ms02nv_init_one(ulong addr)
 	mp->resource.user_ram = user_res;
 
 	/* Control and status register. */
-	csr_res = kzalloc(sizeof(*csr_res), GFP_KERNEL);
+	csr_res = kmalloc(sizeof(*csr_res), GFP_KERNEL);
 	if (!csr_res)
 		goto err_out_user_res;
 
+	memset(csr_res, 0, sizeof(*csr_res));
 	csr_res->name = ms02nv_res_csr;
 	csr_res->start = addr + MS02NV_CSR;
 	csr_res->end = addr + MS02NV_CSR + 3;

@@ -1,0 +1,74 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 31 Aug 2010 15:25:40 -0400
+Subject: [fs] aio: bump i_count instead of using igrab
+Message-id: <x49zkw2vm6j.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 27969
+O-Subject: [RHEL 5 PATCH] aio: bump i_count instead of using igrab
+Bugzilla: 626963
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+
+Hi,
+
+This is a backport of the upstream patch posted by Chris Mason to fix a
+rather large performance issue with a NUMA box running an OLTP-workload
+to a rather large number of SSDs.  The patch has not yet been accepted
+upstream, as Nick Piggin's locking changes will incorporate such a
+change.
+
+The upstream mail message from Chris is:
+
+  From: Chris Mason <chris mason oracle com>
+  Subject: aio: bump i_count instead of using igrab
+  To: linux-kernel vger kernel org, linux-fsdevel vger kernel org,        Jeff Moyer <jmoyer redhat com>
+  Date: Mon, 23 Aug 2010 10:47:55 -0400
+  Mail-Followup-To: Chris Mason <chris mason oracle com>,
+	linux-kernel vger kernel org, linux-fsdevel vger kernel org,
+	Jeff Moyer <jmoyer redhat com>
+
+  The aio batching code is using igrab to get an extra reference on the
+  inode so it can safely batch.  igrab will go ahead and take the global
+  inode spinlock, which can be a bottleneck on large machines doing lots
+  of AIO.
+
+  In this case, igrab isn't required because we already have a reference
+  on the file handle.  It is safe to just bump the i_count directly on
+  the inode.
+
+  Benchmarking shows this patch brings IOP/s on tons of flash up by
+  about 2.5X.
+
+  Signed-off-by: Chris Mason <chris mason oracle com>
+
+This fixes bug 626963.  Comments, as always, are appreciated.
+
+Cheers,
+Jeff
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 583c4f2..e21f7d4 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -1670,7 +1670,20 @@ static void aio_batch_add(struct address_space *mapping,
+ 	}
+ 
+ 	abe = mempool_alloc(abe_pool, GFP_KERNEL);
+-	BUG_ON(!igrab(mapping->host));
++
++	/*
++	 * we should be using igrab here, but
++	 * we don't want to hammer on the global
++	 * inode spinlock just to take an extra
++	 * reference on a file that we must already
++	 * have a reference to.
++	 *
++	 * When we're called, we always have a reference
++	 * on the file, so we must always have a reference
++	 * on the inode, so igrab must always just
++	 * bump the count and move on.
++	 */
++	atomic_inc(&mapping->host->i_count);
+ 	abe->mapping = mapping;
+ 	hlist_add_head(&abe->list, &batch_hash[bucket]);
+ 	return;

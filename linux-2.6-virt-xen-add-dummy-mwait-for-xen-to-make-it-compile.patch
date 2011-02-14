@@ -1,0 +1,50 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 20 Aug 2010 06:33:37 -0400
+Subject: [virt] xen: add dummy mwait for xen to make it compile
+Message-id: <4C6E21C1.7030706@redhat.com>
+Patchwork-id: 27729
+O-Subject: [RHEL 5.6 PATCH 3/3] bz 573514: dummy mwait for xen to make it compile
+Bugzilla: 573514
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Bugzilla #573514
+
+Description of problem:
+
+There is compile time issue with mwait patch in xen. but I believe xen
+does not use mwait.
+
+Please review and ACk
+
+Thanks,
+Luming
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/process-xen.c b/arch/i386/kernel/process-xen.c
+index 6cad288..4650962 100644
+--- a/arch/i386/kernel/process-xen.c
++++ b/arch/i386/kernel/process-xen.c
+@@ -198,6 +198,8 @@ EXPORT_SYMBOL_GPL(cpu_idle_wait);
+ /* Always use xen_idle() instead. */
+ void __devinit select_idle_routine(const struct cpuinfo_x86 *c) {}
+ 
++void mwait_idle_with_hints(unsigned long eax, unsigned long ecx) {}
++
+ void show_regs(struct pt_regs * regs)
+ {
+ 	unsigned long cr0 = 0L, cr2 = 0L, cr3 = 0L, cr4 = 0L;
+diff --git a/arch/x86_64/kernel/process-xen.c b/arch/x86_64/kernel/process-xen.c
+index 382068d..e458fca 100644
+--- a/arch/x86_64/kernel/process-xen.c
++++ b/arch/x86_64/kernel/process-xen.c
+@@ -205,6 +205,8 @@ EXPORT_SYMBOL_GPL(cpu_idle_wait);
+ /* Always use xen_idle() instead. */
+ void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c) {}
+ 
++void mwait_idle_with_hints(unsigned long eax, unsigned long ecx) {}
++
+ /* Prints also some state that isn't saved in the pt_regs */ 
+ void __show_regs(struct pt_regs * regs)
+ {

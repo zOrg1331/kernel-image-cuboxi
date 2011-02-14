@@ -6,7 +6,9 @@
 #ifndef _LINUX_ATMARP_H
 #define _LINUX_ATMARP_H
 
+#ifdef __KERNEL__
 #include <linux/types.h>
+#endif
 #include <linux/atmapi.h>
 #include <linux/atmioc.h>
 
@@ -35,7 +37,7 @@ enum atmarp_ctrl_type {
 struct atmarp_ctrl {
 	enum atmarp_ctrl_type	type;	/* message type */
 	int			itf_num;/* interface number (if present) */
-	__be32			ip;	/* IP address (act_need only) */
+	uint32_t		ip;	/* IP address (act_need only) */
 };
 
 #endif

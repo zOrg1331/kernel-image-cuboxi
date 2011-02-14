@@ -30,10 +30,9 @@
 #include <net/xfrm.h>
 
 static struct xfrm6_tunnel *tunnel6_handlers;
-static struct xfrm6_tunnel *tunnel46_handlers;
 static DEFINE_MUTEX(tunnel6_mutex);
 
-int xfrm6_tunnel_register(struct xfrm6_tunnel *handler, unsigned short family)
+int xfrm6_tunnel_register(struct xfrm6_tunnel *handler)
 {
 	struct xfrm6_tunnel **pprev;
 	int ret = -EEXIST;
@@ -41,8 +40,7 @@ int xfrm6_tunnel_register(struct xfrm6_tunnel *handler, unsigned short family)
 
 	mutex_lock(&tunnel6_mutex);
 
-	for (pprev = (family == AF_INET6) ? &tunnel6_handlers : &tunnel46_handlers;
-	     *pprev; pprev = &(*pprev)->next) {
+	for (pprev = &tunnel6_handlers; *pprev; pprev = &(*pprev)->next) {
 		if ((*pprev)->priority > priority)
 			break;
 		if ((*pprev)->priority == priority)
@@ -62,15 +60,14 @@ err:
 
 EXPORT_SYMBOL(xfrm6_tunnel_register);
 
-int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler, unsigned short family)
+int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler)
 {
 	struct xfrm6_tunnel **pprev;
 	int ret = -ENOENT;
 
 	mutex_lock(&tunnel6_mutex);
 
-	for (pprev = (family == AF_INET6) ? &tunnel6_handlers : &tunnel46_handlers;
-	     *pprev; pprev = &(*pprev)->next) {
+	for (pprev = &tunnel6_handlers; *pprev; pprev = &(*pprev)->next) {
 		if (*pprev == handler) {
 			*pprev = handler->next;
 			ret = 0;
@@ -87,8 +84,9 @@ int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler, unsigned short family)
 
 EXPORT_SYMBOL(xfrm6_tunnel_deregister);
 
-static int tunnel6_rcv(struct sk_buff *skb)
+static int tunnel6_rcv(struct sk_buff **pskb)
 {
+	struct sk_buff *skb = *pskb;
 	struct xfrm6_tunnel *handler;
 
 	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
@@ -105,26 +103,8 @@ drop:
 	return 0;
 }
 
-static int tunnel46_rcv(struct sk_buff *skb)
-{
-	struct xfrm6_tunnel *handler;
-
-	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
-		goto drop;
-
-	for (handler = tunnel46_handlers; handler; handler = handler->next)
-		if (!handler->handler(skb))
-			return 0;
-
-	icmpv6_send(skb, ICMPV6_DEST_UNREACH, ICMPV6_PORT_UNREACH, 0, skb->dev);
-
-drop:
-	kfree_skb(skb);
-	return 0;
-}
-
 static void tunnel6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
-			u8 type, u8 code, int offset, __be32 info)
+			int type, int code, int offset, __u32 info)
 {
 	struct xfrm6_tunnel *handler;
 
@@ -133,14 +113,8 @@ static void tunnel6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 			break;
 }
 
-static const struct inet6_protocol tunnel6_protocol = {
+static struct inet6_protocol tunnel6_protocol = {
 	.handler	= tunnel6_rcv,
-	.err_handler	= tunnel6_err,
-	.flags          = INET6_PROTO_NOPOLICY|INET6_PROTO_FINAL,
-};
-
-static const struct inet6_protocol tunnel46_protocol = {
-	.handler	= tunnel46_rcv,
 	.err_handler	= tunnel6_err,
 	.flags          = INET6_PROTO_NOPOLICY|INET6_PROTO_FINAL,
 };
@@ -151,18 +125,11 @@ static int __init tunnel6_init(void)
 		printk(KERN_ERR "tunnel6 init(): can't add protocol\n");
 		return -EAGAIN;
 	}
-	if (inet6_add_protocol(&tunnel46_protocol, IPPROTO_IPIP)) {
-		printk(KERN_ERR "tunnel6 init(): can't add protocol\n");
-		inet6_del_protocol(&tunnel6_protocol, IPPROTO_IPV6);
-		return -EAGAIN;
-	}
 	return 0;
 }
 
 static void __exit tunnel6_fini(void)
 {
-	if (inet6_del_protocol(&tunnel46_protocol, IPPROTO_IPIP))
-		printk(KERN_ERR "tunnel6 close: can't remove protocol\n");
 	if (inet6_del_protocol(&tunnel6_protocol, IPPROTO_IPV6))
 		printk(KERN_ERR "tunnel6 close: can't remove protocol\n");
 }

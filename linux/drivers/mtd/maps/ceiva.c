@@ -9,8 +9,9 @@
  * Based on: sa1100-flash.c, which has the following copyright:
  * Flash memory access on SA11x0 based devices
  *
- * (C) 2000 Nicolas Pitre <nico@fluxnic.net>
+ * (C) 2000 Nicolas Pitre <nico@cam.org>
  *
+ * $Id: ceiva.c,v 1.11 2004/09/16 23:27:12 gleixner Exp $
  */
 
 #include <linux/module.h>
@@ -25,7 +26,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/concat.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/io.h>
 #include <asm/sizes.h>
@@ -121,9 +122,10 @@ static int __init clps_setup_mtd(struct clps_info *clps, int nr, struct mtd_info
 	/*
 	 * Allocate the map_info structs in one go.
 	 */
-	maps = kzalloc(sizeof(struct map_info) * nr, GFP_KERNEL);
+	maps = kmalloc(sizeof(struct map_info) * nr, GFP_KERNEL);
 	if (!maps)
 		return -ENOMEM;
+	memset(maps, 0, sizeof(struct map_info) * nr);
 	/*
 	 * Claim and then map the memory regions.
 	 */

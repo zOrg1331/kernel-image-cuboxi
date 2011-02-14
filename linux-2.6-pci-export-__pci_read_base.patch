@@ -1,0 +1,79 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:06 -0600
+Subject: [pci] export __pci_read_base
+Message-id: 200904021446.n32Ek6xY017110@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 4/17] BZ493152: Backport: PCI: export __pci_read_base()
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit 0b400c7ed4d027e02f6231afa39852a2d48e6f25
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Sat Nov 22 02:40:40 2008 +0800
+
+    PCI: export __pci_read_base()
+
+    Export __pci_read_base() so it can be used by whole PCI subsystem.
+
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index ff97ba8..487b1b2 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -92,3 +92,12 @@ pci_match_one_device(const struct pci_device_id *id, const struct pci_dev *dev)
+ 	return NULL;
+ }
+ 
++enum pci_bar_type {
++	pci_bar_unknown,	/* Standard PCI BAR probe */
++	pci_bar_io,		/* An io port BAR */
++	pci_bar_mem32,		/* A 32-bit memory BAR */
++	pci_bar_mem64,		/* A 64-bit memory BAR */
++};
++
++extern int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
++				struct resource *res, unsigned int reg);
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index fc6f8d7..3c654b5 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -153,13 +153,6 @@ static u64 pci_size(u64 base, u64 maxbase, u64 mask)
+ 	return size;
+ }
+ 
+-enum pci_bar_type {
+-	pci_bar_unknown,	/* Standard PCI BAR probe */
+-	pci_bar_io,		/* An io port BAR */
+-	pci_bar_mem32,		/* A 32-bit memory BAR */
+-	pci_bar_mem64,		/* A 64-bit memory BAR */
+-};
+-
+ static inline enum pci_bar_type decode_bar(struct resource *res, u32 bar)
+ {
+ 	if ((bar & PCI_BASE_ADDRESS_SPACE) == PCI_BASE_ADDRESS_SPACE_IO) {
+@@ -174,11 +167,16 @@ static inline enum pci_bar_type decode_bar(struct resource *res, u32 bar)
+ 	return pci_bar_mem32;
+ }
+ 
+-/*
+- * If the type is not unknown, we assume that the lowest bit is 'enable'.
+- * Returns 1 if the BAR was 64-bit and 0 if it was 32-bit.
++/**
++ * pci_read_base - read a PCI BAR
++ * @dev: the PCI device
++ * @type: type of the BAR
++ * @res: resource buffer to be filled in
++ * @pos: BAR position in the config space
++ *
++ * Returns 1 if the BAR is 64-bit, or 0 if 32-bit.
+  */
+-static int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
++int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
+ 			struct resource *res, unsigned int pos)
+ {
+ 	u32 l, sz, mask;

@@ -231,6 +231,18 @@ no_l3_proto_spec(struct PStack *st, isdn_ctrl *ic)
 	return(-1);
 }
 
+#ifdef	CONFIG_HISAX_EURO
+extern void setstack_dss1(struct PStack *st);
+#endif
+
+#ifdef  CONFIG_HISAX_NI1
+extern void setstack_ni1(struct PStack *st);
+#endif
+
+#ifdef	CONFIG_HISAX_1TR6
+extern void setstack_1tr6(struct PStack *st);
+#endif
+
 struct l3_process
 *getl3proc(struct PStack *st, int cr)
 {
@@ -543,6 +555,8 @@ static struct FsmNode L3FnList[] __initdata =
 };
 /* *INDENT-ON* */
 
+#define L3_FN_COUNT (sizeof(L3FnList)/sizeof(struct FsmNode))
+
 void
 l3_msg(struct PStack *st, int pr, void *arg)
 {
@@ -585,7 +599,7 @@ Isdnl3New(void)
 	l3fsm.event_count = L3_EVENT_COUNT;
 	l3fsm.strEvent = strL3Event;
 	l3fsm.strState = strL3State;
-	return FsmNew(&l3fsm, L3FnList, ARRAY_SIZE(L3FnList));
+	return FsmNew(&l3fsm, L3FnList, L3_FN_COUNT);
 }
 
 void

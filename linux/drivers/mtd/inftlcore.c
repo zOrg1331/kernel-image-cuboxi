@@ -7,6 +7,8 @@
  * (c) 1999 Machine Vision Holdings, Inc.
  * Author: David Woodhouse <dwmw2@infradead.org>
  *
+ * $Id: inftlcore.c,v 1.19 2005/11/07 11:14:20 gleixner Exp $
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -50,7 +52,7 @@ static void inftl_add_mtd(struct mtd_blktrans_ops *tr, struct mtd_info *mtd)
 	struct INFTLrecord *inftl;
 	unsigned long temp;
 
-	if (mtd->type != MTD_NANDFLASH || mtd->size > UINT_MAX)
+	if (mtd->type != MTD_NANDFLASH)
 		return;
 	/* OK, this is moderately ugly.  But probably safe.  Alternatives? */
 	if (memcmp(mtd->name, "DiskOnChip", 10))
@@ -65,16 +67,17 @@ static void inftl_add_mtd(struct mtd_blktrans_ops *tr, struct mtd_info *mtd)
 
 	DEBUG(MTD_DEBUG_LEVEL3, "INFTL: add_mtd for %s\n", mtd->name);
 
-	inftl = kzalloc(sizeof(*inftl), GFP_KERNEL);
+	inftl = kmalloc(sizeof(*inftl), GFP_KERNEL);
 
 	if (!inftl) {
 		printk(KERN_WARNING "INFTL: Out of memory for data structures\n");
 		return;
 	}
+	memset(inftl, 0, sizeof(*inftl));
 
 	inftl->mbd.mtd = mtd;
 	inftl->mbd.devnum = -1;
-
+	inftl->mbd.blksize = 512;
 	inftl->mbd.tr = tr;
 
 	if (INFTL_mount(inftl) < 0) {
@@ -160,9 +163,10 @@ int inftl_read_oob(struct mtd_info *mtd, loff_t offs, size_t len,
 	ops.ooblen = len;
 	ops.oobbuf = buf;
 	ops.datbuf = NULL;
+	ops.len = len;
 
 	res = mtd->read_oob(mtd, offs & ~(mtd->writesize - 1), &ops);
-	*retlen = ops.oobretlen;
+	*retlen = ops.retlen;
 	return res;
 }
 
@@ -180,9 +184,10 @@ int inftl_write_oob(struct mtd_info *mtd, loff_t offs, size_t len,
 	ops.ooblen = len;
 	ops.oobbuf = buf;
 	ops.datbuf = NULL;
+	ops.len = len;
 
 	res = mtd->write_oob(mtd, offs & ~(mtd->writesize - 1), &ops);
-	*retlen = ops.oobretlen;
+	*retlen = ops.retlen;
 	return res;
 }
 
@@ -226,7 +231,7 @@ static u16 INFTL_findfreeblock(struct INFTLrecord *inftl, int desperate)
 	if (!desperate && inftl->numfreeEUNs < 2) {
 		DEBUG(MTD_DEBUG_LEVEL1, "INFTL: there are too few free "
 			"EUNs (%d)\n", inftl->numfreeEUNs);
-		return BLOCK_NIL;
+		return 0xffff;
 	}
 
 	/* Scan for a free block */
@@ -281,8 +286,7 @@ static u16 INFTL_foldchain(struct INFTLrecord *inftl, unsigned thisVUC, unsigned
 	silly = MAX_LOOPS;
 	while (thisEUN < inftl->nb_blocks) {
 		for (block = 0; block < inftl->EraseSize/SECTORSIZE; block ++) {
-			if ((BlockMap[block] != BLOCK_NIL) ||
-			    BlockDeleted[block])
+			if ((BlockMap[block] != 0xffff) || BlockDeleted[block])
 				continue;
 
 			if (inftl_read_oob(mtd, (thisEUN * inftl->EraseSize)
@@ -389,10 +393,6 @@ static u16 INFTL_foldchain(struct INFTLrecord *inftl, unsigned thisVUC, unsigned
 		if (thisEUN == targetEUN)
 			break;
 
-		/* Unlink the last block from the chain. */
-		inftl->PUtable[prevEUN] = BLOCK_NIL;
-
-		/* Now try to erase it. */
 		if (INFTL_formatblock(inftl, thisEUN) < 0) {
 			/*
 			 * Could not erase : mark block as reserved.
@@ -401,6 +401,7 @@ static u16 INFTL_foldchain(struct INFTLrecord *inftl, unsigned thisVUC, unsigned
 		} else {
 			/* Correctly erased : mark it as free */
 			inftl->PUtable[thisEUN] = BLOCK_FREE;
+			inftl->PUtable[prevEUN] = BLOCK_NIL;
 			inftl->numfreeEUNs++;
 		}
 	}
@@ -526,7 +527,7 @@ static inline u16 INFTL_findwriteunit(struct INFTLrecord *inftl, unsigned block)
 			if (!silly--) {
 				printk(KERN_WARNING "INFTL: infinite loop in "
 					"Virtual Unit Chain 0x%x\n", thisVUC);
-				return BLOCK_NIL;
+				return 0xffff;
 			}
 
 			/* Skip to next block in chain */
@@ -550,7 +551,7 @@ hitused:
 			 * waiting to be picked up. We're going to have to fold
 			 * a chain to make room.
 			 */
-			thisEUN = INFTL_makefreeblock(inftl, block);
+			thisEUN = INFTL_makefreeblock(inftl, 0xffff);
 
 			/*
 			 * Hopefully we free something, lets try again.
@@ -632,7 +633,7 @@ hitused:
 
 	printk(KERN_WARNING "INFTL: error folding to make room for Virtual "
 		"Unit Chain 0x%x\n", thisVUC);
-	return BLOCK_NIL;
+	return 0xffff;
 }
 
 /*
@@ -944,7 +945,6 @@ static struct mtd_blktrans_ops inftl_tr = {
 	.name		= "inftl",
 	.major		= INFTL_MAJOR,
 	.part_bits	= INFTL_PARTN_BITS,
-	.blksize 	= 512,
 	.getgeo		= inftl_getgeo,
 	.readsect	= inftl_readblock,
 	.writesect	= inftl_writeblock,
@@ -955,6 +955,9 @@ static struct mtd_blktrans_ops inftl_tr = {
 
 static int __init init_inftl(void)
 {
+	printk(KERN_INFO "INFTL: inftlcore.c $Revision: 1.19 $, "
+		"inftlmount.c %s\n", inftlmountrev);
+
 	return register_mtd_blktrans(&inftl_tr);
 }
 

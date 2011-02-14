@@ -1,0 +1,78 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 10 Oct 2007 09:53:02 +0200
+Subject: [net] ppp_mppe: avoid using a copy of interim key
+Message-id: 470C84DE.600@redhat.com
+O-Subject: [RHEL5.2 PATCH] ppp_mppe: kernel panic on x86_64
+Bugzilla: 248716
+
+Fixes https://bugzilla.redhat.com/show_bug.cgi?id=248716
+
+Starting a PPTP connection (on a server with pptpd or on a client with
+pptpclient) on x86_64 results in a kernel panic. The problem is
+mppe_rekey runs in interrupt context and it uses virt_to_page on its
+stack-allocated buffer InterimKey. Doing virt_to_XXX on a kernel stack
+is a bug.
+
+The fix is to avoid copying the interim key to the stack. We can simply
+use it in its original place, which is kmalloc'd. This even saves some
+stack space.
+
+Successfully tested by the reporter and by myself.
+
+The patch is upstream since v2.6.23-rc9 and it's being considered for
+2.6.22.10 too.
+
+Michal
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+
+diff --git a/drivers/net/ppp_mppe.c b/drivers/net/ppp_mppe.c
+index 51ff9a9..bf6f877 100644
+--- a/drivers/net/ppp_mppe.c
++++ b/drivers/net/ppp_mppe.c
+@@ -134,7 +134,7 @@ struct ppp_mppe_state {
+  * Key Derivation, from RFC 3078, RFC 3079.
+  * Equivalent to Get_Key() for MS-CHAP as described in RFC 3079.
+  */
+-static void get_new_key_from_sha(struct ppp_mppe_state * state, unsigned char *InterimKey)
++static void get_new_key_from_sha(struct ppp_mppe_state * state)
+ {
+ 	struct scatterlist sg[4];
+ 
+@@ -144,8 +144,6 @@ static void get_new_key_from_sha(struct ppp_mppe_state * state, unsigned char *I
+ 	setup_sg(&sg[3], sha_pad->sha_pad2, sizeof(sha_pad->sha_pad2));
+ 
+ 	crypto_digest_digest (state->sha1, sg, 4, state->sha1_digest);
+-
+-	memcpy(InterimKey, state->sha1_digest, state->keylen);
+ }
+ 
+ /*
+@@ -154,20 +152,20 @@ static void get_new_key_from_sha(struct ppp_mppe_state * state, unsigned char *I
+  */
+ static void mppe_rekey(struct ppp_mppe_state * state, int initial_key)
+ {
+-	unsigned char InterimKey[MPPE_MAX_KEY_LEN];
+ 	struct scatterlist sg_in[1], sg_out[1];
+ 
+-	get_new_key_from_sha(state, InterimKey);
++	get_new_key_from_sha(state);
+ 	if (!initial_key) {
+-		crypto_cipher_setkey(state->arc4, InterimKey, state->keylen);
+-		setup_sg(sg_in, InterimKey, state->keylen);
++		crypto_cipher_setkey(state->arc4, state->sha1_digest,
++				     state->keylen);
++		setup_sg(sg_in, state->sha1_digest, state->keylen);
+ 		setup_sg(sg_out, state->session_key, state->keylen);
+ 		if (crypto_cipher_encrypt(state->arc4, sg_out, sg_in,
+ 				      state->keylen) != 0) {
+     		    printk(KERN_WARNING "mppe_rekey: cipher_encrypt failed\n");
+ 		}
+ 	} else {
+-		memcpy(state->session_key, InterimKey, state->keylen);
++		memcpy(state->session_key, state->sha1_digest, state->keylen);
+ 	}
+ 	if (state->keylen == 8) {
+ 		/* See RFC 3078 */

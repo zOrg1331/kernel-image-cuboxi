@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <net/pkt_sched.h>
 #include <net/red.h>
@@ -164,7 +165,7 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 			 * if no default DP has been configured. This
 			 * allows for DP flows to be left untouched.
 			 */
-			if (skb_queue_len(&sch->q) < qdisc_dev(sch)->tx_queue_len)
+			if (skb_queue_len(&sch->q) < sch->dev->tx_queue_len)
 				return qdisc_enqueue_tail(skb, sch);
 			else
 				goto drop;
@@ -188,7 +189,7 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 	}
 
 	q->packetsin++;
-	q->bytesin += qdisc_pkt_len(skb);
+	q->bytesin += skb->len;
 
 	if (gred_wred_mode(t))
 		gred_load_wred_set(t, q);
@@ -226,8 +227,8 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 			break;
 	}
 
-	if (q->backlog + qdisc_pkt_len(skb) <= q->limit) {
-		q->backlog += qdisc_pkt_len(skb);
+	if (q->backlog + skb->len <= q->limit) {
+		q->backlog += skb->len;
 		return qdisc_enqueue_tail(skb, sch);
 	}
 
@@ -238,6 +239,26 @@ drop:
 congestion_drop:
 	qdisc_drop(skb, sch);
 	return NET_XMIT_CN;
+}
+
+static int gred_requeue(struct sk_buff *skb, struct Qdisc* sch)
+{
+	struct gred_sched *t = qdisc_priv(sch);
+	struct gred_sched_data *q;
+	u16 dp = tc_index_to_dp(skb);
+
+	if (dp >= t->DPs || (q = t->tab[dp]) == NULL) {
+		if (net_ratelimit())
+			printk(KERN_WARNING "GRED: Unable to relocate VQ 0x%x "
+			       "for requeue, screwing up backlog.\n",
+			       tc_index_to_dp(skb));
+	} else {
+		if (red_is_idling(&q->parms))
+			red_end_of_idle_period(&q->parms);
+		q->backlog += skb->len;
+	}
+
+	return qdisc_requeue(skb, sch);
 }
 
 static struct sk_buff *gred_dequeue(struct Qdisc* sch)
@@ -257,7 +278,7 @@ static struct sk_buff *gred_dequeue(struct Qdisc* sch)
 				       "VQ 0x%x after dequeue, screwing up "
 				       "backlog.\n", tc_index_to_dp(skb));
 		} else {
-			q->backlog -= qdisc_pkt_len(skb);
+			q->backlog -= skb->len;
 
 			if (!q->backlog && !gred_wred_mode(t))
 				red_start_of_idle_period(&q->parms);
@@ -279,7 +300,7 @@ static unsigned int gred_drop(struct Qdisc* sch)
 
 	skb = qdisc_dequeue_tail(sch);
 	if (skb) {
-		unsigned int len = qdisc_pkt_len(skb);
+		unsigned int len = skb->len;
 		struct gred_sched_data *q;
 		u16 dp = tc_index_to_dp(skb);
 
@@ -314,7 +335,7 @@ static void gred_reset(struct Qdisc* sch)
 
 	qdisc_reset_queue(sch);
 
-	for (i = 0; i < t->DPs; i++) {
+        for (i = 0; i < t->DPs; i++) {
 		struct gred_sched_data *q = t->tab[i];
 
 		if (!q)
@@ -330,16 +351,16 @@ static inline void gred_destroy_vq(struct gred_sched_data *q)
 	kfree(q);
 }
 
-static inline int gred_change_table_def(struct Qdisc *sch, struct nlattr *dps)
+static inline int gred_change_table_def(struct Qdisc *sch, struct rtattr *dps)
 {
 	struct gred_sched *table = qdisc_priv(sch);
 	struct tc_gred_sopt *sopt;
 	int i;
 
-	if (dps == NULL)
+	if (dps == NULL || RTA_PAYLOAD(dps) < sizeof(*sopt))
 		return -EINVAL;
 
-	sopt = nla_data(dps);
+	sopt = RTA_DATA(dps);
 
 	if (sopt->DPs > MAX_DPs || sopt->DPs == 0 || sopt->def_DP >= sopt->DPs)
 		return -EINVAL;
@@ -372,7 +393,7 @@ static inline int gred_change_table_def(struct Qdisc *sch, struct nlattr *dps)
 			       "shadowed VQ 0x%x\n", i);
 			gred_destroy_vq(table->tab[i]);
 			table->tab[i] = NULL;
-		}
+  		}
 	}
 
 	return 0;
@@ -405,37 +426,28 @@ static inline int gred_change_vq(struct Qdisc *sch, int dp,
 	return 0;
 }
 
-static const struct nla_policy gred_policy[TCA_GRED_MAX + 1] = {
-	[TCA_GRED_PARMS]	= { .len = sizeof(struct tc_gred_qopt) },
-	[TCA_GRED_STAB]		= { .len = 256 },
-	[TCA_GRED_DPS]		= { .len = sizeof(struct tc_gred_sopt) },
-};
-
-static int gred_change(struct Qdisc *sch, struct nlattr *opt)
+static int gred_change(struct Qdisc *sch, struct rtattr *opt)
 {
 	struct gred_sched *table = qdisc_priv(sch);
 	struct tc_gred_qopt *ctl;
-	struct nlattr *tb[TCA_GRED_MAX + 1];
-	int err, prio = GRED_DEF_PRIO;
+	struct rtattr *tb[TCA_GRED_MAX];
+	int err = -EINVAL, prio = GRED_DEF_PRIO;
 	u8 *stab;
 
-	if (opt == NULL)
+	if (opt == NULL || rtattr_parse_nested(tb, TCA_GRED_MAX, opt))
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_GRED_MAX, opt, gred_policy);
-	if (err < 0)
-		return err;
-
-	if (tb[TCA_GRED_PARMS] == NULL && tb[TCA_GRED_STAB] == NULL)
+	if (tb[TCA_GRED_PARMS-1] == NULL && tb[TCA_GRED_STAB-1] == NULL)
 		return gred_change_table_def(sch, opt);
 
-	if (tb[TCA_GRED_PARMS] == NULL ||
-	    tb[TCA_GRED_STAB] == NULL)
+	if (tb[TCA_GRED_PARMS-1] == NULL ||
+	    RTA_PAYLOAD(tb[TCA_GRED_PARMS-1]) < sizeof(*ctl) ||
+	    tb[TCA_GRED_STAB-1] == NULL ||
+	    RTA_PAYLOAD(tb[TCA_GRED_STAB-1]) < 256)
 		return -EINVAL;
 
-	err = -EINVAL;
-	ctl = nla_data(tb[TCA_GRED_PARMS]);
-	stab = nla_data(tb[TCA_GRED_STAB]);
+	ctl = RTA_DATA(tb[TCA_GRED_PARMS-1]);
+	stab = RTA_DATA(tb[TCA_GRED_STAB-1]);
 
 	if (ctl->DP >= table->DPs)
 		goto errout;
@@ -475,28 +487,23 @@ errout:
 	return err;
 }
 
-static int gred_init(struct Qdisc *sch, struct nlattr *opt)
+static int gred_init(struct Qdisc *sch, struct rtattr *opt)
 {
-	struct nlattr *tb[TCA_GRED_MAX + 1];
-	int err;
+	struct rtattr *tb[TCA_GRED_MAX];
 
-	if (opt == NULL)
+	if (opt == NULL || rtattr_parse_nested(tb, TCA_GRED_MAX, opt))
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_GRED_MAX, opt, gred_policy);
-	if (err < 0)
-		return err;
-
-	if (tb[TCA_GRED_PARMS] || tb[TCA_GRED_STAB])
+	if (tb[TCA_GRED_PARMS-1] || tb[TCA_GRED_STAB-1])
 		return -EINVAL;
 
-	return gred_change_table_def(sch, tb[TCA_GRED_DPS]);
+	return gred_change_table_def(sch, tb[TCA_GRED_DPS-1]);
 }
 
 static int gred_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct gred_sched *table = qdisc_priv(sch);
-	struct nlattr *parms, *opts = NULL;
+	struct rtattr *parms, *opts = NULL;
 	int i;
 	struct tc_gred_sopt sopt = {
 		.DPs	= table->DPs,
@@ -505,13 +512,9 @@ static int gred_dump(struct Qdisc *sch, struct sk_buff *skb)
 		.flags	= table->red_flags,
 	};
 
-	opts = nla_nest_start(skb, TCA_OPTIONS);
-	if (opts == NULL)
-		goto nla_put_failure;
-	NLA_PUT(skb, TCA_GRED_DPS, sizeof(sopt), &sopt);
-	parms = nla_nest_start(skb, TCA_GRED_PARMS);
-	if (parms == NULL)
-		goto nla_put_failure;
+	opts = RTA_NEST(skb, TCA_OPTIONS);
+	RTA_PUT(skb, TCA_GRED_DPS, sizeof(sopt), &sopt);
+	parms = RTA_NEST(skb, TCA_GRED_PARMS);
 
 	for (i = 0; i < MAX_DPs; i++) {
 		struct gred_sched_data *q = table->tab[i];
@@ -553,17 +556,15 @@ static int gred_dump(struct Qdisc *sch, struct sk_buff *skb)
 		opt.qave = red_calc_qavg(&q->parms, q->parms.qavg);
 
 append_opt:
-		if (nla_append(skb, sizeof(opt), &opt) < 0)
-			goto nla_put_failure;
+		RTA_APPEND(skb, sizeof(opt), &opt);
 	}
 
-	nla_nest_end(skb, parms);
+	RTA_NEST_END(skb, parms);
 
-	return nla_nest_end(skb, opts);
+	return RTA_NEST_END(skb, opts);
 
-nla_put_failure:
-	nla_nest_cancel(skb, opts);
-	return -EMSGSIZE;
+rtattr_failure:
+	return RTA_NEST_CANCEL(skb, opts);
 }
 
 static void gred_destroy(struct Qdisc *sch)
@@ -577,12 +578,12 @@ static void gred_destroy(struct Qdisc *sch)
 	}
 }
 
-static struct Qdisc_ops gred_qdisc_ops __read_mostly = {
+static struct Qdisc_ops gred_qdisc_ops = {
 	.id		=	"gred",
 	.priv_size	=	sizeof(struct gred_sched),
 	.enqueue	=	gred_enqueue,
 	.dequeue	=	gred_dequeue,
-	.peek		=	qdisc_peek_head,
+	.requeue	=	gred_requeue,
 	.drop		=	gred_drop,
 	.init		=	gred_init,
 	.reset		=	gred_reset,

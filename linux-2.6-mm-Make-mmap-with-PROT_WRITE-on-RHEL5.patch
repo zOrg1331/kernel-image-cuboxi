@@ -1,0 +1,109 @@
+From c9ee5e25fb02218bf5786a1cea19a0d9f5eaaa6d Mon Sep 17 00:00:00 2001
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 3 Jul 2008 16:52:37 -0400
+Subject: [PATCH] [mm] Make mmap() with PROT_WRITE on RHEL5
+
+Message-id: <1212612367.13014.39.camel@dhcp-100-19-198.bos.redhat.com>
+O-Subject: Re: [RHEL5-U3 patch] Make mmap() with PROT_WRITE on RHEL5
+Bugzilla: 448978
+
+On Tue, 2008-06-03 at 11:51 -0400, Larry Woodman wrote:
+> When you mmap() a page and specifying PROT_WRITE only as the 'prot'
+> argument a read from that page for the first time will cause a SIGSEGV,
+> but if you read it after you write it the read will succeed.  This
+> inconsistency has been fixed both upstream and in RHEL4 but not in RHEL5.
+>
+> This was fixed in RHEL4 by linux-2.6.9-fork-optimization.patch
+> and upstream by:
+> http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6.19.y.git;a=commitdiff;h=df67b3daea602728b51325a4debaeeb912ee51d1
+>
+>
+> Fixes BZ 448978
+>
+>
+
+The attached patch fixes all of the concerns:
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+---
+ arch/i386/mm/fault.c    |    2 +-
+ arch/ia64/mm/fault.c    |    6 ++++--
+ arch/powerpc/mm/fault.c |    2 +-
+ arch/ppc/mm/fault.c     |    2 +-
+ arch/x86_64/mm/fault.c  |    2 +-
+ 5 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/arch/i386/mm/fault.c b/arch/i386/mm/fault.c
+index f727946..45914b5 100644
+--- a/arch/i386/mm/fault.c
++++ b/arch/i386/mm/fault.c
+@@ -449,7 +449,7 @@ good_area:
+ 		case 1:		/* read, present */
+ 			goto bad_area;
+ 		case 0:		/* read, not present */
+-			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++			if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 				goto bad_area;
+ 	}
+ 
+diff --git a/arch/ia64/mm/fault.c b/arch/ia64/mm/fault.c
+index 42bc87c..6430004 100644
+--- a/arch/ia64/mm/fault.c
++++ b/arch/ia64/mm/fault.c
+@@ -152,9 +152,11 @@ ia64_do_page_fault (unsigned long address, unsigned long isr, struct pt_regs *re
+ #		error File is out of sync with <linux/mm.h>.  Please update.
+ #	endif
+ 
++	if (((isr >> IA64_ISR_R_BIT) & 1UL) && (!(vma->vm_flags & (VM_READ | VM_WRITE))))
++		goto bad_area;
++
+ 	mask = (  (((isr >> IA64_ISR_X_BIT) & 1UL) << VM_EXEC_BIT)
+-		| (((isr >> IA64_ISR_W_BIT) & 1UL) << VM_WRITE_BIT)
+-		| (((isr >> IA64_ISR_R_BIT) & 1UL) << VM_READ_BIT));
++		| (((isr >> IA64_ISR_W_BIT) & 1UL) << VM_WRITE_BIT));
+ 
+ 	if ((vma->vm_flags & mask) != mask)
+ 		goto bad_area;
+diff --git a/arch/powerpc/mm/fault.c b/arch/powerpc/mm/fault.c
+index 78a0d59..77953f4 100644
+--- a/arch/powerpc/mm/fault.c
++++ b/arch/powerpc/mm/fault.c
+@@ -333,7 +333,7 @@ good_area:
+ 		/* protection fault */
+ 		if (error_code & 0x08000000)
+ 			goto bad_area;
+-		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++		if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 			goto bad_area;
+ 	}
+ 
+diff --git a/arch/ppc/mm/fault.c b/arch/ppc/mm/fault.c
+index 5cdfb71..bc776be 100644
+--- a/arch/ppc/mm/fault.c
++++ b/arch/ppc/mm/fault.c
+@@ -239,7 +239,7 @@ good_area:
+ 		/* protection fault */
+ 		if (error_code & 0x08000000)
+ 			goto bad_area;
+-		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++		if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 			goto bad_area;
+ 	}
+ 
+diff --git a/arch/x86_64/mm/fault.c b/arch/x86_64/mm/fault.c
+index 82542a2..390160b 100644
+--- a/arch/x86_64/mm/fault.c
++++ b/arch/x86_64/mm/fault.c
+@@ -477,7 +477,7 @@ good_area:
+ 		case PF_PROT:		/* read, present */
+ 			goto bad_area;
+ 		case 0:			/* read, not present */
+-			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++			if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 				goto bad_area;
+ 	}
+ 
+-- 
+1.5.5.1
+

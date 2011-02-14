@@ -60,7 +60,7 @@ struct uart_pmac_port {
 	volatile struct dbdma_regs	__iomem *tx_dma_regs;
 	volatile struct dbdma_regs	__iomem *rx_dma_regs;
 
-	struct ktermios			termios_cache;
+	struct termios			termios_cache;
 };
 
 #define to_pmz(p) ((struct uart_pmac_port *)(p))

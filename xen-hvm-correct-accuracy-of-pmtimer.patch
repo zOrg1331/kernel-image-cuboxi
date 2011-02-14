@@ -1,0 +1,86 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Tue, 28 Sep 2010 12:20:55 -0400
+Subject: [xen] hvm: correct accuracy of pmtimer
+Message-id: <1285676455-14103-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 28441
+O-Subject: [RHEL5.6 PATCH v2] xen: hvm pmtimer: correct accuracy
+Bugzilla: 633028
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Bugzilla: 633028
+Brewing at: https://brewweb.devel.redhat.com/taskinfo?taskID=2784498
+
+Several seconds of backward time drift per minute can be seen on a
+RHEL6 HVM guest by switching the clocksource to 'acpi_pm' and then
+running gettimeofday() in a loop. This is due to the accumulation
+of small inaccuracies that are caused by shifting out the lower 32
+bits when pmt_update_time() computes 'tmr_val'.
+
+The patch makes sure that the lower 32 bits of the computed value
+are not lost. They are saved in a new field 'not_accounted' in the
+PMTState structure and are accounted the next time pmt_update_time()
+is called.
+
+This patch was posted and accepted upstream, changeset 21350.
+
+From: Ulrich Obergfell <uobergfe@redhat.com>
+---
+ arch/x86/hvm/pmtimer.c    |    8 ++++++--
+ include/asm-x86/hvm/vpt.h |    1 +
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/pmtimer.c b/arch/x86/hvm/pmtimer.c
+index 4a9f36a..9e56168 100644
+--- a/arch/x86/hvm/pmtimer.c
++++ b/arch/x86/hvm/pmtimer.c
+@@ -65,14 +65,16 @@ static void pmt_update_sci(PMTState *s)
+  * since the last time we did that. */
+ static void pmt_update_time(PMTState *s)
+ {
+-    uint64_t curr_gtime;
++    uint64_t curr_gtime, tmp;
+     uint32_t msb = s->pm.tmr_val & TMR_VAL_MSB;
+     
+     ASSERT(spin_is_locked(&s->lock));
+ 
+     /* Update the timer */
+     curr_gtime = hvm_get_guest_time(s->vcpu);
+-    s->pm.tmr_val += ((curr_gtime - s->last_gtime) * s->scale) >> 32;
++    tmp = ((curr_gtime - s->last_gtime) * s->scale) + s->not_accounted;
++    s->not_accounted = (uint32_t)tmp;
++    s->pm.tmr_val += tmp >> 32;
+     s->pm.tmr_val &= TMR_VAL_MASK;
+     s->last_gtime = curr_gtime;
+     
+@@ -238,6 +240,7 @@ static int pmtimer_load(struct domain *d, hvm_domain_context_t *h)
+ 
+     /* Calculate future counter values from now. */
+     s->last_gtime = hvm_get_guest_time(s->vcpu);
++    s->not_accounted = 0;
+ 
+     /* Set the SCI state from the registers */ 
+     pmt_update_sci(s);
+@@ -257,6 +260,7 @@ void pmtimer_init(struct vcpu *v)
+     spin_lock_init(&s->lock);
+ 
+     s->scale = ((uint64_t)FREQUENCE_PMTIMER << 32) / ticks_per_sec(v);
++    s->not_accounted = 0;
+     s->vcpu = v;
+ 
+     /* Intercept port I/O (need two handlers because PM1a_CNT is between
+diff --git a/include/asm-x86/hvm/vpt.h b/include/asm-x86/hvm/vpt.h
+index 44420a2..68224b7 100644
+--- a/include/asm-x86/hvm/vpt.h
++++ b/include/asm-x86/hvm/vpt.h
+@@ -110,6 +110,7 @@ typedef struct PMTState {
+     struct hvm_hw_pmtimer pm;   /* 32bit timer value */
+     struct vcpu *vcpu;          /* Keeps sync with this vcpu's guest-time */
+     uint64_t last_gtime;        /* Last (guest) time we updated the timer */
++    uint32_t not_accounted;     /* time not accounted at last update */
+     uint64_t scale;             /* Multiplier to get from tsc to timer ticks */
+     struct timer timer;         /* To make sure we send SCIs */
+     spinlock_t lock;

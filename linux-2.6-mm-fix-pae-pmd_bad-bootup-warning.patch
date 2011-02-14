@@ -1,0 +1,67 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 22 Jul 2008 10:27:08 -0400
+Subject: [mm] fix PAE pmd_bad bootup warning
+Message-id: 1216736828.27179.17.camel@localhost.localdomain
+O-Subject: [RHEL5-U3 patch] Backport of "fix PAE pmd_bad bootup warning" from 2.6.26 to RHEL5-U3
+Bugzilla: 455434
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+The following patch is a backport of the final changes needed to
+eliminate the "BAD PMD" warnings.  There were several changes that were
+added and removed between 2.6.24 and the current 2.6.26 but all we need
+is the simple changes to follow_page() to eliminate the warning from
+pmd_bad() when processing 2MB pages.
+
+Addresses BZ 455434.
+
+    Fix warning from pmd_bad() at bootup on a HIGHMEM64G HIGHPTE x86_32.
+
+    That came from 9fc34113f6880b215cbea4e7017fc818700384c2 x86: debug pmd_bad();
+    but we understand now that the typecasting was wrong for PAE in the previous
+    version: pagetable pages above 4GB looked bad and stopped Arjan from booting.
+
+    And revert that cded932b75ab0a5f9181ee3da34a0a488d1a14fd x86: fix pmd_bad
+    and pud_bad to support huge pages.  It was the wrong way round: we shouldn't
+    weaken every pmd_bad and pud_bad check to let huge pages slip through - in
+    part they check that we _don't_ have a huge page where it's not expected.
+
+    Put the x86 pmd_bad() and pud_bad() definitions back to what they have long
+    been: they can be improved (x86_32 should use PTE_MASK, to stop PAE thinking
+    junk in the upper word is good; and x86_64 should follow x86_32's stricter
+    comparison, to stop thinking any subset of required bits is good); but that
+    should be a later patch.
+
+    Fix Hans' good observation that follow_page() will never find pmd_huge()
+    because that would have already failed the pmd_bad test: test pmd_huge in
+    between the pmd_none and pmd_bad tests.  Tighten x86's pmd_huge() check?
+    No, once it's a hugepage entry, it can get quite far from a good pmd: for
+    example, PROT_NONE leaves it with only ACCESSED of the KERN_PGTABLE bits.
+
+    However... though follow_page() contains this and another test for huge
+    pages, so it's nice to keep it working on them, where does it actually get
+    called on a huge page?  get_user_pages() checks is_vm_hugetlb_page(vma) to
+    to call alternative hugetlb processing, as does unmap_vmas() and others.
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 2d376a9..9ea444b 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -934,7 +934,7 @@ struct page *follow_page(struct vm_area_struct *vma, unsigned long address,
+ 		goto no_page_table;
+ 	
+ 	pmd = pmd_offset(pud, address);
+-	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
++	if (pmd_none(*pmd))
+ 		goto no_page_table;
+ 
+ 	if (pmd_huge(*pmd)) {
+@@ -943,6 +943,9 @@ struct page *follow_page(struct vm_area_struct *vma, unsigned long address,
+ 		goto out;
+ 	}
+ 
++	if (unlikely(pmd_bad(*pmd)))
++		goto no_page_table;
++
+ 	ptep = pte_offset_map_lock(mm, pmd, address, &ptl);
+ 	if (!ptep)
+ 		goto out;

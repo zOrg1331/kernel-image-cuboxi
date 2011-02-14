@@ -11,9 +11,10 @@
  * or implied.
  */
 
+#include <linux/config.h>
 #include <linux/linkage.h>
 #include <asm/assembler.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 
 #define PWRMAN_VA_BASE IO_ADDRESS(PNX4008_PWRMAN_BASE)
 #define PWR_CTRL_REG_OFFS 0x44

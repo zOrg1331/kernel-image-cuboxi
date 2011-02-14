@@ -26,20 +26,19 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
-#include <linux/smp_lock.h>
 
 #include "excite_iodev.h"
 
 
 
 static const struct resource *iodev_get_resource(struct platform_device *, const char *, unsigned int);
-static int __init iodev_probe(struct platform_device *);
-static int __exit iodev_remove(struct platform_device *);
+static int __init iodev_probe(struct device *);
+static int __exit iodev_remove(struct device *);
 static int iodev_open(struct inode *, struct file *);
 static int iodev_release(struct inode *, struct file *);
 static ssize_t iodev_read(struct file *, char __user *, size_t s, loff_t *);
 static unsigned int iodev_poll(struct file *, struct poll_table_struct *);
-static irqreturn_t iodev_irqhdl(int, void *);
+static irqreturn_t iodev_irqhdl(int, void *, struct pt_regs *);
 
 
 
@@ -49,7 +48,7 @@ static DECLARE_WAIT_QUEUE_HEAD(wq);
 
 
 
-static const struct file_operations fops =
+static struct file_operations fops =
 {
 	.owner		= THIS_MODULE,
 	.open		= iodev_open,
@@ -65,13 +64,13 @@ static struct miscdevice miscdev =
 	.fops		= &fops
 };
 
-static struct platform_driver iodev_driver = {
-	.driver = {
-		.name		= iodev_name,
-		.owner		= THIS_MODULE,
-	},
+static struct device_driver iodev_driver =
+{
+	.name		= (char *) iodev_name,
+	.bus		= &platform_bus_type,
+	.owner		= THIS_MODULE,
 	.probe		= iodev_probe,
-	.remove		= __devexit_p(iodev_remove),
+	.remove		= __exit_p(iodev_remove)
 };
 
 
@@ -89,10 +88,11 @@ iodev_get_resource(struct platform_device *pdv, const char *name,
 
 
 /* No hotplugging on the platform bus - use __init */
-static int __init iodev_probe(struct platform_device *dev)
+static int __init iodev_probe(struct device *dev)
 {
+	struct platform_device * const pdv = to_platform_device(dev);
 	const struct resource * const ri =
-		iodev_get_resource(dev, IODEV_RESOURCE_IRQ, IORESOURCE_IRQ);
+		iodev_get_resource(pdv, IODEV_RESOURCE_IRQ, IORESOURCE_IRQ);
 
 	if (unlikely(!ri))
 		return -ENXIO;
@@ -103,20 +103,20 @@ static int __init iodev_probe(struct platform_device *dev)
 
 
 
-static int __exit iodev_remove(struct platform_device *dev)
+static int __exit iodev_remove(struct device *dev)
 {
 	return misc_deregister(&miscdev);
 }
 
+
+
 static int iodev_open(struct inode *i, struct file *f)
 {
-	int ret;
-
-	ret = request_irq(iodev_irq, iodev_irqhdl, IRQF_DISABLED,
+	return request_irq(iodev_irq, iodev_irqhdl, IRQF_DISABLED,
 			   iodev_name, &miscdev);
-
-	return ret;
 }
+
+
 
 static int iodev_release(struct inode *i, struct file *f)
 {
@@ -148,23 +148,27 @@ static unsigned int iodev_poll(struct file *f, struct poll_table_struct *p)
 	return POLLOUT | POLLWRNORM;
 }
 
-static irqreturn_t iodev_irqhdl(int irq, void *ctxt)
+
+
+
+static irqreturn_t iodev_irqhdl(int irq, void *ctxt, struct pt_regs *regs)
 {
 	wake_up(&wq);
-
 	return IRQ_HANDLED;
 }
 
+
+
 static int __init iodev_init_module(void)
 {
-	return platform_driver_register(&iodev_driver);
+	return driver_register(&iodev_driver);
 }
 
 
 
 static void __exit iodev_cleanup_module(void)
 {
-	platform_driver_unregister(&iodev_driver);
+	driver_unregister(&iodev_driver);
 }
 
 module_init(iodev_init_module);

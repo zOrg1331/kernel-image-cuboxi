@@ -11,22 +11,8 @@
  */
 
 #include <linux/kernel.h>
-#include <net/rtnetlink.h>
-#include <net/net_namespace.h>
-#include <net/sock.h>
+#include <linux/rtnetlink.h>
 #include "br_private.h"
-
-static inline size_t br_nlmsg_size(void)
-{
-	return NLMSG_ALIGN(sizeof(struct ifinfomsg))
-	       + nla_total_size(IFNAMSIZ) /* IFLA_IFNAME */
-	       + nla_total_size(MAX_ADDR_LEN) /* IFLA_ADDRESS */
-	       + nla_total_size(4) /* IFLA_MASTER */
-	       + nla_total_size(4) /* IFLA_MTU */
-	       + nla_total_size(4) /* IFLA_LINK */
-	       + nla_total_size(1) /* IFLA_OPERSTATE */
-	       + nla_total_size(1); /* IFLA_PROTINFO */
-}
 
 /*
  * Create one netlink message for one interface
@@ -37,44 +23,51 @@ static int br_fill_ifinfo(struct sk_buff *skb, const struct net_bridge_port *por
 {
 	const struct net_bridge *br = port->br;
 	const struct net_device *dev = port->dev;
-	struct ifinfomsg *hdr;
+	struct ifinfomsg *r;
 	struct nlmsghdr *nlh;
+	unsigned char *b = skb->tail;
+	u32 mtu = dev->mtu;
 	u8 operstate = netif_running(dev) ? dev->operstate : IF_OPER_DOWN;
+	u8 portstate = port->state;
 
 	pr_debug("br_fill_info event %d port %s master %s\n",
 		 event, dev->name, br->dev->name);
 
-	nlh = nlmsg_put(skb, pid, seq, event, sizeof(*hdr), flags);
-	if (nlh == NULL)
-		return -EMSGSIZE;
+	nlh = NLMSG_NEW(skb, pid, seq, event, sizeof(*r), flags);
+	r = NLMSG_DATA(nlh);
+	r->ifi_family = AF_BRIDGE;
+	r->__ifi_pad = 0;
+	r->ifi_type = dev->type;
+	r->ifi_index = dev->ifindex;
+	r->ifi_flags = dev_get_flags(dev);
+	r->ifi_change = 0;
 
-	hdr = nlmsg_data(nlh);
-	hdr->ifi_family = AF_BRIDGE;
-	hdr->__ifi_pad = 0;
-	hdr->ifi_type = dev->type;
-	hdr->ifi_index = dev->ifindex;
-	hdr->ifi_flags = dev_get_flags(dev);
-	hdr->ifi_change = 0;
+	RTA_PUT(skb, IFLA_IFNAME, strlen(dev->name)+1, dev->name);
 
-	NLA_PUT_STRING(skb, IFLA_IFNAME, dev->name);
-	NLA_PUT_U32(skb, IFLA_MASTER, br->dev->ifindex);
-	NLA_PUT_U32(skb, IFLA_MTU, dev->mtu);
-	NLA_PUT_U8(skb, IFLA_OPERSTATE, operstate);
+	RTA_PUT(skb, IFLA_MASTER, sizeof(int), &br->dev->ifindex);
 
 	if (dev->addr_len)
-		NLA_PUT(skb, IFLA_ADDRESS, dev->addr_len, dev->dev_addr);
+		RTA_PUT(skb, IFLA_ADDRESS, dev->addr_len, dev->dev_addr);
 
+	RTA_PUT(skb, IFLA_MTU, sizeof(mtu), &mtu);
 	if (dev->ifindex != dev->iflink)
-		NLA_PUT_U32(skb, IFLA_LINK, dev->iflink);
+		RTA_PUT(skb, IFLA_LINK, sizeof(int), &dev->iflink);
+
+
+	RTA_PUT(skb, IFLA_OPERSTATE, sizeof(operstate), &operstate);
 
 	if (event == RTM_NEWLINK)
-		NLA_PUT_U8(skb, IFLA_PROTINFO, port->state);
+		RTA_PUT(skb, IFLA_PROTINFO, sizeof(portstate), &portstate);
 
-	return nlmsg_end(skb, nlh);
+	nlh->nlmsg_len = skb->tail - b;
 
-nla_put_failure:
-	nlmsg_cancel(skb, nlh);
-	return -EMSGSIZE;
+	return skb->len;
+
+nlmsg_failure:
+rtattr_failure:
+
+	skb_trim(skb, b - skb->data);
+	return -EINVAL;
 }
 
 /*
@@ -82,27 +75,27 @@ nla_put_failure:
  */
 void br_ifinfo_notify(int event, struct net_bridge_port *port)
 {
-	struct net *net = dev_net(port->dev);
 	struct sk_buff *skb;
-	int err = -ENOBUFS;
+	int err = -ENOMEM;
 
 	pr_debug("bridge notify event=%d\n", event);
-	skb = nlmsg_new(br_nlmsg_size(), GFP_ATOMIC);
-	if (skb == NULL)
-		goto errout;
+	skb = alloc_skb(NLMSG_SPACE(sizeof(struct ifinfomsg) + 128),
+			GFP_ATOMIC);
+	if (!skb)
+		goto err_out;
 
-	err = br_fill_ifinfo(skb, port, 0, 0, event, 0);
-	if (err < 0) {
-		/* -EMSGSIZE implies BUG in br_nlmsg_size() */
-		WARN_ON(err == -EMSGSIZE);
-		kfree_skb(skb);
-		goto errout;
-	}
-	rtnl_notify(skb, net, 0, RTNLGRP_LINK, NULL, GFP_ATOMIC);
-	return;
-errout:
+	err = br_fill_ifinfo(skb, port, current->pid, 0, event, 0);
 	if (err < 0)
-		rtnl_set_sk_err(net, RTNLGRP_LINK, err);
+		goto err_kfree;
+
+	NETLINK_CB(skb).dst_group = RTNLGRP_LINK;
+	netlink_broadcast(rtnl, skb, 0, RTNLGRP_LINK, GFP_ATOMIC);
+	return;
+
+err_kfree:
+	kfree_skb(skb);
+err_out:
+	netlink_set_err(rtnl, 0, RTNLGRP_LINK, err);
 }
 
 /*
@@ -110,23 +103,30 @@ errout:
  */
 static int br_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct net *net = sock_net(skb->sk);
 	struct net_device *dev;
 	int idx;
+	int s_idx = cb->args[0];
+	int err = 0;
 
-	idx = 0;
-	for_each_netdev(net, dev) {
+	read_lock(&dev_base_lock);
+	for (dev = dev_base, idx = 0; dev; dev = dev->next) {
+		struct net_bridge_port *p = dev->br_port;
+
 		/* not a bridge port */
-		if (dev->br_port == NULL || idx < cb->args[0])
-			goto skip;
+		if (!p)
+			continue;
 
-		if (br_fill_ifinfo(skb, dev->br_port, NETLINK_CB(cb->skb).pid,
-				   cb->nlh->nlmsg_seq, RTM_NEWLINK,
-				   NLM_F_MULTI) < 0)
+		if (idx < s_idx)
+			goto cont;
+
+		err = br_fill_ifinfo(skb, p, NETLINK_CB(cb->skb).pid,
+				     cb->nlh->nlmsg_seq, RTM_NEWLINK, NLM_F_MULTI);
+		if (err <= 0)
 			break;
-skip:
+cont:
 		++idx;
 	}
+	read_unlock(&dev_base_lock);
 
 	cb->args[0] = idx;
 
@@ -139,29 +139,27 @@ skip:
  */
 static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 {
-	struct net *net = sock_net(skb->sk);
-	struct ifinfomsg *ifm;
-	struct nlattr *protinfo;
+	struct rtattr  **rta = arg;
+	struct ifinfomsg *ifm = NLMSG_DATA(nlh);
 	struct net_device *dev;
 	struct net_bridge_port *p;
 	u8 new_state;
 
-	if (nlmsg_len(nlh) < sizeof(*ifm))
-		return -EINVAL;
-
-	ifm = nlmsg_data(nlh);
 	if (ifm->ifi_family != AF_BRIDGE)
 		return -EPFNOSUPPORT;
 
-	protinfo = nlmsg_find_attr(nlh, sizeof(*ifm), IFLA_PROTINFO);
-	if (!protinfo || nla_len(protinfo) < sizeof(u8))
+	/* Must pass valid state as PROTINFO */
+	if (rta[IFLA_PROTINFO-1]) {
+		u8 *pstate = RTA_DATA(rta[IFLA_PROTINFO-1]);
+		new_state = *pstate;
+	} else
 		return -EINVAL;
 
-	new_state = nla_get_u8(protinfo);
 	if (new_state > BR_STATE_BLOCKING)
 		return -EINVAL;
 
-	dev = __dev_get_by_index(net, ifm->ifi_index);
+	/* Find bridge port */
+	dev = __dev_get_by_index(ifm->ifi_index);
 	if (!dev)
 		return -ENODEV;
 
@@ -170,11 +168,13 @@ static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 		return -EINVAL;
 
 	/* if kernel STP is running, don't allow changes */
-	if (p->br->stp_enabled == BR_KERNEL_STP)
+	if (p->br->stp_enabled)
 		return -EBUSY;
 
-	if (!netif_running(dev) ||
-	    (!netif_carrier_ok(dev) && new_state != BR_STATE_DISABLED))
+	if (!netif_running(dev))
+		return -ENETDOWN;
+
+	if (!netif_carrier_ok(dev) && new_state != BR_STATE_DISABLED)
 		return -ENETDOWN;
 
 	p->state = new_state;
@@ -183,19 +183,18 @@ static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 }
 
 
-int __init br_netlink_init(void)
+static struct rtnetlink_link bridge_rtnetlink_table[RTM_NR_MSGTYPES] = {
+	[RTM_GETLINK - RTM_BASE] = { .dumpit	= br_dump_ifinfo, },
+	[RTM_SETLINK - RTM_BASE] = { .doit      = br_rtm_setlink, },
+};
+
+void __init br_netlink_init(void)
 {
-	if (__rtnl_register(PF_BRIDGE, RTM_GETLINK, NULL, br_dump_ifinfo))
-		return -ENOBUFS;
-
-	/* Only the first call to __rtnl_register can fail */
-	__rtnl_register(PF_BRIDGE, RTM_SETLINK, br_rtm_setlink, NULL);
-
-	return 0;
+	rtnetlink_links[PF_BRIDGE] = bridge_rtnetlink_table;
 }
 
 void __exit br_netlink_fini(void)
 {
-	rtnl_unregister_all(PF_BRIDGE);
+	rtnetlink_links[PF_BRIDGE] = NULL;
 }
 

@@ -1,0 +1,70 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 13 Aug 2010 09:46:36 -0400
+Subject: [scsi] bnx2i: fix response panic on unsolicited NOP-In
+Message-id: <1281692802-2810-9-git-send-email-mchristi@redhat.com>
+Patchwork-id: 27543
+O-Subject: [RHEL5.6 PATCH 08/14] BNX2I: Added fix for NOP-Out response panic
+	from unsolicited NOP-In
+Bugzilla: 568606
+
+From: Eddie Wai <eddie.wai@broadcom.com>
+
+For bz 568606.
+
+The patch fixes the following situations where NOP-Out pkt is called for:
+- local unsolicited NOP-Out requests (requesting no NOP-In response)
+- local NOP-Out responses to unsolicited NOP-In requests
+
+kernel panic is observed due to double session spin_lock requests; one in the
+bnx2i_process_nopin_local_cmpl routine in bnx2i_hwi.c and the other in the
+iscsi_put_task routine in libiscsi.c
+
+The proposed fix is to export the currently static __iscsi_put_task() routine
+and have bnx2i call it directly instead of the iscsi_put_task() routine which
+holds the session spin lock.
+
+http://marc.info/?l=linux-scsi&m=128024708106412&w=2
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_hwi.c b/drivers/scsi/bnx2i/bnx2i_hwi.c
+index 9c1f007..74869cf 100644
+--- a/drivers/scsi/bnx2i/bnx2i_hwi.c
++++ b/drivers/scsi/bnx2i/bnx2i_hwi.c
+@@ -1511,7 +1511,7 @@ static void bnx2i_process_nopin_local_cmpl(struct iscsi_session *session,
+ 	task = iscsi_itt_to_task(conn,
+ 				 nop_in->itt & ISCSI_NOP_IN_MSG_INDEX);
+ 	if (task)
+-		iscsi2_put_task(task);
++		__iscsi_put_task(task);
+ 	spin_unlock(&session->lock);
+ }
+ 
+diff --git a/drivers/scsi/libiscsi2.c b/drivers/scsi/libiscsi2.c
+index 262617e..658f8fa 100644
+--- a/drivers/scsi/libiscsi2.c
++++ b/drivers/scsi/libiscsi2.c
+@@ -431,11 +431,12 @@ void __iscsi2_get_task(struct iscsi_task *task)
+ }
+ EXPORT_SYMBOL_GPL(__iscsi2_get_task);
+ 
+-static void __iscsi_put_task(struct iscsi_task *task)
++void __iscsi_put_task(struct iscsi_task *task)
+ {
+ 	if (atomic_dec_and_test(&task->refcount))
+ 		iscsi_free_task(task);
+ }
++EXPORT_SYMBOL_GPL(__iscsi_put_task);
+ 
+ void iscsi2_put_task(struct iscsi_task *task)
+ {
+diff --git a/include/scsi/libiscsi2.h b/include/scsi/libiscsi2.h
+index e0e0464..e47d42e 100644
+--- a/include/scsi/libiscsi2.h
++++ b/include/scsi/libiscsi2.h
+@@ -408,6 +408,7 @@ extern struct iscsi_task *iscsi2_itt_to_ctask(struct iscsi_conn *, itt_t);
+ extern void iscsi2_requeue_task(struct iscsi_task *task);
+ extern struct iscsi_task *iscsi_itt_to_task(struct iscsi_conn *, itt_t);
+ extern void iscsi2_put_task(struct iscsi_task *task);
++extern void __iscsi_put_task(struct iscsi_task *task);
+ extern void __iscsi2_get_task(struct iscsi_task *task);
+ extern void iscsi2_complete_scsi_task(struct iscsi_task *task,
+                               uint32_t exp_cmdsn, uint32_t max_cmdsn);

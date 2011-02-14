@@ -1,5 +1,5 @@
 /*
- * sound/oss/ad1848_mixer.h
+ * sound/ad1848_mixer.h
  *
  * Definitions for the mixer of AD1848 and compatible codecs.
  */

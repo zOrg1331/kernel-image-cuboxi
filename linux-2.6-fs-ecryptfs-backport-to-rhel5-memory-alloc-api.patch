@@ -1,0 +1,41 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:11:50 -0600
+Subject: [fs] ecryptfs: backport to rhel5 memory alloc api
+Message-id: 47680D66.3090103@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 7/15: eCryptfs: backport to RHEL5 memory alloc API
+Bugzilla: 228341
+
+Backport to RHEL5 memory allocation API
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index f25da62..74db5b9 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -610,7 +610,7 @@ static struct file_system_type ecryptfs_fs_type = {
+  * Initializes the ecryptfs_inode_info_cache when it is created
+  */
+ static void
+-inode_info_init_once(struct kmem_cache *cachep, void *vptr)
++inode_info_init_once(void *vptr, struct kmem_cache *cachep, unsigned long flags)
+ {
+ 	struct ecryptfs_inode_info *ei = (struct ecryptfs_inode_info *)vptr;
+ 
+@@ -621,7 +621,7 @@ static struct ecryptfs_cache_info {
+ 	struct kmem_cache **cache;
+ 	const char *name;
+ 	size_t size;
+-	void (*ctor)(struct kmem_cache *cache, void *obj);
++	void (*ctor)(void *obj, struct kmem_cache *cache, unsigned long flags);
+ } ecryptfs_cache_infos[] = {
+ 	{
+ 		.cache = &ecryptfs_auth_tok_list_item_cache,
+@@ -718,7 +718,8 @@ static int ecryptfs_init_kmem_caches(void)
+ 
+ 		info = &ecryptfs_cache_infos[i];
+ 		*(info->cache) = kmem_cache_create(info->name, info->size,
+-				0, SLAB_HWCACHE_ALIGN, info->ctor);
++						   0, SLAB_HWCACHE_ALIGN,
++						   info->ctor, NULL);
+ 		if (!*(info->cache)) {
+ 			ecryptfs_free_kmem_caches();
+ 			ecryptfs_printk(KERN_WARNING, "%s: "

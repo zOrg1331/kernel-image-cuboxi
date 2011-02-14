@@ -1,0 +1,46 @@
+From: Roland McGrath <roland@redhat.com>
+Date: Tue, 18 Dec 2007 15:41:15 -0800
+Subject: [ia64] utrace: forbid ptrace changes psr.ri to 3
+Message-id: 20071218234115.C4F4A26F8C2@magilla.localdomain
+O-Subject: [RHEL 5.2 PATCH] BZ#247174: [IA64] forbid ptrace changes psr.ri to 3
+Bugzilla: 247174
+
+linux-2.6-ia64-ptrace-ipsr.patch, RHEL5 version of this upstream fix:
+
+commit b09e789c438c406bd9bcaac6f1c940a75007e59f
+Author: Shaohua Li <shaohua.li@intel.com>
+Date:   Fri Aug 17 13:43:50 2007 -0700
+
+    [IA64] forbid ptrace changes psr.ri to 3
+
+    The "ri" field in the processor status register only has defined
+    values of 0, 1, 2.  Do not let ptrace set this to 3.  As with
+    other reserved fields in registers we silently discard the value.
+
+    Signed-off-by: Shaohua Li <shaohua.li@intel.com>
+    Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+Acked-by: Luming Yu <luyu@redhat.com>
+
+diff --git a/arch/ia64/kernel/ptrace.c b/arch/ia64/kernel/ptrace.c
+index a7c3022..bb2bcef 100644
+--- a/arch/ia64/kernel/ptrace.c
++++ b/arch/ia64/kernel/ptrace.c
+@@ -1003,10 +1003,14 @@ access_elf_areg(struct task_struct *target, struct unw_frame_info *info,
+ 					*data = cfm;
+ 				return 0;
+ 			case ELF_CR_IPSR_OFFSET:
+-				if (write_access)
+-					pt->cr_ipsr = ((*data & IPSR_MASK)
++			if (write_access) {
++				unsigned long tmp = *data;
++				/* psr.ri==3 is a reserved value: SDM 2:25 */
++				if ((tmp & IA64_PSR_RI) == IA64_PSR_RI)
++					tmp &= ~IA64_PSR_RI;
++				pt->cr_ipsr = ((tmp & IPSR_MASK)
+ 							| (pt->cr_ipsr & ~IPSR_MASK));
+-				else
++			} else
+ 					*data = (pt->cr_ipsr & IPSR_MASK);
+ 				return 0;
+ 		}

@@ -1,0 +1,42 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 13 Apr 2009 10:08:32 -0400
+Subject: [misc] keys: key facility changes for AF_RXRPC
+Message-id: 1239631714-15460-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH 1/3] BZ#465143: keys: Key facility changes for AF_RXRPC
+Bugzilla: 465143
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: David Howells <dhowells@redhat.com>
+
+Upstream commit 7318226ea2931a627f3572e5f4804c91ca19ecbc
+
+The __GENKSYMS__ trickery was needed to make the kabi checker happy. It
+shouldn't change the size of the union however (maybe the kabi checker
+needs work in this regard?).
+
+------------------[snip]--------------------
+
+Add alternative types into the key's type_data union to make it more
+useful.  Not all users necessarily want to use it as a list_head
+(AF_RXRPC doesn't, for example), so make it clear that it can be used in
+other ways.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/linux/key.h b/include/linux/key.h
+index 169f05e..7ed2290 100644
+--- a/include/linux/key.h
++++ b/include/linux/key.h
+@@ -160,6 +160,10 @@ struct key {
+ 	 */
+ 	union {
+ 		struct list_head	link;
++#ifndef __GENKSYMS__
++		unsigned long		x[2];
++		void			*p[2];
++#endif /* __GENKSYMS__ */
+ 	} type_data;
+ 
+ 	/* key data

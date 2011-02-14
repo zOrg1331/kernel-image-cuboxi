@@ -34,9 +34,20 @@
 
 #undef DEBUG_NVRAM
 
+static int nvram_scan_partitions(void);
+static int nvram_setup_partition(void);
+static int nvram_create_os_partition(void);
+static int nvram_remove_os_partition(void);
+
 static struct nvram_partition * nvram_part;
 static long nvram_error_log_index = -1;
 static long nvram_error_log_size = 0;
+
+int no_logging = 1; 	/* Until we initialize everything,
+			 * make sure we don't try logging
+			 * anything */
+
+extern volatile int error_log_cnt;
 
 struct err_log_info {
 	int error_type;
@@ -168,7 +179,7 @@ static int dev_nvram_ioctl(struct inode *inode, struct file *file,
 	}
 }
 
-const struct file_operations nvram_fops = {
+struct file_operations nvram_fops = {
 	.owner =	THIS_MODULE,
 	.llseek =	dev_nvram_llseek,
 	.read =		dev_nvram_read,
@@ -494,7 +505,7 @@ static int nvram_scan_partitions(void)
 		return -ENODEV;
 	total_size = ppc_md.nvram_size();
 	
-	header = kmalloc(NVRAM_HEADER_LEN, GFP_KERNEL);
+	header = (char *) kmalloc(NVRAM_HEADER_LEN, GFP_KERNEL);
 	if (!header) {
 		printk(KERN_ERR "nvram_scan_partitions: Failed kmalloc\n");
 		return -ENOMEM;
@@ -563,7 +574,7 @@ static int __init nvram_init(void)
 	}
   	
   	/* initialize our anchor for the nvram partition list */
-  	nvram_part = kmalloc(sizeof(struct nvram_partition), GFP_KERNEL);
+  	nvram_part = (struct nvram_partition *) kmalloc(sizeof(struct nvram_partition), GFP_KERNEL);
   	if (!nvram_part) {
   		printk(KERN_ERR "nvram_init: Failed kmalloc\n");
   		return -ENOMEM;
@@ -625,13 +636,16 @@ void __exit nvram_cleanup(void)
  * sequence #: The unique sequence # for each event. (until it wraps)
  * error log: The error log from event_scan
  */
-int nvram_write_error_log(char * buff, int length,
-                          unsigned int err_type, unsigned int error_log_cnt)
+int nvram_write_error_log(char * buff, int length, unsigned int err_type)
 {
 	int rc;
 	loff_t tmp_index;
 	struct err_log_info info;
 	
+	if (no_logging) {
+		return -EPERM;
+	}
+
 	if (nvram_error_log_index == -1) {
 		return -ESPIPE;
 	}
@@ -664,8 +678,7 @@ int nvram_write_error_log(char * buff, int length,
  *
  * Reads nvram for error log for at most 'length'
  */
-int nvram_read_error_log(char * buff, int length,
-                         unsigned int * err_type, unsigned int * error_log_cnt)
+int nvram_read_error_log(char * buff, int length, unsigned int * err_type)
 {
 	int rc;
 	loff_t tmp_index;
@@ -691,7 +704,7 @@ int nvram_read_error_log(char * buff, int length,
 		return rc;
 	}
 
-	*error_log_cnt = info.seq_num;
+	error_log_cnt = info.seq_num;
 	*err_type = info.error_type;
 
 	return 0;

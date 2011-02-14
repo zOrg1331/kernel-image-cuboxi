@@ -1,0 +1,137 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz242762 [PPC] donate cycles from dedicated cpu
+Date: Wed, 6 Jun 2007 14:52:22 -0400 (EDT)
+Bugzilla: 242762
+Message-Id: <Pine.LNX.4.64.0706061448010.7066@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc64] donate cycles from dedicated cpu
+
+
+
+RHBZ#: 242762 [FEATURE]
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242762
+
+Description:
+------------
+A Power6 can give up CPU cycles on a dedicated CPU (as opposed to a
+shared CPU) to other shared processors if the administrator asks for it
+(via the HMC).
+
+This patch enables that to work properly on P6.
+
+This just involves setting a bit in the CAS structure as well as the
+VPA.  To donate cycles, a CPU has to have all SMT threads idle and w/
+donate bit set in the VPA.  Then call H_CEDE.
+
+Signed-off-by: Jake Moilanen <moilanen at austin.ibm.com>
+
+RHEL Version Found:
+-------------------
+requested as a feature for 5.1
+
+Upstream Status:
+----------------
+This patch has been submitted for upstream acceptance [1].
+
+Test Status:
+------------
+A brew scratch build of 2.6.18-19.el5 with this patch applied
+is available at [2]. 
+
+This build has been booted on both power5 and power6 machines.
+
+Jake Moillen of IBM has tested the patch when applied on top of the RHEL 5
+GA kernel.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://ozlabs.org/pipermail/linuxppc-dev/2007-June/thread.html#37098
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=808334 .
+
+---
+ kernel/prom_init.c        |    3 ++-
+ kernel/sysfs.c            |    3 +--
+ platforms/pseries/setup.c |   21 +++------------------
+ 3 files changed, 6 insertions(+), 21 deletions(-)
+ 
+Index: b/arch/powerpc/kernel/prom_init.c
+===================================================================
+--- a/arch/powerpc/kernel/prom_init.c
++++ b/arch/powerpc/kernel/prom_init.c
+@@ -635,6 +635,7 @@ static void __init early_cmdline_parse(v
+ /* ibm,dynamic-reconfiguration-memory property supported */
+ #define OV5_DRCONF_MEMORY	0x20
+ #define OV5_LARGE_PAGES		0x10	/* large pages supported */
++#define OV5_DONATE_DEDICATE_CPU 0x02   /* donate dedicated CPU support */
+ 
+ /*
+  * The architecture vector has an array of PVR mask/value pairs,
+@@ -679,7 +680,7 @@ static unsigned char ibm_architecture_ve
+ 	/* option vector 5: PAPR/OF options */
+ 	3 - 2,				/* length */
+ 	0,				/* don't ignore, don't halt */
+-	OV5_LPAR | OV5_SPLPAR | OV5_LARGE_PAGES,
++	OV5_LPAR | OV5_SPLPAR | OV5_LARGE_PAGES | OV5_DONATE_DEDICATE_CPU,
+ };
+ 
+ /* Old method - ELF header with PT_NOTE sections */
+Index: b/arch/powerpc/platforms/pseries/setup.c
+===================================================================
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -470,6 +470,7 @@ static void pseries_dedicated_idle_sleep
+ 	 * a good time to find other work to dispatch.
+ 	 */
+ 	get_lppaca()->idle = 1;
++	get_lppaca()->cpuctls_task_attrs = 1;
+ 
+ 	/*
+ 	 * We come in with interrupts disabled, and need_resched()
+@@ -498,27 +499,11 @@ static void pseries_dedicated_idle_sleep
+ 			goto out;
+ 	}
+ 
+-	/*
+-	 * If not SMT, cede processor.  If CPU is running SMT
+-	 * cede if the other thread is not idle, so that it can
+-	 * go single-threaded.  If the other thread is idle,
+-	 * we ask the hypervisor if it has pending work it
+-	 * wants to do and cede if it does.  Otherwise we keep
+-	 * polling in order to reduce interrupt latency.
+-	 *
+-	 * Doing the cede when the other thread is active will
+-	 * result in this thread going dormant, meaning the other
+-	 * thread gets to run in single-threaded (ST) mode, which
+-	 * is slightly faster than SMT mode with this thread at
+-	 * very low priority.  The cede enables interrupts, which
+-	 * doesn't matter here.
+-	 */
+-	if (!cpu_has_feature(CPU_FTR_SMT) || !lppaca[cpu ^ 1].idle
+-	    || poll_pending() == H_PENDING)
+-		cede_processor();
++	cede_processor();
+ 
+ out:
+ 	HMT_medium();
++	get_lppaca()->cpuctls_task_attrs = 0;
+ 	get_lppaca()->idle = 0;
+ }
+ 
+Index: b/arch/powerpc/kernel/sysfs.c
+===================================================================
+--- a/arch/powerpc/kernel/sysfs.c
++++ b/arch/powerpc/kernel/sysfs.c
+@@ -25,8 +25,7 @@ static DEFINE_PER_CPU(struct cpu, cpu_de
+ /* SMT stuff */
+ 
+ #ifdef CONFIG_PPC_MULTIPLATFORM
+-/* default to snooze disabled */
+-DEFINE_PER_CPU(unsigned long, smt_snooze_delay);
++DEFINE_PER_CPU(unsigned long, smt_snooze_delay) = { 100 };
+ 
+ static ssize_t store_smt_snooze_delay(struct sys_device *dev, const char *buf,
+ 				      size_t count)
+

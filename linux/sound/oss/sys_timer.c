@@ -1,5 +1,5 @@
 /*
- * sound/oss/sys_timer.c
+ * sound/sys_timer.c
  *
  * The default timer for the Level 2 sequencer interface
  * Uses the (1/HZ sec) timer of kernel.
@@ -100,6 +100,9 @@ def_tmr_open(int dev, int mode)
 	curr_tempo = 60;
 	curr_timebase = 100;
 	opened = 1;
+
+	;
+
 	{
 		def_tmr.expires = (1) + jiffies;
 		add_timer(&def_tmr);

@@ -2,7 +2,7 @@
  * inode.h - Defines for inode structures NTFS Linux kernel driver. Part of
  *	     the Linux-NTFS project.
  *
- * Copyright (c) 2001-2007 Anton Altaparmakov
+ * Copyright (c) 2001-2005 Anton Altaparmakov
  * Copyright (c) 2002 Richard Russon
  *
  * This program/include file is free software; you can redistribute it and/or
@@ -101,6 +101,8 @@ struct _ntfs_inode {
 	runlist attr_list_rl;	/* Run list for the attribute list value. */
 	union {
 		struct { /* It is a directory, $MFT, or an index inode. */
+			struct inode *bmp_ino;	/* Attribute inode for the
+						   index $BITMAP. */
 			u32 block_size;		/* Size of an index block. */
 			u32 vcn_size;		/* Size of a vcn in this
 						   index. */
@@ -298,6 +300,8 @@ extern void ntfs_clear_extent_inode(ntfs_inode *ni);
 
 extern int ntfs_read_inode_mount(struct inode *vi);
 
+extern void ntfs_put_inode(struct inode *vi);
+
 extern int ntfs_show_options(struct seq_file *sf, struct vfsmount *mnt);
 
 #ifdef NTFS_RW
@@ -307,12 +311,12 @@ extern void ntfs_truncate_vfs(struct inode *vi);
 
 extern int ntfs_setattr(struct dentry *dentry, struct iattr *attr);
 
-extern int __ntfs_write_inode(struct inode *vi, int sync);
+extern int ntfs_write_inode(struct inode *vi, int sync);
 
 static inline void ntfs_commit_inode(struct inode *vi)
 {
 	if (!is_bad_inode(vi))
-		__ntfs_write_inode(vi, 1);
+		ntfs_write_inode(vi, 1);
 	return;
 }
 

@@ -24,6 +24,7 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
   
+#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -235,7 +236,7 @@ struct nm256 {
 
 	int irq;
 	int irq_acks;
-	irq_handler_t interrupt;
+	irqreturn_t (*interrupt)(int, void *, struct pt_regs *);
 	int badintrcount;		/* counter to check bogus interrupts */
 	struct mutex irq_mutex;
 
@@ -263,9 +264,9 @@ struct nm256 {
  * PCI ids
  */
 static struct pci_device_id snd_nm256_ids[] = {
-	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256AV_AUDIO), 0},
-	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256ZX_AUDIO), 0},
-	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256XL_PLUS_AUDIO), 0},
+	{PCI_VENDOR_ID_NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256AV_AUDIO, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+	{PCI_VENDOR_ID_NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256ZX_AUDIO, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+	{PCI_VENDOR_ID_NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256XL_PLUS_AUDIO, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{0,},
 };
 
@@ -464,7 +465,7 @@ static int snd_nm256_acquire_irq(struct nm256 *chip)
 {
 	mutex_lock(&chip->irq_mutex);
 	if (chip->irq < 0) {
-		if (request_irq(chip->pci->irq, chip->interrupt, IRQF_SHARED,
+		if (request_irq(chip->pci->irq, chip->interrupt, IRQF_DISABLED|IRQF_SHARED,
 				chip->card->driver, chip)) {
 			snd_printk(KERN_ERR "unable to grab IRQ %d\n", chip->pci->irq);
 			mutex_unlock(&chip->irq_mutex);
@@ -562,8 +563,7 @@ snd_nm256_playback_trigger(struct snd_pcm_substream *substream, int cmd)
 	struct nm256_stream *s = substream->runtime->private_data;
 	int err = 0;
 
-	if (snd_BUG_ON(!s))
-		return -ENXIO;
+	snd_assert(s != NULL, return -ENXIO);
 
 	spin_lock(&chip->reg_lock);
 	switch (cmd) {
@@ -600,8 +600,7 @@ snd_nm256_capture_trigger(struct snd_pcm_substream *substream, int cmd)
 	struct nm256_stream *s = substream->runtime->private_data;
 	int err = 0;
 
-	if (snd_BUG_ON(!s))
-		return -ENXIO;
+	snd_assert(s != NULL, return -ENXIO);
 
 	spin_lock(&chip->reg_lock);
 	switch (cmd) {
@@ -637,8 +636,7 @@ static int snd_nm256_pcm_prepare(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct nm256_stream *s = runtime->private_data;
 
-	if (snd_BUG_ON(!s))
-		return -ENXIO;
+	snd_assert(s, return -ENXIO);
 	s->dma_size = frames_to_bytes(runtime, substream->runtime->buffer_size);
 	s->period_size = frames_to_bytes(runtime, substream->runtime->period_size);
 	s->periods = substream->runtime->periods;
@@ -663,8 +661,7 @@ snd_nm256_playback_pointer(struct snd_pcm_substream *substream)
 	struct nm256_stream *s = substream->runtime->private_data;
 	unsigned long curp;
 
-	if (snd_BUG_ON(!s))
-		return 0;
+	snd_assert(s, return 0);
 	curp = snd_nm256_readl(chip, NM_PBUFFER_CURRP) - (unsigned long)s->buf;
 	curp %= s->dma_size;
 	return bytes_to_frames(substream->runtime, curp);
@@ -677,8 +674,7 @@ snd_nm256_capture_pointer(struct snd_pcm_substream *substream)
 	struct nm256_stream *s = substream->runtime->private_data;
 	unsigned long curp;
 
-	if (snd_BUG_ON(!s))
-		return 0;
+	snd_assert(s != NULL, return 0);
 	curp = snd_nm256_readl(chip, NM_RBUFFER_CURRP) - (unsigned long)s->buf;
 	curp %= s->dma_size;	
 	return bytes_to_frames(substream->runtime, curp);
@@ -846,6 +842,7 @@ static void snd_nm256_setup_stream(struct nm256 *chip, struct nm256_stream *s,
 	runtime->private_data = s;
 	s->substream = substream;
 
+	snd_pcm_set_sync(substream);
 	snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
 				   &constraints_rates);
 }
@@ -1007,7 +1004,7 @@ snd_nm256_intr_check(struct nm256 *chip)
  */
 
 static irqreturn_t
-snd_nm256_interrupt(int irq, void *dev_id)
+snd_nm256_interrupt(int irq, void *dev_id, struct pt_regs *dummy)
 {
 	struct nm256 *chip = dev_id;
 	u16 status;
@@ -1072,7 +1069,7 @@ snd_nm256_interrupt(int irq, void *dev_id)
  */
 
 static irqreturn_t
-snd_nm256_interrupt_zx(int irq, void *dev_id)
+snd_nm256_interrupt_zx(int irq, void *dev_id, struct pt_regs *dummy)
 {
 	struct nm256 *chip = dev_id;
 	u32 status;
@@ -1307,8 +1304,8 @@ snd_nm256_mixer(struct nm256 *chip)
 		.read = snd_nm256_ac97_read,
 	};
 
-	chip->ac97_regs = kcalloc(ARRAY_SIZE(nm256_ac97_init_val),
-				  sizeof(short), GFP_KERNEL);
+	chip->ac97_regs = kcalloc(sizeof(short),
+				  ARRAY_SIZE(nm256_ac97_init_val), GFP_KERNEL);
 	if (! chip->ac97_regs)
 		return -ENOMEM;
 
@@ -1393,7 +1390,6 @@ static int nm256_suspend(struct pci_dev *pci, pm_message_t state)
 	chip->coeffs_current = 0;
 	pci_disable_device(pci);
 	pci_save_state(pci);
-	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
@@ -1405,17 +1401,8 @@ static int nm256_resume(struct pci_dev *pci)
 
 	/* Perform a full reset on the hardware */
 	chip->in_resume = 1;
-
-	pci_set_power_state(pci, PCI_D0);
 	pci_restore_state(pci);
-	if (pci_enable_device(pci) < 0) {
-		printk(KERN_ERR "nm256: pci_enable_device failed, "
-		       "disabling device\n");
-		snd_card_disconnect(card);
-		return -EIO;
-	}
-	pci_set_master(pci);
-
+	pci_enable_device(pci);
 	snd_nm256_init_chip(chip);
 
 	/* restore ac97 */
@@ -1444,7 +1431,7 @@ static int snd_nm256_free(struct nm256 *chip)
 		snd_nm256_capture_stop(chip);
 
 	if (chip->irq >= 0)
-		free_irq(chip->irq, chip);
+		synchronize_irq(chip->irq);
 
 	if (chip->cport)
 		iounmap(chip->cport);
@@ -1452,6 +1439,8 @@ static int snd_nm256_free(struct nm256 *chip)
 		iounmap(chip->buffer);
 	release_and_free_resource(chip->res_cport);
 	release_and_free_resource(chip->res_buffer);
+	if (chip->irq >= 0)
+		free_irq(chip->irq, chip);
 
 	pci_disable_device(chip->pci);
 	kfree(chip->ac97_regs);
@@ -1534,8 +1523,7 @@ snd_nm256_create(struct snd_card *card, struct pci_dev *pci,
 				printk(KERN_ERR "  force the driver to load by "
 				       "passing in the module parameter\n");
 				printk(KERN_ERR "    force_ac97=1\n");
-				printk(KERN_ERR "  or try sb16, opl3sa2, or "
-				       "cs423x drivers instead.\n");
+				printk(KERN_ERR "  or try sb16 or cs423x drivers instead.\n");
 				err = -ENXIO;
 				goto __error;
 			}
@@ -1630,15 +1618,23 @@ __error:
 }
 
 
+struct nm256_quirk {
+	unsigned short vendor;
+	unsigned short device;
+	int type;
+};
+
 enum { NM_BLACKLISTED, NM_RESET_WORKAROUND, NM_RESET_WORKAROUND_2 };
 
-static struct snd_pci_quirk nm256_quirks[] __devinitdata = {
+static struct nm256_quirk nm256_quirks[] __devinitdata = {
 	/* HP omnibook 4150 has cs4232 codec internally */
-	SND_PCI_QUIRK(0x103c, 0x0007, "HP omnibook 4150", NM_BLACKLISTED),
-	/* Reset workarounds to avoid lock-ups */
-	SND_PCI_QUIRK(0x104d, 0x8041, "Sony PCG-F305", NM_RESET_WORKAROUND),
-	SND_PCI_QUIRK(0x1028, 0x0080, "Dell Latitude LS", NM_RESET_WORKAROUND),
-	SND_PCI_QUIRK(0x1028, 0x0091, "Dell Latitude CSx", NM_RESET_WORKAROUND_2),
+	{ .vendor = 0x103c, .device = 0x0007, .type = NM_BLACKLISTED },
+	/* Sony PCG-F305 */
+	{ .vendor = 0x104d, .device = 0x8041, .type = NM_RESET_WORKAROUND },
+	/* Dell Latitude LS */
+	{ .vendor = 0x1028, .device = 0x0080, .type = NM_RESET_WORKAROUND },
+	/* Dell Latitude CSx */
+	{ .vendor = 0x1028, .device = 0x0091, .type = NM_RESET_WORKAROUND_2 },
 	{ } /* terminator */
 };
 
@@ -1649,28 +1645,32 @@ static int __devinit snd_nm256_probe(struct pci_dev *pci,
 	struct snd_card *card;
 	struct nm256 *chip;
 	int err;
-	const struct snd_pci_quirk *q;
+	struct nm256_quirk *q;
+	u16 subsystem_vendor, subsystem_device;
 
-	q = snd_pci_quirk_lookup(pci, nm256_quirks);
-	if (q) {
-		snd_printdd(KERN_INFO "nm256: Enabled quirk for %s.\n", q->name);
-		switch (q->value) {
-		case NM_BLACKLISTED:
-			printk(KERN_INFO "nm256: The device is blacklisted. "
-			       "Loading stopped\n");
-			return -ENODEV;
-		case NM_RESET_WORKAROUND_2:
-			reset_workaround_2 = 1;
-			/* Fall-through */
-		case NM_RESET_WORKAROUND:
-			reset_workaround = 1;
-			break;
+	pci_read_config_word(pci, PCI_SUBSYSTEM_VENDOR_ID, &subsystem_vendor);
+	pci_read_config_word(pci, PCI_SUBSYSTEM_ID, &subsystem_device);
+
+	for (q = nm256_quirks; q->vendor; q++) {
+		if (q->vendor == subsystem_vendor && q->device == subsystem_device) {
+			switch (q->type) {
+			case NM_BLACKLISTED:
+				printk(KERN_INFO "nm256: The device is blacklisted. "
+				       "Loading stopped\n");
+				return -ENODEV;
+			case NM_RESET_WORKAROUND_2:
+				reset_workaround_2 = 1;
+				/* Fall-through */
+			case NM_RESET_WORKAROUND:
+				reset_workaround = 1;
+				break;
+			}
 		}
 	}
 
-	err = snd_card_create(index, id, THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index, id, THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 
 	switch (pci->device) {
 	case PCI_DEVICE_ID_NEOMAGIC_NM256AV_AUDIO:

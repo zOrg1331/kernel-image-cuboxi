@@ -1,0 +1,33 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Subject: [RHEL5.1 PATCH] tg3: pci ids missed during backport
+Date: Fri, 10 Aug 2007 16:06:10 -0400
+Bugzilla: 245135
+Message-Id: <20070810200610.GD4882@gospo.rdu.redhat.com>
+Changelog: [net] tg3: pci ids missed during backport
+
+
+
+Somehow these bits were missed when I did the giant tg3 backport for
+5.1, so 5906 adapters weren't working (obviously).
+
+This resolves BZ 245135.
+
+---
+
+ tg3.c |    4 ++++
+ 1 files changed, 4 insertions(+)
+
+--- linux-2.6.18.i386/drivers/net/tg3.c.orig
++++ linux-2.6.18.i386/drivers/net/tg3.c
+@@ -246,6 +246,10 @@ static struct pci_device_id tg3_pci_tbl[
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5781,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
++	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5906,
++	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
++	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5906M,
++	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_SYSKONNECT, PCI_DEVICE_ID_SYSKONNECT_9DXX,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_SYSKONNECT, PCI_DEVICE_ID_SYSKONNECT_9MXX,
+

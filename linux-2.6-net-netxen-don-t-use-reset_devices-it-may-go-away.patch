@@ -1,0 +1,66 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Mon, 29 Nov 2010 20:52:07 -0500
+Subject: [net] netxen: don't use reset_devices, it may go away
+Message-id: <20101129205207.8187.63165.sendpatchset@localhost.localdomain>
+Patchwork-id: 29673
+O-Subject: [RHEL 5.6 PATCH v2 2/2] netxen: Avoid using reset_devices as it may
+	become obsolete
+Bugzilla: 643254
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+Bugzilla
+--------
+
+Bug 643254 (https://bugzilla.redhat.com/show_bug.cgi?id=643254)
+
+Upstream Status
+---------------
+
+netdev posting: http://www.spinics.net/lists/netdev/msg147675.html
+
+Description
+-----------
+
+>From 9518b23ede90d00025224787d5414ab22f2ead1b Mon Sep 17 00:00:00 2001
+From: Rajesh Borundia <rajesh.borundia@qlogic.com>
+Date: Thu, 18 Nov 2010 22:32:46 -0800
+Subject: [PATCH 2/2] netxen: Avoid using reset_devices as it may become obsolete
+
+In kdump environment do not depend on reset_devices
+parameter to reset the device as the parameter may become obsolete.
+Instead use an adapter specific mechanism to determine if the device
+needs a reset.
+
+Driver maintains a count of number of pci functions probed
+and decrements the count when remove handler of that pci function
+is called. If the first probe, probe of function 0,
+detects the count as non zero then reset the device.
+
+Signed-off-by: Rajesh Borundia <rajesh.borundia@qlogic.com>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 9221afc..5d0c042 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -1285,6 +1285,7 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	int i = 0, err;
+ 	int pci_func_id = PCI_FUNC(pdev->devfn);
+ 	uint8_t revision_id;
++	u32 val;
+ 
+ 	pci_read_config_byte(pdev, PCI_REVISION_ID, &revision_id);
+ 
+@@ -1360,8 +1361,9 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 		break;
+ 	}
+ 
+-	if (reset_devices) {
+-		if (adapter->portnum == 0) {
++	if (adapter->portnum == 0) {
++		val = NXRD32(adapter, NX_CRB_DEV_REF_COUNT);
++		if (val != 0xffffffff && val != 0) {
+ 			NXWR32(adapter, NX_CRB_DEV_REF_COUNT, 0);
+ 			adapter->need_fw_reset = 1;
+ 		}

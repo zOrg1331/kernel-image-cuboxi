@@ -7,7 +7,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <string.h>
-#include <limits.h>
 #include "modpost.h"
 
 /*
@@ -290,15 +289,6 @@ static int parse_file(const char *fname, struct md4_ctx *md)
 	release_file(file, len);
 	return 1;
 }
-/* Check whether the file is a static library or not */
-static int is_static_library(const char *objfile)
-{
-	int len = strlen(objfile);
-	if (objfile[len - 2] == '.' && objfile[len - 1] == 'a')
-		return 1;
-	else
-		return 0;
-}
 
 /* We have dir/file.o.  Open dir/.file.o.cmd, look for deps_ line to
  * figure out source file. */
@@ -334,6 +324,8 @@ static int parse_source_files(const char *objfile, struct md4_ctx *md)
 		deps_drivers/net/dummy.o := \
 		  drivers/net/dummy.c \
 		    $(wildcard include/config/net/fastroute.h) \
+		  include/linux/config.h \
+		    $(wildcard include/config/h.h) \
 		  include/linux/module.h \
 
 	   Sum all files in the same dir or subdirs.
@@ -405,9 +397,10 @@ void get_src_version(const char *modname, char sum[], unsigned sumlen)
 		(int) strlen(basename) - 2, basename);
 
 	file = grab_file(filelist, &len);
-	if (!file)
-		/* not a module or .mod file missing - ignore */
+	if (!file) {
+		warn("could not find versions for %s\n", filelist);
 		return;
+	}
 
 	sources = strchr(file, '\n');
 	if (!sources) {
@@ -427,8 +420,7 @@ void get_src_version(const char *modname, char sum[], unsigned sumlen)
 	while ((fname = strsep(&sources, " ")) != NULL) {
 		if (!*fname)
 			continue;
-		if (!(is_static_library(fname)) &&
-				!parse_source_files(fname, &md))
+		if (!parse_source_files(fname, &md))
 			goto release;
 	}
 

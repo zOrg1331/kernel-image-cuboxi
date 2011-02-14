@@ -1,6 +1,6 @@
 /*
  *  Information interface for ALSA driver
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -19,9 +19,9 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/time.h>
-#include <linux/mm.h>
 #include <linux/smp_lock.h>
 #include <linux/string.h>
 #include <sound/core.h>
@@ -78,7 +78,6 @@ struct snd_info_private_data {
 
 static int snd_info_version_init(void);
 static int snd_info_version_done(void);
-static void snd_info_disconnect(struct snd_info_entry *entry);
 
 
 /* resize the proc r/w buffer */
@@ -88,10 +87,12 @@ static int resize_info_buffer(struct snd_info_buffer *buffer,
 	char *nbuf;
 
 	nsize = PAGE_ALIGN(nsize);
-	nbuf = krealloc(buffer->buffer, nsize, GFP_KERNEL);
+	nbuf = kmalloc(nsize, GFP_KERNEL);
 	if (! nbuf)
 		return -ENOMEM;
 
+	memcpy(nbuf, buffer->buffer, buffer->len);
+	kfree(buffer->buffer);
 	buffer->buffer = nbuf;
 	buffer->len = nsize;
 	return 0;
@@ -106,7 +107,7 @@ static int resize_info_buffer(struct snd_info_buffer *buffer,
  *
  * Returns the size of output string.
  */
-int snd_iprintf(struct snd_info_buffer *buffer, const char *fmt, ...)
+int snd_iprintf(struct snd_info_buffer *buffer, char *fmt,...)
 {
 	va_list args;
 	int len, res;
@@ -118,10 +119,7 @@ int snd_iprintf(struct snd_info_buffer *buffer, const char *fmt, ...)
 	len = buffer->len - buffer->size;
 	va_start(args, fmt);
 	for (;;) {
-		va_list ap;
-		va_copy(ap, args);
-		res = vsnprintf(buffer->buffer + buffer->curr, len, fmt, ap);
-		va_end(ap);
+		res = vsnprintf(buffer->buffer + buffer->curr, len, fmt, args);
 		if (res < len)
 			break;
 		err = resize_info_buffer(buffer, buffer->len + PAGE_SIZE);
@@ -152,6 +150,11 @@ EXPORT_SYMBOL(snd_seq_root);
 struct snd_info_entry *snd_oss_root;
 #endif
 
+static inline void snd_info_entry_prepare(struct proc_dir_entry *de)
+{
+	de->owner = THIS_MODULE;
+}
+
 static void snd_remove_proc_entry(struct proc_dir_entry *parent,
 				  struct proc_dir_entry *de)
 {
@@ -171,15 +174,15 @@ static loff_t snd_info_entry_llseek(struct file *file, loff_t offset, int orig)
 	switch (entry->content) {
 	case SNDRV_INFO_CONTENT_TEXT:
 		switch (orig) {
-		case SEEK_SET:
+		case 0:	/* SEEK_SET */
 			file->f_pos = offset;
 			ret = file->f_pos;
 			goto out;
-		case SEEK_CUR:
+		case 1:	/* SEEK_CUR */
 			file->f_pos += offset;
 			ret = file->f_pos;
 			goto out;
-		case SEEK_END:
+		case 2:	/* SEEK_END */
 		default:
 			ret = -EINVAL;
 			goto out;
@@ -210,8 +213,7 @@ static ssize_t snd_info_entry_read(struct file *file, char __user *buffer,
 	loff_t pos;
 
 	data = file->private_data;
-	if (snd_BUG_ON(!data))
-		return -ENXIO;
+	snd_assert(data != NULL, return -ENXIO);
 	pos = *offset;
 	if (pos < 0 || (long) pos != pos || (ssize_t) count < 0)
 		return -EIO;
@@ -252,8 +254,7 @@ static ssize_t snd_info_entry_write(struct file *file, const char __user *buffer
 	loff_t pos;
 
 	data = file->private_data;
-	if (snd_BUG_ON(!data))
-		return -ENXIO;
+	snd_assert(data != NULL, return -ENXIO);
 	entry = data->entry;
 	pos = *offset;
 	if (pos < 0 || (long) pos != pos || (ssize_t) count < 0)
@@ -303,7 +304,7 @@ static int snd_info_entry_open(struct inode *inode, struct file *file)
 	mutex_lock(&info_mutex);
 	p = PDE(inode);
 	entry = p == NULL ? NULL : (struct snd_info_entry *)p->data;
-	if (entry == NULL || ! entry->p) {
+	if (entry == NULL || entry->disconnected) {
 		mutex_unlock(&info_mutex);
 		return -ENODEV;
 	}
@@ -483,7 +484,7 @@ static long snd_info_entry_ioctl(struct file *file, unsigned int cmd,
 
 static int snd_info_entry_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file->f_dentry->d_inode;
 	struct snd_info_private_data *data;
 	struct snd_info_entry *entry;
 
@@ -502,7 +503,7 @@ static int snd_info_entry_mmap(struct file *file, struct vm_area_struct *vma)
 	return -ENXIO;
 }
 
-static const struct file_operations snd_info_entry_operations =
+static struct file_operations snd_info_entry_operations =
 {
 	.owner =		THIS_MODULE,
 	.llseek =		snd_info_entry_llseek,
@@ -515,11 +516,32 @@ static const struct file_operations snd_info_entry_operations =
 	.release =		snd_info_entry_release,
 };
 
+/**
+ * snd_create_proc_entry - create a procfs entry
+ * @name: the name of the proc file
+ * @mode: the file permission bits, S_Ixxx
+ * @parent: the parent proc-directory entry
+ *
+ * Creates a new proc file entry with the given name and permission
+ * on the given directory.
+ *
+ * Returns the pointer of new instance or NULL on failure.
+ */
+static struct proc_dir_entry *snd_create_proc_entry(const char *name, mode_t mode,
+						    struct proc_dir_entry *parent)
+{
+	struct proc_dir_entry *p;
+	p = create_proc_entry(name, mode, parent);
+	if (p)
+		snd_info_entry_prepare(p);
+	return p;
+}
+
 int __init snd_info_init(void)
 {
 	struct proc_dir_entry *p;
 
-	p = create_proc_entry("asound", S_IFDIR | S_IRUGO | S_IXUGO, NULL);
+	p = snd_create_proc_entry("asound", S_IFDIR | S_IRUGO | S_IXUGO, &proc_root);
 	if (p == NULL)
 		return -ENOMEM;
 	snd_proc_root = p;
@@ -564,12 +586,12 @@ int __exit snd_info_done(void)
 	snd_info_version_done();
 	if (snd_proc_root) {
 #if defined(CONFIG_SND_SEQUENCER) || defined(CONFIG_SND_SEQUENCER_MODULE)
-		snd_info_free_entry(snd_seq_root);
+		snd_info_unregister(snd_seq_root);
 #endif
 #ifdef CONFIG_SND_OSSEMUL
-		snd_info_free_entry(snd_oss_root);
+		snd_info_unregister(snd_oss_root);
 #endif
-		snd_remove_proc_entry(NULL, snd_proc_root);
+		snd_remove_proc_entry(&proc_root, snd_proc_root);
 	}
 	return 0;
 }
@@ -588,8 +610,7 @@ int snd_info_card_create(struct snd_card *card)
 	char str[8];
 	struct snd_info_entry *entry;
 
-	if (snd_BUG_ON(!card))
-		return -ENXIO;
+	snd_assert(card != NULL, return -ENXIO);
 
 	sprintf(str, "card%i", card->number);
 	if ((entry = snd_info_create_module_entry(card->module, str, NULL)) == NULL)
@@ -611,8 +632,7 @@ int snd_info_card_register(struct snd_card *card)
 {
 	struct proc_dir_entry *p;
 
-	if (snd_BUG_ON(!card))
-		return -ENXIO;
+	snd_assert(card != NULL, return -ENXIO);
 
 	if (!strcmp(card->id, card->proc_root->name))
 		return 0;
@@ -625,50 +645,20 @@ int snd_info_card_register(struct snd_card *card)
 }
 
 /*
- * called on card->id change
- */
-void snd_info_card_id_change(struct snd_card *card)
-{
-	mutex_lock(&info_mutex);
-	if (card->proc_root_link) {
-		snd_remove_proc_entry(snd_proc_root, card->proc_root_link);
-		card->proc_root_link = NULL;
-	}
-	if (strcmp(card->id, card->proc_root->name))
-		card->proc_root_link = proc_symlink(card->id,
-						    snd_proc_root,
-						    card->proc_root->name);
-	mutex_unlock(&info_mutex);
-}
-
-/*
  * de-register the card proc file
- * called from init.c
- */
-void snd_info_card_disconnect(struct snd_card *card)
-{
-	if (!card)
-		return;
-	mutex_lock(&info_mutex);
-	if (card->proc_root_link) {
-		snd_remove_proc_entry(snd_proc_root, card->proc_root_link);
-		card->proc_root_link = NULL;
-	}
-	if (card->proc_root)
-		snd_info_disconnect(card->proc_root);
-	mutex_unlock(&info_mutex);
-}
-
-/*
- * release the card proc file resources
  * called from init.c
  */
 int snd_info_card_free(struct snd_card *card)
 {
-	if (!card)
-		return 0;
-	snd_info_free_entry(card->proc_root);
-	card->proc_root = NULL;
+	snd_assert(card != NULL, return -ENXIO);
+	if (card->proc_root_link) {
+		snd_remove_proc_entry(snd_proc_root, card->proc_root_link);
+		card->proc_root_link = NULL;
+	}
+	if (card->proc_root) {
+		snd_info_unregister(card->proc_root);
+		card->proc_root = NULL;
+	}
 	return 0;
 }
 
@@ -725,7 +715,7 @@ EXPORT_SYMBOL(snd_info_get_line);
  * Returns the updated pointer of the original string so that
  * it can be used for the next call.
  */
-const char *snd_info_get_str(char *dest, const char *src, int len)
+char *snd_info_get_str(char *dest, char *src, int len)
 {
 	int c;
 
@@ -777,8 +767,6 @@ static struct snd_info_entry *snd_info_create_entry(const char *name)
 	entry->mode = S_IFREG | S_IRUGO;
 	entry->content = SNDRV_INFO_CONTENT_TEXT;
 	mutex_init(&entry->access);
-	INIT_LIST_HEAD(&entry->children);
-	INIT_LIST_HEAD(&entry->list);
 	return entry;
 }
 
@@ -831,24 +819,6 @@ struct snd_info_entry *snd_info_create_card_entry(struct snd_card *card,
 
 EXPORT_SYMBOL(snd_info_create_card_entry);
 
-static void snd_info_disconnect(struct snd_info_entry *entry)
-{
-	struct list_head *p, *n;
-	struct proc_dir_entry *root;
-
-	list_for_each_safe(p, n, &entry->children) {
-		snd_info_disconnect(list_entry(p, struct snd_info_entry, list));
-	}
-
-	if (! entry->p)
-		return;
-	list_del_init(&entry->list);
-	root = entry->parent == NULL ? snd_proc_root : entry->parent->p;
-	snd_BUG_ON(!root);
-	snd_remove_proc_entry(root, entry->p);
-	entry->p = NULL;
-}
-
 static int snd_info_dev_free_entry(struct snd_device *device)
 {
 	struct snd_info_entry *entry = device->device_data;
@@ -860,6 +830,19 @@ static int snd_info_dev_register_entry(struct snd_device *device)
 {
 	struct snd_info_entry *entry = device->device_data;
 	return snd_info_register(entry);
+}
+
+static int snd_info_dev_disconnect_entry(struct snd_device *device)
+{
+	struct snd_info_entry *entry = device->device_data;
+	entry->disconnected = 1;
+	return 0;
+}
+
+static int snd_info_dev_unregister_entry(struct snd_device *device)
+{
+	struct snd_info_entry *entry = device->device_data;
+	return snd_info_unregister(entry);
 }
 
 /**
@@ -888,7 +871,8 @@ int snd_card_proc_new(struct snd_card *card, const char *name,
 	static struct snd_device_ops ops = {
 		.dev_free = snd_info_dev_free_entry,
 		.dev_register =	snd_info_dev_register_entry,
-		/* disconnect is done via snd_info_card_disconnect() */
+		.dev_disconnect = snd_info_dev_disconnect_entry,
+		.dev_unregister = snd_info_dev_unregister_entry
 	};
 	struct snd_info_entry *entry;
 	int err;
@@ -917,11 +901,6 @@ void snd_info_free_entry(struct snd_info_entry * entry)
 {
 	if (entry == NULL)
 		return;
-	if (entry->p) {
-		mutex_lock(&info_mutex);
-		snd_info_disconnect(entry);
-		mutex_unlock(&info_mutex);
-	}
 	kfree(entry->name);
 	if (entry->private_free)
 		entry->private_free(entry);
@@ -942,27 +921,51 @@ int snd_info_register(struct snd_info_entry * entry)
 {
 	struct proc_dir_entry *root, *p = NULL;
 
-	if (snd_BUG_ON(!entry))
-		return -ENXIO;
+	snd_assert(entry != NULL, return -ENXIO);
 	root = entry->parent == NULL ? snd_proc_root : entry->parent->p;
 	mutex_lock(&info_mutex);
-	p = create_proc_entry(entry->name, entry->mode, root);
+	p = snd_create_proc_entry(entry->name, entry->mode, root);
 	if (!p) {
 		mutex_unlock(&info_mutex);
 		return -ENOMEM;
 	}
+	p->owner = entry->module;
 	if (!S_ISDIR(entry->mode))
 		p->proc_fops = &snd_info_entry_operations;
 	p->size = entry->size;
 	p->data = entry;
 	entry->p = p;
-	if (entry->parent)
-		list_add_tail(&entry->list, &entry->parent->children);
 	mutex_unlock(&info_mutex);
 	return 0;
 }
 
 EXPORT_SYMBOL(snd_info_register);
+
+/**
+ * snd_info_unregister - de-register the info entry
+ * @entry: the info entry
+ *
+ * De-registers the info entry and releases the instance.
+ *
+ * Returns zero if successful, or a negative error code on failure.
+ */
+int snd_info_unregister(struct snd_info_entry * entry)
+{
+	struct proc_dir_entry *root;
+
+	if (! entry)
+		return 0;
+	snd_assert(entry->p != NULL, return -ENXIO);
+	root = entry->parent == NULL ? snd_proc_root : entry->parent->p;
+	snd_assert(root, return -ENXIO);
+	mutex_lock(&info_mutex);
+	snd_remove_proc_entry(root, entry->p);
+	mutex_unlock(&info_mutex);
+	snd_info_free_entry(entry);
+	return 0;
+}
+
+EXPORT_SYMBOL(snd_info_unregister);
 
 /*
 
@@ -996,7 +999,8 @@ static int __init snd_info_version_init(void)
 
 static int __exit snd_info_version_done(void)
 {
-	snd_info_free_entry(snd_info_version_entry);
+	if (snd_info_version_entry)
+		snd_info_unregister(snd_info_version_entry);
 	return 0;
 }
 

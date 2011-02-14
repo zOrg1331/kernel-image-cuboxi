@@ -1,0 +1,46 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:43 -0500
+Subject: [edac] i7core_edac: move #if PAGE_SHIFT to edac_core.h
+Message-id: <20101123153343.2b2e2238@pedra>
+Patchwork-id: 29560
+O-Subject: [PATCH RHEL5 04/29] BZ#:651869 i7core_edac: move #if PAGE_SHIFT to
+	edac_core.h
+Bugzilla: 651869
+
+Changeset: e9144601d364d5b81f3e63949337f8507eb58dca
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/edac_mc.h b/drivers/edac/edac_mc.h
+index 0622af1..7df580c 100644
+--- a/drivers/edac/edac_mc.h
++++ b/drivers/edac/edac_mc.h
+@@ -36,8 +36,10 @@
+ 
+ #if PAGE_SHIFT < 20
+ #define PAGES_TO_MiB( pages )	( ( pages ) >> ( 20 - PAGE_SHIFT ) )
++#define MiB_TO_PAGES(mb)	((mb) >> (20 - PAGE_SHIFT))
+ #else				/* PAGE_SHIFT > 20 */
+ #define PAGES_TO_MiB( pages )	( ( pages ) << ( PAGE_SHIFT - 20 ) )
++#define MiB_TO_PAGES(mb)	((mb) >> (PAGE_SHIFT - 20))
+ #endif
+ 
+ #define edac_printk(level, prefix, fmt, arg...) \
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index ec7d883..b868a5d 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -663,11 +663,7 @@ static int get_dimm_config(const struct mem_ctl_info *mci, int *csrow)
+ 				RANKOFFSET(dimm_dod[j]),
+ 				banks, ranks, rows, cols);
+ 
+-#if PAGE_SHIFT > 20
+-			npages = size >> (PAGE_SHIFT - 20);
+-#else
+-			npages = size << (20 - PAGE_SHIFT);
+-#endif
++			npages = MiB_TO_PAGES(size);
+ 
+ 			csr = &mci->csrows[*csrow];
+ 			csr->first_page = last_page + 1;

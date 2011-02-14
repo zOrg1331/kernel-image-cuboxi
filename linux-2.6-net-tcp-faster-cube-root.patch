@@ -1,0 +1,112 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:33:45 -0400
+Subject: [net] tcp: faster cube root
+Message-id: <20100723153345.GH14925@lsx.localdomain>
+Patchwork-id: 27066
+O-Subject: [RHEL5.6 PATCH 6/14] tcp: faster cube root
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This patch combines the following two commits:
+
+commit 7e58886b45bc4a309aeaa8178ef89ff767daaf7f
+Author: Stephen Hemminger <shemminger@linux-foundation.org>
+Date:   Thu Mar 22 12:10:58 2007 -0700
+
+    [TCP]: cubic optimization
+
+    Use willy's work in optimizing cube root by having table for small values.
+
+    Signed-off-by: Stephen Hemminger <shemminger@linux-foundation.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+commit c5f5877c043ca471c3a607fa2c864848b19bc49a
+Author: Stephen Hemminger <shemminger@linux-foundation.org>
+Date:   Sun Mar 25 20:21:15 2007 -0700
+
+    [TCP] tcp_cubic: faster cube root
+
+    The Newton-Raphson method is quadratically convergent so
+    only a small fixed number of steps are necessary.
+    Therefore it is faster to unroll the loop. Since div64_64 is no longer
+    inline it won't cause code explosion.
+
+    Also fixes a bug that can occur if x^2 was bigger than 32 bits.
+
+    Signed-off-by: Stephen Hemminger <shemminger@linux-foundation.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_cubic.c b/net/ipv4/tcp_cubic.c
+index 7492234..e625d7b 100644
+--- a/net/ipv4/tcp_cubic.c
++++ b/net/ipv4/tcp_cubic.c
+@@ -114,30 +114,53 @@ static inline u_int64_t div64_64(u_int64_t dividend, u_int64_t divisor)
+ 	return dividend;
+ }
+ 
+-/*
+- * calculate the cubic root of x using Newton-Raphson
++/* calculate the cubic root of x using a table lookup followed by one
++ * Newton-Raphson iteration.
++ * Avg err ~= 0.195%
+  */
+ static u32 cubic_root(u64 a)
+ {
+-	u32 x, x1;
++	u32 x, b, shift;
+ 
+-	/* Initial estimate is based on:
+-	 * cbrt(x) = exp(log(x) / 3)
++	/*
++	 * cbrt(x) MSB values for x MSB values in [0..63].
++	 * Precomputed then refined by hand - Willy Tarreau
++	 *
++	 * For x in [0..63],
++	 *   v = cbrt(x << 18) - 1
++	 *   cbrt(x) = (v[x] + 10) >> 6
+ 	 */
+-	x = 1u << (fls64(a)/3);
++	static const u8 v[] = {
++		/* 0x00 */    0,   54,   54,   54,  118,  118,  118,  118,
++		/* 0x08 */  123,  129,  134,  138,  143,  147,  151,  156,
++		/* 0x10 */  157,  161,  164,  168,  170,  173,  176,  179,
++		/* 0x18 */  181,  185,  187,  190,  192,  194,  197,  199,
++		/* 0x20 */  200,  202,  204,  206,  209,  211,  213,  215,
++		/* 0x28 */  217,  219,  221,  222,  224,  225,  227,  229,
++		/* 0x30 */  231,  232,  234,  236,  237,  239,  240,  242,
++		/* 0x38 */  244,  245,  246,  248,  250,  251,  252,  254,
++	};
++
++	b = fls64(a);
++	if (b < 7) {
++		/* a in [0..63] */
++		return ((u32)v[(u32)a] + 35) >> 6;
++	}
++
++	b = ((b * 84) >> 8) - 1;
++	shift = (a >> (b * 3));
++
++	x = ((u32)(((u32)v[shift] + 10) << b)) >> 6;
+ 
+ 	/*
+-	 * Iteration based on:
++	 * Newton-Raphson iteration
+ 	 *                         2
+ 	 * x    = ( 2 * x  +  a / x  ) / 3
+ 	 *  k+1          k         k
+ 	 */
+-	do {
+-		x1 = x;
+-		x = (2 * x + (uint32_t) div64_64(a, x*x)) / 3;
+-	} while (abs(x1 - x) > 1);
+-
+-	return x;
++	x = (2 * x + (u32)div64_64(a, (u64)x * (u64)(x - 1)));
++	x = ((x * 341) >> 10);
++        return x;
+ }
+ 
+ /*

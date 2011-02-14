@@ -6,7 +6,6 @@
  *  file VFS functions
  */
 
-#include <linux/smp_lock.h>
 #include "hpfs_fn.h"
 
 #define BLOCKS(size) (((size) + 511) >> 9)
@@ -87,33 +86,25 @@ static int hpfs_writepage(struct page *page, struct writeback_control *wbc)
 {
 	return block_write_full_page(page,hpfs_get_block, wbc);
 }
-
 static int hpfs_readpage(struct file *file, struct page *page)
 {
 	return block_read_full_page(page,hpfs_get_block);
 }
-
-static int hpfs_write_begin(struct file *file, struct address_space *mapping,
-			loff_t pos, unsigned len, unsigned flags,
-			struct page **pagep, void **fsdata)
+static int hpfs_prepare_write(struct file *file, struct page *page, unsigned from, unsigned to)
 {
-	*pagep = NULL;
-	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
-				hpfs_get_block,
-				&hpfs_i(mapping->host)->mmu_private);
+	return cont_prepare_write(page,from,to,hpfs_get_block,
+		&hpfs_i(page->mapping->host)->mmu_private);
 }
-
 static sector_t _hpfs_bmap(struct address_space *mapping, sector_t block)
 {
 	return generic_block_bmap(mapping,block,hpfs_get_block);
 }
-
 const struct address_space_operations hpfs_aops = {
 	.readpage = hpfs_readpage,
 	.writepage = hpfs_writepage,
 	.sync_page = block_sync_page,
-	.write_begin = hpfs_write_begin,
-	.write_end = generic_write_end,
+	.prepare_write = hpfs_prepare_write,
+	.commit_write = generic_commit_write,
 	.bmap = _hpfs_bmap
 };
 
@@ -122,27 +113,25 @@ static ssize_t hpfs_file_write(struct file *file, const char __user *buf,
 {
 	ssize_t retval;
 
-	retval = do_sync_write(file, buf, count, ppos);
+	retval = generic_file_write(file, buf, count, ppos);
 	if (retval > 0)
-		hpfs_i(file->f_path.dentry->d_inode)->i_dirty = 1;
+		hpfs_i(file->f_dentry->d_inode)->i_dirty = 1;
 	return retval;
 }
 
 const struct file_operations hpfs_file_ops =
 {
 	.llseek		= generic_file_llseek,
-	.read		= do_sync_read,
-	.aio_read	= generic_file_aio_read,
+	.read		= generic_file_read,
 	.write		= hpfs_file_write,
-	.aio_write	= generic_file_aio_write,
 	.mmap		= generic_file_mmap,
 	.release	= hpfs_file_release,
 	.fsync		= hpfs_file_fsync,
-	.splice_read	= generic_file_splice_read,
+	.sendfile	= generic_file_sendfile,
 };
 
-const struct inode_operations hpfs_file_iops =
+struct inode_operations hpfs_file_iops =
 {
 	.truncate	= hpfs_truncate,
-	.setattr	= hpfs_setattr,
+	.setattr	= hpfs_notify_change,
 };

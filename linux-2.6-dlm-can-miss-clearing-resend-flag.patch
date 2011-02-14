@@ -1,0 +1,77 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: can miss clearing resend flag
+Date: Thu, 25 Jan 2007 09:19:56 -0600
+Bugzilla: 223522
+Message-Id: <20070125151956.GG21980@redhat.com>
+Changelog: [dlm] can miss clearing resend flag
+
+
+bz 223522
+
+A long, complicated sequence of events, beginning with the RESEND flag not
+being cleared on an lkb, can result in an unlock never completing.
+
+- lkb on waiters list for remote lookup
+- the remote node is both the dir node and the master node, so
+  it optimizes the lookup into a request and sends a request
+  reply back
+- the request reply is saved on the requestqueue to be processed
+  after recovery
+- recovery runs dlm_recover_waiters_pre() which sets RESEND flag
+  so the lookup will be resent after recovery
+- end of recovery: process_requestqueue takes saved request reply
+  which removes the lkb off the waitesr list, _without_ clearing
+  the RESEND flag
+- end of recovery: dlm_recover_waiters_post() doesn't do anything
+  with the now completed lookup lkb (would usually clear RESEND)
+- later, the node unmounts, unlocks this lkb that still has RESEND
+  flag set
+- the lkb is on the waiters list again, now for unlock, when recovery
+  occurs, dlm_recover_waiters_pre() shows the lkb for unlock with RESEND
+  set, doesn't do anything since the master still exists
+- end of recovery: dlm_recover_waiters_post() takes this lkb off
+  the waiters list because it has the RESEND flag set, then reports
+  an error because unlocks are never supposed to be handled in
+  recover_waiters_post().
+- later, the unlock reply is received, doesn't find the lkb on
+  the waiters list because recover_waiters_post() has wrongly
+  removed it.
+- the unlock operation has been lost, and we're left with a
+  stray granted lock
+- unmount spins waiting for the unlock to complete
+
+The visible evidence of this problem will be a node where gfs umount is
+spinning, the dlm waiters list will be empty, and the dlm locks list will
+show a granted lock.
+
+The fix is simply to clear the RESEND flag when taking an lkb off the
+waiters list.
+
+patch is in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lock.c	2007-01-24 15:04:12.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lock.c	2007-01-24 15:04:38.000000000 -0600
+@@ -754,6 +754,11 @@
+ 	mutex_unlock(&ls->ls_waiters_mutex);
+ }
+ 
++/* We clear the RESEND flag because we might be taking an lkb off the waiters
++   list as part of process_requestqueue (e.g. a lookup that has an optimized
++   request reply on the requestqueue) between dlm_recover_waiters_pre() which
++   set RESEND and dlm_recover_waiters_post() */
++
+ static int _remove_from_waiters(struct dlm_lkb *lkb)
+ {
+ 	int error = 0;
+@@ -764,6 +769,7 @@
+ 		goto out;
+ 	}
+ 	lkb->lkb_wait_type = 0;
++	lkb->lkb_flags &= ~DLM_IFL_RESEND;
+ 	list_del(&lkb->lkb_wait_reply);
+ 	unhold_lkb(lkb);
+  out:
+

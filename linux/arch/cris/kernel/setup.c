@@ -18,7 +18,7 @@
 #include <linux/screen_info.h>
 #include <linux/utsname.h>
 #include <linux/pfn.h>
-#include <linux/cpu.h>
+
 #include <asm/setup.h>
 
 /*
@@ -29,14 +29,12 @@ struct screen_info screen_info;
 extern int root_mountflags;
 extern char _etext, _edata, _end;
 
-char __initdata cris_command_line[COMMAND_LINE_SIZE] = { 0, };
+char cris_command_line[COMMAND_LINE_SIZE] = { 0, };
 
 extern const unsigned long text_start, edata; /* set by the linker script */
 extern unsigned long dram_start, dram_end;
 
 extern unsigned long romfs_start, romfs_length, romfs_in_flash; /* from head.S */
-
-static struct cpu cpu_devices[NR_CPUS];
 
 extern void show_etrax_copyright(void);		/* arch-vX/kernel/setup.c */
 
@@ -47,23 +45,24 @@ extern void show_etrax_copyright(void);		/* arch-vX/kernel/setup.c */
  * given by the macro __pa().
  *
  * In this DRAM, the kernel code and data is loaded, in the beginning.
- * It really starts at c0004000 to make room for some special pages -
+ * It really starts at c0004000 to make room for some special pages - 
  * the start address is text_start. The kernel data ends at _end. After
  * this the ROM filesystem is appended (if there is any).
- *
+ * 
  * Between this address and dram_end, we have RAM pages usable to the
  * boot code and the system.
  *
  */
 
-void __init setup_arch(char **cmdline_p)
+void __init 
+setup_arch(char **cmdline_p)
 {
 	extern void init_etrax_debug(void);
 	unsigned long bootmap_size;
 	unsigned long start_pfn, max_pfn;
 	unsigned long memory_start;
 
-	/* register an initial console printing routine for printk's */
+ 	/* register an initial console printing routine for printk's */
 
 	init_etrax_debug();
 
@@ -122,7 +121,7 @@ void __init setup_arch(char **cmdline_p)
 	min_low_pfn = PAGE_OFFSET >> PAGE_SHIFT;
 
 	bootmap_size = init_bootmem_node(NODE_DATA(0), start_pfn,
-					 min_low_pfn,
+					 min_low_pfn, 
 					 max_low_pfn);
 
 	/* And free all memory not belonging to the kernel (addr, size) */
@@ -138,7 +137,7 @@ void __init setup_arch(char **cmdline_p)
 	 * Arguments are start, size
          */
 
-	reserve_bootmem(PFN_PHYS(start_pfn), bootmap_size, BOOTMEM_DEFAULT);
+        reserve_bootmem(PFN_PHYS(start_pfn), bootmap_size);
 
 	/* paging_init() sets up the MMU and marks all pages as reserved */
 
@@ -154,19 +153,19 @@ void __init setup_arch(char **cmdline_p)
 #endif
 
 	/* Save command line for future references. */
-	memcpy(boot_command_line, cris_command_line, COMMAND_LINE_SIZE);
-	boot_command_line[COMMAND_LINE_SIZE - 1] = '\0';
+	memcpy(saved_command_line, cris_command_line, COMMAND_LINE_SIZE);
+	saved_command_line[COMMAND_LINE_SIZE - 1] = '\0';
 
 	/* give credit for the CRIS port */
 	show_etrax_copyright();
 
 	/* Setup utsname */
-	strcpy(init_utsname()->machine, cris_machine_name);
+	strcpy(system_utsname.machine, cris_machine_name);
 }
 
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
-	return *pos < nr_cpu_ids ? (void *)(int)(*pos + 1) : NULL;
+	return *pos < NR_CPUS ? (void *)(int)(*pos + 1): NULL;
 }
 
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)
@@ -181,23 +180,11 @@ static void c_stop(struct seq_file *m, void *v)
 
 extern int show_cpuinfo(struct seq_file *m, void *v);
 
-const struct seq_operations cpuinfo_op = {
+struct seq_operations cpuinfo_op = {
 	.start = c_start,
 	.next  = c_next,
 	.stop  = c_stop,
 	.show  = show_cpuinfo,
 };
 
-static int __init topology_init(void)
-{
-	int i;
-
-	for_each_possible_cpu(i) {
-		 return register_cpu(&cpu_devices[i], i);
-	}
-
-	return 0;
-}
-
-subsys_initcall(topology_init);
 

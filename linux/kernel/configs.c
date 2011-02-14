@@ -54,38 +54,57 @@
 
 #ifdef CONFIG_IKCONFIG_PROC
 
+/**************************************************/
+/* globals and useful constants                   */
+
 static ssize_t
 ikconfig_read_current(struct file *file, char __user *buf,
 		      size_t len, loff_t * offset)
 {
-	return simple_read_from_buffer(buf, len, offset,
-				       kernel_config_data + MAGIC_SIZE,
-				       kernel_config_data_size);
+	loff_t pos = *offset;
+	ssize_t count;
+
+	if (pos >= kernel_config_data_size)
+		return 0;
+
+	count = min(len, (size_t)(kernel_config_data_size - pos));
+	if (copy_to_user(buf, kernel_config_data + MAGIC_SIZE + pos, count))
+		return -EFAULT;
+
+	*offset += count;
+	return count;
 }
 
-static const struct file_operations ikconfig_file_ops = {
+static struct file_operations ikconfig_file_ops = {
 	.owner = THIS_MODULE,
 	.read = ikconfig_read_current,
 };
+
+/***************************************************/
+/* ikconfig_init: start up everything we need to */
 
 static int __init ikconfig_init(void)
 {
 	struct proc_dir_entry *entry;
 
 	/* create the current config file */
-	entry = proc_create("config.gz", S_IFREG | S_IRUGO, NULL,
-			    &ikconfig_file_ops);
+	entry = create_proc_entry("config.gz", S_IFREG | S_IRUGO,
+				  &proc_root);
 	if (!entry)
 		return -ENOMEM;
 
+	entry->proc_fops = &ikconfig_file_ops;
 	entry->size = kernel_config_data_size;
 
 	return 0;
 }
 
+/***************************************************/
+/* ikconfig_cleanup: clean up our mess           */
+
 static void __exit ikconfig_cleanup(void)
 {
-	remove_proc_entry("config.gz", NULL);
+	remove_proc_entry("config.gz", &proc_root);
 }
 
 module_init(ikconfig_init);

@@ -34,6 +34,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/syscalls.h>
 #include <asm/errno.h>
 #include <asm/ioctl.h>

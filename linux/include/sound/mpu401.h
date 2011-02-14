@@ -3,7 +3,7 @@
 
 /*
  *  Header file for MPU-401 and compatible cards
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -50,7 +50,6 @@
 #define MPU401_INFO_INTEGRATED	(1 << 2)	/* integrated h/w port */
 #define MPU401_INFO_MMIO	(1 << 3)	/* MMIO access */
 #define MPU401_INFO_TX_IRQ	(1 << 4)	/* independent TX irq */
-#define MPU401_INFO_NO_ACK	(1 << 6)	/* No ACK cmd needed */
 
 #define MPU401_MODE_BIT_INPUT		0
 #define MPU401_MODE_BIT_OUTPUT		1
@@ -104,26 +103,13 @@ struct snd_mpu401 {
 #define MPU401D(mpu) (mpu)->port
 
 /*
- * control register bits
- */
-/* read MPU401C() */
-#define MPU401_RX_EMPTY		0x80
-#define MPU401_TX_FULL		0x40
-
-/* write MPU401C() */
-#define MPU401_RESET		0xff
-#define MPU401_ENTER_UART	0x3f
-
-/* read MPU401D() */
-#define MPU401_ACK		0xfe
-
-
-/*
 
  */
 
-irqreturn_t snd_mpu401_uart_interrupt(int irq, void *dev_id);
-irqreturn_t snd_mpu401_uart_interrupt_tx(int irq, void *dev_id);
+irqreturn_t snd_mpu401_uart_interrupt(int irq, void *dev_id,
+				      struct pt_regs *regs);
+irqreturn_t snd_mpu401_uart_interrupt_tx(int irq, void *dev_id,
+					 struct pt_regs *regs);
 
 int snd_mpu401_uart_new(struct snd_card *card,
 			int device,

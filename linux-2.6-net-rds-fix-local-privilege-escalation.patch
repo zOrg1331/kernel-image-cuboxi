@@ -1,0 +1,87 @@
+From: Eugene Teo <eugene@redhat.com>
+Date: Wed, 20 Oct 2010 09:41:12 -0400
+Subject: [net] rds: fix local privilege escalation
+Message-id: <20101020094059.GA29358@infradead.org>
+Patchwork-id: 28879
+O-Subject: [RHEL5.6] BZ#642898 CVE-2010-3904 RDS sockets local privesc
+Bugzilla: 642898
+CVE: CVE-2010-3904
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Backport of upstream commit 799c10559d60f159ab2232203f222f18fa3c4a5f.
+Fixes CVE-2010-3904.
+
+Don't try to "optimize" rds_page_copy_user() by using kmap_atomic() and
+the unsafe atomic user mode accessor functions.  It's actually slower
+than the straightforward code on any reasonable modern CPU.
+
+Back when the code was written (although probably not by the time it was
+actually merged, though), 32-bit x86 may have been the dominant
+architecture.  And there kmap_atomic() can be a lot faster than kmap()
+(unless you have very good locality, in which case the virtual address
+caching by kmap() can overcome all the downsides).
+
+But these days, x86-64 may not be more populous, but it's getting there
+(and if you care about performance, it's definitely already there -
+you'd have upgraded your CPU's already in the last few years).  And on
+x86-64, the non-kmap_atomic() version is faster, simply because the code
+is simpler and doesn't have the "re-try page fault" case.
+
+People with old hardware are not likely to care about RDS anyway, and
+the optimization for the 32-bit case is simply buggy, since it doesn't
+verify the user addresses properly.
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+--
+ net/rds/page.c |   27 +++++++--------------------
+ 1 file changed, 7 insertions(+), 20 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/rds/page.c b/net/rds/page.c
+index 9e99601..bd1898c 100644
+--- a/net/rds/page.c
++++ b/net/rds/page.c
+@@ -57,30 +57,17 @@ int rds_page_copy_user(struct page *page, unsigned long offset,
+ 	unsigned long ret;
+ 	void *addr;
+ 
+-	if (to_user)
++	addr = kmap(page);
++	if (to_user) {
+ 		rds_stats_add(s_copy_to_user, bytes);
+-	else
++		ret = copy_to_user(ptr, addr + offset, bytes);
++	} else {
+ 		rds_stats_add(s_copy_from_user, bytes);
+-
+-	addr = kmap_atomic(page, KM_USER0);
+-	if (to_user)
+-		ret = __copy_to_user_inatomic(ptr, addr + offset, bytes);
+-	else
+-		ret = __copy_from_user_inatomic(addr + offset, ptr, bytes);
+-	kunmap_atomic(addr, KM_USER0);
+-
+-	if (ret) {
+-		addr = kmap(page);
+-		if (to_user)
+-			ret = copy_to_user(ptr, addr + offset, bytes);
+-		else
+-			ret = copy_from_user(addr + offset, ptr, bytes);
+-		kunmap(page);
+-		if (ret)
+-			return -EFAULT;
++		ret = copy_from_user(addr + offset, ptr, bytes);
+ 	}
++	kunmap(page);
+ 
+-	return 0;
++	return ret ? -EFAULT : 0;
+ }
+ EXPORT_SYMBOL_GPL(rds_page_copy_user);
+ 

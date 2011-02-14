@@ -1,0 +1,71 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 3 Sep 2010 12:23:40 -0400
+Subject: [wireless] fixes from 2.6.32.14
+Message-id: <1283516623-11659-8-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 28069
+O-Subject: [RHEL5 PATCH 07/10] wireless fixes from 2.6.32.14
+Bugzilla: 621105
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Included commits:
+79ec1d305fe1f2aa77797118fd31ea41e72e7867 iwlwifi: clear all the stop_queue flag after load firmware
+4ee20bc28f74a77307091b15d498e44c7f54645e Revert "ath9k: fix lockdep warning when unloading module" on stable kernels
+
+Omitted commits:
+7bb08a1cac8ed8e4fda495bd907988bd4077b342 p54: disable channels with incomplete calibration data sets
+
+diff --git a/drivers/net/wireless/ath/ath9k/xmit.c b/drivers/net/wireless/ath/ath9k/xmit.c
+index d76e603..051ba3f 100644
+--- a/drivers/net/wireless/ath/ath9k/xmit.c
++++ b/drivers/net/wireless/ath/ath9k/xmit.c
+@@ -2209,7 +2209,7 @@ void ath_tx_node_cleanup(struct ath_softc *sc, struct ath_node *an)
+ 		if (ATH_TXQ_SETUP(sc, i)) {
+ 			txq = &sc->tx.txq[i];
+ 
+-			spin_lock_bh(&txq->axq_lock);
++			spin_lock(&txq->axq_lock);
+ 
+ 			list_for_each_entry_safe(ac,
+ 					ac_tmp, &txq->axq_acq, list) {
+@@ -2230,7 +2230,7 @@ void ath_tx_node_cleanup(struct ath_softc *sc, struct ath_node *an)
+ 				}
+ 			}
+ 
+-			spin_unlock_bh(&txq->axq_lock);
++			spin_unlock(&txq->axq_lock);
+ 		}
+ 	}
+ }
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index 0cd7f0b..d6a5a45 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -716,6 +716,11 @@ static int iwl4965_alive_notify(struct iwl_priv *priv)
+ 
+ 	iwl4965_set_wr_ptrs(priv, IWL_CMD_QUEUE_NUM, 0);
+ 
++	/* make sure all queue are not stopped */
++	memset(&priv->queue_stopped[0], 0, sizeof(priv->queue_stopped));
++	for (i = 0; i < 4; i++)
++		atomic_set(&priv->queue_stop_count[i], 0);
++
+ 	/* reset to 0 to enable all the queue first */
+ 	priv->txq_ctx_active_msk = 0;
+ 	/* Map each Tx/cmd queue to its corresponding fifo */
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index d31d2a0..7477266 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -799,6 +799,11 @@ int iwl5000_alive_notify(struct iwl_priv *priv)
+ 
+ 	iwl5000_set_wr_ptrs(priv, IWL_CMD_QUEUE_NUM, 0);
+ 
++	/* make sure all queue are not stopped */
++	memset(&priv->queue_stopped[0], 0, sizeof(priv->queue_stopped));
++	for (i = 0; i < 4; i++)
++		atomic_set(&priv->queue_stop_count[i], 0);
++
+ 	/* reset to 0 to enable all the queue first */
+ 	priv->txq_ctx_active_msk = 0;
+ 	/* map qos queues to fifos one-to-one */

@@ -1,0 +1,76 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Wed, 6 Oct 2010 16:49:29 -0400
+Subject: [misc] x86_64: fix hang at Booting processor 1/8 APIC
+Message-id: <20101006164928.GA2931@linuxjohn.usersys.redhat.com>
+Patchwork-id: 28629
+O-Subject: [RHEL5.6 PATCH] Fix system hang at Booting processor 1/8 APIC
+Bugzilla: 639851
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+[RHEL 5.6] System hang at Booting processor 1/8 APIC:
+https://bugzilla.redhat.com/show_bug.cgi?id=639851
+
+We are seeing an issue on some newer systems where they hang during boot with
+the message:
+Detected 6.235 MHz APIC timer.
+timer: PIT interrupt stopped.
+SMP alternatives: switching to SMP code
+Booting processor 1/8 APIC 0x2
+<hang>
+
+The fix for this is to revert "[x86_64] use apic as main timer if non-stop-apic
+timer" Which is commit a82862bfbd127999505b36fc48f7b8ec6637bbb5 and first
+appeared in kernel 2.6.18-223
+
+This patch reverts that commit.  The reverted commit is NOT in the upstream kernel.
+
+Developer Testing:
+Tested locally on a system that was hanging.  After applying this patch the
+system booted normally.
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2801573
+
+RHTS Test Passes:
+https://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=176191
+https://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=176192
+https://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=176193
+https://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=176194
+
+I don't believe the RHTS test passes are related to this patch.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 9a0b86a..7f08ec4 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -756,7 +756,7 @@ static void setup_APIC_timer(unsigned int clocks)
+ 	/* Turn off PIT interrupt if we use APIC timer as main timer.
+ 	   Only works with the PM timer right now
+ 	   TBD fix it for HPET too. */
+-	if ((vxtime.mode == VXTIME_PMTMR || boot_cpu_has(X86_FEATURE_ARAT)) &&
++	if (vxtime.mode == VXTIME_PMTMR &&
+ 		smp_processor_id() == boot_cpu_id &&
+ 		apic_runs_main_timer == 1 &&
+ 		!cpu_isset(boot_cpu_id, timer_interrupt_broadcast_ipi_mask)) {
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 11dce35..830c7d6 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1429,13 +1429,6 @@ void __init time_init(void)
+ 		tick_nsec = SH_DIV(NSEC_PER_SEC, acthz, 8) / tick_divider;
+ 	}
+ 
+-	if ((apic_runs_main_timer == 0) && (nohpet == 0) &&
+-	    boot_cpu_has(X86_FEATURE_ARAT)) {
+-		/* apic timer as main timer */
+-		nohpet = 1;
+-		apic_runs_main_timer = 1;
+-	}
+-
+ 	if (nohpet)
+ 		vxtime.hpet_address = 0;
+ 

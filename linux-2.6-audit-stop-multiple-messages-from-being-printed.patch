@@ -1,0 +1,156 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5.1 PATCH] Stop multiple audit messages from being printed
+Date: Thu, 16 Aug 2007 11:55:21 -0400
+Bugzilla: 252358
+Message-Id: <1187279721.5429.3.camel@localhost.localdomain>
+Changelog: [audit] Stop multiple messages from being printed
+
+
+BZ 252358
+
+Fixes 4 places where changing the way the audit system was configured
+would cause 2 almost identical audit messages.  This was introduced by a
+patch in 5.1 which added the ability to make audit configs immutable.
+The problem exists upstream as well and I will be fixing it there.  My
+patch for this problem actually depends on another patch which was
+submitted upstream (and taken into RHEL5) a couple months ago but it
+looks like we dropped the ball upstream.  Once I get that old patch
+upstream I'll push this one on top of that.
+
+upstream it went bad here:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=6a01b07fae482f9b34491b317056c89d3b96ca2e
+
+and I'm waiting on:
+http://www.redhat.com/archives/linux-audit/2007-March/msg00028.html
+
+--- linux-2.6.18.x86_64/kernel/audit.c	2007-08-15 16:03:06.000000000 -0400
++++ linux-2.6.18.with.fix/kernel/audit.c	2007-08-15 16:25:02.000000000 -0400
+@@ -249,21 +249,24 @@ static int audit_set_rate_limit(int limi
+ 		res = 1;
+ 
+ 	if (audit_enabled) {
++		struct audit_buffer *ab;
++
++		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
++		if (!ab)
++			return -ENOMEM;
++		audit_log_format(ab, "audit_rate_limit=%d old=%d by auid=%u",
++				limit, old, loginuid);
+ 		if (sid) {
+ 			char *ctx = NULL;
+ 			u32 len;
+ 			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-					"audit_rate_limit=%d old=%d by auid=%u"
+-					" subj=%s res=%d",
+-					limit, old, loginuid, ctx, res);
++				audit_log_format(ab, " subj=%s", ctx);
+ 				kfree(ctx);
+ 			} else
+ 				res = 0; /* Something weird, deny request */
+ 		}
+-		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-			"audit_rate_limit=%d old=%d by auid=%u res=%d",
+-			limit, old, loginuid, res);
++		audit_log_format(ab, " res=%d", res);
++		audit_log_end(ab);
+ 	}
+ 
+ 	/* If we are allowed, make the change */
+@@ -286,21 +289,24 @@ static int audit_set_backlog_limit(int l
+ 		res = 1;
+ 
+ 	if (audit_enabled) {
++		struct audit_buffer *ab;
++
++		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
++		if (!ab)
++			return -ENOMEM;
++		audit_log_format(ab, "audit_backlog_limit=%d old=%d by auid=%u",
++				limit, old, loginuid);
+ 		if (sid) {
+ 			char *ctx = NULL;
+ 			u32 len;
+ 			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-					"audit_backlog_limit=%d old=%d by auid=%u"
+-					" subj=%s res=%d",
+-					limit, old, loginuid, ctx, res);
++				audit_log_format(ab, " subj=%s", ctx);
+ 				kfree(ctx);
+ 			} else
+ 				res = 0; /* Something weird, deny request */
+ 		}
+-		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-			"audit_backlog_limit=%d old=%d by auid=%u res=%d",
+-			limit, old, loginuid, res);
++		audit_log_format(ab, " res=%d", res);
++		audit_log_end(ab);
+ 	}
+ 
+ 	/* If we are allowed, make the change */
+@@ -326,21 +332,24 @@ static int audit_set_enabled(int state, 
+ 		res = 1;
+ 
+ 	if (audit_enabled || state) {
++		struct audit_buffer *ab;
++
++		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
++		if (!ab)
++			return -ENOMEM;
++		audit_log_format(ab, "audit_enabled=%d old=%d by auid=%u",
++				state, old, loginuid);
+ 		if (sid) {
+ 			char *ctx = NULL;
+ 			u32 len;
+ 			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-					"audit_enabled=%d old=%d by auid=%u"
+-					" subj=%s res=%d",
+-					state, old, loginuid, ctx, res);
++				audit_log_format(ab, " subj=%s", ctx);
+ 				kfree(ctx);
+ 			} else
+ 				res = 0; /* Something weird, deny request */
+ 		}
+-		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-			"audit_enabled=%d old=%d by auid=%u res=%d",
+-			state, old, loginuid, res);
++		audit_log_format(ab, " res=%d", res);
++		audit_log_end(ab);
+ 	}
+ 
+ 	/* If we are allowed, make the change */
+@@ -368,21 +377,24 @@ static int audit_set_failure(int state, 
+ 		res = 1;
+ 
+ 	if (audit_enabled) {
++		struct audit_buffer *ab;
++
++		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
++		if (!ab)
++			return -ENOMEM;
++		audit_log_format(ab, "audit_failure=%d old=%d by auid=%u",
++				state, old, loginuid);
+ 		if (sid) {
+ 			char *ctx = NULL;
+ 			u32 len;
+ 			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-					"audit_failure=%d old=%d by auid=%u"
+-					" subj=%s res=%d",
+-					state, old, loginuid, ctx, res);
++				audit_log_format(ab, " subj=%s", ctx);
+ 				kfree(ctx);
+ 			} else
+ 				res = 0; /* Something weird, deny request */
+ 		}
+-		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-			"audit_failure=%d old=%d by auid=%u res=%d",
+-			state, old, loginuid, res);
++		audit_log_format(ab, " res=%d", res);
++		audit_log_end(ab);
+ 	}
+ 
+ 	/* If we are allowed, make the change */
+

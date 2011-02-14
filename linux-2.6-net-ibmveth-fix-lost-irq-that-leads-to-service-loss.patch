@@ -1,0 +1,93 @@
+From: Steve Best <sbest@redhat.com>
+Date: Tue, 24 Aug 2010 21:21:11 -0400
+Subject: [net] ibmveth: fix lost IRQ that leads to service loss
+Message-id: <20100824210932.12694.16339.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27808
+O-Subject: [PATCH RHEL5.6 BZ626841] ibmveth: lost IRQ while closing/opening
+	device leads to service loss
+Bugzilla: 626841
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626841
+
+Description:
+------------
+The order of freeing the IRQ and freeing the device in firmware
+in ibmveth_close can cause the adapter to become unusable after a
+subsequent ibmveth_open.  Only a reboot of the OS will make the
+network device usable again. This is seen when cycling the adapter
+up and down while there is network activity.
+
+There is a window where an IRQ will be left unserviced (H_EOI will not
+be called).  The solution is to make a VIO_IRQ_DISABLE h_call, free the
+device with firmware, and then call free_irq.
+
+Signed-off-by: Robert Jennings <rcj@linux.vnet.ibm.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+RHEL Version Found:
+-------------------
+RHEL 5.4
+
+Brew:
+-----
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2704871
+
+Upstream:
+---------
+http://git.kernel.org/?p-linux/kernel/git/torvalds/linux-2.6.git;
+a-commit;h-ee2e6114de3bdb1c34f3910b690f990483e981ab
+
+Test Status:
+------------
+Steps to reproduce.
+Robert Jennings helped me test this patch.
+
+The timing window is small; we had luck reproducing this consistently on a lab
+machine owned by the customer support team (on RHEL5.4) but could not recreate
+in the development lab.
+
+There are two partitions (p1 and p2) and the following is done:
+p1# nc -ul 60000 > /dev/null&
+p2# dd if-/dev/zero | nc -u 10.9.47.70 60000
+p1# time while true; do date; echo "bringing interface down..."; ifdown eth1;
+sleep 10; echo "bringing interface up..."; ifup eth1; sleep 2; ping -c 1
+10.47.65.71 || break; done
+
+---------------------------------------------------------------
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/ibmveth.c b/drivers/net/ibmveth.c
+index 4959fb9..2c50271 100644
+--- a/drivers/net/ibmveth.c
++++ b/drivers/net/ibmveth.c
+@@ -621,7 +621,7 @@ static int ibmveth_close(struct net_device *netdev)
+ 	if (!adapter->pool_config)
+ 		netif_stop_queue(netdev);
+ 
+-	free_irq(netdev->irq, netdev);
++	h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
+ 
+ 	do {
+ 		lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+@@ -633,6 +633,8 @@ static int ibmveth_close(struct net_device *netdev)
+ 				     lpar_rc);
+ 	}
+ 
++	free_irq(netdev->irq, netdev);
++
+ 	adapter->rx_no_buffer = *(u64*)(((char*)adapter->buffer_list_addr) + 4096 - 8);
+ 
+ 	ibmveth_cleanup(adapter);

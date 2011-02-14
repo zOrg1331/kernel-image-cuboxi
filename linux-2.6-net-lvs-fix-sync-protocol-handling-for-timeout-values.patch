@@ -1,0 +1,80 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 20 Oct 2009 09:18:29 -0400
+Subject: [net] lvs: fix sync protocol handling for timeout values
+Message-id: 20091020131829.GE13849@hmsreliant.think-freely.org
+O-Subject: Re: [RHEL 5.5 PATCH] lvs: adjust sync protocol handling so timeout values are taken correctly from ipvsadm (bz 524129)
+Bugzilla: 524129
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+On Mon, Oct 12, 2009 at 12:56:41PM -0400, Neil Horman wrote:
+> Hey-
+> 	We had a customer complaining about timeouts being to short when
+> migrating connections in LVS, and was unable to set said timeouts properly.
+> This patch brings us into line with upstream, and allows the kernel sync
+> protocol for lvs to properly grab the timeout values from the table controlled
+> via the ipvsadm --set facility, rather than defaulting them to a hardcoded 180
+> seconds.  Tested and confirmed functional by the customer.
+>
+> Neil
+>
+>
+>
+
+diff --git a/net/ipv4/ipvs/ip_vs_sync.c b/net/ipv4/ipvs/ip_vs_sync.c
+index 07da8e4..eee74d7 100644
+--- a/net/ipv4/ipvs/ip_vs_sync.c
++++ b/net/ipv4/ipvs/ip_vs_sync.c
+@@ -279,6 +279,7 @@ static void ip_vs_process_message(const char *buffer, const size_t buflen)
+ 	struct ip_vs_sync_conn *s;
+ 	struct ip_vs_sync_conn_options *opt;
+ 	struct ip_vs_conn *cp;
++	struct ip_vs_protocol *pp;
+ 	char *p;
+ 	int i;
+ 
+@@ -299,18 +300,26 @@ static void ip_vs_process_message(const char *buffer, const size_t buflen)
+ 
+ 	p = (char *)buffer + sizeof(struct ip_vs_sync_mesg);
+ 	for (i=0; i<m->nr_conns; i++) {
+-		unsigned flags;
++		unsigned flags, state;
+ 
+ 		s = (struct ip_vs_sync_conn *)p;
++		state = ntohs(s->state);
+ 		flags = ntohs(s->flags);
+-		if (!(flags & IP_VS_CONN_F_TEMPLATE))
++		if (!(flags & IP_VS_CONN_F_TEMPLATE)) {
+ 			cp = ip_vs_conn_in_get(s->protocol,
+ 					       s->caddr, s->cport,
+ 					       s->vaddr, s->vport);
+-		else
++			pp = ip_vs_proto_get(s->protocol);
++			if (!pp)
++				continue;
++			if (state >= IP_VS_STATE_BACKUP)
++				continue;
++		} else {
+ 			cp = ip_vs_ct_in_get(s->protocol,
+-					       s->caddr, s->cport,
+-					       s->vaddr, s->vport);
++					     s->caddr, s->cport,
++					     s->vaddr, s->vport);
++			pp = NULL;
++		}
+ 		if (!cp) {
+ 			cp = ip_vs_conn_new(s->protocol,
+ 					    s->caddr, s->cport,
+@@ -337,7 +346,12 @@ static void ip_vs_process_message(const char *buffer, const size_t buflen)
+ 			p += SIMPLE_CONN_SIZE;
+ 
+ 		atomic_set(&cp->in_pkts, sysctl_ip_vs_sync_threshold[0]);
+-		cp->timeout = IP_VS_SYNC_CONN_TIMEOUT;
++
++		if (!(flags & IP_VS_CONN_F_TEMPLATE) && pp->timeout_table)
++			cp->timeout = pp->timeout_table[state];
++		else
++			cp->timeout = IP_VS_SYNC_CONN_TIMEOUT;
++
+ 		ip_vs_conn_put(cp);
+ 
+ 		if (p > buffer+buflen) {

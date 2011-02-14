@@ -11,87 +11,46 @@
 #	bootloader and increase compatibility with OpenFirmware.
 #
 #	To this end we need to define BOOTCC, etc, as the tools
-#	needed to build the 32 bit image.  That's normally the same
-#	compiler for the rest of the kernel, with the -m32 flag added.
+#	needed to build the 32 bit image.  These are normally HOSTCC,
+#	but may be a third compiler if, for example, you are cross
+#	compiling from an intel box.  Once the 64bit ppc gcc is
+#	stable it will probably simply be a compiler switch to
+#	compile for 32bit mode.
 #	To make it easier to setup a cross compiler,
 #	CROSS32_COMPILE is setup as a prefix just like CROSS_COMPILE
 #	in the toplevel makefile.
 
-all: $(obj)/zImage
 
-BOOTCFLAGS    := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
-		 -fno-strict-aliasing -Os -msoft-float -pipe \
-		 -fomit-frame-pointer -fno-builtin -fPIC -nostdinc \
-		 -isystem $(shell $(CROSS32CC) -print-file-name=include)
+HOSTCC		:= gcc
+BOOTCFLAGS	:= $(HOSTCFLAGS) -fno-builtin -nostdinc -isystem \
+		   $(shell $(CROSS32CC) -print-file-name=include) -fPIC
 BOOTAFLAGS	:= -D__ASSEMBLY__ $(BOOTCFLAGS) -traditional -nostdinc
-
-ifdef CONFIG_DEBUG_INFO
-BOOTCFLAGS	+= -g
-endif
-
-ifeq ($(call cc-option-yn, -fstack-protector),y)
-BOOTCFLAGS	+= -fno-stack-protector
-endif
-
-BOOTCFLAGS	+= -I$(obj) -I$(srctree)/$(obj)
-
-DTS_FLAGS	?= -p 1024
-
-$(obj)/4xx.o: BOOTCFLAGS += -mcpu=405
-$(obj)/ebony.o: BOOTCFLAGS += -mcpu=405
-$(obj)/cuboot-hotfoot.o: BOOTCFLAGS += -mcpu=405
-$(obj)/cuboot-taishan.o: BOOTCFLAGS += -mcpu=405
-$(obj)/cuboot-katmai.o: BOOTCFLAGS += -mcpu=405
-$(obj)/cuboot-acadia.o: BOOTCFLAGS += -mcpu=405
-$(obj)/treeboot-walnut.o: BOOTCFLAGS += -mcpu=405
-$(obj)/virtex405-head.o: BOOTAFLAGS += -mcpu=405
-
+OBJCOPYFLAGS    := contents,alloc,load,readonly,data
+OBJCOPY_COFF_ARGS := -O aixcoff-rs6000 --set-start 0x500000
+OBJCOPY_MIB_ARGS  := -O aixcoff-rs6000 -R .stab -R .stabstr -R .comment
 
 zlib       := inffast.c inflate.c inftrees.c
 zlibheader := inffast.h inffixed.h inflate.h inftrees.h infutil.h
 zliblinuxheader := zlib.h zconf.h zutil.h
 
-$(addprefix $(obj)/,$(zlib) cuboot-c2k.o gunzip_util.o main.o prpmc2800.o): \
-	$(addprefix $(obj)/,$(zliblinuxheader)) $(addprefix $(obj)/,$(zlibheader))
+$(addprefix $(obj)/,$(zlib) main.o): $(addprefix $(obj)/,$(zliblinuxheader)) $(addprefix $(obj)/,$(zlibheader))
+#$(addprefix $(obj)/,main.o): $(addprefix $(obj)/,zlib.h)
 
-libfdt       := fdt.c fdt_ro.c fdt_wip.c fdt_sw.c fdt_rw.c fdt_strerror.c
-libfdtheader := fdt.h libfdt.h libfdt_internal.h
-
-$(addprefix $(obj)/,$(libfdt) libfdt-wrapper.o simpleboot.o): \
-	$(addprefix $(obj)/,$(libfdtheader))
-
-src-wlib := string.S crt0.S crtsavres.S stdio.c main.c \
-		$(libfdt) libfdt-wrapper.c \
-		ns16550.c serial.c simple_alloc.c div64.S util.S \
-		gunzip_util.c elf_util.c $(zlib) devtree.c oflib.c ofconsole.c \
-		4xx.c ebony.c mv64x60.c mpsc.c mv64x60_i2c.c cuboot.c bamboo.c \
-		cpm-serial.c stdlib.c mpc52xx-psc.c planetcore.c uartlite.c \
-		fsl-soc.c mpc8xx.c pq2.c
-src-plat := of.c cuboot-52xx.c cuboot-824x.c cuboot-83xx.c cuboot-85xx.c holly.c \
-		cuboot-ebony.c cuboot-hotfoot.c treeboot-ebony.c prpmc2800.c \
-		ps3-head.S ps3-hvcall.S ps3.c treeboot-bamboo.c cuboot-8xx.c \
-		cuboot-pq2.c cuboot-sequoia.c treeboot-walnut.c \
-		cuboot-bamboo.c cuboot-mpc7448hpc2.c cuboot-taishan.c \
-		fixed-head.S ep88xc.c ep405.c cuboot-c2k.c \
-		cuboot-katmai.c cuboot-rainier.c redboot-8xx.c ep8248e.c \
-		cuboot-warp.c cuboot-85xx-cpm2.c cuboot-yosemite.c simpleboot.c \
-		virtex405-head.S virtex.c redboot-83xx.c cuboot-sam440ep.c \
-		cuboot-acadia.c cuboot-amigaone.c cuboot-kilauea.c
-src-boot := $(src-wlib) $(src-plat) empty.c
-
+src-boot := crt0.S string.S prom.c stdio.c main.c div64.S
+src-boot += $(zlib)
 src-boot := $(addprefix $(obj)/, $(src-boot))
 obj-boot := $(addsuffix .o, $(basename $(src-boot)))
-obj-wlib := $(addsuffix .o, $(basename $(addprefix $(obj)/, $(src-wlib))))
-obj-plat := $(addsuffix .o, $(basename $(addprefix $(obj)/, $(src-plat))))
+
+BOOTCFLAGS	+= -I$(obj) -I$(srctree)/$(obj)
 
 quiet_cmd_copy_zlib = COPY    $@
-      cmd_copy_zlib = sed "s@__used@@;s@<linux/\([^>]*\).*@\"\1\"@" $< > $@
+      cmd_copy_zlib = sed "s@__attribute_used__@@;s@<linux/\([^>]\+\).*@\"\1\"@" $< > $@
 
 quiet_cmd_copy_zlibheader = COPY    $@
-      cmd_copy_zlibheader = sed "s@<linux/\([^>]*\).*@\"\1\"@" $< > $@
+      cmd_copy_zlibheader = sed "s@<linux/\([^>]\+\).*@\"\1\"@" $< > $@
 # stddef.h for NULL
 quiet_cmd_copy_zliblinuxheader = COPY    $@
-      cmd_copy_zliblinuxheader = sed "s@<linux/string.h>@\"string.h\"@;s@<linux/kernel.h>@<stddef.h>@;s@<linux/\([^>]*\).*@\"\1\"@" $< > $@
+      cmd_copy_zliblinuxheader = sed "s@<linux/string.h>@\"string.h\"@;s@<linux/kernel.h>@<stddef.h>@;s@<linux/\([^>]\+\).*@\"\1\"@" $< > $@
 
 $(addprefix $(obj)/,$(zlib)): $(obj)/%: $(srctree)/lib/zlib_inflate/%
 	$(call cmd,copy_zlib)
@@ -102,21 +61,8 @@ $(addprefix $(obj)/,$(zlibheader)): $(obj)/%: $(srctree)/lib/zlib_inflate/%
 $(addprefix $(obj)/,$(zliblinuxheader)): $(obj)/%: $(srctree)/include/linux/%
 	$(call cmd,copy_zliblinuxheader)
 
-quiet_cmd_copy_libfdt = COPY    $@
-      cmd_copy_libfdt = cp $< $@
+clean-files := $(zlib) $(zlibheader) $(zliblinuxheader)
 
-$(addprefix $(obj)/,$(libfdt) $(libfdtheader)): $(obj)/%: $(srctree)/scripts/dtc/libfdt/%
-	$(call cmd,copy_libfdt)
-
-$(obj)/empty.c:
-	@touch $@
-
-$(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds: $(obj)/%: $(srctree)/$(src)/%.S
-	@cp $< $@
-
-clean-files := $(zlib) $(zlibheader) $(zliblinuxheader) \
-		$(libfdt) $(libfdtheader) \
-		empty.c zImage.coff.lds zImage.ps3.lds zImage.lds
 
 quiet_cmd_bootcc = BOOTCC  $@
       cmd_bootcc = $(CROSS32CC) -Wp,-MD,$(depfile) $(BOOTCFLAGS) -c -o $@ $<
@@ -124,282 +70,146 @@ quiet_cmd_bootcc = BOOTCC  $@
 quiet_cmd_bootas = BOOTAS  $@
       cmd_bootas = $(CROSS32CC) -Wp,-MD,$(depfile) $(BOOTAFLAGS) -c -o $@ $<
 
-quiet_cmd_bootar = BOOTAR  $@
-      cmd_bootar = $(CROSS32AR) -cr $@.$$$$ $(filter-out FORCE,$^); mv $@.$$$$ $@
+quiet_cmd_bootld = BOOTLD  $@
+      cmd_bootld = $(CROSS32LD) -T $(srctree)/$(src)/$(3) -o $@ $(2)
 
-$(obj-libfdt): $(obj)/%.o: $(srctree)/scripts/dtc/libfdt/%.c FORCE
+$(patsubst %.c,%.o, $(filter %.c, $(src-boot))): %.o: %.c
 	$(call if_changed_dep,bootcc)
-$(patsubst %.c,%.o, $(filter %.c, $(src-boot))): %.o: %.c FORCE
-	$(Q)mkdir -p $(dir $@)
-	$(call if_changed_dep,bootcc)
-$(patsubst %.S,%.o, $(filter %.S, $(src-boot))): %.o: %.S FORCE
-	$(Q)mkdir -p $(dir $@)
+$(patsubst %.S,%.o, $(filter %.S, $(src-boot))): %.o: %.S
 	$(call if_changed_dep,bootas)
 
-$(obj)/wrapper.a: $(obj-wlib) FORCE
-	$(call if_changed,bootar)
+#-----------------------------------------------------------
+# ELF sections within the zImage bootloader/wrapper
+#-----------------------------------------------------------
+required := vmlinux.strip
+initrd   := initrd
 
-hostprogs-y	:= addnote addRamDisk hack-coff mktree
+obj-sec = $(foreach section, $(1), $(patsubst %,$(obj)/kernel-%.o, $(section)))
+src-sec = $(foreach section, $(1), $(patsubst %,$(obj)/kernel-%.c, $(section)))
+gz-sec  = $(foreach section, $(1), $(patsubst %,$(obj)/kernel-%.gz, $(section)))
 
-targets		+= $(patsubst $(obj)/%,%,$(obj-boot) wrapper.a)
-extra-y		:= $(obj)/wrapper.a $(obj-plat) $(obj)/empty.o \
-		   $(obj)/zImage.lds $(obj)/zImage.coff.lds $(obj)/zImage.ps3.lds
+hostprogs-y		:= addnote addRamDisk hack-coff
 
-dtstree		:= $(srctree)/$(src)/dts
+targets += zImage.vmode zImage.initrd.vmode zImage zImage.initrd \
+	   zImage.coff zImage.initrd.coff miboot.image miboot.initrd.image \
+	   $(patsubst $(obj)/%,%, $(call obj-sec, $(required) $(initrd))) \
+	   $(patsubst $(obj)/%,%, $(call src-sec, $(required) $(initrd))) \
+	   $(patsubst $(obj)/%,%, $(call gz-sec, $(required) $(initrd))) \
+	   vmlinux.initrd dummy.o
+extra-y			:= initrd.o
 
-wrapper		:=$(srctree)/$(src)/wrapper
-wrapperbits	:= $(extra-y) $(addprefix $(obj)/,addnote hack-coff mktree) \
-			$(wrapper) FORCE
+quiet_cmd_ramdisk = RAMDISK $@
+      cmd_ramdisk = $(obj)/addRamDisk $(obj)/ramdisk.image.gz $< $@
 
-#############
-# Bits for building various flavours of zImage
+quiet_cmd_stripvm = STRIP   $@
+      cmd_stripvm = $(STRIP) -s -R .comment $< -o $@
 
-ifneq ($(CROSS32_COMPILE),)
-CROSSWRAP := -C "$(CROSS32_COMPILE)"
-else
-ifneq ($(CROSS_COMPILE),)
-CROSSWRAP := -C "$(CROSS_COMPILE)"
-endif
-endif
+vmlinux.strip: vmlinux
+	$(call if_changed,stripvm)
+$(obj)/vmlinux.initrd: vmlinux.strip $(obj)/addRamDisk $(obj)/ramdisk.image.gz
+	$(call if_changed,ramdisk)
 
-# args (to if_changed): 1 = (this rule), 2 = platform, 3 = dts 4=dtb 5=initrd
-quiet_cmd_wrap	= WRAP    $@
-      cmd_wrap	=$(CONFIG_SHELL) $(wrapper) -c -o $@ -p $2 $(CROSSWRAP) \
-		$(if $3, -s $3)$(if $4, -d $4)$(if $5, -i $5) vmlinux
+quiet_cmd_addsection = ADDSEC  $@
+      cmd_addsection = $(CROSS32OBJCOPY) $@ \
+		--add-section=.kernel:$(strip $(patsubst $(obj)/kernel-%.o,%, $@))=$(patsubst %.o,%.gz, $@) \
+		--set-section-flags=.kernel:$(strip $(patsubst $(obj)/kernel-%.o,%, $@))=$(OBJCOPYFLAGS)
 
-image-$(CONFIG_PPC_PSERIES)		+= zImage.pseries
-image-$(CONFIG_PPC_MAPLE)		+= zImage.pseries
-image-$(CONFIG_PPC_IBM_CELL_BLADE)	+= zImage.pseries
-image-$(CONFIG_PPC_PS3)			+= dtbImage.ps3
-image-$(CONFIG_PPC_CELLEB)		+= zImage.pseries
-image-$(CONFIG_PPC_CELL_QPACE)		+= zImage.pseries
-image-$(CONFIG_PPC_CHRP)		+= zImage.chrp
-image-$(CONFIG_PPC_EFIKA)		+= zImage.chrp
-image-$(CONFIG_PPC_PMAC)		+= zImage.pmac
-image-$(CONFIG_PPC_HOLLY)		+= dtbImage.holly
-image-$(CONFIG_PPC_PRPMC2800)		+= dtbImage.prpmc2800
-image-$(CONFIG_PPC_ISERIES)		+= zImage.iseries
-image-$(CONFIG_DEFAULT_UIMAGE)		+= uImage
+quiet_cmd_addnote = ADDNOTE $@
+      cmd_addnote = $(obj)/addnote $@
 
-#
-# Targets which embed a device tree blob
-#
-# Theses are default targets to build images which embed device tree blobs.
-# They are only required on boards which do not have FDT support in firmware.
-# Boards with newish u-boot firmware can use the uImage target above
-#
+quiet_cmd_gen-miboot = GEN     $@
+      cmd_gen-miboot = $(OBJCOPY) $(OBJCOPY_MIB_ARGS) \
+		       --add-section=$1=$(word 2, $^) $< $@
 
-# Board ports in arch/powerpc/platform/40x/Kconfig
-image-$(CONFIG_EP405)			+= dtbImage.ep405
-image-$(CONFIG_HOTFOOT)			+= cuImage.hotfoot
-image-$(CONFIG_WALNUT)			+= treeImage.walnut
-image-$(CONFIG_ACADIA)			+= cuImage.acadia
+quiet_cmd_gencoff = COFF    $@
+      cmd_gencoff = $(OBJCOPY) $(OBJCOPY_COFF_ARGS) $@ && \
+		    $(obj)/hack-coff $@
 
-# Board ports in arch/powerpc/platform/44x/Kconfig
-image-$(CONFIG_EBONY)			+= treeImage.ebony cuImage.ebony
-image-$(CONFIG_BAMBOO)			+= treeImage.bamboo cuImage.bamboo
-image-$(CONFIG_SAM440EP)		+= cuImage.sam440ep
-image-$(CONFIG_SEQUOIA)			+= cuImage.sequoia
-image-$(CONFIG_RAINIER)			+= cuImage.rainier
-image-$(CONFIG_TAISHAN)			+= cuImage.taishan
-image-$(CONFIG_KATMAI)			+= cuImage.katmai
-image-$(CONFIG_WARP)			+= cuImage.warp
-image-$(CONFIG_YOSEMITE)		+= cuImage.yosemite
+$(call gz-sec, $(required)): $(obj)/kernel-%.gz: %
+	$(call if_changed,gzip)
 
-# Board ports in arch/powerpc/platform/8xx/Kconfig
-image-$(CONFIG_MPC86XADS)		+= cuImage.mpc866ads
-image-$(CONFIG_MPC885ADS)		+= cuImage.mpc885ads
-image-$(CONFIG_PPC_EP88XC)		+= dtbImage.ep88xc
-image-$(CONFIG_PPC_ADDER875)		+= cuImage.adder875-uboot \
-					   dtbImage.adder875-redboot
+$(obj)/kernel-initrd.gz: $(obj)/ramdisk.image.gz
+	cp -f $(obj)/ramdisk.image.gz $@
 
-# Board ports in arch/powerpc/platform/52xx/Kconfig
-image-$(CONFIG_PPC_LITE5200)		+= cuImage.lite5200 lite5200.dtb
-image-$(CONFIG_PPC_LITE5200)		+= cuImage.lite5200b lite5200b.dtb
-image-$(CONFIG_PPC_MEDIA5200)		+= cuImage.media5200 media5200.dtb
+$(call src-sec, $(required) $(initrd)): $(obj)/kernel-%.c: $(obj)/kernel-%.gz
+	@touch $@
 
-# Board ports in arch/powerpc/platform/82xx/Kconfig
-image-$(CONFIG_MPC8272_ADS)		+= cuImage.mpc8272ads
-image-$(CONFIG_PQ2FADS)			+= cuImage.pq2fads
-image-$(CONFIG_EP8248E)			+= dtbImage.ep8248e
+$(call obj-sec, $(required) $(initrd)): $(obj)/kernel-%.o: $(obj)/kernel-%.c
+	$(call if_changed_dep,bootcc)
+	$(call cmd,addsection)
 
-# Board ports in arch/powerpc/platform/83xx/Kconfig
-image-$(CONFIG_MPC832x_MDS)		+= cuImage.mpc832x_mds
-image-$(CONFIG_MPC832x_RDB)		+= cuImage.mpc832x_rdb
-image-$(CONFIG_MPC834x_ITX)		+= cuImage.mpc8349emitx \
-					   cuImage.mpc8349emitxgp
-image-$(CONFIG_MPC834x_MDS)		+= cuImage.mpc834x_mds
-image-$(CONFIG_MPC836x_MDS)		+= cuImage.mpc836x_mds
-image-$(CONFIG_ASP834x)			+= dtbImage.asp834x-redboot
+$(obj)/zImage.vmode $(obj)/zImage.coff: obj-boot += $(call obj-sec, $(required))
+$(obj)/zImage.vmode: $(call obj-sec, $(required)) $(obj-boot) $(srctree)/$(src)/zImage.lds
+	$(call cmd,bootld,$(obj-boot),zImage.lds)
 
-# Board ports in arch/powerpc/platform/85xx/Kconfig
-image-$(CONFIG_MPC8540_ADS)		+= cuImage.mpc8540ads
-image-$(CONFIG_MPC8560_ADS)		+= cuImage.mpc8560ads
-image-$(CONFIG_MPC85xx_CDS)		+= cuImage.mpc8541cds \
-					   cuImage.mpc8548cds \
-					   cuImage.mpc8555cds
-image-$(CONFIG_MPC85xx_MDS)		+= cuImage.mpc8568mds
-image-$(CONFIG_MPC85xx_DS)		+= cuImage.mpc8544ds \
-					   cuImage.mpc8572ds
-image-$(CONFIG_TQM8540)			+= cuImage.tqm8540
-image-$(CONFIG_TQM8541)			+= cuImage.tqm8541
-image-$(CONFIG_TQM8548)			+= cuImage.tqm8548
-image-$(CONFIG_TQM8555)			+= cuImage.tqm8555
-image-$(CONFIG_TQM8560)			+= cuImage.tqm8560
-image-$(CONFIG_SBC8548)			+= cuImage.sbc8548
-image-$(CONFIG_SBC8560)			+= cuImage.sbc8560
-image-$(CONFIG_KSI8560)			+= cuImage.ksi8560
-
-# Board ports in arch/powerpc/platform/embedded6xx/Kconfig
-image-$(CONFIG_STORCENTER)		+= cuImage.storcenter
-image-$(CONFIG_MPC7448HPC2)		+= cuImage.mpc7448hpc2
-image-$(CONFIG_PPC_C2K)			+= cuImage.c2k
-
-# Board port in arch/powerpc/platform/amigaone/Kconfig
-image-$(CONFIG_AMIGAONE)		+= cuImage.amigaone
+$(obj)/zImage.initrd.vmode $(obj)/zImage.initrd.coff: obj-boot += $(call obj-sec, $(required) $(initrd))
+$(obj)/zImage.initrd.vmode: $(call obj-sec, $(required) $(initrd)) $(obj-boot) $(srctree)/$(src)/zImage.lds
+	$(call cmd,bootld,$(obj-boot),zImage.lds)
 
 # For 32-bit powermacs, build the COFF and miboot images
 # as well as the ELF images.
-ifeq ($(CONFIG_PPC32),y)
-image-$(CONFIG_PPC_PMAC)	+= zImage.coff zImage.miboot
-endif
+coffimage-$(CONFIG_PPC_PMAC)-$(CONFIG_PPC32) := $(obj)/zImage.coff
+coffrdimg-$(CONFIG_PPC_PMAC)-$(CONFIG_PPC32) := $(obj)/zImage.initrd.coff
+mibootimg-$(CONFIG_PPC_PMAC)-$(CONFIG_PPC32) := $(obj)/miboot.image
+mibrdimg-$(CONFIG_PPC_PMAC)-$(CONFIG_PPC32)  := $(obj)/miboot.initrd.image
 
-# Allow extra targets to be added to the defconfig
-image-y	+= $(subst ",,$(CONFIG_EXTRA_TARGETS))
+$(obj)/zImage: $(obj)/zImage.vmode $(obj)/addnote $(coffimage-y-y) \
+			$(mibootimg-y-y)
+	@cp -f $< $@
+	$(call if_changed,addnote)
 
-initrd-  := $(patsubst zImage%, zImage.initrd%, $(image-n) $(image-))
-initrd-y := $(patsubst zImage%, zImage.initrd%, \
-		$(patsubst dtbImage%, dtbImage.initrd%, \
-		$(patsubst simpleImage%, simpleImage.initrd%, \
-		$(patsubst treeImage%, treeImage.initrd%, $(image-y)))))
-initrd-y := $(filter-out $(image-y), $(initrd-y))
-targets	+= $(image-y) $(initrd-y)
+$(obj)/zImage.initrd: $(obj)/zImage.initrd.vmode $(obj)/addnote \
+			$(coffrdimg-y-y) $(mibrdimg-y-y)
+	@cp -f $< $@
+	$(call if_changed,addnote)
 
-$(addprefix $(obj)/, $(initrd-y)): $(obj)/ramdisk.image.gz
+$(obj)/zImage.coff: $(call obj-sec, $(required)) $(obj-boot) \
+			$(srctree)/$(src)/zImage.coff.lds $(obj)/hack-coff
+	$(call cmd,bootld,$(obj-boot),zImage.coff.lds)
+	$(call cmd,gencoff)
 
-# Don't put the ramdisk on the pattern rule; when its missing make will try
-# the pattern rule with less dependencies that also matches (even with the
-# hard dependency listed).
-$(obj)/zImage.initrd.%: vmlinux $(wrapperbits)
-	$(call if_changed,wrap,$*,,,$(obj)/ramdisk.image.gz)
+$(obj)/zImage.initrd.coff: $(call obj-sec, $(required) $(initrd)) $(obj-boot) \
+			   $(srctree)/$(src)/zImage.coff.lds $(obj)/hack-coff
+	$(call cmd,bootld,$(obj-boot),zImage.coff.lds)
+	$(call cmd,gencoff)
 
-$(obj)/zImage.%: vmlinux $(wrapperbits)
-	$(call if_changed,wrap,$*)
+$(obj)/miboot.image: $(obj)/dummy.o $(obj)/vmlinux.gz
+	$(call cmd,gen-miboot,image)
 
-# dtbImage% - a dtbImage is a zImage with an embedded device tree blob
-$(obj)/dtbImage.initrd.%: vmlinux $(wrapperbits) $(obj)/%.dtb
-	$(call if_changed,wrap,$*,,$(obj)/$*.dtb,$(obj)/ramdisk.image.gz)
+$(obj)/miboot.initrd.image: $(obj)/miboot.image $(images)/ramdisk.image.gz
+	$(call cmd,gen-miboot,initrd)
 
-$(obj)/dtbImage.%: vmlinux $(wrapperbits) $(obj)/%.dtb
-	$(call if_changed,wrap,$*,,$(obj)/$*.dtb)
+#-----------------------------------------------------------
+# build u-boot images
+#-----------------------------------------------------------
+quiet_cmd_mygzip = GZIP $@
+cmd_mygzip = gzip -f -9 < $< > $@.$$$$ && mv $@.$$$$ $@
 
-# This cannot be in the root of $(src) as the zImage rule always adds a $(obj)
-# prefix
-$(obj)/vmlinux.strip: vmlinux
-	$(STRIP) -s -R .comment $< -o $@
+quiet_cmd_objbin = OBJCOPY $@
+      cmd_objbin = $(OBJCOPY) -O binary $< $@
 
-# The iseries hypervisor won't take an ET_DYN executable, so this
-# changes the type (byte 17) in the file to ET_EXEC (2).
-$(obj)/zImage.iseries: vmlinux
-	$(STRIP) -s -R .comment $< -o $@
-	printf "\x02" | dd of=$@ conv=notrunc bs=1 seek=17
+quiet_cmd_uimage = UIMAGE $@
+      cmd_uimage = $(CONFIG_SHELL) $(MKIMAGE) -A ppc -O linux -T kernel \
+               -C gzip -a 00000000 -e 00000000 -n 'Linux-$(KERNELRELEASE)' \
+               -d $< $@
 
-$(obj)/uImage: vmlinux $(wrapperbits)
-	$(call if_changed,wrap,uboot)
+MKIMAGE		:= $(srctree)/scripts/mkuboot.sh
+targets		+= uImage
+extra-y		+= vmlinux.bin vmlinux.gz
 
-$(obj)/cuImage.initrd.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,cuboot-$*,,$(obj)/$*.dtb,$(obj)/ramdisk.image.gz)
+$(obj)/vmlinux.bin: vmlinux FORCE
+	$(call if_changed,objbin)
 
-$(obj)/cuImage.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,cuboot-$*,,$(obj)/$*.dtb)
+$(obj)/vmlinux.gz: $(obj)/vmlinux.bin FORCE
+	$(call if_changed,mygzip)
 
-$(obj)/simpleImage.initrd.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,simpleboot-$*,,$(obj)/$*.dtb,$(obj)/ramdisk.image.gz)
+$(obj)/uImage: $(obj)/vmlinux.gz
+	$(Q)rm -f $@
+	$(call cmd,uimage)
+	@echo -n '  Image: $@ '
+	@if [ -f $@ ]; then echo 'is ready' ; else echo 'not made'; fi
 
-$(obj)/simpleImage.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,simpleboot-$*,,$(obj)/$*.dtb)
+install: $(CONFIGURE) $(BOOTIMAGE)
+	sh -x $(srctree)/$(src)/install.sh "$(KERNELRELEASE)" vmlinux System.map "$(INSTALL_PATH)" "$(BOOTIMAGE)"
 
-$(obj)/treeImage.initrd.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,treeboot-$*,,$(obj)/$*.dtb,$(obj)/ramdisk.image.gz)
-
-$(obj)/treeImage.%: vmlinux $(obj)/%.dtb $(wrapperbits)
-	$(call if_changed,wrap,treeboot-$*,,$(obj)/$*.dtb)
-
-# Rule to build device tree blobs
-DTC = $(objtree)/scripts/dtc/dtc
-
-$(obj)/%.dtb: $(dtstree)/%.dts
-	$(DTC) -O dtb -o $(obj)/$*.dtb -b 0 $(DTS_FLAGS) $(dtstree)/$*.dts
-
-# If there isn't a platform selected then just strip the vmlinux.
-ifeq (,$(image-y))
-image-y := vmlinux.strip
-endif
-
-$(obj)/zImage:		$(addprefix $(obj)/, $(image-y))
-	@rm -f $@; ln $< $@
-$(obj)/zImage.initrd:	$(addprefix $(obj)/, $(initrd-y))
-	@rm -f $@; ln $< $@
-
-install: $(CONFIGURE) $(addprefix $(obj)/, $(image-y))
-	sh -x $(srctree)/$(src)/install.sh "$(KERNELRELEASE)" vmlinux System.map "$(INSTALL_PATH)" $^
-
-# anything not in $(targets)
-clean-files += $(image-) $(initrd-) cuImage.* dtbImage.* treeImage.* \
-	zImage zImage.initrd zImage.chrp zImage.coff zImage.holly \
-	zImage.iseries zImage.miboot zImage.pmac zImage.pseries \
-	simpleImage.* otheros.bld *.dtb
-
-# clean up files cached by wrapper
-clean-kernel := vmlinux.strip vmlinux.bin
-clean-kernel += $(addsuffix .gz,$(clean-kernel))
-# If not absolute clean-files are relative to $(obj).
-clean-files += $(addprefix $(objtree)/, $(clean-kernel))
-
-WRAPPER_OBJDIR := /usr/lib/kernel-wrapper
-WRAPPER_DTSDIR := /usr/lib/kernel-wrapper/dts
-WRAPPER_BINDIR := /usr/sbin
-INSTALL := install
-
-extra-installed		:= $(patsubst $(obj)/%, $(DESTDIR)$(WRAPPER_OBJDIR)/%, $(extra-y))
-hostprogs-installed	:= $(patsubst %, $(DESTDIR)$(WRAPPER_BINDIR)/%, $(hostprogs-y))
-wrapper-installed	:= $(DESTDIR)$(WRAPPER_BINDIR)/wrapper
-dts-installed		:= $(patsubst $(obj)/dts/%, $(DESTDIR)$(WRAPPER_DTSDIR)/%, $(wildcard $(obj)/dts/*.dts))
-
-all-installed		:= $(extra-installed) $(hostprogs-installed) $(wrapper-installed) $(dts-installed)
-
-quiet_cmd_mkdir           = MKDIR   $(patsubst $(INSTALL_HDR_PATH)/%,%,$@)
-      cmd_mkdir           = mkdir -p $@
-
-quiet_cmd_install	  = INSTALL $(patsubst $(DESTDIR)$(WRAPPER_OBJDIR)/%,%,$@)
-      cmd_install	  = $(INSTALL)  -m0644 $(patsubst $(DESTDIR)$(WRAPPER_OBJDIR)/%,$(obj)/%,$@) $@
-
-quiet_cmd_install_dts	  = INSTALL $(patsubst $(DESTDIR)$(WRAPPER_DTSDIR)/%,dts/%,$@)
-      cmd_install_dts	  = $(INSTALL)  -m0644 $(patsubst $(DESTDIR)$(WRAPPER_DTSDIR)/%,$(srctree)/$(obj)/dts/%,$@) $@
-
-quiet_cmd_install_exe	  = INSTALL $(patsubst $(DESTDIR)$(WRAPPER_BINDIR)/%,%,$@)
-      cmd_install_exe	  = $(INSTALL)  -m0755 $(patsubst $(DESTDIR)$(WRAPPER_BINDIR)/%,$(obj)/%,$@) $@
-
-quiet_cmd_install_wrapper = INSTALL $(patsubst $(DESTDIR)$(WRAPPER_BINDIR)/%,%,$@)
-      cmd_install_wrapper = $(INSTALL)  -m0755 $(patsubst $(DESTDIR)$(WRAPPER_BINDIR)/%,$(srctree)/$(obj)/%,$@) $@ ;\
-				sed -i $@ -e 's%^object=.*%object=$(WRAPPER_OBJDIR)%' \
-					  -e 's%^objbin=.*%objbin=$(WRAPPER_BINDIR)%' \
-
-
-$(DESTDIR)$(WRAPPER_OBJDIR) $(DESTDIR)$(WRAPPER_DTSDIR) $(DESTDIR)$(WRAPPER_BINDIR):
-	$(call cmd,mkdir)
-
-$(extra-installed)	: $(DESTDIR)$(WRAPPER_OBJDIR)/% : $(obj)/% | $(DESTDIR)$(WRAPPER_OBJDIR)
-	$(call cmd,install)
-
-$(hostprogs-installed)  : $(DESTDIR)$(WRAPPER_BINDIR)/% : $(obj)/% | $(DESTDIR)$(WRAPPER_BINDIR)
-	$(call cmd,install_exe)
-
-$(dts-installed)	: $(DESTDIR)$(WRAPPER_DTSDIR)/% : $(srctree)/$(obj)/dts/% | $(DESTDIR)$(WRAPPER_DTSDIR)
-	$(call cmd,install_dts)
-
-$(wrapper-installed): $(DESTDIR)$(WRAPPER_BINDIR) $(srctree)/$(obj)/wrapper | $(DESTDIR)$(WRAPPER_BINDIR)
-	$(call cmd,install_wrapper)
-
-$(obj)/bootwrapper_install: $(all-installed)
-
+clean-files += $(addprefix $(objtree)/, $(obj-boot) vmlinux.strip)

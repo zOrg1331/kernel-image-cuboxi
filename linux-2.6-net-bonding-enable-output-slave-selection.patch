@@ -1,0 +1,183 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 8 Sep 2010 17:46:04 -0400
+Subject: [net] bonding: enable output slave selection
+Message-id: <20100908174604.GE29399@hmsreliant.think-freely.org>
+Patchwork-id: 28179
+O-Subject: [RHEL5.6 PATCH] bonding: enable output slave selection (bz 516289)
+Bugzilla: 516289
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Hey-
+	gospo and I wrote a bonding feature awhile back to do output slave
+selection in the bonding driver using the multiqueue tx infrastructure.  Goldman
+wanted this ability in RHEL5, and this is a backport of that feature.  Since we
+don't have any plans to backport the entire multiqueue tx infrastructure to
+RHEL5, this is an approximation of the feature.  Instead of using the traffic
+control utility and the the skbedit action to select output queues, we use
+iptables and the nfmark field of the skb to select output queues based on slave
+ifindex.  The feature is opt-in, enabled by the mark_steering variable in sysfs,
+that this patch adds, on a per-bond-interface basis.
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2748700
+
+Test status:
+Verified by myself in dell-pe1950-07.lab.bos.redhat.com
+
+Resolves bz 516289
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 586c464..cddd517 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -221,6 +221,8 @@ struct bond_parm_tbl pri_reselect_tbl[] = {
+ 
+ static void bond_send_gratuitous_arp(struct bonding *bond);
+ static void bond_deinit(struct net_device *bond_dev);
++static inline int bond_slave_override(struct bonding *bond,
++                                      struct sk_buff *skb);
+ 
+ /*---------------------------- General routines -----------------------------*/
+ 
+@@ -4348,11 +4350,17 @@ static int bond_xmit_roundrobin(struct sk_buff *skb, struct net_device *bond_dev
+ 	int i, slave_no, res = 1;
+ 	struct iphdr *iph = ip_hdr(skb);
+ 
++	if (TX_QUEUE_OVERRIDE(bond)) {
++		if (!bond_slave_override(bond, skb))
++			return NETDEV_TX_OK;
++        }
++
+ 	read_lock(&bond->lock);
+ 
+ 	if (!BOND_IS_OK(bond)) {
+ 		goto out;
+ 	}
++
+ 	/*
+ 	 * Start with the curr_active_slave that joined the bond as the
+ 	 * default for sending IGMP traffic.  For failover purposes one
+@@ -4413,6 +4421,11 @@ static int bond_xmit_activebackup(struct sk_buff *skb, struct net_device *bond_d
+ 	struct bonding *bond = bond_dev->priv;
+ 	int res = 1;
+ 
++	if (TX_QUEUE_OVERRIDE(bond)) {
++		if (!bond_slave_override(bond, skb))
++			return NETDEV_TX_OK;
++	}
++
+ 	read_lock(&bond->lock);
+ 	read_lock(&bond->curr_slave_lock);
+ 
+@@ -4565,6 +4578,40 @@ static void bond_set_xmit_hash_policy(struct bonding *bond)
+ }
+ 
+ /*
++ * Lookup the slave that corresponds to a qid
++ */
++static inline int bond_slave_override(struct bonding *bond,
++				      struct sk_buff *skb)
++{
++	int i, res = 1;
++	struct slave *slave = NULL;
++	struct slave *check_slave;
++
++	read_lock(&bond->lock);
++
++	if (!BOND_IS_OK(bond) || !skb->nfmark)
++		goto out;
++
++	/* Find out if any slaves have the same mapping as this skb. */
++	bond_for_each_slave(bond, check_slave, i) {
++		if (check_slave->dev->ifindex == skb->nfmark) {
++			slave = check_slave;
++			break;
++		}
++	}
++
++	/* If the slave isn't UP, use default transmit policy. */
++	if (slave && IS_UP(slave->dev) &&
++	    (slave->link == BOND_LINK_UP)) {
++		res = bond_dev_queue_xmit(bond, skb, slave->dev);
++	}
++
++out:
++	read_unlock(&bond->lock);
++	return res;
++}
++
++/*
+  * set bond mode specific net device operations
+  */
+ void bond_set_mode_ops(struct bonding *bond, int mode)
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index d6bf50f..977ae5a 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -1437,6 +1437,34 @@ static ssize_t bonding_show_ad_partner_mac(struct class_device *cd, char *buf)
+ }
+ static CLASS_DEVICE_ATTR(ad_partner_mac, S_IRUGO, bonding_show_ad_partner_mac, NULL);
+ 
++static ssize_t bonding_store_mark_steering(struct class_device *cd,
++					   const char *buf, size_t count)
++{
++	int val;
++	int rc;
++	struct bonding *bond = to_bond(cd);
++
++	rc = sscanf(buf, "%d", &val);
++	if (rc != 1)
++		return -EINVAL;
++
++	bond->mark_steering = (val) ? true:false;
++	
++	return count;
++}
++
++static ssize_t bonding_show_mark_steering(struct class_device *cd, char *buf)
++{
++	struct bonding *bond = to_bond(cd);
++	int count = 0;
++
++	count = sprintf(buf, "%d\n", (bond->mark_steering == true) ? 1:0);
++
++	return count;
++}
++
++static CLASS_DEVICE_ATTR(mark_steering, S_IWUSR | S_IRUGO, bonding_show_mark_steering,
++			 bonding_store_mark_steering);
+ 
+ 
+ static struct attribute *per_bond_attrs[] = {
+@@ -1463,6 +1491,7 @@ static struct attribute *per_bond_attrs[] = {
+ 	&class_device_attr_ad_actor_key.attr,
+ 	&class_device_attr_ad_partner_key.attr,
+ 	&class_device_attr_ad_partner_mac.attr,
++	&class_device_attr_mark_steering.attr,
+ 	NULL,
+ };
+ 
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 1c9c6db..cddc6d4 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -68,6 +68,8 @@ extern int debug;
+ 		 ((mode) == BOND_MODE_TLB)          ||	\
+ 		 ((mode) == BOND_MODE_ALB))
+ 
++#define TX_QUEUE_OVERRIDE(bond) (bond->mark_steering == true) 
++
+ /*
+  * Less bad way to call ioctl from within the kernel; this needs to be
+  * done some other way to get the call out of interrupt context.
+@@ -202,6 +204,7 @@ struct bonding {
+ 	struct   slave *current_arp_slave;
+ 	struct   slave *primary_slave;
+ 	bool     force_primary;
++	bool     mark_steering;
+ 	s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
+ 	rwlock_t lock;
+ 	rwlock_t curr_slave_lock;

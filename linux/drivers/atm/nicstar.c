@@ -125,6 +125,85 @@
 #define ATM_SKB(s) (&(s)->atm)
 #endif
 
+   /* Spinlock debugging stuff */
+#ifdef NS_DEBUG_SPINLOCKS /* See nicstar.h */
+#define ns_grab_int_lock(card,flags) \
+ do { \
+    unsigned long nsdsf, nsdsf2; \
+    local_irq_save(flags); \
+    save_flags(nsdsf); cli();\
+    if (nsdsf & (1<<9)) printk ("nicstar.c: ints %sabled -> enabled.\n", \
+                                (flags)&(1<<9)?"en":"dis"); \
+    if (spin_is_locked(&(card)->int_lock) && \
+        (card)->cpu_int == smp_processor_id()) { \
+       printk("nicstar.c: line %d (cpu %d) int_lock already locked at line %d (cpu %d)\n", \
+              __LINE__, smp_processor_id(), (card)->has_int_lock, \
+              (card)->cpu_int); \
+       printk("nicstar.c: ints were %sabled.\n", ((flags)&(1<<9)?"en":"dis")); \
+    } \
+    if (spin_is_locked(&(card)->res_lock) && \
+        (card)->cpu_res == smp_processor_id()) { \
+       printk("nicstar.c: line %d (cpu %d) res_lock locked at line %d (cpu %d)(trying int)\n", \
+              __LINE__, smp_processor_id(), (card)->has_res_lock, \
+              (card)->cpu_res); \
+       printk("nicstar.c: ints were %sabled.\n", ((flags)&(1<<9)?"en":"dis")); \
+    } \
+    spin_lock_irq(&(card)->int_lock); \
+    (card)->has_int_lock = __LINE__; \
+    (card)->cpu_int = smp_processor_id(); \
+    restore_flags(nsdsf); } while (0)
+#define ns_grab_res_lock(card,flags) \
+ do { \
+    unsigned long nsdsf, nsdsf2; \
+    local_irq_save(flags); \
+    save_flags(nsdsf); cli();\
+    if (nsdsf & (1<<9)) printk ("nicstar.c: ints %sabled -> enabled.\n", \
+                                (flags)&(1<<9)?"en":"dis"); \
+    if (spin_is_locked(&(card)->res_lock) && \
+        (card)->cpu_res == smp_processor_id()) { \
+       printk("nicstar.c: line %d (cpu %d) res_lock already locked at line %d (cpu %d)\n", \
+              __LINE__, smp_processor_id(), (card)->has_res_lock, \
+              (card)->cpu_res); \
+       printk("nicstar.c: ints were %sabled.\n", ((flags)&(1<<9)?"en":"dis")); \
+    } \
+    spin_lock_irq(&(card)->res_lock); \
+    (card)->has_res_lock = __LINE__; \
+    (card)->cpu_res = smp_processor_id(); \
+    restore_flags(nsdsf); } while (0)
+#define ns_grab_scq_lock(card,scq,flags) \
+ do { \
+    unsigned long nsdsf, nsdsf2; \
+    local_irq_save(flags); \
+    save_flags(nsdsf); cli();\
+    if (nsdsf & (1<<9)) printk ("nicstar.c: ints %sabled -> enabled.\n", \
+                                (flags)&(1<<9)?"en":"dis"); \
+    if (spin_is_locked(&(scq)->lock) && \
+        (scq)->cpu_lock == smp_processor_id()) { \
+       printk("nicstar.c: line %d (cpu %d) this scq_lock already locked at line %d (cpu %d)\n", \
+              __LINE__, smp_processor_id(), (scq)->has_lock, \
+              (scq)->cpu_lock); \
+       printk("nicstar.c: ints were %sabled.\n", ((flags)&(1<<9)?"en":"dis")); \
+    } \
+    if (spin_is_locked(&(card)->res_lock) && \
+        (card)->cpu_res == smp_processor_id()) { \
+       printk("nicstar.c: line %d (cpu %d) res_lock locked at line %d (cpu %d)(trying scq)\n", \
+              __LINE__, smp_processor_id(), (card)->has_res_lock, \
+              (card)->cpu_res); \
+       printk("nicstar.c: ints were %sabled.\n", ((flags)&(1<<9)?"en":"dis")); \
+    } \
+    spin_lock_irq(&(scq)->lock); \
+    (scq)->has_lock = __LINE__; \
+    (scq)->cpu_lock = smp_processor_id(); \
+    restore_flags(nsdsf); } while (0)
+#else /* !NS_DEBUG_SPINLOCKS */
+#define ns_grab_int_lock(card,flags) \
+        spin_lock_irqsave(&(card)->int_lock,(flags))
+#define ns_grab_res_lock(card,flags) \
+        spin_lock_irqsave(&(card)->res_lock,(flags))
+#define ns_grab_scq_lock(card,scq,flags) \
+        spin_lock_irqsave(&(scq)->lock,flags)
+#endif /* NS_DEBUG_SPINLOCKS */
+
 
 /* Function declarations ******************************************************/
 
@@ -135,7 +214,7 @@ static void __devinit ns_init_card_error(ns_dev *card, int error);
 static scq_info *get_scq(int size, u32 scd);
 static void free_scq(scq_info *scq, struct atm_vcc *vcc);
 static void push_rxbufs(ns_dev *, struct sk_buff *);
-static irqreturn_t ns_irq_handler(int irq, void *dev_id);
+static irqreturn_t ns_irq_handler(int irq, void *dev_id, struct pt_regs *regs);
 static int ns_open(struct atm_vcc *vcc);
 static void ns_close(struct atm_vcc *vcc);
 static void fill_tst(ns_dev *card, int n, vc_map *vc);
@@ -343,7 +422,7 @@ static u32 ns_read_sram(ns_dev *card, u32 sram_address)
    sram_address <<= 2;
    sram_address &= 0x0007FFFC;	/* address must be dword aligned */
    sram_address |= 0x50000000;	/* SRAM read command */
-   spin_lock_irqsave(&card->res_lock, flags);
+   ns_grab_res_lock(card, flags);
    while (CMD_BUSY(card));
    writel(sram_address, card->membase + CMD);
    while (CMD_BUSY(card));
@@ -361,7 +440,7 @@ static void ns_write_sram(ns_dev *card, u32 sram_address, u32 *value, int count)
    count--;	/* count range now is 0..3 instead of 1..4 */
    c = count;
    c <<= 2;	/* to use increments of 4 */
-   spin_lock_irqsave(&card->res_lock, flags);
+   ns_grab_res_lock(card, flags);
    while (CMD_BUSY(card));
    for (i = 0; i <= c; i += 4)
       writel(*(value++), card->membase + i);
@@ -415,7 +494,7 @@ static int __devinit ns_init_card(int i, struct pci_dev *pcidev)
    card->pcidev = pcidev;
    membase = pci_resource_start(pcidev, 1);
    card->membase = ioremap(membase, NS_IOREMAP_SIZE);
-   if (!card->membase)
+   if (card->membase == 0)
    {
       printk("nicstar%d: can't ioremap() membase.\n",i);
       error = 3;
@@ -545,6 +624,14 @@ static int __devinit ns_init_card(int i, struct pci_dev *pcidev)
    /* Initialize the nicstar eeprom/eprom stuff, for the MAC addr */
    if (mac[i] == NULL)
       nicstar_init_eprom(card->membase);
+
+   if (request_irq(pcidev->irq, &ns_irq_handler, IRQF_DISABLED | IRQF_SHARED, "nicstar", card) != 0)
+   {
+      printk("nicstar%d: can't allocate IRQ %d.\n", i, pcidev->irq);
+      error = 9;
+      ns_init_card_error(card, error);
+      return error;
+   }
 
    /* Set the VPI/VCI MSb mask to zero so we can receive OAM cells */
    writel(0x00000000, card->membase + VPM);
@@ -771,6 +858,8 @@ static int __devinit ns_init_card(int i, struct pci_dev *pcidev)
       card->iovpool.count++;
    }
 
+   card->intcnt = 0;
+
    /* Configure NICStAR */
    if (card->rct_size == 4096)
       ns_cfg_rctsize = NS_CFG_RCTSIZE_4096_ENTRIES;
@@ -778,15 +867,6 @@ static int __devinit ns_init_card(int i, struct pci_dev *pcidev)
       ns_cfg_rctsize = NS_CFG_RCTSIZE_16384_ENTRIES;
 
    card->efbie = 1;
-
-   card->intcnt = 0;
-   if (request_irq(pcidev->irq, &ns_irq_handler, IRQF_DISABLED | IRQF_SHARED, "nicstar", card) != 0)
-   {
-      printk("nicstar%d: can't allocate IRQ %d.\n", i, pcidev->irq);
-      error = 9;
-      ns_init_card_error(card, error);
-      return error;
-   }
 
    /* Register device */
    card->atmdev = atm_dev_register("nicstar", &atm_ops, -1, NULL);
@@ -917,7 +997,7 @@ static scq_info *get_scq(int size, u32 scd)
    if (size != VBR_SCQSIZE && size != CBR_SCQSIZE)
       return NULL;
 
-   scq = kmalloc(sizeof(scq_info), GFP_KERNEL);
+   scq = (scq_info *) kmalloc(sizeof(scq_info), GFP_KERNEL);
    if (scq == NULL)
       return NULL;
    scq->org = kmalloc(2 * size, GFP_KERNEL);
@@ -926,7 +1006,7 @@ static scq_info *get_scq(int size, u32 scd)
       kfree(scq);
       return NULL;
    }
-   scq->skb = kmalloc(sizeof(struct sk_buff *) *
+   scq->skb = (struct sk_buff **) kmalloc(sizeof(struct sk_buff *) *
                                           (size / NS_SCQE_SIZE), GFP_KERNEL);
    if (scq->skb == NULL)
    {
@@ -1087,7 +1167,7 @@ static void push_rxbufs(ns_dev *card, struct sk_buff *skb)
             card->lbfqc += 2;
       }
 
-      spin_lock_irqsave(&card->res_lock, flags);
+      ns_grab_res_lock(card, flags);
 
       while (CMD_BUSY(card));
       writel(addr2, card->membase + DR3);
@@ -1114,7 +1194,7 @@ static void push_rxbufs(ns_dev *card, struct sk_buff *skb)
 
 
 
-static irqreturn_t ns_irq_handler(int irq, void *dev_id)
+static irqreturn_t ns_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
    u32 stat_r;
    ns_dev *card;
@@ -1127,7 +1207,7 @@ static irqreturn_t ns_irq_handler(int irq, void *dev_id)
 
    PRINTK("nicstar%d: NICStAR generated an interrupt\n", card->index);
 
-   spin_lock_irqsave(&card->int_lock, flags);
+   ns_grab_int_lock(card, flags);
    
    stat_r = readl(card->membase + STAT);
 
@@ -1506,7 +1586,7 @@ static void ns_close(struct atm_vcc *vcc)
       unsigned long flags;
       
       addr = NS_RCT + (vcc->vpi << card->vcibits | vcc->vci) * NS_RCT_ENTRY_SIZE;
-      spin_lock_irqsave(&card->res_lock, flags);
+      ns_grab_res_lock(card, flags);
       while(CMD_BUSY(card));
       writel(NS_CMD_CLOSE_CONNECTION | addr << 2, card->membase + CMD);
       spin_unlock_irqrestore(&card->res_lock, flags);
@@ -1528,7 +1608,7 @@ static void ns_close(struct atm_vcc *vcc)
 	                       NS_SKB(iovb)->iovcnt);
          NS_SKB(iovb)->iovcnt = 0;
          NS_SKB(iovb)->vcc = NULL;
-         spin_lock_irqsave(&card->int_lock, flags);
+         ns_grab_int_lock(card, flags);
          recycle_iov_buf(card, iovb);
          spin_unlock_irqrestore(&card->int_lock, flags);
          vc->rx_iov = NULL;
@@ -1550,7 +1630,7 @@ static void ns_close(struct atm_vcc *vcc)
 
       for (;;)
       {
-         spin_lock_irqsave(&scq->lock, flags);
+         ns_grab_scq_lock(card, scq, flags);
          scqep = scq->next;
          if (scqep == scq->base)
             scqep = scq->last;
@@ -1612,7 +1692,7 @@ static void ns_close(struct atm_vcc *vcc)
      unsigned long flags;
      scq_info *scq = card->scq0;
 
-     spin_lock_irqsave(&scq->lock, flags);
+     ns_grab_scq_lock(card, scq, flags);
 
      for(i = 0; i < scq->num_entries; i++) {
        if(scq->skb[i] && ATM_SKB(scq->skb[i])->vcc == vcc) {
@@ -1813,7 +1893,7 @@ static int push_scqe(ns_dev *card, vc_map *vc, scq_info *scq, ns_scqe *tbd,
    u32 data;
    int index;
    
-   spin_lock_irqsave(&scq->lock, flags);
+   ns_grab_scq_lock(card, scq, flags);
    while (scq->tail == scq->next)
    {
       if (in_interrupt()) {
@@ -1825,7 +1905,7 @@ static int push_scqe(ns_dev *card, vc_map *vc, scq_info *scq, ns_scqe *tbd,
       scq->full = 1;
       spin_unlock_irqrestore(&scq->lock, flags);
       interruptible_sleep_on_timeout(&scq->scqfull_waitq, SCQFULL_TIMEOUT);
-      spin_lock_irqsave(&scq->lock, flags);
+      ns_grab_scq_lock(card, scq, flags);
 
       if (scq->full) {
          spin_unlock_irqrestore(&scq->lock, flags);
@@ -1874,7 +1954,7 @@ static int push_scqe(ns_dev *card, vc_map *vc, scq_info *scq, ns_scqe *tbd,
          if (has_run++) break;
          spin_unlock_irqrestore(&scq->lock, flags);
          interruptible_sleep_on_timeout(&scq->scqfull_waitq, SCQFULL_TIMEOUT);
-         spin_lock_irqsave(&scq->lock, flags);
+         ns_grab_scq_lock(card, scq, flags);
       }
 
       if (!scq->full)
@@ -2011,7 +2091,7 @@ static void drain_scq(ns_dev *card, scq_info *scq, int pos)
       return;
    }
 
-   spin_lock_irqsave(&scq->lock, flags);
+   ns_grab_scq_lock(card, scq, flags);
    i = (int) (scq->tail - scq->base);
    if (++i == scq->num_entries)
       i = 0;
@@ -2128,7 +2208,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
          if (i == 1 && ns_rsqe_eopdu(rsqe))
             *((u32 *) sb->data) |= 0x00000002;
          skb_put(sb, NS_AAL0_HEADER);
-         memcpy(skb_tail_pointer(sb), cell, ATM_CELL_PAYLOAD);
+         memcpy(sb->tail, cell, ATM_CELL_PAYLOAD);
          skb_put(sb, ATM_CELL_PAYLOAD);
          ATM_SKB(sb)->vcc = vcc;
 	 __net_timestamp(sb);
@@ -2172,8 +2252,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
       vc->rx_iov = iovb;
       NS_SKB(iovb)->iovcnt = 0;
       iovb->len = 0;
-      iovb->data = iovb->head;
-      skb_reset_tail_pointer(iovb);
+      iovb->tail = iovb->data = iovb->head;
       NS_SKB(iovb)->vcc = vcc;
       /* IMPORTANT: a pointer to the sk_buff containing the small or large
                     buffer is stored as iovec base, NOT a pointer to the 
@@ -2186,8 +2265,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
       recycle_iovec_rx_bufs(card, (struct iovec *) iovb->data, NS_MAX_IOVECS);
       NS_SKB(iovb)->iovcnt = 0;
       iovb->len = 0;
-      iovb->data = iovb->head;
-      skb_reset_tail_pointer(iovb);
+      iovb->tail = iovb->data = iovb->head;
       NS_SKB(iovb)->vcc = vcc;
    }
    iov = &((struct iovec *) iovb->data)[NS_SKB(iovb)->iovcnt++];
@@ -2315,7 +2393,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
                skb->destructor = ns_lb_destructor;
 #endif /* NS_USE_DESTRUCTORS */
                skb_push(skb, NS_SMBUFSIZE);
-               skb_copy_from_linear_data(sb, skb->data, NS_SMBUFSIZE);
+               memcpy(skb->data, sb->data, NS_SMBUFSIZE);
                skb_put(skb, len - NS_SMBUFSIZE);
                ATM_SKB(skb)->vcc = vcc;
 	       __net_timestamp(skb);
@@ -2399,7 +2477,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
 	 {
             /* Copy the small buffer to the huge buffer */
             sb = (struct sk_buff *) iov->iov_base;
-            skb_copy_from_linear_data(sb, hb->data, iov->iov_len);
+            memcpy(hb->data, sb->data, iov->iov_len);
             skb_put(hb, iov->iov_len);
             remaining = len - iov->iov_len;
             iov++;
@@ -2411,7 +2489,7 @@ static void dequeue_rx(ns_dev *card, ns_rsqe *rsqe)
             {
                lb = (struct sk_buff *) iov->iov_base;
                tocopy = min_t(int, remaining, iov->iov_len);
-               skb_copy_from_linear_data(lb, skb_tail_pointer(hb), tocopy);
+               memcpy(hb->tail, lb->data, tocopy);
                skb_put(hb, tocopy);
                iov++;
                remaining -= tocopy;
@@ -2681,7 +2759,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
 {
    ns_dev *card;
    pool_levels pl;
-   long btype;
+   int btype;
    unsigned long flags;
 
    card = dev->dev_data;
@@ -2781,7 +2859,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
       case NS_ADJBUFLEV:
          if (!capable(CAP_NET_ADMIN))
 	    return -EPERM;
-         btype = (long) arg;	/* a long is the same size as a pointer or bigger */
+         btype = (int) arg;	/* an int is the same size as a pointer */
          switch (btype)
 	 {
 	    case NS_BUFTYPE_SMALL:
@@ -2819,7 +2897,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
 	       {
                   struct sk_buff *hb;
 
-                  spin_lock_irqsave(&card->int_lock, flags);
+                  ns_grab_int_lock(card, flags);
 		  hb = skb_dequeue(&card->hbpool.queue);
 		  card->hbpool.count--;
                   spin_unlock_irqrestore(&card->int_lock, flags);
@@ -2838,7 +2916,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
                   if (hb == NULL)
                      return -ENOMEM;
                   NS_SKB_CB(hb)->buf_type = BUF_NONE;
-                  spin_lock_irqsave(&card->int_lock, flags);
+                  ns_grab_int_lock(card, flags);
                   skb_queue_tail(&card->hbpool.queue, hb);
                   card->hbpool.count++;
                   spin_unlock_irqrestore(&card->int_lock, flags);
@@ -2850,7 +2928,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
 	       {
 	          struct sk_buff *iovb;
 
-                  spin_lock_irqsave(&card->int_lock, flags);
+                  ns_grab_int_lock(card, flags);
 		  iovb = skb_dequeue(&card->iovpool.queue);
 		  card->iovpool.count--;
                   spin_unlock_irqrestore(&card->int_lock, flags);
@@ -2869,7 +2947,7 @@ static int ns_ioctl(struct atm_dev *dev, unsigned int cmd, void __user *arg)
                   if (iovb == NULL)
                      return -ENOMEM;
                   NS_SKB_CB(iovb)->buf_type = BUF_NONE;
-                  spin_lock_irqsave(&card->int_lock, flags);
+                  ns_grab_int_lock(card, flags);
                   skb_queue_tail(&card->iovpool.queue, iovb);
                   card->iovpool.count++;
                   spin_unlock_irqrestore(&card->int_lock, flags);
@@ -2916,7 +2994,7 @@ static void ns_poll(unsigned long arg)
       /* Probably it isn't worth spinning */
          continue;
       }
-      spin_lock_irqsave(&card->int_lock, flags);
+      ns_grab_int_lock(card, flags);
 
       stat_w = 0;
       stat_r = readl(card->membase + STAT);
@@ -2983,7 +3061,7 @@ static void ns_phy_put(struct atm_dev *dev, unsigned char value,
    unsigned long flags;
 
    card = dev->dev_data;
-   spin_lock_irqsave(&card->res_lock, flags);
+   ns_grab_res_lock(card, flags);
    while(CMD_BUSY(card));
    writel((unsigned long) value, card->membase + DR0);
    writel(NS_CMD_WRITE_UTILITY | 0x00000200 | (addr & 0x000000FF),
@@ -3000,7 +3078,7 @@ static unsigned char ns_phy_get(struct atm_dev *dev, unsigned long addr)
    unsigned long data;
 
    card = dev->dev_data;
-   spin_lock_irqsave(&card->res_lock, flags);
+   ns_grab_res_lock(card, flags);
    while(CMD_BUSY(card));
    writel(NS_CMD_READ_UTILITY | 0x00000200 | (addr & 0x000000FF),
           card->membase + CMD);

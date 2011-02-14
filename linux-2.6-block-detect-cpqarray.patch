@@ -1,0 +1,30 @@
+Date: Fri, 6 Oct 2006 14:37:49 -0400 (EDT)
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5.0 PATCH]: BZ#205653: cpqarray module fails to detect arrays
+
+
+RHEL5.0 would not install on the Compaq ProLiant 8500R computers in
+the Westford lab (xeon1 and xeon2) because it could not detect the
+storage on the built-in cpqarray RAID systems.  This is a regression
+from RHEL4.5.  Eventually, I tracked down the problem to the device
+not being configured as a PCI bus master.  I have confirmed that this
+patch fixes the problem, and that reversing the operation reproduces
+the problem.
+
+I have no idea why this patch isn't needed on RHEL4.
+
+I will submit this upstream through HP.
+
+Chip
+
+--- a/drivers/block/cpqarray.c	2006-10-06 14:23:34.000000000 -0400
++++ b/drivers/block/cpqarray.c	2006-10-06 14:25:16.000000000 -0400
+@@ -614,6 +614,7 @@ static int cpqarray_pci_init(ctlr_info_t
+ 	int i;
+
+ 	c->pci_dev = pdev;
++	pci_set_master(pdev);
+ 	if (pci_enable_device(pdev)) {
+ 		printk(KERN_ERR "cpqarray: Unable to Enable PCI device\n");
+ 		return -1;
+

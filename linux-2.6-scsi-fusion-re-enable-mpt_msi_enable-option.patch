@@ -1,0 +1,60 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 30 Sep 2009 16:23:27 +0200
+Subject: [scsi] fusion: re-enable mpt_msi_enable option
+Message-id: 4AC369DF.8050607@redhat.com
+O-Subject: [RHEL5.5 PATCH] fusion: re-enable mpt_msi_enable option
+Bugzilla: 520820
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+This is for BZ#520820
+
+In the latest patch for the fusion driver we removed
+the module parameter mpt_msi_enable in favor of
+mpt_msi_enable_sas, mpt_msi_enable_spi, mpt_msi_enable_fc.
+The new options allow finer grained control for msi
+in systems with more buses.
+I shouldn't have removed the original mpt_msi_enable, because
+it breaks some customers scripts.
+This patch brings the option mpt_msi_enable back. It works now
+in parallel with the new options.
+I did some tests and built it in brew.
+
+Tomas
+
+diff --git a/drivers/message/fusion/mptbase.c b/drivers/message/fusion/mptbase.c
+index 60a4a62..da3749f 100644
+--- a/drivers/message/fusion/mptbase.c
++++ b/drivers/message/fusion/mptbase.c
+@@ -80,6 +80,11 @@ MODULE_VERSION(my_VERSION);
+  *  cmd line parameters
+  */
+ 
++static int mpt_msi_enable;
++module_param(mpt_msi_enable, int, 0);
++MODULE_PARM_DESC(mpt_msi_enable, " MSI Support Enable (default=0)");
++
++
+ static int mpt_msi_enable_spi;
+ module_param(mpt_msi_enable_spi, int, 0);
+ MODULE_PARM_DESC(mpt_msi_enable_spi, " Enable MSI Support for SPI \
+@@ -1959,15 +1964,15 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	switch (ioc->bus_type) {
+ 
+ 	case SAS:
+-		ioc->msi_enable = mpt_msi_enable_sas;
++		ioc->msi_enable = mpt_msi_enable_sas | mpt_msi_enable;
+ 		break;
+ 
+ 	case SPI:
+-		ioc->msi_enable = mpt_msi_enable_spi;
++		ioc->msi_enable = mpt_msi_enable_spi | mpt_msi_enable;
+ 		break;
+ 
+ 	case FC:
+-		ioc->msi_enable = mpt_msi_enable_fc;
++		ioc->msi_enable = mpt_msi_enable_fc | mpt_msi_enable;
+ 		break;
+ 
+ 	default:

@@ -1,0 +1,180 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:17 -0500
+Subject: [scsi] qla4xxx: dump mailbox registers on System Error
+Message-id: <20101130195916.10450.3477.sendpatchset@localhost.localdomain>
+Patchwork-id: 29696
+O-Subject: [RHEL 5.6 PATCH 5/28] qla4xxx: dump mailbox registers on System Error
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 91a772a4b1840fea39f0377c2cbca4cfc5be05f9
+
+Description
+-----------
+
+>From ae7481b0ff31013f2aaa77917616456575a55a23 Mon Sep 17 00:00:00 2001
+From: Karen Higgins <karen.higgins@qlogic.com>
+Date: Tue, 23 Nov 2010 16:20:59 -0800
+Subject: [PATCH 06/29] qla4xxx: dump mailbox registers on System Error
+
+Signed-off-by: Karen Higgins <karen.higgins@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_dbg.c b/drivers/scsi/qla4xxx/ql4_dbg.c
+index ce020a0..c4a10d9 100644
+--- a/drivers/scsi/qla4xxx/ql4_dbg.c
++++ b/drivers/scsi/qla4xxx/ql4_dbg.c
+@@ -173,10 +173,116 @@ void qla4xxx_dump_mbox_registers(struct scsi_qla_host *ha)
+ 
+ void qla4xxx_dump_registers(struct scsi_qla_host *ha)
+ {
+-	unsigned long flags = 0;
+-	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	__dump_registers(ha);
+-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
++	uint8_t i;
++
++	if (is_qla8022(ha)) {
++		for (i = 1; i < MBOX_REG_COUNT; i++)
++			printk(KERN_INFO "mailbox[%d]     = 0x%08X\n",
++			    i, readl(&ha->qla4_8xxx_reg->mailbox_in[i]));
++		return;
++	}
++
++	for (i = 0; i < MBOX_REG_COUNT; i++) {
++		printk(KERN_INFO "0x%02X mailbox[%d]	  = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, mailbox[i]), i,
++		       readw(&ha->reg->mailbox[i]));
++	}
++	printk(KERN_INFO "0x%02X flash_address	 = 0x%08X\n",
++	       (uint8_t) offsetof(struct isp_reg, flash_address),
++	       readw(&ha->reg->flash_address));
++	printk(KERN_INFO "0x%02X flash_data	 = 0x%08X\n",
++	       (uint8_t) offsetof(struct isp_reg, flash_data),
++	       readw(&ha->reg->flash_data));
++	printk(KERN_INFO "0x%02X ctrl_status	 = 0x%08X\n",
++	       (uint8_t) offsetof(struct isp_reg, ctrl_status),
++	       readw(&ha->reg->ctrl_status));
++	if (is_qla4010(ha)) {
++		printk(KERN_INFO "0x%02X nvram		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, u1.isp4010.nvram),
++		       readw(&ha->reg->u1.isp4010.nvram));
++	}
++
++	else if (is_qla4022(ha) | is_qla4032(ha)) {
++		printk(KERN_INFO "0x%02X intr_mask	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u1.isp4022.intr_mask),
++		       readw(&ha->reg->u1.isp4022.intr_mask));
++		printk(KERN_INFO "0x%02X nvram		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, u1.isp4022.nvram),
++		       readw(&ha->reg->u1.isp4022.nvram));
++		printk(KERN_INFO "0x%02X semaphore	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u1.isp4022.semaphore),
++		       readw(&ha->reg->u1.isp4022.semaphore));
++	}
++	printk(KERN_INFO "0x%02X req_q_in	 = 0x%08X\n",
++	       (uint8_t) offsetof(struct isp_reg, req_q_in),
++	       readw(&ha->reg->req_q_in));
++	printk(KERN_INFO "0x%02X rsp_q_out	 = 0x%08X\n",
++	       (uint8_t) offsetof(struct isp_reg, rsp_q_out),
++	       readw(&ha->reg->rsp_q_out));
++	if (is_qla4010(ha)) {
++		printk(KERN_INFO "0x%02X ext_hw_conf	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4010.ext_hw_conf),
++		       readw(&ha->reg->u2.isp4010.ext_hw_conf));
++		printk(KERN_INFO "0x%02X port_ctrl	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4010.port_ctrl),
++		       readw(&ha->reg->u2.isp4010.port_ctrl));
++		printk(KERN_INFO "0x%02X port_status	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4010.port_status),
++		       readw(&ha->reg->u2.isp4010.port_status));
++		printk(KERN_INFO "0x%02X req_q_out	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4010.req_q_out),
++		       readw(&ha->reg->u2.isp4010.req_q_out));
++		printk(KERN_INFO "0x%02X gp_out		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, u2.isp4010.gp_out),
++		       readw(&ha->reg->u2.isp4010.gp_out));
++		printk(KERN_INFO "0x%02X gp_in		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, u2.isp4010.gp_in),
++		       readw(&ha->reg->u2.isp4010.gp_in));
++		printk(KERN_INFO "0x%02X port_err_status = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4010.port_err_status),
++		       readw(&ha->reg->u2.isp4010.port_err_status));
++	} else if (is_qla4022(ha) | is_qla4032(ha)) {
++		printk(KERN_INFO "Page 0 Registers:\n");
++		printk(KERN_INFO "0x%02X ext_hw_conf	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p0.ext_hw_conf),
++		       readw(&ha->reg->u2.isp4022.p0.ext_hw_conf));
++		printk(KERN_INFO "0x%02X port_ctrl	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p0.port_ctrl),
++		       readw(&ha->reg->u2.isp4022.p0.port_ctrl));
++		printk(KERN_INFO "0x%02X port_status	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p0.port_status),
++		       readw(&ha->reg->u2.isp4022.p0.port_status));
++		printk(KERN_INFO "0x%02X gp_out		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p0.gp_out),
++		       readw(&ha->reg->u2.isp4022.p0.gp_out));
++		printk(KERN_INFO "0x%02X gp_in		 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg, u2.isp4022.p0.gp_in),
++		       readw(&ha->reg->u2.isp4022.p0.gp_in));
++		printk(KERN_INFO "0x%02X port_err_status = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p0.port_err_status),
++		       readw(&ha->reg->u2.isp4022.p0.port_err_status));
++		printk(KERN_INFO "Page 1 Registers:\n");
++		writel(HOST_MEM_CFG_PAGE & set_rmask(CSR_SCSI_PAGE_SELECT),
++		       &ha->reg->ctrl_status);
++		printk(KERN_INFO "0x%02X req_q_out	 = 0x%08X\n",
++		       (uint8_t) offsetof(struct isp_reg,
++					  u2.isp4022.p1.req_q_out),
++		       readw(&ha->reg->u2.isp4022.p1.req_q_out));
++		writel(PORT_CTRL_STAT_PAGE & set_rmask(CSR_SCSI_PAGE_SELECT),
++		       &ha->reg->ctrl_status);
++	}
+ }
+ 
+ void qla4xxx_dump_buffer(void *b, uint32_t size)
+diff --git a/drivers/scsi/qla4xxx/ql4_glbl.h b/drivers/scsi/qla4xxx/ql4_glbl.h
+index ecc2c23..20c62c0 100644
+--- a/drivers/scsi/qla4xxx/ql4_glbl.h
++++ b/drivers/scsi/qla4xxx/ql4_glbl.h
+@@ -85,6 +85,7 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+ extern void qla4xxx_queue_iocb(struct scsi_qla_host *ha);
+ extern void qla4xxx_complete_iocb(struct scsi_qla_host *ha);
+ void qla4xxx_mailbox_premature_completion(struct scsi_qla_host *ha);
++void qla4xxx_dump_registers(struct scsi_qla_host *ha);
+ int qla4xxx_get_sys_info(struct scsi_qla_host *ha);
+ extern int qla4xxx_iospace_config(struct scsi_qla_host *ha);
+ extern void qla4xxx_pci_config(struct scsi_qla_host *ha);
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index 9fe3e03..284c92d 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -538,6 +538,9 @@ void qla4xxx_isr_decode_mailbox(struct scsi_qla_host *ha,
+ 		switch (mbox_status) {
+ 		case MBOX_ASTS_SYSTEM_ERROR:
+ 			/* Log Mailbox registers */
++			printk(KERN_INFO "%s: System Err\n", __func__);
++			qla4xxx_dump_registers(ha);
++
+ 			if (ql4xdontresethba) {
+ 				DEBUG2(printk("%s:Dont Reset HBA\n",
+ 					      __func__));

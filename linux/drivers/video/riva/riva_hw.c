@@ -231,7 +231,7 @@ typedef struct {
   int nvclk_khz;
   char mem_page_miss;
   char mem_latency;
-  u32 memory_type;
+  int memory_type;
   int memory_width;
   char enable_video;
   char gr_during_vid;
@@ -1118,9 +1118,8 @@ static void nForceUpdateArbitrationSettings
     unsigned int uMClkPostDiv;
     struct pci_dev *dev;
 
-    dev = pci_get_bus_and_slot(0, 3);
+    dev = pci_find_slot(0, 3);
     pci_read_config_dword(dev, 0x6C, &uMClkPostDiv);
-    pci_dev_put(dev);
     uMClkPostDiv = (uMClkPostDiv >> 8) & 0xf;
 
     if(!uMClkPostDiv) uMClkPostDiv = 4;
@@ -1133,9 +1132,8 @@ static void nForceUpdateArbitrationSettings
     sim_data.enable_video   = 0;
     sim_data.enable_mp      = 0;
 
-    dev = pci_get_bus_and_slot(0, 1);
+    dev = pci_find_slot(0, 1);
     pci_read_config_dword(dev, 0x7C, &sim_data.memory_type);
-    pci_dev_put(dev);
     sim_data.memory_type    = (sim_data.memory_type >> 12) & 1;
 
     sim_data.memory_width   = 64;
@@ -1223,15 +1221,13 @@ static int CalcVClock
         }
     }
     }
-
-    /* non-zero: M/N/P/clock values assigned.  zero: error (not set) */
     return (DeltaOld != 0xFFFFFFFF);
 }
 /*
  * Calculate extended mode parameters (SVGA) and save in a 
  * mode state structure.
  */
-int CalcStateExt
+static void CalcStateExt
 (
     RIVA_HW_INST  *chip,
     RIVA_HW_STATE *state,
@@ -1242,10 +1238,7 @@ int CalcStateExt
     int            dotClock
 )
 {
-    int pixelDepth;
-    int uninitialized_var(VClk),uninitialized_var(m),
-        uninitialized_var(n),	uninitialized_var(p);
-
+    int pixelDepth, VClk, m, n, p;
     /*
      * Save mode parameters.
      */
@@ -1256,8 +1249,7 @@ int CalcStateExt
      * Extended RIVA registers.
      */
     pixelDepth = (bpp + 1)/8;
-    if (!CalcVClock(dotClock, &VClk, &m, &n, &p, chip))
-    	return -EINVAL;
+    CalcVClock(dotClock, &VClk, &m, &n, &p, chip);
 
     switch (chip->Architecture)
     {
@@ -1335,8 +1327,6 @@ int CalcStateExt
     state->pitch1   =
     state->pitch2   =
     state->pitch3   = pixelDepth * width;
-
-    return 0;
 }
 /*
  * Load fixed function state and pre-calculated/stored state.
@@ -2036,6 +2026,7 @@ static void nv3GetConfig
      */
     chip->Busy            = nv3Busy;
     chip->ShowHideCursor  = ShowHideCursor;
+    chip->CalcStateExt    = CalcStateExt;
     chip->LoadStateExt    = LoadStateExt;
     chip->UnloadStateExt  = UnloadStateExt;
     chip->SetStartAddress = SetStartAddress3;
@@ -2093,6 +2084,7 @@ static void nv4GetConfig
      */
     chip->Busy            = nv4Busy;
     chip->ShowHideCursor  = ShowHideCursor;
+    chip->CalcStateExt    = CalcStateExt;
     chip->LoadStateExt    = LoadStateExt;
     chip->UnloadStateExt  = UnloadStateExt;
     chip->SetStartAddress = SetStartAddress;
@@ -2107,7 +2099,7 @@ static void nv10GetConfig
 )
 {
     struct pci_dev* dev;
-    u32 amt;
+    int amt;
 
 #ifdef __BIG_ENDIAN
     /* turn on big endian register access */
@@ -2119,14 +2111,12 @@ static void nv10GetConfig
      * Fill in chip configuration.
      */
     if(chipset == NV_CHIP_IGEFORCE2) {
-        dev = pci_get_bus_and_slot(0, 1);
+        dev = pci_find_slot(0, 1);
         pci_read_config_dword(dev, 0x7C, &amt);
-        pci_dev_put(dev);
         chip->RamAmountKBytes = (((amt >> 6) & 31) + 1) * 1024;
     } else if(chipset == NV_CHIP_0x01F0) {
-        dev = pci_get_bus_and_slot(0, 1);
+        dev = pci_find_slot(0, 1);
         pci_read_config_dword(dev, 0x84, &amt);
-        pci_dev_put(dev);
         chip->RamAmountKBytes = (((amt >> 4) & 127) + 1) * 1024;
     } else {
         switch ((NV_RD32(chip->PFB, 0x0000020C) >> 20) & 0x000000FF)
@@ -2196,6 +2186,7 @@ static void nv10GetConfig
      */
     chip->Busy            = nv10Busy;
     chip->ShowHideCursor  = ShowHideCursor;
+    chip->CalcStateExt    = CalcStateExt;
     chip->LoadStateExt    = LoadStateExt;
     chip->UnloadStateExt  = UnloadStateExt;
     chip->SetStartAddress = SetStartAddress;

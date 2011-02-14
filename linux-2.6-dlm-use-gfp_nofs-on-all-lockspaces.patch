@@ -1,0 +1,38 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 29 Oct 2009 10:37:47 -0500
+Subject: [dlm] use GFP_NOFS on all lockspaces
+Message-id: 20091029153747.GC13474@redhat.com
+O-Subject: [RHEL5.5 PATCH] dlm: use GFP_NOFS on all lockspaces
+Bugzilla: 530537
+RH-Acked-by: Christine Caulfield <ccaulfie@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+bz 530537
+
+not upstream; with more time I may come up with a different solution
+
+dlm memory allocations for any locks from any lockspace can cause
+kernel memory reclamation to call into gfs which can then call into
+the dlm.  If this happens to be in the context of the dlm_recv
+thread, that thread will deadlock, blocking all further dlm activity.
+This means all dlm memory allocations must use GFP_NOFS, not just
+allocations related to locks belonging to gfs.
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lockspace.c b/fs/dlm/lockspace.c
+index d2a1df1..27ce1d5 100644
+--- a/fs/dlm/lockspace.c
++++ b/fs/dlm/lockspace.c
+@@ -450,10 +450,7 @@ static int new_lockspace(char *name, int namelen, void **lockspace,
+ 	if (flags & DLM_LSFL_TIMEWARN)
+ 		set_bit(LSFL_TIMEWARN, &ls->ls_flags);
+ 
+-	if (flags & DLM_LSFL_FS)
+-		ls->ls_allocation = GFP_NOFS;
+-	else
+-		ls->ls_allocation = GFP_KERNEL;
++	ls->ls_allocation = GFP_NOFS;
+ 
+ 	/* ls_exflags are forced to match among nodes, and we don't
+ 	   need to require all nodes to have TIMEWARN or FS set */

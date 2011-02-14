@@ -15,7 +15,11 @@
 #ifndef	_MBUF_
 #define _MBUF_
 
+#ifndef PCI
+#define M_SIZE	4550
+#else
 #define M_SIZE	4504
+#endif
 
 #ifndef MAX_MBUF
 #define MAX_MBUF	4

@@ -1,0 +1,88 @@
+From: Chris Snook <csnook@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 242681: export DASD status to userspace
+Date: Tue, 05 Jun 2007 11:20:52 -0400
+Bugzilla: 242681
+Message-Id: <46657F54.6040906@redhat.com>
+Changelog: [dasd] export DASD status to userspace
+
+
+Hey folks --
+
+	The attached patch, written and tested by IBM, enables userspace 
+	monitoring tools to directly monitor DASD status and respond to changes.  
+Impact is limited to the s390x DASD driver.  Resolves BZ 242681.  Please ACK.
+
+	-- Chris
+
+diff -Naurp linux-rhel5/drivers/s390/block/dasd.c linux-rhel5_new/drivers/s390/block/dasd.c
+--- linux-rhel5/drivers/s390/block/dasd.c	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5_new/drivers/s390/block/dasd.c	2007-03-28 20:38:14.000000000 +0200
+@@ -397,6 +397,9 @@ dasd_change_state(struct dasd_device *de
+ 
+ 	if (device->state == device->target)
+ 		wake_up(&dasd_init_waitq);
++
++	/* let user-space know that the device status changed */
++	kobject_uevent(&device->cdev->dev.kobj, KOBJ_CHANGE);
+ }
+ 
+ /*
+diff -Naurp linux-rhel5/drivers/s390/block/dasd_devmap.c linux-rhel5_new/drivers/s390/block/dasd_devmap.c
+--- linux-rhel5/drivers/s390/block/dasd_devmap.c	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5_new/drivers/s390/block/dasd_devmap.c	2007-03-28 20:34:30.000000000 +0200
+@@ -745,6 +745,46 @@ dasd_discipline_show(struct device *dev,
+ static DEVICE_ATTR(discipline, 0444, dasd_discipline_show, NULL);
+ 
+ static ssize_t
++dasd_device_status_show(struct device *dev, struct device_attribute *attr,
++		     char *buf)
++{
++	struct dasd_device *device;
++	ssize_t len;
++
++	device = dasd_device_from_cdev(to_ccwdev(dev));
++	if (!IS_ERR(device)) {
++		switch (device->state) {
++		case DASD_STATE_NEW:
++			len = snprintf(buf, PAGE_SIZE, "new\n");
++			break;
++		case DASD_STATE_KNOWN:
++			len = snprintf(buf, PAGE_SIZE, "detected\n");
++			break;
++		case DASD_STATE_BASIC:
++			len = snprintf(buf, PAGE_SIZE, "basic\n");
++			break;
++		case DASD_STATE_UNFMT:
++			len = snprintf(buf, PAGE_SIZE, "unformatted\n");
++			break;
++		case DASD_STATE_READY:
++			len = snprintf(buf, PAGE_SIZE, "ready\n");
++			break;
++		case DASD_STATE_ONLINE:
++			len = snprintf(buf, PAGE_SIZE, "online\n");
++			break;
++		default:
++			len = snprintf(buf, PAGE_SIZE, "no stat\n");
++			break;
++		}
++		dasd_put_device(device);
++	} else
++		len = snprintf(buf, PAGE_SIZE, "unknown\n");
++	return len;
++}
++
++static DEVICE_ATTR(status, 0444, dasd_device_status_show, NULL);
++
++static ssize_t
+ dasd_alias_show(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+ 	struct dasd_devmap *devmap;
+@@ -849,6 +889,7 @@ static DEVICE_ATTR(eer_enabled, 0644, da
+ static struct attribute * dasd_attrs[] = {
+ 	&dev_attr_readonly.attr,
+ 	&dev_attr_discipline.attr,
++	&dev_attr_status.attr,
+ 	&dev_attr_alias.attr,
+ 	&dev_attr_vendor.attr,
+ 	&dev_attr_uid.attr,
+

@@ -1,0 +1,41 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 16 Feb 2010 19:38:06 -0500
+Subject: lpfc: Relax Event Queue field checking to allow non-zero minor codes
+Message-id: <20100216193727.8604.7347.sendpatchset@localhost.localdomain>
+Patchwork-id: 23295
+O-Subject: [RHEL5.5 5/7] lpfc: Relax Event Queue field checking to allow
+	non-zero minor codes
+Bugzilla: 564506
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=564506
+
+Relax Event Queue field checking to allow non-zero minor codes
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 2700429..2cd3d52 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -8930,8 +8930,7 @@ lpfc_sli4_sp_handle_eqe(struct lpfc_hba *phba, struct lpfc_eqe *eqe)
+ 	int ecount = 0;
+ 	uint16_t cqid;
+ 
+-	if (bf_get(lpfc_eqe_major_code, eqe) != 0 ||
+-	    bf_get(lpfc_eqe_minor_code, eqe) != 0) {
++	if (bf_get(lpfc_eqe_major_code, eqe) != 0) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
+ 				"0359 Not a valid slow-path completion "
+ 				"event: majorcode=x%x, minorcode=x%x\n",
+@@ -9163,8 +9162,7 @@ lpfc_sli4_fp_handle_eqe(struct lpfc_hba *phba, struct lpfc_eqe *eqe,
+ 	uint16_t cqid;
+ 	int ecount = 0;
+ 
+-	if (unlikely(bf_get(lpfc_eqe_major_code, eqe) != 0) ||
+-	    unlikely(bf_get(lpfc_eqe_minor_code, eqe) != 0)) {
++	if (unlikely(bf_get(lpfc_eqe_major_code, eqe) != 0)) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
+ 				"0366 Not a valid fast-path completion "
+ 				"event: majorcode=x%x, minorcode=x%x\n",

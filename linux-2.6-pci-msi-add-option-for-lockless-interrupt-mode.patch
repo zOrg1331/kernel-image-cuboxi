@@ -1,0 +1,92 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 5 Aug 2010 15:05:50 -0400
+Subject: [pci] msi: add option for lockless interrupt mode
+Message-id: <20100805150550.7573.67336.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 27412
+O-Subject: [RHEL5 BZ 599295 PATCH V2]: pci: Improve MSI interrupt performance
+Bugzilla: 599295
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+wmealing  suggested a patch for MSI.  He has an excellent write up in
+the BZ of why the patch is neccesary for RHEL5 and I agree with his
+assessment.
+
+Simply the problem is this: On every MSI interrupt, we mask and unmask the
+MSI irq on the PCI dev.  This masking and unmasking is an expensive PCI
+read and write which are serialized via a pci lock.
+
+Obviously, that is a significant performance hit.  We only need to mask when
+we're changing the affinity of the interrupt, not for every interrupt.
+
+After the initial submit, revers pointed out that blindly changing this could
+potentially introduce regressions in MSI capable drivers.  Instead of making
+the msi-no-pci-lock access the default, I really should be keeping the original
+code, and making no pci lock msi access optional.  I've therefore introduced
+a kernel parameter, msi_nolock (name suggested by jwilson), to enable the
+"faster" MSI.
+
+Successfully tested on a few systems (a mix of large and small AMD and Intel
+systems) by me.
+
+Resolves BZ 599295.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index e91fbcf..0b85c83 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1091,6 +1091,10 @@ running once the system is up.
+ 	mpu401=		[HW,OSS]
+ 			Format: <io>,<irq>
+ 
++	msi_nolock	[MSI] Don't acquire pci_lock on msi interrupts,
++			improves throughput but may cause issues for some
++			devices
++
+ 	MTD_Partition=	[MTD]
+ 			Format: <name>,<region-number>,<size>,<offset>
+ 
+diff --git a/drivers/pci/msi.c b/drivers/pci/msi.c
+index 8d05a2f..303fae3 100644
+--- a/drivers/pci/msi.c
++++ b/drivers/pci/msi.c
+@@ -202,7 +202,7 @@ static void shutdown_msi_irq(unsigned int vector)
+ 	spin_unlock_irqrestore(&msi_lock, flags);
+ }
+ 
+-static void end_msi_irq_wo_maskbit(unsigned int vector)
++static void end_msi_irq(unsigned int vector)
+ {
+ 	move_native_irq(vector);
+ 	ack_APIC_irq();
+@@ -262,7 +262,7 @@ static struct hw_interrupt_type msi_irq_wo_maskbit_type = {
+ 	.enable		= do_nothing,
+ 	.disable	= do_nothing,
+ 	.ack		= do_nothing,
+-	.end		= end_msi_irq_wo_maskbit,
++	.end		= end_msi_irq,
+ 	.set_affinity	= set_msi_affinity
+ };
+ 
+@@ -1267,6 +1267,18 @@ int pci_msi_enabled(void)
+ }
+ EXPORT_SYMBOL(pci_msi_enabled);
+ 
++static int __init enable_msi_nolock(char *str)
++{
++	printk(KERN_INFO "Enabling MSI without pci_lock on interrupts\n");
++	msix_irq_type.ack = do_nothing;
++	msix_irq_type.end = end_msi_irq;
++	msi_irq_w_maskbit_type.ack = do_nothing;
++	msi_irq_w_maskbit_type.end = end_msi_irq;
++
++	return 0;
++}
++__setup("msi_nolock", enable_msi_nolock);
++
+ EXPORT_SYMBOL(pci_enable_msi);
+ EXPORT_SYMBOL(pci_disable_msi);
+ EXPORT_SYMBOL(pci_enable_msix);

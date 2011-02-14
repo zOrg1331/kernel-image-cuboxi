@@ -1,0 +1,45 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 2 Oct 2008 16:16:10 -0400
+Subject: [net] correct mode setting for extended sysctl interface
+Message-id: 20081002201610.GD14508@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 patch] correct mode settings for extended sysctls on net interfaces (bz 463659)
+Bugzilla: 463659
+RH-Acked-by: Don Howard <dhoward@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Hey all-
+	A few weeks back I posted a patch that implemented the ability to add
+net devconf sysctls to dynamically allocated network interfaces without breaking
+ABI.  As part of this patch I needed to handle the semantics of those added
+sysctls for interfaces that were not dynamically allocated (and consequently did
+not have the additional storage for extended sysctls).  I solved this by marking
+the associated proc files as having no permissions (so they could not be read or
+written).  Well, unfortunately, sysctl registration automatically marks sysctl
+files as being readable, regardless of the mode that you set, so we just
+discovered this oddness that on interfaces like l0, which are not dynamically
+allocated, extended sysctls are shows as readable, but trying to read them,
+still returns -EPERM.  I'm solving this problem by attaching the default storage
+data for the extended sysctls to statically allocated net_devices and marking
+them as read only.  This way reading for instance
+/proc/sys/net/ipv6/conf/lo/accept_dad returns the default value of that sysctl,
+but it still remains unwriteable.
+
+Tested by me.  Solves bz 463659
+
+Regards
+Neil
+
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index 3744762..1f89683 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -4056,7 +4056,7 @@ static void addrconf_sysctl_register(struct inet6_dev *idev, struct ipv6_devconf
+ 					 * register the extra sysctls, but we give them
+ 					 * no permissions so that we can't write to them
+ 					 */
+-					t->addrconf_vars[i].mode = 0000;
++					t->addrconf_vars[i].mode = 0444;
+ 			} else
+ 				dext = &ext->ipv6_devconf_ext;
+ 

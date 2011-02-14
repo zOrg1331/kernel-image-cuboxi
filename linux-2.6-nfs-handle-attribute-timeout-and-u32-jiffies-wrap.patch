@@ -1,0 +1,192 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 13 Jan 2009 11:12:57 -0500
+Subject: [nfs] handle attribute timeout and u32 jiffies wrap
+Message-id: 1231863177-9914-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#460133: NFS: Attribute timeout handling and wrapping u32 jiffies (try #2)
+Bugzilla: 460133
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Backported from:
+
+c7e15961115028b99f6142266b5fb08acca0e8dd
+64672d55d93c26fb4035fd1a84a803cbc09cb058
+
+NFS uses some jiffies-based values to track timeout values for data
+structures in-kernel. The problem is that some of these timeout values
+can last for a very long time, even over 2 wraps of jiffes in the
+kernel. When this occurs, some of these timeout mechanisms don't work
+properly.
+
+The following patch went upstream several months ago and fixes this
+problem by adding a time_in_range macro and having the places in the NFS
+client that use these long jiffies-based timeouts use it.
+
+While it's not a common failure scenario, we did have some customers hit
+it in RHEL4, and it was quite maddening to track down. A similar patch
+was taken into RHEL4 quite some time ago. We need to patch RHEL5 the
+same way so that it's not considered a regression.
+
+Unfortunately, it's very hard to reproduce this situation so we really
+can't do much other than verify it by inspection.
+
+The following patch is a combination of 2 upstream patches, the original
+one from Fabio that added the the time_in_range macro and that had the
+NFS client use it in the appropriate places. The other patch is a more
+recent one from Peter Staubach that adds time_in_range_open() and
+changes these locations to use it. This allows us to eliminate some
+special cases when actimeo=0 and fixes a couple of edge cases.
+
+I went ahead and left the time_in_range() macro in place even though
+it's no longer used after Peter's patch is applied. It should be
+harmless, but if someone feels strongly about it I can remove it.
+
+Fabio's original patch description follows:
+
+-----------------------------[snip]----------------------------
+
+I would like to discuss the idea that the current checks for attribute
+timeout using time_after are inadequate for 32bit architectures, since
+time_after works correctly only when the two timestamps being compared
+are within 2^31 jiffies of each other. The signed overflow caused by
+comparing values more than 2^31 jiffies apart will flip the result,
+causing incorrect assumptions of validity.
+
+2^31 jiffies is a fairly large period of time (~25 days) when compared
+to the lifetime of most kernel data structures, but for long lived NFS
+mounts that can sit idle for months (think that for some reason autofs
+cannot be used), it is easy to compare inode attribute timestamps with
+very disparate or even bogus values (as in when jiffies have wrapped
+many times, where the comparison doesn't even make sense).
+
+Currently the code tests for attribute timeout by simply adding the
+desired amount of jiffies to the stored timestamp and comparing that
+with the current timestamp of obtained attribute data with time_after.
+This is incorrect, as it returns true for the desired timeout period
+and another full 2^31 range of jiffies.
+
+In testing with artificial jumps (several small jumps, not one big
+crank) of the jiffies I was able to reproduce a problem found in a
+server with very long lived NFS mounts, where attributes would not be
+refreshed even after touching files and directories in the server:
+
+Initial uptime:
+03:42:01 up 6 min, 0 users, load average: 0.01, 0.12, 0.07
+
+NFS volume is mounted and time is advanced:
+03:38:09 up 25 days, 2 min, 0 users, load average: 1.22, 1.05, 1.08
+
+# ls -l /local/A/foo/bar /nfs/A/foo/bar
+-rw-r--r--  1 root root 0 Dec 17 03:38 /local/A/foo/bar
+-rw-r--r--  1 root root 0 Nov 22 00:36 /nfs/A/foo/bar
+
+# touch /local/A/foo/bar
+
+# ls -l /local/A/foo/bar /nfs/A/foo/bar
+-rw-r--r--  1 root root 0 Dec 17 03:47 /local/A/foo/bar
+-rw-r--r--  1 root root 0 Nov 22 00:36 /nfs/A/foo/bar
+
+We can see the local mtime is updated, but the NFS mount still shows
+the old value. The patch below makes it work:
+
+Initial setup...
+07:11:02 up 25 days, 1 min,  0 users,  load average: 0.15, 0.03, 0.04
+
+# ls -l /local/A/foo/bar /nfs/A/foo/bar
+-rw-r--r--  1 root root 0 Jan 11 07:11 /local/A/foo/bar
+-rw-r--r--  1 root root 0 Jan 11 07:11 /nfs/A/foo/bar
+
+# touch /local/A/foo/bar
+
+# ls -l /local/A/foo/bar /nfs/A/foo/bar
+-rw-r--r--  1 root root 0 Jan 11 07:14 /local/A/foo/bar
+-rw-r--r--  1 root root 0 Jan 11 07:14 /nfs/A/foo/bar
+
+Signed-off-by: Fabio Olive Leite <fleite@redhat.com>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 16a4323..52b83d6 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1775,7 +1775,8 @@ int nfs_access_get_cached(struct inode *inode, struct rpc_cred *cred, struct nfs
+ 	cache = nfs_access_search_rbtree(inode, cred);
+ 	if (cache == NULL)
+ 		goto out;
+-	if (time_after(jiffies, cache->jiffies + NFS_ATTRTIMEO(inode)))
++	if (!time_in_range_open(jiffies, cache->jiffies,
++			        cache->jiffies + NFS_ATTRTIMEO(inode)))
+ 		goto out_stale;
+ 	res->jiffies = cache->jiffies;
+ 	res->cred = cache->cred;
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 0382272..67a9bb9 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -672,14 +672,8 @@ int nfs_attribute_timeout(struct inode *inode)
+ 
+ 	if (nfs_have_delegation(inode, FMODE_READ))
+ 		return 0;
+-	/*
+-	 * Special case: if the attribute timeout is set to 0, then we
+-	 *               treat the cache as having expired (unless we
+-	 *               have a delegation).
+-	 */
+-	if (nfsi->attrtimeo == 0)
+-		return 1;
+-	return time_after(jiffies, nfsi->read_cache_jiffies+nfsi->attrtimeo);
++	return !time_in_range_open(jiffies, nfsi->read_cache_jiffies,
++			           nfsi->read_cache_jiffies + nfsi->attrtimeo);
+ }
+ 
+ /**
+@@ -1010,7 +1004,8 @@ static int nfs_update_inode(struct inode *inode, struct nfs_fattr *fattr)
+ 		nfs_inc_stats(inode, NFSIOS_ATTRINVALIDATE);
+ 		nfsi->attrtimeo = NFS_MINATTRTIMEO(inode);
+ 		nfsi->attrtimeo_timestamp = jiffies;
+-	} else if (time_after(jiffies, nfsi->attrtimeo_timestamp+nfsi->attrtimeo)) {
++	} else if (!time_in_range_open(jiffies, nfsi->attrtimeo_timestamp,
++				nfsi->attrtimeo_timestamp + nfsi->attrtimeo)) {
+ 		if ((nfsi->attrtimeo <<= 1) > NFS_MAXATTRTIMEO(inode))
+ 			nfsi->attrtimeo = NFS_MAXATTRTIMEO(inode);
+ 		nfsi->attrtimeo_timestamp = jiffies;
+diff --git a/include/linux/jiffies.h b/include/linux/jiffies.h
+index 72a26e7..c4944a7 100644
+--- a/include/linux/jiffies.h
++++ b/include/linux/jiffies.h
+@@ -126,6 +126,20 @@ static inline u64 get_jiffies_64(void)
+ 	 ((long)(a) - (long)(b) >= 0))
+ #define time_before_eq(a,b)	time_after_eq(b,a)
+ 
++/*
++ * Calculate whether a is in the range of [b, c].
++ */
++#define time_in_range(a,b,c) \
++	(time_after_eq(a,b) && \
++	time_before_eq(a,c))
++
++/*
++ * Calculate whether a is in the range of [b, c).
++ */
++#define time_in_range_open(a,b,c) \
++	(time_after_eq(a,b) && \
++	time_before(a,c))
++
+ /* Same as above, but does so with platform independent 64bit types.
+  * These must be used when utilizing jiffies_64 (i.e. return value of
+  * get_jiffies_64() */
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 40524d9..67413ce 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -137,7 +137,10 @@ struct nfs_inode {
+ 	 *
+ 	 * We need to revalidate the cached attrs for this inode if
+ 	 *
+-	 *	jiffies - read_cache_jiffies > attrtimeo
++	 *	jiffies - read_cache_jiffies >= attrtimeo
++	 *
++	 * Please note the comparison is greater than or equal
++	 * so that zero timeout values can be specified.
+ 	 */
+ 	unsigned long		read_cache_jiffies;
+ 	unsigned long		attrtimeo;

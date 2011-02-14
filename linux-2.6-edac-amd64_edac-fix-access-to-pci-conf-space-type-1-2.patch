@@ -1,0 +1,411 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Fri, 8 Jan 2010 18:42:29 -0500
+Subject: [edac] amd64_edac: fix access to pci conf space type 1
+Message-id: <20100108184543.13206.89833.sendpatchset@localhost.localdomain>
+Patchwork-id: 22358
+O-Subject: [RHEL5.5 PATCH] EDAC driver fix coping with lack of PCI config space
+	access
+Bugzilla: 479070
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Resolves BZ 479070
+
+Alcatel reported an issue with the EDAC driver on their home grown system.
+EDAC driver failed to initialize, and here is the root cause:
+
+Systems running RHEL 5.4 which use PCI configuration space type 1
+accesses cannot access extended configuration space due to checks in the
+pci/direct.c routines.
+
+This patch adds a workaround to the EDAC driver by porting only the
+required functionality from upstream. This is a less intrusive fix
+since it affects only AMD systems running EDAC.  Also, this patch
+initializes the 'ret' variable to -ENODEV.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2174922
+
+The RPMS were successfully tested by Alcatel
+
+Please review and ACK for RHEL5.5
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 7bf5921..af41516 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -56,6 +56,46 @@ u32 revf_quad_ddr2_shift[] = {
+        0       /* 1111b future */
+ };
+ 
++DEFINE_SPINLOCK(edac_pci_config_lock);
++
++int edac_pci_read_cfg_dword(struct pci_dev *dev, int reg, u32 *value)
++{
++	unsigned long flags;
++
++	if ((dev->devfn > 255) || (reg > 4095)) {
++		*value = -1;
++		return -EINVAL;
++	}
++
++	spin_lock_irqsave(&edac_pci_config_lock, flags);
++
++	outl(EDAC_PCI_CONF1_ADDRESS(dev->bus->number, dev->devfn, reg), 0xCF8);
++
++	*value = inl(0xCFC);
++
++	spin_unlock_irqrestore(&edac_pci_config_lock, flags);
++
++	return 0;
++}
++
++int edac_pci_write_cfg_dword(struct pci_dev *dev, int reg, u32 value)
++{
++	unsigned long flags;
++
++	if ((dev->devfn > 255) || (reg > 4095))
++		return -EINVAL;
++
++	spin_lock_irqsave(&edac_pci_config_lock, flags);
++
++	outl(EDAC_PCI_CONF1_ADDRESS(dev->bus->number, dev->devfn, reg), 0xCF8);
++
++	outl((u32)value, 0xCFC);
++
++	spin_unlock_irqrestore(&edac_pci_config_lock, flags);
++
++	return 0;
++}
++
+ /* Map from a CSROW entry to the mask entry that operates on it */
+ static inline u32 amd64_map_to_dcs_mask(struct amd64_pvt *pvt, int csrow)
+ {
+@@ -783,13 +823,13 @@ static void amd64_read_dbam_reg(struct amd64_pvt *pvt)
+        unsigned int reg;
+ 
+        reg = DBAM0;
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, reg, &pvt->dbam0);
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg, &pvt->dbam0);
+        if (err)
+                goto err_reg;
+ 
+        if (boot_cpu_data.x86 >= 0x10) {
+                reg = DBAM1;
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, reg, &pvt->dbam1);
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg, &pvt->dbam1);
+ 
+                if (err)
+                        goto err_reg;
+@@ -867,7 +907,7 @@ static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
+ 
+        for (cs = 0; cs < pvt->cs_count; cs++) {
+                reg = K8_DCSB0 + (cs * 4);
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg,
+                                                &pvt->dcsb0[cs]);
+                if (unlikely(err))
+                        debugf0("Reading K8_DCSB0[%d] failed\n", cs);
+@@ -878,7 +918,7 @@ static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
+                /* If DCT are NOT ganged, then read in DCT1's base */
+                if (boot_cpu_data.x86 >= 0x10 && !dct_ganging_enabled(pvt)) {
+                        reg = F10_DCSB1 + (cs * 4);
+-                       err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
++                       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg,
+                                                        &pvt->dcsb1[cs]);
+                        if (unlikely(err))
+                                debugf0("Reading F10_DCSB1[%d] failed\n", cs);
+@@ -892,7 +932,7 @@ static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
+ 
+        for (cs = 0; cs < pvt->num_dcsm; cs++) {
+                reg = K8_DCSM0 + (cs * 4);
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg,
+                                        &pvt->dcsm0[cs]);
+                if (unlikely(err))
+                        debugf0("Reading K8_DCSM0 failed\n");
+@@ -903,7 +943,7 @@ static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
+                /* If DCT are NOT ganged, then read in DCT1's mask */
+                if (boot_cpu_data.x86 >= 0x10 && !dct_ganging_enabled(pvt)) {
+                        reg = F10_DCSM1 + (cs * 4);
+-                       err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
++                       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, reg,
+                                        &pvt->dcsm1[cs]);
+                        if (unlikely(err))
+                                debugf0("Reading F10_DCSM1[%d] failed\n", cs);
+@@ -953,11 +993,11 @@ static int f10_early_channel_count(struct amd64_pvt *pvt)
+        int i, j;
+        u32 dbam;
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_1, &pvt->dclr1);
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCLR_1, &pvt->dclr1);
+        if (err)
+                goto err_reg;
+ 
+@@ -984,7 +1024,7 @@ static int f10_early_channel_count(struct amd64_pvt *pvt)
+         * both controllers since DIMMs can be placed in either one.
+         */
+        for (i = 0; i < ARRAY_SIZE(dbams); i++) {
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, dbams[i], &dbam);
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, dbams[i], &dbam);
+                if (err)
+                        goto err_reg;
+ 
+@@ -1022,11 +1062,11 @@ static void amd64_setup(struct amd64_pvt *pvt)
+ {
+        u32 reg;
+ 
+-       pci_read_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
++       edac_pci_read_cfg_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
+ 
+        pvt->flags.cf8_extcfg = !!(reg & F10_NB_CFG_LOW_ENABLE_EXT_CFG);
+        reg |= F10_NB_CFG_LOW_ENABLE_EXT_CFG;
+-       pci_write_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, reg);
++       edac_pci_write_cfg_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, reg);
+ }
+ 
+ /* Restore the extended configuration access via 0xCF8 feature */
+@@ -1034,12 +1074,12 @@ static void amd64_teardown(struct amd64_pvt *pvt)
+ {
+        u32 reg;
+ 
+-       pci_read_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
++       edac_pci_read_cfg_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
+ 
+        reg &= ~F10_NB_CFG_LOW_ENABLE_EXT_CFG;
+        if (pvt->flags.cf8_extcfg)
+                reg |= F10_NB_CFG_LOW_ENABLE_EXT_CFG;
+-       pci_write_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, reg);
++       edac_pci_write_cfg_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, reg);
+ }
+ 
+ static u64 f10_get_error_address(struct mem_ctl_info *mci,
+@@ -1063,10 +1103,10 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
+        high_offset = F10_DRAM_BASE_HIGH + (dram << 3);
+ 
+        /* read the 'raw' DRAM BASE Address register */
+-       pci_read_config_dword(pvt->addr_f1_ctl, low_offset, &low_base);
++       edac_pci_read_cfg_dword(pvt->addr_f1_ctl, low_offset, &low_base);
+ 
+        /* Read from the ECS data register */
+-       pci_read_config_dword(pvt->addr_f1_ctl, high_offset, &high_base);
++       edac_pci_read_cfg_dword(pvt->addr_f1_ctl, high_offset, &high_base);
+ 
+        /* Extract parts into separate data entries */
+        pvt->dram_rw_en[dram] = (low_base & 0x3);
+@@ -1083,10 +1123,10 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
+        high_offset = F10_DRAM_LIMIT_HIGH + (dram << 3);
+ 
+        /* read the 'raw' LIMIT registers */
+-       pci_read_config_dword(pvt->addr_f1_ctl, low_offset, &low_limit);
++       edac_pci_read_cfg_dword(pvt->addr_f1_ctl, low_offset, &low_limit);
+ 
+        /* Read from the ECS data register for the HIGH portion */
+-       pci_read_config_dword(pvt->addr_f1_ctl, high_offset, &high_limit);
++       edac_pci_read_cfg_dword(pvt->addr_f1_ctl, high_offset, &high_limit);
+ 
+        debugf0("  HW Regs: BASE=0x%08x-%08x      LIMIT=  0x%08x-%08x\n",
+                high_base, low_base, high_limit, low_limit);
+@@ -1107,7 +1147,7 @@ static void f10_read_dram_ctl_register(struct amd64_pvt *pvt)
+ {
+        int err = 0;
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_LOW,
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_LOW,
+                                    &pvt->dram_ctl_select_low);
+        if (err) {
+                debugf0("Reading F10_DCTL_SEL_LOW failed\n");
+@@ -1127,7 +1167,7 @@ static void f10_read_dram_ctl_register(struct amd64_pvt *pvt)
+                        dct_sel_interleave_addr(pvt));
+        }
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_HIGH,
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_HIGH,
+                                    &pvt->dram_ctl_select_high);
+        if (err)
+                debugf0("Reading F10_DCTL_SEL_HIGH failed\n");
+@@ -1719,7 +1759,7 @@ static int amd64_get_error_info_regs(struct mem_ctl_info *mci,
+        pvt = mci->pvt_info;
+        misc_f3_ctl = pvt->misc_f3_ctl;
+ 
+-       err = pci_read_config_dword(misc_f3_ctl, K8_NBSH, &regs->nbsh);
++       err = edac_pci_read_cfg_dword(misc_f3_ctl, K8_NBSH, &regs->nbsh);
+        if (err)
+                goto err_reg;
+ 
+@@ -1727,19 +1767,19 @@ static int amd64_get_error_info_regs(struct mem_ctl_info *mci,
+                return 0;
+ 
+        /* valid error, read remaining error information registers */
+-       err = pci_read_config_dword(misc_f3_ctl, K8_NBSL, &regs->nbsl);
++       err = edac_pci_read_cfg_dword(misc_f3_ctl, K8_NBSL, &regs->nbsl);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(misc_f3_ctl, K8_NBEAL, &regs->nbeal);
++       err = edac_pci_read_cfg_dword(misc_f3_ctl, K8_NBEAL, &regs->nbeal);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(misc_f3_ctl, K8_NBEAH, &regs->nbeah);
++       err = edac_pci_read_cfg_dword(misc_f3_ctl, K8_NBEAH, &regs->nbeah);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(misc_f3_ctl, K8_NBCFG, &regs->nbcfg);
++       err = edac_pci_read_cfg_dword(misc_f3_ctl, K8_NBCFG, &regs->nbcfg);
+        if (err)
+                goto err_reg;
+ 
+@@ -2046,7 +2086,7 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
+ 
+        amd64_cpu_display_info(pvt);
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCAP, &pvt->nbcap);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCAP, &pvt->nbcap);
+        if (err)
+                goto err_reg;
+ 
+@@ -2086,32 +2126,32 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
+ 
+        amd64_read_dct_base_mask(pvt);
+ 
+-       err = pci_read_config_dword(pvt->addr_f1_ctl, K8_DHAR, &pvt->dhar);
++       err = edac_pci_read_cfg_dword(pvt->addr_f1_ctl, K8_DHAR, &pvt->dhar);
+        if (err)
+                goto err_reg;
+ 
+        amd64_read_dbam_reg(pvt);
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl,
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl,
+                                F10_ONLINE_SPARE, &pvt->online_spare);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
+        if (err)
+                goto err_reg;
+ 
+-       err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCHR_0, &pvt->dchr0);
++       err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCHR_0, &pvt->dchr0);
+        if (err)
+                goto err_reg;
+ 
+        if (!dct_ganging_enabled(pvt)) {
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_1,
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCLR_1,
+                                                &pvt->dclr1);
+                if (err)
+                        goto err_reg;
+ 
+-               err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCHR_1,
++               err = edac_pci_read_cfg_dword(pvt->dram_f2_ctl, F10_DCHR_1,
+                                                &pvt->dchr1);
+                if (err)
+                        goto err_reg;
+@@ -2201,7 +2241,7 @@ static int amd64_init_csrows(struct mem_ctl_info *mci)
+ 
+        pvt = mci->pvt_info;
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &pvt->nbcfg);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCFG, &pvt->nbcfg);
+        if (err)
+                debugf0("Reading K8_NBCFG failed\n");
+ 
+@@ -2389,7 +2429,7 @@ static void amd64_enable_ecc_error_reporting(struct mem_ctl_info *mci)
+                "'ecc_enable_override' parameter is active, "
+                "Enabling AMD ECC hardware now: CAUTION\n");
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
+        if (err)
+                debugf0("Reading K8_NBCTL failed\n");
+ 
+@@ -2398,13 +2438,13 @@ static void amd64_enable_ecc_error_reporting(struct mem_ctl_info *mci)
+        pvt->nbctl_mcgctl_saved = 1;
+ 
+        value |= mask;
+-       pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
++       edac_pci_write_cfg_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
+ 
+        if (amd64_toggle_ecc_err_reporting(pvt, ON))
+                amd64_printk(KERN_WARNING, "Error enabling ECC reporting over "
+                                           "MCGCTL!\n");
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
+        if (err)
+                debugf0("Reading K8_NBCFG failed\n");
+ 
+@@ -2419,9 +2459,9 @@ static void amd64_enable_ecc_error_reporting(struct mem_ctl_info *mci)
+ 
+                /* Attempt to turn on DRAM ECC Enable */
+                value |= K8_NBCFG_ECC_ENABLE;
+-               pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCFG, value);
++               edac_pci_write_cfg_dword(pvt->misc_f3_ctl, K8_NBCFG, value);
+ 
+-               err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
++               err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
+                if (err)
+                        debugf0("Reading K8_NBCFG failed\n");
+ 
+@@ -2449,14 +2489,14 @@ static void amd64_restore_ecc_error_reporting(struct amd64_pvt *pvt)
+        if (!pvt->nbctl_mcgctl_saved)
+                return;
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
+        if (err)
+                debugf0("Reading K8_NBCTL failed\n");
+        value &= ~mask;
+        value |= pvt->old_nbctl;
+ 
+        /* restore the NB Enable MCGCTL bit */
+-       pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
++       edac_pci_write_cfg_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
+ 
+        if (amd64_toggle_ecc_err_reporting(pvt, OFF))
+                amd64_printk(KERN_WARNING, "Error restoring ECC reporting over "
+@@ -2481,7 +2521,7 @@ static int amd64_check_ecc_enabled(struct amd64_pvt *pvt)
+        u8 ecc_enabled = 0;
+        bool nb_mce_en = false;
+ 
+-       err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
++       err = edac_pci_read_cfg_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
+        if (err)
+                debugf0("Reading K8_NBCTL failed\n");
+ 
+@@ -2613,7 +2653,7 @@ static int amd64_init_2nd_stage(struct amd64_pvt *pvt)
+ {
+        int node_id = pvt->mc_node_id;
+        struct mem_ctl_info *mci;
+-       int ret;
++       int ret = -ENODEV;
+ 
+        amd64_read_mc_registers(pvt);
+ 
+diff --git a/drivers/edac/amd64_edac.h b/drivers/edac/amd64_edac.h
+index b1606c9..a58bf2b 100644
+--- a/drivers/edac/amd64_edac.h
++++ b/drivers/edac/amd64_edac.h
+@@ -73,6 +73,10 @@
+ #include "edac_mc.h"
+ #include "edac_mce_amd.h"
+ 
++#define EDAC_PCI_CONF1_ADDRESS(bus, devfn, reg) \
++	(0x80000000 | ((reg & 0xF00) << 16) | (bus << 16) \
++	| (devfn << 8) | (reg & 0xFC))
++
+ #define PCI_DEVICE_ID_AMD_10H_NB_MAP    0x1201
+ #define PCI_DEVICE_ID_AMD_10H_NB_DRAM   0x1202
+ #define PCI_DEVICE_ID_AMD_10H_NB_MISC   0x1203

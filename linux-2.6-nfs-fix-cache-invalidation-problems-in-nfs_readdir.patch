@@ -1,0 +1,187 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 28 Aug 2009 14:49:02 -0400
+Subject: [nfs] fix cache invalidation problems in nfs_readdir
+Message-id: 1251485342-24411-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#511170: nfs: fix cache invalidation problems in nfs_readdir()
+Bugzilla: 511170
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Netapp reported the following bug in RHEL5:
+
+The RHEL5.3 client does not always invalidate previously cached
+READDIRPLUS reply pages after individual pages are repopulated with
+fresh results across the wire. When the repopulated page is in the
+middle of the READDIRPLUS stream, and the server replies with less (or
+more) data, it will throw off the cookie matching algorithm. This causes
+the client to miss (or possibly duplicate) entries during getdents
+requests.
+
+They've had customers hit this problem and did the legwork to track
+it down.
+
+The main problem is that nfs_readdir() passes the wrong parameters to
+invalidate_inode_pages2_range(). I've also pulled in a patch that
+should also help when invalidate_inode_pages fail. That made the
+upstream patch apply cleanly and also seems like a reasonable thing to
+fix. The original patch descriptions follow:
+
+---------------------------[snip]-------------------------------
+commit cd9ae2b6a75bb1fa0d370929c2d7a7da1ed719d9
+NFS: Deal with failure of invalidate_inode_pages2()
+
+If invalidate_inode_pages2() fails, then it should in principle just be
+because the current process was signalled.  In that case, we just want to
+ensure that the inode's page cache remains marked as invalid.
+
+Also add a helper to allow the O_DIRECT code to simply mark the page cache as
+invalid once it is finished writing, instead of calling
+invalidate_inode_pages2() itself.
+---------------------------[snip]-------------------------------
+commit 2aac05a91971fbd1bf6cbed78b8731eb7454b9b7
+NFS: Fix readdir cache invalidation
+
+invalidate_inode_pages2_range() takes page offset arguments, not byte
+ranges.
+
+Another thought is that individual pages might perhaps get evicted by VM
+pressure, in which case we might perhaps want to re-read not only the
+evicted page, but all subsequent pages too (in case the server returns
+more/less data per page so that the alignment of the next entry
+changes). We should therefore remove the condition that we only do this on
+page->index==0.
+---------------------------[snip]-------------------------------
+
+Both patches are backports of upstream patches by Trond. They were
+tested by Netapp using a fault injection patch on the client and a
+doctored server that helped to trigger the problem. Netapp's QA
+dept also was unable to reproduce the bug after testing a kernel
+with this patch in their environment.
+
+I've also given this some relatively basic smoke testing here and it
+doesn't seem to have had any major problems.
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index a514521..926e26d 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -198,8 +198,10 @@ int nfs_readdir_filler(nfs_readdir_descriptor_t *desc, struct page *page)
+ 	 * Note: assumes we have exclusive access to this mapping either
+ 	 *	 through inode->i_mutex or some other mechanism.
+ 	 */
+-	if (page->index == 0)
+-		invalidate_inode_pages2_range(inode->i_mapping, PAGE_CACHE_SIZE, -1);
++	if (invalidate_inode_pages2_range(inode->i_mapping, page->index + 1, -1) < 0) {
++		/* Should never happen */
++		nfs_zap_mapping(inode, inode->i_mapping);
++	}
+ 	unlock_page(page);
+ 	return 0;
+  error:
+diff --git a/fs/nfs/direct.c b/fs/nfs/direct.c
+index 8dfe2b0..5a1e41c 100644
+--- a/fs/nfs/direct.c
++++ b/fs/nfs/direct.c
+@@ -511,6 +511,7 @@ static void nfs_direct_write_complete(struct nfs_direct_req *dreq, struct inode
+ 			if (dreq->commit_data != NULL)
+ 				nfs_commit_free(dreq->commit_data);
+ 			nfs_direct_free_writedata(dreq);
++			nfs_zap_mapping(inode, inode->i_mapping);
+ 			nfs_direct_complete(dreq);
+ 	}
+ }
+@@ -530,6 +531,7 @@ static inline void nfs_alloc_commit_data(struct nfs_direct_req *dreq)
+ static void nfs_direct_write_complete(struct nfs_direct_req *dreq, struct inode *inode)
+ {
+ 	nfs_direct_free_writedata(dreq);
++	nfs_zap_mapping(inode, inode->i_mapping);
+ 	nfs_direct_complete(dreq);
+ }
+ #endif
+@@ -835,13 +837,6 @@ ssize_t nfs_file_direct_write(struct kiocb *iocb, const char __user *buf, size_t
+ 
+ 	retval = nfs_direct_write(iocb, (unsigned long) buf, count, pos);
+ 
+-	/*
+-	 *      For aio writes, this invalidation will almost certainly
+-	 *      occur before the writes complete.  Kind of racey.
+-	 */
+-	if (mapping->nrpages)
+-		invalidate_inode_pages2(mapping);
+-
+ 	if (retval > 0)
+ 		iocb->ki_pos = pos + retval;
+ 
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 6df2d14..e73d776 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -152,6 +152,15 @@ void nfs_zap_caches(struct inode *inode)
+ 	nfs_fscache_zap_cookie(inode);
+ }
+ 
++void nfs_zap_mapping(struct inode *inode, struct address_space *mapping)
++{
++	if (mapping->nrpages != 0) {
++		spin_lock(&inode->i_lock);
++		NFS_I(inode)->cache_validity |= NFS_INO_INVALID_DATA;
++		spin_unlock(&inode->i_lock);
++	}
++}
++
+ static void nfs_zap_acl_cache(struct inode *inode)
+ {
+ 	void (*clear_acl_cache)(struct inode *);
+@@ -717,13 +726,20 @@ int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
+ 	if ((nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE)
+ 			|| nfs_attribute_timeout(inode))
+ 		ret = __nfs_revalidate_inode(NFS_SERVER(inode), inode);
++	if (ret < 0)
++		goto out;
+ 
+ 	if (nfsi->cache_validity & NFS_INO_INVALID_DATA) {
+-		nfs_inc_stats(inode, NFSIOS_DATAINVALIDATE);
+-		if (S_ISREG(inode->i_mode))
+-			nfs_sync_mapping(mapping);
+-		invalidate_inode_pages3(mapping);
+-
++		if (mapping->nrpages != 0) {
++			if (S_ISREG(inode->i_mode)) {
++				ret = nfs_sync_mapping(mapping);
++				if (ret < 0)
++					goto out;
++			}
++			ret = invalidate_inode_pages3(mapping);
++			if (ret < 0)
++				goto out;
++		}
+ 		spin_lock(&inode->i_lock);
+ 		nfsi->cache_validity &= ~NFS_INO_INVALID_DATA;
+ 		if (S_ISDIR(inode->i_mode))
+@@ -732,10 +748,12 @@ int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping)
+ 
+ 		nfs_fscache_renew_cookie(inode);
+ 
++		nfs_inc_stats(inode, NFSIOS_DATAINVALIDATE);
+ 		dfprintk(PAGECACHE, "NFS: (%s/%Ld) data cache invalidated\n",
+ 				inode->i_sb->s_id,
+ 				(long long)NFS_FILEID(inode));
+ 	}
++out:
+ 	return ret;
+ }
+ 
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index be3ec3e..1362ab2 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -311,6 +311,7 @@ static inline int nfs_verify_change_attribute(struct inode *dir, unsigned long c
+  * linux/fs/nfs/inode.c
+  */
+ extern int nfs_sync_mapping(struct address_space *mapping);
++extern void nfs_zap_mapping(struct inode *inode, struct address_space *mapping);
+ extern void nfs_zap_caches(struct inode *);
+ extern void nfs_invalidate_atime(struct inode *);
+ extern struct inode *nfs_fhget(struct super_block *, struct nfs_fh *,

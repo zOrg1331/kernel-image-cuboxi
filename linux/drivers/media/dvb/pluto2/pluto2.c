@@ -39,8 +39,6 @@
 #include "dvbdev.h"
 #include "tda1004x.h"
 
-DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
-
 #define DRIVER_NAME		"pluto2"
 
 #define REG_PIDn(n)		((n) << 2)	/* PID n pattern registers */
@@ -116,7 +114,6 @@ struct pluto {
 
 	/* irq */
 	unsigned int overflow;
-	unsigned int dead;
 
 	/* dma */
 	dma_addr_t dma_addr;
@@ -150,15 +147,6 @@ static inline void pluto_rw(struct pluto *pluto, u32 reg, u32 mask, u32 bits)
 	val &= ~mask;
 	val |= bits;
 	writel(val, &pluto->io_mem[reg]);
-}
-
-static void pluto_write_tscr(struct pluto *pluto, u32 val)
-{
-	/* set the number of packets */
-	val &= ~TSCR_ADEF;
-	val |= TS_DMA_PACKETS / 2;
-
-	pluto_writereg(pluto, REG_TSCR, val);
 }
 
 static void pluto_setsda(void *data, int state)
@@ -225,17 +213,17 @@ static void pluto_reset_ts(struct pluto *pluto, int reenable)
 
 	if (val & TSCR_RSTN) {
 		val &= ~TSCR_RSTN;
-		pluto_write_tscr(pluto, val);
+		pluto_writereg(pluto, REG_TSCR, val);
 	}
 	if (reenable) {
 		val |= TSCR_RSTN;
-		pluto_write_tscr(pluto, val);
+		pluto_writereg(pluto, REG_TSCR, val);
 	}
 }
 
 static void pluto_set_dma_addr(struct pluto *pluto)
 {
-	pluto_writereg(pluto, REG_PCAR, pluto->dma_addr);
+	pluto_writereg(pluto, REG_PCAR, cpu_to_le32(pluto->dma_addr));
 }
 
 static int __devinit pluto_dma_map(struct pluto *pluto)
@@ -243,7 +231,7 @@ static int __devinit pluto_dma_map(struct pluto *pluto)
 	pluto->dma_addr = pci_map_single(pluto->pdev, pluto->dma_buf,
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 
-	return pci_dma_mapping_error(pluto->pdev, pluto->dma_addr);
+	return pci_dma_mapping_error(pluto->dma_addr);
 }
 
 static void pluto_dma_unmap(struct pluto *pluto)
@@ -296,20 +284,12 @@ static void pluto_dma_end(struct pluto *pluto, unsigned int nbpackets)
 	 *     but no packets have been transfered.
 	 * [2] Sometimes (actually very often) NBPACKETS stays at zero
 	 *     although one packet has been transfered.
-	 * [3] Sometimes (actually rarely), the card gets into an erroneous
-	 *     mode where it continuously generates interrupts, claiming it
-	 *     has recieved nbpackets>TS_DMA_PACKETS packets, but no packet
-	 *     has been transfered. Only a reset seems to solve this
 	 */
 	if ((nbpackets == 0) || (nbpackets > TS_DMA_PACKETS)) {
 		unsigned int i = 0;
 		while (pluto->dma_buf[i] == 0x47)
 			i += 188;
 		nbpackets = i / 188;
-		if (i == 0) {
-			pluto_reset_ts(pluto, 1);
-			dev_printk(KERN_DEBUG, &pluto->pdev->dev, "resetting TS because of invalid packet counter\n");
-		}
 	}
 
 	dvb_dmx_swfilter_packets(&pluto->demux, pluto->dma_buf, nbpackets);
@@ -326,7 +306,7 @@ static void pluto_dma_end(struct pluto *pluto, unsigned int nbpackets)
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 }
 
-static irqreturn_t pluto_irq(int irq, void *dev_id)
+static irqreturn_t pluto_irq(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct pluto *pluto = dev_id;
 	u32 tscr;
@@ -337,10 +317,8 @@ static irqreturn_t pluto_irq(int irq, void *dev_id)
 		return IRQ_NONE;
 
 	if (tscr == 0xffffffff) {
-		if (pluto->dead == 0)
-			dev_err(&pluto->pdev->dev, "card has hung or been ejected.\n");
-		/* It's dead Jim */
-		pluto->dead = 1;
+		// FIXME: maybe recover somehow
+		dev_err(&pluto->pdev->dev, "card hung up :(\n");
 		return IRQ_HANDLED;
 	}
 
@@ -361,7 +339,7 @@ static irqreturn_t pluto_irq(int irq, void *dev_id)
 	}
 
 	/* ACK the interrupt */
-	pluto_write_tscr(pluto, tscr | TSCR_IACK);
+	pluto_writereg(pluto, REG_TSCR, tscr | TSCR_IACK);
 
 	return IRQ_HANDLED;
 }
@@ -370,6 +348,9 @@ static void __devinit pluto_enable_irqs(struct pluto *pluto)
 {
 	u32 val = pluto_readreg(pluto, REG_TSCR);
 
+	/* set the number of packets */
+	val &= ~TSCR_ADEF;
+	val |= TS_DMA_PACKETS / 2;
 	/* disable AFUL and LOCK interrupts */
 	val |= (TSCR_MSKA | TSCR_MSKL);
 	/* enable DMA and OVERFLOW interrupts */
@@ -377,7 +358,7 @@ static void __devinit pluto_enable_irqs(struct pluto *pluto)
 	/* clear pending interrupts */
 	val |= TSCR_IACK;
 
-	pluto_write_tscr(pluto, val);
+	pluto_writereg(pluto, REG_TSCR, val);
 }
 
 static void pluto_disable_irqs(struct pluto *pluto)
@@ -389,7 +370,7 @@ static void pluto_disable_irqs(struct pluto *pluto)
 	/* clear pending interrupts */
 	val |= TSCR_IACK;
 
-	pluto_write_tscr(pluto, val);
+	pluto_writereg(pluto, REG_TSCR, val);
 }
 
 static int __devinit pluto_hw_init(struct pluto *pluto)
@@ -439,7 +420,7 @@ static inline u32 divide(u32 numerator, u32 denominator)
 	if (denominator == 0)
 		return ~0;
 
-	return DIV_ROUND_CLOSEST(numerator, denominator);
+	return (numerator + denominator / 2) / denominator;
 }
 
 /* LG Innotek TDTE-E001P (Infineon TUA6034) */
@@ -563,7 +544,8 @@ static void __devinit pluto_read_mac(struct pluto *pluto, u8 *mac)
 	mac[4] = (val >> 8) & 0xff;
 	mac[5] = (val >> 0) & 0xff;
 
-	dev_info(&pluto->pdev->dev, "MAC %pM\n", mac);
+	dev_info(&pluto->pdev->dev, "MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 static int __devinit pluto_read_serial(struct pluto *pluto)
@@ -616,7 +598,7 @@ static int __devinit pluto2_probe(struct pci_dev *pdev,
 	/* enable interrupts */
 	pci_write_config_dword(pdev, 0x6c, 0x8000);
 
-	ret = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+	ret = pci_set_dma_mask(pdev, DMA_32BIT_MASK);
 	if (ret < 0)
 		goto err_pci_disable_device;
 
@@ -666,10 +648,9 @@ static int __devinit pluto2_probe(struct pci_dev *pdev,
 		goto err_pluto_hw_exit;
 
 	/* dvb */
-	ret = dvb_register_adapter(&pluto->dvb_adapter, DRIVER_NAME,
-				   THIS_MODULE, &pdev->dev, adapter_nr);
+	ret = dvb_register_adapter(&pluto->dvb_adapter, DRIVER_NAME, THIS_MODULE, &pdev->dev);
 	if (ret < 0)
-		goto err_i2c_del_adapter;
+		goto err_i2c_bit_del_bus;
 
 	dvb_adapter = &pluto->dvb_adapter;
 
@@ -731,8 +712,8 @@ err_dvb_dmx_release:
 	dvb_dmx_release(dvbdemux);
 err_dvb_unregister_adapter:
 	dvb_unregister_adapter(dvb_adapter);
-err_i2c_del_adapter:
-	i2c_del_adapter(&pluto->i2c_adap);
+err_i2c_bit_del_bus:
+	i2c_bit_del_bus(&pluto->i2c_adap);
 err_pluto_hw_exit:
 	pluto_hw_exit(pluto);
 err_free_irq:
@@ -767,7 +748,7 @@ static void __devexit pluto2_remove(struct pci_dev *pdev)
 	dvb_dmxdev_release(&pluto->dmxdev);
 	dvb_dmx_release(dvbdemux);
 	dvb_unregister_adapter(dvb_adapter);
-	i2c_del_adapter(&pluto->i2c_adap);
+	i2c_bit_del_bus(&pluto->i2c_adap);
 	pluto_hw_exit(pluto);
 	free_irq(pdev->irq, pluto);
 	pci_iounmap(pdev, pluto->io_mem);

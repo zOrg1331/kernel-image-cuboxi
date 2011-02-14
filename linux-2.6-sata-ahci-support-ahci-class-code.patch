@@ -1,0 +1,26 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: [RHEL5 patch] SATA AHCI: support AHCI class code
+Date: Mon, 15 Jan 2007 11:57:20 -0500
+Bugzilla: 222674
+Message-Id: <20070115165720.GV31287@devserv.devel.redhat.com>
+Changelog: SATA AHCI: support AHCI class code
+
+
+This last-minute patch helps future-proof the AHCI driver, by supporting
+the AHCI PCI class code in addition to specific PCI IDs.
+
+
+--- linux-2.6.18.noarch/drivers/scsi/ahci.c.orig	2007-01-15 11:54:56.000000000 -0500
++++ linux-2.6.18.noarch/drivers/scsi/ahci.c	2007-01-15 11:55:36.000000000 -0500
+@@ -362,6 +362,10 @@
+ 	{ PCI_VENDOR_ID_NVIDIA, 0x044f, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
+ 	  board_ahci },		/* MCP65 */
+ 
++	/* Generic, PCI class code for AHCI */
++	{ PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
++	  0x010601, 0xffffff, board_ahci },
++
+ 	{ }	/* terminate list */
+ };
+ 
+

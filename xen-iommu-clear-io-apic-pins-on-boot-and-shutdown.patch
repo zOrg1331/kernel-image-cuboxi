@@ -1,0 +1,141 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 7 Apr 2010 10:37:44 -0400
+Subject: [xen] iommu: clear IO-APIC pins on boot and shutdown
+Message-id: <1270636664-23313-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 23937
+O-Subject: [RHEL5.5.z/5.6 PATCH] [xen] iommu: Really clear IO-APIC pins on boot
+	and shutdown when used with an IOMMU
+Bugzilla: 548201
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Bugzilla: 548071
+
+Upstream: http://xenbits.xensource.com/xen-unstable.hg?rev/20650
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2355939
+
+When booted with iommu=on, io_apic_read/write functions call into the
+interrupt remapping code to update the IRTEs. Unfortunately, on boot
+and shutdown, we really want clear_IO_APIC() to sanitize the actual
+IOAPIC RTE, and not just the bits that are active when interrupt
+remapping is enabled. This is particularly a problem on older
+versions of Xen which used the IOAPIC RTE as the canonical source for
+the IRTE index. In that case, clear_IO_APIC() actually causes
+whatever happens to be stored in the RTEs to be used as an IRTE index,
+which can come back and bite us in ioapic_guest_write() if we attempt
+to remove an interrupt that didn't actually exist.
+
+Trivial backport of upstream c/s, the only difference is a context line
+in __io_apic_read (conflict introduced by upstream c/s 19800).
+---
+ arch/x86/io_apic.c        |   26 +++++++++++++++++---------
+ include/asm-x86/io_apic.h |   22 +++++++++++++++-------
+ 2 files changed, 32 insertions(+), 16 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/io_apic.c b/arch/x86/io_apic.c
+index b388973..a25d62d 100644
+--- a/arch/x86/io_apic.c
++++ b/arch/x86/io_apic.c
+@@ -233,27 +233,32 @@ static void unmask_IO_APIC_irq (unsigned int irq)
+     spin_unlock_irqrestore(&ioapic_lock, flags);
+ }
+ 
+-static void clear_IO_APIC_pin(unsigned int apic, unsigned int pin)
+-{
++#define clear_IO_APIC_pin(a,p)     __clear_IO_APIC_pin(a,p,0)
++#define clear_IO_APIC_pin_raw(a,p) __clear_IO_APIC_pin(a,p,1)
++static void __clear_IO_APIC_pin(unsigned int apic, unsigned int pin, int raw)
++{
++    unsigned int (*read)(unsigned int, unsigned int)
++        = raw ? __io_apic_read : io_apic_read;
++    void (*write)(unsigned int, unsigned int, unsigned int)
++        = raw ? __io_apic_write : io_apic_write;
+     struct IO_APIC_route_entry entry;
+     unsigned long flags;
+-	
++    
+     /* Check delivery_mode to be sure we're not clearing an SMI pin */
+     spin_lock_irqsave(&ioapic_lock, flags);
+-    *(((int*)&entry) + 0) = io_apic_read(apic, 0x10 + 2 * pin);
+-    *(((int*)&entry) + 1) = io_apic_read(apic, 0x11 + 2 * pin);
++    *(((int*)&entry) + 0) = (*read)(apic, 0x10 + 2 * pin);
++    *(((int*)&entry) + 1) = (*read)(apic, 0x11 + 2 * pin);
+     spin_unlock_irqrestore(&ioapic_lock, flags);
+     if (entry.delivery_mode == dest_SMI)
+         return;
+-
+     /*
+      * Disable it in the IO-APIC irq-routing table:
+      */
+     memset(&entry, 0, sizeof(entry));
+     entry.mask = 1;
+     spin_lock_irqsave(&ioapic_lock, flags);
+-    io_apic_write(apic, 0x10 + 2 * pin, *(((int *)&entry) + 0));
+-    io_apic_write(apic, 0x11 + 2 * pin, *(((int *)&entry) + 1));
++    (*write)(apic, 0x10 + 2 * pin, *(((int *)&entry) + 0));
++    (*write)(apic, 0x11 + 2 * pin, *(((int *)&entry) + 1));
+     spin_unlock_irqrestore(&ioapic_lock, flags);
+ }
+ 
+@@ -261,9 +266,12 @@ static void clear_IO_APIC (void)
+ {
+     int apic, pin;
+ 
+-    for (apic = 0; apic < nr_ioapics; apic++)
+-        for (pin = 0; pin < nr_ioapic_registers[apic]; pin++)
++    for (apic = 0; apic < nr_ioapics; apic++) {
++        for (pin = 0; pin < nr_ioapic_registers[apic]; pin++) {
+             clear_IO_APIC_pin(apic, pin);
++            clear_IO_APIC_pin_raw(apic, pin);
++        }
++    }
+ }
+ 
+ #ifdef CONFIG_SMP
+diff --git a/include/asm-x86/io_apic.h b/include/asm-x86/io_apic.h
+index 7481f7f..0fec685 100644
+--- a/include/asm-x86/io_apic.h
++++ b/include/asm-x86/io_apic.h
+@@ -128,24 +128,32 @@ extern int mpc_default_type;
+ /* Only need to remap ioapic RTE (reg: 10~3Fh) */
+ #define ioapic_reg_remapped(reg) (iommu_enabled && ((reg) >= 0x10))
+ 
+-static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
++static inline unsigned int __io_apic_read(unsigned int apic, unsigned int reg)
+ {
+-    if (ioapic_reg_remapped(reg))
+-        return io_apic_read_remap_rte(apic, reg);
+-
+ 	*IO_APIC_BASE(apic) = reg;
+ 	return *(IO_APIC_BASE(apic)+4);
+ }
+ 
+-static inline void io_apic_write(unsigned int apic, unsigned int reg, unsigned int value)
++static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
+ {
+-    if (ioapic_reg_remapped(reg))
+-        return iommu_update_ire_from_apic(apic, reg, value);
++	if (ioapic_reg_remapped(reg))
++	    return io_apic_read_remap_rte(apic, reg);
++	return __io_apic_read(apic, reg);
++}
+ 
++static inline void __io_apic_write(unsigned int apic, unsigned int reg, unsigned int value)
++{
+ 	*IO_APIC_BASE(apic) = reg;
+ 	*(IO_APIC_BASE(apic)+4) = value;
+ }
+ 
++static inline void io_apic_write(unsigned int apic, unsigned int reg, unsigned int value)
++{
++        if (ioapic_reg_remapped(reg))
++            return iommu_update_ire_from_apic(apic, reg, value);
++        __io_apic_write(apic, reg, value);
++}
++
+ /*
+  * Re-write a value: to be used for read-modify-write
+  * cycles where the read already set up the index register.

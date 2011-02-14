@@ -47,7 +47,6 @@ enum {
 	cmap_M3B,		/* ATI Rage Mobility M3 Head B */
 	cmap_radeon,		/* ATI Radeon */
 	cmap_gxt2000,		/* IBM GXT2000 */
-	cmap_avivo,		/* ATI R5xx */
 };
 
 struct offb_par {
@@ -59,36 +58,26 @@ struct offb_par {
 
 struct offb_par default_par;
 
+    /*
+     *  Interface used by the world
+     */
+
+static int offb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
+			  u_int transp, struct fb_info *info);
+static int offb_blank(int blank, struct fb_info *info);
+
 #ifdef CONFIG_PPC32
 extern boot_infos_t *boot_infos;
 #endif
 
-/* Definitions used by the Avivo palette hack */
-#define AVIVO_DC_LUT_RW_SELECT                  0x6480
-#define AVIVO_DC_LUT_RW_MODE                    0x6484
-#define AVIVO_DC_LUT_RW_INDEX                   0x6488
-#define AVIVO_DC_LUT_SEQ_COLOR                  0x648c
-#define AVIVO_DC_LUT_PWL_DATA                   0x6490
-#define AVIVO_DC_LUT_30_COLOR                   0x6494
-#define AVIVO_DC_LUT_READ_PIPE_SELECT           0x6498
-#define AVIVO_DC_LUT_WRITE_EN_MASK              0x649c
-#define AVIVO_DC_LUT_AUTOFILL                   0x64a0
-
-#define AVIVO_DC_LUTA_CONTROL                   0x64c0
-#define AVIVO_DC_LUTA_BLACK_OFFSET_BLUE         0x64c4
-#define AVIVO_DC_LUTA_BLACK_OFFSET_GREEN        0x64c8
-#define AVIVO_DC_LUTA_BLACK_OFFSET_RED          0x64cc
-#define AVIVO_DC_LUTA_WHITE_OFFSET_BLUE         0x64d0
-#define AVIVO_DC_LUTA_WHITE_OFFSET_GREEN        0x64d4
-#define AVIVO_DC_LUTA_WHITE_OFFSET_RED          0x64d8
-
-#define AVIVO_DC_LUTB_CONTROL                   0x6cc0
-#define AVIVO_DC_LUTB_BLACK_OFFSET_BLUE         0x6cc4
-#define AVIVO_DC_LUTB_BLACK_OFFSET_GREEN        0x6cc8
-#define AVIVO_DC_LUTB_BLACK_OFFSET_RED          0x6ccc
-#define AVIVO_DC_LUTB_WHITE_OFFSET_BLUE         0x6cd0
-#define AVIVO_DC_LUTB_WHITE_OFFSET_GREEN        0x6cd4
-#define AVIVO_DC_LUTB_WHITE_OFFSET_RED          0x6cd8
+static struct fb_ops offb_ops = {
+	.owner		= THIS_MODULE,
+	.fb_setcolreg	= offb_setcolreg,
+	.fb_blank	= offb_blank,
+	.fb_fillrect	= cfb_fillrect,
+	.fb_copyarea	= cfb_copyarea,
+	.fb_imageblit	= cfb_imageblit,
+};
 
     /*
      *  Set a single color register. The values supplied are already
@@ -168,19 +157,8 @@ static int offb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 		out_le32(par->cmap_adr + 0xb4, (red << 16 | green << 8 | blue));
 		break;
 	case cmap_gxt2000:
-		out_le32(((unsigned __iomem *) par->cmap_adr) + regno,
+		out_le32((unsigned __iomem *) par->cmap_adr + regno,
 			 (red << 16 | green << 8 | blue));
-		break;
-	case cmap_avivo:
-		/* Write to both LUTs for now */
-		writel(1, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-		writeb(regno, par->cmap_adr + AVIVO_DC_LUT_RW_INDEX);
-		writel(((red) << 22) | ((green) << 12) | ((blue) << 2),
-		       par->cmap_adr + AVIVO_DC_LUT_30_COLOR);
-		writel(0, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-		writeb(regno, par->cmap_adr + AVIVO_DC_LUT_RW_INDEX);
-		writel(((red) << 22) | ((green) << 12) | ((blue) << 2),
-		       par->cmap_adr + AVIVO_DC_LUT_30_COLOR);
 		break;
 	}
 
@@ -235,16 +213,8 @@ static int offb_blank(int blank, struct fb_info *info)
 				out_le32(par->cmap_adr + 0xb4, 0);
 				break;
 			case cmap_gxt2000:
-				out_le32(((unsigned __iomem *) par->cmap_adr) + i,
+				out_le32((unsigned __iomem *) par->cmap_adr + i,
 					 0);
-				break;
-			case cmap_avivo:
-				writel(1, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-				writeb(i, par->cmap_adr + AVIVO_DC_LUT_RW_INDEX);
-				writel(0, par->cmap_adr + AVIVO_DC_LUT_30_COLOR);
-				writel(0, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-				writeb(i, par->cmap_adr + AVIVO_DC_LUT_RW_INDEX);
-				writel(0, par->cmap_adr + AVIVO_DC_LUT_30_COLOR);
 				break;
 			}
 	} else
@@ -252,134 +222,23 @@ static int offb_blank(int blank, struct fb_info *info)
 	return 0;
 }
 
-static int offb_set_par(struct fb_info *info)
-{
-	struct offb_par *par = (struct offb_par *) info->par;
-
-	/* On avivo, initialize palette control */
-	if (par->cmap_type == cmap_avivo) {
-		writel(0, par->cmap_adr + AVIVO_DC_LUTA_CONTROL);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTA_BLACK_OFFSET_BLUE);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTA_BLACK_OFFSET_GREEN);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTA_BLACK_OFFSET_RED);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTA_WHITE_OFFSET_BLUE);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTA_WHITE_OFFSET_GREEN);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTA_WHITE_OFFSET_RED);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTB_CONTROL);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTB_BLACK_OFFSET_BLUE);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTB_BLACK_OFFSET_GREEN);
-		writel(0, par->cmap_adr + AVIVO_DC_LUTB_BLACK_OFFSET_RED);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTB_WHITE_OFFSET_BLUE);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTB_WHITE_OFFSET_GREEN);
-		writel(0x0000ffff, par->cmap_adr + AVIVO_DC_LUTB_WHITE_OFFSET_RED);
-		writel(1, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-		writel(0, par->cmap_adr + AVIVO_DC_LUT_RW_MODE);
-		writel(0x0000003f, par->cmap_adr + AVIVO_DC_LUT_WRITE_EN_MASK);
-		writel(0, par->cmap_adr + AVIVO_DC_LUT_RW_SELECT);
-		writel(0, par->cmap_adr + AVIVO_DC_LUT_RW_MODE);
-		writel(0x0000003f, par->cmap_adr + AVIVO_DC_LUT_WRITE_EN_MASK);
-	}
-	return 0;
-}
-
-static void offb_destroy(struct fb_info *info)
-{
-	if (info->screen_base)
-		iounmap(info->screen_base);
-	release_mem_region(info->aperture_base, info->aperture_size);
-	framebuffer_release(info);
-}
-
-static struct fb_ops offb_ops = {
-	.owner		= THIS_MODULE,
-	.fb_destroy	= offb_destroy,
-	.fb_setcolreg	= offb_setcolreg,
-	.fb_set_par	= offb_set_par,
-	.fb_blank	= offb_blank,
-	.fb_fillrect	= cfb_fillrect,
-	.fb_copyarea	= cfb_copyarea,
-	.fb_imageblit	= cfb_imageblit,
-};
 
 static void __iomem *offb_map_reg(struct device_node *np, int index,
 				  unsigned long offset, unsigned long size)
 {
-	const u32 *addrp;
-	u64 asize, taddr;
-	unsigned int flags;
+	struct resource r;
 
-	addrp = of_get_pci_address(np, index, &asize, &flags);
-	if (addrp == NULL)
-		addrp = of_get_address(np, index, &asize, &flags);
-	if (addrp == NULL)
-		return NULL;
-	if ((flags & (IORESOURCE_IO | IORESOURCE_MEM)) == 0)
-		return NULL;
-	if ((offset + size) > asize)
-		return NULL;
-	taddr = of_translate_address(np, addrp);
-	if (taddr == OF_BAD_ADDR)
-		return NULL;
-	return ioremap(taddr + offset, size);
-}
-
-static void offb_init_palette_hacks(struct fb_info *info, struct device_node *dp,
-				    const char *name, unsigned long address)
-{
-	struct offb_par *par = (struct offb_par *) info->par;
-
-	if (dp && !strncmp(name, "ATY,Rage128", 11)) {
-		par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
-		if (par->cmap_adr)
-			par->cmap_type = cmap_r128;
-	} else if (dp && (!strncmp(name, "ATY,RageM3pA", 12)
-			  || !strncmp(name, "ATY,RageM3p12A", 14))) {
-		par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
-		if (par->cmap_adr)
-			par->cmap_type = cmap_M3A;
-	} else if (dp && !strncmp(name, "ATY,RageM3pB", 12)) {
-		par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
-		if (par->cmap_adr)
-			par->cmap_type = cmap_M3B;
-	} else if (dp && !strncmp(name, "ATY,Rage6", 9)) {
-		par->cmap_adr = offb_map_reg(dp, 1, 0, 0x1fff);
-		if (par->cmap_adr)
-			par->cmap_type = cmap_radeon;
-	} else if (!strncmp(name, "ATY,", 4)) {
-		unsigned long base = address & 0xff000000UL;
-		par->cmap_adr =
-			ioremap(base + 0x7ff000, 0x1000) + 0xcc0;
-		par->cmap_data = par->cmap_adr + 1;
-		par->cmap_type = cmap_m64;
-	} else if (dp && (of_device_is_compatible(dp, "pci1014,b7") ||
-			  of_device_is_compatible(dp, "pci1014,21c"))) {
-		par->cmap_adr = offb_map_reg(dp, 0, 0x6000, 0x1000);
-		if (par->cmap_adr)
-			par->cmap_type = cmap_gxt2000;
-	} else if (dp && !strncmp(name, "vga,Display-", 12)) {
-		/* Look for AVIVO initialized by SLOF */
-		struct device_node *pciparent = of_get_parent(dp);
-		const u32 *vid, *did;
-		vid = of_get_property(pciparent, "vendor-id", NULL);
-		did = of_get_property(pciparent, "device-id", NULL);
-		/* This will match most R5xx */
-		if (vid && did && *vid == 0x1002 &&
-		    ((*did >= 0x7100 && *did < 0x7800) ||
-		     (*did >= 0x9400))) {
-			par->cmap_adr = offb_map_reg(pciparent, 2, 0, 0x10000);
-			if (par->cmap_adr)
-				par->cmap_type = cmap_avivo;
-		}
-		of_node_put(pciparent);
-	}
-	info->fix.visual = (par->cmap_type != cmap_unknown) ?
-		FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_STATIC_PSEUDOCOLOR;
+	if (of_address_to_resource(np, index, &r))
+		return 0;
+	if ((r.start + offset + size) > r.end)
+		return 0;
+	return ioremap(r.start + offset, size);
 }
 
 static void __init offb_init_fb(const char *name, const char *full_name,
 				int width, int height, int depth,
 				int pitch, unsigned long address,
-				int foreign_endian, struct device_node *dp)
+				struct device_node *dp)
 {
 	unsigned long res_size = pitch * height * (depth + 7) / 8;
 	struct offb_par *par = &default_par;
@@ -387,6 +246,7 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	struct fb_fix_screeninfo *fix;
 	struct fb_var_screeninfo *var;
 	struct fb_info *info;
+	int size;
 
 	if (!request_mem_region(res_start, res_size, "offb"))
 		return;
@@ -401,16 +261,18 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 		return;
 	}
 
-	info = framebuffer_alloc(sizeof(u32) * 16, NULL);
+	size = sizeof(struct fb_info) + sizeof(u32) * 17;
+
+	info = kmalloc(size, GFP_ATOMIC);
 	
 	if (info == 0) {
 		release_mem_region(res_start, res_size);
 		return;
 	}
+	memset(info, 0, size);
 
 	fix = &info->fix;
 	var = &info->var;
-	info->par = par;
 
 	strcpy(fix->id, "OFfb ");
 	strncat(fix->id, name, sizeof(fix->id) - sizeof("OFfb "));
@@ -426,9 +288,39 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	fix->type_aux = 0;
 
 	par->cmap_type = cmap_unknown;
-	if (depth == 8)
-		offb_init_palette_hacks(info, dp, name, address);
-	else
+	if (depth == 8) {
+		/* Palette hacks disabled for now */
+		if (dp && !strncmp(name, "ATY,Rage128", 11)) {
+			par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
+			if (par->cmap_adr)
+				par->cmap_type = cmap_r128;
+		} else if (dp && (!strncmp(name, "ATY,RageM3pA", 12)
+				  || !strncmp(name, "ATY,RageM3p12A", 14))) {
+			par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
+			if (par->cmap_adr)
+				par->cmap_type = cmap_M3A;
+		} else if (dp && !strncmp(name, "ATY,RageM3pB", 12)) {
+			par->cmap_adr = offb_map_reg(dp, 2, 0, 0x1fff);
+			if (par->cmap_adr)
+				par->cmap_type = cmap_M3B;
+		} else if (dp && !strncmp(name, "ATY,Rage6", 9)) {
+			par->cmap_adr = offb_map_reg(dp, 1, 0, 0x1fff);
+			if (par->cmap_adr)
+				par->cmap_type = cmap_radeon;
+		} else if (!strncmp(name, "ATY,", 4)) {
+			unsigned long base = address & 0xff000000UL;
+			par->cmap_adr =
+			    ioremap(base + 0x7ff000, 0x1000) + 0xcc0;
+			par->cmap_data = par->cmap_adr + 1;
+			par->cmap_type = cmap_m64;
+		} else if (dp && device_is_compatible(dp, "pci1014,b7")) {
+			par->cmap_adr = offb_map_reg(dp, 0, 0x6000, 0x1000);
+			if (par->cmap_adr)
+				par->cmap_type = cmap_gxt2000;
+		}
+		fix->visual = (par->cmap_type != cmap_unknown) ?
+			FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_STATIC_PSEUDOCOLOR;
+	} else
 		fix->visual = FB_VISUAL_TRUECOLOR;
 
 	var->xoffset = var->yoffset = 0;
@@ -491,22 +383,16 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	var->sync = 0;
 	var->vmode = FB_VMODE_NONINTERLACED;
 
-	/* set offb aperture size for generic probing */
-	info->aperture_base = address;
-	info->aperture_size = fix->smem_len;
-
 	info->fbops = &offb_ops;
 	info->screen_base = ioremap(address, fix->smem_len);
+	info->par = par;
 	info->pseudo_palette = (void *) (info + 1);
-	info->flags = FBINFO_DEFAULT | FBINFO_MISC_FIRMWARE | foreign_endian;
+	info->flags = FBINFO_DEFAULT;
 
 	fb_alloc_cmap(&info->cmap, 256, 0);
 
 	if (register_framebuffer(info) < 0) {
-		iounmap(par->cmap_adr);
-		par->cmap_adr = NULL;
-		iounmap(info->screen_base);
-		framebuffer_release(info);
+		kfree(info);
 		release_mem_region(res_start, res_size);
 		return;
 	}
@@ -523,40 +409,31 @@ static void __init offb_init_nodriver(struct device_node *dp, int no_real_node)
 	unsigned int flags, rsize, addr_prop = 0;
 	unsigned long max_size = 0;
 	u64 rstart, address = OF_BAD_ADDR;
-	const u32 *pp, *addrp, *up;
+	u32 *pp, *addrp, *up;
 	u64 asize;
-	int foreign_endian = 0;
 
-#ifdef __BIG_ENDIAN
-	if (of_get_property(dp, "little-endian", NULL))
-		foreign_endian = FBINFO_FOREIGN_ENDIAN;
-#else
-	if (of_get_property(dp, "big-endian", NULL))
-		foreign_endian = FBINFO_FOREIGN_ENDIAN;
-#endif
-
-	pp = of_get_property(dp, "linux,bootx-depth", &len);
+	pp = (u32 *)get_property(dp, "linux,bootx-depth", &len);
 	if (pp == NULL)
-		pp = of_get_property(dp, "depth", &len);
+		pp = (u32 *)get_property(dp, "depth", &len);
 	if (pp && len == sizeof(u32))
 		depth = *pp;
 
-	pp = of_get_property(dp, "linux,bootx-width", &len);
+	pp = (u32 *)get_property(dp, "linux,bootx-width", &len);
 	if (pp == NULL)
-		pp = of_get_property(dp, "width", &len);
+		pp = (u32 *)get_property(dp, "width", &len);
 	if (pp && len == sizeof(u32))
 		width = *pp;
 
-	pp = of_get_property(dp, "linux,bootx-height", &len);
+	pp = (u32 *)get_property(dp, "linux,bootx-height", &len);
 	if (pp == NULL)
-		pp = of_get_property(dp, "height", &len);
+		pp = (u32 *)get_property(dp, "height", &len);
 	if (pp && len == sizeof(u32))
 		height = *pp;
 
-	pp = of_get_property(dp, "linux,bootx-linebytes", &len);
+	pp = (u32 *)get_property(dp, "linux,bootx-linebytes", &len);
 	if (pp == NULL)
-		pp = of_get_property(dp, "linebytes", &len);
-	if (pp && len == sizeof(u32) && (*pp != 0xffffffffu))
+		pp = (u32 *)get_property(dp, "linebytes", &len);
+	if (pp && len == sizeof(u32))
 		pitch = *pp;
 	else
 		pitch = width * ((depth + 7) / 8);
@@ -573,9 +450,9 @@ static void __init offb_init_nodriver(struct device_node *dp, int no_real_node)
 	 * ranges and pick one that is both big enough and if possible encloses
 	 * the "address" property. If none match, we pick the biggest
 	 */
-	up = of_get_property(dp, "linux,bootx-addr", &len);
+	up = (u32 *)get_property(dp, "linux,bootx-addr", &len);
 	if (up == NULL)
-		up = of_get_property(dp, "address", &len);
+		up = (u32 *)get_property(dp, "address", &len);
 	if (up && len == sizeof(u32))
 		addr_prop = *up;
 
@@ -619,7 +496,7 @@ static void __init offb_init_nodriver(struct device_node *dp, int no_real_node)
 		offb_init_fb(no_real_node ? "bootx" : dp->name,
 			     no_real_node ? "display" : dp->full_name,
 			     width, height, depth, pitch, address,
-			     foreign_endian, no_real_node ? NULL : dp);
+			     no_real_node ? dp : NULL);
 	}
 }
 
@@ -631,7 +508,7 @@ static int __init offb_init(void)
 		return -ENODEV;
 
 	/* Check if we have a MacOS display without a node spec */
-	if (of_get_property(of_chosen, "linux,bootx-noscreen", NULL) != NULL) {
+	if (get_property(of_chosen, "linux,bootx-noscreen", NULL) != NULL) {
 		/* The old code tried to work out which node was the MacOS
 		 * display based on the address. I'm dropping that since the
 		 * lack of a node spec only happens with old BootX versions
@@ -642,14 +519,14 @@ static int __init offb_init(void)
 	}
 
 	for (dp = NULL; (dp = of_find_node_by_type(dp, "display"));) {
-		if (of_get_property(dp, "linux,opened", NULL) &&
-		    of_get_property(dp, "linux,boot-display", NULL)) {
+		if (get_property(dp, "linux,opened", NULL) &&
+		    get_property(dp, "linux,boot-display", NULL)) {
 			boot_disp = dp;
 			offb_init_nodriver(dp, 0);
 		}
 	}
 	for (dp = NULL; (dp = of_find_node_by_type(dp, "display"));) {
-		if (of_get_property(dp, "linux,opened", NULL) &&
+		if (get_property(dp, "linux,opened", NULL) &&
 		    dp != boot_disp)
 			offb_init_nodriver(dp, 0);
 	}

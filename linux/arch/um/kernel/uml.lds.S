@@ -1,5 +1,4 @@
 #include <asm-generic/vmlinux.lds.h>
-#include <asm/page.h>
 
 OUTPUT_FORMAT(ELF_FORMAT)
 OUTPUT_ARCH(ELF_ARCH)
@@ -19,39 +18,47 @@ SECTIONS
 
   . = START + SIZEOF_HEADERS;
 
-  _text = .;
+#ifdef MODE_TT
+  .remap_data : { UNMAP_PATH (.data .bss) }
+  .remap : { UNMAP_PATH (.text) }
+
+  . = ALIGN(4096);		/* Init code and data */
+#endif
+
   _stext = .;
   __init_begin = .;
-  INIT_TEXT_SECTION(PAGE_SIZE)
-  . = ALIGN(PAGE_SIZE);
+  .init.text : {
+	_sinittext = .;
+	*(.init.text)
+	_einittext = .;
+  }
+  . = ALIGN(4096);
 
   .text      :
   {
-    TEXT_TEXT
+    *(.text)
     SCHED_TEXT
     LOCK_TEXT
     *(.fixup)
     /* .gnu.warning sections are handled specially by elf32.em.  */
     *(.gnu.warning)
     *(.gnu.linkonce.t*)
-  }
 
-  . = ALIGN(PAGE_SIZE);
-  .syscall_stub : {
-	__syscall_stub_start = .;
-	*(.__syscall_stub*)
-	__syscall_stub_end = .;
+    . = ALIGN(4096);
+    __syscall_stub_start = .;
+    *(.__syscall_stub*)
+    __syscall_stub_end = .;
+    . = ALIGN(4096);
   }
 
   #include "asm/common.lds.S"
 
-  init.data : { INIT_DATA }
+  init.data : { *(init.data) }
   .data    :
   {
-    INIT_TASK_DATA(KERNEL_STACK_SIZE)
-    . = ALIGN(KERNEL_STACK_SIZE);
-    *(.data.init_irqstack)
-    DATA_DATA
+    . = ALIGN(KERNEL_STACK_SIZE);		/* init_task */
+    *(.data.init_task)
+    *(.data)
     *(.gnu.linkonce.d*)
     CONSTRUCTORS
   }
@@ -75,17 +82,24 @@ SECTIONS
   .sdata     : { *(.sdata) }
   _edata  =  .;
   PROVIDE (edata = .);
-  . = ALIGN(PAGE_SIZE);
-  __bss_start = .;
-  PROVIDE(_bss_start = .);
-  SBSS(0)
-  BSS(0)
+  . = ALIGN(0x1000);
+  .sbss      :
+  {
+   __bss_start = .;
+   PROVIDE(_bss_start = .);
+   *(.sbss)
+   *(.scommon)
+  }
+  .bss       :
+  {
+   *(.dynbss)
+   *(.bss)
+   *(COMMON)
+  }
   _end = .;
   PROVIDE (end = .);
 
   STABS_DEBUG
 
   DWARF_DEBUG
-
-  DISCARDS
 }

@@ -1,0 +1,122 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] Issue 126094 PCI: unable to reserve  mem region on module reload
+Date: Tue, 10 Jul 2007 15:24:51 -0400 (EDT)
+Bugzilla: 247701 247400
+Message-Id: <Pine.LNX.4.64.0707101524030.18157@squad5-lp1.lab.boston.redhat.com>
+Changelog: [PCI] unable to reserve mem region on module reload
+
+
+Description:
+------------
+This bug pulls back some missing devres pieces from upstream that need to
+accompany the recent changes made to the RHEL 5u1 kernel.  The  missing pieces
+cause "region_mask" to be always zero in pcim_release() and fail to release
+device resources properly.  This patch adds the missing devres bits to
+drivers/pci/pci.c. 
+
+The bug can be seen by simply loading, unloading and reloading module
+pata_pdc2027x on a system with relevant hardware.  The second load results in:
+  pata_pdc2027x 0000:cc:01.0: version 0.9 
+  PCI: Unable to reserve mem region #6:4000@40068000000 for device 0000:cc:01.0
+  pata_pdc2027x: probe of 0000:cc:01.0 failed with error 
+
+RHEL Version Found:
+-------------------
+This bug was found in RHEL 5.1 Beta
+
+Upstream Status:
+----------------
+This functionality is backported from upstream.
+
+Test Status:
+------------
+To ensure cross platform build, this code has been built with brew --scratch on
+top of 2.6.18-32.el5.  Its results are availble at [1].
+
+Albert Lee of IBM has tested this code to verify it is working and that load,
+unload, reload of the pata_pdc2027x driver works as it should.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+---
+ drivers/pci/pci.c |   27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+--- linux-2.6.18.i386/drivers/pci/pci.c.orig	2007-07-03 17:17:33.000000000 +0800
++++ linux-2.6.18.i386/drivers/pci/pci.c	2007-07-09 16:27:05.000000000 +0800
+@@ -772,8 +772,13 @@ void __attribute__ ((weak)) pcibios_disa
+ void
+ pci_disable_device(struct pci_dev *dev)
+ {
++	struct pci_devres *dr;
+ 	u16 pci_command;
+ 
++	dr = find_pci_dr(dev);
++	if (dr)
++		dr->enabled = 0;
++
+ 	if (dev->msi_enabled)
+ 		disable_msi_mode(dev, pci_find_capability(dev, PCI_CAP_ID_MSI),
+ 			PCI_CAP_ID_MSI);
+@@ -898,6 +903,8 @@ pci_get_interrupt_pin(struct pci_dev *de
+  */
+ void pci_release_region(struct pci_dev *pdev, int bar)
+ {
++	struct pci_devres *dr;
++
+ 	if (pci_resource_len(pdev, bar) == 0)
+ 		return;
+ 	if (pci_resource_flags(pdev, bar) & IORESOURCE_IO)
+@@ -906,6 +913,10 @@ void pci_release_region(struct pci_dev *
+ 	else if (pci_resource_flags(pdev, bar) & IORESOURCE_MEM)
+ 		release_mem_region(pci_resource_start(pdev, bar),
+ 				pci_resource_len(pdev, bar));
++
++	dr = find_pci_dr(pdev);
++	if (dr)
++		dr->region_mask &= ~(1 << bar);
+ }
+ 
+ /**
+@@ -924,6 +935,8 @@ void pci_release_region(struct pci_dev *
+  */
+ int pci_request_region(struct pci_dev *pdev, int bar, const char *res_name)
+ {
++	struct pci_devres *dr;
++
+ 	if (pci_resource_len(pdev, bar) == 0)
+ 		return 0;
+ 		
+@@ -937,7 +950,11 @@ int pci_request_region(struct pci_dev *p
+ 				        pci_resource_len(pdev, bar), res_name))
+ 			goto err_out;
+ 	}
+-	
++
++	dr = find_pci_dr(pdev);
++	if (dr)
++		dr->region_mask |= 1 << bar;
++
+ 	return 0;
+ 
+ err_out:
+@@ -1137,7 +1154,15 @@ pci_intx(struct pci_dev *pdev, int enabl
+ 	}
+ 
+ 	if (new != pci_command) {
++		struct pci_devres *dr;
++
+ 		pci_write_config_word(pdev, PCI_COMMAND, new);
++
++		dr = find_pci_dr(pdev);
++		if (dr && !dr->restore_intx) {
++			dr->restore_intx = 1;
++			dr->orig_intx = !enable;
++		}
+ 	}
+ }
+ 
+
+

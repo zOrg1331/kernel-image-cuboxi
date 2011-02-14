@@ -1,0 +1,51 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Mon, 7 Apr 2008 00:13:23 +0200
+Subject: [crytpo] use scatterwalk_sg_next for xcbc
+Message-id: 20080406221323.GA24828@lsx.localdomain
+O-Subject: [RHEL5.2 PATCH] BZ#439874: Use scatterwalk_sg_next() for xcbc
+Bugzilla: 439874
+
+This patch fixes xcbc in RHEL which is required for DoD
+certification. The patch has been posted and accepted
+upstream already.
+
+Please ACK.
+
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/crypto/xcbc.c b/crypto/xcbc.c
+index e822111..9316b07 100644
+--- a/crypto/xcbc.c
++++ b/crypto/xcbc.c
+@@ -116,13 +116,11 @@ static int crypto_xcbc_digest_update2(struct hash_desc *pdesc,
+ 	struct crypto_xcbc_ctx *ctx = crypto_hash_ctx_aligned(parent);
+ 	struct crypto_cipher *tfm = ctx->child;
+ 	int bs = crypto_hash_blocksize(parent);
+-	unsigned int i = 0;
+ 
+-	do {
+-
+-		struct page *pg = sg_page(&sg[i]);
+-		unsigned int offset = sg[i].offset;
+-		unsigned int slen = sg[i].length;
++	for (;;) {
++		struct page *pg = sg_page(sg);
++		unsigned int offset = sg->offset;
++		unsigned int slen = sg->length;
+ 
+ 		if (unlikely(slen > nbytes))
+ 			slen = nbytes;
+@@ -182,8 +180,11 @@ static int crypto_xcbc_digest_update2(struct hash_desc *pdesc,
+ 			offset = 0;
+ 			pg++;
+ 		}
+-		i++;
+-	} while (nbytes>0);
++
++		if (!nbytes)
++			break;
++		sg = scatterwalk_sg_next(sg);
++	} 
+ 
+ 	return 0;
+ }

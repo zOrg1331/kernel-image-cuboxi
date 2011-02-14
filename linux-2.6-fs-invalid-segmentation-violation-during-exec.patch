@@ -1,0 +1,104 @@
+From: Dave Anderson <anderson@redhat.com>
+Subject: [RHEL5-1 PATCH] BZ #230339: invalid segmentation violation during  exec
+Date: Wed, 23 May 2007 11:00:51 -0400
+Bugzilla: 230339
+Message-Id: <46545723.2050305@redhat.com>
+Changelog: [fs] invalid segmentation violation during exec
+
+
+Description:
+
+  When RHEL5's load_elf_binary() calls load_elf_interp(), it receives back a
+  relative address value, which is added to the interpreter's ELF header
+  e_entry address, resulting in the virtual address of the task's entry 
+  point.
+  But since load_elf_interp() can fail, load_elf_binary() first must check
+  the returned relative address value with the BAD_ADDR() macro to see
+  whether it is a "-errno" value:
+
+    #define BAD_ADDR(x) ((unsigned long)(x) >= PAGE_MASK
+
+  As it turns out, there is a case where a legitimate relative address value
+  returned by load_elf_interp() can be misconstrued as a BAD_ADDR().  That
+  can happen if the map address returned by do_mmap() just happens to be one
+  page less than the interpreter's PT_LOAD segment's p_vaddr address, which
+  causes the relocation value ("load_addr" below) returned by 
+  load_elf_interp()
+  to be equal to PAGE_MASK:
+
+           if (!load_addr_set &&
+               interp_elf_ex->e_type == ET_DYN) {
+                   load_addr = map_addr - ELF_PAGESTART(vaddr);
+                   load_addr_set = 1;
+           }
+
+  If that happens, load_elf_binary() force-kills the exec operation
+  with a segmentation violation.
+
+  The fix changes the semantics and return value from load_elf_interp().
+  The relative address gets added to the interpreter's ELF header e_entry
+  address by load_elf_interp(), and the adjusted virtual address gets
+  returned back to load_elf_binary().  Then the BAD_ADDR() check done in
+  load_elf_binary() can properly check for a -errno value vs. a legitimate
+  virtual address.
+
+Bugzilla:
+
+  BZ #230339: The fatal error "Segmentation fault" happens when lots of
+              continuous processes of mount.nfs4 are executed.
+
+Testing:
+
+  The bugzilla reports that repeated attempts to run mount.nfs4 will
+  eventually result in a failure, because the randomness of the map address
+  returned by do_mmap() inevitably causes it to return an address that
+  is one page less than the interpreter's p_vaddr.  I was never able to
+  reproduce this, but the customer was able to do so, and verified that
+  a test kernel with this patch fixed the problem.
+
+Upstream status:
+
+  This patch actually reverts the code back to the way it is done upstream.
+  It was modified in RHEL5 as a small part of the linux-2.6-execshield.patch,
+  and because of this Ingo was asked to review the attached patch, and this
+  was his response:
+
+    i agree with the exec-shield fix he did for RHEL5 and we should include 
+    it
+    - but i'm quite overloaded at the moment so i'm bouncing this to you.
+    Could you perhaps assign this bugzilla to someone who could move this
+    patch into RHEL5? The patch has my full ACK.
+
+    Ingo
+
+RHEL5 patch:
+
+
+--- linux-2.6.18.i686-orig/fs/binfmt_elf.c	2007-02-02 12:56:03.000000000 -0500
++++ linux-2.6.18.i686/fs/binfmt_elf.c	2007-02-16 12:50:19.000000000 -0500
+@@ -491,7 +491,8 @@
+ 			goto out_close;
+ 	}
+ 
+-	error = load_addr;
++	*interp_map_addr = load_addr;
++	error = ((unsigned long)interp_elf_ex->e_entry) + load_addr;
+ 
+ out_close:
+ 	kfree(elf_phdata);
+@@ -1001,13 +1002,8 @@
+ 		else {
+ 			elf_entry = load_elf_interp(&loc->interp_elf_ex,
+ 						    interpreter,
+-						    &interp_map_addr,
++						    &interp_load_addr,
+ 						    load_bias);
+-			if (!BAD_ADDR(elf_entry)) {
+-				/* load_elf_interp() returns relocation adjustment */
+-				interp_load_addr = elf_entry;
+-				elf_entry += loc->interp_elf_ex.e_entry;
+-			}
+ 		}
+ 		if (BAD_ADDR(elf_entry)) {
+ 			force_sig(SIGSEGV, current);
+

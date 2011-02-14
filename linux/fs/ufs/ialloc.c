@@ -18,12 +18,10 @@
  *  Stephen Tweedie (sct@dcs.ed.ac.uk), 1993
  *  Big-endian to little-endian byte-swapping/bitmaps by
  *        David S. Miller (davem@caip.rutgers.edu), 1995
- *
- * UFS2 write support added by
- * Evgeniy Dushistov <dushistov@mail.ru>, 2007
  */
 
 #include <linux/fs.h>
+#include <linux/ufs_fs.h>
 #include <linux/time.h>
 #include <linux/stat.h>
 #include <linux/string.h>
@@ -33,8 +31,6 @@
 #include <linux/bitops.h>
 #include <asm/byteorder.h>
 
-#include "ufs_fs.h"
-#include "ufs.h"
 #include "swab.h"
 #include "util.h"
 
@@ -95,8 +91,8 @@ void ufs_free_inode (struct inode * inode)
 
 	is_directory = S_ISDIR(inode->i_mode);
 
-	vfs_dq_free_inode(inode);
-	vfs_dq_drop(inode);
+	DQUOT_FREE_INODE(inode);
+	DQUOT_DROP(inode);
 
 	clear_inode (inode);
 
@@ -130,47 +126,6 @@ void ufs_free_inode (struct inode * inode)
 }
 
 /*
- * Nullify new chunk of inodes,
- * BSD people also set ui_gen field of inode
- * during nullification, but we not care about
- * that because of linux ufs do not support NFS
- */
-static void ufs2_init_inodes_chunk(struct super_block *sb,
-				   struct ufs_cg_private_info *ucpi,
-				   struct ufs_cylinder_group *ucg)
-{
-	struct buffer_head *bh;
-	struct ufs_sb_private_info *uspi = UFS_SB(sb)->s_uspi;
-	sector_t beg = uspi->s_sbbase +
-		ufs_inotofsba(ucpi->c_cgx * uspi->s_ipg +
-			      fs32_to_cpu(sb, ucg->cg_u.cg_u2.cg_initediblk));
-	sector_t end = beg + uspi->s_fpb;
-
-	UFSD("ENTER cgno %d\n", ucpi->c_cgx);
-
-	for (; beg < end; ++beg) {
-		bh = sb_getblk(sb, beg);
-		lock_buffer(bh);
-		memset(bh->b_data, 0, sb->s_blocksize);
-		set_buffer_uptodate(bh);
-		mark_buffer_dirty(bh);
-		unlock_buffer(bh);
-		if (sb->s_flags & MS_SYNCHRONOUS)
-			sync_dirty_buffer(bh);
-		brelse(bh);
-	}
-
-	fs32_add(sb, &ucg->cg_u.cg_u2.cg_initediblk, uspi->s_inopb);
-	ubh_mark_buffer_dirty(UCPI_UBH(ucpi));
-	if (sb->s_flags & MS_SYNCHRONOUS) {
-		ubh_ll_rw_block(SWRITE, UCPI_UBH(ucpi));
-		ubh_wait_on_buffer(UCPI_UBH(ucpi));
-	}
-
-	UFSD("EXIT\n");
-}
-
-/*
  * There are two policies for allocating an inode.  If the new inode is
  * a directory, then a forward search is made for a block group with both
  * free space and a low directory-to-inode ratio; if that fails, then of
@@ -191,7 +146,6 @@ struct inode * ufs_new_inode(struct inode * dir, int mode)
 	struct inode * inode;
 	unsigned cg, bit, i, j, start;
 	struct ufs_inode_info *ufsi;
-	int err = -ENOSPC;
 
 	UFSD("ENTER\n");
 	
@@ -244,15 +198,13 @@ struct inode * ufs_new_inode(struct inode * dir, int mode)
 			goto cg_found;
 		}
 	}
-
+	
 	goto failed;
 
 cg_found:
 	ucpi = ufs_load_cylinder (sb, cg);
-	if (!ucpi) {
-		err = -EIO;
+	if (!ucpi)
 		goto failed;
-	}
 	ucg = ubh_get_ucg(UCPI_UBH(ucpi));
 	if (!ufs_cg_chkmagic(sb, ucg)) 
 		ufs_panic (sb, "ufs_new_inode", "internal error, bad cg magic number");
@@ -264,7 +216,6 @@ cg_found:
 		if (!(bit < start)) {
 			ufs_error (sb, "ufs_new_inode",
 			    "cylinder group %u corrupted - error in inode bitmap\n", cg);
-			err = -EIO;
 			goto failed;
 		}
 	}
@@ -273,18 +224,9 @@ cg_found:
 		ubh_setbit (UCPI_UBH(ucpi), ucpi->c_iusedoff, bit);
 	else {
 		ufs_panic (sb, "ufs_new_inode", "internal error");
-		err = -EIO;
 		goto failed;
 	}
-
-	if (uspi->fs_magic == UFS2_MAGIC) {
-		u32 initediblk = fs32_to_cpu(sb, ucg->cg_u.cg_u2.cg_initediblk);
-
-		if (bit + uspi->s_inopb > initediblk &&
-		    initediblk < fs32_to_cpu(sb, ucg->cg_u.cg_u2.cg_niblk))
-			ufs2_init_inodes_chunk(sb, ucpi, ucg);
-	}
-
+	
 	fs32_sub(sb, &ucg->cg_cs.cs_nifree, 1);
 	uspi->cs_total.cs_nifree--;
 	fs32_sub(sb, &sbi->fs_cs(cg).cs_nifree, 1);
@@ -294,6 +236,7 @@ cg_found:
 		uspi->cs_total.cs_ndir++;
 		fs32_add(sb, &sbi->fs_cs(cg).cs_ndir, 1);
 	}
+
 	ubh_mark_buffer_dirty (USPI_UBH(uspi));
 	ubh_mark_buffer_dirty (UCPI_UBH(ucpi));
 	if (sb->s_flags & MS_SYNCHRONOUS) {
@@ -302,81 +245,49 @@ cg_found:
 	}
 	sb->s_dirt = 1;
 
-	inode->i_ino = cg * uspi->s_ipg + bit;
 	inode->i_mode = mode;
-	inode->i_uid = current_fsuid();
+	inode->i_uid = current->fsuid;
 	if (dir->i_mode & S_ISGID) {
 		inode->i_gid = dir->i_gid;
 		if (S_ISDIR(mode))
 			inode->i_mode |= S_ISGID;
 	} else
-		inode->i_gid = current_fsgid();
+		inode->i_gid = current->fsgid;
 
+	inode->i_ino = cg * uspi->s_ipg + bit;
+	inode->i_blksize = PAGE_SIZE;	/* This is the optimal IO size (for stat), not the fs block size */
 	inode->i_blocks = 0;
-	inode->i_generation = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
 	ufsi->i_flags = UFS_I(dir)->i_flags;
 	ufsi->i_lastfrag = 0;
+	ufsi->i_gen = 0;
 	ufsi->i_shadow = 0;
 	ufsi->i_osync = 0;
 	ufsi->i_oeftflag = 0;
 	ufsi->i_dir_start_lookup = 0;
 	memset(&ufsi->i_u1, 0, sizeof(ufsi->i_u1));
+
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
 
-	if (uspi->fs_magic == UFS2_MAGIC) {
-		struct buffer_head *bh;
-		struct ufs2_inode *ufs2_inode;
-
-		/*
-		 * setup birth date, we do it here because of there is no sense
-		 * to hold it in struct ufs_inode_info, and lose 64 bit
-		 */
-		bh = sb_bread(sb, uspi->s_sbbase + ufs_inotofsba(inode->i_ino));
-		if (!bh) {
-			ufs_warning(sb, "ufs_read_inode",
-				    "unable to read inode %lu\n",
-				    inode->i_ino);
-			err = -EIO;
-			goto fail_remove_inode;
-		}
-		lock_buffer(bh);
-		ufs2_inode = (struct ufs2_inode *)bh->b_data;
-		ufs2_inode += ufs_inotofsbo(inode->i_ino);
-		ufs2_inode->ui_birthtime = cpu_to_fs64(sb, CURRENT_TIME.tv_sec);
-		ufs2_inode->ui_birthnsec = cpu_to_fs32(sb, CURRENT_TIME.tv_nsec);
-		mark_buffer_dirty(bh);
-		unlock_buffer(bh);
-		if (sb->s_flags & MS_SYNCHRONOUS)
-			sync_dirty_buffer(bh);
-		brelse(bh);
-	}
-
 	unlock_super (sb);
 
-	if (vfs_dq_alloc_inode(inode)) {
-		vfs_dq_drop(inode);
-		err = -EDQUOT;
-		goto fail_without_unlock;
+	if (DQUOT_ALLOC_INODE(inode)) {
+		DQUOT_DROP(inode);
+		inode->i_flags |= S_NOQUOTA;
+		inode->i_nlink = 0;
+		iput(inode);
+		return ERR_PTR(-EDQUOT);
 	}
 
 	UFSD("allocating inode %lu\n", inode->i_ino);
 	UFSD("EXIT\n");
 	return inode;
 
-fail_remove_inode:
-	unlock_super(sb);
-fail_without_unlock:
-	inode->i_flags |= S_NOQUOTA;
-	inode->i_nlink = 0;
-	iput(inode);
-	UFSD("EXIT (FAILED): err %d\n", err);
-	return ERR_PTR(err);
 failed:
 	unlock_super (sb);
 	make_bad_inode(inode);
 	iput (inode);
-	UFSD("EXIT (FAILED): err %d\n", err);
-	return ERR_PTR(err);
+	UFSD("EXIT (FAILED)\n");
+	return ERR_PTR(-ENOSPC);
 }

@@ -1,7 +1,5 @@
 /*
  * Copyright (C) 2004 Anton Blanchard <anton@au.ibm.com>, IBM
- * Added mmcra[slot] support:
- * Copyright (C) 2006-2007 Will Schmidt <willschm@us.ibm.com>, IBM
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,14 +24,13 @@
 static unsigned long reset_value[OP_MAX_COUNTER];
 
 static int oprofile_running;
-static int use_slot_nums;
 
 /* mmcr values are set in power4_reg_setup, used in power4_cpu_setup */
 static u32 mmcr0_val;
 static u64 mmcr1_val;
 static u64 mmcra_val;
 
-static int power4_reg_setup(struct op_counter_config *ctr,
+static void power4_reg_setup(struct op_counter_config *ctr,
 			     struct op_system_config *sys,
 			     int num_ctrs)
 {
@@ -61,17 +58,9 @@ static int power4_reg_setup(struct op_counter_config *ctr,
 		mmcr0_val &= ~MMCR0_PROBLEM_DISABLE;
 	else
 		mmcr0_val |= MMCR0_PROBLEM_DISABLE;
-
-	if (__is_processor(PV_POWER4) || __is_processor(PV_POWER4p) ||
-	    __is_processor(PV_970) || __is_processor(PV_970FX) ||
-	    __is_processor(PV_970MP) || __is_processor(PV_970GX) ||
-	    __is_processor(PV_POWER5) || __is_processor(PV_POWER5p))
-		use_slot_nums = 1;
-
-	return 0;
 }
 
-extern void ppc_enable_pmcs(void);
+extern void ppc64_enable_pmcs(void);
 
 /*
  * Older CPUs require the MMCRA sample bit to be always set, but newer 
@@ -87,18 +76,18 @@ static inline int mmcra_must_set_sample(void)
 {
 	if (__is_processor(PV_POWER4) || __is_processor(PV_POWER4p) ||
 	    __is_processor(PV_970) || __is_processor(PV_970FX) ||
-	    __is_processor(PV_970MP) || __is_processor(PV_970GX))
+	    __is_processor(PV_970MP))
 		return 1;
 
 	return 0;
 }
 
-static int power4_cpu_setup(struct op_counter_config *ctr)
+static void power4_cpu_setup(void *unused)
 {
 	unsigned int mmcr0 = mmcr0_val;
 	unsigned long mmcra = mmcra_val;
 
-	ppc_enable_pmcs();
+	ppc64_enable_pmcs();
 
 	/* set the freeze bit */
 	mmcr0 |= MMCR0_FC;
@@ -120,11 +109,9 @@ static int power4_cpu_setup(struct op_counter_config *ctr)
 	    mfspr(SPRN_MMCR1));
 	dbg("setup on cpu %d, mmcra %lx\n", smp_processor_id(),
 	    mfspr(SPRN_MMCRA));
-
-	return 0;
 }
 
-static int power4_start(struct op_counter_config *ctr)
+static void power4_start(struct op_counter_config *ctr)
 {
 	int i;
 	unsigned int mmcr0;
@@ -134,9 +121,9 @@ static int power4_start(struct op_counter_config *ctr)
 
 	for (i = 0; i < cur_cpu_spec->num_pmcs; ++i) {
 		if (ctr[i].enabled) {
-			classic_ctr_write(i, reset_value[i]);
+			ctr_write(i, reset_value[i]);
 		} else {
-			classic_ctr_write(i, 0);
+			ctr_write(i, 0);
 		}
 	}
 
@@ -159,7 +146,6 @@ static int power4_start(struct op_counter_config *ctr)
 	oprofile_running = 1;
 
 	dbg("start on cpu %d, mmcr0 %x\n", smp_processor_id(), mmcr0);
-	return 0;
 }
 
 static void power4_stop(void)
@@ -179,15 +165,15 @@ static void power4_stop(void)
 }
 
 /* Fake functions used by canonicalize_pc */
-static void __used hypervisor_bucket(void)
+static void __attribute_used__ hypervisor_bucket(void)
 {
 }
 
-static void __used rtas_bucket(void)
+static void __attribute_used__ rtas_bucket(void)
 {
 }
 
-static void __used kernel_unknown_bucket(void)
+static void __attribute_used__ kernel_unknown_bucket(void)
 {
 }
 
@@ -195,29 +181,17 @@ static void __used kernel_unknown_bucket(void)
  * On GQ and newer the MMCRA stores the HV and PR bits at the time
  * the SIAR was sampled. We use that to work out if the SIAR was sampled in
  * the hypervisor, our exception vectors or RTAS.
- * If the MMCRA_SAMPLE_ENABLE bit is set, we can use the MMCRA[slot] bits
- * to more accurately identify the address of the sampled instruction. The
- * mmcra[slot] bits represent the slot number of a sampled instruction
- * within an instruction group.  The slot will contain a value between 1
- * and 5 if MMCRA_SAMPLE_ENABLE is set, otherwise 0.
  */
 static unsigned long get_pc(struct pt_regs *regs)
 {
 	unsigned long pc = mfspr(SPRN_SIAR);
 	unsigned long mmcra;
-	unsigned long slot;
 
 	/* Cant do much about it */
 	if (!cur_cpu_spec->oprofile_mmcra_sihv)
 		return pc;
 
 	mmcra = mfspr(SPRN_MMCRA);
-
-	if (use_slot_nums && (mmcra & MMCRA_SAMPLE_ENABLE)) {
-		slot = ((mmcra & MMCRA_SLOT) >> MMCRA_SLOT_SHIFT);
-		if (slot > 1)
-			pc += 4 * (slot - 1);
-	}
 
 	/* Were we in the hypervisor? */
 	if (firmware_has_feature(FW_FEATURE_LPAR) &&
@@ -280,13 +254,13 @@ static void power4_handle_interrupt(struct pt_regs *regs,
 	mtmsrd(mfmsr() | MSR_PMM);
 
 	for (i = 0; i < cur_cpu_spec->num_pmcs; ++i) {
-		val = classic_ctr_read(i);
+		val = ctr_read(i);
 		if (val < 0) {
 			if (oprofile_running && ctr[i].enabled) {
 				oprofile_add_ext_sample(pc, regs, i, is_kernel);
-				classic_ctr_write(i, reset_value[i]);
+				ctr_write(i, reset_value[i]);
 			} else {
-				classic_ctr_write(i, 0);
+				ctr_write(i, 0);
 			}
 		}
 	}

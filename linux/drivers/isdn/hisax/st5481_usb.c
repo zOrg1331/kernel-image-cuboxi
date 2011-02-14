@@ -66,7 +66,7 @@ static void usb_ctrl_msg(struct st5481_adapter *adapter,
 	struct ctrl_msg *ctrl_msg;
 	
 	if ((w_index = fifo_add(&ctrl->msg_fifo.f)) < 0) {
-		WARNING("control msg FIFO full");
+		WARN("control msg FIFO full");
 		return;
 	}
 	ctrl_msg = &ctrl->msg_fifo.data[w_index]; 
@@ -125,7 +125,7 @@ void st5481_ph_command(struct st5481_adapter *adapter, unsigned int command)
  * Call the user provided completion routine and try
  * to send the next request.
  */
-static void usb_ctrl_complete(struct urb *urb)
+static void usb_ctrl_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct st5481_adapter *adapter = urb->context;
 	struct st5481_ctrl *ctrl = &adapter->ctrl;
@@ -139,7 +139,7 @@ static void usb_ctrl_complete(struct urb *urb)
 				DBG(1,"urb killed status %d", urb->status);
 				return; // Give up
 			default: 
-				WARNING("urb status %d",urb->status);
+				WARN("urb status %d",urb->status);
 				break;
 		}
 	}
@@ -149,7 +149,14 @@ static void usb_ctrl_complete(struct urb *urb)
 	if (ctrl_msg->dr.bRequest == USB_REQ_CLEAR_FEATURE) {
 	        /* Special case handling for pipe reset */
 		le16_to_cpus(&ctrl_msg->dr.wIndex);
-		usb_reset_endpoint(adapter->usb_dev, ctrl_msg->dr.wIndex);
+
+		/* toggle is reset on clear */
+		usb_settoggle(adapter->usb_dev, 
+			      ctrl_msg->dr.wIndex & ~USB_DIR_IN, 
+			      (ctrl_msg->dr.wIndex & USB_DIR_IN) == 0,
+			      0);
+
+
 	}
 	
 	if (ctrl_msg->complete)
@@ -172,7 +179,7 @@ static void usb_ctrl_complete(struct urb *urb)
  * Decode the register values and schedule a private event.
  * Called at interrupt.
  */
-static void usb_int_complete(struct urb *urb)
+static void usb_int_complete(struct urb *urb, struct pt_regs *regs)
 {
 	u8 *data = urb->transfer_buffer;
 	u8 irqbyte;
@@ -191,7 +198,7 @@ static void usb_int_complete(struct urb *urb)
 			DBG(2, "urb shutting down with status: %d", urb->status);
 			return;
 		default:
-			WARNING("nonzero urb status received: %d", urb->status);
+			WARN("nonzero urb status received: %d", urb->status);
 			goto exit;
 	}
 
@@ -228,7 +235,7 @@ static void usb_int_complete(struct urb *urb)
 exit:
 	status = usb_submit_urb (urb, GFP_ATOMIC);
 	if (status)
-		WARNING("usb_submit_urb failed with result %d", status);
+		WARN("usb_submit_urb failed with result %d", status);
 }
 
 /* ======================================================================
@@ -250,7 +257,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
 	DBG(2,"");
 	
 	if ((status = usb_reset_configuration (dev)) < 0) {
-		WARNING("reset_configuration failed,status=%d",status);
+		WARN("reset_configuration failed,status=%d",status);
 		return status;
 	}
 
@@ -262,7 +269,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
 
 	// Check if the config is sane
 	if ( altsetting->desc.bNumEndpoints != 7 ) {
-		WARNING("expecting 7 got %d endpoints!", altsetting->desc.bNumEndpoints);
+		WARN("expecting 7 got %d endpoints!", altsetting->desc.bNumEndpoints);
 		return -EINVAL;
 	}
 
@@ -272,7 +279,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
 
 	// Use alternative setting 3 on interface 0 to have 2B+D
 	if ((status = usb_set_interface (dev, 0, 3)) < 0) {
-		WARNING("usb_set_interface failed,status=%d",status);
+		WARN("usb_set_interface failed,status=%d",status);
 		return status;
 	}
 
@@ -335,7 +342,7 @@ void st5481_release_usb(struct st5481_adapter *adapter)
 	usb_kill_urb(intr->urb);
 	kfree(intr->urb->transfer_buffer);
 	usb_free_urb(intr->urb);
-	intr->urb = NULL;
+	ctrl->urb = NULL;
 }
 
 /*
@@ -400,6 +407,7 @@ fill_isoc_urb(struct urb *urb, struct usb_device *dev,
 {
 	int k;
 
+	spin_lock_init(&urb->lock);
 	urb->dev=dev;
 	urb->pipe=pipe;
 	urb->interval = 1;
@@ -475,7 +483,7 @@ void st5481_release_isocpipes(struct urb* urb[2])
  * called 50 times per second with 20 ISOC descriptors. 
  * Called at interrupt.
  */
-static void usb_in_complete(struct urb *urb)
+static void usb_in_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct st5481_in *in = urb->context;
 	unsigned char *ptr;
@@ -490,7 +498,7 @@ static void usb_in_complete(struct urb *urb)
 				DBG(1,"urb killed status %d", urb->status);
 				return; // Give up
 			default: 
-				WARNING("urb status %d",urb->status);
+				WARN("urb status %d",urb->status);
 				break;
 		}
 	}
@@ -516,7 +524,7 @@ static void usb_in_complete(struct urb *urb)
 			DBG(4,"count=%d",status);
 			DBG_PACKET(0x400, in->rcvbuf, status);
 			if (!(skb = dev_alloc_skb(status))) {
-				WARNING("receive out of memory\n");
+				WARN("receive out of memory\n");
 				break;
 			}
 			memcpy(skb_put(skb, status), in->rcvbuf, status);
@@ -637,13 +645,10 @@ void st5481_in_mode(struct st5481_in *in, int mode)
 	usb_unlink_urb(in->urb[1]);
 
 	if (in->mode != L1_MODE_NULL) {
-		if (in->mode != L1_MODE_TRANS) {
-			u32 features = HDLC_BITREVERSE;
-
-			if (in->mode == L1_MODE_HDLC_56K)
-				features |= HDLC_56KBIT;
-			isdnhdlc_rcv_init(&in->hdlc_state, features);
-		}
+		if (in->mode != L1_MODE_TRANS)
+			isdnhdlc_rcv_init(&in->hdlc_state,
+				in->mode == L1_MODE_HDLC_56K);
+		
 		st5481_usb_pipe_reset(in->adapter, in->ep, NULL, NULL);
 		st5481_usb_device_ctrl_msg(in->adapter, in->counter,
 					   in->packet_size,

@@ -18,6 +18,7 @@
 #include "midway.h"
 
 
+#define KERNEL_OFFSET	0xC0000000	/* kernel 0x0 is at phys 0xC0000000 */
 #define DEV_LABEL	"eni"
 
 #define UBR_BUFFER	(128*1024)	/* UBR buffer size */
@@ -58,7 +59,7 @@ struct eni_vcc {
 	int rxing;			/* number of pending PDUs */
 	int servicing;			/* number of waiting VCs (0 or 1) */
 	int txing;			/* number of pending TX bytes */
-	ktime_t timestamp;		/* for RX timing */
+	struct timeval timestamp;	/* for RX timing */
 	struct atm_vcc *next;		/* next pending RX */
 	struct sk_buff *last;		/* last PDU being DMAed (used to carry
 					   discard information) */

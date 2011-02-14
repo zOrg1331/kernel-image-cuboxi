@@ -1,0 +1,296 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 30 Aug 2010 16:46:39 -0400
+Subject: [xen] introduce hvm_set_segment_register
+Message-id: <1283186802-21009-4-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 27938
+O-Subject: [RHEL5.6 XEN PATCH 3/6] introduce hvm_set_segment_register
+Bugzilla: 625903
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=625903
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg/rev/15894
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2719051
+
+This patch adds infrastructure for hardware task switching, by providing a
+function hvm_set_segment_register for both VMX and SVM.
+---
+ arch/x86/hvm/svm/svm.c        |   72 ++++++++++++++++++++++++++++++++--------
+ arch/x86/hvm/vmx/vmx.c        |   74 +++++++++++++++++++++++++++++++++++++++++
+ include/asm-x86/hvm/hvm.h     |    9 +++++
+ include/asm-x86/hvm/svm/svm.h |   16 ++++++++-
+ 4 files changed, 156 insertions(+), 15 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index dc4497f..baaec80 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -666,9 +666,7 @@ static void svm_sync_vmcb(struct vcpu *v)
+ 
+     arch_svm->vmcb_in_sync = 1;
+ 
+-    asm volatile (
+-        ".byte 0x0f,0x01,0xdb" /* vmsave */
+-        : : "a" (__pa(arch_svm->vmcb)) );
++    svm_vmsave(arch_svm->vmcb);
+ }
+ 
+ static unsigned long svm_get_segment_base(struct vcpu *v, enum x86_segment seg)
+@@ -697,6 +695,7 @@ static void svm_get_segment_register(struct vcpu *v, enum x86_segment seg,
+                                      struct segment_register *reg)
+ {
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++
+     switch ( seg )
+     {
+     case x86_seg_cs:
+@@ -733,7 +732,58 @@ static void svm_get_segment_register(struct vcpu *v, enum x86_segment seg,
+         svm_sync_vmcb(v);
+         memcpy(reg, &vmcb->ldtr, sizeof(*reg));
+         break;
+-    default: BUG();
++    default:
++        BUG();
++    }
++}
++
++static void svm_set_segment_register(struct vcpu *v, enum x86_segment seg,
++                                     struct segment_register *reg)
++{
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++
++    switch ( seg )
++    {
++    case x86_seg_cs:
++        memcpy(&vmcb->cs, reg, sizeof(*reg));
++        break;
++    case x86_seg_ds:
++        memcpy(&vmcb->ds, reg, sizeof(*reg));
++        break;
++    case x86_seg_es:
++        memcpy(&vmcb->es, reg, sizeof(*reg));
++        break;
++    case x86_seg_fs:
++        svm_sync_vmcb(v);
++        memcpy(&vmcb->fs, reg, sizeof(*reg));
++        svm_vmload(vmcb);
++        break;
++    case x86_seg_gs:
++        svm_sync_vmcb(v);
++        memcpy(&vmcb->gs, reg, sizeof(*reg));
++        svm_vmload(vmcb);
++        break;
++    case x86_seg_ss:
++        memcpy(&vmcb->ss, reg, sizeof(*reg));
++        break;
++    case x86_seg_tr:
++        svm_sync_vmcb(v);
++        memcpy(&vmcb->tr, reg, sizeof(*reg));
++        svm_vmload(vmcb);
++        break;
++    case x86_seg_gdtr:
++        memcpy(&vmcb->gdtr, reg, sizeof(*reg));
++        break;
++    case x86_seg_idtr:
++        memcpy(&vmcb->idtr, reg, sizeof(*reg));
++        break;
++    case x86_seg_ldtr:
++        svm_sync_vmcb(v);
++        memcpy(&vmcb->ldtr, reg, sizeof(*reg));
++        svm_vmload(vmcb);
++        break;
++    default:
++        BUG();
+     }
+ }
+ 
+@@ -835,10 +885,7 @@ static void svm_ctxt_switch_from(struct vcpu *v)
+     svm_save_dr(v);
+ 
+     svm_sync_vmcb(v);
+-
+-    asm volatile (
+-        ".byte 0x0f,0x01,0xda" /* vmload */
+-        : : "a" (__pa(root_vmcb[cpu])) );
++    svm_vmload(root_vmcb[cpu]);
+ 
+ #ifdef __x86_64__
+     /* Resume use of ISTs now that the host TR is reinstated. */
+@@ -874,12 +921,8 @@ static void svm_ctxt_switch_to(struct vcpu *v)
+ 
+     svm_restore_dr(v);
+ 
+-    asm volatile (
+-        ".byte 0x0f,0x01,0xdb" /* vmsave */
+-        : : "a" (__pa(root_vmcb[cpu])) );
+-    asm volatile (
+-        ".byte 0x0f,0x01,0xda" /* vmload */
+-        : : "a" (__pa(v->arch.hvm_svm.vmcb)) );
++    svm_vmsave(root_vmcb[cpu]);
++    svm_vmload(v->arch.hvm_svm.vmcb);
+ }
+ 
+ static void svm_do_resume(struct vcpu *v) 
+@@ -968,6 +1011,7 @@ static struct hvm_function_table svm_function_table = {
+     .get_guest_ctrl_reg   = svm_get_ctrl_reg,
+     .get_segment_base     = svm_get_segment_base,
+     .get_segment_register = svm_get_segment_register,
++    .set_segment_register = svm_set_segment_register,
+     .update_host_cr3      = svm_update_host_cr3,
+     .update_guest_cr3     = svm_update_guest_cr3,
+     .flush_guest_tlbs     = svm_flush_guest_tlbs,
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 79de2f4..569b570 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1156,6 +1156,79 @@ static void vmx_get_segment_register(struct vcpu *v, enum x86_segment seg,
+     reg->attr.bytes = (attr & 0xff) | ((attr >> 4) & 0xf00);
+ }
+ 
++static void vmx_set_segment_register(struct vcpu *v, enum x86_segment seg,
++                                     struct segment_register *reg)
++{
++    u16 attr;
++
++    ASSERT(v == current);
++
++    attr = reg->attr.bytes;
++    attr = ((attr & 0xf00) << 4) | (attr & 0xff);
++
++    switch ( seg )
++    {
++    case x86_seg_cs:
++        __vmwrite(GUEST_CS_SELECTOR, reg->sel);
++        __vmwrite(GUEST_CS_LIMIT, reg->limit);
++        __vmwrite(GUEST_CS_BASE, reg->base);
++        __vmwrite(GUEST_CS_AR_BYTES, attr);
++        break;
++    case x86_seg_ds:
++        __vmwrite(GUEST_DS_SELECTOR, reg->sel);
++        __vmwrite(GUEST_DS_LIMIT, reg->limit);
++        __vmwrite(GUEST_DS_BASE, reg->base);
++        __vmwrite(GUEST_DS_AR_BYTES, attr);
++        break;
++    case x86_seg_es:
++        __vmwrite(GUEST_ES_SELECTOR, reg->sel);
++        __vmwrite(GUEST_ES_LIMIT, reg->limit);
++        __vmwrite(GUEST_ES_BASE, reg->base);
++        __vmwrite(GUEST_ES_AR_BYTES, attr);
++        break;
++    case x86_seg_fs:
++        __vmwrite(GUEST_FS_SELECTOR, reg->sel);
++        __vmwrite(GUEST_FS_LIMIT, reg->limit);
++        __vmwrite(GUEST_FS_BASE, reg->base);
++        __vmwrite(GUEST_FS_AR_BYTES, attr);
++        break;
++    case x86_seg_gs:
++        __vmwrite(GUEST_GS_SELECTOR, reg->sel);
++        __vmwrite(GUEST_GS_LIMIT, reg->limit);
++        __vmwrite(GUEST_GS_BASE, reg->base);
++        __vmwrite(GUEST_GS_AR_BYTES, attr);
++        break;
++    case x86_seg_ss:
++        __vmwrite(GUEST_SS_SELECTOR, reg->sel);
++        __vmwrite(GUEST_SS_LIMIT, reg->limit);
++        __vmwrite(GUEST_SS_BASE, reg->base);
++        __vmwrite(GUEST_SS_AR_BYTES, attr);
++        break;
++    case x86_seg_tr:
++        __vmwrite(GUEST_TR_SELECTOR, reg->sel);
++        __vmwrite(GUEST_TR_LIMIT, reg->limit);
++        __vmwrite(GUEST_TR_BASE, reg->base);
++        __vmwrite(GUEST_TR_AR_BYTES, attr);
++        break;
++    case x86_seg_gdtr:
++        __vmwrite(GUEST_GDTR_LIMIT, reg->limit);
++        __vmwrite(GUEST_GDTR_BASE, reg->base);
++        break;
++    case x86_seg_idtr:
++        __vmwrite(GUEST_IDTR_LIMIT, reg->limit);
++        __vmwrite(GUEST_IDTR_BASE, reg->base);
++        break;
++    case x86_seg_ldtr:
++        __vmwrite(GUEST_LDTR_SELECTOR, reg->sel);
++        __vmwrite(GUEST_LDTR_LIMIT, reg->limit);
++        __vmwrite(GUEST_LDTR_BASE, reg->base);
++        __vmwrite(GUEST_LDTR_AR_BYTES, attr);
++        break;
++    default:
++        BUG();
++    }
++}
++
+ /* Make sure that xen intercepts any FP accesses from current */
+ static void vmx_stts(struct vcpu *v)
+ {
+@@ -1325,6 +1398,7 @@ static struct hvm_function_table vmx_function_table = {
+     .get_guest_ctrl_reg   = vmx_get_ctrl_reg,
+     .get_segment_base     = vmx_get_segment_base,
+     .get_segment_register = vmx_get_segment_register,
++    .set_segment_register = vmx_set_segment_register,
+     .update_host_cr3      = vmx_update_host_cr3,
+     .update_guest_cr3     = vmx_update_guest_cr3,
+     .flush_guest_tlbs     = vmx_flush_guest_tlbs,
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index 1fc6696..c2b4539 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -126,6 +126,8 @@ struct hvm_function_table {
+     unsigned long (*get_segment_base)(struct vcpu *v, enum x86_segment seg);
+     void (*get_segment_register)(struct vcpu *v, enum x86_segment seg,
+                                  struct segment_register *reg);
++    void (*set_segment_register)(struct vcpu *v, enum x86_segment seg,
++                                 struct segment_register *reg);
+ 
+     /* 
+      * Re-set the value of CR3 that Xen runs on when handling VM exits
+@@ -293,6 +295,13 @@ hvm_get_segment_register(struct vcpu *v, enum x86_segment seg,
+     hvm_funcs.get_segment_register(v, seg, reg);
+ }
+ 
++static inline void
++hvm_set_segment_register(struct vcpu *v, enum x86_segment seg,
++                         struct segment_register *reg)
++{
++    hvm_funcs.set_segment_register(v, seg, reg);
++}
++
+ void hvm_cpuid(unsigned int input, unsigned int *eax, unsigned int *ebx,
+                                    unsigned int *ecx, unsigned int *edx);
+ void hvm_stts(struct vcpu *v);
+diff --git a/include/asm-x86/hvm/svm/svm.h b/include/asm-x86/hvm/svm/svm.h
+index 46e8e67..0ecf173 100644
+--- a/include/asm-x86/hvm/svm/svm.h
++++ b/include/asm-x86/hvm/svm/svm.h
+@@ -28,7 +28,7 @@
+ #include <asm/hvm/svm/vmcb.h>
+ #include <asm/i387.h>
+ 
+-extern void svm_dump_vmcb(const char *from, struct vmcb_struct *vmcb);
++void svm_dump_vmcb(const char *from, struct vmcb_struct *vmcb);
+ 
+ #define SVM_REG_EAX (0) 
+ #define SVM_REG_ECX (1) 
+@@ -47,6 +47,20 @@ extern void svm_dump_vmcb(const char *from, struct vmcb_struct *vmcb);
+ #define SVM_REG_R14 (14)
+ #define SVM_REG_R15 (15)
+ 
++static inline void svm_vmload(void *vmcb)
++{
++    asm volatile (
++        ".byte 0x0f,0x01,0xda" /* vmload */
++        : : "a" (__pa(vmcb)) : "memory" );
++}
++
++static inline void svm_vmsave(void *vmcb)
++{
++    asm volatile (
++        ".byte 0x0f,0x01,0xdb" /* vmsave */
++        : : "a" (__pa(vmcb)) : "memory" );
++}
++
+ /*
+  * Need to re-inject a given event? We avoid re-injecting software exceptions
+  * and interrupts because the faulting/trapping instruction can simply be

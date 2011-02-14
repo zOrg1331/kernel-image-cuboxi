@@ -1,0 +1,81 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:51:49 -0400
+Subject: [net] netxen: fix register usage
+Message-id: <20100803134905.2239.38490.sendpatchset@localhost.localdomain>
+Patchwork-id: 27338
+O-Subject: [RHEL 5.6 PATCH 36/44] netxen: fix register usage
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id f8e21f8fe2253e2ed5b9189b9dd5ff7e51af307c
+
+Description
+===========
+
+>From b83ed5e14de4fa3fa48bdcb643339040d73dd796 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Tue, 11 May 2010 23:53:02 +0000
+Subject: [PATCH] netxen: fix register usage
+
+o For NX3031, MSI_MODE, CAPABILITIES_FW and SCRATCHPAD registers
+  are obsolete. These register addresses can be used for different
+  purpose.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_ethtool.c b/drivers/net/netxen/netxen_nic_ethtool.c
+index a41ed24..a89ac16 100644
+--- a/drivers/net/netxen/netxen_nic_ethtool.c
++++ b/drivers/net/netxen/netxen_nic_ethtool.c
+@@ -634,6 +634,9 @@ static int netxen_nic_reg_test(struct net_device *dev)
+ 	if ((data_read & 0xffff) != adapter->pdev->vendor)
+ 		return 1;
+ 
++	if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
++		return 0;
++
+ 	data_written = (u32)0xa5a5a5a5;
+ 
+ 	NXWR32(adapter, CRB_SCRATCHPAD_TEST, data_written);
+diff --git a/drivers/net/netxen/netxen_nic_hdr.h b/drivers/net/netxen/netxen_nic_hdr.h
+index 622e4c8..d930068 100644
+--- a/drivers/net/netxen/netxen_nic_hdr.h
++++ b/drivers/net/netxen/netxen_nic_hdr.h
+@@ -789,9 +789,7 @@ enum {
+  * for backward compability
+  */
+ #define CRB_NIC_CAPABILITIES_HOST	NETXEN_NIC_REG(0x1a8)
+-#define CRB_NIC_CAPABILITIES_FW	  	NETXEN_NIC_REG(0x1dc)
+ #define CRB_NIC_MSI_MODE_HOST		NETXEN_NIC_REG(0x270)
+-#define CRB_NIC_MSI_MODE_FW	  	NETXEN_NIC_REG(0x274)
+ 
+ #define INTR_SCHEME_PERPORT	      	0x1
+ #define MSI_MODE_MULTIFUNC	      	0x1
+diff --git a/drivers/net/netxen/netxen_nic_init.c b/drivers/net/netxen/netxen_nic_init.c
+index 7fe7ec6..f377196 100644
+--- a/drivers/net/netxen/netxen_nic_init.c
++++ b/drivers/net/netxen/netxen_nic_init.c
+@@ -1360,10 +1360,12 @@ int netxen_init_firmware(struct netxen_adapter *adapter)
+ 		return err;
+ 
+ 	NXWR32(adapter, CRB_NIC_CAPABILITIES_HOST, INTR_SCHEME_PERPORT);
+-	NXWR32(adapter, CRB_NIC_MSI_MODE_HOST, MSI_MODE_MULTIFUNC);
+ 	NXWR32(adapter, CRB_MPORT_MODE, MPORT_MULTI_FUNCTION_MODE);
+ 	NXWR32(adapter, CRB_CMDPEG_STATE, PHAN_INITIALIZE_ACK);
+ 
++	if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
++		NXWR32(adapter, CRB_NIC_MSI_MODE_HOST, MSI_MODE_MULTIFUNC);
++
+ 	return err;
+ }
+ 

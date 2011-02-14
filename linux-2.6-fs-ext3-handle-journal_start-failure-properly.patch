@@ -1,0 +1,133 @@
+From: Josef Bacik <josef@redhat.com>
+Date: Wed, 5 May 2010 15:33:16 -0400
+Subject: [fs] ext3: handle journal_start failure properly
+Message-id: <20100505153316.GA4309@localhost.localdomain>
+Patchwork-id: 24832
+O-Subject: [PATCH][RHEL 5] ext3: handle journal_start failure properly
+Bugzilla: 588599
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Hello,
+
+This is in reference to bz 588599.  Oracle reported a problem where doing DIO to
+a loop device on an fs that is larger than the underlying will result in
+left-over orphan entries since we fail to start a journal handle and leave an
+orphan entry in memory.  To fix this I've backported two upstream patches
+
+    commit 7eb4969e04060dcf3fbd46af9c21b1059b853068
+    Author: Jan Kara <jack@suse.cz>
+    Date:   Mon Mar 1 14:02:37 2010 +0100
+
+        ext3: Truncate allocated blocks if direct IO write fails to update
+i_size
+
+        We have to truncate blocks allocated to file during direct IO when we
+        fail to update i_size properly.
+
+        Signed-off-by: Jan Kara <jack@suse.cz>
+
+    commit ef43618a47179b41e7203a624f2c7445e7da488c
+    Author: Jan Kara <jack@suse.cz>
+    Date:   Wed Jun 17 16:26:24 2009 -0700
+
+        ext3: make sure inode is deleted from orphan list after truncate
+
+        As Ted pointed out, it can happen that ext3_truncate() returns without
+        removing inode from orphan list.  This way we could in some rare cases
+        (like when we get ENOMEM from an allocation in ext3_truncate called
+        because of failed ext3_write_begin) leave the inode on orphan list and
+        that triggers assertion failure on umount.
+
+        So make ext3_truncate() always remove inode from in-memory orphan list.
+
+        Cc: Theodore Ts'o <tytso@mit.edu>
+        Signed-off-by: Jan Kara <jack@suse.cz>
+        Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+        Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+This patch has been tested by the reporter and he has verified that the problem
+is fixed.  Thanks,
+
+Josef
+
+index fac9413..aba5666 100644
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/ext3/inode.c b/fs/ext3/inode.c
+index fac9413..aba5666 100644
+--- a/fs/ext3/inode.c
++++ b/fs/ext3/inode.c
+@@ -1732,8 +1732,9 @@ static ssize_t ext3_direct_IO(int rw, struct kiocb *iocb,
+ 		handle = ext3_journal_start(inode, 2);
+ 		if (IS_ERR(handle)) {
+ 			/* This is really bad luck. We've written the data
+-			 * but cannot extend i_size. Bail out and pretend
+-			 * the write failed... */
++			 * but cannot extend i_size. Truncate allocated blocks
++			 * and pretend the write failed... */
++			ext3_truncate(inode);
+ 			ret = PTR_ERR(handle);
+ 			goto out;
+ 		}
+@@ -2325,11 +2326,11 @@ void ext3_truncate(struct inode *inode)
+ 
+ 	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
+ 	    S_ISLNK(inode->i_mode)))
+-		return;
++		goto out_notrans;
+ 	if (ext3_inode_is_fast_symlink(inode))
+-		return;
++		goto out_notrans;
+ 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
+-		return;
++		goto out_notrans;
+ 
+ 	/*
+ 	 * We have to lock the EOF page here, because lock_page() nests
+@@ -2342,7 +2343,7 @@ void ext3_truncate(struct inode *inode)
+ 		page = grab_cache_page(mapping,
+ 				inode->i_size >> PAGE_CACHE_SHIFT);
+ 		if (!page)
+-			return;
++			goto out_notrans;
+ 	}
+ 
+ 	handle = start_transaction(inode);
+@@ -2353,7 +2354,7 @@ void ext3_truncate(struct inode *inode)
+ 			unlock_page(page);
+ 			page_cache_release(page);
+ 		}
+-		return;		/* AKPM: return what? */
++		goto out_notrans;
+ 	}
+ 
+ 	last_block = (inode->i_size + blocksize-1)
+@@ -2477,6 +2478,14 @@ out_stop:
+ 		ext3_orphan_del(handle, inode);
+ 
+ 	ext3_journal_stop(handle);
++	return;
++out_notrans:
++	/*
++	 * Delete the inode from orphan list so that it doesn't stay there
++	 * forever and trigger assertion on umount.
++	 */
++	if (inode->i_nlink)
++		ext3_orphan_del(NULL, inode);
+ }
+ 
+ static ext3_fsblk_t ext3_get_inode_block(struct super_block *sb,
+@@ -3051,12 +3060,6 @@ int ext3_setattr(struct dentry *dentry, struct iattr *attr)
+ 
+ 	rc = inode_setattr(inode, attr);
+ 
+-	/* If inode_setattr's call to ext3_truncate failed to get a
+-	 * transaction handle at all, we need to clean up the in-core
+-	 * orphan list manually. */
+-	if (inode->i_nlink)
+-		ext3_orphan_del(NULL, inode);
+-
+ 	if (!rc && (ia_valid & ATTR_MODE))
+ 		rc = ext3_acl_chmod(inode);
+ 

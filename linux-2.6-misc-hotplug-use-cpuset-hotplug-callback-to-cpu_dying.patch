@@ -1,0 +1,38 @@
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Thu, 24 Sep 2009 13:46:28 -0300
+Subject: [misc] hotplug: use cpuset hotplug callback to CPU_DYING
+Message-id: 1253810790-11195-3-git-send-email-ehabkost@redhat.com
+O-Subject: [RHEL-5.5 PATCH 2/4] HOTPLUG: Adapt cpuset hotplug callback to CPU_DYING
+Bugzilla: 510814
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=510814
+
+This is a cherry-pick of upstream commit:
+
+commit ac076758b97d9e3d2c1557cfa412911e93cd0919
+Author: Avi Kivity <avi@qumranet.com>
+Date:   Thu May 24 12:33:15 2007 +0300
+
+    HOTPLUG: Adapt cpuset hotplug callback to CPU_DYING
+
+    CPU_DYING is called in atomic context, so don't try to take any locks.
+
+    Signed-off-by: Avi Kivity <avi@qumranet.com>
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index 1960d2a..937288b 100644
+--- a/kernel/cpuset.c
++++ b/kernel/cpuset.c
+@@ -2109,6 +2109,9 @@ out:
+ static int cpuset_handle_cpuhp(struct notifier_block *nb,
+ 				unsigned long phase, void *cpu)
+ {
++	if (phase == CPU_DYING || phase == CPU_DYING_FROZEN)
++		return NOTIFY_DONE;
++
+ 	mutex_lock(&manage_mutex);
+ 	mutex_lock(&callback_mutex);
+ 

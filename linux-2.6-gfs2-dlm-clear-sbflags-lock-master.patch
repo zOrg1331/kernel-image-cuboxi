@@ -1,0 +1,26 @@
+Date: Fri, 27 Oct 2006 10:13:05 -0500
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: clear sbflags on lock master
+
+BZ 211622
+
+The ALTMODE flag can be set in the lock master's copy of the lock but
+never cleared, so ALTMODE will also be returned in a subsequent conversion
+of the lock when it shouldn't be.  This results in lock_dlm incorrectly
+switching to the alternate lock mode when returning the result to gfs
+which then asserts when it sees the wrong lock state.  The fix is to
+propagate the cleared sbflags value to the master node when the lock is
+requested.  QA's d_rwrandirectlarge test triggers this bug very quickly.  
+
+diff -ur linux-2.6.19-rc1-orig/fs/dlm/lock.c linux-2.6.19-rc1-test/fs/dlm/lock.c
+--- linux-2.6.19-rc1-orig/fs/dlm/lock.c	2006-10-05 11:45:35.000000000 -0500
++++ linux-2.6.19-rc1-test/fs/dlm/lock.c	2006-10-26 14:55:38.166052089 -0500
+@@ -2372,6 +2372,7 @@
+ static void receive_flags(struct dlm_lkb *lkb, struct dlm_message *ms)
+ {
+ 	lkb->lkb_exflags = ms->m_exflags;
++	lkb->lkb_sbflags = ms->m_sbflags;
+ 	lkb->lkb_flags = (lkb->lkb_flags & 0xFFFF0000) |
+ 		         (ms->m_flags & 0x0000FFFF);
+ }
+

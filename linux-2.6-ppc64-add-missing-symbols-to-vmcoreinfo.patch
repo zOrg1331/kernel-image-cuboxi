@@ -1,0 +1,39 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 9 Oct 2008 13:32:38 -0400
+Subject: [ppc64] add missing symbols to vmcoreinfo
+Message-id: 20081009173238.GB25273@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH]: ppc64: add missing symbols to vmcoreinfo
+Bugzilla: 465396
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Hey-
+	makedumpfile needs certain kernel symbols to operate in certain
+filtering modes during kdump operation.  Those symbols are missing from the
+ppc64 kernel.  This patch adds them in properly.  Tested successfully by QA
+here.
+
+Best
+Neil
+
+diff --git a/arch/powerpc/kernel/machine_kexec.c b/arch/powerpc/kernel/machine_kexec.c
+index e60a0c5..cad4dbe 100644
+--- a/arch/powerpc/kernel/machine_kexec.c
++++ b/arch/powerpc/kernel/machine_kexec.c
+@@ -43,6 +43,17 @@ void machine_kexec_cleanup(struct kimage *image)
+ 		ppc_md.machine_kexec_cleanup(image);
+ }
+ 
++void arch_crash_save_vmcoreinfo(void)
++{
++
++#ifdef CONFIG_NEED_MULTIPLE_NODES
++	SYMBOL(node_data);
++	LENGTH(node_data, MAX_NUMNODES);
++#else
++	SYMBOL(contig_page_data);
++#endif
++}
++
+ /*
+  * Do not allocate memory (or fail in any way) in machine_kexec().
+  * We are past the point of no return, committed to rebooting now.

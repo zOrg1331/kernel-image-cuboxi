@@ -1,0 +1,609 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 3 Sep 2010 21:12:14 -0400
+Subject: [misc] add WARN_ONCE macro
+Message-id: <4C8164AE.5000807@redhat.com>
+Patchwork-id: 28135
+O-Subject: [RHEL5.6 PATCH 2/3] Add WARN_ONCE()
+Bugzilla: 568551
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This patch provides for the WARN_ONCE() macro required by I/O AT but in
+order to get WARN_ONCE(), _WARN() and WARN() are needed too.
+
+The upstream patches are as follows:
+1. debug: introduce __WARN()
+  Olof Johansson  Wed, 30 Jan 2008
+  debug: introduce __WARN()
+  Introduce __WARN() in the generic case, so the generic WARN_ON()
+  can use arch-specific code for when the condition is true.
+      include/asm-generic/bug.h
+   commit: 3a6a62f96f168d192fb0cc9c0b5ee2584740b32d
+
+2. Add a WARN() macro; this is WARN_ON() + printk arguments
+  Arjan van de Ven  Fri, 25 Jul 2008
+  Add a WARN() macro; this is WARN_ON() + printk arguments
+
+  Note: Purposely did not add slowpath
+      include/asm-generic/bug.h
+  commmit: a8f18b909c0a3f22630846207035c8b84bb252b8
+
+3. warn: Turn the netdev timeout WARN_ON() into a WARN()
+  Arjan van de Ven Mon 8 Sep 2008
+  this patch turns the netdev timeout WARN_ON_ONCE() into a WARN_ONCE(),
+  so that the device and driver names are inside the warning message.
+
+  NOTE: Took just WARN_ONCE()
+    include/asm-generic/bug.h
+   commit: 5337407c673e2c7c66a84b9838d55a45a760ecff
+
+Note: during build process I noticed warnings resulting from the
+addition of the above so I found and applied the following patch
+to rectify.
+4. Rename WARN() to WARNING() to clear the namespace
+  Arjan van de Ven  Fri, 25 Jul 2008
+  Rename WARN() to WARNING() to clear the namespace
+   drivers/isdn/hisax/st5481.h
+   drivers/isdn/hisax/st5481_b.c
+   drivers/isdn/hisax/st5481_d.c
+   drivers/isdn/hisax/st5481_usb.c
+   drivers/usb/gadget/at91_udc.h
+   drivers/usb/gadget/ether.c
+   drivers/usb/gadget/file_storage.c
+   drivers/usb/gadget/goku_udc.c
+   drivers/usb/gadget/goku_udc.h
+   drivers/usb/gadget/inode.c
+   drivers/usb/gadget/net2280.c
+   drivers/usb/gadget/net2280.h
+   drivers/usb/gadget/omap_udc.c
+   drivers/usb/gadget/omap_udc.h
+   drivers/usb/gadget/pxa2xx_udc.c
+   drivers/usb/host/isp116x-hcd.c
+   drivers/usb/host/isp116x.h
+   drivers/usb/host/sl811-hcd.c
+   drivers/usb/host/sl811.h
+   drivers/usb/misc/usbtest.c
+ commit: b6c63937001889af6fe431aaba97e59d04e028e7
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/isdn/hisax/st5481.h b/drivers/isdn/hisax/st5481.h
+index 04416ba..d4eb324 100644
+--- a/drivers/isdn/hisax/st5481.h
++++ b/drivers/isdn/hisax/st5481.h
+@@ -220,7 +220,7 @@ enum {
+ #define ERR(format, arg...) \
+ printk(KERN_ERR "%s:%s: " format "\n" , __FILE__,  __FUNCTION__ , ## arg)
+ 
+-#define WARN(format, arg...) \
++#define WARNING(format, arg...) \
+ printk(KERN_WARNING "%s:%s: " format "\n" , __FILE__,  __FUNCTION__ , ## arg)
+ 
+ #define INFO(format, arg...) \
+@@ -412,7 +412,7 @@ struct st5481_adapter {
+ ({ \
+ 	int status; \
+ 	if ((status = usb_submit_urb(urb, mem_flags)) < 0) { \
+-		WARN("usb_submit_urb failed,status=%d", status); \
++		WARNING("usb_submit_urb failed,status=%d", status); \
+ 	} \
+         status; \
+ })
+diff --git a/drivers/isdn/hisax/st5481_b.c b/drivers/isdn/hisax/st5481_b.c
+index 22fd5db..7bb533e 100644
+--- a/drivers/isdn/hisax/st5481_b.c
++++ b/drivers/isdn/hisax/st5481_b.c
+@@ -179,7 +179,7 @@ static void usb_b_out_complete(struct urb *urb, struct pt_regs *regs)
+ 				DBG(4,"urb killed status %d", urb->status);
+ 				return; // Give up
+ 			default: 
+-				WARN("urb status %d",urb->status);
++				WARNING("urb status %d",urb->status);
+ 				if (b_out->busy == 0) {
+ 					st5481_usb_pipe_reset(adapter, (bcs->channel+1)*2 | USB_DIR_OUT, NULL, NULL);
+ 				}
+@@ -371,6 +371,6 @@ void st5481_b_l2l1(struct hisax_if *ifc, int pr, void *arg)
+ 		B_L1L2(bcs, PH_DEACTIVATE | INDICATION, NULL);
+ 		break;
+ 	default:
+-		WARN("pr %#x\n", pr);
++		WARNING("pr %#x\n", pr);
+ 	}
+ }
+diff --git a/drivers/isdn/hisax/st5481_d.c b/drivers/isdn/hisax/st5481_d.c
+index 493dc94..ebe5f5f 100644
+--- a/drivers/isdn/hisax/st5481_d.c
++++ b/drivers/isdn/hisax/st5481_d.c
+@@ -389,7 +389,7 @@ static void usb_d_out_complete(struct urb *urb, struct pt_regs *regs)
+ 				DBG(1,"urb killed status %d", urb->status);
+ 				break;
+ 			default: 
+-				WARN("urb status %d",urb->status);
++				WARNING("urb status %d",urb->status);
+ 				if (d_out->busy == 0) {
+ 					st5481_usb_pipe_reset(adapter, EP_D_OUT | USB_DIR_OUT, fifo_reseted, adapter);
+ 				}
+@@ -420,7 +420,7 @@ static void dout_start_xmit(struct FsmInst *fsm, int event, void *arg)
+ 	isdnhdlc_out_init(&d_out->hdlc_state, 1, 0);
+ 
+ 	if (test_and_set_bit(buf_nr, &d_out->busy)) {
+-		WARN("ep %d urb %d busy %#lx", EP_D_OUT, buf_nr, d_out->busy);
++		WARNING("ep %d urb %d busy %#lx", EP_D_OUT, buf_nr, d_out->busy);
+ 		return;
+ 	}
+ 	urb = d_out->urb[buf_nr];
+@@ -601,7 +601,7 @@ void st5481_d_l2l1(struct hisax_if *hisax_d_if, int pr, void *arg)
+ 		FsmEvent(&adapter->d_out.fsm, EV_DOUT_START_XMIT, NULL);
+ 		break;
+ 	default:
+-		WARN("pr %#x\n", pr);
++		WARNING("pr %#x\n", pr);
+ 		break;
+ 	}
+ }
+diff --git a/drivers/isdn/hisax/st5481_usb.c b/drivers/isdn/hisax/st5481_usb.c
+index b096b64..f87dfec 100644
+--- a/drivers/isdn/hisax/st5481_usb.c
++++ b/drivers/isdn/hisax/st5481_usb.c
+@@ -66,7 +66,7 @@ static void usb_ctrl_msg(struct st5481_adapter *adapter,
+ 	struct ctrl_msg *ctrl_msg;
+ 	
+ 	if ((w_index = fifo_add(&ctrl->msg_fifo.f)) < 0) {
+-		WARN("control msg FIFO full");
++		WARNING("control msg FIFO full");
+ 		return;
+ 	}
+ 	ctrl_msg = &ctrl->msg_fifo.data[w_index]; 
+@@ -139,7 +139,7 @@ static void usb_ctrl_complete(struct urb *urb, struct pt_regs *regs)
+ 				DBG(1,"urb killed status %d", urb->status);
+ 				return; // Give up
+ 			default: 
+-				WARN("urb status %d",urb->status);
++				WARNING("urb status %d",urb->status);
+ 				break;
+ 		}
+ 	}
+@@ -198,7 +198,7 @@ static void usb_int_complete(struct urb *urb, struct pt_regs *regs)
+ 			DBG(2, "urb shutting down with status: %d", urb->status);
+ 			return;
+ 		default:
+-			WARN("nonzero urb status received: %d", urb->status);
++			WARNING("nonzero urb status received: %d", urb->status);
+ 			goto exit;
+ 	}
+ 
+@@ -235,7 +235,7 @@ static void usb_int_complete(struct urb *urb, struct pt_regs *regs)
+ exit:
+ 	status = usb_submit_urb (urb, GFP_ATOMIC);
+ 	if (status)
+-		WARN("usb_submit_urb failed with result %d", status);
++		WARNING("usb_submit_urb failed with result %d", status);
+ }
+ 
+ /* ======================================================================
+@@ -257,7 +257,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
+ 	DBG(2,"");
+ 	
+ 	if ((status = usb_reset_configuration (dev)) < 0) {
+-		WARN("reset_configuration failed,status=%d",status);
++		WARNING("reset_configuration failed,status=%d",status);
+ 		return status;
+ 	}
+ 
+@@ -269,7 +269,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
+ 
+ 	// Check if the config is sane
+ 	if ( altsetting->desc.bNumEndpoints != 7 ) {
+-		WARN("expecting 7 got %d endpoints!", altsetting->desc.bNumEndpoints);
++		WARNING("expecting 7 got %d endpoints!", altsetting->desc.bNumEndpoints);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -279,7 +279,7 @@ int st5481_setup_usb(struct st5481_adapter *adapter)
+ 
+ 	// Use alternative setting 3 on interface 0 to have 2B+D
+ 	if ((status = usb_set_interface (dev, 0, 3)) < 0) {
+-		WARN("usb_set_interface failed,status=%d",status);
++		WARNING("usb_set_interface failed,status=%d",status);
+ 		return status;
+ 	}
+ 
+@@ -498,7 +498,7 @@ static void usb_in_complete(struct urb *urb, struct pt_regs *regs)
+ 				DBG(1,"urb killed status %d", urb->status);
+ 				return; // Give up
+ 			default: 
+-				WARN("urb status %d",urb->status);
++				WARNING("urb status %d",urb->status);
+ 				break;
+ 		}
+ 	}
+@@ -524,7 +524,7 @@ static void usb_in_complete(struct urb *urb, struct pt_regs *regs)
+ 			DBG(4,"count=%d",status);
+ 			DBG_PACKET(0x400, in->rcvbuf, status);
+ 			if (!(skb = dev_alloc_skb(status))) {
+-				WARN("receive out of memory\n");
++				WARNING("receive out of memory\n");
+ 				break;
+ 			}
+ 			memcpy(skb_put(skb, status), in->rcvbuf, status);
+diff --git a/drivers/usb/gadget/at91_udc.h b/drivers/usb/gadget/at91_udc.h
+index 882af42..4c8bccd 100644
+--- a/drivers/usb/gadget/at91_udc.h
++++ b/drivers/usb/gadget/at91_udc.h
+@@ -175,7 +175,7 @@ struct at91_request {
+ #endif
+ 
+ #define ERR(stuff...)		printk(KERN_ERR "udc: " stuff)
+-#define WARN(stuff...)		printk(KERN_WARNING "udc: " stuff)
++#define WARNING(stuff...)	printk(KERN_WARNING "udc: " stuff)
+ #define INFO(stuff...)		printk(KERN_INFO "udc: " stuff)
+ 
+ #endif
+diff --git a/drivers/usb/gadget/ether.c b/drivers/usb/gadget/ether.c
+index fed484d..0225113 100644
+--- a/drivers/usb/gadget/ether.c
++++ b/drivers/usb/gadget/ether.c
+@@ -376,7 +376,7 @@ static inline int BITRATE(struct usb_gadget *g)
+ 
+ #define ERROR(dev,fmt,args...) \
+ 	xprintk(dev , KERN_ERR , fmt , ## args)
+-#define WARN(dev,fmt,args...) \
++#define WARNING(dev,fmt,args...) \
+ 	xprintk(dev , KERN_WARNING , fmt , ## args)
+ #define INFO(dev,fmt,args...) \
+ 	xprintk(dev , KERN_INFO , fmt , ## args)
+diff --git a/drivers/usb/gadget/file_storage.c b/drivers/usb/gadget/file_storage.c
+index 8d7f1e8..9c15e9d 100644
+--- a/drivers/usb/gadget/file_storage.c
++++ b/drivers/usb/gadget/file_storage.c
+@@ -327,7 +327,7 @@ MODULE_LICENSE("Dual BSD/GPL");
+ #define LERROR(lun,fmt,args...) \
+ 	yprintk(lun , KERN_ERR , fmt , ## args)
+ 
+-#define WARN(fsg,fmt,args...) \
++#define WARNING(fsg,fmt,args...) \
+ 	xprintk(fsg , KERN_WARNING , fmt , ## args)
+ #define LWARN(lun,fmt,args...) \
+ 	yprintk(lun , KERN_WARNING , fmt , ## args)
+@@ -1139,7 +1139,7 @@ static int ep0_queue(struct fsg_dev *fsg)
+ 	if (rc != 0 && rc != -ESHUTDOWN) {
+ 
+ 		/* We can't do much more than wait for a reset */
+-		WARN(fsg, "error in submission: %s --> %d\n",
++		WARNING(fsg, "error in submission: %s --> %d\n",
+ 				fsg->ep0->name, rc);
+ 	}
+ 	return rc;
+@@ -1275,7 +1275,7 @@ static void received_cbi_adsc(struct fsg_dev *fsg, struct fsg_buffhd *bh)
+ 
+ 	/* Save the command for later */
+ 	if (fsg->cbbuf_cmnd_size)
+-		WARN(fsg, "CB[I] overwriting previous command\n");
++		WARNING(fsg, "CB[I] overwriting previous command\n");
+ 	fsg->cbbuf_cmnd_size = req->actual;
+ 	memcpy(fsg->cbbuf_cmnd, req->buf, fsg->cbbuf_cmnd_size);
+ 
+@@ -1557,7 +1557,7 @@ static void start_transfer(struct fsg_dev *fsg, struct usb_ep *ep,
+ 		 * submissions if DMA is enabled. */
+ 		if (rc != -ESHUTDOWN && !(rc == -EOPNOTSUPP &&
+ 						req->length == 0))
+-			WARN(fsg, "error in submission: %s --> %d\n",
++			WARNING(fsg, "error in submission: %s --> %d\n",
+ 					ep->name, rc);
+ 	}
+ }
+@@ -2332,7 +2332,7 @@ static int halt_bulk_in_endpoint(struct fsg_dev *fsg)
+ 		VDBG(fsg, "delayed bulk-in endpoint halt\n");
+ 	while (rc != 0) {
+ 		if (rc != -EAGAIN) {
+-			WARN(fsg, "usb_ep_set_halt -> %d\n", rc);
++			WARNING(fsg, "usb_ep_set_halt -> %d\n", rc);
+ 			rc = 0;
+ 			break;
+ 		}
+@@ -3765,7 +3765,7 @@ static int __init check_parameters(struct fsg_dev *fsg)
+ 		if (gcnum >= 0)
+ 			mod_data.release = 0x0300 + gcnum;
+ 		else {
+-			WARN(fsg, "controller '%s' not recognized\n",
++			WARNING(fsg, "controller '%s' not recognized\n",
+ 				fsg->gadget->name);
+ 			mod_data.release = 0x0399;
+ 		}
+diff --git a/drivers/usb/gadget/goku_udc.c b/drivers/usb/gadget/goku_udc.c
+index 7cf2999..fd94c0f 100644
+--- a/drivers/usb/gadget/goku_udc.c
++++ b/drivers/usb/gadget/goku_udc.c
+@@ -1811,7 +1811,7 @@ static void goku_remove(struct pci_dev *pdev)
+ 	/* start with the driver above us */
+ 	if (dev->driver) {
+ 		/* should have been done already by driver model core */
+-		WARN(dev, "pci remove, driver '%s' is still registered\n",
++		WARNING(dev, "pci remove, driver '%s' is still registered\n",
+ 				dev->driver->driver.name);
+ 		usb_gadget_unregister_driver(dev->driver);
+ 	}
+@@ -1854,7 +1854,7 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	 * usb_gadget_driver_{register,unregister}() must change.
+ 	 */
+ 	if (the_controller) {
+-		WARN(dev, "ignoring %s\n", pci_name(pdev));
++		WARNING(dev, "ignoring %s\n", pci_name(pdev));
+ 		return -EBUSY;
+ 	}
+ 	if (!pdev->irq) {
+diff --git a/drivers/usb/gadget/goku_udc.h b/drivers/usb/gadget/goku_udc.h
+index ea8c8e5..1145da8 100644
+--- a/drivers/usb/gadget/goku_udc.h
++++ b/drivers/usb/gadget/goku_udc.h
+@@ -283,7 +283,7 @@ struct goku_udc {
+ 
+ #define ERROR(dev,fmt,args...) \
+ 	xprintk(dev , KERN_ERR , fmt , ## args)
+-#define WARN(dev,fmt,args...) \
++#define WARNING(dev,fmt,args...) \
+ 	xprintk(dev , KERN_WARNING , fmt , ## args)
+ #define INFO(dev,fmt,args...) \
+ 	xprintk(dev , KERN_INFO , fmt , ## args)
+diff --git a/drivers/usb/gadget/inode.c b/drivers/usb/gadget/inode.c
+index 2dd7808..0882aed 100644
+--- a/drivers/usb/gadget/inode.c
++++ b/drivers/usb/gadget/inode.c
+@@ -263,8 +263,6 @@ static const char *CHIP;
+ 
+ #define ERROR(dev,fmt,args...) \
+ 	xprintk(dev , KERN_ERR , fmt , ## args)
+-#define WARN(dev,fmt,args...) \
+-	xprintk(dev , KERN_WARNING , fmt , ## args)
+ #define INFO(dev,fmt,args...) \
+ 	xprintk(dev , KERN_INFO , fmt , ## args)
+ 
+diff --git a/drivers/usb/gadget/net2280.c b/drivers/usb/gadget/net2280.c
+index 0924323..013eb6a 100644
+--- a/drivers/usb/gadget/net2280.c
++++ b/drivers/usb/gadget/net2280.c
+@@ -1089,7 +1089,7 @@ static void scan_dma_completions (struct net2280_ep *ep)
+ 			 * 0122, and 0124; not all cases trigger the warning.
+ 			 */
+ 			if ((tmp & (1 << NAK_OUT_PACKETS)) == 0) {
+-				WARN (ep->dev, "%s lost packet sync!\n",
++				WARNING (ep->dev, "%s lost packet sync!\n",
+ 						ep->ep.name);
+ 				req->req.status = -EOVERFLOW;
+ 			} else if ((tmp = readl (&ep->regs->ep_avail)) != 0) {
+@@ -2776,7 +2776,7 @@ static void net2280_remove (struct pci_dev *pdev)
+ 	/* start with the driver above us */
+ 	if (dev->driver) {
+ 		/* should have been done already by driver model core */
+-		WARN (dev, "pci remove, driver '%s' is still registered\n",
++		WARNING (dev, "pci remove, driver '%s' is still registered\n",
+ 				dev->driver->driver.name);
+ 		usb_gadget_unregister_driver (dev->driver);
+ 	}
+diff --git a/drivers/usb/gadget/net2280.h b/drivers/usb/gadget/net2280.h
+index 957d6df..56e25ae 100644
+--- a/drivers/usb/gadget/net2280.h
++++ b/drivers/usb/gadget/net2280.h
+@@ -271,7 +271,7 @@ static inline void net2280_led_shutdown (struct net2280 *dev)
+ 
+ #define ERROR(dev,fmt,args...) \
+ 	xprintk(dev , KERN_ERR , fmt , ## args)
+-#define WARN(dev,fmt,args...) \
++#define WARNING(dev,fmt,args...) \
+ 	xprintk(dev , KERN_WARNING , fmt , ## args)
+ #define INFO(dev,fmt,args...) \
+ 	xprintk(dev , KERN_INFO , fmt , ## args)
+diff --git a/drivers/usb/gadget/omap_udc.c b/drivers/usb/gadget/omap_udc.c
+index 65d749a..57177e8 100644
+--- a/drivers/usb/gadget/omap_udc.c
++++ b/drivers/usb/gadget/omap_udc.c
+@@ -1139,7 +1139,7 @@ static int omap_ep_set_halt(struct usb_ep *_ep, int value)
+ 			status = -EINVAL;
+ 		else if (value) {
+ 			if (ep->udc->ep0_set_config) {
+-				WARN("error changing config?\n");
++				WARNING("error changing config?\n");
+ 				UDC_SYSCON2_REG = UDC_CLR_CFG;
+ 			}
+ 			UDC_SYSCON2_REG = UDC_STALL_CMD;
+@@ -1710,7 +1710,7 @@ do_stall:
+ 					u.r.bRequestType, u.r.bRequest, status);
+ 			if (udc->ep0_set_config) {
+ 				if (udc->ep0_reset_config)
+-					WARN("error resetting config?\n");
++					WARNING("error resetting config?\n");
+ 				else
+ 					UDC_SYSCON2_REG = UDC_CLR_CFG;
+ 			}
+@@ -2921,7 +2921,7 @@ static int omap_udc_suspend(struct platform_device *dev, pm_message_t message)
+ 	 * which would prevent entry to deep sleep...
+ 	 */
+ 	if ((devstat & UDC_ATT) != 0 && (devstat & UDC_SUS) == 0) {
+-		WARN("session active; suspend requires disconnect\n");
++		WARNING("session active; suspend requires disconnect\n");
+ 		omap_pullup(&udc->gadget, 0);
+ 	}
+ 
+diff --git a/drivers/usb/gadget/omap_udc.h b/drivers/usb/gadget/omap_udc.h
+index 652ee46..f678a4a 100644
+--- a/drivers/usb/gadget/omap_udc.h
++++ b/drivers/usb/gadget/omap_udc.h
+@@ -192,7 +192,7 @@ struct omap_udc {
+ #endif
+ 
+ #define ERR(stuff...)		printk(KERN_ERR "udc: " stuff)
+-#define WARN(stuff...)		printk(KERN_WARNING "udc: " stuff)
++#define WARNING(stuff...)	printk(KERN_WARNING "udc: " stuff)
+ #define INFO(stuff...)		printk(KERN_INFO "udc: " stuff)
+ 
+ /*-------------------------------------------------------------------------*/
+diff --git a/drivers/usb/gadget/pxa2xx_udc.c b/drivers/usb/gadget/pxa2xx_udc.c
+index fff027d..e9690f2 100644
+--- a/drivers/usb/gadget/pxa2xx_udc.c
++++ b/drivers/usb/gadget/pxa2xx_udc.c
+@@ -354,7 +354,7 @@ pxa2xx_ep_free_request (struct usb_ep *_ep, struct usb_request *_req)
+ 	struct pxa2xx_request	*req;
+ 
+ 	req = container_of (_req, struct pxa2xx_request, req);
+-	WARN_ON (!list_empty (&req->queue));
++	WARN_ON(!list_empty (&req->queue));
+ 	kfree(req);
+ }
+ 
+@@ -1869,7 +1869,7 @@ config_change:
+ 					 * tell us about config change events,
+ 					 * so later ones may fail...
+ 					 */
+-					WARN("config change %02x fail %d?\n",
++					WARNING("config change %02x fail %d?\n",
+ 						u.r.bRequest, i);
+ 					return;
+ 					/* TODO experiment:  if has_cfr,
+@@ -2613,7 +2613,7 @@ static int pxa2xx_udc_suspend(struct platform_device *dev, pm_message_t state)
+ 	struct pxa2xx_udc	*udc = platform_get_drvdata(dev);
+ 
+ 	if (!udc->mach->udc_command)
+-		WARN("USB host won't detect disconnect!\n");
++		WARNING("USB host won't detect disconnect!\n");
+ 	pullup(udc, 0);
+ 
+ 	return 0;
+diff --git a/drivers/usb/host/isp116x-hcd.c b/drivers/usb/host/isp116x-hcd.c
+index f97b183..3d854c6 100644
+--- a/drivers/usb/host/isp116x-hcd.c
++++ b/drivers/usb/host/isp116x-hcd.c
+@@ -889,7 +889,7 @@ static void isp116x_endpoint_disable(struct usb_hcd *hcd,
+ 	for (i = 0; i < 100 && !list_empty(&hep->urb_list); i++)
+ 		msleep(3);
+ 	if (!list_empty(&hep->urb_list))
+-		WARN("ep %p not empty?\n", ep);
++		WARNING("ep %p not empty?\n", ep);
+ 
+ 	kfree(ep);
+ 	hep->hcpriv = NULL;
+diff --git a/drivers/usb/host/isp116x.h b/drivers/usb/host/isp116x.h
+index a1b7c38..0fc989c 100644
+--- a/drivers/usb/host/isp116x.h
++++ b/drivers/usb/host/isp116x.h
+@@ -339,7 +339,7 @@ struct isp116x_ep {
+ #endif
+ 
+ #define ERR(stuff...)		printk(KERN_ERR "116x: " stuff)
+-#define WARN(stuff...)		printk(KERN_WARNING "116x: " stuff)
++#define WARNING(stuff...)	printk(KERN_WARNING "116x: " stuff)
+ #define INFO(stuff...)		printk(KERN_INFO "116x: " stuff)
+ 
+ /* ------------------------------------------------- */
+diff --git a/drivers/usb/host/sl811-hcd.c b/drivers/usb/host/sl811-hcd.c
+index fa34092..c85a6b9 100644
+--- a/drivers/usb/host/sl811-hcd.c
++++ b/drivers/usb/host/sl811-hcd.c
+@@ -1049,7 +1049,7 @@ sl811h_endpoint_disable(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
+ 	if (!list_empty(&hep->urb_list))
+ 		msleep(3);
+ 	if (!list_empty(&hep->urb_list))
+-		WARN("ep %p not empty?\n", ep);
++		WARNING("ep %p not empty?\n", ep);
+ 
+ 	kfree(ep);
+ 	hep->hcpriv = NULL;
+diff --git a/drivers/usb/host/sl811.h b/drivers/usb/host/sl811.h
+index 7690d98..b6b8c1f 100644
+--- a/drivers/usb/host/sl811.h
++++ b/drivers/usb/host/sl811.h
+@@ -261,6 +261,6 @@ sl811_read_buf(struct sl811 *sl811, int addr, void *buf, size_t count)
+ #endif
+ 
+ #define ERR(stuff...)		printk(KERN_ERR "sl811: " stuff)
+-#define WARN(stuff...)		printk(KERN_WARNING "sl811: " stuff)
++#define WARNING(stuff...)	printk(KERN_WARNING "sl811: " stuff)
+ #define INFO(stuff...)		printk(KERN_INFO "sl811: " stuff)
+ 
+diff --git a/drivers/usb/misc/usbtest.c b/drivers/usb/misc/usbtest.c
+index 983e104..fa99773 100644
+--- a/drivers/usb/misc/usbtest.c
++++ b/drivers/usb/misc/usbtest.c
+@@ -98,7 +98,7 @@ static struct usb_device *testdev_to_usbdev (struct usbtest_dev *test)
+ 
+ #define ERROR(dev,fmt,args...) \
+ 	xprintk(dev , KERN_ERR , fmt , ## args)
+-#define WARN(dev,fmt,args...) \
++#define WARNING(dev,fmt,args...) \
+ 	xprintk(dev , KERN_WARNING , fmt , ## args)
+ #define INFO(dev,fmt,args...) \
+ 	xprintk(dev , KERN_INFO , fmt , ## args)
+diff --git a/include/asm-generic/bug.h b/include/asm-generic/bug.h
+index eb72204..74530e6 100644
+--- a/include/asm-generic/bug.h
++++ b/include/asm-generic/bug.h
+@@ -19,17 +19,33 @@ extern const char *print_tainted(void);
+ #define BUG_ON(condition) do { if (unlikely((condition)!=0)) BUG(); } while(0)
+ #endif
+ 
+-#ifndef HAVE_ARCH_WARN_ON
++#ifndef __WARN
++#define __WARN() do {							\
++	printk("WARNING: at %s:%d %s()\n", __FILE__,			\
++		__LINE__, __FUNCTION__);				\
++	dump_stack();							\
++} while (0)
++#endif
++#define __WARN_printf(arg...) do { printk(arg); __WARN(); } while (0)
++
++#ifndef WARN_ON
+ #define WARN_ON(condition) ({ \
+ 	int __ret_warn_on = !!(condition); \
+-	if (unlikely((__ret_warn_on)!=0)) { \
+-		printk("BUG: warning at %s:%d/%s() (%s)\n", __FILE__, __LINE__, __FUNCTION__, print_tainted()); \
+-		dump_stack(); \
+-	} \
++	if (unlikely(__ret_warn_on))                                    \
++		__WARN();                                               \
+ 	unlikely(__ret_warn_on); \
+ })
+ #endif
+ 
++#ifndef WARN
++#define WARN(condition, format...) ({					\
++	int __ret_warn_on = !!(condition);				\
++	if (unlikely(__ret_warn_on))					\
++		__WARN_printf(format);					\
++	unlikely(__ret_warn_on);					\
++})
++#endif
++
+ #else /* !CONFIG_BUG */
+ #ifndef HAVE_ARCH_BUG
+ #define BUG()
+@@ -45,6 +61,14 @@ extern const char *print_tainted(void);
+ 	unlikely(__ret_warn_on); \
+ })
+ #endif
++
++#ifndef WARN
++#define WARN(condition, format...) ({                                  \
++	int __ret_warn_on = !!(condition);                              \
++	unlikely(__ret_warn_on);                                        \
++})
++#endif
++
+ #endif
+ 
+ #define WARN_ON_ONCE(condition)				\
+@@ -60,6 +84,16 @@ extern const char *print_tainted(void);
+ 	__ret;						\
+ })
+ 
++#define WARN_ONCE(condition, format...)        ({\
++	static int __warned;				\
++	int __ret_warn_once = !!(condition);		\
++							\
++	if (unlikely(__ret_warn_once))			\
++		if (WARN(!__warned, format))		\
++			__warned = 1;			\
++	unlikely(__ret_warn_once);			\
++})
++
+ #ifdef CONFIG_SMP
+ # define WARN_ON_SMP(x)			WARN_ON(x)
+ #else

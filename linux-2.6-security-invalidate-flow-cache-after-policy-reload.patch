@@ -1,0 +1,77 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 229527 flow cache entries remain valid even 	after selinux policy reload
+Date: Thu, 29 Mar 2007 16:45:54 -0400
+Bugzilla: 229527
+Message-Id: <1175201154.16700.75.camel@localhost.localdomain>
+Changelog: [security] invalidate flow cache entries after selinux policy reload
+
+
+BZ 229527
+
+With the introduction of labeled networking a reload or change of
+SELinux policy means that entries in the flow cache may no longer be
+valid.  This patch causes us to invalidate the flow cache when people
+reload policy or change policy settings like booleans.
+
+This is actually a mashup of 2 upstream patches.  The first did the
+invalidation, the second fixed it so it could build even if xfrm wasn't
+enabled (so part 2 is a non issue for RHEL but why not go with the full
+upstream fix?)
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=334c85569b8adeaa820c0f2fab3c8f0a9dc8b92e
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=342a0cff0ad5fba6b591cfa37db3c65c4d9913f8
+
+-Eric
+
+diff -Naupr linux-2.6.18.x86_64.orig/security/selinux/include/xfrm.h linux-2.6.18.x86_64/security/selinux/include/xfrm.h
+--- linux-2.6.18.x86_64.orig/security/selinux/include/xfrm.h	2007-03-28 15:12:20.000000000 -0400
++++ linux-2.6.18.x86_64/security/selinux/include/xfrm.h	2007-03-28 15:31:39.000000000 -0400
+@@ -37,6 +37,10 @@ int selinux_xfrm_sock_rcv_skb(u32 sid, s
+ int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb,
+ 			struct avc_audit_data *ad, u8 proto);
+ int selinux_xfrm_decode_session(struct sk_buff *skb, u32 *sid, int ckall);
++static inline void selinux_xfrm_notify_policyload(void)
++{
++	atomic_inc(&flow_cache_genid);
++}
+ #else
+ static inline int selinux_xfrm_sock_rcv_skb(u32 isec_sid, struct sk_buff *skb,
+ 			struct avc_audit_data *ad)
+@@ -55,6 +59,9 @@ static inline int selinux_xfrm_decode_se
+ 	*sid = SECSID_NULL;
+ 	return 0;
+ }
++static inline void selinux_xfrm_notify_policyload(void)
++{
++}
+ #endif
+ 
+ static inline void selinux_skb_xfrm_sid(struct sk_buff *skb, u32 *sid)
+diff -Naupr linux-2.6.18.x86_64.orig/security/selinux/ss/services.c linux-2.6.18.x86_64/security/selinux/ss/services.c
+--- linux-2.6.18.x86_64.orig/security/selinux/ss/services.c	2007-03-28 15:23:34.000000000 -0400
++++ linux-2.6.18.x86_64/security/selinux/ss/services.c	2007-03-28 15:34:01.000000000 -0400
+@@ -1253,6 +1253,7 @@ int security_load_policy(void *data, siz
+ 		avc_ss_reset(seqno);
+ 		selnl_notify_policyload(seqno);
+ 		selinux_netlbl_cache_invalidate();
++		selinux_xfrm_notify_policyload();
+ 		return 0;
+ 	}
+ 
+@@ -1308,6 +1309,7 @@ int security_load_policy(void *data, siz
+ 	avc_ss_reset(seqno);
+ 	selnl_notify_policyload(seqno);
+ 	selinux_netlbl_cache_invalidate();
++	selinux_xfrm_notify_policyload();
+ 
+ 	return 0;
+ 
+@@ -1807,6 +1809,7 @@ out:
+ 	if (!rc) {
+ 		avc_ss_reset(seqno);
+ 		selnl_notify_policyload(seqno);
++		selinux_xfrm_notify_policyload();
+ 	}
+ 	return rc;
+ }
+

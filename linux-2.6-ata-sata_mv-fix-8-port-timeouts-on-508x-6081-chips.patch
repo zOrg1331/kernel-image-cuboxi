@@ -1,0 +1,50 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Wed, 8 Apr 2009 13:32:56 -0500
+Subject: [ata] sata_mv: fix 8-port timeouts on 508x/6081 chips
+Message-id: 20090408183256.GA5969@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.4 PATCH] sata_mv: fix 8-port timeouts on 508x/6081 chips
+Bugzilla: 493451
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+
+The sata_mv driver may check the Interrupt Status
+register for the wrong port when using the 8-port
+Marvell 6081 sata controller leading to timeouts.
+
+This resolves BZ 493451, reporter verified a -138.el5
+test kernel, please review and ACK.
+
+Thanks,
+David
+
+commit b0bccb18bc523d1d5060d25958f12438062829a9
+Author: Mark Lord <liml@rtr.ca>
+Date:   Mon Jan 19 18:04:37 2009 -0500
+
+    sata_mv: fix 8-port timeouts on 508x/6081 chips
+
+    Fix a longstanding bug for the 8-port Marvell Sata controllers (508x/6081),
+    where accesses to the upper 4 ports would cause lost-interrupts / timeouts
+    for the lower 4-ports.  With this patch, the 6081 boards should finally be
+    reliable enough for mainstream use with Linux.
+
+    Signed-off-by: Mark Lord <mlord@pobox.com>
+    Signed-off-by: Jeff Garzik <jgarzik@redhat.com>
+
+ drivers/ata/sata_mv.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/ata/sata_mv.c b/drivers/ata/sata_mv.c
+index 2ddd2aa..c5d561e 100644
+--- a/drivers/ata/sata_mv.c
++++ b/drivers/ata/sata_mv.c
+@@ -877,7 +877,7 @@ static void mv_start_dma(struct ata_port *ap, void __iomem *port_mmio,
+ 		struct mv_host_priv *hpriv = ap->host->private_data;
+ 		int hardport = mv_hardport_from_port(ap->port_no);
+ 		void __iomem *hc_mmio = mv_hc_base_from_port(
+-					mv_host_base(ap->host), hardport);
++					mv_host_base(ap->host), ap->port_no);
+ 		u32 hc_irq_cause, ipending;
+ 
+ 		/* clear EDMA event indicators, if any */

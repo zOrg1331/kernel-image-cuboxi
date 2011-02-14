@@ -1,0 +1,45 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Thu, 17 Jan 2008 15:48:47 -0500
+Subject: [xen] x86: more improved TPR/CR8 virtualization
+Message-id: 20080117204848.1520.51965.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] svm.c snippet for Improved TPR/CR8 virtualization in Xen
+Bugzilla: 251985
+
+Resolves BZ 251985
+
+I'm posting the svm.c changes to the TPR/CR8 separately per DonZ's request
+as he had already incorporated the original patch into -69 build.  I've
+re-tested on 2 socket Barcelona with WinXP64 guest and here are the results.
+Still good, but the margins are bit in line with what I'd expect.
+
+With the combined CR8 patch, the number of CR8 intercepts dropped from
+7814084 to 8176 during WinXP 64-bit boot up.
+
+Please ACK.
+
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 31359a3..163a6cf 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -2395,6 +2395,16 @@ asmlinkage void svm_vmexit_handler(struct cpu_user_regs *regs)
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
+     int inst_len, rc;
+ 
++    /*
++     * Before doing anything else, we need to sync up the VLAPIC's TPR with
++     * SVM's vTPR if CR8 writes are currently disabled.  It's OK if the
++     * guest doesn't touch the CR8 (e.g. 32-bit Windows) because we update
++     * the vTPR on MMIO writes to the TPR
++     */
++    if ( !(vmcb->cr_intercepts & CR_INTERCEPT_CR8_WRITE) )
++        vlapic_set_reg(vcpu_vlapic(v), APIC_TASKPRI,
++                       (vmcb->vintr.fields.tpr & 0x0F) << 4);
++ 
+     exit_reason = vmcb->exitcode;
+ 
+     HVMTRACE_2D(VMEXIT, v, vmcb->rip, exit_reason);

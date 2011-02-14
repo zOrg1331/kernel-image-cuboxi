@@ -1,0 +1,64 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Fri, 15 Jan 2010 20:58:27 -0500
+Subject: [misc] hpilo: fix build warning in ilo_isr
+Message-id: <20100115205836.20907.77000.sendpatchset@dhcp-100-2-186.bos.redhat.com>
+Patchwork-id: 22580
+O-Subject: [RHEL5.5 PATCH]hpilo: fix build warning
+Bugzilla: 515010
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+BUGZILLA
+========
+ Bug 515010 - FEAT: RHEL 5.5 - Request for the hp-ilo driver
+ https://bugzilla.redhat.com/show_bug.cgi?id=515010
+
+DESCRIPTION
+===========
+  This patch eliminates a compiler warning created by applying
+  the original patch set. The warning was for an incorrect
+  argument list to a function.
+
+AUTHOR
+======
+Prarit Bhargava
+
+UPSTREAM STATUS
+===============
+  Upstream already has the correct argument list. The backport
+  failed to account for the difference between upstream and
+  2.6.18 kernel for the argument list.
+
+KABI STATUS
+===========
+  No KABI symbols were affected.
+
+TESTING
+=======
+  The patch was applied to RHEL5 kernel 2.6.18-183 and tested
+  using a test program.
+
+rSTAT
+====
+ drivers/misc/hpilo.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+Signed-off-by: David Altobelli <david.altobelli@hp.com>
+Signed-off-by: Tony Camuso <tony.camuso@hp.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/misc/hpilo.c b/drivers/misc/hpilo.c
+index 91addf4..ea31cbf 100644
+--- a/drivers/misc/hpilo.c
++++ b/drivers/misc/hpilo.c
+@@ -639,7 +639,7 @@ static const struct file_operations ilo_fops = {
+ 	.release 	= ilo_close,
+ };
+ 
+-static irqreturn_t ilo_isr(int irq, void *data)
++static irqreturn_t ilo_isr(int irq, void *data, struct pt_regs *regs)
+ {
+ 	struct ilo_hwinfo *hw = data;
+ 	int pending, i;

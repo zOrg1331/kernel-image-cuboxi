@@ -19,7 +19,6 @@
 #include <asm/pgtable.h>
 #include <asm/processor.h>
 #include <asm/reboot.h>
-#include <asm/smp-ops.h>
 #include <asm/system.h>
 #include <asm/bootinfo.h>
 #include <asm/pmon.h>
@@ -35,7 +34,7 @@ extern void prom_grab_secondary(void);
 struct callvectors *debug_vectors;
 
 extern unsigned long yosemite_base;
-extern unsigned long cpu_clock_freq;
+extern unsigned long cpu_clock;
 
 const char *get_system_type(void)
 {
@@ -64,7 +63,7 @@ static void prom_exit(void)
 #ifdef CONFIG_SMP
 	if (smp_processor_id())
 		/* CPU 1 */
-		smp_call_function(prom_cpu0_exit, NULL, 1);
+		smp_call_function(prom_cpu0_exit, NULL, 1, 1);
 #endif
 	prom_cpu0_exit(NULL);
 }
@@ -78,8 +77,6 @@ static void prom_halt(void)
 	while (1)
 		__asm__(".set\tmips3\n\t" "wait\n\t" ".set\tmips0");
 }
-
-extern struct plat_smp_ops yos_smp_ops;
 
 /*
  * Init routine which accepts the variables from PMON
@@ -122,20 +119,22 @@ void __init prom_init(void)
 					  16);
 
 		if (strncmp("cpuclock", *env, strlen("cpuclock")) == 0)
-			cpu_clock_freq =
+			cpu_clock =
 			    simple_strtol(*env + strlen("cpuclock="), NULL,
 					  10);
 
 		env++;
 	}
 
-	prom_grab_secondary();
+	mips_machgroup = MACH_GROUP_TITAN;
+	mips_machtype = MACH_TITAN_YOSEMITE;
 
-	register_smp_ops(&yos_smp_ops);
+	prom_grab_secondary();
 }
 
-void __init prom_free_prom_memory(void)
+unsigned long __init prom_free_prom_memory(void)
 {
+	return 0;
 }
 
 void __init prom_fixup_mem_map(unsigned long start, unsigned long end)

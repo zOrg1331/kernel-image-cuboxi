@@ -29,7 +29,6 @@
 #define ECHOCARD_HAS_ADAT	FALSE
 #define ECHOCARD_HAS_STEREO_BIG_ENDIAN32
 #define ECHOCARD_HAS_MIDI
-#define ECHOCARD_HAS_LINE_OUT_GAIN
 
 /* Pipe indexes */
 #define PX_ANALOG_OUT	0	/* 8 */
@@ -46,6 +45,7 @@
 #define BX_NUM		8
 
 
+#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -56,7 +56,6 @@
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/control.h>
-#include <sound/tlv.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/asoundef.h>
@@ -65,9 +64,6 @@
 #include <asm/io.h>
 #include <asm/atomic.h>
 #include "echoaudio.h"
-
-MODULE_FIRMWARE("ea/loader_dsp.fw");
-MODULE_FIRMWARE("ea/mia_dsp.fw");
 
 #define FW_361_LOADER	0
 #define FW_MIA_DSP	1

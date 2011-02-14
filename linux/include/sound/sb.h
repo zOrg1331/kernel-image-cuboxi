@@ -3,7 +3,7 @@
 
 /*
  *  Header file for SoundBlaster cards
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -38,7 +38,6 @@ enum sb_hw_type {
 	SB_HW_ALS100,		/* Avance Logic ALS100 chip */
 	SB_HW_ALS4000,		/* Avance Logic ALS4000 chip */
 	SB_HW_DT019X,		/* Diamond Tech. DT-019X / Avance Logic ALS-007 */
-	SB_HW_CS5530,		/* Cyrix/NatSemi 5530 VSA1 */
 };
 
 #define SB_OPEN_PCM			0x01
@@ -101,7 +100,7 @@ struct snd_sb {
 	struct snd_rawmidi *rmidi;
 	struct snd_rawmidi_substream *midi_substream_input;
 	struct snd_rawmidi_substream *midi_substream_output;
-	irq_handler_t rmidi_callback;
+	irqreturn_t (*rmidi_callback)(int irq, void *dev_id, struct pt_regs *regs);
 
 	spinlock_t reg_lock;
 	spinlock_t open_lock;
@@ -240,16 +239,11 @@ struct snd_sb {
 #define SB_DT019X_CAP_MAIN	0x07
 
 #define SB_ALS4000_MONO_IO_CTRL	0x4b
-#define SB_ALS4000_OUT_MIXER_CTRL_2	0x4c
 #define SB_ALS4000_MIC_IN_GAIN	0x4d
-#define SB_ALS4000_ANALOG_REFRNC_VOLT_CTRL 0x4e
 #define SB_ALS4000_FMDAC	0x4f
 #define SB_ALS4000_3D_SND_FX	0x50
 #define SB_ALS4000_3D_TIME_DELAY	0x51
 #define SB_ALS4000_3D_AUTO_MUTE	0x52
-#define SB_ALS4000_ANALOG_BLOCK_CTRL 0x53
-#define SB_ALS4000_3D_DELAYLINE_PATTERN 0x54
-#define SB_ALS4000_CR3_CONFIGURATION	0xc3 /* bit 7 is Digital Loop Enable */
 #define SB_ALS4000_QSOUND	0xdb
 
 /* IRQ setting bitmap */
@@ -262,7 +256,6 @@ struct snd_sb {
 #define SB_IRQTYPE_8BIT		0x01
 #define SB_IRQTYPE_16BIT	0x02
 #define SB_IRQTYPE_MPUIN	0x04
-#define ALS4K_IRQTYPE_CR1E_DMA	0x20
 
 /* DMA setting bitmap */
 #define SB_DMASETUP_DMA0	0x01
@@ -293,7 +286,7 @@ int snd_sbdsp_reset(struct snd_sb *chip);
 int snd_sbdsp_create(struct snd_card *card,
 		     unsigned long port,
 		     int irq,
-		     irq_handler_t irq_handler,
+		     irqreturn_t (*irq_handler)(int, void *, struct pt_regs *),
 		     int dma8, int dma16,
 		     unsigned short hardware,
 		     struct snd_sb **r_chip);
@@ -323,7 +316,7 @@ int snd_sb16dsp_pcm(struct snd_sb *chip, int device, struct snd_pcm ** rpcm);
 const struct snd_pcm_ops *snd_sb16dsp_get_pcm_ops(int direction);
 int snd_sb16dsp_configure(struct snd_sb *chip);
 /* sb16.c */
-irqreturn_t snd_sb16dsp_interrupt(int irq, void *dev_id);
+irqreturn_t snd_sb16dsp_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 
 /* exported mixer stuffs */
 enum {
@@ -331,8 +324,7 @@ enum {
 	SB_MIX_DOUBLE,
 	SB_MIX_INPUT_SW,
 	SB_MIX_CAPTURE_PRO,
-	SB_MIX_CAPTURE_DT019X,
-	SB_MIX_MONO_CAPTURE_ALS4K
+	SB_MIX_CAPTURE_DT019X
 };
 
 #define SB_MIXVAL_DOUBLE(left_reg, right_reg, left_shift, right_shift, mask) \

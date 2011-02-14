@@ -1,0 +1,50 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:49:46 -0400
+Subject: [net] netxen: fix set mac addr
+Message-id: <20100803134701.2239.76793.sendpatchset@localhost.localdomain>
+Patchwork-id: 27318
+O-Subject: [RHEL 5.6 PATCH 16/44] netxen: fix set mac addr
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id d49c9640975355c79f346869831bf9780d185de0
+
+Description
+===========
+
+>From 4fc681ca1345f046942cf9179f52111b05e74ee4 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Thu, 7 Jan 2010 22:10:16 +0000
+Subject: [PATCH] netxen: fix set mac addr
+
+o If tx and rx resources are not available, during set mac request.
+  Then this request wont be passed to firmware and it will be added to
+  driver mac list and will never make it to firmware.
+  So if resources are not available, don't add it to driver mac list.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_hw.c b/drivers/net/netxen/netxen_nic_hw.c
+index 1952f43..11234d9 100644
+--- a/drivers/net/netxen/netxen_nic_hw.c
++++ b/drivers/net/netxen/netxen_nic_hw.c
+@@ -675,6 +675,9 @@ void netxen_p3_nic_set_multi(struct net_device *netdev)
+ 	struct list_head *head;
+ 	nx_mac_list_t *cur;
+ 
++	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
++		return;
++
+ 	list_splice_init(&adapter->mac_list, &del_list);
+ 
+ 	nx_p3_nic_add_mac(adapter, adapter->mac_addr, &del_list);

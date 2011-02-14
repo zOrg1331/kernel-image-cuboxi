@@ -120,7 +120,7 @@
  * the Wavelan itself (NCR -> AT&T -> Lucent).
  *
  * All started with Anders Klemets <klemets@paul.rutgers.edu>,
- * writing a Wavelan ISA driver for the MACH microkernel. Girish
+ * writting a Wavelan ISA driver for the MACH microkernel. Girish
  * Welling <welling@paul.rutgers.edu> had also worked on it.
  * Keith Moore modify this for the Pcmcia hardware.
  * 
@@ -459,6 +459,7 @@
 #undef WAVELAN_ROAMING_EXT	/* Enable roaming wireless extensions */
 #undef SET_PSA_CRC		/* Set the CRC in PSA (slower) */
 #define USE_PSA_CONFIG		/* Use info from the PSA */
+#undef STRUCT_CHECK		/* Verify padding of structures */
 #undef EEPROM_IS_PROTECTED	/* Doesn't seem to be necessary */
 #define MULTICAST_AVOID		/* Avoid extra multicast (I'm sceptical) */
 #undef SET_MAC_ADDRESS		/* Experimental */
@@ -547,7 +548,7 @@ typedef struct wavepoint_beacon
 			spec_id2,	/* Unused */
 			pdu_type,	/* Unused */
 			seq;		/* WavePoint beacon sequence number */
-  __be16		domain_id,	/* WavePoint Domain ID */
+  unsigned short	domain_id,	/* WavePoint Domain ID */
 			nwid;		/* WavePoint NWID */
 } wavepoint_beacon;
 
@@ -576,6 +577,7 @@ struct wavepoint_table
 /****************************** TYPES ******************************/
 
 /* Shortcuts */
+typedef struct net_device_stats	en_stats;
 typedef struct iw_statistics	iw_stats;
 typedef struct iw_quality	iw_qual;
 typedef struct iw_freq		iw_freq;
@@ -591,6 +593,8 @@ typedef u_char		mac_addr[WAVELAN_ADDR_SIZE];	/* Hardware address */
  * For each network interface, Linux keep data in two structure. "device"
  * keep the generic data (same format for everybody) and "net_local" keep
  * the additional specific data.
+ * Note that some of this specific data is in fact generic (en_stats, for
+ * example).
  */
 struct net_local
 {
@@ -598,6 +602,7 @@ struct net_local
   struct net_device *	dev;		/* Reverse link... */
   spinlock_t	spinlock;	/* Serialize access to the hardware (SMP) */
   struct pcmcia_device *	link;		/* pcmcia structure */
+  en_stats	stats;		/* Ethernet interface statistics */
   int		nresets;	/* Number of hw resets */
   u_char	configured;	/* If it is configured */
   u_char	reconfig_82593;	/* Need to reconfigure the controller */
@@ -633,7 +638,7 @@ struct net_local
 /* ----------------- MODEM MANAGEMENT SUBROUTINES ----------------- */
 static inline u_char		/* data */
 	hasr_read(u_long);	/* Read the host interface : base address */
-static void
+static inline void
 	hacr_write(u_long,	/* Write to host interface : base address */
 		   u_char),	/* data */
 	hacr_write_slow(u_long,
@@ -647,7 +652,7 @@ static void
 		  int,		/* Offset in psa */
 		  u_char *,	/* Buffer in memory */
 		  int);		/* Length of buffer */
-static void
+static inline void
 	mmc_out(u_long,		/* Write 1 byte to the Modem Manag Control */
 		u_short,
 		u_char),
@@ -655,10 +660,10 @@ static void
 		  u_char,
 		  u_char *,
 		  int);
-static u_char			/* Read 1 byte from the MMC */
+static inline u_char		/* Read 1 byte from the MMC */
 	mmc_in(u_long,
 	       u_short);
-static void
+static inline void
 	mmc_read(u_long,	/* Read n bytes from the MMC */
 		 u_char,
 		 u_char *,
@@ -684,54 +689,57 @@ static int
 		     int,
 		     char *,
 		     int);
-static void
+static inline void
 	wv_82593_reconfig(struct net_device *);	/* Reconfigure the controller */
 /* ------------------- DEBUG & INFO SUBROUTINES ------------------- */
-static void
+static inline void
 	wv_init_info(struct net_device *);	/* display startup info */
 /* ------------------- IOCTL, STATS & RECONFIG ------------------- */
+static en_stats	*
+	wavelan_get_stats(struct net_device *);	/* Give stats /proc/net/dev */
 static iw_stats *
 	wavelan_get_wireless_stats(struct net_device *);
 /* ----------------------- PACKET RECEPTION ----------------------- */
-static int
+static inline int
 	wv_start_of_frame(struct net_device *,	/* Seek beggining of current frame */
 			  int,	/* end of frame */
 			  int);	/* start of buffer */
-static void
+static inline void
 	wv_packet_read(struct net_device *,	/* Read a packet from a frame */
 		       int,
 		       int),
 	wv_packet_rcv(struct net_device *);	/* Read all packets waiting */
 /* --------------------- PACKET TRANSMISSION --------------------- */
-static void
+static inline void
 	wv_packet_write(struct net_device *,	/* Write a packet to the Tx buffer */
 			void *,
 			short);
-static netdev_tx_t
+static int
 	wavelan_packet_xmit(struct sk_buff *,	/* Send a packet */
 			    struct net_device *);
 /* -------------------- HARDWARE CONFIGURATION -------------------- */
-static int
+static inline int
 	wv_mmc_init(struct net_device *);	/* Initialize the modem */
 static int
 	wv_ru_stop(struct net_device *),	/* Stop the i82593 receiver unit */
 	wv_ru_start(struct net_device *);	/* Start the i82593 receiver unit */
 static int
 	wv_82593_config(struct net_device *);	/* Configure the i82593 */
-static int
+static inline int
 	wv_pcmcia_reset(struct net_device *);	/* Reset the pcmcia interface */
 static int
 	wv_hw_config(struct net_device *);	/* Reset & configure the whole hardware */
-static void
+static inline void
 	wv_hw_reset(struct net_device *);	/* Same, + start receiver unit */
-static int
+static inline int
 	wv_pcmcia_config(struct pcmcia_device *);	/* Configure the pcmcia interface */
 static void
 	wv_pcmcia_release(struct pcmcia_device *);/* Remove a device */
 /* ---------------------- INTERRUPT HANDLING ---------------------- */
 static irqreturn_t
 	wavelan_interrupt(int,	/* Interrupt handler */
-			  void *);
+			  void *,
+			  struct pt_regs *);
 static void
 	wavelan_watchdog(struct net_device *);	/* Transmission watchdog */
 /* ------------------- CONFIGURATION CALLBACKS ------------------- */

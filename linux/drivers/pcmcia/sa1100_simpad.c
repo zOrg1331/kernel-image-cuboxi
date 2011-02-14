@@ -6,13 +6,14 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/init.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/irq.h>
-#include <mach/simpad.h>
+#include <asm/arch/simpad.h>
 #include "sa1100_generic.h"
  
 extern long get_cs3_shadow(void);
@@ -90,7 +91,7 @@ simpad_pcmcia_configure_socket(struct soc_pcmcia_socket *skt,
 
 	default:
 		printk(KERN_ERR "%s(): unrecognized Vcc %u\n",
-			__func__, state->Vcc);
+			__FUNCTION__, state->Vcc);
 		clear_cs3_bit(VCC_3V_EN|VCC_5V_EN|EN0|EN1);
 		local_irq_restore(flags);
 		return -1;

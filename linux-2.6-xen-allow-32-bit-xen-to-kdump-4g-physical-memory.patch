@@ -1,0 +1,43 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Subject: [RHEL-5.1 PATCH] Allow 32-bit Xen to kdump >4G physical memory
+Date: Mon, 10 Sep 2007 16:13:13 +0100
+Bugzilla: 251341
+Message-Id: <1189437193.11438.35.camel@sisko.scot.redhat.com>
+Changelog: [Xen] Allow 32-bit Xen to kdump >4G physical memory
+
+
+Hi,
+
+This patch allows /proc/iomem to report physical memory above 4GB on 
+kernel-xen.  The kexec userland tools use that information to set up the
+kdump kernel; without the patch, the kdump kernel is still run but is
+only aware of memory below 4G.
+
+Our RHEL baremetal kernels, and the upstream Xen kernels, already have
+this.  Without it we cannot get a vmcore above 4G, severely impacting
+support of larger 32-bit boxes.
+
+Fixes bug 251341.  I've tested that with the patch, I can get a complete
+vmcore from an 8G i686 box, and that crash can successfully read the
+resulting vmcore.
+
+Please ACK.
+
+--Stephen
+
+
+diff -uNrp linux-2.6.18.i386.orig/arch/i386/kernel/setup-xen.c linux-2.6.18.i386/arch/i386/kernel/setup-xen.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/setup-xen.c	2007-08-07 19:12:58.000000000 +0900
++++ linux-2.6.18.i386/arch/i386/kernel/setup-xen.c	2007-08-07 20:32:02.000000000 +0900
+@@ -1440,8 +1440,10 @@ legacy_init_iomem_resources(struct resou
+ 
+ 	for (i = 0; i < nr_map; i++) {
+ 		struct resource *res;
++#ifndef CONFIG_RESOURCES_64BIT
+ 		if (map[i].addr + map[i].size > 0x100000000ULL)
+ 			continue;
++#endif
+ 		res = kzalloc(sizeof(struct resource), GFP_ATOMIC);
+ 		switch (map[i].type) {
+ 		case E820_RAM:	res->name = "System RAM"; break;
+

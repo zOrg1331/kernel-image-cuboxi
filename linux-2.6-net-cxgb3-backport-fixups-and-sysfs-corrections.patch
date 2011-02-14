@@ -1,0 +1,314 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Subject: [RHEL5.1 PATCH] cxgb3: backport fixups and sysfs corrections
+Date: Wed, 15 Aug 2007 16:38:36 -0400
+Bugzilla: 252243
+Message-Id: <20070815203835.GJ18917@gospo.rdu.redhat.com>
+Changelog: [net] cxgb3: backport fixups and sysfs corrections
+
+
+
+There were a few small fixups needed in the cxgb3 driver.  Some were
+related to compiler warnings others to correct sysfs functionality.
+
+Chelsio is currently regression testing this with my RHEL5 test kernels
+and so far has provided positive feedback.
+
+This would resolve BZ 252243.
+
+---
+
+ adapter.h    |    6 ++--
+ cxgb3_main.c |   71 ++++++++++++++++++++++++++++-------------------------------
+ sge.c        |   24 +++++++++----------
+ 3 files changed, 49 insertions(+), 52 deletions(-)
+
+--- linux-2.6.18.i386/drivers/net/cxgb3/sge.c.orig
++++ linux-2.6.18.i386/drivers/net/cxgb3/sge.c
+@@ -2186,7 +2186,7 @@ static inline int handle_responses(struc
+  * The MSI-X interrupt handler for an SGE response queue for the non-NAPI case
+  * (i.e., response queue serviced in hard interrupt).
+  */
+-irqreturn_t t3_sge_intr_msix(int irq, void *cookie)
++irqreturn_t t3_sge_intr_msix(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	struct sge_qset *qs = cookie;
+ 	struct adapter *adap = qs->netdev->priv;
+@@ -2205,7 +2205,7 @@ irqreturn_t t3_sge_intr_msix(int irq, vo
+  * The MSI-X interrupt handler for an SGE response queue for the NAPI case
+  * (i.e., response queue serviced by NAPI polling).
+  */
+-irqreturn_t t3_sge_intr_msix_napi(int irq, void *cookie)
++irqreturn_t t3_sge_intr_msix_napi(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	struct sge_qset *qs = cookie;
+ 	struct adapter *adap = qs->netdev->priv;
+@@ -2226,7 +2226,7 @@ irqreturn_t t3_sge_intr_msix_napi(int ir
+  * the same MSI vector.  We use one SGE response queue per port in this mode
+  * and protect all response queues with queue 0's lock.
+  */
+-static irqreturn_t t3_intr_msi(int irq, void *cookie)
++static irqreturn_t t3_intr_msi(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	int new_packets = 0;
+ 	struct adapter *adap = cookie;
+@@ -2274,7 +2274,7 @@ static int rspq_check_napi(struct net_de
+  * one SGE response queue per port in this mode and protect all response
+  * queues with queue 0's lock.
+  */
+-irqreturn_t t3_intr_msi_napi(int irq, void *cookie)
++irqreturn_t t3_intr_msi_napi(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	int new_packets;
+ 	struct adapter *adap = cookie;
+@@ -2313,7 +2313,7 @@ static inline int process_responses_gts(
+  * the same interrupt pin.  We use one SGE response queue per port in this mode
+  * and protect all response queues with queue 0's lock.
+  */
+-static irqreturn_t t3_intr(int irq, void *cookie)
++static irqreturn_t t3_intr(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	int work_done, w0, w1;
+ 	struct adapter *adap = cookie;
+@@ -2351,7 +2351,7 @@ static irqreturn_t t3_intr(int irq, void
+  * response queue per port in this mode and protect all response queues with
+  * queue 0's lock.
+  */
+-static irqreturn_t t3b_intr(int irq, void *cookie)
++static irqreturn_t t3b_intr(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	u32 map;
+ 	struct adapter *adap = cookie;
+@@ -2385,7 +2385,7 @@ static irqreturn_t t3b_intr(int irq, voi
+  * response queue per port in this mode and protect all response queues with
+  * queue 0's lock.
+  */
+-static irqreturn_t t3b_intr_napi(int irq, void *cookie)
++static irqreturn_t t3b_intr_napi(int irq, void *cookie, struct pt_regs *regs)
+ {
+ 	u32 map;
+ 	struct net_device *dev;
+@@ -2429,15 +2429,15 @@ static irqreturn_t t3b_intr_napi(int irq
+  *	(MSI-X, MSI, or legacy) and whether NAPI will be used to service the
+  *	response queues.
+  */
+-irqreturn_t t3_intr_handler(struct adapter *adap, int polling, struct pt_regs *ptregs)
++intr_handler_t t3_intr_handler(struct adapter *adap, int polling, struct pt_regs *ptregs)
+ {
+ 	if (adap->flags & USING_MSIX)
+-		return polling ? (irqreturn_t)t3_sge_intr_msix_napi : (irqreturn_t)t3_sge_intr_msix;
++		return polling ? t3_sge_intr_msix_napi : t3_sge_intr_msix;
+ 	if (adap->flags & USING_MSI)
+-		return polling ? (irqreturn_t)t3_intr_msi_napi : (irqreturn_t)t3_intr_msi;
++		return polling ? t3_intr_msi_napi : t3_intr_msi;
+ 	if (adap->params.rev > 0)
+-		return polling ? (irqreturn_t)t3b_intr_napi : (irqreturn_t)t3b_intr;
+-	return (irqreturn_t)t3_intr;
++		return polling ? t3b_intr_napi : t3b_intr;
++	return t3_intr;
+ }
+ 
+ /**
+--- linux-2.6.18.i386/drivers/net/cxgb3/adapter.h.orig
++++ linux-2.6.18.i386/drivers/net/cxgb3/adapter.h
+@@ -46,7 +46,7 @@
+ #include <asm/bitops.h>
+ #include <asm/io.h>
+ 
+-typedef irqreturn_t(*intr_handler_t) (int, void *);
++typedef irqreturn_t(*intr_handler_t) (int, void *, struct pt_regs *);
+ 
+ struct vlan_group;
+ 
+@@ -274,7 +274,7 @@ void t3_sge_start(struct adapter *adap);
+ void t3_sge_stop(struct adapter *adap);
+ void t3_free_sge_resources(struct adapter *adap);
+ void t3_sge_err_intr_handler(struct adapter *adapter);
+-irqreturn_t t3_intr_handler(struct adapter *adap, int polling, 
++intr_handler_t t3_intr_handler(struct adapter *adap, int polling, 
+ 			       struct pt_regs *ptregs);
+ int t3_eth_xmit(struct sk_buff *skb, struct net_device *dev);
+ int t3_mgmt_tx(struct adapter *adap, struct sk_buff *skb);
+@@ -284,6 +284,6 @@ int t3_sge_alloc_qset(struct adapter *ad
+ 		      int ntxq, struct net_device *netdev);
+ int t3_get_desc(const struct sge_qset *qs, unsigned int qnum, unsigned int idx,
+ 		unsigned char *data);
+-irqreturn_t t3_sge_intr_msix(int irq, void *cookie);
++irqreturn_t t3_sge_intr_msix(int irq, void *cookie, struct pt_regs*);
+ 
+ #endif				/* __T3_ADAPTER_H__ */
+--- linux-2.6.18.i386/drivers/net/cxgb3/cxgb3_main.c.orig
++++ linux-2.6.18.i386/drivers/net/cxgb3/cxgb3_main.c
+@@ -443,21 +443,19 @@ static int setup_sge_qsets(struct adapte
+ 	return 0;
+ }
+ 
+-static ssize_t attr_show(struct device *d, struct device_attribute *attr,
+-			 char *buf,
++static ssize_t attr_show(struct class_device *c, char *buf,
+ 			 ssize_t(*format) (struct net_device *, char *))
+ {
+ 	ssize_t len;
+ 
+ 	/* Synchronize with ioctls that may shut down the device */
+ 	rtnl_lock();
+-	len = (*format) (to_net_dev(d), buf);
++	len = (*format) (to_net_dev(c), buf);
+ 	rtnl_unlock();
+ 	return len;
+ }
+ 
+-static ssize_t attr_store(struct device *d, struct device_attribute *attr,
+-			  const char *buf, size_t len,
++static ssize_t attr_store(struct class_device *c, const char *buf, size_t len,
+ 			  ssize_t(*set) (struct net_device *, unsigned int),
+ 			  unsigned int min_val, unsigned int max_val)
+ {
+@@ -473,7 +471,7 @@ static ssize_t attr_store(struct device 
+ 		return -EINVAL;
+ 
+ 	rtnl_lock();
+-	ret = (*set) (to_net_dev(d), val);
++	ret = (*set) (to_net_dev(c), val);
+ 	if (!ret)
+ 		ret = len;
+ 	rtnl_unlock();
+@@ -486,10 +484,9 @@ static ssize_t format_##name(struct net_
+ 	struct adapter *adap = dev->priv; \
+ 	return sprintf(buf, "%u\n", val_expr); \
+ } \
+-static ssize_t show_##name(struct device *d, struct device_attribute *attr, \
+-			   char *buf) \
++static ssize_t show_##name(struct class_device *c, char *buf) \
+ { \
+-	return attr_show(d, attr, buf, format_##name); \
++	return attr_show(c, buf, format_##name); \
+ }
+ 
+ static ssize_t set_nfilters(struct net_device *dev, unsigned int val)
+@@ -508,10 +505,10 @@ static ssize_t set_nfilters(struct net_d
+ 	return 0;
+ }
+ 
+-static ssize_t store_nfilters(struct device *d, struct device_attribute *attr,
++static ssize_t store_nfilters(struct class_device *c,
+ 			      const char *buf, size_t len)
+ {
+-	return attr_store(d, attr, buf, len, set_nfilters, 0, ~0);
++	return attr_store(c, buf, len, set_nfilters, 0, ~0);
+ }
+ 
+ static ssize_t set_nservers(struct net_device *dev, unsigned int val)
+@@ -527,39 +524,39 @@ static ssize_t set_nservers(struct net_d
+ 	return 0;
+ }
+ 
+-static ssize_t store_nservers(struct device *d, struct device_attribute *attr,
++static ssize_t store_nservers(struct class_device *c,
+ 			      const char *buf, size_t len)
+ {
+-	return attr_store(d, attr, buf, len, set_nservers, 0, ~0);
++	return attr_store(c, buf, len, set_nservers, 0, ~0);
+ }
+ 
+ #define CXGB3_ATTR_R(name, val_expr) \
+ CXGB3_SHOW(name, val_expr) \
+-static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
++static CLASS_DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
+ 
+ #define CXGB3_ATTR_RW(name, val_expr, store_method) \
+ CXGB3_SHOW(name, val_expr) \
+-static DEVICE_ATTR(name, S_IRUGO | S_IWUSR, show_##name, store_method)
++static CLASS_DEVICE_ATTR(name, S_IRUGO | S_IWUSR, show_##name, store_method)
+ 
+ CXGB3_ATTR_R(cam_size, t3_mc5_size(&adap->mc5));
+ CXGB3_ATTR_RW(nfilters, adap->params.mc5.nfilters, store_nfilters);
+ CXGB3_ATTR_RW(nservers, adap->params.mc5.nservers, store_nservers);
+ 
+ static struct attribute *cxgb3_attrs[] = {
+-	&dev_attr_cam_size.attr,
+-	&dev_attr_nfilters.attr,
+-	&dev_attr_nservers.attr,
++	&class_device_attr_cam_size.attr,
++	&class_device_attr_nfilters.attr,
++	&class_device_attr_nservers.attr,
+ 	NULL
+ };
+ 
+ static struct attribute_group cxgb3_attr_group = {.attrs = cxgb3_attrs };
+ 
+-static ssize_t tm_attr_show(struct device *d, struct device_attribute *attr,
+-			    char *buf, int sched)
++static ssize_t tm_attr_show(struct class_device *c, char *buf, 
++			    int sched)
+ {
+ 	ssize_t len;
+ 	unsigned int v, addr, bpt, cpt;
+-	struct adapter *adap = to_net_dev(d)->priv;
++	struct adapter *adap = to_net_dev(c)->priv;
+ 
+ 	addr = A_TP_TX_MOD_Q1_Q0_RATE_LIMIT - sched / 2;
+ 	rtnl_lock();
+@@ -579,13 +576,13 @@ static ssize_t tm_attr_show(struct devic
+ 	return len;
+ }
+ 
+-static ssize_t tm_attr_store(struct device *d, struct device_attribute *attr,
+-			     const char *buf, size_t len, int sched)
++static ssize_t tm_attr_store(struct class_device *c, const char *buf, 
++			     size_t len, int sched)
+ {
+ 	char *endp;
+ 	ssize_t ret;
+ 	unsigned int val;
+-	struct adapter *adap = to_net_dev(d)->priv;
++	struct adapter *adap = to_net_dev(c)->priv;
+ 
+ 	if (!capable(CAP_NET_ADMIN))
+ 		return -EPERM;
+@@ -603,17 +600,17 @@ static ssize_t tm_attr_store(struct devi
+ }
+ 
+ #define TM_ATTR(name, sched) \
+-static ssize_t show_##name(struct device *d, struct device_attribute *attr, \
++static ssize_t show_##name(struct class_device *c, \
+ 			   char *buf) \
+ { \
+-	return tm_attr_show(d, attr, buf, sched); \
++	return tm_attr_show(c, buf, sched); \
+ } \
+-static ssize_t store_##name(struct device *d, struct device_attribute *attr, \
++static ssize_t store_##name(struct class_device *c, \
+ 			    const char *buf, size_t len) \
+ { \
+-	return tm_attr_store(d, attr, buf, len, sched); \
++	return tm_attr_store(c, buf, len, sched); \
+ } \
+-static DEVICE_ATTR(name, S_IRUGO | S_IWUSR, show_##name, store_##name)
++static CLASS_DEVICE_ATTR(name, S_IRUGO | S_IWUSR, show_##name, store_##name)
+ 
+ TM_ATTR(sched0, 0);
+ TM_ATTR(sched1, 1);
+@@ -625,14 +622,14 @@ TM_ATTR(sched6, 6);
+ TM_ATTR(sched7, 7);
+ 
+ static struct attribute *offload_attrs[] = {
+-	&dev_attr_sched0.attr,
+-	&dev_attr_sched1.attr,
+-	&dev_attr_sched2.attr,
+-	&dev_attr_sched3.attr,
+-	&dev_attr_sched4.attr,
+-	&dev_attr_sched5.attr,
+-	&dev_attr_sched6.attr,
+-	&dev_attr_sched7.attr,
++	&class_device_attr_sched0.attr,
++	&class_device_attr_sched1.attr,
++	&class_device_attr_sched2.attr,
++	&class_device_attr_sched3.attr,
++	&class_device_attr_sched4.attr,
++	&class_device_attr_sched5.attr,
++	&class_device_attr_sched6.attr,
++	&class_device_attr_sched7.attr,
+ 	NULL
+ };
+ 
+

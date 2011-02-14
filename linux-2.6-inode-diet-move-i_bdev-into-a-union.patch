@@ -1,0 +1,38 @@
+From: "Theodore Ts'o" <tytso@mit.edu>
+
+Move the i_bdev pointer in struct inode into a union.
+
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ fs/inode.c         |    2 +-
+ include/linux/fs.h |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN fs/inode.c~inode-diet-move-i_bdev-into-a-union fs/inode.c
+--- a/fs/inode.c~inode-diet-move-i_bdev-into-a-union
++++ a/fs/inode.c
+@@ -254,7 +254,7 @@ void clear_inode(struct inode *inode)
+ 	DQUOT_DROP(inode);
+ 	if (inode->i_sb && inode->i_sb->s_op->clear_inode)
+ 		inode->i_sb->s_op->clear_inode(inode);
+-	if (inode->i_bdev)
++	if (S_ISBLK(inode->i_mode) && inode->i_bdev)
+ 		bd_forget(inode);
+ 	if (inode->i_cdev)
+ 		cd_forget(inode);
+diff -puN include/linux/fs.h~inode-diet-move-i_bdev-into-a-union include/linux/fs.h
+--- a/include/linux/fs.h~inode-diet-move-i_bdev-into-a-union
++++ a/include/linux/fs.h
+@@ -526,8 +526,8 @@ struct inode {
+ 	struct list_head	i_devices;
+ 	union {
+ 		struct pipe_inode_info	*i_pipe;
++		struct block_device	*i_bdev;
+ 	};
+-	struct block_device	*i_bdev;
+ 	struct cdev		*i_cdev;
+ 	int			i_cindex;
+ 
+_

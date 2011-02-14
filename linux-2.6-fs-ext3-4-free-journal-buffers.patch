@@ -1,0 +1,234 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 23 Nov 2009 21:47:55 -0500
+Subject: [fs] ext3/4: free journal buffers
+Message-id: <4B0B030B.4010704@redhat.com>
+Patchwork-id: 21472
+O-Subject: Re: [PATCH RHEL 5.5] BZ 506217 free journal buffers on ext3 and ext4.
+Bugzilla: 506217
+RH-Acked-by: Wade Mealing <wmealing@redhat.com>
+
+This time with ext3,ext4 filesystem support and a better description.
+
+This is a backport of:
+
+http://marc.info/?l=linux-ext4&m=123099540219696&w=2
+http://marc.info/?l=linux-ext4&m=123121619116500&w=2
+
+Our bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=506217
+
+As a supplemental description to the previous patch:
+
+Pages in the page cache belonging to ext3/ext4 data files are released via
+the ext3/4_releasepage() function specified in the ext3/4 inode's
+address_space_ops.  However, metadata blocks (such as indirect blocks,
+directory blocks, etc) are managed via the block device
+address_space_ops, and they cannot be released by
+try_to_free_buffers() if they have a journal head attached to them.
+
+To address this, we supply a try_to_free_pages() function which calls
+journal_try_to_free_buffers() function to free the metadata, and which
+is called by the block device's blkdev_releasepage() function.
+
+A new fs_flag ( FS_HAS_RELEASE_METADATA ) has been implemented that can
+be checked to see if the filesystem supports blkdev_releasepages to
+prevent using this function if the filesystem does not support it.
+
+I've done light testing with the test cases.    If this seems like
+dejavu it has been posted before ;).
+
+Scratch build here:
+http://porkchop.devel.redhat.com/brewroot/scratch/wmealing/task_2077766/
+
+This time it seems to register and un register itself correctly.
+
+Testing:
+Ran tester as produced by customer over full night.  This time on a
+512mb system.
+
+Can mount and remount, verbose debugging version here (
+http://porkchop.devel.redhat.com/brewroot/scratch/wmealing/task_2084536/ ).
+
+Acks would be appreciated. Thankyou.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/fs/block_dev.c b/fs/block_dev.c
+index b9ded0e..3dbc4fb 100644
+--- a/fs/block_dev.c
++++ b/fs/block_dev.c
+@@ -1189,6 +1189,21 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
+ 	return blkdev_ioctl(file->f_mapping->host, file, cmd, arg);
+ }
+ 
++/*
++ * Try to release a page associated with block device when the system
++ * is under memory pressure.
++ */
++static int blkdev_releasepage(struct page *page, gfp_t wait)
++{
++	struct super_block *super = BDEV_I(page->mapping->host)->bdev.bd_super;
++
++	if (super && (super->s_type->fs_flags & FS_HAS_TRYTOFREE) &&
++	    super->s_op->bdev_try_to_free_page)
++		return super->s_op->bdev_try_to_free_page(super, page, wait);
++
++	return try_to_free_buffers(page);
++}
++
+ const struct address_space_operations def_blk_aops = {
+ 	.readpage	= blkdev_readpage,
+ 	.writepage	= blkdev_writepage,
+@@ -1196,6 +1211,7 @@ const struct address_space_operations def_blk_aops = {
+ 	.prepare_write	= blkdev_prepare_write,
+ 	.commit_write	= blkdev_commit_write,
+ 	.writepages	= generic_writepages,
++	.releasepage	= blkdev_releasepage,
+ 	.direct_IO	= blkdev_direct_IO,
+ };
+ 
+diff --git a/fs/ext3/super.c b/fs/ext3/super.c
+index d42bbb1..2663e45 100644
+--- a/fs/ext3/super.c
++++ b/fs/ext3/super.c
+@@ -600,6 +600,26 @@ static struct dentry *ext3_get_dentry(struct super_block *sb, void *vobjp)
+ 	return result;
+ }
+ 
++/*
++ * Try to release metadata pages (indirect blocks, directories) which are
++ * mapped via the block device.  Since these pages could have journal heads
++ * which would prevent try_to_free_buffers() from freeing them, we must use
++ * jbd layer's try_to_free_buffers() function to release them.
++ */
++static int bdev_try_to_free_page(struct super_block *sb, struct page *page,
++				 gfp_t wait)
++{
++	journal_t *journal = EXT3_SB(sb)->s_journal;
++
++	WARN_ON(PageChecked(page));
++	if (!page_has_buffers(page))
++		return 0;
++	if (journal)
++		return journal_try_to_free_buffers(journal, page, 
++						   wait & ~__GFP_WAIT);
++	return try_to_free_buffers(page);
++}
++
+ #ifdef CONFIG_QUOTA
+ #define QTYPE2NAME(t) ((t)==USRQUOTA?"user":"group")
+ #define QTYPE2MOPT(on, t) ((t)==USRQUOTA?((on)##USRJQUOTA):((on)##GRPJQUOTA))
+@@ -664,6 +684,7 @@ static struct super_operations ext3_sops = {
+ 	.quota_read	= ext3_quota_read,
+ 	.quota_write	= ext3_quota_write,
+ #endif
++	.bdev_try_to_free_page = bdev_try_to_free_page,
+ };
+ 
+ static struct export_operations ext3_export_ops = {
+@@ -2786,7 +2807,8 @@ static struct file_system_type ext3_fs_type = {
+ 	.name		= "ext3",
+ 	.get_sb		= ext3_get_sb,
+ 	.kill_sb	= kill_block_super,
+-	.fs_flags	= FS_REQUIRES_DEV|FS_HAS_FIEMAP|FS_HAS_FREEZE,
++	.fs_flags	= FS_REQUIRES_DEV|FS_HAS_FIEMAP|FS_HAS_FREEZE
++			 |FS_HAS_TRYTOFREE,
+ };
+ 
+ static int __init init_ext3_fs(void)
+diff --git a/fs/ext4/super.c b/fs/ext4/super.c
+index a5423ce..939244e 100644
+--- a/fs/ext4/super.c
++++ b/fs/ext4/super.c
+@@ -960,6 +960,25 @@ static struct dentry *ext4_get_dentry(struct super_block *sb, void *vobjp)
+ 	return result;
+ }
+ 
++/*
++ * Try to release metadata pages (indirect blocks, directories) which are
++ * mapped via the block device.  Since these pages could have journal heads
++ * which would prevent try_to_free_buffers() from freeing them, we must use
++ * jbd2 layer's try_to_free_buffers() function to release them.
++ */
++static int bdev_try_to_free_page(struct super_block *sb, struct page *page, gfp_t wait)
++{
++	journal_t *journal = EXT4_SB(sb)->s_journal;
++
++	WARN_ON(PageChecked(page));
++	if (!page_has_buffers(page))
++		return 0;
++	if (journal)
++		return jbd2_journal_try_to_free_buffers(journal, page,
++							wait & ~__GFP_WAIT);
++	return try_to_free_buffers(page);
++}
++
+ #ifdef CONFIG_QUOTA
+ #define QTYPE2NAME(t) ((t) == USRQUOTA ? "user" : "group")
+ #define QTYPE2MOPT(on, t) ((t) == USRQUOTA?((on)##USRJQUOTA):((on)##GRPJQUOTA))
+@@ -1039,6 +1058,7 @@ static struct super_operations ext4_nojournal_sops = {
+ 	.quota_read	= ext4_quota_read,
+ 	.quota_write	= ext4_quota_write,
+ #endif
++	.bdev_try_to_free_page = bdev_try_to_free_page,
+ };
+ 
+ static struct export_operations ext4_export_ops = {
+@@ -3953,7 +3973,8 @@ static struct file_system_type ext4_fs_type = {
+ 	.name		= "ext4",
+ 	.get_sb		= ext4_get_sb,
+ 	.kill_sb	= kill_block_super,
+-	.fs_flags	= FS_REQUIRES_DEV|FS_HAS_FALLOCATE|FS_HAS_FIEMAP|FS_HAS_FREEZE,
++	.fs_flags	= FS_REQUIRES_DEV|FS_HAS_FALLOCATE|FS_HAS_FIEMAP
++			 |FS_HAS_FREEZE|FS_HAS_TRYTOFREE,
+ };
+ 
+ #ifdef CONFIG_EXT4DEV_COMPAT
+diff --git a/fs/super.c b/fs/super.c
+index bfc3137..c660392 100644
+--- a/fs/super.c
++++ b/fs/super.c
+@@ -731,6 +731,7 @@ int get_sb_bdev(struct file_system_type *fs_type,
+ 
+ 		s->s_flags |= MS_ACTIVE;
+ 		bdev_uevent(bdev, KOBJ_MOUNT);
++		bdev->bd_super = s;
+ 	}
+ 
+ 	return simple_set_mnt(mnt, s);
+@@ -750,6 +751,7 @@ void kill_block_super(struct super_block *sb)
+ 	struct block_device *bdev = sb->s_bdev;
+ 
+ 	bdev_uevent(bdev, KOBJ_UMOUNT);
++	bdev->bd_super = 0;
+ 	generic_shutdown_super(sb);
+ 	sync_blockdev(bdev);
+ 	close_bdev_excl(bdev);
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 3834748..f3c8e98 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -95,6 +95,7 @@ extern int dir_notify_enable;
+ #define FS_HAS_FALLOCATE 4    /* Safe to check for ->fallocate */
+ #define FS_HAS_FIEMAP  8      /* Safe to check for ->fiemap */
+ #define FS_HAS_FREEZE 16      /* Safe to check for ->freeze_fs etc */
++#define FS_HAS_TRYTOFREE 32   /* Safe to check for ->bdev_try_to_free... */
+ #define FS_REVAL_DOT	16384	/* Check the paths ".", ".." for staleness */
+ #define FS_RENAME_DOES_D_MOVE	32768	/* FS will handle d_move()
+ 					 * during rename() internally.
+@@ -564,6 +565,7 @@ struct block_device {
+ 
+ 	/* this isn't embedded in anything external, so should be safe */
+ #ifndef __GENKSYMS__
++	struct super_block *	bd_super;
+ 	/* The counter of freeze processes */
+ 	int			bd_fsfreeze_count;
+ 	/* Mutex for freeze */
+@@ -1305,6 +1307,7 @@ struct super_operations {
+ #ifndef __GENKSYMS__
+ 	int (*freeze_fs) (struct super_block *);
+ 	int (*unfreeze_fs) (struct super_block *);
++	int (*bdev_try_to_free_page)(struct super_block*, struct page*, gfp_t);
+ #endif
+ };
+ 

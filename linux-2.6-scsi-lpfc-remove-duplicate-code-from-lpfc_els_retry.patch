@@ -1,0 +1,33 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:23:10 -0400
+Subject: [scsi] lpfc: remove duplicate code from lpfc_els_retry
+Message-id: <1288192999-24221-19-git-send-email-revers@redhat.com>
+Patchwork-id: 28944
+O-Subject: [RHEL5.6 PATCH 18/27] lpfc: Remove duplicate code from lpfc_els_retry
+	routine.
+Bugzilla: 639028
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 4b89db7..15a0af8 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -2868,15 +2868,6 @@ lpfc_els_retry(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 				retry = 1;
+ 				break;
+ 			}
+-			if (stat.un.b.lsRjtRsnCodeExp ==
+-			    LSEXP_CANT_GIVE_DATA) {
+-				if (cmd == ELS_CMD_PLOGI) {
+-					delay = 1000;
+-					maxretry = 48;
+-				}
+-				retry = 1;
+-				break;
+-			}
+ 			if (cmd == ELS_CMD_PLOGI) {
+ 				delay = 1000;
+ 				maxretry = lpfc_max_els_tries + 1;

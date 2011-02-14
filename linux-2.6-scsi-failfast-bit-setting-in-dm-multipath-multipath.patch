@@ -1,0 +1,55 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Tue, 23 Sep 2008 11:40:39 -0500
+Subject: [scsi] failfast bit setting in dm-multipath/multipath
+Message-id: 1222188039-6324-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH 1/1] PATCH RHEL 5.3: Regression: fix failfast bit setting in dm-multipath/multipath (fix perf regression)
+Bugzilla: 463470
+
+From: Mike Christie <mchristi@redhat.com>
+
+For BZ 463470.
+
+This fixes the performance drop when using multipath that Jeff and
+Sanjay saw yesterday.
+
+I set the REQ flag instead of the BIO one for compat support.
+The REQ flag actually maps to bio barriers so
+this is why we get a drop in performance and the sync caches
+and sync IO (my git trees must have got messed and so when I reported
+sync caches to Alasdair and Milan my compat patch had went into that
+branch).
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index a82f4c3..b96d7c3 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -868,10 +868,10 @@ static int multipath_map(struct dm_target *ti, struct bio *bio,
+ 	map_context->ptr = mpio;
+ 	/*
+ 	 * We set both incase 3rd party drivers were only checking
+-	 * for REQ_FAILFAST.
++	 * for BIO_RW_FAILFAST.
+ 	 */
+ 	bio->bi_rw |= (1 << BIO_RW_FAILFAST_TRANSPORT);
+-	bio->bi_rw |= (1 << REQ_FAILFAST);
++	bio->bi_rw |= (1 << BIO_RW_FAILFAST);
+ 	r = map_io(m, bio, mpio, 0);
+ 	if (r < 0 || r == DM_MAPIO_REQUEUE)
+ 		mempool_free(mpio, m->mpio_pool);
+diff --git a/drivers/md/multipath.c b/drivers/md/multipath.c
+index 756117e..c646100 100644
+--- a/drivers/md/multipath.c
++++ b/drivers/md/multipath.c
+@@ -180,10 +180,10 @@ static int multipath_make_request (request_queue_t *q, struct bio * bio)
+ 	mp_bh->bio.bi_bdev = multipath->rdev->bdev;
+ 	/*
+ 	 * We set both incase 3rd party drivers were only checking
+-	 * for REQ_FAILFAST.
++	 * for BIO_RW_FAILFAST.
+ 	 */
+ 	mp_bh->bio.bi_rw |= (1 << BIO_RW_FAILFAST_TRANSPORT);
+-	mp_bh->bio.bi_rw |= (1 << REQ_FAILFAST);
++	mp_bh->bio.bi_rw |= (1 << BIO_RW_FAILFAST);
+ 	mp_bh->bio.bi_end_io = multipath_end_request;
+ 	mp_bh->bio.bi_private = mp_bh;
+ 	generic_make_request(&mp_bh->bio);

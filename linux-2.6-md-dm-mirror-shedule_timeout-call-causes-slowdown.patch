@@ -1,0 +1,48 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Mon, 17 Dec 2007 16:13:31 -0600
+Subject: [md] dm-mirror: shedule_timeout call causes slowdown
+Message-id: 1197929611.28090.13.camel@hydrogen
+O-Subject: [RHEL 5.2 PATCH] dm-mirror: shedule_timeout() call causing big process slowdowns
+Bugzilla: 358881
+
+Bug #358881:
+
+The small sleep in drivers/md/dm-raid1.c:do_work() was designed to:
+1) Allow the userspace process to more easily proceed to reconfigure a
+mirror in the event of a failure.
+2) Allow remote machines (cluster mirror) to finish recovery of a region
+before resubmitting I/O.
+
+However, the sleep is having adverse effects on nominal I?o - sometimes
+slowing processes down by greater than a factor of 10.  This can make
+applications appear hung.
+
+This problem occurs most frequently in cluster mirrors under heavy I/O
+(or during failure scenarios).  It is possible in single machine
+mirroring, but hasn't been seen yet.
+
+This bug does not corrupt data, but it certainly affects "availability"
+- which is especially bad considering mirrors are used when you want to
+increase availability.
+
+ brassow
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index d4ea9cb..b22ab8f 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -1293,10 +1293,8 @@ static int do_mirror(struct mirror_set *ms)
+ 
+ static void do_work(void *data)
+ {
+-	while (do_mirror(data)) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(HZ/5);
+-	}
++	while (do_mirror(data))
++		schedule();
+ }
+ 
+ /*-----------------------------------------------------------------

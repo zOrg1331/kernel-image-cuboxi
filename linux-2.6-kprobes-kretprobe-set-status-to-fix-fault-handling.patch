@@ -1,0 +1,71 @@
+From: Josh Stone <jistone@redhat.com>
+Date: Wed, 18 Aug 2010 21:24:21 -0400
+Subject: [kprobes] kretprobe: set status to fix fault handling
+Message-id: <1282166661-15843-1-git-send-email-jistone@redhat.com>
+Patchwork-id: 27686
+O-Subject: [RHEL5.6 PATCH BZ615121] kretprobe: set kprobe status to fix fault
+	handling
+Bugzilla: 615121
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Resolves BZ#615121
+https://bugzilla.redhat.com/show_bug.cgi?id=615121
+
+This is a backport of Masami's upstream commit described below.  I
+didn't include the gs bits though, as struct pt_regs doesn't actually
+contain gs in this kernel.  I also corrected the order of pushing es/ds.
+
+commit 8bdc052eccdc7893d075d3f1f7103594a458c8c4
+Author: Masami Hiramatsu <masami.hiramatsu.pt@hitachi.com>
+Date:   Wed Nov 8 17:44:49 2006 -0800
+
+[PATCH] kretprobe: fix kretprobe-booster to save regs and set status
+
+There are two bugs in the kretprobe-booster.
+
+1) It doesn't make room for gs registers.
+
+2) It doesn't change status of the current kprobe.  This status will
+   effect the fault handling.
+
+This patch fixes these bugs and, additionally, saves skipped registers for
+compatibility with the original kretprobe.
+
+diff --git a/arch/i386/kernel/kprobes.c b/arch/i386/kernel/kprobes.c
+index 7ce4d82..b1db8b2 100644
+--- a/arch/i386/kernel/kprobes.c
++++ b/arch/i386/kernel/kprobes.c
+@@ -373,8 +373,10 @@ no_kprobe:
+ 	asm volatile ( ".global kretprobe_trampoline\n"
+  			"kretprobe_trampoline: \n"
+ 			"	pushf\n"
+-			/* skip cs, eip, orig_eax, es, ds */
+-			"	subl $20, %esp\n"
++			/* skip cs, eip, orig_eax */
++			"	subl $12, %esp\n"
++			"	pushl %es\n"
++			"	pushl %ds\n"
+ 			"	pushl %eax\n"
+ 			"	pushl %ebp\n"
+ 			"	pushl %edi\n"
+@@ -416,6 +418,10 @@ fastcall void *__kprobes trampoline_handler(struct pt_regs *regs)
+ 	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+         head = kretprobe_inst_table_head(current);
++	/* fixup registers */
++	regs->xcs = __KERNEL_CS;
++	regs->eip = trampoline_address;
++	regs->orig_eax = 0xffffffff;
+ 
+ 	/*
+ 	 * It is possible to have multiple instances associated with a given
+@@ -437,6 +443,7 @@ fastcall void *__kprobes trampoline_handler(struct pt_regs *regs)
+ 
+ 		if (ri->rp && ri->rp->handler){
+ 			__get_cpu_var(current_kprobe) = &ri->rp->kp;
++			get_kprobe_ctlblk()->kprobe_status = KPROBE_HIT_ACTIVE;
+ 			ri->rp->handler(ri, regs);
+ 			__get_cpu_var(current_kprobe) = NULL;
+ 		}

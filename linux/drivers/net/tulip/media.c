@@ -1,6 +1,7 @@
 /*
 	drivers/net/tulip/media.c
 
+	Maintained by Jeff Garzik <jgarzik@pobox.com>
 	Copyright 2000,2001  The Linux Kernel Team
 	Written/copyright 1994-2001 by Donald Becker.
 
@@ -8,9 +9,9 @@
 	of the GNU General Public License, incorporated herein by reference.
 
 	Please refer to Documentation/DocBook/tulip-user.{pdf,ps,html}
-	for more information on this driver.
+	for more information on this driver, or visit the project
+	Web page at http://sourceforge.net/projects/tulip/
 
-	Please submit bugs to http://bugzilla.kernel.org/ .
 */
 
 #include <linux/kernel.h>
@@ -43,10 +44,8 @@ static const unsigned char comet_miireg2offset[32] = {
 
 /* MII transceiver control section.
    Read and write the MII registers using software-generated serial
-   MDIO protocol.
-   See IEEE 802.3-2002.pdf (Section 2, Chapter "22.2.4 Management functions")
-   or DP83840A data sheet for more details.
-   */
+   MDIO protocol.  See the MII specifications or DP83840A data sheet
+   for details. */
 
 int tulip_mdio_read(struct net_device *dev, int phy_id, int location)
 {
@@ -69,10 +68,11 @@ int tulip_mdio_read(struct net_device *dev, int phy_id, int location)
 
 	spin_lock_irqsave(&tp->mii_lock, flags);
 	if (tp->chip_id == LC82C168) {
+		int i = 1000;
 		iowrite32(0x60020000 + (phy_id<<23) + (location<<18), ioaddr + 0xA0);
 		ioread32(ioaddr + 0xA0);
 		ioread32(ioaddr + 0xA0);
-		for (i = 1000; i >= 0; --i) {
+		while (--i > 0) {
 			barrier();
 			if ( ! ((retval = ioread32(ioaddr + 0xA0)) & 0x80000000))
 				break;
@@ -130,12 +130,13 @@ void tulip_mdio_write(struct net_device *dev, int phy_id, int location, int val)
 
 	spin_lock_irqsave(&tp->mii_lock, flags);
 	if (tp->chip_id == LC82C168) {
+		int i = 1000;
 		iowrite32(cmd, ioaddr + 0xA0);
-		for (i = 1000; i >= 0; --i) {
+		do {
 			barrier();
 			if ( ! (ioread32(ioaddr + 0xA0) & 0x80000000))
 				break;
-		}
+		} while (--i > 0);
 		spin_unlock_irqrestore(&tp->mii_lock, flags);
 		return;
 	}
@@ -260,56 +261,24 @@ void tulip_select_media(struct net_device *dev, int startup)
 				u16 *reset_sequence = &((u16*)(p+3))[init_length];
 				int reset_length = p[2 + init_length*2];
 				misc_info = reset_sequence + reset_length;
-				if (startup) {
-					int timeout = 10;	/* max 1 ms */
+				if (startup)
 					for (i = 0; i < reset_length; i++)
 						iowrite32(get_u16(&reset_sequence[i]) << 16, ioaddr + CSR15);
-
-					/* flush posted writes */
-					ioread32(ioaddr + CSR15);
-
-					/* Sect 3.10.3 in DP83840A.pdf (p39) */
-					udelay(500);
-
-					/* Section 4.2 in DP83840A.pdf (p43) */
-					/* and IEEE 802.3 "22.2.4.1.1 Reset" */
-					while (timeout-- &&
-						(tulip_mdio_read (dev, phy_num, MII_BMCR) & BMCR_RESET))
-						udelay(100);
-				}
 				for (i = 0; i < init_length; i++)
 					iowrite32(get_u16(&init_sequence[i]) << 16, ioaddr + CSR15);
-
-				ioread32(ioaddr + CSR15);	/* flush posted writes */
 			} else {
 				u8 *init_sequence = p + 2;
 				u8 *reset_sequence = p + 3 + init_length;
 				int reset_length = p[2 + init_length];
 				misc_info = (u16*)(reset_sequence + reset_length);
 				if (startup) {
-					int timeout = 10;	/* max 1 ms */
 					iowrite32(mtable->csr12dir | 0x100, ioaddr + CSR12);
 					for (i = 0; i < reset_length; i++)
 						iowrite32(reset_sequence[i], ioaddr + CSR12);
-
-					/* flush posted writes */
-					ioread32(ioaddr + CSR12);
-
-					/* Sect 3.10.3 in DP83840A.pdf (p39) */
-					udelay(500);
-
-					/* Section 4.2 in DP83840A.pdf (p43) */
-					/* and IEEE 802.3 "22.2.4.1.1 Reset" */
-					while (timeout-- &&
-						(tulip_mdio_read (dev, phy_num, MII_BMCR) & BMCR_RESET))
-						udelay(100);
 				}
 				for (i = 0; i < init_length; i++)
 					iowrite32(init_sequence[i], ioaddr + CSR12);
-
-				ioread32(ioaddr + CSR12);	/* flush posted writes */
 			}
-
 			tmp_info = get_u16(&misc_info[1]);
 			if (tmp_info)
 				tp->advertising[phy_num] = tmp_info | 1;

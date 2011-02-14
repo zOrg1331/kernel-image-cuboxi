@@ -1,0 +1,1236 @@
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/kernel/head-xen.S linux-2.6.17.work/arch/i386/kernel/head-xen.S
+--- linux-2.6.17.reloc/arch/i386/kernel/head-xen.S	2006-08-24 14:49:28.000000000 +0200
++++ linux-2.6.17.work/arch/i386/kernel/head-xen.S	2006-08-24 16:16:09.000000000 +0200
+@@ -5,6 +5,7 @@
+ #include <linux/linkage.h>
+ #include <asm/segment.h>
+ #include <asm/page.h>
++#include <asm/boot.h>
+ #include <asm/thread_info.h>
+ #include <asm/asm-offsets.h>
+ #include <xen/interface/arch-x86_32.h>
+@@ -163,9 +164,9 @@ ENTRY(cpu_gdt_table)
+ 	.ascii	",ELF_PADDR_OFFSET=0x0"
+ #endif /* !CONFIG_XEN_COMPAT_030002 */
+ 	.ascii	",VIRT_ENTRY=0x"
+-		utoa (__PAGE_OFFSET + __PHYSICAL_START + VIRT_ENTRY_OFFSET)
++		utoa (__PAGE_OFFSET + LOAD_PHYSICAL_ADDR + VIRT_ENTRY_OFFSET)
+ 	.ascii	",HYPERCALL_PAGE=0x"
+-		utoa ((__PHYSICAL_START+HYPERCALL_PAGE_OFFSET)>>PAGE_SHIFT)
++		utoa ((LOAD_PHYSICAL_ADDR + HYPERCALL_PAGE_OFFSET)>>PAGE_SHIFT)
+ 	.ascii  ",FEATURES=writable_page_tables"
+ 	.ascii	         "|writable_descriptor_tables"
+ 	.ascii	         "|auto_translated_physmap"
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/kernel/setup-xen.c linux-2.6.17.work/arch/i386/kernel/setup-xen.c
+--- linux-2.6.17.reloc/arch/i386/kernel/setup-xen.c	2006-08-24 14:49:28.000000000 +0200
++++ linux-2.6.17.work/arch/i386/kernel/setup-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -1292,8 +1292,8 @@ void __init setup_bootmem_allocator(void
+ 	 * the (very unlikely) case of us accidentally initializing the
+ 	 * bootmem allocator with an invalid RAM area.
+ 	 */
+-	reserve_bootmem(__PHYSICAL_START, (PFN_PHYS(min_low_pfn) +
+-			 bootmap_size + PAGE_SIZE-1) - (__PHYSICAL_START));
++	reserve_bootmem(__pa_symbol(_text), (PFN_PHYS(min_low_pfn) +
++			 bootmap_size + PAGE_SIZE-1) - __pa_symbol(_text));
+ 
+ #ifndef CONFIG_XEN
+ 	/*
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/kernel/traps.c linux-2.6.17.work/arch/i386/kernel/traps.c
+--- linux-2.6.17.reloc/arch/i386/kernel/traps.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/i386/kernel/traps.c	2006-08-24 14:59:36.000000000 +0200
+@@ -1192,7 +1192,7 @@ asmlinkage void math_emulate(long arg)
+ #ifdef CONFIG_X86_F00F_BUG
+ void __init trap_init_f00f_bug(void)
+ {
+-	__set_fixmap(FIX_F00F_IDT, __pa(&idt_table), PAGE_KERNEL_RO);
++	__set_fixmap(FIX_F00F_IDT, __pa_symbol(&idt_table), PAGE_KERNEL_RO);
+ 
+ 	/*
+ 	 * Update the IDT descriptor and reload the IDT so that
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/kernel/traps-xen.c linux-2.6.17.work/arch/i386/kernel/traps-xen.c
+--- linux-2.6.17.reloc/arch/i386/kernel/traps-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/i386/kernel/traps-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -1180,7 +1180,7 @@ asmlinkage void math_emulate(long arg)
+ #ifdef CONFIG_X86_F00F_BUG
+ void __init trap_init_f00f_bug(void)
+ {
+-	__set_fixmap(FIX_F00F_IDT, __pa(&idt_table), PAGE_KERNEL_RO);
++	__set_fixmap(FIX_F00F_IDT, __pa_symbol(&idt_table), PAGE_KERNEL_RO);
+ 
+ 	/*
+ 	 * Update the IDT descriptor and reload the IDT so that
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/kernel/vmlinux.lds.S linux-2.6.17.work/arch/i386/kernel/vmlinux.lds.S
+--- linux-2.6.17.reloc/arch/i386/kernel/vmlinux.lds.S	2006-08-24 14:56:40.000000000 +0200
++++ linux-2.6.17.work/arch/i386/kernel/vmlinux.lds.S	2006-08-24 15:56:34.000000000 +0200
+@@ -17,7 +17,13 @@ ENTRY(phys_startup_32)
+ jiffies = jiffies_64;
+ SECTIONS
+ {
++/* xen i386 redefineds LOAD_OFFSET to zero on page.h
++   quintela@redhat.com */
++#ifdef CONFIG_XEN
++  . = __PAGE_OFFSET + LOAD_PHYSICAL_ADDR;
++#else
+   . = LOAD_OFFSET + LOAD_PHYSICAL_ADDR;
++#endif
+   phys_startup_32 = startup_32 - LOAD_OFFSET;
+   /* read-only */
+   .text : AT(ADDR(.text) - LOAD_OFFSET) {
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/mm/init.c linux-2.6.17.work/arch/i386/mm/init.c
+--- linux-2.6.17.reloc/arch/i386/mm/init.c	2006-08-24 14:56:40.000000000 +0200
++++ linux-2.6.17.work/arch/i386/mm/init.c	2006-08-24 14:59:36.000000000 +0200
+@@ -563,7 +563,7 @@ static void __init test_wp_bit(void)
+ 	printk("Checking if this processor honours the WP bit even in supervisor mode... ");
+ 
+ 	/* Any page-aligned address will do, the test is non-destructive */
+-	__set_fixmap(FIX_WP_TEST, __pa(&swapper_pg_dir), PAGE_READONLY);
++	__set_fixmap(FIX_WP_TEST, __pa_symbol(&swapper_pg_dir), PAGE_READONLY);
+ 	boot_cpu_data.wp_works_ok = do_test_wp_bit();
+ 	clear_fixmap(FIX_WP_TEST);
+ 
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/i386/mm/init-xen.c linux-2.6.17.work/arch/i386/mm/init-xen.c
+--- linux-2.6.17.reloc/arch/i386/mm/init-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/i386/mm/init-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -611,7 +611,7 @@ static void __init test_wp_bit(void)
+ 	printk("Checking if this processor honours the WP bit even in supervisor mode... ");
+ 
+ 	/* Any page-aligned address will do, the test is non-destructive */
+-	__set_fixmap(FIX_WP_TEST, __pa(&swapper_pg_dir), PAGE_READONLY);
++	__set_fixmap(FIX_WP_TEST, __pa_symbol(&swapper_pg_dir), PAGE_READONLY);
+ 	boot_cpu_data.wp_works_ok = do_test_wp_bit();
+ 	clear_fixmap(FIX_WP_TEST);
+ 
+@@ -851,10 +851,11 @@ void free_init_pages(char *what, unsigne
+ 	unsigned long addr;
+ 
+ 	for (addr = begin; addr < end; addr += PAGE_SIZE) {
+-		ClearPageReserved(virt_to_page(addr));
+-		init_page_count(virt_to_page(addr));
+-		memset((void *)addr, POISON_FREE_INITMEM, PAGE_SIZE);
+-		free_page(addr);
++		struct page *page = pfn_to_page(addr >> PAGE_SHIFT);
++		ClearPageReserved(page);
++		init_page_count(page);
++		memset(page_address(page), POISON_FREE_INITMEM, PAGE_SIZE);
++		__free_page(page);
+ 		totalram_pages++;
+ 	}
+ 	printk(KERN_INFO "Freeing %s: %ldk freed\n", what, (end - begin) >> 10);
+@@ -863,14 +864,14 @@ void free_init_pages(char *what, unsigne
+ void free_initmem(void)
+ {
+ 	free_init_pages("unused kernel memory",
+-			(unsigned long)(&__init_begin),
+-			(unsigned long)(&__init_end));
++			__pa_symbol(&__init_begin),
++			__pa_symbol(&__init_end));
+ }
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ void free_initrd_mem(unsigned long start, unsigned long end)
+ {
+-	free_init_pages("initrd memory", start, end);
++	free_init_pages("initrd memory", __pa_symbol(start), __pa_symbol(end));
+ }
+ #endif
+ 
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/e820-xen.c linux-2.6.17.work/arch/x86_64/kernel/e820-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/e820-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/e820-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -214,8 +219,8 @@ unsigned long __init e820_end_of_ram(voi
+ 		if (start >= end)
+ 			continue;
+ 		if (ei->type == E820_RAM) { 
+-		if (end > end_pfn<<PAGE_SHIFT)
+-			end_pfn = end>>PAGE_SHIFT;
++			if (end > end_pfn<<PAGE_SHIFT)
++				end_pfn = end>>PAGE_SHIFT;
+ 		} else { 
+ 			if (end > end_pfn_map<<PAGE_SHIFT) 
+ 				end_pfn_map = end>>PAGE_SHIFT;
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/early_printk-xen.c linux-2.6.17.work/arch/x86_64/kernel/early_printk-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/early_printk-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/early_printk-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -12,11 +12,10 @@
+ 
+ #ifdef __i386__
+ #include <asm/setup.h>
+-#define VGABASE		(__ISA_IO_base + 0xb8000)
+ #else
+ #include <asm/bootsetup.h>
+-#define VGABASE		((void __iomem *)0xffffffff800b8000UL)
+ #endif
++#define VGABASE		(__ISA_IO_base + 0xb8000)
+ 
+ static int max_ypos = 25, max_xpos = 80;
+ static int current_ypos = 25, current_xpos = 0;
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/head64-xen.c linux-2.6.17.work/arch/x86_64/kernel/head64-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/head64-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/head64-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -22,13 +22,21 @@
+ #include <asm/setup.h>
+ #include <asm/desc.h>
+ #include <asm/pgtable.h>
++#include <asm/tlbflush.h>
+ #include <asm/sections.h>
+ 
+ unsigned long start_pfn;
+ 
++#if 0
++static void __init zap_identity_mappings(void)
++{
++	pgd_t *pgd = pgd_offset_k(0UL);
++	pgd_clear(pgd);
++	__flush_tlb();
++}
++
+ /* Don't add a printk in there. printk relies on the PDA which is not initialized 
+    yet. */
+-#if 0
+ static void __init clear_bss(void)
+ {
+ 	memset(__bss_start, 0,
+@@ -37,30 +45,29 @@ static void __init clear_bss(void)
+ #endif
+ 
+ #define NEW_CL_POINTER		0x228	/* Relative to real mode data */
+-#define OLD_CL_MAGIC_ADDR	0x90020
++#define OLD_CL_MAGIC_ADDR	0x20
+ #define OLD_CL_MAGIC            0xA33F
+-#define OLD_CL_BASE_ADDR        0x90000
+-#define OLD_CL_OFFSET           0x90022
++#define OLD_CL_OFFSET           0x22
+ 
+ extern char saved_command_line[];
+ 
+ static void __init copy_bootdata(char *real_mode_data)
+ {
+ #ifndef CONFIG_XEN
+-	int new_data;
++	unsigned long new_data;
+ 	char * command_line;
+ 
+ 	memcpy(x86_boot_params, real_mode_data, BOOT_PARAM_SIZE);
+-	new_data = *(int *) (x86_boot_params + NEW_CL_POINTER);
++	new_data = *(u32 *) (x86_boot_params + NEW_CL_POINTER);
+ 	if (!new_data) {
+-		if (OLD_CL_MAGIC != * (u16 *) OLD_CL_MAGIC_ADDR) {
++		if (OLD_CL_MAGIC != *(u16 *)(real_mode_data + OLD_CL_MAGIC_ADDR)) {
+ 			printk("so old bootloader that it does not support commandline?!\n");
+ 			return;
+ 		}
+-		new_data = OLD_CL_BASE_ADDR + * (u16 *) OLD_CL_OFFSET;
++		new_data = __pa(real_mode_data) + *(u16 *)(read_mode_data + OLD_CL_OFFSET);
+ 		printk("old bootloader convention, maybe loadlin?\n");
+ 	}
+-	command_line = (char *) ((u64)(new_data));
++	command_line = __va(new_data);
+ 	memcpy(saved_command_line, command_line, COMMAND_LINE_SIZE);
+ #else
+ 	int max_cmdline;
+@@ -104,6 +111,10 @@ void __init x86_64_start_kernel(char * r
+ 	char *s;
+ 	int i;
+ 
++#if 0
++	/* Make NULL pointers segfault */
++	zap_identity_mappings();
++#endif
+ 	xen_start_info = (struct start_info *)real_mode_data;
+ 	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+ 		phys_to_machine_mapping =
+@@ -136,7 +147,7 @@ void __init x86_64_start_kernel(char * r
+  		cpu_pda(i) = &boot_cpu_pda[i];
+ 
+ 	pda_init(0);
+-	copy_bootdata(real_mode_data);
++	copy_bootdata(__va(real_mode_data));
+ #ifdef CONFIG_SMP
+ 	cpu_set(0, cpu_online_map);
+ #endif
+@@ -153,7 +164,7 @@ void __init x86_64_start_kernel(char * r
+ 		disable_apic = 1;
+ #endif
+ 	/* You need early console to see that */
+-	if (__pa_symbol(&_end) >= KERNEL_TEXT_SIZE)
++	if (((unsigned long)&_end) >= (__START_KERNEL_map + KERNEL_TEXT_SIZE))
+ 		panic("Kernel too big for kernel mapping\n");
+ 
+ 	setup_boot_cpu_data();
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/head-xen.S linux-2.6.17.work/arch/x86_64/kernel/head-xen.S
+--- linux-2.6.17.reloc/arch/x86_64/kernel/head-xen.S	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/head-xen.S	2006-08-24 14:59:36.000000000 +0200
+@@ -18,6 +18,7 @@
+ #include <linux/init.h>
+ #include <asm/desc.h>
+ #include <asm/segment.h>
++#include <asm/pgtable.h>
+ #include <asm/page.h>
+ #include <asm/msr.h>
+ #include <asm/cache.h>
+@@ -29,6 +30,7 @@
+ .org VIRT_ENTRY_OFFSET
+ 	.globl startup_64
+ startup_64:
++ENTRY(secondary_startup_64)
+ ENTRY(_start)
+ 	movq $(init_thread_union+THREAD_SIZE-8),%rsp
+ 	/* zero EFLAGS after setting rsp */
+@@ -47,7 +49,7 @@ ENTRY(_stext)
+ #define NEXT_PAGE(name) \
+ 	$page = $page + 1; \
+ 	.org $page * 0x1000; \
+-	phys_/**/name = $page * 0x1000 + __PHYSICAL_START; \
++	phys_/**/name = $page * 0x1000 + 0x200000; \
+ ENTRY(name)
+ 
+ NEXT_PAGE(init_level4_pgt)
+@@ -110,13 +112,12 @@ gdt:
+ 
+ ENTRY(cpu_gdt_table)
+ 	.quad	0x0000000000000000	/* NULL descriptor */
+-	.quad	0x0			/* unused */
+-	.quad	0x00af9a000000ffff	/* __KERNEL_CS */
+-	.quad	0x00cf92000000ffff	/* __KERNEL_DS */
+-	.quad	0x00cffa000000ffff	/* __USER32_CS */
+-	.quad	0x00cff2000000ffff	/* __USER_DS, __USER32_DS  */
+-	.quad	0x00affa000000ffff	/* __USER_CS */
+-	.quad	0x00cf9a000000ffff	/* __KERNEL32_CS */
++	.quad	0x00cf9b000000ffff	/* __KERNEL32_CS */
++	.quad	0x00af9b000000ffff	/* __KERNEL_CS */
++	.quad	0x00cf93000000ffff	/* __KERNEL_DS */
++	.quad	0x00cffb000000ffff	/* __USER32_CS */
++	.quad	0x00cff3000000ffff	/* __USER_DS, __USER32_DS  */
++	.quad	0x00affb000000ffff	/* __USER_CS */
+ 	.quad	0,0			/* TSS */
+ 	.quad	0,0			/* LDT */
+ 	.quad   0,0,0			/* three TLS descriptors */
+@@ -165,7 +166,7 @@ ENTRY(empty_zero_page)
+ 	.ascii	",ELF_PADDR_OFFSET=0x0"
+ #endif /* !CONFIG_XEN_COMPAT_030002 */
+ 	.ascii	",VIRT_ENTRY=0x"
+-		utoh (__START_KERNEL_map + __PHYSICAL_START + VIRT_ENTRY_OFFSET)
++		utoh (__START_KERNEL_map + 0x200000 + VIRT_ENTRY_OFFSET)
+ 	.ascii	",HYPERCALL_PAGE=0x"
+ 		utoh (phys_hypercall_page >> PAGE_SHIFT)
+ 	.ascii  ",FEATURES=writable_page_tables"
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/setup64-xen.c linux-2.6.17.work/arch/x86_64/kernel/setup64-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/setup64-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/setup64-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -234,7 +234,6 @@ void __cpuinit cpu_init (void)
+ 	/* CPU 0 is initialised in head64.c */
+ 	if (cpu != 0) {
+ 		pda_init(cpu);
+-		zap_low_mappings(cpu);
+ 	}
+ #ifndef CONFIG_X86_NO_TSS
+ 	else
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/setup-xen.c linux-2.6.17.work/arch/x86_64/kernel/setup-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/setup-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/setup-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -559,10 +559,10 @@ static void discover_ebda(void)
+ 	 * there is a real-mode segmented pointer pointing to the 
+ 	 * 4K EBDA area at 0x40E
+ 	 */
+-	ebda_addr = *(unsigned short *)EBDA_ADDR_POINTER;
++	ebda_addr = *(unsigned short *)__va(EBDA_ADDR_POINTER);
+ 	ebda_addr <<= 4;
+ 
+-	ebda_size = *(unsigned short *)(unsigned long)ebda_addr;
++	ebda_size = *(unsigned short *)__va(ebda_addr);
+ 
+ 	/* Round EBDA up to pages */
+ 	if (ebda_size == 0)
+@@ -643,11 +643,12 @@ void __init setup_arch(char **cmdline_p)
+ 	init_mm.end_code = (unsigned long) &_etext;
+ 	init_mm.end_data = (unsigned long) &_edata;
+ 	init_mm.brk = (unsigned long) &_end;
++	init_mm.pgd = __va(__pa_symbol(&init_level4_pgt));
+ 
+-	code_resource.start = virt_to_phys(&_text);
+-	code_resource.end = virt_to_phys(&_etext)-1;
+-	data_resource.start = virt_to_phys(&_etext);
+-	data_resource.end = virt_to_phys(&_edata)-1;
++	code_resource.start = __pa_symbol(&_text);
++	code_resource.end = __pa_symbol(&_etext)-1;
++	data_resource.start = __pa_symbol(&_etext);
++	data_resource.end = __pa_symbol(&_edata)-1;
+ 
+ 	parse_cmdline_early(cmdline_p);
+ 
+@@ -705,15 +707,8 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ 
+ #ifdef CONFIG_SMP
+-	/*
+-	 * But first pinch a few for the stack/trampoline stuff
+-	 * FIXME: Don't need the extra page at 4K, but need to fix
+-	 * trampoline before removing it. (see the GDT stuff)
+-	 */
+-	reserve_bootmem_generic(PAGE_SIZE, PAGE_SIZE);
+-
+ 	/* Reserve SMP trampoline */
+-	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, PAGE_SIZE);
++	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, 2*PAGE_SIZE);
+ #endif
+ 
+ #ifdef CONFIG_ACPI_SLEEP
+@@ -833,9 +828,6 @@ void __init setup_arch(char **cmdline_p)
+ #ifndef CONFIG_XEN
+ 	check_ioapic();
+ #endif
+-
+-	zap_low_mappings(0);
+-
+ 	/*
+ 	 * set this early, so we dont allocate cpu0
+ 	 * if MADT list doesnt list BSP first
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/smp-xen.c linux-2.6.17.work/arch/x86_64/kernel/smp-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/smp-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/smp-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -81,7 +81,7 @@ static inline void leave_mm(unsigned lon
+ 	if (read_pda(mmu_state) == TLBSTATE_OK)
+ 		BUG();
+ 	cpu_clear(cpu, read_pda(active_mm)->cpu_vm_mask);
+-	load_cr3(swapper_pg_dir);
++	load_cr3(init_mm.pgd);
+ }
+ 
+ #ifndef CONFIG_XEN
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/vmlinux.lds.S linux-2.6.17.work/arch/x86_64/kernel/vmlinux.lds.S
+--- linux-2.6.17.reloc/arch/x86_64/kernel/vmlinux.lds.S	2006-08-24 14:56:40.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/vmlinux.lds.S	2006-08-24 14:59:36.000000000 +0200
+@@ -15,7 +15,12 @@ ENTRY(phys_startup_64)
+ jiffies_64 = jiffies;
+ SECTIONS
+ {
++/* XEN x86_64 don't work with relocations yet quintela@redhat.com */
++#ifdef CONFIG_X86_64_XEN
++  . = __START_KERNEL_map + 0x200000;
++#else	
+   . = __START_KERNEL_map;
++#endif
+   phys_startup_64 = startup_64 - LOAD_OFFSET;
+   _text = .;			/* Text and read-only data */
+   .text :  AT(ADDR(.text) - LOAD_OFFSET) {
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/kernel/vsyscall-xen.c linux-2.6.17.work/arch/x86_64/kernel/vsyscall-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/kernel/vsyscall-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/kernel/vsyscall-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -41,6 +41,12 @@ seqlock_t __xtime_lock __section_xtime_l
+ 
+ #include <asm/unistd.h>
+ 
++#define __pa_vsymbol(x)			\
++	({unsigned long v;  		\
++	extern char __vsyscall_0; 	\
++	  asm("" : "=r" (v) : "0" (x)); \
++	  ((v - VSYSCALL_FIRST_PAGE) + __pa_symbol(&__vsyscall_0)); })
++
+ static __always_inline void timeval_normalize(struct timeval * tv)
+ {
+ 	time_t __sec;
+@@ -155,10 +161,10 @@ static int vsyscall_sysctl_change(ctl_ta
+ 		return ret;
+ 	/* gcc has some trouble with __va(__pa()), so just do it this
+ 	   way. */
+-	map1 = ioremap(__pa_symbol(&vsysc1), 2);
++	map1 = ioremap(__pa_vsymbol(&vsysc1), 2);
+ 	if (!map1)
+ 		return -ENOMEM;
+-	map2 = ioremap(__pa_symbol(&vsysc2), 2);
++	map2 = ioremap(__pa_vsymbol(&vsysc2), 2);
+ 	if (!map2) {
+ 		ret = -ENOMEM;
+ 		goto out;
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/mm/fault-xen.c linux-2.6.17.work/arch/x86_64/mm/fault-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/mm/fault-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/mm/fault-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -710,9 +710,9 @@ void vmalloc_sync_all(void)
+ 			start = address + PGDIR_SIZE;
+ 	}
+ 	/* Check that there is no need to do the same for the modules area. */
+-	BUILD_BUG_ON(!(MODULES_VADDR > __START_KERNEL));
++	BUILD_BUG_ON(!(MODULES_VADDR > __START_KERNEL_map));
+ 	BUILD_BUG_ON(!(((MODULES_END - 1) & PGDIR_MASK) == 
+-				(__START_KERNEL & PGDIR_MASK)));
++				(__START_KERNEL_map & PGDIR_MASK)));
+ }
+ 
+ static int __init enable_pagefaulttrace(char *str)
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/mm/init-xen.c linux-2.6.17.work/arch/x86_64/mm/init-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/mm/init-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/mm/init-xen.c	2006-08-24 15:02:05.000000000 +0200
+@@ -369,20 +369,6 @@ void __set_fixmap_user (enum fixed_addre
+ 
+ unsigned long __initdata table_start, table_end; 
+ 
+-#ifndef CONFIG_XEN
+-extern pmd_t temp_boot_pmds[]; 
+-
+-static  struct temp_map { 
+-	pmd_t *pmd;
+-	void  *address; 
+-	int    allocated; 
+-} temp_mappings[] __initdata = { 
+-	{ &temp_boot_pmds[0], (void *)(40UL * 1024 * 1024) },
+-	{ &temp_boot_pmds[1], (void *)(42UL * 1024 * 1024) }, 
+-	{}
+-}; 
+-#endif /* !CONFIG_XEN */
+-
+ unsigned long get_machine_pfn(unsigned long addr)
+ {
+ 	pud_t* pud = pud_offset_k(NULL, addr);
+@@ -392,17 +378,10 @@ unsigned long get_machine_pfn(unsigned l
+ 	return pte_mfn(*pte);
+ } 
+ 
+-static __meminit void *alloc_static_page(unsigned long *phys)
++static __init void *alloc_static_page(unsigned long *phys)
+ {
+ 	unsigned long va = (start_pfn << PAGE_SHIFT) + __START_KERNEL_map;
+ 
+-	if (after_bootmem) {
+-		void *adr = (void *)get_zeroed_page(GFP_ATOMIC);
+-
+-		*phys = __pa(adr);
+-		return adr;
+-	}
+-
+ 	*phys = start_pfn << PAGE_SHIFT;
+ 	start_pfn++;
+ 	memset((void *)va, 0, PAGE_SIZE);
+@@ -446,32 +425,50 @@ static inline int make_readonly(unsigned
+ /* Must run before zap_low_mappings */
+ __init void *early_ioremap(unsigned long addr, unsigned long size)
+ {
+-	unsigned long map = round_down(addr, LARGE_PAGE_SIZE); 
+-
+-	/* actually usually some more */
+-	if (size >= LARGE_PAGE_SIZE) { 
+-		printk("SMBIOS area too long %lu\n", size);
+-		return NULL;
++	unsigned long vaddr;
++	pmd_t *pmd, *last_pmd;
++	int i, pmds;
++
++	pmds = ((addr & ~PMD_MASK) + size + ~PMD_MASK) / PMD_SIZE;
++	vaddr = __START_KERNEL_map;
++	pmd = level2_kernel_pgt;
++	last_pmd = level2_kernel_pgt + PTRS_PER_PMD - 1;
++	for (; pmd <= last_pmd; pmd++, vaddr += PMD_SIZE) {
++		for (i = 0; i < pmds; i++) {
++			if (pmd_present(pmd[i]))
++				goto next;
++		}
++		vaddr += addr & ~PMD_MASK;
++		addr &= PMD_MASK;
++		for (i = 0; i < pmds; i++, addr += PMD_SIZE)
++			set_pmd(pmd + i,__pmd(addr | _KERNPG_TABLE | _PAGE_PSE));
++		__flush_tlb();
++		return (void *)vaddr;
++	next:
++		;
+ 	}
+-	set_pmd(temp_mappings[0].pmd,  __pmd(map | _KERNPG_TABLE | _PAGE_PSE));
+-	map += LARGE_PAGE_SIZE;
+-	set_pmd(temp_mappings[1].pmd,  __pmd(map | _KERNPG_TABLE | _PAGE_PSE));
+-	__flush_tlb();
+-	return temp_mappings[0].address + (addr & (LARGE_PAGE_SIZE-1));
++	printk("early_ioremap(0x%lx, %lu) failed\n", addr, size);
++	return NULL;
++
+ }
+ 
+ /* To avoid virtual aliases later */
+ __init void early_iounmap(void *addr, unsigned long size)
+ {
+-	if ((void *)round_down((unsigned long)addr, LARGE_PAGE_SIZE) != temp_mappings[0].address)
+-		printk("early_iounmap: bad address %p\n", addr);
+-	set_pmd(temp_mappings[0].pmd, __pmd(0));
+-	set_pmd(temp_mappings[1].pmd, __pmd(0));
++	unsigned long vaddr;
++	pmd_t *pmd;
++	int i, pmds;
++
++	vaddr = (unsigned long)addr;
++	pmds = ((vaddr & ~PMD_MASK) + size + ~PMD_MASK) / PMD_SIZE;
++	pmd = level2_kernel_pgt + pmd_index(vaddr);
++	for (i = 0; i < pmds; i++)
++		pmd_clear(pmd + i);
+ 	__flush_tlb();
+ }
+ #endif /* !CONFIG_XEN */
+ 
+-static void __meminit
++static void __init
+ phys_pmd_init(pmd_t *pmd, unsigned long address, unsigned long end)
+ {
+ 	int i, k;
+@@ -481,9 +478,8 @@ phys_pmd_init(pmd_t *pmd, unsigned long 
+ 		pte_t *pte, *pte_save;
+ 
+ 		if (address >= end) {
+-			if (!after_bootmem)
+-				for (; i < PTRS_PER_PMD; i++, pmd++)
+-					set_pmd(pmd, __pmd(0));
++			for (; i < PTRS_PER_PMD; i++, pmd++)
++				set_pmd(pmd, __pmd(0));
+ 			break;
+ 		}
+ 		pte = alloc_static_page(&pte_phys);
+@@ -508,30 +504,12 @@ phys_pmd_init(pmd_t *pmd, unsigned long 
+ 	}
+ }
+ 
+-static void __meminit
+-phys_pmd_update(pud_t *pud, unsigned long address, unsigned long end)
+-{
+-	pmd_t *pmd = pmd_offset(pud, (unsigned long)__va(address));
+-
+-	if (pmd_none(*pmd)) {
+-		spin_lock(&init_mm.page_table_lock);
+-		phys_pmd_init(pmd, address, end);
+-		spin_unlock(&init_mm.page_table_lock);
+-		__flush_tlb_all();
+-	}
+-}
+-
+-static void __meminit phys_pud_init(pud_t *pud, unsigned long address, unsigned long end)
++static void __init phys_pud_init(pud_t *pud, unsigned long address, unsigned long end)
+ { 
+ 	long i = pud_index(address);
+ 
+ 	pud = pud + i;
+ 
+-	if (after_bootmem && pud_val(*pud)) {
+-		phys_pmd_update(pud, address, end);
+-		return;
+-	}
+-
+ 	for (; i < PTRS_PER_PUD; pud++, i++) {
+ 		unsigned long paddr, pmd_phys;
+ 		pmd_t *pmd;
+@@ -542,10 +520,8 @@ static void __meminit phys_pud_init(pud_
+ 
+ 		pmd = alloc_static_page(&pmd_phys);
+ 		early_make_page_readonly(pmd, XENFEAT_writable_page_tables);
+-		spin_lock(&init_mm.page_table_lock);
+ 		set_pud(pud, __pud(pmd_phys | _KERNPG_TABLE));
+ 		phys_pmd_init(pmd, paddr, end);
+-		spin_unlock(&init_mm.page_table_lock);
+ 	}
+ 	__flush_tlb();
+ } 
+@@ -669,7 +645,7 @@ static void __init find_early_table_spac
+ /* Setup the direct mapping of the physical memory at PAGE_OFFSET.
+    This runs before bootmem is initialized and gets pages directly from the 
+    physical memory. To access them they are temporarily mapped. */
+-void __meminit init_memory_mapping(unsigned long start, unsigned long end)
++void __init init_memory_mapping(unsigned long start, unsigned long end)
+ { 
+ 	unsigned long next; 
+ 
+@@ -681,73 +657,54 @@ void __meminit init_memory_mapping(unsig
+ 	 * mapped.  Unfortunately this is done currently before the nodes are 
+ 	 * discovered.
+ 	 */
+-	if (!after_bootmem)
+-		find_early_table_space(end);
++	find_early_table_space(end);
+ 
+ 	start = (unsigned long)__va(start);
+ 	end = (unsigned long)__va(end);
+ 
+ 	for (; start < end; start = next) {
+ 		unsigned long pud_phys; 
+-		pgd_t *pgd = pgd_offset_k(start);
++ 		pgd_t *pgd = pgd_offset_k(start);
+ 		pud_t *pud;
+ 
+-		if (after_bootmem) {
+-			pud = pud_offset(pgd, start & PGDIR_MASK);
+-			make_page_readonly(pud, XENFEAT_writable_page_tables);
+-			pud_phys = __pa(pud);
+-		} else {
+-			pud = alloc_static_page(&pud_phys);
+-			early_make_page_readonly(pud, XENFEAT_writable_page_tables);
+-		}
++		pud = alloc_static_page(&pud_phys);
++		early_make_page_readonly(pud, XENFEAT_writable_page_tables);
++
+ 		next = start + PGDIR_SIZE;
+ 		if (next > end) 
+ 			next = end; 
+ 		phys_pud_init(pud, __pa(start), __pa(next));
+-		if (!after_bootmem)
+-			set_pgd(pgd_offset_k(start), mk_kernel_pgd(pud_phys));
++		set_pgd(pgd, mk_kernel_pgd(pud_phys));
+ 	}
+ 
+-	if (!after_bootmem) {
+-		BUG_ON(start_pfn != table_end);
++	BUG_ON(start_pfn != table_end);
+ 
+-		/* Re-vector virtual addresses pointing into the initial
+-		   mapping to the just-established permanent ones. */
+-		xen_start_info = __va(__pa(xen_start_info));
+-		xen_start_info->pt_base = (unsigned long)
+-			__va(__pa(xen_start_info->pt_base));
+-		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+-			phys_to_machine_mapping =
+-				__va(__pa(xen_start_info->mfn_list));
+-			xen_start_info->mfn_list = (unsigned long)
++	/* Re-vector virtual addresses pointing into the initial
++	   mapping to the just-established permanent ones. */
++	xen_start_info = __va(__pa(xen_start_info));
++	xen_start_info->pt_base = (unsigned long)
++		__va(__pa(xen_start_info->pt_base));
++	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
++		phys_to_machine_mapping = __va(__pa(xen_start_info->mfn_list));
++		xen_start_info->mfn_list = (unsigned long)
+ 				phys_to_machine_mapping;
+-		}
+-		if (xen_start_info->mod_start)
+-			xen_start_info->mod_start = (unsigned long)
+-				__va(__pa(xen_start_info->mod_start));
+-
+-		/* Destroy the Xen-created mappings beyond the kernel image as
+-		 * well as the temporary mappings created above. Prevents
+-		 * overlap with modules area (if init mapping is very big).
+-		 */
+-		start = PAGE_ALIGN((unsigned long)_end);
+-		end   = __START_KERNEL_map + (table_end << PAGE_SHIFT);
+-		for (; start < end; start += PAGE_SIZE)
+-			WARN_ON(HYPERVISOR_update_va_mapping(
+-				start, __pte_ma(0), 0));
+ 	}
++	if (xen_start_info->mod_start)
++		xen_start_info->mod_start = (unsigned long)
++			__va(__pa(xen_start_info->mod_start));
++
++	/* Destroy the Xen-created mappings beyond the kernel image as
++	 * well as the temporary mappings created above. Prevents
++	 * overlap with modules area (if init mapping is very big).
++	 */
++	start = PAGE_ALIGN((unsigned long)_end);
++	end   = __START_KERNEL_map + (table_end << PAGE_SHIFT);
++	for (; start < end; start += PAGE_SIZE)
++		WARN_ON(HYPERVISOR_update_va_mapping(start, __pte_ma(0), 0));
+ 
+ 	__flush_tlb_all();
+ }
+ 
+-void __cpuinit zap_low_mappings(int cpu)
+-{
+-	/* this is not required for Xen */
+-#if 0
+-	swap_low_mappings();
+-#endif
+-}
+-
+ /* Compute zone sizes for the DMA and DMA32 zones in a node. */
+ __init void
+ size_zones(unsigned long *z, unsigned long *h,
+@@ -901,6 +858,111 @@ int memory_add_physaddr_to_nid(u64 start
+ }
+ #endif
+ 
++static void
++late_phys_pmd_init(pmd_t *pmd, unsigned long address, unsigned long end)
++{
++	int i, k;
++
++	for (i = 0; i < PTRS_PER_PMD; pmd++, i++) {
++		unsigned long pte_phys;
++		pte_t *pte, *pte_save;
++
++		if (address >= end)
++			break;
++		pte = alloc_static_page(&pte_phys);
++		pte_save = pte;
++		for (k = 0; k < PTRS_PER_PTE; pte++, k++, address += PTE_SIZE) {
++			if ((address >= end) ||
++			    ((address >> PAGE_SHIFT) >=
++			     xen_start_info->nr_pages)) { 
++				__set_pte(pte, __pte(0)); 
++				continue;
++			}
++			if (make_readonly(address)) {
++				__set_pte(pte, 
++					  __pte(address | (_KERNPG_TABLE & ~_PAGE_RW)));
++				continue;
++			}
++			__set_pte(pte, __pte(address | _KERNPG_TABLE));
++		}
++		pte = pte_save;
++		early_make_page_readonly(pte, XENFEAT_writable_page_tables);
++		set_pmd(pmd, __pmd(pte_phys | _KERNPG_TABLE));
++	}
++}
++
++static void
++late_phys_pmd_update(pud_t *pud, unsigned long address, unsigned long end)
++{
++	pmd_t *pmd = pmd_offset(pud, (unsigned long)__va(address));
++
++	if (pmd_none(*pmd)) {
++		spin_lock(&init_mm.page_table_lock);
++		late_phys_pmd_init(pmd, address, end);
++		spin_unlock(&init_mm.page_table_lock);
++		__flush_tlb_all();
++	}
++}
++
++static void late_phys_pud_init(pud_t *pud, unsigned long address, unsigned long end)
++{ 
++	long i = pud_index(address);
++
++	pud = pud + i;
++
++	if (pud_val(*pud)) {
++		late_phys_pmd_update(pud, address, end);
++		return;
++	}
++
++	for (; i < PTRS_PER_PUD; pud++, i++) {
++		unsigned long paddr, pmd_phys;
++		pmd_t *pmd;
++
++		paddr = (address & PGDIR_MASK) + i*PUD_SIZE;
++		if (paddr >= end)
++			break;
++
++		pmd = (pmd_t *)get_zeroed_page(GFP_ATOMIC);
++		pmd_phys = __pa(pmd);
++
++		early_make_page_readonly(pmd, XENFEAT_writable_page_tables);
++		spin_lock(&init_mm.page_table_lock);
++		set_pud(pud, __pud(pmd_phys | _KERNPG_TABLE));
++		late_phys_pmd_init(pmd, paddr, end);
++		spin_unlock(&init_mm.page_table_lock);
++	}
++} 
++
++/* Setup the direct mapping of the physical memory at PAGE_OFFSET.
++   This runs before bootmem is initialized and gets pages normally.
++*/
++static void late_init_memory_mapping(unsigned long start, unsigned long end)
++{ 
++	unsigned long next; 
++
++	Dprintk("init_memory_mapping\n");
++
++	start = (unsigned long)__va(start);
++	end = (unsigned long)__va(end);
++
++	for (; start < end; start = next) {
++		unsigned long pud_phys; 
++		pgd_t *pgd = pgd_offset_k(start);
++		pud_t *pud;
++
++		pud = pud_offset(pgd, start & PGDIR_MASK);
++		make_page_readonly(pud, XENFEAT_writable_page_tables);
++		pud_phys = __pa(pud);
++
++		next = start + PGDIR_SIZE;
++		if (next > end) 
++			next = end; 
++		late_phys_pud_init(pud, __pa(start), __pa(next));
++	}
++	__flush_tlb_all();
++}
++
+ /*
+  * Memory is added always to NORMAL zone. This means you will never get
+  * additional DMA/DMA32 memory.
+@@ -917,7 +979,7 @@ int arch_add_memory(int nid, u64 start, 
+ 	if (ret)
+ 		goto error;
+ 
+-	init_memory_mapping(start, (start + size -1));
++	late_init_memory_mapping(start, (start + size -1));
+ 
+ 	return ret;
+ error:
+@@ -1048,17 +1110,6 @@ void __init mem_init(void)
+ 		reservedpages << (PAGE_SHIFT-10),
+ 		datasize >> 10,
+ 		initsize >> 10);
+-
+-#ifndef CONFIG_XEN
+-#ifdef CONFIG_SMP
+-	/*
+-	 * Sync boot_level4_pgt mappings with the init_level4_pgt
+-	 * except for the low identity mappings which are already zapped
+-	 * in init_level4_pgt. This sync-up is essential for AP's bringup
+-	 */
+-	memcpy(boot_level4_pgt+1, init_level4_pgt+1, (PTRS_PER_PGD-1)*sizeof(pgd_t));
+-#endif
+-#endif
+ }
+ 
+ void free_init_pages(char *what, unsigned long begin, unsigned long end)
+@@ -1071,11 +1122,11 @@ void free_init_pages(char *what, unsigne
+ 
+ 	printk(KERN_INFO "Freeing %s: %ldk freed\n", what, (end - begin) >> 10);
+ 	for (addr = begin; addr < end; addr += PAGE_SIZE) {
+-		ClearPageReserved(virt_to_page(addr));
+-		init_page_count(virt_to_page(addr));
+-		memset((void *)(addr & ~(PAGE_SIZE-1)),
+-			POISON_FREE_INITMEM, PAGE_SIZE);
+-		free_page(addr);
++		struct page *page = pfn_to_page(addr >> PAGE_SHIFT);
++		ClearPageReserved(page);
++		init_page_count(page);
++		memset(page_address(page), POISON_FREE_INITMEM, PAGE_SIZE);
++		__free_page(page);
+ 		totalram_pages++;
+ 	}
+ #endif
+@@ -1087,8 +1138,8 @@ void free_initmem(void)
+ 	memset(__initdata_begin, POISON_FREE_INITDATA,
+ 	       __initdata_end - __initdata_begin);
+ 	free_init_pages("unused kernel memory",
+-			(unsigned long)(&__init_begin),
+-			(unsigned long)(&__init_end));
++			__pa_symbol(&__init_begin),
++			__pa_symbol(&__init_end));
+ #endif
+ }
+ 
+@@ -1097,9 +1148,10 @@ void free_initmem(void)
+ extern char __start_rodata, __end_rodata;
+ void mark_rodata_ro(void)
+ {
+-	unsigned long addr = (unsigned long)__start_rodata;
++	unsigned long addr = (unsigned long)__va(__pa_symbol(&__start_rodata));
++	unsigned long end  = (unsigned long)__va(__pa_symbol(&__end_rodata));
+ 
+-	for (; addr < (unsigned long)__end_rodata; addr += PAGE_SIZE)
++	for (; addr < end; addr += PAGE_SIZE)
+ 		change_page_attr_addr(addr, 1, PAGE_KERNEL_RO);
+ 
+ 	printk ("Write protecting the kernel read-only data: %luk\n",
+@@ -1117,7 +1169,7 @@ void mark_rodata_ro(void)
+ #ifdef CONFIG_BLK_DEV_INITRD
+ void free_initrd_mem(unsigned long start, unsigned long end)
+ {
+-	free_init_pages("initrd memory", start, end);
++	free_init_pages("initrd memory", __pa(start), __pa(end));
+ }
+ #endif
+ 
+diff --exclude='*~' -urNp linux-2.6.17.reloc/arch/x86_64/mm/pageattr-xen.c linux-2.6.17.work/arch/x86_64/mm/pageattr-xen.c
+--- linux-2.6.17.reloc/arch/x86_64/mm/pageattr-xen.c	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/arch/x86_64/mm/pageattr-xen.c	2006-08-24 14:59:36.000000000 +0200
+@@ -212,7 +212,6 @@ static struct page *split_large_page(uns
+ 	SetPagePrivate(base);
+ 	page_private(base) = 0;
+ 
+-	address = __pa(address);
+ 	addr = address & LARGE_PAGE_MASK; 
+ 	pbase = (pte_t *)page_address(base);
+ 	for (i = 0; i < PTRS_PER_PTE; i++, addr += PAGE_SIZE) {
+@@ -256,7 +255,7 @@ static inline void save_page(struct page
+  * No more special protections in this 2/4MB area - revert to a
+  * large page again. 
+  */
+-static void revert_page(unsigned long address, pgprot_t ref_prot)
++static void revert_page(unsigned long address, unsigned long pfn, pgprot_t ref_prot)
+ {
+ 	pgd_t *pgd;
+ 	pud_t *pud;
+@@ -270,7 +269,7 @@ static void revert_page(unsigned long ad
+ 	pmd = pmd_offset(pud, address);
+ 	BUG_ON(pmd_val(*pmd) & _PAGE_PSE);
+ 	pgprot_val(ref_prot) |= _PAGE_PSE;
+-	large_pte = mk_pte_phys(__pa(address) & LARGE_PAGE_MASK, ref_prot);
++	large_pte = mk_pte_phys((pfn << PAGE_SHIFT) & LARGE_PAGE_MASK, ref_prot);
+ 	set_pte((pte_t *)pmd, large_pte);
+ }      
+ 
+@@ -298,7 +297,7 @@ __change_page_attr(unsigned long address
+ 			struct page *split;
+ 			ref_prot2 = __pgprot(pgprot_val(pte_pgprot(*lookup_address(address))) & ~(1<<_PAGE_BIT_PSE));
+ 
+-			split = split_large_page(address, prot, ref_prot2);
++			split = split_large_page(pfn << PAGE_SHIFT, prot, ref_prot2);
+ 			if (!split)
+ 				return -ENOMEM;
+ 			set_pte(kpte,mk_pte(split, ref_prot2));
+@@ -324,7 +323,7 @@
+ #endif
+ 		if (page_private(kpte_page) == 0) {
+ 			save_page(kpte_page);
+-			revert_page(address, ref_prot);
++			revert_page(address, pfn, ref_prot);
+ 		}
+ 	return 0;
+ } 
+@@ -344,6 +343,7 @@ __change_page_attr(unsigned long address
+  */
+ int change_page_attr_addr(unsigned long address, int numpages, pgprot_t prot)
+ {
++	unsigned long phys_base_pfn = __pa_symbol(__START_KERNEL_map) >> PAGE_SHIFT;
+ 	int err = 0; 
+ 	int i; 
+ 
+@@ -356,14 +356,16 @@ int change_page_attr_addr(unsigned long 
+ 			break; 
+ 		/* Handle kernel mapping too which aliases part of the
+ 		 * lowmem */
+-		if (__pa(address) < KERNEL_TEXT_SIZE) {
++		if ((pfn >= phys_base_pfn) &&
++			((pfn - phys_base_pfn) < (KERNEL_TEXT_SIZE >> PAGE_SHIFT)))
++		{
+ 			unsigned long addr2;
+ 			pgprot_t prot2 = prot;
+-			addr2 = __START_KERNEL_map + __pa(address);
++			addr2 = __START_KERNEL_map + ((pfn - phys_base_pfn) << PAGE_SHIFT);
+  			pgprot_val(prot2) &= ~_PAGE_NX;
+ 			err = __change_page_attr(addr2, pfn, prot2, PAGE_KERNEL_EXEC);
+-		} 
+-	} 	
++		}
++	}
+ 	up_write(&init_mm.mmap_sem); 
+ 	return err;
+ }
+diff --exclude='*~' -urNp linux-2.6.17.reloc/include/asm-i386/mach-xen/asm/page.h linux-2.6.17.work/include/asm-i386/mach-xen/asm/page.h
+--- linux-2.6.17.reloc/include/asm-i386/mach-xen/asm/page.h	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/include/asm-i386/mach-xen/asm/page.h	2006-08-24 14:59:36.000000000 +0200
+@@ -295,12 +295,9 @@ extern int page_is_ram(unsigned long pag
+ 
+ #ifdef __ASSEMBLY__
+ #define __PAGE_OFFSET		CONFIG_PAGE_OFFSET
+-#define __PHYSICAL_START	CONFIG_PHYSICAL_START
+ #else
+ #define __PAGE_OFFSET		((unsigned long)CONFIG_PAGE_OFFSET)
+-#define __PHYSICAL_START	((unsigned long)CONFIG_PHYSICAL_START)
+ #endif
+-#define __KERNEL_START		(__PAGE_OFFSET + __PHYSICAL_START)
+ 
+ #ifdef CONFIG_XEN_COMPAT_030002
+ #undef LOAD_OFFSET
+@@ -311,6 +308,7 @@ extern int page_is_ram(unsigned long pag
+ #define VMALLOC_RESERVE		((unsigned long)__VMALLOC_RESERVE)
+ #define MAXMEM			(__FIXADDR_TOP-__PAGE_OFFSET-__VMALLOC_RESERVE)
+ #define __pa(x)			((unsigned long)(x)-PAGE_OFFSET)
++#define __pa_symbol(x)		__pa(x)
+ #define __va(x)			((void *)((unsigned long)(x)+PAGE_OFFSET))
+ #define pfn_to_kaddr(pfn)      __va((pfn) << PAGE_SHIFT)
+ #ifdef CONFIG_FLATMEM
+diff --exclude='*~' -urNp linux-2.6.17.reloc/include/asm-x86_64/mach-xen/asm/page.h linux-2.6.17.work/include/asm-x86_64/mach-xen/asm/page.h
+--- linux-2.6.17.reloc/include/asm-x86_64/mach-xen/asm/page.h	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/include/asm-x86_64/mach-xen/asm/page.h	2006-08-24 15:01:29.000000000 +0200
+@@ -1,6 +1,8 @@
+ #ifndef _X86_64_PAGE_H
+ #define _X86_64_PAGE_H
+ 
++#include <asm/const.h>
++
+ /* #include <linux/string.h> */
+ #ifndef __ASSEMBLY__
+ #include <linux/kernel.h>
+@@ -28,11 +30,7 @@
+ 
+ /* PAGE_SHIFT determines the page size */
+ #define PAGE_SHIFT	12
+-#ifdef __ASSEMBLY__
+-#define PAGE_SIZE	(0x1 << PAGE_SHIFT)
+-#else
+-#define PAGE_SIZE	(1UL << PAGE_SHIFT)
+-#endif
++#define PAGE_SIZE	(_AC(1,UL) << PAGE_SHIFT)
+ #define PAGE_MASK	(~(PAGE_SIZE-1))
+ #define PHYSICAL_PAGE_MASK	(~(PAGE_SIZE-1) & __PHYSICAL_MASK)
+ 
+@@ -57,10 +55,10 @@
+ #define N_EXCEPTION_STACKS 5  /* hw limit: 7 */
+ 
+ #define LARGE_PAGE_MASK (~(LARGE_PAGE_SIZE-1))
+-#define LARGE_PAGE_SIZE (1UL << PMD_SHIFT)
++#define LARGE_PAGE_SIZE (_AC(1,UL) << PMD_SHIFT)
+ 
+ #define HPAGE_SHIFT PMD_SHIFT
+-#define HPAGE_SIZE	((1UL) << HPAGE_SHIFT)
++#define HPAGE_SIZE	(_AC(1,UL) << HPAGE_SHIFT)
+ #define HPAGE_MASK	(~(HPAGE_SIZE - 1))
+ #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
+ 
+@@ -256,18 +254,11 @@ static inline pgd_t __pgd(unsigned long 
+ 
+ #define __pgprot(x)	((pgprot_t) { (x) } )
+ 
+-#define __PHYSICAL_START	((unsigned long)CONFIG_PHYSICAL_START)
+-#define __START_KERNEL		(__START_KERNEL_map + __PHYSICAL_START)
+-#define __START_KERNEL_map	0xffffffff80000000UL
+-#define __PAGE_OFFSET           0xffff880000000000UL	
+-
+-#else
+-#define __PHYSICAL_START	CONFIG_PHYSICAL_START
+-#define __START_KERNEL		(__START_KERNEL_map + __PHYSICAL_START)
+-#define __START_KERNEL_map	0xffffffff80000000
+-#define __PAGE_OFFSET           0xffff880000000000
+ #endif /* !__ASSEMBLY__ */
+ 
++#define __START_KERNEL_map	_AC(0xffffffff80000000,UL)
++#define __PAGE_OFFSET           _AC(0xffff880000000000,UL)
++
+ #ifdef CONFIG_XEN_COMPAT_030002
+ #undef LOAD_OFFSET
+ #define LOAD_OFFSET		0
+@@ -278,28 +269,28 @@ static inline pgd_t __pgd(unsigned long 
+ 
+ /* See Documentation/x86_64/mm.txt for a description of the memory map. */
+ #define __PHYSICAL_MASK_SHIFT	46
+-#define __PHYSICAL_MASK		((1UL << __PHYSICAL_MASK_SHIFT) - 1)
++#define __PHYSICAL_MASK		((_AC(1,UL) << __PHYSICAL_MASK_SHIFT) - 1)
+ #define __VIRTUAL_MASK_SHIFT	48
+-#define __VIRTUAL_MASK		((1UL << __VIRTUAL_MASK_SHIFT) - 1)
++#define __VIRTUAL_MASK		((_AC(1,UL) << __VIRTUAL_MASK_SHIFT) - 1)
+ 
+-#define KERNEL_TEXT_SIZE  (40UL*1024*1024)
+-#define KERNEL_TEXT_START 0xffffffff80000000UL 
++#define KERNEL_TEXT_SIZE  (_AC(40,UL)*1024*1024)
++#define KERNEL_TEXT_START _AC(0xffffffff80000000,UL)
+ 
+-#define PAGE_OFFSET		((unsigned long)__PAGE_OFFSET)
++#define PAGE_OFFSET		__PAGE_OFFSET
+ 
+ /* Note: __pa(&symbol_visible_to_c) should be always replaced with __pa_symbol.
+    Otherwise you risk miscompilation. */ 
++/* Optimized __pa() didn't work on xen, because we also use it for kernel addresses */
++/* #define __pa(x)			((unsigned long)(x) - PAGE_OFFSET) */
+ #define __pa(x)			(((unsigned long)(x)>=__START_KERNEL_map)?(unsigned long)(x) - (unsigned long)__START_KERNEL_map:(unsigned long)(x) - PAGE_OFFSET)
+ /* __pa_symbol should be used for C visible symbols.
+    This seems to be the official gcc blessed way to do such arithmetic. */ 
+ #define __pa_symbol(x)		\
+ 	({unsigned long v;  \
+ 	  asm("" : "=r" (v) : "0" (x)); \
+-	  __pa(v); })
++	  (v - __START_KERNEL_map); })
+ 
+ #define __va(x)			((void *)((unsigned long)(x)+PAGE_OFFSET))
+-#define __boot_va(x)		__va(x)
+-#define __boot_pa(x)		__pa(x)
+ #ifdef CONFIG_FLATMEM
+ #define pfn_valid(pfn)		((pfn) < end_pfn)
+ #endif
+diff --exclude='*~' -urNp linux-2.6.17.reloc/include/asm-x86_64/mach-xen/asm/pgtable.h linux-2.6.17.work/include/asm-x86_64/mach-xen/asm/pgtable.h
+--- linux-2.6.17.reloc/include/asm-x86_64/mach-xen/asm/pgtable.h	2006-08-24 14:49:29.000000000 +0200
++++ linux-2.6.17.work/include/asm-x86_64/mach-xen/asm/pgtable.h	2006-08-24 14:59:36.000000000 +0200
+@@ -1,6 +1,9 @@
+ #ifndef _X86_64_PGTABLE_H
+ #define _X86_64_PGTABLE_H
+ 
++#include <asm/const.h>
++#ifndef __ASSEMBLY__
++
+ /*
+  * This file contains the functions and defines necessary to modify and use
+  * the x86-64 page table tree.
+@@ -35,14 +38,12 @@ extern void xen_init_pt(void);
+ #endif
+ 
+ extern pud_t level3_kernel_pgt[512];
+-extern pud_t level3_physmem_pgt[512];
+ extern pud_t level3_ident_pgt[512];
+ extern pmd_t level2_kernel_pgt[512];
+ extern pgd_t init_level4_pgt[];
+-extern pgd_t boot_level4_pgt[];
+ extern unsigned long __supported_pte_mask;
+ 
+-#define swapper_pg_dir init_level4_pgt
++#define swapper_pg_dir ((pgd_t *)NULL)
+ 
+ extern void nonx_setup(char *str);
+ extern void paging_init(void);
+@@ -55,7 +56,9 @@ extern unsigned long pgkern_mask;
+  * for zero-mapped memory areas etc..
+  */
+ extern unsigned long empty_zero_page[PAGE_SIZE/sizeof(unsigned long)];
+-#define ZERO_PAGE(vaddr) (virt_to_page(empty_zero_page))
++#define ZERO_PAGE(vaddr) (pfn_to_page(__pa_symbol(&empty_zero_page) >> PAGE_SHIFT))
++
++#endif /* !__ASSEMBLY__ */
+ 
+ /*
+  * PGDIR_SHIFT determines what a top-level page table entry can map
+@@ -81,6 +84,8 @@ extern unsigned long empty_zero_page[PAG
+  */
+ #define PTRS_PER_PTE	512
+ 
++#ifndef __ASSEMBLY__
++
+ #define pte_ERROR(e) \
+ 	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), pte_val(e))
+ #define pmd_ERROR(e) \
+@@ -162,22 +167,23 @@ static inline pte_t ptep_get_and_clear_f
+ 
+ #define pte_pgprot(a)	(__pgprot((a).pte & ~PHYSICAL_PAGE_MASK))
+ 
+-#define PMD_SIZE	(1UL << PMD_SHIFT)
++#endif /* !__ASSEMBLY__ */
++
++#define PMD_SIZE	(_AC(1,UL) << PMD_SHIFT)
+ #define PMD_MASK	(~(PMD_SIZE-1))
+-#define PUD_SIZE	(1UL << PUD_SHIFT)
++#define PUD_SIZE	(_AC(1,UL) << PUD_SHIFT)
+ #define PUD_MASK	(~(PUD_SIZE-1))
+-#define PGDIR_SIZE	(1UL << PGDIR_SHIFT)
++#define PGDIR_SIZE	(_AC(1,UL) << PGDIR_SHIFT)
+ #define PGDIR_MASK	(~(PGDIR_SIZE-1))
+ 
+ #define USER_PTRS_PER_PGD	((TASK_SIZE-1)/PGDIR_SIZE+1)
+ #define FIRST_USER_ADDRESS	0
+ 
+-#ifndef __ASSEMBLY__
+-#define MAXMEM		 0x3fffffffffffUL
+-#define VMALLOC_START    0xffffc20000000000UL
+-#define VMALLOC_END      0xffffe1ffffffffffUL
+-#define MODULES_VADDR    0xffffffff88000000UL
+-#define MODULES_END      0xfffffffffff00000UL
++#define MAXMEM		 _AC(0x3fffffffffff,UL)
++#define VMALLOC_START    _AC(0xffffc20000000000,UL)
++#define VMALLOC_END      _AC(0xffffe1ffffffffff,UL)
++#define MODULES_VADDR    _AC(0xffffffff88000000,UL)
++#define MODULES_END      _AC(0xfffffffffff00000,UL)
+ #define MODULES_LEN   (MODULES_END - MODULES_VADDR)
+ 
+ #define _PAGE_BIT_PRESENT	0
+@@ -203,7 +209,7 @@ static inline pte_t ptep_get_and_clear_f
+ #define _PAGE_GLOBAL	0x100	/* Global TLB entry */
+ 
+ #define _PAGE_PROTNONE	0x080	/* If not present */
+-#define _PAGE_NX        (1UL<<_PAGE_BIT_NX)
++#define _PAGE_NX        (_AC(1,UL)<<_PAGE_BIT_NX)
+ 
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	_PAGE_TABLE
+@@ -269,6 +275,8 @@ static inline pte_t ptep_get_and_clear_f
+ #define __S110	PAGE_SHARED_EXEC
+ #define __S111	PAGE_SHARED_EXEC
+ 
++#ifndef __ASSEMBLY__
++
+ static inline unsigned long pgd_bad(pgd_t pgd)
+ {
+        unsigned long val = pgd_val(pgd);
+@@ -502,8 +510,6 @@ extern spinlock_t pgd_lock;
+ extern struct page *pgd_list;
+ void vmalloc_sync_all(void);
+ 
+-#endif /* !__ASSEMBLY__ */
+-
+ extern int kern_addr_valid(unsigned long addr); 
+ 
+ #define DOMID_LOCAL (0xFFFFU)
+@@ -556,5 +562,6 @@ int touch_pte_range(struct mm_struct *mm
+ #define __HAVE_ARCH_PTEP_SET_WRPROTECT
+ #define __HAVE_ARCH_PTE_SAME
+ #include <asm-generic/pgtable.h>
++#endif /* !__ASSEMBLY__ */
+ 
+ #endif /* _X86_64_PGTABLE_H */

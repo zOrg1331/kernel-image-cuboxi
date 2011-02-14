@@ -1,0 +1,45 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 18 Feb 2010 23:38:31 -0500
+Subject: [scsi] device_handler: add netapp to alua dev list
+Message-id: <1266536311-2806-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 23358
+O-Subject: [PATCH 1/1] RHEL 5.5: Add netapp to scsi dh alua dev list
+Bugzilla: 562080
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+Netapp is now supporting ALUA, and is hitting a bug
+where they get:
+
+kernel: sd 7:0:0:1: Device not ready: <6>: Current: sense key: Not Ready
+kernel:     Add. Sense: Logical unit not accessible, asymmetric access
+state transition
+
+and the IO is failed.
+
+This is a retryable error, and the scsi_dh_alua is already set up
+to detect and retry it. Netapp devices are not yet in the alua
+list though, so this patch adds their boxes to it.
+
+I have just sent the patch to the linux-scsi list.
+http://marc.info/?l=linux-scsi&m=126653579625086&w=2
+
+Patch was made and tested by Netapp. I do not have any netpapp boxes
+that support this feature and the netapp sim does not either,
+so I just ran with the patch to check that it fails correctly
+on older boxes that do not support alua.
+
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 1c16a40..0315aa1 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -700,6 +700,7 @@ const struct scsi_dh_devlist alua_dev_list[] = {
+ 	{"DGC", "RAID"},
+ 	{"DGC", "DISK"},
+ 	{"DGC", "VRAID"},
++	{"NETAPP", "LUN"},
+ 	{NULL, NULL}
+ };
+ 

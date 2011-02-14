@@ -2,7 +2,7 @@
  * include/linux/tipc_config.h: Include file for TIPC configuration interface
  * 
  * Copyright (c) 2003-2006, Ericsson AB
- * Copyright (c) 2005-2007, Wind River Systems
+ * Copyright (c) 2005, Wind River Systems
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -136,14 +136,6 @@
 #define  TIPC_CMD_SET_NETID         0x800B    /* tx unsigned, rx none */
 
 /*
- * Reserved commands:
- * May not be issued by any process.
- * Used internally by TIPC.
- */
-
-#define  TIPC_CMD_NOT_NET_ADMIN     0xC001    /* tx none, rx none */
-
-/*
  * TLV types defined for TIPC
  */
 
@@ -202,34 +194,34 @@
 
 
 struct tipc_node_info {
-	__be32 addr;			/* network address of node */
-	__be32 up;			/* 0=down, 1= up */
+	__u32 addr;			/* network address of node */
+	__u32 up;			/* 0=down, 1= up */
 };
 
 struct tipc_link_info {
-	__be32 dest;			/* network address of peer node */
-	__be32 up;			/* 0=down, 1=up */
+	__u32 dest;			/* network address of peer node */
+	__u32 up;			/* 0=down, 1=up */
 	char str[TIPC_MAX_LINK_NAME];	/* link name */
 };
 
 struct tipc_bearer_config {
-	__be32 priority;		/* Range [1,31]. Override per link  */
-	__be32 detect_scope;
+	__u32 priority;			/* Range [1,31]. Override per link  */
+	__u32 detect_scope;     
 	char name[TIPC_MAX_BEARER_NAME];
 };
 
 struct tipc_link_config {
-	__be32 value;
+	__u32 value;
 	char name[TIPC_MAX_LINK_NAME];
 };
 
 #define TIPC_NTQ_ALLTYPES 0x80000000
 
 struct tipc_name_table_query {
-	__be32 depth;	/* 1:type, 2:+name info, 3:+port info, 4+:+debug info */
-	__be32 type;	/* {t,l,u} info ignored if high bit of "depth" is set */
-	__be32 lowbound; /* (i.e. displays all entries of name table) */
-	__be32 upbound;
+	__u32 depth;	/* 1:type, 2:+name info, 3:+port info, 4+:+debug info */
+	__u32 type;	/* {t,l,u} info ignored if high bit of "depth" is set */
+	__u32 lowbound; /* (i.e. displays all entries of name table) */
+	__u32 upbound;
 };
 
 /*
@@ -270,8 +262,8 @@ struct tipc_route_info {
  */
 
 struct tlv_desc {
-	__be16 tlv_len;		/* TLV length (descriptor + value) */
-	__be16 tlv_type;		/* TLV identifier */
+	__u16 tlv_len;		/* TLV length (descriptor + value) */
+	__u16 tlv_type;		/* TLV identifier */
 };
 
 #define TLV_ALIGNTO 4
@@ -385,9 +377,9 @@ struct tipc_genlmsghdr {
 
 struct tipc_cfg_msg_hdr
 {
-	__be32 tcm_len;		/* Message length (including header) */
-	__be16 tcm_type;	/* Command type */
-	__be16 tcm_flags;	/* Additional flags */
+	__u32 tcm_len;		/* Message length (including header) */
+	__u16 tcm_type;		/* Command type */
+	__u16 tcm_flags;	/* Additional flags */
 	char  tcm_reserved[8];	/* Unused */
 };
 

@@ -332,8 +332,8 @@ static int complete_read_super(struct super_block *sb, int silent, int size)
 	sb->s_magic = SYSV_MAGIC_BASE + sbi->s_type;
 	/* set up enough so that it can read an inode */
 	sb->s_op = &sysv_sops;
-	root_inode = sysv_iget(sb, SYSV_ROOT_INO);
-	if (IS_ERR(root_inode)) {
+	root_inode = iget(sb,SYSV_ROOT_INO);
+	if (!root_inode || is_bad_inode(root_inode)) {
 		printk("SysV FS: get root inode failed\n");
 		return 0;
 	}
@@ -358,15 +358,21 @@ static int sysv_fill_super(struct super_block *sb, void *data, int silent)
 	unsigned long blocknr;
 	int size = 0, i;
 	
-	BUILD_BUG_ON(1024 != sizeof (struct xenix_super_block));
-	BUILD_BUG_ON(512 != sizeof (struct sysv4_super_block));
-	BUILD_BUG_ON(512 != sizeof (struct sysv2_super_block));
-	BUILD_BUG_ON(500 != sizeof (struct coh_super_block));
-	BUILD_BUG_ON(64 != sizeof (struct sysv_inode));
+	if (1024 != sizeof (struct xenix_super_block))
+		panic("Xenix FS: bad superblock size");
+	if (512 != sizeof (struct sysv4_super_block))
+		panic("SystemV FS: bad superblock size");
+	if (512 != sizeof (struct sysv2_super_block))
+		panic("SystemV FS: bad superblock size");
+	if (500 != sizeof (struct coh_super_block))
+		panic("Coherent FS: bad superblock size");
+	if (64 != sizeof (struct sysv_inode))
+		panic("sysv fs: bad inode size");
 
-	sbi = kzalloc(sizeof(struct sysv_sb_info), GFP_KERNEL);
+	sbi = kmalloc(sizeof(struct sysv_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
+	memset(sbi, 0, sizeof(struct sysv_sb_info));
 
 	sbi->s_sb = sb;
 	sbi->s_block_base = 0;
@@ -447,9 +453,10 @@ static int v7_fill_super(struct super_block *sb, void *data, int silent)
 	if (64 != sizeof (struct sysv_inode))
 		panic("sysv fs: bad i-node size");
 
-	sbi = kzalloc(sizeof(struct sysv_sb_info), GFP_KERNEL);
+	sbi = kmalloc(sizeof(struct sysv_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
+	memset(sbi, 0, sizeof(struct sysv_sb_info));
 
 	sbi->s_sb = sb;
 	sbi->s_block_base = 0;
@@ -527,6 +534,9 @@ static struct file_system_type v7_fs_type = {
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
+
+extern int sysv_init_icache(void) __init;
+extern void sysv_destroy_icache(void);
 
 static int __init init_sysv_fs(void)
 {

@@ -1,11 +1,13 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright (C) 2001-2003 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
+ *
+ * $Id: read.c,v 1.42 2005/11/07 11:14:41 gleixner Exp $
  *
  */
 
@@ -164,15 +166,12 @@ int jffs2_read_inode_range(struct jffs2_sb_info *c, struct jffs2_inode_info *f,
 
 	/* XXX FIXME: Where a single physical node actually shows up in two
 	   frags, we read it twice. Don't do that. */
-	/* Now we're pointing at the first frag which overlaps our page
-	 * (or perhaps is before it, if we've been asked to read off the
-	 * end of the file). */
+	/* Now we're pointing at the first frag which overlaps our page */
 	while(offset < end) {
 		D2(printk(KERN_DEBUG "jffs2_read_inode_range: offset %d, end %d\n", offset, end));
-		if (unlikely(!frag || frag->ofs > offset ||
-			     frag->ofs + frag->size <= offset)) {
+		if (unlikely(!frag || frag->ofs > offset)) {
 			uint32_t holesize = end - offset;
-			if (frag && frag->ofs > offset) {
+			if (frag) {
 				D1(printk(KERN_NOTICE "Eep. Hole in ino #%u fraglist. frag->ofs = 0x%08x, offset = 0x%08x\n", f->inocache->ino, frag->ofs, offset));
 				holesize = min(holesize, frag->ofs - offset);
 			}

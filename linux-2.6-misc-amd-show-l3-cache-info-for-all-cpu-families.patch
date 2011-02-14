@@ -1,0 +1,40 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 2 Sep 2010 17:05:58 -0400
+Subject: [misc] amd: show L3 cache info for all CPU families
+Message-id: <20100902171157.18123.57528.sendpatchset@localhost.localdomain>
+Patchwork-id: 28020
+O-Subject: [RHEL5.6 PATCH 4/5] Show L3 cache information for all AMD CPU families
+Bugzilla: 610199
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+
+>From b4ebdd517f64bfa25748d0258622fb1bc14e629b Mon Sep 17 00:00:00 2001
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+Date: Wed, 1 Sep 2010 18:59:36 +0200
+Subject: [PATCH 4/5] i386, amd: Show L3 cache information for all AMD CPU families
+
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+Adapt this superfluous family check to allow display of L3 cache
+information for future CPUs.
+
+This corresponds to what was introduced with commit
+11fdd252bb5b461289fc5c21dc8fc87dc66f3284 (x86: cpu make amd.c more
+like amd_64.c v2) for 32-bit in mainline kernel.
+
+Signed-off-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index b709e59..6c4f964 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -303,8 +303,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
+ #endif
+ 
+ 	if (cpuid_eax(0x80000000) >= 0x80000006) {
+-		if ((c->x86 == 0x10) && (cpuid_edx(0x80000006) &
+-0xf000))
++		if ((c->x86 >= 0xf) && (cpuid_edx(0x80000006) & 0xf000))
+ 			num_cache_leaves = 4;
+ 		else
+ 			num_cache_leaves = 3;

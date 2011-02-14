@@ -1,0 +1,52 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] bz 218966 GFS2 Readpages fix [2/4]
+Date: Fri, 15 Dec 2006 17:46:32 +0000
+Bugzilla: 218966
+Message-Id: <1166204792.3752.1253.camel@quoit.chygwyn.com>
+Changelog: GFS2 Readpages fix (part 2)
+
+
+Hi,
+
+This is the second of the four patches. It is taken directly from
+upstream. See the first patch for the full explanation.
+
+This patch is the GFS2 part of the change, prior to this GFS2 was not
+disposing of the pages correctly.
+
+
+Steve.
+
+X-Git-Tag: v2.6.19-rc5
+X-Git-Url: http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=7011774db8afca43be466f0f0428434a9edf053e
+
+[PATCH] gfs2: ->readpages() fixes
+
+This just ignore the remaining pages, and remove unneeded unlock_pages().
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+Cc: Steven French <sfrench@us.ibm.com>
+Cc: Miklos Szeredi <miklos@szeredi.hu>
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+Cc: Trond Myklebust <trond.myklebust@fys.uio.no>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+---
+
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -337,13 +337,6 @@ out:
+ out_noerror:
+ 	ret = 0;
+ out_unlock:
+-	/* unlock all pages, we can't do any I/O right now */
+-	for (page_idx = 0; page_idx < nr_pages; page_idx++) {
+-		struct page *page = list_entry(pages->prev, struct page, lru);
+-		list_del(&page->lru);
+-		unlock_page(page);
+-		page_cache_release(page);
+-	}
+ 	if (do_unlock)
+ 		gfs2_holder_uninit(&gh);
+ 	goto out;
+

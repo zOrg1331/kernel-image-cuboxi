@@ -1,0 +1,876 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 22 Oct 2009 20:00:52 -0400
+Subject: [xen] iommu: enable amd iommu debug at run-time
+Message-id: <20091022200313.3419.81978.sendpatchset@localhost.localdomain>
+Patchwork-id: 21202
+O-Subject: [RHEL5.5 PATCH 3/5] Enable AMD IOMMU debug at run-time
+Bugzilla: 518474 526766
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+This debug patch proved to be very useful to enable IOMMU debug 
+output at run time.  The old compile time option is removed.
+
+Resolves BZ 526766 and 518474
+
+diff --git a/drivers/passthrough/amd/iommu_acpi.c b/drivers/passthrough/amd/iommu_acpi.c
+index a54227c..ced57d6 100644
+--- a/drivers/passthrough/amd/iommu_acpi.c
++++ b/drivers/passthrough/amd/iommu_acpi.c
+@@ -30,6 +30,7 @@ extern struct ivrs_mappings *ivrs_mappings;
+ extern unsigned short last_bdf;
+ extern int ioapic_bdf[MAX_IO_APICS];
+ unsigned int parse_ivrs_table_error;
++extern int amd_iommu_debug;
+ 
+ static void add_ivrs_mapping_entry(
+             u16 bdf, u16 alias_id, u8 flags, struct amd_iommu *iommu)
+@@ -185,7 +186,7 @@ static int __init register_exclusion_range_for_device(
+     iommu = find_iommu_for_device(bus, devfn);
+     if ( !iommu )
+     {
+-        amd_iov_error("IVMD Error: No IOMMU for Dev_Id 0x%x!\n", bdf);
++        AMD_IOMMU_DEBUG("IVMD Error: No IOMMU for Dev_Id 0x%x!\n", bdf);
+         return -ENODEV;
+     }
+     req = ivrs_mappings[bdf].dte_requestor_id;
+@@ -267,7 +268,7 @@ static int __init parse_ivmd_device_select(
+     bdf = ivmd_block->header.dev_id;
+     if ( bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVMD Error: Invalid Dev_Id 0x%x\n", bdf);
++        AMD_IOMMU_DEBUG("IVMD Error: Invalid Dev_Id 0x%x\n", bdf);
+         return -ENODEV;
+     }
+ 
+@@ -284,7 +285,7 @@ static int __init parse_ivmd_device_range(
+     first_bdf = ivmd_block->header.dev_id;
+     if ( first_bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVMD Error: Invalid Range_First Dev_Id 0x%x\n", first_bdf);
+         return -ENODEV;
+     }
+@@ -292,7 +293,7 @@ static int __init parse_ivmd_device_range(
+     last_bdf = ivmd_block->last_dev_id;
+     if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG( 
+             "IVMD Error: Invalid Range_Last Dev_Id 0x%x\n", last_bdf);
+         return -ENODEV;
+     }
+@@ -315,8 +316,8 @@ static int __init parse_ivmd_device_iommu(
+                                     ivmd_block->cap_offset);
+     if ( !iommu )
+     {
+-        amd_iov_error("IVMD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
+-                ivmd_block->header.dev_id, ivmd_block->cap_offset);
++        AMD_IOMMU_DEBUG("IVMD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
++                        ivmd_block->header.dev_id, ivmd_block->cap_offset);
+         return -ENODEV;
+     }
+ 
+@@ -332,7 +333,7 @@ static int __init parse_ivmd_block(struct acpi_ivmd_block_header *ivmd_block)
+     if ( ivmd_block->header.length <
+          sizeof(struct acpi_ivmd_block_header) )
+     {
+-        amd_iov_error("IVMD Error: Invalid Block Length!\n");
++        AMD_IOMMU_DEBUG("IVMD Error: Invalid Block Length!\n");
+         return -ENODEV;
+     }
+ 
+@@ -341,9 +342,9 @@ static int __init parse_ivmd_block(struct acpi_ivmd_block_header *ivmd_block)
+     base = start_addr & PAGE_MASK;
+     limit = (start_addr + mem_length - 1) & PAGE_MASK;
+ 
+-    amd_iov_info("IVMD Block: Type 0x%x\n",ivmd_block->header.type);
+-    amd_iov_info(" Start_Addr_Phys 0x%lx\n", start_addr);
+-    amd_iov_info(" Mem_Length 0x%lx\n", mem_length);
++    AMD_IOMMU_DEBUG("IVMD Block: Type 0x%x\n",ivmd_block->header.type);
++    AMD_IOMMU_DEBUG(" Start_Addr_Phys 0x%lx\n", start_addr);
++    AMD_IOMMU_DEBUG(" Mem_Length 0x%lx\n", mem_length);
+ 
+     if ( get_field_from_byte(ivmd_block->header.flags,
+                              AMD_IOMMU_ACPI_EXCLUSION_RANGE_MASK,
+@@ -362,7 +363,7 @@ static int __init parse_ivmd_block(struct acpi_ivmd_block_header *ivmd_block)
+     }
+     else
+     {
+-        amd_iov_error("IVMD Error: Invalid Flag Field!\n");
++        AMD_IOMMU_DEBUG("IVMD Error: Invalid Flag Field!\n");
+         return -ENODEV;
+     }
+ 
+@@ -385,7 +386,7 @@ static int __init parse_ivmd_block(struct acpi_ivmd_block_header *ivmd_block)
+                                        base, limit, iw, ir);
+ 
+     default:
+-        amd_iov_error("IVMD Error: Invalid Block Type!\n");
++        AMD_IOMMU_DEBUG("IVMD Error: Invalid Block Type!\n");
+         return -ENODEV;
+     }
+ }
+@@ -395,7 +396,7 @@ static u16 __init parse_ivhd_device_padding(
+ {
+     if ( header_length < (block_length + pad_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+@@ -410,7 +411,7 @@ static u16 __init parse_ivhd_device_select(
+     bdf = ivhd_device->header.dev_id;
+     if ( bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
+         return 0;
+     }
+ 
+@@ -429,23 +430,23 @@ static u16 __init parse_ivhd_device_range(
+     dev_length = sizeof(struct acpi_ivhd_device_range);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+     if ( ivhd_device->range.trailer.type !=
+          AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
+     {
+-        amd_iov_error("IVHD Error: "
+-                "Invalid Range: End_Type 0x%x\n",
+-                ivhd_device->range.trailer.type);
++        AMD_IOMMU_DEBUG("IVHD Error: "
++                        "Invalid Range: End_Type 0x%x\n",
++                        ivhd_device->range.trailer.type);
+         return 0;
+     }
+ 
+     first_bdf = ivhd_device->header.dev_id;
+     if ( first_bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
+         return 0;
+     }
+@@ -453,12 +454,12 @@ static u16 __init parse_ivhd_device_range(
+     last_bdf = ivhd_device->range.trailer.dev_id;
+     if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
+         return 0;
+     }
+ 
+-    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
++    AMD_IOMMU_DEBUG(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
+ 
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+         add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
+@@ -475,25 +476,25 @@ static u16 __init parse_ivhd_device_alias(
+     dev_length = sizeof(struct acpi_ivhd_device_alias);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+     bdf = ivhd_device->header.dev_id;
+     if ( bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
+         return 0;
+     }
+ 
+     alias_id = ivhd_device->alias.dev_id;
+     if ( alias_id >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
+         return 0;
+     }
+ 
+-    amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
++    AMD_IOMMU_DEBUG(" Dev_Id Alias: 0x%x\n", alias_id);
+ 
+     /* override requestor_id and flags for device */
+     add_ivrs_mapping_entry(bdf, alias_id, ivhd_device->header.flags, iommu);
+@@ -511,23 +512,23 @@ static u16 __init parse_ivhd_device_alias_range(
+     dev_length = sizeof(struct acpi_ivhd_device_alias_range);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+     if ( ivhd_device->alias_range.trailer.type !=
+          AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
+     {
+-        amd_iov_error("IVHD Error: "
+-                "Invalid Range: End_Type 0x%x\n",
+-                ivhd_device->alias_range.trailer.type);
++        AMD_IOMMU_DEBUG("IVHD Error: "
++                        "Invalid Range: End_Type 0x%x\n",
++                        ivhd_device->alias_range.trailer.type);
+         return 0;
+     }
+ 
+     first_bdf = ivhd_device->header.dev_id;
+     if ( first_bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
+         return 0;
+     }
+@@ -535,7 +536,7 @@ static u16 __init parse_ivhd_device_alias_range(
+     last_bdf = ivhd_device->alias_range.trailer.dev_id;
+     if ( last_bdf >= ivrs_bdf_entries || last_bdf <= first_bdf )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
+         return 0;
+     }
+@@ -543,12 +544,12 @@ static u16 __init parse_ivhd_device_alias_range(
+     alias_id = ivhd_device->alias_range.alias.dev_id;
+     if ( alias_id >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
+         return 0;
+     }
+ 
+-    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
+-    amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
++    AMD_IOMMU_DEBUG(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
++    AMD_IOMMU_DEBUG(" Dev_Id Alias: 0x%x\n", alias_id);
+ 
+     /* override requestor_id and flags for range of devices */
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+@@ -567,14 +568,14 @@ static u16 __init parse_ivhd_device_extended(
+     dev_length = sizeof(struct acpi_ivhd_device_extended);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+     bdf = ivhd_device->header.dev_id;
+     if ( bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
+         return 0;
+     }
+ 
+@@ -593,23 +594,23 @@ static u16 __init parse_ivhd_device_extended_range(
+     dev_length = sizeof(struct acpi_ivhd_device_extended_range);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+ 
+     if ( ivhd_device->extended_range.trailer.type !=
+          AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
+     {
+-        amd_iov_error("IVHD Error: "
+-                "Invalid Range: End_Type 0x%x\n",
+-                ivhd_device->extended_range.trailer.type);
++        AMD_IOMMU_DEBUG("IVHD Error: "
++                        "Invalid Range: End_Type 0x%x\n",
++                        ivhd_device->extended_range.trailer.type);
+         return 0;
+     }
+ 
+     first_bdf = ivhd_device->header.dev_id;
+     if ( first_bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
+         return 0;
+     }
+@@ -617,13 +618,13 @@ static u16 __init parse_ivhd_device_extended_range(
+     last_bdf = ivhd_device->extended_range.trailer.dev_id;
+     if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
+         return 0;
+     }
+ 
+-    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n",
+-            first_bdf, last_bdf);
++    AMD_IOMMU_DEBUG(" Dev_Id Range: 0x%x -> 0x%x\n",
++                    first_bdf, last_bdf);
+ 
+     /* override flags for range of devices */
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+@@ -641,14 +642,14 @@ static u16 __init parse_ivhd_device_special(
+     dev_length = sizeof(struct acpi_ivhd_device_special);
+     if ( header_length < (block_length + dev_length) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Length!\n");
+         return 0;
+     }
+     
+     bdf = ivhd_device->special.dev_id;
+     if ( bdf >= ivrs_bdf_entries )
+     {
+-        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
+         return 0;
+     }
+     
+@@ -668,7 +669,7 @@ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+     if ( ivhd_block->header.length <
+          sizeof(struct acpi_ivhd_block_header) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Block Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Block Length!\n");
+         return -ENODEV;
+     }
+ 
+@@ -676,8 +677,8 @@ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+                                     ivhd_block->cap_offset);
+     if ( !iommu )
+     {
+-        amd_iov_error("IVHD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
+-                ivhd_block->header.dev_id, ivhd_block->cap_offset);
++        AMD_IOMMU_DEBUG("IVHD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
++                        ivhd_block->header.dev_id, ivhd_block->cap_offset);
+         return -ENODEV;
+     }
+ 
+@@ -689,10 +690,10 @@ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+         ivhd_device = (union acpi_ivhd_device *)
+             ((u8 *)ivhd_block + block_length);
+ 
+-        amd_iov_info( "IVHD Device Entry:\n");
+-        amd_iov_info( " Type 0x%x\n", ivhd_device->header.type);
+-        amd_iov_info( " Dev_Id 0x%x\n", ivhd_device->header.dev_id);
+-        amd_iov_info( " Flags 0x%x\n", ivhd_device->header.flags);
++        AMD_IOMMU_DEBUG( "IVHD Device Entry:\n");
++        AMD_IOMMU_DEBUG( " Type 0x%x\n", ivhd_device->header.type);
++        AMD_IOMMU_DEBUG( " Dev_Id 0x%x\n", ivhd_device->header.dev_id);
++        AMD_IOMMU_DEBUG( " Flags 0x%x\n", ivhd_device->header.flags);
+ 
+         switch ( ivhd_device->header.type )
+         {
+@@ -740,7 +741,7 @@ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+                 ivhd_block->header.length, block_length, iommu);
+             break;
+         default:
+-            amd_iov_error("IVHD Error: Invalid Device Type!\n");
++            AMD_IOMMU_DEBUG("IVHD Error: Invalid Device Type!\n");
+             dev_length = 0;
+             break;
+         }
+@@ -772,7 +773,7 @@ static int __init parse_ivrs_block(struct acpi_ivrs_block_header *ivrs_block)
+         return parse_ivmd_block(ivmd_block);
+ 
+     default:
+-        amd_iov_error("IVRS Error: Invalid Block Type!\n");
++        AMD_IOMMU_DEBUG("IVRS Error: Invalid Block Type!\n");
+         return -ENODEV;
+     }
+ 
+@@ -781,40 +782,37 @@ static int __init parse_ivrs_block(struct acpi_ivrs_block_header *ivrs_block)
+ 
+ static void __init dump_acpi_table_header(struct acpi_table_header *table)
+ {
+-#ifdef AMD_IOV_DEBUG
+     int i;
+ 
+-    amd_iov_info("ACPI Table:\n");
+-    amd_iov_info(" Signature ");
++    AMD_IOMMU_DEBUG("ACPI Table:\n");
++    AMD_IOMMU_DEBUG(" Signature ");
+     for ( i = 0; i < ACPI_NAME_SIZE; i++ )
+         printk("%c", table->signature[i]);
+     printk("\n");
+ 
+-    amd_iov_info(" Length 0x%x\n", table->length);
+-    amd_iov_info(" Revision 0x%x\n", table->revision);
+-    amd_iov_info(" CheckSum 0x%x\n", table->checksum);
++    AMD_IOMMU_DEBUG(" Length 0x%x\n", table->length);
++    AMD_IOMMU_DEBUG(" Revision 0x%x\n", table->revision);
++    AMD_IOMMU_DEBUG(" CheckSum 0x%x\n", table->checksum);
+ 
+-    amd_iov_info(" OEM_Id ");
++    AMD_IOMMU_DEBUG(" OEM_Id ");
+     for ( i = 0; i < ACPI_OEM_ID_SIZE; i++ )
+         printk("%c", table->oem_id[i]);
+     printk("\n");
+ 
+-    amd_iov_info(" OEM_Table_Id ");
++    AMD_IOMMU_DEBUG(" OEM_Table_Id ");
+     for ( i = 0; i < ACPI_OEM_TABLE_ID_SIZE; i++ )
+         printk("%c", table->oem_table_id[i]);
+     printk("\n");
+ 
+-    amd_iov_info(" OEM_Revision 0x%x\n", table->oem_revision);
++    AMD_IOMMU_DEBUG(" OEM_Revision 0x%x\n", table->oem_revision);
+ 
+-    amd_iov_info(" Creator_Id ");
++    AMD_IOMMU_DEBUG(" Creator_Id ");
+     for ( i = 0; i < ACPI_NAME_SIZE; i++ )
+         printk("%c", table->asl_compiler_id[i]);
+     printk("\n");
+ 
+-    amd_iov_info(" Creator_Revision 0x%x\n",
+-           table->asl_compiler_revision);
+-#endif
+-
++    AMD_IOMMU_DEBUG(" Creator_Revision 0x%x\n",
++                    table->asl_compiler_revision);
+ }
+ 
+ static int __init parse_ivrs_table(unsigned long phys_addr,
+@@ -828,11 +826,12 @@ static int __init parse_ivrs_table(unsigned long phys_addr,
+     table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
+     if ( !table )
+     {
+-        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        AMD_IOMMU_DEBUG("IVRS Error: Unable to map IVRS\n");
+         return -ENODEV;
+     }
+ 
+-    dump_acpi_table_header(table);
++    if ( amd_iommu_debug )
++        dump_acpi_table_header(table);
+ 
+     /* parse IVRS blocks */
+     length = sizeof(struct acpi_ivrs_table_header);
+@@ -841,18 +840,18 @@ static int __init parse_ivrs_table(unsigned long phys_addr,
+         ivrs_block = (struct acpi_ivrs_block_header *)
+             ((u8 *)table + length);
+ 
+-        amd_iov_info("IVRS Block:\n");
+-        amd_iov_info(" Type 0x%x\n", ivrs_block->type);
+-        amd_iov_info(" Flags 0x%x\n", ivrs_block->flags);
+-        amd_iov_info(" Length 0x%x\n", ivrs_block->length);
+-        amd_iov_info(" Dev_Id 0x%x\n", ivrs_block->dev_id);
++        AMD_IOMMU_DEBUG("IVRS Block:\n");
++        AMD_IOMMU_DEBUG(" Type 0x%x\n", ivrs_block->type);
++        AMD_IOMMU_DEBUG(" Flags 0x%x\n", ivrs_block->flags);
++        AMD_IOMMU_DEBUG(" Length 0x%x\n", ivrs_block->length);
++        AMD_IOMMU_DEBUG(" Dev_Id 0x%x\n", ivrs_block->dev_id);
+ 
+         if ( table->length < (length + ivrs_block->length) )
+         {
+-            amd_iov_error("IVRS Error: "
+-                    "Table Length Exceeded: 0x%x -> 0x%lx\n",
+-                    table->length,
+-                    (length + ivrs_block->length));
++            AMD_IOMMU_DEBUG("IVRS Error: "
++                            "Table Length Exceeded: 0x%x -> 0x%lx\n",
++                            table->length,
++                            (length + ivrs_block->length));
+             return -ENODEV;
+         }
+ 
+@@ -877,7 +876,7 @@ static int __init detect_iommu_acpi(unsigned long phys_addr,
+     table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
+     if ( !table )
+     {
+-        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        AMD_IOMMU_DEBUG("IVRS Error: Unable to map IVRS\n");
+         return -ENODEV;
+     }
+ 
+@@ -888,8 +887,8 @@ static int __init detect_iommu_acpi(unsigned long phys_addr,
+         checksum += raw_table[i];
+     if ( checksum )
+     {
+-        amd_iov_error("IVRS Error: "
+-                "Invalid Checksum 0x%x\n", checksum);
++        AMD_IOMMU_DEBUG("IVRS Error: "
++                        "Invalid Checksum 0x%x\n", checksum);
+         return -ENODEV;
+     }
+ 
+@@ -922,7 +921,7 @@ static int __init get_last_bdf_ivhd(void *ivhd)
+     if ( ivhd_block->header.length <
+          sizeof(struct acpi_ivhd_block_header) )
+     {
+-        amd_iov_error("IVHD Error: Invalid Block Length!\n");
++        AMD_IOMMU_DEBUG("IVHD Error: Invalid Block Length!\n");
+         return -ENODEV;
+     }
+ 
+@@ -970,7 +969,7 @@ static int __init get_last_bdf_ivhd(void *ivhd)
+             dev_length = sizeof(struct acpi_ivhd_device_special);
+             break;
+         default:
+-            amd_iov_error("IVHD Error: Invalid Device Type!\n");
++            AMD_IOMMU_DEBUG("IVHD Error: Invalid Device Type!\n");
+             dev_length = 0;
+             break;
+         }
+@@ -993,7 +992,7 @@ static int __init get_last_bdf_acpi(unsigned long phys_addr, unsigned long size)
+     table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
+     if ( !table )
+     {
+-        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        AMD_IOMMU_DEBUG("IVRS Error: Unable to map IVRS\n");
+         return -ENODEV;
+     }
+ 
+diff --git a/drivers/passthrough/amd/iommu_detect.c b/drivers/passthrough/amd/iommu_detect.c
+index 9180de9..155ca56 100644
+--- a/drivers/passthrough/amd/iommu_detect.c
++++ b/drivers/passthrough/amd/iommu_detect.c
+@@ -62,7 +62,7 @@ static int __init get_iommu_msi_capabilities(u8 bus, u8 dev, u8 func,
+     if ( !iommu->msi_cap )
+         return -ENODEV;
+ 
+-    amd_iov_info("Found MSI capability block \n");
++    AMD_IOMMU_DEBUG("Found MSI capability block \n");
+     control = pci_conf_read16(bus, dev, func,
+             iommu->msi_cap + PCI_MSI_FLAGS);
+     iommu->maskbit = control & PCI_MSI_FLAGS_MASKBIT;
+@@ -103,21 +103,21 @@ int __init amd_iommu_detect_one_acpi(void *ivhd)
+ 
+     if ( ivhd_block->header.length < sizeof(struct acpi_ivhd_block_header) )
+     {
+-        amd_iov_error("Invalid IVHD Block Length!\n");
++        AMD_IOMMU_DEBUG("Invalid IVHD Block Length!\n");
+         return -ENODEV;
+     }
+ 
+     if ( !ivhd_block->header.dev_id ||
+         !ivhd_block->cap_offset || !ivhd_block->mmio_base)
+     {
+-        amd_iov_error("Invalid IVHD Block!\n");
++        AMD_IOMMU_DEBUG("Invalid IVHD Block!\n");
+         return -ENODEV;
+     }
+ 
+     iommu = (struct amd_iommu *) xmalloc(struct amd_iommu);
+     if ( !iommu )
+     {
+-        amd_iov_error("Error allocating amd_iommu\n");
++        AMD_IOMMU_DEBUG("Error allocating amd_iommu\n");
+         return -ENOMEM;
+     }
+     memset(iommu, 0, sizeof(struct amd_iommu));
+diff --git a/drivers/passthrough/amd/iommu_init.c b/drivers/passthrough/amd/iommu_init.c
+index 2e29af7..536288c 100644
+--- a/drivers/passthrough/amd/iommu_init.c
++++ b/drivers/passthrough/amd/iommu_init.c
+@@ -82,7 +82,7 @@ static int __init map_iommu_mmio_region(struct amd_iommu *iommu)
+ 
+     if ( nr_amd_iommus > MAX_AMD_IOMMUS )
+     {
+-        amd_iov_error("nr_amd_iommus %d > MAX_IOMMUS\n", nr_amd_iommus);
++        AMD_IOMMU_DEBUG("nr_amd_iommus %d > MAX_IOMMUS\n", nr_amd_iommus);
+         return -ENOMEM;
+     }
+ 
+@@ -468,7 +468,7 @@ static void parse_event_log_entry(u32 entry[])
+     if ( (code > IOMMU_EVENT_INVALID_DEV_REQUEST) ||
+         (code < IOMMU_EVENT_ILLEGAL_DEV_TABLE_ENTRY) )
+     {
+-        amd_iov_error("Invalid event log entry!\n");
++        AMD_IOMMU_DEBUG("Invalid event log entry!\n");
+         return;
+     }
+ 
+@@ -519,7 +519,7 @@ static int set_iommu_interrupt_handler(struct amd_iommu *iommu)
+ 
+     if ( !vector )
+     {
+-        amd_iov_error("no vectors\n");
++        AMD_IOMMU_DEBUG("no vectors\n");
+         return 0;
+     }
+ 
+@@ -533,7 +533,7 @@ static int set_iommu_interrupt_handler(struct amd_iommu *iommu)
+     ret = request_irq(vector, amd_iommu_page_fault, 0, "amd_iommu", iommu);
+     if ( ret )
+     {
+-        amd_iov_error("can't request irq\n");
++        AMD_IOMMU_DEBUG("can't request irq\n");
+         return 0;
+     }
+     iommu->vector = vector;
+@@ -600,7 +600,7 @@ static int __init allocate_iommu_table_struct(struct table_struct *table,
+ 
+         if ( table->buffer == NULL )
+         {
+-            amd_iov_error("Error allocating %s\n", name);
++            AMD_IOMMU_DEBUG("Error allocating %s\n", name);
+             return -ENOMEM;
+         }
+         memset(table->buffer, 0, PAGE_SIZE * (1UL << order));
+@@ -703,7 +703,7 @@ static int __init init_ivrs_mapping(void)
+     ivrs_mappings = xmalloc_array( struct ivrs_mappings, ivrs_bdf_entries);
+     if ( ivrs_mappings == NULL )
+     {
+-        amd_iov_error("Error allocating IVRS Mappings table\n");
++        AMD_IOMMU_DEBUG("Error allocating IVRS Mappings table\n");
+         return -ENOMEM;
+     }
+     memset(ivrs_mappings, 0, ivrs_bdf_entries * sizeof(struct ivrs_mappings));
+@@ -776,9 +776,9 @@ static int __init amd_iommu_setup_device_table(void)
+             amd_iommu_set_intremap_table(
+                 dte, (u64)virt_to_maddr(intr_tb), iommu_intremap);
+ 
+-            amd_iov_info("Add device table entry at DTE:0x%x, "
+-                          "intremap_table:%"PRIx64"\n", bdf,
+-                          (u64)virt_to_maddr(intr_tb));
++            AMD_IOMMU_DEBUG("Add device table entry at DTE:0x%x, "
++                            "intremap_table:%"PRIx64"\n", bdf,
++                            (u64)virt_to_maddr(intr_tb));
+         }
+     }
+     
+diff --git a/drivers/passthrough/amd/iommu_intr.c b/drivers/passthrough/amd/iommu_intr.c
+index 3700737..5ff2070 100644
+--- a/drivers/passthrough/amd/iommu_intr.c
++++ b/drivers/passthrough/amd/iommu_intr.c
+@@ -161,8 +161,8 @@ int __init amd_iommu_setup_ioapic_remapping(void)
+             
+             if ( !iommu )
+             {
+-                amd_iov_info("failed to find iommu for ioapic device "
+-                             "id = 0x%x\n", bdf);
++                AMD_IOMMU_DEBUG("failed to find iommu for ioapic device "
++                                "id = 0x%x\n", bdf);
+                 continue;
+             }
+             
+@@ -214,7 +214,7 @@ void amd_iommu_ioapic_update_ire(
+     iommu = find_iommu_for_device(bus, devfn);
+     if ( !iommu )
+     {
+-        amd_iov_error(
++        AMD_IOMMU_DEBUG(
+             "Fail to find iommu for ioapic device id = 0x%x\n", bdf);
+         return;
+     }
+diff --git a/drivers/passthrough/amd/iommu_map.c b/drivers/passthrough/amd/iommu_map.c
+index 44d43e4..7c01a1e 100644
+--- a/drivers/passthrough/amd/iommu_map.c
++++ b/drivers/passthrough/amd/iommu_map.c
+@@ -154,7 +154,7 @@ void flush_command_buffer(struct amd_iommu *iommu)
+         }
+         else
+         {
+-            amd_iov_warning("Warning: ComWaitInt bit did not assert!\n");
++            AMD_IOMMU_DEBUG("Warning: ComWaitInt bit did not assert!\n");
+         }
+     }
+ }
+@@ -487,7 +487,7 @@ int amd_iommu_map_page(struct domain *d, unsigned long gfn, unsigned long mfn)
+     if ( iommu_l2e == 0 )
+     {
+         spin_unlock(&hd->mapping_lock);
+-        amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++        AMD_IOMMU_DEBUG("Invalid IO pagetable entry gfn = %lx\n", gfn);
+         return -EFAULT;
+     }
+     set_iommu_l1e_present(iommu_l2e, gfn, (u64)mfn << PAGE_SHIFT, iw, ir);
+@@ -519,7 +519,7 @@ int amd_iommu_unmap_page(struct domain *d, unsigned long gfn)
+     if ( iommu_l2e == 0 )
+     {
+         spin_unlock(&hd->mapping_lock);
+-        amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++        AMD_IOMMU_DEBUG("Invalid IO pagetable entry gfn = %lx\n", gfn);
+         return -EFAULT;
+     }
+ 
+@@ -559,8 +559,8 @@ int amd_iommu_reserve_domain_unity_map(
+         if ( iommu_l2e == 0 )
+         {
+             spin_unlock(&hd->mapping_lock);
+-            amd_iov_error("Invalid IO pagetable entry phys_addr = %lx\n",
+-                          phys_addr);
++            AMD_IOMMU_DEBUG("Invalid IO pagetable entry phys_addr = %lx\n",
++                            phys_addr);
+             return -EFAULT;
+         }
+ 
+@@ -608,7 +608,7 @@ int amd_iommu_sync_p2m(struct domain *d)
+         {
+             spin_unlock(&d->page_alloc_lock);
+             spin_unlock(&hd->mapping_lock);
+-            amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++            AMD_IOMMU_DEBUG("Invalid IO pagetable entry gfn = %lx\n", gfn);
+             return -EFAULT;
+         }
+ 
+diff --git a/drivers/passthrough/amd/pci_amd_iommu.c b/drivers/passthrough/amd/pci_amd_iommu.c
+index 7556963..ded3bfe 100644
+--- a/drivers/passthrough/amd/pci_amd_iommu.c
++++ b/drivers/passthrough/amd/pci_amd_iommu.c
+@@ -82,10 +82,10 @@ static void amd_iommu_setup_domain_device(
+         invalidate_dev_table_entry(iommu, req_id);
+         flush_command_buffer(iommu);
+         
+-        amd_iov_info("Setup I/O page table at DTE:0x%x, root_table:%"PRIx64","
+-                     "domain_id:%d, paging_mode:%d\n", req_id,
+-                     page_to_maddr(hd->root_table), hd->domain_id, 
+-                     hd->paging_mode);
++        AMD_IOMMU_DEBUG("Setup I/O page table at DTE:0x%x, root_table:%"
++                        PRIx64", domain_id:%d, paging_mode:%d\n", req_id,
++                        (u64)page_to_maddr(hd->root_table), hd->domain_id, 
++                        hd->paging_mode);
+     }
+     spin_unlock_irqrestore(&iommu->lock, flags);
+ }
+@@ -231,10 +231,10 @@ static void amd_iommu_disable_domain_device(
+         memset (dte, 0, IOMMU_DEV_TABLE_ENTRY_SIZE);
+         invalidate_dev_table_entry(iommu, req_id);
+         flush_command_buffer(iommu);
+-        amd_iov_info("Disable DTE:0x%x,"
+-                " domain_id:%d, paging_mode:%d\n",
+-                req_id,  domain_hvm_iommu(domain)->domain_id,
+-                domain_hvm_iommu(domain)->paging_mode);
++        AMD_IOMMU_DEBUG("Disable DTE:0x%x,"
++                        " domain_id:%d, paging_mode:%d\n",
++                        req_id,  domain_hvm_iommu(domain)->domain_id,
++                        domain_hvm_iommu(domain)->paging_mode);
+     }
+     spin_unlock_irqrestore(&iommu->lock, flags);
+ }
+@@ -258,9 +258,10 @@ static int reassign_device( struct domain *source, struct domain *target,
+ 
+     if ( !iommu )
+     {
+-        amd_iov_error("Fail to find iommu."
+-            " %x:%x.%x cannot be assigned to domain %d\n", 
+-            bus, PCI_SLOT(devfn), PCI_FUNC(devfn), target->domain_id);
++        AMD_IOMMU_DEBUG("Fail to find iommu."
++                        " %x:%x.%x cannot be assigned to domain %d\n", 
++                        bus, PCI_SLOT(devfn), PCI_FUNC(devfn), 
++                        target->domain_id);
+         return -ENODEV;
+     }
+ 
+@@ -270,9 +271,9 @@ static int reassign_device( struct domain *source, struct domain *target,
+     pdev->domain = target;
+ 
+     amd_iommu_setup_domain_device(target, iommu, bdf);
+-    amd_iov_info("reassign %x:%x.%x domain %d -> domain %d\n",
+-                 bus, PCI_SLOT(devfn), PCI_FUNC(devfn),
+-                 source->domain_id, target->domain_id);
++    AMD_IOMMU_DEBUG("reassign %x:%x.%x domain %d -> domain %d\n",
++                    bus, PCI_SLOT(devfn), PCI_FUNC(devfn),
++                    source->domain_id, target->domain_id);
+ 
+     return 0;
+ }
+@@ -362,10 +363,10 @@ static int amd_iommu_add_device(struct pci_dev *pdev)
+ 
+     if ( !iommu )
+     {
+-        amd_iov_error("Fail to find iommu."
+-            " %x:%x.%x cannot be assigned to domain %d\n", 
+-            pdev->bus, PCI_SLOT(pdev->devfn),
+-            PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
++        AMD_IOMMU_DEBUG("Fail to find iommu."
++                        " %x:%x.%x cannot be assigned to domain %d\n", 
++                        pdev->bus, PCI_SLOT(pdev->devfn),
++                        PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
+         return -ENODEV;
+     }
+ 
+@@ -386,10 +387,10 @@ static int amd_iommu_remove_device(struct pci_dev *pdev)
+ 
+     if ( !iommu )
+     {
+-        amd_iov_error("Fail to find iommu."
+-            " %x:%x.%x cannot be removed from domain %d\n", 
+-            pdev->bus, PCI_SLOT(pdev->devfn),
+-            PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
++        AMD_IOMMU_DEBUG("Fail to find iommu."
++                        " %x:%x.%x cannot be removed from domain %d\n", 
++                        pdev->bus, PCI_SLOT(pdev->devfn),
++                        PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
+         return -ENODEV;
+     }
+ 
+diff --git a/drivers/passthrough/iommu.c b/drivers/passthrough/iommu.c
+index 6f88364..8c57637 100644
+--- a/drivers/passthrough/iommu.c
++++ b/drivers/passthrough/iommu.c
+@@ -31,18 +31,21 @@ int intel_vtd_setup(void);
+  *   passthrough                Bypass VT-d translation for Dom0
+  *   snoop                      Utilize the snoop control for IOMMU (default)
+  *   no-snoop                   Dont utilize the snoop control for IOMMU
++ *   amd-iommu-debug            Turn on debug info for AMD IOMMU
+  */
+ custom_param("iommu", parse_iommu_param);
+ int iommu_enabled = 0;
+ int force_iommu = 0;
+ int iommu_passthrough = 0;
+ int iommu_snoop = 0;
++int amd_iommu_debug=0;
+ 
+ static void __init parse_iommu_param(char *s)
+ {
+     char *ss;
+     iommu_enabled = 1;
+     iommu_snoop = 1;
++    amd_iommu_debug = 0;
+ 
+     do {
+         ss = strchr(s, ',');
+@@ -60,6 +63,8 @@ static void __init parse_iommu_param(char *s)
+             iommu_snoop = 1;
+         else if ( !strcmp(s, "no-snoop") )
+             iommu_snoop = 0;
++        else if ( !strcmp(s, "amd-iommu-debug") )
++            amd_iommu_debug = 1;
+ 
+         s = ss + 1;
+     } while ( ss );
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-proto.h b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+index 77d4baa..00eaf36 100644
+--- a/include/asm-x86/hvm/svm/amd-iommu-proto.h
++++ b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+@@ -32,18 +32,13 @@
+ #define DMA_32BIT_MASK  0x00000000ffffffffULL
+ #define PAGE_ALIGN(addr)    (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
+ 
+-#ifdef AMD_IOV_DEBUG
+-#define amd_iov_info(fmt, args...) \
+-    printk(XENLOG_INFO "AMD-Vi: " fmt, ## args)
+-#define amd_iov_warning(fmt, args...) \
+-    printk(XENLOG_WARNING "AMD-Vi: " fmt, ## args)
+-#define amd_iov_error(fmt, args...) \
+-    printk(XENLOG_ERR "AMD-Vi: %s:%d: " fmt, __FILE__ , __LINE__ , ## args)
+-#else
+-#define amd_iov_info(fmt, args...)
+-#define amd_iov_warning(fmt, args...)
+-#define amd_iov_error(fmt, args...)
+-#endif
++extern int amd_iommu_debug;
++#define AMD_IOMMU_DEBUG(fmt, args...)                       \
++  do                                                        \
++  {                                                         \
++          if ( amd_iommu_debug )                            \
++              printk(XENLOG_INFO "AMD-Vi: " fmt, ## args);  \
++  } while(0)
+ 
+ /* amd-iommu-detect functions */
+ int __init amd_iommu_get_ivrs_dev_entries(void);

@@ -1,0 +1,97 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 11 May 2009 10:01:41 -0400
+Subject: [ia64] fix regression in nanosleep syscall
+Message-id: 20090511140138.10014.34992.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: ia64 - fix regression in nanosleep() syscall
+Bugzilla: 499289
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+After applying the fix for BZ 485323, a regression in the behavior of
+nanosleep was noted -- occasionally nanosleep would sleep slightly less than
+the requested time on ia64.
+
+The following patch resolves the situation.  It does, however, have a drawback.
+On systems using time interpolation, when a timer interrupt occurs and an
+hrtimer is active there will be an additional delay due to the calling of
+gettimeofday().  I've minimized the impact (obvious patch chunk below) by
+only calling getnstimeofday() when timer interpolation is configured and used
+within the kernel.
+
+Compiled and tested successfully on a few ia64 systems listed in the BZ.
+Testing was done using the test in 499289 and the test from 485323.  No
+failures were seen for either test in 18+ hours of testing on three
+different vendor's systems.
+
+Resolves BZ 499289.
+
+diff --git a/include/linux/timex.h b/include/linux/timex.h
+index ab71c9a..46c8c3f 100644
+--- a/include/linux/timex.h
++++ b/include/linux/timex.h
+@@ -294,6 +294,7 @@ extern void register_time_interpolator(struct time_interpolator *);
+ extern void unregister_time_interpolator(struct time_interpolator *);
+ extern void time_interpolator_reset(void);
+ extern unsigned long time_interpolator_get_offset(void);
++extern struct time_interpolator *time_interpolator;
+ 
+ #else /* !CONFIG_TIME_INTERPOLATION */
+ 
+diff --git a/kernel/hrtimer.c b/kernel/hrtimer.c
+index 6088238..8904a61 100644
+--- a/kernel/hrtimer.c
++++ b/kernel/hrtimer.c
+@@ -37,6 +37,7 @@
+ #include <linux/notifier.h>
+ #include <linux/syscalls.h>
+ #include <linux/interrupt.h>
++#include <linux/timex.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -63,11 +64,7 @@ static ktime_t ktime_get_real(void)
+ {
+ 	struct timespec now;
+ 
+-#ifdef CONFIG_TIME_INTERPOLATION
+-	now = current_kernel_time();
+-#else
+ 	getnstimeofday(&now);
+-#endif
+ 
+ 	return timespec_to_ktime(now);
+ }
+@@ -115,11 +112,7 @@ void ktime_get_ts(struct timespec *ts)
+ 
+ 	do {
+ 		seq = read_seqbegin(&xtime_lock);
+-#ifdef CONFIG_TIME_INTERPOLATION
+-		*ts = xtime;
+-#else
+ 		getnstimeofday(ts);
+-#endif
+ 		tomono = wall_to_monotonic;
+ 
+ 	} while (read_seqretry(&xtime_lock, seq));
+@@ -137,10 +130,20 @@ static void hrtimer_get_softirq_time(struct hrtimer_base *base)
+ {
+ 	ktime_t xtim, tomono;
+ 	unsigned long seq;
++	struct timespec ts;
+ 
+ 	do {
+ 		seq = read_seqbegin(&xtime_lock);
+-		xtim = timespec_to_ktime(xtime);
++#ifdef CONFIG_TIME_INTERPOLATION
++		if (time_interpolator) {
++			getnstimeofday(&ts);
++			xtim = timespec_to_ktime(ts);
++		} else {
++			xtim = timespec_to_ktime(xtime);
++		}
++#else
++ 		xtim = timespec_to_ktime(xtime);
++#endif
+ 		tomono = timespec_to_ktime(wall_to_monotonic);
+ 
+ 	} while (read_seqretry(&xtime_lock, seq));

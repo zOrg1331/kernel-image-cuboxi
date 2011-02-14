@@ -1,0 +1,33 @@
+Date: Thu, 2 Nov 2006 09:45:56 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: status messages ping-pong between unmounted nodes
+
+BZ 213682
+
+If two nodes leave the lockspace (while unmounting the fs in the case of
+gfs) after one has sent a STATUS message to the other, STATUS/STATUS_REPLY
+messages will then ping-pong between the nodes when neither of them can
+find the lockspace in question any longer.  We kill this by not sending
+another STATUS message when we get a STATUS_REPLY for an unknown
+lockspace.
+
+
+Index: linux-2.6.19-rc1-rh/fs/dlm/rcom.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/rcom.c	2006-10-05 11:45:35.000000000 -0500
++++ linux-2.6.19-rc1-rh/fs/dlm/rcom.c	2006-11-02 09:43:57.248602141 -0600
+@@ -412,9 +412,10 @@
+ 
+ 	ls = dlm_find_lockspace_global(hd->h_lockspace);
+ 	if (!ls) {
+-		log_print("lockspace %x from %d not found",
+-			  hd->h_lockspace, nodeid);
+-		send_ls_not_ready(nodeid, rc);
++		log_print("lockspace %x from %d type %x not found",
++			  hd->h_lockspace, nodeid, rc->rc_type);
++		if (rc->rc_type == DLM_RCOM_STATUS)
++			send_ls_not_ready(nodeid, rc);
+ 		return;
+ 	}
+ 
+

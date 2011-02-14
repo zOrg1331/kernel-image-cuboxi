@@ -1,0 +1,47 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] bz323231 (regression) cat /proc/scsi/megaraid_sas/0 	panics the machine
+Date: Mon, 8 Oct 2007 15:16:33 -0400 (EDT)
+Bugzilla: 323231
+Message-Id: <alpine.LFD.0.9999.0710081512270.3296@localhost.localdomain>
+Changelog: [scsi] megaraid_sas: kabi fix for /proc entries
+
+
+
+The KABI workaround for bug 245184 (megaraid_sas: intercept cmd
+timeout and throttle io) stuffed a sentinel value into the
+scsi_host_template.proc_info pointer:
+
+The SCSI midlayer tests the value of this pointer, and if it is
+non-NULL, it will create a /proc/scsi/[driver-name]/[host-number] file
+using the proc_info value as a pointer to a read method.  The proposed
+solution is to modify the midlayer so that it ignores both null
+pointers and pointers containing the sentinel value.
+
+--- linux-2.6.18.x86_64/drivers/scsi/scsi_proc.c~	2007-10-08 13:16:27.872633000 -0400
++++ linux-2.6.18.x86_64/drivers/scsi/scsi_proc.c	2007-10-08 13:13:48.447218000 -0400
+@@ -82,7 +82,7 @@ out:
+ 
+ void scsi_proc_hostdir_add(struct scsi_host_template *sht)
+ {
+-	if (!sht->proc_info)
++	if (!sht->proc_info || sht->proc_info == (void *) RH_EXTENDED_MAGIC)
+ 		return;
+ 
+ 	mutex_lock(&global_host_template_mutex);
+@@ -99,7 +99,7 @@ void scsi_proc_hostdir_add(struct scsi_h
+ 
+ void scsi_proc_hostdir_rm(struct scsi_host_template *sht)
+ {
+-	if (!sht->proc_info)
++	if (!sht->proc_info || sht->proc_info == (void *) RH_EXTENDED_MAGIC)
+ 		return;
+ 
+ 	mutex_lock(&global_host_template_mutex);
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

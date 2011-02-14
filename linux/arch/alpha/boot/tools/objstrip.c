@@ -25,6 +25,7 @@
 #include <linux/a.out.h>
 #include <linux/coff.h>
 #include <linux/param.h>
+#include <linux/string.h>
 #ifdef __ELF__
 # include <linux/elf.h>
 #endif
@@ -35,7 +36,7 @@
 const char * prog_name;
 
 
-static void
+void
 usage (void)
 {
     fprintf(stderr,
@@ -93,7 +94,7 @@ main (int argc, char *argv[])
     ofd = 1;
     if (i < argc) {
 	ofd = open(argv[i++], O_WRONLY | O_CREAT | O_TRUNC, 0666);
-	if (ofd == -1) {
+	if (fd == -1) {
 	    perror("open");
 	    exit(1);
 	}
@@ -144,7 +145,7 @@ main (int argc, char *argv[])
 #ifdef __ELF__
     elf = (struct elfhdr *) buf;
 
-    if (elf->e_ident[0] == 0x7f && strncmp((char *)elf->e_ident + 1, "ELF", 3) == 0) {
+    if (elf->e_ident[0] == 0x7f && strncmp(elf->e_ident + 1, "ELF", 3) == 0) {
 	if (elf->e_type != ET_EXEC) {
 	    fprintf(stderr, "%s: %s is not an ELF executable\n",
 		    prog_name, inname);

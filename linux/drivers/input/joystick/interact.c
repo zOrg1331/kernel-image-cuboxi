@@ -1,4 +1,6 @@
 /*
+ * $Id: interact.c,v 1.16 2002/01/22 20:28:25 vojtech Exp $
+ *
  *  Copyright (c) 2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -183,7 +185,7 @@ static void interact_poll(struct gameport *gameport)
 
 static int interact_open(struct input_dev *dev)
 {
-	struct interact *interact = input_get_drvdata(dev);
+	struct interact *interact = dev->private;
 
 	gameport_start_polling(interact->gameport);
 	return 0;
@@ -195,7 +197,7 @@ static int interact_open(struct input_dev *dev)
 
 static void interact_close(struct input_dev *dev)
 {
-	struct interact *interact = input_get_drvdata(dev);
+	struct interact *interact = dev->private;
 
 	gameport_stop_polling(interact->gameport);
 }
@@ -260,14 +262,12 @@ static int interact_connect(struct gameport *gameport, struct gameport_driver *d
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_INTERACT;
 	input_dev->id.product = interact_type[i].id;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &gameport->dev;
-
-	input_set_drvdata(input_dev, interact);
+	input_dev->private = interact;
 
 	input_dev->open = interact_open;
 	input_dev->close = interact_close;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; (t = interact_type[interact->type].abs[i]) >= 0; i++) {
 		set_bit(t, input_dev->absbit);
@@ -283,9 +283,7 @@ static int interact_connect(struct gameport *gameport, struct gameport_driver *d
 	for (i = 0; (t = interact_type[interact->type].btn[i]) >= 0; i++)
 		set_bit(t, input_dev->keybit);
 
-	err = input_register_device(interact->dev);
-	if (err)
-		goto fail2;
+	input_register_device(interact->dev);
 
 	return 0;
 
@@ -317,7 +315,8 @@ static struct gameport_driver interact_drv = {
 
 static int __init interact_init(void)
 {
-	return gameport_register_driver(&interact_drv);
+	gameport_register_driver(&interact_drv);
+	return 0;
 }
 
 static void __exit interact_exit(void)

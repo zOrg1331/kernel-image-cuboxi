@@ -1,0 +1,101 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:35 -0500
+Subject: [block] cfq-iosched: development update
+Message-id: 1257266206-24003-2-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 01/12] cfq-iosched: development update
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This patch is a backport of a small subset of the changes in
+commit 6d048f5310aa2dda2b5acd947eab3598c25e269f.  I've only pulled in
+the bits that are relevant to the follow-on close cooperator patch series.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index a8ac140..f7c069e 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -138,7 +138,7 @@ struct cfq_data {
+ 
+ 	struct timer_list idle_class_timer;
+ 
+-	sector_t last_sector;
++	sector_t last_position;
+ 	unsigned long last_end_request;
+ 
+ 	unsigned int rq_starved;
+@@ -359,7 +359,7 @@ cfq_choose_req(struct cfq_data *cfqd, struct cfq_rq *crq1, struct cfq_rq *crq2)
+ 	s1 = crq1->request->sector;
+ 	s2 = crq2->request->sector;
+ 
+-	last = cfqd->last_sector;
++	last = cfqd->last_position;
+ 
+ 	/*
+ 	 * by definition, 1KiB is 2 sectors
+@@ -661,6 +661,8 @@ static void cfq_activate_request(request_queue_t *q, struct request *rq)
+ 	 */
+ 	if (!cfqd->hw_tag && cfqd->rq_in_driver > 4)
+ 		cfqd->hw_tag = 1;
++
++	cfqd->last_position = rq->hard_sector + rq->hard_nr_sectors;
+ }
+ 
+ static void cfq_deactivate_request(request_queue_t *q, struct request *rq)
+@@ -864,6 +866,15 @@ static int cfq_get_next_prio_level(struct cfq_data *cfqd)
+ 	return prio;
+ }
+ 
++static inline sector_t cfq_dist_from_last(struct cfq_data *cfqd,
++					  struct request *rq)
++{
++	if (rq->sector >= cfqd->last_position)
++		return rq->sector - cfqd->last_position;
++	else
++		return cfqd->last_position - rq->sector;
++}
++
+ static struct cfq_queue *cfq_set_active_queue(struct cfq_data *cfqd)
+ {
+ 	struct cfq_queue *cfqq = NULL;
+@@ -900,7 +911,17 @@ static struct cfq_queue *cfq_set_active_queue(struct cfq_data *cfqd)
+ 	return cfqq;
+ }
+ 
+-#define CIC_SEEKY(cic) ((cic)->seek_mean > (128 * 1024))
++static inline int cfq_rq_close(struct cfq_data *cfqd, struct request *rq)
++{
++	struct cfq_io_context *cic = cfqd->active_cic;
++
++	if (!sample_valid(cic->seek_samples))
++		return 0;
++
++	return cfq_dist_from_last(cfqd, rq) <= cic->seek_mean;
++}
++
++#define CIC_SEEKY(cic) ((cic)->seek_mean > (8 * 1024))
+ 
+ static int cfq_arm_slice_timer(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ 
+@@ -954,7 +975,6 @@ static void cfq_dispatch_insert(request_queue_t *q, struct cfq_rq *crq)
+ 	elv_dispatch_sort(q, crq->request);
+ 
+ 	rq = list_entry(q->queue_head.prev, struct request, queuelist);
+-	cfqd->last_sector = rq->sector + rq->nr_sectors;
+ }
+ 
+ /*
+@@ -1721,6 +1741,9 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
+ 	if (cfq_crq_is_sync(crq) && !cfq_cfqq_sync(cfqq))
+ 		return 1;
+ 
++	if (cfq_rq_close(cfqd, crq->request))
++		return 1;
++
+ 	return 0;
+ }
+ 

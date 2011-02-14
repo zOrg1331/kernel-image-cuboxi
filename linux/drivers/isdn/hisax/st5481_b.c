@@ -14,7 +14,6 @@
 #include <linux/usb.h>
 #include <linux/slab.h>
 #include <linux/netdevice.h>
-#include <linux/bitrev.h>
 #include "st5481.h"
 
 static inline void B_L1L2(struct st5481_bcs *bcs, int pr, void *arg)
@@ -73,7 +72,7 @@ static void usb_b_out(struct st5481_bcs *bcs,int buf_nr)
 					register unsigned char *dest = urb->transfer_buffer+len;
 					register unsigned int count;
 					for (count = 0; count < bytes_sent; count++)
-						*dest++ = bitrev8(*src++);
+						*dest++ = isdnhdlc_bit_rev_tab[*src++];
 				}
 				len += bytes_sent;
 			} else {
@@ -87,7 +86,7 @@ static void usb_b_out(struct st5481_bcs *bcs,int buf_nr)
 			if (!skb->len) {
 				// Frame sent
 				b_out->tx_skb = NULL;
-				B_L1L2(bcs, PH_DATA | CONFIRM, (void *)(unsigned long) skb->truesize);
+				B_L1L2(bcs, PH_DATA | CONFIRM, (void *) skb->truesize);
 				dev_kfree_skb_any(skb);
 
 /* 				if (!(bcs->tx_skb = skb_dequeue(&bcs->sq))) { */
@@ -162,7 +161,7 @@ static void led_blink(struct st5481_adapter *adapter)
 	st5481_usb_device_ctrl_msg(adapter, GPIO_OUT, leds, NULL, NULL);
 }
 
-static void usb_b_out_complete(struct urb *urb)
+static void usb_b_out_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct st5481_bcs *bcs = urb->context;
 	struct st5481_b_out *b_out = &bcs->b_out;
@@ -180,7 +179,7 @@ static void usb_b_out_complete(struct urb *urb)
 				DBG(4,"urb killed status %d", urb->status);
 				return; // Give up
 			default: 
-				WARNING("urb status %d",urb->status);
+				WARN("urb status %d",urb->status);
 				if (b_out->busy == 0) {
 					st5481_usb_pipe_reset(adapter, (bcs->channel+1)*2 | USB_DIR_OUT, NULL, NULL);
 				}
@@ -218,10 +217,7 @@ static void st5481B_mode(struct st5481_bcs *bcs, int mode)
 	if (bcs->mode != L1_MODE_NULL) {
 		// Open the B channel
 		if (bcs->mode != L1_MODE_TRANS) {
-			u32 features = HDLC_BITREVERSE;
-			if (bcs->mode == L1_MODE_HDLC_56K)
-				features |= HDLC_56KBIT;
-			isdnhdlc_out_init(&b_out->hdlc_state, features);
+			isdnhdlc_out_init(&b_out->hdlc_state, 0, bcs->mode == L1_MODE_HDLC_56K);
 		}
 		st5481_usb_pipe_reset(adapter, (bcs->channel+1)*2, NULL, NULL);
 	
@@ -354,7 +350,7 @@ void st5481_b_l2l1(struct hisax_if *ifc, int pr, void *arg)
 {
 	struct st5481_bcs *bcs = ifc->priv;
 	struct sk_buff *skb = arg;
-	long mode;
+	int mode;
 
 	DBG(4, "");
 
@@ -364,8 +360,8 @@ void st5481_b_l2l1(struct hisax_if *ifc, int pr, void *arg)
 		bcs->b_out.tx_skb = skb;
 		break;
 	case PH_ACTIVATE | REQUEST:
-		mode = (long) arg;
-		DBG(4,"B%d,PH_ACTIVATE_REQUEST %ld", bcs->channel + 1, mode);
+		mode = (int) arg;
+		DBG(4,"B%d,PH_ACTIVATE_REQUEST %d", bcs->channel + 1, mode);
 		st5481B_mode(bcs, mode);
 		B_L1L2(bcs, PH_ACTIVATE | INDICATION, NULL);
 		break;
@@ -375,6 +371,6 @@ void st5481_b_l2l1(struct hisax_if *ifc, int pr, void *arg)
 		B_L1L2(bcs, PH_DEACTIVATE | INDICATION, NULL);
 		break;
 	default:
-		WARNING("pr %#x\n", pr);
+		WARN("pr %#x\n", pr);
 	}
 }

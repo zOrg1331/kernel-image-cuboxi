@@ -1,0 +1,59 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 6 Mar 2008 20:06:36 +0800
+Subject: [crypto] xcbc: fix IPsec crash with aes-xcbc-mac
+Message-id: 20080306120636.GA7558@gondor.apana.org.au
+O-Subject: [RHEL5.2 PATCH] [CRYPTO] xcbc: Fix IPsec crash with aes-xcbc-mac
+Bugzilla: 435377
+
+Hi:
+
+RHEL5.2 BZ 435377
+
+This patch fixes a crash that prevents the XCBC algorithm from
+being used with IPsec.  This is a problem since it is a required
+algorithm.
+
+This patch has been accepted upstream.  Please ack,
+
+From: Joy Latten <latten@austin.ibm.com>
+
+When using aes-xcbc-mac for authentication in IPsec,
+the kernel crashes. It seems this algorithm doesn't
+account for the space IPsec may make in scatterlist for authtag.
+Thus when crypto_xcbc_digest_update2() gets called,
+nbytes may be less than sg[i].length.
+Since nbytes is an unsigned number, it wraps
+at the end of the loop allowing us to go back
+into loop and causing crash in memcpy.
+
+I used update function in digest.c to model this fix.
+
+Signed-off-by: Joy Latten <latten@austin.ibm.com>
+
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/xcbc.c b/crypto/xcbc.c
+index b730c6f..e822111 100644
+--- a/crypto/xcbc.c
++++ b/crypto/xcbc.c
+@@ -124,6 +124,11 @@ static int crypto_xcbc_digest_update2(struct hash_desc *pdesc,
+ 		unsigned int offset = sg[i].offset;
+ 		unsigned int slen = sg[i].length;
+ 
++		if (unlikely(slen > nbytes))
++			slen = nbytes;
++
++		nbytes -= slen;
++
+ 		while (slen > 0) {
+ 			unsigned int len = min(slen, ((unsigned int)(PAGE_SIZE)) - offset);
+ 			char *p = ncrypto_kmap(pg, 0) + offset;
+@@ -177,7 +182,6 @@ static int crypto_xcbc_digest_update2(struct hash_desc *pdesc,
+ 			offset = 0;
+ 			pg++;
+ 		}
+-		nbytes-=sg[i].length;
+ 		i++;
+ 	} while (nbytes>0);
+ 

@@ -1,0 +1,2348 @@
+Date: Tue, 8 Aug 2006 00:20:01 -0400 (EDT)
+From: James Morris <jmorris@redhat.com>
+Subject: [SELINUX/NETWORK 1/2] IPsec labeling enhancements for MLS
+Message-ID: <Pine.LNX.4.44.0608080013270.13632-100000@redline.boston.redhat.com>
+
+This patch, from TCS, enhances the IPsec xfrm labeling for MLS, to allow 
+Linux to be certified against LSPP.
+
+The upstream post of the first patch is here:
+http://marc.theaimsgroup.com/?l=linux-netdev&m=115324352321637&w=2
+
+This code has been merged into the upstream 2.6.19 networking tree and is 
+also included in the latest -mm kernel.
+
+Signed-off-by: Venkat Yekkirala <vyekkirala@TrustedCS.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: James Morris <jmorris@redhat.com>
+
+---
+
+ Documentation/networking/secid.txt           |   14 +
+ include/linux/security.h                     |  214 +++++++++++++++++++++++---
+ include/net/flow.h                           |    5 
+ include/net/request_sock.h                   |    1 
+ include/net/route.h                          |    3 
+ include/net/sock.h                           |   14 +
+ include/net/xfrm.h                           |    2 
+ net/core/flow.c                              |    7 
+ net/core/sock.c                              |    2 
+ net/dccp/ipv4.c                              |    4 
+ net/dccp/ipv6.c                              |    9 +
+ net/ipv4/af_inet.c                           |    1 
+ net/ipv4/icmp.c                              |    2 
+ net/ipv4/inet_connection_sock.c              |    3 
+ net/ipv4/ip_output.c                         |    2 
+ net/ipv4/netfilter/ipt_REJECT.c              |    1 
+ net/ipv4/raw.c                               |    1 
+ net/ipv4/syncookies.c                        |    5 
+ net/ipv4/tcp_ipv4.c                          |    3 
+ net/ipv4/udp.c                               |    1 
+ net/ipv6/af_inet6.c                          |    1 
+ net/ipv6/datagram.c                          |    2 
+ net/ipv6/icmp.c                              |    2 
+ net/ipv6/inet6_connection_sock.c             |    1 
+ net/ipv6/ndisc.c                             |    1 
+ net/ipv6/netfilter/ip6t_REJECT.c             |    1 
+ net/ipv6/raw.c                               |    1 
+ net/ipv6/tcp_ipv6.c                          |    9 +
+ net/ipv6/udp.c                               |    2 
+ net/key/af_key.c                             |   37 ++++
+ net/xfrm/xfrm_policy.c                       |   27 +--
+ net/xfrm/xfrm_state.c                        |   14 +
+ net/xfrm/xfrm_user.c                         |   58 +++++--
+ security/dummy.c                             |   58 ++++++-
+ security/selinux/hooks.c                     |  183 +++++++++++++++-------
+ security/selinux/include/av_perm_to_string.h |    1 
+ security/selinux/include/av_permissions.h    |    1 
+ security/selinux/include/objsec.h            |    1 
+ security/selinux/include/security.h          |    2 
+ security/selinux/include/xfrm.h              |   43 +++--
+ security/selinux/ss/mls.c                    |   20 --
+ security/selinux/ss/mls.h                    |   20 ++
+ security/selinux/ss/services.c               |   69 ++++++++
+ security/selinux/xfrm.c                      |  216 ++++++++++++++++++++++-----
+ 44 files changed, 854 insertions(+), 210 deletions(-)
+
+
+diff -purN -X dontdiff linux-2.6.17.i686/Documentation/networking/secid.txt linux-2.6.17.i686.w/Documentation/networking/secid.txt
+--- linux-2.6.17.i686/Documentation/networking/secid.txt	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.17.i686.w/Documentation/networking/secid.txt	2006-08-07 20:29:29.000000000 -0400
+@@ -0,0 +1,14 @@
++flowi structure:
++
++The secid member in the flow structure is used in LSMs (e.g. SELinux) to indicate
++the label of the flow. This label of the flow is currently used in selecting
++matching labeled xfrm(s).
++
++If this is an outbound flow, the label is derived from the socket, if any, or
++the incoming packet this flow is being generated as a response to (e.g. tcp
++resets, timewait ack, etc.). It is also conceivable that the label could be
++derived from other sources such as process context, device, etc., in special
++cases, as may be appropriate.
++
++If this is an inbound flow, the label is derived from the IPSec security
++associations, if any, used by the packet.
+diff -purN -X dontdiff linux-2.6.17.i686/include/linux/security.h linux-2.6.17.i686.w/include/linux/security.h
+--- linux-2.6.17.i686/include/linux/security.h	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/include/linux/security.h	2006-08-07 20:34:49.000000000 -0400
+@@ -31,6 +31,8 @@
+ #include <linux/msg.h>
+ #include <linux/sched.h>
+ #include <linux/key.h>
++#include <linux/xfrm.h>
++#include <net/flow.h>
+ 
+ struct ctl_table;
+ 
+@@ -88,6 +90,7 @@ extern int cap_netlink_recv(struct sk_bu
+ struct nfsctl_arg;
+ struct sched_param;
+ struct swap_info_struct;
++struct request_sock;
+ 
+ /* bprm_apply_creds unsafe reasons */
+ #define LSM_UNSAFE_SHARE	1
+@@ -812,9 +815,19 @@ struct swap_info_struct;
+  *      which is used to copy security attributes between local stream sockets.
+  * @sk_free_security:
+  *	Deallocate security structure.
+- * @sk_getsid:
+- *	Retrieve the LSM-specific sid for the sock to enable caching of network
++ * @sk_clone_security:
++ *	Clone/copy security structure.
++ * @sk_getsecid:
++ *	Retrieve the LSM-specific secid for the sock to enable caching of network
+  *	authorizations.
++ * @sock_graft:
++ *	Sets the socket's isec sid to the sock's sid.
++ * @inet_conn_request:
++ *	Sets the openreq's sid to socket's sid with MLS portion taken from peer sid.
++ * @inet_csk_clone:
++ *	Sets the new child socket's sid to the openreq sid.
++ * @req_classify_flow:
++ *	Sets the flow's sid to the openreq sid.
+  *
+  * Security hooks for XFRM operations.
+  *
+@@ -823,9 +836,10 @@ struct swap_info_struct;
+  *	used by the XFRM system.
+  *	@sec_ctx contains the security context information being provided by
+  *	the user-level policy update program (e.g., setkey).
+- *	Allocate a security structure to the xp->security field.
+- *	The security field is initialized to NULL when the xfrm_policy is
+- *	allocated.
++ *	@sk refers to the sock from which to derive the security context.
++ *	Allocate a security structure to the xp->security field; the security
++ *	field is initialized to NULL when the xfrm_policy is allocated. Only
++ *	one of sec_ctx or sock can be specified.
+  *	Return 0 if operation was successful (memory to allocate, legal context)
+  * @xfrm_policy_clone_security:
+  *	@old contains an existing xfrm_policy in the SPD.
+@@ -844,9 +858,14 @@ struct swap_info_struct;
+  *	Database by the XFRM system.
+  *	@sec_ctx contains the security context information being provided by
+  *	the user-level SA generation program (e.g., setkey or racoon).
+- *	Allocate a security structure to the x->security field.  The
+- *	security field is initialized to NULL when the xfrm_state is
+- *	allocated.
++ *	@polsec contains the security context information associated with a xfrm
++ *	policy rule from which to take the base context. polsec must be NULL
++ *	when sec_ctx is specified.
++ *	@secid contains the secid from which to take the mls portion of the context.
++ *	Allocate a security structure to the x->security field; the security
++ *	field is initialized to NULL when the xfrm_state is allocated. Set the
++ *	context to correspond to either sec_ctx or polsec, with the mls portion
++ *	taken from secid in the latter case.
+  *	Return 0 if operation was successful (memory to allocate, legal context).
+  * @xfrm_state_free_security:
+  *	@x contains the xfrm_state.
+@@ -857,13 +876,27 @@ struct swap_info_struct;
+  * @xfrm_policy_lookup:
+  *	@xp contains the xfrm_policy for which the access control is being
+  *	checked.
+- *	@sk_sid contains the sock security label that is used to authorize
++ *	@fl_secid contains the flow security label that is used to authorize
+  *	access to the policy xp.
+  *	@dir contains the direction of the flow (input or output).
+- *	Check permission when a sock selects a xfrm_policy for processing
++ *	Check permission when a flow selects a xfrm_policy for processing
+  *	XFRMs on a packet.  The hook is called when selecting either a
+  *	per-socket policy or a generic xfrm policy.
+  *	Return 0 if permission is granted.
++ * @xfrm_state_pol_flow_match:
++ *	@x contains the state to match.
++ *	@xp contains the policy to check for a match.
++ *	@fl contains the flow to check for a match.
++ *	Return 1 if there is a match.
++ * @xfrm_flow_state_match:
++ *	@fl contains the flow key to match.
++ *	@xfrm points to the xfrm_state to match.
++ *	Return 1 if there is a match.
++ * @xfrm_decode_session:
++ *	@skb points to skb to decode.
++ *	@secid points to the flow key secid to set.
++ *	@ckall says if all xfrms used should be checked for same secid.
++ *	Return 0 if ckall is zero or all xfrms used have the same secid.
+  *
+  * Security hooks affecting all Key Management operations
+  *
+@@ -1332,18 +1365,31 @@ struct security_operations {
+ 	int (*socket_getpeersec_dgram) (struct socket *sock, struct sk_buff *skb, u32 *secid);
+ 	int (*sk_alloc_security) (struct sock *sk, int family, gfp_t priority);
+ 	void (*sk_free_security) (struct sock *sk);
+-	unsigned int (*sk_getsid) (struct sock *sk, struct flowi *fl, u8 dir);
++	void (*sk_clone_security) (const struct sock *sk, struct sock *newsk);
++	void (*sk_getsecid) (struct sock *sk, u32 *secid);
++	void (*sock_graft)(struct sock* sk, struct socket *parent);
++	int (*inet_conn_request)(struct sock *sk, struct sk_buff *skb,
++					struct request_sock *req);
++	void (*inet_csk_clone)(struct sock *newsk, const struct request_sock *req);
++	void (*req_classify_flow)(const struct request_sock *req, struct flowi *fl);
+ #endif	/* CONFIG_SECURITY_NETWORK */
+ 
+ #ifdef CONFIG_SECURITY_NETWORK_XFRM
+-	int (*xfrm_policy_alloc_security) (struct xfrm_policy *xp, struct xfrm_user_sec_ctx *sec_ctx);
++	int (*xfrm_policy_alloc_security) (struct xfrm_policy *xp,
++			struct xfrm_user_sec_ctx *sec_ctx, struct sock *sk);
+ 	int (*xfrm_policy_clone_security) (struct xfrm_policy *old, struct xfrm_policy *new);
+ 	void (*xfrm_policy_free_security) (struct xfrm_policy *xp);
+ 	int (*xfrm_policy_delete_security) (struct xfrm_policy *xp);
+-	int (*xfrm_state_alloc_security) (struct xfrm_state *x, struct xfrm_user_sec_ctx *sec_ctx);
++	int (*xfrm_state_alloc_security) (struct xfrm_state *x,
++		struct xfrm_user_sec_ctx *sec_ctx, struct xfrm_sec_ctx *polsec,
++		u32 secid);
+ 	void (*xfrm_state_free_security) (struct xfrm_state *x);
+ 	int (*xfrm_state_delete_security) (struct xfrm_state *x);
+-	int (*xfrm_policy_lookup)(struct xfrm_policy *xp, u32 sk_sid, u8 dir);
++	int (*xfrm_policy_lookup)(struct xfrm_policy *xp, u32 fl_secid, u8 dir);
++	int (*xfrm_state_pol_flow_match)(struct xfrm_state *x,
++			struct xfrm_policy *xp, struct flowi *fl);
++	int (*xfrm_flow_state_match)(struct flowi *fl, struct xfrm_state *xfrm);
++	int (*xfrm_decode_session)(struct sk_buff *skb, u32 *secid, int ckall);
+ #endif	/* CONFIG_SECURITY_NETWORK_XFRM */
+ 
+ 	/* key management security hooks */
+@@ -2885,9 +2931,36 @@ static inline void security_sk_free(stru
+ 	return security_ops->sk_free_security(sk);
+ }
+ 
+-static inline unsigned int security_sk_sid(struct sock *sk, struct flowi *fl, u8 dir)
++static inline void security_sk_clone(const struct sock *sk, struct sock *newsk)
++{
++	return security_ops->sk_clone_security(sk, newsk);
++}
++
++static inline void security_sk_classify_flow(struct sock *sk, struct flowi *fl)
+ {
+-	return security_ops->sk_getsid(sk, fl, dir);
++	security_ops->sk_getsecid(sk, &fl->secid);
++}
++
++static inline void security_req_classify_flow(const struct request_sock *req, struct flowi *fl)
++{
++	security_ops->req_classify_flow(req, fl);
++}
++
++static inline void security_sock_graft(struct sock* sk, struct socket *parent)
++{
++	security_ops->sock_graft(sk, parent);
++}
++
++static inline int security_inet_conn_request(struct sock *sk,
++			struct sk_buff *skb, struct request_sock *req)
++{
++	return security_ops->inet_conn_request(sk, skb, req);
++}
++
++static inline void security_inet_csk_clone(struct sock *newsk,
++			const struct request_sock *req)
++{
++	security_ops->inet_csk_clone(newsk, req);
+ }
+ #else	/* CONFIG_SECURITY_NETWORK */
+ static inline int security_unix_stream_connect(struct socket * sock,
+@@ -3011,16 +3084,43 @@ static inline void security_sk_free(stru
+ {
+ }
+ 
+-static inline unsigned int security_sk_sid(struct sock *sk, struct flowi *fl, u8 dir)
++static inline void security_sk_clone(const struct sock *sk, struct sock *newsk)
++{
++}
++
++static inline void security_sk_classify_flow(struct sock *sk, struct flowi *fl)
++{
++}
++
++static inline void security_req_classify_flow(const struct request_sock *req, struct flowi *fl)
++{
++}
++
++static inline void security_sock_graft(struct sock* sk, struct socket *parent)
++{
++}
++
++static inline int security_inet_conn_request(struct sock *sk,
++			struct sk_buff *skb, struct request_sock *req)
+ {
+ 	return 0;
+ }
++
++static inline void security_inet_csk_clone(struct sock *newsk,
++			const struct request_sock *req)
++{
++}
+ #endif	/* CONFIG_SECURITY_NETWORK */
+ 
+ #ifdef CONFIG_SECURITY_NETWORK_XFRM
+ static inline int security_xfrm_policy_alloc(struct xfrm_policy *xp, struct xfrm_user_sec_ctx *sec_ctx)
+ {
+-	return security_ops->xfrm_policy_alloc_security(xp, sec_ctx);
++	return security_ops->xfrm_policy_alloc_security(xp, sec_ctx, NULL);
++}
++
++static inline int security_xfrm_sock_policy_alloc(struct xfrm_policy *xp, struct sock *sk)
++{
++	return security_ops->xfrm_policy_alloc_security(xp, NULL, sk);
+ }
+ 
+ static inline int security_xfrm_policy_clone(struct xfrm_policy *old, struct xfrm_policy *new)
+@@ -3038,9 +3138,18 @@ static inline int security_xfrm_policy_d
+ 	return security_ops->xfrm_policy_delete_security(xp);
+ }
+ 
+-static inline int security_xfrm_state_alloc(struct xfrm_state *x, struct xfrm_user_sec_ctx *sec_ctx)
++static inline int security_xfrm_state_alloc(struct xfrm_state *x,
++			struct xfrm_user_sec_ctx *sec_ctx)
++{
++	return security_ops->xfrm_state_alloc_security(x, sec_ctx, NULL, 0);
++}
++
++static inline int security_xfrm_state_alloc_acquire(struct xfrm_state *x,
++				struct xfrm_sec_ctx *polsec, u32 secid)
+ {
+-	return security_ops->xfrm_state_alloc_security(x, sec_ctx);
++	if (!polsec)
++		return 0;
++	return security_ops->xfrm_state_alloc_security(x, NULL, polsec, secid);
+ }
+ 
+ static inline int security_xfrm_state_delete(struct xfrm_state *x)
+@@ -3053,9 +3162,32 @@ static inline void security_xfrm_state_f
+ 	security_ops->xfrm_state_free_security(x);
+ }
+ 
+-static inline int security_xfrm_policy_lookup(struct xfrm_policy *xp, u32 sk_sid, u8 dir)
++static inline int security_xfrm_policy_lookup(struct xfrm_policy *xp, u32 fl_secid, u8 dir)
++{
++	return security_ops->xfrm_policy_lookup(xp, fl_secid, dir);
++}
++
++static inline int security_xfrm_state_pol_flow_match(struct xfrm_state *x,
++			struct xfrm_policy *xp, struct flowi *fl)
+ {
+-	return security_ops->xfrm_policy_lookup(xp, sk_sid, dir);
++	return security_ops->xfrm_state_pol_flow_match(x, xp, fl);
++}
++
++static inline int security_xfrm_flow_state_match(struct flowi *fl, struct xfrm_state *xfrm)
++{
++	return security_ops->xfrm_flow_state_match(fl, xfrm);
++}
++
++static inline int security_xfrm_decode_session(struct sk_buff *skb, u32 *secid)
++{
++	return security_ops->xfrm_decode_session(skb, secid, 1);
++}
++
++static inline void security_skb_classify_flow(struct sk_buff *skb, struct flowi *fl)
++{
++	int rc = security_ops->xfrm_decode_session(skb, &fl->secid, 0);
++
++	BUG_ON(rc);
+ }
+ #else	/* CONFIG_SECURITY_NETWORK_XFRM */
+ static inline int security_xfrm_policy_alloc(struct xfrm_policy *xp, struct xfrm_user_sec_ctx *sec_ctx)
+@@ -3063,6 +3195,11 @@ static inline int security_xfrm_policy_a
+ 	return 0;
+ }
+ 
++static inline int security_xfrm_sock_policy_alloc(struct xfrm_policy *xp, struct sock *sk)
++{
++	return 0;
++}
++
+ static inline int security_xfrm_policy_clone(struct xfrm_policy *old, struct xfrm_policy *new)
+ {
+ 	return 0;
+@@ -3077,7 +3214,14 @@ static inline int security_xfrm_policy_d
+ 	return 0;
+ }
+ 
+-static inline int security_xfrm_state_alloc(struct xfrm_state *x, struct xfrm_user_sec_ctx *sec_ctx)
++static inline int security_xfrm_state_alloc(struct xfrm_state *x,
++					struct xfrm_user_sec_ctx *sec_ctx)
++{
++	return 0;
++}
++
++static inline int security_xfrm_state_alloc_acquire(struct xfrm_state *x,
++					struct xfrm_sec_ctx *polsec, u32 secid)
+ {
+ 	return 0;
+ }
+@@ -3091,10 +3235,32 @@ static inline int security_xfrm_state_de
+ 	return 0;
+ }
+ 
+-static inline int security_xfrm_policy_lookup(struct xfrm_policy *xp, u32 sk_sid, u8 dir)
++static inline int security_xfrm_policy_lookup(struct xfrm_policy *xp, u32 fl_secid, u8 dir)
++{
++	return 0;
++}
++
++static inline int security_xfrm_state_pol_flow_match(struct xfrm_state *x,
++			struct xfrm_policy *xp, struct flowi *fl)
++{
++	return 1;
++}
++
++static inline int security_xfrm_flow_state_match(struct flowi *fl,
++                                struct xfrm_state *xfrm)
++{
++	return 1;
++}
++
++static inline int security_xfrm_decode_session(struct sk_buff *skb, u32 *secid)
+ {
+ 	return 0;
+ }
++
++static inline void security_skb_classify_flow(struct sk_buff *skb, struct flowi *fl)
++{
++}
++
+ #endif	/* CONFIG_SECURITY_NETWORK_XFRM */
+ 
+ #ifdef CONFIG_KEYS
+diff -purN -X dontdiff linux-2.6.17.i686/include/net/flow.h linux-2.6.17.i686.w/include/net/flow.h
+--- linux-2.6.17.i686/include/net/flow.h	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/include/net/flow.h	2006-08-07 20:29:38.000000000 -0400
+@@ -78,6 +78,7 @@ struct flowi {
+ #define fl_icmp_type	uli_u.icmpt.type
+ #define fl_icmp_code	uli_u.icmpt.code
+ #define fl_ipsec_spi	uli_u.spi
++	__u32           secid;	/* used by xfrm; see secid.txt */
+ } __attribute__((__aligned__(BITS_PER_LONG/8)));
+ 
+ #define FLOW_DIR_IN	0
+@@ -85,10 +86,10 @@ struct flowi {
+ #define FLOW_DIR_FWD	2
+ 
+ struct sock;
+-typedef void (*flow_resolve_t)(struct flowi *key, u32 sk_sid, u16 family, u8 dir,
++typedef void (*flow_resolve_t)(struct flowi *key, u16 family, u8 dir,
+ 			       void **objp, atomic_t **obj_refp);
+ 
+-extern void *flow_cache_lookup(struct flowi *key, u32 sk_sid, u16 family, u8 dir,
++extern void *flow_cache_lookup(struct flowi *key, u16 family, u8 dir,
+ 	 		       flow_resolve_t resolver);
+ extern void flow_cache_flush(void);
+ extern atomic_t flow_cache_genid;
+diff -purN -X dontdiff linux-2.6.17.i686/include/net/request_sock.h linux-2.6.17.i686.w/include/net/request_sock.h
+--- linux-2.6.17.i686/include/net/request_sock.h	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/include/net/request_sock.h	2006-08-07 20:34:49.000000000 -0400
+@@ -53,6 +53,7 @@ struct request_sock {
+ 	unsigned long			expires;
+ 	struct request_sock_ops		*rsk_ops;
+ 	struct sock			*sk;
++	u32				secid;
+ };
+ 
+ static inline struct request_sock *reqsk_alloc(struct request_sock_ops *ops)
+diff -purN -X dontdiff linux-2.6.17.i686/include/net/route.h linux-2.6.17.i686.w/include/net/route.h
+--- linux-2.6.17.i686/include/net/route.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/include/net/route.h	2006-08-07 20:29:56.000000000 -0400
+@@ -32,6 +32,7 @@
+ #include <linux/route.h>
+ #include <linux/ip.h>
+ #include <linux/cache.h>
++#include <linux/security.h>
+ 
+ #ifndef __KERNEL__
+ #warning This file is not supposed to be used outside of kernel.
+@@ -166,6 +167,7 @@ static inline int ip_route_connect(struc
+ 		ip_rt_put(*rp);
+ 		*rp = NULL;
+ 	}
++	security_sk_classify_flow(sk, &fl);
+ 	return ip_route_output_flow(rp, &fl, sk, 0);
+ }
+ 
+@@ -182,6 +184,7 @@ static inline int ip_route_newports(stru
+ 		fl.proto = protocol;
+ 		ip_rt_put(*rp);
+ 		*rp = NULL;
++		security_sk_classify_flow(sk, &fl);
+ 		return ip_route_output_flow(rp, &fl, sk, 0);
+ 	}
+ 	return 0;
+diff -purN -X dontdiff linux-2.6.17.i686/include/net/sock.h linux-2.6.17.i686.w/include/net/sock.h
+--- linux-2.6.17.i686/include/net/sock.h	2006-08-07 10:40:13.000000000 -0400
++++ linux-2.6.17.i686.w/include/net/sock.h	2006-08-07 20:34:49.000000000 -0400
+@@ -971,9 +971,23 @@ static inline void sock_graft(struct soc
+ 	sk->sk_sleep = &parent->wait;
+ 	parent->sk = sk;
+ 	sk->sk_socket = parent;
++	security_sock_graft(sk, parent);
+ 	write_unlock_bh(&sk->sk_callback_lock);
+ }
+ 
++static inline void sock_copy(struct sock *nsk, const struct sock *osk)
++{
++#ifdef CONFIG_SECURITY_NETWORK
++	void *sptr = nsk->sk_security;
++#endif
++
++	memcpy(nsk, osk, osk->sk_prot->obj_size);
++#ifdef CONFIG_SECURITY_NETWORK
++	nsk->sk_security = sptr;
++	security_sk_clone(osk, nsk);
++#endif
++}
++
+ extern int sock_i_uid(struct sock *sk);
+ extern unsigned long sock_i_ino(struct sock *sk);
+ 
+diff -purN -X dontdiff linux-2.6.17.i686/include/net/xfrm.h linux-2.6.17.i686.w/include/net/xfrm.h
+--- linux-2.6.17.i686/include/net/xfrm.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/include/net/xfrm.h	2006-08-07 20:34:38.000000000 -0400
+@@ -363,7 +363,7 @@ struct xfrm_mgr
+ 	char			*id;
+ 	int			(*notify)(struct xfrm_state *x, struct km_event *c);
+ 	int			(*acquire)(struct xfrm_state *x, struct xfrm_tmpl *, struct xfrm_policy *xp, int dir);
+-	struct xfrm_policy	*(*compile_policy)(u16 family, int opt, u8 *data, int len, int *dir);
++	struct xfrm_policy	*(*compile_policy)(struct sock *sk, int opt, u8 *data, int len, int *dir);
+ 	int			(*new_mapping)(struct xfrm_state *x, xfrm_address_t *ipaddr, u16 sport);
+ 	int			(*notify_policy)(struct xfrm_policy *x, int dir, struct km_event *c);
+ };
+diff -purN -X dontdiff linux-2.6.17.i686/net/core/flow.c linux-2.6.17.i686.w/net/core/flow.c
+--- linux-2.6.17.i686/net/core/flow.c	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/net/core/flow.c	2006-08-07 20:29:38.000000000 -0400
+@@ -32,7 +32,6 @@ struct flow_cache_entry {
+ 	u8			dir;
+ 	struct flowi		key;
+ 	u32			genid;
+-	u32			sk_sid;
+ 	void			*object;
+ 	atomic_t		*object_ref;
+ };
+@@ -165,7 +164,7 @@ static int flow_key_compare(struct flowi
+ 	return 0;
+ }
+ 
+-void *flow_cache_lookup(struct flowi *key, u32 sk_sid, u16 family, u8 dir,
++void *flow_cache_lookup(struct flowi *key, u16 family, u8 dir,
+ 			flow_resolve_t resolver)
+ {
+ 	struct flow_cache_entry *fle, **head;
+@@ -189,7 +188,6 @@ void *flow_cache_lookup(struct flowi *ke
+ 	for (fle = *head; fle; fle = fle->next) {
+ 		if (fle->family == family &&
+ 		    fle->dir == dir &&
+-		    fle->sk_sid == sk_sid &&
+ 		    flow_key_compare(key, &fle->key) == 0) {
+ 			if (fle->genid == atomic_read(&flow_cache_genid)) {
+ 				void *ret = fle->object;
+@@ -214,7 +212,6 @@ void *flow_cache_lookup(struct flowi *ke
+ 			*head = fle;
+ 			fle->family = family;
+ 			fle->dir = dir;
+-			fle->sk_sid = sk_sid;
+ 			memcpy(&fle->key, key, sizeof(*key));
+ 			fle->object = NULL;
+ 			flow_count(cpu)++;
+@@ -226,7 +223,7 @@ nocache:
+ 		void *obj;
+ 		atomic_t *obj_ref;
+ 
+-		resolver(key, sk_sid, family, dir, &obj, &obj_ref);
++		resolver(key, family, dir, &obj, &obj_ref);
+ 
+ 		if (fle) {
+ 			fle->genid = atomic_read(&flow_cache_genid);
+diff -purN -X dontdiff linux-2.6.17.i686/net/core/sock.c linux-2.6.17.i686.w/net/core/sock.c
+--- linux-2.6.17.i686/net/core/sock.c	2006-08-07 10:40:10.000000000 -0400
++++ linux-2.6.17.i686.w/net/core/sock.c	2006-08-07 20:29:25.000000000 -0400
+@@ -911,7 +911,7 @@ struct sock *sk_clone(struct sock *sk, c
+ 	if (newsk != NULL) {
+ 		struct sk_filter *filter;
+ 
+-		memcpy(newsk, sk, sk->sk_prot->obj_size);
++		sock_copy(newsk, sk);
+ 
+ 		/* SANITY */
+ 		sk_node_init(&newsk->sk_node);
+diff -purN -X dontdiff linux-2.6.17.i686/net/dccp/ipv4.c linux-2.6.17.i686.w/net/dccp/ipv4.c
+--- linux-2.6.17.i686/net/dccp/ipv4.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/dccp/ipv4.c	2006-08-07 20:34:49.000000000 -0400
+@@ -501,6 +501,9 @@ int dccp_v4_conn_request(struct sock *sk
+ 
+ 	dccp_openreq_init(req, &dp, skb);
+ 
++	if (security_inet_conn_request(sk, skb, req))
++		goto drop_and_free;
++
+ 	ireq = inet_rsk(req);
+ 	ireq->loc_addr = daddr;
+ 	ireq->rmt_addr = saddr;
+@@ -678,6 +681,7 @@ static struct dst_entry* dccp_v4_route_s
+ 			   	     }
+ 			  };
+ 
++	security_skb_classify_flow(skb, &fl);
+ 	if (ip_route_output_flow(&rt, &fl, sk, 0)) {
+ 		IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+ 		return NULL;
+diff -purN -X dontdiff linux-2.6.17.i686/net/dccp/ipv6.c linux-2.6.17.i686.w/net/dccp/ipv6.c
+--- linux-2.6.17.i686/net/dccp/ipv6.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/dccp/ipv6.c	2006-08-07 20:34:49.000000000 -0400
+@@ -201,6 +201,7 @@ static int dccp_v6_connect(struct sock *
+ 	fl.oif = sk->sk_bound_dev_if;
+ 	fl.fl_ip_dport = usin->sin6_port;
+ 	fl.fl_ip_sport = inet->sport;
++	security_sk_classify_flow(sk, &fl);
+ 
+ 	if (np->opt != NULL && np->opt->srcrt != NULL) {
+ 		const struct rt0_hdr *rt0 = (struct rt0_hdr *)np->opt->srcrt;
+@@ -322,6 +323,7 @@ static void dccp_v6_err(struct sk_buff *
+ 			fl.oif = sk->sk_bound_dev_if;
+ 			fl.fl_ip_dport = inet->dport;
+ 			fl.fl_ip_sport = inet->sport;
++			security_sk_classify_flow(sk, &fl);
+ 
+ 			err = ip6_dst_lookup(sk, &dst, &fl);
+ 			if (err) {
+@@ -422,6 +424,7 @@ static int dccp_v6_send_response(struct 
+ 	fl.oif = ireq6->iif;
+ 	fl.fl_ip_dport = inet_rsk(req)->rmt_port;
+ 	fl.fl_ip_sport = inet_sk(sk)->sport;
++	security_req_classify_flow(req, &fl);
+ 
+ 	if (dst == NULL) {
+ 		opt = np->opt;
+@@ -566,6 +569,7 @@ static void dccp_v6_ctl_send_reset(struc
+ 	fl.oif = inet6_iif(rxskb);
+ 	fl.fl_ip_dport = dh->dccph_dport;
+ 	fl.fl_ip_sport = dh->dccph_sport;
++	security_skb_classify_flow(rxskb, &fl);
+ 
+ 	/* sk = NULL, but it is safe for now. RST socket required. */
+ 	if (!ip6_dst_lookup(NULL, &skb->dst, &fl)) {
+@@ -622,6 +626,7 @@ static void dccp_v6_reqsk_send_ack(struc
+ 	fl.oif = inet6_iif(rxskb);
+ 	fl.fl_ip_dport = dh->dccph_dport;
+ 	fl.fl_ip_sport = dh->dccph_sport;
++	security_req_classify_flow(req, &fl);
+ 
+ 	if (!ip6_dst_lookup(NULL, &skb->dst, &fl)) {
+ 		if (xfrm_lookup(&skb->dst, &fl, NULL, 0) >= 0) {
+@@ -704,6 +709,9 @@ static int dccp_v6_conn_request(struct s
+ 
+ 	dccp_openreq_init(req, &dp, skb);
+ 
++	if (security_inet_conn_request(sk, skb, req))
++		goto drop_and_free;
++
+ 	ireq6 = inet6_rsk(req);
+ 	ireq = inet_rsk(req);
+ 	ipv6_addr_copy(&ireq6->rmt_addr, &skb->nh.ipv6h->saddr);
+@@ -842,6 +850,7 @@ static struct sock *dccp_v6_request_recv
+ 		fl.oif = sk->sk_bound_dev_if;
+ 		fl.fl_ip_dport = inet_rsk(req)->rmt_port;
+ 		fl.fl_ip_sport = inet_sk(sk)->sport;
++		security_sk_classify_flow(sk, &fl);
+ 
+ 		if (ip6_dst_lookup(sk, &dst, &fl))
+ 			goto out;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/af_inet.c linux-2.6.17.i686.w/net/ipv4/af_inet.c
+--- linux-2.6.17.i686/net/ipv4/af_inet.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/af_inet.c	2006-08-07 20:29:56.000000000 -0400
+@@ -1074,6 +1074,7 @@ int inet_sk_rebuild_header(struct sock *
+ 		},
+ 	};
+ 						
++	security_sk_classify_flow(sk, &fl);
+ 	err = ip_route_output_flow(&rt, &fl, sk, 0);
+ }
+ 	if (!err)
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/icmp.c linux-2.6.17.i686.w/net/ipv4/icmp.c
+--- linux-2.6.17.i686/net/ipv4/icmp.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/icmp.c	2006-08-07 20:29:56.000000000 -0400
+@@ -406,6 +406,7 @@ static void icmp_reply(struct icmp_bxm *
+ 						.saddr = rt->rt_spec_dst,
+ 						.tos = RT_TOS(skb->nh.iph->tos) } },
+ 				    .proto = IPPROTO_ICMP };
++		security_skb_classify_flow(skb, &fl);
+ 		if (ip_route_output_key(&rt, &fl))
+ 			goto out_unlock;
+ 	}
+@@ -560,6 +561,7 @@ void icmp_send(struct sk_buff *skb_in, i
+ 				}
+ 			}
+ 		};
++		security_skb_classify_flow(skb_in, &fl);
+ 		if (ip_route_output_key(&rt, &fl))
+ 			goto out_unlock;
+ 	}
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/inet_connection_sock.c linux-2.6.17.i686.w/net/ipv4/inet_connection_sock.c
+--- linux-2.6.17.i686/net/ipv4/inet_connection_sock.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/inet_connection_sock.c	2006-08-07 20:34:49.000000000 -0400
+@@ -327,6 +327,7 @@ struct dst_entry* inet_csk_route_req(str
+ 				       { .sport = inet_sk(sk)->sport,
+ 					 .dport = ireq->rmt_port } } };
+ 
++	security_req_classify_flow(req, &fl);
+ 	if (ip_route_output_flow(&rt, &fl, sk, 0)) {
+ 		IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+ 		return NULL;
+@@ -509,6 +510,8 @@ struct sock *inet_csk_clone(struct sock 
+ 
+ 		/* Deinitialize accept_queue to trap illegal accesses. */
+ 		memset(&newicsk->icsk_accept_queue, 0, sizeof(newicsk->icsk_accept_queue));
++
++		security_inet_csk_clone(newsk, req);
+ 	}
+ 	return newsk;
+ }
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/ip_output.c linux-2.6.17.i686.w/net/ipv4/ip_output.c
+--- linux-2.6.17.i686/net/ipv4/ip_output.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/ip_output.c	2006-08-07 20:29:56.000000000 -0400
+@@ -328,6 +328,7 @@ int ip_queue_xmit(struct sk_buff *skb, i
+ 			 * keep trying until route appears or the connection times
+ 			 * itself out.
+ 			 */
++			security_sk_classify_flow(sk, &fl);
+ 			if (ip_route_output_flow(&rt, &fl, sk, 0))
+ 				goto no_route;
+ 		}
+@@ -1365,6 +1366,7 @@ void ip_send_reply(struct sock *sk, stru
+ 					       { .sport = skb->h.th->dest,
+ 					         .dport = skb->h.th->source } },
+ 				    .proto = sk->sk_protocol };
++		security_skb_classify_flow(skb, &fl);
+ 		if (ip_route_output_key(&rt, &fl))
+ 			return;
+ 	}
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/netfilter/ipt_REJECT.c linux-2.6.17.i686.w/net/ipv4/netfilter/ipt_REJECT.c
+--- linux-2.6.17.i686/net/ipv4/netfilter/ipt_REJECT.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/netfilter/ipt_REJECT.c	2006-08-07 20:29:56.000000000 -0400
+@@ -90,6 +90,7 @@ static inline struct rtable *route_rever
+ 	fl.proto = IPPROTO_TCP;
+ 	fl.fl_ip_sport = tcph->dest;
+ 	fl.fl_ip_dport = tcph->source;
++	security_skb_classify_flow(skb, &fl);
+ 
+ 	xfrm_lookup((struct dst_entry **)&rt, &fl, NULL, 0);
+ 
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/raw.c linux-2.6.17.i686.w/net/ipv4/raw.c
+--- linux-2.6.17.i686/net/ipv4/raw.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/raw.c	2006-08-07 20:29:56.000000000 -0400
+@@ -484,6 +484,7 @@ static int raw_sendmsg(struct kiocb *ioc
+ 		if (!inet->hdrincl)
+ 			raw_probe_proto_opt(&fl, msg);
+ 
++		security_sk_classify_flow(sk, &fl);
+ 		err = ip_route_output_flow(&rt, &fl, sk, !(msg->msg_flags&MSG_DONTWAIT));
+ 	}
+ 	if (err)
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/syncookies.c linux-2.6.17.i686.w/net/ipv4/syncookies.c
+--- linux-2.6.17.i686/net/ipv4/syncookies.c	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/syncookies.c	2006-08-07 20:34:49.000000000 -0400
+@@ -214,6 +214,10 @@ struct sock *cookie_v4_check(struct sock
+ 	if (!req)
+ 		goto out;
+ 
++	if (security_inet_conn_request(sk, skb, req)) {
++		reqsk_free(req);
++		goto out; 
++	}
+ 	ireq = inet_rsk(req);
+ 	treq = tcp_rsk(req);
+ 	treq->rcv_isn		= htonl(skb->h.th->seq) - 1;
+@@ -259,6 +263,7 @@ struct sock *cookie_v4_check(struct sock
+ 				    .uli_u = { .ports =
+ 					       { .sport = skb->h.th->dest,
+ 						 .dport = skb->h.th->source } } };
++		security_req_classify_flow(req, &fl);
+ 		if (ip_route_output_key(&rt, &fl)) {
+ 			reqsk_free(req);
+ 			goto out; 
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/tcp_ipv4.c linux-2.6.17.i686.w/net/ipv4/tcp_ipv4.c
+--- linux-2.6.17.i686/net/ipv4/tcp_ipv4.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/tcp_ipv4.c	2006-08-07 20:34:49.000000000 -0400
+@@ -798,6 +798,9 @@ int tcp_v4_conn_request(struct sock *sk,
+ 
+ 	tcp_openreq_init(req, &tmp_opt, skb);
+ 
++	if (security_inet_conn_request(sk, skb, req))
++		goto drop_and_free;
++
+ 	ireq = inet_rsk(req);
+ 	ireq->loc_addr = daddr;
+ 	ireq->rmt_addr = saddr;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv4/udp.c linux-2.6.17.i686.w/net/ipv4/udp.c
+--- linux-2.6.17.i686/net/ipv4/udp.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv4/udp.c	2006-08-07 20:29:56.000000000 -0400
+@@ -603,6 +603,7 @@ int udp_sendmsg(struct kiocb *iocb, stru
+ 				    .uli_u = { .ports =
+ 					       { .sport = inet->sport,
+ 						 .dport = dport } } };
++		security_sk_classify_flow(sk, &fl);
+ 		err = ip_route_output_flow(&rt, &fl, sk, !(msg->msg_flags&MSG_DONTWAIT));
+ 		if (err)
+ 			goto out;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/af_inet6.c linux-2.6.17.i686.w/net/ipv6/af_inet6.c
+--- linux-2.6.17.i686/net/ipv6/af_inet6.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/af_inet6.c	2006-08-07 20:29:56.000000000 -0400
+@@ -637,6 +637,7 @@ int inet6_sk_rebuild_header(struct sock 
+ 		fl.oif = sk->sk_bound_dev_if;
+ 		fl.fl_ip_dport = inet->dport;
+ 		fl.fl_ip_sport = inet->sport;
++		security_sk_classify_flow(sk, &fl);
+ 
+ 		if (np->opt && np->opt->srcrt) {
+ 			struct rt0_hdr *rt0 = (struct rt0_hdr *) np->opt->srcrt;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/datagram.c linux-2.6.17.i686.w/net/ipv6/datagram.c
+--- linux-2.6.17.i686/net/ipv6/datagram.c	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/datagram.c	2006-08-07 20:29:56.000000000 -0400
+@@ -156,6 +156,8 @@ ipv4_connected:
+ 	if (!fl.oif && (addr_type&IPV6_ADDR_MULTICAST))
+ 		fl.oif = np->mcast_oif;
+ 
++	security_sk_classify_flow(sk, &fl);
++
+ 	if (flowlabel) {
+ 		if (flowlabel->opt && flowlabel->opt->srcrt) {
+ 			struct rt0_hdr *rt0 = (struct rt0_hdr *) flowlabel->opt->srcrt;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/icmp.c linux-2.6.17.i686.w/net/ipv6/icmp.c
+--- linux-2.6.17.i686/net/ipv6/icmp.c	2006-08-07 10:40:13.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/icmp.c	2006-08-07 20:29:56.000000000 -0400
+@@ -358,6 +358,7 @@ void icmpv6_send(struct sk_buff *skb, in
+ 	fl.oif = iif;
+ 	fl.fl_icmp_type = type;
+ 	fl.fl_icmp_code = code;
++	security_skb_classify_flow(skb, &fl);
+ 
+ 	if (icmpv6_xmit_lock())
+ 		return;
+@@ -472,6 +473,7 @@ static void icmpv6_echo_reply(struct sk_
+ 		ipv6_addr_copy(&fl.fl6_src, saddr);
+ 	fl.oif = skb->dev->ifindex;
+ 	fl.fl_icmp_type = ICMPV6_ECHO_REPLY;
++	security_skb_classify_flow(skb, &fl);
+ 
+ 	if (icmpv6_xmit_lock())
+ 		return;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/inet6_connection_sock.c linux-2.6.17.i686.w/net/ipv6/inet6_connection_sock.c
+--- linux-2.6.17.i686/net/ipv6/inet6_connection_sock.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/inet6_connection_sock.c	2006-08-07 20:29:56.000000000 -0400
+@@ -157,6 +157,7 @@ int inet6_csk_xmit(struct sk_buff *skb, 
+ 	fl.oif = sk->sk_bound_dev_if;
+ 	fl.fl_ip_sport = inet->sport;
+ 	fl.fl_ip_dport = inet->dport;
++	security_sk_classify_flow(sk, &fl);
+ 
+ 	if (np->opt && np->opt->srcrt) {
+ 		struct rt0_hdr *rt0 = (struct rt0_hdr *)np->opt->srcrt;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/ndisc.c linux-2.6.17.i686.w/net/ipv6/ndisc.c
+--- linux-2.6.17.i686/net/ipv6/ndisc.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/ndisc.c	2006-08-07 20:29:56.000000000 -0400
+@@ -419,6 +419,7 @@ static inline void ndisc_flow_init(struc
+ 	fl->proto	 	= IPPROTO_ICMPV6;
+ 	fl->fl_icmp_type	= type;
+ 	fl->fl_icmp_code	= 0;
++	security_sk_classify_flow(ndisc_socket->sk, fl);
+ }
+ 
+ static void ndisc_send_na(struct net_device *dev, struct neighbour *neigh,
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/netfilter/ip6t_REJECT.c linux-2.6.17.i686.w/net/ipv6/netfilter/ip6t_REJECT.c
+--- linux-2.6.17.i686/net/ipv6/netfilter/ip6t_REJECT.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/netfilter/ip6t_REJECT.c	2006-08-07 20:29:56.000000000 -0400
+@@ -96,6 +96,7 @@ static void send_reset(struct sk_buff *o
+ 	ipv6_addr_copy(&fl.fl6_dst, &oip6h->saddr);
+ 	fl.fl_ip_sport = otcph.dest;
+ 	fl.fl_ip_dport = otcph.source;
++	security_skb_classify_flow(oldskb, &fl);
+ 	dst = ip6_route_output(NULL, &fl);
+ 	if (dst == NULL)
+ 		return;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/raw.c linux-2.6.17.i686.w/net/ipv6/raw.c
+--- linux-2.6.17.i686/net/ipv6/raw.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/raw.c	2006-08-07 20:29:56.000000000 -0400
+@@ -759,6 +759,7 @@ static int rawv6_sendmsg(struct kiocb *i
+ 
+ 	if (!fl.oif && ipv6_addr_is_multicast(&fl.fl6_dst))
+ 		fl.oif = np->mcast_oif;
++	security_sk_classify_flow(sk, &fl);
+ 
+ 	err = ip6_dst_lookup(sk, &dst, &fl);
+ 	if (err)
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/tcp_ipv6.c linux-2.6.17.i686.w/net/ipv6/tcp_ipv6.c
+--- linux-2.6.17.i686/net/ipv6/tcp_ipv6.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/tcp_ipv6.c	2006-08-07 20:34:49.000000000 -0400
+@@ -251,6 +251,8 @@ static int tcp_v6_connect(struct sock *s
+ 		final_p = &final;
+ 	}
+ 
++	security_sk_classify_flow(sk, &fl);
++
+ 	err = ip6_dst_lookup(sk, &dst, &fl);
+ 	if (err)
+ 		goto failure;
+@@ -374,6 +376,7 @@ static void tcp_v6_err(struct sk_buff *s
+ 			fl.oif = sk->sk_bound_dev_if;
+ 			fl.fl_ip_dport = inet->dport;
+ 			fl.fl_ip_sport = inet->sport;
++			security_skb_classify_flow(skb, &fl);
+ 
+ 			if ((err = ip6_dst_lookup(sk, &dst, &fl))) {
+ 				sk->sk_err_soft = -err;
+@@ -467,6 +470,7 @@ static int tcp_v6_send_synack(struct soc
+ 	fl.oif = treq->iif;
+ 	fl.fl_ip_dport = inet_rsk(req)->rmt_port;
+ 	fl.fl_ip_sport = inet_sk(sk)->sport;
++	security_req_classify_flow(req, &fl);
+ 
+ 	if (dst == NULL) {
+ 		opt = np->opt;
+@@ -625,6 +629,7 @@ static void tcp_v6_send_reset(struct sk_
+ 	fl.oif = inet6_iif(skb);
+ 	fl.fl_ip_dport = t1->dest;
+ 	fl.fl_ip_sport = t1->source;
++	security_skb_classify_flow(skb, &fl);
+ 
+ 	/* sk = NULL, but it is safe for now. RST socket required. */
+ 	if (!ip6_dst_lookup(NULL, &buff->dst, &fl)) {
+@@ -691,6 +696,7 @@ static void tcp_v6_send_ack(struct sk_bu
+ 	fl.oif = inet6_iif(skb);
+ 	fl.fl_ip_dport = t1->dest;
+ 	fl.fl_ip_sport = t1->source;
++	security_skb_classify_flow(skb, &fl);
+ 
+ 	if (!ip6_dst_lookup(NULL, &buff->dst, &fl)) {
+ 		if (xfrm_lookup(&buff->dst, &fl, NULL, 0) >= 0) {
+@@ -820,6 +826,8 @@ static int tcp_v6_conn_request(struct so
+ 
+ 	tcp_rsk(req)->snt_isn = isn;
+ 
++	security_inet_conn_request(sk, skb, req);
++
+ 	if (tcp_v6_send_synack(sk, req, NULL))
+ 		goto drop;
+ 
+@@ -923,6 +931,7 @@ static struct sock * tcp_v6_syn_recv_soc
+ 		fl.oif = sk->sk_bound_dev_if;
+ 		fl.fl_ip_dport = inet_rsk(req)->rmt_port;
+ 		fl.fl_ip_sport = inet_sk(sk)->sport;
++		security_req_classify_flow(req, &fl);
+ 
+ 		if (ip6_dst_lookup(sk, &dst, &fl))
+ 			goto out;
+diff -purN -X dontdiff linux-2.6.17.i686/net/ipv6/udp.c linux-2.6.17.i686.w/net/ipv6/udp.c
+--- linux-2.6.17.i686/net/ipv6/udp.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/net/ipv6/udp.c	2006-08-07 20:31:37.000000000 -0400
+@@ -782,6 +782,8 @@ do_udp_sendmsg:
+ 		connected = 0;
+ 	}
+ 
++	security_sk_classify_flow(sk, fl);
++	
+ 	err = ip6_sk_dst_lookup(sk, &dst, fl);
+ 	if (err)
+ 		goto out;
+diff -purN -X dontdiff linux-2.6.17.i686/net/key/af_key.c linux-2.6.17.i686.w/net/key/af_key.c
+--- linux-2.6.17.i686/net/key/af_key.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/key/af_key.c	2006-08-07 20:34:38.000000000 -0400
+@@ -2708,6 +2708,9 @@ static int pfkey_send_acquire(struct xfr
+ #endif
+ 	int sockaddr_size;
+ 	int size;
++	struct sadb_x_sec_ctx *sec_ctx;
++	struct xfrm_sec_ctx *xfrm_ctx;
++	int ctx_size = 0;
+ 	
+ 	sockaddr_size = pfkey_sockaddr_size(x->props.family);
+ 	if (!sockaddr_size)
+@@ -2723,6 +2726,11 @@ static int pfkey_send_acquire(struct xfr
+ 	else if (x->id.proto == IPPROTO_ESP)
+ 		size += count_esp_combs(t);
+ 
++	if ((xfrm_ctx = x->security)) {
++		ctx_size = PFKEY_ALIGN8(xfrm_ctx->ctx_len);
++		size +=  sizeof(struct sadb_x_sec_ctx) + ctx_size;
++	}
++
+ 	skb =  alloc_skb(size + 16, GFP_ATOMIC);
+ 	if (skb == NULL)
+ 		return -ENOMEM;
+@@ -2818,17 +2826,31 @@ static int pfkey_send_acquire(struct xfr
+ 	else if (x->id.proto == IPPROTO_ESP)
+ 		dump_esp_combs(skb, t);
+ 
++	/* security context */
++	if (xfrm_ctx) {
++		sec_ctx = (struct sadb_x_sec_ctx *) skb_put(skb,
++				sizeof(struct sadb_x_sec_ctx) + ctx_size);
++		sec_ctx->sadb_x_sec_len =
++		  (sizeof(struct sadb_x_sec_ctx) + ctx_size) / sizeof(uint64_t);
++		sec_ctx->sadb_x_sec_exttype = SADB_X_EXT_SEC_CTX;
++		sec_ctx->sadb_x_ctx_doi = xfrm_ctx->ctx_doi;
++		sec_ctx->sadb_x_ctx_alg = xfrm_ctx->ctx_alg;
++		sec_ctx->sadb_x_ctx_len = xfrm_ctx->ctx_len;
++		memcpy(sec_ctx + 1, xfrm_ctx->ctx_str,
++		       xfrm_ctx->ctx_len);
++	}
++
+ 	return pfkey_broadcast(skb, GFP_ATOMIC, BROADCAST_REGISTERED, NULL);
+ }
+ 
+-static struct xfrm_policy *pfkey_compile_policy(u16 family, int opt,
++static struct xfrm_policy *pfkey_compile_policy(struct sock *sk, int opt,
+                                                 u8 *data, int len, int *dir)
+ {
+ 	struct xfrm_policy *xp;
+ 	struct sadb_x_policy *pol = (struct sadb_x_policy*)data;
+ 	struct sadb_x_sec_ctx *sec_ctx;
+ 
+-	switch (family) {
++	switch (sk->sk_family) {
+ 	case AF_INET:
+ 		if (opt != IP_IPSEC_POLICY) {
+ 			*dir = -EOPNOTSUPP;
+@@ -2869,7 +2891,7 @@ static struct xfrm_policy *pfkey_compile
+ 	xp->lft.hard_byte_limit = XFRM_INF;
+ 	xp->lft.soft_packet_limit = XFRM_INF;
+ 	xp->lft.hard_packet_limit = XFRM_INF;
+-	xp->family = family;
++	xp->family = sk->sk_family;
+ 
+ 	xp->xfrm_nr = 0;
+ 	if (pol->sadb_x_policy_type == IPSEC_POLICY_IPSEC &&
+@@ -2885,8 +2907,10 @@ static struct xfrm_policy *pfkey_compile
+ 		p += pol->sadb_x_policy_len*8;
+ 		sec_ctx = (struct sadb_x_sec_ctx *)p;
+ 		if (len < pol->sadb_x_policy_len*8 +
+-		    sec_ctx->sadb_x_sec_len)
++		    sec_ctx->sadb_x_sec_len) {
++			*dir = -EINVAL;
+ 			goto out;
++		}
+ 		if ((*dir = verify_sec_ctx_len(p)))
+ 			goto out;
+ 		uctx = pfkey_sadb2xfrm_user_sec_ctx(sec_ctx);
+@@ -2896,6 +2920,11 @@ static struct xfrm_policy *pfkey_compile
+ 		if (*dir)
+ 			goto out;
+ 	}
++	else {
++		*dir = security_xfrm_sock_policy_alloc(xp, sk);
++		if (*dir)
++			goto out;
++	}
+ 
+ 	*dir = pol->sadb_x_policy_dir-1;
+ 	return xp;
+diff -purN -X dontdiff linux-2.6.17.i686/net/xfrm/xfrm_policy.c linux-2.6.17.i686.w/net/xfrm/xfrm_policy.c
+--- linux-2.6.17.i686/net/xfrm/xfrm_policy.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/xfrm/xfrm_policy.c	2006-08-07 20:29:56.000000000 -0400
+@@ -597,7 +597,7 @@ EXPORT_SYMBOL(xfrm_policy_walk);
+ 
+ /* Find policy to apply to this flow. */
+ 
+-static void xfrm_policy_lookup(struct flowi *fl, u32 sk_sid, u16 family, u8 dir,
++static void xfrm_policy_lookup(struct flowi *fl, u16 family, u8 dir,
+ 			       void **objp, atomic_t **obj_refp)
+ {
+ 	struct xfrm_policy *pol;
+@@ -613,7 +613,7 @@ static void xfrm_policy_lookup(struct fl
+ 		match = xfrm_selector_match(sel, fl, family);
+ 
+ 		if (match) {
+- 			if (!security_xfrm_policy_lookup(pol, sk_sid, dir)) {
++ 			if (!security_xfrm_policy_lookup(pol, fl->secid, dir)) {
+ 				xfrm_pol_hold(pol);
+ 				break;
+ 			}
+@@ -641,7 +641,7 @@ static inline int policy_to_flow_dir(int
+ 	};
+ }
+ 
+-static struct xfrm_policy *xfrm_sk_policy_lookup(struct sock *sk, int dir, struct flowi *fl, u32 sk_sid)
++static struct xfrm_policy *xfrm_sk_policy_lookup(struct sock *sk, int dir, struct flowi *fl)
+ {
+ 	struct xfrm_policy *pol;
+ 
+@@ -652,7 +652,7 @@ static struct xfrm_policy *xfrm_sk_polic
+  		int err = 0;
+ 
+ 		if (match)
+-		  err = security_xfrm_policy_lookup(pol, sk_sid, policy_to_flow_dir(dir));
++		  err = security_xfrm_policy_lookup(pol, fl->secid, policy_to_flow_dir(dir));
+ 
+  		if (match && !err)
+ 			xfrm_pol_hold(pol);
+@@ -862,19 +862,19 @@ int xfrm_lookup(struct dst_entry **dst_p
+ 	u32 genid;
+ 	u16 family;
+ 	u8 dir = policy_to_flow_dir(XFRM_POLICY_OUT);
+-	u32 sk_sid = security_sk_sid(sk, fl, dir);
++
+ restart:
+ 	genid = atomic_read(&flow_cache_genid);
+ 	policy = NULL;
+ 	if (sk && sk->sk_policy[1])
+-		policy = xfrm_sk_policy_lookup(sk, XFRM_POLICY_OUT, fl, sk_sid);
++		policy = xfrm_sk_policy_lookup(sk, XFRM_POLICY_OUT, fl);
+ 
+ 	if (!policy) {
+ 		/* To accelerate a bit...  */
+ 		if ((dst_orig->flags & DST_NOXFRM) || !xfrm_policy_list[XFRM_POLICY_OUT])
+ 			return 0;
+ 
+-		policy = flow_cache_lookup(fl, sk_sid, dst_orig->ops->family,
++		policy = flow_cache_lookup(fl, dst_orig->ops->family,
+ 					   dir, xfrm_policy_lookup);
+ 	}
+ 
+@@ -1032,13 +1032,15 @@ int
+ xfrm_decode_session(struct sk_buff *skb, struct flowi *fl, unsigned short family)
+ {
+ 	struct xfrm_policy_afinfo *afinfo = xfrm_policy_get_afinfo(family);
++	int err;
+ 
+ 	if (unlikely(afinfo == NULL))
+ 		return -EAFNOSUPPORT;
+ 
+ 	afinfo->decode_session(skb, fl);
++	err = security_xfrm_decode_session(skb, &fl->secid);
+ 	xfrm_policy_put_afinfo(afinfo);
+-	return 0;
++	return err;
+ }
+ EXPORT_SYMBOL(xfrm_decode_session);
+ 
+@@ -1058,14 +1060,11 @@ int __xfrm_policy_check(struct sock *sk,
+ 	struct xfrm_policy *pol;
+ 	struct flowi fl;
+ 	u8 fl_dir = policy_to_flow_dir(dir);
+-	u32 sk_sid;
+ 
+ 	if (xfrm_decode_session(skb, &fl, family) < 0)
+ 		return 0;
+ 	nf_nat_decode_session(skb, &fl, family);
+ 
+-	sk_sid = security_sk_sid(sk, &fl, fl_dir);
+-
+ 	/* First, check used SA against their selectors. */
+ 	if (skb->sp) {
+ 		int i;
+@@ -1079,10 +1078,10 @@ int __xfrm_policy_check(struct sock *sk,
+ 
+ 	pol = NULL;
+ 	if (sk && sk->sk_policy[dir])
+-		pol = xfrm_sk_policy_lookup(sk, dir, &fl, sk_sid);
++		pol = xfrm_sk_policy_lookup(sk, dir, &fl);
+ 
+ 	if (!pol)
+-		pol = flow_cache_lookup(&fl, sk_sid, family, fl_dir,
++		pol = flow_cache_lookup(&fl, family, fl_dir,
+ 					xfrm_policy_lookup);
+ 
+ 	if (!pol)
+@@ -1277,6 +1276,8 @@ int xfrm_bundle_ok(struct xfrm_dst *firs
+ 
+ 		if (fl && !xfrm_selector_match(&dst->xfrm->sel, fl, family))
+ 			return 0;
++		if (fl && !security_xfrm_flow_state_match(fl, dst->xfrm))
++			return 0;
+ 		if (dst->xfrm->km.state != XFRM_STATE_VALID)
+ 			return 0;
+ 
+diff -purN -X dontdiff linux-2.6.17.i686/net/xfrm/xfrm_state.c linux-2.6.17.i686.w/net/xfrm/xfrm_state.c
+--- linux-2.6.17.i686/net/xfrm/xfrm_state.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/xfrm/xfrm_state.c	2006-08-07 20:34:38.000000000 -0400
+@@ -367,7 +367,7 @@ xfrm_state_find(xfrm_address_t *daddr, x
+ 			 */
+ 			if (x->km.state == XFRM_STATE_VALID) {
+ 				if (!xfrm_selector_match(&x->sel, fl, family) ||
+-				    !xfrm_sec_ctx_match(pol->security, x->security))
++				    !security_xfrm_state_pol_flow_match(x, pol, fl))
+ 					continue;
+ 				if (!best ||
+ 				    best->km.dying > x->km.dying ||
+@@ -379,7 +379,7 @@ xfrm_state_find(xfrm_address_t *daddr, x
+ 			} else if (x->km.state == XFRM_STATE_ERROR ||
+ 				   x->km.state == XFRM_STATE_EXPIRED) {
+  				if (xfrm_selector_match(&x->sel, fl, family) &&
+-				    xfrm_sec_ctx_match(pol->security, x->security))
++				    security_xfrm_state_pol_flow_match(x, pol, fl))
+ 					error = -ESRCH;
+ 			}
+ 		}
+@@ -403,6 +403,14 @@ xfrm_state_find(xfrm_address_t *daddr, x
+ 		 * to current session. */
+ 		xfrm_init_tempsel(x, fl, tmpl, daddr, saddr, family);
+ 
++		error = security_xfrm_state_alloc_acquire(x, pol->security, fl->secid);
++		if (error) {
++			x->km.state = XFRM_STATE_DEAD;
++			xfrm_state_put(x);
++			x = NULL;
++			goto out;
++		}
++
+ 		if (km_query(x, tmpl, pol) == 0) {
+ 			x->km.state = XFRM_STATE_ACQ;
+ 			list_add_tail(&x->bydst, xfrm_state_bydst+h);
+@@ -1018,7 +1026,7 @@ int xfrm_user_policy(struct sock *sk, in
+ 	err = -EINVAL;
+ 	read_lock(&xfrm_km_lock);
+ 	list_for_each_entry(km, &xfrm_km_list, list) {
+-		pol = km->compile_policy(sk->sk_family, optname, data,
++		pol = km->compile_policy(sk, optname, data,
+ 					 optlen, &err);
+ 		if (err >= 0)
+ 			break;
+diff -purN -X dontdiff linux-2.6.17.i686/net/xfrm/xfrm_user.c linux-2.6.17.i686.w/net/xfrm/xfrm_user.c
+--- linux-2.6.17.i686/net/xfrm/xfrm_user.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/net/xfrm/xfrm_user.c	2006-08-07 20:34:38.000000000 -0400
+@@ -909,27 +909,40 @@ rtattr_failure:
+ 	return -1;
+ }
+ 
+-static int copy_to_user_sec_ctx(struct xfrm_policy *xp, struct sk_buff *skb)
++static int copy_sec_ctx(struct xfrm_sec_ctx *s, struct sk_buff *skb)
+ {
+-	if (xp->security) {
+-		int ctx_size = sizeof(struct xfrm_sec_ctx) +
+-				xp->security->ctx_len;
+-		struct rtattr *rt = __RTA_PUT(skb, XFRMA_SEC_CTX, ctx_size);
+-		struct xfrm_user_sec_ctx *uctx = RTA_DATA(rt);
+-
+-		uctx->exttype = XFRMA_SEC_CTX;
+-		uctx->len = ctx_size;
+-		uctx->ctx_doi = xp->security->ctx_doi;
+-		uctx->ctx_alg = xp->security->ctx_alg;
+-		uctx->ctx_len = xp->security->ctx_len;
+-		memcpy(uctx + 1, xp->security->ctx_str, xp->security->ctx_len);
+-	}
+-	return 0;
++	int ctx_size = sizeof(struct xfrm_sec_ctx) + s->ctx_len;
++	struct rtattr *rt = __RTA_PUT(skb, XFRMA_SEC_CTX, ctx_size);
++	struct xfrm_user_sec_ctx *uctx = RTA_DATA(rt);
++
++	uctx->exttype = XFRMA_SEC_CTX;
++	uctx->len = ctx_size;
++	uctx->ctx_doi = s->ctx_doi;
++	uctx->ctx_alg = s->ctx_alg;
++	uctx->ctx_len = s->ctx_len;
++	memcpy(uctx + 1, s->ctx_str, s->ctx_len);
++ 	return 0;
+ 
+  rtattr_failure:
+ 	return -1;
+ }
+ 
++static inline int copy_to_user_state_sec_ctx(struct xfrm_state *x, struct sk_buff *skb)
++{
++	if (x->security) {
++		return copy_sec_ctx(x->security, skb);
++	}
++	return 0;
++}
++
++static inline int copy_to_user_sec_ctx(struct xfrm_policy *xp, struct sk_buff *skb)
++{
++	if (xp->security) {
++		return copy_sec_ctx(xp->security, skb);
++	}
++	return 0;
++}
++
+ static int dump_one_policy(struct xfrm_policy *xp, int dir, int count, void *ptr)
+ {
+ 	struct xfrm_dump_info *sp = ptr;
+@@ -1708,7 +1721,7 @@ static int build_acquire(struct sk_buff 
+ 
+ 	if (copy_to_user_tmpl(xp, skb) < 0)
+ 		goto nlmsg_failure;
+-	if (copy_to_user_sec_ctx(xp, skb))
++	if (copy_to_user_state_sec_ctx(x, skb))
+ 		goto nlmsg_failure;
+ 
+ 	nlh->nlmsg_len = skb->tail - b;
+@@ -1742,7 +1755,7 @@ static int xfrm_send_acquire(struct xfrm
+ /* User gives us xfrm_user_policy_info followed by an array of 0
+  * or more templates.
+  */
+-static struct xfrm_policy *xfrm_compile_policy(u16 family, int opt,
++static struct xfrm_policy *xfrm_compile_policy(struct sock *sk, int opt,
+ 					       u8 *data, int len, int *dir)
+ {
+ 	struct xfrm_userpolicy_info *p = (struct xfrm_userpolicy_info *)data;
+@@ -1750,7 +1763,7 @@ static struct xfrm_policy *xfrm_compile_
+ 	struct xfrm_policy *xp;
+ 	int nr;
+ 
+-	switch (family) {
++	switch (sk->sk_family) {
+ 	case AF_INET:
+ 		if (opt != IP_XFRM_POLICY) {
+ 			*dir = -EOPNOTSUPP;
+@@ -1792,6 +1805,15 @@ static struct xfrm_policy *xfrm_compile_
+ 	copy_from_user_policy(xp, p);
+ 	copy_templates(xp, ut, nr);
+ 
++	if (!xp->security) {
++		int err = security_xfrm_sock_policy_alloc(xp, sk);
++		if (err) {
++			kfree(xp);
++			*dir = err;
++			return NULL;
++		}
++	}
++
+ 	*dir = p->dir;
+ 
+ 	return xp;
+diff -purN -X dontdiff linux-2.6.17.i686/security/dummy.c linux-2.6.17.i686.w/security/dummy.c
+--- linux-2.6.17.i686/security/dummy.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/security/dummy.c	2006-08-07 20:34:49.000000000 -0400
+@@ -805,14 +805,38 @@ static inline void dummy_sk_free_securit
+ {
+ }
+ 
+-static unsigned int dummy_sk_getsid(struct sock *sk, struct flowi *fl, u8 dir)
++static inline void dummy_sk_clone_security (const struct sock *sk, struct sock *newsk)
++{
++}
++
++static inline void dummy_sk_getsecid(struct sock *sk, u32 *secid)
++{
++}
++
++static inline void dummy_sock_graft(struct sock* sk, struct socket *parent)
++{
++}
++
++static inline int dummy_inet_conn_request(struct sock *sk,
++			struct sk_buff *skb, struct request_sock *req)
+ {
+ 	return 0;
+ }
++
++static inline void dummy_inet_csk_clone(struct sock *newsk,
++			const struct request_sock *req)
++{
++}
++
++static inline void dummy_req_classify_flow(const struct request_sock *req,
++			struct flowi *fl)
++{
++}
+ #endif	/* CONFIG_SECURITY_NETWORK */
+ 
+ #ifdef CONFIG_SECURITY_NETWORK_XFRM
+-static int dummy_xfrm_policy_alloc_security(struct xfrm_policy *xp, struct xfrm_user_sec_ctx *sec_ctx)
++static int dummy_xfrm_policy_alloc_security(struct xfrm_policy *xp,
++		struct xfrm_user_sec_ctx *sec_ctx, struct sock *sk)
+ {
+ 	return 0;
+ }
+@@ -831,7 +855,8 @@ static int dummy_xfrm_policy_delete_secu
+ 	return 0;
+ }
+ 
+-static int dummy_xfrm_state_alloc_security(struct xfrm_state *x, struct xfrm_user_sec_ctx *sec_ctx)
++static int dummy_xfrm_state_alloc_security(struct xfrm_state *x,
++	struct xfrm_user_sec_ctx *sec_ctx, struct xfrm_sec_ctx *pol, u32 secid)
+ {
+ 	return 0;
+ }
+@@ -849,6 +874,23 @@ static int dummy_xfrm_policy_lookup(stru
+ {
+ 	return 0;
+ }
++
++static int dummy_xfrm_state_pol_flow_match(struct xfrm_state *x,
++				struct xfrm_policy *xp, struct flowi *fl)
++{
++	return 1;
++}
++
++static int dummy_xfrm_flow_state_match(struct flowi *fl, struct xfrm_state *xfrm)
++{
++	return 1;
++}
++
++static int dummy_xfrm_decode_session(struct sk_buff *skb, u32 *fl, int ckall)
++{
++	return 0;
++}
++
+ #endif /* CONFIG_SECURITY_NETWORK_XFRM */
+ static int dummy_register_security (const char *name, struct security_operations *ops)
+ {
+@@ -1060,7 +1102,12 @@ void security_fixup_ops (struct security
+ 	set_to_dummy_if_null(ops, socket_getpeersec_dgram);
+ 	set_to_dummy_if_null(ops, sk_alloc_security);
+ 	set_to_dummy_if_null(ops, sk_free_security);
+-	set_to_dummy_if_null(ops, sk_getsid);
++	set_to_dummy_if_null(ops, sk_clone_security);
++	set_to_dummy_if_null(ops, sk_getsecid);
++	set_to_dummy_if_null(ops, sock_graft);
++	set_to_dummy_if_null(ops, inet_conn_request);
++	set_to_dummy_if_null(ops, inet_csk_clone);
++	set_to_dummy_if_null(ops, req_classify_flow);
+  #endif	/* CONFIG_SECURITY_NETWORK */
+ #ifdef  CONFIG_SECURITY_NETWORK_XFRM
+ 	set_to_dummy_if_null(ops, xfrm_policy_alloc_security);
+@@ -1071,6 +1118,9 @@ void security_fixup_ops (struct security
+ 	set_to_dummy_if_null(ops, xfrm_state_free_security);
+ 	set_to_dummy_if_null(ops, xfrm_state_delete_security);
+ 	set_to_dummy_if_null(ops, xfrm_policy_lookup);
++	set_to_dummy_if_null(ops, xfrm_state_pol_flow_match);
++	set_to_dummy_if_null(ops, xfrm_flow_state_match);
++	set_to_dummy_if_null(ops, xfrm_decode_session);
+ #endif	/* CONFIG_SECURITY_NETWORK_XFRM */
+ #ifdef CONFIG_KEYS
+ 	set_to_dummy_if_null(ops, key_alloc);
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/hooks.c linux-2.6.17.i686.w/security/selinux/hooks.c
+--- linux-2.6.17.i686/security/selinux/hooks.c	2006-08-07 10:40:13.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/hooks.c	2006-08-07 20:34:55.000000000 -0400
+@@ -269,15 +269,13 @@ static int sk_alloc_security(struct sock
+ {
+ 	struct sk_security_struct *ssec;
+ 
+-	if (family != PF_UNIX)
+-		return 0;
+-
+ 	ssec = kzalloc(sizeof(*ssec), priority);
+ 	if (!ssec)
+ 		return -ENOMEM;
+ 
+ 	ssec->sk = sk;
+ 	ssec->peer_sid = SECINITSID_UNLABELED;
++	ssec->sid = SECINITSID_UNLABELED;
+ 	sk->sk_security = ssec;
+ 
+ 	return 0;
+@@ -287,9 +285,6 @@ static void sk_free_security(struct sock
+ {
+ 	struct sk_security_struct *ssec = sk->sk_security;
+ 
+-	if (sk->sk_family != PF_UNIX)
+-		return;
+-
+ 	sk->sk_security = NULL;
+ 	kfree(ssec);
+ }
+@@ -3064,6 +3059,7 @@ static void selinux_socket_post_create(s
+ {
+ 	struct inode_security_struct *isec;
+ 	struct task_security_struct *tsec;
++	struct sk_security_struct *sksec;
+ 	u32 newsid;
+ 
+ 	isec = SOCK_INODE(sock)->i_security;
+@@ -3074,6 +3070,11 @@ static void selinux_socket_post_create(s
+ 	isec->sid = kern ? SECINITSID_KERNEL : newsid;
+ 	isec->initialized = 1;
+ 
++	if (sock->sk) {
++		sksec = sock->sk->sk_security;
++		sksec->sid = isec->sid;
++	}
++
+ 	return;
+ }
+ 
+@@ -3323,8 +3324,9 @@ static int selinux_socket_unix_stream_co
+ 	/* server child socket */
+ 	ssec = newsk->sk_security;
+ 	ssec->peer_sid = isec->sid;
+-	
+-	return 0;
++	err = security_sid_mls_copy(other_isec->sid, ssec->peer_sid, &ssec->sid);
++
++	return err;
+ }
+ 
+ static int selinux_socket_unix_may_send(struct socket *sock,
+@@ -3350,11 +3352,29 @@ static int selinux_socket_unix_may_send(
+ }
+ 
+ static int selinux_sock_rcv_skb_compat(struct sock *sk, struct sk_buff *skb,
+-		struct avc_audit_data *ad, u32 sock_sid, u16 sock_class,
+-		u16 family, char *addrp, int len)
++		struct avc_audit_data *ad, u16 family, char *addrp, int len)
+ {
+ 	int err = 0;
+ 	u32 netif_perm, node_perm, node_sid, if_sid, recv_perm = 0;
++	struct socket *sock;
++	u16 sock_class = 0;
++	u32 sock_sid = 0;
++
++ 	read_lock_bh(&sk->sk_callback_lock);
++ 	sock = sk->sk_socket;
++ 	if (sock) {
++ 		struct inode *inode;
++ 		inode = SOCK_INODE(sock);
++ 		if (inode) {
++ 			struct inode_security_struct *isec;
++ 			isec = inode->i_security;
++ 			sock_sid = isec->sid;
++ 			sock_class = isec->sclass;
++ 		}
++ 	}
++ 	read_unlock_bh(&sk->sk_callback_lock);
++ 	if (!sock_sid)
++  		goto out;
+ 
+ 	if (!skb->dev)
+ 		goto out;
+@@ -3414,12 +3434,10 @@ out:
+ static int selinux_socket_sock_rcv_skb(struct sock *sk, struct sk_buff *skb)
+ {
+ 	u16 family;
+-	u16 sock_class = 0;
+ 	char *addrp;
+ 	int len, err = 0;
+-	u32 sock_sid = 0;
+-	struct socket *sock;
+ 	struct avc_audit_data ad;
++	struct sk_security_struct *sksec = sk->sk_security;
+ 
+ 	family = sk->sk_family;
+ 	if (family != PF_INET && family != PF_INET6)
+@@ -3429,22 +3447,6 @@ static int selinux_socket_sock_rcv_skb(s
+ 	if (family == PF_INET6 && skb->protocol == ntohs(ETH_P_IP))
+ 		family = PF_INET;
+ 
+- 	read_lock_bh(&sk->sk_callback_lock);
+- 	sock = sk->sk_socket;
+- 	if (sock) {
+- 		struct inode *inode;
+- 		inode = SOCK_INODE(sock);
+- 		if (inode) {
+- 			struct inode_security_struct *isec;
+- 			isec = inode->i_security;
+- 			sock_sid = isec->sid;
+- 			sock_class = isec->sclass;
+- 		}
+- 	}
+- 	read_unlock_bh(&sk->sk_callback_lock);
+- 	if (!sock_sid)
+-  		goto out;
+-
+ 	AVC_AUDIT_DATA_INIT(&ad, NET);
+ 	ad.u.net.netif = skb->dev ? skb->dev->name : "[unknown]";
+ 	ad.u.net.family = family;
+@@ -3454,16 +3456,15 @@ static int selinux_socket_sock_rcv_skb(s
+ 		goto out;
+ 
+ 	if (selinux_compat_net)
+-		err = selinux_sock_rcv_skb_compat(sk, skb, &ad, sock_sid,
+-						  sock_class, family,
++		err = selinux_sock_rcv_skb_compat(sk, skb, &ad, family,
+ 						  addrp, len);
+ 	else
+-		err = avc_has_perm(sock_sid, skb->secmark, SECCLASS_PACKET,
++		err = avc_has_perm(sksec->sid, skb->secmark, SECCLASS_PACKET,
+ 				   PACKET__RECV, &ad);
+ 	if (err)
+ 		goto out;
+ 
+-	err = selinux_xfrm_sock_rcv_skb(sock_sid, skb);
++	err = selinux_xfrm_sock_rcv_skb(sksec->sid, skb, &ad);
+ out:	
+ 	return err;
+ }
+@@ -3547,22 +3548,72 @@ static void selinux_sk_free_security(str
+ 	sk_free_security(sk);
+ }
+ 
+-static unsigned int selinux_sk_getsid_security(struct sock *sk, struct flowi *fl, u8 dir)
++static void selinux_sk_clone_security(const struct sock *sk, struct sock *newsk)
+ {
+-	struct inode_security_struct *isec;
+-	u32 sock_sid = SECINITSID_ANY_SOCKET;
++	struct sk_security_struct *ssec = sk->sk_security;
++	struct sk_security_struct *newssec = newsk->sk_security;
++
++	newssec->sid = ssec->sid;
++	newssec->peer_sid = ssec->peer_sid;
++}
+ 
++static void selinux_sk_getsecid(struct sock *sk, u32 *secid)
++{
+ 	if (!sk)
+-		return selinux_no_sk_sid(fl);
++		*secid = SECINITSID_ANY_SOCKET;
++	else {
++		struct sk_security_struct *sksec = sk->sk_security;
++
++		*secid = sksec->sid;
++	}
++}
++
++void selinux_sock_graft(struct sock* sk, struct socket *parent)
++{
++	struct inode_security_struct *isec = SOCK_INODE(parent)->i_security;
++	struct sk_security_struct *sksec = sk->sk_security;
++
++	isec->sid = sksec->sid;
++}
++
++int selinux_inet_conn_request(struct sock *sk, struct sk_buff *skb, 
++					   struct request_sock *req)
++{
++	struct sk_security_struct *sksec = sk->sk_security;
++	int err;
++	u32 newsid = 0;
++	u32 peersid;
++
++	err = selinux_xfrm_decode_session(skb, &peersid, 0);
++	BUG_ON(err);
+ 
+-	read_lock_bh(&sk->sk_callback_lock);
+-	isec = get_sock_isec(sk);
++	if (peersid == SECSID_NULL) {
++		req->secid = sksec->sid;
++		return 0;
++	}
+ 
+-	if (isec)
+-		sock_sid = isec->sid;
++	err = security_sid_mls_copy(sksec->sid, peersid, &newsid);
++	if (err)
++		return err;
+ 
+-	read_unlock_bh(&sk->sk_callback_lock);
+-	return sock_sid;
++	req->secid = newsid;
++	return 0;
++}
++
++void selinux_inet_csk_clone(struct sock *newsk, const struct request_sock *req)
++{
++	struct sk_security_struct *newsksec = newsk->sk_security;
++
++	newsksec->sid = req->secid;
++	/* NOTE: Ideally, we should also get the isec->sid for the
++	   new socket in sync, but we don't have the isec available yet.
++	   So we will wait until sock_graft to do it, by which
++	   time it will have been created and available. */
++}
++
++void selinux_req_classify_flow(const struct request_sock *req, struct flowi *fl)
++{
++	fl->secid = req->secid;
+ }
+ 
+ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
+@@ -3604,12 +3655,24 @@ out:
+ #ifdef CONFIG_NETFILTER
+ 
+ static int selinux_ip_postroute_last_compat(struct sock *sk, struct net_device *dev,
+-					    struct inode_security_struct *isec,
+ 					    struct avc_audit_data *ad,
+ 					    u16 family, char *addrp, int len)
+ {
+-	int err;
++	int err = 0;
+ 	u32 netif_perm, node_perm, node_sid, if_sid, send_perm = 0;
++	struct socket *sock;
++	struct inode *inode;
++	struct inode_security_struct *isec;
++
++	sock = sk->sk_socket;
++	if (!sock)
++		goto out;
++
++	inode = SOCK_INODE(sock);
++	if (!inode)
++		goto out;
++
++	isec = inode->i_security;
+ 	
+ 	err = sel_netif_sids(dev, &if_sid, NULL);
+ 	if (err)
+@@ -3674,26 +3737,16 @@ static unsigned int selinux_ip_postroute
+ 	char *addrp;
+ 	int len, err = 0;
+ 	struct sock *sk;
+-	struct socket *sock;
+-	struct inode *inode;
+ 	struct sk_buff *skb = *pskb;
+-	struct inode_security_struct *isec;
+ 	struct avc_audit_data ad;
+ 	struct net_device *dev = (struct net_device *)out;
++	struct sk_security_struct *sksec;
+ 
+ 	sk = skb->sk;
+ 	if (!sk)
+ 		goto out;
+ 
+-	sock = sk->sk_socket;
+-	if (!sock)
+-		goto out;
+-
+-	inode = SOCK_INODE(sock);
+-	if (!inode)
+-		goto out;
+-
+-	isec = inode->i_security;
++	sksec = sk->sk_security;
+ 
+ 	AVC_AUDIT_DATA_INIT(&ad, NET);
+ 	ad.u.net.netif = dev->name;
+@@ -3704,16 +3757,16 @@ static unsigned int selinux_ip_postroute
+ 		goto out;
+ 
+ 	if (selinux_compat_net)
+-		err = selinux_ip_postroute_last_compat(sk, dev, isec, &ad,
++		err = selinux_ip_postroute_last_compat(sk, dev, &ad,
+ 						       family, addrp, len);
+ 	else
+-		err = avc_has_perm(isec->sid, skb->secmark, SECCLASS_PACKET,
++		err = avc_has_perm(sksec->sid, skb->secmark, SECCLASS_PACKET,
+ 				   PACKET__SEND, &ad);
+ 
+ 	if (err)
+ 		goto out;
+ 
+-	err = selinux_xfrm_postroute_last(isec->sid, skb);
++	err = selinux_xfrm_postroute_last(sksec->sid, skb, &ad);
+ out:
+ 	return err ? NF_DROP : NF_ACCEPT;
+ }
+@@ -4614,7 +4667,12 @@ static struct security_operations selinu
+ 	.socket_getpeersec_dgram =	selinux_socket_getpeersec_dgram,
+ 	.sk_alloc_security =		selinux_sk_alloc_security,
+ 	.sk_free_security =		selinux_sk_free_security,
+-	.sk_getsid = 			selinux_sk_getsid_security,
++	.sk_clone_security =		selinux_sk_clone_security,
++	.sk_getsecid = 			selinux_sk_getsecid,
++	.sock_graft =			selinux_sock_graft,
++	.inet_conn_request =		selinux_inet_conn_request,
++	.inet_csk_clone =		selinux_inet_csk_clone,
++	.req_classify_flow =		selinux_req_classify_flow,
+ 
+ #ifdef CONFIG_SECURITY_NETWORK_XFRM
+ 	.xfrm_policy_alloc_security =	selinux_xfrm_policy_alloc,
+@@ -4625,6 +4683,9 @@ static struct security_operations selinu
+ 	.xfrm_state_free_security =	selinux_xfrm_state_free,
+ 	.xfrm_state_delete_security =	selinux_xfrm_state_delete,
+ 	.xfrm_policy_lookup = 		selinux_xfrm_policy_lookup,
++	.xfrm_state_pol_flow_match =	selinux_xfrm_state_pol_flow_match,
++	.xfrm_flow_state_match =	selinux_xfrm_flow_state_match,
++	.xfrm_decode_session =		selinux_xfrm_decode_session,
+ #endif
+ 
+ #ifdef CONFIG_KEYS
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/include/av_permissions.h linux-2.6.17.i686.w/security/selinux/include/av_permissions.h
+--- linux-2.6.17.i686/security/selinux/include/av_permissions.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/include/av_permissions.h	2006-08-07 20:29:17.000000000 -0400
+@@ -911,6 +911,7 @@
+ #define ASSOCIATION__SENDTO                       0x00000001UL
+ #define ASSOCIATION__RECVFROM                     0x00000002UL
+ #define ASSOCIATION__SETCONTEXT                   0x00000004UL
++#define ASSOCIATION__POLMATCH                     0x00000008UL
+ 
+ #define NETLINK_KOBJECT_UEVENT_SOCKET__IOCTL      0x00000001UL
+ #define NETLINK_KOBJECT_UEVENT_SOCKET__READ       0x00000002UL
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/include/av_perm_to_string.h linux-2.6.17.i686.w/security/selinux/include/av_perm_to_string.h
+--- linux-2.6.17.i686/security/selinux/include/av_perm_to_string.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/include/av_perm_to_string.h	2006-08-07 20:29:17.000000000 -0400
+@@ -241,6 +241,7 @@
+    S_(SECCLASS_ASSOCIATION, ASSOCIATION__SENDTO, "sendto")
+    S_(SECCLASS_ASSOCIATION, ASSOCIATION__RECVFROM, "recvfrom")
+    S_(SECCLASS_ASSOCIATION, ASSOCIATION__SETCONTEXT, "setcontext")
++   S_(SECCLASS_ASSOCIATION, ASSOCIATION__POLMATCH, "polmatch")
+    S_(SECCLASS_PACKET, PACKET__SEND, "send")
+    S_(SECCLASS_PACKET, PACKET__RECV, "recv")
+    S_(SECCLASS_PACKET, PACKET__RELABELTO, "relabelto")
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/include/objsec.h linux-2.6.17.i686.w/security/selinux/include/objsec.h
+--- linux-2.6.17.i686/security/selinux/include/objsec.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/include/objsec.h	2006-08-07 20:29:25.000000000 -0400
+@@ -99,6 +99,7 @@ struct netif_security_struct {
+ 
+ struct sk_security_struct {
+ 	struct sock *sk;		/* back pointer to sk object */
++	u32 sid;			/* SID of this object */
+ 	u32 peer_sid;			/* SID of peer */
+ };
+ 
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/include/security.h linux-2.6.17.i686.w/security/selinux/include/security.h
+--- linux-2.6.17.i686/security/selinux/include/security.h	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/include/security.h	2006-08-07 20:29:21.000000000 -0400
+@@ -78,6 +78,8 @@ int security_node_sid(u16 domain, void *
+ int security_validate_transition(u32 oldsid, u32 newsid, u32 tasksid,
+                                  u16 tclass);
+ 
++int security_sid_mls_copy(u32 sid, u32 mls_sid, u32 *new_sid);
++
+ #define SECURITY_FS_USE_XATTR		1 /* use xattr */
+ #define SECURITY_FS_USE_TRANS		2 /* use transition SIDs, e.g. devpts/tmpfs */
+ #define SECURITY_FS_USE_TASK		3 /* use task SIDs, e.g. pipefs/sockfs */
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/include/xfrm.h linux-2.6.17.i686.w/security/selinux/include/xfrm.h
+--- linux-2.6.17.i686/security/selinux/include/xfrm.h	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/include/xfrm.h	2006-08-07 20:34:55.000000000 -0400
+@@ -2,18 +2,25 @@
+  * SELinux support for the XFRM LSM hooks
+  *
+  * Author : Trent Jaeger, <jaegert@us.ibm.com>
++ * Updated : Venkat Yekkirala, <vyekkirala@TrustedCS.com>
+  */
+ #ifndef _SELINUX_XFRM_H_
+ #define _SELINUX_XFRM_H_
+ 
+-int selinux_xfrm_policy_alloc(struct xfrm_policy *xp, struct xfrm_user_sec_ctx *sec_ctx);
++int selinux_xfrm_policy_alloc(struct xfrm_policy *xp,
++		struct xfrm_user_sec_ctx *sec_ctx, struct sock *sk);
+ int selinux_xfrm_policy_clone(struct xfrm_policy *old, struct xfrm_policy *new);
+ void selinux_xfrm_policy_free(struct xfrm_policy *xp);
+ int selinux_xfrm_policy_delete(struct xfrm_policy *xp);
+-int selinux_xfrm_state_alloc(struct xfrm_state *x, struct xfrm_user_sec_ctx *sec_ctx);
++int selinux_xfrm_state_alloc(struct xfrm_state *x,
++	struct xfrm_user_sec_ctx *sec_ctx, struct xfrm_sec_ctx *pol, u32 secid);
+ void selinux_xfrm_state_free(struct xfrm_state *x);
+ int selinux_xfrm_state_delete(struct xfrm_state *x);
+-int selinux_xfrm_policy_lookup(struct xfrm_policy *xp, u32 sk_sid, u8 dir);
++int selinux_xfrm_policy_lookup(struct xfrm_policy *xp, u32 fl_secid, u8 dir);
++int selinux_xfrm_state_pol_flow_match(struct xfrm_state *x,
++			struct xfrm_policy *xp, struct flowi *fl);
++int selinux_xfrm_flow_state_match(struct flowi *fl, struct xfrm_state *xfrm);
++
+ 
+ /*
+  * Extract the security blob from the sock (it's actually on the socket)
+@@ -26,30 +33,23 @@ static inline struct inode_security_stru
+ 	return SOCK_INODE(sk->sk_socket)->i_security;
+ }
+ 
+-
+-static inline u32 selinux_no_sk_sid(struct flowi *fl)
+-{
+-	/* NOTE: no sock occurs on ICMP reply, forwards, ... */
+-	/* icmp_reply: authorize as kernel packet */
+-	if (fl && fl->proto == IPPROTO_ICMP) {
+-		return SECINITSID_KERNEL;
+-	}
+-
+-	return SECINITSID_ANY_SOCKET;
+-}
+-
+ #ifdef CONFIG_SECURITY_NETWORK_XFRM
+-int selinux_xfrm_sock_rcv_skb(u32 sid, struct sk_buff *skb);
+-int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb);
++int selinux_xfrm_sock_rcv_skb(u32 sid, struct sk_buff *skb,
++			struct avc_audit_data *ad);
++int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb,
++			struct avc_audit_data *ad);
+ u32 selinux_socket_getpeer_stream(struct sock *sk);
+ u32 selinux_socket_getpeer_dgram(struct sk_buff *skb);
++int selinux_xfrm_decode_session(struct sk_buff *skb, u32 *sid, int ckall);
+ #else
+-static inline int selinux_xfrm_sock_rcv_skb(u32 isec_sid, struct sk_buff *skb)
++static inline int selinux_xfrm_sock_rcv_skb(u32 isec_sid, struct sk_buff *skb,
++			struct avc_audit_data *ad)
+ {
+ 	return 0;
+ }
+ 
+-static inline int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb)
++static inline int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb,
++			struct avc_audit_data *ad)
+ {
+ 	return 0;
+ }
+@@ -63,6 +63,11 @@ static inline int selinux_socket_getpeer
+ {
+ 	return SECSID_NULL;
+ }
++static inline int selinux_xfrm_decode_session(struct sk_buff *skb, u32 *sid, int ckall)
++{
++	*sid = SECSID_NULL;
++	return 0;
++}
+ #endif
+ 
+ #endif /* _SELINUX_XFRM_H_ */
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/ss/mls.c linux-2.6.17.i686.w/security/selinux/ss/mls.c
+--- linux-2.6.17.i686/security/selinux/ss/mls.c	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/ss/mls.c	2006-08-07 20:29:21.000000000 -0400
+@@ -212,26 +212,6 @@ int mls_context_isvalid(struct policydb 
+ }
+ 
+ /*
+- * Copies the MLS range from `src' into `dst'.
+- */
+-static inline int mls_copy_context(struct context *dst,
+-				   struct context *src)
+-{
+-	int l, rc = 0;
+-
+-	/* Copy the MLS range from the source context */
+-	for (l = 0; l < 2; l++) {
+-		dst->range.level[l].sens = src->range.level[l].sens;
+-		rc = ebitmap_cpy(&dst->range.level[l].cat,
+-				 &src->range.level[l].cat);
+-		if (rc)
+-			break;
+-	}
+-
+-	return rc;
+-}
+-
+-/*
+  * Set the MLS fields in the security context structure
+  * `context' based on the string representation in
+  * the string `*scontext'.  Update `*scontext' to
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/ss/mls.h linux-2.6.17.i686.w/security/selinux/ss/mls.h
+--- linux-2.6.17.i686/security/selinux/ss/mls.h	2006-06-17 21:49:35.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/ss/mls.h	2006-08-07 20:29:21.000000000 -0400
+@@ -17,6 +17,26 @@
+ #include "context.h"
+ #include "policydb.h"
+ 
++/*
++ * Copies the MLS range from `src' into `dst'.
++ */
++static inline int mls_copy_context(struct context *dst,
++				   struct context *src)
++{
++	int l, rc = 0;
++
++	/* Copy the MLS range from the source context */
++	for (l = 0; l < 2; l++) {
++		dst->range.level[l].sens = src->range.level[l].sens;
++		rc = ebitmap_cpy(&dst->range.level[l].cat,
++				 &src->range.level[l].cat);
++		if (rc)
++			break;
++	}
++
++	return rc;
++}
++
+ int mls_compute_context_len(struct context *context);
+ void mls_sid_to_context(struct context *context, char **scontext);
+ int mls_context_isvalid(struct policydb *p, struct context *c);
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/ss/services.c linux-2.6.17.i686.w/security/selinux/ss/services.c
+--- linux-2.6.17.i686/security/selinux/ss/services.c	2006-08-07 10:40:09.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/ss/services.c	2006-08-07 20:29:21.000000000 -0400
+@@ -1817,6 +1817,75 @@ out:
+ 	return rc;
+ }
+ 
++/*
++ * security_sid_mls_copy() - computes a new sid based on the given
++ * sid and the mls portion of mls_sid.
++ */
++int security_sid_mls_copy(u32 sid, u32 mls_sid, u32 *new_sid)
++{
++	struct context *context1;
++	struct context *context2;
++	struct context newcon;
++	char *s;
++	u32 len;
++	int rc = 0;
++
++	if (!ss_initialized) {
++		*new_sid = sid;
++		goto out;
++	}
++
++	context_init(&newcon);
++
++	POLICY_RDLOCK;
++	context1 = sidtab_search(&sidtab, sid);
++	if (!context1) {
++		printk(KERN_ERR "security_sid_mls_copy:  unrecognized SID "
++		       "%d\n", sid);
++		rc = -EINVAL;
++		goto out_unlock;
++	}
++
++	context2 = sidtab_search(&sidtab, mls_sid);
++	if (!context2) {
++		printk(KERN_ERR "security_sid_mls_copy:  unrecognized SID "
++		       "%d\n", mls_sid);
++		rc = -EINVAL;
++		goto out_unlock;
++	}
++
++	newcon.user = context1->user;
++	newcon.role = context1->role;
++	newcon.type = context1->type;
++	rc = mls_copy_context(&newcon, context2);
++	if (rc)
++		goto out_unlock;
++
++
++	/* Check the validity of the new context. */
++	if (!policydb_context_isvalid(&policydb, &newcon)) {
++		rc = convert_context_handle_invalid_context(&newcon);
++		if (rc)
++			goto bad;
++	}
++
++	rc = sidtab_context_to_sid(&sidtab, &newcon, new_sid);
++	goto out_unlock;
++
++bad:
++	if (!context_struct_to_string(&newcon, &s, &len)) {
++		audit_log(current->audit_context, GFP_ATOMIC, AUDIT_SELINUX_ERR,
++			  "security_sid_mls_copy: invalid context %s", s);
++		kfree(s);
++	}
++
++out_unlock:
++	POLICY_RDUNLOCK;
++	context_destroy(&newcon);
++out:
++	return rc;
++}
++
+ struct selinux_audit_rule {
+ 	u32 au_seqno;
+ 	struct context au_ctxt;
+diff -purN -X dontdiff linux-2.6.17.i686/security/selinux/xfrm.c linux-2.6.17.i686.w/security/selinux/xfrm.c
+--- linux-2.6.17.i686/security/selinux/xfrm.c	2006-08-07 10:40:06.000000000 -0400
++++ linux-2.6.17.i686.w/security/selinux/xfrm.c	2006-08-07 20:34:49.000000000 -0400
+@@ -6,7 +6,12 @@
+  *  Authors:  Serge Hallyn <sergeh@us.ibm.com>
+  *	      Trent Jaeger <jaegert@us.ibm.com>
+  *
++ *  Updated: Venkat Yekkirala <vyekkirala@TrustedCS.com>
++ *
++ *           Granular IPSec Associations for use in MLS environments.
++ *
+  *  Copyright (C) 2005 International Business Machines Corporation
++ *  Copyright (C) 2006 Trusted Computer Solutions, Inc.
+  *
+  *	This program is free software; you can redistribute it and/or modify
+  *	it under the terms of the GNU General Public License version 2,
+@@ -67,10 +72,10 @@ static inline int selinux_authorizable_x
+ }
+ 
+ /*
+- * LSM hook implementation that authorizes that a socket can be used
+- * with the corresponding xfrm_sec_ctx and direction.
++ * LSM hook implementation that authorizes that a flow can use
++ * a xfrm policy rule.
+  */
+-int selinux_xfrm_policy_lookup(struct xfrm_policy *xp, u32 sk_sid, u8 dir)
++int selinux_xfrm_policy_lookup(struct xfrm_policy *xp, u32 fl_secid, u8 dir)
+ {
+ 	int rc = 0;
+ 	u32 sel_sid = SECINITSID_UNLABELED;
+@@ -84,27 +89,130 @@ int selinux_xfrm_policy_lookup(struct xf
+ 		sel_sid = ctx->ctx_sid;
+ 	}
+ 
+-	rc = avc_has_perm(sk_sid, sel_sid, SECCLASS_ASSOCIATION,
+-			  ((dir == FLOW_DIR_IN) ? ASSOCIATION__RECVFROM :
+-			   ((dir == FLOW_DIR_OUT) ?  ASSOCIATION__SENDTO :
+-			    (ASSOCIATION__SENDTO | ASSOCIATION__RECVFROM))),
++	rc = avc_has_perm(fl_secid, sel_sid, SECCLASS_ASSOCIATION,
++			  ASSOCIATION__POLMATCH,
+ 			  NULL);
+ 
+ 	return rc;
+ }
+ 
+ /*
++ * LSM hook implementation that authorizes that a state matches
++ * the given policy, flow combo.
++ */
++
++int selinux_xfrm_state_pol_flow_match(struct xfrm_state *x, struct xfrm_policy *xp,
++			struct flowi *fl)
++{
++	u32 state_sid;
++	u32 pol_sid;
++	int err;
++
++	if (x->security)
++		state_sid = x->security->ctx_sid;
++	else
++		state_sid = SECINITSID_UNLABELED;
++
++	if (xp->security)
++		pol_sid = xp->security->ctx_sid;
++	else
++		pol_sid = SECINITSID_UNLABELED;
++
++	err = avc_has_perm(state_sid, pol_sid, SECCLASS_ASSOCIATION,
++			  ASSOCIATION__POLMATCH,
++			  NULL);
++
++	if (err)
++		return 0;
++
++	return selinux_xfrm_flow_state_match(fl, x);
++}
++
++/*
++ * LSM hook implementation that authorizes that a particular outgoing flow
++ * can use a given security association.
++ */
++
++int selinux_xfrm_flow_state_match(struct flowi *fl, struct xfrm_state *xfrm)
++{
++	int rc = 0;
++	u32 sel_sid = SECINITSID_UNLABELED;
++	struct xfrm_sec_ctx *ctx;
++
++	/* Context sid is either set to label or ANY_ASSOC */
++	if ((ctx = xfrm->security)) {
++		if (!selinux_authorizable_ctx(ctx))
++			return 0;
++
++		sel_sid = ctx->ctx_sid;
++	}
++
++	rc = avc_has_perm(fl->secid, sel_sid, SECCLASS_ASSOCIATION,
++			  ASSOCIATION__SENDTO,
++			  NULL)? 0:1;
++
++	return rc;
++}
++
++/*
++ * LSM hook implementation that determines the sid for the session.
++ */
++
++int selinux_xfrm_decode_session(struct sk_buff *skb, u32 *sid, int ckall)
++{
++	struct sec_path *sp;
++
++	*sid = SECSID_NULL;
++
++	if (skb == NULL)
++		return 0;
++
++	sp = skb->sp;
++	if (sp) {
++		int i, sid_set = 0;
++
++		for (i = sp->len-1; i >= 0; i--) {
++			struct xfrm_state *x = sp->xvec[i];
++			if (selinux_authorizable_xfrm(x)) {
++				struct xfrm_sec_ctx *ctx = x->security;
++
++				if (!sid_set) {
++					*sid = ctx->ctx_sid;
++					sid_set = 1;
++
++					if (!ckall)
++						break;
++				}
++				else if (*sid != ctx->ctx_sid)
++					return -EINVAL;
++			}
++		}
++	}
++
++	return 0;
++}
++
++/*
+  * Security blob allocation for xfrm_policy and xfrm_state
+  * CTX does not have a meaningful value on input
+  */
+-static int selinux_xfrm_sec_ctx_alloc(struct xfrm_sec_ctx **ctxp, struct xfrm_user_sec_ctx *uctx)
++static int selinux_xfrm_sec_ctx_alloc(struct xfrm_sec_ctx **ctxp,
++	struct xfrm_user_sec_ctx *uctx, struct xfrm_sec_ctx *pol, u32 sid)
+ {
+ 	int rc = 0;
+ 	struct task_security_struct *tsec = current->security;
+-	struct xfrm_sec_ctx *ctx;
++	struct xfrm_sec_ctx *ctx = NULL;
++	char *ctx_str = NULL;
++	u32 str_len;
++	u32 ctx_sid;
+ 
+-	BUG_ON(!uctx);
+-	BUG_ON(uctx->ctx_doi != XFRM_SC_ALG_SELINUX);
++	BUG_ON(uctx && pol);
++
++	if (!uctx)
++		goto not_from_user;
++
++	if (uctx->ctx_doi != XFRM_SC_ALG_SELINUX)
++		return -EINVAL;
+ 
+ 	if (uctx->ctx_len >= PAGE_SIZE)
+ 		return -ENOMEM;
+@@ -141,9 +249,43 @@ static int selinux_xfrm_sec_ctx_alloc(st
+ 
+ 	return rc;
+ 
++not_from_user:
++	if (pol) {
++		rc = security_sid_mls_copy(pol->ctx_sid, sid, &ctx_sid);
++		if (rc)
++			goto out;
++	}
++	else
++		ctx_sid = sid;
++
++	rc = security_sid_to_context(ctx_sid, &ctx_str, &str_len);
++	if (rc)
++		goto out;
++
++	*ctxp = ctx = kmalloc(sizeof(*ctx) +
++			      str_len,
++			      GFP_ATOMIC);
++
++	if (!ctx) {
++		rc = -ENOMEM;
++		goto out;
++	}
++
++	ctx->ctx_doi = XFRM_SC_DOI_LSM;
++	ctx->ctx_alg = XFRM_SC_ALG_SELINUX;
++	ctx->ctx_sid = ctx_sid;
++	ctx->ctx_len = str_len;
++	memcpy(ctx->ctx_str,
++	       ctx_str,
++	       str_len);
++
++	goto out2;
++
+ out:
+ 	*ctxp = NULL;
+ 	kfree(ctx);
++out2:
++	kfree(ctx_str);
+ 	return rc;
+ }
+ 
+@@ -151,13 +293,23 @@ out:
+  * LSM hook implementation that allocs and transfers uctx spec to
+  * xfrm_policy.
+  */
+-int selinux_xfrm_policy_alloc(struct xfrm_policy *xp, struct xfrm_user_sec_ctx *uctx)
++int selinux_xfrm_policy_alloc(struct xfrm_policy *xp,
++		struct xfrm_user_sec_ctx *uctx, struct sock *sk)
+ {
+ 	int err;
++	u32 sid;
+ 
+ 	BUG_ON(!xp);
++	BUG_ON(uctx && sk);
+ 
+-	err = selinux_xfrm_sec_ctx_alloc(&xp->security, uctx);
++	if (sk) {
++		struct sk_security_struct *ssec = sk->sk_security;
++		sid = ssec->sid;
++	}
++	else
++		sid = SECSID_NULL;
++
++	err = selinux_xfrm_sec_ctx_alloc(&xp->security, uctx, NULL, sid);
+ 	return err;
+ }
+ 
+@@ -217,13 +369,14 @@ int selinux_xfrm_policy_delete(struct xf
+  * LSM hook implementation that allocs and transfers sec_ctx spec to
+  * xfrm_state.
+  */
+-int selinux_xfrm_state_alloc(struct xfrm_state *x, struct xfrm_user_sec_ctx *uctx)
++int selinux_xfrm_state_alloc(struct xfrm_state *x, struct xfrm_user_sec_ctx *uctx,
++		struct xfrm_sec_ctx *pol, u32 secid)
+ {
+ 	int err;
+ 
+ 	BUG_ON(!x);
+ 
+-	err = selinux_xfrm_sec_ctx_alloc(&x->security, uctx);
++	err = selinux_xfrm_sec_ctx_alloc(&x->security, uctx, pol, secid);
+ 	return err;
+ }
+ 
+@@ -329,38 +482,30 @@ int selinux_xfrm_state_delete(struct xfr
+  * we need to check for unlabelled access since this may not have
+  * gone thru the IPSec process.
+  */
+-int selinux_xfrm_sock_rcv_skb(u32 isec_sid, struct sk_buff *skb)
++int selinux_xfrm_sock_rcv_skb(u32 isec_sid, struct sk_buff *skb,
++				struct avc_audit_data *ad)
+ {
+ 	int i, rc = 0;
+ 	struct sec_path *sp;
++	u32 sel_sid = SECINITSID_UNLABELED;
+ 
+ 	sp = skb->sp;
+ 
+ 	if (sp) {
+-		/*
+-		 * __xfrm_policy_check does not approve unless xfrm_policy_ok
+-		 * says that spi's match for policy and the socket.
+-		 *
+-		 *  Only need to verify the existence of an authorizable sp.
+-		 */
+ 		for (i = 0; i < sp->len; i++) {
+ 			struct xfrm_state *x = sp->xvec[i];
+ 
+-			if (x && selinux_authorizable_xfrm(x))
+-				goto accept;
++			if (x && selinux_authorizable_xfrm(x)) {
++				struct xfrm_sec_ctx *ctx = x->security;
++				sel_sid = ctx->ctx_sid;
++				break;
++			}
+ 		}
+ 	}
+ 
+-	/* check SELinux sock for unlabelled access */
+-	rc = avc_has_perm(isec_sid, SECINITSID_UNLABELED, SECCLASS_ASSOCIATION,
+-			  ASSOCIATION__RECVFROM, NULL);
+-	if (rc)
+-		goto drop;
+-
+-accept:
+-	return 0;
++	rc = avc_has_perm(isec_sid, sel_sid, SECCLASS_ASSOCIATION,
++			  ASSOCIATION__RECVFROM, ad);
+ 
+-drop:
+ 	return rc;
+ }
+ 
+@@ -371,7 +516,8 @@ drop:
+  * If we do have a authorizable security association, then it has already been
+  * checked in xfrm_policy_lookup hook.
+  */
+-int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb)
++int selinux_xfrm_postroute_last(u32 isec_sid, struct sk_buff *skb,
++					struct avc_audit_data *ad)
+ {
+ 	struct dst_entry *dst;
+ 	int rc = 0;
+@@ -391,7 +537,7 @@ int selinux_xfrm_postroute_last(u32 isec
+ 	}
+ 
+ 	rc = avc_has_perm(isec_sid, SECINITSID_UNLABELED, SECCLASS_ASSOCIATION,
+-			  ASSOCIATION__SENDTO, NULL);
++			  ASSOCIATION__SENDTO, ad);
+ out:
+ 	return rc;
+ }
+

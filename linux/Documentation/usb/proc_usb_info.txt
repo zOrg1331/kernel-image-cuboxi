@@ -49,10 +49,8 @@ it and 002/048 sometime later.
 
 These files can be read as binary data.  The binary data consists
 of first the device descriptor, then the descriptors for each
-configuration of the device.  Multi-byte fields in the device and
-configuration descriptors, but not other descriptors, are converted
-to host endianness by the kernel.  This information is also shown
-in text form by the /proc/bus/usb/devices file, described later.
+configuration of the device.  That information is also shown in
+text form by the /proc/bus/usb/devices file, described later.
 
 These files may also be used to write user-level drivers for the USB
 devices.  You would open the /proc/bus/usb/BBB/DDD file read/write,
@@ -215,16 +213,15 @@ C:* #Ifs=dd Cfg#=dd Atr=xx MPwr=dddmA
 
 Interface descriptor info (can be multiple per Config):
 
-I:* If#=dd Alt=dd #EPs=dd Cls=xx(sssss) Sub=xx Prot=xx Driver=ssss
-| | |      |      |       |             |      |       |__Driver name
-| | |      |      |       |             |      |          or "(none)"
-| | |      |      |       |             |      |__InterfaceProtocol
-| | |      |      |       |             |__InterfaceSubClass
-| | |      |      |       |__InterfaceClass
-| | |      |      |__NumberOfEndpoints
-| | |      |__AlternateSettingNumber
-| | |__InterfaceNumber
-| |__ "*" indicates the active altsetting (others are " ")
+I:  If#=dd Alt=dd #EPs=dd Cls=xx(sssss) Sub=xx Prot=xx Driver=ssss
+|   |      |      |       |             |      |       |__Driver name
+|   |      |      |       |             |      |          or "(none)"
+|   |      |      |       |             |      |__InterfaceProtocol
+|   |      |      |       |             |__InterfaceSubClass
+|   |      |      |       |__InterfaceClass
+|   |      |      |__NumberOfEndpoints
+|   |      |__AlternateSettingNumber
+|   |__InterfaceNumber
 |__Interface info tag
 
     A given interface may have one or more "alternate" settings.
@@ -280,7 +277,7 @@ of the USB devices on a system's root hub.  (See more below
 on how to do this.)
 
 The Interface lines can be used to determine what driver is
-being used for each device, and which altsetting it activated.
+being used for each device.
 
 The Configuration lines could be used to list maximum power
 (in milliamps) that a system's USB devices are using.

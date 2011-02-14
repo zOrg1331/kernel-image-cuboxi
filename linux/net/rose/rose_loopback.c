@@ -77,10 +77,9 @@ static void rose_loopback_timer(unsigned long param)
 		dest      = (rose_address *)(skb->data + 4);
 		lci_o     = 0xFFF - lci_i;
 
-		skb_reset_transport_header(skb);
+		skb->h.raw = skb->data;
 
-		sk = rose_find_socket(lci_o, rose_loopback_neigh);
-		if (sk) {
+		if ((sk = rose_find_socket(lci_o, rose_loopback_neigh)) != NULL) {
 			if (rose_process_rx_frame(sk, skb) == 0)
 				kfree_skb(skb);
 			continue;

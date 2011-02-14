@@ -1,0 +1,162 @@
+From: Josef Bacik <josef@redhat.com>
+Date: Thu, 12 Feb 2009 13:44:40 -0500
+Subject: [mm] clean up pagecache allocation
+Message-id: 20090212184440.GG2384@unused.rdu.redhat.com
+O-Subject: Re: [PATCH 01/24] [RHEL 5.4] mm: clean up pagecache allocation UPDATED V2
+Bugzilla: 445433
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+I'm going to leave page_cache_alloc just for completeness, it is exported so
+maybe somebody somewhere is using it.  I've made it and page_cache_alloc_cold
+just wrappers like you suggested.  Thanks,
+
+Josef
+
+commit 70df8adb37db9b5a2858318051c43ac13926405c
+Author: Josef Bacik <jbacik@redhat.com>
+Date:   Thu Feb 12 13:07:38 2009 -0500
+
+    [RHEL 5.4] mm: clean up pagecache allocation
+
+    This patch is a backport of upstream commit
+
+    2ae88149a27cadf2840e0ab8155bef13be285c03
+
+    and is in reference to bz 445433.  This cleans up some of the page cache
+    stuff, most importantly it introduces __page_cache_alloc which is used
+    later on in this patch set.
+
+diff --git a/fs/splice.c b/fs/splice.c
+index 76aa3c0..350d801 100644
+--- a/fs/splice.c
++++ b/fs/splice.c
+@@ -74,7 +74,7 @@ static int page_cache_pipe_buf_steal(struct pipe_inode_info *pipe,
+ 		wait_on_page_writeback(page);
+ 
+ 		if (PagePrivate(page))
+-			try_to_release_page(page, mapping_gfp_mask(mapping));
++			try_to_release_page(page, GFP_KERNEL);
+ 
+ 		/*
+ 		 * If we succeeded in removing the mapping, set LRU flag
+@@ -333,7 +333,7 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
+ 				break;
+ 
+ 			error = add_to_page_cache_lru(page, mapping, index,
+-					      mapping_gfp_mask(mapping));
++					      GFP_KERNEL);
+ 			if (unlikely(error)) {
+ 				page_cache_release(page);
+ 				if (error == -EEXIST)
+@@ -557,7 +557,6 @@ static int pipe_to_file(struct pipe_inode_info *pipe, struct pipe_buffer *buf,
+ {
+ 	struct file *file = sd->file;
+ 	struct address_space *mapping = file->f_mapping;
+-	gfp_t gfp_mask = mapping_gfp_mask(mapping);
+ 	unsigned int offset, this_len;
+ 	struct page *page;
+ 	pgoff_t index;
+@@ -591,7 +590,7 @@ static int pipe_to_file(struct pipe_inode_info *pipe, struct pipe_buffer *buf,
+ 			goto find_page;
+ 
+ 		page = buf->page;
+-		if (add_to_page_cache(page, mapping, index, gfp_mask)) {
++		if (add_to_page_cache(page, mapping, index, GFP_KERNEL)) {
+ 			unlock_page(page);
+ 			goto find_page;
+ 		}
+@@ -613,7 +612,7 @@ find_page:
+ 			 * This will also lock the page
+ 			 */
+ 			ret = add_to_page_cache_lru(page, mapping, index,
+-						    gfp_mask);
++						    GFP_KERNEL);
+ 			if (unlikely(ret))
+ 				goto out_release;
+ 		}
+diff --git a/include/linux/pagemap.h b/include/linux/pagemap.h
+index e77298b..a672621 100644
+--- a/include/linux/pagemap.h
++++ b/include/linux/pagemap.h
+@@ -54,15 +54,21 @@ void release_pages(struct page **pages, int nr, int cold);
+ #ifdef CONFIG_NUMA
+ extern struct page *page_cache_alloc(struct address_space *x);
+ extern struct page *page_cache_alloc_cold(struct address_space *x);
++extern struct page *__page_cache_alloc(gfp_t gfp);
+ #else
++static inline struct page *__page_cache_alloc(gfp_t gfp)
++{
++	return alloc_pages(gfp, 0);
++}
++
+ static inline struct page *page_cache_alloc(struct address_space *x)
+ {
+-	return alloc_pages(mapping_gfp_mask(x), 0);
++	return __page_cache_alloc(mapping_gfp_mask(x));
+ }
+ 
+ static inline struct page *page_cache_alloc_cold(struct address_space *x)
+ {
+-	return alloc_pages(mapping_gfp_mask(x)|__GFP_COLD, 0);
++	return __page_cache_alloc(mapping_gfp_mask(x)|__GFP_COLD);
+ }
+ #endif
+ 
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 251e6f1..63cdc94 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -468,23 +468,25 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
+ }
+ 
+ #ifdef CONFIG_NUMA
+-struct page *page_cache_alloc(struct address_space *x)
++struct page *__page_cache_alloc(gfp_t gfp)
+ {
+ 	if (cpuset_do_page_mem_spread()) {
+ 		int n = cpuset_mem_spread_node();
+-		return alloc_pages_node(n, mapping_gfp_mask(x), 0);
++		return alloc_pages_node(n, gfp, 0);
+ 	}
+-	return alloc_pages(mapping_gfp_mask(x), 0);
++	return alloc_pages(gfp, 0);
++}
++EXPORT_SYMBOL(__page_cache_alloc);
++
++struct page *page_cache_alloc(struct address_space *x)
++{
++	return __page_cache_alloc(mapping_gfp_mask(x));
+ }
+ EXPORT_SYMBOL(page_cache_alloc);
+ 
+ struct page *page_cache_alloc_cold(struct address_space *x)
+ {
+-	if (cpuset_do_page_mem_spread()) {
+-		int n = cpuset_mem_spread_node();
+-		return alloc_pages_node(n, mapping_gfp_mask(x)|__GFP_COLD, 0);
+-	}
+-	return alloc_pages(mapping_gfp_mask(x)|__GFP_COLD, 0);
++	return __page_cache_alloc(mapping_gfp_mask(x)|__GFP_COLD);
+ }
+ EXPORT_SYMBOL(page_cache_alloc_cold);
+ #endif
+@@ -839,7 +841,6 @@ struct page *
+ grab_cache_page_nowait(struct address_space *mapping, unsigned long index)
+ {
+ 	struct page *page = find_get_page(mapping, index);
+-	gfp_t gfp_mask;
+ 
+ 	if (page) {
+ 		if (!TestSetPageLocked(page))
+@@ -847,9 +848,8 @@ grab_cache_page_nowait(struct address_space *mapping, unsigned long index)
+ 		page_cache_release(page);
+ 		return NULL;
+ 	}
+-	gfp_mask = mapping_gfp_mask(mapping) & ~__GFP_FS;
+-	page = alloc_pages(gfp_mask, 0);
+-	if (page && add_to_page_cache_lru(page, mapping, index, gfp_mask)) {
++	page = __page_cache_alloc(mapping_gfp_mask(mapping) & ~__GFP_FS);
++	if (page && add_to_page_cache_lru(page, mapping, index, GFP_KERNEL)) {
+ 		page_cache_release(page);
+ 		page = NULL;
+ 	}

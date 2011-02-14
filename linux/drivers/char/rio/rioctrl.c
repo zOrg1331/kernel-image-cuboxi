@@ -29,14 +29,18 @@
 **
 ** -----------------------------------------------------------------------------
 */
+#ifdef SCCS_LABELS
+static char *_rioctrl_c_sccs_ = "@(#)rioctrl.c	1.3";
+#endif
+
 
 #include <linux/module.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include <asm/io.h>
 #include <asm/system.h>
 #include <asm/string.h>
+#include <asm/semaphore.h>
 #include <asm/uaccess.h>
 
 #include <linux/termios.h>
@@ -419,8 +423,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 		}
 
 		rio_spin_lock_irqsave(&PortP->portSem, flags);
-		if (RIOPreemptiveCmd(p, (p->RIOPortp[port]), RIOC_RESUME) ==
-				RIO_FAIL) {
+		if (RIOPreemptiveCmd(p, (p->RIOPortp[port]), RESUME) == RIO_FAIL) {
 			rio_dprintk(RIO_DEBUG_CTRL, "RIO_RESUME failed\n");
 			rio_spin_unlock_irqrestore(&PortP->portSem, flags);
 			return -EBUSY;
@@ -634,8 +637,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 			return -ENXIO;
 		}
 		PortP = (p->RIOPortp[PortTty.port]);
-		RIOParam(PortP, RIOC_CONFIG, PortP->State & RIO_MODEM,
-				OK_TO_SLEEP);
+		RIOParam(PortP, CONFIG, PortP->State & RIO_MODEM, OK_TO_SLEEP);
 		return retval;
 
 	case RIO_SET_PORT_PARAMS:
@@ -660,7 +662,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 			p->RIOError.Error = COPYIN_FAILED;
 			return -EFAULT;
 		}
-		if (portStats.port < 0 || portStats.port >= RIO_PORTS) {
+		if (portStats.port >= RIO_PORTS) {
 			p->RIOError.Error = PORT_NUMBER_OUT_OF_RANGE;
 			return -ENXIO;
 		}
@@ -700,7 +702,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 			p->RIOError.Error = COPYIN_FAILED;
 			return -EFAULT;
 		}
-		if (portStats.port < 0 || portStats.port >= RIO_PORTS) {
+		if (portStats.port >= RIO_PORTS) {
 			p->RIOError.Error = PORT_NUMBER_OUT_OF_RANGE;
 			return -ENXIO;
 		}
@@ -874,7 +876,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 		/*
 		 ** It is important that the product code is an unsigned object!
 		 */
-		if (DownLoad.ProductCode >= MAX_PRODUCT) {
+		if (DownLoad.ProductCode > MAX_PRODUCT) {
 			rio_dprintk(RIO_DEBUG_CTRL, "RIO_DOWNLOAD: Bad product code %d passed\n", DownLoad.ProductCode);
 			p->RIOError.Error = NO_SUCH_PRODUCT;
 			return -ENXIO;
@@ -1246,7 +1248,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 
 		rio_spin_lock_irqsave(&PortP->portSem, flags);
 
-		if (RIOPreemptiveCmd(p, PortP, RIOC_MEMDUMP) == RIO_FAIL) {
+		if (RIOPreemptiveCmd(p, PortP, MEMDUMP) == RIO_FAIL) {
 			rio_dprintk(RIO_DEBUG_CTRL, "RIO_MEM_DUMP failed\n");
 			rio_spin_unlock_irqrestore(&PortP->portSem, flags);
 			return -EBUSY;
@@ -1312,8 +1314,7 @@ int riocontrol(struct rio_info *p, dev_t dev, int cmd, unsigned long arg, int su
 
 		rio_spin_lock_irqsave(&PortP->portSem, flags);
 
-		if (RIOPreemptiveCmd(p, PortP, RIOC_READ_REGISTER) ==
-				RIO_FAIL) {
+		if (RIOPreemptiveCmd(p, PortP, READ_REGISTER) == RIO_FAIL) {
 			rio_dprintk(RIO_DEBUG_CTRL, "RIO_READ_REGISTER failed\n");
 			rio_spin_unlock_irqrestore(&PortP->portSem, flags);
 			return -EBUSY;
@@ -1434,50 +1435,50 @@ int RIOPreemptiveCmd(struct rio_info *p, struct Port *PortP, u8 Cmd)
 	PktCmdP->PhbNum = port;
 
 	switch (Cmd) {
-	case RIOC_MEMDUMP:
+	case MEMDUMP:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue MEMDUMP command blk %p "
 				"(addr 0x%x)\n", CmdBlkP, (int) SubCmd.Addr);
-		PktCmdP->SubCommand = RIOC_MEMDUMP;
+		PktCmdP->SubCommand = MEMDUMP;
 		PktCmdP->SubAddr = SubCmd.Addr;
 		break;
-	case RIOC_FCLOSE:
+	case FCLOSE:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue FCLOSE command blk %p\n",
 				CmdBlkP);
 		break;
-	case RIOC_READ_REGISTER:
+	case READ_REGISTER:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue READ_REGISTER (0x%x) "
 				"command blk %p\n", (int) SubCmd.Addr, CmdBlkP);
-		PktCmdP->SubCommand = RIOC_READ_REGISTER;
+		PktCmdP->SubCommand = READ_REGISTER;
 		PktCmdP->SubAddr = SubCmd.Addr;
 		break;
-	case RIOC_RESUME:
+	case RESUME:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue RESUME command blk %p\n",
 				CmdBlkP);
 		break;
-	case RIOC_RFLUSH:
+	case RFLUSH:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue RFLUSH command blk %p\n",
 				CmdBlkP);
 		CmdBlkP->PostFuncP = RIORFlushEnable;
 		break;
-	case RIOC_SUSPEND:
+	case SUSPEND:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue SUSPEND command blk %p\n",
 				CmdBlkP);
 		break;
 
-	case RIOC_MGET:
+	case MGET:
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue MGET command blk %p\n",
 				CmdBlkP);
 		break;
 
-	case RIOC_MSET:
-	case RIOC_MBIC:
-	case RIOC_MBIS:
+	case MSET:
+	case MBIC:
+	case MBIS:
 		CmdBlkP->Packet.data[4] = (char) PortP->ModemLines;
 		rio_dprintk(RIO_DEBUG_CTRL, "Queue MSET/MBIC/MBIS command "
 				"blk %p\n", CmdBlkP);
 		break;
 
-	case RIOC_WFLUSH:
+	case WFLUSH:
 		/*
 		 ** If we have queued up the maximum number of Write flushes
 		 ** allowed then we should not bother sending any more to the

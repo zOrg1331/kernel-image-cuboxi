@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/smp.h>
 #include <linux/mm.h>
 
 #include <asm/page.h>
@@ -83,7 +82,8 @@ void local_flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 	int cpu = smp_processor_id();
 
 	if (cpu_context(cpu, mm) != 0) {
-		unsigned long size, flags;
+		unsigned long flags;
+		int size;
 
 #ifdef DEBUG_TLB
 		printk("[tlbrange<%lu,0x%08lx,0x%08lx>]",
@@ -121,7 +121,8 @@ void local_flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
 
 void local_flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
-	unsigned long size, flags;
+	unsigned long flags;
+	int size;
 
 #ifdef DEBUG_TLB
 	printk("[tlbrange<%lu,0x%08lx,0x%08lx>]", start, end);
@@ -245,6 +246,10 @@ void __init add_wired_entry(unsigned long entrylo0, unsigned long entrylo1,
 		old_pagemask = read_c0_pagemask();
 		w = read_c0_wired();
 		write_c0_wired(w + 1);
+		if (read_c0_wired() != w + 1) {
+			printk("[tlbwired] No WIRED reg?\n");
+			return;
+		}
 		write_c0_index(w << 8);
 		write_c0_pagemask(pagemask);
 		write_c0_entryhi(entryhi);
@@ -276,7 +281,7 @@ void __init add_wired_entry(unsigned long entrylo0, unsigned long entrylo1,
 	}
 }
 
-void __cpuinit tlb_init(void)
+void __init tlb_init(void)
 {
 	local_flush_tlb_all();
 

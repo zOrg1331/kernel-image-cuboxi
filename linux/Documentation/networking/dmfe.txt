@@ -34,7 +34,7 @@ Next you should configure your network interface with a command similar to :
 
 	ifconfig eth0 172.22.3.18
                       ^^^^^^^^^^^
-		     Your IP Address
+		     Your IP Adress
 
 Then you may have to modify the default routing table with command :
 
@@ -60,6 +60,6 @@ Tobias Ringstrom <tori@unhappy.mine.nu> : Current Maintainer
 Contributors:
 
 Marcelo Tosatti <marcelo@conectiva.com.br>
-Alan Cox <alan@lxorguk.ukuu.org.uk>
+Alan Cox <alan@redhat.com>
 Jeff Garzik <jgarzik@pobox.com>
 Vojtech Pavlik <vojtech@suse.cz>

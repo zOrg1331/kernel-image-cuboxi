@@ -1,0 +1,657 @@
+Date: Mon, 09 Oct 2006 13:42:31 -0400
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH 1/3] BZ 208456 Audit netlabel configuration changes
+
+The following patch send audit messages when the security policy applied
+by netlabel is changed.  Such security policy change auditing is
+required for the LSPP certification which is planned for RHEL5.  This
+code is upstream in 2.6.19.  It has been tested by HP and no problems
+have been found.
+
+-Eric
+
+diff -Naupr linux-2.6.18.i686/include/linux/audit.h linux-2.6.18.i686/include/linux/audit.h
+--- linux-2.6.18.i686/include/linux/audit.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/include/linux/audit.h	2006-10-02 12:33:26.000000000 -0400
+@@ -95,6 +95,11 @@
+ #define AUDIT_MAC_POLICY_LOAD	1403	/* Policy file load */
+ #define AUDIT_MAC_STATUS	1404	/* Changed enforcing,permissive,off */
+ #define AUDIT_MAC_CONFIG_CHANGE	1405	/* Changes to booleans */
++#define AUDIT_MAC_UNLBL_ALLOW	1406	/* NetLabel: allow unlabeled traffic */
++#define AUDIT_MAC_CIPSOV4_ADD	1407	/* NetLabel: add CIPSOv4 DOI entry */
++#define AUDIT_MAC_CIPSOV4_DEL	1408	/* NetLabel: del CIPSOv4 DOI entry */
++#define AUDIT_MAC_MAP_ADD	1409	/* NetLabel: add LSM domain mapping */
++#define AUDIT_MAC_MAP_DEL	1410	/* NetLabel: del LSM domain mapping */
+ 
+ #define AUDIT_FIRST_KERN_ANOM_MSG   1700
+ #define AUDIT_LAST_KERN_ANOM_MSG    1799
+diff -Naupr linux-2.6.18.i686/include/net/cipso_ipv4.h linux-2.6.18.i686/include/net/cipso_ipv4.h
+--- linux-2.6.18.i686/include/net/cipso_ipv4.h	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/include/net/cipso_ipv4.h	2006-10-02 12:33:26.000000000 -0400
+@@ -128,7 +128,9 @@ extern int cipso_v4_rbm_strictvalid;
+ 
+ #ifdef CONFIG_NETLABEL
+ int cipso_v4_doi_add(struct cipso_v4_doi *doi_def);
+-int cipso_v4_doi_remove(u32 doi, void (*callback) (struct rcu_head * head));
++int cipso_v4_doi_remove(u32 doi,
++			struct netlbl_audit *audit_info,
++			void (*callback) (struct rcu_head * head));
+ struct cipso_v4_doi *cipso_v4_doi_getdef(u32 doi);
+ int cipso_v4_doi_walk(u32 *skip_cnt,
+ 		     int (*callback) (struct cipso_v4_doi *doi_def, void *arg),
+@@ -143,6 +145,7 @@ static inline int cipso_v4_doi_add(struc
+ }
+ 
+ static inline int cipso_v4_doi_remove(u32 doi,
++				    struct netlbl_audit *audit_info,
+ 				    void (*callback) (struct rcu_head * head))
+ {
+ 	return 0;
+diff -Naupr linux-2.6.18.i686/include/net/netlabel.h linux-2.6.18.i686/include/net/netlabel.h
+--- linux-2.6.18.i686/include/net/netlabel.h	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/include/net/netlabel.h	2006-10-02 12:33:26.000000000 -0400
+@@ -92,11 +92,17 @@
+  *
+  */
+ 
++/* NetLabel audit information */
++struct netlbl_audit {
++	u32 secid;
++	uid_t loginuid;
++};
++
+ /* Domain mapping definition struct */
+ struct netlbl_dom_map;
+ 
+ /* Domain mapping operations */
+-int netlbl_domhsh_remove(const char *domain);
++int netlbl_domhsh_remove(const char *domain, struct netlbl_audit *audit_info);
+ 
+ /* LSM security attributes */
+ struct netlbl_lsm_cache {
+diff -Naupr linux-2.6.18.i686/net/ipv4/cipso_ipv4.c linux-2.6.18.i686/net/ipv4/cipso_ipv4.c
+--- linux-2.6.18.i686/net/ipv4/cipso_ipv4.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/ipv4/cipso_ipv4.c	2006-10-02 12:33:26.000000000 -0400
+@@ -474,6 +474,7 @@ doi_add_failure_rlock:
+ /**
+  * cipso_v4_doi_remove - Remove an existing DOI from the CIPSO protocol engine
+  * @doi: the DOI value
++ * @audit_secid: the LSM secid to use in the audit message
+  * @callback: the DOI cleanup/free callback
+  *
+  * Description:
+@@ -483,7 +484,9 @@ doi_add_failure_rlock:
+  * success and negative values on failure.
+  *
+  */
+-int cipso_v4_doi_remove(u32 doi, void (*callback) (struct rcu_head * head))
++int cipso_v4_doi_remove(u32 doi,
++			struct netlbl_audit *audit_info,
++			void (*callback) (struct rcu_head * head))
+ {
+ 	struct cipso_v4_doi *doi_def;
+ 	struct cipso_v4_domhsh_entry *dom_iter;
+@@ -502,7 +505,8 @@ int cipso_v4_doi_remove(u32 doi, void (*
+ 		spin_unlock(&cipso_v4_doi_list_lock);
+ 		list_for_each_entry_rcu(dom_iter, &doi_def->dom_list, list)
+ 			if (dom_iter->valid)
+-				netlbl_domhsh_remove(dom_iter->domain);
++				netlbl_domhsh_remove(dom_iter->domain,
++						     audit_info);
+ 		cipso_v4_cache_invalidate();
+ 		rcu_read_unlock();
+ 
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_cipso_v4.c linux-2.6.18.i686/net/netlabel/netlabel_cipso_v4.c
+--- linux-2.6.18.i686/net/netlabel/netlabel_cipso_v4.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_cipso_v4.c	2006-10-02 12:33:26.000000000 -0400
+@@ -32,6 +32,7 @@
+ #include <linux/socket.h>
+ #include <linux/string.h>
+ #include <linux/skbuff.h>
++#include <linux/audit.h>
+ #include <net/sock.h>
+ #include <net/netlink.h>
+ #include <net/genetlink.h>
+@@ -162,8 +163,7 @@ static int netlbl_cipsov4_add_std(struct
+ 	int nla_a_rem;
+ 	int nla_b_rem;
+ 
+-	if (!info->attrs[NLBL_CIPSOV4_A_DOI] ||
+-	    !info->attrs[NLBL_CIPSOV4_A_TAGLST] ||
++	if (!info->attrs[NLBL_CIPSOV4_A_TAGLST] ||
+ 	    !info->attrs[NLBL_CIPSOV4_A_MLSLVLLST])
+ 		return -EINVAL;
+ 
+@@ -344,8 +344,7 @@ static int netlbl_cipsov4_add_pass(struc
+ 	int ret_val;
+ 	struct cipso_v4_doi *doi_def = NULL;
+ 
+-	if (!info->attrs[NLBL_CIPSOV4_A_DOI] ||
+-	    !info->attrs[NLBL_CIPSOV4_A_TAGLST])
++	if (!info->attrs[NLBL_CIPSOV4_A_TAGLST])
+ 		return -EINVAL;
+ 
+ 	doi_def = kmalloc(sizeof(*doi_def), GFP_KERNEL);
+@@ -381,21 +380,40 @@ static int netlbl_cipsov4_add(struct sk_
+ 
+ {
+ 	int ret_val = -EINVAL;
+-	u32 map_type;
++	u32 type;
++	u32 doi;
++	const char *type_str = "(unknown)";
++	struct audit_buffer *audit_buf;
++	struct netlbl_audit audit_info;
+ 
+-	if (!info->attrs[NLBL_CIPSOV4_A_MTYPE])
++	if (!info->attrs[NLBL_CIPSOV4_A_DOI] ||
++	    !info->attrs[NLBL_CIPSOV4_A_MTYPE])
+ 		return -EINVAL;
+ 
+-	map_type = nla_get_u32(info->attrs[NLBL_CIPSOV4_A_MTYPE]);
+-	switch (map_type) {
++	doi = nla_get_u32(info->attrs[NLBL_CIPSOV4_A_DOI]);
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
++	type = nla_get_u32(info->attrs[NLBL_CIPSOV4_A_MTYPE]);
++	switch (type) {
+ 	case CIPSO_V4_MAP_STD:
++		type_str = "std";
+ 		ret_val = netlbl_cipsov4_add_std(info);
+ 		break;
+ 	case CIPSO_V4_MAP_PASS:
++		type_str = "pass";
+ 		ret_val = netlbl_cipsov4_add_pass(info);
+ 		break;
+ 	}
+ 
++	audit_buf = netlbl_audit_start_common(AUDIT_MAC_CIPSOV4_ADD,
++					      &audit_info);
++	audit_log_format(audit_buf,
++			 " cipso_doi=%u cipso_type=%s res=%u",
++			 doi,
++			 type_str,
++			 ret_val == 0 ? 1 : 0);
++	audit_log_end(audit_buf);
++
+ 	return ret_val;
+ }
+ 
+@@ -653,12 +671,27 @@ static int netlbl_cipsov4_listall(struct
+ static int netlbl_cipsov4_remove(struct sk_buff *skb, struct genl_info *info)
+ {
+ 	int ret_val = -EINVAL;
+-	u32 doi;
++	u32 doi = 0;
++	struct audit_buffer *audit_buf;
++	struct netlbl_audit audit_info;
+ 
+-	if (info->attrs[NLBL_CIPSOV4_A_DOI]) {
+-		doi = nla_get_u32(info->attrs[NLBL_CIPSOV4_A_DOI]);
+-		ret_val = cipso_v4_doi_remove(doi, netlbl_cipsov4_doi_free);
+-	}
++	if (!info->attrs[NLBL_CIPSOV4_A_DOI])
++		return -EINVAL;
++
++	doi = nla_get_u32(info->attrs[NLBL_CIPSOV4_A_DOI]);
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
++	ret_val = cipso_v4_doi_remove(doi,
++				      &audit_info,
++				      netlbl_cipsov4_doi_free);
++
++	audit_buf = netlbl_audit_start_common(AUDIT_MAC_CIPSOV4_DEL,
++					      &audit_info);
++	audit_log_format(audit_buf,
++			 " cipso_doi=%u res=%u",
++			 doi,
++			 ret_val == 0 ? 1 : 0);
++	audit_log_end(audit_buf);
+ 
+ 	return ret_val;
+ }
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_domainhash.c linux-2.6.18.i686/net/netlabel/netlabel_domainhash.c
+--- linux-2.6.18.i686/net/netlabel/netlabel_domainhash.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_domainhash.c	2006-10-02 12:33:26.000000000 -0400
+@@ -35,12 +35,14 @@
+ #include <linux/skbuff.h>
+ #include <linux/spinlock.h>
+ #include <linux/string.h>
++#include <linux/audit.h>
+ #include <net/netlabel.h>
+ #include <net/cipso_ipv4.h>
+ #include <asm/bug.h>
+ 
+ #include "netlabel_mgmt.h"
+ #include "netlabel_domainhash.h"
++#include "netlabel_user.h"
+ 
+ struct netlbl_domhsh_tbl {
+ 	struct list_head *tbl;
+@@ -186,6 +188,7 @@ int netlbl_domhsh_init(u32 size)
+ /**
+  * netlbl_domhsh_add - Adds a entry to the domain hash table
+  * @entry: the entry to add
++ * @audit_info: NetLabel audit information
+  *
+  * Description:
+  * Adds a new entry to the domain hash table and handles any updates to the
+@@ -193,10 +196,13 @@ int netlbl_domhsh_init(u32 size)
+  * negative on failure.
+  *
+  */
+-int netlbl_domhsh_add(struct netlbl_dom_map *entry)
++int netlbl_domhsh_add(struct netlbl_dom_map *entry,
++		      struct netlbl_audit *audit_info)
+ {
+ 	int ret_val;
+ 	u32 bkt;
++	struct audit_buffer *audit_buf;
++	char *audit_domain;
+ 
+ 	switch (entry->type) {
+ 	case NETLBL_NLTYPE_UNLABELED:
+@@ -236,6 +242,26 @@ int netlbl_domhsh_add(struct netlbl_dom_
+ 		spin_unlock(&netlbl_domhsh_def_lock);
+ 	} else
+ 		ret_val = -EINVAL;
++
++	if (entry->domain != NULL)
++		audit_domain = entry->domain;
++	else
++		audit_domain = "(default)";
++	audit_buf = netlbl_audit_start_common(AUDIT_MAC_MAP_ADD, audit_info);
++	audit_log_format(audit_buf, " nlbl_domain=%s", audit_domain);
++	switch (entry->type) {
++	case NETLBL_NLTYPE_UNLABELED:
++		audit_log_format(audit_buf, " nlbl_protocol=unlbl");
++		break;
++	case NETLBL_NLTYPE_CIPSOV4:
++		audit_log_format(audit_buf,
++				 " nlbl_protocol=cipsov4 cipso_doi=%u",
++				 entry->type_def.cipsov4->doi);
++		break;
++	}
++	audit_log_format(audit_buf, " res=%u", ret_val == 0 ? 1 : 0);
++	audit_log_end(audit_buf);
++
+ 	rcu_read_unlock();
+ 
+ 	if (ret_val != 0) {
+@@ -254,6 +280,7 @@ int netlbl_domhsh_add(struct netlbl_dom_
+ /**
+  * netlbl_domhsh_add_default - Adds the default entry to the domain hash table
+  * @entry: the entry to add
++ * @audit_info: NetLabel audit information
+  *
+  * Description:
+  * Adds a new default entry to the domain hash table and handles any updates
+@@ -261,14 +288,16 @@ int netlbl_domhsh_add(struct netlbl_dom_
+  * negative on failure.
+  *
+  */
+-int netlbl_domhsh_add_default(struct netlbl_dom_map *entry)
++int netlbl_domhsh_add_default(struct netlbl_dom_map *entry,
++			      struct netlbl_audit *audit_info)
+ {
+-	return netlbl_domhsh_add(entry);
++	return netlbl_domhsh_add(entry, audit_info);
+ }
+ 
+ /**
+  * netlbl_domhsh_remove - Removes an entry from the domain hash table
+  * @domain: the domain to remove
++ * @audit_info: NetLabel audit information
+  *
+  * Description:
+  * Removes an entry from the domain hash table and handles any updates to the
+@@ -276,10 +305,12 @@ int netlbl_domhsh_add_default(struct net
+  * negative on failure.
+  *
+  */
+-int netlbl_domhsh_remove(const char *domain)
++int netlbl_domhsh_remove(const char *domain, struct netlbl_audit *audit_info)
+ {
+ 	int ret_val = -ENOENT;
+ 	struct netlbl_dom_map *entry;
++	struct audit_buffer *audit_buf;
++	char *audit_domain;
+ 
+ 	rcu_read_lock();
+ 	if (domain != NULL)
+@@ -316,6 +347,18 @@ int netlbl_domhsh_remove(const char *dom
+ 			ret_val = -ENOENT;
+ 		spin_unlock(&netlbl_domhsh_def_lock);
+ 	}
++
++	if (entry->domain != NULL)
++		audit_domain = entry->domain;
++	else
++		audit_domain = "(default)";
++	audit_buf = netlbl_audit_start_common(AUDIT_MAC_MAP_DEL, audit_info);
++	audit_log_format(audit_buf,
++			 " nlbl_domain=%s res=%u",
++			 audit_domain,
++			 ret_val == 0 ? 1 : 0);
++	audit_log_end(audit_buf);
++
+ 	if (ret_val == 0)
+ 		call_rcu(&entry->rcu, netlbl_domhsh_free_entry);
+ 
+@@ -326,6 +369,7 @@ remove_return:
+ 
+ /**
+  * netlbl_domhsh_remove_default - Removes the default entry from the table
++ * @audit_info: NetLabel audit information
+  *
+  * Description:
+  * Removes/resets the default entry for the domain hash table and handles any
+@@ -333,9 +377,9 @@ remove_return:
+  * success, non-zero on failure.
+  *
+  */
+-int netlbl_domhsh_remove_default(void)
++int netlbl_domhsh_remove_default(struct netlbl_audit *audit_info)
+ {
+-	return netlbl_domhsh_remove(NULL);
++	return netlbl_domhsh_remove(NULL, audit_info);
+ }
+ 
+ /**
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_domainhash.h linux-2.6.18.i686/net/netlabel/netlabel_domainhash.h
+--- linux-2.6.18.i686/net/netlabel/netlabel_domainhash.h	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_domainhash.h	2006-10-02 12:33:26.000000000 -0400
+@@ -57,9 +57,11 @@ struct netlbl_dom_map {
+ int netlbl_domhsh_init(u32 size);
+ 
+ /* Manipulate the domain hash table */
+-int netlbl_domhsh_add(struct netlbl_dom_map *entry);
+-int netlbl_domhsh_add_default(struct netlbl_dom_map *entry);
+-int netlbl_domhsh_remove_default(void);
++int netlbl_domhsh_add(struct netlbl_dom_map *entry,
++		      struct netlbl_audit *audit_info);
++int netlbl_domhsh_add_default(struct netlbl_dom_map *entry,
++			      struct netlbl_audit *audit_info);
++int netlbl_domhsh_remove_default(struct netlbl_audit *audit_info);
+ struct netlbl_dom_map *netlbl_domhsh_getentry(const char *domain);
+ int netlbl_domhsh_walk(u32 *skip_bkt,
+ 		     u32 *skip_chain,
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_mgmt.c linux-2.6.18.i686/net/netlabel/netlabel_mgmt.c
+--- linux-2.6.18.i686/net/netlabel/netlabel_mgmt.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_mgmt.c	2006-10-02 12:33:26.000000000 -0400
+@@ -87,11 +87,14 @@ static int netlbl_mgmt_add(struct sk_buf
+ 	struct netlbl_dom_map *entry = NULL;
+ 	size_t tmp_size;
+ 	u32 tmp_val;
++	struct netlbl_audit audit_info;
+ 
+ 	if (!info->attrs[NLBL_MGMT_A_DOMAIN] ||
+ 	    !info->attrs[NLBL_MGMT_A_PROTOCOL])
+ 		goto add_failure;
+ 
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
+ 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+ 	if (entry == NULL) {
+ 		ret_val = -ENOMEM;
+@@ -108,7 +111,7 @@ static int netlbl_mgmt_add(struct sk_buf
+ 
+ 	switch (entry->type) {
+ 	case NETLBL_NLTYPE_UNLABELED:
+-		ret_val = netlbl_domhsh_add(entry);
++		ret_val = netlbl_domhsh_add(entry, &audit_info);
+ 		break;
+ 	case NETLBL_NLTYPE_CIPSOV4:
+ 		if (!info->attrs[NLBL_MGMT_A_CV4DOI])
+@@ -125,7 +128,7 @@ static int netlbl_mgmt_add(struct sk_buf
+ 			rcu_read_unlock();
+ 			goto add_failure;
+ 		}
+-		ret_val = netlbl_domhsh_add(entry);
++		ret_val = netlbl_domhsh_add(entry, &audit_info);
+ 		rcu_read_unlock();
+ 		break;
+ 	default:
+@@ -156,12 +159,15 @@ add_failure:
+ static int netlbl_mgmt_remove(struct sk_buff *skb, struct genl_info *info)
+ {
+ 	char *domain;
++	struct netlbl_audit audit_info;
+ 
+ 	if (!info->attrs[NLBL_MGMT_A_DOMAIN])
+ 		return -EINVAL;
+ 
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
+ 	domain = nla_data(info->attrs[NLBL_MGMT_A_DOMAIN]);
+-	return netlbl_domhsh_remove(domain);
++	return netlbl_domhsh_remove(domain, &audit_info);
+ }
+ 
+ /**
+@@ -264,10 +270,13 @@ static int netlbl_mgmt_adddef(struct sk_
+ 	int ret_val = -EINVAL;
+ 	struct netlbl_dom_map *entry = NULL;
+ 	u32 tmp_val;
++	struct netlbl_audit audit_info;
+ 
+ 	if (!info->attrs[NLBL_MGMT_A_PROTOCOL])
+ 		goto adddef_failure;
+ 
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
+ 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+ 	if (entry == NULL) {
+ 		ret_val = -ENOMEM;
+@@ -277,7 +286,7 @@ static int netlbl_mgmt_adddef(struct sk_
+ 
+ 	switch (entry->type) {
+ 	case NETLBL_NLTYPE_UNLABELED:
+-		ret_val = netlbl_domhsh_add_default(entry);
++		ret_val = netlbl_domhsh_add_default(entry, &audit_info);
+ 		break;
+ 	case NETLBL_NLTYPE_CIPSOV4:
+ 		if (!info->attrs[NLBL_MGMT_A_CV4DOI])
+@@ -294,7 +303,7 @@ static int netlbl_mgmt_adddef(struct sk_
+ 			rcu_read_unlock();
+ 			goto adddef_failure;
+ 		}
+-		ret_val = netlbl_domhsh_add_default(entry);
++		ret_val = netlbl_domhsh_add_default(entry, &audit_info);
+ 		rcu_read_unlock();
+ 		break;
+ 	default:
+@@ -322,7 +331,11 @@ adddef_failure:
+  */
+ static int netlbl_mgmt_removedef(struct sk_buff *skb, struct genl_info *info)
+ {
+-	return netlbl_domhsh_remove_default();
++	struct netlbl_audit audit_info;
++
++	netlbl_netlink_auditinfo(skb, &audit_info);
++
++	return netlbl_domhsh_remove_default(&audit_info);
+ }
+ 
+ /**
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c
+--- linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c	2006-10-02 12:33:26.000000000 -0400
+@@ -64,6 +64,34 @@ static struct nla_policy netlbl_unlabel_
+ };
+ 
+ /*
++ * Helper Functions
++ */
++
++/**
++ * netlbl_unlabel_acceptflg_set - Set the unlabeled accept flag
++ * @value: desired value
++ * @audit_info: NetLabel audit information
++ *
++ * Description:
++ * Set the value of the unlabeled accept flag to @value.
++ *
++ */
++static void netlbl_unlabel_acceptflg_set(u8 value,
++					 struct netlbl_audit *audit_info)
++{
++	struct audit_buffer *audit_buf;
++	u8 old_val;
++
++	old_val = atomic_read(&netlabel_unlabel_accept_flg);
++	atomic_set(&netlabel_unlabel_accept_flg, value);
++
++	audit_buf = netlbl_audit_start_common(AUDIT_MAC_UNLBL_ALLOW,
++					      audit_info);
++	audit_log_format(audit_buf, " unlbl_accept=%u old=%u", value, old_val);
++	audit_log_end(audit_buf);
++}
++
++/*
+  * NetLabel Command Handlers
+  */
+ 
+@@ -79,18 +107,19 @@ static struct nla_policy netlbl_unlabel_
+  */
+ static int netlbl_unlabel_accept(struct sk_buff *skb, struct genl_info *info)
+ {
+-	int ret_val = -EINVAL;
+ 	u8 value;
++	struct netlbl_audit audit_info;
+ 
+ 	if (info->attrs[NLBL_UNLABEL_A_ACPTFLG]) {
+ 		value = nla_get_u8(info->attrs[NLBL_UNLABEL_A_ACPTFLG]);
+ 		if (value == 1 || value == 0) {
+-			atomic_set(&netlabel_unlabel_accept_flg, value);
+-			ret_val = 0;
++			netlbl_netlink_auditinfo(skb, &audit_info);
++			netlbl_unlabel_acceptflg_set(value, &audit_info);
++			return 0;
+ 		}
+ 	}
+ 
+-	return ret_val;
++	return -EINVAL;
+ }
+ 
+ /**
+@@ -229,16 +258,23 @@ int netlbl_unlabel_defconf(void)
+ {
+ 	int ret_val;
+ 	struct netlbl_dom_map *entry;
++	struct netlbl_audit audit_info;
++
++	/* Only the kernel is allowed to call this function and the only time
++	 * it is called is at bootup before the audit subsystem is reporting
++	 * messages so don't worry to much about these values. */
++	security_task_getsecid(current, &audit_info.secid);
++	audit_info.loginuid = 0;
+ 
+ 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+ 	if (entry == NULL)
+ 		return -ENOMEM;
+ 	entry->type = NETLBL_NLTYPE_UNLABELED;
+-	ret_val = netlbl_domhsh_add_default(entry);
++	ret_val = netlbl_domhsh_add_default(entry, &audit_info);
+ 	if (ret_val != 0)
+ 		return ret_val;
+ 
+-	atomic_set(&netlabel_unlabel_accept_flg, 1);
++	netlbl_unlabel_acceptflg_set(1, &audit_info);
+ 
+ 	return 0;
+ }
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_user.c linux-2.6.18.i686/net/netlabel/netlabel_user.c
+--- linux-2.6.18.i686/net/netlabel/netlabel_user.c	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_user.c	2006-10-02 12:33:26.000000000 -0400
+@@ -32,6 +32,9 @@
+ #include <linux/types.h>
+ #include <linux/list.h>
+ #include <linux/socket.h>
++#include <linux/audit.h>
++#include <linux/tty.h>
++#include <linux/security.h>
+ #include <net/sock.h>
+ #include <net/netlink.h>
+ #include <net/genetlink.h>
+@@ -74,3 +77,41 @@ int netlbl_netlink_init(void)
+ 
+ 	return 0;
+ }
++
++/*
++ * NetLabel Audit Functions
++ */
++
++/**
++ * netlbl_audit_start_common - Start an audit message
++ * @type: audit message type
++ * @audit_info: NetLabel audit information
++ *
++ * Description:
++ * Start an audit message using the type specified in @type and fill the audit
++ * message with some fields common to all NetLabel audit messages.  Returns
++ * a pointer to the audit buffer on success, NULL on failure.
++ *
++ */
++struct audit_buffer *netlbl_audit_start_common(int type,
++					       struct netlbl_audit *audit_info)
++{
++	struct audit_context *audit_ctx = current->audit_context;
++	struct audit_buffer *audit_buf;
++	char *secctx;
++	u32 secctx_len;
++
++	audit_buf = audit_log_start(audit_ctx, GFP_ATOMIC, type);
++	if (audit_buf == NULL)
++		return NULL;
++
++	audit_log_format(audit_buf, "netlabel: auid=%u", audit_info->loginuid);
++
++	if (audit_info->secid != 0 &&
++	    security_secid_to_secctx(audit_info->secid,
++				     &secctx,
++				     &secctx_len) == 0)
++		audit_log_format(audit_buf, " subj=%s", secctx);
++
++	return audit_buf;
++}
+diff -Naupr linux-2.6.18.i686/net/netlabel/netlabel_user.h linux-2.6.18.i686/net/netlabel/netlabel_user.h
+--- linux-2.6.18.i686/net/netlabel/netlabel_user.h	2006-10-02 10:12:58.000000000 -0400
++++ linux-2.6.18.i686/net/netlabel/netlabel_user.h	2006-10-02 12:33:26.000000000 -0400
+@@ -34,6 +34,7 @@
+ #include <linux/types.h>
+ #include <linux/skbuff.h>
+ #include <linux/capability.h>
++#include <linux/audit.h>
+ #include <net/netlink.h>
+ #include <net/genetlink.h>
+ #include <net/netlabel.h>
+@@ -71,8 +72,25 @@ static inline void *netlbl_netlink_hdr_p
+ 			   NETLBL_PROTO_VERSION);
+ }
+ 
++/**
++ * netlbl_netlink_auditinfo - Fetch the audit information from a NETLINK msg
++ * @skb: the packet
++ * @audit_info: NetLabel audit information
++ */
++static inline void netlbl_netlink_auditinfo(struct sk_buff *skb,
++					    struct netlbl_audit *audit_info)
++{
++	audit_info->secid = NETLINK_CB(skb).sid;
++	audit_info->loginuid = NETLINK_CB(skb).loginuid;
++}
++
+ /* NetLabel NETLINK I/O functions */
+ 
+ int netlbl_netlink_init(void);
+ 
++/* NetLabel Audit Functions */
++
++struct audit_buffer *netlbl_audit_start_common(int type,
++					      struct netlbl_audit *audit_info);
++
+ #endif
+

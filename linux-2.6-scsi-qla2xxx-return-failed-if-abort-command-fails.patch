@@ -1,0 +1,36 @@
+From: Rob Evers <revers@redhat.com>
+Date: Fri, 12 Feb 2010 23:11:43 -0500
+Subject: [scsi] qla2xxx: return FAILED if abort command fails
+Message-id: <20100212231107.1962.44034.sendpatchset@localhost.localdomain>
+Patchwork-id: 23268
+O-Subject: [RHEL5.5 PATCH] qla2xxx: qla2xxx_eh_abort to return FAILED state on
+	failure, avoid double completion of command
+Bugzilla: 559972
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=559972
+
+Description (from bz):
+
+qla2xxx_eh_abort need to return FAILED in case abort command fails at the
+driver level. Otherwise the IO can be completed twice causing kernel panic.
+
+Testing:
+
+Testing of fix done by Qlogic, See bz for details.
+Also applied patch and sanity tested.
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 8c76290..fd60a05 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -819,6 +819,7 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
+ 		if (ha->isp_ops->abort_command(ha, sp)) {
+ 			DEBUG2(printk("%s(%ld): abort_command "
+ 			    "mbx failed.\n", __func__, ha->host_no));
++			ret = FAILED;
+ 		} else {
+ 			DEBUG3(printk("%s(%ld): abort_command "
+ 			    "mbx success.\n", __func__, ha->host_no));

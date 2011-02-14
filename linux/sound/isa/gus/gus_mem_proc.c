@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *  GUS's memory access via proc filesystem
  *
  *
@@ -19,6 +19,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/gus.h>
@@ -60,13 +61,13 @@ static long long snd_gf1_mem_proc_llseek(struct snd_info_entry *entry,
 	struct gus_proc_private *priv = entry->private_data;
 
 	switch (orig) {
-	case SEEK_SET:
+	case 0:	/* SEEK_SET */
 		file->f_pos = offset;
 		break;
-	case SEEK_CUR:
+	case 1:	/* SEEK_CUR */
 		file->f_pos += offset;
 		break;
-	case SEEK_END: /* offset is negative */
+	case 2: /* SEEK_END, offset is negative */
 		file->f_pos = priv->size + offset;
 		break;
 	default:

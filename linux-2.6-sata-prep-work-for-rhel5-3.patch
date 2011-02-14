@@ -1,0 +1,846 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 18 Aug 2008 10:12:00 -0500
+Subject: [sata] prep work for rhel5.3
+Message-id: 20080818151200.GA25423@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] RHEL5.3 Driver update prep
+Bugzilla: 439247 445727 450962 451586 455445
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+This patch is needed in order to sync RHEL5 sata drivers
+to 2.6.26-rc5, updating pmp support, sata_mv, and error
+handling
+
+BZ 439247
+BZ 445727
+BZ 450962
+BZ 451586
+BZ 455445
+
+Please review.
+
+Thanks,
+David
+
+ arch/alpha/lib/Makefile              |    1 -
+ arch/alpha/lib/strcasecmp.c          |   26 ----------
+ arch/powerpc/kernel/pci_64.c         |    2 +
+ arch/powerpc/kernel/ppc_ksyms.c      |    2 -
+ arch/powerpc/lib/Makefile            |    5 +-
+ arch/powerpc/lib/strcase.c           |   25 ---------
+ arch/ppc/kernel/ppc_ksyms.c          |    2 -
+ arch/ppc/lib/Makefile                |    2 +-
+ arch/ppc/lib/strcase.c               |   24 ---------
+ arch/sh/lib/Makefile                 |    2 +-
+ arch/sh/lib/strcasecmp.c             |   26 ----------
+ arch/xtensa/lib/Makefile             |    2 +-
+ arch/xtensa/lib/strcasecmp.c         |   32 ------------
+ block/ll_rw_blk.c                    |   24 +++++++++
+ drivers/base/dmapool.c               |   60 ++++++++++++++++++++++
+ drivers/media/video/bt8xx/bttvp.h    |    2 -
+ drivers/media/video/usbvideo/vicam.c |    6 --
+ drivers/pci/probe.c                  |    1 +
+ drivers/scsi/scsi_error.c            |   28 ++++++++++
+ include/asm-alpha/string.h           |    2 -
+ include/asm-powerpc/string.h         |    2 -
+ include/linux/blkdev.h               |    1 +
+ include/linux/cdrom.h                |    3 +
+ include/linux/dma-mapping.h          |   30 +++++++----
+ include/linux/dmapool.h              |    7 +++
+ include/linux/kernel.h               |   91 +++++++++++++++++++++++++++------
+ include/linux/pci.h                  |    3 +
+ include/linux/pci_ids.h              |    4 ++
+ include/linux/string.h               |    6 ++
+ include/scsi/scsi_eh.h               |    2 +
+ lib/string.c                         |   28 ++++++++++
+ 31 files changed, 268 insertions(+), 183 deletions(-)
+
+diff --git a/arch/alpha/lib/Makefile b/arch/alpha/lib/Makefile
+index 21cf624..ea098f3 100644
+--- a/arch/alpha/lib/Makefile
++++ b/arch/alpha/lib/Makefile
+@@ -36,7 +36,6 @@ lib-y =	__divqu.o __remqu.o __divlu.o __remlu.o \
+ 	$(ev6-y)csum_ipv6_magic.o \
+ 	$(ev6-y)clear_page.o \
+ 	$(ev6-y)copy_page.o \
+-	strcasecmp.o \
+ 	fpreg.o \
+ 	callback_srm.o srm_puts.o srm_printk.o
+ 
+diff --git a/arch/alpha/lib/strcasecmp.c b/arch/alpha/lib/strcasecmp.c
+deleted file mode 100644
+index 4e57a21..0000000
+--- a/arch/alpha/lib/strcasecmp.c
++++ /dev/null
+@@ -1,26 +0,0 @@
+-/*
+- *  linux/arch/alpha/lib/strcasecmp.c
+- */
+-
+-#include <linux/string.h>
+-
+-
+-/* We handle nothing here except the C locale.  Since this is used in
+-   only one place, on strings known to contain only 7 bit ASCII, this
+-   is ok.  */
+-
+-int strcasecmp(const char *a, const char *b)
+-{
+-	int ca, cb;
+-
+-	do {
+-		ca = *a++ & 0xff;
+-		cb = *b++ & 0xff;
+-		if (ca >= 'A' && ca <= 'Z')
+-			ca += 'a' - 'A';
+-		if (cb >= 'A' && cb <= 'Z')
+-			cb += 'a' - 'A';
+-	} while (ca == cb && ca != '\0');
+-
+-	return ca - cb;
+-}
+diff --git a/arch/powerpc/kernel/pci_64.c b/arch/powerpc/kernel/pci_64.c
+index 8c34e52..aae5a67 100644
+--- a/arch/powerpc/kernel/pci_64.c
++++ b/arch/powerpc/kernel/pci_64.c
+@@ -424,8 +424,10 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
+ 	sprintf(pci_name(dev), "%04x:%02x:%02x.%d", pci_domain_nr(bus),
+ 		dev->bus->number, PCI_SLOT(devfn), PCI_FUNC(devfn));
+ 	dev->class = get_int_prop(node, "class-code", 0);
++	dev->revision = get_int_prop(node, "revision-id", 0);
+ 
+ 	DBG("    class: 0x%x\n", dev->class);
++	DBG("    revision: 0x%x\n", dev->revision);
+ 
+ 	dev->current_state = 4;		/* unknown power state */
+ 	dev->error_state = pci_channel_io_normal;
+diff --git a/arch/powerpc/kernel/ppc_ksyms.c b/arch/powerpc/kernel/ppc_ksyms.c
+index 0410c99..a5de9e0 100644
+--- a/arch/powerpc/kernel/ppc_ksyms.c
++++ b/arch/powerpc/kernel/ppc_ksyms.c
+@@ -80,8 +80,6 @@ EXPORT_SYMBOL(strncpy);
+ EXPORT_SYMBOL(strcat);
+ EXPORT_SYMBOL(strlen);
+ EXPORT_SYMBOL(strcmp);
+-EXPORT_SYMBOL(strcasecmp);
+-EXPORT_SYMBOL(strncasecmp);
+ 
+ EXPORT_SYMBOL(csum_partial);
+ EXPORT_SYMBOL(csum_partial_copy_generic);
+diff --git a/arch/powerpc/lib/Makefile b/arch/powerpc/lib/Makefile
+index ff70964..19f630f 100644
+--- a/arch/powerpc/lib/Makefile
++++ b/arch/powerpc/lib/Makefile
+@@ -7,13 +7,12 @@ EXTRA_CFLAGS		+= -mno-minimal-toc
+ endif
+ 
+ ifeq ($(CONFIG_PPC_MERGE),y)
+-obj-y			:= string.o strcase.o
++obj-y			:= string.o
+ obj-$(CONFIG_PPC32)	+= div64.o copy_32.o checksum_32.o
+ endif
+ 
+ obj-$(CONFIG_PPC64)	+= checksum_64.o copypage_64.o copyuser_64.o \
+-			   memcpy_64.o usercopy_64.o mem_64.o string.o \
+-			   strcase.o
++			   memcpy_64.o usercopy_64.o mem_64.o string.o 
+ obj-$(CONFIG_PPC_ISERIES) += e2a.o
+ obj-$(CONFIG_XMON)	+= sstep.o
+ 
+diff --git a/arch/powerpc/lib/strcase.c b/arch/powerpc/lib/strcase.c
+deleted file mode 100644
+index f8ec1eb..0000000
+--- a/arch/powerpc/lib/strcase.c
++++ /dev/null
+@@ -1,25 +0,0 @@
+-#include <linux/types.h>
+-#include <linux/ctype.h>
+-#include <linux/string.h>
+-
+-int strcasecmp(const char *s1, const char *s2)
+-{
+-	int c1, c2;
+-
+-	do {
+-		c1 = tolower(*s1++);
+-		c2 = tolower(*s2++);
+-	} while (c1 == c2 && c1 != 0);
+-	return c1 - c2;
+-}
+-
+-int strncasecmp(const char *s1, const char *s2, size_t n)
+-{
+-	int c1, c2;
+-
+-	do {
+-		c1 = tolower(*s1++);
+-		c2 = tolower(*s2++);
+-	} while ((--n > 0) && c1 == c2 && c1 != 0);
+-	return c1 - c2;
+-}
+diff --git a/arch/ppc/kernel/ppc_ksyms.c b/arch/ppc/kernel/ppc_ksyms.c
+index 1e82536..6069ebd 100644
+--- a/arch/ppc/kernel/ppc_ksyms.c
++++ b/arch/ppc/kernel/ppc_ksyms.c
+@@ -93,8 +93,6 @@ EXPORT_SYMBOL(strncpy);
+ EXPORT_SYMBOL(strcat);
+ EXPORT_SYMBOL(strlen);
+ EXPORT_SYMBOL(strcmp);
+-EXPORT_SYMBOL(strcasecmp);
+-EXPORT_SYMBOL(strncasecmp);
+ EXPORT_SYMBOL(__div64_32);
+ 
+ EXPORT_SYMBOL(csum_partial);
+diff --git a/arch/ppc/lib/Makefile b/arch/ppc/lib/Makefile
+index 50358e4..422bef9 100644
+--- a/arch/ppc/lib/Makefile
++++ b/arch/ppc/lib/Makefile
+@@ -2,7 +2,7 @@
+ # Makefile for ppc-specific library files..
+ #
+ 
+-obj-y			:= checksum.o string.o strcase.o div64.o
++obj-y			:= checksum.o string.o div64.o
+ 
+ obj-$(CONFIG_8xx)	+= rheap.o
+ obj-$(CONFIG_CPM2)	+= rheap.o
+diff --git a/arch/ppc/lib/strcase.c b/arch/ppc/lib/strcase.c
+deleted file mode 100644
+index 3b0094c..0000000
+--- a/arch/ppc/lib/strcase.c
++++ /dev/null
+@@ -1,24 +0,0 @@
+-#include <linux/ctype.h>
+-#include <linux/types.h>
+-
+-int strcasecmp(const char *s1, const char *s2)
+-{
+-	int c1, c2;
+-
+-	do {
+-		c1 = tolower(*s1++);
+-		c2 = tolower(*s2++);
+-	} while (c1 == c2 && c1 != 0);
+-	return c1 - c2;
+-}
+-
+-int strncasecmp(const char *s1, const char *s2, size_t n)
+-{
+-	int c1, c2;
+-
+-	do {
+-		c1 = tolower(*s1++);
+-		c2 = tolower(*s2++);
+-	} while ((--n > 0) && c1 == c2 && c1 != 0);
+-	return c1 - c2;
+-}
+diff --git a/arch/sh/lib/Makefile b/arch/sh/lib/Makefile
+index b5681e3..0b9cca5 100644
+--- a/arch/sh/lib/Makefile
++++ b/arch/sh/lib/Makefile
+@@ -3,7 +3,7 @@
+ #
+ 
+ lib-y  = delay.o memset.o memmove.o memchr.o \
+-	 checksum.o strcasecmp.o strlen.o div64.o udivdi3.o \
++	 checksum.o strlen.o div64.o udivdi3.o \
+ 	 div64-generic.o
+ 
+ memcpy-y			:= memcpy.o
+diff --git a/arch/sh/lib/strcasecmp.c b/arch/sh/lib/strcasecmp.c
+deleted file mode 100644
+index 4e57a21..0000000
+--- a/arch/sh/lib/strcasecmp.c
++++ /dev/null
+@@ -1,26 +0,0 @@
+-/*
+- *  linux/arch/alpha/lib/strcasecmp.c
+- */
+-
+-#include <linux/string.h>
+-
+-
+-/* We handle nothing here except the C locale.  Since this is used in
+-   only one place, on strings known to contain only 7 bit ASCII, this
+-   is ok.  */
+-
+-int strcasecmp(const char *a, const char *b)
+-{
+-	int ca, cb;
+-
+-	do {
+-		ca = *a++ & 0xff;
+-		cb = *b++ & 0xff;
+-		if (ca >= 'A' && ca <= 'Z')
+-			ca += 'a' - 'A';
+-		if (cb >= 'A' && cb <= 'Z')
+-			cb += 'a' - 'A';
+-	} while (ca == cb && ca != '\0');
+-
+-	return ca - cb;
+-}
+diff --git a/arch/xtensa/lib/Makefile b/arch/xtensa/lib/Makefile
+index ed935b5..6c4fdd8 100644
+--- a/arch/xtensa/lib/Makefile
++++ b/arch/xtensa/lib/Makefile
+@@ -2,6 +2,6 @@
+ # Makefile for Xtensa-specific library files.
+ #
+ 
+-lib-y	+= memcopy.o memset.o checksum.o strcasecmp.o \
++lib-y	+= memcopy.o memset.o checksum.o \
+ 	   usercopy.o strncpy_user.o strnlen_user.o
+ lib-$(CONFIG_PCI) += pci-auto.o
+diff --git a/arch/xtensa/lib/strcasecmp.c b/arch/xtensa/lib/strcasecmp.c
+deleted file mode 100644
+index 165b2d6..0000000
+--- a/arch/xtensa/lib/strcasecmp.c
++++ /dev/null
+@@ -1,32 +0,0 @@
+-/*
+- *  linux/arch/xtensa/lib/strcasecmp.c
+- *
+- *  This file is subject to the terms and conditions of the GNU General
+- *  Public License.  See the file "COPYING" in the main directory of
+- *  this archive for more details.
+- *
+- *  Copyright (C) 2002 Tensilica Inc.
+- */
+-
+-#include <linux/string.h>
+-
+-
+-/* We handle nothing here except the C locale.  Since this is used in
+-   only one place, on strings known to contain only 7 bit ASCII, this
+-   is ok.  */
+-
+-int strcasecmp(const char *a, const char *b)
+-{
+-	int ca, cb;
+-
+-	do {
+-		ca = *a++ & 0xff;
+-		cb = *b++ & 0xff;
+-		if (ca >= 'A' && ca <= 'Z')
+-			ca += 'a' - 'A';
+-		if (cb >= 'A' && cb <= 'Z')
+-			cb += 'a' - 'A';
+-	} while (ca == cb && ca != '\0');
+-
+-	return ca - cb;
+-}
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index e7431f4..2828104 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -825,6 +825,30 @@ void blk_queue_dma_alignment(request_queue_t *q, int mask)
+ EXPORT_SYMBOL(blk_queue_dma_alignment);
+ 
+ /**
++ * blk_queue_update_dma_alignment - update dma length and memory alignment
++ * @q:     the request queue for the device
++ * @mask:  alignment mask
++ *
++ * description:
++ *    update required memory and length aligment for direct dma transactions.
++ *    If the requested alignment is larger than the current alignment, then
++ *    the current queue alignment is updated to the new value, otherwise it
++ *    is left alone.  The design of this is to allow multiple objects
++ *    (driver, device, transport etc) to set their respective
++ *    alignments without having them interfere.
++ *
++ **/
++void blk_queue_update_dma_alignment(struct request_queue *q, int mask)
++{
++	BUG_ON(mask > PAGE_SIZE);
++	
++	if (mask > q->dma_alignment)
++		q->dma_alignment = mask;
++}
++
++EXPORT_SYMBOL(blk_queue_update_dma_alignment);
++
++/**
+  * blk_queue_find_tag - find a request by its tag and queue
+  * @q:	 The request queue for the device
+  * @tag: The tag of the request
+diff --git a/drivers/base/dmapool.c b/drivers/base/dmapool.c
+index 33c5cce..2dd886d 100644
+--- a/drivers/base/dmapool.c
++++ b/drivers/base/dmapool.c
+@@ -411,3 +411,63 @@ EXPORT_SYMBOL (dma_pool_create);
+ EXPORT_SYMBOL (dma_pool_destroy);
+ EXPORT_SYMBOL (dma_pool_alloc);
+ EXPORT_SYMBOL (dma_pool_free);
++
++/*
++ * Managed DMA pool
++ */
++static void dmam_pool_release(struct device *dev, void *res)
++{
++	struct dma_pool *pool = *(struct dma_pool **)res;
++
++	dma_pool_destroy(pool);
++}
++
++static int dmam_pool_match(struct device *dev, void *res, void *match_data)
++{
++	return *(struct dma_pool **)res == match_data;
++}
++
++/**
++ * dmam_pool_create - Managed dma_pool_create()
++ * @name: name of pool, for diagnostics
++ * @dev: device that will be doing the DMA
++ * @size: size of the blocks in this pool.
++ * @align: alignment requirement for blocks; must be a power of two
++ * @allocation: returned blocks won't cross this boundary (or zero)
++ *
++ * Managed dma_pool_create().  DMA pool created with this function is
++ * automatically destroyed on driver detach.
++ */
++struct dma_pool *dmam_pool_create(const char *name, struct device *dev,
++				  size_t size, size_t align, size_t allocation)
++{
++	struct dma_pool **ptr, *pool;
++
++	ptr = devres_alloc(dmam_pool_release, sizeof(*ptr), GFP_KERNEL);
++	if (!ptr)
++		return NULL;
++
++	pool = *ptr = dma_pool_create(name, dev, size, align, allocation);
++	if (pool)
++		devres_add(dev, ptr);
++	else
++		devres_free(ptr);
++
++	return pool;
++}
++EXPORT_SYMBOL(dmam_pool_create);
++
++/**
++ * dmam_pool_destroy - Managed dma_pool_destroy()
++ * @pool: dma pool that will be destroyed
++ *
++ * Managed dma_pool_destroy().
++ */
++void dmam_pool_destroy(struct dma_pool *pool)
++{
++	struct device *dev = pool->dev;
++
++	dma_pool_destroy(pool);
++	WARN_ON(devres_destroy(dev, dmam_pool_release, dmam_pool_match, pool));
++}
++EXPORT_SYMBOL(dmam_pool_destroy);
+diff --git a/drivers/media/video/bt8xx/bttvp.h b/drivers/media/video/bt8xx/bttvp.h
+index 311c4c5..01bdeeb 100644
+--- a/drivers/media/video/bt8xx/bttvp.h
++++ b/drivers/media/video/bt8xx/bttvp.h
+@@ -74,8 +74,6 @@
+ 
+ #define UNSET (-1U)
+ 
+-#define clamp(x, low, high) min (max (low, x), high)
+-
+ /* ---------------------------------------------------------- */
+ 
+ struct bttv_tvnorm {
+diff --git a/drivers/media/video/usbvideo/vicam.c b/drivers/media/video/usbvideo/vicam.c
+index 90d48e8..37587d0 100644
+--- a/drivers/media/video/usbvideo/vicam.c
++++ b/drivers/media/video/usbvideo/vicam.c
+@@ -68,12 +68,6 @@
+ 
+ #define VICAM_HEADER_SIZE       64
+ 
+-#define clamp( x, l, h )        max_t( __typeof__( x ),         \
+-				       ( l ),                   \
+-				       min_t( __typeof__( x ),  \
+-					      ( h ),            \
+-					      ( x ) ) )
+-
+ /* Not sure what all the bytes in these char
+  * arrays do, but they're necessary to make
+  * the camera work.
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 2ad50f4..ed67dc1 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -657,6 +657,7 @@ static int pci_setup_device(struct pci_dev * dev)
+ 		dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
+ 
+ 	pci_read_config_dword(dev, PCI_CLASS_REVISION, &class);
++	dev->revision = class & 0xff;
+ 	class >>= 8;				    /* upper 3 bytes */
+ 	dev->class = class;
+ 	class >>= 8;
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index f4213c1..1d3d726 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -1911,3 +1911,31 @@ int scsi_get_sense_info_fld(const u8 * sense_buffer, int sb_len,
+ 	}
+ }
+ EXPORT_SYMBOL(scsi_get_sense_info_fld);
++
++/**
++ * scsi_build_sense_buffer - build sense data in a buffer
++ * @desc:	Sense format (non zero == descriptor format,
++ * 		0 == fixed format)
++ * @buf:	Where to build sense data
++ * @key:	Sense key
++ * @asc:	Additional sense code
++ * @ascq:	Additional sense code qualifier
++ *
++ **/
++void scsi_build_sense_buffer(int desc, u8 *buf, u8 key, u8 asc, u8 ascq)
++{
++	if (desc) {
++		buf[0] = 0x72;	/* descriptor, current */
++		buf[1] = key;
++		buf[2] = asc;
++		buf[3] = ascq;
++		buf[7] = 0;
++	} else {
++		buf[0] = 0x70;	/* fixed, current */
++		buf[2] = key;
++		buf[7] = 0xa;
++		buf[12] = asc;
++		buf[13] = ascq;
++	}
++}
++EXPORT_SYMBOL(scsi_build_sense_buffer);
+diff --git a/include/asm-alpha/string.h b/include/asm-alpha/string.h
+index 9e44fea..b02b8a2 100644
+--- a/include/asm-alpha/string.h
++++ b/include/asm-alpha/string.h
+@@ -61,8 +61,6 @@ extern void * __memsetw(void *dest, unsigned short, size_t count);
+  ? __constant_c_memset((s),0x0001000100010001UL*(unsigned short)(c),(n)) \
+  : __memsetw((s),(c),(n)))
+ 
+-extern int strcasecmp(const char *, const char *);
+-
+ #endif /* __KERNEL__ */
+ 
+ #endif /* __ALPHA_STRING_H__ */
+diff --git a/include/asm-powerpc/string.h b/include/asm-powerpc/string.h
+index faa407f..aa40f92 100644
+--- a/include/asm-powerpc/string.h
++++ b/include/asm-powerpc/string.h
+@@ -14,8 +14,6 @@
+ #define __HAVE_ARCH_MEMCMP
+ #define __HAVE_ARCH_MEMCHR
+ 
+-extern int strcasecmp(const char *, const char *);
+-extern int strncasecmp(const char *, const char *, __kernel_size_t);
+ extern char * strcpy(char *,const char *);
+ extern char * strncpy(char *,const char *, __kernel_size_t);
+ extern __kernel_size_t strlen(const char *);
+diff --git a/include/linux/blkdev.h b/include/linux/blkdev.h
+index 427b0d6..616f89a 100644
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -712,6 +712,7 @@ extern void blk_queue_segment_boundary(request_queue_t *, unsigned long);
+ extern void blk_queue_prep_rq(request_queue_t *, prep_rq_fn *pfn);
+ extern void blk_queue_merge_bvec(request_queue_t *, merge_bvec_fn *);
+ extern void blk_queue_dma_alignment(request_queue_t *, int);
++extern void blk_queue_update_dma_alignment(request_queue_t *, int);
+ extern void blk_queue_softirq_done(request_queue_t *, softirq_done_fn *);
+ extern struct backing_dev_info *blk_get_backing_dev_info(struct block_device *bdev);
+ extern int blk_queue_ordered(request_queue_t *, unsigned, prepare_flush_fn *);
+diff --git a/include/linux/cdrom.h b/include/linux/cdrom.h
+index 3c9b0bc..a57ce24 100644
+--- a/include/linux/cdrom.h
++++ b/include/linux/cdrom.h
+@@ -451,6 +451,7 @@ struct cdrom_generic_command
+ #define GPCMD_PREVENT_ALLOW_MEDIUM_REMOVAL  0x1e
+ #define GPCMD_READ_10			    0x28
+ #define GPCMD_READ_12			    0xa8
++#define GPCMD_READ_BUFFER                   0x3c
+ #define GPCMD_READ_BUFFER_CAPACITY	    0x5c
+ #define GPCMD_READ_CDVD_CAPACITY	    0x25
+ #define GPCMD_READ_CD			    0xbe
+@@ -480,7 +481,9 @@ struct cdrom_generic_command
+ #define GPCMD_TEST_UNIT_READY		    0x00
+ #define GPCMD_VERIFY_10			    0x2f
+ #define GPCMD_WRITE_10			    0x2a
++#define GPCMD_WRITE_12                      0xaa
+ #define GPCMD_WRITE_AND_VERIFY_10	    0x2e
++#define GPCMD_WRITE_BUFFER                  0x3b
+ /* This is listed as optional in ATAPI 2.6, but is (curiously) 
+  * missing from Mt. Fuji, Table 57.  It _is_ mentioned in Mt. Fuji
+  * Table 377 as an MMC command for SCSi devices though...  Most ATAPI
+diff --git a/include/linux/dma-mapping.h b/include/linux/dma-mapping.h
+index 9a663c6..897ad8e 100644
+--- a/include/linux/dma-mapping.h
++++ b/include/linux/dma-mapping.h
+@@ -13,16 +13,26 @@ enum dma_data_direction {
+ 	DMA_NONE = 3,
+ };
+ 
+-#define DMA_64BIT_MASK	0xffffffffffffffffULL
+-#define DMA_48BIT_MASK	0x0000ffffffffffffULL
+-#define DMA_40BIT_MASK	0x000000ffffffffffULL
+-#define DMA_39BIT_MASK	0x0000007fffffffffULL
+-#define DMA_32BIT_MASK	0x00000000ffffffffULL
+-#define DMA_31BIT_MASK	0x000000007fffffffULL
+-#define DMA_30BIT_MASK	0x000000003fffffffULL
+-#define DMA_29BIT_MASK	0x000000001fffffffULL
+-#define DMA_28BIT_MASK	0x000000000fffffffULL
+-#define DMA_24BIT_MASK	0x0000000000ffffffULL
++#define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
++
++/*
++ * NOTE: do not use the below macros in new code and do not add new definitions
++ * here.
++ *
++ * Instead, just open-code DMA_BIT_MASK(n) within your driver
++ */
++#define DMA_64BIT_MASK	DMA_BIT_MASK(64)
++#define DMA_48BIT_MASK	DMA_BIT_MASK(48)
++#define DMA_47BIT_MASK	DMA_BIT_MASK(47)
++#define DMA_40BIT_MASK	DMA_BIT_MASK(40)
++#define DMA_39BIT_MASK	DMA_BIT_MASK(39)
++#define DMA_35BIT_MASK	DMA_BIT_MASK(35)
++#define DMA_32BIT_MASK	DMA_BIT_MASK(32)
++#define DMA_31BIT_MASK	DMA_BIT_MASK(31)
++#define DMA_30BIT_MASK	DMA_BIT_MASK(30)
++#define DMA_29BIT_MASK	DMA_BIT_MASK(29)
++#define DMA_28BIT_MASK	DMA_BIT_MASK(28)
++#define DMA_24BIT_MASK	DMA_BIT_MASK(24)
+ 
+ static inline int valid_dma_direction(int dma_direction)
+ {
+diff --git a/include/linux/dmapool.h b/include/linux/dmapool.h
+index 76f12f4..022e34f 100644
+--- a/include/linux/dmapool.h
++++ b/include/linux/dmapool.h
+@@ -24,5 +24,12 @@ void *dma_pool_alloc(struct dma_pool *pool, gfp_t mem_flags,
+ 
+ void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t addr);
+ 
++/*
++ * Managed DMA pool
++ */
++struct dma_pool *dmam_pool_create(const char *name, struct device *dev,
++				  size_t size, size_t align, size_t allocation);
++void dmam_pool_destroy(struct dma_pool *pool);
++
+ #endif
+ 
+diff --git a/include/linux/kernel.h b/include/linux/kernel.h
+index 69d8ac8..63f688d 100644
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -282,33 +282,90 @@ extern void print_hex_dump_bytes(const char *prefix_str, int prefix_type,
+ #endif /* __LITTLE_ENDIAN */
+ 
+ /*
+- * min()/max() macros that also do
++ * min()/max()/clamp() macros that also do
+  * strict type-checking.. See the
+  * "unnecessary" pointer comparison.
+  */
+-#define min(x,y) ({ \
+-	typeof(x) _x = (x);	\
+-	typeof(y) _y = (y);	\
+-	(void) (&_x == &_y);		\
+-	_x < _y ? _x : _y; })
+-
+-#define max(x,y) ({ \
+-	typeof(x) _x = (x);	\
+-	typeof(y) _y = (y);	\
+-	(void) (&_x == &_y);		\
+-	_x > _y ? _x : _y; })
++#define min(x, y) ({				\
++	typeof(x) _min1 = (x);			\
++	typeof(y) _min2 = (y);			\
++	(void) (&_min1 == &_min2);		\
++	_min1 < _min2 ? _min1 : _min2; })
++
++#define max(x, y) ({				\
++	typeof(x) _max1 = (x);			\
++	typeof(y) _max2 = (y);			\
++	(void) (&_max1 == &_max2);		\
++	_max1 > _max2 ? _max1 : _max2; })
++
++/**
++ * clamp - return a value clamped to a given range with strict typechecking
++ * @val: current value
++ * @min: minimum allowable value
++ * @max: maximum allowable value
++ *
++ * This macro does strict typechecking of min/max to make sure they are of the
++ * same type as val.  See the unnecessary pointer comparisons.
++ */
++#define clamp(val, min, max) ({			\
++	typeof(val) __val = (val);		\
++	typeof(min) __min = (min);		\
++	typeof(max) __max = (max);		\
++	(void) (&__val == &__min);		\
++	(void) (&__val == &__max);		\
++	__val = __val < __min ? __min: __val;	\
++	__val > __max ? __max: __val; })
+ 
+ /*
+  * ..and if you can't take the strict
+  * types, you can specify one yourself.
+  *
+- * Or not use min/max at all, of course.
++ * Or not use min/max/clamp at all, of course.
++ */
++#define min_t(type, x, y) ({			\
++	type __min1 = (x);			\
++	type __min2 = (y);			\
++	__min1 < __min2 ? __min1: __min2; })
++
++#define max_t(type, x, y) ({			\
++	type __max1 = (x);			\
++	type __max2 = (y);			\
++	__max1 > __max2 ? __max1: __max2; })
++
++/**
++ * clamp_t - return a value clamped to a given range using a given type
++ * @type: the type of variable to use
++ * @val: current value
++ * @min: minimum allowable value
++ * @max: maximum allowable value
++ *
++ * This macro does no typechecking and uses temporary variables of type
++ * 'type' to make all the comparisons.
+  */
+-#define min_t(type,x,y) \
+-	({ type __x = (x); type __y = (y); __x < __y ? __x: __y; })
+-#define max_t(type,x,y) \
+-	({ type __x = (x); type __y = (y); __x > __y ? __x: __y; })
++#define clamp_t(type, val, min, max) ({		\
++	type __val = (val);			\
++	type __min = (min);			\
++	type __max = (max);			\
++	__val = __val < __min ? __min: __val;	\
++	__val > __max ? __max: __val; })
+ 
++/**
++ * clamp_val - return a value clamped to a given range using val's type
++ * @val: current value
++ * @min: minimum allowable value
++ * @max: maximum allowable value
++ *
++ * This macro does no typechecking and uses temporary variables of whatever
++ * type the input argument 'val' is.  This is useful when val is an unsigned
++ * type and min and max are literals that will otherwise be assigned a signed
++ * integer type.
++ */
++#define clamp_val(val, min, max) ({		\
++	typeof(val) __val = (val);		\
++	typeof(val) __min = (min);		\
++	typeof(val) __max = (max);		\
++	__val = __val < __min ? __min: __val;	\
++	__val > __max ? __max: __val; })
+ 
+ /**
+  * container_of - cast a member of a structure out to the containing structure
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 50e036d..68ac37b 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -189,6 +189,9 @@ struct pci_dev {
+ 	struct bin_attribute *rom_attr; /* attribute descriptor for sysfs ROM entry */
+ 	int rom_attr_enabled;		/* has display of the rom attribute been enabled? */
+ 	struct bin_attribute *res_attr[DEVICE_COUNT_RESOURCE]; /* sysfs file for resources */
++#ifndef __GENKSYMS__
++	u8              revision;       /* PCI revision, low byte of class word */
++#endif
+ };
+ 
+ #define pci_dev_g(n) list_entry(n, struct pci_dev, global_list)
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index f3b9410..ca2680c 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -2041,6 +2041,9 @@
+ #define PCI_VENDOR_ID_NETCELL		0x169c
+ #define PCI_DEVICE_ID_REVOLUTION	0x0044
+ 
++#define PCI_VENDOR_ID_CENATEK           0x16CA
++#define PCI_DEVICE_ID_CENATEK_IDE       0x0001
++
+ #define PCI_VENDOR_ID_VITESSE		0x1725
+ #define PCI_DEVICE_ID_VITESSE_VSC7174	0x7174
+ 
+@@ -2312,6 +2315,7 @@
+ #define PCI_DEVICE_ID_INTEL_82443GX_0	0x71a0
+ #define PCI_DEVICE_ID_INTEL_82443GX_2	0x71a2
+ #define PCI_DEVICE_ID_INTEL_82372FB_1	0x7601
++#define PCI_DEVICE_ID_INTEL_SCH_IDE     0x811a
+ #define PCI_DEVICE_ID_INTEL_82454GX	0x84c4
+ #define PCI_DEVICE_ID_INTEL_82450GX	0x84c5
+ #define PCI_DEVICE_ID_INTEL_82451NX	0x84ca
+diff --git a/include/linux/string.h b/include/linux/string.h
+index e4c7558..4a20c32 100644
+--- a/include/linux/string.h
++++ b/include/linux/string.h
+@@ -47,6 +47,12 @@ extern int strncmp(const char *,const char *,__kernel_size_t);
+ #ifndef __HAVE_ARCH_STRNICMP
+ extern int strnicmp(const char *, const char *, __kernel_size_t);
+ #endif
++#ifndef __HAVE_ARCH_STRCASECMP
++extern int strcasecmp(const char *s1, const char *s2);
++#endif
++#ifndef __HAVE_ARCH_STRNCASECMP
++extern int strncasecmp(const char *s1, const char *s2, size_t n);
++#endif
+ #ifndef __HAVE_ARCH_STRCHR
+ extern char * strchr(const char *,int);
+ #endif
+diff --git a/include/scsi/scsi_eh.h b/include/scsi/scsi_eh.h
+index c5c0f67..ffa90d3 100644
+--- a/include/scsi/scsi_eh.h
++++ b/include/scsi/scsi_eh.h
+@@ -55,6 +55,8 @@ extern const u8 * scsi_sense_desc_find(const u8 * sense_buffer, int sb_len,
+ 
+ extern int scsi_get_sense_info_fld(const u8 * sense_buffer, int sb_len,
+ 				   u64 * info_out);
++
++extern void scsi_build_sense_buffer(int desc, u8 *buf, u8 key, u8 asc, u8 ascq);
+  
+ /*
+  * Reset request from external source
+diff --git a/lib/string.c b/lib/string.c
+index 6307726..cbae612 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -60,6 +60,34 @@ int strnicmp(const char *s1, const char *s2, size_t len)
+ EXPORT_SYMBOL(strnicmp);
+ #endif
+ 
++#ifndef __HAVE_ARCH_STRCASECMP
++int strcasecmp(const char *s1, const char *s2)
++{
++	int c1, c2;
++
++	do {
++		c1 = tolower(*s1++);
++		c2 = tolower(*s2++);
++	} while (c1 == c2 && c1 != 0);
++	return c1 - c2;
++}
++EXPORT_SYMBOL(strcasecmp);
++#endif
++
++#ifndef __HAVE_ARCH_STRNCASECMP
++int strncasecmp(const char *s1, const char *s2, size_t n)
++{
++	int c1, c2;
++
++	do {
++		c1 = tolower(*s1++);
++		c2 = tolower(*s2++);
++	} while ((--n > 0) && c1 == c2 && c1 != 0);
++	return c1 - c2;
++}
++EXPORT_SYMBOL(strncasecmp);
++#endif
++
+ #ifndef __HAVE_ARCH_STRCPY
+ /**
+  * strcpy - Copy a %NUL terminated string

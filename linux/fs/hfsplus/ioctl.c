@@ -14,7 +14,6 @@
 
 #include <linux/capability.h>
 #include <linux/fs.h>
-#include <linux/mount.h>
 #include <linux/sched.h>
 #include <linux/xattr.h>
 #include <asm/uaccess.h>
@@ -29,63 +28,55 @@ int hfsplus_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 	case HFSPLUS_IOC_EXT2_GETFLAGS:
 		flags = 0;
 		if (HFSPLUS_I(inode).rootflags & HFSPLUS_FLG_IMMUTABLE)
-			flags |= FS_IMMUTABLE_FL; /* EXT2_IMMUTABLE_FL */
+			flags |= EXT2_FLAG_IMMUTABLE; /* EXT2_IMMUTABLE_FL */
 		if (HFSPLUS_I(inode).rootflags & HFSPLUS_FLG_APPEND)
-			flags |= FS_APPEND_FL; /* EXT2_APPEND_FL */
+			flags |= EXT2_FLAG_APPEND; /* EXT2_APPEND_FL */
 		if (HFSPLUS_I(inode).userflags & HFSPLUS_FLG_NODUMP)
-			flags |= FS_NODUMP_FL; /* EXT2_NODUMP_FL */
+			flags |= EXT2_FLAG_NODUMP; /* EXT2_NODUMP_FL */
 		return put_user(flags, (int __user *)arg);
 	case HFSPLUS_IOC_EXT2_SETFLAGS: {
-		int err = 0;
-		err = mnt_want_write(filp->f_path.mnt);
-		if (err)
-			return err;
+		if (IS_RDONLY(inode))
+			return -EROFS;
 
-		if (!is_owner_or_cap(inode)) {
-			err = -EACCES;
-			goto setflags_out;
-		}
-		if (get_user(flags, (int __user *)arg)) {
-			err = -EFAULT;
-			goto setflags_out;
-		}
-		if (flags & (FS_IMMUTABLE_FL|FS_APPEND_FL) ||
+		if ((current->fsuid != inode->i_uid) && !capable(CAP_FOWNER))
+			return -EACCES;
+
+		if (get_user(flags, (int __user *)arg))
+			return -EFAULT;
+
+		if (flags & (EXT2_FLAG_IMMUTABLE|EXT2_FLAG_APPEND) ||
 		    HFSPLUS_I(inode).rootflags & (HFSPLUS_FLG_IMMUTABLE|HFSPLUS_FLG_APPEND)) {
-			if (!capable(CAP_LINUX_IMMUTABLE)) {
-				err = -EPERM;
-				goto setflags_out;
-			}
+			if (!capable(CAP_LINUX_IMMUTABLE))
+				return -EPERM;
 		}
 
 		/* don't silently ignore unsupported ext2 flags */
-		if (flags & ~(FS_IMMUTABLE_FL|FS_APPEND_FL|FS_NODUMP_FL)) {
-			err = -EOPNOTSUPP;
-			goto setflags_out;
-		}
-		if (flags & FS_IMMUTABLE_FL) { /* EXT2_IMMUTABLE_FL */
+		if (flags & ~(EXT2_FLAG_IMMUTABLE|EXT2_FLAG_APPEND|
+			      EXT2_FLAG_NODUMP))
+			return -EOPNOTSUPP;
+
+		if (flags & EXT2_FLAG_IMMUTABLE) { /* EXT2_IMMUTABLE_FL */
 			inode->i_flags |= S_IMMUTABLE;
 			HFSPLUS_I(inode).rootflags |= HFSPLUS_FLG_IMMUTABLE;
 		} else {
 			inode->i_flags &= ~S_IMMUTABLE;
 			HFSPLUS_I(inode).rootflags &= ~HFSPLUS_FLG_IMMUTABLE;
 		}
-		if (flags & FS_APPEND_FL) { /* EXT2_APPEND_FL */
+		if (flags & EXT2_FLAG_APPEND) { /* EXT2_APPEND_FL */
 			inode->i_flags |= S_APPEND;
 			HFSPLUS_I(inode).rootflags |= HFSPLUS_FLG_APPEND;
 		} else {
 			inode->i_flags &= ~S_APPEND;
 			HFSPLUS_I(inode).rootflags &= ~HFSPLUS_FLG_APPEND;
 		}
-		if (flags & FS_NODUMP_FL) /* EXT2_NODUMP_FL */
+		if (flags & EXT2_FLAG_NODUMP) /* EXT2_NODUMP_FL */
 			HFSPLUS_I(inode).userflags |= HFSPLUS_FLG_NODUMP;
 		else
 			HFSPLUS_I(inode).userflags &= ~HFSPLUS_FLG_NODUMP;
 
 		inode->i_ctime = CURRENT_TIME_SEC;
 		mark_inode_dirty(inode);
-setflags_out:
-		mnt_drop_write(filp->f_path.mnt);
-		return err;
+		return 0;
 	}
 	default:
 		return -ENOTTY;

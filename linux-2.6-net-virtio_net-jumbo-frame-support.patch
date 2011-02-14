@@ -1,0 +1,60 @@
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Wed, 26 Nov 2008 17:40:56 +0000
+Subject: [net] virtio_net: jumbo frame support
+Message-id: 1227721256.24571.3.camel@blaa
+O-Subject: [RHEL5.3 PATCH] virtio_net: jumbo frame support
+Bugzilla: 473114
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+https://bugzilla.redhat.com/473114
+
+This is a trivial patch to allow users to configure virtio_net with
+an MTU larger than 1500 bytes.
+
+We don't really have a max tx frame size limit, so there should be
+nothing preventing us supporting larger frames.
+
+Patch sent upstream here:
+
+  http://kerneltrap.org/mailarchive/linux-netdev/2008/11/26/4239974
+
+Tested locally with no obvious problems; the performance team has
+tested this too and found that using jumbo frames (9000 byte MTU) can
+improve external->guest throughput by over 300%.
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 8e8da1d..06763b9 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -505,6 +505,17 @@ static struct ethtool_ops virtnet_ethtool_ops = {
+ 	.get_tso = ethtool_op_get_tso,
+ };
+ 
++#define MIN_MTU 68
++#define MAX_MTU 65535
++
++static int virtnet_change_mtu(struct net_device *dev, int new_mtu)
++{
++	if (new_mtu < MIN_MTU || new_mtu > MAX_MTU)
++		return -EINVAL;
++	dev->mtu = new_mtu;
++	return 0;
++}
++
+ static int virtnet_probe(struct virtio_device *vdev)
+ {
+ 	int err;
+@@ -521,6 +532,7 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 	dev->stop = virtnet_close;
+ 	dev->hard_start_xmit = start_xmit;
+ 	dev->get_stats = virtnet_get_stats;
++	dev->change_mtu = virtnet_change_mtu;
+ 	dev->features = NETIF_F_HIGHDMA;
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	dev->poll_controller = virtnet_netpoll;

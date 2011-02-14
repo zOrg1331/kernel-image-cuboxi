@@ -1,0 +1,127 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz242937 [ppc] Cope with PCI host bridge I/O window 	not starting at 0
+Date: Thu, 26 Jul 2007 15:26:25 -0400 (EDT)
+Bugzilla: 242937
+Message-Id: <Pine.LNX.4.64.0707261525080.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] Cope with PCI host bridge I/O window not starting at 0
+
+
+Reposting with correct bug in subject.
+
+RHBZ#: 242937
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242937
+
+Description:
+------------
+Currently our code to set up the data structures for a PCI host bridge and
+create the mapping for its I/O window assumes that the window starts at I/O
+port 0 on the PCI side.  If this is not true, we can end up with I/O port
+numbers in the resources for PCI devices which will cause an oops if a driver
+tries to access them via inb/outb etc., because there is no mapping for the
+corresponding addresses.
+
+Normally the I/O window starts at 0, but there are some situations on
+partitioned machines with a hypervisor where the window may not start
+at 0.
+
+Certain Intel e1000 chips require special reset using port I/O. The ports
+are not correctly mapped in ppc64. Although the bug was found in e1000
+tests, the problem is not limited to legacy ethernet adapters. It will hit
+every I/O adapter using port I/O.  In the e1000 case, the result is kernel
+oops.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5.
+
+Upstream Status:
+----------------
+This patch is a combination of the following upstream git commits:
+  11fbb00c67e19737757e747ec7dd3ba8d584f5d1
+  31e92e0a1f40ecbef415cd99dc886b14963dc594
+
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [1].
+
+This kernel build was verified by Ryan Hong of IBM.  A e1000 device that was
+would cause kernel oops without the patch was successfully used with this
+patched kernel.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=887483
+
+---
+Index: linux-2.6.18.ppc64/arch/powerpc/kernel/pci_64.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/kernel/pci_64.c
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/pci_64.c
+@@ -1031,8 +1031,9 @@ void __devinit pci_process_bridge_OF_ran
+ 
+ 		switch ((pci_space >> 24) & 0x3) {
+ 		case 1:		/* I/O space */
+-			hose->io_base_phys = cpu_phys_addr;
+-			hose->pci_io_size = size;
++			hose->io_base_phys = cpu_phys_addr - pci_addr;
++			/* handle from 0 to top of I/O window */
++			hose->pci_io_size = pci_addr + size;
+ 
+ 			res = &hose->io_resource;
+ 			res->flags = IORESOURCE_IO;
+@@ -1122,35 +1123,24 @@ static int get_bus_io_range(struct pci_b
+ 				unsigned long *start_virt, unsigned long *size)
+ {
+ 	struct pci_controller *hose = pci_bus_to_host(bus);
+-	struct pci_bus_region region;
+ 	struct resource *res;
+ 
+-	if (bus->self) {
++	if (bus->self)
+ 		res = bus->resource[0];
+-		pcibios_resource_to_bus(bus->self, &region, res);
+-		*start_phys = hose->io_base_phys + region.start;
+-		*start_virt = (unsigned long) hose->io_base_virt + 
+-				region.start;
+-		if (region.end > region.start) 
+-			*size = region.end - region.start + 1;
+-		else {
+-			printk("%s(): unexpected region 0x%lx->0x%lx\n", 
+-					__FUNCTION__, region.start, region.end);
+-			return 1;
+-		}
+-		
+-	} else {
++	else
+ 		/* Root Bus */
+ 		res = &hose->io_resource;
+-		*start_phys = hose->io_base_phys;
+-		*start_virt = (unsigned long) hose->io_base_virt;
+-		if (res->end > res->start)
+-			*size = res->end - res->start + 1;
+-		else {
+-			printk("%s(): unexpected region 0x%lx->0x%lx\n", 
+-					__FUNCTION__, res->start, res->end);
+-			return 1;
+-		}
++
++	*start_virt = pci_io_base + res->start;
++	*start_phys = *start_virt + hose->io_base_phys
++		- (unsigned long) hose->io_base_virt;
++
++	if (res->end > res->start)
++		*size = res->end - res->start + 1;
++	else {
++		printk("%s(): unexpected region 0x%lx->0x%lx\n", 
++			__FUNCTION__, res->start, res->end);
++		return 1;
+ 	}
+ 
+ 	return 0;
+

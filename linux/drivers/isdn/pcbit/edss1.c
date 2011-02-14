@@ -15,6 +15,7 @@
  *              move state/event descriptions to a user space logger
  */
 
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
 
@@ -33,6 +34,12 @@
 #include "layer2.h"
 #include "callbacks.h"
 
+
+extern void pcbit_state_change(struct pcbit_dev *, struct pcbit_chan *, 
+                               unsigned short i, unsigned short ev, 
+                               unsigned short f);
+
+extern struct pcbit_dev * dev_pcbit[MAX_PCBIT_CARDS];
 
 char * isdn_state_table[] = {
   "Closed",

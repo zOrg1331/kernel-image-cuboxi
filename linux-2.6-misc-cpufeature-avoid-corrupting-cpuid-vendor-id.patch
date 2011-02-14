@@ -1,0 +1,52 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Tue, 7 Dec 2010 19:04:22 -0500
+Subject: [misc] cpufeature: avoid corrupting cpuid vendor id
+Message-id: <1291748662-13723-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 29960
+O-Subject: [PATCH] RHEL 5.6: #568751: Avoid corrupting cpuid vendor id
+Bugzilla: 568751
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+rhbz: #568751
+
+Commit 452d4903e0904500f291a0e64ceb1087a4992ed3 added support for the AMD
+core performance boost feature. Due to an error in backporting, enabling
+the feature corrupted the cpu vendor string rather than using its own bit.
+This patch from Frank Arnold at AMD moves it into the area used by RHEL 5
+and avoids overwriting unrelated data.
+
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index 2177d41..6210947 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -80,10 +80,10 @@
+ #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
+-#define X86_FEATURE_CPB		(7*32+ 2) /* AMD Core Performance Boost  */
+ #define X86_FEATURE_EXTD_APICID	(3*32+26) /* has extended APICID (8 bits) */
+ #define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
+ #define X86_FEATURE_CLFLUSH_MONITOR (3*32+28) /* clflush reqd with monitor */
++#define X86_FEATURE_CPB		(3*32+29) /* AMD Core Performance Boost  */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index 4591c80..c11b676 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -75,9 +75,9 @@
+ #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
+-#define X86_FEATURE_CPB		(7*32+ 2) /* AMD Core Performance Boost */
+ #define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
+ #define X86_FEATURE_CLFLUSH_MONITOR (3*32+28) /* clflush reqd with monitor */
++#define X86_FEATURE_CPB		(3*32+29) /* AMD Core Performance Boost */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */

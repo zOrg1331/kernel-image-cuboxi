@@ -1,0 +1,60 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 17 Mar 2009 16:00:42 +0100
+Subject: [ptrace] audit_syscall_entry to use right syscall number
+Message-id: 20090317150042.GA594@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ488002 (CVE-2009-0834) ptrace: fix for audit_syscall_entry to use the right syscall number - REPOST
+Bugzilla: 488002
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+CVE: CVE-2009-0834
+
+BZ488002 (CVE-2009-0834)
+https://bugzilla.redhat.com/show_bug.cgi?id=488002
+
+Description:
+On x86-64, a 32-bit process (TIF_IA32) can switch to 64-bit mode with
+ljmp, and then use the "syscall" instruction to make a 64-bit system
+call.  A 64-bit process make a 32-bit system call with int $0x80.
+
+In both these cases, audit_syscall_entry() will use the wrong system
+call number table and the wrong system call argument registers.  This
+could be used to circumvent a syscall audit configuration that filters
+based on the syscall numbers or argument details.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=ccbe495caa5e604b04d5a31d7459a6f6a76a756c
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1728166
+
+Test:
+Booted on x86_64.
+
+Jirka
+
+diff --git a/arch/x86_64/kernel/ptrace.c b/arch/x86_64/kernel/ptrace.c
+index 053d9d9..f31fa47 100644
+--- a/arch/x86_64/kernel/ptrace.c
++++ b/arch/x86_64/kernel/ptrace.c
+@@ -772,6 +772,11 @@ int arch_ptrace(long *req, struct task_struct *child,
+ }
+ #endif	/* CONFIG_PTRACE */
+ 
++#if defined CONFIG_IA32_EMULATION
++# define IS_IA32	is_compat_task()
++#else
++# define IS_IA32	0
++#endif
+ 
+ asmlinkage void syscall_trace_enter(struct pt_regs *regs)
+ {
+@@ -782,7 +787,7 @@ asmlinkage void syscall_trace_enter(struct pt_regs *regs)
+ 		tracehook_report_syscall(regs, 0);
+ 
+ 	if (unlikely(current->audit_context)) {
+-		if (test_thread_flag(TIF_IA32)) {
++		if (IS_IA32) {
+ 			audit_syscall_entry(AUDIT_ARCH_I386,
+ 					    regs->orig_rax,
+ 					    regs->rbx, regs->rcx,

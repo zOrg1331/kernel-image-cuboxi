@@ -1,0 +1,90 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Wed, 23 Jan 2008 15:25:41 -0500
+Subject: [audit] ratelimit printk messages
+Message-id: 1201119941.3295.25.camel@localhost.localdomain
+O-Subject: [RHEL 5.2 PATCH] Audit: ratelimit printk messages from the audit system
+Bugzilla: 428701
+
+BZ 428701
+
+http://www.redhat.com/archives/linux-audit/2008-January/msg00069.html
+
+Just posted upstream moments ago so it isn't really 'in' anything, but
+it'll make it into 2.6.25.
+
+Some printk messages from the audit system can become excessive.  This
+patch ratelimits those messages.  It was found that messages, such as
+the audit backlog lost printk message could flood the logs to the point
+that a machine could take an nmi watchdog hit or otherwise become
+unresponsive.
+
+Signed-off-by: Eric Paris <eparis redhat com>
+
+diff --git a/kernel/audit.c b/kernel/audit.c
+index 049eec1..6cbe2cb 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -162,7 +162,8 @@ void audit_panic(const char *message)
+ 	case AUDIT_FAIL_SILENT:
+ 		break;
+ 	case AUDIT_FAIL_PRINTK:
+-		printk(KERN_ERR "audit: %s\n", message);
++		if (printk_ratelimit())
++			printk(KERN_ERR "audit: %s\n", message);
+ 		break;
+ 	case AUDIT_FAIL_PANIC:
+ 		panic("audit: %s\n", message);
+@@ -230,11 +231,13 @@ void audit_log_lost(const char *message)
+ 	}
+ 
+ 	if (print) {
+-		printk(KERN_WARNING
+-		       "audit: audit_lost=%d audit_rate_limit=%d audit_backlog_limit=%d\n",
+-		       atomic_read(&audit_lost),
+-		       audit_rate_limit,
+-		       audit_backlog_limit);
++		if (printk_ratelimit())
++			printk(KERN_WARNING
++				"audit: audit_lost=%d audit_rate_limit=%d "
++				"audit_backlog_limit=%d\n",
++				atomic_read(&audit_lost),
++				audit_rate_limit,
++				audit_backlog_limit);
+ 		audit_panic(message);
+ 	}
+ }
+@@ -417,7 +420,11 @@ static int kauditd_thread(void *dummy)
+ 					audit_pid = 0;
+ 				}
+ 			} else {
+-				printk(KERN_NOTICE "%s\n", skb->data + NLMSG_SPACE(0));
++				if (printk_ratelimit())
++					printk(KERN_NOTICE "%s\n", skb->data +
++						NLMSG_SPACE(0));
++				else
++					audit_log_lost("printk limit exceeded\n");
+ 				kfree_skb(skb);
+ 			}
+ 		} else {
+@@ -1103,7 +1110,7 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
+ 			remove_wait_queue(&audit_backlog_wait, &wait);
+ 			continue;
+ 		}
+-		if (audit_rate_check())
++		if (audit_rate_check() && printk_ratelimit())
+ 			printk(KERN_WARNING
+ 			       "audit: audit_backlog=%d > "
+ 			       "audit_backlog_limit=%d\n",
+@@ -1381,9 +1388,10 @@ void audit_log_end(struct audit_buffer *ab)
+ 			skb_queue_tail(&audit_skb_queue, ab->skb);
+ 			ab->skb = NULL;
+ 			wake_up_interruptible(&kauditd_wait);
+-		} else {
++		} else if (printk_ratelimit())
+ 			printk(KERN_NOTICE "%s\n", ab->skb->data + NLMSG_SPACE(0));
+-		}
++		else
++			audit_log_lost("printk limit exceeded\n");
+ 	}
+ 	audit_buffer_free(ab);
+ }

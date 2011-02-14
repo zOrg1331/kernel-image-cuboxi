@@ -1,0 +1,67 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:35 -0500
+Subject: [s390] wire up signald, timerfd and eventfd syscalls
+Message-id: <1259701600-23508-8-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21615
+O-Subject: [RHEL5 PATCH 07/12 v2] [S390] Wire up signald,
+	timerfd and eventfd syscalls.
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101
+
+commit 913f11ee48edfa78b531e0db9385b640fbf9f6d7
+Author: Heiko Carstens <heiko.carstens@de.ibm.com>
+Date:   Mon May 21 11:25:21 2007 +0200
+
+    [S390] Wire up signald, timerfd and eventfd syscalls.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/arch/s390/kernel/compat_wrapper.S b/arch/s390/kernel/compat_wrapper.S
+index 24b19d7..825cf05 100644
+--- a/arch/s390/kernel/compat_wrapper.S
++++ b/arch/s390/kernel/compat_wrapper.S
+@@ -1659,6 +1659,11 @@ compat_sys_vmsplice_wrapper:
+ 	llgfr	%r5,%r5			# unsigned int
+ 	jg	compat_sys_vmsplice
+ 
++	.globl	sys_eventfd_wrapper
++sys_eventfd_wrapper:
++	llgfr	%r2,%r2			# unsigned int
++	jg	sys_eventfd
++
+ 	.globl	sys_fallocate_wrapper
+ sys_fallocate_wrapper:
+ 	lgfr	%r2,%r2			# int
+diff --git a/arch/s390/kernel/syscalls.S b/arch/s390/kernel/syscalls.S
+index 4f7bc36..5dfe326 100644
+--- a/arch/s390/kernel/syscalls.S
++++ b/arch/s390/kernel/syscalls.S
+@@ -323,4 +323,7 @@ NI_SYSCALL	/* 311 sys_getcpu */
+ NI_SYSCALL	/* 312 sys_epoll_pwait */
+ NI_SYSCALL	/* 313 sys_utimes */
+ SYSCALL(s390_fallocate,sys_fallocate,sys_fallocate_wrapper)
+-
++NI_SYSCALL	/* 315 sys_utimensat */
++NI_SYSCALL	/* 316 sys_signalfd */
++NI_SYSCALL	/* 317 old sys_timer_fd */
++SYSCALL(sys_eventfd,sys_eventfd,sys_eventfd_wrapper)
+diff --git a/include/asm-s390/unistd.h b/include/asm-s390/unistd.h
+index e06a504..3d4e874 100644
+--- a/include/asm-s390/unistd.h
++++ b/include/asm-s390/unistd.h
+@@ -307,8 +307,11 @@
+ /* Number 312 is reserved for sys_epoll_pwait */
+ /* Number 313 is reserved for sys_utimes */
+ #define __NR_fallocate		314
+-
+-#define NR_syscalls 315
++/* Number 315 is reserved for sys_utimensat */
++/* Number 316 is reserved for sys_signalfd */
++/* Number 317 is reserved for sys_timerfd */
++#define __NR_eventfd		318
++#define NR_syscalls 319
+ 
+ /* 
+  * There are some system calls that are not present on 64 bit, some

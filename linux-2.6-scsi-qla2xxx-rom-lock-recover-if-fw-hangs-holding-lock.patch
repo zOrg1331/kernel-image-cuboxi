@@ -1,0 +1,108 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 3 Sep 2010 21:40:47 -0400
+Subject: [scsi] qla2xxx: rom lock recover if fw hangs holding lock
+Message-id: <20100903214047.2767.79238.sendpatchset@localhost.localdomain>
+Patchwork-id: 28152
+O-Subject: [RHEL 5.6 PATCH 9/9] qla2xxx:rom lock recovery if fw hangs while
+	holding the lock.
+Bugzilla: 619814
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+Bugzilla
+--------
+
+Bug 619814 (https://bugzilla.redhat.com/show_bug.cgi?id=619814)
+
+Upstream Status
+---------------
+
+Will be submitted upstream with our next patch submission.
+
+Description
+-----------
+
+>From a4c213d2107345662b21b036bece950a05b3f5cd Mon Sep 17 00:00:00 2001
+From: Saurav Kashyap <saurav.kashyap@qlogic.com>
+Date: Wed, 11 Aug 2010 11:49:13 +0530
+Subject: [PATCH] qla2xxx:rom lock recovery if fw hangs while holding the lock.
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_nx.c b/drivers/scsi/qla2xxx/qla_nx.c
+index 4beb14b..1ab3b22 100644
+--- a/drivers/scsi/qla2xxx/qla_nx.c
++++ b/drivers/scsi/qla2xxx/qla_nx.c
+@@ -869,8 +869,12 @@ qla82xx_rom_lock(scsi_qla_host_t *ha)
+ 		done = qla82xx_rd_32(ha, QLA82XX_PCIE_REG(PCIE_SEM2_LOCK));
+ 		if (done == 1)
+ 			break;
+-		if (timeout >= qla82xx_rom_lock_timeout)
++		if (timeout >= qla82xx_rom_lock_timeout) {
++			qla_printk(KERN_WARNING, ha,
++				"%s(%ld) Failed to acquire rom lock\n",
++				__func__, ha->host_no);
+ 			return -1;
++		}
+ 		timeout++;
+ 
+ 		/*
+@@ -974,6 +978,14 @@ qla82xx_rom_fast_read(scsi_qla_host_t *ha, int addr, int *valp)
+ 	return ret;
+ }
+ 
++static void qla82xx_rom_lock_recovery(scsi_qla_host_t *ha)
++{
++	if (qla82xx_rom_lock(ha))
++		qla_printk(KERN_INFO, ha,
++			"%s() Resetting the rom lock\n", __func__);
++	qla82xx_rom_unlock(ha);
++}
++
+ int
+ qla82xx_read_status_reg(scsi_qla_host_t *ha, uint32_t *val)
+ {
+@@ -2360,11 +2372,13 @@ qla82xx_start_firmware(scsi_qla_host_t *ha)
+ static int
+ qla82xx_device_bootstrap(scsi_qla_host_t *ha)
+ {
+-	int rval, i, timeout;
++	int rval = QLA_SUCCESS;
++	int i, timeout;
+ 	uint32_t old_count, count;
++	int need_reset = 0, peg_stuck = 1;
++
++	need_reset = qla82xx_need_reset(ha);
+ 
+-	if (qla82xx_need_reset(ha))
+-		goto dev_initialize;
+ 
+ 	old_count = qla82xx_rd_32(ha, QLA82XX_PEG_ALIVE_COUNTER);
+ 
+@@ -2373,11 +2387,27 @@ qla82xx_device_bootstrap(scsi_qla_host_t *ha)
+ 		if (timeout) {
+ 			qla82xx_wr_32(ha, QLA82XX_CRB_DEV_STATE,
+ 			    QLA82XX_DEV_FAILED);
+-			return QLA_FUNCTION_FAILED;
++			rval = QLA_FUNCTION_FAILED;
++			return rval;
+ 		}
+ 
+ 		count = qla82xx_rd_32(ha, QLA82XX_PEG_ALIVE_COUNTER);
+ 		if (count != old_count)
++			peg_stuck = 0;
++	}
++
++	if (need_reset) {
++		/* Do rom lock recovery here */
++		if (peg_stuck)
++			qla82xx_rom_lock_recovery(ha);
++		goto dev_initialize;
++	} else {
++		if (peg_stuck) {
++			/* Either we are first or recovery is in progress */
++			qla82xx_rom_lock_recovery(ha);
++			goto dev_initialize;
++		} else
++			/* Firmware already running */
+ 			goto dev_ready;
+ 	}
+ 

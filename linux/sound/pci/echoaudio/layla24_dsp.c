@@ -42,8 +42,7 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 	int err;
 
 	DE_INIT(("init_hw() - Layla24\n"));
-	if (snd_BUG_ON((subdevice_id & 0xfff0) != LAYLA24))
-		return -ENODEV;
+	snd_assert((subdevice_id & 0xfff0) == LAYLA24, return -ENODEV);
 
 	if ((err = init_dsp_comm_page(chip))) {
 		DE_INIT(("init_hw - could not initialize DSP comm page\n"));
@@ -74,8 +73,7 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 		return err;
 
 	err = set_digital_mode(chip, DIGITAL_MODE_SPDIF_RCA);
-	if (err < 0)
-		return err;
+	snd_assert(err >= 0, return err);
 	err = set_professional_spdif(chip, TRUE);
 
 	DE_INIT(("init_hw done\n"));
@@ -160,9 +158,8 @@ static int set_sample_rate(struct echoaudio *chip, u32 rate)
 {
 	u32 control_reg, clock, base_rate;
 
-	if (snd_BUG_ON(rate >= 50000 &&
-		       chip->digital_mode == DIGITAL_MODE_ADAT))
-		return -EINVAL;
+	snd_assert(rate < 50000 || chip->digital_mode != DIGITAL_MODE_ADAT,
+		   return -EINVAL);
 
 	/* Only set the clock for internal mode. */
 	if (chip->input_clock != ECHO_CLOCK_INTERNAL) {
@@ -305,11 +302,11 @@ static int switch_asic(struct echoaudio *chip, const struct firmware *asic)
 
 	/*  Check to see if this is already loaded */
 	if (asic != chip->asic_code) {
-		monitors = kmemdup(chip->comm_page->monitors,
-					MONITOR_ARRAY_SIZE, GFP_KERNEL);
+		monitors = kmalloc(MONITOR_ARRAY_SIZE, GFP_KERNEL);
 		if (! monitors)
 			return -ENOMEM;
 
+		memcpy(monitors, chip->comm_page->monitors, MONITOR_ARRAY_SIZE);
 		memset(chip->comm_page->monitors, ECHOGAIN_MUTED,
 		       MONITOR_ARRAY_SIZE);
 

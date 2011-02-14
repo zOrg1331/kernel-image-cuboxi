@@ -1,5 +1,5 @@
 /*
- * linux/include/linux/nfsd/stats.h
+ * linux/include/nfsd/stats.h
  *
  * Statistics for NFS server.
  *
@@ -10,11 +10,6 @@
 #define LINUX_NFSD_STATS_H
 
 #include <linux/nfs4.h>
-
-/* thread usage wraps very million seconds (approx one fortnight) */
-#define	NFSD_USAGE_WRAP	(HZ*1000000)
-
-#ifdef __KERNEL__
 
 struct nfsd_stats {
 	unsigned int	rchits;		/* repcache hits */
@@ -40,6 +35,10 @@ struct nfsd_stats {
 
 };
 
+/* thread usage wraps very million seconds (approx one fortnight) */
+#define	NFSD_USAGE_WRAP	(HZ*1000000)
+
+#ifdef __KERNEL__
 
 extern struct nfsd_stats	nfsdstats;
 extern struct svc_stat		nfsd_svcstats;

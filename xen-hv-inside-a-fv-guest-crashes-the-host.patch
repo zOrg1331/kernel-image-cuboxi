@@ -1,0 +1,77 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Wed, 12 Mar 2008 09:10:08 -0400
+Subject: [xen] HV inside a FV guest, crashes the host
+Message-id: 47D7D630.6050409@redhat.com
+O-Subject: [RHEL 5.2 PATCH] Fix Xen hypervisor inside a fullyvirt guest, crashes the host
+Bugzilla: 436351
+
+Fixes bz 436351
+
+The bz is a regression complaint that the Xen Hypervisor and
+dom0 coud not be run in a fully virtualized guest. This previously
+worked. The result was that the host Hypervisor would crash
+with a divide by zero error.
+
+The fix was found upstream. It prevents doing missed
+tick cacluations on one shot timers. The fix is very
+simple, but the upstream patch situation is not.
+The fix exists in patches both on the Xen unstable and
+3.1.x branches. Idelly we'd pull the 3.1.x changeset and be done
+with it, since our Hypervisor is 3.1.2. But the changeset
+as applied to the 3.1 stream gloms together other, somewhat
+related items that we do not want. Indeed even the unstable
+changeset has two sections. The first section fixes this bug and
+the second introduces yet another bug where a timer going
+off is lost (which results in a hang, and not a crash). While
+there are further changesets to fix the new problem the tack
+taken here is to only take the "fix" and not the "bug" from the
+original changeset. This minimizes our risk  by not taking
+in extra code.
+
+The upstream changeset this patch is based on is:
+  http://xenbits.xensource.com/staging/xen-unstable.hg?rev=15943
+
+For reference the 3.1 upstream changeset is:
+  http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev=15550
+with further cleanup fixes in
+  http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev=15561
+
+Brewbuild:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1208011
+
+Built locally and under brew, tested on x86_64 system.
+Problem was reproduced and fixed. New images ran both as
+the host and in the FV guest.
+
+Please review and ack.
+
+Thanks,
+ Bill
+
+# patch derived from Xen unstable:
+#changeset:   15550:03551b644e35
+#user:        Keir Fraser <keir.fraser@citrix.com>
+#date:        Wed Dec 12 14:41:39 2007 +0000
+#summary:     [HVM] Don't count "missed ticks" on one-shot timers.
+# Note that only the first part of the upstrem changeset, as the
+# second part introduces another bug.
+#
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/hvm/vpt.c b/arch/x86/hvm/vpt.c
+index 5ea7303..4762ef6 100644
+--- a/arch/x86/hvm/vpt.c
++++ b/arch/x86/hvm/vpt.c
+@@ -46,6 +46,9 @@ static void missed_ticks(struct periodic_time *pt)
+ {
+     s_time_t missed_ticks;
+ 
++    if ( pt->one_shot )
++        return;
++
+     missed_ticks = NOW() - pt->scheduled;
+     if ( missed_ticks <= 0 )
+         return;

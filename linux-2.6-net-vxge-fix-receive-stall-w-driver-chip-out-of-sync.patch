@@ -1,0 +1,157 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Sun, 22 Aug 2010 19:57:28 -0400
+Subject: [net] vxge: fix receive stall w/ driver/chip out-of-sync
+Message-id: <20100822195728.24928.31067.sendpatchset@bob-desktop>
+Patchwork-id: 27760
+O-Subject: [RHEL5.7 PATCH 1/7] vxge: Fix a receive stall due to driver being out
+	of synch with chip.
+Bugzilla: 580413
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From 18dec74c16abaa92d663dfef64ee6503e085be89 Mon Sep 17 00:00:00 2001
+From: Sreenivasa Honnur <Sreenivasa.Honnur@neterion.com>
+Date: Sun, 28 Mar 2010 22:07:34 +0000
+Subject: [PATCH 1/7] vxge: Fix a receive stall due to driver being out of synch with chip.
+
+- Fix a receive stall due to driver being out of synch with chip. In a corner
+case scenario the adapter's ring controller may return a RxD with transfer code
+of 0xC, while the host ownership bit is still set to the adapter. The driver
+needs to assume that this case where (host_ownership == 1 or adapter) and
+(transfer_code == 0xC) is valid, that is, this RxD has been returned by the
+receive ring controller but no frame data is associated with the rxd.
+
+- Restore the transfer code field of each newly replenished RxD to 0x0.
+
+- Code cleanup. Removed usage of magic numbers.
+
+Signed-off-by: Sreenivasa Honnur <sreenivasa.honnur@neterion.com>
+Signed-off-by: Ramkrishna Vepa <ram.vepa@neterion.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/vxge/vxge-traffic.c b/drivers/net/vxge/vxge-traffic.c
+index 61ce754..c1cd33a 100644
+--- a/drivers/net/vxge/vxge-traffic.c
++++ b/drivers/net/vxge/vxge-traffic.c
+@@ -878,7 +878,7 @@ void vxge_hw_ring_rxd_post_post(struct __vxge_hw_ring *ring, void *rxdh)
+ 
+ 	channel = &ring->channel;
+ 
+-	rxdp->control_0	|= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
++	rxdp->control_0	= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
+ 
+ 	if (ring->stats->common_stats.usage_cnt > 0)
+ 		ring->stats->common_stats.usage_cnt--;
+@@ -902,7 +902,7 @@ void vxge_hw_ring_rxd_post(struct __vxge_hw_ring *ring, void *rxdh)
+ 	channel = &ring->channel;
+ 
+ 	wmb();
+-	rxdp->control_0	|= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
++	rxdp->control_0	= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
+ 
+ 	vxge_hw_channel_dtr_post(channel, rxdh);
+ 
+@@ -966,6 +966,7 @@ enum vxge_hw_status vxge_hw_ring_rxd_next_completed(
+ 	struct __vxge_hw_channel *channel;
+ 	struct vxge_hw_ring_rxd_1 *rxdp;
+ 	enum vxge_hw_status status = VXGE_HW_OK;
++	u64 control_0, own;
+ 
+ 	channel = &ring->channel;
+ 
+@@ -977,8 +978,12 @@ enum vxge_hw_status vxge_hw_ring_rxd_next_completed(
+ 		goto exit;
+ 	}
+ 
++	control_0 = rxdp->control_0;
++	own = control_0 & VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
++	*t_code	= (u8)VXGE_HW_RING_RXD_T_CODE_GET(control_0);
++
+ 	/* check whether it is not the end */
+-	if (!(rxdp->control_0 &	VXGE_HW_RING_RXD_LIST_OWN_ADAPTER)) {
++	if (!own || ((*t_code == VXGE_HW_RING_T_CODE_FRM_DROP) && own)) {
+ 
+ 		vxge_assert(((struct vxge_hw_ring_rxd_1 *)rxdp)->host_control !=
+ 				0);
+@@ -986,8 +991,6 @@ enum vxge_hw_status vxge_hw_ring_rxd_next_completed(
+ 		++ring->cmpl_cnt;
+ 		vxge_hw_channel_dtr_complete(channel);
+ 
+-		*t_code	= (u8)VXGE_HW_RING_RXD_T_CODE_GET(rxdp->control_0);
+-
+ 		vxge_assert(*t_code != VXGE_HW_RING_RXD_T_CODE_UNUSED);
+ 
+ 		ring->stats->common_stats.usage_cnt++;
+@@ -1035,12 +1038,13 @@ enum vxge_hw_status vxge_hw_ring_handle_tcode(
+ 	 * such as unknown UPV6 header), Drop it !!!
+ 	 */
+ 
+-	if (t_code == 0 || t_code == 5) {
++	if (t_code ==  VXGE_HW_RING_T_CODE_OK ||
++		t_code == VXGE_HW_RING_T_CODE_L3_PKT_ERR) {
+ 		status = VXGE_HW_OK;
+ 		goto exit;
+ 	}
+ 
+-	if (t_code > 0xF) {
++	if (t_code > VXGE_HW_RING_T_CODE_MULTI_ERR) {
+ 		status = VXGE_HW_ERR_INVALID_TCODE;
+ 		goto exit;
+ 	}
+diff --git a/drivers/net/vxge/vxge-traffic.h b/drivers/net/vxge/vxge-traffic.h
+index 861c853..3c35e44 100644
+--- a/drivers/net/vxge/vxge-traffic.h
++++ b/drivers/net/vxge/vxge-traffic.h
+@@ -1866,6 +1866,51 @@ struct vxge_hw_ring_rxd_info {
+ 	u32	rth_hash_type;
+ 	u32	rth_value;
+ };
++/**
++ * enum vxge_hw_ring_tcode - Transfer codes returned by adapter
++ * @VXGE_HW_RING_T_CODE_OK: Transfer ok.
++ * @VXGE_HW_RING_T_CODE_L3_CKSUM_MISMATCH: Layer 3 checksum presentation
++ *		configuration mismatch.
++ * @VXGE_HW_RING_T_CODE_L4_CKSUM_MISMATCH: Layer 4 checksum presentation
++ *		configuration mismatch.
++ * @VXGE_HW_RING_T_CODE_L3_L4_CKSUM_MISMATCH: Layer 3 and Layer 4 checksum
++ *		presentation configuration mismatch.
++ * @VXGE_HW_RING_T_CODE_L3_PKT_ERR: Layer 3 error unparseable packet,
++ *		such as unknown IPv6 header.
++ * @VXGE_HW_RING_T_CODE_L2_FRM_ERR: Layer 2 error frame integrity
++ *		error, such as FCS or ECC).
++ * @VXGE_HW_RING_T_CODE_BUF_SIZE_ERR: Buffer size error the RxD buffer(
++ *		s) were not appropriately sized and data loss occurred.
++ * @VXGE_HW_RING_T_CODE_INT_ECC_ERR: Internal ECC error RxD corrupted.
++ * @VXGE_HW_RING_T_CODE_BENIGN_OVFLOW: Benign overflow the contents of
++ *		Segment1 exceeded the capacity of Buffer1 and the remainder
++ *		was placed in Buffer2. Segment2 now starts in Buffer3.
++ *		No data loss or errors occurred.
++ * @VXGE_HW_RING_T_CODE_ZERO_LEN_BUFF: Buffer size 0 one of the RxDs
++ *		assigned buffers has a size of 0 bytes.
++ * @VXGE_HW_RING_T_CODE_FRM_DROP: Frame dropped either due to
++ *		VPath Reset or because of a VPIN mismatch.
++ * @VXGE_HW_RING_T_CODE_UNUSED: Unused
++ * @VXGE_HW_RING_T_CODE_MULTI_ERR: Multiple errors more than one
++ *		transfer code condition occurred.
++ *
++ * Transfer codes returned by adapter.
++ */
++enum vxge_hw_ring_tcode {
++	VXGE_HW_RING_T_CODE_OK				= 0x0,
++	VXGE_HW_RING_T_CODE_L3_CKSUM_MISMATCH		= 0x1,
++	VXGE_HW_RING_T_CODE_L4_CKSUM_MISMATCH		= 0x2,
++	VXGE_HW_RING_T_CODE_L3_L4_CKSUM_MISMATCH	= 0x3,
++	VXGE_HW_RING_T_CODE_L3_PKT_ERR			= 0x5,
++	VXGE_HW_RING_T_CODE_L2_FRM_ERR			= 0x6,
++	VXGE_HW_RING_T_CODE_BUF_SIZE_ERR		= 0x7,
++	VXGE_HW_RING_T_CODE_INT_ECC_ERR			= 0x8,
++	VXGE_HW_RING_T_CODE_BENIGN_OVFLOW		= 0x9,
++	VXGE_HW_RING_T_CODE_ZERO_LEN_BUFF		= 0xA,
++	VXGE_HW_RING_T_CODE_FRM_DROP			= 0xC,
++	VXGE_HW_RING_T_CODE_UNUSED			= 0xE,
++	VXGE_HW_RING_T_CODE_MULTI_ERR			= 0xF
++};
+ 
+ /**
+  * enum enum vxge_hw_ring_hash_type - RTH hash types

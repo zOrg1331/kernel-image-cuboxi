@@ -1,0 +1,543 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 26 May 2010 13:31:00 -0400
+Subject: [net] sfc: compat header cleanups
+Message-id: <4BFD2294.8010409@redhat.com>
+Patchwork-id: 25816
+O-Subject: Re: [RHEL5 PATCH 15/27] compat.h cleanup: sfc driver changes
+Bugzilla: 546740
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+Clean up sfc driver compat header usage.
+
+Resolves 546740.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/sfc/boards.c b/drivers/net/sfc/boards.c
+index 0321fac..d5c8243 100644
+--- a/drivers/net/sfc/boards.c
++++ b/drivers/net/sfc/boards.c
+@@ -12,7 +12,6 @@
+ #include "boards.h"
+ #include "efx.h"
+ #include "workarounds.h"
+-#include "i2c_compat.h"
+ 
+ /* Macros for unpacking the board revision */
+ /* The revision info is in host byte order. */
+diff --git a/drivers/net/sfc/efx.c b/drivers/net/sfc/efx.c
+index 87d89d4..3e75d68 100644
+--- a/drivers/net/sfc/efx.c
++++ b/drivers/net/sfc/efx.c
+@@ -535,9 +535,9 @@ static void efx_remove_channel(struct efx_channel *channel)
+ 	channel->used_flags = 0;
+ }
+ 
+-void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue, int delay)
++void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue, unsigned long delay)
+ {
+-	queue_delayed_work(refill_workqueue, &rx_queue->work, delay);
++	queue_delayed_work(refill_workqueue, &rx_queue->work.work, delay);
+ }
+ 
+ /**************************************************************************
+@@ -640,9 +640,10 @@ void efx_reconfigure_port(struct efx_nic *efx)
+ /* Asynchronous efx_reconfigure_port work item. To speed up efx_flush_all()
+  * we don't efx_reconfigure_port() if the port is disabled. Care is taken
+  * in efx_stop_all() and efx_start_port() to prevent PHY events being lost */
+-static void efx_phy_work(struct work_struct *data)
++static void efx_phy_work(void *data)
+ {
+-	struct efx_nic *efx = container_of(data, struct efx_nic, phy_work);
++	struct work_struct *work = data;
++	struct efx_nic *efx = container_of(work, struct efx_nic, phy_work);
+ 
+ 	mutex_lock(&efx->mac_lock);
+ 	if (efx->port_enabled)
+@@ -650,9 +651,10 @@ static void efx_phy_work(struct work_struct *data)
+ 	mutex_unlock(&efx->mac_lock);
+ }
+ 
+-static void efx_mac_work(struct work_struct *data)
++static void efx_mac_work(void *data)
+ {
+-	struct efx_nic *efx = container_of(data, struct efx_nic, mac_work);
++	struct work_struct *work = data;
++	struct efx_nic *efx = container_of(work, struct efx_nic, mac_work);
+ 
+ 	mutex_lock(&efx->mac_lock);
+ 	if (efx->port_enabled)
+@@ -1118,7 +1120,7 @@ static void efx_start_all(struct efx_nic *efx)
+ 
+ 	/* Start hardware monitor if we're in RUNNING */
+ 	if (efx->state == STATE_RUNNING)
+-		queue_delayed_work(efx->workqueue, &efx->monitor_work,
++		queue_delayed_work(efx->workqueue, &efx->monitor_work.work,
+ 				   efx_monitor_interval);
+ }
+ 
+@@ -1133,11 +1135,9 @@ static void efx_flush_all(struct efx_nic *efx)
+ 	 * the delayed work safely rather than just flushing the queue twice
+ 	 * (which is guaranteed to flush all the work since efx_monitor(),
+ 	 * and efx_mac_work() disarm if !efx->port_enabled). */
+-	if (timer_pending(&efx->monitor_work.timer))
+-		cancel_delayed_work(&efx->monitor_work);
++	cancel_delayed_work_sync(&efx->monitor_work);
+ 	flush_workqueue(efx->workqueue);
+-	if (timer_pending(&efx->monitor_work.timer))
+-		cancel_delayed_work(&efx->monitor_work);
++	cancel_delayed_work_sync(&efx->monitor_work);
+ 	flush_workqueue(efx->workqueue);
+ 
+ 	/* efx_rx_work will disarm if !channel->enabled, so we can just
+@@ -1252,9 +1252,11 @@ void efx_init_irq_moderation(struct efx_nic *efx, int tx_usecs, int rx_usecs,
+ 
+ /* Run periodically off the general workqueue. Serialised against
+  * efx_reconfigure_port via the mac_lock */
+-static void efx_monitor(struct work_struct *data)
++static void efx_monitor(void *data)
+ {
+-	struct efx_nic *efx = container_of(data, struct efx_nic, monitor_work);
++	struct work_struct *work = data;
++	struct efx_nic *efx = container_of(work, struct efx_nic,
++					   monitor_work.work);
+ 	int rc;
+ 
+ 	EFX_TRACE(efx, "hardware monitor executing on CPU %d\n",
+@@ -1278,7 +1280,7 @@ static void efx_monitor(struct work_struct *data)
+ 	efx->mac_op->poll(efx);
+ 
+ 	mutex_unlock(&efx->mac_lock);
+-	queue_delayed_work(efx->workqueue, &efx->monitor_work,
++	queue_delayed_work(efx->workqueue, &efx->monitor_work.work,
+ 			   efx_monitor_interval);
+ }
+ 
+@@ -1570,22 +1572,6 @@ static void efx_set_multicast_list(struct net_device *net_dev)
+ 	falcon_set_multicast_hash(efx);
+ }
+ 
+-static const struct net_device_ops efx_netdev_ops = {
+-	.ndo_open		= efx_net_open,
+-	.ndo_stop		= efx_net_stop,
+-	.ndo_get_stats		= efx_net_stats,
+-	.ndo_tx_timeout		= efx_watchdog,
+-	.ndo_start_xmit		= efx_hard_start_xmit,
+-	.ndo_validate_addr	= eth_validate_addr,
+-	.ndo_do_ioctl		= efx_ioctl,
+-	.ndo_change_mtu		= efx_change_mtu,
+-	.ndo_set_mac_address	= efx_set_mac_address,
+-	.ndo_set_multicast_list = efx_set_multicast_list,
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	.ndo_poll_controller = efx_netpoll,
+-#endif
+-};
+-
+ static void efx_update_name(struct efx_nic *efx)
+ {
+ 	strcpy(efx->name, efx->net_dev->name);
+@@ -1624,7 +1610,18 @@ static int efx_register_netdev(struct efx_nic *efx)
+ 
+ 	net_dev->watchdog_timeo = 5 * HZ;
+ 	net_dev->irq = efx->pci_dev->irq;
+-	sfc_set_netdev_ops(net_dev, &efx_netdev_ops);
++	net_dev->open = efx_net_open;
++	net_dev->stop = efx_net_stop;
++	net_dev->hard_start_xmit = efx_hard_start_xmit;
++	net_dev->set_mac_address = efx_set_mac_address;
++	net_dev->get_stats = efx_net_stats;
++	net_dev->set_multicast_list = efx_set_multicast_list;
++	net_dev->change_mtu = efx_change_mtu;
++	net_dev->tx_timeout = efx_watchdog;
++	net_dev->do_ioctl = efx_ioctl;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	net_dev->poll_controller = efx_netpoll;
++#endif
+ 	SET_NETDEV_DEV(net_dev, &efx->pci_dev->dev);
+ 	SET_ETHTOOL_OPS(net_dev, &efx_ethtool_ops);
+ 
+@@ -1827,9 +1824,10 @@ out_unlock:
+ /* The worker thread exists so that code that cannot sleep can
+  * schedule a reset for later.
+  */
+-static void efx_reset_work(struct work_struct *data)
++static void efx_reset_work(void *data)
+ {
+-	struct efx_nic *nic = container_of(data, struct efx_nic, reset_work);
++	struct work_struct *work = data;
++	struct efx_nic *nic = container_of(work, struct efx_nic, reset_work);
+ 
+ 	efx_reset(nic);
+ }
+@@ -1947,10 +1945,8 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 	spin_lock_init(&efx->biu_lock);
+ 	spin_lock_init(&efx->phy_lock);
+ 	mutex_init(&efx->spi_lock);
+-	INIT_WORK(&efx->reset_work, (work_func_old_t)efx_reset_work,
+-		  &efx->reset_work);
+-	INIT_DELAYED_WORK(&efx->monitor_work, (work_func_old_t)efx_monitor,
+-			  &efx->monitor_work);
++	INIT_WORK(&efx->reset_work, efx_reset_work, &efx->reset_work);
++	INIT_DELAYED_WORK(&efx->monitor_work, efx_monitor);
+ 	efx->pci_dev = pci_dev;
+ 	efx->state = STATE_INIT;
+ 	efx->reset_pending = RESET_TYPE_NONE;
+@@ -1966,10 +1962,8 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 	efx->mac_op = &efx_dummy_mac_operations;
+ 	efx->phy_op = &efx_dummy_phy_operations;
+ 	efx->mdio.dev = net_dev;
+-	INIT_WORK(&efx->phy_work, (work_func_old_t)efx_phy_work,
+-		  &efx->phy_work);
+-	INIT_WORK(&efx->mac_work, (work_func_old_t)efx_mac_work,
+-		  &efx->mac_work);
++	INIT_WORK(&efx->phy_work, efx_phy_work, &efx->phy_work);
++	INIT_WORK(&efx->mac_work, efx_mac_work, &efx->mac_work);
+ 	atomic_set(&efx->netif_stop_count, 1);
+ 
+ 	for (i = 0; i < EFX_MAX_CHANNELS; i++) {
+@@ -1993,9 +1987,7 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 		rx_queue->channel = &efx->channel[0]; /* for safety */
+ 		rx_queue->buffer = NULL;
+ 		spin_lock_init(&rx_queue->add_lock);
+-		INIT_DELAYED_WORK(&rx_queue->work,
+-				  (work_func_old_t)efx_rx_work,
+-				  &rx_queue->work);
++		INIT_DELAYED_WORK(&rx_queue->work, efx_rx_work);
+ 	}
+ 
+ 	efx->type = type;
+diff --git a/drivers/net/sfc/efx.h b/drivers/net/sfc/efx.h
+index f65d238..4ce5176 100644
+--- a/drivers/net/sfc/efx.h
++++ b/drivers/net/sfc/efx.h
+@@ -20,7 +20,7 @@
+ #define FALCON_B_P_DEVID        0x0710
+ 
+ /* TX */
+-extern netdev_tx_t efx_xmit(struct efx_nic *efx,
++extern int efx_xmit(struct efx_nic *efx,
+ 				  struct efx_tx_queue *tx_queue,
+ 				  struct sk_buff *skb);
+ extern void efx_stop_queue(struct efx_nic *efx);
+@@ -30,7 +30,8 @@ extern void efx_wake_queue(struct efx_nic *efx);
+ extern void efx_xmit_done(struct efx_tx_queue *tx_queue, unsigned int index);
+ extern void efx_rx_packet(struct efx_rx_queue *rx_queue, unsigned int index,
+ 			  unsigned int len, bool checksummed, bool discard);
+-extern void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue, int delay);
++extern void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue,
++				   unsigned long delay);
+ 
+ /* Channels */
+ extern void efx_process_channel_now(struct efx_channel *channel);
+diff --git a/drivers/net/sfc/i2c_compat.h b/drivers/net/sfc/i2c_compat.h
+deleted file mode 100644
+index 83d2b8b..0000000
+--- a/drivers/net/sfc/i2c_compat.h
++++ /dev/null
+@@ -1,37 +0,0 @@
+-#ifndef _SFC_I2C_COMPAT_H_
+-#define _SFC_I2C_COMPAT_H_
+-
+-struct i2c_board_info {
+-	char		type[I2C_NAME_SIZE];
+-	unsigned short	addr;
+-	void		*platform_data;
+-	int		irq;
+-};
+-
+-#define I2C_BOARD_INFO(dev_type, dev_addr) \
+-        .type = dev_type, .addr = (dev_addr)
+-
+-/*
+- * These functions do not really (/un)register the i2c device.
+- * Only create a minimal i2c_client, so i2c_smbus_read_byte_data and
+- * i2c_smbus_write_byte_data can work.
+- */
+-static inline struct i2c_client *
+-i2c_new_dummy(struct i2c_adapter *adap, u16 address)
+-{
+-	struct i2c_client *client;
+-
+-	client = kzalloc(sizeof(struct i2c_client), GFP_KERNEL);
+-	if (client) {
+-		client->addr = address;
+-		client->adapter = adap;
+-	}
+-	return client;
+-}
+-
+-static inline void i2c_unregister_device(struct i2c_client *c)
+-{
+-	kfree(c);
+-}
+-
+-#endif /* _SFC_I2C_COMPAT_H_ */
+diff --git a/drivers/net/sfc/net_driver.h b/drivers/net/sfc/net_driver.h
+index b6db326..5590759 100644
+--- a/drivers/net/sfc/net_driver.h
++++ b/drivers/net/sfc/net_driver.h
+@@ -30,8 +30,6 @@
+ #include "enum.h"
+ #include "bitfield.h"
+ 
+-#include "sfc_compat.h"
+-
+ /**************************************************************************
+  *
+  * Build definitions
+diff --git a/drivers/net/sfc/rx.c b/drivers/net/sfc/rx.c
+index b4bc5b4..1cd7d78 100644
+--- a/drivers/net/sfc/rx.c
++++ b/drivers/net/sfc/rx.c
+@@ -130,7 +130,7 @@ static int efx_init_rx_buffer_skb(struct efx_rx_queue *rx_queue,
+ 					  rx_buf->data, rx_buf->len,
+ 					  PCI_DMA_FROMDEVICE);
+ 
+-	if (unlikely(pci_dma_mapping_error(efx->pci_dev, rx_buf->dma_addr))) {
++	if (unlikely(pci_dma_mapping_error(rx_buf->dma_addr))) {
+ 		dev_kfree_skb_any(rx_buf->skb);
+ 		rx_buf->skb = NULL;
+ 		return -EIO;
+@@ -172,7 +172,7 @@ static int efx_init_rx_buffer_page(struct efx_rx_queue *rx_queue,
+ 					0, efx_rx_buf_size(efx),
+ 					PCI_DMA_FROMDEVICE);
+ 
+-		if (unlikely(pci_dma_mapping_error(efx->pci_dev, dma_addr))) {
++		if (unlikely(pci_dma_mapping_error(dma_addr))) {
+ 			__free_pages(rx_buf->page, efx->rx_buffer_order);
+ 			rx_buf->page = NULL;
+ 			return -EIO;
+@@ -382,12 +382,13 @@ void efx_fast_push_rx_descriptors(struct efx_rx_queue *rx_queue)
+ 	}
+ }
+ 
+-void efx_rx_work(struct work_struct *data)
++void efx_rx_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct efx_rx_queue *rx_queue;
+ 	int rc;
+ 
+-	rx_queue = container_of(data, struct efx_rx_queue, work);
++	rx_queue = container_of(work, struct efx_rx_queue, work.work);
+ 
+ 	if (unlikely(!rx_queue->channel->enabled))
+ 		return;
+@@ -588,8 +589,6 @@ void __efx_rx_packet(struct efx_channel *channel,
+ 	/* Set the SKB flags */
+ 	skb->ip_summed = CHECKSUM_NONE;
+ 
+-	skb_record_rx_queue(skb, channel->channel);
+-
+ 	/* Pass the packet up */
+ 	netif_receive_skb(skb);
+ 
+diff --git a/drivers/net/sfc/rx.h b/drivers/net/sfc/rx.h
+index 42ee755..c02e3f5 100644
+--- a/drivers/net/sfc/rx.h
++++ b/drivers/net/sfc/rx.h
+@@ -19,7 +19,7 @@ void efx_fini_rx_queue(struct efx_rx_queue *rx_queue);
+ 
+ void efx_rx_strategy(struct efx_channel *channel);
+ void efx_fast_push_rx_descriptors(struct efx_rx_queue *rx_queue);
+-void efx_rx_work(struct work_struct *data);
++void efx_rx_work(void *work);
+ void __efx_rx_packet(struct efx_channel *channel,
+ 		     struct efx_rx_buffer *rx_buf, bool checksummed);
+ 
+diff --git a/drivers/net/sfc/selftest.c b/drivers/net/sfc/selftest.c
+index ffb5f0a..dd57ddd 100644
+--- a/drivers/net/sfc/selftest.c
++++ b/drivers/net/sfc/selftest.c
+@@ -401,7 +401,7 @@ static int efx_begin_loopback(struct efx_tx_queue *tx_queue)
+ 	struct efx_loopback_payload *payload;
+ 	struct sk_buff *skb;
+ 	int i;
+-	netdev_tx_t rc;
++	int rc;
+ 
+ 	/* Transmit N copies of buffer */
+ 	for (i = 0; i < state->packet_count; i++) {
+diff --git a/drivers/net/sfc/sfc_compat.h b/drivers/net/sfc/sfc_compat.h
+deleted file mode 100644
+index 0b4f849..0000000
+--- a/drivers/net/sfc/sfc_compat.h
++++ /dev/null
+@@ -1,70 +0,0 @@
+-#ifndef __SFC_COMPAT_H__
+-#define __SFC_COMPAT_H__
+-
+-#include <linux/etherdevice.h>
+-#include <linux/if_vlan.h>
+-#include <linux/workqueue.h>
+-
+-#define delayed_work work_struct
+-#define INIT_DELAYED_WORK INIT_WORK
+-typedef void (*work_func_old_t)(void *);
+-
+-static inline int sfc_pci_dma_mapping_error(struct pci_dev *pdev,
+-					    dma_addr_t dma_addr)
+-{
+-	return pci_dma_mapping_error(dma_addr);
+-}
+-#define pci_dma_mapping_error(pdev, dma_addr) \
+-	sfc_pci_dma_mapping_error(pdev, dma_addr)
+-
+-static inline void skb_record_rx_queue(struct sk_buff *skb, u16 rx_queue)
+-{
+-}
+-
+-typedef int netdev_tx_t;
+-
+-/*
+- * net_device_ops copied from upstream, but only the members actually
+- * used by the sfc driver.
+- */
+-struct net_device_ops {
+-	int			(*ndo_open)(struct net_device *dev);
+-	int			(*ndo_stop)(struct net_device *dev);
+-	netdev_tx_t		(*ndo_start_xmit) (struct sk_buff *skb,
+-						   struct net_device *dev);
+-	void			(*ndo_set_multicast_list)(struct net_device *dev);
+-	int			(*ndo_set_mac_address)(struct net_device *dev,
+-						       void *addr);
+-	int			(*ndo_validate_addr)(struct net_device *dev);
+-	int			(*ndo_do_ioctl)(struct net_device *dev,
+-					        struct ifreq *ifr, int cmd);
+-	int			(*ndo_change_mtu)(struct net_device *dev,
+-						  int new_mtu);
+-	void			(*ndo_tx_timeout) (struct net_device *dev);
+-	struct net_device_stats* (*ndo_get_stats)(struct net_device *dev);
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	void                    (*ndo_poll_controller)(struct net_device *dev);
+-#endif
+-};
+-
+-#define eth_validate_addr NULL
+-
+-static inline void sfc_set_netdev_ops(struct net_device *ndev,
+-	const struct net_device_ops *ndo)
+-{
+-	ndev->open               = ndo->ndo_open;
+-	ndev->stop               = ndo->ndo_stop;
+-	ndev->hard_start_xmit    = ndo->ndo_start_xmit;
+-	ndev->set_multicast_list = ndo->ndo_set_multicast_list;
+-	ndev->set_mac_address    = ndo->ndo_set_mac_address;
+-	BUG_ON(ndo->ndo_validate_addr != eth_validate_addr);
+-	ndev->do_ioctl           = ndo->ndo_do_ioctl;
+-	ndev->change_mtu         = ndo->ndo_change_mtu;
+-	ndev->tx_timeout         = ndo->ndo_tx_timeout;
+-	ndev->get_stats          = ndo->ndo_get_stats;
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	ndev->poll_controller    = ndo->ndo_poll_controller;
+-#endif
+-}
+-
+-#endif /* __SFC_COMPAT_H__ */
+diff --git a/drivers/net/sfc/sfe4001.c b/drivers/net/sfc/sfe4001.c
+index 4b03f6a..efa4db8 100644
+--- a/drivers/net/sfc/sfe4001.c
++++ b/drivers/net/sfc/sfe4001.c
+@@ -34,7 +34,6 @@
+ #include "falcon_io.h"
+ #include "mac.h"
+ #include "workarounds.h"
+-#include "i2c_compat.h"
+ 
+ /**************************************************************************
+  *
+diff --git a/drivers/net/sfc/tx.c b/drivers/net/sfc/tx.c
+index 0ad5727..1f86538 100644
+--- a/drivers/net/sfc/tx.c
++++ b/drivers/net/sfc/tx.c
+@@ -138,7 +138,7 @@ static void efx_tsoh_free(struct efx_tx_queue *tx_queue,
+  * Returns NETDEV_TX_OK or NETDEV_TX_BUSY
+  * You must hold netif_tx_lock() to call this function.
+  */
+-static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
++static int efx_enqueue_skb(struct efx_tx_queue *tx_queue,
+ 					 struct sk_buff *skb)
+ {
+ 	struct efx_nic *efx = tx_queue->efx;
+@@ -152,7 +152,7 @@ static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
+ 	unsigned int dma_len;
+ 	bool unmap_single;
+ 	int q_space, i = 0;
+-	netdev_tx_t rc = NETDEV_TX_OK;
++	int rc = NETDEV_TX_OK;
+ 
+ 	EFX_BUG_ON_PARANOID(tx_queue->write_count != tx_queue->insert_count);
+ 
+@@ -182,7 +182,7 @@ static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
+ 
+ 	/* Process all fragments */
+ 	while (1) {
+-		if (unlikely(pci_dma_mapping_error(pci_dev, dma_addr)))
++		if (unlikely(pci_dma_mapping_error(dma_addr)))
+ 			goto pci_err;
+ 
+ 		/* Store fields for marking in the per-fragment final
+@@ -353,10 +353,10 @@ static void efx_dequeue_buffers(struct efx_tx_queue *tx_queue,
+  *
+  * Context: netif_tx_lock held
+  */
+-inline netdev_tx_t efx_xmit(struct efx_nic *efx,
++inline int efx_xmit(struct efx_nic *efx,
+ 		    struct efx_tx_queue *tx_queue, struct sk_buff *skb)
+ {
+-	netdev_tx_t rc;
++	int rc;
+ 
+ 	/* Map fragments for DMA and add to TX queue */
+ 	rc = efx_enqueue_skb(tx_queue, skb);
+@@ -379,7 +379,7 @@ inline netdev_tx_t efx_xmit(struct efx_nic *efx,
+  * Note that returning anything other than NETDEV_TX_OK will cause the
+  * OS to free the skb.
+  */
+-netdev_tx_t efx_hard_start_xmit(struct sk_buff *skb,
++int efx_hard_start_xmit(struct sk_buff *skb,
+ 				      struct net_device *net_dev)
+ {
+ 	struct efx_nic *efx = netdev_priv(net_dev);
+@@ -683,8 +683,7 @@ efx_tsoh_heap_alloc(struct efx_tx_queue *tx_queue, size_t header_len)
+ 	tsoh->dma_addr = pci_map_single(tx_queue->efx->pci_dev,
+ 					TSOH_BUFFER(tsoh), header_len,
+ 					PCI_DMA_TODEVICE);
+-	if (unlikely(pci_dma_mapping_error(tx_queue->efx->pci_dev,
+-					   tsoh->dma_addr))) {
++	if (unlikely(pci_dma_mapping_error(tsoh->dma_addr))) {
+ 		kfree(tsoh);
+ 		return NULL;
+ 	}
+@@ -879,7 +878,7 @@ static int tso_get_fragment(struct tso_state *st, struct efx_nic *efx,
+ 	st->unmap_addr = pci_map_page(efx->pci_dev, frag->page,
+ 				      frag->page_offset, frag->size,
+ 				      PCI_DMA_TODEVICE);
+-	if (likely(!pci_dma_mapping_error(efx->pci_dev, st->unmap_addr))) {
++	if (likely(!pci_dma_mapping_error(st->unmap_addr))) {
+ 		st->unmap_single = false;
+ 		st->unmap_len = frag->size;
+ 		st->in_len = frag->size;
+@@ -897,7 +896,7 @@ static int tso_get_head_fragment(struct tso_state *st, struct efx_nic *efx,
+ 
+ 	st->unmap_addr = pci_map_single(efx->pci_dev, skb->data + hl,
+ 					len, PCI_DMA_TODEVICE);
+-	if (likely(!pci_dma_mapping_error(efx->pci_dev, st->unmap_addr))) {
++	if (likely(!pci_dma_mapping_error(st->unmap_addr))) {
+ 		st->unmap_single = true;
+ 		st->unmap_len = len;
+ 		st->in_len = len;
+diff --git a/drivers/net/sfc/tx.h b/drivers/net/sfc/tx.h
+index e367896..5e1cc23 100644
+--- a/drivers/net/sfc/tx.h
++++ b/drivers/net/sfc/tx.h
+@@ -18,8 +18,7 @@ void efx_remove_tx_queue(struct efx_tx_queue *tx_queue);
+ void efx_init_tx_queue(struct efx_tx_queue *tx_queue);
+ void efx_fini_tx_queue(struct efx_tx_queue *tx_queue);
+ 
+-netdev_tx_t efx_hard_start_xmit(struct sk_buff *skb,
+-				      struct net_device *net_dev);
++int efx_hard_start_xmit(struct sk_buff *skb, struct net_device *net_dev);
+ void efx_release_tx_buffers(struct efx_tx_queue *tx_queue);
+ 
+ #endif /* EFX_TX_H */

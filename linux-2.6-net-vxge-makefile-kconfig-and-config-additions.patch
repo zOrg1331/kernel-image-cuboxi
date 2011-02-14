@@ -1,0 +1,55 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 27 May 2009 15:24:38 +0200
+Subject: [net] vxge: Makefile, Kconfig and config additions
+Message-id: 20090527152438.3085ef12@brian.englab.brq.redhat.com
+O-Subject: [RHEL5.4 PATCH 3/3] vxge: Makefile, Kconfig and config additions
+Bugzilla: 453683
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+(Resending unchanged patch just to add this BZ link for Don's scripts:)
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=453683
+
+Build the vxge module.
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 86d4834..aa748d5 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2503,6 +2503,23 @@ config S2IO_NAPI
+ 
+ 	  If in doubt, say N.
+ 
++config VXGE
++	tristate "Neterion X3100 Series 10GbE PCIe Server Adapter"
++	depends on PCI && INET
++	---help---
++	  This driver supports Neterion Inc's X3100 Series 10 GbE PCIe
++	  I/O Virtualized Server Adapter.
++	  More specific information on configuring the driver is in
++	  <file:Documentation/networking/vxge.txt>.
++
++config VXGE_DEBUG_TRACE_ALL
++	bool "Enabling All Debug trace statments in driver"
++	default n
++	depends on VXGE
++	---help---
++	  Say Y here if you want to enabling all the debug trace statements in
++	  driver. By  default only few debug trace statements are enabled.
++
+ config MYRI10GE
+ 	tristate "Myricom Myri-10G Ethernet support"
+ 	depends on PCI
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index b818f7d..7020152 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -209,6 +209,7 @@ obj-$(CONFIG_R8169) += r8169.o
+ obj-$(CONFIG_AMD8111_ETH) += amd8111e.o
+ obj-$(CONFIG_IBMVETH) += ibmveth.o
+ obj-$(CONFIG_S2IO) += s2io.o
++obj-$(CONFIG_VXGE) += vxge/
+ obj-$(CONFIG_MYRI10GE) += myri10ge/
+ obj-$(CONFIG_SMC91X) += smc91x.o
+ obj-$(CONFIG_SMC911X) += smc911x.o

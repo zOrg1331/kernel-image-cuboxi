@@ -44,8 +44,7 @@ struct rw_semaphore {
 #endif
 
 #define __RWSEM_INITIALIZER(name) \
-{ 0, __SPIN_LOCK_UNLOCKED(name.wait_lock), LIST_HEAD_INIT((name).wait_list) \
-  __RWSEM_DEP_MAP_INIT(name) }
+{ 0, SPIN_LOCK_UNLOCKED, LIST_HEAD_INIT((name).wait_list) __RWSEM_DEP_MAP_INIT(name) }
 
 #define DECLARE_RWSEM(name) \
 	struct rw_semaphore name = __RWSEM_INITIALIZER(name)
@@ -60,14 +59,14 @@ do {								\
 	__init_rwsem((sem), #sem, &__key);			\
 } while (0)
 
-extern void __down_read(struct rw_semaphore *sem);
-extern int __down_read_trylock(struct rw_semaphore *sem);
-extern void __down_write(struct rw_semaphore *sem);
-extern void __down_write_nested(struct rw_semaphore *sem, int subclass);
-extern int __down_write_trylock(struct rw_semaphore *sem);
-extern void __up_read(struct rw_semaphore *sem);
-extern void __up_write(struct rw_semaphore *sem);
-extern void __downgrade_write(struct rw_semaphore *sem);
+extern void FASTCALL(__down_read(struct rw_semaphore *sem));
+extern int FASTCALL(__down_read_trylock(struct rw_semaphore *sem));
+extern void FASTCALL(__down_write(struct rw_semaphore *sem));
+extern void FASTCALL(__down_write_nested(struct rw_semaphore *sem, int subclass));
+extern int FASTCALL(__down_write_trylock(struct rw_semaphore *sem));
+extern void FASTCALL(__up_read(struct rw_semaphore *sem));
+extern void FASTCALL(__up_write(struct rw_semaphore *sem));
+extern void FASTCALL(__downgrade_write(struct rw_semaphore *sem));
 
 static inline int rwsem_is_locked(struct rw_semaphore *sem)
 {

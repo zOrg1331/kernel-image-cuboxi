@@ -1,5 +1,5 @@
 /*
- * arch/xtensa/lib/pci-auto.c
+ * arch/xtensa/kernel/pci-auto.c
  *
  * PCI autoconfiguration library
  *

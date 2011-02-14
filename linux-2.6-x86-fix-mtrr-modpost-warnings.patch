@@ -1,0 +1,156 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: BZ 226854 Fix mtrr MODPOST warnings
+Date: Tue, 3 Apr 2007 10:02:53 -0400
+Bugzilla: 226854
+Message-Id: <20070403140253.2603.81685.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86]: Fix mtrr MODPOST warnings
+
+
+__init fixes to mtrr code.
+
+Upstream patch is currently in -mm tree.
+
+Fixes MODPOST warning:
+
+WARNING: vmlinux - Section mismatch: reference to .init.text:mtrr_bp_init from .
+text between 'identify_cpu' (at offset 0xc040a38e) and 'detect_ht'
+
+Resolves BZ 226854.
+
+Successfully tested by me.
+
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/amd.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/amd.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/amd.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/amd.c	2007-02-28 14:00:44.000000000 -0500
+@@ -112,7 +112,7 @@ static struct mtrr_ops amd_mtrr_ops = {
+ 	.have_wrcomb       = positive_have_wrcomb,
+ };
+ 
+-int __init amd_init_mtrr(void)
++int __cpuinit amd_init_mtrr(void)
+ {
+ 	set_mtrr_ops(&amd_mtrr_ops);
+ 	return 0;
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/centaur.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/centaur.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/centaur.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/centaur.c	2007-02-28 14:00:51.000000000 -0500
+@@ -214,7 +214,7 @@ static struct mtrr_ops centaur_mtrr_ops 
+ 	.have_wrcomb       = positive_have_wrcomb,
+ };
+ 
+-int __init centaur_init_mtrr(void)
++int __cpuinit centaur_init_mtrr(void)
+ {
+ 	set_mtrr_ops(&centaur_mtrr_ops);
+ 	return 0;
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/cyrix.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/cyrix.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/cyrix.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/cyrix.c	2007-02-28 14:01:03.000000000 -0500
+@@ -355,7 +355,7 @@ static struct mtrr_ops cyrix_mtrr_ops = 
+ 	.have_wrcomb       = positive_have_wrcomb,
+ };
+ 
+-int __init cyrix_init_mtrr(void)
++int __cpuinit cyrix_init_mtrr(void)
+ {
+ 	set_mtrr_ops(&cyrix_mtrr_ops);
+ 	return 0;
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/generic.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/generic.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/generic.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/generic.c	2007-02-28 14:00:30.000000000 -0500
+@@ -22,14 +22,14 @@ static unsigned long smp_changes_mask;
+ static struct mtrr_state mtrr_state = {};
+ 
+ /*  Get the MSR pair relating to a var range  */
+-static void __init
++static void __cpuinit
+ get_mtrr_var_range(unsigned int index, struct mtrr_var_range *vr)
+ {
+ 	rdmsr(MTRRphysBase_MSR(index), vr->base_lo, vr->base_hi);
+ 	rdmsr(MTRRphysMask_MSR(index), vr->mask_lo, vr->mask_hi);
+ }
+ 
+-static void __init
++static void __cpuinit
+ get_fixed_ranges(mtrr_type * frs)
+ {
+ 	unsigned int *p = (unsigned int *) frs;
+@@ -44,7 +44,7 @@ get_fixed_ranges(mtrr_type * frs)
+ }
+ 
+ /*  Grab all of the MTRR state for this CPU into *state  */
+-void __init get_mtrr_state(void)
++void __cpuinit get_mtrr_state(void)
+ {
+ 	unsigned int i;
+ 	struct mtrr_var_range *vrs;
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/main.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/main.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/main.c	2007-02-28 11:33:21.000000000 -0500
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/main.c	2007-02-28 14:00:30.000000000 -0500
+@@ -99,7 +99,7 @@ static int have_wrcomb(void)
+ }
+ 
+ /*  This function returns the number of variable MTRRs  */
+-static void __init set_num_var_ranges(void)
++static void __cpuinit set_num_var_ranges(void)
+ {
+ 	unsigned long config = 0, dummy;
+ 
+@@ -112,7 +112,7 @@ static void __init set_num_var_ranges(vo
+ 	num_var_ranges = config & 0xff;
+ }
+ 
+-static void __init init_table(void)
++static void __cpuinit init_table(void)
+ {
+ 	int i, max;
+ 
+@@ -542,7 +542,7 @@ extern void amd_init_mtrr(void);
+ extern void cyrix_init_mtrr(void);
+ extern void centaur_init_mtrr(void);
+ 
+-static void __init init_ifs(void)
++static void __cpuinit init_ifs(void)
+ {
+ 	amd_init_mtrr();
+ 	cyrix_init_mtrr();
+@@ -610,7 +610,7 @@ static struct sysdev_driver mtrr_sysdev_
+  * initialized (i.e. before smp_init()).
+  * 
+  */
+-void __init mtrr_bp_init(void)
++void __cpuinit mtrr_bp_init(void)
+ {
+ 	init_ifs();
+ 
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/main-xen.c linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/main-xen.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/cpu/mtrr/main-xen.c	2007-02-28 11:33:12.000000000 -0500
++++ linux-2.6.18.i386.new/arch/i386/kernel/cpu/mtrr/main-xen.c	2007-02-28 14:00:30.000000000 -0500
+@@ -34,7 +34,7 @@ struct mtrr_ops *mtrr_if = &generic_mtrr
+ unsigned int num_var_ranges;
+ unsigned int *usage_table;
+ 
+-static void __init set_num_var_ranges(void)
++static void __cpuinit set_num_var_ranges(void)
+ {
+ 	dom0_op_t op;
+ 
+@@ -46,7 +46,7 @@ static void __init set_num_var_ranges(vo
+ 	}
+ }
+ 
+-static void __init init_table(void)
++static void __cpuinit init_table(void)
+ {
+ 	int i, max;
+ 
+@@ -167,7 +167,7 @@ mtrr_del(int reg, unsigned long base, un
+ EXPORT_SYMBOL(mtrr_add);
+ EXPORT_SYMBOL(mtrr_del);
+ 
+-void __init mtrr_bp_init(void)
++void __cpuinit mtrr_bp_init(void)
+ {
+ }
+ 
+

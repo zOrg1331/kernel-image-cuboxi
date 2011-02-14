@@ -38,7 +38,7 @@ static long do_spu_run(struct file *filp,
 	u32 npc, status;
 
 	ret = -EFAULT;
-	if (get_user(npc, unpc))
+	if (get_user(npc, unpc) || get_user(status, ustatus))
 		goto out;
 
 	/* check if this file was created by spu_create */
@@ -46,20 +46,35 @@ static long do_spu_run(struct file *filp,
 	if (filp->f_op != &spufs_context_fops)
 		goto out;
 
-	i = SPUFS_I(filp->f_path.dentry->d_inode);
-	ret = spufs_run_spu(i->i_ctx, &npc, &status);
+	i = SPUFS_I(filp->f_dentry->d_inode);
+	ret = spufs_run_spu(filp, i->i_ctx, &npc, &status);
 
-	if (put_user(npc, unpc))
-		ret = -EFAULT;
-
-	if (ustatus && put_user(status, ustatus))
+	if (put_user(npc, unpc) || put_user(status, ustatus))
 		ret = -EFAULT;
 out:
 	return ret;
 }
 
-static long do_spu_create(const char __user *pathname, unsigned int flags,
-		mode_t mode, struct file *neighbor)
+#ifndef MODULE
+asmlinkage long sys_spu_run(int fd, __u32 __user *unpc, __u32 __user *ustatus)
+{
+	int fput_needed;
+	struct file *filp;
+	long ret;
+
+	ret = -EBADF;
+	filp = fget_light(fd, &fput_needed);
+	if (filp) {
+		ret = do_spu_run(filp, unpc, ustatus);
+		fput_light(filp, fput_needed);
+	}
+
+	return ret;
+}
+#endif
+
+asmlinkage long sys_spu_create(const char __user *pathname,
+					unsigned int flags, mode_t mode)
 {
 	char *tmp;
 	int ret;
@@ -69,11 +84,11 @@ static long do_spu_create(const char __user *pathname, unsigned int flags,
 	if (!IS_ERR(tmp)) {
 		struct nameidata nd;
 
-		ret = path_lookup(tmp, LOOKUP_PARENT, &nd);
+		ret = path_lookup(tmp, LOOKUP_PARENT|
+				LOOKUP_OPEN|LOOKUP_CREATE, &nd);
 		if (!ret) {
-			nd.flags |= LOOKUP_OPEN | LOOKUP_CREATE;
-			ret = spufs_create(&nd, flags, mode, neighbor);
-			path_put(&nd.path);
+			ret = spufs_create_thread(&nd, flags, mode);
+			path_release(&nd);
 		}
 		putname(tmp);
 	}
@@ -82,10 +97,7 @@ static long do_spu_create(const char __user *pathname, unsigned int flags,
 }
 
 struct spufs_calls spufs_calls = {
-	.create_thread = do_spu_create,
+	.create_thread = sys_spu_create,
 	.spu_run = do_spu_run,
-	.coredump_extra_notes_size = spufs_coredump_extra_notes_size,
-	.coredump_extra_notes_write = spufs_coredump_extra_notes_write,
-	.notify_spus_active = do_notify_spus_active,
 	.owner = THIS_MODULE,
 };

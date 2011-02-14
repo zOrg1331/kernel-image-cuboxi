@@ -23,7 +23,6 @@
 #include <linux/input.h>
 #include <linux/serio.h>
 #include <linux/init.h>
-#include <linux/ctype.h>
 
 #define DRIVER_DESC	"Elo serial touchscreen driver"
 
@@ -35,19 +34,7 @@ MODULE_LICENSE("GPL");
  * Definitions & global arrays.
  */
 
-#define ELO_MAX_LENGTH		10
-
-#define ELO10_PACKET_LEN	8
-#define ELO10_TOUCH		0x03
-#define ELO10_PRESSURE		0x80
-
-#define ELO10_LEAD_BYTE		'U'
-
-#define ELO10_ID_CMD		'i'
-
-#define ELO10_TOUCH_PACKET	'T'
-#define ELO10_ACK_PACKET	'A'
-#define ELI10_ID_PACKET		'I'
+#define	ELO_MAX_LENGTH	10
 
 /*
  * Per-touchscreen data.
@@ -56,66 +43,51 @@ MODULE_LICENSE("GPL");
 struct elo {
 	struct input_dev *dev;
 	struct serio *serio;
-	struct mutex cmd_mutex;
-	struct completion cmd_done;
 	int id;
 	int idx;
-	unsigned char expected_packet;
 	unsigned char csum;
 	unsigned char data[ELO_MAX_LENGTH];
-	unsigned char response[ELO10_PACKET_LEN];
 	char phys[32];
 };
 
-static void elo_process_data_10(struct elo *elo, unsigned char data)
+static void elo_process_data_10(struct elo* elo, unsigned char data, struct pt_regs *regs)
 {
 	struct input_dev *dev = elo->dev;
 
-	elo->data[elo->idx] = data;
+	elo->csum += elo->data[elo->idx] = data;
+
 	switch (elo->idx++) {
+
 		case 0:
-			elo->csum = 0xaa;
-			if (data != ELO10_LEAD_BYTE) {
-				pr_debug("elo: unsynchronized data: 0x%02x\n", data);
+			if (data != 'U') {
 				elo->idx = 0;
+				elo->csum = 0;
+			}
+			break;
+
+		case 1:
+			if (data != 'T') {
+				elo->idx = 0;
+				elo->csum = 0;
 			}
 			break;
 
 		case 9:
-			elo->idx = 0;
-			if (data != elo->csum) {
-				pr_debug("elo: bad checksum: 0x%02x, expected 0x%02x\n",
-					 data, elo->csum);
-				break;
-			}
-			if (elo->data[1] != elo->expected_packet) {
-				if (elo->data[1] != ELO10_TOUCH_PACKET)
-					pr_debug("elo: unexpected packet: 0x%02x\n",
-						 elo->data[1]);
-				break;
-			}
-			if (likely(elo->data[1] == ELO10_TOUCH_PACKET)) {
+			if (elo->csum) {
+				input_regs(dev, regs);
 				input_report_abs(dev, ABS_X, (elo->data[4] << 8) | elo->data[3]);
 				input_report_abs(dev, ABS_Y, (elo->data[6] << 8) | elo->data[5]);
-				if (elo->data[2] & ELO10_PRESSURE)
-					input_report_abs(dev, ABS_PRESSURE,
-							(elo->data[8] << 8) | elo->data[7]);
-				input_report_key(dev, BTN_TOUCH, elo->data[2] & ELO10_TOUCH);
+				input_report_abs(dev, ABS_PRESSURE, (elo->data[8] << 8) | elo->data[7]);
+				input_report_key(dev, BTN_TOUCH, elo->data[8] || elo->data[7]);
 				input_sync(dev);
-			} else if (elo->data[1] == ELO10_ACK_PACKET) {
-				if (elo->data[2] == '0')
-					elo->expected_packet = ELO10_TOUCH_PACKET;
-				complete(&elo->cmd_done);
-			} else {
-				memcpy(elo->response, &elo->data[1], ELO10_PACKET_LEN);
-				elo->expected_packet = ELO10_ACK_PACKET;
 			}
+			elo->idx = 0;
+			elo->csum = 0;
 			break;
 	}
-	elo->csum += data;
 }
 
-static void elo_process_data_6(struct elo *elo, unsigned char data)
+static void elo_process_data_6(struct elo* elo, unsigned char data, struct pt_regs *regs)
 {
 	struct input_dev *dev = elo->dev;
 
@@ -133,6 +105,7 @@ static void elo_process_data_6(struct elo *elo, unsigned char data)
 				break;
 			}
 
+			input_regs(dev, regs);
 			input_report_abs(dev, ABS_X, ((elo->data[0] & 0x3f) << 6) | (elo->data[1] & 0x3f));
 			input_report_abs(dev, ABS_Y, ((elo->data[2] & 0x3f) << 6) | (elo->data[3] & 0x3f));
 
@@ -162,7 +135,7 @@ static void elo_process_data_6(struct elo *elo, unsigned char data)
 	}
 }
 
-static void elo_process_data_3(struct elo *elo, unsigned char data)
+static void elo_process_data_3(struct elo* elo, unsigned char data, struct pt_regs *regs)
 {
 	struct input_dev *dev = elo->dev;
 
@@ -175,6 +148,7 @@ static void elo_process_data_3(struct elo *elo, unsigned char data)
 				elo->idx = 0;
 			break;
 		case 2:
+			input_regs(dev, regs);
 			input_report_key(dev, BTN_TOUCH, !(elo->data[1] & 0x80));
 			input_report_abs(dev, ABS_X, elo->data[1]);
 			input_report_abs(dev, ABS_Y, elo->data[2]);
@@ -185,88 +159,26 @@ static void elo_process_data_3(struct elo *elo, unsigned char data)
 }
 
 static irqreturn_t elo_interrupt(struct serio *serio,
-		unsigned char data, unsigned int flags)
+		unsigned char data, unsigned int flags, struct pt_regs *regs)
 {
-	struct elo *elo = serio_get_drvdata(serio);
+	struct elo* elo = serio_get_drvdata(serio);
 
 	switch(elo->id) {
 		case 0:
-			elo_process_data_10(elo, data);
+			elo_process_data_10(elo, data, regs);
 			break;
 
 		case 1:
 		case 2:
-			elo_process_data_6(elo, data);
+			elo_process_data_6(elo, data, regs);
 			break;
 
 		case 3:
-			elo_process_data_3(elo, data);
+			elo_process_data_3(elo, data, regs);
 			break;
 	}
 
 	return IRQ_HANDLED;
-}
-
-static int elo_command_10(struct elo *elo, unsigned char *packet)
-{
-	int rc = -1;
-	int i;
-	unsigned char csum = 0xaa + ELO10_LEAD_BYTE;
-
-	mutex_lock(&elo->cmd_mutex);
-
-	serio_pause_rx(elo->serio);
-	elo->expected_packet = toupper(packet[0]);
-	init_completion(&elo->cmd_done);
-	serio_continue_rx(elo->serio);
-
-	if (serio_write(elo->serio, ELO10_LEAD_BYTE))
-		goto out;
-
-	for (i = 0; i < ELO10_PACKET_LEN; i++) {
-		csum += packet[i];
-		if (serio_write(elo->serio, packet[i]))
-			goto out;
-	}
-
-	if (serio_write(elo->serio, csum))
-		goto out;
-
-	wait_for_completion_timeout(&elo->cmd_done, HZ);
-
-	if (elo->expected_packet == ELO10_TOUCH_PACKET) {
-		/* We are back in reporting mode, the command was ACKed */
-		memcpy(packet, elo->response, ELO10_PACKET_LEN);
-		rc = 0;
-	}
-
- out:
-	mutex_unlock(&elo->cmd_mutex);
-	return rc;
-}
-
-static int elo_setup_10(struct elo *elo)
-{
-	static const char *elo_types[] = { "Accu", "Dura", "Intelli", "Carroll" };
-	struct input_dev *dev = elo->dev;
-	unsigned char packet[ELO10_PACKET_LEN] = { ELO10_ID_CMD };
-
-	if (elo_command_10(elo, packet))
-		return -1;
-
-	dev->id.version = (packet[5] << 8) | packet[4];
-
-	input_set_abs_params(dev, ABS_X, 96, 4000, 0, 0);
-	input_set_abs_params(dev, ABS_Y, 96, 4000, 0, 0);
-	if (packet[3] & ELO10_PRESSURE)
-		input_set_abs_params(dev, ABS_PRESSURE, 0, 255, 0, 0);
-
-	printk(KERN_INFO "elo: %sTouch touchscreen, fw: %02x.%02x, "
-		"features: 0x%02x, controller: 0x%02x\n",
-		elo_types[(packet[1] -'0') & 0x03],
-		packet[5], packet[4], packet[3], packet[7]);
-
-	return 0;
 }
 
 /*
@@ -275,13 +187,11 @@ static int elo_setup_10(struct elo *elo)
 
 static void elo_disconnect(struct serio *serio)
 {
-	struct elo *elo = serio_get_drvdata(serio);
+	struct elo* elo = serio_get_drvdata(serio);
 
-	input_get_device(elo->dev);
 	input_unregister_device(elo->dev);
 	serio_close(serio);
 	serio_set_drvdata(serio, NULL);
-	input_put_device(elo->dev);
 	kfree(elo);
 }
 
@@ -301,39 +211,32 @@ static int elo_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev = input_allocate_device();
 	if (!elo || !input_dev) {
 		err = -ENOMEM;
-		goto fail1;
+		goto fail;
 	}
 
 	elo->serio = serio;
 	elo->id = serio->id.id;
 	elo->dev = input_dev;
-	elo->expected_packet = ELO10_TOUCH_PACKET;
-	mutex_init(&elo->cmd_mutex);
-	init_completion(&elo->cmd_done);
 	snprintf(elo->phys, sizeof(elo->phys), "%s/input0", serio->phys);
 
+	input_dev->private = elo;
 	input_dev->name = "Elo Serial TouchScreen";
 	input_dev->phys = elo->phys;
 	input_dev->id.bustype = BUS_RS232;
 	input_dev->id.vendor = SERIO_ELO;
 	input_dev->id.product = elo->id;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
-	input_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
-
-	serio_set_drvdata(serio, elo);
-	err = serio_open(serio, drv);
-	if (err)
-		goto fail2;
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
+	input_dev->keybit[LONG(BTN_TOUCH)] = BIT(BTN_TOUCH);
 
 	switch (elo->id) {
 
 		case 0: /* 10-byte protocol */
-			if (elo_setup_10(elo))
-				goto fail3;
-
+			input_set_abs_params(input_dev, ABS_X, 96, 4000, 0, 0);
+			input_set_abs_params(input_dev, ABS_Y, 96, 4000, 0, 0);
+			input_set_abs_params(input_dev, ABS_PRESSURE, 0, 255, 0, 0);
 			break;
 
 		case 1: /* 6-byte protocol */
@@ -350,15 +253,17 @@ static int elo_connect(struct serio *serio, struct serio_driver *drv)
 			break;
 	}
 
-	err = input_register_device(elo->dev);
-	if (err)
-		goto fail3;
+	serio_set_drvdata(serio, elo);
 
+	err = serio_open(serio, drv);
+	if (err)
+		goto fail;
+
+	input_register_device(elo->dev);
 	return 0;
 
- fail3: serio_close(serio);
- fail2:	serio_set_drvdata(serio, NULL);
- fail1:	input_free_device(input_dev);
+ fail:	serio_set_drvdata(serio, NULL);
+	input_free_device(input_dev);
 	kfree(elo);
 	return err;
 }
@@ -396,7 +301,8 @@ static struct serio_driver elo_drv = {
 
 static int __init elo_init(void)
 {
-	return serio_register_driver(&elo_drv);
+	serio_register_driver(&elo_drv);
+	return 0;
 }
 
 static void __exit elo_exit(void)

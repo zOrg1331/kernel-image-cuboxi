@@ -98,14 +98,14 @@ IVc. Errata
 #include <linux/crc32.h>
 #include <asm/io.h>
 
-#define NETDRV_VERSION		"1.0.1"
+#define NETDRV_VERSION		"1.0.0"
 #define MODNAME			"netdrv"
 #define NETDRV_DRIVER_LOAD_MSG	"MyVendor Fast Ethernet driver " NETDRV_VERSION " loaded"
 #define PFX			MODNAME ": "
 
 static char version[] __devinitdata =
 KERN_INFO NETDRV_DRIVER_LOAD_MSG "\n"
-"  Support available from http://foo.com/bar/baz.html\n";
+KERN_INFO "  Support available from http://foo.com/bar/baz.html\n";
 
 /* define to 1 to enable PIO instead of MMIO */
 #undef USE_IO_OPS
@@ -119,7 +119,7 @@ KERN_INFO NETDRV_DRIVER_LOAD_MSG "\n"
 
 #ifdef NETDRV_DEBUG
 /* note: prints function name for you */
-#  define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __func__ , ## args)
+#  define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __FUNCTION__ , ## args)
 #else
 #  define DPRINTK(fmt, args...)
 #endif
@@ -130,7 +130,7 @@ KERN_INFO NETDRV_DRIVER_LOAD_MSG "\n"
 #  define assert(expr) \
         if(!(expr)) {					\
         printk( "Assertion failed! %s,%s,%s,line=%d\n",	\
-        #expr,__FILE__,__func__,__LINE__);		\
+        #expr,__FILE__,__FUNCTION__,__LINE__);		\
         }
 #endif
 
@@ -457,6 +457,7 @@ struct netdrv_private {
 	void *mmio_addr;
 	int drv_flags;
 	struct pci_dev *pci_dev;
+	struct net_device_stats stats;
 	struct timer_list timer;	/* Media selection timer. */
 	unsigned char *rx_ring;
 	unsigned int cur_rx;	/* Index into the Rx buffer of next Rx pkt. */
@@ -501,9 +502,11 @@ static void netdrv_tx_timeout (struct net_device *dev);
 static void netdrv_init_ring (struct net_device *dev);
 static int netdrv_start_xmit (struct sk_buff *skb,
 			       struct net_device *dev);
-static irqreturn_t netdrv_interrupt (int irq, void *dev_instance);
+static irqreturn_t netdrv_interrupt (int irq, void *dev_instance,
+			       struct pt_regs *regs);
 static int netdrv_close (struct net_device *dev);
 static int netdrv_ioctl (struct net_device *dev, struct ifreq *rq, int cmd);
+static struct net_device_stats *netdrv_get_stats (struct net_device *dev);
 static void netdrv_set_rx_mode (struct net_device *dev);
 static void netdrv_hw_start (struct net_device *dev);
 
@@ -541,7 +544,7 @@ static void netdrv_hw_start (struct net_device *dev);
 #define NETDRV_W32_F(reg, val32)	do { writel ((val32), ioaddr + (reg)); readl (ioaddr + (reg)); } while (0)
 
 
-#ifdef MMIO_FLUSH_AUDIT_COMPLETE
+#if MMIO_FLUSH_AUDIT_COMPLETE
 
 /* write MMIO register */
 #define NETDRV_W8(reg, val8)	writeb ((val8), ioaddr + (reg))
@@ -602,8 +605,9 @@ static int __devinit netdrv_init_board (struct pci_dev *pdev,
 		DPRINTK ("EXIT, returning -ENOMEM\n");
 		return -ENOMEM;
 	}
+	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
-	tp = netdev_priv(dev);
+	tp = dev->priv;
 
 	/* enable device (incl. PCI PM wakeup), and bus-mastering */
 	rc = pci_enable_device (pdev);
@@ -707,8 +711,8 @@ match:
 		tp->chipset,
 		rtl_chip_info[tp->chipset].name);
 
-	rc = register_netdev (dev);
-	if (rc)
+	i = register_netdev (dev);
+	if (i)
 		goto err_out_unmap;
 
 	DPRINTK ("EXIT, returning 0\n");
@@ -728,17 +732,6 @@ err_out:
 	return rc;
 }
 
-static const struct net_device_ops netdrv_netdev_ops = {
-	.ndo_open		= netdrv_open,
-	.ndo_stop		= netdrv_close,
-	.ndo_start_xmit		= netdrv_start_xmit,
-	.ndo_set_multicast_list	= netdrv_set_rx_mode,
-	.ndo_do_ioctl		= netdrv_ioctl,
-	.ndo_tx_timeout		= netdrv_tx_timeout,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address	= eth_mac_addr,
-};
 
 static int __devinit netdrv_init_one (struct pci_dev *pdev,
 				       const struct pci_device_id *ent)
@@ -769,7 +762,7 @@ static int __devinit netdrv_init_one (struct pci_dev *pdev,
 		return i;
 	}
 
-	tp = netdev_priv(dev);
+	tp = dev->priv;
 
 	assert (ioaddr != NULL);
 	assert (dev != NULL);
@@ -780,14 +773,21 @@ static int __devinit netdrv_init_one (struct pci_dev *pdev,
 		((u16 *) (dev->dev_addr))[i] =
 		    le16_to_cpu (read_eeprom (ioaddr, i + 7, addr_len));
 
-	dev->netdev_ops = &netdrv_netdev_ops;
+	/* The Rtl8139-specific entries in the device structure. */
+	dev->open = netdrv_open;
+	dev->hard_start_xmit = netdrv_start_xmit;
+	dev->stop = netdrv_close;
+	dev->get_stats = netdrv_get_stats;
+	dev->set_multicast_list = netdrv_set_rx_mode;
+	dev->do_ioctl = netdrv_ioctl;
+	dev->tx_timeout = netdrv_tx_timeout;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
 	dev->irq = pdev->irq;
 	dev->base_addr = (unsigned long) ioaddr;
 
-	/* netdev_priv()/tp zeroed and aligned in alloc_etherdev */
-	tp = netdev_priv(dev);
+	/* dev->priv/tp zeroed and aligned in alloc_etherdev */
+	tp = dev->priv;
 
 	/* note: tp->chipset set in netdrv_init_board */
 	tp->drv_flags = PCI_COMMAND_IO | PCI_COMMAND_MEMORY |
@@ -801,11 +801,15 @@ static int __devinit netdrv_init_one (struct pci_dev *pdev,
 
 	tp->phys[0] = 32;
 
-	printk (KERN_INFO "%s: %s at 0x%lx, %pM IRQ %d\n",
+	printk (KERN_INFO "%s: %s at 0x%lx, "
+		"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x, "
+		"IRQ %d\n",
 		dev->name,
 		board_info[ent->driver_data].name,
 		dev->base_addr,
-		dev->dev_addr,
+		dev->dev_addr[0], dev->dev_addr[1],
+		dev->dev_addr[2], dev->dev_addr[3],
+		dev->dev_addr[4], dev->dev_addr[5],
 		dev->irq);
 
 	printk (KERN_DEBUG "%s:  Identified 8139 chip type '%s'\n",
@@ -845,7 +849,7 @@ static void __devexit netdrv_remove_one (struct pci_dev *pdev)
 
 	assert (dev != NULL);
 
-	np = netdev_priv(dev);
+	np = dev->priv;
 	assert (np != NULL);
 
 	unregister_netdev (dev);
@@ -978,7 +982,7 @@ static void mdio_sync (void *mdio_addr)
 
 static int mdio_read (struct net_device *dev, int phy_id, int location)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *mdio_addr = tp->mmio_addr + Config4;
 	int mii_cmd = (0xf6 << 10) | (phy_id << 5) | location;
 	int retval = 0;
@@ -1021,7 +1025,7 @@ static int mdio_read (struct net_device *dev, int phy_id, int location)
 static void mdio_write (struct net_device *dev, int phy_id, int location,
 			int value)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *mdio_addr = tp->mmio_addr + Config4;
 	int mii_cmd =
 	    (0x5002 << 16) | (phy_id << 23) | (location << 18) | value;
@@ -1064,7 +1068,7 @@ static void mdio_write (struct net_device *dev, int phy_id, int location,
 
 static int netdrv_open (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	int retval;
 #ifdef NETDRV_DEBUG
 	void *ioaddr = tp->mmio_addr;
@@ -1125,7 +1129,7 @@ static int netdrv_open (struct net_device *dev)
 /* Start the hardware at open or resume. */
 static void netdrv_hw_start (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	u32 i;
 
@@ -1195,7 +1199,7 @@ static void netdrv_hw_start (struct net_device *dev)
 /* Initialize the Rx and Tx rings, along with various 'dev' bits. */
 static void netdrv_init_ring (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	int i;
 
 	DPRINTK ("ENTER\n");
@@ -1217,7 +1221,7 @@ static void netdrv_init_ring (struct net_device *dev)
 static void netdrv_timer (unsigned long data)
 {
 	struct net_device *dev = (struct net_device *) data;
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	int next_tick = 60 * HZ;
 	int mii_lpa;
@@ -1256,10 +1260,9 @@ static void netdrv_timer (unsigned long data)
 }
 
 
-static void netdrv_tx_clear (struct net_device *dev)
+static void netdrv_tx_clear (struct netdrv_private *tp)
 {
 	int i;
-	struct netdrv_private *tp = netdev_priv(dev);
 
 	atomic_set (&tp->cur_tx, 0);
 	atomic_set (&tp->dirty_tx, 0);
@@ -1275,7 +1278,7 @@ static void netdrv_tx_clear (struct net_device *dev)
 		if (rp->skb) {
 			dev_kfree_skb (rp->skb);
 			rp->skb = NULL;
-			dev->stats.tx_dropped++;
+			tp->stats.tx_dropped++;
 		}
 	}
 }
@@ -1283,7 +1286,7 @@ static void netdrv_tx_clear (struct net_device *dev)
 
 static void netdrv_tx_timeout (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	int i;
 	u8 tmp8;
@@ -1315,8 +1318,8 @@ static void netdrv_tx_timeout (struct net_device *dev)
 
 	/* Stop a shared interrupt from scavenging while we are. */
 	spin_lock_irqsave (&tp->lock, flags);
-
-	netdrv_tx_clear (dev);
+	
+	netdrv_tx_clear (tp);
 
 	spin_unlock_irqrestore (&tp->lock, flags);
 
@@ -1330,7 +1333,7 @@ static void netdrv_tx_timeout (struct net_device *dev)
 
 static int netdrv_start_xmit (struct sk_buff *skb, struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	int entry;
 
@@ -1342,7 +1345,7 @@ static int netdrv_start_xmit (struct sk_buff *skb, struct net_device *dev)
 
 	tp->tx_info[entry].skb = skb;
 	/* tp->tx_info[entry].mapping = 0; */
-	skb_copy_from_linear_data(skb, tp->tx_buf[entry], skb->len);
+	memcpy (tp->tx_buf[entry], skb->data, skb->len);
 
 	/* Note: the chip doesn't have auto-pad! */
 	NETDRV_W32 (TxStatus0 + (entry * sizeof(u32)),
@@ -1356,7 +1359,7 @@ static int netdrv_start_xmit (struct sk_buff *skb, struct net_device *dev)
 	DPRINTK ("%s: Queued Tx packet at %p size %u to slot %d.\n",
 		 dev->name, skb->data, skb->len, entry);
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 
@@ -1388,25 +1391,25 @@ static void netdrv_tx_interrupt (struct net_device *dev,
 			/* There was an major error, log it. */
 			DPRINTK ("%s: Transmit error, Tx status %8.8x.\n",
 				 dev->name, txstatus);
-			dev->stats.tx_errors++;
+			tp->stats.tx_errors++;
 			if (txstatus & TxAborted) {
-				dev->stats.tx_aborted_errors++;
+				tp->stats.tx_aborted_errors++;
 				NETDRV_W32 (TxConfig, TxClearAbt | (TX_DMA_BURST << TxDMAShift));
 			}
 			if (txstatus & TxCarrierLost)
-				dev->stats.tx_carrier_errors++;
+				tp->stats.tx_carrier_errors++;
 			if (txstatus & TxOutOfWindow)
-				dev->stats.tx_window_errors++;
+				tp->stats.tx_window_errors++;
 		} else {
 			if (txstatus & TxUnderrun) {
 				/* Add 64 to the Tx FIFO threshold. */
 				if (tp->tx_flag < 0x00300000)
 					tp->tx_flag += 0x00020000;
-				dev->stats.tx_fifo_errors++;
+				tp->stats.tx_fifo_errors++;
 			}
-			dev->stats.collisions += (txstatus >> 24) & 15;
-			dev->stats.tx_bytes += txstatus & 0x7ff;
-			dev->stats.tx_packets++;
+			tp->stats.collisions += (txstatus >> 24) & 15;
+			tp->stats.tx_bytes += txstatus & 0x7ff;
+			tp->stats.tx_packets++;
 		}
 
 		/* Free the original skb. */
@@ -1459,13 +1462,13 @@ static void netdrv_rx_err (u32 rx_status, struct net_device *dev,
 			 dev->name, rx_status);
 		/* A.C.: The chip hangs here. */
 	}
-	dev->stats.rx_errors++;
+	tp->stats.rx_errors++;
 	if (rx_status & (RxBadSymbol | RxBadAlign))
-		dev->stats.rx_frame_errors++;
+		tp->stats.rx_frame_errors++;
 	if (rx_status & (RxRunt | RxTooLong))
-		dev->stats.rx_length_errors++;
+		tp->stats.rx_length_errors++;
 	if (rx_status & RxCRCErr)
-		dev->stats.rx_crc_errors++;
+		tp->stats.rx_crc_errors++;
 	/* Reset the receiver, based on RealTek recommendation. (Bug?) */
 	tp->cur_rx = 0;
 
@@ -1530,7 +1533,7 @@ static void netdrv_rx_interrupt (struct net_device *dev,
 		DPRINTK ("%s:  netdrv_rx() status %4.4x, size %4.4x,"
 			 " cur %4.4x.\n", dev->name, rx_status,
 			 rx_size, cur_rx);
-#if defined(NETDRV_DEBUG) && (NETDRV_DEBUG > 2)
+#if NETDRV_DEBUG > 2
 		{
 			int i;
 			DPRINTK ("%s: Frame contents ", dev->name);
@@ -1563,20 +1566,22 @@ static void netdrv_rx_interrupt (struct net_device *dev,
 
 		skb = dev_alloc_skb (pkt_size + 2);
 		if (skb) {
+			skb->dev = dev;
 			skb_reserve (skb, 2);	/* 16 byte align the IP fields. */
 
-			skb_copy_to_linear_data (skb, &rx_ring[ring_offset + 4], pkt_size);
+			eth_copy_and_sum (skb, &rx_ring[ring_offset + 4], pkt_size, 0);
 			skb_put (skb, pkt_size);
 
 			skb->protocol = eth_type_trans (skb, dev);
 			netif_rx (skb);
-			dev->stats.rx_bytes += pkt_size;
-			dev->stats.rx_packets++;
+			dev->last_rx = jiffies;
+			tp->stats.rx_bytes += pkt_size;
+			tp->stats.rx_packets++;
 		} else {
 			printk (KERN_WARNING
 				"%s: Memory squeeze, dropping packet.\n",
 				dev->name);
-			dev->stats.rx_dropped++;
+			tp->stats.rx_dropped++;
 		}
 
 		cur_rx = (cur_rx + rx_size + 4 + 3) & ~3;
@@ -1605,7 +1610,7 @@ static void netdrv_weird_interrupt (struct net_device *dev,
 	assert (ioaddr != NULL);
 
 	/* Update the error count. */
-	dev->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
+	tp->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
 	NETDRV_W32 (RxMissed, 0);
 
 	if ((status & RxUnderrun) && link_changed &&
@@ -1626,14 +1631,14 @@ static void netdrv_weird_interrupt (struct net_device *dev,
 	/* XXX along with netdrv_rx_err, are we double-counting errors? */
 	if (status &
 	    (RxUnderrun | RxOverflow | RxErr | RxFIFOOver))
-		dev->stats.rx_errors++;
+		tp->stats.rx_errors++;
 
 	if (status & (PCSTimeout))
-		dev->stats.rx_length_errors++;
+		tp->stats.rx_length_errors++;
 	if (status & (RxUnderrun | RxFIFOOver))
-		dev->stats.rx_fifo_errors++;
+		tp->stats.rx_fifo_errors++;
 	if (status & RxOverflow) {
-		dev->stats.rx_over_errors++;
+		tp->stats.rx_over_errors++;
 		tp->cur_rx = NETDRV_R16 (RxBufAddr) % RX_BUF_LEN;
 		NETDRV_W16_F (RxBufPtr, tp->cur_rx - 16);
 	}
@@ -1649,10 +1654,11 @@ static void netdrv_weird_interrupt (struct net_device *dev,
 
 /* The interrupt handler does all of the Rx thread work and cleans up
    after the Tx thread. */
-static irqreturn_t netdrv_interrupt (int irq, void *dev_instance)
+static irqreturn_t netdrv_interrupt (int irq, void *dev_instance,
+			       struct pt_regs *regs)
 {
 	struct net_device *dev = (struct net_device *) dev_instance;
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	int boguscnt = max_interrupt_work;
 	void *ioaddr = tp->mmio_addr;
 	int status = 0, link_changed = 0; /* avoid bogus "uninit" warning */
@@ -1715,7 +1721,7 @@ static irqreturn_t netdrv_interrupt (int irq, void *dev_instance)
 
 static int netdrv_close (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	unsigned long flags;
 
@@ -1737,14 +1743,15 @@ static int netdrv_close (struct net_device *dev)
 	NETDRV_W16 (IntrMask, 0x0000);
 
 	/* Update the error counts. */
-	dev->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
+	tp->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
 	NETDRV_W32 (RxMissed, 0);
 
 	spin_unlock_irqrestore (&tp->lock, flags);
 
+	synchronize_irq ();
 	free_irq (dev->irq, dev);
 
-	netdrv_tx_clear (dev);
+	netdrv_tx_clear (tp);
 
 	pci_free_consistent(tp->pci_dev, RX_BUF_TOT_LEN,
 			    tp->rx_ring, tp->rx_ring_dma);
@@ -1765,7 +1772,7 @@ static int netdrv_close (struct net_device *dev)
 
 static int netdrv_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	struct mii_ioctl_data *data = if_mii(rq);
 	unsigned long flags;
 	int rc = 0;
@@ -1784,6 +1791,11 @@ static int netdrv_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
 		break;
 
 	case SIOCSMIIREG:		/* Write MII PHY register. */
+		if (!capable (CAP_NET_ADMIN)) {
+			rc = -EPERM;
+			break;
+		}
+
 		spin_lock_irqsave (&tp->lock, flags);
 		mdio_write (dev, data->phy_id & 0x1f, data->reg_num & 0x1f, data->val_in);
 		spin_unlock_irqrestore (&tp->lock, flags);
@@ -1798,12 +1810,37 @@ static int netdrv_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
 	return rc;
 }
 
+
+static struct net_device_stats *netdrv_get_stats (struct net_device *dev)
+{
+	struct netdrv_private *tp = dev->priv;
+	void *ioaddr = tp->mmio_addr;
+
+	DPRINTK ("ENTER\n");
+
+	assert (tp != NULL);
+
+	if (netif_running(dev)) {
+		unsigned long flags;
+
+		spin_lock_irqsave (&tp->lock, flags);
+
+		tp->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
+		NETDRV_W32 (RxMissed, 0);
+
+		spin_unlock_irqrestore (&tp->lock, flags);
+	}
+
+	DPRINTK ("EXIT\n");
+	return &tp->stats;
+}
+
 /* Set or clear the multicast filter for this adaptor.
    This routine is not state sensitive and need not be SMP locked. */
 
 static void netdrv_set_rx_mode (struct net_device *dev)
 {
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	u32 mc_filter[2];	/* Multicast hash filter */
 	int i, rx_mode;
@@ -1816,6 +1853,9 @@ static void netdrv_set_rx_mode (struct net_device *dev)
 
 	/* Note: do not reorder, GCC is clever about common statements. */
 	if (dev->flags & IFF_PROMISC) {
+		/* Unconditionally log net taps. */
+		printk (KERN_NOTICE "%s: Promiscuous mode enabled.\n",
+			dev->name);
 		rx_mode =
 		    AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
 		    AcceptAllPhys;
@@ -1860,7 +1900,7 @@ static void netdrv_set_rx_mode (struct net_device *dev)
 static int netdrv_suspend (struct pci_dev *pdev, pm_message_t state)
 {
 	struct net_device *dev = pci_get_drvdata (pdev);
-	struct netdrv_private *tp = netdev_priv(dev);
+	struct netdrv_private *tp = dev->priv;
 	void *ioaddr = tp->mmio_addr;
 	unsigned long flags;
 
@@ -1875,7 +1915,7 @@ static int netdrv_suspend (struct pci_dev *pdev, pm_message_t state)
 	NETDRV_W8 (ChipCmd, (NETDRV_R8 (ChipCmd) & ChipCmdClear));
 
 	/* Update the error counts. */
-	dev->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
+	tp->stats.rx_missed_errors += NETDRV_R32 (RxMissed);
 	NETDRV_W32 (RxMissed, 0);
 
 	spin_unlock_irqrestore (&tp->lock, flags);
@@ -1890,7 +1930,7 @@ static int netdrv_suspend (struct pci_dev *pdev, pm_message_t state)
 static int netdrv_resume (struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata (pdev);
-	/*struct netdrv_private *tp = netdev_priv(dev);*/
+	struct netdrv_private *tp = dev->priv;
 
 	if (!netif_running(dev))
 		return 0;
@@ -1923,7 +1963,7 @@ static int __init netdrv_init_module (void)
 #ifdef MODULE
 	printk(version);
 #endif
-	return pci_register_driver(&netdrv_pci_driver);
+	return pci_module_init (&netdrv_pci_driver);
 }
 
 

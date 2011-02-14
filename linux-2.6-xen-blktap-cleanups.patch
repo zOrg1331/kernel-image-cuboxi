@@ -1,0 +1,183 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 6/10] xen: blktap: cleanups.
+Date: Fri, 15 Jun 2007 10:46:28 +0200
+Bugzilla: 242122
+Message-Id: <467251E4.8050303@redhat.com>
+Changelog: [xen] blktap: cleanups.
+
+
+  Hi,
+
+This patch carries a bunch of cleanups, partly needed for ia64.  It also 
+changes the size of the communication ring between kernel and userspace 
+daemon.  Thus it is required to make the blktap driver work together 
+with the updated xen tools (which contain the userspace part).
+
+cheers,
+  Gerd
+
+rh bug 242122
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1162897295 0
+# Node ID 862aca401601062aa6207a00549c19cdac054bbb
+# Parent  6f3c40ee248856b84053adb9f6edfc5d31955684
+[BLKTAP] Various cleanups necessary for ia64 support.
+- remove magic number 8 and 64.
+  page size / sector size is 8 on x86, however on ia64 page size is
+  16kb.
+  blkring size is 64 on x86. however it's 128 on ia64.
+- replace 0xFFFF with INVALID_GRANT_HANDLE
+- don't map io ring into user space with uncachable.
+  kernel access the page with cacable and tapdisk uses memory barrier
+  so that it isn't necessary.
+- remove printk warning and inserted new line.
+- remove unused variable, page.
+- add one BUG()
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+---
+ drivers/xen/blktap/blktapmain.c |   27 +++++++++++++--------------
+ drivers/xen/blktap/xenbus.c     |    6 +++---
+ 2 files changed, 16 insertions(+), 17 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+@@ -89,8 +89,9 @@ int setup_xen_class(void)
+  * mmap_alloc is initialised to 2 and should be adjustable on the fly via
+  * sysfs.
+  */
+-#define MAX_DYNAMIC_MEM 64
+-#define MAX_PENDING_REQS 64   
++#define BLK_RING_SIZE		__RING_SIZE((blkif_sring_t *)0, PAGE_SIZE)
++#define MAX_DYNAMIC_MEM		BLK_RING_SIZE
++#define MAX_PENDING_REQS	BLK_RING_SIZE
+ #define MMAP_PAGES (MAX_PENDING_REQS * BLKIF_MAX_SEGMENTS_PER_REQUEST)
+ #define MMAP_VADDR(_start, _req,_seg)                                   \
+         (_start +                                                       \
+@@ -211,6 +212,7 @@ struct grant_handle_pair
+         grant_handle_t kernel;
+         grant_handle_t user;
+ };
++#define INVALID_GRANT_HANDLE	0xFFFF
+ 
+ static struct grant_handle_pair 
+     pending_grant_handles[MAX_DYNAMIC_MEM][MMAP_PAGES];
+@@ -289,10 +291,11 @@ static inline int GET_NEXT_REQ(unsigned 
+ 
+ 
+ #define BLKTAP_INVALID_HANDLE(_g) \
+-    (((_g->kernel) == 0xFFFF) && ((_g->user) == 0xFFFF))
++    (((_g->kernel) == INVALID_GRANT_HANDLE) &&  \
++     ((_g->user) == INVALID_GRANT_HANDLE))
+ 
+ #define BLKTAP_INVALIDATE_HANDLE(_g) do {       \
+-    (_g)->kernel = 0xFFFF; (_g)->user = 0xFFFF; \
++    (_g)->kernel = INVALID_GRANT_HANDLE; (_g)->user = INVALID_GRANT_HANDLE; \
+     } while(0)
+ 
+ 
+@@ -532,8 +535,6 @@ static int blktap_mmap(struct file *filp
+ 	info->user_vstart  = info->rings_vstart + (RING_PAGES << PAGE_SHIFT);
+     
+ 	/* Map the ring pages to the start of the region and reserve it. */
+-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+-
+ 	if (remap_pfn_range(vma, vma->vm_start, 
+ 			    __pa(info->ufe_ring.sring) >> PAGE_SHIFT, 
+ 			    PAGE_SIZE, vma->vm_page_prot)) {
+@@ -845,14 +846,14 @@ static void fast_flush_area(pending_req_
+ 
+ 		khandle = &pending_handle(mmap_idx, k_idx, i);
+ 
+-		if (khandle->kernel != 0xFFFF) {
++		if (khandle->kernel != INVALID_GRANT_HANDLE) {
+ 			gnttab_set_unmap_op(&unmap[invcount],
+ 				    idx_to_kaddr(mmap_idx, k_idx, i), 
+ 				    GNTMAP_host_map, khandle->kernel);
+ 			invcount++;
+ 		}
+ 
+-		if (khandle->user != 0xFFFF) {
++		if (khandle->user != INVALID_GRANT_HANDLE) {
+ 			if (create_lookup_pte_addr(
+ 		    		info->vma->vm_mm,
+ 		    		MMAP_VADDR(info->user_vstart, u_idx, i),
+@@ -1165,14 +1166,12 @@ static void dispatch_rw_block_io(blkif_t
+ 		unsigned long uvaddr;
+ 		unsigned long kvaddr;
+ 		uint64_t ptep;
+-		struct page *page;
+ 		uint32_t flags;
+ 
+ 		uvaddr = MMAP_VADDR(info->user_vstart, usr_idx, i);
+ 		kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i);
+-		page = virt_to_page(kvaddr);
+ 
+-		sector = req->sector_number + (8*i);
++		sector = req->sector_number + ((PAGE_SIZE / 512) * i);
+ 		if( (blkif->sectors > 0) && (sector >= blkif->sectors) ) {
+ 			WPRINTK("BLKTAP: Sector request greater" 
+ 			       "than size\n");
+@@ -1182,7 +1181,7 @@ static void dispatch_rw_block_io(blkif_t
+ 				BLKIF_OP_WRITE ? "WRITE" : "READ"),
+ 				(long long unsigned) sector,
+ 				(long long unsigned) sector>>9,
+-				blkif->sectors);
++				(long long unsigned) blkif->sectors);
+ 		}
+ 
+ 		flags = GNTMAP_host_map;
+@@ -1227,14 +1226,14 @@ static void dispatch_rw_block_io(blkif_t
+ 			WPRINTK("invalid kernel buffer -- "
+ 				"could not remap it\n");
+ 			ret |= 1;
+-			map[i].handle = 0xFFFF;
++			map[i].handle = INVALID_GRANT_HANDLE;
+ 		}
+ 
+ 		if (unlikely(map[i+1].status != 0)) {
+ 			WPRINTK("invalid user buffer -- "
+ 				"could not remap it\n");
+ 			ret |= 1;
+-			map[i+1].handle = 0xFFFF;
++			map[i+1].handle = INVALID_GRANT_HANDLE;
+ 		}
+ 
+ 		pending_handle(mmap_idx, pending_idx, i/2).kernel 
+Index: linux-2.6.18.noarch/drivers/xen/blktap/xenbus.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/xenbus.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/xenbus.c
+@@ -189,7 +189,7 @@ static int blktap_probe(struct xenbus_de
+ 	return 0;
+ 
+ fail:
+-	DPRINTK("blktap probe failed");
++	DPRINTK("blktap probe failed\n");
+ 	blktap_remove(dev);
+ 	return err;
+ }
+@@ -243,7 +243,7 @@ static void tap_frontend_changed(struct 
+ 	struct backend_info *be = dev->dev.driver_data;
+ 	int err;
+ 
+-	DPRINTK("");
++	DPRINTK("\n");
+ 
+ 	switch (frontend_state) {
+ 	case XenbusStateInitialising:
+@@ -318,7 +318,7 @@ static int connect_ring(struct backend_i
+ 	unsigned int evtchn;
+ 	int err;
+ 
+-	DPRINTK("%s", dev->otherend);
++	DPRINTK("%s\n", dev->otherend);
+ 
+ 	err = xenbus_gather(XBT_NIL, dev->otherend, "ring-ref", "%lu", 
+ 			    &ring_ref, "event-channel", "%u", &evtchn, NULL);
+

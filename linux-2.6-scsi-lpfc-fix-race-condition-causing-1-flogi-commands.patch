@@ -1,0 +1,38 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:38 -0400
+Subject: [scsi] lpfc: fix race condition causing >1 FLOGI commands
+Message-id: <1286288695-20754-7-git-send-email-revers@redhat.com>
+Patchwork-id: 28589
+O-Subject: [RHEL5.6 PATCH 06/23] Fixed a race condition causing FLOGI issued
+	from dual processes (CR: 104288)
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Fixed a race condition causing FLOGI issued from dual processes (CR: 104288)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 2fc232c..fb857b7 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -5562,13 +5562,15 @@ void
+ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
+ {
+ 	/*
+-	 * If HBA is not running in FIP mode or if HBA does not support
+-	 * FCoE or if FCF is not registered, do nothing.
++	 * If HBA is not running in FIP mode, if HBA does not support
++	 * FCoE, if FCF discovery is ongoing, or if FCF has not been
++	 * registered, do nothing.
+ 	 */
+ 	spin_lock_irq(&phba->hbalock);
+ 	if (!(phba->hba_flag & HBA_FCOE_SUPPORT) ||
+ 	    !(phba->fcf.fcf_flag & FCF_REGISTERED) ||
+ 	    !(phba->hba_flag & HBA_FIP_SUPPORT) ||
++	    (phba->fcf.fcf_flag & FCF_DISCOVERY) ||
+ 	    (phba->pport->port_state == LPFC_FLOGI)) {
+ 		spin_unlock_irq(&phba->hbalock);
+ 		return;

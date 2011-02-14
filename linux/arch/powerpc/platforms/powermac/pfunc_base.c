@@ -15,7 +15,7 @@
 #define DBG(fmt...)
 #endif
 
-static irqreturn_t macio_gpio_irq(int irq, void *data)
+static irqreturn_t macio_gpio_irq(int irq, void *data, struct pt_regs *regs)
 {
 	pmf_do_irq(data);
 
@@ -114,7 +114,7 @@ static void macio_gpio_init_one(struct macio_chip *macio)
 	 * we just create them all
 	 */
 	for (gp = NULL; (gp = of_get_next_child(gparent, gp)) != NULL;) {
-		const u32 *reg = of_get_property(gp, "reg", NULL);
+		u32 *reg = (u32 *)get_property(gp, "reg", NULL);
 		unsigned long offset;
 		if (reg == NULL)
 			continue;
@@ -363,7 +363,8 @@ int __init pmac_pfunc_base_install(void)
 
 	return 0;
 }
-machine_arch_initcall(powermac, pmac_pfunc_base_install);
+
+arch_initcall(pmac_pfunc_base_install);
 
 #ifdef CONFIG_PM
 

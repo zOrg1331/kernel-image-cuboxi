@@ -23,7 +23,6 @@
  */
 
 #include <linux/mm.h>
-#include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/init.h>
@@ -34,8 +33,14 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 
+static struct fs_struct init_fs = INIT_FS;
+static struct files_struct init_files = INIT_FILES;
 static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
 static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+struct mm_struct init_mm = INIT_MM(init_mm);
+
+EXPORT_SYMBOL(init_mm);
+
 /*
  * Initial task structure.
  *
@@ -43,8 +48,9 @@ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
  * way process stacks are handled. This is done by having a special
  * "init_task" linker map entry..
  */
-union thread_union init_thread_union __init_task_data
-	__attribute__((aligned(128))) =
+unsigned char interrupt_stack[ISTACK_SIZE] __attribute__ ((section("init_istack"), aligned(4096)));
+union thread_union init_thread_union
+	__attribute__((aligned(128))) __attribute__((__section__(".data.init_task"))) =
 		{ INIT_THREAD_INFO(init_task) };
 
 #if PT_NLEVELS == 3

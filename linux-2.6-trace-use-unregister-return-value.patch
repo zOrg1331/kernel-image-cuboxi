@@ -1,0 +1,40 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Thu, 26 Mar 2009 22:10:53 -0400
+Subject: [trace] use unregister return value
+Message-id: 200903270210.n2R2ArfO030449@ns3.rdu.redhat.com
+O-Subject: [RHEL 5.4 PATCH 10/10] -tracepoints: use unregister return value
+Bugzilla: 465543
+
+make sure we have proper return values on a tracepoint unregister.
+
+taken from upstream committ: c420970ef476d7d68df119711700666224001f43
+
+diff --git a/include/linux/tracepoint.h b/include/linux/tracepoint.h
+index c11451d..71ec6c9 100644
+--- a/include/linux/tracepoint.h
++++ b/include/linux/tracepoint.h
+@@ -72,9 +72,9 @@ struct tracepoint {
+ 	{								\
+ 		return tracepoint_probe_register(#name, (void *)probe); \
+ 	}								\
+-	static inline void unregister_trace_##name(void (*probe)(proto))\
++	static inline int unregister_trace_##name(void (*probe)(proto))\
+ 	{								\
+-		tracepoint_probe_unregister(#name, (void *)probe);      \
++		return tracepoint_probe_unregister(#name, (void *)probe);      \
+ 	}
+ 
+ extern void tracepoint_update_probe_range(struct tracepoint *begin,
+@@ -90,8 +90,10 @@ extern void tracepoint_update_probe_range(struct tracepoint *begin,
+ 	{								\
+ 		return -ENOSYS;						\
+ 	}								\
+-	static inline void unregister_trace_##name(void (*probe)(proto))\
+-	{ }
++	static inline int unregister_trace_##name(void (*probe)(proto))	\
++	{								\
++		return -ENOSYS;						\
++	}
+ 
+ static inline void tracepoint_update_probe_range(struct tracepoint *begin,
+ 	struct tracepoint *end)

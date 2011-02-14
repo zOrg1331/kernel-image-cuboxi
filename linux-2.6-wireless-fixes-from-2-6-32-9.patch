@@ -1,0 +1,66 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 3 Sep 2010 12:23:35 -0400
+Subject: [wireless] fixes from 2.6.32.9
+Message-id: <1283516623-11659-3-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 28065
+O-Subject: [RHEL5 PATCH 02/10] wireless fixes from 2.6.32.9
+Bugzilla: 621105
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Included commits:
+20f774c4adc1f0690b300103b3f046c79d82ed99 ath9k: Fix sequence numbers for PAE frames
+de30e10d0080bccca8fe56f8dcb75171fffdb695 mac80211: Fix probe request filtering in IBSS mode
+98d7938431c181dea6a03f5f89b550f081ad6220 iwlwifi: Fix to set correct ht configuration
+
+Omitted commits:
+ea658ff1d6314ed206393dd23d2cd45b22f8f6b4 rtl8187: Add new device ID
+51a53302d168c9c6089cb931acebfbc5a2e81a48 b43: Fix throughput regression
+
+diff --git a/drivers/net/wireless/ath/ath9k/xmit.c b/drivers/net/wireless/ath/ath9k/xmit.c
+index 2dc16f9..30426f1 100644
+--- a/drivers/net/wireless/ath/ath9k/xmit.c
++++ b/drivers/net/wireless/ath/ath9k/xmit.c
+@@ -1575,7 +1575,7 @@ static int ath_tx_setup_buffer(struct ieee80211_hw *hw, struct ath_buf *bf,
+ 
+ 	bf->bf_frmlen = skb->len + FCS_LEN - (hdrlen & 3);
+ 
+-	if (conf_is_ht(&sc->hw->conf) && !is_pae(skb))
++	if (conf_is_ht(&sc->hw->conf))
+ 		bf->bf_state.bf_type |= BUF_HT;
+ 
+ 	bf->bf_flags = setup_tx_flags(sc, skb, txctl->txq);
+@@ -1664,7 +1664,7 @@ static void ath_tx_start_dma(struct ath_softc *sc, struct ath_buf *bf,
+ 			goto tx_done;
+ 		}
+ 
+-		if (tx_info->flags & IEEE80211_TX_CTL_AMPDU) {
++		if ((tx_info->flags & IEEE80211_TX_CTL_AMPDU) && !is_pae(skb)) {
+ 			/*
+ 			 * Try aggregation if it's a unicast data frame
+ 			 * and the destination is HT capable.
+diff --git a/drivers/net/wireless/iwlwifi/iwl-core.c b/drivers/net/wireless/iwlwifi/iwl-core.c
+index 0f665df..bd9e105 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-core.c
++++ b/drivers/net/wireless/iwlwifi/iwl-core.c
+@@ -2648,6 +2648,7 @@ int iwl_mac_config(struct ieee80211_hw *hw, u32 changed)
+ 		if ((le16_to_cpu(priv->staging_rxon.channel) != ch))
+ 			priv->staging_rxon.flags = 0;
+ 
++		iwl_set_rxon_ht(priv, ht_conf);
+ 		iwl_set_rxon_channel(priv, conf->channel);
+ 
+ 		iwl_set_flags_for_band(priv, conf->channel->band);
+diff --git a/net/mac80211/ibss.c b/net/mac80211/ibss.c
+index a39abdd..5cb051f 100644
+--- a/net/mac80211/ibss.c
++++ b/net/mac80211/ibss.c
+@@ -643,7 +643,7 @@ static void ieee80211_rx_mgmt_probe_req(struct ieee80211_sub_if_data *sdata,
+ 	}
+ 	if (pos[1] != 0 &&
+ 	    (pos[1] != ifibss->ssid_len ||
+-	     !memcmp(pos + 2, ifibss->ssid, ifibss->ssid_len))) {
++	     memcmp(pos + 2, ifibss->ssid, ifibss->ssid_len))) {
+ 		/* Ignore ProbeReq for foreign SSID */
+ 		return;
+ 	}

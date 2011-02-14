@@ -1,12 +1,14 @@
 /*
- * IBM/3270 Driver - core functions.
+ *  drivers/s390/char/raw3270.c
+ *    IBM/3270 Driver - core functions.
  *
- * Author(s):
- *   Original 3270 Code for 2.4 written by Richard Hitt (UTS Global)
- *   Rewritten for 2.5 by Martin Schwidefsky <schwidefsky@de.ibm.com>
- *     Copyright IBM Corp. 2003, 2009
+ *  Author(s):
+ *    Original 3270 Code for 2.4 written by Richard Hitt (UTS Global)
+ *    Rewritten for 2.5 by Martin Schwidefsky <schwidefsky@de.ibm.com>
+ *	-- Copyright (C) 2003 IBM Deutschland Entwicklung GmbH, IBM Corporation
  */
 
+#include <linux/bootmem.h>
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -19,7 +21,6 @@
 #include <asm/ccwdev.h>
 #include <asm/cio.h>
 #include <asm/ebcdic.h>
-#include <asm/diag.h>
 
 #include "raw3270.h"
 
@@ -28,7 +29,7 @@
 #include <linux/device.h>
 #include <linux/mutex.h>
 
-static struct class *class3270;
+struct class *class3270;
 
 /* The main 3270 data structure. */
 struct raw3270 {
@@ -46,8 +47,8 @@ struct raw3270 {
 	struct timer_list timer;	/* Device timer. */
 
 	unsigned char *ascebc;		/* ascii -> ebcdic table */
-	struct device *clttydev;	/* 3270-class tty device ptr */
-	struct device *cltubdev;	/* 3270-class tub device ptr */
+	struct class_device *clttydev;	/* 3270-class tty device ptr */
+	struct class_device *cltubdev;	/* 3270-class tub device ptr */
 
 	struct raw3270_request init_request;
 	unsigned char init_data[256];
@@ -59,13 +60,12 @@ struct raw3270 {
 #define RAW3270_FLAGS_ATTN	2	/* Device sent an ATTN interrupt */
 #define RAW3270_FLAGS_READY	4	/* Device is useable by views */
 #define RAW3270_FLAGS_CONSOLE	8	/* Device is the console. */
-#define RAW3270_FLAGS_FROZEN	16	/* set if 3270 is frozen for suspend */
 
 /* Semaphore to protect global data of raw3270 (devices, views, etc). */
 static DEFINE_MUTEX(raw3270_mutex);
 
 /* List of 3270 devices. */
-static LIST_HEAD(raw3270_devices);
+static struct list_head raw3270_devices = LIST_HEAD_INIT(raw3270_devices);
 
 /*
  * Flag to indicate if the driver has been registered. Some operations
@@ -86,7 +86,7 @@ DECLARE_WAIT_QUEUE_HEAD(raw3270_wait_queue);
 /*
  * Encode array for 12 bit 3270 addresses.
  */
-static unsigned char raw3270_ebcgraf[64] =	{
+unsigned char raw3270_ebcgraf[64] =	{
 	0x40, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
 	0xc8, 0xc9, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
 	0x50, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
@@ -141,6 +141,43 @@ raw3270_request_alloc(size_t size)
 
 	return rq;
 }
+
+#ifdef CONFIG_TN3270_CONSOLE
+/*
+ * Allocate a new 3270 ccw request from bootmem. Only works very
+ * early in the boot process. Only con3270.c should be using this.
+ */
+struct raw3270_request *
+raw3270_request_alloc_bootmem(size_t size)
+{
+	struct raw3270_request *rq;
+
+	rq = alloc_bootmem_low(sizeof(struct raw3270));
+	if (!rq)
+		return ERR_PTR(-ENOMEM);
+	memset(rq, 0, sizeof(struct raw3270_request));
+
+	/* alloc output buffer. */
+	if (size > 0) {
+		rq->buffer = alloc_bootmem_low(size);
+		if (!rq->buffer) {
+			free_bootmem((unsigned long) rq,
+				     sizeof(struct raw3270));
+			return ERR_PTR(-ENOMEM);
+		}
+	}
+	rq->size = size;
+	INIT_LIST_HEAD(&rq->list);
+
+	/*
+	 * Setup ccw.
+	 */
+	rq->ccw.cda = __pa(rq->buffer);
+	rq->ccw.flags = CCW_FLAG_SLI;
+
+	return rq;
+}
+#endif
 
 /*
  * Free 3270 ccw request
@@ -278,8 +315,7 @@ raw3270_start(struct raw3270_view *view, struct raw3270_request *rq)
 
 	spin_lock_irqsave(get_ccwdev_lock(view->dev->cdev), flags);
 	rp = view->dev;
-	if (!rp || rp->view != view ||
-	    test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
+	if (!rp || rp->view != view)
 		rc = -EACCES;
 	else if (!test_bit(RAW3270_FLAGS_READY, &rp->flags))
 		rc = -ENODEV;
@@ -296,8 +332,7 @@ raw3270_start_locked(struct raw3270_view *view, struct raw3270_request *rq)
 	int rc;
 
 	rp = view->dev;
-	if (!rp || rp->view != view ||
-	    test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
+	if (!rp || rp->view != view)
 		rc = -EACCES;
 	else if (!test_bit(RAW3270_FLAGS_READY, &rp->flags))
 		rc = -ENODEV;
@@ -329,7 +364,7 @@ raw3270_irq (struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
 	struct raw3270_request *rq;
 	int rc;
 
-	rp = dev_get_drvdata(&cdev->dev);
+	rp = (struct raw3270 *) cdev->dev.driver_data;
 	if (!rp)
 		return;
 	rq = (struct raw3270_request *) intparm;
@@ -337,17 +372,17 @@ raw3270_irq (struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
 
 	if (IS_ERR(irb))
 		rc = RAW3270_IO_RETRY;
-	else if (irb->scsw.cmd.fctl & SCSW_FCTL_HALT_FUNC) {
+	else if (irb->scsw.fctl & SCSW_FCTL_HALT_FUNC) {
 		rq->rc = -EIO;
 		rc = RAW3270_IO_DONE;
-	} else if (irb->scsw.cmd.dstat == (DEV_STAT_CHN_END | DEV_STAT_DEV_END |
-					   DEV_STAT_UNIT_EXCEP)) {
+	} else if (irb->scsw.dstat ==  (DEV_STAT_CHN_END | DEV_STAT_DEV_END |
+					DEV_STAT_UNIT_EXCEP)) {
 		/* Handle CE-DE-UE and subsequent UDE */
 		set_bit(RAW3270_FLAGS_BUSY, &rp->flags);
 		rc = RAW3270_IO_BUSY;
 	} else if (test_bit(RAW3270_FLAGS_BUSY, &rp->flags)) {
 		/* Wait for UDE if busy flag is set. */
-		if (irb->scsw.cmd.dstat & DEV_STAT_DEV_END) {
+		if (irb->scsw.dstat & DEV_STAT_DEV_END) {
 			clear_bit(RAW3270_FLAGS_BUSY, &rp->flags);
 			/* Got it, now retry. */
 			rc = RAW3270_IO_RETRY;
@@ -452,7 +487,7 @@ struct raw3270_ua {	/* Query Reply structure for Usable Area */
 } __attribute__ ((packed));
 
 static struct diag210 raw3270_init_diag210;
-static DEFINE_MUTEX(raw3270_init_mutex);
+static DECLARE_MUTEX(raw3270_init_sem);
 
 static int
 raw3270_init_irq(struct raw3270_view *view, struct raw3270_request *rq,
@@ -462,7 +497,7 @@ raw3270_init_irq(struct raw3270_view *view, struct raw3270_request *rq,
 	 * Unit-Check Processing:
 	 * Expect Command Reject or Intervention Required.
 	 */
-	if (irb->scsw.cmd.dstat & DEV_STAT_UNIT_CHECK) {
+	if (irb->scsw.dstat & DEV_STAT_UNIT_CHECK) {
 		/* Request finished abnormally. */
 		if (irb->ecw[0] & SNS0_INTERVENTION_REQ) {
 			set_bit(RAW3270_FLAGS_BUSY, &view->dev->flags);
@@ -470,16 +505,16 @@ raw3270_init_irq(struct raw3270_view *view, struct raw3270_request *rq,
 		}
 	}
 	if (rq) {
-		if (irb->scsw.cmd.dstat & DEV_STAT_UNIT_CHECK) {
+		if (irb->scsw.dstat & DEV_STAT_UNIT_CHECK) {
 			if (irb->ecw[0] & SNS0_CMD_REJECT)
 				rq->rc = -EOPNOTSUPP;
 			else
 				rq->rc = -EIO;
 		} else
 			/* Request finished normally. Copy residual count. */
-			rq->rescnt = irb->scsw.cmd.count;
+			rq->rescnt = irb->scsw.count;
 	}
-	if (irb->scsw.cmd.dstat & DEV_STAT_ATTENTION) {
+	if (irb->scsw.dstat & DEV_STAT_ATTENTION) {
 		set_bit(RAW3270_FLAGS_ATTN, &view->dev->flags);
 		wake_up(&raw3270_wait_queue);
 	}
@@ -514,6 +549,7 @@ raw3270_start_init(struct raw3270 *rp, struct raw3270_view *view,
 		   struct raw3270_request *rq)
 {
 	unsigned long flags;
+	wait_queue_head_t wq;
 	int rc;
 
 #ifdef CONFIG_TN3270_CONSOLE
@@ -530,20 +566,20 @@ raw3270_start_init(struct raw3270 *rp, struct raw3270_view *view,
 		return rq->rc;
 	}
 #endif
+	init_waitqueue_head(&wq);
 	rq->callback = raw3270_wake_init;
-	rq->callback_data = &raw3270_wait_queue;
+	rq->callback_data = &wq;
 	spin_lock_irqsave(get_ccwdev_lock(view->dev->cdev), flags);
 	rc = __raw3270_start(rp, view, rq);
 	spin_unlock_irqrestore(get_ccwdev_lock(view->dev->cdev), flags);
 	if (rc)
 		return rc;
 	/* Now wait for the completion. */
-	rc = wait_event_interruptible(raw3270_wait_queue,
-				      raw3270_request_final(rq));
+	rc = wait_event_interruptible(wq, raw3270_request_final(rq));
 	if (rc == -ERESTARTSYS) {	/* Interrupted by a signal. */
 		raw3270_halt_io(view->dev, rq);
 		/* No wait for the halt to complete. */
-		wait_event(raw3270_wait_queue, raw3270_request_final(rq));
+		wait_event(wq, raw3270_request_final(rq));
 		return -ERESTARTSYS;
 	}
 	return rq->rc;
@@ -553,10 +589,9 @@ static int
 __raw3270_size_device_vm(struct raw3270 *rp)
 {
 	int rc, model;
-	struct ccw_dev_id dev_id;
 
-	ccw_device_get_id(rp->cdev, &dev_id);
-	raw3270_init_diag210.vrdcdvno = dev_id.devno;
+	raw3270_init_diag210.vrdcdvno = 
+		_ccw_device_get_device_number(rp->cdev);
 	raw3270_init_diag210.vrdclen = sizeof(struct diag210);
 	rc = diag210(&raw3270_init_diag210);
 	if (rc)
@@ -584,6 +619,7 @@ __raw3270_size_device_vm(struct raw3270 *rp)
 		rp->cols = 132;
 		break;
 	default:
+		printk(KERN_WARNING "vrdccrmd is 0x%.8x\n", model);
 		rc = -EOPNOTSUPP;
 		break;
 	}
@@ -676,7 +712,7 @@ raw3270_size_device(struct raw3270 *rp)
 {
 	int rc;
 
-	mutex_lock(&raw3270_init_mutex);
+	down(&raw3270_init_sem);
 	rp->view = &raw3270_init_view;
 	raw3270_init_view.dev = rp;
 	if (MACHINE_IS_VM)
@@ -685,7 +721,7 @@ raw3270_size_device(struct raw3270 *rp)
 		rc = __raw3270_size_device(rp);
 	raw3270_init_view.dev = NULL;
 	rp->view = NULL;
-	mutex_unlock(&raw3270_init_mutex);
+	up(&raw3270_init_sem);
 	if (rc == 0) {	/* Found something. */
 		/* Try to find a model. */
 		rp->model = 0;
@@ -712,7 +748,7 @@ raw3270_reset_device(struct raw3270 *rp)
 {
 	int rc;
 
-	mutex_lock(&raw3270_init_mutex);
+	down(&raw3270_init_sem);
 	memset(&rp->init_request, 0, sizeof(rp->init_request));
 	memset(&rp->init_data, 0, sizeof(rp->init_data));
 	/* Store reset data stream to init_data/init_request */
@@ -727,7 +763,7 @@ raw3270_reset_device(struct raw3270 *rp)
 	rc = raw3270_start_init(rp, &raw3270_init_view, &rp->init_request);
 	raw3270_init_view.dev = NULL;
 	rp->view = NULL;
-	mutex_unlock(&raw3270_init_mutex);
+	up(&raw3270_init_sem);
 	return rc;
 }
 
@@ -738,8 +774,7 @@ raw3270_reset(struct raw3270_view *view)
 	int rc;
 
 	rp = view->dev;
-	if (!rp || rp->view != view ||
-	    test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
+	if (!rp || rp->view != view)
 		rc = -EACCES;
 	else if (!test_bit(RAW3270_FLAGS_READY, &rp->flags))
 		rc = -ENODEV;
@@ -803,7 +838,7 @@ raw3270_setup_device(struct ccw_device *cdev, struct raw3270 *rp, char *ascebc)
 	if (rp->minor == -1)
 		return -EUSERS;
 	rp->cdev = cdev;
-	dev_set_drvdata(&cdev->dev, rp);
+	cdev->dev.driver_data = rp;
 	cdev->handler = raw3270_irq;
 	return 0;
 }
@@ -812,14 +847,15 @@ raw3270_setup_device(struct ccw_device *cdev, struct raw3270 *rp, char *ascebc)
 /*
  * Setup 3270 device configured as console.
  */
-struct raw3270 __init *raw3270_setup_console(struct ccw_device *cdev)
+struct raw3270 *
+raw3270_setup_console(struct ccw_device *cdev)
 {
 	struct raw3270 *rp;
 	char *ascebc;
 	int rc;
 
-	rp = kzalloc(sizeof(struct raw3270), GFP_KERNEL | GFP_DMA);
-	ascebc = kzalloc(256, GFP_KERNEL);
+	rp = (struct raw3270 *) alloc_bootmem_low(sizeof(struct raw3270));
+	ascebc = (char *) alloc_bootmem(256);
 	rc = raw3270_setup_device(cdev, rp, ascebc);
 	if (rc)
 		return ERR_PTR(rc);
@@ -897,8 +933,6 @@ raw3270_activate_view(struct raw3270_view *view)
 		rc = 0;
 	else if (!test_bit(RAW3270_FLAGS_READY, &rp->flags))
 		rc = -ENODEV;
-	else if (test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
-		rc = -EACCES;
 	else {
 		oldview = NULL;
 		if (rp->view) {
@@ -946,8 +980,7 @@ raw3270_deactivate_view(struct raw3270_view *view)
 		list_del_init(&view->list);
 		list_add_tail(&view->list, &rp->view_list);
 		/* Try to activate another view. */
-		if (test_bit(RAW3270_FLAGS_READY, &rp->flags) &&
-		    !test_bit(RAW3270_FLAGS_FROZEN, &rp->flags)) {
+		if (test_bit(RAW3270_FLAGS_READY, &rp->flags)) {
 			list_for_each_entry(view, &rp->view_list, list) {
 				rp->view = view;
 				if (view->fn->activate(view) == 0)
@@ -1046,8 +1079,7 @@ raw3270_del_view(struct raw3270_view *view)
 		rp->view = NULL;
 	}
 	list_del_init(&view->list);
-	if (!rp->view && test_bit(RAW3270_FLAGS_READY, &rp->flags) &&
-	    !test_bit(RAW3270_FLAGS_FROZEN, &rp->flags)) {
+	if (!rp->view && test_bit(RAW3270_FLAGS_READY, &rp->flags)) {
 		/* Try to activate another view. */
 		list_for_each_entry(nv, &rp->view_list, list) {
 			if (nv->fn->activate(nv) == 0) {
@@ -1075,16 +1107,18 @@ raw3270_delete_device(struct raw3270 *rp)
 	/* Remove from device chain. */
 	mutex_lock(&raw3270_mutex);
 	if (rp->clttydev && !IS_ERR(rp->clttydev))
-		device_destroy(class3270, MKDEV(IBM_TTY3270_MAJOR, rp->minor));
+		class_device_destroy(class3270,
+				     MKDEV(IBM_TTY3270_MAJOR, rp->minor));
 	if (rp->cltubdev && !IS_ERR(rp->cltubdev))
-		device_destroy(class3270, MKDEV(IBM_FS3270_MAJOR, rp->minor));
+		class_device_destroy(class3270,
+				     MKDEV(IBM_FS3270_MAJOR, rp->minor));
 	list_del_init(&rp->list);
 	mutex_unlock(&raw3270_mutex);
 
 	/* Disconnect from ccw_device. */
 	cdev = rp->cdev;
 	rp->cdev = NULL;
-	dev_set_drvdata(&cdev->dev, NULL);
+	cdev->dev.driver_data = NULL;
 	cdev->handler = NULL;
 
 	/* Put ccw_device structure. */
@@ -1108,7 +1142,7 @@ static ssize_t
 raw3270_model_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->model);
+			((struct raw3270 *) dev->driver_data)->model);
 }
 static DEVICE_ATTR(model, 0444, raw3270_model_show, NULL);
 
@@ -1116,7 +1150,7 @@ static ssize_t
 raw3270_rows_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->rows);
+			((struct raw3270 *) dev->driver_data)->rows);
 }
 static DEVICE_ATTR(rows, 0444, raw3270_rows_show, NULL);
 
@@ -1124,7 +1158,7 @@ static ssize_t
 raw3270_columns_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->cols);
+			((struct raw3270 *) dev->driver_data)->cols);
 }
 static DEVICE_ATTR(columns, 0444, raw3270_columns_show, NULL);
 
@@ -1147,22 +1181,24 @@ static int raw3270_create_attributes(struct raw3270 *rp)
 	if (rc)
 		goto out;
 
-	rp->clttydev = device_create(class3270, &rp->cdev->dev,
-				     MKDEV(IBM_TTY3270_MAJOR, rp->minor), NULL,
-				     "tty%s", dev_name(&rp->cdev->dev));
+	rp->clttydev = class_device_create(class3270, NULL,
+					   MKDEV(IBM_TTY3270_MAJOR, rp->minor),
+					   &rp->cdev->dev, "tty%s",
+					   rp->cdev->dev.bus_id);
 	if (IS_ERR(rp->clttydev)) {
 		rc = PTR_ERR(rp->clttydev);
 		goto out_ttydev;
 	}
 
-	rp->cltubdev = device_create(class3270, &rp->cdev->dev,
-				     MKDEV(IBM_FS3270_MAJOR, rp->minor), NULL,
-				     "tub%s", dev_name(&rp->cdev->dev));
+	rp->cltubdev = class_device_create(class3270, NULL,
+					   MKDEV(IBM_FS3270_MAJOR, rp->minor),
+					   &rp->cdev->dev, "tub%s",
+					   rp->cdev->dev.bus_id);
 	if (!IS_ERR(rp->cltubdev))
 		goto out;
 
 	rc = PTR_ERR(rp->cltubdev);
-	device_destroy(class3270, MKDEV(IBM_TTY3270_MAJOR, rp->minor));
+	class_device_destroy(class3270, MKDEV(IBM_TTY3270_MAJOR, rp->minor));
 
 out_ttydev:
 	sysfs_remove_group(&rp->cdev->dev.kobj, &raw3270_attr_group);
@@ -1178,7 +1214,7 @@ struct raw3270_notifier {
 	void (*notifier)(int, int);
 };
 
-static LIST_HEAD(raw3270_notifier);
+static struct list_head raw3270_notifier = LIST_HEAD_INIT(raw3270_notifier);
 
 int raw3270_register_notifier(void (*notifier)(int, int))
 {
@@ -1261,7 +1297,7 @@ raw3270_remove (struct ccw_device *cdev)
 	struct raw3270_view *v;
 	struct raw3270_notifier *np;
 
-	rp = dev_get_drvdata(&cdev->dev);
+	rp = cdev->dev.driver_data;
 	/*
 	 * _remove is the opposite of _probe; it's probe that
 	 * should set up rp.  raw3270_remove gets entered for
@@ -1309,65 +1345,11 @@ raw3270_set_offline (struct ccw_device *cdev)
 {
 	struct raw3270 *rp;
 
-	rp = dev_get_drvdata(&cdev->dev);
+	rp = cdev->dev.driver_data;
 	if (test_bit(RAW3270_FLAGS_CONSOLE, &rp->flags))
 		return -EBUSY;
 	raw3270_remove(cdev);
 	return 0;
-}
-
-static int raw3270_pm_stop(struct ccw_device *cdev)
-{
-	struct raw3270 *rp;
-	struct raw3270_view *view;
-	unsigned long flags;
-
-	rp = dev_get_drvdata(&cdev->dev);
-	if (!rp)
-		return 0;
-	spin_lock_irqsave(get_ccwdev_lock(rp->cdev), flags);
-	if (rp->view)
-		rp->view->fn->deactivate(rp->view);
-	if (!test_bit(RAW3270_FLAGS_CONSOLE, &rp->flags)) {
-		/*
-		 * Release tty and fullscreen for all non-console
-		 * devices.
-		 */
-		list_for_each_entry(view, &rp->view_list, list) {
-			if (view->fn->release)
-				view->fn->release(view);
-		}
-	}
-	set_bit(RAW3270_FLAGS_FROZEN, &rp->flags);
-	spin_unlock_irqrestore(get_ccwdev_lock(rp->cdev), flags);
-	return 0;
-}
-
-static int raw3270_pm_start(struct ccw_device *cdev)
-{
-	struct raw3270 *rp;
-	unsigned long flags;
-
-	rp = dev_get_drvdata(&cdev->dev);
-	if (!rp)
-		return 0;
-	spin_lock_irqsave(get_ccwdev_lock(rp->cdev), flags);
-	clear_bit(RAW3270_FLAGS_FROZEN, &rp->flags);
-	if (rp->view)
-		rp->view->fn->activate(rp->view);
-	spin_unlock_irqrestore(get_ccwdev_lock(rp->cdev), flags);
-	return 0;
-}
-
-void raw3270_pm_unfreeze(struct raw3270_view *view)
-{
-#ifdef CONFIG_TN3270_CONSOLE
-	struct raw3270 *rp;
-
-	rp = view->dev;
-	if (rp && test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
-		ccw_device_force_console();
-#endif
 }
 
 static struct ccw_device_id raw3270_id[] = {
@@ -1393,9 +1375,6 @@ static struct ccw_driver raw3270_ccw_driver = {
 	.remove		= &raw3270_remove,
 	.set_online	= &raw3270_set_online,
 	.set_offline	= &raw3270_set_offline,
-	.freeze		= &raw3270_pm_stop,
-	.thaw		= &raw3270_pm_start,
-	.restore	= &raw3270_pm_start,
 };
 
 static int

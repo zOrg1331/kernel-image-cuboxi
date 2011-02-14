@@ -14,39 +14,52 @@
  *
  */
 
+#include <asm/uaccess.h>
+#include <asm/system.h>
+#include <linux/bitops.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/string.h>
+#include <linux/mm.h>
+#include <linux/socket.h>
+#include <linux/sockios.h>
+#include <linux/in.h>
 #include <linux/errno.h>
+#include <linux/interrupt.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#include <linux/rtnetlink.h>
 #include <linux/init.h>
 #include <linux/kmod.h>
-#include <linux/netlink.h>
-#include <linux/err.h>
-#include <net/net_namespace.h>
 #include <net/sock.h>
-#include <net/netlink.h>
 #include <net/pkt_sched.h>
 #include <net/pkt_cls.h>
 
+#if 0 /* control */
+#define DPRINTK(format,args...) printk(KERN_DEBUG format,##args)
+#else
+#define DPRINTK(format,args...)
+#endif
+
 /* The list of all installed classifier types */
 
-static struct tcf_proto_ops *tcf_proto_base __read_mostly;
+static struct tcf_proto_ops *tcf_proto_base;
 
 /* Protects list of registered TC modules. It is pure SMP lock. */
 static DEFINE_RWLOCK(cls_mod_lock);
 
 /* Find classifier type by string name */
 
-static struct tcf_proto_ops *tcf_proto_lookup_ops(struct nlattr *kind)
+static struct tcf_proto_ops * tcf_proto_lookup_ops(struct rtattr *kind)
 {
 	struct tcf_proto_ops *t = NULL;
 
 	if (kind) {
 		read_lock(&cls_mod_lock);
 		for (t = tcf_proto_base; t; t = t->next) {
-			if (nla_strcmp(kind, t->kind) == 0) {
+			if (rtattr_strcmp(kind, t->kind) == 0) {
 				if (!try_module_get(t->owner))
 					t = NULL;
 				break;
@@ -76,7 +89,6 @@ out:
 	write_unlock(&cls_mod_lock);
 	return rc;
 }
-EXPORT_SYMBOL(register_tcf_proto_ops);
 
 int unregister_tcf_proto_ops(struct tcf_proto_ops *ops)
 {
@@ -96,7 +108,6 @@ out:
 	write_unlock(&cls_mod_lock);
 	return rc;
 }
-EXPORT_SYMBOL(unregister_tcf_proto_ops);
 
 static int tfilter_notify(struct sk_buff *oskb, struct nlmsghdr *n,
 			  struct tcf_proto *tp, unsigned long fh, int event);
@@ -104,9 +115,9 @@ static int tfilter_notify(struct sk_buff *oskb, struct nlmsghdr *n,
 
 /* Select new prio value from the range, managed by kernel. */
 
-static inline u32 tcf_auto_prio(struct tcf_proto *tp)
+static __inline__ u32 tcf_auto_prio(struct tcf_proto *tp)
 {
-	u32 first = TC_H_MAKE(0xC0000000U, 0U);
+	u32 first = TC_H_MAKE(0xC0000000U,0U);
 
 	if (tp)
 		first = tp->prio-1;
@@ -118,9 +129,7 @@ static inline u32 tcf_auto_prio(struct tcf_proto *tp)
 
 static int tc_ctl_tfilter(struct sk_buff *skb, struct nlmsghdr *n, void *arg)
 {
-	struct net *net = sock_net(skb->sk);
-	struct nlattr *tca[TCA_MAX + 1];
-	spinlock_t *root_lock;
+	struct rtattr **tca;
 	struct tcmsg *t;
 	u32 protocol;
 	u32 prio;
@@ -131,16 +140,13 @@ static int tc_ctl_tfilter(struct sk_buff *skb, struct nlmsghdr *n, void *arg)
 	struct tcf_proto **back, **chain;
 	struct tcf_proto *tp;
 	struct tcf_proto_ops *tp_ops;
-	const struct Qdisc_class_ops *cops;
+	struct Qdisc_class_ops *cops;
 	unsigned long cl;
 	unsigned long fh;
 	int err;
-	int tp_created = 0;
-
-	if (net != &init_net)
-		return -EINVAL;
 
 replay:
+	tca = arg;
 	t = NLMSG_DATA(n);
 	protocol = TC_H_MIN(t->tcm_info);
 	prio = TC_H_MAJ(t->tcm_info);
@@ -152,36 +158,25 @@ replay:
 		/* If no priority is given, user wants we allocated it. */
 		if (n->nlmsg_type != RTM_NEWTFILTER || !(n->nlmsg_flags&NLM_F_CREATE))
 			return -ENOENT;
-		prio = TC_H_MAKE(0x80000000U, 0U);
+		prio = TC_H_MAKE(0x80000000U,0U);
 	}
 
 	/* Find head of filter chain. */
 
 	/* Find link */
-	dev = __dev_get_by_index(&init_net, t->tcm_ifindex);
-	if (dev == NULL)
+	if ((dev = __dev_get_by_index(t->tcm_ifindex)) == NULL)
 		return -ENODEV;
-
-	err = nlmsg_parse(n, sizeof(*t), tca, TCA_MAX, NULL);
-	if (err < 0)
-		return err;
 
 	/* Find qdisc */
 	if (!parent) {
-		q = dev->qdisc;
+		q = dev->qdisc_sleeping;
 		parent = q->handle;
-	} else {
-		q = qdisc_lookup(dev, TC_H_MAJ(t->tcm_parent));
-		if (q == NULL)
-			return -EINVAL;
-	}
+	} else if ((q = qdisc_lookup(dev, TC_H_MAJ(t->tcm_parent))) == NULL)
+		return -EINVAL;
 
 	/* Is it classful? */
 	if ((cops = q->ops->cl_ops) == NULL)
 		return -EINVAL;
-
-	if (cops->tcf_chain == NULL)
-		return -EOPNOTSUPP;
 
 	/* Do we search for filter, attached to class? */
 	if (TC_H_MIN(parent)) {
@@ -208,12 +203,10 @@ replay:
 		}
 	}
 
-	root_lock = qdisc_root_sleeping_lock(q);
-
 	if (tp == NULL) {
 		/* Proto-tcf does not exist, create new one */
 
-		if (tca[TCA_KIND] == NULL || !protocol)
+		if (tca[TCA_KIND-1] == NULL || !protocol)
 			goto errout;
 
 		err = -ENOENT;
@@ -224,18 +217,17 @@ replay:
 		/* Create new proto tcf */
 
 		err = -ENOBUFS;
-		tp = kzalloc(sizeof(*tp), GFP_KERNEL);
-		if (tp == NULL)
+		if ((tp = kmalloc(sizeof(*tp), GFP_KERNEL)) == NULL)
 			goto errout;
-		err = -ENOENT;
-		tp_ops = tcf_proto_lookup_ops(tca[TCA_KIND]);
+		err = -EINVAL;
+		tp_ops = tcf_proto_lookup_ops(tca[TCA_KIND-1]);
 		if (tp_ops == NULL) {
-#ifdef CONFIG_MODULES
-			struct nlattr *kind = tca[TCA_KIND];
+#ifdef CONFIG_KMOD
+			struct rtattr *kind = tca[TCA_KIND-1];
 			char name[IFNAMSIZ];
 
 			if (kind != NULL &&
-			    nla_strlcpy(name, kind, IFNAMSIZ) < IFNAMSIZ) {
+			    rtattr_strlcpy(name, kind, IFNAMSIZ) < IFNAMSIZ) {
 				rtnl_unlock();
 				request_module("cls_%s", name);
 				rtnl_lock();
@@ -255,32 +247,34 @@ replay:
 			kfree(tp);
 			goto errout;
 		}
+		memset(tp, 0, sizeof(*tp));
 		tp->ops = tp_ops;
 		tp->protocol = protocol;
-		tp->prio = nprio ? : TC_H_MAJ(tcf_auto_prio(*back));
+		tp->prio = nprio ? : tcf_auto_prio(*back);
 		tp->q = q;
 		tp->classify = tp_ops->classify;
 		tp->classid = parent;
-
-		err = tp_ops->init(tp);
-		if (err != 0) {
+		if ((err = tp_ops->init(tp)) != 0) {
 			module_put(tp_ops->owner);
 			kfree(tp);
 			goto errout;
 		}
 
-		tp_created = 1;
+		qdisc_lock_tree(dev);
+		tp->next = *back;
+		*back = tp;
+		qdisc_unlock_tree(dev);
 
-	} else if (tca[TCA_KIND] && nla_strcmp(tca[TCA_KIND], tp->ops->kind))
+	} else if (tca[TCA_KIND-1] && rtattr_strcmp(tca[TCA_KIND-1], tp->ops->kind))
 		goto errout;
 
 	fh = tp->ops->get(tp, t->tcm_handle);
 
 	if (fh == 0) {
 		if (n->nlmsg_type == RTM_DELTFILTER && t->tcm_handle == 0) {
-			spin_lock_bh(root_lock);
+			qdisc_lock_tree(dev);
 			*back = tp->next;
-			spin_unlock_bh(root_lock);
+			qdisc_unlock_tree(dev);
 
 			tfilter_notify(skb, n, tp, fh, RTM_DELTFILTER);
 			tcf_destroy(tp);
@@ -289,18 +283,14 @@ replay:
 		}
 
 		err = -ENOENT;
-		if (n->nlmsg_type != RTM_NEWTFILTER ||
-		    !(n->nlmsg_flags & NLM_F_CREATE))
+		if (n->nlmsg_type != RTM_NEWTFILTER || !(n->nlmsg_flags&NLM_F_CREATE))
 			goto errout;
 	} else {
 		switch (n->nlmsg_type) {
-		case RTM_NEWTFILTER:
+		case RTM_NEWTFILTER:	
 			err = -EEXIST;
-			if (n->nlmsg_flags & NLM_F_EXCL) {
-				if (tp_created)
-					tcf_destroy(tp);
+			if (n->nlmsg_flags&NLM_F_EXCL)
 				goto errout;
-			}
 			break;
 		case RTM_DELTFILTER:
 			err = tp->ops->delete(tp, fh);
@@ -317,18 +307,8 @@ replay:
 	}
 
 	err = tp->ops->change(tp, cl, t->tcm_handle, tca, &fh);
-	if (err == 0) {
-		if (tp_created) {
-			spin_lock_bh(root_lock);
-			tp->next = *back;
-			*back = tp;
-			spin_unlock_bh(root_lock);
-		}
+	if (err == 0)
 		tfilter_notify(skb, n, tp, fh, RTM_NEWTFILTER);
-	} else {
-		if (tp_created)
-			tcf_destroy(tp);
-	}
 
 errout:
 	if (cl)
@@ -339,34 +319,35 @@ errout:
 	return err;
 }
 
-static int tcf_fill_node(struct sk_buff *skb, struct tcf_proto *tp,
-			 unsigned long fh, u32 pid, u32 seq, u16 flags, int event)
+static int
+tcf_fill_node(struct sk_buff *skb, struct tcf_proto *tp, unsigned long fh,
+	      u32 pid, u32 seq, u16 flags, int event)
 {
 	struct tcmsg *tcm;
 	struct nlmsghdr  *nlh;
-	unsigned char *b = skb_tail_pointer(skb);
+	unsigned char	 *b = skb->tail;
 
 	nlh = NLMSG_NEW(skb, pid, seq, event, sizeof(*tcm), flags);
 	tcm = NLMSG_DATA(nlh);
 	tcm->tcm_family = AF_UNSPEC;
 	tcm->tcm__pad1 = 0;
-	tcm->tcm__pad2 = 0;
-	tcm->tcm_ifindex = qdisc_dev(tp->q)->ifindex;
+	tcm->tcm__pad1 = 0;
+	tcm->tcm_ifindex = tp->q->dev->ifindex;
 	tcm->tcm_parent = tp->classid;
 	tcm->tcm_info = TC_H_MAKE(tp->prio, tp->protocol);
-	NLA_PUT_STRING(skb, TCA_KIND, tp->ops->kind);
+	RTA_PUT(skb, TCA_KIND, IFNAMSIZ, tp->ops->kind);
 	tcm->tcm_handle = fh;
 	if (RTM_DELTFILTER != event) {
 		tcm->tcm_handle = 0;
 		if (tp->ops->dump && tp->ops->dump(tp, fh, skb, tcm) < 0)
-			goto nla_put_failure;
+			goto rtattr_failure;
 	}
-	nlh->nlmsg_len = skb_tail_pointer(skb) - b;
+	nlh->nlmsg_len = skb->tail - b;
 	return skb->len;
 
 nlmsg_failure:
-nla_put_failure:
-	nlmsg_trim(skb, b);
+rtattr_failure:
+	skb_trim(skb, b - skb->data);
 	return -1;
 }
 
@@ -385,20 +366,19 @@ static int tfilter_notify(struct sk_buff *oskb, struct nlmsghdr *n,
 		return -EINVAL;
 	}
 
-	return rtnetlink_send(skb, &init_net, pid, RTNLGRP_TC,
-			      n->nlmsg_flags & NLM_F_ECHO);
+	return rtnetlink_send(skb, pid, RTNLGRP_TC, n->nlmsg_flags&NLM_F_ECHO);
 }
 
-struct tcf_dump_args {
+struct tcf_dump_args
+{
 	struct tcf_walker w;
 	struct sk_buff *skb;
 	struct netlink_callback *cb;
 };
 
-static int tcf_node_dump(struct tcf_proto *tp, unsigned long n,
-			 struct tcf_walker *arg)
+static int tcf_node_dump(struct tcf_proto *tp, unsigned long n, struct tcf_walker *arg)
 {
-	struct tcf_dump_args *a = (void *)arg;
+	struct tcf_dump_args *a = (void*)arg;
 
 	return tcf_fill_node(a->skb, tp, n, NETLINK_CB(a->cb->skb).pid,
 			     a->cb->nlh->nlmsg_seq, NLM_F_MULTI, RTM_NEWTFILTER);
@@ -406,34 +386,29 @@ static int tcf_node_dump(struct tcf_proto *tp, unsigned long n,
 
 static int tc_dump_tfilter(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct net *net = sock_net(skb->sk);
 	int t;
 	int s_t;
 	struct net_device *dev;
 	struct Qdisc *q;
 	struct tcf_proto *tp, **chain;
-	struct tcmsg *tcm = (struct tcmsg *)NLMSG_DATA(cb->nlh);
+	struct tcmsg *tcm = (struct tcmsg*)NLMSG_DATA(cb->nlh);
 	unsigned long cl = 0;
-	const struct Qdisc_class_ops *cops;
+	struct Qdisc_class_ops *cops;
 	struct tcf_dump_args arg;
-
-	if (net != &init_net)
-		return 0;
 
 	if (cb->nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*tcm)))
 		return skb->len;
-	if ((dev = dev_get_by_index(&init_net, tcm->tcm_ifindex)) == NULL)
+	if ((dev = dev_get_by_index(tcm->tcm_ifindex)) == NULL)
 		return skb->len;
 
+	read_lock_bh(&qdisc_tree_lock);
 	if (!tcm->tcm_parent)
-		q = dev->qdisc;
+		q = dev->qdisc_sleeping;
 	else
 		q = qdisc_lookup(dev, TC_H_MAJ(tcm->tcm_parent));
 	if (!q)
 		goto out;
 	if ((cops = q->ops->cl_ops) == NULL)
-		goto errout;
-	if (cops->tcf_chain == NULL)
 		goto errout;
 	if (TC_H_MIN(tcm->tcm_parent)) {
 		cl = cops->get(q, tcm->tcm_parent);
@@ -458,10 +433,9 @@ static int tc_dump_tfilter(struct sk_buff *skb, struct netlink_callback *cb)
 			memset(&cb->args[1], 0, sizeof(cb->args)-sizeof(cb->args[0]));
 		if (cb->args[1] == 0) {
 			if (tcf_fill_node(skb, tp, 0, NETLINK_CB(cb->skb).pid,
-					  cb->nlh->nlmsg_seq, NLM_F_MULTI,
-					  RTM_NEWTFILTER) <= 0)
+					  cb->nlh->nlmsg_seq, NLM_F_MULTI, RTM_NEWTFILTER) <= 0) {
 				break;
-
+			}
 			cb->args[1] = 1;
 		}
 		if (tp->ops->walk == NULL)
@@ -484,78 +458,105 @@ errout:
 	if (cl)
 		cops->put(q, cl);
 out:
+	read_unlock_bh(&qdisc_tree_lock);
 	dev_put(dev);
 	return skb->len;
 }
 
-void tcf_exts_destroy(struct tcf_proto *tp, struct tcf_exts *exts)
+void
+tcf_exts_destroy(struct tcf_proto *tp, struct tcf_exts *exts)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	if (exts->action) {
 		tcf_action_destroy(exts->action, TCA_ACT_UNBIND);
 		exts->action = NULL;
 	}
+#elif defined CONFIG_NET_CLS_POLICE
+	if (exts->police) {
+		tcf_police_release(exts->police, TCA_ACT_UNBIND);
+		exts->police = NULL;
+	}
 #endif
 }
-EXPORT_SYMBOL(tcf_exts_destroy);
 
-int tcf_exts_validate(struct tcf_proto *tp, struct nlattr **tb,
-		  struct nlattr *rate_tlv, struct tcf_exts *exts,
-		  const struct tcf_ext_map *map)
+
+int
+tcf_exts_validate(struct tcf_proto *tp, struct rtattr **tb,
+	          struct rtattr *rate_tlv, struct tcf_exts *exts,
+	          struct tcf_ext_map *map)
 {
 	memset(exts, 0, sizeof(*exts));
-
+	
 #ifdef CONFIG_NET_CLS_ACT
 	{
+		int err;
 		struct tc_action *act;
 
-		if (map->police && tb[map->police]) {
-			act = tcf_action_init_1(tb[map->police], rate_tlv,
-						"police", TCA_ACT_NOREPLACE,
-						TCA_ACT_BIND);
-			if (IS_ERR(act))
-				return PTR_ERR(act);
+		if (map->police && tb[map->police-1]) {
+			act = tcf_action_init_1(tb[map->police-1], rate_tlv, "police",
+				TCA_ACT_NOREPLACE, TCA_ACT_BIND, &err);
+			if (act == NULL)
+				return err;
 
 			act->type = TCA_OLD_COMPAT;
 			exts->action = act;
-		} else if (map->action && tb[map->action]) {
-			act = tcf_action_init(tb[map->action], rate_tlv, NULL,
-					      TCA_ACT_NOREPLACE, TCA_ACT_BIND);
-			if (IS_ERR(act))
-				return PTR_ERR(act);
+		} else if (map->action && tb[map->action-1]) {
+			act = tcf_action_init(tb[map->action-1], rate_tlv, NULL,
+				TCA_ACT_NOREPLACE, TCA_ACT_BIND, &err);
+			if (act == NULL)
+				return err;
 
 			exts->action = act;
 		}
 	}
+#elif defined CONFIG_NET_CLS_POLICE
+	if (map->police && tb[map->police-1]) {
+		struct tcf_police *p;
+		
+		p = tcf_police_locate(tb[map->police-1], rate_tlv);
+		if (p == NULL)
+			return -EINVAL;
+
+		exts->police = p;
+	} else if (map->action && tb[map->action-1])
+		return -EOPNOTSUPP;
 #else
-	if ((map->action && tb[map->action]) ||
-	    (map->police && tb[map->police]))
+	if ((map->action && tb[map->action-1]) ||
+	    (map->police && tb[map->police-1]))
 		return -EOPNOTSUPP;
 #endif
 
 	return 0;
 }
-EXPORT_SYMBOL(tcf_exts_validate);
 
-void tcf_exts_change(struct tcf_proto *tp, struct tcf_exts *dst,
-		     struct tcf_exts *src)
+void
+tcf_exts_change(struct tcf_proto *tp, struct tcf_exts *dst,
+	        struct tcf_exts *src)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	if (src->action) {
 		struct tc_action *act;
 		tcf_tree_lock(tp);
-		act = dst->action;
-		dst->action = src->action;
+		act = xchg(&dst->action, src->action);
 		tcf_tree_unlock(tp);
 		if (act)
 			tcf_action_destroy(act, TCA_ACT_UNBIND);
 	}
+#elif defined CONFIG_NET_CLS_POLICE
+	if (src->police) {
+		struct tcf_police *p;
+		tcf_tree_lock(tp);
+		p = xchg(&dst->police, src->police);
+		tcf_tree_unlock(tp);
+		if (p)
+			tcf_police_release(p, TCA_ACT_UNBIND);
+	}
 #endif
 }
-EXPORT_SYMBOL(tcf_exts_change);
 
-int tcf_exts_dump(struct sk_buff *skb, struct tcf_exts *exts,
-		  const struct tcf_ext_map *map)
+int
+tcf_exts_dump(struct sk_buff *skb, struct tcf_exts *exts,
+	      struct tcf_ext_map *map)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	if (map->action && exts->action) {
@@ -564,54 +565,78 @@ int tcf_exts_dump(struct sk_buff *skb, struct tcf_exts *exts,
 		 * to work with both old and new modes of entering
 		 * tc data even if iproute2  was newer - jhs
 		 */
-		struct nlattr *nest;
+		struct rtattr * p_rta = (struct rtattr*) skb->tail;
 
 		if (exts->action->type != TCA_OLD_COMPAT) {
-			nest = nla_nest_start(skb, map->action);
-			if (nest == NULL)
-				goto nla_put_failure;
+			RTA_PUT(skb, map->action, 0, NULL);
 			if (tcf_action_dump(skb, exts->action, 0, 0) < 0)
-				goto nla_put_failure;
-			nla_nest_end(skb, nest);
+				goto rtattr_failure;
+			p_rta->rta_len = skb->tail - (u8*)p_rta;
 		} else if (map->police) {
-			nest = nla_nest_start(skb, map->police);
-			if (nest == NULL)
-				goto nla_put_failure;
+			RTA_PUT(skb, map->police, 0, NULL);
 			if (tcf_action_dump_old(skb, exts->action, 0, 0) < 0)
-				goto nla_put_failure;
-			nla_nest_end(skb, nest);
+				goto rtattr_failure;
+			p_rta->rta_len = skb->tail - (u8*)p_rta;
 		}
+	}
+#elif defined CONFIG_NET_CLS_POLICE
+	if (map->police && exts->police) {
+		struct rtattr * p_rta = (struct rtattr*) skb->tail;
+
+		RTA_PUT(skb, map->police, 0, NULL);
+
+		if (tcf_police_dump(skb, exts->police) < 0)
+			goto rtattr_failure;
+
+		p_rta->rta_len = skb->tail - (u8*)p_rta;
 	}
 #endif
 	return 0;
-nla_put_failure: __attribute__ ((unused))
+rtattr_failure: __attribute__ ((unused))
 	return -1;
 }
-EXPORT_SYMBOL(tcf_exts_dump);
 
-
-int tcf_exts_dump_stats(struct sk_buff *skb, struct tcf_exts *exts,
-			const struct tcf_ext_map *map)
+int
+tcf_exts_dump_stats(struct sk_buff *skb, struct tcf_exts *exts,
+	            struct tcf_ext_map *map)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	if (exts->action)
 		if (tcf_action_copy_stats(skb, exts->action, 1) < 0)
-			goto nla_put_failure;
+			goto rtattr_failure;
+#elif defined CONFIG_NET_CLS_POLICE
+	if (exts->police)
+		if (tcf_police_dump_stats(skb, exts->police) < 0)
+			goto rtattr_failure;
 #endif
 	return 0;
-nla_put_failure: __attribute__ ((unused))
+rtattr_failure: __attribute__ ((unused))
 	return -1;
 }
-EXPORT_SYMBOL(tcf_exts_dump_stats);
 
 static int __init tc_filter_init(void)
 {
-	rtnl_register(PF_UNSPEC, RTM_NEWTFILTER, tc_ctl_tfilter, NULL);
-	rtnl_register(PF_UNSPEC, RTM_DELTFILTER, tc_ctl_tfilter, NULL);
-	rtnl_register(PF_UNSPEC, RTM_GETTFILTER, tc_ctl_tfilter,
-						 tc_dump_tfilter);
+	struct rtnetlink_link *link_p = rtnetlink_links[PF_UNSPEC];
 
+	/* Setup rtnetlink links. It is made here to avoid
+	   exporting large number of public symbols.
+	 */
+
+	if (link_p) {
+		link_p[RTM_NEWTFILTER-RTM_BASE].doit = tc_ctl_tfilter;
+		link_p[RTM_DELTFILTER-RTM_BASE].doit = tc_ctl_tfilter;
+		link_p[RTM_GETTFILTER-RTM_BASE].doit = tc_ctl_tfilter;
+		link_p[RTM_GETTFILTER-RTM_BASE].dumpit = tc_dump_tfilter;
+	}
 	return 0;
 }
 
 subsys_initcall(tc_filter_init);
+
+EXPORT_SYMBOL(register_tcf_proto_ops);
+EXPORT_SYMBOL(unregister_tcf_proto_ops);
+EXPORT_SYMBOL(tcf_exts_validate);
+EXPORT_SYMBOL(tcf_exts_destroy);
+EXPORT_SYMBOL(tcf_exts_change);
+EXPORT_SYMBOL(tcf_exts_dump);
+EXPORT_SYMBOL(tcf_exts_dump_stats);

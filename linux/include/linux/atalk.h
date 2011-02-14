@@ -1,7 +1,6 @@
 #ifndef __LINUX_ATALK_H__
 #define __LINUX_ATALK_H__
 
-#include <linux/types.h>
 #include <asm/byteorder.h>
 
 /*
@@ -86,8 +85,18 @@ static inline struct atalk_sock *at_sk(struct sock *sk)
 	return (struct atalk_sock *)sk;
 }
 
+#include <asm/byteorder.h>
+
 struct ddpehdr {
-	__be16	deh_len_hops;	/* lower 10 bits are length, next 4 - hops */
+#ifdef __LITTLE_ENDIAN_BITFIELD
+	__u16	deh_len:10,
+		deh_hops:4,
+		deh_pad:2;
+#else
+	__u16	deh_pad:2,
+		deh_hops:4,
+		deh_len:10;
+#endif
 	__be16	deh_sum;
 	__be16	deh_dnet;
 	__be16	deh_snet;
@@ -100,8 +109,38 @@ struct ddpehdr {
 
 static __inline__ struct ddpehdr *ddp_hdr(struct sk_buff *skb)
 {
-	return (struct ddpehdr *)skb_transport_header(skb);
+	return (struct ddpehdr *)skb->h.raw;
 }
+
+/*
+ *	Don't drop the struct into the struct above.  You'll get some
+ *	surprise padding.
+ */
+struct ddpebits {
+#ifdef __LITTLE_ENDIAN_BITFIELD
+	__u16	deh_len:10,
+		deh_hops:4,
+		deh_pad:2;
+#else
+	__u16	deh_pad:2,
+		deh_hops:4,
+		deh_len:10;
+#endif
+};
+
+/* Short form header */
+struct ddpshdr {
+#ifdef __LITTLE_ENDIAN_BITFIELD
+	__u16	dsh_len:10,
+		dsh_pad:6;
+#else
+	__u16	dsh_pad:6,
+		dsh_len:10;
+#endif
+	__u8	dsh_dport;
+	__u8	dsh_sport;
+	/* And netatalk apps expect to stick the type in themselves */
+};
 
 /* AppleTalk AARP headers */
 struct elapaarp {
@@ -128,7 +167,7 @@ struct elapaarp {
 
 static __inline__ struct elapaarp *aarp_hdr(struct sk_buff *skb)
 {
-	return (struct elapaarp *)skb_transport_header(skb);
+	return (struct elapaarp *)skb->h.raw;
 }
 
 /* Not specified - how long till we drop a resolved entry */
@@ -181,7 +220,7 @@ extern rwlock_t atalk_interfaces_lock;
 
 extern struct atalk_route atrtr_default;
 
-extern const struct file_operations atalk_seq_arp_fops;
+extern struct file_operations atalk_seq_arp_fops;
 
 extern int sysctl_aarp_expiry_time;
 extern int sysctl_aarp_tick_time;

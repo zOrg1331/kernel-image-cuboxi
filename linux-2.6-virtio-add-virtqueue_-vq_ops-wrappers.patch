@@ -1,0 +1,69 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Sat, 7 Aug 2010 07:16:53 -0400
+Subject: [virtio] add virtqueue_ vq_ops wrappers
+Message-id: <228f3585f7054d1b056fa815f1249607378d0c2a.1281129816.git.amit.shah@redhat.com>
+Patchwork-id: 27469
+O-Subject: [RHEL5.6 PATCH 8/9] virtio: add virtqueue_ vq_ops wrappers
+Bugzilla: 620037
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+Add inline functions that wrap vq->vq_ops-> calls
+
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+(cherry picked from commit 316f25f5b3d547ce892d370f99f08a27276896ff)
+
+(rhel5: fix compile errors:
+   s/inline int void/inline void/
+   void function returns value
+
+   Picked up to keep virtio-console changes from rhel6.0 to a minimum
+and this just introduces wrappers, no functional change.)
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/include/linux/virtio.h b/include/linux/virtio.h
+index 16e142f..f5fc606 100644
+--- a/include/linux/virtio.h
++++ b/include/linux/virtio.h
+@@ -84,6 +84,40 @@ struct virtio_device_id {
+ 
+ #define VIRTIO_DEV_ANY_ID 0xffffffff
+ 
++static inline int virtqueue_add_buf(struct virtqueue *vq,
++				    struct scatterlist sg[],
++				    unsigned int out_num,
++				    unsigned int in_num,
++				    void *data)
++{
++	return vq->vq_ops->add_buf(vq, sg, out_num, in_num, data);
++}
++
++static inline void virtqueue_kick(struct virtqueue *vq)
++{
++	return vq->vq_ops->kick(vq);
++}
++
++static inline void *virtqueue_get_buf(struct virtqueue *vq, unsigned int *len)
++{
++	return vq->vq_ops->get_buf(vq, len);
++}
++
++static inline void virtqueue_disable_cb(struct virtqueue *vq)
++{
++	vq->vq_ops->disable_cb(vq);
++}
++
++static inline bool virtqueue_enable_cb(struct virtqueue *vq)
++{
++	return vq->vq_ops->enable_cb(vq);
++}
++
++static inline void *virtqueue_detach_unused_buf(struct virtqueue *vq)
++{
++	return vq->vq_ops->detach_unused_buf(vq);
++}
++
+ /**
+  * virtio_device - representation of a device using virtio
+  * @index: unique position on the virtio bus

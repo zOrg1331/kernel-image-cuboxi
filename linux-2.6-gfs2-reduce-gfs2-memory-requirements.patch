@@ -1,0 +1,366 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Thu, 10 Jan 2008 10:13:02 -0600
+Subject: [gfs2] Reduce gfs2 memory requirements
+Message-id: 1199981582.13758.13.camel@technetium.msp.redhat.com
+O-Subject: [RHEL5.2][GFS2] bz #428291: GFS2: Reduce gfs2 memory requirements
+Bugzilla: 428291
+
+Hi,
+
+GFS2 uses too much memory.  For every buffer, gfs2 has a special
+lock structure called a glock, due to the type of page-level locking
+it does.  Right now, GFS2 allocates an inode structure to keep track
+of the address space associated with metadata.  We can reduce memory
+by making it only allocate the address space inode when it's needed,
+on the fly.  That reduces the size of each glock considerably.
+
+This is a crosswrite of an upstream gfs2 patch and it's been tested
+with the aol test.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index 7dde4d9..da0ad28 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -683,7 +683,7 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
+ 	if (metadata)
+ 		revokes = (height) ? sdp->sd_inptrs : sdp->sd_diptrs;
+ 
+-	error = gfs2_rindex_hold(sdp, &ip->i_alloc.al_ri_gh);
++	error = gfs2_rindex_hold(sdp, &ip->i_alloc->al_ri_gh);
+ 	if (error)
+ 		return error;
+ 
+@@ -785,7 +785,7 @@ out_rg_gunlock:
+ out_rlist:
+ 	gfs2_rlist_free(&rlist);
+ out:
+-	gfs2_glock_dq_uninit(&ip->i_alloc.al_ri_gh);
++	gfs2_glock_dq_uninit(&ip->i_alloc->al_ri_gh);
+ 	return error;
+ }
+ 
+diff --git a/fs/gfs2/dir.c b/fs/gfs2/dir.c
+index 2ed3a8c..06db257 100644
+--- a/fs/gfs2/dir.c
++++ b/fs/gfs2/dir.c
+@@ -1876,7 +1876,7 @@ static int leaf_dealloc(struct gfs2_inode *dip, u32 index, u32 len,
+ 	if (error)
+ 		goto out;
+ 
+-	error = gfs2_rindex_hold(sdp, &dip->i_alloc.al_ri_gh);
++	error = gfs2_rindex_hold(sdp, &dip->i_alloc->al_ri_gh);
+ 	if (error)
+ 		goto out_qs;
+ 
+@@ -1949,7 +1949,7 @@ out_rg_gunlock:
+ 	gfs2_glock_dq_m(rlist.rl_rgrps, rlist.rl_ghs);
+ out_rlist:
+ 	gfs2_rlist_free(&rlist);
+-	gfs2_glock_dq_uninit(&dip->i_alloc.al_ri_gh);
++	gfs2_glock_dq_uninit(&dip->i_alloc->al_ri_gh);
+ out_qs:
+ 	gfs2_quota_unhold(dip);
+ out:
+diff --git a/fs/gfs2/eattr.c b/fs/gfs2/eattr.c
+index 2a7435b..bee9970 100644
+--- a/fs/gfs2/eattr.c
++++ b/fs/gfs2/eattr.c
+@@ -1418,7 +1418,7 @@ out:
+ static int ea_dealloc_block(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_rgrpd *rgd;
+ 	struct buffer_head *dibh;
+ 	int error;
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index 42aabab..dc795b1 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -270,7 +270,7 @@ struct gfs2_inode {
+ 	struct gfs2_glock *i_gl; /* Move into i_gh? */
+ 	struct gfs2_holder i_iopen_gh;
+ 	struct gfs2_holder i_gh; /* for prepare/commit_write only */
+-	struct gfs2_alloc i_alloc;
++	struct gfs2_alloc *i_alloc;
+ 	u64 i_last_rg_alloc;
+ 
+ 	spinlock_t i_spin;
+diff --git a/fs/gfs2/inode.c b/fs/gfs2/inode.c
+index 90a80ac..f9cea71 100644
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -711,9 +711,10 @@ static int alloc_dinode(struct gfs2_inode *dip, u64 *no_addr, u64 *generation)
+ 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
+ 	int error;
+ 
+-	gfs2_alloc_get(dip);
++	if (gfs2_alloc_get(dip) == NULL)
++		return -ENOMEM;
+ 
+-	dip->i_alloc.al_requested = RES_DINODE;
++	dip->i_alloc->al_requested = RES_DINODE;
+ 	error = gfs2_inplace_reserve(dip);
+ 	if (error)
+ 		goto out;
+@@ -900,7 +901,7 @@ fail_end_trans:
+ 	gfs2_trans_end(sdp);
+ 
+ fail_ipreserv:
+-	if (dip->i_alloc.al_rgd)
++	if (dip->i_alloc->al_rgd)
+ 		gfs2_inplace_release(dip);
+ 
+ fail_quota_locks:
+diff --git a/fs/gfs2/main.c b/fs/gfs2/main.c
+index aae81b6..ca2c456 100644
+--- a/fs/gfs2/main.c
++++ b/fs/gfs2/main.c
+@@ -32,6 +32,7 @@ static void gfs2_init_inode_once(void *foo, kmem_cache_t *cachep, unsigned long
+ 		inode_init_once(&ip->i_inode);
+ 		spin_lock_init(&ip->i_spin);
+ 		init_rwsem(&ip->i_rw_mutex);
++		ip->i_alloc = NULL;
+ 	}
+ }
+ 
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index cba6d8c..8cff6cf 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -627,9 +627,10 @@ static int gfs2_write_lock_start(struct gfs2_inode *ip, struct page *page,
+ 	if (ret)
+ 		goto out_unlock;
+ 
+-	ip->i_alloc.al_requested = 0;
+ 	if (*alloc_required) {
+ 		al = gfs2_alloc_get(ip);
++		if (al == NULL)
++			goto out_unlock;
+ 
+ 		ret = gfs2_quota_lock(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
+ 		if (ret)
+@@ -770,7 +771,7 @@ static int gfs2_commit_write(struct file *file, struct page *page,
+ 	struct gfs2_sbd *sdp = GFS2_SB(inode);
+ 	int error = -EOPNOTSUPP;
+ 	struct buffer_head *dibh;
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_dinode *di;
+ 
+ 	if (gfs2_assert_withdraw(sdp, gfs2_glock_is_locked_by_me(ip->i_gl)))
+@@ -818,7 +819,7 @@ static int gfs2_commit_write(struct file *file, struct page *page,
+ 
+ 	brelse(dibh);
+ 	gfs2_trans_end(sdp);
+-	if (al->al_requested) {
++	if (al) {
+ 		gfs2_inplace_release(ip);
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+@@ -833,7 +834,7 @@ fail:
+ 	brelse(dibh);
+ fail_endtrans:
+ 	gfs2_trans_end(sdp);
+-	if (al->al_requested) {
++	if (al) {
+ 		gfs2_inplace_release(ip);
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index 8141b3c..6f82ce1 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -61,7 +61,7 @@ static int gfs2_create(struct inode *dir, struct dentry *dentry,
+ 		inode = gfs2_createi(ghs, &dentry->d_name, S_IFREG | mode, 0);
+ 		if (!IS_ERR(inode)) {
+ 			gfs2_trans_end(sdp);
+-			if (dip->i_alloc.al_rgd)
++			if (dip->i_alloc->al_rgd)
+ 				gfs2_inplace_release(dip);
+ 			gfs2_quota_unlock(dip);
+ 			gfs2_alloc_put(dip);
+@@ -376,7 +376,7 @@ static int gfs2_symlink(struct inode *dir, struct dentry *dentry,
+ 	}
+ 
+ 	gfs2_trans_end(sdp);
+-	if (dip->i_alloc.al_rgd)
++	if (dip->i_alloc->al_rgd)
+ 		gfs2_inplace_release(dip);
+ 	gfs2_quota_unlock(dip);
+ 	gfs2_alloc_put(dip);
+@@ -452,7 +452,7 @@ static int gfs2_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+ 	gfs2_assert_withdraw(sdp, !error); /* dip already pinned */
+ 
+ 	gfs2_trans_end(sdp);
+-	if (dip->i_alloc.al_rgd)
++	if (dip->i_alloc->al_rgd)
+ 		gfs2_inplace_release(dip);
+ 	gfs2_quota_unlock(dip);
+ 	gfs2_alloc_put(dip);
+@@ -558,7 +558,7 @@ static int gfs2_mknod(struct inode *dir, struct dentry *dentry, int mode,
+ 	}
+ 
+ 	gfs2_trans_end(sdp);
+-	if (dip->i_alloc.al_rgd)
++	if (dip->i_alloc->al_rgd)
+ 		gfs2_inplace_release(dip);
+ 	gfs2_quota_unlock(dip);
+ 	gfs2_alloc_put(dip);
+diff --git a/fs/gfs2/quota.c b/fs/gfs2/quota.c
+index 0d072ce..ad437f9 100644
+--- a/fs/gfs2/quota.c
++++ b/fs/gfs2/quota.c
+@@ -454,7 +454,7 @@ static void qdsb_put(struct gfs2_quota_data *qd)
+ int gfs2_quota_hold(struct gfs2_inode *ip, u32 uid, u32 gid)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_quota_data **qd = al->al_qd;
+ 	int error;
+ 
+@@ -502,7 +502,7 @@ out:
+ void gfs2_quota_unhold(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	unsigned int x;
+ 
+ 	gfs2_assert_warn(sdp, !test_bit(GIF_QD_LOCKED, &ip->i_flags));
+@@ -856,7 +856,7 @@ fail:
+ int gfs2_quota_lock(struct gfs2_inode *ip, u32 uid, u32 gid)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	unsigned int x;
+ 	int error = 0;
+ 
+@@ -924,7 +924,7 @@ static int need_sync(struct gfs2_quota_data *qd)
+ 
+ void gfs2_quota_unlock(struct gfs2_inode *ip)
+ {
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_quota_data *qda[4];
+ 	unsigned int count = 0;
+ 	unsigned int x;
+@@ -972,7 +972,7 @@ static int print_message(struct gfs2_quota_data *qd, char *type)
+ int gfs2_quota_check(struct gfs2_inode *ip, u32 uid, u32 gid)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_quota_data *qd;
+ 	s64 value;
+ 	unsigned int x;
+@@ -1016,7 +1016,7 @@ int gfs2_quota_check(struct gfs2_inode *ip, u32 uid, u32 gid)
+ void gfs2_quota_change(struct gfs2_inode *ip, s64 change,
+ 		       u32 uid, u32 gid)
+ {
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_quota_data *qd;
+ 	unsigned int x;
+ 	unsigned int found = 0;
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 4fc56b9..f7f9ad4 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -817,11 +817,9 @@ void gfs2_rgrp_repolish_clones(struct gfs2_rgrpd *rgd)
+ 
+ struct gfs2_alloc *gfs2_alloc_get(struct gfs2_inode *ip)
+ {
+-	struct gfs2_alloc *al = &ip->i_alloc;
+-
+-	/* FIXME: Should assert that the correct locks are held here... */
+-	memset(al, 0, sizeof(*al));
+-	return al;
++	BUG_ON(ip->i_alloc != NULL);
++	ip->i_alloc = kzalloc(sizeof(struct gfs2_alloc), GFP_KERNEL);
++	return ip->i_alloc;
+ }
+ 
+ /**
+@@ -1059,7 +1057,7 @@ static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 	struct inode *inode = NULL;
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+ 	struct gfs2_rgrpd *rgd, *begin = NULL;
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	int flags = LM_FLAG_TRY;
+ 	int skipped = 0;
+ 	int loops = 0;
+@@ -1174,7 +1172,7 @@ out:
+ int gfs2_inplace_reserve_i(struct gfs2_inode *ip, char *file, unsigned int line)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct inode *inode;
+ 	int error = 0;
+ 	u64 last_unlinked = NO_BLOCK;
+@@ -1220,7 +1218,7 @@ try_again:
+ void gfs2_inplace_release(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 
+ 	if (gfs2_assert_warn(sdp, al->al_alloced <= al->al_requested) == -1)
+ 		fs_warn(sdp, "al_alloced = %u, al_requested = %u "
+@@ -1411,7 +1409,7 @@ static struct gfs2_rgrpd *rgblk_free(struct gfs2_sbd *sdp, u64 bstart,
+ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_rgrpd *rgd = al->al_rgd;
+ 	u32 goal, blk;
+ 	u64 block;
+@@ -1456,7 +1454,7 @@ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	struct gfs2_alloc *al = &ip->i_alloc;
++	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_rgrpd *rgd = al->al_rgd;
+ 	u32 goal, blk;
+ 	u64 block;
+@@ -1502,7 +1500,7 @@ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ u64 gfs2_alloc_di(struct gfs2_inode *dip, u64 *generation)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
+-	struct gfs2_alloc *al = &dip->i_alloc;
++	struct gfs2_alloc *al = dip->i_alloc;
+ 	struct gfs2_rgrpd *rgd = al->al_rgd;
+ 	u32 blk;
+ 	u64 block;
+diff --git a/fs/gfs2/rgrp.h b/fs/gfs2/rgrp.h
+index b4c6adf..149bb16 100644
+--- a/fs/gfs2/rgrp.h
++++ b/fs/gfs2/rgrp.h
+@@ -32,7 +32,9 @@ void gfs2_rgrp_repolish_clones(struct gfs2_rgrpd *rgd);
+ struct gfs2_alloc *gfs2_alloc_get(struct gfs2_inode *ip);
+ static inline void gfs2_alloc_put(struct gfs2_inode *ip)
+ {
+-	return; /* So we can see where ip->i_alloc is used */
++	BUG_ON(ip->i_alloc == NULL);
++	kfree(ip->i_alloc);
++	ip->i_alloc = NULL;
+ }
+ 
+ int gfs2_inplace_reserve_i(struct gfs2_inode *ip,

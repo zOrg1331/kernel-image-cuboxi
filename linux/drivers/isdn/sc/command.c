@@ -31,6 +31,19 @@ static int setl2(int card, unsigned long arg);
 static int setl3(int card, unsigned long arg);
 static int acceptb(int card, unsigned long channel);
 
+extern int cinst;
+extern board *sc_adapter[];
+
+extern int sc_ioctl(int, scs_ioctl *);
+extern int setup_buffers(int, int, unsigned int);
+extern int indicate_status(int, int,ulong,char*);
+extern void check_reset(unsigned long);
+extern int send_and_receive(int, unsigned int, unsigned char, unsigned char,
+                unsigned char, unsigned char, unsigned char, unsigned char *,
+                RspMessage *, int);
+extern int sendmessage(int, unsigned int, unsigned int, unsigned int,
+                unsigned int, unsigned int, unsigned int, unsigned int *);
+
 #ifdef DEBUG
 /*
  * Translate command codes to strings
@@ -90,6 +103,9 @@ int command(isdn_ctrl *cmd)
 		return -ENODEV;
 	}
 
+	pr_debug("%s: Received %s command from Link Layer\n",
+		sc_adapter[card]->devicename, commands[cmd->command]);
+
 	/*
 	 * Dispatch the command
 	 */
@@ -102,7 +118,7 @@ int command(isdn_ctrl *cmd)
 		memcpy(&cmdptr, cmd->parm.num, sizeof(unsigned long));
 		if (copy_from_user(&ioc, (scs_ioctl __user *)cmdptr,
 				   sizeof(scs_ioctl))) {
-			pr_debug("%s: Failed to verify user space 0x%lx\n",
+			pr_debug("%s: Failed to verify user space 0x%x\n",
 				sc_adapter[card]->devicename, cmdptr);
 			return -EFAULT;
 		}
@@ -179,7 +195,7 @@ static int dial(int card, unsigned long channel, setup_parm setup)
 				strlen(Phone),
 				(unsigned int *) Phone);
 
-	pr_debug("%s: Dialing %s on channel %lu\n",
+	pr_debug("%s: Dialing %s on channel %d\n",
 		sc_adapter[card]->devicename, Phone, channel+1);
 	
 	return status;
@@ -195,13 +211,13 @@ static int answer(int card, unsigned long channel)
 		return -ENODEV;
 	}
 
-	if(setup_buffers(card, channel+1)) {
+	if(setup_buffers(card, channel+1, BUFFER_SIZE)) {
 		hangup(card, channel+1);
 		return -ENOBUFS;
 	}
 
 	indicate_status(card, ISDN_STAT_BCONN,channel,NULL);
-	pr_debug("%s: Answered incoming call on channel %lu\n",
+	pr_debug("%s: Answered incoming call on channel %s\n",
 		sc_adapter[card]->devicename, channel+1);
 	return 0;
 }
@@ -224,7 +240,7 @@ static int hangup(int card, unsigned long channel)
 						 (unsigned char) channel+1,
 						 0,
 						 NULL);
-	pr_debug("%s: Sent HANGUP message to channel %lu\n",
+	pr_debug("%s: Sent HANGUP message to channel %d\n",
 		sc_adapter[card]->devicename, channel+1);
 	return status;
 }
@@ -244,6 +260,9 @@ static int setl2(int card, unsigned long arg)
 	protocol = arg >> 8;
 	channel = arg & 0xff;
 	sc_adapter[card]->channel[channel].l2_proto = protocol;
+	pr_debug("%s: Level 2 protocol for channel %d set to %s from %d\n",
+		sc_adapter[card]->devicename, channel+1,
+		l2protos[sc_adapter[card]->channel[channel].l2_proto],protocol);
 
 	/*
 	 * check that the adapter is also set to the correct protocol
@@ -274,6 +293,8 @@ static int setl3(int card, unsigned long channel)
 	}
 
 	sc_adapter[card]->channel[channel].l3_proto = protocol;
+	pr_debug("%s: Level 3 protocol for channel %d set to %s\n",
+		sc_adapter[card]->devicename, channel+1, l3protos[protocol]);
 	return 0;
 }
 
@@ -284,13 +305,13 @@ static int acceptb(int card, unsigned long channel)
 		return -ENODEV;
 	}
 
-	if(setup_buffers(card, channel+1))
+	if(setup_buffers(card, channel+1, BUFFER_SIZE))
 	{
 		hangup(card, channel+1);
 		return -ENOBUFS;
 	}
 
-	pr_debug("%s: B-Channel connection accepted on channel %lu\n",
+	pr_debug("%s: B-Channel connection accepted on channel %d\n",
 		sc_adapter[card]->devicename, channel+1);
 	indicate_status(card, ISDN_STAT_BCONN, channel, NULL);
 	return 0;
@@ -305,7 +326,7 @@ static int clreaz(int card, unsigned long arg)
 
 	strcpy(sc_adapter[card]->channel[arg].eazlist, "");
 	sc_adapter[card]->channel[arg].eazclear = 1;
-	pr_debug("%s: EAZ List cleared for channel %lu\n",
+	pr_debug("%s: EAZ List cleared for channel %d\n",
 		sc_adapter[card]->devicename, arg+1);
 	return 0;
 }
@@ -319,7 +340,7 @@ static int seteaz(int card, unsigned long arg, char *num)
 
 	strcpy(sc_adapter[card]->channel[arg].eazlist, num);
 	sc_adapter[card]->channel[arg].eazclear = 0;
-	pr_debug("%s: EAZ list for channel %lu set to: %s\n",
+	pr_debug("%s: EAZ list for channel %d set to: %s\n",
 		sc_adapter[card]->devicename, arg+1,
 		sc_adapter[card]->channel[arg].eazlist);
 	return 0;
@@ -344,7 +365,7 @@ int reset(int card)
 
 	spin_lock_irqsave(&sc_adapter[card]->lock, flags);
 	init_timer(&sc_adapter[card]->reset_timer);
-	sc_adapter[card]->reset_timer.function = sc_check_reset;
+	sc_adapter[card]->reset_timer.function = check_reset;
 	sc_adapter[card]->reset_timer.data = card;
 	sc_adapter[card]->reset_timer.expires = jiffies + CHECKRESET_TIME;
 	add_timer(&sc_adapter[card]->reset_timer);

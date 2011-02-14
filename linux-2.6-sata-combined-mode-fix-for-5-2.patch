@@ -1,0 +1,278 @@
+From: Peter Martuccelli <peterm@redhat.com>
+Date: Thu, 24 Jan 2008 10:00:55 -0500
+Subject: [sata] combined mode fix for 5.2
+Message-id: 200801241500.m0OF0tWk030184@redrum.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH] SATA: Combined mode fix for post -67 builds
+Bugzilla: 428945 428708
+
+Hello,
+
+The following patch resolves SATA boot failures reported in post RHEL 5.2 -67 builds.  The patch
+restores the prior RHEL specific legacy mode checks during init, specifically the calls to
+__request_resource to identify if the resource has been reserved for use by libata.  This check
+is required to avoid problems when dealing with combined mode configurations.
+
+This patch resolves Bugzillas 428945, and 428708.
+
+Regards,
+
+Peter
+
+diff --git a/drivers/ata/libata-sff.c b/drivers/ata/libata-sff.c
+index 1cdb102..2762ec1 100644
+--- a/drivers/ata/libata-sff.c
++++ b/drivers/ata/libata-sff.c
+@@ -504,23 +504,6 @@ int ata_sff_port_start(struct ata_port *ap)
+ 
+ #ifdef CONFIG_PCI
+ 
+-#if 0
+-static int ata_legacy_port_reserved(unsigned long res_start)
+-{
+-	struct resource *conflict, res;
+-
+-	res.start = res_start;
+-	res.end = res_start + 8 - 1;
+-	conflict = ____request_resource(&ioport_resource, &res);
+-	while (conflict->child)
+-		conflict = ____request_resource(conflict, &res);
+-	if (!strcmp(conflict->name, "libata"))
+-		return 1;	/* true */
+-
+-	return 0;		/* false */
+-}
+-#endif
+-
+ static int ata_resources_present(struct pci_dev *pdev, int port)
+ {
+ 	int i;
+@@ -592,6 +575,163 @@ int ata_pci_init_bmdma(struct ata_host *host)
+ 	return 0;
+ }
+ 
++struct ata_legacy_devres {
++	unsigned int	mask;
++	unsigned long	cmd_port[2];
++	void __iomem *	cmd_addr[2];
++	void __iomem *	ctl_addr[2];
++	unsigned int	irq[2];
++	void *		irq_dev_id[2];
++};
++
++static void ata_legacy_free_irqs(struct ata_legacy_devres *legacy_dr)
++{
++	int i;
++
++	for (i = 0; i < 2; i++) {
++		if (!legacy_dr->irq[i])
++			continue;
++
++		free_irq(legacy_dr->irq[i], legacy_dr->irq_dev_id[i]);
++		legacy_dr->irq[i] = 0;
++		legacy_dr->irq_dev_id[i] = NULL;
++	}
++}
++
++static void ata_legacy_release(struct device *gdev, void *res)
++{
++	struct ata_legacy_devres *this = res;
++	int i;
++
++	ata_legacy_free_irqs(this);
++
++	for (i = 0; i < 2; i++) {
++		if (this->cmd_addr[i])
++			ioport_unmap(this->cmd_addr[i]);
++		if (this->ctl_addr[i])
++			ioport_unmap(this->ctl_addr[i]);
++		if (this->cmd_port[i])
++			release_region(this->cmd_port[i], 8);
++	}
++}
++
++static int ata_legacy_port_reserved(unsigned long res_start)
++{
++	struct resource *conflict, res;
++
++	res.start = res_start;
++	res.end = res_start + 8 - 1;
++	conflict = ____request_resource(&ioport_resource, &res);
++	while (conflict->child)
++		conflict = ____request_resource(conflict, &res);
++	if (!strcmp(conflict->name, "libata"))
++		return 1;	/* true */
++
++	return 0;		/* false */
++}
++
++static int ata_init_legacy_port(struct ata_port *ap,
++				struct ata_legacy_devres *legacy_dr)
++{
++	struct ata_host *host = ap->host;
++	int port_no = ap->port_no;
++	unsigned long cmd_port, ctl_port;
++
++	if (port_no == 0) {
++		cmd_port = ATA_PRIMARY_CMD;
++		ctl_port = ATA_PRIMARY_CTL;
++	} else {
++		cmd_port = ATA_SECONDARY_CMD;
++		ctl_port = ATA_SECONDARY_CTL;
++	}
++
++	/* request cmd_port */
++	if (request_region(cmd_port, 8, "libata") ||
++	    ata_legacy_port_reserved(cmd_port))
++		legacy_dr->cmd_port[port_no] = cmd_port;
++	else {
++		dev_printk(KERN_WARNING, host->dev,
++			   "0x%0lX IDE port busy\n", cmd_port);
++		return -EBUSY;
++	}
++
++	/* iomap cmd and ctl ports */
++	legacy_dr->cmd_addr[port_no] = ioport_map(cmd_port, 8);
++	legacy_dr->ctl_addr[port_no] = ioport_map(ctl_port, 1);
++	if (!legacy_dr->cmd_addr[port_no] || !legacy_dr->ctl_addr[port_no]) {
++		dev_printk(KERN_WARNING, host->dev,
++			   "failed to map cmd/ctl ports\n");
++		return -ENOMEM;
++	}
++
++	/* init IO addresses */
++	ap->ioaddr.cmd_addr = legacy_dr->cmd_addr[port_no];
++	ap->ioaddr.altstatus_addr = legacy_dr->ctl_addr[port_no];
++	ap->ioaddr.ctl_addr = legacy_dr->ctl_addr[port_no];
++	ata_std_ports(&ap->ioaddr);
++
++	return 0;
++}
++
++/**
++ *	ata_init_legacy_host - acquire legacy ATA resources and init ATA host
++ *	@host: target ATA host
++ *	@was_busy: out parameter, indicates whether any port was busy
++ *
++ *	Acquire legacy ATA resources for the first two ports of @host
++ *	and initialize it accordingly.  Ports marked dummy are skipped
++ *	and resource acquistion failure makes the port dummy.
++ *
++ *	LOCKING:
++ *	Inherited from calling layer (may sleep).
++ *
++ *	RETURNS:
++ *	0 if at least one port is initialized, -ENODEV if no port is
++ *	available.
++ */
++static int ata_init_legacy_host(struct ata_host *host, int *was_busy)
++{
++	struct device *gdev = host->dev;
++	struct ata_legacy_devres *legacy_dr;
++	int i, rc;
++
++	if (!devres_open_group(gdev, NULL, GFP_KERNEL))
++		return -ENOMEM;
++
++	rc = -ENOMEM;
++	legacy_dr = devres_alloc(ata_legacy_release, sizeof(*legacy_dr),
++				 GFP_KERNEL);
++	if (!legacy_dr)
++		goto err_out;
++	devres_add(gdev, legacy_dr);
++
++	for (i = 0; i < 2; i++) {
++		if (ata_port_is_dummy(host->ports[i]))
++			continue;
++
++		rc = ata_init_legacy_port(host->ports[i], legacy_dr);
++		if (rc == 0)
++			legacy_dr->mask |= 1 << i;
++		else {
++			if (rc == -EBUSY)
++				(*was_busy)++;
++			host->ports[i]->ops = &ata_dummy_port_ops;
++		}
++	}
++
++	if (!legacy_dr->mask) {
++		dev_printk(KERN_ERR, gdev, "no available legacy port\n");
++		return -ENODEV;
++	}
++
++	devres_remove_group(gdev, NULL);
++	return 0;
++
++ err_out:
++	devres_release_group(gdev, NULL);
++	return rc;
++}
++
+ /**
+  *	ata_pci_init_sff_host - acquire native PCI ATA resources and init host
+  *	@host: target ATA host
+@@ -690,6 +830,8 @@ int ata_pci_prepare_sff_host(struct pci_dev *pdev,
+ {
+ 	struct ata_host *host;
+ 	int rc;
++	int legacy_mode = 0;
++	u8 mask;
+ 
+ 	if (!devres_open_group(&pdev->dev, NULL, GFP_KERNEL))
+ 		return -ENOMEM;
+@@ -702,9 +844,32 @@ int ata_pci_prepare_sff_host(struct pci_dev *pdev,
+ 		goto err_out;
+ 	}
+ 
+-	rc = ata_pci_init_sff_host(host);
+-	if (rc)
+-		goto err_out;
++	if ((pdev->class >> 8) == PCI_CLASS_STORAGE_IDE) {
++		u8 tmp8;
++
++		pci_read_config_byte(pdev, PCI_CLASS_PROG, &tmp8);
++		mask = (1 << 2) | (1 << 0);
++		if ((tmp8 & mask) != mask)
++			legacy_mode = 1;
++	}
++
++	if (!legacy_mode) {
++		rc = ata_pci_init_sff_host(host);
++		if (rc)
++			goto err_out;
++	} else {
++		int was_busy = 0;
++
++		rc = ata_init_legacy_host(host, &was_busy);
++		if (was_busy)
++			pcim_pin_device(pdev);
++		if (rc)
++			goto err_out;
++
++		/* request respective PCI regions, may fail */
++		rc = pci_request_region(pdev, 1, DRV_NAME);
++		rc = pci_request_region(pdev, 3, DRV_NAME);
++	}
+ 
+ 	/* init DMA related stuff */
+ 	rc = ata_pci_init_bmdma(host);
+@@ -823,7 +988,10 @@ int ata_pci_init_one(struct pci_dev *pdev,
+ 	if (rc)
+ 		goto err_out;
+ 
+-	if (!legacy_mode) {
++	if (!legacy_mode && pdev->irq) {
++		/* We may have no IRQ assigned in which case we can poll. This
++		   shouldn't happen on a sane system but robustness is cheap
++		   in this case */
+ 		rc = devm_request_irq(dev, pdev->irq, pi->port_ops->irq_handler,
+ 				      IRQF_SHARED, DRV_NAME, host);
+ 		if (rc)
+@@ -831,7 +999,7 @@ int ata_pci_init_one(struct pci_dev *pdev,
+ 
+ 		ata_port_desc(host->ports[0], "irq %d", pdev->irq);
+ 		ata_port_desc(host->ports[1], "irq %d", pdev->irq);
+-	} else {
++	} else if (legacy_mode) {
+ 		if (!ata_port_is_dummy(host->ports[0])) {
+ 			rc = devm_request_irq(dev, ATA_PRIMARY_IRQ(pdev),
+ 					      pi->port_ops->irq_handler,

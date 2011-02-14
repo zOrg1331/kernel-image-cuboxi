@@ -1,0 +1,61 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5.1 PATCH] Add FC link speeds.
+Date: Wed, 06 Jun 2007 19:18:17 -0400
+Bugzilla: 231888
+Message-Id: <1181171899.8758.10.camel@bianchi.boston.redhat.com>
+Changelog: [scsi] Add FC link speeds.
+
+
+Bugzilla 231888.
+
+The patch adds the needed definitions, and ascii string translations. It
+also removes a workaround from the lpfc driver update (8.1.10.9) that
+Chip posted:
+
+
+I built these modules and loaded them on a system with lpfc storage. We
+don't have the 8 GBIT and 16 GBIT hw, but that won't be necessary for
+this simple patch. 
+
+Tom  
+
+--- linux-2.6.18.noarch/drivers/scsi/lpfc/lpfc_compat.h.orig
++++ linux-2.6.18.noarch/drivers/scsi/lpfc/lpfc_compat.h
+@@ -32,14 +32,6 @@ using writel() and readl().
+  *******************************************************************/
+ #include <asm/byteorder.h>
+ 
+-/*
+- * This definition is to support older versions of scsi_transport_fc which
+- * do not have 8Gig speed definition.
+- */
+-#ifndef FC_PORTSPEED_8GBIT
+-#define FC_PORTSPEED_8GBIT 0x10
+-#endif
+-
+ #ifdef __BIG_ENDIAN
+ 
+ static inline void
+--- linux-2.6.18.noarch/drivers/scsi/scsi_transport_fc.c.orig
++++ linux-2.6.18.noarch/drivers/scsi/scsi_transport_fc.c
+@@ -201,6 +201,8 @@ static const struct {
+ 	{ FC_PORTSPEED_2GBIT,		"2 Gbit" },
+ 	{ FC_PORTSPEED_4GBIT,		"4 Gbit" },
+ 	{ FC_PORTSPEED_10GBIT,		"10 Gbit" },
++	{ FC_PORTSPEED_8GBIT,		"8 Gbit" },
++	{ FC_PORTSPEED_16GBIT,		"16 Gbit" },
+ 	{ FC_PORTSPEED_NOT_NEGOTIATED,	"Not Negotiated" },
+ };
+ fc_bitfield_name_search(port_speed, fc_port_speed_names)
+--- linux-2.6.18.noarch/include/scsi/scsi_transport_fc.h.orig
++++ linux-2.6.18.noarch/include/scsi/scsi_transport_fc.h
+@@ -108,6 +108,8 @@ enum fc_port_state {
+ #define FC_PORTSPEED_2GBIT		2
+ #define FC_PORTSPEED_4GBIT		4
+ #define FC_PORTSPEED_10GBIT		8
++#define FC_PORTSPEED_8GBIT		0x10
++#define FC_PORTSPEED_16GBIT		0x20
+ #define FC_PORTSPEED_NOT_NEGOTIATED	(1 << 15) /* Speed not established */
+ 
+ /*
+

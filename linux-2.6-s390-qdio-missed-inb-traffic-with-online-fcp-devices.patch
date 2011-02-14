@@ -1,0 +1,61 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 25 Apr 2008 15:07:44 +0200
+Subject: [s390] qdio: missed inb. traffic with online FCP devices
+Message-id: 20080425130744.GC22728@redhat.com
+O-Subject: [RHEL5 U3 PATCH 3/5] s390 - qdio: Undetected inb. traffic with many online FCP devices
+Bugzilla: 444146
+RH-Acked-by: Alan Cox <alan@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Usually every FCP device has its own indicator field
+the adapter uses to signal outstanding work. Once a
+certain limit of devices is reached, a common indicator
+field is used. In certain scenarios qdio resets this
+common indicator field, but handles only part of the
+FCP-devices sharing the common indicator field. Thus
+inbound traffic on the non-processed shared FCP-devices
+is not recognized immediately.
+
+Now we make sure the common indicator field is reset only,
+if all FCP-devices sharing the indicator are processed.
+
+Bugzilla
+=========
+
+BZ 444082
+https://bugzilla.redhat.com/show_bug.cgi?id=444082
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 as git commit
+35b58b028dfc99dd390a09f66945947c4945fa64
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index 8cfb11c..cb6037c 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -1392,7 +1392,7 @@ __tiqdio_inbound_processing(struct qdio_q *q, int spare_ind_was_set)
+ 	 * q->dev_st_chg_ind is the indicator, be it shared or not.
+ 	 * only clear it, if indicator is non-shared
+ 	 */
+-	if (!spare_ind_was_set)
++	if (q->dev_st_chg_ind != &spare_indicator)
+ 		tiqdio_clear_summary_bit((__u32*)q->dev_st_chg_ind);
+ 
+ 	if (q->hydra_gives_outbound_pcis) {

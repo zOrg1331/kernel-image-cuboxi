@@ -1,0 +1,85 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 8 Mar 2010 21:25:43 -0500
+Subject: [edac] fix internal error message in amd64_edac driver
+Message-id: <20100308212947.22809.34588.sendpatchset@localhost.localdomain>
+Patchwork-id: 23516
+O-Subject: [RHEL5 PATCH] Fix internal error message in amd64_edac driver
+Bugzilla: 569938
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Resolves BZ 569938
+
+RHEL5.5 beta + snapshot QA revealed an error in the amd64_edac driver.
+The test was done on a Toonie platform with known bad memory. The reason
+for the error shown below is an incorrect shift width of 24 used in the
+driver, the correct width as detailed in the BKDG "F1x[78, 70, 68, 60,
+58, 50, 48, 40] DRAM Base Address Registers" is 8.
+
+The second snippet: f10_translate_sysaddr_to_cs() simply returns negative
+value on error. The error handling path was wrong and had to be inverted.
+
+Error with unmodified 2.6.18-189:
+
+ Northbridge Error, node 1, core: -1
+K8 ECC error.
+EDAC amd64 MC1: CE ERROR_ADDRESS= 0x3aaa867a0
+EDAC MC1: INTERNAL ERROR: row out of range (-22 >= 8)
+EDAC MC1: CE - no information available: INTERNAL ERROR
+
+Testing, with patch, messages with debug kernel:
+Northbridge Error, node 1, core: -1
+K8 ECC error.
+EDAC amd64 MC1: CE ERROR_ADDRESS= 0x3aaa867a0 EDAC DEBUG: (dram=1) Base=0x238000000 SystemAddr= 0x3aaa867a0 Limit=0x437ffffff
+EDAC DEBUG:    HoleOffset=0x0  HoleValid=0x0 IntlvSel=0x0
+EDAC DEBUG:    (ChannelAddrLong=0xb95433c0) >> 8 becomes InputAddr=0xb95433
+EDAC DEBUG: InputAddr=0xb95433  channelselect=1
+EDAC DEBUG:     CSROW=0 CSBase=0x0 RAW CSMask=0xf83ce0
+EDAC DEBUG:               Final CSMask=0xfffcff
+EDAC DEBUG:     (InputAddr & ~CSMask)=0x0 (CSBase & ~CSMask)=0x0
+EDAC DEBUG:  MATCH csrow=0
+EDAC MC1: CE page 0x3aaa86, offset 0x7a0, grain 0, syndrome 0x9391, row 0, channel 1, label "": amd64_edac
+
+No more Internal error messages.  Also, I sanity tested on Dinar with good memory
+and checked initialization messages.
+
+Unfortunately this issue was not see in previous testing both by Alcatel and AMD,
+as presumably the driver was not tested with bad memory.
+
+Ideally this bug should be fixed in RHEL5.5, or in the first erratum.
+
+Please review and ACK.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index d13ab75..2490a21 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -1077,7 +1077,7 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
+        pvt->dram_IntlvEn[dram] = (low_base >> 8) & 0x7;
+ 
+        pvt->dram_base[dram] = (((u64)high_base & 0x000000FF) << 40) |
+-                              (((u64)low_base  & 0xFFFF0000) << 24);
++                              (((u64)low_base  & 0xFFFF0000) << 8);
+ 
+        low_offset = K8_DRAM_LIMIT_LOW + (dram << 3);
+        high_offset = F10_DRAM_LIMIT_HIGH + (dram << 3);
+@@ -1099,7 +1099,7 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
+         * memory location of the region, so low 24 bits need to be all ones.
+         */
+        pvt->dram_limit[dram] = (((u64)high_limit & 0x000000FF) << 40) |
+-                               (((u64) low_limit & 0xFFFF0000) << 24) |
++                               (((u64) low_limit & 0xFFFF0000) << 8) |
+                                0x00FFFFFF;
+ }
+ 
+@@ -1431,7 +1431,7 @@ static void f10_map_sysaddr_to_csrow(struct mem_ctl_info *mci,
+ 
+        csrow = f10_translate_sysaddr_to_cs(pvt, sys_addr, &nid, &chan);
+ 
+-       if (csrow >= 0) {
++       if (csrow < 0) {
+ 		edac_mc_handle_ce_no_info(mci, EDAC_MOD_STR);
+ 		return;
+ 	}

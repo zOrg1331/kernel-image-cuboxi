@@ -31,4 +31,6 @@ struct SpCommArea {
 	u8	xRsvd2[80];		// Reserved				030-07F
 };
 
+extern struct SpCommArea xSpCommArea;
+
 #endif /* _ISERIES_SPCOMM_AREA_H */

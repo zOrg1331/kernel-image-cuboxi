@@ -1,0 +1,48 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Thu, 22 Jul 2010 12:27:40 -0400
+Subject: [parport] increase ite887x's I/O port range
+Message-id: <20100722122739.5885.5243.send-patch@localhost.localdomain>
+Patchwork-id: 27024
+O-Subject: [RHEL5.6 PATCH 1/4] parport: increase ite887x's I/O port range
+Bugzilla: 563271
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolves RHBZ 563271.
+
+The I/O port range requested by parport_pc.c:sio_ite_8872_probe() is too small.
+The I/O ports of ttyS1 (0x2f8) will be misconfigured by the ITE-chip. The ITE
+starts looking for the chip at 0x2a0. An I/O port range of 32 will not overwrite
+the ports of ttyS1. Therefore register 0x60 should be written with 0xe5000000,
+enabling the ITE and setting I/O port size to 32 bytes.
+
+Backport of upstream commit:
+http://git.kernel.org/linus/e7c310c36e5fdf1b83a459e5db167bfbd86137db
+
+
+diff --git a/drivers/parport/parport_pc.c b/drivers/parport/parport_pc.c
+index fe800dc..2e3f0d6 100644
+--- a/drivers/parport/parport_pc.c
++++ b/drivers/parport/parport_pc.c
+@@ -2406,7 +2406,6 @@ static int __devinit sio_ite_8872_probe (struct pci_dev *pdev, int autoirq,
+ 	u32 ite8872set;
+ 	u32 ite8872_lpt, ite8872_lpthi;
+ 	u8 ite8872_irq, type;
+-	char *fake_name = "parport probe";
+ 	int irq;
+ 	int i;
+ 
+@@ -2414,11 +2413,11 @@ static int __devinit sio_ite_8872_probe (struct pci_dev *pdev, int autoirq,
+ 	
+ 	// make sure which one chip
+ 	for(i = 0; i < 5; i++) {
+-		base_res = request_region(inta_addr[i], 0x8, fake_name);
++		base_res = request_region(inta_addr[i], 32, "it887x");
+ 		if (base_res) {
+ 			int test;
+ 			pci_write_config_dword (pdev, 0x60,
+-						0xe7000000 | inta_addr[i]);
++						0xe5000000 | inta_addr[i]);
+ 			pci_write_config_dword (pdev, 0x78,
+ 						0x00000000 | inta_addr[i]);
+ 			test = inb (inta_addr[i]);

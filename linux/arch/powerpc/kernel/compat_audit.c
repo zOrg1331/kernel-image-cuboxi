@@ -21,11 +21,6 @@ unsigned ppc32_read_class[] = {
 ~0U
 };
 
-unsigned ppc32_signal_class[] = {
-#include <asm-generic/audit_signal.h>
-~0U
-};
-
 int ppc32_classify_syscall(unsigned syscall)
 {
 	switch(syscall) {

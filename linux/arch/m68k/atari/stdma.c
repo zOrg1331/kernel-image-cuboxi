@@ -35,7 +35,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
-#include <linux/module.h>
 
 #include <asm/atari_stdma.h>
 #include <asm/atariints.h>
@@ -45,7 +44,7 @@
 
 static int stdma_locked;			/* the semaphore */
 						/* int func to be called */
-static irq_handler_t stdma_isr;
+static irqreturn_t (*stdma_isr)(int, void *, struct pt_regs *);
 static void *stdma_isr_data;			/* data passed to isr */
 static DECLARE_WAIT_QUEUE_HEAD(stdma_wait);	/* wait queue for ST-DMA */
 
@@ -54,7 +53,7 @@ static DECLARE_WAIT_QUEUE_HEAD(stdma_wait);	/* wait queue for ST-DMA */
 
 /***************************** Prototypes *****************************/
 
-static irqreturn_t stdma_int (int irq, void *dummy);
+static irqreturn_t stdma_int (int irq, void *dummy, struct pt_regs *fp);
 
 /************************* End of Prototypes **************************/
 
@@ -76,7 +75,8 @@ static irqreturn_t stdma_int (int irq, void *dummy);
  *
  */
 
-void stdma_lock(irq_handler_t handler, void *data)
+void stdma_lock(irqreturn_t (*handler)(int, void *, struct pt_regs *),
+		void *data)
 {
 	unsigned long flags;
 
@@ -92,7 +92,6 @@ void stdma_lock(irq_handler_t handler, void *data)
 	stdma_isr_data = data;
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(stdma_lock);
 
 
 /*
@@ -119,7 +118,6 @@ void stdma_release(void)
 
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(stdma_release);
 
 
 /*
@@ -137,7 +135,6 @@ int stdma_others_waiting(void)
 {
 	return waitqueue_active(&stdma_wait);
 }
-EXPORT_SYMBOL(stdma_others_waiting);
 
 
 /*
@@ -159,7 +156,6 @@ int stdma_islocked(void)
 {
 	return stdma_locked;
 }
-EXPORT_SYMBOL(stdma_islocked);
 
 
 /*
@@ -179,9 +175,8 @@ EXPORT_SYMBOL(stdma_islocked);
 void __init stdma_init(void)
 {
 	stdma_isr = NULL;
-	if (request_irq(IRQ_MFP_FDC, stdma_int, IRQ_TYPE_SLOW | IRQF_SHARED,
-			"ST-DMA: floppy/ACSI/IDE/Falcon-SCSI", stdma_int))
-		pr_err("Couldn't register ST-DMA interrupt\n");
+	request_irq(IRQ_MFP_FDC, stdma_int, IRQ_TYPE_SLOW,
+	            "ST-DMA: floppy/ACSI/IDE/Falcon-SCSI", stdma_int);
 }
 
 
@@ -193,9 +188,9 @@ void __init stdma_init(void)
  *
  */
 
-static irqreturn_t stdma_int(int irq, void *dummy)
+static irqreturn_t stdma_int(int irq, void *dummy, struct pt_regs *fp)
 {
   if (stdma_isr)
-      (*stdma_isr)(irq, stdma_isr_data);
+      (*stdma_isr)(irq, stdma_isr_data, fp);
   return IRQ_HANDLED;
 }

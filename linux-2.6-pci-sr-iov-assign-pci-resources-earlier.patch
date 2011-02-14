@@ -1,0 +1,215 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Wed, 1 Sep 2010 21:33:53 -0400
+Subject: [pci] sr-iov: assign pci resources earlier
+Message-id: <4C7EC6C1.7020609@redhat.com>
+Patchwork-id: 28001
+O-Subject: Re: [RHEL5.6 PATCH 1/3] PCI SR-IOV assign pci resources earlier
+Bugzilla: 523341
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+This patch synchs the (sr)iov support from upstream
+to count up the number of VF resources needed,
+repair some failure paths, and assign sriov
+resources earlier in configuration.
+
+See 0/3 for bz, brew build, testing.
+
+Please review and ack.
+
+- Don
+
+diff --git a/drivers/pci/iov.c b/drivers/pci/iov.c
+index c3b92af..ffa334c 100644
+--- a/drivers/pci/iov.c
++++ b/drivers/pci/iov.c
+@@ -167,6 +167,7 @@ static int sriov_enable(struct pci_dev *dev, int nr_virtfn)
+ {
+ 	int rc;
+ 	int i, j;
++	int nres;
+ 	u16 offset, stride, initial;
+ 	struct resource *res;
+ 	struct pci_dev *pdev;
+@@ -193,15 +194,15 @@ static int sriov_enable(struct pci_dev *dev, int nr_virtfn)
+ 	if (!offset || (nr_virtfn > 1 && !stride))
+ 		return -EIO;
+ 
++	nres = 0;
+ 	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+ 		res = iov->res + i;
+-		if (!res->flags)
+-			continue;
+-		rc = pci_assign_resource(dev, i + PCI_IOV_RESOURCES);
+-		if (rc) {
+-			dev_err(&dev->dev, "not enough MMIO resources for SR-IOV\n");
+-			goto failed1;
+-		}
++		if (res->parent)
++			nres++;
++	}
++	if (nres != iov->nres) {
++		dev_err(&dev->dev, "not enough MMIO resources for SR-IOV\n");
++		return -ENOMEM;
+ 	}
+ 
+ 	iov->offset = offset;
+@@ -262,20 +263,12 @@ failed2:
+ 	if (iov->link != dev->devfn)
+ 		sysfs_remove_link(&dev->dev.kobj, "dep_link");
+ 
+-failed1:
+-	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+-		res = iov->res + i;
+-		if (res->parent)
+-			release_resource(res);
+-	}
+-
+ 	return rc;
+ }
+ 
+ static void sriov_disable(struct pci_dev *dev)
+ {
+ 	int i;
+-	struct resource *res;
+ 	struct pci_sriov *iov = dev->sriov;
+ 
+ 	if (!iov->nr_virtfn)
+@@ -293,12 +286,6 @@ static void sriov_disable(struct pci_dev *dev)
+ 	if (iov->link != dev->devfn)
+ 		sysfs_remove_link(&dev->dev.kobj, "dep_link");
+ 
+-	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+-		res = iov->res + i;
+-		if (res->parent)
+-			release_resource(res);
+-	}
+-
+ 	iov->nr_virtfn = 0;
+ }
+ 
+@@ -306,6 +293,7 @@ static int sriov_init(struct pci_dev *dev, int pos)
+ {
+ 	int i;
+ 	int rc;
++	int nres;
+ 	u32 pgsz;
+ 	u16 ctrl, total, offset, stride;
+ 	struct pci_sriov *iov;
+@@ -356,6 +344,7 @@ found:
+ 	if (!iov)
+ 		return -ENOMEM;
+ 
++	nres = 0;
+ 	for (i = 0; i < PCI_SRIOV_NUM_BARS; i++) {
+ 		res = iov->res + i;
+ 		i += __pci_read_base(dev, pci_bar_unknown, res,
+@@ -367,9 +356,11 @@ found:
+ 			goto failed;
+ 		}
+ 		res->end = res->start + (res->end - res->start + 1) * total - 1;
++		nres++;
+ 	}
+ 
+ 	iov->pos = pos;
++	iov->nres = nres;
+ 	iov->ctrl = ctrl;
+ 	iov->total = total;
+ 	iov->offset = offset;
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 7619a2c..a0e9b86 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -125,6 +125,7 @@ static inline int pci_ari_enabled(struct pci_bus *bus)
+ /* Single Root I/O Virtualization */
+ struct pci_sriov {
+ 	int pos;		/* capability position */
++	int nres;		/* number of resources */
+ 	u32 cap;		/* SR-IOV Capabilities */
+ 	u16 ctrl;		/* SR-IOV Control */
+ 	u16 total;		/* total VFs associated with the PF */
+diff --git a/drivers/pci/setup-bus.c b/drivers/pci/setup-bus.c
+index aa78b28..b525c6a 100644
+--- a/drivers/pci/setup-bus.c
++++ b/drivers/pci/setup-bus.c
+@@ -25,7 +25,7 @@
+ #include <linux/ioport.h>
+ #include <linux/cache.h>
+ #include <linux/slab.h>
+-
++#include "pci.h"
+ 
+ #define DEBUG_CONFIG 1
+ #if DEBUG_CONFIG
+@@ -49,7 +49,7 @@ pbus_assign_resources_sorted(struct pci_bus *bus)
+ 	struct pci_dev *dev;
+ 	struct resource *res;
+ 	struct resource_list head, *list, *tmp;
+-	int idx;
++	unsigned long idx;
+ 
+ 	head.next = NULL;
+ 	list_for_each_entry(dev, &bus->devices, bus_list) {
+@@ -74,6 +74,10 @@ pbus_assign_resources_sorted(struct pci_bus *bus)
+ 	for (list = head.next; list;) {
+ 		res = list->res;
+ 		idx = res - &list->dev->resource[0];
++		if (idx > PCI_NUM_RESOURCES) {
++			idx = res - &list->dev->sriov->res[0];
++			idx += PCI_IOV_RESOURCES;
++		}
+ 		if (pci_assign_resource(list->dev, idx)) {
+ 			res->start = 0;
+ 			res->end = 0;
+diff --git a/drivers/pci/setup-res.c b/drivers/pci/setup-res.c
+index c7b7ac9..013637e 100644
+--- a/drivers/pci/setup-res.c
++++ b/drivers/pci/setup-res.c
+@@ -227,12 +227,20 @@ pdev_sort_resources(struct pci_dev *dev, struct resource_list *head)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
++	for (i = 0; i <= PCI_IOV_RESOURCE_END; i++) {
+ 		struct resource *r;
+ 		struct resource_list *list, *tmp;
+ 		resource_size_t r_align;
+ 
+-		r = &dev->resource[i];
++		if (i < PCI_NUM_RESOURCES)
++			r = &dev->resource[i];
++		else if (i == PCI_NUM_RESOURCES)
++			continue;
++		else {
++			if (!dev->sriov)
++				continue;
++			r = &dev->sriov->res[i - PCI_IOV_RESOURCES];
++		}
+ 		r_align = r->end - r->start;
+ 		
+ 		if (!(r->flags) || r->parent)
+@@ -244,15 +252,21 @@ pdev_sort_resources(struct pci_dev *dev, struct resource_list *head)
+ 				(unsigned long long)r->end, pci_name(dev));
+ 			continue;
+ 		}
+-		r_align = (i < PCI_BRIDGE_RESOURCES) ? r_align + 1 : r->start;
++		r_align = (i < PCI_BRIDGE_RESOURCES ||
++			   i > PCI_NUM_RESOURCES) ? r_align + 1 : r->start;
+ 		for (list = head; ; list = list->next) {
+ 			resource_size_t align = 0;
+ 			struct resource_list *ln = list->next;
+-			int idx;
++			unsigned long idx;
+ 
+ 			if (ln) {
+ 				idx = ln->res - &ln->dev->resource[0];
+-				align = (idx < PCI_BRIDGE_RESOURCES) ?
++				if (idx > PCI_NUM_RESOURCES) {
++					idx = ln->res - &ln->dev->sriov->res[0];
++					idx += PCI_IOV_RESOURCES;
++				}
++				align = (idx < PCI_BRIDGE_RESOURCES ||
++					 idx > PCI_NUM_RESOURCES) ?
+ 					ln->res->end - ln->res->start + 1 :
+ 					ln->res->start;
+ 			}

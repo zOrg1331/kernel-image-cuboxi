@@ -1,4 +1,6 @@
 /*
+ * $Id: redwood.c,v 1.11 2005/11/07 11:14:28 gleixner Exp $
+ *
  * drivers/mtd/maps/redwood.c
  *
  * FLASH map for the IBM Redwood 4/5/6 boards.
@@ -122,10 +124,8 @@ struct map_info redwood_flash_map = {
 
 static struct mtd_info *redwood_mtd;
 
-static int __init init_redwood_flash(void)
+int __init init_redwood_flash(void)
 {
-	int err;
-
 	printk(KERN_NOTICE "redwood: flash mapping: %x at %x\n",
 			WINDOW_SIZE, WINDOW_ADDR);
 
@@ -141,18 +141,11 @@ static int __init init_redwood_flash(void)
 
 	if (redwood_mtd) {
 		redwood_mtd->owner = THIS_MODULE;
-		err = add_mtd_partitions(redwood_mtd,
+		return add_mtd_partitions(redwood_mtd,
 				redwood_flash_partitions,
 				NUM_REDWOOD_FLASH_PARTITIONS);
-		if (err) {
-			printk("init_redwood_flash: add_mtd_partitions failed\n");
-			iounmap(redwood_flash_map.virt);
-		}
-		return err;
-
 	}
 
-	iounmap(redwood_flash_map.virt);
 	return -ENXIO;
 }
 

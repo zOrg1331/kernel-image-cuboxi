@@ -1,0 +1,17 @@
+Quite a few UP x86-64 laptops print APIC error 40's repeatedly
+when they run an SMP kernel (And Fedora doesn't ship a UP x86-64 kernel
+any more).  We can suppress this as there's not really anything we
+can do about them.
+
+--- linux-2.6.14/arch/x86_64/kernel/apic.c~	2005-12-07 15:17:33.000000000 -0500
++++ linux-2.6.14/arch/x86_64/kernel/apic.c	2005-12-07 15:18:16.000000000 -0500
+@@ -1032,7 +1032,8 @@ asmlinkage void smp_error_interrupt(void
+ 	   6: Received illegal vector
+ 	   7: Illegal register address
+ 	*/
+-	printk (KERN_DEBUG "APIC error on CPU%d: %02x(%02x)\n",
++	if (num_online_cpus() > 1)
++		printk (KERN_DEBUG "APIC error on CPU%d: %02x(%02x)\n",
+ 	        smp_processor_id(), v , v1);
+ 	irq_exit();
+ }

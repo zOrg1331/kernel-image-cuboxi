@@ -36,3 +36,6 @@ struct page *kmap_atomic_to_page(void *ptr)
 {
 	return virt_to_page(ptr);
 }
+
+
+EXPORT_SYMBOL(kmap_atomic_to_page);

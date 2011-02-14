@@ -1,4 +1,4 @@
-/* Copyright (c) 2007 Coraid, Inc.  See COPYING for GPL terms. */
+/* Copyright (c) 2004 Coraid, Inc.  See COPYING for GPL terms. */
 /*
  * aoechr.c
  * AoE character device driver
@@ -6,10 +6,6 @@
 
 #include <linux/hdreg.h>
 #include <linux/blkdev.h>
-#include <linux/completion.h>
-#include <linux/delay.h>
-#include <linux/smp_lock.h>
-#include <linux/skbuff.h>
 #include "aoe.h"
 
 enum {
@@ -18,8 +14,8 @@ enum {
 	MINOR_DISCOVER,
 	MINOR_INTERFACES,
 	MINOR_REVALIDATE,
-	MINOR_FLUSH,
 	MSGSZ = 2048,
+	NARGS = 10,
 	NMSG = 100,		/* message backlog to retain */
 };
 
@@ -38,7 +34,7 @@ struct ErrMsg {
 
 static struct ErrMsg emsgs[NMSG];
 static int emsgs_head_idx, emsgs_tail_idx;
-static struct completion emsgs_comp;
+static struct semaphore emsgs_sema;
 static spinlock_t emsgs_lock;
 static int nblocked_emsgs_readers;
 static struct class *aoe_class;
@@ -47,7 +43,6 @@ static struct aoe_chardev chardevs[] = {
 	{ MINOR_DISCOVER, "discover" },
 	{ MINOR_INTERFACES, "interfaces" },
 	{ MINOR_REVALIDATE, "revalidate" },
-	{ MINOR_FLUSH, "flush" },
 };
 
 static int
@@ -61,8 +56,9 @@ static int
 interfaces(const char __user *str, size_t size)
 {
 	if (set_aoe_iflist(str, size)) {
-		printk(KERN_ERR
-			"aoe: could not set interface list: too many interfaces\n");
+		printk(KERN_CRIT
+		       "%s: could not set interface list: %s\n",
+		       __FUNCTION__, "too many interfaces");
 		return -EINVAL;
 	}
 	return 0;
@@ -74,7 +70,6 @@ revalidate(const char __user *str, size_t size)
 	int major, minor, n;
 	ulong flags;
 	struct aoedev *d;
-	struct sk_buff *skb;
 	char buf[16];
 
 	if (size >= sizeof buf)
@@ -86,31 +81,19 @@ revalidate(const char __user *str, size_t size)
 	/* should be e%d.%d format */
 	n = sscanf(buf, "e%d.%d", &major, &minor);
 	if (n != 2) {
-		printk(KERN_ERR "aoe: invalid device specification\n");
+		printk(KERN_ERR "aoe: %s: invalid device specification\n",
+			__FUNCTION__);
 		return -EINVAL;
 	}
 	d = aoedev_by_aoeaddr(major, minor);
 	if (!d)
 		return -EINVAL;
+
 	spin_lock_irqsave(&d->lock, flags);
-	aoecmd_cleanslate(d);
-loop:
-	skb = aoecmd_ata_id(d);
+	d->flags |= DEVFL_PAUSE;
 	spin_unlock_irqrestore(&d->lock, flags);
-	/* try again if we are able to sleep a bit,
-	 * otherwise give up this revalidation
-	 */
-	if (!skb && !msleep_interruptible(200)) {
-		spin_lock_irqsave(&d->lock, flags);
-		goto loop;
-	}
-	if (skb) {
-		struct sk_buff_head queue;
-		__skb_queue_head_init(&queue);
-		__skb_queue_tail(&queue, skb);
-		aoenet_xmit(&queue);
-	}
 	aoecmd_cfg(major, minor);
+
 	return 0;
 }
 
@@ -133,7 +116,7 @@ bail:		spin_unlock_irqrestore(&emsgs_lock, flags);
 
 	mp = kmalloc(n, GFP_ATOMIC);
 	if (mp == NULL) {
-		printk(KERN_ERR "aoe: allocation failure, len=%ld\n", n);
+		printk(KERN_CRIT "aoe: aoechr_error: allocation failure, len=%ld\n", n);
 		goto bail;
 	}
 
@@ -148,7 +131,7 @@ bail:		spin_unlock_irqrestore(&emsgs_lock, flags);
 	spin_unlock_irqrestore(&emsgs_lock, flags);
 
 	if (nblocked_emsgs_readers)
-		complete(&emsgs_comp);
+		up(&emsgs_sema);
 }
 
 static ssize_t
@@ -158,7 +141,7 @@ aoechr_write(struct file *filp, const char __user *buf, size_t cnt, loff_t *offp
 
 	switch ((unsigned long) filp->private_data) {
 	default:
-		printk(KERN_INFO "aoe: can't write to that file.\n");
+		printk(KERN_INFO "aoe: aoechr_write: can't write to that file.\n");
 		break;
 	case MINOR_DISCOVER:
 		ret = discover();
@@ -168,9 +151,6 @@ aoechr_write(struct file *filp, const char __user *buf, size_t cnt, loff_t *offp
 		break;
 	case MINOR_REVALIDATE:
 		ret = revalidate(buf, cnt);
-		break;
-	case MINOR_FLUSH:
-		ret = aoedev_flush(buf, cnt);
 	}
 	if (ret == 0)
 		ret = cnt;
@@ -182,16 +162,12 @@ aoechr_open(struct inode *inode, struct file *filp)
 {
 	int n, i;
 
-	lock_kernel();
 	n = iminor(inode);
 	filp->private_data = (void *) (unsigned long) n;
 
 	for (i = 0; i < ARRAY_SIZE(chardevs); ++i)
-		if (chardevs[i].minor == n) {
-			unlock_kernel();
+		if (chardevs[i].minor == n)
 			return 0;
-		}
-	unlock_kernel();
 	return -EINVAL;
 }
 
@@ -211,65 +187,61 @@ aoechr_read(struct file *filp, char __user *buf, size_t cnt, loff_t *off)
 	ulong flags;
 
 	n = (unsigned long) filp->private_data;
-	if (n != MINOR_ERR)
-		return -EFAULT;
-
-	spin_lock_irqsave(&emsgs_lock, flags);
-
-	for (;;) {
+	switch (n) {
+	case MINOR_ERR:
+		spin_lock_irqsave(&emsgs_lock, flags);
+loop:
 		em = emsgs + emsgs_head_idx;
-		if ((em->flags & EMFL_VALID) != 0)
-			break;
-		if (filp->f_flags & O_NDELAY) {
+		if ((em->flags & EMFL_VALID) == 0) {
+			if (filp->f_flags & O_NDELAY) {
+				spin_unlock_irqrestore(&emsgs_lock, flags);
+				return -EAGAIN;
+			}
+			nblocked_emsgs_readers++;
+
+			spin_unlock_irqrestore(&emsgs_lock, flags);
+
+			n = down_interruptible(&emsgs_sema);
+
+			spin_lock_irqsave(&emsgs_lock, flags);
+
+			nblocked_emsgs_readers--;
+
+			if (n) {
+				spin_unlock_irqrestore(&emsgs_lock, flags);
+				return -ERESTARTSYS;
+			}
+			goto loop;
+		}
+		if (em->len > cnt) {
 			spin_unlock_irqrestore(&emsgs_lock, flags);
 			return -EAGAIN;
 		}
-		nblocked_emsgs_readers++;
+		mp = em->msg;
+		len = em->len;
+		em->msg = NULL;
+		em->flags &= ~EMFL_VALID;
+
+		emsgs_head_idx++;
+		emsgs_head_idx %= ARRAY_SIZE(emsgs);
 
 		spin_unlock_irqrestore(&emsgs_lock, flags);
 
-		n = wait_for_completion_interruptible(&emsgs_comp);
-
-		spin_lock_irqsave(&emsgs_lock, flags);
-
-		nblocked_emsgs_readers--;
-
-		if (n) {
-			spin_unlock_irqrestore(&emsgs_lock, flags);
-			return -ERESTARTSYS;
-		}
+		n = copy_to_user(buf, mp, len);
+		kfree(mp);
+		return n == 0 ? len : -EFAULT;
+	default:
+		return -EFAULT;
 	}
-	if (em->len > cnt) {
-		spin_unlock_irqrestore(&emsgs_lock, flags);
-		return -EAGAIN;
-	}
-	mp = em->msg;
-	len = em->len;
-	em->msg = NULL;
-	em->flags &= ~EMFL_VALID;
-
-	emsgs_head_idx++;
-	emsgs_head_idx %= ARRAY_SIZE(emsgs);
-
-	spin_unlock_irqrestore(&emsgs_lock, flags);
-
-	n = copy_to_user(buf, mp, len);
-	kfree(mp);
-	return n == 0 ? len : -EFAULT;
 }
 
-static const struct file_operations aoe_fops = {
+static struct file_operations aoe_fops = {
 	.write = aoechr_write,
 	.read = aoechr_read,
 	.open = aoechr_open,
 	.release = aoechr_rel,
 	.owner = THIS_MODULE,
 };
-
-static char *aoe_devnode(struct device *dev, mode_t *mode)
-{
-	return kasprintf(GFP_KERNEL, "etherd/%s", dev_name(dev));
-}
 
 int __init
 aoechr_init(void)
@@ -278,22 +250,20 @@ aoechr_init(void)
 
 	n = register_chrdev(AOE_MAJOR, "aoechr", &aoe_fops);
 	if (n < 0) { 
-		printk(KERN_ERR "aoe: can't register char device\n");
+		printk(KERN_ERR "aoe: aoechr_init: can't register char device\n");
 		return n;
 	}
-	init_completion(&emsgs_comp);
+	sema_init(&emsgs_sema, 0);
 	spin_lock_init(&emsgs_lock);
 	aoe_class = class_create(THIS_MODULE, "aoe");
 	if (IS_ERR(aoe_class)) {
 		unregister_chrdev(AOE_MAJOR, "aoechr");
 		return PTR_ERR(aoe_class);
 	}
-	aoe_class->devnode = aoe_devnode;
-
 	for (i = 0; i < ARRAY_SIZE(chardevs); ++i)
-		device_create(aoe_class, NULL,
-			      MKDEV(AOE_MAJOR, chardevs[i].minor), NULL,
-			      chardevs[i].name);
+		class_device_create(aoe_class, NULL,
+					MKDEV(AOE_MAJOR, chardevs[i].minor),
+					NULL, chardevs[i].name);
 
 	return 0;
 }
@@ -304,7 +274,7 @@ aoechr_exit(void)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(chardevs); ++i)
-		device_destroy(aoe_class, MKDEV(AOE_MAJOR, chardevs[i].minor));
+		class_device_destroy(aoe_class, MKDEV(AOE_MAJOR, chardevs[i].minor));
 	class_destroy(aoe_class);
 	unregister_chrdev(AOE_MAJOR, "aoechr");
 }

@@ -1,0 +1,49 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 6 Aug 2010 14:22:33 -0400
+Subject: [net] qlge: adding ndev->last_rx = jiffies
+Message-id: <20100806141920.2774.30831.sendpatchset@localhost.localdomain>
+Patchwork-id: 27445
+O-Subject: [RHEL 5.6 PATCH 3/10] qlge: Adding ndev->last_rx = jiffies.
+Bugzilla: 567402
+
+Bugzilla
+========
+
+567402
+
+Upstream Status
+===============
+
+RHEL 5 specific
+
+Description
+===========
+
+>From 66a00e60fdb764f4ac836c1e01194142676d92fc Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Wed, 4 Aug 2010 16:32:58 -0700
+Subject: [PATCH 3/8] 	qlge: Adding ndev->last_rx = jiffies.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index 96483b0..a7cf9f6 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -4379,7 +4379,7 @@ static int ql_poll(struct net_device *ndev, int *budget)
+ 	struct rx_ring *rx_ring = ndev->priv;
+ 	struct ql_adapter *qdev = rx_ring->qdev;
+ 	int work_to_do = min(*budget, ndev->quota);
+-	int work_done;
++	int work_done = 0;
+ 
+ 	QPRINTK_DBG(qdev, RX_STATUS, DEBUG,
+ 			"NAPI poll, netdev = %p, rx_ring = %p, cq_id = %d, "
+@@ -4387,6 +4387,7 @@ static int ql_poll(struct net_device *ndev, int *budget)
+ 			work_to_do);
+ 
+ 	work_done = ql_clean_inbound_rx_ring(rx_ring, work_to_do);
++	if (work_done) ndev->last_rx = jiffies;
+ 	*budget -= work_done;
+ 	ndev->quota -= work_done;
+ #ifdef NETIF_F_GRO

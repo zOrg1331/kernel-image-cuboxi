@@ -1,0 +1,68 @@
+From: Aron Griffis <agriffis@redhat.com>
+Subject: [RHEL5.1 PATCH][XEN] use xencons=xvc by default on non-x86
+Date: Wed, 8 Aug 2007 21:17:29 -0400
+Bugzilla: 249100
+Message-Id: <20070809011728.GB27167@redhat.com>
+Changelog: [XEN] use xencons=xvc by default on non-x86
+
+
+bz249100
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249100
+
+Summary
+-------
+This patch changes the default xencons setting to "xvc" for non-x86
+and non-x86_64 systems, in particular ia64.  The goal is to get
+a login prompt on dom0 without needing to specify xencons=xvc
+console=xvc0 on the kernel command-line.
+
+Explanation
+-----------
+ia64 sets the current console in EFI, i.e. serial or VGA.  This
+console setting is honored by bare-metal Linux, and corresponding
+support is in the Xen hypervisor.  This means that ia64 users are
+accustomed to not setting any console variables on the kernel
+command-line, and everything works as expected.
+
+This is different from x86, of course, where console=ttyS0 or
+a similar setting is required for any headless setup.  Similarly on
+RHEL5 Xen, xencons=xvc console=xvc0 is recommended.
+
+There are two possible routes to making this work on ia64:
+
+1. Since the default presently is xencons=ttyS, hack kudzu to check
+   /dev/ttyS* in addition to /dev/xvc0.  I tried this approach first
+   (see the bugzilla) but met resistance to further propogating the
+   xencons=ttyS badness.
+
+    OR
+
+2. Follow upstream's lead by making xencons=xvc the default.  See
+   http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/12c399692d44
+
+This patch implements #2.  It avoids changing the default xencons=ttyS
+for x86 and x86_64 since those were supported in GA, but it uses the
+new default for other platforms.  At this point that would only be
+ia64.
+
+I've tested this patch on rx3600 successfully.
+
+Thanks,
+Aron
+
+diff -ur linux-2.6.18.ia64.old/drivers/xen/console/console.c linux-2.6.18.ia64/drivers/xen/console/console.c
+--- linux-2.6.18.ia64.old/drivers/xen/console/console.c	2007-08-08 15:55:35.000000000 -0400
++++ linux-2.6.18.ia64/drivers/xen/console/console.c	2007-08-08 16:14:34.000000000 -0400
+@@ -194,7 +194,11 @@
+ 
+ 	if (is_initial_xendomain()) {
+ 		if (xc_mode == XC_DEFAULT)
++#if defined(__i386__) || defined(__x86_64__)
+ 			xc_mode = XC_SERIAL;
++#else
++			xc_mode = XC_XVC;
++#endif
+ 		kcons_info.write = kcons_write_dom0;
+ 	} else {
+ 		if (!xen_start_info->console.domU.evtchn)
+

@@ -1,0 +1,136 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 Aug 2008 10:18:28 +1000
+Subject: [CRYPTO] tcrpyt: Remove unnecessary kmap/kunmap calls
+Message-id: E1KY8k0-0002Gr-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 7/19] crypto: tcrpyt - Remove unnecessary kmap/kunmap calls
+Bugzilla: 446522
+
+RHEL5 bugzilla #446522
+
+crypto: tcrpyt - Remove unnecessary kmap/kunmap calls
+
+Noticed by Neil Horman: we are doing unnecessary kmap/kunmap calls
+on kmalloced memory.  This patch removes them.  For the purposes of
+testing SG construction, the underlying crypto code already does plenty
+of kmap/kunmap calls anyway.
+
+There is also an issue with testing the last segment when encrypting.
+The additional part produced by AEAD wasn't tested.  Similarly, on
+decryption the additional part of the AEAD input is mistaken for
+corruption.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/crypto/tcrypt.c b/crypto/tcrypt.c
+index 0a6b43b..7e47e8d 100644
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -27,7 +27,6 @@
+ #include <linux/scatterlist.h>
+ #include <linux/string.h>
+ #include <linux/ncrypto.h>
+-#include <linux/highmem.h>
+ #include <linux/moduleparam.h>
+ #include <linux/jiffies.h>
+ #include <linux/timex.h>
+@@ -35,7 +34,7 @@
+ #include "tcrypt.h"
+ 
+ /*
+- * Need to kmalloc() memory for testing kmap().
++ * Need to kmalloc() memory for testing.
+  */
+ #define TVMEMSIZE	16384
+ #define XBUFSIZE	32768
+@@ -420,13 +419,12 @@ static void test_aead(char *algo, int enc, struct aead_testvec *template,
+ 				goto next_one;
+ 			}
+ 
+-			q = kmap(sg_page(&sg[0])) + sg[0].offset;
++			q = input;
+ 			hexdump(q, template[i].rlen);
+ 
+ 			printk(KERN_INFO "enc/dec: %s\n",
+ 			       memcmp(q, template[i].result,
+ 				      template[i].rlen) ? "fail" : "pass");
+-			kunmap(sg_page(&sg[0]));
+ next_one:
+ 			if (!template[i].key)
+ 				kfree(key);
+@@ -525,25 +523,34 @@ next_one:
+ 
+ 			for (k = 0, temp = 0; k < template[i].np; k++) {
+ 				printk(KERN_INFO "page %u\n", k);
+-				q = kmap(sg_page(&sg[k])) + sg[k].offset;
+-				hexdump(q, template[i].tap[k]);
++				q = &xbuf[IDX[k]];
++
++				n = template[i].tap[k];
++				if (k == template[i].np - 1)
++					n += enc ? authsize : -authsize;
++				hexdump(q, n);
+ 				printk(KERN_INFO "%s\n",
+-				       memcmp(q, template[i].result + temp,
+-					      template[i].tap[k] -
+-					      (k < template[i].np - 1 || enc ?
+-					       0 : authsize)) ?
++				       memcmp(q, template[i].result + temp, n) ?
+ 				       "fail" : "pass");
+ 
+-				for (n = 0; q[template[i].tap[k] + n]; n++)
+-					;
++				q += n;
++				if (k == template[i].np - 1 && !enc) {
++					if (memcmp(q, template[i].input +
++						      temp + n, authsize))
++						n = authsize;
++					else
++						n = 0;
++				} else {
++					for (n = 0; q[n]; n++)
++						;
++				}
+ 				if (n) {
+ 					printk("Result buffer corruption %u "
+ 					       "bytes:\n", n);
+-					hexdump(&q[template[i].tap[k]], n);
++					hexdump(q, n);
+ 				}
+ 
+ 				temp += template[i].tap[k];
+-				kunmap(sg_page(&sg[k]));
+ 			}
+ 		}
+ 	}
+@@ -652,13 +659,12 @@ static void test_cipher(char *algo, int enc,
+ 				goto out;
+ 			}
+ 
+-			q = kmap(sg_page(&sg[0])) + sg[0].offset;
++			q = data;
+ 			hexdump(q, template[i].rlen);
+ 
+ 			printk("%s\n",
+ 			       memcmp(q, template[i].result,
+ 				      template[i].rlen) ? "fail" : "pass");
+-			kunmap(sg_page(&sg[0]));
+ 		}
+ 		kfree(data);
+ 	}
+@@ -740,7 +746,7 @@ static void test_cipher(char *algo, int enc,
+ 			temp = 0;
+ 			for (k = 0; k < template[i].np; k++) {
+ 				printk("page %u\n", k);
+-				q = kmap(sg_page(&sg[k])) + sg[k].offset;
++				q = &xbuf[IDX[k]];
+ 				hexdump(q, template[i].tap[k]);
+ 				printk("%s\n",
+ 					memcmp(q, template[i].result + temp,
+@@ -755,7 +761,6 @@ static void test_cipher(char *algo, int enc,
+ 					hexdump(&q[template[i].tap[k]], n);
+ 				}
+ 				temp += template[i].tap[k];
+-				kunmap(sg_page(&sg[k]));
+ 			}
+ 		}
+ 	}

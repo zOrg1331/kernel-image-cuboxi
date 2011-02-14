@@ -5,6 +5,8 @@
  *
  *		IPv4 Forwarding Information Base: FIB frontend.
  *
+ * Version:	$Id: fib_frontend.c,v 1.26 2001/10/31 21:55:54 davem Exp $
+ *
  * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  *
  *		This program is free software; you can redistribute it and/or
@@ -20,6 +22,7 @@
 #include <linux/capability.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/socket.h>
@@ -29,140 +32,87 @@
 #include <linux/inet.h>
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
-#include <linux/if_addr.h>
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
+#include <linux/netlink.h>
 #include <linux/init.h>
-#include <linux/list.h>
 
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/route.h>
 #include <net/tcp.h>
 #include <net/sock.h>
+#include <net/icmp.h>
 #include <net/arp.h>
 #include <net/ip_fib.h>
-#include <net/rtnetlink.h>
+
+#define FFprint(a...) printk(KERN_DEBUG a)
 
 #ifndef CONFIG_IP_MULTIPLE_TABLES
 
-static int __net_init fib4_rules_init(struct net *net)
-{
-	struct fib_table *local_table, *main_table;
+#define RT_TABLE_MIN RT_TABLE_MAIN
 
-	local_table = fib_hash_table(RT_TABLE_LOCAL);
-	if (local_table == NULL)
-		return -ENOMEM;
+struct fib_table *ip_fib_local_table;
+struct fib_table *ip_fib_main_table;
 
-	main_table  = fib_hash_table(RT_TABLE_MAIN);
-	if (main_table == NULL)
-		goto fail;
-
-	hlist_add_head_rcu(&local_table->tb_hlist,
-				&net->ipv4.fib_table_hash[TABLE_LOCAL_INDEX]);
-	hlist_add_head_rcu(&main_table->tb_hlist,
-				&net->ipv4.fib_table_hash[TABLE_MAIN_INDEX]);
-	return 0;
-
-fail:
-	kfree(local_table);
-	return -ENOMEM;
-}
 #else
 
-struct fib_table *fib_new_table(struct net *net, u32 id)
+#define RT_TABLE_MIN 1
+
+struct fib_table *fib_tables[RT_TABLE_MAX+1];
+
+struct fib_table *__fib_new_table(int id)
 {
 	struct fib_table *tb;
-	unsigned int h;
 
-	if (id == 0)
-		id = RT_TABLE_MAIN;
-	tb = fib_get_table(net, id);
-	if (tb)
-		return tb;
-
-	tb = fib_hash_table(id);
+	tb = fib_hash_init(id);
 	if (!tb)
 		return NULL;
-	h = id & (FIB_TABLE_HASHSZ - 1);
-	hlist_add_head_rcu(&tb->tb_hlist, &net->ipv4.fib_table_hash[h]);
+	fib_tables[id] = tb;
 	return tb;
 }
 
-struct fib_table *fib_get_table(struct net *net, u32 id)
-{
-	struct fib_table *tb;
-	struct hlist_node *node;
-	struct hlist_head *head;
-	unsigned int h;
 
-	if (id == 0)
-		id = RT_TABLE_MAIN;
-	h = id & (FIB_TABLE_HASHSZ - 1);
-
-	rcu_read_lock();
-	head = &net->ipv4.fib_table_hash[h];
-	hlist_for_each_entry_rcu(tb, node, head, tb_hlist) {
-		if (tb->tb_id == id) {
-			rcu_read_unlock();
-			return tb;
-		}
-	}
-	rcu_read_unlock();
-	return NULL;
-}
 #endif /* CONFIG_IP_MULTIPLE_TABLES */
 
-void fib_select_default(struct net *net,
-			const struct flowi *flp, struct fib_result *res)
-{
-	struct fib_table *tb;
-	int table = RT_TABLE_MAIN;
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	if (res->r == NULL || res->r->action != FR_ACT_TO_TBL)
-		return;
-	table = res->r->table;
-#endif
-	tb = fib_get_table(net, table);
-	if (FIB_RES_GW(*res) && FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK)
-		tb->tb_select_default(tb, flp, res);
-}
 
-static void fib_flush(struct net *net)
+static void fib_flush(void)
 {
 	int flushed = 0;
+#ifdef CONFIG_IP_MULTIPLE_TABLES
 	struct fib_table *tb;
-	struct hlist_node *node;
-	struct hlist_head *head;
-	unsigned int h;
+	int id;
 
-	for (h = 0; h < FIB_TABLE_HASHSZ; h++) {
-		head = &net->ipv4.fib_table_hash[h];
-		hlist_for_each_entry(tb, node, head, tb_hlist)
-			flushed += tb->tb_flush(tb);
+	for (id = RT_TABLE_MAX; id>0; id--) {
+		if ((tb = fib_get_table(id))==NULL)
+			continue;
+		flushed += tb->tb_flush(tb);
 	}
+#else /* CONFIG_IP_MULTIPLE_TABLES */
+	flushed += ip_fib_main_table->tb_flush(ip_fib_main_table);
+	flushed += ip_fib_local_table->tb_flush(ip_fib_local_table);
+#endif /* CONFIG_IP_MULTIPLE_TABLES */
 
 	if (flushed)
-		rt_cache_flush(net, -1);
+		rt_cache_flush(-1);
 }
 
 /*
  *	Find the first device with a given source address.
  */
 
-struct net_device * ip_dev_find(struct net *net, __be32 addr)
+struct net_device * ip_dev_find(u32 addr)
 {
 	struct flowi fl = { .nl_u = { .ip4_u = { .daddr = addr } } };
 	struct fib_result res;
 	struct net_device *dev = NULL;
-	struct fib_table *local_table;
 
 #ifdef CONFIG_IP_MULTIPLE_TABLES
 	res.r = NULL;
 #endif
 
-	local_table = fib_get_table(net, RT_TABLE_LOCAL);
-	if (!local_table || local_table->tb_lookup(local_table, &fl, &res))
+	if (!ip_fib_local_table ||
+	    ip_fib_local_table->tb_lookup(ip_fib_local_table, &fl, &res))
 		return NULL;
 	if (res.type != RTN_LOCAL)
 		goto out;
@@ -175,49 +125,30 @@ out:
 	return dev;
 }
 
-/*
- * Find address type as if only "dev" was present in the system. If
- * on_dev is NULL then all interfaces are taken into consideration.
- */
-static inline unsigned __inet_dev_addr_type(struct net *net,
-					    const struct net_device *dev,
-					    __be32 addr)
+unsigned inet_addr_type(u32 addr)
 {
 	struct flowi		fl = { .nl_u = { .ip4_u = { .daddr = addr } } };
 	struct fib_result	res;
 	unsigned ret = RTN_BROADCAST;
-	struct fib_table *local_table;
 
-	if (ipv4_is_zeronet(addr) || ipv4_is_lbcast(addr))
+	if (ZERONET(addr) || BADCLASS(addr))
 		return RTN_BROADCAST;
-	if (ipv4_is_multicast(addr))
+	if (MULTICAST(addr))
 		return RTN_MULTICAST;
 
 #ifdef CONFIG_IP_MULTIPLE_TABLES
 	res.r = NULL;
 #endif
-
-	local_table = fib_get_table(net, RT_TABLE_LOCAL);
-	if (local_table) {
+	
+	if (ip_fib_local_table) {
 		ret = RTN_UNICAST;
-		if (!local_table->tb_lookup(local_table, &fl, &res)) {
-			if (!dev || dev == res.fi->fib_dev)
-				ret = res.type;
+		if (!ip_fib_local_table->tb_lookup(ip_fib_local_table,
+						   &fl, &res)) {
+			ret = res.type;
 			fib_res_put(&res);
 		}
 	}
 	return ret;
-}
-
-unsigned int inet_addr_type(struct net *net, __be32 addr)
-{
-	return __inet_dev_addr_type(net, NULL, addr);
-}
-
-unsigned int inet_dev_addr_type(struct net *net, const struct net_device *dev,
-				__be32 addr)
-{
-       return __inet_dev_addr_type(net, dev, addr);
 }
 
 /* Given (packet source, input interface) and optional (dst, oif, tos):
@@ -228,22 +159,18 @@ unsigned int inet_dev_addr_type(struct net *net, const struct net_device *dev,
    - check, that packet arrived from expected physical interface.
  */
 
-int fib_validate_source(__be32 src, __be32 dst, u8 tos, int oif,
-			struct net_device *dev, __be32 *spec_dst,
-			u32 *itag, u32 mark)
+int fib_validate_source(u32 src, u32 dst, u8 tos, int oif,
+			struct net_device *dev, u32 *spec_dst, u32 *itag)
 {
 	struct in_device *in_dev;
 	struct flowi fl = { .nl_u = { .ip4_u =
 				      { .daddr = src,
 					.saddr = dst,
 					.tos = tos } },
-			    .mark = mark,
 			    .iif = oif };
-
 	struct fib_result res;
 	int no_addr, rpf;
 	int ret;
-	struct net *net;
 
 	no_addr = rpf = 0;
 	rcu_read_lock();
@@ -251,16 +178,13 @@ int fib_validate_source(__be32 src, __be32 dst, u8 tos, int oif,
 	if (in_dev) {
 		no_addr = in_dev->ifa_list == NULL;
 		rpf = IN_DEV_RPFILTER(in_dev);
-		if (mark && !IN_DEV_SRC_VMARK(in_dev))
-			fl.mark = 0;
 	}
 	rcu_read_unlock();
 
 	if (in_dev == NULL)
 		goto e_inval;
 
-	net = dev_net(dev);
-	if (fib_lookup(net, &fl, &res))
+	if (fib_lookup(&fl, &res))
 		goto last_resort;
 	if (res.type != RTN_UNICAST)
 		goto e_inval_res;
@@ -279,12 +203,12 @@ int fib_validate_source(__be32 src, __be32 dst, u8 tos, int oif,
 	fib_res_put(&res);
 	if (no_addr)
 		goto last_resort;
-	if (rpf == 1)
+	if (rpf)
 		goto e_inval;
 	fl.oif = dev->ifindex;
 
 	ret = 0;
-	if (fib_lookup(net, &fl, &res) == 0) {
+	if (fib_lookup(&fl, &res) == 0) {
 		if (res.type == RTN_UNICAST) {
 			*spec_dst = FIB_RES_PREFSRC(res);
 			ret = FIB_RES_NH(res).nh_scope >= RT_SCOPE_HOST;
@@ -306,191 +230,44 @@ e_inval:
 	return -EINVAL;
 }
 
-static inline __be32 sk_extract_addr(struct sockaddr *addr)
-{
-	return ((struct sockaddr_in *) addr)->sin_addr.s_addr;
-}
-
-static int put_rtax(struct nlattr *mx, int len, int type, u32 value)
-{
-	struct nlattr *nla;
-
-	nla = (struct nlattr *) ((char *) mx + len);
-	nla->nla_type = type;
-	nla->nla_len = nla_attr_size(4);
-	*(u32 *) nla_data(nla) = value;
-
-	return len + nla_total_size(4);
-}
-
-static int rtentry_to_fib_config(struct net *net, int cmd, struct rtentry *rt,
-				 struct fib_config *cfg)
-{
-	__be32 addr;
-	int plen;
-
-	memset(cfg, 0, sizeof(*cfg));
-	cfg->fc_nlinfo.nl_net = net;
-
-	if (rt->rt_dst.sa_family != AF_INET)
-		return -EAFNOSUPPORT;
-
-	/*
-	 * Check mask for validity:
-	 * a) it must be contiguous.
-	 * b) destination must have all host bits clear.
-	 * c) if application forgot to set correct family (AF_INET),
-	 *    reject request unless it is absolutely clear i.e.
-	 *    both family and mask are zero.
-	 */
-	plen = 32;
-	addr = sk_extract_addr(&rt->rt_dst);
-	if (!(rt->rt_flags & RTF_HOST)) {
-		__be32 mask = sk_extract_addr(&rt->rt_genmask);
-
-		if (rt->rt_genmask.sa_family != AF_INET) {
-			if (mask || rt->rt_genmask.sa_family)
-				return -EAFNOSUPPORT;
-		}
-
-		if (bad_mask(mask, addr))
-			return -EINVAL;
-
-		plen = inet_mask_len(mask);
-	}
-
-	cfg->fc_dst_len = plen;
-	cfg->fc_dst = addr;
-
-	if (cmd != SIOCDELRT) {
-		cfg->fc_nlflags = NLM_F_CREATE;
-		cfg->fc_protocol = RTPROT_BOOT;
-	}
-
-	if (rt->rt_metric)
-		cfg->fc_priority = rt->rt_metric - 1;
-
-	if (rt->rt_flags & RTF_REJECT) {
-		cfg->fc_scope = RT_SCOPE_HOST;
-		cfg->fc_type = RTN_UNREACHABLE;
-		return 0;
-	}
-
-	cfg->fc_scope = RT_SCOPE_NOWHERE;
-	cfg->fc_type = RTN_UNICAST;
-
-	if (rt->rt_dev) {
-		char *colon;
-		struct net_device *dev;
-		char devname[IFNAMSIZ];
-
-		if (copy_from_user(devname, rt->rt_dev, IFNAMSIZ-1))
-			return -EFAULT;
-
-		devname[IFNAMSIZ-1] = 0;
-		colon = strchr(devname, ':');
-		if (colon)
-			*colon = 0;
-		dev = __dev_get_by_name(net, devname);
-		if (!dev)
-			return -ENODEV;
-		cfg->fc_oif = dev->ifindex;
-		if (colon) {
-			struct in_ifaddr *ifa;
-			struct in_device *in_dev = __in_dev_get_rtnl(dev);
-			if (!in_dev)
-				return -ENODEV;
-			*colon = ':';
-			for (ifa = in_dev->ifa_list; ifa; ifa = ifa->ifa_next)
-				if (strcmp(ifa->ifa_label, devname) == 0)
-					break;
-			if (ifa == NULL)
-				return -ENODEV;
-			cfg->fc_prefsrc = ifa->ifa_local;
-		}
-	}
-
-	addr = sk_extract_addr(&rt->rt_gateway);
-	if (rt->rt_gateway.sa_family == AF_INET && addr) {
-		cfg->fc_gw = addr;
-		if (rt->rt_flags & RTF_GATEWAY &&
-		    inet_addr_type(net, addr) == RTN_UNICAST)
-			cfg->fc_scope = RT_SCOPE_UNIVERSE;
-	}
-
-	if (cmd == SIOCDELRT)
-		return 0;
-
-	if (rt->rt_flags & RTF_GATEWAY && !cfg->fc_gw)
-		return -EINVAL;
-
-	if (cfg->fc_scope == RT_SCOPE_NOWHERE)
-		cfg->fc_scope = RT_SCOPE_LINK;
-
-	if (rt->rt_flags & (RTF_MTU | RTF_WINDOW | RTF_IRTT)) {
-		struct nlattr *mx;
-		int len = 0;
-
-		mx = kzalloc(3 * nla_total_size(4), GFP_KERNEL);
-		if (mx == NULL)
-			return -ENOMEM;
-
-		if (rt->rt_flags & RTF_MTU)
-			len = put_rtax(mx, len, RTAX_ADVMSS, rt->rt_mtu - 40);
-
-		if (rt->rt_flags & RTF_WINDOW)
-			len = put_rtax(mx, len, RTAX_WINDOW, rt->rt_window);
-
-		if (rt->rt_flags & RTF_IRTT)
-			len = put_rtax(mx, len, RTAX_RTT, rt->rt_irtt << 3);
-
-		cfg->fc_mx = mx;
-		cfg->fc_mx_len = len;
-	}
-
-	return 0;
-}
+#ifndef CONFIG_IP_NOSIOCRT
 
 /*
  *	Handle IP routing ioctl calls. These are used to manipulate the routing tables
  */
-
-int ip_rt_ioctl(struct net *net, unsigned int cmd, void __user *arg)
+ 
+int ip_rt_ioctl(unsigned int cmd, void __user *arg)
 {
-	struct fib_config cfg;
-	struct rtentry rt;
 	int err;
+	struct kern_rta rta;
+	struct rtentry  r;
+	struct {
+		struct nlmsghdr nlh;
+		struct rtmsg	rtm;
+	} req;
 
 	switch (cmd) {
 	case SIOCADDRT:		/* Add a route */
 	case SIOCDELRT:		/* Delete a route */
 		if (!capable(CAP_NET_ADMIN))
 			return -EPERM;
-
-		if (copy_from_user(&rt, arg, sizeof(rt)))
+		if (copy_from_user(&r, arg, sizeof(struct rtentry)))
 			return -EFAULT;
-
 		rtnl_lock();
-		err = rtentry_to_fib_config(net, cmd, &rt, &cfg);
+		err = fib_convert_rtentry(cmd, &req.nlh, &req.rtm, &rta, &r);
 		if (err == 0) {
-			struct fib_table *tb;
-
 			if (cmd == SIOCDELRT) {
-				tb = fib_get_table(net, cfg.fc_table);
+				struct fib_table *tb = fib_get_table(req.rtm.rtm_table);
+				err = -ESRCH;
 				if (tb)
-					err = tb->tb_delete(tb, &cfg);
-				else
-					err = -ESRCH;
+					err = tb->tb_delete(tb, &req.rtm, &rta, &req.nlh, NULL);
 			} else {
-				tb = fib_new_table(net, cfg.fc_table);
+				struct fib_table *tb = fib_new_table(req.rtm.rtm_table);
+				err = -ENOBUFS;
 				if (tb)
-					err = tb->tb_insert(tb, &cfg);
-				else
-					err = -ENOBUFS;
+					err = tb->tb_insert(tb, &req.rtm, &rta, &req.nlh, NULL);
 			}
-
-			/* allocated by rtentry_to_fib_config() */
-			kfree(cfg.fc_mx);
+			kfree(rta.rta_mx);
 		}
 		rtnl_unlock();
 		return err;
@@ -498,170 +275,86 @@ int ip_rt_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	return -EINVAL;
 }
 
-const struct nla_policy rtm_ipv4_policy[RTA_MAX+1] = {
-	[RTA_DST]		= { .type = NLA_U32 },
-	[RTA_SRC]		= { .type = NLA_U32 },
-	[RTA_IIF]		= { .type = NLA_U32 },
-	[RTA_OIF]		= { .type = NLA_U32 },
-	[RTA_GATEWAY]		= { .type = NLA_U32 },
-	[RTA_PRIORITY]		= { .type = NLA_U32 },
-	[RTA_PREFSRC]		= { .type = NLA_U32 },
-	[RTA_METRICS]		= { .type = NLA_NESTED },
-	[RTA_MULTIPATH]		= { .len = sizeof(struct rtnexthop) },
-	[RTA_FLOW]		= { .type = NLA_U32 },
-};
+#else
 
-static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
-			    struct nlmsghdr *nlh, struct fib_config *cfg)
+int ip_rt_ioctl(unsigned int cmd, void *arg)
 {
-	struct nlattr *attr;
-	int err, remaining;
-	struct rtmsg *rtm;
+	return -EINVAL;
+}
 
-	err = nlmsg_validate(nlh, sizeof(*rtm), RTA_MAX, rtm_ipv4_policy);
-	if (err < 0)
-		goto errout;
+#endif
 
-	memset(cfg, 0, sizeof(*cfg));
+static int inet_check_attr(struct rtmsg *r, struct rtattr **rta)
+{
+	int i;
 
-	rtm = nlmsg_data(nlh);
-	cfg->fc_dst_len = rtm->rtm_dst_len;
-	cfg->fc_tos = rtm->rtm_tos;
-	cfg->fc_table = rtm->rtm_table;
-	cfg->fc_protocol = rtm->rtm_protocol;
-	cfg->fc_scope = rtm->rtm_scope;
-	cfg->fc_type = rtm->rtm_type;
-	cfg->fc_flags = rtm->rtm_flags;
-	cfg->fc_nlflags = nlh->nlmsg_flags;
-
-	cfg->fc_nlinfo.pid = NETLINK_CB(skb).pid;
-	cfg->fc_nlinfo.nlh = nlh;
-	cfg->fc_nlinfo.nl_net = net;
-
-	if (cfg->fc_type > RTN_MAX) {
-		err = -EINVAL;
-		goto errout;
-	}
-
-	nlmsg_for_each_attr(attr, nlh, sizeof(struct rtmsg), remaining) {
-		switch (nla_type(attr)) {
-		case RTA_DST:
-			cfg->fc_dst = nla_get_be32(attr);
-			break;
-		case RTA_OIF:
-			cfg->fc_oif = nla_get_u32(attr);
-			break;
-		case RTA_GATEWAY:
-			cfg->fc_gw = nla_get_be32(attr);
-			break;
-		case RTA_PRIORITY:
-			cfg->fc_priority = nla_get_u32(attr);
-			break;
-		case RTA_PREFSRC:
-			cfg->fc_prefsrc = nla_get_be32(attr);
-			break;
-		case RTA_METRICS:
-			cfg->fc_mx = nla_data(attr);
-			cfg->fc_mx_len = nla_len(attr);
-			break;
-		case RTA_MULTIPATH:
-			cfg->fc_mp = nla_data(attr);
-			cfg->fc_mp_len = nla_len(attr);
-			break;
-		case RTA_FLOW:
-			cfg->fc_flow = nla_get_u32(attr);
-			break;
-		case RTA_TABLE:
-			cfg->fc_table = nla_get_u32(attr);
-			break;
+	for (i=1; i<=RTA_MAX; i++, rta++) {
+		struct rtattr *attr = *rta;
+		if (attr) {
+			if (RTA_PAYLOAD(attr) < 4)
+				return -EINVAL;
+			if (i != RTA_MULTIPATH && i != RTA_METRICS)
+				*rta = (struct rtattr*)RTA_DATA(attr);
 		}
 	}
-
 	return 0;
-errout:
-	return err;
 }
 
-static int inet_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
+int inet_rtm_delroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
 {
-	struct net *net = sock_net(skb->sk);
-	struct fib_config cfg;
-	struct fib_table *tb;
-	int err;
+	struct fib_table * tb;
+	struct rtattr **rta = arg;
+	struct rtmsg *r = NLMSG_DATA(nlh);
 
-	err = rtm_to_fib_config(net, skb, nlh, &cfg);
-	if (err < 0)
-		goto errout;
+	if (inet_check_attr(r, rta))
+		return -EINVAL;
 
-	tb = fib_get_table(net, cfg.fc_table);
-	if (tb == NULL) {
-		err = -ESRCH;
-		goto errout;
-	}
-
-	err = tb->tb_delete(tb, &cfg);
-errout:
-	return err;
+	tb = fib_get_table(r->rtm_table);
+	if (tb)
+		return tb->tb_delete(tb, r, (struct kern_rta*)rta, nlh, &NETLINK_CB(skb));
+	return -ESRCH;
 }
 
-static int inet_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
+int inet_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
 {
-	struct net *net = sock_net(skb->sk);
-	struct fib_config cfg;
-	struct fib_table *tb;
-	int err;
+	struct fib_table * tb;
+	struct rtattr **rta = arg;
+	struct rtmsg *r = NLMSG_DATA(nlh);
 
-	err = rtm_to_fib_config(net, skb, nlh, &cfg);
-	if (err < 0)
-		goto errout;
+	if (inet_check_attr(r, rta))
+		return -EINVAL;
 
-	tb = fib_new_table(net, cfg.fc_table);
-	if (tb == NULL) {
-		err = -ENOBUFS;
-		goto errout;
-	}
-
-	err = tb->tb_insert(tb, &cfg);
-errout:
-	return err;
+	tb = fib_new_table(r->rtm_table);
+	if (tb)
+		return tb->tb_insert(tb, r, (struct kern_rta*)rta, nlh, &NETLINK_CB(skb));
+	return -ENOBUFS;
 }
 
-static int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct net *net = sock_net(skb->sk);
-	unsigned int h, s_h;
-	unsigned int e = 0, s_e;
+	int t;
+	int s_t;
 	struct fib_table *tb;
-	struct hlist_node *node;
-	struct hlist_head *head;
-	int dumped = 0;
 
-	if (nlmsg_len(cb->nlh) >= sizeof(struct rtmsg) &&
-	    ((struct rtmsg *) nlmsg_data(cb->nlh))->rtm_flags & RTM_F_CLONED)
+	if (NLMSG_PAYLOAD(cb->nlh, 0) >= sizeof(struct rtmsg) &&
+	    ((struct rtmsg*)NLMSG_DATA(cb->nlh))->rtm_flags&RTM_F_CLONED)
 		return ip_rt_dump(skb, cb);
 
-	s_h = cb->args[0];
-	s_e = cb->args[1];
+	s_t = cb->args[0];
+	if (s_t == 0)
+		s_t = cb->args[0] = RT_TABLE_MIN;
 
-	for (h = s_h; h < FIB_TABLE_HASHSZ; h++, s_e = 0) {
-		e = 0;
-		head = &net->ipv4.fib_table_hash[h];
-		hlist_for_each_entry(tb, node, head, tb_hlist) {
-			if (e < s_e)
-				goto next;
-			if (dumped)
-				memset(&cb->args[2], 0, sizeof(cb->args) -
-						 2 * sizeof(cb->args[0]));
-			if (tb->tb_dump(tb, skb, cb) < 0)
-				goto out;
-			dumped = 1;
-next:
-			e++;
-		}
+	for (t=s_t; t<=RT_TABLE_MAX; t++) {
+		if (t < s_t) continue;
+		if (t > s_t)
+			memset(&cb->args[1], 0, sizeof(cb->args)-sizeof(cb->args[0]));
+		if ((tb = fib_get_table(t))==NULL)
+			continue;
+		if (tb->tb_dump(tb, skb, cb) < 0) 
+			break;
 	}
-out:
-	cb->args[1] = e;
-	cb->args[0] = h;
+
+	cb->args[0] = t;
 
 	return skb->len;
 }
@@ -673,42 +366,46 @@ out:
    only when netlink is already locked.
  */
 
-static void fib_magic(int cmd, int type, __be32 dst, int dst_len, struct in_ifaddr *ifa)
+static void fib_magic(int cmd, int type, u32 dst, int dst_len, struct in_ifaddr *ifa)
 {
-	struct net *net = dev_net(ifa->ifa_dev->dev);
-	struct fib_table *tb;
-	struct fib_config cfg = {
-		.fc_protocol = RTPROT_KERNEL,
-		.fc_type = type,
-		.fc_dst = dst,
-		.fc_dst_len = dst_len,
-		.fc_prefsrc = ifa->ifa_local,
-		.fc_oif = ifa->ifa_dev->dev->ifindex,
-		.fc_nlflags = NLM_F_CREATE | NLM_F_APPEND,
-		.fc_nlinfo = {
-			.nl_net = net,
-		},
-	};
+	struct fib_table * tb;
+	struct {
+		struct nlmsghdr	nlh;
+		struct rtmsg	rtm;
+	} req;
+	struct kern_rta rta;
+
+	memset(&req.rtm, 0, sizeof(req.rtm));
+	memset(&rta, 0, sizeof(rta));
 
 	if (type == RTN_UNICAST)
-		tb = fib_new_table(net, RT_TABLE_MAIN);
+		tb = fib_new_table(RT_TABLE_MAIN);
 	else
-		tb = fib_new_table(net, RT_TABLE_LOCAL);
+		tb = fib_new_table(RT_TABLE_LOCAL);
 
 	if (tb == NULL)
 		return;
 
-	cfg.fc_table = tb->tb_id;
+	req.nlh.nlmsg_len = sizeof(req);
+	req.nlh.nlmsg_type = cmd;
+	req.nlh.nlmsg_flags = NLM_F_REQUEST|NLM_F_CREATE|NLM_F_APPEND;
+	req.nlh.nlmsg_pid = 0;
+	req.nlh.nlmsg_seq = 0;
 
-	if (type != RTN_LOCAL)
-		cfg.fc_scope = RT_SCOPE_LINK;
-	else
-		cfg.fc_scope = RT_SCOPE_HOST;
+	req.rtm.rtm_dst_len = dst_len;
+	req.rtm.rtm_table = tb->tb_id;
+	req.rtm.rtm_protocol = RTPROT_KERNEL;
+	req.rtm.rtm_scope = (type != RTN_LOCAL ? RT_SCOPE_LINK : RT_SCOPE_HOST);
+	req.rtm.rtm_type = type;
+
+	rta.rta_dst = &dst;
+	rta.rta_prefsrc = &ifa->ifa_local;
+	rta.rta_oif = &ifa->ifa_dev->dev->ifindex;
 
 	if (cmd == RTM_NEWROUTE)
-		tb->tb_insert(tb, &cfg);
+		tb->tb_insert(tb, &req.rtm, &rta, &req.nlh, NULL);
 	else
-		tb->tb_delete(tb, &cfg);
+		tb->tb_delete(tb, &req.rtm, &rta, &req.nlh, NULL);
 }
 
 void fib_add_ifaddr(struct in_ifaddr *ifa)
@@ -716,14 +413,14 @@ void fib_add_ifaddr(struct in_ifaddr *ifa)
 	struct in_device *in_dev = ifa->ifa_dev;
 	struct net_device *dev = in_dev->dev;
 	struct in_ifaddr *prim = ifa;
-	__be32 mask = ifa->ifa_mask;
-	__be32 addr = ifa->ifa_local;
-	__be32 prefix = ifa->ifa_address&mask;
+	u32 mask = ifa->ifa_mask;
+	u32 addr = ifa->ifa_local;
+	u32 prefix = ifa->ifa_address&mask;
 
 	if (ifa->ifa_flags&IFA_F_SECONDARY) {
 		prim = inet_ifa_byprefix(in_dev, prefix, mask);
 		if (prim == NULL) {
-			printk(KERN_WARNING "fib_add_ifaddr: bug: prim == NULL\n");
+			printk(KERN_DEBUG "fib_add_ifaddr: bug: prim == NULL\n");
 			return;
 		}
 	}
@@ -734,10 +431,10 @@ void fib_add_ifaddr(struct in_ifaddr *ifa)
 		return;
 
 	/* Add broadcast address, if it is explicitly assigned. */
-	if (ifa->ifa_broadcast && ifa->ifa_broadcast != htonl(0xFFFFFFFF))
+	if (ifa->ifa_broadcast && ifa->ifa_broadcast != 0xFFFFFFFF)
 		fib_magic(RTM_NEWROUTE, RTN_BROADCAST, ifa->ifa_broadcast, 32, prim);
 
-	if (!ipv4_is_zeronet(prefix) && !(ifa->ifa_flags&IFA_F_SECONDARY) &&
+	if (!ZERONET(prefix) && !(ifa->ifa_flags&IFA_F_SECONDARY) &&
 	    (prefix != addr || ifa->ifa_prefixlen < 32)) {
 		fib_magic(RTM_NEWROUTE, dev->flags&IFF_LOOPBACK ? RTN_LOCAL :
 			  RTN_UNICAST, prefix, ifa->ifa_prefixlen, prim);
@@ -756,8 +453,8 @@ static void fib_del_ifaddr(struct in_ifaddr *ifa)
 	struct net_device *dev = in_dev->dev;
 	struct in_ifaddr *ifa1;
 	struct in_ifaddr *prim = ifa;
-	__be32 brd = ifa->ifa_address|~ifa->ifa_mask;
-	__be32 any = ifa->ifa_address&ifa->ifa_mask;
+	u32 brd = ifa->ifa_address|~ifa->ifa_mask;
+	u32 any = ifa->ifa_address&ifa->ifa_mask;
 #define LOCAL_OK	1
 #define BRD_OK		2
 #define BRD0_OK		4
@@ -770,7 +467,7 @@ static void fib_del_ifaddr(struct in_ifaddr *ifa)
 	else {
 		prim = inet_ifa_byprefix(in_dev, any, ifa->ifa_mask);
 		if (prim == NULL) {
-			printk(KERN_WARNING "fib_del_ifaddr: bug: prim == NULL\n");
+			printk(KERN_DEBUG "fib_del_ifaddr: bug: prim == NULL\n");
 			return;
 		}
 	}
@@ -802,15 +499,15 @@ static void fib_del_ifaddr(struct in_ifaddr *ifa)
 		fib_magic(RTM_DELROUTE, RTN_LOCAL, ifa->ifa_local, 32, prim);
 
 		/* Check, that this local address finally disappeared. */
-		if (inet_addr_type(dev_net(dev), ifa->ifa_local) != RTN_LOCAL) {
+		if (inet_addr_type(ifa->ifa_local) != RTN_LOCAL) {
 			/* And the last, but not the least thing.
 			   We must flush stray FIB entries.
 
 			   First of all, we scan fib_info list searching
 			   for stray nexthop entries, then ignite fib_flush.
 			*/
-			if (fib_sync_down_addr(dev_net(dev), ifa->ifa_local))
-				fib_flush(dev_net(dev));
+			if (fib_sync_down(ifa->ifa_local, NULL, 0))
+				fib_flush();
 		}
 	}
 #undef LOCAL_OK
@@ -821,18 +518,12 @@ static void fib_del_ifaddr(struct in_ifaddr *ifa)
 
 static void nl_fib_lookup(struct fib_result_nl *frn, struct fib_table *tb )
 {
-
+	
 	struct fib_result       res;
-	struct flowi            fl = { .mark = frn->fl_mark,
-				       .nl_u = { .ip4_u = { .daddr = frn->fl_addr,
+	struct flowi            fl = { .nl_u = { .ip4_u = { .daddr = frn->fl_addr, 
+							    .fwmark = frn->fl_fwmark,
 							    .tos = frn->fl_tos,
 							    .scope = frn->fl_scope } } };
-
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	res.r = NULL;
-#endif
-
-	frn->err = -ENOENT;
 	if (tb) {
 		local_bh_disable();
 
@@ -844,79 +535,63 @@ static void nl_fib_lookup(struct fib_result_nl *frn, struct fib_table *tb )
 			frn->nh_sel = res.nh_sel;
 			frn->type = res.type;
 			frn->scope = res.scope;
-			fib_res_put(&res);
 		}
 		local_bh_enable();
 	}
 }
 
-static void nl_fib_input(struct sk_buff *skb)
+static void nl_fib_input(struct sock *sk, int len)
 {
-	struct net *net;
+	struct sk_buff *skb = NULL;
+        struct nlmsghdr *nlh = NULL;
 	struct fib_result_nl *frn;
-	struct nlmsghdr *nlh;
+	u32 pid;     
 	struct fib_table *tb;
-	u32 pid;
-
-	net = sock_net(skb->sk);
-	nlh = nlmsg_hdr(skb);
+	
+	skb = skb_dequeue(&sk->sk_receive_queue);
+	nlh = (struct nlmsghdr *)skb->data;
 	if (skb->len < NLMSG_SPACE(0) || skb->len < nlh->nlmsg_len ||
-	    nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*frn)))
+	    nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*frn))) {
+		kfree_skb(skb);
 		return;
-
-	skb = skb_clone(skb, GFP_KERNEL);
-	if (skb == NULL)
-		return;
-	nlh = nlmsg_hdr(skb);
-
+	}
+	
 	frn = (struct fib_result_nl *) NLMSG_DATA(nlh);
-	tb = fib_get_table(net, frn->tb_id_in);
+	tb = fib_get_table(frn->tb_id_in);
 
 	nl_fib_lookup(frn, tb);
-
-	pid = NETLINK_CB(skb).pid;       /* pid of sending process */
+	
+	pid = nlh->nlmsg_pid;           /*pid of sending process */
 	NETLINK_CB(skb).pid = 0;         /* from kernel */
+	NETLINK_CB(skb).dst_pid = pid;
 	NETLINK_CB(skb).dst_group = 0;  /* unicast */
-	netlink_unicast(net->ipv4.fibnl, skb, pid, MSG_DONTWAIT);
-}
+	netlink_unicast(sk, skb, pid, MSG_DONTWAIT);
+}    
 
-static int nl_fib_lookup_init(struct net *net)
+static void nl_fib_lookup_init(void)
 {
-	struct sock *sk;
-	sk = netlink_kernel_create(net, NETLINK_FIB_LOOKUP, 0,
-				   nl_fib_input, NULL, THIS_MODULE);
-	if (sk == NULL)
-		return -EAFNOSUPPORT;
-	net->ipv4.fibnl = sk;
-	return 0;
-}
-
-static void nl_fib_lookup_exit(struct net *net)
-{
-	netlink_kernel_release(net->ipv4.fibnl);
-	net->ipv4.fibnl = NULL;
+      netlink_kernel_create(NETLINK_FIB_LOOKUP, 0, nl_fib_input, THIS_MODULE);
 }
 
 static void fib_disable_ip(struct net_device *dev, int force)
 {
-	if (fib_sync_down_dev(dev, force))
-		fib_flush(dev_net(dev));
-	rt_cache_flush(dev_net(dev), 0);
+	if (fib_sync_down(0, dev, force))
+		fib_flush();
+	rt_cache_flush(0);
 	arp_ifdown(dev);
 }
 
 static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct in_ifaddr *ifa = (struct in_ifaddr *)ptr;
-	struct net_device *dev = ifa->ifa_dev->dev;
+	struct in_ifaddr *ifa = (struct in_ifaddr*)ptr;
 
 	switch (event) {
 	case NETDEV_UP:
 		fib_add_ifaddr(ifa);
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-		fib_sync_up(dev);
+		fib_sync_up(ifa->ifa_dev->dev);
 #endif
-		rt_cache_flush(dev_net(dev), -1);
+		rt_cache_flush(-1);
 		break;
 	case NETDEV_DOWN:
 		fib_del_ifaddr(ifa);
@@ -924,9 +599,9 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 			/* Last address was deleted from this interface.
 			   Disable IP.
 			 */
-			fib_disable_ip(dev, 1);
+			fib_disable_ip(ifa->ifa_dev->dev, 1);
 		} else {
-			rt_cache_flush(dev_net(dev), -1);
+			rt_cache_flush(-1);
 		}
 		break;
 	}
@@ -954,121 +629,40 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 		fib_sync_up(dev);
 #endif
-		rt_cache_flush(dev_net(dev), -1);
+		rt_cache_flush(-1);
 		break;
 	case NETDEV_DOWN:
 		fib_disable_ip(dev, 0);
 		break;
 	case NETDEV_CHANGEMTU:
 	case NETDEV_CHANGE:
-		rt_cache_flush(dev_net(dev), 0);
+		rt_cache_flush(0);
 		break;
 	}
 	return NOTIFY_DONE;
 }
 
 static struct notifier_block fib_inetaddr_notifier = {
-	.notifier_call = fib_inetaddr_event,
+	.notifier_call =fib_inetaddr_event,
 };
 
 static struct notifier_block fib_netdev_notifier = {
-	.notifier_call = fib_netdev_event,
-};
-
-static int __net_init ip_fib_net_init(struct net *net)
-{
-	int err;
-	unsigned int i;
-
-	net->ipv4.fib_table_hash = kzalloc(
-			sizeof(struct hlist_head)*FIB_TABLE_HASHSZ, GFP_KERNEL);
-	if (net->ipv4.fib_table_hash == NULL)
-		return -ENOMEM;
-
-	for (i = 0; i < FIB_TABLE_HASHSZ; i++)
-		INIT_HLIST_HEAD(&net->ipv4.fib_table_hash[i]);
-
-	err = fib4_rules_init(net);
-	if (err < 0)
-		goto fail;
-	return 0;
-
-fail:
-	kfree(net->ipv4.fib_table_hash);
-	return err;
-}
-
-static void __net_exit ip_fib_net_exit(struct net *net)
-{
-	unsigned int i;
-
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	fib4_rules_exit(net);
-#endif
-
-	for (i = 0; i < FIB_TABLE_HASHSZ; i++) {
-		struct fib_table *tb;
-		struct hlist_head *head;
-		struct hlist_node *node, *tmp;
-
-		head = &net->ipv4.fib_table_hash[i];
-		hlist_for_each_entry_safe(tb, node, tmp, head, tb_hlist) {
-			hlist_del(node);
-			tb->tb_flush(tb);
-			kfree(tb);
-		}
-	}
-	kfree(net->ipv4.fib_table_hash);
-}
-
-static int __net_init fib_net_init(struct net *net)
-{
-	int error;
-
-	error = ip_fib_net_init(net);
-	if (error < 0)
-		goto out;
-	error = nl_fib_lookup_init(net);
-	if (error < 0)
-		goto out_nlfl;
-	error = fib_proc_init(net);
-	if (error < 0)
-		goto out_proc;
-out:
-	return error;
-
-out_proc:
-	nl_fib_lookup_exit(net);
-out_nlfl:
-	ip_fib_net_exit(net);
-	goto out;
-}
-
-static void __net_exit fib_net_exit(struct net *net)
-{
-	fib_proc_exit(net);
-	nl_fib_lookup_exit(net);
-	ip_fib_net_exit(net);
-}
-
-static struct pernet_operations fib_net_ops = {
-	.init = fib_net_init,
-	.exit = fib_net_exit,
+	.notifier_call =fib_netdev_event,
 };
 
 void __init ip_fib_init(void)
 {
-	rtnl_register(PF_INET, RTM_NEWROUTE, inet_rtm_newroute, NULL);
-	rtnl_register(PF_INET, RTM_DELROUTE, inet_rtm_delroute, NULL);
-	rtnl_register(PF_INET, RTM_GETROUTE, NULL, inet_dump_fib);
+#ifndef CONFIG_IP_MULTIPLE_TABLES
+	ip_fib_local_table = fib_hash_init(RT_TABLE_LOCAL);
+	ip_fib_main_table  = fib_hash_init(RT_TABLE_MAIN);
+#else
+	fib_rules_init();
+#endif
 
-	register_pernet_subsys(&fib_net_ops);
 	register_netdevice_notifier(&fib_netdev_notifier);
 	register_inetaddr_notifier(&fib_inetaddr_notifier);
-
-	fib_hash_init();
+	nl_fib_lookup_init();
 }
 
 EXPORT_SYMBOL(inet_addr_type);
-EXPORT_SYMBOL(inet_dev_addr_type);
 EXPORT_SYMBOL(ip_dev_find);

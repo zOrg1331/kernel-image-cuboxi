@@ -1,0 +1,816 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 20 Aug 2010 06:16:34 -0400
+Subject: [acpi] cpu: use MWAIT for C-state
+Message-id: <4C6E1DC2.50902@redhat.com>
+Patchwork-id: 27727
+O-Subject: [RHEL 5.6 PATCH 1/3] bz 573514: use MWAIT for C-state
+Bugzilla: 573514
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Bugzilla #573514
+Description of problem:
+
+Upstream has supported MWAIT c-state mechanism for almost 4 years. RHEL
+5.x should support the native method for smaller C-state transition
+overhead.  Especially on some large systems like NHM-EX, I've seen it
+cut about 50%  c0 (CPU running state)
+when system is in idle.
+
+Before the patch series:
+%c0   GHz  TSC   %c1    %c3    %c6   %pc3   %pc6
+9.83 1.20 2.38  11.73  78.44   0.00  70.23   0.00
+
+After the patch series:
+%c0   GHz  TSC   %c1    %c3    %c6   %pc3   %pc6
+4.71 1.11 2.26  12.36  82.93   0.00  73.69   0.00
+
+Testing status:
+Successfully tested by me on NHM EX/EP.
+
+Brew:
+https://brewweb.devel.redhat.com//taskinfo?taskID=2692008
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/acpi/cstate.c b/arch/i386/kernel/acpi/cstate.c
+index 0fe83ee..a0e65b2 100644
+--- a/arch/i386/kernel/acpi/cstate.c
++++ b/arch/i386/kernel/acpi/cstate.c
+@@ -10,10 +10,12 @@
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/acpi.h>
++#include <linux/cpu.h>
+ 
+ #include <acpi/processor.h>
+ #include <asm/acpi.h>
+ 
++extern void mwait_idle_with_hints(unsigned long eax, unsigned long ecx);
+ /*
+  * Initialize bm_flags based on the CPU cache properties
+  * On SMP it depends on cache configuration
+@@ -53,3 +55,123 @@ void acpi_processor_power_init_bm_check(struct acpi_processor_flags *flags,
+ }
+ 
+ EXPORT_SYMBOL(acpi_processor_power_init_bm_check);
++
++/* The code below handles cstate entry with monitor-mwait pair on Intel*/
++
++struct cstate_entry_s {
++	struct {
++		unsigned int eax;
++		unsigned int ecx;
++	} states[ACPI_PROCESSOR_MAX_POWER];
++};
++static struct cstate_entry_s *cpu_cstate_entry;	/* per CPU ptr */
++
++static short mwait_supported[ACPI_PROCESSOR_MAX_POWER];
++
++#define MWAIT_SUBSTATE_MASK	(0xf)
++#define MWAIT_SUBSTATE_SIZE	(4)
++
++#define CPUID_MWAIT_LEAF (5)
++#define CPUID5_ECX_EXTENSIONS_SUPPORTED (0x1)
++#define CPUID5_ECX_INTERRUPT_BREAK	(0x2)
++
++#define MWAIT_ECX_INTERRUPT_BREAK	(0x1)
++
++#define NATIVE_CSTATE_BEYOND_HALT	(2)
++
++int acpi_processor_ffh_cstate_probe(unsigned int cpu,
++		struct acpi_processor_cx *cx, struct acpi_power_register *reg)
++{
++	struct cstate_entry_s *percpu_entry;
++	struct cpuinfo_x86 *c = cpu_data + cpu;
++
++	cpumask_t saved_mask;
++	int retval;
++	unsigned int eax, ebx, ecx, edx;
++	unsigned int edx_part;
++	unsigned int cstate_type; /* C-state type and not ACPI C-state type */
++	unsigned int num_cstate_subtype;
++
++	if (!cpu_cstate_entry || c->cpuid_level < CPUID_MWAIT_LEAF )
++		return -1;
++
++	if (reg->bit_offset != NATIVE_CSTATE_BEYOND_HALT)
++		return -1;
++
++	percpu_entry = per_cpu_ptr(cpu_cstate_entry, cpu);
++	percpu_entry->states[cx->index].eax = 0;
++	percpu_entry->states[cx->index].ecx = 0;
++
++	/* Make sure we are running on right CPU */
++	saved_mask = current->cpus_allowed;
++	retval = set_cpus_allowed(current, cpumask_of_cpu(cpu));
++	if (retval)
++		return -1;
++
++	cpuid(CPUID_MWAIT_LEAF, &eax, &ebx, &ecx, &edx);
++
++	/* Check whether this particular cx_type (in CST) is supported or not */
++	cstate_type = (cx->address >> MWAIT_SUBSTATE_SIZE) + 1;
++	edx_part = edx >> (cstate_type * MWAIT_SUBSTATE_SIZE);
++	num_cstate_subtype = edx_part & MWAIT_SUBSTATE_MASK;
++
++	retval = 0;
++	if (num_cstate_subtype < (cx->address & MWAIT_SUBSTATE_MASK)) {
++		retval = -1;
++		goto out;
++	}
++
++	/* mwait ecx extensions INTERRUPT_BREAK should be supported for C2/C3 */
++	if (!(ecx & CPUID5_ECX_EXTENSIONS_SUPPORTED) ||
++	    !(ecx & CPUID5_ECX_INTERRUPT_BREAK)) {
++		retval = -1;
++		goto out;
++	}
++	percpu_entry->states[cx->index].ecx = MWAIT_ECX_INTERRUPT_BREAK;
++
++	/* Use the hint in CST */
++	percpu_entry->states[cx->index].eax = cx->address;
++
++	if (!mwait_supported[cstate_type]) {
++		mwait_supported[cstate_type] = 1;
++		printk(KERN_DEBUG "Monitor-Mwait will be used to enter C-%d "
++		       "state\n", cx->type);
++	}
++
++out:
++	set_cpus_allowed(current, saved_mask);
++	return retval;
++}
++EXPORT_SYMBOL_GPL(acpi_processor_ffh_cstate_probe);
++
++void acpi_processor_ffh_cstate_enter(struct acpi_processor_cx *cx)
++{
++	unsigned int cpu = smp_processor_id();
++	struct cstate_entry_s *percpu_entry;
++
++	percpu_entry = per_cpu_ptr(cpu_cstate_entry, cpu);
++	mwait_idle_with_hints(percpu_entry->states[cx->index].eax,
++	                      percpu_entry->states[cx->index].ecx);
++}
++EXPORT_SYMBOL_GPL(acpi_processor_ffh_cstate_enter);
++
++static int __init ffh_cstate_init(void)
++{
++	struct cpuinfo_x86 *c = &boot_cpu_data;
++	if (c->x86_vendor != X86_VENDOR_INTEL)
++		return -1;
++
++	cpu_cstate_entry = alloc_percpu(struct cstate_entry_s);
++	return 0;
++}
++
++static void __exit ffh_cstate_exit(void)
++{
++	if (cpu_cstate_entry) {
++		free_percpu(cpu_cstate_entry);
++		cpu_cstate_entry = NULL;
++	}
++}
++
++arch_initcall(ffh_cstate_init);
++__exitcall(ffh_cstate_exit);
+diff --git a/arch/i386/kernel/cpu/intel.c b/arch/i386/kernel/cpu/intel.c
+index 80c85ed..ce7081c 100644
+--- a/arch/i386/kernel/cpu/intel.c
++++ b/arch/i386/kernel/cpu/intel.c
+@@ -206,6 +206,8 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+                 set_bit(X86_FEATURE_CONSTANT_TSC,c->x86_capability);
+                 set_bit(X86_FEATURE_NONSTOP_TSC,c->x86_capability);
+         }
++	if ((c->x86 == 6) && (c->x86_model >= 29) && cpu_has_clflush)
++		set_bit(X86_FEATURE_CLFLUSH_MONITOR, c->x86_capability);
+ }
+ 
+ 
+diff --git a/arch/i386/kernel/process.c b/arch/i386/kernel/process.c
+index 1140a10..5ff502e 100644
+--- a/arch/i386/kernel/process.c
++++ b/arch/i386/kernel/process.c
+@@ -236,20 +236,30 @@ EXPORT_SYMBOL_GPL(cpu_idle_wait);
+  * We execute MONITOR against need_resched and enter optimized wait state
+  * through MWAIT. Whenever someone changes need_resched, we would be woken
+  * up from MWAIT (without an IPI).
++ *
++ * New with Core Duo processors, MWAIT can take some hints based on CPU
++ * capability.
+  */
+-static void mwait_idle(void)
++void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
+ {
+-	local_irq_enable();
+-
+-	while (!need_resched()) {
++	if (!need_resched()) {
++		if (boot_cpu_has(X86_FEATURE_CLFLUSH_MONITOR))
++			clflush((void *)&current_thread_info()->flags);
+ 		__monitor((void *)&current_thread_info()->flags, 0, 0);
+ 		smp_mb();
+-		if (need_resched())
+-			break;
+-		__mwait(0, 0);
++		if (!need_resched())
++			__mwait(eax, ecx);
+ 	}
+ }
+ 
++/* Default MONITOR/MWAIT with no hints, used for default C1 state */
++static void mwait_idle(void)
++{
++	local_irq_enable();
++	while (!need_resched())
++		mwait_idle_with_hints(0, 0);
++}
++
+ void __devinit select_idle_routine(const struct cpuinfo_x86 *c)
+ {
+ 	if (cpu_has(c, X86_FEATURE_MWAIT)) {
+diff --git a/arch/x86_64/kernel/process.c b/arch/x86_64/kernel/process.c
+index b2c719f..41fc345 100644
+--- a/arch/x86_64/kernel/process.c
++++ b/arch/x86_64/kernel/process.c
+@@ -235,20 +235,30 @@ void cpu_idle (void)
+  * We execute MONITOR against need_resched and enter optimized wait state
+  * through MWAIT. Whenever someone changes need_resched, we would be woken
+  * up from MWAIT (without an IPI).
++ *
++ * New with Core Duo processors, MWAIT can take some hints based on CPU
++ * capability.
+  */
+-static void mwait_idle(void)
++void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
+ {
+-	local_irq_enable();
+-
+-	while (!need_resched()) {
++	if (!need_resched()) {
++		if (boot_cpu_has(X86_FEATURE_CLFLUSH_MONITOR))
++			clflush((void *)&current_thread_info()->flags);
+ 		__monitor((void *)&current_thread_info()->flags, 0, 0);
+ 		smp_mb();
+-		if (need_resched())
+-			break;
+-		__mwait(0, 0);
++		if (!need_resched())
++			__mwait(eax, ecx);
+ 	}
+ }
+ 
++/* Default MONITOR/MWAIT with no hints, used for default C1 state */
++static void mwait_idle(void)
++{
++	local_irq_enable();
++	while (!need_resched())
++		mwait_idle_with_hints(0,0);
++}
++
+ void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
+ {
+ 	static int printed;
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 4ad790a..bf5f428 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -1119,6 +1119,9 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
+ 		set_bit(X86_FEATURE_NONSTOP_TSC, &c->x86_capability);
+ 	}
++	if ((c->x86 == 6) && (c->x86_model >= 29) 
++		&& cpu_has_clflush)
++		set_bit(X86_FEATURE_CLFLUSH_MONITOR, c->x86_capability);
+ 
+ 	set_bit(X86_FEATURE_LFENCE_RDTSC, &c->x86_capability);
+  	c->x86_max_cores = intel_num_cpu_cores(c);
+@@ -1203,6 +1206,7 @@ void __cpuinit early_identify_cpu(struct cpuinfo_x86 *c)
+ 	    (c->extended_cpuid_level >= 0x80000007) &&
+ 	    (cpuid_edx(0x80000007) & (1<<8)))
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
++	init_scattered_cpuid_features(c);
+ }
+ 
+ /*
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index d35be40..564962c 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -38,6 +38,7 @@
+ #include <linux/dmi.h>
+ #include <linux/moduleparam.h>
+ #include <linux/sched.h>	/* need_resched() */
++#include <linux/ktime.h>
+ 
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+@@ -155,16 +156,6 @@ static struct dmi_system_id __cpuinitdata processor_power_dmi_table[] = {
+ 	{},
+ };
+ 
+-static inline u32 ticks_elapsed(u32 t1, u32 t2)
+-{
+-	if (t2 >= t1)
+-		return (t2 - t1);
+-	else if (!acpi_fadt.tmr_val_ext)
+-		return (((0x00FFFFFF - t1) + t2) & 0x00FFFFFF);
+-	else
+-		return ((0xFFFFFFFF - t1) + t2);
+-}
+-
+ static void
+ acpi_processor_power_activate(struct acpi_processor *pr,
+ 			      struct acpi_processor_cx *new)
+@@ -218,6 +209,22 @@ static void acpi_safe_halt(void)
+ 
+ static atomic_t c3_cpu_count;
+ 
++/* Common C-state entry for C2, C3, .. */
++static void acpi_cstate_enter(struct acpi_processor_cx *cstate)
++{
++	if (cstate->space_id == ACPI_CSTATE_FFH) {
++		/* Call into architectural FFH based C-state */
++		acpi_processor_ffh_cstate_enter(cstate);
++	} else {
++		int unused;
++		/* IO port based C-state */
++		inb(cstate->address);
++		/* Dummy wait op - must do something useless after P_LVL2 read
++		   because chipsets cannot guarantee that STPCLK# signal
++		   gets asserted in time to freeze execution properly. */
++		unused = inl(acpi_fadt.xpm_tmr_blk.address);
++	}
++}
+ 
+ static void acpi_processor_idle_simple(void)
+ {
+@@ -225,7 +232,8 @@ static void acpi_processor_idle_simple(void)
+ 	struct acpi_processor_cx *cx = NULL;
+ 	struct acpi_processor_cx *next_state = NULL;
+ 	int sleep_ticks = 0;
+-	u32 t1, t2 = 0;
++	ktime_t  kt1, kt2;
++	s64 idle_time;
+ 
+ 	pr = processors[smp_processor_id()];
+ 	if (!pr)
+@@ -296,15 +304,12 @@ static void acpi_processor_idle_simple(void)
+ 
+ 	case ACPI_STATE_C2:
+ 		/* Get start time (ticks) */
+-		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt1 = ktime_get_real();
+ 		/* Invoke C2 */
+-		inb(cx->address);
+-		/* Dummy wait op - must do something useless after P_LVL2 read
+-		   because chipsets cannot guarantee that STPCLK# signal
+-		   gets asserted in time to freeze execution properly. */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		acpi_cstate_enter(cx);
+ 		/* Get end time (ticks) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt2 = ktime_get_real();
++		idle_time =  ktime_to_us(ktime_sub(kt2, kt1));
+ 
+ #ifdef CONFIG_GENERIC_TIME
+ 		/* TSC halts in C2, so notify users */
+@@ -315,19 +320,17 @@ static void acpi_processor_idle_simple(void)
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+ 		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks =
+-		    ticks_elapsed(t1, t2) - cx->latency_ticks - C2_OVERHEAD;
++		sleep_ticks = idle_time - cx->latency_ticks - C2_OVERHEAD;
+ 		break;
+ 
+ 	case ACPI_STATE_C3:
+ 		/* Get start time (ticks) */
+-		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt1 = ktime_get_real();
+ 		/* Invoke C3 */
+-		inb(cx->address);
+-		/* Dummy wait op (see above) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		acpi_cstate_enter(cx);
+ 		/* Get end time (ticks) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt2 = ktime_get_real();
++		idle_time =  ktime_to_us(ktime_sub(kt2, kt1));
+ 		if (pr->flags.bm_check && pr->flags.bm_control) {
+ 			/* Enable bus master arbitration */
+ 			atomic_dec(&c3_cpu_count);
+@@ -344,8 +347,7 @@ static void acpi_processor_idle_simple(void)
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+ 		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks =
+-		    ticks_elapsed(t1, t2) - cx->latency_ticks - C3_OVERHEAD;
++		sleep_ticks = idle_time - cx->latency_ticks - C3_OVERHEAD;
+ 		break;
+ 
+ 	default:
+@@ -449,7 +451,8 @@ static void acpi_processor_idle_bm(void)
+ 	struct acpi_processor_cx *cx = NULL;
+ 	struct acpi_processor_cx *next_state = NULL;
+ 	int sleep_ticks = 0;
+-	u32 t1, t2 = 0;
++	ktime_t  kt1, kt2;
++	s64 idle_time;
+ 
+ 	pr = processors[smp_processor_id()];
+ 	if (!pr)
+@@ -575,15 +578,12 @@ static void acpi_processor_idle_bm(void)
+ 
+ 	case ACPI_STATE_C2:
+ 		/* Get start time (ticks) */
+-		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt1 = ktime_get_real();
+ 		/* Invoke C2 */
+-		inb(cx->address);
+-		/* Dummy wait op - must do something useless after P_LVL2 read
+-		   because chipsets cannot guarantee that STPCLK# signal
+-		   gets asserted in time to freeze execution properly. */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		acpi_cstate_enter(cx);
+ 		/* Get end time (ticks) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt2 = ktime_get_real();
++		idle_time =  ktime_to_us(ktime_sub(kt2, kt1));
+ 
+ #ifdef CONFIG_GENERIC_TIME
+ 		/* TSC halts in C2, so notify users */
+@@ -594,8 +594,7 @@ static void acpi_processor_idle_bm(void)
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+ 		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks =
+-		    ticks_elapsed(t1, t2) - cx->latency_ticks - C2_OVERHEAD;
++		sleep_ticks = idle_time - cx->latency_ticks - C2_OVERHEAD;
+ 		break;
+ 
+ 	case ACPI_STATE_C3:
+@@ -626,13 +625,12 @@ static void acpi_processor_idle_bm(void)
+ 		}
+ 
+ 		/* Get start time (ticks) */
+-		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt1 = ktime_get_real();
+ 		/* Invoke C3 */
+-		inb(cx->address);
+-		/* Dummy wait op (see above) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		acpi_cstate_enter(cx);
+ 		/* Get end time (ticks) */
+-		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
++		kt2 = ktime_get_real();
++		idle_time =  ktime_to_us(ktime_sub(kt2, kt1));
+ 		if (pr->flags.bm_check && pr->flags.bm_control) {
+ 			/* Enable bus master arbitration */
+ 			atomic_dec(&c3_cpu_count);
+@@ -649,8 +647,7 @@ static void acpi_processor_idle_bm(void)
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+ 		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks =
+-		    ticks_elapsed(t1, t2) - cx->latency_ticks - C3_OVERHEAD;
++		sleep_ticks = idle_time - cx->latency_ticks - C3_OVERHEAD;
+ 		break;
+ 
+ 	default:
+@@ -863,20 +860,16 @@ static int acpi_processor_get_power_info_fadt(struct acpi_processor *pr)
+ 	return 0;
+ }
+ 
+-static int acpi_processor_get_power_info_default_c1(struct acpi_processor *pr)
++static int acpi_processor_get_power_info_default(struct acpi_processor *pr)
+ {
+-
+-	/* Zero initialize all the C-states info. */
+-	memset(pr->power.states, 0, sizeof(pr->power.states));
+-
+-	/* set the first C-State to C1 */
+-	pr->power.states[ACPI_STATE_C1].type = ACPI_STATE_C1;
+-
+-	/* the C0 state only exists as a filler in our array,
+-	 * and all processors need to support C1 */
++	if (!pr->power.states[ACPI_STATE_C1].valid) {
++		/* set the first C-State to C1 */
++		/* all processors need to support C1 */
++		pr->power.states[ACPI_STATE_C1].type = ACPI_STATE_C1;
++		pr->power.states[ACPI_STATE_C1].valid = 1;
++	}
++	/* the C0 state only exists as a filler in our array */
+ 	pr->power.states[ACPI_STATE_C0].valid = 1;
+-	pr->power.states[ACPI_STATE_C1].valid = 1;
+-
+ 	return 0;
+ }
+ 
+@@ -893,12 +886,7 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
+ 	if (nocst)
+ 		return -ENODEV;
+ 
+-	current_count = 1;
+-
+-	/* Zero initialize C2 onwards and prepare for fresh CST lookup */
+-	for (i = 2; i < ACPI_PROCESSOR_MAX_POWER; i++)
+-		memset(&(pr->power.states[i]), 0, 
+-				sizeof(struct acpi_processor_cx));
++	current_count = 0;
+ 
+ 	status = acpi_evaluate_object(pr->handle, "_CST", NULL, &buffer);
+ 	if (ACPI_FAILURE(status)) {
+@@ -953,9 +941,6 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
+ 		    (reg->space_id != ACPI_ADR_SPACE_FIXED_HARDWARE))
+ 			continue;
+ 
+-		cx.address = (reg->space_id == ACPI_ADR_SPACE_FIXED_HARDWARE) ?
+-		    0 : reg->address;
+-
+ 		/* There should be an easy way to extract an integer... */
+ 		obj = (union acpi_object *)&(element->package.elements[1]);
+ 		if (obj->type != ACPI_TYPE_INTEGER)
+@@ -963,12 +948,33 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
+ 
+ 		cx.type = obj->integer.value;
+ 
+-		if ((cx.type != ACPI_STATE_C1) &&
+-		    (reg->space_id != ACPI_ADR_SPACE_SYSTEM_IO))
+-			continue;
+-
+-		if ((cx.type < ACPI_STATE_C2) || (cx.type > ACPI_STATE_C3))
+-			continue;
++		/*
++		 * Some buggy BIOSes won't list C1 in _CST -
++		 * Let acpi_processor_get_power_info_default() handle them later
++		 */
++		if (i == 1 && cx.type != ACPI_STATE_C1)
++			current_count++;
++
++		cx.address = reg->address;
++		cx.index = current_count + 1;
++
++		cx.space_id = ACPI_CSTATE_SYSTEMIO;
++		if (reg->space_id == ACPI_ADR_SPACE_FIXED_HARDWARE) {
++			if (acpi_processor_ffh_cstate_probe
++					(pr->id, &cx, reg) == 0) {
++				cx.space_id = ACPI_CSTATE_FFH;
++			} else if (cx.type != ACPI_STATE_C1) {
++				/*
++				 * C1 is a special case where FIXED_HARDWARE
++				 * can be handled in non-MWAIT way as well.
++				 * In that case, save this _CST entry info.
++				 * That is, we retain space_id of SYSTEM_IO for
++				 * halt based C1.
++				 * Otherwise, ignore this info and continue.
++				 */
++				continue;
++			}
++		}
+ 
+ 		obj = (union acpi_object *)&(element->package.elements[2]);
+ 		if (obj->type != ACPI_TYPE_INTEGER)
+@@ -1033,7 +1039,7 @@ static void acpi_processor_power_verify_c2(struct acpi_processor_cx *cx)
+ 	 * Normalize the C2 latency to expidite policy
+ 	 */
+ 	cx->valid = 1;
+-	cx->latency_ticks = US_TO_PM_TIMER_TICKS(cx->latency);
++	cx->latency_ticks = cx->latency;
+ 
+ 	return;
+ }
+@@ -1117,7 +1123,7 @@ static void acpi_processor_power_verify_c3(struct acpi_processor *pr,
+ 	 * use this in our C3 policy
+ 	 */
+ 	cx->valid = 1;
+-	cx->latency_ticks = US_TO_PM_TIMER_TICKS(cx->latency);
++	cx->latency_ticks = cx->latency;
+ 
+ 	return;
+ }
+@@ -1182,12 +1188,18 @@ static int acpi_processor_get_power_info(struct acpi_processor *pr)
+ 	/* NOTE: the idle thread may not be running while calling
+ 	 * this function */
+ 
+-	/* Adding C1 state */
+-	acpi_processor_get_power_info_default_c1(pr);
++	/* Zero initialize all the C-states info. */
++	memset(pr->power.states, 0, sizeof(pr->power.states));
++
+ 	result = acpi_processor_get_power_info_cst(pr);
+ 	if (result == -ENODEV)
+ 		acpi_processor_get_power_info_fadt(pr);
+ 
++	if (result)
++		return result;
++
++	acpi_processor_get_power_info_default(pr);
++
+ 	pr->power.count = acpi_processor_power_verify(pr);
+ 
+ 	/*
+diff --git a/include/acpi/pdc_intel.h b/include/acpi/pdc_intel.h
+index c5472be..0302e61 100644
+--- a/include/acpi/pdc_intel.h
++++ b/include/acpi/pdc_intel.h
+@@ -13,7 +13,7 @@
+ #define ACPI_PDC_SMP_C_SWCOORD		(0x0040)
+ #define ACPI_PDC_SMP_T_SWCOORD		(0x0080)
+ #define ACPI_PDC_C_C1_FFH		(0x0100)
+-
++#define ACPI_PDC_C_C2C3_FFH		(0x0200)
+ #define ACPI_PDC_EST_CAPABILITY_SMP	(ACPI_PDC_SMP_C1PT | \
+ 					 ACPI_PDC_C_C1_HALT | \
+ 					 ACPI_PDC_P_FFH)
+@@ -23,8 +23,10 @@
+ 					 ACPI_PDC_SMP_P_SWCOORD | \
+ 					 ACPI_PDC_P_FFH)
+ 
+-#define ACPI_PDC_C_CAPABILITY_SMP	(ACPI_PDC_SMP_C2C3 | \
+-					 ACPI_PDC_SMP_C1PT | \
+-					 ACPI_PDC_C_C1_HALT)
+ 
++#define ACPI_PDC_C_CAPABILITY_SMP	(ACPI_PDC_SMP_C2C3  | \
++					 ACPI_PDC_SMP_C1PT  | \
++					 ACPI_PDC_C_C1_HALT | \
++					 ACPI_PDC_C_C1_FFH  | \
++					 ACPI_PDC_C_C2C3_FFH)
+ #endif				/* __PDC_INTEL_H__ */
+diff --git a/include/acpi/processor.h b/include/acpi/processor.h
+index 7c219b6..3c3bb13 100644
+--- a/include/acpi/processor.h
++++ b/include/acpi/processor.h
+@@ -32,6 +32,9 @@
+ #define DOMAIN_COORD_TYPE_SW_ANY	0xfd
+ #define DOMAIN_COORD_TYPE_HW_ALL	0xfe
+ 
++#define ACPI_CSTATE_SYSTEMIO	(0)
++#define ACPI_CSTATE_FFH		(1)
++
+ /* Power Management */
+ 
+ struct acpi_processor_cx;
+@@ -61,6 +64,8 @@ struct acpi_processor_cx {
+ 	u8 valid;
+ 	u8 type;
+ 	u32 address;
++	u8 space_id;
++	u8 index;
+ 	u32 latency;
+ 	u32 latency_ticks;
+ 	u32 power;
+@@ -249,6 +254,9 @@ void arch_acpi_processor_init_pdc(struct acpi_processor *pr);
+ #ifdef ARCH_HAS_POWER_INIT
+ void acpi_processor_power_init_bm_check(struct acpi_processor_flags *flags,
+ 					unsigned int cpu);
++int acpi_processor_ffh_cstate_probe(unsigned int cpu,
++		struct acpi_processor_cx *cx, struct acpi_power_register *reg);
++void acpi_processor_ffh_cstate_enter(struct acpi_processor_cx *cstate);
+ #else
+ static inline void acpi_processor_power_init_bm_check(struct
+ 						      acpi_processor_flags
+@@ -257,6 +265,16 @@ static inline void acpi_processor_power_init_bm_check(struct
+ 	flags->bm_check = 1;
+ 	return;
+ }
++static inline void acpi_processor_ffh_cstate_enter(
++		struct acpi_processor_cx *cstate)
++{
++	return;
++}
++static inline int acpi_processor_ffh_cstate_probe(unsigned int cpu,
++		struct acpi_processor_cx *cx, struct acpi_power_register *reg)
++{
++	return -1;
++}
+ #endif
+ 
+ /* in processor_perflib.c */
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index 5071348..2177d41 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -83,6 +83,7 @@
+ #define X86_FEATURE_CPB		(7*32+ 2) /* AMD Core Performance Boost  */
+ #define X86_FEATURE_EXTD_APICID	(3*32+26) /* has extended APICID (8 bits) */
+ #define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
++#define X86_FEATURE_CLFLUSH_MONITOR (3*32+28) /* clflush reqd with monitor */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+@@ -165,6 +166,7 @@
+ #define cpu_has_xmm4_1		boot_cpu_has(X86_FEATURE_XMM4_1)
+ #define cpu_has_xmm4_2		boot_cpu_has(X86_FEATURE_XMM4_2)
+ #define cpu_has_pci_ext_cfg	boot_cpu_has(X86_FEATURE_PCI_EXT_CFG)
++#define cpu_has_clflush	       boot_cpu_has(X86_FEATURE_CLFLSH)
+ 
+ #endif /* __ASM_I386_CPUFEATURE_H */
+ 
+diff --git a/include/asm-i386/processor.h b/include/asm-i386/processor.h
+index 7d34b26..4727b32 100644
+--- a/include/asm-i386/processor.h
++++ b/include/asm-i386/processor.h
+@@ -321,6 +321,8 @@ static inline void __mwait(unsigned long eax, unsigned long ecx)
+ 		: :"a" (eax), "c" (ecx));
+ }
+ 
++extern void mwait_idle_with_hints(unsigned long eax, unsigned long ecx);
++
+ /* from system description table in BIOS.  Mostly for MCA use, but
+ others may find it useful. */
+ extern unsigned int machine_id;
+diff --git a/include/asm-i386/system.h b/include/asm-i386/system.h
+index 098bcee..4601f04 100644
+--- a/include/asm-i386/system.h
++++ b/include/asm-i386/system.h
+@@ -158,6 +158,11 @@ static inline unsigned long get_limit(unsigned long segment)
+ 	return __limit+1;
+ }
+ 
++static inline void clflush(volatile void *__p)
++{
++	asm volatile("clflush %0" : "+m" (*(volatile char __force *)__p));
++}
++
+ #define nop() __asm__ __volatile__ ("nop")
+ 
+ #define xchg(ptr,v) ((__typeof__(*(ptr)))__xchg((unsigned long)(v),(ptr),sizeof(*(ptr))))
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index 2e6de04..4591c80 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -77,6 +77,7 @@
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
+ #define X86_FEATURE_CPB		(7*32+ 2) /* AMD Core Performance Boost */
+ #define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
++#define X86_FEATURE_CLFLUSH_MONITOR (3*32+28) /* clflush reqd with monitor */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+diff --git a/include/asm-x86_64/processor.h b/include/asm-x86_64/processor.h
+index fcb76e2..286ba56 100644
+--- a/include/asm-x86_64/processor.h
++++ b/include/asm-x86_64/processor.h
+@@ -485,6 +485,8 @@ static inline void __mwait(unsigned long eax, unsigned long ecx)
+ 		: :"a" (eax), "c" (ecx));
+ }
+ 
++extern void mwait_idle_with_hints(unsigned long eax, unsigned long ecx);
++
+ #define stack_current() \
+ ({								\
+ 	struct thread_info *ti;					\
+diff --git a/include/asm-x86_64/system.h b/include/asm-x86_64/system.h
+index bd376bc..74af56f 100644
+--- a/include/asm-x86_64/system.h
++++ b/include/asm-x86_64/system.h
+@@ -117,6 +117,11 @@ static inline void sched_cacheflush(void)
+ 
+ #endif	/* __KERNEL__ */
+ 
++static inline void clflush(volatile void *__p)
++{
++	asm volatile("clflush %0" : "+m" (*(volatile char __force *)__p));
++}
++
+ #define nop() __asm__ __volatile__ ("nop")
+ 
+ #define xchg(ptr,v) ((__typeof__(*(ptr)))__xchg((unsigned long)(v),(ptr),sizeof(*(ptr))))
+diff --git a/include/linux/ktime.h b/include/linux/ktime.h
+index 8b419a4..65cff45 100644
+--- a/include/linux/ktime.h
++++ b/include/linux/ktime.h
+@@ -255,6 +255,12 @@ static inline u64 ktime_to_ns(const ktime_t kt)
+ 
+ #endif
+ 
++static inline s64 ktime_to_us(const ktime_t kt)
++{
++	struct timeval tv = ktime_to_timeval(kt);
++	return (s64) tv.tv_sec * USEC_PER_SEC + tv.tv_usec;
++}
++
+ /*
+  * The resolution of the clocks. The resolution value is returned in
+  * the clock_getres() system call to give application programmers an
+@@ -270,5 +276,6 @@ extern ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs);
+ 
+ /* Get the real (wall-) time in timespec format: */
+ #define ktime_get_real_ts(ts)	getnstimeofday(ts)
++extern ktime_t ktime_get_real(void);
+ 
+ #endif
+diff --git a/kernel/hrtimer.c b/kernel/hrtimer.c
+index 652e660..bd216f6 100644
+--- a/kernel/hrtimer.c
++++ b/kernel/hrtimer.c
+@@ -60,7 +60,7 @@ static ktime_t ktime_get(void)
+  *
+  * returns the time in ktime_t format
+  */
+-static ktime_t ktime_get_real(void)
++ktime_t ktime_get_real(void)
+ {
+ 	struct timespec now;
+ 

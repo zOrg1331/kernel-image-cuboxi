@@ -2,6 +2,7 @@
  * ichxrom.c
  *
  * Normal mappings of chips in physical memory
+ * $Id: ichxrom.c,v 1.19 2005/11/07 11:14:27 gleixner Exp $
  */
 
 #include <linux/module.h>
@@ -60,7 +61,6 @@ static void ichxrom_cleanup(struct ichxrom_window *window)
 	/* Disable writes through the rom window */
 	pci_read_config_word(window->pdev, BIOS_CNTL, &word);
 	pci_write_config_word(window->pdev, BIOS_CNTL, word & ~1);
-	pci_dev_put(window->pdev);
 
 	/* Free all of the mtd devices */
 	list_for_each_entry_safe(map, scratch, &window->maps, list) {
@@ -226,8 +226,8 @@ static int __devinit ichxrom_init_one (struct pci_dev *pdev,
 			(((unsigned long)(window->virt)) + offset);
 		map->map.size = 0xffffffffUL - map_top + 1UL;
 		/* Set the name of the map to the address I am trying */
-		sprintf(map->map_name, "%s @%08Lx",
-			MOD_NAME, (unsigned long long)map->map.phys);
+		sprintf(map->map_name, "%s @%08lx",
+			MOD_NAME, map->map.phys);
 
 		/* Firmware hubs only use vpp when being programmed
 		 * in a factory setting.  So in-place programming
@@ -258,8 +258,8 @@ static int __devinit ichxrom_init_one (struct pci_dev *pdev,
 		/* Trim the size if we are larger than the map */
 		if (map->mtd->size > map->map.size) {
 			printk(KERN_WARNING MOD_NAME
-				" rom(%llu) larger than window(%lu). fixing...\n",
-				(unsigned long long)map->mtd->size, map->map.size);
+				" rom(%u) larger than window(%lu). fixing...\n",
+				map->mtd->size, map->map.size);
 			map->mtd->size = map->map.size;
 		}
 		if (window->rsrc.parent) {
@@ -355,7 +355,7 @@ static int __init init_ichxrom(void)
 
 	pdev = NULL;
 	for (id = ichxrom_pci_tbl; id->vendor; id++) {
-		pdev = pci_get_device(id->vendor, id->device, NULL);
+		pdev = pci_find_device(id->vendor, id->device, NULL);
 		if (pdev) {
 			break;
 		}

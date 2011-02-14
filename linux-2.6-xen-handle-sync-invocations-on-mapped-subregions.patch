@@ -1,0 +1,49 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:28:50 -0500
+Subject: [xen] handle sync invocations on mapped subregions
+Message-id: 20071220182850.7320.2971.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 2/6] Handle sync invocations on subregions of a mapped region
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1184006464 -3600
+# Node ID e4c8041605b2e7dfc1746e558c96c28fd0b51644
+# Parent  483e8ab872c1812d5e36244abd0f3a1e4aaba8b4
+swiotlb: Handle sync invocations on subregions of a mapped region.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+linux-2.6.18-xen changeset: 99:f15643dab1ca40ff3f2ca7eed5196bc74703422a
+linux-2.6.18-xen date: Mon Jul 09 19:41:04 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 2c5441d..3194db4 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -260,6 +260,7 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	unsigned long flags;
+ 	char *dma_addr;
+ 	unsigned int nslots, stride, index, wrap;
++	struct phys_addr slot_buf;
+ 	int i;
+ 
+ 	/*
+@@ -331,7 +332,15 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	 * This is needed when we sync the memory.  Then we sync the buffer if
+ 	 * needed.
+ 	 */
+-	io_tlb_orig_addr[index] = buffer;
++	slot_buf = buffer;
++	for (i = 0; i < nslots; i++) {
++		io_tlb_orig_addr[index+i] = slot_buf;
++		slot_buf.offset += 1 << IO_TLB_SHIFT;
++		if (slot_buf.offset > PAGE_SIZE) {
++			slot_buf.page++;
++			slot_buf.offset -= PAGE_SIZE;
++		}
++	}
+ 	if ((dir == DMA_TO_DEVICE) || (dir == DMA_BIDIRECTIONAL))
+ 		__sync_single(buffer, dma_addr, size, DMA_TO_DEVICE);
+ 

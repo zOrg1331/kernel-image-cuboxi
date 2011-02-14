@@ -1,0 +1,58 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:45 -0500
+Subject: [edac] i7core_edac: improve debug register/remove errors
+Message-id: <20101123153345.756aba5f@pedra>
+Patchwork-id: 29561
+O-Subject: [PATCH RHEL5 05/29] BZ#:651869 i7core_edac: Improve debug to seek
+	for register/remove errors
+Bugzilla: 651869
+
+Changeset: 3cfd01468b98360ede8cc8849d14e586253d290c
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index b868a5d..fdd40de 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1899,7 +1899,8 @@ static int i7core_register_mci(struct i7core_dev *i7core_dev,
+ 	if (unlikely(!mci))
+ 		return -ENOMEM;
+ 
+-	debugf0("MC: " __FILE__ ": %s(): mci = %p\n", __func__, mci);
++	debugf0("MC: " __FILE__ ": %s(): mci = %p, dev = %p\n",
++		__func__, mci, &i7core_dev->pdev[0]->dev);
+ 
+ 	/* record ptr to the generic device */
+ 	mci->dev = &i7core_dev->pdev[0]->dev;
+@@ -2053,18 +2054,24 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 	mutex_lock(&i7core_edac_lock);
+ 	list_for_each_entry_safe(i7core_dev, tmp, &i7core_edac_list, list) {
+ 		mci = edac_mc_del_mc(&i7core_dev->pdev[0]->dev);
+-		if (mci) {
++		if (unlikely(!mci || !mci->pvt_info)) {
++			debugf0("MC: " __FILE__ ": %s(): dev = %p\n",
++				__func__, &i7core_dev->pdev[0]->dev);
++
++				i7core_printk(KERN_ERR,
++				      "Couldn't find mci hanler\n");
++		} else {
+ 			struct i7core_pvt *pvt = mci->pvt_info;
+ 
+ 			i7core_dev = pvt->i7core_dev;
++
++			debugf0("MC: " __FILE__ ": %s(): mci = %p, dev = %p\n",
++				__func__, mci, &i7core_dev->pdev[0]->dev);
++
+ 			edac_mce_unregister(&pvt->edac_mce);
+ 			kfree(mci->ctl_name);
+ 			edac_mc_free(mci);
+ 			i7core_put_devices(i7core_dev);
+-		} else {
+-			i7core_printk(KERN_ERR,
+-				      "Couldn't find mci for socket %d\n",
+-				      i7core_dev->socket);
+ 		}
+ 	}
+ 	probed--;

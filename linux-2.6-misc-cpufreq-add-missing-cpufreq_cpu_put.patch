@@ -1,0 +1,86 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 15 Oct 2010 18:46:30 -0400
+Subject: [misc] cpufreq: add missing cpufreq_cpu_put
+Message-id: <4CB8A186.9050101@redhat.com>
+Patchwork-id: 28768
+O-Subject: Re: [RHEL5.6 BZ 643080 PATCH v2]: Add missing cpufreq_cpu_put() to
+	cpufreq code
+Bugzilla: 643080
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+RHEL5 commit a8b7e45cecee43a921c34fc94f1d913f8a60b4e3, "[cpufreq] add
+APERF/MPERF support for AMD processors" broke CPU Hotplug.  Bringing down
+any CPU will lead to a system hang.
+
+Originally I thought that this was because the cpu's frequency policy was
+not valid during a hotplug event.  I also noted in the submit for v1 that the
+reason this was likely was because of a broken get/put pair somewhere in the
+code.
+
+It turns out that I was half right.  A cpufreq_cpu_put() is missing but it
+doesn't effect the validity of the policy code.
+
+What happens with the introduction of the APERF/MPERF patch is that there
+is now an imbalanced cpufreq_cpu_get() and cpufreq_cpu_put() pair.
+
+When a cpu is removed __cpufreq_remove_dev() is called which does
+
+        kobject_unregister(&data->kobj);
+
+        kobject_put(&data->kobj);
+
+        /* we need to make sure that the underlying kobj is actually
+         * not referenced anymore by anybody before we proceed with
+         * unloading.
+         */
+	dprintk("waiting for dropping of refcount\n");
+        wait_for_completion(&data->kobj_unregister);
+        dprintk("wait complete\n");
+
+Because a cpufreq_cpu_put() is missing, the refcount never drops to zero and
+we hang waiting for completion.
+
+This patch moves the cpufreq_cpu_get() after the get_cpu() and adds in the
+missing cpufreq_cpu_put().
+
+Successfully tested by me on an Intel Nehalem system and an AMD Dinar system.
+
+Resolves BZ 643080.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/mperf.c b/arch/i386/kernel/cpu/cpufreq/mperf.c
+index bbbebb3..dea33d5 100644
+--- a/arch/i386/kernel/cpu/cpufreq/mperf.c
++++ b/arch/i386/kernel/cpu/cpufreq/mperf.c
+@@ -35,7 +35,7 @@ unsigned int cpufreq_get_measured_perf(unsigned int cpu)
+ 	cpumask_t saved_mask;
+ 	unsigned int perf_percent;
+ 	unsigned int retval;
+-	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
++	struct cpufreq_policy *policy = NULL;
+ 
+ 	saved_mask = current->cpus_allowed;
+ 	set_cpus_allowed(current, cpumask_of_cpu(cpu));
+@@ -45,6 +45,12 @@ unsigned int cpufreq_get_measured_perf(unsigned int cpu)
+ 		return 0;
+ 	}
+ 
++	policy = cpufreq_cpu_get(cpu);
++	if (unlikely(!policy)) {
++		put_cpu();
++		return 0;
++	}
++
+ 	rdmsr(MSR_IA32_APERF, aperf_cur.split.lo, aperf_cur.split.hi);
+ 	rdmsr(MSR_IA32_MPERF, mperf_cur.split.lo, mperf_cur.split.hi);
+ 
+@@ -95,6 +101,7 @@ unsigned int cpufreq_get_measured_perf(unsigned int cpu)
+ 
+ 	retval = policy->cpuinfo.max_freq * perf_percent / 100;
+ 
++	cpufreq_cpu_put(policy);
+ 	put_cpu();
+ 	set_cpus_allowed(current, saved_mask);
+ 

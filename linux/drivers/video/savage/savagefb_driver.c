@@ -57,6 +57,7 @@
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/system.h>
+#include <asm/uaccess.h>
 
 #ifdef CONFIG_MTRR
 #include <asm/mtrr.h>
@@ -383,19 +384,6 @@ SavageSetup2DEngine(struct savagefb_par  *par)
 	BCI_SEND(0);
 	BCI_SEND(BCI_CMD_SETREG | (1 << 16) | BCI_GBD2);
 	BCI_SEND(GlobalBitmapDescriptor);
-
-	/*
-	 * I don't know why, sending this twice fixes the intial black screen,
-	 * prevents X from crashing at least in Toshiba laptops with SavageIX.
-	 * --Tony
-	 */
-	par->bci_ptr = 0;
-	par->SavageWaitFifo(par, 4);
-
-	BCI_SEND(BCI_CMD_SETREG | (1 << 16) | BCI_GBD1);
-	BCI_SEND(0);
-	BCI_SEND(BCI_CMD_SETREG | (1 << 16) | BCI_GBD2);
-	BCI_SEND(GlobalBitmapDescriptor);
 }
 
 static void savagefb_set_clip(struct fb_info *info)
@@ -508,7 +496,7 @@ static int common_calc_clock(long freq, int min_m, int min_n1, int max_n1,
 #ifdef SAVAGEFB_DEBUG
 /* This function is used to debug, it prints out the contents of s3 regs */
 
-static void SavagePrintRegs(struct savagefb_par *par)
+static void SavagePrintRegs(void)
 {
 	unsigned char i;
 	int vgaCRIndex = 0x3d4;
@@ -845,8 +833,7 @@ static void savage_set_default_par(struct savagefb_par *par,
 	vga_out8(0x3d5, cr66, par);
 }
 
-static void savage_update_var(struct fb_var_screeninfo *var,
-			      const struct fb_videomode *modedb)
+static void savage_update_var(struct fb_var_screeninfo *var, struct fb_videomode *modedb)
 {
 	var->xres = var->xres_virtual = modedb->xres;
 	var->yres = modedb->yres;
@@ -915,7 +902,7 @@ static int savagefb_check_var(struct fb_var_screeninfo   *var,
 	}
 
 	if (!mode_valid) {
-		const struct fb_videomode *mode;
+		struct fb_videomode *mode;
 
 		mode = fb_find_best_mode(var, &info->modelist);
 		if (mode) {
@@ -1537,7 +1524,7 @@ static int savagefb_set_par(struct fb_info *info)
 	savagefb_set_fix(info);
 	savagefb_set_clip(info);
 
-	SavagePrintRegs(par);
+	SavagePrintRegs();
 	return 0;
 }
 
@@ -1565,7 +1552,7 @@ static int savagefb_blank(int blank, struct fb_info *info)
 		vga_out8(0x3c5, sr8, par);
 		vga_out8(0x3c4, 0x0d, par);
 		srd = vga_in8(0x3c5, par);
-		srd &= 0x50;
+		srd &= 0x03;
 
 		switch (blank) {
 		case FB_BLANK_UNBLANK:
@@ -1606,51 +1593,31 @@ static int savagefb_blank(int blank, struct fb_info *info)
 	return (blank == FB_BLANK_NORMAL) ? 1 : 0;
 }
 
-static int savagefb_open(struct fb_info *info, int user)
+static void savagefb_save_state(struct fb_info *info)
 {
 	struct savagefb_par *par = info->par;
 
-	mutex_lock(&par->open_lock);
-
-	if (!par->open_count) {
-		memset(&par->vgastate, 0, sizeof(par->vgastate));
-		par->vgastate.flags = VGA_SAVE_CMAP | VGA_SAVE_FONTS |
-			VGA_SAVE_MODE;
-		par->vgastate.vgabase = par->mmio.vbase + 0x8000;
-		save_vga(&par->vgastate);
-		savage_get_default_par(par, &par->initial);
-	}
-
-	par->open_count++;
-	mutex_unlock(&par->open_lock);
-	return 0;
+	savage_get_default_par(par, &par->save);
 }
 
-static int savagefb_release(struct fb_info *info, int user)
+static void savagefb_restore_state(struct fb_info *info)
 {
 	struct savagefb_par *par = info->par;
 
-	mutex_lock(&par->open_lock);
-
-	if (par->open_count == 1) {
-		savage_set_default_par(par, &par->initial);
-		restore_vga(&par->vgastate);
-	}
-
-	par->open_count--;
-	mutex_unlock(&par->open_lock);
-	return 0;
+	savagefb_blank(FB_BLANK_POWERDOWN, info);
+	savage_set_default_par(par, &par->save);
+	savagefb_blank(FB_BLANK_UNBLANK, info);
 }
 
 static struct fb_ops savagefb_ops = {
 	.owner          = THIS_MODULE,
-	.fb_open        = savagefb_open,
-	.fb_release     = savagefb_release,
 	.fb_check_var   = savagefb_check_var,
 	.fb_set_par     = savagefb_set_par,
 	.fb_setcolreg   = savagefb_setcolreg,
 	.fb_pan_display = savagefb_pan_display,
 	.fb_blank       = savagefb_blank,
+	.fb_save_state  = savagefb_save_state,
+	.fb_restore_state = savagefb_restore_state,
 #if defined(CONFIG_FB_SAVAGE_ACCEL)
 	.fb_fillrect    = savagefb_fillrect,
 	.fb_copyarea    = savagefb_copyarea,
@@ -2155,10 +2122,11 @@ static int __devinit savage_init_fb_info(struct fb_info *info,
 
 #if defined(CONFIG_FB_SAVAGE_ACCEL)
 	/* FIFO size + padding for commands */
-	info->pixmap.addr = kcalloc(8, 1024, GFP_KERNEL);
+	info->pixmap.addr = kmalloc(8*1024, GFP_KERNEL);
 
 	err = -ENOMEM;
 	if (info->pixmap.addr) {
+		memset(info->pixmap.addr, 0, 8*1024);
 		info->pixmap.size = 8*1024;
 		info->pixmap.scan_align = 4;
 		info->pixmap.buf_align = 4;
@@ -2186,12 +2154,12 @@ static int __devinit savagefb_probe(struct pci_dev* dev,
 	int video_len;
 
 	DBG("savagefb_probe");
+	SavagePrintRegs();
 
 	info = framebuffer_alloc(sizeof(struct savagefb_par), &dev->dev);
 	if (!info)
 		return -ENOMEM;
 	par = info->par;
-	mutex_init(&par->open_lock);
 	err = pci_enable_device(dev);
 	if (err)
 		goto failed_enable;
@@ -2238,10 +2206,11 @@ static int __devinit savagefb_probe(struct pci_dev* dev,
 			     info->monspecs.modedb, info->monspecs.modedb_len,
 			     NULL, 8);
 	} else if (info->monspecs.modedb != NULL) {
-		const struct fb_videomode *mode;
+		struct fb_videomode *modedb;
 
-		mode = fb_find_best_display(&info->monspecs, &info->modelist);
-		savage_update_var(&info->var, mode);
+		modedb = fb_find_best_display(&info->monspecs,
+					      &info->modelist);
+		savage_update_var(&info->var, modedb);
 	}
 
 	/* maximize virtual vertical length */
@@ -2354,24 +2323,24 @@ static void __devexit savagefb_remove(struct pci_dev *dev)
 	}
 }
 
-static int savagefb_suspend(struct pci_dev *dev, pm_message_t mesg)
+static int savagefb_suspend(struct pci_dev* dev, pm_message_t state)
 {
 	struct fb_info *info = pci_get_drvdata(dev);
 	struct savagefb_par *par = info->par;
 
 	DBG("savagefb_suspend");
 
-	if (mesg.event == PM_EVENT_PRETHAW)
-		mesg.event = PM_EVENT_FREEZE;
-	par->pm_state = mesg.event;
-	dev->dev.power.power_state = mesg;
+
+	par->pm_state = state.event;
 
 	/*
 	 * For PM_EVENT_FREEZE, do not power down so the console
 	 * can remain active.
 	 */
-	if (mesg.event == PM_EVENT_FREEZE)
+	if (state.event == PM_EVENT_FREEZE) {
+		dev->dev.power.power_state = state;
 		return 0;
+	}
 
 	acquire_console_sem();
 	fb_set_suspend(info, 1);
@@ -2384,7 +2353,7 @@ static int savagefb_suspend(struct pci_dev *dev, pm_message_t mesg)
 	savage_disable_mmio(par);
 	pci_save_state(dev);
 	pci_disable_device(dev);
-	pci_set_power_state(dev, pci_choose_state(dev, mesg));
+	pci_set_power_state(dev, pci_choose_state(dev, state));
 	release_console_sem();
 
 	return 0;

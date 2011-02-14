@@ -1,0 +1,179 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: Re: [RHEL 5 PPC PATCH] REGRESSION: enter xmon (.early_pfn_to_nid+0x0/0x50)duri  (fwd)
+Date: Tue, 9 Jan 2007 20:52:17 -0500 (Eastern Standard Time)
+Bugzilla: 220065
+Message-Id: <Pine.WNT.4.64.0701092047560.252@IBM-3MTQI3AXJFW>
+Changelog: ppc64: initialization of hotplug memory fixes
+
+
+RHBZ#: 220065
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220065
+
+Description:
+------------
+The following patch fixes an oops experienced on the Cell architecture
+when init-time functions, early_*(), are called at runtime.  It alters the
+call paths to make sure that the callers explicitly say whether the call
+is being made on behalf of a hotplug even, or happening at boot-time.
+
+Without this fix, the kernel will oops when memmap_init_zone calls
+early_pfn_in_nid, which is marked __init.  Customers will not be able to
+add memory to a partion.  This is a serious regression from previous RHEL5
+builds.
+
+RHEL Version Found:
+-------------------
+Kernel 2.6.18-1.2839.el
+
+Upstream Status:
+----------------
+Community dialogue and acceptance can be viewed:
+http://lkml.org/lkml/2006/12/19/208
+
+Test Status:
+------------
+Tested by John Rose of IBM.  This is based & builds without error on
+kernel-2.6.18-1.2839.el5.src.rpm.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.0
+
+
+diff -ru -X /home/dave/work/linux/exclude --exclude-from=/home/dave/work/linux/exclude rh-clean/arch/ia64/mm/init.c rh/arch/ia64/mm/init.c
+--- rh-clean/arch/ia64/mm/init.c	2006-12-20 21:52:31.000000000 -0800
++++ rh/arch/ia64/mm/init.c	2007-01-09 11:17:22.000000000 -0800
+@@ -550,7 +550,8 @@
+ 
+ 	if (map_start < map_end)
+ 		memmap_init_zone((unsigned long)(map_end - map_start),
+-				 args->nid, args->zone, page_to_pfn(map_start));
++				 args->nid, args->zone, page_to_pfn(map_start),
++				 MEMMAP_EARLY);
+ 	return 0;
+ }
+ 
+@@ -559,7 +560,7 @@
+ 	     unsigned long start_pfn)
+ {
+ 	if (!vmem_map)
+-		memmap_init_zone(size, nid, zone, start_pfn);
++		memmap_init_zone(size, nid, zone, start_pfn, MEMMAP_EARLY);
+ 	else {
+ 		struct page *start;
+ 		struct memmap_init_callback_data args;
+diff -ru -X /home/dave/work/linux/exclude --exclude-from=/home/dave/work/linux/exclude rh-clean/include/linux/mm.h rh/include/linux/mm.h
+--- rh-clean/include/linux/mm.h	2006-12-20 21:52:38.000000000 -0800
++++ rh/include/linux/mm.h	2007-01-09 11:18:00.000000000 -0800
+@@ -916,7 +916,8 @@
+ extern void free_area_init_node(int nid, pg_data_t *pgdat,
+ 	unsigned long * zones_size, unsigned long zone_start_pfn, 
+ 	unsigned long *zholes_size);
+-extern void memmap_init_zone(unsigned long, int, unsigned long, unsigned long);
++extern void memmap_init_zone(unsigned long, int, unsigned long,
++				unsigned long, enum memmap_context);
+ extern void setup_per_zone_pages_min(void);
+ extern void mem_init(void);
+ extern void show_mem(void);
+diff -ru -X /home/dave/work/linux/exclude --exclude-from=/home/dave/work/linux/exclude rh-clean/include/linux/mmzone.h rh/include/linux/mmzone.h
+--- rh-clean/include/linux/mmzone.h	2006-12-20 21:52:28.000000000 -0800
++++ rh/include/linux/mmzone.h	2007-01-09 11:17:22.000000000 -0800
+@@ -346,9 +346,13 @@
+ void wakeup_kswapd(struct zone *zone, int order);
+ int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
+ 		int classzone_idx, int alloc_flags);
+-
++enum memmap_context {
++	MEMMAP_EARLY,
++	MEMMAP_HOTPLUG,
++};
+ extern int init_currently_empty_zone(struct zone *zone, unsigned long start_pfn,
+-				     unsigned long size);
++				     unsigned long size,
++				     enum memmap_context context);
+ 
+ #ifdef CONFIG_HAVE_MEMORY_PRESENT
+ void memory_present(int nid, unsigned long start, unsigned long end);
+Only in rh: linux-2.6.18-1.2910.el5
+diff -ru -X /home/dave/work/linux/exclude --exclude-from=/home/dave/work/linux/exclude rh-clean/mm/memory_hotplug.c rh/mm/memory_hotplug.c
+--- rh-clean/mm/memory_hotplug.c	2006-09-19 20:42:06.000000000 -0700
++++ rh/mm/memory_hotplug.c	2007-01-09 11:18:55.000000000 -0800
+@@ -36,11 +36,13 @@
+ 	zone_type = zone - pgdat->node_zones;
+ 	if (!populated_zone(zone)) {
+ 		int ret = 0;
+-		ret = init_currently_empty_zone(zone, phys_start_pfn, nr_pages);
++		ret = init_currently_empty_zone(zone, phys_start_pfn,
++						nr_pages, MEMMAP_HOTPLUG);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+-	memmap_init_zone(nr_pages, nid, zone_type, phys_start_pfn);
++	memmap_init_zone(nr_pages, nid, zone_type,
++			 phys_start_pfn, MEMMAP_HOTPLUG);
+ 	zonetable_add(zone, nid, zone_type, phys_start_pfn, nr_pages);
+ 	return 0;
+ }
+diff -ru -X /home/dave/work/linux/exclude --exclude-from=/home/dave/work/linux/exclude rh-clean/mm/page_alloc.c rh/mm/page_alloc.c
+--- rh-clean/mm/page_alloc.c	2006-12-20 21:52:33.000000000 -0800
++++ rh/mm/page_alloc.c	2007-01-09 11:19:20.000000000 -0800
+@@ -1666,17 +1666,24 @@
+  * done. Non-atomic initialization, single-pass.
+  */
+ void __meminit memmap_init_zone(unsigned long size, int nid, unsigned long zone,
+-		unsigned long start_pfn)
++		unsigned long start_pfn, enum memmap_context context)
+ {
+ 	struct page *page;
+ 	unsigned long end_pfn = start_pfn + size;
+ 	unsigned long pfn;
+ 
+ 	for (pfn = start_pfn; pfn < end_pfn; pfn++) {
+-		if (!early_pfn_valid(pfn))
+-			continue;
+-		if (!early_pfn_in_nid(pfn, nid))
+-			continue;
++		/*
++		 * There can be holes in boot-time mem_map[]s
++		 * handed to this function.  They do not
++		 * exist on hotplugged memory.
++		 */
++		if (context == MEMMAP_EARLY) {
++			if (!early_pfn_valid(pfn))
++				continue;
++			if (!early_pfn_in_nid(pfn, nid))
++				continue;
++		}
+ 		page = pfn_to_page(pfn);
+ 		set_page_links(page, zone, nid, pfn);
+ 		init_page_count(page);
+@@ -1717,7 +1724,7 @@
+ 
+ #ifndef __HAVE_ARCH_MEMMAP_INIT
+ #define memmap_init(size, nid, zone, start_pfn) \
+-	memmap_init_zone((size), (nid), (zone), (start_pfn))
++	memmap_init_zone((size), (nid), (zone), (start_pfn), MEMMAP_EARLY)
+ #endif
+ 
+ static int __cpuinit zone_batchsize(struct zone *zone)
+@@ -1960,7 +1967,8 @@
+ 
+ __meminit int init_currently_empty_zone(struct zone *zone,
+ 					unsigned long zone_start_pfn,
+-					unsigned long size)
++					unsigned long size,
++					enum memmap_context context)
+ {
+ 	struct pglist_data *pgdat = zone->zone_pgdat;
+ 	int ret;
+@@ -2038,7 +2046,8 @@
+ 			continue;
+ 
+ 		zonetable_add(zone, nid, j, zone_start_pfn, size);
+-		ret = init_currently_empty_zone(zone, zone_start_pfn, size);
++		ret = init_currently_empty_zone(zone, zone_start_pfn,
++						size, MEMMAP_EARLY);
+ 		BUG_ON(ret);
+ 		zone_start_pfn += size;
+ 	}
+

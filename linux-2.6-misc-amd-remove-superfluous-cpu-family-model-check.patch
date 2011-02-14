@@ -1,0 +1,58 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 2 Sep 2010 17:05:38 -0400
+Subject: [misc] amd: remove superfluous CPU family/model check
+Message-id: <20100902171137.18123.9516.sendpatchset@localhost.localdomain>
+Patchwork-id: 28017
+O-Subject: [RHEL5.6 PATCH 1/5] Remove superfluous CPU family/model check
+Bugzilla: 610199
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+
+Resolves BZ 610199, please review and ACK.
+
+>From 84607922f11f8411cd9fe682dfe4729563e55d8a Mon Sep 17 00:00:00 2001
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+Date: Wed, 1 Sep 2010 15:36:38 +0200
+Subject: [PATCH 1/5] x86, amd: Remove superfluous CPU family/model check
+
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+amd_fixup_dcm() already checks for existence of a CPUID flag, so there
+is no point in further restricting this function to run only on
+specific CPUs.
+
+In particular this prevents amd_fixup_dcm() to be executed on future
+AMD CPU families which might also be available as multi-node
+processors. (IMHO this is good reason to tag this patch for stable
+trees.)
+
+Signed-off-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index 2b8c150..b709e59 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -296,8 +296,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
+ 		/* use socket ID also for last level cache */
+ 		cpu_llc_id[cpu] = c->phys_proc_id;
+ 		/* fixup topology information on multi-node processors */
+-		if ((c->x86 == 0x10) && (c->x86_model == 9))
+-			amd_fixup_dcm(c);
++		amd_fixup_dcm(c);
+ 		printk(KERN_INFO "CPU %d(%d) -> Core %d\n",
+ 		       cpu, c->x86_max_cores, c->cpu_core_id);
+ 	}
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index f4a441a..4d6213d 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -893,8 +893,7 @@ static void __init amd_detect_cmp(struct cpuinfo_x86 *c)
+ 	cpu_llc_id[cpu] = c->phys_proc_id;
+ 
+ 	/* fixup topology information on multi-node processors */
+-	if ((c->x86 == 0x10) && (c->x86_model == 9))
+-		amd_fixup_dcm(c);
++	amd_fixup_dcm(c);
+ 
+ #ifdef CONFIG_NUMA
+ 	node = cpu_llc_id[cpu];

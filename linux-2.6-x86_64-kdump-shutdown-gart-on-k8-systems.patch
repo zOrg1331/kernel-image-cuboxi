@@ -1,0 +1,133 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 14 Sep 2007 09:07:54 -0400
+Subject: [x86_64] kdump: shutdown gart on k8 systems
+Message-id: 20070914130754.28966.43946.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH]: Fix kexec/kdump on systems with gart & >4G mem
+Bugzilla: 264601
+
+Backport of git commit bc2cea6a34fdb30f118ec75db39a46a191870607.
+
+For K8 system: 4G RAM with memory hole remapping enabled, or more than 4G RAM
+installed. when using kexec to load second kernel. In the second kernel,
+when mem is allocated for GART, it will do the memset for clear, it will cause
+restart, because some device still used that for dma.
+solution will be:
+in second kernel: disable that at first before we try to allocate mem for it.
+or in the first kernel: do disable that before shutdown.
+Andi/Eric/Alan prefer to second one for clean shutdown in first kernel.
+Andi also point out need to consider to AGP enable but mem less 4G case too.
+
+Compile & boot tested on a non-effected x86_64 system by me.
+Boot tested on an effect x86_64 system by customer.
+
+Resolves BZ 264601.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/x86_64/kernel/pci-dma.c b/arch/x86_64/kernel/pci-dma.c
+index dbe2b03..4f2915e 100644
+--- a/arch/x86_64/kernel/pci-dma.c
++++ b/arch/x86_64/kernel/pci-dma.c
+@@ -320,5 +320,10 @@ static int __init pci_iommu_init(void)
+ 	return 0;
+ }
+ 
++void pci_iommu_shutdown(void)
++{
++	gart_iommu_shutdown();
++}
++
+ /* Must execute after PCI subsystem */
+ fs_initcall(pci_iommu_init);
+diff --git a/arch/x86_64/kernel/pci-gart.c b/arch/x86_64/kernel/pci-gart.c
+index aa986d5..565ee9b 100644
+--- a/arch/x86_64/kernel/pci-gart.c
++++ b/arch/x86_64/kernel/pci-gart.c
+@@ -574,6 +574,26 @@ static struct dma_mapping_ops gart_dma_ops = {
+ 	.unmap_sg = gart_unmap_sg,
+ };
+ 
++void gart_iommu_shutdown(void)
++{
++	struct pci_dev *dev;
++	int i;
++
++	if (no_agp && (dma_ops != &gart_dma_ops))
++		return;
++
++        for (i = 0; i < num_k8_northbridges; i++) {
++                u32 ctl;
++
++                dev = k8_northbridges[i];
++                pci_read_config_dword(dev, 0x90, &ctl);
++
++                ctl &= ~1;
++
++                pci_write_config_dword(dev, 0x90, ctl);
++        }
++}
++
+ void __init gart_iommu_init(void)
+ { 
+ 	struct agp_kern_info info;
+diff --git a/arch/x86_64/kernel/reboot.c b/arch/x86_64/kernel/reboot.c
+index 2d67698..6f56f2f 100644
+--- a/arch/x86_64/kernel/reboot.c
++++ b/arch/x86_64/kernel/reboot.c
+@@ -15,6 +15,7 @@
+ #include <asm/pgtable.h>
+ #include <asm/tlbflush.h>
+ #include <asm/apic.h>
++#include <asm/proto.h>
+ 
+ /*
+  * Power off function, if any
+@@ -80,6 +81,7 @@ static inline void kb_wait(void)
+ void machine_shutdown(void)
+ {
+ 	unsigned long flags;
++
+ 	/* Stop the cpus and apics */
+ #ifdef CONFIG_SMP
+ 	int reboot_cpu_id;
+@@ -110,6 +112,8 @@ void machine_shutdown(void)
+ 	disable_IO_APIC();
+ 
+ 	local_irq_restore(flags);
++
++	pci_iommu_shutdown();
+ }
+ 
+ void machine_emergency_restart(void)
+diff --git a/include/asm-x86_64/proto.h b/include/asm-x86_64/proto.h
+index a10e5f1..4aa1c87 100644
+--- a/include/asm-x86_64/proto.h
++++ b/include/asm-x86_64/proto.h
+@@ -111,11 +111,13 @@ extern int skip_ioapic_setup;
+ extern int acpi_ht;
+ extern int acpi_disabled;
+ 
++extern void pci_iommu_shutdown(void);
+ extern void no_iommu_init(void);
+ extern int force_iommu, no_iommu;
+ extern int iommu_detected;
+ #ifdef CONFIG_IOMMU
+ extern void gart_iommu_init(void);
++extern void gart_iommu_shutdown(void);
+ extern void gart_parse_options(char *);
+ extern void iommu_hole_init(void);
+ extern int fallback_aper_order;
+@@ -127,6 +129,11 @@ extern int fix_aperture;
+ #else
+ #define iommu_aperture 0
+ #define iommu_aperture_allowed 0
++
++static inline void gart_iommu_shutdown(void)
++{
++}
++
+ #endif
+ 
+ extern int reboot_force;

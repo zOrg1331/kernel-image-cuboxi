@@ -1,0 +1,64 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 8 Oct 2010 01:49:55 -0400
+Subject: [scsi] re-enable transistions from OFFLINE to RUNNING
+Message-id: <1286502595-18587-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28659
+O-Subject: [PATCH RHEL 5.6]: enable state transistions from OFFLINE to RUNNING
+Bugzilla: 641193
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 641193.
+
+This fixes a regression added by
+commit 7c2748560418dc6fc26d4c6a87255dacf1e27f50
+[scsi] disable state transition from OFFLINE to RUNNING
+
+The problem is that in RHEL 5 with qla4xxx and fc drivers using the fc
+class a device might be offlined due to a transport problem, then later the
+problem is resolved but the devices are not usable until a user manually
+corrects the state. Before we added the patch the device would
+come back online automatically.
+
+Upstream and in RHEL6, this is not a problem for FC because it will
+remove the device when dev_loss_tmo fires and then readd them when the
+problem is resolved (upstream and in RHEL6 it is actually causing other
+problems like hangs during shutdown). It is still a problem for qla4xxx
+but upstream we are adding dev_loss_tmo functionality like FC.
+
+For RHEL 5, we cannot change the default dev_loss_tmo behavior so this
+patch just reverts the patch that causes the problem. The orignal patch
+does fix a problem where IO will take a long time to fail if the device
+bounces between offline and running, but I would consider that more of
+a optimization and with the patch multipath and other apps are broken.
+
+I can replicate the problem here and have confirmed this fixes the
+problem.
+
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index 5d412ad..7a26d25 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -2395,16 +2395,16 @@ int
+ scsi_internal_device_unblock(struct scsi_device *sdev)
+ {
+ 	request_queue_t *q = sdev->request_queue; 
++	int err;
+ 	unsigned long flags;
+ 	
+ 	/* 
+ 	 * Try to transition the scsi device to SDEV_RUNNING
+ 	 * and goose the device queue if successful.  
+ 	 */
+-	if (sdev->sdev_state == SDEV_BLOCK)
+-		sdev->sdev_state = SDEV_RUNNING;
+-	else
+-		return -EINVAL;
++	err = scsi_device_set_state(sdev, SDEV_RUNNING);
++	if (err)
++		return err;
+ 
+ 	spin_lock_irqsave(q->queue_lock, flags);
+ 	blk_start_queue(q);

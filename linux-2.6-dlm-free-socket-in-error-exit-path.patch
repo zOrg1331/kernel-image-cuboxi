@@ -1,0 +1,48 @@
+From: David Teigland <teigland@redhat.com>
+Date: Wed, 15 Jul 2009 09:26:45 -0500
+Subject: [dlm] free socket in error exit path
+Message-id: 20090715142645.GA29084@redhat.com
+O-Subject: [RHEL5.5 PATCH] dlm: free socket in error exit path
+Bugzilla: 508829
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+bz 508829 - dlm_send socket leak
+
+upstream: in 2.6.31-rc4
+
+>From 68054ba92a36e03d299f9ae2d7a01474f3ba616a Mon Sep 17 00:00:00 2001
+From: Casey Dahlin <cdahlin@redhat.com>
+Date: Tue, 14 Jul 2009 12:17:51 -0500
+Subject: [PATCH] dlm: free socket in error exit path
+
+In the tcp_connect_to_sock() error exit path, the socket
+allocated at the top of the function was not being freed.
+
+Signed-off-by: Casey Dahlin <cdahlin@redhat.com>
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index 877662f..051709d 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -881,7 +881,7 @@ static void tcp_connect_to_sock(struct connection *con)
+ 	int result = -EHOSTUNREACH;
+ 	struct sockaddr_storage saddr, src_addr;
+ 	int addr_len;
+-	struct socket *sock;
++	struct socket *sock = NULL;
+ 
+ 	if (con->nodeid == 0) {
+ 		log_print("attempt to connect sock 0 foiled");
+@@ -939,6 +939,8 @@ out_err:
+ 	if (con->sock) {
+ 		sock_release(con->sock);
+ 		con->sock = NULL;
++	} else if (sock) {
++		sock_release(sock);
+ 	}
+ 	/*
+ 	 * Some errors are fatal and this list might need adjusting. For other

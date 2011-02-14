@@ -13,38 +13,37 @@
 #include <linux/init.h>
 #include <net/xfrm.h>
 
-#include <linux/netfilter.h>
 #include <linux/netfilter/xt_policy.h>
 #include <linux/netfilter/x_tables.h>
 
 MODULE_AUTHOR("Patrick McHardy <kaber@trash.net>");
-MODULE_DESCRIPTION("Xtables: IPsec policy match");
+MODULE_DESCRIPTION("Xtables IPsec policy matching module");
 MODULE_LICENSE("GPL");
 
-static inline bool
-xt_addr_cmp(const union nf_inet_addr *a1, const union nf_inet_addr *m,
-	    const union nf_inet_addr *a2, unsigned short family)
+static inline int
+xt_addr_cmp(const union xt_policy_addr *a1, const union xt_policy_addr *m,
+	    const union xt_policy_addr *a2, unsigned short family)
 {
 	switch (family) {
-	case NFPROTO_IPV4:
-		return ((a1->ip ^ a2->ip) & m->ip) == 0;
-	case NFPROTO_IPV6:
-		return ipv6_masked_addr_cmp(&a1->in6, &m->in6, &a2->in6) == 0;
+	case AF_INET:
+		return !((a1->a4.s_addr ^ a2->a4.s_addr) & m->a4.s_addr);
+	case AF_INET6:
+		return !ipv6_masked_addr_cmp(&a1->a6, &m->a6, &a2->a6);
 	}
-	return false;
+	return 0;
 }
 
-static bool
-match_xfrm_state(const struct xfrm_state *x, const struct xt_policy_elem *e,
+static inline int
+match_xfrm_state(struct xfrm_state *x, const struct xt_policy_elem *e,
 		 unsigned short family)
 {
 #define MATCH_ADDR(x,y,z)	(!e->match.x ||			       \
-				 (xt_addr_cmp(&e->x, &e->y, (const union nf_inet_addr *)(z), family) \
+				 (xt_addr_cmp(&e->x, &e->y, z, family) \
 				  ^ e->invert.x))
 #define MATCH(x,y)		(!e->match.x || ((e->x == (y)) ^ e->invert.x))
 
-	return MATCH_ADDR(saddr, smask, &x->props.saddr) &&
-	       MATCH_ADDR(daddr, dmask, &x->id.daddr) &&
+	return MATCH_ADDR(saddr, smask, (union xt_policy_addr *)&x->props.saddr) &&
+	       MATCH_ADDR(daddr, dmask, (union xt_policy_addr *)&x->id.daddr) &&
 	       MATCH(proto, x->id.proto) &&
 	       MATCH(mode, x->props.mode) &&
 	       MATCH(spi, x->id.spi) &&
@@ -56,7 +55,7 @@ match_policy_in(const struct sk_buff *skb, const struct xt_policy_info *info,
 		unsigned short family)
 {
 	const struct xt_policy_elem *e;
-	const struct sec_path *sp = skb->sp;
+	struct sec_path *sp = skb->sp;
 	int strict = info->flags & XT_POLICY_MATCH_STRICT;
 	int i, pos;
 
@@ -86,7 +85,7 @@ match_policy_out(const struct sk_buff *skb, const struct xt_policy_info *info,
 		 unsigned short family)
 {
 	const struct xt_policy_elem *e;
-	const struct dst_entry *dst = skb_dst(skb);
+	struct dst_entry *dst = skb->dst;
 	int strict = info->flags & XT_POLICY_MATCH_STRICT;
 	int i, pos;
 
@@ -109,83 +108,103 @@ match_policy_out(const struct sk_buff *skb, const struct xt_policy_info *info,
 	return strict ? i == info->len : 0;
 }
 
-static bool
-policy_mt(const struct sk_buff *skb, const struct xt_match_param *par)
+static int match(const struct sk_buff *skb,
+                 const struct net_device *in,
+                 const struct net_device *out,
+                 const struct xt_match *match,
+                 const void *matchinfo,
+                 int offset,
+                 unsigned int protoff,
+                 int *hotdrop)
 {
-	const struct xt_policy_info *info = par->matchinfo;
+	const struct xt_policy_info *info = matchinfo;
 	int ret;
 
 	if (info->flags & XT_POLICY_MATCH_IN)
-		ret = match_policy_in(skb, info, par->match->family);
+		ret = match_policy_in(skb, info, match->family);
 	else
-		ret = match_policy_out(skb, info, par->match->family);
+		ret = match_policy_out(skb, info, match->family);
 
 	if (ret < 0)
-		ret = info->flags & XT_POLICY_MATCH_NONE ? true : false;
+		ret = info->flags & XT_POLICY_MATCH_NONE ? 1 : 0;
 	else if (info->flags & XT_POLICY_MATCH_NONE)
-		ret = false;
+		ret = 0;
 
 	return ret;
 }
 
-static bool policy_mt_check(const struct xt_mtchk_param *par)
+static int checkentry(const char *tablename, const void *ip_void,
+                      const struct xt_match *match,
+                      void *matchinfo, unsigned int matchsize,
+                      unsigned int hook_mask)
 {
-	const struct xt_policy_info *info = par->matchinfo;
+	struct xt_policy_info *info = matchinfo;
 
 	if (!(info->flags & (XT_POLICY_MATCH_IN|XT_POLICY_MATCH_OUT))) {
 		printk(KERN_ERR "xt_policy: neither incoming nor "
-				"outgoing policy selected\n");
-		return false;
+		                "outgoing policy selected\n");
+		return 0;
 	}
-	if (par->hook_mask & ((1 << NF_INET_PRE_ROUTING) |
-	    (1 << NF_INET_LOCAL_IN)) && info->flags & XT_POLICY_MATCH_OUT) {
+	/* hook values are equal for IPv4 and IPv6 */
+	if (hook_mask & (1 << NF_IP_PRE_ROUTING | 1 << NF_IP_LOCAL_IN)
+	    && info->flags & XT_POLICY_MATCH_OUT) {
 		printk(KERN_ERR "xt_policy: output policy not valid in "
-				"PRE_ROUTING and INPUT\n");
-		return false;
+		                "PRE_ROUTING and INPUT\n");
+		return 0;
 	}
-	if (par->hook_mask & ((1 << NF_INET_POST_ROUTING) |
-	    (1 << NF_INET_LOCAL_OUT)) && info->flags & XT_POLICY_MATCH_IN) {
+	if (hook_mask & (1 << NF_IP_POST_ROUTING | 1 << NF_IP_LOCAL_OUT)
+	    && info->flags & XT_POLICY_MATCH_IN) {
 		printk(KERN_ERR "xt_policy: input policy not valid in "
-				"POST_ROUTING and OUTPUT\n");
-		return false;
+		                "POST_ROUTING and OUTPUT\n");
+		return 0;
 	}
 	if (info->len > XT_POLICY_MAX_ELEM) {
 		printk(KERN_ERR "xt_policy: too many policy elements\n");
-		return false;
+		return 0;
 	}
-	return true;
+	return 1;
 }
 
-static struct xt_match policy_mt_reg[] __read_mostly = {
-	{
-		.name		= "policy",
-		.family		= NFPROTO_IPV4,
-		.checkentry 	= policy_mt_check,
-		.match		= policy_mt,
-		.matchsize	= sizeof(struct xt_policy_info),
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "policy",
-		.family		= NFPROTO_IPV6,
-		.checkentry	= policy_mt_check,
-		.match		= policy_mt,
-		.matchsize	= sizeof(struct xt_policy_info),
-		.me		= THIS_MODULE,
-	},
+static struct xt_match policy_match = {
+	.name		= "policy",
+	.family		= AF_INET,
+	.match		= match,
+	.matchsize	= sizeof(struct xt_policy_info),
+	.checkentry 	= checkentry,
+	.family		= AF_INET,
+	.me		= THIS_MODULE,
 };
 
-static int __init policy_mt_init(void)
+static struct xt_match policy6_match = {
+	.name		= "policy",
+	.family		= AF_INET6,
+	.match		= match,
+	.matchsize	= sizeof(struct xt_policy_info),
+	.checkentry	= checkentry,
+	.family		= AF_INET6,
+	.me		= THIS_MODULE,
+};
+
+static int __init init(void)
 {
-	return xt_register_matches(policy_mt_reg, ARRAY_SIZE(policy_mt_reg));
+	int ret;
+
+	ret = xt_register_match(&policy_match);
+	if (ret)
+		return ret;
+	ret = xt_register_match(&policy6_match);
+	if (ret)
+		xt_unregister_match(&policy_match);
+	return ret;
 }
 
-static void __exit policy_mt_exit(void)
+static void __exit fini(void)
 {
-	xt_unregister_matches(policy_mt_reg, ARRAY_SIZE(policy_mt_reg));
+	xt_unregister_match(&policy6_match);
+	xt_unregister_match(&policy_match);
 }
 
-module_init(policy_mt_init);
-module_exit(policy_mt_exit);
+module_init(init);
+module_exit(fini);
 MODULE_ALIAS("ipt_policy");
 MODULE_ALIAS("ip6t_policy");

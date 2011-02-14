@@ -1,0 +1,49 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 10 Dec 2010 18:55:09 -0500
+Subject: [scsi] qla4xxx: don't default device to FAILED state
+Message-id: <20101210185509.7449.2623.sendpatchset@localhost.localdomain>
+Patchwork-id: 30079
+O-Subject: [RHEL 5.6 PATCH 2/4] qla4xxx: Don't put the device in FAILED state by
+	default.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+Will be pushed upstream with out next patch submission.
+
+Description
+-----------
+
+>From 3cb882a9f5cd1eb15d996ffd0c3c05af684c5834 Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Thu, 9 Dec 2010 10:20:31 -0800
+Subject: [PATCH 2/4] qla4xxx: Don't put the device in FAILED state by default.
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index 06f866b..6088ff4 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -1944,10 +1944,13 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
+ 		if (is_qla8022(ha)) {
+ 			/* Put the device in failed state. */
+ 			qla4_8xxx_idc_lock(ha);
+-			DEBUG2(printk(KERN_ERR "HW STATE: FAILED\n"));
+ 			qla4_8xxx_clear_drv_active(ha);
+-			qla4_8xxx_wr_32(ha, QLA82XX_CRB_DEV_STATE,
++			if (ql4xdontresethba == 1) {
++				dev_info(&ha->pdev->dev, "%s: HW State: "
++					"setting to failed\n", __func__);
++				qla4_8xxx_wr_32(ha, QLA82XX_CRB_DEV_STATE,
+ 					QLA82XX_DEV_FAILED);
++			}
+ 			qla4_8xxx_idc_unlock(ha);
+ 		}
+ 		ret = -ENODEV;

@@ -1,0 +1,73 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 25 Mar 2008 15:06:52 -0400
+Subject: [xen] ia64: HV messages are not shown on VGA console
+Message-id: 47E94D4C.70208@redhat.com
+O-Subject: [RHEL5.2 patch] ia64-xen: hypervisor messages are not shown on VGA console
+Bugzilla: 438789
+
+This fixes BZ#438789.
+https://bugzilla.redhat.com/show_bug.cgi?id=438789
+
+This bug has been fixed in the upstream by adding VGA console information.
+- changeset 15746: [IA64] Fix VGA console
+  http://xenbits.xensource.com/xen-unstable.hg?rev/1ef9dc28810d
+
+brew task is here:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1226763
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1185390567 21600
+# Node ID 1ef9dc28810dc748bdbb21231061ff5f861bd04f
+# Parent  fcdd56b88acdc34a392a6807fcaa6005fedf6d82
+[IA64] Fix VGA console
+
+VGA console support seems to have gotten broken somewhere along the
+way.  On current bits, console=vga doesn't seem to do anything.  This
+patch adds the necessary console info to get it working again.
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/ia64/xen/xensetup.c b/arch/ia64/xen/xensetup.c
+index ca6727a..9fa7e4d 100644
+--- a/arch/ia64/xen/xensetup.c
++++ b/arch/ia64/xen/xensetup.c
+@@ -19,6 +19,7 @@
+ #include <xen/serial.h>
+ #include <xen/trace.h>
+ #include <xen/keyhandler.h>
++#include <xen/vga.h>
+ #include <asm/meminit.h>
+ #include <asm/page.h>
+ #include <asm/setup.h>
+@@ -273,6 +274,20 @@ void start_kernel(void)
+     }
+     serial_init_preirq();
+ 
++#ifdef CONFIG_VGA
++    /* Plug in a default VGA mode */
++    vga_console_info.video_type = XEN_VGATYPE_TEXT_MODE_3;
++    vga_console_info.u.text_mode_3.font_height = 16; /* generic VGA? */
++    vga_console_info.u.text_mode_3.cursor_x =
++                                        ia64_boot_param->console_info.orig_x;
++    vga_console_info.u.text_mode_3.cursor_y =
++                                        ia64_boot_param->console_info.orig_y;
++    vga_console_info.u.text_mode_3.rows =
++                                        ia64_boot_param->console_info.num_rows;
++    vga_console_info.u.text_mode_3.columns =
++                                        ia64_boot_param->console_info.num_cols;
++#endif
++
+     init_console();
+     set_printk_prefix("(XEN) ");
+ 

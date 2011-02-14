@@ -44,7 +44,6 @@
 **    the host.
 */
 struct Host {
-	struct pci_dev *pdev;
 	unsigned char Type;		/* RIO_EISA, RIO_MCA, ... */
 	unsigned char Ivec;		/* POLLED or ivec number */
 	unsigned char Mode;		/* Control stuff */
@@ -99,7 +98,7 @@ struct Host {
 	struct UnixRup UnixRups[MAX_RUP + LINKS_PER_UNIT];
 	int timeout_id;				/* For calling 100 ms delays */
 	int timeout_sem;			/* For calling 100 ms delays */
-	unsigned long locks;			/* long req'd for set_bit --RR */
+	long locks;				/* long req'd for set_bit --RR */
 	char ____end_marker____;
 };
 #define Control      CardP->DpControl

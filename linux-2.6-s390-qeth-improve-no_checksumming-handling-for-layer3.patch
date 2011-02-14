@@ -1,0 +1,78 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 14 Jul 2009 14:03:32 +0200
+Subject: [s390] qeth: improve no_checksumming handling for layer3
+Message-id: 20090714120332.GA26518@redhat.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - qeth: improve no_checksumming handling for layer3
+Bugzilla: 503238
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Problem: If sysfs-attribute checksumming is set to
+"no-checksumming" for a layer3 qeth device, incoming
+data is stored in skbs with incorrect setting of
+skb->ip_summed.
+
+Solution: Set skb->ip_summed to CHECKSUM_UNNECESSARY if
+RX-checksumming is not required.
+
+Bugzilla
+=========
+
+BZ 503238
+https://bugzilla.redhat.com/show_bug.cgi?id=503238
+
+Upstream status of the patch:
+=============================
+
+Patch is upstream as of commit b91398008cae916c528d907f5d7a9ed54f35b4e9
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 16109c1..d11ea35 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2628,16 +2628,22 @@ qeth_rebuild_skb(struct qeth_card *card, struct sk_buff *skb,
+ 		qeth_rebuild_skb_fake_ll(card, skb, hdr);
+ 	else
+ 		skb->mac.raw = skb->data;
+-	skb->ip_summed = card->options.checksum_type;
+-	if (card->options.checksum_type == HW_CHECKSUMMING){
+-		if ( (hdr->hdr.l3.ext_flags &
+-		      (QETH_HDR_EXT_CSUM_HDR_REQ |
+-		       QETH_HDR_EXT_CSUM_TRANSP_REQ)) ==
+-		     (QETH_HDR_EXT_CSUM_HDR_REQ |
+-		      QETH_HDR_EXT_CSUM_TRANSP_REQ) )
++	switch (card->options.checksum_type) {
++	case SW_CHECKSUMMING:
++		skb->ip_summed = CHECKSUM_NONE;
++		break;
++	case NO_CHECKSUMMING:
++		skb->ip_summed = CHECKSUM_UNNECESSARY;
++		break;
++	case HW_CHECKSUMMING:
++		if ((hdr->hdr.l3.ext_flags &
++		    (QETH_HDR_EXT_CSUM_HDR_REQ |
++		     QETH_HDR_EXT_CSUM_TRANSP_REQ)) ==
++		    (QETH_HDR_EXT_CSUM_HDR_REQ |
++		     QETH_HDR_EXT_CSUM_TRANSP_REQ))
+ 			skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 		else
+-			skb->ip_summed = SW_CHECKSUMMING;
++			skb->ip_summed = CHECKSUM_NONE;
+ 	}
+ 	return vlan_id;
+ }

@@ -21,10 +21,12 @@
 struct xfs_mount;
 struct xfs_trans;
 
+#define XFS_IS_REALTIME_INODE(ip) ((ip)->i_d.di_flags & XFS_DIFLAG_REALTIME)
+
 /* Min and max rt extent sizes, specified in bytes */
 #define	XFS_MAX_RTEXTSIZE	(1024 * 1024 * 1024)	/* 1GB */
-#define	XFS_DFL_RTEXTSIZE	(64 * 1024)	        /* 64kB */
-#define	XFS_MIN_RTEXTSIZE	(4 * 1024)		/* 4kB */
+#define	XFS_DFL_RTEXTSIZE	(64 * 1024)	        /* 64KB */
+#define	XFS_MIN_RTEXTSIZE	(4 * 1024)		/* 4KB */
 
 /*
  * Constants for bit manipulations.
@@ -108,9 +110,6 @@ xfs_rtfree_extent(
 int					/* error */
 xfs_rtmount_init(
 	struct xfs_mount	*mp);	/* file system mount structure */
-void
-xfs_rtunmount_inodes(
-	struct xfs_mount	*mp);
 
 /*
  * Get the bitmap and summary inodes into the mount structure
@@ -135,6 +134,24 @@ xfs_rtpick_extent(
 	xfs_rtblock_t		*pick);	/* result rt extent */
 
 /*
+ * Debug code: print out the value of a range in the bitmap.
+ */
+void
+xfs_rtprint_range(
+	struct xfs_mount	*mp,	/* file system mount structure */
+	struct xfs_trans	*tp,	/* transaction pointer */
+	xfs_rtblock_t		start,	/* starting block to print */
+	xfs_extlen_t		len);	/* length to print */
+
+/*
+ * Debug code: print the summary file.
+ */
+void
+xfs_rtprint_summary(
+	struct xfs_mount	*mp,	/* file system mount structure */
+	struct xfs_trans	*tp);	/* transaction pointer */
+
+/*
  * Grow the realtime area of the filesystem.
  */
 int
@@ -149,7 +166,6 @@ xfs_growfs_rt(
 # define xfs_growfs_rt(mp,in)                           (ENOSYS)
 # define xfs_rtmount_init(m)    (((mp)->m_sb.sb_rblocks == 0)? 0 : (ENOSYS))
 # define xfs_rtmount_inodes(m)  (((mp)->m_sb.sb_rblocks == 0)? 0 : (ENOSYS))
-# define xfs_rtunmount_inodes(m)
 #endif	/* CONFIG_XFS_RT */
 
 #endif	/* __KERNEL__ */

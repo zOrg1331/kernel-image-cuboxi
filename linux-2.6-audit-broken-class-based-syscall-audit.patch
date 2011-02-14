@@ -1,0 +1,90 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 239887 broken class-based syscall audit
+Date: Mon, 04 Jun 2007 17:08:24 -0400
+Bugzilla: 239887
+Message-Id: <1180991304.3950.57.camel@localhost.localdomain>
+Changelog: [audit] broken class-based syscall audit
+
+
+BZ 239887
+
+The sanity check in audit_match_class() is wrong.  We are able to audit
+2048 syscalls but in audit_match_class() we were accidentally using
+sizeof(_u32) instead of number of bits in _u32 when deciding how many
+syscalls were valid.  On ia64 in particular we were hitting syscall
+numbers over the (wrong) limit of 256.  Fixing the audit_match_class
+check takes care of the problem.
+
+https://www.redhat.com/archives/linux-audit/2007-May/msg00029.html
+
+-Eric
+
+--- linux-2.6.18.i686/kernel/auditfilter.c.lspp.80	2007-05-11 17:06:08.000000000 -0500
++++ linux-2.6.18.i686/kernel/auditfilter.c	2007-05-11 17:09:37.000000000 -0500
+@@ -306,7 +306,7 @@
+ 
+ int audit_match_class(int class, unsigned syscall)
+ {
+-	if (unlikely(syscall >= AUDIT_BITMASK_SIZE * sizeof(__u32)))
++	if (unlikely(syscall >= AUDIT_BITMASK_SIZE * 32))
+ 		return 0;
+ 	if (unlikely(class >= AUDIT_SYSCALL_CLASSES || !classes[class]))
+ 		return 0;
+
+
+cheap place to stick some audit fixes
+
+diff -urN foo0/fs/xattr.c foo/fs/xattr.c
+--- foo0/fs/xattr.c	2007-06-15 13:29:35.000000000 -0400
++++ foo/fs/xattr.c	2007-06-15 13:27:53.000000000 -0400
+@@ -326,7 +326,7 @@
+ 	if (!f)
+ 		return error;
+ 	dentry = f->f_dentry;
+-	audit_inode(NULL, dentry->d_inode);
++	audit_inode(NULL, dentry);
+ 	error = getxattr(f->f_dentry, name, value, size);
+ 	fput(f);
+ 	return error;
+@@ -412,7 +412,7 @@
+ 	if (!f)
+ 		return error;
+ 	dentry = f->f_dentry;
+-	audit_inode(NULL, dentry->d_inode);
++	audit_inode(NULL, dentry);
+ 	error = listxattr(f->f_dentry, list, size);
+ 	fput(f);
+ 	return error;
+diff -urN foo0/kernel/audit.h foo/kernel/audit.h
+--- foo0/kernel/audit.h	2007-06-15 13:29:35.000000000 -0400
++++ foo/kernel/audit.h	2007-06-15 13:28:39.000000000 -0400
+@@ -138,7 +138,7 @@
+ extern struct mutex audit_filter_mutex;
+ extern void audit_free_rule_rcu(struct rcu_head *);
+ 
+-extern struct audit_chunk *audit_tree_lookup(struct inode *);
++extern struct audit_chunk *audit_tree_lookup(const struct inode *);
+ extern void audit_put_chunk(struct audit_chunk *);
+ extern int audit_tree_match(struct audit_chunk *, struct audit_tree *);
+ extern int audit_add_tree_rule(struct audit_krule *, char *, u32);
+diff -urN foo0/kernel/audit_tree.c foo/kernel/audit_tree.c
+--- foo0/kernel/audit_tree.c	2007-06-15 13:29:35.000000000 -0400
++++ foo/kernel/audit_tree.c	2007-06-15 13:29:16.000000000 -0400
+@@ -148,7 +148,7 @@
+ static struct list_head chunk_hash_heads[HASH_SIZE];
+ static __cacheline_aligned_in_smp DEFINE_SPINLOCK(hash_lock);
+ 
+-static inline struct list_head *chunk_hash(struct inode *inode)
++static inline struct list_head *chunk_hash(const struct inode *inode)
+ {
+ 	unsigned long n = (unsigned long)inode / L1_CACHE_BYTES;
+ 	return chunk_hash_heads + n % HASH_SIZE;
+@@ -162,7 +162,7 @@
+ }
+ 
+ /* called under rcu_read_lock */
+-struct audit_chunk *audit_tree_lookup(struct inode *inode)
++struct audit_chunk *audit_tree_lookup(const struct inode *inode)
+ {
+ 	struct list_head *list = chunk_hash(inode);
+ 	struct list_head *pos;

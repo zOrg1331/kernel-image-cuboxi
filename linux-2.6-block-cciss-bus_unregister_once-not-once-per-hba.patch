@@ -1,0 +1,31 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:50:01 -0400
+Subject: [block] cciss: bus_unregister_once not once per hba
+Message-id: <1283097002-3341-63-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27899
+O-Subject: [RHEL6 PATCH 62/63] cciss: bus_unregister_once not once per hba
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+do not call bus_unregister once per hba, call it once period.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 920585c..54e36a9 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -4327,7 +4327,6 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 	pci_release_regions(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ 	cciss_destroy_hba_sysfs_entry(hba[i]);
+-	bus_unregister(&cciss_bus_type);
+ 	free_hba(i);
+ }
+ 
+@@ -4379,6 +4378,7 @@ static void __exit cciss_cleanup(void)
+ 		}
+ 	}
+ 	remove_proc_entry("cciss", proc_root_driver);
++	bus_unregister(&cciss_bus_type);
+ }
+ 
+ static void fail_all_cmds(unsigned long ctlr)

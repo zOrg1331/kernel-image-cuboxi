@@ -56,7 +56,7 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/pci.h>
@@ -91,7 +91,7 @@
 #undef DEBUG
 
 #ifdef DEBUG
-#define DBG(fmt, args...)		printk(KERN_DEBUG "aty128fb: %s " fmt, __func__, ##args);
+#define DBG(fmt, args...)		printk(KERN_DEBUG "aty128fb: %s " fmt, __FUNCTION__, ##args);
 #else
 #define DBG(fmt, args...)
 #endif
@@ -354,13 +354,7 @@ static int default_crt_on __devinitdata = 0;
 static int default_lcd_on __devinitdata = 1;
 
 #ifdef CONFIG_MTRR
-static bool mtrr = true;
-#endif
-
-#ifdef CONFIG_PMAC_BACKLIGHT
-static int backlight __devinitdata = 1;
-#else
-static int backlight __devinitdata = 0;
+static int mtrr = 1;
 #endif
 
 /* PLL constants */
@@ -1340,16 +1334,13 @@ static int aty128_var_to_pll(u32 period_in_ps, struct aty128_pll *pll,
 		vclk = c.ppll_min/12;
 
 	/* now, find an acceptable divider */
-	for (i = 0; i < ARRAY_SIZE(post_dividers); i++) {
+	for (i = 0; i < sizeof(post_dividers); i++) {
 		output_freq = post_dividers[i] * vclk;
 		if (output_freq >= c.ppll_min && output_freq <= c.ppll_max) {
 			pll->post_divider = post_dividers[i];
 			break;
 		}
 	}
-
-	if (i == ARRAY_SIZE(post_dividers))
-		return -EINVAL;
 
 	/* calculate feedback divider */
 	n = c.ref_divider * output_freq;
@@ -1475,7 +1466,7 @@ static int aty128fb_set_par(struct fb_info *info)
 	aty128_set_pll(&par->pll, par);
 	aty128_set_fifo(&par->fifo_reg, par);
 
-	config = aty_ld_le32(CNFG_CNTL) & ~3;
+	config = aty_ld_le32(CONFIG_CNTL) & ~3;
 
 #if defined(__BIG_ENDIAN)
 	if (par->crtc.bpp == 32)
@@ -1484,7 +1475,7 @@ static int aty128fb_set_par(struct fb_info *info)
 		config |= 1;	/* make aperture do 16 bit swapping */
 #endif
 
-	aty_st_le32(CNFG_CNTL, config);
+	aty_st_le32(CONFIG_CNTL, config);
 	aty_st_8(CRTC_EXT_CNTL + 1, 0);	/* turn the video back on */
 
 	info->fix.line_length = (par->crtc.vxres * par->crtc.bpp) >> 3;
@@ -1656,9 +1647,6 @@ static int __devinit aty128fb_setup(char *options)
 		} else if (!strncmp(this_opt, "crt:", 4)) {
 			default_crt_on = simple_strtoul(this_opt+4, NULL, 0);
 			continue;
-		} else if (!strncmp(this_opt, "backlight:", 10)) {
-			backlight = simple_strtoul(this_opt+10, NULL, 0);
-			continue;
 		}
 #ifdef CONFIG_MTRR
 		if(!strncmp(this_opt, "nomtrr", 6)) {
@@ -1702,6 +1690,9 @@ static int __devinit aty128fb_setup(char *options)
 #ifdef CONFIG_FB_ATY128_BACKLIGHT
 #define MAX_LEVEL 0xFF
 
+static struct backlight_properties aty128_bl_data;
+
+/* Call with fb_info->bl_mutex held */
 static int aty128_bl_get_level_brightness(struct aty128fb_par *par,
 		int level)
 {
@@ -1709,7 +1700,6 @@ static int aty128_bl_get_level_brightness(struct aty128fb_par *par,
 	int atylevel;
 
 	/* Get and convert the value */
-	/* No locking of bl_curve since we read a single value */
 	atylevel = MAX_LEVEL -
 		(info->bl_curve[level] * FB_BACKLIGHT_MAX / MAX_LEVEL);
 
@@ -1729,18 +1719,19 @@ static int aty128_bl_get_level_brightness(struct aty128fb_par *par,
 /* That one prevents proper CRT output with LCD off */
 #undef BACKLIGHT_DAC_OFF
 
-static int aty128_bl_update_status(struct backlight_device *bd)
+/* Call with fb_info->bl_mutex held */
+static int __aty128_bl_update_status(struct backlight_device *bd)
 {
-	struct aty128fb_par *par = bl_get_data(bd);
+	struct aty128fb_par *par = class_get_devdata(&bd->class_dev);
 	unsigned int reg = aty_ld_le32(LVDS_GEN_CNTL);
 	int level;
 
-	if (bd->props.power != FB_BLANK_UNBLANK ||
-	    bd->props.fb_blank != FB_BLANK_UNBLANK ||
+	if (bd->props->power != FB_BLANK_UNBLANK ||
+	    bd->props->fb_blank != FB_BLANK_UNBLANK ||
 	    !par->lcd_on)
 		level = 0;
 	else
-		level = bd->props.brightness;
+		level = bd->props->brightness;
 
 	reg |= LVDS_BL_MOD_EN | LVDS_BLON;
 	if (level > 0) {
@@ -1782,22 +1773,43 @@ static int aty128_bl_update_status(struct backlight_device *bd)
 	return 0;
 }
 
-static int aty128_bl_get_brightness(struct backlight_device *bd)
+static int aty128_bl_update_status(struct backlight_device *bd)
 {
-	return bd->props.brightness;
+	struct aty128fb_par *par = class_get_devdata(&bd->class_dev);
+	struct fb_info *info = pci_get_drvdata(par->pdev);
+	int ret;
+
+	mutex_lock(&info->bl_mutex);
+	ret = __aty128_bl_update_status(bd);
+	mutex_unlock(&info->bl_mutex);
+
+	return ret;
 }
 
-static struct backlight_ops aty128_bl_data = {
+static int aty128_bl_get_brightness(struct backlight_device *bd)
+{
+	return bd->props->brightness;
+}
+
+static struct backlight_properties aty128_bl_data = {
+	.owner		= THIS_MODULE,
 	.get_brightness	= aty128_bl_get_brightness,
 	.update_status	= aty128_bl_update_status,
+	.max_brightness	= (FB_BACKLIGHT_LEVELS - 1),
 };
 
 static void aty128_bl_set_power(struct fb_info *info, int power)
 {
+	mutex_lock(&info->bl_mutex);
+
 	if (info->bl_dev) {
-		info->bl_dev->props.power = power;
-		backlight_update_status(info->bl_dev);
+		down(&info->bl_dev->sem);
+		info->bl_dev->props->power = power;
+		__aty128_bl_update_status(info->bl_dev);
+		up(&info->bl_dev->sem);
 	}
+
+	mutex_unlock(&info->bl_mutex);
 }
 
 static void aty128_bl_init(struct aty128fb_par *par)
@@ -1817,22 +1829,32 @@ static void aty128_bl_init(struct aty128fb_par *par)
 
 	snprintf(name, sizeof(name), "aty128bl%d", info->node);
 
-	bd = backlight_device_register(name, info->dev, par, &aty128_bl_data);
+	bd = backlight_device_register(name, par, &aty128_bl_data);
 	if (IS_ERR(bd)) {
 		info->bl_dev = NULL;
 		printk(KERN_WARNING "aty128: Backlight registration failed\n");
 		goto error;
 	}
 
+	mutex_lock(&info->bl_mutex);
 	info->bl_dev = bd;
 	fb_bl_default_curve(info, 0,
 		 63 * FB_BACKLIGHT_MAX / MAX_LEVEL,
 		219 * FB_BACKLIGHT_MAX / MAX_LEVEL);
+	mutex_unlock(&info->bl_mutex);
 
-	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
-	bd->props.brightness = bd->props.max_brightness;
-	bd->props.power = FB_BLANK_UNBLANK;
-	backlight_update_status(bd);
+	down(&bd->sem);
+	bd->props->brightness = aty128_bl_data.max_brightness;
+	bd->props->power = FB_BLANK_UNBLANK;
+	bd->props->update_status(bd);
+	up(&bd->sem);
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_lock(&pmac_backlight_mutex);
+	if (!pmac_backlight)
+		pmac_backlight = bd;
+	mutex_unlock(&pmac_backlight_mutex);
+#endif
 
 	printk("aty128: Backlight initialized (%s)\n", name);
 
@@ -1842,10 +1864,31 @@ error:
 	return;
 }
 
-static void aty128_bl_exit(struct backlight_device *bd)
+static void aty128_bl_exit(struct aty128fb_par *par)
 {
-	backlight_device_unregister(bd);
-	printk("aty128: Backlight unloaded\n");
+	struct fb_info *info = pci_get_drvdata(par->pdev);
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_lock(&pmac_backlight_mutex);
+#endif
+
+	mutex_lock(&info->bl_mutex);
+	if (info->bl_dev) {
+#ifdef CONFIG_PMAC_BACKLIGHT
+		if (pmac_backlight == info->bl_dev)
+			pmac_backlight = NULL;
+#endif
+
+		backlight_device_unregister(info->bl_dev);
+		info->bl_dev = NULL;
+
+		printk("aty128: Backlight unloaded\n");
+	}
+	mutex_unlock(&info->bl_mutex);
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_unlock(&pmac_backlight_mutex);
+#endif
 }
 #endif /* CONFIG_FB_ATY128_BACKLIGHT */
 
@@ -1853,14 +1896,13 @@ static void aty128_bl_exit(struct backlight_device *bd)
  *  Initialisation
  */
 
-#ifdef CONFIG_PPC_PMAC__disabled
+#ifdef CONFIG_PPC_PMAC
 static void aty128_early_resume(void *data)
 {
         struct aty128fb_par *par = data;
 
 	if (try_acquire_console_sem())
 		return;
-	pci_restore_state(par->pdev);
 	aty128_do_resume(par->pdev);
 	release_console_sem();
 }
@@ -1871,12 +1913,12 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 	struct fb_info *info = pci_get_drvdata(pdev);
 	struct aty128fb_par *par = info->par;
 	struct fb_var_screeninfo var;
-	char video_card[50];
+	char video_card[DEVICE_NAME_SIZE];
 	u8 chip_rev;
 	u32 dac;
 
 	/* Get the chip revision */
-	chip_rev = (aty_ld_le32(CNFG_CNTL) >> 16) & 0x1F;
+	chip_rev = (aty_ld_le32(CONFIG_CNTL) >> 16) & 0x1F;
 
 	strcpy(video_card, "Rage128 XX ");
 	video_card[8] = ent->device >> 8;
@@ -1884,7 +1926,7 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 
 	/* range check to make sure */
 	if (ent->driver_data < ARRAY_SIZE(r128_family))
-	    strlcat(video_card, r128_family[ent->driver_data], sizeof(video_card));
+	    strncat(video_card, r128_family[ent->driver_data], sizeof(video_card));
 
 	printk(KERN_INFO "aty128fb: %s [chip rev 0x%x] ", video_card, chip_rev);
 
@@ -1908,14 +1950,7 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 		/* Indicate sleep capability */
 		if (par->chip_gen == rage_M3) {
 			pmac_call_feature(PMAC_FTR_DEVICE_CAN_WAKE, NULL, 0, 1);
-#if 0 /* Disable the early video resume hack for now as it's causing problems, among
-       * others we now rely on the PCI core restoring the config space for us, which
-       * isn't the case with that hack, and that code path causes various things to
-       * be called with interrupts off while they shouldn't. I'm leaving the code in
-       * as it can be useful for debugging purposes
-       */
 			pmac_set_early_video_resume(aty128_early_resume, par);
-#endif
 		}
 
 		/* Find default mode */
@@ -2000,8 +2035,7 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 	par->lock_blank = 0;
 
 #ifdef CONFIG_FB_ATY128_BACKLIGHT
-	if (backlight)
-		aty128_bl_init(par);
+	aty128_bl_init(par);
 #endif
 
 	if (register_framebuffer(info) < 0)
@@ -2059,13 +2093,13 @@ static int __devinit aty128_probe(struct pci_dev *pdev, const struct pci_device_
 
 	/* Virtualize mmio region */
 	info->fix.mmio_start = reg_addr;
-	par->regbase = pci_ioremap_bar(pdev, 2);
+	par->regbase = ioremap(reg_addr, pci_resource_len(pdev, 2));
 	if (!par->regbase)
 		goto err_free_info;
 
 	/* Grab memory size from the card */
 	// How does this relate to the resource length from the PCI hardware?
-	par->vram_size = aty_ld_le32(CNFG_MEMSIZE) & 0x03FFFFFF;
+	par->vram_size = aty_ld_le32(CONFIG_MEMSIZE) & 0x03FFFFFF;
 
 	/* Virtualize the framebuffer */
 	info->screen_base = ioremap(fb_addr, par->vram_size);
@@ -2141,12 +2175,11 @@ static void __devexit aty128_remove(struct pci_dev *pdev)
 
 	par = info->par;
 
-	unregister_framebuffer(info);
-
 #ifdef CONFIG_FB_ATY128_BACKLIGHT
-	aty128_bl_exit(info->bl_dev);
+	aty128_bl_exit(par);
 #endif
 
+	unregister_framebuffer(info);
 #ifdef CONFIG_MTRR
 	if (par->mtrr.vram_valid)
 		mtrr_del(par->mtrr.vram, info->fix.smem_start,
@@ -2171,35 +2204,34 @@ static void __devexit aty128_remove(struct pci_dev *pdev)
 static int aty128fb_blank(int blank, struct fb_info *fb)
 {
 	struct aty128fb_par *par = fb->par;
-	u8 state;
+	u8 state = 0;
 
 	if (par->lock_blank || par->asleep)
 		return 0;
 
-	switch (blank) {
-	case FB_BLANK_NORMAL:
-		state = 4;
-		break;
-	case FB_BLANK_VSYNC_SUSPEND:
-		state = 6;
-		break;
-	case FB_BLANK_HSYNC_SUSPEND:
-		state = 5;
-		break;
-	case FB_BLANK_POWERDOWN:
-		state = 7;
-		break;
-	case FB_BLANK_UNBLANK:
-	default:
-		state = 0;
-		break;
-	}
+#ifdef CONFIG_FB_ATY128_BACKLIGHT
+	if (machine_is(powermac) && blank)
+		aty128_bl_set_power(fb, FB_BLANK_POWERDOWN);
+#endif
+
+	if (blank & FB_BLANK_VSYNC_SUSPEND)
+		state |= 2;
+	if (blank & FB_BLANK_HSYNC_SUSPEND)
+		state |= 1;
+	if (blank & FB_BLANK_POWERDOWN)
+		state |= 4;
+
 	aty_st_8(CRTC_EXT_CNTL+1, state);
 
 	if (par->chip_gen == rage_M3) {
 		aty128_set_crt_enable(par, par->crt_on && !blank);
 		aty128_set_lcd_enable(par, par->lcd_on && !blank);
 	}
+
+#ifdef CONFIG_FB_ATY128_BACKLIGHT
+	if (machine_is(powermac) && !blank)
+		aty128_bl_set_power(fb, FB_BLANK_UNBLANK);
+#endif
 
 	return 0;
 }
@@ -2373,6 +2405,7 @@ static void fbcon_aty128_bmove(struct display *p, int sy, int sx, int dy, int dx
 static void aty128_set_suspend(struct aty128fb_par *par, int suspend)
 {
 	u32	pmgt;
+	u16	pwr_command;
 	struct pci_dev *pdev = par->pdev;
 
 	if (!par->pm_reg)
@@ -2381,8 +2414,6 @@ static void aty128_set_suspend(struct aty128fb_par *par, int suspend)
 	/* Set the chip into the appropriate suspend mode (we use D2,
 	 * D3 would require a complete re-initialisation of the chip,
 	 * including PCI config registers, clocks, AGP configuration, ...)
-	 *
-	 * For resume, the core will have already brought us back to D0
 	 */
 	if (suspend) {
 		/* Make sure CRTC2 is reset. Remove that the day we decide to
@@ -2400,9 +2431,17 @@ static void aty128_set_suspend(struct aty128fb_par *par, int suspend)
 		aty_st_le32(BUS_CNTL1, 0x00000010);
 		aty_st_le32(MEM_POWER_MISC, 0x0c830000);
 		mdelay(100);
-
+		pci_read_config_word(pdev, par->pm_reg+PCI_PM_CTRL, &pwr_command);
 		/* Switch PCI power management to D2 */
-		pci_set_power_state(pdev, PCI_D2);
+		pci_write_config_word(pdev, par->pm_reg+PCI_PM_CTRL,
+			(pwr_command & ~PCI_PM_CTRL_STATE_MASK) | 2);
+		pci_read_config_word(pdev, par->pm_reg+PCI_PM_CTRL, &pwr_command);
+	} else {
+		/* Switch back PCI power management to D0 */
+		mdelay(100);
+		pci_write_config_word(pdev, par->pm_reg+PCI_PM_CTRL, 0);
+		pci_read_config_word(pdev, par->pm_reg+PCI_PM_CTRL, &pwr_command);
+		mdelay(100);
 	}
 }
 
@@ -2410,12 +2449,6 @@ static int aty128_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 {
 	struct fb_info *info = pci_get_drvdata(pdev);
 	struct aty128fb_par *par = info->par;
-
-	/* Because we may change PCI D state ourselves, we need to
-	 * first save the config space content so the core can
-	 * restore it properly on resume.
-	 */
-	pci_save_state(pdev);
 
 	/* We don't do anything but D2, for now we return 0, but
 	 * we may want to change that. How do we know if the BIOS
@@ -2446,7 +2479,7 @@ static int aty128_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	wait_for_idle(par);
 
 	/* Blank display and LCD */
-	aty128fb_blank(FB_BLANK_POWERDOWN, info);
+	aty128fb_blank(VESA_POWERDOWN, info);
 
 	/* Sleep */
 	par->asleep = 1;
@@ -2482,11 +2515,6 @@ static int aty128_do_resume(struct pci_dev *pdev)
 
 	if (pdev->dev.power.power_state.event == PM_EVENT_ON)
 		return 0;
-
-	/* PCI state will have been restored by the core, so
-	 * we should be in D0 now with our config space fully
-	 * restored
-	 */
 
 	/* Wakeup chip */
 	aty128_set_suspend(par, 0);

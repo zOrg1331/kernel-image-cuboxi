@@ -30,16 +30,16 @@
 #define PS2PP_NAV_BTN		0x20
 
 struct ps2pp_info {
-	u8 model;
-	u8 kind;
-	u16 features;
+	const int model;
+	unsigned const int kind;
+	unsigned const int features;
 };
 
 /*
  * Process a PS2++ or PS2T++ packet.
  */
 
-static psmouse_ret_t ps2pp_process_byte(struct psmouse *psmouse)
+static psmouse_ret_t ps2pp_process_byte(struct psmouse *psmouse, struct pt_regs *regs)
 {
 	struct input_dev *dev = psmouse->dev;
 	unsigned char *packet = psmouse->packet;
@@ -50,6 +50,8 @@ static psmouse_ret_t ps2pp_process_byte(struct psmouse *psmouse)
 /*
  * Full packet accumulated, process it
  */
+
+	input_regs(dev, regs);
 
 	if ((packet[0] & 0x48) == 0x48 && (packet[1] & 0x02) == 0x02) {
 
@@ -130,10 +132,13 @@ static int ps2pp_cmd(struct psmouse *psmouse, unsigned char *param, unsigned cha
  * 0 - disabled
  */
 
-static void ps2pp_set_smartscroll(struct psmouse *psmouse, bool smartscroll)
+static void ps2pp_set_smartscroll(struct psmouse *psmouse, unsigned int smartscroll)
 {
 	struct ps2dev *ps2dev = &psmouse->ps2dev;
 	unsigned char param[4];
+
+	if (smartscroll > 1)
+		smartscroll = 1;
 
 	ps2pp_cmd(psmouse, param, 0x32);
 
@@ -146,18 +151,18 @@ static void ps2pp_set_smartscroll(struct psmouse *psmouse, bool smartscroll)
 	ps2_command(ps2dev, param, PSMOUSE_CMD_SETRES);
 }
 
-static ssize_t ps2pp_attr_show_smartscroll(struct psmouse *psmouse,
-					   void *data, char *buf)
+static ssize_t ps2pp_attr_show_smartscroll(struct psmouse *psmouse, void *data, char *buf)
 {
-	return sprintf(buf, "%d\n", psmouse->smartscroll);
+	return sprintf(buf, "%d\n", psmouse->smartscroll ? 1 : 0);
 }
 
-static ssize_t ps2pp_attr_set_smartscroll(struct psmouse *psmouse, void *data,
-					  const char *buf, size_t count)
+static ssize_t ps2pp_attr_set_smartscroll(struct psmouse *psmouse, void *data, const char *buf, size_t count)
 {
 	unsigned long value;
+	char *rest;
 
-	if (strict_strtoul(buf, 10, &value) || value > 1)
+	value = simple_strtoul(buf, &rest, 10);
+	if (*rest || value > 1)
 		return -EINVAL;
 
 	ps2pp_set_smartscroll(psmouse, value);
@@ -194,10 +199,9 @@ static void ps2pp_disconnect(struct psmouse *psmouse)
 	device_remove_file(&psmouse->ps2dev.serio->dev, &psmouse_attr_smartscroll.dattr);
 }
 
-static const struct ps2pp_info *get_model_info(unsigned char model)
+static struct ps2pp_info *get_model_info(unsigned char model)
 {
-	static const struct ps2pp_info ps2pp_list[] = {
-		{  1,	0,			0 },	/* Simple 2-button mouse */
+	static struct ps2pp_info ps2pp_list[] = {
 		{ 12,	0,			PS2PP_SIDE_BTN},
 		{ 13,	0,			0 },
 		{ 15,	PS2PP_KIND_MX,					/* MX1000 */
@@ -211,15 +215,13 @@ static const struct ps2pp_info *get_model_info(unsigned char model)
 		{ 51,	0,			0 },
 		{ 52,	PS2PP_KIND_WHEEL,	PS2PP_SIDE_BTN | PS2PP_WHEEL },
 		{ 53,	PS2PP_KIND_WHEEL,	PS2PP_WHEEL },
-		{ 56,	PS2PP_KIND_WHEEL,	PS2PP_SIDE_BTN | PS2PP_WHEEL }, /* Cordless MouseMan Wheel */
 		{ 61,	PS2PP_KIND_MX,					/* MX700 */
 				PS2PP_WHEEL | PS2PP_SIDE_BTN | PS2PP_TASK_BTN |
 				PS2PP_EXTRA_BTN | PS2PP_NAV_BTN },
 		{ 66,	PS2PP_KIND_MX,					/* MX3100 reciver */
 				PS2PP_WHEEL | PS2PP_SIDE_BTN | PS2PP_TASK_BTN |
 				PS2PP_EXTRA_BTN | PS2PP_NAV_BTN | PS2PP_HWHEEL },
-		{ 72,	PS2PP_KIND_TRACKMAN,	0 },			/* T-CH11: TrackMan Marble */
-		{ 73,	PS2PP_KIND_TRACKMAN,	PS2PP_SIDE_BTN },	/* TrackMan FX */
+		{ 73,	0,			PS2PP_SIDE_BTN },
 		{ 75,	PS2PP_KIND_WHEEL,	PS2PP_WHEEL },
 		{ 76,	PS2PP_KIND_WHEEL,	PS2PP_WHEEL },
 		{ 79,	PS2PP_KIND_TRACKMAN,	PS2PP_WHEEL },		/* TrackMan with wheel */
@@ -242,11 +244,12 @@ static const struct ps2pp_info *get_model_info(unsigned char model)
 				PS2PP_EXTRA_BTN | PS2PP_NAV_BTN },
 		{ 114,	PS2PP_KIND_MX,					/* MX310 */
 				PS2PP_WHEEL | PS2PP_SIDE_BTN |
-				PS2PP_TASK_BTN | PS2PP_EXTRA_BTN }
+				PS2PP_TASK_BTN | PS2PP_EXTRA_BTN },
+		{ }
 	};
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(ps2pp_list); i++)
+	for (i = 0; ps2pp_list[i].model; i++)
 		if (model == ps2pp_list[i].model)
 			return &ps2pp_list[i];
 
@@ -258,31 +261,30 @@ static const struct ps2pp_info *get_model_info(unsigned char model)
  * Set up input device's properties based on the detected mouse model.
  */
 
-static void ps2pp_set_model_properties(struct psmouse *psmouse,
-				       const struct ps2pp_info *model_info,
-				       bool using_ps2pp)
+static void ps2pp_set_model_properties(struct psmouse *psmouse, struct ps2pp_info *model_info,
+				       int using_ps2pp)
 {
 	struct input_dev *input_dev = psmouse->dev;
 
 	if (model_info->features & PS2PP_SIDE_BTN)
-		__set_bit(BTN_SIDE, input_dev->keybit);
+		set_bit(BTN_SIDE, input_dev->keybit);
 
 	if (model_info->features & PS2PP_EXTRA_BTN)
-		__set_bit(BTN_EXTRA, input_dev->keybit);
+		set_bit(BTN_EXTRA, input_dev->keybit);
 
 	if (model_info->features & PS2PP_TASK_BTN)
-		__set_bit(BTN_TASK, input_dev->keybit);
+		set_bit(BTN_TASK, input_dev->keybit);
 
 	if (model_info->features & PS2PP_NAV_BTN) {
-		__set_bit(BTN_FORWARD, input_dev->keybit);
-		__set_bit(BTN_BACK, input_dev->keybit);
+		set_bit(BTN_FORWARD, input_dev->keybit);
+		set_bit(BTN_BACK, input_dev->keybit);
 	}
 
 	if (model_info->features & PS2PP_WHEEL)
-		__set_bit(REL_WHEEL, input_dev->relbit);
+		set_bit(REL_WHEEL, input_dev->relbit);
 
 	if (model_info->features & PS2PP_HWHEEL)
-		__set_bit(REL_HWHEEL, input_dev->relbit);
+		set_bit(REL_HWHEEL, input_dev->relbit);
 
 	switch (model_info->kind) {
 		case PS2PP_KIND_WHEEL:
@@ -320,14 +322,13 @@ static void ps2pp_set_model_properties(struct psmouse *psmouse,
  * that support it.
  */
 
-int ps2pp_init(struct psmouse *psmouse, bool set_properties)
+int ps2pp_init(struct psmouse *psmouse, int set_properties)
 {
 	struct ps2dev *ps2dev = &psmouse->ps2dev;
 	unsigned char param[4];
 	unsigned char model, buttons;
-	const struct ps2pp_info *model_info;
-	bool use_ps2pp = false;
-	int error;
+	struct ps2pp_info *model_info;
+	int use_ps2pp = 0;
 
 	param[0] = 0;
 	ps2_command(ps2dev, param, PSMOUSE_CMD_SETRES);
@@ -337,18 +338,18 @@ int ps2pp_init(struct psmouse *psmouse, bool set_properties)
 	param[1] = 0;
 	ps2_command(ps2dev, param, PSMOUSE_CMD_GETINFO);
 
+	if (!param[1])
+		return -1;
+
 	model = ((param[0] >> 4) & 0x07) | ((param[0] << 3) & 0x78);
 	buttons = param[1];
-
-	if (!model || !buttons)
-		return -1;
 
 	if ((model_info = get_model_info(model)) != NULL) {
 
 /*
  * Do Logitech PS2++ / PS2T++ magic init.
  */
-		if (model_info->kind == PS2PP_KIND_TP3) { /* Touch Pad 3 */
+		if (model == 97) { /* Touch Pad 3 */
 
 			/* Unprotect RAM */
 			param[0] = 0x11; param[1] = 0x04; param[2] = 0x68;
@@ -363,7 +364,7 @@ int ps2pp_init(struct psmouse *psmouse, bool set_properties)
 			param[0] = 0;
 			if (!ps2_command(ps2dev, param, 0x13d1) &&
 			    param[0] == 0x06 && param[1] == 0x00 && param[2] == 0x14) {
-				use_ps2pp = true;
+				use_ps2pp = 1;
 			}
 
 		} else {
@@ -375,8 +376,8 @@ int ps2pp_init(struct psmouse *psmouse, bool set_properties)
 			if ((param[0] & 0x78) == 0x48 &&
 			    (param[1] & 0xf3) == 0xc2 &&
 			    (param[2] & 0x03) == ((param[1] >> 2) & 3)) {
-				ps2pp_set_smartscroll(psmouse, false);
-				use_ps2pp = true;
+				ps2pp_set_smartscroll(psmouse, psmouse->smartscroll);
+				use_ps2pp = 1;
 			}
 		}
 	}
@@ -393,19 +394,13 @@ int ps2pp_init(struct psmouse *psmouse, bool set_properties)
 				psmouse->set_resolution = ps2pp_set_resolution;
 				psmouse->disconnect = ps2pp_disconnect;
 
-				error = device_create_file(&psmouse->ps2dev.serio->dev,
-							   &psmouse_attr_smartscroll.dattr);
-				if (error) {
-					printk(KERN_ERR
-						"logips2pp.c: failed to create smartscroll "
-						"sysfs attribute, error: %d\n", error);
-					return -1;
-				}
+				device_create_file(&psmouse->ps2dev.serio->dev,
+						   &psmouse_attr_smartscroll.dattr);
 			}
 		}
 
 		if (buttons < 3)
-			__clear_bit(BTN_MIDDLE, psmouse->dev->keybit);
+			clear_bit(BTN_MIDDLE, psmouse->dev->keybit);
 
 		if (model_info)
 			ps2pp_set_model_properties(psmouse, model_info, use_ps2pp);

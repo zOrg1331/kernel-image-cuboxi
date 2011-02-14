@@ -1,0 +1,127 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 20 Apr 2009 12:58:11 -0400
+Subject: [xen] enable AMD IOMMU Xen driver
+Message-id: 20090420165010.6359.84661.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.4 PATCH 2/3] Enable AMD IOMMU Xen driver
+Bugzilla: 477261
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Resolves BZ 477261
+
+Enable AMD IOMMU support.
+
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index 241155b..ed8cd6e 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -95,6 +95,10 @@ asmlinkage void svm_intr_assist(void)
+     int intr_vector = -1;
+     int intr_window_enabled = 0;
+ 
++    /* Crank the handle on interrupt state and check for new interrrupts. */
++    pt_update_irq(v);
++    hvm_dirq_assist(v);
++
+     /*
+      * Previous Interrupt delivery caused this intercept?
+      * This will happen if the injection is latched by the processor (hence
+@@ -122,9 +126,6 @@ asmlinkage void svm_intr_assist(void)
+     if ( vmcb->vintr.fields.irq )
+         goto out;
+ 
+-    /* Crank the handle on interrupt state and check for new interrrupts. */
+-    pt_update_irq(v);
+-
+     do {
+         if ( !cpu_has_pending_irq(v) )
+             goto out;
+diff --git a/drivers/acpi/tables.c b/drivers/acpi/tables.c
+index b2d1d89..1580bbb 100644
+--- a/drivers/acpi/tables.c
++++ b/drivers/acpi/tables.c
+@@ -60,6 +60,7 @@ static char *acpi_table_signatures[ACPI_TABLE_COUNT] = {
+ 	[ACPI_HPET] = "HPET",
+ 	[ACPI_MCFG] = "MCFG",
+ 	[ACPI_DMAR] = "DMAR",
++	[ACPI_IVRS] = "IVRS",
+ };
+ 
+ static char *mps_inti_flags_polarity[] = { "dfl", "high", "res", "low" };
+diff --git a/include/asm-x86/fixmap.h b/include/asm-x86/fixmap.h
+index c14d8f7..4d1005e 100644
+--- a/include/asm-x86/fixmap.h
++++ b/include/asm-x86/fixmap.h
+@@ -19,6 +19,7 @@
+ #include <xen/kexec.h>
+ #include <xen/iommu.h>
+ #include <asm/msi.h>
++#include <asm/amd-iommu.h>
+ 
+ /*
+  * Here we define all the compile-time 'special' virtual
+@@ -44,6 +45,8 @@ enum fixed_addresses {
+       + ((KEXEC_XEN_NO_PAGES >> 1) * KEXEC_IMAGE_NR) - 1,
+     FIX_IOMMU_REGS_BASE_0,
+     FIX_IOMMU_REGS_END = FIX_IOMMU_REGS_BASE_0 + MAX_IOMMUS-1,
++    FIX_IOMMU_MMIO_BASE_0,
++    FIX_IOMMU_MMIO_END = FIX_IOMMU_MMIO_BASE_0 + IOMMU_PAGES-1,
+     FIX_MSIX_IO_RESERV_BASE,
+     FIX_MSIX_IO_RESERV_END = FIX_MSIX_IO_RESERV_BASE + MAX_MSIX_PAGES -1,
+     __end_of_fixed_addresses
+diff --git a/include/asm-x86/hvm/iommu.h b/include/asm-x86/hvm/iommu.h
+index 6b63927..b72a016 100644
+--- a/include/asm-x86/hvm/iommu.h
++++ b/include/asm-x86/hvm/iommu.h
+@@ -3,7 +3,9 @@
+ 
+ struct iommu_ops;
+ extern struct iommu_ops intel_iommu_ops;
++extern struct iommu_ops amd_iommu_ops;
+ extern int intel_vtd_setup(void);
++extern int amd_iov_detect(void);
+ 
+ static inline struct iommu_ops *iommu_get_ops(void)
+ {
+@@ -11,6 +13,8 @@ static inline struct iommu_ops *iommu_get_ops(void)
+     {
+     case X86_VENDOR_INTEL:
+         return &intel_iommu_ops;
++    case X86_VENDOR_AMD:
++        return &amd_iommu_ops;
+     default:
+         BUG();
+     }
+@@ -24,6 +28,8 @@ static inline int iommu_hardware_setup(void)
+     {
+     case X86_VENDOR_INTEL:
+         return intel_vtd_setup();
++    case X86_VENDOR_AMD:
++        return amd_iov_detect();
+     default:
+         BUG();
+     }
+diff --git a/include/xen/acpi.h b/include/xen/acpi.h
+index 813849b..69d3ab4 100644
+--- a/include/xen/acpi.h
++++ b/include/xen/acpi.h
+@@ -368,6 +368,7 @@ enum acpi_table_id {
+ 	ACPI_HPET,
+ 	ACPI_MCFG,
+ 	ACPI_DMAR,
++	ACPI_IVRS,
+ 	ACPI_TABLE_COUNT
+ };
+ 
+diff --git a/include/xen/hvm/iommu.h b/include/xen/hvm/iommu.h
+index 2a66956..8ed4530 100644
+--- a/include/xen/hvm/iommu.h
++++ b/include/xen/hvm/iommu.h
+@@ -40,7 +40,7 @@ struct hvm_iommu {
+     /* amd iommu support */
+     int domain_id;
+     int paging_mode;
+-    void *root_table;
++    struct page_info *root_table;
+     bool_t p2m_synchronized;
+ 
+     /* iommu_ops */

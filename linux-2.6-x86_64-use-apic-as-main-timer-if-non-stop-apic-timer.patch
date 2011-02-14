@@ -1,0 +1,56 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 20 Aug 2010 06:29:00 -0400
+Subject: [x86_64] use apic as main timer if non-stop-apic timer
+Message-id: <4C6E20AC.2050902@redhat.com>
+Patchwork-id: 27728
+O-Subject: [RHEL 5.6 PATCH 2/3] bz 573514: use apic timer as main timer for
+	system with non-stop-apic timer
+Bugzilla: 573514
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Bugzilla #573514
+
+Description of problem:
+
+It is useful to kill interrupt 0 to make the system more idle by
+shutting down a interrupt source,which wakes up CPU0 every 1ms, to save
+some power on systems like WSM-EX with non-stop APIC timer feature.
+
+Upstream status:
+
+Upstream don't need this. So no upstream.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 7f08ec4..9a0b86a 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -756,7 +756,7 @@ static void setup_APIC_timer(unsigned int clocks)
+ 	/* Turn off PIT interrupt if we use APIC timer as main timer.
+ 	   Only works with the PM timer right now
+ 	   TBD fix it for HPET too. */
+-	if (vxtime.mode == VXTIME_PMTMR &&
++	if ((vxtime.mode == VXTIME_PMTMR || boot_cpu_has(X86_FEATURE_ARAT)) &&
+ 		smp_processor_id() == boot_cpu_id &&
+ 		apic_runs_main_timer == 1 &&
+ 		!cpu_isset(boot_cpu_id, timer_interrupt_broadcast_ipi_mask)) {
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 830c7d6..11dce35 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1429,6 +1429,13 @@ void __init time_init(void)
+ 		tick_nsec = SH_DIV(NSEC_PER_SEC, acthz, 8) / tick_divider;
+ 	}
+ 
++	if ((apic_runs_main_timer == 0) && (nohpet == 0) &&
++	    boot_cpu_has(X86_FEATURE_ARAT)) {
++		/* apic timer as main timer */
++		nohpet = 1;
++		apic_runs_main_timer = 1;
++	}
++
+ 	if (nohpet)
+ 		vxtime.hpet_address = 0;
+ 

@@ -114,7 +114,7 @@ static unsigned int read_magic_time(void)
 	get_rtc_time(&time);
 	printk("Time: %2d:%02d:%02d  Date: %02d/%02d/%02d\n",
 		time.tm_hour, time.tm_min, time.tm_sec,
-		time.tm_mon + 1, time.tm_mday, time.tm_year % 100);
+		time.tm_mon, time.tm_mday, time.tm_year);
 	val = time.tm_year;				/* 100 years */
 	if (val > 100)
 		val -= 100;
@@ -140,9 +140,8 @@ static unsigned int hash_string(unsigned int seed, const char *data, unsigned in
 
 void set_trace_device(struct device *dev)
 {
-	dev_hash_value = hash_string(DEVSEED, dev_name(dev), DEVHASH);
+	dev_hash_value = hash_string(DEVSEED, dev->bus_id, DEVHASH);
 }
-EXPORT_SYMBOL(set_trace_device);
 
 /*
  * We could just take the "tracedata" index into the .tracedata
@@ -153,7 +152,7 @@ EXPORT_SYMBOL(set_trace_device);
  * it's not any guarantee, but it's a high _likelihood_ that
  * the match is valid).
  */
-void generate_resume_trace(const void *tracedata, unsigned int user)
+void generate_resume_trace(void *tracedata, unsigned int user)
 {
 	unsigned short lineno = *(unsigned short *)tracedata;
 	const char *file = *(const char **)(tracedata + 2);
@@ -163,7 +162,6 @@ void generate_resume_trace(const void *tracedata, unsigned int user)
 	file_hash_value = hash_string(lineno, file, FILEHASH);
 	set_magic_time(user_hash_value, file_hash_value, dev_hash_value);
 }
-EXPORT_SYMBOL(generate_resume_trace);
 
 extern char __tracedata_start, __tracedata_end;
 static int show_file_hash(unsigned int value)
@@ -172,8 +170,7 @@ static int show_file_hash(unsigned int value)
 	char *tracedata;
 
 	match = 0;
-	for (tracedata = &__tracedata_start ; tracedata < &__tracedata_end ;
-			tracedata += 2 + sizeof(unsigned long)) {
+	for (tracedata = &__tracedata_start ; tracedata < &__tracedata_end ; tracedata += 6) {
 		unsigned short lineno = *(unsigned short *)tracedata;
 		const char *file = *(const char **)(tracedata + 2);
 		unsigned int hash = hash_string(lineno, file, FILEHASH);
@@ -188,13 +185,13 @@ static int show_file_hash(unsigned int value)
 static int show_dev_hash(unsigned int value)
 {
 	int match = 0;
-	struct list_head *entry = dpm_list.prev;
+	struct list_head * entry = dpm_active.prev;
 
-	while (entry != &dpm_list) {
+	while (entry != &dpm_active) {
 		struct device * dev = to_device(entry);
-		unsigned int hash = hash_string(DEVSEED, dev_name(dev), DEVHASH);
+		unsigned int hash = hash_string(DEVSEED, dev->bus_id, DEVHASH);
 		if (hash == value) {
-			dev_info(dev, "hash matches\n");
+			printk("  hash matches device %s\n", dev->bus_id);
 			match++;
 		}
 		entry = entry->prev;

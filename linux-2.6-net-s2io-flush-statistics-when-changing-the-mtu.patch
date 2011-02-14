@@ -1,0 +1,162 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 8 Jan 2009 11:31:23 -0500
+Subject: [net] s2io: flush statistics when changing the MTU
+Message-id: 20090108163024.28975.42566.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ459514] s2io flushs statistics when changing the MTU
+Bugzilla: 459514
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=459514
+
+Description:
+===========
+This patch prevents s2io device driver from flushing the packet
+statistics information when the Maximum Transmission Unit(MTU) is changed.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1641905
+
+Upstream Status:
+================
+commit dc56e634c807c6be69be8af919f20a746197b87d
+
+Test Status:
+============
+Testcase is in the Bugzilla as well.
+
+# rmmod s2io
+# modprobe s2io
+# ifconfig eth11 192.168.200.2 netmask 255.255.255.0 up
+# ping -f -c1000 192.168.200.3
+# ifconfig eth11 | grep -E '(R|T)X'
+ Notice RX and TX are non-zero
+# ifconfig eth11 mtu 1600
+# ifconfig eth11 | grep -E '(R|T)X'
+ Without this patch the RX and TX values are zero and this is not
+seen with patch applied.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/net/s2io.c b/drivers/net/s2io.c
+index bd5d336..4f4124b 100644
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -3446,9 +3446,9 @@ static void s2io_reset(struct s2io_nic * sp)
+ 		writeq(BIT(62), &bar0->txpic_int_reg);
+ 	}
+ 
+-	/* Reset device statistics maintained by OS */
+-	memset(&sp->stats, 0, sizeof (struct net_device_stats));
+-	
++	/* Reset device statistics buffer */
++	memset(&sp->stats_buffer, 0, sizeof (struct s2io_stats_buffer));
++
+ 	up_cnt = sp->mac_control.stats_info->sw_stat.link_up_cnt;
+ 	down_cnt = sp->mac_control.stats_info->sw_stat.link_down_cnt;
+ 	up_time = sp->mac_control.stats_info->sw_stat.link_up_time;
+@@ -4355,23 +4355,44 @@ static struct net_device_stats *s2io_get_stats(struct net_device *dev)
+ 	struct mac_info *mac_control;
+ 	struct config_param *config;
+ 
+-
+ 	mac_control = &sp->mac_control;
+ 	config = &sp->config;
+ 
+ 	/* Configure Stats for immediate updt */
+ 	s2io_updt_stats(sp);
+ 
+-	sp->stats.tx_packets =
+-		le32_to_cpu(mac_control->stats_info->tmac_frms);
+-	sp->stats.tx_errors =
+-		le32_to_cpu(mac_control->stats_info->tmac_any_err_frms);
+-	sp->stats.rx_errors =
+-		le64_to_cpu(mac_control->stats_info->rmac_drop_frms);
+-	sp->stats.multicast =
+-		le32_to_cpu(mac_control->stats_info->rmac_vld_mcst_frms);
+-	sp->stats.rx_length_errors =
+-		le64_to_cpu(mac_control->stats_info->rmac_long_frms);
++	/* Calculate the changes in the device statistics since the last call, 
++	 * and add them to the statistics maintained by the OS.
++	 *
++	 * The amount of changes to be added equals to the distance between the 
++	 * s2io statistics buffer (which holds the device statistics when 
++	 * this function was previously called) towards the current values of the
++	 * device statistics.
++	 *
++	 * Normally the current device statistics are always greater or equal to 
++	 * the old statistics stored in the buffer, unless the 32bit device 
++	 * registers cycle back to zero due to overflow. This fact is taken into 
++	 * account for calculating the correct amount of increment to be added to 
++	 * the OS statistics.
++	 */
++
++#define UPDATE_STATS(FIELD, DEVFIELD) \
++{ \
++	u32 dev_stat = le32_to_cpu(mac_control->stats_info->DEVFIELD); \
++	if (dev_stat >= sp->stats_buffer.FIELD) \
++		sp->stats.FIELD += dev_stat - sp->stats_buffer.FIELD; \
++	else \
++		sp->stats.FIELD += ((u32) -1) - sp->stats_buffer.FIELD + dev_stat; \
++	sp->stats_buffer.FIELD = dev_stat; \
++}
++
++	UPDATE_STATS(tx_packets, tmac_frms);
++	UPDATE_STATS(tx_errors, tmac_any_err_frms);
++	UPDATE_STATS(rx_errors, rmac_drop_frms);
++	UPDATE_STATS(multicast, rmac_vld_mcst_frms);
++	UPDATE_STATS(rx_length_errors, rmac_long_frms);
++
++#undef UPDATE_STATS
+ 
+ 	return (&sp->stats);
+ }
+diff --git a/drivers/net/s2io.h b/drivers/net/s2io.h
+index 8e52954..6436e28 100644
+--- a/drivers/net/s2io.h
++++ b/drivers/net/s2io.h
+@@ -777,6 +777,17 @@ struct lro {
+ 	u8		saw_ts;
+ };
+ 
++/* Network private statistics. */
++struct s2io_stats_buffer {
++
++	unsigned long   tx_packets;             /* packets transmitted    */
++	unsigned long   rx_errors;              /* bad packets received         */
++	unsigned long   tx_errors;              /* packet transmit problems     */
++	unsigned long   multicast;              /* multicast packets received   */
++	unsigned long   rx_length_errors;
++
++};
++
+ /* Structure representing one instance of the NIC */
+ struct s2io_nic {
+ 	int rxd_mode;
+@@ -786,6 +797,7 @@ struct s2io_nic {
+ 	 */
+ 	int pkts_to_process;
+ 	struct net_device *dev;
++	struct s2io_stats_buffer stats_buffer;
+ 	struct mac_info mac_control;
+ 	struct config_param config;
+ 	struct pci_dev *pdev;

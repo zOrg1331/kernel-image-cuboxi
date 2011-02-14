@@ -1,0 +1,36 @@
+From: Brian Maly <bmaly@redhat.com>
+Date: Wed, 19 Dec 2007 15:07:38 -0500
+Subject: [acpi] improve reporting of power states
+Message-id: 47697A0A.8090009@redhat.com
+O-Subject: [RHEL5 patch] ACPI: improve reporting of power states
+Bugzilla: 210716
+
+resolves BZ 210716
+
+This patch does not really fix a bug, rather just improves reporting of
+power states to ease in debugging ACPI bugs.
+In the case of this BZ, the kernel appears to be trying to set a power
+state higher than the parent because thats the power state it got from
+the ACPI tables, so either hardware is powered off completely or we have
+BIOS issue. With this patch you will be able to see if the power state
+is D0-D3 and this will help a bit in debugging the issue. It saves a
+step anyway, and these sorts of problem (power state conflicts) are not
+uncommon, i.e. bound to be seen again.
+
+Brian
+
+diff --git a/drivers/acpi/bus.c b/drivers/acpi/bus.c
+index 766332e..75404bb 100644
+--- a/drivers/acpi/bus.c
++++ b/drivers/acpi/bus.c
+@@ -219,6 +219,10 @@ int acpi_bus_set_power(acpi_handle handle, int state)
+ 		printk(KERN_WARNING PREFIX
+ 			      "Cannot set device to a higher-powered"
+ 			      " state than parent\n");
++		printk(KERN_WARNING PREFIX
++			      "Device requested power state D%d but"
++			      " parents power state is at D%d\n", state, device->parent->power.state);
++
+ 		return -ENODEV;
+ 	}
+ 

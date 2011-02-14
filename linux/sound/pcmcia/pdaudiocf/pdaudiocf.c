@@ -1,7 +1,7 @@
 /*
  * Driver for Sound Core PDAudioCF soundcard
  *
- * Copyright (c) 2003 by Jaroslav Kysela <perex@perex.cz>
+ * Copyright (c) 2003 by Jaroslav Kysela <perex@suse.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <linux/slab.h>
 #include <linux/moduleparam.h>
@@ -32,7 +33,7 @@
 
 #define CARD_NAME	"PDAudio-CF"
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
 MODULE_DESCRIPTION("Sound Core " CARD_NAME);
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Sound Core," CARD_NAME "}}");
@@ -91,7 +92,7 @@ static int snd_pdacf_dev_free(struct snd_device *device)
  */
 static int snd_pdacf_probe(struct pcmcia_device *link)
 {
-	int i, err;
+	int i;
 	struct snd_pdacf *pdacf;
 	struct snd_card *card;
 	static struct snd_device_ops ops = {
@@ -112,26 +113,21 @@ static int snd_pdacf_probe(struct pcmcia_device *link)
 		return -ENODEV; /* disabled explicitly */
 
 	/* ok, create a card instance */
-	err = snd_card_create(index[i], id[i], THIS_MODULE, 0, &card);
-	if (err < 0) {
+	card = snd_card_new(index[i], id[i], THIS_MODULE, 0);
+	if (card == NULL) {
 		snd_printk(KERN_ERR "pdacf: cannot create a card instance\n");
-		return err;
-	}
-
-	pdacf = snd_pdacf_create(card);
-	if (!pdacf) {
-		snd_card_free(card);
 		return -ENOMEM;
 	}
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, pdacf, &ops);
-	if (err < 0) {
+	pdacf = snd_pdacf_create(card);
+	if (! pdacf)
+		return -EIO;
+
+	if (snd_device_new(card, SNDRV_DEV_LOWLEVEL, pdacf, &ops) < 0) {
 		kfree(pdacf);
 		snd_card_free(card);
-		return err;
+		return -ENODEV;
 	}
-
-	snd_card_set_dev(card, &handle_to_dev(link));
 
 	pdacf->index = i;
 	card_list[i] = card;
@@ -210,32 +206,47 @@ static void snd_pdacf_detach(struct pcmcia_device *link)
 		snd_pdacf_powerdown(chip);
 	chip->chip_status |= PDAUDIOCF_STAT_IS_STALE; /* to be sure */
 	snd_card_disconnect(chip->card);
-	snd_card_free_when_closed(chip->card);
+	snd_card_free_in_thread(chip->card);
 }
 
 /*
  * configuration callback
  */
 
+#define CS_CHECK(fn, ret) \
+do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
+
 static int pdacf_config(struct pcmcia_device *link)
 {
 	struct snd_pdacf *pdacf = link->priv;
-	int ret;
+	tuple_t tuple;
+	cisparse_t *parse = NULL;
+	u_short buf[32];
+	int last_fn, last_ret;
 
 	snd_printdd(KERN_DEBUG "pdacf_config called\n");
+	parse = kmalloc(sizeof(*parse), GFP_KERNEL);
+	if (! parse) {
+		snd_printk(KERN_ERR "pdacf_config: cannot allocate\n");
+		return -ENOMEM;
+	}
+	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
+	tuple.Attributes = 0;
+	tuple.TupleData = (cisdata_t *)buf;
+	tuple.TupleDataMax = sizeof(buf);
+	tuple.TupleOffset = 0;
+	tuple.DesiredTuple = CISTPL_CONFIG;
+	CS_CHECK(GetFirstTuple, pcmcia_get_first_tuple(link, &tuple));
+	CS_CHECK(GetTupleData, pcmcia_get_tuple_data(link, &tuple));
+	CS_CHECK(ParseTuple, pcmcia_parse_tuple(link, &tuple, parse));
+	link->conf.ConfigBase = parse->config.base;
 	link->conf.ConfigIndex = 0x5;
 
-	ret = pcmcia_request_io(link, &link->io);
-	if (ret)
-		goto failed;
+	CS_CHECK(RequestIO, pcmcia_request_io(link, &link->io));
+	CS_CHECK(RequestIRQ, pcmcia_request_irq(link, &link->irq));
+	CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
 
-	ret = pcmcia_request_irq(link, &link->irq);
-	if (ret)
-		goto failed;
-
-	ret = pcmcia_request_configuration(link, &link->conf);
-	if (ret)
-		goto failed;
+	kfree(parse);
 
 	if (snd_pdacf_assign_resources(pdacf, link->io.BasePort1, link->irq.AssignedIRQ) < 0)
 		goto failed;
@@ -243,6 +254,9 @@ static int pdacf_config(struct pcmcia_device *link)
 	link->dev_node = &pdacf->node;
 	return 0;
 
+cs_failed:
+	kfree(parse);
+	cs_error(link, last_fn, last_ret);
 failed:
 	pcmcia_disable_device(link);
 	return -ENODEV;
@@ -285,8 +299,7 @@ static int pdacf_resume(struct pcmcia_device *link)
  * Module entry points
  */
 static struct pcmcia_device_id snd_pdacf_ids[] = {
-	/* this is too general PCMCIA_DEVICE_MANF_CARD(0x015d, 0x4c45), */
-	PCMCIA_DEVICE_PROD_ID12("Core Sound","PDAudio-CF",0x396d19d2,0x71717b49),
+	PCMCIA_DEVICE_MANF_CARD(0x015d, 0x4c45),
 	PCMCIA_DEVICE_NULL
 };
 MODULE_DEVICE_TABLE(pcmcia, snd_pdacf_ids);

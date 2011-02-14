@@ -1,0 +1,65 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 29 Jul 2008 17:25:48 -0400
+Subject: [ppc64] cell spufs: fix HugeTLB
+Message-id: 20080729212548.14304.64521.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL 5.3 3/3] Fix HugeTLB
+Bugzilla: 439483
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=439483
+
+Description:
+===========
+Patch fixes hugetlb handling in spufs.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+Upstream Status:
+================
+Upstream, was backported from a very large patch set here:
+https://bugzilla.linux.ibm.com/attachment.cgi?id=37746
+
+Test Status:
+============
+Collectively tested with other spufs updates for stability
+Brad Peters 7/29/08
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-98.el5
+
+Subject: spufs: fix hugetlb handling
+
+From: Gerhard Stenzel <gerhard.stenzel@de.ibm.com>
+
+This patch fixes hugetlb handling in spufs.
+Seems like this little hunk slipped through while backporting.
+
+Signed-off-by: Christian Krafft <krafft@de.ibm.com>
+
+diff --git a/arch/powerpc/platforms/cell/spu_base.c b/arch/powerpc/platforms/cell/spu_base.c
+index 2c22ce6..893776d 100644
+--- a/arch/powerpc/platforms/cell/spu_base.c
++++ b/arch/powerpc/platforms/cell/spu_base.c
+@@ -177,10 +177,10 @@ static int __spu_trap_data_seg(struct spu *spu, unsigned long ea)
+ 
+ 	switch(REGION_ID(ea)) {
+ 	case USER_REGION_ID:
+-#ifdef CONFIG_PPC_MM_SLICES
+-		psize = get_slice_psize(mm, ea);
+-#else
+ 		psize = mm->context.user_psize;
++#ifdef CONFIG_HUGETLB_PAGE
++		if (in_hugepage_area(mm->context, ea))
++			psize = mmu_huge_psize;
+ #endif
+ 		slb.vsid = (get_vsid(mm->context.id, ea)
+ 				<< SLB_VSID_SHIFT) | SLB_VSID_USER;

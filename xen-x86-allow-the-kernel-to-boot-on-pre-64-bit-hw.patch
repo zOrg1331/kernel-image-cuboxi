@@ -1,0 +1,111 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Mon, 27 Oct 2008 11:46:45 +0100
+Subject: [xen] x86: allow the kernel to boot on pre-64 bit hw
+Message-id: 49059C15.9080303@redhat.com
+O-Subject: [RHEL5.3 PATCH]: Allow the Xen kernel to boot on pre-64 bit hardware
+Bugzilla: 468083
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+All,
+     My patch to allow Xen PV guest kernels to hide the CR4 went into kernel
+-116.  Unfortunately, I introduced a regression with that patch; namely, that
+kernel (and later ones, of course) won't boot on pre-64 bit hardware.  That
+patch added a rdmsrl(MSR_EFER) in the boot path for the hypervisor.  The problem
+is pre-64 bit hardware doesn't have the EFER MSR, so it's faulting very early in
+boot (a 100 instructions or so).
+
+The attached patch fixes this by checking whether the CPU has the EFER register
+before actually using it.  With this patch in place, pre-64 bit hardware will
+now boot the Xen kernel.  This is a straightforward backport of upstream
+xen-unstable c/s 16378, and seems to fix the problem for the reporter of the
+issue.  This will resolve BZ 468083.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86/boot/head.S b/arch/x86/boot/head.S
+index 4a987bb..7e6c9e6 100644
+--- a/arch/x86/boot/head.S
++++ b/arch/x86/boot/head.S
+@@ -98,6 +98,7 @@ __start:
+         mov     $0x80000001,%eax
+         cpuid
+ 1:      mov     %edx,sym_phys(cpuid_ext_features)
++        mov     %edx,sym_phys(boot_cpu_data)+CPUINFO_ext_features
+ 
+ #if defined(__x86_64__)
+         /* Check for availability of long mode. */
+diff --git a/arch/x86/setup.c b/arch/x86/setup.c
+index 4ae9bae..c621786 100644
+--- a/arch/x86/setup.c
++++ b/arch/x86/setup.c
+@@ -474,7 +474,8 @@ void __init __start_xen(unsigned long mbi_p)
+     set_current((struct vcpu *)0xfffff000); /* debug sanity */
+     idle_vcpu[0] = current;
+     set_processor_id(0); /* needed early, for smp_processor_id() */
+-    rdmsrl(MSR_EFER, this_cpu(efer));
++    if ( cpu_has_efer )
++        rdmsrl(MSR_EFER, this_cpu(efer));
+     asm volatile ( "mov %%cr4,%0" : "=r" (this_cpu(cr4)) );
+ 
+     smp_prepare_boot_cpu();
+diff --git a/arch/x86/smpboot.c b/arch/x86/smpboot.c
+index 86b3f26..027fb05 100644
+--- a/arch/x86/smpboot.c
++++ b/arch/x86/smpboot.c
+@@ -489,7 +489,8 @@ void __devinit start_secondary(void *unused)
+ 	set_processor_id(cpu);
+ 	set_current(idle_vcpu[cpu]);
+         this_cpu(curr_vcpu) = idle_vcpu[cpu];
+-	rdmsrl(MSR_EFER, this_cpu(efer));
++	if ( cpu_has_efer )
++		rdmsrl(MSR_EFER, this_cpu(efer));
+ 	asm volatile ( "mov %%cr4,%0" : "=r" (this_cpu(cr4)) );
+ 
+ 	percpu_traps_init();
+diff --git a/arch/x86/x86_32/asm-offsets.c b/arch/x86/x86_32/asm-offsets.c
+index 2d6b47d..186e399 100644
+--- a/arch/x86/x86_32/asm-offsets.c
++++ b/arch/x86/x86_32/asm-offsets.c
+@@ -114,4 +114,7 @@ void __dummy__(void)
+     BLANK();
+ 
+     DEFINE(IRQSTAT_shift, LOG_2(sizeof(irq_cpustat_t)));
++    BLANK();
++
++    OFFSET(CPUINFO_ext_features, struct cpuinfo_x86, x86_capability[1]);
+ }
+diff --git a/arch/x86/x86_64/asm-offsets.c b/arch/x86/x86_64/asm-offsets.c
+index 836ce6a..97331c1 100644
+--- a/arch/x86/x86_64/asm-offsets.c
++++ b/arch/x86/x86_64/asm-offsets.c
+@@ -124,4 +124,7 @@ void __dummy__(void)
+ #endif
+ 
+     DEFINE(IRQSTAT_shift, LOG_2(sizeof(irq_cpustat_t)));
++    BLANK();
++
++    OFFSET(CPUINFO_ext_features, struct cpuinfo_x86, x86_capability[1]);
+ }
+diff --git a/include/asm-x86/cpufeature.h b/include/asm-x86/cpufeature.h
+index 22a72f4..c8b511f 100644
+--- a/include/asm-x86/cpufeature.h
++++ b/include/asm-x86/cpufeature.h
+@@ -121,6 +121,7 @@
+ #define cpu_has_cyrix_arr	boot_cpu_has(X86_FEATURE_CYRIX_ARR)
+ #define cpu_has_centaur_mcr	boot_cpu_has(X86_FEATURE_CENTAUR_MCR)
+ #define cpu_has_clflush		boot_cpu_has(X86_FEATURE_CLFLSH)
++#define cpu_has_efer            (boot_cpu_data.x86_capability[1] & 0x20100800)
+ #else /* __x86_64__ */
+ #define cpu_has_vme		0
+ #define cpu_has_de		1
+@@ -144,6 +145,7 @@
+ #define cpu_has_cyrix_arr	0
+ #define cpu_has_centaur_mcr	0
+ #define cpu_has_clflush		boot_cpu_has(X86_FEATURE_CLFLSH)
++#define cpu_has_efer            1
+ #endif
+ 
+ #endif /* __ASM_I386_CPUFEATURE_H */

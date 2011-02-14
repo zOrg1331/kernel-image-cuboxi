@@ -34,9 +34,15 @@
 #include <asm/time.h>
 #include <asm/pmac_feature.h>
 #include <asm/mpic.h>
-#include <asm/xmon.h>
 
 #include "pmac.h"
+
+/*
+ * XXX this should be in xmon.h, but putting it there means xmon.h
+ * has to include <linux/interrupt.h> (to get irqreturn_t), which
+ * causes all sorts of problems.  -- paulus
+ */
+extern irqreturn_t xmon_irq(int, void *, struct pt_regs *);
 
 #ifdef CONFIG_PPC32
 struct pmac_irq_hw {
@@ -204,7 +210,7 @@ static struct irq_chip pmac_pic = {
 	.retrigger	= pmac_retrigger,
 };
 
-static irqreturn_t gatwick_action(int cpl, void *dev_id)
+static irqreturn_t gatwick_action(int cpl, void *dev_id, struct pt_regs *regs)
 {
 	unsigned long flags;
 	int irq, bits;
@@ -221,7 +227,7 @@ static irqreturn_t gatwick_action(int cpl, void *dev_id)
 			continue;
 		irq += __ilog2(bits);
 		spin_unlock_irqrestore(&pmac_pic_lock, flags);
-		generic_handle_irq(irq);
+		__do_IRQ(irq, regs);
 		spin_lock_irqsave(&pmac_pic_lock, flags);
 		rc = IRQ_HANDLED;
 	}
@@ -229,18 +235,18 @@ static irqreturn_t gatwick_action(int cpl, void *dev_id)
 	return rc;
 }
 
-static unsigned int pmac_pic_get_irq(void)
+static unsigned int pmac_pic_get_irq(struct pt_regs *regs)
 {
 	int irq;
 	unsigned long bits = 0;
 	unsigned long flags;
 
 #ifdef CONFIG_SMP
-	void psurge_smp_message_recv(void);
+	void psurge_smp_message_recv(struct pt_regs *);
 
        	/* IPI's are a hack on the powersurge -- Cort */
        	if ( smp_processor_id() != 0 ) {
-		psurge_smp_message_recv();
+		psurge_smp_message_recv(regs);
 		return NO_IRQ_IGNORE;	/* ignore, already handled */
         }
 #endif /* CONFIG_SMP */
@@ -266,6 +272,7 @@ static unsigned int pmac_pic_get_irq(void)
 static struct irqaction xmon_action = {
 	.handler	= xmon_irq,
 	.flags		= 0,
+	.mask		= CPU_MASK_NONE,
 	.name		= "NMI - XMON"
 };
 #endif
@@ -273,6 +280,7 @@ static struct irqaction xmon_action = {
 static struct irqaction gatwick_cascade_action = {
 	.handler	= gatwick_action,
 	.flags		= IRQF_DISABLED,
+	.mask		= CPU_MASK_NONE,
 	.name		= "cascade",
 };
 
@@ -297,6 +305,8 @@ static int pmac_pic_host_map(struct irq_host *h, unsigned int virq,
 	level = !!(level_mask[hw >> 5] & (1UL << (hw & 0x1f)));
 	if (level)
 		desc->status |= IRQ_LEVEL;
+	else
+		desc->status |= IRQ_DELAYED_DISABLE;
 	set_irq_chip_and_handler(virq, &pmac_pic, level ?
 				 handle_level_irq : handle_edge_irq);
 	return 0;
@@ -356,7 +366,7 @@ static void __init pmac_pic_probe_oldstyle(void)
 		slave = of_find_node_by_name(master, "mac-io");
 
 		/* Check ordering of master & slave */
-		if (of_device_is_compatible(master, "gatwick")) {
+		if (device_is_compatible(master, "gatwick")) {
 			struct device_node *tmp;
 			BUG_ON(slave == NULL);
 			tmp = master;
@@ -376,7 +386,7 @@ static void __init pmac_pic_probe_oldstyle(void)
 	/*
 	 * Allocate an irq host
 	 */
-	pmac_pic_host = irq_alloc_host(master, IRQ_HOST_MAP_LINEAR, max_irqs,
+	pmac_pic_host = irq_alloc_host(IRQ_HOST_MAP_LINEAR, max_irqs,
 				       &pmac_pic_host_ops,
 				       max_irqs);
 	BUG_ON(pmac_pic_host == NULL);
@@ -430,13 +440,14 @@ static void __init pmac_pic_probe_oldstyle(void)
 }
 #endif /* CONFIG_PPC32 */
 
-static void pmac_u3_cascade(unsigned int irq, struct irq_desc *desc)
+static void pmac_u3_cascade(unsigned int irq, struct irq_desc *desc,
+			    struct pt_regs *regs)
 {
 	struct mpic *mpic = desc->handler_data;
 
-	unsigned int cascade_irq = mpic_get_one_irq(mpic);
+	unsigned int cascade_irq = mpic_get_one_irq(mpic, regs);
 	if (cascade_irq != NO_IRQ)
-		generic_handle_irq(cascade_irq);
+		generic_handle_irq(cascade_irq, regs);
 	desc->chip->eoi(irq);
 }
 
@@ -474,14 +485,14 @@ static struct mpic * __init pmac_setup_one_mpic(struct device_node *np,
 	pmac_call_feature(PMAC_FTR_ENABLE_MPIC, np, 0, 0);
 
 	flags |= MPIC_WANTS_RESET;
-	if (of_get_property(np, "big-endian", NULL))
+	if (get_property(np, "big-endian", NULL))
 		flags |= MPIC_BIG_ENDIAN;
 
 	/* Primary Big Endian means HT interrupts. This is quite dodgy
 	 * but works until I find a better way
 	 */
 	if (master && (flags & MPIC_BIG_ENDIAN))
-		flags |= MPIC_U3_HT_IRQS;
+		flags |= MPIC_BROKEN_U3;
 
 	mpic = mpic_alloc(np, r.start, flags, 0, 0, name);
 	if (mpic == NULL)
@@ -502,7 +513,7 @@ static int __init pmac_pic_probe_mpic(void)
 	for (np = NULL; (np = of_find_node_by_type(np, "open-pic"))
 		     != NULL;) {
 		if (master == NULL &&
-		    of_get_property(np, "interrupts", NULL) == NULL)
+		    get_property(np, "interrupts", NULL) == NULL)
 			master = of_node_get(np);
 		else if (slave == NULL)
 			slave = of_node_get(np);
@@ -567,7 +578,7 @@ void __init pmac_pic_init(void)
 #ifdef CONFIG_PPC32
 	if (!pmac_newworld)
 		flags |= OF_IMAP_OLDWORLD_MAC;
-	if (of_get_property(of_chosen, "linux,bootx", NULL) != NULL)
+	if (get_property(of_chosen, "linux,bootx", NULL) != NULL)
 		flags |= OF_IMAP_NO_PHANDLE;
 #endif /* CONFIG_PPC_32 */
 
@@ -609,10 +620,10 @@ static int pmacpic_find_viaint(void)
 	np = of_find_node_by_name(NULL, "via-pmu");
 	if (np == NULL)
 		goto not_found;
-	viaint = irq_of_parse_and_map(np, 0);
+	viaint = irq_of_parse_and_map(np, 0);;
+#endif /* CONFIG_ADB_PMU */
 
 not_found:
-#endif /* CONFIG_ADB_PMU */
 	return viaint;
 }
 
@@ -655,7 +666,7 @@ static int pmacpic_resume(struct sys_device *sysdev)
 #endif /* CONFIG_PM && CONFIG_PPC32 */
 
 static struct sysdev_class pmacpic_sysclass = {
-	.name = "pmac_pic",
+	set_kset_name("pmac_pic"),
 };
 
 static struct sys_device device_pmacpic = {
@@ -682,5 +693,6 @@ static int __init init_pmacpic_sysfs(void)
 	sysdev_driver_register(&pmacpic_sysclass, &driver_pmacpic);
 	return 0;
 }
-machine_subsys_initcall(powermac, init_pmacpic_sysfs);
+
+subsys_initcall(init_pmacpic_sysfs);
 

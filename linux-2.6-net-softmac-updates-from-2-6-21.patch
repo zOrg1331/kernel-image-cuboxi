@@ -1,0 +1,1051 @@
+From: John W. Linville <linville@redhat.com>
+Subject: [RHEL 5.1 PATCH 1/2] softmac: updates from 2.6.21 (corrected for kABI)
+Date: Wed, 13 Jun 2007 13:41:40 -0400
+Bugzilla: 240354
+Message-Id: <20070613174140.GA6600@redhat.com>
+Changelog: [net] softmac: updates from 2.6.21
+
+
+Cherry-pick of a number of bugfixes to the ieee80211 softmac component.
+This brings the component mostly up-to-date with upstream, minus a few
+cherries skipped due to kABI concerns.
+
+BZ240354 <-- this is correct, previous post used the wrong BZ.
+
+Smoke testing by me yields positive results.
+
+commit d8e2be90d301a0381e9b2528fe2835cf2992bca3
+Author: Daniel Drake <dsd@gentoo.org>
+
+    [PATCH] ieee80211: small ERP handling additions
+    
+    This adds a flag to the ieee80211_network structure which indicates whether
+    the stored erp_value is valid (a check against 0 is not enough, since an ERP
+    of 0 is valid and very meaningful).
+    
+    I also added the ERP IE bit-definitions to ieee80211.h.
+    
+    This is needed by some upcoming softmac patches.
+    
+    Signed-off-by: Daniel Drake <dsd@gentoo.org>
+    Acked-by: Johannes Berg <johannes@sipsolutions.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 65b6a2775102cd81e57158ef4b1cb89641f76cfd
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: Fix header->qos_ctl endian issue
+    
+    Signed-off-by: Jackie Wu <jackie.wu@intel.com>
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 051562f7e980b53f7bc6529f2e55b68e20f5d0e6
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: remove ieee80211_tx() is_queue_full warning
+    
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit b4328d87ec5711543b818fea2e1cf64f09d326f1
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: TKIP and CCMP replay check rework
+    
+    Signed-off-by: Hong Liu <hong.liu@intel.com>
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 5a656949719bf8598ad1e93a56eb11e70a4c3208
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: Fix TKIP and WEP decryption error on SMP machines
+    
+    The IEEE80211 TKIP and WEP Tx and Rx paths use the same crypto_tfm to encrypt
+    and decrypt data. During the encrypt and decrypt process, both of them will
+    set a new key to crypto_tfm. If they happen on the same time, it will
+    corrupt the crypto_tfm. Thus users will receive an ICV error or Michael MIC
+    error. This only likely to happen on SMP box with heavy traffic both on Tx
+    and Rx. The patch use two sets of crypto_tfms to avoid this problem.
+    
+    Signed-off-by: Hong Liu <hong.liu@intel.com>
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit f09fc44d8c25f22c4d985bb93857338ed02feac6
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: Workaround malformed 802.11 frames from AP
+    
+    Stop processing further but return success when we receive a malformed
+    packet from the AP. We need this patch to workaround some AP bugs. For
+    example, the beacon frames from the Orinoco AP1000 contains an IE (value
+    = 128) with length equals to 8 but the actual frame length is only 7.
+    
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 6684e59aa3cf6cb7ebf04ea2953198500c93b0a9
+Author: Laurent Riffard <laurent.riffard@free.fr>
+
+    [PATCH] sotftmac: fix a slab corruption in WEP restricted key association
+    
+    Fix a slab corruption in ieee80211softmac_auth(). The size of a buffer
+    was miscomputed.
+    
+    see http://bugzilla.kernel.org/show_bug.cgi?id=7245
+    
+    Acked-by: Daniel Drake <dsd@gentoo.org>
+    Signed-off-by: Laurent Riffard <laurent.riffard@free.fr>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit aec41a0d02342fc9e3b6bb278eae50fa29f04d1f
+Author: Jiri Benc <jbenc@suse.cz>
+
+    [PATCH] ieee80211: don't flood log with errors
+    
+    The "ieee80211: Workaround malformed 802.11 frames from AP" patch (see
+    http://kernel.org/git/?p=linux/kernel/git/linville/wireless-2.6.git;a=commit;h=f09fc44d8c25f22c4d985bb93857338ed02feac6 )
+    fixes the problem with some buggy APs but also converts debug message into
+    an error one. This floods the log with errors when you are near such AP (you
+    get a message for every beacon). This patch reverts the error message back
+    to the debug one.
+    
+    Signed-off-by: Jiri Benc <jbenc@suse.cz>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit efa53ebe0d2f50bf342eb1976824f59bba9941eb
+Author: Zhu Yi <yi.zhu@intel.com>
+
+    [PATCH] ieee80211: Fix kernel panic when QoS is enabled
+    
+    The 802.11 header length is affected by the wireless mode (WDS or not) and
+    type (QoS or not). We should use the variable hdr_len instead of the
+    hard coded IEEE80211_3ADDR_LEN, otherwise we may touch invalid memory.
+    
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit a3df3b6f2e37474cdb8b56d55d31be41c22f9b18
+Author: Michael Buesch <mb@bu3sch.de>
+
+    [PATCH] softmac: remove netif_tx_disable when scanning
+    
+    In the scan section of ieee80211softmac, network transmits are
+    disabled.  When SoftMAC re-enables transmits, it may override the
+    wishes of a driver that may have very good reasons for disabling
+    transmits. At least one failure in bcm43xx can be traced to this
+    problem. In addition, several unexplained problems may arise from
+    the unexpected enabling of transmits. Note that making this change
+    introduces a new bug that would allow transmits for the current session
+    to be transmitted on the wrong channel; however, the new bug is much
+    less severe than the one being fixed, as the new one only leads to
+    a few retransmits, whereas the old one can bring the interface down.
+    
+    A fix that will not introduce new bugs is being investigated; however,
+    the current, more serious one should be fixed now.
+    
+    Signed-off-by: Michael Buesch <mb@bu3sch.de>
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 42a4cf9576f036db69e15fa6b4e72986e17f0359
+Author: matthieu castet <castet.matthieu@free.fr>
+
+    [PATCH] ieee80211: allow mtu bigger than 1500
+    
+    Hi
+    
+    this patch allow to set the mtu between 1500 and 2304 (max octets in an
+    MSDU) for devices using ieee80211 linux stack.
+    
+    Signed-off-by: Matthieu CASTET <castet.matthieu@free.fr>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 5398d5901dcb677d24d839d3feac7209e250b161
+Author: Larry Finger <Larry.Finger@lwfinger.net>
+
+    [PATCH] ieee80211softmac: fix verbosity when debug disabled
+    
+    SoftMAC contains a number of debug-type messages that continue to print
+    even when debugging is turned off. This patch substitutes dprintkl for
+    printkl for those lines.
+    
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Acked-by: Johannes Berg <johannes@sipsolutions.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 571d6eee9b5bce28fcbeb7588890ad5ca3f8c718
+Author: Arnaldo Carvalho de Melo <acme@mandriva.com>
+
+    [PATCH] Check ieee80211softmac_auth_resp kmalloc result
+    
+    And use kmemdup and kzalloc where applicable
+    
+    Signed-off-by: Arnaldo Carvalho de Melo <acme@mandriva.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 718cc4ca2bfb3263c7ea3ceba9c194f9cd7292e2
+Author: Daniel Drake <dsd@gentoo.org>
+
+    [PATCH] ieee80211: Provide generic get_stats implementation
+    
+    bcm43xx and ipw2100 currently duplicate the same simplistic get_stats
+    handler.  Additionally, zd1211rw requires the same handler to fix a
+    bug where all stats are reported as 0.
+    
+    This patch adds a generic implementation to the ieee80211 layer,
+    which drivers are free to override.
+    
+    Signed-off-by: Daniel Drake <dsd@gentoo.org>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 38e3a6466f369944a2a1ec9aee9a9e472689d0a9
+Author: Larry Finger <Larry.Finger@lwfinger.net>
+
+    [PATCH] softmac: reduce scan debug output
+    
+    When scanning in debug mode, softmac is very chatty in that it puts
+    3 lines in the logs for each time it scans. This patch has only one
+    line containing all the information previously reported.
+    
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 2b50c24554d31c2db2f93b1151b5991e62f96594
+Author: Ulrich Kunitz <kune@deine-taler.de>
+
+    [PATCH] softmac: Fixed handling of deassociation from AP
+    
+    In 2.6.19 a deauthentication from the AP doesn't start a
+    reassociation by the softmac code. It appears that
+    mac->associnfo.associating must be set and the
+    ieee80211softmac_assoc_work function must be scheduled. This patch
+    fixes that.
+    
+    Signed-off-by: Ulrich Kunitz <kune@deine-taler.de>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit cc8ce997d2a4e524b1acea44beaf5bcfefdb1bfe
+Author: Maxime Austruy <maxime@tralhalla.org>
+
+    [PATCH] softmac: fix unbalanced mutex_lock/unlock in ieee80211softmac_wx_set_mlme
+    
+    Routine ieee80211softmac_wx_set_mlme has one return that fails
+    to release a mutex acquired at entry.
+    
+    Signed-off-by: Maxime Austruy <maxime@tralhalla.org>
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 0c234ae655a45ac3ee53a25b2e56e9bb6c27d71d
+Author: Ulrich Kunitz <kune@deine-taler.de>
+
+    [PATCH] ieee80211softmac: Fix mutex_lock at exit of ieee80211_softmac_get_genie
+    
+    ieee80211softmac_wx_get_genie locks the associnfo mutex at
+    function exit. This patch fixes it. The patch is against Linus'
+    tree (commit af1713e0).
+    
+    Signed-off-by: Ulrich Kunitz <kune@deine-taler.de>
+    Signed-off-by: Michael Buesch <mb@bu3sch.de>
+    Acked-by: Johannes Berg <johannes@sipsolutions.net>
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 6bbdce5ac755e3b3cdcf9bb9fdbcc2af78ad34d0
+Author: John W. Linville <linville@tuxdriver.com>
+
+    [PATCH] softmac: avoid assert in ieee80211softmac_wx_get_rate
+    
+    Unconfigured bcm43xx device can hit an assert() during wx_get_rate
+    queries.  This is because bcm43xx calls ieee80211softmac_start late
+    (i.e. during open instead of probe).
+    
+       bcm43xx_net_open ->
+          bcm43xx_init_board ->
+             bcm43xx_select_wireless_core ->
+                ieee80211softmac_start
+    
+    Fix is to check that device is running before completing
+    ieee80211softmac_wx_get_rate.
+    
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 46b8c85e1df091fe2d53ae7d02addb0dc58a9123
+Author: Larry Finger <Larry.Finger@lwfinger.net>
+
+    [PATCH] ieee80211: Fix sparse warning
+    
+    Sparse issues the warning "warning: symbol 'crypt' shadows an earlier one"
+    in net/ieee80211/ieee80211_tx.c.
+    
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit bb52a653eaef4aee877b2fa36de8699926f788bd
+Author: Larry Finger <Larry.Finger@lwfinger.net>
+
+    [PATCH] ieee80211softmac: Fix setting of initial transmit rates
+    
+    There is a bug in ieee80211softmac that always sets the user rate
+    to 11Mbs, no matter the capabilities of the device. This bug was
+    probably beneficial as long as the bcm43xx cards were rate limited;
+    however, most are now capable of relatively high speeds. This patch
+    fixes that bug and eliminates an assert that is no longer needed.
+    
+    Once the cards are capable of full OFDM speeds, the 24 Mbs rate will
+    be changed to 54 Mbs.
+    
+    Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+--- linux-2.6.18.noarch/include/net/ieee80211.h.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/include/net/ieee80211.h	2007-06-13 13:03:58.000000000 -0400
+@@ -240,6 +240,11 @@ struct ieee80211_snap_hdr {
+ #define WLAN_CAPABILITY_SHORT_SLOT_TIME (1<<10)
+ #define WLAN_CAPABILITY_DSSS_OFDM (1<<13)
+ 
++/* 802.11g ERP information element */
++#define WLAN_ERP_NON_ERP_PRESENT (1<<0)
++#define WLAN_ERP_USE_PROTECTION (1<<1)
++#define WLAN_ERP_BARKER_PREAMBLE (1<<2)
++
+ /* Status codes */
+ enum ieee80211_statuscode {
+ 	WLAN_STATUS_SUCCESS = 0,
+@@ -747,6 +752,8 @@ struct ieee80211_txb {
+ #define NETWORK_HAS_IBSS_DFS            (1<<8)
+ #define NETWORK_HAS_TPC_REPORT          (1<<9)
+ 
++#define NETWORK_HAS_ERP_VALUE           (1<<10)
++
+ #define QOS_QUEUE_NUM                   4
+ #define QOS_OUI_LEN                     3
+ #define QOS_OUI_TYPE                    2
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_wep.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_wep.c	2007-06-13 13:03:49.000000000 -0400
+@@ -32,7 +32,8 @@ struct prism2_wep_data {
+ 	u8 key[WEP_KEY_LEN + 1];
+ 	u8 key_len;
+ 	u8 key_idx;
+-	struct crypto_tfm *tfm;
++	struct crypto_tfm *tx_tfm;
++	struct crypto_tfm *rx_tfm;
+ };
+ 
+ static void *prism2_wep_init(int keyidx)
+@@ -44,13 +45,19 @@ static void *prism2_wep_init(int keyidx)
+ 		goto fail;
+ 	priv->key_idx = keyidx;
+ 
+-	priv->tfm = crypto_alloc_tfm("arc4", 0);
+-	if (priv->tfm == NULL) {
++	priv->tx_tfm = crypto_alloc_tfm("arc4", 0);
++	if (priv->tx_tfm == NULL) {
+ 		printk(KERN_DEBUG "ieee80211_crypt_wep: could not allocate "
+ 		       "crypto API arc4\n");
+ 		goto fail;
+ 	}
+ 
++	priv->rx_tfm = crypto_alloc_tfm("arc4", 0);
++	if (priv->rx_tfm == NULL) {
++		printk(KERN_DEBUG "ieee80211_crypt_wep: could not allocate "
++		       "crypto API arc4\n");
++		goto fail;
++	}
+ 	/* start WEP IV from a random value */
+ 	get_random_bytes(&priv->iv, 4);
+ 
+@@ -58,8 +65,10 @@ static void *prism2_wep_init(int keyidx)
+ 
+       fail:
+ 	if (priv) {
+-		if (priv->tfm)
+-			crypto_free_tfm(priv->tfm);
++		if (priv->tx_tfm)
++			crypto_free_tfm(priv->tx_tfm);
++		if (priv->rx_tfm)
++			crypto_free_tfm(priv->rx_tfm);
+ 		kfree(priv);
+ 	}
+ 	return NULL;
+@@ -68,8 +77,12 @@ static void *prism2_wep_init(int keyidx)
+ static void prism2_wep_deinit(void *priv)
+ {
+ 	struct prism2_wep_data *_priv = priv;
+-	if (_priv && _priv->tfm)
+-		crypto_free_tfm(_priv->tfm);
++	if (_priv) {
++		if (_priv->tx_tfm)
++			crypto_free_tfm(_priv->tx_tfm);
++		if (_priv->rx_tfm)
++			crypto_free_tfm(_priv->rx_tfm);
++	}
+ 	kfree(priv);
+ }
+ 
+@@ -151,11 +164,11 @@ static int prism2_wep_encrypt(struct sk_
+ 	icv[2] = crc >> 16;
+ 	icv[3] = crc >> 24;
+ 
+-	crypto_cipher_setkey(wep->tfm, key, klen);
++	crypto_cipher_setkey(wep->tx_tfm, key, klen);
+ 	sg.page = virt_to_page(pos);
+ 	sg.offset = offset_in_page(pos);
+ 	sg.length = len + 4;
+-	crypto_cipher_encrypt(wep->tfm, &sg, &sg, len + 4);
++	crypto_cipher_encrypt(wep->tx_tfm, &sg, &sg, len + 4);
+ 
+ 	return 0;
+ }
+@@ -194,11 +207,11 @@ static int prism2_wep_decrypt(struct sk_
+ 	/* Apply RC4 to data and compute CRC32 over decrypted data */
+ 	plen = skb->len - hdr_len - 8;
+ 
+-	crypto_cipher_setkey(wep->tfm, key, klen);
++	crypto_cipher_setkey(wep->rx_tfm, key, klen);
+ 	sg.page = virt_to_page(pos);
+ 	sg.offset = offset_in_page(pos);
+ 	sg.length = plen + 4;
+-	crypto_cipher_decrypt(wep->tfm, &sg, &sg, plen + 4);
++	crypto_cipher_decrypt(wep->rx_tfm, &sg, &sg, plen + 4);
+ 
+ 	crc = ~crc32_le(~0, pos, plen);
+ 	icv[0] = crc;
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_module.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_module.c	2007-06-13 13:03:49.000000000 -0400
+@@ -67,7 +67,7 @@ static int ieee80211_networks_allocate(s
+ 		return 0;
+ 
+ 	ieee->networks =
+-	    kmalloc(MAX_NETWORK_COUNT * sizeof(struct ieee80211_network),
++	    kzalloc(MAX_NETWORK_COUNT * sizeof(struct ieee80211_network),
+ 		    GFP_KERNEL);
+ 	if (!ieee->networks) {
+ 		printk(KERN_WARNING "%s: Out of memory allocating beacons\n",
+@@ -75,9 +75,6 @@ static int ieee80211_networks_allocate(s
+ 		return -ENOMEM;
+ 	}
+ 
+-	memset(ieee->networks, 0,
+-	       MAX_NETWORK_COUNT * sizeof(struct ieee80211_network));
+-
+ 	return 0;
+ }
+ 
+@@ -118,6 +115,21 @@ static void ieee80211_networks_initializ
+ 			      &ieee->network_free_list);
+ }
+ 
++static int ieee80211_change_mtu(struct net_device *dev, int new_mtu)
++{
++	if ((new_mtu < 68) || (new_mtu > IEEE80211_DATA_LEN))
++		return -EINVAL;
++	dev->mtu = new_mtu;
++	return 0;
++}
++
++static struct net_device_stats *ieee80211_generic_get_stats(
++	struct net_device *dev)
++{
++	struct ieee80211_device *ieee = netdev_priv(dev);
++	return &ieee->stats;
++}
++
+ struct net_device *alloc_ieee80211(int sizeof_priv)
+ {
+ 	struct ieee80211_device *ieee;
+@@ -133,6 +145,11 @@ struct net_device *alloc_ieee80211(int s
+ 	}
+ 	ieee = netdev_priv(dev);
+ 	dev->hard_start_xmit = ieee80211_xmit;
++	dev->change_mtu = ieee80211_change_mtu;
++
++	/* Drivers are free to override this if the generic implementation
++	 * does not meet their needs. */
++	dev->get_stats = ieee80211_generic_get_stats;
+ 
+ 	ieee->dev = dev;
+ 
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_auth.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_auth.c	2007-06-13 13:03:49.000000000 -0400
+@@ -158,7 +158,7 @@ ieee80211softmac_auth_resp(struct net_de
+ 	/* Make sure that we've got an auth queue item for this request */
+ 	if(aq == NULL)
+ 	{
+-		printkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but no queue item exists.\n", MAC_ARG(auth->header.addr2));
++		dprintkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but no queue item exists.\n", MAC_ARG(auth->header.addr2));
+ 		/* Error #? */
+ 		return -1;
+ 	}			
+@@ -166,7 +166,7 @@ ieee80211softmac_auth_resp(struct net_de
+ 	/* Check for out of order authentication */
+ 	if(!net->authenticating)
+ 	{
+-		printkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but did not request authentication.\n",MAC_ARG(auth->header.addr2));
++		dprintkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but did not request authentication.\n",MAC_ARG(auth->header.addr2));
+ 		return -1;
+ 	}
+ 
+@@ -216,10 +216,17 @@ ieee80211softmac_auth_resp(struct net_de
+ 			net->challenge_len = *data++; 	
+ 			if (net->challenge_len > WLAN_AUTH_CHALLENGE_LEN)
+ 				net->challenge_len = WLAN_AUTH_CHALLENGE_LEN;
+-			if (net->challenge != NULL)
+-				kfree(net->challenge);
+-			net->challenge = kmalloc(net->challenge_len, GFP_ATOMIC);
++			kfree(net->challenge);
++			net->challenge = kmalloc(net->challenge_len,
++						 GFP_ATOMIC);
+ 			memcpy(net->challenge, data, net->challenge_len);
++			if (net->challenge == NULL) {
++				printkl(KERN_NOTICE PFX "Shared Key "
++					"Authentication failed due to "
++					"memory shortage.\n");
++				spin_unlock_irqrestore(&mac->lock, flags);
++				break;
++			}
+ 			aq->state = IEEE80211SOFTMAC_AUTH_SHARED_RESPONSE; 
+ 
+ 			/* We reuse the work struct from the auth request here.
+@@ -328,6 +335,8 @@ ieee80211softmac_deauth_from_net(struct 
+ 	/* can't transmit data right now... */
+ 	netif_carrier_off(mac->dev);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
++
++	ieee80211softmac_try_reassoc(mac);
+ }
+ 
+ /* 
+@@ -342,7 +351,7 @@ ieee80211softmac_deauth_req(struct ieee8
+ 	/* Make sure the network is authenticated */
+ 	if (!net->authenticated)
+ 	{
+-		printkl(KERN_DEBUG PFX "Can't send deauthentication packet, network is not authenticated.\n");
++		dprintkl(KERN_DEBUG PFX "Can't send deauthentication packet, network is not authenticated.\n");
+ 		/* Error okay? */
+ 		return -EPERM;
+ 	}
+@@ -376,7 +385,7 @@ ieee80211softmac_deauth_resp(struct net_
+ 	net = ieee80211softmac_get_network_by_bssid(mac, deauth->header.addr2);
+ 	
+ 	if (net == NULL) {
+-		printkl(KERN_DEBUG PFX "Received deauthentication packet from "MAC_FMT", but that network is unknown.\n",
++		dprintkl(KERN_DEBUG PFX "Received deauthentication packet from "MAC_FMT", but that network is unknown.\n",
+ 			MAC_ARG(deauth->header.addr2));
+ 		return 0;
+ 	}
+@@ -384,7 +393,7 @@ ieee80211softmac_deauth_resp(struct net_
+ 	/* Make sure the network is authenticated */
+ 	if(!net->authenticated)
+ 	{
+-		printkl(KERN_DEBUG PFX "Can't perform deauthentication, network is not authenticated.\n");
++		dprintkl(KERN_DEBUG PFX "Can't perform deauthentication, network is not authenticated.\n");
+ 		/* Error okay? */
+ 		return -EPERM;
+ 	}
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_module.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_module.c	2007-06-13 13:03:58.000000000 -0400
+@@ -245,19 +245,10 @@ void ieee80211softmac_init_txrates(struc
+ 	/* Change the default txrate to the highest possible value.
+ 	 * The txrate machine will lower it, if it is too high.
+ 	 */
+-	if (mac->txrates_change)
+-		oldrates = mac->txrates;
+-	/* FIXME: We don't correctly handle backing down to lower
+-	   rates, so 801.11g devices start off at 11M for now. People
+-	   can manually change it if they really need to, but 11M is
+-	   more reliable. Note similar logic in
+-	   ieee80211softmac_wx_set_rate() */	 
+-	if (ieee->modulation & IEEE80211_CCK_MODULATION) {
++	if (ieee->modulation & IEEE80211_OFDM_MODULATION)
++		txrates->user_rate = IEEE80211_OFDM_RATE_24MB;
++	else
+ 		txrates->user_rate = IEEE80211_CCK_RATE_11MB;
+-	} else if (ieee->modulation & IEEE80211_OFDM_MODULATION) {
+-		txrates->user_rate = IEEE80211_OFDM_RATE_54MB;
+-	} else
+-		assert(0);
+ 
+ 	txrates->default_rate = IEEE80211_CCK_RATE_1MB;
+ 	change |= IEEE80211SOFTMAC_TXRATECHG_DEFAULT;
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_priv.h.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_priv.h	2007-06-13 13:03:58.000000000 -0400
+@@ -232,4 +232,6 @@ void ieee80211softmac_call_events_locked
+ int ieee80211softmac_notify_internal(struct ieee80211softmac_device *mac,
+ 	int event, void *event_context, notify_function_ptr fun, void *context, gfp_t gfp_mask);
+ 
++void ieee80211softmac_try_reassoc(struct ieee80211softmac_device *mac);
++
+ #endif /* IEEE80211SOFTMAC_PRIV_H_ */
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_io.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_io.c	2007-06-13 13:03:58.000000000 -0400
+@@ -304,7 +304,7 @@ ieee80211softmac_auth(struct ieee80211_a
+ 		2 +		/* Auth Transaction Seq */
+ 		2 +		/* Status Code */
+ 		 /* Challenge Text IE */
+-		is_shared_response ? 0 : 1 + 1 + net->challenge_len
++		(is_shared_response ? 1 + 1 + net->challenge_len : 0)
+ 	);
+ 	if (unlikely((*pkt) == NULL))
+ 		return 0;
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_wx.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_wx.c	2007-06-13 13:03:58.000000000 -0400
+@@ -177,15 +177,10 @@ ieee80211softmac_wx_set_rate(struct net_
+ 	int err = -EINVAL;
+ 
+ 	if (in_rate == -1) {
+-		/* FIXME: We don't correctly handle backing down to lower
+-		   rates, so 801.11g devices start off at 11M for now. People
+-		   can manually change it if they really need to, but 11M is
+-		   more reliable. Note similar logic in
+-		   ieee80211softmac_wx_set_rate() */	 
+-		if (ieee->modulation & IEEE80211_CCK_MODULATION)
+-			in_rate = 11000000;
++		if (ieee->modulation & IEEE80211_OFDM_MODULATION)
++			in_rate = 24000000;
+ 		else
+-			in_rate = 54000000;
++			in_rate = 11000000;
+ 	}
+ 
+ 	switch (in_rate) {
+@@ -265,6 +260,12 @@ ieee80211softmac_wx_get_rate(struct net_
+ 	int err = -EINVAL;
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
++
++	if (unlikely(!mac->running)) {
++		err = -ENODEV;
++		goto out_unlock;
++	}
++
+ 	switch (mac->txrates.default_rate) {
+ 	case IEEE80211_CCK_RATE_1MB:
+ 		data->bitrate.value = 1000000;
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_assoc.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_assoc.c	2007-06-13 13:03:58.000000000 -0400
+@@ -416,6 +416,17 @@ ieee80211softmac_handle_assoc_response(s
+ 	return 0;
+ }
+ 
++void
++ieee80211softmac_try_reassoc(struct ieee80211softmac_device *mac)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&mac->lock, flags);
++	mac->associnfo.associating = 1;
++	schedule_work(&mac->associnfo.work);
++	spin_unlock_irqrestore(&mac->lock, flags);
++}
++
+ int
+ ieee80211softmac_handle_disassoc(struct net_device * dev,
+ 				 struct ieee80211_disassoc *disassoc)
+@@ -434,8 +445,7 @@ ieee80211softmac_handle_disassoc(struct 
+ 	dprintk(KERN_INFO PFX "got disassoc frame\n");
+ 	ieee80211softmac_disassoc(mac);
+ 
+-	/* try to reassociate */
+-	schedule_work(&mac->associnfo.work);
++	ieee80211softmac_try_reassoc(mac);
+ 
+ 	return 0;
+ }
+--- linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_scan.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/softmac/ieee80211softmac_scan.c	2007-06-13 13:03:49.000000000 -0400
+@@ -47,7 +47,6 @@ ieee80211softmac_start_scan(struct ieee8
+ 	sm->scanning = 1;
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 
+-	netif_tx_disable(sm->ieee->dev);
+ 	ret = sm->start_scan(sm->dev);
+ 	if (ret) {
+ 		spin_lock_irqsave(&sm->lock, flags);
+@@ -135,7 +134,8 @@ void ieee80211softmac_scan(void *d)
+ 	si->started = 0;
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 
+-	dprintk(PFX "Scanning finished\n");
++	dprintk(PFX "Scanning finished: scanned %d channels starting with channel %d\n",
++		     sm->scaninfo->number_channels, sm->scaninfo->channels[0].channel);
+ 	ieee80211softmac_scan_finished(sm);
+ 	complete_all(&sm->scaninfo->finished);
+ }
+@@ -183,8 +183,6 @@ int ieee80211softmac_start_scan_implemen
+ 		sm->scaninfo->channels = sm->ieee->geo.bg;
+ 		sm->scaninfo->number_channels = sm->ieee->geo.bg_channels;
+ 	}
+-	dprintk(PFX "Start scanning with channel: %d\n", sm->scaninfo->channels[0].channel);
+-	dprintk(PFX "Scanning %d channels\n", sm->scaninfo->number_channels);
+ 	sm->scaninfo->current_channel_idx = 0;
+ 	sm->scaninfo->started = 1;
+ 	sm->scaninfo->stop = 0;
+@@ -248,7 +246,6 @@ void ieee80211softmac_scan_finished(stru
+ 		if (net)
+ 			sm->set_channel(sm->dev, net->channel);
+ 	}
+-	netif_wake_queue(sm->ieee->dev);
+ 	ieee80211softmac_call_events(sm, IEEE80211SOFTMAC_EVENT_SCAN_FINISHED, NULL);
+ }
+ EXPORT_SYMBOL_GPL(ieee80211softmac_scan_finished);
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_tkip.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_tkip.c	2007-06-13 13:03:49.000000000 -0400
+@@ -52,8 +52,10 @@ struct ieee80211_tkip_data {
+ 
+ 	int key_idx;
+ 
+-	struct crypto_tfm *tfm_arc4;
+-	struct crypto_tfm *tfm_michael;
++	struct crypto_tfm *tx_tfm_arc4;
++	struct crypto_tfm *tx_tfm_michael;
++	struct crypto_tfm *rx_tfm_arc4;
++	struct crypto_tfm *rx_tfm_michael;
+ 
+ 	/* scratch buffers for virt_to_page() (crypto API) */
+ 	u8 rx_hdr[16], tx_hdr[16];
+@@ -85,15 +87,29 @@ static void *ieee80211_tkip_init(int key
+ 
+ 	priv->key_idx = key_idx;
+ 
+-	priv->tfm_arc4 = crypto_alloc_tfm("arc4", 0);
+-	if (priv->tfm_arc4 == NULL) {
++	priv->tx_tfm_arc4 = crypto_alloc_tfm("arc4", 0);
++	if (priv->tx_tfm_arc4 == NULL) {
+ 		printk(KERN_DEBUG "ieee80211_crypt_tkip: could not allocate "
+ 		       "crypto API arc4\n");
+ 		goto fail;
+ 	}
+ 
+-	priv->tfm_michael = crypto_alloc_tfm("michael_mic", 0);
+-	if (priv->tfm_michael == NULL) {
++	priv->tx_tfm_michael = crypto_alloc_tfm("michael_mic", 0);
++	if (priv->tx_tfm_michael == NULL) {
++		printk(KERN_DEBUG "ieee80211_crypt_tkip: could not allocate "
++		       "crypto API michael_mic\n");
++		goto fail;
++	}
++
++	priv->rx_tfm_arc4 = crypto_alloc_tfm("arc4", 0);
++	if (priv->rx_tfm_arc4 == NULL) {
++		printk(KERN_DEBUG "ieee80211_crypt_tkip: could not allocate "
++		       "crypto API arc4\n");
++		goto fail;
++	}
++
++	priv->rx_tfm_michael = crypto_alloc_tfm("michael_mic", 0);
++	if (priv->rx_tfm_michael == NULL) {
+ 		printk(KERN_DEBUG "ieee80211_crypt_tkip: could not allocate "
+ 		       "crypto API michael_mic\n");
+ 		goto fail;
+@@ -103,10 +119,14 @@ static void *ieee80211_tkip_init(int key
+ 
+       fail:
+ 	if (priv) {
+-		if (priv->tfm_michael)
+-			crypto_free_tfm(priv->tfm_michael);
+-		if (priv->tfm_arc4)
+-			crypto_free_tfm(priv->tfm_arc4);
++		if (priv->tx_tfm_michael)
++			crypto_free_tfm(priv->tx_tfm_michael);
++		if (priv->tx_tfm_arc4)
++			crypto_free_tfm(priv->tx_tfm_arc4);
++		if (priv->rx_tfm_michael)
++			crypto_free_tfm(priv->rx_tfm_michael);
++		if (priv->rx_tfm_arc4)
++			crypto_free_tfm(priv->rx_tfm_arc4);
+ 		kfree(priv);
+ 	}
+ 
+@@ -116,10 +136,16 @@ static void *ieee80211_tkip_init(int key
+ static void ieee80211_tkip_deinit(void *priv)
+ {
+ 	struct ieee80211_tkip_data *_priv = priv;
+-	if (_priv && _priv->tfm_michael)
+-		crypto_free_tfm(_priv->tfm_michael);
+-	if (_priv && _priv->tfm_arc4)
+-		crypto_free_tfm(_priv->tfm_arc4);
++	if (_priv) {
++		if (_priv->tx_tfm_michael)
++			crypto_free_tfm(_priv->tx_tfm_michael);
++		if (_priv->tx_tfm_arc4)
++			crypto_free_tfm(_priv->tx_tfm_arc4);
++		if (_priv->rx_tfm_michael)
++			crypto_free_tfm(_priv->rx_tfm_michael);
++		if (_priv->rx_tfm_arc4)
++			crypto_free_tfm(_priv->rx_tfm_arc4);
++	}
+ 	kfree(priv);
+ }
+ 
+@@ -351,12 +377,25 @@ static int ieee80211_tkip_encrypt(struct
+ 	icv[2] = crc >> 16;
+ 	icv[3] = crc >> 24;
+ 
+-	crypto_cipher_setkey(tkey->tfm_arc4, rc4key, 16);
++	crypto_cipher_setkey(tkey->tx_tfm_arc4, rc4key, 16);
+ 	sg.page = virt_to_page(pos);
+ 	sg.offset = offset_in_page(pos);
+ 	sg.length = len + 4;
+-	crypto_cipher_encrypt(tkey->tfm_arc4, &sg, &sg, len + 4);
++	crypto_cipher_encrypt(tkey->tx_tfm_arc4, &sg, &sg, len + 4);
++
++	return 0;
++}
+ 
++/*
++ * deal with seq counter wrapping correctly.
++ * refer to timer_after() for jiffies wrapping handling
++ */
++static inline int tkip_replay_check(u32 iv32_n, u16 iv16_n,
++				    u32 iv32_o, u16 iv16_o)
++{
++	if ((s32)iv32_n - (s32)iv32_o < 0 ||
++	    (iv32_n == iv32_o && iv16_n <= iv16_o))
++		return 1;
+ 	return 0;
+ }
+ 
+@@ -414,8 +453,7 @@ static int ieee80211_tkip_decrypt(struct
+ 	iv32 = pos[4] | (pos[5] << 8) | (pos[6] << 16) | (pos[7] << 24);
+ 	pos += 8;
+ 
+-	if (iv32 < tkey->rx_iv32 ||
+-	    (iv32 == tkey->rx_iv32 && iv16 <= tkey->rx_iv16)) {
++	if (tkip_replay_check(iv32, iv16, tkey->rx_iv32, tkey->rx_iv16)) {
+ 		if (net_ratelimit()) {
+ 			printk(KERN_DEBUG "TKIP: replay detected: STA=" MAC_FMT
+ 			       " previous TSC %08x%04x received TSC "
+@@ -434,11 +472,11 @@ static int ieee80211_tkip_decrypt(struct
+ 
+ 	plen = skb->len - hdr_len - 12;
+ 
+-	crypto_cipher_setkey(tkey->tfm_arc4, rc4key, 16);
++	crypto_cipher_setkey(tkey->rx_tfm_arc4, rc4key, 16);
+ 	sg.page = virt_to_page(pos);
+ 	sg.offset = offset_in_page(pos);
+ 	sg.length = plen + 4;
+-	crypto_cipher_decrypt(tkey->tfm_arc4, &sg, &sg, plen + 4);
++	crypto_cipher_decrypt(tkey->rx_tfm_arc4, &sg, &sg, plen + 4);
+ 
+ 	crc = ~crc32_le(~0, pos, plen);
+ 	icv[0] = crc;
+@@ -472,12 +510,12 @@ static int ieee80211_tkip_decrypt(struct
+ 	return keyidx;
+ }
+ 
+-static int michael_mic(struct ieee80211_tkip_data *tkey, u8 * key, u8 * hdr,
++static int michael_mic(struct crypto_tfm *tfm_michael, u8 * key, u8 * hdr,
+ 		       u8 * data, size_t data_len, u8 * mic)
+ {
+ 	struct scatterlist sg[2];
+ 
+-	if (tkey->tfm_michael == NULL) {
++	if (tfm_michael == NULL) {
+ 		printk(KERN_WARNING "michael_mic: tfm_michael == NULL\n");
+ 		return -1;
+ 	}
+@@ -489,10 +527,10 @@ static int michael_mic(struct ieee80211_
+ 	sg[1].offset = offset_in_page(data);
+ 	sg[1].length = data_len;
+ 
+-	crypto_digest_init(tkey->tfm_michael);
+-	crypto_digest_setkey(tkey->tfm_michael, key, 8);
+-	crypto_digest_update(tkey->tfm_michael, sg, 2);
+-	crypto_digest_final(tkey->tfm_michael, mic);
++	crypto_digest_init(tfm_michael);
++	crypto_digest_setkey(tfm_michael, key, 8);
++	crypto_digest_update(tfm_michael, sg, 2);
++	crypto_digest_final(tfm_michael, mic);
+ 
+ 	return 0;
+ }
+@@ -528,7 +566,7 @@ static void michael_mic_hdr(struct sk_bu
+ 	if (stype & IEEE80211_STYPE_QOS_DATA) {
+ 		const struct ieee80211_hdr_3addrqos *qoshdr =
+ 			(struct ieee80211_hdr_3addrqos *)skb->data;
+-		hdr[12] = le16_to_cpu(qoshdr->qos_ctl) & IEEE80211_QCTL_TID;
++		hdr[12] = qoshdr->qos_ctl & cpu_to_le16(IEEE80211_QCTL_TID);
+ 	} else
+ 		hdr[12] = 0;		/* priority */
+ 
+@@ -550,7 +588,7 @@ static int ieee80211_michael_mic_add(str
+ 
+ 	michael_mic_hdr(skb, tkey->tx_hdr);
+ 	pos = skb_put(skb, 8);
+-	if (michael_mic(tkey, &tkey->key[16], tkey->tx_hdr,
++	if (michael_mic(tkey->tx_tfm_michael, &tkey->key[16], tkey->tx_hdr,
+ 			skb->data + hdr_len, skb->len - 8 - hdr_len, pos))
+ 		return -1;
+ 
+@@ -588,7 +626,7 @@ static int ieee80211_michael_mic_verify(
+ 		return -1;
+ 
+ 	michael_mic_hdr(skb, tkey->rx_hdr);
+-	if (michael_mic(tkey, &tkey->key[24], tkey->rx_hdr,
++	if (michael_mic(tkey->rx_tfm_michael, &tkey->key[24], tkey->rx_hdr,
+ 			skb->data + hdr_len, skb->len - 8 - hdr_len, mic))
+ 		return -1;
+ 	if (memcmp(mic, skb->data + skb->len - 8, 8) != 0) {
+@@ -618,14 +656,18 @@ static int ieee80211_tkip_set_key(void *
+ {
+ 	struct ieee80211_tkip_data *tkey = priv;
+ 	int keyidx;
+-	struct crypto_tfm *tfm = tkey->tfm_michael;
+-	struct crypto_tfm *tfm2 = tkey->tfm_arc4;
++	struct crypto_tfm *tfm = tkey->tx_tfm_michael;
++	struct crypto_tfm *tfm2 = tkey->tx_tfm_arc4;
++	struct crypto_tfm *tfm3 = tkey->rx_tfm_michael;
++	struct crypto_tfm *tfm4 = tkey->rx_tfm_arc4;
+ 
+ 	keyidx = tkey->key_idx;
+ 	memset(tkey, 0, sizeof(*tkey));
+ 	tkey->key_idx = keyidx;
+-	tkey->tfm_michael = tfm;
+-	tkey->tfm_arc4 = tfm2;
++	tkey->tx_tfm_michael = tfm;
++	tkey->tx_tfm_arc4 = tfm2;
++	tkey->rx_tfm_michael = tfm3;
++	tkey->rx_tfm_arc4 = tfm4;
+ 	if (len == TKIP_KEY_LEN) {
+ 		memcpy(tkey->key, key, TKIP_KEY_LEN);
+ 		tkey->key_set = 1;
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_rx.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_rx.c	2007-06-13 13:03:58.000000000 -0400
+@@ -1067,7 +1067,10 @@ static int ieee80211_parse_info_param(st
+ 					     info_element->len +
+ 					     sizeof(*info_element),
+ 					     length, info_element->id);
+-			return 1;
++			/* We stop processing but don't return an error here
++			 * because some misbehaviour APs break this rule. ie.
++			 * Orinoco AP1000. */
++			break;
+ 		}
+ 
+ 		switch (info_element->id) {
+@@ -1166,6 +1169,7 @@ static int ieee80211_parse_info_param(st
+ 
+ 		case MFIE_TYPE_ERP_INFO:
+ 			network->erp_value = info_element->data[0];
++			network->flags |= NETWORK_HAS_ERP_VALUE;
+ 			IEEE80211_DEBUG_MGMT("MFIE_TYPE_ERP_SET: %d\n",
+ 					     network->erp_value);
+ 			break;
+@@ -1234,12 +1238,12 @@ static int ieee80211_parse_info_param(st
+ 		case MFIE_TYPE_IBSS_DFS:
+ 			if (network->ibss_dfs)
+ 				break;
+-			network->ibss_dfs =
+-			    kmalloc(info_element->len, GFP_ATOMIC);
+-			if (!network->ibss_dfs)
+-				return 1;
++			network->ibss_dfs = kmalloc(info_element->len,
++						    GFP_ATOMIC);
+ 			memcpy(network->ibss_dfs, info_element->data,
+ 			       info_element->len);
++			if (!network->ibss_dfs)
++				return 1;
+ 			network->flags |= NETWORK_HAS_IBSS_DFS;
+ 			break;
+ 
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_tx.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_tx.c	2007-06-13 13:03:49.000000000 -0400
+@@ -337,7 +337,7 @@ int ieee80211_xmit(struct sk_buff *skb, 
+ 		hdr_len += 2;
+ 
+ 		skb->priority = ieee80211_classify(skb);
+-		header.qos_ctl |= skb->priority & IEEE80211_QCTL_TID;
++		header.qos_ctl |= cpu_to_le16(skb->priority & IEEE80211_QCTL_TID);
+ 	}
+ 	header.frame_ctl = cpu_to_le16(fc);
+ 
+@@ -390,7 +390,7 @@ int ieee80211_xmit(struct sk_buff *skb, 
+ 		 * this stack is providing the full 802.11 header, one will
+ 		 * eventually be affixed to this fragment -- so we must account
+ 		 * for it when determining the amount of payload space. */
+-		bytes_per_frag = frag_size - IEEE80211_3ADDR_LEN;
++		bytes_per_frag = frag_size - hdr_len;
+ 		if (ieee->config &
+ 		    (CFG_IEEE80211_COMPUTE_FCS | CFG_IEEE80211_RESERVE_FCS))
+ 			bytes_per_frag -= IEEE80211_FCS_LEN;
+@@ -412,7 +412,7 @@ int ieee80211_xmit(struct sk_buff *skb, 
+ 	} else {
+ 		nr_frags = 1;
+ 		bytes_per_frag = bytes_last_frag = bytes;
+-		frag_size = bytes + IEEE80211_3ADDR_LEN;
++		frag_size = bytes + hdr_len;
+ 	}
+ 
+ 	rts_required = (frag_size > ieee->rts
+@@ -502,9 +502,6 @@ int ieee80211_xmit(struct sk_buff *skb, 
+ 		if (host_encrypt)
+ 			ieee80211_encrypt_fragment(ieee, skb_frag, hdr_len);
+ 		else if (host_build_iv) {
+-			struct ieee80211_crypt_data *crypt;
+-
+-			crypt = ieee->crypt[ieee->tx_keyidx];
+ 			atomic_inc(&crypt->refcnt);
+ 			if (crypt->ops->build_iv)
+ 				crypt->ops->build_iv(skb_frag, hdr_len,
+@@ -532,13 +529,6 @@ int ieee80211_xmit(struct sk_buff *skb, 
+ 			return 0;
+ 		}
+ 
+-		if (ret == NETDEV_TX_BUSY) {
+-			printk(KERN_ERR "%s: NETDEV_TX_BUSY returned; "
+-			       "driver should report queue full via "
+-			       "ieee_device->is_queue_full.\n",
+-			       ieee->dev->name);
+-		}
+-
+ 		ieee80211_txb_free(txb);
+ 	}
+ 
+--- linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_ccmp.c.orig	2007-06-13 13:03:39.000000000 -0400
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_crypt_ccmp.c	2007-06-13 13:03:49.000000000 -0400
+@@ -271,6 +271,27 @@ static int ieee80211_ccmp_encrypt(struct
+ 	return 0;
+ }
+ 
++/*
++ * deal with seq counter wrapping correctly.
++ * refer to timer_after() for jiffies wrapping handling
++ */
++static inline int ccmp_replay_check(u8 *pn_n, u8 *pn_o)
++{
++	u32 iv32_n, iv16_n;
++	u32 iv32_o, iv16_o;
++
++	iv32_n = (pn_n[0] << 24) | (pn_n[1] << 16) | (pn_n[2] << 8) | pn_n[3];
++	iv16_n = (pn_n[4] << 8) | pn_n[5];
++
++	iv32_o = (pn_o[0] << 24) | (pn_o[1] << 16) | (pn_o[2] << 8) | pn_o[3];
++	iv16_o = (pn_o[4] << 8) | pn_o[5];
++
++	if ((s32)iv32_n - (s32)iv32_o < 0 ||
++	    (iv32_n == iv32_o && iv16_n <= iv16_o))
++		return 1;
++	return 0;
++}
++
+ static int ieee80211_ccmp_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
+ {
+ 	struct ieee80211_ccmp_data *key = priv;
+@@ -323,7 +344,7 @@ static int ieee80211_ccmp_decrypt(struct
+ 	pn[5] = pos[0];
+ 	pos += 8;
+ 
+-	if (memcmp(pn, key->rx_pn, CCMP_PN_LEN) <= 0) {
++	if (ccmp_replay_check(pn, key->rx_pn)) {
+ 		if (net_ratelimit()) {
+ 			printk(KERN_DEBUG "CCMP: replay detected: STA=" MAC_FMT
+ 			       " previous PN %02x%02x%02x%02x%02x%02x "
+-- 
+John W. Linville
+linville@redhat.com
+

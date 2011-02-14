@@ -1,0 +1,98 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Mon, 13 Jul 2009 13:06:19 -0500
+Subject: [scsi] bnx2i: fix host setup and libiscsi abort locking
+Message-id: 1247508379-2860-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.4: bnx2i - fix bnx2i host setup and libiscsi abort locking
+Bugzilla: 511096
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 511096.
+
+The first part of the patch (the bnx2i parts) fixes a bug where
+the host is not properly registered so the iscsi connection
+setup will fail. This is not yet upstream. It was sent last
+week here:
+http://www.spinics.net/lists/linux-scsi/msg37301.html
+
+The second part of the patch fixes a bug in the iscsi eh
+abort locking. This code is taking the sesison lock from the
+scsi eh thread, but not disabling bottom halves. This is needed
+because the session lock can also be taken from a softirq or timer
+handler. This part of the patch is not upstream and has not been set
+yet. I just found the bug while testing the bnx2i part of the patch.
+
+Broadcom is doing the testing for the bnx2i driver. They made
+the patch and tested it. I also verified it and ran some
+iscsi/scsi eh tests (started and stopped sessions while running dd
+and ran dd and set the scsi cmd timer to 1 second) while I was at it.
+
+This patch was made over these patches:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2009-July/msg00221.html
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_init.c b/drivers/scsi/bnx2i/bnx2i_init.c
+index 1f16439..a35e9fe 100644
+--- a/drivers/scsi/bnx2i/bnx2i_init.c
++++ b/drivers/scsi/bnx2i/bnx2i_init.c
+@@ -186,14 +186,17 @@ void bnx2i_stop(void *handle)
+  */
+ void bnx2i_register_device(struct bnx2i_hba *hba)
+ {
++	int rc;
++
+ 	if (test_bit(ADAPTER_STATE_GOING_DOWN, &hba->adapter_state) ||
+ 	    test_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic)) {
+ 		return;
+ 	}
+ 
+-	hba->cnic->register_device(hba->cnic, CNIC_ULP_ISCSI, hba);
++	rc = hba->cnic->register_device(hba->cnic, CNIC_ULP_ISCSI, hba);
+ 
+-	set_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic);
++	if (!rc)
++		set_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic);
+ }
+ 
+ 
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index 4b8c949..5e93aaa 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -1664,15 +1664,18 @@ static struct iscsi_endpoint *bnx2i_ep_connect(struct Scsi_Host *shost,
+ 	struct iscsi_endpoint *ep;
+ 	int rc = 0;
+ 
+-	if (shost)
++	if (shost) {
+ 		/* driver is given scsi host to work with */
+ 		hba = iscsi_host_priv(shost);
+-	else
++		/* Register the device with cnic if not already done so */
++		bnx2i_register_device(hba);
++	} else
+ 		/*
+ 		 * check if the given destination can be reached through
+ 		 * a iscsi capable NetXtreme2 device
+ 		 */
+ 		hba = bnx2i_check_route(dst_addr);
++
+ 	if (!hba) {
+ 		rc = -ENOMEM;
+ 		goto check_busy;
+diff --git a/drivers/scsi/libiscsi2.c b/drivers/scsi/libiscsi2.c
+index 1b56432..9092a10 100644
+--- a/drivers/scsi/libiscsi2.c
++++ b/drivers/scsi/libiscsi2.c
+@@ -1911,10 +1911,10 @@ int iscsi2_eh_abort(struct scsi_cmnd *sc)
+ 		 * good and have never sent us a successful tmf response
+ 		 * then sent more data for the cmd.
+ 		 */
+-		spin_lock(&session->lock);
++		spin_lock_bh(&session->lock);
+ 		fail_scsi_task(task, DID_ABORT);
+ 		conn->tmf_state = TMF_INITIAL;
+-		spin_unlock(&session->lock);
++		spin_unlock_bh(&session->lock);
+ 		iscsi_start_tx(conn);
+ 		goto success_unlocked;
+ 	case TMF_TIMEDOUT:

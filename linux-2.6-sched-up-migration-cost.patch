@@ -1,0 +1,24 @@
+--- linux-2.6.16.noarch/kernel/sched.c~	2006-04-24 19:30:13.000000000 -0400
++++ linux-2.6.16.noarch/kernel/sched.c	2006-04-24 19:32:49.000000000 -0400
+@@ -5518,13 +5518,15 @@ static void calibrate_migration_costs(co
+ #endif
+ 		);
+ 	if (system_state == SYSTEM_BOOTING) {
+-		printk("migration_cost=");
+-		for (distance = 0; distance <= max_distance; distance++) {
+-			if (distance)
+-				printk(",");
+-			printk("%ld", (long)migration_cost[distance] / 1000);
++		if (num_online_cpus() > 1) {
++			printk("migration_cost=");
++			for (distance = 0; distance <= max_distance; distance++) {
++				if (distance)
++					printk(",");
++				printk("%ld", (long)migration_cost[distance] / 1000);
++			}
++			printk("\n");
+ 		}
+-		printk("\n");
+ 	}
+ 	j1 = jiffies;
+ 	if (migration_debug)

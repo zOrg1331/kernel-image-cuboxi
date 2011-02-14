@@ -1,0 +1,221 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Wed, 9 Dec 2009 19:56:20 -0500
+Subject: [trace] add signal tracepoints
+Message-id: <4B2000E4.8090903@redhat.com>
+Patchwork-id: 21830
+O-Subject: [PATCH RHEL5.5][REPOST] tracepoint: add signal tracepoints
+Bugzilla: 517121
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Hi,
+
+This patch is related to BZ#517121, add signal tracepoints.
+
+BZ:
+   Bug 517121 -  Tracepoint for signal delivery event
+
+Description:
+This patch adds new tracepoints for signal events including
+signal generation, delivery, lost. These tracepoints help us
+to find out who terminated a process, when and why a signal was
+lost, and whether a signal is delivered.
+
+I've ported below 3 patches to rhel5 kernel and folded it
+into 1 patch. Major differences from upstream are:
+- Use DEFINE_TRACE instead of TRACE_EVENT.
+- Remove 'group' parameter from signal loss events because there
+   is no group flag in rhel5 kernel.
+- Signal generate event is put at the beginning of specific_send_sig_info
+   and __group_send_sig_info.
+
+Upstream status:
+Backported from latest Ingo's -tip tree. Commits are below.
+   d1eb650ff4130972fa21462fa49cd35a2865403b
+   f9d4257e01d266e67420cc99d456b6d4c8464f54
+   ba005e1f417295d28cd1563ab82bc33af07fb16a
+
+Test status:
+Successfully tested.
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2113573
+
+Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+This patch is related to BZ#517121, add signal tracepoints.
+
+BZ:
+   Bug 517121 -  Tracepoint for signal delivery event
+
+Description:
+This patch adds new tracepoints for signal events including
+signal generation, delivery, lost. These tracepoints help us
+to find out who terminated a process, when and why a signal was
+lost, and whether a signal is delivered.
+
+I've ported below 3 patches to rhel5 kernel and folded it
+into 1 patch. Major differences from upstream are:
+- Use DEFINE_TRACE instead of TRACE_EVENT.
+- Remove 'group' parameter from signal loss events because there
+   is no group flag in rhel5 kernel.
+- Signal generate event is put at the beginning of specific_send_sig_info
+   and __group_send_sig_info.
+
+Upstream status:
+Backported from latest Ingo's -tip tree. Commits are below.
+   d1eb650ff4130972fa21462fa49cd35a2865403b
+   f9d4257e01d266e67420cc99d456b6d4c8464f54
+   ba005e1f417295d28cd1563ab82bc33af07fb16a
+
+Test status:
+Successfully tested.
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2113573
+
+Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/include/trace/signal.h b/include/trace/signal.h
+new file mode 100644
+index 0000000..adc8bb1
+--- /dev/null
++++ b/include/trace/signal.h
+@@ -0,0 +1,71 @@
++#ifndef _TRACE_SIGNAL_H
++#define _TRACE_SIGNAL_H
++
++#include <linux/signal.h>
++#include <linux/sched.h>
++#include <linux/tracepoint.h>
++
++/**
++ * signal_generate - called when a signal is generated
++ * @sig: signal number
++ * @info: pointer to struct siginfo
++ * @task: pointer to struct task_struct
++ *
++ * Current process sends a 'sig' signal to 'task' process with
++ * 'info' siginfo. If 'info' is SEND_SIG_NOINFO or SEND_SIG_PRIV,
++ * 'info' is not a pointer and you can't access its field. Instead,
++ * SEND_SIG_NOINFO means that si_code is SI_USER, and SEND_SIG_PRIV
++ * means that si_code is SI_KERNEL.
++ */
++DEFINE_TRACE(signal_generate,
++	TPPROTO(int sig, struct siginfo *info, struct task_struct *task),
++	TPARGS(sig, info, task)
++);
++
++/**
++ * signal_deliver - called when a signal is delivered
++ * @sig: signal number
++ * @info: pointer to struct siginfo
++ * @ka: pointer to struct k_sigaction
++ *
++ * A 'sig' signal is delivered to current process with 'info' siginfo,
++ * and it will be handled by 'ka'. ka->sa.sa_handler can be SIG_IGN or
++ * SIG_DFL.
++ * Note that some signals reported by signal_generate tracepoint can be
++ * lost, ignored or modified (by debugger) before hitting this tracepoint.
++ * This means, this can show which signals are actually delivered, but
++ * matching generated signals and delivered signals may not be correct.
++ */
++DEFINE_TRACE(signal_deliver,
++	TPPROTO(int sig, struct siginfo *info, struct k_sigaction *ka),
++	TPARGS(sig, info, ka)
++);
++
++/**
++ * signal_overflow_fail - called when signal queue is overflow
++ * @sig: signal number
++ * @info: pointer to struct siginfo
++ *
++ * Kernel fails to generate 'sig' signal with 'info' siginfo, because
++ * siginfo queue is overflow, and the signal is dropped.
++ * 'sig' is always one of RT signals.
++ */
++DEFINE_TRACE(signal_overflow_fail,
++	TPPROTO(int sig, struct siginfo *info),
++	TPARGS(sig, info)
++);
++
++/**
++ * signal_lose_info - called when siginfo is lost
++ * @sig: signal number
++ * @info: pointer to struct siginfo
++ *
++ * Kernel generates 'sig' signal but loses 'info' siginfo, because siginfo
++ * queue is overflow.
++ * 'sig' is always one of non-RT signals.
++ */
++DEFINE_TRACE(signal_lose_info,
++	TPPROTO(int sig, struct siginfo *info),
++	TPARGS(sig, info)
++);
++#endif /* _TRACE_SIGNAL_H */
+diff --git a/kernel/signal.c b/kernel/signal.c
+index da9b46f..2b5e7ac 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -28,6 +28,7 @@
+ #include <asm/unistd.h>
+ #include <asm/siginfo.h>
+ #include "audit.h"	/* audit_signal_info() */
++#include <trace/signal.h>
+ 
+ /*
+  * SLAB caches for signal bits.
+@@ -652,12 +653,21 @@ static int send_signal(int sig, struct siginfo *info, struct task_struct *t,
+ 			break;
+ 		}
+ 	} else if (!is_si_special(info)) {
+-		if (sig >= SIGRTMIN && info->si_code != SI_USER)
+-		/*
+-		 * Queue overflow, abort.  We may abort if the signal was rt
+-		 * and sent by user using something other than kill().
+-		 */
++		if (sig >= SIGRTMIN && info->si_code != SI_USER) {
++			/*
++			 * Queue overflow, abort.  We may abort if the
++			 * signal was rt and sent by user using something
++			 * other than kill().
++			 */
++			trace_signal_overflow_fail(sig, info);
+ 			return -EAGAIN;
++		} else {
++			/*
++			 * This is a silent loss of information.  We still
++			 * send the signal, but the *info bits are lost.
++			 */
++			trace_signal_lose_info(sig, info);
++		}
+ 	}
+ 
+ out_set:
+@@ -705,6 +715,8 @@ specific_send_sig_info(int sig, struct siginfo *info, struct task_struct *t)
+ {
+ 	int ret = 0;
+ 
++	trace_signal_generate(sig, info, t);
++
+ 	BUG_ON(!irqs_disabled());
+ 	assert_spin_locked(&t->sighand->siglock);
+ 
+@@ -893,6 +905,8 @@ __group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
+ {
+ 	int ret = 0;
+ 
++	trace_signal_generate(sig, info, p);
++
+ 	assert_spin_locked(&p->sighand->siglock);
+ 	handle_stop_signal(sig, p);
+ 
+@@ -1638,6 +1652,9 @@ relock:
+ 			ka = &current->sighand->action[signr-1];
+ 		}
+ 
++		/* Trace actually delivered signals. */
++		trace_signal_deliver(signr, info, ka);
++
+ 		if (ka->sa.sa_handler == SIG_IGN) /* Do nothing.  */
+ 			continue;
+ 		if (ka->sa.sa_handler != SIG_DFL) {

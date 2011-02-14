@@ -1,0 +1,142 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Thu, 28 Feb 2008 14:18:31 -0500
+Subject: [ppc64] fix xics set_affinity code
+Message-id: 47C70907.5020605@redhat.com
+O-Subject: [RHEL 5.2 Patch 1/1] Fixes 'xics_set_affinity: No online cpus in the mask' problem
+Bugzilla: 435126
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=435126
+
+Description:
+------------
+RHEL 5.2 on Power continuously throws the following error messages to console:
+
+Feb 25 11:14:17 squad1-lp3 kernel: xics_set_affinity: No online cpus in the mask
+00000000,00000000,00000000,00000001 for irq 18
+Feb 25 11:14:17 squad1-lp3 kernel: xics_set_affinity: No online cpus in the mask
+00000000,00000000,00000000,00000001 for irq 19
+
+These errors are highly visible to power users, and this really needs to get fixed for 5.2.
+
+This patch fixes the problem by passing the virtual irq into get_irq_server(), rather than the real irq.
+
+RHEL Version Found:
+------------------
+RHEL 5.1 Beta
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Brew:
+-----
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1190888
+
+Kernel binary rpm available at:
+-----
+http://people.redhat.com/bpeters/kernels/5.2/kernel-2.6.18-83.el5.83.el5.435126.ppc64.rpm
+
+Upstream Status:
+----------------
+Upstream at
+Commit # e48395f1753cab0fde6c03f1db833cece9ef2ba0
+
+Test Status:
+------------
+Tested, fix confirmed.  2/28/08 <bpeters@redhat.com>
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-83.el5
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+</head>
+<body bgcolor="#ffffff" text="#000000">
+<meta http-equiv="CONTENT-TYPE" content="text/html; charset=utf-8">
+<title></title>
+<meta name="GENERATOR" content="OpenOffice.org 2.3  (Linux)">
+<style type="text/css">
+	<!--
+		@page { size: 8.5in 11in; margin: 0.79in }
+		P { margin-bottom: 0.08in }
+	-->
+	</style>
+<pre>RHBZ#:
+------
+<a class="moz-txt-link-freetext" href="https://bugzilla.redhat.com/show_bug.cgi?id=435126">https://bugzilla.redhat.com/show_bug.cgi?id=435126</a>
+
+Description:
+------------
+RHEL 5.2 on Power continuously throws the following error messages to console:
+
+Feb 25 11:14:17 squad1-lp3 kernel: xics_set_affinity: No online cpus in the mask
+00000000,00000000,00000000,00000001 for irq 18
+Feb 25 11:14:17 squad1-lp3 kernel: xics_set_affinity: No online cpus in the mask
+00000000,00000000,00000000,00000001 for irq 19
+
+These errors are highly visible to power users, and this really needs to get fixed for 5.2.
+
+This patch fixes the problem by passing the virtual irq into get_irq_server(), rather than the real irq.
+
+RHEL Version Found:
+------------------
+RHEL 5.1 Beta
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Brew:
+-----
+Built on all platforms.
+<a class="moz-txt-link-freetext" href="http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1190888">http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1190888</a>
+
+Kernel binary rpm available at:
+-----
+<a class="moz-txt-link-freetext" href="http://people.redhat.com/bpeters/kernels/5.2/kernel-2.6.18-83.el5.83.el5.435126.ppc64.rpm">http://people.redhat.com/bpeters/kernels/5.2/kernel-2.6.18-83.el5.83.el5.435126.ppc64.rpm</a>
+
+Upstream Status:
+----------------
+Upstream at
+Commit # e48395f1753cab0fde6c03f1db833cece9ef2ba0
+
+Test Status:
+------------
+Tested, fix confirmed.  2/28/08 <a class="moz-txt-link-rfc2396E" href="mailto:bpeters@redhat.com">&lt;bpeters@redhat.com&gt;</a>
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-83.el5
+
+</pre>
+</body>
+</html>
+
+diff --git a/arch/powerpc/platforms/pseries/xics.c b/arch/powerpc/platforms/pseries/xics.c
+index a1e133e..a011fe4 100644
+--- a/arch/powerpc/platforms/pseries/xics.c
++++ b/arch/powerpc/platforms/pseries/xics.c
+@@ -440,7 +440,7 @@ static void xics_set_affinity(unsigned int virq, cpumask_t cpumask)
+ 	 * For the moment only implement delivery to all cpus or one cpu.
+ 	 * Get current irq_server for the given irq
+ 	 */
+-	irq_server = get_irq_server(irq, 1);
++	irq_server = get_irq_server(virq, 1);
+ 	if (irq_server == -1) {
+ 		char cpulist[128];
+ 		cpumask_scnprintf(cpulist, sizeof(cpulist), cpumask);

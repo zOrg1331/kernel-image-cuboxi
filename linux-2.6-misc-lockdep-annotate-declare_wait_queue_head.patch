@@ -1,0 +1,177 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [PATCH RHEL-5] bz209539 lockdep: annotate DECLARE_WAIT_QUEUE_HEAD
+Date: Fri, 4 May 2007 16:46:38 -0400 (EDT)
+Bugzilla: 209539
+Message-Id: <Pine.LNX.4.64.0705041634020.23728@bogart.boston.redhat.com>
+Changelog: [misc] lockdep: annotate DECLARE_WAIT_QUEUE_HEAD
+
+
+This is a straightforward backport of an upstream commit to fix some
+lockdep warnings.  I've built the kernel, and I am awaiting feedback
+from the customer to confirm that it silences the warnings.  I believe
+that adding a macro to include/linux/wait.h is KABI neutral.
+
+commit 7259f0d05d595b73ef312a082e628627c6414969
+Author: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+    [PATCH] lockdep: annotate DECLARE_WAIT_QUEUE_HEAD
+    
+    kernel: INFO: trying to register non-static key.
+    kernel: the code is fine but needs lockdep annotation.
+    kernel: turning off the locking correctness validator.
+    kernel:  [<c04051ed>] show_trace_log_lvl+0x58/0x16a
+    kernel:  [<c04057fa>] show_trace+0xd/0x10
+    kernel:  [<c0405913>] dump_stack+0x19/0x1b
+    kernel:  [<c043b1e2>] __lock_acquire+0xf0/0x90d
+    kernel:  [<c043bf70>] lock_acquire+0x4b/0x6b
+    kernel:  [<c061472f>] _spin_lock_irqsave+0x22/0x32
+    kernel:  [<c04363d3>] prepare_to_wait+0x17/0x4b
+    kernel:  [<f89a24b6>] lpfc_do_work+0xdd/0xcc2 [lpfc]
+    kernel:  [<c04361b9>] kthread+0xc3/0xf2
+    kernel:  [<c0402005>] kernel_thread_helper+0x5/0xb
+    
+    Another case of non-static lockdep keys; duplicate the paradigm set by
+    DECLARE_COMPLETION_ONSTACK and introduce DECLARE_WAIT_QUEUE_HEAD_ONSTACK.
+    
+    Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+    Cc: Greg KH <gregkh@suse.de>
+    Cc: Markus Lidel <markus.lidel@shadowconnect.com>
+    Acked-by: Ingo Molnar <mingo@elte.hu>
+    Cc: Arjan van de Ven <arjan@infradead.org>
+    Cc: James Bottomley <James.Bottomley@steeleye.com>
+    Cc: Marcel Holtmann <marcel@holtmann.org>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+diff -pruN a/drivers/bluetooth/bluecard_cs.c b/drivers/bluetooth/bluecard_cs.c
+--- a/drivers/bluetooth/bluecard_cs.c	2006-09-19 23:42:06.000000000 -0400
++++ b/drivers/bluetooth/bluecard_cs.c	2007-05-01 14:09:46.177323000 -0400
+@@ -282,7 +282,7 @@ static void bluecard_write_wakeup(blueca
+ 		clear_bit(ready_bit, &(info->tx_state));
+ 
+ 		if (bt_cb(skb)->pkt_type & 0x80) {
+-			DECLARE_WAIT_QUEUE_HEAD(wq);
++			DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+ 			DEFINE_WAIT(wait);
+ 
+ 			unsigned char baud_reg;
+diff -pruN a/drivers/message/i2o/exec-osm.c b/drivers/message/i2o/exec-osm.c
+--- a/drivers/message/i2o/exec-osm.c	2006-09-19 23:42:06.000000000 -0400
++++ b/drivers/message/i2o/exec-osm.c	2007-05-01 14:09:46.249253000 -0400
+@@ -124,7 +124,7 @@ static void i2o_exec_wait_free(struct i2
+ int i2o_msg_post_wait_mem(struct i2o_controller *c, struct i2o_message *msg,
+ 			  unsigned long timeout, struct i2o_dma *dma)
+ {
+-	DECLARE_WAIT_QUEUE_HEAD(wq);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+ 	struct i2o_exec_wait *wait;
+ 	static u32 tcntxt = 0x80000000;
+ 	long flags;
+diff -pruN a/drivers/scsi/dpt/dpti_i2o.h b/drivers/scsi/dpt/dpti_i2o.h
+--- a/drivers/scsi/dpt/dpti_i2o.h	2006-09-19 23:42:06.000000000 -0400
++++ b/drivers/scsi/dpt/dpti_i2o.h	2007-05-01 14:09:46.258242000 -0400
+@@ -58,7 +58,7 @@ typedef struct wait_queue adpt_wait_queu
+ 
+ #include <linux/wait.h>
+ typedef wait_queue_head_t adpt_wait_queue_head_t;
+-#define ADPT_DECLARE_WAIT_QUEUE_HEAD(wait) DECLARE_WAIT_QUEUE_HEAD(wait)
++#define ADPT_DECLARE_WAIT_QUEUE_HEAD(wait) DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wait)
+ typedef wait_queue_t adpt_wait_queue_t;
+ 
+ #endif
+diff -pruN a/drivers/scsi/imm.c b/drivers/scsi/imm.c
+--- a/drivers/scsi/imm.c	2006-09-19 23:42:06.000000000 -0400
++++ b/drivers/scsi/imm.c	2007-05-01 14:09:46.265235000 -0400
+@@ -1153,7 +1153,7 @@ static int __imm_attach(struct parport *
+ {
+ 	struct Scsi_Host *host;
+ 	imm_struct *dev;
+-	DECLARE_WAIT_QUEUE_HEAD(waiting);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waiting);
+ 	DEFINE_WAIT(wait);
+ 	int ports;
+ 	int modes, ppb;
+diff -pruN a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c	2007-05-01 14:02:23.644300000 -0400
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c	2007-05-01 14:09:46.278223000 -0400
+@@ -306,7 +306,7 @@ lpfc_do_work(void *p)
+ {
+ 	struct lpfc_hba *phba = p;
+ 	int rc;
+-	DECLARE_WAIT_QUEUE_HEAD(work_waitq);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(work_waitq);
+ 
+ 	set_user_nice(current, -20);
+ 	phba->work_wait = &work_waitq;
+diff -pruN a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+--- a/drivers/scsi/lpfc/lpfc_sli.c	2007-05-01 14:02:23.707237000 -0400
++++ b/drivers/scsi/lpfc/lpfc_sli.c	2007-05-01 14:09:46.293210000 -0400
+@@ -3000,7 +3000,7 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba
+ 			 struct lpfc_iocbq * prspiocbq,
+ 			 uint32_t timeout)
+ {
+-	DECLARE_WAIT_QUEUE_HEAD(done_q);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(done_q);
+ 	long timeleft, timeout_req = 0;
+ 	int retval = IOCB_SUCCESS;
+ 	uint32_t creg_val;
+@@ -3078,7 +3078,7 @@ int
+ lpfc_sli_issue_mbox_wait(struct lpfc_hba * phba, LPFC_MBOXQ_t * pmboxq,
+ 			 uint32_t timeout)
+ {
+-	DECLARE_WAIT_QUEUE_HEAD(done_q);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(done_q);
+ 	DECLARE_WAITQUEUE(wq_entry, current);
+ 	uint32_t timeleft = 0;
+ 	int retval;
+diff -pruN a/drivers/scsi/ppa.c b/drivers/scsi/ppa.c
+--- a/drivers/scsi/ppa.c	2006-09-19 23:42:06.000000000 -0400
++++ b/drivers/scsi/ppa.c	2007-05-01 14:09:46.300201000 -0400
+@@ -1012,7 +1012,7 @@ static LIST_HEAD(ppa_hosts);
+ static int __ppa_attach(struct parport *pb)
+ {
+ 	struct Scsi_Host *host;
+-	DECLARE_WAIT_QUEUE_HEAD(waiting);
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waiting);
+ 	DEFINE_WAIT(wait);
+ 	ppa_struct *dev;
+ 	int ports;
+diff -pruN a/drivers/usb/net/usbnet.c b/drivers/usb/net/usbnet.c
+--- a/drivers/usb/net/usbnet.c	2007-05-01 14:02:15.625326000 -0400
++++ b/drivers/usb/net/usbnet.c	2007-05-01 14:09:46.311190000 -0400
+@@ -542,7 +542,7 @@ static int usbnet_stop (struct net_devic
+ {
+ 	struct usbnet		*dev = netdev_priv(net);
+ 	int			temp;
+-	DECLARE_WAIT_QUEUE_HEAD (unlink_wakeup); 
++	DECLARE_WAIT_QUEUE_HEAD_ONSTACK (unlink_wakeup);
+ 	DECLARE_WAITQUEUE (wait, current);
+ 
+ 	netif_stop_queue (net);
+diff -pruN a/include/linux/wait.h b/include/linux/wait.h
+--- a/include/linux/wait.h	2007-05-01 14:02:03.935033000 -0400
++++ b/include/linux/wait.h	2007-05-01 14:09:46.317183000 -0400
+@@ -79,6 +79,15 @@ struct task_struct;
+ 
+ extern void init_waitqueue_head(wait_queue_head_t *q);
+ 
++#ifdef CONFIG_LOCKDEP
++# define __WAIT_QUEUE_HEAD_INIT_ONSTACK(name) \
++	({ init_waitqueue_head(&name); name; })
++# define DECLARE_WAIT_QUEUE_HEAD_ONSTACK(name) \
++	wait_queue_head_t name = __WAIT_QUEUE_HEAD_INIT_ONSTACK(name)
++#else
++# define DECLARE_WAIT_QUEUE_HEAD_ONSTACK(name) DECLARE_WAIT_QUEUE_HEAD(name)
++#endif
++
+ static inline void init_waitqueue_entry(wait_queue_t *q, struct task_struct *p)
+ {
+ 	q->flags = 0;
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

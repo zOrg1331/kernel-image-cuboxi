@@ -1,0 +1,77 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 15 Sep 2010 21:18:35 -0400
+Subject: [scsi] fix disk spinup for shorter path restore times
+Message-id: <20100915211321.27913.71062.sendpatchset@localhost.localdomain>
+Patchwork-id: 28243
+O-Subject: [RHEL5.6 PATCH] scsi: Spinning up disk is observed on standby paths
+	until timeout, resulting in longer path restoration.
+Bugzilla: 608109
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+scsi: Spinning up disk is observed on standby paths until timeout, resulting in longer path restoration.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=608109
+
+On Fri, Feb 20, 2009 at 12:03:58PM +0000, Rengarajan, Narayanan (STSD) wrote:
+Spinning up disk is observed on standby paths until timeout, resulting in longer
+path restoration time in 2.6.27 kernel.
+Steps to reproduce:
+1. present a standby lun to the host
+2. do a discovery from the host (scan the scsi bus)  3. Spinning of disks is
+observed in  /var/log/messages
+Whenever a device goes offline and comes back, the new sd device takes longer time
+to get created. This is because of the spinning up of disk in sd_spinup_disk
+fuction as the standby paths would return device not ready with 0x04/0x0b asc/ascq.
+
+Commit id from storage-tree: 3dd6f92a1a7ad85c54d47fd9d73371a32c0bde4
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=2764725
+
+Bug fix tested at HP against -201.el5 where it is reported to have
+fixed the problem seen.
+
+Sanity tested by me.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index a8ab20a..4c0deab 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -1124,23 +1124,19 @@ sd_spinup_disk(struct scsi_disk *sdkp, char *diskname)
+ 		/*
+ 		 * The device does not want the automatic start to be issued.
+ 		 */
+-		if (sdkp->device->no_start_on_add) {
++		if (sdkp->device->no_start_on_add) 
+ 			break;
+-		}
+-
+-		/*
+-		 * If manual intervention is required, or this is an
+-		 * absent USB storage device, a spinup is meaningless.
+-		 */
+-		if (sense_valid &&
+-		    sshdr.sense_key == NOT_READY &&
+-		    sshdr.asc == 4 && sshdr.ascq == 3) {
+-			break;		/* manual intervention required */
++		if (sense_valid && sshdr.sense_key == NOT_READY) {
++			if (sshdr.asc == 4 && sshdr.ascq == 3)
++				break;	/* manual intervention required */
++			if (sshdr.asc == 4 && sshdr.ascq == 0xb)
++				break;	/* standby */
++			if (sshdr.asc == 4 && sshdr.ascq == 0xc)
++				break;	/* unavailable */
++			/*
++			 * Issue command to spin up drive when not ready
++			 */
+ 
+-		/*
+-		 * Issue command to spin up drive when not ready
+-		 */
+-		} else if (sense_valid && sshdr.sense_key == NOT_READY) {
+ 			if (!spintime) {
+ 				printk(KERN_NOTICE "%s: Spinning up disk...",
+ 				       diskname);

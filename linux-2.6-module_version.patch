@@ -1,0 +1,73 @@
+--- linux-2.6.13/drivers/block/cciss.c~	2005-09-16 04:56:37.000000000 -0400
++++ linux-2.6.13/drivers/block/cciss.c	2005-09-16 04:56:47.000000000 -0400
+@@ -56,6 +56,7 @@ MODULE_DESCRIPTION("Driver for HP Contro
+ MODULE_SUPPORTED_DEVICE("HP SA5i SA5i+ SA532 SA5300 SA5312 SA641 SA642 SA6400"
+ 			" SA6i P600 P800 P400 P400i E200 E200i");
+ MODULE_LICENSE("GPL");
++MODULE_VERSION("2.6.8");
+ 
+ #include "cciss_cmd.h"
+ #include "cciss.h"
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/block/cpqarray.c linux-1720/drivers/block/cpqarray.c
+--- linux-1700/drivers/block/cpqarray.c
++++ linux-1720/drivers/block/cpqarray.c
+@@ -52,6 +52,7 @@
+ /* Original author Chris Frantz - Compaq Computer Corporation */
+ MODULE_AUTHOR("Compaq Computer Corporation");
+ MODULE_DESCRIPTION("Driver for Compaq Smart2 Array Controllers version 2.6.0");
++MODULE_VERSION("2.6.0");
+ MODULE_LICENSE("GPL");
+ 
+ #include "cpqarray.h"
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/block/DAC960.c linux-1720/drivers/block/DAC960.c
+--- linux-1700/drivers/block/DAC960.c
++++ linux-1720/drivers/block/DAC960.c
+@@ -7109,3 +7109,4 @@ module_init(DAC960_init_module);
+ module_exit(DAC960_cleanup_module);
+ 
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(DAC960_DriverVersion);
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/message/fusion/mptbase.c linux-1720/drivers/message/fusion/mptbase.c
+--- linux-1700/drivers/message/fusion/mptbase.c
++++ linux-1720/drivers/message/fusion/mptbase.c
+@@ -119,6 +119,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /*
+  *  cmd line parameters
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/net/b44.c linux-1720/drivers/net/b44.c
+--- linux-1700/drivers/net/b44.c
++++ linux-1720/drivers/net/b44.c
+@@ -85,6 +85,7 @@ MODULE_VERSION(DRV_MODULE_VERSION);
+ static int b44_debug = -1;	/* -1 == use B44_DEF_MSG_ENABLE as value */
+ module_param(b44_debug, int, 0);
+ MODULE_PARM_DESC(b44_debug, "B44 bitmapped debugging message enable value");
++MODULE_VERSION(DRV_MODULE_VERSION);
+ 
+ static struct pci_device_id b44_pci_tbl[] = {
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_BCM4401,
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/net/ns83820.c linux-1720/drivers/net/ns83820.c
+--- linux-1700/drivers/net/ns83820.c
++++ linux-1720/drivers/net/ns83820.c
+@@ -2206,6 +2206,7 @@ static void __exit ns83820_exit(void)
+ MODULE_AUTHOR("Benjamin LaHaise <bcrl@kvack.org>");
+ MODULE_DESCRIPTION("National Semiconductor DP83820 10/100/1000 driver");
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(VERSION);
+ 
+ MODULE_DEVICE_TABLE(pci, ns83820_pci_tbl);
+ 
+diff -urNp --exclude-from=/home/davej/.exclude linux-1700/drivers/scsi/gdth.c linux-1720/drivers/scsi/gdth.c
+--- linux-1700/drivers/scsi/gdth.c
++++ linux-1720/drivers/scsi/gdth.c
+@@ -656,6 +656,7 @@ module_param(probe_eisa_isa, int, 0);
+ module_param(force_dma32, int, 0);
+ MODULE_AUTHOR("Achim Leubner");
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(GDTH_VERSION_STR);
+ 
+ /* ioctl interface */
+ static struct file_operations gdth_fops = {

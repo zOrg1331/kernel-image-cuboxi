@@ -1,0 +1,164 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Tue, 10 Nov 2009 09:13:01 -0500
+Subject: [acpi] support physical cpu hotplug on x86_64
+Message-id: <4AF92E9D.8010607@redhat.com>
+Patchwork-id: 21342
+O-Subject: [RHEL 5.5 PATCH v3] Support physical cpu hotplug for x86_64
+Bugzilla: 516999
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=516999
+
+Description:
+This patch enables ACPI based physical CPU hotplug support for x86_64.
+Implements acpi_map_lsapic() to hot-add a CPU. Hot-removing is not
+supported so far. Added #ifdef CONFIG_X86_64 around the code to make
+sure it's only executed on x86_64.
+
+Comment #2 from Hitachi:
+In the latest upstream kernel, the following changes have been
+applied on top of the original patch (commit 73fea175).
+
+  1. change buffer name with the latest ACPI spec
+  2. change variable name and structure name
+  3. add processing to allocate cpumask structure on given node
+
+1 and 2 are just name change, not important. 3 is code excuted by
+CONFIG_CPUMASK_OFFSTACK=y, but it is not set in RHEL.
+
+So we don't backport these changes.
+
+Upstream Status:
+http://git.kernel.org/linus/73fea175303926055440c06bc8894f0c5c58afc8
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2067608
+
+Test Status:
+Patch supplied and tested by Hitachi. For verification I've tested cpu
+hot-add by utilizing kvms cpu_set capability (using kvm from F11).
+
+  Stefan
+
+diff --git a/arch/i386/kernel/acpi/boot.c b/arch/i386/kernel/acpi/boot.c
+index dfa658b..7365930 100644
+--- a/arch/i386/kernel/acpi/boot.c
++++ b/arch/i386/kernel/acpi/boot.c
+@@ -26,6 +26,7 @@
+ #include <linux/init.h>
+ #include <linux/acpi.h>
+ #include <linux/efi.h>
++#include <linux/cpumask.h>
+ #include <linux/module.h>
+ #include <linux/dmi.h>
+ #include <linux/irq.h>
+@@ -504,11 +505,69 @@ EXPORT_SYMBOL(acpi_register_gsi);
+  *  ACPI based hotplug support for CPU
+  */
+ #ifdef CONFIG_ACPI_HOTPLUG_CPU
++
++#ifdef	CONFIG_X86_64
++int acpi_map_lsapic(acpi_handle handle, int *pcpu)
++{
++	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
++	union acpi_object *obj;
++	struct acpi_table_lapic *lapic;
++	cpumask_t tmp_map, new_map;
++	u8 physid;
++	int cpu;
++
++	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
++		return -EINVAL;
++
++	if (!buffer.length || !buffer.pointer)
++		return -EINVAL;
++
++	obj = buffer.pointer;
++	if (obj->type != ACPI_TYPE_BUFFER ||
++	    obj->buffer.length < sizeof(*lapic)) {
++		kfree(buffer.pointer);
++		return -EINVAL;
++	}
++
++	lapic = (struct acpi_table_lapic *)obj->buffer.pointer;
++
++	if ((lapic->header.type != ACPI_MADT_LAPIC) ||
++	    (!lapic->flags.enabled)) {
++		kfree(buffer.pointer);
++		return -EINVAL;
++	}
++
++	physid = lapic->id;
++
++	kfree(buffer.pointer);
++	buffer.length = ACPI_ALLOCATE_BUFFER;
++	buffer.pointer = NULL;
++
++	tmp_map = cpu_present_map;
++	mp_register_lapic(physid, lapic->flags.enabled);
++
++	/*
++	 * If mp_register_lapic successfully generates a new logical cpu
++	 * number, then the following will get us exactly what was mapped
++	 */
++	cpus_andnot(new_map, cpu_present_map, tmp_map);
++	if (cpus_empty(new_map)) {
++		printk ("Unable to map lapic to logical cpu number\n");
++		return -EINVAL;
++	}
++
++	cpu = first_cpu(new_map);
++
++	*pcpu = cpu;
++	return 0;
++}
++#else	/* X86 */
+ int acpi_map_lsapic(acpi_handle handle, int *pcpu)
+ {
+ 	/* TBD */
+ 	return -EINVAL;
+ }
++#endif	/* CONFIG_X86_64 */
+ 
+ EXPORT_SYMBOL(acpi_map_lsapic);
+ 
+diff --git a/arch/i386/kernel/mpparse.c b/arch/i386/kernel/mpparse.c
+index 40f4daf..8ecee55 100644
+--- a/arch/i386/kernel/mpparse.c
++++ b/arch/i386/kernel/mpparse.c
+@@ -68,7 +68,7 @@ unsigned int def_to_bigsmp = 0;
+ /* Processor that is doing the boot up */
+ unsigned int boot_cpu_physical_apicid = -1U;
+ /* Internal processor count */
+-static unsigned int __devinitdata num_processors;
++unsigned int __cpuinitdata num_processors;
+ 
+ /* Bitmask of physically existing CPUs */
+ physid_mask_t phys_cpu_present_map;
+diff --git a/arch/x86_64/kernel/mpparse.c b/arch/x86_64/kernel/mpparse.c
+index a3f7db8..2f720ba 100644
+--- a/arch/x86_64/kernel/mpparse.c
++++ b/arch/x86_64/kernel/mpparse.c
+@@ -64,7 +64,7 @@ unsigned long mp_lapic_addr = 0;
+ /* Processor that is doing the boot up */
+ unsigned int boot_cpu_id = -1U;
+ /* Internal processor count */
+-unsigned int num_processors __initdata = 0;
++unsigned int num_processors __cpuinitdata = 0;
+ 
+ unsigned disabled_cpus __cpuinitdata;
+ 
+diff --git a/include/asm-i386/smp.h b/include/asm-i386/smp.h
+index 70fd693..d46581f 100644
+--- a/include/asm-i386/smp.h
++++ b/include/asm-i386/smp.h
+@@ -95,6 +95,7 @@ static __inline int logical_smp_processor_id(void)
+ 
+ extern int __cpu_disable(void);
+ extern void __cpu_die(unsigned int cpu);
++extern unsigned int num_processors;
+ #endif /* !__ASSEMBLY__ */
+ 
+ #else /* CONFIG_SMP */

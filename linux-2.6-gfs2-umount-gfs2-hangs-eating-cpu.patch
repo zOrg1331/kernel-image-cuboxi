@@ -1,0 +1,58 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Fri, 10 Jul 2009 13:42:03 -0500
+Subject: [gfs2] umount.gfs2 hangs eating CPU
+Message-id: 4A578B7B.2090105@redhat.com
+O-Subject: [RHEL5.4 PATCH][GFS2] bz 508876 - umount.gfs2 hangs eating CPU
+Bugzilla: 508876
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+This is the fix from upstream. It moves the sem from around the code which
+receives messages from the dlm to being around the code which processes the
+particular messages which cause the race during umount. This means that other
+messages from the dlm can continue to be processed during this time.
+
+Since the write side of the lock is held for all of the invalidate_inodes()
+routine, the read side acts like a barrier during that process.
+
+This is entirely due to the extra set of inodes that we are carrying around,
+and once we are rid of those, this need for this rw semaphore will go away.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 03409a2..875a3af 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -695,6 +695,7 @@ static void glock_work_func(void *data)
+ 
+ 	if (test_and_clear_bit(GLF_REPLY_PENDING, &gl->gl_flags))
+ 		finish_xmote(gl, gl->gl_reply);
++	down_read(&gfs2_umount_flush_sem);
+ 	spin_lock(&gl->gl_spin);
+ 	if (test_and_clear_bit(GLF_PENDING_DEMOTE, &gl->gl_flags) &&
+ 	    gl->gl_state != LM_ST_UNLOCKED &&
+@@ -707,6 +708,7 @@ static void glock_work_func(void *data)
+ 	}
+ 	run_queue(gl, 0);
+ 	spin_unlock(&gl->gl_spin);
++	up_read(&gfs2_umount_flush_sem);
+ 	if (!delay ||
+ 	    queue_delayed_work(glock_workqueue, &gl->gl_work, delay) == 0)
+ 		gfs2_glock_put(gl);
+@@ -1365,7 +1367,6 @@ void gfs2_glock_cb(void *cb_data, unsigned int type, void *data)
+ 		struct lm_async_cb *async = data;
+ 		struct gfs2_glock *gl;
+ 
+-		down_read(&gfs2_umount_flush_sem);
+ 		gl = gfs2_glock_find(sdp, &async->lc_name);
+ 		if (gfs2_assert_warn(sdp, gl))
+ 			return;
+@@ -1373,7 +1374,6 @@ void gfs2_glock_cb(void *cb_data, unsigned int type, void *data)
+ 		set_bit(GLF_REPLY_PENDING, &gl->gl_flags);
+ 		if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 			gfs2_glock_put(gl);
+-		up_read(&gfs2_umount_flush_sem);
+ 		return;
+ 	}
+ 

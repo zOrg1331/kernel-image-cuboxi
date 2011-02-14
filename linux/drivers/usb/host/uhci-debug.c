@@ -16,7 +16,7 @@
 
 #include "uhci-hcd.h"
 
-#define uhci_debug_operations (* (const struct file_operations *) NULL)
+#define uhci_debug_operations (* (struct file_operations *) NULL)
 static struct dentry *uhci_debugfs_root;
 
 #ifdef DEBUG
@@ -118,12 +118,10 @@ static int uhci_show_urbp(struct urb_priv *urbp, char *buf, int len, int space)
 	}
 
 	out += sprintf(out, "%s%s", ptype, (urbp->fsbr ? " FSBR" : ""));
-	out += sprintf(out, " Actlen=%d%s", urbp->urb->actual_length,
-			(urbp->qh->type == USB_ENDPOINT_XFER_CONTROL ?
-				"-8" : ""));
+	out += sprintf(out, " Actlen=%d", urbp->urb->actual_length);
 
-	if (urbp->urb->unlinked)
-		out += sprintf(out, " Unlinked=%d", urbp->urb->unlinked);
+	if (urbp->urb->status != -EINPROGRESS)
+		out += sprintf(out, " Status=%d", urbp->urb->status);
 	out += sprintf(out, "\n");
 
 	i = nactive = ninactive = 0;
@@ -147,8 +145,7 @@ static int uhci_show_urbp(struct urb_priv *urbp, char *buf, int len, int space)
 	return out - buf;
 }
 
-static int uhci_show_qh(struct uhci_hcd *uhci,
-		struct uhci_qh *qh, char *buf, int len, int space)
+static int uhci_show_qh(struct uhci_qh *qh, char *buf, int len, int space)
 {
 	char *out = buf;
 	int i, nurbs;
@@ -171,13 +168,9 @@ static int uhci_show_qh(struct uhci_hcd *uhci,
 			space, "", qh, qtype,
 			le32_to_cpu(qh->link), le32_to_cpu(element));
 	if (qh->type == USB_ENDPOINT_XFER_ISOC)
-		out += sprintf(out, "%*s    period %d phase %d load %d us, "
-				"frame %x desc [%p]\n",
-				space, "", qh->period, qh->phase, qh->load,
-				qh->iso_frame, qh->iso_packet_desc);
-	else if (qh->type == USB_ENDPOINT_XFER_INT)
-		out += sprintf(out, "%*s    period %d phase %d load %d us\n",
-				space, "", qh->period, qh->phase, qh->load);
+		out += sprintf(out, "%*s    period %d frame %x desc [%p]\n",
+				space, "", qh->period, qh->iso_frame,
+				qh->iso_packet_desc);
 
 	if (element & UHCI_PTR_QH)
 		out += sprintf(out, "%*s  Element points to QH (bug?)\n", space, "");
@@ -193,16 +186,13 @@ static int uhci_show_qh(struct uhci_hcd *uhci,
 
 	if (list_empty(&qh->queue)) {
 		out += sprintf(out, "%*s  queue is empty\n", space, "");
-		if (qh == uhci->skel_async_qh)
-			out += uhci_show_td(uhci->term_td, out,
-					len - (out - buf), 0);
 	} else {
 		struct urb_priv *urbp = list_entry(qh->queue.next,
 				struct urb_priv, node);
 		struct uhci_td *td = list_entry(urbp->td_list.next,
 				struct uhci_td, list);
 
-		if (element != LINK_TO_TD(td))
+		if (cpu_to_le32(td->dma_handle) != (element & ~UHCI_PTR_BITS))
 			out += sprintf(out, "%*s Element != First TD\n",
 					space, "");
 		i = nurbs = 0;
@@ -218,13 +208,23 @@ static int uhci_show_qh(struct uhci_hcd *uhci,
 					space, "", nurbs);
 	}
 
-	if (qh->dummy_td) {
+	if (qh->udev) {
 		out += sprintf(out, "%*s  Dummy TD\n", space, "");
 		out += uhci_show_td(qh->dummy_td, out, len - (out - buf), 0);
 	}
 
 	return out - buf;
 }
+
+static const char * const qh_names[] = {
+  "skel_unlink_qh", "skel_iso_qh",
+  "skel_int128_qh", "skel_int64_qh",
+  "skel_int32_qh", "skel_int16_qh",
+  "skel_int8_qh", "skel_int4_qh",
+  "skel_int2_qh", "skel_int1_qh",
+  "skel_ls_control_qh", "skel_fs_control_qh",
+  "skel_bulk_qh", "skel_term_qh"
+};
 
 static int uhci_show_sc(int port, unsigned short status, char *buf, int len)
 {
@@ -347,108 +347,53 @@ static int uhci_sprint_schedule(struct uhci_hcd *uhci, char *buf, int len)
 	struct uhci_qh *qh;
 	struct uhci_td *td;
 	struct list_head *tmp, *head;
-	int nframes, nerrs;
-	__le32 link;
-	__le32 fsbr_link;
-
-	static const char * const qh_names[] = {
-		"unlink", "iso", "int128", "int64", "int32", "int16",
-		"int8", "int4", "int2", "async", "term"
-	};
 
 	out += uhci_show_root_hub_state(uhci, out, len - (out - buf));
 	out += sprintf(out, "HC status\n");
 	out += uhci_show_status(uhci, out, len - (out - buf));
-
-	out += sprintf(out, "Periodic load table\n");
-	for (i = 0; i < MAX_PHASE; ++i) {
-		out += sprintf(out, "\t%d", uhci->load[i]);
-		if (i % 8 == 7)
-			*out++ = '\n';
-	}
-	out += sprintf(out, "Total: %d, #INT: %d, #ISO: %d\n",
-			uhci->total_load,
-			uhci_to_hcd(uhci)->self.bandwidth_int_reqs,
-			uhci_to_hcd(uhci)->self.bandwidth_isoc_reqs);
 	if (debug <= 1)
 		return out - buf;
 
 	out += sprintf(out, "Frame List\n");
-	nframes = 10;
-	nerrs = 0;
 	for (i = 0; i < UHCI_NUMFRAMES; ++i) {
-		__le32 qh_dma;
-
-		j = 0;
 		td = uhci->frame_cpu[i];
-		link = uhci->frame[i];
 		if (!td)
-			goto check_link;
+			continue;
 
-		if (nframes > 0) {
-			out += sprintf(out, "- Frame %d -> (%08x)\n",
-					i, le32_to_cpu(link));
-			j = 1;
-		}
+		out += sprintf(out, "- Frame %d\n", i); \
+		if (td->dma_handle != (dma_addr_t)uhci->frame[i])
+			out += sprintf(out, "    frame list does not match td->dma_handle!\n");
 
 		head = &td->fl_list;
 		tmp = head;
 		do {
 			td = list_entry(tmp, struct uhci_td, fl_list);
 			tmp = tmp->next;
-			if (link != LINK_TO_TD(td)) {
-				if (nframes > 0)
-					out += sprintf(out, "    link does "
-						"not match list entry!\n");
-				else
-					++nerrs;
-			}
-			if (nframes > 0)
-				out += uhci_show_td(td, out,
-						len - (out - buf), 4);
-			link = td->link;
+			out += uhci_show_td(td, out, len - (out - buf), 4);
 		} while (tmp != head);
-
-check_link:
-		qh_dma = uhci_frame_skel_link(uhci, i);
-		if (link != qh_dma) {
-			if (nframes > 0) {
-				if (!j) {
-					out += sprintf(out,
-						"- Frame %d -> (%08x)\n",
-						i, le32_to_cpu(link));
-					j = 1;
-				}
-				out += sprintf(out, "   link does not match "
-					"QH (%08x)!\n", le32_to_cpu(qh_dma));
-			} else
-				++nerrs;
-		}
-		nframes -= j;
 	}
-	if (nerrs > 0)
-		out += sprintf(out, "Skipped %d bad links\n", nerrs);
 
 	out += sprintf(out, "Skeleton QHs\n");
 
-	fsbr_link = 0;
 	for (i = 0; i < UHCI_NUM_SKELQH; ++i) {
 		int cnt = 0;
 
 		qh = uhci->skelqh[i];
-		out += sprintf(out, "- skel_%s_qh\n", qh_names[i]); \
-		out += uhci_show_qh(uhci, qh, out, len - (out - buf), 4);
+		out += sprintf(out, "- %s\n", qh_names[i]); \
+		out += uhci_show_qh(qh, out, len - (out - buf), 4);
 
 		/* Last QH is the Terminating QH, it's different */
-		if (i == SKEL_TERM) {
-			if (qh_element(qh) != LINK_TO_TD(uhci->term_td))
+		if (i == UHCI_NUM_SKELQH - 1) {
+			if (qh->link != UHCI_PTR_TERM)
+				out += sprintf(out, "    bandwidth reclamation on!\n");
+
+			if (qh_element(qh) != cpu_to_le32(uhci->term_td->dma_handle))
 				out += sprintf(out, "    skel_term_qh element is not set to term_td!\n");
-			link = fsbr_link;
-			if (!link)
-				link = LINK_TO_QH(uhci->skel_term_qh);
-			goto check_qh_link;
+
+			continue;
 		}
 
+		j = (i < 9) ? 9 : i+1;		/* Next skeleton */
 		head = &qh->node;
 		tmp = head->next;
 
@@ -456,26 +401,17 @@ check_link:
 			qh = list_entry(tmp, struct uhci_qh, node);
 			tmp = tmp->next;
 			if (++cnt <= 10)
-				out += uhci_show_qh(uhci, qh, out,
+				out += uhci_show_qh(qh, out,
 						len - (out - buf), 4);
-			if (!fsbr_link && qh->skel >= SKEL_FSBR)
-				fsbr_link = LINK_TO_QH(qh);
 		}
 		if ((cnt -= 10) > 0)
 			out += sprintf(out, "    Skipped %d QHs\n", cnt);
 
-		link = UHCI_PTR_TERM;
-		if (i <= SKEL_ISO)
-			;
-		else if (i < SKEL_ASYNC)
-			link = LINK_TO_QH(uhci->skel_async_qh);
-		else if (!uhci->fsbr_is_on)
-			;
-		else
-			link = LINK_TO_QH(uhci->skel_term_qh);
-check_qh_link:
-		if (qh->link != link)
-			out += sprintf(out, "    last QH not linked to next skeleton!\n");
+		if (i > 1 && i < UHCI_NUM_SKELQH - 1) {
+			if (qh->link !=
+			    (cpu_to_le32(uhci->skelqh[j]->dma_handle) | UHCI_PTR_QH))
+				out += sprintf(out, "    last QH not linked to next skeleton!\n");
+		}
 	}
 
 	return out - buf;
@@ -492,7 +428,7 @@ struct uhci_debug {
 
 static int uhci_debug_open(struct inode *inode, struct file *file)
 {
-	struct uhci_hcd *uhci = inode->i_private;
+	struct uhci_hcd *uhci = inode->u.generic_ip;
 	struct uhci_debug *up;
 	int ret = -ENOMEM;
 	unsigned long flags;
@@ -564,7 +500,7 @@ static int uhci_debug_release(struct inode *inode, struct file *file)
 }
 
 #undef uhci_debug_operations
-static const struct file_operations uhci_debug_operations = {
+static struct file_operations uhci_debug_operations = {
 	.owner =	THIS_MODULE,
 	.open =		uhci_debug_open,
 	.llseek =	uhci_debug_lseek,
@@ -579,8 +515,8 @@ static const struct file_operations uhci_debug_operations = {
 static inline void lprintk(char *buf)
 {}
 
-static inline int uhci_show_qh(struct uhci_hcd *uhci,
-		struct uhci_qh *qh, char *buf, int len, int space)
+static inline int uhci_show_qh(struct uhci_qh *qh, char *buf,
+		int len, int space)
 {
 	return 0;
 }

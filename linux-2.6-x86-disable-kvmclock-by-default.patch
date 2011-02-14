@@ -1,0 +1,49 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Wed, 19 Aug 2009 06:51:58 -0400
+Subject: [x86] disable kvmclock by default
+Message-id: 1250679118-5730-1-git-send-email-glommer@redhat.com
+O-Subject: [PATCH] RHEL5 BZ476075 Disable kvmclock by default
+Bugzilla: 476075
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+This is a follow up from the last kvmclock series. Testing revealed
+the kernel was crashing in baremetal. Don, I am sending this a separate
+patch to ease acking. Please tell me if there is any other preferred
+method.
+
+This new patch got testing from me, jburke and clalance, and seem to be
+working alright.
+
+Changelog:
+Differently from upstream, we use a use_kvm_time variable to control
+whether or not kvmclock is enabled.
+
+But if kvm is not enabled, we never get a chance to disable. So default
+it to zero, instead of one, to prevent failure on baremetal.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/kvmclock.c b/arch/i386/kernel/kvmclock.c
+index 6edd2e2..0b8f5e8 100644
+--- a/arch/i386/kernel/kvmclock.c
++++ b/arch/i386/kernel/kvmclock.c
+@@ -30,7 +30,7 @@
+ 
+ static int kvmclock = 1;
+ 
+-unsigned int use_kvm_time = 1; /* RHEL specific */
++unsigned int use_kvm_time = 0; /* RHEL specific */
+ 
+ static int parse_no_kvmclock(char *arg)
+ {
+@@ -119,6 +119,7 @@ void __init kvmclock_init(void)
+ 		return;
+ 
+ 	if (kvmclock && kvm_para_has_feature(KVM_FEATURE_CLOCKSOURCE)) {
++		use_kvm_time = 1;
+ 		if (kvm_register_clock("boot clock")) {
+ 			use_kvm_time = 0;
+ 			return;

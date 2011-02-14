@@ -1,0 +1,5686 @@
+Date: Tue, 19 Sep 2006 19:43:44 +0200
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [FC6/RHEL5 BZ179612] IPv6: Multiple Routing Tables & Policy Routing
+
+Hello
+
+The original feature request in this bugzilla was to implement multiple
+routing tables and policy routing support for IPv6. A new generic
+interface for fib rules has been created for this purpose which enabled
+to easly add protocol independant features. In the process of fixing up
+IPv6 routing, the existing subtree code has been fixed as well.
+
+I've come to the conclusion that its best to stick to upstream as close
+as possible and backport more than essentialy needed to fullfil the
+bugzilla but have a state which is known to be working and properly
+tested. Therefore this patch also includes the subtree work, the patches
+to support more than 256 routing tables, and routing by fwmark. It
+results in a fairly big patch but comes with the advantage that none of
+the upstream patches had to be modified and we can rely on the testing
+results of the USAGI project.
+
+The following patches have been included:
+
+[IPV6]: Remove ndiscs rt6_lock dependency
+[IPV6]: Multiple Routing Tables
+[NET]: Protocol Independant Policy Routing Rules Framework
+[IPV6]: Policy Routing Rules
+[IPV4]: Use Protocol Independant Policy Routing Rules Framework
+[IPV6]: Fix crash in ip6_del_rt
+[IPV6]: Fix policy routing lookup
+[IPV6]: Protect RTM_GETRULE table entry with IPV6_MULTIPLE_TABLES ifdef
+[IPV4]: Kill fib4_rules_clean().
+[IPV6]: Make sure fib6_rule_lookup doesn't return NULL
+[DECNET]: Covert rules to use generic code
+[NET]: Use u32 for routing table IDs
+[IPV6]: Fix thinko in rt6_fill_node
+[NET]: Introduce RTA_TABLE/FRA_TABLE attributes
+[IPV4]: Increase number of possible routing tables to 2^32
+[IPV6]: Increase number of possible routing tables to 2^32
+[DECNET]: Increase number of possible routing tables to 2^32
+[NET]: Increate RT_TABLE_MAX to 2^32
+[DECNET] Fix to multiple tables routing
+[DECNET] Fix to decnet rules compare function
+[IPV6] NDISC: Take source address into account for redirects.
+[IPV6] NDISC: Search over all possible rules on receipt of redirect.
+[IPV6] NDISC: Initialize fl with outbound interface to lookup
+              rules properly.
+[IPV6] ROUTE: Introduce a helper to check route validity.
+[IPV6]: Cache source address as well in ipv6_pinfo{}.
+[IPV6] ROUTE: Make sure we have fn->leaf when adding a node on subtree.
+[IPV6] ROUTE: Prune clones from main tree as well.
+[IPV6] ROUTE: Fix looking up a route on subtree.
+[IPV6] ROUTE: Make sure we do not exceed args in fib6_lookup_1().
+[IPV6] ROUTE: Allow searching subtree only.
+[IPV6] ROUTE: Put SUBTREE() as FIB6_SUBTREE() into ip6_fib.h for future
+              use.
+[IPV6] ROUTE: Search subtree when backtracking.
+[IPV6] ROUTE: Purge clones on other trees when deleting a route.
+[IPV6] NDISC: Search subtrees when backtracking on receipt of redirects.
+[IPV6] KCONFIG: Add subtrees support.
+[IPV6] ROUTE: Unify RT6_F_xxx and RT6_SELECT_F_xxx flags
+[IPV6] ROUTE: Routing by Traffic Class.
+[IPV6] ROUTE: Routing by FWMARK.
+[IPV6] ROUTE: Fix FWMARK support.
+[IPV6] ROUTE: Fix size of fib6_rule_policy.
+[IPV6]: Fix build with fwmark disabled.
+[IPV6] ROUTE: Add support for fwmask in routing rules.
+[IPV4]: Add support for fwmark masks in routing rules.
+[DECNET]: Add support for fwmark masks in routing rules.
+[IPV6]: Fix routing by fwmark
+[IPV6] ROUTE: Fix dst reference counting in ip6_pol_route_lookup().
+
+Index: linux-2.6.17.noarch/net/ipv6/route.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/route.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/route.c	2006-09-19 19:02:50.000000000 +0200
+@@ -74,9 +74,6 @@
+ 
+ #define CLONE_OFFLINK_ROUTE 0
+ 
+-#define RT6_SELECT_F_IFACE	0x1
+-#define RT6_SELECT_F_REACHABLE	0x2
+-
+ static int ip6_rt_max_size = 4096;
+ static int ip6_rt_gc_min_interval = HZ / 2;
+ static int ip6_rt_gc_timeout = 60*HZ;
+@@ -140,15 +137,49 @@
+ 	.rt6i_ref	= ATOMIC_INIT(1),
+ };
+ 
+-struct fib6_node ip6_routing_table = {
+-	.leaf		= &ip6_null_entry,
+-	.fn_flags	= RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO,
+-};
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
+ 
+-/* Protects all the ip6 fib */
++struct rt6_info ip6_prohibit_entry = {
++	.u = {
++		.dst = {
++			.__refcnt	= ATOMIC_INIT(1),
++			.__use		= 1,
++			.dev		= &loopback_dev,
++			.obsolete	= -1,
++			.error		= -EACCES,
++			.metrics	= { [RTAX_HOPLIMIT - 1] = 255, },
++			.input		= ip6_pkt_discard,
++			.output		= ip6_pkt_discard_out,
++			.ops		= &ip6_dst_ops,
++			.path		= (struct dst_entry*)&ip6_prohibit_entry,
++		}
++	},
++	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
++	.rt6i_metric	= ~(u32) 0,
++	.rt6i_ref	= ATOMIC_INIT(1),
++};
+ 
+-DEFINE_RWLOCK(rt6_lock);
++struct rt6_info ip6_blk_hole_entry = {
++	.u = {
++		.dst = {
++			.__refcnt	= ATOMIC_INIT(1),
++			.__use		= 1,
++			.dev		= &loopback_dev,
++			.obsolete	= -1,
++			.error		= -EINVAL,
++			.metrics	= { [RTAX_HOPLIMIT - 1] = 255, },
++			.input		= ip6_pkt_discard,
++			.output		= ip6_pkt_discard_out,
++			.ops		= &ip6_dst_ops,
++			.path		= (struct dst_entry*)&ip6_blk_hole_entry,
++		}
++	},
++	.rt6i_flags	= (RTF_REJECT | RTF_NONEXTHOP),
++	.rt6i_metric	= ~(u32) 0,
++	.rt6i_ref	= ATOMIC_INIT(1),
++};
+ 
++#endif
+ 
+ /* allocate dst with ip6_dst_ops */
+ static __inline__ struct rt6_info *ip6_dst_alloc(void)
+@@ -188,8 +219,14 @@
+ 		time_after(jiffies, rt->rt6i_expires));
+ }
+ 
++static inline int rt6_need_strict(struct in6_addr *daddr)
++{
++	return (ipv6_addr_type(daddr) &
++		(IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL));
++}
++
+ /*
+- *	Route lookup. Any rt6_lock is implied.
++ *	Route lookup. Any table->tb6_lock is implied.
+  */
+ 
+ static __inline__ struct rt6_info *rt6_device_match(struct rt6_info *rt,
+@@ -298,7 +335,7 @@
+ 	int m, n;
+ 		
+ 	m = rt6_check_dev(rt, oif);
+-	if (!m && (strict & RT6_SELECT_F_IFACE))
++	if (!m && (strict & RT6_LOOKUP_F_IFACE))
+ 		return -1;
+ #ifdef CONFIG_IPV6_ROUTER_PREF
+ 	m |= IPV6_DECODE_PREF(IPV6_EXTRACT_PREF(rt->rt6i_flags)) << 2;
+@@ -306,7 +343,7 @@
+ 	n = rt6_check_neigh(rt);
+ 	if (n > 1)
+ 		m |= 16;
+-	else if (!n && strict & RT6_SELECT_F_REACHABLE)
++	else if (!n && strict & RT6_LOOKUP_F_REACHABLE)
+ 		return -1;
+ 	return m;
+ }
+@@ -346,7 +383,7 @@
+ 	}
+ 
+ 	if (!match &&
+-	    (strict & RT6_SELECT_F_REACHABLE) &&
++	    (strict & RT6_LOOKUP_F_REACHABLE) &&
+ 	    last && last != rt0) {
+ 		/* no entries matched; do round-robin */
+ 		static DEFINE_SPINLOCK(lock);
+@@ -441,27 +478,72 @@
+ }
+ #endif
+ 
+-struct rt6_info *rt6_lookup(struct in6_addr *daddr, struct in6_addr *saddr,
+-			    int oif, int strict)
++#define BACKTRACK(saddr) \
++do { \
++	if (rt == &ip6_null_entry) { \
++		struct fib6_node *pn; \
++		while (fn) { \
++			if (fn->fn_flags & RTN_TL_ROOT) \
++				goto out; \
++			pn = fn->parent; \
++			if (FIB6_SUBTREE(pn) && FIB6_SUBTREE(pn) != fn) \
++				fn = fib6_lookup(pn->subtree, NULL, saddr); \
++			else \
++				fn = pn; \
++			if (fn->fn_flags & RTN_RTINFO) \
++				goto restart; \
++		} \
++	} \
++} while(0)
++
++static struct rt6_info *ip6_pol_route_lookup(struct fib6_table *table,
++					     struct flowi *fl, int flags)
+ {
+ 	struct fib6_node *fn;
+ 	struct rt6_info *rt;
+ 
+-	read_lock_bh(&rt6_lock);
+-	fn = fib6_lookup(&ip6_routing_table, daddr, saddr);
+-	rt = rt6_device_match(fn->leaf, oif, strict);
++	read_lock_bh(&table->tb6_lock);
++	fn = fib6_lookup(&table->tb6_root, &fl->fl6_dst, &fl->fl6_src);
++restart:
++	rt = fn->leaf;
++	rt = rt6_device_match(rt, fl->oif, flags);
++	BACKTRACK(&fl->fl6_src);
++out:
+ 	dst_hold(&rt->u.dst);
+-	rt->u.dst.__use++;
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ 
+ 	rt->u.dst.lastuse = jiffies;
+-	if (rt->u.dst.error == 0)
+-		return rt;
+-	dst_release(&rt->u.dst);
++	rt->u.dst.__use++;
++
++	return rt;
++
++}
++
++struct rt6_info *rt6_lookup(struct in6_addr *daddr, struct in6_addr *saddr,
++			    int oif, int strict)
++{
++	struct flowi fl = {
++		.oif = oif,
++		.nl_u = {
++			.ip6_u = {
++				.daddr = *daddr,
++				/* TODO: saddr */
++			},
++		},
++	};
++	struct dst_entry *dst;
++	int flags = strict ? RT6_LOOKUP_F_IFACE : 0;
++
++	dst = fib6_rule_lookup(&fl, flags, ip6_pol_route_lookup);
++	if (dst->error == 0)
++		return (struct rt6_info *) dst;
++
++	dst_release(dst);
++
+ 	return NULL;
+ }
+ 
+-/* ip6_ins_rt is called with FREE rt6_lock.
++/* ip6_ins_rt is called with FREE table->tb6_lock.
+    It takes new route entry, the addition fails by any reason the
+    route is freed. In any case, if caller does not hold it, it may
+    be destroyed.
+@@ -471,10 +553,12 @@
+ 		void *_rtattr, struct netlink_skb_parms *req)
+ {
+ 	int err;
++	struct fib6_table *table;
+ 
+-	write_lock_bh(&rt6_lock);
+-	err = fib6_add(&ip6_routing_table, rt, nlh, _rtattr, req);
+-	write_unlock_bh(&rt6_lock);
++	table = rt->rt6i_table;
++	write_lock_bh(&table->tb6_lock);
++	err = fib6_add(&table->tb6_root, rt, nlh, _rtattr, req);
++	write_unlock_bh(&table->tb6_lock);
+ 
+ 	return err;
+ }
+@@ -532,51 +616,39 @@
+ 	return rt;
+ }
+ 
+-#define BACKTRACK() \
+-if (rt == &ip6_null_entry) { \
+-       while ((fn = fn->parent) != NULL) { \
+-		if (fn->fn_flags & RTN_ROOT) { \
+-			goto out; \
+-		} \
+-		if (fn->fn_flags & RTN_RTINFO) \
+-			goto restart; \
+-	} \
+-}
+-
+-
+-void ip6_route_input(struct sk_buff *skb)
++struct rt6_info *ip6_pol_route_input(struct fib6_table *table, struct flowi *fl,
++				     int flags)
+ {
+ 	struct fib6_node *fn;
+ 	struct rt6_info *rt, *nrt;
+-	int strict;
++	int strict = 0;
+ 	int attempts = 3;
+ 	int err;
+-	int reachable = RT6_SELECT_F_REACHABLE;
++	int reachable = RT6_LOOKUP_F_REACHABLE;
+ 
+-	strict = ipv6_addr_type(&skb->nh.ipv6h->daddr) & (IPV6_ADDR_MULTICAST|IPV6_ADDR_LINKLOCAL) ? RT6_SELECT_F_IFACE : 0;
++	strict |= flags & RT6_LOOKUP_F_IFACE;
+ 
+ relookup:
+-	read_lock_bh(&rt6_lock);
++	read_lock_bh(&table->tb6_lock);
+ 
+ restart_2:
+-	fn = fib6_lookup(&ip6_routing_table, &skb->nh.ipv6h->daddr,
+-			 &skb->nh.ipv6h->saddr);
++	fn = fib6_lookup(&table->tb6_root, &fl->fl6_dst, &fl->fl6_src);
+ 
+ restart:
+-	rt = rt6_select(&fn->leaf, skb->dev->ifindex, strict | reachable);
+-	BACKTRACK();
++	rt = rt6_select(&fn->leaf, fl->iif, strict | reachable);
++	BACKTRACK(&fl->fl6_src);
+ 	if (rt == &ip6_null_entry ||
+ 	    rt->rt6i_flags & RTF_CACHE)
+ 		goto out;
+ 
+ 	dst_hold(&rt->u.dst);
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ 
+ 	if (!rt->rt6i_nexthop && !(rt->rt6i_flags & RTF_NONEXTHOP))
+-		nrt = rt6_alloc_cow(rt, &skb->nh.ipv6h->daddr, &skb->nh.ipv6h->saddr);
++		nrt = rt6_alloc_cow(rt, &fl->fl6_dst, &fl->fl6_src);
+ 	else {
+ #if CLONE_OFFLINK_ROUTE
+-		nrt = rt6_alloc_clone(rt, &skb->nh.ipv6h->daddr);
++		nrt = rt6_alloc_clone(rt, &fl->fl6_dst);
+ #else
+ 		goto out2;
+ #endif
+@@ -587,7 +659,7 @@
+ 
+ 	dst_hold(&rt->u.dst);
+ 	if (nrt) {
+-		err = ip6_ins_rt(nrt, NULL, NULL, &NETLINK_CB(skb));
++		err = ip6_ins_rt(nrt, NULL, NULL, NULL);
+ 		if (!err)
+ 			goto out2;
+ 	}
+@@ -596,7 +668,7 @@
+ 		goto out2;
+ 
+ 	/*
+-	 * Race condition! In the gap, when rt6_lock was
++	 * Race condition! In the gap, when table->tb6_lock was
+ 	 * released someone could insert this route.  Relookup.
+ 	 */
+ 	dst_release(&rt->u.dst);
+@@ -608,40 +680,63 @@
+ 		goto restart_2;
+ 	}
+ 	dst_hold(&rt->u.dst);
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ out2:
+ 	rt->u.dst.lastuse = jiffies;
+ 	rt->u.dst.__use++;
+-	skb->dst = (struct dst_entry *) rt;
+-	return;
++
++	return rt;
+ }
+ 
+-struct dst_entry * ip6_route_output(struct sock *sk, struct flowi *fl)
++void ip6_route_input(struct sk_buff *skb)
++{
++	struct ipv6hdr *iph = skb->nh.ipv6h;
++	struct flowi fl = {
++		.iif = skb->dev->ifindex,
++		.nl_u = {
++			.ip6_u = {
++				.daddr = iph->daddr,
++				.saddr = iph->saddr,
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++				.fwmark = skb->nfmark,
++#endif
++				.flowlabel = (* (u32 *) iph)&IPV6_FLOWINFO_MASK,
++			},
++		},
++		.proto = iph->nexthdr,
++	};
++	int flags = rt6_need_strict(&iph->daddr) ? RT6_LOOKUP_F_IFACE : 0;
++
++	skb->dst = fib6_rule_lookup(&fl, flags, ip6_pol_route_input);
++}
++
++static struct rt6_info *ip6_pol_route_output(struct fib6_table *table,
++					     struct flowi *fl, int flags)
+ {
+ 	struct fib6_node *fn;
+ 	struct rt6_info *rt, *nrt;
+-	int strict;
++	int strict = 0;
+ 	int attempts = 3;
+ 	int err;
+-	int reachable = RT6_SELECT_F_REACHABLE;
++	int reachable = RT6_LOOKUP_F_REACHABLE;
+ 
+-	strict = ipv6_addr_type(&fl->fl6_dst) & (IPV6_ADDR_MULTICAST|IPV6_ADDR_LINKLOCAL) ? RT6_SELECT_F_IFACE : 0;
++	strict |= flags & RT6_LOOKUP_F_IFACE;
+ 
+ relookup:
+-	read_lock_bh(&rt6_lock);
++	read_lock_bh(&table->tb6_lock);
+ 
+ restart_2:
+-	fn = fib6_lookup(&ip6_routing_table, &fl->fl6_dst, &fl->fl6_src);
++	fn = fib6_lookup(&table->tb6_root, &fl->fl6_dst, &fl->fl6_src);
+ 
+ restart:
+ 	rt = rt6_select(&fn->leaf, fl->oif, strict | reachable);
+-	BACKTRACK();
++	BACKTRACK(&fl->fl6_src);
+ 	if (rt == &ip6_null_entry ||
+ 	    rt->rt6i_flags & RTF_CACHE)
+ 		goto out;
+ 
+ 	dst_hold(&rt->u.dst);
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ 
+ 	if (!rt->rt6i_nexthop && !(rt->rt6i_flags & RTF_NONEXTHOP))
+ 		nrt = rt6_alloc_cow(rt, &fl->fl6_dst, &fl->fl6_src);
+@@ -667,7 +762,7 @@
+ 		goto out2;
+ 
+ 	/*
+-	 * Race condition! In the gap, when rt6_lock was
++	 * Race condition! In the gap, when table->tb6_lock was
+ 	 * released someone could insert this route.  Relookup.
+ 	 */
+ 	dst_release(&rt->u.dst);
+@@ -679,11 +774,21 @@
+ 		goto restart_2;
+ 	}
+ 	dst_hold(&rt->u.dst);
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ out2:
+ 	rt->u.dst.lastuse = jiffies;
+ 	rt->u.dst.__use++;
+-	return &rt->u.dst;
++	return rt;
++}
++
++struct dst_entry * ip6_route_output(struct sock *sk, struct flowi *fl)
++{
++	int flags = 0;
++
++	if (rt6_need_strict(&fl->fl6_dst))
++		flags |= RT6_LOOKUP_F_IFACE;
++
++	return fib6_rule_lookup(fl, flags, ip6_pol_route_output);
+ }
+ 
+ 
+@@ -747,8 +852,6 @@
+ 	}
+ }
+ 
+-/* Protected by rt6_lock.  */
+-static struct dst_entry *ndisc_dst_gc_list;
+ static int ipv6_get_mtu(struct net_device *dev);
+ 
+ static inline unsigned int ipv6_advmss(unsigned int mtu)
+@@ -769,6 +872,9 @@
+ 	return mtu;
+ }
+ 
++static struct dst_entry *ndisc_dst_gc_list;
++DEFINE_SPINLOCK(ndisc_lock);
++
+ struct dst_entry *ndisc_dst_alloc(struct net_device *dev, 
+ 				  struct neighbour *neigh,
+ 				  struct in6_addr *addr,
+@@ -809,10 +915,10 @@
+ 	rt->rt6i_dst.plen = 128;
+ #endif
+ 
+-	write_lock_bh(&rt6_lock);
++	spin_lock_bh(&ndisc_lock);
+ 	rt->u.dst.next = ndisc_dst_gc_list;
+ 	ndisc_dst_gc_list = &rt->u.dst;
+-	write_unlock_bh(&rt6_lock);
++	spin_unlock_bh(&ndisc_lock);
+ 
+ 	fib6_force_start_gc();
+ 
+@@ -826,8 +932,11 @@
+ 	int freed;
+ 
+ 	next = NULL;
++ 	freed = 0;
++
++	spin_lock_bh(&ndisc_lock);
+ 	pprev = &ndisc_dst_gc_list;
+-	freed = 0;
++
+ 	while ((dst = *pprev) != NULL) {
+ 		if (!atomic_read(&dst->__refcnt)) {
+ 			*pprev = dst->next;
+@@ -839,6 +948,8 @@
+ 		}
+ 	}
+ 
++	spin_unlock_bh(&ndisc_lock);
++
+ 	return freed;
+ }
+ 
+@@ -900,7 +1011,8 @@
+  */
+ 
+ int ip6_route_add(struct in6_rtmsg *rtmsg, struct nlmsghdr *nlh, 
+-		void *_rtattr, struct netlink_skb_parms *req)
++		  void *_rtattr, struct netlink_skb_parms *req,
++		  u32 table_id)
+ {
+ 	int err;
+ 	struct rtmsg *r;
+@@ -908,6 +1020,7 @@
+ 	struct rt6_info *rt = NULL;
+ 	struct net_device *dev = NULL;
+ 	struct inet6_dev *idev = NULL;
++	struct fib6_table *table;
+ 	int addr_type;
+ 
+ 	rta = (struct rtattr **) _rtattr;
+@@ -931,6 +1044,12 @@
+ 	if (rtmsg->rtmsg_metric == 0)
+ 		rtmsg->rtmsg_metric = IP6_RT_PRIO_USER;
+ 
++	table = fib6_new_table(table_id);
++	if (table == NULL) {
++		err = -ENOBUFS;
++		goto out;
++	}
++
+ 	rt = ip6_dst_alloc();
+ 
+ 	if (rt == NULL) {
+@@ -1087,6 +1206,7 @@
+ 		rt->u.dst.metrics[RTAX_ADVMSS-1] = ipv6_advmss(dst_mtu(&rt->u.dst));
+ 	rt->u.dst.dev = dev;
+ 	rt->rt6i_idev = idev;
++	rt->rt6i_table = table;
+ 	return ip6_ins_rt(rt, nlh, _rtattr, req);
+ 
+ out:
+@@ -1102,26 +1222,38 @@
+ int ip6_del_rt(struct rt6_info *rt, struct nlmsghdr *nlh, void *_rtattr, struct netlink_skb_parms *req)
+ {
+ 	int err;
++	struct fib6_table *table;
++
++	if (rt == &ip6_null_entry)
++		return -ENOENT;
+ 
+-	write_lock_bh(&rt6_lock);
++	table = rt->rt6i_table;
++	write_lock_bh(&table->tb6_lock);
+ 
+ 	err = fib6_del(rt, nlh, _rtattr, req);
+ 	dst_release(&rt->u.dst);
+ 
+-	write_unlock_bh(&rt6_lock);
++	write_unlock_bh(&table->tb6_lock);
+ 
+ 	return err;
+ }
+ 
+-static int ip6_route_del(struct in6_rtmsg *rtmsg, struct nlmsghdr *nlh, void *_rtattr, struct netlink_skb_parms *req)
++static int ip6_route_del(struct in6_rtmsg *rtmsg, struct nlmsghdr *nlh,
++			 void *_rtattr, struct netlink_skb_parms *req,
++			 u32 table_id)
+ {
++	struct fib6_table *table;
+ 	struct fib6_node *fn;
+ 	struct rt6_info *rt;
+ 	int err = -ESRCH;
+ 
+-	read_lock_bh(&rt6_lock);
++	table = fib6_get_table(table_id);
++	if (table == NULL)
++		return err;
++
++	read_lock_bh(&table->tb6_lock);
+ 
+-	fn = fib6_locate(&ip6_routing_table,
++	fn = fib6_locate(&table->tb6_root,
+ 			 &rtmsg->rtmsg_dst, rtmsg->rtmsg_dst_len,
+ 			 &rtmsg->rtmsg_src, rtmsg->rtmsg_src_len);
+ 	
+@@ -1138,12 +1270,12 @@
+ 			    rtmsg->rtmsg_metric != rt->rt6i_metric)
+ 				continue;
+ 			dst_hold(&rt->u.dst);
+-			read_unlock_bh(&rt6_lock);
++			read_unlock_bh(&table->tb6_lock);
+ 
+ 			return ip6_del_rt(rt, nlh, _rtattr, req);
+ 		}
+ 	}
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ 
+ 	return err;
+ }
+@@ -1151,13 +1283,18 @@
+ /*
+  *	Handle redirects
+  */
+-void rt6_redirect(struct in6_addr *dest, struct in6_addr *saddr,
+-		  struct neighbour *neigh, u8 *lladdr, int on_link)
++struct ip6rd_flowi {
++	struct flowi fl;
++	struct in6_addr gateway;
++};
++
++static struct rt6_info *__ip6_route_redirect(struct fib6_table *table,
++					     struct flowi *fl,
++					     int flags)
+ {
+-	struct rt6_info *rt, *nrt = NULL;
+-	int strict;
++	struct ip6rd_flowi *rdfl = (struct ip6rd_flowi *)fl;
++	struct rt6_info *rt;
+ 	struct fib6_node *fn;
+-	struct netevent_redirect netevent;
+ 
+ 	/*
+ 	 * Get the "current" route for this destination and
+@@ -1169,10 +1306,9 @@
+ 	 * is a bit fuzzy and one might need to check all possible
+ 	 * routes.
+ 	 */
+-	strict = ipv6_addr_type(dest) & (IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL);
+ 
+-	read_lock_bh(&rt6_lock);
+-	fn = fib6_lookup(&ip6_routing_table, dest, NULL);
++	read_lock_bh(&table->tb6_lock);
++	fn = fib6_lookup(&table->tb6_root, &fl->fl6_dst, &fl->fl6_src);
+ restart:
+ 	for (rt = fn->leaf; rt; rt = rt->u.next) {
+ 		/*
+@@ -1187,29 +1323,60 @@
+ 			continue;
+ 		if (!(rt->rt6i_flags & RTF_GATEWAY))
+ 			continue;
+-		if (neigh->dev != rt->rt6i_dev)
++		if (fl->oif != rt->rt6i_dev->ifindex)
+ 			continue;
+-		if (!ipv6_addr_equal(saddr, &rt->rt6i_gateway))
++		if (!ipv6_addr_equal(&rdfl->gateway, &rt->rt6i_gateway))
+ 			continue;
+ 		break;
+ 	}
+-	if (rt)
+-		dst_hold(&rt->u.dst);
+-	else if (strict) {
+-		while ((fn = fn->parent) != NULL) {
+-			if (fn->fn_flags & RTN_ROOT)
+-				break;
+-			if (fn->fn_flags & RTN_RTINFO)
+-				goto restart;
+-		}
+-	}
+-	read_unlock_bh(&rt6_lock);
+ 
+-	if (!rt) {
++	if (!rt)
++		rt = &ip6_null_entry;
++	BACKTRACK(&fl->fl6_src);
++out:
++	dst_hold(&rt->u.dst);
++
++	read_unlock_bh(&table->tb6_lock);
++
++	return rt;
++};
++
++static struct rt6_info *ip6_route_redirect(struct in6_addr *dest,
++					   struct in6_addr *src,
++					   struct in6_addr *gateway,
++					   struct net_device *dev)
++{
++	struct ip6rd_flowi rdfl = {
++		.fl = {
++			.oif = dev->ifindex,
++			.nl_u = {
++				.ip6_u = {
++					.daddr = *dest,
++					.saddr = *src,
++				},
++			},
++		},
++		.gateway = *gateway,
++	};
++	int flags = rt6_need_strict(dest) ? RT6_LOOKUP_F_IFACE : 0;
++
++	return (struct rt6_info *)fib6_rule_lookup((struct flowi *)&rdfl, flags, __ip6_route_redirect);
++}
++
++void rt6_redirect(struct in6_addr *dest, struct in6_addr *src,
++		  struct in6_addr *saddr,
++		  struct neighbour *neigh, u8 *lladdr, int on_link)
++{
++	struct rt6_info *rt, *nrt = NULL;
++	struct netevent_redirect netevent;
++
++	rt = ip6_route_redirect(dest, src, saddr, neigh->dev);
++
++	if (rt == &ip6_null_entry) {
+ 		if (net_ratelimit())
+ 			printk(KERN_DEBUG "rt6_redirect: source isn't a valid nexthop "
+ 			       "for redirect target\n");
+-		return;
++		goto out;
+ 	}
+ 
+ 	/*
+@@ -1378,6 +1545,7 @@
+ #ifdef CONFIG_IPV6_SUBTREES
+ 		memcpy(&rt->rt6i_src, &ort->rt6i_src, sizeof(struct rt6key));
+ #endif
++		rt->rt6i_table = ort->rt6i_table;
+ 	}
+ 	return rt;
+ }
+@@ -1388,9 +1556,14 @@
+ {
+ 	struct fib6_node *fn;
+ 	struct rt6_info *rt = NULL;
++	struct fib6_table *table;
+ 
+-	write_lock_bh(&rt6_lock);
+-	fn = fib6_locate(&ip6_routing_table, prefix ,prefixlen, NULL, 0);
++	table = fib6_get_table(RT6_TABLE_INFO);
++	if (table == NULL)
++		return NULL;
++
++	write_lock_bh(&table->tb6_lock);
++	fn = fib6_locate(&table->tb6_root, prefix ,prefixlen, NULL, 0);
+ 	if (!fn)
+ 		goto out;
+ 
+@@ -1405,7 +1578,7 @@
+ 		break;
+ 	}
+ out:
+-	write_unlock_bh(&rt6_lock);
++	write_unlock_bh(&table->tb6_lock);
+ 	return rt;
+ }
+ 
+@@ -1427,7 +1600,7 @@
+ 		rtmsg.rtmsg_flags |= RTF_DEFAULT;
+ 	rtmsg.rtmsg_ifindex = ifindex;
+ 
+-	ip6_route_add(&rtmsg, NULL, NULL, NULL);
++	ip6_route_add(&rtmsg, NULL, NULL, NULL, RT6_TABLE_INFO);
+ 
+ 	return rt6_get_route_info(prefix, prefixlen, gwaddr, ifindex);
+ }
+@@ -1436,12 +1609,14 @@
+ struct rt6_info *rt6_get_dflt_router(struct in6_addr *addr, struct net_device *dev)
+ {	
+ 	struct rt6_info *rt;
+-	struct fib6_node *fn;
++	struct fib6_table *table;
+ 
+-	fn = &ip6_routing_table;
++	table = fib6_get_table(RT6_TABLE_DFLT);
++	if (table == NULL)
++		return NULL;
+ 
+-	write_lock_bh(&rt6_lock);
+-	for (rt = fn->leaf; rt; rt=rt->u.next) {
++	write_lock_bh(&table->tb6_lock);
++	for (rt = table->tb6_root.leaf; rt; rt=rt->u.next) {
+ 		if (dev == rt->rt6i_dev &&
+ 		    ((rt->rt6i_flags & (RTF_ADDRCONF | RTF_DEFAULT)) == (RTF_ADDRCONF | RTF_DEFAULT)) &&
+ 		    ipv6_addr_equal(&rt->rt6i_gateway, addr))
+@@ -1449,7 +1624,7 @@
+ 	}
+ 	if (rt)
+ 		dst_hold(&rt->u.dst);
+-	write_unlock_bh(&rt6_lock);
++	write_unlock_bh(&table->tb6_lock);
+ 	return rt;
+ }
+ 
+@@ -1468,28 +1643,31 @@
+ 
+ 	rtmsg.rtmsg_ifindex = dev->ifindex;
+ 
+-	ip6_route_add(&rtmsg, NULL, NULL, NULL);
++	ip6_route_add(&rtmsg, NULL, NULL, NULL, RT6_TABLE_DFLT);
+ 	return rt6_get_dflt_router(gwaddr, dev);
+ }
+ 
+ void rt6_purge_dflt_routers(void)
+ {
+ 	struct rt6_info *rt;
++	struct fib6_table *table;
++
++	/* NOTE: Keep consistent with rt6_get_dflt_router */
++	table = fib6_get_table(RT6_TABLE_DFLT);
++	if (table == NULL)
++		return;
+ 
+ restart:
+-	read_lock_bh(&rt6_lock);
+-	for (rt = ip6_routing_table.leaf; rt; rt = rt->u.next) {
++	read_lock_bh(&table->tb6_lock);
++	for (rt = table->tb6_root.leaf; rt; rt = rt->u.next) {
+ 		if (rt->rt6i_flags & (RTF_DEFAULT | RTF_ADDRCONF)) {
+ 			dst_hold(&rt->u.dst);
+-
+-			read_unlock_bh(&rt6_lock);
+-
++			read_unlock_bh(&table->tb6_lock);
+ 			ip6_del_rt(rt, NULL, NULL, NULL);
+-
+ 			goto restart;
+ 		}
+ 	}
+-	read_unlock_bh(&rt6_lock);
++	read_unlock_bh(&table->tb6_lock);
+ }
+ 
+ int ipv6_route_ioctl(unsigned int cmd, void __user *arg)
+@@ -1510,10 +1688,12 @@
+ 		rtnl_lock();
+ 		switch (cmd) {
+ 		case SIOCADDRT:
+-			err = ip6_route_add(&rtmsg, NULL, NULL, NULL);
++			err = ip6_route_add(&rtmsg, NULL, NULL, NULL,
++					    RT6_TABLE_MAIN);
+ 			break;
+ 		case SIOCDELRT:
+-			err = ip6_route_del(&rtmsg, NULL, NULL, NULL);
++			err = ip6_route_del(&rtmsg, NULL, NULL, NULL,
++					    RT6_TABLE_MAIN);
+ 			break;
+ 		default:
+ 			err = -EINVAL;
+@@ -1587,6 +1767,7 @@
+ 
+ 	ipv6_addr_copy(&rt->rt6i_dst.addr, addr);
+ 	rt->rt6i_dst.plen = 128;
++	rt->rt6i_table = fib6_get_table(RT6_TABLE_LOCAL);
+ 
+ 	atomic_set(&rt->u.dst.__refcnt, 1);
+ 
+@@ -1605,9 +1786,7 @@
+ 
+ void rt6_ifdown(struct net_device *dev)
+ {
+-	write_lock_bh(&rt6_lock);
+-	fib6_clean_tree(&ip6_routing_table, fib6_ifdown, 0, dev);
+-	write_unlock_bh(&rt6_lock);
++	fib6_clean_all(fib6_ifdown, 0, dev);
+ }
+ 
+ struct rt6_mtu_change_arg
+@@ -1657,13 +1836,12 @@
+ 
+ void rt6_mtu_change(struct net_device *dev, unsigned mtu)
+ {
+-	struct rt6_mtu_change_arg arg;
++	struct rt6_mtu_change_arg arg = {
++		.dev = dev,
++		.mtu = mtu,
++	};
+ 
+-	arg.dev = dev;
+-	arg.mtu = mtu;
+-	read_lock_bh(&rt6_lock);
+-	fib6_clean_tree(&ip6_routing_table, rt6_mtu_change_route, 0, &arg);
+-	read_unlock_bh(&rt6_lock);
++	fib6_clean_all(rt6_mtu_change_route, 0, &arg);
+ }
+ 
+ static int inet6_rtm_to_rtmsg(struct rtmsg *r, struct rtattr **rta,
+@@ -1713,7 +1891,8 @@
+ 
+ 	if (inet6_rtm_to_rtmsg(r, arg, &rtmsg))
+ 		return -EINVAL;
+-	return ip6_route_del(&rtmsg, nlh, arg, &NETLINK_CB(skb));
++	return ip6_route_del(&rtmsg, nlh, arg, &NETLINK_CB(skb),
++			     rtm_get_table(arg, r->rtm_table));
+ }
+ 
+ int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
+@@ -1723,15 +1902,10 @@
+ 
+ 	if (inet6_rtm_to_rtmsg(r, arg, &rtmsg))
+ 		return -EINVAL;
+-	return ip6_route_add(&rtmsg, nlh, arg, &NETLINK_CB(skb));
++	return ip6_route_add(&rtmsg, nlh, arg, &NETLINK_CB(skb),
++			     rtm_get_table(arg, r->rtm_table));
+ }
+ 
+-struct rt6_rtnl_dump_arg
+-{
+-	struct sk_buff *skb;
+-	struct netlink_callback *cb;
+-};
+-
+ static int rt6_fill_node(struct sk_buff *skb, struct rt6_info *rt,
+ 			 struct in6_addr *dst, struct in6_addr *src,
+ 			 int iif, int type, u32 pid, u32 seq,
+@@ -1741,6 +1915,7 @@
+ 	struct nlmsghdr  *nlh;
+ 	unsigned char	 *b = skb->tail;
+ 	struct rta_cacheinfo ci;
++	u32 table;
+ 
+ 	if (prefix) {	/* user wants prefix routes only */
+ 		if (!(rt->rt6i_flags & RTF_PREFIX_RT)) {
+@@ -1755,7 +1930,12 @@
+ 	rtm->rtm_dst_len = rt->rt6i_dst.plen;
+ 	rtm->rtm_src_len = rt->rt6i_src.plen;
+ 	rtm->rtm_tos = 0;
+-	rtm->rtm_table = RT_TABLE_MAIN;
++	if (rt->rt6i_table)
++		table = rt->rt6i_table->tb6_id;
++	else
++		table = RT6_TABLE_UNSPEC;
++	rtm->rtm_table = table;
++	RTA_PUT_U32(skb, RTA_TABLE, table);
+ 	if (rt->rt6i_flags&RTF_REJECT)
+ 		rtm->rtm_type = RTN_UNREACHABLE;
+ 	else if (rt->rt6i_dev && (rt->rt6i_dev->flags&IFF_LOOPBACK))
+@@ -1822,7 +2002,7 @@
+ 	return -1;
+ }
+ 
+-static int rt6_dump_route(struct rt6_info *rt, void *p_arg)
++int rt6_dump_route(struct rt6_info *rt, void *p_arg)
+ {
+ 	struct rt6_rtnl_dump_arg *arg = (struct rt6_rtnl_dump_arg *) p_arg;
+ 	int prefix;
+@@ -1838,96 +2018,6 @@
+ 		     prefix, NLM_F_MULTI);
+ }
+ 
+-static int fib6_dump_node(struct fib6_walker_t *w)
+-{
+-	int res;
+-	struct rt6_info *rt;
+-
+-	for (rt = w->leaf; rt; rt = rt->u.next) {
+-		res = rt6_dump_route(rt, w->args);
+-		if (res < 0) {
+-			/* Frame is full, suspend walking */
+-			w->leaf = rt;
+-			return 1;
+-		}
+-		BUG_TRAP(res!=0);
+-	}
+-	w->leaf = NULL;
+-	return 0;
+-}
+-
+-static void fib6_dump_end(struct netlink_callback *cb)
+-{
+-	struct fib6_walker_t *w = (void*)cb->args[0];
+-
+-	if (w) {
+-		cb->args[0] = 0;
+-		fib6_walker_unlink(w);
+-		kfree(w);
+-	}
+-	cb->done = (void*)cb->args[1];
+-	cb->args[1] = 0;
+-}
+-
+-static int fib6_dump_done(struct netlink_callback *cb)
+-{
+-	fib6_dump_end(cb);
+-	return cb->done ? cb->done(cb) : 0;
+-}
+-
+-int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+-{
+-	struct rt6_rtnl_dump_arg arg;
+-	struct fib6_walker_t *w;
+-	int res;
+-
+-	arg.skb = skb;
+-	arg.cb = cb;
+-
+-	w = (void*)cb->args[0];
+-	if (w == NULL) {
+-		/* New dump:
+-		 * 
+-		 * 1. hook callback destructor.
+-		 */
+-		cb->args[1] = (long)cb->done;
+-		cb->done = fib6_dump_done;
+-
+-		/*
+-		 * 2. allocate and initialize walker.
+-		 */
+-		w = kzalloc(sizeof(*w), GFP_ATOMIC);
+-		if (w == NULL)
+-			return -ENOMEM;
+-		RT6_TRACE("dump<%p", w);
+-		w->root = &ip6_routing_table;
+-		w->func = fib6_dump_node;
+-		w->args = &arg;
+-		cb->args[0] = (long)w;
+-		read_lock_bh(&rt6_lock);
+-		res = fib6_walk(w);
+-		read_unlock_bh(&rt6_lock);
+-	} else {
+-		w->args = &arg;
+-		read_lock_bh(&rt6_lock);
+-		res = fib6_walk_continue(w);
+-		read_unlock_bh(&rt6_lock);
+-	}
+-#if RT6_DEBUG >= 3
+-	if (res <= 0 && skb->len == 0)
+-		RT6_TRACE("%p>dump end\n", w);
+-#endif
+-	res = res < 0 ? res : skb->len;
+-	/* res < 0 is an error. (really, impossible)
+-	   res == 0 means that dump is complete, but skb still can contain data.
+-	   res > 0 dump is not complete, but frame is full.
+-	 */
+-	/* Destroy walker, if dump of this table is complete. */
+-	if (res <= 0)
+-		fib6_dump_end(cb);
+-	return res;
+-}
+-
+ int inet6_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr* nlh, void *arg)
+ {
+ 	struct rtattr **rta = arg;
+@@ -2096,16 +2186,13 @@
+ 
+ static int rt6_proc_info(char *buffer, char **start, off_t offset, int length)
+ {
+-	struct rt6_proc_arg arg;
+-	arg.buffer = buffer;
+-	arg.offset = offset;
+-	arg.length = length;
+-	arg.skip = 0;
+-	arg.len = 0;
+-
+-	read_lock_bh(&rt6_lock);
+-	fib6_clean_tree(&ip6_routing_table, rt6_info_route, 0, &arg);
+-	read_unlock_bh(&rt6_lock);
++	struct rt6_proc_arg arg = {
++		.buffer = buffer,
++		.offset = offset,
++		.length = length,
++	};
++
++	fib6_clean_all(rt6_info_route, 0, &arg);
+ 
+ 	*start = buffer;
+ 	if (offset)
+@@ -2278,10 +2365,16 @@
+ #ifdef CONFIG_XFRM
+ 	xfrm6_init();
+ #endif
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++	fib6_rules_init();
++#endif
+ }
+ 
+ void ip6_route_cleanup(void)
+ {
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++	fib6_rules_cleanup();
++#endif
+ #ifdef CONFIG_PROC_FS
+ 	proc_net_remove("ipv6_route");
+ 	proc_net_remove("rt6_stats");
+Index: linux-2.6.17.noarch/include/net/ip6_fib.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/net/ip6_fib.h	2006-09-19 14:32:04.000000000 +0200
++++ linux-2.6.17.noarch/include/net/ip6_fib.h	2006-09-19 19:01:07.000000000 +0200
+@@ -39,6 +39,11 @@
+ 	__u32			fn_sernum;
+ };
+ 
++#ifndef CONFIG_IPV6_SUBTREES
++#define FIB6_SUBTREE(fn)	NULL
++#else
++#define FIB6_SUBTREE(fn)	((fn)->subtree)
++#endif
+ 
+ /*
+  *	routing information
+@@ -51,6 +56,8 @@
+ 	int		plen;
+ };
+ 
++struct fib6_table;
++
+ struct rt6_info
+ {
+ 	union {
+@@ -71,6 +78,7 @@
+ 	u32				rt6i_flags;
+ 	u32				rt6i_metric;
+ 	atomic_t			rt6i_ref;
++	struct fib6_table		*rt6i_table;
+ 
+ 	struct rt6key			rt6i_dst;
+ 	struct rt6key			rt6i_src;
+@@ -143,12 +151,41 @@
+ 
+ typedef void			(*f_pnode)(struct fib6_node *fn, void *);
+ 
+-extern struct fib6_node		ip6_routing_table;
++struct fib6_table {
++	struct hlist_node	tb6_hlist;
++	u32			tb6_id;
++	rwlock_t		tb6_lock;
++	struct fib6_node	tb6_root;
++};
++
++#define RT6_TABLE_UNSPEC	RT_TABLE_UNSPEC
++#define RT6_TABLE_MAIN		RT_TABLE_MAIN
++#define RT6_TABLE_DFLT		RT6_TABLE_MAIN
++#define RT6_TABLE_INFO		RT6_TABLE_MAIN
++#define RT6_TABLE_PREFIX	RT6_TABLE_MAIN
++
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++#define FIB6_TABLE_MIN		1
++#define FIB6_TABLE_MAX		RT_TABLE_MAX
++#define RT6_TABLE_LOCAL		RT_TABLE_LOCAL
++#else
++#define FIB6_TABLE_MIN		RT_TABLE_MAIN
++#define FIB6_TABLE_MAX		FIB6_TABLE_MIN
++#define RT6_TABLE_LOCAL		RT6_TABLE_MAIN
++#endif
++
++typedef struct rt6_info *(*pol_lookup_t)(struct fib6_table *,
++					 struct flowi *, int);
+ 
+ /*
+  *	exported functions
+  */
+ 
++extern struct fib6_table *	fib6_get_table(u32 id);
++extern struct fib6_table *	fib6_new_table(u32 id);
++extern struct dst_entry *	fib6_rule_lookup(struct flowi *fl, int flags,
++						 pol_lookup_t lookup);
++
+ extern struct fib6_node		*fib6_lookup(struct fib6_node *root,
+ 					     struct in6_addr *daddr,
+ 					     struct in6_addr *saddr);
+@@ -161,6 +198,9 @@
+ 						int (*func)(struct rt6_info *, void *arg),
+ 						int prune, void *arg);
+ 
++extern void			fib6_clean_all(int (*func)(struct rt6_info *, void *arg),
++					       int prune, void *arg);
++
+ extern int			fib6_walk(struct fib6_walker_t *w);
+ extern int			fib6_walk_continue(struct fib6_walker_t *w);
+ 
+@@ -184,5 +224,11 @@
+ extern void			fib6_gc_cleanup(void);
+ 
+ extern void			fib6_init(void);
++
++extern void			fib6_rules_init(void);
++extern void			fib6_rules_cleanup(void);
++extern int			fib6_rules_dump(struct sk_buff *,
++						struct netlink_callback *);
++
+ #endif
+ #endif
+Index: linux-2.6.17.noarch/include/net/ip6_route.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/net/ip6_route.h	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/include/net/ip6_route.h	2006-09-19 19:01:07.000000000 +0200
+@@ -32,6 +32,10 @@
+ #include <linux/ip.h>
+ #include <linux/ipv6.h>
+ 
++#define RT6_LOOKUP_F_IFACE	0x1
++#define RT6_LOOKUP_F_REACHABLE	0x2
++#define RT6_LOOKUP_F_HAS_SADDR	0x4
++
+ struct pol_chain {
+ 	int			type;
+ 	int			priority;
+@@ -41,6 +45,11 @@
+ 
+ extern struct rt6_info	ip6_null_entry;
+ 
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++extern struct rt6_info	ip6_prohibit_entry;
++extern struct rt6_info	ip6_blk_hole_entry;
++#endif
++
+ extern int ip6_rt_gc_interval;
+ 
+ extern void			ip6_route_input(struct sk_buff *skb);
+@@ -58,7 +67,8 @@
+ extern int			ip6_route_add(struct in6_rtmsg *rtmsg,
+ 					      struct nlmsghdr *,
+ 					      void *rtattr,
+-					      struct netlink_skb_parms *req);
++					      struct netlink_skb_parms *req,
++					      u32 table_id);
+ extern int			ip6_ins_rt(struct rt6_info *,
+ 					   struct nlmsghdr *,
+ 					   void *rtattr,
+@@ -114,6 +124,7 @@
+ 					      struct in6_addr *gwaddr);
+ 
+ extern void			rt6_redirect(struct in6_addr *dest,
++					     struct in6_addr *src,
+ 					     struct in6_addr *saddr,
+ 					     struct neighbour *neigh,
+ 					     u8 *lladdr,
+@@ -131,6 +142,13 @@
+ extern int inet6_rtm_delroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg);
+ extern int inet6_rtm_getroute(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg);
+ 
++struct rt6_rtnl_dump_arg
++{
++	struct sk_buff *skb;
++	struct netlink_callback *cb;
++};
++
++extern int rt6_dump_route(struct rt6_info *rt, void *p_arg);
+ extern void rt6_ifdown(struct net_device *dev);
+ extern void rt6_mtu_change(struct net_device *dev, unsigned mtu);
+ 
+@@ -140,21 +158,24 @@
+  *	Store a destination cache entry in a socket
+  */
+ static inline void __ip6_dst_store(struct sock *sk, struct dst_entry *dst,
+-				   struct in6_addr *daddr)
++				   struct in6_addr *daddr, struct in6_addr *saddr)
+ {
+ 	struct ipv6_pinfo *np = inet6_sk(sk);
+ 	struct rt6_info *rt = (struct rt6_info *) dst;
+ 
+ 	sk_setup_caps(sk, dst);
+ 	np->daddr_cache = daddr;
++#ifdef CONFIG_IPV6_SUBTREES
++	np->saddr_cache = saddr;
++#endif
+ 	np->dst_cookie = rt->rt6i_node ? rt->rt6i_node->fn_sernum : 0;
+ }
+ 
+ static inline void ip6_dst_store(struct sock *sk, struct dst_entry *dst,
+-				 struct in6_addr *daddr)
++				 struct in6_addr *daddr, struct in6_addr *saddr)
+ {
+ 	write_lock(&sk->sk_dst_lock);
+-	__ip6_dst_store(sk, dst, daddr);
++	__ip6_dst_store(sk, dst, daddr, saddr);
+ 	write_unlock(&sk->sk_dst_lock);
+ }
+ 
+Index: linux-2.6.17.noarch/net/ipv6/Kconfig
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/Kconfig	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/Kconfig	2006-09-19 19:02:02.000000000 +0200
+@@ -135,3 +135,31 @@
+ 
+ 	  If unsure, say N.
+ 
++config IPV6_SUBTREES
++	bool "IPv6: source address based routing"
++	depends on IPV6 && EXPERIMENTAL
++	---help---
++	  Enable routing by source address or prefix.
++
++	  The destination address is still the primary routing key, so mixing
++	  normal and source prefix specific routes in the same routing table
++	  may sometimes lead to unintended routing behavior.  This can be
++	  avoided by defining different routing tables for the normal and
++	  source prefix specific routes.
++
++	  If unsure, say N.
++
++config IPV6_MULTIPLE_TABLES
++	bool "IPv6: Multiple Routing Tables"
++	depends on IPV6 && EXPERIMENTAL
++	select FIB_RULES
++	---help---
++	  Support multiple routing tables.
++
++config IPV6_ROUTE_FWMARK
++	bool "IPv6: use netfilter MARK value as routing key"
++	depends on IPV6_MULTIPLE_TABLES && NETFILTER
++	---help---
++	  If you say Y here, you will be able to specify different routes for
++	  packets with different mark values (see iptables(8), MARK target).
++
+Index: linux-2.6.17.noarch/net/ipv6/addrconf.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/addrconf.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/addrconf.c	2006-09-19 14:31:55.000000000 +0200
+@@ -1525,7 +1525,7 @@
+ 	if (dev->type == ARPHRD_SIT && (dev->flags&IFF_POINTOPOINT))
+ 		rtmsg.rtmsg_flags |= RTF_NONEXTHOP;
+ 
+-	ip6_route_add(&rtmsg, NULL, NULL, NULL);
++	ip6_route_add(&rtmsg, NULL, NULL, NULL, RT6_TABLE_PREFIX);
+ }
+ 
+ /* Create "default" multicast route to the interface */
+@@ -1542,7 +1542,7 @@
+ 	rtmsg.rtmsg_ifindex = dev->ifindex;
+ 	rtmsg.rtmsg_flags = RTF_UP;
+ 	rtmsg.rtmsg_type = RTMSG_NEWROUTE;
+-	ip6_route_add(&rtmsg, NULL, NULL, NULL);
++	ip6_route_add(&rtmsg, NULL, NULL, NULL, RT6_TABLE_LOCAL);
+ }
+ 
+ static void sit_route_add(struct net_device *dev)
+@@ -1559,7 +1559,7 @@
+ 	rtmsg.rtmsg_flags	= RTF_UP|RTF_NONEXTHOP;
+ 	rtmsg.rtmsg_ifindex	= dev->ifindex;
+ 
+-	ip6_route_add(&rtmsg, NULL, NULL, NULL);
++	ip6_route_add(&rtmsg, NULL, NULL, NULL, RT6_TABLE_MAIN);
+ }
+ 
+ static void addrconf_add_lroute(struct net_device *dev)
+@@ -3530,6 +3530,9 @@
+ 	[RTM_DELROUTE - RTM_BASE] = { .doit	= inet6_rtm_delroute, },
+ 	[RTM_GETROUTE - RTM_BASE] = { .doit	= inet6_rtm_getroute,
+ 				      .dumpit	= inet6_dump_fib, },
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++	[RTM_GETRULE  - RTM_BASE] = { .dumpit   = fib6_rules_dump,   },
++#endif
+ };
+ 
+ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
+Index: linux-2.6.17.noarch/net/ipv6/ip6_fib.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/ip6_fib.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/ip6_fib.c	2006-09-19 18:59:31.000000000 +0200
+@@ -26,6 +26,7 @@
+ #include <linux/netdevice.h>
+ #include <linux/in6.h>
+ #include <linux/init.h>
++#include <linux/list.h>
+ 
+ #ifdef 	CONFIG_PROC_FS
+ #include <linux/proc_fs.h>
+@@ -73,13 +74,12 @@
+ 
+ #ifdef CONFIG_IPV6_SUBTREES
+ #define FWS_INIT FWS_S
+-#define SUBTREE(fn) ((fn)->subtree)
+ #else
+ #define FWS_INIT FWS_L
+-#define SUBTREE(fn) NULL
+ #endif
+ 
+ static void fib6_prune_clones(struct fib6_node *fn, struct rt6_info *rt);
++static struct rt6_info * fib6_find_prefix(struct fib6_node *fn);
+ static struct fib6_node * fib6_repair_tree(struct fib6_node *fn);
+ 
+ /*
+@@ -147,6 +147,253 @@
+ 		dst_free(&rt->u.dst);
+ }
+ 
++static struct fib6_table fib6_main_tbl = {
++	.tb6_id		= RT6_TABLE_MAIN,
++	.tb6_lock	= RW_LOCK_UNLOCKED,
++	.tb6_root	= {
++		.leaf		= &ip6_null_entry,
++		.fn_flags	= RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO,
++	},
++};
++
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++#define FIB_TABLE_HASHSZ 256
++#else
++#define FIB_TABLE_HASHSZ 1
++#endif
++static struct hlist_head fib_table_hash[FIB_TABLE_HASHSZ];
++
++static void fib6_link_table(struct fib6_table *tb)
++{
++	unsigned int h;
++
++	h = tb->tb6_id & (FIB_TABLE_HASHSZ - 1);
++
++	/*
++	 * No protection necessary, this is the only list mutatation
++	 * operation, tables never disappear once they exist.
++	 */
++	hlist_add_head_rcu(&tb->tb6_hlist, &fib_table_hash[h]);
++}
++
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++static struct fib6_table fib6_local_tbl = {
++	.tb6_id		= RT6_TABLE_LOCAL,
++	.tb6_lock	= RW_LOCK_UNLOCKED,
++	.tb6_root 	= {
++		.leaf		= &ip6_null_entry,
++		.fn_flags	= RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO,
++	},
++};
++
++static struct fib6_table *fib6_alloc_table(u32 id)
++{
++	struct fib6_table *table;
++
++	table = kzalloc(sizeof(*table), GFP_ATOMIC);
++	if (table != NULL) {
++		table->tb6_id = id;
++		table->tb6_lock = RW_LOCK_UNLOCKED;
++		table->tb6_root.leaf = &ip6_null_entry;
++		table->tb6_root.fn_flags = RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO;
++	}
++
++	return table;
++}
++
++struct fib6_table *fib6_new_table(u32 id)
++{
++	struct fib6_table *tb;
++
++	if (id == 0)
++		id = RT6_TABLE_MAIN;
++	tb = fib6_get_table(id);
++	if (tb)
++		return tb;
++
++	tb = fib6_alloc_table(id);
++	if (tb != NULL)
++		fib6_link_table(tb);
++
++	return tb;
++}
++
++struct fib6_table *fib6_get_table(u32 id)
++{
++	struct fib6_table *tb;
++	struct hlist_node *node;
++	unsigned int h;
++
++	if (id == 0)
++		id = RT6_TABLE_MAIN;
++	h = id & (FIB_TABLE_HASHSZ - 1);
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(tb, node, &fib_table_hash[h], tb6_hlist) {
++		if (tb->tb6_id == id) {
++			rcu_read_unlock();
++			return tb;
++		}
++	}
++	rcu_read_unlock();
++
++	return NULL;
++}
++
++static void __init fib6_tables_init(void)
++{
++	fib6_link_table(&fib6_main_tbl);
++	fib6_link_table(&fib6_local_tbl);
++}
++
++#else
++
++struct fib6_table *fib6_new_table(u32 id)
++{
++	return fib6_get_table(id);
++}
++
++struct fib6_table *fib6_get_table(u32 id)
++{
++	return &fib6_main_tbl;
++}
++
++struct dst_entry *fib6_rule_lookup(struct flowi *fl, int flags,
++				   pol_lookup_t lookup)
++{
++	return (struct dst_entry *) lookup(&fib6_main_tbl, fl, flags);
++}
++
++static void __init fib6_tables_init(void)
++{
++	fib6_link_table(&fib6_main_tbl);
++}
++
++#endif
++
++static int fib6_dump_node(struct fib6_walker_t *w)
++{
++	int res;
++	struct rt6_info *rt;
++
++	for (rt = w->leaf; rt; rt = rt->u.next) {
++		res = rt6_dump_route(rt, w->args);
++		if (res < 0) {
++			/* Frame is full, suspend walking */
++			w->leaf = rt;
++			return 1;
++		}
++		BUG_TRAP(res!=0);
++	}
++	w->leaf = NULL;
++	return 0;
++}
++
++static void fib6_dump_end(struct netlink_callback *cb)
++{
++	struct fib6_walker_t *w = (void*)cb->args[2];
++
++	if (w) {
++		cb->args[2] = 0;
++		kfree(w);
++	}
++	cb->done = (void*)cb->args[3];
++	cb->args[1] = 3;
++}
++
++static int fib6_dump_done(struct netlink_callback *cb)
++{
++	fib6_dump_end(cb);
++	return cb->done ? cb->done(cb) : 0;
++}
++
++static int fib6_dump_table(struct fib6_table *table, struct sk_buff *skb,
++			   struct netlink_callback *cb)
++{
++	struct fib6_walker_t *w;
++	int res;
++
++	w = (void *)cb->args[2];
++	w->root = &table->tb6_root;
++
++	if (cb->args[4] == 0) {
++		read_lock_bh(&table->tb6_lock);
++		res = fib6_walk(w);
++		read_unlock_bh(&table->tb6_lock);
++		if (res > 0)
++			cb->args[4] = 1;
++	} else {
++		read_lock_bh(&table->tb6_lock);
++		res = fib6_walk_continue(w);
++		read_unlock_bh(&table->tb6_lock);
++		if (res != 0) {
++			if (res < 0)
++				fib6_walker_unlink(w);
++			goto end;
++		}
++		fib6_walker_unlink(w);
++		cb->args[4] = 0;
++	}
++end:
++	return res;
++}
++
++int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
++{
++	unsigned int h, s_h;
++	unsigned int e = 0, s_e;
++	struct rt6_rtnl_dump_arg arg;
++	struct fib6_walker_t *w;
++	struct fib6_table *tb;
++	struct hlist_node *node;
++	int res = 0;
++
++	s_h = cb->args[0];
++	s_e = cb->args[1];
++
++	w = (void *)cb->args[2];
++	if (w == NULL) {
++		/* New dump:
++		 *
++		 * 1. hook callback destructor.
++		 */
++		cb->args[3] = (long)cb->done;
++		cb->done = fib6_dump_done;
++
++		/*
++		 * 2. allocate and initialize walker.
++		 */
++		w = kzalloc(sizeof(*w), GFP_ATOMIC);
++		if (w == NULL)
++			return -ENOMEM;
++		w->func = fib6_dump_node;
++		cb->args[2] = (long)w;
++	}
++
++	arg.skb = skb;
++	arg.cb = cb;
++	w->args = &arg;
++
++	for (h = s_h; h < FIB_TABLE_HASHSZ; h++, s_e = 0) {
++		e = 0;
++		hlist_for_each_entry(tb, node, &fib_table_hash[h], tb6_hlist) {
++			if (e < s_e)
++				goto next;
++			res = fib6_dump_table(tb, skb, cb);
++			if (res != 0)
++				goto out;
++next:
++			e++;
++		}
++	}
++out:
++	cb->args[1] = e;
++	cb->args[0] = h;
++
++	res = res < 0 ? res : skb->len;
++	if (res <= 0)
++		fib6_dump_end(cb);
++	return res;
++}
+ 
+ /*
+  *	Routing Table
+@@ -431,7 +678,7 @@
+ int fib6_add(struct fib6_node *root, struct rt6_info *rt, 
+ 		struct nlmsghdr *nlh, void *_rtattr, struct netlink_skb_parms *req)
+ {
+-	struct fib6_node *fn;
++	struct fib6_node *fn, *pn = NULL;
+ 	int err = -ENOMEM;
+ 
+ 	fn = fib6_add_1(root, &rt->rt6i_dst.addr, sizeof(struct in6_addr),
+@@ -440,6 +687,8 @@
+ 	if (fn == NULL)
+ 		goto out;
+ 
++	pn = fn;
++
+ #ifdef CONFIG_IPV6_SUBTREES
+ 	if (rt->rt6i_src.plen) {
+ 		struct fib6_node *sn;
+@@ -485,10 +734,6 @@
+ 			/* Now link new subtree to main tree */
+ 			sfn->parent = fn;
+ 			fn->subtree = sfn;
+-			if (fn->leaf == NULL) {
+-				fn->leaf = rt;
+-				atomic_inc(&rt->rt6i_ref);
+-			}
+ 		} else {
+ 			sn = fib6_add_1(fn->subtree, &rt->rt6i_src.addr,
+ 					sizeof(struct in6_addr), rt->rt6i_src.plen,
+@@ -498,6 +743,10 @@
+ 				goto st_failure;
+ 		}
+ 
++		if (fn->leaf == NULL) {
++			fn->leaf = rt;
++			atomic_inc(&rt->rt6i_ref);
++		}
+ 		fn = sn;
+ 	}
+ #endif
+@@ -507,12 +756,29 @@
+ 	if (err == 0) {
+ 		fib6_start_gc(rt);
+ 		if (!(rt->rt6i_flags&RTF_CACHE))
+-			fib6_prune_clones(fn, rt);
++			fib6_prune_clones(pn, rt);
+ 	}
+ 
+ out:
+-	if (err)
++	if (err) {
++#ifdef CONFIG_IPV6_SUBTREES
++		/*
++		 * If fib6_add_1 has cleared the old leaf pointer in the
++		 * super-tree leaf node we have to find a new one for it.
++		 */
++		if (pn != fn && !pn->leaf && !(pn->fn_flags & RTN_RTINFO)) {
++			pn->leaf = fib6_find_prefix(pn);
++#if RT6_DEBUG >= 2
++			if (!pn->leaf) {
++				BUG_TRAP(pn->leaf != NULL);
++				pn->leaf = &ip6_null_entry;
++			}
++#endif
++			atomic_inc(&pn->leaf->rt6i_ref);
++		}
++#endif
+ 		dst_free(&rt->u.dst);
++	}
+ 	return err;
+ 
+ #ifdef CONFIG_IPV6_SUBTREES
+@@ -543,6 +809,9 @@
+ 	struct fib6_node *fn;
+ 	int dir;
+ 
++	if (unlikely(args->offset == 0))
++		return NULL;
++
+ 	/*
+ 	 *	Descend on a tree
+ 	 */
+@@ -564,33 +833,26 @@
+ 		break;
+ 	}
+ 
+-	while ((fn->fn_flags & RTN_ROOT) == 0) {
+-#ifdef CONFIG_IPV6_SUBTREES
+-		if (fn->subtree) {
+-			struct fib6_node *st;
+-			struct lookup_args *narg;
+-
+-			narg = args + 1;
+-
+-			if (narg->addr) {
+-				st = fib6_lookup_1(fn->subtree, narg);
+-
+-				if (st && !(st->fn_flags & RTN_ROOT))
+-					return st;
+-			}
+-		}
+-#endif
+-
+-		if (fn->fn_flags & RTN_RTINFO) {
++	while(fn) {
++		if (FIB6_SUBTREE(fn) || fn->fn_flags & RTN_RTINFO) {
+ 			struct rt6key *key;
+ 
+ 			key = (struct rt6key *) ((u8 *) fn->leaf +
+ 						 args->offset);
+ 
+-			if (ipv6_prefix_equal(&key->addr, args->addr, key->plen))
+-				return fn;
++			if (ipv6_prefix_equal(&key->addr, args->addr, key->plen)) {
++#ifdef CONFIG_IPV6_SUBTREES
++				if (fn->subtree)
++					fn = fib6_lookup_1(fn->subtree, args + 1);
++#endif
++				if (!fn || fn->fn_flags & RTN_RTINFO)
++					return fn;
++			}
+ 		}
+ 
++		if (fn->fn_flags & RTN_ROOT)
++			break;
++
+ 		fn = fn->parent;
+ 	}
+ 
+@@ -600,18 +862,24 @@
+ struct fib6_node * fib6_lookup(struct fib6_node *root, struct in6_addr *daddr,
+ 			       struct in6_addr *saddr)
+ {
+-	struct lookup_args args[2];
+ 	struct fib6_node *fn;
+-
+-	args[0].offset = offsetof(struct rt6_info, rt6i_dst);
+-	args[0].addr = daddr;
+-
++	struct lookup_args args[] = {
++		{
++			.offset = offsetof(struct rt6_info, rt6i_dst),
++			.addr = daddr,
++		},
+ #ifdef CONFIG_IPV6_SUBTREES
+-	args[1].offset = offsetof(struct rt6_info, rt6i_src);
+-	args[1].addr = saddr;
++		{
++			.offset = offsetof(struct rt6_info, rt6i_src),
++			.addr = saddr,
++		},
+ #endif
++		{
++			.offset = 0,	/* sentinel */
++		}
++	};
+ 
+-	fn = fib6_lookup_1(root, args);
++	fn = fib6_lookup_1(root, daddr ? args : args + 1);
+ 
+ 	if (fn == NULL || fn->fn_flags & RTN_TL_ROOT)
+ 		fn = root;
+@@ -667,10 +935,8 @@
+ #ifdef CONFIG_IPV6_SUBTREES
+ 	if (src_len) {
+ 		BUG_TRAP(saddr!=NULL);
+-		if (fn == NULL)
+-			fn = fn->subtree;
+-		if (fn)
+-			fn = fib6_locate_1(fn, saddr, src_len,
++		if (fn && fn->subtree)
++			fn = fib6_locate_1(fn->subtree, saddr, src_len,
+ 					   offsetof(struct rt6_info, rt6i_src));
+ 	}
+ #endif
+@@ -699,7 +965,7 @@
+ 		if(fn->right)
+ 			return fn->right->leaf;
+ 
+-		fn = SUBTREE(fn);
++		fn = FIB6_SUBTREE(fn);
+ 	}
+ 	return NULL;
+ }
+@@ -730,7 +996,7 @@
+ 		if (fn->right) child = fn->right, children |= 1;
+ 		if (fn->left) child = fn->left, children |= 2;
+ 
+-		if (children == 3 || SUBTREE(fn) 
++		if (children == 3 || FIB6_SUBTREE(fn)
+ #ifdef CONFIG_IPV6_SUBTREES
+ 		    /* Subtree root (i.e. fn) may have one child */
+ 		    || (children && fn->fn_flags&RTN_ROOT)
+@@ -749,9 +1015,9 @@
+ 
+ 		pn = fn->parent;
+ #ifdef CONFIG_IPV6_SUBTREES
+-		if (SUBTREE(pn) == fn) {
++		if (FIB6_SUBTREE(pn) == fn) {
+ 			BUG_TRAP(fn->fn_flags&RTN_ROOT);
+-			SUBTREE(pn) = NULL;
++			FIB6_SUBTREE(pn) = NULL;
+ 			nstate = FWS_L;
+ 		} else {
+ 			BUG_TRAP(!(fn->fn_flags&RTN_ROOT));
+@@ -799,7 +1065,7 @@
+ 		read_unlock(&fib6_walker_lock);
+ 
+ 		node_free(fn);
+-		if (pn->fn_flags&RTN_RTINFO || SUBTREE(pn))
++		if (pn->fn_flags&RTN_RTINFO || FIB6_SUBTREE(pn))
+ 			return pn;
+ 
+ 		rt6_release(pn->leaf);
+@@ -885,8 +1151,18 @@
+ 
+ 	BUG_TRAP(fn->fn_flags&RTN_RTINFO);
+ 
+-	if (!(rt->rt6i_flags&RTF_CACHE))
+-		fib6_prune_clones(fn, rt);
++	if (!(rt->rt6i_flags&RTF_CACHE)) {
++		struct fib6_node *pn = fn;
++#ifdef CONFIG_IPV6_SUBTREES
++		/* clones of this route might be in another subtree */
++		if (rt->rt6i_src.plen) {
++			while (!(pn->fn_flags&RTN_ROOT))
++				pn = pn->parent;
++			pn = pn->parent;
++		}
++#endif
++		fib6_prune_clones(pn, rt);
++	}
+ 
+ 	/*
+ 	 *	Walk the leaf entries looking for ourself
+@@ -942,8 +1218,8 @@
+ 		switch (w->state) {
+ #ifdef CONFIG_IPV6_SUBTREES
+ 		case FWS_S:
+-			if (SUBTREE(fn)) {
+-				w->node = SUBTREE(fn);
++			if (FIB6_SUBTREE(fn)) {
++				w->node = FIB6_SUBTREE(fn);
+ 				continue;
+ 			}
+ 			w->state = FWS_L;
+@@ -977,7 +1253,7 @@
+ 			pn = fn->parent;
+ 			w->node = pn;
+ #ifdef CONFIG_IPV6_SUBTREES
+-			if (SUBTREE(pn) == fn) {
++			if (FIB6_SUBTREE(pn) == fn) {
+ 				BUG_TRAP(fn->fn_flags&RTN_ROOT);
+ 				w->state = FWS_L;
+ 				continue;
+@@ -1064,6 +1340,25 @@
+ 	fib6_walk(&c.w);
+ }
+ 
++void fib6_clean_all(int (*func)(struct rt6_info *, void *arg),
++		    int prune, void *arg)
++{
++	struct fib6_table *table;
++	struct hlist_node *node;
++	unsigned int h;
++
++	rcu_read_lock();
++	for (h = 0; h < FIB_TABLE_HASHSZ; h++) {
++		hlist_for_each_entry_rcu(table, node, &fib_table_hash[h],
++					 tb6_hlist) {
++			write_lock_bh(&table->tb6_lock);
++			fib6_clean_tree(&table->tb6_root, func, prune, arg);
++			write_unlock_bh(&table->tb6_lock);
++		}
++	}
++	rcu_read_unlock();
++}
++
+ static int fib6_prune_clone(struct rt6_info *rt, void *arg)
+ {
+ 	if (rt->rt6i_flags & RTF_CACHE) {
+@@ -1142,11 +1437,8 @@
+ 	}
+ 	gc_args.more = 0;
+ 
+-
+-	write_lock_bh(&rt6_lock);
+ 	ndisc_dst_gc(&gc_args.more);
+-	fib6_clean_tree(&ip6_routing_table, fib6_age, 0, NULL);
+-	write_unlock_bh(&rt6_lock);
++	fib6_clean_all(fib6_age, 0, NULL);
+ 
+ 	if (gc_args.more)
+ 		mod_timer(&ip6_fib_timer, jiffies + ip6_rt_gc_interval);
+@@ -1165,6 +1457,8 @@
+ 					   NULL, NULL);
+ 	if (!fib6_node_kmem)
+ 		panic("cannot create fib6_nodes cache");
++
++	fib6_tables_init();
+ }
+ 
+ void fib6_gc_cleanup(void)
+Index: linux-2.6.17.noarch/include/linux/fib_rules.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.17.noarch/include/linux/fib_rules.h	2006-09-19 19:02:11.000000000 +0200
+@@ -0,0 +1,65 @@
++#ifndef __LINUX_FIB_RULES_H
++#define __LINUX_FIB_RULES_H
++
++#include <linux/types.h>
++#include <linux/rtnetlink.h>
++
++/* rule is permanent, and cannot be deleted */
++#define FIB_RULE_PERMANENT	1
++
++struct fib_rule_hdr
++{
++	__u8		family;
++	__u8		dst_len;
++	__u8		src_len;
++	__u8		tos;
++
++	__u8		table;
++	__u8		res1;	/* reserved */
++	__u8		res2;	/* reserved */
++	__u8		action;
++
++	__u32		flags;
++};
++
++enum
++{
++	FRA_UNSPEC,
++	FRA_DST,	/* destination address */
++	FRA_SRC,	/* source address */
++	FRA_IFNAME,	/* interface name */
++	FRA_UNUSED1,
++	FRA_UNUSED2,
++	FRA_PRIORITY,	/* priority/preference */
++	FRA_UNUSED3,
++	FRA_UNUSED4,
++	FRA_UNUSED5,
++	FRA_FWMARK,	/* netfilter mark */
++	FRA_FLOW,	/* flow/class id */
++	FRA_UNUSED6,
++	FRA_UNUSED7,
++	FRA_UNUSED8,
++	FRA_TABLE,	/* Extended table id */
++	FRA_FWMASK,	/* mask for netfilter mark */
++	__FRA_MAX
++};
++
++#define FRA_MAX (__FRA_MAX - 1)
++
++enum
++{
++	FR_ACT_UNSPEC,
++	FR_ACT_TO_TBL,		/* Pass to fixed table */
++	FR_ACT_RES1,
++	FR_ACT_RES2,
++	FR_ACT_RES3,
++	FR_ACT_RES4,
++	FR_ACT_BLACKHOLE,	/* Drop without notification */
++	FR_ACT_UNREACHABLE,	/* Drop with ENETUNREACH */
++	FR_ACT_PROHIBIT,	/* Drop with EACCES */
++	__FR_ACT_MAX,
++};
++
++#define FR_ACT_MAX (__FR_ACT_MAX - 1)
++
++#endif
+Index: linux-2.6.17.noarch/include/net/fib_rules.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.17.noarch/include/net/fib_rules.h	2006-09-19 14:31:50.000000000 +0200
+@@ -0,0 +1,97 @@
++#ifndef __NET_FIB_RULES_H
++#define __NET_FIB_RULES_H
++
++#include <linux/types.h>
++#include <linux/netdevice.h>
++#include <linux/fib_rules.h>
++#include <net/flow.h>
++#include <net/netlink.h>
++
++struct fib_rule
++{
++	struct list_head	list;
++	atomic_t		refcnt;
++	int			ifindex;
++	char			ifname[IFNAMSIZ];
++	u32			pref;
++	u32			flags;
++	u32			table;
++	u8			action;
++	struct rcu_head		rcu;
++};
++
++struct fib_lookup_arg
++{
++	void			*lookup_ptr;
++	void			*result;
++	struct fib_rule		*rule;
++};
++
++struct fib_rules_ops
++{
++	int			family;
++	struct list_head	list;
++	int			rule_size;
++
++	int			(*action)(struct fib_rule *,
++					  struct flowi *, int,
++					  struct fib_lookup_arg *);
++	int			(*match)(struct fib_rule *,
++					 struct flowi *, int);
++	int			(*configure)(struct fib_rule *,
++					     struct sk_buff *,
++					     struct nlmsghdr *,
++					     struct fib_rule_hdr *,
++					     struct nlattr **);
++	int			(*compare)(struct fib_rule *,
++					   struct fib_rule_hdr *,
++					   struct nlattr **);
++	int			(*fill)(struct fib_rule *, struct sk_buff *,
++					struct nlmsghdr *,
++					struct fib_rule_hdr *);
++	u32			(*default_pref)(void);
++
++	int			nlgroup;
++	struct nla_policy	*policy;
++	struct list_head	*rules_list;
++	struct module		*owner;
++};
++
++static inline void fib_rule_get(struct fib_rule *rule)
++{
++	atomic_inc(&rule->refcnt);
++}
++
++static inline void fib_rule_put_rcu(struct rcu_head *head)
++{
++	struct fib_rule *rule = container_of(head, struct fib_rule, rcu);
++	kfree(rule);
++}
++
++static inline void fib_rule_put(struct fib_rule *rule)
++{
++	if (atomic_dec_and_test(&rule->refcnt))
++		call_rcu(&rule->rcu, fib_rule_put_rcu);
++}
++
++static inline u32 frh_get_table(struct fib_rule_hdr *frh, struct nlattr **nla)
++{
++	if (nla[FRA_TABLE])
++		return nla_get_u32(nla[FRA_TABLE]);
++	return frh->table;
++}
++
++extern int			fib_rules_register(struct fib_rules_ops *);
++extern int			fib_rules_unregister(struct fib_rules_ops *);
++
++extern int			fib_rules_lookup(struct fib_rules_ops *,
++						 struct flowi *, int flags,
++						 struct fib_lookup_arg *);
++
++extern int			fib_nl_newrule(struct sk_buff *,
++					       struct nlmsghdr *, void *);
++extern int			fib_nl_delrule(struct sk_buff *,
++					       struct nlmsghdr *, void *);
++extern int			fib_rules_dump(struct sk_buff *,
++					       struct netlink_callback *, int);
++#endif
+Index: linux-2.6.17.noarch/net/Kconfig
+===================================================================
+--- linux-2.6.17.noarch.orig/net/Kconfig	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/Kconfig	2006-09-19 14:31:55.000000000 +0200
+@@ -252,6 +252,9 @@
+ 
+ source "net/netlabel/Kconfig"
+ 
++config FIB_RULES
++	bool
++
+ endif   # if NET
+ endmenu # Networking
+ 
+Index: linux-2.6.17.noarch/net/core/Makefile
+===================================================================
+--- linux-2.6.17.noarch.orig/net/core/Makefile	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/core/Makefile	2006-09-19 14:31:55.000000000 +0200
+@@ -17,3 +17,4 @@
+ obj-$(CONFIG_WIRELESS_EXT) += wireless.o
+ obj-$(CONFIG_NETPOLL) += netpoll.o
+ obj-$(CONFIG_NET_DMA) += user_dma.o
++obj-$(CONFIG_FIB_RULES) += fib_rules.o
+Index: linux-2.6.17.noarch/net/core/fib_rules.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.17.noarch/net/core/fib_rules.c	2006-09-19 14:31:55.000000000 +0200
+@@ -0,0 +1,417 @@
++/*
++ * net/core/fib_rules.c		Generic Routing Rules
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License as
++ *	published by the Free Software Foundation, version 2.
++ *
++ * Authors:	Thomas Graf <tgraf@suug.ch>
++ */
++
++#include <linux/config.h>
++#include <linux/types.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <net/fib_rules.h>
++
++static LIST_HEAD(rules_ops);
++static DEFINE_SPINLOCK(rules_mod_lock);
++
++static void notify_rule_change(int event, struct fib_rule *rule,
++			       struct fib_rules_ops *ops);
++
++static struct fib_rules_ops *lookup_rules_ops(int family)
++{
++	struct fib_rules_ops *ops;
++
++	rcu_read_lock();
++	list_for_each_entry_rcu(ops, &rules_ops, list) {
++		if (ops->family == family) {
++			if (!try_module_get(ops->owner))
++				ops = NULL;
++			rcu_read_unlock();
++			return ops;
++		}
++	}
++	rcu_read_unlock();
++
++	return NULL;
++}
++
++static void rules_ops_put(struct fib_rules_ops *ops)
++{
++	if (ops)
++		module_put(ops->owner);
++}
++
++int fib_rules_register(struct fib_rules_ops *ops)
++{
++	int err = -EEXIST;
++	struct fib_rules_ops *o;
++
++	if (ops->rule_size < sizeof(struct fib_rule))
++		return -EINVAL;
++
++	if (ops->match == NULL || ops->configure == NULL ||
++	    ops->compare == NULL || ops->fill == NULL ||
++	    ops->action == NULL)
++		return -EINVAL;
++
++	spin_lock(&rules_mod_lock);
++	list_for_each_entry(o, &rules_ops, list)
++		if (ops->family == o->family)
++			goto errout;
++
++	list_add_tail_rcu(&ops->list, &rules_ops);
++	err = 0;
++errout:
++	spin_unlock(&rules_mod_lock);
++
++	return err;
++}
++
++EXPORT_SYMBOL_GPL(fib_rules_register);
++
++static void cleanup_ops(struct fib_rules_ops *ops)
++{
++	struct fib_rule *rule, *tmp;
++
++	list_for_each_entry_safe(rule, tmp, ops->rules_list, list) {
++		list_del_rcu(&rule->list);
++		fib_rule_put(rule);
++	}
++}
++
++int fib_rules_unregister(struct fib_rules_ops *ops)
++{
++	int err = 0;
++	struct fib_rules_ops *o;
++
++	spin_lock(&rules_mod_lock);
++	list_for_each_entry(o, &rules_ops, list) {
++		if (o == ops) {
++			list_del_rcu(&o->list);
++			cleanup_ops(ops);
++			goto out;
++		}
++	}
++
++	err = -ENOENT;
++out:
++	spin_unlock(&rules_mod_lock);
++
++	synchronize_rcu();
++
++	return err;
++}
++
++EXPORT_SYMBOL_GPL(fib_rules_unregister);
++
++int fib_rules_lookup(struct fib_rules_ops *ops, struct flowi *fl,
++		     int flags, struct fib_lookup_arg *arg)
++{
++	struct fib_rule *rule;
++	int err;
++
++	rcu_read_lock();
++
++	list_for_each_entry_rcu(rule, ops->rules_list, list) {
++		if (rule->ifindex && (rule->ifindex != fl->iif))
++			continue;
++
++		if (!ops->match(rule, fl, flags))
++			continue;
++
++		err = ops->action(rule, fl, flags, arg);
++		if (err != -EAGAIN) {
++			fib_rule_get(rule);
++			arg->rule = rule;
++			goto out;
++		}
++	}
++
++	err = -ENETUNREACH;
++out:
++	rcu_read_unlock();
++
++	return err;
++}
++
++EXPORT_SYMBOL_GPL(fib_rules_lookup);
++
++int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
++{
++	struct fib_rule_hdr *frh = nlmsg_data(nlh);
++	struct fib_rules_ops *ops = NULL;
++	struct fib_rule *rule, *r, *last = NULL;
++	struct nlattr *tb[FRA_MAX+1];
++	int err = -EINVAL;
++
++	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*frh)))
++		goto errout;
++
++	ops = lookup_rules_ops(frh->family);
++	if (ops == NULL) {
++		err = EAFNOSUPPORT;
++		goto errout;
++	}
++
++	err = nlmsg_parse(nlh, sizeof(*frh), tb, FRA_MAX, ops->policy);
++	if (err < 0)
++		goto errout;
++
++	if (tb[FRA_IFNAME] && nla_len(tb[FRA_IFNAME]) > IFNAMSIZ)
++		goto errout;
++
++	rule = kzalloc(ops->rule_size, GFP_KERNEL);
++	if (rule == NULL) {
++		err = -ENOMEM;
++		goto errout;
++	}
++
++	if (tb[FRA_PRIORITY])
++		rule->pref = nla_get_u32(tb[FRA_PRIORITY]);
++
++	if (tb[FRA_IFNAME]) {
++		struct net_device *dev;
++
++		rule->ifindex = -1;
++		if (nla_strlcpy(rule->ifname, tb[FRA_IFNAME],
++				IFNAMSIZ) >= IFNAMSIZ)
++			goto errout_free;
++
++		dev = __dev_get_by_name(rule->ifname);
++		if (dev)
++			rule->ifindex = dev->ifindex;
++	}
++
++	rule->action = frh->action;
++	rule->flags = frh->flags;
++	rule->table = frh_get_table(frh, tb);
++
++	if (!rule->pref && ops->default_pref)
++		rule->pref = ops->default_pref();
++
++	err = ops->configure(rule, skb, nlh, frh, tb);
++	if (err < 0)
++		goto errout_free;
++
++	list_for_each_entry(r, ops->rules_list, list) {
++		if (r->pref > rule->pref)
++			break;
++		last = r;
++	}
++
++	fib_rule_get(rule);
++
++	if (last)
++		list_add_rcu(&rule->list, &last->list);
++	else
++		list_add_rcu(&rule->list, ops->rules_list);
++
++	notify_rule_change(RTM_NEWRULE, rule, ops);
++	rules_ops_put(ops);
++	return 0;
++
++errout_free:
++	kfree(rule);
++errout:
++	rules_ops_put(ops);
++	return err;
++}
++
++int fib_nl_delrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
++{
++	struct fib_rule_hdr *frh = nlmsg_data(nlh);
++	struct fib_rules_ops *ops = NULL;
++	struct fib_rule *rule;
++	struct nlattr *tb[FRA_MAX+1];
++	int err = -EINVAL;
++
++	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*frh)))
++		goto errout;
++
++	ops = lookup_rules_ops(frh->family);
++	if (ops == NULL) {
++		err = EAFNOSUPPORT;
++		goto errout;
++	}
++
++	err = nlmsg_parse(nlh, sizeof(*frh), tb, FRA_MAX, ops->policy);
++	if (err < 0)
++		goto errout;
++
++	list_for_each_entry(rule, ops->rules_list, list) {
++		if (frh->action && (frh->action != rule->action))
++			continue;
++
++		if (frh->table && (frh_get_table(frh, tb) != rule->table))
++			continue;
++
++		if (tb[FRA_PRIORITY] &&
++		    (rule->pref != nla_get_u32(tb[FRA_PRIORITY])))
++			continue;
++
++		if (tb[FRA_IFNAME] &&
++		    nla_strcmp(tb[FRA_IFNAME], rule->ifname))
++			continue;
++
++		if (!ops->compare(rule, frh, tb))
++			continue;
++
++		if (rule->flags & FIB_RULE_PERMANENT) {
++			err = -EPERM;
++			goto errout;
++		}
++
++		list_del_rcu(&rule->list);
++		synchronize_rcu();
++		notify_rule_change(RTM_DELRULE, rule, ops);
++		fib_rule_put(rule);
++		rules_ops_put(ops);
++		return 0;
++	}
++
++	err = -ENOENT;
++errout:
++	rules_ops_put(ops);
++	return err;
++}
++
++static int fib_nl_fill_rule(struct sk_buff *skb, struct fib_rule *rule,
++			    u32 pid, u32 seq, int type, int flags,
++			    struct fib_rules_ops *ops)
++{
++	struct nlmsghdr *nlh;
++	struct fib_rule_hdr *frh;
++
++	nlh = nlmsg_put(skb, pid, seq, type, sizeof(*frh), flags);
++	if (nlh == NULL)
++		return -1;
++
++	frh = nlmsg_data(nlh);
++	frh->table = rule->table;
++	NLA_PUT_U32(skb, FRA_TABLE, rule->table);
++	frh->res1 = 0;
++	frh->res2 = 0;
++	frh->action = rule->action;
++	frh->flags = rule->flags;
++
++	if (rule->ifname[0])
++		NLA_PUT_STRING(skb, FRA_IFNAME, rule->ifname);
++
++	if (rule->pref)
++		NLA_PUT_U32(skb, FRA_PRIORITY, rule->pref);
++
++	if (ops->fill(rule, skb, nlh, frh) < 0)
++		goto nla_put_failure;
++
++	return nlmsg_end(skb, nlh);
++
++nla_put_failure:
++	return nlmsg_cancel(skb, nlh);
++}
++
++int fib_rules_dump(struct sk_buff *skb, struct netlink_callback *cb, int family)
++{
++	int idx = 0;
++	struct fib_rule *rule;
++	struct fib_rules_ops *ops;
++
++	ops = lookup_rules_ops(family);
++	if (ops == NULL)
++		return -EAFNOSUPPORT;
++
++	rcu_read_lock();
++	list_for_each_entry(rule, ops->rules_list, list) {
++		if (idx < cb->args[0])
++			goto skip;
++
++		if (fib_nl_fill_rule(skb, rule, NETLINK_CB(cb->skb).pid,
++				     cb->nlh->nlmsg_seq, RTM_NEWRULE,
++				     NLM_F_MULTI, ops) < 0)
++			break;
++skip:
++		idx++;
++	}
++	rcu_read_unlock();
++	cb->args[0] = idx;
++	rules_ops_put(ops);
++
++	return skb->len;
++}
++
++EXPORT_SYMBOL_GPL(fib_rules_dump);
++
++static void notify_rule_change(int event, struct fib_rule *rule,
++			       struct fib_rules_ops *ops)
++{
++	int size = nlmsg_total_size(sizeof(struct fib_rule_hdr) + 128);
++	struct sk_buff *skb = alloc_skb(size, GFP_KERNEL);
++
++	if (skb == NULL)
++		netlink_set_err(rtnl, 0, ops->nlgroup, ENOBUFS);
++	else if (fib_nl_fill_rule(skb, rule, 0, 0, event, 0, ops) < 0) {
++		kfree_skb(skb);
++		netlink_set_err(rtnl, 0, ops->nlgroup, EINVAL);
++	} else
++		netlink_broadcast(rtnl, skb, 0, ops->nlgroup, GFP_KERNEL);
++}
++
++static void attach_rules(struct list_head *rules, struct net_device *dev)
++{
++	struct fib_rule *rule;
++
++	list_for_each_entry(rule, rules, list) {
++		if (rule->ifindex == -1 &&
++		    strcmp(dev->name, rule->ifname) == 0)
++			rule->ifindex = dev->ifindex;
++	}
++}
++
++static void detach_rules(struct list_head *rules, struct net_device *dev)
++{
++	struct fib_rule *rule;
++
++	list_for_each_entry(rule, rules, list)
++		if (rule->ifindex == dev->ifindex)
++			rule->ifindex = -1;
++}
++
++
++static int fib_rules_event(struct notifier_block *this, unsigned long event,
++			    void *ptr)
++{
++	struct net_device *dev = ptr;
++	struct fib_rules_ops *ops;
++
++	ASSERT_RTNL();
++	rcu_read_lock();
++
++	switch (event) {
++	case NETDEV_REGISTER:
++		list_for_each_entry(ops, &rules_ops, list)
++			attach_rules(ops->rules_list, dev);
++		break;
++
++	case NETDEV_UNREGISTER:
++		list_for_each_entry(ops, &rules_ops, list)
++			detach_rules(ops->rules_list, dev);
++		break;
++	}
++
++	rcu_read_unlock();
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block fib_rules_notifier = {
++	.notifier_call = fib_rules_event,
++};
++
++static int __init fib_rules_init(void)
++{
++	return register_netdevice_notifier(&fib_rules_notifier);
++}
++
++subsys_initcall(fib_rules_init);
+Index: linux-2.6.17.noarch/net/core/rtnetlink.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/core/rtnetlink.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/core/rtnetlink.c	2006-09-19 14:31:55.000000000 +0200
+@@ -49,6 +49,7 @@
+ #include <net/udp.h>
+ #include <net/sock.h>
+ #include <net/pkt_sched.h>
++#include <net/fib_rules.h>
+ #include <net/netlink.h>
+ #ifdef CONFIG_NET_WIRELESS_RTNETLINK
+ #include <linux/wireless.h>
+@@ -103,7 +104,7 @@
+ 	[RTM_FAM(RTM_NEWADDR)]      = NLMSG_LENGTH(sizeof(struct ifaddrmsg)),
+ 	[RTM_FAM(RTM_NEWROUTE)]     = NLMSG_LENGTH(sizeof(struct rtmsg)),
+ 	[RTM_FAM(RTM_NEWNEIGH)]     = NLMSG_LENGTH(sizeof(struct ndmsg)),
+-	[RTM_FAM(RTM_NEWRULE)]      = NLMSG_LENGTH(sizeof(struct rtmsg)),
++	[RTM_FAM(RTM_NEWRULE)]      = NLMSG_LENGTH(sizeof(struct fib_rule_hdr)),
+ 	[RTM_FAM(RTM_NEWQDISC)]     = NLMSG_LENGTH(sizeof(struct tcmsg)),
+ 	[RTM_FAM(RTM_NEWTCLASS)]    = NLMSG_LENGTH(sizeof(struct tcmsg)),
+ 	[RTM_FAM(RTM_NEWTFILTER)]   = NLMSG_LENGTH(sizeof(struct tcmsg)),
+@@ -120,7 +121,7 @@
+ 	[RTM_FAM(RTM_NEWADDR)]      = IFA_MAX,
+ 	[RTM_FAM(RTM_NEWROUTE)]     = RTA_MAX,
+ 	[RTM_FAM(RTM_NEWNEIGH)]     = NDA_MAX,
+-	[RTM_FAM(RTM_NEWRULE)]      = RTA_MAX,
++	[RTM_FAM(RTM_NEWRULE)]      = FRA_MAX,
+ 	[RTM_FAM(RTM_NEWQDISC)]     = TCA_MAX,
+ 	[RTM_FAM(RTM_NEWTCLASS)]    = TCA_MAX,
+ 	[RTM_FAM(RTM_NEWTFILTER)]   = TCA_MAX,
+@@ -757,6 +758,10 @@
+ 	[RTM_NEWNEIGH    - RTM_BASE] = { .doit   = neigh_add		 },
+ 	[RTM_DELNEIGH    - RTM_BASE] = { .doit   = neigh_delete		 },
+ 	[RTM_GETNEIGH    - RTM_BASE] = { .dumpit = neigh_dump_info	 },
++#ifdef CONFIG_FIB_RULES
++	[RTM_NEWRULE     - RTM_BASE] = { .doit   = fib_nl_newrule	 },
++	[RTM_DELRULE     - RTM_BASE] = { .doit   = fib_nl_delrule	 },
++#endif
+ 	[RTM_GETRULE     - RTM_BASE] = { .dumpit = rtnetlink_dump_all	 },
+ 	[RTM_GETNEIGHTBL - RTM_BASE] = { .dumpit = neightbl_dump_info	 },
+ 	[RTM_SETNEIGHTBL - RTM_BASE] = { .doit   = neightbl_set		 },
+Index: linux-2.6.17.noarch/include/linux/rtnetlink.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/linux/rtnetlink.h	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/include/linux/rtnetlink.h	2006-09-19 14:31:50.000000000 +0200
+@@ -238,10 +238,8 @@
+ 	RT_TABLE_DEFAULT=253,
+ 	RT_TABLE_MAIN=254,
+ 	RT_TABLE_LOCAL=255,
+-	__RT_TABLE_MAX
++	RT_TABLE_MAX=0xFFFFFFFF
+ };
+-#define RT_TABLE_MAX (__RT_TABLE_MAX - 1)
+-
+ 
+ 
+ /* Routing message attributes */
+@@ -263,6 +261,7 @@
+ 	RTA_CACHEINFO,
+ 	RTA_SESSION,
+ 	RTA_MP_ALGO,
++	RTA_TABLE,
+ 	__RTA_MAX
+ };
+ 
+@@ -885,10 +884,13 @@
+ 	RTNLGRP_NOP2,
+ 	RTNLGRP_DECnet_ROUTE,
+ #define RTNLGRP_DECnet_ROUTE	RTNLGRP_DECnet_ROUTE
+-	RTNLGRP_NOP3,
++	RTNLGRP_DECnet_RULE,
++#define RTNLGRP_DECnet_RULE	RTNLGRP_DECnet_RULE
+ 	RTNLGRP_NOP4,
+ 	RTNLGRP_IPV6_PREFIX,
+ #define RTNLGRP_IPV6_PREFIX	RTNLGRP_IPV6_PREFIX
++	RTNLGRP_IPV6_RULE,
++#define RTNLGRP_IPV6_RULE	RTNLGRP_IPV6_RULE
+ 	__RTNLGRP_MAX
+ };
+ #define RTNLGRP_MAX	(__RTNLGRP_MAX - 1)
+@@ -1065,6 +1067,13 @@
+ 	} \
+ } while(0)
+ 
++static inline u32 rtm_get_table(struct rtattr **rta, u8 table)
++{
++	return RTA_GET_U32(rta[RTA_TABLE-1]);
++rtattr_failure:
++	return table;
++}
++
+ #endif /* __KERNEL__ */
+ 
+ 
+Index: linux-2.6.17.noarch/net/ipv6/Makefile
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/Makefile	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/Makefile	2006-09-19 14:31:55.000000000 +0200
+@@ -13,6 +13,7 @@
+ ipv6-$(CONFIG_XFRM) += xfrm6_policy.o xfrm6_state.o xfrm6_input.o \
+ 	xfrm6_output.o
+ ipv6-$(CONFIG_NETFILTER) += netfilter.o
++ipv6-$(CONFIG_IPV6_MULTIPLE_TABLES) += fib6_rules.o
+ ipv6-objs += $(ipv6-y)
+ 
+ obj-$(CONFIG_INET6_AH) += ah6.o
+Index: linux-2.6.17.noarch/net/ipv6/fib6_rules.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-2.6.17.noarch/net/ipv6/fib6_rules.c	2006-09-19 19:02:14.000000000 +0200
+@@ -0,0 +1,305 @@
++/*
++ * net/ipv6/fib6_rules.c	IPv6 Routing Policy Rules
++ *
++ * Copyright (C)2003-2006 Helsinki University of Technology
++ * Copyright (C)2003-2006 USAGI/WIDE Project
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License as
++ *	published by the Free Software Foundation, version 2.
++ *
++ * Authors
++ *	Thomas Graf		<tgraf@suug.ch>
++ *	Ville Nuorvala		<vnuorval@tcs.hut.fi>
++ */
++
++#include <linux/config.h>
++#include <linux/netdevice.h>
++
++#include <net/fib_rules.h>
++#include <net/ipv6.h>
++#include <net/ip6_route.h>
++#include <net/netlink.h>
++
++struct fib6_rule
++{
++	struct fib_rule		common;
++	struct rt6key		src;
++	struct rt6key		dst;
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++	u32			fwmark;
++	u32			fwmask;
++#endif
++	u8			tclass;
++};
++
++static struct fib_rules_ops fib6_rules_ops;
++
++static struct fib6_rule main_rule = {
++	.common = {
++		.refcnt =	ATOMIC_INIT(2),
++		.pref =		0x7FFE,
++		.action =	FR_ACT_TO_TBL,
++		.table =	RT6_TABLE_MAIN,
++	},
++};
++
++static struct fib6_rule local_rule = {
++	.common = {
++		.refcnt =	ATOMIC_INIT(2),
++		.pref =		0,
++		.action =	FR_ACT_TO_TBL,
++		.table =	RT6_TABLE_LOCAL,
++		.flags =	FIB_RULE_PERMANENT,
++	},
++};
++
++static LIST_HEAD(fib6_rules);
++
++struct dst_entry *fib6_rule_lookup(struct flowi *fl, int flags,
++				   pol_lookup_t lookup)
++{
++	struct fib_lookup_arg arg = {
++		.lookup_ptr = lookup,
++	};
++
++	fib_rules_lookup(&fib6_rules_ops, fl, flags, &arg);
++	if (arg.rule)
++		fib_rule_put(arg.rule);
++
++	if (arg.result)
++		return (struct dst_entry *) arg.result;
++
++	dst_hold(&ip6_null_entry.u.dst);
++	return &ip6_null_entry.u.dst;
++}
++
++int fib6_rule_action(struct fib_rule *rule, struct flowi *flp,
++		     int flags, struct fib_lookup_arg *arg)
++{
++	struct rt6_info *rt = NULL;
++	struct fib6_table *table;
++	pol_lookup_t lookup = arg->lookup_ptr;
++
++	switch (rule->action) {
++	case FR_ACT_TO_TBL:
++		break;
++	case FR_ACT_UNREACHABLE:
++		rt = &ip6_null_entry;
++		goto discard_pkt;
++	default:
++	case FR_ACT_BLACKHOLE:
++		rt = &ip6_blk_hole_entry;
++		goto discard_pkt;
++	case FR_ACT_PROHIBIT:
++		rt = &ip6_prohibit_entry;
++		goto discard_pkt;
++	}
++
++	table = fib6_get_table(rule->table);
++	if (table)
++		rt = lookup(table, flp, flags);
++
++	if (rt != &ip6_null_entry)
++		goto out;
++	dst_release(&rt->u.dst);
++	rt = NULL;
++	goto out;
++
++discard_pkt:
++	dst_hold(&rt->u.dst);
++out:
++	arg->result = rt;
++	return rt == NULL ? -EAGAIN : 0;
++}
++
++
++static int fib6_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
++{
++	struct fib6_rule *r = (struct fib6_rule *) rule;
++
++	if (!ipv6_prefix_equal(&fl->fl6_dst, &r->dst.addr, r->dst.plen))
++		return 0;
++
++	if ((flags & RT6_LOOKUP_F_HAS_SADDR) &&
++	    !ipv6_prefix_equal(&fl->fl6_src, &r->src.addr, r->src.plen))
++		return 0;
++
++	if (r->tclass && r->tclass != ((ntohl(fl->fl6_flowlabel) >> 20) & 0xff))
++		return 0;
++
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++	if ((r->fwmark ^ fl->fl6_fwmark) & r->fwmask)
++		return 0;
++#endif
++
++	return 1;
++}
++
++static struct nla_policy fib6_rule_policy[FRA_MAX+1] __read_mostly = {
++	[FRA_IFNAME]	= { .type = NLA_STRING },
++	[FRA_PRIORITY]	= { .type = NLA_U32 },
++	[FRA_SRC]       = { .len = sizeof(struct in6_addr) },
++	[FRA_DST]       = { .len = sizeof(struct in6_addr) },
++	[FRA_FWMARK]	= { .type = NLA_U32 },
++	[FRA_FWMASK]	= { .type = NLA_U32 },
++	[FRA_TABLE]	= { .type = NLA_U32 },
++};
++
++static int fib6_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
++			       struct nlmsghdr *nlh, struct fib_rule_hdr *frh,
++			       struct nlattr **tb)
++{
++	int err = -EINVAL;
++	struct fib6_rule *rule6 = (struct fib6_rule *) rule;
++
++	if (frh->src_len > 128 || frh->dst_len > 128 ||
++	    (frh->tos & ~IPV6_FLOWINFO_MASK))
++		goto errout;
++
++	if (rule->action == FR_ACT_TO_TBL) {
++		if (rule->table == RT6_TABLE_UNSPEC)
++			goto errout;
++
++		if (fib6_new_table(rule->table) == NULL) {
++			err = -ENOBUFS;
++			goto errout;
++		}
++	}
++
++	if (tb[FRA_SRC])
++		nla_memcpy(&rule6->src.addr, tb[FRA_SRC],
++			   sizeof(struct in6_addr));
++
++	if (tb[FRA_DST])
++		nla_memcpy(&rule6->dst.addr, tb[FRA_DST],
++			   sizeof(struct in6_addr));
++
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++	if (tb[FRA_FWMARK]) {
++		rule6->fwmark = nla_get_u32(tb[FRA_FWMARK]);
++		if (rule6->fwmark) {
++			/*
++			 * if the mark value is non-zero,
++			 * all bits are compared by default
++			 * unless a mask is explicitly specified.
++			 */
++			rule6->fwmask = 0xFFFFFFFF;
++		}
++	}
++
++	if (tb[FRA_FWMASK])
++		rule6->fwmask = nla_get_u32(tb[FRA_FWMASK]);
++#endif
++
++	rule6->src.plen = frh->src_len;
++	rule6->dst.plen = frh->dst_len;
++	rule6->tclass = frh->tos;
++
++	err = 0;
++errout:
++	return err;
++}
++
++static int fib6_rule_compare(struct fib_rule *rule, struct fib_rule_hdr *frh,
++			     struct nlattr **tb)
++{
++	struct fib6_rule *rule6 = (struct fib6_rule *) rule;
++
++	if (frh->src_len && (rule6->src.plen != frh->src_len))
++		return 0;
++
++	if (frh->dst_len && (rule6->dst.plen != frh->dst_len))
++		return 0;
++
++	if (frh->tos && (rule6->tclass != frh->tos))
++		return 0;
++
++	if (tb[FRA_SRC] &&
++	    nla_memcmp(tb[FRA_SRC], &rule6->src.addr, sizeof(struct in6_addr)))
++		return 0;
++
++	if (tb[FRA_DST] &&
++	    nla_memcmp(tb[FRA_DST], &rule6->dst.addr, sizeof(struct in6_addr)))
++		return 0;
++
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++	if (tb[FRA_FWMARK] && (rule6->fwmark != nla_get_u32(tb[FRA_FWMARK])))
++		return 0;
++
++	if (tb[FRA_FWMASK] && (rule6->fwmask != nla_get_u32(tb[FRA_FWMASK])))
++		return 0;
++#endif
++
++	return 1;
++}
++
++static int fib6_rule_fill(struct fib_rule *rule, struct sk_buff *skb,
++			  struct nlmsghdr *nlh, struct fib_rule_hdr *frh)
++{
++	struct fib6_rule *rule6 = (struct fib6_rule *) rule;
++
++	frh->family = AF_INET6;
++	frh->dst_len = rule6->dst.plen;
++	frh->src_len = rule6->src.plen;
++	frh->tos = rule6->tclass;
++
++	if (rule6->dst.plen)
++		NLA_PUT(skb, FRA_DST, sizeof(struct in6_addr),
++			&rule6->dst.addr);
++
++	if (rule6->src.plen)
++		NLA_PUT(skb, FRA_SRC, sizeof(struct in6_addr),
++			&rule6->src.addr);
++
++#ifdef CONFIG_IPV6_ROUTE_FWMARK
++	if (rule6->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMARK, rule6->fwmark);
++
++	if (rule6->fwmask || rule6->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMASK, rule6->fwmask);
++#endif
++
++	return 0;
++
++nla_put_failure:
++	return -ENOBUFS;
++}
++
++int fib6_rules_dump(struct sk_buff *skb, struct netlink_callback *cb)
++{
++	return fib_rules_dump(skb, cb, AF_INET6);
++}
++
++static u32 fib6_rule_default_pref(void)
++{
++	return 0x3FFF;
++}
++
++static struct fib_rules_ops fib6_rules_ops = {
++	.family			= AF_INET6,
++	.rule_size		= sizeof(struct fib6_rule),
++	.action			= fib6_rule_action,
++	.match			= fib6_rule_match,
++	.configure		= fib6_rule_configure,
++	.compare		= fib6_rule_compare,
++	.fill			= fib6_rule_fill,
++	.default_pref		= fib6_rule_default_pref,
++	.nlgroup		= RTNLGRP_IPV6_RULE,
++	.policy			= fib6_rule_policy,
++	.rules_list		= &fib6_rules,
++	.owner			= THIS_MODULE,
++};
++
++void __init fib6_rules_init(void)
++{
++	list_add_tail(&local_rule.common.list, &fib6_rules);
++	list_add_tail(&main_rule.common.list, &fib6_rules);
++
++	fib_rules_register(&fib6_rules_ops);
++}
++
++void fib6_rules_cleanup(void)
++{
++	fib_rules_unregister(&fib6_rules_ops);
++}
+Index: linux-2.6.17.noarch/include/net/ip_fib.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/net/ip_fib.h	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/include/net/ip_fib.h	2006-09-19 14:31:50.000000000 +0200
+@@ -18,6 +18,7 @@
+ 
+ #include <net/flow.h>
+ #include <linux/seq_file.h>
++#include <net/fib_rules.h>
+ 
+ /* WARNING: The ordering of these elements must match ordering
+  *          of RTA_* rtnetlink attribute numbers.
+@@ -149,7 +150,8 @@
+ #endif /* CONFIG_IP_ROUTE_MULTIPATH_WRANDOM */
+ 
+ struct fib_table {
+-	unsigned char	tb_id;
++	struct hlist_node tb_hlist;
++	u32		tb_id;
+ 	unsigned	tb_stamp;
+ 	int		(*tb_lookup)(struct fib_table *tb, const struct flowi *flp, struct fib_result *res);
+ 	int		(*tb_insert)(struct fib_table *table, struct rtmsg *r,
+@@ -172,14 +174,14 @@
+ extern struct fib_table *ip_fib_local_table;
+ extern struct fib_table *ip_fib_main_table;
+ 
+-static inline struct fib_table *fib_get_table(int id)
++static inline struct fib_table *fib_get_table(u32 id)
+ {
+ 	if (id != RT_TABLE_LOCAL)
+ 		return ip_fib_main_table;
+ 	return ip_fib_local_table;
+ }
+ 
+-static inline struct fib_table *fib_new_table(int id)
++static inline struct fib_table *fib_new_table(u32 id)
+ {
+ 	return fib_get_table(id);
+ }
+@@ -199,30 +201,13 @@
+ }
+ 
+ #else /* CONFIG_IP_MULTIPLE_TABLES */
+-#define ip_fib_local_table (fib_tables[RT_TABLE_LOCAL])
+-#define ip_fib_main_table (fib_tables[RT_TABLE_MAIN])
++#define ip_fib_local_table fib_get_table(RT_TABLE_LOCAL)
++#define ip_fib_main_table fib_get_table(RT_TABLE_MAIN)
+ 
+-extern struct fib_table * fib_tables[RT_TABLE_MAX+1];
+-extern int fib_lookup(const struct flowi *flp, struct fib_result *res);
+-extern struct fib_table *__fib_new_table(int id);
+-extern void fib_rule_put(struct fib_rule *r);
+-
+-static inline struct fib_table *fib_get_table(int id)
+-{
+-	if (id == 0)
+-		id = RT_TABLE_MAIN;
+-
+-	return fib_tables[id];
+-}
+-
+-static inline struct fib_table *fib_new_table(int id)
+-{
+-	if (id == 0)
+-		id = RT_TABLE_MAIN;
+-
+-	return fib_tables[id] ? : __fib_new_table(id);
+-}
++extern int fib_lookup(struct flowi *flp, struct fib_result *res);
+ 
++extern struct fib_table *fib_new_table(u32 id);
++extern struct fib_table *fib_get_table(u32 id);
+ extern void fib_select_default(const struct flowi *flp, struct fib_result *res);
+ 
+ #endif /* CONFIG_IP_MULTIPLE_TABLES */
+@@ -248,18 +233,17 @@
+ extern u32  __fib_res_prefsrc(struct fib_result *res);
+ 
+ /* Exported by fib_hash.c */
+-extern struct fib_table *fib_hash_init(int id);
++extern struct fib_table *fib_hash_init(u32 id);
+ 
+ #ifdef CONFIG_IP_MULTIPLE_TABLES
+-/* Exported by fib_rules.c */
++extern int fib4_rules_dump(struct sk_buff *skb, struct netlink_callback *cb);
++
++extern void __init fib4_rules_init(void);
+ 
+-extern int inet_rtm_delrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg);
+-extern int inet_rtm_newrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg);
+-extern int inet_dump_rules(struct sk_buff *skb, struct netlink_callback *cb);
+ #ifdef CONFIG_NET_CLS_ROUTE
+ extern u32 fib_rules_tclass(struct fib_result *res);
+ #endif
+-extern void fib_rules_init(void);
++
+ #endif
+ 
+ static inline void fib_combine_itag(u32 *itag, struct fib_result *res)
+Index: linux-2.6.17.noarch/net/ipv4/Kconfig
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/Kconfig	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/Kconfig	2006-09-19 14:31:55.000000000 +0200
+@@ -88,6 +88,7 @@
+ config IP_MULTIPLE_TABLES
+ 	bool "IP: policy routing"
+ 	depends on IP_ADVANCED_ROUTER
++	select FIB_RULES
+ 	---help---
+ 	  Normally, a router decides what to do with a received packet based
+ 	  solely on the packet's final destination address. If you say Y here,
+Index: linux-2.6.17.noarch/net/ipv4/devinet.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/devinet.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/devinet.c	2006-09-19 14:31:55.000000000 +0200
+@@ -1151,9 +1151,7 @@
+ 	[RTM_GETROUTE - RTM_BASE] = { .doit	= inet_rtm_getroute,
+ 				      .dumpit	= inet_dump_fib,	},
+ #ifdef CONFIG_IP_MULTIPLE_TABLES
+-	[RTM_NEWRULE  - RTM_BASE] = { .doit	= inet_rtm_newrule,	},
+-	[RTM_DELRULE  - RTM_BASE] = { .doit	= inet_rtm_delrule,	},
+-	[RTM_GETRULE  - RTM_BASE] = { .dumpit	= inet_dump_rules,	},
++	[RTM_GETRULE  - RTM_BASE] = { .dumpit	= fib4_rules_dump,	},
+ #endif
+ };
+ 
+Index: linux-2.6.17.noarch/net/ipv4/fib_frontend.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_frontend.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_frontend.c	2006-09-19 14:31:55.000000000 +0200
+@@ -36,6 +36,7 @@
+ #include <linux/skbuff.h>
+ #include <linux/netlink.h>
+ #include <linux/init.h>
++#include <linux/list.h>
+ 
+ #include <net/ip.h>
+ #include <net/protocol.h>
+@@ -50,48 +51,67 @@
+ 
+ #ifndef CONFIG_IP_MULTIPLE_TABLES
+ 
+-#define RT_TABLE_MIN RT_TABLE_MAIN
+-
+ struct fib_table *ip_fib_local_table;
+ struct fib_table *ip_fib_main_table;
+ 
+-#else
++#define FIB_TABLE_HASHSZ 1
++static struct hlist_head fib_table_hash[FIB_TABLE_HASHSZ];
+ 
+-#define RT_TABLE_MIN 1
++#else
+ 
+-struct fib_table *fib_tables[RT_TABLE_MAX+1];
++#define FIB_TABLE_HASHSZ 256
++static struct hlist_head fib_table_hash[FIB_TABLE_HASHSZ];
+ 
+-struct fib_table *__fib_new_table(int id)
++struct fib_table *fib_new_table(u32 id)
+ {
+ 	struct fib_table *tb;
++	unsigned int h;
+ 
++	if (id == 0)
++		id = RT_TABLE_MAIN;
++	tb = fib_get_table(id);
++	if (tb)
++		return tb;
+ 	tb = fib_hash_init(id);
+ 	if (!tb)
+ 		return NULL;
+-	fib_tables[id] = tb;
++	h = id & (FIB_TABLE_HASHSZ - 1);
++	hlist_add_head_rcu(&tb->tb_hlist, &fib_table_hash[h]);
+ 	return tb;
+ }
+ 
++struct fib_table *fib_get_table(u32 id)
++{
++	struct fib_table *tb;
++	struct hlist_node *node;
++	unsigned int h;
+ 
++	if (id == 0)
++		id = RT_TABLE_MAIN;
++	h = id & (FIB_TABLE_HASHSZ - 1);
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(tb, node, &fib_table_hash[h], tb_hlist) {
++		if (tb->tb_id == id) {
++			rcu_read_unlock();
++			return tb;
++		}
++	}
++	rcu_read_unlock();
++	return NULL;
++}
+ #endif /* CONFIG_IP_MULTIPLE_TABLES */
+ 
+-
+ static void fib_flush(void)
+ {
+ 	int flushed = 0;
+-#ifdef CONFIG_IP_MULTIPLE_TABLES
+ 	struct fib_table *tb;
+-	int id;
++	struct hlist_node *node;
++	unsigned int h;
+ 
+-	for (id = RT_TABLE_MAX; id>0; id--) {
+-		if ((tb = fib_get_table(id))==NULL)
+-			continue;
+-		flushed += tb->tb_flush(tb);
+-	}
+-#else /* CONFIG_IP_MULTIPLE_TABLES */
+-	flushed += ip_fib_main_table->tb_flush(ip_fib_main_table);
+-	flushed += ip_fib_local_table->tb_flush(ip_fib_local_table);
+-#endif /* CONFIG_IP_MULTIPLE_TABLES */
++	for (h = 0; h < FIB_TABLE_HASHSZ; h++) {
++		hlist_for_each_entry(tb, node, &fib_table_hash[h], tb_hlist)
++			flushed += tb->tb_flush(tb);
++	}
+ 
+ 	if (flushed)
+ 		rt_cache_flush(-1);
+@@ -293,7 +313,8 @@
+ 		if (attr) {
+ 			if (RTA_PAYLOAD(attr) < 4)
+ 				return -EINVAL;
+-			if (i != RTA_MULTIPATH && i != RTA_METRICS)
++			if (i != RTA_MULTIPATH && i != RTA_METRICS &&
++			    i != RTA_TABLE)
+ 				*rta = (struct rtattr*)RTA_DATA(attr);
+ 		}
+ 	}
+@@ -309,7 +330,7 @@
+ 	if (inet_check_attr(r, rta))
+ 		return -EINVAL;
+ 
+-	tb = fib_get_table(r->rtm_table);
++	tb = fib_get_table(rtm_get_table(rta, r->rtm_table));
+ 	if (tb)
+ 		return tb->tb_delete(tb, r, (struct kern_rta*)rta, nlh, &NETLINK_CB(skb));
+ 	return -ESRCH;
+@@ -324,7 +345,7 @@
+ 	if (inet_check_attr(r, rta))
+ 		return -EINVAL;
+ 
+-	tb = fib_new_table(r->rtm_table);
++	tb = fib_new_table(rtm_get_table(rta, r->rtm_table));
+ 	if (tb)
+ 		return tb->tb_insert(tb, r, (struct kern_rta*)rta, nlh, &NETLINK_CB(skb));
+ 	return -ENOBUFS;
+@@ -332,29 +353,37 @@
+ 
+ int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+ {
+-	int t;
+-	int s_t;
++	unsigned int h, s_h;
++	unsigned int e = 0, s_e;
+ 	struct fib_table *tb;
++	struct hlist_node *node;
++	int dumped = 0;
+ 
+ 	if (NLMSG_PAYLOAD(cb->nlh, 0) >= sizeof(struct rtmsg) &&
+ 	    ((struct rtmsg*)NLMSG_DATA(cb->nlh))->rtm_flags&RTM_F_CLONED)
+ 		return ip_rt_dump(skb, cb);
+ 
+-	s_t = cb->args[0];
+-	if (s_t == 0)
+-		s_t = cb->args[0] = RT_TABLE_MIN;
+-
+-	for (t=s_t; t<=RT_TABLE_MAX; t++) {
+-		if (t < s_t) continue;
+-		if (t > s_t)
+-			memset(&cb->args[1], 0, sizeof(cb->args)-sizeof(cb->args[0]));
+-		if ((tb = fib_get_table(t))==NULL)
+-			continue;
+-		if (tb->tb_dump(tb, skb, cb) < 0) 
+-			break;
+-	}
++	s_h = cb->args[0];
++	s_e = cb->args[1];
+ 
+-	cb->args[0] = t;
++	for (h = s_h; h < FIB_TABLE_HASHSZ; h++, s_e = 0) {
++		e = 0;
++		hlist_for_each_entry(tb, node, &fib_table_hash[h], tb_hlist) {
++			if (e < s_e)
++				goto next;
++			if (dumped)
++				memset(&cb->args[2], 0, sizeof(cb->args) -
++				                 2 * sizeof(cb->args[0]));
++			if (tb->tb_dump(tb, skb, cb) < 0)
++				goto out;
++			dumped = 1;
++next:
++			e++;
++		}
++	}
++out:
++	cb->args[1] = e;
++	cb->args[0] = h;
+ 
+ 	return skb->len;
+ }
+@@ -652,11 +681,17 @@
+ 
+ void __init ip_fib_init(void)
+ {
++	unsigned int i;
++
++	for (i = 0; i < FIB_TABLE_HASHSZ; i++)
++		INIT_HLIST_HEAD(&fib_table_hash[i]);
+ #ifndef CONFIG_IP_MULTIPLE_TABLES
+ 	ip_fib_local_table = fib_hash_init(RT_TABLE_LOCAL);
++	hlist_add_head_rcu(&ip_fib_local_table->tb_hlist, &fib_table_hash[0]);
+ 	ip_fib_main_table  = fib_hash_init(RT_TABLE_MAIN);
++	hlist_add_head_rcu(&ip_fib_main_table->tb_hlist, &fib_table_hash[0]);
+ #else
+-	fib_rules_init();
++	fib4_rules_init();
+ #endif
+ 
+ 	register_netdevice_notifier(&fib_netdev_notifier);
+Index: linux-2.6.17.noarch/net/ipv4/fib_rules.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_rules.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_rules.c	2006-09-19 19:02:11.000000000 +0200
+@@ -5,9 +5,8 @@
+  *
+  *		IPv4 Forwarding Information Base: policy rules.
+  *
+- * Version:	$Id: fib_rules.c,v 1.17 2001/10/31 21:55:54 davem Exp $
+- *
+  * Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
++ * 		Thomas Graf <tgraf@suug.ch>
+  *
+  *		This program is free software; you can redistribute it and/or
+  *		modify it under the terms of the GNU General Public License
+@@ -19,463 +18,350 @@
+  *		Marc Boucher	:	routing by fwmark
+  */
+ 
+-#include <asm/uaccess.h>
+-#include <asm/system.h>
+-#include <linux/bitops.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+-#include <linux/sched.h>
+-#include <linux/mm.h>
+-#include <linux/string.h>
+-#include <linux/socket.h>
+-#include <linux/sockios.h>
+-#include <linux/errno.h>
+-#include <linux/in.h>
+-#include <linux/inet.h>
+-#include <linux/inetdevice.h>
+ #include <linux/netdevice.h>
+-#include <linux/if_arp.h>
+-#include <linux/proc_fs.h>
+-#include <linux/skbuff.h>
+ #include <linux/netlink.h>
++#include <linux/inetdevice.h>
+ #include <linux/init.h>
+ #include <linux/list.h>
+ #include <linux/rcupdate.h>
+-
+ #include <net/ip.h>
+-#include <net/protocol.h>
+ #include <net/route.h>
+ #include <net/tcp.h>
+-#include <net/sock.h>
+ #include <net/ip_fib.h>
++#include <net/fib_rules.h>
+ 
+-#define FRprintk(a...)
++static struct fib_rules_ops fib4_rules_ops;
+ 
+-struct fib_rule
++struct fib4_rule
+ {
+-	struct hlist_node hlist;
+-	atomic_t	r_clntref;
+-	u32		r_preference;
+-	unsigned char	r_table;
+-	unsigned char	r_action;
+-	unsigned char	r_dst_len;
+-	unsigned char	r_src_len;
+-	u32		r_src;
+-	u32		r_srcmask;
+-	u32		r_dst;
+-	u32		r_dstmask;
+-	u32		r_srcmap;
+-	u8		r_flags;
+-	u8		r_tos;
++	struct fib_rule		common;
++	u8			dst_len;
++	u8			src_len;
++	u8			tos;
++	u32			src;
++	u32			srcmask;
++	u32			dst;
++	u32			dstmask;
+ #ifdef CONFIG_IP_ROUTE_FWMARK
+-	u32		r_fwmark;
++	u32			fwmark;
++	u32			fwmask;
+ #endif
+-	int		r_ifindex;
+ #ifdef CONFIG_NET_CLS_ROUTE
+-	__u32		r_tclassid;
++	u32			tclassid;
+ #endif
+-	char		r_ifname[IFNAMSIZ];
+-	int		r_dead;
+-	struct		rcu_head rcu;
+ };
+ 
+-static struct fib_rule default_rule = {
+-	.r_clntref =	ATOMIC_INIT(2),
+-	.r_preference =	0x7FFF,
+-	.r_table =	RT_TABLE_DEFAULT,
+-	.r_action =	RTN_UNICAST,
++static struct fib4_rule default_rule = {
++	.common = {
++		.refcnt =	ATOMIC_INIT(2),
++		.pref =		0x7FFF,
++		.table =	RT_TABLE_DEFAULT,
++		.action =	FR_ACT_TO_TBL,
++	},
+ };
+ 
+-static struct fib_rule main_rule = {
+-	.r_clntref =	ATOMIC_INIT(2),
+-	.r_preference =	0x7FFE,
+-	.r_table =	RT_TABLE_MAIN,
+-	.r_action =	RTN_UNICAST,
++static struct fib4_rule main_rule = {
++	.common = {
++		.refcnt =	ATOMIC_INIT(2),
++		.pref =		0x7FFE,
++		.table =	RT_TABLE_MAIN,
++		.action =	FR_ACT_TO_TBL,
++	},
+ };
+ 
+-static struct fib_rule local_rule = {
+-	.r_clntref =	ATOMIC_INIT(2),
+-	.r_table =	RT_TABLE_LOCAL,
+-	.r_action =	RTN_UNICAST,
++static struct fib4_rule local_rule = {
++	.common = {
++		.refcnt =	ATOMIC_INIT(2),
++		.table =	RT_TABLE_LOCAL,
++		.action =	FR_ACT_TO_TBL,
++		.flags =	FIB_RULE_PERMANENT,
++	},
+ };
+ 
+-static struct hlist_head fib_rules;
++static LIST_HEAD(fib4_rules);
++
++#ifdef CONFIG_NET_CLS_ROUTE
++u32 fib_rules_tclass(struct fib_result *res)
++{
++	return res->r ? ((struct fib4_rule *) res->r)->tclassid : 0;
++}
++#endif
+ 
+-/* writer func called from netlink -- rtnl_sem hold*/
++int fib_lookup(struct flowi *flp, struct fib_result *res)
++{
++	struct fib_lookup_arg arg = {
++		.result = res,
++	};
++	int err;
+ 
+-static void rtmsg_rule(int, struct fib_rule *);
++	err = fib_rules_lookup(&fib4_rules_ops, flp, 0, &arg);
++	res->r = arg.rule;
+ 
+-int inet_rtm_delrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
++	return err;
++}
++
++int fib4_rule_action(struct fib_rule *rule, struct flowi *flp, int flags,
++		     struct fib_lookup_arg *arg)
+ {
+-	struct rtattr **rta = arg;
+-	struct rtmsg *rtm = NLMSG_DATA(nlh);
+-	struct fib_rule *r;
+-	struct hlist_node *node;
+-	int err = -ESRCH;
+-
+-	hlist_for_each_entry(r, node, &fib_rules, hlist) {
+-		if ((!rta[RTA_SRC-1] || memcmp(RTA_DATA(rta[RTA_SRC-1]), &r->r_src, 4) == 0) &&
+-		    rtm->rtm_src_len == r->r_src_len &&
+-		    rtm->rtm_dst_len == r->r_dst_len &&
+-		    (!rta[RTA_DST-1] || memcmp(RTA_DATA(rta[RTA_DST-1]), &r->r_dst, 4) == 0) &&
+-		    rtm->rtm_tos == r->r_tos &&
+-#ifdef CONFIG_IP_ROUTE_FWMARK
+-		    (!rta[RTA_PROTOINFO-1] || memcmp(RTA_DATA(rta[RTA_PROTOINFO-1]), &r->r_fwmark, 4) == 0) &&
+-#endif
+-		    (!rtm->rtm_type || rtm->rtm_type == r->r_action) &&
+-		    (!rta[RTA_PRIORITY-1] || memcmp(RTA_DATA(rta[RTA_PRIORITY-1]), &r->r_preference, 4) == 0) &&
+-		    (!rta[RTA_IIF-1] || rtattr_strcmp(rta[RTA_IIF-1], r->r_ifname) == 0) &&
+-		    (!rtm->rtm_table || (r && rtm->rtm_table == r->r_table))) {
+-			err = -EPERM;
+-			if (r == &local_rule)
+-				break;
+-
+-			hlist_del_rcu(&r->hlist);
+-			r->r_dead = 1;
+-			rtmsg_rule(RTM_DELRULE, r);
+-			fib_rule_put(r);
+-			err = 0;
+-			break;
+-		}
++	int err = -EAGAIN;
++	struct fib_table *tbl;
++
++	switch (rule->action) {
++	case FR_ACT_TO_TBL:
++		break;
++
++	case FR_ACT_UNREACHABLE:
++		err = -ENETUNREACH;
++		goto errout;
++
++	case FR_ACT_PROHIBIT:
++		err = -EACCES;
++		goto errout;
++
++	case FR_ACT_BLACKHOLE:
++	default:
++		err = -EINVAL;
++		goto errout;
+ 	}
++
++	if ((tbl = fib_get_table(rule->table)) == NULL)
++		goto errout;
++
++	err = tbl->tb_lookup(tbl, flp, (struct fib_result *) arg->result);
++	if (err > 0)
++		err = -EAGAIN;
++errout:
+ 	return err;
+ }
+ 
+-/* Allocate new unique table id */
+ 
+-static struct fib_table *fib_empty_table(void)
++void fib_select_default(const struct flowi *flp, struct fib_result *res)
+ {
+-	int id;
+-
+-	for (id = 1; id <= RT_TABLE_MAX; id++)
+-		if (fib_tables[id] == NULL)
+-			return __fib_new_table(id);
+-	return NULL;
++	if (res->r && res->r->action == FR_ACT_TO_TBL &&
++	    FIB_RES_GW(*res) && FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK) {
++		struct fib_table *tb;
++		if ((tb = fib_get_table(res->r->table)) != NULL)
++			tb->tb_select_default(tb, flp, res);
++	}
+ }
+ 
+-static inline void fib_rule_put_rcu(struct rcu_head *head)
++static int fib4_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
+ {
+-	struct fib_rule *r = container_of(head, struct fib_rule, rcu);
+-	kfree(r);
++	struct fib4_rule *r = (struct fib4_rule *) rule;
++	u32 daddr = fl->fl4_dst;
++	u32 saddr = fl->fl4_src;
++
++	if (((saddr ^ r->src) & r->srcmask) ||
++	    ((daddr ^ r->dst) & r->dstmask))
++		return 0;
++
++	if (r->tos && (r->tos != fl->fl4_tos))
++		return 0;
++
++#ifdef CONFIG_IP_ROUTE_FWMARK
++	if ((r->fwmark ^ fl->fl4_fwmark) & r->fwmask)
++		return 0;
++#endif
++
++	return 1;
+ }
+ 
+-void fib_rule_put(struct fib_rule *r)
++static struct fib_table *fib_empty_table(void)
+ {
+-	if (atomic_dec_and_test(&r->r_clntref)) {
+-		if (r->r_dead)
+-			call_rcu(&r->rcu, fib_rule_put_rcu);
+-		else
+-			printk("Freeing alive rule %p\n", r);
+-	}
++	u32 id;
++
++	for (id = 1; id <= RT_TABLE_MAX; id++)
++		if (fib_get_table(id) == NULL)
++			return fib_new_table(id);
++	return NULL;
+ }
+ 
+-/* writer func called from netlink -- rtnl_sem hold*/
++static struct nla_policy fib4_rule_policy[FRA_MAX+1] __read_mostly = {
++	[FRA_IFNAME]	= { .type = NLA_STRING },
++	[FRA_PRIORITY]	= { .type = NLA_U32 },
++	[FRA_SRC]	= { .type = NLA_U32 },
++	[FRA_DST]	= { .type = NLA_U32 },
++	[FRA_FWMARK]	= { .type = NLA_U32 },
++	[FRA_FWMASK]	= { .type = NLA_U32 },
++	[FRA_FLOW]	= { .type = NLA_U32 },
++	[FRA_TABLE]	= { .type = NLA_U32 },
++};
+ 
+-int inet_rtm_newrule(struct sk_buff *skb, struct nlmsghdr* nlh, void *arg)
+-{
+-	struct rtattr **rta = arg;
+-	struct rtmsg *rtm = NLMSG_DATA(nlh);
+-	struct fib_rule *r, *new_r, *last = NULL;
+-	struct hlist_node *node = NULL;
+-	unsigned char table_id;
+-
+-	if (rtm->rtm_src_len > 32 || rtm->rtm_dst_len > 32 ||
+-	    (rtm->rtm_tos & ~IPTOS_TOS_MASK))
+-		return -EINVAL;
+-
+-	if (rta[RTA_IIF-1] && RTA_PAYLOAD(rta[RTA_IIF-1]) > IFNAMSIZ)
+-		return -EINVAL;
+-
+-	table_id = rtm->rtm_table;
+-	if (table_id == RT_TABLE_UNSPEC) {
+-		struct fib_table *table;
+-		if (rtm->rtm_type == RTN_UNICAST) {
+-			if ((table = fib_empty_table()) == NULL)
+-				return -ENOBUFS;
+-			table_id = table->tb_id;
++static int fib4_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
++			       struct nlmsghdr *nlh, struct fib_rule_hdr *frh,
++			       struct nlattr **tb)
++{
++	int err = -EINVAL;
++	struct fib4_rule *rule4 = (struct fib4_rule *) rule;
++
++	if (frh->src_len > 32 || frh->dst_len > 32 ||
++	    (frh->tos & ~IPTOS_TOS_MASK))
++		goto errout;
++
++	if (rule->table == RT_TABLE_UNSPEC) {
++		if (rule->action == FR_ACT_TO_TBL) {
++			struct fib_table *table;
++
++			table = fib_empty_table();
++			if (table == NULL) {
++				err = -ENOBUFS;
++				goto errout;
++			}
++
++			rule->table = table->tb_id;
+ 		}
+ 	}
+ 
+-	new_r = kzalloc(sizeof(*new_r), GFP_KERNEL);
+-	if (!new_r)
+-		return -ENOMEM;
+-
+-	if (rta[RTA_SRC-1])
+-		memcpy(&new_r->r_src, RTA_DATA(rta[RTA_SRC-1]), 4);
+-	if (rta[RTA_DST-1])
+-		memcpy(&new_r->r_dst, RTA_DATA(rta[RTA_DST-1]), 4);
+-	if (rta[RTA_GATEWAY-1])
+-		memcpy(&new_r->r_srcmap, RTA_DATA(rta[RTA_GATEWAY-1]), 4);
+-	new_r->r_src_len = rtm->rtm_src_len;
+-	new_r->r_dst_len = rtm->rtm_dst_len;
+-	new_r->r_srcmask = inet_make_mask(rtm->rtm_src_len);
+-	new_r->r_dstmask = inet_make_mask(rtm->rtm_dst_len);
+-	new_r->r_tos = rtm->rtm_tos;
+-#ifdef CONFIG_IP_ROUTE_FWMARK
+-	if (rta[RTA_PROTOINFO-1])
+-		memcpy(&new_r->r_fwmark, RTA_DATA(rta[RTA_PROTOINFO-1]), 4);
+-#endif
+-	new_r->r_action = rtm->rtm_type;
+-	new_r->r_flags = rtm->rtm_flags;
+-	if (rta[RTA_PRIORITY-1])
+-		memcpy(&new_r->r_preference, RTA_DATA(rta[RTA_PRIORITY-1]), 4);
+-	new_r->r_table = table_id;
+-	if (rta[RTA_IIF-1]) {
+-		struct net_device *dev;
+-		rtattr_strlcpy(new_r->r_ifname, rta[RTA_IIF-1], IFNAMSIZ);
+-		new_r->r_ifindex = -1;
+-		dev = __dev_get_by_name(new_r->r_ifname);
+-		if (dev)
+-			new_r->r_ifindex = dev->ifindex;
+-	}
+-#ifdef CONFIG_NET_CLS_ROUTE
+-	if (rta[RTA_FLOW-1])
+-		memcpy(&new_r->r_tclassid, RTA_DATA(rta[RTA_FLOW-1]), 4);
+-#endif
+-	r = container_of(fib_rules.first, struct fib_rule, hlist);
++	if (tb[FRA_SRC])
++		rule4->src = nla_get_u32(tb[FRA_SRC]);
+ 
+-	if (!new_r->r_preference) {
+-		if (r && r->hlist.next != NULL) {
+-			r = container_of(r->hlist.next, struct fib_rule, hlist);
+-			if (r->r_preference)
+-				new_r->r_preference = r->r_preference - 1;
+-		}
+-	}
++	if (tb[FRA_DST])
++		rule4->dst = nla_get_u32(tb[FRA_DST]);
+ 
+-	hlist_for_each_entry(r, node, &fib_rules, hlist) {
+-		if (r->r_preference > new_r->r_preference)
+-			break;
+-		last = r;
++#ifdef CONFIG_IP_ROUTE_FWMARK
++	if (tb[FRA_FWMARK]) {
++		rule4->fwmark = nla_get_u32(tb[FRA_FWMARK]);
++		if (rule4->fwmark)
++			/* compatibility: if the mark value is non-zero all bits
++			 * are compared unless a mask is explicitly specified.
++			 */
++			rule4->fwmask = 0xFFFFFFFF;
+ 	}
+-	atomic_inc(&new_r->r_clntref);
+-
+-	if (last)
+-		hlist_add_after_rcu(&last->hlist, &new_r->hlist);
+-	else
+-		hlist_add_before_rcu(&new_r->hlist, &r->hlist);
+ 
+-	rtmsg_rule(RTM_NEWRULE, new_r);
+-	return 0;
+-}
++	if (tb[FRA_FWMASK])
++		rule4->fwmask = nla_get_u32(tb[FRA_FWMASK]);
++#endif
+ 
+ #ifdef CONFIG_NET_CLS_ROUTE
+-u32 fib_rules_tclass(struct fib_result *res)
+-{
+-	if (res->r)
+-		return res->r->r_tclassid;
+-	return 0;
+-}
++	if (tb[FRA_FLOW])
++		rule4->tclassid = nla_get_u32(tb[FRA_FLOW]);
+ #endif
+ 
+-/* callers should hold rtnl semaphore */
++	rule4->src_len = frh->src_len;
++	rule4->srcmask = inet_make_mask(rule4->src_len);
++	rule4->dst_len = frh->dst_len;
++	rule4->dstmask = inet_make_mask(rule4->dst_len);
++	rule4->tos = frh->tos;
++
++	err = 0;
++errout:
++	return err;
++}
+ 
+-static void fib_rules_detach(struct net_device *dev)
++static int fib4_rule_compare(struct fib_rule *rule, struct fib_rule_hdr *frh,
++			     struct nlattr **tb)
+ {
+-	struct hlist_node *node;
+-	struct fib_rule *r;
++	struct fib4_rule *rule4 = (struct fib4_rule *) rule;
+ 
+-	hlist_for_each_entry(r, node, &fib_rules, hlist) {
+-		if (r->r_ifindex == dev->ifindex)
+-			r->r_ifindex = -1;
++	if (frh->src_len && (rule4->src_len != frh->src_len))
++		return 0;
+ 
+-	}
+-}
++	if (frh->dst_len && (rule4->dst_len != frh->dst_len))
++		return 0;
+ 
+-/* callers should hold rtnl semaphore */
++	if (frh->tos && (rule4->tos != frh->tos))
++		return 0;
+ 
+-static void fib_rules_attach(struct net_device *dev)
+-{
+-	struct hlist_node *node;
+-	struct fib_rule *r;
++#ifdef CONFIG_IP_ROUTE_FWMARK
++	if (tb[FRA_FWMARK] && (rule4->fwmark != nla_get_u32(tb[FRA_FWMARK])))
++		return 0;
+ 
+-	hlist_for_each_entry(r, node, &fib_rules, hlist) {
+-		if (r->r_ifindex == -1 && strcmp(dev->name, r->r_ifname) == 0)
+-			r->r_ifindex = dev->ifindex;
+-	}
+-}
++	if (tb[FRA_FWMASK] && (rule4->fwmask != nla_get_u32(tb[FRA_FWMASK])))
++		return 0;
++#endif
+ 
+-int fib_lookup(const struct flowi *flp, struct fib_result *res)
+-{
+-	int err;
+-	struct fib_rule *r, *policy;
+-	struct fib_table *tb;
+-	struct hlist_node *node;
+-
+-	u32 daddr = flp->fl4_dst;
+-	u32 saddr = flp->fl4_src;
+-
+-FRprintk("Lookup: %u.%u.%u.%u <- %u.%u.%u.%u ",
+-	NIPQUAD(flp->fl4_dst), NIPQUAD(flp->fl4_src));
+-
+-	rcu_read_lock();
+-
+-	hlist_for_each_entry_rcu(r, node, &fib_rules, hlist) {
+-		if (((saddr^r->r_src) & r->r_srcmask) ||
+-		    ((daddr^r->r_dst) & r->r_dstmask) ||
+-		    (r->r_tos && r->r_tos != flp->fl4_tos) ||
+-#ifdef CONFIG_IP_ROUTE_FWMARK
+-		    (r->r_fwmark && r->r_fwmark != flp->fl4_fwmark) ||
++#ifdef CONFIG_NET_CLS_ROUTE
++	if (tb[FRA_FLOW] && (rule4->tclassid != nla_get_u32(tb[FRA_FLOW])))
++		return 0;
+ #endif
+-		    (r->r_ifindex && r->r_ifindex != flp->iif))
+-			continue;
+ 
+-FRprintk("tb %d r %d ", r->r_table, r->r_action);
+-		switch (r->r_action) {
+-		case RTN_UNICAST:
+-			policy = r;
+-			break;
+-		case RTN_UNREACHABLE:
+-			rcu_read_unlock();
+-			return -ENETUNREACH;
+-		default:
+-		case RTN_BLACKHOLE:
+-			rcu_read_unlock();
+-			return -EINVAL;
+-		case RTN_PROHIBIT:
+-			rcu_read_unlock();
+-			return -EACCES;
+-		}
++	if (tb[FRA_SRC] && (rule4->src != nla_get_u32(tb[FRA_SRC])))
++		return 0;
+ 
+-		if ((tb = fib_get_table(r->r_table)) == NULL)
+-			continue;
+-		err = tb->tb_lookup(tb, flp, res);
+-		if (err == 0) {
+-			res->r = policy;
+-			if (policy)
+-				atomic_inc(&policy->r_clntref);
+-			rcu_read_unlock();
+-			return 0;
+-		}
+-		if (err < 0 && err != -EAGAIN) {
+-			rcu_read_unlock();
+-			return err;
+-		}
+-	}
+-FRprintk("FAILURE\n");
+-	rcu_read_unlock();
+-	return -ENETUNREACH;
+-}
++	if (tb[FRA_DST] && (rule4->dst != nla_get_u32(tb[FRA_DST])))
++		return 0;
+ 
+-void fib_select_default(const struct flowi *flp, struct fib_result *res)
+-{
+-	if (res->r && res->r->r_action == RTN_UNICAST &&
+-	    FIB_RES_GW(*res) && FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK) {
+-		struct fib_table *tb;
+-		if ((tb = fib_get_table(res->r->r_table)) != NULL)
+-			tb->tb_select_default(tb, flp, res);
+-	}
++	return 1;
+ }
+ 
+-static int fib_rules_event(struct notifier_block *this, unsigned long event, void *ptr)
++static int fib4_rule_fill(struct fib_rule *rule, struct sk_buff *skb,
++			  struct nlmsghdr *nlh, struct fib_rule_hdr *frh)
+ {
+-	struct net_device *dev = ptr;
+-
+-	if (event == NETDEV_UNREGISTER)
+-		fib_rules_detach(dev);
+-	else if (event == NETDEV_REGISTER)
+-		fib_rules_attach(dev);
+-	return NOTIFY_DONE;
+-}
++	struct fib4_rule *rule4 = (struct fib4_rule *) rule;
+ 
++	frh->family = AF_INET;
++	frh->dst_len = rule4->dst_len;
++	frh->src_len = rule4->src_len;
++	frh->tos = rule4->tos;
+ 
+-static struct notifier_block fib_rules_notifier = {
+-	.notifier_call =fib_rules_event,
+-};
+-
+-static __inline__ int inet_fill_rule(struct sk_buff *skb,
+-				     struct fib_rule *r,
+-				     u32 pid, u32 seq, int event,
+-				     unsigned int flags)
+-{
+-	struct rtmsg *rtm;
+-	struct nlmsghdr  *nlh;
+-	unsigned char	 *b = skb->tail;
+-
+-	nlh = NLMSG_NEW(skb, pid, seq, event, sizeof(*rtm), flags);
+-	rtm = NLMSG_DATA(nlh);
+-	rtm->rtm_family = AF_INET;
+-	rtm->rtm_dst_len = r->r_dst_len;
+-	rtm->rtm_src_len = r->r_src_len;
+-	rtm->rtm_tos = r->r_tos;
+ #ifdef CONFIG_IP_ROUTE_FWMARK
+-	if (r->r_fwmark)
+-		RTA_PUT(skb, RTA_PROTOINFO, 4, &r->r_fwmark);
++	if (rule4->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMARK, rule4->fwmark);
++
++	if (rule4->fwmask || rule4->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMASK, rule4->fwmask);
+ #endif
+-	rtm->rtm_table = r->r_table;
+-	rtm->rtm_protocol = 0;
+-	rtm->rtm_scope = 0;
+-	rtm->rtm_type = r->r_action;
+-	rtm->rtm_flags = r->r_flags;
+-
+-	if (r->r_dst_len)
+-		RTA_PUT(skb, RTA_DST, 4, &r->r_dst);
+-	if (r->r_src_len)
+-		RTA_PUT(skb, RTA_SRC, 4, &r->r_src);
+-	if (r->r_ifname[0])
+-		RTA_PUT(skb, RTA_IIF, IFNAMSIZ, &r->r_ifname);
+-	if (r->r_preference)
+-		RTA_PUT(skb, RTA_PRIORITY, 4, &r->r_preference);
+-	if (r->r_srcmap)
+-		RTA_PUT(skb, RTA_GATEWAY, 4, &r->r_srcmap);
++
++	if (rule4->dst_len)
++		NLA_PUT_U32(skb, FRA_DST, rule4->dst);
++
++	if (rule4->src_len)
++		NLA_PUT_U32(skb, FRA_SRC, rule4->src);
++
+ #ifdef CONFIG_NET_CLS_ROUTE
+-	if (r->r_tclassid)
+-		RTA_PUT(skb, RTA_FLOW, 4, &r->r_tclassid);
++	if (rule4->tclassid)
++		NLA_PUT_U32(skb, FRA_FLOW, rule4->tclassid);
+ #endif
+-	nlh->nlmsg_len = skb->tail - b;
+-	return skb->len;
++	return 0;
+ 
+-nlmsg_failure:
+-rtattr_failure:
+-	skb_trim(skb, b - skb->data);
+-	return -1;
++nla_put_failure:
++	return -ENOBUFS;
+ }
+ 
+-/* callers should hold rtnl semaphore */
+-
+-static void rtmsg_rule(int event, struct fib_rule *r)
++int fib4_rules_dump(struct sk_buff *skb, struct netlink_callback *cb)
+ {
+-	int size = NLMSG_SPACE(sizeof(struct rtmsg) + 128);
+-	struct sk_buff *skb = alloc_skb(size, GFP_KERNEL);
+-
+-	if (!skb)
+-		netlink_set_err(rtnl, 0, RTNLGRP_IPV4_RULE, ENOBUFS);
+-	else if (inet_fill_rule(skb, r, 0, 0, event, 0) < 0) {
+-		kfree_skb(skb);
+-		netlink_set_err(rtnl, 0, RTNLGRP_IPV4_RULE, EINVAL);
+-	} else {
+-		netlink_broadcast(rtnl, skb, 0, RTNLGRP_IPV4_RULE, GFP_KERNEL);
+-	}
++	return fib_rules_dump(skb, cb, AF_INET);
+ }
+ 
+-int inet_dump_rules(struct sk_buff *skb, struct netlink_callback *cb)
++static u32 fib4_rule_default_pref(void)
+ {
+-	int idx = 0;
+-	int s_idx = cb->args[0];
+-	struct fib_rule *r;
+-	struct hlist_node *node;
+-
+-	rcu_read_lock();
+-	hlist_for_each_entry(r, node, &fib_rules, hlist) {
+-		if (idx < s_idx)
+-			goto next;
+-		if (inet_fill_rule(skb, r, NETLINK_CB(cb->skb).pid,
+-				   cb->nlh->nlmsg_seq,
+-				   RTM_NEWRULE, NLM_F_MULTI) < 0)
+-			break;
+-next:
+-		idx++;
++	struct list_head *pos;
++	struct fib_rule *rule;
++
++	if (!list_empty(&fib4_rules)) {
++		pos = fib4_rules.next;
++		if (pos->next != &fib4_rules) {
++			rule = list_entry(pos->next, struct fib_rule, list);
++			if (rule->pref)
++				return rule->pref - 1;
++		}
+ 	}
+-	rcu_read_unlock();
+-	cb->args[0] = idx;
+ 
+-	return skb->len;
++	return 0;
+ }
+ 
+-void __init fib_rules_init(void)
++static struct fib_rules_ops fib4_rules_ops = {
++	.family		= AF_INET,
++	.rule_size	= sizeof(struct fib4_rule),
++	.action		= fib4_rule_action,
++	.match		= fib4_rule_match,
++	.configure	= fib4_rule_configure,
++	.compare	= fib4_rule_compare,
++	.fill		= fib4_rule_fill,
++	.default_pref	= fib4_rule_default_pref,
++	.nlgroup	= RTNLGRP_IPV4_RULE,
++	.policy		= fib4_rule_policy,
++	.rules_list	= &fib4_rules,
++	.owner		= THIS_MODULE,
++};
++
++void __init fib4_rules_init(void)
+ {
+-	INIT_HLIST_HEAD(&fib_rules);
+-	hlist_add_head(&local_rule.hlist, &fib_rules);
+-	hlist_add_after(&local_rule.hlist, &main_rule.hlist);
+-	hlist_add_after(&main_rule.hlist, &default_rule.hlist);
+-	register_netdevice_notifier(&fib_rules_notifier);
++	list_add_tail(&local_rule.common.list, &fib4_rules);
++	list_add_tail(&main_rule.common.list, &fib4_rules);
++	list_add_tail(&default_rule.common.list, &fib4_rules);
++
++	fib_rules_register(&fib4_rules_ops);
+ }
+Index: linux-2.6.17.noarch/include/net/dn_fib.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/net/dn_fib.h	2006-09-19 14:32:04.000000000 +0200
++++ linux-2.6.17.noarch/include/net/dn_fib.h	2006-09-19 14:31:50.000000000 +0200
+@@ -22,7 +22,7 @@
+ };
+ 
+ struct dn_fib_res {
+-	struct dn_fib_rule *r;
++	struct fib_rule *r;
+ 	struct dn_fib_info *fi;
+ 	unsigned char prefixlen;
+ 	unsigned char nh_sel;
+@@ -94,7 +94,8 @@
+ 
+ 
+ struct dn_fib_table {
+-	int n;
++	struct hlist_node hlist;
++	u32 n;
+ 
+ 	int (*insert)(struct dn_fib_table *t, struct rtmsg *r, 
+ 			struct dn_kern_rta *rta, struct nlmsghdr *n, 
+@@ -137,7 +138,7 @@
+ /*
+  * dn_tables.c
+  */
+-extern struct dn_fib_table *dn_fib_get_table(int n, int creat);
++extern struct dn_fib_table *dn_fib_get_table(u32 n, int creat);
+ extern struct dn_fib_table *dn_fib_empty_table(void);
+ extern void dn_fib_table_init(void);
+ extern void dn_fib_table_cleanup(void);
+@@ -147,10 +148,8 @@
+  */
+ extern void dn_fib_rules_init(void);
+ extern void dn_fib_rules_cleanup(void);
+-extern void dn_fib_rule_put(struct dn_fib_rule *);
+-extern __le16 dn_fib_rules_policy(__le16 saddr, struct dn_fib_res *res, unsigned *flags);
+ extern unsigned dnet_addr_type(__le16 addr);
+-extern int dn_fib_lookup(const struct flowi *fl, struct dn_fib_res *res);
++extern int dn_fib_lookup(struct flowi *fl, struct dn_fib_res *res);
+ 
+ /*
+  * rtnetlink interface
+@@ -176,11 +175,9 @@
+ 	if (res->fi)
+ 		dn_fib_info_put(res->fi);
+ 	if (res->r)
+-		dn_fib_rule_put(res->r);
++		fib_rule_put(res->r);
+ }
+ 
+-extern struct dn_fib_table *dn_fib_tables[];
+-
+ #else /* Endnode */
+ 
+ #define dn_fib_init()  do { } while(0)
+Index: linux-2.6.17.noarch/net/decnet/Kconfig
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/Kconfig	2006-09-19 14:32:08.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/Kconfig	2006-09-19 14:31:55.000000000 +0200
+@@ -27,6 +27,7 @@
+ config DECNET_ROUTER
+ 	bool "DECnet: router support (EXPERIMENTAL)"
+ 	depends on DECNET && EXPERIMENTAL
++	select FIB_RULES
+ 	---help---
+ 	  Add support for turning your DECnet Endnode into a level 1 or 2
+ 	  router.  This is an experimental, but functional option.  If you
+Index: linux-2.6.17.noarch/net/decnet/af_decnet.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/af_decnet.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/af_decnet.c	2006-09-19 14:31:55.000000000 +0200
+@@ -130,6 +130,7 @@
+ #include <linux/poll.h>
+ #include <net/neighbour.h>
+ #include <net/dst.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_nsp.h>
+ #include <net/dn_dev.h>
+Index: linux-2.6.17.noarch/net/decnet/dn_dev.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/dn_dev.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/dn_dev.c	2006-09-19 14:31:55.000000000 +0200
+@@ -45,6 +45,7 @@
+ #include <net/neighbour.h>
+ #include <net/dst.h>
+ #include <net/flow.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_dev.h>
+ #include <net/dn_route.h>
+@@ -1417,8 +1418,6 @@
+ 	[RTM_DELROUTE - RTM_BASE] = { .doit	= dn_fib_rtm_delroute,	},
+ 	[RTM_GETROUTE - RTM_BASE] = { .doit	= dn_cache_getroute,
+ 				      .dumpit	= dn_fib_dump,		},
+-	[RTM_NEWRULE  - RTM_BASE] = { .doit	= dn_fib_rtm_newrule,	},
+-	[RTM_DELRULE  - RTM_BASE] = { .doit	= dn_fib_rtm_delrule,	},
+ 	[RTM_GETRULE  - RTM_BASE] = { .dumpit	= dn_fib_dump_rules,	},
+ #else
+ 	[RTM_GETROUTE - RTM_BASE] = { .doit	= dn_cache_getroute,
+Index: linux-2.6.17.noarch/net/decnet/dn_fib.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/dn_fib.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/dn_fib.c	2006-09-19 14:31:55.000000000 +0200
+@@ -34,6 +34,7 @@
+ #include <net/neighbour.h>
+ #include <net/dst.h>
+ #include <net/flow.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_route.h>
+ #include <net/dn_fib.h>
+@@ -490,7 +491,8 @@
+ 		if (attr) {
+ 			if (RTA_PAYLOAD(attr) < 4 && RTA_PAYLOAD(attr) != 2)
+ 				return -EINVAL;
+-			if (i != RTA_MULTIPATH && i != RTA_METRICS)
++			if (i != RTA_MULTIPATH && i != RTA_METRICS &&
++			    i != RTA_TABLE)
+ 				rta[i-1] = (struct rtattr *)RTA_DATA(attr);
+ 		}
+ 	}
+@@ -507,7 +509,7 @@
+ 	if (dn_fib_check_attr(r, rta))
+ 		return -EINVAL;
+ 
+-	tb = dn_fib_get_table(r->rtm_table, 0);
++	tb = dn_fib_get_table(rtm_get_table(rta, r->rtm_table), 0);
+ 	if (tb)
+ 		return tb->delete(tb, r, (struct dn_kern_rta *)rta, nlh, &NETLINK_CB(skb));
+ 
+@@ -523,46 +525,13 @@
+ 	if (dn_fib_check_attr(r, rta))
+ 		return -EINVAL;
+ 
+-	tb = dn_fib_get_table(r->rtm_table, 1);
++	tb = dn_fib_get_table(rtm_get_table(rta, r->rtm_table), 1);
+ 	if (tb) 
+ 		return tb->insert(tb, r, (struct dn_kern_rta *)rta, nlh, &NETLINK_CB(skb));
+ 
+ 	return -ENOBUFS;
+ }
+ 
+-
+-int dn_fib_dump(struct sk_buff *skb, struct netlink_callback *cb)
+-{
+-	int t;
+-	int s_t;
+-	struct dn_fib_table *tb;
+-
+-	if (NLMSG_PAYLOAD(cb->nlh, 0) >= sizeof(struct rtmsg) &&
+-		((struct rtmsg *)NLMSG_DATA(cb->nlh))->rtm_flags&RTM_F_CLONED)
+-			return dn_cache_dump(skb, cb);
+-
+-	s_t = cb->args[0];
+-	if (s_t == 0)
+-		s_t = cb->args[0] = RT_MIN_TABLE;
+-
+-	for(t = s_t; t <= RT_TABLE_MAX; t++) {
+-		if (t < s_t)
+-			continue;
+-		if (t > s_t)
+-			memset(&cb->args[1], 0,
+-			       sizeof(cb->args) - sizeof(cb->args[0]));
+-		tb = dn_fib_get_table(t, 0);
+-		if (tb == NULL)
+-			continue;
+-		if (tb->dump(tb, skb, cb) < 0)
+-			break;
+-	}
+-
+-	cb->args[0] = t;
+-
+-	return skb->len;
+-}
+-
+ static void fib_magic(int cmd, int type, __le16 dst, int dst_len, struct dn_ifaddr *ifa)
+ {
+ 	struct dn_fib_table *tb;
+@@ -760,22 +729,6 @@
+         return ret;
+ }
+ 
+-void dn_fib_flush(void)
+-{
+-        int flushed = 0;
+-        struct dn_fib_table *tb;
+-        int id;
+-
+-        for(id = RT_TABLE_MAX; id > 0; id--) {
+-                if ((tb = dn_fib_get_table(id, 0)) == NULL)
+-                        continue;
+-                flushed += tb->flush(tb);
+-        }
+-
+-        if (flushed)
+-                dn_rt_cache_flush(-1);
+-}
+-
+ static struct notifier_block dn_fib_dnaddr_notifier = {
+ 	.notifier_call = dn_fib_dnaddr_event,
+ };
+Index: linux-2.6.17.noarch/net/decnet/dn_route.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/dn_route.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/dn_route.c	2006-09-19 14:31:55.000000000 +0200
+@@ -80,6 +80,7 @@
+ #include <net/neighbour.h>
+ #include <net/dst.h>
+ #include <net/flow.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_dev.h>
+ #include <net/dn_nsp.h>
+@@ -1284,7 +1285,7 @@
+ 		dev_hold(out_dev);
+ 
+ 		if (res.r)
+-			src_map = dn_fib_rules_policy(fl.fld_src, &res, &flags);
++			src_map = fl.fld_src; /* no NAT support for now */
+ 
+ 		gateway = DN_FIB_RES_GW(res);
+ 		if (res.type == RTN_NAT) {
+@@ -1485,6 +1486,7 @@
+ 	r->rtm_src_len = 0;
+ 	r->rtm_tos = 0;
+ 	r->rtm_table = RT_TABLE_MAIN;
++	RTA_PUT_U32(skb, RTA_TABLE, RT_TABLE_MAIN);
+ 	r->rtm_type = rt->rt_type;
+ 	r->rtm_flags = (rt->rt_flags & ~0xFFFF) | RTM_F_CLONED;
+ 	r->rtm_scope = RT_SCOPE_UNIVERSE;
+Index: linux-2.6.17.noarch/net/decnet/dn_rules.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/dn_rules.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/dn_rules.c	2006-09-19 19:02:12.000000000 +0200
+@@ -11,259 +11,213 @@
+  *
+  *
+  * Changes:
++ *              Steve Whitehouse <steve@chygwyn.com>
++ *              Updated for Thomas Graf's generic rules
+  *
+  */
+-#include <linux/string.h>
+ #include <linux/net.h>
+-#include <linux/socket.h>
+-#include <linux/sockios.h>
+ #include <linux/init.h>
+-#include <linux/skbuff.h>
+ #include <linux/netlink.h>
+ #include <linux/rtnetlink.h>
+-#include <linux/proc_fs.h>
+ #include <linux/netdevice.h>
+-#include <linux/timer.h>
+ #include <linux/spinlock.h>
+-#include <linux/in_route.h>
+ #include <linux/list.h>
+ #include <linux/rcupdate.h>
+-#include <asm/atomic.h>
+-#include <asm/uaccess.h>
+ #include <net/neighbour.h>
+ #include <net/dst.h>
+ #include <net/flow.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_fib.h>
+ #include <net/dn_neigh.h>
+ #include <net/dn_dev.h>
+ 
++static struct fib_rules_ops dn_fib_rules_ops;
++
+ struct dn_fib_rule
+ {
+-	struct hlist_node	r_hlist;
+-	atomic_t		r_clntref;
+-	u32			r_preference;
+-	unsigned char		r_table;
+-	unsigned char		r_action;
+-	unsigned char		r_dst_len;
+-	unsigned char		r_src_len;
+-	__le16			r_src;
+-	__le16			r_srcmask;
+-	__le16			r_dst;
+-	__le16			r_dstmask;
+-	__le16			r_srcmap;
+-	u8			r_flags;
++	struct fib_rule		common;
++	unsigned char		dst_len;
++	unsigned char		src_len;
++	__le16			src;
++	__le16			srcmask;
++	__le16			dst;
++	__le16			dstmask;
++	__le16			srcmap;
++	u8			flags;
+ #ifdef CONFIG_DECNET_ROUTE_FWMARK
+-	u32			r_fwmark;
++	u32			fwmark;
++	u32			fwmask;
+ #endif
+-	int			r_ifindex;
+-	char			r_ifname[IFNAMSIZ];
+-	int			r_dead;
+-	struct rcu_head		rcu;
+ };
+ 
+ static struct dn_fib_rule default_rule = {
+-	.r_clntref =		ATOMIC_INIT(2),
+-	.r_preference =		0x7fff,
+-	.r_table =		RT_TABLE_MAIN,
+-	.r_action =		RTN_UNICAST
++	.common = {
++		.refcnt =		ATOMIC_INIT(2),
++		.pref =			0x7fff,
++		.table =		RT_TABLE_MAIN,
++		.action =		FR_ACT_TO_TBL,
++	},
+ };
+ 
+-static struct hlist_head dn_fib_rules;
++static LIST_HEAD(dn_fib_rules);
++
+ 
+-int dn_fib_rtm_delrule(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
++int dn_fib_lookup(struct flowi *flp, struct dn_fib_res *res)
+ {
+-	struct rtattr **rta = arg;
+-	struct rtmsg *rtm = NLMSG_DATA(nlh);
+-	struct dn_fib_rule *r;
+-	struct hlist_node *node;
+-	int err = -ESRCH;
+-
+-	hlist_for_each_entry(r, node, &dn_fib_rules, r_hlist) {
+-		if ((!rta[RTA_SRC-1] || memcmp(RTA_DATA(rta[RTA_SRC-1]), &r->r_src, 2) == 0) &&
+-			rtm->rtm_src_len == r->r_src_len &&
+-			rtm->rtm_dst_len == r->r_dst_len &&
+-			(!rta[RTA_DST-1] || memcmp(RTA_DATA(rta[RTA_DST-1]), &r->r_dst, 2) == 0) &&
+-#ifdef CONFIG_DECNET_ROUTE_FWMARK
+-			(!rta[RTA_PROTOINFO-1] || memcmp(RTA_DATA(rta[RTA_PROTOINFO-1]), &r->r_fwmark, 4) == 0) &&
+-#endif
+-			(!rtm->rtm_type || rtm->rtm_type == r->r_action) &&
+-			(!rta[RTA_PRIORITY-1] || memcmp(RTA_DATA(rta[RTA_PRIORITY-1]), &r->r_preference, 4) == 0) &&
+-			(!rta[RTA_IIF-1] || rtattr_strcmp(rta[RTA_IIF-1], r->r_ifname) == 0) &&
+-			(!rtm->rtm_table || (r && rtm->rtm_table == r->r_table))) {
+-
+-			err = -EPERM;
+-			if (r == &default_rule)
+-				break;
+-
+-			hlist_del_rcu(&r->r_hlist);
+-			r->r_dead = 1;
+-			dn_fib_rule_put(r);
+-			err = 0;
+-			break;
+-		}
+-	}
++	struct fib_lookup_arg arg = {
++		.result = res,
++	};
++	int err;
++
++	err = fib_rules_lookup(&dn_fib_rules_ops, flp, 0, &arg);
++	res->r = arg.rule;
+ 
+ 	return err;
+ }
+ 
+-static inline void dn_fib_rule_put_rcu(struct rcu_head *head)
++int dn_fib_rule_action(struct fib_rule *rule, struct flowi *flp, int flags,
++		       struct fib_lookup_arg *arg)
+ {
+-	struct dn_fib_rule *r = container_of(head, struct dn_fib_rule, rcu);
+-	kfree(r);
+-}
++	int err = -EAGAIN;
++	struct dn_fib_table *tbl;
+ 
+-void dn_fib_rule_put(struct dn_fib_rule *r)
+-{
+-	if (atomic_dec_and_test(&r->r_clntref)) {
+-		if (r->r_dead)
+-			call_rcu(&r->rcu, dn_fib_rule_put_rcu);
+-		else
+-			printk(KERN_DEBUG "Attempt to free alive dn_fib_rule\n");
+-	}
++	switch(rule->action) {
++	case FR_ACT_TO_TBL:
++		break;
++
++	case FR_ACT_UNREACHABLE:
++		err = -ENETUNREACH;
++		goto errout;
++
++	case FR_ACT_PROHIBIT:
++		err = -EACCES;
++		goto errout;
++
++	case FR_ACT_BLACKHOLE:
++	default:
++		err = -EINVAL;
++		goto errout;
++	}
++
++	tbl = dn_fib_get_table(rule->table, 0);
++	if (tbl == NULL)
++		goto errout;
++
++	err = tbl->lookup(tbl, flp, (struct dn_fib_res *)arg->result);
++	if (err > 0)
++		err = -EAGAIN;
++errout:
++	return err;
+ }
+ 
++static struct nla_policy dn_fib_rule_policy[FRA_MAX+1] __read_mostly = {
++	[FRA_IFNAME]	= { .type = NLA_STRING },
++	[FRA_PRIORITY]	= { .type = NLA_U32 },
++	[FRA_SRC]	= { .type = NLA_U16 },
++	[FRA_DST]	= { .type = NLA_U16 },
++	[FRA_FWMARK]	= { .type = NLA_U32 },
++	[FRA_FWMASK]	= { .type = NLA_U32 },
++	[FRA_TABLE]     = { .type = NLA_U32 },
++};
+ 
+-int dn_fib_rtm_newrule(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
++static int dn_fib_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
+ {
+-	struct rtattr **rta = arg;
+-	struct rtmsg *rtm = NLMSG_DATA(nlh);
+-	struct dn_fib_rule *r, *new_r, *last = NULL;
+-	struct hlist_node *node = NULL;
+-	unsigned char table_id;
+-
+-	if (rtm->rtm_src_len > 16 || rtm->rtm_dst_len > 16)
+-		return -EINVAL;
+-
+-	if (rta[RTA_IIF-1] && RTA_PAYLOAD(rta[RTA_IIF-1]) > IFNAMSIZ)
+-		return -EINVAL;
+-
+-	if (rtm->rtm_type == RTN_NAT)
+-		return -EINVAL;
+-
+-	table_id = rtm->rtm_table;
+-	if (table_id == RT_TABLE_UNSPEC) {
+-		struct dn_fib_table *tb;
+-		if (rtm->rtm_type == RTN_UNICAST) {
+-			if ((tb = dn_fib_empty_table()) == NULL)
+-				return -ENOBUFS;
+-			table_id = tb->n;
+-		}
+-	}
++	struct dn_fib_rule *r = (struct dn_fib_rule *)rule;
++	u16 daddr = fl->fld_dst;
++	u16 saddr = fl->fld_src;
++
++	if (((saddr ^ r->src) & r->srcmask) ||
++	    ((daddr ^ r->dst) & r->dstmask))
++		return 0;
+ 
+-	new_r = kzalloc(sizeof(*new_r), GFP_KERNEL);
+-	if (!new_r)
+-		return -ENOMEM;
+-
+-	if (rta[RTA_SRC-1])
+-		memcpy(&new_r->r_src, RTA_DATA(rta[RTA_SRC-1]), 2);
+-	if (rta[RTA_DST-1])
+-		memcpy(&new_r->r_dst, RTA_DATA(rta[RTA_DST-1]), 2);
+-	if (rta[RTA_GATEWAY-1])
+-		memcpy(&new_r->r_srcmap, RTA_DATA(rta[RTA_GATEWAY-1]), 2);
+-	new_r->r_src_len = rtm->rtm_src_len;
+-	new_r->r_dst_len = rtm->rtm_dst_len;
+-	new_r->r_srcmask = dnet_make_mask(rtm->rtm_src_len);
+-	new_r->r_dstmask = dnet_make_mask(rtm->rtm_dst_len);
+ #ifdef CONFIG_DECNET_ROUTE_FWMARK
+-	if (rta[RTA_PROTOINFO-1])
+-		memcpy(&new_r->r_fwmark, RTA_DATA(rta[RTA_PROTOINFO-1]), 4);
++	if ((r->fwmark ^ fl->fld_fwmark) & r->fwmask)
++		return 0;
+ #endif
+-	new_r->r_action = rtm->rtm_type;
+-	new_r->r_flags = rtm->rtm_flags;
+-	if (rta[RTA_PRIORITY-1])
+-		memcpy(&new_r->r_preference, RTA_DATA(rta[RTA_PRIORITY-1]), 4);
+-	new_r->r_table = table_id;
+-	if (rta[RTA_IIF-1]) {
+-		struct net_device *dev;
+-		rtattr_strlcpy(new_r->r_ifname, rta[RTA_IIF-1], IFNAMSIZ);
+-		new_r->r_ifindex = -1;
+-		dev = dev_get_by_name(new_r->r_ifname);
+-		if (dev) {
+-			new_r->r_ifindex = dev->ifindex;
+-			dev_put(dev);
+-		}
+-	}
+ 
+-	r = container_of(dn_fib_rules.first, struct dn_fib_rule, r_hlist);
+-	if (!new_r->r_preference) {
+-		if (r && r->r_hlist.next != NULL) {
+-			r = container_of(r->r_hlist.next, struct dn_fib_rule, r_hlist);
+-			if (r->r_preference)
+-				new_r->r_preference = r->r_preference - 1;
++	return 1;
++}
++
++static int dn_fib_rule_configure(struct fib_rule *rule, struct sk_buff *skb,
++				 struct nlmsghdr *nlh, struct fib_rule_hdr *frh,
++				 struct nlattr **tb)
++{
++	int err = -EINVAL;
++	struct dn_fib_rule *r = (struct dn_fib_rule *)rule;
++
++	if (frh->src_len > 16 || frh->dst_len > 16 || frh->tos)
++		goto  errout;
++
++	if (rule->table == RT_TABLE_UNSPEC) {
++		if (rule->action == FR_ACT_TO_TBL) {
++			struct dn_fib_table *table;
++
++			table = dn_fib_empty_table();
++			if (table == NULL) {
++				err = -ENOBUFS;
++				goto errout;
++			}
++
++			rule->table = table->n;
+ 		}
+ 	}
+ 
+-	hlist_for_each_entry(r, node, &dn_fib_rules, r_hlist) {
+-		if (r->r_preference > new_r->r_preference)
+-			break;
+-		last = r;
++	if (tb[FRA_SRC])
++		r->src = nla_get_u16(tb[FRA_SRC]);
++
++	if (tb[FRA_DST])
++		r->dst = nla_get_u16(tb[FRA_DST]);
++
++#ifdef CONFIG_DECNET_ROUTE_FWMARK
++	if (tb[FRA_FWMARK]) {
++		r->fwmark = nla_get_u32(tb[FRA_FWMARK]);
++		if (r->fwmark)
++			/* compatibility: if the mark value is non-zero all bits
++			 * are compared unless a mask is explicitly specified.
++			 */
++			r->fwmask = 0xFFFFFFFF;
+ 	}
+-	atomic_inc(&new_r->r_clntref);
+ 
+-	if (last)
+-		hlist_add_after_rcu(&last->r_hlist, &new_r->r_hlist);
+-	else
+-		hlist_add_before_rcu(&new_r->r_hlist, &r->r_hlist);
+-	return 0;
+-}
++	if (tb[FRA_FWMASK])
++		r->fwmask = nla_get_u32(tb[FRA_FWMASK]);
++#endif
+ 
++	r->src_len = frh->src_len;
++	r->srcmask = dnet_make_mask(r->src_len);
++	r->dst_len = frh->dst_len;
++	r->dstmask = dnet_make_mask(r->dst_len);
++	err = 0;
++errout:
++	return err;
++}
+ 
+-int dn_fib_lookup(const struct flowi *flp, struct dn_fib_res *res)
++static int dn_fib_rule_compare(struct fib_rule *rule, struct fib_rule_hdr *frh,
++			       struct nlattr **tb)
+ {
+-	struct dn_fib_rule *r, *policy;
+-	struct dn_fib_table *tb;
+-	__le16 saddr = flp->fld_src;
+-	__le16 daddr = flp->fld_dst;
+-	struct hlist_node *node;
+-	int err;
++	struct dn_fib_rule *r = (struct dn_fib_rule *)rule;
++
++	if (frh->src_len && (r->src_len != frh->src_len))
++		return 0;
+ 
+-	rcu_read_lock();
++	if (frh->dst_len && (r->dst_len != frh->dst_len))
++		return 0;
+ 
+-	hlist_for_each_entry_rcu(r, node, &dn_fib_rules, r_hlist) {
+-		if (((saddr^r->r_src) & r->r_srcmask) ||
+-		    ((daddr^r->r_dst) & r->r_dstmask) ||
+ #ifdef CONFIG_DECNET_ROUTE_FWMARK
+-		    (r->r_fwmark && r->r_fwmark != flp->fld_fwmark) ||
++	if (tb[FRA_FWMARK] && (r->fwmark != nla_get_u32(tb[FRA_FWMARK])))
++		return 0;
++
++	if (tb[FRA_FWMASK] && (r->fwmask != nla_get_u32(tb[FRA_FWMASK])))
++		return 0;
+ #endif
+-		    (r->r_ifindex && r->r_ifindex != flp->iif))
+-			continue;
+ 
+-		switch(r->r_action) {
+-			case RTN_UNICAST:
+-			case RTN_NAT:
+-				policy = r;
+-				break;
+-			case RTN_UNREACHABLE:
+-				rcu_read_unlock();
+-				return -ENETUNREACH;
+-			default:
+-			case RTN_BLACKHOLE:
+-				rcu_read_unlock();
+-				return -EINVAL;
+-			case RTN_PROHIBIT:
+-				rcu_read_unlock();
+-				return -EACCES;
+-		}
++	if (tb[FRA_SRC] && (r->src != nla_get_u16(tb[FRA_SRC])))
++		return 0;
+ 
+-		if ((tb = dn_fib_get_table(r->r_table, 0)) == NULL)
+-			continue;
+-		err = tb->lookup(tb, flp, res);
+-		if (err == 0) {
+-			res->r = policy;
+-			if (policy)
+-				atomic_inc(&policy->r_clntref);
+-			rcu_read_unlock();
+-			return 0;
+-		}
+-		if (err < 0 && err != -EAGAIN) {
+-			rcu_read_unlock();
+-			return err;
+-		}
+-	}
++	if (tb[FRA_DST] && (r->dst != nla_get_u16(tb[FRA_DST])))
++		return 0;
+ 
+-	rcu_read_unlock();
+-	return -ESRCH;
++	return 1;
+ }
+ 
+ unsigned dnet_addr_type(__le16 addr)
+@@ -271,7 +225,7 @@
+ 	struct flowi fl = { .nl_u = { .dn_u = { .daddr = addr } } };
+ 	struct dn_fib_res res;
+ 	unsigned ret = RTN_UNICAST;
+-	struct dn_fib_table *tb = dn_fib_tables[RT_TABLE_LOCAL];
++	struct dn_fib_table *tb = dn_fib_get_table(RT_TABLE_LOCAL, 0);
+ 
+ 	res.r = NULL;
+ 
+@@ -284,142 +238,79 @@
+ 	return ret;
+ }
+ 
+-__le16 dn_fib_rules_policy(__le16 saddr, struct dn_fib_res *res, unsigned *flags)
++static int dn_fib_rule_fill(struct fib_rule *rule, struct sk_buff *skb,
++			    struct nlmsghdr *nlh, struct fib_rule_hdr *frh)
+ {
+-	struct dn_fib_rule *r = res->r;
++	struct dn_fib_rule *r = (struct dn_fib_rule *)rule;
+ 
+-	if (r->r_action == RTN_NAT) {
+-		int addrtype = dnet_addr_type(r->r_srcmap);
+-
+-		if (addrtype == RTN_NAT) {
+-			saddr = (saddr&~r->r_srcmask)|r->r_srcmap;
+-			*flags |= RTCF_SNAT;
+-		} else if (addrtype == RTN_LOCAL || r->r_srcmap == 0) {
+-			saddr = r->r_srcmap;
+-			*flags |= RTCF_MASQ;
+-		}
+-	}
+-	return saddr;
+-}
++	frh->family = AF_DECnet;
++	frh->dst_len = r->dst_len;
++	frh->src_len = r->src_len;
++	frh->tos = 0;
+ 
+-static void dn_fib_rules_detach(struct net_device *dev)
+-{
+-	struct hlist_node *node;
+-	struct dn_fib_rule *r;
+-
+-	hlist_for_each_entry(r, node, &dn_fib_rules, r_hlist) {
+-		if (r->r_ifindex == dev->ifindex)
+-			r->r_ifindex = -1;
+-	}
+-}
++#ifdef CONFIG_DECNET_ROUTE_FWMARK
++	if (r->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMARK, r->fwmark);
++	if (r->fwmask || r->fwmark)
++		NLA_PUT_U32(skb, FRA_FWMASK, r->fwmask);
++#endif
++	if (r->dst_len)
++		NLA_PUT_U16(skb, FRA_DST, r->dst);
++	if (r->src_len)
++		NLA_PUT_U16(skb, FRA_SRC, r->src);
+ 
+-static void dn_fib_rules_attach(struct net_device *dev)
+-{
+-	struct hlist_node *node;
+-	struct dn_fib_rule *r;
++	return 0;
+ 
+-	hlist_for_each_entry(r, node, &dn_fib_rules, r_hlist) {
+-		if (r->r_ifindex == -1 && strcmp(dev->name, r->r_ifname) == 0)
+-			r->r_ifindex = dev->ifindex;
+-	}
++nla_put_failure:
++	return -ENOBUFS;
+ }
+ 
+-static int dn_fib_rules_event(struct notifier_block *this, unsigned long event, void *ptr)
++static u32 dn_fib_rule_default_pref(void)
+ {
+-	struct net_device *dev = ptr;
++	struct list_head *pos;
++	struct fib_rule *rule;
+ 
+-	switch(event) {
+-		case NETDEV_UNREGISTER:
+-			dn_fib_rules_detach(dev);
+-			dn_fib_sync_down(0, dev, 1);
+-		case NETDEV_REGISTER:
+-			dn_fib_rules_attach(dev);
+-			dn_fib_sync_up(dev);
++	if (!list_empty(&dn_fib_rules)) {
++		pos = dn_fib_rules.next;
++		if (pos->next != &dn_fib_rules) {
++			rule = list_entry(pos->next, struct fib_rule, list);
++			if (rule->pref)
++				return rule->pref - 1;
++		}
+ 	}
+ 
+-	return NOTIFY_DONE;
+-}
+-
+-
+-static struct notifier_block dn_fib_rules_notifier = {
+-	.notifier_call =	dn_fib_rules_event,
+-};
+-
+-static int dn_fib_fill_rule(struct sk_buff *skb, struct dn_fib_rule *r,
+-			    struct netlink_callback *cb, unsigned int flags)
+-{
+-	struct rtmsg *rtm;
+-	struct nlmsghdr *nlh;
+-	unsigned char *b = skb->tail;
+-
+-
+-	nlh = NLMSG_NEW_ANSWER(skb, cb, RTM_NEWRULE, sizeof(*rtm), flags);
+-	rtm = NLMSG_DATA(nlh);
+-	rtm->rtm_family = AF_DECnet;
+-	rtm->rtm_dst_len = r->r_dst_len;
+-	rtm->rtm_src_len = r->r_src_len;
+-	rtm->rtm_tos = 0;
+-#ifdef CONFIG_DECNET_ROUTE_FWMARK
+-	if (r->r_fwmark)
+-		RTA_PUT(skb, RTA_PROTOINFO, 4, &r->r_fwmark);
+-#endif
+-	rtm->rtm_table = r->r_table;
+-	rtm->rtm_protocol = 0;
+-	rtm->rtm_scope = 0;
+-	rtm->rtm_type = r->r_action;
+-	rtm->rtm_flags = r->r_flags;
+-
+-	if (r->r_dst_len)
+-		RTA_PUT(skb, RTA_DST, 2, &r->r_dst);
+-	if (r->r_src_len)
+-		RTA_PUT(skb, RTA_SRC, 2, &r->r_src);
+-	if (r->r_ifname[0])
+-		RTA_PUT(skb, RTA_IIF, IFNAMSIZ, &r->r_ifname);
+-	if (r->r_preference)
+-		RTA_PUT(skb, RTA_PRIORITY, 4, &r->r_preference);
+-	if (r->r_srcmap)
+-		RTA_PUT(skb, RTA_GATEWAY, 2, &r->r_srcmap);
+-	nlh->nlmsg_len = skb->tail - b;
+-	return skb->len;
+-
+-nlmsg_failure:
+-rtattr_failure:
+-	skb_trim(skb, b - skb->data);
+-	return -1;
++	return 0;
+ }
+ 
+ int dn_fib_dump_rules(struct sk_buff *skb, struct netlink_callback *cb)
+ {
+-	int idx = 0;
+-	int s_idx = cb->args[0];
+-	struct dn_fib_rule *r;
+-	struct hlist_node *node;
+-
+-	rcu_read_lock();
+-	hlist_for_each_entry(r, node, &dn_fib_rules, r_hlist) {
+-		if (idx < s_idx)
+-			goto next;
+-		if (dn_fib_fill_rule(skb, r, cb, NLM_F_MULTI) < 0)
+-			break;
+-next:
+-		idx++;
+-	}
+-	rcu_read_unlock();
+-	cb->args[0] = idx;
+-
+-	return skb->len;
++	return fib_rules_dump(skb, cb, AF_DECnet);
+ }
+ 
++static struct fib_rules_ops dn_fib_rules_ops = {
++	.family		= AF_DECnet,
++	.rule_size	= sizeof(struct dn_fib_rule),
++	.action		= dn_fib_rule_action,
++	.match		= dn_fib_rule_match,
++	.configure	= dn_fib_rule_configure,
++	.compare	= dn_fib_rule_compare,
++	.fill		= dn_fib_rule_fill,
++	.default_pref	= dn_fib_rule_default_pref,
++	.nlgroup	= RTNLGRP_DECnet_RULE,
++	.policy		= dn_fib_rule_policy,
++	.rules_list	= &dn_fib_rules,
++	.owner		= THIS_MODULE,
++};
++
+ void __init dn_fib_rules_init(void)
+ {
+-	INIT_HLIST_HEAD(&dn_fib_rules);
+-	hlist_add_head(&default_rule.r_hlist, &dn_fib_rules);
+-	register_netdevice_notifier(&dn_fib_rules_notifier);
++	list_add_tail(&default_rule.common.list, &dn_fib_rules);
++	fib_rules_register(&dn_fib_rules_ops);
+ }
+ 
+ void __exit dn_fib_rules_cleanup(void)
+ {
+-	unregister_netdevice_notifier(&dn_fib_rules_notifier);
++	fib_rules_unregister(&dn_fib_rules_ops);
+ }
+ 
+ 
+Index: linux-2.6.17.noarch/net/decnet/dn_table.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/decnet/dn_table.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/decnet/dn_table.c	2006-09-19 14:31:55.000000000 +0200
+@@ -30,6 +30,7 @@
+ #include <net/neighbour.h>
+ #include <net/dst.h>
+ #include <net/flow.h>
++#include <net/fib_rules.h>
+ #include <net/dn.h>
+ #include <net/dn_route.h>
+ #include <net/dn_fib.h>
+@@ -74,9 +75,9 @@
+ for( ; ((f) = *(fp)) != NULL && dn_key_eq((f)->fn_key, (key)); (fp) = &(f)->fn_next)
+ 
+ #define RT_TABLE_MIN 1
+-
++#define DN_FIB_TABLE_HASHSZ 256
++static struct hlist_head dn_fib_table_hash[DN_FIB_TABLE_HASHSZ];
+ static DEFINE_RWLOCK(dn_fib_tables_lock);
+-struct dn_fib_table *dn_fib_tables[RT_TABLE_MAX + 1];
+ 
+ static kmem_cache_t *dn_hash_kmem __read_mostly;
+ static int dn_fib_hash_zombies;
+@@ -263,7 +264,7 @@
+ }
+ 
+ static int dn_fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
+-                        u8 tb_id, u8 type, u8 scope, void *dst, int dst_len,
++                        u32 tb_id, u8 type, u8 scope, void *dst, int dst_len,
+                         struct dn_fib_info *fi, unsigned int flags)
+ {
+         struct rtmsg *rtm;
+@@ -277,6 +278,7 @@
+         rtm->rtm_src_len = 0;
+         rtm->rtm_tos = 0;
+         rtm->rtm_table = tb_id;
++	RTA_PUT_U32(skb, RTA_TABLE, tb_id);
+         rtm->rtm_flags = fi->fib_flags;
+         rtm->rtm_scope = scope;
+ 	rtm->rtm_type  = type;
+@@ -326,7 +328,7 @@
+ }
+ 
+ 
+-static void dn_rtmsg_fib(int event, struct dn_fib_node *f, int z, int tb_id,
++static void dn_rtmsg_fib(int event, struct dn_fib_node *f, int z, u32 tb_id,
+                         struct nlmsghdr *nlh, struct netlink_skb_parms *req)
+ {
+         struct sk_buff *skb;
+@@ -359,7 +361,7 @@
+ {
+ 	int i, s_i;
+ 
+-	s_i = cb->args[3];
++	s_i = cb->args[4];
+ 	for(i = 0; f; i++, f = f->fn_next) {
+ 		if (i < s_i)
+ 			continue;
+@@ -372,11 +374,11 @@
+ 				(f->fn_state & DN_S_ZOMBIE) ? 0 : f->fn_type,
+ 				f->fn_scope, &f->fn_key, dz->dz_order, 
+ 				f->fn_info, NLM_F_MULTI) < 0) {
+-			cb->args[3] = i;
++			cb->args[4] = i;
+ 			return -1;
+ 		}
+ 	}
+-	cb->args[3] = i;
++	cb->args[4] = i;
+ 	return skb->len;
+ }
+ 
+@@ -387,20 +389,20 @@
+ {
+ 	int h, s_h;
+ 
+-	s_h = cb->args[2];
++	s_h = cb->args[3];
+ 	for(h = 0; h < dz->dz_divisor; h++) {
+ 		if (h < s_h)
+ 			continue;
+ 		if (h > s_h)
+-			memset(&cb->args[3], 0, sizeof(cb->args) - 3*sizeof(cb->args[0]));
++			memset(&cb->args[4], 0, sizeof(cb->args) - 4*sizeof(cb->args[0]));
+ 		if (dz->dz_hash == NULL || dz->dz_hash[h] == NULL)
+ 			continue;
+ 		if (dn_hash_dump_bucket(skb, cb, tb, dz, dz->dz_hash[h]) < 0) {
+-			cb->args[2] = h;
++			cb->args[3] = h;
+ 			return -1;
+ 		}
+ 	}
+-	cb->args[2] = h;
++	cb->args[3] = h;
+ 	return skb->len;
+ }
+ 
+@@ -411,26 +413,63 @@
+ 	struct dn_zone *dz;
+ 	struct dn_hash *table = (struct dn_hash *)tb->data;
+ 
+-	s_m = cb->args[1];
++	s_m = cb->args[2];
+ 	read_lock(&dn_fib_tables_lock);
+ 	for(dz = table->dh_zone_list, m = 0; dz; dz = dz->dz_next, m++) {
+ 		if (m < s_m)
+ 			continue;
+ 		if (m > s_m)
+-			memset(&cb->args[2], 0, sizeof(cb->args) - 2*sizeof(cb->args[0]));
++			memset(&cb->args[3], 0, sizeof(cb->args) - 3*sizeof(cb->args[0]));
+ 
+ 		if (dn_hash_dump_zone(skb, cb, tb, dz) < 0) {
+-			cb->args[1] = m;
++			cb->args[2] = m;
+ 			read_unlock(&dn_fib_tables_lock);
+ 			return -1;
+ 		}
+ 	}
+ 	read_unlock(&dn_fib_tables_lock);
+-	cb->args[1] = m;
++	cb->args[2] = m;
+ 
+         return skb->len;
+ }
+ 
++int dn_fib_dump(struct sk_buff *skb, struct netlink_callback *cb)
++{
++	unsigned int h, s_h;
++	unsigned int e = 0, s_e;
++	struct dn_fib_table *tb;
++	struct hlist_node *node;
++	int dumped = 0;
++
++	if (NLMSG_PAYLOAD(cb->nlh, 0) >= sizeof(struct rtmsg) &&
++		((struct rtmsg *)NLMSG_DATA(cb->nlh))->rtm_flags&RTM_F_CLONED)
++			return dn_cache_dump(skb, cb);
++
++	s_h = cb->args[0];
++	s_e = cb->args[1];
++
++	for (h = s_h; h < DN_FIB_TABLE_HASHSZ; h++, s_h = 0) {
++		e = 0;
++		hlist_for_each_entry(tb, node, &dn_fib_table_hash[h], hlist) {
++			if (e < s_e)
++				goto next;
++			if (dumped)
++				memset(&cb->args[2], 0, sizeof(cb->args) -
++				                 2 * sizeof(cb->args[0]));
++			if (tb->dump(tb, skb, cb) < 0)
++				goto out;
++			dumped = 1;
++next:
++			e++;
++		}
++	}
++out:
++	cb->args[1] = e;
++	cb->args[0] = h;
++
++	return skb->len;
++}
++
+ static int dn_fib_table_insert(struct dn_fib_table *tb, struct rtmsg *r, struct dn_kern_rta *rta, struct nlmsghdr *n, struct netlink_skb_parms *req)
+ {
+ 	struct dn_hash *table = (struct dn_hash *)tb->data;
+@@ -739,9 +778,11 @@
+ }
+ 
+ 
+-struct dn_fib_table *dn_fib_get_table(int n, int create)
++struct dn_fib_table *dn_fib_get_table(u32 n, int create)
+ {
+         struct dn_fib_table *t;
++	struct hlist_node *node;
++	unsigned int h;
+ 
+         if (n < RT_TABLE_MIN)
+                 return NULL;
+@@ -749,8 +790,15 @@
+         if (n > RT_TABLE_MAX)
+                 return NULL;
+ 
+-        if (dn_fib_tables[n]) 
+-                return dn_fib_tables[n];
++	h = n & (DN_FIB_TABLE_HASHSZ - 1);
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(t, node, &dn_fib_table_hash[h], hlist) {
++		if (t->n == n) {
++			rcu_read_unlock();
++			return t;
++		}
++	}
++	rcu_read_unlock();
+ 
+         if (!create)
+                 return NULL;
+@@ -771,33 +819,37 @@
+         t->flush  = dn_fib_table_flush;
+         t->dump = dn_fib_table_dump;
+ 	memset(t->data, 0, sizeof(struct dn_hash));
+-        dn_fib_tables[n] = t;
++	hlist_add_head_rcu(&t->hlist, &dn_fib_table_hash[h]);
+ 
+         return t;
+ }
+ 
+-static void dn_fib_del_tree(int n)
+-{
+-	struct dn_fib_table *t;
+-
+-	write_lock(&dn_fib_tables_lock);
+-	t = dn_fib_tables[n];
+-	dn_fib_tables[n] = NULL;
+-	write_unlock(&dn_fib_tables_lock);
+-
+-	kfree(t);
+-}
+-
+ struct dn_fib_table *dn_fib_empty_table(void)
+ {
+-        int id;
++        u32 id;
+ 
+         for(id = RT_TABLE_MIN; id <= RT_TABLE_MAX; id++)
+-                if (dn_fib_tables[id] == NULL)
++		if (dn_fib_get_table(id, 0) == NULL)
+                         return dn_fib_get_table(id, 1);
+         return NULL;
+ }
+ 
++void dn_fib_flush(void)
++{
++        int flushed = 0;
++        struct dn_fib_table *tb;
++	struct hlist_node *node;
++	unsigned int h;
++
++	for (h = 0; h < DN_FIB_TABLE_HASHSZ; h++) {
++		hlist_for_each_entry(tb, node, &dn_fib_table_hash[h], hlist)
++	                flushed += tb->flush(tb);
++        }
++
++        if (flushed)
++                dn_rt_cache_flush(-1);
++}
++
+ void __init dn_fib_table_init(void)
+ {
+ 	dn_hash_kmem = kmem_cache_create("dn_fib_info_cache",
+@@ -808,10 +860,17 @@
+ 
+ void __exit dn_fib_table_cleanup(void)
+ {
+-	int i;
+-
+-	for (i = RT_TABLE_MIN; i <= RT_TABLE_MAX; ++i)
+-		dn_fib_del_tree(i);
++	struct dn_fib_table *t;
++	struct hlist_node *node, *next;
++	unsigned int h;
+ 
+-	return;
++	write_lock(&dn_fib_tables_lock);
++	for (h = 0; h < DN_FIB_TABLE_HASHSZ; h++) {
++		hlist_for_each_entry_safe(t, node, next, &dn_fib_table_hash[h],
++		                          hlist) {
++			hlist_del(&t->hlist);
++			kfree(t);
++		}
++	}
++	write_unlock(&dn_fib_tables_lock);
+ }
+Index: linux-2.6.17.noarch/net/ipv4/fib_hash.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_hash.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_hash.c	2006-09-19 14:31:55.000000000 +0200
+@@ -684,7 +684,7 @@
+ 	struct fib_node *f;
+ 	int i, s_i;
+ 
+-	s_i = cb->args[3];
++	s_i = cb->args[4];
+ 	i = 0;
+ 	hlist_for_each_entry(f, node, head, fn_hash) {
+ 		struct fib_alias *fa;
+@@ -704,14 +704,14 @@
+ 					  fa->fa_tos,
+ 					  fa->fa_info,
+ 					  NLM_F_MULTI) < 0) {
+-				cb->args[3] = i;
++				cb->args[4] = i;
+ 				return -1;
+ 			}
+ 		next:
+ 			i++;
+ 		}
+ 	}
+-	cb->args[3] = i;
++	cb->args[4] = i;
+ 	return skb->len;
+ }
+ 
+@@ -722,21 +722,21 @@
+ {
+ 	int h, s_h;
+ 
+-	s_h = cb->args[2];
++	s_h = cb->args[3];
+ 	for (h=0; h < fz->fz_divisor; h++) {
+ 		if (h < s_h) continue;
+ 		if (h > s_h)
+-			memset(&cb->args[3], 0,
+-			       sizeof(cb->args) - 3*sizeof(cb->args[0]));
++			memset(&cb->args[4], 0,
++			       sizeof(cb->args) - 4*sizeof(cb->args[0]));
+ 		if (fz->fz_hash == NULL ||
+ 		    hlist_empty(&fz->fz_hash[h]))
+ 			continue;
+ 		if (fn_hash_dump_bucket(skb, cb, tb, fz, &fz->fz_hash[h])<0) {
+-			cb->args[2] = h;
++			cb->args[3] = h;
+ 			return -1;
+ 		}
+ 	}
+-	cb->args[2] = h;
++	cb->args[3] = h;
+ 	return skb->len;
+ }
+ 
+@@ -746,28 +746,28 @@
+ 	struct fn_zone *fz;
+ 	struct fn_hash *table = (struct fn_hash*)tb->tb_data;
+ 
+-	s_m = cb->args[1];
++	s_m = cb->args[2];
+ 	read_lock(&fib_hash_lock);
+ 	for (fz = table->fn_zone_list, m=0; fz; fz = fz->fz_next, m++) {
+ 		if (m < s_m) continue;
+ 		if (m > s_m)
+-			memset(&cb->args[2], 0,
+-			       sizeof(cb->args) - 2*sizeof(cb->args[0]));
++			memset(&cb->args[3], 0,
++			       sizeof(cb->args) - 3*sizeof(cb->args[0]));
+ 		if (fn_hash_dump_zone(skb, cb, tb, fz) < 0) {
+-			cb->args[1] = m;
++			cb->args[2] = m;
+ 			read_unlock(&fib_hash_lock);
+ 			return -1;
+ 		}
+ 	}
+ 	read_unlock(&fib_hash_lock);
+-	cb->args[1] = m;
++	cb->args[2] = m;
+ 	return skb->len;
+ }
+ 
+ #ifdef CONFIG_IP_MULTIPLE_TABLES
+-struct fib_table * fib_hash_init(int id)
++struct fib_table * fib_hash_init(u32 id)
+ #else
+-struct fib_table * __init fib_hash_init(int id)
++struct fib_table * __init fib_hash_init(u32 id)
+ #endif
+ {
+ 	struct fib_table *tb;
+Index: linux-2.6.17.noarch/net/ipv4/fib_lookup.h
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_lookup.h	2006-09-19 14:32:08.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_lookup.h	2006-09-19 14:31:55.000000000 +0200
+@@ -30,11 +30,11 @@
+ extern int fib_nh_match(struct rtmsg *r, struct nlmsghdr *,
+ 			struct kern_rta *rta, struct fib_info *fi);
+ extern int fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
+-			 u8 tb_id, u8 type, u8 scope, void *dst,
++			 u32 tb_id, u8 type, u8 scope, void *dst,
+ 			 int dst_len, u8 tos, struct fib_info *fi,
+ 			 unsigned int);
+ extern void rtmsg_fib(int event, u32 key, struct fib_alias *fa,
+-		      int z, int tb_id,
++		      int z, u32 tb_id,
+ 		      struct nlmsghdr *n, struct netlink_skb_parms *req);
+ extern struct fib_alias *fib_find_alias(struct list_head *fah,
+ 					u8 tos, u32 prio);
+Index: linux-2.6.17.noarch/net/ipv4/fib_semantics.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_semantics.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_semantics.c	2006-09-19 14:31:55.000000000 +0200
+@@ -273,7 +273,7 @@
+ }
+ 
+ void rtmsg_fib(int event, u32 key, struct fib_alias *fa,
+-	       int z, int tb_id,
++	       int z, u32 tb_id,
+ 	       struct nlmsghdr *n, struct netlink_skb_parms *req)
+ {
+ 	struct sk_buff *skb;
+@@ -939,7 +939,7 @@
+ 
+ int
+ fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
+-	      u8 tb_id, u8 type, u8 scope, void *dst, int dst_len, u8 tos,
++	      u32 tb_id, u8 type, u8 scope, void *dst, int dst_len, u8 tos,
+ 	      struct fib_info *fi, unsigned int flags)
+ {
+ 	struct rtmsg *rtm;
+@@ -953,6 +953,7 @@
+ 	rtm->rtm_src_len = 0;
+ 	rtm->rtm_tos = tos;
+ 	rtm->rtm_table = tb_id;
++	RTA_PUT_U32(skb, RTA_TABLE, tb_id);
+ 	rtm->rtm_type = type;
+ 	rtm->rtm_flags = fi->fib_flags;
+ 	rtm->rtm_scope = scope;
+Index: linux-2.6.17.noarch/net/ipv4/fib_trie.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/fib_trie.c	2006-09-19 14:31:57.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/fib_trie.c	2006-09-19 14:31:55.000000000 +0200
+@@ -1148,7 +1148,7 @@
+ 
+ 	key = ntohl(key);
+ 
+-	pr_debug("Insert table=%d %08x/%d\n", tb->tb_id, key, plen);
++	pr_debug("Insert table=%u %08x/%d\n", tb->tb_id, key, plen);
+ 
+ 	mask = ntohl(inet_make_mask(plen));
+ 
+@@ -1848,7 +1848,7 @@
+ 
+ 	u32 xkey = htonl(key);
+ 
+-	s_i = cb->args[3];
++	s_i = cb->args[4];
+ 	i = 0;
+ 
+ 	/* rcu_read_lock is hold by caller */
+@@ -1870,12 +1870,12 @@
+ 				  plen,
+ 				  fa->fa_tos,
+ 				  fa->fa_info, 0) < 0) {
+-			cb->args[3] = i;
++			cb->args[4] = i;
+ 			return -1;
+ 		}
+ 		i++;
+ 	}
+-	cb->args[3] = i;
++	cb->args[4] = i;
+ 	return skb->len;
+ }
+ 
+@@ -1886,14 +1886,14 @@
+ 	struct list_head *fa_head;
+ 	struct leaf *l = NULL;
+ 
+-	s_h = cb->args[2];
++	s_h = cb->args[3];
+ 
+ 	for (h = 0; (l = nextleaf(t, l)) != NULL; h++) {
+ 		if (h < s_h)
+ 			continue;
+ 		if (h > s_h)
+-			memset(&cb->args[3], 0,
+-			       sizeof(cb->args) - 3*sizeof(cb->args[0]));
++			memset(&cb->args[4], 0,
++			       sizeof(cb->args) - 4*sizeof(cb->args[0]));
+ 
+ 		fa_head = get_fa_head(l, plen);
+ 
+@@ -1904,11 +1904,11 @@
+ 			continue;
+ 
+ 		if (fn_trie_dump_fa(l->key, plen, fa_head, tb, skb, cb)<0) {
+-			cb->args[2] = h;
++			cb->args[3] = h;
+ 			return -1;
+ 		}
+ 	}
+-	cb->args[2] = h;
++	cb->args[3] = h;
+ 	return skb->len;
+ }
+ 
+@@ -1917,23 +1917,23 @@
+ 	int m, s_m;
+ 	struct trie *t = (struct trie *) tb->tb_data;
+ 
+-	s_m = cb->args[1];
++	s_m = cb->args[2];
+ 
+ 	rcu_read_lock();
+ 	for (m = 0; m <= 32; m++) {
+ 		if (m < s_m)
+ 			continue;
+ 		if (m > s_m)
+-			memset(&cb->args[2], 0,
+-				sizeof(cb->args) - 2*sizeof(cb->args[0]));
++			memset(&cb->args[3], 0,
++				sizeof(cb->args) - 3*sizeof(cb->args[0]));
+ 
+ 		if (fn_trie_dump_plen(t, 32-m, tb, skb, cb)<0) {
+-			cb->args[1] = m;
++			cb->args[2] = m;
+ 			goto out;
+ 		}
+ 	}
+ 	rcu_read_unlock();
+-	cb->args[1] = m;
++	cb->args[2] = m;
+ 	return skb->len;
+ out:
+ 	rcu_read_unlock();
+@@ -1943,9 +1943,9 @@
+ /* Fix more generic FIB names for init later */
+ 
+ #ifdef CONFIG_IP_MULTIPLE_TABLES
+-struct fib_table * fib_hash_init(int id)
++struct fib_table * fib_hash_init(u32 id)
+ #else
+-struct fib_table * __init fib_hash_init(int id)
++struct fib_table * __init fib_hash_init(u32 id)
+ #endif
+ {
+ 	struct fib_table *tb;
+Index: linux-2.6.17.noarch/net/ipv4/route.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv4/route.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv4/route.c	2006-09-19 14:31:55.000000000 +0200
+@@ -2652,6 +2652,7 @@
+ 	r->rtm_src_len	= 0;
+ 	r->rtm_tos	= rt->fl.fl4_tos;
+ 	r->rtm_table	= RT_TABLE_MAIN;
++	RTA_PUT_U32(skb, RTA_TABLE, RT_TABLE_MAIN);
+ 	r->rtm_type	= rt->rt_type;
+ 	r->rtm_scope	= RT_SCOPE_UNIVERSE;
+ 	r->rtm_protocol = RTPROT_UNSPEC;
+Index: linux-2.6.17.noarch/net/ipv6/ndisc.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/ndisc.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/ndisc.c	2006-09-19 14:31:55.000000000 +0200
+@@ -411,7 +411,8 @@
+  */
+ 
+ static inline void ndisc_flow_init(struct flowi *fl, u8 type,
+-			    struct in6_addr *saddr, struct in6_addr *daddr)
++			    struct in6_addr *saddr, struct in6_addr *daddr,
++			    int oif)
+ {
+ 	memset(fl, 0, sizeof(*fl));
+ 	ipv6_addr_copy(&fl->fl6_src, saddr);
+@@ -419,6 +420,7 @@
+ 	fl->proto	 	= IPPROTO_ICMPV6;
+ 	fl->fl_icmp_type	= type;
+ 	fl->fl_icmp_code	= 0;
++	fl->oif			= oif;
+ 	security_sk_classify_flow(ndisc_socket->sk, fl);
+ }
+ 
+@@ -451,7 +453,8 @@
+ 		src_addr = &tmpaddr;
+ 	}
+ 
+-	ndisc_flow_init(&fl, NDISC_NEIGHBOUR_ADVERTISEMENT, src_addr, daddr);
++	ndisc_flow_init(&fl, NDISC_NEIGHBOUR_ADVERTISEMENT, src_addr, daddr,
++			dev->ifindex);
+ 
+ 	dst = ndisc_dst_alloc(dev, neigh, daddr, ip6_output);
+ 	if (!dst)
+@@ -541,7 +544,8 @@
+ 		saddr = &addr_buf;
+ 	}
+ 
+-	ndisc_flow_init(&fl, NDISC_NEIGHBOUR_SOLICITATION, saddr, daddr);
++	ndisc_flow_init(&fl, NDISC_NEIGHBOUR_SOLICITATION, saddr, daddr,
++			dev->ifindex);
+ 
+ 	dst = ndisc_dst_alloc(dev, neigh, daddr, ip6_output);
+ 	if (!dst)
+@@ -616,7 +620,8 @@
+         int len;
+ 	int err;
+ 
+-	ndisc_flow_init(&fl, NDISC_ROUTER_SOLICITATION, saddr, daddr);
++	ndisc_flow_init(&fl, NDISC_ROUTER_SOLICITATION, saddr, daddr,
++			dev->ifindex);
+ 
+ 	dst = ndisc_dst_alloc(dev, NULL, daddr, ip6_output);
+ 	if (!dst)
+@@ -1345,7 +1350,8 @@
+ 
+ 	neigh = __neigh_lookup(&nd_tbl, target, skb->dev, 1);
+ 	if (neigh) {
+-		rt6_redirect(dest, &skb->nh.ipv6h->saddr, neigh, lladdr, 
++		rt6_redirect(dest, &skb->nh.ipv6h->daddr,
++			     &skb->nh.ipv6h->saddr, neigh, lladdr,
+ 			     on_link);
+ 		neigh_release(neigh);
+ 	}
+@@ -1381,7 +1387,8 @@
+  		return;
+  	}
+ 
+-	ndisc_flow_init(&fl, NDISC_REDIRECT, &saddr_buf, &skb->nh.ipv6h->saddr);
++	ndisc_flow_init(&fl, NDISC_REDIRECT, &saddr_buf, &skb->nh.ipv6h->saddr,
++			dev->ifindex);
+ 
+ 	dst = ip6_route_output(NULL, &fl);
+ 	if (dst == NULL)
+Index: linux-2.6.17.noarch/net/ipv6/ip6_output.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/ip6_output.c	2006-09-19 14:31:56.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/ip6_output.c	2006-09-19 18:55:03.000000000 +0200
+@@ -726,6 +726,14 @@
+ 	return err;
+ }
+ 
++static inline int ip6_rt_check(struct rt6key *rt_key,
++			       struct in6_addr *fl_addr,
++			       struct in6_addr *addr_cache)
++{
++	return ((rt_key->plen != 128 || !ipv6_addr_equal(fl_addr, &rt_key->addr)) &&
++		(addr_cache == NULL || !ipv6_addr_equal(fl_addr, addr_cache)));
++}
++
+ static struct dst_entry *ip6_sk_dst_check(struct sock *sk,
+ 					  struct dst_entry *dst,
+ 					  struct flowi *fl)
+@@ -741,8 +749,8 @@
+ 	 * that we do not support routing by source, TOS,
+ 	 * and MSG_DONTROUTE 		--ANK (980726)
+ 	 *
+-	 * 1. If route was host route, check that
+-	 *    cached destination is current.
++	 * 1. ip6_rt_check(): If route was host route,
++	 *    check that cached destination is current.
+ 	 *    If it is network route, we still may
+ 	 *    check its validity using saved pointer
+ 	 *    to the last used address: daddr_cache.
+@@ -753,11 +761,11 @@
+ 	 *    sockets.
+ 	 * 2. oif also should be the same.
+ 	 */
+-	if (((rt->rt6i_dst.plen != 128 ||
+-	      !ipv6_addr_equal(&fl->fl6_dst, &rt->rt6i_dst.addr))
+-	     && (np->daddr_cache == NULL ||
+-		 !ipv6_addr_equal(&fl->fl6_dst, np->daddr_cache)))
+-	    || (fl->oif && fl->oif != dst->dev->ifindex)) {
++	if (ip6_rt_check(&rt->rt6i_dst, &fl->fl6_dst, np->daddr_cache) ||
++#ifdef CONFIG_IPV6_SUBTREES
++	    ip6_rt_check(&rt->rt6i_src, &fl->fl6_src, np->saddr_cache) ||
++#endif
++	    (fl->oif && fl->oif != dst->dev->ifindex)) {
+ 		dst_release(dst);
+ 		dst = NULL;
+ 	}
+Index: linux-2.6.17.noarch/include/linux/ipv6.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/linux/ipv6.h	2006-09-19 14:31:50.000000000 +0200
++++ linux-2.6.17.noarch/include/linux/ipv6.h	2006-09-19 18:55:03.000000000 +0200
+@@ -242,6 +242,9 @@
+ 	struct in6_addr 	rcv_saddr;
+ 	struct in6_addr		daddr;
+ 	struct in6_addr		*daddr_cache;
++#ifdef CONFIG_IPV6_SUBTREES
++	struct in6_addr		*saddr_cache;
++#endif
+ 
+ 	__u32			flow_label;
+ 	__u32			frag_size;
+Index: linux-2.6.17.noarch/net/dccp/ipv6.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/dccp/ipv6.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/dccp/ipv6.c	2006-09-19 18:55:03.000000000 +0200
+@@ -231,7 +231,7 @@
+ 	ipv6_addr_copy(&np->saddr, saddr);
+ 	inet->rcv_saddr = LOOPBACK4_IPV6;
+ 
+-	__ip6_dst_store(sk, dst, NULL);
++	__ip6_dst_store(sk, dst, NULL, NULL);
+ 
+ 	icsk->icsk_ext_hdr_len = 0;
+ 	if (np->opt != NULL)
+@@ -872,7 +872,7 @@
+ 	 * comment in that function for the gory details. -acme
+ 	 */
+ 
+-	__ip6_dst_store(newsk, dst, NULL);
++	__ip6_dst_store(newsk, dst, NULL, NULL);
+ 	newsk->sk_route_caps = dst->dev->features & ~(NETIF_F_IP_CSUM |
+ 						      NETIF_F_TSO);
+ 	newdp6 = (struct dccp6_sock *)newsk;
+Index: linux-2.6.17.noarch/net/ipv6/af_inet6.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/af_inet6.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/af_inet6.c	2006-09-19 18:55:03.000000000 +0200
+@@ -659,7 +659,7 @@
+ 			return err;
+ 		}
+ 
+-		__ip6_dst_store(sk, dst, NULL);
++		__ip6_dst_store(sk, dst, NULL, NULL);
+ 	}
+ 
+ 	return 0;
+Index: linux-2.6.17.noarch/net/ipv6/datagram.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/datagram.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/datagram.c	2006-09-19 18:55:03.000000000 +0200
+@@ -193,7 +193,12 @@
+ 
+ 	ip6_dst_store(sk, dst,
+ 		      ipv6_addr_equal(&fl.fl6_dst, &np->daddr) ?
+-		      &np->daddr : NULL);
++		      &np->daddr : NULL,
++#ifdef CONFIG_IPV6_SUBTREES
++		      ipv6_addr_equal(&fl.fl6_src, &np->saddr) ?
++		      &np->saddr :
++#endif
++		      NULL);
+ 
+ 	sk->sk_state = TCP_ESTABLISHED;
+ out:
+Index: linux-2.6.17.noarch/net/ipv6/inet6_connection_sock.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/inet6_connection_sock.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/inet6_connection_sock.c	2006-09-19 18:55:03.000000000 +0200
+@@ -186,7 +186,7 @@
+ 			return err;
+ 		}
+ 
+-		__ip6_dst_store(sk, dst, NULL);
++		__ip6_dst_store(sk, dst, NULL, NULL);
+ 	}
+ 
+ 	skb->dst = dst_clone(dst);
+Index: linux-2.6.17.noarch/net/ipv6/tcp_ipv6.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/tcp_ipv6.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/tcp_ipv6.c	2006-09-19 18:55:03.000000000 +0200
+@@ -272,7 +272,7 @@
+ 	inet->rcv_saddr = LOOPBACK4_IPV6;
+ 
+ 	sk->sk_gso_type = SKB_GSO_TCPV6;
+-	__ip6_dst_store(sk, dst, NULL);
++	__ip6_dst_store(sk, dst, NULL, NULL);
+ 
+ 	icsk->icsk_ext_hdr_len = 0;
+ 	if (np->opt)
+@@ -954,7 +954,7 @@
+ 	 */
+ 
+ 	newsk->sk_gso_type = SKB_GSO_TCPV6;
+-	__ip6_dst_store(newsk, dst, NULL);
++	__ip6_dst_store(newsk, dst, NULL, NULL);
+ 
+ 	newtcp6sk = (struct tcp6_sock *)newsk;
+ 	inet_sk(newsk)->pinet6 = &newtcp6sk->inet6;
+Index: linux-2.6.17.noarch/net/ipv6/udp.c
+===================================================================
+--- linux-2.6.17.noarch.orig/net/ipv6/udp.c	2006-09-19 14:31:55.000000000 +0200
++++ linux-2.6.17.noarch/net/ipv6/udp.c	2006-09-19 18:55:03.000000000 +0200
+@@ -842,7 +842,12 @@
+ 		if (connected) {
+ 			ip6_dst_store(sk, dst,
+ 				      ipv6_addr_equal(&fl->fl6_dst, &np->daddr) ?
+-				      &np->daddr : NULL);
++				      &np->daddr : NULL,
++#ifdef CONFIG_IPV6_SUBTREES
++				      ipv6_addr_equal(&fl->fl6_src, &np->saddr) ?
++				      &np->saddr :
++#endif
++				      NULL);
+ 		} else {
+ 			dst_release(dst);
+ 		}
+Index: linux-2.6.17.noarch/include/net/flow.h
+===================================================================
+--- linux-2.6.17.noarch.orig/include/net/flow.h	2006-09-19 18:50:44.000000000 +0200
++++ linux-2.6.17.noarch/include/net/flow.h	2006-09-19 19:02:02.000000000 +0200
+@@ -26,6 +26,7 @@
+ 		struct {
+ 			struct in6_addr		daddr;
+ 			struct in6_addr		saddr;
++			__u32			fwmark;
+ 			__u32			flowlabel;
+ 		} ip6_u;
+ 
+@@ -42,6 +43,7 @@
+ #define fld_scope	nl_u.dn_u.scope
+ #define fl6_dst		nl_u.ip6_u.daddr
+ #define fl6_src		nl_u.ip6_u.saddr
++#define fl6_fwmark	nl_u.ip6_u.fwmark
+ #define fl6_flowlabel	nl_u.ip6_u.flowlabel
+ #define fl4_dst		nl_u.ip4_u.daddr
+ #define fl4_src		nl_u.ip4_u.saddr
+

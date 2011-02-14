@@ -1,0 +1,41 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 5 Nov 2010 18:08:36 -0400
+Subject: [kernel] add stop_machine barrier to fix lock contention
+Message-id: <4CD44824.9040307@redhat.com>
+Patchwork-id: 29054
+O-Subject: Re: [RHEL5 BZ 634454 PATCH]: add barrier in stop_machine() to fix
+	lock	contention
+Bugzilla: 634454
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Add smp_mb() to stop_machine() after yield() is called.  This avoids a
+potential deadlocks over locks when stop_machine() is called.
+
+There is a detailed explanation of how this arose in the code in the BZ.
+
+Successfully tested by me on an AMD Dinar system and an Intel Nehalem-EP
+(see comments 97 and 99 in the BZ).
+
+Resolves BZ 634454.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/kernel/stop_machine.c b/kernel/stop_machine.c
+index 618363a..ff6dd9f 100644
+--- a/kernel/stop_machine.c
++++ b/kernel/stop_machine.c
+@@ -102,8 +102,12 @@ static int stop_machine(void)
+ 	}
+ 
+ 	/* Wait for them all to come to life. */
+-	while (atomic_read(&stopmachine_thread_ack) != stopmachine_num_threads)
++	while (atomic_read(&stopmachine_thread_ack) != stopmachine_num_threads){
+ 		yield();
++		/* add in a barrier to avoid kstopmachine
++		   causing lock starvation issues for other threads */
++		smp_mb();
++	}
+ 
+ 	/* If some failed, kill them all. */
+ 	if (ret < 0) {

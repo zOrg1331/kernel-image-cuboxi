@@ -74,6 +74,7 @@ struct mlog_attribute {
 #define define_mask(_name) {			\
 	.attr = {				\
 		.name = #_name,			\
+		.owner = THIS_MODULE,		\
 		.mode = S_IRUGO | S_IWUSR,	\
 	},					\
 	.mask = ML_##_name,			\
@@ -109,9 +110,6 @@ static struct mlog_attribute mlog_attrs[MLOG_MAX_BITS] = {
 	define_mask(CONN),
 	define_mask(QUORUM),
 	define_mask(EXPORT),
-	define_mask(XATTR),
-	define_mask(QUOTA),
-	define_mask(REFCOUNT),
 	define_mask(ERROR),
 	define_mask(NOTICE),
 	define_mask(KTHREAD),
@@ -135,7 +133,7 @@ static ssize_t mlog_store(struct kobject *obj, struct attribute *attr,
 	return mlog_mask_store(mlog_attr->mask, buf, count);
 }
 
-static const struct sysfs_ops mlog_attr_ops = {
+static struct sysfs_ops mlog_attr_ops = {
 	.show  = mlog_show,
 	.store = mlog_store,
 };
@@ -146,10 +144,10 @@ static struct kobj_type mlog_ktype = {
 };
 
 static struct kset mlog_kset = {
-	.kobj   = {.ktype = &mlog_ktype},
+	.kobj   = {.name = "logmask", .ktype = &mlog_ktype},
 };
 
-int mlog_sys_init(struct kset *o2cb_kset)
+int mlog_sys_init(struct subsystem *o2cb_subsys)
 {
 	int i = 0;
 
@@ -159,8 +157,7 @@ int mlog_sys_init(struct kset *o2cb_kset)
 	}
 	mlog_attr_ptrs[i] = NULL;
 
-	kobject_set_name(&mlog_kset.kobj, "logmask");
-	mlog_kset.kobj.kset = o2cb_kset;
+	mlog_kset.subsys = o2cb_subsys;
 	return kset_register(&mlog_kset);
 }
 

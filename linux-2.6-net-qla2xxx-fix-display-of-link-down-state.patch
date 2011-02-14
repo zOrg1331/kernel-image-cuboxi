@@ -1,0 +1,57 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Thu, 26 Aug 2010 21:28:45 -0400
+Subject: [net] qla2xxx: fix display of link down state
+Message-id: <20100826212845.4628.79181.sendpatchset@localhost.localdomain>
+Patchwork-id: 27838
+O-Subject: [RHEL 5.6 PATCH] qla2xxx: Correctly displaying the link state for
+	disconnected port.
+Bugzilla: 627612
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 627612 (https://bugzilla.redhat.com/show_bug.cgi?id=627612)
+
+Upstream Status
+---------------
+
+scsi-misc commit id 62542f4b05a4515ff75320600ffeb2e7447d25fe
+
+Brew Build
+----------
+
+2711951
+
+Testing
+-------
+
+The build of the patch was tested against the 2.6.18-213 RHEL 5 kernel.  The
+patch was functionally tested internally at QLogic.
+
+Description
+-----------
+
+>From 9ff02a986fbc6ac0251d62a01a6b3b20456390da Mon Sep 17 00:00:00 2001
+From: root <root@labrat.lab.bos.redhat.com>
+Date: Thu, 26 Aug 2010 10:35:28 -0400
+Subject: [PATCH] qla2xxx: Correctly displaying the link state for disconnected port.
+
+With qla2xxx using mid-layer async-scsi-scanning, the link state for
+disconnected port is displayed wrong. Additional check for cable presence
+is considered to display proper link state.
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index f99a033..62f4947 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1277,7 +1277,8 @@ qla2x00_state_show(struct class_device *cdev, char *buf)
+ 	int len = 0;
+ 
+ 	if (atomic_read(&ha->loop_state) == LOOP_DOWN ||
+-	    atomic_read(&ha->loop_state) == LOOP_DEAD)
++	    atomic_read(&ha->loop_state) == LOOP_DEAD ||
++	    ha->device_flags & DFLG_NO_CABLE)
+ 		len = snprintf(buf, PAGE_SIZE, "Link Down\n");
+ 	else if (atomic_read(&ha->loop_state) != LOOP_READY ||
+ 	    test_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags) ||

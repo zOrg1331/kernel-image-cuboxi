@@ -1,0 +1,31 @@
+--- ./drivers/message/i2o/i2o_proc.c.i2pp	2006-03-02 14:00:48.000000000 +0300
++++ ./drivers/message/i2o/i2o_proc.c	2006-03-04 09:45:08.000000000 +0300
+@@ -1855,17 +1855,17 @@ static i2o_proc_entry i2o_proc_generic_i
+  * Device specific entries
+  */
+ static i2o_proc_entry generic_dev_entries[] = {
+-	{"groups", S_IFREG | S_IRUGO, &i2o_seq_fops_groups},
+-	{"phys_dev", S_IFREG | S_IRUGO, &i2o_seq_fops_phys_device},
+-	{"claimed", S_IFREG | S_IRUGO, &i2o_seq_fops_claimed},
+-	{"users", S_IFREG | S_IRUGO, &i2o_seq_fops_users},
+-	{"priv_msgs", S_IFREG | S_IRUGO, &i2o_seq_fops_priv_msgs},
+-	{"authorized_users", S_IFREG | S_IRUGO, &i2o_seq_fops_authorized_users},
+-	{"dev_identity", S_IFREG | S_IRUGO, &i2o_seq_fops_dev_identity},
+-	{"ddm_identity", S_IFREG | S_IRUGO, &i2o_seq_fops_ddm_identity},
+-	{"user_info", S_IFREG | S_IRUGO, &i2o_seq_fops_uinfo},
+-	{"sgl_limits", S_IFREG | S_IRUGO, &i2o_seq_fops_sgl_limits},
+-	{"sensors", S_IFREG | S_IRUGO, &i2o_seq_fops_sensors},
++	{"groups", S_IFREG | S_IRUSR, &i2o_seq_fops_groups},
++	{"phys_dev", S_IFREG | S_IRUSR, &i2o_seq_fops_phys_device},
++	{"claimed", S_IFREG | S_IRUSR, &i2o_seq_fops_claimed},
++	{"users", S_IFREG | S_IRUSR, &i2o_seq_fops_users},
++	{"priv_msgs", S_IFREG | S_IRUSR, &i2o_seq_fops_priv_msgs},
++	{"authorized_users", S_IFREG | S_IRUSR, &i2o_seq_fops_authorized_users},
++	{"dev_identity", S_IFREG | S_IRUSR, &i2o_seq_fops_dev_identity},
++	{"ddm_identity", S_IFREG | S_IRUSR, &i2o_seq_fops_ddm_identity},
++	{"user_info", S_IFREG | S_IRUSR, &i2o_seq_fops_uinfo},
++	{"sgl_limits", S_IFREG | S_IRUSR, &i2o_seq_fops_sgl_limits},
++	{"sensors", S_IFREG | S_IRUSR, &i2o_seq_fops_sensors},
+ 	{NULL, 0, NULL}
+ };
+ 

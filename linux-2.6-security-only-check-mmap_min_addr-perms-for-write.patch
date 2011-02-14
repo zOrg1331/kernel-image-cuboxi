@@ -1,0 +1,47 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 27 Sep 2010 15:32:16 -0400
+Subject: [security] only check mmap_min_addr perms for write
+Message-id: <20100927153216.1264.65633.stgit@paris.rdu.redhat.com>
+Patchwork-id: 28419
+O-Subject: [RHEL5 PATCH] mmap_min_addr check CAP_SYS_RAWIO only for write
+Bugzilla: 623519
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+RHBZ: 623519
+Upstream commit: 4ae69e6b718589abe97c9625ccbb1e0bc95a8c0e
+
+Redirecting directly to lsm, here's the patch discussed on lkml:
+http://lkml.org/lkml/2010/4/22/219
+
+The mmap_min_addr value is useful information for an admin to see without
+being root ("is my system vulnerable to kernel NULL pointer attacks?") and
+its setting is trivially easy for an attacker to determine by calling
+mmap() in PAGE_SIZE increments starting at 0, so trying to keep it private
+has no value.
+
+Only require CAP_SYS_RAWIO if changing the value, not reading it.
+
+Comment from Serge :
+
+  Me, I like to write my passwords with light blue pen on dark blue
+  paper, pasted on my window - if you're going to get my password, you're
+  gonna get a headache.
+
+Signed-off-by: Kees Cook <kees.cook@canonical.com>
+Acked-by: Serge Hallyn <serue@us.ibm.com>
+Signed-off-by: James Morris <jmorris@namei.org>
+(cherry picked from commit 822cceec7248013821d655545ea45d1c6a9d15b3)
+
+diff --git a/security/min_addr.c b/security/min_addr.c
+index 7d035df..5731ef9 100644
+--- a/security/min_addr.c
++++ b/security/min_addr.c
+@@ -34,7 +34,7 @@ int mmap_min_addr_handler(struct ctl_table *table, int write, struct file *filp,
+ {
+ 	int ret;
+ 
+-	if (!capable(CAP_SYS_RAWIO))
++	if (write && !capable(CAP_SYS_RAWIO))
+ 		return -EPERM;
+ 
+ 	ret = proc_doulongvec_minmax(table, write, filp, buffer, lenp, ppos);

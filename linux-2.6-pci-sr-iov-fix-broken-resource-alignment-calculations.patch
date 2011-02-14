@@ -1,0 +1,135 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Wed, 1 Sep 2010 21:41:43 -0400
+Subject: [pci] sr-iov: fix broken resource alignment calculations
+Message-id: <4C7EC897.1090208@redhat.com>
+Patchwork-id: 28003
+O-Subject: Re: [RHEL5.6 PATCH 3/3] PCI SR-IOV: correct broken resource alignment
+	calculations
+Bugzilla: 523341
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+This patch is the core of the patches to
+fix the bz (523341).
+
+Backport of commit id:
+6faf17f6f1ffc586d16efc2f9fa2083a7785ee74
+
+See 0/3 for bz, brew build, & testing.
+
+Please review and ack.
+
+- Don
+
+diff --git a/drivers/pci/iov.c b/drivers/pci/iov.c
+index ffa334c..c182696 100644
+--- a/drivers/pci/iov.c
++++ b/drivers/pci/iov.c
+@@ -480,6 +480,29 @@ int pci_iov_resource_bar(struct pci_dev *dev, int resno,
+ }
+ 
+ /**
++ * pci_sriov_resource_alignment - get resource alignment for VF BAR
++ * @dev: the PCI device
++ * @resno: the resource number
++ *
++ * Returns the alignment of the VF BAR found in the SR-IOV capability.
++ * This is not the same as the resource size which is defined as
++ * the VF BAR size multiplied by the number of VFs.  The alignment
++ * is just the VF BAR size.
++ */
++int pci_sriov_resource_alignment(struct pci_dev *dev, int resno)
++{
++	struct resource tmp;
++	enum pci_bar_type type;
++	int reg = pci_iov_resource_bar(dev, resno, &type);
++
++	if (!reg)
++		return 0;
++
++	 __pci_read_base(dev, type, &tmp, reg);
++	return resource_alignment(&tmp);
++}
++
++/**
+  * pci_restore_iov_state - restore the state of the IOV capability
+  * @dev: the PCI device
+  */
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index a0e9b86..2b7811d 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -155,6 +155,7 @@ extern int pci_iov_init(struct pci_dev *dev);
+ extern void pci_iov_release(struct pci_dev *dev);
+ extern int pci_iov_resource_bar(struct pci_dev *dev, int resno,
+ 				enum pci_bar_type *type);
++extern int pci_sriov_resource_alignment(struct pci_dev *dev, int resno);
+ extern void pci_restore_iov_state(struct pci_dev *dev);
+ extern int pci_iov_bus_range(struct pci_bus *bus);
+ 
+@@ -212,6 +213,21 @@ static inline int pci_ats_enabled(struct pci_dev *dev)
+ struct pci_dev *pci_find_upstream_pcie_bridge(struct pci_dev *pdev);
+ 
+ extern void pci_enable_acs(struct pci_dev *dev);
++static inline int pci_resource_alignment(struct pci_dev *dev,
++					 struct resource *res)
++{
++#ifdef CONFIG_PCI_IOV
++	unsigned long resno = res - dev->resource;
++
++	if (resno > PCI_NUM_RESOURCES) {
++		WARN_ON(!dev->sriov);
++		resno = (res - dev->sriov->res) + PCI_IOV_RESOURCES;
++		return pci_sriov_resource_alignment(dev, resno);
++	}
++#endif
++	return resource_alignment(res);
++}
++
+ 
+ struct pci_dev_reset_methods {
+ 	u16 vendor;
+diff --git a/drivers/pci/setup-bus.c b/drivers/pci/setup-bus.c
+index e1bd909..10f9eca 100644
+--- a/drivers/pci/setup-bus.c
++++ b/drivers/pci/setup-bus.c
+@@ -372,7 +372,7 @@ pbus_size_mem(struct pci_bus *bus, unsigned long mask, unsigned long type)
+ 				continue;
+ 			r_size = r->end - r->start + 1;
+ 			/* For bridges size != alignment */
+-			align = resource_alignment(r);
++			align = pci_resource_alignment(dev, r);
+ 			order = __ffs(align) - 20;
+ 			if (order > 11) {
+ 				printk(KERN_WARNING "PCI: region %s/%d "
+diff --git a/drivers/pci/setup-res.c b/drivers/pci/setup-res.c
+index 1f3dadc..47c2530 100644
+--- a/drivers/pci/setup-res.c
++++ b/drivers/pci/setup-res.c
+@@ -140,7 +140,7 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
+ 	size = res->end - res->start + 1;
+ 	min = (res->flags & IORESOURCE_IO) ? PCIBIOS_MIN_IO : PCIBIOS_MIN_MEM;
+ 
+-	align = resource_alignment(res);
++	align = pci_resource_alignment(dev, res);
+ 	if (!align) {
+ 		printk(KERN_ERR "PCI: Cannot allocate resource (bogus "
+ 			"alignment) %d [%llx:%llx] (flags %lx) of %s\n",
+@@ -252,7 +252,7 @@ pdev_sort_resources(struct pci_dev *dev, struct resource_list *head)
+ 		if (!(r->flags) || r->parent)
+ 			continue;
+ 
+-		r_align = resource_alignment(r);
++		r_align = pci_resource_alignment(dev, r);
+ 		if (!r_align) {
+ 			printk(KERN_WARNING "PCI: bogus alignment of resource "
+ 				"%d [%llx:%llx] (flags %lx) of %s\n",
+@@ -266,7 +266,7 @@ pdev_sort_resources(struct pci_dev *dev, struct resource_list *head)
+ 			struct resource_list *ln = list->next;
+ 
+ 			if (ln)
+-				align = resource_alignment(ln->res);
++				align = pci_resource_alignment(ln->dev, ln->res);
+ 
+ 			if (r_align > align) {
+ 				tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);

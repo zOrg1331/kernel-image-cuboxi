@@ -1,0 +1,44 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 9 Nov 2007 12:29:18 +0800
+Subject: [ia64] use thread.on_ustack to determine user stack
+Message-id: 4733E21E.904@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz253548: Following boot of Montvale - dmesg: Transition failed with error -19
+Bugzilla: 253548
+
+bz253548
+
+Description of problem:
+
+The PSR.lp bit of kernel thread kondemand sometimes would be set, then
+causes set_pstate PAL call fails with invalid argument. I tracked down
+to the place that the PSR.lp was set in do_notify_resume_user.
+
+Upstream status:
+The patch proposal has been tested and discussed on mailing list.
+http://www.gelato.unsw.edu.au/archives/linux-ia64/0709/21226.html
+The only concern is about the possibility of breaking ia64 fast system call.
+And the concern has been considered invalid:
+http://www.gelato.unsw.edu.au/archives/linux-ia64/0710/21259.html
+Specifically for RHEL 5, the ia64 fsys mode __is__ actually __disabled__.
+I'm pretty sure the patch will go upstream.
+
+The following back port is tested by me, and it fixes the problem.
+
+Please review, test and AC.
+
+Thanks,
+Luming
+
+diff --git a/include/asm-ia64/ptrace.h b/include/asm-ia64/ptrace.h
+index 13435f7..414fae3 100644
+--- a/include/asm-ia64/ptrace.h
++++ b/include/asm-ia64/ptrace.h
+@@ -257,7 +257,7 @@ struct switch_stack {
+ # define task_pt_regs(t)		(((struct pt_regs *) ((char *) (t) + IA64_STK_OFFSET)) - 1)
+ # define ia64_psr(regs)			((struct ia64_psr *) &(regs)->cr_ipsr)
+ # define user_mode(regs)		(((struct ia64_psr *) &(regs)->cr_ipsr)->cpl != 0)
+-# define user_stack(task,regs)	((long) regs - (long) task == IA64_STK_OFFSET - sizeof(*regs))
++# define user_stack(task,regs)  (task->thread.on_ustack)
+ # define fsys_mode(task,regs)					\
+   ({								\
+ 	  struct task_struct *_task = (task);			\

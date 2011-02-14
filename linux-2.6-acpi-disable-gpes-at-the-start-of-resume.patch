@@ -1,0 +1,35 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Fri, 6 Mar 2009 23:29:57 +0000
+Subject: [acpi] disable GPEs at the start of resume
+Message-id: 20090306232957.GA18853@srcf.ucam.org
+O-Subject: [RHEL 5.4 PATCH] ACPI: disable GPEs at the start of resume
+Bugzilla: 456302
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+
+Bugzilla: 456302
+
+At wakeup time, unhandled GPEs may fire before handlers have been set
+up. Disable GPEs at the beginning of wakeup and reenable them when we're
+ready to handle them. Backport of upstream
+a3627f67b1d5ddd8f65eedc2a76da90fbe062530
+
+diff --git a/drivers/acpi/sleep/main.c b/drivers/acpi/sleep/main.c
+index 62ce87d..c39b111 100644
+--- a/drivers/acpi/sleep/main.c
++++ b/drivers/acpi/sleep/main.c
+@@ -113,6 +113,13 @@ static int acpi_pm_enter(suspend_state_t pm_state)
+ 	if (ACPI_SUCCESS(status) && (acpi_state == ACPI_STATE_S3))
+ 		acpi_clear_event(ACPI_EVENT_POWER_BUTTON);
+ 
++	/*
++	 * Disable and clear GPE status before interrupt is enabled. Some GPEs
++	 * (like wakeup GPE) haven't handler, this can avoid such GPE misfire.
++	 * acpi_leave_sleep_state will reenable specific GPEs later
++	 */
++	acpi_hw_disable_all_gpes();
++
+ 	local_irq_restore(flags);
+ 	printk(KERN_DEBUG "Back to C!\n");
+ 

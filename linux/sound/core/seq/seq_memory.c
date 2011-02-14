@@ -1,7 +1,7 @@
 /*
  *  ALSA sequencer Memory Manager
  *  Copyright (c) 1998 by Frank van de Pol <fvdpol@coil.demon.nl>
- *                        Jaroslav Kysela <perex@perex.cz>
+ *                        Jaroslav Kysela <perex@suse.cz>
  *                2000 by Takashi Iwai <tiwai@suse.de>
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -20,6 +20,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -150,7 +151,7 @@ int snd_seq_expand_var_event(const struct snd_seq_event *event, int count, char 
 		return len;
 	newlen = len;
 	if (size_aligned > 0)
-		newlen = roundup(len, size_aligned);
+		newlen = ((len + size_aligned - 1) / size_aligned) * size_aligned;
 	if (count < newlen)
 		return -EAGAIN;
 
@@ -187,11 +188,9 @@ void snd_seq_cell_free(struct snd_seq_event_cell * cell)
 	unsigned long flags;
 	struct snd_seq_pool *pool;
 
-	if (snd_BUG_ON(!cell))
-		return;
+	snd_assert(cell != NULL, return);
 	pool = cell->pool;
-	if (snd_BUG_ON(!pool))
-		return;
+	snd_assert(pool != NULL, return);
 
 	spin_lock_irqsave(&pool->lock, flags);
 	free_cell(pool, cell);
@@ -380,8 +379,7 @@ int snd_seq_pool_init(struct snd_seq_pool *pool)
 	struct snd_seq_event_cell *cellptr;
 	unsigned long flags;
 
-	if (snd_BUG_ON(!pool))
-		return -EINVAL;
+	snd_assert(pool != NULL, return -EINVAL);
 	if (pool->ptr)			/* should be atomic? */
 		return 0;
 
@@ -417,8 +415,7 @@ int snd_seq_pool_done(struct snd_seq_pool *pool)
 	struct snd_seq_event_cell *ptr;
 	int max_count = 5 * HZ;
 
-	if (snd_BUG_ON(!pool))
-		return -EINVAL;
+	snd_assert(pool != NULL, return -EINVAL);
 
 	/* wait for closing all threads */
 	spin_lock_irqsave(&pool->lock, flags);

@@ -1,0 +1,55 @@
+From: Vivek Goyal <vgoyal@redhat.com>
+Subject: [PATCH][RHEL5 BZ# 215954] x86_64: check and enable NXbit support  during resume
+Date: Thu, 30 Nov 2006 17:17:55 -0500
+Bugzilla: 215954
+Message-Id: <456F5893.30102@redhat.com>
+Changelog: x86_64: check and enable NXbit support during resume
+
+
+
+
+o Relocatable patches got rid of the code which checked for NX bit support
+  and enabling that bit during resume operation.
+
+o This fails resume operations on the system which support NX bit, I think
+  because it treis to load a page table which has got NX bit set as cpu
+  supported NX bit.
+
+o Restoring that piece of code back.
+
+Signed-off-by: Vivek Goyal <vgoyal@in.ibm.com>
+---
+
+ arch/x86_64/kernel/acpi/wakeup.S |   17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff -puN arch/x86_64/kernel/acpi/wakeup.S~x86_64-check-and-enable-NX-bit-support-during-resume arch/x86_64/kernel/acpi/wakeup.S
+--- linux-2.6.18.x86_64-2747/arch/x86_64/kernel/acpi/wakeup.S~x86_64-check-and-enable-NX-bit-support-during-resume	2006-11-20 22:42:05.000000000 -0500
++++ linux-2.6.18.x86_64-2747-root/arch/x86_64/kernel/acpi/wakeup.S	2006-11-20 22:48:16.000000000 -0500
+@@ -114,9 +114,22 @@ wakeup_32:
+ 	leal	(wakeup_level4_pgt - wakeup_code)(%esi), %eax
+ 	movl	%eax, %cr3
+ 
++	/* Check if nx is implemented */
++	movl	$0x80000001, %eax
++	cpuid
++	movl	%edx,%edi
++
+ 	/* Enable Long Mode */
+-	movl	$MSR_EFER, %ecx
+-	movl	$(1 << _EFER_LME), %eax	# Enable Long Mode
++	xorl	%eax, %eax
++	btsl	$_EFER_LME, %eax
++
++	/* No Execute supported? */
++	btl	$20,%edi
++	jnc	1f
++	btsl	$_EFER_NX, %eax
++
++	/* Make changes effective */
++1:	movl	$MSR_EFER, %ecx
+ 	xorl	%edx, %edx
+ 	wrmsr
+ 
+_
+

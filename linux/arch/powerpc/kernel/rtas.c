@@ -19,14 +19,11 @@
 #include <linux/init.h>
 #include <linux/capability.h>
 #include <linux/delay.h>
-#include <linux/smp.h>
-#include <linux/completion.h>
-#include <linux/cpumask.h>
-#include <linux/lmb.h>
 
 #include <asm/prom.h>
 #include <asm/rtas.h>
 #include <asm/hvcall.h>
+#include <asm/semaphore.h>
 #include <asm/machdep.h>
 #include <asm/firmware.h>
 #include <asm/page.h>
@@ -34,24 +31,18 @@
 #include <asm/system.h>
 #include <asm/delay.h>
 #include <asm/uaccess.h>
+#include <asm/lmb.h>
 #include <asm/udbg.h>
 #include <asm/syscalls.h>
-#include <asm/smp.h>
-#include <asm/atomic.h>
-#include <asm/time.h>
-#include <asm/mmu.h>
 
 struct rtas_t rtas = {
-	.lock = __RAW_SPIN_LOCK_UNLOCKED
+	.lock = SPIN_LOCK_UNLOCKED
 };
 EXPORT_SYMBOL(rtas);
 
 struct rtas_suspend_me_data {
-	atomic_t working; /* number of cpus accessing this struct */
-	atomic_t done;
-	int token; /* ibm,suspend-me */
-	int error;
-	struct completion *complete; /* wait on this until working == 0 */
+	long waiting;
+	struct rtas_args *args;
 };
 
 DEFINE_SPINLOCK(rtas_data_buf_lock);
@@ -69,28 +60,6 @@ unsigned long rtas_rmo_buf;
 void (*rtas_flash_term_hook)(int);
 EXPORT_SYMBOL(rtas_flash_term_hook);
 
-/* RTAS use home made raw locking instead of spin_lock_irqsave
- * because those can be called from within really nasty contexts
- * such as having the timebase stopped which would lockup with
- * normal locks and spinlock debugging enabled
- */
-static unsigned long lock_rtas(void)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-	preempt_disable();
-	__raw_spin_lock_flags(&rtas.lock, flags);
-	return flags;
-}
-
-static void unlock_rtas(unsigned long flags)
-{
-	__raw_spin_unlock(&rtas.lock);
-	local_irq_restore(flags);
-	preempt_enable();
-}
-
 /*
  * call_rtas_display_status and call_rtas_display_status_delay
  * are designed only for very early low-level debugging, which
@@ -103,7 +72,7 @@ static void call_rtas_display_status(char c)
 
 	if (!rtas.base)
 		return;
-	s = lock_rtas();
+	spin_lock_irqsave(&rtas.lock, s);
 
 	args->token = 10;
 	args->nargs = 1;
@@ -113,7 +82,7 @@ static void call_rtas_display_status(char c)
 
 	enter_rtas(__pa(args));
 
-	unlock_rtas(s);
+	spin_unlock_irqrestore(&rtas.lock, s);
 }
 
 static void call_rtas_display_status_delay(char c)
@@ -208,12 +177,10 @@ void __init udbg_init_rtas_console(void)
 void rtas_progress(char *s, unsigned short hex)
 {
 	struct device_node *root;
-	int width;
-	const int *p;
+	int width, *p;
 	char *os;
 	static int display_character, set_indicator;
-	static int display_width, display_lines, form_feed;
-	static const int *row_width;
+	static int display_width, display_lines, *row_width, form_feed;
 	static DEFINE_SPINLOCK(progress_lock);
 	static int current_line;
 	static int pending_newline = 0;  /* did last write end with unprinted newline? */
@@ -223,19 +190,18 @@ void rtas_progress(char *s, unsigned short hex)
 
 	if (display_width == 0) {
 		display_width = 0x10;
-		if ((root = of_find_node_by_path("/rtas"))) {
-			if ((p = of_get_property(root,
+		if ((root = find_path_device("/rtas"))) {
+			if ((p = (unsigned int *)get_property(root,
 					"ibm,display-line-length", NULL)))
 				display_width = *p;
-			if ((p = of_get_property(root,
+			if ((p = (unsigned int *)get_property(root,
 					"ibm,form-feed", NULL)))
 				form_feed = *p;
-			if ((p = of_get_property(root,
+			if ((p = (unsigned int *)get_property(root,
 					"ibm,display-number-of-lines", NULL)))
 				display_lines = *p;
-			row_width = of_get_property(root,
+			row_width = (unsigned int *)get_property(root,
 					"ibm,display-truncation-length", NULL);
-			of_node_put(root);
 		}
 		display_character = rtas_token("display-character");
 		set_indicator = rtas_token("set-indicator");
@@ -327,19 +293,13 @@ EXPORT_SYMBOL(rtas_progress);		/* needed by rtas_flash module */
 
 int rtas_token(const char *service)
 {
-	const int *tokp;
+	int *tokp;
 	if (rtas.dev == NULL)
 		return RTAS_UNKNOWN_SERVICE;
-	tokp = of_get_property(rtas.dev, service, NULL);
+	tokp = (int *) get_property(rtas.dev, service, NULL);
 	return tokp ? *tokp : RTAS_UNKNOWN_SERVICE;
 }
 EXPORT_SYMBOL(rtas_token);
-
-int rtas_service_present(const char *service)
-{
-	return rtas_token(service) != RTAS_UNKNOWN_SERVICE;
-}
-EXPORT_SYMBOL(rtas_service_present);
 
 #ifdef CONFIG_RTAS_ERROR_LOGGING
 /*
@@ -365,8 +325,8 @@ int rtas_get_error_log_max(void)
 EXPORT_SYMBOL(rtas_get_error_log_max);
 
 
-static char rtas_err_buf[RTAS_ERROR_LOG_MAX];
-static int rtas_last_error_token;
+char rtas_err_buf[RTAS_ERROR_LOG_MAX];
+int rtas_last_error_token;
 
 /** Return a copy of the detailed error text associated with the
  *  most recent failed call to rtas.  Because the error text
@@ -435,7 +395,8 @@ int rtas_call(int token, int nargs, int nret, int *outputs, ...)
 	if (!rtas.entry || token == RTAS_UNKNOWN_SERVICE)
 		return -1;
 
-	s = lock_rtas();
+	/* Gotta do something different here, use global lock for now... */
+	spin_lock_irqsave(&rtas.lock, s);
 	rtas_args = &rtas.args;
 
 	rtas_args->token = token;
@@ -462,7 +423,8 @@ int rtas_call(int token, int nargs, int nret, int *outputs, ...)
 			outputs[i] = rtas_args->rets[i+1];
 	ret = (nret > 0)? rtas_args->rets[0]: 0;
 
-	unlock_rtas(s);
+	/* Gotta do something different here, use global lock for now... */
+	spin_unlock_irqrestore(&rtas.lock, s);
 
 	if (buff_copy) {
 		log_error(buff_copy, ERR_TYPE_RTAS_LOG, 0);
@@ -507,7 +469,7 @@ unsigned int rtas_busy_delay(int status)
 }
 EXPORT_SYMBOL(rtas_busy_delay);
 
-static int rtas_error_rc(int rtas_rc)
+int rtas_error_rc(int rtas_rc)
 {
 	int rc;
 
@@ -529,7 +491,7 @@ static int rtas_error_rc(int rtas_rc)
 			break;
 		default:
 			printk(KERN_ERR "%s: unexpected RTAS error %d\n",
-					__func__, rtas_rc);
+					__FUNCTION__, rtas_rc);
 			rc = -ERANGE;
 			break;
 	}
@@ -588,32 +550,6 @@ int rtas_get_sensor(int sensor, int index, int *state)
 	return rc;
 }
 EXPORT_SYMBOL(rtas_get_sensor);
-
-bool rtas_indicator_present(int token, int *maxindex)
-{
-	int proplen, count, i;
-	const struct indicator_elem {
-		u32 token;
-		u32 maxindex;
-	} *indicators;
-
-	indicators = of_get_property(rtas.dev, "rtas-indicators", &proplen);
-	if (!indicators)
-		return false;
-
-	count = proplen / sizeof(struct indicator_elem);
-
-	for (i = 0; i < count; i++) {
-		if (indicators[i].token != token)
-			continue;
-		if (maxindex)
-			*maxindex = indicators[i].maxindex;
-		return true;
-	}
-
-	return false;
-}
-EXPORT_SYMBOL(rtas_indicator_present);
 
 int rtas_set_indicator(int indicator, int index, int new_value)
 {
@@ -690,9 +626,6 @@ void rtas_os_term(char *str)
 {
 	int status;
 
-	if (panic_timeout)
-		return;
-
 	if (RTAS_UNKNOWN_SERVICE == rtas_token("ibm,os-term"))
 		return;
 
@@ -712,76 +645,57 @@ static int ibm_suspend_me_token = RTAS_UNKNOWN_SERVICE;
 #ifdef CONFIG_PPC_PSERIES
 static void rtas_percpu_suspend_me(void *info)
 {
-	long rc = H_SUCCESS;
-	unsigned long msr_save;
-	u16 slb_size = mmu_slb_size;
-	int cpu;
+	int i;
+	long rc;
+	long flags;
 	struct rtas_suspend_me_data *data =
 		(struct rtas_suspend_me_data *)info;
 
-	atomic_inc(&data->working);
-
-	/* really need to ensure MSR.EE is off for H_JOIN */
-	msr_save = mfmsr();
-	mtmsr(msr_save & ~(MSR_EE));
-
-	while (rc == H_SUCCESS && !atomic_read(&data->done))
+	/*
+	 * We use "waiting" to indicate our state.  As long
+	 * as it is >0, we are still trying to all join up.
+	 * If it goes to 0, we have successfully joined up and
+	 * one thread got H_CONTINUE.  If any error happens,
+	 * we set it to <0.
+	 */
+	local_irq_save(flags);
+	do {
 		rc = plpar_hcall_norets(H_JOIN);
-
-	mtmsr(msr_save);
-
-	if (rc == H_SUCCESS) {
-		/* This cpu was prodded and the suspend is complete. */
+		smp_rmb();
+	} while (rc == H_SUCCESS && data->waiting > 0);
+	if (rc == H_SUCCESS)
 		goto out;
-	} else if (rc == H_CONTINUE) {
-		/* All other cpus are in H_JOIN, this cpu does
-		 * the suspend.
-		 */
-		slb_set_size(SLB_MIN_SIZE);
-		printk(KERN_DEBUG "calling ibm,suspend-me on cpu %i\n",
-		       smp_processor_id());
-		data->error = rtas_call(data->token, 0, 1, NULL);
 
-		if (data->error) {
-			printk(KERN_DEBUG "ibm,suspend-me returned %d\n",
-			       data->error);
-			slb_set_size(slb_size);
-		}
+	if (rc == H_CONTINUE) {
+		data->waiting = 0;
+		data->args->args[data->args->nargs] =
+			rtas_call(ibm_suspend_me_token, 0, 1, NULL);
+		for_each_possible_cpu(i)
+			plpar_hcall_norets(H_PROD,i);
 	} else {
-		printk(KERN_ERR "H_JOIN on cpu %i failed with rc = %ld\n",
-		       smp_processor_id(), rc);
-		data->error = rc;
+		data->waiting = -EBUSY;
+		printk(KERN_ERR "Error on H_JOIN hypervisor call\n");
 	}
 
-	atomic_set(&data->done, 1);
-
-	/* This cpu did the suspend or got an error; in either case,
-	 * we need to prod all other other cpus out of join state.
-	 * Extra prods are harmless.
-	 */
-	for_each_online_cpu(cpu)
-		plpar_hcall_norets(H_PROD, get_hard_smp_processor_id(cpu));
 out:
-	if (atomic_dec_return(&data->working) == 0)
-		complete(data->complete);
+	local_irq_restore(flags);
+	return;
 }
 
 static int rtas_ibm_suspend_me(struct rtas_args *args)
 {
+	int i;
 	long state;
 	long rc;
-	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
-	struct rtas_suspend_me_data data;
-	DECLARE_COMPLETION_ONSTACK(done);
+	unsigned long dummy;
 
-	if (!rtas_service_present("ibm,suspend-me"))
-		return -ENOSYS;
+	struct rtas_suspend_me_data data;
 
 	/* Make sure the state is valid */
-	rc = plpar_hcall(H_VASI_STATE, retbuf,
-			 ((u64)args->args[0] << 32) | args->args[1]);
-
-	state = retbuf[0];
+	rc = plpar_hcall(H_VASI_STATE,
+			 ((u64)args->args[0] << 32) | args->args[1],
+			 0, 0, 0,
+			 &state, &dummy, &dummy);
 
 	if (rc) {
 		printk(KERN_ERR "rtas_ibm_suspend_me: vasi_state returned %ld\n",rc);
@@ -796,24 +710,25 @@ static int rtas_ibm_suspend_me(struct rtas_args *args)
 		return 0;
 	}
 
-	atomic_set(&data.working, 0);
-	atomic_set(&data.done, 0);
-	data.token = rtas_token("ibm,suspend-me");
-	data.error = 0;
-	data.complete = &done;
+	data.waiting = 1;
+	data.args = args;
 
 	/* Call function on all CPUs.  One of us will make the
 	 * rtas call
 	 */
-	if (on_each_cpu(rtas_percpu_suspend_me, &data, 0))
-		data.error = -EINVAL;
+	if (on_each_cpu(rtas_percpu_suspend_me, &data, 1, 0))
+		data.waiting = -EINVAL;
 
-	wait_for_completion(&done);
-
-	if (data.error != 0)
+	if (data.waiting != 0)
 		printk(KERN_ERR "Error doing global join\n");
 
-	return data.error;
+	/* Prod each CPU.  This won't hurt, and will wake
+	 * anyone we successfully put to sleep with H_JOIN.
+	 */
+	for_each_possible_cpu(i)
+		plpar_hcall_norets(H_PROD, i);
+
+	return data.waiting;
 }
 #else /* CONFIG_PPC_PSERIES */
 static int rtas_ibm_suspend_me(struct rtas_args *args)
@@ -850,9 +765,6 @@ asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
 	if (args.token == RTAS_UNKNOWN_SERVICE)
 		return -EINVAL;
 
-	args.rets = &args.args[nargs];
-	memset(args.rets, 0, args.nret * sizeof(rtas_arg_t));
-
 	/* Need to handle ibm,suspend_me call specially */
 	if (args.token == ibm_suspend_me_token) {
 		rc = rtas_ibm_suspend_me(&args);
@@ -863,18 +775,20 @@ asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
 
 	buff_copy = get_errorlog_buffer();
 
-	flags = lock_rtas();
+	spin_lock_irqsave(&rtas.lock, flags);
 
 	rtas.args = args;
 	enter_rtas(__pa(&rtas.args));
 	args = rtas.args;
+
+	args.rets = &args.args[nargs];
 
 	/* A -1 return code indicates that the last command couldn't
 	   be completed due to a hardware error. */
 	if (args.rets[0] == -1)
 		errbuf = __fetch_rtas_last_error(buff_copy);
 
-	unlock_rtas(flags);
+	spin_unlock_irqrestore(&rtas.lock, flags);
 
 	if (buff_copy) {
 		if (errbuf)
@@ -892,6 +806,31 @@ asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
 	return 0;
 }
 
+/* This version can't take the spinlock, because it never returns */
+
+struct rtas_args rtas_stop_self_args = {
+	/* The token is initialized for real in setup_system() */
+	.token = RTAS_UNKNOWN_SERVICE,
+	.nargs = 0,
+	.nret = 1,
+	.rets = &rtas_stop_self_args.args[0],
+};
+
+void rtas_stop_self(void)
+{
+	struct rtas_args *rtas_args = &rtas_stop_self_args;
+
+	local_irq_disable();
+
+	BUG_ON(rtas_args->token == RTAS_UNKNOWN_SERVICE);
+
+	printk("cpu %u (hwid %u) Ready to die...\n",
+	       smp_processor_id(), hard_smp_processor_id());
+	enter_rtas(__pa(rtas_args));
+
+	panic("Alas, I survived.\n");
+}
+
 /*
  * Call early during boot, before mem init or bootmem, to retrieve the RTAS
  * informations from the device-tree and allocate the RMO buffer for userland
@@ -906,15 +845,15 @@ void __init rtas_initialize(void)
 	 */
 	rtas.dev = of_find_node_by_name(NULL, "rtas");
 	if (rtas.dev) {
-		const u32 *basep, *entryp, *sizep;
+		u32 *basep, *entryp;
+		u32 *sizep;
 
-		basep = of_get_property(rtas.dev, "linux,rtas-base", NULL);
-		sizep = of_get_property(rtas.dev, "rtas-size", NULL);
+		basep = (u32 *)get_property(rtas.dev, "linux,rtas-base", NULL);
+		sizep = (u32 *)get_property(rtas.dev, "rtas-size", NULL);
 		if (basep != NULL && sizep != NULL) {
 			rtas.base = *basep;
 			rtas.size = *sizep;
-			entryp = of_get_property(rtas.dev,
-					"linux,rtas-entry", NULL);
+			entryp = (u32 *)get_property(rtas.dev, "linux,rtas-entry", NULL);
 			if (entryp == NULL) /* Ugh */
 				rtas.entry = rtas.base;
 			else
@@ -936,6 +875,9 @@ void __init rtas_initialize(void)
 #endif
 	rtas_rmo_buf = lmb_alloc_base(RTAS_RMOBUF_MAX, PAGE_SIZE, rtas_region);
 
+#ifdef CONFIG_HOTPLUG_CPU
+	rtas_stop_self_args.token = rtas_token("stop-self");
+#endif /* CONFIG_HOTPLUG_CPU */
 #ifdef CONFIG_RTAS_ERROR_LOGGING
 	rtas_last_error_token = rtas_token("rtas-last-error");
 #endif
@@ -967,43 +909,8 @@ int __init early_init_dt_scan_rtas(unsigned long node,
 	basep = of_get_flat_dt_prop(node, "get-term-char", NULL);
 	if (basep)
 		rtas_getchar_token = *basep;
-
-	if (rtas_putchar_token != RTAS_UNKNOWN_SERVICE &&
-	    rtas_getchar_token != RTAS_UNKNOWN_SERVICE)
-		udbg_init_rtas_console();
-
 #endif
 
 	/* break now */
 	return 1;
-}
-
-static raw_spinlock_t timebase_lock;
-static u64 timebase = 0;
-
-void __cpuinit rtas_give_timebase(void)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-	hard_irq_disable();
-	__raw_spin_lock(&timebase_lock);
-	rtas_call(rtas_token("freeze-time-base"), 0, 1, NULL);
-	timebase = get_tb();
-	__raw_spin_unlock(&timebase_lock);
-
-	while (timebase)
-		barrier();
-	rtas_call(rtas_token("thaw-time-base"), 0, 1, NULL);
-	local_irq_restore(flags);
-}
-
-void __cpuinit rtas_take_timebase(void)
-{
-	while (!timebase)
-		barrier();
-	__raw_spin_lock(&timebase_lock);
-	set_tb(timebase >> 32, timebase & 0xffffffff);
-	timebase = 0;
-	__raw_spin_unlock(&timebase_lock);
 }

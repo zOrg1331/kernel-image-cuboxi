@@ -20,7 +20,7 @@
  *     published by the Free Software Foundation; either version 2 of 
  *     the License, or (at your option) any later version.
  *  
- *     Neither Dag Brattli nor University of TromsÃ¸ admit liability nor
+ *     Neither Dag Brattli nor University of Tromsø admit liability nor
  *     provide warranty for any of this software. This material is 
  *     provided "AS-IS" and at no charge.
  *     
@@ -31,6 +31,7 @@
 #include <linux/tty.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
+#include <linux/smp_lock.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
 
@@ -63,7 +64,7 @@ static int irtty_chars_in_buffer(struct sir_dev *dev)
 	IRDA_ASSERT(priv != NULL, return -1;);
 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return -1;);
 
-	return tty_chars_in_buffer(priv->tty);
+	return priv->tty->driver->chars_in_buffer(priv->tty);
 }
 
 /* Wait (sleep) until underlaying hardware finished transmission
@@ -92,8 +93,10 @@ static void irtty_wait_until_sent(struct sir_dev *dev)
 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return;);
 
 	tty = priv->tty;
-	if (tty->ops->wait_until_sent) {
-		tty->ops->wait_until_sent(tty, msecs_to_jiffies(100));
+	if (tty->driver->wait_until_sent) {
+		lock_kernel();
+		tty->driver->wait_until_sent(tty, msecs_to_jiffies(100));
+		unlock_kernel();
 	}
 	else {
 		msleep(USBSERIAL_TX_DONE_DELAY);
@@ -114,7 +117,7 @@ static int irtty_change_speed(struct sir_dev *dev, unsigned speed)
 {
 	struct sirtty_cb *priv = dev->priv;
 	struct tty_struct *tty;
-        struct ktermios old_termios;
+        struct termios old_termios;
 	int cflag;
 
 	IRDA_ASSERT(priv != NULL, return -1;);
@@ -122,14 +125,48 @@ static int irtty_change_speed(struct sir_dev *dev, unsigned speed)
 
 	tty = priv->tty;
 
-	mutex_lock(&tty->termios_mutex);
+	lock_kernel();
 	old_termios = *(tty->termios);
 	cflag = tty->termios->c_cflag;
-	tty_encode_baud_rate(tty, speed, speed);
-	if (tty->ops->set_termios)
-		tty->ops->set_termios(tty, &old_termios);
+
+	cflag &= ~CBAUD;
+
+	IRDA_DEBUG(2, "%s(), Setting speed to %d\n", __FUNCTION__, speed);
+
+	switch (speed) {
+	case 1200:
+		cflag |= B1200;
+		break;
+	case 2400:
+		cflag |= B2400;
+		break;
+	case 4800:
+		cflag |= B4800;
+		break;
+	case 19200:
+		cflag |= B19200;
+		break;
+	case 38400:
+		cflag |= B38400;
+		break;
+	case 57600:
+		cflag |= B57600;
+		break;
+	case 115200:
+		cflag |= B115200;
+		break;
+	case 9600:
+	default:
+		cflag |= B9600;
+		break;
+	}	
+
+	tty->termios->c_cflag = cflag;
+	if (tty->driver->set_termios)
+		tty->driver->set_termios(tty, &old_termios);
+	unlock_kernel();
+
 	priv->io.speed = speed;
-	mutex_unlock(&tty->termios_mutex);
 
 	return 0;
 }
@@ -165,8 +202,8 @@ static int irtty_set_dtr_rts(struct sir_dev *dev, int dtr, int rts)
 	 * This function is not yet defined for all tty driver, so
 	 * let's be careful... Jean II
 	 */
-	IRDA_ASSERT(priv->tty->ops->tiocmset != NULL, return -1;);
-	priv->tty->ops->tiocmset(priv->tty, NULL, set, clear);
+	IRDA_ASSERT(priv->tty->driver->tiocmset != NULL, return -1;);
+	priv->tty->driver->tiocmset(priv->tty, NULL, set, clear);
 
 	return 0;
 }
@@ -188,13 +225,17 @@ static int irtty_do_write(struct sir_dev *dev, const unsigned char *ptr, size_t 
 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return -1;);
 
 	tty = priv->tty;
-	if (!tty->ops->write)
+	if (!tty->driver->write)
 		return 0;
-	set_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
-	writelen = tty_write_room(tty);
-	if (writelen > len)
+	tty->flags |= (1 << TTY_DO_WRITE_WAKEUP);
+	if (tty->driver->write_room) {
+		writelen = tty->driver->write_room(tty);
+		if (writelen > len)
+			writelen = len;
+	}
+	else
 		writelen = len;
-	return tty->ops->write(tty, ptr, writelen);
+	return tty->driver->write(tty, ptr, writelen);
 }
 
 /* ------------------------------------------------------- */
@@ -230,7 +271,7 @@ static void irtty_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 
 	dev = priv->dev;
 	if (!dev) {
-		IRDA_WARNING("%s(), not ready yet!\n", __func__);
+		IRDA_WARNING("%s(), not ready yet!\n", __FUNCTION__);
 		return;
 	}
 
@@ -262,7 +303,8 @@ static void irtty_write_wakeup(struct tty_struct *tty)
 	IRDA_ASSERT(priv != NULL, return;);
 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return;);
 
-	clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+	tty->flags &= ~(1 << TTY_DO_WRITE_WAKEUP);
+
 	if (priv->dev)
 		sirdev_write_complete(priv->dev);
 }
@@ -276,10 +318,10 @@ static void irtty_write_wakeup(struct tty_struct *tty)
 
 static inline void irtty_stop_receiver(struct tty_struct *tty, int stop)
 {
-	struct ktermios old_termios;
+	struct termios old_termios;
 	int cflag;
 
-	mutex_lock(&tty->termios_mutex);
+	lock_kernel();
 	old_termios = *(tty->termios);
 	cflag = tty->termios->c_cflag;
 	
@@ -289,9 +331,9 @@ static inline void irtty_stop_receiver(struct tty_struct *tty, int stop)
 		cflag |= CREAD;
 
 	tty->termios->c_cflag = cflag;
-	if (tty->ops->set_termios)
-		tty->ops->set_termios(tty, &old_termios);
-	mutex_unlock(&tty->termios_mutex);
+	if (tty->driver->set_termios)
+		tty->driver->set_termios(tty, &old_termios);
+	unlock_kernel();
 }
 
 /*****************************************************************/
@@ -317,8 +359,8 @@ static int irtty_start_dev(struct sir_dev *dev)
 
 	tty = priv->tty;
 
-	if (tty->ops->start)
-		tty->ops->start(tty);
+	if (tty->driver->start)
+		tty->driver->start(tty);
 	/* Make sure we can receive more data */
 	irtty_stop_receiver(tty, FALSE);
 
@@ -346,8 +388,8 @@ static int irtty_stop_dev(struct sir_dev *dev)
 
 	/* Make sure we don't receive more data */
 	irtty_stop_receiver(tty, TRUE);
-	if (tty->ops->stop)
-		tty->ops->stop(tty);
+	if (tty->driver->stop)
+		tty->driver->stop(tty);
 
 	mutex_unlock(&irtty_mutex);
 
@@ -386,12 +428,17 @@ static int irtty_ioctl(struct tty_struct *tty, struct file *file, unsigned int c
 	IRDA_ASSERT(priv != NULL, return -ENODEV;);
 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return -EBADR;);
 
-	IRDA_DEBUG(3, "%s(cmd=0x%X)\n", __func__, cmd);
+	IRDA_DEBUG(3, "%s(cmd=0x%X)\n", __FUNCTION__, cmd);
 
 	dev = priv->dev;
 	IRDA_ASSERT(dev != NULL, return -1;);
 
 	switch (cmd) {
+	case TCGETS:
+	case TCGETA:
+		err = n_tty_ioctl(tty, file, cmd, arg);
+		break;
+
 	case IRTTY_IOCTDONGLE:
 		/* this call blocks for completion */
 		err = sirdev_set_dongle(dev, (IRDA_DONGLE) arg);
@@ -407,7 +454,7 @@ static int irtty_ioctl(struct tty_struct *tty, struct file *file, unsigned int c
 			err = -EFAULT;
 		break;
 	default:
-		err = tty_mode_ioctl(tty, file, cmd, arg);
+		err = -ENOIOCTLCMD;
 		break;
 	}
 	return err;
@@ -441,10 +488,11 @@ static int irtty_open(struct tty_struct *tty)
 
 	/* stop the underlying  driver */
 	irtty_stop_receiver(tty, TRUE);
-	if (tty->ops->stop)
-		tty->ops->stop(tty);
+	if (tty->driver->stop)
+		tty->driver->stop(tty);
 
-	tty_driver_flush_buffer(tty);
+	if (tty->driver->flush_buffer)
+		tty->driver->flush_buffer(tty);
 	
 	/* apply mtt override */
 	sir_tty_drv.qos_mtt_bits = qos_mtt_bits;
@@ -457,9 +505,10 @@ static int irtty_open(struct tty_struct *tty)
 	}
 
 	/* allocate private device info block */
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kmalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		goto out_put;
+	memset(priv, 0, sizeof(*priv));
 
 	priv->magic = IRTTY_MAGIC;
 	priv->tty = tty;
@@ -474,7 +523,7 @@ static int irtty_open(struct tty_struct *tty)
 
 	mutex_unlock(&irtty_mutex);
 
-	IRDA_DEBUG(0, "%s - %s: irda line discipline opened\n", __func__, tty->name);
+	IRDA_DEBUG(0, "%s - %s: irda line discipline opened\n", __FUNCTION__, tty->name);
 
 	return 0;
 
@@ -520,18 +569,18 @@ static void irtty_close(struct tty_struct *tty)
 
 	/* Stop tty */
 	irtty_stop_receiver(tty, TRUE);
-	clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
-	if (tty->ops->stop)
-		tty->ops->stop(tty);
+	tty->flags &= ~(1 << TTY_DO_WRITE_WAKEUP);
+	if (tty->driver->stop)
+		tty->driver->stop(tty);
 
 	kfree(priv);
 
-	IRDA_DEBUG(0, "%s - %s: irda line discipline closed\n", __func__, tty->name);
+	IRDA_DEBUG(0, "%s - %s: irda line discipline closed\n", __FUNCTION__, tty->name);
 }
 
 /* ------------------------------------------------------- */
 
-static struct tty_ldisc_ops irda_ldisc = {
+static struct tty_ldisc irda_ldisc = {
 	.magic		= TTY_LDISC_MAGIC,
  	.name		= "irda",
 	.flags		= 0,
@@ -564,7 +613,7 @@ static void __exit irtty_sir_cleanup(void)
 
 	if ((err = tty_unregister_ldisc(N_IRDA))) {
 		IRDA_ERROR("%s(), can't unregister line discipline (err = %d)\n",
-			   __func__, err);
+			   __FUNCTION__, err);
 	}
 }
 

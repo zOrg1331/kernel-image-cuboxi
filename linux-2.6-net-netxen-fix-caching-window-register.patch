@@ -1,0 +1,56 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:52:33 -0400
+Subject: [net] netxen: fix caching window register
+Message-id: <20100803134949.2239.52637.sendpatchset@localhost.localdomain>
+Patchwork-id: 27345
+O-Subject: [RHEL 5.6 PATCH 43/44] netxen: fix caching window register
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 7e43cd66d36e8f0900e87d9d287c9ee649cbdd07
+
+Description
+===========
+
+>From 6e46dcd98caa282ef3851ec039079866ded50077 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Sun, 13 Jun 2010 23:39:05 +0000
+Subject: [PATCH] netxen: fix caching window register
+
+CRB window register is not per pci-func for NX3031,
+so caching can result in incorrect values.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_hw.c b/drivers/net/netxen/netxen_nic_hw.c
+index f9a49cc..20c6c63 100644
+--- a/drivers/net/netxen/netxen_nic_hw.c
++++ b/drivers/net/netxen/netxen_nic_hw.c
+@@ -1148,9 +1148,6 @@ netxen_nic_pci_set_crbwindow_2M(struct netxen_adapter *adapter, ulong off)
+ 
+ 	window = CRB_HI(off);
+ 
+-	if (adapter->ahw.crb_win == window)
+-		return;
+-
+ 	writel(window, addr);
+ 	if (readl(addr) != window) {
+ 		if (printk_ratelimit())
+@@ -1158,7 +1155,6 @@ netxen_nic_pci_set_crbwindow_2M(struct netxen_adapter *adapter, ulong off)
+ 				"failed to set CRB window to %d off 0x%lx\n",
+ 				window, off);
+ 	}
+-	adapter->ahw.crb_win = window;
+ }
+ 
+ static void __iomem *

@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *  GUS's memory allocation routines / bottom layer
  *
  *
@@ -19,6 +19,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <sound/core.h>
@@ -142,8 +143,9 @@ static int snd_gf1_mem_find(struct snd_gf1_mem * alloc,
 	struct snd_gf1_mem_block *pblock;
 	unsigned int ptr1, ptr2;
 
-	if (w_16 && align < 2)
-		align = 2;
+	align--;
+	if (w_16 && align < 1)
+		align = 1;
 	block->flags = w_16 ? SNDRV_GF1_MEM_BLOCK_16BIT : 0;
 	block->owner = SNDRV_GF1_MEM_OWNER_DRIVER;
 	block->share = 0;
@@ -163,7 +165,7 @@ static int snd_gf1_mem_find(struct snd_gf1_mem * alloc,
 			if (pblock->next->ptr < boundary)
 				ptr2 = pblock->next->ptr;
 		}
-		ptr1 = ALIGN(pblock->ptr + pblock->size, align);
+		ptr1 = (pblock->ptr + pblock->size + align) & ~align;
 		if (ptr1 >= ptr2)
 			continue;
 		size1 = ptr2 - ptr1;

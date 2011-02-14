@@ -1,0 +1,199 @@
+diff --git a/fs/buffer.c b/fs/buffer.c
+index 3660dcb..31a01da 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -184,6 +184,8 @@ int fsync_super(struct super_block *sb)
+ 	return sync_blockdev(sb->s_bdev);
+ }
+ 
++EXPORT_SYMBOL(fsync_super);
++
+ /*
+  * Write out and wait upon all dirty data associated with this
+  * device.   Filesystem data as well as the underlying block
+diff --git a/fs/fcntl.c b/fs/fcntl.c
+index d35cbc6..b43d821 100644
+--- a/fs/fcntl.c
++++ b/fs/fcntl.c
+@@ -529,6 +529,8 @@ int send_sigurg(struct fown_struct *fown
+ 	return ret;
+ }
+ 
++EXPORT_SYMBOL(send_sigurg);
++
+ static DEFINE_RWLOCK(fasync_lock);
+ static kmem_cache_t *fasync_cache __read_mostly;
+ 
+diff --git a/fs/file_table.c b/fs/file_table.c
+index 0131ba0..47a3fa8 100644
+--- a/fs/file_table.c
++++ b/fs/file_table.c
+@@ -234,6 +234,7 @@ struct file fastcall *fget_light(unsigne
+ 	return file;
+ }
+ 
++EXPORT_SYMBOL_GPL(fget_light);
+ 
+ void put_filp(struct file *file)
+ {
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 2561020..3cc9657 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1651,6 +1651,8 @@ extern ssize_t generic_file_direct_write
+ 		unsigned long *, loff_t, loff_t *, size_t, size_t);
+ extern ssize_t generic_file_buffered_write(struct kiocb *, const struct iovec *,
+ 		unsigned long, loff_t, loff_t *, size_t, ssize_t);
++extern int generic_file_buffered_write_one_kernel_page(struct address_space *,
++						       pgoff_t, struct page *);
+ extern ssize_t do_sync_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos);
+ extern ssize_t do_sync_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos);
+ ssize_t generic_file_write_nolock(struct file *file, const struct iovec *iov,
+diff --git a/include/linux/pagemap.h b/include/linux/pagemap.h
+index 82b2753..acc3481 100644
+--- a/include/linux/pagemap.h
++++ b/include/linux/pagemap.h
+@@ -181,6 +181,12 @@ static inline void wait_on_page_fs_misc(
+ extern void fastcall end_page_fs_misc(struct page *page);
+ 
+ /*
++ * permit installation of a state change monitor in the queue for a page
++ */
++extern void install_page_waitqueue_monitor(struct page *page,
++					   wait_queue_t *monitor);
++
++/*
+  * Fault a userspace page into pagetables.  Return non-zero on a fault.
+  *
+  * This assumes that two userspace pages are always sufficient.  That's
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index ae40ac8..61b484f 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1314,6 +1314,8 @@ #endif
+ 		context->names[idx].ino   = (unsigned long)-1;
+ }
+ 
++EXPORT_SYMBOL_GPL(__audit_inode_child);
++
+ /**
+  * auditsc_get_stamp - get local copies of audit_context values
+  * @ctx: audit_context for the task
+diff --git a/mm/filemap.c b/mm/filemap.c
+index c71d8fd..d04f557 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -520,6 +520,18 @@ void fastcall wait_on_page_bit(struct pa
+ }
+ EXPORT_SYMBOL(wait_on_page_bit);
+ 
++void install_page_waitqueue_monitor(struct page *page, wait_queue_t *monitor)
++{
++	wait_queue_head_t *q = page_waitqueue(page);
++	unsigned long flags;
++
++	spin_lock_irqsave(&q->lock, flags);
++	__add_wait_queue(q, monitor);
++	spin_unlock_irqrestore(&q->lock, flags);
++}
++
++EXPORT_SYMBOL_GPL(install_page_waitqueue_monitor);
++
+ /**
+  * unlock_page - unlock a locked page
+  * @page: the page
+@@ -2237,6 +2249,92 @@ zero_length_segment:
+ }
+ EXPORT_SYMBOL(generic_file_buffered_write);
+ 
++/*
++ * This writes the data from the source page to the specified page offset in
++ * the nominated file
++ * - the source page does not need to have any association with the file or the
++ *   page offset
++ */
++int
++generic_file_buffered_write_one_kernel_page(struct address_space *mapping,
++					    pgoff_t index,
++					    struct page *src)
++{
++	const struct address_space_operations *a_ops = mapping->a_ops;
++	struct pagevec	lru_pvec;
++	struct page *page, *cached_page = NULL;
++	long status = 0;
++
++	pagevec_init(&lru_pvec, 0);
++
++#if 0
++	if (mapping->tree_lock.magic != RWLOCK_MAGIC)
++		printk("RWLOCK magic incorrect: %x != %x\n",
++		       mapping->tree_lock.magic, RWLOCK_MAGIC);
++#endif
++
++	page = __grab_cache_page(mapping, index, &cached_page, &lru_pvec);
++	if (!page) {
++		BUG_ON(cached_page);
++		return -ENOMEM;
++	}
++
++	status = a_ops->prepare_write(NULL, page, 0, PAGE_CACHE_SIZE);
++	if (unlikely(status)) {
++		loff_t isize = i_size_read(mapping->host);
++
++		if (status != AOP_TRUNCATED_PAGE)
++			unlock_page(page);
++		page_cache_release(page);
++		if (status == AOP_TRUNCATED_PAGE)
++			goto sync;
++
++		/* prepare_write() may have instantiated a few blocks outside
++		 * i_size.  Trim these off again.
++		 */
++		if ((1ULL << (index + 1)) > isize)
++			vmtruncate(mapping->host, isize);
++		goto sync;
++	}
++
++	copy_highpage(page, src);
++	flush_dcache_page(page);
++
++	status = a_ops->commit_write(NULL, page, 0, PAGE_CACHE_SIZE);
++	if (status == AOP_TRUNCATED_PAGE) {
++		page_cache_release(page);
++		goto sync;
++	}
++
++	if (status > 0)
++		status = 0;
++
++	unlock_page(page);
++	mark_page_accessed(page);
++	page_cache_release(page);
++	if (status < 0)
++		return status;
++
++	balance_dirty_pages_ratelimited(mapping);
++	cond_resched();
++
++sync:
++	if (cached_page)
++		page_cache_release(cached_page);
++
++	/* the caller must handle O_SYNC themselves, but we handle S_SYNC and
++	 * MS_SYNCHRONOUS here */
++	if (unlikely(IS_SYNC(mapping->host)) && !a_ops->writepage)
++		status = generic_osync_inode(mapping->host, mapping,
++					     OSYNC_METADATA | OSYNC_DATA);
++
++	/* the caller must handle O_DIRECT for themselves */
++
++	pagevec_lru_add(&lru_pvec);
++	return status;
++}
++EXPORT_SYMBOL(generic_file_buffered_write_one_kernel_page);
++
+ static ssize_t
+ __generic_file_aio_write_nolock(struct kiocb *iocb, const struct iovec *iov,
+ 				unsigned long nr_segs, loff_t *ppos)
+
+

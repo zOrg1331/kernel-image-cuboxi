@@ -1,0 +1,65 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 19 Nov 2010 18:25:18 -0500
+Subject: [net] qlge: restore vlan setting during ql_adapter_up
+Message-id: <20101119182518.6308.98356.sendpatchset@localhost.localdomain>
+Patchwork-id: 29523
+O-Subject: [RHEL 5.6 PATCH 1/5] qlge: Restoring the vlan setting during
+	ql_adapter_up.
+Bugzilla: 654420
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 654420 (https://bugzilla.redhat.com/show_bug.cgi?id=654420)
+
+Upstream Status
+---------------
+
+net-2.6 commit id c1b60092cf307fef12f793abf7cf8167e26a6ccf
+
+Description
+-----------
+
+>From 111218cc7270f6515a747c191ec51b79af78b18f Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Thu, 14 Oct 2010 13:52:43 -0700
+Subject: [PATCH 1/5] 	qlge: Restoring the vlan setting during ql_adapter_up.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index 5811aef..3391f12 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -2071,6 +2071,20 @@ static void ql_vlan_rx_kill_vid(struct net_device *ndev, u16 vid)
+ 
+ }
+ 
++static void ql_restore_vlan(struct ql_adapter *qdev)
++{
++	ql_vlan_rx_register(qdev->ndev, qdev->vlgrp);
++
++	if (qdev->vlgrp) {
++		u16 vid;
++			for (vid = 0; vid < VLAN_GROUP_ARRAY_LEN; vid++) {
++				if (!vlan_group_get_device(qdev->vlgrp, vid))
++					continue;
++				ql_vlan_rx_add_vid(qdev->ndev, vid);
++			}
++	}
++}
++
+ /* MSI-X Multiple Vector Interrupt Handler for inbound completions. */
+ static irqreturn_t qlge_msix_rx_isr(int irq, void *dev_id,
+ 					struct pt_regs *ptregs)
+@@ -3705,6 +3719,9 @@ static int ql_adapter_up(struct ql_adapter *qdev)
+ 	clear_bit(QL_PROMISCUOUS, &qdev->flags);
+ 	qlge_set_multicast_list(qdev->ndev);
+ 
++	/* Restore vlan setting. */
++	ql_restore_vlan(qdev);
++
+ 	ql_enable_interrupts(qdev);
+ 	return 0;
+ err_init:

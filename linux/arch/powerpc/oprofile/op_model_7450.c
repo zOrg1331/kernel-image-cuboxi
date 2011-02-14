@@ -1,5 +1,5 @@
 /*
- * arch/powerpc/oprofile/op_model_7450.c
+ * oprofile/op_model_7450.c
  *
  * Freescale 745x/744x oprofile support, based on fsl_booke support
  * Copyright (C) 2004 Anton Blanchard <anton@au.ibm.com>, IBM
@@ -29,7 +29,7 @@
 static unsigned long reset_value[OP_MAX_COUNTER];
 
 static int oprofile_running;
-static u32 mmcr0_val, mmcr1_val, mmcr2_val, num_pmcs;
+static u32 mmcr0_val, mmcr1_val, mmcr2_val;
 
 #define MMCR0_PMC1_SHIFT	6
 #define MMCR0_PMC2_SHIFT	0
@@ -81,33 +81,31 @@ static void pmc_stop_ctrs(void)
 
 /* Configures the counters on this CPU based on the global
  * settings */
-static int fsl7450_cpu_setup(struct op_counter_config *ctr)
+static void fsl7450_cpu_setup(void *unused)
 {
 	/* freeze all counters */
 	pmc_stop_ctrs();
 
 	mtspr(SPRN_MMCR0, mmcr0_val);
 	mtspr(SPRN_MMCR1, mmcr1_val);
-	if (num_pmcs > 4)
-		mtspr(SPRN_MMCR2, mmcr2_val);
-
-	return 0;
+	mtspr(SPRN_MMCR2, mmcr2_val);
 }
 
+#define NUM_CTRS 6
+
 /* Configures the global settings for the countes on all CPUs. */
-static int fsl7450_reg_setup(struct op_counter_config *ctr,
+static void fsl7450_reg_setup(struct op_counter_config *ctr,
 			     struct op_system_config *sys,
 			     int num_ctrs)
 {
 	int i;
 
-	num_pmcs = num_ctrs;
 	/* Our counters count up, and "count" refers to
 	 * how much before the next interrupt, and we interrupt
 	 * on overflow.  So we calculate the starting value
 	 * which will give us "count" until overflow.
 	 * Then we set the events on the enabled counters */
-	for (i = 0; i < num_ctrs; ++i)
+	for (i = 0; i < NUM_CTRS; ++i)
 		reset_value[i] = 0x80000000UL - ctr[i].count;
 
 	/* Set events for Counters 1 & 2 */
@@ -123,28 +121,25 @@ static int fsl7450_reg_setup(struct op_counter_config *ctr,
 
 	/* Set events for Counters 3-6 */
 	mmcr1_val = mmcr1_event3(ctr[2].event)
-		| mmcr1_event4(ctr[3].event);
-	if (num_ctrs > 4)
-		mmcr1_val |= mmcr1_event5(ctr[4].event)
-			| mmcr1_event6(ctr[5].event);
+		| mmcr1_event4(ctr[3].event)
+		| mmcr1_event5(ctr[4].event)
+		| mmcr1_event6(ctr[5].event);
 
 	mmcr2_val = 0;
-
-	return 0;
 }
 
 /* Sets the counters on this CPU to the chosen values, and starts them */
-static int fsl7450_start(struct op_counter_config *ctr)
+static void fsl7450_start(struct op_counter_config *ctr)
 {
 	int i;
 
 	mtmsr(mfmsr() | MSR_PMM);
 
-	for (i = 0; i < num_pmcs; ++i) {
+	for (i = 0; i < NUM_CTRS; ++i) {
 		if (ctr[i].enabled)
-			classic_ctr_write(i, reset_value[i]);
+			ctr_write(i, reset_value[i]);
 		else
-			classic_ctr_write(i, 0);
+			ctr_write(i, 0);
 	}
 
 	/* Clear the freeze bit, and enable the interrupt.
@@ -153,8 +148,6 @@ static int fsl7450_start(struct op_counter_config *ctr)
 	pmc_start_ctrs();
 
 	oprofile_running = 1;
-
-	return 0;
 }
 
 /* Stop the counters on this CPU */
@@ -185,14 +178,14 @@ static void fsl7450_handle_interrupt(struct pt_regs *regs,
 	pc = mfspr(SPRN_SIAR);
 	is_kernel = is_kernel_addr(pc);
 
-	for (i = 0; i < num_pmcs; ++i) {
-		val = classic_ctr_read(i);
+	for (i = 0; i < NUM_CTRS; ++i) {
+		val = ctr_read(i);
 		if (val < 0) {
 			if (oprofile_running && ctr[i].enabled) {
 				oprofile_add_ext_sample(pc, regs, i, is_kernel);
-				classic_ctr_write(i, reset_value[i]);
+				ctr_write(i, reset_value[i]);
 			} else {
-				classic_ctr_write(i, 0);
+				ctr_write(i, 0);
 			}
 		}
 	}
@@ -200,7 +193,7 @@ static void fsl7450_handle_interrupt(struct pt_regs *regs,
 	/* The freeze bit was set by the interrupt. */
 	/* Clear the freeze bit, and reenable the interrupt.
 	 * The counters won't actually start until the rfi clears
-	 * the PM/M bit */
+	 * the PMM bit */
 	pmc_start_ctrs();
 }
 

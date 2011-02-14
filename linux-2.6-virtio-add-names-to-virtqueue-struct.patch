@@ -1,0 +1,267 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Sat, 7 Aug 2010 07:16:48 -0400
+Subject: [virtio] add names to virtqueue struct
+Message-id: <6dd91b9c9ad09d31311c897935e2e2acfd25d94d.1281129816.git.amit.shah@redhat.com>
+Patchwork-id: 27466
+O-Subject: [RHEL5.6 PATCH 3/9] virtio: add names to virtqueue struct,
+	mapping from devices to queues.
+Bugzilla: 620037
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+From: Rusty Russell <rusty@rustcorp.com.au>
+
+Add a linked list of all virtqueues for a virtio device: this helps for
+debugging and is also needed for upcoming interface change.
+
+Also, add a "name" field for clearer debug messages.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+(Cherry-picked from 9499f5e7ed5224c40706f0cec6542a9916bc7606)
+
+(rhel5: this is picked to keep diffs from upstream to a minimum for
+future patches. Plus this is a cleanup, no functional change.)
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/block/virtio_blk.c b/drivers/block/virtio_blk.c
+index f7eff0c..0516057 100644
+--- a/drivers/block/virtio_blk.c
++++ b/drivers/block/virtio_blk.c
+@@ -230,7 +230,7 @@ static int virtblk_probe(struct virtio_device *vdev)
+ 	vblk->vdev = vdev;
+ 
+ 	/* We expect one virtqueue, for output. */
+-	vblk->vq = vdev->config->find_vq(vdev, 0, blk_done);
++	vblk->vq = vdev->config->find_vq(vdev, 0, blk_done, "requests");
+ 	if (IS_ERR(vblk->vq)) {
+ 		err = PTR_ERR(vblk->vq);
+ 		goto out_free_vblk;
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 8697508..3cdb672 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -744,13 +744,13 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 		vi->mergeable_rx_bufs = true;
+ 
+ 	/* We expect two virtqueues, receive then send. */
+-	vi->rvq = vdev->config->find_vq(vdev, 0, skb_recv_done);
++	vi->rvq = vdev->config->find_vq(vdev, 0, skb_recv_done, "input");
+ 	if (IS_ERR(vi->rvq)) {
+ 		err = PTR_ERR(vi->rvq);
+ 		goto free;
+ 	}
+ 
+-	vi->svq = vdev->config->find_vq(vdev, 1, skb_xmit_done);
++	vi->svq = vdev->config->find_vq(vdev, 1, skb_xmit_done, "output");
+ 	if (IS_ERR(vi->svq)) {
+ 		err = PTR_ERR(vi->svq);
+ 		goto free_recv;
+diff --git a/drivers/virtio/virtio.c b/drivers/virtio/virtio.c
+index e631221..00f2599 100644
+--- a/drivers/virtio/virtio.c
++++ b/drivers/virtio/virtio.c
+@@ -188,6 +188,8 @@ int register_virtio_device(struct virtio_device *dev)
+ 	/* Acknowledge that we've seen the device. */
+ 	add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE);
+ 
++	INIT_LIST_HEAD(&dev->vqs);
++
+ 	/* device_register() causes the bus infrastructure to look for a
+ 	 * matching driver. */
+ 	err = device_register(&dev->dev);
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index b5b5d26..865f37a 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -221,13 +221,13 @@ static int virtballoon_probe(struct virtio_device *vdev)
+ 	vb->vdev = vdev;
+ 
+ 	/* We expect two virtqueues. */
+-	vb->inflate_vq = vdev->config->find_vq(vdev, 0, balloon_ack);
++	vb->inflate_vq = vdev->config->find_vq(vdev, 0, balloon_ack, "inflate");
+ 	if (IS_ERR(vb->inflate_vq)) {
+ 		err = PTR_ERR(vb->inflate_vq);
+ 		goto out_free_vb;
+ 	}
+ 
+-	vb->deflate_vq = vdev->config->find_vq(vdev, 1, balloon_ack);
++	vb->deflate_vq = vdev->config->find_vq(vdev, 1, balloon_ack, "deflate");
+ 	if (IS_ERR(vb->deflate_vq)) {
+ 		err = PTR_ERR(vb->deflate_vq);
+ 		goto out_del_inflate_vq;
+diff --git a/drivers/virtio/virtio_pci.c b/drivers/virtio/virtio_pci.c
+index 8d8da9f..4d68c1f 100644
+--- a/drivers/virtio/virtio_pci.c
++++ b/drivers/virtio/virtio_pci.c
+@@ -208,7 +208,8 @@ static irqreturn_t vp_interrupt(int irq, void *opaque, struct pt_regs *regs)
+ 
+ /* the config->find_vq() implementation */
+ static struct virtqueue *vp_find_vq(struct virtio_device *vdev, unsigned index,
+-				    void (*callback)(struct virtqueue *vq))
++				    void (*callback)(struct virtqueue *vq),
++				    const char *name)
+ {
+ 	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
+ 	struct virtio_pci_vq_info *info;
+@@ -246,7 +247,7 @@ static struct virtqueue *vp_find_vq(struct virtio_device *vdev, unsigned index,
+ 
+ 	/* create the vring */
+ 	vq = vring_new_virtqueue(info->num, vdev, info->queue,
+-				 vp_notify, callback);
++				 vp_notify, callback, name);
+ 	if (!vq) {
+ 		err = -ENOMEM;
+ 		goto out_activate_queue;
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+index c834961..5dc2601 100644
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -24,21 +24,30 @@
+ 
+ #ifdef DEBUG
+ /* For development, we want to crash whenever the ring is screwed. */
+-#define BAD_RING(_vq, fmt...)			\
+-	do { dev_err(&(_vq)->vq.vdev->dev, fmt); BUG(); } while(0)
++#define BAD_RING(_vq, fmt, args...)				\
++	do {							\
++		dev_err(&(_vq)->vq.vdev->dev,			\
++			"%s:"fmt, (_vq)->vq.name, ##args);	\
++		BUG();						\
++	} while (0)
+ /* Caller is supposed to guarantee no reentry. */
+ #define START_USE(_vq)						\
+ 	do {							\
+ 		if ((_vq)->in_use)				\
+-			panic("in_use = %i\n", (_vq)->in_use);	\
++			panic("%s:in_use = %i\n",		\
++			      (_vq)->vq.name, (_vq)->in_use);	\
+ 		(_vq)->in_use = __LINE__;			\
+ 		mb();						\
+-	} while(0)
++	} while (0)
+ #define END_USE(_vq) \
+ 	do { BUG_ON(!(_vq)->in_use); (_vq)->in_use = 0; mb(); } while(0)
+ #else
+-#define BAD_RING(_vq, fmt...)			\
+-	do { dev_err(&_vq->vq.vdev->dev, fmt); (_vq)->broken = true; } while(0)
++#define BAD_RING(_vq, fmt, args...)				\
++	do {							\
++		dev_err(&_vq->vq.vdev->dev,			\
++			"%s:"fmt, (_vq)->vq.name, ##args);	\
++		(_vq)->broken = true;				\
++	} while (0)
+ #define START_USE(vq)
+ #define END_USE(vq)
+ #endif
+@@ -284,7 +293,8 @@ struct virtqueue *vring_new_virtqueue(unsigned int num,
+ 				      struct virtio_device *vdev,
+ 				      void *pages,
+ 				      void (*notify)(struct virtqueue *),
+-				      void (*callback)(struct virtqueue *))
++				      void (*callback)(struct virtqueue *),
++				      const char *name)
+ {
+ 	struct vring_virtqueue *vq;
+ 	unsigned int i;
+@@ -303,10 +313,12 @@ struct virtqueue *vring_new_virtqueue(unsigned int num,
+ 	vq->vq.callback = callback;
+ 	vq->vq.vdev = vdev;
+ 	vq->vq.vq_ops = &vring_vq_ops;
++	vq->vq.name = name;
+ 	vq->notify = notify;
+ 	vq->broken = false;
+ 	vq->last_used_idx = 0;
+ 	vq->num_added = 0;
++	list_add_tail(&vq->vq.list, &vdev->vqs);
+ #ifdef DEBUG
+ 	vq->in_use = false;
+ #endif
+@@ -327,6 +339,7 @@ EXPORT_SYMBOL_GPL(vring_new_virtqueue);
+ 
+ void vring_del_virtqueue(struct virtqueue *vq)
+ {
++	list_del(&vq->list);
+ 	kfree(to_vvq(vq));
+ }
+ EXPORT_SYMBOL_GPL(vring_del_virtqueue);
+diff --git a/include/linux/virtio.h b/include/linux/virtio.h
+index 3eb49b8..df29c40 100644
+--- a/include/linux/virtio.h
++++ b/include/linux/virtio.h
+@@ -10,14 +10,17 @@
+ 
+ /**
+  * virtqueue - a queue to register buffers for sending or receiving.
++ * @list: the chain of virtqueues for this device
+  * @callback: the function to call when buffers are consumed (can be NULL).
++ * @name: the name of this virtqueue (mainly for debugging)
+  * @vdev: the virtio device this queue was created for.
+  * @vq_ops: the operations for this virtqueue (see below).
+  * @priv: a pointer for the virtqueue implementation to use.
+  */
+-struct virtqueue
+-{
++struct virtqueue {
++	struct list_head list;
+ 	void (*callback)(struct virtqueue *vq);
++	const char *name;
+ 	struct virtio_device *vdev;
+ 	struct virtqueue_ops *vq_ops;
+ 	void *priv;
+@@ -83,15 +86,16 @@ struct virtio_device_id {
+  * @dev: underlying device.
+  * @id: the device type identification (used to match it with a driver).
+  * @config: the configuration ops for this device.
++ * @vqs: the list of virtqueues for this device.
+  * @features: the features supported by both driver and device.
+  * @priv: private pointer for the driver's use.
+  */
+-struct virtio_device
+-{
++struct virtio_device {
+ 	int index;
+ 	struct device dev;
+ 	struct virtio_device_id id;
+ 	struct virtio_config_ops *config;
++	struct list_head vqs;
+ 	/* Note that this is a Linux set_bit-style bitmap. */
+ 	unsigned long features[1];
+ 	void *priv;
+diff --git a/include/linux/virtio_config.h b/include/linux/virtio_config.h
+index bf8ec28..9fae274 100644
+--- a/include/linux/virtio_config.h
++++ b/include/linux/virtio_config.h
+@@ -55,7 +55,8 @@
+  * @find_vq: find a virtqueue and instantiate it.
+  *	vdev: the virtio_device
+  *	index: the 0-based virtqueue number in case there's more than one.
+- *	callback: the virqtueue callback
++ *	callback: the virtqueue callback
++ *	name: the virtqueue name (mainly for debugging)
+  *	Returns the new virtqueue or ERR_PTR() (eg. -ENOENT).
+  * @del_vq: free a virtqueue found by find_vq().
+  * @get_features: get the array of feature bits for this device.
+@@ -77,7 +78,8 @@ struct virtio_config_ops
+ 	void (*reset)(struct virtio_device *vdev);
+ 	struct virtqueue *(*find_vq)(struct virtio_device *vdev,
+ 				     unsigned index,
+-				     void (*callback)(struct virtqueue *));
++				     void (*callback)(struct virtqueue *),
++				     const char *name);
+ 	void (*del_vq)(struct virtqueue *vq);
+ 	u32 (*get_features)(struct virtio_device *vdev);
+ 	void (*finalize_features)(struct virtio_device *vdev);
+diff --git a/include/linux/virtio_ring.h b/include/linux/virtio_ring.h
+index c4a598f..f91c356 100644
+--- a/include/linux/virtio_ring.h
++++ b/include/linux/virtio_ring.h
+@@ -118,7 +118,8 @@ struct virtqueue *vring_new_virtqueue(unsigned int num,
+ 				      struct virtio_device *vdev,
+ 				      void *pages,
+ 				      void (*notify)(struct virtqueue *vq),
+-				      void (*callback)(struct virtqueue *vq));
++				      void (*callback)(struct virtqueue *vq),
++				      const char *name);
+ void vring_del_virtqueue(struct virtqueue *vq);
+ /* Filter out transport-specific feature bits. */
+ void vring_transport_features(struct virtio_device *vdev);

@@ -70,8 +70,8 @@ pyxis_mask_and_ack_irq(unsigned int irq)
 	*(vulp)PYXIS_INT_MASK;
 }
 
-static struct irq_chip pyxis_irq_type = {
-	.name		= "PYXIS",
+static struct hw_interrupt_type pyxis_irq_type = {
+	.typename	= "PYXIS",
 	.startup	= pyxis_startup_irq,
 	.shutdown	= pyxis_disable_irq,
 	.enable		= pyxis_enable_irq,
@@ -81,7 +81,7 @@ static struct irq_chip pyxis_irq_type = {
 };
 
 void 
-pyxis_device_interrupt(unsigned long vector)
+pyxis_device_interrupt(unsigned long vector, struct pt_regs *regs)
 {
 	unsigned long pld;
 	unsigned int i;
@@ -98,9 +98,9 @@ pyxis_device_interrupt(unsigned long vector)
 		i = ffz(~pld);
 		pld &= pld - 1; /* clear least bit set */
 		if (i == 7)
-			isa_device_interrupt(vector);
+			isa_device_interrupt(vector, regs);
 		else
-			handle_irq(16+i);
+			handle_irq(16+i, regs);
 	}
 }
 

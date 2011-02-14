@@ -1,0 +1,35 @@
+From: Josef Whiter <jwhiter@redhat.com>
+Subject: [RHEL5 patch] GFS2: fix mount failure
+Date: Mon, 4 Dec 2006 13:44:56 -0500
+Bugzilla: 218327
+Message-Id: <20061204184455.GA6722@korben.rdu.redhat.com>
+Changelog: GFS2: fix mount failure
+
+
+Hello,
+
+This is in reference to bz218327.  This patch has already been submitted and
+accepted upstream (http://lkml.org/lkml/2006/11/30/29) by IBM.  Previously
+bio->bi_sector was the same as bh->b_blocknr, which isn't correct.  The patch
+below was generated from 2.6.18-1.2747.  Thank you,
+
+Josef
+
+
+ super.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18.x86_64/fs/gfs2/super.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/fs/gfs2/super.c
++++ linux-2.6.18.x86_64/fs/gfs2/super.c
+@@ -199,7 +199,7 @@ static struct page *gfs2_read_super(stru
+ 		return NULL;
+ 	}
+ 
+-	bio->bi_sector = sector;
++	bio->bi_sector = sector * (sb->s_blocksize >> 9);
+ 	bio->bi_bdev = sb->s_bdev;
+ 	bio_add_page(bio, page, PAGE_SIZE, 0);
+ 
+

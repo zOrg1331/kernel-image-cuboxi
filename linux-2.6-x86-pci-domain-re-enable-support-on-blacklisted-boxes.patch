@@ -1,0 +1,64 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 8 Dec 2008 08:56:47 -0500
+Subject: [x86] pci domain: re-enable support on blacklisted boxes
+Message-id: 20081208135655.19300.69912.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5.4 PATCH]: Re-enable PCI Domain support on HP xw9400/9300
+Bugzilla: 474891
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+Commit a53f0c7b1bbdaa718cd549aa4929181da90291d3 blacklisted xw9400 and xw9300
+systems because they have multiple PCI domains which caused panics during
+boot.
+
+With the introduction of PCI Domain support, the blacklisting is no longer
+necessary.
+
+Successfully compiled and tested on an xw9400.
+
+Resolves BZ 474891.
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index f49b5b0..f95f0ac 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -173,16 +173,6 @@ static int __devinit assign_all_busses(struct dmi_system_id *d)
+ }
+ #endif
+ 
+-#ifdef CONFIG_X86
+-static int __devinit disable_pci_seg(struct dmi_system_id *d)
+-{
+-	pci_noseg = 1;
+-	printk(KERN_INFO "%s detected: disabling PCI segments\n", d->ident);
+-	return 0;
+-}
+-#endif
+-
+-
+ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
+ #ifdef __i386__
+ /*
+@@ -197,22 +187,6 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
+ 		},
+ 	},
+ #endif		/* __i386__ */
+-#ifdef CONFIG_X86
+-	{
+-		.callback = disable_pci_seg,
+-		.ident = "HP xw9300 Workstation",
+-		.matches = {
+-			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9300 Workstation"),
+-		},
+-	},
+-	{
+-		.callback = disable_pci_seg,
+-		.ident = "HP xw9400 Workstation",
+-		.matches = {
+-			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
+-		},
+-	},
+-#endif
+ 	{
+ 		.callback = set_bf_sort,
+ 		.ident = "Dell PowerEdge 1950",

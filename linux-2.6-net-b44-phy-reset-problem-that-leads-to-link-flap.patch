@@ -1,0 +1,160 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL5 PATCH]: b44: phy reset problem that leads to link flap under moderate traffic
+Date: Tue, 2 Jan 2007 13:17:53 -0500
+Bugzilla: 216338
+Message-Id: <20070102181753.GA16938@hmsendeavour.rdu.redhat.com>
+Changelog: net: b44: phy reset problem that leads to link flap 
+
+
+hey all-
+	Patch to correct phy reset logic in the b44 driver.  This patch is a
+backport of the upstream patch currently being proposed by broadcom to fix
+these phy resets and the resultant link flap that moderate traffic can cause.
+fixes bz 216338.
+
+Thanks & Regards
+Neil
+
+
+--- linux-2.6.18.noarch/drivers/net/b44.c.orig	2007-01-02 08:59:09.000000000 -0500
++++ linux-2.6.18.noarch/drivers/net/b44.c	2007-01-02 10:55:28.000000000 -0500
+@@ -111,6 +111,11 @@ MODULE_DEVICE_TABLE(pci, b44_pci_tbl);
+ 
+ static void b44_halt(struct b44 *);
+ static void b44_init_rings(struct b44 *);
++
++#define B44_FULL_RESET		1
++#define B44_FULL_RESET_SKIP_PHY	2
++#define B44_PARTIAL_RESET	3
++
+ static void b44_init_hw(struct b44 *, int);
+ 
+ static int dma_desc_align_mask;
+@@ -883,7 +888,7 @@ static int b44_poll(struct net_device *n
+ 		spin_lock_irq(&bp->lock);
+ 		b44_halt(bp);
+ 		b44_init_rings(bp);
+-		b44_init_hw(bp, 1);
++		b44_init_hw(bp, B44_FULL_RESET_SKIP_PHY);
+ 		netif_wake_queue(bp->dev);
+ 		spin_unlock_irq(&bp->lock);
+ 		done = 1;
+@@ -952,7 +957,7 @@ static void b44_tx_timeout(struct net_de
+ 
+ 	b44_halt(bp);
+ 	b44_init_rings(bp);
+-	b44_init_hw(bp, 1);
++	b44_init_hw(bp, B44_FULL_RESET);
+ 
+ 	spin_unlock_irq(&bp->lock);
+ 
+@@ -1069,7 +1074,7 @@ static int b44_change_mtu(struct net_dev
+ 	b44_halt(bp);
+ 	dev->mtu = new_mtu;
+ 	b44_init_rings(bp);
+-	b44_init_hw(bp, 1);
++	b44_init_hw(bp, B44_FULL_RESET);
+ 	spin_unlock_irq(&bp->lock);
+ 
+ 	b44_enable_ints(bp);
+@@ -1366,12 +1371,12 @@ static int b44_set_mac_addr(struct net_d
+  * packet processing.  Invoked with bp->lock held.
+  */
+ static void __b44_set_rx_mode(struct net_device *);
+-static void b44_init_hw(struct b44 *bp, int full_reset)
++static void b44_init_hw(struct b44 *bp, int reset_kind)
+ {
+ 	u32 val;
+ 
+ 	b44_chip_reset(bp);
+-	if (full_reset) {
++	if (reset_kind == B44_FULL_RESET) {
+ 		b44_phy_reset(bp);
+ 		b44_setup_phy(bp);
+ 	}
+@@ -1388,7 +1393,10 @@ static void b44_init_hw(struct b44 *bp, 
+ 	bw32(bp, B44_TXMAXLEN, bp->dev->mtu + ETH_HLEN + 8 + RX_HEADER_LEN);
+ 
+ 	bw32(bp, B44_TX_WMARK, 56); /* XXX magic */
+-	if (full_reset) {
++	if (reset_kind == B44_PARTIAL_RESET) {
++		bw32(bp, B44_DMARX_CTRL, (DMARX_CTRL_ENABLE |
++				      (bp->rx_offset << DMARX_CTRL_ROSHIFT)));
++	} else {
+ 		bw32(bp, B44_DMATX_CTRL, DMATX_CTRL_ENABLE);
+ 		bw32(bp, B44_DMATX_ADDR, bp->tx_ring_dma + bp->dma_offset);
+ 		bw32(bp, B44_DMARX_CTRL, (DMARX_CTRL_ENABLE |
+@@ -1399,9 +1407,6 @@ static void b44_init_hw(struct b44 *bp, 
+ 		bp->rx_prod = bp->rx_pending;
+ 
+ 		bw32(bp, B44_MIB_CTRL, MIB_CTRL_CLR_ON_READ);
+-	} else {
+-		bw32(bp, B44_DMARX_CTRL, (DMARX_CTRL_ENABLE |
+-				      (bp->rx_offset << DMARX_CTRL_ROSHIFT)));
+ 	}
+ 
+ 	val = br32(bp, B44_ENET_CTRL);
+@@ -1418,7 +1423,7 @@ static int b44_open(struct net_device *d
+ 		goto out;
+ 
+ 	b44_init_rings(bp);
+-	b44_init_hw(bp, 1);
++	b44_init_hw(bp, B44_FULL_RESET);
+ 
+ 	b44_check_phy(bp);
+ 
+@@ -1627,7 +1632,7 @@ static int b44_close(struct net_device *
+ 	netif_poll_enable(dev);
+ 
+ 	if (bp->flags & B44_FLAG_WOL_ENABLE) {
+-		b44_init_hw(bp, 0);
++		b44_init_hw(bp, B44_PARTIAL_RESET);
+ 		b44_setup_wol(bp);
+ 	}
+ 
+@@ -1902,7 +1907,7 @@ static int b44_set_ringparam(struct net_
+ 
+ 	b44_halt(bp);
+ 	b44_init_rings(bp);
+-	b44_init_hw(bp, 1);
++	b44_init_hw(bp, B44_FULL_RESET);
+ 	netif_wake_queue(bp->dev);
+ 	spin_unlock_irq(&bp->lock);
+ 
+@@ -1945,7 +1950,7 @@ static int b44_set_pauseparam(struct net
+ 	if (bp->flags & B44_FLAG_PAUSE_AUTO) {
+ 		b44_halt(bp);
+ 		b44_init_rings(bp);
+-		b44_init_hw(bp, 1);
++		b44_init_hw(bp, B44_FULL_RESET);
+ 	} else {
+ 		__b44_set_flow_ctrl(bp, bp->flags);
+ 	}
+@@ -2301,7 +2306,7 @@ static int b44_suspend(struct pci_dev *p
+ 
+ 	free_irq(dev->irq, dev);
+ 	if (bp->flags & B44_FLAG_WOL_ENABLE) {
+-		b44_init_hw(bp, 0);
++		b44_init_hw(bp, B44_PARTIAL_RESET);
+ 		b44_setup_wol(bp);
+ 	}
+ 	pci_disable_device(pdev);
+@@ -2326,7 +2331,7 @@ static int b44_resume(struct pci_dev *pd
+ 	spin_lock_irq(&bp->lock);
+ 
+ 	b44_init_rings(bp);
+-	b44_init_hw(bp, 1);
++	b44_init_hw(bp, B44_FULL_RESET);
+ 	netif_device_attach(bp->dev);
+ 	spin_unlock_irq(&bp->lock);
+ 
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

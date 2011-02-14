@@ -1,0 +1,144 @@
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Fri, 29 May 2009 13:37:40 +0200
+Subject: [dm] raid45 target: kernel oops in constructor
+Message-id: 1243597060.22836.57.camel@o
+O-Subject: [RHEL 5.4 PATCH] dm: raid45 target: kernel oops in constructor
+Bugzilla: 503070
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+
+RHEL5.4 device mapper: raid45 target
+
+The RAID target oopses in el5 beta kernels on mapping table loads,
+because due to API differences between mainline based code and RHEL5,
+wrong dm-memcache arguments are being calculated and passed into
+dm_mem_cache_client_create(); dm_mem_cache_{grow,shrink}() arguments are
+bogus as well.
+
+Additionally, this patch fixes a wrong region_hash argument in the
+rh_recovery_end() call for the same reason and a comment typo.
+
+Resolves: bz#503070
+
+Please ACK.
+
+Heinz
+
+----
+ drivers/md/{dm-raid45.c.orig => dm-raid45.c} |   33 +++++++++++------------
+ 1 files changed, 16 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/md/dm-raid45.c b/drivers/md/dm-raid45.c
+index 0d2ac0e..bf74af8 100644
+--- a/drivers/md/dm-raid45.c
++++ b/drivers/md/dm-raid45.c
+@@ -1341,7 +1341,6 @@ static void stripe_init(struct stripe_cache *sc, struct stripe *stripe)
+ 
+ 	stripe->sc = sc;
+ 
+-
+ 	i = ARRAY_SIZE(stripe->lists);
+ 	while (i--)
+ 		INIT_LIST_HEAD(stripe->lists + i);
+@@ -1409,13 +1408,13 @@ static struct stripe *stripe_alloc(struct stripe_cache *sc,
+ 	if (stripe) {
+ 		/* Grow the dm-mem-cache by one object. */
+ 		if (grow == SC_GROW) {
+-			r = dm_mem_cache_grow(mc, 1);
++			r = dm_mem_cache_grow(mc, pages_per_chunk);
+ 			if (r)
+ 				goto err_free;
+ 		}
+ 
+ 		stripe->obj = dm_mem_cache_alloc(mc, pages_per_chunk);
+-		if (!stripe->obj)
++		if (IS_ERR(stripe->obj))
+ 			goto err_shrink;
+ 
+ 		stripe_init(sc, stripe);
+@@ -1425,7 +1424,7 @@ static struct stripe *stripe_alloc(struct stripe_cache *sc,
+ 
+ err_shrink:
+ 	if (grow == SC_GROW)
+-		dm_mem_cache_shrink(mc, 1);
++		dm_mem_cache_shrink(mc, pages_per_chunk);
+ err_free:
+ 	kmem_cache_free(sc->kc.cache, stripe);
+ 	return NULL;
+@@ -1438,7 +1437,7 @@ err_free:
+ static void stripe_free(struct stripe *stripe, struct dm_mem_cache_client *mc)
+ {
+ 	dm_mem_cache_free(mc, stripe->obj);
+-	dm_mem_cache_shrink(mc, 1);
++	dm_mem_cache_shrink(mc, chunk_pages(stripe->io.size));
+ 	kmem_cache_free(stripe->sc->kc.cache, stripe);
+ }
+ 
+@@ -1569,39 +1568,39 @@ static int sc_init(struct raid_set *rs, unsigned stripes)
+ 
+ 	/* Create memory cache client context for RAID stripe cache. */
+ 	sc->mem_cache_client =
+-		dm_mem_cache_client_create(stripes, rs->set.raid_devs,
+-					   chunk_pages(rs->set.io_size));
++		dm_mem_cache_client_create(stripes *
++					   stripe_pages(rs, rs->set.io_size),
++					   stripes, rs->set.raid_devs);
+ 	if (IS_ERR(sc->mem_cache_client))
+ 		return PTR_ERR(sc->mem_cache_client);
+ 
+ 	/* Create memory cache client context for RAID recovery stripe(s). */
+ 	rstripes = rec->recovery_stripes;
+ 	rec->mem_cache_client =
+-		dm_mem_cache_client_create(rstripes, rs->set.raid_devs,
+-					   chunk_pages(rec->io_size));
++		dm_mem_cache_client_create(rstripes *
++					   stripe_pages(rs, rec->io_size),
++					   rstripes, rs->set.raid_devs);
+ 	if (IS_ERR(rec->mem_cache_client))
+ 		return PTR_ERR(rec->mem_cache_client);
+ 
+ 	/* Create dm-io client context for IO stripes. */
+ 	sc->dm_io_client =
+ 		dm_io_client_create((stripes > 32 ? 32 : stripes) *
+-				    rs->set.raid_devs *
+-				    chunk_pages(rs->set.io_size));
++				    stripe_pages(rs, rs->set.io_size));
+ 	if (IS_ERR(sc->dm_io_client))
+ 		return PTR_ERR(sc->dm_io_client);
+ 
+ 	/* FIXME: intermingeled with stripe cache initialization. */
+ 	/* Create dm-io client context for recovery stripes. */
+ 	rec->dm_io_client =
+-		dm_io_client_create(rstripes * rs->set.raid_devs *
+-				    chunk_pages(rec->io_size));
++		dm_io_client_create(rstripes * stripe_pages(rs, rec->io_size));
+ 	if (IS_ERR(rec->dm_io_client))
+ 		return PTR_ERR(rec->dm_io_client);
+ 
+ 	/* Allocate stripes for set recovery. */
+ 	while (rstripes--) {
+ 		stripe = stripe_alloc(sc, rec->mem_cache_client,
+-				      rs->recover.io_size, SC_KEEP);
++				      rec->io_size, SC_KEEP);
+ 		if (!stripe)
+ 			return -ENOMEM;
+ 
+@@ -2928,8 +2927,8 @@ static void recover_rh_update(struct stripe *stripe, enum recover_type success)
+ 		return;
+ 	}
+ 
+-	rh_recovery_end(addr->reg, success);
+-	if (success)
++	rh_recovery_end(addr->reg, success == REC_SUCCESS ? 0 : -EIO);
++	if (success == REC_SUCCESS)
+ 		rec->nr_regions_recovered++;
+ 
+ 	addr->reg = NULL;
+@@ -3753,7 +3752,7 @@ static int get_raid_variable_parms(struct dm_target *ti, char **argv,
+ {
+ 	int p, value;
+ 	struct {
+-		int action; /* -1: skip, 0: no pwer2 check, 1: power2 check */
++		int action; /* -1: skip, 0: no power2 check, 1: power2 check */
+ 		char *errmsg;
+ 		int min, max;
+ 		int *var, *var2, *var3;

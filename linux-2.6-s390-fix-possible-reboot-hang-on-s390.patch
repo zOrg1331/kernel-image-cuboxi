@@ -1,0 +1,205 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] fix possible reboot hang on s390
+Date: Mon, 11 Jun 2007 18:31:21 +0000
+Bugzilla: 222181
+Message-Id: <1181586681.5197.12.camel@localhost.localdomain>
+Changelog: [s390] fix possible reboot hang on s390
+
+
+On Mon, 2007-06-11 at 13:31 -0400, Don Zickus wrote:
+> On Mon, Apr 23, 2007 at 06:31:37PM +0000, Jan Glauber wrote:
+> > BZ 222181
+> > 
+> > We had several reboot problems on s390 with RHEL5. While the iptables problems
+> > were fixed we still have a problem in the qeth driver. In case of outbound traffic
+> > on a qeth or hipersocket interface the reboot could hang forever.
+> > 
+> > It turned out that the qeth/qdio driver doesn't guarantee that skb's are released
+> > after an amount of time which blocked the unloading of the drivers and thus 
+> > blocked the reboot process. The patch adds a timer per queue to kick the outbound
+> > handler.
+> > 
+
+At least this was fixable with GENKSYMS. Here is the updated patch:
+
+Index: linux-rhel5/drivers/s390/cio/qdio.c
+===================================================================
+--- linux-rhel5.orig/drivers/s390/cio/qdio.c	2007-06-11 17:59:05.000000000 +0200
++++ linux-rhel5/drivers/s390/cio/qdio.c	2007-06-11 17:59:05.000000000 +0200
+@@ -994,20 +994,21 @@ __qdio_outbound_processing(struct qdio_q
+ 	if (qdio_has_outbound_q_moved(q))
+ 		qdio_kick_outbound_handler(q);
+ 
+-	if (q->is_iqdio_q) {
+-		/* 
+-		 * for asynchronous queues, we better check, if the fill
+-		 * level is too high. for synchronous queues, the fill
+-		 * level will never be that high. 
+-		 */
+-		if (atomic_read(&q->number_of_buffers_used)>
+-		    IQDIO_FILL_LEVEL_TO_POLL)
++	if (q->queue_type == QDIO_ZFCP_QFMT) {
++		if ((!q->hydra_gives_outbound_pcis) &&
++		    (!qdio_is_outbound_q_done(q)))
+ 			qdio_mark_q(q);
+-
+-	} else if (!q->hydra_gives_outbound_pcis)
+-		if (!qdio_is_outbound_q_done(q))
+-			qdio_mark_q(q);
+-
++	}
++	else if (((!q->is_iqdio_q) && (!q->is_pci_out)) ||
++		 (q->queue_type == QDIO_IQDIO_QFMT_ASYNCH)) {
++		if (qdio_is_outbound_q_done(q)) {
++			del_timer(&q->timer);
++		} else {
++			if (!timer_pending(&q->timer))
++				mod_timer(&q->timer, jiffies +
++					  QDIO_FORCE_CHECK_TIMEOUT);
++		}
++	}
+ 	qdio_release_q(q);
+ }
+ 
+@@ -1820,8 +1821,13 @@ qdio_fill_qs(struct qdio_irq *irq_ptr, s
+ 			q->sbal[j]=*(outbound_sbals_array++);
+ 
+                 q->queue_type=q_format;
++		if ((q->queue_type == QDIO_IQDIO_QFMT) &&
++		    (no_output_qs > 1) &&
++		    (i == no_output_qs-1))
++			q->queue_type = QDIO_IQDIO_QFMT_ASYNCH;
+ 		q->int_parm=int_parm;
+ 		q->is_input_q=0;
++		q->is_pci_out = 0;
+ 		q->schid = irq_ptr->schid;
+ 		q->cdev = cdev;
+ 		q->irq_ptr = irq_ptr;
+@@ -1834,6 +1840,10 @@ qdio_fill_qs(struct qdio_irq *irq_ptr, s
+ 		q->tasklet.data=(unsigned long)q;
+ 		q->tasklet.func=(void(*)(unsigned long))
+ 			&qdio_outbound_processing;
++		q->timer.function=(void(*)(unsigned long))
++			&qdio_outbound_processing;
++		q->timer.data = (long)q;
++		init_timer(&q->timer);
+ 
+ 		atomic_set(&q->busy_siga_counter,0);
+ 		q->timing.busy_start=0;
+@@ -2630,6 +2640,7 @@ qdio_shutdown(struct ccw_device *cdev, i
+ 
+ 	for (i=0;i<irq_ptr->no_output_qs;i++) {
+ 		tasklet_kill(&irq_ptr->output_qs[i]->tasklet);
++		del_timer(&irq_ptr->output_qs[i]->timer);
+ 		wait_event_interruptible_timeout(cdev->private->wait_q,
+ 						 !atomic_read(&irq_ptr->
+ 							      output_qs[i]->
+@@ -3454,6 +3465,10 @@ do_qdio_handle_outbound(struct qdio_q *q
+ 		qdio_perf_stat_inc(&perf_stats.outbound_cnt);
+ 		return;
+ 	}
++	if (callflags & QDIO_FLAG_PCI_OUT)
++		q->is_pci_out = 1;
++	else
++		q->is_pci_out = 0;
+ 	if (q->is_iqdio_q) {
+ 		/* one siga for every sbal */
+ 		while (count--)
+Index: linux-rhel5/drivers/s390/cio/qdio.h
+===================================================================
+--- linux-rhel5.orig/drivers/s390/cio/qdio.h	2007-06-11 17:59:04.000000000 +0200
++++ linux-rhel5/drivers/s390/cio/qdio.h	2007-06-11 18:00:03.000000000 +0200
+@@ -60,6 +60,7 @@
+ #define QDIO_ACTIVATE_TIMEOUT ((5*HZ)>>10)
+ #define QDIO_CLEANUP_CLEAR_TIMEOUT (20*HZ)
+ #define QDIO_CLEANUP_HALT_TIMEOUT (10*HZ)
++#define QDIO_FORCE_CHECK_TIMEOUT (10*HZ)
+ 
+ enum qdio_irq_states {
+ 	QDIO_IRQ_STATE_INACTIVE,
+@@ -607,8 +608,10 @@ struct qdio_q {
+ 
+ 	void *irq_ptr;
+ 
+-#ifdef QDIO_USE_TIMERS_FOR_POLLING
++#ifndef __GENKSYMS__
+ 	struct timer_list timer;
++#endif
++#ifdef QDIO_USE_TIMERS_FOR_POLLING
+ 	atomic_t timer_already_set;
+ 	spinlock_t timer_lock;
+ #else /* QDIO_USE_TIMERS_FOR_POLLING */
+@@ -654,6 +657,9 @@ struct qdio_q {
+ 	} timing;
+ 	atomic_t busy_siga_counter;
+         unsigned int queue_type;
++#ifndef __GENKSYMS__
++	unsigned int is_pci_out;
++#endif
+ 
+ 	/* leave this member at the end. won't be cleared in qdio_fill_qs */
+ 	struct slib *slib; /* a page is allocated under this pointer,
+Index: linux-rhel5/drivers/s390/net/qeth_main.c
+===================================================================
+--- linux-rhel5.orig/drivers/s390/net/qeth_main.c	2007-06-11 17:59:05.000000000 +0200
++++ linux-rhel5/drivers/s390/net/qeth_main.c	2007-06-11 17:59:05.000000000 +0200
+@@ -2763,6 +2763,7 @@ qeth_flush_buffers(struct qeth_qdio_out_
+ 	struct qeth_qdio_out_buffer *buf;
+ 	int rc;
+ 	int i;
++	unsigned int qdio_flags;
+ 
+ 	QETH_DBF_TEXT(trace, 6, "flushbuf");
+ 
+@@ -2806,13 +2807,13 @@ qeth_flush_buffers(struct qeth_qdio_out_
+ 		queue->card->perf_stats.outbound_do_qdio_start_time =
+ 			qeth_get_micros();
+ 	}
++	qdio_flags = QDIO_FLAG_SYNC_OUTPUT;
+ 	if (under_int)
+-		rc = do_QDIO(CARD_DDEV(queue->card),
+-			     QDIO_FLAG_SYNC_OUTPUT | QDIO_FLAG_UNDER_INTERRUPT,
+-			     queue->queue_no, index, count, NULL);
+-	else
+-		rc = do_QDIO(CARD_DDEV(queue->card), QDIO_FLAG_SYNC_OUTPUT,
+-			     queue->queue_no, index, count, NULL);
++		qdio_flags |= QDIO_FLAG_UNDER_INTERRUPT;
++	if (atomic_read(&queue->set_pci_flags_count))
++		qdio_flags |= QDIO_FLAG_PCI_OUT;
++	rc = do_QDIO(CARD_DDEV(queue->card), qdio_flags,
++		     queue->queue_no, index, count, NULL);
+ 	if (queue->card->options.performance_stats)
+ 		queue->card->perf_stats.outbound_do_qdio_time +=
+ 			qeth_get_micros() -
+@@ -8385,6 +8386,7 @@ __qeth_reboot_event_card(struct device *
+ 	card = (struct qeth_card *) dev->driver_data;
+ 	qeth_clear_ip_list(card, 0, 0);
+ 	qeth_qdio_clear_card(card, 0);
++	qeth_clear_qdio_buffers(card);
+ 	return 0;
+ }
+ 
+Index: linux-rhel5/include/asm-s390/qdio.h
+===================================================================
+--- linux-rhel5.orig/include/asm-s390/qdio.h	2007-06-11 17:58:27.000000000 +0200
++++ linux-rhel5/include/asm-s390/qdio.h	2007-06-11 17:59:05.000000000 +0200
+@@ -34,6 +34,7 @@
+ #define QDIO_QETH_QFMT 0
+ #define QDIO_ZFCP_QFMT 1
+ #define QDIO_IQDIO_QFMT 2
++#define QDIO_IQDIO_QFMT_ASYNCH 3
+ 
+ struct qdio_buffer_element{
+ 	unsigned int flags;
+@@ -119,6 +120,7 @@ extern unsigned long qdio_get_status(int
+ #define QDIO_FLAG_NO_INPUT_INTERRUPT_CONTEXT 0x08 /* no effect on
+ 						     adapter interrupts */
+ #define QDIO_FLAG_DONT_SIGA 0x10
++#define QDIO_FLAG_PCI_OUT   0x20
+ 
+ extern int do_QDIO(struct ccw_device*, unsigned int flags, 
+ 		   unsigned int queue_number,
+
+
+
+

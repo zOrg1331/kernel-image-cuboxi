@@ -1,0 +1,69 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 26 Sep 2007 09:24:10 -0400
+Subject: [nfs] Set attrmask on NFS4_CREATE_EXCLUSIVE reply
+Message-id: 200709261324.l8QDOAZg031559@barsoom.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2] BZ#242482: Set attrmask correctly on NFS4_CREATE_EXCLUSIVE reply
+Bugzilla: 242482
+
+When an exclusive create is done on NFSv4, the file often ends up with a
+nonsensical mtime. This is because servers often save the verifier in
+the mtime field, and the client doesn't overwrite it. To fix this takes
+a client and server side patch. Server-side first...
+
+RFC 3530 says:
+
+   If the server uses an attribute to store the exclusive create
+   verifier, it will signify which attribute by setting the appropriate
+   bit in the attribute mask that is returned in the results.
+
+knfsd uses the atime and mtime to store the verifier, but sends a zeroed
+out bitmask back to the client. This patch makes sure that we set the
+correct bits in the bitmask in this situation.
+
+This patch went upstream in early June and was verified by inspecting
+packet traces and by testing the simple reproducer on a client with
+patch #2.
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 6bae607..cd85672 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -105,9 +105,16 @@ do_open_lookup(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_o
+ 		status = nfsd_create_v3(rqstp, current_fh, open->op_fname.data,
+ 					open->op_fname.len, &open->op_iattr,
+ 					&resfh, open->op_createmode,
+-					(u32 *)open->op_verf.data, &open->op_truncate);
+-	}
+-	else {
++					(u32 *)open->op_verf.data,
++					&open->op_truncate);
++
++		/* If we ever decide to use different attrs to store the
++		 * verifier in nfsd_create_v3, then we'll need to change this
++		 */
++		if (open->op_createmode == NFS4_CREATE_EXCLUSIVE && status == 0)
++			open->op_bmval[1] |= (FATTR4_WORD1_TIME_ACCESS |
++						FATTR4_WORD1_TIME_MODIFY);
++	} else {
+ 		status = nfsd_lookup(rqstp, current_fh,
+ 				     open->op_fname.data, open->op_fname.len, &resfh);
+ 		fh_unlock(current_fh);
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index e069816..78388e1 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1255,7 +1255,10 @@ nfsd_create_v3(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 
+ 	if (createmode == NFS3_CREATE_EXCLUSIVE) {
+ 		/* solaris7 gets confused (bugid 4218508) if these have
+-		 * the high bit set, so just clear the high bits.
++		 * the high bit set, so just clear the high bits. If this is
++		 * ever changed to use different attrs for storing the
++		 * verifier, then do_open_lookup() will also need to be fixed
++		 * accordingly.
+ 		 */
+ 		v_mtime = verifier[0]&0x7fffffff;
+ 		v_atime = verifier[1]&0x7fffffff;

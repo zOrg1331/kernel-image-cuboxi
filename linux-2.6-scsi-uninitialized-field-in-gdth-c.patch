@@ -1,0 +1,49 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] bz245550 uninitialized field in gdth.c
+Date: Wed, 15 Aug 2007 13:31:34 -0400 (EDT)
+Bugzilla: 245550
+Message-Id: <Pine.LNX.4.64.0708151323360.24530@bogart.boston.redhat.com>
+Changelog: [scsi] uninitialized field in gdth.c
+
+
+upstream discussion here
+
+http://lkml.org/lkml/2007/2/23/138
+
+upstream commit here 
+
+http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=bb9ba31ca3b88fd396e38950d1caedf2f83521c6
+
+Patch below
+
+ drivers/scsi/gdth.c |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/scsi/gdth.c b/drivers/scsi/gdth.c
+index 5c0c927..0a2cc96 100644
+--- a/drivers/scsi/gdth.c
++++ b/drivers/scsi/gdth.c
+@@ -3093,6 +3093,7 @@ static int gdth_fill_raw_cmd(int hanum,Scsi_Cmnd *scp,unchar b)
+             cmdp->u.raw64.direction  = 
+                 gdth_direction_tab[scp->cmnd[0]]==DOU ? GDTH_DATA_OUT:GDTH_DATA_IN;
+             memcpy(cmdp->u.raw64.cmd,scp->cmnd,16);
++            cmdp->u.raw64.sg_ranz    = 0;
+         } else {
+             cmdp->u.raw.reserved   = 0;
+             cmdp->u.raw.mdisc_time = 0;
+@@ -3109,6 +3110,7 @@ static int gdth_fill_raw_cmd(int hanum,Scsi_Cmnd *scp,unchar b)
+             cmdp->u.raw.direction  = 
+                 gdth_direction_tab[scp->cmnd[0]]==DOU ? GDTH_DATA_OUT:GDTH_DATA_IN;
+             memcpy(cmdp->u.raw.cmd,scp->cmnd,12);
++            cmdp->u.raw.sg_ranz    = 0;
+         }
+ 
+         if (scp->use_sg) {
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

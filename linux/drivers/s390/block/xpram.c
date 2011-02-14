@@ -25,9 +25,6 @@
  *   generic hard disk support to replace ad-hoc partitioning
  */
 
-#define KMSG_COMPONENT "xpram"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/ctype.h>  /* isdigit, isxdigit */
@@ -39,13 +36,17 @@
 #include <linux/hdreg.h>  /* HDIO_GETGEO */
 #include <linux/sysdev.h>
 #include <linux/bio.h>
-#include <linux/suspend.h>
-#include <linux/platform_device.h>
 #include <asm/uaccess.h>
 
 #define XPRAM_NAME	"xpram"
 #define XPRAM_DEVS	1	/* one partition */
 #define XPRAM_MAX_DEVS	32	/* maximal number of devices (partitions) */
+
+#define PRINT_DEBUG(x...)	printk(KERN_DEBUG XPRAM_NAME " debug:" x)
+#define PRINT_INFO(x...)	printk(KERN_INFO XPRAM_NAME " info:" x)
+#define PRINT_WARN(x...)	printk(KERN_WARNING XPRAM_NAME " warning:" x)
+#define PRINT_ERR(x...)		printk(KERN_ERR XPRAM_NAME " error:" x)
+
 
 typedef struct {
 	unsigned int	size;		/* size of xpram segment in pages */
@@ -55,7 +56,6 @@ typedef struct {
 static xpram_device_t xpram_devices[XPRAM_MAX_DEVS];
 static unsigned int xpram_sizes[XPRAM_MAX_DEVS];
 static struct gendisk *xpram_disks[XPRAM_MAX_DEVS];
-static struct request_queue *xpram_queues[XPRAM_MAX_DEVS];
 static unsigned int xpram_pages;
 static int xpram_devs;
 
@@ -89,21 +89,39 @@ MODULE_LICENSE("GPL");
  */
 static int xpram_page_in (unsigned long page_addr, unsigned int xpage_index)
 {
-	int cc = 2;	/* return unused cc 2 if pgin traps */
+	int cc;
 
-	asm volatile(
-		"	.insn	rre,0xb22e0000,%1,%2\n"  /* pgin %1,%2 */
-		"0:	ipm	%0\n"
-		"	srl	%0,28\n"
+	__asm__ __volatile__ (
+		"   lhi   %0,2\n"  /* return unused cc 2 if pgin traps */
+		"   .insn rre,0xb22e0000,%1,%2\n"  /* pgin %1,%2 */
+                "0: ipm   %0\n"
+		"   srl   %0,28\n"
 		"1:\n"
-		EX_TABLE(0b,1b)
-		: "+d" (cc) : "a" (__pa(page_addr)), "d" (xpage_index) : "cc");
+#ifndef CONFIG_64BIT
+		".section __ex_table,\"a\"\n"
+		"   .align 4\n"
+		"   .long  0b,1b\n"
+		".previous"
+#else
+                ".section __ex_table,\"a\"\n"
+                "   .align 8\n"
+                "   .quad 0b,1b\n"
+                ".previous"
+#endif
+		: "=&d" (cc) 
+		: "a" (__pa(page_addr)), "a" (xpage_index) 
+		: "cc" );
 	if (cc == 3)
 		return -ENXIO;
-	if (cc == 2)
+	if (cc == 2) {
+		PRINT_ERR("expanded storage lost!\n");
 		return -ENXIO;
-	if (cc == 1)
+	}
+	if (cc == 1) {
+		PRINT_ERR("page in failed for page index %u.\n",
+			  xpage_index);
 		return -EIO;
+	}
 	return 0;
 }
 
@@ -119,28 +137,46 @@ static int xpram_page_in (unsigned long page_addr, unsigned int xpage_index)
  */
 static long xpram_page_out (unsigned long page_addr, unsigned int xpage_index)
 {
-	int cc = 2;	/* return unused cc 2 if pgin traps */
+	int cc;
 
-	asm volatile(
-		"	.insn	rre,0xb22f0000,%1,%2\n"  /* pgout %1,%2 */
-		"0:	ipm	%0\n"
-		"	srl	%0,28\n"
+	__asm__ __volatile__ (
+		"   lhi   %0,2\n"  /* return unused cc 2 if pgout traps */
+		"   .insn rre,0xb22f0000,%1,%2\n"  /* pgout %1,%2 */
+                "0: ipm   %0\n"
+		"   srl   %0,28\n"
 		"1:\n"
-		EX_TABLE(0b,1b)
-		: "+d" (cc) : "a" (__pa(page_addr)), "d" (xpage_index) : "cc");
+#ifndef CONFIG_64BIT
+		".section __ex_table,\"a\"\n"
+		"   .align 4\n"
+		"   .long  0b,1b\n"
+		".previous"
+#else
+                ".section __ex_table,\"a\"\n"
+                "   .align 8\n"
+                "   .quad 0b,1b\n"
+                ".previous"
+#endif
+		: "=&d" (cc) 
+		: "a" (__pa(page_addr)), "a" (xpage_index) 
+		: "cc" );
 	if (cc == 3)
 		return -ENXIO;
-	if (cc == 2)
+	if (cc == 2) {
+		PRINT_ERR("expanded storage lost!\n");
 		return -ENXIO;
-	if (cc == 1)
+	}
+	if (cc == 1) {
+		PRINT_ERR("page out failed for page index %u.\n",
+			  xpage_index);
 		return -EIO;
+	}
 	return 0;
 }
 
 /*
  * Check if xpram is available.
  */
-static int xpram_present(void)
+static int __init xpram_present(void)
 {
 	unsigned long mem_page;
 	int rc;
@@ -156,7 +192,7 @@ static int xpram_present(void)
 /*
  * Return index of the last available xpram page.
  */
-static unsigned long xpram_highest_page_index(void)
+static unsigned long __init xpram_highest_page_index(void)
 {
 	unsigned int page_index, add_bit;
 	unsigned long mem_page;
@@ -181,7 +217,7 @@ static unsigned long xpram_highest_page_index(void)
 /*
  * Block device make request function.
  */
-static int xpram_make_request(struct request_queue *q, struct bio *bio)
+static int xpram_make_request(request_queue_t *q, struct bio *bio)
 {
 	xpram_device_t *xdev = bio->bi_bdev->bd_disk->private_data;
 	struct bio_vec *bvec;
@@ -220,10 +256,12 @@ static int xpram_make_request(struct request_queue *q, struct bio *bio)
 		}
 	}
 	set_bit(BIO_UPTODATE, &bio->bi_flags);
-	bio_endio(bio, 0);
+	bytes = bio->bi_size;
+	bio->bi_size = 0;
+	bio->bi_end_io(bio, bytes, 0);
 	return 0;
 fail:
-	bio_io_error(bio);
+	bio_io_error(bio, bio->bi_size);
 	return 0;
 }
 
@@ -244,7 +282,7 @@ static int xpram_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
-static const struct block_device_operations xpram_devops =
+static struct block_device_operations xpram_devops =
 {
 	.owner	= THIS_MODULE,
 	.getgeo	= xpram_getgeo,
@@ -263,7 +301,7 @@ static int __init xpram_setup_sizes(unsigned long pages)
 
 	/* Check number of devices. */
 	if (devs <= 0 || devs > XPRAM_MAX_DEVS) {
-		pr_err("%d is not a valid number of XPRAM devices\n",devs);
+		PRINT_ERR("invalid number %d of devices\n",devs);
 		return -EINVAL;
 	}
 	xpram_devs = devs;
@@ -294,22 +332,22 @@ static int __init xpram_setup_sizes(unsigned long pages)
 			mem_auto_no++;
 	}
 	
-	pr_info("  number of devices (partitions): %d \n", xpram_devs);
+	PRINT_INFO("  number of devices (partitions): %d \n", xpram_devs);
 	for (i = 0; i < xpram_devs; i++) {
 		if (xpram_sizes[i])
-			pr_info("  size of partition %d: %u kB\n",
-				i, xpram_sizes[i]);
+			PRINT_INFO("  size of partition %d: %u kB\n",
+				   i, xpram_sizes[i]);
 		else
-			pr_info("  size of partition %d to be set "
-				"automatically\n",i);
+			PRINT_INFO("  size of partition %d to be set "
+				   "automatically\n",i);
 	}
-	pr_info("  memory needed (for sized partitions): %lu kB\n",
-		mem_needed);
-	pr_info("  partitions to be sized automatically: %d\n",
-		mem_auto_no);
+	PRINT_DEBUG("  memory needed (for sized partitions): %lu kB\n",
+		    mem_needed);
+	PRINT_DEBUG("  partitions to be sized automatically: %d\n",
+		    mem_auto_no);
 
 	if (mem_needed > pages * 4) {
-		pr_err("Not enough expanded memory available\n");
+		PRINT_ERR("Not enough expanded memory available\n");
 		return -EINVAL;
 	}
 
@@ -321,8 +359,8 @@ static int __init xpram_setup_sizes(unsigned long pages)
 	 */
 	if (mem_auto_no) {
 		mem_auto = ((pages - mem_needed / 4) / mem_auto_no) * 4;
-		pr_info("  automatically determined "
-			"partition size: %lu kB\n", mem_auto);
+		PRINT_INFO("  automatically determined "
+			   "partition size: %lu kB\n", mem_auto);
 		for (i = 0; i < xpram_devs; i++)
 			if (xpram_sizes[i] == 0)
 				xpram_sizes[i] = mem_auto;
@@ -330,22 +368,18 @@ static int __init xpram_setup_sizes(unsigned long pages)
 	return 0;
 }
 
+static struct request_queue *xpram_queue;
+
 static int __init xpram_setup_blkdev(void)
 {
 	unsigned long offset;
 	int i, rc = -ENOMEM;
 
 	for (i = 0; i < xpram_devs; i++) {
-		xpram_disks[i] = alloc_disk(1);
-		if (!xpram_disks[i])
+		struct gendisk *disk = alloc_disk(1);
+		if (!disk)
 			goto out;
-		xpram_queues[i] = blk_alloc_queue(GFP_KERNEL);
-		if (!xpram_queues[i]) {
-			put_disk(xpram_disks[i]);
-			goto out;
-		}
-		blk_queue_make_request(xpram_queues[i], xpram_make_request);
-		blk_queue_logical_block_size(xpram_queues[i], 4096);
+		xpram_disks[i] = disk;
 	}
 
 	/*
@@ -354,6 +388,18 @@ static int __init xpram_setup_blkdev(void)
 	rc = register_blkdev(XPRAM_MAJOR, XPRAM_NAME);
 	if (rc < 0)
 		goto out;
+
+	/*
+	 * Assign the other needed values: make request function, sizes and
+	 * hardsect size. All the minor devices feature the same value.
+	 */
+	xpram_queue = blk_alloc_queue(GFP_KERNEL);
+	if (!xpram_queue) {
+		rc = -ENOMEM;
+		goto out_unreg;
+	}
+	blk_queue_make_request(xpram_queue, xpram_make_request);
+	blk_queue_hardsect_size(xpram_queue, 4096);
 
 	/*
 	 * Setup device structures.
@@ -369,57 +415,20 @@ static int __init xpram_setup_blkdev(void)
 		disk->first_minor = i;
 		disk->fops = &xpram_devops;
 		disk->private_data = &xpram_devices[i];
-		disk->queue = xpram_queues[i];
+		disk->queue = xpram_queue;
 		sprintf(disk->disk_name, "slram%d", i);
 		set_capacity(disk, xpram_sizes[i] << 1);
 		add_disk(disk);
 	}
 
 	return 0;
+out_unreg:
+	unregister_blkdev(XPRAM_MAJOR, XPRAM_NAME);
 out:
-	while (i--) {
-		blk_cleanup_queue(xpram_queues[i]);
+	while (i--)
 		put_disk(xpram_disks[i]);
-	}
 	return rc;
 }
-
-/*
- * Resume failed: Print error message and call panic.
- */
-static void xpram_resume_error(const char *message)
-{
-	pr_err("Resuming the system failed: %s\n", message);
-	panic("xpram resume error\n");
-}
-
-/*
- * Check if xpram setup changed between suspend and resume.
- */
-static int xpram_restore(struct device *dev)
-{
-	if (!xpram_pages)
-		return 0;
-	if (xpram_present() != 0)
-		xpram_resume_error("xpram disappeared");
-	if (xpram_pages != xpram_highest_page_index() + 1)
-		xpram_resume_error("Size of xpram changed");
-	return 0;
-}
-
-static struct dev_pm_ops xpram_pm_ops = {
-	.restore	= xpram_restore,
-};
-
-static struct platform_driver xpram_pdrv = {
-	.driver = {
-		.name	= XPRAM_NAME,
-		.owner	= THIS_MODULE,
-		.pm	= &xpram_pm_ops,
-	},
-};
-
-static struct platform_device *xpram_pdev;
 
 /*
  * Finally, the init/exit functions.
@@ -429,12 +438,10 @@ static void __exit xpram_exit(void)
 	int i;
 	for (i = 0; i < xpram_devs; i++) {
 		del_gendisk(xpram_disks[i]);
-		blk_cleanup_queue(xpram_queues[i]);
 		put_disk(xpram_disks[i]);
 	}
 	unregister_blkdev(XPRAM_MAJOR, XPRAM_NAME);
-	platform_device_unregister(xpram_pdev);
-	platform_driver_unregister(&xpram_pdrv);
+	blk_cleanup_queue(xpram_queue);
 }
 
 static int __init xpram_init(void)
@@ -443,33 +450,16 @@ static int __init xpram_init(void)
 
 	/* Find out size of expanded memory. */
 	if (xpram_present() != 0) {
-		pr_err("No expanded memory available\n");
+		PRINT_WARN("No expanded memory available\n");
 		return -ENODEV;
 	}
-	xpram_pages = xpram_highest_page_index() + 1;
-	pr_info("  %u pages expanded memory found (%lu KB).\n",
-		xpram_pages, (unsigned long) xpram_pages*4);
+	xpram_pages = xpram_highest_page_index();
+	PRINT_INFO("  %u pages expanded memory found (%lu KB).\n",
+		   xpram_pages, (unsigned long) xpram_pages*4);
 	rc = xpram_setup_sizes(xpram_pages);
 	if (rc)
 		return rc;
-	rc = platform_driver_register(&xpram_pdrv);
-	if (rc)
-		return rc;
-	xpram_pdev = platform_device_register_simple(XPRAM_NAME, -1, NULL, 0);
-	if (IS_ERR(xpram_pdev)) {
-		rc = PTR_ERR(xpram_pdev);
-		goto fail_platform_driver_unregister;
-	}
-	rc = xpram_setup_blkdev();
-	if (rc)
-		goto fail_platform_device_unregister;
-	return 0;
-
-fail_platform_device_unregister:
-	platform_device_unregister(xpram_pdev);
-fail_platform_driver_unregister:
-	platform_driver_unregister(&xpram_pdrv);
-	return rc;
+	return xpram_setup_blkdev();
 }
 
 module_init(xpram_init);

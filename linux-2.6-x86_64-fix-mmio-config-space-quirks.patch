@@ -1,0 +1,167 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: [RHEL5.1 PATCH] Fix MMIO config space quirks on AMD Greyhound procs
+Date: Thu, 16 Aug 2007 10:08:08 -0400
+Bugzilla: 252397
+Message-Id: <20070816140358.11971.41687.sendpatchset@allegro.boston.redhat.com>
+Changelog: [x86_64] Fix MMIO config space quirks
+
+
+Resolves BZ 252397
+
+Work around mmio config space quirk on AMD Greyhounds processors. Some broken 
+devices have been discovered to require %al/%ax/%eax registers for MMIO config 
+space accesses.  Modify mmconfig.c to use these registers explicitly (rather than 
+modify the global readb/writeb/etc inlines). 
+
+Here's the analysis:
+The issue is not so much that Barcelona processor is buggy, but the compiler 
+can generate incorrect code.  Greyhound BIOS and Kernel Developer's Guide (BKDG)
+specifies that
+
+"Instructions used to write MMIO configuration space are required to take the
+following form:
+mov < any_address_mode>, eax/ax/a1; "
+
+So we need explicit assembly code that will ensure that eax/ax/a1 registers 
+are used. readb() function in inlined. Once the compiler has inlined a 
+function, it is then free to optimize it and change register assignments. 
+So it is in fact free to change the %al target to anything else. At other 
+sites where this function is inlined, it may generate completely different 
+code.   I disassembled a readb and comnpared it with mmconf, but all call 
+sites need to be examined.  Even if there is one instance of mmconf not 
+match readb disassembled code, we are asking for trouble. 
+
+Here are the git links for the upstream patches.
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=3320ad994afb2c44ad34b3b34c3c5cf0da297331
+
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c1502e28346fd3b9955ce654c96212c4748d900d
+
+Tested on Barcelona 2p Anaheim system with no issues.  Evan tested on HP Rev F system for regressions and he reported a pass.  Please grab the brew build to run regression testing on x86 systems.
+
+Please ACK and incorporate in R5.1; peterm has granted an exception.
+
+--- linux-2.6.18.x86_64/arch/x86_64/pci/mmconfig.c.pciorig	2007-08-15 15:53:51.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/pci/mmconfig.c	2007-08-15 16:09:13.000000000 -0400
+@@ -90,13 +90,13 @@ static int pci_mmcfg_read(unsigned int s
+ 
+ 	switch (len) {
+ 	case 1:
+-		*value = readb(addr + reg);
++		*value = mmio_config_readb(addr + reg);
+ 		break;
+ 	case 2:
+-		*value = readw(addr + reg);
++		*value = mmio_config_readw(addr + reg);
+ 		break;
+ 	case 4:
+-		*value = readl(addr + reg);
++		*value = mmio_config_readl(addr + reg);
+ 		break;
+ 	}
+ 
+@@ -118,13 +118,13 @@ static int pci_mmcfg_write(unsigned int 
+ 
+ 	switch (len) {
+ 	case 1:
+-		writeb(value, addr + reg);
++		mmio_config_writeb(addr + reg, value);
+ 		break;
+ 	case 2:
+-		writew(value, addr + reg);
++		mmio_config_writew(addr + reg, value);
+ 		break;
+ 	case 4:
+-		writel(value, addr + reg);
++		mmio_config_writel(addr + reg, value);
+ 		break;
+ 	}
+ 
+--- linux-2.6.18.x86_64/arch/i386/pci/pci.h.pciorig	2007-08-15 15:53:39.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/pci/pci.h	2007-08-15 16:04:51.000000000 -0400
+@@ -92,3 +92,49 @@ extern void pci_direct_init(void);
+ extern void pci_pcbios_init(void);
+ extern void pci_mmcfg_init(void);
+ extern void pcibios_sort(void);
++
++
++/*
++ * AMD Fam10h CPUs are buggy, and cannot access MMIO config space
++ * on their northbrige except through the * %eax register. As such, you MUST
++ * NOT use normal IOMEM accesses, you need to only use the magic mmio-config
++ * accessor functions.
++ * In fact just use pci_config_*, nothing else please.
++ */
++static inline unsigned char mmio_config_readb(void __iomem *pos)
++{
++	u8 val;
++	asm volatile("movb (%1),%%al" : "=a" (val) : "r" (pos));
++	return val;
++}
++
++static inline unsigned short mmio_config_readw(void __iomem *pos)
++{
++	u16 val;
++	asm volatile("movw (%1),%%ax" : "=a" (val) : "r" (pos));
++	return val;
++}
++
++static inline unsigned int mmio_config_readl(void __iomem *pos)
++{
++	u32 val;
++	asm volatile("movl (%1),%%eax" : "=a" (val) : "r" (pos));
++	return val;
++}
++
++static inline void mmio_config_writeb(void __iomem *pos, u8 val)
++{
++	asm volatile("movb %%al,(%1)" :: "a" (val), "r" (pos) : "memory");
++}
++
++static inline void mmio_config_writew(void __iomem *pos, u16 val)
++{
++	asm volatile("movw %%ax,(%1)" :: "a" (val), "r" (pos) : "memory");
++}
++
++static inline void mmio_config_writel(void __iomem *pos, u32 val)
++{
++	asm volatile("movl %%eax,(%1)" :: "a" (val), "r" (pos) : "memory");
++}
++
++
+--- linux-2.6.18.x86_64/arch/i386/pci/mmconfig.c.pciorig	2007-08-15 15:52:10.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/pci/mmconfig.c	2007-08-15 16:14:04.000000000 -0400
+@@ -98,13 +98,13 @@ static int pci_mmcfg_read(unsigned int s
+ 
+ 	switch (len) {
+ 	case 1:
+-		*value = readb(mmcfg_virt_addr + reg);
++		*value = mmio_config_readb(mmcfg_virt_addr + reg);
+ 		break;
+ 	case 2:
+-		*value = readw(mmcfg_virt_addr + reg);
++		*value = mmio_config_readw(mmcfg_virt_addr + reg);
+ 		break;
+ 	case 4:
+-		*value = readl(mmcfg_virt_addr + reg);
++		*value = mmio_config_readl(mmcfg_virt_addr + reg);
+ 		break;
+ 	}
+ 
+@@ -132,13 +132,13 @@ static int pci_mmcfg_write(unsigned int 
+ 
+ 	switch (len) {
+ 	case 1:
+-		writeb(value, mmcfg_virt_addr + reg);
++		mmio_config_writeb(mmcfg_virt_addr + reg, value);
+ 		break;
+ 	case 2:
+-		writew(value, mmcfg_virt_addr + reg);
++		mmio_config_writew(mmcfg_virt_addr + reg, value);
+ 		break;
+ 	case 4:
+-		writel(value, mmcfg_virt_addr + reg);
++		mmio_config_writel(mmcfg_virt_addr + reg, value);
+ 		break;
+ 	}
+ 
+

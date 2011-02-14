@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 
+#include <asm/semaphore.h>
 #include <asm/prom.h>
 #include <asm/pmac_pfunc.h>
 
@@ -691,7 +692,8 @@ static int pmf_add_functions(struct pmf_device *dev, void *driverdata)
 		name = pp->name + plen;
 		if (strlen(name) && pp->length >= 12)
 			count += pmf_add_function_prop(dev, driverdata, name,
-						       pp->value, pp->length);
+						       (u32 *)pp->value,
+						       pp->length);
 	}
 	return count;
 }
@@ -811,15 +813,14 @@ struct pmf_function *__pmf_find_function(struct device_node *target,
 	struct pmf_device *dev;
 	struct pmf_function *func, *result = NULL;
 	char fname[64];
-	const u32 *prop;
-	u32 ph;
+	u32 *prop, ph;
 
 	/*
 	 * Look for a "platform-*" function reference. If we can't find
 	 * one, then we fallback to a direct call attempt
 	 */
 	snprintf(fname, 63, "platform-%s", name);
-	prop = of_get_property(target, fname, NULL);
+	prop = (u32 *)get_property(target, fname, NULL);
 	if (prop == NULL)
 		goto find_it;
 	ph = *prop;

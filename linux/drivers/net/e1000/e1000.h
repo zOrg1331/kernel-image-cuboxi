@@ -1,24 +1,25 @@
 /*******************************************************************************
 
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2006 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  
+  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+  
+  This program is free software; you can redistribute it and/or modify it 
+  under the terms of the GNU General Public License as published by the Free 
+  Software Foundation; either version 2 of the License, or (at your option) 
+  any later version.
+  
+  This program is distributed in the hope that it will be useful, but WITHOUT 
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
   more details.
-
+  
   You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
+  this program; if not, write to the Free Software Foundation, Inc., 59 
+  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+  
+  The full GNU General Public License is included in this distribution in the
+  file called LICENSE.
+  
   Contact Information:
   Linux NICS <linux.nics@intel.com>
   e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
@@ -59,13 +60,14 @@
 #include <linux/capability.h>
 #include <linux/in.h>
 #include <linux/ip.h>
-#include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <net/pkt_sched.h>
 #include <linux/list.h>
 #include <linux/reboot.h>
+#ifdef NETIF_F_TSO
 #include <net/checksum.h>
+#endif
 #include <linux/mii.h>
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
@@ -90,13 +92,10 @@ struct e1000_adapter;
 #define E1000_ERR(args...) printk(KERN_ERR "e1000: " args)
 
 #define PFX "e1000: "
-
-#define DPRINTK(nlevel, klevel, fmt, args...)				\
-do {									\
-	if (NETIF_MSG_##nlevel & adapter->msg_enable)			\
-		printk(KERN_##klevel PFX "%s: %s: " fmt,		\
-		       adapter->netdev->name, __func__, ##args);	\
-} while (0)
+#define DPRINTK(nlevel, klevel, fmt, args...) \
+	(void)((NETIF_MSG_##nlevel & adapter->msg_enable) && \
+	printk(KERN_##klevel PFX "%s: %s: " fmt, adapter->netdev->name, \
+		__FUNCTION__ , ## args))
 
 #define E1000_MAX_INTR 10
 
@@ -110,9 +109,6 @@ do {									\
 #define E1000_MAX_RXD                      256
 #define E1000_MIN_RXD                       80
 #define E1000_MAX_82544_RXD               4096
-
-#define E1000_MIN_ITR_USECS		10 /* 100000 irq/sec */
-#define E1000_MAX_ITR_USECS		10000 /* 100    irq/sec */
 
 /* this is the size past which hardware will drop packets when setting LPE=0 */
 #define MAXIMUM_ETHERNET_VLAN_SIZE 1522
@@ -140,7 +136,7 @@ do {									\
 #define E1000_FC_HIGH_DIFF 0x1638  /* High: 5688 bytes below Rx FIFO size */
 #define E1000_FC_LOW_DIFF 0x1640   /* Low:  5696 bytes below Rx FIFO size */
 
-#define E1000_FC_PAUSE_TIME 0xFFFF /* pause for the max or until send xon */
+#define E1000_FC_PAUSE_TIME 0x0680 /* 858 usec */
 
 /* How many Tx Descriptors do we need to call netif_wake_queue ? */
 #define E1000_TX_QUEUE_WAKE	16
@@ -149,6 +145,7 @@ do {									\
 
 #define AUTO_ALL_MODES            0
 #define E1000_EEPROM_82544_APM    0x0004
+#define E1000_EEPROM_ICH8_APME    0x0004
 #define E1000_EEPROM_APME         0x0400
 
 #ifndef E1000_MASTER_SLAVE
@@ -156,19 +153,26 @@ do {									\
 #define E1000_MASTER_SLAVE	e1000_ms_hw_default
 #endif
 
-#define E1000_MNG_VLAN_NONE (-1)
+#define E1000_MNG_VLAN_NONE -1
+/* Number of packet split data buffers (not including the header buffer) */
+#define PS_PAGE_BUFFERS MAX_PS_BUFFERS-1
+
+/* only works for sizes that are powers of 2 */
+#define E1000_ROUNDUP(i, size) ((i) = (((i) + (size) - 1) & ~((size) - 1)))
 
 /* wrapper around a pointer to a socket buffer,
  * so a DMA handle can be stored along with the buffer */
 struct e1000_buffer {
 	struct sk_buff *skb;
 	dma_addr_t dma;
-	struct page *page;
 	unsigned long time_stamp;
-	u16 length;
-	u16 next_to_watch;
-	u16 mapped_as_page;
+	uint16_t length;
+	uint16_t next_to_watch;
 };
+
+
+struct e1000_ps_page { struct page *ps_page[PS_PAGE_BUFFERS]; };
+struct e1000_ps_page_dma { uint64_t ps_page_dma[PS_PAGE_BUFFERS]; };
 
 struct e1000_tx_ring {
 	/* pointer to the descriptor ring memory */
@@ -186,9 +190,10 @@ struct e1000_tx_ring {
 	/* array of buffer information structs */
 	struct e1000_buffer *buffer_info;
 
-	u16 tdh;
-	u16 tdt;
-	bool last_tx_tso;
+	spinlock_t tx_lock;
+	uint16_t tdh;
+	uint16_t tdt;
+	boolean_t last_tx_tso;
 };
 
 struct e1000_rx_ring {
@@ -206,20 +211,24 @@ struct e1000_rx_ring {
 	unsigned int next_to_clean;
 	/* array of buffer information structs */
 	struct e1000_buffer *buffer_info;
-	struct sk_buff *rx_skb_top;
+	/* arrays of page information for packet split */
+	struct e1000_ps_page *ps_page;
+	struct e1000_ps_page_dma *ps_page_dma;
 
 	/* cpu for rx queue */
 	int cpu;
 
-	u16 rdh;
-	u16 rdt;
+	uint16_t rdh;
+	uint16_t rdt;
 };
 
-#define E1000_DESC_UNUSED(R)						\
-	((((R)->next_to_clean > (R)->next_to_use)			\
-	  ? 0 : (R)->count) + (R)->next_to_clean - (R)->next_to_use - 1)
+#define E1000_DESC_UNUSED(R) \
+	((((R)->next_to_clean > (R)->next_to_use) ? 0 : (R)->count) + \
+	(R)->next_to_clean - (R)->next_to_use - 1)
 
-#define E1000_RX_DESC_EXT(R, i)						\
+#define E1000_RX_DESC_PS(R, i)	    \
+	(&(((union e1000_rx_desc_packet_split *)((R).desc))[i]))
+#define E1000_RX_DESC_EXT(R, i)	    \
 	(&(((union e1000_rx_desc_extended *)((R).desc))[i]))
 #define E1000_GET_DESC(R, i, type)	(&(((struct type *)((R).desc))[i]))
 #define E1000_RX_DESC(R, i)		E1000_GET_DESC(R, i, e1000_rx_desc)
@@ -233,72 +242,79 @@ struct e1000_adapter {
 	struct timer_list watchdog_timer;
 	struct timer_list phy_info_timer;
 	struct vlan_group *vlgrp;
-	u16 mng_vlan_id;
-	u32 bd_number;
-	u32 rx_buffer_len;
-	u32 wol;
-	u32 smartspeed;
-	u32 en_mng_pt;
-	u16 link_speed;
-	u16 link_duplex;
+    	uint16_t mng_vlan_id;
+	uint32_t bd_number;
+	uint32_t rx_buffer_len;
+	uint32_t part_num;
+	uint32_t wol;
+	uint32_t ksp3_port_a;
+	uint32_t smartspeed;
+	uint32_t en_mng_pt;
+	uint16_t link_speed;
+	uint16_t link_duplex;
 	spinlock_t stats_lock;
-	unsigned int total_tx_bytes;
-	unsigned int total_tx_packets;
-	unsigned int total_rx_bytes;
-	unsigned int total_rx_packets;
-	/* Interrupt Throttle Rate */
-	u32 itr;
-	u32 itr_setting;
-	u16 tx_itr;
-	u16 rx_itr;
-
+#ifdef CONFIG_E1000_NAPI
+	spinlock_t tx_queue_lock;
+#endif
+	atomic_t irq_sem;
 	struct work_struct reset_task;
-	u8 fc_autoneg;
+	uint8_t fc_autoneg;
 
 	struct timer_list blink_timer;
 	unsigned long led_status;
 
 	/* TX */
 	struct e1000_tx_ring *tx_ring;      /* One per active queue */
-	unsigned int restart_queue;
 	unsigned long tx_queue_len;
-	u32 txd_cmd;
-	u32 tx_int_delay;
-	u32 tx_abs_int_delay;
-	u32 gotcl;
-	u64 gotcl_old;
-	u64 tpt_old;
-	u64 colc_old;
-	u32 tx_timeout_count;
-	u32 tx_fifo_head;
-	u32 tx_head_addr;
-	u32 tx_fifo_size;
-	u8  tx_timeout_factor;
+	uint32_t txd_cmd;
+	uint32_t tx_int_delay;
+	uint32_t tx_abs_int_delay;
+	uint32_t gotcl;
+	uint64_t gotcl_old;
+	uint64_t tpt_old;
+	uint64_t colc_old;
+	uint32_t tx_timeout_count;
+	uint32_t tx_fifo_head;
+	uint32_t tx_head_addr;
+	uint32_t tx_fifo_size;
+	uint8_t  tx_timeout_factor;
 	atomic_t tx_fifo_stall;
-	bool pcix_82544;
-	bool detect_tx_hung;
+	boolean_t pcix_82544;
+	boolean_t detect_tx_hung;
 
 	/* RX */
-	bool (*clean_rx)(struct e1000_adapter *adapter,
-			 struct e1000_rx_ring *rx_ring,
-			 int *work_done, int work_to_do);
-	void (*alloc_rx_buf)(struct e1000_adapter *adapter,
-			     struct e1000_rx_ring *rx_ring,
-			     int cleaned_count);
+#ifdef CONFIG_E1000_NAPI
+	boolean_t (*clean_rx) (struct e1000_adapter *adapter,
+			       struct e1000_rx_ring *rx_ring,
+			       int *work_done, int work_to_do);
+#else
+	boolean_t (*clean_rx) (struct e1000_adapter *adapter,
+			       struct e1000_rx_ring *rx_ring);
+#endif
+	void (*alloc_rx_buf) (struct e1000_adapter *adapter,
+			      struct e1000_rx_ring *rx_ring,
+				int cleaned_count);
 	struct e1000_rx_ring *rx_ring;      /* One per active queue */
-	struct napi_struct napi;
-
+#ifdef CONFIG_E1000_NAPI
+	struct net_device *polling_netdev;  /* One per active queue */
+#endif
 	int num_tx_queues;
 	int num_rx_queues;
 
-	u64 hw_csum_err;
-	u64 hw_csum_good;
-	u32 alloc_rx_buff_failed;
-	u32 rx_int_delay;
-	u32 rx_abs_int_delay;
-	bool rx_csum;
-	u32 gorcl;
-	u64 gorcl_old;
+	uint64_t hw_csum_err;
+	uint64_t hw_csum_good;
+	uint64_t rx_hdr_split;
+	uint32_t alloc_rx_buff_failed;
+	uint32_t rx_int_delay;
+	uint32_t rx_abs_int_delay;
+	boolean_t rx_csum;
+	unsigned int rx_ps_pages;
+	uint32_t gorcl;
+	uint64_t gorcl_old;
+	uint16_t rx_ps_bsize0;
+
+	/* Interrupt Throttle Rate */
+	uint32_t itr;
 
 	/* OS defined structs */
 	struct net_device *netdev;
@@ -311,47 +327,48 @@ struct e1000_adapter {
 	struct e1000_phy_info phy_info;
 	struct e1000_phy_stats phy_stats;
 
-	u32 test_icr;
+	uint32_t test_icr;
 	struct e1000_tx_ring test_tx_ring;
 	struct e1000_rx_ring test_rx_ring;
 
+
+	uint32_t *config_space;
 	int msg_enable;
-
+#ifdef CONFIG_PCI_MSI
+	boolean_t have_msi;
+#endif
 	/* to not mess up cache alignment, always add to the bottom */
-	bool tso_force;
-	bool smart_power_down;	/* phy smart power down */
-	bool quad_port_a;
+#ifdef NETIF_F_TSO
+	boolean_t tso_force;
+#endif
+	boolean_t smart_power_down;	/* phy smart power down */
 	unsigned long flags;
-	u32 eeprom_wol;
-
-	/* for ioport free */
-	int bars;
-	int need_ioport;
-
-	bool discarding;
 };
 
 enum e1000_state_t {
-	__E1000_TESTING,
+	__E1000_DRIVER_TESTING,
 	__E1000_RESETTING,
-	__E1000_DOWN
 };
 
+/*  e1000_main.c  */
 extern char e1000_driver_name[];
-extern const char e1000_driver_version[];
+extern char e1000_driver_version[];
+int e1000_up(struct e1000_adapter *adapter);
+void e1000_down(struct e1000_adapter *adapter);
+void e1000_reset(struct e1000_adapter *adapter);
+void e1000_reinit_locked(struct e1000_adapter *adapter);
+int e1000_setup_all_tx_resources(struct e1000_adapter *adapter);
+void e1000_free_all_tx_resources(struct e1000_adapter *adapter);
+int e1000_setup_all_rx_resources(struct e1000_adapter *adapter);
+void e1000_free_all_rx_resources(struct e1000_adapter *adapter);
+void e1000_update_stats(struct e1000_adapter *adapter);
+int e1000_set_spd_dplx(struct e1000_adapter *adapter, uint16_t spddplx);
 
-extern int e1000_up(struct e1000_adapter *adapter);
-extern void e1000_down(struct e1000_adapter *adapter);
-extern void e1000_reinit_locked(struct e1000_adapter *adapter);
-extern void e1000_reset(struct e1000_adapter *adapter);
-extern int e1000_set_spd_dplx(struct e1000_adapter *adapter, u16 spddplx);
-extern int e1000_setup_all_rx_resources(struct e1000_adapter *adapter);
-extern int e1000_setup_all_tx_resources(struct e1000_adapter *adapter);
-extern void e1000_free_all_rx_resources(struct e1000_adapter *adapter);
-extern void e1000_free_all_tx_resources(struct e1000_adapter *adapter);
-extern void e1000_update_stats(struct e1000_adapter *adapter);
-extern void e1000_power_up_phy(struct e1000_adapter *);
-extern void e1000_set_ethtool_ops(struct net_device *netdev);
-extern void e1000_check_options(struct e1000_adapter *adapter);
+/*  e1000_ethtool.c  */
+void e1000_set_ethtool_ops(struct net_device *netdev);
+
+/*  e1000_param.c  */
+void e1000_check_options(struct e1000_adapter *adapter);
+
 
 #endif /* _E1000_H_ */

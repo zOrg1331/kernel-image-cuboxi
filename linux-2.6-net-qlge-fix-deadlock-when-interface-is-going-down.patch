@@ -1,0 +1,119 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 19 Nov 2010 18:25:30 -0500
+Subject: [net] qlge: fix deadlock when interface is going down
+Message-id: <20101119182530.6308.77393.sendpatchset@localhost.localdomain>
+Patchwork-id: 29522
+O-Subject: [RHEL 5.6 PATCH 3/5] qlge: Fix a deadlock when the interface is going
+	down.
+Bugzilla: 654420
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 654420 (https://bugzilla.redhat.com/show_bug.cgi?id=654420)
+
+Upstream Status
+---------------
+
+net-2.6 commit id c5dadddb8c9d310bc263f671f19fe3ba90b329fe
+
+Further rtnl locking fix still pending.
+
+Description
+-----------
+
+>From 8b24aebe8c541a9e81190ec53caad23e98dc493b Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Wed, 13 Oct 2010 14:04:57 -0700
+Subject: [PATCH 3/5] qlge: Fix a deadlock when the interface is going down.
+
+	Currently qlge can deadlock when the interface is going
+	down, and the mpi_port_cfg_work() is executing on another
+	processor. It happens because unregister_netdev() holds
+	the rtnl lock, and the mpi_port_cfg_work() also request
+	this lock.
+
+	Since unregister_netdev() may wait mpi_port_cfg_work(), who
+	also request the holding lock, it can cause an deadlock,
+
+	Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+>From 8b7d7e81ee5f5c4691c37ea4dca32af3cbb42caf Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Wed, 1 Dec 2010 13:51:57 -0800
+Subject: [PATCH 1/1] qlge: During mtu change, rtnl_lock is called on error case
+	in ql_change_rx_buffers(), which can cause deadlock.
+
+	Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index d10de66..789f0a5 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -3661,12 +3661,8 @@ static void ql_enable_napi(struct ql_adapter *qdev)
+ 		netif_poll_enable(qdev->rx_ring[i].dummy_netdev);
+ }
+ 
+-static int ql_adapter_down(struct ql_adapter *qdev)
++static void ql_cancel_all_work_sync(struct ql_adapter *qdev)
+ {
+-	int i, status = 0;
+-
+-	ql_link_off(qdev);
+-
+ 	/* Don't kill the reset worker thread if we
+ 	 * are in the process of recovery.
+ 	 */
+@@ -3678,6 +3674,15 @@ static int ql_adapter_down(struct ql_adapter *qdev)
+ 	cancel_delayed_work_sync(&qdev->mpi_core_to_log);
+ 	cancel_delayed_work_sync(&qdev->mpi_port_cfg_work);
+ 	cancel_delayed_work_sync(&qdev->link_work);
++}
++
++static int ql_adapter_down(struct ql_adapter *qdev)
++{
++	int i, status = 0;
++
++	ql_link_off(qdev);
++	
++	ql_cancel_all_work_sync(qdev);
+ 
+ 	for (i = 0; i < qdev->tx_ring_count; i++)
+ 		del_timer_sync(&qdev->tx_ring[i].txq_clean_timer);
+@@ -3942,10 +3947,8 @@ static int ql_change_rx_buffers(struct ql_adapter *qdev)
+ error:
+ 	QPRINTK(qdev, IFUP, ALERT,
+ 		"Driver up/down cycle failed, closing device.\n");
+-	rtnl_lock();
+ 	set_bit(QL_ADAPTER_UP, &qdev->flags);
+ 	dev_close(qdev->ndev);
+-	rtnl_unlock();
+ 	return status;
+ }
+ 
+@@ -4626,6 +4629,7 @@ static void __devexit qlge_remove(struct pci_dev *pdev)
+ 	struct ql_adapter *qdev = netdev_priv(ndev);
+ 
+ 	del_timer_sync(&qdev->eeh_timer);
++	ql_cancel_all_work_sync(qdev);
+ 	unregister_netdev(ndev);
+ 	ql_deinit_napi(qdev);
+ 	ql_release_all(pdev);
+@@ -4646,14 +4650,7 @@ static void ql_eeh_close(struct net_device *ndev)
+ 	/* Disabling the timer */
+ 	del_timer_sync(&qdev->eeh_timer);
+ 
+-	if (test_bit(QL_ADAPTER_UP, &qdev->flags))
+-		cancel_delayed_work_sync(&qdev->asic_reset_work);
+-	cancel_delayed_work_sync(&qdev->mpi_reset_work);
+-	cancel_delayed_work_sync(&qdev->mpi_work);
+-	cancel_delayed_work_sync(&qdev->mpi_idc_work);
+-	cancel_delayed_work_sync(&qdev->mpi_core_to_log);
+-	cancel_delayed_work_sync(&qdev->mpi_port_cfg_work);
+-	cancel_delayed_work_sync(&qdev->link_work);
++	ql_cancel_all_work_sync(qdev);
+ 
+ 	for (i = 0; i < qdev->tx_ring_count; i++)
+ 		del_timer_sync(&qdev->tx_ring[i].txq_clean_timer);

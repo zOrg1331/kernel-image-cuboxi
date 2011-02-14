@@ -1,0 +1,29 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 28 Sep 2010 14:34:16 -0400
+Subject: [edac] i7300_edac: add appropriate MAINTAINERS info
+Message-id: <20100928113416.1d2504b6@pedra>
+Patchwork-id: 28454
+O-Subject: [PATCH RHEL5 23/27] MAINTAINERS: Add maintainer for i7300-edac driver
+Bugzilla: 487428
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index d3bf0f9..7497c42 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -1019,6 +1019,12 @@ L:	bluesmoke-devel@lists.sourceforge.net
+ W:	bluesmoke.sourceforge.net
+ S:	Maintained
+ 
++EDAC-I7300
++M:	Mauro Carvalho Chehab <mchehab@redhat.com>
++L:	linux-edac@vger.kernel.org
++W:	bluesmoke.sourceforge.net
++S:	Maintained
++
+ EDAC-R82600
+ P:	Tim Small
+ M:	tim@buttersideup.com

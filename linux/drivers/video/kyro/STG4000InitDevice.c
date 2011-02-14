@@ -247,6 +247,7 @@ int SetCoreClockPLL(volatile STG4000REG __iomem *pSTGReg, struct pci_dev *pDev)
 	u32 ulCoreClock;
 	u32 tmp;
 	u32 ulChipSpeed;
+	u8 rev;
 
 	STG_WRITE_REG(IntMask, 0xFFFF);
 
@@ -275,9 +276,9 @@ int SetCoreClockPLL(volatile STG4000REG __iomem *pSTGReg, struct pci_dev *pDev)
 		      PMX2_SOFTRESET_ROM_RST);
 
 	pci_read_config_word(pDev, PCI_CONFIG_SUBSYS_ID, &sub);
+	pci_read_config_byte(pDev, PCI_REVISION_ID, &rev);
 
-	ulChipSpeed = InitSDRAMRegisters(pSTGReg, (u32)sub,
-		                         (u32)pDev->revision);
+	ulChipSpeed = InitSDRAMRegisters(pSTGReg, (u32)sub, (u32)rev);
 
 	if (ulChipSpeed == 0)
 		return -EINVAL;

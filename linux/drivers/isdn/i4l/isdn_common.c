@@ -761,7 +761,7 @@ isdn_getnum(char **p)
  * Be aware that this is not an atomic operation when sleep != 0, even though 
  * interrupts are turned off! Well, like that we are currently only called
  * on behalf of a read system call on raw device files (which are documented
- * to be dangerous and for debugging purpose only). The inode semaphore
+ * to be dangerous and for for debugging purpose only). The inode semaphore
  * takes care that this is not called for the same minor device number while
  * we are sleeping, but access is not serialized against simultaneous read()
  * from the corresponding ttyI device. Can other ugly events, like changes
@@ -829,7 +829,7 @@ isdn_readbchan(int di, int channel, u_char * buf, u_char * fp, int len, wait_que
 				dflag = 0;
 			}
 			count_put = count_pull;
-			skb_copy_from_linear_data(skb, cp, count_put);
+			memcpy(cp, skb->data, count_put);
 			cp += count_put;
 			len -= count_put;
 #ifdef CONFIG_ISDN_AUDIO
@@ -873,7 +873,7 @@ isdn_readbchan(int di, int channel, u_char * buf, u_char * fp, int len, wait_que
  * Be aware that this is not an atomic operation when sleep != 0, even though
  * interrupts are turned off! Well, like that we are currently only called
  * on behalf of a read system call on raw device files (which are documented
- * to be dangerous and for debugging purpose only). The inode semaphore
+ * to be dangerous and for for debugging purpose only). The inode semaphore
  * takes care that this is not called for the same minor device number while
  * we are sleeping, but access is not serialized against simultaneous read()
  * from the corresponding ttyI device. Can other ugly events, like changes
@@ -914,9 +914,6 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 			dflag = 0;
 			count_pull = count_put = 0;
 			while ((count_pull < skb->len) && (len > 0)) {
-				/* push every character but the last to the tty buffer directly */
-				if ( count_put )
-					tty_insert_flip_char(tty, last, TTY_NORMAL);
 				len--;
 				if (dev->drv[di]->DLEflag & DLEmask) {
 					last = DLE;
@@ -981,13 +978,13 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 }
 
 
-static inline int
+static __inline int
 isdn_minor2drv(int minor)
 {
 	return (dev->drvmap[minor]);
 }
 
-static inline int
+static __inline int
 isdn_minor2chan(int minor)
 {
 	return (dev->chanmap[minor]);
@@ -1062,7 +1059,7 @@ isdn_info_update(void)
 static ssize_t
 isdn_read(struct file *file, char __user *buf, size_t count, loff_t * off)
 {
-	uint minor = iminor(file->f_path.dentry->d_inode);
+	uint minor = iminor(file->f_dentry->d_inode);
 	int len = 0;
 	int drvidx;
 	int chidx;
@@ -1137,12 +1134,9 @@ isdn_read(struct file *file, char __user *buf, size_t count, loff_t * off)
 		if (dev->drv[drvidx]->interface->readstat) {
 			if (count > dev->drv[drvidx]->stavail)
 				count = dev->drv[drvidx]->stavail;
-			len = dev->drv[drvidx]->interface->readstat(buf, count,
-				drvidx, isdn_minor2chan(minor - ISDN_MINOR_CTRL));
-			if (len < 0) {
-				retval = len;
-				goto out;
-			}
+			len = dev->drv[drvidx]->interface->
+				readstat(buf, count, drvidx,
+					 isdn_minor2chan(minor));
 		} else {
 			len = 0;
 		}
@@ -1169,7 +1163,7 @@ isdn_read(struct file *file, char __user *buf, size_t count, loff_t * off)
 static ssize_t
 isdn_write(struct file *file, const char __user *buf, size_t count, loff_t * off)
 {
-	uint minor = iminor(file->f_path.dentry->d_inode);
+	uint minor = iminor(file->f_dentry->d_inode);
 	int drvidx;
 	int chidx;
 	int retval;
@@ -1210,8 +1204,7 @@ isdn_write(struct file *file, const char __user *buf, size_t count, loff_t * off
 		 */
 		if (dev->drv[drvidx]->interface->writecmd)
 			retval = dev->drv[drvidx]->interface->
-				writecmd(buf, count, drvidx,
-				isdn_minor2chan(minor - ISDN_MINOR_CTRL));
+				writecmd(buf, count, drvidx, isdn_minor2chan(minor));
 		else
 			retval = count;
 		goto out;
@@ -1232,7 +1225,7 @@ static unsigned int
 isdn_poll(struct file *file, poll_table * wait)
 {
 	unsigned int mask = 0;
-	unsigned int minor = iminor(file->f_path.dentry->d_inode);
+	unsigned int minor = iminor(file->f_dentry->d_inode);
 	int drvidx = isdn_minor2drv(minor - ISDN_MINOR_CTRL);
 
 	lock_kernel();
@@ -1368,7 +1361,7 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 				} else {
 					s = NULL;
 				}
-				ret = mutex_lock_interruptible(&dev->mtx);
+				ret = down_interruptible(&dev->sem);
 				if( ret ) return ret;
 				if ((s = isdn_net_new(s, NULL))) {
 					if (copy_to_user(argp, s, strlen(s) + 1)){
@@ -1378,7 +1371,7 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					}
 				} else
 					ret = -ENODEV;
-				mutex_unlock(&dev->mtx);
+				up(&dev->sem);
 				return ret;
 			case IIOCNETASL:
 				/* Add a slave to a network-interface */
@@ -1387,7 +1380,7 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 						return -EFAULT;
 				} else
 					return -EINVAL;
-				ret = mutex_lock_interruptible(&dev->mtx);
+				ret = down_interruptible(&dev->sem);
 				if( ret ) return ret;
 				if ((s = isdn_net_newslave(bname))) {
 					if (copy_to_user(argp, s, strlen(s) + 1)){
@@ -1397,17 +1390,17 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					}
 				} else
 					ret = -ENODEV;
-				mutex_unlock(&dev->mtx);
+				up(&dev->sem);
 				return ret;
 			case IIOCNETDIF:
 				/* Delete a network-interface */
 				if (arg) {
 					if (copy_from_user(name, argp, sizeof(name)))
 						return -EFAULT;
-					ret = mutex_lock_interruptible(&dev->mtx);
+					ret = down_interruptible(&dev->sem);
 					if( ret ) return ret;
 					ret = isdn_net_rm(name);
-					mutex_unlock(&dev->mtx);
+					up(&dev->sem);
 					return ret;
 				} else
 					return -EINVAL;
@@ -1436,10 +1429,10 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 				if (arg) {
 					if (copy_from_user(&phone, argp, sizeof(phone)))
 						return -EFAULT;
-					ret = mutex_lock_interruptible(&dev->mtx);
+					ret = down_interruptible(&dev->sem);
 					if( ret ) return ret;
 					ret = isdn_net_addphone(&phone);
-					mutex_unlock(&dev->mtx);
+					up(&dev->sem);
 					return ret;
 				} else
 					return -EINVAL;
@@ -1448,10 +1441,10 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 				if (arg) {
 					if (copy_from_user(&phone, argp, sizeof(phone)))
 						return -EFAULT;
-					ret = mutex_lock_interruptible(&dev->mtx);
+					ret = down_interruptible(&dev->sem);
 					if( ret ) return ret;
 					ret = isdn_net_getphones(&phone, argp);
-					mutex_unlock(&dev->mtx);
+					up(&dev->sem);
 					return ret;
 				} else
 					return -EINVAL;
@@ -1460,10 +1453,10 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 				if (arg) {
 					if (copy_from_user(&phone, argp, sizeof(phone)))
 						return -EFAULT;
-					ret = mutex_lock_interruptible(&dev->mtx);
+					ret = down_interruptible(&dev->sem);
 					if( ret ) return ret;
 					ret = isdn_net_delphone(&phone);
-					mutex_unlock(&dev->mtx);
+					up(&dev->sem);
 					return ret;
 				} else
 					return -EINVAL;
@@ -1518,7 +1511,6 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					if (copy_from_user(&iocts, argp,
 					     sizeof(isdn_ioctl_struct)))
 						return -EFAULT;
-					iocts.drvid[sizeof(iocts.drvid)-1] = 0;
 					if (strlen(iocts.drvid)) {
 						if ((p = strchr(iocts.drvid, ',')))
 							*p = 0;
@@ -1603,7 +1595,6 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					if (copy_from_user(&iocts, argp,
 					     sizeof(isdn_ioctl_struct)))
 						return -EFAULT;
-					iocts.drvid[sizeof(iocts.drvid)-1] = 0;
 					if (strlen(iocts.drvid)) {
 						drvidx = -1;
 						for (i = 0; i < ISDN_MAX_DRIVERS; i++)
@@ -1648,7 +1639,7 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					} else {
 						p = (char __user *) iocts.arg;
 						for (i = 0; i < 10; i++) {
-							snprintf(bname, sizeof(bname), "%s%s",
+							sprintf(bname, "%s%s",
 								strlen(dev->drv[drvidx]->msn2eaz[i]) ?
 								dev->drv[drvidx]->msn2eaz[i] : "_",
 								(i < 9) ? "," : "\0");
@@ -1678,7 +1669,6 @@ isdn_ioctl(struct inode *inode, struct file *file, uint cmd, ulong arg)
 					char *p;
 					if (copy_from_user(&iocts, argp, sizeof(isdn_ioctl_struct)))
 						return -EFAULT;
-					iocts.drvid[sizeof(iocts.drvid)-1] = 0;
 					if (strlen(iocts.drvid)) {
 						if ((p = strchr(iocts.drvid, ',')))
 							*p = 0;
@@ -1732,7 +1722,7 @@ isdn_open(struct inode *ino, struct file *filep)
 	int chidx;
 	int retval = -ENODEV;
 
-	lock_kernel();
+
 	if (minor == ISDN_MINOR_STATUS) {
 		infostruct *p;
 
@@ -1783,7 +1773,6 @@ isdn_open(struct inode *ino, struct file *filep)
 #endif
  out:
 	nonseekable_open(ino, filep);
-	unlock_kernel();
 	return retval;
 }
 
@@ -1830,7 +1819,7 @@ isdn_close(struct inode *ino, struct file *filep)
 	return 0;
 }
 
-static const struct file_operations isdn_fops =
+static struct file_operations isdn_fops =
 {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
@@ -1925,7 +1914,7 @@ isdn_free_channel(int di, int ch, int usage)
 
 	if ((di < 0) || (ch < 0)) {
 		printk(KERN_WARNING "%s: called with invalid drv(%d) or channel(%d)\n",
-			__func__, di, ch);
+			__FUNCTION__, di, ch);
 		return;
 	}
 	for (i = 0; i < ISDN_MAX_CHANNELS; i++)
@@ -1978,10 +1967,8 @@ isdn_writebuf_stub(int drvidx, int chan, const u_char __user * buf, int len)
 	if (!skb)
 		return -ENOMEM;
 	skb_reserve(skb, hl);
-	if (copy_from_user(skb_put(skb, len), buf, len)) {
-		dev_kfree_skb(skb);
+	if (copy_from_user(skb_put(skb, len), buf, len))
 		return -EFAULT;
-	}
 	ret = dev->drv[drvidx]->interface->writebuf_skb(drvidx, chan, 1, skb);
 	if (ret <= 0)
 		dev_kfree_skb(skb);
@@ -2082,19 +2069,21 @@ isdn_add_channels(isdn_driver_t *d, int drvidx, int n, int adding)
 
 	if ((adding) && (d->rcverr))
 		kfree(d->rcverr);
-	if (!(d->rcverr = kzalloc(sizeof(int) * m, GFP_ATOMIC))) {
+	if (!(d->rcverr = kmalloc(sizeof(int) * m, GFP_ATOMIC))) {
 		printk(KERN_WARNING "register_isdn: Could not alloc rcverr\n");
 		return -1;
 	}
+	memset((char *) d->rcverr, 0, sizeof(int) * m);
 
 	if ((adding) && (d->rcvcount))
 		kfree(d->rcvcount);
-	if (!(d->rcvcount = kzalloc(sizeof(int) * m, GFP_ATOMIC))) {
+	if (!(d->rcvcount = kmalloc(sizeof(int) * m, GFP_ATOMIC))) {
 		printk(KERN_WARNING "register_isdn: Could not alloc rcvcount\n");
 		if (!adding)
 			kfree(d->rcverr);
 		return -1;
 	}
+	memset((char *) d->rcvcount, 0, sizeof(int) * m);
 
 	if ((adding) && (d->rpqueue)) {
 		for (j = 0; j < d->channels; j++)
@@ -2234,10 +2223,11 @@ register_isdn(isdn_if * i)
 		printk(KERN_WARNING "register_isdn: No write routine given.\n");
 		return 0;
 	}
-	if (!(d = kzalloc(sizeof(isdn_driver_t), GFP_KERNEL))) {
+	if (!(d = kmalloc(sizeof(isdn_driver_t), GFP_KERNEL))) {
 		printk(KERN_WARNING "register_isdn: Could not alloc driver-struct\n");
 		return 0;
 	}
+	memset((char *) d, 0, sizeof(isdn_driver_t));
 
 	d->maxbufsize = i->maxbufsize;
 	d->pktcount = 0;
@@ -2301,7 +2291,7 @@ static int __init isdn_init(void)
 	int i;
 	char tmprev[50];
 
-	if (!(dev = vmalloc(sizeof(isdn_dev)))) {
+	if (!(dev = (isdn_dev *) vmalloc(sizeof(isdn_dev)))) {
 		printk(KERN_WARNING "isdn: Could not allocate device-struct.\n");
 		return -EIO;
 	}
@@ -2313,7 +2303,7 @@ static int __init isdn_init(void)
 #ifdef MODULE
 	dev->owner = THIS_MODULE;
 #endif
-	mutex_init(&dev->mtx);
+	init_MUTEX(&dev->sem);
 	init_waitqueue_head(&dev->info_waitq);
 	for (i = 0; i < ISDN_MAX_CHANNELS; i++) {
 		dev->drvmap[i] = -1;

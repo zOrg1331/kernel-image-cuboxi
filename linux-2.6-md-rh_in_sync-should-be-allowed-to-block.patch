@@ -1,0 +1,36 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [PATCH RHEL 5.1] bz 236624 - dm-raid1.c: rh_in_sync should be 	allowed to block
+Date: Tue, 08 May 2007 13:28:35 -0500
+Bugzilla: 236624
+Message-Id: <1178648915.10582.29.camel@hydrogen.msp.redhat.com>
+Changelog: [md] rh_in_sync should be allowed to block
+
+
+ brassow
+
+RHEL5
+
+Bug 236624: dm-mirror: Call to rh_in_sync should be allowed...
+
+When checking the sync status of a region, there are times when we must not
+block.  Like when we are attempting to map I/O for the first time or in a
+context that must not block.
+
+do_reads operates in a separate kernel thread and should be allowed to block.
+
+In 2.6.21-mm1 as agk-dm-dm-raid1-switch-rh_in_sync-to-blocking-in-do_reads.patch
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -977,7 +977,7 @@ static void do_reads(struct mirror_set *
+ 		 * We can only read balance if the region is in sync.
+ 		 */
+ 		if (likely(rh_in_sync(&ms->rh,
+-				      bio_to_region(&ms->rh, bio), 0)))
++				      bio_to_region(&ms->rh, bio), 1)))
+ 			m = choose_mirror(ms);
+ 		else {
+ 			m = ms->default_mirror;
+

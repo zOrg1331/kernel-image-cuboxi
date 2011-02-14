@@ -1,0 +1,48 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Tue, 9 Mar 2010 15:57:46 -0500
+Subject: [fusion] mptsas: fix event_data alignment
+Message-id: <4B966FFA.10101@redhat.com>
+Patchwork-id: 23524
+O-Subject: [RHEL5 PATCH] fusion: fix alignment
+Bugzilla: 570000
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This is for bz#570000
+
+SGI has reported a problem on Altix 330,
+from the report it is probably limited to this family.
+They have seen in dmesg warnings like this:
+kernel unaligned access to 0xe0000034f327f0ff, ip=0xa0000002040c4870
+...
+
+I tried to retest/verify the patch in RHTS on a different Altix,
+but wasn't able to see this.
+
+The patch itself comes from Kashyap Desai (LSI) and changes the alignment.
+SGI hasn't yet verified that the patch resolves the issue.
+
+Upstream - I expect LSI will take care.
+
+It is only a warning in dmesg and I hope tiny
+performance hit. It probably can wait for 5.6, but if others
+also consider this as low risk even at the last minute, it could
+go into 5.5.
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/message/fusion/mptsas.h b/drivers/message/fusion/mptsas.h
+index 390e6eb..bb0591b 100644
+--- a/drivers/message/fusion/mptsas.h
++++ b/drivers/message/fusion/mptsas.h
+@@ -110,7 +110,7 @@ struct fw_event_work {
+ 	MPT_ADAPTER	*ioc;
+ 	u32			event;
+ 	u8			retries;
+-	u8			event_data[1];
++	u8			__attribute__ ((aligned(4))) event_data[1];
+ };
+ 
+ struct mptsas_discovery_event {

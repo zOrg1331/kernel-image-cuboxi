@@ -1,0 +1,82 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Wed, 18 Nov 2009 19:49:13 -0500
+Subject: [xen] msi fixmap cleanup and vector teardown
+Message-id: <200911181949.nAIJnDJN009890@sobek.n0ano.com>
+Patchwork-id: 21423
+O-Subject: [RHEL5.5 PATCH] BZ 516236 : xen: MSI fixmap cleanup and vector
+	teardown
+Bugzilla: 516236
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Mapping msix creates a page in fixmap area for the mmio of msix. But these
+fixmap pages were not torn down properly at the time of domain destroy. When 32
+fixmap pages are depleted in this test, mapping msix fails.
+
+x86_64 kernel has more fixmap pages dedicated to msix mmio, the number is 256.
+So the problem doesn't show up in this test.
+
+	Signed-off-by: Espen Skoglund <espen.skoglund@netronome.com>
+	Signed-off-by: Joshua LeVasseur <joshua.levasseur@netronome.com>
+
+	Signed-off-by: Qing He <qing.he@intel.com>
+	Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+Upstream status: CS 17947, 18010 (modified for RHEL 5 differences)
+Brew build:  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2082636
+Testing: Tested on Tylersburg and it does fix the problem.
+
+---
+ arch/x86/irq.c            |    3 ---
+ arch/x86/msi.c            |    1 +
+ drivers/passthrough/pci.c |    2 ++
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/irq.c b/arch/x86/irq.c
+index 1085276..37d9018 100644
+--- a/arch/x86/irq.c
++++ b/arch/x86/irq.c
+@@ -968,10 +968,7 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+ 
+     spin_unlock_irqrestore(&desc->lock, flags);
+     if (msi_desc)
+-    {
+         msi_free_vector(msi_desc);
+-        free_irq_vector(vector);
+-    }
+ 
+     ret = irq_deny_access(d, pirq);
+     if ( ret )
+diff --git a/arch/x86/msi.c b/arch/x86/msi.c
+index 6333e18..79e6c8e 100644
+--- a/arch/x86/msi.c
++++ b/arch/x86/msi.c
+@@ -452,6 +452,7 @@ int msi_free_vector(struct msi_desc *entry)
+         msix_put_fixmap(entry->dev, virt_to_fix(start));
+     }
+     list_del(&entry->list);
++    free_irq_vector(entry->vector);
+     xfree(entry);
+     return 0;
+ }
+diff --git a/drivers/passthrough/pci.c b/drivers/passthrough/pci.c
+index 87c3f20..d7c1a16 100644
+--- a/drivers/passthrough/pci.c
++++ b/drivers/passthrough/pci.c
+@@ -132,6 +132,7 @@ int pci_remove_device(u8 bus, u8 devfn)
+             ret = iommu_remove_device(pdev);
+             if ( pdev->domain )
+                 list_del(&pdev->domain_list);
++            pci_cleanup_msi(pdev);
+             free_pdev(pdev);
+             printk(XENLOG_DEBUG "PCI remove device %02x:%02x.%x\n", bus,
+                    PCI_SLOT(devfn), PCI_FUNC(devfn));
+@@ -202,6 +203,7 @@ void pci_release_devices(struct domain *d)
+     pci_clean_dpci_irqs(d);
+     while ( (pdev = pci_get_pdev_by_domain(d, -1, -1)) )
+     {
++        pci_cleanup_msi(pdev);
+         bus = pdev->bus; devfn = pdev->devfn;
+         deassign_device(d, bus, devfn);
+     }

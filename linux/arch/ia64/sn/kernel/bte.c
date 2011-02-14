@@ -3,7 +3,7 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  *
- * Copyright (c) 2000-2007 Silicon Graphics, Inc.  All Rights Reserved.
+ * Copyright (c) 2000-2006 Silicon Graphics, Inc.  All Rights Reserved.
  */
 
 #include <linux/module.h>
@@ -63,7 +63,7 @@ static inline void bte_start_transfer(struct bteinfo_s *bte, u64 len, u64 mode)
  * Use the block transfer engine to move kernel memory from src to dest
  * using the assigned mode.
  *
- * Parameters:
+ * Paramaters:
  *   src - physical address of the transfer source.
  *   dest - physical address of the transfer destination.
  *   len - number of bytes to transfer from source to dest.
@@ -97,10 +97,9 @@ bte_result_t bte_copy(u64 src, u64 dest, u64 len, u64 mode, void *notification)
 		return BTE_SUCCESS;
 	}
 
-	BUG_ON(len & L1_CACHE_MASK);
-	BUG_ON(src & L1_CACHE_MASK);
-	BUG_ON(dest & L1_CACHE_MASK);
-	BUG_ON(len > BTE_MAX_XFER);
+	BUG_ON((len & L1_CACHE_MASK) ||
+		 (src & L1_CACHE_MASK) || (dest & L1_CACHE_MASK));
+	BUG_ON(!(len < ((BTE_LEN_MASK + 1) << L1_CACHE_SHIFT)));
 
 	/*
 	 * Start with interface corresponding to cpu number
@@ -228,7 +227,7 @@ retry_bteop:
 		     BTE_LNSTAT_LOAD(bte), *bte->most_rcnt_na));
 
 	if (transfer_stat & IBLS_ERROR) {
-		bte_status = BTE_GET_ERROR_STATUS(transfer_stat);
+		bte_status = transfer_stat & ~IBLS_ERROR;
 	} else {
 		bte_status = BTE_SUCCESS;
 	}
@@ -248,7 +247,7 @@ EXPORT_SYMBOL(bte_copy);
  * use the block transfer engine to move kernel
  * memory from src to dest using the assigned mode.
  *
- * Parameters:
+ * Paramaters:
  *   src - physical address of the transfer source.
  *   dest - physical address of the transfer destination.
  *   len - number of bytes to transfer from source to dest.
@@ -256,7 +255,7 @@ EXPORT_SYMBOL(bte_copy);
  *          for IBCT0/1 in the SGI documentation.
  *
  * NOTE: If the source, dest, and len are all cache line aligned,
- * then it would be _FAR_ preferable to use bte_copy instead.
+ * then it would be _FAR_ preferrable to use bte_copy instead.
  */
 bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
 {
@@ -278,7 +277,8 @@ bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
 	}
 
 	/* temporary buffer used during unaligned transfers */
-	bteBlock_unaligned = kmalloc(len + 3 * L1_CACHE_BYTES, GFP_KERNEL);
+	bteBlock_unaligned = kmalloc(len + 3 * L1_CACHE_BYTES,
+				     GFP_KERNEL | GFP_DMA);
 	if (bteBlock_unaligned == NULL) {
 		return BTEFAIL_NOTAVAIL;
 	}
@@ -301,7 +301,7 @@ bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
 	 * a standard bte copy.
 	 *
 	 * One nasty exception to the above rule is when the
-	 * source and destination are not symmetrically
+	 * source and destination are not symetrically
 	 * mis-aligned.  If the source offset from the first
 	 * cache line is different from the destination offset,
 	 * we make the first section be the entire transfer
@@ -338,7 +338,7 @@ bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
 
 			if (footBcopyDest == (headBcopyDest + headBcopyLen)) {
 				/*
-				 * We have two contiguous bcopy
+				 * We have two contigous bcopy
 				 * blocks.  Merge them.
 				 */
 				headBcopyLen += footBcopyLen;
@@ -376,19 +376,20 @@ bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
 	} else {
 
 		/*
-		 * The transfer is not symmetric, we will
+		 * The transfer is not symetric, we will
 		 * allocate a buffer large enough for all the
 		 * data, bte_copy into that buffer and then
 		 * bcopy to the destination.
 		 */
 
+		/* Add the leader from source */
+		headBteLen = len + (src & L1_CACHE_MASK);
+		/* Add the trailing bytes from footer. */
+		headBteLen += L1_CACHE_BYTES - (headBteLen & L1_CACHE_MASK);
+		headBteSource = src & ~L1_CACHE_MASK;
 		headBcopySrcOffset = src & L1_CACHE_MASK;
 		headBcopyDest = dest;
 		headBcopyLen = len;
-
-		headBteSource = src - headBcopySrcOffset;
-		/* Add the leading and trailing bytes from source */
-		headBteLen = L1_CACHE_ALIGN(len + headBcopySrcOffset);
 	}
 
 	if (headBcopyLen > 0) {

@@ -1,0 +1,90 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5 Xen] fix 2TB overflow in virtual disk driver
+Date: Fri, 01 Dec 2006 10:24:12 -0500
+Bugzilla: 216556
+Message-Id: <4570491C.7080609@redhat.com>
+Changelog: Xen: fix 2TB overflow in virtual disk driver
+
+
+The attached patch fixes a 2TB overflow in the Xen virtual disk
+driver, and is necessary to be able to use block devices larger
+than 2TB without silent data corruption.
+
+Fixes bug 216556
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+changeset:   12496:0c0ef61de06b523fa44f67d97de01def87306e1d
+user:        kfraser@localhost.localdomain
+date:        Tue Nov 21 10:16:58 2006 +0000
+files:       linux-2.6-xen-sparse/drivers/xen/blkback/common.h linux-2.6-xen-sparse/drivers/xen/blkback/vbd.c linux-2.6-xen-sparse/drivers/xen/blkback/xenbus.c linux-2.6-xen-sparse/drivers/xen/blkfront/blkfront.c
+description:
+[BLK] Handle block devices with more than 2^32 sectors.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+
+Index: latest/drivers/xen/blkback/common.h
+===================================================================
+--- latest.orig/drivers/xen/blkback/common.h
++++ latest/drivers/xen/blkback/common.h
+@@ -110,7 +110,7 @@ int vbd_create(blkif_t *blkif, blkif_vde
+ 	       unsigned minor, int readonly);
+ void vbd_free(struct vbd *vbd);
+ 
+-unsigned long vbd_size(struct vbd *vbd);
++unsigned long long vbd_size(struct vbd *vbd);
+ unsigned int vbd_info(struct vbd *vbd);
+ unsigned long vbd_secsize(struct vbd *vbd);
+ 
+Index: latest/drivers/xen/blkback/vbd.c
+===================================================================
+--- latest.orig/drivers/xen/blkback/vbd.c
++++ latest/drivers/xen/blkback/vbd.c
+@@ -36,7 +36,7 @@
+ #define vbd_sz(_v)   ((_v)->bdev->bd_part ?				\
+ 	(_v)->bdev->bd_part->nr_sects : (_v)->bdev->bd_disk->capacity)
+ 
+-unsigned long vbd_size(struct vbd *vbd)
++unsigned long long vbd_size(struct vbd *vbd)
+ {
+ 	return vbd_sz(vbd);
+ }
+Index: latest/drivers/xen/blkback/xenbus.c
+===================================================================
+--- latest.orig/drivers/xen/blkback/xenbus.c
++++ latest/drivers/xen/blkback/xenbus.c
+@@ -372,7 +372,7 @@ again:
+ 		return;
+ 	}
+ 
+-	err = xenbus_printf(xbt, dev->nodename, "sectors", "%lu",
++	err = xenbus_printf(xbt, dev->nodename, "sectors", "%llu",
+ 			    vbd_size(&be->blkif->vbd));
+ 	if (err) {
+ 		xenbus_dev_fatal(dev, err, "writing %s/sectors",
+Index: latest/drivers/xen/blkfront/blkfront.c
+===================================================================
+--- latest.orig/drivers/xen/blkfront/blkfront.c
++++ latest/drivers/xen/blkfront/blkfront.c
+@@ -294,7 +294,8 @@ static void backend_changed(struct xenbu
+  */
+ static void connect(struct blkfront_info *info)
+ {
+-	unsigned long sectors, sector_size;
++	unsigned long long sectors;
++	unsigned long sector_size;
+ 	unsigned int binfo;
+ 	int err;
+ 
+@@ -305,7 +306,7 @@ static void connect(struct blkfront_info
+ 	DPRINTK("blkfront.c:connect:%s.\n", info->xbdev->otherend);
+ 
+ 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
+-			    "sectors", "%lu", &sectors,
++			    "sectors", "%llu", &sectors,
+ 			    "info", "%u", &binfo,
+ 			    "sector-size", "%lu", &sector_size,
+ 			    NULL);

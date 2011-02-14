@@ -1,0 +1,59 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 9 Jul 2009 18:01:49 +0200
+Subject: [xen] ia64: add get/set_address_size support
+Message-id: 4A56146D.7050000@redhat.com
+O-Subject: [RHEL5.4 PATCH 1/2]: Hypervisor ia64 get/set_address_size
+Bugzilla: 510069
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+This patches the ia64 hypervisor to understand the
+XEN_DOMCTL_{get,set}_address_size, and is a backport of xen-unstable c/s 19121
+
+Part of the solution for BZ 510069
+
+diff --git a/arch/ia64/xen/dom0_ops.c b/arch/ia64/xen/dom0_ops.c
+index 6079dc5..ee51ebe 100644
+--- a/arch/ia64/xen/dom0_ops.c
++++ b/arch/ia64/xen/dom0_ops.c
+@@ -214,6 +214,39 @@ long arch_do_domctl(xen_domctl_t *op, XEN_GUEST_HANDLE(xen_domctl_t) u_domctl)
+     }
+     break;
+ 
++    case XEN_DOMCTL_set_address_size:
++    {
++        struct domain *d = rcu_lock_domain_by_id(op->domain);
++
++        ret = -ESRCH;
++        if (d == NULL)
++            break;
++
++        ret = -EINVAL;
++        if (op->u.address_size.size == BITS_PER_LONG)
++            ret = 0;
++
++        rcu_unlock_domain(d);
++    }
++    break;
++
++    case XEN_DOMCTL_get_address_size:
++    {
++        struct domain *d = rcu_lock_domain_by_id(op->domain);
++
++        ret = -ESRCH;
++        if (d  == NULL)
++            break;
++
++        ret = 0;
++        op->u.address_size.size = BITS_PER_LONG;
++        rcu_unlock_domain(d);
++
++        if (copy_to_guest(u_domctl, op, 1))
++            ret = -EFAULT;
++    }
++    break;
++
+     default:
+         printk("arch_do_domctl: unrecognized domctl: %d!!!\n",op->cmd);
+         ret = -ENOSYS;

@@ -4,6 +4,8 @@
  * Copyright (C) 2001,2002  Hiroyuki Kondo, and Hirokazu Takata
  *
  */
+/* $Id$ */
+
 
 ;
 ;      input   (r0,r1)  src
@@ -291,3 +293,4 @@ __lshrdi3:
 #endif /* not CONFIG_ISA_DUAL_ISSUE */
 
 	.end
+

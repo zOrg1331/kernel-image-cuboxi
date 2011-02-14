@@ -24,6 +24,7 @@
 #include "hscx.h"
 #include "isdnl1.h"
 
+extern const char *CardType[];
 static const char *ix1_revision = "$Revision: 2.12.2.4 $";
 
 #define byteout(addr,val) outb(val,addr)
@@ -124,7 +125,7 @@ WriteHSCX(struct IsdnCardState *cs, int hscx, u_char offset, u_char value)
 #include "hscx_irq.c"
 
 static irqreturn_t
-ix1micro_interrupt(int intno, void *dev_id)
+ix1micro_interrupt(int intno, void *dev_id, struct pt_regs *regs)
 {
 	struct IsdnCardState *cs = dev_id;
 	u_char val;
@@ -252,7 +253,7 @@ setup_ix1micro(struct IsdnCard *card)
 					err = pnp_activate_dev(pnp_d);
 					if (err<0) {
 						printk(KERN_WARNING "%s: pnp_activate_dev ret(%d)\n",
-							__func__, err);
+							__FUNCTION__, err);
 						return(0);
 					}
 					card->para[1] = pnp_port_start(pnp_d, 0);
@@ -287,15 +288,15 @@ setup_ix1micro(struct IsdnCard *card)
 	if (cs->hw.ix1.cfg_reg) {
 		if (!request_region(cs->hw.ix1.cfg_reg, 4, "ix1micro cfg")) {
 			printk(KERN_WARNING
-			  "HiSax: ITK ix1-micro Rev.2 config port "
-			  "%x-%x already in use\n",
+			  "HiSax: %s config port %x-%x already in use\n",
+			       CardType[card->typ],
 			       cs->hw.ix1.cfg_reg,
 			       cs->hw.ix1.cfg_reg + 4);
 			return (0);
 		}
 	}
-	printk(KERN_INFO "HiSax: ITK ix1-micro Rev.2 config irq:%d io:0x%X\n",
-		cs->irq, cs->hw.ix1.cfg_reg);
+	printk(KERN_INFO "HiSax: %s config irq:%d io:0x%X\n",
+		CardType[cs->typ], cs->irq, cs->hw.ix1.cfg_reg);
 	setup_isac(cs);
 	cs->readisac = &ReadISAC;
 	cs->writeisac = &WriteISAC;

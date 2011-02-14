@@ -1,0 +1,63 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Tue, 19 Jan 2010 20:27:45 -0500
+Subject: [scsi] stex: don't try to scan a nonexistent lun
+Message-id: <20100119202745.GB4160@dhcp-210.hsv.redhat.com>
+Patchwork-id: 22655
+O-Subject: [RHEL5.5 PATCH] stex: fix inconsistent usage of max_lun
+Bugzilla: 531488
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+This patch is from Ed Lin at Promise, it replaces the
+previous patch to fix manually scanning a non-existent
+LUN. Here is the original RHEL5.5 post and the post
+to revert due to upstream regressions.
+
+http://post-office.corp.redhat.com/archives/rhkernel-list/2009-November/msg00594.html
+http://post-office.corp.redhat.com/archives/rhkernel-list/2009-December/msg00520.html
+
+This patch is a replacement which only effects stex.c, it is a
+backport of upstream commit:
+
+commit 91e6ecada757a6e2ef7b937634af8a04376772a1
+Author: Ed Lin <ed.lin@promise.com>
+Date:   Fri Dec 18 17:34:51 2009 -0800
+
+    [SCSI] stex: fix scan of nonexistent lun
+
+    During a manual scan, a user can send command to a nonexistent
+    lun, precisely at the point of max_lun. Normally it's possible
+    (but not required) that the firmware has the knowledge that it
+    is an invalid lun. In the particular case when max_lun is 256,
+    however, the nonexistent lun 256 will be confused with lun 0,
+    because the lun member in a request message is only u8, and 256
+    will become 0. So we need to fix the problem, at least, at the
+    driver level.
+
+Customer has verified a -183.el5 test kernel built with this
+patch, it resolves BZ 531488, please review and ACK.
+
+Thanks,
+David
+
+ drivers/scsi/stex.c |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/stex.c b/drivers/scsi/stex.c
+index 46105d0..cce3329 100644
+--- a/drivers/scsi/stex.c
++++ b/drivers/scsi/stex.c
+@@ -722,6 +722,11 @@ stex_queuecommand(struct scsi_cmnd *cmd, void (* done)(struct scsi_cmnd *))
+ 		}
+ 		break;
+ 	case INQUIRY:
++		if (lun >= host->max_lun) {
++			cmd->result = DID_NO_CONNECT << 16;
++			done(cmd);
++			return 0;
++		}
+ 		if (id != host->max_id - 1)
+ 			break;
+ 		if (!lun && !cmd->device->channel &&

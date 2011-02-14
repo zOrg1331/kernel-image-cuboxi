@@ -1,0 +1,200 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Date: Thu, 13 Dec 2007 12:53:20 -0500
+Subject: [mm] make zonelist order selectable in NUMA
+Message-id: 47617190.5070206@redhat.com
+O-Subject: [RHEL5.2 PATCH] FEAT: make zonelist order selectable in NUMA
+Bugzilla: 251111
+
+Resolve bz251111.
+
+This patch is based on the upstream patch:
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=f0c0b2b808f232741eadac272bd4bc51f18df0f4
+
+In RHEL5's NUMA configuration today, the zonelists are created
+in "Node order".  For example, GFP_KERNEL zonelist for Node(0)
+is created like:
+
+  Node(0)'s NORMAL -> Node(0)'s DMA -> Node(1)'s NORMAL
+
+That way, it can be easy to exhaust the DMA zone before the
+NORMAL zone.  Since DMA zone usually tends to be smaller than
+NORMAL zone, it would be nice for some users to use NORMAL
+zone first as much as possible.  In some situations, "Node
+Order" zonelist can cause an adverse affect on performance
+and OOM Killer determination.  For instance, a process that
+needs to mlock a huge memory could take up most of DMA zone
+in the relatively early stages.
+
+The patch introduces another option for the zonelist creation,
+which is "Zone Order."  With the order, the zonelist is created
+like:
+
+  Node(0)'s NORMAL -> Node(1)'s NORMAL -> Node(0)'s DMA
+
+The upstream patch originally has two options (kernel parameter
+and sysctl interface) for users to specify the zonelist creation
+order, but this patch only has the former so the changes are
+very minimum.  And this keeps "Node Order" selected by default
+so that the default behavior of zonelist creation does not differ
+from previous RHEL5 releases.
+
+I tested 2.6.18-53.el5 with the patch applied on my ia64 box.
+There should not be any kABI breakage in the patch.
+
+Thanks,
+Kei
+--
+Kei Tokunaga
+Fujitsu On-site Partner
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index c262188..7f51429 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1125,6 +1125,10 @@ running once the system is up.
+ 
+ 	nowb		[ARM]
+ 
++	numa_zonelist_order= [KNL, BOOT] Select zonelist order for NUMA.
++			one of ['zone', 'node'] can be specified.  The default
++                        is 'node'.
++
+ 	nr_uarts=	[SERIAL] maximum number of UARTs to be registered.
+ 
+ 	opl3=		[HW,OSS]
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 77b02ee..b7ccece 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1365,6 +1365,19 @@ void show_free_areas(void)
+ }
+ 
+ /*
++ * zonlist_order.
++ * 0 = order by node distance, -zonetype
++ * 1 = order by -zonetype, node distance
++ *
++ * If not NUMA, ZONELIST_ORDER_ZONE and ZONELIST_ORDER_NODE will create
++ * the same zonelist.
++ */
++#define ZONELIST_ORDER_NODE	(0)
++#define ZONELIST_ORDER_ZONE	(1)
++
++static int zonelist_order = ZONELIST_ORDER_NODE;
++
++/*
+  * Builds allocation fallback zone lists.
+  *
+  * Add all populated zones of a node to the zonelist.
+@@ -1404,6 +1417,65 @@ static inline int highest_zone(int zone_bits)
+ }
+ 
+ #ifdef CONFIG_NUMA
++
++static int __parse_numa_zonelist_order(char *s)
++{
++	if (*s == 'n' || *s == 'N')
++		zonelist_order = ZONELIST_ORDER_NODE;
++	else if (*s == 'z' || *s == 'Z')
++		zonelist_order = ZONELIST_ORDER_ZONE;
++	else
++		printk(KERN_WARNING "Ignoring invalid numa_zonelist_order:"
++		    "%s\n", s);
++	return 0;
++}
++
++static __init int setup_numa_zonelist_order(char *s)
++{
++	if (s)
++		return __parse_numa_zonelist_order(s);
++	return 0;
++}
++early_param("numa_zonelist_order", setup_numa_zonelist_order);
++
++static void build_zonelist_in_node_order(pg_data_t *pgdat, int node)
++{
++	int i, j, k;
++	struct zonelist *zonelist;
++	for (i = 0; i < GFP_ZONETYPES; i++) {
++		zonelist = pgdat->node_zonelists + i;
++		for (j = 0; zonelist->zones[j] != NULL; j++);
++		k = highest_zone(i);
++		j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
++		zonelist->zones[j] = NULL;
++	}
++}
++
++static int node_order[MAX_NUMNODES];
++
++static void build_zonelist_in_zone_order(pg_data_t *pgdat, int nr_nodes)
++{
++	int k;
++	int pos, j, i, node;
++	int zone_type;
++	struct zone *z;
++	struct zonelist *zonelist;
++
++	for (i = 0; i < GFP_ZONETYPES; i++) {
++		zonelist = pgdat->node_zonelists + i;
++		pos = 0;
++		k = highest_zone(i);
++		for (zone_type = k; zone_type >= 0; zone_type--)
++			for (j = 0; j < nr_nodes; j++) {
++				node = node_order[j];
++				z = &NODE_DATA(node)->node_zones[zone_type];
++				if (populated_zone(z))
++					zonelist->zones[pos++] = z;
++			}
++		zonelist->zones[pos] = NULL;
++	}
++}
++
+ #define MAX_NODE_LOAD (num_online_nodes())
+ static int __meminitdata node_load[MAX_NUMNODES];
+ /**
+@@ -1472,6 +1544,7 @@ static void __meminit build_zonelists(pg_data_t *pgdat)
+ 	int prev_node, load;
+ 	struct zonelist *zonelist;
+ 	nodemask_t used_mask;
++	int node_order_length = 0;
+ 
+ 	/* initialize zonelists */
+ 	for (i = 0; i < GFP_ZONETYPES; i++) {
+@@ -1484,6 +1557,10 @@ static void __meminit build_zonelists(pg_data_t *pgdat)
+ 	load = num_online_nodes();
+ 	prev_node = local_node;
+ 	nodes_clear(used_mask);
++
++	memset(node_load, 0, sizeof(node_load));
++	memset(node_order, 0, sizeof(node_order));
++
+ 	while ((node = find_next_best_node(local_node, &used_mask)) >= 0) {
+ 		int distance = node_distance(local_node, node);
+ 
+@@ -1504,16 +1581,14 @@ static void __meminit build_zonelists(pg_data_t *pgdat)
+ 			node_load[node] += load;
+ 		prev_node = node;
+ 		load--;
+-		for (i = 0; i < GFP_ZONETYPES; i++) {
+-			zonelist = pgdat->node_zonelists + i;
+-			for (j = 0; zonelist->zones[j] != NULL; j++);
+-
+-			k = highest_zone(i);
+-
+-	 		j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
+-			zonelist->zones[j] = NULL;
+-		}
++		if (zonelist_order == ZONELIST_ORDER_NODE)
++			build_zonelist_in_node_order(pgdat, node);
++		else
++			node_order[node_order_length++] = node;
+ 	}
++	/* we already have node_order */
++	if (zonelist_order == ZONELIST_ORDER_ZONE)
++		build_zonelist_in_zone_order(pgdat, node_order_length);
+ }
+ 
+ #else	/* CONFIG_NUMA */

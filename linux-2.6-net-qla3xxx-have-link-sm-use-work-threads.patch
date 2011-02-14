@@ -1,0 +1,105 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 19 Mar 2008 23:00:24 -0400
+Subject: [net] qla3xxx: have link SM use work threads
+Message-id: 20080320030024.7649.88517.sendpatchset@shell.boston.redhat.com
+O-Subject: [rhel 5.2 bug] qla3xxx - Move link state machine from timer thread to kernel thread to avoid CPU lockup.
+Bugzilla: 409171
+
+BZ 409171 qla3xxx - Move link state machine from timer thread to kernel thread to avoid CPU lockup
+
+This problem can cause a panic from nmi watchdog.
+
+The link state machine requires access to some resources that
+are shared with the iSCSI function on the chip.  (See iSCSI
+driver at drivers/scsi/qla4xxx)  If the interface is being
+up/downed at a rapid pace this driver may need to sleep
+waiting to get access to the common resources. For this we
+are moving the state machine to run as a work thread.
+
+Applies cleanly to 2.6.18-84.el5.  Tested at QLogic.
+
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index 1600945..935f027 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME  	"qla3xxx"
+ #define DRV_STRING 	"QLogic ISP3XXX Network Driver"
+-#define DRV_VERSION	"v2.03.00-k4-RHEL5U2"
++#define DRV_VERSION	"v2.03.00-k4-RHEL5.2-01"
+ #define PFX		DRV_NAME " "
+ 
+ static const char ql3xxx_driver_name[] = DRV_NAME;
+@@ -1657,7 +1657,7 @@ static int ql_finish_auto_neg(struct ql3_adapter *qdev)
+ 	return 0;
+ }
+ 
+-static void ql_link_state_machine(struct ql3_adapter *qdev)
++static void ql_link_state_machine_work(struct ql3_adapter *qdev)
+ {
+ 	u32 curr_link_state;
+ 	unsigned long hw_flags;
+@@ -1673,6 +1673,8 @@ static void ql_link_state_machine(struct ql3_adapter *qdev)
+ 			       "state.\n", qdev->ndev->name);
+ 
+ 		spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);		
++		/* Restart timer on 1 second interval. */
++		mod_timer(&qdev->adapter_timer, jiffies + HZ * 1);\
+ 		return;
+ 	}
+ 
+@@ -1717,6 +1719,8 @@ static void ql_link_state_machine(struct ql3_adapter *qdev)
+ 		break;
+ 	}
+ 	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	/* Restart timer on 1 second interval. */
++	mod_timer(&qdev->adapter_timer, jiffies + HZ * 1);
+ }
+ 
+ /*
+@@ -3977,20 +3981,7 @@ static void ql_get_board_info(struct ql3_adapter *qdev)
+ static void ql3xxx_timer(unsigned long ptr)
+ {
+ 	struct ql3_adapter *qdev = (struct ql3_adapter *)ptr;
+-
+-	if (test_bit(QL_RESET_ACTIVE,&qdev->flags)) {
+-		printk(KERN_DEBUG PFX
+-		       "%s: Reset in progress.\n",
+-		       qdev->ndev->name);
+-		goto end;
+-	}
+-
+-	if (test_bit(QL_ADAPTER_UP,&qdev->flags))
+-		ql_link_state_machine(qdev);
+-
+-	/* Restart timer on 2 second interval. */
+-end:
+-	mod_timer(&qdev->adapter_timer, jiffies + HZ * 1);
++	queue_work(qdev->workqueue, &qdev->link_state_work);
+ }
+ 
+ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+@@ -4144,6 +4135,8 @@ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+ 	INIT_WORK(&qdev->reset_work, (void (*)(void *))ql_reset_work, qdev);
+ 	INIT_WORK(&qdev->tx_timeout_work,
+ 		  (void (*)(void *))ql_tx_timeout_work, qdev);
++	INIT_WORK(&qdev->link_state_work, 
++		(void (*)(void *))ql_link_state_machine_work,qdev);
+ 
+ 	init_timer(&qdev->adapter_timer);
+ 	qdev->adapter_timer.function = ql3xxx_timer;
+diff --git a/drivers/net/qla3xxx.h b/drivers/net/qla3xxx.h
+index f66466d..8f0c6eb 100644
+--- a/drivers/net/qla3xxx.h
++++ b/drivers/net/qla3xxx.h
+@@ -1285,6 +1285,7 @@ struct ql3_adapter {
+ 	struct workqueue_struct *workqueue;
+ 	struct work_struct reset_work;
+ 	struct work_struct tx_timeout_work;
++	struct work_struct link_state_work;
+ 	u32 max_frame_size;
+ 	u32 device_id;
+ 	u16 phyType;

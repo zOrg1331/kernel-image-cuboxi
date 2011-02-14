@@ -30,22 +30,26 @@
 #include "vgatypes.h"
 #include "vstruct.h"
 
+#include <linux/version.h>
 #include <linux/types.h>
 #include <linux/fb.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 int		sisfb_mode_rate_to_dclock(struct SiS_Private *SiS_Pr,
 			unsigned char modeno, unsigned char rateindex);
 int		sisfb_mode_rate_to_ddata(struct SiS_Private *SiS_Pr, unsigned char modeno,
 			unsigned char rateindex, struct fb_var_screeninfo *var);
-bool		sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno,
+#endif
+BOOLEAN		sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno,
 			int *htotal, int *vtotal, unsigned char rateindex);
 
-extern bool	SiSInitPtr(struct SiS_Private *SiS_Pr);
-extern bool	SiS_SearchModeID(struct SiS_Private *SiS_Pr, unsigned short *ModeNo,
+extern BOOLEAN	SiSInitPtr(struct SiS_Private *SiS_Pr);
+extern BOOLEAN	SiS_SearchModeID(struct SiS_Private *SiS_Pr, unsigned short *ModeNo,
 			unsigned short *ModeIdIndex);
 extern void	SiS_Generic_ConvertCRData(struct SiS_Private *SiS_Pr, unsigned char *crdata,
-			int xres, int yres, struct fb_var_screeninfo *var, bool writeres);
+			int xres, int yres, struct fb_var_screeninfo *var, BOOLEAN writeres);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 int
 sisfb_mode_rate_to_dclock(struct SiS_Private *SiS_Pr, unsigned char modeno,
 			unsigned char rateindex)
@@ -130,7 +134,7 @@ sisfb_mode_rate_to_ddata(struct SiS_Private *SiS_Pr, unsigned char modeno,
 			(unsigned char *)&SiS_Pr->SiS_CRT1Table[index].CR[0],
 			SiS_Pr->SiS_RefIndex[RRTI].XRes,
 			SiS_Pr->SiS_RefIndex[RRTI].YRes,
-			var, false);
+			var, FALSE);
 
     if(SiS_Pr->SiS_RefIndex[RRTI].Ext_InfoFlag & 0x8000)
        var->sync &= ~FB_SYNC_VERT_HIGH_ACT;
@@ -173,8 +177,9 @@ sisfb_mode_rate_to_ddata(struct SiS_Private *SiS_Pr, unsigned char modeno,
 
     return 1;
 }
+#endif /* Linux >= 2.5 */
 
-bool
+BOOLEAN
 sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno, int *htotal,
 			int *vtotal, unsigned char rateindex)
 {
@@ -183,7 +188,7 @@ sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno, int *ht
     unsigned short RRTI = 0;
     unsigned char  sr_data, cr_data, cr_data2;
 
-    if(!SiSInitPtr(SiS_Pr)) return false;
+    if(!SiSInitPtr(SiS_Pr)) return FALSE;
 
     if(rateindex > 0) rateindex--;
 
@@ -194,7 +199,7 @@ sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno, int *ht
     }
 #endif
 
-    if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return false;
+    if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return FALSE;
 
     RRTI = SiS_Pr->SiS_EModeIDTable[ModeIdIndex].REFindex;
     if(SiS_Pr->SiS_RefIndex[RRTI].Ext_InfoFlag & HaveWideTiming) {
@@ -225,7 +230,7 @@ sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno, int *ht
     if(SiS_Pr->SiS_RefIndex[RRTI].Ext_InfoFlag & InterlaceMode)
        *vtotal *= 2;
 
-    return true;
+    return TRUE;
 }
 
 

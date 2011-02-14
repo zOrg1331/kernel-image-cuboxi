@@ -1,0 +1,52 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Wed, 10 Mar 2010 15:45:49 -0500
+Subject: [net] r8169: fix assignments in backported net_device_ops
+Message-id: <1268235949-11848-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 23535
+O-Subject: [RHEL5.5 PATCH] r8169: fix assignments in the backported
+	net_device_ops
+Bugzilla: 568040
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+BZs:
+#568040 - network does not work with rhel 5.5 snap1 x64 server, xen kernel, and r8169 driver
+
+Description:
+This contains fix for invalid/bad assignments in the net_device_ops
+backport. The tx_timeout, do_ioctl, set_multicast_list and poll_controller
+were not set correctly. This causes strange NIC's behavior, mainly when
+used with Xen. I corrected the net_device_ops backport, but it could be
+better for 5.6 to avoid things like this (NAPI...).
+
+Upstream status:
+N/A
+
+Test status:
+Tested by myself on my local workstation and also on a RHTS machine.
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/r8169_compat.h b/drivers/net/r8169_compat.h
+index ac42f7f..7983d36 100644
+--- a/drivers/net/r8169_compat.h
++++ b/drivers/net/r8169_compat.h
+@@ -157,10 +157,15 @@ static void dev_netdev_ops(struct net_device *netdev,
+ 	netdev->hard_start_xmit = ops->ndo_start_xmit;
+ 	netdev->set_mac_address = ops->ndo_set_mac_address;
+ 	netdev->get_stats = ops->ndo_get_stats;
+-	netdev->set_multicast_list = ops->ndo_set_rx_mode;
++	netdev->set_multicast_list = ops->ndo_set_multicast_list;
+ 	netdev->change_mtu = ops->ndo_change_mtu;
+ 	netdev->vlan_rx_register = ops->ndo_vlan_rx_register;
+ 	netdev->vlan_rx_add_vid = ops->ndo_vlan_rx_add_vid;
++	netdev->tx_timeout = ops->ndo_tx_timeout;
++	netdev->do_ioctl = ops->ndo_do_ioctl;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	netdev->poll_controller = ops->ndo_poll_controller;
++#endif
+ }
+ 
+ static inline int backport_request_irq(unsigned int irq,

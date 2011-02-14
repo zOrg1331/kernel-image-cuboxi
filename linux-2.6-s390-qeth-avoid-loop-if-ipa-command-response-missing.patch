@@ -1,0 +1,111 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 4 Aug 2010 10:02:57 -0400
+Subject: [s390] qeth: avoid loop if ipa command response missing
+Message-id: <1280916181-27024-5-git-send-email-brueckner@redhat.com>
+Patchwork-id: 27374
+O-Subject: [RHEL5.6 PATCH 4/8] [s390x] qeth: avoid loop if ipa command response
+	is missing
+Bugzilla: 619451
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+endless loop in qeth_send_control_data
+
+If qeth issues an ipa command, but for some reasons the
+response never comes back, qeth reaches a timeout. In this
+case the irq_pending flag of the write channel is not reset,
+and the command buffer is not reinitialized.
+
+Reset the irq_pending flag of the write channel in timeout
+handling code, clear the command buffer, clear the list of
+scheduled ipa commands and trigger a recovery. This avoids
+endless looping in case of ipa command timeout.
+
+Bugzilla
+--------
+BZ 619451
+https://bugzilla.redhat.com/show_bug.cgi?id=619451
+
+Upstream status of the patch
+----------------------------
+http://git.kernel.org/?p=linux/kernel/git/davem/net-next-2.6.git;a=commitdiff;h=908abbb5773213288c8ed033c3313440b31cfbf3
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+diff --git a/drivers/s390/net/qeth.h b/drivers/s390/net/qeth.h
+index 1fb19f6..ca7f10f 100644
+--- a/drivers/s390/net/qeth.h
++++ b/drivers/s390/net/qeth.h
+@@ -852,6 +852,7 @@ struct qeth_card {
+ 	struct qeth_osn_info osn_info;
+ 	atomic_t force_alloc_skb;
+ 	struct service_level qeth_service_level;
++	int read_or_write_problem;
+ };
+ 
+ struct qeth_card_list_struct {
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 8513ef8..1344cac 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -1075,6 +1075,7 @@ qeth_setup_card(struct qeth_card *card)
+ 	card->state = CARD_STATE_DOWN;
+ 	card->lan_online = 0;
+ 	card->use_hard_stop = 0;
++	card->read_or_write_problem = 0;
+ 	card->dev = NULL;
+ #ifdef CONFIG_QETH_VLAN
+ 	spin_lock_init(&card->vlanlock);
+@@ -1659,6 +1660,7 @@ qeth_issue_next_read(struct qeth_card *card)
+ 	if (rc) {
+ 		PRINT_ERR("Error in starting next read ccw! rc=%i\n", rc);
+ 		atomic_set(&card->read.irq_pending, 0);
++		card->read_or_write_problem = 1;
+ 		qeth_schedule_recovery(card);
+ 		wake_up(&card->wait_q);
+ 	}
+@@ -1881,6 +1883,10 @@ qeth_send_control_data(struct qeth_card *card, int len,
+ 
+ 	QETH_DBF_TEXT(trace, 2, "sendctl");
+ 
++	if (card->read_or_write_problem) {
++		qeth_release_buffer(iob->channel, iob);
++		return -EIO;
++	}
+ 	reply = qeth_alloc_reply(card);
+ 	if (!reply) {
+ 		PRINT_WARN("Could no alloc qeth_reply!\n");
+@@ -1931,6 +1937,10 @@ qeth_send_control_data(struct qeth_card *card, int len,
+ 			spin_unlock_irqrestore(&reply->card->lock, flags);
+ 			reply->rc = -ETIME;
+ 			atomic_inc(&reply->received);
++			atomic_set(&card->write.irq_pending, 0);
++			qeth_release_buffer(iob->channel, iob);
++			card->write.buf_no = (card->write.buf_no + 1) %
++							QETH_CMD_BUFFER_NO;
+ 			wake_up(&reply->wait_q);
+ 		}
+ 	};
+@@ -2016,6 +2026,10 @@ qeth_send_ipa_cmd(struct qeth_card *card, struct qeth_cmd_buffer *iob,
+ 	qeth_prepare_ipa_cmd(card,iob,prot_type);
+ 	rc = qeth_send_control_data(card, IPA_CMD_LENGTH, iob,
+ 				    reply_cb, reply_param);
++	if (rc == -ETIME) {
++		card->read_or_write_problem = 1;
++		qeth_schedule_recovery(card);
++	}
+ 	return rc;
+ }
+ 
+@@ -6776,6 +6790,7 @@ retry:
+ 		else
+ 			goto retry;
+ 	}
++	card->read_or_write_problem = 0;
+ 	if ((rc = qeth_mpc_initialize(card))){
+ 		QETH_DBF_TEXT_(setup, 2, "5err%d", rc);
+ 		goto out;

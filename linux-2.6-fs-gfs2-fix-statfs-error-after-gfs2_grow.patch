@@ -1,0 +1,68 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Tue, 7 Dec 2010 21:09:05 -0500
+Subject: [fs] gfs2: fix statfs error after gfs2_grow
+Message-id: <927422884.366371291756145492.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 29966
+O-Subject: [RHEL5.7 Patch] fsck.gfs2 reported statfs error after gfs2_grow -
+	bz #660661
+Bugzilla: 660661
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+
+Hi,
+
+This patch is for RHEL5.7 bug #660661.
+
+When you do gfs2_grow it failed to take the very last
+rgrp into account when adding up the new free space due
+to an off-by-one error.  It was not reading the last
+rgrp from the rindex because of a check for ">=" that
+should have been ">".  Therefore, fsck.gfs2 was finding
+(and fixing) the error with the system statfs file.
+
+With the proper ">" check, the GFS2 kernel properly counts
+all the new resource groups and fixes the statfs file
+correctly, so fsck.gfs2 doesn't need to clean it up.
+
+This patch has been submitted upstream and accepted into
+the -nmw (development) git tree.  It was tested on RHEL5
+on system roth-01, where I could easily recreate the failure,
+and it was found to fix the problem.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+commit 4219faf5c4f36c6ff4bc7ab900b6837c86fceb24
+Author: Bob Peterson <rpeterso@redhat.com>
+Date:   Tue Dec 7 14:52:13 2010 -0600
+
+    fsck.gfs2 reported statfs error after gfs2_grow
+
+    When you do gfs2_grow it failed to take the very last
+    rgrp into account when adding up the new free space due
+    to an off-by-one error.  It was not reading the last
+    rgrp from the rindex because of a check for ">=" that
+    should have been ">".  Therefore, fsck.gfs2 was finding
+    (and fixing) an error with the system statfs file.
+
+    rhbz#660661
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 1ab6269..72ce9cc 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -495,7 +495,7 @@ u64 gfs2_ri_total(struct gfs2_sbd *sdp)
+ 	for (rgrps = 0;; rgrps++) {
+ 		loff_t pos = rgrps * sizeof(struct gfs2_rindex);
+ 
+-		if (pos + sizeof(struct gfs2_rindex) >= ip->i_disksize)
++		if (pos + sizeof(struct gfs2_rindex) > ip->i_disksize)
+ 			break;
+ 		error = gfs2_internal_read(ip, &ra_state, buf, &pos,
+ 					   sizeof(struct gfs2_rindex));

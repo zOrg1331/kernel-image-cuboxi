@@ -1,0 +1,87 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 17 Dec 2007 11:10:49 -0500
+Subject: [audit] netmask on xfrm policy configuration changes
+Message-id: 1197907849.6197.10.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] XFRM/Audit: audit netmask on xfrm policy configuration changes
+Bugzilla: 410531
+
+BZ 410531
+
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.25.git;a=commitdiff;h=373e473ddeefcddea6ffd2a2d0bf0d3aa7e8d3e3
+
+Currently the netmask/prefix-length of an IPsec SPD entry is not
+included in
+any of the SPD related audit messages.  This can cause a problem when the
+audit log is examined as the netmask/prefix-length is vital in determining
+what network traffic is affected by a particular SPD entry.  This patch fixes
+this problem by adding two additional fields, "src_prefixlen" and
+"dst_prefixlen", to the SPD audit messages to indicate the source and
+destination netmasks.  These new fields are only included in the audit message
+when the netmask/prefix-length is less than the address length, i.e. the SPD
+entry applies to a network address and not a host address.
+
+[snip]
+
+Signed-off-by: Paul Moore <paul.moore@hp.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Tested on a RHEL5 kernel.  The original author also looked at the patch
+and thought it was correct.  This is not a complete backport of the
+upstream commit as the upstream commit made 3 'cosmetic' changes as well
+which are not needed to fix a bug nor does any of that patch cleanly
+apply since most of the subsystem was rewritten.  I did make one
+cosmetic change to use NIPQUAD_FMT similar to upstream.
+
+Example audit messages from my RHEL5 box:
+type=MAC_IPSEC_DELSPD msg=audit(1197906947.196:192): SPD delete: auid=0 subj=root:system_r:unconfined_t:s0-s0:c0.c1023 src=10.0.0.1 dst=10.0.0.2 res=1
+type=MAC_IPSEC_DELSPD msg=audit(1197906947.196:192): SPD delete: auid=0 subj=root:system_r:unconfined_t:s0-s0:c0.c1023 src=10.0.0.0 src_prefixlen=24 dst=10.0.1.0 dst_prefixlen=24 res=1
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index ee1bd8f..d5e6cd7 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -1528,9 +1528,17 @@ void xfrm_audit_log(uid_t auid, u32 sid, int type, int result,
+ 				saddr.s_addr = x->props.saddr.a4;
+ 				daddr.s_addr = x->id.daddr.a4;
+ 			}
+-			audit_log_format(audit_buf,
+-					 " src=%u.%u.%u.%u dst=%u.%u.%u.%u",
+-					 NIPQUAD(saddr), NIPQUAD(daddr));
++			audit_log_format(audit_buf, " src=" NIPQUAD_FMT,
++					 NIPQUAD(saddr));
++			if (xp && (xp->selector.prefixlen_s != 32))
++				audit_log_format(audit_buf, " src_prefixlen=%d",
++						 xp->selector.prefixlen_s);
++
++			audit_log_format(audit_buf, " dst=" NIPQUAD_FMT,
++					 NIPQUAD(daddr));
++			if (xp && (xp->selector.prefixlen_d != 32))
++				audit_log_format(audit_buf, " dst_prefixlen=%d",
++						 xp->selector.prefixlen_d);
+ 		}
+ 			break;
+ 	case AF_INET6:
+@@ -1547,9 +1555,17 @@ void xfrm_audit_log(uid_t auid, u32 sid, int type, int result,
+ 				memcpy(&daddr6, x->id.daddr.a6,
+ 					sizeof(struct in6_addr));
+ 			}
+-			audit_log_format(audit_buf,
+-					 " src=" NIP6_FMT " dst=" NIP6_FMT,
+-					 NIP6(saddr6), NIP6(daddr6));
++			audit_log_format(audit_buf, " src=" NIP6_FMT,
++					 NIP6(saddr6));
++			if (xp && (xp->selector.prefixlen_s != 128))
++				audit_log_format(audit_buf, " src_prefixlen=%d",
++						 xp->selector.prefixlen_s);
++
++			audit_log_format(audit_buf, " dst=" NIP6_FMT,
++					 NIP6(daddr6));
++			if (xp && (xp->selector.prefixlen_d != 128))
++				audit_log_format(audit_buf, " dst_prefixlen=%d",
++						 xp->selector.prefixlen_d);
+ 		}
+ 		break;
+ 	}

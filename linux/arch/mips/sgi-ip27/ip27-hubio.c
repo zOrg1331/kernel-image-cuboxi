@@ -168,7 +168,7 @@ static void hub_set_piomode(nasid_t nasid)
 }
 
 /*
- * hub_pio_init  -  PIO-related hub initialization
+ * hub_pio_init  -  PIO-related hub initalization
  *
  * @hub:	hubinfo structure for our hub
  */

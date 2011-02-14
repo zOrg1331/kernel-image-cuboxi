@@ -1,0 +1,209 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 19 Feb 2009 17:07:41 +0800
+Subject: [x86] TSC keeps running in C3+
+Message-id: 499D215D.8050306@redhat.com
+O-Subject: [RHEL 5.4 PATCH] bz 474091 TSC keeps running in C3+
+Bugzilla: 474091
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+BZ 474091
+
+Description of problem:
+
+    x86: support always running TSC on Intel CPUs
+
+    Impact: reward non-stop TSCs with good TSC-based clocksources, etc.
+
+    Add support for CPUID_0x80000007_Bit8 on Intel CPUs as well. This bit means
+    that the TSC is invariant with C/P/T states and always runs at constant
+    frequency.
+
+    With Intel CPUs, we have 3 classes
+    * CPUs where TSC runs at constant rate and does not stop n C-states
+    * CPUs where TSC runs at constant rate, but will stop in deep C-states
+    * CPUs where TSC rate will vary based on P/T-states and TSC will stop in
+deep
+      C-states.
+
+    To cover these 3, one feature bit (CONSTANT_TSC) is not enough. So, add a
+    second bit (NONSTOP_TSC). CONSTANT_TSC indicates that the TSC runs at
+    constant frequency irrespective of P/T-states, and NONSTOP_TSC indicates
+    that TSC does not stop in deep C-states.
+
+    CPUID_0x8000000_Bit8 indicates both these feature bit can be set.
+    We still have CONSTANT_TSC _set_ and NONSTOP_TSC _not_set_ on some older
+Intel
+    CPUs, based on model checks. We can use TSC on such CPUs for time, as long
+as
+    those CPUs do not support/enter deep C-states.
+
+Testing status:
+Successfully tested the x86_64 patch on Intel Tylersburg-EP SDV,
+My intel colleague has sucessfully tested the i386 version on
+Tylersburg-EP SDV.
+
+Upstream status:
+
+ 40fb17152c50a69dc304dd632131c2f41281ce44
+
+Brew:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1698914
+
+Please review and Ack
+
+Thanks,
+Luming
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index ff6d06c..fd46f5b 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -222,6 +222,7 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 		c->x86_power = cpuid_edx(0x80000007);
+ 		if (c->x86_power & (1<<8))
+ 			set_bit(X86_FEATURE_CONSTANT_TSC, c->x86_capability);
++                	set_bit(X86_FEATURE_NONSTOP_TSC,c->x86_capability);
+ 	}
+ 
+ #ifdef CONFIG_X86_HT
+diff --git a/arch/i386/kernel/cpu/intel.c b/arch/i386/kernel/cpu/intel.c
+index 5a2e270..80c85ed 100644
+--- a/arch/i386/kernel/cpu/intel.c
++++ b/arch/i386/kernel/cpu/intel.c
+@@ -128,6 +128,9 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ 			set_bit(X86_FEATURE_ARCH_PERFMON, c->x86_capability);
+ 	}
+ 
++	if (cpuid_eax(0x80000000) >= 0x80000007) 
++		c->x86_power = cpuid_edx(0x80000007);
++
+ 	/* SEP CPUID bug: Pentium Pro reports SEP but doesn't have it until model 3 mask 3 */
+ 	if ((c->x86<<8 | c->x86_model<<4 | c->x86_mask) < 0x633)
+ 		clear_bit(X86_FEATURE_SEP, c->x86_capability);
+@@ -195,6 +198,14 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ 	if ((c->x86 == 0xf && c->x86_model >= 0x03) ||
+ 		(c->x86 == 0x6 && c->x86_model >= 0x0e))
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, c->x86_capability);
++        /*
++         * c->x86_power is 8000_0007 edx. Bit 8 is TSC runs at constant rate
++         * with P/T states and does not stop in deep C-states
++         */
++        if (c->x86_power & (1 << 8)) {
++                set_bit(X86_FEATURE_CONSTANT_TSC,c->x86_capability);
++                set_bit(X86_FEATURE_NONSTOP_TSC,c->x86_capability);
++        }
+ }
+ 
+ 
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 4f11f98..478f8a2 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -889,8 +889,10 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 	display_cacheinfo(c);
+ 
+ 	/* c->x86_power is 8000_0007 edx. Bit 8 is constant TSC */
+-	if (c->x86_power & (1<<8))
++	if (c->x86_power & (1<<8)) {
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
++		set_bit(X86_FEATURE_NONSTOP_TSC, &c->x86_capability);
++	}
+ 
+ 	/* Multi core CPU? */
+ 	if (c->extended_cpuid_level >= 0x80000008)
+@@ -994,9 +996,13 @@ static void srat_detect_node(void)
+ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ {
+ 	/* Cache sizes */
+-	unsigned n;
++	unsigned n,dummy;
+ 
+ 	init_intel_cacheinfo(c);
++
++        if (c->extended_cpuid_level >= 0x80000007)
++                cpuid(0x80000007, &dummy, &dummy, &dummy, &c->x86_power);
++
+ 	if (c->cpuid_level > 9 ) {
+ 		unsigned eax = cpuid_eax(10);
+ 		/* Check for version and the number of counters */
+@@ -1021,6 +1027,12 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ 	if ((c->x86 == 0xf && c->x86_model >= 0x03) ||
+ 	    (c->x86 == 0x6 && c->x86_model >= 0x0e))
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
++
++	if (c->x86_power & (1<<8)) {
++		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
++		set_bit(X86_FEATURE_NONSTOP_TSC, &c->x86_capability);
++	}
++
+ 	if (c->x86 == 15)
+ 		set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
+ 	else
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 9ad5528..2d34020 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1049,10 +1049,9 @@ __cpuinit int unsynchronized_tsc(void)
+ 		return 1;
+ #endif
+ 
+-	/* AMD systems with constant TSCs have synchronized clocks */
+-	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
+-		(boot_cpu_has(X86_FEATURE_CONSTANT_TSC)))
+-	return 0;
++	/* AMD or Intel systems with constant TSCs have synchronized clocks */
++	if (boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
++		return 0;
+ 
+ 	/* Most intel systems have synchronized TSCs except for
+ 	   multi node systems */
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index 299734e..afe6d2b 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -362,7 +362,8 @@ static void acpi_processor_idle(void)
+ 
+ #ifdef CONFIG_GENERIC_TIME
+ 		/* TSC halts in C2, so notify users */
+-		mark_tsc_unstable();
++		if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
++			mark_tsc_unstable();
+ #endif
+ 		/* Re-enable interrupts */
+ 		local_irq_enable();
+@@ -416,7 +417,8 @@ static void acpi_processor_idle(void)
+ 
+ #ifdef CONFIG_GENERIC_TIME
+ 		/* TSC halts in C3, so notify users */
+-		mark_tsc_unstable();
++		if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
++			mark_tsc_unstable();
+ #endif
+ 		/* Re-enable interrupts */
+ 		local_irq_enable();
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index dfd126f..f42c0b2 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -74,6 +74,7 @@
+ #define X86_FEATURE_FXSAVE_LEAK (3*32+10) /* FXSAVE leaks FOP/FIP/FOP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+11) /* Intel Architectural PerfMon */
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
++#define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index 6ac3053..310a86f 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -69,6 +69,7 @@
+ #define X86_FEATURE_UP		(3*32+8) /* SMP kernel running on UP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+9) /* Intel Architectural PerfMon */
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
++#define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */

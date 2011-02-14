@@ -1,0 +1,52 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: fix queue_work oops
+Date: Mon, 4 Jun 2007 08:27:27 -0500
+Bugzilla: 242070
+Message-Id: <20070604132727.GA5597@redhat.com>
+Changelog: [dlm] fix queue_work oops
+
+
+bz 242070
+
+This patch clears the user_data of active sockets as part of cleanup.
+This prevents any late-arriving data from trying to add jobs to the work
+queue while we are tidying up.
+
+upstream: gfs2-2.6-nmw.git
+
+Index: linux-rhel51-quilt/fs/dlm/lowcomms.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lowcomms.c	2007-06-08 09:55:54.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/lowcomms.c	2007-06-08 10:23:26.000000000 -0500
+@@ -260,7 +260,7 @@
+ static void lowcomms_data_ready(struct sock *sk, int count_unused)
+ {
+ 	struct connection *con = sock2con(sk);
+-	if (!test_and_set_bit(CF_READ_PENDING, &con->flags))
++	if (con && !test_and_set_bit(CF_READ_PENDING, &con->flags))
+ 		queue_work(recv_workqueue, &con->rwork);
+ }
+ 
+@@ -268,7 +268,7 @@
+ {
+ 	struct connection *con = sock2con(sk);
+ 
+-	if (!test_and_set_bit(CF_WRITE_PENDING, &con->flags))
++	if (con && !test_and_set_bit(CF_WRITE_PENDING, &con->flags))
+ 		queue_work(send_workqueue, &con->swork);
+ }
+ 
+@@ -1399,8 +1399,11 @@
+ 	down(&connections_lock);
+ 	for (i = 0; i <= max_nodeid; i++) {
+ 		con = __nodeid2con(i, 0);
+-		if (con)
++		if (con) {
+ 			con->flags |= 0xFF;
++			if (con->sock)
++				con->sock->sk->sk_user_data = NULL;
++		}
+ 	}
+ 	up(&connections_lock);
+ 
+

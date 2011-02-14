@@ -1,0 +1,135 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:34 -0500
+Subject: [scsi] qla4xxx: update AER support for ISP82XX
+Message-id: <20101130195934.10450.58316.sendpatchset@localhost.localdomain>
+Patchwork-id: 29699
+O-Subject: [RHEL 5.6 PATCH 8/28] qla4xxx: update AER support for ISP82XX
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 7b3595df0e064c8d85ddb6836aaa2af3956fb2ba
+
+Description
+-----------
+
+>From f412ff246a59b8bed077d7fbebaa50618bf27b6b Mon Sep 17 00:00:00 2001
+From: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Date: Sat, 20 Nov 2010 14:21:15 -0800
+Subject: [PATCH 09/29] qla4xxx: update AER support for ISP82XX
+
+* Cleanup qla4xxx_pci_mmio_enabled():
+  don't want to return PCI_ERS_NEED_RESET if firmware hung.
+  IDC will take care of it.
+* Request irq after initialize_adapter() in qla82xx_error_recovery().
+* Return all active commands from qla4xxx_pci_error_detected().
+* Cleanup ql4_def.h & add a macro for ql4_printk.
+
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index c2e452c..6e146fd 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -93,6 +93,12 @@
+ #define BIT_30	0x40000000
+ #define BIT_31	0x80000000
+ 
++/**
++ * Macros to help code, maintain, etc.
++ **/
++#define ql4_printk(level, ha, format, arg...) \
++	dev_printk(level , &((ha)->pdev->dev) , format , ## arg)
++
+ /*
+  * Host adapter default definitions
+  ***********************************/
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index abfcb08..fe53e8d 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -2598,9 +2598,10 @@ qla4xxx_pci_mmio_enabled(struct pci_dev *pdev)
+ 	return PCI_ERS_RESULT_RECOVERED;
+ }
+ 
+-uint32_t qla4_8xxx_error_recovery(struct scsi_qla_host *ha)
++static uint32_t qla4_8xxx_error_recovery(struct scsi_qla_host *ha)
+ {
+ 	uint32_t rval = QLA_ERROR;
++	uint32_t ret = 0;
+ 	int fn;
+ 	struct pci_dev *other_pdev = NULL;
+ 
+@@ -2669,28 +2670,48 @@ uint32_t qla4_8xxx_error_recovery(struct scsi_qla_host *ha)
+ 				QLA82XX_DEV_READY);
+ 			/* clear driver state register */
+ 			qla4_8xxx_wr_32(ha, QLA82XX_CRB_DRV_STATE, 0);
+-			set_bit(AF_ONLINE, &ha->flags);
++			qla4_8xxx_set_drv_active(ha);
++			ret = qla4xxx_request_irqs(ha);
++			if (ret) {
++				ql4_printk(KERN_WARNING, ha, "Failed to "
++				    "reserve interrupt %d already in use.\n",
++				    ha->pdev->irq);
++				rval = QLA_ERROR;
++			} else {
++				ha->isp_ops->enable_intrs(ha);
++				rval = QLA_SUCCESS;
++			}
+ 		}
+ 		qla4_8xxx_idc_unlock(ha);
+ 	} else {
+-			printk(KERN_INFO "scsi%ld: %s: devfn 0x%x is not the "
+-				"reset owner\n", ha->host_no, __func__,
+-				ha->pdev->devfn);
+-			if ((qla4_8xxx_rd_32(ha, QLA82XX_CRB_DEV_STATE) ==
+-							QLA82XX_DEV_READY)) {
+-				clear_bit(AF_FW_RECOVERY, &ha->flags);
+-				/* Firmware has been loaded & started by the
+-				 * first function Initialize the firmware and
+-				 * ddb list
+-				 */
+-				rval = qla4xxx_initialize_adapter(ha,
+-							PRESERVE_DDB_LIST);
+-				if (rval == QLA_SUCCESS)
++		printk(KERN_INFO "scsi%ld: %s: devfn 0x%x is not the "
++			"reset owner\n", ha->host_no, __func__,
++			ha->pdev->devfn);
++		if ((qla4_8xxx_rd_32(ha, QLA82XX_CRB_DEV_STATE) ==
++			QLA82XX_DEV_READY)) {
++			clear_bit(AF_FW_RECOVERY, &ha->flags);
++			/* Firmware has been loaded & started by the
++			 * first function Initialize the firmware and
++			 * ddb list
++			 */
++			rval = qla4xxx_initialize_adapter(ha,
++			    PRESERVE_DDB_LIST);
++			if (rval == QLA_SUCCESS) {
++				ret = qla4xxx_request_irqs(ha);
++				if (ret) {
++					ql4_printk(KERN_WARNING, ha, "Failed to"
++					    " reserve interrupt %d already in"
++					    " use.\n", ha->pdev->irq);
++					rval = QLA_ERROR;
++				} else {
+ 					ha->isp_ops->enable_intrs(ha);
+-				qla4_8xxx_idc_lock(ha);
+-				qla4_8xxx_set_drv_active(ha);
+-				qla4_8xxx_idc_unlock(ha);
++					rval = QLA_SUCCESS;
++				}
+ 			}
++			qla4_8xxx_idc_lock(ha);
++			qla4_8xxx_set_drv_active(ha);
++			qla4_8xxx_idc_unlock(ha);
++		}
+ 	}
+ 	clear_bit(DPC_RESET_ACTIVE, &ha->dpc_flags);
+ 	return rval;

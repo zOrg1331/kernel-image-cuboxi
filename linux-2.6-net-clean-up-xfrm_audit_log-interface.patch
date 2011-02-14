@@ -1,0 +1,103 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 228422 clean up xfrm_audit_log interface
+Date: Wed, 28 Mar 2007 13:44:31 -0400
+Bugzilla: 228422
+Message-Id: <1175103871.13618.90.camel@localhost.localdomain>
+Changelog: [net] clean up xfrm_audit_log interface
+
+
+BZ 228422  (and BZ 222033)
+
+Back for GA we (ok fine, I) rushed in a patch for xfrm_audit_log because
+it was causing a panic when re-establishing a timed out ipsec
+connection.  The patch fixed that panic but was eventually
+rejected/rewritten upstream because it didn't fix the problem for all
+callers of the interface (it can be called from the key code as well as
+ipsec code).  Upstream basically cleaned up the callers so it would not
+be a problem anywhere and added a BUG_ON in case a caller ever gets
+broken in the future.
+
+The original patch for the problem in GA does not fix all of the callers
+but it instead of a BUG_ON just silently returns.  So there is no panic
+but it won't be right.
+
+Although this patch may not be required to stop us from panicing much of
+the followup LSPP patches are based on this patch.  And following
+upstream rather than doing our own thing is always a good thing right?
+To apply this we would need to stop applying patch 21202 in the spec
+file, linux-2.6-xfrm-audit-correct-xfrm-auditing-panic.patch.  This new
+patch has been in use in the LSPP kernel for months now and is upstream
+with no problems.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=13fcfbb0675bf87da694f55dec11cada489a205c
+
+-Eric
+
+Index: linux-2.6.18.noarch/net/key/af_key.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/key/af_key.c
++++ linux-2.6.18.noarch/net/key/af_key.c
+@@ -2285,16 +2285,17 @@ static int pfkey_spddelete(struct sock *
+ 	xp = xfrm_policy_bysel_ctx(pol->sadb_x_policy_dir-1, &sel, tmp.security, 1);
+ 	security_xfrm_policy_free(&tmp);
+ 
+-	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
+-		       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
+-
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+-	err = 0;
++	err = security_xfrm_policy_delete(xp);
+ 
+-	if ((err = security_xfrm_policy_delete(xp)))
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_DELSPD, err ? 0 : 1, xp, NULL);
++
++	if (err)
+ 		goto out;
++
+ 	c.seq = hdr->sadb_msg_seq;
+ 	c.pid = hdr->sadb_msg_pid;
+ 	c.event = XFRM_MSG_DELPOLICY;
+Index: linux-2.6.18.noarch/net/xfrm/xfrm_user.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/xfrm/xfrm_user.c
++++ linux-2.6.18.noarch/net/xfrm/xfrm_user.c
+@@ -1081,12 +1081,14 @@ static int xfrm_get_policy(struct sk_buf
+ 					      MSG_DONTWAIT);
+ 		}
+ 	} else {
+-		if ((err = security_xfrm_policy_delete(xp)) != 0)
+-			goto out;
++		err = security_xfrm_policy_delete(xp);
+ 
+ 		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
+ 			       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
+ 
++		if (err != 0)
++			goto out;
++			
+ 		c.data.byid = p->index;
+ 		c.event = nlh->nlmsg_type;
+ 		c.seq = nlh->nlmsg_seq;
+Index: linux-2.6.18.noarch/net/xfrm/xfrm_policy.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/xfrm/xfrm_policy.c
++++ linux-2.6.18.noarch/net/xfrm/xfrm_policy.c
+@@ -1396,9 +1396,14 @@ void xfrm_audit_log(uid_t auid, u32 sid,
+ 	if ((x == NULL) && (xp == NULL))
+ 		return;
+ 
++	BUG_ON((type == AUDIT_MAC_IPSEC_ADDSA ||
++		type == AUDIT_MAC_IPSEC_DELSA) && !x);
++	BUG_ON((type == AUDIT_MAC_IPSEC_ADDSPD ||
++		type == AUDIT_MAC_IPSEC_DELSPD) && !xp);
++
+ 	audit_buf = audit_log_start(current->audit_context, GFP_ATOMIC, type);
+ 	if (audit_buf == NULL)
+-	return;
++		return;
+ 
+ 	switch(type) {
+ 	case AUDIT_MAC_IPSEC_ADDSA:

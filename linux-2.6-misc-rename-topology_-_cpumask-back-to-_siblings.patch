@@ -1,0 +1,116 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 13 Sep 2010 17:20:49 -0400
+Subject: [misc] rename topology_*_cpumask back to *_siblings
+Message-id: <20100913172049.4907.56433.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28220
+O-Subject: [RHEL5.6 PATCH] topology: rename topology_{thread,
+	core}_cpumask back to *_siblings
+Bugzilla: 633388
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=633388
+
+RHEL5 commit bdc251febfb1c545734ab0729ea4d7872f8774bc
+"[misc] add {thread,core}_siblings_list to /sys" renamed
+topology_core_siblings to topology_core_cpumask and
+topology_thread_siblings to topology_thread_cpumask
+as a side effect.
+
+It caused an unexpected change in the sfc driver which uses
+topology_core_siblings (if it is defined) to adjust the number of
+RX queues.
+
+The renaming might have made sense for staying closer to upstream, but
+in RHEL the macros do not return the same type as in upstream, so the
+same name is not helpful.
+
+Rename the macros back.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2754167
+
+I tested that this does not break
+/sys/devices/system/cpu/cpu*/topology/*_siblings*
+and that the sfc driver creates the right number of queues again (one per CPU
+package; can be checked in /proc/interrupts).
+
+Noticed by Ben Hutchings.
+
+diff --git a/drivers/base/topology.c b/drivers/base/topology.c
+index d1e9766..7907866 100644
+--- a/drivers/base/topology.c
++++ b/drivers/base/topology.c
+@@ -106,10 +106,10 @@ define_one_ro(core_id);
+ #define ref_core_id_attr
+ #endif
+ 
+-#ifdef topology_thread_cpumask
+-define_siblings_show_func(thread_cpumask);
+-define_one_ro_named(thread_siblings, show_thread_cpumask);
+-define_one_ro_named(thread_siblings_list, show_thread_cpumask_list);
++#ifdef topology_thread_siblings
++define_siblings_show_func(thread_siblings);
++define_one_ro(thread_siblings);
++define_one_ro(thread_siblings_list);
+ #define ref_thread_siblings_attr	&attr_thread_siblings.attr,
+ #define ref_thread_siblings_list_attr	&attr_thread_siblings_list.attr,
+ #else
+@@ -117,10 +117,10 @@ define_one_ro_named(thread_siblings_list, show_thread_cpumask_list);
+ #define ref_thread_siblings_list_attr
+ #endif
+ 
+-#ifdef topology_core_cpumask
+-define_siblings_show_func(core_cpumask);
+-define_one_ro_named(core_siblings, show_core_cpumask);
+-define_one_ro_named(core_siblings_list, show_core_cpumask_list);
++#ifdef topology_core_siblings
++define_siblings_show_func(core_siblings);
++define_one_ro(core_siblings);
++define_one_ro(core_siblings_list);
+ #define ref_core_siblings_attr		&attr_core_siblings.attr,
+ #define ref_core_siblings_list_attr	&attr_core_siblings_list.attr,
+ #else
+diff --git a/include/asm-i386/topology.h b/include/asm-i386/topology.h
+index 0dbc5be..9234497 100644
+--- a/include/asm-i386/topology.h
++++ b/include/asm-i386/topology.h
+@@ -30,8 +30,8 @@
+ #ifdef CONFIG_X86_HT
+ #define topology_physical_package_id(cpu)	(cpu_data[cpu].phys_proc_id)
+ #define topology_core_id(cpu)			(cpu_data[cpu].cpu_core_id)
+-#define topology_core_cpumask(cpu)		(cpu_core_map[cpu])
+-#define topology_thread_cpumask(cpu)		(cpu_sibling_map[cpu])
++#define topology_core_siblings(cpu)		(cpu_core_map[cpu])
++#define topology_thread_siblings(cpu)		(cpu_sibling_map[cpu])
+ #endif
+ 
+ #ifdef CONFIG_NUMA
+diff --git a/include/asm-ia64/topology.h b/include/asm-ia64/topology.h
+index 2be14b2..7d12dc6 100644
+--- a/include/asm-ia64/topology.h
++++ b/include/asm-ia64/topology.h
+@@ -110,8 +110,8 @@ void build_cpu_to_node_map(void);
+ #ifdef CONFIG_SMP
+ #define topology_physical_package_id(cpu)	(cpu_data(cpu)->socket_id)
+ #define topology_core_id(cpu)			(cpu_data(cpu)->core_id)
+-#define topology_core_cpumask(cpu)		(cpu_core_map[cpu])
+-#define topology_thread_cpumask(cpu)		(cpu_sibling_map[cpu])
++#define topology_core_siblings(cpu)		(cpu_core_map[cpu])
++#define topology_thread_siblings(cpu)		(cpu_sibling_map[cpu])
+ #define smt_capable() 				(smp_num_siblings > 1)
+ #endif
+ 
+diff --git a/include/asm-x86_64/topology.h b/include/asm-x86_64/topology.h
+index 2d0def8..c38717c 100644
+--- a/include/asm-x86_64/topology.h
++++ b/include/asm-x86_64/topology.h
+@@ -57,8 +57,8 @@ extern int __node_distance(int, int);
+ #ifdef CONFIG_SMP
+ #define topology_physical_package_id(cpu)	(cpu_data[cpu].phys_proc_id)
+ #define topology_core_id(cpu)			(cpu_data[cpu].cpu_core_id)
+-#define topology_core_cpumask(cpu)		(cpu_core_map[cpu])
+-#define topology_thread_cpumask(cpu)		(cpu_sibling_map[cpu])
++#define topology_core_siblings(cpu)		(cpu_core_map[cpu])
++#define topology_thread_siblings(cpu)		(cpu_sibling_map[cpu])
+ #define mc_capable()			(boot_cpu_data.x86_max_cores > 1)
+ #define smt_capable() 			(smp_num_siblings > 1)
+ #endif

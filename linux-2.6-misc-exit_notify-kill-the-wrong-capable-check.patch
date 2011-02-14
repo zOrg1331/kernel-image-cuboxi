@@ -1,0 +1,38 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Thu, 9 Apr 2009 00:47:18 +0200
+Subject: [misc] exit_notify: kill the wrong capable check
+Message-id: 20090408224718.GA4476@redhat.com
+O-Subject: [RHEL-5 PATCH] exit_notify: kill the wrong capable(CAP_KILL) check
+Bugzilla: 494271
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Don Howard <dhoward@redhat.com>
+CVE: CVE-2009-1337
+
+(Trivial backport of upstream (trivial) commit
+ 432870dab85a2f69dc417022646cb9a70acf7f94).
+
+The CAP_KILL check in exit_notify() looks just wrong, kill it.
+
+Whatever logic we have to reset ->exit_signal, the malicious user
+can bypass it if it execs the setuid application before exiting.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index db61e3f..6878408 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -779,9 +779,8 @@ static void exit_notify(struct task_struct *tsk)
+ 	 */
+ 	
+ 	if (tsk->exit_signal != SIGCHLD && tsk->exit_signal != -1 &&
+-	    ( tsk->parent_exec_id != t->self_exec_id  ||
+-	      tsk->self_exec_id != tsk->parent_exec_id)
+-	    && !capable(CAP_KILL))
++	    (tsk->parent_exec_id != t->self_exec_id ||
++	     tsk->self_exec_id != tsk->parent_exec_id))
+ 		tsk->exit_signal = SIGCHLD;
+ 
+ 	if (!tracehook_notify_death(tsk, &noreap, &cookie)

@@ -1,0 +1,142 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Subject: [RHEL-5 Patch 2/2] Update xen paravirt framebuffer to upstream protocol, attempt #2
+Date: Fri, 15 Dec 2006 15:05:40 +0000
+Bugzilla: 218048
+Message-Id: <1166195140.6246.25.camel@sisko.scot.redhat.com>
+Changelog: xen: Update xen paravirt framebuffer to upstream protocol (fixes)
+
+
+Hi,
+
+This is the 2nd posting of the xen PV-FB patch, updated to apply
+cleanly against current RHEL-5 CVS HEAD.  Addresses kernel side of
+blocker bug 218048.  The patch below should be dropped into CVS as
+linux-2.6-xen-pvfb-fixes.patch, and contains purely locking changes
+since Wednesday's four-patch posting, to address the problems identified
+then (mainly the calling of zap_page_range from within a spinlock.)
+Full description of the locking issue already posted on virtualist.
+
+--Stephen
+
+
+--- linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c.~1~	2006-12-15 14:32:32.000000000 +0000
++++ linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c	2006-12-15 14:33:45.000000000 +0000
+@@ -49,8 +49,9 @@ struct xenfb_info
+ 	struct timer_list	refresh;
+ 	int			dirty;
+ 	int			x1, y1, x2, y2;	/* dirty rectangle,
+-						   protected by mm_lock */
+-	spinlock_t		mm_lock;
++						   protected by dirty_lock */
++	spinlock_t		dirty_lock;
++	struct mutex		mm_lock;
+ 	int			nr_pages;
+ 	struct page		**pages;
+ 	struct list_head	mappings; /* protected by mm_lock */
+@@ -114,14 +115,16 @@ static void xenfb_update_screen(struct x
+ 	if (xenfb_queue_full(info))
+ 		return;
+ 
+-	spin_lock_irqsave(&info->mm_lock, flags);
++	mutex_lock(&info->mm_lock);
+ 
++	spin_lock_irqsave(&info->dirty_lock, flags);
+ 	y1 = info->y1;
+ 	y2 = info->y2;
+ 	x1 = info->x1;
+ 	x2 = info->x2;
+ 	info->x1 = info->y1 = INT_MAX;
+ 	info->x2 = info->y2 = 0;
++	spin_unlock_irqrestore(&info->dirty_lock, flags);
+ 
+ 	list_for_each_entry(map, &info->mappings, link) {
+ 		if (!map->faults)
+@@ -131,7 +134,7 @@ static void xenfb_update_screen(struct x
+ 		map->faults = 0;
+ 	}
+ 
+-	spin_unlock_irqrestore(&info->mm_lock, flags);
++	mutex_unlock(&info->mm_lock);
+ 
+ 	xenfb_do_update(info, x1, y1, x2 - x1, y2 - y1);
+ }
+@@ -216,9 +219,9 @@ static void xenfb_refresh(struct xenfb_i
+ {
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&info->mm_lock, flags);
++	spin_lock_irqsave(&info->dirty_lock, flags);
+ 	__xenfb_refresh(info, x1, y1, w, h);
+-	spin_unlock_irqrestore(&info->mm_lock, flags);
++	spin_unlock_irqrestore(&info->dirty_lock, flags);
+ }
+ 
+ static void xenfb_fillrect(struct fb_info *p, const struct fb_fillrect *rect)
+@@ -255,14 +258,13 @@ static void xenfb_vm_close(struct vm_are
+ {
+ 	struct xenfb_mapping *map = vma->vm_private_data;
+ 	struct xenfb_info *info = map->info;
+-	unsigned long flags;
+ 
+-	spin_lock_irqsave(&info->mm_lock, flags);
++	mutex_lock(&info->mm_lock);
+ 	if (atomic_dec_and_test(&map->map_refs)) {
+ 		list_del(&map->link);
+ 		kfree(map);
+ 	}
+-	spin_unlock_irqrestore(&info->mm_lock, flags);
++	mutex_unlock(&info->mm_lock);
+ }
+ 
+ static struct page *xenfb_vm_nopage(struct vm_area_struct *vma,
+@@ -278,7 +280,8 @@ static struct page *xenfb_vm_nopage(stru
+ 	if (pgnr >= info->nr_pages)
+ 		return NOPAGE_SIGBUS;
+ 
+-	spin_lock_irqsave(&info->mm_lock, flags);
++	mutex_lock(&info->mm_lock);
++	spin_lock_irqsave(&info->dirty_lock, flags);
+ 	page = info->pages[pgnr];
+ 	get_page(page);
+ 	map->faults++;
+@@ -288,7 +291,8 @@ static struct page *xenfb_vm_nopage(stru
+ 	if (y2 > info->fb_info->var.yres)
+ 		y2 = info->fb_info->var.yres;
+ 	__xenfb_refresh(info, 0, y1, info->fb_info->var.xres, y2 - y1);
+-	spin_unlock_irqrestore(&info->mm_lock, flags);
++	spin_unlock_irqrestore(&info->dirty_lock, flags);
++	mutex_unlock(&info->mm_lock);
+ 
+ 	if (type)
+ 		*type = VM_FAULT_MINOR;
+@@ -305,7 +309,6 @@ static struct vm_operations_struct xenfb
+ static int xenfb_mmap(struct fb_info *fb_info, struct vm_area_struct *vma)
+ {
+ 	struct xenfb_info *info = fb_info->par;
+-	unsigned long flags;
+ 	struct xenfb_mapping *map;
+ 	int map_pages;
+ 
+@@ -329,9 +332,9 @@ static int xenfb_mmap(struct fb_info *fb
+ 	map->info = info;
+ 	atomic_set(&map->map_refs, 1);
+ 
+-	spin_lock_irqsave(&info->mm_lock, flags);
++	mutex_lock(&info->mm_lock);
+ 	list_add(&map->link, &info->mappings);
+-	spin_unlock_irqrestore(&info->mm_lock, flags);
++	mutex_unlock(&info->mm_lock);
+ 
+ 	vma->vm_ops = &xenfb_vm_ops;
+ 	vma->vm_flags |= (VM_DONTEXPAND | VM_RESERVED);
+@@ -388,7 +391,8 @@ static int __devinit xenfb_probe(struct 
+ 	info->xbdev = dev;
+ 	info->irq = -1;
+ 	info->x1 = info->y1 = INT_MAX;
+-	spin_lock_init(&info->mm_lock);
++	spin_lock_init(&info->dirty_lock);
++	mutex_init(&info->mm_lock);
+ 	init_waitqueue_head(&info->wq);
+ 	init_timer(&info->refresh);
+ 	info->refresh.function = xenfb_timer;
+

@@ -1,0 +1,79 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Tue, 16 Feb 2010 19:13:16 -0500
+Subject: nfs: Bug 548846 - Deadlock in the sunrpc code
+Message-id: <4B7AEE4C.6060008@RedHat.com>
+Patchwork-id: 23289
+O-Subject: [RHEL5] [PATCH] nfs: Bug 548846 - Deadlock in the sunrpc code
+Bugzilla: 548846
+
+Hello,
+
+The following late breaking patches has shown to stop a
+hang in the kernel RPC code used by NFS. The details
+are here: https://bugzilla.redhat.com/show_bug.cgi?id=548846
+but a hang that was reproducible after few hours was no longer
+reproducible after applying these patches...
+
+Please consider for rhel5.5
+
+steved.
+
+commit d6740df98e12a8e49ef3a699dcc1e2913f22c51b
+Author: Neil Brown <neilb@suse.de>
+Date:   Sun Oct 29 22:46:45 2006 -0800
+
+    [PATCH] sunrpc: fix refcounting problems in rpc servers
+
+    A recent patch fixed a problem which would occur when the refcount on an
+    auth_domain reached zero.  This problem has not been reported in practice
+    despite existing in two major kernel releases because the refcount can
+    never reach zero.
+
+    This patch fixes the problems that stop the refcount reaching zero.
+
+    1/ We were adding to the refcount when inserting in the hash table,
+       but only removing from the hashtable when the refcount reached zero.
+       Obviously it never would.  So don't count the implied reference of
+       being in the hash table.
+
+    2/ There are two paths on which a socket can be destroyed.  One called
+       svcauth_unix_info_release().  The other didn't.  So when the other was
+       taken, we can lose a reference to an ip_map which in-turn holds a
+       reference to an auth_domain
+
+       So unify the exit paths into svc_sock_put.  This highlights the fact
+       that svc_delete_socket has slightly odd semantics - it does not drop
+       a reference but probably should.  Fixing this need a bit more
+       thought and testing.
+
+    Signed-off-by: Neil Brown <neilb@suse.de>
+    Cc: Trond Myklebust <trond.myklebust@fys.uio.no>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sunrpc/svcauth.c b/net/sunrpc/svcauth.c
+index 5b28c61..55d1734 100644
+--- a/net/sunrpc/svcauth.c
++++ b/net/sunrpc/svcauth.c
+@@ -126,6 +126,7 @@ void auth_domain_put(struct auth_domain *dom)
+ 	if (atomic_dec_and_lock(&dom->ref.refcount, &auth_domain_lock)) {
+ 		hlist_del(&dom->hash);
+ 		dom->flavour->domain_release(dom);
++		spin_unlock(&auth_domain_lock);
+ 	}
+ }
+ 
+@@ -147,10 +148,8 @@ auth_domain_lookup(char *name, struct auth_domain *new)
+ 			return hp;
+ 		}
+ 	}
+-	if (new) {
++	if (new)
+ 		hlist_add_head(&new->hash, head);
+-		kref_get(&new->ref);
+-	}
+ 	spin_unlock(&auth_domain_lock);
+ 	return new;
+ }

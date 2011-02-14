@@ -1,0 +1,90 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 9 Nov 2007 14:02:44 +0800
+Subject: [ia64] mm: register backing store bug
+Message-id: 4733F804.1060906@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz310801: Register backing store bug
+Bugzilla: 310801
+
+bz310801
+
+Description of problem:
+
+A bug in the register backing store code can interact badly with the address
+space randomisation feature to cause applications to seg-fault.
+
+This is fixed by the attached patch, which has already been submitted back to
+the mainline kernel and is currently included in the 2.6.23-rc8 prepatch.
+
+Version-Release number of selected component (if applicable):
+
+Any IA64 Linux RH version could be effected, though it's unlikely that this
+issue will be noticed until the address space randomisation is turned on.
+
+Upstream status:
+
+It is upstream.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=e8c59c0cf9c91dccfb6367c306d753500d5a0150
+
+[IA64] Failure to grow RBS
+
+There is a bug in the ia64_do_page_fault code that can cause a failure
+to grow the register backing store, or any mapping that is marked as
+VM_GROWSUP if the mapping is the highest mapped area of memory.
+
+When the address accessed is below the first mapping the previous mapping
+is returned as NULL, and this case is handled.  However, when the address
+accessed is above the highest mapping the vma returned is NULL, this
+case is not handled correctly, and it fails to spot that this access
+might require an existing mapping to grow upwards.
+Signed-off-by: Andrew Burgess <andrew@transitive.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+The following back port has been tested by me. I don't see any problem with this patch so far.
+
+Management status:
+The pm_ack, devel_ack, and qa_ack are __not__ set on the bugzilla.
+
+Please review, test and AC.
+
+Thanks,
+Luming
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/mm/fault.c b/arch/ia64/mm/fault.c
+index 14ef7cc..42bc87c 100644
+--- a/arch/ia64/mm/fault.c
++++ b/arch/ia64/mm/fault.c
+@@ -125,11 +125,17 @@ ia64_do_page_fault (unsigned long address, unsigned long isr, struct pt_regs *re
+ 	down_read(&mm->mmap_sem);
+ 
+ 	vma = find_vma_prev(mm, address, &prev_vma);
+-	if (!vma)
++	if (!vma && !prev_vma )
+ 		goto bad_area;
+ 
+-	/* find_vma_prev() returns vma such that address < vma->vm_end or NULL */
+-	if (address < vma->vm_start)
++        /*
++         * find_vma_prev() returns vma such that address < vma->vm_end or NULL
++         *
++         * May find no vma, but could be that the last vm area is the
++         * register backing store that needs to expand upwards, in
++         * this case vma will be null, but prev_vma will ne non-null
++         */
++        if (( !vma && prev_vma ) || (address < vma->vm_start) )
+ 		goto check_expansion;
+ 
+   good_area:
+@@ -184,6 +190,8 @@ ia64_do_page_fault (unsigned long address, unsigned long isr, struct pt_regs *re
+ 
+   check_expansion:
+ 	if (!(prev_vma && (prev_vma->vm_flags & VM_GROWSUP) && (address == prev_vma->vm_end))) {
++		if (!vma)
++			goto bad_area;
+ 		if (!(vma->vm_flags & VM_GROWSDOWN))
+ 			goto bad_area;
+ 		if (REGION_NUMBER(address) != REGION_NUMBER(vma->vm_start)

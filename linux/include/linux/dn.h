@@ -1,8 +1,6 @@
 #ifndef _LINUX_DN_H
 #define _LINUX_DN_H
 
-#include <linux/types.h>
-
 /*
 
 	DECnet Data Structures and Constants
@@ -115,7 +113,7 @@ struct accessdata_dn
  * DECnet logical link information structure
  */
 struct linkinfo_dn {
-        __u16  idn_segsize;    /* Segment size for link */
+        __le16  idn_segsize;    /* Segment size for link */
         __u8   idn_linkstate;  /* Logical link state    */
 };
 

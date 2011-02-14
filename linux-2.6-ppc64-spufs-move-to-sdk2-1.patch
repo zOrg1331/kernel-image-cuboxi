@@ -1,0 +1,2216 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz242763  1/15 [PPC] spufs move to sdk2.1
+Date: Wed, 6 Jun 2007 15:03:50 -0400 (EDT)
+Bugzilla: 242763
+Message-Id: <200706061909.l56J9HSF024585@mail.boston.redhat.com>
+Changelog: [PPC64] spufs move to sdk2.1
+
+
+RHBZ#: 242763 [FEATURE]
+
+Description:
+------------
+This updates the MMIO nvram driver (currently only used by QS20/21) to the
+latest upstream version, thus fixing a bug occuring on QS21 due to misparsed
+addresss informations from the firmware device-tree
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.20 [1].
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=6984ee797a8798128e94ab2447c8ed91f0156eb5
+
+---
+ arch/powerpc/sysdev/mmio_nvram.c |   40 ++++++++++++++++++++++-----------------
+ 1 file changed, 23 insertions(+), 17 deletions(-)
+
+Index: b/arch/powerpc/sysdev/mmio_nvram.c
+===================================================================
+--- a/arch/powerpc/sysdev/mmio_nvram.c
++++ b/arch/powerpc/sysdev/mmio_nvram.c
+@@ -80,33 +80,39 @@ static ssize_t mmio_nvram_get_size(void)
+ int __init mmio_nvram_init(void)
+ {
+ 	struct device_node *nvram_node;
+-	unsigned long *buffer;
+-	int proplen;
+ 	unsigned long nvram_addr;
++	struct resource r;
+ 	int ret;
+ 
+-	ret = -ENODEV;
+ 	nvram_node = of_find_node_by_type(NULL, "nvram");
+-	if (!nvram_node)
++	if (!nvram_node) {
++		printk(KERN_WARNING "nvram: no node found in device-tree\n");
++		return -ENODEV;
++	}
++
++	ret = of_address_to_resource(nvram_node, 0, &r);
++	if (ret) {
++		printk(KERN_WARNING "nvram: failed to get address (err %d)\n",
++		       ret);
+ 		goto out;
+-
+-	ret = -EIO;
+-	buffer = (unsigned long *)get_property(nvram_node, "reg", &proplen);
+-	if (proplen != 2*sizeof(unsigned long))
+-		goto out;
+-
+-	ret = -ENODEV;
+-	nvram_addr = buffer[0];
+-	mmio_nvram_len = buffer[1];
+-	if ( (!mmio_nvram_len) || (!nvram_addr) )
++	}
++	nvram_addr = r.start;
++	mmio_nvram_len = r.end - r.start + 1;
++	if ( (!mmio_nvram_len) || (!nvram_addr) ) {
++		printk(KERN_WARNING "nvram: address or lenght is 0\n");
++		ret = -EIO;
+ 		goto out;
++	}
+ 
+ 	mmio_nvram_start = ioremap(nvram_addr, mmio_nvram_len);
+-	if (!mmio_nvram_start)
++	if (!mmio_nvram_start) {
++		printk(KERN_WARNING "nvram: failed to ioremap\n");
++		ret = -ENOMEM;
+ 		goto out;
++	}
+ 
+-	printk(KERN_INFO "mmio NVRAM, %luk mapped to %p\n",
+-	       mmio_nvram_len >> 10, mmio_nvram_start);
++	printk(KERN_INFO "mmio NVRAM, %luk at 0x%lx mapped to %p\n",
++	       mmio_nvram_len >> 10, nvram_addr, mmio_nvram_start);
+ 
+ 	ppc_md.nvram_read	= mmio_nvram_read;
+ 	ppc_md.nvram_write	= mmio_nvram_write;
+
+Description:
+------------
+This adds a simple hook to MMIO read operations to work around a HW bug in the
+bridge used on QS20 that can cause IDE disk corruption. The cell code fills
+that hook with the appropriate workaround and also disables DMA read prefetch.
+The known impact of that patch is that disk write performance goes down to
+about 3MB/sec, but that's accepted in the cell SDK and currently the only way
+to guarantee data integrity.
+
+This is a simplified version of the code in mainline. Mainline has a more
+complete rework of the IO operations accross the powerpc architecture which
+includes hooking facilities. I decided not to backport the complete rework do
+limit the scope of the patch. Let me know if you prefer a complete backport
+though, in which case I will do it.
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.20 [1].
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=014da7ff47b559e5f0ae3e044b73f0359c08153d
+
+---
+ arch/powerpc/platforms/cell/Makefile         |    3 
+ arch/powerpc/platforms/cell/io-workarounds.c |  202 +++++++++++++++++++++++++++
+ include/asm-powerpc/eeh.h                    |   26 +++
+ 3 files changed, 230 insertions(+), 1 deletion(-)
+
+Index: b/include/asm-powerpc/eeh.h
+===================================================================
+--- a/include/asm-powerpc/eeh.h
++++ b/include/asm-powerpc/eeh.h
+@@ -29,6 +29,17 @@ struct pci_dev;
+ struct pci_bus;
+ struct device_node;
+ 
++#ifdef CONFIG_PPC_CELL_NATIVE
++extern void (*ppc_mmio_read_fixup)(const volatile void __iomem *addr);
++static inline void mmio_read_fixup(const volatile void __iomem *addr)
++{
++	if (ppc_mmio_read_fixup)
++		ppc_mmio_read_fixup(addr);
++}
++#else
++define mmio_read_fixup(addr)	do { } while(0)
++#endif
++
+ #ifdef CONFIG_EEH
+ 
+ extern int eeh_subsystem_enabled;
+@@ -116,6 +127,7 @@ static inline void eeh_remove_bus_device
+ static inline u8 eeh_readb(const volatile void __iomem *addr)
+ {
+ 	u8 val = in_8(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u8))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -128,6 +140,7 @@ static inline void eeh_writeb(u8 val, vo
+ static inline u16 eeh_readw(const volatile void __iomem *addr)
+ {
+ 	u16 val = in_le16(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u16))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -139,6 +152,7 @@ static inline void eeh_writew(u16 val, v
+ static inline u16 eeh_raw_readw(const volatile void __iomem *addr)
+ {
+ 	u16 val = in_be16(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u16))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -151,6 +165,7 @@ static inline void eeh_raw_writew(u16 va
+ static inline u32 eeh_readl(const volatile void __iomem *addr)
+ {
+ 	u32 val = in_le32(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u32))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -162,6 +177,7 @@ static inline void eeh_writel(u32 val, v
+ static inline u32 eeh_raw_readl(const volatile void __iomem *addr)
+ {
+ 	u32 val = in_be32(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u32))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -174,6 +190,7 @@ static inline void eeh_raw_writel(u32 va
+ static inline u64 eeh_readq(const volatile void __iomem *addr)
+ {
+ 	u64 val = in_le64(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u64))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -185,6 +202,7 @@ static inline void eeh_writeq(u64 val, v
+ static inline u64 eeh_raw_readq(const volatile void __iomem *addr)
+ {
+ 	u64 val = in_be64(addr);
++	mmio_read_fixup(addr);
+ 	if (EEH_POSSIBLE_ERROR(val, u64))
+ 		return eeh_check_failure(addr, val);
+ 	return val;
+@@ -254,6 +272,8 @@ static inline void eeh_memcpy_fromio(voi
+ 	}
+ 	__asm__ __volatile__ ("sync" : : : "memory");
+ 
++	mmio_read_fixup(src);
++
+ 	/* Look for ffff's here at dest[n].  Assume that at least 4 bytes
+ 	 * were copied. Check all four bytes.
+ 	 */
+@@ -296,6 +316,7 @@ static inline u8 eeh_inb(unsigned long p
+ {
+ 	u8 val;
+ 	val = in_8((u8 __iomem *)(port+pci_io_base));
++	mmio_read_fixup((u8 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR(val, u8))
+ 		return eeh_check_failure((void __iomem *)(port), val);
+ 	return val;
+@@ -310,6 +331,7 @@ static inline u16 eeh_inw(unsigned long 
+ {
+ 	u16 val;
+ 	val = in_le16((u16 __iomem *)(port+pci_io_base));
++	mmio_read_fixup((u16 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR(val, u16))
+ 		return eeh_check_failure((void __iomem *)(port), val);
+ 	return val;
+@@ -324,6 +346,7 @@ static inline u32 eeh_inl(unsigned long 
+ {
+ 	u32 val;
+ 	val = in_le32((u32 __iomem *)(port+pci_io_base));
++	mmio_read_fixup((u32 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR(val, u32))
+ 		return eeh_check_failure((void __iomem *)(port), val);
+ 	return val;
+@@ -338,6 +361,7 @@ static inline void eeh_outl(u32 val, uns
+ static inline void eeh_insb(unsigned long port, void * buf, int ns)
+ {
+ 	_insb((u8 __iomem *)(port+pci_io_base), buf, ns);
++	mmio_read_fixup((u8 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR((*(((u8*)buf)+ns-1)), u8))
+ 		eeh_check_failure((void __iomem *)(port), *(u8*)buf);
+ }
+@@ -345,6 +369,7 @@ static inline void eeh_insb(unsigned lon
+ static inline void eeh_insw_ns(unsigned long port, void * buf, int ns)
+ {
+ 	_insw_ns((u16 __iomem *)(port+pci_io_base), buf, ns);
++	mmio_read_fixup((u16 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR((*(((u16*)buf)+ns-1)), u16))
+ 		eeh_check_failure((void __iomem *)(port), *(u16*)buf);
+ }
+@@ -352,6 +377,7 @@ static inline void eeh_insw_ns(unsigned 
+ static inline void eeh_insl_ns(unsigned long port, void * buf, int nl)
+ {
+ 	_insl_ns((u32 __iomem *)(port+pci_io_base), buf, nl);
++	mmio_read_fixup((u32 __iomem *)(port+pci_io_base));
+ 	if (EEH_POSSIBLE_ERROR((*(((u32*)buf)+nl-1)), u32))
+ 		eeh_check_failure((void __iomem *)(port), *(u32*)buf);
+ }
+Index: b/arch/powerpc/platforms/cell/Makefile
+===================================================================
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -1,5 +1,6 @@
+ obj-$(CONFIG_PPC_CELL_NATIVE)		+= interrupt.o iommu.o setup.o \
+-					   cbe_regs.o spider-pic.o pervasive.o
++					   cbe_regs.o spider-pic.o pervasive.o \
++					   io-workarounds.o
+ obj-$(CONFIG_CBE_RAS)			+= ras.o
+ 
+ ifeq ($(CONFIG_SMP),y)
+Index: b/arch/powerpc/platforms/cell/io-workarounds.c
+===================================================================
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/io-workarounds.c
+@@ -0,0 +1,202 @@
++/*
++ *  Copyright (C) 2006 Benjamin Herrenschmidt <benh@kernel.crashing.org>
++ *		       IBM, Corp.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++#undef DEBUG
++
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/pci.h>
++#include <asm/io.h>
++#include <asm/machdep.h>
++#include <asm/pci-bridge.h>
++#include <asm/ppc-pci.h>
++
++void (*ppc_mmio_read_fixup)(const volatile void __iomem *addr);
++EXPORT_SYMBOL(ppc_mmio_read_fixup);
++
++#define SPIDER_PCI_REG_BASE		0xd000
++#define SPIDER_PCI_VCI_CNTL_STAT	0x0110
++#define SPIDER_PCI_DUMMY_READ		0x0810
++#define SPIDER_PCI_DUMMY_READ_BASE	0x0814
++
++/* Undefine that to re-enable bogus prefetch
++ *
++ * Without that workaround, the chip will do bogus prefetch past
++ * page boundary from system memory. This setting will disable that,
++ * though the documentation is unclear as to the consequences of doing
++ * so, either purely performances, or possible misbehaviour... It's not
++ * clear wether the chip can handle unaligned accesses at all without
++ * prefetching enabled.
++ *
++ * For now, things appear to be behaving properly with that prefetching
++ * disabled and IDE, possibly because IDE isn't doing any unaligned
++ * access.
++ */
++#define SPIDER_DISABLE_PREFETCH
++
++#define MAX_SPIDERS	3
++
++static struct spider_pci_bus {
++	void __iomem	*regs;
++	unsigned long	mmio_start;
++	unsigned long	mmio_end;
++	unsigned long	pio_vstart;
++	unsigned long	pio_vend;
++} spider_pci_busses[MAX_SPIDERS];
++static int spider_pci_count;
++
++static struct spider_pci_bus *spider_pci_find(unsigned long vaddr,
++					      unsigned long paddr)
++{
++	int i;
++
++	for (i = 0; i < spider_pci_count; i++) {
++		struct spider_pci_bus *bus = &spider_pci_busses[i];
++		if (paddr && paddr >= bus->mmio_start && paddr < bus->mmio_end)
++			return bus;
++		if (vaddr && vaddr >= bus->pio_vstart && vaddr < bus->pio_vend)
++			return bus;
++	}
++	return NULL;
++}
++
++static void spider_io_flush(const volatile void __iomem *addr)
++{
++	struct spider_pci_bus *bus;
++	unsigned long vaddr, paddr;
++	pte_t *ptep;
++
++	/* Fixup physical address */
++	vaddr = (unsigned long)addr;
++
++	/* Check if it's in allowed range for  PIO */
++	if (vaddr < PHBS_IO_BASE || vaddr >= IMALLOC_BASE)
++		return;
++
++	/* Try to find a PTE. If not, clear the paddr, we'll do
++	 * a vaddr only lookup (PIO only)
++	 */
++	ptep = find_linux_pte(init_mm.pgd, vaddr);
++	if (ptep == NULL)
++		paddr = 0;
++	else
++		paddr = pte_pfn(*ptep) << PAGE_SHIFT;
++
++	bus = spider_pci_find(vaddr, paddr);
++	if (bus == NULL)
++		return;
++
++	/* Now do the workaround
++	 */
++	(void)in_be32(bus->regs + SPIDER_PCI_DUMMY_READ);
++}
++
++static void __init spider_pci_setup_chip(struct spider_pci_bus *bus)
++{
++#ifdef SPIDER_DISABLE_PREFETCH
++	u32 val = in_be32(bus->regs + SPIDER_PCI_VCI_CNTL_STAT);
++	pr_debug(" PVCI_Control_Status was 0x%08x\n", val);
++	out_be32(bus->regs + SPIDER_PCI_VCI_CNTL_STAT, val | 0x8);
++#endif
++
++	/* Configure the dummy address for the workaround */
++	out_be32(bus->regs + SPIDER_PCI_DUMMY_READ_BASE, 0x80000000);
++}
++
++static void __init spider_pci_add_one(struct pci_controller *phb)
++{
++	struct spider_pci_bus *bus = &spider_pci_busses[spider_pci_count];
++	struct device_node *np = phb->arch_data;
++	struct resource rsrc;
++	void __iomem *regs;
++
++	if (spider_pci_count >= MAX_SPIDERS) {
++		printk(KERN_ERR "Too many spider bridges, workarounds"
++		       " disabled for %s\n", np->full_name);
++		return;
++	}
++
++	/* Get the registers for the beast */
++	if (of_address_to_resource(np, 0, &rsrc)) {
++		printk(KERN_ERR "Failed to get registers for spider %s"
++		       " workarounds disabled\n", np->full_name);
++		return;
++	}
++
++	/* Mask out some useless bits in there to get to the base of the
++	 * spider chip
++	 */
++	rsrc.start &= ~0xfffffffful;
++
++	/* Map them */
++	regs = ioremap(rsrc.start + SPIDER_PCI_REG_BASE, 0x1000);
++	if (regs == NULL) {
++		printk(KERN_ERR "Failed to map registers for spider %s"
++		       " workarounds disabled\n", np->full_name);
++		return;
++	}
++
++	spider_pci_count++;
++
++	/* We assume spiders only have one MMIO resource */
++	bus->mmio_start = phb->mem_resources[0].start;
++	bus->mmio_end = phb->mem_resources[0].end + 1;
++
++	bus->pio_vstart = (unsigned long)phb->io_base_virt;
++	bus->pio_vend = bus->pio_vstart + phb->pci_io_size;
++
++	bus->regs = regs;
++
++	printk(KERN_INFO "PCI: Spider MMIO workaround for %s\n",np->full_name);
++
++	pr_debug(" mmio (P) = 0x%016lx..0x%016lx\n",
++		 bus->mmio_start, bus->mmio_end);
++	pr_debug("  pio (V) = 0x%016lx..0x%016lx\n",
++		 bus->pio_vstart, bus->pio_vend);
++	pr_debug(" regs (P) = 0x%016lx (V) = 0x%p\n",
++		 rsrc.start + SPIDER_PCI_REG_BASE, bus->regs);
++
++	spider_pci_setup_chip(bus);
++}
++
++static int __init spider_pci_workaround_init(void)
++{
++	struct pci_controller *phb;
++
++	if (!machine_is(cell))
++		return 0;
++
++	/* Find spider bridges. We assume they have been all probed
++	 * in setup_arch(). If that was to change, we would need to
++	 * update this code to cope with dynamically added busses
++	 */
++	list_for_each_entry(phb, &hose_list, list_node) {
++		struct device_node *np = phb->arch_data;
++		const char *model = get_property(np, "model", NULL);
++
++		/* If no model property or name isn't exactly "pci", skip */
++		if (model == NULL || strcmp(np->name, "pci"))
++			continue;
++		/* If model is not "Spider", skip */
++		if (strcmp(model, "Spider"))
++			continue;
++		spider_pci_add_one(phb);
++	}
++
++	/* No Spider PCI found, exit */
++	if (spider_pci_count == 0)
++		return 0;
++
++	/* Setup IO callbacks. We only setup MMIO reads. PIO reads will
++	 * fallback to MMIO reads (though without a token, thus slower)
++	 */
++	ppc_mmio_read_fixup = spider_io_flush;
++
++	return 0;
++}
++arch_initcall(spider_pci_workaround_init);
+
+Description:
+------------
+OF serial driver for qs21 console
+
+serial console support for final malta firmware doesn't go through RTAS anymore,
+but the OF serial driver is missing (that change was done after the initial
+january backport). Patch for that coming now.
+
+This patch adds the of_platform_serial driver allowing 8250 compatible UARTs to
+be probed from the device-tree automatically. This enables the serial ports in
+native mode on qs21. This patch is already upstream.
+
+ === Note that CONFIG_SERIAL_OF_PLATFORM needs to be enabled (Y) now ===
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.21 [1].
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=8d38a5b2fab1397d35ba1c92828a91b77ce9f865
+
+---
+ arch/powerpc/kernel/legacy_serial.c |   15 +++
+ drivers/serial/Kconfig              |   10 ++
+ drivers/serial/Makefile             |    1 
+ drivers/serial/of_serial.c          |  143 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 169 insertions(+)
+
+
+This can be used for serial ports that are connected to an
+OF platform bus but are not autodetected by the lecacy
+serial support.
+It will automatically take over devices that come from the
+legacy serial detection, which usually is only one device.
+
+In some cases, rtas may be set up to use the serial port
+in the firmware, which allows easier debugging before probing
+the serial ports. In this case, the "used-by-rtas" property
+must be set by the firmware. This patch also adds code to the
+legacy serial driver to check for this.
+
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Index: b/drivers/serial/Makefile
+===================================================================
+--- a/drivers/serial/Makefile
++++ b/drivers/serial/Makefile
+@@ -56,3 +56,4 @@ obj-$(CONFIG_SERIAL_SGI_IOC4) += ioc4_se
+ obj-$(CONFIG_SERIAL_SGI_IOC3) += ioc3_serial.o
+ obj-$(CONFIG_SERIAL_AT91) += at91_serial.o
+ obj-$(CONFIG_SERIAL_NETX) += netx-serial.o
++obj-$(CONFIG_SERIAL_OF_PLATFORM) += of_serial.o
+Index: b/drivers/serial/of_serial.c
+===================================================================
+--- /dev/null
++++ b/drivers/serial/of_serial.c
+@@ -0,0 +1,143 @@
++/*
++ *  Serial Port driver for Open Firmware platform devices
++ *
++ *    Copyright (C) 2006 Arnd Bergmann <arnd@arndb.de>, IBM Corp.
++ *
++ *  This program is free software; you can redistribute it and/or
++ *  modify it under the terms of the GNU General Public License
++ *  as published by the Free Software Foundation; either version
++ *  2 of the License, or (at your option) any later version.
++ *
++ */
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/serial_core.h>
++#include <linux/serial_8250.h>
++
++#include <asm/of_device.h>
++#include <asm/prom.h>
++
++/*
++ * Fill a struct uart_port for a given device node
++ */
++static int __devinit of_platform_serial_setup(struct of_device *ofdev,
++					int type, struct uart_port *port)
++{
++	struct resource resource;
++	struct device_node *np = ofdev->node;
++	const unsigned int *clk, *spd;
++	int ret;
++
++	memset(port, 0, sizeof *port);
++	spd = get_property(np, "current-speed", NULL);
++	clk = get_property(np, "clock-frequency", NULL);
++	if (!clk) {
++		dev_warn(&ofdev->dev, "no clock-frequency property set\n");
++		return -ENODEV;
++	}
++
++	ret = of_address_to_resource(np, 0, &resource);
++	if (ret) {
++		dev_warn(&ofdev->dev, "invalid address\n");
++		return ret;
++	}
++
++	spin_lock_init(&port->lock);
++	port->mapbase = resource.start;
++	port->irq = irq_of_parse_and_map(np, 0);
++	port->iotype = UPIO_MEM;
++	port->type = type;
++	port->uartclk = *clk;
++	port->flags = UPF_SHARE_IRQ | UPF_BOOT_AUTOCONF | UPF_IOREMAP;
++	port->dev = &ofdev->dev;
++	port->custom_divisor = *clk / (16 * (*spd));
++
++	return 0;
++}
++
++/*
++ * Try to register a serial port
++ */
++static int __devinit of_platform_serial_probe(struct of_device *ofdev,
++						const struct of_device_id *id)
++{
++	struct uart_port port;
++	int port_type;
++	int ret;
++
++	if (of_find_property(ofdev->node, "used-by-rtas", NULL))
++		return -EBUSY;
++
++	port_type = (unsigned long)id->data;
++	ret = of_platform_serial_setup(ofdev, port_type, &port);
++	if (ret)
++		goto out;
++
++	switch (port_type) {
++	case PORT_UNKNOWN:
++		dev_info(&ofdev->dev, "Unknown serial port found, "
++			"attempting to use 8250 driver\n");
++		/* fallthrough */
++	case PORT_8250 ... PORT_MAX_8250:
++		ret = serial8250_register_port(&port);
++		break;
++	default:
++		/* need to add code for these */
++		ret = -ENODEV;
++		break;
++	}
++	if (ret < 0)
++		goto out;
++
++	ofdev->dev.driver_data = (void *)(unsigned long)ret;
++	return 0;
++out:
++	irq_dispose_mapping(port.irq);
++	return ret;
++}
++
++/*
++ * Release a line
++ */
++static int of_platform_serial_remove(struct of_device *ofdev)
++{
++	int line = (unsigned long)ofdev->dev.driver_data;
++	serial8250_unregister_port(line);
++	return 0;
++}
++
++/*
++ * A few common types, add more as needed.
++ */
++static struct of_device_id __devinitdata of_platform_serial_table[] = {
++	{ .type = "serial", .compatible = "ns8250",   .data = (void *)PORT_8250, },
++	{ .type = "serial", .compatible = "ns16450",  .data = (void *)PORT_16450, },
++	{ .type = "serial", .compatible = "ns16550",  .data = (void *)PORT_16550, },
++	{ .type = "serial", .compatible = "ns16750",  .data = (void *)PORT_16750, },
++	{ .type = "serial",			      .data = (void *)PORT_UNKNOWN, },
++	{ /* end of list */ },
++};
++
++static struct of_platform_driver __devinitdata of_platform_serial_driver = {
++	.owner = THIS_MODULE,
++	.name = "of_serial",
++	.probe = of_platform_serial_probe,
++	.remove = of_platform_serial_remove,
++	.match_table = of_platform_serial_table,
++};
++
++static int __init of_platform_serial_init(void)
++{
++	return of_register_platform_driver(&of_platform_serial_driver);
++}
++module_init(of_platform_serial_init);
++
++static void __exit of_platform_serial_exit(void)
++{
++	return of_unregister_platform_driver(&of_platform_serial_driver);
++};
++module_exit(of_platform_serial_exit);
++
++MODULE_AUTHOR("Arnd Bergmann <arnd@arndb.de>");
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Serial Port driver for Open Firmware platform devices");
+Index: b/drivers/serial/Kconfig
+===================================================================
+--- a/drivers/serial/Kconfig
++++ b/drivers/serial/Kconfig
+@@ -960,4 +960,14 @@ config SERIAL_NETX_CONSOLE
+ 	  If you have enabled the serial port on the Motorola IMX
+ 	  CPU you can make it the console by answering Y to this option.
+ 
++config SERIAL_OF_PLATFORM
++	tristate "Serial port on Open Firmware platform bus"
++	depends on PPC_OF
++	depends on SERIAL_8250
++	help
++	  If you have a PowerPC based system that has serial ports
++	  on a platform specific bus, you should enable this option.
++	  Currently, only 8250 compatible ports are supported, but
++	  others can easily be added.
++
+ endmenu
+Index: b/arch/powerpc/kernel/legacy_serial.c
+===================================================================
+--- a/arch/powerpc/kernel/legacy_serial.c
++++ b/arch/powerpc/kernel/legacy_serial.c
+@@ -123,6 +123,10 @@ static int __init add_legacy_soc_port(st
+ 	if (get_property(np, "clock-frequency", NULL) == NULL)
+ 		return -1;
+ 
++	/* if rtas uses this device, don't try to use it as well */
++	if (get_property(np, "used-by-rtas", NULL) != NULL)
++		return -1;
++
+ 	/* Get the address */
+ 	addrp = of_get_address(soc_dev, 0, NULL, NULL);
+ 	if (addrp == NULL)
+@@ -333,6 +337,17 @@ void __init find_legacy_serial_ports(voi
+ 		of_node_put(tsi);
+ 	}
+ 
++	/* First fill our array with opb bus ports */
++	for (np = NULL; (np = of_find_compatible_node(np, "serial", "ns16750")) != NULL;) {
++		struct device_node *opb = of_get_parent(np);
++		if (opb && !strcmp(opb->type, "opb")) {
++			index = add_legacy_soc_port(np, np);
++			if (index >= 0 && np == stdout)
++				legacy_serial_console = index;
++		}
++		of_node_put(opb);
++	}
++
+ #ifdef CONFIG_PCI
+ 	/* Next, try to locate PCI ports */
+ 	for (np = NULL; (np = of_find_all_nodes(np));) {
+
+Description:
+------------
+The patch submitted with subject "[RHEL 5.1 FEATURE] bz #228099 9/12 PPC: Cell
+Platform Base kernel support" [1] inadvertently removes an export of a symbol
+used by the powermac sound driver (which is enabled in RHEL5). This restores
+the missing symbol.
+
+Upstream Status:
+----------------
+Not applicable.
+
+-- 
+[1] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-April/msg00360.html
+
+--- 
+
+ arch/powerpc/kernel/of_device.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Index: b/arch/powerpc/kernel/of_device.c
+===================================================================
+--- a/arch/powerpc/kernel/of_device.c
++++ b/arch/powerpc/kernel/of_device.c
+@@ -147,6 +147,7 @@ void of_device_unregister(struct of_devi
+ }
+ 
+ EXPORT_SYMBOL(of_match_device);
++EXPORT_SYMBOL(of_device_register);
+ EXPORT_SYMBOL(of_device_unregister);
+ EXPORT_SYMBOL(of_dev_get);
+ EXPORT_SYMBOL(of_dev_put);
+
+Description:
+------------
+Generic DCR infrastructure updates/fixes
+
+This brings the code provided by the previous "Generic DCR infrastructure"
+patch up to date with the current upstream version which had a few bug fixed
+since the backport was done.
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.21 [1-3].
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c91ef5986185c044a853d990670e3f7ce22f2991
+[2] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=a2c70211fa072f4076f0e59f909b69105f69072e
+[3] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=190a4408ecb577391ea5fbd1f90148a6992a5756
+
+---
+ arch/powerpc/kernel/ppc_ksyms.c  |    1 +
+ arch/powerpc/sysdev/dcr.c        |    2 +-
+ arch/ppc/kernel/ppc_ksyms.c      |    1 +
+ include/asm-powerpc/dcr-native.h |    4 ++--
+ include/asm-powerpc/dcr.h        |    1 +
+ include/asm-ppc/ibm4xx.h         |    1 +
+ include/asm-ppc/reg_booke.h      |    2 --
+ 7 files changed, 7 insertions(+), 5 deletions(-)
+
+Index: b/arch/powerpc/kernel/ppc_ksyms.c
+===================================================================
+--- a/arch/powerpc/kernel/ppc_ksyms.c
++++ b/arch/powerpc/kernel/ppc_ksyms.c
+@@ -44,6 +44,7 @@
+ #include <asm/btext.h>
+ #include <asm/div64.h>
+ #include <asm/signal.h>
++#include <asm/dcr.h>
+ 
+ #ifdef  CONFIG_8xx
+ #include <asm/commproc.h>
+Index: b/arch/ppc/kernel/ppc_ksyms.c
+===================================================================
+--- a/arch/ppc/kernel/ppc_ksyms.c
++++ b/arch/ppc/kernel/ppc_ksyms.c
+@@ -43,6 +43,7 @@
+ #include <asm/div64.h>
+ #include <asm/xmon.h>
+ #include <asm/signal.h>
++#include <asm/dcr.h>
+ 
+ #ifdef  CONFIG_8xx
+ #include <asm/commproc.h>
+Index: b/include/asm-powerpc/dcr.h
+===================================================================
+--- a/include/asm-powerpc/dcr.h
++++ b/include/asm-powerpc/dcr.h
+@@ -33,6 +33,7 @@
+  * base from the device-tree
+  */
+ #ifdef CONFIG_PPC_MERGE
++struct device_node;
+ extern unsigned int dcr_resource_start(struct device_node *np,
+ 				       unsigned int index);
+ extern unsigned int dcr_resource_len(struct device_node *np,
+Index: b/include/asm-ppc/ibm4xx.h
+===================================================================
+--- a/include/asm-ppc/ibm4xx.h
++++ b/include/asm-ppc/ibm4xx.h
+@@ -15,6 +15,7 @@
+ #define __ASM_IBM4XX_H__
+ 
+ #include <asm/types.h>
++#include <asm/dcr.h>
+ 
+ #ifdef CONFIG_40x
+ 
+Index: b/include/asm-ppc/reg_booke.h
+===================================================================
+--- a/include/asm-ppc/reg_booke.h
++++ b/include/asm-ppc/reg_booke.h
+@@ -9,8 +9,6 @@
+ #ifndef __ASM_PPC_REG_BOOKE_H__
+ #define __ASM_PPC_REG_BOOKE_H__
+ 
+-#include <asm/dcr.h>
+-
+ #ifndef __ASSEMBLY__
+ /* Performance Monitor Registers */
+ #define mfpmr(rn)	({unsigned int rval; \
+Index: b/include/asm-powerpc/dcr-native.h
+===================================================================
+--- a/include/asm-powerpc/dcr-native.h
++++ b/include/asm-powerpc/dcr-native.h
+@@ -26,8 +26,8 @@ typedef struct {} dcr_host_t;
+ 
+ #define DCR_MAP_OK(host)	(1)
+ 
+-#define dcr_map(dev, dcr_n, dcr_c)	{}
+-#define dcr_unmap(host, dcr_n, dcr_c)	{}
++#define dcr_map(dev, dcr_n, dcr_c)	((dcr_host_t){})
++#define dcr_unmap(host, dcr_n, dcr_c)	do {} while (0)
+ #define dcr_read(host, dcr_n)		mfdcr(dcr_n)
+ #define dcr_write(host, dcr_n, value)	mtdcr(dcr_n, value)
+ 
+Index: b/arch/powerpc/sysdev/dcr.c
+===================================================================
+--- a/arch/powerpc/sysdev/dcr.c
++++ b/arch/powerpc/sysdev/dcr.c
+@@ -129,7 +129,7 @@ void dcr_unmap(dcr_host_t host, unsigned
+ 
+ 	if (h.token == NULL)
+ 		return;
+-	h.token -= dcr_n * h.stride;
++	h.token += dcr_n * h.stride;
+ 	iounmap(h.token);
+ 	h.token = NULL;
+ }
+
+Description:
+------------
+This patch adds the of_iomap helper function for use by drivers. It's a
+backport of a function that is in the powerpc git tree and about to be merged
+in 2.6.22. It's a simple helper combining two existing functions in one to
+simplify driver code.
+
+Upstream Status:
+----------------
+This code is expected in upstream in 2.6.22-rc1 [1].
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c3e8011ad1bf4791a9c6d70ac1b377df93a9f5af
+
+---
+ arch/powerpc/kernel/prom_parse.c |   12 ++++++++++++
+ include/asm-powerpc/prom.h       |    9 +++++++++
+ 2 files changed, 21 insertions(+)
+
+Index: b/arch/powerpc/kernel/prom_parse.c
+===================================================================
+--- a/arch/powerpc/kernel/prom_parse.c
++++ b/arch/powerpc/kernel/prom_parse.c
+@@ -978,3 +978,15 @@ int of_irq_map_pci(struct pci_dev *pdev,
+ }
+ EXPORT_SYMBOL_GPL(of_irq_map_pci);
+ #endif /* CONFIG_PCI */
++
++void __iomem *of_iomap(struct device_node *np, int index)
++{
++	struct resource res;
++
++	if (of_address_to_resource(np, index, &res))
++		return NULL;
++
++	return ioremap(res.start, 1 + res.end - res.start);
++}
++EXPORT_SYMBOL(of_iomap);
++
+Index: b/include/asm-powerpc/prom.h
+===================================================================
+--- a/include/asm-powerpc/prom.h
++++ b/include/asm-powerpc/prom.h
+@@ -321,6 +321,15 @@ extern int of_irq_map_one(struct device_
+ struct pci_dev;
+ extern int of_irq_map_pci(struct pci_dev *pdev, struct of_irq *out_irq);
+ 
++/**
++ * of_iomap - Maps the memory mapped IO for a given device_node
++ * @device:  the device whose io range will be mapped
++ * @index:   index of the io range
++ *
++ * Returns a pointer to the mapped memory
++ */
++extern void __iomem *of_iomap(struct device_node *np, int index);
++
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _POWERPC_PROM_H */
+
+Description:
+------------
+This patch brings the "cbe_regs" utilities up to date to the latest version
+from SDK2.1, which is pretty much the same as upstream with bug fixes for newer
+firmware.
+
+These utilities are local to the cell code and are used to describe and get
+access to internal hardware registers of various parts of the cell chip. This
+update fix mapping of some of those registers on QS21 blades with the latest
+firmware. This has no impact outside of the cell platform code.
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.21.
+Some pieces not yet in kernel are present (and tested) in the Cell SDK2.1.
+
+-- 
+ arch/powerpc/platforms/cell/cbe_regs.c |  185 ++++++++++++++++++++++++++++-----
+ arch/powerpc/platforms/cell/cbe_regs.h |  150 +++++++++++++++++++++-----
+ 2 files changed, 280 insertions(+), 55 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/cbe_regs.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/cbe_regs.c
++++ b/arch/powerpc/platforms/cell/cbe_regs.c
+@@ -8,16 +8,16 @@
+ 
+ #include <linux/percpu.h>
+ #include <linux/types.h>
++#include <linux/module.h>
+ 
+ #include <asm/io.h>
+ #include <asm/pgtable.h>
+ #include <asm/prom.h>
+ #include <asm/ptrace.h>
++#include <asm/of_device.h>
+ 
+ #include "cbe_regs.h"
+ 
+-#define MAX_CBE		2
+-
+ /*
+  * Current implementation uses "cpu" nodes. We build our own mapping
+  * array of cpu numbers to cpu nodes locally for now to allow interrupt
+@@ -28,25 +28,53 @@
+ static struct cbe_regs_map
+ {
+ 	struct device_node *cpu_node;
++	struct device_node *be_node;
+ 	struct cbe_pmd_regs __iomem *pmd_regs;
+ 	struct cbe_iic_regs __iomem *iic_regs;
++	struct cbe_mic_tm_regs __iomem *mic_tm_regs;
+ } cbe_regs_maps[MAX_CBE];
+ static int cbe_regs_map_count;
+ 
+ static struct cbe_thread_map
+ {
+ 	struct device_node *cpu_node;
++	struct device_node *be_node;
+ 	struct cbe_regs_map *regs;
++	unsigned int thread_id;
++	unsigned int cbe_id;
+ } cbe_thread_map[NR_CPUS];
+ 
++static cpumask_t cbe_local_mask[MAX_CBE] = { [0 ... MAX_CBE-1] = CPU_MASK_NONE };
++static cpumask_t cbe_first_online_cpu = CPU_MASK_NONE;
++
+ static struct cbe_regs_map *cbe_find_map(struct device_node *np)
+ {
+ 	int i;
++	struct device_node *tmp_np;
+ 
+-	for (i = 0; i < cbe_regs_map_count; i++)
+-		if (cbe_regs_maps[i].cpu_node == np)
+-			return &cbe_regs_maps[i];
+-	return NULL;
++	if (strcasecmp(np->type, "spe")) {
++		for (i = 0; i < cbe_regs_map_count; i++)
++			if (cbe_regs_maps[i].cpu_node == np ||
++			    cbe_regs_maps[i].be_node == np)
++				return &cbe_regs_maps[i];
++		return NULL;
++	}
++
++	if (np->data)
++		return np->data;
++
++	/* walk up path until cpu or be node was found */
++	tmp_np = np;
++	do {
++		tmp_np = tmp_np->parent;
++		/* on a correct devicetree we wont get up to root */
++		BUG_ON(!tmp_np);
++	} while (strcasecmp(tmp_np->type, "cpu") &&
++		 strcasecmp(tmp_np->type, "be"));
++
++	np->data = cbe_find_map(tmp_np);
++
++	return np->data;
+ }
+ 
+ struct cbe_pmd_regs __iomem *cbe_get_pmd_regs(struct device_node *np)
+@@ -56,6 +84,7 @@ struct cbe_pmd_regs __iomem *cbe_get_pmd
+ 		return NULL;
+ 	return map->pmd_regs;
+ }
++EXPORT_SYMBOL_GPL(cbe_get_pmd_regs);
+ 
+ struct cbe_pmd_regs __iomem *cbe_get_cpu_pmd_regs(int cpu)
+ {
+@@ -64,7 +93,7 @@ struct cbe_pmd_regs __iomem *cbe_get_cpu
+ 		return NULL;
+ 	return map->pmd_regs;
+ }
+-
++EXPORT_SYMBOL_GPL(cbe_get_cpu_pmd_regs);
+ 
+ struct cbe_iic_regs __iomem *cbe_get_iic_regs(struct device_node *np)
+ {
+@@ -73,6 +102,7 @@ struct cbe_iic_regs __iomem *cbe_get_iic
+ 		return NULL;
+ 	return map->iic_regs;
+ }
++
+ struct cbe_iic_regs __iomem *cbe_get_cpu_iic_regs(int cpu)
+ {
+ 	struct cbe_regs_map *map = cbe_thread_map[cpu].regs;
+@@ -81,25 +111,124 @@ struct cbe_iic_regs __iomem *cbe_get_cpu
+ 	return map->iic_regs;
+ }
+ 
++struct cbe_mic_tm_regs __iomem *cbe_get_mic_tm_regs(struct device_node *np)
++{
++	struct cbe_regs_map *map = cbe_find_map(np);
++	if (map == NULL)
++		return NULL;
++	return map->mic_tm_regs;
++}
++
++struct cbe_mic_tm_regs __iomem *cbe_get_cpu_mic_tm_regs(int cpu)
++{
++	struct cbe_regs_map *map = cbe_thread_map[cpu].regs;
++	if (map == NULL)
++		return NULL;
++	return map->mic_tm_regs;
++}
++EXPORT_SYMBOL_GPL(cbe_get_cpu_mic_tm_regs);
++
++u32 cbe_get_hw_thread_id(int cpu)
++{
++	return cbe_thread_map[cpu].thread_id;
++}
++EXPORT_SYMBOL_GPL(cbe_get_hw_thread_id);
++
++u32 cbe_cpu_to_node(int cpu)
++{
++	return cbe_thread_map[cpu].cbe_id;
++}
++EXPORT_SYMBOL_GPL(cbe_cpu_to_node);
++
++u32 cbe_node_to_cpu(int node)
++{
++	return find_first_bit( (unsigned long *) &cbe_local_mask[node], sizeof(cpumask_t));
++}
++EXPORT_SYMBOL_GPL(cbe_node_to_cpu);
++
++static struct device_node *cbe_get_be_node(int cpu_id)
++{
++	struct device_node *np;
++
++	for_each_node_by_type (np, "be") {
++		int len,i;
++		const phandle *cpu_handle;
++
++		cpu_handle = get_property(np, "cpus", &len);
++		if (!cpu_handle)
++			continue;
++
++		for (i=0; i<len; i++)
++			if (of_find_node_by_phandle(cpu_handle[i]) == of_get_cpu_node(cpu_id, NULL))
++				return np;
++	}
++
++	return NULL;
++}
++
++void __init cbe_fill_regs_map(struct cbe_regs_map *map)
++{
++	if(map->be_node) {
++		struct device_node *be, *np;
++
++		be = map->be_node;
++
++		for_each_node_by_type(np, "pervasive")
++			if (of_get_parent(np) == be)
++				map->pmd_regs = of_iomap(np, 0);
++
++		for_each_node_by_type(np, "CBEA-Internal-Interrupt-Controller")
++			if (of_get_parent(np) == be)
++				map->iic_regs = of_iomap(np, 2);
++
++		for_each_node_by_type(np, "mic-tm")
++			if (of_get_parent(np) == be)
++				map->mic_tm_regs = of_iomap(np, 0);
++	} else {
++		struct device_node *cpu;
++		/* That hack must die die die ! */
++		const struct address_prop {
++			unsigned long address;
++			unsigned int len;
++		} __attribute__((packed)) *prop;
++
++		cpu = map->cpu_node;
++
++		prop = get_property(cpu, "pervasive", NULL);
++		if (prop != NULL)
++			map->pmd_regs = ioremap(prop->address, prop->len);
++
++		prop = get_property(cpu, "iic", NULL);
++		if (prop != NULL)
++			map->iic_regs = ioremap(prop->address, prop->len);
++
++		prop = (struct address_prop *)get_property(cpu, "mic-tm", NULL);
++		if (prop != NULL)
++			map->mic_tm_regs = ioremap(prop->address, prop->len);
++	}
++}
++
++
+ void __init cbe_regs_init(void)
+ {
+ 	int i;
++	unsigned int thread_id;
+ 	struct device_node *cpu;
+ 
+ 	/* Build local fast map of CPUs */
+-	for_each_possible_cpu(i)
+-		cbe_thread_map[i].cpu_node = of_get_cpu_node(i, NULL);
++	for_each_possible_cpu(i) {
++		cbe_thread_map[i].cpu_node = of_get_cpu_node(i, &thread_id);
++		cbe_thread_map[i].be_node = cbe_get_be_node(i);
++		cbe_thread_map[i].thread_id = thread_id;
++	}
+ 
+ 	/* Find maps for each device tree CPU */
+ 	for_each_node_by_type(cpu, "cpu") {
+-		struct cbe_regs_map *map = &cbe_regs_maps[cbe_regs_map_count++];
+-
+-		/* That hack must die die die ! */
+-		struct address_prop {
+-			unsigned long address;
+-			unsigned int len;
+-		} __attribute__((packed)) *prop;
++		struct cbe_regs_map *map;
++		unsigned int cbe_id;
+ 
++		cbe_id = cbe_regs_map_count++;
++		map = &cbe_regs_maps[cbe_id];
+ 
+ 		if (cbe_regs_map_count > MAX_CBE) {
+ 			printk(KERN_ERR "cbe_regs: More BE chips than supported"
+@@ -108,19 +237,21 @@ void __init cbe_regs_init(void)
+ 			return;
+ 		}
+ 		map->cpu_node = cpu;
+-		for_each_possible_cpu(i)
+-			if (cbe_thread_map[i].cpu_node == cpu)
+-				cbe_thread_map[i].regs = map;
+ 
+-		prop = (struct address_prop *)get_property(cpu, "pervasive",
+-							   NULL);
+-		if (prop != NULL)
+-			map->pmd_regs = ioremap(prop->address, prop->len);
++		for_each_possible_cpu(i) {
++			struct cbe_thread_map *thread = &cbe_thread_map[i];
+ 
+-		prop = (struct address_prop *)get_property(cpu, "iic",
+-							   NULL);
+-		if (prop != NULL)
+-			map->iic_regs = ioremap(prop->address, prop->len);
++			if (thread->cpu_node == cpu) {
++				thread->regs = map;
++				thread->cbe_id = cbe_id;
++				map->be_node = thread->be_node;
++				cpu_set(i, cbe_local_mask[cbe_id]);
++				if(thread->thread_id == 0)
++					cpu_set(i, cbe_first_online_cpu);
++			}
++		}
++
++		cbe_fill_regs_map(map);
+ 	}
+ }
+ 
+Index: b/arch/powerpc/platforms/cell/cbe_regs.h
+===================================================================
+--- a/arch/powerpc/platforms/cell/cbe_regs.h
++++ b/arch/powerpc/platforms/cell/cbe_regs.h
+@@ -4,6 +4,11 @@
+  * This file is intended to hold the various register definitions for CBE
+  * on-chip system devices (memory controller, IO controller, etc...)
+  *
++ * (C) Copyright IBM Corporation 2001,2006
++ *
++ * Authors: Maximino Aguilar (maguilar@us.ibm.com)
++ *          David J. Erb (djerb@us.ibm.com)
++ *
+  * (c) 2006 Benjamin Herrenschmidt <benh@kernel.crashing.org>, IBM Corp.
+  */
+ 
+@@ -22,6 +27,7 @@
+ #define HID0_CBE_THERM_INT_EN	0x0000000400000000ul
+ #define HID0_CBE_SYSERR_INT_EN	0x0000000200000000ul
+ 
++#define MAX_CBE		2
+ 
+ /*
+  *
+@@ -29,45 +35,86 @@
+  *
+  */
+ 
++union spe_reg {
++	u64 val;
++	u8 spe[8];
++};
++
++union ppe_spe_reg {
++	u64 val;
++	struct {
++		u32 ppe;
++		u32 spe;
++	};
++};
++
++
+ struct cbe_pmd_regs {
+-	u8 pad_0x0000_0x0800[0x0800 - 0x0000];			/* 0x0000 */
++	/* Debug Bus Control */
++	u64	pad_0x0000;					/* 0x0000 */
++
++	u64	group_control;					/* 0x0008 */
++
++	u8	pad_0x0010_0x00a8 [0x00a8 - 0x0010];		/* 0x0010 */
++
++	u64	debug_bus_control;				/* 0x00a8 */
++
++	u8	pad_0x00b0_0x0100 [0x0100 - 0x00b0];		/* 0x00b0 */
++
++	u64	trace_aux_data;					/* 0x0100 */
++	u64	trace_buffer_0_63;				/* 0x0108 */
++	u64	trace_buffer_64_127;				/* 0x0110 */
++	u64	trace_address;					/* 0x0118 */
++	u64	ext_tr_timer;					/* 0x0120 */
++
++	u8	pad_0x0128_0x0400 [0x0400 - 0x0128];		/* 0x0128 */
++
++	/* Performance Monitor */
++	u64	pm_status;					/* 0x0400 */
++	u64	pm_control;					/* 0x0408 */
++	u64	pm_interval;					/* 0x0410 */
++	u64	pm_ctr[4];					/* 0x0418 */
++	u64	pm_start_stop;					/* 0x0438 */
++	u64	pm07_control[8];				/* 0x0440 */
++
++	u8	pad_0x0480_0x0800 [0x0800 - 0x0480];		/* 0x0480 */
+ 
+ 	/* Thermal Sensor Registers */
+-	u64  ts_ctsr1;						/* 0x0800 */
+-	u64  ts_ctsr2;						/* 0x0808 */
+-	u64  ts_mtsr1;						/* 0x0810 */
+-	u64  ts_mtsr2;						/* 0x0818 */
+-	u64  ts_itr1;						/* 0x0820 */
+-	u64  ts_itr2;						/* 0x0828 */
+-	u64  ts_gitr;						/* 0x0830 */
+-	u64  ts_isr;						/* 0x0838 */
+-	u64  ts_imr;						/* 0x0840 */
+-	u64  tm_cr1;						/* 0x0848 */
+-	u64  tm_cr2;						/* 0x0850 */
+-	u64  tm_simr;						/* 0x0858 */
+-	u64  tm_tpr;						/* 0x0860 */
+-	u64  tm_str1;						/* 0x0868 */
+-	u64  tm_str2;						/* 0x0870 */
+-	u64  tm_tsr;						/* 0x0878 */
++	union	spe_reg	ts_ctsr1;				/* 0x0800 */
++	u64	ts_ctsr2;					/* 0x0808 */
++	union	spe_reg	ts_mtsr1;				/* 0x0810 */
++	u64	ts_mtsr2;					/* 0x0818 */
++	union	spe_reg	ts_itr1;				/* 0x0820 */
++	u64	ts_itr2;					/* 0x0828 */
++	u64	ts_gitr;					/* 0x0830 */
++	u64	ts_isr;						/* 0x0838 */
++	u64	ts_imr;						/* 0x0840 */
++	union	spe_reg	tm_cr1;					/* 0x0848 */
++	u64	tm_cr2;						/* 0x0850 */
++	u64	tm_simr;					/* 0x0858 */
++	union	ppe_spe_reg tm_tpr;				/* 0x0860 */
++	union	spe_reg	tm_str1;				/* 0x0868 */
++	u64	tm_str2;					/* 0x0870 */
++	union	ppe_spe_reg tm_tsr;				/* 0x0878 */
+ 
+ 	/* Power Management */
+-	u64  pm_control;					/* 0x0880 */
+-#define CBE_PMD_PAUSE_ZERO_CONTROL		0x10000
+-	u64  pm_status;						/* 0x0888 */
++	u64	pmcr;						/* 0x0880 */
++#define CBE_PMD_PAUSE_ZERO_CONTROL	0x10000
++	u64	pmsr;						/* 0x0888 */
+ 
+ 	/* Time Base Register */
+-	u64  tbr;						/* 0x0890 */
++	u64	tbr;						/* 0x0890 */
+ 
+-	u8   pad_0x0898_0x0c00 [0x0c00 - 0x0898];		/* 0x0898 */
++	u8	pad_0x0898_0x0c00 [0x0c00 - 0x0898];		/* 0x0898 */
+ 
+ 	/* Fault Isolation Registers */
+-	u64  checkstop_fir;					/* 0x0c00 */
+-	u64  recoverable_fir;
+-	u64  spec_att_mchk_fir;
+-	u64  fir_mode_reg;
+-	u64  fir_enable_mask;
++	u64	checkstop_fir;					/* 0x0c00 */
++	u64	recoverable_fir;				/* 0x0c08 */
++	u64	spec_att_mchk_fir;				/* 0x0c10 */
++	u64	fir_mode_reg;					/* 0x0c18 */
++	u64	fir_enable_mask;				/* 0x0c20 */
+ 
+-	u8   pad_0x0c28_0x1000 [0x1000 - 0x0c28];		/* 0x0c28 */
++	u8	pad_0x0c28_0x1000 [0x1000 - 0x0c28];		/* 0x0c28 */
+ };
+ 
+ extern struct cbe_pmd_regs __iomem *cbe_get_pmd_regs(struct device_node *np);
+@@ -132,6 +179,53 @@ extern struct cbe_iic_regs __iomem *cbe_
+ extern struct cbe_iic_regs __iomem *cbe_get_cpu_iic_regs(int cpu);
+ 
+ 
++struct cbe_mic_tm_regs {
++	u8	pad_0x0000_0x0040[0x0040 - 0x0000];		/* 0x0000 */
++
++	u64	mic_ctl_cnfg2;					/* 0x0040 */
++#define CBE_MIC_ENABLE_AUX_TRC		0x8000000000000000LL
++#define CBE_MIC_DISABLE_PWR_SAV_2	0x0200000000000000LL
++#define CBE_MIC_DISABLE_AUX_TRC_WRAP	0x0100000000000000LL
++#define CBE_MIC_ENABLE_AUX_TRC_INT	0x0080000000000000LL
++
++	u64	pad_0x0048;					/* 0x0048 */
++
++	u64	mic_aux_trc_base;				/* 0x0050 */
++	u64	mic_aux_trc_max_addr;				/* 0x0058 */
++	u64	mic_aux_trc_cur_addr;				/* 0x0060 */
++	u64	mic_aux_trc_grf_addr;				/* 0x0068 */
++	u64	mic_aux_trc_grf_data;				/* 0x0070 */
++
++	u64	pad_0x0078;					/* 0x0078 */
++
++	u64	mic_ctl_cnfg_0;					/* 0x0080 */
++#define CBE_MIC_DISABLE_PWR_SAV_0	0x8000000000000000LL
++
++	u64	pad_0x0088;					/* 0x0088 */
++
++	u64	slow_fast_timer_0;				/* 0x0090 */
++	u64	slow_next_timer_0;				/* 0x0098 */
++
++	u8	pad_0x00a0_0x01c0[0x01c0 - 0x0a0];		/* 0x00a0 */
++
++	u64	mic_ctl_cnfg_1;					/* 0x01c0 */
++#define CBE_MIC_DISABLE_PWR_SAV_1	0x8000000000000000LL
++	u64	pad_0x01c8;					/* 0x01c8 */
++
++	u64	slow_fast_timer_1;				/* 0x01d0 */
++	u64	slow_next_timer_1;				/* 0x01d8 */
++
++	u8	pad_0x01e0_0x1000[0x1000 - 0x01e0];		/* 0x01e0 */
++};
++
++extern struct cbe_mic_tm_regs __iomem *cbe_get_mic_tm_regs(struct device_node *np);
++extern struct cbe_mic_tm_regs __iomem *cbe_get_cpu_mic_tm_regs(int cpu);
++
++/* some utility functions to deal with SMT */
++extern u32 cbe_get_hw_thread_id(int cpu);
++extern u32 cbe_cpu_to_node(int cpu);
++extern u32 cbe_node_to_cpu(int node);
++
+ /* Init this module early */
+ extern void cbe_regs_init(void);
+ 
+
+Description:
+------------
+
+Addition to stop_wq needs to happen before adding to the runqeueue and
+under the same lock so that we don't have a race window for a lost
+wake up in the spu scheduler.
+
+Signed-off-by: Luke Browning <lukebrowning@us.ibm.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Upstream Status:
+----------------
+Present in 2.6.22-rc1 [1].
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=4e0f4ed0df71013290cd2a01f7b84264f7b99678
+
+---
+ arch/powerpc/platforms/cell/spufs/sched.c |   38 ++++++++++++------------------
+ 1 file changed, 16 insertions(+), 22 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/sched.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/sched.c
++++ b/arch/powerpc/platforms/cell/spufs/sched.c
+@@ -272,44 +272,40 @@ static void spu_unbind_context(struct sp
+  * spu_add_to_rq - add a context to the runqueue
+  * @ctx:       context to add
+  */
+-static void spu_add_to_rq(struct spu_context *ctx)
++static void __spu_add_to_rq(struct spu_context *ctx)
+ {
+-	spin_lock(&spu_prio->runq_lock);
+-	list_add_tail(&ctx->rq, &spu_prio->runq[ctx->prio]);
+-	set_bit(ctx->prio, spu_prio->bitmap);
+-	mb();
+-	spin_unlock(&spu_prio->runq_lock);
++	int prio = ctx->prio;
++
++	list_add_tail(&ctx->rq, &spu_prio->runq[prio]);
++	set_bit(prio, spu_prio->bitmap);
+ }
+ 
+-static void __spu_del_from_rq(struct spu_context *ctx, int prio)
++static void __spu_del_from_rq(struct spu_context *ctx)
+ {
++	int prio = ctx->prio;
++
+ 	if (!list_empty(&ctx->rq))
+ 		list_del_init(&ctx->rq);
+ 	if (list_empty(&spu_prio->runq[prio]))
+-		clear_bit(ctx->prio, spu_prio->bitmap);
+-}
+-
+-/**
+- * spu_del_from_rq - remove a context from the runqueue
+- * @ctx:       context to remove
+- */
+-static void spu_del_from_rq(struct spu_context *ctx)
+-{
+-	spin_lock(&spu_prio->runq_lock);
+-	__spu_del_from_rq(ctx, ctx->prio);
+-	spin_unlock(&spu_prio->runq_lock);
++		clear_bit(prio, spu_prio->bitmap);
+ }
+ 
+ static void spu_prio_wait(struct spu_context *ctx)
+ {
+ 	DEFINE_WAIT(wait);
+ 
++	spin_lock(&spu_prio->runq_lock);
+ 	prepare_to_wait_exclusive(&ctx->stop_wq, &wait, TASK_INTERRUPTIBLE);
+ 	if (!signal_pending(current)) {
++		__spu_add_to_rq(ctx);
++		spin_unlock(&spu_prio->runq_lock);
+ 		mutex_unlock(&ctx->state_mutex);
+ 		schedule();
+ 		mutex_lock(&ctx->state_mutex);
++		spin_lock(&spu_prio->runq_lock);
++		__spu_del_from_rq(ctx);
+ 	}
++	spin_unlock(&spu_prio->runq_lock);
+ 	__set_current_state(TASK_RUNNING);
+ 	remove_wait_queue(&ctx->stop_wq, &wait);
+ }
+@@ -336,7 +332,7 @@ static void spu_reschedule(struct spu *s
+ 		BUG_ON(list_empty(rq));
+ 
+ 		ctx = list_entry(rq->next, struct spu_context, rq);
+-		__spu_del_from_rq(ctx, best);
++		__spu_del_from_rq(ctx);
+ 		wake_up(&ctx->stop_wq);
+ 	}
+ 	spin_unlock(&spu_prio->runq_lock);
+@@ -467,9 +463,7 @@ int spu_activate(struct spu_context *ctx
+ 			return 0;
+ 		}
+ 
+-		spu_add_to_rq(ctx);
+ 		spu_prio_wait(ctx);
+-		spu_del_from_rq(ctx);
+ 	} while (!signal_pending(current));
+ 
+ 	return -ERESTARTSYS;
+
+Description:
+------------
+spufs: always compile fault handling builtin
+
+The fault handler needs access to some non-exported symbols
+of the memory management subsystem. Instead of exporting
+them, we do a self-contained solution and build the fault
+handling into the kernel.
+
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Upstream Status:
+----------------
+export of spufs_dma_callback and spufs_handle_class1 is present in in
+2.6.22-rc1.
+
+Notes:
+-----
+This patch removes the need for the EXPORT_SYMBOL_GPL of force_sig_info,
+and expand_stack, which were submitted in patches to bug 228128 at [2] and
+[3] respectively.
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=57dace2391ba10135e38457904121e7ef34d0c83
+[2] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-May/msg00131.html
+[3] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-May/msg00131.html
+
+---
+ arch/powerpc/platforms/cell/spufs/Makefile |    3 +--
+ arch/powerpc/platforms/cell/spufs/fault.c  |    3 +++
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/Makefile
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/Makefile
++++ b/arch/powerpc/platforms/cell/spufs/Makefile
+@@ -1,9 +1,8 @@
+-obj-y += switch.o lscsa_alloc.o
++obj-y += switch.o lscsa_alloc.o fault.o
+ 
+ obj-$(CONFIG_SPU_FS) += spufs.o
+ spufs-y += inode.o file.o context.o syscalls.o coredump.o
+ spufs-y += sched.o backing_ops.o hw_ops.o run.o gang.o
+-spufs-y += fault.o
+ 
+ # Rules to build switch.o with the help of SPU tool chain
+ SPU_CROSS	:= spu-
+Index: b/arch/powerpc/platforms/cell/spufs/fault.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/fault.c
++++ b/arch/powerpc/platforms/cell/spufs/fault.c
+@@ -21,6 +21,7 @@
+  */
+ #include <linux/sched.h>
+ #include <linux/mm.h>
++#include <linux/module.h>
+ 
+ #include <asm/spu.h>
+ #include <asm/spu_csa.h>
+@@ -134,6 +135,7 @@ static void spufs_handle_dma_error(struc
+ 			force_sig_info(info.si_signo, &info, current);
+ 	}
+ }
++EXPORT_SYMBOL_GPL(spufs_dma_callback);
+ 
+ void spufs_dma_callback(struct spu *spu, int type)
+ {
+@@ -208,3 +210,4 @@ int spufs_handle_class1(struct spu_conte
+ 
+ 	return ret;
+ }
++EXPORT_SYMBOL_GPL(spufs_handle_class1);
+
+Description:
+------------
+spufs: check spu_acquire_runnable() return value
+
+This patch checks return value of spu_acquire_runnable() in
+spufs_mfc_write().
+
+Signed-off-by: Akinobu Mita <mita@fixstars.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Upstream Status:
+----------------
+Present in 2.6.22-rc1 [1].
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=577f8f1021f9ee6ef2a98a142652759ec122d27f
+
+---
+ arch/powerpc/platforms/cell/spufs/file.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/file.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/file.c
++++ b/arch/powerpc/platforms/cell/spufs/file.c
+@@ -1444,7 +1444,10 @@ static ssize_t spufs_mfc_write(struct fi
+ 	if (ret)
+ 		goto out;
+ 
+-	spu_acquire_runnable(ctx, 0);
++	ret = spu_acquire_runnable(ctx, 0);
++	if (ret)
++		goto out;
++
+ 	if (file->f_flags & O_NONBLOCK) {
+ 		ret = ctx->ops->send_mfc_command(ctx, &cmd);
+ 	} else {
+
+Description:
+------------
+spufs: fix memory leak on spufs reloading
+
+When SPU isolation mode enabled, isolated_loader would be
+allocated by spufs_init_isolated_loader() on module_init().
+But anyone do not free it.
+
+This patch introduces spufs_exit_isolated_loader() which is
+the opposite of spufs_init_isolated_loader() and called on
+module_exit().
+
+Cc: Arnd Bergmann <arnd@arndb.de>
+Signed-off-by: Akinobu Mita <mita@fixstars.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Upstream Status:
+----------------
+Present in 2.6.22-rc1 [1].
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=db1384b40d12eda6910513ff429ad90453ca49e1
+
+---
+ arch/powerpc/platforms/cell/spufs/inode.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+Index: b/arch/powerpc/platforms/cell/spufs/inode.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/inode.c
++++ b/arch/powerpc/platforms/cell/spufs/inode.c
+@@ -681,6 +681,11 @@ spufs_parse_options(char *options, struc
+ 	return 1;
+ }
+ 
++static void spufs_exit_isolated_loader(void)
++{
++	kfree(isolated_loader);
++}
++
+ static void
+ spufs_init_isolated_loader(void)
+ {
+@@ -810,6 +815,7 @@ module_init(spufs_init);
+ static void __exit spufs_exit(void)
+ {
+ 	spu_sched_exit();
++	spufs_exit_isolated_loader();
+ 	unregister_arch_coredump_calls(&spufs_coredump_calls);
+ 	unregister_spu_syscalls(&spufs_calls);
+ 	unregister_filesystem(&spufs_type);
+
+Description:
+------------
+spufs: use memcpy_fromio() to copy from local store
+
+GCC may generates inline copy loop to handle memcpy() function
+instead of kernel defined memcpy(). But this inlined version of memcpy()
+causes an alignment interrupt when copying from local store.
+
+This patch uses memcpy_fromio() and memcpy_toio to copy local store
+to prevent memcpy() being inlined.
+
+Signed-off-by: Akinobu Mita <mita@fixstars.com>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+
+Upstream Status:
+----------------
+Present in 2.6.22-rc1 [1].
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=9e2fe2ce4e957a79d3dc5d813e0cfb10d79b79b3
+
+---
+ arch/powerpc/platforms/cell/spufs/run.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/run.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/run.c
++++ b/arch/powerpc/platforms/cell/spufs/run.c
+@@ -234,17 +234,17 @@ int spu_process_callback(struct spu_cont
+ {
+ 	struct spu_syscall_block s;
+ 	u32 ls_pointer, npc;
+-	char *ls;
++	void __iomem *ls;
+ 	long spu_ret;
+ 	int ret;
+ 
+ 	/* get syscall block from local store */
+-	npc = ctx->ops->npc_read(ctx);
+-	ls = ctx->ops->get_ls(ctx);
+-	ls_pointer = *(u32*)(ls + npc);
++	npc = ctx->ops->npc_read(ctx) & ~3;
++	ls = (void __iomem *)ctx->ops->get_ls(ctx);
++	ls_pointer = in_be32(ls + npc);
+ 	if (ls_pointer > (LS_SIZE - sizeof(s)))
+ 		return -EFAULT;
+-	memcpy(&s, ls + ls_pointer, sizeof (s));
++	memcpy_fromio(&s, ls + ls_pointer, sizeof(s));
+ 
+ 	/* do actual syscall without pinning the spu */
+ 	ret = 0;
+@@ -264,7 +264,7 @@ int spu_process_callback(struct spu_cont
+ 	}
+ 
+ 	/* write result, jump over indirect pointer */
+-	memcpy(ls + ls_pointer, &spu_ret, sizeof (spu_ret));
++	memcpy_toio(ls + ls_pointer, &spu_ret, sizeof(spu_ret));
+ 	ctx->ops->npc_write(ctx, npc);
+ 	ctx->ops->runcntl_write(ctx, SPU_RUNCNTL_RUNNABLE);
+ 	return ret;
+
+Description:
+------------
+spufs: fix memory leak on coredump
+
+Dynamically allocated read/write buffer in spufs_arch_write_note() will
+not be freed. Convert it to get_free_page at the same time.
+
+Cc: Akinobu Mita <mita@fixstars.com>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Upstream Status:
+----------------
+Present in 2.6.22-rc1 [1].
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=6cf2179202cf706471777ad6ee5d0377d5990ab7
+---
+
+ arch/powerpc/platforms/cell/spufs/coredump.c |   19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/coredump.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/coredump.c
++++ b/arch/powerpc/platforms/cell/spufs/coredump.c
+@@ -169,12 +169,12 @@ static void spufs_arch_write_note(struct
+ 	struct spu_context *ctx;
+ 	loff_t pos = 0;
+ 	int sz, dfd, rc, total = 0;
+-	const int bufsz = 4096;
++	const int bufsz = PAGE_SIZE;
+ 	char *name;
+ 	char fullname[80], *buf;
+ 	struct elf_note en;
+ 
+-	buf = kmalloc(bufsz, GFP_KERNEL);
++	buf = (void *)get_zeroed_page(GFP_KERNEL);
+ 	if (!buf)
+ 		return;
+ 
+@@ -187,9 +187,8 @@ static void spufs_arch_write_note(struct
+ 		sz = spufs_coredump_read[i].size;
+ 
+ 	ctx = ctx_info->ctx;
+-	if (!ctx) {
+-		return;
+-	}
++	if (!ctx)
++		goto out;
+ 
+ 	sprintf(fullname, "SPU/%d/%s", dfd, name);
+ 	en.n_namesz = strlen(fullname) + 1;
+@@ -197,23 +196,25 @@ static void spufs_arch_write_note(struct
+ 	en.n_type = NT_SPU;
+ 
+ 	if (!spufs_dump_write(file, &en, sizeof(en)))
+-		return;
++		goto out;
+ 	if (!spufs_dump_write(file, fullname, en.n_namesz))
+-		return;
++		goto out;
+ 	if (!spufs_dump_seek(file, roundup((unsigned long)file->f_pos, 4)))
+-		return;
++		goto out;
+ 
+ 	do {
+ 		rc = do_coredump_read(i, ctx, buf, bufsz, &pos);
+ 		if (rc > 0) {
+ 			if (!spufs_dump_write(file, buf, rc))
+-				return;
++				goto out;
+ 			total += rc;
+ 		}
+ 	} while (rc == bufsz && total < sz);
+ 
+ 	spufs_dump_seek(file, roundup((unsigned long)file->f_pos
+ 						- total + sz, 4));
++out:
++	free_page((unsigned long)buf);
+ }
+ 
+ static void spufs_arch_write_notes(struct file *file)
+
+Description:
+------------
+spu sched: fix wakeup races
+
+Fix the race between checking for contexts on the runqueue and actually
+waking them in spu_deactive and spu_yield.
+
+The guts of spu_reschedule are split into a new helper called
+grab_runnable_context which shows if there is a runnable thread below
+a specified priority and if yes removes if from the runqueue and uses
+it.  This function is used by the new __spu_deactivate hepler shared
+by preemption and spu_yield to grab a new context before deactivating
+a specified priority and if yes removes if from the runqueue and uses
+it.  This function is used by the new __spu_deactivate hepler shared
+by preemption and spu_yield to grab a new context before deactivating
+the old one.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Arnd Bergmann <arnd.bergmann@de.ibm.com>
+
+Below is a smaller patch that fixes the race only for the scheduler
+tick where it really matters, and avoids moving things around as
+much as possible.
+
+Upstream Status:
+----------------
+This patch has been submitted for upstream acceptance [1]
+
+--
+[1] http://patchwork.ozlabs.org/cbe-oss-dev/patch?person=67&id=10424
+
+---
+ arch/powerpc/platforms/cell/spufs/sched.c |   51 ++++++++++++++++++++++--------
+ 1 file changed, 38 insertions(+), 13 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/sched.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/sched.c
++++ b/arch/powerpc/platforms/cell/spufs/sched.c
+@@ -57,6 +57,10 @@ struct spu_prio_array {
+ static struct spu_prio_array *spu_prio;
+ static struct workqueue_struct *spu_sched_wq;
+ 
++static struct spu_context *grab_runnable_context(int prio);
++static void spu_unbind_context(struct spu *spu, struct spu_context *ctx);
++
++
+ static inline int node_allowed(int node)
+ {
+ 	cpumask_t mask;
+@@ -111,9 +115,14 @@ void spu_sched_tick(void *data)
+ 	mutex_lock(&ctx->state_mutex);
+ 	spu = ctx->spu;
+ 	if (spu) {
+-		int best = sched_find_first_bit(spu_prio->bitmap);
+-		if (best <= ctx->prio) {
+-			spu_deactivate(ctx);
++		struct spu_context *new;
++
++		new = grab_runnable_context(ctx->prio + 1);
++		if (new) {
++			spu_unbind_context(spu, ctx);
++			spu_free(spu);
++			if (new)
++				wake_up(&new->stop_wq);
+ 			preempted = 1;
+ 		}
+ 	}
+@@ -311,31 +320,47 @@ static void spu_prio_wait(struct spu_con
+ }
+ 
+ /**
+- * spu_reschedule - try to find a runnable context for a spu
+- * @spu:       spu available
++ * grab_runnable_context - try to find a runnable context
+  *
+- * This function is called whenever a spu becomes idle.	 It looks for the
+- * most suitable runnable spu context and schedules it for execution.
++ * Remove the highest priority context on the runqueue and return it
++ * to the caller.  Returns %NULL if no runnable context was found.
+  */
+-static void spu_reschedule(struct spu *spu)
++static struct spu_context *grab_runnable_context(int prio)
+ {
++	struct spu_context *ctx = NULL;
+ 	int best;
+ 
+-	spu_free(spu);
+-
+ 	spin_lock(&spu_prio->runq_lock);
+ 	best = sched_find_first_bit(spu_prio->bitmap);
+-	if (best < MAX_PRIO) {
++	if (best < prio) {
+ 		struct list_head *rq = &spu_prio->runq[best];
+-		struct spu_context *ctx;
+ 
+ 		BUG_ON(list_empty(rq));
+ 
+ 		ctx = list_entry(rq->next, struct spu_context, rq);
+ 		__spu_del_from_rq(ctx);
+-		wake_up(&ctx->stop_wq);
+ 	}
+ 	spin_unlock(&spu_prio->runq_lock);
++
++	return ctx;
++}
++
++/**
++ * spu_reschedule - try to find a runnable context for a spu
++ * @spu:       spu available
++ *
++ * This function is called whenever a spu becomes idle.	 It looks for the
++ * most suitable runnable spu context and schedules it for execution.
++ */
++static void spu_reschedule(struct spu *spu)
++{
++	struct spu_context *ctx;
++
++	spu_free(spu);
++
++	ctx = grab_runnable_context(MAX_PRIO);
++	if (ctx)
++		wake_up(&ctx->stop_wq);
+ }
+ 
+ static struct spu *spu_get_idle(struct spu_context *ctx)
+
+Description:
+------------
+spufs: Fix gang destroy leaks
+
+Previously, closing a SPE gang that still has contexts would trigger
+a WARN_ON, and leak the allocated gang.
+
+This change fixes the problem by using the gang's reference counts to
+destroy the gang instead. The gangs will persist until their last
+reference (be it context or open file handle) is gone.
+
+Also, avoid using statements with side-effects in a WARN_ON().
+
+Signed-off-by: Jeremy Kerr <jk@ozlabs.org>
+
+Upstream Status:
+----------------
+This patch has been submitted for upstream acceptance [1].
+
+--
+[1] http://patchwork.ozlabs.org/cbe-oss-dev/patch?id=11034 
+
+---
+ arch/powerpc/platforms/cell/spufs/inode.c |   40 +++---------------------------
+ 1 file changed, 5 insertions(+), 35 deletions(-)
+
+Index: b/arch/powerpc/platforms/cell/spufs/inode.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spufs/inode.c
++++ b/arch/powerpc/platforms/cell/spufs/inode.c
+@@ -470,37 +470,6 @@ out:
+ 	return ret;
+ }
+ 
+-static int spufs_rmgang(struct inode *root, struct dentry *dir)
+-{
+-	/* FIXME: this fails if the dir is not empty,
+-	          which causes a leak of gangs. */
+-	return simple_rmdir(root, dir);
+-}
+-
+-static int spufs_gang_close(struct inode *inode, struct file *file)
+-{
+-	struct inode *parent;
+-	struct dentry *dir;
+-	int ret;
+-
+-	dir = file->f_dentry;
+-	parent = dir->d_parent->d_inode;
+-
+-	ret = spufs_rmgang(parent, dir);
+-	WARN_ON(ret);
+-
+-	return dcache_dir_close(inode, file);
+-}
+-
+-const struct file_operations spufs_gang_fops = {
+-	.open		= dcache_dir_open,
+-	.release	= spufs_gang_close,
+-	.llseek		= dcache_dir_lseek,
+-	.read		= generic_read_dir,
+-	.readdir	= dcache_readdir,
+-	.fsync		= simple_sync_file,
+-};
+-
+ static int
+ spufs_mkgang(struct inode *dir, struct dentry *dentry, int mode)
+ {
+@@ -528,7 +497,6 @@ spufs_mkgang(struct inode *dir, struct d
+ 	inode->i_fop = &simple_dir_operations;
+ 
+ 	d_instantiate(dentry, inode);
+-	dget(dentry);
+ 	dir->i_nlink++;
+ 	dentry->d_inode->i_nlink++;
+ 	return ret;
+@@ -558,7 +526,7 @@ static int spufs_gang_open(struct dentry
+ 		goto out;
+ 	}
+ 
+-	filp->f_op = &spufs_gang_fops;
++	filp->f_op = &simple_dir_operations;
+ 	fd_install(ret, filp);
+ out:
+ 	return ret;
+@@ -579,8 +547,10 @@ static int spufs_create_gang(struct inod
+ 	 * in error path of *_open().
+ 	 */
+ 	ret = spufs_gang_open(dget(dentry), mntget(mnt));
+-	if (ret < 0)
+-		WARN_ON(spufs_rmgang(inode, dentry));
++	if (ret < 0) {
++		int err = simple_rmdir(inode, dentry);
++		WARN_ON(err);
++	}
+ 
+ out:
+ 	mutex_unlock(&inode->i_mutex);
+
+Description:
+-----------
+This patch applies on top of the other 15 in this series and fixes the
+kabi breakage that they introduced.
+
+Please review and ack for RHEL 5u1.
+
+---
+ arch/powerpc/platforms/cell/spu_base.c       |    5 +++++
+ arch/powerpc/platforms/cell/spu_priv1_mmio.c |    4 ++--
+ include/asm-powerpc/spu.h                    |   22 ++++++++++++++++------
+ include/asm-powerpc/spu_priv1.h              |    4 ++--
+ 4 files changed, 25 insertions(+), 10 deletions(-)
+
+Index: linux-malta-RH5/include/asm-powerpc/spu_priv1.h
+===================================================================
+--- linux-malta-RH5.orig/include/asm-powerpc/spu_priv1.h	2007-06-08 16:07:48.000000000 +1000
++++ linux-malta-RH5/include/asm-powerpc/spu_priv1.h	2007-06-08 16:07:49.000000000 +1000
+@@ -38,7 +38,7 @@ struct spu_priv1_ops {
+ 	u64 (*mfc_dar_get) (struct spu *spu);
+ 	u64 (*mfc_dsisr_get) (struct spu *spu);
+ 	void (*mfc_dsisr_set) (struct spu *spu, u64 dsisr);
+-	void (*mfc_sdr_setup) (struct spu *spu);
++	void (*mfc_sdr_set) (struct spu *spu, u64 sdr/* Obsolete */);
+ 	void (*mfc_sr1_set) (struct spu *spu, u64 sr1);
+ 	u64 (*mfc_sr1_get) (struct spu *spu);
+ 	void (*mfc_tclass_id_set) (struct spu *spu, u64 tclass_id);
+@@ -115,7 +115,7 @@ spu_mfc_dsisr_set (struct spu *spu, u64 
+ static inline void
+ spu_mfc_sdr_setup (struct spu *spu)
+ {
+-	spu_priv1_ops->mfc_sdr_setup(spu);
++	spu_priv1_ops->mfc_sdr_set(spu, 0);
+ }
+ 
+ static inline void
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/spu_priv1_mmio.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/spu_priv1_mmio.c	2007-06-08 16:07:48.000000000 +1000
++++ linux-malta-RH5/arch/powerpc/platforms/cell/spu_priv1_mmio.c	2007-06-08 16:07:49.000000000 +1000
+@@ -412,7 +412,7 @@ static void mfc_dsisr_set(struct spu *sp
+ 	out_be64(&spu_get_pdata(spu)->priv1->mfc_dsisr_RW, dsisr);
+ }
+ 
+-static void mfc_sdr_setup(struct spu *spu)
++static void mfc_sdr_set(struct spu *spu, u64 unused)
+ {
+ 	out_be64(&spu_get_pdata(spu)->priv1->mfc_sdr_RW, mfspr(SPRN_SDR1));
+ }
+@@ -478,7 +478,7 @@ const struct spu_priv1_ops spu_priv1_mmi
+ 	.mfc_dar_get = mfc_dar_get,
+ 	.mfc_dsisr_get = mfc_dsisr_get,
+ 	.mfc_dsisr_set = mfc_dsisr_set,
+-	.mfc_sdr_setup = mfc_sdr_setup,
++	.mfc_sdr_set = mfc_sdr_set,
+ 	.mfc_sr1_set = mfc_sr1_set,
+ 	.mfc_sr1_get = mfc_sr1_get,
+ 	.mfc_tclass_id_set = mfc_tclass_id_set,
+Index: linux-malta-RH5/include/asm-powerpc/spu.h
+===================================================================
+--- linux-malta-RH5.orig/include/asm-powerpc/spu.h	2007-06-08 16:07:48.000000000 +1000
++++ linux-malta-RH5/include/asm-powerpc/spu.h	2007-06-08 16:07:49.000000000 +1000
+@@ -105,19 +105,21 @@
+ struct spu_context;
+ struct spu_runqueue;
+ 
++
+ struct spu {
+-	const char *name;
++	char *name;
+ 	unsigned long local_store_phys;
+ 	u8 *local_store;
+ 	unsigned long problem_phys;
+ 	struct spu_problem __iomem *problem;
++	struct spu_priv1 __iomem *priv1;	/* obsolete */
+ 	struct spu_priv2 __iomem *priv2;
+ 	struct list_head list;
+-	struct list_head be_list;
+ 	struct list_head sched_list;
+-	struct list_head full_list;
+ 	int number;
++	int nid;				/* obsolete */
+ 	unsigned int irqs[3];
++	u32 isrc;				/* obsolete */
+ 	u32 node;
+ 	u64 flags;
+ 	u64 dar;
+@@ -129,7 +131,7 @@ struct spu {
+ 	struct spu_runqueue *rq;
+ 	unsigned long long timestamp;
+ 	pid_t pid;
+-	pid_t tgid;
++	int prio;
+ 	int class_0_pending;
+ 	spinlock_t register_lock;
+ 
+@@ -137,17 +139,25 @@ struct spu {
+ 	void (* ibox_callback)(struct spu *spu);
+ 	void (* stop_callback)(struct spu *spu);
+ 	void (* mfc_callback)(struct spu *spu);
+-	void (* dma_callback)(struct spu *spu, int type);
+ 
+ 	char irq_c0[8];
+ 	char irq_c1[8];
+ 	char irq_c2[8];
+ 
+-	void* pdata; /* platform private data */
+ 	struct sys_device sysdev;
+ 
++	/* Additions for RHEL5U1 */
++#ifndef __GENKSYMS__
++	void (* dma_callback)(struct spu *spu, int type);
++
++	pid_t tgid;
+ 	int has_mem_affinity;
+ 	struct list_head aff_list;
++	struct list_head be_list;
++	struct list_head full_list;
++
++	void* pdata; /* platform private data */
++#endif
+ };
+ 
+ struct be_spu_info {
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/spu_base.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/spu_base.c	2007-06-08 16:49:05.000000000 +1000
++++ linux-malta-RH5/arch/powerpc/platforms/cell/spu_base.c	2007-06-08 16:49:43.000000000 +1000
+@@ -25,16 +25,21 @@
+ #include <linux/interrupt.h>
+ #include <linux/list.h>
+ #include <linux/module.h>
++#include <linux/poll.h>
+ #include <linux/ptrace.h>
+ #include <linux/slab.h>
+ #include <linux/wait.h>
+ #include <linux/mm.h>
+ #include <linux/io.h>
+ #include <linux/mutex.h>
++
++#include <asm/io.h>
++#include <asm/prom.h>
+ #include <asm/spu.h>
+ #include <asm/spu_priv1.h>
+ #include <asm/prom.h>
+ #include "spu_priv1_mmio.h"
++#include <asm/mmu_context.h>
+ 
+ const struct spu_management_ops *spu_management_ops;
+ const struct spu_priv1_ops *spu_priv1_ops;
+

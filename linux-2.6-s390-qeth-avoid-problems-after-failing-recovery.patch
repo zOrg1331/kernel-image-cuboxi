@@ -1,0 +1,102 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 6 Nov 2008 15:40:46 +0100
+Subject: [s390] qeth: avoid problems after failing recovery
+Message-id: 20081106144046.GA12027@redhat.com
+O-Subject: [RHEL5 U4 PATCH 1/4] s390 - qeth: avoid problems after failing recovery
+Bugzilla: 468019
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+hsi recovery hang after z/VM CP detach/attach
+
+Problem: IFF_UP flag is switched off/on during qeth recovery.
+If recovery fails for some reason, a following
+dev_close() is aborted due to the reset IFF_UP.
+In case of a device unit check "command rejected"
+the qeth driver tries to continue processing, but
+following OSA-commands run into timeout causing
+recovery to hang.
+
+Solution:  Do not touch IFF_UP flag during qeth recovery,
+but invoke dev_close() in case of failing recovery.
+Cancel outstanding control commands in case of
+Data Checks or Channel Checks.
+
+Bugzilla
+=========
+
+BZ 468019
+https://bugzilla.redhat.com/show_bug.cgi?id=468019
+
+Upstream status of the patch:
+=============================
+
+Patch is upstream in linux-2.6
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=28a7e4c906bd86419eb8572b3b1343e619cd1470
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 9e201dc..791c771 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -370,7 +370,7 @@ qeth_get_problem(struct ccw_device *cdev, struct irb *irb)
+ 		if (sense[SENSE_COMMAND_REJECT_BYTE] &
+ 		    SENSE_COMMAND_REJECT_FLAG) {
+ 			QETH_DBF_TEXT(trace,2,"CMDREJi");
+-			return 0;
++			return 1;
+ 		}
+ 		if ((sense[2] == 0xaf) && (sense[3] == 0xfe)) {
+ 			QETH_DBF_TEXT(trace,2,"AFFE");
+@@ -455,6 +455,7 @@ qeth_irq(struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
+ 		}
+ 		rc = qeth_get_problem(cdev,irb);
+ 		if (rc) {
++			qeth_clear_ipacmd_list(card);
+ 			qeth_schedule_recovery(card);
+ 			goto out;
+ 		}
+@@ -973,9 +974,13 @@ qeth_recover(void *ptr)
+ 	if (!rc)
+ 		PRINT_INFO("Device %s successfully recovered!\n",
+ 			   CARD_BUS_ID(card));
+-	else
++	else {
++		rtnl_lock();
++		dev_close(card->dev);
++		rtnl_unlock();
+ 		PRINT_INFO("Device %s could not be recovered!\n",
+ 			   CARD_BUS_ID(card));
++	}
+ 	/* don't run another scheduled recovery */
+ 	qeth_clear_thread_start_bit(card, QETH_RECOVER_THREAD);
+ 	qeth_clear_thread_running_bit(card, QETH_RECOVER_THREAD);
+@@ -3910,7 +3915,6 @@ qeth_open(struct net_device *dev)
+ 	}
+ 	card->data.state = CH_STATE_UP;
+ 	card->state = CARD_STATE_UP;
+-	card->dev->flags |= IFF_UP;
+ 	netif_start_queue(dev);
+ 
+ 	if (!card->lan_online && netif_carrier_ok(dev))
+@@ -3928,7 +3932,6 @@ qeth_stop(struct net_device *dev)
+ 	card = (struct qeth_card *) dev->priv;
+ 
+ 	netif_tx_disable(dev);
+-	card->dev->flags &= ~IFF_UP;
+ 	if (card->state == CARD_STATE_UP)
+ 		card->state = CARD_STATE_SOFTSETUP;
+ 	return 0;

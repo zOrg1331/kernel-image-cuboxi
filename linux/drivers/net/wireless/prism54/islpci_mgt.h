@@ -1,4 +1,5 @@
 /*
+ *  
  *  Copyright (C) 2002 Intersil Americas Inc.
  *  Copyright (C) 2003 Luis R. Rodriguez <mcgrof@ruslug.rutgers.edu>
  *
@@ -35,8 +36,8 @@ extern int pc_debug;
 
 
 /* General driver definitions */
-#define PCIDEVICE_LATENCY_TIMER_MIN		0x40
-#define PCIDEVICE_LATENCY_TIMER_VAL		0x50
+#define PCIDEVICE_LATENCY_TIMER_MIN 		0x40
+#define PCIDEVICE_LATENCY_TIMER_VAL 		0x50
 
 /* Debugging verbose definitions */
 #define SHOW_NOTHING                            0x00	/* overrules everything */
@@ -84,6 +85,12 @@ extern int pc_debug;
 #define PIMFOR_DEV_ID_MHLI_MIB                  0
 #define PIMFOR_FLAG_APPLIC_ORIGIN               0x01
 #define PIMFOR_FLAG_LITTLE_ENDIAN               0x02
+
+static inline void
+add_le32p(u32 * le_number, u32 add)
+{
+	*le_number = cpu_to_le32(le32_to_cpup(le_number) + add);
+}
 
 void display_buffer(char *, int);
 

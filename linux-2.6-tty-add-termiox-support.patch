@@ -1,0 +1,208 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Tue, 2 Sep 2008 15:37:13 -0400
+Subject: [tty] add termiox support
+Message-id: 20080902193713.GF10700@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/2] tty: add termiox support v3
+Bugzilla: 445211
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=445211
+
+This is a preparation patch for adding support for DTR/DSR serial flow control.
+This is the interface that is going to be upstream (TC{G,S}ETX* ioctls).
+
+kabi: just like done with the shutdown() method, this patch adds two new
+elements to tty_driver and a respective flag to indicate the driver supports
+it.
+
+Tested locally with serial console and a Point of Sale Printer (as many
+probably heard)
+
+Updated: using __GENKSYMS__ and fixed the build on different architectures
+
+Original upstream commit (in linux-next now):
+
+>From f810b01cbdf82d7627c000dd5945a236d5c496a1 Mon Sep 17 00:00:00 2001
+From: Alan Cox <alan@redhat.com>
+Date: Sat, 23 Aug 2008 20:22:35 +1000
+Subject: [PATCH] tty-add-termiox
+
+We need a way to describe the various additional modes and flow control
+features that random weird hardware shows up and software such as wine
+wants to emulate as Windows supports them.
+
+TCGETX/TCSETX and the termiox ioctl are a SYS5 extension that we might as
+well adopt. This patches adds the structures and the basic ioctl interfaces
+when the TCGETX etc defines are added for an architecture. Drivers wishing
+to use this stuff need to add new methods.
+
+Signed-off-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/char/tty_ioctl.c b/drivers/char/tty_ioctl.c
+index 3b6fa7b..dc25af0 100644
+--- a/drivers/char/tty_ioctl.c
++++ b/drivers/char/tty_ioctl.c
+@@ -418,6 +418,61 @@ static int set_ltchars(struct tty_struct * tty, struct ltchars __user * ltchars)
+ }
+ #endif
+ 
++static int get_termiox(struct tty_struct *tty, void __user *arg)
++{
++	struct termiox tx;
++
++	if (!(tty->driver->flags & TTY_DRIVER_HAS_TERMIOX))
++		return -EINVAL;
++
++	memset(&tx, 0, sizeof(tx));
++	tty->driver->get_termiox(tty, &tx);
++	if (copy_to_user(arg, &tx, sizeof(struct termiox)))
++		return -EFAULT;
++
++	return 0;
++}
++
++/**
++ *	set_termiox	-	set termiox fields if possible
++ *	@tty: terminal
++ *	@arg: termiox structure from user
++ *	@opt: option flags for ioctl type
++ *
++ *	Implement the device calling points for the SYS5 termiox ioctl
++ *	interface in Linux
++ */
++
++static int set_termiox(struct tty_struct *tty, void __user *arg, int opt)
++{
++	struct termiox tnew;
++	struct tty_ldisc *ld;
++	int ret, i;
++
++	if (!(tty->driver->flags & TTY_DRIVER_HAS_TERMIOX))
++		return -EINVAL;
++
++	if (copy_from_user(&tnew, arg, sizeof(struct termiox)))
++		return -EFAULT;
++
++	ld = tty_ldisc_ref(tty);
++	if (ld != NULL) {
++		if ((opt & TERMIOS_FLUSH) && ld->flush_buffer)
++			ld->flush_buffer(tty);
++		tty_ldisc_deref(ld);
++	}
++	if (opt & TERMIOS_WAIT) {
++		tty_wait_until_sent(tty, 0);
++		if (signal_pending(current))
++			return -EINTR;
++	}
++
++	ret = tty->driver->set_termiox(tty, &tnew);
++	mutex_unlock(&tty->termios_mutex);
++
++	return ret;
++}
++
+ /**
+  *	send_prio_char		-	send priority character
+  *
+@@ -592,6 +647,16 @@ int n_tty_ioctl(struct tty_struct * tty, struct file * file,
+ 				tty->packet = 0;
+ 			return 0;
+ 		}
++#ifdef TCGETX
++		case TCGETX:
++			return get_termiox(tty, p);
++		case TCSETX:
++			return set_termiox(tty, p, 0);
++		case TCSETXW:
++			return set_termiox(tty, p, TERMIOS_WAIT);
++		case TCSETXF:
++			return set_termiox(tty, p, TERMIOS_FLUSH);
++#endif
+ 		case TIOCGSOFTCAR:
+ 			return put_user(C_CLOCAL(tty) ? 1 : 0, (int __user *)arg);
+ 		case TIOCSSOFTCAR:
+diff --git a/include/asm-i386/ioctls.h b/include/asm-i386/ioctls.h
+index f962fad..0c21b60 100644
+--- a/include/asm-i386/ioctls.h
++++ b/include/asm-i386/ioctls.h
+@@ -50,6 +50,11 @@
+ #define TIOCGPTN	_IOR('T',0x30, unsigned int) /* Get Pty Number (of pty-mux device) */
+ #define TIOCSPTLCK	_IOW('T',0x31, int)  /* Lock/unlock Pty */
+ 
++#define TCGETX		0x5432 /* SYS5 TCGETX compatibility */
++#define TCSETX		0x5433
++#define TCSETXF		0x5434
++#define TCSETXW		0x5435
++
+ #define FIONCLEX	0x5450
+ #define FIOCLEX		0x5451
+ #define FIOASYNC	0x5452
+diff --git a/include/asm-x86_64/ioctls.h b/include/asm-x86_64/ioctls.h
+index 62caf8b..1df9b15 100644
+--- a/include/asm-x86_64/ioctls.h
++++ b/include/asm-x86_64/ioctls.h
+@@ -49,6 +49,11 @@
+ #define TIOCGPTN	_IOR('T',0x30, unsigned int) /* Get Pty Number (of pty-mux device) */
+ #define TIOCSPTLCK	_IOW('T',0x31, int)  /* Lock/unlock Pty */
+ 
++#define TCGETX		0x5432 /* SYS5 TCGETX compatibility */
++#define TCSETX		0x5433
++#define TCSETXF		0x5434
++#define TCSETXW		0x5435
++
+ #define FIONCLEX	0x5450  /* these numbers need to be adjusted. */
+ #define FIOCLEX		0x5451
+ #define FIOASYNC	0x5452
+diff --git a/include/linux/termios.h b/include/linux/termios.h
+index 4786628..2acd0c1 100644
+--- a/include/linux/termios.h
++++ b/include/linux/termios.h
+@@ -4,4 +4,19 @@
+ #include <linux/types.h>
+ #include <asm/termios.h>
+ 
++#define NFF	5
++
++struct termiox
++{
++	__u16	x_hflag;
++	__u16	x_cflag;
++	__u16	x_rflag[NFF];
++	__u16	x_sflag;
++};
++
++#define	RTSXOFF		0x0001		/* RTS flow control on input */
++#define	CTSXON		0x0002		/* CTS flow control on output */
++#define	DTRXOFF		0x0004		/* DTR flow control on input */
++#define DSRXON		0x0008		/* DCD flow control on output */
++
+ #endif
+diff --git a/include/linux/tty_driver.h b/include/linux/tty_driver.h
+index 2846f11..247b1ca 100644
+--- a/include/linux/tty_driver.h
++++ b/include/linux/tty_driver.h
+@@ -215,6 +215,8 @@ struct tty_driver {
+ 	struct list_head tty_drivers;
+ #ifndef __GENKSYMS__
+ 	void (*shutdown)(struct tty_struct *tty);
++	int (*set_termiox)(struct tty_struct *tty, struct termiox *old);
++	void (*get_termiox)(struct tty_struct *tty, struct termiox *tx);
+ #endif
+ };
+ 
+@@ -261,6 +263,7 @@ void tty_shutdown(struct tty_struct *tty);
+  *	is only applicable to the pty driver.
+  * TTY_DRIVER_HAS_SHUTDOWN - if the driver implements the shutdown()
+  *	function
++ * TTY_DRIVER_HAS_TERMIOX - if the driver implements the termiox ioctls
+  */
+ #define TTY_DRIVER_INSTALLED		0x0001
+ #define TTY_DRIVER_RESET_TERMIOS	0x0002
+@@ -268,6 +271,7 @@ void tty_shutdown(struct tty_struct *tty);
+ #define TTY_DRIVER_DYNAMIC_DEV		0x0008
+ #define TTY_DRIVER_DEVPTS_MEM		0x0010
+ #define TTY_DRIVER_HAS_SHUTDOWN		0x0020
++#define TTY_DRIVER_HAS_TERMIOX		0x0040
+ 
+ /* tty driver types */
+ #define TTY_DRIVER_TYPE_SYSTEM		0x0001

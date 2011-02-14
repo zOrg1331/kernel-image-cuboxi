@@ -1,0 +1,46 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Fri, 19 Oct 2007 14:19:48 -0400
+Subject: [net] qla3xxx: new 4032 does not work with VLAN
+Message-id: 20071019181948.30942.86529.sendpatchset@shell.boston.redhat.com
+O-Subject: [Bug 253785][QLogic][RHEL 5.2 bug] qla3xxx - new 4032 does not work with VLAN.
+Bugzilla: 253785
+
+BZ 253785
+
+If an interface owned by the qla3xxx driver (4032 chip) is used in a VLAN,
+inbound completions will not be handled and passed to the TCP/IP stack.
+
+This patch has been accepted upstream. It applies cleanly
+to the current 5.1 build. It is low risk and has been tested
+at QLogic.
+
+I changed the version string from RHEL5U1 to RHEL5U2.
+
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index 28f1bcb..1600945 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME  	"qla3xxx"
+ #define DRV_STRING 	"QLogic ISP3XXX Network Driver"
+-#define DRV_VERSION	"v2.03.00-k4-RHEL5U1"
++#define DRV_VERSION	"v2.03.00-k4-RHEL5U2"
+ #define PFX		DRV_NAME " "
+ 
+ static const char ql3xxx_driver_name[] = DRV_NAME;
+@@ -2262,6 +2262,12 @@ static int ql_tx_rx_clean(struct ql3_adapter *qdev,
+ 
+ 		net_rsp = qdev->rsp_current;
+ 		rmb();
++		/*
++		 * Fix 4032 chip undocumented "feature" where bit-8 is set if the
++		 * inbound completion is for a VLAN.
++		 */
++		if (qdev->device_id == QL3032_DEVICE_ID)
++			net_rsp->opcode &= 0x7f;
+ 		switch (net_rsp->opcode) {
+ 
+ 		case OPCODE_OB_MAC_IOCB_FN0:

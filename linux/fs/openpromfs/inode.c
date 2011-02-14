@@ -8,10 +8,10 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/fs.h>
+#include <linux/openprom_fs.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
-#include <linux/magic.h>
 
 #include <asm/openprom.h>
 #include <asm/oplib.h>
@@ -37,8 +37,6 @@ struct op_inode_info {
 	enum op_inode_type	type;
 	union op_inode_data	u;
 };
-
-static struct inode *openprom_iget(struct super_block *sb, ino_t ino);
 
 static inline struct op_inode_info *OP_I(struct inode *inode)
 {
@@ -133,7 +131,7 @@ static void property_stop(struct seq_file *f, void *v)
 	/* Nothing to do */
 }
 
-static const struct seq_operations property_op = {
+static struct seq_operations property_op = {
 	.start		= property_start,
 	.next		= property_next,
 	.stop		= property_stop,
@@ -167,12 +165,11 @@ static int openpromfs_readdir(struct file *, void *, filldir_t);
 static const struct file_operations openprom_operations = {
 	.read		= generic_read_dir,
 	.readdir	= openpromfs_readdir,
-	.llseek		= generic_file_llseek,
 };
 
 static struct dentry *openpromfs_lookup(struct inode *, struct dentry *, struct nameidata *);
 
-static const struct inode_operations openprom_inode_operations = {
+static struct inode_operations openprom_inode_operations = {
 	.lookup		= openpromfs_lookup,
 };
 
@@ -229,10 +226,10 @@ static struct dentry *openpromfs_lookup(struct inode *dir, struct dentry *dentry
 	return ERR_PTR(-ENOENT);
 
 found:
-	inode = openprom_iget(dir->i_sb, ino);
+	inode = iget(dir->i_sb, ino);
 	mutex_unlock(&op_mutex);
-	if (IS_ERR(inode))
-		return ERR_CAST(inode);
+	if (!inode)
+		return ERR_PTR(-EINVAL);
 	ent_oi = OP_I(inode);
 	ent_oi->type = ent_type;
 	ent_oi->u = ent_data;
@@ -256,13 +253,16 @@ found:
 		break;
 	}
 
+	inode->i_gid = 0;
+	inode->i_uid = 0;
+
 	d_add(dentry, inode);
 	return NULL;
 }
 
 static int openpromfs_readdir(struct file * filp, void * dirent, filldir_t filldir)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = filp->f_dentry->d_inode;
 	struct op_inode_info *oi = OP_I(inode);
 	struct device_node *dp = oi->u.node;
 	struct device_node *child;
@@ -330,13 +330,13 @@ out:
 	return 0;
 }
 
-static struct kmem_cache *op_inode_cachep;
+static kmem_cache_t *op_inode_cachep;
 
 static struct inode *openprom_alloc_inode(struct super_block *sb)
 {
 	struct op_inode_info *oi;
 
-	oi = kmem_cache_alloc(op_inode_cachep, GFP_KERNEL);
+	oi = kmem_cache_alloc(op_inode_cachep, SLAB_KERNEL);
 	if (!oi)
 		return NULL;
 
@@ -348,23 +348,14 @@ static void openprom_destroy_inode(struct inode *inode)
 	kmem_cache_free(op_inode_cachep, OP_I(inode));
 }
 
-static struct inode *openprom_iget(struct super_block *sb, ino_t ino)
+static void openprom_read_inode(struct inode * inode)
 {
-	struct inode *inode;
-
-	inode = iget_locked(sb, ino);
-	if (!inode)
-		return ERR_PTR(-ENOMEM);
-	if (inode->i_state & I_NEW) {
-		inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
-		if (inode->i_ino == OPENPROM_ROOT_INO) {
-			inode->i_op = &openprom_inode_operations;
-			inode->i_fop = &openprom_operations;
-			inode->i_mode = S_IFDIR | S_IRUGO | S_IXUGO;
-		}
-		unlock_new_inode(inode);
+	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
+	if (inode->i_ino == OPENPROM_ROOT_INO) {
+		inode->i_op = &openprom_inode_operations;
+		inode->i_fop = &openprom_operations;
+		inode->i_mode = S_IFDIR | S_IRUGO | S_IXUGO;
 	}
-	return inode;
 }
 
 static int openprom_remount(struct super_block *sb, int *flags, char *data)
@@ -373,9 +364,10 @@ static int openprom_remount(struct super_block *sb, int *flags, char *data)
 	return 0;
 }
 
-static const struct super_operations openprom_sops = {
+static struct super_operations openprom_sops = { 
 	.alloc_inode	= openprom_alloc_inode,
 	.destroy_inode	= openprom_destroy_inode,
+	.read_inode	= openprom_read_inode,
 	.statfs		= simple_statfs,
 	.remount_fs	= openprom_remount,
 };
@@ -384,7 +376,6 @@ static int openprom_fill_super(struct super_block *s, void *data, int silent)
 {
 	struct inode *root_inode;
 	struct op_inode_info *oi;
-	int ret;
 
 	s->s_flags |= MS_NOATIME;
 	s->s_blocksize = 1024;
@@ -392,11 +383,9 @@ static int openprom_fill_super(struct super_block *s, void *data, int silent)
 	s->s_magic = OPENPROM_SUPER_MAGIC;
 	s->s_op = &openprom_sops;
 	s->s_time_gran = 1;
-	root_inode = openprom_iget(s, OPENPROM_ROOT_INO);
-	if (IS_ERR(root_inode)) {
-		ret = PTR_ERR(root_inode);
+	root_inode = iget(s, OPENPROM_ROOT_INO);
+	if (!root_inode)
 		goto out_no_root;
-	}
 
 	oi = OP_I(root_inode);
 	oi->type = op_inode_node;
@@ -404,15 +393,13 @@ static int openprom_fill_super(struct super_block *s, void *data, int silent)
 
 	s->s_root = d_alloc_root(root_inode);
 	if (!s->s_root)
-		goto out_no_root_dentry;
+		goto out_no_root;
 	return 0;
 
-out_no_root_dentry:
-	iput(root_inode);
-	ret = -ENOMEM;
 out_no_root:
 	printk("openprom_fill_super: get root inode failed\n");
-	return ret;
+	iput(root_inode);
+	return -ENOMEM;
 }
 
 static int openprom_get_sb(struct file_system_type *fs_type,
@@ -428,11 +415,13 @@ static struct file_system_type openprom_fs_type = {
 	.kill_sb	= kill_anon_super,
 };
 
-static void op_inode_init_once(void *data)
+static void op_inode_init_once(void *data, kmem_cache_t * cachep, unsigned long flags)
 {
 	struct op_inode_info *oi = (struct op_inode_info *) data;
 
-	inode_init_once(&oi->vfs_inode);
+	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
+	    SLAB_CTOR_CONSTRUCTOR)
+		inode_init_once(&oi->vfs_inode);
 }
 
 static int __init init_openprom_fs(void)
@@ -444,7 +433,7 @@ static int __init init_openprom_fs(void)
 					    0,
 					    (SLAB_RECLAIM_ACCOUNT |
 					     SLAB_MEM_SPREAD),
-					    op_inode_init_once);
+					    op_inode_init_once, NULL);
 	if (!op_inode_cachep)
 		return -ENOMEM;
 

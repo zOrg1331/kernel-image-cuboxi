@@ -10,18 +10,23 @@
 ** the Free Software Foundation; either version 2 of the License, or
 ** (at your option) any later version.
 **
+** This Driver currently only supports the console (port 0) on the MUX.
+** Additional work will be needed on this driver to enable the full
+** functionality of the MUX.
+**
 */
 
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/dma-mapping.h>
 #include <linux/ioport.h>
 
 #include <asm/io.h>
 #include <asm/hardware.h>
 #include <asm/parisc-device.h>
+
+#include <linux/pci.h>
 
 struct hppb_card {
 	unsigned long hpa;
@@ -29,7 +34,7 @@ struct hppb_card {
 	struct hppb_card *next;
 };
 
-static struct hppb_card hppb_card_head = {
+struct hppb_card hppb_card_head = {
 	.hpa = 0,
 	.next = NULL,
 };
@@ -62,8 +67,7 @@ static int hppb_probe(struct parisc_device *dev)
 		}
 		card = card->next;
 	}
-	printk(KERN_INFO "Found GeckoBoa at 0x%llx\n",
-			(unsigned long long) dev->hpa.start);
+        printk(KERN_INFO "Found GeckoBoa at 0x%lx\n", dev->hpa.start);
 
 	card->hpa = dev->hpa.start;
 	card->mmio_region.name = "HP-PB Bus";
@@ -74,20 +78,16 @@ static int hppb_probe(struct parisc_device *dev)
 
 	status = ccio_request_resource(dev, &card->mmio_region);
 	if(status < 0) {
-		printk(KERN_ERR "%s: failed to claim HP-PB "
-			"bus space (0x%08llx, 0x%08llx)\n",
-			__FILE__, (unsigned long long) card->mmio_region.start,
-			(unsigned long long) card->mmio_region.end);
+		printk(KERN_ERR "%s: failed to claim HP-PB bus space (%08lx, %08lx)\n",
+			__FILE__, card->mmio_region.start, card->mmio_region.end);
 	}
 
         return 0;
 }
 
+
 static struct parisc_device_id hppb_tbl[] = {
-        { HPHW_BCPORT, HVERSION_REV_ANY_ID, 0x500, 0xc }, /* E25 and K */
-        { HPHW_BCPORT, 0x0, 0x501, 0xc }, /* E35 */
-        { HPHW_BCPORT, 0x0, 0x502, 0xc }, /* E45 */
-        { HPHW_BCPORT, 0x0, 0x503, 0xc }, /* E55 */
+        { HPHW_BCPORT, HVERSION_REV_ANY_ID, 0x500, 0xc }, 
         { 0, }
 };
 
@@ -98,7 +98,7 @@ static struct parisc_driver hppb_driver = {
 };
 
 /**
- * hppb_init - HP-PB bus initialization procedure.
+ * hppb_init - HP-PB bus initalization procedure.
  *
  * Register this driver.   
  */

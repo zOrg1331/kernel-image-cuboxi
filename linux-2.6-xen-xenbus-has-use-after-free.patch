@@ -1,0 +1,37 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Wed, 12 Dec 2007 16:11:50 -0500
+Subject: [xen] xenbus has use-after-free
+Message-id: 47604E96.8090709@redhat.com
+O-Subject: [RHEL5.2 PATCH] : BZ 249728 xenbus has use-after-free in drivers/xen/xenbus/xenbus_xs.c
+Bugzilla: 249728
+
+Cleaning out the BZ's... trivial patch.
+
+Taken from upstream patch which can be seen at:
+
+http://xenbits.xensource.com/xen-3.1-testing.hg?rev/20284e9cd540
+
+Not seen since it is in error path.
+Caught by Coverity checker run against Xen codebase.
+
+Patch attached as well (warning Don Z: in-line and attached).
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Markus Armbruster <armbru@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/drivers/xen/xenbus/xenbus_xs.c b/drivers/xen/xenbus/xenbus_xs.c
+index 26b9829..0cb7700 100644
+--- a/drivers/xen/xenbus/xenbus_xs.c
++++ b/drivers/xen/xenbus/xenbus_xs.c
+@@ -779,8 +779,9 @@ static int process_msg(void)
+ 		msg->u.watch.vec = split(body, msg->hdr.len,
+ 					 &msg->u.watch.vec_size);
+ 		if (IS_ERR(msg->u.watch.vec)) {
++			err = PTR_ERR(msg->u.watch.vec);
+ 			kfree(msg);
+-			return PTR_ERR(msg->u.watch.vec);
++			return (err);
+ 		}
+ 
+ 		spin_lock(&watches_lock);

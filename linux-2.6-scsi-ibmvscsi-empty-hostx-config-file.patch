@@ -1,0 +1,107 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: [RHEL5.0 PPC PATCH] 210239: Empty /sys/class/scsi_host/hostX/config  file
+Date: Mon, 18 Dec 2006 19:15:59 -0500 (Eastern Standard Time)
+Bugzilla: 210239
+Message-Id: <Pine.WNT.4.64.0612181913240.2100@IBM-3MTQI3AXJFW>
+Changelog: scsi: Empty /sys/class/scsi_host/hostX/config  file
+
+
+
+RHBZ#: 210239
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=210239
+
+Description:
+------------
+the /sys/class/scsi_host/hostX/config file and find it is empty when the 
+buffer size is less than 64k. 
+
+this patch affects the ppc specific file drivers/scsi/ibmvscsi/ibmvscsi.c
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+This patch has been posted upstream:
+http://marc.theaimsgroup.com/?l=linux-scsi&m=116562209626200&w=2
+
+Test Status:
+------------
+This patch was tested by Linda Xie of IBM and builds cleanly against 
+kernel-2.6.18-1.2839.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL  5.0.
+
+--- linux-2.6.17.ppc64/drivers/scsi/ibmvscsi/ibmvscsi.c	2006-09-28 15:03:54.000000000 -0500
++++ linux-2.6.17.ppc64-linda/drivers/scsi/ibmvscsi/ibmvscsi.c	2006-09-28 15:00:56.000000000 -0500
+@@ -86,8 +86,10 @@ static int max_id = 64;
+ static int max_channel = 3;
+ static int init_timeout = 5;
+ static int max_requests = 50;
++/* host data buffer size */
++#define buff_size	4096
+ 
+-#define IBMVSCSI_VERSION "1.5.8"
++#define IBMVSCSI_VERSION "1.5.9"
+ 
+ MODULE_DESCRIPTION("IBM Virtual SCSI");
+ MODULE_AUTHOR("Dave Boutcher");
+@@ -1347,7 +1349,7 @@ static ssize_t show_host_srp_version(str
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 	int len;
+ 
+-	len = snprintf(buf, PAGE_SIZE, "%s\n",
++	len = snprintf(buf, buff_size, "%s\n",
+ 		       hostdata->madapter_info.srp_version);
+ 	return len;
+ }
+@@ -1368,7 +1370,7 @@ static ssize_t show_host_partition_name(
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 	int len;
+ 
+-	len = snprintf(buf, PAGE_SIZE, "%s\n",
++	len = snprintf(buf, buff_size, "%s\n",
+ 		       hostdata->madapter_info.partition_name);
+ 	return len;
+ }
+@@ -1389,7 +1391,7 @@ static ssize_t show_host_partition_numbe
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 	int len;
+ 
+-	len = snprintf(buf, PAGE_SIZE, "%d\n",
++	len = snprintf(buf, buff_size, "%d\n",
+ 		       hostdata->madapter_info.partition_number);
+ 	return len;
+ }
+@@ -1409,7 +1411,7 @@ static ssize_t show_host_mad_version(str
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 	int len;
+ 
+-	len = snprintf(buf, PAGE_SIZE, "%d\n",
++	len = snprintf(buf, buff_size, "%d\n",
+ 		       hostdata->madapter_info.mad_version);
+ 	return len;
+ }
+@@ -1429,7 +1431,7 @@ static ssize_t show_host_os_type(struct 
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 	int len;
+ 
+-	len = snprintf(buf, PAGE_SIZE, "%d\n", hostdata->madapter_info.os_type);
++	len = snprintf(buf, buff_size, "%d\n", hostdata->madapter_info.os_type);
+ 	return len;
+ }
+ 
+@@ -1448,7 +1450,7 @@ static ssize_t show_host_config(struct c
+ 	    (struct ibmvscsi_host_data *)shost->hostdata;
+ 
+ 	/* returns null-terminated host config data */
+-	if (ibmvscsi_do_host_config(hostdata, buf, PAGE_SIZE) == 0)
++	if (ibmvscsi_do_host_config(hostdata, buf, buff_size) == 0)
+ 		return strlen(buf);
+ 	else
+ 		return 0;
+
+

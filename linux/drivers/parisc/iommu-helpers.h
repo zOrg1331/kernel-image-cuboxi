@@ -95,14 +95,12 @@ iommu_fill_pdir(struct ioc *ioc, struct scatterlist *startsg, int nents,
 */
 
 static inline unsigned int
-iommu_coalesce_chunks(struct ioc *ioc, struct device *dev,
-		struct scatterlist *startsg, int nents,
-		int (*iommu_alloc_range)(struct ioc *, struct device *, size_t))
+iommu_coalesce_chunks(struct ioc *ioc, struct scatterlist *startsg, int nents,
+		      int (*iommu_alloc_range)(struct ioc *, size_t))
 {
 	struct scatterlist *contig_sg;	   /* contig chunk head */
 	unsigned long dma_offset, dma_len; /* start/len of DMA stream */
 	unsigned int n_mappings = 0;
-	unsigned int max_seg_size = dma_get_max_seg_size(dev);
 
 	while (nents > 0) {
 
@@ -140,11 +138,8 @@ iommu_coalesce_chunks(struct ioc *ioc, struct device *dev,
 			** exceed DMA_CHUNK_SIZE if we coalesce the
 			** next entry.
 			*/   
-			if(unlikely(ALIGN(dma_len + dma_offset + startsg->length,
+			if(unlikely(ROUNDUP(dma_len + dma_offset + startsg->length,
 					    IOVP_SIZE) > DMA_CHUNK_SIZE))
-				break;
-
-			if (startsg->length + dma_len > max_seg_size)
 				break;
 
 			/*
@@ -163,10 +158,10 @@ iommu_coalesce_chunks(struct ioc *ioc, struct device *dev,
 		** Allocate space for DMA stream.
 		*/
 		sg_dma_len(contig_sg) = dma_len;
-		dma_len = ALIGN(dma_len + dma_offset, IOVP_SIZE);
+		dma_len = ROUNDUP(dma_len + dma_offset, IOVP_SIZE);
 		sg_dma_address(contig_sg) =
 			PIDE_FLAG 
-			| (iommu_alloc_range(ioc, dev, dma_len) << IOVP_SHIFT)
+			| (iommu_alloc_range(ioc, dma_len) << IOVP_SHIFT)
 			| dma_offset;
 		n_mappings++;
 	}

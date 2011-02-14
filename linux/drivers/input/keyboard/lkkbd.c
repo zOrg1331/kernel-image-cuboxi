@@ -59,11 +59,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ *
+ * Should you need to contact me, the author, you can do so either by
+ * email or by paper mail:
+ * Jan-Benedict Glaw, Lilienstraße 16, 33790 Hörste (near Halle/Westf.),
+ * Germany.
  */
 
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/input.h>
@@ -447,7 +453,8 @@ lkkbd_detection_done (struct lkkbd *lk)
  * is received.
  */
 static irqreturn_t
-lkkbd_interrupt (struct serio *serio, unsigned char data, unsigned int flags)
+lkkbd_interrupt (struct serio *serio, unsigned char data, unsigned int flags,
+		struct pt_regs *regs)
 {
 	struct lkkbd *lk = serio_get_drvdata (serio);
 	int i;
@@ -466,6 +473,7 @@ lkkbd_interrupt (struct serio *serio, unsigned char data, unsigned int flags)
 
 	switch (data) {
 		case LK_ALL_KEYS_UP:
+			input_regs (lk->dev, regs);
 			for (i = 0; i < ARRAY_SIZE (lkkbd_keycode); i++)
 				if (lk->keycode[i] != KEY_RESERVED)
 					input_report_key (lk->dev, lk->keycode[i], 0);
@@ -493,6 +501,7 @@ lkkbd_interrupt (struct serio *serio, unsigned char data, unsigned int flags)
 
 		default:
 			if (lk->keycode[data] != KEY_RESERVED) {
+				input_regs (lk->dev, regs);
 				if (!test_bit (lk->keycode[data], lk->dev->key))
 					input_report_key (lk->dev, lk->keycode[data], 1);
 				else
@@ -514,7 +523,7 @@ static int
 lkkbd_event (struct input_dev *dev, unsigned int type, unsigned int code,
 		int value)
 {
-	struct lkkbd *lk = input_get_drvdata (dev);
+	struct lkkbd *lk = dev->private;
 	unsigned char leds_on = 0;
 	unsigned char leds_off = 0;
 
@@ -525,12 +534,12 @@ lkkbd_event (struct input_dev *dev, unsigned int type, unsigned int code,
 			CHECK_LED (lk, leds_on, leds_off, LED_SCROLLL, LK_LED_SCROLLLOCK);
 			CHECK_LED (lk, leds_on, leds_off, LED_SLEEP, LK_LED_WAIT);
 			if (leds_on != 0) {
-				serio_write (lk->serio, LK_CMD_LED_ON);
-				serio_write (lk->serio, leds_on);
+				lk->serio->write (lk->serio, LK_CMD_LED_ON);
+				lk->serio->write (lk->serio, leds_on);
 			}
 			if (leds_off != 0) {
-				serio_write (lk->serio, LK_CMD_LED_OFF);
-				serio_write (lk->serio, leds_off);
+				lk->serio->write (lk->serio, LK_CMD_LED_OFF);
+				lk->serio->write (lk->serio, leds_off);
 			}
 			return 0;
 
@@ -538,21 +547,21 @@ lkkbd_event (struct input_dev *dev, unsigned int type, unsigned int code,
 			switch (code) {
 				case SND_CLICK:
 					if (value == 0) {
-						DBG ("%s: Deactivating key clicks\n", __func__);
-						serio_write (lk->serio, LK_CMD_DISABLE_KEYCLICK);
-						serio_write (lk->serio, LK_CMD_DISABLE_CTRCLICK);
+						DBG ("%s: Deactivating key clicks\n", __FUNCTION__);
+						lk->serio->write (lk->serio, LK_CMD_DISABLE_KEYCLICK);
+						lk->serio->write (lk->serio, LK_CMD_DISABLE_CTRCLICK);
 					} else {
-						DBG ("%s: Activating key clicks\n", __func__);
-						serio_write (lk->serio, LK_CMD_ENABLE_KEYCLICK);
-						serio_write (lk->serio, volume_to_hw (lk->keyclick_volume));
-						serio_write (lk->serio, LK_CMD_ENABLE_CTRCLICK);
-						serio_write (lk->serio, volume_to_hw (lk->ctrlclick_volume));
+						DBG ("%s: Activating key clicks\n", __FUNCTION__);
+						lk->serio->write (lk->serio, LK_CMD_ENABLE_KEYCLICK);
+						lk->serio->write (lk->serio, volume_to_hw (lk->keyclick_volume));
+						lk->serio->write (lk->serio, LK_CMD_ENABLE_CTRCLICK);
+						lk->serio->write (lk->serio, volume_to_hw (lk->ctrlclick_volume));
 					}
 					return 0;
 
 				case SND_BELL:
 					if (value != 0)
-						serio_write (lk->serio, LK_CMD_SOUND_BELL);
+						lk->serio->write (lk->serio, LK_CMD_SOUND_BELL);
 
 					return 0;
 			}
@@ -560,7 +569,7 @@ lkkbd_event (struct input_dev *dev, unsigned int type, unsigned int code,
 
 		default:
 			printk (KERN_ERR "%s (): Got unknown type %d, code %d, value %d\n",
-					__func__, type, code, value);
+					__FUNCTION__, type, code, value);
 	}
 
 	return -1;
@@ -571,18 +580,18 @@ lkkbd_event (struct input_dev *dev, unsigned int type, unsigned int code,
  * were in.
  */
 static void
-lkkbd_reinit (struct work_struct *work)
+lkkbd_reinit (void *data)
 {
-	struct lkkbd *lk = container_of(work, struct lkkbd, tq);
+	struct lkkbd *lk = data;
 	int division;
 	unsigned char leds_on = 0;
 	unsigned char leds_off = 0;
 
 	/* Ask for ID */
-	serio_write (lk->serio, LK_CMD_REQUEST_ID);
+	lk->serio->write (lk->serio, LK_CMD_REQUEST_ID);
 
 	/* Reset parameters */
-	serio_write (lk->serio, LK_CMD_SET_DEFAULTS);
+	lk->serio->write (lk->serio, LK_CMD_SET_DEFAULTS);
 
 	/* Set LEDs */
 	CHECK_LED (lk, leds_on, leds_off, LED_CAPSL, LK_LED_SHIFTLOCK);
@@ -590,12 +599,12 @@ lkkbd_reinit (struct work_struct *work)
 	CHECK_LED (lk, leds_on, leds_off, LED_SCROLLL, LK_LED_SCROLLLOCK);
 	CHECK_LED (lk, leds_on, leds_off, LED_SLEEP, LK_LED_WAIT);
 	if (leds_on != 0) {
-		serio_write (lk->serio, LK_CMD_LED_ON);
-		serio_write (lk->serio, leds_on);
+		lk->serio->write (lk->serio, LK_CMD_LED_ON);
+		lk->serio->write (lk->serio, leds_on);
 	}
 	if (leds_off != 0) {
-		serio_write (lk->serio, LK_CMD_LED_OFF);
-		serio_write (lk->serio, leds_off);
+		lk->serio->write (lk->serio, LK_CMD_LED_OFF);
+		lk->serio->write (lk->serio, leds_off);
 	}
 
 	/*
@@ -603,31 +612,31 @@ lkkbd_reinit (struct work_struct *work)
 	 * only work with a LK401 keyboard and grants access to
 	 * LAlt, RAlt, RCompose and RShift.
 	 */
-	serio_write (lk->serio, LK_CMD_ENABLE_LK401);
+	lk->serio->write (lk->serio, LK_CMD_ENABLE_LK401);
 
 	/* Set all keys to UPDOWN mode */
 	for (division = 1; division <= 14; division++)
-		serio_write (lk->serio, LK_CMD_SET_MODE (LK_MODE_UPDOWN,
+		lk->serio->write (lk->serio, LK_CMD_SET_MODE (LK_MODE_UPDOWN,
 					division));
 
 	/* Enable bell and set volume */
-	serio_write (lk->serio, LK_CMD_ENABLE_BELL);
-	serio_write (lk->serio, volume_to_hw (lk->bell_volume));
+	lk->serio->write (lk->serio, LK_CMD_ENABLE_BELL);
+	lk->serio->write (lk->serio, volume_to_hw (lk->bell_volume));
 
 	/* Enable/disable keyclick (and possibly set volume) */
 	if (test_bit (SND_CLICK, lk->dev->snd)) {
-		serio_write (lk->serio, LK_CMD_ENABLE_KEYCLICK);
-		serio_write (lk->serio, volume_to_hw (lk->keyclick_volume));
-		serio_write (lk->serio, LK_CMD_ENABLE_CTRCLICK);
-		serio_write (lk->serio, volume_to_hw (lk->ctrlclick_volume));
+		lk->serio->write (lk->serio, LK_CMD_ENABLE_KEYCLICK);
+		lk->serio->write (lk->serio, volume_to_hw (lk->keyclick_volume));
+		lk->serio->write (lk->serio, LK_CMD_ENABLE_CTRCLICK);
+		lk->serio->write (lk->serio, volume_to_hw (lk->ctrlclick_volume));
 	} else {
-		serio_write (lk->serio, LK_CMD_DISABLE_KEYCLICK);
-		serio_write (lk->serio, LK_CMD_DISABLE_CTRCLICK);
+		lk->serio->write (lk->serio, LK_CMD_DISABLE_KEYCLICK);
+		lk->serio->write (lk->serio, LK_CMD_DISABLE_CTRCLICK);
 	}
 
 	/* Sound the bell if needed */
 	if (test_bit (SND_BELL, lk->dev->snd))
-		serio_write (lk->serio, LK_CMD_SOUND_BELL);
+		lk->serio->write (lk->serio, LK_CMD_SOUND_BELL);
 }
 
 /*
@@ -645,12 +654,12 @@ lkkbd_connect (struct serio *serio, struct serio_driver *drv)
 	input_dev = input_allocate_device ();
 	if (!lk || !input_dev) {
 		err = -ENOMEM;
-		goto fail1;
+		goto fail;
 	}
 
 	lk->serio = serio;
 	lk->dev = input_dev;
-	INIT_WORK (&lk->tq, lkkbd_reinit);
+	INIT_WORK (&lk->tq, lkkbd_reinit, lk);
 	lk->bell_volume = bell_volume;
 	lk->keyclick_volume = keyclick_volume;
 	lk->ctrlclick_volume = ctrlclick_volume;
@@ -665,10 +674,9 @@ lkkbd_connect (struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_LKKBD;
 	input_dev->id.product = 0;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
 	input_dev->event = lkkbd_event;
-
-	input_set_drvdata (input_dev, lk);
+	input_dev->private = lk;
 
 	set_bit (EV_KEY, input_dev->evbit);
 	set_bit (EV_LED, input_dev->evbit);
@@ -684,28 +692,22 @@ lkkbd_connect (struct serio *serio, struct serio_driver *drv)
 	input_dev->keycode = lk->keycode;
 	input_dev->keycodesize = sizeof (lk_keycode_t);
 	input_dev->keycodemax = LK_NUM_KEYCODES;
-
 	for (i = 0; i < LK_NUM_KEYCODES; i++)
-		__set_bit (lk->keycode[i], input_dev->keybit);
-	__clear_bit(KEY_RESERVED, input_dev->keybit);
+		set_bit (lk->keycode[i], input_dev->keybit);
 
 	serio_set_drvdata (serio, lk);
 
 	err = serio_open (serio, drv);
 	if (err)
-		goto fail2;
+		goto fail;
 
-	err = input_register_device (lk->dev);
-	if (err)
-		goto fail3;
-
-	serio_write (lk->serio, LK_CMD_POWERCYCLE_RESET);
+	input_register_device (lk->dev);
+	lk->serio->write (lk->serio, LK_CMD_POWERCYCLE_RESET);
 
 	return 0;
 
- fail3:	serio_close (serio);
- fail2:	serio_set_drvdata (serio, NULL);
- fail1:	input_free_device (input_dev);
+ fail:	serio_set_drvdata (serio, NULL);
+	input_free_device (input_dev);
 	kfree (lk);
 	return err;
 }
@@ -755,7 +757,8 @@ static struct serio_driver lkkbd_drv = {
 static int __init
 lkkbd_init (void)
 {
-	return serio_register_driver(&lkkbd_drv);
+	serio_register_driver(&lkkbd_drv);
+	return 0;
 }
 
 static void __exit

@@ -8,7 +8,7 @@
  *
  *  See Documentation/dcdbas.txt for more information.
  *
- *  Copyright (C) 1995-2006 Dell Inc.
+ *  Copyright (C) 1995-2005 Dell Inc.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License v2.0 as published by
@@ -35,11 +35,12 @@
 #include <linux/types.h>
 #include <linux/mutex.h>
 #include <asm/io.h>
+#include <asm/semaphore.h>
 
 #include "dcdbas.h"
 
 #define DRIVER_NAME		"dcdbas"
-#define DRIVER_VERSION		"5.6.0-3.2"
+#define DRIVER_VERSION		"5.6.0-2"
 #define DRIVER_DESCRIPTION	"Dell Systems Management Base Driver"
 
 static struct platform_device *dcdbas_pdev;
@@ -63,7 +64,7 @@ static void smi_data_buf_free(void)
 		return;
 
 	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
-		__func__, smi_data_buf_phys_addr, smi_data_buf_size);
+		__FUNCTION__, smi_data_buf_phys_addr, smi_data_buf_size);
 
 	dma_free_coherent(&dcdbas_pdev->dev, smi_data_buf_size, smi_data_buf,
 			  smi_data_buf_handle);
@@ -92,7 +93,7 @@ static int smi_data_buf_realloc(unsigned long size)
 	if (!buf) {
 		dev_dbg(&dcdbas_pdev->dev,
 			"%s: failed to allocate memory size %lu\n",
-			__func__, size);
+			__FUNCTION__, size);
 		return -ENOMEM;
 	}
 	/* memory zeroed by dma_alloc_coherent */
@@ -110,7 +111,7 @@ static int smi_data_buf_realloc(unsigned long size)
 	smi_data_buf_size = size;
 
 	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
-		__func__, smi_data_buf_phys_addr, smi_data_buf_size);
+		__FUNCTION__, smi_data_buf_phys_addr, smi_data_buf_size);
 
 	return 0;
 }
@@ -148,27 +149,31 @@ static ssize_t smi_data_buf_size_store(struct device *dev,
 	return count;
 }
 
-static ssize_t smi_data_read(struct file *filp, struct kobject *kobj,
-			     struct bin_attribute *bin_attr,
-			     char *buf, loff_t pos, size_t count)
+static ssize_t smi_data_read(struct kobject *kobj, char *buf, loff_t pos,
+			     size_t count)
 {
+	size_t max_read;
 	ssize_t ret;
 
 	mutex_lock(&smi_data_lock);
-	ret = memory_read_from_buffer(buf, count, &pos, smi_data_buf,
-					smi_data_buf_size);
+
+	if (pos >= smi_data_buf_size) {
+		ret = 0;
+		goto out;
+	}
+
+	max_read = smi_data_buf_size - pos;
+	ret = min(max_read, count);
+	memcpy(buf, smi_data_buf + pos, ret);
+out:
 	mutex_unlock(&smi_data_lock);
 	return ret;
 }
 
-static ssize_t smi_data_write(struct file *filp, struct kobject *kobj,
-			      struct bin_attribute *bin_attr,
-			      char *buf, loff_t pos, size_t count)
+static ssize_t smi_data_write(struct kobject *kobj, char *buf, loff_t pos,
+			      size_t count)
 {
 	ssize_t ret;
-
-	if ((pos + count) > MAX_SMI_DATA_BUF_SIZE)
-		return -EINVAL;
 
 	mutex_lock(&smi_data_lock);
 
@@ -238,30 +243,27 @@ static ssize_t host_control_on_shutdown_store(struct device *dev,
 }
 
 /**
- * dcdbas_smi_request: generate SMI request
+ * smi_request: generate SMI request
  *
  * Called with smi_data_lock.
  */
-int dcdbas_smi_request(struct smi_cmd *smi_cmd)
+static int smi_request(struct smi_cmd *smi_cmd)
 {
-	cpumask_var_t old_mask;
+	cpumask_t old_mask;
 	int ret = 0;
 
 	if (smi_cmd->magic != SMI_CMD_MAGIC) {
 		dev_info(&dcdbas_pdev->dev, "%s: invalid magic value\n",
-			 __func__);
+			 __FUNCTION__);
 		return -EBADR;
 	}
 
 	/* SMI requires CPU 0 */
-	if (!alloc_cpumask_var(&old_mask, GFP_KERNEL))
-		return -ENOMEM;
-
-	cpumask_copy(old_mask, &current->cpus_allowed);
-	set_cpus_allowed_ptr(current, cpumask_of(0));
+	old_mask = current->cpus_allowed;
+	set_cpus_allowed(current, cpumask_of_cpu(0));
 	if (smp_processor_id() != 0) {
 		dev_dbg(&dcdbas_pdev->dev, "%s: failed to get CPU 0\n",
-			__func__);
+			__FUNCTION__);
 		ret = -EBUSY;
 		goto out;
 	}
@@ -278,8 +280,7 @@ int dcdbas_smi_request(struct smi_cmd *smi_cmd)
 	);
 
 out:
-	set_cpus_allowed_ptr(current, old_mask);
-	free_cpumask_var(old_mask);
+	set_cpus_allowed(current, old_mask);
 	return ret;
 }
 
@@ -313,14 +314,14 @@ static ssize_t smi_request_store(struct device *dev,
 	switch (val) {
 	case 2:
 		/* Raw SMI */
-		ret = dcdbas_smi_request(smi_cmd);
+		ret = smi_request(smi_cmd);
 		if (!ret)
 			ret = count;
 		break;
 	case 1:
 		/* Calling Interface SMI */
 		smi_cmd->ebx = (u32) virt_to_phys(smi_cmd->command_buffer);
-		ret = dcdbas_smi_request(smi_cmd);
+		ret = smi_request(smi_cmd);
 		if (!ret)
 			ret = count;
 		break;
@@ -337,7 +338,6 @@ out:
 	mutex_unlock(&smi_data_lock);
 	return ret;
 }
-EXPORT_SYMBOL(dcdbas_smi_request);
 
 /**
  * host_control_smi: generate host control SMI
@@ -424,7 +424,7 @@ static int host_control_smi(void)
 
 	default:
 		dev_dbg(&dcdbas_pdev->dev, "%s: invalid SMI type %u\n",
-			__func__, host_control_smi_type);
+			__FUNCTION__, host_control_smi_type);
 		return -ENOSYS;
 	}
 
@@ -452,13 +452,13 @@ static void dcdbas_host_control(void)
 	host_control_action = HC_ACTION_NONE;
 
 	if (!smi_data_buf) {
-		dev_dbg(&dcdbas_pdev->dev, "%s: no SMI buffer\n", __func__);
+		dev_dbg(&dcdbas_pdev->dev, "%s: no SMI buffer\n", __FUNCTION__);
 		return;
 	}
 
 	if (smi_data_buf_size < sizeof(struct apm_cmd)) {
 		dev_dbg(&dcdbas_pdev->dev, "%s: SMI buffer too small\n",
-			__func__);
+			__FUNCTION__);
 		return;
 	}
 
@@ -545,7 +545,7 @@ static int __devinit dcdbas_probe(struct platform_device *dev)
 	 * BIOS SMI calls require buffer addresses be in 32-bit address space.
 	 * This is done by setting the DMA mask below.
 	 */
-	dcdbas_pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
+	dcdbas_pdev->dev.coherent_dma_mask = DMA_32BIT_MASK;
 	dcdbas_pdev->dev.dma_mask = &dcdbas_pdev->dev.coherent_dma_mask;
 
 	error = sysfs_create_group(&dev->dev.kobj, &dcdbas_attr_group);
@@ -559,7 +559,7 @@ static int __devinit dcdbas_probe(struct platform_device *dev)
 			while (--i >= 0)
 				sysfs_remove_bin_file(&dev->dev.kobj,
 						      dcdbas_bin_attrs[i]);
-			sysfs_remove_group(&dev->dev.kobj, &dcdbas_attr_group);
+			sysfs_create_group(&dev->dev.kobj, &dcdbas_attr_group);
 			return error;
 		}
 	}
@@ -653,5 +653,4 @@ MODULE_DESCRIPTION(DRIVER_DESCRIPTION " (version " DRIVER_VERSION ")");
 MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR("Dell Inc.");
 MODULE_LICENSE("GPL");
-/* Any System or BIOS claiming to be by Dell */
-MODULE_ALIAS("dmi:*:[bs]vnD[Ee][Ll][Ll]*:*");
+

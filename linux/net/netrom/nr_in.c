@@ -12,6 +12,7 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -51,12 +52,10 @@ static int nr_queue_rx_frame(struct sock *sk, struct sk_buff *skb, int more)
 		if ((skbn = alloc_skb(nr->fraglen, GFP_ATOMIC)) == NULL)
 			return 1;
 
-		skb_reset_transport_header(skbn);
+		skbn->h.raw = skbn->data;
 
 		while ((skbo = skb_dequeue(&nr->frag_queue)) != NULL) {
-			skb_copy_from_linear_data(skbo,
-						  skb_put(skbn, skbo->len),
-						  skbo->len);
+			memcpy(skb_put(skbn, skbo->len), skbo->data, skbo->len);
 			kfree_skb(skbo);
 		}
 

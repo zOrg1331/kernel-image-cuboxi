@@ -51,7 +51,7 @@ processor_set_pstate (
 	retval = ia64_pal_set_pstate((u64)value);
 
 	if (retval) {
-		dprintk("Failed to set freq to 0x%x, with error 0x%lx\n",
+		dprintk("Failed to set freq to 0x%x, with error 0x%x\n",
 		        value, retval);
 		return -ENODEV;
 	}
@@ -68,13 +68,12 @@ processor_get_pstate (
 
 	dprintk("processor_get_pstate\n");
 
-	retval = ia64_pal_get_pstate(&pstate_index,
-	                             PAL_GET_PSTATE_TYPE_INSTANT);
+	retval = ia64_pal_get_pstate(&pstate_index);
 	*value = (u32) pstate_index;
 
 	if (retval)
 		dprintk("Failed to get current freq with "
-			"error 0x%lx, idx 0x%x\n", retval, *value);
+		        "error 0x%x, idx 0x%x\n", retval, *value);
 
 	return (int)retval;
 }
@@ -92,7 +91,7 @@ extract_clock (
 	dprintk("extract_clock\n");
 
 	for (i = 0; i < data->acpi_data.state_count; i++) {
-		if (value == data->acpi_data.states[i].status)
+		if (value >= data->acpi_data.states[i].control)
 			return data->acpi_data.states[i].core_frequency;
 	}
 	return data->acpi_data.states[i-1].core_frequency;
@@ -113,17 +112,23 @@ processor_get_freq (
 
 	saved_mask = current->cpus_allowed;
 	set_cpus_allowed(current, cpumask_of_cpu(cpu));
-	if (smp_processor_id() != cpu)
+	if (smp_processor_id() != cpu) {
+		ret = -EAGAIN;
 		goto migrate_end;
+	}
 
-	/* processor_get_pstate gets the instantaneous frequency */
+	/*
+	 * processor_get_pstate gets the average frequency since the
+	 * last get. So, do two PAL_get_freq()...
+	 */
+	ret = processor_get_pstate(&value);
 	ret = processor_get_pstate(&value);
 
 	if (ret) {
 		set_cpus_allowed(current, saved_mask);
 		printk(KERN_WARNING "get performance failed with error %d\n",
 		       ret);
-		ret = 0;
+		ret = -EAGAIN;
 		goto migrate_end;
 	}
 	clock_freq = extract_clock(data, value, cpu);
@@ -274,9 +279,11 @@ acpi_cpufreq_cpu_init (
 
 	dprintk("acpi_cpufreq_cpu_init\n");
 
-	data = kzalloc(sizeof(struct cpufreq_acpi_io), GFP_KERNEL);
+	data = kmalloc(sizeof(struct cpufreq_acpi_io), GFP_KERNEL);
 	if (!data)
 		return (-ENOMEM);
+
+	memset(data, 0, sizeof(struct cpufreq_acpi_io));
 
 	acpi_io_data[cpu] = data;
 
@@ -321,6 +328,8 @@ acpi_cpufreq_cpu_init (
 			    data->acpi_data.states[i].transition_latency * 1000;
 		}
 	}
+	policy->governor = CPUFREQ_DEFAULT_GOVERNOR;
+
 	policy->cur = processor_get_freq(data, policy->cpu);
 
 	/* table init */

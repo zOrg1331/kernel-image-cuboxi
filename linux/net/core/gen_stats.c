@@ -20,17 +20,16 @@
 #include <linux/socket.h>
 #include <linux/rtnetlink.h>
 #include <linux/gen_stats.h>
-#include <net/netlink.h>
 #include <net/gen_stats.h>
 
 
 static inline int
 gnet_stats_copy(struct gnet_dump *d, int type, void *buf, int size)
 {
-	NLA_PUT(d->skb, type, size, buf);
+	RTA_PUT(d->skb, type, size, buf);
 	return 0;
 
-nla_put_failure:
+rtattr_failure:
 	spin_unlock_bh(d->lock);
 	return -1;
 }
@@ -56,14 +55,13 @@ nla_put_failure:
 int
 gnet_stats_start_copy_compat(struct sk_buff *skb, int type, int tc_stats_type,
 	int xstats_type, spinlock_t *lock, struct gnet_dump *d)
-	__acquires(lock)
 {
 	memset(d, 0, sizeof(*d));
-
+	
 	spin_lock_bh(lock);
 	d->lock = lock;
 	if (type)
-		d->tail = (struct nlattr *)skb_tail_pointer(skb);
+		d->tail = (struct rtattr *) skb->tail;
 	d->skb = skb;
 	d->compat_tc_stats = tc_stats_type;
 	d->compat_xstats = xstats_type;
@@ -106,21 +104,16 @@ gnet_stats_start_copy(struct sk_buff *skb, int type, spinlock_t *lock,
  * if the room in the socket buffer was not sufficient.
  */
 int
-gnet_stats_copy_basic(struct gnet_dump *d, struct gnet_stats_basic_packed *b)
+gnet_stats_copy_basic(struct gnet_dump *d, struct gnet_stats_basic *b)
 {
 	if (d->compat_tc_stats) {
 		d->tc_stats.bytes = b->bytes;
 		d->tc_stats.packets = b->packets;
 	}
 
-	if (d->tail) {
-		struct gnet_stats_basic sb;
+	if (d->tail)
+		return gnet_stats_copy(d, TCA_STATS_BASIC, b, sizeof(*b));
 
-		memset(&sb, 0, sizeof(sb));
-		sb.bytes = b->bytes;
-		sb.packets = b->packets;
-		return gnet_stats_copy(d, TCA_STATS_BASIC, &sb, sizeof(sb));
-	}
 	return 0;
 }
 
@@ -219,7 +212,7 @@ int
 gnet_stats_finish_copy(struct gnet_dump *d)
 {
 	if (d->tail)
-		d->tail->nla_len = skb_tail_pointer(d->skb) - (u8 *)d->tail;
+		d->tail->rta_len = d->skb->tail - (u8 *) d->tail;
 
 	if (d->compat_tc_stats)
 		if (gnet_stats_copy(d, d->compat_tc_stats, &d->tc_stats,

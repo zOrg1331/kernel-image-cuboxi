@@ -44,6 +44,9 @@
 extern int m68k_realnum_memory;
 extern struct mem_info m68k_memory[NUM_MEMINFO];
 
+#define TRUE                  (1)
+#define FALSE                 (0)
+
 #define Z2MINOR_COMBINED      (0)
 #define Z2MINOR_Z2ONLY        (1)
 #define Z2MINOR_CHIPONLY      (2)
@@ -64,23 +67,21 @@ static int current_device   = -1;
 
 static DEFINE_SPINLOCK(z2ram_lock);
 
+static struct block_device_operations z2_fops;
 static struct gendisk *z2ram_gendisk;
 
-static void do_z2_request(struct request_queue *q)
+static void do_z2_request(request_queue_t *q)
 {
 	struct request *req;
-
-	req = blk_fetch_request(q);
-	while (req) {
-		unsigned long start = blk_rq_pos(req) << 9;
-		unsigned long len  = blk_rq_cur_bytes(req);
-		int err = 0;
+	while ((req = elv_next_request(q)) != NULL) {
+		unsigned long start = req->sector << 9;
+		unsigned long len  = req->current_nr_sectors << 9;
 
 		if (start + len > z2ram_size) {
 			printk( KERN_ERR DEVICE_NAME ": bad access: block=%lu, count=%u\n",
-				blk_rq_pos(req), blk_rq_cur_sectors(req));
-			err = -EIO;
-			goto done;
+				req->sector, req->current_nr_sectors);
+			end_request(req, 0);
+			continue;
 		}
 		while (len) {
 			unsigned long addr = start & Z2RAM_CHUNKMASK;
@@ -95,9 +96,7 @@ static void do_z2_request(struct request_queue *q)
 			start += size;
 			len -= size;
 		}
-	done:
-		if (!__blk_end_request_cur(req, err))
-			req = blk_fetch_request(q);
+		end_request(req, 1);
 	}
 }
 
@@ -141,7 +140,8 @@ get_chipram( void )
     return;
 }
 
-static int z2_open(struct block_device *bdev, fmode_t mode)
+static int
+z2_open( struct inode *inode, struct file *filp )
 {
     int device;
     int max_z2_map = ( Z2RAM_SIZE / Z2RAM_CHUNKSIZE ) *
@@ -150,7 +150,7 @@ static int z2_open(struct block_device *bdev, fmode_t mode)
 	sizeof( z2ram_map[0] );
     int rc = -ENOMEM;
 
-    device = MINOR(bdev->bd_dev);
+    device = iminor(inode);
 
     if ( current_device != -1 && current_device != device )
     {
@@ -302,7 +302,7 @@ err_out:
 }
 
 static int
-z2_release(struct gendisk *disk, fmode_t mode)
+z2_release( struct inode *inode, struct file *filp )
 {
     if ( current_device == -1 )
 	return 0;     
@@ -314,7 +314,7 @@ z2_release(struct gendisk *disk, fmode_t mode)
     return 0;
 }
 
-static const struct block_device_operations z2_fops =
+static struct block_device_operations z2_fops =
 {
 	.owner		= THIS_MODULE,
 	.open		= z2_open,
@@ -329,13 +329,13 @@ static struct kobject *z2_find(dev_t dev, int *part, void *data)
 
 static struct request_queue *z2_queue;
 
-static int __init 
+int __init 
 z2_init(void)
 {
     int ret;
 
     if (!MACH_IS_AMIGA)
-	return -ENODEV;
+	return -ENXIO;
 
     ret = -EBUSY;
     if (register_blkdev(Z2RAM_MAJOR, DEVICE_NAME))
@@ -370,11 +370,32 @@ err:
     return ret;
 }
 
-static void __exit z2_exit(void)
+#if defined(MODULE)
+
+MODULE_LICENSE("GPL");
+
+int
+init_module( void )
+{
+    int error;
+    
+    error = z2_init();
+    if ( error == 0 )
+    {
+	printk( KERN_INFO DEVICE_NAME ": loaded as module\n" );
+    }
+    
+    return error;
+}
+
+void
+cleanup_module( void )
 {
     int i, j;
-    blk_unregister_region(MKDEV(Z2RAM_MAJOR, 0), Z2MINOR_COUNT);
-    unregister_blkdev(Z2RAM_MAJOR, DEVICE_NAME);
+    blk_unregister_region(MKDEV(Z2RAM_MAJOR, 0), 256);
+    if ( unregister_blkdev( Z2RAM_MAJOR, DEVICE_NAME ) != 0 )
+	printk( KERN_ERR DEVICE_NAME ": unregister of device failed\n");
+
     del_gendisk(z2ram_gendisk);
     put_disk(z2ram_gendisk);
     blk_cleanup_queue(z2_queue);
@@ -404,7 +425,4 @@ static void __exit z2_exit(void)
 
     return;
 } 
-
-module_init(z2_init);
-module_exit(z2_exit);
-MODULE_LICENSE("GPL");
+#endif

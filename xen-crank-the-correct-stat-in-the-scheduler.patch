@@ -1,0 +1,31 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Wed, 4 Nov 2009 08:11:39 -0500
+Subject: [xen] crank the correct stat in the scheduler
+Message-id: <4AF1373B.30008@redhat.com>
+Patchwork-id: 21307
+O-Subject: [RHEL5.5 PATCH 2/3]: Crank the correct stat in the scheduler
+Bugzilla: 529271
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+The hard-virt patches that went into 5.4 added some new statistics for the
+real-time priority class.  Unfortunately, we were cranking the wrong stat during
+real-time load-balancing.  Crank the correct statistic here.
+
+This helps to solve BZ 529271
+
+diff --git a/common/sched_credit.c b/common/sched_credit.c
+index adf4515..c3a98bf 100644
+--- a/common/sched_credit.c
++++ b/common/sched_credit.c
+@@ -1593,7 +1593,7 @@ csched_rr_load_balance(int cpu, struct csched_vcpu *snext)
+ 
+         if ( !spin_trylock(&per_cpu(schedule_data, peer_cpu).schedule_lock) )
+         {
+-            CSCHED_STAT_CRANK(steal_trylock_failed);
++            CSCHED_STAT_CRANK(rt_steal_trylock_failed);
+             lock_failure_flag = 1;
+             continue;
+         }

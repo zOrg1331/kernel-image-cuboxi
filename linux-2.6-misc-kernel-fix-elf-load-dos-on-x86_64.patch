@@ -1,0 +1,421 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Wed, 10 Feb 2010 07:32:44 -0500
+Subject: [misc] kernel: fix elf load DoS on x86_64
+Message-id: <20100210073316.3471.59875.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 23216
+O-Subject: [PATCH RHEL5.5 BZ560553 CVE-2010-0307] kernel: DoS on x86_64
+Bugzilla: 560553
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=560553
+
+Description:
+Reported by Mathias Krause. The problem seams to be located in
+fs/binfmt_elf.c:load_elf_binary(). It calls SET_PERSONALITY() prior checking
+that the ELF interpreter is available. This in turn makes the previously 32 bit
+process a 64 bit one which would be fine if execve() would succeed. But after
+the SET_PERSONALITY() the open_exec() call fails (because it cannot find the
+interpreter) and execve() almost instantly returns with an error. If you now
+look at /proc/PID/maps you'll see, that it has the vsyscall page mapped which
+shouldn't be. But the process is not dead yet, it's still running. By now
+generating a segmentation fault and in turn trying to generate a core dump the
+kernel just dies.
+
+Upstream status:
+ - 221af7f87 ("Split 'flush_old_exec' into two functions")
+ - 05d43ed8a ("x86: get rid of the insane TIF_ABI_PENDING bit")
+ - 7ab02af42 ("Fix 'flush_old_exec()/setup_new_exec()' split")
+ - 94f28da84 ("powerpc: TIF_ABI_PENDING bit removal")
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2240936
+
+KABI:
+no breakage
+
+Test status:
+reproducer works fine on my x86_64 box, and with rhts kernel tier1 test, no
+regression introduced.
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=123240
+
+diff --git a/arch/powerpc/kernel/process.c b/arch/powerpc/kernel/process.c
+index f4169c3..2528fc9 100644
+--- a/arch/powerpc/kernel/process.c
++++ b/arch/powerpc/kernel/process.c
+@@ -474,13 +474,6 @@ void exit_thread(void)
+ 
+ void flush_thread(void)
+ {
+-#ifdef CONFIG_PPC64
+-	struct thread_info *t = current_thread_info();
+-
+-	if (t->flags & _TIF_ABI_PENDING)
+-		t->flags ^= (_TIF_ABI_PENDING | _TIF_32BIT);
+-#endif
+-
+ 	discard_lazy_cpu_state();
+ 
+ #ifdef CONFIG_PPC64	/* for now */
+diff --git a/arch/x86_64/ia32/ia32_aout.c b/arch/x86_64/ia32/ia32_aout.c
+index 3571d6a..1a6a397 100644
+--- a/arch/x86_64/ia32/ia32_aout.c
++++ b/arch/x86_64/ia32/ia32_aout.c
+@@ -291,14 +291,15 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
+ 	if (retval)
+ 		return retval;
+ 
+-	regs->cs = __USER32_CS; 
+-	regs->r8 = regs->r9 = regs->r10 = regs->r11 = regs->r12 =
+-		regs->r13 = regs->r14 = regs->r15 = 0;
+-
+ 	/* OK, This is the point of no return */
+ 	set_personality(PER_LINUX);
+ 	set_thread_flag(TIF_IA32); 
+-	clear_thread_flag(TIF_ABI_PENDING);
++
++	setup_new_exec(bprm);
++
++	regs->cs = __USER32_CS;
++	regs->r8 = regs->r9 = regs->r10 = regs->r11 = regs->r12 =
++		regs->r13 = regs->r14 = regs->r15 = 0;
+ 
+ 	current->mm->end_code = ex.a_text +
+ 		(current->mm->start_code = N_TXTADDR(ex));
+diff --git a/arch/x86_64/ia32/ia32_binfmt.c b/arch/x86_64/ia32/ia32_binfmt.c
+index 03e01e4..e095608 100644
+--- a/arch/x86_64/ia32/ia32_binfmt.c
++++ b/arch/x86_64/ia32/ia32_binfmt.c
+@@ -211,14 +211,12 @@ elf_core_copy_task_xfpregs(struct task_struct *t, elf_fpxregset_t *xfpu)
+ #define ELF_PLATFORM  ("i686")
+ #define SET_PERSONALITY(ex, ibcs2)			\
+ do {							\
+-	unsigned long new_flags = 0;				\
+-	if ((ex).e_ident[EI_CLASS] == ELFCLASS32)		\
+-		new_flags = _TIF_IA32;				\
+-	if ((current_thread_info()->flags & _TIF_IA32)		\
+-	    != new_flags)					\
+-		set_thread_flag(TIF_ABI_PENDING);		\
++	if ((ex).e_ident[EI_CLASS] == ELFCLASS32) {		\
++		set_thread_flag(TIF_IA32);		\
++		current_thread_info()->status |= TS_COMPAT;	\
++	}						\
+ 	else							\
+-		clear_thread_flag(TIF_ABI_PENDING);		\
++		clear_thread_flag(TIF_IA32);		\
+ } while (0)
+ 
+ /* Override some function names */
+diff --git a/arch/x86_64/kernel/process-xen.c b/arch/x86_64/kernel/process-xen.c
+index fc34b29..382068d 100644
+--- a/arch/x86_64/kernel/process-xen.c
++++ b/arch/x86_64/kernel/process-xen.c
+@@ -299,13 +299,6 @@ void flush_thread(void)
+ 	struct task_struct *tsk = current;
+ 	struct thread_info *t = current_thread_info();
+ 
+-	if (t->flags & _TIF_ABI_PENDING) {
+-		t->flags ^= (_TIF_ABI_PENDING | _TIF_IA32);
+-		if (t->flags & _TIF_IA32)
+-			current_thread_info()->status |= TS_COMPAT;
+-	}
+-
+-
+ 	tsk->thread.debugreg0 = 0;
+ 	tsk->thread.debugreg1 = 0;
+ 	tsk->thread.debugreg2 = 0;
+@@ -793,7 +786,7 @@ void randomize_brk(unsigned long old_brk)
+ 	/* randomize_brk is called after SET_PERSONALITY, but before
+ 	   flush_thread.  So, the test if the process will be 32-bit
+ 	   or 64-bit is uglier.  */
+-	if (test_thread_flag(TIF_ABI_PENDING) ^ test_thread_flag(TIF_IA32))
++	if (test_thread_flag(TIF_IA32))
+ 	{
+ 		/* i?86 ELF32 binaries start at 0x8048000 or sometimes
+ 		   a little bit lower when prelinked.  */
+diff --git a/arch/x86_64/kernel/process.c b/arch/x86_64/kernel/process.c
+index ea464ec..b2c719f 100644
+--- a/arch/x86_64/kernel/process.c
++++ b/arch/x86_64/kernel/process.c
+@@ -367,12 +367,6 @@ void flush_thread(void)
+ 	struct task_struct *tsk = current;
+ 	struct thread_info *t = current_thread_info();
+ 
+-	if (t->flags & _TIF_ABI_PENDING) {
+-		t->flags ^= (_TIF_ABI_PENDING | _TIF_IA32);
+-		if (t->flags & _TIF_IA32)
+-			current_thread_info()->status |= TS_COMPAT;
+-	}
+-
+ 	tsk->thread.debugreg0 = 0;
+ 	tsk->thread.debugreg1 = 0;
+ 	tsk->thread.debugreg2 = 0;
+@@ -842,7 +836,7 @@ void randomize_brk(unsigned long old_brk)
+ 	/* randomize_brk is called after SET_PERSONALITY, but before
+ 	   flush_thread.  So, the test if the process will be 32-bit
+ 	   or 64-bit is uglier.  */
+-	if (test_thread_flag(TIF_ABI_PENDING) ^ test_thread_flag(TIF_IA32))
++	if (test_thread_flag(TIF_IA32))
+ 	{
+ 		/* i?86 ELF32 binaries start at 0x8048000 or sometimes
+ 		   a little bit lower when prelinked.  */
+diff --git a/fs/binfmt_aout.c b/fs/binfmt_aout.c
+index 13a1589..5a6f3cf 100644
+--- a/fs/binfmt_aout.c
++++ b/fs/binfmt_aout.c
+@@ -302,6 +302,7 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
+ #else
+ 	set_personality(PER_LINUX);
+ #endif
++	setup_new_exec(bprm);
+ 
+ 	current->mm->end_code = ex.a_text +
+ 		(current->mm->start_code = N_TXTADDR(ex));
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index dc6c03e..47cc7cf 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -717,27 +717,6 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 			    strcmp(elf_interpreter,"/usr/lib/ld.so.1") == 0)
+ 				ibcs2_interpreter = 1;
+ 
+-			/*
+-			 * The early SET_PERSONALITY here is so that the lookup
+-			 * for the interpreter happens in the namespace of the 
+-			 * to-be-execed image.  SET_PERSONALITY can select an
+-			 * alternate root.
+-			 *
+-			 * However, SET_PERSONALITY is NOT allowed to switch
+-			 * this task into the new images's memory mapping
+-			 * policy - that is, TASK_SIZE must still evaluate to
+-			 * that which is appropriate to the execing application.
+-			 * This is because exit_mmap() needs to have TASK_SIZE
+-			 * evaluate to the size of the old image.
+-			 *
+-			 * So if (say) a 64-bit application is execing a 32-bit
+-			 * application it is the architecture's responsibility
+-			 * to defer changing the value of TASK_SIZE until the
+-			 * switch really is going to happen - do this in
+-			 * flush_thread().	- akpm
+-			 */
+-			SET_PERSONALITY(loc->elf_ex, ibcs2_interpreter);
+-
+ 			interpreter = open_exec(elf_interpreter);
+ 			retval = PTR_ERR(interpreter);
+ 			if (IS_ERR(interpreter))
+@@ -813,9 +792,6 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 		if ((interpreter_type == INTERPRETER_ELF) &&
+ 		    !elf_check_arch(&loc->interp_elf_ex))
+ 			goto out_free_dentry;
+-	} else {
+-		/* Executables without an interpreter also need a personality  */
+-		SET_PERSONALITY(loc->elf_ex, ibcs2_interpreter);
+ 	}
+ 
+ 	/* OK, we are done with that, now set up the arg stuff,
+@@ -865,7 +841,7 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 
+ 	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
+ 		current->flags |= PF_RANDOMIZE;
+-	arch_pick_mmap_layout(current->mm);
++	setup_new_exec(bprm);
+ 
+ 	/* Do this so that we can load the interpreter, if need be.  We will
+ 	   change some of these later */
+diff --git a/fs/binfmt_elf_fdpic.c b/fs/binfmt_elf_fdpic.c
+index f37cab6..c9e830c 100644
+--- a/fs/binfmt_elf_fdpic.c
++++ b/fs/binfmt_elf_fdpic.c
+@@ -311,6 +311,9 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm,
+ 	 * defunct, deceased, etc. after this point we have to exit via
+ 	 * error_kill */
+ 	set_personality(PER_LINUX_FDPIC);
++
++	setup_new_exec(bprm);
++
+ 	set_binfmt(&elf_fdpic_format);
+ 
+ 	current->mm->start_code = 0;
+diff --git a/fs/binfmt_flat.c b/fs/binfmt_flat.c
+index f352545..6464ff1 100644
+--- a/fs/binfmt_flat.c
++++ b/fs/binfmt_flat.c
+@@ -510,6 +510,7 @@ static int load_flat_file(struct linux_binprm * bprm,
+ 
+ 		/* OK, This is the point of no return */
+ 		set_personality(PER_LINUX_32BIT);
++		setup_new_exec(bprm);
+ 	}
+ 
+ 	/*
+diff --git a/fs/binfmt_som.c b/fs/binfmt_som.c
+index 8834928..a6570cc 100644
+--- a/fs/binfmt_som.c
++++ b/fs/binfmt_som.c
+@@ -231,6 +231,7 @@ load_som_binary(struct linux_binprm * bprm, struct pt_regs * regs)
+ 	/* OK, This is the point of no return */
+ 	current->flags &= ~PF_FORKNOEXEC;
+ 	current->personality = PER_HPUX;
++	setup_new_exec(bprm);
+ 
+ 	/* Set the task size for HP-UX processes such that
+ 	 * the gateway page is outside the address space.
+diff --git a/fs/exec.c b/fs/exec.c
+index c6b2570..ac81e99 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1015,10 +1015,8 @@ void set_task_comm(struct task_struct *tsk, char *buf)
+ 
+ int flush_old_exec(struct linux_binprm * bprm)
+ {
+-	char * name;
+-	int i, ch, retval;
++	int retval;
+ 	struct files_struct *files;
+-	char tcomm[sizeof(current->comm)];
+ 
+ 	/*
+ 	 * Make sure we have a private signal table and that
+@@ -1046,9 +1044,29 @@ int flush_old_exec(struct linux_binprm * bprm)
+ 
+ 	bprm->mm = NULL;		/* We're using it now */
+ 
+-	/* This is the point of no return */
+ 	put_files_struct(files);
+ 
++	current->flags &= ~PF_RANDOMIZE;
++	flush_thread();
++
++	return 0;
++
++mmap_failed:
++	reset_files_struct(current, files);
++out:
++	return retval;
++}
++EXPORT_SYMBOL(flush_old_exec);
++
++void setup_new_exec(struct linux_binprm * bprm)
++{
++	int i, ch;
++	char * name;
++	char tcomm[sizeof(current->comm)];
++
++	arch_pick_mmap_layout(current->mm);
++
++	/* This is the point of no return */
+ 	current->sas_ss_sp = current->sas_ss_size = 0;
+ 
+ 	if (current->euid == current->uid && current->egid == current->gid)
+@@ -1069,9 +1087,6 @@ int flush_old_exec(struct linux_binprm * bprm)
+ 	tcomm[i] = '\0';
+ 	set_task_comm(current, tcomm);
+ 
+-	current->flags &= ~PF_RANDOMIZE;
+-	flush_thread();
+-
+ 	/* Set the new mm task size. We have to do that late because it may
+ 	 * depend on TIF_32BIT which is only updated in flush_thread() on
+ 	 * some architectures like powerpc
+@@ -1096,15 +1111,8 @@ int flush_old_exec(struct linux_binprm * bprm)
+ 	flush_signal_handlers(current, 0);
+ 	flush_old_files(current->files);
+ 
+-	return 0;
+-
+-mmap_failed:
+-	reset_files_struct(current, files);
+-out:
+-	return retval;
+ }
+-
+-EXPORT_SYMBOL(flush_old_exec);
++EXPORT_SYMBOL(setup_new_exec);
+ 
+ /* 
+  * Fill the binprm structure from the inode. 
+diff --git a/include/asm-powerpc/elf.h b/include/asm-powerpc/elf.h
+index 3c6d947..779f7b5 100644
+--- a/include/asm-powerpc/elf.h
++++ b/include/asm-powerpc/elf.h
+@@ -238,14 +238,10 @@ extern int dump_task_fpu(struct task_struct *, elf_fpregset_t *);
+ #ifdef __powerpc64__
+ # define SET_PERSONALITY(ex, ibcs2)				\
+ do {								\
+-	unsigned long new_flags = 0;				\
+ 	if ((ex).e_ident[EI_CLASS] == ELFCLASS32)		\
+-		new_flags = _TIF_32BIT;				\
+-	if ((current_thread_info()->flags & _TIF_32BIT)		\
+-	    != new_flags)					\
+-		set_thread_flag(TIF_ABI_PENDING);		\
++		set_thread_flag(TIF_32BIT);			\
+ 	else							\
+-		clear_thread_flag(TIF_ABI_PENDING);		\
++		clear_thread_flag(TIF_32BIT);			\
+ 	if (personality(current->personality) != PER_LINUX32)	\
+ 		set_personality(PER_LINUX);			\
+ } while (0)
+diff --git a/include/asm-powerpc/thread_info.h b/include/asm-powerpc/thread_info.h
+index d339e2e..81eb6e5 100644
+--- a/include/asm-powerpc/thread_info.h
++++ b/include/asm-powerpc/thread_info.h
+@@ -114,7 +114,6 @@ static inline struct thread_info *current_thread_info(void)
+ 					   TIF_NEED_RESCHED */
+ #define TIF_32BIT		5	/* 32 bit binary */
+ #define TIF_RUNLATCH		6	/* Is the runlatch enabled? */
+-#define TIF_ABI_PENDING		7	/* 32/64 bit switch needed */
+ #define TIF_SYSCALL_AUDIT	8	/* syscall auditing active */
+ #define TIF_SINGLESTEP		9	/* singlestepping active */
+ #define TIF_MEMDIE		10
+@@ -131,7 +130,6 @@ static inline struct thread_info *current_thread_info(void)
+ #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
+ #define _TIF_32BIT		(1<<TIF_32BIT)
+ #define _TIF_RUNLATCH		(1<<TIF_RUNLATCH)
+-#define _TIF_ABI_PENDING	(1<<TIF_ABI_PENDING)
+ #define _TIF_SYSCALL_AUDIT	(1<<TIF_SYSCALL_AUDIT)
+ #define _TIF_SINGLESTEP		(1<<TIF_SINGLESTEP)
+ #define _TIF_SECCOMP		(1<<TIF_SECCOMP)
+diff --git a/include/asm-x86_64/thread_info.h b/include/asm-x86_64/thread_info.h
+index 3363f7b..4179782 100644
+--- a/include/asm-x86_64/thread_info.h
++++ b/include/asm-x86_64/thread_info.h
+@@ -118,7 +118,6 @@ static inline struct thread_info *stack_thread_info(void)
+ /* 16 free */
+ #define TIF_IA32		17	/* 32bit process */ 
+ #define TIF_FORK		18	/* ret_from_fork */
+-#define TIF_ABI_PENDING		19
+ #define TIF_MEMDIE		20
+ #define TIF_FORCED_TF		21	/* true if TF in eflags artificially */
+ 
+@@ -133,7 +132,6 @@ static inline struct thread_info *stack_thread_info(void)
+ #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
+ #define _TIF_IA32		(1<<TIF_IA32)
+ #define _TIF_FORK		(1<<TIF_FORK)
+-#define _TIF_ABI_PENDING	(1<<TIF_ABI_PENDING)
+ #define _TIF_FORCED_TF		(1<<TIF_FORCED_TF)
+ 
+ /* work to do on interrupt/exception return */
+diff --git a/include/linux/binfmts.h b/include/linux/binfmts.h
+index 4345a54..0833d6e 100644
+--- a/include/linux/binfmts.h
++++ b/include/linux/binfmts.h
+@@ -86,6 +86,7 @@ extern int prepare_binprm(struct linux_binprm *);
+ extern int __must_check remove_arg_zero(struct linux_binprm *);
+ extern int search_binary_handler(struct linux_binprm *,struct pt_regs *);
+ extern int flush_old_exec(struct linux_binprm * bprm);
++extern void setup_new_exec(struct linux_binprm * bprm);
+ 
+ extern int suid_dumpable;
+ #define SUID_DUMP_DISABLE	0	/* No setuid dumping */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 5f09c65..559a5a7 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -975,7 +975,7 @@ struct task_struct {
+ 	char comm[TASK_COMM_LEN]; /* executable name excluding path
+ 				     - access with [gs]et_task_comm (which lock
+ 				       it with task_lock())
+-				     - initialized normally by flush_old_exec */
++				     - initialized normally by setup_new_exec */
+ /* file system info */
+ 	int link_count, total_link_count;
+ /* ipc stuff */

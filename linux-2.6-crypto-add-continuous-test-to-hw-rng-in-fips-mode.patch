@@ -1,0 +1,124 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Sat, 13 Jun 2009 14:19:10 -0400
+Subject: [crypto] add continuous test to hw rng in FIPS mode
+Message-id: 20090613181910.GB24861@localhost.localdomain
+O-Subject: Re: crypto: add continuous test to hw rng in FIPS mode (bz 504218)
+Bugzilla: 504218
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Hey All-
+        Recent info from atsec indicates that we need a continuous test on
+our
+hw rng when operating in FIPS mode.  This is a backport of the patch which I
+currently have undergoing review upstream.  It provides a continuous test in
+which each block of random data extracted from an entropy pool is compared
+against the last block extracted, and the system panics if a repetition is
+found.  Satisfies bz 504218
+
+Neil
+
+diff --git a/crypto/internal.h b/crypto/internal.h
+index c7c68f4..3925f4b 100644
+--- a/crypto/internal.h
++++ b/crypto/internal.h
+@@ -23,6 +23,7 @@
+ #include <linux/rwsem.h>
+ #include <linux/slab.h>
+ #include <asm/kmap_types.h>
++#include <linux/fips.h>
+ 
+ /* Crypto notification events. */
+ enum {
+diff --git a/drivers/char/random.c b/drivers/char/random.c
+index b40d73d..7b97b3c 100644
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -239,6 +239,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/percpu.h>
+ #include <linux/cryptohash.h>
++#include <linux/fips.h>
+ 
+ #include <asm/processor.h>
+ #include <asm/uaccess.h>
+@@ -406,6 +407,7 @@ struct entropy_store {
+ 	unsigned add_ptr;
+ 	int entropy_count;
+ 	int input_rotate;
++	__u8 *last_data;
+ };
+ 
+ static __u32 input_pool_data[INPUT_POOL_WORDS];
+@@ -806,12 +808,21 @@ static ssize_t extract_entropy(struct entropy_store *r, void * buf,
+ {
+ 	ssize_t ret = 0, i;
+ 	__u8 tmp[EXTRACT_SIZE];
++	unsigned long flags;
+ 
+ 	xfer_secondary_pool(r, nbytes);
+ 	nbytes = account(r, nbytes, min, reserved);
+ 
+ 	while (nbytes) {
+ 		extract_buf(r, tmp);
++
++		if (r->last_data) {
++			spin_lock_irqsave(&r->lock, flags);
++			if (!memcmp(tmp, r->last_data, EXTRACT_SIZE))
++				panic("Hardware RNG duplicated output!\n");
++			memcpy(r->last_data, tmp, EXTRACT_SIZE);
++			spin_unlock_irqrestore(&r->lock, flags);
++		}
+ 		i = min_t(int, nbytes, EXTRACT_SIZE);
+ 		memcpy(buf, tmp, i);
+ 		nbytes -= i;
+@@ -896,6 +907,13 @@ static void init_std_data(struct entropy_store *r)
+ 	add_entropy_words(r, (__u32 *)&tv, sizeof(tv)/4);
+ 	add_entropy_words(r, (__u32 *)&system_utsname,
+ 			  sizeof(system_utsname)/4);
++
++	/* Enable continuous test in fips mode */
++	if (fips_enabled) {
++		r->last_data = kmalloc(EXTRACT_SIZE, GFP_KERNEL);
++		if (!r->last_data)
++			panic("RNG self test failed to init!\n");
++	}
+ }
+ 
+ static int __init rand_initialize(void)
+diff --git a/include/linux/crypto.h b/include/linux/crypto.h
+index 0280ec0..c308eed 100644
+--- a/include/linux/crypto.h
++++ b/include/linux/crypto.h
+@@ -22,14 +22,9 @@
+ #include <linux/types.h>
+ #include <linux/list.h>
+ #include <linux/string.h>
++#include <linux/fips.h>
+ #include <asm/page.h>
+ 
+-#ifdef CONFIG_CRYPTO_FIPS
+-extern int fips_enabled;
+-#else
+-#define fips_enabled 0
+-#endif
+-
+ /*
+  * Algorithm masks and types.
+  */
+diff --git a/include/linux/fips.h b/include/linux/fips.h
+new file mode 100644
+index 0000000..f8fb07b
+--- /dev/null
++++ b/include/linux/fips.h
+@@ -0,0 +1,10 @@
++#ifndef _FIPS_H
++#define _FIPS_H
++
++#ifdef CONFIG_CRYPTO_FIPS
++extern int fips_enabled;
++#else
++#define fips_enabled 0
++#endif
++
++#endif

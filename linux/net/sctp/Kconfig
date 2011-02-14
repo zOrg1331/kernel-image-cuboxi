@@ -2,15 +2,16 @@
 # SCTP configuration
 #
 
-menuconfig IP_SCTP
-	tristate "The SCTP Protocol (EXPERIMENTAL)"
+menu "SCTP Configuration (EXPERIMENTAL)"
 	depends on INET && EXPERIMENTAL
+
+config IP_SCTP
+	tristate "The SCTP Protocol (EXPERIMENTAL)"
 	depends on IPV6 || IPV6=n
-	select CRYPTO
-	select CRYPTO_HMAC
-	select CRYPTO_SHA1
+	select CRYPTO if SCTP_HMAC_SHA1 || SCTP_HMAC_MD5
+	select CRYPTO_HMAC if SCTP_HMAC_SHA1 || SCTP_HMAC_MD5
+	select CRYPTO_SHA1 if SCTP_HMAC_SHA1
 	select CRYPTO_MD5 if SCTP_HMAC_MD5
-	select LIBCRC32C
 	---help---
 	  Stream Control Transmission Protocol
 
@@ -35,10 +36,9 @@ menuconfig IP_SCTP
 
 	  If in doubt, say N.
 
-if IP_SCTP
-
 config SCTP_DBG_MSG
 	bool "SCTP: Debug messages"
+	depends on IP_SCTP
 	help
 	  If you say Y, this will enable verbose debugging messages. 
 
@@ -47,17 +47,19 @@ config SCTP_DBG_MSG
 
 config SCTP_DBG_OBJCNT
 	bool "SCTP: Debug object counts"
-	depends on PROC_FS
+	depends on IP_SCTP
 	help
 	  If you say Y, this will enable debugging support for counting the 
 	  type of objects that are currently allocated.  This is useful for 
-	  identifying memory leaks. This debug information can be viewed by
+	  identifying memory leaks.   If the /proc filesystem is enabled this 
+	  debug information can be viewed by 
 	  'cat /proc/net/sctp/sctp_dbg_objcnt'
 
 	  If unsure, say N
 
 choice
 	prompt "SCTP: Cookie HMAC Algorithm"
+	depends on IP_SCTP
 	default SCTP_HMAC_MD5
 	help
 	  HMAC algorithm to be used during association initialization.  It
@@ -84,5 +86,4 @@ config SCTP_HMAC_MD5
 	  advised to use either HMAC-MD5 or HMAC-SHA1.
 
 endchoice
-
-endif # IP_SCTP
+endmenu

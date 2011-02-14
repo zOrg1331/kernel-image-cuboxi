@@ -52,7 +52,7 @@ static unsigned int Submodule_slot;
 #define DPRINT_CONFIG(_x...)	;
 //#define DPRINT_CONFIG(_x...)  printk _x
 #define NOT_PROGRESS()	;
-//#define NOT_PROGRESS()	printk("%s : fails %d\n", __func__, __LINE__)
+//#define NOT_PROGRESS()	printk("%s : fails %d\n", __FUNCTION__, __LINE__)
 
 /* number of characters we want to transmit to the lower level at a time */
 #define MAX_CHARS		256
@@ -445,7 +445,7 @@ static int inline port_init(struct ioc3_port *port)
 		sbbr_h = &idd->vma->sbbr_h;
 		ring_pci_addr = (unsigned long __iomem)port->ip_dma_ringbuf;
 		DPRINT_CONFIG(("%s: ring_pci_addr 0x%p\n",
-			       __func__, (void *)ring_pci_addr));
+			       __FUNCTION__, (void *)ring_pci_addr));
 
 		writel((unsigned int)((uint64_t) ring_pci_addr >> 32), sbbr_h);
 		writel((unsigned int)ring_pci_addr | BUF_SIZE_BIT, sbbr_l);
@@ -593,7 +593,7 @@ config_port(struct ioc3_port *port,
 
 	DPRINT_CONFIG(("%s: line %d baud %d byte_size %d stop %d parenb %d "
 			"parodd %d\n",
-		       __func__, ((struct uart_port *)port->ip_port)->line,
+		       __FUNCTION__, ((struct uart_port *)port->ip_port)->line,
 			baud, byte_size, stop_bits, parenb, parodd));
 
 	if (set_baud(port, baud))
@@ -871,14 +871,14 @@ static int ioc3_set_proto(struct ioc3_port *port, int proto)
 	default:
 	case PROTO_RS232:
 		/* Clear the appropriate GIO pin */
-		DPRINT_CONFIG(("%s: rs232\n", __func__));
+		DPRINT_CONFIG(("%s: rs232\n", __FUNCTION__));
 		writel(0, (&port->ip_idd->vma->gppr[0]
 					+ hooks->rs422_select_pin));
 		break;
 
 	case PROTO_RS422:
 		/* Set the appropriate GIO pin */
-		DPRINT_CONFIG(("%s: rs422\n", __func__));
+		DPRINT_CONFIG(("%s: rs422\n", __FUNCTION__));
 		writel(1, (&port->ip_idd->vma->gppr[0]
 					+ hooks->rs422_select_pin));
 		break;
@@ -897,25 +897,25 @@ static void transmit_chars(struct uart_port *the_port)
 	char *start;
 	struct tty_struct *tty;
 	struct ioc3_port *port = get_ioc3_port(the_port);
-	struct uart_state *state;
+	struct uart_info *info;
 
 	if (!the_port)
 		return;
 	if (!port)
 		return;
 
-	state = the_port->state;
-	tty = state->port.tty;
+	info = the_port->info;
+	tty = info->tty;
 
-	if (uart_circ_empty(&state->xmit) || uart_tx_stopped(the_port)) {
+	if (uart_circ_empty(&info->xmit) || uart_tx_stopped(the_port)) {
 		/* Nothing to do or hw stopped */
 		set_notification(port, N_ALL_OUTPUT, 0);
 		return;
 	}
 
-	head = state->xmit.head;
-	tail = state->xmit.tail;
-	start = (char *)&state->xmit.buf[tail];
+	head = info->xmit.head;
+	tail = info->xmit.tail;
+	start = (char *)&info->xmit.buf[tail];
 
 	/* write out all the data or until the end of the buffer */
 	xmit_count = (head < tail) ? (UART_XMIT_SIZE - tail) : (head - tail);
@@ -928,14 +928,14 @@ static void transmit_chars(struct uart_port *the_port)
 			/* advance the pointers */
 			tail += result;
 			tail &= UART_XMIT_SIZE - 1;
-			state->xmit.tail = tail;
-			start = (char *)&state->xmit.buf[tail];
+			info->xmit.tail = tail;
+			start = (char *)&info->xmit.buf[tail];
 		}
 	}
-	if (uart_circ_chars_pending(&state->xmit) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(&info->xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(the_port);
 
-	if (uart_circ_empty(&state->xmit)) {
+	if (uart_circ_empty(&info->xmit)) {
 		set_notification(port, N_OUTPUT_LOWAT, 0);
 	} else {
 		set_notification(port, N_OUTPUT_LOWAT, 1);
@@ -950,13 +950,13 @@ static void transmit_chars(struct uart_port *the_port)
  */
 static void
 ioc3_change_speed(struct uart_port *the_port,
-		  struct ktermios *new_termios, struct ktermios *old_termios)
+		  struct termios *new_termios, struct termios *old_termios)
 {
 	struct ioc3_port *port = get_ioc3_port(the_port);
 	unsigned int cflag;
 	int baud;
 	int new_parity = 0, new_parity_enable = 0, new_stop = 0, new_data = 8;
-	struct uart_state *state = the_port->state;
+	struct uart_info *info = the_port->info;
 
 	cflag = new_termios->c_cflag;
 
@@ -988,7 +988,7 @@ ioc3_change_speed(struct uart_port *the_port,
 	}
 	baud = uart_get_baud_rate(the_port, new_termios, old_termios,
 				  MIN_BAUD_SUPPORTED, MAX_BAUD_SUPPORTED);
-	DPRINT_CONFIG(("%s: returned baud %d for line %d\n", __func__, baud,
+	DPRINT_CONFIG(("%s: returned baud %d for line %d\n", __FUNCTION__, baud,
 				the_port->line));
 
 	if (!the_port->fifosize)
@@ -997,14 +997,14 @@ ioc3_change_speed(struct uart_port *the_port,
 
 	the_port->ignore_status_mask = N_ALL_INPUT;
 
-	state->port.tty->low_latency = 1;
+	info->tty->low_latency = 1;
 
-	if (I_IGNPAR(state->port.tty))
+	if (I_IGNPAR(info->tty))
 		the_port->ignore_status_mask &= ~(N_PARITY_ERROR
 						  | N_FRAMING_ERROR);
-	if (I_IGNBRK(state->port.tty)) {
+	if (I_IGNBRK(info->tty)) {
 		the_port->ignore_status_mask &= ~N_BREAK;
-		if (I_IGNPAR(state->port.tty))
+		if (I_IGNPAR(info->tty))
 			the_port->ignore_status_mask &= ~N_OVERRUN_ERROR;
 	}
 	if (!(cflag & CREAD)) {
@@ -1026,7 +1026,7 @@ ioc3_change_speed(struct uart_port *the_port,
 	DPRINT_CONFIG(("%s : port 0x%p line %d cflag 0%o "
 		       "config_port(baud %d data %d stop %d penable %d "
 			" parity %d), notification 0x%x\n",
-		       __func__, (void *)port, the_port->line, cflag, baud,
+		       __FUNCTION__, (void *)port, the_port->line, cflag, baud,
 		       new_data, new_stop, new_parity_enable, new_parity,
 		       the_port->ignore_status_mask));
 
@@ -1286,8 +1286,8 @@ static inline int do_read(struct uart_port *the_port, char *buf, int len)
 						uart_handle_dcd_change
 							(port->ip_port, 0);
 						wake_up_interruptible
-						    (&the_port->state->
-						     port.delta_msr_wait);
+						    (&the_port->info->
+						     delta_msr_wait);
 					}
 
 					/* If we had any data to return, we
@@ -1392,21 +1392,21 @@ static int receive_chars(struct uart_port *the_port)
 	struct tty_struct *tty;
 	unsigned char ch[MAX_CHARS];
 	int read_count = 0, read_room, flip = 0;
-	struct uart_state *state = the_port->state;
+	struct uart_info *info = the_port->info;
 	struct ioc3_port *port = get_ioc3_port(the_port);
 	unsigned long pflags;
 
 	/* Make sure all the pointers are "good" ones */
-	if (!state)
+	if (!info)
 		return 0;
-	if (!state->port.tty)
+	if (!info->tty)
 		return 0;
 
 	if (!(port->ip_flags & INPUT_ENABLE))
 		return 0;
 
 	spin_lock_irqsave(&the_port->lock, pflags);
-	tty = state->port.tty;
+	tty = info->tty;
 
 	read_count = do_read(the_port, ch, MAX_CHARS);
 	if (read_count > 0) {
@@ -1428,12 +1428,13 @@ static int receive_chars(struct uart_port *the_port)
  * @is : submodule
  * @idd: driver data
  * @pending: interrupts to handle
+ * @regs: pt_regs
  */
 
 static int inline
 ioc3uart_intr_one(struct ioc3_submodule *is,
 			struct ioc3_driver_data *idd,
-			unsigned int pending)
+			unsigned int pending, struct pt_regs *regs)
 {
 	int port_num = GET_PORT_FROM_SIO_IR(pending);
 	struct port_hooks *hooks;
@@ -1491,7 +1492,7 @@ ioc3uart_intr_one(struct ioc3_submodule *is,
 				uart_handle_dcd_change(the_port,
 						shadow & SHADOW_DCD);
 				wake_up_interruptible
-				    (&the_port->state->port.delta_msr_wait);
+				    (&the_port->info->delta_msr_wait);
 			} else if ((port->ip_notify & N_DDCD)
 				   && !(shadow & SHADOW_DCD)) {
 				/* Flag delta DCD/no DCD */
@@ -1511,7 +1512,7 @@ ioc3uart_intr_one(struct ioc3_submodule *is,
 				uart_handle_cts_change(the_port, shadow
 						& SHADOW_CTS);
 				wake_up_interruptible
-				    (&the_port->state->port.delta_msr_wait);
+				    (&the_port->info->delta_msr_wait);
 			}
 		}
 
@@ -1627,12 +1628,13 @@ ioc3uart_intr_one(struct ioc3_submodule *is,
  * @is : submodule
  * @idd: driver data
  * @pending: interrupts to handle
+ * @regs: pt_regs
  *
  */
 
 static int ioc3uart_intr(struct ioc3_submodule *is,
 			struct ioc3_driver_data *idd,
-			unsigned int pending)
+			unsigned int pending, struct pt_regs *regs)
 {
 	int ret = 0;
 
@@ -1642,9 +1644,9 @@ static int ioc3uart_intr(struct ioc3_submodule *is,
 	 */
 
 	if (pending & SIO_IR_SA)
-		ret |= ioc3uart_intr_one(is, idd, pending & SIO_IR_SA);
+		ret |= ioc3uart_intr_one(is, idd, pending & SIO_IR_SA, regs);
 	if (pending & SIO_IR_SB)
-		ret |= ioc3uart_intr_one(is, idd, pending & SIO_IR_SB);
+		ret |= ioc3uart_intr_one(is, idd, pending & SIO_IR_SB, regs);
 
 	return ret;
 }
@@ -1721,14 +1723,14 @@ static void ic3_shutdown(struct uart_port *the_port)
 {
 	unsigned long port_flags;
 	struct ioc3_port *port;
-	struct uart_state *state;
+	struct uart_info *info;
 
 	port = get_ioc3_port(the_port);
 	if (!port)
 		return;
 
-	state = the_port->state;
-	wake_up_interruptible(&state->port.delta_msr_wait);
+	info = the_port->info;
+	wake_up_interruptible(&info->delta_msr_wait);
 
 	spin_lock_irqsave(&the_port->lock, port_flags);
 	set_notification(port, N_ALL, 0);
@@ -1853,7 +1855,7 @@ static int ic3_startup(struct uart_port *the_port)
  */
 static void
 ic3_set_termios(struct uart_port *the_port,
-		struct ktermios *termios, struct ktermios *old_termios)
+		struct termios *termios, struct termios *old_termios)
 {
 	unsigned long port_flags;
 
@@ -1919,7 +1921,7 @@ static inline int ioc3_serial_core_attach( struct ioc3_submodule *is,
 	struct pci_dev *pdev = idd->pdev;
 
 	DPRINT_CONFIG(("%s: attach pdev 0x%p - card_ptr 0x%p\n",
-		       __func__, pdev, (void *)card_ptr));
+		       __FUNCTION__, pdev, (void *)card_ptr));
 
 	if (!card_ptr)
 		return -ENODEV;
@@ -1933,7 +1935,7 @@ static inline int ioc3_serial_core_attach( struct ioc3_submodule *is,
 		port->ip_port = the_port;
 
 		DPRINT_CONFIG(("%s: attach the_port 0x%p / port 0x%p [%d/%d]\n",
-			__func__, (void *)the_port, (void *)port,
+			__FUNCTION__, (void *)the_port, (void *)port,
 				phys_port, ii));
 
 		/* membase, iobase and mapbase just need to be non-0 */
@@ -1950,7 +1952,7 @@ static inline int ioc3_serial_core_attach( struct ioc3_submodule *is,
 		if (uart_add_one_port(&ioc3_uart, the_port) < 0) {
 			printk(KERN_WARNING
 		          "%s: unable to add port %d bus %d\n",
-			       __func__, the_port->line, pdev->bus->number);
+			       __FUNCTION__, the_port->line, pdev->bus->number);
 		} else {
 			DPRINT_CONFIG(("IOC3 serial port %d irq %d bus %d\n",
 		          the_port->line, the_port->irq, pdev->bus->number));
@@ -2017,14 +2019,15 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 	struct ioc3_port *ports[PORTS_PER_CARD];
 	int phys_port;
 
-	DPRINT_CONFIG(("%s (0x%p, 0x%p)\n", __func__, is, idd));
+	DPRINT_CONFIG(("%s (0x%p, 0x%p)\n", __FUNCTION__, is, idd));
 
-	card_ptr = kzalloc(sizeof(struct ioc3_card), GFP_KERNEL);
+	card_ptr = kmalloc(sizeof(struct ioc3_card), GFP_KERNEL);
 	if (!card_ptr) {
 		printk(KERN_WARNING "ioc3_attach_one"
 		       ": unable to get memory for the IOC3\n");
 		return -ENOMEM;
 	}
+	memset(card_ptr, 0, sizeof(struct ioc3_card));
 	idd->data[is->id] = card_ptr;
 	Submodule_slot = is->id;
 
@@ -2039,12 +2042,13 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 
 	/* Create port structures for each port */
 	for (phys_port = 0; phys_port < PORTS_PER_CARD; phys_port++) {
-		port = kzalloc(sizeof(struct ioc3_port), GFP_KERNEL);
+		port = kmalloc(sizeof(struct ioc3_port), GFP_KERNEL);
 		if (!port) {
 			printk(KERN_WARNING
 			       "IOC3 serial memory not available for port\n");
 			goto out4;
 		}
+		memset(port, 0, sizeof(struct ioc3_port));
 		spin_lock_init(&port->ip_lock);
 
 		/* we need to remember the previous ones, to point back to
@@ -2067,7 +2071,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 
 			DPRINT_CONFIG(("%s : Port A ip_serial_regs 0x%p "
 				       "ip_uart_regs 0x%p\n",
-				       __func__,
+				       __FUNCTION__,
 				       (void *)port->ip_serial_regs,
 				       (void *)port->ip_uart_regs));
 
@@ -2082,7 +2086,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 			DPRINT_CONFIG(("%s : Port A ip_cpu_ringbuf 0x%p "
 				       "ip_dma_ringbuf 0x%p, ip_inring 0x%p "
 					"ip_outring 0x%p\n",
-				       __func__,
+				       __FUNCTION__,
 				       (void *)port->ip_cpu_ringbuf,
 				       (void *)port->ip_dma_ringbuf,
 				       (void *)port->ip_inring,
@@ -2094,7 +2098,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 
 			DPRINT_CONFIG(("%s : Port B ip_serial_regs 0x%p "
 				       "ip_uart_regs 0x%p\n",
-				       __func__,
+				       __FUNCTION__,
 				       (void *)port->ip_serial_regs,
 				       (void *)port->ip_uart_regs));
 
@@ -2108,7 +2112,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 			DPRINT_CONFIG(("%s : Port B ip_cpu_ringbuf 0x%p "
 				       "ip_dma_ringbuf 0x%p, ip_inring 0x%p "
 					"ip_outring 0x%p\n",
-				       __func__,
+				       __FUNCTION__,
 				       (void *)port->ip_cpu_ringbuf,
 				       (void *)port->ip_dma_ringbuf,
 				       (void *)port->ip_inring,
@@ -2116,7 +2120,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 		}
 
 		DPRINT_CONFIG(("%s : port %d [addr 0x%p] card_ptr 0x%p",
-			       __func__,
+			       __FUNCTION__,
 			       phys_port, (void *)port, (void *)card_ptr));
 		DPRINT_CONFIG((" ip_serial_regs 0x%p ip_uart_regs 0x%p\n",
 			       (void *)port->ip_serial_regs,
@@ -2127,7 +2131,7 @@ ioc3uart_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
 
 		DPRINT_CONFIG(("%s: phys_port %d port 0x%p inring 0x%p "
 			       "outring 0x%p\n",
-			       __func__,
+			       __FUNCTION__,
 			       phys_port, (void *)port,
 			       (void *)port->ip_inring,
 			       (void *)port->ip_outring));
@@ -2149,7 +2153,7 @@ out4:
 	return ret;
 }
 
-static struct ioc3_submodule ioc3uart_ops = {
+static struct ioc3_submodule ioc3uart_submodule = {
 	.name = "IOC3uart",
 	.probe = ioc3uart_probe,
 	.remove = ioc3uart_remove,
@@ -2170,10 +2174,10 @@ static int __devinit ioc3uart_init(void)
 	if ((ret = uart_register_driver(&ioc3_uart)) < 0) {
 		printk(KERN_WARNING
 		       "%s: Couldn't register IOC3 uart serial driver\n",
-		       __func__);
+		       __FUNCTION__);
 		return ret;
 	}
-	ret = ioc3_register_submodule(&ioc3uart_ops);
+	ret = ioc3_register_submodule(&ioc3uart_submodule);
 	if (ret)
 		uart_unregister_driver(&ioc3_uart);
 	return ret;
@@ -2181,7 +2185,7 @@ static int __devinit ioc3uart_init(void)
 
 static void __devexit ioc3uart_exit(void)
 {
-	ioc3_unregister_submodule(&ioc3uart_ops);
+	ioc3_unregister_submodule(&ioc3uart_submodule);
 	uart_unregister_driver(&ioc3_uart);
 }
 

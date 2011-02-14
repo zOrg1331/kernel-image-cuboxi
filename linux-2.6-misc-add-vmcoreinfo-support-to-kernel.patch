@@ -1,0 +1,518 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 18 Sep 2007 13:37:31 -0400
+Subject: [misc] add vmcoreinfo support to kernel
+Message-id: 20070918173731.GC21188@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] add vmcoreinfo support to kernel
+Bugzilla: 253850
+
+Hey -
+	This is a backport of an upstream patch that recently went into -mm.  It
+adds support for /sys/kernel/vmcoreinfo, which provides symbol information in
+the running kernel for use by the makedumpfile dump filtering program.
+Inclusion of this patch provides makedumpfile with the ability to dynamically
+filter a vmcore without the aid of a configuration file, which otherwise
+requires the installation of a kernel-debuginfo package on the dumping system.
+Tested by me on x86_64 successfully.  Resolves bz 253850
+
+Regards
+Neil
+
+Acked-by: Dave Anderson <anderson@redhat.com>
+---
+ arch/i386/kernel/machine_kexec.c          |   12 +++
+ arch/ia64/kernel/machine_kexec.c          |   30 ++++++
+ arch/ia64/mm/discontig.c                  |    2 +-
+ arch/x86_64/kernel/machine_kexec.c        |    9 ++
+ include/asm-ia64/numa.h                   |    1 +
+ include/asm-x86_64/mach-xen/asm/pgtable.h |    2 +-
+ include/asm-x86_64/pgtable.h              |    2 +-
+ include/linux/kexec.h                     |   34 +++++++
+ include/linux/utsname.h                   |    8 ++
+ init/version.c                            |   16 ++++
+ kernel/kexec.c                            |  141 +++++++++++++++++++++++++++++
+ kernel/ksysfs.c                           |   10 ++
+ 12 files changed, 264 insertions(+), 3 deletions(-)
+
+diff --git a/arch/i386/kernel/machine_kexec.c b/arch/i386/kernel/machine_kexec.c
+index d3979a6..68dce1a 100644
+--- a/arch/i386/kernel/machine_kexec.c
++++ b/arch/i386/kernel/machine_kexec.c
+@@ -92,6 +92,18 @@ void machine_kexec_cleanup(struct kimage *image)
+ {
+ }
+ 
++ 
++void arch_crash_save_vmcoreinfo(void)
++{
++#ifdef CONFIG_ARCH_DISCONTIGMEM_ENABLE
++	SYMBOL(node_data);
++	LENGTH(node_data, MAX_NUMNODES);
++#endif
++#ifdef CONFIG_X86_PAE
++	CONFIG(X86_PAE);
++#endif
++}
++
+ #ifndef CONFIG_XEN
+ /*
+  * Do not allocate memory (or fail in any way) in machine_kexec().
+diff --git a/arch/ia64/kernel/machine_kexec.c b/arch/ia64/kernel/machine_kexec.c
+index 7d70847..daf5ab0 100644
+--- a/arch/ia64/kernel/machine_kexec.c
++++ b/arch/ia64/kernel/machine_kexec.c
+@@ -19,6 +19,8 @@
+ #include <asm/delay.h>
+ #include <asm/meminit.h>
+ #include <asm/machvec.h>
++#include <linux/numa.h>
++#include <linux/mmzone.h>
+ 
+ typedef void (*relocate_new_kernel_t)(unsigned long, unsigned long,
+ 		struct ia64_boot_param *, unsigned long);
+@@ -138,3 +140,31 @@ void machine_kexec(struct kimage *image)
+ 	unw_init_running(ia64_machine_kexec, image);
+ 	for(;;);
+ }
++
++void arch_crash_save_vmcoreinfo(void)
++{
++#ifdef CONFIG_ARCH_DISCONTIGMEM_ENABLE
++	SYMBOL(pgdat_list);
++	LENGTH(pgdat_list, MAX_NUMNODES);
++
++	SYMBOL(node_memblk);
++	LENGTH(node_memblk, NR_NODE_MEMBLKS);
++	SIZE(node_memblk_s);
++	OFFSET(node_memblk_s, start_paddr);
++	OFFSET(node_memblk_s, size);
++#endif
++#ifdef CONFIG_PGTABLE_3
++	CONFIG(PGTABLE_3);
++#elif  CONFIG_PGTABLE_4
++	CONFIG(PGTABLE_4);
++#endif
++}
++
++unsigned long paddr_vmcoreinfo_note(void)
++{
++	unsigned long vaddr, paddr;
++	vaddr = (unsigned long)(char *)&vmcoreinfo_note;
++	asm volatile ("tpa %0 = %1" : "=r"(paddr) : "r"(vaddr) : "memory");
++	return paddr;
++}
++
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index d260bff..a8de559 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -45,7 +45,7 @@ struct early_node_data {
+ static struct early_node_data mem_data[MAX_NUMNODES] __initdata;
+ static nodemask_t memory_less_mask __initdata;
+ 
+-static pg_data_t *pgdat_list[MAX_NUMNODES];
++pg_data_t *pgdat_list[MAX_NUMNODES];
+ 
+ /*
+  * To prevent cache aliasing effects, align per-node structures so that they
+diff --git a/arch/x86_64/kernel/machine_kexec.c b/arch/x86_64/kernel/machine_kexec.c
+index 162019a..efb6a0a 100644
+--- a/arch/x86_64/kernel/machine_kexec.c
++++ b/arch/x86_64/kernel/machine_kexec.c
+@@ -10,6 +10,7 @@
+ #include <linux/kexec.h>
+ #include <linux/string.h>
+ #include <linux/reboot.h>
++#include <linux/numa.h>
+ #include <asm/pgtable.h>
+ #include <asm/tlbflush.h>
+ #include <asm/mmu_context.h>
+@@ -237,6 +238,14 @@ void machine_kexec_cleanup(struct kimage *image)
+ 	return;
+ }
+ 
++void arch_crash_save_vmcoreinfo(void)
++{
++#ifdef CONFIG_ARCH_DISCONTIGMEM_ENABLE
++	SYMBOL(node_data);
++	LENGTH(node_data, MAX_NUMNODES);
++#endif
++}
++
+ #ifndef CONFIG_XEN
+ /*
+  * Do not allocate memory (or fail in any way) in machine_kexec().
+diff --git a/include/asm-ia64/numa.h b/include/asm-ia64/numa.h
+index 7d5e2cc..6a8a27c 100644
+--- a/include/asm-ia64/numa.h
++++ b/include/asm-ia64/numa.h
+@@ -24,6 +24,7 @@
+ 
+ extern u16 cpu_to_node_map[NR_CPUS] __cacheline_aligned;
+ extern cpumask_t node_to_cpu_mask[MAX_NUMNODES] __cacheline_aligned;
++extern pg_data_t *pgdat_list[MAX_NUMNODES];
+ 
+ /* Stuff below this line could be architecture independent */
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index 19b41f3..a104104 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -43,7 +43,7 @@ extern pmd_t level2_kernel_pgt[512];
+ extern pgd_t init_level4_pgt[];
+ extern unsigned long __supported_pte_mask;
+ 
+-#define swapper_pg_dir ((pgd_t *)NULL)
++#define swapper_pg_dir init_level4_pgt
+ 
+ extern void nonx_setup(char *str);
+ extern void paging_init(void);
+diff --git a/include/asm-x86_64/pgtable.h b/include/asm-x86_64/pgtable.h
+index e26a005..c63ecb7 100644
+--- a/include/asm-x86_64/pgtable.h
++++ b/include/asm-x86_64/pgtable.h
+@@ -21,7 +21,7 @@ extern pmd_t level2_kernel_pgt[512];
+ extern pgd_t init_level4_pgt[];
+ extern unsigned long __supported_pte_mask;
+ 
+-#define swapper_pg_dir ((pgd_t *)NULL)
++#define swapper_pg_dir init_level4_pgt
+ 
+ extern void nonx_setup(const char *str);
+ extern void paging_init(void);
+diff --git a/include/linux/kexec.h b/include/linux/kexec.h
+index e731128..e60563e 100644
+--- a/include/linux/kexec.h
++++ b/include/linux/kexec.h
+@@ -10,6 +10,8 @@
+ #endif
+ #include <linux/ioport.h>
+ #include <asm/kexec.h>
++#include <linux/elf.h>
++#include <linux/elfnote.h>
+ 
+ /* Verify architecture specific macros are defined */
+ 
+@@ -33,6 +35,8 @@
+ #error KEXEC_ARCH not defined
+ #endif
+ 
++#define KEXEC_NOTE_HEAD_BYTES ALIGN(sizeof(struct elf_note), 4)
++
+ #ifndef KEXEC_ARCH_HAS_PAGE_MACROS
+ #define kexec_page_to_pfn(page)  page_to_pfn(page)
+ #define kexec_pfn_to_page(pfn)   pfn_to_page(pfn)
+@@ -120,6 +124,24 @@ extern struct page *kimage_alloc_control_pages(struct kimage *image,
+ 						unsigned int order);
+ extern void crash_kexec(struct pt_regs *);
+ int kexec_should_crash(struct task_struct *);
++void crash_save_vmcoreinfo(void);
++void arch_crash_save_vmcoreinfo(void);
++void vmcoreinfo_append_str(const char *fmt, ...);
++unsigned long paddr_vmcoreinfo_note(void);
++
++#define SYMBOL(name) \
++	vmcoreinfo_append_str("SYMBOL(%s)=%lx\n", #name, (unsigned long)&name)
++#define SIZE(name) \
++	vmcoreinfo_append_str("SIZE(%s)=%d\n", #name, sizeof(struct name))
++#define OFFSET(name, field) \
++	vmcoreinfo_append_str("OFFSET(%s.%s)=%d\n", #name, #field, \
++				&(((struct name *)0)->field))
++#define LENGTH(name, value) \
++	vmcoreinfo_append_str("LENGTH(%s)=%d\n", #name, value)
++#define CONFIG(name) \
++	vmcoreinfo_append_str("CONFIG_%s=y\n", #name)
++
++
+ extern struct kimage *kexec_image;
+ extern struct kimage *kexec_crash_image;
+ 
+@@ -144,12 +166,24 @@ extern struct kimage *kexec_crash_image;
+ 
+ #define KEXEC_FLAGS    (KEXEC_ON_CRASH)  /* List of defined/legal kexec flags */
+ 
++#define VMCOREINFO_BYTES           (4096)
++#define VMCOREINFO_NOTE_NAME       "VMCOREINFO"
++#define VMCOREINFO_NOTE_NAME_BYTES ALIGN(sizeof(VMCOREINFO_NOTE_NAME), 4)
++#define VMCOREINFO_NOTE_SIZE       (KEXEC_NOTE_HEAD_BYTES*2 + VMCOREINFO_BYTES \
++					+ VMCOREINFO_NOTE_NAME_BYTES)
++
++
++
+ /* Location of a reserved region to hold the crash kernel.
+  */
+ extern struct resource crashk_res;
+ typedef u32 note_buf_t[MAX_NOTE_BYTES/4];
+ extern note_buf_t *crash_notes;
+ 
++extern u32 vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
++extern unsigned int vmcoreinfo_size;
++extern unsigned int vmcoreinfo_max_size;
++
+ #else /* !CONFIG_KEXEC */
+ struct pt_regs;
+ struct task_struct;
+diff --git a/include/linux/utsname.h b/include/linux/utsname.h
+index 822b295..faa9182 100644
+--- a/include/linux/utsname.h
++++ b/include/linux/utsname.h
+@@ -1,6 +1,8 @@
+ #ifndef _LINUX_UTSNAME_H
+ #define _LINUX_UTSNAME_H
+ 
++#include <linux/kref.h>
++
+ #define __OLD_UTS_LEN 8
+ 
+ struct oldold_utsname {
+@@ -30,7 +32,13 @@ struct new_utsname {
+ 	char domainname[65];
+ };
+ 
++struct uts_namespace {
++	struct kref kref;
++	struct new_utsname name;
++};
++
+ extern struct new_utsname system_utsname;
++extern struct uts_namespace init_uts_ns;
+ 
+ extern struct rw_semaphore uts_sem;
+ 
+diff --git a/init/version.c b/init/version.c
+index e290802..04bd77a 100644
+--- a/init/version.c
++++ b/init/version.c
+@@ -29,6 +29,22 @@ struct new_utsname system_utsname = {
+ 
+ EXPORT_SYMBOL(system_utsname);
+ 
++struct uts_namespace init_uts_ns = {
++        .kref = {
++                .refcount       = ATOMIC_INIT(2),
++        },
++        .name = {
++                .sysname        = UTS_SYSNAME,
++                .nodename       = UTS_NODENAME,
++                .release        = UTS_RELEASE,
++                .version        = UTS_VERSION,
++                .machine        = UTS_MACHINE,
++                .domainname     = UTS_DOMAINNAME,
++        },
++};
++
++EXPORT_SYMBOL_GPL(init_uts_ns);
++
+ const char linux_banner[] =
+ 	"Linux version " UTS_RELEASE " (" LINUX_COMPILE_BY "@"
+ 	LINUX_COMPILE_HOST ") (" LINUX_COMPILER ") " UTS_VERSION "\n";
+diff --git a/kernel/kexec.c b/kernel/kexec.c
+index 9db23d6..69ef5f2 100644
+--- a/kernel/kexec.c
++++ b/kernel/kexec.c
+@@ -20,16 +20,29 @@
+ #include <linux/syscalls.h>
+ #include <linux/ioport.h>
+ #include <linux/hardirq.h>
++#include <linux/elf.h>
++#include <linux/elfcore.h>
++#include <linux/utsrelease.h>
++#include <linux/utsname.h>
++#include <linux/numa.h>
+ 
+ #include <asm/page.h>
+ #include <asm/uaccess.h>
+ #include <asm/io.h>
+ #include <asm/system.h>
+ #include <asm/semaphore.h>
++#include <asm/sections.h>
+ 
+ /* Per cpu memory for storing cpu states in case of system crash. */
+ note_buf_t* crash_notes;
+ 
++/* vmcoreinfo stuff */
++unsigned char vmcoreinfo_data[VMCOREINFO_BYTES];
++u32 vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
++unsigned int vmcoreinfo_size = 0;
++unsigned int vmcoreinfo_max_size = sizeof(vmcoreinfo_data);
++
++
+ /* Location of the reserved area for the crash kernel */
+ struct resource crashk_res = {
+ 	.name  = "Crash kernel",
+@@ -1106,6 +1119,7 @@ void crash_kexec(struct pt_regs *regs)
+ 		if (kexec_crash_image) {
+ 			struct pt_regs fixed_regs;
+ 			crash_setup_regs(&fixed_regs, regs);
++			crash_save_vmcoreinfo();
+ 			machine_crash_shutdown(&fixed_regs);
+ 			machine_kexec(kexec_crash_image);
+ 		}
+@@ -1113,6 +1127,34 @@ void crash_kexec(struct pt_regs *regs)
+ 	}
+ }
+ 
++static u32 *append_elf_note(u32 *buf, char *name, unsigned type, void *data,
++                            size_t data_len)
++{
++	struct elf_note note;
++
++	note.n_namesz = strlen(name) + 1;
++	note.n_descsz = data_len;
++	note.n_type   = type;
++	memcpy(buf, &note, sizeof(note));
++	buf += (sizeof(note) + 3)/4;
++	memcpy(buf, name, note.n_namesz);
++	buf += (note.n_namesz + 3)/4;
++	memcpy(buf, data, note.n_descsz);
++	buf += (note.n_descsz + 3)/4;
++
++	return buf;
++}
++
++static void final_note(u32 *buf)
++{
++	struct elf_note note;
++
++	note.n_namesz = 0;
++	note.n_descsz = 0;
++	note.n_type   = 0;
++	memcpy(buf, &note, sizeof(note));
++}
++
+ static int __init crash_notes_memory_init(void)
+ {
+ 	/* Allocate memory for saving cpu registers. */
+@@ -1125,3 +1167,102 @@ static int __init crash_notes_memory_init(void)
+ 	return 0;
+ }
+ module_init(crash_notes_memory_init)
++
++void crash_save_vmcoreinfo(void)
++{
++	u32 *buf;
++
++	if (!vmcoreinfo_size)
++		return;
++
++	vmcoreinfo_append_str("CRASHTIME=%d", xtime.tv_sec);
++
++	buf = (u32 *)vmcoreinfo_note;
++
++	buf = append_elf_note(buf, VMCOREINFO_NOTE_NAME, 0, vmcoreinfo_data,
++			      vmcoreinfo_size);
++
++	final_note(buf);
++}
++
++void vmcoreinfo_append_str(const char *fmt, ...)
++{
++	va_list args;
++	char buf[0x50];
++	int r;
++
++	va_start(args, fmt);
++	r = vsnprintf(buf, sizeof(buf), fmt, args);
++	va_end(args);
++
++	if (r + vmcoreinfo_size > vmcoreinfo_max_size)
++		r = vmcoreinfo_max_size - vmcoreinfo_size;
++
++	memcpy(&vmcoreinfo_data[vmcoreinfo_size], buf, r);
++
++	vmcoreinfo_size += r;
++}
++
++/*
++ * provide an empty default implementation here -- architecture
++ * code may override this
++ */
++void __attribute__ ((weak)) arch_crash_save_vmcoreinfo(void)
++{}
++
++unsigned long __attribute__ ((weak)) paddr_vmcoreinfo_note(void)
++{
++	return __pa((unsigned long)(char *)&vmcoreinfo_note);
++}
++
++static int __init crash_save_vmcoreinfo_init(void)
++{
++	vmcoreinfo_append_str("OSRELEASE=%s\n", UTS_RELEASE);
++	vmcoreinfo_append_str("PAGESIZE=%d\n", PAGE_SIZE);
++
++	SYMBOL(init_uts_ns);
++	SYMBOL(node_online_map);
++	SYMBOL(swapper_pg_dir);
++	SYMBOL(_stext);
++
++#ifndef CONFIG_NEED_MULTIPLE_NODES
++	SYMBOL(mem_map);
++	SYMBOL(contig_page_data);
++#endif
++#ifdef CONFIG_SPARSEMEM
++	SYMBOL(mem_section);
++	LENGTH(mem_section, NR_SECTION_ROOTS);
++	SIZE(mem_section);
++	OFFSET(mem_section, section_mem_map);
++#endif
++	SIZE(page);
++	SIZE(pglist_data);
++	SIZE(zone);
++	SIZE(free_area);
++	SIZE(list_head);
++	OFFSET(page, flags);
++	OFFSET(page, _count);
++	OFFSET(page, mapping);
++	OFFSET(page, lru);
++	OFFSET(pglist_data, node_zones);
++	OFFSET(pglist_data, nr_zones);
++#ifdef CONFIG_FLAT_NODE_MEM_MAP
++	OFFSET(pglist_data, node_mem_map);
++#endif
++	OFFSET(pglist_data, node_start_pfn);
++	OFFSET(pglist_data, node_spanned_pages);
++	OFFSET(pglist_data, node_id);
++	OFFSET(zone, free_area);
++	OFFSET(zone, vm_stat);
++	OFFSET(zone, spanned_pages);
++	OFFSET(free_area, free_list);
++	OFFSET(list_head, next);
++	OFFSET(list_head, prev);
++	LENGTH(zone.free_area, MAX_ORDER);
++
++	arch_crash_save_vmcoreinfo();
++
++	return 0;
++}
++
++module_init(crash_save_vmcoreinfo_init)
+diff --git a/kernel/ksysfs.c b/kernel/ksysfs.c
+index e0ffe4a..2ea612d 100644
+--- a/kernel/ksysfs.c
++++ b/kernel/ksysfs.c
+@@ -60,6 +60,15 @@ static ssize_t kexec_crash_loaded_show(struct subsystem *subsys, char *page)
+ 	return sprintf(page, "%d\n", !!kexec_crash_image);
+ }
+ KERNEL_ATTR_RO(kexec_crash_loaded);
++
++static ssize_t vmcoreinfo_show(struct kset *kset, char *page)
++{
++	return sprintf(page, "%lx %x\n",
++		       paddr_vmcoreinfo_note(),
++		       vmcoreinfo_max_size);
++}
++KERNEL_ATTR_RO(vmcoreinfo);
++
+ #endif /* CONFIG_KEXEC */
+ 
+ decl_subsys(kernel, NULL, NULL);
+@@ -73,6 +82,7 @@ static struct attribute * kernel_attrs[] = {
+ #ifdef CONFIG_KEXEC
+ 	&kexec_loaded_attr.attr,
+ 	&kexec_crash_loaded_attr.attr,
++	&vmcoreinfo_attr.attr,
+ #endif
+ 	NULL
+ };
+-- 
+1.5.3.5.645.gbb47
+

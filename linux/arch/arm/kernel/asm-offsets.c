@@ -15,8 +15,6 @@
 #include <asm/mach/arch.h>
 #include <asm/thread_info.h>
 #include <asm/memory.h>
-#include <asm/procinfo.h>
-#include <linux/kbuild.h>
 
 /*
  * Make sure that the compiler and target are compatible.
@@ -36,6 +34,13 @@
 #error    Known good compilers: 3.3
 #endif
 
+/* Use marker if you need to separate the values later */
+
+#define DEFINE(sym, val) \
+        asm volatile("\n->" #sym " %0 " #val : : "i" (val))
+
+#define BLANK() asm volatile("\n->" : : )
+
 int main(void)
 {
   DEFINE(TSK_ACTIVE_MM,		offsetof(struct task_struct, active_mm));
@@ -52,9 +57,6 @@ int main(void)
   DEFINE(TI_TP_VALUE,		offsetof(struct thread_info, tp_value));
   DEFINE(TI_FPSTATE,		offsetof(struct thread_info, fpstate));
   DEFINE(TI_VFPSTATE,		offsetof(struct thread_info, vfpstate));
-#ifdef CONFIG_ARM_THUMBEE
-  DEFINE(TI_THUMBEE_STATE,	offsetof(struct thread_info, thumbee_state));
-#endif
 #ifdef CONFIG_IWMMXT
   DEFINE(TI_IWMMXT_STATE,	offsetof(struct thread_info, fpstate.iwmmxt));
 #endif
@@ -82,7 +84,7 @@ int main(void)
   DEFINE(S_OLD_R0,		offsetof(struct pt_regs, ARM_ORIG_r0));
   DEFINE(S_FRAME_SIZE,		sizeof(struct pt_regs));
   BLANK();
-#ifdef CONFIG_CPU_HAS_ASID
+#if __LINUX_ARM_ARCH__ >= 6
   DEFINE(MM_CONTEXT_ID,		offsetof(struct mm_struct, context.id));
   BLANK();
 #endif
@@ -105,12 +107,5 @@ int main(void)
   DEFINE(PROCINFO_INITFUNC,	offsetof(struct proc_info_list, __cpu_flush));
   DEFINE(PROCINFO_MM_MMUFLAGS,	offsetof(struct proc_info_list, __cpu_mm_mmu_flags));
   DEFINE(PROCINFO_IO_MMUFLAGS,	offsetof(struct proc_info_list, __cpu_io_mmu_flags));
-  BLANK();
-#ifdef MULTI_DABORT
-  DEFINE(PROCESSOR_DABT_FUNC,	offsetof(struct processor, _data_abort));
-#endif
-#ifdef MULTI_PABORT
-  DEFINE(PROCESSOR_PABT_FUNC,	offsetof(struct processor, _prefetch_abort));
-#endif
   return 0; 
 }

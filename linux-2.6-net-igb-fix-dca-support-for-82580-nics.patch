@@ -1,0 +1,50 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Fri, 26 Feb 2010 10:50:26 -0500
+Subject: [net] igb: fix DCA support for 82580 NICs
+Message-id: <4B87A772.7040300@redhat.com>
+Patchwork-id: 23445
+O-Subject: [RHEL 5.5 PATCH] igb: fix DCA support for 82580 NICs
+Bugzilla: 513712
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=513712
+
+Description:
+82580 NICs weren't properly taken into account for DCA handling.
+
+Upstream Status:
+Not an upstream issue.
+
+Brew Build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2287035
+
+Test Status:
+Tested by Intel only, we don't have the hw.
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index a570003..f4a2833 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -4067,7 +4067,7 @@ static void igb_update_rx_dca(struct igb_ring *rx_ring)
+ 
+ 	if (rx_ring->cpu != cpu) {
+ 		dca_rxctrl = rd32(E1000_DCA_RXCTRL(q));
+-		if (hw->mac.type == e1000_82576) {
++		if (hw->mac.type >= e1000_82576) {
+ 			dca_rxctrl &= ~E1000_DCA_RXCTRL_CPUID_MASK_82576;
+ 			dca_rxctrl |= dca3_get_tag(&adapter->pdev->dev, cpu) <<
+ 			              E1000_DCA_RXCTRL_CPUID_SHIFT;
+@@ -4094,7 +4094,7 @@ static void igb_update_tx_dca(struct igb_ring *tx_ring)
+ 
+ 	if (tx_ring->cpu != cpu) {
+ 		dca_txctrl = rd32(E1000_DCA_TXCTRL(q));
+-		if (hw->mac.type == e1000_82576) {
++		if (hw->mac.type >= e1000_82576) {
+ 			dca_txctrl &= ~E1000_DCA_TXCTRL_CPUID_MASK_82576;
+ 			dca_txctrl |= dca3_get_tag(&adapter->pdev->dev, cpu) <<
+ 			              E1000_DCA_TXCTRL_CPUID_SHIFT;

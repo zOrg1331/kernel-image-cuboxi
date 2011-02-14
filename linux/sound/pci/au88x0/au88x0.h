@@ -18,6 +18,7 @@
 #define __SOUND_AU88X0_H
 
 #ifdef __KERNEL__
+#include <sound/driver.h>
 #include <linux/pci.h>
 #include <asm/io.h>
 #include <sound/core.h>
@@ -125,6 +126,7 @@ typedef struct {
 	/* Virtual page extender stuff */
 	int nr_periods;
 	int period_bytes;
+	struct snd_sg_buf *sgbuf;	/* DMA Scatter Gather struct */
 	int period_real;
 	int period_virt;
 
@@ -194,14 +196,16 @@ static void vortex_adb_setsrc(vortex_t * vortex, int adbdma,
 
 /* DMA Engines. */
 static void vortex_adbdma_setbuffers(vortex_t * vortex, int adbdma,
-				     int size, int count);
+				     struct snd_sg_buf * sgbuf, int size,
+				     int count);
 static void vortex_adbdma_setmode(vortex_t * vortex, int adbdma, int ie,
 				  int dir, int fmt, int d,
 				  u32 offset);
 static void vortex_adbdma_setstartbuffer(vortex_t * vortex, int adbdma, int sb);
 #ifndef CHIP_AU8810
 static void vortex_wtdma_setbuffers(vortex_t * vortex, int wtdma,
-				    int size, int count);
+				    struct snd_sg_buf * sgbuf, int size,
+				    int count);
 static void vortex_wtdma_setmode(vortex_t * vortex, int wtdma, int ie, int fmt, int d,	/*int e, */
 				 u32 offset);
 static void vortex_wtdma_setstartbuffer(vortex_t * vortex, int wtdma, int sb);
@@ -232,7 +236,8 @@ static void vortex_spdif_init(vortex_t * vortex, int spdif_sr, int spdif_mode);
 static int vortex_core_init(vortex_t * card);
 static int vortex_core_shutdown(vortex_t * card);
 static void vortex_enable_int(vortex_t * card);
-static irqreturn_t vortex_interrupt(int irq, void *dev_id);
+static irqreturn_t vortex_interrupt(int irq, void *dev_id,
+				    struct pt_regs *regs);
 static int vortex_alsafmt_aspfmt(int alsafmt);
 
 /* Connection  stuff. */

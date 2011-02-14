@@ -1,0 +1,91 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 14 Oct 2008 11:43:06 -0400
+Subject: [openib] ehca: attempt to free srq when none exists
+Message-id: 20081014154259.11422.37902.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.2 BZ463487] Attempt to free srq when none exists
+Bugzilla: 463487
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=463487
+
+Description:
+===========
+Using ehca driver with a gal1 card, load and unload the ib_ipoib driver. This
+will result in free() called on a random address which results in a panic or
+hang some time later.
+
+This patch frees the buffer and then drops the reference before NULLing the
+pointer.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1517078
+
+Upstream Status:
+================
+OFED-1.4 is synced with mainline kernel. In OFED-1.3.X release, several patches
+were included which were/are/will not part of mainline kernel. This is a bug in
+OFED-1.3.X only. OFED-1.3.X has includes patches not in mainline kernel, that's
+the reason this is not a bug in OFED-1.4 and mainline kernel. That's the reason
+IBM didn't submit this patch to mainline kernel.
+
+Test Status:
+============
+Using ehca driver with a gal1 card, load and unload the ib_ipoib driver.
+Without this patch free() is called on a random address resulting in a
+panic or hang some time later.
+
+With this patch the module loads and unloads without any problems.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_cm.c b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+index 16fc866..5eba8af 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_cm.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+@@ -1611,21 +1611,21 @@ void ipoib_cm_dev_cleanup(struct net_device *dev)
+ 	struct ipoib_dev_priv *priv = netdev_priv(dev);
+ 	int ret;
+ 
++	ipoib_dbg(priv, "Cleanup ipoib connected mode.\n");
++
+ 	if (!priv->cm.srq)
+ 		return;
+ 
+-	ipoib_dbg(priv, "Cleanup ipoib connected mode.\n");
++	if (priv->cm.srq_ring) {
++		ipoib_cm_free_rx_ring(dev, priv->cm.srq_ring);
++		priv->cm.srq_ring = NULL;
++	}
+ 
+ 	ret = ib_destroy_srq(priv->cm.srq);
+ 	if (ret)
+ 		ipoib_warn(priv, "ib_destroy_srq failed: %d\n", ret);
+-
+-	priv->cm.srq = NULL;
+-	if (!priv->cm.srq_ring)
+-		return;
+-
+-	ipoib_cm_free_rx_ring(dev, priv->cm.srq_ring);
+-	priv->cm.srq_ring = NULL;
++	else
++		priv->cm.srq = NULL;
+ 
+ 	ipoib_vfree(&priv->cm.rx_vmap_wr_arr);
+ }

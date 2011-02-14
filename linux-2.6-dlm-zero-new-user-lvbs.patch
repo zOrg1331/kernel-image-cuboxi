@@ -1,0 +1,35 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: zero new user lvbs
+Date: Thu, 19 Apr 2007 11:45:48 -0500
+Bugzilla: 237124
+Message-Id: <20070419164548.GA23079@redhat.com>
+Changelog: [dlm] zero new user lvbs
+
+
+bz 237124
+
+A new lvb for a userland lock wasn't being initialized to zero.
+
+Index: linux-2.6.20-rc5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.20-rc5-quilt.orig/fs/dlm/lock.c	2007-01-30 16:34:12.000000000 -0600
++++ linux-2.6.20-rc5-quilt/fs/dlm/lock.c	2007-01-30 16:58:50.000000000 -0600
+@@ -3643,7 +3643,7 @@
+ 	}
+ 
+ 	if (flags & DLM_LKF_VALBLK) {
+-		ua->lksb.sb_lvbptr = kmalloc(DLM_USER_LVB_LEN, GFP_KERNEL);
++		ua->lksb.sb_lvbptr = kzalloc(DLM_USER_LVB_LEN, GFP_KERNEL);
+ 		if (!ua->lksb.sb_lvbptr) {
+ 			kfree(ua);
+ 			__put_lkb(ls, lkb);
+@@ -3712,7 +3712,7 @@
+ 	ua = (struct dlm_user_args *)lkb->lkb_astparam;
+ 
+ 	if (flags & DLM_LKF_VALBLK && !ua->lksb.sb_lvbptr) {
+-		ua->lksb.sb_lvbptr = kmalloc(DLM_USER_LVB_LEN, GFP_KERNEL);
++		ua->lksb.sb_lvbptr = kzalloc(DLM_USER_LVB_LEN, GFP_KERNEL);
+ 		if (!ua->lksb.sb_lvbptr) {
+ 			error = -ENOMEM;
+ 			goto out_put;
+

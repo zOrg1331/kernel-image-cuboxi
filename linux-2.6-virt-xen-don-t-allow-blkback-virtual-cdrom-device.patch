@@ -1,0 +1,35 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Thu, 2 Dec 2010 17:34:12 -0500
+Subject: [virt] xen: don't allow blkback virtual CDROM device
+Message-id: <1291311252-8227-3-git-send-email-drjones@redhat.com>
+Patchwork-id: 29826
+O-Subject: [RHEL5.6 PATCH 2/2] blkbk: don't allow virtual CDROM device
+Bugzilla: 635638
+CVE: CVE-2010-4238
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=635638
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/xen/blkback/vbd.c b/drivers/xen/blkback/vbd.c
+index c1862ce..a0f6920 100644
+--- a/drivers/xen/blkback/vbd.c
++++ b/drivers/xen/blkback/vbd.c
+@@ -75,15 +75,15 @@ int vbd_create(blkif_t *blkif, blkif_vdev_t handle, unsigned major,
+ 
+ 	vbd->bdev = bdev;
+ 
+-	if (vbd->bdev->bd_disk == NULL) {
++	/* CD-ROMs are not supported by xen blkback */
++	if (vbd->bdev->bd_disk == NULL ||
++	    vbd->bdev->bd_disk->flags & GENHD_FL_CD) {
+ 		DPRINTK("vbd_creat: device %08x doesn't exist.\n",
+ 			vbd->pdevice);
+ 		vbd_free(vbd);
+ 		return -ENOENT;
+ 	}
+ 
+-	if (vbd->bdev->bd_disk->flags & GENHD_FL_CD)
+-		vbd->type |= VDISK_CDROM;
+ 	if (vbd->bdev->bd_disk->flags & GENHD_FL_REMOVABLE)
+ 		vbd->type |= VDISK_REMOVABLE;
+ 

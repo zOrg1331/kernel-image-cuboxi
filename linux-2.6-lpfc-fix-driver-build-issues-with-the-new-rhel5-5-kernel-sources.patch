@@ -1,0 +1,58 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 16 Feb 2010 19:38:12 -0500
+Subject: lpfc: Fix driver build issues with the new RHEL5.5 kernel sources
+Message-id: <20100216193733.8604.47963.sendpatchset@localhost.localdomain>
+Patchwork-id: 23296
+O-Subject: [RHEL5.5 6/7] lpfc: Fix driver build issues with the new RHEL5.5
+	kernel sources
+Bugzilla: 564506
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=564506
+
+Fix driver build issues with the new RHEL5.5 kernel sources
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index bdb8ca8..2770970 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -2496,10 +2496,12 @@ lpfc_create_static_vport(struct lpfc_hba *phba)
+ 	struct Scsi_Host *shost;
+ 	struct lpfc_vport *vport;
+ 	uint16_t offset = 0;
+-	uint8_t *vport_buff, vname = '\0';
+-	uint64_t wwpn, wwnn;
++	uint8_t *vport_buff;
+ 	struct lpfc_dmabuf *mp;
+ 	uint32_t byte_count = 0;
++	uint64_t wwpn, wwnn;
++	uint8_t vname = '\0';
++
+ 
+ 	pmb = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 	if (!pmb) {
+@@ -2595,7 +2597,6 @@ lpfc_create_static_vport(struct lpfc_hba *phba)
+ 
+ 		vport->vport_flag |= STATIC_VPORT;
+ 	}
+-
+ out:
+ 	kfree(vport_info);
+ 	if (rc != MBX_TIMEOUT) {
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 87d0afd..58bb291 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -7844,8 +7844,8 @@ lpfc_pci_remove_one_s4(struct pci_dev *pdev)
+ {
+ 	struct Scsi_Host *shost = pci_get_drvdata(pdev);
+ 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
+-	struct lpfc_vport **vports;
+ 	struct lpfc_hba *phba = vport->phba;
++	struct lpfc_vport **vports;
+ 	int i;
+ 
+ 	lpfcdfc_host_del(phba->dfc_host);

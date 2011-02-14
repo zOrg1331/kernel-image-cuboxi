@@ -23,7 +23,7 @@
 #include <linux/workqueue.h>
 #include <linux/spi/spi.h>
 
-#define DRV_VERSION "0.2"
+#define DRV_VERSION "0.1"
 
 #define RS5C348_REG_SECS	0
 #define RS5C348_REG_MINS	1
@@ -74,20 +74,20 @@ rs5c348_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	txbuf[3] = 0;	/* dummy */
 	txbuf[4] = RS5C348_CMD_MW(RS5C348_REG_SECS); /* cmd, sec, ... */
 	txp = &txbuf[5];
-	txp[RS5C348_REG_SECS] = bin2bcd(tm->tm_sec);
-	txp[RS5C348_REG_MINS] = bin2bcd(tm->tm_min);
+	txp[RS5C348_REG_SECS] = BIN2BCD(tm->tm_sec);
+	txp[RS5C348_REG_MINS] = BIN2BCD(tm->tm_min);
 	if (pdata->rtc_24h) {
-		txp[RS5C348_REG_HOURS] = bin2bcd(tm->tm_hour);
+		txp[RS5C348_REG_HOURS] = BIN2BCD(tm->tm_hour);
 	} else {
 		/* hour 0 is AM12, noon is PM12 */
-		txp[RS5C348_REG_HOURS] = bin2bcd((tm->tm_hour + 11) % 12 + 1) |
+		txp[RS5C348_REG_HOURS] = BIN2BCD((tm->tm_hour + 11) % 12 + 1) |
 			(tm->tm_hour >= 12 ? RS5C348_BIT_PM : 0);
 	}
-	txp[RS5C348_REG_WDAY] = bin2bcd(tm->tm_wday);
-	txp[RS5C348_REG_DAY] = bin2bcd(tm->tm_mday);
-	txp[RS5C348_REG_MONTH] = bin2bcd(tm->tm_mon + 1) |
+	txp[RS5C348_REG_WDAY] = BIN2BCD(tm->tm_wday);
+	txp[RS5C348_REG_DAY] = BIN2BCD(tm->tm_mday);
+	txp[RS5C348_REG_MONTH] = BIN2BCD(tm->tm_mon + 1) |
 		(tm->tm_year >= 100 ? RS5C348_BIT_Y2K : 0);
-	txp[RS5C348_REG_YEAR] = bin2bcd(tm->tm_year % 100);
+	txp[RS5C348_REG_YEAR] = BIN2BCD(tm->tm_year % 100);
 	/* write in one transfer to avoid data inconsistency */
 	ret = spi_write_then_read(spi, txbuf, sizeof(txbuf), NULL, 0);
 	udelay(62);	/* Tcsr 62us */
@@ -116,20 +116,20 @@ rs5c348_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	if (ret < 0)
 		return ret;
 
-	tm->tm_sec = bcd2bin(rxbuf[RS5C348_REG_SECS] & RS5C348_SECS_MASK);
-	tm->tm_min = bcd2bin(rxbuf[RS5C348_REG_MINS] & RS5C348_MINS_MASK);
-	tm->tm_hour = bcd2bin(rxbuf[RS5C348_REG_HOURS] & RS5C348_HOURS_MASK);
+	tm->tm_sec = BCD2BIN(rxbuf[RS5C348_REG_SECS] & RS5C348_SECS_MASK);
+	tm->tm_min = BCD2BIN(rxbuf[RS5C348_REG_MINS] & RS5C348_MINS_MASK);
+	tm->tm_hour = BCD2BIN(rxbuf[RS5C348_REG_HOURS] & RS5C348_HOURS_MASK);
 	if (!pdata->rtc_24h) {
 		tm->tm_hour %= 12;
 		if (rxbuf[RS5C348_REG_HOURS] & RS5C348_BIT_PM)
 			tm->tm_hour += 12;
 	}
-	tm->tm_wday = bcd2bin(rxbuf[RS5C348_REG_WDAY] & RS5C348_WDAY_MASK);
-	tm->tm_mday = bcd2bin(rxbuf[RS5C348_REG_DAY] & RS5C348_DAY_MASK);
+	tm->tm_wday = BCD2BIN(rxbuf[RS5C348_REG_WDAY] & RS5C348_WDAY_MASK);
+	tm->tm_mday = BCD2BIN(rxbuf[RS5C348_REG_DAY] & RS5C348_DAY_MASK);
 	tm->tm_mon =
-		bcd2bin(rxbuf[RS5C348_REG_MONTH] & RS5C348_MONTH_MASK) - 1;
+		BCD2BIN(rxbuf[RS5C348_REG_MONTH] & RS5C348_MONTH_MASK) - 1;
 	/* year is 1900 + tm->tm_year */
-	tm->tm_year = bcd2bin(rxbuf[RS5C348_REG_YEAR]) +
+	tm->tm_year = BCD2BIN(rxbuf[RS5C348_REG_YEAR]) +
 		((rxbuf[RS5C348_REG_MONTH] & RS5C348_BIT_Y2K) ? 100 : 0);
 
 	if (rtc_valid_tm(tm) < 0) {
@@ -140,7 +140,7 @@ rs5c348_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	return 0;
 }
 
-static const struct rtc_class_ops rs5c348_rtc_ops = {
+static struct rtc_class_ops rs5c348_rtc_ops = {
 	.read_time	= rs5c348_rtc_read_time,
 	.set_time	= rs5c348_rtc_set_time,
 };
@@ -175,15 +175,8 @@ static int __devinit rs5c348_probe(struct spi_device *spi)
 		goto kfree_exit;
 	if (ret & (RS5C348_BIT_XSTP | RS5C348_BIT_VDET)) {
 		u8 buf[2];
-		struct rtc_time tm;
 		if (ret & RS5C348_BIT_VDET)
 			dev_warn(&spi->dev, "voltage-low detected.\n");
-		if (ret & RS5C348_BIT_XSTP)
-			dev_warn(&spi->dev, "oscillator-stop detected.\n");
-		rtc_time_to_tm(0, &tm);	/* 1970/1/1 */
-		ret = rs5c348_rtc_set_time(&spi->dev, &tm);
-		if (ret < 0)
-			goto kfree_exit;
 		buf[0] = RS5C348_CMD_W(RS5C348_REG_CTL2);
 		buf[1] = 0;
 		ret = spi_write_then_read(spi, buf, sizeof(buf), NULL, 0);
@@ -226,7 +219,7 @@ static int __devexit rs5c348_remove(struct spi_device *spi)
 
 static struct spi_driver rs5c348_driver = {
 	.driver = {
-		.name	= "rtc-rs5c348",
+		.name	= "rs5c348",
 		.bus	= &spi_bus_type,
 		.owner	= THIS_MODULE,
 	},
@@ -251,4 +244,3 @@ MODULE_AUTHOR("Atsushi Nemoto <anemo@mba.ocn.ne.jp>");
 MODULE_DESCRIPTION("Ricoh RS5C348 RTC driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
-MODULE_ALIAS("spi:rtc-rs5c348");

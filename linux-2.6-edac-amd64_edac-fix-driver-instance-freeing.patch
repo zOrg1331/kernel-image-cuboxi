@@ -1,0 +1,48 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 5 Aug 2010 18:03:41 -0400
+Subject: [edac] amd64_edac: fix driver instance freeing
+Message-id: <20100805180917.6566.10104.sendpatchset@localhost.localdomain>
+Patchwork-id: 27417
+O-Subject: [RHEL5.6 PATCH 3/10] amd64_edac - Fix driver instance freeing
+Bugzilla: 568576
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+>From 56899da1bc0247a832bec6738ad088f01a678681 Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <borislav.petkov@amd.com>
+Date: Sat, 31 Jul 2010 03:12:38 +0200
+Subject: [PATCH] amd64_edac: Fix driver instance freeing
+
+(Upstream commit 8f68ed9728193b1f2fb53ba06031b06bd8b3d1b4)
+
+Fix use-after-free errors by pushing all memory-freeing calls to the end
+of amd64_remove_one_instance().
+
+Reported-by: Darren Jenkins <darrenrjenkins@gmail.com>
+LKML-Reference: <1261370306.11354.52.camel@ICE-BOX>
+Signed-off-by: Borislav Petkov <borislav.petkov@amd.com>
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 3d4ec39..c8642b2 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -2746,16 +2746,15 @@ static void __devexit amd64_remove_one_instance(struct pci_dev *pdev)
+ 
+        amd64_free_mc_sibling_devices(pvt);
+ 
+-       kfree(pvt);
+-       mci->pvt_info = NULL;
+-
+-       mci_lookup[pvt->mc_node_id] = NULL;
+-
+        /* unregister from EDAC MCE */
+        amd_report_gart_errors(false);
+        amd_unregister_ecc_decoder(amd64_decode_bus_error);
+ 
+        /* Free the EDAC CORE resources */
++       mci->pvt_info = NULL;
++       mci_lookup[pvt->mc_node_id] = NULL;
++
++       kfree(pvt);
+        edac_mc_free(mci);
+ }
+ 

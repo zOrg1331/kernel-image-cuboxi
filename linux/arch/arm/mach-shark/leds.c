@@ -1,5 +1,5 @@
 /*
- * arch/arm/mach-shark/leds.c
+ * arch/arm/kernel/leds-shark.c
  * by Alexander Schulz
  *
  * derived from:
@@ -20,18 +20,14 @@
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/ioport.h>
-#include <linux/io.h>
 
+#include <asm/hardware.h>
 #include <asm/leds.h>
+#include <asm/io.h>
 #include <asm/system.h>
 
 #define LED_STATE_ENABLED	1
 #define LED_STATE_CLAIMED	2
-
-#define SEQUOIA_LED_GREEN       (1<<6)
-#define SEQUOIA_LED_AMBER       (1<<5)
-#define SEQUOIA_LED_BACK        (1<<7)
-
 static char led_state;
 static short hw_led_state;
 static short saved_state;

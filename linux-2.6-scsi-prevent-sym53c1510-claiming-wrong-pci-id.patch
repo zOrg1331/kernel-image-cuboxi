@@ -1,0 +1,39 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL 5 PATCH] BZ#205653
+Date: Wed, 29 Nov 2006 12:19:44 -0500
+Bugzilla: 218623
+Message-Id: <rzpr6vmp3v3.fsf@redhat.com>
+Changelog: scsi: prevent sym53c1510 from claiming the wrong pci id
+
+
+
+This is a small, obviously correct patch that fixes a problem with
+RHEL5 recognizing cpqarray devices.  It is obviously correct because
+of the previous patch that made the same change nine lines higher in
+the same file.  Essentially, what these patches do is to prevent the
+sym53c1510 driver from claiming the PCI ID that belongs to cpqarray.
+It turns out that this device can show up with two different PCI
+device IDs: one for LSI Logic and one for the same device sold by NCR.
+
+Thanks,
+
+Chip
+
+--- linux-2.6.18/drivers/scsi/sym53c8xx_2/sym_glue.c	2006-09-20 09:12:06.000000000 +0530
++++ linux-2.6.18/drivers/scsi/sym53c8xx_2/sym_glue.c	2006-10-10 19:14:56.000000000 +0530
+@@ -2094,7 +2094,7 @@
+ 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_NCR_53C875,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_NCR_53C1510,
+-	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL }, /* new */
++	  PCI_ANY_ID, PCI_ANY_ID,  PCI_CLASS_STORAGE_SCSI<<8,  0xffff00, 0UL }, /* new */
+ 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_53C895A,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_53C875A,
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc.
+1-978-392-2426
+

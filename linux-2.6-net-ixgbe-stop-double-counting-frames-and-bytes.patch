@@ -1,0 +1,28 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 5 Mar 2009 10:58:28 -0500
+Subject: [net] ixgbe: stop double counting frames and bytes
+Message-id: 20090305155828.GM12660@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] ixgbe: stop double counting frames and bytes
+Bugzilla: 487213
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+
+Since we don't make our customers pay by the bit, there is no reason to
+double-count received bytes and received packets with the ixgbe driver.
+
+This will resolve RHBZ 487213.
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 8198e53..b2cb0dc 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -558,9 +558,6 @@ next_desc:
+ 	if (cleaned_count)
+ 		ixgbe_alloc_rx_buffers(adapter, rx_ring, cleaned_count);
+ 
+-	adapter->net_stats.rx_bytes += total_rx_bytes;
+-	adapter->net_stats.rx_packets += total_rx_packets;
+-
+ 	rx_ring->total_packets += total_rx_packets;
+ 	rx_ring->total_bytes += total_rx_bytes;
+ 	adapter->net_stats.rx_bytes += total_rx_bytes;

@@ -1,0 +1,123 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Wed, 8 Dec 2010 14:50:57 -0500
+Subject: [net] s2io: fix netdev initialization failure
+Message-id: <20101208145320.3971.98673.sendpatchset@localhost.localdomain>
+Patchwork-id: 29981
+O-Subject: [RHEL5.6 PATCH V2] BZ654948 s2io netdev initialization failure
+Bugzilla: 654948
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+bz#654948
+
+V2
+This is a small change and only compile tested. I discovered
+why Michal saw chattiness on Altix and the bz's reporter
+log is chatty too. All debug information is being logged for the driver.
+The upstream commit was picked up in R6 with commit
+	ff8502c96001b8a3e91eac6dd1d7f9fd55e4136c
+.  I cherry-picked upstream commit
+	git.kernel.org/linus/5447080cfa3c77154498dfbf225367ac85b4c2b5
+. The small change can be seen in DBG_PRINT macro in s2io.h.
+
+V1
+Michal and I worked on this blocker. The issue manifested because
+of R5 commit 144e94883f6a158e7eca29e6e1bed9acf3f03ed2. Basically a network
+driver requiring more than 64Kb of private data for netdev allocation will
+fail to initialize. So the allocation required for a large netdev private
+allocation can require multiple memory allocations for device initialization.
+
+Tested by reporter. Michal attempted to test locally but there are
+unresolved issues with: altix350-01.rhts.eng.rdu.redhat.com.
+
+Signed-off-by: Bob Picco <bpicco@redhat.com>
+
+ drivers/net/s2io.c |   18 +++++++++++++-----
+ drivers/net/s2io.h |    4 ++--
+ 2 files changed, 15 insertions(+), 7 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/s2io.c b/drivers/net/s2io.c
+index 9473938..c020836 100644
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -7802,6 +7802,7 @@ s2io_init_nic(struct pci_dev *pdev, const struct pci_device_id *pre)
+ 	u16 subid;
+ 	struct config_param *config;
+ 	struct mac_info *mac_control;
++	struct ring_info *rings;
+ 	int mode;
+ 	u8 dev_intr_type = intr_type;
+ 	u8 dev_multiq = 0;
+@@ -7846,11 +7847,13 @@ s2io_init_nic(struct pci_dev *pdev, const struct pci_device_id *pre)
+ 		dev = alloc_etherdev_mq(sizeof(struct s2io_nic), tx_fifo_num);
+ 	else
+ 		dev = alloc_etherdev(sizeof(struct s2io_nic));
+-	if (dev == NULL) {
++
++	rings = kzalloc(sizeof (struct ring_info) * MAX_RX_RINGS, GFP_KERNEL);
++
++	if (dev == NULL || rings == NULL) {
+ 		DBG_PRINT(ERR_DBG, "Device allocation failed\n");
+-		pci_disable_device(pdev);
+-		pci_release_regions(pdev);
+-		return -ENODEV;
++		ret = -ENODEV;
++		goto nodev;
+ 	}
+ 
+ 	pci_set_master(pdev);
+@@ -7891,6 +7894,7 @@ s2io_init_nic(struct pci_dev *pdev, const struct pci_device_id *pre)
+ 	 */
+ 	config = &sp->config;
+ 	mac_control = &sp->mac_control;
++	mac_control->rings = rings;
+ 
+ 	config->napi = napi;
+ 	config->tx_steering_type = tx_steering_type;
+@@ -8320,10 +8324,13 @@ bar1_remap_failed:
+ bar0_remap_failed:
+ mem_alloc_failed:
+ 	free_shared_mem(sp);
++nodev:
+ 	pci_disable_device(pdev);
+ 	pci_release_regions(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+-	free_netdev(dev);
++	if (dev)
++		free_netdev(dev);
++	kfree(rings);
+ 
+ 	return ret;
+ }
+@@ -8364,6 +8371,7 @@ static void __devexit s2io_rem_nic(struct pci_dev *pdev)
+ 	iounmap(sp->bar1);
+ 	pci_release_regions(pdev);
+ 	pci_set_drvdata(pdev, NULL);
++	kfree(sp->mac_control.rings);
+ 	free_netdev(dev);
+ 	pci_disable_device(pdev);
+ }
+diff --git a/drivers/net/s2io.h b/drivers/net/s2io.h
+index 2fc3c87..75cbbc2 100644
+--- a/drivers/net/s2io.h
++++ b/drivers/net/s2io.h
+@@ -65,7 +65,7 @@ static int debug_level = ERR_DBG;
+ 
+ /* DEBUG message print. */
+ #define DBG_PRINT(dbg_level, fmt, args...) do {			\
+-	if (dbg_level >= debug_level)				\
++	if (dbg_level <= debug_level)				\
+ 		pr_info(fmt, ##args);				\
+ 	} while (0)
+ 
+@@ -808,7 +808,7 @@ struct mac_info {
+ 
+ /* rx side stuff */
+ 	/* Ring specific structure */
+-	struct ring_info rings[MAX_RX_RINGS];
++	struct ring_info *rings;
+ 
+ 	u16 rmac_pause_time;
+ 	u16 mc_pause_threshold_q0q3;

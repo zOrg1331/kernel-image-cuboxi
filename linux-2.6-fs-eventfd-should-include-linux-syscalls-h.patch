@@ -1,0 +1,34 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:37 -0500
+Subject: [fs] eventfd: should #include <linux/syscalls.h>
+Message-id: <1259701600-23508-10-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21617
+O-Subject: [RHEL5 PATCH 09/12 v2] fs/eventfd.c should #include <linux/syscalls.h>
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit 7747cdb2f8302c2e1121f6d604b62a060fb04603
+Author: Adrian Bunk <bunk@kernel.org>
+Date:   Wed Feb 6 01:36:49 2008 -0800
+
+    fs/eventfd.c should #include <linux/syscalls.h>
+
+    Every file should include the headers containing the prototypes for its glob
+    functions (in this case sys_eventfd()).
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/eventfd.c b/fs/eventfd.c
+index 2ce19c0..a9f130c 100644
+--- a/fs/eventfd.c
++++ b/fs/eventfd.c
+@@ -15,6 +15,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/anon_inodes.h>
+ #include <linux/eventfd.h>
++#include <linux/syscalls.h>
+ 
+ struct eventfd_ctx {
+ 	wait_queue_head_t wqh;

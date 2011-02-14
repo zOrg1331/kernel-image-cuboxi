@@ -1,0 +1,352 @@
+From: John Linville <linville@redhat.com>
+Date: Sun, 13 Dec 2009 16:55:07 -0500
+Subject: [wireless] use internal regulatory database infrastructure
+Message-id: <20091213165507.GA2306@redhat.com>
+Patchwork-id: 21911
+O-Subject: [RHEL5.5 urgent PATCH] wireless: use internal regulatory database
+	infrastructure
+Bugzilla: 546712
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+Infrastructure to support generation and use of internal regulatory
+database as an alternative to using CRDA (which is unavailable in
+RHEL5).  This allows for better regulatory enforcement while maximizing
+functionality for customers.  This is a backport of what I posted as an
+RFC for upstream this weekend.
+
+It would be best if this was available in RHEL5.5 during the Beta
+timeframe.
+
+BZ546712
+
+ net/wireless/Kconfig      |   16 ++++++
+ net/wireless/Makefile     |    6 ++
+ net/wireless/genregdb.awk |  105 ++++++++++++++++++++++++++++++++++++++++
+ net/wireless/reg.c        |  119 ++++++++++++++++++++++++++++++++++++----------
+ net/wireless/regdb.h      |    7 ++
+ 5 files changed, 229 insertions(+), 24 deletions(-)
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/net/wireless/Kconfig b/net/wireless/Kconfig
+index 9f705a8..30f4cd8 100644
+--- a/net/wireless/Kconfig
++++ b/net/wireless/Kconfig
+@@ -33,6 +33,22 @@ config WIRELESS_OLD_REGULATORY
+ 
+ 	  Say N and if you say Y, please tell us why. The default is N.
+ 
++config CFG80211_INTERNAL_REGDB
++	bool "Statically compiled regulatory rules database"
++	default n
++	depends on CFG80211
++	---help---
++	  This option generates an internal data structure representing
++	  the wireless regulatory rules described in net/wireless/db.txt
++	  and includes code to query that database.  This is an alternative
++	  to using CRDA for defining regulatory rules for the kernel.
++
++	  For details see:
++
++	  http://wireless.kernel.org/en/developers/Regulatory
++
++	  Most distributions have a CRDA package.  So if unsure, say N.
++
+ config WIRELESS_EXT
+ 	bool "Wireless extensions"
+ 	default n
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index eec78cc..f5a902f 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -4,8 +4,14 @@ cfg80211-y += core.o sysfs.o radiotap.o util.o reg.o scan.o nl80211.o
+ cfg80211-y += mlme.o ibss.o sme.o chan.o
+ cfg80211-$(CONFIG_CFG80211_DEBUGFS) += debugfs.o
+ cfg80211-$(CONFIG_WIRELESS_EXT) += wext-compat.o wext-sme.o
++cfg80211-$(CONFIG_CFG80211_INTERNAL_REGDB) += regdb.o
+ 
+ ccflags-y += -D__CHECK_ENDIAN__
+ 
+ wireless_compat-y += compat.o
+ obj-$(CONFIG_WIRELESS_COMPAT) += wireless_compat.o
++
++$(obj)/regdb.c: $(src)/db.txt $(src)/genregdb.awk
++	@$(AWK) -f $(src)/genregdb.awk < $< > $@
++
++clean-files := regdb.c
+diff --git a/net/wireless/genregdb.awk b/net/wireless/genregdb.awk
+new file mode 100644
+index 0000000..89ec7f6
+--- /dev/null
++++ b/net/wireless/genregdb.awk
+@@ -0,0 +1,105 @@
++#!/usr/bin/awk -f
++BEGIN {
++	active = 0
++	rule = 0;
++	print "/*"
++	print " * DO NOT EDIT -- file generated from data in db.txt"
++	print " */"
++	print ""
++	print "#include <linux/nl80211.h>"
++	print "#include <net/cfg80211.h>"
++	print ""
++	regdb = "const struct ieee80211_regdomain *reg_regdb[] = {\n"
++}
++
++/^[ \t]*#/ {
++	/* Ignore */
++}
++
++!active && /^[ \t]*$/ {
++	/* Ignore */
++}
++
++!active && /country/ {
++	country=$2
++	sub(/:/, "", country)
++	printf "static const struct ieee80211_regdomain regdom_%s = {\n", country
++	printf "\t.alpha2 = \"%s\",\n", country
++	printf "\t.reg_rules = {\n"
++	active = 1
++	regdb = regdb "\t&regdom_" country ",\n"
++}
++
++active && /^[ \t]*\(/ {
++	start = $1
++	sub(/\(/, "", start)
++	end = $3
++	bw = $5
++	sub(/\),/, "", bw)
++	gain = $6
++	sub(/\(/, "", gain)
++	sub(/,/, "", gain)
++	power = $7
++	sub(/\)/, "", power)
++	sub(/,/, "", power)
++	# power might be in mW...
++	units = $8
++	sub(/\)/, "", units)
++	sub(/,/, "", units)
++	if (units == "mW") {
++		if (power == 100) {
++			power = 20
++		} else if (power == 200) {
++			power = 23
++		} else if (power == 500) {
++			power = 27
++		} else if (power == 1000) {
++			power = 30
++		} else {
++			print "Unknown power value in database!"
++		}
++	}
++	flagstr = ""
++	for (i=8; i<=NF; i++)
++		flagstr = flagstr $i
++	split(flagstr, flagarray, ",")
++	flags = ""
++	for (arg in flagarray) {
++		if (flagarray[arg] == "NO-OFDM") {
++			flags = flags "\n\t\t\tNL80211_RRF_NO_OFDM | "
++		} else if (flagarray[arg] == "NO-CCK") {
++			flags = flags "\n\t\t\tNL80211_RRF_NO_CCK | "
++		} else if (flagarray[arg] == "NO-INDOOR") {
++			flags = flags "\n\t\t\tNL80211_RRF_NO_INDOOR | "
++		} else if (flagarray[arg] == "NO-OUTDOOR") {
++			flags = flags "\n\t\t\tNL80211_RRF_NO_OUTDOOR | "
++		} else if (flagarray[arg] == "DFS") {
++			flags = flags "\n\t\t\tNL80211_RRF_DFS | "
++		} else if (flagarray[arg] == "PTP-ONLY") {
++			flags = flags "\n\t\t\tNL80211_RRF_PTP_ONLY | "
++		} else if (flagarray[arg] == "PTMP-ONLY") {
++			flags = flags "\n\t\t\tNL80211_RRF_PTMP_ONLY | "
++		} else if (flagarray[arg] == "PASSIVE-SCAN") {
++			flags = flags "\n\t\t\tNL80211_RRF_PASSIVE_SCAN | "
++		} else if (flagarray[arg] == "NO-IBSS") {
++			flags = flags "\n\t\t\tNL80211_RRF_NO_IBSS | "
++		}
++	}
++	flags = flags "0"
++	printf "\t\tREG_RULE(%d, %d, %d, %d, %d, %s),\n", start, end, bw, gain, power, flags
++	rules++
++}
++
++active && /^[ \t]*$/ {
++	active = 0
++	printf "\t},\n"
++	printf "\t.n_reg_rules = %d\n", rules
++	printf "};\n\n"
++	rules = 0;
++}
++
++END {
++	print regdb "};"
++	print ""
++	print "int reg_regdb_size = ARRAY_SIZE(reg_regdb);"
++}
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index 75b6de7..df6b1b9 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -40,6 +40,7 @@
+ #include <net/cfg80211.h>
+ #include "core.h"
+ #include "reg.h"
++#include "regdb.h"
+ #include "nl80211.h"
+ 
+ /* Receipt of information from last regulatory request */
+@@ -335,6 +336,98 @@ static bool country_ie_integrity_changes(u32 checksum)
+ 	return false;
+ }
+ 
++static int reg_copy_regd(const struct ieee80211_regdomain **dst_regd,
++			 const struct ieee80211_regdomain *src_regd)
++{
++	struct ieee80211_regdomain *regd;
++	int size_of_regd = 0;
++	unsigned int i;
++
++	size_of_regd = sizeof(struct ieee80211_regdomain) +
++	  ((src_regd->n_reg_rules + 1) * sizeof(struct ieee80211_reg_rule));
++
++	regd = kzalloc(size_of_regd, GFP_KERNEL);
++	if (!regd)
++		return -ENOMEM;
++
++	memcpy(regd, src_regd, sizeof(struct ieee80211_regdomain));
++
++	for (i = 0; i < src_regd->n_reg_rules; i++)
++		memcpy(&regd->reg_rules[i], &src_regd->reg_rules[i],
++			sizeof(struct ieee80211_reg_rule));
++
++	*dst_regd = regd;
++	return 0;
++}
++
++#ifdef CONFIG_CFG80211_INTERNAL_REGDB
++struct reg_regdb_search_request {
++	char alpha2[2];
++	struct list_head list;
++};
++
++static LIST_HEAD(reg_regdb_search_list);
++static DEFINE_SPINLOCK(reg_regdb_search_lock);
++
++static void reg_regdb_search(void *unused)
++{
++	struct reg_regdb_search_request *request;
++	const struct ieee80211_regdomain *curdom, *regdom;
++	int i, r;
++
++	spin_lock(&reg_regdb_search_lock);
++	while (!list_empty(&reg_regdb_search_list)) {
++		request = list_first_entry(&reg_regdb_search_list,
++					   struct reg_regdb_search_request,
++					   list);
++		list_del(&request->list);
++
++		for (i=0; i<reg_regdb_size; i++) {
++			curdom = reg_regdb[i];
++
++			if (!memcmp(request->alpha2, curdom->alpha2, 2)) {
++				r = reg_copy_regd(&regdom, curdom);
++				if (r)
++					break;
++				spin_unlock(&reg_regdb_search_lock);
++				mutex_lock(&cfg80211_mutex);
++				set_regdom(regdom);
++				mutex_unlock(&cfg80211_mutex);
++				spin_lock(&reg_regdb_search_lock);
++				break;
++			}
++		}
++
++		kfree(request);
++	}
++	spin_unlock(&reg_regdb_search_lock);
++}
++
++static DECLARE_WORK(reg_regdb_work, reg_regdb_search, NULL);
++
++static void reg_regdb_query(const char *alpha2)
++{
++	struct reg_regdb_search_request *request;
++
++	if (!alpha2)
++		return;
++
++	request = kzalloc(sizeof(struct reg_regdb_search_request), GFP_KERNEL);
++	if (!request)
++		return;
++
++	memcpy(request->alpha2, alpha2, 2);
++
++	spin_lock(&reg_regdb_search_lock);
++	list_add_tail(&request->list, &reg_regdb_search_list);
++	spin_unlock(&reg_regdb_search_lock);
++
++	schedule_work(&reg_regdb_work);
++}
++#else
++static inline void reg_regdb_query(const char *alpha2) {}
++#endif /* CONFIG_CFG80211_INTERNAL_REGDB */
++
+ /*
+  * This lets us keep regulatory code which is updated on a regulatory
+  * basis in userspace.
+@@ -354,6 +447,8 @@ static int call_crda(const char *alpha2)
+ 		printk(KERN_INFO "cfg80211: Calling CRDA to update world "
+ 			"regulatory domain\n");
+ 
++	reg_regdb_query(alpha2);
++
+ 	country_env[8] = alpha2[0];
+ 	country_env[9] = alpha2[1];
+ 
+@@ -1344,30 +1439,6 @@ void wiphy_apply_custom_regulatory(struct wiphy *wiphy,
+ }
+ EXPORT_SYMBOL(wiphy_apply_custom_regulatory);
+ 
+-static int reg_copy_regd(const struct ieee80211_regdomain **dst_regd,
+-			 const struct ieee80211_regdomain *src_regd)
+-{
+-	struct ieee80211_regdomain *regd;
+-	int size_of_regd = 0;
+-	unsigned int i;
+-
+-	size_of_regd = sizeof(struct ieee80211_regdomain) +
+-	  ((src_regd->n_reg_rules + 1) * sizeof(struct ieee80211_reg_rule));
+-
+-	regd = kzalloc(size_of_regd, GFP_KERNEL);
+-	if (!regd)
+-		return -ENOMEM;
+-
+-	memcpy(regd, src_regd, sizeof(struct ieee80211_regdomain));
+-
+-	for (i = 0; i < src_regd->n_reg_rules; i++)
+-		memcpy(&regd->reg_rules[i], &src_regd->reg_rules[i],
+-			sizeof(struct ieee80211_reg_rule));
+-
+-	*dst_regd = regd;
+-	return 0;
+-}
+-
+ /*
+  * Return value which can be used by ignore_request() to indicate
+  * it has been determined we should intersect two regulatory domains
+diff --git a/net/wireless/regdb.h b/net/wireless/regdb.h
+new file mode 100644
+index 0000000..818222c
+--- /dev/null
++++ b/net/wireless/regdb.h
+@@ -0,0 +1,7 @@
++#ifndef __REGDB_H__
++#define __REGDB_H__
++
++extern const struct ieee80211_regdomain *reg_regdb[];
++extern int reg_regdb_size;
++
++#endif /* __REGDB_H__ */

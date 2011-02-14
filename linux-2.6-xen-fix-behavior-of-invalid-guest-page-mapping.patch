@@ -1,0 +1,52 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Thu, 22 Nov 2007 09:10:13 +0100
+Subject: [xen] fix behavior of invalid guest page mapping
+Message-id: 873auy3dlm.fsf@pike.pond.sub.org
+O-Subject: [PATCH RHEL-5.2] Fix behavior of invalid guest page mapping
+Bugzilla: 254208
+
+When dom0 attempts to map a guest page, and that request cannot be
+satisfied, a page of zeroes is mapped instead.  This is wrong.  Access
+to the invalid map should trap.
+
+In Xen upstream, access triggers SIGBUS.
+
+In RHEL-5.0, dom0 crashed hard (bug 249409).
+
+linux-2.6-xen-fix-privcmd-to-remove-nopage-handler.patch hastily
+resolved that bug for 5.1: dom0 no longer crashes.
+
+This patch fixes the remaining issue: SIGBUS instead of mapping
+zeroes.
+
+It was tested by Chris Lalancette and myself.
+
+Bug 254208: Xen: Mapping random guest pages returns the wrong
+information
+
+Please ACK.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/drivers/xen/privcmd/privcmd.c b/drivers/xen/privcmd/privcmd.c
+index aab53ca..1aacaa2 100644
+--- a/drivers/xen/privcmd/privcmd.c
++++ b/drivers/xen/privcmd/privcmd.c
+@@ -217,8 +217,14 @@ static int privcmd_ioctl(struct inode *inode, struct file *file,
+ }
+ 
+ #ifndef HAVE_ARCH_PRIVCMD_MMAP
++unsigned long privcmd_nopfn(struct vm_area_struct *vma,
++				unsigned long address)
++{
++	return NOPFN_SIGBUS;
++}
++
+ static struct vm_operations_struct privcmd_vm_ops = {
+-	.nopage = NULL
++	.nopfn = privcmd_nopfn
+ };
+ 
+ static int privcmd_mmap(struct file * file, struct vm_area_struct * vma)

@@ -1,0 +1,13 @@
+diff --git a/fs/proc/proc_misc.c b/fs/proc/proc_misc.c
+index 13f8984..06fd862 100644
+--- a/fs/proc/proc_misc.c
++++ b/fs/proc/proc_misc.c
+@@ -784,7 +784,7 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
+ 				pnum--;
+ 				continue;
+ 			}
+-			__handle_sysrq(c[i], NULL, NULL, 0);
++			__handle_sysrq(c[i], NULL, NULL, 1);
+ 		}
+ 	}
+ 	return count;

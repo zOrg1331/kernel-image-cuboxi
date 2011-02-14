@@ -1,0 +1,233 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz184681 [PPC] Support for ibm,power-off-ups RTAS  call
+Date: Thu, 10 May 2007 11:53:58 -0400 (EDT)
+Bugzilla: 184681
+Message-Id: <Pine.LNX.4.64.0705101151010.9606@squad1-lp1.lab.boston.redhat.com>
+Changelog: [PPC64] Support for ibm,power-off-ups RTAS  call
+
+
+RHBZ#: 184681 [FEATURE]
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=184681
+
+Description:
+------------
+During power outages, the ups notifies the system for a shutdown. In the
+current setup, it isn't possible to poweron when power is restored. This
+patch fixes the issue by calling the right ibm,power-off-ups token during
+such events. It also adds a sysfs interface so that rc.powerfail can parse
+the epow events and modify the power-off behavior accordingly to enable
+the right token to be called.
+
+This has very low risk of causing issues in the system. The generic method
+already is in place and if this new feature is somehow not enabled it will
+revert back to the current method of providing service.
+
+This feature enables auto-poweron in pseries systems only.
+It adds a new interface in sysfs as /sys/power/auto_poweron
+
+RHEL Version Found:
+-------------------
+requested as a feature for 5.1
+
+Upstream Status:
+----------------
+This bug is present in uptream since 2007/02/08 (commit
+5d30bf309717a518d0c4180af41650d4dcd3bb38)
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=5d30bf309717a518d0c4180af41650d4dcd3bb38
+
+Test Status:
+------------
+This code has been tested by Manish Ahuja of IBM using the following test:
+ 
+1. Make sure that default shutdown works as defined and nothing different
+happens.
+
+2. Generate a epow event from vsp and send to partition and check
+behaviour. This should allow ability to reboot when power is restored,
+when the firmware policy for the system is set to reboot when power is
+restored.
+
+Test Results:
+Both test cases work as defined above. This code tests out okay. 
+For any issues please open a bugzilla entry for it.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+ arch/powerpc/platforms/pseries/Makefile |    2 
+ arch/powerpc/platforms/pseries/power.c  |   87 ++++++++++++++++++++++++++++++++
+ arch/powerpc/platforms/pseries/setup.c  |   30 ++++++++++-
+ include/asm-powerpc/rtas.h              |    3 +
+ 4 files changed, 120 insertions(+), 2 deletions(-)
+
+Index: b/arch/powerpc/platforms/pseries/power.c
+===================================================================
+--- /dev/null
++++ b/arch/powerpc/platforms/pseries/power.c
+@@ -0,0 +1,87 @@
++/*
++ *  Interface for power-management for ppc64 compliant platform
++ *
++ *  Manish Ahuja <mahuja@us.ibm.com>
++ *
++ *  Feb 2007
++ *
++ *  Copyright (C) 2007 IBM Corporation.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; version 2 of the License.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#include <linux/kobject.h>
++#include <linux/string.h>
++#include <linux/errno.h>
++#include <linux/init.h>
++
++unsigned long rtas_poweron_auto; /* default and normal state is 0 */
++
++static ssize_t auto_poweron_show(struct subsystem * subsys, char * buf)
++{
++        return sprintf(buf, "%lu\n", rtas_poweron_auto);
++}
++
++static ssize_t
++auto_poweron_store(struct subsystem * subsys, const char * buf, size_t n)
++{
++	int ret;
++	unsigned long ups_restart;
++	ret = sscanf(buf, "%lu", &ups_restart);
++
++	if ((ret == 1) && ((ups_restart == 1) || (ups_restart == 0))){
++		rtas_poweron_auto = ups_restart;
++		return n;
++	}
++	return -EINVAL;
++}
++
++static struct subsys_attribute auto_poweron_attr = {
++        .attr   = {
++                .name = __stringify(auto_poweron),
++                .mode = 0644,
++        },
++        .show   = auto_poweron_show,
++        .store  = auto_poweron_store,
++};
++
++#ifndef CONFIG_PM
++decl_subsys(power,NULL,NULL);
++
++static struct attribute * g[] = {
++        &auto_poweron_attr.attr,
++        NULL,
++};
++
++static struct attribute_group attr_group = {
++        .attrs = g,
++};
++
++static int __init pm_init(void)
++{
++        int error = subsystem_register(&power_subsys);
++        if (!error)
++                error = sysfs_create_group(&power_subsys.kset.kobj,&attr_group);
++        return error;
++}
++core_initcall(pm_init);
++#else
++extern struct subsystem power_subsys;
++
++static int __init apo_pm_init(void)
++{
++	return(subsys_create_file(&power_subsys, &auto_poweron_attr));
++}
++__initcall(apo_pm_init);
++#endif
+Index: b/arch/powerpc/platforms/pseries/Makefile
+===================================================================
+--- a/arch/powerpc/platforms/pseries/Makefile
++++ b/arch/powerpc/platforms/pseries/Makefile
+@@ -4,7 +4,7 @@ endif
+ 
+ obj-y			:= pci.o lpar.o hvCall.o nvram.o reconfig.o \
+ 			   setup.o iommu.o ras.o rtasd.o pci_dlpar.o \
+-			   firmware.o
++			   firmware.o power.o
+ obj-$(CONFIG_SMP)	+= smp.o
+ obj-$(CONFIG_XICS)	+= xics.o
+ obj-$(CONFIG_SCANLOG)	+= scanlog.o
+Index: b/arch/powerpc/platforms/pseries/setup.c
+===================================================================
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -549,6 +549,34 @@ static int pSeries_pci_probe_mode(struct
+ 	return PCI_PROBE_NORMAL;
+ }
+ 
++/**
++ * pSeries_power_off - tell firmware about how to power off the system.
++ *
++ * This function calls either the power-off rtas token in normal cases
++ * or the ibm,power-off-ups token (if present & requested) in case of
++ * a power failure. If power-off token is used, power on will only be
++ * possible with power button press. If ibm,power-off-ups token is used
++ * it will allow auto poweron after power is restored.
++ */
++void pSeries_power_off(void)
++{
++	int rc;
++	int rtas_poweroff_ups_token = rtas_token("ibm,power-off-ups");
++
++	if (rtas_flash_term_hook)
++		rtas_flash_term_hook(SYS_POWER_OFF);
++
++	if (rtas_poweron_auto == 0 ||
++		rtas_poweroff_ups_token == RTAS_UNKNOWN_SERVICE) {
++		rc = rtas_call(rtas_token("power-off"), 2, 1, NULL, -1, -1);
++		printk(KERN_INFO "RTAS power-off returned %d\n", rc);
++	} else {
++		rc = rtas_call(rtas_poweroff_ups_token, 0, 1, NULL);
++		printk(KERN_INFO "RTAS ibm,power-off-ups returned %d\n", rc);
++	}
++	for (;;);
++}
++
+ define_machine(pseries) {
+ 	.name			= "pSeries",
+ 	.probe			= pSeries_probe,
+@@ -560,7 +588,7 @@ define_machine(pseries) {
+ 	.pci_probe_mode		= pSeries_pci_probe_mode,
+ 	.irq_bus_setup		= pSeries_irq_bus_setup,
+ 	.restart		= rtas_restart,
+-	.power_off		= rtas_power_off,
++	.power_off		= pSeries_power_off,
+ 	.halt			= rtas_halt,
+ 	.panic			= rtas_os_term,
+ 	.cpu_die		= pSeries_mach_cpu_die,
+Index: b/include/asm-powerpc/rtas.h
+===================================================================
+--- a/include/asm-powerpc/rtas.h
++++ b/include/asm-powerpc/rtas.h
+@@ -225,6 +225,9 @@ extern char rtas_data_buf[RTAS_DATA_BUF_
+ 
+ extern void rtas_stop_self(void);
+ 
++/* Poweron buffer used for enabling auto ups restart */
++extern unsigned long rtas_poweron_auto;
++
+ /* RMO buffer reserved for user-space RTAS use */
+ extern unsigned long rtas_rmo_buf;
+ 
+

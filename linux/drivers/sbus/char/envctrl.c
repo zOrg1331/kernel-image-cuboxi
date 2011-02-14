@@ -1,4 +1,5 @@
-/* envctrl.c: Temperature and Fan monitoring on Machines providing it.
+/* $Id: envctrl.c,v 1.25 2002/01/15 09:01:26 davem Exp $
+ * envctrl.c: Temperature and Fan monitoring on Machines providing it.
  *
  * Copyright (C) 1998  Eddie C. Dost  (ecd@skynet.be)
  * Copyright (C) 2000  Vinh Truong    (vinh.truong@eng.sun.com)
@@ -18,24 +19,24 @@
  *              Daniele Bellucci <bellucda@tiscali.it>
  */
 
+#define __KERNEL_SYSCALLS__
+static int errno;
+
 #include <linux/module.h>
-#include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/kthread.h>
+#include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/ioport.h>
+#include <linux/init.h>
 #include <linux/miscdevice.h>
-#include <linux/kmod.h>
-#include <linux/reboot.h>
-#include <linux/smp_lock.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/kernel.h>
 
+#include <asm/ebus.h>
 #include <asm/uaccess.h>
 #include <asm/envctrl.h>
-#include <asm/io.h>
-
-#define DRIVER_NAME	"envctrl"
-#define PFX		DRIVER_NAME ": "
 
 #define ENVCTRL_MINOR	162
 
@@ -196,7 +197,7 @@ static void envtrl_i2c_test_pin(void)
 	} 
 
 	if (limit <= 0)
-		printk(KERN_INFO PFX "Pin status will not clear.\n");
+		printk(KERN_INFO "envctrl: Pin status will not clear.\n");
 }
 
 /* Function Description: Test busy bit.
@@ -214,7 +215,7 @@ static void envctrl_i2c_test_bb(void)
 	} 
 
 	if (limit <= 0)
-		printk(KERN_INFO PFX "Busy bit will not clear.\n");
+		printk(KERN_INFO "envctrl: Busy bit will not clear.\n");
 }
 
 /* Function Description: Send the address for a read access.
@@ -698,7 +699,6 @@ envctrl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 static int
 envctrl_open(struct inode *inode, struct file *file)
 {
-	cycle_kernel_lock();
 	file->private_data = NULL;
 	return 0;
 }
@@ -712,7 +712,7 @@ envctrl_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations envctrl_fops = {
+static struct file_operations envctrl_fops = {
 	.owner =		THIS_MODULE,
 	.read =			envctrl_read,
 	.unlocked_ioctl =	envctrl_ioctl,
@@ -733,7 +733,7 @@ static struct miscdevice envctrl_dev = {
  * Return: None.
  */
 static void envctrl_set_mon(struct i2c_child_t *pchild,
-			    const char *chnl_desc,
+			    char *chnl_desc,
 			    int chnl_no)
 {
 	/* Firmware only has temperature type.  It does not distinguish
@@ -770,8 +770,8 @@ static void envctrl_set_mon(struct i2c_child_t *pchild,
 static void envctrl_init_adc(struct i2c_child_t *pchild, struct device_node *dp)
 {
 	int i = 0, len;
-	const char *pos;
-	const unsigned int *pval;
+	char *pos;
+	unsigned int *pval;
 
 	/* Firmware describe channels into a stream separated by a '\0'. */
 	pos = of_get_property(dp, "channels-description", &len);
@@ -861,11 +861,12 @@ static void envctrl_init_voltage_status(struct i2c_child_t *pchild)
 /* Function Description: Initialize i2c child device.
  * Return: None.
  */
-static void envctrl_init_i2c_child(struct device_node *dp,
+static void envctrl_init_i2c_child(struct linux_ebus_child *edev_child,
 				   struct i2c_child_t *pchild)
 {
 	int len, i, tbls_size = 0;
-	const void *pval;
+	struct device_node *dp = edev_child->prom_node;
+	void *pval;
 
 	/* Get device address. */
 	pval = of_get_property(dp, "reg", &len);
@@ -884,12 +885,12 @@ static void envctrl_init_i2c_child(struct device_node *dp,
 
                 pchild->tables = kmalloc(tbls_size, GFP_KERNEL);
 		if (pchild->tables == NULL){
-			printk(KERN_ERR PFX "Failed to allocate table.\n");
+			printk("envctrl: Failed to allocate table.\n");
 			return;
 		}
 		pval = of_get_property(dp, "tables", &len);
                 if (!pval || len <= 0) {
-			printk(KERN_ERR PFX "Failed to get table.\n");
+			printk("envctrl: Failed to get table.\n");
 			return;
 		}
 		memcpy(pchild->tables, pval, len);
@@ -971,15 +972,17 @@ static struct i2c_child_t *envctrl_get_i2c_child(unsigned char mon_type)
 static void envctrl_do_shutdown(void)
 {
 	static int inprog = 0;
-	int ret;
+	static char *envp[] = {	
+		"HOME=/", "TERM=linux", "PATH=/sbin:/usr/sbin:/bin:/usr/bin", NULL };
+	char *argv[] = { 
+		"/sbin/shutdown", "-h", "now", NULL };	
 
 	if (inprog != 0)
 		return;
 
 	inprog = 1;
 	printk(KERN_CRIT "kenvctrld: WARNING: Shutting down the system now.\n");
-	ret = orderly_poweroff(true);
-	if (ret < 0) {
+	if (0 > execve("/sbin/shutdown", argv, envp)) {
 		printk(KERN_CRIT "kenvctrld: WARNING: system shutdown failed!\n"); 
 		inprog = 0;  /* unlikely to succeed, but we could try again */
 	}
@@ -995,14 +998,14 @@ static int kenvctrld(void *__unused)
 	struct i2c_child_t *cputemp;
 
 	if (NULL == (cputemp = envctrl_get_i2c_child(ENVCTRL_CPUTEMP_MON))) {
-		printk(KERN_ERR  PFX
-		       "kenvctrld unable to monitor CPU temp-- exiting\n");
+		printk(KERN_ERR 
+		       "envctrl: kenvctrld unable to monitor CPU temp-- exiting\n");
 		return -ENODEV;
 	}
 
 	poll_interval = 5000; /* TODO env_mon_interval */
 
-	printk(KERN_INFO PFX "%s starting...\n", current->comm);
+	printk(KERN_INFO "envctrl: %s starting...\n", current->comm);
 	for (;;) {
 		msleep_interruptible(poll_interval);
 
@@ -1024,35 +1027,54 @@ static int kenvctrld(void *__unused)
 			}
 		}
 	}
-	printk(KERN_INFO PFX "%s exiting...\n", current->comm);
+	printk(KERN_INFO "envctrl: %s exiting...\n", current->comm);
 	return 0;
 }
 
-static int __devinit envctrl_probe(struct of_device *op,
-				   const struct of_device_id *match)
+static int __init envctrl_init(void)
 {
-	struct device_node *dp;
-	int index, err;
+	struct linux_ebus *ebus = NULL;
+	struct linux_ebus_device *edev = NULL;
+	struct linux_ebus_child *edev_child = NULL;
+	int err, i = 0;
 
-	if (i2c)
-		return -EINVAL;
-
-	i2c = of_ioremap(&op->resource[0], 0, 0x2, DRIVER_NAME);
-	if (!i2c)
-		return -ENOMEM;
-
-	index = 0;
-	dp = op->node->child;
-	while (dp) {
-		if (!strcmp(dp->name, "gpio")) {
-			i2c_childlist[index].i2ctype = I2C_GPIO;
-			envctrl_init_i2c_child(dp, &(i2c_childlist[index++]));
-		} else if (!strcmp(dp->name, "adc")) {
-			i2c_childlist[index].i2ctype = I2C_ADC;
-			envctrl_init_i2c_child(dp, &(i2c_childlist[index++]));
+	for_each_ebus(ebus) {
+		for_each_ebusdev(edev, ebus) {
+			if (!strcmp(edev->prom_node->name, "bbc")) {
+				/* If we find a boot-bus controller node,
+				 * then this envctrl driver is not for us.
+				 */
+				return -ENODEV;
+			}
 		}
+	}
 
-		dp = dp->sibling;
+	/* Traverse through ebus and ebus device list for i2c device and
+	 * adc and gpio nodes.
+	 */
+	for_each_ebus(ebus) {
+		for_each_ebusdev(edev, ebus) {
+			if (!strcmp(edev->prom_node->name, "i2c")) {
+				i2c = ioremap(edev->resource[0].start, 0x2);
+				for_each_edevchild(edev, edev_child) {
+					if (!strcmp("gpio", edev_child->prom_node->name)) {
+						i2c_childlist[i].i2ctype = I2C_GPIO;
+						envctrl_init_i2c_child(edev_child, &(i2c_childlist[i++]));
+					}
+					if (!strcmp("adc", edev_child->prom_node->name)) {
+						i2c_childlist[i].i2ctype = I2C_ADC;
+						envctrl_init_i2c_child(edev_child, &(i2c_childlist[i++]));
+					}
+				}
+				goto done;
+			}
+		}
+	}
+
+done:
+	if (!edev) {
+		printk("envctrl: I2C device not found.\n");
+		return -ENODEV;
 	}
 
 	/* Set device address. */
@@ -1070,7 +1092,7 @@ static int __devinit envctrl_probe(struct of_device *op,
 	/* Register the device as a minor miscellaneous device. */
 	err = misc_register(&envctrl_dev);
 	if (err) {
-		printk(KERN_ERR PFX "Unable to get misc minor %d\n",
+		printk("envctrl: Unable to get misc minor %d\n",
 		       envctrl_dev.minor);
 		goto out_iounmap;
 	}
@@ -1079,12 +1101,12 @@ static int __devinit envctrl_probe(struct of_device *op,
 	 * a next child device, so we decrement before reverse-traversal of
 	 * child devices.
 	 */
-	printk(KERN_INFO PFX "Initialized ");
-	for (--index; index >= 0; --index) {
+	printk("envctrl: initialized ");
+	for (--i; i >= 0; --i) {
 		printk("[%s 0x%lx]%s", 
-			(I2C_ADC == i2c_childlist[index].i2ctype) ? "adc" : 
-			((I2C_GPIO == i2c_childlist[index].i2ctype) ? "gpio" : "unknown"), 
-			i2c_childlist[index].addr, (0 == index) ? "\n" : " ");
+			(I2C_ADC == i2c_childlist[i].i2ctype) ? ("adc") : 
+			((I2C_GPIO == i2c_childlist[i].i2ctype) ? ("gpio") : ("unknown")), 
+			i2c_childlist[i].addr, (0 == i) ? ("\n") : (" "));
 	}
 
 	kenvctrld_task = kthread_run(kenvctrld, NULL, "kenvctrld");
@@ -1098,54 +1120,26 @@ static int __devinit envctrl_probe(struct of_device *op,
 out_deregister:
 	misc_deregister(&envctrl_dev);
 out_iounmap:
-	of_iounmap(&op->resource[0], i2c, 0x2);
-	for (index = 0; index < ENVCTRL_MAX_CPU * 2; index++)
-		kfree(i2c_childlist[index].tables);
+	iounmap(i2c);
+	for (i = 0; i < ENVCTRL_MAX_CPU * 2; i++)
+		kfree(i2c_childlist[i].tables);
 
 	return err;
 }
 
-static int __devexit envctrl_remove(struct of_device *op)
+static void __exit envctrl_cleanup(void)
 {
-	int index;
+	int i;
 
 	kthread_stop(kenvctrld_task);
 
-	of_iounmap(&op->resource[0], i2c, 0x2);
+	iounmap(i2c);
 	misc_deregister(&envctrl_dev);
 
-	for (index = 0; index < ENVCTRL_MAX_CPU * 2; index++)
-		kfree(i2c_childlist[index].tables);
-
-	return 0;
-}
-
-static const struct of_device_id envctrl_match[] = {
-	{
-		.name = "i2c",
-		.compatible = "i2cpcf,8584",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, envctrl_match);
-
-static struct of_platform_driver envctrl_driver = {
-	.name		= DRIVER_NAME,
-	.match_table	= envctrl_match,
-	.probe		= envctrl_probe,
-	.remove		= __devexit_p(envctrl_remove),
-};
-
-static int __init envctrl_init(void)
-{
-	return of_register_driver(&envctrl_driver, &of_bus_type);
-}
-
-static void __exit envctrl_exit(void)
-{
-	of_unregister_driver(&envctrl_driver);
+	for (i = 0; i < ENVCTRL_MAX_CPU * 2; i++)
+		kfree(i2c_childlist[i].tables);
 }
 
 module_init(envctrl_init);
-module_exit(envctrl_exit);
+module_exit(envctrl_cleanup);
 MODULE_LICENSE("GPL");

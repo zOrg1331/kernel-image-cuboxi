@@ -1,0 +1,66 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Thu, 9 Sep 2010 15:19:16 -0400
+Subject: [net] udp: fix bogus UFO packet generation
+Message-id: <20100909151916.GA16026@redhat.com>
+Patchwork-id: 28191
+O-Subject: [RHEL5 PATCH] net/udp: fix bogus UFO packet generation
+Bugzilla: 632266
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+This is a backport of Herbert Xu's patch for the same issue in RHEL6.
+RHTS connectathon testing in kvm guests just started hitting indefinite
+timeouts during nfsv2 udp testing, following a number of virtio updates,
+and the best guess at the moment is that we're hitting the same issue as
+RHEL6 was, and that this relatively trivial backport should fix the
+problem. It has not yet been tested beyond compilation, but will be RSN.
+
+Please review, would like to get this in ASAP, as we have a sev1 hotfix
+kernel slated to go out that we'd rather not send out with busted nfs udp
+support...
+
+Hopefully fixes bugzilla #632266.
+https://bugzilla.redhat.com/show_bug.cgi?id=632266
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index 59cfa24..fe8464d 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -854,9 +854,12 @@ int ip_append_data(struct sock *sk,
+ 	    !exthdrlen)
+ 		csummode = CHECKSUM_HW;
+ 
++	skb = skb_peek_tail(&sk->sk_write_queue);
++
+ 	inet->cork.length += length;
+-	if (((length > mtu) && (sk->sk_protocol == IPPROTO_UDP)) &&
+-			(rt->u.dst.dev->features & NETIF_F_UFO)) {
++	if (((length > mtu) || (skb && skb_is_gso(skb))) &&
++	    (sk->sk_protocol == IPPROTO_UDP) &&
++	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
+ 
+ 		err = ip_ufo_append_data(sk, getfrag, from, length, hh_len,
+ 					 fragheaderlen, transhdrlen, mtu,
+@@ -873,7 +876,7 @@ int ip_append_data(struct sock *sk,
+ 	 * adding appropriate IP header.
+ 	 */
+ 
+-	if ((skb = skb_peek_tail(&sk->sk_write_queue)) == NULL)
++	if (!skb)
+ 		goto alloc_new_skb;
+ 
+ 	while (length > 0) {
+@@ -1096,7 +1099,8 @@ ssize_t	ip_append_page(struct sock *sk, struct page *page,
+ 		return -EINVAL;
+ 
+ 	inet->cork.length += size;
+-	if ((sk->sk_protocol == IPPROTO_UDP) &&
++	if ((size + skb->len > mtu) &&
++	    (sk->sk_protocol == IPPROTO_UDP) &&
+ 	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
+ 		skb_shinfo(skb)->gso_size = mtu - fragheaderlen;
+ 		skb_shinfo(skb)->gso_type = SKB_GSO_UDP;

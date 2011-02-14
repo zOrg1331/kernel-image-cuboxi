@@ -1,0 +1,428 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Mon, 30 Nov 2009 21:57:18 -0500
+Subject: [xen] change interface of hvm_mmio_access
+Message-id: <200911302157.nAULvIvA008705@sobek.n0ano.com>
+Patchwork-id: 21557
+O-Subject: [RHEL5.5 PATCH 2/3] BZ 537734: xen: change interface of
+	hvm_mmio_access
+Bugzilla: 537734
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+hvm_mmio_access now return a status from read/write handler,
+so that the handler can give an indication whether it can
+handle the request.
+
+partly backporting xen-unstable changeset 17452
+
+Signed-off-by: Qing He <qing.he@intel.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+---
+ arch/x86/hvm/hpet.c      |   21 +++++++++----
+ arch/x86/hvm/intercept.c |   75 ++++++++++++++++++++++++----------------------
+ arch/x86/hvm/vioapic.c   |   21 +++++++-----
+ arch/x86/hvm/vlapic.c    |   27 ++++++++++-------
+ include/asm-x86/hvm/io.h |   12 ++++----
+ 5 files changed, 88 insertions(+), 68 deletions(-)
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/x86/hvm/hpet.c b/arch/x86/hvm/hpet.c
+index dd05da6..f2fc8f5 100644
+--- a/arch/x86/hvm/hpet.c
++++ b/arch/x86/hvm/hpet.c
+@@ -122,8 +122,9 @@ static inline uint64_t hpet_read_maincounter(HPETState *h)
+         return h->hpet.mc64;
+ }
+ 
+-static unsigned long hpet_read(
+-    struct vcpu *v, unsigned long addr, unsigned long length)
++static int hpet_read(
++    struct vcpu *v, unsigned long addr, unsigned long length,
++    unsigned long *pval)
+ {
+     HPETState *h = &v->domain->arch.hvm_domain.pl_time.vhpet;
+     unsigned long result;
+@@ -132,7 +133,10 @@ static unsigned long hpet_read(
+     addr &= HPET_MMAP_SIZE-1;
+ 
+     if ( hpet_check_access_length(addr, length) != 0 )
+-        return ~0UL;
++    {
++        result = ~0ul;
++        goto out;
++    }
+ 
+     spin_lock(&h->lock);
+ 
+@@ -146,7 +150,9 @@ static unsigned long hpet_read(
+ 
+     spin_unlock(&h->lock);
+ 
+-    return result;
++ out:
++    *pval = result;
++    return 1;
+ }
+ 
+ static void hpet_stop_timer(HPETState *h, unsigned int tn)
+@@ -209,7 +215,7 @@ static inline uint64_t hpet_fixup_reg(
+     return new;
+ }
+ 
+-static void hpet_write(
++static int hpet_write(
+     struct vcpu *v, unsigned long addr,
+     unsigned long length, unsigned long val)
+ {
+@@ -220,7 +226,7 @@ static void hpet_write(
+     addr &= HPET_MMAP_SIZE-1;
+ 
+     if ( hpet_check_access_length(addr, length) != 0 )
+-        return;
++        goto out;
+ 
+     spin_lock(&h->lock);
+ 
+@@ -315,6 +321,9 @@ static void hpet_write(
+     }
+ 
+     spin_unlock(&h->lock);
++
++ out:
++    return 1;
+ }
+ 
+ static int hpet_range(struct vcpu *v, unsigned long addr)
+diff --git a/arch/x86/hvm/intercept.c b/arch/x86/hvm/intercept.c
+index e555f3c..8e8ee9a 100644
+--- a/arch/x86/hvm/intercept.c
++++ b/arch/x86/hvm/intercept.c
+@@ -58,30 +58,33 @@ static struct hvm_buffered_io_range
+     &buffered_stdvga_range
+ };
+ 
+-static inline void hvm_mmio_access(struct vcpu *v,
+-                                   ioreq_t *p,
+-                                   hvm_mmio_read_t read_handler,
+-                                   hvm_mmio_write_t write_handler)
++static inline int hvm_mmio_access(struct vcpu *v,
++                                  ioreq_t *p,
++                                  hvm_mmio_read_t read_handler,
++                                  hvm_mmio_write_t write_handler)
+ {
+-    unsigned int tmp1, tmp2;
++    unsigned long tmp1, tmp2;
+     unsigned long data;
++    int rc = 1;
+ 
+     switch ( p->type ) {
+     case IOREQ_TYPE_COPY:
+     {
+         if ( !p->data_is_ptr ) {
+-            if ( p->dir == IOREQ_READ )
+-                p->data = read_handler(v, p->addr, p->size);
++            if ( p->dir == IOREQ_READ ) {
++                rc = read_handler(v, p->addr, p->size, &data);
++                p->data = data;
++            }
+             else    /* p->dir == IOREQ_WRITE */
+-                write_handler(v, p->addr, p->size, p->data);
++                rc = write_handler(v, p->addr, p->size, p->data);
+         } else {    /* p->data_is_ptr */
+             int i, sign = (p->df) ? -1 : 1;
+ 
+             if ( p->dir == IOREQ_READ ) {
+                 for ( i = 0; i < p->count; i++ ) {
+-                    data = read_handler(v,
++                    rc = read_handler(v,
+                         p->addr + (sign * i * p->size),
+-                        p->size);
++                        p->size, &data);
+                     (void)hvm_copy_to_guest_phys(
+                         p->data + (sign * i * p->size),
+                         &data,
+@@ -93,7 +96,7 @@ static inline void hvm_mmio_access(struct vcpu *v,
+                         &data,
+                         p->data + (sign * i * p->size),
+                         p->size);
+-                    write_handler(v,
++                    rc = write_handler(v,
+                         p->addr + (sign * i * p->size),
+                         p->size, data);
+                 }
+@@ -103,37 +106,37 @@ static inline void hvm_mmio_access(struct vcpu *v,
+     }
+ 
+     case IOREQ_TYPE_AND:
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        if ( p->dir == IOREQ_WRITE ) {
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc && p->dir == IOREQ_WRITE ) {
+             tmp2 = tmp1 & (unsigned long) p->data;
+-            write_handler(v, p->addr, p->size, tmp2);
++            rc = write_handler(v, p->addr, p->size, tmp2);
+         }
+         p->data = tmp1;
+         break;
+ 
+     case IOREQ_TYPE_ADD:
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        if (p->dir == IOREQ_WRITE) {
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc && p->dir == IOREQ_WRITE) {
+             tmp2 = tmp1 + (unsigned long) p->data;
+-            write_handler(v, p->addr, p->size, tmp2);
++            rc = write_handler(v, p->addr, p->size, tmp2);
+         }
+         p->data = tmp1;
+         break;
+ 
+     case IOREQ_TYPE_OR:
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        if ( p->dir == IOREQ_WRITE ) {
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc && p->dir == IOREQ_WRITE ) {
+             tmp2 = tmp1 | (unsigned long) p->data;
+-            write_handler(v, p->addr, p->size, tmp2);
++            rc = write_handler(v, p->addr, p->size, tmp2);
+         }
+         p->data = tmp1;
+         break;
+ 
+     case IOREQ_TYPE_XOR:
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        if ( p->dir == IOREQ_WRITE ) {
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc && p->dir == IOREQ_WRITE ) {
+             tmp2 = tmp1 ^ (unsigned long) p->data;
+-            write_handler(v, p->addr, p->size, tmp2);
++            rc = write_handler(v, p->addr, p->size, tmp2);
+         }
+         p->data = tmp1;
+         break;
+@@ -143,25 +146,29 @@ static inline void hvm_mmio_access(struct vcpu *v,
+          * Note that we don't need to be atomic here since VCPU is accessing
+          * its own local APIC.
+          */
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        write_handler(v, p->addr, p->size, (unsigned long) p->data);
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc )
++            rc = write_handler(v, p->addr, p->size, (unsigned long) p->data);
+         p->data = tmp1;
+         break;
+ 
+     case IOREQ_TYPE_SUB:
+-        tmp1 = read_handler(v, p->addr, p->size);
+-        if ( p->dir == IOREQ_WRITE ) {
++        rc = read_handler(v, p->addr, p->size, &tmp1);
++        if ( rc && p->dir == IOREQ_WRITE ) {
+             tmp2 = tmp1 - (unsigned long) p->data;
+-            write_handler(v, p->addr, p->size, tmp2);
++            rc = write_handler(v, p->addr, p->size, tmp2);
+         }
+         p->data = tmp1;
+         break;
+ 
+     default:
++        rc = 0;
+         printk("hvm_mmio_access: error ioreq type %x\n", p->type);
+         domain_crash_synchronous();
+         break;
+     }
++
++    return rc;
+ }
+ 
+ int hvm_buffered_io_send(ioreq_t *p)
+@@ -218,15 +225,11 @@ int hvm_mmio_intercept(ioreq_t *p)
+     int i;
+ 
+     for ( i = 0; i < HVM_MMIO_HANDLER_NR; i++ )
+-    {
+         if ( hvm_mmio_handlers[i]->check_handler(v, p->addr) )
+-        {
+-            hvm_mmio_access(v, p,
+-                            hvm_mmio_handlers[i]->read_handler,
+-                            hvm_mmio_handlers[i]->write_handler);
+-            return 1;
+-        }
+-    }
++            return hvm_mmio_access(
++                v, p,
++                hvm_mmio_handlers[i]->read_handler,
++                hvm_mmio_handlers[i]->write_handler);
+ 
+     return 0;
+ }
+diff --git a/arch/x86/hvm/vioapic.c b/arch/x86/hvm/vioapic.c
+index c86cbfa..7f17a15 100644
+--- a/arch/x86/hvm/vioapic.c
++++ b/arch/x86/hvm/vioapic.c
+@@ -92,9 +92,9 @@ static unsigned long vioapic_read_indirect(struct hvm_hw_vioapic *vioapic,
+     return result;
+ }
+ 
+-static unsigned long vioapic_read(struct vcpu *v,
+-                                  unsigned long addr,
+-                                  unsigned long length)
++static int vioapic_read(
++    struct vcpu *v, unsigned long addr,
++    unsigned long length, unsigned long *pval)
+ {
+     struct hvm_hw_vioapic *vioapic = domain_vioapic(v->domain);
+     uint32_t result;
+@@ -118,11 +118,13 @@ static unsigned long vioapic_read(struct vcpu *v,
+         break;
+     }
+ 
+-    return result;
++    *pval = result;
++    return 1;
+ }
+ 
+ static void vioapic_write_redirent(
+-    struct hvm_hw_vioapic *vioapic, unsigned int idx, int top_word, uint32_t val)
++    struct hvm_hw_vioapic *vioapic, unsigned int idx,
++    int top_word, uint32_t val)
+ {
+     struct domain *d = vioapic_domain(vioapic);
+     struct hvm_irq *hvm_irq = &d->arch.hvm_domain.irq;
+@@ -200,10 +202,9 @@ static void vioapic_write_indirect(
+     }
+ }
+ 
+-static void vioapic_write(struct vcpu *v,
+-                          unsigned long addr,
+-                          unsigned long length,
+-                          unsigned long val)
++static int vioapic_write(
++    struct vcpu *v, unsigned long addr,
++    unsigned long length, unsigned long val)
+ {
+     struct hvm_hw_vioapic *vioapic = domain_vioapic(v->domain);
+ 
+@@ -228,6 +229,8 @@ static void vioapic_write(struct vcpu *v,
+     default:
+         break;
+     }
++
++    return 1;
+ }
+ 
+ static int vioapic_range(struct vcpu *v, unsigned long addr)
+diff --git a/arch/x86/hvm/vlapic.c b/arch/x86/hvm/vlapic.c
+index b039bcf..58712f4 100644
+--- a/arch/x86/hvm/vlapic.c
++++ b/arch/x86/hvm/vlapic.c
+@@ -475,17 +475,18 @@ static void vlapic_read_aligned(struct vlapic *vlapic, unsigned int offset,
+     }
+ }
+ 
+-static unsigned long vlapic_read(struct vcpu *v, unsigned long address,
+-                                 unsigned long len)
++static int vlapic_read(
++    struct vcpu *v, unsigned long address,
++    unsigned long len, unsigned long *pval)
+ {
+     unsigned int alignment;
+     unsigned int tmp;
+-    unsigned long result;
++    unsigned long result = 0;
+     struct vlapic *vlapic = vcpu_vlapic(v);
+     unsigned int offset = address - vlapic_base_address(vlapic);
+ 
+     if ( offset > APIC_TDCR )
+-        return 0;
++        goto out;
+ 
+     /* some bugs on kernel cause read this with byte*/
+     if ( len != 4 )
+@@ -521,11 +522,13 @@ static unsigned long vlapic_read(struct vcpu *v, unsigned long address,
+     HVM_DBG_LOG(DBG_LEVEL_VLAPIC, "offset 0x%x with length 0x%lx, "
+                 "and the result is 0x%lx", offset, len, result);
+ 
+-    return result;
++    goto out;
+ 
+  exit_and_crash:
+     domain_crash(v->domain);
+-    return 0;
++ out:
++    *pval = result;
++    return 1;
+ }
+ 
+ void vlapic_pt_cb(struct vcpu *v, void *data)
+@@ -533,8 +536,8 @@ void vlapic_pt_cb(struct vcpu *v, void *data)
+     *(s_time_t *)data = hvm_get_guest_time(v);
+ }
+ 
+-static void vlapic_write(struct vcpu *v, unsigned long address,
+-                         unsigned long len, unsigned long val)
++static int vlapic_write(struct vcpu *v, unsigned long address,
++                        unsigned long len, unsigned long val)
+ {
+     struct vlapic *vlapic = vcpu_vlapic(v);
+     unsigned int offset = address - vlapic_base_address(vlapic);
+@@ -551,13 +554,13 @@ static void vlapic_write(struct vcpu *v, unsigned long address,
+     val &= 0xffffffff;
+     if ( len != 4 )
+     {
+-        unsigned int tmp;
++        unsigned long tmp;
+         unsigned char alignment;
+ 
+         gdprintk(XENLOG_INFO, "Notice: Local APIC write with len = %lx\n",len);
+ 
+         alignment = offset & 0x3;
+-        tmp = vlapic_read(v, offset & ~0x3, 4);
++        (void)vlapic_read(v, offset & ~0x3, 4, &tmp);
+ 
+         switch ( len )
+         {
+@@ -583,7 +586,7 @@ static void vlapic_write(struct vcpu *v, unsigned long address,
+                      "should be 4 instead\n", len);
+         exit_and_crash:
+             domain_crash(v->domain);
+-            return;
++            return 0;
+         }
+     }
+ 
+@@ -684,6 +687,8 @@ static void vlapic_write(struct vcpu *v, unsigned long address,
+                  "Local APIC Write to read-only register 0x%x\n", offset);
+         break;
+     }
++
++    return 1;
+ }
+ 
+ static int vlapic_range(struct vcpu *v, unsigned long addr)
+diff --git a/include/asm-x86/hvm/io.h b/include/asm-x86/hvm/io.h
+index a7b2846..4459db2 100644
+--- a/include/asm-x86/hvm/io.h
++++ b/include/asm-x86/hvm/io.h
+@@ -86,14 +86,14 @@ struct hvm_io_op {
+ #define HVM_MMIO                    1
+ 
+ typedef int (*intercept_action_t)(ioreq_t *);
+-typedef unsigned long (*hvm_mmio_read_t)(struct vcpu *v,
+-                                         unsigned long addr,
+-                                         unsigned long length);
+-
+-typedef void (*hvm_mmio_write_t)(struct vcpu *v,
++typedef int (*hvm_mmio_read_t)(struct vcpu *v,
+                                unsigned long addr,
+                                unsigned long length,
+-                               unsigned long val);
++                               unsigned long *val);
++typedef int (*hvm_mmio_write_t)(struct vcpu *v,
++                                unsigned long addr,
++                                unsigned long length,
++                                unsigned long val);
+ 
+ typedef int (*hvm_mmio_check_t)(struct vcpu *v, unsigned long addr);
+ 

@@ -109,10 +109,8 @@ struct net2280_ep {
 						in_fifo_validate : 1,
 						out_overflow : 1,
 						stopped : 1,
-						wedged : 1,
 						is_in : 1,
-						is_iso : 1,
-						responded : 1;
+						is_iso : 1;
 };
 
 static inline void allow_status (struct net2280_ep *ep)
@@ -273,7 +271,7 @@ static inline void net2280_led_shutdown (struct net2280 *dev)
 
 #define ERROR(dev,fmt,args...) \
 	xprintk(dev , KERN_ERR , fmt , ## args)
-#define WARNING(dev,fmt,args...) \
+#define WARN(dev,fmt,args...) \
 	xprintk(dev , KERN_WARNING , fmt , ## args)
 #define INFO(dev,fmt,args...) \
 	xprintk(dev , KERN_INFO , fmt , ## args)
@@ -300,7 +298,7 @@ static inline void assert_out_naking (struct net2280_ep *ep, const char *where)
 			&ep->regs->ep_rsp);
 	}
 }
-#define ASSERT_OUT_NAKING(ep) assert_out_naking(ep,__func__)
+#define ASSERT_OUT_NAKING(ep) assert_out_naking(ep,__FUNCTION__)
 #else
 #define ASSERT_OUT_NAKING(ep) do {} while (0)
 #endif

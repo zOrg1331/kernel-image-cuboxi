@@ -14,6 +14,7 @@
  *
  */
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/unistd.h>
@@ -37,7 +38,6 @@
 
 #define MII_DM9161_SCR		0x10
 #define MII_DM9161_SCR_INIT	0x0610
-#define MII_DM9161_SCR_RMII	0x0100
 
 /* DM9161 Interrupt Register */
 #define MII_DM9161_INTR	0x15
@@ -104,7 +104,7 @@ static int dm9161_config_aneg(struct phy_device *phydev)
 
 static int dm9161_config_init(struct phy_device *phydev)
 {
-	int err, temp;
+	int err;
 
 	/* Isolate the PHY */
 	err = phy_write(phydev, MII_BMCR, BMCR_ISOLATE);
@@ -112,19 +112,9 @@ static int dm9161_config_init(struct phy_device *phydev)
 	if (err < 0)
 		return err;
 
-	switch (phydev->interface) {
-	case PHY_INTERFACE_MODE_MII:
-		temp = MII_DM9161_SCR_INIT;
-		break;
-	case PHY_INTERFACE_MODE_RMII:
-		temp =  MII_DM9161_SCR_INIT | MII_DM9161_SCR_RMII;
-		break;
-	default:
-		return -EINVAL;
-	}
-
 	/* Do not bypass the scrambler/descrambler */
-	err = phy_write(phydev, MII_DM9161_SCR, temp);
+	err = phy_write(phydev, MII_DM9161_SCR, MII_DM9161_SCR_INIT);
+
 	if (err < 0)
 		return err;
 
@@ -150,7 +140,7 @@ static int dm9161_ack_interrupt(struct phy_device *phydev)
 	return (err < 0) ? err : 0;
 }
 
-static struct phy_driver dm9161e_driver = {
+static struct phy_driver dm9161_driver = {
 	.phy_id		= 0x0181b880,
 	.name		= "Davicom DM9161E",
 	.phy_id_mask	= 0x0ffffff0,
@@ -158,18 +148,7 @@ static struct phy_driver dm9161e_driver = {
 	.config_init	= dm9161_config_init,
 	.config_aneg	= dm9161_config_aneg,
 	.read_status	= genphy_read_status,
-	.driver		= { .owner = THIS_MODULE,},
-};
-
-static struct phy_driver dm9161a_driver = {
-	.phy_id		= 0x0181b8a0,
-	.name		= "Davicom DM9161A",
-	.phy_id_mask	= 0x0ffffff0,
-	.features	= PHY_BASIC_FEATURES,
-	.config_init	= dm9161_config_init,
-	.config_aneg	= dm9161_config_aneg,
-	.read_status	= genphy_read_status,
-	.driver		= { .owner = THIS_MODULE,},
+	.driver 	= { .owner = THIS_MODULE,},
 };
 
 static struct phy_driver dm9131_driver = {
@@ -182,49 +161,33 @@ static struct phy_driver dm9131_driver = {
 	.read_status	= genphy_read_status,
 	.ack_interrupt	= dm9161_ack_interrupt,
 	.config_intr	= dm9161_config_intr,
-	.driver		= { .owner = THIS_MODULE,},
+	.driver 	= { .owner = THIS_MODULE,},
 };
 
 static int __init davicom_init(void)
 {
 	int ret;
 
-	ret = phy_driver_register(&dm9161e_driver);
+	ret = phy_driver_register(&dm9161_driver);
 	if (ret)
 		goto err1;
 
-	ret = phy_driver_register(&dm9161a_driver);
-	if (ret)
-		goto err2;
-
 	ret = phy_driver_register(&dm9131_driver);
 	if (ret)
-		goto err3;
+		goto err2;
 	return 0;
 
- err3:
-	phy_driver_unregister(&dm9161a_driver);
- err2:
-	phy_driver_unregister(&dm9161e_driver);
+ err2:	
+	phy_driver_unregister(&dm9161_driver);
  err1:
 	return ret;
 }
 
 static void __exit davicom_exit(void)
 {
-	phy_driver_unregister(&dm9161e_driver);
-	phy_driver_unregister(&dm9161a_driver);
+	phy_driver_unregister(&dm9161_driver);
 	phy_driver_unregister(&dm9131_driver);
 }
 
 module_init(davicom_init);
 module_exit(davicom_exit);
-
-static struct mdio_device_id davicom_tbl[] = {
-	{ 0x0181b880, 0x0ffffff0 },
-	{ 0x0181b8a0, 0x0ffffff0 },
-	{ 0x00181b80, 0x0ffffff0 },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(mdio, davicom_tbl);

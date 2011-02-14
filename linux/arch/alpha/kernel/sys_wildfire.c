@@ -157,8 +157,8 @@ wildfire_end_irq(unsigned int irq)
 		wildfire_enable_irq(irq);
 }
 
-static struct irq_chip wildfire_irq_type = {
-	.name		= "WILDFIRE",
+static struct hw_interrupt_type wildfire_irq_type = {
+	.typename	= "WILDFIRE",
 	.startup	= wildfire_startup_irq,
 	.shutdown	= wildfire_disable_irq,
 	.enable		= wildfire_enable_irq,
@@ -234,7 +234,7 @@ wildfire_init_irq(void)
 }
 
 static void 
-wildfire_device_interrupt(unsigned long vector)
+wildfire_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -246,7 +246,7 @@ wildfire_device_interrupt(unsigned long vector)
 	 * bits 5-0:	irq in PCA
 	 */
 
-	handle_irq(irq);
+	handle_irq(irq, regs);
 	return;
 }
 

@@ -1,0 +1,30 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 18 Aug 2008 08:44:27 -0400
+Subject: [nfs] v4: Poll aggressively when handling NFS4ERR_DELAY
+Message-id: 1219063469-27779-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] BZ#441884: NFSv4: Poll more aggressively when handling NFS4ERR_DELAY
+Bugzilla: 441884
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Upstream commit 2066fe89b459c3c787c811b3369df191cddd93d8
+
+Change the initial retry delay from 1s to 0.1s (and then back off
+exponentially).
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 0daf4e7..4354fa5 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -55,7 +55,7 @@
+ 
+ #define NFSDBG_FACILITY		NFSDBG_PROC
+ 
+-#define NFS4_POLL_RETRY_MIN	(1*HZ)
++#define NFS4_POLL_RETRY_MIN	(HZ/10)
+ #define NFS4_POLL_RETRY_MAX	(15*HZ)
+ 
+ struct nfs4_opendata;

@@ -25,29 +25,6 @@
 #define CMD_TIMEOUT             0x000B
 #define CMD_UNABORTABLE		0x000C
 
-/* Unit Attentions ASC's as defined for the MSA2012sa */
-#define POWER_OR_RESET			0x29
-#define STATE_CHANGED			0x2a
-#define UNIT_ATTENTION_CLEARED		0x2f
-#define LUN_FAILED			0x3e
-#define REPORT_LUNS_CHANGED		0x3f
-
-/* Unit Attentions ASCQ's as defined for the MSA2012sa */
-
-	/* These ASCQ's defined for ASC = POWER_OR_RESET */
-#define POWER_ON_RESET			0x00
-#define POWER_ON_REBOOT			0x01
-#define SCSI_BUS_RESET			0x02
-#define MSA_TARGET_RESET		0x03
-#define CONTROLLER_FAILOVER		0x04
-#define TRANSCEIVER_SE			0x05
-#define TRANSCEIVER_LVD			0x06
-
-	/* These ASCQ's defined for ASC = STATE_CHANGED */
-#define RESERVATION_PREEMPTED		0x03
-#define ASYM_ACCESS_CHANGED		0x06
-#define LUN_CAPACITY_CHANGED		0x09
-
 //transfer direction
 #define XFER_NONE               0x00
 #define XFER_WRITE              0x01
@@ -78,12 +55,10 @@
 #define I2O_INT_MASK            0x34
 #define I2O_IBPOST_Q            0x40
 #define I2O_OBPOST_Q            0x44
-#define I2O_DMA1_CFG		0x214
 
 //Configuration Table
 #define CFGTBL_ChangeReq        0x00000001l
 #define CFGTBL_AccCmds          0x00000001l
-#define DOORBELL_CTLR_RESET     0x00000004l
 
 #define CFGTBL_Trans_Simple     0x00000002l
 
@@ -113,7 +88,7 @@ typedef union _u64bit
 //###########################################################################
 //STRUCTURES
 //###########################################################################
-#define CISS_MAX_LUN	1024
+#define CISS_MAX_LUN	16	
 #define CISS_MAX_PHYS_LUN	1024
 // SCSI-3 Cmmands 
 
@@ -143,34 +118,11 @@ typedef struct _ReadCapdata_struct
   BYTE block_size[4];	// Size of blocks in bytes
 } ReadCapdata_struct;
 
-#define CCISS_READ_CAPACITY_16 0x9e /* Read Capacity 16 */
-
-/* service action to differentiate a 16 byte read capacity from
-   other commands that use the 0x9e SCSI op code */
-
-#define CCISS_READ_CAPACITY_16_SERVICE_ACT 0x10
-
-typedef struct _ReadCapdata_struct_16
-{
-	BYTE total_size[8];   /* Total size in blocks */
-	BYTE block_size[4];   /* Size of blocks in bytes */
-	BYTE prot_en:1;       /* protection enable bit */
-	BYTE rto_en:1;        /* reference tag own enable bit */
-	BYTE reserved:6;      /* reserved bits */
-	BYTE reserved2[18];   /* reserved bytes per spec */
-} ReadCapdata_struct_16;
-
-/* Define the supported read/write commands for cciss based controllers */
-
-#define CCISS_READ_10   0x28    /* Read(10)  */
-#define CCISS_WRITE_10  0x2a    /* Write(10) */
-#define CCISS_READ_16   0x88    /* Read(16)  */
-#define CCISS_WRITE_16  0x8a    /* Write(16) */
-
-/* Define the CDB lengths supported by cciss based controllers */
-
-#define CDB_LEN10	10
-#define CDB_LEN16	16
+// 12 byte commands not implemented in firmware yet. 
+// #define CCISS_READ 	0xa8	// Read(12)
+// #define CCISS_WRITE	0xaa	// Write(12)
+ #define CCISS_READ   0x28    // Read(10)
+ #define CCISS_WRITE  0x2a    // Write(10)
 
 // BMIC commands 
 #define BMIC_READ 0x26
@@ -217,8 +169,6 @@ typedef union _LUNAddr_struct {
   PhysDevAddr_struct PhysDev;
   LogDevAddr_struct  LogDev;
 } LUNAddr_struct;
-
-#define CTLR_LUNID "\0\0\0\0\0\0\0\0"
 
 typedef struct _CommandListHeader_struct {
   BYTE              ReplyQueue;
@@ -275,7 +225,6 @@ typedef struct _ErrorInfo_struct {
 #define CMD_SCSI	0x03
 #define CMD_MSG_DONE	0x04
 #define CMD_MSG_TIMEOUT 0x05
-#define CMD_MSG_STALE	0xff
 
 /* This structure needs to be divisible by 8 for new
  * indexing method.
@@ -292,7 +241,8 @@ typedef struct _CommandList_struct {
   int			   ctlr;
   int			   cmd_type; 
   long			   cmdindex;
-  struct hlist_node list;
+  struct _CommandList_struct *prev;
+  struct _CommandList_struct *next;
   struct request *	   rq;
   struct completion *waiting;
   int	 retry_count;
@@ -309,28 +259,17 @@ typedef struct _HostWrite_struct {
 } HostWrite_struct;
 
 typedef struct _CfgTable_struct {
-  BYTE			Signature[4];
-  DWORD			SpecValence;
-#define SIMPLE_MODE	0x02
-#define PERFORMANT_MODE 0x04
-#define MEMQ_MODE	0x08
-  DWORD			TransportSupport;
-  DWORD			TransportActive;
-  HostWrite_struct	HostWrite;
-  DWORD			CmdsOutMax;
-  DWORD			BusTypes;
-  DWORD			Reserved;
-  BYTE 			ServerName[16];
-  DWORD			HeartBeat;
-  DWORD			SCSI_Prefetch;
-  DWORD			MaxSGElements;
-  DWORD			MaxLogicalUnits;
-  DWORD			MaxPhysicalDrives;
-  DWORD			MaxPhysicalDrivesPerLogicalUnit;
-  DWORD			MaxPerformantModeCommands;
-  u8			reserved[0x78 - 0x58];
-  u32			misc_fw_support; /* offset 0x78 */
-#define MISC_FW_DOORBELL_RESET (0x02)
+  BYTE             Signature[4];
+  DWORD            SpecValence;
+  DWORD            TransportSupport;
+  DWORD            TransportActive;
+  HostWrite_struct HostWrite;
+  DWORD            CmdsOutMax;
+  DWORD            BusTypes;
+  DWORD            Reserved; 
+  BYTE             ServerName[16];
+  DWORD            HeartBeat;
+  DWORD            SCSI_Prefetch;
 } CfgTable_struct;
 #pragma pack()	 
 #endif // CCISS_CMD_H

@@ -4,14 +4,13 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <linux/jiffies.h>
+#include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/timex.h>
-#include <linux/smp.h>
 
-unsigned long lpj_fine;
-unsigned long preset_lpj;
+#include <asm/timex.h>
+
+static unsigned long preset_lpj;
 static int __init lpj_setup(char *str)
 {
 	preset_lpj = simple_strtoul(str,NULL,0);
@@ -30,14 +29,14 @@ __setup("lpj=", lpj_setup);
 #define DELAY_CALIBRATION_TICKS			((HZ < 100) ? 1 : (HZ/100))
 #define MAX_DIRECT_CALIBRATION_RETRIES		5
 
-static unsigned long __cpuinit calibrate_delay_direct(void)
+static unsigned long __devinit calibrate_delay_direct(void)
 {
 	unsigned long pre_start, start, post_start;
 	unsigned long pre_end, end, post_end;
 	unsigned long start_jiffies;
-	unsigned long timer_rate_min, timer_rate_max;
-	unsigned long good_timer_sum = 0;
-	unsigned long good_timer_count = 0;
+	unsigned long tsc_rate_min, tsc_rate_max;
+	unsigned long good_tsc_sum = 0;
+	unsigned long good_tsc_count = 0;
 	int i;
 
 	if (read_current_timer(&pre_start) < 0 )
@@ -81,68 +80,59 @@ static unsigned long __cpuinit calibrate_delay_direct(void)
 		}
 		read_current_timer(&post_end);
 
-		timer_rate_max = (post_end - pre_start) /
-					DELAY_CALIBRATION_TICKS;
-		timer_rate_min = (pre_end - post_start) /
-					DELAY_CALIBRATION_TICKS;
+		tsc_rate_max = (post_end - pre_start) / DELAY_CALIBRATION_TICKS;
+		tsc_rate_min = (pre_end - post_start) / DELAY_CALIBRATION_TICKS;
 
 		/*
-		 * If the upper limit and lower limit of the timer_rate is
+	 	 * If the upper limit and lower limit of the tsc_rate is
 		 * >= 12.5% apart, redo calibration.
 		 */
 		if (pre_start != 0 && pre_end != 0 &&
-		    (timer_rate_max - timer_rate_min) < (timer_rate_max >> 3)) {
-			good_timer_count++;
-			good_timer_sum += timer_rate_max;
+		    (tsc_rate_max - tsc_rate_min) < (tsc_rate_max >> 3)) {
+			good_tsc_count++;
+			good_tsc_sum += tsc_rate_max;
 		}
 	}
 
-	if (good_timer_count)
-		return (good_timer_sum/good_timer_count);
+	if (good_tsc_count)
+		return (good_tsc_sum/good_tsc_count);
 
 	printk(KERN_WARNING "calibrate_delay_direct() failed to get a good "
 	       "estimate for loops_per_jiffy.\nProbably due to long platform interrupts. Consider using \"lpj=\" boot option.\n");
 	return 0;
 }
 #else
-static unsigned long __cpuinit calibrate_delay_direct(void) {return 0;}
+static unsigned long __devinit calibrate_delay_direct(void) {return 0;}
 #endif
 
 /*
  * This is the number of bits of precision for the loops_per_jiffy.  Each
  * bit takes on average 1.5/HZ seconds.  This (like the original) is a little
  * better than 1%
- * For the boot cpu we can skip the delay calibration and assign it a value
- * calculated based on the timer frequency.
- * For the rest of the CPUs we cannot assume that the timer frequency is same as
- * the cpu frequency, hence do the calibration for those.
  */
 #define LPS_PREC 8
 
-void __cpuinit calibrate_delay(void)
+void __devinit calibrate_delay(void)
 {
 	unsigned long ticks, loopbit;
 	int lps_precision = LPS_PREC;
-	static bool printed;
 
 	if (preset_lpj) {
 		loops_per_jiffy = preset_lpj;
-		if (!printed)
-			pr_info("Calibrating delay loop (skipped) "
-				"preset value.. ");
-	} else if ((!printed) && lpj_fine) {
-		loops_per_jiffy = lpj_fine;
-		pr_info("Calibrating delay loop (skipped), "
-			"value calculated using timer frequency.. ");
+		printk("Calibrating delay loop (skipped)... "
+			"%lu.%02lu BogoMIPS preset\n",
+			loops_per_jiffy/(500000/HZ),
+			(loops_per_jiffy/(5000/HZ)) % 100);
 	} else if ((loops_per_jiffy = calibrate_delay_direct()) != 0) {
-		if (!printed)
-			pr_info("Calibrating delay using timer "
-				"specific routine.. ");
+		printk("Calibrating delay using timer specific routine.. ");
+		printk("%lu.%02lu BogoMIPS (lpj=%lu)\n",
+			loops_per_jiffy/(500000/HZ),
+			(loops_per_jiffy/(5000/HZ)) % 100,
+			loops_per_jiffy);
 	} else {
 		loops_per_jiffy = (1<<12);
 
-		if (!printed)
-			pr_info("Calibrating delay loop... ");
+		printk(KERN_DEBUG "Calibrating delay loop... ");
 		while ((loops_per_jiffy <<= 1) != 0) {
 			/* wait for "start of" clock tick */
 			ticks = jiffies;
@@ -172,11 +162,12 @@ void __cpuinit calibrate_delay(void)
 			if (jiffies != ticks)	/* longer than 1 tick */
 				loops_per_jiffy &= ~loopbit;
 		}
-	}
-	if (!printed)
-		pr_cont("%lu.%02lu BogoMIPS (lpj=%lu)\n",
-			loops_per_jiffy/(500000/HZ),
-			(loops_per_jiffy/(5000/HZ)) % 100, loops_per_jiffy);
 
-	printed = true;
+		/* Round the value and print it */
+		printk("%lu.%02lu BogoMIPS (lpj=%lu)\n",
+			loops_per_jiffy/(500000/HZ),
+			(loops_per_jiffy/(5000/HZ)) % 100,
+			loops_per_jiffy);
+	}
+
 }

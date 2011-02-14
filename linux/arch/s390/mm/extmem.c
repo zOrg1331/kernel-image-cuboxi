@@ -7,9 +7,6 @@
  * (C) IBM Corporation 2002-2004
  */
 
-#define KMSG_COMPONENT "extmem"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/spinlock.h>
@@ -17,15 +14,25 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/bootmem.h>
-#include <linux/ctype.h>
-#include <linux/ioport.h>
 #include <asm/page.h>
-#include <asm/pgtable.h>
 #include <asm/ebcdic.h>
 #include <asm/errno.h>
 #include <asm/extmem.h>
 #include <asm/cpcmd.h>
-#include <asm/setup.h>
+#include <linux/ctype.h>
+
+#define DCSS_DEBUG	/* Debug messages on/off */
+
+#define DCSS_NAME "extmem"
+#ifdef DCSS_DEBUG
+#define PRINT_DEBUG(x...)	printk(KERN_DEBUG DCSS_NAME " debug:" x)
+#else
+#define PRINT_DEBUG(x...)   do {} while (0)
+#endif
+#define PRINT_INFO(x...)	printk(KERN_INFO DCSS_NAME " info:" x)
+#define PRINT_WARN(x...)	printk(KERN_WARNING DCSS_NAME " warning:" x)
+#define PRINT_ERR(x...)		printk(KERN_ERR DCSS_NAME " error:" x)
+
 
 #define DCSS_LOADSHR    0x00
 #define DCSS_LOADNSR    0x04
@@ -33,40 +40,20 @@
 #define DCSS_FINDSEG    0x0c
 #define DCSS_LOADNOLY   0x10
 #define DCSS_SEGEXT     0x18
-#define DCSS_LOADSHRX	0x20
-#define DCSS_LOADNSRX	0x24
-#define DCSS_FINDSEGX	0x2c
-#define DCSS_SEGEXTX	0x38
 #define DCSS_FINDSEGA   0x0c
 
 struct qrange {
-	unsigned long  start; /* last byte type */
-	unsigned long  end;   /* last byte reserved */
+	unsigned int  start; // 3byte start address, 1 byte type
+	unsigned int  end;   // 3byte end address, 1 byte reserved
 };
 
 struct qout64 {
-	unsigned long segstart;
-	unsigned long segend;
-	int segcnt;
-	int segrcnt;
-	struct qrange range[6];
-};
-
-#ifdef CONFIG_64BIT
-struct qrange_old {
-	unsigned int start; /* last byte type */
-	unsigned int end;   /* last byte reserved */
-};
-
-/* output area format for the Diag x'64' old subcode x'18' */
-struct qout64_old {
 	int segstart;
 	int segend;
 	int segcnt;
 	int segrcnt;
-	struct qrange_old range[6];
+	struct qrange range[6];
 };
-#endif
 
 struct qin64 {
 	char qopcode;
@@ -81,7 +68,6 @@ struct qin64 {
 struct dcss_segment {
 	struct list_head list;
 	char dcss_name[8];
-	char res_name[15];
 	unsigned long start_addr;
 	unsigned long end;
 	atomic_t ref_count;
@@ -89,68 +75,22 @@ struct dcss_segment {
 	unsigned int vm_segtype;
 	struct qrange range[6];
 	int segcnt;
-	struct resource *res;
 };
 
-static DEFINE_MUTEX(dcss_lock);
-static LIST_HEAD(dcss_list);
+static DEFINE_SPINLOCK(dcss_lock);
+static struct list_head dcss_list = LIST_HEAD_INIT(dcss_list);
 static char *segtype_string[] = { "SW", "EW", "SR", "ER", "SN", "EN", "SC",
 					"EW/EN-MIXED" };
-static int loadshr_scode, loadnsr_scode, findseg_scode;
-static int segext_scode, purgeseg_scode;
-static int scode_set;
 
-/* set correct Diag x'64' subcodes. */
-static int
-dcss_set_subcodes(void)
-{
-#ifdef CONFIG_64BIT
-	char *name = kmalloc(8 * sizeof(char), GFP_DMA);
-	unsigned long rx, ry;
-	int rc;
-
-	if (name == NULL)
-		return -ENOMEM;
-
-	rx = (unsigned long) name;
-	ry = DCSS_FINDSEGX;
-
-	strcpy(name, "dummy");
-	asm volatile(
-		"	diag	%0,%1,0x64\n"
-		"0:	ipm	%2\n"
-		"	srl	%2,28\n"
-		"	j	2f\n"
-		"1:	la	%2,3\n"
-		"2:\n"
-		EX_TABLE(0b, 1b)
-		: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
-
-	kfree(name);
-	/* Diag x'64' new subcodes are supported, set to new subcodes */
-	if (rc != 3) {
-		loadshr_scode = DCSS_LOADSHRX;
-		loadnsr_scode = DCSS_LOADNSRX;
-		purgeseg_scode = DCSS_PURGESEG;
-		findseg_scode = DCSS_FINDSEGX;
-		segext_scode = DCSS_SEGEXTX;
-		return 0;
-	}
-#endif
-	/* Diag x'64' new subcodes are not supported, set to old subcodes */
-	loadshr_scode = DCSS_LOADNOLY;
-	loadnsr_scode = DCSS_LOADNSR;
-	purgeseg_scode = DCSS_PURGESEG;
-	findseg_scode = DCSS_FINDSEG;
-	segext_scode = DCSS_SEGEXT;
-	return 0;
-}
+extern struct {
+	unsigned long addr, size, type;
+} memory_chunk[MEMORY_CHUNKS];
 
 /*
  * Create the 8 bytes, ebcdic VM segment name from
  * an ascii name.
  */
-static void
+static void inline
 dcss_mkname(char *name, char *dcss_name)
 {
 	int i;
@@ -177,7 +117,7 @@ segment_by_name (char *name)
 	struct list_head *l;
 	struct dcss_segment *tmp, *retval = NULL;
 
-	BUG_ON(!mutex_is_locked(&dcss_lock));
+	assert_spin_locked(&dcss_lock);
 	dcss_mkname (name, dcss_name);
 	list_for_each (l, &dcss_list) {
 		tmp = list_entry (l, struct dcss_segment, list);
@@ -194,45 +134,25 @@ segment_by_name (char *name)
  * Perform a function on a dcss segment.
  */
 static inline int
-dcss_diag(int *func, void *parameter,
+dcss_diag (__u8 func, void *parameter,
            unsigned long *ret1, unsigned long *ret2)
 {
 	unsigned long rx, ry;
 	int rc;
 
-	if (scode_set == 0) {
-		rc = dcss_set_subcodes();
-		if (rc < 0)
-			return rc;
-		scode_set = 1;
-	}
 	rx = (unsigned long) parameter;
-	ry = (unsigned long) *func;
-
+	ry = (unsigned long) func;
+	__asm__ __volatile__(
 #ifdef CONFIG_64BIT
-	/* 64-bit Diag x'64' new subcode, keep in 64-bit addressing mode */
-	if (*func > DCSS_SEGEXT)
-		asm volatile(
-			"	diag	%0,%1,0x64\n"
-			"	ipm	%2\n"
-			"	srl	%2,28\n"
-			: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
-	/* 31-bit Diag x'64' old subcode, switch to 31-bit addressing mode */
-	else
-		asm volatile(
-			"	sam31\n"
-			"	diag	%0,%1,0x64\n"
-			"	sam64\n"
-			"	ipm	%2\n"
-			"	srl	%2,28\n"
-			: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
+		"   sam31\n" // switch to 31 bit
+		"   diag    %0,%1,0x64\n"
+		"   sam64\n" // switch back to 64 bit
 #else
-	asm volatile(
-		"	diag	%0,%1,0x64\n"
-		"	ipm	%2\n"
-		"	srl	%2,28\n"
-		: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc");
+		"   diag    %0,%1,0x64\n"
 #endif
+		"   ipm     %2\n"
+		"   srl     %2,28\n"
+		: "+d" (rx), "+d" (ry), "=d" (rc) : : "cc" );
 	*ret1 = rx;
 	*ret2 = ry;
 	return rc;
@@ -269,45 +189,14 @@ query_segment_type (struct dcss_segment *seg)
 	qin->qoutlen = sizeof(struct qout64);
 	memcpy (qin->qname, seg->dcss_name, 8);
 
-	diag_cc = dcss_diag(&segext_scode, qin, &dummy, &vmrc);
+	diag_cc = dcss_diag (DCSS_SEGEXT, qin, &dummy, &vmrc);
 
-	if (diag_cc < 0) {
-		rc = diag_cc;
-		goto out_free;
-	}
 	if (diag_cc > 1) {
-		pr_warning("Querying a DCSS type failed with rc=%ld\n", vmrc);
+		PRINT_WARN ("segment_type: diag returned error %ld\n", vmrc);
 		rc = dcss_diag_translate_rc (vmrc);
 		goto out_free;
 	}
 
-#ifdef CONFIG_64BIT
-	/* Only old format of output area of Diagnose x'64' is supported,
-	   copy data for the new format. */
-	if (segext_scode == DCSS_SEGEXT) {
-		struct qout64_old *qout_old;
-		qout_old = kzalloc(sizeof(struct qout64_old), GFP_DMA);
-		if (qout_old == NULL) {
-			rc = -ENOMEM;
-			goto out_free;
-		}
-		memcpy(qout_old, qout, sizeof(struct qout64_old));
-		qout->segstart = (unsigned long) qout_old->segstart;
-		qout->segend = (unsigned long) qout_old->segend;
-		qout->segcnt = qout_old->segcnt;
-		qout->segrcnt = qout_old->segrcnt;
-
-		if (qout->segcnt > 6)
-			qout->segrcnt = 6;
-		for (i = 0; i < qout->segrcnt; i++) {
-			qout->range[i].start =
-				(unsigned long) qout_old->range[i].start;
-			qout->range[i].end =
-				(unsigned long) qout_old->range[i].end;
-		}
-		kfree(qout_old);
-	}
-#endif
 	if (qout->segcnt > 6) {
 		rc = -ENOTSUPP;
 		goto out_free;
@@ -352,12 +241,72 @@ query_segment_type (struct dcss_segment *seg)
 }
 
 /*
+ * check if the given segment collides with guest storage.
+ * returns 1 if this is the case, 0 if no collision was found
+ */
+static int
+segment_overlaps_storage(struct dcss_segment *seg)
+{
+	int i;
+
+	for (i=0; i < MEMORY_CHUNKS && memory_chunk[i].size > 0; i++) {
+		if (memory_chunk[i].type != 0)
+			continue;
+		if ((memory_chunk[i].addr >> 20) > (seg->end >> 20))
+			continue;
+		if (((memory_chunk[i].addr + memory_chunk[i].size - 1) >> 20)
+				< (seg->start_addr >> 20))
+			continue;
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * check if segment collides with other segments that are currently loaded
+ * returns 1 if this is the case, 0 if no collision was found
+ */
+static int
+segment_overlaps_others (struct dcss_segment *seg)
+{
+	struct list_head *l;
+	struct dcss_segment *tmp;
+
+	assert_spin_locked(&dcss_lock);
+	list_for_each(l, &dcss_list) {
+		tmp = list_entry(l, struct dcss_segment, list);
+		if ((tmp->start_addr >> 20) > (seg->end >> 20))
+			continue;
+		if ((tmp->end >> 20) < (seg->start_addr >> 20))
+			continue;
+		if (seg == tmp)
+			continue;
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * check if segment exceeds the kernel mapping range (detected or set via mem=)
+ * returns 1 if this is the case, 0 if segment fits into the range
+ */
+static inline int
+segment_exceeds_range (struct dcss_segment *seg)
+{
+	int seg_last_pfn = (seg->end) >> PAGE_SHIFT;
+	if (seg_last_pfn > max_pfn)
+		return 1;
+	return 0;
+}
+
+/*
  * get info about a segment
  * possible return values:
  * -ENOSYS  : we are not running on VM
  * -EIO     : could not perform query diagnose
  * -ENOENT  : no such segment
  * -ENOTSUPP: multi-part segment cannot be used with linux
+ * -ENOSPC  : segment cannot be used (overlaps with storage)
  * -ENOMEM  : out of memory
  * 0 .. 6   : type of segment as defined in include/asm-s390/extmem.h
  */
@@ -378,30 +327,6 @@ segment_type (char* name)
 }
 
 /*
- * check if segment collides with other segments that are currently loaded
- * returns 1 if this is the case, 0 if no collision was found
- */
-static int
-segment_overlaps_others (struct dcss_segment *seg)
-{
-	struct list_head *l;
-	struct dcss_segment *tmp;
-
-	BUG_ON(!mutex_is_locked(&dcss_lock));
-	list_for_each(l, &dcss_list) {
-		tmp = list_entry(l, struct dcss_segment, list);
-		if ((tmp->start_addr >> 20) > (seg->end >> 20))
-			continue;
-		if ((tmp->end >> 20) < (seg->start_addr >> 20))
-			continue;
-		if (seg == tmp)
-			continue;
-		return 1;
-	}
-	return 0;
-}
-
-/*
  * real segment loading function, called from segment_load
  */
 static int
@@ -409,8 +334,7 @@ __segment_load (char *name, int do_nonshared, unsigned long *addr, unsigned long
 {
 	struct dcss_segment *seg = kmalloc(sizeof(struct dcss_segment),
 			GFP_DMA);
-	int rc, diag_cc;
-	unsigned long start_addr, end_addr, dummy;
+	int dcss_command, rc, diag_cc;
 
 	if (seg == NULL) {
 		rc = -ENOMEM;
@@ -420,84 +344,56 @@ __segment_load (char *name, int do_nonshared, unsigned long *addr, unsigned long
 	rc = query_segment_type (seg);
 	if (rc < 0)
 		goto out_free;
-
-	if (loadshr_scode == DCSS_LOADSHRX) {
-		if (segment_overlaps_others(seg)) {
-			rc = -EBUSY;
-			goto out_free;
-		}
-	}
-
-	rc = vmem_add_mapping(seg->start_addr, seg->end - seg->start_addr + 1);
-
-	if (rc)
+	if (segment_exceeds_range(seg)) {
+		PRINT_WARN ("segment_load: not loading segment %s - exceeds"
+				" kernel mapping range\n",name);
+		rc = -ERANGE;
 		goto out_free;
-
-	seg->res = kzalloc(sizeof(struct resource), GFP_KERNEL);
-	if (seg->res == NULL) {
-		rc = -ENOMEM;
-		goto out_shared;
 	}
-	seg->res->flags = IORESOURCE_BUSY | IORESOURCE_MEM;
-	seg->res->start = seg->start_addr;
-	seg->res->end = seg->end;
-	memcpy(&seg->res_name, seg->dcss_name, 8);
-	EBCASC(seg->res_name, 8);
-	seg->res_name[8] = '\0';
-	strncat(seg->res_name, " (DCSS)", 7);
-	seg->res->name = seg->res_name;
-	rc = seg->vm_segtype;
-	if (rc == SEG_TYPE_SC ||
-	    ((rc == SEG_TYPE_SR || rc == SEG_TYPE_ER) && !do_nonshared))
-		seg->res->flags |= IORESOURCE_READONLY;
-	if (request_resource(&iomem_resource, seg->res)) {
+	if (segment_overlaps_storage(seg)) {
+		PRINT_WARN ("segment_load: not loading segment %s - overlaps"
+				" storage\n",name);
+		rc = -ENOSPC;
+		goto out_free;
+	}
+	if (segment_overlaps_others(seg)) {
+		PRINT_WARN ("segment_load: not loading segment %s - overlaps"
+				" other segments\n",name);
 		rc = -EBUSY;
-		kfree(seg->res);
-		goto out_shared;
+		goto out_free;
 	}
-
 	if (do_nonshared)
-		diag_cc = dcss_diag(&loadnsr_scode, seg->dcss_name,
-				&start_addr, &end_addr);
+		dcss_command = DCSS_LOADNSR;
 	else
-		diag_cc = dcss_diag(&loadshr_scode, seg->dcss_name,
-				&start_addr, &end_addr);
-	if (diag_cc < 0) {
-		dcss_diag(&purgeseg_scode, seg->dcss_name,
-				&dummy, &dummy);
-		rc = diag_cc;
-		goto out_resource;
-	}
+		dcss_command = DCSS_LOADNOLY;
+
+	diag_cc = dcss_diag(dcss_command, seg->dcss_name,
+			&seg->start_addr, &seg->end);
 	if (diag_cc > 1) {
-		pr_warning("Loading DCSS %s failed with rc=%ld\n", name,
-			   end_addr);
-		rc = dcss_diag_translate_rc(end_addr);
-		dcss_diag(&purgeseg_scode, seg->dcss_name,
-				&dummy, &dummy);
-		goto out_resource;
+		PRINT_WARN ("segment_load: could not load segment %s - "
+				"diag returned error (%ld)\n",name,seg->end);
+		rc = dcss_diag_translate_rc (seg->end);
+		dcss_diag(DCSS_PURGESEG, seg->dcss_name,
+				&seg->start_addr, &seg->end);
+		goto out_free;
 	}
-	seg->start_addr = start_addr;
-	seg->end = end_addr;
 	seg->do_nonshared = do_nonshared;
 	atomic_set(&seg->ref_count, 1);
 	list_add(&seg->list, &dcss_list);
+	rc = seg->vm_segtype;
 	*addr = seg->start_addr;
 	*end  = seg->end;
 	if (do_nonshared)
-		pr_info("DCSS %s of range %p to %p and type %s loaded as "
-			"exclusive-writable\n", name, (void*) seg->start_addr,
-			(void*) seg->end, segtype_string[seg->vm_segtype]);
-	else {
-		pr_info("DCSS %s of range %p to %p and type %s loaded in "
-			"shared access mode\n", name, (void*) seg->start_addr,
-			(void*) seg->end, segtype_string[seg->vm_segtype]);
-	}
+		PRINT_INFO ("segment_load: loaded segment %s range %p .. %p "
+				"type %s in non-shared mode\n", name,
+				(void*)seg->start_addr, (void*)seg->end,
+				segtype_string[seg->vm_segtype]);
+	else
+		PRINT_INFO ("segment_load: loaded segment %s range %p .. %p "
+				"type %s in shared mode\n", name,
+				(void*)seg->start_addr, (void*)seg->end,
+				segtype_string[seg->vm_segtype]);
 	goto out;
- out_resource:
-	release_resource(seg->res);
-	kfree(seg->res);
- out_shared:
-	vmem_remove_mapping(seg->start_addr, seg->end - seg->start_addr + 1);
  out_free:
 	kfree(seg);
  out:
@@ -533,7 +429,7 @@ segment_load (char *name, int do_nonshared, unsigned long *addr,
 	if (!MACHINE_IS_VM)
 		return -ENOSYS;
 
-	mutex_lock(&dcss_lock);
+	spin_lock (&dcss_lock);
 	seg = segment_by_name (name);
 	if (seg == NULL)
 		rc = __segment_load (name, do_nonshared, addr, end);
@@ -548,7 +444,7 @@ segment_load (char *name, int do_nonshared, unsigned long *addr,
 			rc    = -EPERM;
 		}
 	}
-	mutex_unlock(&dcss_lock);
+	spin_unlock (&dcss_lock);
 	return rc;
 }
 
@@ -562,82 +458,57 @@ segment_load (char *name, int do_nonshared, unsigned long *addr,
  * -ENOENT  : no such segment (segment gone!)
  * -EAGAIN  : segment is in use by other exploiters, try later
  * -EINVAL  : no segment with the given name is currently loaded - name invalid
- * -EBUSY   : segment can temporarily not be used (overlaps with dcss)
  * 0	    : operation succeeded
  */
 int
 segment_modify_shared (char *name, int do_nonshared)
 {
 	struct dcss_segment *seg;
-	unsigned long start_addr, end_addr, dummy;
-	int rc, diag_cc;
+	unsigned long dummy;
+	int dcss_command, rc, diag_cc;
 
-	mutex_lock(&dcss_lock);
+	spin_lock (&dcss_lock);
 	seg = segment_by_name (name);
 	if (seg == NULL) {
 		rc = -EINVAL;
 		goto out_unlock;
 	}
 	if (do_nonshared == seg->do_nonshared) {
-		pr_info("DCSS %s is already in the requested access "
-			"mode\n", name);
+		PRINT_INFO ("segment_modify_shared: not reloading segment %s"
+				" - already in requested mode\n",name);
 		rc = 0;
 		goto out_unlock;
 	}
 	if (atomic_read (&seg->ref_count) != 1) {
-		pr_warning("DCSS %s is in use and cannot be reloaded\n",
-			   name);
+		PRINT_WARN ("segment_modify_shared: not reloading segment %s - "
+				"segment is in use by other driver(s)\n",name);
 		rc = -EAGAIN;
 		goto out_unlock;
 	}
-	release_resource(seg->res);
+	dcss_diag(DCSS_PURGESEG, seg->dcss_name,
+		  &dummy, &dummy);
 	if (do_nonshared)
-		seg->res->flags &= ~IORESOURCE_READONLY;
+		dcss_command = DCSS_LOADNSR;
 	else
-		if (seg->vm_segtype == SEG_TYPE_SR ||
-		    seg->vm_segtype == SEG_TYPE_ER)
-			seg->res->flags |= IORESOURCE_READONLY;
-
-	if (request_resource(&iomem_resource, seg->res)) {
-		pr_warning("DCSS %s overlaps with used memory resources "
-			   "and cannot be reloaded\n", name);
-		rc = -EBUSY;
-		kfree(seg->res);
-		goto out_del_mem;
-	}
-
-	dcss_diag(&purgeseg_scode, seg->dcss_name, &dummy, &dummy);
-	if (do_nonshared)
-		diag_cc = dcss_diag(&loadnsr_scode, seg->dcss_name,
-				&start_addr, &end_addr);
-	else
-		diag_cc = dcss_diag(&loadshr_scode, seg->dcss_name,
-				&start_addr, &end_addr);
-	if (diag_cc < 0) {
-		rc = diag_cc;
-		goto out_del_res;
-	}
+	dcss_command = DCSS_LOADNOLY;
+	diag_cc = dcss_diag(dcss_command, seg->dcss_name,
+			&seg->start_addr, &seg->end);
 	if (diag_cc > 1) {
-		pr_warning("Reloading DCSS %s failed with rc=%ld\n", name,
-			   end_addr);
-		rc = dcss_diag_translate_rc(end_addr);
-		goto out_del_res;
+		PRINT_WARN ("segment_modify_shared: could not reload segment %s"
+				" - diag returned error (%ld)\n",name,seg->end);
+		rc = dcss_diag_translate_rc (seg->end);
+		goto out_del;
 	}
-	seg->start_addr = start_addr;
-	seg->end = end_addr;
 	seg->do_nonshared = do_nonshared;
 	rc = 0;
 	goto out_unlock;
- out_del_res:
-	release_resource(seg->res);
-	kfree(seg->res);
- out_del_mem:
-	vmem_remove_mapping(seg->start_addr, seg->end - seg->start_addr + 1);
+ out_del:
 	list_del(&seg->list);
-	dcss_diag(&purgeseg_scode, seg->dcss_name, &dummy, &dummy);
+	dcss_diag(DCSS_PURGESEG, seg->dcss_name,
+		  &dummy, &dummy);
 	kfree(seg);
  out_unlock:
-	mutex_unlock(&dcss_lock);
+	spin_unlock(&dcss_lock);
 	return rc;
 }
 
@@ -655,22 +526,21 @@ segment_unload(char *name)
 	if (!MACHINE_IS_VM)
 		return;
 
-	mutex_lock(&dcss_lock);
+	spin_lock(&dcss_lock);
 	seg = segment_by_name (name);
 	if (seg == NULL) {
-		pr_err("Unloading unknown DCSS %s failed\n", name);
+		PRINT_ERR ("could not find segment %s in segment_unload, "
+				"please report to linux390@de.ibm.com\n",name);
 		goto out_unlock;
 	}
-	if (atomic_dec_return(&seg->ref_count) != 0)
-		goto out_unlock;
-	release_resource(seg->res);
-	kfree(seg->res);
-	vmem_remove_mapping(seg->start_addr, seg->end - seg->start_addr + 1);
-	list_del(&seg->list);
-	dcss_diag(&purgeseg_scode, seg->dcss_name, &dummy, &dummy);
-	kfree(seg);
+	if (atomic_dec_return(&seg->ref_count) == 0) {
+		list_del(&seg->list);
+		dcss_diag(DCSS_PURGESEG, seg->dcss_name,
+			  &dummy, &dummy);
+		kfree(seg);
+	}
 out_unlock:
-	mutex_unlock(&dcss_lock);
+	spin_unlock(&dcss_lock);
 }
 
 /*
@@ -689,19 +559,19 @@ segment_save(char *name)
 	if (!MACHINE_IS_VM)
 		return;
 
-	mutex_lock(&dcss_lock);
+	spin_lock(&dcss_lock);
 	seg = segment_by_name (name);
 
 	if (seg == NULL) {
-		pr_err("Saving unknown DCSS %s failed\n", name);
-		goto out;
+		PRINT_ERR ("could not find segment %s in segment_save, please report to linux390@de.ibm.com\n",name);
+		return;
 	}
 
 	startpfn = seg->start_addr >> PAGE_SHIFT;
 	endpfn = (seg->end) >> PAGE_SHIFT;
 	sprintf(cmd1, "DEFSEG %s", name);
 	for (i=0; i<seg->segcnt; i++) {
-		sprintf(cmd1+strlen(cmd1), " %lX-%lX %s",
+		sprintf(cmd1+strlen(cmd1), " %X-%X %s",
 			seg->range[i].start >> PAGE_SHIFT,
 			seg->range[i].end >> PAGE_SHIFT,
 			segtype_string[seg->range[i].start & 0xff]);
@@ -710,65 +580,18 @@ segment_save(char *name)
 	response = 0;
 	cpcmd(cmd1, NULL, 0, &response);
 	if (response) {
-		pr_err("Saving a DCSS failed with DEFSEG response code "
-		       "%i\n", response);
+		PRINT_ERR("segment_save: DEFSEG failed with response code %i\n",
+			  response);
 		goto out;
 	}
 	cpcmd(cmd2, NULL, 0, &response);
 	if (response) {
-		pr_err("Saving a DCSS failed with SAVESEG response code "
-		       "%i\n", response);
+		PRINT_ERR("segment_save: SAVESEG failed with response code %i\n",
+			  response);
 		goto out;
 	}
 out:
-	mutex_unlock(&dcss_lock);
-}
-
-/*
- * print appropriate error message for segment_load()/segment_type()
- * return code
- */
-void segment_warning(int rc, char *seg_name)
-{
-	switch (rc) {
-	case -ENOENT:
-		pr_err("DCSS %s cannot be loaded or queried\n", seg_name);
-		break;
-	case -ENOSYS:
-		pr_err("DCSS %s cannot be loaded or queried without "
-		       "z/VM\n", seg_name);
-		break;
-	case -EIO:
-		pr_err("Loading or querying DCSS %s resulted in a "
-		       "hardware error\n", seg_name);
-		break;
-	case -ENOTSUPP:
-		pr_err("DCSS %s has multiple page ranges and cannot be "
-		       "loaded or queried\n", seg_name);
-		break;
-	case -ENOSPC:
-		pr_err("DCSS %s overlaps with used storage and cannot "
-		       "be loaded\n", seg_name);
-		break;
-	case -EBUSY:
-		pr_err("%s needs used memory resources and cannot be "
-		       "loaded or queried\n", seg_name);
-		break;
-	case -EPERM:
-		pr_err("DCSS %s is already loaded in a different access "
-		       "mode\n", seg_name);
-		break;
-	case -ENOMEM:
-		pr_err("There is not enough memory to load or query "
-		       "DCSS %s\n", seg_name);
-		break;
-	case -ERANGE:
-		pr_err("DCSS %s exceeds the kernel mapping range (%lu) "
-		       "and cannot be loaded\n", seg_name, VMEM_MAX_PHYS);
-		break;
-	default:
-		break;
-	}
+	spin_unlock(&dcss_lock);
 }
 
 EXPORT_SYMBOL(segment_load);
@@ -776,4 +599,3 @@ EXPORT_SYMBOL(segment_unload);
 EXPORT_SYMBOL(segment_save);
 EXPORT_SYMBOL(segment_type);
 EXPORT_SYMBOL(segment_modify_shared);
-EXPORT_SYMBOL(segment_warning);

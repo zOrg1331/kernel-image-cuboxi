@@ -1,0 +1,27 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: Remove __initdata from tscsync
+Date: Wed, 17 Jan 2007 11:09:12 -0500
+Bugzilla: 223017
+Message-Id: <20070117160912.25299.36808.sendpatchset@prarit.boston.redhat.com>
+Changelog: [cpufreq] Remove __initdata from tscsync
+
+
+The tscsync variable is declared as __initdata but is accessed post-init.  This
+causes a panic.
+
+This is a very low-risk patch which simply removes __initdata from tscsync.
+
+Resolves BZ 223017.
+
+--- linux-2.6.18/arch/i386/kernel/cpu/cpufreq/powernow-k8.c.orig	2007-01-17 15:51:07.000000000 -0500
++++ linux-2.6.18/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2007-01-17 15:51:23.000000000 -0500
+@@ -55,7 +55,7 @@ static DEFINE_MUTEX(fidvid_mutex);
+ 
+ static struct powernow_k8_data *powernow_data[NR_CPUS];
+ static int *req_state = NULL;
+-static int tscsync __initdata = 0;
++static int tscsync = 0;
+ 
+ static int cpu_family = CPU_OPTERON;
+ 
+

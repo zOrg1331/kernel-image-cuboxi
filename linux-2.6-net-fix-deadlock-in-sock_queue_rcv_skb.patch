@@ -1,0 +1,175 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Mon, 15 Nov 2010 11:44:02 -0500
+Subject: [net] fix deadlock in sock_queue_rcv_skb
+Message-id: <20101115114401.9470.59763.sendpatchset@danny.redhat>
+Patchwork-id: 29236
+O-Subject: [PATCH RHEL5.6] net: fix deadlock in sock_queue_rcv_skb (v2)
+Bugzilla: 652537
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=652537
+
+Description:
+There's a deadlock issue in udp_queue_rcv_skb, which is found
+when we're trying to reproduce a rhel5 info leak CVE.
+
+   udp_queue_rcv_skb
+         |_ bh_lock_sock(sk)
+         |_ __udp_queue_rcv_skb
+            |_ sock_queue_rcv_skb
+               |_ sk_filter(sk, skb, 1) ->  1 means needlock
+                  |_ bh_lock_sock(sk) -> deadlock
+
+This is a regression introduced by rhel5 commit 6865201191, the upstream is okay because sk_filter was adopted to rcu protection, but rhel5 hasn't taken
+the sk_filter changes, so after we take commit 6865201191 in, we have a deadlock.
+
+Eugene has opened this as  CVE-2010-4161
+
+Upstream status:
+upstream has changed to use rcu to protect sk_filter, but rhel5 can not use it because the kabi breakage.
+
+Follow Neil's suggestion, move the contents of skb_queue_rcv_skb to an internal function that takes an extra
+needlock argument, make skb_queue_rcv_skb call that internal function with
+needlock set to 0, and create a new function skb_queue_rcv_skb_nolock which
+calls it with needlock set to zero.
+
+I also check all users of sock_queue_rcv_skb, and changes to skb_queue_rcv_skb_nolock if the user is not lock
+free.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2894136
+
+Test status:
+Test with the info leak reproducer, there's an soft lockup warning shown and the cpu is really locked up.
+With the patch applied, the soft lockup disappeared.
+
+
+diff --git a/include/net/sock.h b/include/net/sock.h
+index f539b08..af2d541 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -1282,6 +1282,7 @@ extern void sk_reset_timer(struct sock *sk, struct timer_list* timer,
+ extern void sk_stop_timer(struct sock *sk, struct timer_list* timer);
+ 
+ extern int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
++extern int sock_queue_rcv_skb_nolock(struct sock *sk, struct sk_buff *skb);
+ 
+ static inline int sock_queue_err_skb(struct sock *sk, struct sk_buff *skb)
+ {
+diff --git a/net/bluetooth/l2cap.c b/net/bluetooth/l2cap.c
+index 89b63f9..7b9f167 100644
+--- a/net/bluetooth/l2cap.c
++++ b/net/bluetooth/l2cap.c
+@@ -1825,7 +1825,7 @@ static inline int l2cap_data_channel(struct l2cap_conn *conn, u16 cid, struct sk
+ 	 * But we don't have any other choice. L2CAP doesn't
+ 	 * provide flow control mechanism. */
+ 
+-	if (!sock_queue_rcv_skb(sk, skb))
++	if (!sock_queue_rcv_skb_nolock(sk, skb))
+ 		goto done;
+ 
+ drop:
+@@ -1854,7 +1854,7 @@ static inline int l2cap_conless_channel(struct l2cap_conn *conn, u16 psm, struct
+ 	if (l2cap_pi(sk)->imtu < skb->len)
+ 		goto drop;
+ 
+-	if (!sock_queue_rcv_skb(sk, skb))
++	if (!sock_queue_rcv_skb_nolock(sk, skb))
+ 		goto done;
+ 
+ drop:
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 620eaba..7411c3a 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -245,8 +245,7 @@ static void sock_disable_timestamp(struct sock *sk)
+ 	}
+ }
+ 
+-
+-int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
++static int __sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb, int needlock)
+ {
+ 	int err = 0;
+ 	int skb_len;
+@@ -260,11 +259,7 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
+ 		goto out;
+ 	}
+ 
+-	/* It would be deadlock, if sock_queue_rcv_skb is used
+-	   with socket lock! We assume that users of this
+-	   function are lock free.
+-	*/
+-	err = sk_filter(sk, skb, 1);
++	err = sk_filter(sk, skb, needlock);
+ 	if (err)
+ 		goto out;
+ 
+@@ -290,6 +285,24 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
+ out:
+ 	return err;
+ }
++
++/*
++ * sock_queue_rcv_skb_nolock should be used with socket lock
++ */
++int sock_queue_rcv_skb_nolock(struct sock *sk, struct sk_buff *skb)
++{
++	return __sock_queue_rcv_skb(sk, skb, 0);
++}
++EXPORT_SYMBOL(sock_queue_rcv_skb_nolock);
++
++/* It would be deadlock, if sock_queue_rcv_skb is used
++ * with socket lock! We assume that users of this
++ * function are lock free.
++ */
++int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
++{
++	return __sock_queue_rcv_skb(sk, skb, 1);
++}
+ EXPORT_SYMBOL(sock_queue_rcv_skb);
+ 
+ int sk_receive_skb(struct sock *sk, struct sk_buff *skb)
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index bebc101..9d7d5f0 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -1017,7 +1017,7 @@ static int __udp_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
+ {
+ 	int rc;
+ 
+-	if ((rc = sock_queue_rcv_skb(sk, skb)) < 0) {
++	if ((rc = sock_queue_rcv_skb_nolock(sk, skb)) < 0) {
+ 		UDP_INC_STATS_BH(UDP_MIB_INERRORS);
+ 		kfree_skb(skb);
+ 		return -1;
+diff --git a/net/ipv6/udp.c b/net/ipv6/udp.c
+index 36d0301..41f7f00 100644
+--- a/net/ipv6/udp.c
++++ b/net/ipv6/udp.c
+@@ -382,7 +382,7 @@ static inline int udpv6_queue_rcv_skb(struct sock * sk, struct sk_buff *skb)
+ 		return 0;
+ 	}
+ 
+-	if (sock_queue_rcv_skb(sk,skb)<0) {
++	if (sock_queue_rcv_skb_nolock(sk,skb)<0) {
+ 		UDP6_INC_STATS_BH(UDP_MIB_INERRORS);
+ 		kfree_skb(skb);
+ 		return 0;
+diff --git a/net/llc/llc_conn.c b/net/llc/llc_conn.c
+index c761c15..dd3684e 100644
+--- a/net/llc/llc_conn.c
++++ b/net/llc/llc_conn.c
+@@ -94,7 +94,7 @@ int llc_conn_state_process(struct sock *sk, struct sk_buff *skb)
+ 	switch (ev->ind_prim) {
+ 	case LLC_DATA_PRIM:
+ 		llc_save_primitive(sk, skb, LLC_DATA_PRIM);
+-		if (unlikely(sock_queue_rcv_skb(sk, skb))) {
++		if (unlikely(sock_queue_rcv_skb_nolock(sk, skb))) {
+ 			/*
+ 			 * shouldn't happen
+ 			 */

@@ -1,0 +1,128 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 3 Dec 2007 17:09:46 -0500
+Subject: [xen] ia64: running java-vm causes dom0 to hang
+Message-id: 20071203170552.EA8A.TYAMAMOT@redhat.com
+O-Subject: [RHEL5.2 PATCH][Xen] Running IA32EL or java-vm causes dom0 hung
+Bugzilla: 317301
+
+This patch fixes BZ#317301.
+https://bugzilla.redhat.com/show_bug.cgi?id=317301
+
+This patch is backported from the upstream:
+http://xenbits.xensource.com/ext/xen-ia64-unstable.hg?rev/2d1b8ae1548d
+
+On PV domain with metaphysical mode, emulation of itc.d in region 0
+doesn't work well and inserts an wrong TC entry.
+Because set_one_rr() doesn't set the machine region register.
+i.e. metaphyisical_rr0 is used instead of guest's rr[0].
+This patch fixes this wrong insertion of TLB entry in region 0.
+
+This bug causes Dom0/U crash when an application uses region 0.
+Actually this problem is easily reproduced by running many (about 30)
+java-vm processes concurrently.
+
+With kernel-xen-2.6.18-53.el5 applied this patch, I've confirmed that
+this problem does not occur.
+
+Please review and ack.
+
+Regards,
+
+Tetsu Yamamoto
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/regionreg.c b/arch/ia64/xen/regionreg.c
+index c83a91a..d594805 100644
+--- a/arch/ia64/xen/regionreg.c
++++ b/arch/ia64/xen/regionreg.c
+@@ -270,8 +270,16 @@ int set_one_rr(unsigned long rr, unsigned long val)
+ 	return 1;
+ }
+ 
++void set_virtual_rr0(void)
++{
++	struct vcpu *v = current;
++
++	ia64_set_rr(0, v->arch.metaphysical_saved_rr0);
++	ia64_srlz_d();
++}
++
+ // set rr0 to the passed rid (for metaphysical mode so don't use domain offset
+-int set_metaphysical_rr0(void)
++void set_metaphysical_rr0(void)
+ {
+ 	struct vcpu *v = current;
+ //	ia64_rr rrv;
+@@ -279,7 +287,6 @@ int set_metaphysical_rr0(void)
+ //	rrv.ve = 1; 	FIXME: TURN ME BACK ON WHEN VHPT IS WORKING
+ 	ia64_set_rr(0,v->arch.metaphysical_rr0);
+ 	ia64_srlz_d();
+-	return 1;
+ }
+ 
+ void init_all_rr(struct vcpu *v)
+diff --git a/arch/ia64/xen/vcpu.c b/arch/ia64/xen/vcpu.c
+index 43599f6..fae2520 100644
+--- a/arch/ia64/xen/vcpu.c
++++ b/arch/ia64/xen/vcpu.c
+@@ -239,7 +239,7 @@ IA64FAULT vcpu_get_ar(VCPU * vcpu, u64 reg, u64 * val)
+  VCPU processor status register access routines
+ **************************************************************************/
+ 
+-void vcpu_set_metaphysical_mode(VCPU * vcpu, BOOLEAN newmode)
++static void vcpu_set_metaphysical_mode(VCPU * vcpu, BOOLEAN newmode)
+ {
+ 	/* only do something if mode changes */
+ 	if (!!newmode ^ !!PSCB(vcpu, metaphysical_mode)) {
+@@ -247,7 +247,7 @@ void vcpu_set_metaphysical_mode(VCPU * vcpu, BOOLEAN newmode)
+ 		if (newmode)
+ 			set_metaphysical_rr0();
+ 		else if (PSCB(vcpu, rrs[0]) != -1)
+-			set_one_rr(0, PSCB(vcpu, rrs[0]));
++			set_virtual_rr0();
+ 	}
+ }
+ 
+@@ -1561,7 +1561,7 @@ vcpu_get_domain_bundle(VCPU * vcpu, REGS * regs, u64 gip,
+ 		// This may cause tlb miss. see vcpu_translate(). Be careful!
+ 		swap_rr0 = (!region && PSCB(vcpu, metaphysical_mode));
+ 		if (swap_rr0) {
+-			set_one_rr(0x0, PSCB(vcpu, rrs[0]));
++			set_virtual_rr0();
+ 		}
+ 		*bundle = __get_domain_bundle(gip);
+ 		if (swap_rr0) {
+@@ -2208,7 +2208,7 @@ IA64FAULT vcpu_itc_d(VCPU * vcpu, u64 pte, u64 itir, u64 ifa)
+ 	if (!pteval)
+ 		return IA64_ILLOP_FAULT;
+ 	if (swap_rr0)
+-		set_one_rr(0x0, PSCB(vcpu, rrs[0]));
++		set_virtual_rr0();
+ 	vcpu_itc_no_srlz(vcpu, 2, ifa, pteval, pte, logps, &entry);
+ 	if (swap_rr0)
+ 		set_metaphysical_rr0();
+@@ -2235,7 +2235,7 @@ IA64FAULT vcpu_itc_i(VCPU * vcpu, u64 pte, u64 itir, u64 ifa)
+ 	if (!pteval)
+ 		return IA64_ILLOP_FAULT;
+ 	if (swap_rr0)
+-		set_one_rr(0x0, PSCB(vcpu, rrs[0]));
++		set_virtual_rr0();
+ 	vcpu_itc_no_srlz(vcpu, 1, ifa, pteval, pte, logps, &entry);
+ 	if (swap_rr0)
+ 		set_metaphysical_rr0();
+diff --git a/include/asm-ia64/regionreg.h b/include/asm-ia64/regionreg.h
+index c2e9ecc..73b4cd7 100644
+--- a/include/asm-ia64/regionreg.h
++++ b/include/asm-ia64/regionreg.h
+@@ -76,7 +76,8 @@ extern int deallocate_rid_range(struct domain *d);
+ struct vcpu;
+ extern void init_all_rr(struct vcpu *v);
+ 
+-extern int set_metaphysical_rr0(void);
++extern void set_virtual_rr0(void);
++extern void set_metaphysical_rr0(void);
+ 
+ extern void load_region_regs(struct vcpu *v);
+ 

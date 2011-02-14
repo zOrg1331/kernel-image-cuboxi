@@ -1,0 +1,31 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Fri, 5 Mar 2010 16:28:58 -0500
+Subject: [acpi] tell platformthat we support fixed hw T-states
+Message-id: <1267806538-12806-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 23504
+O-Subject: [PATCH] RHEL 5.5: Tell the platform that we support fixed-hardware T
+	states
+Bugzilla: 569590
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Bugzilla: 569590
+
+The backport of ACPI 3.0 T-state support failed to add the flag that
+informs the platform that this support is available. Pass this to the
+platform in case it makes T-state initialisation dependent upon it.
+
+diff --git a/arch/i386/kernel/acpi/processor.c b/arch/i386/kernel/acpi/processor.c
+index b54fded..d3f21b3 100644
+--- a/arch/i386/kernel/acpi/processor.c
++++ b/arch/i386/kernel/acpi/processor.c
+@@ -49,6 +49,9 @@ static void init_intel_pdc(struct acpi_processor *pr, struct cpuinfo_x86 *c)
+ 	if (cpu_has(c, X86_FEATURE_EST))
+ 		buf[2] |= ACPI_PDC_EST_CAPABILITY_SWSMP;
+ 
++        if (cpu_has(c, X86_FEATURE_ACPI))
++                buf[2] |= ACPI_PDC_T_FFH;
++
+ 	obj->type = ACPI_TYPE_BUFFER;
+ 	obj->buffer.length = 12;
+ 	obj->buffer.pointer = (u8 *) buf;

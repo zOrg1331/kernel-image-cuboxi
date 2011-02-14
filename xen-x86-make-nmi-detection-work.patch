@@ -1,0 +1,71 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Mon, 8 Jun 2009 03:22:06 -0400
+Subject: [xen] x86: make NMI detection work
+Message-id: 1425322985.100091244445726651.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com
+O-Subject: Re: [PATCH RHEL5.5] BZ494120 - XEN NMI detection fails on Dell 1950 server
+Bugzilla: 494120
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Version 2 of patch. Due to copy paste tabs were replaced with spaces.
+
+BZ #494120 (https://bugzilla.redhat.com/show_bug.cgi?id=494120)
+
+Description:
+------------
+With watchdog option set on, boot test of NMI reports processors stucks, that mean NMI is not working properly.
+
+Fix:
+----
+Checking differencies between RHEL and upstream source code, and upstream c/s,  I found c/s 18645. Applying this c/s cause watchdog test to pass successfuly.
+
+Testing:
+--------
+Patched XEN hypervisor was used on x86_64 machine. xm dmesg output checked.
+
+Patch:
+------
+
+diff --git a/arch/x86/nmi.c b/arch/x86/nmi.c
+index 53d15a5..b30df07 100644
+--- a/arch/x86/nmi.c
++++ b/arch/x86/nmi.c
+@@ -73,7 +73,7 @@ int nmi_active;
+ #define P6_EVNTSEL_OS		(1 << 17)
+ #define P6_EVNTSEL_USR		(1 << 16)
+ #define P6_EVENT_CPU_CLOCKS_NOT_HALTED	0x79
+-#define P6_NMI_EVENT		P6_EVENT_CPU_CLOCKS_NOT_HALTED
++#define CORE_EVENT_CPU_CLOCKS_NOT_HALTED 0x3c
+ 
+ #define P4_ESCR_EVENT_SELECT(N)	((N)<<25)
+ #define P4_CCCR_OVF_PMI0	(1<<26)
+@@ -248,7 +248,7 @@ static void __pminit setup_k7_watchdog(void)
+     wrmsr(MSR_K7_EVNTSEL0, evntsel, 0);
+ }
+ 
+-static void __pminit setup_p6_watchdog(void)
++static void __pminit setup_p6_watchdog(unsigned counter)
+ {
+     unsigned int evntsel;
+ 
+@@ -260,7 +260,7 @@ static void __pminit setup_p6_watchdog(void)
+     evntsel = P6_EVNTSEL_INT
+         | P6_EVNTSEL_OS
+         | P6_EVNTSEL_USR
+-        | P6_NMI_EVENT;
++        | counter;
+ 
+     wrmsr(MSR_P6_EVNTSEL0, evntsel, 0);
+     write_watchdog_counter("P6_PERFCTR0");
+@@ -326,7 +326,9 @@ void __pminit setup_apic_nmi_watchdog(void)
+     case X86_VENDOR_INTEL:
+         switch (boot_cpu_data.x86) {
+         case 6:
+-            setup_p6_watchdog();
++            setup_p6_watchdog((boot_cpu_data.x86_model < 14) 
++                              ? P6_EVENT_CPU_CLOCKS_NOT_HALTED
++                              : CORE_EVENT_CPU_CLOCKS_NOT_HALTED);
+             break;
+         case 15:
+             if (!setup_p4_watchdog())

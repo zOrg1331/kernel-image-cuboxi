@@ -1,0 +1,55 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Tue, 2 Oct 2007 15:11:03 -0400
+Subject: [net] labeled: memory leak calling secid_to_secctx
+Message-id: 1191352263.9506.19.camel@localhost.localdomain
+O-Subject: [PATCH RHEL 5.2] bz250442 labeled networking: memory leak from calling secid_to_secctx
+Bugzilla: 250442
+
+BZ 250442
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e6e0871cce2ae04f5790543ad2f4ec36b23260ba
+
+The security_secid_to_secctx() function returns memory that must be
+freed by a call to security_release_secctx() which was not always
+happening.  This patch fixes two of these problems (all that I could
+find in the kernel source at present).
+
+Signed-off-by: Paul Moore <paul.moore@hp.com>
+Acked-by: Stephen Smalley <sds@tycho.nsa.gov>
+Signed-off-by: James Morris <jmorris@namei.org>
+
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/net/netlabel/netlabel_user.c b/net/netlabel/netlabel_user.c
+index 42f12bd..a3ab435 100644
+--- a/net/netlabel/netlabel_user.c
++++ b/net/netlabel/netlabel_user.c
+@@ -117,8 +117,10 @@ struct audit_buffer *netlbl_audit_start_common(int type,
+ 	if (audit_info->secid != 0 &&
+ 	    security_secid_to_secctx(audit_info->secid,
+ 				     &secctx,
+-				     &secctx_len) == 0)
++				     &secctx_len) == 0) {
+ 		audit_log_format(audit_buf, " subj=%s", secctx);
++		security_release_secctx(secctx, secctx_len);
++	}
+ 
+ 	return audit_buf;
+ }
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index a7892cb..ee1bd8f 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -1496,9 +1496,10 @@ void xfrm_audit_log(uid_t auid, u32 sid, int type, int result,
+ 	}
+ 
+ 	if (sid != 0 &&
+-		security_secid_to_secctx(sid, &secctx, &secctx_len) == 0)
++	    security_secid_to_secctx(sid, &secctx, &secctx_len) == 0) {
+ 		audit_log_format(audit_buf, " subj=%s", secctx);
+-	else
++		security_release_secctx(secctx, secctx_len);
++	} else
+ 		audit_log_task_context(audit_buf);
+ 
+ 	if (xp) {

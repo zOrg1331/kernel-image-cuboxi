@@ -1,0 +1,55 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 7 Aug 2008 13:16:44 +0200
+Subject: [s390] cio: fix double unregistering of subchannels
+Message-id: 20080807111644.GB6319@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/5] s390 - cio: fix double unregistering of subchannels
+Bugzilla: 456087
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+In some cases where the channel subsystem decides to drop a subchannel
+device device_unregister may be called twice, which results in an oops.
+
+The patch prevents this by only unregistering registered devices.
+
+Bugzilla
+=========
+
+BZ 456087
+https://bugzilla.redhat.com/show_bug.cgi?id=456087
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 as of git commit
+ef60cd13ecee0ccf2439d63013cbfc798aea2bb9
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/cio/css.c b/drivers/s390/cio/css.c
+index 8caf089..51ec6ff 100644
+--- a/drivers/s390/cio/css.c
++++ b/drivers/s390/cio/css.c
+@@ -123,7 +123,8 @@ int css_sch_device_register(struct subchannel *sch)
+ void css_sch_device_unregister(struct subchannel *sch)
+ {
+ 	mutex_lock(&sch->reg_mutex);
+-	device_unregister(&sch->dev);
++	if (device_is_registered(&sch->dev))
++		device_unregister(&sch->dev);
+ 	mutex_unlock(&sch->reg_mutex);
+ }
+ 

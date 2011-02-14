@@ -1,0 +1,321 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 7 Jul 2009 16:57:13 +0200
+Subject: [xen] HV: remove high latency spin_lock
+Message-id: 4A536249.2090609@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Remove high latency spin_lock in the Xen hypervisor
+Bugzilla: 459410
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     We've had some ongoing problems with latency spikes in the Xen hypervisor.
+ In particular, when destroying a large (say, 64GB) domU on a large NUMA
+machine, there would be high latency spikes in other domains during the domain
+destruction.
+     During domain destruction, the hypervisor takes responsibility for
+scrubbing guest memory clean of any potentially sensitive data.  The way it
+currently does this is to place all of the memory on a list, and then defer
+scrubbing/freeing until softirq time.  What we found, however, is that during
+softirq time, whatever CPU was doing the scrubbing was spending *most* of it's
+time (80 - 95%) waiting on the spinlock protecting the list.  This highly
+contested spinlock is part of the cause of the high latencies in other domains.
+     The solution in this patch (and now upstream) is to completely remove the
+whole silly deferred scrubbing/allocation thing.  Since memory destruction is
+mostly preemptible (more on this in P.S.), this is entirely reasonable.  With
+this patch in place, the high latencies are significantly reduced.
+     Tested by me on the problem machine, where it reduces the latencies to a
+reasonable amount.  This is a backport of upstream xen-unstable c/s 19886 and
+19888, and solves BZ 459410.  Please review and ACK.
+
+--
+Chris Lalancette
+
+P.S.  During memory teardown, the hypervisor has to walk the pagetables from the
+guest and destroy all of the pagetable levels.  The RHEL-5 hypervisor can do
+this partially preemptibly.  However, upstream has a much more comprehensive fix
+in place that makes all levels of the pagetable teardown preemptible.  I've done
+a backport of this to RHEL-5, and while it completely eliminates the high
+latency, it's much too risky for 5.4 at this stage.  That complete fix will be
+proposed for 5.5.
+
+diff --git a/arch/ia64/xen/dom0_ops.c b/arch/ia64/xen/dom0_ops.c
+index ee51ebe..23a9ead 100644
+--- a/arch/ia64/xen/dom0_ops.c
++++ b/arch/ia64/xen/dom0_ops.c
+@@ -300,7 +300,7 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+ 
+         pi->total_pages      = total_pages; 
+         pi->free_pages       = avail_domheap_pages();
+-        pi->scrub_pages      = avail_scrub_pages();
++        pi->scrub_pages      = 0;
+         pi->cpu_khz          = local_cpu_data->proc_freq / 1000;
+         memset(pi->hw_cap, 0, sizeof(pi->hw_cap));
+ 
+diff --git a/arch/ia64/xen/domain.c b/arch/ia64/xen/domain.c
+index 1ac0b94..04cb053 100644
+--- a/arch/ia64/xen/domain.c
++++ b/arch/ia64/xen/domain.c
+@@ -345,7 +345,6 @@ static void continue_cpu_idle_loop(void)
+ #else
+ 	    irq_stat[cpu].idle_timestamp = jiffies;
+ #endif
+-	    page_scrub_schedule_work();
+ 	    while ( !softirq_pending(smp_processor_id()) )
+ 	        default_idle();
+ 	    raise_softirq(SCHEDULE_SOFTIRQ);
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 389c418..6cf255d 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -81,7 +81,6 @@ void idle_loop(void)
+ {
+     for ( ; ; )
+     {
+-        page_scrub_schedule_work();
+         default_idle();
+         do_softirq();
+     }
+diff --git a/arch/x86/sysctl.c b/arch/x86/sysctl.c
+index c0cf163..fd783db 100644
+--- a/arch/x86/sysctl.c
++++ b/arch/x86/sysctl.c
+@@ -61,7 +61,7 @@ long arch_do_sysctl(
+ 
+         pi->total_pages      = total_pages;
+         pi->free_pages       = avail_domheap_pages();
+-        pi->scrub_pages      = avail_scrub_pages();
++        pi->scrub_pages      = 0;
+         pi->cpu_khz          = cpu_khz;
+         memset(pi->hw_cap, 0, sizeof(pi->hw_cap));
+         memcpy(pi->hw_cap, boot_cpu_data.x86_capability, NCAPINTS*4);
+diff --git a/common/domain.c b/common/domain.c
+index 9fa0b83..d035ad1 100644
+--- a/common/domain.c
++++ b/common/domain.c
+@@ -339,7 +339,6 @@ int domain_kill(struct domain *d)
+         /* fallthrough */
+     case DOMDYING_dying:
+         rc = domain_relinquish_resources(d);
+-        page_scrub_kick();
+         if ( rc != 0 )
+         {
+             BUG_ON(rc != -EAGAIN);
+diff --git a/common/page_alloc.c b/common/page_alloc.c
+index 6c010fa..c94b5cb 100644
+--- a/common/page_alloc.c
++++ b/common/page_alloc.c
+@@ -84,10 +84,6 @@ custom_param("dma_emergency_pool", parse_dma_emergency_pool);
+ #define round_pgdown(_p)  ((_p)&PAGE_MASK)
+ #define round_pgup(_p)    (((_p)+(PAGE_SIZE-1))&PAGE_MASK)
+ 
+-static DEFINE_SPINLOCK(page_scrub_lock);
+-LIST_HEAD(page_scrub_list);
+-static unsigned long scrub_pages;
+-
+ /*********************
+  * ALLOCATION BITMAP
+  *  One bit per page of memory. Bit set => page is allocated.
+@@ -620,7 +616,6 @@ void __init end_boot_allocator(void)
+  */
+ void __init scrub_heap_pages(void)
+ {
+-    void *p;
+     unsigned long mfn;
+ 
+     if ( !opt_bootscrub )
+@@ -644,21 +639,7 @@ void __init scrub_heap_pages(void)
+ 
+         /* Re-check page status with lock held. */
+         if ( !allocated_in_map(mfn) )
+-        {
+-            if ( is_xen_heap_frame(mfn_to_page(mfn)) )
+-            {
+-                p = page_to_virt(mfn_to_page(mfn));
+-                memguard_unguard_range(p, PAGE_SIZE);
+-                clear_page(p);
+-                memguard_guard_range(p, PAGE_SIZE);
+-            }
+-            else
+-            {
+-                p = map_domain_page(mfn);
+-                clear_page(p);
+-                unmap_domain_page(p);
+-            }
+-        }
++            scrub_one_page(mfn_to_page(mfn));
+ 
+         spin_unlock(&heap_lock);
+     }
+@@ -895,26 +876,16 @@ void free_domheap_pages(struct page_info *pg, unsigned int order)
+ 
+         spin_unlock_recursive(&d->page_alloc_lock);
+ 
+-        if ( likely(!d->is_dying) )
+-        {
+-            free_heap_pages(pfn_dom_zone_type(page_to_mfn(pg)), pg, order);
+-        }
+-        else
+-        {
+-            /*
+-             * Normally we expect a domain to clear pages before freeing them,
+-             * if it cares about the secrecy of their contents. However, after
+-             * a domain has died we assume responsibility for erasure.
+-             */
++        /*
++         * Normally we expect a domain to clear pages before freeing them,
++         * if it cares about the secrecy of their contents. However, after
++         * a domain has died we assume responsibility for erasure.
++         */
++        if ( unlikely(d->is_dying) )
+             for ( i = 0; i < (1 << order); i++ )
+-            {
+-                page_set_owner(&pg[i], NULL);
+-                spin_lock(&page_scrub_lock);
+-                list_add(&pg[i].list, &page_scrub_list);
+-                scrub_pages++;
+-                spin_unlock(&page_scrub_lock);
+-            }
+-        }
++                scrub_one_page(&pg[i]);
++
++        free_heap_pages(pfn_dom_zone_type(page_to_mfn(pg)), pg, order);
+     }
+     else
+     {
+@@ -1002,81 +973,19 @@ static __init int pagealloc_keyhandler_init(void)
+ }
+ __initcall(pagealloc_keyhandler_init);
+ 
+-
+-
+-/*************************
+- * PAGE SCRUBBING
+- */
+-
+-static DEFINE_PER_CPU(struct timer, page_scrub_timer);
+-
+-static void page_scrub_softirq(void)
++void scrub_one_page(struct page_info *pg)
+ {
+-    struct list_head *ent;
+-    struct page_info  *pg;
+-    void             *p;
+-    int               i;
+-    s_time_t          start = NOW();
+-    static spinlock_t serialise_lock = SPIN_LOCK_UNLOCKED;
+-
+-    /* free_heap_pages() does not parallelise well. Serialise this function. */
+-    if ( !spin_trylock(&serialise_lock) )
+-    {
+-        set_timer(&this_cpu(page_scrub_timer), NOW() + MILLISECS(1));
+-        return;
+-    }
+-
+-    /* Aim to do 1ms of work every 10ms. */
+-    do {
+-        spin_lock(&page_scrub_lock);
+-
+-        if ( unlikely((ent = page_scrub_list.next) == &page_scrub_list) )
+-        {
+-            spin_unlock(&page_scrub_lock);
+-            goto out;
+-        }
+-        
+-        /* Peel up to 16 pages from the list. */
+-        for ( i = 0; i < 16; i++ )
+-        {
+-            if ( ent->next == &page_scrub_list )
+-                break;
+-            ent = ent->next;
+-        }
+-        
+-        /* Remove peeled pages from the list. */
+-        ent->next->prev = &page_scrub_list;
+-        page_scrub_list.next = ent->next;
+-        scrub_pages -= (i+1);
+-
+-        spin_unlock(&page_scrub_lock);
+-
+-        /* Working backwards, scrub each page in turn. */
+-        while ( ent != &page_scrub_list )
+-        {
+-            pg = list_entry(ent, struct page_info, list);
+-            ent = ent->prev;
+-            p = map_domain_page(page_to_mfn(pg));
+-            clear_page(p);
+-            unmap_domain_page(p);
+-            free_heap_pages(pfn_dom_zone_type(page_to_mfn(pg)), pg, 0);
+-        }
+-    } while ( (NOW() - start) < MILLISECS(1) );
+-
+-    set_timer(&this_cpu(page_scrub_timer), NOW() + MILLISECS(10));
+-
+- out:
+-    spin_unlock(&serialise_lock);
+-}
++    void *p = map_domain_page(page_to_mfn(pg));
+ 
+-static void page_scrub_timer_fn(void *unused)
+-{
+-    page_scrub_schedule_work();
+-}
++#ifndef NDEBUG
++    /* Avoid callers relying on allocations returning zeroed pages. */
++    memset(p, 0xc2, PAGE_SIZE);
++#else
++    /* For a production build, clear_page() is the fastest way to scrub. */
++    clear_page(p);
++#endif
+ 
+-unsigned long avail_scrub_pages(void)
+-{
+-    return scrub_pages;
++    unmap_domain_page(p);
+ }
+ 
+ static void dump_heap(unsigned char key)
+@@ -1104,18 +1013,6 @@ static __init int register_heap_trigger(void)
+ }
+ __initcall(register_heap_trigger);
+ 
+-
+-static __init int page_scrub_init(void)
+-{
+-    int cpu;
+-    for_each_cpu ( cpu )
+-        init_timer(&per_cpu(page_scrub_timer, cpu),
+-                   page_scrub_timer_fn, NULL, cpu);
+-    open_softirq(PAGE_SCRUB_SOFTIRQ, page_scrub_softirq);
+-    return 0;
+-}
+-__initcall(page_scrub_init);
+-
+ /*
+  * Local variables:
+  * mode: C
+diff --git a/include/xen/mm.h b/include/xen/mm.h
+index 8a67fc7..ab7af4b 100644
+--- a/include/xen/mm.h
++++ b/include/xen/mm.h
+@@ -87,19 +87,7 @@ int assign_pages(
+ #define MAX_ORDER 20 /* 2^20 contiguous pages */
+ #endif
+ 
+-/* Automatic page scrubbing for dead domains. */
+-extern struct list_head page_scrub_list;
+-#define page_scrub_schedule_work()              \
+-    do {                                        \
+-        if ( !list_empty(&page_scrub_list) )    \
+-            raise_softirq(PAGE_SCRUB_SOFTIRQ);  \
+-    } while ( 0 )
+-#define page_scrub_kick()                                               \
+-    do {                                                                \
+-        if ( !list_empty(&page_scrub_list) )                            \
+-            cpumask_raise_softirq(cpu_online_map, PAGE_SCRUB_SOFTIRQ);  \
+-    } while ( 0 )
+-unsigned long avail_scrub_pages(void);
++void scrub_one_page(struct page_info *);
+ 
+ #include <asm/mm.h>
+ 

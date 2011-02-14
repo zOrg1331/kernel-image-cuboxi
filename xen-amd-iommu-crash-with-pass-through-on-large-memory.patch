@@ -1,0 +1,53 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Fri, 31 Jul 2009 14:04:39 -0400
+Subject: [xen] amd iommu: crash with pass-through on large memory
+Message-id: 4A733237.40103@redhat.com
+O-Subject: Re: [RHEL5.4 Xen PATCH] Fix system crash issue on AMD IOMMU with large memory
+Bugzilla: 514910
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Posting patch with description as requested by Don, it has notes
+regarding upstream.
+
+Resolves BZ 514910
+
+AMD QA found issue with device pass-through to an HVM guest RHEL 5.4 Xen
+with IOMMU enabled, results in a crash. The circumstances under which this
+system crash happens  - host memory >= 16G, and guest memory >= 1024.
+This is an entire system crash, system reboots.
+
+root cause: sometimes alloc_domheap_page() might return NULL pointer, which
+causes map_domain_page() to crash the whole system. The solution is to check
+page pointer returned by alloc_domheap_page() in alloc_amd_iommu_pgtable().
+With the patch shown below, the crash disappears.
+
+For now this is a RHEL specific fix as upstream IOMMU implementation uses
+dom heap, and RHEL (3.1.2) uses xen heap.  If upstream as similar issue
+(testing ongoing), same patch will be submitted upstream.
+
+We are finding that with large memory sizes the IO page table is huge,
+but it needs to be allocated on the xen heap which is fixed size.
+This is the reason for resulting in the NULL pointer.  The fix is simple,
+contained to AMD IOMMU code base, and appears as good programming practice
+to check pointer and return if NULL.
+
+Patch tested on several Toonie IOMMU systems, and fixes the crash seen
+with >= 16G memory, 1024 guest memory.  See BZ for further results.
+
+Requested exception. Please review and ACK for inclusion in RHEL5.4.
+
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-proto.h b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+index 4dc1577..cf2d60f 100644
+--- a/include/asm-x86/hvm/svm/amd-iommu-proto.h
++++ b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+@@ -122,6 +122,8 @@ static inline struct page_info* alloc_amd_iommu_pgtable(void)
+     void *vaddr;
+ 
+     pg = alloc_domheap_page(NULL);
++    if ( pg == NULL )
++        return 0;
+     vaddr = map_domain_page(page_to_mfn(pg));
+     if ( !vaddr )
+         return 0;

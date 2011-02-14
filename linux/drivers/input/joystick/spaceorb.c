@@ -1,4 +1,6 @@
 /*
+ * $Id: spaceorb.c,v 1.15 2002/01/22 20:29:19 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -72,7 +74,7 @@ static unsigned char *spaceorb_errors[] = { "EEPROM storing 0 failed", "Receive 
  * SpaceOrb.
  */
 
-static void spaceorb_process_packet(struct spaceorb *spaceorb)
+static void spaceorb_process_packet(struct spaceorb *spaceorb, struct pt_regs *regs)
 {
 	struct input_dev *dev = spaceorb->dev;
 	unsigned char *data = spaceorb->data;
@@ -83,6 +85,8 @@ static void spaceorb_process_packet(struct spaceorb *spaceorb)
 	if (spaceorb->idx < 2) return;
 	for (i = 0; i < spaceorb->idx; i++) c ^= data[i];
 	if (c) return;
+
+	input_regs(dev, regs);
 
 	switch (data[0]) {
 
@@ -127,12 +131,12 @@ static void spaceorb_process_packet(struct spaceorb *spaceorb)
 }
 
 static irqreturn_t spaceorb_interrupt(struct serio *serio,
-		unsigned char data, unsigned int flags)
+		unsigned char data, unsigned int flags, struct pt_regs *regs)
 {
 	struct spaceorb* spaceorb = serio_get_drvdata(serio);
 
 	if (~data & 0x80) {
-		if (spaceorb->idx) spaceorb_process_packet(spaceorb);
+		if (spaceorb->idx) spaceorb_process_packet(spaceorb, regs);
 		spaceorb->idx = 0;
 	}
 	if (spaceorb->idx < SPACEORB_MAX_LENGTH)
@@ -170,7 +174,7 @@ static int spaceorb_connect(struct serio *serio, struct serio_driver *drv)
 	spaceorb = kzalloc(sizeof(struct spaceorb), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!spaceorb || !input_dev)
-		goto fail1;
+		goto fail;
 
 	spaceorb->dev = input_dev;
 	snprintf(spaceorb->phys, sizeof(spaceorb->phys), "%s/input0", serio->phys);
@@ -181,9 +185,10 @@ static int spaceorb_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_SPACEORB;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
+	input_dev->private = spaceorb;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; i < 6; i++)
 		set_bit(spaceorb_buttons[i], input_dev->keybit);
@@ -195,17 +200,13 @@ static int spaceorb_connect(struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open(serio, drv);
 	if (err)
-		goto fail2;
+		goto fail;
 
-	err = input_register_device(spaceorb->dev);
-	if (err)
-		goto fail3;
-
+	input_register_device(spaceorb->dev);
 	return 0;
 
- fail3:	serio_close(serio);
- fail2:	serio_set_drvdata(serio, NULL);
- fail1:	input_free_device(input_dev);
+ fail:	serio_set_drvdata(serio, NULL);
+	input_free_device(input_dev);
 	kfree(spaceorb);
 	return err;
 }
@@ -243,7 +244,8 @@ static struct serio_driver spaceorb_drv = {
 
 static int __init spaceorb_init(void)
 {
-	return serio_register_driver(&spaceorb_drv);
+	serio_register_driver(&spaceorb_drv);
+	return 0;
 }
 
 static void __exit spaceorb_exit(void)

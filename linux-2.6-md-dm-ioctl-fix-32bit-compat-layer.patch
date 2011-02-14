@@ -1,0 +1,134 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Thu, 20 Dec 2007 14:41:51 +0100
+Subject: [md] dm ioctl: fix 32bit compat layer
+Message-id: 476A711F.1080900@redhat.com
+O-Subject: [RHEL 5.2 PATCH][REPOST] dm ioctl: some ioctl can fail with 32bit userspace and 64bit kernel
+Bugzilla: 360441
+
+RHEL5.2 dm: some dm ioctl can fail with 32bit userspace and 64bit kernel
+Resolves: rhbz#360441
+Patches are upstream in 2.6.24-rc,
+    commit 027d50f92ea26fd065aeb141ebfcbbbe010825e3
+    + compat part in -mm tree agk-dm-dm-ioctl-move-compat-code.patch
+
+Make size of dm_ioctl struct always 312 bytes on all supported
+architectures and use own compat ioctl handler.
+
+This change retains compatibility with already-compiled code because
+it uses an embedded offset to locate the payload that follows the
+structure.
+
+On 64-bit architectures there is no change at all; on 32-bit
+we are increasing the size of dm-ioctl from 308 to 312 bytes.
+
+Currently with 32-bit userspace / 64-bit kernel on x86_64
+some ioctls (including rename, message) are incorrectly rejected
+by the comparison against 'param + 1'.  This breaks userspace
+lvrename and multipath 'fail_if_no_path' changes, for example.
+
+Code can process both old and new structure, for compatibility
+reasons there is old compat header defines left, but have no real
+effect in code now.
+
+There is no functional kABI change but because of aligning change
+in dm_ioctl structure new padding part must be covered by
+__GENKSYMS__ define.
+
+Kernel with patch compiled and tested (reproducer script in bugzilla).
+
+diff --git a/drivers/md/dm-ioctl.c b/drivers/md/dm-ioctl.c
+index ff04338..c72a81c 100644
+--- a/drivers/md/dm-ioctl.c
++++ b/drivers/md/dm-ioctl.c
+@@ -15,6 +15,7 @@
+ #include <linux/slab.h>
+ #include <linux/dm-ioctl.h>
+ #include <linux/hdreg.h>
++#include <linux/compat.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -700,7 +701,7 @@ static int dev_rename(struct dm_ioctl *param, size_t param_size)
+ 	int r;
+ 	char *new_name = (char *) param + param->data_start;
+ 
+-	if (new_name < (char *) (param + 1) ||
++	if (new_name < (char *) param->data ||
+ 	    invalid_str(new_name, (void *) param + param_size)) {
+ 		DMWARN("Invalid new logical volume name supplied.");
+ 		return -EINVAL;
+@@ -726,7 +727,7 @@ static int dev_set_geometry(struct dm_ioctl *param, size_t param_size)
+ 	if (!md)
+ 		return -ENXIO;
+ 
+-	if (geostr < (char *) (param + 1) ||
++	if (geostr < (char *) param->data ||
+ 	    invalid_str(geostr, (void *) param + param_size)) {
+ 		DMWARN("Invalid geometry supplied.");
+ 		goto out;
+@@ -1233,7 +1234,7 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
+ 	if (r)
+ 		goto out;
+ 
+-	if (tmsg < (struct dm_target_msg *) (param + 1) ||
++	if (tmsg < (struct dm_target_msg *) param->data ||
+ 	    invalid_str(tmsg->message, (void *) param + param_size)) {
+ 		DMWARN("Invalid target message parameters.");
+ 		r = -EINVAL;
+@@ -1348,10 +1349,10 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl **param)
+ {
+ 	struct dm_ioctl tmp, *dmi;
+ 
+-	if (copy_from_user(&tmp, user, sizeof(tmp)))
++	if (copy_from_user(&tmp, user, sizeof(tmp) - sizeof(tmp.data)))
+ 		return -EFAULT;
+ 
+-	if (tmp.data_size < sizeof(tmp))
++	if (tmp.data_size < (sizeof(tmp) - sizeof(tmp.data)))
+ 		return -EINVAL;
+ 
+ 	dmi = (struct dm_ioctl *) vmalloc(tmp.data_size);
+@@ -1469,8 +1470,18 @@ static int ctl_ioctl(struct inode *inode, struct file *file,
+ 	return r;
+ }
+ 
++#ifdef CONFIG_COMPAT
++static long dm_compat_ctl_ioctl(struct file *file, uint command, ulong u)
++{
++	return (long)ctl_ioctl(NULL, file, command, (ulong) compat_ptr(u));
++}
++#else
++#define dm_compat_ctl_ioctl NULL
++#endif
++
+ static struct file_operations _ctl_fops = {
+ 	.ioctl	 = ctl_ioctl,
++	.compat_ioctl = dm_compat_ctl_ioctl,
+ 	.owner	 = THIS_MODULE,
+ };
+ 
+diff --git a/include/linux/dm-ioctl.h b/include/linux/dm-ioctl.h
+index c23f30c..d4004c6 100644
+--- a/include/linux/dm-ioctl.h
++++ b/include/linux/dm-ioctl.h
+@@ -131,6 +131,9 @@ struct dm_ioctl {
+ 	char name[DM_NAME_LEN];	/* device name */
+ 	char uuid[DM_UUID_LEN];	/* unique identifier for
+ 				 * the block device */
++#ifndef __GENKSYMS__
++	char data[7];		/* padding or data */
++#endif
+ };
+ 
+ /*
+@@ -286,8 +289,8 @@ typedef char ioctl_struct[308];
+ 
+ #define DM_VERSION_MAJOR	4
+ #define DM_VERSION_MINOR	11
+-#define DM_VERSION_PATCHLEVEL	0
+-#define DM_VERSION_EXTRA	"-ioctl (2006-09-14)"
++#define DM_VERSION_PATCHLEVEL	5
++#define DM_VERSION_EXTRA	"-ioctl (2007-12-12)"
+ 
+ /* Status bits */
+ #define DM_READONLY_FLAG	(1 << 0) /* In/Out */

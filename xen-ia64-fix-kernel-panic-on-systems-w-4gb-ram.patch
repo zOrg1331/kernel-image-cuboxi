@@ -1,0 +1,52 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Mon, 18 Feb 2008 17:20:19 -0500
+Subject: [xen] ia64: fix kernel panic on systems w/<=4GB RAM
+Message-id: 200802181720.19405.jwilson@redhat.com
+O-Subject: [RHEL5.2 PATCH] ia64 xen: fix kernel panic on systems w/<=4GB RAM
+Bugzilla: 431001
+
+Bug #431001: [RHEL5 U2] Kernel-xen Panic on CPU 1: ia64_fault, When trying to
+install a xen guest
+https://bugzilla.redhat.com/show_bug.cgi?id=431001
+
+Description
+-----------
+A combination of xen changes have increased the amount of memory that the xen
+hypervisor needs to save for itself to do its thing. Unfortunately, xen isn't
+particularly bright about knowing how much memory it will need, particularly on
+ia64. A system with only 2GB in rhts started hitting a kernel panic with recent
+kernels when installing a xen guest, which went away when dom0_mem=1G was
+specified. The basic problem is that the hypervisor didn't save enough memory
+for its own use, it allocated too much to dom0. The dom0 memory allocation
+routines basically have a fudge-factor for memory to reserve for the
+hypervisor, and the simple fix is to increase it a bit. Saving an extra 64MB
+prevented the panic on the machine in question, but still gave a bunch of 'bad
+mpa' messages when attempting to install a guest. Saving an extra 128MB results
+in no panic and no 'bad mpa' spew. Ugly, but so is ia64 xen in general... :)
+
+Upstream Status
+---------------
+Not there yet, will take it to the upstream ia64 xen list soon.
+
+This bug is marked as a Regression from 5.1 and it fixes a reproduceable kernel
+panic. Please ACK.
+
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/domain.c b/arch/ia64/xen/domain.c
+index f01b027..1ac0b94 100644
+--- a/arch/ia64/xen/domain.c
++++ b/arch/ia64/xen/domain.c
+@@ -1083,10 +1083,10 @@ static void calc_dom0_size(void)
+ 	 * for DMA and PCI mapping from the available domheap pages. The
+ 	 * chunk for DMA, PCI, etc., is a guestimate, as xen doesn't seem
+ 	 * to have a good idea of what those requirements might be ahead
+-	 * of time, calculated at 1MB per 4GB of system memory */
++	 * of time, calculated at 128MB + 1MB per 4GB of system memory */
+ 	domheap_pages = avail_domheap_pages();
+ 	p2m_pages = domheap_pages / PTRS_PER_PTE;
+-	spare_hv_pages = domheap_pages / 4096;
++	spare_hv_pages = 8192 + (domheap_pages / 4096);
+ 	max_dom0_size = (domheap_pages - (p2m_pages + spare_hv_pages))
+ 			 * PAGE_SIZE;
+ 	printk("Maximum permitted dom0 size: %luMB\n",

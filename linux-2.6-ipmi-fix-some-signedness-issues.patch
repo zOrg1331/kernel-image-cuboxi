@@ -1,0 +1,76 @@
+From: peterm@redhat.com <peterm@redhat.com>
+Date: Fri, 17 Apr 2009 12:09:45 -0400
+Subject: [ipmi] fix some signedness issues
+Message-id: 200904171609.n3HG9jVx013430@dhcp-100-18-167.bos.redhat.com
+O-Subject: [Patch RHEL 5.4][Part 3/4]IPMI:Fix some signedness issues
+Bugzilla: 475536
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Hello,
+
+This third patch fixes some signedness issues.
+
+commit 64a6f9500d8e8a8e1b1adc2120e56cc88df5727f
+
+Kernels were built in brew, all archs.
+Task info: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1757755
+
+Testing:  IBM and HP are testing the kernels.  Still waiting on test
+results.
+
+This resolves:
+
+Bug 475536 -  [LTC 5.4 FEAT] OpenIPMI driver update [201263]
+
+Regards,
+
+Peter
+
+diff --git a/drivers/char/ipmi/ipmi_si_intf.c b/drivers/char/ipmi/ipmi_si_intf.c
+index 5a8b3e4..d1a5607 100644
+--- a/drivers/char/ipmi/ipmi_si_intf.c
++++ b/drivers/char/ipmi/ipmi_si_intf.c
+@@ -1077,19 +1077,19 @@ static char          *si_type[SI_MAX_PARMS];
+ #define MAX_SI_TYPE_STR 30
+ static char          si_type_str[MAX_SI_TYPE_STR];
+ static unsigned long addrs[SI_MAX_PARMS];
+-static int num_addrs;
++static unsigned int num_addrs;
+ static unsigned int  ports[SI_MAX_PARMS];
+-static int num_ports;
++static unsigned int num_ports;
+ static int           irqs[SI_MAX_PARMS];
+-static int num_irqs;
++static unsigned int num_irqs;
+ static int           regspacings[SI_MAX_PARMS];
+-static int num_regspacings;
++static unsigned int num_regspacings;
+ static int           regsizes[SI_MAX_PARMS];
+-static int num_regsizes;
++static unsigned int num_regsizes;
+ static int           regshifts[SI_MAX_PARMS];
+-static int num_regshifts;
++static unsigned int num_regshifts;
+ static int slave_addrs[SI_MAX_PARMS];
+-static int num_slave_addrs;
++static unsigned int num_slave_addrs;
+ 
+ #define IPMI_IO_ADDR_SPACE  0
+ #define IPMI_MEM_ADDR_SPACE 1
+@@ -1111,12 +1111,12 @@ MODULE_PARM_DESC(type, "Defines the type of each interface, each"
+ 		 " interface separated by commas.  The types are 'kcs',"
+ 		 " 'smic', and 'bt'.  For example si_type=kcs,bt will set"
+ 		 " the first interface to kcs and the second to bt");
+-module_param_array(addrs, long, &num_addrs, 0);
++module_param_array(addrs, ulong, &num_addrs, 0);
+ MODULE_PARM_DESC(addrs, "Sets the memory address of each interface, the"
+ 		 " addresses separated by commas.  Only use if an interface"
+ 		 " is in memory.  Otherwise, set it to zero or leave"
+ 		 " it blank.");
+-module_param_array(ports, int, &num_ports, 0);
++module_param_array(ports, uint, &num_ports, 0);
+ MODULE_PARM_DESC(ports, "Sets the port address of each interface, the"
+ 		 " addresses separated by commas.  Only use if an interface"
+ 		 " is a port.  Otherwise, set it to zero or leave"

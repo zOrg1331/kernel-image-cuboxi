@@ -1,0 +1,774 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:40 +1100
+Subject: [ipsec] add support for combined mode algorithms
+Message-id: E1JBNlU-0001Cf-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 25/32] [IPSEC]: Add support for combined mode algorithms
+Bugzilla: 253051
+
+[IPSEC]: Add support for combined mode algorithms
+
+This patch adds support for combined mode algorithms with GCM being the
+first algorithm supported.
+
+Combined mode algorithms can be added through the xfrm_user interface
+using the new algorithm payload type XFRMA_ALG_AEAD.  Each algorithms
+is identified by its name and the ICV length.
+
+For the purposes of matching algorithms in xfrm_tmpl structures, combined
+mode algorithms are occupy the same name space as encryption algorithms.
+This is in line with how they are negotiated using IKE.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/linux/pfkeyv2.h b/include/linux/pfkeyv2.h
+index 636e0fb..fc2c5ba 100644
+--- a/include/linux/pfkeyv2.h
++++ b/include/linux/pfkeyv2.h
+@@ -297,6 +297,12 @@ struct sadb_x_sec_ctx {
+ #define SADB_X_EALG_BLOWFISHCBC		7
+ #define SADB_EALG_NULL			11
+ #define SADB_X_EALG_AESCBC		12
++#define SADB_X_EALG_AES_CCM_ICV8	14
++#define SADB_X_EALG_AES_CCM_ICV12	15
++#define SADB_X_EALG_AES_CCM_ICV16	16
++#define SADB_X_EALG_AES_GCM_ICV8	18
++#define SADB_X_EALG_AES_GCM_ICV12	19
++#define SADB_X_EALG_AES_GCM_ICV16	20
+ #define SADB_EALG_MAX                   253 /* last EALG */
+ /* private allocations should use 249-255 (RFC2407) */
+ #define SADB_X_EALG_SERPENTCBC  252     /* draft-ietf-ipsec-ciph-aes-cbc-00 */
+diff --git a/include/linux/xfrm.h b/include/linux/xfrm.h
+index 46a15c7..bd49a97 100644
+--- a/include/linux/xfrm.h
++++ b/include/linux/xfrm.h
+@@ -96,6 +96,13 @@ struct xfrm_algo {
+ 	char	alg_key[0];
+ };
+ 
++struct xfrm_algo_aead {
++	char	alg_name[64];
++	int	alg_key_len;	/* in bits */
++	int	alg_icv_len;	/* in bits */
++	char	alg_key[0];
++};
++
+ struct xfrm_stats {
+ 	__u32	replay_window;
+ 	__u32	replay;
+@@ -232,6 +239,7 @@ enum xfrm_attr_type_t {
+ 	XFRMA_REPLAY_VAL,
+ 	XFRMA_REPLAY_THRESH,
+ 	XFRMA_ETIMER_THRESH,
++	XFRMA_ALG_AEAD = 18,	/* struct xfrm_algo_aead */
+ 	__XFRMA_MAX
+ 
+ #define XFRMA_MAX (__XFRMA_MAX - 1)
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index ae0107b..0219b17 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -870,6 +870,10 @@ static inline int xfrm_state_kern(struct xfrm_state *x)
+ /*
+  * xfrm algorithm information
+  */
++struct xfrm_algo_aead_info {
++	u16 icv_truncbits;
++};
++
+ struct xfrm_algo_auth_info {
+ 	u16 icv_truncbits;
+ 	u16 icv_fullbits;
+@@ -899,6 +903,7 @@ struct xfrm_nalgo_desc {
+ 	char *name;
+ 	u8 available:1;
+ 	union {
++		struct xfrm_algo_aead_info aead;
+ 		struct xfrm_algo_auth_info auth;
+ 		struct xfrm_algo_encr_info encr;
+ 		struct xfrm_algo_comp_info comp;
+@@ -1032,8 +1037,12 @@ extern struct xfrm_algo_desc *xfrm_calg_get_byid(int alg_id);
+ extern struct xfrm_algo_desc *xfrm_aalg_get_byname(char *name, int probe);
+ extern struct xfrm_algo_desc *xfrm_ealg_get_byname(char *name, int probe);
+ extern struct xfrm_algo_desc *xfrm_calg_get_byname(char *name, int probe);
++extern struct xfrm_algo_desc *xfrm_aead_get_byname(char *name, int icv_len,
++						   int probe);
+ extern struct xfrm_nalgo_desc *xfrm_naalg_get_byname(char *name, int probe);
+ extern struct xfrm_nalgo_desc *xfrm_nealg_get_byname(char *name, int probe);
++extern struct xfrm_nalgo_desc *xfrm_naead_get_byname(char *name, int icv_len,
++						     int probe);
+ 
+ struct crypto_tfm;
+ typedef void (icv_update_fn_t)(struct crypto_tfm *, struct scatterlist *, unsigned int);
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index a2a6294..0dd43a9 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -422,9 +422,9 @@ static void esp_destroy(struct xfrm_state *x)
+ 	kfree(esp);
+ }
+ 
+-static int esp_init_state(struct xfrm_state *x)
++static int esp_init_authenc(struct xfrm_state *x)
+ {
+-	struct esp_data *esp = NULL;
++	struct esp_data *esp = x->data;
+ 	struct crypto_aead *aead;
+ 	struct crypto_authenc_key_param *param;
+ 	struct xfrm_nalgo_desc *aalg_desc;
+@@ -436,30 +436,27 @@ static int esp_init_state(struct xfrm_state *x)
+ 	unsigned int keylen;
+ 	int err;
+ 
++	err = -EINVAL;
+ 	if (x->ealg == NULL)
+-		return -EINVAL;
++		goto error;
+ 
++	err = -ENOENT;
+ 	aalg_desc = NULL;
+ 	if (x->aalg) {
+ 		aalg_desc = xfrm_naalg_get_byname(x->aalg->alg_name, 1);
+ 		if (!aalg_desc)
+-			return -ENOENT;
++			goto error;
+ 	}
+ 
+ 	ealg_desc = xfrm_nealg_get_byname(x->ealg->alg_name, 1);
+ 	if (!ealg_desc)
+-		return -ENOENT;
++		goto error;
+ 
++	err = -ENAMETOOLONG;
+ 	if (snprintf(authenc_name, CRYPTO_MAX_ALG_NAME, "authenc(%s,%s)",
+ 		     aalg_desc ? aalg_desc->name : "digest_null",
+ 		     ealg_desc->name) >= CRYPTO_MAX_ALG_NAME)
+-		return -ENAMETOOLONG;
+-
+-	esp = kzalloc(sizeof(*esp), GFP_KERNEL);
+-	if (esp == NULL)
+-		return -ENOMEM;
+-
+-	x->data = esp;
++		goto error;
+ 
+ 	aead = crypto_alloc_aead(authenc_name, 0,
+ 				 strcmp(ealg_desc->name, x->ealg->alg_name) ?
+@@ -504,8 +501,6 @@ static int esp_init_state(struct xfrm_state *x)
+ 			goto free_key;
+ 	}
+ 
+-	esp->padlen = 0;
+-
+ 	param->enckeylen = cpu_to_be32((x->ealg->alg_key_len + 7) / 8);
+ 	memcpy(p, x->ealg->alg_key, (x->ealg->alg_key_len + 7) / 8);
+ 
+@@ -514,9 +509,61 @@ static int esp_init_state(struct xfrm_state *x)
+ free_key:
+ 	kfree(key);
+ 
++error:
++	return err;
++}
++
++static int esp_init_aead(struct xfrm_state *x)
++{
++	struct xfrm_algo_aead *aead_algo;
++	struct esp_data *esp = x->data;
++	struct crypto_aead *aead;
++	int err;
++
++	if (!xfrm_naead_get_byname(x->ealg->alg_name, 0, 1))
++		return esp_init_authenc(x);
++
++	aead_algo = (struct xfrm_algo_aead *)x->ealg;
++	aead = crypto_alloc_aead(aead_algo->alg_name, 0, 0);
++	err = PTR_ERR(aead);
++	if (IS_ERR(aead))
++		goto error;
++
++	esp->aead = aead;
++
++	err = crypto_aead_setkey(aead, aead_algo->alg_key,
++				 (aead_algo->alg_key_len + 7) / 8);
++	if (err)
++		goto error;
++
++	err = crypto_aead_setauthsize(aead, aead_algo->alg_icv_len / 8);
++	if (err)
++		goto error;
++
++error:
++	return err;
++}
++
++static int esp_init_state(struct xfrm_state *x)
++{
++	struct esp_data *esp;
++	struct crypto_aead *aead;
++	int err;
++
++	esp = kzalloc(sizeof(*esp), GFP_KERNEL);
++	if (esp == NULL)
++		return -ENOMEM;
++
++	x->data = esp;
++
++	err = esp_init_aead(x);
+ 	if (err)
+ 		goto error;
+ 
++	aead = esp->aead;
++
++	esp->padlen = 0;
++
+ 	x->props.header_len = sizeof(struct ip_esp_hdr) +
+ 			      crypto_aead_ivsize(aead);
+ 	if (x->props.mode)
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index c0185a9..653bd97 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -388,9 +388,9 @@ static void esp6_destroy(struct xfrm_state *x)
+ 	kfree(esp);
+ }
+ 
+-static int esp6_init_state(struct xfrm_state *x)
++static int esp_init_authenc(struct xfrm_state *x)
+ {
+-	struct esp_data *esp = NULL;
++	struct esp_data *esp = x->data;
+ 	struct crypto_aead *aead;
+ 	struct crypto_authenc_key_param *param;
+ 	struct xfrm_nalgo_desc *aalg_desc;
+@@ -402,33 +402,27 @@ static int esp6_init_state(struct xfrm_state *x)
+ 	unsigned int keylen;
+ 	int err;
+ 
++	err = -EINVAL;
+ 	if (x->ealg == NULL)
+-		return -EINVAL;
+-
+-	if (x->encap)
+-		return -EINVAL;
++		goto error;
+ 
++	err = -ENOENT;
+ 	aalg_desc = NULL;
+ 	if (x->aalg) {
+ 		aalg_desc = xfrm_naalg_get_byname(x->aalg->alg_name, 1);
+ 		if (!aalg_desc)
+-			return -ENOENT;
++			goto error;
+ 	}
+ 
+ 	ealg_desc = xfrm_nealg_get_byname(x->ealg->alg_name, 1);
+ 	if (!ealg_desc)
+-		return -ENOENT;
++		goto error;
+ 
++	err = -ENAMETOOLONG;
+ 	if (snprintf(authenc_name, CRYPTO_MAX_ALG_NAME, "authenc(%s,%s)",
+ 		     x->aalg ? x->aalg->alg_name : "digest_null",
+ 		     x->ealg->alg_name) >= CRYPTO_MAX_ALG_NAME)
+-		return -ENAMETOOLONG;
+-
+-	esp = kzalloc(sizeof(*esp), GFP_KERNEL);
+-	if (esp == NULL)
+-		return -ENOMEM;
+-
+-	x->data = esp;
++		goto error;
+ 
+ 	aead = crypto_alloc_aead(authenc_name, 0,
+ 				 strcmp(ealg_desc->name, x->ealg->alg_name) ?
+@@ -472,8 +466,6 @@ static int esp6_init_state(struct xfrm_state *x)
+ 			goto free_key;
+ 	}
+ 
+-	esp->padlen = 0;
+-
+ 	param->enckeylen = cpu_to_be32((x->ealg->alg_key_len + 7) / 8);
+ 	memcpy(p, x->ealg->alg_key, (x->ealg->alg_key_len + 7) / 8);
+ 
+@@ -482,9 +474,64 @@ static int esp6_init_state(struct xfrm_state *x)
+ free_key:
+ 	kfree(key);
+ 
++error:
++	return err;
++}
++
++static int esp_init_aead(struct xfrm_state *x)
++{
++	struct xfrm_algo_aead *aead_algo;
++	struct esp_data *esp = x->data;
++	struct crypto_aead *aead;
++	int err;
++
++	if (!xfrm_naead_get_byname(x->ealg->alg_name, 0, 1))
++		return esp_init_authenc(x);
++
++	aead_algo = (struct xfrm_algo_aead *)x->ealg;
++	aead = crypto_alloc_aead(aead_algo->alg_name, 0, 0);
++	err = PTR_ERR(aead);
++	if (IS_ERR(aead))
++		goto error;
++
++	esp->aead = aead;
++
++	err = crypto_aead_setkey(aead, aead_algo->alg_key,
++				 (aead_algo->alg_key_len + 7) / 8);
++	if (err)
++		goto error;
++
++	err = crypto_aead_setauthsize(aead, aead_algo->alg_icv_len / 8);
+ 	if (err)
+ 		goto error;
+ 
++error:
++	return err;
++}
++
++static int esp6_init_state(struct xfrm_state *x)
++{
++	struct esp_data *esp;
++	struct crypto_aead *aead;
++	int err;
++
++	if (x->encap)
++		return -EINVAL;
++
++	esp = kzalloc(sizeof(*esp), GFP_KERNEL);
++	if (esp == NULL)
++		return -ENOMEM;
++
++	x->data = esp;
++
++	err = esp_init_aead(x);
++	if (err)
++		goto error;
++
++	aead = esp->aead;
++
++	esp->padlen = 0;
++
+ 	x->props.header_len = sizeof(struct ipv6_esp_hdr) +
+ 			      crypto_aead_ivsize(aead);
+ 	if (x->props.mode)
+diff --git a/net/xfrm/xfrm_algo.c b/net/xfrm/xfrm_algo.c
+index f279617..ca87d54 100644
+--- a/net/xfrm/xfrm_algo.c
++++ b/net/xfrm/xfrm_algo.c
+@@ -28,6 +28,57 @@
+  * that instantiated crypto transforms have correct parameters for IPsec
+  * purposes.
+  */
++static struct xfrm_nalgo_desc aead_list[] = {
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 64,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV8,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 96,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV12,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV16,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++};
++
+ static struct xfrm_nalgo_desc aalg_list[] = {
+ {
+ 	.name = "hmac(digest_null)",
+@@ -315,6 +366,11 @@ static struct xfrm_nalgo_desc calg_list[] = {
+ },
+ };
+ 
++static inline int aead_entries(void)
++{
++	return ARRAY_SIZE(aead_list);
++}
++
+ static inline int aalg_entries(void)
+ {
+ 	return ARRAY_SIZE(aalg_list);
+@@ -432,6 +488,35 @@ struct xfrm_algo_desc *xfrm_calg_get_byname(char *name, int probe)
+ }
+ EXPORT_SYMBOL_GPL(xfrm_calg_get_byname);
+ 
++struct xfrm_algo_desc *xfrm_aead_get_byname(char *name, int icv_len, int probe)
++{
++	struct xfrm_nalgo_desc *list = aead_list;
++	int entries = aead_entries();
++	int i;
++
++	if (!name)
++		return NULL;
++
++	for (i = 0; i < entries; i++) {
++		if (strcmp(name, list[i].name))
++			continue;
++
++		if (icv_len && icv_len != list[i].uinfo.aead.icv_truncbits)
++			continue;
++
++		if (list[i].available)
++			return (struct xfrm_algo_desc *)&list[i];
++
++		if (!probe)
++			break;
++
++		list[i].available = 1;
++		return (struct xfrm_algo_desc *)&list[i];
++	}
++	return NULL;
++}
++EXPORT_SYMBOL_GPL(xfrm_aead_get_byname);
++
+ struct xfrm_algo_desc *xfrm_aalg_get_byidx(unsigned int idx)
+ {
+ 	if (idx >= aalg_entries())
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+index a951d99..1fa7872 100644
+--- a/net/xfrm/xfrm_nalgo.c
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -22,6 +22,57 @@
+  * that instantiated crypto transforms have correct parameters for IPsec
+  * purposes.
+  */
++static struct xfrm_nalgo_desc aead_list[] = {
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 64,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV8,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 96,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV12,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "rfc4309(ccm(aes))",
++
++	.uinfo = {
++		.aead = {
++			.icv_truncbits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AES_CCM_ICV16,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++};
++
+ static struct xfrm_nalgo_desc aalg_list[] = {
+ {
+ 	.name = "hmac(digest_null)",
+@@ -309,6 +360,11 @@ static struct xfrm_nalgo_desc calg_list[] = {
+ },
+ };
+ 
++static inline int aead_entries(void)
++{
++	return ARRAY_SIZE(aead_list);
++}
++
+ static inline int aalg_entries(void)
+ {
+ 	return ARRAY_SIZE(aalg_list);
+@@ -331,6 +387,13 @@ struct xfrm_algo_list {
+ 	u32 mask;
+ };
+ 
++static const struct xfrm_algo_list xfrm_aead_list = {
++	.algs = aead_list,
++	.entries = ARRAY_SIZE(aead_list),
++	.type = NCRYPTO_ALG_TYPE_AEAD,
++	.mask = NCRYPTO_ALG_TYPE_MASK,
++};
++
+ static const struct xfrm_algo_list xfrm_aalg_list = {
+ 	.algs = aalg_list,
+ 	.entries = ARRAY_SIZE(aalg_list),
+@@ -397,4 +460,33 @@ struct xfrm_nalgo_desc *xfrm_nealg_get_byname(char *name, int probe)
+ }
+ EXPORT_SYMBOL_GPL(xfrm_nealg_get_byname);
+ 
++struct xfrm_aead_name {
++	const char *name;
++	int icvbits;
++};
++
++static int xfrm_aead_name_match(const struct xfrm_nalgo_desc *entry,
++				const void *data)
++{
++	const struct xfrm_aead_name *aead = data;
++	const char *name = aead->name;
++
++	return (!aead->icvbits ||
++		aead->icvbits == entry->uinfo.aead.icv_truncbits) && name &&
++	       !strcmp(name, entry->name);
++}
++
++struct xfrm_nalgo_desc *xfrm_naead_get_byname(char *name, int icv_len,
++					      int probe)
++{
++	struct xfrm_aead_name data = {
++		.name = name,
++		.icvbits = icv_len,
++	};
++
++	return xfrm_find_algo(&xfrm_aead_list, xfrm_aead_name_match, &data,
++			      probe);
++}
++EXPORT_SYMBOL_GPL(xfrm_naead_get_byname);
++
+ MODULE_LICENSE("GPL");
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index a7d47e1..ff38212 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -73,6 +73,29 @@ static int verify_one_alg(struct rtattr **xfrma, enum xfrm_attr_type_t type)
+ 	return 0;
+ }
+ 
++static int verify_aead(struct rtattr **xfrma)
++{
++	struct rtattr *rt = xfrma[XFRMA_ALG_AEAD - 1];
++	struct xfrm_algo_aead *algp;
++	int len;
++
++	if (!rt)
++		return 0;
++
++	len = (rt->rta_len - sizeof(*rt)) - sizeof(*algp);
++	if (len < 0)
++		return -EINVAL;
++
++	algp = RTA_DATA(rt);
++
++	len -= (algp->alg_key_len + 7U) / 8; 
++	if (len < 0)
++		return -EINVAL;
++
++	algp->alg_name[CRYPTO_MAX_ALG_NAME - 1] = '\0';
++	return 0;
++}
++
+ static int verify_encap_tmpl(struct rtattr **xfrma)
+ {
+ 	struct rtattr *rt = xfrma[XFRMA_ENCAP - 1];
+@@ -138,20 +161,28 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
+ 	switch (p->id.proto) {
+ 	case IPPROTO_AH:
+ 		if (!xfrma[XFRMA_ALG_AUTH-1]	||
++		    xfrma[XFRMA_ALG_AEAD-1]	||
+ 		    xfrma[XFRMA_ALG_CRYPT-1]	||
+ 		    xfrma[XFRMA_ALG_COMP-1])
+ 			goto out;
+ 		break;
+ 
+ 	case IPPROTO_ESP:
+-		if ((!xfrma[XFRMA_ALG_AUTH-1] &&
+-		     !xfrma[XFRMA_ALG_CRYPT-1])	||
+-		    xfrma[XFRMA_ALG_COMP-1])
++		if (xfrma[XFRMA_ALG_COMP-1])
++			goto out;
++		if (!xfrma[XFRMA_ALG_AUTH-1] &&
++		    !xfrma[XFRMA_ALG_CRYPT-1] &&
++		    !xfrma[XFRMA_ALG_AEAD-1])
++			goto out;
++		if ((xfrma[XFRMA_ALG_AUTH-1] ||
++		     xfrma[XFRMA_ALG_CRYPT-1]) &&
++		    xfrma[XFRMA_ALG_AEAD-1])
+ 			goto out;
+ 		break;
+ 
+ 	case IPPROTO_COMP:
+ 		if (!xfrma[XFRMA_ALG_COMP-1]	||
++		    xfrma[XFRMA_ALG_AEAD-1]	||
+ 		    xfrma[XFRMA_ALG_AUTH-1]	||
+ 		    xfrma[XFRMA_ALG_CRYPT-1])
+ 			goto out;
+@@ -161,6 +192,8 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
+ 		goto out;
+ 	};
+ 
++	if ((err = verify_aead(xfrma)))
++		goto out;
+ 	if ((err = verify_one_alg(xfrma, XFRMA_ALG_AUTH)))
+ 		goto out;
+ 	if ((err = verify_one_alg(xfrma, XFRMA_ALG_CRYPT)))
+@@ -188,6 +221,34 @@ out:
+ 	return err;
+ }
+ 
++static int attach_aead(struct xfrm_algo_aead **algpp, u8 *props,
++		       struct rtattr *rta)
++{
++	struct xfrm_algo_aead *p, *ualg;
++	struct xfrm_algo_desc *algo;
++	int len;
++
++	if (!rta)
++		return 0;
++
++	ualg = RTA_DATA(rta);
++
++	algo = xfrm_aead_get_byname(ualg->alg_name, ualg->alg_icv_len, 1);
++	if (!algo)
++		return -ENOSYS;
++	*props = algo->desc.sadb_alg_id;
++
++	len = sizeof(*ualg) + (ualg->alg_key_len + 7U) / 8;
++	p = kmalloc(len , GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	memcpy(p, ualg, len);
++	strcpy(p->alg_name, algo->name);
++	*algpp = p;
++	return 0;
++}
++
+ static int attach_one_algo(struct xfrm_algo **algpp, u8 *props,
+ 			   struct xfrm_algo_desc *(*get_byname)(char *, int),
+ 			   struct rtattr *u_arg)
+@@ -334,6 +395,9 @@ static struct xfrm_state *xfrm_state_construct(struct xfrm_usersa_info *p,
+ 
+ 	copy_from_user_state(x, p);
+ 
++	if ((err = attach_aead((struct xfrm_algo_aead **)&x->ealg,
++			       &x->props.ealgo, xfrma[XFRMA_ALG_AEAD - 1])))
++		goto error;
+ 	if ((err = attach_one_algo(&x->aalg, &x->props.aalgo,
+ 				   xfrm_aalg_get_byname,
+ 				   xfrma[XFRMA_ALG_AUTH-1])))
+@@ -504,9 +568,18 @@ static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
+ 	if (x->aalg)
+ 		RTA_PUT(skb, XFRMA_ALG_AUTH,
+ 			sizeof(*(x->aalg))+(x->aalg->alg_key_len+7)/8, x->aalg);
+-	if (x->ealg)
+-		RTA_PUT(skb, XFRMA_ALG_CRYPT,
+-			sizeof(*(x->ealg))+(x->ealg->alg_key_len+7)/8, x->ealg);
++	if (x->ealg) {
++		if (xfrm_aead_get_byname(x->ealg->alg_name, 0, 0)) {
++			struct xfrm_algo_aead *aead = (void *)x->ealg;
++
++			RTA_PUT(skb, XFRMA_ALG_AEAD,
++				sizeof(*aead) + (aead->alg_key_len + 7) / 8,
++				aead);
++		} else 
++			RTA_PUT(skb, XFRMA_ALG_CRYPT,
++				sizeof(*x->ealg) +
++				(x->ealg->alg_key_len + 7) / 8, x->ealg);
++	}
+ 	if (x->calg)
+ 		RTA_PUT(skb, XFRMA_ALG_COMP, sizeof(*(x->calg)), x->calg);
+ 
+@@ -1634,8 +1707,16 @@ static int inline xfrm_sa_len(struct xfrm_state *x)
+ 	int l = 0;
+ 	if (x->aalg)
+ 		l += RTA_SPACE(sizeof(*x->aalg) + (x->aalg->alg_key_len+7)/8);
+-	if (x->ealg)
+-		l += RTA_SPACE(sizeof(*x->ealg) + (x->ealg->alg_key_len+7)/8);
++	if (x->ealg) {
++		if (xfrm_aead_get_byname(x->ealg->alg_name, 0, 0)) {
++			struct xfrm_algo_aead *aead = (void *)x->ealg;
++
++			l += RTA_SPACE(sizeof(*aead) +
++			     (aead->alg_key_len + 7) / 8);
++		} else
++			l += RTA_SPACE(sizeof(*x->ealg) +
++			     (x->ealg->alg_key_len + 7) / 8);
++	}
+ 	if (x->calg)
+ 		l += RTA_SPACE(sizeof(*x->calg));
+ 	if (x->encap)
+@@ -1685,9 +1766,18 @@ static int xfrm_notify_sa(struct xfrm_state *x, struct km_event *c)
+ 	if (x->aalg)
+ 		RTA_PUT(skb, XFRMA_ALG_AUTH,
+ 			sizeof(*(x->aalg))+(x->aalg->alg_key_len+7)/8, x->aalg);
+-	if (x->ealg)
+-		RTA_PUT(skb, XFRMA_ALG_CRYPT,
+-			sizeof(*(x->ealg))+(x->ealg->alg_key_len+7)/8, x->ealg);
++	if (x->ealg) {
++		if (xfrm_aead_get_byname(x->ealg->alg_name, 0, 0)) {
++			struct xfrm_algo_aead *aead = (void *)x->ealg;
++
++			RTA_PUT(skb, XFRMA_ALG_AEAD,
++				sizeof(*aead) + (aead->alg_key_len + 7) / 8,
++				aead);
++		} else 
++			RTA_PUT(skb, XFRMA_ALG_CRYPT,
++				sizeof(*x->ealg) +
++				(x->ealg->alg_key_len + 7) / 8, x->ealg);
++	}
+ 	if (x->calg)
+ 		RTA_PUT(skb, XFRMA_ALG_COMP, sizeof(*(x->calg)), x->calg);
+ 

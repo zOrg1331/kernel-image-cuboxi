@@ -1,0 +1,142 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 25 Nov 2010 22:40:09 -0500
+Subject: [net] inet_diag: make sure we run audited bytecode
+Message-id: <20101125224009.GA2810@psychotron.redhat.com>
+Patchwork-id: 29632
+O-Subject: [RHEL5.6 patch] BZ651267 CVE-2010-3880 inet_diag: Make sure we
+	actually run the same bytecode we audited.
+Bugzilla: 651267
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ651267
+https://bugzilla.redhat.com/show_bug.cgi?id=651267
+
+Description:
+We were using nlmsg_find_attr() to look up the bytecode by attribute when
+auditing, but then just using the first attribute when actually running
+bytecode. So, if we received a message with two attribute elements, where only
+the second had type INET_DIAG_REQ_BYTECODE, we would validate and run different
+bytecode strings.
+
+Fix this by consistently using nlmsg_find_attr everywhere.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=22e76c849d505d87c5ecf3d3e6742a65f0ff4860
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=6b8c92ba07287578718335ce409de8e8d7217e40
++ seventh hunk of following commit (include net/netlink.h):
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=dc5fc579b90ed0a9a4e55b0218cdbaf0a8cf2e67
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2914809
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/net/netlink.h b/include/net/netlink.h
+index d200b99..e033493 100644
+--- a/include/net/netlink.h
++++ b/include/net/netlink.h
+@@ -360,7 +360,7 @@ static inline int nlmsg_parse(struct nlmsghdr *nlh, int hdrlen,
+  *
+  * Returns the first attribute which matches the specified type.
+  */
+-static inline struct nlattr *nlmsg_find_attr(struct nlmsghdr *nlh,
++static inline struct nlattr *nlmsg_find_attr(const struct nlmsghdr *nlh,
+ 					     int hdrlen, int attrtype)
+ {
+ 	return nla_find(nlmsg_attrdata(nlh, hdrlen),
+diff --git a/net/ipv4/inet_diag.c b/net/ipv4/inet_diag.c
+index 492858e..dd43a67 100644
+--- a/net/ipv4/inet_diag.c
++++ b/net/ipv4/inet_diag.c
+@@ -27,6 +27,7 @@
+ #include <net/inet_hashtables.h>
+ #include <net/inet_timewait_sock.h>
+ #include <net/inet6_hashtables.h>
++#include <net/netlink.h>
+ 
+ #include <linux/inet.h>
+ #include <linux/stddef.h>
+@@ -459,9 +460,11 @@ static int inet_csk_diag_dump(struct sock *sk,
+ {
+ 	struct inet_diag_req *r = NLMSG_DATA(cb->nlh);
+ 
+-	if (cb->nlh->nlmsg_len > 4 + NLMSG_SPACE(sizeof(*r))) {
++	if (nlmsg_attrlen(cb->nlh, sizeof(*r))) {
+ 		struct inet_diag_entry entry;
+-		struct rtattr *bc = (struct rtattr *)(r + 1);
++		const struct nlattr *bc = nlmsg_find_attr(cb->nlh,
++							  sizeof(*r),
++							  INET_DIAG_REQ_BYTECODE);
+ 		struct inet_sock *inet = inet_sk(sk);
+ 
+ 		entry.family = sk->sk_family;
+@@ -481,7 +484,7 @@ static int inet_csk_diag_dump(struct sock *sk,
+ 		entry.dport = ntohs(inet->dport);
+ 		entry.userlocks = sk->sk_userlocks;
+ 
+-		if (!inet_diag_bc_run(RTA_DATA(bc), RTA_PAYLOAD(bc), &entry))
++		if (!inet_diag_bc_run(nla_data(bc), nla_len(bc), &entry))
+ 			return 0;
+ 	}
+ 
+@@ -496,9 +499,11 @@ static int inet_twsk_diag_dump(struct inet_timewait_sock *tw,
+ {
+ 	struct inet_diag_req *r = NLMSG_DATA(cb->nlh);
+ 
+-	if (cb->nlh->nlmsg_len > 4 + NLMSG_SPACE(sizeof(*r))) {
++	if (nlmsg_attrlen(cb->nlh, sizeof(*r))) {
+ 		struct inet_diag_entry entry;
+-		struct rtattr *bc = (struct rtattr *)(r + 1);
++		const struct nlattr *bc = nlmsg_find_attr(cb->nlh,
++							  sizeof(*r),
++							  INET_DIAG_REQ_BYTECODE);
+ 
+ 		entry.family = tw->tw_family;
+ #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+@@ -517,7 +522,7 @@ static int inet_twsk_diag_dump(struct inet_timewait_sock *tw,
+ 		entry.dport = ntohs(tw->tw_dport);
+ 		entry.userlocks = 0; 
+ 
+-		if (!inet_diag_bc_run(RTA_DATA(bc), RTA_PAYLOAD(bc), &entry))
++		if (!inet_diag_bc_run(nla_data(bc), nla_len(bc), &entry))
+ 			return 0;
+ 	}
+ 
+@@ -587,7 +592,7 @@ static int inet_diag_dump_reqs(struct sk_buff *skb, struct sock *sk,
+ 	struct inet_diag_req *r = NLMSG_DATA(cb->nlh);
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	struct listen_sock *lopt;
+-	struct rtattr *bc = NULL;
++	const struct nlattr *bc = NULL;
+ 	struct inet_sock *inet = inet_sk(sk);
+ 	int j, s_j;
+ 	int reqnum, s_reqnum;
+@@ -607,8 +612,9 @@ static int inet_diag_dump_reqs(struct sk_buff *skb, struct sock *sk,
+ 	if (!lopt || !lopt->qlen)
+ 		goto out;
+ 
+-	if (cb->nlh->nlmsg_len > 4 + NLMSG_SPACE(sizeof(*r))) {
+-		bc = (struct rtattr *)(r + 1);
++	if (nlmsg_attrlen(cb->nlh, sizeof(*r))) {
++		bc = nlmsg_find_attr(cb->nlh, sizeof(*r),
++				     INET_DIAG_REQ_BYTECODE);
+ 		entry.sport = inet->num;
+ 		entry.userlocks = sk->sk_userlocks;
+ 	}
+@@ -641,8 +647,8 @@ static int inet_diag_dump_reqs(struct sk_buff *skb, struct sock *sk,
+ 					&ireq->rmt_addr;
+ 				entry.dport = ntohs(ireq->rmt_port);
+ 
+-				if (!inet_diag_bc_run(RTA_DATA(bc),
+-						    RTA_PAYLOAD(bc), &entry))
++				if (!inet_diag_bc_run(nla_data(bc),
++						      nla_len(bc), &entry))
+ 					continue;
+ 			}
+ 

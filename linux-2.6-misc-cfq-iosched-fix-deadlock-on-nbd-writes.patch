@@ -1,0 +1,84 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Mon, 1 Oct 2007 15:44:35 -0400
+Subject: [misc] cfq-iosched: fix deadlock on nbd writes
+Message-id: 47014E23.7080007@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] cfq-iosched: fix deadlock on nbd writes
+Bugzilla: 241540
+
+Jarod Wilson wrote:
+> Bugzilla #241540: NBD module in RHEL5 deadlocks (regression)
+> https://bugzilla.redhat.com/show_bug.cgi?id=241540
+>
+> Description:
+> ------------
+> Writes to a network block device deadlock under the cfq I/O scheduler.
+> The problem is actually a generic cfq problem, but has thus far only
+> been noticed/reproduced with nbd + cfq. It can be easily reproduced by
+> simply attaching a system to a network block device and dd'ing /dev/zero
+> directly to the device:
+>
+> dd if=/dev/zero of=/dev/nbd0
+>
+> Almost immediately when write operations start, the client deadlocks. If
+> the I/O scheduler on the client is changed from cfq to noop, traffic
+> picks up again. Flip back to cfq, and the deadlock happens again.
+>
+> The latest upstream kernel has no such problems, and git-bisection
+> isolated the fix to a changeset between 2.6.21 and 2.6.22-rc1:
+>
+> http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=6d048f5310aa2dda2b5acd947eab3598c25e269f
+>
+> However, that commit rolls a ton of junk into one commit, most of the
+> 700+ lines of which are not required to address this bug. In fact, only
+> about 4 or 5 lines of change are needed.
+>
+> Trial and error, plus some strategically-placed printk's revealed that
+> the problem is that the nbd driver quickly gets in a state where we need
+> to schedule some block I/O, but we're improperly checking the return
+> value of cfq_arm_slice_timer() to determine whether or not to do so --
+> its possible we still need to schedule block I/O no matter what the
+> return value is. The problem is remedied by adjusting the check for
+> whether or not to call cfq_schedule_dispatch() to look at
+> cfqd->rq_in_driver instead -- dispatch if the driver has pending
+> requests queued.
+>
+> Test status:
+> ------------
+> Tested by me, doing the 'dd if=/dev/zero of=/dev/nbd0' thing multiple
+> times. Without patch, writes hang almost immediately. With patch, the dd
+> operation will run 'til it finishes filling the entire 5GB of nbd0's
+> backing store.
+
+Also, attached is a slightly better rendition of the patch (diff -up).
+
+--
+Jarod Wilson
+jwilson@redhat.com
+---
+ block/cfq-iosched.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 99e492a..a8ac140 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -1866,11 +1866,12 @@ static void cfq_completed_request(request_queue_t *q, struct request *rq)
+ 	if (cfqd->active_queue == cfqq) {
+ 		if (time_after(now, cfqq->slice_end))
+ 			cfq_slice_expired(cfqd, 0);
+-		else if (sync && RB_EMPTY_ROOT(&cfqq->sort_list)) {
+-			if (!cfq_arm_slice_timer(cfqd, cfqq))
+-				cfq_schedule_dispatch(cfqd);
+-		}
++		else if (sync && RB_EMPTY_ROOT(&cfqq->sort_list))
++			cfq_arm_slice_timer(cfqd, cfqq);
+ 	}
++
++	if (!cfqd->rq_in_driver)
++		cfq_schedule_dispatch(cfqd);
+ }
+ 
+ static struct request *
+-- 
+1.5.3.5.645.gbb47
+

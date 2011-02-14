@@ -8,7 +8,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/sched.h>
 #include "includes.h"
 #include "hardware.h"
 #include "card.h"
@@ -35,6 +34,12 @@ module_param_array(io, int, NULL, 0);
 module_param_array(irq, int, NULL, 0);
 module_param_array(ram, int, NULL, 0);
 module_param(do_reset, bool, 0);
+
+extern irqreturn_t interrupt_handler(int, void *, struct pt_regs *);
+extern int sndpkt(int, int, int, struct sk_buff *);
+extern int command(isdn_ctrl *);
+extern int indicate_status(int, int, ulong, char*);
+extern int reset(int);
 
 static int identify_board(unsigned long, unsigned int);
 
@@ -93,14 +98,13 @@ static int __init sc_init(void)
 			 * Confirm the I/O Address with a test
 			 */
 			if(io[b] == 0) {
-				pr_debug("I/O Address invalid.\n");
+				pr_debug("I/O Address 0x%x is in use.\n");
 				continue;
 			}
 
 			outb(0x18, io[b] + 0x400 * EXP_PAGE0);
 			if(inb(io[b] + 0x400 * EXP_PAGE0) != 0x18) {
-				pr_debug("I/O Base 0x%x fails test\n",
-					 io[b] + 0x400 * EXP_PAGE0);
+				pr_debug("I/O Base 0x%x fails test\n");
 				continue;
 			}
 		}
@@ -154,8 +158,8 @@ static int __init sc_init(void)
 			outb(0xFF, io[b] + RESET_OFFSET);
 			msleep_interruptible(10000);
 		}
-		pr_debug("RAM Base for board %d is 0x%lx, %s probe\n", b,
-			ram[b], ram[b] == 0 ? "will" : "won't");
+		pr_debug("RAM Base for board %d is 0x%x, %s probe\n", b, ram[b],
+			ram[b] == 0 ? "will" : "won't");
 
 		if(ram[b]) {
 			/*
@@ -164,7 +168,7 @@ static int __init sc_init(void)
 			 * board model
 			 */
 			if(request_region(ram[b], SRAM_PAGESIZE, "sc test")) {
-				pr_debug("request_region for RAM base 0x%lx succeeded\n", ram[b]);
+				pr_debug("request_region for RAM base 0x%x succeeded\n", ram[b]);
 			 	model = identify_board(ram[b], io[b]);
 				release_region(ram[b], SRAM_PAGESIZE);
 			}
@@ -200,7 +204,7 @@ static int __init sc_init(void)
 			 * Nope, there was no place in RAM for the
 			 * board, or it couldn't be identified
 			 */
-			 pr_debug("Failed to find an adapter at 0x%lx\n", ram[b]);
+			 pr_debug("Failed to find an adapter at 0x%x\n", ram[b]);
 			 continue;
 		}
 
@@ -266,13 +270,14 @@ static int __init sc_init(void)
 		 * Horray! We found a board, Make sure we can register
 		 * it with ISDN4Linux
 		 */
-		interface = kzalloc(sizeof(isdn_if), GFP_KERNEL);
+		interface = kmalloc(sizeof(isdn_if), GFP_KERNEL);
 		if (interface == NULL) {
 			/*
 			 * Oops, can't malloc isdn_if
 			 */
 			continue;
 		}
+		memset(interface, 0, sizeof(isdn_if));
 
 		interface->owner = THIS_MODULE;
 		interface->hl_hdrlen = 0;
@@ -288,7 +293,7 @@ static int __init sc_init(void)
 		/*
 		 * Allocate the board structure
 		 */
-		sc_adapter[cinst] = kzalloc(sizeof(board), GFP_KERNEL);
+		sc_adapter[cinst] = kmalloc(sizeof(board), GFP_KERNEL);
 		if (sc_adapter[cinst] == NULL) {
 			/*
 			 * Oops, can't alloc memory for the board
@@ -296,6 +301,7 @@ static int __init sc_init(void)
 			kfree(interface);
 			continue;
 		}
+		memset(sc_adapter[cinst], 0, sizeof(board));
 		spin_lock_init(&sc_adapter[cinst]->lock);
 
 		if(!register_isdn(interface)) {
@@ -319,7 +325,7 @@ static int __init sc_init(void)
 		/*
 		 * Allocate channels status structures
 		 */
-		sc_adapter[cinst]->channel = kzalloc(sizeof(bchan) * channels, GFP_KERNEL);
+		sc_adapter[cinst]->channel = kmalloc(sizeof(bchan) * channels, GFP_KERNEL);
 		if (sc_adapter[cinst]->channel == NULL) {
 			/*
 			 * Oops, can't alloc memory for the channels
@@ -329,14 +335,14 @@ static int __init sc_init(void)
 			kfree(sc_adapter[cinst]);
 			continue;
 		}
+		memset(sc_adapter[cinst]->channel, 0, sizeof(bchan) * channels);
 
 		/*
 		 * Lock down the hardware resources
 		 */
 		sc_adapter[cinst]->interrupt = irq[b];
 		if (request_irq(sc_adapter[cinst]->interrupt, interrupt_handler,
-				IRQF_DISABLED, interface->id,
-				(void *)(unsigned long) cinst))
+				IRQF_DISABLED, interface->id, NULL))
 		{
 			kfree(sc_adapter[cinst]->channel);
 			indicate_status(cinst, ISDN_STAT_UNLOAD, 0, NULL);	/* Fix me */
@@ -406,7 +412,7 @@ static void __exit sc_exit(void)
 		/*
 		 * Release the IRQ
 		 */
-		free_irq(sc_adapter[i]->interrupt, NULL);
+		FREE_IRQ(sc_adapter[i]->interrupt, NULL);
 
 		/*
 		 * Reset for a clean start
@@ -445,7 +451,7 @@ static int identify_board(unsigned long rambase, unsigned int iobase)
 	HWConfig_pl hwci;
 	int x;
 
-	pr_debug("Attempting to identify adapter @ 0x%lx io 0x%x\n",
+	pr_debug("Attempting to identify adapter @ 0x%x io 0x%x\n",
 		rambase, iobase);
 
 	/*
@@ -484,7 +490,7 @@ static int identify_board(unsigned long rambase, unsigned int iobase)
 	outb(PRI_BASEPG_VAL, pgport);
 	msleep_interruptible(1000);
 	sig = readl(rambase + SIG_OFFSET);
-	pr_debug("Looking for a signature, got 0x%lx\n", sig);
+	pr_debug("Looking for a signature, got 0x%x\n", sig);
 	if(sig == SIGNATURE)
 		return PRI_BOARD;
 
@@ -494,7 +500,7 @@ static int identify_board(unsigned long rambase, unsigned int iobase)
 	outb(BRI_BASEPG_VAL, pgport);
 	msleep_interruptible(1000);
 	sig = readl(rambase + SIG_OFFSET);
-	pr_debug("Looking for a signature, got 0x%lx\n", sig);
+	pr_debug("Looking for a signature, got 0x%x\n", sig);
 	if(sig == SIGNATURE)
 		return BRI_BOARD;
 
@@ -504,7 +510,7 @@ static int identify_board(unsigned long rambase, unsigned int iobase)
 	 * Try to spot a card
 	 */
 	sig = readl(rambase + SIG_OFFSET);
-	pr_debug("Looking for a signature, got 0x%lx\n", sig);
+	pr_debug("Looking for a signature, got 0x%x\n", sig);
 	if(sig != SIGNATURE)
 		return -1;
 
@@ -534,7 +540,7 @@ static int identify_board(unsigned long rambase, unsigned int iobase)
 	memcpy_fromio(&rcvmsg, &(dpm->rsp_queue[dpm->rsp_tail]), MSG_LEN);
 	pr_debug("Got HWConfig response, status = 0x%x\n", rcvmsg.rsp_status);
 	memcpy(&hwci, &(rcvmsg.msg_data.HWCresponse), sizeof(HWConfig_pl));
-	pr_debug("Hardware Config: Interface: %s, RAM Size: %ld, Serial: %s\n"
+	pr_debug("Hardware Config: Interface: %s, RAM Size: %d, Serial: %s\n"
 		 "                 Part: %s, Rev: %s\n",
 		 hwci.st_u_sense ? "S/T" : "U", hwci.ram_size,
 		 hwci.serial_no, hwci.part_no, hwci.rev_no);

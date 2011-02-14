@@ -1,0 +1,142 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:12 +0100
+Subject: [lockdep] avoid lockdep & lock_stat infinite output
+Message-id: 20071218112316.272342055@chello.nl
+O-Subject: [RHEL5.2 PATCH 11/14] lockdep: Avoid /proc/lockdep & lock_stat infinite output
+Bugzilla: 193729
+
+When a read() requests an amount of data smaller than the amount of data
+that the seq_file's foo_show() outputs, the output starts looping and
+outputs the "stuck" element's data infinitely.  There may be multiple
+sequential calls to foo_start(), foo_next()/foo_show(), and foo_stop()
+for a single open with sequential read of the file.  The _start() does not
+have to start with the 0th element and _show() might be called multiple
+times in a row for the same element for a given open/read of the seq_file.
+
+Also header output should not be happening in _start().  All output should
+be in _show(), which SEQ_START_TOKEN is meant to help.  Having output in
+_start() may also negatively impact seq_file's seq_read() and traverse()
+accounting.
+
+Signed-off-by: Tim Pepper <lnxninja@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Al Viro <viro@ftp.linux.org.uk>
+
+diff --git a/kernel/lockdep_proc.c b/kernel/lockdep_proc.c
+index 6ab388c..c585c46 100644
+--- a/kernel/lockdep_proc.c
++++ b/kernel/lockdep_proc.c
+@@ -26,28 +26,38 @@
+ 
+ static void *l_next(struct seq_file *m, void *v, loff_t *pos)
+ {
+-	struct lock_class *class = v;
++	struct lock_class *class;
+ 
+ 	(*pos)++;
+ 
+-	if (class->lock_entry.next != &all_lock_classes)
+-		class = list_entry(class->lock_entry.next, struct lock_class,
+-				  lock_entry);
+-	else
+-		class = NULL;
+-	m->private = class;
++	if (v == SEQ_START_TOKEN)
++		class = m->private;
++	else {
++		class = v;
++
++		if (class->lock_entry.next != &all_lock_classes)
++			class = list_entry(class->lock_entry.next,
++					   struct lock_class, lock_entry);
++		else
++			class = NULL;
++	}
+ 
+ 	return class;
+ }
+ 
+ static void *l_start(struct seq_file *m, loff_t *pos)
+ {
+-	struct lock_class *class = m->private;
++	struct lock_class *class;
++	loff_t i = 0;
+ 
+-	if (&class->lock_entry == all_lock_classes.next)
+-		seq_printf(m, "all lock classes:\n");
++	if (*pos == 0)
++		return SEQ_START_TOKEN;
+ 
+-	return class;
++	list_for_each_entry(class, &all_lock_classes, lock_entry) {
++		if (++i == *pos)
++		return class;
++	}
++	return NULL;
+ }
+ 
+ static void l_stop(struct seq_file *m, void *v)
+@@ -85,10 +95,15 @@ static unsigned long count_backward_deps(struct lock_class *class)
+ static int l_show(struct seq_file *m, void *v)
+ {
+ 	unsigned long nr_forward_deps, nr_backward_deps;
+-	struct lock_class *class = m->private;
++	struct lock_class *class = v;
+ 	char str[128], c1, c2, c3, c4;
+ 	const char *name;
+ 
++	if (v == SEQ_START_TOKEN) {
++		seq_printf(m, "all lock classes:\n");
++		return 0;
++	}
++
+ 	seq_printf(m, "%p", class->key);
+ #ifdef CONFIG_DEBUG_LOCKDEP
+ 	seq_printf(m, " OPS:%8ld", class->ops);
+@@ -505,10 +520,11 @@ static void *ls_start(struct seq_file *m, loff_t *pos)
+ {
+ 	struct lock_stat_seq *data = m->private;
+ 
+-	if (data->iter == data->stats)
+-		seq_header(m);
++	if (*pos == 0)
++		return SEQ_START_TOKEN;
+ 
+-	if (data->iter == data->iter_end)
++	data->iter = data->stats + *pos;
++	if (data->iter >= data->iter_end)
+ 		data->iter = NULL;
+ 
+ 	return data->iter;
+@@ -520,8 +536,13 @@ static void *ls_next(struct seq_file *m, void *v, loff_t *pos)
+ 
+ 	(*pos)++;
+ 
+-	data->iter = v;
+-	data->iter++;
++	if (v == SEQ_START_TOKEN)
++		data->iter = data->stats;
++	else {
++		data->iter = v;
++		data->iter++;
++	}
++
+ 	if (data->iter == data->iter_end)
+ 		data->iter = NULL;
+ 
+@@ -534,9 +555,11 @@ static void ls_stop(struct seq_file *m, void *v)
+ 
+ static int ls_show(struct seq_file *m, void *v)
+ {
+-	struct lock_stat_seq *data = m->private;
++	if (v == SEQ_START_TOKEN)
++		seq_header(m);
++	else
++		seq_stats(m, v);
+ 
+-	seq_stats(m, data->iter);
+ 	return 0;
+ }
+ 

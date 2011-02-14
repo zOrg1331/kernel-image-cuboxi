@@ -1,0 +1,156 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Wed, 23 Jun 2010 08:28:31 -0400
+Subject: [net] benet: compat header cleanups, part 2
+Message-id: <1277281711.2432.36.camel@ceranb.intra.cera.cz>
+Patchwork-id: 26451
+O-Subject: Re: [RHEL5 PATCH 1/27] compat.h cleanup: benet driver changes
+Bugzilla: 546740
+
+Some corrections are needed (incremental patch to Prarit's one below).
+
+1. RHEL5's poll has to update *budget and also netdev->quota and also
+initial value used for polling has to be min(*budget, netdev->quota) and
+NOT *budget!
+Since upstream NAPI poll func and RHEL5 NAPI poll func are much
+different,  IMHO it's better to leave the upstream one untouched and
+create for RHEL5 small compat wrapper - overhead is really small and
+it's also better for maintaining in future.
+
+2. You are calling netif_rx_schedule/enable/disable with real device as
+argument but poll member function ptr is NULL, because be_poll is
+assigned to allocated dummy device. This dummy device should not be
+allocated and napi->dev should be the real device. This approach was
+used for be2net before (see be_compat.c) and also uses r8169 it. The
+advantage is also you don't need to change return value of
+be_netdev_init to 'int' and to solve the problem with dummy net device
+allocation failure.
+
+Ivan
+
+
+diff --git a/drivers/net/benet/be_main.c b/drivers/net/benet/be_main.c
+index 8c54003..e38b602 100644
+--- a/drivers/net/benet/be_main.c
++++ b/drivers/net/benet/be_main.c
+@@ -1410,9 +1410,10 @@ int be_poll_tx(struct be_adapter *adapter, int budget)
+ 	return num_cmpl;
+ }
+ 
+-int be_poll(struct net_device *dev, int *budget)
++int be_poll(struct napi_struct *napi, int budget)
+ {
+-	struct be_adapter *adapter = netdev_priv(dev);
++	struct be_adapter *adapter =
++				container_of(napi, struct be_adapter, napi);
+ 	struct be_eq_obj *eq_obj = &adapter->be_eq;
+ 	u16 num = 0;
+ 	u32 tx_work, rx_work;
+@@ -1420,15 +1421,15 @@ int be_poll(struct net_device *dev, int *budget)
+ 	while (event_get(eq_obj))
+ 		num++;
+ 
+-	tx_work = be_poll_tx(adapter, *budget);
+-	rx_work = be_poll_rx(adapter, *budget);
++	tx_work = be_poll_tx(adapter, budget);
++	rx_work = be_poll_rx(adapter, budget);
+ 	be_process_mcc(adapter);
+ 
+ 	drvr_stats(adapter)->be_num_events += num;
+ 
+ 	/* All consumed */
+-	if (rx_work < *budget) {
+-		napi_complete(&adapter->napi);
++	if (rx_work < budget) {
++		napi_complete(napi);
+ 		be_eq_notify(adapter, eq_obj->q.id, true, false, num);
+ 	} else
+ 		be_eq_notify(adapter, eq_obj->q.id, false, false, num);
+@@ -1436,6 +1437,20 @@ int be_poll(struct net_device *dev, int *budget)
+ 	return rx_work;
+ }
+ 
++static int be_poll_compat(struct net_device *netdev, int *budget)
++{
++	struct be_adapter *adapter = netdev_priv(netdev);
++	u32 work_done, can_do;
++
++	can_do = min(*budget, netdev->quota);
++	work_done = be_poll(&adapter->napi, can_do);
++
++	*budget -= work_done;
++	netdev->quota -= work_done;
++
++	return (work_done < can_do) ? 0 : 1;
++}
++
+ static void be_worker(void *data)
+ {
+ 	struct work_struct *work = data;
+@@ -1978,10 +1993,9 @@ fw_exit:
+ 	return status;
+ }
+ 
+-static int be_netdev_init(struct net_device *netdev)
++static void be_netdev_init(struct net_device *netdev)
+ {
+ 	struct be_adapter *adapter = netdev_priv(netdev);
+-	struct net_device *napi_nd;
+ 
+ 	netdev->features |= NETIF_F_SG | NETIF_F_HW_VLAN_RX | NETIF_F_TSO |
+ 		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER | NETIF_F_HW_CSUM |
+@@ -2011,20 +2025,12 @@ static int be_netdev_init(struct net_device *netdev)
+ 
+ 	SET_ETHTOOL_OPS(netdev, &be_ethtool_ops);
+ 
+-	napi_nd = alloc_netdev(0, "", ether_setup);
+-	if (!napi_nd)
+-		return -ENOMEM;
+-
+-	napi_nd->priv = adapter;
+-	napi_nd->weight = BE_NAPI_WEIGHT;
+-	napi_nd->poll = be_poll;
+-	set_bit(__LINK_STATE_START, &napi_nd->state);
+-	adapter->napi.dev = napi_nd;
++	netdev->weight = BE_NAPI_WEIGHT;
++	netdev->poll = be_poll_compat;
++	adapter->napi.dev = netdev;
+ 
+ 	netif_carrier_off(netdev);
+ 	netif_stop_queue(netdev);
+-
+-	return 0;
+ }
+ 
+ static void be_unmap_pci_bars(struct be_adapter *adapter)
+@@ -2211,9 +2217,6 @@ static void __devexit be_remove(struct pci_dev *pdev)
+ 
+ 	be_ctrl_cleanup(adapter);
+ 
+-	free_netdev(adapter->napi.dev);
+-	adapter->napi.dev = NULL;
+-
+ 	be_msix_disable(adapter);
+ 
+ 	pci_set_drvdata(pdev, NULL);
+@@ -2286,8 +2289,7 @@ static int __devinit be_probe(struct pci_dev *pdev,
+ 	adapter->pdev = pdev;
+ 	pci_set_drvdata(pdev, adapter);
+ 	adapter->netdev = netdev;
+-	if (be_netdev_init(netdev))
+-		goto rel_drvdata;
++	be_netdev_init(netdev);
+ 	SET_NETDEV_DEV(netdev, &pdev->dev);
+ 
+ 	be_msix_enable(adapter);
+@@ -2353,11 +2355,8 @@ stats_clean:
+ ctrl_clean:
+ 	be_ctrl_cleanup(adapter);
+ free_netdev:
+-	free_netdev(adapter->napi.dev);
+-	adapter->napi.dev = NULL;
+ 	be_msix_disable(adapter);
+ 	free_netdev(adapter->netdev);
+-rel_drvdata:
+ 	pci_set_drvdata(pdev, NULL);
+ rel_reg:
+ 	pci_release_regions(pdev);

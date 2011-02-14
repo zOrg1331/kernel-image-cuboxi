@@ -1,0 +1,396 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5 PATCH] [PACKET]: Add PACKET_AUXDATA cmsg
+Date: Wed, 10 Jan 2007 20:17:36 +1100
+Bugzilla: 219681
+Message-Id: <20070110091736.GA28579@gondor.apana.org.au>
+Changelog: xen: Add PACKET_AUXDATA cmsg
+
+
+Hi:
+
+RHEL5 BZ 219681
+
+This patch forms part of the solution to #219681 where the DHCP server
+can't serve any requests from clients running (in different domains)
+on the same Xen host.
+
+I've sent a similar patch (without the Xen-specific code) upstream.
+
+This obsoletes the previous patch that computed the checksums in
+kernel-space.
+
+[PACKET]: Add PACKET_AUXDATA cmsg
+
+HCP servers/clients using AF_PACKET) to be able to serve another
+client on the same Xen host.
+
+The problem is that packets between different domains on the same
+Xen host only have partial checksums.  Unfortunately this piece of
+information is not passed along in AF_PACKET unless you're using
+the mmap interface.  Since dhcpd doesn't support packet-mmap, UDP
+packets from the same host come out with apparently bogus checksums.
+
+This patch adds a mechanism for AF_PACKET recvmsg(2) to return the
+status along with the packet.  It does so by adding a new cmsg that
+contains this information along with some other relevant data such
+as the original packet length.
+
+I didn't include the time stamp information since there is already
+a cmsg for that.
+
+This patch also changes the mmap code to set the CSUMNOTREADY flag
+on all packets instead of just outoing packets on cooked sockets.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff -ur linux-2.6.18.i386.orig/include/linux/if_packet.h linux-2.6.18.i386/include/linux/if_packet.h
+--- linux-2.6.18.i386.orig/include/linux/if_packet.h	2007-01-04 17:43:32.000000000 +1100
++++ linux-2.6.18.i386/include/linux/if_packet.h	2007-01-10 19:57:27.000000000 +1100
+@@ -39,6 +39,7 @@
+ #define PACKET_RX_RING			5
+ #define PACKET_STATISTICS		6
+ #define PACKET_COPY_THRESH		7
++#define PACKET_AUXDATA			8
+ 
+ struct tpacket_stats
+ {
+@@ -46,6 +47,15 @@
+ 	unsigned int	tp_drops;
+ };
+ 
++struct tpacket_auxdata
++{
++	__u32		tp_status;
++	__u32		tp_len;
++	__u32		tp_snaplen;
++	__u16		tp_mac;
++	__u16		tp_net;
++};
++
+ struct tpacket_hdr
+ {
+ 	unsigned long	tp_status;
+Only in linux-2.6.18.i386/include/linux: if_packet.h.orig
+diff -ur linux-2.6.18.i386.orig/net/packet/af_packet.c linux-2.6.18.i386/net/packet/af_packet.c
+--- linux-2.6.18.i386.orig/net/packet/af_packet.c	2007-01-09 22:09:11.000000000 +1100
++++ linux-2.6.18.i386/net/packet/af_packet.c	2007-01-10 20:01:37.000000000 +1100
+@@ -199,7 +199,8 @@
+ #endif
+ 	struct packet_type	prot_hook;
+ 	spinlock_t		bind_lock;
+-	char			running;	/* prot_hook is attached*/
++	unsigned int		running:1,	/* prot_hook is attached*/
++				auxdata:1;
+ 	int			ifindex;	/* bound device		*/
+ 	unsigned short		num;
+ #ifdef CONFIG_PACKET_MULTICAST
+@@ -213,6 +214,8 @@
+ #endif
+ };
+ 
++#define PACKET_SKB_CB(__skb)	((struct tpacket_auxdata *)((__skb)->cb))
++
+ #ifdef CONFIG_PACKET_MMAP
+ 
+ static inline char *packet_lookup_frame(struct packet_sock *po, unsigned int position)
+@@ -464,6 +467,7 @@
+ 	u8 * skb_head = skb->data;
+ 	int skb_len = skb->len;
+ 	unsigned snaplen;
++	struct tpacket_auxdata *aux;
+ 
+ 	if (skb->pkt_type == PACKET_LOOPBACK)
+ 		goto drop;
+@@ -527,6 +531,18 @@
+ 	if (dev->hard_header_parse)
+ 		sll->sll_halen = dev->hard_header_parse(skb, sll->sll_addr);
+ 
++	if (skb_checksum_setup(skb))
++		goto drop_n_acct;
++
++	aux = PACKET_SKB_CB(skb);
++	aux->tp_status = TP_STATUS_USER;
++	if (skb->ip_summed == CHECKSUM_HW)
++		aux->tp_status |= TP_STATUS_CSUMNOTREADY;
++	aux->tp_len = skb->len;
++	aux->tp_snaplen = snaplen;
++	aux->tp_mac = 0;
++	aux->tp_net = skb->nh.raw - skb->data;
++
+ 	if (pskb_trim(skb, snaplen))
+ 		goto drop_n_acct;
+ 
+@@ -586,8 +602,6 @@
+ 		else if (skb->pkt_type == PACKET_OUTGOING) {
+ 			/* Special case: outgoing packets have ll header at head */
+ 			skb_pull(skb, skb->nh.raw - skb->data);
+-			if (skb->ip_summed == CHECKSUM_HW)
+-				status |= TP_STATUS_CSUMNOTREADY;
+ 		}
+ 	}
+ 
+@@ -601,6 +615,11 @@
+ 			snaplen = res;
+ 	}
+ 
++	if (skb_checksum_setup(skb))
++		goto drop;
++	if (skb->ip_summed == CHECKSUM_HW)
++		status |= TP_STATUS_CSUMNOTREADY;
++
+ 	if (sk->sk_type == SOCK_DGRAM) {
+ 		macoff = netoff = TPACKET_ALIGN(TPACKET_HDRLEN) + 16;
+ 	} else {
+@@ -1124,6 +1143,11 @@
+ 	if (msg->msg_name)
+ 		memcpy(msg->msg_name, skb->cb, msg->msg_namelen);
+ 
++	if (pkt_sk(sk)->auxdata) {
++		struct tpacket_auxdata *aux = PACKET_SKB_CB(skb);
++		put_cmsg(msg, SOL_PACKET, PACKET_AUXDATA, sizeof(*aux), aux);
++	}
++
+ 	/*
+ 	 *	Free or return the buffer as appropriate. Again this
+ 	 *	hides all the races and re-entrancy issues from us.
+@@ -1322,6 +1346,7 @@
+ packet_setsockopt(struct socket *sock, int level, int optname, char __user *optval, int optlen)
+ {
+ 	struct sock *sk = sock->sk;
++	struct packet_sock *po = pkt_sk(sk);
+ 	int ret;
+ 
+ 	if (level != SOL_PACKET)
+@@ -1374,6 +1399,18 @@
+ 		return 0;
+ 	}
+ #endif
++	case PACKET_AUXDATA:
++	{
++		int val;
++
++		if (optlen < sizeof(val))
++			return -EINVAL;
++		if (copy_from_user(&val, optval, sizeof(val)))
++			return -EFAULT;
++
++		po->auxdata = !!val;
++		return 0;
++	}
+ 	default:
+ 		return -ENOPROTOOPT;
+ 	}
+@@ -1383,8 +1420,11 @@
+ 			     char __user *optval, int __user *optlen)
+ {
+ 	int len;
++	int val;
+ 	struct sock *sk = sock->sk;
+ 	struct packet_sock *po = pkt_sk(sk);
++	void *data;
++	struct tpacket_stats st;
+ 
+ 	if (level != SOL_PACKET)
+ 		return -ENOPROTOOPT;
+@@ -1397,9 +1437,6 @@
+ 		
+ 	switch(optname)	{
+ 	case PACKET_STATISTICS:
+-	{
+-		struct tpacket_stats st;
+-
+ 		if (len > sizeof(struct tpacket_stats))
+ 			len = sizeof(struct tpacket_stats);
+ 		spin_lock_bh(&sk->sk_receive_queue.lock);
+@@ -1408,16 +1445,23 @@
+ 		spin_unlock_bh(&sk->sk_receive_queue.lock);
+ 		st.tp_packets += st.tp_drops;
+ 
+-		if (copy_to_user(optval, &st, len))
+-			return -EFAULT;
++		data = &st;
++		break;
++	case PACKET_AUXDATA:
++		if (len > sizeof(int))
++			len = sizeof(int);
++		val = po->auxdata;
++
++		data = &val;
+ 		break;
+-	}
+ 	default:
+ 		return -ENOPROTOOPT;
+ 	}
+ 
+ 	if (put_user(len, optlen))
+ 		return -EFAULT;
++	if (copy_to_user(optval, data, len))
++		return -EFAULT;
+ 	return 0;
+ }
+ 
+diff -ur linux-2.6.18.noarch.new/net/packet/af_packet.c linux-2.6.18.noarch/net/packet/af_packet.c
+--- linux-2.6.18.noarch.new/net/packet/af_packet.c	2007-01-12 13:59:50.000000000 +1100
++++ linux-2.6.18.noarch/net/packet/af_packet.c	2007-01-12 13:58:59.000000000 +1100
+@@ -216,6 +216,8 @@
+ 
+ #define PACKET_SKB_CB(__skb)	((struct tpacket_auxdata *)((__skb)->cb))
+ 
++extern int skb_checksum_setup(struct sk_buff *skb);
++
+ #ifdef CONFIG_PACKET_MMAP
+ 
+ static inline char *packet_lookup_frame(struct packet_sock *po, unsigned int position)
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: Re: Help on BZ 223505 tcpdump causes ppc64 to enter xmon
+Date: Wed, 24 Jan 2007 10:23:55 +1100
+Bugzilla: 223505
+Message-Id: <20070123232355.GA4724@gondor.apana.org.au>
+
+On Wed, Jan 24, 2007 at 09:03:24AM +1100, Herbert Xu wrote:
+> 
+> OK, I've found the problem.  The skb->cb buffer is already being
+> used for sockaddr_ll which the aux data is overwriting.  Let me
+> fix this up by getting them to share the buffer.
+
+The obvious fix of putting them together in the cb doesn't quite work
+because sockaddr_ll's last member can be as large as MAX_ADDR_LEN (32).
+In fact this means that older kernels with skb->cb less than 44 bytes
+may in fact be vulnerable if net devices with an address length of 32
+bytes exist.
+
+[PACKET]: Fix skb->cb clobbering between aux and sockaddr
+
+Both aux data and sockaddr tries to use the same buffer which
+obviously doesn't work.  We just happen to have 4 bytes free in
+the skb->cb if you take away the maximum length of sockaddr_ll.
+That's just enough to store the one piece of info from aux data
+that we can't generate at recvmsg(2) time.
+
+This is what the following patch does.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+diff -ur linux-2.6.18.noarch.orig/net/packet/af_packet.c linux-2.6.18.noarch/net/packet/af_packet.c
+--- linux-2.6.18.noarch.orig/net/packet/af_packet.c	2007-01-12 13:58:59.000000000 +1100
++++ linux-2.6.18.noarch/net/packet/af_packet.c	2007-01-24 10:15:59.000000000 +1100
+@@ -60,6 +60,7 @@
+ #include <linux/netdevice.h>
+ #include <linux/if_packet.h>
+ #include <linux/wireless.h>
++#include <linux/kernel.h>
+ #include <linux/kmod.h>
+ #include <net/ip.h>
+ #include <net/protocol.h>
+@@ -214,7 +215,15 @@
+ #endif
+ };
+ 
+-#define PACKET_SKB_CB(__skb)	((struct tpacket_auxdata *)((__skb)->cb))
++struct packet_skb_cb {
++	unsigned int origlen;
++	union {
++		struct sockaddr_pkt pkt;
++		struct sockaddr_ll ll;
++	} sa;
++};
++
++#define PACKET_SKB_CB(__skb)	((struct packet_skb_cb *)((__skb)->cb))
+ 
+ extern int skb_checksum_setup(struct sk_buff *skb);
+ 
+@@ -297,7 +306,7 @@
+ 	/* drop conntrack reference */
+ 	nf_reset(skb);
+ 
+-	spkt = (struct sockaddr_pkt*)skb->cb;
++	spkt = &PACKET_SKB_CB(skb)->sa.pkt;
+ 
+ 	skb_push(skb, skb->data-skb->mac.raw);
+ 
+@@ -469,7 +478,6 @@
+ 	u8 * skb_head = skb->data;
+ 	int skb_len = skb->len;
+ 	unsigned snaplen;
+-	struct tpacket_auxdata *aux;
+ 
+ 	if (skb->pkt_type == PACKET_LOOPBACK)
+ 		goto drop;
+@@ -522,7 +530,10 @@
+ 		skb = nskb;
+ 	}
+ 
+-	sll = (struct sockaddr_ll*)skb->cb;
++	BUILD_BUG_ON(sizeof(*PACKET_SKB_CB(skb)) + MAX_ADDR_LEN - 8 >
++		     sizeof(skb->cb));
++
++	sll = &PACKET_SKB_CB(skb)->sa.ll;
+ 	sll->sll_family = AF_PACKET;
+ 	sll->sll_hatype = dev->type;
+ 	sll->sll_protocol = skb->protocol;
+@@ -536,14 +547,7 @@
+ 	if (skb_checksum_setup(skb))
+ 		goto drop_n_acct;
+ 
+-	aux = PACKET_SKB_CB(skb);
+-	aux->tp_status = TP_STATUS_USER;
+-	if (skb->ip_summed == CHECKSUM_HW)
+-		aux->tp_status |= TP_STATUS_CSUMNOTREADY;
+-	aux->tp_len = skb->len;
+-	aux->tp_snaplen = snaplen;
+-	aux->tp_mac = 0;
+-	aux->tp_net = skb->nh.raw - skb->data;
++	PACKET_SKB_CB(skb)->origlen = skb->len;
+ 
+ 	if (pskb_trim(skb, snaplen))
+ 		goto drop_n_acct;
+@@ -1118,7 +1122,7 @@
+ 	 *	it in now.
+ 	 */
+ 
+-	sll = (struct sockaddr_ll*)skb->cb;
++	sll = &PACKET_SKB_CB(skb)->sa.ll;
+ 	if (sock->type == SOCK_PACKET)
+ 		msg->msg_namelen = sizeof(struct sockaddr_pkt);
+ 	else
+@@ -1143,11 +1147,21 @@
+ 	sock_recv_timestamp(msg, sk, skb);
+ 
+ 	if (msg->msg_name)
+-		memcpy(msg->msg_name, skb->cb, msg->msg_namelen);
++		memcpy(msg->msg_name, &PACKET_SKB_CB(skb)->sa,
++		       msg->msg_namelen);
+ 
+ 	if (pkt_sk(sk)->auxdata) {
+-		struct tpacket_auxdata *aux = PACKET_SKB_CB(skb);
+-		put_cmsg(msg, SOL_PACKET, PACKET_AUXDATA, sizeof(*aux), aux);
++		struct tpacket_auxdata aux;
++
++		aux.tp_status = TP_STATUS_USER;
++		if (skb->ip_summed == CHECKSUM_HW)
++			aux.tp_status |= TP_STATUS_CSUMNOTREADY;
++		aux.tp_len = PACKET_SKB_CB(skb)->origlen;
++		aux.tp_snaplen = skb->len;
++		aux.tp_mac = 0;
++		aux.tp_net = skb->nh.raw - skb->data;
++
++		put_cmsg(msg, SOL_PACKET, PACKET_AUXDATA, sizeof(aux), &aux);
+ 	}
+ 
+ 	/*
+

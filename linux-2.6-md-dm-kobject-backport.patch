@@ -1,0 +1,137 @@
+From: Dave Wysochanski <dwysocha@redhat.com>
+Date: Fri, 4 Jan 2008 17:38:29 -0500
+Subject: [md] dm: kobject backport
+Message-id: 1199486309.4533.32.camel@linux-cxyg
+O-Subject: Re: [RHEL5.2 PATCH 1/5] bz#184778: kobject - backport kobject_uevent_env
+Bugzilla: 184778
+
+> > >
+> > > Modified backport of upstream.
+> > >
+> > > Note that this backport duplicates some code between kobject_uevent and
+> > > kobject_uevent_env. Having kobject_uevent call kobject_uevent_env was
+> > > tested, but not modifying kobject_uevent appeared to a safer solution. If
+> > > reduction in code duplication is desired the call to kobject_uevent_env
+> > > can be used.
+> > >
+> > > Also note that upstream add_uevent_var() changed prototypes
+> > > (see http://tinyurl.com/2aurgo).  To avoid KABI problems this patch
+> > > duplicates code and creates add_uevent_env_var() for use within
+> > > kobject_uevent_env().
+> >
+
+Risk Assessment / Tradeoffs:
+Backport very close to upstream but creates add_uevent_var_env()
+function, the new upstream implementation of add_uevent_var().  Was not
+confident with adding a symbol not upstream but my reasoning was: 1) the
+backport of later patches in this series uses this new API with the
+kobj_uevent_env structure, 2) code seems cleaner/less error prone, 3)
+other future code is likely to use it and thus be easier to backport.
+
+Build / Test status: Built against distcvs (2.6.18-54).  Tested in dm-mp
+environment by running I/O, generating path failures / reinstates, and
+observing UEVENTS
+generation and normal dm-mp operation.
+
+This is from upstream, except for minor differences:
+
+* minor kobject_uevent_env() tweaks for backporting
+
+ include/linux/kobject.h |    2 ++
+ lib/kobject_uevent.c    |   35 ++++++++++++++++++++++++++++-------
+ 2 files changed, 30 insertions(+), 7 deletions(-)
+
+diff --git a/include/linux/kobject.h b/include/linux/kobject.h
+index 0b69c70..2ab07f9 100644
+--- a/include/linux/kobject.h
++++ b/include/linux/kobject.h
+@@ -29,6 +29,8 @@
+ 
+ #define KOBJ_NAME_LEN			20
+ #define UEVENT_HELPER_PATH_LEN		256
++#define UEVENT_NUM_ENVP			32	/* number of env pointers */
++#define UEVENT_BUFFER_SIZE		2048	/* buffer for the variables */
+ 
+ /* path to the userspace helper executed on an event */
+ extern char uevent_helper[];
+@@ -92,6 +94,12 @@ struct kobj_type {
+ 	struct attribute	** default_attrs;
+ };
+ 
++struct kobj_uevent_env {
++	char *envp[UEVENT_NUM_ENVP];
++	int envp_idx;
++	char buf[UEVENT_BUFFER_SIZE];
++	int buflen;
++};
+ 
+ /**
+  *	kset - a set of kobjects of a specific type, belonging
+@@ -269,6 +277,8 @@ int add_uevent_var(char **envp, int num_envp, int *cur_index,
+ 			char *buffer, int buffer_size, int *cur_len,
+ 			const char *format, ...)
+ 	__attribute__((format (printf, 7, 8)));
++int add_uevent_var_env(struct kobj_uevent_env *env, const char *format, ...)
++	__attribute__((format (printf, 2, 3)));
+ #else
+ static inline void kobject_uevent(struct kobject *kobj, enum kobject_action action) { }
+ 
+@@ -276,6 +286,10 @@ static inline int add_uevent_var(char **envp, int num_envp, int *cur_index,
+ 				      char *buffer, int buffer_size, int *cur_len, 
+ 				      const char *format, ...)
+ { return 0; }
++
++static inline int add_uevent_var_env(struct kobj_uevent_env *env, const char *format, ...)
++{ return 0; }
++
+ #endif
+ 
+ #endif /* __KERNEL__ */
+diff --git a/lib/kobject_uevent.c b/lib/kobject_uevent.c
+index b8db06b..c5aeb73 100644
+--- a/lib/kobject_uevent.c
++++ b/lib/kobject_uevent.c
+@@ -274,6 +274,43 @@ int add_uevent_var(char **envp, int num_envp, int *cur_index,
+ }
+ EXPORT_SYMBOL_GPL(add_uevent_var);
+ 
++/**
++ * add_uevent_var_env - add key value string to the environment buffer
++ * @env: environment buffer structure
++ * @format: printf format for the key=value pair
++ *
++ * Returns 0 if environment variable was added successfully or -ENOMEM
++ * if no space was available.
++ */
++int add_uevent_var_env(struct kobj_uevent_env *env, const char *format, ...)
++{
++	va_list args;
++	int len;
++
++	if (env->envp_idx >= ARRAY_SIZE(env->envp)) {
++		printk(KERN_ERR "add_uevent_var: too many keys\n");
++		WARN_ON(1);
++		return -ENOMEM;
++	}
++
++	va_start(args, format);
++	len = vsnprintf(&env->buf[env->buflen],
++			sizeof(env->buf) - env->buflen,
++			format, args);
++	va_end(args);
++
++	if (len >= (sizeof(env->buf) - env->buflen)) {
++		printk(KERN_ERR "add_uevent_var: buffer size too small\n");
++		WARN_ON(1);
++		return -ENOMEM;
++	}
++
++	env->envp[env->envp_idx++] = &env->buf[env->buflen];
++	env->buflen += len + 1;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(add_uevent_var_env);
++
+ #if defined(CONFIG_NET)
+ static int __init kobject_uevent_init(void)
+ {

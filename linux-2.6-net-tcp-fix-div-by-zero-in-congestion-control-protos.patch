@@ -1,0 +1,76 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 12 Aug 2010 18:05:30 -0400
+Subject: [net] tcp: fix div by zero in congestion control protos
+Message-id: <20100812180530.GB7251@shamino.rdu.redhat.com>
+Patchwork-id: 27526
+O-Subject: [RHEL 5.6 PATCH] tcp: fix div by zero oops in vegas and veno
+	congestion control (608641)
+Bugzilla: 608641
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+Hey all-
+	We had several crashes reported in bug  608641, which were caused by
+division by zero in the tcp vegas congestion controll algorithm.  Upstream
+seemed to solve this problem (perhaps inadvertently) with commit
+30cfd0baf0a0c4329fff1ef4b622919297969ec8, which did a sign check on the rtt
+value.  Since getting that commit back to RHEL5 is pretty impossible as the
+supporting patches would be abi breakers, this is an approximation of that fix.
+Confirmed to fix bz 608641
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index e9aa763..44c7718 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -2249,7 +2249,7 @@ static int tcp_tso_acked(struct sock *sk, struct sk_buff *skb,
+ 	return acked;
+ }
+ 
+-static u32 tcp_usrtt(struct timeval *tv)
++static s32 tcp_usrtt(struct timeval *tv)
+ {
+ 	struct timeval now;
+ 
+diff --git a/net/ipv4/tcp_vegas.c b/net/ipv4/tcp_vegas.c
+index 8a57a56..5635671 100644
+--- a/net/ipv4/tcp_vegas.c
++++ b/net/ipv4/tcp_vegas.c
+@@ -116,10 +116,13 @@ static void tcp_vegas_init(struct sock *sk)
+  *   o min-filter RTT samples from a much longer window (forever for now)
+  *     to find the propagation delay (baseRTT)
+  */
+-static void tcp_vegas_rtt_calc(struct sock *sk, u32 usrtt)
++static void tcp_vegas_rtt_calc(struct sock *sk, s32 usrtt)
+ {
+ 	struct vegas *vegas = inet_csk_ca(sk);
+-	u32 vrtt = usrtt + 1; /* Never allow zero rtt or baseRTT */
++	s32 vrtt = usrtt + 1; /* Never allow zero rtt or baseRTT */
++
++	if (vrtt <= 0)
++		return;
+ 
+ 	/* Filter to find propagation delay: */
+ 	if (vrtt < vegas->baseRTT)
+diff --git a/net/ipv4/tcp_veno.c b/net/ipv4/tcp_veno.c
+index 35baea6..d34d0c4 100644
+--- a/net/ipv4/tcp_veno.c
++++ b/net/ipv4/tcp_veno.c
+@@ -69,10 +69,13 @@ static void tcp_veno_init(struct sock *sk)
+ }
+ 
+ /* Do rtt sampling needed for Veno. */
+-static void tcp_veno_rtt_calc(struct sock *sk, u32 usrtt)
++static void tcp_veno_rtt_calc(struct sock *sk, s32 usrtt)
+ {
+ 	struct veno *veno = inet_csk_ca(sk);
+-	u32 vrtt = usrtt + 1;	/* Never allow zero rtt or basertt */
++	s32 vrtt = usrtt + 1;	/* Never allow zero rtt or basertt */
++
++	if (vrtt <= 0)
++		return;
+ 
+ 	/* Filter to find propagation delay: */
+ 	if (vrtt < veno->basertt)

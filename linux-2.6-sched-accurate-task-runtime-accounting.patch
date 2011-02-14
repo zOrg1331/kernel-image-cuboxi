@@ -1,0 +1,132 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Thu, 7 May 2009 15:59:43 +0200
+Subject: [sched] accurate task runtime accounting
+Message-id: 20090507140138.416010000@chello.nl
+O-Subject: [PATCH 5/5] RHEL-5: sched: accurate task runtime accounting
+Bugzilla: 297731
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+CVE: CVE-2007-3719
+
+Current runtime accounting is tick based, which means that tasks that never
+run when the tick comes along will never get any runtime attributed to them.
+
+This can be abused to 'steal' time and or to hide from process monitor tools
+like top.
+
+Use the ns task runtime to calculate a more accurate version using the tick
+user:kernel samples to provide the resp. ratio.
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index fbb1718..5632355 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -321,6 +321,60 @@ int proc_pid_status(struct task_struct *task, char * buffer)
+ 	return buffer - orig;
+ }
+ 
++/*
++ * Use precise platform statistics if available:
++ */
++#ifdef CONFIG_VIRT_CPU_ACCOUNTING
++cputime_t task_utime(struct task_struct *p)
++{
++	return p->utime;
++}
++
++cputime_t task_stime(struct task_struct *p)
++{
++	return p->stime;
++}
++#else
++cputime_t task_utime(struct task_struct *p)
++{
++	clock_t utime = cputime_to_clock_t(p->utime),
++		total = utime + cputime_to_clock_t(p->stime);
++	u64 temp;
++
++	temp = (u64)nsec_to_clock_t(p->sched_time);
++
++	if (total) {
++		temp *= utime;
++		do_div(temp, total);
++	}
++	utime = (clock_t)temp;
++
++	task_aux(p)->last_utime = 
++		max(task_aux(p)->last_utime, clock_t_to_cputime(utime));
++
++	return task_aux(p)->last_utime;
++}
++
++cputime_t task_stime(struct task_struct *p)
++{
++	clock_t stime;
++
++	/*
++	 * we subtract utime from the total, to make sure the total observed by
++	 * userspace grows monotonically - apps rely on that:
++	 */
++	stime = nsec_to_clock_t(p->sched_time) -
++			cputime_to_clock_t(task_utime(p));
++
++	if (stime >= 0) {
++		task_aux(p)->last_stime = 
++			max(task_aux(p)->last_stime, clock_t_to_cputime(stime));
++	}
++
++	return task_aux(p)->last_stime;
++}
++#endif
++
+ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ {
+ 	unsigned long vsize, eip, esp, wchan = ~0UL;
+@@ -368,8 +422,8 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ 			do {
+ 				min_flt += t->min_flt;
+ 				maj_flt += t->maj_flt;
+-				utime = cputime_add(utime, t->utime);
+-				stime = cputime_add(stime, t->stime);
++				utime = cputime_add(utime, task_utime(t));
++				stime = cputime_add(stime, task_stime(t));
+ 				t = next_thread(t);
+ 			} while (t != task);
+ 		}
+@@ -408,8 +462,8 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ 	if (!whole) {
+ 		min_flt = task->min_flt;
+ 		maj_flt = task->maj_flt;
+-		utime = task->utime;
+-		stime = task->stime;
++		utime = task_utime(task);
++		stime = task_stime(task);
+ 	}
+ 
+ 	/* scale priority and nice values from timeslices to -20..20 */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 1faef4a..6c2b680 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -855,6 +855,7 @@ struct task_struct_aux {
+ 	struct completion *vfork_done;  /* for vfork() [displaced from task_struct] */
+ 	struct list_head  *scm_work_list; /*displaced from task_struct for abi compat*/
+ 	struct task_io_accounting ioac;
++	cputime_t last_utime, last_stime;	/* ensure the user sees a monotonous clock */
+ };
+ 
+ #define task_aux(tsk) ((tsk)->auxilliary)
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 8ef2897..0a34cfa 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -210,6 +210,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
+ 	setup_thread_stack(tsk, orig);
+ 	task_aux(tsk) = aux;
+ 
++	task_aux(tsk)->last_utime = task_aux(tsk)->last_stime = cputime_zero;
++
+ 	/* One for us, one for whoever does the "release_task()" (usually parent) */
+ 	atomic_set(&tsk->usage,2);
+ 	atomic_set(&tsk->fs_excl, 0);

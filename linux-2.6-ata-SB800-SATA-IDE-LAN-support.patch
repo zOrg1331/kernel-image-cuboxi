@@ -1,0 +1,52 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Wed, 31 Oct 2007 09:43:54 -0400
+Subject: [ata] SB800 SATA/IDE LAN support
+Message-id: 20071031133420.6071.40634.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] SB800 SATA/IDE LAN support in RHEL5.2
+Bugzilla: 252961
+
+Resolves BZ 252961
+
+ATI/AMD SB800 shares some device IDs with SB700, and SB800 adds two
+more device IDs:0x4394,0x4395.  This patch adds the SB800 device ID
+support.  Most of the SATA PCI device IDs are same as those of SB700,
+except:
+0x4394  SATA in AHCI mode with HyperFlash-OneNand support
+0x4395  SATA in AHCI mode with HyperFlash-PCIE support
+
+Upstream link:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-
+2.6.git;a=commit;h=c69c0892d8dd68b01a9fced5cab8527f0698c15e
+
+Please ACK and include in RHEL5.2
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+---
+ drivers/ata/ahci.c |   10 ++++++----
+ 1 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 174320f..1ae18a0 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -399,10 +399,12 @@ static const struct pci_device_id ahci_pci_tbl[] = {
+ 
+ 	/* ATI */
+ 	{ PCI_VDEVICE(ATI, 0x4380), board_ahci_sb600 }, /* ATI SB600 */
+-	{ PCI_VDEVICE(ATI, 0x4390), board_ahci_sb600 }, /* ATI SB700 IDE */
+-	{ PCI_VDEVICE(ATI, 0x4391), board_ahci_sb600 }, /* ATI SB700 AHCI */
+-	{ PCI_VDEVICE(ATI, 0x4392), board_ahci_sb600 }, /* ATI SB700 nraid5 */
+-	{ PCI_VDEVICE(ATI, 0x4393), board_ahci_sb600 }, /* ATI SB700 raid5 */
++	{ PCI_VDEVICE(ATI, 0x4390), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4391), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4392), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4393), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4394), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4395), board_ahci_sb600 }, /* ATI SB700/800 */
+ 
+ 	/* VIA */
+ 	{ PCI_VDEVICE(VIA, 0x3349), board_ahci_vt8251 }, /* VIA VT8251 */
+-- 
+1.5.3.5.645.gbb47
+

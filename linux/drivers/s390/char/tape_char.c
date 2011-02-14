@@ -3,21 +3,17 @@
  *    character device frontend for tape device driver
  *
  *  S390 and zSeries version
- *    Copyright IBM Corp. 2001,2006
+ *    Copyright (C) 2001,2002 IBM Deutschland Entwicklung GmbH, IBM Corporation
  *    Author(s): Carsten Otte <cotte@de.ibm.com>
  *		 Michael Holzheu <holzheu@de.ibm.com>
  *		 Tuan Ngo-Anh <ngoanh@de.ibm.com>
  *		 Martin Schwidefsky <schwidefsky@de.ibm.com>
  */
 
-#define KMSG_COMPONENT "tape"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/proc_fs.h>
 #include <linux/mtio.h>
-#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -26,6 +22,8 @@
 #include "tape.h"
 #include "tape_std.h"
 #include "tape_class.h"
+
+#define PRINTK_HEADER "TAPE_CHAR: "
 
 #define TAPECHAR_MAJOR		0	/* get dynamic major */
 
@@ -41,7 +39,7 @@ static int tapechar_ioctl(struct inode *, struct file *, unsigned int,
 static long tapechar_compat_ioctl(struct file *, unsigned int,
 			  unsigned long);
 
-static const struct file_operations tape_fops =
+static struct file_operations tape_fops =
 {
 	.owner = THIS_MODULE,
 	.read = tapechar_read,
@@ -85,13 +83,28 @@ tapechar_setup_device(struct tape_device * device)
 void
 tapechar_cleanup_device(struct tape_device *device)
 {
-	unregister_tape_dev(&device->cdev->dev, device->rt);
+	unregister_tape_dev(device->rt);
 	device->rt = NULL;
-	unregister_tape_dev(&device->cdev->dev, device->nt);
+	unregister_tape_dev(device->nt);
 	device->nt = NULL;
 }
 
-static int
+/*
+ * Terminate write command (we write two TMs and skip backward over last)
+ * This ensures that the tape is always correctly terminated.
+ * When the user writes afterwards a new file, he will overwrite the
+ * second TM and therefore one TM will remain to separate the
+ * two files on the tape...
+ */
+static inline void
+tapechar_terminate_write(struct tape_device *device)
+{
+	if (tape_mtop(device, MTWEOF, 1) == 0 &&
+	    tape_mtop(device, MTWEOF, 1) == 0)
+		tape_mtop(device, MTBSR, 1);
+}
+
+static inline int
 tapechar_check_idalbuffer(struct tape_device *device, size_t block_size)
 {
 	struct idal_buffer *new;
@@ -103,12 +116,14 @@ tapechar_check_idalbuffer(struct tape_device *device, size_t block_size)
 	if (block_size > MAX_BLOCKSIZE) {
 		DBF_EVENT(3, "Invalid blocksize (%zd > %d)\n",
 			block_size, MAX_BLOCKSIZE);
+		PRINT_ERR("Invalid blocksize (%zd> %d)\n",
+			block_size, MAX_BLOCKSIZE);
 		return -EINVAL;
 	}
 
 	/* The current idal buffer is not correct. Allocate a new one. */
 	new = idal_buffer_alloc(block_size, 0);
-	if (IS_ERR(new))
+	if (new == NULL)
 		return -ENOMEM;
 
 	if (device->char_data.idal_buf != NULL)
@@ -122,7 +137,7 @@ tapechar_check_idalbuffer(struct tape_device *device, size_t block_size)
 /*
  * Tape device read function
  */
-static ssize_t
+ssize_t
 tapechar_read(struct file *filp, char __user *data, size_t count, loff_t *ppos)
 {
 	struct tape_device *device;
@@ -186,7 +201,7 @@ tapechar_read(struct file *filp, char __user *data, size_t count, loff_t *ppos)
 /*
  * Tape device write function
  */
-static ssize_t
+ssize_t
 tapechar_write(struct file *filp, const char __user *data, size_t count, loff_t *ppos)
 {
 	struct tape_device *device;
@@ -276,39 +291,34 @@ tapechar_write(struct file *filp, const char __user *data, size_t count, loff_t 
 /*
  * Character frontend tape device open function.
  */
-static int
+int
 tapechar_open (struct inode *inode, struct file *filp)
 {
 	struct tape_device *device;
 	int minor, rc;
 
 	DBF_EVENT(6, "TCHAR:open: %i:%i\n",
-		imajor(filp->f_path.dentry->d_inode),
-		iminor(filp->f_path.dentry->d_inode));
+		imajor(filp->f_dentry->d_inode),
+		iminor(filp->f_dentry->d_inode));
 
-	if (imajor(filp->f_path.dentry->d_inode) != tapechar_major)
+	if (imajor(filp->f_dentry->d_inode) != tapechar_major)
 		return -ENODEV;
 
-	lock_kernel();
-	minor = iminor(filp->f_path.dentry->d_inode);
+	minor = iminor(filp->f_dentry->d_inode);
 	device = tape_get_device(minor / TAPE_MINORS_PER_DEV);
 	if (IS_ERR(device)) {
 		DBF_EVENT(3, "TCHAR:open: tape_get_device() failed\n");
-		rc = PTR_ERR(device);
-		goto out;
+		return PTR_ERR(device);
 	}
 
 
 	rc = tape_open(device);
 	if (rc == 0) {
 		filp->private_data = device;
-		rc = nonseekable_open(inode, filp);
+		return nonseekable_open(inode, filp);
 	}
-	else
-		tape_put_device(device);
+	tape_put_device(device);
 
-out:
-	unlock_kernel();
 	return rc;
 }
 
@@ -316,7 +326,7 @@ out:
  * Character frontend tape device release function.
  */
 
-static int
+int
 tapechar_release(struct inode *inode, struct file *filp)
 {
 	struct tape_device *device;
@@ -484,6 +494,7 @@ tapechar_init (void)
 		return -1;
 
 	tapechar_major = MAJOR(dev);
+	PRINT_INFO("tape gets major %d for character devices\n", MAJOR(dev));
 
 	return 0;
 }
@@ -494,5 +505,7 @@ tapechar_init (void)
 void
 tapechar_exit(void)
 {
+	PRINT_INFO("tape releases major %d for character devices\n",
+		tapechar_major);
 	unregister_chrdev_region(MKDEV(tapechar_major, 0), 256);
 }

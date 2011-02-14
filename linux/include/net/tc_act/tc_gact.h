@@ -3,15 +3,15 @@
 
 #include <net/act_api.h>
 
-struct tcf_gact {
-	struct tcf_common	common;
+struct tcf_gact
+{
+        tca_gen(gact);
 #ifdef CONFIG_GACT_PROB
-        u16			tcfg_ptype;
-        u16			tcfg_pval;
-        int			tcfg_paction;
+        u16                 ptype;
+        u16                 pval;
+        int                 paction;
 #endif
+                                                                                
 };
-#define to_gact(pc) \
-	container_of(pc, struct tcf_gact, common)
-
-#endif /* __NET_TC_GACT_H */
+                                                                                
+#endif

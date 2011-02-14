@@ -1,0 +1,69 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:11 -0500
+Subject: [scsi] qla4xxx: add support for 8130/8131 AENs
+Message-id: <20101130195911.10450.24202.sendpatchset@localhost.localdomain>
+Patchwork-id: 29695
+O-Subject: [RHEL 5.6 PATCH 4/28] qla4xxx: Add support for 8130/8131 AENs.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 6434080b127088606e03d2ecfe5ffdd797e38d63
+
+Description
+-----------
+
+>From 2f5de650747dcb189ce0052927b14b634dfb43b3 Mon Sep 17 00:00:00 2001
+From: Shyam Sundar <shyam.sundar@qlogic.com>
+Date: Sat, 20 Nov 2010 14:07:16 -0800
+Subject: [PATCH 05/29] qla4xxx: Add support for 8130/8131 AENs.
+
+AEN 8130 Corresponds to an event representing the insertion (detection)
+of a transceiver. It also reports the type of the SFP+.
+AEN 8131 corresponds to the removal of a transceiver.
+
+Signed-off-by: Shyam Sundar <shyam.sundar@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_fw.h b/drivers/scsi/qla4xxx/ql4_fw.h
+index 2bf0f50..b40050a 100644
+--- a/drivers/scsi/qla4xxx/ql4_fw.h
++++ b/drivers/scsi/qla4xxx/ql4_fw.h
+@@ -430,6 +430,8 @@ struct qla_flt_region {
+ #define MBOX_ASTS_IPV6_ND_PREFIX_IGNORED	0x802C
+ #define MBOX_ASTS_IPV6_LCL_PREFIX_IGNORED	0x802D
+ #define MBOX_ASTS_ICMPV6_ERROR_MSG_RCVD		0x802E
++#define MBOX_ASTS_TXSCVR_INSERTED		0x8130
++#define MBOX_ASTS_TXSCVR_REMOVED		0x8131
+ 
+ #define ISNS_EVENT_DATA_RECEIVED		0x0000
+ #define ISNS_EVENT_CONNECTION_OPENED		0x0001
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index f866e6d..9fe3e03 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -666,6 +666,18 @@ void qla4xxx_isr_decode_mailbox(struct scsi_qla_host *ha,
+ 			}
+ 			break;
+ 
++		case MBOX_ASTS_TXSCVR_INSERTED:
++			DEBUG2(printk(KERN_WARNING
++				"scsi%ld: AEN %04x Transceiver"
++				" inserted\n", ha->host_no, mbox_sts[0]));
++			break;
++
++		case MBOX_ASTS_TXSCVR_REMOVED:
++			DEBUG2(printk(KERN_WARNING
++				"scsi%ld: AEN %04x Transceiver"
++				" removed\n", ha->host_no, mbox_sts[0]));
++			break;
++
+ 		default:
+ 			DEBUG2(printk(KERN_WARNING
+ 				      "scsi%ld: AEN %04x UNKNOWN\n",

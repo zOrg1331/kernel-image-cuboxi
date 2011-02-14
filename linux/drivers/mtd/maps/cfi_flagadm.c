@@ -1,6 +1,8 @@
 /*
  *  Copyright © 2001 Flaga hf. Medical Devices, Kári Davíðsson <kd@flaga.is>
  *
+ *  $Id: cfi_flagadm.c,v 1.15 2005/11/07 11:14:26 gleixner Exp $
+ *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
  *  Free Software Foundation;  either version 2 of the  License, or (at your
@@ -78,7 +80,7 @@ struct mtd_partition flagadm_parts[] = {
 		.size =		FLASH_PARTITION2_SIZE
 	},
 	{
-		.name =		"Persistent storage",
+		.name =		"Persistant storage",
 		.offset =	FLASH_PARTITION3_ADDR,
 		.size =		FLASH_PARTITION3_SIZE
 	}
@@ -88,7 +90,7 @@ struct mtd_partition flagadm_parts[] = {
 
 static struct mtd_info *mymtd;
 
-static int __init init_flagadm(void)
+int __init init_flagadm(void)
 {
 	printk(KERN_NOTICE "FlagaDM flash device: %x at %x\n",
 			FLASH_SIZE, FLASH_PHYS_ADDR);

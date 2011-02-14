@@ -1,0 +1,102 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 28 Aug 2007 17:16:17 +0200
+Subject: [x86_64] 'ide0=noprobe' crashes the kernel
+Message-id: 46D43C41.8050807@redhat.com
+O-Subject: [RHEL5.2 PATCH] "ide0=noprobe" crashes the kernel early
+Bugzilla: 241338
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=241338
+
+Description: x86_64 kernel crashes early during boot when "ide0=noprobe"
+parameter is passed on the command line.
+The crash is caused by ide_setup() enabling interrupts inadvertently:
+
+ide_setup()
+  init_ide_data()
+    init_hwif_default()
+      ide_default_io_base()
+	pci_find_device()
+
+pci_find_device() uses a rwsem. Unlike i386, x86_64 uses
+GENERIC_RWSEM_SPINLOCK implementation which enables interrupts.
+The bug was spotted and analyzed by Gerd Hoffmann on a Xen HVM machine.
+
+Solution: IDE just needs to know whether there are any PCI devices in
+the system. The patch introduces a new function no_pci_devices() to
+provide the answer. This avoids the call to pci_find_device().
+
+Upstream status: The patch is upstream since commit
+ed4aaadb1a7913f509f05d3e67840541a180713f ('fix jvc cdrom drive lockup'),
+released in 2.6.23-rc1.
+
+KABI impact: This adds a new exported function
+int no_pci_devices(void);
+EXPORT_SYMBOL(no_pci_devices);
+
+Testing: Gerd Hoffmann confirmed a kernel with this patch fixed the bug.
+
+Thanks,
+Michal
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 773557e..db714a8 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -22,6 +22,18 @@ EXPORT_SYMBOL(pci_root_buses);
+ 
+ LIST_HEAD(pci_devices);
+ 
++/*
++ * Some device drivers need know if pci is initiated.
++ * Basically, we think pci is not initiated when there
++ * is no device in list of pci_devices.
++ */
++int no_pci_devices(void)
++{
++	return list_empty(&pci_devices);
++}
++
++EXPORT_SYMBOL(no_pci_devices);
++
+ #ifdef HAVE_PCI_LEGACY
+ /**
+  * pci_create_legacy_files - create legacy I/O port and memory files
+diff --git a/include/asm-i386/ide.h b/include/asm-i386/ide.h
+index 73465d2..e7817a3 100644
+--- a/include/asm-i386/ide.h
++++ b/include/asm-i386/ide.h
+@@ -46,7 +46,7 @@ static __inline__ unsigned long ide_default_io_base(int index)
+ 	 *	defined compatibility mode ports for PCI. A user can 
+ 	 *	override this using ide= but we must default safe.
+ 	 */
+-	if (pci_find_device(PCI_ANY_ID, PCI_ANY_ID, NULL) == NULL) {
++	if (no_pci_devices()) {
+ 		switch(index) {
+ 			case 2: return 0x1e8;
+ 			case 3: return 0x168;
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 694c4d8..3b2bcb1 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -431,6 +431,8 @@ extern struct bus_type pci_bus_type;
+  * code, or pci core code. */
+ extern struct list_head pci_root_buses;	/* list of all known PCI buses */
+ extern struct list_head pci_devices;	/* list of all devices */
++/* Some device drivers need know if pci is initiated */
++extern int no_pci_devices(void);
+ 
+ void pcibios_fixup_bus(struct pci_bus *);
+ int pcibios_enable_device(struct pci_dev *, int mask);
+@@ -705,6 +707,7 @@ static inline struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *
+ { return NULL; }
+ 
+ #define pci_dev_present(ids)	(0)
++#define no_pci_devices()	(1)
+ #define pci_dev_put(dev)	do { } while (0)
+ 
+ static inline void pci_set_master(struct pci_dev *dev) { }

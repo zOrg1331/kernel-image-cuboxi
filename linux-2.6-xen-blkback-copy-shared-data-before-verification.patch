@@ -1,0 +1,64 @@
+From: Rik van Riel<riel@redhat.com>
+Subject: [PATCH][RHEL5 Xen] blkback: Copy shared data before verification
+Date: Fri, 01 Dec 2006 20:25:31
+Bugzilla: 217994
+Message-Id: <4570D60B.6010407@redhat.com>
+Changelog: Xen: blkback: Copy shared data before verification
+
+
+Another upstream security patch by Herbert Xu.  Upstream cset 11859.
+
+As it is blkback verifies the metadata from the frontend in place.
+This means we run the risk of the frontend changing the data after
+we've verified it.  This patch copies the data onto the stack before
+verifying and using it to ensure we see a consistent snapshot.
+
+Fixes bug 217994.
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+diff -r da5997fcc070 -r f326ec66e514 linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c
+--- linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c	Mon Oct 23 09:57:24 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c	Mon Oct 23 10:00:14 2006 +0100
+@@ -293,7 +293,7 @@ static int do_block_io_op(blkif_t *blkif
+ static int do_block_io_op(blkif_t *blkif)
+ {
+ 	blkif_back_ring_t *blk_ring = &blkif->blk_ring;
+-	blkif_request_t *req;
++	blkif_request_t req;
+ 	pending_req_t *pending_req;
+ 	RING_IDX rc, rp;
+ 	int more_to_do = 0;
+@@ -311,22 +311,22 @@ static int do_block_io_op(blkif_t *blkif
+ 			break;
+ 		}
+ 
+-		req = RING_GET_REQUEST(blk_ring, rc);
++		memcpy(&req, RING_GET_REQUEST(blk_ring, rc), sizeof(req));
+ 		blk_ring->req_cons = ++rc; /* before make_response() */
+ 
+-		switch (req->operation) {
++		switch (req.operation) {
+ 		case BLKIF_OP_READ:
+ 			blkif->st_rd_req++;
+-			dispatch_rw_block_io(blkif, req, pending_req);
++			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
+ 		case BLKIF_OP_WRITE:
+ 			blkif->st_wr_req++;
+-			dispatch_rw_block_io(blkif, req, pending_req);
++			dispatch_rw_block_io(blkif, &req, pending_req);
+ 			break;
+ 		default:
+ 			DPRINTK("error: unknown block io operation [%d]\n",
+-				req->operation);
+-			make_response(blkif, req->id, req->operation,
++				req.operation);
++			make_response(blkif, req.id, req.operation,
+ 				      BLKIF_RSP_ERROR);
+ 			free_req(pending_req);
+ 			break;
+

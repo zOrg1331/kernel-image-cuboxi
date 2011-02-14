@@ -1,0 +1,110 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Mon, 11 May 2009 19:37:12 -0400
+Subject: [mm] don't oomkill when hugepage alloc fails on node
+Message-id: <1242070632.10978.185.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 19981
+O-Subject: [RHEL5 patch] Prevent a task from being OOM killed when a hugepage
+	allocation fails on a specic node
+Bugzilla: 498510
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Currently, RHEL5 will oom kill a task attempting to increase the number
+of huge pages in the huge page free pool when it can't allocate memory
+from a given node.  This is not really an out of memory condition, and
+it is not under the user/administrator's control, as the kernel will
+unconditionally attempt to distribute allocations across all on-line
+nodes, whether or not the node has sufficient memory.
+
+This can be avoided by having the huge page free pool allocator--
+alloc_fresh_huge_page_node() pass a new flag--__GFP_NO_OOM--to the call
+to alloc_pages_thisnode(), used only for huge page allocations.  With
+this flag, __alloc_pages() will not call out_of_memory() before
+restarting the allocation loop but set a local would_oom_kill instead.
+Since we don't call out_of_memory(), the task will not have the
+TF_MEMDIE flag set, therefore we need to indicate that it WOULD have
+oom-killed the task so that we don't loop forever, attempting to
+allocate huge pages.
+
+Fixes BZ 498510
+
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index 58a8607..765ba80 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -48,6 +48,7 @@ extern void kfree(const void *);
+ #define __GFP_ZERO	((__force gfp_t)0x8000u)/* Return zeroed page on success */
+ #define __GFP_NOMEMALLOC ((__force gfp_t)0x10000u) /* Don't use emergency reserves */
+ #define __GFP_HARDWALL   ((__force gfp_t)0x20000u) /* Enforce hardwall cpuset memory allocs */
++#define __GFP_NO_OOM     ((__force gfp_t)0x40000u) /* Don't OOM on alloc fail - hugepages */
+ 
+ #define __GFP_BITS_SHIFT 20	/* Room for 20 __GFP_FOO bits */
+ #define __GFP_BITS_MASK ((__force gfp_t)((1 << __GFP_BITS_SHIFT) - 1))
+@@ -56,7 +57,7 @@ extern void kfree(const void *);
+ #define GFP_LEVEL_MASK (__GFP_WAIT|__GFP_HIGH|__GFP_IO|__GFP_FS| \
+ 			__GFP_COLD|__GFP_NOWARN|__GFP_REPEAT| \
+ 			__GFP_NOFAIL|__GFP_NORETRY|__GFP_NO_GROW|__GFP_COMP| \
+-			__GFP_NOMEMALLOC|__GFP_HARDWALL)
++			__GFP_NOMEMALLOC|__GFP_HARDWALL|__GFP_NO_OOM)
+ 
+ /* This equals 0, but use constants in case they ever change */
+ #define GFP_NOWAIT	(GFP_ATOMIC & ~__GFP_HIGH)
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index f737968..fa2fd01 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -105,8 +105,9 @@ static struct page *alloc_fresh_huge_page_node(int nid)
+ {
+ 	struct page *page;
+ 
+-	page = alloc_pages_thisnode(nid, GFP_HIGHUSER|__GFP_COMP|__GFP_NOWARN,
+-					HUGETLB_PAGE_ORDER);
++	page = alloc_pages_thisnode(nid,
++		GFP_HIGHUSER|__GFP_COMP|__GFP_NOWARN|__GFP_NOMEMALLOC|__GFP_NO_OOM,
++		HUGETLB_PAGE_ORDER);
+ 	if (page) {
+ 		if (arch_prepare_hugepage(page)) {
+ 			__free_pages(page, HUGETLB_PAGE_ORDER);
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 0f0f756..cddb8ce 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -939,6 +939,7 @@ __alloc_pages(gfp_t gfp_mask, unsigned int order,
+ 	int do_retry;
+ 	int alloc_flags;
+ 	int did_some_progress;
++	int would_oom_kill = 0;
+ 
+ 	might_sleep_if(wait);
+ 
+@@ -991,7 +992,8 @@ restart:
+ 
+ 	/* This allocation should allow future memory freeing. */
+ 
+-	if (((p->flags & PF_MEMALLOC) || unlikely(test_thread_flag(TIF_MEMDIE)))
++	if (((p->flags & PF_MEMALLOC) ||
++			unlikely(test_thread_flag(TIF_MEMDIE) || would_oom_kill))
+ 			&& !in_interrupt()) {
+ 		if (!(gfp_mask & __GFP_NOMEMALLOC)) {
+ nofail_alloc:
+@@ -1013,7 +1015,7 @@ nofail_alloc:
+ 		goto nopage;
+ 
+ rebalance:
+-	if (test_thread_flag(TIF_MEMDIE))
++	if (test_thread_flag(TIF_MEMDIE) || would_oom_kill)
+ 		goto nopage;
+ 	cond_resched();
+ 
+@@ -1047,7 +1049,10 @@ rebalance:
+ 		if (page)
+ 			goto got_pg;
+ 
+-		out_of_memory(zonelist, gfp_mask, order, 0);
++		if (!(gfp_mask & __GFP_NO_OOM))
++			out_of_memory(zonelist, gfp_mask, order, 0);
++		else
++			would_oom_kill = 1;
+ 		goto restart;
+ 	}
+ 

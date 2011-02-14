@@ -21,6 +21,8 @@
 #include "isac.h"
 #include "hscx.h"
 
+extern const char *CardType[];
+
 static const char *teles0_revision = "$Revision: 2.15.2.4 $";
 
 #define TELES_IOMEM_SIZE	0x400
@@ -142,7 +144,7 @@ WriteHSCX(struct IsdnCardState *cs, int hscx, u_char offset, u_char value)
 #include "hscx_irq.c"
 
 static irqreturn_t
-teles0_interrupt(int intno, void *dev_id)
+teles0_interrupt(int intno, void *dev_id, struct pt_regs *regs)
 {
 	struct IsdnCardState *cs = dev_id;
 	u_char val;

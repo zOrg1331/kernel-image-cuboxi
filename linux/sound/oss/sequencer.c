@@ -1,5 +1,5 @@
 /*
- * sound/oss/sequencer.c
+ * sound/sequencer.c
  *
  * The sequencer personality manager.
  */
@@ -16,6 +16,7 @@
  */
 #include <linux/kmod.h>
 #include <linux/spinlock.h>
+#define SEQUENCER_C
 #include "sound_config.h"
 
 #include "midi_ctrl.h"
@@ -156,7 +157,6 @@ void seq_copy_to_input(unsigned char *event_rec, int len)
 	wake_up(&midi_sleeper);
 	spin_unlock_irqrestore(&lock,flags);
 }
-EXPORT_SYMBOL(seq_copy_to_input);
 
 static void sequencer_midi_input(int dev, unsigned char data)
 {
@@ -206,12 +206,12 @@ void seq_input_event(unsigned char *event_rec, int len)
 	}
 	seq_copy_to_input(event_rec, len);
 }
-EXPORT_SYMBOL(seq_input_event);
 
 int sequencer_write(int dev, struct file *file, const char __user *buf, int count)
 {
 	unsigned char event_rec[EV_SZ], ev_code;
 	int p = 0, c, ev_size;
+	int err;
 	int mode = translate_mode(file);
 
 	dev = dev >> 4;
@@ -284,7 +284,7 @@ int sequencer_write(int dev, struct file *file, const char __user *buf, int coun
 		{
 			if (!midi_opened[event_rec[2]])
 			{
-				int err, mode;
+				int mode;
 				int dev = event_rec[2];
 
 				if (dev >= max_mididev || midi_devs[dev]==NULL)
@@ -1554,7 +1554,6 @@ void sequencer_timer(unsigned long dummy)
 {
 	seq_startplay();
 }
-EXPORT_SYMBOL(sequencer_timer);
 
 int note_to_freq(int note_num)
 {
@@ -1588,7 +1587,6 @@ int note_to_freq(int note_num)
 
 	return note_freq;
 }
-EXPORT_SYMBOL(note_to_freq);
 
 unsigned long compute_finetune(unsigned long base_freq, int bend, int range,
 		 int vibrato_cents)
@@ -1642,12 +1640,19 @@ unsigned long compute_finetune(unsigned long base_freq, int bend, int range,
 	else
 		return (base_freq * amount) / 10000;	/* Bend up */
 }
-EXPORT_SYMBOL(compute_finetune);
+
 
 void sequencer_init(void)
 {
+	/* drag in sequencer_syms.o */
+	{
+		extern char sequencer_syms_symbol;
+		sequencer_syms_symbol = 0;
+	}
+
 	if (sequencer_ok)
 		return;
+	MIDIbuf_init();
 	queue = (unsigned char *)vmalloc(SEQ_MAX_QUEUE * EV_SZ);
 	if (queue == NULL)
 	{
@@ -1663,7 +1668,6 @@ void sequencer_init(void)
 	}
 	sequencer_ok = 1;
 }
-EXPORT_SYMBOL(sequencer_init);
 
 void sequencer_unload(void)
 {

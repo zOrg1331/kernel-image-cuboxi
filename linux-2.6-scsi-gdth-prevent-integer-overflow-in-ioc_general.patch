@@ -1,0 +1,56 @@
+From: Frantisek Hrbata <fhrbata@redhat.com>
+Date: Thu, 11 Nov 2010 12:55:53 -0500
+Subject: [scsi] gdth: prevent integer overflow in ioc_general
+Message-id: <1289480153-6542-1-git-send-email-fhrbata@redhat.com>
+Patchwork-id: 29143
+O-Subject: [PATCH RHEL5.6 BZ651176 - CVE-2010-4157] scsi: gdth: integer overflow
+	in ioc_general()
+Bugzilla: 651176
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Bug: 651176
+https://bugzilla.redhat.com/show_bug.cgi?id=651176
+
+Brew build: 2886748
+https://brewweb.devel.redhat.com/taskinfo?taskID=2886748
+
+Description:
+gdth_ioctl_alloc() takes the size variable as an int. copy_from_user() takes
+the size variable as an unsigned long. gen.data_len and gen.sense_len are
+unsigned longs. On x86_64 longs are 64 bit and ints are 32 bit.
+
+We could pass in a very large number and the allocation would truncate the size
+to 32 bits and allocate a small buffer.  Then when we do the copy_from_user(),
+it would result in a memory corruption.
+
+Upstream Status:
+backport of 2.6 commit f63ae56e4e97fb12053590e41a4fa59e7daa74a4
+
+Test Status:
+Not tested, since I have not been able to locate any machine with required
+hardware yet. To test this we need a 64bit machine with some ICP vortex GDT RAID
+Controller using the gdth driver. I will keep searching and if I find such HW I
+will test it. The patch is pretty straightforward. If I overlooked such machine
+in beaker or you know about one, please let me know.
+
+Signed-off-by: Frantisek Hrbata <fhrbata@redhat.com>
+
+diff --git a/drivers/scsi/gdth.c b/drivers/scsi/gdth.c
+index e0d487b..ad7442e 100644
+--- a/drivers/scsi/gdth.c
++++ b/drivers/scsi/gdth.c
+@@ -5098,6 +5098,14 @@ static int ioc_general(void __user *arg, char *cmnd)
+     if (copy_from_user(&gen, arg, sizeof(gdth_ioctl_general)) ||
+         gen.ionode >= gdth_ctr_count)
+         return -EFAULT;
++
++    if (gen.data_len > INT_MAX)
++        return -EINVAL;
++    if (gen.sense_len > INT_MAX)
++        return -EINVAL;
++    if (gen.data_len + gen.sense_len > INT_MAX)
++        return -EINVAL;
++
+     hanum = gen.ionode; 
+     ha = HADATA(gdth_ctr_tab[hanum]);
+     if (gen.data_len + gen.sense_len != 0) {

@@ -1,0 +1,237 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:37 -0400
+Subject: [scsi] lpfc: enhance round-robin FCF failover algorithm
+Message-id: <1286288695-20754-6-git-send-email-revers@redhat.com>
+Patchwork-id: 28597
+O-Subject: [RHEL5.6 PATCH 05/23] Enhanced round-robin FCF failover algorithm to
+	re-start on new FCF async event
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Enhanced round-robin FCF failover algorithm to re-start on new FCF async event
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index c521727..5862b0b 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -815,14 +815,12 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 				 */
+ 				lpfc_printf_log(phba, KERN_WARNING,
+ 						LOG_FIP | LOG_ELS,
+-						"2760 FLOGI exhausted FCF "
+-						"round robin failover list, "
+-						"retry FLOGI on the current "
+-						"registered FCF index:%d\n",
++						"2760 Completed one round "
++						"of FLOGI FCF round robin "
++						"failover list, retry FLOGI "
++						"on currently registered "
++						"FCF index:%d\n",
+ 						phba->fcf.current_rec.fcf_indx);
+-				spin_lock_irq(&phba->hbalock);
+-				phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
+-				spin_unlock_irq(&phba->hbalock);
+ 			} else {
+ 				lpfc_printf_log(phba, KERN_INFO,
+ 						LOG_FIP | LOG_ELS,
+@@ -831,7 +829,7 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 						fcf_index);
+ 				rc = lpfc_sli4_fcf_rr_read_fcf_rec(phba,
+ 								   fcf_index);
+-				if (rc) {
++				if (rc)
+ 					lpfc_printf_log(phba, KERN_WARNING,
+ 							LOG_FIP | LOG_ELS,
+ 							"2761 FLOGI round "
+@@ -840,10 +838,7 @@ lpfc_cmpl_els_flogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 							"rc:x%x, fcf_index:"
+ 							"%d\n", rc,
+ 						phba->fcf.current_rec.fcf_indx);
+-					spin_lock_irq(&phba->hbalock);
+-					phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
+-					spin_unlock_irq(&phba->hbalock);
+-				} else
++				else
+ 					goto out;
+ 			}
+ 		}
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 135bef7..2fc232c 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -1706,7 +1706,7 @@ lpfc_sli4_new_fcf_random_select(struct lpfc_hba *phba, uint32_t fcf_cnt)
+ }
+ 
+ /**
+- * lpfc_mbx_cmpl_read_fcf_record - Completion handler for read_fcf mbox.
++ * lpfc_sli4_fcf_rec_mbox_parse - Parse read_fcf mbox command.
+  * @phba: pointer to lpfc hba data structure.
+  * @mboxq: pointer to mailbox object.
+  * @next_fcf_index: pointer to holder of next fcf index.
+@@ -2160,9 +2160,14 @@ read_next_fcf:
+ 			memcpy(&phba->fcf.current_rec,
+ 			       &phba->fcf.failover_rec,
+ 			       sizeof(struct lpfc_fcf_rec));
+-			/* mark the FCF fast failover completed */
++			/*
++			 * Mark the fast FCF failover rediscovery completed
++			 * and the start of the first round of the roundrobin
++			 * FCF failover.
++			 */
+ 			spin_lock_irq(&phba->hbalock);
+-			phba->fcf.fcf_flag &= ~FCF_REDISC_FOV;
++			phba->fcf.fcf_flag &=
++					~(FCF_REDISC_FOV | FCF_REDISC_RRU);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			/*
+ 			 * Set up the initial registered FCF index for FLOGI
+@@ -2208,9 +2213,14 @@ read_next_fcf:
+ 			 * through the FCF scanning process.
+ 			 */
+ 
+-			/* mark the initial FCF discovery completed */
++			/*
++			 * Mark the initial FCF discovery completed and
++			 * the start of the first round of the roundrobin
++			 * FCF failover.
++			 */
+ 			spin_lock_irq(&phba->hbalock);
+-			phba->fcf.fcf_flag &= ~FCF_INIT_DISC;
++			phba->fcf.fcf_flag &=
++					~(FCF_INIT_DISC | FCF_REDISC_RRU);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			/*
+ 			 * Set up the initial registered FCF index for FLOGI
+@@ -2340,7 +2350,7 @@ lpfc_mbx_cmpl_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 		goto out;
+ 
+ 	/* If FCF discovery period is over, no need to proceed */
+-	if (phba->fcf.fcf_flag & FCF_DISCOVERY)
++	if (!(phba->fcf.fcf_flag & FCF_DISCOVERY))
+ 		goto out;
+ 
+ 	/* Parse the FCF record from the non-embedded mailbox command */
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index c8e9289..b2c3113 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3452,22 +3452,14 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 					"evt_tag:x%x, fcf_index:x%x\n",
+ 					acqe_fcoe->event_tag,
+ 					acqe_fcoe->index);
++		/* If the FCF discovery is in progress, do nothing. */
+ 		spin_lock_irq(&phba->hbalock);
+-		if ((phba->fcf.fcf_flag & FCF_SCAN_DONE) ||
+-		    (phba->hba_flag & FCF_DISC_INPROGRESS)) {
+-			/*
+-			 * If the current FCF is in discovered state or
+-			 * FCF discovery is in progress, do nothing.
+-			 */
++		if (phba->hba_flag & FCF_DISC_INPROGRESS) {
+ 			spin_unlock_irq(&phba->hbalock);
+ 			break;
+ 		}
+-
++		/* If fast FCF failover rescan event is pending, do nothing */
+ 		if (phba->fcf.fcf_flag & FCF_REDISC_EVT) {
+-			/*
+-			 * If fast FCF failover rescan event is pending,
+-			 * do nothing.
+-			 */
+ 			spin_unlock_irq(&phba->hbalock);
+ 			break;
+ 		}
+@@ -3488,7 +3480,13 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 					acqe_fcoe->index);
+ 			rc = lpfc_sli4_read_fcf_rec(phba, acqe_fcoe->index);
+ 		}
+-
++		/* If the FCF has been in discovered state, do nothing. */
++		spin_lock_irq(&phba->hbalock);
++		if (phba->fcf.fcf_flag & FCF_SCAN_DONE) {
++			spin_unlock_irq(&phba->hbalock);
++			break;
++		}
++		spin_unlock_irq(&phba->hbalock);
+ 		/* Otherwise, scan the entire FCF table and re-discover SAN */
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
+ 				"2770 Start FCF table scan due to new FCF "
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index bf88b92..5b8abeb 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -12476,15 +12476,32 @@ lpfc_sli4_fcf_rr_next_index_get(struct lpfc_hba *phba)
+ 		next_fcf_index = find_next_bit(phba->fcf.fcf_rr_bmask,
+ 					       LPFC_SLI4_FCF_TBL_INDX_MAX, 0);
+ 
+-	/* Round robin failover stop condition */
+-	if ((next_fcf_index == phba->fcf.fcf_rr_init_indx) ||
+-		(next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX)) {
++	/* Check roundrobin failover list empty condition */
++	if (next_fcf_index >= LPFC_SLI4_FCF_TBL_INDX_MAX) {
+ 		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
+-				"2844 Round robin failover FCF index search "
+-				"hit stop condition:x%x\n", next_fcf_index);
++				"2844 No roundrobin failover FCF available\n");
+ 		return LPFC_FCOE_FCF_NEXT_NONE;
+ 	}
+ 
++	/* Check roundrobin failover index bmask stop condition */
++	if (next_fcf_index == phba->fcf.fcf_rr_init_indx) {
++		if (!(phba->fcf.fcf_flag & FCF_REDISC_RRU)) {
++			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
++					"2847 Round robin failover FCF index "
++					"search hit stop condition:x%x\n",
++					next_fcf_index);
++			return LPFC_FCOE_FCF_NEXT_NONE;
++		}
++		/* The roundrobin failover index bmask updated, start over */
++		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
++				"2848 Round robin failover FCF index bmask "
++				"updated, start over\n");
++		spin_lock_irq(&phba->hbalock);
++		phba->fcf.fcf_flag &= ~FCF_REDISC_RRU;
++		spin_unlock_irq(&phba->hbalock);
++		return phba->fcf.fcf_rr_init_indx;
++	}
++
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+ 			"2845 Get next round robin failover "
+ 			"FCF index x%x\n", next_fcf_index);
+@@ -12517,6 +12534,11 @@ lpfc_sli4_fcf_rr_index_set(struct lpfc_hba *phba, uint16_t fcf_index)
+ 	/* Set the eligible FCF record index bmask */
+ 	set_bit(fcf_index, phba->fcf.fcf_rr_bmask);
+ 
++	/* Set the roundrobin index bmask updated */
++	spin_lock_irq(&phba->hbalock);
++	phba->fcf.fcf_flag |= FCF_REDISC_RRU;
++	spin_unlock_irq(&phba->hbalock);
++
+ 	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
+ 			"2790 Set FCF index x%x to round robin failover "
+ 			"bmask\n", fcf_index);
+@@ -12612,7 +12634,7 @@ lpfc_mbx_cmpl_redisc_fcf_table(struct lpfc_hba *phba, LPFC_MBOXQ_t *mbox)
+ }
+ 
+ /**
+- * lpfc_sli4_redisc_all_fcf - Request to rediscover entire FCF table by port.
++ * lpfc_sli4_redisc_fcf_table - Request to rediscover entire FCF table by port.
+  * @phba: pointer to lpfc hba data structure.
+  *
+  * This routine is invoked to request for rediscovery of the entire FCF table
+diff --git a/drivers/scsi/lpfc/lpfc_sli4.h b/drivers/scsi/lpfc/lpfc_sli4.h
+index b06374c..54a54ce 100644
+--- a/drivers/scsi/lpfc/lpfc_sli4.h
++++ b/drivers/scsi/lpfc/lpfc_sli4.h
+@@ -163,6 +163,7 @@ struct lpfc_fcf {
+ #define FCF_REDISC_PEND	0x80 /* FCF rediscovery pending */
+ #define FCF_REDISC_EVT	0x100 /* FCF rediscovery event to worker thread */
+ #define FCF_REDISC_FOV	0x200 /* Post FCF rediscovery fast failover */
++#define FCF_REDISC_RRU	0x400 /* Roundrobin bitmap updated */
+ 	uint32_t addr_mode;
+ 	uint16_t fcf_rr_init_indx;
+ 	uint32_t eligible_fcf_cnt;

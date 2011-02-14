@@ -1,0 +1,134 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Fri, 18 Jan 2008 15:15:55 -0500
+Subject: [fs] manually d_move inside of rename()
+Message-id: 479108FB.60603@redhat.com
+O-Subject: [RHEL5.2 PATCH] Backport patch from 2.6.19 allowing fs' to manually d_move() inside of ->rename()
+Bugzilla: 427472
+
+Hi.
+
+Attached is a patch to address bz427472, "Backport patch from
+2.6.19 allowing fs' to manually d_move() inside of ->rename()".
+
+This patch allows a file system to better control when the
+dcache is updated during a rename operation.  The NFS code
+implemented a particular solution, but this wasn't quite
+sufficient for OCFS, so they have requested a variation of it.
+Thus, both NFS and the VFS code was updated to reflect the
+new requirements and implementation.
+
+The patch was committed upstream and has been tested there by
+the OCFS folks.
+
+    Thanx...
+
+       ps
+
+Acked-by: Steve Dickson <SteveD@redhat.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index cece729..6b99c47 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -2397,7 +2397,8 @@ static int vfs_rename_dir(struct inode *old_dir, struct dentry *old_dentry,
+ 		dput(new_dentry);
+ 	}
+ 	if (!error)
+-		d_move(old_dentry,new_dentry);
++		if (!(old_dir->i_sb->s_type->fs_flags & FS_RENAME_DOES_D_MOVE))
++			d_move(old_dentry,new_dentry);
+ 	return error;
+ }
+ 
+@@ -2420,8 +2421,7 @@ static int vfs_rename_other(struct inode *old_dir, struct dentry *old_dentry,
+ 	else
+ 		error = old_dir->i_op->rename(old_dir, old_dentry, new_dir, new_dentry);
+ 	if (!error) {
+-		/* The following d_move() should become unconditional */
+-		if (!(old_dir->i_sb->s_type->fs_flags & FS_ODD_RENAME))
++		if (!(old_dir->i_sb->s_type->fs_flags & FS_RENAME_DOES_D_MOVE))
+ 			d_move(old_dentry, new_dentry);
+ 	}
+ 	if (target)
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index bf2a8b2..48452eb 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1670,8 +1670,7 @@ out:
+ 	if (rehash)
+ 		d_rehash(rehash);
+ 	if (!error) {
+-		if (!S_ISDIR(old_inode->i_mode))
+-			d_move(old_dentry, new_dentry);
++		d_move(old_dentry, new_dentry);
+ 		nfs_set_verifier(new_dentry, nfs_save_change_attribute(new_dir));
+ 	}
+ 
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index 753508d..9427062 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -71,7 +71,7 @@ static struct file_system_type nfs_fs_type = {
+ 	.name		= "nfs",
+ 	.get_sb		= nfs_get_sb,
+ 	.kill_sb	= nfs_kill_super,
+-	.fs_flags	= FS_ODD_RENAME|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
++	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+ };
+ 
+ struct file_system_type nfs_xdev_fs_type = {
+@@ -79,7 +79,7 @@ struct file_system_type nfs_xdev_fs_type = {
+ 	.name		= "nfs",
+ 	.get_sb		= nfs_xdev_get_sb,
+ 	.kill_sb	= nfs_kill_super,
+-	.fs_flags	= FS_ODD_RENAME|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
++	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+ };
+ 
+ static struct super_operations nfs_sops = {
+@@ -108,7 +108,7 @@ static struct file_system_type nfs4_fs_type = {
+ 	.name		= "nfs4",
+ 	.get_sb		= nfs4_get_sb,
+ 	.kill_sb	= nfs4_kill_super,
+-	.fs_flags	= FS_ODD_RENAME|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
++	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+ };
+ 
+ struct file_system_type nfs4_xdev_fs_type = {
+@@ -116,7 +116,7 @@ struct file_system_type nfs4_xdev_fs_type = {
+ 	.name		= "nfs4",
+ 	.get_sb		= nfs4_xdev_get_sb,
+ 	.kill_sb	= nfs4_kill_super,
+-	.fs_flags	= FS_ODD_RENAME|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
++	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+ };
+ 
+ struct file_system_type nfs4_referral_fs_type = {
+@@ -124,7 +124,7 @@ struct file_system_type nfs4_referral_fs_type = {
+ 	.name		= "nfs4",
+ 	.get_sb		= nfs4_referral_get_sb,
+ 	.kill_sb	= nfs4_kill_super,
+-	.fs_flags	= FS_ODD_RENAME|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
++	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+ };
+ 
+ static struct super_operations nfs4_sops = {
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 3423d23..6644592 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -92,9 +92,10 @@ extern int dir_notify_enable;
+ #define FS_REQUIRES_DEV 1 
+ #define FS_BINARY_MOUNTDATA 2
+ #define FS_REVAL_DOT	16384	/* Check the paths ".", ".." for staleness */
+-#define FS_ODD_RENAME	32768	/* Temporary stuff; will go away as soon
+-				  * as nfs_rename() will be cleaned up
+-				  */
++#define FS_RENAME_DOES_D_MOVE	32768	/* FS will handle d_move()
++					 * during rename() internally.
++					 */
++
+ /*
+  * These are the fs-independent mount-flags: up to 32 flags are supported
+  */

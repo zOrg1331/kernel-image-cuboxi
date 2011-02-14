@@ -5,6 +5,7 @@
  */
 #include <linux/module.h>
 #include <linux/signal.h>
+#include <linux/sched.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/blkdev.h>
@@ -24,7 +25,7 @@
 
 #define CUMANASCSI_PUBLIC_RELEASE 1
 
-#define priv(host)			((struct NCR5380_hostdata *)(host)->hostdata)
+#define NCR5380_implementation_fields	int port, ctrl
 #define NCR5380_local_declare()		struct Scsi_Host *_instance
 #define NCR5380_setup(instance)		_instance = instance
 #define NCR5380_read(reg)		cumanascsi_read(_instance, reg)
@@ -32,11 +33,6 @@
 #define NCR5380_intr			cumanascsi_intr
 #define NCR5380_queue_command		cumanascsi_queue_command
 #define NCR5380_proc_info		cumanascsi_proc_info
-
-#define NCR5380_implementation_fields	\
-	unsigned ctrl;			\
-	void __iomem *base;		\
-	void __iomem *dma
 
 #define BOARD_NORMAL	0
 #define BOARD_NCR53C400	1
@@ -52,162 +48,192 @@ const char *cumanascsi_info(struct Scsi_Host *spnt)
 	return "";
 }
 
-#define CTRL	0x16fc
-#define STAT	0x2004
-#define L(v)	(((v)<<16)|((v) & 0x0000ffff))
-#define H(v)	(((v)>>16)|((v) & 0xffff0000))
+#ifdef NOT_EFFICIENT
+#define CTRL(p,v)     outb(*ctrl = (v), (p) - 577)
+#define STAT(p)       inb((p)+1)
+#define IN(p)         inb((p))
+#define OUT(v,p)      outb((v), (p))
+#else
+#define CTRL(p,v)	(p[-2308] = (*ctrl = (v)))
+#define STAT(p)		(p[4])
+#define IN(p)		(*(p))
+#define IN2(p)		((unsigned short)(*(volatile unsigned long *)(p)))
+#define OUT(v,p)	(*(p) = (v))
+#define OUT2(v,p)	(*((volatile unsigned long *)(p)) = (v))
+#endif
+#define L(v)		(((v)<<16)|((v) & 0x0000ffff))
+#define H(v)		(((v)>>16)|((v) & 0xffff0000))
 
 static inline int
-NCR5380_pwrite(struct Scsi_Host *host, unsigned char *addr, int len)
+NCR5380_pwrite(struct Scsi_Host *instance, unsigned char *addr, int len)
 {
+  int *ctrl = &((struct NCR5380_hostdata *)instance->hostdata)->ctrl;
+  int oldctrl = *ctrl;
   unsigned long *laddr;
-  void __iomem *dma = priv(host)->dma + 0x2000;
+#ifdef NOT_EFFICIENT
+  int iobase = instance->io_port;
+  int dma_io = iobase & ~(0x3C0000>>2);
+#else
+  volatile unsigned char *iobase = (unsigned char *)ioaddr(instance->io_port);
+  volatile unsigned char *dma_io = (unsigned char *)((int)iobase & ~0x3C0000);
+#endif
 
   if(!len) return 0;
 
-  writeb(0x02, priv(host)->base + CTRL);
+  CTRL(iobase, 0x02);
   laddr = (unsigned long *)addr;
   while(len >= 32)
   {
-    unsigned int status;
+    int status;
     unsigned long v;
-    status = readb(priv(host)->base + STAT);
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(!(status & 0x40))
       continue;
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
-    v=*laddr++; writew(L(v), dma); writew(H(v), dma);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
+    v=*laddr++; OUT2(L(v),dma_io); OUT2(H(v),dma_io);
     len -= 32;
     if(len == 0)
       break;
   }
 
   addr = (unsigned char *)laddr;
-  writeb(0x12, priv(host)->base + CTRL);
-
+  CTRL(iobase, 0x12);
   while(len > 0)
   {
-    unsigned int status;
-    status = readb(priv(host)->base + STAT);
+    int status;
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(status & 0x40)
     {
-      writeb(*addr++, dma);
+      OUT(*addr++, dma_io);
       if(--len == 0)
         break;
     }
 
-    status = readb(priv(host)->base + STAT);
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(status & 0x40)
     {
-      writeb(*addr++, dma);
+      OUT(*addr++, dma_io);
       if(--len == 0)
         break;
     }
   }
 end:
-  writeb(priv(host)->ctrl | 0x40, priv(host)->base + CTRL);
+  CTRL(iobase, oldctrl|0x40);
   return len;
 }
 
 static inline int
-NCR5380_pread(struct Scsi_Host *host, unsigned char *addr, int len)
+NCR5380_pread(struct Scsi_Host *instance, unsigned char *addr, int len)
 {
+  int *ctrl = &((struct NCR5380_hostdata *)instance->hostdata)->ctrl;
+  int oldctrl = *ctrl;
   unsigned long *laddr;
-  void __iomem *dma = priv(host)->dma + 0x2000;
+#ifdef NOT_EFFICIENT
+  int iobase = instance->io_port;
+  int dma_io = iobase & ~(0x3C0000>>2);
+#else
+  volatile unsigned char *iobase = (unsigned char *)ioaddr(instance->io_port);
+  volatile unsigned char *dma_io = (unsigned char *)((int)iobase & ~0x3C0000);
+#endif
 
   if(!len) return 0;
 
-  writeb(0x00, priv(host)->base + CTRL);
+  CTRL(iobase, 0x00);
   laddr = (unsigned long *)addr;
   while(len >= 32)
   {
-    unsigned int status;
-    status = readb(priv(host)->base + STAT);
+    int status;
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(!(status & 0x40))
       continue;
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
-    *laddr++ = readw(dma) | (readw(dma) << 16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
+    *laddr++ = IN2(dma_io)|(IN2(dma_io)<<16);
     len -= 32;
     if(len == 0)
       break;
   }
 
   addr = (unsigned char *)laddr;
-  writeb(0x10, priv(host)->base + CTRL);
-
+  CTRL(iobase, 0x10);
   while(len > 0)
   {
-    unsigned int status;
-    status = readb(priv(host)->base + STAT);
+    int status;
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(status & 0x40)
     {
-      *addr++ = readb(dma);
+      *addr++ = IN(dma_io);
       if(--len == 0)
         break;
     }
 
-    status = readb(priv(host)->base + STAT);
+    status = STAT(iobase);
     if(status & 0x80)
       goto end;
     if(status & 0x40)
     {
-      *addr++ = readb(dma);
+      *addr++ = IN(dma_io);
       if(--len == 0)
         break;
     }
   }
 end:
-  writeb(priv(host)->ctrl | 0x40, priv(host)->base + CTRL);
+  CTRL(iobase, oldctrl|0x40);
   return len;
 }
 
-static unsigned char cumanascsi_read(struct Scsi_Host *host, unsigned int reg)
+#undef STAT
+#undef CTRL
+#undef IN
+#undef OUT
+
+#define CTRL(p,v) outb(*ctrl = (v), (p) - 577)
+
+static char cumanascsi_read(struct Scsi_Host *instance, int reg)
 {
-	void __iomem *base = priv(host)->base;
-	unsigned char val;
+	unsigned int iobase = instance->io_port;
+	int i;
+	int *ctrl = &((struct NCR5380_hostdata *)instance->hostdata)->ctrl;
 
-	writeb(0, base + CTRL);
+	CTRL(iobase, 0);
+	i = inb(iobase + 64 + reg);
+	CTRL(iobase, 0x40);
 
-	val = readb(base + 0x2100 + (reg << 2));
-
-	priv(host)->ctrl = 0x40;
-	writeb(0x40, base + CTRL);
-
-	return val;
+	return i;
 }
 
-static void cumanascsi_write(struct Scsi_Host *host, unsigned int reg, unsigned int value)
+static void cumanascsi_write(struct Scsi_Host *instance, int reg, int value)
 {
-	void __iomem *base = priv(host)->base;
+	int iobase = instance->io_port;
+	int *ctrl = &((struct NCR5380_hostdata *)instance->hostdata)->ctrl;
 
-	writeb(0, base + CTRL);
-
-	writeb(value, base + 0x2100 + (reg << 2));
-
-	priv(host)->ctrl = 0x40;
-	writeb(0x40, base + CTRL);
+	CTRL(iobase, 0);
+	outb(value, iobase + 64 + reg);
+	CTRL(iobase, 0x40);
 }
+
+#undef CTRL
 
 #include "../NCR5380.c"
 
@@ -222,6 +248,7 @@ static struct scsi_host_template cumanascsi_template = {
 	.this_id		= 7,
 	.sg_tablesize		= SG_ALL,
 	.cmd_per_lun		= 2,
+	.unchecked_isa_dma	= 0,
 	.use_clustering		= DISABLE_CLUSTERING,
 	.proc_name		= "CumanaSCSI-1",
 };
@@ -230,46 +257,32 @@ static int __devinit
 cumanascsi1_probe(struct expansion_card *ec, const struct ecard_id *id)
 {
 	struct Scsi_Host *host;
-	int ret;
-
-	ret = ecard_request_resources(ec);
-	if (ret)
-		goto out;
+	int ret = -ENOMEM;
 
 	host = scsi_host_alloc(&cumanascsi_template, sizeof(struct NCR5380_hostdata));
-	if (!host) {
-		ret = -ENOMEM;
-		goto out_release;
-	}
+	if (!host)
+		goto out;
 
-	priv(host)->base = ioremap(ecard_resource_start(ec, ECARD_RES_IOCSLOW),
-				   ecard_resource_len(ec, ECARD_RES_IOCSLOW));
-	priv(host)->dma = ioremap(ecard_resource_start(ec, ECARD_RES_MEMC),
-				  ecard_resource_len(ec, ECARD_RES_MEMC));
-	if (!priv(host)->base || !priv(host)->dma) {
-		ret = -ENOMEM;
-		goto out_unmap;
-	}
-
+        host->io_port = ecard_address(ec, ECARD_IOC, ECARD_SLOW) + 0x800;
 	host->irq = ec->irq;
 
 	NCR5380_init(host, 0);
 
-        priv(host)->ctrl = 0;
-        writeb(0, priv(host)->base + CTRL);
-
 	host->n_io_port = 255;
 	if (!(request_region(host->io_port, host->n_io_port, "CumanaSCSI-1"))) {
 		ret = -EBUSY;
-		goto out_unmap;
+		goto out_free;
 	}
+
+        ((struct NCR5380_hostdata *)host->hostdata)->ctrl = 0;
+        outb(0x00, host->io_port - 577);
 
 	ret = request_irq(host->irq, cumanascsi_intr, IRQF_DISABLED,
 			  "CumanaSCSI-1", host);
 	if (ret) {
 		printk("scsi%d: IRQ%d not free: %d\n",
 		    host->host_no, host->irq, ret);
-		goto out_unmap;
+		goto out_release;
 	}
 
 	printk("scsi%d: at port 0x%08lx irq %d",
@@ -289,12 +302,10 @@ cumanascsi1_probe(struct expansion_card *ec, const struct ecard_id *id)
 
  out_free_irq:
 	free_irq(host->irq, host);
- out_unmap:
-	iounmap(priv(host)->base);
-	iounmap(priv(host)->dma);
-	scsi_host_put(host);
  out_release:
-	ecard_release_resources(ec);
+	release_region(host->io_port, host->n_io_port);
+ out_free:
+	scsi_host_put(host);
  out:
 	return ret;
 }
@@ -308,10 +319,8 @@ static void __devexit cumanascsi1_remove(struct expansion_card *ec)
 	scsi_remove_host(host);
 	free_irq(host->irq, host);
 	NCR5380_exit(host);
-	iounmap(priv(host)->base);
-	iounmap(priv(host)->dma);
+	release_region(host->io_port, host->n_io_port);
 	scsi_host_put(host);
-	ecard_release_resources(ec);
 }
 
 static const struct ecard_id cumanascsi1_cids[] = {

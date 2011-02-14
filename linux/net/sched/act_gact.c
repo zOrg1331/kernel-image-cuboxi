@@ -10,183 +10,189 @@
  *
  */
 
+#include <asm/uaccess.h>
+#include <asm/system.h>
+#include <linux/bitops.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/string.h>
+#include <linux/mm.h>
+#include <linux/socket.h>
+#include <linux/sockios.h>
+#include <linux/in.h>
 #include <linux/errno.h>
+#include <linux/interrupt.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <linux/rtnetlink.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <net/netlink.h>
+#include <linux/proc_fs.h>
+#include <net/sock.h>
 #include <net/pkt_sched.h>
 #include <linux/tc_act/tc_gact.h>
 #include <net/tc_act/tc_gact.h>
 
-#define GACT_TAB_MASK	15
-static struct tcf_common *tcf_gact_ht[GACT_TAB_MASK + 1];
-static u32 gact_idx_gen;
+/* use generic hash table */
+#define MY_TAB_SIZE	16
+#define MY_TAB_MASK	15
+
+static u32 idx_gen;
+static struct tcf_gact *tcf_gact_ht[MY_TAB_SIZE];
 static DEFINE_RWLOCK(gact_lock);
 
-static struct tcf_hashinfo gact_hash_info = {
-	.htab	=	tcf_gact_ht,
-	.hmask	=	GACT_TAB_MASK,
-	.lock	=	&gact_lock,
-};
+/* ovewrride the defaults */
+#define tcf_st		tcf_gact
+#define tc_st		tc_gact
+#define tcf_t_lock	gact_lock
+#define tcf_ht		tcf_gact_ht
+
+#define CONFIG_NET_ACT_INIT 1
+#include <net/pkt_act.h>
 
 #ifdef CONFIG_GACT_PROB
-static int gact_net_rand(struct tcf_gact *gact)
+static int gact_net_rand(struct tcf_gact *p)
 {
-	if (!gact->tcfg_pval || net_random() % gact->tcfg_pval)
-		return gact->tcf_action;
-	return gact->tcfg_paction;
+	if (net_random()%p->pval)
+		return p->action;
+	return p->paction;
 }
 
-static int gact_determ(struct tcf_gact *gact)
+static int gact_determ(struct tcf_gact *p)
 {
-	if (!gact->tcfg_pval || gact->tcf_bstats.packets % gact->tcfg_pval)
-		return gact->tcf_action;
-	return gact->tcfg_paction;
+	if (p->bstats.packets%p->pval)
+		return p->action;
+	return p->paction;
 }
 
-typedef int (*g_rand)(struct tcf_gact *gact);
+typedef int (*g_rand)(struct tcf_gact *p);
 static g_rand gact_rand[MAX_RAND]= { NULL, gact_net_rand, gact_determ };
-#endif /* CONFIG_GACT_PROB */
+#endif
 
-static const struct nla_policy gact_policy[TCA_GACT_MAX + 1] = {
-	[TCA_GACT_PARMS]	= { .len = sizeof(struct tc_gact) },
-	[TCA_GACT_PROB]		= { .len = sizeof(struct tc_gact_p) },
-};
-
-static int tcf_gact_init(struct nlattr *nla, struct nlattr *est,
-			 struct tc_action *a, int ovr, int bind)
+static int tcf_gact_init(struct rtattr *rta, struct rtattr *est,
+                         struct tc_action *a, int ovr, int bind)
 {
-	struct nlattr *tb[TCA_GACT_MAX + 1];
+	struct rtattr *tb[TCA_GACT_MAX];
 	struct tc_gact *parm;
-	struct tcf_gact *gact;
-	struct tcf_common *pc;
+	struct tcf_gact *p;
 	int ret = 0;
-	int err;
 
-	if (nla == NULL)
+	if (rta == NULL || rtattr_parse_nested(tb, TCA_GACT_MAX, rta) < 0)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_GACT_MAX, nla, gact_policy);
-	if (err < 0)
-		return err;
-
-	if (tb[TCA_GACT_PARMS] == NULL)
+	if (tb[TCA_GACT_PARMS - 1] == NULL ||
+	    RTA_PAYLOAD(tb[TCA_GACT_PARMS - 1]) < sizeof(*parm))
 		return -EINVAL;
-	parm = nla_data(tb[TCA_GACT_PARMS]);
+	parm = RTA_DATA(tb[TCA_GACT_PARMS - 1]);
 
-#ifndef CONFIG_GACT_PROB
-	if (tb[TCA_GACT_PROB] != NULL)
+	if (tb[TCA_GACT_PROB-1] != NULL)
+#ifdef CONFIG_GACT_PROB
+		if (RTA_PAYLOAD(tb[TCA_GACT_PROB-1]) < sizeof(struct tc_gact_p))
+			return -EINVAL;
+#else
 		return -EOPNOTSUPP;
 #endif
 
-	pc = tcf_hash_check(parm->index, a, bind, &gact_hash_info);
-	if (!pc) {
-		pc = tcf_hash_create(parm->index, est, a, sizeof(*gact),
-				     bind, &gact_idx_gen, &gact_hash_info);
-		if (IS_ERR(pc))
-		    return PTR_ERR(pc);
+	p = tcf_hash_check(parm->index, a, ovr, bind);
+	if (p == NULL) {
+		p = tcf_hash_create(parm->index, est, a, sizeof(*p), ovr, bind);
+		if (p == NULL)
+			return -ENOMEM;
 		ret = ACT_P_CREATED;
 	} else {
 		if (!ovr) {
-			tcf_hash_release(pc, bind, &gact_hash_info);
+			tcf_hash_release(p, bind);
 			return -EEXIST;
 		}
 	}
 
-	gact = to_gact(pc);
-
-	spin_lock_bh(&gact->tcf_lock);
-	gact->tcf_action = parm->action;
+	spin_lock_bh(&p->lock);
+	p->action = parm->action;
 #ifdef CONFIG_GACT_PROB
-	if (tb[TCA_GACT_PROB] != NULL) {
-		struct tc_gact_p *p_parm = nla_data(tb[TCA_GACT_PROB]);
-		gact->tcfg_paction = p_parm->paction;
-		gact->tcfg_pval    = p_parm->pval;
-		gact->tcfg_ptype   = p_parm->ptype;
+	if (tb[TCA_GACT_PROB-1] != NULL) {
+		struct tc_gact_p *p_parm = RTA_DATA(tb[TCA_GACT_PROB-1]);
+		p->paction = p_parm->paction;
+		p->pval    = p_parm->pval;
+		p->ptype   = p_parm->ptype;
 	}
 #endif
-	spin_unlock_bh(&gact->tcf_lock);
+	spin_unlock_bh(&p->lock);
 	if (ret == ACT_P_CREATED)
-		tcf_hash_insert(pc, &gact_hash_info);
+		tcf_hash_insert(p);
 	return ret;
 }
 
-static int tcf_gact_cleanup(struct tc_action *a, int bind)
+static int
+tcf_gact_cleanup(struct tc_action *a, int bind)
 {
-	struct tcf_gact *gact = a->priv;
+	struct tcf_gact *p = PRIV(a, gact);
 
-	if (gact)
-		return tcf_hash_release(&gact->common, bind, &gact_hash_info);
+	if (p != NULL)
+		return tcf_hash_release(p, bind);
 	return 0;
 }
 
-static int tcf_gact(struct sk_buff *skb, struct tc_action *a, struct tcf_result *res)
+static int
+tcf_gact(struct sk_buff *skb, struct tc_action *a, struct tcf_result *res)
 {
-	struct tcf_gact *gact = a->priv;
+	struct tcf_gact *p = PRIV(a, gact);
 	int action = TC_ACT_SHOT;
 
-	spin_lock(&gact->tcf_lock);
+	spin_lock(&p->lock);
 #ifdef CONFIG_GACT_PROB
-	if (gact->tcfg_ptype && gact_rand[gact->tcfg_ptype] != NULL)
-		action = gact_rand[gact->tcfg_ptype](gact);
+	if (p->ptype && gact_rand[p->ptype] != NULL)
+		action = gact_rand[p->ptype](p);
 	else
-		action = gact->tcf_action;
+		action = p->action;
 #else
-	action = gact->tcf_action;
+	action = p->action;
 #endif
-	gact->tcf_bstats.bytes += qdisc_pkt_len(skb);
-	gact->tcf_bstats.packets++;
+	p->bstats.bytes += skb->len;
+	p->bstats.packets++;
 	if (action == TC_ACT_SHOT)
-		gact->tcf_qstats.drops++;
-	gact->tcf_tm.lastuse = jiffies;
-	spin_unlock(&gact->tcf_lock);
+		p->qstats.drops++;
+	p->tm.lastuse = jiffies;
+	spin_unlock(&p->lock);
 
 	return action;
 }
 
-static int tcf_gact_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
+static int
+tcf_gact_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
 {
-	unsigned char *b = skb_tail_pointer(skb);
-	struct tcf_gact *gact = a->priv;
-	struct tc_gact opt = {
-		.index   = gact->tcf_index,
-		.refcnt  = gact->tcf_refcnt - ref,
-		.bindcnt = gact->tcf_bindcnt - bind,
-		.action  = gact->tcf_action,
-	};
+	unsigned char *b = skb->tail;
+	struct tc_gact opt;
+	struct tcf_gact *p = PRIV(a, gact);
 	struct tcf_t t;
 
-	NLA_PUT(skb, TCA_GACT_PARMS, sizeof(opt), &opt);
+	opt.index = p->index;
+	opt.refcnt = p->refcnt - ref;
+	opt.bindcnt = p->bindcnt - bind;
+	opt.action = p->action;
+	RTA_PUT(skb, TCA_GACT_PARMS, sizeof(opt), &opt);
 #ifdef CONFIG_GACT_PROB
-	if (gact->tcfg_ptype) {
-		struct tc_gact_p p_opt = {
-			.paction = gact->tcfg_paction,
-			.pval    = gact->tcfg_pval,
-			.ptype   = gact->tcfg_ptype,
-		};
-
-		NLA_PUT(skb, TCA_GACT_PROB, sizeof(p_opt), &p_opt);
+	if (p->ptype) {
+		struct tc_gact_p p_opt;
+		p_opt.paction = p->paction;
+		p_opt.pval = p->pval;
+		p_opt.ptype = p->ptype;
+		RTA_PUT(skb, TCA_GACT_PROB, sizeof(p_opt), &p_opt);
 	}
 #endif
-	t.install = jiffies_to_clock_t(jiffies - gact->tcf_tm.install);
-	t.lastuse = jiffies_to_clock_t(jiffies - gact->tcf_tm.lastuse);
-	t.expires = jiffies_to_clock_t(gact->tcf_tm.expires);
-	NLA_PUT(skb, TCA_GACT_TM, sizeof(t), &t);
+	t.install = jiffies_to_clock_t(jiffies - p->tm.install);
+	t.lastuse = jiffies_to_clock_t(jiffies - p->tm.lastuse);
+	t.expires = jiffies_to_clock_t(p->tm.expires);
+	RTA_PUT(skb, TCA_GACT_TM, sizeof(t), &t);
 	return skb->len;
 
-nla_put_failure:
-	nlmsg_trim(skb, b);
+      rtattr_failure:
+	skb_trim(skb, b - skb->data);
 	return -1;
 }
 
 static struct tc_action_ops act_gact_ops = {
 	.kind		=	"gact",
-	.hinfo		=	&gact_hash_info,
 	.type		=	TCA_ACT_GACT,
 	.capab		=	TCA_CAP_NONE,
 	.owner		=	THIS_MODULE,
@@ -202,7 +208,8 @@ MODULE_AUTHOR("Jamal Hadi Salim(2002-4)");
 MODULE_DESCRIPTION("Generic Classifier actions");
 MODULE_LICENSE("GPL");
 
-static int __init gact_init_module(void)
+static int __init
+gact_init_module(void)
 {
 #ifdef CONFIG_GACT_PROB
 	printk("GACT probability on\n");
@@ -212,7 +219,8 @@ static int __init gact_init_module(void)
 	return tcf_register_action(&act_gact_ops);
 }
 
-static void __exit gact_cleanup_module(void)
+static void __exit
+gact_cleanup_module(void)
 {
 	tcf_unregister_action(&act_gact_ops);
 }

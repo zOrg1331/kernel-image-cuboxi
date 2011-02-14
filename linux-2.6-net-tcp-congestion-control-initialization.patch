@@ -1,0 +1,72 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:32:00 -0400
+Subject: [net] tcp: congestion control initialization
+Message-id: <20100723153200.GE14925@lsx.localdomain>
+Patchwork-id: 27063
+O-Subject: [RHEL5.6 PATCH 3/14] tcp: congestion control initialization
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit 4d4d3d1e8807d6aa9822eeedf7fe8500e1b7e38d
+Author: Stephen Hemminger <shemminger@linux-foundation.org>
+Date:   Mon Apr 23 22:32:11 2007 -0700
+
+    [TCP]: Congestion control initialization.
+
+    Change to defer congestion control initialization.
+
+    If setsockopt() was used to change TCP_CONGESTION before
+    connection is established, then protocols that use sequence numbers
+    to keep track of one RTT interval (vegas, illinois, ...) get confused.
+
+    Change the init hook to be called after handshake.
+
+    Signed-off-by: Stephen Hemminger <shemminger@linux-foundation.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_cong.c b/net/ipv4/tcp_cong.c
+index 3ced76c..0914708 100644
+--- a/net/ipv4/tcp_cong.c
++++ b/net/ipv4/tcp_cong.c
+@@ -77,18 +77,19 @@ void tcp_init_congestion_control(struct sock *sk)
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	struct tcp_congestion_ops *ca;
+ 
+-	if (icsk->icsk_ca_ops != &tcp_init_congestion_ops)
+-		return;
+-
+-	rcu_read_lock();
+-	list_for_each_entry_rcu(ca, &tcp_cong_list, list) {
+-		if (try_module_get(ca->owner)) {
+-			icsk->icsk_ca_ops = ca;
+-			break;
++	/* if no choice made yet assign the current value set as default */
++	if (icsk->icsk_ca_ops == &tcp_init_congestion_ops) {
++		rcu_read_lock();
++		list_for_each_entry_rcu(ca, &tcp_cong_list, list) {
++			if (try_module_get(ca->owner)) {
++				icsk->icsk_ca_ops = ca;
++				break;
++			}
++
++			/* fallback to next available */
+ 		}
+-
++		rcu_read_unlock();
+ 	}
+-	rcu_read_unlock();
+ 
+ 	if (icsk->icsk_ca_ops->init)
+ 		icsk->icsk_ca_ops->init(sk);
+@@ -165,7 +166,7 @@ int tcp_set_congestion_control(struct sock *sk, const char *name)
+ 	else {
+ 		tcp_cleanup_congestion_control(sk);
+ 		icsk->icsk_ca_ops = ca;
+-		if (icsk->icsk_ca_ops->init)
++		if (sk->sk_state != TCP_CLOSE && icsk->icsk_ca_ops->init)
+ 			icsk->icsk_ca_ops->init(sk);
+ 	}
+  out:

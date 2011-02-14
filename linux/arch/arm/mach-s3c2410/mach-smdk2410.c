@@ -1,10 +1,11 @@
-/* linux/arch/arm/mach-s3c2410/mach-smdk2410.c
+/***********************************************************************
  *
  * linux/arch/arm/mach-s3c2410/mach-smdk2410.c
  *
  * Copyright (C) 2004 by FS Forth-Systeme GmbH
  * All rights reserved.
  *
+ * $Id: mach-smdk2410.c,v 1.1 2004/05/11 14:15:38 mpietrek Exp $
  * @Author: Jonas Dietsche
  *
  * This program is free software; you can redistribute it and/or
@@ -34,25 +35,23 @@
 #include <linux/list.h>
 #include <linux/timer.h>
 #include <linux/init.h>
-#include <linux/serial_core.h>
 #include <linux/platform_device.h>
-#include <linux/io.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/mach-types.h>
 
-#include <plat/regs-serial.h>
-#include <plat/iic.h>
+#include <asm/arch/regs-serial.h>
 
-#include <plat/devs.h>
-#include <plat/cpu.h>
+#include "devs.h"
+#include "cpu.h"
 
-#include <plat/common-smdk.h>
+#include "common-smdk.h"
 
 static struct map_desc smdk2410_iodesc[] __initdata = {
   /* nothing here yet */
@@ -90,8 +89,13 @@ static struct platform_device *smdk2410_devices[] __initdata = {
 	&s3c_device_usb,
 	&s3c_device_lcd,
 	&s3c_device_wdt,
-	&s3c_device_i2c0,
+	&s3c_device_i2c,
 	&s3c_device_iis,
+};
+
+static struct s3c24xx_board smdk2410_board __initdata = {
+	.devices       = smdk2410_devices,
+	.devices_count = ARRAY_SIZE(smdk2410_devices)
 };
 
 static void __init smdk2410_map_io(void)
@@ -99,13 +103,7 @@ static void __init smdk2410_map_io(void)
 	s3c24xx_init_io(smdk2410_iodesc, ARRAY_SIZE(smdk2410_iodesc));
 	s3c24xx_init_clocks(0);
 	s3c24xx_init_uarts(smdk2410_uartcfgs, ARRAY_SIZE(smdk2410_uartcfgs));
-}
-
-static void __init smdk2410_init(void)
-{
-	s3c_i2c0_set_platdata(NULL);
-	platform_add_devices(smdk2410_devices, ARRAY_SIZE(smdk2410_devices));
-	smdk_machine_init();
+	s3c24xx_set_board(&smdk2410_board);
 }
 
 MACHINE_START(SMDK2410, "SMDK2410") /* @TODO: request a new identifier and switch
@@ -116,7 +114,7 @@ MACHINE_START(SMDK2410, "SMDK2410") /* @TODO: request a new identifier and switc
 	.boot_params	= S3C2410_SDRAM_PA + 0x100,
 	.map_io		= smdk2410_map_io,
 	.init_irq	= s3c24xx_init_irq,
-	.init_machine	= smdk2410_init,
+	.init_machine	= smdk_machine_init,
 	.timer		= &s3c24xx_timer,
 MACHINE_END
 

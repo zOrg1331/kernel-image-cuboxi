@@ -1,0 +1,45 @@
+REVERT:
+
+From: Andreas Schwab <schwab@suse.de>
+Date: Mon, 4 Sep 2006 19:56:09 +0000 (+0200)
+Subject: [IA64] Unwire set/get_robust_list
+X-Git-Tag: v2.6.18-rc7
+X-Git-Url: http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=2636255488484e04d6d54303d2b0ec30f7ef7e02
+
+[IA64] Unwire set/get_robust_list
+
+The syscalls set/get_robust_list must not be wired up until
+futex_atomic_cmpxchg_inatomic is implemented.  Otherwise the kernel will
+hang in handle_futex_death.
+
+Signed-off-by: Andreas Schwab <schwab@suse.de>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+---
+
+reverted:
+--- b/arch/ia64/kernel/entry.S
++++ a/arch/ia64/kernel/entry.S
+@@ -1605,8 +1605,8 @@
+ 	data8 sys_ni_syscall			// 1295 reserved for ppoll
+ 	data8 sys_unshare
+ 	data8 sys_splice
++	data8 sys_set_robust_list
++	data8 sys_get_robust_list
+-	data8 sys_ni_syscall			// reserved for set_robust_list
+-	data8 sys_ni_syscall			// reserved for get_robust_list
+ 	data8 sys_sync_file_range		// 1300
+ 	data8 sys_tee
+ 	data8 sys_vmsplice
+reverted:
+--- b/include/asm-ia64/unistd.h
++++ a/include/asm-ia64/unistd.h
+@@ -286,7 +286,8 @@
+ /* 1294, 1295 reserved for pselect/ppoll */
+ #define __NR_unshare			1296
+ #define __NR_splice			1297
++#define __NR_set_robust_list		1298
++#define __NR_get_robust_list		1299
+-/* 1298, 1299 reserved for set_robust_list/get_robust_list */
+ #define __NR_sync_file_range		1300
+ #define __NR_tee			1301
+ #define __NR_vmsplice			1302

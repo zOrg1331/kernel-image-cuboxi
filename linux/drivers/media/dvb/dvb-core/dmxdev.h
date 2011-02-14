@@ -53,20 +53,13 @@ enum dmxdev_state {
 	DMXDEV_STATE_TIMEDOUT
 };
 
-struct dmxdev_feed {
-	u16 pid;
-	struct dmx_ts_feed *ts;
-	struct list_head next;
-};
-
 struct dmxdev_filter {
 	union {
 		struct dmx_section_filter *sec;
 	} filter;
 
 	union {
-		/* list of TS and PES feeds (struct dmxdev_feed) */
-		struct list_head ts;
+		struct dmx_ts_feed *ts;
 		struct dmx_section_feed *sec;
 	} feed;
 
@@ -98,8 +91,6 @@ struct dmxdev {
 
 	int filternum;
 	int capabilities;
-
-	unsigned int exit:1;
 #define DMXDEV_CAP_DUPLEX 1
 	struct dmx_frontend *dvr_orig_fe;
 

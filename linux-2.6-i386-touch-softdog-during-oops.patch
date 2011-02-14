@@ -1,0 +1,59 @@
+From: Dave Jones <davej@redhat.com>
+Subject: Re: [rhel5] touch softdog during oops
+Date: Sun, 26 Nov 2006 15:21:29 -0500
+Bugzilla: 218109
+Message-Id: <20061126202129.GA20539@redhat.com>
+Changelog: touch softdog during oops
+
+Some times we spend so long doing backtraces during oopsing
+that the soft watchdog fires. See
+http://projects.info-pull.com/mokb/MOKB-25-11-2006.html
+for an example.
+
+Same change sent upstream tonight.
+(minus the xen bit)
+
+The upstream patch submission was changed to use touch_nmi_watchdog()
+which touches both the soft lockup detector and the NMI watchdog.
+
+		Dave
+
+--- linux-2.6.18.noarch/arch/i386/kernel/traps.c~	2006-11-26 15:18:33.000000000 -0500
++++ linux-2.6.18.noarch/arch/i386/kernel/traps.c	2006-11-26 15:18:46.000000000 -0500
+@@ -28,6 +28,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/kexec.h>
+ #include <linux/unwind.h>
++#include <linux/nmi.h>
+ 
+ #ifdef CONFIG_EISA
+ #include <linux/ioport.h>
+@@ -243,6 +244,7 @@ void dump_trace(struct task_struct *task
+ 		stack = (unsigned long*)context->previous_esp;
+ 		if (!stack)
+ 			break;
++		touch_nmi_watchdog();
+ 	}
+ }
+ EXPORT_SYMBOL(dump_trace);
+--- linux-2.6.18.noarch/arch/i386/kernel/traps-xen.c~	2006-11-26 15:20:18.000000000 -0500
++++ linux-2.6.18.noarch/arch/i386/kernel/traps-xen.c	2006-11-26 15:20:36.000000000 -0500
+@@ -28,6 +28,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/kexec.h>
+ #include <linux/unwind.h>
++#include <linux/nmi.h>
+ 
+ #ifdef CONFIG_EISA
+ #include <linux/ioport.h>
+@@ -242,6 +243,7 @@ void dump_trace(struct task_struct *task
+ 		stack = (unsigned long*)context->previous_esp;
+ 		if (!stack)
+ 			break;
++		touch_nmi_watchdog();
+ 	}
+ }
+ 
+-- 
+http://www.codemonkey.org.uk
+

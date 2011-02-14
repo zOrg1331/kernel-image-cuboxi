@@ -1,0 +1,77 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] [GFS2] Fix recursive locking in gfs2_getattr
+Date: Thu, 07 Dec 2006 11:15:16 +0000
+Bugzilla: 218479
+Message-Id: <1165490116.3752.825.camel@quoit.chygwyn.com>
+Changelog: GFS2: Fix recursive locking in gfs2_getattr
+
+
+Hi,
+
+The RHEL5 bug which is fixed by this patch is: #218479 the bz mentioned below
+is the same bug, but for Fedora. The patch is in the upstream git tree and will
+be sent to Linus very shortly.
+
+Steve.
+
+
+>From dcf3dd852f554bb0016aa23892596717cc123a26 Mon Sep 17 00:00:00 2001
+
+The readdirplus NFS operation can result in gfs2_getattr being
+called with the glock already held. In this case we do not want
+to try and grab the lock again.
+
+This fixes Red Hat bugzilla #215727
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/ops_inode.c |   22 +++++++++++++++++-----
+ 1 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index fd9fee2..fbe38c1 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -992,6 +992,12 @@ out:
+  * @dentry: The dentry to stat
+  * @stat: The inode's stats
+  *
++ * This may be called from the VFS directly, or from within GFS2 with the
++ * inode locked, so we look to see if the glock is already locked and only
++ * lock the glock if its not already been done. Note that its the NFS
++ * readdirplus operation which causes this to be called (from filldir)
++ * with the glock already held.
++ *
+  * Returns: errno
+  */
+ 
+@@ -1002,14 +1008,20 @@ static int gfs2_getattr(struct vfsmount 
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+ 	struct gfs2_holder gh;
+ 	int error;
++	int unlock = 0;
+ 
+-	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED, LM_FLAG_ANY, &gh);
+-	if (!error) {
+-		generic_fillattr(inode, stat);
+-		gfs2_glock_dq_uninit(&gh);
++	if (gfs2_glock_is_locked_by_me(ip->i_gl) == 0) {
++		error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED, LM_FLAG_ANY, &gh);
++		if (error)
++			return error;
++		unlock = 1;
+ 	}
+ 
+-	return error;
++	generic_fillattr(inode, stat);
++	if (unlock);
++		gfs2_glock_dq_uninit(&gh);
++
++	return 0;
+ }
+ 
+ static int gfs2_setxattr(struct dentry *dentry, const char *name,
+-- 
+1.4.1
+
+

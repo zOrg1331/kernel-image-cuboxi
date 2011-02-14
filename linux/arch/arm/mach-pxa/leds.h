@@ -1,5 +1,5 @@
 /*
- * arch/arm/mach-pxa/leds.h
+ * include/asm-arm/arch-pxa/leds.h
  *
  * Copyright (c) 2001 Jeff Sutherland, Accelent Systems Inc.
  *

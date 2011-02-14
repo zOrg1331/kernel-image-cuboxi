@@ -43,9 +43,23 @@
 #include "elmer0.h"
 #include "suni1x10gexp_regs.h"
 
-#include <linux/crc32.h>
+/* 802.3ae 10Gb/s MDIO Manageable Device(MMD)
+ */
+enum {
+    MMD_RESERVED,
+    MMD_PMAPMD,
+    MMD_WIS,
+    MMD_PCS,
+    MMD_PHY_XGXS,	/* XGMII Extender Sublayer */
+    MMD_DTE_XGXS,
+};
 
-#define OFFSET(REG_ADDR)    ((REG_ADDR) << 2)
+enum {
+    PHY_XGXS_CTRL_1,
+    PHY_XGXS_STATUS_1
+};
+
+#define OFFSET(REG_ADDR)    (REG_ADDR << 2)
 
 /* Max frame size PM3393 can handle. Includes Ethernet header and CRC. */
 #define MAX_FRAME_SIZE  9600
@@ -74,8 +88,6 @@ enum {                     /* RMON registers */
 	RxJabbers = SUNI1x10GEXP_REG_MSTAT_COUNTER_16_LOW,
 	RxFragments = SUNI1x10GEXP_REG_MSTAT_COUNTER_17_LOW,
 	RxUndersizedFrames =  SUNI1x10GEXP_REG_MSTAT_COUNTER_18_LOW,
-	RxJumboFramesReceivedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_25_LOW,
-	RxJumboOctetsReceivedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_26_LOW,
 
 	TxOctetsTransmittedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_33_LOW,
 	TxFramesLostDueToInternalMACTransmissionError = SUNI1x10GEXP_REG_MSTAT_COUNTER_35_LOW,
@@ -83,9 +95,7 @@ enum {                     /* RMON registers */
 	TxUnicastFramesTransmittedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_38_LOW,
 	TxMulticastFramesTransmittedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_40_LOW,
 	TxBroadcastFramesTransmittedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_42_LOW,
-	TxPAUSEMACCtrlFramesTransmitted = SUNI1x10GEXP_REG_MSTAT_COUNTER_43_LOW,
-	TxJumboFramesReceivedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_51_LOW,
-	TxJumboOctetsReceivedOK = SUNI1x10GEXP_REG_MSTAT_COUNTER_52_LOW
+	TxPAUSEMACCtrlFramesTransmitted = SUNI1x10GEXP_REG_MSTAT_COUNTER_43_LOW
 };
 
 struct _cmac_instance {
@@ -114,12 +124,12 @@ static int pm3393_reset(struct cmac *cmac)
 
 /*
  * Enable interrupts for the PM3393
- *
- *	1. Enable PM3393 BLOCK interrupts.
- *	2. Enable PM3393 Master Interrupt bit(INTE)
- *	3. Enable ELMER's PM3393 bit.
- *	4. Enable Terminator external interrupt.
- */
+
+	1. Enable PM3393 BLOCK interrupts.
+	2. Enable PM3393 Master Interrupt bit(INTE)
+	3. Enable ELMER's PM3393 bit.
+	4. Enable Terminator external interrupt.
+*/
 static int pm3393_interrupt_enable(struct cmac *cmac)
 {
 	u32 pl_intr;
@@ -247,12 +257,14 @@ static int pm3393_interrupt_clear(struct cmac *cmac)
 static int pm3393_interrupt_handler(struct cmac *cmac)
 {
 	u32 master_intr_status;
-
+/*
+	1. Read master interrupt register.
+	2. Read BLOCK's interrupt status registers.
+	3. Handle BLOCK interrupts.
+*/
 	/* Read the master interrupt status register. */
 	pmread(cmac, SUNI1x10GEXP_REG_MASTER_INTERRUPT_STATUS,
 	       &master_intr_status);
-	CH_DBG(cmac->adapter, INTR, "PM3393 intr cause 0x%x\n",
-	       master_intr_status);
 
 	/* TBD XXX Lets just clear everything for now */
 	pm3393_interrupt_clear(cmac);
@@ -295,7 +307,11 @@ static int pm3393_enable_port(struct cmac *cmac, int which)
 	 * The PHY doesn't give us link status indication on its own so have
 	 * the link management code query it instead.
 	 */
-	t1_link_changed(cmac->adapter, 0);
+	{
+		extern void link_changed(adapter_t *adapter, int port_id);
+
+		link_changed(cmac->adapter, 0);
+	}
 	return 0;
 }
 
@@ -347,6 +363,33 @@ static int pm3393_set_mtu(struct cmac *cmac, int mtu)
 	return 0;
 }
 
+static u32 calc_crc(u8 *b, int len)
+{
+	int i;
+	u32 crc = (u32)~0;
+
+	/* calculate crc one bit at a time */
+	while (len--) {
+		crc ^= *b++;
+		for (i = 0; i < 8; i++) {
+			if (crc & 0x1)
+				crc = (crc >> 1) ^ 0xedb88320;
+			else
+				crc = (crc >> 1);
+		}
+	}
+
+	/* reverse bits */
+	crc = ((crc >> 4) & 0x0f0f0f0f) | ((crc << 4) & 0xf0f0f0f0);
+	crc = ((crc >> 2) & 0x33333333) | ((crc << 2) & 0xcccccccc);
+	crc = ((crc >> 1) & 0x55555555) | ((crc << 1) & 0xaaaaaaaa);
+	/* swap bytes */
+	crc = (crc >> 16) | (crc << 16);
+	crc = (crc >> 8 & 0x00ff00ff) | (crc << 8 & 0xff00ff00);
+
+	return crc;
+}
+
 static int pm3393_set_rx_mode(struct cmac *cmac, struct t1_rx_mode *rm)
 {
 	int enabled = cmac->instance->enabled & MAC_DIRECTION_RX;
@@ -380,7 +423,7 @@ static int pm3393_set_rx_mode(struct cmac *cmac, struct t1_rx_mode *rm)
 		u16 mc_filter[4] = { 0, };
 
 		while ((addr = t1_get_next_mcaddr(rm))) {
-			bit = (ether_crc(ETH_ALEN, addr) >> 23) & 0x3f;	/* bit[23:28] */
+			bit = (calc_crc(addr, ETH_ALEN) >> 23) & 0x3f;	/* bit[23:28] */
 			mc_filter[bit >> 4] |= 1 << (bit & 0xf);
 		}
 		pmwrite(cmac, SUNI1x10GEXP_REG_RXXG_MULTICAST_HASH_LOW, mc_filter[0]);
@@ -429,19 +472,19 @@ static int pm3393_set_speed_duplex_fc(struct cmac *cmac, int speed, int duplex,
 }
 
 #define RMON_UPDATE(mac, name, stat_name) \
-{ \
-	t1_tpi_read((mac)->adapter, OFFSET(name), &val0);     \
-	t1_tpi_read((mac)->adapter, OFFSET((name)+1), &val1); \
-	t1_tpi_read((mac)->adapter, OFFSET((name)+2), &val2); \
-	(mac)->stats.stat_name = (u64)(val0 & 0xffff) | \
-				 ((u64)(val1 & 0xffff) << 16) | \
-				 ((u64)(val2 & 0xff) << 32) | \
-				 ((mac)->stats.stat_name & \
-					0xffffff0000000000ULL); \
-	if (ro & \
-	    (1ULL << ((name - SUNI1x10GEXP_REG_MSTAT_COUNTER_0_LOW) >> 2))) \
-		(mac)->stats.stat_name += 1ULL << 40; \
-}
+	{ \
+		t1_tpi_read((mac)->adapter, OFFSET(name), &val0);	\
+		t1_tpi_read((mac)->adapter, OFFSET(((name)+1)), &val1); \
+		t1_tpi_read((mac)->adapter, OFFSET(((name)+2)), &val2); \
+		(mac)->stats.stat_name = ((u64)val0 & 0xffff) | \
+						(((u64)val1 & 0xffff) << 16) | \
+						(((u64)val2 & 0xff) << 32) | \
+						((mac)->stats.stat_name & \
+							(~(u64)0 << 40)); \
+		if (ro &	\
+			((name -  SUNI1x10GEXP_REG_MSTAT_COUNTER_0_LOW) >> 2)) \
+			(mac)->stats.stat_name += ((u64)1 << 40); \
+	}
 
 static const struct cmac_statistics *pm3393_update_statistics(struct cmac *mac,
 							      int flag)
@@ -476,8 +519,6 @@ static const struct cmac_statistics *pm3393_update_statistics(struct cmac *mac,
 	RMON_UPDATE(mac, RxJabbers, RxJabberErrors);
 	RMON_UPDATE(mac, RxFragments, RxRuntErrors);
 	RMON_UPDATE(mac, RxUndersizedFrames, RxRuntErrors);
-	RMON_UPDATE(mac, RxJumboFramesReceivedOK, RxJumboFramesOK);
-	RMON_UPDATE(mac, RxJumboOctetsReceivedOK, RxJumboOctetsOK);
 
 	/* Tx stats */
 	RMON_UPDATE(mac, TxOctetsTransmittedOK, TxOctetsOK);
@@ -488,8 +529,6 @@ static const struct cmac_statistics *pm3393_update_statistics(struct cmac *mac,
 	RMON_UPDATE(mac, TxMulticastFramesTransmittedOK, TxMulticastFramesOK);
 	RMON_UPDATE(mac, TxBroadcastFramesTransmittedOK, TxBroadcastFramesOK);
 	RMON_UPDATE(mac, TxPAUSEMACCtrlFramesTransmitted, TxPauseFrames);
-	RMON_UPDATE(mac, TxJumboFramesReceivedOK, TxJumboFramesOK);
-	RMON_UPDATE(mac, TxJumboOctetsReceivedOK, TxJumboOctetsOK);
 
 	return &mac->stats;
 }
@@ -525,9 +564,9 @@ static int pm3393_macaddress_set(struct cmac *cmac, u8 ma[6])
 	/* Store local copy */
 	memcpy(cmac->instance->mac_addr, ma, 6);
 
-	lo  = ((u32) ma[1] << 8) | (u32) ma[0];
+	lo = ((u32) ma[1] << 8) | (u32) ma[0];
 	mid = ((u32) ma[3] << 8) | (u32) ma[2];
-	hi  = ((u32) ma[5] << 8) | (u32) ma[4];
+	hi = ((u32) ma[5] << 8) | (u32) ma[4];
 
 	/* Disable Rx/Tx MAC before configuring it. */
 	if (enabled)
@@ -592,9 +631,10 @@ static struct cmac *pm3393_mac_create(adapter_t *adapter, int index)
 {
 	struct cmac *cmac;
 
-	cmac = kzalloc(sizeof(*cmac) + sizeof(cmac_instance), GFP_KERNEL);
+	cmac = kmalloc(sizeof(*cmac) + sizeof(cmac_instance), GFP_KERNEL);
 	if (!cmac)
 		return NULL;
+	memset(cmac, 0, sizeof(*cmac));
 
 	cmac->ops = &pm3393_ops;
 	cmac->instance = (cmac_instance *) (cmac + 1);
@@ -775,18 +815,12 @@ static int pm3393_mac_reset(adapter_t * adapter)
 
 		successful_reset = (is_pl4_reset_finished && !is_pl4_outof_lock
 				    && is_xaui_mabc_pll_locked);
-
-		CH_DBG(adapter, HW,
-		       "PM3393 HW reset %d: pl4_reset 0x%x, val 0x%x, "
-		       "is_pl4_outof_lock 0x%x, xaui_locked 0x%x\n",
-		       i, is_pl4_reset_finished, val, is_pl4_outof_lock,
-		       is_xaui_mabc_pll_locked);
 	}
 	return successful_reset ? 0 : 1;
 }
 
-const struct gmac t1_pm3393_ops = {
-	.stats_update_period = STATS_TICK_SECS,
-	.create              = pm3393_mac_create,
-	.reset               = pm3393_mac_reset,
+struct gmac t1_pm3393_ops = {
+	STATS_TICK_SECS,
+	pm3393_mac_create,
+	pm3393_mac_reset
 };

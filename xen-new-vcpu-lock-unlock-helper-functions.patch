@@ -1,0 +1,157 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Fri, 15 Feb 2008 13:25:23 -0500
+Subject: [xen] new vcpu lock/unlock helper functions
+Message-id: 20080215182522.11293.96623.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 1] Introduce new vcpu lock/unlock helper functions
+Bugzilla: 430938
+
+Resolves BZ 430938
+
+Introduce new vcpu_lock_affinity() and vcpu_unlock_affinity() helper
+functions for use by x86's continue_hypercall_on_cpu().
+
+This has two advantages:
+1. We can lock out ordinary vcpu_set_affinity() commands from dom0.
+2. We avoid the (in this case bogus) check for dom0_vcpus_pin.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 77a6583..9ff936e 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -1355,6 +1355,7 @@ static void continue_hypercall_on_cpu_helper(struct vcpu *v)
+ {
+     struct cpu_user_regs *regs = guest_cpu_user_regs();
+     struct migrate_info *info = v->arch.continue_info;
++    cpumask_t mask = info->saved_affinity;
+ 
+     regs->eax = info->func(info->data);
+ 
+@@ -1363,7 +1364,7 @@ static void continue_hypercall_on_cpu_helper(struct vcpu *v)
+ 
+     xfree(info);
+ 
+-    vcpu_set_affinity(v, &v->cpu_affinity);
++    vcpu_unlock_affinity(v, &mask);
+     schedule_tail(v);
+ }
+ 
+@@ -1371,7 +1372,6 @@ int continue_hypercall_on_cpu(int cpu, long (*func)(void *data), void *data)
+ {
+     struct vcpu *v = current;
+     struct migrate_info *info;
+-    cpumask_t mask = cpumask_of_cpu(cpu);
+     int rc;
+ 
+     if ( cpu == smp_processor_id() )
+@@ -1384,12 +1384,12 @@ int continue_hypercall_on_cpu(int cpu, long (*func)(void *data), void *data)
+     info->func = func;
+     info->data = data;
+     info->saved_schedule_tail = v->arch.schedule_tail;
+-    info->saved_affinity = v->cpu_affinity;
++    info->saved_affinity = cpumask_of_cpu(cpu);
+ 
+     v->arch.schedule_tail = continue_hypercall_on_cpu_helper;
+     v->arch.continue_info = info;
+ 
+-    rc = vcpu_set_affinity(v, &mask);
++    rc = vcpu_lock_affinity(v, &info->saved_affinity);
+     if ( rc )
+     {
+         v->arch.schedule_tail = info->saved_schedule_tail;
+diff --git a/common/schedule.c b/common/schedule.c
+index 3d80021..b27771c 100644
+--- a/common/schedule.c
++++ b/common/schedule.c
+@@ -264,12 +264,11 @@ void vcpu_force_reschedule(struct vcpu *v)
+     }
+ }
+ 
+-int vcpu_set_affinity(struct vcpu *v, cpumask_t *affinity)
++static int __vcpu_set_affinity(
++    struct vcpu *v, cpumask_t *affinity,
++    bool_t old_lock_status, bool_t new_lock_status)
+ {
+-    cpumask_t online_affinity;
+-
+-    if ( (v->domain->domain_id == 0) && opt_dom0_vcpus_pin )
+-        return -EINVAL;
++    cpumask_t online_affinity, old_affinity;
+ 
+     cpus_and(online_affinity, *affinity, cpu_online_map);
+     if ( cpus_empty(online_affinity) )
+@@ -277,7 +276,18 @@ int vcpu_set_affinity(struct vcpu *v, cpumask_t *affinity)
+ 
+     vcpu_schedule_lock_irq(v);
+ 
++    if ( v->affinity_locked != old_lock_status )
++    {
++        BUG_ON(!v->affinity_locked);
++        vcpu_schedule_unlock_irq(v);
++        return -EBUSY;
++    }
++
++    v->affinity_locked = new_lock_status;
++
++    old_affinity = v->cpu_affinity;
+     v->cpu_affinity = *affinity;
++    *affinity = old_affinity;
+     if ( !cpu_isset(v->processor, v->cpu_affinity) )
+         set_bit(_VPF_migrating, &v->pause_flags);
+ 
+@@ -292,6 +302,31 @@ int vcpu_set_affinity(struct vcpu *v, cpumask_t *affinity)
+     return 0;
+ }
+ 
++int vcpu_set_affinity(struct vcpu *v, cpumask_t *affinity)
++{
++    if ( (v->domain->domain_id == 0) && opt_dom0_vcpus_pin )
++        return -EINVAL;
++    return __vcpu_set_affinity(v, affinity, 0, 0);
++}
++
++int vcpu_lock_affinity(struct vcpu *v, cpumask_t *affinity)
++{
++    return __vcpu_set_affinity(v, affinity, 0, 1);
++}
++
++void vcpu_unlock_affinity(struct vcpu *v, cpumask_t *affinity)
++{
++    cpumask_t online_affinity;
++
++    /* Do not fail if no CPU in old affinity mask is online. */
++    cpus_and(online_affinity, *affinity, cpu_online_map);
++    if ( cpus_empty(online_affinity) )
++        *affinity = cpu_online_map;
++
++    if ( __vcpu_set_affinity(v, affinity, 1, 0) != 0 )
++        BUG();
++}
++
+ /* Block the currently-executing domain until a pertinent event occurs. */
+ static long do_block(void)
+ {
+diff --git a/include/xen/sched.h b/include/xen/sched.h
+index 3d9f190..ec6afa1 100644
+--- a/include/xen/sched.h
++++ b/include/xen/sched.h
+@@ -119,6 +119,8 @@ struct vcpu
+     bool_t           defer_shutdown;
+     /* VCPU is paused following shutdown request (d->is_shutting_down)? */
+     bool_t           paused_for_shutdown;
++    /* VCPU affinity is temporarily locked from controller changes? */
++    bool_t           affinity_locked;
+ 
+     unsigned long    pause_flags;
+     atomic_t         pause_count;
+@@ -476,6 +478,8 @@ void cpu_init(void);
+ 
+ void vcpu_force_reschedule(struct vcpu *v);
+ int vcpu_set_affinity(struct vcpu *v, cpumask_t *affinity);
++int vcpu_lock_affinity(struct vcpu *v, cpumask_t *affinity);
++void vcpu_unlock_affinity(struct vcpu *v, cpumask_t *affinity);
+ 
+ void vcpu_runstate_get(struct vcpu *v, struct vcpu_runstate_info *runstate);
+ 

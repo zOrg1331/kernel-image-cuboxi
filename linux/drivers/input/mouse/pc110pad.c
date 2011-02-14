@@ -1,4 +1,6 @@
 /*
+ * $Id: pc110pad.c,v 1.12 2001/09/25 10:12:07 vojtech Exp $
+ *
  *  Copyright (c) 2000-2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -37,7 +39,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/delay.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -56,15 +57,13 @@ static struct input_dev *pc110pad_dev;
 static int pc110pad_data[3];
 static int pc110pad_count;
 
-static irqreturn_t pc110pad_interrupt(int irq, void *ptr)
+static irqreturn_t pc110pad_interrupt(int irq, void *ptr, struct pt_regs *regs)
 {
 	int value     = inb_p(pc110pad_io);
 	int handshake = inb_p(pc110pad_io + 2);
 
-	outb(handshake |  1, pc110pad_io + 2);
-	udelay(2);
-	outb(handshake & ~1, pc110pad_io + 2);
-	udelay(2);
+	outb_p(handshake |  1, pc110pad_io + 2);
+	outb_p(handshake & ~1, pc110pad_io + 2);
 	inb_p(0x64);
 
 	pc110pad_data[pc110pad_count++] = value;
@@ -72,6 +71,7 @@ static irqreturn_t pc110pad_interrupt(int irq, void *ptr)
 	if (pc110pad_count < 3)
 		return IRQ_HANDLED;
 
+	input_regs(pc110pad_dev, regs);
 	input_report_key(pc110pad_dev, BTN_TOUCH,
 		pc110pad_data[0] & 0x01);
 	input_report_abs(pc110pad_dev, ABS_X,
@@ -91,9 +91,9 @@ static void pc110pad_close(struct input_dev *dev)
 
 static int pc110pad_open(struct input_dev *dev)
 {
-	pc110pad_interrupt(0, NULL);
-	pc110pad_interrupt(0, NULL);
-	pc110pad_interrupt(0, NULL);
+	pc110pad_interrupt(0, NULL, NULL);
+	pc110pad_interrupt(0, NULL, NULL);
+	pc110pad_interrupt(0, NULL, NULL);
 	outb(PC110PAD_ON, pc110pad_io + 2);
 	pc110pad_count = 0;
 
@@ -108,10 +108,13 @@ static int pc110pad_open(struct input_dev *dev)
  */
 static int __init pc110pad_init(void)
 {
-	int err;
+	struct pci_dev *dev;
 
-	if (!no_pci_devices())
-		return -ENODEV;
+	dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, NULL);
+	if (dev) {
+		pci_dev_put(dev);
+		return -ENOENT;
+	}
 
 	if (!request_region(pc110pad_io, 4, "pc110pad")) {
 		printk(KERN_ERR "pc110pad: I/O area %#x-%#x in use.\n",
@@ -122,16 +125,16 @@ static int __init pc110pad_init(void)
 	outb(PC110PAD_OFF, pc110pad_io + 2);
 
 	if (request_irq(pc110pad_irq, pc110pad_interrupt, 0, "pc110pad", NULL)) {
+		release_region(pc110pad_io, 4);
 		printk(KERN_ERR "pc110pad: Unable to get irq %d.\n", pc110pad_irq);
-		err = -EBUSY;
-		goto err_release_region;
+		return -EBUSY;
 	}
 
-	pc110pad_dev = input_allocate_device();
-	if (!pc110pad_dev) {
+	if (!(pc110pad_dev = input_allocate_device())) {
+		free_irq(pc110pad_irq, NULL);
+		release_region(pc110pad_io, 4);
 		printk(KERN_ERR "pc110pad: Not enough memory.\n");
-		err = -ENOMEM;
-		goto err_free_irq;
+		return -ENOMEM;
 	}
 
 	pc110pad_dev->name = "IBM PC110 TouchPad";
@@ -141,9 +144,9 @@ static int __init pc110pad_init(void)
 	pc110pad_dev->id.product = 0x0001;
 	pc110pad_dev->id.version = 0x0100;
 
-	pc110pad_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
-	pc110pad_dev->absbit[0] = BIT_MASK(ABS_X) | BIT_MASK(ABS_Y);
-	pc110pad_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
+	pc110pad_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
+	pc110pad_dev->absbit[0] = BIT(ABS_X) | BIT(ABS_Y);
+	pc110pad_dev->keybit[LONG(BTN_TOUCH)] = BIT(BTN_TOUCH);
 
 	pc110pad_dev->absmax[ABS_X] = 0x1ff;
 	pc110pad_dev->absmax[ABS_Y] = 0x0ff;
@@ -151,20 +154,9 @@ static int __init pc110pad_init(void)
 	pc110pad_dev->open = pc110pad_open;
 	pc110pad_dev->close = pc110pad_close;
 
-	err = input_register_device(pc110pad_dev);
-	if (err)
-		goto err_free_dev;
+	input_register_device(pc110pad_dev);
 
 	return 0;
-
- err_free_dev:
-	input_free_device(pc110pad_dev);
- err_free_irq:
-	free_irq(pc110pad_irq, NULL);
- err_release_region:
-	release_region(pc110pad_io, 4);
-
-	return err;
 }
 
 static void __exit pc110pad_exit(void)

@@ -8,16 +8,19 @@
 
 /* proc info support a la one created by Sizif@Botik.RU for PGC */
 
+/* $Id: procfs.c,v 1.1.8.2 2001/07/15 17:08:42 god Exp $ */
+
 #include <linux/module.h>
 #include <linux/time.h>
 #include <linux/seq_file.h>
 #include <asm/uaccess.h>
 #include <linux/reiserfs_fs.h>
 #include <linux/reiserfs_fs_sb.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 
-#ifdef CONFIG_REISERFS_PROC_INFO
+#if defined( REISERFS_PROC_INFO )
 
 /*
  * LOCKING:
@@ -292,7 +295,7 @@ static int show_oidmap(struct seq_file *m, struct super_block *sb)
 	}
 #if defined( REISERFS_USE_OIDMAPF )
 	if (sb_info->oidmap.use_file && (sb_info->oidmap.mapf != NULL)) {
-		loff_t size = sb_info->oidmap.mapf->f_path.dentry->d_inode->i_size;
+		loff_t size = sb_info->oidmap.mapf->f_dentry->d_inode->i_size;
 		total_used += size / sizeof(reiserfs_oidinterval_d_t);
 	}
 #endif
@@ -321,7 +324,7 @@ static int show_journal(struct seq_file *m, struct super_block *sb)
 		   /* incore fields */
 		   "j_1st_reserved_block: \t%i\n"
 		   "j_state: \t%li\n"
-		   "j_trans_id: \t%u\n"
+		   "j_trans_id: \t%lu\n"
 		   "j_mount_id: \t%lu\n"
 		   "j_start: \t%lu\n"
 		   "j_len: \t%lu\n"
@@ -329,7 +332,7 @@ static int show_journal(struct seq_file *m, struct super_block *sb)
 		   "j_wcount: \t%i\n"
 		   "j_bcount: \t%lu\n"
 		   "j_first_unflushed_offset: \t%lu\n"
-		   "j_last_flush_trans_id: \t%u\n"
+		   "j_last_flush_trans_id: \t%lu\n"
 		   "j_trans_start_time: \t%li\n"
 		   "j_list_bitmap_index: \t%i\n"
 		   "j_must_wait: \t%i\n"
@@ -418,6 +421,12 @@ static void *r_start(struct seq_file *m, loff_t * pos)
 		return NULL;
 
 	up_write(&s->s_umount);
+
+	if (de->deleted) {
+		deactivate_super(s);
+		return NULL;
+	}
+
 	return s;
 }
 
@@ -442,7 +451,7 @@ static int r_show(struct seq_file *m, void *v)
 	return show(m, v);
 }
 
-static const struct seq_operations r_ops = {
+static struct seq_operations r_ops = {
 	.start = r_start,
 	.next = r_next,
 	.stop = r_stop,
@@ -465,7 +474,6 @@ static const struct file_operations r_file_operations = {
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = seq_release,
-	.owner = THIS_MODULE,
 };
 
 static struct proc_dir_entry *proc_info_root = NULL;
@@ -474,8 +482,12 @@ static const char proc_info_root_name[] = "fs/reiserfs";
 static void add_file(struct super_block *sb, char *name,
 		     int (*func) (struct seq_file *, struct super_block *))
 {
-	proc_create_data(name, 0, REISERFS_SB(sb)->procdir,
-			 &r_file_operations, func);
+	struct proc_dir_entry *de;
+	de = create_proc_entry(name, 0, REISERFS_SB(sb)->procdir);
+	if (de) {
+		de->data = func;
+		de->proc_fops = &r_file_operations;
+	}
 }
 
 int reiserfs_proc_info_init(struct super_block *sb)
@@ -492,6 +504,7 @@ int reiserfs_proc_info_init(struct super_block *sb)
 	spin_lock_init(&__PINFO(sb).lock);
 	REISERFS_SB(sb)->procdir = proc_mkdir(b, proc_info_root);
 	if (REISERFS_SB(sb)->procdir) {
+		REISERFS_SB(sb)->procdir->owner = THIS_MODULE;
 		REISERFS_SB(sb)->procdir->data = sb;
 		add_file(sb, "version", show_version);
 		add_file(sb, "super", show_super);
@@ -502,7 +515,7 @@ int reiserfs_proc_info_init(struct super_block *sb)
 		add_file(sb, "journal", show_journal);
 		return 0;
 	}
-	reiserfs_warning(sb, "cannot create /proc/%s/%s",
+	reiserfs_warning(sb, "reiserfs: cannot create /proc/%s/%s",
 			 proc_info_root_name, b);
 	return 1;
 }
@@ -555,8 +568,11 @@ int reiserfs_proc_info_global_init(void)
 {
 	if (proc_info_root == NULL) {
 		proc_info_root = proc_mkdir(proc_info_root_name, NULL);
-		if (!proc_info_root) {
-			reiserfs_warning(NULL, "cannot create /proc/%s",
+		if (proc_info_root) {
+			proc_info_root->owner = THIS_MODULE;
+		} else {
+			reiserfs_warning(NULL,
+					 "reiserfs: cannot create /proc/%s",
 					 proc_info_root_name);
 			return 1;
 		}
@@ -615,6 +631,7 @@ int reiserfs_global_version_in_proc(char *buffer, char **start,
 #endif
 
 /*
+ * $Log: procfs.c,v $
  * Revision 1.1.8.2  2001/07/15 17:08:42  god
  *  . use get_super() in procfs.c
  *  . remove remove_save_link() from reiserfs_do_truncate()
@@ -630,7 +647,7 @@ int reiserfs_global_version_in_proc(char *buffer, char **start,
  *
  */
 
-/*
+/* 
  * Make Linus happy.
  * Local variables:
  * c-indentation-style: "K&R"

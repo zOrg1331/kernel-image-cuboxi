@@ -1,0 +1,50 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 22 Feb 2010 19:02:00 -0500
+Subject: [x86_64] k8: do not mark early_is_k8_nb as __init
+Message-id: <1266865320-10213-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 23401
+O-Subject: [RHEL5.5 PATCH] Do not mark early_is_k8_nb as __init
+Bugzilla: 567275
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Bugzilla: http://bugzilla.redhat.com/show_bug.cgi?id=567275
+
+Upstream status: no way without a usage of early_is_k8_nb outside __init
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2274638
+
+AMD QA team is reporting that the patch in bug 560013 (for RHEL5.5,
+bug 547518 for RHEL5.4.z) breaks CPU offlining and onlining for M-C bare
+metal systems.
+
+The cause is a function marked as __init called from a __cpuinit function.
+
+On an affected machine,
+
+  echo 0 > /sys/devices/system/cpu/cpu1/online    # works
+  echo 1 > /sys/devices/system/cpu/cpu1/online    # hangs
+
+without the patch, while both work with the patch (tested by me).
+This bug is not present in RHEL6, because the aforementioned BZs were
+RHEL5 material only.
+
+Please review and ack for both 5.5 and 5.4.z.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Cc: Bhavna Sarathy <bhavna.sarathy@amd.com>
+
+diff --git a/arch/x86_64/kernel/k8.c b/arch/x86_64/kernel/k8.c
+index bc11b32..f9d9770 100644
+--- a/arch/x86_64/kernel/k8.c
++++ b/arch/x86_64/kernel/k8.c
+@@ -71,7 +71,7 @@ EXPORT_SYMBOL_GPL(cache_k8_northbridges);
+ 
+ /* Ignores subdevice/subvendor but as far as I can figure out
+    they're useless anyways */
+-int __init early_is_k8_nb(u32 device)
++int early_is_k8_nb(u32 device)
+ {
+ 	struct pci_device_id *id;
+ 	u32 vendor = device & 0xffff;

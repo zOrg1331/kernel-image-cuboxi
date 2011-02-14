@@ -1,0 +1,79 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH RHEL5] reduce MADV_DONTNEED contention
+Date: Tue, 29 May 2007 11:54:53 -0400
+Bugzilla: 237677
+Message-Id: <465C4CCD.3060205@redhat.com>
+Changelog: [mm] reduce MADV_DONTNEED contention
+
+
+This patch, together with a glibc patch to use MADV_DONTNEED for
+free(3), fixes the MySQL sysbench performance issue by allowing
+multiple CPUs to be in free(3) and the page fault path simultaneously.
+
+The more complicated MADV_FREE lazy freeing turns out to not provide
+much of an additional benefit, because setting the pte accessed bits
+in hardware can cost a few thousand CPU cycles - more than it costs
+to zero out a page!
+
+Because of this, we can go with the simple patch for RHEL.
+
+This same madvise mmap_sem contention fix was merged into the
+upstream kernel 3 weeks ago.
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+--- linux-2.6.18.noarch/mm/madvise.c.slow	2007-05-29 11:47:48.000000000 -0400
++++ linux-2.6.18.noarch/mm/madvise.c	2007-05-29 11:50:05.000000000 -0400
+@@ -12,6 +12,24 @@
+ #include <linux/hugetlb.h>
+ 
+ /*
++ * Any behaviour which results in changes to the vma->vm_flags needs to
++ * take mmap_sem for writing. Others, which simply traverse vmas, need
++ * to only take it for reading.
++ */
++static int madvise_need_mmap_write(int behavior)
++{
++	switch (behavior) {
++	case MADV_REMOVE:
++	case MADV_WILLNEED:
++	case MADV_DONTNEED:
++		return 0;
++	default:
++		/* be safe, default to 1. list exceptions explicitly */
++		return 1;
++	}
++}
++
++/*
+  * We can potentially split a vm area into separate
+  * areas, each area with its own behavior.
+  */
+@@ -264,7 +282,10 @@ asmlinkage long sys_madvise(unsigned lon
+ 	int error = -EINVAL;
+ 	size_t len;
+ 
+-	down_write(&current->mm->mmap_sem);
++	if (madvise_need_mmap_write(behavior))
++		down_write(&current->mm->mmap_sem);
++	else
++		down_read(&current->mm->mmap_sem);
+ 
+ 	if (start & ~PAGE_MASK)
+ 		goto out;
+@@ -323,6 +344,10 @@ asmlinkage long sys_madvise(unsigned lon
+ 		vma = prev->vm_next;
+ 	}
+ out:
+-	up_write(&current->mm->mmap_sem);
++	if (madvise_need_mmap_write(behavior))
++		up_write(&current->mm->mmap_sem);
++	else
++		up_read(&current->mm->mmap_sem);
++
+ 	return error;
+ }
+

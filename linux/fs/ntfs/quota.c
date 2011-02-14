@@ -31,10 +31,10 @@
  * ntfs_mark_quotas_out_of_date - mark the quotas out of date on an ntfs volume
  * @vol:	ntfs volume on which to mark the quotas out of date
  *
- * Mark the quotas out of date on the ntfs volume @vol and return 'true' on
- * success and 'false' on error.
+ * Mark the quotas out of date on the ntfs volume @vol and return TRUE on
+ * success and FALSE on error.
  */
-bool ntfs_mark_quotas_out_of_date(ntfs_volume *vol)
+BOOL ntfs_mark_quotas_out_of_date(ntfs_volume *vol)
 {
 	ntfs_index_context *ictx;
 	QUOTA_CONTROL_ENTRY *qce;
@@ -46,7 +46,7 @@ bool ntfs_mark_quotas_out_of_date(ntfs_volume *vol)
 		goto done;
 	if (!vol->quota_ino || !vol->quota_q_ino) {
 		ntfs_error(vol->sb, "Quota inodes are not open.");
-		return false;
+		return FALSE;
 	}
 	mutex_lock(&vol->quota_q_ino->i_mutex);
 	ictx = ntfs_index_ctx_get(NTFS_I(vol->quota_q_ino));
@@ -106,12 +106,12 @@ set_done:
 	NVolSetQuotaOutOfDate(vol);
 done:
 	ntfs_debug("Done.");
-	return true;
+	return TRUE;
 err_out:
 	if (ictx)
 		ntfs_index_ctx_put(ictx);
 	mutex_unlock(&vol->quota_q_ino->i_mutex);
-	return false;
+	return FALSE;
 }
 
 #endif /* NTFS_RW */

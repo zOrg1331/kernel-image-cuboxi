@@ -1,0 +1,37 @@
+From: Patrick Caulfield <pcaulfie@redhat.com>
+Date: Thu, 1 Nov 2007 10:30:12 +0000
+Subject: [dlm] Don't overwrite castparam if it's NULL
+Message-id: 4729AAB4.7010307@redhat.com
+O-Subject: [RHEL5.2 PATCH] bz#318061 Don't overwrite castparam if it's NULL
+Bugzilla: 318061
+
+If the castaddr passed to the userland API is NULL then don't overwrite the
+existing castparam. This allows a different thread to cancel a lock request
+and the CANCEL AST gets delivered to the original thread.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index de8b3ca..23c332f 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -4430,7 +4430,8 @@ int dlm_user_unlock(struct dlm_ls *ls, struct dlm_user_args *ua_tmp,
+ 
+ 	if (lvb_in && ua->lksb.sb_lvbptr)
+ 		memcpy(ua->lksb.sb_lvbptr, lvb_in, DLM_USER_LVB_LEN);
+-	ua->castparam = ua_tmp->castparam;
++	if (ua_tmp->castparam)
++		ua->castparam = ua_tmp->castparam;
+ 	ua->user_lksb = ua_tmp->user_lksb;
+ 
+ 	error = set_unlock_args(flags, ua, &args);
+@@ -4475,7 +4476,8 @@ int dlm_user_cancel(struct dlm_ls *ls, struct dlm_user_args *ua_tmp,
+ 		goto out;
+ 
+ 	ua = (struct dlm_user_args *)lkb->lkb_astparam;
+-	ua->castparam = ua_tmp->castparam;
++	if (ua_tmp->castparam)
++		ua->castparam = ua_tmp->castparam;
+ 	ua->user_lksb = ua_tmp->user_lksb;
+ 
+ 	error = set_unlock_args(flags, ua, &args);

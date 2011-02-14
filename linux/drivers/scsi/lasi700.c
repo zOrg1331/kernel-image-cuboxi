@@ -38,6 +38,7 @@
 #include <linux/stat.h>
 #include <linux/mm.h>
 #include <linux/blkdev.h>
+#include <linux/sched.h>
 #include <linux/ioport.h>
 #include <linux/dma-mapping.h>
 
@@ -101,14 +102,16 @@ lasi700_probe(struct parisc_device *dev)
 	struct NCR_700_Host_Parameters *hostdata;
 	struct Scsi_Host *host;
 
-	hostdata = kzalloc(sizeof(*hostdata), GFP_KERNEL);
+	hostdata = kmalloc(sizeof(*hostdata), GFP_KERNEL);
 	if (!hostdata) {
-		dev_printk(KERN_ERR, &dev->dev, "Failed to allocate host data\n");
+		printk(KERN_ERR "%s: Failed to allocate host data\n",
+		       dev->dev.bus_id);
 		return -ENOMEM;
 	}
+	memset(hostdata, 0, sizeof(struct NCR_700_Host_Parameters));
 
 	hostdata->dev = &dev->dev;
-	dma_set_mask(&dev->dev, DMA_BIT_MASK(32));
+	dma_set_mask(&dev->dev, DMA_32BIT_MASK);
 	hostdata->base = ioremap_nocache(base, 0x100);
 	hostdata->differential = 0;
 
@@ -120,7 +123,6 @@ lasi700_probe(struct parisc_device *dev)
 		hostdata->force_le_on_be = 0;
 		hostdata->chip710 = 1;
 		hostdata->dmode_extra = DMODE_FC2;
-		hostdata->burst_length = 8;
 	}
 
 	host = NCR_700_detect(&lasi700_template, hostdata, &dev->dev);

@@ -1,0 +1,67 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:47 -0500
+Subject: [scsi] lpfc: Fix vport->fc_flag set outside of lock fail
+Message-id: <20100104225254.24386.39711.sendpatchset@localhost.localdomain>
+Patchwork-id: 22307
+O-Subject: [RHEL5.5 PATCH 15/18] Fix vport->fc_flag set outside of lock caused
+	I/O failure during pci-func reset (CR: 96975)
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix vport->fc_flag set outside of lock caused I/O failure during pci-func reset (CR: 96975)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 0e15ded..b69ce36 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -4193,8 +4193,8 @@ lpfc_els_rcv_rscn(struct lpfc_vport *vport, struct lpfc_iocbq *cmdiocb,
+ 	spin_lock_irq(shost->host_lock);
+ 	if (vport->fc_rscn_flush) {
+ 		/* Another thread is walking fc_rscn_id_list on this vport */
+-		spin_unlock_irq(shost->host_lock);
+ 		vport->fc_flag |= FC_RSCN_DISCOVERY;
++		spin_unlock_irq(shost->host_lock);
+ 		/* Send back ACC */
+ 		lpfc_els_rsp_acc(vport, ELS_CMD_ACC, cmdiocb, ndlp, NULL);
+ 		return 0;
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 64932a0..74767f7 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -1834,7 +1834,9 @@ lpfc_init_vpi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
+ 		return;
+ 	}
++	spin_lock_irq(&phba->hbalock);
+ 	vport->fc_flag &= ~FC_VPORT_NEEDS_INIT_VPI;
++	spin_unlock_irq(&phba->hbalock);
+ 
+ 	if (phba->link_flag & LS_NPIV_FAB_SUPPORTED)
+ 		lpfc_initial_fdisc(vport);
+@@ -2396,8 +2398,10 @@ lpfc_mbx_cmpl_unreg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
+ 				 mb->mbxStatus);
+ 		break;
+ 	}
++	spin_lock_irq(&phba->hbalock);
+ 	vport->vpi_state &= ~LPFC_VPI_REGISTERED;
+ 	vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
++	spin_unlock_irq(&phba->hbalock);
+ 	vport->unreg_vpi_cmpl = VPORT_OK;
+ 	mempool_free(pmb, phba->mbox_mem_pool);
+ 	/*
+@@ -4704,8 +4708,10 @@ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
+ 		(phba->sli3_options & LPFC_SLI3_NPIV_ENABLED))
+ 		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
+ 			lpfc_mbx_unreg_vpi(vports[i]);
++			spin_lock_irq(&phba->hbalock);
+ 			vports[i]->fc_flag |= FC_VPORT_NEEDS_INIT_VPI;
+ 			vports[i]->vpi_state &= ~LPFC_VPI_REGISTERED;
++			spin_unlock_irq(&phba->hbalock);
+ 		}
+ 	lpfc_destroy_vport_work_array(phba, vports);
+ 

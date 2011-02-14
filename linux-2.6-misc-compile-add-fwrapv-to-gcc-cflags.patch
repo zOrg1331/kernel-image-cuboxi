@@ -1,0 +1,61 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 18 May 2009 14:07:43 -0400
+Subject: [misc] compile: add -fwrapv to gcc CFLAGS
+Message-id: 20090518180743.GA16867@redhat.com
+O-Subject: [PATCH RHEL-5.4] compile: Add -fwrapv to gcc CFLAGS
+Bugzilla: 491266
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=491266
+
+Turn wrapping garbage into something predicatable.
+Sounds like a good thing to do ..
+
+commit 68df3755e383e6fecf2354a67b08f92f18536594
+Author: Linus Torvalds <torvalds@linux-foundation.org>
+Date:   Thu Mar 19 11:10:17 2009 -0700
+
+    Add '-fwrapv' to gcc CFLAGS
+
+    This makes sure that gcc doesn't try to optimize away wrapping
+    arithmetic, which the kernel occasionally uses for overflow testing, ie
+    things like
+
+    	if (ptr + offset < ptr)
+
+    which technically is undefined for non-unsigned types. See
+
+    	http://bugzilla.kernel.org/show_bug.cgi?id=12597
+
+    for details.
+
+    Not all versions of gcc support it, so we need to make it conditional
+    (it looks like it was introduced in gcc-3.4).
+
+    Reminded-by: Alan Cox <alan@lxorguk.ukuu.org.uk>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Compiled and booted on an x86_64.  rpm built a kernel just to stress test
+it a little.  I know this is a little late to be throwing into a beta
+kernel, but it is marked urgent by the security team and the risk seems
+low.
+
+Please ACK
+
+Cheers,
+Don
+
+diff --git a/Makefile b/Makefile
+index e6956da..8411cbe 100644
+--- a/Makefile
++++ b/Makefile
+@@ -307,6 +307,7 @@ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
+ 
+ CFLAGS          := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+                    -fno-strict-aliasing -fno-common -Wstrict-prototypes -Wundef -Werror-implicit-function-declaration
++CFLAGS		+= $(call cc-option,-fwrapv)
+ AFLAGS          := -D__ASSEMBLY__
+ 
+ # Read KERNELRELEASE from include/config/kernel.release (if it exists)

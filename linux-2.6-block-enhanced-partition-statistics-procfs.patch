@@ -1,0 +1,53 @@
+From: Jerome Marchand <jmarchand@redhat.com>
+Date: Tue, 15 Jul 2008 15:55:48 +0200
+Subject: [block] Enhanced Partition Statistics: procfs
+Message-id: 20080715135911.072564879@redhat.com
+O-Subject: [Patch RHEL5.3 7/9] Enhanced Partition Statistics: procfs
+Bugzilla: 224322
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+bz224322
+
+Reports enhanced partition statistics in /proc/diskstats.
+
+commit: 28f39d553ee242000e62f6c589ee3dc6de3f9aaa
+
+diff --git a/block/genhd.c b/block/genhd.c
+index 762eb46..1684f86 100644
+--- a/block/genhd.c
++++ b/block/genhd.c
+@@ -581,12 +581,28 @@ static int diskstats_show(struct seq_file *s, void *v)
+ 	for (n = 0; n < gp->minors - 1; n++) {
+ 		struct hd_struct *hd = gp->part[n];
+ 
+-		if (hd && hd->nr_sects)
+-			seq_printf(s, "%4d %4d %s %u %u %u %u\n",
+-				gp->major, n + gp->first_minor + 1,
+-				disk_name(gp, n + 1, buf),
+-				hd->ios[0], hd->sectors[0],
+-				hd->ios[1], hd->sectors[1]);
++		if (!hd || !hd->nr_sects)
++			continue;
++
++		preempt_disable();
++		part_round_stats(hd);
++		preempt_enable();
++		seq_printf(s, "%4d %4d %s %lu %lu %llu "
++			   "%u %lu %lu %llu %u %u %u %u\n",
++			   gp->major, n + gp->first_minor + 1,
++			   disk_name(gp, n + 1, buf),
++			   part_stat_read(hd, ios[0]),
++			   part_stat_read(hd, merges[0]),
++			   (unsigned long long)part_stat_read(hd, sectors[0]),
++			   jiffies_to_msecs(part_stat_read(hd, ticks[0])),
++			   part_stat_read(hd, ios[1]),
++			   part_stat_read(hd, merges[1]),
++			   (unsigned long long)part_stat_read(hd, sectors[1]),
++			   jiffies_to_msecs(part_stat_read(hd, ticks[1])),
++			   get_partstats(hd)->in_flight,
++			   jiffies_to_msecs(part_stat_read(hd, io_ticks)),
++			   jiffies_to_msecs(part_stat_read(hd, time_in_queue))
++			);
+ 	}
+  
+ 	return 0;

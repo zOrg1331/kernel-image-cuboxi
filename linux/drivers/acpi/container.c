@@ -35,36 +35,30 @@
 #include <acpi/acpi_drivers.h>
 #include <acpi/container.h>
 
-#define PREFIX "ACPI: "
-
+#define ACPI_CONTAINER_DRIVER_NAME	"ACPI container driver"
 #define ACPI_CONTAINER_DEVICE_NAME	"ACPI container device"
 #define ACPI_CONTAINER_CLASS		"container"
 
 #define INSTALL_NOTIFY_HANDLER		1
 #define UNINSTALL_NOTIFY_HANDLER	2
 
+#define ACPI_CONTAINER_COMPONENT	0x01000000
 #define _COMPONENT			ACPI_CONTAINER_COMPONENT
-ACPI_MODULE_NAME("container");
+ACPI_MODULE_NAME("acpi_container")
 
-MODULE_AUTHOR("Anil S Keshavamurthy");
-MODULE_DESCRIPTION("ACPI container driver");
+    MODULE_AUTHOR("Anil S Keshavamurthy");
+MODULE_DESCRIPTION(ACPI_CONTAINER_DRIVER_NAME);
 MODULE_LICENSE("GPL");
+
+#define ACPI_STA_PRESENT		(0x00000001)
 
 static int acpi_container_add(struct acpi_device *device);
 static int acpi_container_remove(struct acpi_device *device, int type);
 
-static const struct acpi_device_id container_device_ids[] = {
-	{"ACPI0004", 0},
-	{"PNP0A05", 0},
-	{"PNP0A06", 0},
-	{"", 0},
-};
-MODULE_DEVICE_TABLE(acpi, container_device_ids);
-
 static struct acpi_driver acpi_container_driver = {
-	.name = "container",
+	.name = ACPI_CONTAINER_DRIVER_NAME,
 	.class = ACPI_CONTAINER_CLASS,
-	.ids = container_device_ids,
+	.ids = "ACPI0004,PNP0A05,PNP0A06",
 	.ops = {
 		.add = acpi_container_add,
 		.remove = acpi_container_remove,
@@ -77,18 +71,18 @@ static int is_device_present(acpi_handle handle)
 {
 	acpi_handle temp;
 	acpi_status status;
-	unsigned long long sta;
+	unsigned long sta;
 
 
 	status = acpi_get_handle(handle, "_STA", &temp);
 	if (ACPI_FAILURE(status))
-		return 1;	/* _STA not found, assume device present */
+		return 1;	/* _STA not found, assmue device present */
 
 	status = acpi_evaluate_integer(handle, "_STA", NULL, &sta);
 	if (ACPI_FAILURE(status))
 		return 0;	/* Firmware error */
 
-	return ((sta & ACPI_STA_DEVICE_PRESENT) == ACPI_STA_DEVICE_PRESENT);
+	return ((sta & ACPI_STA_PRESENT) == ACPI_STA_PRESENT);
 }
 
 /*******************************************************************/
@@ -102,14 +96,15 @@ static int acpi_container_add(struct acpi_device *device)
 		return -EINVAL;
 	}
 
-	container = kzalloc(sizeof(struct acpi_container), GFP_KERNEL);
+	container = kmalloc(sizeof(struct acpi_container), GFP_KERNEL);
 	if (!container)
 		return -ENOMEM;
 
+	memset(container, 0, sizeof(struct acpi_container));
 	container->handle = device->handle;
 	strcpy(acpi_device_name(device), ACPI_CONTAINER_DEVICE_NAME);
 	strcpy(acpi_device_class(device), ACPI_CONTAINER_CLASS);
-	device->driver_data = container;
+	acpi_driver_data(device) = container;
 
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device <%s> bid <%s>\n",
 			  acpi_device_name(device), acpi_device_bid(device)));
@@ -122,7 +117,7 @@ static int acpi_container_remove(struct acpi_device *device, int type)
 	acpi_status status = AE_OK;
 	struct acpi_container *pc = NULL;
 
-	pc = acpi_driver_data(device);
+	pc = (struct acpi_container *)acpi_driver_data(device);
 	kfree(pc);
 	return status;
 }
@@ -165,7 +160,7 @@ static void container_notify_cb(acpi_handle handle, u32 type, void *context)
 	case ACPI_NOTIFY_BUS_CHECK:
 		/* Fall through */
 	case ACPI_NOTIFY_DEVICE_CHECK:
-		printk(KERN_WARNING "Container driver received %s event\n",
+		printk("Container driver received %s event\n",
 		       (type == ACPI_NOTIFY_BUS_CHECK) ?
 		       "ACPI_NOTIFY_BUS_CHECK" : "ACPI_NOTIFY_DEVICE_CHECK");
 		status = acpi_bus_get_device(handle, &device);
@@ -173,22 +168,21 @@ static void container_notify_cb(acpi_handle handle, u32 type, void *context)
 			if (ACPI_FAILURE(status) || !device) {
 				result = container_device_add(&device, handle);
 				if (!result)
-					kobject_uevent(&device->dev.kobj,
+					kobject_uevent(&device->kobj,
 						       KOBJ_ONLINE);
 				else
-					printk(KERN_WARNING
-					       "Failed to add container\n");
+					printk("Failed to add container\n");
 			}
 		} else {
 			if (ACPI_SUCCESS(status)) {
 				/* device exist and this is a remove request */
-				kobject_uevent(&device->dev.kobj, KOBJ_OFFLINE);
+				kobject_uevent(&device->kobj, KOBJ_OFFLINE);
 			}
 		}
 		break;
 	case ACPI_NOTIFY_EJECT_REQUEST:
 		if (!acpi_bus_get_device(handle, &device) && device) {
-			kobject_uevent(&device->dev.kobj, KOBJ_OFFLINE);
+			kobject_uevent(&device->kobj, KOBJ_OFFLINE);
 		}
 		break;
 	default:
@@ -202,17 +196,20 @@ container_walk_namespace_cb(acpi_handle handle,
 			    u32 lvl, void *context, void **rv)
 {
 	char *hid = NULL;
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_device_info *info;
 	acpi_status status;
 	int *action = context;
 
-	status = acpi_get_object_info(handle, &info);
-	if (ACPI_FAILURE(status)) {
+
+	status = acpi_get_object_info(handle, &buffer);
+	if (ACPI_FAILURE(status) || !buffer.pointer) {
 		return AE_OK;
 	}
 
+	info = buffer.pointer;
 	if (info->valid & ACPI_VALID_HID)
-		hid = info->hardware_id.string;
+		hid = info->hardware_id.value;
 
 	if (hid == NULL) {
 		goto end;
@@ -239,7 +236,7 @@ container_walk_namespace_cb(acpi_handle handle,
 	}
 
       end:
-	kfree(info);
+	kfree(buffer.pointer);
 
 	return AE_OK;
 }

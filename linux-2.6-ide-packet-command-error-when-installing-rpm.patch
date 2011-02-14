@@ -1,0 +1,74 @@
+From: John Feeney <jfeeney@redhat.com>
+Subject: [RHEL-5.1 PATCH] packet command error when installing rpm
+Date: Tue, 05 Jun 2007 18:12:21 -0400
+Bugzilla: 229701
+Message-Id: <4665DFC5.2070908@redhat.com>
+Changelog: [ide] packet command error when installing rpm
+
+
+bz229701
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=229701
+"packet command error" when installing rpm
+
+Description of problem:
+
+hda: packet command error: status=0x51 { DriveReady SeekComplete Error }
+hda: packet command error: error=0x54 { AbortedCommand LastFailedSense=0x05 }
+ide: failed opcode was: unknown
+
+This happens when a "start stop unit" command (0x1b 0 0 0 3 0 0 0 0 0) is 
+sent to the drive (a TEAC CD-ROM CD-224E) to try to close the CD-ROM tray, 
+but this drive doesn't have that capability (it's a slim portable-type 
+CD-ROM), so it reports sense key 5 (illegal request) with asc/ascq 24/0.  
+This is exactly how SFF8090i says it should respond.
+
+But ide-cd.c (in cdrom_decode_status() ) just sees sense key 5 and spews out 
+an error.  It then goes on to request sense data, and cdrom_log_sense() 
+understands this error and doesn't log it.
+
+The attached patch suppresses this error message."
+
+Solution:
+In ide-cd.c, specifically cdrom_decode_status(), check to see
+if the command is start/stop unit and the error indicates an
+illegal request. If both are true, don't printk anything.
+
+Upstream status:
+See
+http://www.kernel.org/pub/linux/kernel/v2.6/snapshots/patch-2.6.21-rc6-git4.log
+
+commit 76ca1af10e28021e1894c5703da42b5e7bff1771
+Author: Stuart Hayes <stuart_hayes@dell.com>
+
+Signed-off-by: Stuart Hayes <stuart_hayes@dell.com>
+   Cc: Alan Cox <alan@lxorguk.ukuu.org.uk>
+   Signed-off-by: Bartlomiej Zolnierkiewicz <bzolnier@gmail.com>
+   ide: ugly messages trying to open CD drive with no media present
+
+
+Testing:
+I copied the Dell patch to the RHEL 5.1 code base and built a release
+with brew. I sent it to Dell where it was tested successfully.
+
+Acks would be appreciated. Thanks.
+
+
+--- linux-2.6.18.noarch/drivers/ide/ide-cd.c.stuart
++++ linux-2.6.18.noarch/drivers/ide/ide-cd.c
+@@ -742,6 +742,15 @@ static int cdrom_decode_status(ide_drive
+ 			cdrom_saw_media_change (drive);
+ 			/*printk("%s: media changed\n",drive->name);*/
+ 			return 0;
++		} else if ((sense_key == ILLEGAL_REQUEST) &&
++			   (rq->cmd[0] == GPCMD_START_STOP_UNIT)) {
++			/*
++			 * Don't print error message for this condition--
++			 * SFF8090i indicates that 5/24/00 is the correct
++			 * response to a request to close the tray if the
++			 * drive doesn't have that capability.
++			 * cdrom_log_sense() knows this!
++			 */
+ 		} else if (!(rq->flags & REQ_QUIET)) {
+ 			/* Otherwise, print an error. */
+ 			ide_dump_status(drive, "packet command error", stat);
+

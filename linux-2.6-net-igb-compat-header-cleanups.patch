@@ -1,0 +1,121 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:51:02 -0400
+Subject: [net] igb: compat header cleanups
+Message-id: <20100510184846.2781.5172.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24967
+O-Subject: [RHEL5 PATCH 7/27] compat.h cleanup: igb and igbvf driver changes
+Bugzilla: 546740
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+>From 09e184e22b08a1e7ed41beee1790f76b7bda503c Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:31:23 -0400
+Subject: [PATCH] igb and igbvf driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/igb/e1000_hw.h b/drivers/net/igb/e1000_hw.h
+index 0359489..6564914 100644
+--- a/drivers/net/igb/e1000_hw.h
++++ b/drivers/net/igb/e1000_hw.h
+@@ -35,8 +35,6 @@
+ #include "e1000_regs.h"
+ #include "e1000_defines.h"
+ 
+-#include "igb_compat.h"
+-
+ struct e1000_hw;
+ 
+ #define E1000_DEV_ID_82576                    0x10C9
+diff --git a/drivers/net/igb/e1000_phy.h b/drivers/net/igb/e1000_phy.h
+index f01e5e7..15e8eb2 100644
+--- a/drivers/net/igb/e1000_phy.h
++++ b/drivers/net/igb/e1000_phy.h
+@@ -28,8 +28,6 @@
+ #ifndef _E1000_PHY_H_
+ #define _E1000_PHY_H_
+ 
+-#include "igb_compat.h"
+-
+ enum e1000_ms_type {
+ 	e1000_ms_hw_default = 0,
+ 	e1000_ms_force_master,
+diff --git a/drivers/net/igb/igb_compat.h b/drivers/net/igb/igb_compat.h
+deleted file mode 100644
+index 7897de4..0000000
+--- a/drivers/net/igb/igb_compat.h
++++ /dev/null
+@@ -1,23 +0,0 @@
+-#ifndef __IGB_COMPAT_H__
+-#define __IGB_COMPAT_H__
+-
+-#include <linux/if_vlan.h>
+-#include <linux/pci.h>
+-
+-#define ETH_FCS_LEN               4
+-
+-#define PCIE_LINK_STATE_L0S	0
+-
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-						       int vlan_id)
+-{
+-	return vg->vlan_devices[vlan_id];
+-}
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-					 struct net_device *dev)
+-{
+-	vg->vlan_devices[vlan_id] = NULL;
+-}
+-
+-#endif 
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index e802398..f60c042 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -45,6 +45,7 @@
+ #ifdef CONFIG_IGB_DCA
+ #include <linux/dca.h>
+ #endif
++#include <linux/pcieport_if.h>
+ #include "igb.h"
+ 
+ #define DRV_VERSION "2.1.0-k2"
+diff --git a/drivers/net/igbvf/igbvf.h b/drivers/net/igbvf/igbvf.h
+index 98d98fa..cf30f3e 100644
+--- a/drivers/net/igbvf/igbvf.h
++++ b/drivers/net/igbvf/igbvf.h
+@@ -37,7 +37,6 @@
+ 
+ 
+ #include "vf.h"
+-#include "igbvf_compat.h"
+ 
+ /* Forward declarations */
+ struct igbvf_info;
+diff --git a/drivers/net/igbvf/igbvf_compat.h b/drivers/net/igbvf/igbvf_compat.h
+deleted file mode 100644
+index ad8d09f..0000000
+--- a/drivers/net/igbvf/igbvf_compat.h
++++ /dev/null
+@@ -1,20 +0,0 @@
+-#ifndef __IXBVF_COMPAT_H__
+-#define __IXVVF_COMPAT_H__
+-
+-#include <linux/if_vlan.h>
+-
+-#define ETH_FCS_LEN               4
+-
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-						       int vlan_id)
+-{
+-	return vg->vlan_devices[vlan_id];
+-}
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-					 struct net_device *dev)
+-{
+-	vg->vlan_devices[vlan_id] = NULL;
+-}
+-
+-#endif 

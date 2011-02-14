@@ -1,0 +1,44 @@
+From: John W. Linville <linville@redhat.com>
+Date: Mon, 20 Oct 2008 10:41:52 -0400
+Subject: [wireless] iwlwifi: fix busted tkip encryption _again_
+Message-id: 20081020144152.GC22238@redhat.com
+O-Subject: [RHEL5.3 PATCH] iwlwifi: fix busted tkip encryption _again_
+Bugzilla: 467831
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+On Thu, Sep 04, 2008 at 03:32:22PM -0400, John W. Linville wrote:
+> On Thu, Aug 28, 2008 at 01:59:00PM -0400, John W. Linville wrote:
+> > Yet another monster patch...this one updates the iwlwifi drivers to
+> > match what was released in 2.6.27-rc3 plus some even later patches
+> > (the ones from the current upstream process discussion on-going in
+> > linux-wireless for anyone watching that).  This also renames the
+> > iwl4965 driver to iwlagn (MODULE_ALIAS added) and adds support for
+> > the iwl5x00 adapters.
+> >
+> > BZ438388
+>
+> This patch inadvertently broke TKIP encryption for this driver.
+> The patch below restores correct functionality.
+
+This patch seems to have made it into -109 (hooray!), but then the
+"Yet another monster patch" it was based upon didn't get applied
+until -110.  In the process, part of this patch got dropped and TKIP
+got broken again (boo!).
+
+The fixup is below -- please apply or there will be some unhappy
+rhel5.3 Intel wireless users...
+
+John
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-sta.c b/drivers/net/wireless/iwlwifi/iwl-sta.c
+index b91d906..912309d 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-sta.c
++++ b/drivers/net/wireless/iwlwifi/iwl-sta.c
+@@ -693,6 +693,7 @@ static int iwl_set_tkip_dynamic_key_info(struct iwl_priv *priv,
+ 	spin_lock_irqsave(&priv->sta_lock, flags);
+ 
+ 	priv->stations[sta_id].keyinfo.alg = keyconf->alg;
++	priv->stations[sta_id].keyinfo.conf = keyconf;
+ 	priv->stations[sta_id].keyinfo.keylen = 16;
+ 
+ 	if ((priv->stations[sta_id].sta.key.key_flags & STA_KEY_FLG_ENCRYPT_MSK)

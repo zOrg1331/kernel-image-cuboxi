@@ -1,0 +1,98 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Fri, 23 Oct 2009 16:53:19 +0200
+Subject: [net] forcedeth: let phy power down when IF is down
+Message-id: 1256309599-18631-1-git-send-email-ivecera@redhat.com
+O-Subject: [RHEL5.5 PATCH] forcedeth: optionally power down phy when interface is down
+Bugzilla: 513692
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZs:
+#513692 - ifdown on nVidia CK804 (rev f3) NIC doesn't work
+
+Description:
+When the forcedeth based NIC is switched down, the IP address is deassigned
+from the interface, but the link is up. If the interface was current active
+in the bond then it remains active and the connectivity via this bond
+interface is lost.
+This patch brings the physical link down when the interface is down by
+placing the phy in power-down state, unless WOL is enabled. This
+functionality has to be enabled by phy_power_down module parameter because
+the power state persists across reboots and some OS, BIOSes and older
+versions of Linux don't bother to power up the phy again.
+
+Test:
+Tested by customer and by myself.
+
+Upstream commits:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=cb52deba12f27af90a46d2f8667a64888118a888
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=35a7433c789ba6df6d96b70fa745ae9e6cac0038
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=5a9a8e32ebe269c71d8d3e78f9435fe7729f38e9
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index f3eb92c..56748b6 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -878,6 +878,12 @@ enum {
+ };
+ static int phy_cross = NV_CROSSOVER_DETECTION_DISABLED;
+ 
++/*
++ * Power down phy when interface is down (persists through reboot;
++ * older Linux and other OSes may not power it up again)
++ */
++static int phy_power_down = 0;
++
+ static inline struct fe_priv *get_nvpriv(struct net_device *dev)
+ {
+ 	return netdev_priv(dev);
+@@ -1446,9 +1452,12 @@ static int phy_init(struct net_device *dev)
+ 	/* some phys clear out pause advertisment on reset, set it back */
+ 	mii_rw(dev, np->phyaddr, MII_ADVERTISE, reg);
+ 
+-	/* restart auto negotiation */
++	/* restart auto negotiation, power down phy */
+ 	mii_control = mii_rw(dev, np->phyaddr, MII_BMCR, MII_READ);
+ 	mii_control |= (BMCR_ANRESTART | BMCR_ANENABLE);
++	if (phy_power_down) {
++		mii_control |= BMCR_PDOWN;
++	}
+ 	if (mii_rw(dev, np->phyaddr, MII_BMCR, mii_control)) {
+ 		return PHY_ERROR;
+ 	}
+@@ -5421,9 +5430,13 @@ static int nv_close(struct net_device *dev)
+ 
+ 	nv_drain_rxtx(dev);
+ 
+-	if (np->wolenabled) {
++	if (np->wolenabled || !phy_power_down) {
+ 		writel(NVREG_PFF_ALWAYS|NVREG_PFF_MYADDR, base + NvRegPacketFilterFlags);
+ 		nv_start_rx(dev);
++	} else {
++		/* power down phy */
++		mii_rw(dev, np->phyaddr, MII_BMCR,
++		       mii_rw(dev, np->phyaddr, MII_BMCR, MII_READ)|BMCR_PDOWN);
+ 	}
+ 
+ 	/* FIXME: power down nic */
+@@ -5988,6 +6001,9 @@ static int nv_resume(struct pci_dev *pdev)
+ 	for (i = 0;i <= np->register_size/sizeof(u32); i++)
+ 		writel(np->saved_config_space[i], base+i*sizeof(u32));
+ 
++	/* restore phy state, including autoneg */
++	phy_init(dev);
++
+ 	netif_device_attach(dev);
+ 	if (netif_running(dev)) {
+ 		rc = nv_open(dev);
+@@ -6213,6 +6229,8 @@ module_param(dma_64bit, int, 0);
+ MODULE_PARM_DESC(dma_64bit, "High DMA is enabled by setting to 1 and disabled by setting to 0.");
+ module_param(phy_cross, int, 0);
+ MODULE_PARM_DESC(phy_cross, "Phy crossover detection for Realtek 8201 phy is enabled by setting to 1 and disabled by setting to 0.");
++module_param(phy_power_down, int, 0);
++MODULE_PARM_DESC(phy_power_down, "Power down phy and disable link when interface is down (1), or leave phy powered up (0).");
+ 
+ MODULE_AUTHOR("Manfred Spraul <manfred@colorfullife.com>");
+ MODULE_DESCRIPTION("Reverse Engineered nForce ethernet driver"

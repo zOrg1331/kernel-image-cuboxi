@@ -1,0 +1,63 @@
+From: George Beshers <gbeshers@redhat.com>
+Subject: [RHEL5] [BZ#219819] Correct typo in qla1280 driver
+Date: Mon, 18 Dec 2006 08:49:34 -0500
+Bugzilla: 219819
+Message-Id: <45869C6E.8040806@redhat.com>
+Changelog: scsi: fix bus reset in qla1280 driver
+
+
+BZ#219819[RHEL5] is a clone BZ#217886[RHEL4.5]
+
+Description of problem:
+Customer reported that on his Altix with a ql12160 the performance of the
+attached devices significantly drops after a bus reset had occurred.
+The problem is reproducible. Here the log of what has been done.
+
+Resolution:
+There is a typo, misplaced ')' in the conditional.
+
+Upstream: yes
+
+Built and tested on Altix2 against kernel-2.6.18-1.2876.el5
+
+George
+
+
+
+------------------------------------------------------------------------
+
+# HG changeset patch
+# User Jes Sorensen <jes@sgi.com>
+# Date Thu Oct 26 05:14:09 2006 +0700
+# Node ID 94233958ed3dc04ab8a2ebe86f2b5170bbcf3cad
+# parent: 195581a2d5bdadecafe43f2d97079eaf17bf49fb
+[SCSI] qla1280 bus reset typo
+
+Fix typo in check of return value of qla1280_bus_reset() which would
+result in an adapter reset in addition to the bus reset.
+
+Signed-off-by: Jes Sorensen <jes@sgi.com>
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+committer: James Bottomley <jejb@mulgrave.il.steeleye.com> 1161814449 -0700
+
+
+--- a/drivers/scsi/qla1280.c	Thu Oct 26 05:14:05 2006 +0700
++++ b/drivers/scsi/qla1280.c	Thu Oct 26 05:14:09 2006 +0700
+@@ -931,11 +931,10 @@ qla1280_error_action(struct scsi_cmnd *c
+
+	case BUS_RESET:
+		if (qla1280_verbose)
+-			printk(KERN_INFO "qla1280(%ld:%d): Issuing BUS "
+-			       "DEVICE RESET\n", ha->host_no, bus);
+-		if (qla1280_bus_reset(ha, bus == 0))
++			printk(KERN_INFO "qla1280(%ld:%d): Issued bus "
++			       "reset.\n", ha->host_no, bus);
++		if (qla1280_bus_reset(ha, bus) == 0)
+			result = SUCCESS;
+-
+		break;
+
+	case ADAPTER_RESET:
+
+

@@ -1,0 +1,100 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Sat, 2 Oct 2010 03:32:15 -0400
+Subject: [fs] ext4: don't scan/accumulate too many pages
+Message-id: <4CA6A7BF.2020301@redhat.com>
+Patchwork-id: 28566
+O-Subject: [PATCH RHEL5.6] ext4: don't scan/accumulate more pages than mballoc
+	will allocate
+Bugzilla: 572930
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+ext4: don't scan/accumulate more pages than mballoc will allocate
+
+This is for
+572930 - Bad ext4 sync performance on 16 TB GPT partition
+
+In short, ext4 is wasting tons of time scanning many more pages
+than it can actually allocate in one go; short-circuiting that
+at the maximum allocation greatly speeds up large writeback.
+
+Timing a 10G buffered dd + sync on a 16G box, with just a single spindle,
+I got this w/o the patch:
+
+10485760000 bytes (10 GB) copied, 373.516 seconds, 28.1 MB/s
+0.01user 500.23system 6:14.05elapsed 133%CPU (0avgtext+0avgdata 6704maxresident)k
+
+and this with:
+
+10485760000 bytes (10 GB) copied, 107.205 seconds, 97.8 MB/s
+0.01user 53.60system 5:01.56elapsed 17%CPU (0avgtext+0avgdata 6704maxresident)k
+
+Note the time for dd, the throughput, the total time, and the CPU utilization
+improvements...
+
+This patch hit upstream in 2.6.34 and actually needs to get pushed
+for RHEL6 as well.
+
+Thanks,
+-Eric
+
+commit c445e3e0a5c2804524dec6e55f66d63f6bc5bc3e
+Author: Eric Sandeen <sandeen@redhat.com>
+Date:   Sun May 16 04:00:00 2010 -0400
+
+    ext4: don't scan/accumulate more pages than mballoc will allocate
+
+    There was a bug reported on RHEL5 that a 10G dd on a 12G box
+    had a very, very slow sync after that.
+
+    At issue was the loop in write_cache_pages scanning all the way
+    to the end of the 10G file, even though the subsequent call
+    to mpage_da_submit_io would only actually write a smallish amt; then
+    we went back to the write_cache_pages loop ... wasting tons of time
+    in calling __mpage_da_writepage for thousands of pages we would
+    just revisit (many times) later.
+
+    Upstream it's not such a big issue for sys_sync because we get
+    to the loop with a much smaller nr_to_write, which limits the loop.
+
+    However, talking with Aneesh he realized that fsync upstream still
+    gets here with a very large nr_to_write and we face the same problem.
+
+    This patch makes mpage_add_bh_to_extent stop the loop after we've
+    accumulated 2048 pages, by setting mpd->io_done = 1; which ultimately
+    causes the write_cache_pages loop to break.
+
+    Repeating the test with a dirty_ratio of 80 (to leave something for
+    fsync to do), I don't see huge IO performance gains, but the reduction
+    in cpu usage is striking: 80% usage with stock, and 2% with the
+    below patch.  Instrumenting the loop in write_cache_pages clearly
+    shows that we are wasting time here.
+
+    Eventually we need to change mpage_da_map_pages() also submit its I/O
+    to the block layer, subsuming mpage_da_submit_io(), and then change it
+    call ext4_get_blocks() multiple times.
+
+    Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+    Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 8a3f138..27604aa 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -2371,6 +2371,15 @@ static void mpage_add_bh_to_extent(struct mpage_da_data *mpd,
+ 	sector_t next;
+ 	int nrblocks = mpd->b_size >> mpd->inode->i_blkbits;
+ 
++	/*
++	 * XXX Don't go larger than mballoc is willing to allocate
++	 * This is a stopgap solution.  We eventually need to fold
++	 * mpage_da_submit_io() into this function and then call
++	 * ext4_get_blocks() multiple times in a loop
++	 */
++	if (nrblocks >= 8*1024*1024/mpd->inode->i_sb->s_blocksize)
++		goto flush_it;
++
+ 	/* check if thereserved journal credits might overflow */
+ 	if (!(EXT4_I(mpd->inode)->i_flags & EXT4_EXTENTS_FL)) {
+ 		if (nrblocks >= EXT4_MAX_TRANS_DATA) {

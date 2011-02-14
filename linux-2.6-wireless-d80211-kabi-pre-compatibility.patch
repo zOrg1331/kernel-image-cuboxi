@@ -1,0 +1,43 @@
+From: John W. Linville <linville@redhat.com>
+Subject: [RFC/PATCH rhel5] d80211: kABI pre-compatibility
+Date: Wed, 15 Nov 2006 14:54:25 -0500
+Bugzilla: 214982
+Message-Id: <20061115195425.GC9964@redhat.com>
+Changelog: d80211: kABI pre-compatibility
+
+
+We are almost certainly going to need to pull some version of the
+d80211 wireless stack into RHEL5 during it's lifetime, possibly as
+early as U1.  This raises the usual kABI concerns related to such a
+big chunk of code.
+
+Perhaps surprisingly, the current kABI intrusiveness of d80211 is
+fairly small.  These changes currently consist of a couple of fields
+in the net_device structure, although it is difficult to be sure they
+will remain so.  Still, it would be better to have a couple fewer
+things to hack around due to kABI concerns later.
+
+--- linux-2.6.18.noarch/include/linux/netdevice.h.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/include/linux/netdevice.h	2006-11-15 14:45:14.000000000 -0500
+@@ -342,6 +342,9 @@ struct net_device
+ 	/* Instance data managed by the core of Wireless Extensions. */
+ 	struct iw_public_data *	wireless_data;
+ 
++	/* pending config used by cfg80211/wext compat code only */
++	void *cfg80211_wext_pending_config;
++
+ 	struct ethtool_ops *ethtool_ops;
+ 
+ 	/*
+@@ -386,6 +389,7 @@ struct net_device
+ 	void                    *ip6_ptr;       /* IPv6 specific data */
+ 	void			*ec_ptr;	/* Econet specific data	*/
+ 	void			*ax25_ptr;	/* AX.25 specific data */
++	void			*ieee80211_ptr;	/* IEEE 802.11 specific data */
+ 
+ /*
+  * Cache line mostly used on receive path (including eth_type_trans())
+-- 
+John W. Linville
+linville@redhat.com
+

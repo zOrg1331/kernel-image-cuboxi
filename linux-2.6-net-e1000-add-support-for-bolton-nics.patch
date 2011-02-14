@@ -1,0 +1,84 @@
+From: Bruce Allan <ballan@redhat.com>
+Subject: [RHEL5.1 PATCH] e1000: add support (device IDs) for Bolton NICs
+Date: Thu, 09 Aug 2007 11:56:04 -0700
+Bugzilla: 251221
+Message-Id: <46BB6344.9050406@redhat.com>
+Changelog: [net] e1000: add support for Bolton NICs
+
+
+RHBZ#: 251221
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251221
+
+Description:
+------------
+Add PCI device IDs for 82571EB Intel PRO/1000 PF Quad Port Server Adapter.
+
+Upstream Status:
+----------------
+This is not yet upstream but will be soon.
+
+Test Status:
+------------
+Currently under test at Intel.
+
+-- 
+Bruce Allan
+Intel LAN Access Division
+2111 NE 25th Avenue
+Hillsboro, OR  97124
+503-712-5943
+
+diff -urp -X dontdiff linux-2.6.18-38.el5/drivers/net/e1000/e1000_ethtool.c linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_ethtool.c
+--- linux-2.6.18-38.el5/drivers/net/e1000/e1000_ethtool.c	2007-08-06 14:26:50.000000000 -0700
++++ linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_ethtool.c	2007-08-06 15:22:36.000000000 -0700
+@@ -1728,6 +1728,7 @@ static int e1000_wol_exclusion(struct e1
+ 		retval = 0;
+ 		break;
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER:
++	case E1000_DEV_ID_82571EB_QUAD_FIBER:
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER_LOWPROFILE:
+ 	case E1000_DEV_ID_82546GB_QUAD_COPPER_KSP3:
+ 		/* quad port adapters only support WoL on port A */
+diff -urp -X dontdiff linux-2.6.18-38.el5/drivers/net/e1000/e1000_hw.c linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_hw.c
+--- linux-2.6.18-38.el5/drivers/net/e1000/e1000_hw.c	2007-08-06 14:26:53.000000000 -0700
++++ linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_hw.c	2007-08-06 15:22:36.000000000 -0700
+@@ -385,6 +385,7 @@ e1000_set_mac_type(struct e1000_hw *hw)
+ 	case E1000_DEV_ID_82571EB_FIBER:
+ 	case E1000_DEV_ID_82571EB_SERDES:
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER:
++	case E1000_DEV_ID_82571EB_QUAD_FIBER:
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER_LOWPROFILE:
+ 		hw->mac_type = e1000_82571;
+ 		break;
+diff -urp -X dontdiff linux-2.6.18-38.el5/drivers/net/e1000/e1000_hw.h linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_hw.h
+--- linux-2.6.18-38.el5/drivers/net/e1000/e1000_hw.h	2007-08-06 14:26:53.000000000 -0700
++++ linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_hw.h	2007-08-06 15:22:36.000000000 -0700
+@@ -472,6 +472,7 @@ int32_t e1000_check_phy_reset_block(stru
+ #define E1000_DEV_ID_82571EB_FIBER       0x105F
+ #define E1000_DEV_ID_82571EB_SERDES      0x1060
+ #define E1000_DEV_ID_82571EB_QUAD_COPPER 0x10A4
++#define E1000_DEV_ID_82571EB_QUAD_FIBER  0x10A5
+ #define E1000_DEV_ID_82571EB_QUAD_COPPER_LOWPROFILE  0x10BC
+ #define E1000_DEV_ID_82572EI_COPPER      0x107D
+ #define E1000_DEV_ID_82572EI_FIBER       0x107E
+diff -urp -X dontdiff linux-2.6.18-38.el5/drivers/net/e1000/e1000_main.c linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_main.c
+--- linux-2.6.18-38.el5/drivers/net/e1000/e1000_main.c	2007-08-06 14:26:53.000000000 -0700
++++ linux-2.6.18-38.el5.bolton/drivers/net/e1000/e1000_main.c	2007-08-06 15:22:36.000000000 -0700
+@@ -100,6 +100,7 @@ static struct pci_device_id e1000_pci_tb
+ 	INTEL_E1000_ETHERNET_DEVICE(0x1099),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x109A),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10A4),
++	INTEL_E1000_ETHERNET_DEVICE(0x10A5),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10B5),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10B9),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10BA),
+@@ -1100,6 +1101,7 @@ e1000_probe(struct pci_dev *pdev,
+ 		break;
+ 	case E1000_DEV_ID_82546GB_QUAD_COPPER_KSP3:
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER:
++	case E1000_DEV_ID_82571EB_QUAD_FIBER:
+ 	case E1000_DEV_ID_82571EB_QUAD_COPPER_LOWPROFILE:
+ 		/* if quad port adapter, disable WoL on all but port A */
+ 		if (global_quad_port_a != 0)
+

@@ -1,0 +1,234 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Mon, 17 Dec 2007 16:41:53 -0500
+Subject: [xen] enable nested paging by default on amd-v
+Message-id: 20071217214156.1638.1797.sendpatchset@localhost.localdomain
+O-Subject: Re: [RHEL5.2 PATCH] Enable Nested Paging by default on AMD-V
+Bugzilla: 247190
+
+Resolves BZ 247190
+
+This patch enables AMD's Nested Paging that allows the guest virtual pages
+to map to host physical pages through hardware, to be the default.
+Benefits of Nested Paging
+- Reduces the complexity of memory management in virtualized environment
+(less s/w bugs)
+- Improves performance by avoiding a vast amount of #VMEXIT for memory
+intensive guests (less CPU utilized)
+Nested Paging can only be enabled on AMD-V platforms and does not affect the
+VT code paths.Testing:
+There has been a lot of performance experiments done with Nested Paging
+enabled, and with Oracle workloads.  Shak and I can provide data offline.
+
+This patch has been applied to Bill Burns' 3.1.1 HV upgrade and tested at
+AMD (Austin team, and BDC (me)).
+
+Chris Lalancette wrote:
+>
+> OK, great.  Yeah, I'm much more comfortable with this new patch.  I also did
+> some basic smoke-testing on my Barcelona and an Intel SDV, and it seemed to do
+> the right thing.
+>
+Great, thanks.   Chris, I looked into the boolean_param patch and found a changeset that's
+not in R5.2 code base.   This allows for users to not only use hap=off and hap=no, which are
+both functional, but also to use hap=false and hap=0.   These are supported upstream, and
+something that should really work in R5.2 as well.
+
+Upstream c/s 15885.
+
+Please review and ACK this change.
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/x86/hvm/hvm.c b/arch/x86/hvm/hvm.c
+index a15e74a..66fc9a5 100644
+--- a/arch/x86/hvm/hvm.c
++++ b/arch/x86/hvm/hvm.c
+@@ -49,6 +49,15 @@
+ #include <public/version.h>
+ #include <public/memory.h>
+ 
++/*
++ * Xen command-line option to allow/disallow hardware-assisted paging.
++ * Since the phys-to-machine table of AMD NPT is in host format, 32-bit Xen
++ * could only support guests using NPT with up to a 4GB memory map. Therefore
++ * we only allow HAP by default on 64-bit Xen.
++ */
++static int opt_hap_permitted = (CONFIG_PAGING_LEVELS != 3);
++boolean_param("hap", opt_hap_permitted);
++
+ int hvm_enabled __read_mostly;
+ 
+ unsigned int opt_hvm_debug_level __read_mostly;
+@@ -74,6 +83,14 @@ void hvm_enable(struct hvm_function_table *fns)
+ 
+     hvm_funcs   = *fns;
+     hvm_enabled = 1;
++
++    if ( hvm_funcs.hap_supported )
++    {
++        if ( !opt_hap_permitted )
++            hvm_funcs.hap_supported = 0;
++        printk("HVM: Hardware Assisted Paging detected %s.\n",
++               hvm_funcs.hap_supported ? "and enabled" : "but disabled");
++    }
+ }
+ 
+ void hvm_disable(void)
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 4bf131f..23a44cd 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -66,9 +66,6 @@ static void *hsa[NR_CPUS] __read_mostly;
+ /* vmcb used for extended host state */
+ static void *root_vmcb[NR_CPUS] __read_mostly;
+ 
+-/* hardware assisted paging bits */
+-extern int opt_hap_enabled;
+-
+ static void svm_inject_exception(struct vcpu *v, int trap, 
+                                         int ev, int error_code)
+ {
+@@ -1008,20 +1005,6 @@ static struct hvm_function_table svm_function_table = {
+     .event_injection_faulted = svm_event_injection_faulted
+ };
+ 
+-static void svm_npt_detect(void)
+-{
+-    u32 eax, ebx, ecx, edx;
+-
+-    /* Check CPUID for nested paging support. */
+-    cpuid(0x8000000A, &eax, &ebx, &ecx, &edx);
+-
+-    if ( !(edx & 1) && opt_hap_enabled )
+-    {
+-        printk("SVM: Nested paging is not supported by this CPU.\n");
+-        opt_hap_enabled = 0;
+-    }
+-}
+-
+ int start_svm(struct cpuinfo_x86 *c)
+ {
+     u32 eax, ecx, edx;
+@@ -1050,8 +1033,6 @@ int start_svm(struct cpuinfo_x86 *c)
+ 
+     write_efer(read_efer() | EFER_SVME);
+ 
+-    svm_npt_detect();
+-
+     /* Initialize the HSA for this core. */
+     phys_hsa = (u64) virt_to_maddr(hsa[cpu]);
+     phys_hsa_lo = (u32) phys_hsa;
+@@ -1066,11 +1047,10 @@ int start_svm(struct cpuinfo_x86 *c)
+ 
+     setup_vmcb_dump();
+ 
++    svm_function_table.hap_supported = (cpuid_edx(0x8000000A) & 1);
++
+     hvm_enable(&svm_function_table);
+ 
+-    if ( opt_hap_enabled )
+-        printk("SVM: Nested paging enabled.\n");
+-        
+     return 1;
+ }
+ 
+diff --git a/arch/x86/mm/paging.c b/arch/x86/mm/paging.c
+index 4cf1c06..0be022f 100644
+--- a/arch/x86/mm/paging.c
++++ b/arch/x86/mm/paging.c
+@@ -27,9 +27,7 @@
+ #include <asm/hap.h>
+ #include <asm/guest_access.h>
+ 
+-/* Xen command-line option to enable hardware-assisted paging */
+-int opt_hap_enabled;
+-boolean_param("hap", opt_hap_enabled);
++#define hap_enabled(d) (hvm_funcs.hap_supported && is_hvm_domain(d))
+ 
+ /* Printouts */
+ #define PAGING_PRINTK(_f, _a...)                                     \
+@@ -362,14 +360,14 @@ void paging_domain_init(struct domain *d)
+     shadow_domain_init(d);
+ 
+     /* ... but we will use hardware assistance if it's available. */
+-    if ( opt_hap_enabled && is_hvm_domain(d) )
++    if ( hap_enabled(d) )
+         hap_domain_init(d);
+ }
+ 
+ /* vcpu paging struct initialization goes here */
+ void paging_vcpu_init(struct vcpu *v)
+ {
+-    if ( opt_hap_enabled && is_hvm_vcpu(v) )
++    if ( hap_enabled(v->domain) )
+         hap_vcpu_init(v);
+     else
+         shadow_vcpu_init(v);
+@@ -429,7 +427,7 @@ int paging_domctl(struct domain *d, xen_domctl_shadow_op_t *sc,
+     }
+ 	
+     /* Here, dispatch domctl to the appropriate paging code */
+-    if ( opt_hap_enabled && is_hvm_domain(d) )
++    if ( hap_enabled(d) )
+ 	return hap_domctl(d, sc, u_domctl);
+     else
+ 	return shadow_domctl(d, sc, u_domctl);
+@@ -438,7 +436,7 @@ int paging_domctl(struct domain *d, xen_domctl_shadow_op_t *sc,
+ /* Call when destroying a domain */
+ void paging_teardown(struct domain *d)
+ {
+-    if ( opt_hap_enabled && is_hvm_domain(d) )
++    if ( hap_enabled(d) )
+         hap_teardown(d);
+     else
+         shadow_teardown(d);
+@@ -450,7 +448,7 @@ void paging_teardown(struct domain *d)
+ /* Call once all of the references to the domain have gone away */
+ void paging_final_teardown(struct domain *d)
+ {
+-    if ( opt_hap_enabled && is_hvm_domain(d) )
++    if ( hap_enabled(d) )
+         hap_final_teardown(d);
+     else
+         shadow_final_teardown(d);
+@@ -460,7 +458,7 @@ void paging_final_teardown(struct domain *d)
+  * creation. */
+ int paging_enable(struct domain *d, u32 mode)
+ {
+-    if ( opt_hap_enabled && is_hvm_domain(d) )
++    if ( hap_enabled(d) )
+         return hap_enable(d, mode | PG_HAP_enable);
+     else
+         return shadow_enable(d, mode | PG_SH_enable);
+diff --git a/common/kernel.c b/common/kernel.c
+index 9bfba6b..034ff21 100644
+--- a/common/kernel.c
++++ b/common/kernel.c
+@@ -80,7 +80,10 @@ void cmdline_parse(char *cmdline)
+                 break;
+             case OPT_BOOL:
+             case OPT_INVBOOL:
+-                if ( !strcmp("no", optval) || !strcmp("off", optval) )
++                if ( !strcmp("no", optval) ||
++                     !strcmp("off", optval) ||
++                     !strcmp("false", optval) ||
++                     !strcmp("0", optval) )
+                     bool_assert = !bool_assert;
+                 if ( param->type == OPT_INVBOOL )
+                     bool_assert = !bool_assert;
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index 4562e8c..117f167 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -63,6 +63,9 @@ typedef struct segment_register {
+ struct hvm_function_table {
+     char *name;
+ 
++    /* Support Hardware-Assisted Paging? */
++    int hap_supported;
++
+     /*
+      *  Disable HVM functionality
+      */

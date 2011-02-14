@@ -1,0 +1,79 @@
+From: Jan Glauber <jglauber@redhat.com>
+Date: Tue, 25 Mar 2008 13:33:56 +0100
+Subject: [s390] fix qeth scatter-gather
+Message-id: 1206448436.8004.16.camel@localhost.localdomain
+O-Subject: [RHEL5 U2 PATCH] s390: fix qeth scatter-gather
+Bugzilla: 438180
+
+Description
+============
+
+Test found two issues with the qeth scatter gather support that is new
+with 5.2.
+
+qeth: inbound scatter gather - fix skb page increment
+
+If the first qdio buffer element is to short to use a page we copy
+the data. In this case we are not allowed to increment the fragment
+count.
+
+qeth: Receive (RX-SG) on HiperSockets creates invalid IP packets
+
+Invaild IP packets are created, when receive-scatter/gather (RX-SG)
+is utilized in qeth. Typically the IP header is dropped.
+When receiving on HiperSocket and the first SBALE buffer is
+filled with data chunk smaller than 64 bytes, these data bytes
+are dropped.
+
+Bugzilla
+=========
+BZ: 438180
+
+Upstream status of the patch:
+=============================
+Upstream 2.6.25 will have a rewritten qeth driver which is not yet in
+Linus' tree.
+
+Test status:
+============
+Kernel with patch was built and successfully tested.
+
+Please ack,
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index fa63e60..e6b9411 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2202,7 +2202,7 @@ qeth_create_skb_frag(struct qdio_buffer_element *element,
+ 		     int offset, int *pfrag, int data_len)
+ {
+ 	struct page *page = virt_to_page(element->addr);
+-	if (*pfrag == 0) {
++	if (*pskb == NULL) {
+ 		/* the upper protocol layers assume that there is data in the
+ 		 * skb itself. Copy a small amount (64 bytes) to make them
+ 		 * happy. */
+@@ -2221,6 +2221,7 @@ qeth_create_skb_frag(struct qdio_buffer_element *element,
+ 			(*pskb)->data_len += data_len - 64;
+ 			(*pskb)->len      += data_len - 64;
+ 			(*pskb)->truesize += data_len - 64;
++			(*pfrag)++;
+ 		}
+ 	} else {
+ 		get_page(page);
+@@ -2228,8 +2229,8 @@ qeth_create_skb_frag(struct qdio_buffer_element *element,
+ 		(*pskb)->data_len += data_len;
+ 		(*pskb)->len      += data_len;
+ 		(*pskb)->truesize += data_len;
++		(*pfrag)++;
+ 	}
+-	(*pfrag)++;
+ 	return 0;
+ }
+ 

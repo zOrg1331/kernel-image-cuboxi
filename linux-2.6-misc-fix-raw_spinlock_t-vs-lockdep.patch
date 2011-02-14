@@ -1,0 +1,89 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:02 +0100
+Subject: [misc] fix raw_spinlock_t vs lockdep
+Message-id: 20071218112315.414957004@chello.nl
+O-Subject: [RHEL5.2 PATCH 01/14] fix raw_spinlock_t vs lockdep
+Bugzilla: 193729
+
+Use the lockdep infrastructure to track lock contention and other lock
+statistics.
+
+It tracks lock contention events, and the first four unique call-sites that
+encountered contention.
+
+It also measures lock wait-time and hold-time in nanoseconds. The minimum and
+maximum times are tracked, as well as a total (which together with the number
+of event can give the avg).
+
+All statistics are done per lock class, per write (exclusive state) and per read
+(shared state).
+
+The statistics are collected per-cpu, so that the collection overhead is
+minimized via having no global cachemisses.
+
+This new lock statistics feature is independent of the lock dependency checking
+traditionally done by lockdep; it just shares the lock tracking code. It is
+also possible to enable both and runtime disabled either component - thereby
+avoiding the O(n^2) lock chain walks for instance.
+
+This patch:
+
+raw_spinlock_t should not use lockdep (and doesn't) since lockdep itself
+relies on it.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/spinlock_types.h b/include/linux/spinlock_types.h
+index dc5fb69..99350ef 100644
+--- a/include/linux/spinlock_types.h
++++ b/include/linux/spinlock_types.h
+@@ -9,14 +9,14 @@
+  * Released under the General Public License (GPL).
+  */
+ 
+-#include <linux/lockdep.h>
+-
+ #if defined(CONFIG_SMP)
+ # include <asm/spinlock_types.h>
+ #else
+ # include <linux/spinlock_types_up.h>
+ #endif
+ 
++#include <linux/lockdep.h>
++
+ typedef struct {
+ 	raw_spinlock_t raw_lock;
+ #if defined(CONFIG_PREEMPT) && defined(CONFIG_SMP)
+diff --git a/include/linux/spinlock_types_up.h b/include/linux/spinlock_types_up.h
+index 27644af..04135b0 100644
+--- a/include/linux/spinlock_types_up.h
++++ b/include/linux/spinlock_types_up.h
+@@ -12,14 +12,10 @@
+  * Released under the General Public License (GPL).
+  */
+ 
+-#if defined(CONFIG_DEBUG_SPINLOCK) || \
+-	defined(CONFIG_DEBUG_LOCK_ALLOC)
++#ifdef CONFIG_DEBUG_SPINLOCK
+ 
+ typedef struct {
+ 	volatile unsigned int slock;
+-#ifdef CONFIG_DEBUG_LOCK_ALLOC
+-	struct lockdep_map dep_map;
+-#endif
+ } raw_spinlock_t;
+ 
+ #define __RAW_SPIN_LOCK_UNLOCKED { 1 }
+@@ -34,9 +30,6 @@ typedef struct { } raw_spinlock_t;
+ 
+ typedef struct {
+ 	/* no debug version on UP */
+-#ifdef CONFIG_DEBUG_LOCK_ALLOC
+-	struct lockdep_map dep_map;
+-#endif
+ } raw_rwlock_t;
+ 
+ #define __RAW_RW_LOCK_UNLOCKED { }

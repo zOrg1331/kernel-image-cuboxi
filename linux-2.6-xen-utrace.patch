@@ -1,0 +1,110 @@
+diff -urNp linux-2.6.17.previous/arch/i386/kernel/entry-xen.S linux-2.6.17.noarch/arch/i386/kernel/entry-xen.S
+--- linux-2.6.17.previous/arch/i386/kernel/entry-xen.S	2006-07-19 16:27:09.000000000 +0200
++++ linux-2.6.17.noarch/arch/i386/kernel/entry-xen.S	2006-07-19 17:48:25.000000000 +0200
+@@ -340,7 +340,7 @@ sysenter_past_esp:
+ 	GET_THREAD_INFO(%ebp)
+ 
+ 	/* Note, _TIF_SECCOMP is bit number 8, and so it needs testw and not testb */
+-	testw $(_TIF_SYSCALL_EMU|_TIF_SYSCALL_TRACE|_TIF_SECCOMP|_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
++	testw $(_TIF_SYSCALL_TRACE|_TIF_SECCOMP|_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
+ 	jnz syscall_trace_entry
+ 	cmpl $(nr_syscalls), %eax
+ 	jae syscall_badsys
+@@ -389,7 +389,7 @@ ENTRY(system_call)
+ no_singlestep:
+ 					# system call tracing in operation / emulation
+ 	/* Note, _TIF_SECCOMP is bit number 8, and so it needs testw and not testb */
+-	testw $(_TIF_SYSCALL_EMU|_TIF_SYSCALL_TRACE|_TIF_SECCOMP|_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
++	testw $(_TIF_SYSCALL_TRACE|_TIF_SECCOMP|_TIF_SYSCALL_AUDIT),TI_flags(%ebp)
+ 	jnz syscall_trace_entry
+ 	cmpl $(nr_syscalls), %eax
+ 	jae syscall_badsys
+@@ -539,9 +539,6 @@ syscall_trace_entry:
+ 	movl %esp, %eax
+ 	xorl %edx,%edx
+ 	call do_syscall_trace
+-	cmpl $0, %eax
+-	jne resume_userspace		# ret != 0 -> running under PTRACE_SYSEMU,
+-					# so must skip actual syscall
+ 	movl ORIG_EAX(%esp), %eax
+ 	cmpl $(nr_syscalls), %eax
+ 	jnae syscall_call
+diff -urNp linux-2.6.17.previous/arch/i386/kernel/process-xen.c linux-2.6.17.noarch/arch/i386/kernel/process-xen.c
+--- linux-2.6.17.previous/arch/i386/kernel/process-xen.c	2006-07-19 16:27:11.000000000 +0200
++++ linux-2.6.17.noarch/arch/i386/kernel/process-xen.c	2006-07-19 17:46:21.000000000 +0200
+@@ -657,9 +657,6 @@ asmlinkage int sys_execve(struct pt_regs
+ 			(char __user * __user *) regs.edx,
+ 			&regs);
+ 	if (error == 0) {
+-		task_lock(current);
+-		current->ptrace &= ~PT_DTRACE;
+-		task_unlock(current);
+ 		/* Make sure we don't return using sysenter.. */
+ 		set_thread_flag(TIF_IRET);
+ 	}
+diff -urNp linux-2.6.17.previous/arch/x86_64/ia32/ia32entry-xen.S linux-2.6.17.noarch/arch/x86_64/ia32/ia32entry-xen.S
+--- linux-2.6.17.previous/arch/x86_64/ia32/ia32entry-xen.S	2006-07-19 16:27:10.000000000 +0200
++++ linux-2.6.17.noarch/arch/x86_64/ia32/ia32entry-xen.S	2006-07-19 17:53:16.000000000 +0200
+@@ -444,7 +444,7 @@ ia32_sys_call_table:
+ 	.quad sys_setuid16
+ 	.quad sys_getuid16
+ 	.quad compat_sys_stime	/* stime */		/* 25 */
+-	.quad sys32_ptrace	/* ptrace */
++	.quad compat_sys_ptrace	/* ptrace */
+ 	.quad sys_alarm
+ 	.quad sys_fstat	/* (old)fstat */
+ 	.quad sys_pause
+diff -urNp linux-2.6.17.previous/arch/x86_64/kernel/process-xen.c linux-2.6.17.noarch/arch/x86_64/kernel/process-xen.c
+--- linux-2.6.17.previous/arch/x86_64/kernel/process-xen.c	2006-07-19 16:27:11.000000000 +0200
++++ linux-2.6.17.noarch/arch/x86_64/kernel/process-xen.c	2006-07-19 17:52:39.000000000 +0200
+@@ -580,11 +580,6 @@ long sys_execve(char __user *name, char 
+ 	if (IS_ERR(filename)) 
+ 		return error;
+ 	error = do_execve(filename, argv, envp, &regs); 
+-	if (error == 0) {
+-		task_lock(current);
+-		current->ptrace &= ~PT_DTRACE;
+-		task_unlock(current);
+-	}
+ 	putname(filename);
+ 	return error;
+ }
+diff -urNp linux-2.6.17.previous/arch/x86_64/kernel/traps-xen.c linux-2.6.17.noarch/arch/x86_64/kernel/traps-xen.c
+--- linux-2.6.17.previous/arch/x86_64/kernel/traps-xen.c	2006-07-19 16:27:10.000000000 +0200
++++ linux-2.6.17.noarch/arch/x86_64/kernel/traps-xen.c	2006-07-19 17:51:56.000000000 +0200
+@@ -863,14 +863,6 @@ asmlinkage void __kprobes do_debug(struc
+ 		 */
+                 if (!user_mode(regs))
+                        goto clear_TF_reenable;
+-		/*
+-		 * Was the TF flag set by a debugger? If so, clear it now,
+-		 * so that register information is correct.
+-		 */
+-		if (tsk->ptrace & PT_DTRACE) {
+-			regs->eflags &= ~TF_MASK;
+-			tsk->ptrace &= ~PT_DTRACE;
+-		}
+ 	}
+ 
+ 	/* Ok, finally something we can handle */
+diff -urNp linux-2.6.17.previous/arch/x86_64/mm/fault-xen.c linux-2.6.17.noarch/arch/x86_64/mm/fault-xen.c
+--- linux-2.6.17.previous/arch/x86_64/mm/fault-xen.c	2006-07-19 16:27:11.000000000 +0200
++++ linux-2.6.17.noarch/arch/x86_64/mm/fault-xen.c	2006-07-19 18:01:52.000000000 +0200
+@@ -11,7 +11,7 @@
+ #include <linux/errno.h>
+ #include <linux/string.h>
+ #include <linux/types.h>
+-#include <linux/ptrace.h>
++#include <linux/tracehook.h>
+ #include <linux/mman.h>
+ #include <linux/mm.h>
+ #include <linux/smp.h>
+@@ -250,7 +250,7 @@ int unhandled_signal(struct task_struct 
+ {
+ 	if (tsk->pid == 1)
+ 		return 1;
+-	if (tsk->ptrace & PT_PTRACED)
++	if (tracehook_consider_fatal_signal(tsk, sig))
+ 		return 0;
+ 	return (tsk->sighand->action[sig-1].sa.sa_handler == SIG_IGN) ||
+ 		(tsk->sighand->action[sig-1].sa.sa_handler == SIG_DFL);

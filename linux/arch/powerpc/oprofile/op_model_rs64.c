@@ -88,7 +88,7 @@ static unsigned long reset_value[OP_MAX_COUNTER];
 
 static int num_counters;
 
-static int rs64_reg_setup(struct op_counter_config *ctr,
+static void rs64_reg_setup(struct op_counter_config *ctr,
 			   struct op_system_config *sys,
 			   int num_ctrs)
 {
@@ -100,10 +100,9 @@ static int rs64_reg_setup(struct op_counter_config *ctr,
 		reset_value[i] = 0x80000000UL - ctr[i].count;
 
 	/* XXX setup user and kernel profiling */
-	return 0;
 }
 
-static int rs64_cpu_setup(struct op_counter_config *ctr)
+static void rs64_cpu_setup(void *unused)
 {
 	unsigned int mmcr0;
 
@@ -126,11 +125,9 @@ static int rs64_cpu_setup(struct op_counter_config *ctr)
 	    mfspr(SPRN_MMCR0));
 	dbg("setup on cpu %d, mmcr1 %lx\n", smp_processor_id(),
 	    mfspr(SPRN_MMCR1));
-
-	return 0;
 }
 
-static int rs64_start(struct op_counter_config *ctr)
+static void rs64_start(struct op_counter_config *ctr)
 {
 	int i;
 	unsigned int mmcr0;
@@ -140,10 +137,10 @@ static int rs64_start(struct op_counter_config *ctr)
 
 	for (i = 0; i < num_counters; ++i) {
 		if (ctr[i].enabled) {
-			classic_ctr_write(i, reset_value[i]);
+			ctr_write(i, reset_value[i]);
 			ctrl_write(i, ctr[i].event);
 		} else {
-			classic_ctr_write(i, 0);
+			ctr_write(i, 0);
 		}
 	}
 
@@ -158,7 +155,6 @@ static int rs64_start(struct op_counter_config *ctr)
 	mtspr(SPRN_MMCR0, mmcr0);
 
 	dbg("start on cpu %d, mmcr0 %x\n", smp_processor_id(), mmcr0);
-	return 0;
 }
 
 static void rs64_stop(void)
@@ -190,13 +186,13 @@ static void rs64_handle_interrupt(struct pt_regs *regs,
 	mtmsrd(mfmsr() | MSR_PMM);
 
 	for (i = 0; i < num_counters; ++i) {
-		val = classic_ctr_read(i);
+		val = ctr_read(i);
 		if (val < 0) {
 			if (ctr[i].enabled) {
 				oprofile_add_ext_sample(pc, regs, i, is_kernel);
-				classic_ctr_write(i, reset_value[i]);
+				ctr_write(i, reset_value[i]);
 			} else {
-				classic_ctr_write(i, 0);
+				ctr_write(i, 0);
 			}
 		}
 	}

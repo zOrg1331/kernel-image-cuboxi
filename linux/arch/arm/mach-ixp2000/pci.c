@@ -24,15 +24,15 @@
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/system.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 
 #include <asm/mach/pci.h>
 
-static volatile int pci_master_aborts = 0;
+static int pci_master_aborts = 0;
 
 static int clear_master_aborts(void);
 
@@ -102,7 +102,7 @@ int ixp2000_pci_read_config(struct pci_bus *bus, unsigned int devfn, int where,
 }
 
 /*
- * We don't do error checks by calling clear_master_aborts() b/c the
+ * We don't do error checks by callling clear_master_aborts() b/c the
  * assumption is that the caller did a read first to make sure a device
  * exists.
  */

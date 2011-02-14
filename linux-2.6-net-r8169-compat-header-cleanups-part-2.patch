@@ -1,0 +1,94 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Wed, 23 Jun 2010 09:54:05 -0400
+Subject: [net] r8169: compat header cleanups, part 2
+Message-id: <1277286845.2432.42.camel@ceranb.intra.cera.cz>
+Patchwork-id: 26453
+O-Subject: Re: [RHEL5 PATCH 13/27] compat.h cleanup: r8169 driver changes
+Bugzilla: 546740
+
+One correction (incremental patch to Prarit's one below).
+
+Since upstream NAPI poll func and RHEL5 NAPI poll func are much
+different,  IMHO it should be better to leave the upstream one untouched
+and create for RHEL5 small compat wrapper - overhead is really small and
+it's also better for maintaining in future.
+
+Ivan
+
+
+diff --git a/drivers/net/r8169.c b/drivers/net/r8169.c
+index f6041a3..df7f5b4 100644
+--- a/drivers/net/r8169.c
++++ b/drivers/net/r8169.c
+@@ -538,7 +538,7 @@ static int rtl8169_rx_interrupt(struct net_device *, struct rtl8169_private *,
+ static int rtl8169_change_mtu(struct net_device *dev, int new_mtu);
+ static void rtl8169_down(struct net_device *dev);
+ static void rtl8169_rx_clear(struct rtl8169_private *tp);
+-static int rtl8169_poll(struct net_device *dev, int *budget);
++static int rtl8169_poll_compat(struct net_device *netdev, int *budget);
+ 
+ static const unsigned int rtl8169_rx_config =
+ 	(RX_FIFO_THRESH << RxCfgFIFOShift) | (RX_DMA_BURST << RxCfgDMAShift);
+@@ -3163,7 +3163,7 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	dev->base_addr = (unsigned long) ioaddr;
+ 
+ 	dev->weight = R8169_NAPI_WEIGHT;
+-	dev->poll = rtl8169_poll;
++	dev->poll = rtl8169_poll_compat;
+ 	tp->napi.dev = dev;
+ 
+ #ifdef CONFIG_R8169_VLAN
+@@ -3217,7 +3217,6 @@ out:
+ err_out_msi_5:
+ 	rtl_disable_msi(pdev, tp);
+ 	iounmap(ioaddr);
+-	tp->napi.dev = NULL;
+ err_out_free_res_4:
+ 	pci_release_regions(pdev);
+ err_out_mwi_3:
+@@ -4658,18 +4657,18 @@ static irqreturn_t rtl8169_interrupt(int irq, void *dev_instance,
+ 	return IRQ_RETVAL(handled);
+ }
+ 
+-static int rtl8169_poll(struct net_device *dev, int *budget)
++static int rtl8169_poll(struct napi_struct *napi, int budget)
+ {
+-	struct rtl8169_private *tp = netdev_priv(dev);
++	struct rtl8169_private *tp = container_of(napi, struct rtl8169_private, napi);
++	struct net_device *dev = tp->dev;
+ 	void __iomem *ioaddr = tp->mmio_addr;
+ 	int work_done;
+-	u32 can_do = min(*budget, dev->quota);
+ 
+-	work_done = rtl8169_rx_interrupt(dev, tp, ioaddr, can_do);
++	work_done = rtl8169_rx_interrupt(dev, tp, ioaddr, (u32) budget);
+ 	rtl8169_tx_interrupt(dev, tp, ioaddr);
+ 
+-	if (work_done < can_do) {
+-		napi_complete(&tp->napi);
++	if (work_done < budget) {
++		netif_rx_complete(dev);
+ 
+ 		/* We need for force the visibility of tp->intr_mask
+ 		 * for other CPUs, as we can loose an MSI interrupt
+@@ -4683,8 +4682,19 @@ static int rtl8169_poll(struct net_device *dev, int *budget)
+ 		RTL_W16(IntrMask, tp->intr_event);
+ 	}
+ 
++	return work_done;
++}
++
++static int rtl8169_poll_compat(struct net_device *netdev, int *budget)
++{
++	struct rtl8169_private *tp = netdev_priv(netdev);
++	u32 work_done, can_do;
++
++	can_do = min(*budget, netdev->quota);
++	work_done = rtl8169_poll(&tp->napi, can_do);
++
+ 	*budget -= work_done;
+-	dev->quota -= work_done;
++	netdev->quota -= work_done;
+ 
+ 	return (work_done < can_do) ? 0 : 1;
+ }

@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:52 -0400
+Subject: [scsi] lpfc: log msg 0318 is a warning, not an error
+Message-id: <1286288695-20754-21-git-send-email-revers@redhat.com>
+Patchwork-id: 28605
+O-Subject: [RHEL5.6 PATCH 20/23] Change log message 0318 from an error to a
+	warning as it is not an error.
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Change log message 0318 from an error to a warning as it is not an error.
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index ecd73c0..2f9d618 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -1042,7 +1042,7 @@ lpfc_sli_next_iotag(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
+ 	} else
+ 		spin_unlock_irq(&phba->hbalock);
+ 
+-	lpfc_printf_log(phba, KERN_ERR,LOG_SLI,
++	lpfc_printf_log(phba, KERN_WARNING, LOG_SLI,
+ 			"0318 Failed to allocate IOTAG.last IOTAG is %d\n",
+ 			psli->last_iotag);
+ 

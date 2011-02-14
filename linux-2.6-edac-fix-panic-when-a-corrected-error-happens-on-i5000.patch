@@ -1,0 +1,44 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Mon, 18 Jan 2010 14:13:32 -0500
+Subject: [edac] fix panic when a corrected error happens on i5000
+Message-id: <4B546C8C.9060001@redhat.com>
+Patchwork-id: 22627
+O-Subject: [RHEL 5 PATCH] Fix kernel panic when a corrected error happens on
+	i5000
+Bugzilla: 533391
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+BZ#533391
+
+Upstream changeset: 118f3e1afd5534c15f9701f33514186cfc841a27
+
+EDAC MC0: INTERNAL ERROR: channel-b out of range (4 >= 4)
+Kernel panic - not syncing: EDAC MC0: Uncorrected Error
+ (XEN) Domain 0 crashed: 'noreboot' set - not rebooting.
+
+This happens because FERR_NF_FBD bit 28 is not updated on i5000.  Due to
+that, both bits 28 and 29 may be equal to one, returning channel = 3.  As
+this value is invalid, EDAC core generates the panic.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i5000_edac.c b/drivers/edac/i5000_edac.c
+index c6f5fb4..0c63675 100644
+--- a/drivers/edac/i5000_edac.c
++++ b/drivers/edac/i5000_edac.c
+@@ -573,7 +573,13 @@ static void i5000_process_nonfatal_error_info(struct mem_ctl_info *mci,
+ 		debugf0("\tUncorrected bits= 0x%x\n", ue_errors);
+ 
+ 		branch = EXTRACT_FBDCHAN_INDX(info->ferr_nf_fbd);
+-		channel = branch;
++
++		/*
++		 * According with i5000 datasheet, bit 28 has no significance
++		 * for errors M4Err-M12Err and M17Err-M21Err, on FERR_NF_FBD
++		 */
++		channel = branch & 2;
++
+ 		bank = NREC_BANK(info->nrecmema);
+ 		rank = NREC_RANK(info->nrecmema);
+ 		rdwr = NREC_RDWR(info->nrecmema);

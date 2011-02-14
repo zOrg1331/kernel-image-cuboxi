@@ -35,8 +35,10 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/wait.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/rawmidi.h>
@@ -79,11 +81,13 @@ static int snd_virmidi_dev_receive_event(struct snd_virmidi_dev *rdev,
 					 struct snd_seq_event *ev)
 {
 	struct snd_virmidi *vmidi;
+	struct list_head *list;
 	unsigned char msg[4];
 	int len;
 
 	read_lock(&rdev->filelist_lock);
-	list_for_each_entry(vmidi, &rdev->filelist, list) {
+	list_for_each(list, &rdev->filelist) {
+		vmidi = list_entry(list, struct snd_virmidi, list);
 		if (!vmidi->trigger)
 			continue;
 		if (ev->type == SNDRV_SEQ_EVENT_SYSEX) {
@@ -362,7 +366,7 @@ static int snd_virmidi_dev_attach_seq(struct snd_virmidi_dev *rdev)
 	if (rdev->client >= 0)
 		return 0;
 
-	pinfo = kzalloc(sizeof(*pinfo), GFP_KERNEL);
+	pinfo = kmalloc(sizeof(*pinfo), GFP_KERNEL);
 	if (!pinfo) {
 		err = -ENOMEM;
 		goto __error;
@@ -379,6 +383,7 @@ static int snd_virmidi_dev_attach_seq(struct snd_virmidi_dev *rdev)
 	rdev->client = client;
 
 	/* create a port */
+	memset(pinfo, 0, sizeof(*pinfo));
 	pinfo->addr.client = client;
 	sprintf(pinfo->name, "VirMIDI %d-%d", rdev->card->number, rdev->device);
 	/* set all capabilities */

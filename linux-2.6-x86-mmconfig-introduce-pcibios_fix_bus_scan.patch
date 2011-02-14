@@ -1,0 +1,93 @@
+From: tcamuso@redhat.com <tcamuso@redhat.com>
+Date: Mon, 7 Jan 2008 22:15:41 -0500
+Subject: [x86] mmconfig: introduce pcibios_fix_bus_scan
+Message-id: 20080108031541.15008.51365.sendpatchset@dhcp83-188.boston.redhat.com
+O-Subject: [PATCH 5/6][Version-2]PCI: x86 MMCONFIG: introduce pcibios_fix_bus_scan()
+Bugzilla: 408551
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 56c9ba4..bf9dffb 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -29,7 +29,7 @@ struct pci_raw_ops *raw_pci_ops;
+ 
+ #ifdef CONFIG_X86
+ int pci_noseg = 0;
+-#endif;
++#endif
+ 
+ static int pci_read(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *value)
+ {
+@@ -495,3 +495,72 @@ void pcibios_disable_device (struct pci_dev *dev)
+ 	if (pcibios_disable_irq)
+ 		pcibios_disable_irq(dev);
+ }
++
++/**
++ * This routine traps devices not correctly responding to MMCONFIG access.
++ * For each device on the current bus, compare a mmconf read of the
++ * vendor/device dword with a legacy PCI config read. If they're not the same,
++ * the bus serving this device must use legacy PCI config accesses instead of
++ * mmconf, as must all buses descending from this bus.
++ */
++void __devinit pcibios_fix_bus_scan_quirk(struct pci_bus *bus)
++{
++	int devfn;
++	int fail;
++	int found_nommconf_dev = 0;
++	static int advised;
++	u32 mcfg_vendev;
++	u32 arch_vendev;
++	struct pci_ops *save_ops = bus->ops;
++
++	/*
++	 * Return here if mmconf is NOT the default platform-wide pci config
++	 * access mechanism, or if this bus is within the range checked by
++	 * unreachable_devices().
++	 */
++	if (((pci_probe & PCI_USING_MMCONF) == 0) ||
++	    (bus->number < MAX_CHECK_BUS))
++		return;
++	/*
++	 * If the parent bus has already been programmed for legacy pci config
++	 * access, then there is no need to scan this bus.
++	 */
++	if (bus->parent != NULL)
++		if (bus->parent->ops == &pci_legacy_ops)
++			return;
++
++	if (!advised) {
++		pr_info("PCI: If a device isn't working, "
++			"try \"pci=nommconf\".\n");
++		advised = 1;
++	}
++	pr_debug("PCI: Checking bus %04x:%02x for MMCONFIG compliance.\n",
++		 pci_domain_nr(bus), bus->number);
++
++	for (devfn = 0; devfn < 256; devfn++) {
++		bus->ops = &pci_legacy_ops;
++		fail = pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID,
++						 &arch_vendev);
++		if ((arch_vendev == 0xFFFFFFFF) || (arch_vendev == 0) || fail)
++			continue;
++
++		bus->ops = save_ops;	/* Restore to original value */
++		pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID,
++					  &mcfg_vendev);
++		if (mcfg_vendev != arch_vendev) {
++			found_nommconf_dev = 1;
++			break;
++		}
++	}
++
++	if (found_nommconf_dev) {
++		pr_info("PCI: Device at %04x:%02x.%02x.%x is not MMCONFIG "
++			"compliant.\n", pci_domain_nr(bus), bus->number,
++			PCI_SLOT(devfn), PCI_FUNC(devfn));
++		pr_info("PCI: Bus %04x:%02x and its descendents cannot use "
++			"MMCONFIG.\n", pci_domain_nr(bus), bus->number);
++		bus->ops = &pci_legacy_ops;	/* Use Legacy PCI Config */
++	} else
++		bus->ops = save_ops;		/* Use MMCONFIG  */
++	return;
++}

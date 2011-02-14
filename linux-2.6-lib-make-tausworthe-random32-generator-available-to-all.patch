@@ -1,0 +1,429 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Tue, 22 Jun 2010 20:10:35 -0400
+Subject: [lib] make tausworthe random32 generator available to all
+Message-id: <20100622201035.GA21474@redhat.com>
+Patchwork-id: 26447
+O-Subject: [RHEL5 PATCH 1/2] lib: make tausworthe random32 generator available
+	to all
+Bugzilla: 605816
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Bugzilla #605816
+
+The tausworthe random number generator that first appeared in net/core/utils.c
+as net_random and friends was relocated upstream in 2.6.19 to lib/random32.c,
+and renamed random32. Subsequent recent changes made it available for any and
+all modules to use. The upstream lpfc driver is among those now using it, and
+we've had a backport of it posted for inclusion recently, with its own private
+implementation, which is what prompted this port. A follow-up patch will alter
+the lpfc driver to use this generally available version instead.
+
+The random32 code here matches current linus' tree as of 2.6.35-rc3, except for
+in some minor and ultimately insignificant (to consumers) ways, with the only
+difference being due to the need to preserve kabi, as net_random and net_srandom
+are on our kabi list. This patch preserves kabi by keeping these as functions,
+which call the new general-purpose versions, rather than making them #defines.
+
+Local x86_64 and i686 builds, including an updated lpfc (patch 2/2), build just
+fine, and pass kabi checks. Will be passing it along to emulex for testing on
+on their end too.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/net.h b/include/linux/net.h
+index 5866980..a887146 100644
+--- a/include/linux/net.h
++++ b/include/linux/net.h
+@@ -201,7 +201,6 @@ extern struct socket *sockfd_lookup(int fd, int *err);
+ extern int	     net_ratelimit(void);
+ extern unsigned long net_random(void);
+ extern void	     net_srandom(unsigned long);
+-extern void	     net_random_init(void);
+ 
+ extern int   	     kernel_sendmsg(struct socket *sock, struct msghdr *msg,
+ 				    struct kvec *vec, size_t num, size_t len);
+diff --git a/include/linux/random.h b/include/linux/random.h
+index 5d6456b..0cc1448 100644
+--- a/include/linux/random.h
++++ b/include/linux/random.h
+@@ -38,6 +38,10 @@ struct rand_pool_info {
+ 	__u32	buf[0];
+ };
+ 
++struct rnd_state {
++	__u32 s1, s2, s3;
++};
++
+ /* Exported functions */
+ 
+ #ifdef __KERNEL__
+@@ -69,6 +73,33 @@ extern struct file_operations random_fops, urandom_fops;
+ unsigned int get_random_int(void);
+ unsigned long randomize_range(unsigned long start, unsigned long end, unsigned long len);
+ 
++u32 random32(void);
++void srandom32(u32 seed);
++
++u32 prandom32(struct rnd_state *);
++
++/*
++ * Handle minimum values for seeds
++ */
++static inline u32 __seed(u32 x, u32 m)
++{
++	return (x < m) ? x + m : x;
++}
++
++/**
++ * prandom32_seed - set seed for prandom32().
++ * @state: pointer to state structure to receive the seed.
++ * @seed: arbitrary 64-bit value to use as a seed.
++ */
++static inline void prandom32_seed(struct rnd_state *state, u64 seed)
++{
++	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
++
++	state->s1 = __seed(i, 1);
++	state->s2 = __seed(i, 7);
++	state->s3 = __seed(i, 15);
++}
++
+ #endif /* __KERNEL___ */
+ 
+ #endif /* _LINUX_RANDOM_H */
+diff --git a/lib/Makefile b/lib/Makefile
+index 7d85f21..0256915 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -12,7 +12,7 @@ lib-$(CONFIG_SMP) += cpumask.o
+ 
+ lib-y	+= kobject.o kref.o kobject_uevent.o klist.o
+ 
+-obj-y += sort.o parser.o halfmd4.o debug_locks.o hexdump.o
++obj-y += sort.o parser.o halfmd4.o debug_locks.o random32.o hexdump.o
+ 
+ ifeq ($(CONFIG_DEBUG_KOBJECT),y)
+ CFLAGS_kobject.o += -DDEBUG
+diff --git a/lib/random32.c b/lib/random32.c
+new file mode 100644
+index 0000000..870dc3f
+--- /dev/null
++++ b/lib/random32.c
+@@ -0,0 +1,150 @@
++/*
++  This is a maximally equidistributed combined Tausworthe generator
++  based on code from GNU Scientific Library 1.5 (30 Jun 2004)
++
++   x_n = (s1_n ^ s2_n ^ s3_n)
++
++   s1_{n+1} = (((s1_n & 4294967294) <<12) ^ (((s1_n <<13) ^ s1_n) >>19))
++   s2_{n+1} = (((s2_n & 4294967288) << 4) ^ (((s2_n << 2) ^ s2_n) >>25))
++   s3_{n+1} = (((s3_n & 4294967280) <<17) ^ (((s3_n << 3) ^ s3_n) >>11))
++
++   The period of this generator is about 2^88.
++
++   From: P. L'Ecuyer, "Maximally Equidistributed Combined Tausworthe
++   Generators", Mathematics of Computation, 65, 213 (1996), 203--213.
++
++   This is available on the net from L'Ecuyer's home page,
++
++   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme.ps
++   ftp://ftp.iro.umontreal.ca/pub/simulation/lecuyer/papers/tausme.ps
++
++   There is an erratum in the paper "Tables of Maximally
++   Equidistributed Combined LFSR Generators", Mathematics of
++   Computation, 68, 225 (1999), 261--269:
++   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme2.ps
++
++        ... the k_j most significant bits of z_j must be non-
++        zero, for each j. (Note: this restriction also applies to the
++        computer code given in [4], but was mistakenly not mentioned in
++        that paper.)
++
++   This affects the seeding procedure by imposing the requirement
++   s1 > 1, s2 > 7, s3 > 15.
++
++*/
++
++#include <linux/types.h>
++#include <linux/percpu.h>
++#include <linux/module.h>
++#include <linux/jiffies.h>
++#include <linux/random.h>
++
++static DEFINE_PER_CPU(struct rnd_state, net_rand_state);
++
++/**
++ *	prandom32 - seeded pseudo-random number generator.
++ *	@state: pointer to state structure holding seeded state.
++ *
++ *	This is used for pseudo-randomness with no outside seeding.
++ *	For more random results, use random32().
++ */
++u32 prandom32(struct rnd_state *state)
++{
++#define TAUSWORTHE(s,a,b,c,d) ((s&c)<<d) ^ (((s <<a) ^ s)>>b)
++
++	state->s1 = TAUSWORTHE(state->s1, 13, 19, 4294967294UL, 12);
++	state->s2 = TAUSWORTHE(state->s2, 2, 25, 4294967288UL, 4);
++	state->s3 = TAUSWORTHE(state->s3, 3, 11, 4294967280UL, 17);
++
++	return (state->s1 ^ state->s2 ^ state->s3);
++}
++EXPORT_SYMBOL(prandom32);
++
++/**
++ *	random32 - pseudo random number generator
++ *
++ *	A 32 bit pseudo-random number is generated using a fast
++ *	algorithm suitable for simulation. This algorithm is NOT
++ *	considered safe for cryptographic use.
++ */
++u32 random32(void)
++{
++	unsigned long r;
++	struct rnd_state *state = &get_cpu_var(net_rand_state);
++	r = prandom32(state);
++	put_cpu_var(state);
++	return r;
++}
++EXPORT_SYMBOL(random32);
++
++/**
++ *	srandom32 - add entropy to pseudo random number generator
++ *	@seed: seed value
++ *
++ *	Add some additional seeding to the random32() pool.
++ */
++void srandom32(u32 entropy)
++{
++	int i;
++	/*
++	 * No locking on the CPUs, but then somewhat random results are, well,
++	 * expected.
++	 */
++	for_each_possible_cpu (i) {
++		struct rnd_state *state = &per_cpu(net_rand_state, i);
++		state->s1 = __seed(state->s1 ^ entropy, 1);
++	}
++}
++EXPORT_SYMBOL(srandom32);
++
++/*
++ *	Generate some initially weak seeding values to allow
++ *	to start the random32() engine.
++ */
++static int __init random32_init(void)
++{
++	int i;
++
++	for_each_possible_cpu(i) {
++		struct rnd_state *state = &per_cpu(net_rand_state,i);
++
++#define LCG(x)	((x) * 69069)	/* super-duper LCG */
++		state->s1 = __seed(LCG(i + jiffies), 1);
++		state->s2 = __seed(LCG(state->s1), 7);
++		state->s3 = __seed(LCG(state->s2), 15);
++
++		/* "warm it up" */
++		prandom32(state);
++		prandom32(state);
++		prandom32(state);
++		prandom32(state);
++		prandom32(state);
++		prandom32(state);
++	}
++	return 0;
++}
++core_initcall(random32_init);
++
++/*
++ *	Generate better values after random number generator
++ *	is fully initalized.
++ */
++static int __init random32_reseed(void)
++{
++	int i;
++
++	for_each_possible_cpu(i) {
++		struct rnd_state *state = &per_cpu(net_rand_state,i);
++		u32 seeds[3];
++
++		get_random_bytes(&seeds, sizeof(seeds));
++		state->s1 = __seed(seeds[0], 1);
++		state->s2 = __seed(seeds[1], 7);
++		state->s3 = __seed(seeds[2], 15);
++
++		/* mix it in */
++		prandom32(state);
++	}
++	return 0;
++}
++late_initcall(random32_reseed);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 898b6db..de00e24 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4185,8 +4185,6 @@ static int __init net_dev_init(void)
+ 
+ 	BUG_ON(!dev_boot_phase);
+ 
+-	net_random_init();
+-
+ 	if (dev_proc_init())
+ 		goto out;
+ 
+diff --git a/net/core/utils.c b/net/core/utils.c
+index 4ca43fb..348ef50 100644
+--- a/net/core/utils.c
++++ b/net/core/utils.c
+@@ -30,129 +30,27 @@
+ #include <asm/uaccess.h>
+ 
+ /*
+-  This is a maximally equidistributed combined Tausworthe generator
+-  based on code from GNU Scientific Library 1.5 (30 Jun 2004)
+-
+-   x_n = (s1_n ^ s2_n ^ s3_n) 
+-
+-   s1_{n+1} = (((s1_n & 4294967294) <<12) ^ (((s1_n <<13) ^ s1_n) >>19))
+-   s2_{n+1} = (((s2_n & 4294967288) << 4) ^ (((s2_n << 2) ^ s2_n) >>25))
+-   s3_{n+1} = (((s3_n & 4294967280) <<17) ^ (((s3_n << 3) ^ s3_n) >>11))
+-
+-   The period of this generator is about 2^88.
+-
+-   From: P. L'Ecuyer, "Maximally Equidistributed Combined Tausworthe
+-   Generators", Mathematics of Computation, 65, 213 (1996), 203--213.
+-
+-   This is available on the net from L'Ecuyer's home page,
+-
+-   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme.ps
+-   ftp://ftp.iro.umontreal.ca/pub/simulation/lecuyer/papers/tausme.ps 
+-
+-   There is an erratum in the paper "Tables of Maximally
+-   Equidistributed Combined LFSR Generators", Mathematics of
+-   Computation, 68, 225 (1999), 261--269:
+-   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme2.ps
+-
+-        ... the k_j most significant bits of z_j must be non-
+-        zero, for each j. (Note: this restriction also applies to the 
+-        computer code given in [4], but was mistakenly not mentioned in
+-        that paper.)
+-   
+-   This affects the seeding procedure by imposing the requirement
+-   s1 > 1, s2 > 7, s3 > 15.
+-
+-*/
+-struct nrnd_state {
+-	u32 s1, s2, s3;
+-};
+-
+-static DEFINE_PER_CPU(struct nrnd_state, net_rand_state);
+-
+-static u32 __net_random(struct nrnd_state *state)
+-{
+-#define TAUSWORTHE(s,a,b,c,d) ((s&c)<<d) ^ (((s <<a) ^ s)>>b)
+-
+-	state->s1 = TAUSWORTHE(state->s1, 13, 19, 4294967294UL, 12);
+-	state->s2 = TAUSWORTHE(state->s2, 2, 25, 4294967288UL, 4);
+-	state->s3 = TAUSWORTHE(state->s3, 3, 11, 4294967280UL, 17);
+-
+-	return (state->s1 ^ state->s2 ^ state->s3);
+-}
+-
+-/*
+- * Handle minimum values for seeds
++ * RHEL5's net_{s}random are on the kabi whitelist, so while we've backported
++ * the move of net_random to lib/random32.c and random32(), we can't use the
++ * same #define net_random random32 upstream does, if we want to preserve kabi
++ * in a way that our kabi tools can deal with. This works though.
+  */
+-static inline u32 __seed(u32 x, u32 m)
+-{
+-	return (x < m) ? x + m : x;
+-}
+-
+-
+ unsigned long net_random(void)
+ {
+ 	unsigned long r;
+-	struct nrnd_state *state = &get_cpu_var(net_rand_state);
+-	r = __net_random(state);
+-	put_cpu_var(state);
+-	return r;
+-}
+ 
++	r = (unsigned long)random32();
+ 
+-void net_srandom(unsigned long entropy)
+-{
+-	int i;
+-	/*
+-	 * No locking on the CPUs, but then somewhat random results are, well,
+-	 * expected.
+-	 */
+-	for_each_possible_cpu (i) {
+-		struct nrnd_state *state = &per_cpu(net_rand_state, i);
+-		state->s1 = __seed(state->s1 ^ entropy, 1);
+-	}
++	return r;
+ }
++EXPORT_SYMBOL(net_random);
+ 
+-void __init net_random_init(void)
++void net_srandom(unsigned long entropy)
+ {
+-	int i;
+-
+-	for_each_possible_cpu(i) {
+-		struct nrnd_state *state = &per_cpu(net_rand_state,i);
+-
+-#define LCG(x) ((x) * 69069)   /* super-duper LCG */
+-		state->s1 = __seed(LCG(i + jiffies), 1);
+-		state->s2 = __seed(LCG(state->s1), 7);
+-		state->s3 = __seed(LCG(state->s2), 15);
+-
+-		/* "warm it up" */
+-		__net_random(state);
+-		__net_random(state);
+-		__net_random(state);
+-		__net_random(state);
+-		__net_random(state);
+-		__net_random(state);
+-	}
++	srandom32((__force u32)entropy);
+ }
++EXPORT_SYMBOL(net_srandom);
+ 
+-static int net_random_reseed(void)
+-{
+-	int i;
+-
+-	for_each_possible_cpu(i) {
+-		struct nrnd_state *state = &per_cpu(net_rand_state,i);
+-		u32 seeds[3];
+-
+-		get_random_bytes(&seeds, sizeof(seeds));
+-		state->s1 = __seed(seeds[0], 1);
+-		state->s2 = __seed(seeds[1], 7);
+-		state->s3 = __seed(seeds[2], 15);
+-
+-		/* mix it in */
+-		__net_random(state);
+-	}
+-	return 0;
+-}
+-late_initcall(net_random_reseed);
+ 
+ int net_msg_cost = 5*HZ;
+ int net_msg_burst = 10;
+@@ -165,9 +63,7 @@ int net_ratelimit(void)
+ 	return __printk_ratelimit(net_msg_cost, net_msg_burst);
+ }
+ 
+-EXPORT_SYMBOL(net_random);
+ EXPORT_SYMBOL(net_ratelimit);
+-EXPORT_SYMBOL(net_srandom);
+ 
+ /*
+  * Convert an ASCII string to binary IP.

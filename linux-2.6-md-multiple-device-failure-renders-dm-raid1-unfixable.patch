@@ -1,0 +1,62 @@
+From: Jonathan E Brassow <jbrassow@redhat.com>
+Date: Wed, 18 Nov 2009 03:36:03 -0500
+Subject: [md] multiple device failure renders dm-raid1 unfixable
+Message-id: <1258515363.8771.4.camel@hydrogen.msp.redhat.com>
+Patchwork-id: 21411
+O-Subject: [RHEL5.5 PATCH] BZ 498532: Multiple device failure renders
+	dm-raid1 "unfixable"
+Bugzilla: 498532
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+RH-Acked-by: Heinz Mauelshagen <heinzm@redhat.com>
+
+Bug 498532
+Upstream commit id: d2b698644c97cb033261536a4f2010924a00eac9
+
+Description:
+    dm raid1: do not allow log_failure variable to unset after being set
+
+    This patch fixes a bug which was triggering a case where the primary leg
+    could not be changed on failure even when the mirror was in-sync.
+
+    The case involves the failure of the primary device along with
+    the transient failure of the log device.  The problem is that
+    bios can be put on the 'failures' list (due to log failure)
+    before 'fail_mirror' is called due to the primary device failure.
+    Normally, this is fine, but if the log device failure is transient,
+    a subsequent iteration of the work thread, 'do_mirror', will
+    reset 'log_failure'.  The 'do_failures' function then resets
+    the 'in_sync' variable when processing bios on the failures list.
+    The 'in_sync' variable is what is used to determine if the
+    primary device can be switched in the event of a failure.  Since
+    this has been reset, the primary device is incorrectly assumed
+    to be not switchable.
+
+    The case has been seen in the cluster mirror context, where one
+    machine realizes the log device is dead before the other machines.
+    As the responsibilities of the server migrate from one node to
+    another (because the mirror is being reconfigured due to the failure),
+    the new server may think for a moment that the log device is fine -
+    thus resetting the 'log_failure' variable.
+
+    In any case, it is inappropriate for us to reset the 'log_failure'
+    variable.  The above bug simply illustrates that it can actually
+    hurt us.
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index dfdb4ca..f76c2e0 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -1248,7 +1248,12 @@ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
+ 	rh_inc_pending(&ms->rh, &sync);
+ 	rh_inc_pending(&ms->rh, &nosync);
+ 
+-	ms->log_failure = rh_flush(&ms->rh);
++	/*
++	 * If the flush fails on a previous call and succeeds here,
++	 * we must not reset the log_failure variable.  We need
++	 * userspace interaction to do that.
++	 */
++	ms->log_failure = rh_flush(&ms->rh) ? 1 : ms->log_failure;
+ 
+ 	/*
+ 	 * Dispatch io.

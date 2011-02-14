@@ -150,7 +150,7 @@
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
 
-#include <asm/visws/cobalt.h>
+#include <asm/mach-visws/cobalt.h>
 
 #include "sound_config.h"
 
@@ -194,11 +194,11 @@ static void dbgassert(const char *fcn, int line, const char *expr)
  *	DBGRV	- debug print function return when verbose
  */
 
-#define ASSERT(e)      ((e) ? (void) 0 : dbgassert(__func__, __LINE__, #e))
+#define ASSERT(e)      ((e) ? (void) 0 : dbgassert(__FUNCTION__, __LINE__, #e))
 #define DBGDO(x)            x
 #define DBGX(fmt, args...)  (in_interrupt() ? 0 : printk(KERN_ERR fmt, ##args))
-#define DBGP(fmt, args...)  (DBGX("%s: " fmt, __func__ , ##args))
-#define DBGE(fmt, args...)  (DBGX("%s" fmt, __func__ , ##args))
+#define DBGP(fmt, args...)  (DBGX("%s: " fmt, __FUNCTION__ , ##args))
+#define DBGE(fmt, args...)  (DBGX("%s" fmt, __FUNCTION__ , ##args))
 #define DBGC(rtn)           (DBGP("calling %s\n", rtn))
 #define DBGR()              (DBGP("returning\n"))
 #define DBGXV(fmt, args...) (shut_up ? 0 : DBGX(fmt, ##args))
@@ -628,7 +628,7 @@ static void li_setup_dma(dma_chan_t *chan,
 	ASSERT(!(buffer_paddr & 0xFF));
 	chan->baseval = (buffer_paddr >> 8) | 1 << (37 - 8);
 
-	chan->cfgval = ((chan->cfgval & ~LI_CCFG_LOCK) |
+	chan->cfgval = (!LI_CCFG_LOCK |
 			SHIFT_FIELD(desc->ad1843_slot, LI_CCFG_SLOT) |
 			desc->direction |
 			mode |
@@ -638,9 +638,9 @@ static void li_setup_dma(dma_chan_t *chan,
 	tmask = 13 - fragshift;		/* See Lithium DMA Notes above. */
 	ASSERT(size >= 2 && size <= 7);
 	ASSERT(tmask >= 1 && tmask <= 7);
-	chan->ctlval = ((chan->ctlval & ~LI_CCTL_RESET) |
+	chan->ctlval = (!LI_CCTL_RESET |
 			SHIFT_FIELD(size, LI_CCTL_SIZE) |
-			(chan->ctlval & ~LI_CCTL_DMA_ENABLE) |
+			!LI_CCTL_DMA_ENABLE |
 			SHIFT_FIELD(tmask, LI_CCTL_TMASK) |
 			SHIFT_FIELD(0, LI_CCTL_TPTR));
 
@@ -1509,7 +1509,7 @@ typedef struct vwsnd_dev {
 	struct mutex open_mutex;
 	struct mutex io_mutex;
 	struct mutex mix_mutex;
-	fmode_t		open_mode;
+	mode_t		open_mode;
 	wait_queue_head_t open_wait;
 
 	lithium_t	lith;
@@ -2233,12 +2233,12 @@ static void vwsnd_audio_write_intr(vwsnd_dev_t *devc, unsigned int status)
 		pcm_output(devc, underflown, 0);
 }
 
-static irqreturn_t vwsnd_audio_intr(int irq, void *dev_id)
+static irqreturn_t vwsnd_audio_intr(int irq, void *dev_id, struct pt_regs *regs)
 {
-	vwsnd_dev_t *devc = dev_id;
+	vwsnd_dev_t *devc = (vwsnd_dev_t *) dev_id;
 	unsigned int status;
 
-	DBGEV("(irq=%d, dev_id=0x%p)\n", irq, dev_id);
+	DBGEV("(irq=%d, dev_id=0x%p, regs=0x%p)\n", irq, dev_id, regs);
 
 	status = li_get_clear_intr_status(&devc->lith);
 	vwsnd_audio_read_intr(devc, status);
@@ -2673,9 +2673,7 @@ static int vwsnd_audio_do_ioctl(struct inode *inode,
 
 	case SNDCTL_DSP_NONBLOCK:	/* _SIO  ('P',14) */
 		DBGX("SNDCTL_DSP_NONBLOCK\n");
-		spin_lock(&file->f_lock);
 		file->f_flags |= O_NONBLOCK;
-		spin_unlock(&file->f_lock);
 		return 0;
 
 	case SNDCTL_DSP_RESET:		/* _SIO  ('P', 0) */
@@ -3037,7 +3035,7 @@ static int vwsnd_audio_release(struct inode *inode, struct file *file)
 	return err;
 }
 
-static const struct file_operations vwsnd_audio_fops = {
+static struct file_operations vwsnd_audio_fops = {
 	.owner =	THIS_MODULE,
 	.llseek =	no_llseek,
 	.read =		vwsnd_audio_read,
@@ -3227,7 +3225,7 @@ static int vwsnd_mixer_ioctl(struct inode *ioctl,
 	return retval;
 }
 
-static const struct file_operations vwsnd_mixer_fops = {
+static struct file_operations vwsnd_mixer_fops = {
 	.owner =	THIS_MODULE,
 	.llseek =	no_llseek,
 	.ioctl =	vwsnd_mixer_ioctl,

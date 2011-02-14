@@ -3,6 +3,8 @@
  *
  *  This source is covered by the GNU GPL, the same as all kernel sources.
  *
+ *  Version:	$Id: inetpeer.c,v 1.7 2001/09/20 21:22:50 davem Exp $
+ *
  *  Authors:	Andrey V. Savochkin <saw@msu.ru>
  */
 
@@ -12,6 +14,7 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/random.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
@@ -59,7 +62,7 @@
  *  4.  Global variable peer_total is modified under the pool lock.
  *  5.  struct inet_peer fields modification:
  *		avl_left, avl_right, avl_parent, avl_height: pool lock
- *		unused: unused node list lock
+ *		unused_next, unused_prevp: unused node list lock
  *		refcnt: atomically against modifications on other CPU;
  *		   usually under some other lock to prevent node disappearing
  *		dtime: unused node list lock
@@ -70,7 +73,7 @@
 /* Exported for inet_getid inline function.  */
 DEFINE_SPINLOCK(inet_peer_idlock);
 
-static struct kmem_cache *peer_cachep __read_mostly;
+static kmem_cache_t *peer_cachep __read_mostly;
 
 #define node_height(x) x->avl_height
 static struct inet_peer peer_fake_node = {
@@ -85,19 +88,23 @@ static DEFINE_RWLOCK(peer_pool_lock);
 
 static int peer_total;
 /* Exported for sysctl_net_ipv4.  */
-int inet_peer_threshold __read_mostly = 65536 + 128;	/* start to throw entries more
+int inet_peer_threshold = 65536 + 128;	/* start to throw entries more
 					 * aggressively at this stage */
-int inet_peer_minttl __read_mostly = 120 * HZ;	/* TTL under high load: 120 sec */
-int inet_peer_maxttl __read_mostly = 10 * 60 * HZ;	/* usual time to live: 10 min */
-int inet_peer_gc_mintime __read_mostly = 10 * HZ;
-int inet_peer_gc_maxtime __read_mostly = 120 * HZ;
+int inet_peer_minttl = 120 * HZ;	/* TTL under high load: 120 sec */
+int inet_peer_maxttl = 10 * 60 * HZ;	/* usual time to live: 10 min */
 
-static LIST_HEAD(unused_peers);
-static DEFINE_SPINLOCK(inet_peer_unused_lock);
+static struct inet_peer *inet_peer_unused_head;
+/* Exported for inet_putpeer inline function.  */
+struct inet_peer **inet_peer_unused_tailp = &inet_peer_unused_head;
+DEFINE_SPINLOCK(inet_peer_unused_lock);
+#define PEER_MAX_CLEANUP_WORK 30
 
 static void peer_check_expire(unsigned long dummy);
 static DEFINE_TIMER(peer_periodic_timer, peer_check_expire, 0, 0);
 
+/* Exported for sysctl_net_ipv4.  */
+int inet_peer_gc_mintime = 10 * HZ,
+    inet_peer_gc_maxtime = 120 * HZ;
 
 /* Called from ip_output.c:ip_init  */
 void __init inet_initpeers(void)
@@ -119,8 +126,11 @@ void __init inet_initpeers(void)
 
 	peer_cachep = kmem_cache_create("inet_peer_cache",
 			sizeof(struct inet_peer),
-			0, SLAB_HWCACHE_ALIGN|SLAB_PANIC,
-			NULL);
+			0, SLAB_HWCACHE_ALIGN,
+			NULL, NULL);
+
+	if (!peer_cachep)
+		panic("cannot create inet_peer_cache");
 
 	/* All the timers, started at system startup tend
 	   to synchronize. Perturb it a bit.
@@ -135,31 +145,32 @@ void __init inet_initpeers(void)
 static void unlink_from_unused(struct inet_peer *p)
 {
 	spin_lock_bh(&inet_peer_unused_lock);
-	list_del_init(&p->unused);
+	if (p->unused_prevp != NULL) {
+		/* On unused list. */
+		*p->unused_prevp = p->unused_next;
+		if (p->unused_next != NULL)
+			p->unused_next->unused_prevp = p->unused_prevp;
+		else
+			inet_peer_unused_tailp = p->unused_prevp;
+		p->unused_prevp = NULL; /* mark it as removed */
+	}
 	spin_unlock_bh(&inet_peer_unused_lock);
 }
 
-/*
- * Called with local BH disabled and the pool lock held.
- * _stack is known to be NULL or not at compile time,
- * so compiler will optimize the if (_stack) tests.
- */
-#define lookup(_daddr, _stack) 					\
+/* Called with local BH disabled and the pool lock held. */
+#define lookup(daddr) 						\
 ({								\
 	struct inet_peer *u, **v;				\
-	if (_stack != NULL) {					\
-		stackptr = _stack;				\
-		*stackptr++ = &peer_root;			\
-	}							\
+	stackptr = stack;					\
+	*stackptr++ = &peer_root;				\
 	for (u = peer_root; u != peer_avl_empty; ) {		\
-		if (_daddr == u->v4daddr)			\
+		if (daddr == u->v4daddr)			\
 			break;					\
-		if ((__force __u32)_daddr < (__force __u32)u->v4daddr)	\
+		if (daddr < u->v4daddr)				\
 			v = &u->avl_left;			\
 		else						\
 			v = &u->avl_right;			\
-		if (_stack != NULL)				\
-			*stackptr++ = v;			\
+		*stackptr++ = v;				\
 		u = *v;						\
 	}							\
 	u;							\
@@ -283,7 +294,7 @@ static void unlink_from_pool(struct inet_peer *p)
 	if (atomic_read(&p->refcnt) == 1) {
 		struct inet_peer **stack[PEER_MAXDEPTH];
 		struct inet_peer ***stackptr, ***delp;
-		if (lookup(p->v4daddr, stack) != p)
+		if (lookup(p->v4daddr) != p)
 			BUG();
 		delp = stackptr - 1; /* *delp[0] == p */
 		if (p->avl_left == peer_avl_empty) {
@@ -326,24 +337,23 @@ static void unlink_from_pool(struct inet_peer *p)
 /* May be called with local BH enabled. */
 static int cleanup_once(unsigned long ttl)
 {
-	struct inet_peer *p = NULL;
+	struct inet_peer *p;
 
 	/* Remove the first entry from the list of unused nodes. */
 	spin_lock_bh(&inet_peer_unused_lock);
-	if (!list_empty(&unused_peers)) {
-		__u32 delta;
-
-		p = list_first_entry(&unused_peers, struct inet_peer, unused);
-		delta = (__u32)jiffies - p->dtime;
-
-		if (delta < ttl) {
+	p = inet_peer_unused_head;
+	if (p != NULL) {
+		if (time_after(p->dtime + ttl, jiffies)) {
 			/* Do not prune fresh entries. */
 			spin_unlock_bh(&inet_peer_unused_lock);
 			return -1;
 		}
-
-		list_del_init(&p->unused);
-
+		inet_peer_unused_head = p->unused_next;
+		if (p->unused_next != NULL)
+			p->unused_next->unused_prevp = p->unused_prevp;
+		else
+			inet_peer_unused_tailp = p->unused_prevp;
+		p->unused_prevp = NULL; /* mark as not on the list */
 		/* Grab an extra reference to prevent node disappearing
 		 * before unlink_from_pool() call. */
 		atomic_inc(&p->refcnt);
@@ -361,14 +371,14 @@ static int cleanup_once(unsigned long ttl)
 }
 
 /* Called with or without local BH being disabled. */
-struct inet_peer *inet_getpeer(__be32 daddr, int create)
+struct inet_peer *inet_getpeer(__u32 daddr, int create)
 {
 	struct inet_peer *p, *n;
 	struct inet_peer **stack[PEER_MAXDEPTH], ***stackptr;
 
 	/* Look up for the address quickly. */
 	read_lock_bh(&peer_pool_lock);
-	p = lookup(daddr, NULL);
+	p = lookup(daddr);
 	if (p != peer_avl_empty)
 		atomic_inc(&p->refcnt);
 	read_unlock_bh(&peer_pool_lock);
@@ -395,13 +405,13 @@ struct inet_peer *inet_getpeer(__be32 daddr, int create)
 
 	write_lock_bh(&peer_pool_lock);
 	/* Check if an entry has suddenly appeared. */
-	p = lookup(daddr, stack);
+	p = lookup(daddr);
 	if (p != peer_avl_empty)
 		goto out_free;
 
 	/* Link the node. */
 	link_to_pool(n);
-	INIT_LIST_HEAD(&n->unused);
+	n->unused_prevp = NULL; /* not on the list */
 	peer_total++;
 	write_unlock_bh(&peer_pool_lock);
 
@@ -425,7 +435,7 @@ out_free:
 /* Called with local BH disabled. */
 static void peer_check_expire(unsigned long dummy)
 {
-	unsigned long now = jiffies;
+	int i;
 	int ttl;
 
 	if (peer_total >= inet_peer_threshold)
@@ -434,10 +444,7 @@ static void peer_check_expire(unsigned long dummy)
 		ttl = inet_peer_maxttl
 				- (inet_peer_maxttl - inet_peer_minttl) / HZ *
 					peer_total / inet_peer_threshold * HZ;
-	while (!cleanup_once(ttl)) {
-		if (jiffies != now)
-			break;
-	}
+	for (i = 0; i < PEER_MAX_CLEANUP_WORK && !cleanup_once(ttl); i++);
 
 	/* Trigger the timer after inet_peer_gc_mintime .. inet_peer_gc_maxtime
 	 * interval depending on the total number of entries (more entries,
@@ -450,14 +457,4 @@ static void peer_check_expire(unsigned long dummy)
 			- (inet_peer_gc_maxtime - inet_peer_gc_mintime) / HZ *
 				peer_total / inet_peer_threshold * HZ;
 	add_timer(&peer_periodic_timer);
-}
-
-void inet_putpeer(struct inet_peer *p)
-{
-	spin_lock_bh(&inet_peer_unused_lock);
-	if (atomic_dec_and_test(&p->refcnt)) {
-		list_add_tail(&p->unused, &unused_peers);
-		p->dtime = (__u32)jiffies;
-	}
-	spin_unlock_bh(&inet_peer_unused_lock);
 }

@@ -1,7 +1,7 @@
 /*
  * vrc4171_card.c, NEC VRC4171 Card Controller driver for Socket Services.
  *
- * Copyright (C) 2003-2005  Yoichi Yuasa <yuasa@linux-mips.org>
+ * Copyright (C) 2003-2005  Yoichi Yuasa <yoichi_yuasa@tripeaks.co.jp>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/platform_device.h>
 
@@ -32,7 +33,7 @@
 #include "i82365.h"
 
 MODULE_DESCRIPTION("NEC VRC4171 Card Controllers driver for Socket Services");
-MODULE_AUTHOR("Yoichi Yuasa <yuasa@linux-mips.org>");
+MODULE_AUTHOR("Yoichi Yuasa <yoichi_yuasa@tripeaks.co.jp>");
 MODULE_LICENSE("GPL");
 
 #define CARD_MAX_SLOTS		2
@@ -513,7 +514,7 @@ static inline unsigned int get_events(int slot)
 	return events;
 }
 
-static irqreturn_t pccard_interrupt(int irq, void *dev_id)
+static irqreturn_t pccard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	vrc4171_socket_t *socket;
 	unsigned int events;
@@ -596,7 +597,7 @@ static int __devinit vrc4171_add_sockets(void)
 		}
 
 		sprintf(socket->name, "NEC VRC4171 Card Slot %1c", 'A' + slot);
-		socket->pcmcia_socket.dev.parent = &vrc4171_card_device.dev;
+		socket->pcmcia_socket.dev.dev = &vrc4171_card_device.dev;
 		socket->pcmcia_socket.ops = &vrc4171_pccard_operations;
 		socket->pcmcia_socket.owner = THIS_MODULE;
 
@@ -639,7 +640,7 @@ static int __devinit vrc4171_card_setup(char *options)
 		int irq;
 		options += 4;
 		irq = simple_strtoul(options, &options, 0);
-		if (irq >= 0 && irq < nr_irqs)
+		if (irq >= 0 && irq < NR_IRQS)
 			vrc4171_irq = irq;
 
 		if (*options != ',')
@@ -704,37 +705,24 @@ static int __devinit vrc4171_card_setup(char *options)
 
 __setup("vrc4171_card=", vrc4171_card_setup);
 
-static int vrc4171_card_suspend(struct platform_device *dev,
-				     pm_message_t state)
-{
-	return pcmcia_socket_dev_suspend(&dev->dev);
-}
-
-static int vrc4171_card_resume(struct platform_device *dev)
-{
-	return pcmcia_socket_dev_resume(&dev->dev);
-}
-
-static struct platform_driver vrc4171_card_driver = {
-	.driver = {
-		.name		= vrc4171_card_name,
-		.owner		= THIS_MODULE,
-	},
-	.suspend	= vrc4171_card_suspend,
-	.resume		= vrc4171_card_resume,
+static struct device_driver vrc4171_card_driver = {
+	.name		= vrc4171_card_name,
+	.bus		= &platform_bus_type,
+	.suspend	= pcmcia_socket_dev_suspend,
+	.resume		= pcmcia_socket_dev_resume,
 };
 
 static int __devinit vrc4171_card_init(void)
 {
 	int retval;
 
-	retval = platform_driver_register(&vrc4171_card_driver);
+	retval = driver_register(&vrc4171_card_driver);
 	if (retval < 0)
 		return retval;
 
 	retval = platform_device_register(&vrc4171_card_device);
 	if (retval < 0) {
-		platform_driver_unregister(&vrc4171_card_driver);
+		driver_unregister(&vrc4171_card_driver);
 		return retval;
 	}
 
@@ -748,12 +736,11 @@ static int __devinit vrc4171_card_init(void)
 	if (retval < 0) {
 		vrc4171_remove_sockets();
 		platform_device_unregister(&vrc4171_card_device);
-		platform_driver_unregister(&vrc4171_card_driver);
+		driver_unregister(&vrc4171_card_driver);
 		return retval;
 	}
 
-	printk(KERN_INFO "%s, connected to IRQ %d\n",
-		vrc4171_card_driver.driver.name, vrc4171_irq);
+	printk(KERN_INFO "%s, connected to IRQ %d\n", vrc4171_card_driver.name, vrc4171_irq);
 
 	return 0;
 }
@@ -763,7 +750,7 @@ static void __devexit vrc4171_card_exit(void)
 	free_irq(vrc4171_irq, vrc4171_sockets);
 	vrc4171_remove_sockets();
 	platform_device_unregister(&vrc4171_card_device);
-	platform_driver_unregister(&vrc4171_card_driver);
+	driver_unregister(&vrc4171_card_driver);
 }
 
 module_init(vrc4171_card_init);

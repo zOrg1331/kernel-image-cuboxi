@@ -1,0 +1,56 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 5 Feb 2008 14:12:40 -0500
+Subject: [net] e1000e: tweak irq allocation messages
+Message-id: 20080205191240.GA28559@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] e1000e: tweak irq allocation messages
+Bugzilla: 431004
+
+The main purpose of this patch is to remove the messages that spew when
+unable to allocate MSI interrupts.  It's unnecessary to complain, since
+it's may not be a real error.  It's especially annoying when running a
+Xen kernel since you get this message on every boot:
+
+eth0: Unable to allocate MSI interrupt Error: -1
+
+This cleans up the MSI allocation failure message and really cries if
+all interrupt assignment fails.
+
+This is a backport of the patch that I posted upstream this week to
+netdev and Jeff pulled into his tree.
+
+This will resolve 431004.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index 27db90a..94f3a31 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -954,11 +954,7 @@ static int e1000_request_irq(struct e1000_adapter *adapter)
+ 	int irq_flags = IRQF_SHARED;
+ 	int err;
+ 
+-	err = pci_enable_msi(adapter->pdev);
+-	if (err) {
+-		ndev_warn(netdev,
+-		 "Unable to allocate MSI interrupt Error: %d\n", err);
+-	} else {
++	if (!pci_enable_msi(adapter->pdev)) {
+ 		adapter->flags |= FLAG_MSI_ENABLED;
+ 		handler = &e1000_intr_msi;
+ 		irq_flags = 0;
+@@ -967,10 +963,12 @@ static int e1000_request_irq(struct e1000_adapter *adapter)
+ 	err = request_irq(adapter->pdev->irq, handler, irq_flags, netdev->name,
+ 			  netdev);
+ 	if (err) {
++		ndev_err(netdev,
++		       "Unable to allocate %s interrupt (return: %d)\n",
++			adapter->flags & FLAG_MSI_ENABLED ? "MSI":"INTx",
++			err);
+ 		if (adapter->flags & FLAG_MSI_ENABLED)
+ 			pci_disable_msi(adapter->pdev);
+-		ndev_err(netdev,
+-		       "Unable to allocate interrupt Error: %d\n", err);
+ 	}
+ 
+ 	return err;

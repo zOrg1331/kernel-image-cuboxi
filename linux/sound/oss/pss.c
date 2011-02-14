@@ -1,5 +1,5 @@
 /*
- * sound/oss/pss.c
+ * sound/pss.c
  *
  * The low level driver for the Personal Sound System (ECHO ESC614).
  *
@@ -46,7 +46,7 @@
  *          load the driver as it did in previous versions.
  * 04-07-1999: Anthony Barbachan <barbcode@xmen.cis.fordham.edu>
  *          Added module parameter pss_firmware to allow the user to tell 
- *          the driver where the firmware file is located.  The default 
+ *          the driver where the fireware file is located.  The default 
  *          setting is the previous hardcoded setting "/etc/sound/pss_synth".
  * 00-03-03: Christoph Hellwig <chhellwig@infradead.org>
  *	    Adapted to module_init/module_exit
@@ -232,12 +232,14 @@ static int set_irq(pss_confdata * devc, int dev, int irq)
 	return 1;
 }
 
-static void set_io_base(pss_confdata * devc, int dev, int base)
+static int set_io_base(pss_confdata * devc, int dev, int base)
 {
 	unsigned short  tmp = inw(REG(dev)) & 0x003f;
 	unsigned short  bits = (base & 0x0ffc) << 4;
 
 	outw(bits | tmp, REG(dev));
+
+	return 1;
 }
 
 static int set_dma(pss_confdata * devc, int dev, int dma)
@@ -457,9 +459,10 @@ static void pss_mixer_reset(pss_confdata *devc)
 	}
 }
 
-static int set_volume_mono(unsigned __user *p, unsigned int *aleft)
+static int set_volume_mono(unsigned __user *p, int *aleft)
 {
-	unsigned int left, volume;
+	int left;
+	unsigned volume;
 	if (get_user(volume, p))
 		return -EFAULT;
 	
@@ -470,11 +473,10 @@ static int set_volume_mono(unsigned __user *p, unsigned int *aleft)
 	return 0;
 }
 
-static int set_volume_stereo(unsigned __user *p,
-			     unsigned int *aleft,
-			     unsigned int *aright)
+static int set_volume_stereo(unsigned __user *p, int *aleft, int *aright)
 {
-	unsigned int left, right, volume;
+	int left, right;
+	unsigned volume;
 	if (get_user(volume, p))
 		return -EFAULT;
 
@@ -671,12 +673,20 @@ static void configure_nonsound_components(void)
 
 	/* Configure CDROM port */
 
-	if (pss_cdrom_port == -1) {	/* If cdrom port enablation wasn't requested */
+	if(pss_cdrom_port == -1)	/* If cdrom port enablation wasn't requested */
+	{
 		printk(KERN_INFO "PSS: CDROM port not enabled.\n");
-	} else if (check_region(pss_cdrom_port, 2)) {
+	}
+	else if(check_region(pss_cdrom_port, 2))
+	{
 		printk(KERN_ERR "PSS: CDROM I/O port conflict.\n");
-	} else {
-		set_io_base(devc, CONF_CDROM, pss_cdrom_port);
+	}
+	else if(!set_io_base(devc, CONF_CDROM, pss_cdrom_port))
+	{
+		printk(KERN_ERR "PSS: CDROM I/O port could not be set.\n");
+	}
+	else					/* CDROM port successfully configured */
+	{
 		printk(KERN_INFO "PSS: CDROM I/O port set to 0x%x.\n", pss_cdrom_port);
 	}
 }
@@ -748,7 +758,10 @@ static int __init probe_pss_mpu(struct address_info *hw_config)
 		printk(KERN_ERR "PSS: MPU I/O port conflict\n");
 		return 0;
 	}
-	set_io_base(devc, CONF_MIDI, hw_config->io_base);
+	if (!set_io_base(devc, CONF_MIDI, hw_config->io_base)) {
+		printk(KERN_ERR "PSS: MIDI base could not be set.\n");
+		goto fail;
+	}
 	if (!set_irq(devc, CONF_MIDI, hw_config->irq)) {
 		printk(KERN_ERR "PSS: MIDI IRQ allocation error.\n");
 		goto fail;
@@ -1044,7 +1057,10 @@ static int __init probe_pss_mss(struct address_info *hw_config)
 		release_region(hw_config->io_base, 4);
 		return 0;
 	}
-	set_io_base(devc, CONF_WSS, hw_config->io_base);
+	if (!set_io_base(devc, CONF_WSS, hw_config->io_base)) {
+		printk("PSS: WSS base not settable.\n");
+		goto fail;
+	}
 	if (!set_irq(devc, CONF_WSS, hw_config->irq)) {
 		printk("PSS: WSS IRQ allocation error.\n");
 		goto fail;

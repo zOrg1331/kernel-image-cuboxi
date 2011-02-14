@@ -2,10 +2,7 @@
 #define __LINUX_MROUTE_H
 
 #include <linux/sockios.h>
-#include <linux/types.h>
-#ifdef __KERNEL__
 #include <linux/in.h>
-#endif
 
 /*
  *	Based on the MROUTING 3.5 defines primarily to keep
@@ -129,52 +126,13 @@ struct igmpmsg
  */
 
 #ifdef __KERNEL__
-#include <linux/pim.h>
 #include <net/sock.h>
 
-#ifdef CONFIG_IP_MROUTE
-static inline int ip_mroute_opt(int opt)
-{
-	return (opt >= MRT_BASE) && (opt <= MRT_BASE + 10);
-}
-#else
-static inline int ip_mroute_opt(int opt)
-{
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_IP_MROUTE
-extern int ip_mroute_setsockopt(struct sock *, int, char __user *, unsigned int);
+extern int ip_mroute_setsockopt(struct sock *, int, char __user *, int);
 extern int ip_mroute_getsockopt(struct sock *, int, char __user *, int __user *);
 extern int ipmr_ioctl(struct sock *sk, int cmd, void __user *arg);
-extern int ip_mr_init(void);
-#else
-static inline
-int ip_mroute_setsockopt(struct sock *sock,
-			 int optname, char __user *optval, unsigned int optlen)
-{
-	return -ENOPROTOOPT;
-}
+extern void ip_mr_init(void);
 
-static inline
-int ip_mroute_getsockopt(struct sock *sock,
-			 int optname, char __user *optval, int __user *optlen)
-{
-	return -ENOPROTOOPT;
-}
-
-static inline
-int ipmr_ioctl(struct sock *sk, int cmd, void __user *arg)
-{
-	return -ENOIOCTLCMD;
-}
-
-static inline int ip_mr_init(void)
-{
-	return 0;
-}
-#endif
 
 struct vif_device
 {
@@ -184,7 +142,7 @@ struct vif_device
 	unsigned long	rate_limit;		/* Traffic shaping (NI) 	*/
 	unsigned char	threshold;		/* TTL threshold 		*/
 	unsigned short	flags;			/* Control flags 		*/
-	__be32		local,remote;		/* Addresses(remote for tunnels)*/
+	__u32		local,remote;		/* Addresses(remote for tunnels)*/
 	int		link;			/* Physical interface index	*/
 };
 
@@ -193,11 +151,8 @@ struct vif_device
 struct mfc_cache 
 {
 	struct mfc_cache *next;			/* Next entry on cache line 	*/
-#ifdef CONFIG_NET_NS
-	struct net *mfc_net;
-#endif
-	__be32 mfc_mcastgrp;			/* Group the entry belongs to 	*/
-	__be32 mfc_origin;			/* Source of packet 		*/
+	__u32 mfc_mcastgrp;			/* Group the entry belongs to 	*/
+	__u32 mfc_origin;			/* Source of packet 		*/
 	vifi_t mfc_parent;			/* Source interface		*/
 	int mfc_flags;				/* Flags on line		*/
 
@@ -218,27 +173,15 @@ struct mfc_cache
 	} mfc_un;
 };
 
-static inline
-struct net *mfc_net(const struct mfc_cache *mfc)
-{
-	return read_pnet(&mfc->mfc_net);
-}
-
-static inline
-void mfc_net_set(struct mfc_cache *mfc, struct net *net)
-{
-	write_pnet(&mfc->mfc_net, hold_net(net));
-}
-
 #define MFC_STATIC		1
 #define MFC_NOTIFY		2
 
 #define MFC_LINES		64
 
 #ifdef __BIG_ENDIAN
-#define MFC_HASH(a,b)	(((((__force u32)(__be32)a)>>24)^(((__force u32)(__be32)b)>>26))&(MFC_LINES-1))
+#define MFC_HASH(a,b)	((((a)>>24)^((b)>>26))&(MFC_LINES-1))
 #else
-#define MFC_HASH(a,b)	((((__force u32)(__be32)a)^(((__force u32)(__be32)b)>>2))&(MFC_LINES-1))
+#define MFC_HASH(a,b)	(((a)^((b)>>2))&(MFC_LINES-1))
 #endif		
 
 #endif
@@ -255,9 +198,29 @@ void mfc_net_set(struct mfc_cache *mfc, struct net *net)
 #define IGMPMSG_WHOLEPKT	3		/* For PIM Register processing */
 
 #ifdef __KERNEL__
+
+#define PIM_V1_VERSION		__constant_htonl(0x10000000)
+#define PIM_V1_REGISTER		1
+
+#define PIM_VERSION		2
+#define PIM_REGISTER		1
+
+#define PIM_NULL_REGISTER	__constant_htonl(0x40000000)
+
+/* PIMv2 register message header layout (ietf-draft-idmr-pimvsm-v2-00.ps */
+
+struct pimreghdr
+{
+	__u8	type;
+	__u8	reserved;
+	__u16	csum;
+	__u32	flags;
+};
+
+extern int pim_rcv_v1(struct sk_buff *);
+
 struct rtmsg;
-extern int ipmr_get_route(struct net *net, struct sk_buff *skb,
-			  struct rtmsg *rtm, int nowait);
+extern int ipmr_get_route(struct sk_buff *skb, struct rtmsg *rtm, int nowait);
 #endif
 
 #endif

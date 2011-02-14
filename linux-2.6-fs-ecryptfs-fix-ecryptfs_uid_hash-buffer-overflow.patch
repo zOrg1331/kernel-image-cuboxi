@@ -1,0 +1,86 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 3 Aug 2010 13:43:35 -0400
+Subject: [fs] ecryptfs: fix ecryptfs_uid_hash buffer overflow
+Message-id: <4C581D07.8040104@redhat.com>
+Patchwork-id: 27300
+O-Subject: [RHEL5.6 PATCH] CVE-2010-2492 kernel: ecryptfs_uid_hash() buffer
+	overflow
+Bugzilla: 611387
+CVE: CVE-2010-2492
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=611387
+
+Description:
+The function ecryptfs_uid_hash wrongly assumes that the
+second parameter to hash_long() is the number of hash
+buckets instead of the number of hash bits.
+This patch fixes that and renames the variable
+ecryptfs_hash_buckets to ecryptfs_hash_bits to make it
+clearer.
+
+Upstream status:
+http://git.kernel.org/linus/a6f80fb7b5986fda663d94079d3bba0937a6b6ff
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2645287
+
+Test status:
+Built, boot, mounted an ecryptfs filesystem and used it.
+I don't know however how to trigger the issue, so I haven't test that.
+
+Regards,
+Jerome
+
+
+diff --git a/fs/ecryptfs/messaging.c b/fs/ecryptfs/messaging.c
+index c6038bd..b91ab61 100644
+--- a/fs/ecryptfs/messaging.c
++++ b/fs/ecryptfs/messaging.c
+@@ -28,9 +28,9 @@ static struct mutex ecryptfs_msg_ctx_lists_mux;
+ 
+ static struct hlist_head *ecryptfs_daemon_hash;
+ struct mutex ecryptfs_daemon_hash_mux;
+-static int ecryptfs_hash_buckets;
++static int ecryptfs_hash_bits;
+ #define ecryptfs_uid_hash(uid) \
+-        hash_long((unsigned long)uid, ecryptfs_hash_buckets)
++        hash_long((unsigned long)uid, ecryptfs_hash_bits)
+ 
+ static u32 ecryptfs_msg_counter;
+ static struct ecryptfs_msg_ctx *ecryptfs_msg_ctx_arr;
+@@ -560,18 +560,19 @@ int ecryptfs_init_messaging(unsigned int transport)
+ 	}
+ 	mutex_init(&ecryptfs_daemon_hash_mux);
+ 	mutex_lock(&ecryptfs_daemon_hash_mux);
+-	ecryptfs_hash_buckets = 1;
+-	while (ecryptfs_number_of_users >> ecryptfs_hash_buckets)
+-		ecryptfs_hash_buckets++;
++	ecryptfs_hash_bits = 1;
++	while (ecryptfs_number_of_users >> ecryptfs_hash_bits)
++		ecryptfs_hash_bits++;
+ 	ecryptfs_daemon_hash = kmalloc((sizeof(struct hlist_head)
+-					* ecryptfs_hash_buckets), GFP_KERNEL);
++					* (1 << ecryptfs_hash_bits)),
++				       GFP_KERNEL);
+ 	if (!ecryptfs_daemon_hash) {
+ 		rc = -ENOMEM;
+ 		printk(KERN_ERR "%s: Failed to allocate memory\n", __func__);
+ 		mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 		goto out;
+ 	}
+-	for (i = 0; i < ecryptfs_hash_buckets; i++)
++	for (i = 0; i < (1 << ecryptfs_hash_bits); i++)
+ 		INIT_HLIST_HEAD(&ecryptfs_daemon_hash[i]);
+ 	mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 	ecryptfs_msg_ctx_arr = kmalloc((sizeof(struct ecryptfs_msg_ctx)
+@@ -641,7 +642,7 @@ void ecryptfs_release_messaging(unsigned int transport)
+ 		int i;
+ 
+ 		mutex_lock(&ecryptfs_daemon_hash_mux);
+-		for (i = 0; i < ecryptfs_hash_buckets; i++) {
++		for (i = 0; i < (1 << ecryptfs_hash_bits); i++) {
+ 			int rc;
+ 
+ 			hlist_for_each_entry(daemon, elem,

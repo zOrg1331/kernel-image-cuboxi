@@ -1,0 +1,100 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Wed, 12 Sep 2007 09:09:04 +0200
+Subject: [sched] return first time_slice to correct process
+Message-id: m3sl5jnlzc.fsf@gravicapa.englab.brq.redhat.com
+O-Subject: [RHEL-5.2 patch] *REPOST v3* BZ238035 exiting process returns its first time_slice to wrong process
+Bugzilla: 238035
+
+BZ#238035
+https://bugzilla.redhat.com/show_bug.cgi?id=238035
+
+Description:
+============
+When a thread or a process created with CLONE_PARENT flag exits before
+exhausting its first time slice, it returns its first time_slice not to
+its creator, but to its parent.
+
+Upstream status of the patch:
+=============================
+Scheduler have changed in 2.6.22, the patch cann't be applied.
+
+Test status:
+============
+Kernel with patch was built and successfully tested on RHEL-5/x86
+box. See bz for logs.
+
+This patch prevents a problem of creator's pid reusage and returning
+timeslice to wrong process.
+
+Acked-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index d779f4f..45a1562 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -684,6 +684,12 @@ forget_original_parent(struct task_struct *father)
+ 
+ 	list_for_each_safe(_p, _n, &father->children) {
+ 		p = list_entry(_p, struct task_struct, sibling);
++
++                /* Father is going to die, so it does not need available
++                 * first time slices from childs anymore */     
++		if (p->first_time_slice == father->pid)
++		    p->first_time_slice = 0;
++		    
+ 		choose_new_parent(p, reaper);
+ 		reparent_thread(p, father);
+ 	}
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 90d03bb..293db1f 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -1587,9 +1587,9 @@ void fastcall sched_fork(struct task_struct *p, int clone_flags)
+ 	p->time_slice = (current->time_slice + 1) >> 1;
+ 	/*
+ 	 * The remainder of the first timeslice might be recovered by
+-	 * the parent if the child exits early enough.
++	 * the creator (not parent) if the child exits early enough.
+ 	 */
+-	p->first_time_slice = 1;
++	p->first_time_slice = current->pid;
+ 	current->time_slice >>= 1;
+ 	p->timestamp = sched_clock();
+ 	if (unlikely(!current->time_slice)) {
+@@ -1700,22 +1700,27 @@ void fastcall sched_exit(struct task_struct *p)
+ {
+ 	unsigned long flags;
+ 	struct rq *rq;
+-
++	struct task_struct* creator = NULL;
+ 	/*
+ 	 * If the child was a (relative-) CPU hog then decrease
+ 	 * the sleep_avg of the parent as well.
+ 	 */
+-	rq = task_rq_lock(p->parent, &flags);
+-	if (p->first_time_slice && task_cpu(p) == task_cpu(p->parent)) {
+-		p->parent->time_slice += p->time_slice;
+-		if (unlikely(p->parent->time_slice > task_timeslice(p)))
+-			p->parent->time_slice = task_timeslice(p);
+-	}
+-	if (p->sleep_avg < p->parent->sleep_avg)
+-		p->parent->sleep_avg = p->parent->sleep_avg /
++
++        if (p->first_time_slice) {
++                creator = find_task_by_pid((pid_t)p->first_time_slice);
++                if (creator && task_cpu(p) == task_cpu(creator)) {
++                        rq = task_rq_lock(creator, &flags);
++                        creator->time_slice += p->time_slice;
++                        if (unlikely(creator->time_slice > task_timeslice(p)))
++                                creator->time_slice = task_timeslice(p);
++
++                        if (p->sleep_avg < creator->sleep_avg)
++                                creator->sleep_avg = creator->sleep_avg /
+ 		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+ 		(EXIT_WEIGHT + 1);
+ 	task_rq_unlock(rq, &flags);
++                }
++        }
+ }
+ 
+ /**

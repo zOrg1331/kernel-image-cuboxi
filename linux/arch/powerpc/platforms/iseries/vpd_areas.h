@@ -80,9 +80,9 @@ struct ItVpdAreas {
 	u32	xPlicDmaLens[ItDmaMaxEntries];// Array of DMA lengths	080-0A7
 	u32	xPlicDmaToks[ItDmaMaxEntries];// Array of DMA tokens	0A8-0CF
 	u32	xSlicVpdLens[ItVpdMaxEntries];// Array of VPD lengths	0D0-12F
-	const void *xSlicVpdAdrs[ItVpdMaxEntries];// Array of VPD buffers 130-1EF
+	void	*xSlicVpdAdrs[ItVpdMaxEntries];// Array of VPD buffers	130-1EF
 };
 
-extern const struct ItVpdAreas	itVpdAreas;
+extern struct ItVpdAreas	itVpdAreas;
 
 #endif /* _ISERIES_VPD_AREAS_H */

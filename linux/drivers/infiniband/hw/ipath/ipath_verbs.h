@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2007, 2008 QLogic Corporation. All rights reserved.
+ * Copyright (c) 2006 QLogic, Inc. All rights reserved.
  * Copyright (c) 2005, 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -38,13 +38,10 @@
 #include <linux/spinlock.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
-#include <linux/kref.h>
 #include <rdma/ib_pack.h>
-#include <rdma/ib_user_verbs.h>
 
-#include "ipath_kernel.h"
-
-#define IPATH_MAX_RDMA_ATOMIC	4
+#include "ipath_layer.h"
+#include "verbs_debug.h"
 
 #define QPN_MAX                 (1 << 24)
 #define QPNMAP_ENTRIES          (QPN_MAX / PAGE_SIZE / BITS_PER_BYTE)
@@ -53,7 +50,7 @@
  * Increment this value if any changes that break userspace ABI
  * compatibility are made.
  */
-#define IPATH_UVERBS_ABI_VERSION       2
+#define IPATH_UVERBS_ABI_VERSION       1
 
 /*
  * Define an ib_cq_notify value that is not valid so we know when CQ
@@ -61,7 +58,6 @@
  */
 #define IB_CQ_NONE	(IB_CQ_NEXT_COMP + 1)
 
-/* AETH NAK opcode values */
 #define IB_RNR_NAK			0x20
 #define IB_NAK_PSN_ERROR		0x60
 #define IB_NAK_INVALID_REQUEST		0x61
@@ -69,16 +65,10 @@
 #define IB_NAK_REMOTE_OPERATIONAL_ERROR 0x63
 #define IB_NAK_INVALID_RD_REQUEST	0x64
 
-/* Flags for checking QP state (see ib_ipath_state_ops[]) */
 #define IPATH_POST_SEND_OK		0x01
 #define IPATH_POST_RECV_OK		0x02
 #define IPATH_PROCESS_RECV_OK		0x04
 #define IPATH_PROCESS_SEND_OK		0x08
-#define IPATH_PROCESS_NEXT_SEND_OK	0x10
-#define IPATH_FLUSH_SEND		0x20
-#define IPATH_FLUSH_RECV		0x40
-#define IPATH_PROCESS_OR_FLUSH_SEND \
-	(IPATH_PROCESS_SEND_OK | IPATH_FLUSH_SEND)
 
 /* IB Performance Manager status values */
 #define IB_PMA_SAMPLE_STATUS_DONE	0x00
@@ -86,11 +76,11 @@
 #define IB_PMA_SAMPLE_STATUS_RUNNING	0x02
 
 /* Mandatory IB performance counter select values. */
-#define IB_PMA_PORT_XMIT_DATA	cpu_to_be16(0x0001)
-#define IB_PMA_PORT_RCV_DATA	cpu_to_be16(0x0002)
-#define IB_PMA_PORT_XMIT_PKTS	cpu_to_be16(0x0003)
-#define IB_PMA_PORT_RCV_PKTS	cpu_to_be16(0x0004)
-#define IB_PMA_PORT_XMIT_WAIT	cpu_to_be16(0x0005)
+#define IB_PMA_PORT_XMIT_DATA	__constant_htons(0x0001)
+#define IB_PMA_PORT_RCV_DATA	__constant_htons(0x0002)
+#define IB_PMA_PORT_XMIT_PKTS	__constant_htons(0x0003)
+#define IB_PMA_PORT_RCV_PKTS	__constant_htons(0x0004)
+#define IB_PMA_PORT_XMIT_WAIT	__constant_htons(0x0005)
 
 struct ib_reth {
 	__be64 vaddr;
@@ -99,7 +89,7 @@ struct ib_reth {
 } __attribute__ ((packed));
 
 struct ib_atomic_eth {
-	__be32 vaddr[2];	/* unaligned so access as 2 32-bit words */
+	__be64 vaddr;
 	__be32 rkey;
 	__be64 swap_data;
 	__be64 compare_data;
@@ -118,7 +108,7 @@ struct ipath_other_headers {
 		} rc;
 		struct {
 			__be32 aeth;
-			__be32 atomic_ack_eth[2];
+			__be64 atomic_ack_eth;
 		} at;
 		__be32 imm_data;
 		__be32 aeth;
@@ -143,11 +133,6 @@ struct ipath_ib_header {
 	} u;
 } __attribute__ ((packed));
 
-struct ipath_pio_header {
-	__le32 pbc[2];
-	struct ipath_ib_header hdr;
-} __attribute__ ((packed));
-
 /*
  * There is one struct ipath_mcast for each multicast GID.
  * All attached QPs are then stored as a list of
@@ -167,6 +152,19 @@ struct ipath_mcast {
 	int n_attached;
 };
 
+/* Memory region */
+struct ipath_mr {
+	struct ib_mr ibmr;
+	struct ipath_mregion mr;	/* must be last */
+};
+
+/* Fast memory region */
+struct ipath_fmr {
+	struct ib_fmr ibfmr;
+	u8 page_shift;
+	struct ipath_mregion mr;	/* must be last */
+};
+
 /* Protection domain */
 struct ipath_pd {
 	struct ib_pd ibpd;
@@ -180,95 +178,58 @@ struct ipath_ah {
 };
 
 /*
- * This structure is used by ipath_mmap() to validate an offset
- * when an mmap() request is made.  The vm_area_struct then uses
- * this as its vm_private_data.
+ * Quick description of our CQ/QP locking scheme:
+ *
+ * We have one global lock that protects dev->cq/qp_table.  Each
+ * struct ipath_cq/qp also has its own lock.  An individual qp lock
+ * may be taken inside of an individual cq lock.  Both cqs attached to
+ * a qp may be locked, with the send cq locked first.  No other
+ * nesting should be done.
+ *
+ * Each struct ipath_cq/qp also has an atomic_t ref count.  The
+ * pointer from the cq/qp_table to the struct counts as one reference.
+ * This reference also is good for access through the consumer API, so
+ * modifying the CQ/QP etc doesn't need to take another reference.
+ * Access because of a completion being polled does need a reference.
+ *
+ * Finally, each struct ipath_cq/qp has a wait_queue_head_t for the
+ * destroy function to sleep on.
+ *
+ * This means that access from the consumer API requires nothing but
+ * taking the struct's lock.
+ *
+ * Access because of a completion event should go as follows:
+ * - lock cq/qp_table and look up struct
+ * - increment ref count in struct
+ * - drop cq/qp_table lock
+ * - lock struct, do your thing, and unlock struct
+ * - decrement ref count; if zero, wake up waiters
+ *
+ * To destroy a CQ/QP, we can do the following:
+ * - lock cq/qp_table, remove pointer, unlock cq/qp_table lock
+ * - decrement ref count
+ * - wait_event until ref count is zero
+ *
+ * It is the consumer's responsibilty to make sure that no QP
+ * operations (WQE posting or state modification) are pending when the
+ * QP is destroyed.  Also, the consumer must make sure that calls to
+ * qp_modify are serialized.
+ *
+ * Possible optimizations (wait for profile data to see if/where we
+ * have locks bouncing between CPUs):
+ * - split cq/qp table lock into n separate (cache-aligned) locks,
+ *   indexed (say) by the page in the table
  */
-struct ipath_mmap_info {
-	struct list_head pending_mmaps;
-	struct ib_ucontext *context;
-	void *obj;
-	__u64 offset;
-	struct kref ref;
-	unsigned size;
-};
 
-/*
- * This structure is used to contain the head pointer, tail pointer,
- * and completion queue entries as a single memory allocation so
- * it can be mmap'ed into user space.
- */
-struct ipath_cq_wc {
-	u32 head;		/* index of next entry to fill */
-	u32 tail;		/* index of next ib_poll_cq() entry */
-	union {
-		/* these are actually size ibcq.cqe + 1 */
-		struct ib_uverbs_wc uqueue[0];
-		struct ib_wc kqueue[0];
-	};
-};
-
-/*
- * The completion queue structure.
- */
 struct ipath_cq {
 	struct ib_cq ibcq;
 	struct tasklet_struct comptask;
 	spinlock_t lock;
 	u8 notify;
 	u8 triggered;
-	struct ipath_cq_wc *queue;
-	struct ipath_mmap_info *ip;
-};
-
-/*
- * A segment is a linear region of low physical memory.
- * XXX Maybe we should use phys addr here and kmap()/kunmap().
- * Used by the verbs layer.
- */
-struct ipath_seg {
-	void *vaddr;
-	size_t length;
-};
-
-/* The number of ipath_segs that fit in a page. */
-#define IPATH_SEGSZ     (PAGE_SIZE / sizeof (struct ipath_seg))
-
-struct ipath_segarray {
-	struct ipath_seg segs[IPATH_SEGSZ];
-};
-
-struct ipath_mregion {
-	struct ib_pd *pd;	/* shares refcnt of ibmr.pd */
-	u64 user_base;		/* User's address for this region */
-	u64 iova;		/* IB start address of this region */
-	size_t length;
-	u32 lkey;
-	u32 offset;		/* offset (bytes) to start of region */
-	int access_flags;
-	u32 max_segs;		/* number of ipath_segs in all the arrays */
-	u32 mapsz;		/* size of the map array */
-	struct ipath_segarray *map[0];	/* the segments */
-};
-
-/*
- * These keep track of the copy progress within a memory region.
- * Used by the verbs layer.
- */
-struct ipath_sge {
-	struct ipath_mregion *mr;
-	void *vaddr;		/* kernel virtual address of segment */
-	u32 sge_length;		/* length of the SGE */
-	u32 length;		/* remaining length of the segment */
-	u16 m;			/* current index: mr->map[m] */
-	u16 n;			/* current index: mr->map[m]->segs[n] */
-};
-
-/* Memory region */
-struct ipath_mr {
-	struct ib_mr ibmr;
-	struct ib_umem *umem;
-	struct ipath_mregion mr;	/* must be last */
+	u32 head;		/* new records added to the head */
+	u32 tail;		/* poll_cq() reads from here. */
+	struct ib_wc *queue;	/* this is actually ibcq.cqe + 1 */
 };
 
 /*
@@ -287,63 +248,30 @@ struct ipath_swqe {
 
 /*
  * Receive work request queue entry.
- * The size of the sg_list is determined when the QP (or SRQ) is created
- * and stored in qp->r_rq.max_sge (or srq->rq.max_sge).
+ * The size of the sg_list is determined when the QP is created and stored
+ * in qp->r_max_sge.
  */
 struct ipath_rwqe {
 	u64 wr_id;
+	u32 length;		/* total length of data in sg_list */
 	u8 num_sge;
-	struct ib_sge sg_list[0];
-};
-
-/*
- * This structure is used to contain the head pointer, tail pointer,
- * and receive work queue entries as a single memory allocation so
- * it can be mmap'ed into user space.
- * Note that the wq array elements are variable size so you can't
- * just index into the array to get the N'th element;
- * use get_rwqe_ptr() instead.
- */
-struct ipath_rwq {
-	u32 head;		/* new work requests posted to the head */
-	u32 tail;		/* receives pull requests from here. */
-	struct ipath_rwqe wq[0];
+	struct ipath_sge sg_list[0];
 };
 
 struct ipath_rq {
-	struct ipath_rwq *wq;
 	spinlock_t lock;
+	u32 head;		/* new work requests posted to the head */
+	u32 tail;		/* receives pull requests from here. */
 	u32 size;		/* size of RWQE array */
 	u8 max_sge;
+	struct ipath_rwqe *wq;	/* RWQE array */
 };
 
 struct ipath_srq {
 	struct ib_srq ibsrq;
 	struct ipath_rq rq;
-	struct ipath_mmap_info *ip;
 	/* send signal when number of RWQEs < limit */
 	u32 limit;
-};
-
-struct ipath_sge_state {
-	struct ipath_sge *sg_list;      /* next SGE to be used if any */
-	struct ipath_sge sge;   /* progress state for the current SGE */
-	u8 num_sge;
-	u8 static_rate;
-};
-
-/*
- * This structure holds the information that the send tasklet needs
- * to send a RDMA read response or atomic operation.
- */
-struct ipath_ack_entry {
-	u8 opcode;
-	u8 sent;
-	u32 psn;
-	union {
-		struct ipath_sge_state rdma_sge;
-		u64 atomic_data;
-	};
 };
 
 /*
@@ -358,39 +286,33 @@ struct ipath_qp {
 	struct ib_qp ibqp;
 	struct ipath_qp *next;		/* link list for QPN hash table */
 	struct ipath_qp *timer_next;	/* link list for ipath_ib_timer() */
-	struct ipath_qp *pio_next;	/* link for ipath_ib_piobufavail() */
 	struct list_head piowait;	/* link for wait PIO buf */
 	struct list_head timerwait;	/* link for waiting for timeouts */
 	struct ib_ah_attr remote_ah_attr;
 	struct ipath_ib_header s_hdr;	/* next packet header to send */
 	atomic_t refcount;
 	wait_queue_head_t wait;
-	wait_queue_head_t wait_dma;
 	struct tasklet_struct s_task;
-	struct ipath_mmap_info *ip;
 	struct ipath_sge_state *s_cur_sge;
-	struct ipath_verbs_txreq *s_tx;
 	struct ipath_sge_state s_sge;	/* current send request data */
-	struct ipath_ack_entry s_ack_queue[IPATH_MAX_RDMA_ATOMIC + 1];
-	struct ipath_sge_state s_ack_rdma_sge;
-	struct ipath_sge_state s_rdma_read_sge;
+	/* current RDMA read send data */
+	struct ipath_sge_state s_rdma_sge;
 	struct ipath_sge_state r_sge;	/* current receive data */
 	spinlock_t s_lock;
-	atomic_t s_dma_busy;
-	u16 s_pkt_delay;
-	u16 s_hdrwords;		/* size of s_hdr in 32 bit words */
+	unsigned long s_flags;
+	u32 s_hdrwords;		/* size of s_hdr in 32 bit words */
 	u32 s_cur_size;		/* size of send packet in bytes */
 	u32 s_len;		/* total length of s_sge */
-	u32 s_rdma_read_len;	/* total length of s_rdma_read_sge */
+	u32 s_rdma_len;		/* total length of s_rdma_sge */
 	u32 s_next_psn;		/* PSN for next request */
 	u32 s_last_psn;		/* last response PSN processed */
 	u32 s_psn;		/* current packet sequence number */
-	u32 s_ack_rdma_psn;	/* PSN for sending RDMA read responses */
-	u32 s_ack_psn;		/* PSN for acking sends and RDMA writes */
+	u32 s_ack_psn;		/* PSN for RDMA_READ */
 	u32 s_rnr_timeout;	/* number of milliseconds for RNR timeout */
 	u32 r_ack_psn;		/* PSN for next ACK or atomic ACK */
 	u64 r_wr_id;		/* ID for current receive WQE */
-	unsigned long r_aflags;
+	u64 r_atomic_data;	/* data for last atomic op */
+	u32 r_atomic_psn;	/* PSN of last atomic op */
 	u32 r_len;		/* total length of r_sge */
 	u32 r_rcv_len;		/* receive data len processed */
 	u32 r_psn;		/* expected rcv packet sequence number */
@@ -400,11 +322,11 @@ struct ipath_qp {
 	u8 s_ack_state;		/* opcode of packet to ACK */
 	u8 s_nak_state;		/* non-zero if NAK is pending */
 	u8 r_state;		/* opcode of last packet received */
+	u8 r_ack_state;		/* opcode of packet to ACK */
 	u8 r_nak_state;		/* non-zero if NAK is pending */
 	u8 r_min_rnr_timer;	/* retry timeout value for RNR NAKs */
-	u8 r_flags;
-	u8 r_max_rd_atomic;	/* max number of RDMA read/atomic to receive */
-	u8 r_head_ack_queue;	/* index into s_ack_queue[] */
+	u8 r_reuse_sge;		/* for UC receive errors */
+	u8 r_sge_inx;		/* current index into sg_list */
 	u8 qp_access_flags;
 	u8 s_max_sge;		/* size of s_wq->sg_list */
 	u8 s_retry_cnt;		/* number of times to retry */
@@ -412,13 +334,6 @@ struct ipath_qp {
 	u8 s_retry;		/* requester retry counter */
 	u8 s_rnr_retry;		/* requester RNR retry counter */
 	u8 s_pkey_index;	/* PKEY index to use */
-	u8 s_max_rd_atomic;	/* max number of RDMA read/atomic to send */
-	u8 s_num_rd_atomic;	/* number of RDMA read/atomic pending */
-	u8 s_tail_ack_queue;	/* index into s_ack_queue[] */
-	u8 s_flags;
-	u8 s_dmult;
-	u8 s_draining;
-	u8 timeout;		/* Timeout for this QP */
 	enum ib_mtu path_mtu;
 	u32 remote_qpn;
 	u32 qkey;		/* QKEY for this QP (for UD or RD) */
@@ -430,48 +345,14 @@ struct ipath_qp {
 	u32 s_ssn;		/* SSN of tail entry */
 	u32 s_lsn;		/* limit sequence number (credit) */
 	struct ipath_swqe *s_wq;	/* send work queue */
-	struct ipath_swqe *s_wqe;
-	struct ipath_sge *r_ud_sg_list;
-	struct ipath_rq r_rq;		/* receive work queue */
-	struct ipath_sge r_sg_list[0];	/* verified SGEs */
+	struct ipath_rq r_rq;	/* receive work queue */
 };
 
 /*
- * Atomic bit definitions for r_aflags.
- */
-#define IPATH_R_WRID_VALID	0
-
-/*
- * Bit definitions for r_flags.
- */
-#define IPATH_R_REUSE_SGE	0x01
-#define IPATH_R_RDMAR_SEQ	0x02
-
-/*
  * Bit definitions for s_flags.
- *
- * IPATH_S_FENCE_PENDING - waiting for all prior RDMA read or atomic SWQEs
- *			   before processing the next SWQE
- * IPATH_S_RDMAR_PENDING - waiting for any RDMA read or atomic SWQEs
- *			   before processing the next SWQE
- * IPATH_S_WAITING - waiting for RNR timeout or send buffer available.
- * IPATH_S_WAIT_SSN_CREDIT - waiting for RC credits to process next SWQE
- * IPATH_S_WAIT_DMA - waiting for send DMA queue to drain before generating
- *		      next send completion entry not via send DMA.
  */
-#define IPATH_S_SIGNAL_REQ_WR	0x01
-#define IPATH_S_FENCE_PENDING	0x02
-#define IPATH_S_RDMAR_PENDING	0x04
-#define IPATH_S_ACK_PENDING	0x08
-#define IPATH_S_BUSY		0x10
-#define IPATH_S_WAITING		0x20
-#define IPATH_S_WAIT_SSN_CREDIT	0x40
-#define IPATH_S_WAIT_DMA	0x80
-
-#define IPATH_S_ANY_WAIT (IPATH_S_FENCE_PENDING | IPATH_S_RDMAR_PENDING | \
-	IPATH_S_WAITING | IPATH_S_WAIT_SSN_CREDIT | IPATH_S_WAIT_DMA)
-
-#define IPATH_PSN_CREDIT	512
+#define IPATH_S_BUSY		0
+#define IPATH_S_SIGNAL_REQ_WR	1
 
 /*
  * Since struct ipath_swqe is not a fixed size, we can't simply index into
@@ -488,15 +369,15 @@ static inline struct ipath_swqe *get_swqe_ptr(struct ipath_qp *qp,
 
 /*
  * Since struct ipath_rwqe is not a fixed size, we can't simply index into
- * struct ipath_rwq.wq.  This function does the array index computation.
+ * struct ipath_rq.wq.  This function does the array index computation.
  */
 static inline struct ipath_rwqe *get_rwqe_ptr(struct ipath_rq *rq,
 					      unsigned n)
 {
 	return (struct ipath_rwqe *)
-		((char *) rq->wq->wq +
+		((char *) rq->wq +
 		 (sizeof(struct ipath_rwqe) +
-		  rq->max_sge * sizeof(struct ib_sge)) * n);
+		  rq->max_sge * sizeof(struct ipath_sge)) * n);
 }
 
 /*
@@ -534,14 +415,12 @@ struct ipath_opcode_stats {
 
 struct ipath_ibdev {
 	struct ib_device ibdev;
+	struct list_head dev_list;
 	struct ipath_devdata *dd;
-	struct list_head pending_mmaps;
-	spinlock_t mmap_offset_lock;
-	u32 mmap_offset;
 	int ib_unit;		/* This is the device number */
 	u16 sm_lid;		/* in host order */
 	u8 sm_sl;
-	u8 mkeyprot;
+	u8 mkeyprot_resv_lmc;
 	/* non-zero when timer is set */
 	unsigned long mkey_lease_timeout;
 
@@ -550,28 +429,17 @@ struct ipath_ibdev {
 	struct ipath_lkey_table lk_table;
 	struct list_head pending[3];	/* FIFO of QPs waiting for ACKs */
 	struct list_head piowait;	/* list for wait PIO buf */
-	struct list_head txreq_free;
-	void *txreq_bufs;
 	/* list of QPs waiting for RNR timer */
 	struct list_head rnrwait;
 	spinlock_t pending_lock;
 	__be64 sys_image_guid;	/* in network order */
 	__be64 gid_prefix;	/* in network order */
 	__be64 mkey;
-
 	u32 n_pds_allocated;	/* number of PDs allocated for device */
-	spinlock_t n_pds_lock;
 	u32 n_ahs_allocated;	/* number of AHs allocated for device */
-	spinlock_t n_ahs_lock;
 	u32 n_cqs_allocated;	/* number of CQs allocated for device */
-	spinlock_t n_cqs_lock;
-	u32 n_qps_allocated;	/* number of QPs allocated for device */
-	spinlock_t n_qps_lock;
 	u32 n_srqs_allocated;	/* number of SRQs allocated for device */
-	spinlock_t n_srqs_lock;
 	u32 n_mcast_grps_allocated; /* number of mcast groups allocated */
-	spinlock_t n_mcast_grps_lock;
-
 	u64 ipath_sword;	/* total dwords sent (sample result) */
 	u64 ipath_rword;	/* total dwords received (sample result) */
 	u64 ipath_spkts;	/* total packets sent (sample result) */
@@ -596,7 +464,6 @@ struct ipath_ibdev {
 	u32 z_pkey_violations;			/* starting count for PMA */
 	u32 z_local_link_integrity_errors;	/* starting count for PMA */
 	u32 z_excessive_buffer_overrun_errors;	/* starting count for PMA */
-	u32 z_vl15_dropped;			/* starting count for PMA */
 	u32 n_rc_resends;
 	u32 n_rc_acks;
 	u32 n_rc_qacks;
@@ -610,7 +477,7 @@ struct ipath_ibdev {
 	u32 n_wqe_errs;
 	u32 n_rdma_dup_busy;
 	u32 n_piowait;
-	u32 n_unaligned;
+	u32 n_no_piobuf;
 	u32 port_cap_flags;
 	u32 pma_sample_start;
 	u32 pma_sample_interval;
@@ -622,39 +489,23 @@ struct ipath_ibdev {
 	u16 pending_index;	/* which pending queue is active */
 	u8 pma_sample_status;
 	u8 subnet_timeout;
+	u8 link_width_enabled;
 	u8 vl_high_limit;
 	struct ipath_opcode_stats opstats[128];
 };
 
-struct ipath_verbs_counters {
-	u64 symbol_error_counter;
-	u64 link_error_recovery_counter;
-	u64 link_downed_counter;
-	u64 port_rcv_errors;
-	u64 port_rcv_remphys_errors;
-	u64 port_xmit_discards;
-	u64 port_xmit_data;
-	u64 port_rcv_data;
-	u64 port_xmit_packets;
-	u64 port_rcv_packets;
-	u32 local_link_integrity_errors;
-	u32 excessive_buffer_overrun_errors;
-	u32 vl15_dropped;
-};
-
-struct ipath_verbs_txreq {
-	struct ipath_qp         *qp;
-	struct ipath_swqe       *wqe;
-	u32                      map_len;
-	u32                      len;
-	struct ipath_sge_state  *ss;
-	struct ipath_pio_header  hdr;
-	struct ipath_sdma_txreq  txreq;
+struct ipath_ucontext {
+	struct ib_ucontext ibucontext;
 };
 
 static inline struct ipath_mr *to_imr(struct ib_mr *ibmr)
 {
 	return container_of(ibmr, struct ipath_mr, ibmr);
+}
+
+static inline struct ipath_fmr *to_ifmr(struct ib_fmr *ibfmr)
+{
+	return container_of(ibfmr, struct ipath_fmr, ibfmr);
 }
 
 static inline struct ipath_pd *to_ipd(struct ib_pd *ibpd)
@@ -687,23 +538,18 @@ static inline struct ipath_ibdev *to_idev(struct ib_device *ibdev)
 	return container_of(ibdev, struct ipath_ibdev, ibdev);
 }
 
-/*
- * This must be called with s_lock held.
- */
-static inline void ipath_schedule_send(struct ipath_qp *qp)
-{
-	if (qp->s_flags & IPATH_S_ANY_WAIT)
-		qp->s_flags &= ~IPATH_S_ANY_WAIT;
-	if (!(qp->s_flags & IPATH_S_BUSY))
-		tasklet_hi_schedule(&qp->s_task);
-}
-
 int ipath_process_mad(struct ib_device *ibdev,
 		      int mad_flags,
 		      u8 port_num,
 		      struct ib_wc *in_wc,
 		      struct ib_grh *in_grh,
 		      struct ib_mad *in_mad, struct ib_mad *out_mad);
+
+static inline struct ipath_ucontext *to_iucontext(struct ib_ucontext
+						  *ibucontext)
+{
+	return container_of(ibucontext, struct ipath_ucontext, ibucontext);
+}
 
 /*
  * Compare the lower 24 bits of the two values.
@@ -715,13 +561,6 @@ static inline int ipath_cmp24(u32 a, u32 b)
 }
 
 struct ipath_mcast *ipath_mcast_find(union ib_gid *mgid);
-
-int ipath_snapshot_counters(struct ipath_devdata *dd, u64 *swords,
-			    u64 *rwords, u64 *spkts, u64 *rpkts,
-			    u64 *xmit_wait);
-
-int ipath_get_counters(struct ipath_devdata *dd,
-		       struct ipath_verbs_counters *cntrs);
 
 int ipath_multicast_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid);
 
@@ -739,28 +578,33 @@ struct ib_qp *ipath_create_qp(struct ib_pd *ibpd,
 
 int ipath_destroy_qp(struct ib_qp *ibqp);
 
-int ipath_error_qp(struct ipath_qp *qp, enum ib_wc_status err);
-
 int ipath_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
-		    int attr_mask, struct ib_udata *udata);
+		    int attr_mask);
 
 int ipath_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		   int attr_mask, struct ib_qp_init_attr *init_attr);
 
-unsigned ipath_free_all_qps(struct ipath_qp_table *qpt);
+void ipath_free_all_qps(struct ipath_qp_table *qpt);
 
 int ipath_init_qp_table(struct ipath_ibdev *idev, int size);
 
+void ipath_sqerror_qp(struct ipath_qp *qp, struct ib_wc *wc);
+
 void ipath_get_credit(struct ipath_qp *qp, u32 aeth);
 
-unsigned ipath_ib_rate_to_mult(enum ib_rate rate);
+void ipath_cq_enter(struct ipath_cq *cq, struct ib_wc *entry, int sig);
 
-int ipath_verbs_send(struct ipath_qp *qp, struct ipath_ib_header *hdr,
-		     u32 hdrwords, struct ipath_sge_state *ss, u32 len);
+int ipath_rkey_ok(struct ipath_ibdev *dev, struct ipath_sge_state *ss,
+		  u32 len, u64 vaddr, u32 rkey, int acc);
+
+int ipath_lkey_ok(struct ipath_lkey_table *rkt, struct ipath_sge *isge,
+		  struct ib_sge *sge, int acc);
 
 void ipath_copy_sge(struct ipath_sge_state *ss, void *data, u32 length);
 
 void ipath_skip_sge(struct ipath_sge_state *ss, u32 length);
+
+int ipath_post_ruc_send(struct ipath_qp *qp, struct ib_send_wr *wr);
 
 void ipath_uc_rcv(struct ipath_ibdev *dev, struct ipath_ib_header *hdr,
 		  int has_grh, void *data, u32 tlen, struct ipath_qp *qp);
@@ -768,9 +612,7 @@ void ipath_uc_rcv(struct ipath_ibdev *dev, struct ipath_ib_header *hdr,
 void ipath_rc_rcv(struct ipath_ibdev *dev, struct ipath_ib_header *hdr,
 		  int has_grh, void *data, u32 tlen, struct ipath_qp *qp);
 
-void ipath_restart_rc(struct ipath_qp *qp, u32 psn);
-
-void ipath_rc_error(struct ipath_qp *qp, enum ib_wc_status err);
+void ipath_restart_rc(struct ipath_qp *qp, u32 psn, struct ib_wc *wc);
 
 int ipath_post_ud_send(struct ipath_qp *qp, struct ib_send_wr *wr);
 
@@ -782,10 +624,10 @@ int ipath_alloc_lkey(struct ipath_lkey_table *rkt,
 
 void ipath_free_lkey(struct ipath_lkey_table *rkt, u32 lkey);
 
-int ipath_lkey_ok(struct ipath_qp *qp, struct ipath_sge *isge,
+int ipath_lkey_ok(struct ipath_lkey_table *rkt, struct ipath_sge *isge,
 		  struct ib_sge *sge, int acc);
 
-int ipath_rkey_ok(struct ipath_qp *qp, struct ipath_sge_state *ss,
+int ipath_rkey_ok(struct ipath_ibdev *dev, struct ipath_sge_state *ss,
 		  u32 len, u64 vaddr, u32 rkey, int acc);
 
 int ipath_post_srq_receive(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
@@ -796,8 +638,7 @@ struct ib_srq *ipath_create_srq(struct ib_pd *ibpd,
 				struct ib_udata *udata);
 
 int ipath_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
-		     enum ib_srq_attr_mask attr_mask,
-		     struct ib_udata *udata);
+		     enum ib_srq_attr_mask attr_mask);
 
 int ipath_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr);
 
@@ -807,13 +648,13 @@ void ipath_cq_enter(struct ipath_cq *cq, struct ib_wc *entry, int sig);
 
 int ipath_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *entry);
 
-struct ib_cq *ipath_create_cq(struct ib_device *ibdev, int entries, int comp_vector,
+struct ib_cq *ipath_create_cq(struct ib_device *ibdev, int entries,
 			      struct ib_ucontext *context,
 			      struct ib_udata *udata);
 
 int ipath_destroy_cq(struct ib_cq *ibcq);
 
-int ipath_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags);
+int ipath_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify notify);
 
 int ipath_resize_cq(struct ib_cq *ibcq, int cqe, struct ib_udata *udata);
 
@@ -823,8 +664,8 @@ struct ib_mr *ipath_reg_phys_mr(struct ib_pd *pd,
 				struct ib_phys_buf *buffer_list,
 				int num_phys_buf, int acc, u64 *iova_start);
 
-struct ib_mr *ipath_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
-				u64 virt_addr, int mr_access_flags,
+struct ib_mr *ipath_reg_user_mr(struct ib_pd *pd, struct ib_umem *region,
+				int mr_access_flags,
 				struct ib_udata *udata);
 
 int ipath_dereg_mr(struct ib_mr *ibmr);
@@ -839,71 +680,29 @@ int ipath_unmap_fmr(struct list_head *fmr_list);
 
 int ipath_dealloc_fmr(struct ib_fmr *ibfmr);
 
-void ipath_release_mmap_info(struct kref *ref);
-
-struct ipath_mmap_info *ipath_create_mmap_info(struct ipath_ibdev *dev,
-					       u32 size,
-					       struct ib_ucontext *context,
-					       void *obj);
-
-void ipath_update_mmap_info(struct ipath_ibdev *dev,
-			    struct ipath_mmap_info *ip,
-			    u32 size, void *obj);
-
-int ipath_mmap(struct ib_ucontext *context, struct vm_area_struct *vma);
+void ipath_no_bufs_available(struct ipath_qp *qp, struct ipath_ibdev *dev);
 
 void ipath_insert_rnr_queue(struct ipath_qp *qp);
-
-int ipath_init_sge(struct ipath_qp *qp, struct ipath_rwqe *wqe,
-		   u32 *lengthp, struct ipath_sge_state *ss);
 
 int ipath_get_rwqe(struct ipath_qp *qp, int wr_id_only);
 
 u32 ipath_make_grh(struct ipath_ibdev *dev, struct ib_grh *hdr,
 		   struct ib_global_route *grh, u32 hwords, u32 nwords);
 
-void ipath_make_ruc_header(struct ipath_ibdev *dev, struct ipath_qp *qp,
-			   struct ipath_other_headers *ohdr,
-			   u32 bth0, u32 bth2);
+void ipath_do_ruc_send(unsigned long data);
 
-void ipath_do_send(unsigned long data);
+u32 ipath_make_rc_ack(struct ipath_qp *qp, struct ipath_other_headers *ohdr,
+		      u32 pmtu);
 
-void ipath_send_complete(struct ipath_qp *qp, struct ipath_swqe *wqe,
-			 enum ib_wc_status status);
+int ipath_make_rc_req(struct ipath_qp *qp, struct ipath_other_headers *ohdr,
+		      u32 pmtu, u32 *bth0p, u32 *bth2p);
 
-int ipath_make_rc_req(struct ipath_qp *qp);
-
-int ipath_make_uc_req(struct ipath_qp *qp);
-
-int ipath_make_ud_req(struct ipath_qp *qp);
-
-int ipath_register_ib_device(struct ipath_devdata *);
-
-void ipath_unregister_ib_device(struct ipath_ibdev *);
-
-void ipath_ib_rcv(struct ipath_ibdev *, void *, void *, u32);
-
-int ipath_ib_piobufavail(struct ipath_ibdev *);
-
-unsigned ipath_get_npkeys(struct ipath_devdata *);
-
-u32 ipath_get_cr_errpkey(struct ipath_devdata *);
-
-unsigned ipath_get_pkey(struct ipath_devdata *, unsigned);
+int ipath_make_uc_req(struct ipath_qp *qp, struct ipath_other_headers *ohdr,
+		      u32 pmtu, u32 *bth0p, u32 *bth2p);
 
 extern const enum ib_wc_opcode ib_ipath_wc_opcode[];
 
-/*
- * Below converts HCA-specific LinkTrainingState to IB PhysPortState
- * values.
- */
 extern const u8 ipath_cvt_physportstate[];
-#define IB_PHYSPORTSTATE_SLEEP 1
-#define IB_PHYSPORTSTATE_POLL 2
-#define IB_PHYSPORTSTATE_DISABLED 3
-#define IB_PHYSPORTSTATE_CFG_TRAIN 4
-#define IB_PHYSPORTSTATE_LINKUP 5
-#define IB_PHYSPORTSTATE_LINK_ERR_RECOVER 6
 
 extern const int ib_ipath_state_ops[];
 
@@ -914,8 +713,6 @@ extern unsigned int ib_ipath_max_cqes;
 extern unsigned int ib_ipath_max_cqs;
 
 extern unsigned int ib_ipath_max_qp_wrs;
-
-extern unsigned int ib_ipath_max_qps;
 
 extern unsigned int ib_ipath_max_sges;
 
@@ -930,7 +727,5 @@ extern unsigned int ib_ipath_max_srq_sges;
 extern unsigned int ib_ipath_max_srq_wrs;
 
 extern const u32 ib_ipath_rnr_table[];
-
-extern struct ib_dma_mapping_ops ipath_dma_mapping_ops;
 
 #endif				/* IPATH_VERBS_H */

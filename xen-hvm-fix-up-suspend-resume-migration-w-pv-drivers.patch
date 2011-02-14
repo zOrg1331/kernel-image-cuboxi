@@ -1,0 +1,69 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Tue, 7 Sep 2010 09:09:08 -0400
+Subject: [xen] hvm: fix UP suspend/resume/migration w/PV drivers
+Message-id: <1754004907.229391283850548465.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 28167
+O-Subject: [RHEL5.6 Xen hypervisor PATCH] Fix  HVM guest w/ UP and PV driver
+	live migration and suspend/resume
+Bugzilla: 629773
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+BZ 629773 - HVM guest w/ UP and PV driver hangs after live migration or suspend/resume
+https://bugzilla.redhat.com/show_bug.cgi?id=629773
+
+When user tries to save/migrate guest using xen vnif driver, guest is stored
+in locked state so after restoring/migrating it is hanged. This hang is caused
+by interrupt jumping in the save process so it breaks guest state.
+
+Upstream introduced c/s 15691 fixing save/migrate for callback_via using PCI. As FJ
+mentioned, this c/s fixed problem for them. Testing shows that it is fixing problem.
+
+This patch deassert virtual interrupt so it can't jump into save procedure and it can be
+done successfully. After saving virtual interrupt is reasserted back.
+
+Patch:
+--
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/irq.c b/arch/x86/hvm/irq.c
+index 53a4b98..a47d2fa 100644
+--- a/arch/x86/hvm/irq.c
++++ b/arch/x86/hvm/irq.c
+@@ -372,9 +372,33 @@ static void irq_dump(struct domain *d)
+ static int irq_save_pci(struct domain *d, hvm_domain_context_t *h)
+ {
+     struct hvm_irq *hvm_irq = &d->arch.hvm_domain.irq;
++    unsigned int asserted, pdev, pintx;
++    int rc;
++
++    spin_lock(&d->arch.hvm_domain.irq_lock);
++
++    pdev  = hvm_irq->callback_via.pci.dev;
++    pintx = hvm_irq->callback_via.pci.intx;
++    asserted = (hvm_irq->callback_via_asserted &&
++                (hvm_irq->callback_via_type == HVMIRQ_callback_pci_intx));
++
++    /*
++     * Deassert virtual interrupt via PCI INTx line. The virtual interrupt
++     * status is not save/restored, so the INTx line must be deasserted in
++     * the restore context.
++     */
++    if ( asserted )
++        __hvm_pci_intx_deassert(d, pdev, pintx);
+ 
+     /* Save PCI IRQ lines */
+-    return ( hvm_save_entry(PCI_IRQ, 0, h, &hvm_irq->pci_intx) );
++    rc = hvm_save_entry(PCI_IRQ, 0, h, &hvm_irq->pci_intx);
++
++    if ( asserted )
++        __hvm_pci_intx_assert(d, pdev, pintx);    
++
++    spin_unlock(&d->arch.hvm_domain.irq_lock);
++
++    return rc;
+ }
+ 
+ static int irq_save_isa(struct domain *d, hvm_domain_context_t *h)

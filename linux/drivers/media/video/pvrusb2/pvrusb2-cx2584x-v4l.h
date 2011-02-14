@@ -1,5 +1,6 @@
 /*
  *
+ *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
@@ -34,9 +35,9 @@
 
 
 
-#include "pvrusb2-hdw-internal.h"
+#include "pvrusb2-i2c-core.h"
 
-void pvr2_cx25840_subdev_update(struct pvr2_hdw *, struct v4l2_subdev *sd);
+int pvr2_i2c_cx2584x_v4l_setup(struct pvr2_hdw *,struct pvr2_i2c_client *);
 
 
 #endif /* __PVRUSB2_CX2584X_V4L_H */

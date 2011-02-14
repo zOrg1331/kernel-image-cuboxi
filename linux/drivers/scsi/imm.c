@@ -36,7 +36,7 @@ typedef struct {
 	int base_hi;		/* Hi Base address for ECP-ISA chipset */
 	int mode;		/* Transfer mode                */
 	struct scsi_cmnd *cur_cmd;	/* Current queued command       */
-	struct delayed_work imm_tq;	/* Polling interrupt stuff       */
+	struct work_struct imm_tq;	/* Polling interrupt stuff       */
 	unsigned long jstart;	/* Jiffies at start             */
 	unsigned failed:1;	/* Failure flag                 */
 	unsigned dp:1;		/* Data phase present           */
@@ -163,7 +163,7 @@ static int imm_proc_info(struct Scsi_Host *host, char *buffer, char **start,
 
 #if IMM_DEBUG > 0
 #define imm_fail(x,y) printk("imm: imm_fail(%i) from %s at line %d\n",\
-	   y, __func__, __LINE__); imm_fail_func(x,y);
+	   y, __FUNCTION__, __LINE__); imm_fail_func(x,y);
 static inline void
 imm_fail_func(imm_struct *dev, int error_code)
 #else
@@ -705,7 +705,9 @@ static int imm_completion(struct scsi_cmnd *cmd)
 				cmd->SCp.buffer++;
 				cmd->SCp.this_residual =
 				    cmd->SCp.buffer->length;
-				cmd->SCp.ptr = sg_virt(cmd->SCp.buffer);
+				cmd->SCp.ptr =
+				    page_address(cmd->SCp.buffer->page) +
+				    cmd->SCp.buffer->offset;
 
 				/*
 				 * Make sure that we transfer even number of bytes
@@ -731,14 +733,19 @@ static int imm_completion(struct scsi_cmnd *cmd)
  * the scheduler's task queue to generate a stream of call-backs and
  * complete the request when the drive is ready.
  */
-static void imm_interrupt(struct work_struct *work)
+static void imm_interrupt(void *data)
 {
-	imm_struct *dev = container_of(work, imm_struct, imm_tq.work);
+	imm_struct *dev = (imm_struct *) data;
 	struct scsi_cmnd *cmd = dev->cur_cmd;
 	struct Scsi_Host *host = cmd->device->host;
 	unsigned long flags;
 
+	if (!cmd) {
+		printk("IMM: bug in imm_interrupt\n");
+		return;
+	}
 	if (imm_engine(dev, cmd)) {
+		INIT_WORK(&dev->imm_tq, imm_interrupt, (void *) dev);
 		schedule_delayed_work(&dev->imm_tq, 1);
 		return;
 	}
@@ -837,16 +844,21 @@ static int imm_engine(imm_struct *dev, struct scsi_cmnd *cmd)
 
 		/* Phase 4 - Setup scatter/gather buffers */
 	case 4:
-		if (scsi_bufflen(cmd)) {
-			cmd->SCp.buffer = scsi_sglist(cmd);
+		if (cmd->use_sg) {
+			/* if many buffers are available, start filling the first */
+			cmd->SCp.buffer =
+			    (struct scatterlist *) cmd->request_buffer;
 			cmd->SCp.this_residual = cmd->SCp.buffer->length;
-			cmd->SCp.ptr = sg_virt(cmd->SCp.buffer);
+			cmd->SCp.ptr =
+			    page_address(cmd->SCp.buffer->page) +
+			    cmd->SCp.buffer->offset;
 		} else {
+			/* else fill the only available buffer */
 			cmd->SCp.buffer = NULL;
-			cmd->SCp.this_residual = 0;
-			cmd->SCp.ptr = NULL;
+			cmd->SCp.this_residual = cmd->request_bufflen;
+			cmd->SCp.ptr = cmd->request_buffer;
 		}
-		cmd->SCp.buffers_residual = scsi_sg_count(cmd) - 1;
+		cmd->SCp.buffers_residual = cmd->use_sg - 1;
 		cmd->SCp.phase++;
 		if (cmd->SCp.this_residual & 0x01)
 			cmd->SCp.this_residual++;
@@ -941,7 +953,8 @@ static int imm_queuecommand(struct scsi_cmnd *cmd,
 	cmd->result = DID_ERROR << 16;	/* default return code */
 	cmd->SCp.phase = 0;	/* bus free */
 
-	schedule_delayed_work(&dev->imm_tq, 0);
+	INIT_WORK(&dev->imm_tq, imm_interrupt, dev);
+	schedule_work(&dev->imm_tq);
 
 	imm_pb_claim(dev);
 
@@ -1140,7 +1153,7 @@ static int __imm_attach(struct parport *pb)
 {
 	struct Scsi_Host *host;
 	imm_struct *dev;
-	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(waiting);
+	DECLARE_WAIT_QUEUE_HEAD(waiting);
 	DEFINE_WAIT(wait);
 	int ports;
 	int modes, ppb;
@@ -1148,10 +1161,11 @@ static int __imm_attach(struct parport *pb)
 
 	init_waitqueue_head(&waiting);
 
-	dev = kzalloc(sizeof(imm_struct), GFP_KERNEL);
+	dev = kmalloc(sizeof(imm_struct), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 
+	memset(dev, 0, sizeof(imm_struct));
 
 	dev->base = -1;
 	dev->mode = IMM_AUTODETECT;
@@ -1211,7 +1225,7 @@ static int __imm_attach(struct parport *pb)
 	else
 		ports = 8;
 
-	INIT_DELAYED_WORK(&dev->imm_tq, imm_interrupt);
+	INIT_WORK(&dev->imm_tq, imm_interrupt, dev);
 
 	err = -ENOMEM;
 	host = scsi_host_alloc(&imm_template, sizeof(imm_struct *));

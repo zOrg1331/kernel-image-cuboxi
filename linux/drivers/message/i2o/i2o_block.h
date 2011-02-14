@@ -64,7 +64,7 @@
 
 /* I2O Block OSM mempool struct */
 struct i2o_block_mempool {
-	struct kmem_cache *slab;
+	kmem_cache_t *slab;
 	mempool_t *pool;
 };
 
@@ -96,7 +96,7 @@ struct i2o_block_request {
 
 /* I2O Block device delayed request */
 struct i2o_block_delayed_request {
-	struct delayed_work work;
+	struct work_struct work;
 	struct request_queue *queue;
 };
 

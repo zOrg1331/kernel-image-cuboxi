@@ -1,0 +1,52 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Fri, 5 Mar 2010 13:35:29 -0500
+Subject: [x86_64] xen: fix missing 32-bit syscalls on 64-bit Xen
+Message-id: <4B9108A1.20108@redhat.com>
+Patchwork-id: 23500
+O-Subject: [RHEL5.5 PATCH]: Fix missing 32-bit syscalls on 64-bit Xen
+Bugzilla: 559410
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+All,
+     This is the followup to Wade Mealing's earlier
+"[RHEL5.6 PATCH]  fix missing 32 bit syscalls on 64 bit. (BZ 559410 )"
+patch.  It just wires up the syscalls for 32-bit readahead, fadvise, and
+sync_file_range running on 64-bit Xen kernels.  Tested by me to work
+as per the BZ.  This should solve BZ 559410.  Please review and ACK.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/ia32/ia32entry-xen.S b/arch/x86_64/ia32/ia32entry-xen.S
+index 1f5d8ee..23f380d 100644
+--- a/arch/x86_64/ia32/ia32entry-xen.S
++++ b/arch/x86_64/ia32/ia32entry-xen.S
+@@ -663,7 +663,7 @@ ia32_sys_call_table:
+ 	.quad quiet_ni_syscall		/* tux */
+ 	.quad quiet_ni_syscall    	/* security */
+ 	.quad sys_gettid	
+-	.quad sys_readahead	/* 225 */
++	.quad sys32_readahead	/* 225 */
+ 	.quad sys_setxattr
+ 	.quad sys_lsetxattr
+ 	.quad sys_fsetxattr
+@@ -688,7 +688,7 @@ ia32_sys_call_table:
+ 	.quad compat_sys_io_getevents
+ 	.quad compat_sys_io_submit
+ 	.quad sys_io_cancel
+-	.quad sys_fadvise64		/* 250 */
++	.quad sys32_fadvise64		/* 250 */
+ 	.quad quiet_ni_syscall 	/* free_huge_pages */
+ 	.quad sys_exit_group
+ 	.quad sys32_lookup_dcookie
+@@ -752,7 +752,7 @@ ia32_sys_call_table:
+ 	.quad compat_sys_set_robust_list
+ 	.quad compat_sys_get_robust_list
+ 	.quad sys_splice
+-	.quad sys_sync_file_range
++	.quad sys32_sync_file_range
+ 	.quad sys_tee
+ 	.quad compat_sys_vmsplice
+ 	.quad compat_sys_move_pages

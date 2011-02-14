@@ -1,0 +1,100 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 30 Aug 2010 15:17:14 -0400
+Subject: [scsi] ipr: fix register read address on 64-bit adapters
+Message-id: <20100830150527.5212.73819.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27920
+O-Subject: [PATCH RHEL5.6 BZ626566 4/16] ipr: fix a register read to use correct
+	address for 64 bit adapters
+Bugzilla: 626566
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626566
+
+Description:
+------------
+Fix ipr_reset_enable_ioa() to read the correct IOA to host interrupt register
+address for 64 bit adapters.  We need to read the lower 32 bits, not the upper
+32 bits.
+
+Also change the write of the 64 bit mask value to a single writeq instead
+of two writel calls.
+
+Finally, use the correct u8 type for the type field in the ipr_resource_entry
+structure.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Acked-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2713332
+
+Upstream Status:
+----------------
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;
+a=commit;h=7be96900a2a662c67403559acd250f011b1d70db
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 1e20772..5a435c0 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -7160,13 +7160,14 @@ static int ipr_reset_enable_ioa(struct ipr_cmnd *ipr_cmd)
+ {
+ 	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
+ 	volatile u32 int_reg;
++	volatile u64 maskval;
+ 
+ 	ENTER;
+ 	ipr_cmd->job_step = ipr_ioafp_identify_hrrq;
+ 	ipr_init_ioa_mem(ioa_cfg);
+ 
+ 	ioa_cfg->allow_interrupts = 1;
+-	int_reg = readl(ioa_cfg->regs.sense_interrupt_reg);
++	int_reg = readl(ioa_cfg->regs.sense_interrupt_reg32);
+ 
+ 	if (int_reg & IPR_PCII_IOA_TRANS_TO_OPER) {
+ 		writel((IPR_PCII_ERROR_INTERRUPTS | IPR_PCII_HRRQ_UPDATED),
+@@ -7178,9 +7179,12 @@ static int ipr_reset_enable_ioa(struct ipr_cmnd *ipr_cmd)
+ 	/* Enable destructive diagnostics on IOA */
+ 	writel(ioa_cfg->doorbell, ioa_cfg->regs.set_uproc_interrupt_reg32);
+ 
+-	writel(IPR_PCII_OPER_INTERRUPTS, ioa_cfg->regs.clr_interrupt_mask_reg32);
+-	if (ioa_cfg->sis64)
+-		writel(IPR_PCII_IPL_STAGE_CHANGE, ioa_cfg->regs.clr_interrupt_mask_reg);
++	if (ioa_cfg->sis64) {
++		maskval = IPR_PCII_IPL_STAGE_CHANGE;
++		maskval = (maskval << 32) | IPR_PCII_OPER_INTERRUPTS;
++		writeq(maskval, ioa_cfg->regs.clr_interrupt_mask_reg);
++	} else
++		writel(IPR_PCII_OPER_INTERRUPTS, ioa_cfg->regs.clr_interrupt_mask_reg32);
+ 
+ 	int_reg = readl(ioa_cfg->regs.sense_interrupt_mask_reg);
+ 
+diff --git a/drivers/scsi/ipr.h b/drivers/scsi/ipr.h
+index 211c58d..17fac0a 100644
+--- a/drivers/scsi/ipr.h
++++ b/drivers/scsi/ipr.h
+@@ -1201,7 +1201,7 @@ struct ipr_resource_entry {
+ 	u8 flags;
+ 	__be16 res_flags;
+ 
+-	__be32 type;
++	u8 type;
+ 
+ 	u8 qmodel;
+ 	struct ipr_std_inq_data std_inq_data;

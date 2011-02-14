@@ -1,0 +1,215 @@
+Date: Mon, 02 Oct 2006 23:13:12 -0400
+From: Jim Paradis <jparadis@redhat.com>
+Subject: [RHEL5] Disable PCI mmconf and segmentation on HP xw9300/9400
+
+This patch is a stopgap to address Bug 207396.  The problem is that
+HP xw9300 and xw9400 systems have problems with PCI mmconfig access
+and with PCI bus segmentation.  We saw these problems in RHEL4 as
+well.  jgarzik is working on a patch to support multiple PCI domains,
+but it's not had enough soak time for us to slip it into a beta at
+this stage.  This patch is a port of the patch I made for RHEL4.
+It implements a pair of dmi quirks to turn turn off MMCONFIG and
+collapse all PCI domains into domain 0 on these systems.  Tested
+on a xw9300, works a champ.
+
+--- linux-2.6.18.noarch/drivers/acpi/pci_root.c.orig	2006-10-02 18:41:55.000000000 -0400
++++ linux-2.6.18.noarch/drivers/acpi/pci_root.c	2006-10-02 18:43:56.000000000 -0400
+@@ -67,6 +67,10 @@
+ 
+ static struct acpi_pci_driver *sub_driver;
+ 
++#if defined(CONFIG_X86)
++extern int pci_noseg;
++#endif
++
+ int acpi_pci_register_driver(struct acpi_pci_driver *driver)
+ {
+ 	int n = 0;
+@@ -202,6 +206,13 @@
+ 		goto end;
+ 	}
+ 
++#if defined(CONFIG_X86)
++	if (root->id.segment && pci_noseg) {
++		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "pci=noseg enabled, forcing segment %d to 0\n", root->id.segment));
++		root->id.segment = 0;
++	}
++#endif
++
+ 	/* 
+ 	 * Bus
+ 	 * ---
+--- linux-2.6.18.noarch/arch/i386/pci/mmconfig.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/pci/mmconfig.c	2006-10-02 18:07:59.000000000 -0400
+@@ -12,6 +12,7 @@
+ #include <linux/pci.h>
+ #include <linux/init.h>
+ #include <linux/acpi.h>
++#include <linux/dmi.h>
+ #include <asm/e820.h>
+ #include "pci.h"
+ 
+@@ -187,8 +188,41 @@
+ 	}
+ }
+ 
++static int __devinit disable_mmconf(struct dmi_system_id *d)
++{
++	pci_probe &= ~PCI_PROBE_MMCONF;
++	printk(KERN_INFO "%s detected: disabling PCI MMCONFIG\n", d->ident);
++	return 0;
++}
++
++
++/*
++ * Systems which cannot use PCI MMCONFIG at this time...
++ */
++static struct dmi_system_id __devinitdata nommconf_dmi_table[] = {
++	{
++		.callback = disable_mmconf,
++		.ident = "HP xw9300 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9300 Workstation"),
++		},
++	},
++	{
++		.callback = disable_mmconf,
++		.ident = "HP xw9400 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
++		},
++	},
++
++	{}
++};
++
++
+ void __init pci_mmcfg_init(void)
+ {
++	dmi_check_system(nommconf_dmi_table);
++
+ 	if ((pci_probe & PCI_PROBE_MMCONF) == 0)
+ 		return;
+ 
+--- linux-2.6.18.noarch/arch/i386/pci/common.c.orig	2006-10-02 18:46:28.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/pci/common.c	2006-10-02 18:48:53.000000000 -0400
+@@ -26,6 +26,10 @@
+ struct pci_bus *pci_root_bus;
+ struct pci_raw_ops *raw_pci_ops;
+ 
++#ifdef CONFIG_X86
++int pci_noseg = 0;
++#endif;
++
+ static int pci_read(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *value)
+ {
+ 	return raw_pci_ops->read(0, bus->number, devfn, where, size, value);
+@@ -130,6 +134,16 @@
+ }
+ #endif
+ 
++#ifdef CONFIG_X86
++static int __devinit disable_pci_seg(struct dmi_system_id *d)
++{
++	pci_noseg = 1;
++	printk(KERN_INFO "%s detected: disabling PCI segments\n", d->ident);
++	return 0;
++}
++#endif
++
++
+ /*
+  * Laptops which need pci=assign-busses to see Cardbus cards
+  */
+@@ -144,6 +158,23 @@
+ 		},
+ 	},
+ #endif		/* __i386__ */
++#ifdef CONFIG_X86
++	{
++		.callback = disable_pci_seg,
++		.ident = "HP xw9300 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9300 Workstation"),
++		},
++	},
++	{
++		.callback = disable_pci_seg,
++		.ident = "HP xw9400 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
++		},
++	},
++#endif
++
+ 	{}
+ };
+ 
+@@ -238,6 +269,12 @@
+ 		return NULL;
+ 	}
+ #endif
++#ifdef CONFIG_X86
++	else if (!strcmp(str, "noseg")) {
++		pci_noseg = 1;
++		return NULL;
++	}
++#endif
+ 	else if (!strcmp(str, "noacpi")) {
+ 		acpi_noirq_set();
+ 		return NULL;
+--- linux-2.6.18.noarch/arch/x86_64/pci/mmconfig.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/pci/mmconfig.c	2006-10-02 18:07:59.000000000 -0400
+@@ -9,6 +9,7 @@
+ #include <linux/init.h>
+ #include <linux/acpi.h>
+ #include <linux/bitmap.h>
++#include <linux/dmi.h>
+ #include <asm/e820.h>
+ 
+ #include "pci.h"
+@@ -164,10 +165,43 @@
+ 	}
+ }
+ 
++static int __devinit disable_mmconf(struct dmi_system_id *d)
++{
++	pci_probe &= ~PCI_PROBE_MMCONF;
++	printk(KERN_INFO "%s detected: disabling PCI MMCONFIG\n", d->ident);
++	return 0;
++}
++
++
++/*
++ * Systems which cannot use PCI MMCONFIG at this time...
++ */
++static struct dmi_system_id __devinitdata nommconf_dmi_table[] = {
++	{
++		.callback = disable_mmconf,
++		.ident = "HP xw9300 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9300 Workstation"),
++		},
++	},
++	{
++		.callback = disable_mmconf,
++		.ident = "HP xw9400 Workstation",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
++		},
++	},
++
++	{}
++};
++
++
+ void __init pci_mmcfg_init(void)
+ {
+ 	int i;
+ 
++	dmi_check_system(nommconf_dmi_table);
++
+ 	if ((pci_probe & PCI_PROBE_MMCONF) == 0)
+ 		return;
+ 
+

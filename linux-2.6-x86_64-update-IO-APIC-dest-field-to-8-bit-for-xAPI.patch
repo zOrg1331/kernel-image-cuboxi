@@ -1,0 +1,279 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Fri, 2 Nov 2007 13:23:39 -0500
+Subject: [x86_64] update IO-APIC dest field to 8-bit for xAPIC
+Message-id: 472B6B2B.20604@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ #224373: kexec or kdump hangs on ES7000/ONE
+Bugzilla: 224373
+
+BZ #224373: kexec or kdump hangs on ES7000/ONE
+   https://bugzilla.redhat.com/show_bug.cgi?id=224373
+
+Description:
+   Backport of a 2.6.21 patch that addresses the increase in size of
+   the x86_64 physical dest field from 4-bits in the legacy APIC to
+   8-bits in the xAPIC.  The 4-bit physical_dest and 8-bit logical_dest
+   fields in the IO_APIC_route_entry dest union were replaced by a common
+   8-bit dest field, i.e., from this:
+
+         union {         struct { __u32
+                                         __reserved_1    : 24,
+                                         physical_dest   :  4,
+                                         __reserved_2    :  4;
+                         } physical;
+
+                         struct { __u32
+                                         __reserved_1    : 24,
+                                         logical_dest    :  8;
+                         } logical;
+         } dest;
+
+   to this:
+
+        __u32    __reserved_3    : 24,
+                 dest            : 8;
+
+   The kexec/kdump problem was tracked to old code in the io_apic.c file.
+   Inside of disable_IO_APIC(), the obsolete 4-bit field physical.physical_dest
+   was being used.  As of the xAPIC spec this field was expanded to 8 bits.
+   The old code cuts the upper 4 bits off of the APIC ID, and on the
+   ES7000 this causes the timer interrupt to fail on any cell above cell 0
+   (the cell number ends up being the top 4 bits of the APIC ID).
+
+Upstream status:
+   commit ee4eff6ff6cbfc8ce38131058a18802bf6206879
+   Author: Benjamin Romer <benjamin.romer@unisys.com>
+   Date:   Tue Feb 13 13:26:25 2007 +0100
+
+   [PATCH] x86-64: update IO-APIC dest field to 8-bit for xAPIC
+
+   On the Unisys ES7000/ONE system, we encountered a problem where performing
+   a kexec reboot or dump on any cell other than cell 0 causes the system
+   timer to stop working, resulting in a hang during timer calibration in the
+   new kernel.
+
+   We traced the problem to one line of code in disable_IO_APIC(), which needs
+   to restore the timer's IO-APIC configuration before rebooting.  The code is
+   currently using the 4-bit physical destination field, rather than using the
+   8-bit logical destination field, and it cuts off the upper 4 bits of the
+   timer's APIC ID.  If we change this to use the logical destination field,
+   the timer works and we can kexec on the upper cells.  This was tested on
+   two different cells (0 and 2) in an ES7000/ONE system.
+
+   For reference, the relevant Intel xAPIC spec is kept at
+   ftp://download.intel.com/design/chipsets/e8501/datashts/30962001.pdf,
+   specifically on page 334.
+
+   Signed-off-by: Benjamin M Romer <benjamin.romer@unisys.com>
+   Signed-off-by: Andi Kleen <ak@suse.de>
+   Cc: Andi Kleen <ak@suse.de>
+   Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+   Cc: Vivek Goyal <vgoyal@in.ibm.com>
+   Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+
+Testing:
+   Brew-built with no KABI issues.
+   Tested by Unisys, and by Jeff Burke on our in-house ES7000/ONE system.
+
+RHEL-5 Patch:
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+---
+ arch/x86_64/kernel/io_apic-xen.c |   20 +++++++++-----------
+ arch/x86_64/kernel/io_apic.c     |   20 +++++++++-----------
+ include/asm-x86_64/io_apic.h     |   15 ++-------------
+ 3 files changed, 20 insertions(+), 35 deletions(-)
+
+diff --git a/arch/x86_64/kernel/io_apic-xen.c b/arch/x86_64/kernel/io_apic-xen.c
+index 9ba203b..bc894fa 100644
+--- a/arch/x86_64/kernel/io_apic-xen.c
++++ b/arch/x86_64/kernel/io_apic-xen.c
+@@ -956,7 +956,7 @@ static void __init setup_IO_APIC_irqs(void)
+ 		entry.delivery_mode = INT_DELIVERY_MODE;
+ 		entry.dest_mode = INT_DEST_MODE;
+ 		entry.mask = 0;				/* enable IRQ */
+-		entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++		entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 
+ 		idx = find_irq_entry(apic,pin,mp_INT);
+ 		if (idx == -1) {
+@@ -974,7 +974,7 @@ static void __init setup_IO_APIC_irqs(void)
+ 		if (irq_trigger(idx)) {
+ 			entry.trigger = 1;
+ 			entry.mask = 1;
+-			entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++			entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 		}
+ 
+ 		irq = pin_2_irq(idx, apic, pin);
+@@ -1026,7 +1026,7 @@ static void __init setup_ExtINT_IRQ0_pin(unsigned int apic, unsigned int pin, in
+ 	 */
+ 	entry.dest_mode = INT_DEST_MODE;
+ 	entry.mask = 0;					/* unmask IRQ now */
+-	entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++	entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 	entry.delivery_mode = INT_DELIVERY_MODE;
+ 	entry.polarity = 0;
+ 	entry.trigger = 0;
+@@ -1126,7 +1126,7 @@ void __apicdebuginit print_IO_APIC(void)
+ 
+ 	printk(KERN_DEBUG ".... IRQ redirection table:\n");
+ 
+-	printk(KERN_DEBUG " NR Log Phy Mask Trig IRR Pol"
++	printk(KERN_DEBUG " NR Dst Mask Trig IRR Pol"
+ 			  " Stat Dest Deli Vect:   \n");
+ 
+ 	for (i = 0; i <= reg_01.bits.entries; i++) {
+@@ -1137,10 +1137,9 @@ void __apicdebuginit print_IO_APIC(void)
+ 		*(((int *)&entry)+1) = io_apic_read(apic, 0x11+i*2);
+ 		spin_unlock_irqrestore(&ioapic_lock, flags);
+ 
+-		printk(KERN_DEBUG " %02x %03X %02X  ",
++		printk(KERN_DEBUG " %02x %03X ",
+ 			i,
+-			entry.dest.logical.logical_dest,
+-			entry.dest.physical.physical_dest
++			entry.dest
+ 		);
+ 
+ 		printk("%1d    %1d    %1d   %1d   %1d    %1d    %1d    %02X\n",
+@@ -1424,8 +1423,7 @@ void disable_IO_APIC(void)
+ 		entry.dest_mode       = 0; /* Physical */
+ 		entry.delivery_mode   = dest_ExtINT; /* ExtInt */
+ 		entry.vector          = 0;
+-		entry.dest.physical.physical_dest =
+-					GET_APIC_ID(apic_read(APIC_ID));
++		entry.dest            = GET_APIC_ID(apic_read(APIC_ID));
+ 
+ 		/*
+ 		 * Add it to the IO-APIC irq-routing table:
+@@ -1846,7 +1844,7 @@ static inline void unlock_ExtINT_logic(void)
+ 
+ 	entry1.dest_mode = 0;			/* physical delivery */
+ 	entry1.mask = 0;			/* unmask IRQ now */
+-	entry1.dest.physical.physical_dest = hard_smp_processor_id();
++	entry1.dest = hard_smp_processor_id();
+ 	entry1.delivery_mode = dest_ExtINT;
+ 	entry1.polarity = entry0.polarity;
+ 	entry1.trigger = 0;
+@@ -2198,7 +2196,7 @@ int io_apic_set_pci_routing (int ioapic, int pin, int irq, int edge_level, int a
+ 
+ 	entry.delivery_mode = INT_DELIVERY_MODE;
+ 	entry.dest_mode = INT_DEST_MODE;
+-	entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++	entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 	entry.trigger = edge_level;
+ 	entry.polarity = active_high_low;
+ 	entry.mask = 1;					 /* Disabled (masked) */
+diff --git a/arch/x86_64/kernel/io_apic.c b/arch/x86_64/kernel/io_apic.c
+index 924a4a3..610d316 100644
+--- a/arch/x86_64/kernel/io_apic.c
++++ b/arch/x86_64/kernel/io_apic.c
+@@ -908,7 +908,7 @@ static void __init setup_IO_APIC_irqs(void)
+ 		entry.delivery_mode = INT_DELIVERY_MODE;
+ 		entry.dest_mode = INT_DEST_MODE;
+ 		entry.mask = 0;				/* enable IRQ */
+-		entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++		entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 
+ 		idx = find_irq_entry(apic,pin,mp_INT);
+ 		if (idx == -1) {
+@@ -926,7 +926,7 @@ static void __init setup_IO_APIC_irqs(void)
+ 		if (irq_trigger(idx)) {
+ 			entry.trigger = 1;
+ 			entry.mask = 1;
+-			entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++			entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 		}
+ 
+ 		irq = pin_2_irq(idx, apic, pin);
+@@ -977,7 +977,7 @@ static void __init setup_ExtINT_IRQ0_pin(unsigned int apic, unsigned int pin, in
+ 	 */
+ 	entry.dest_mode = INT_DEST_MODE;
+ 	entry.mask = 0;					/* unmask IRQ now */
+-	entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++	entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 	entry.delivery_mode = INT_DELIVERY_MODE;
+ 	entry.polarity = 0;
+ 	entry.trigger = 0;
+@@ -1077,7 +1077,7 @@ void __apicdebuginit print_IO_APIC(void)
+ 
+ 	printk(KERN_DEBUG ".... IRQ redirection table:\n");
+ 
+-	printk(KERN_DEBUG " NR Log Phy Mask Trig IRR Pol"
++	printk(KERN_DEBUG " NR Dst Mask Trig IRR Pol"
+ 			  " Stat Dest Deli Vect:   \n");
+ 
+ 	for (i = 0; i <= reg_01.bits.entries; i++) {
+@@ -1088,10 +1088,9 @@ void __apicdebuginit print_IO_APIC(void)
+ 		*(((int *)&entry)+1) = io_apic_read(apic, 0x11+i*2);
+ 		spin_unlock_irqrestore(&ioapic_lock, flags);
+ 
+-		printk(KERN_DEBUG " %02x %03X %02X  ",
++		printk(KERN_DEBUG " %02x %03X ",
+ 			i,
+-			entry.dest.logical.logical_dest,
+-			entry.dest.physical.physical_dest
++			entry.dest
+ 		);
+ 
+ 		printk("%1d    %1d    %1d   %1d   %1d    %1d    %1d    %02X\n",
+@@ -1366,8 +1365,7 @@ void disable_IO_APIC(void)
+ 		entry.dest_mode       = 0; /* Physical */
+ 		entry.delivery_mode   = dest_ExtINT; /* ExtInt */
+ 		entry.vector          = 0;
+-		entry.dest.physical.physical_dest =
+-					GET_APIC_ID(apic_read(APIC_ID));
++		entry.dest            = GET_APIC_ID(apic_read(APIC_ID));
+ 
+ 		/*
+ 		 * Add it to the IO-APIC irq-routing table:
+@@ -1778,7 +1776,7 @@ static inline void unlock_ExtINT_logic(void)
+ 
+ 	entry1.dest_mode = 0;			/* physical delivery */
+ 	entry1.mask = 0;			/* unmask IRQ now */
+-	entry1.dest.physical.physical_dest = hard_smp_processor_id();
++	entry1.dest = hard_smp_processor_id();
+ 	entry1.delivery_mode = dest_ExtINT;
+ 	entry1.polarity = entry0.polarity;
+ 	entry1.trigger = 0;
+@@ -2124,7 +2122,7 @@ int io_apic_set_pci_routing (int ioapic, int pin, int irq, int triggering, int p
+ 
+ 	entry.delivery_mode = INT_DELIVERY_MODE;
+ 	entry.dest_mode = INT_DEST_MODE;
+-	entry.dest.logical.logical_dest = cpu_mask_to_apicid(TARGET_CPUS);
++	entry.dest = cpu_mask_to_apicid(TARGET_CPUS);
+ 	entry.trigger = triggering;
+ 	entry.polarity = polarity;
+ 	entry.mask = 1;					 /* Disabled (masked) */
+diff --git a/include/asm-x86_64/io_apic.h b/include/asm-x86_64/io_apic.h
+index fb7a090..21fff71 100644
+--- a/include/asm-x86_64/io_apic.h
++++ b/include/asm-x86_64/io_apic.h
+@@ -130,19 +130,8 @@ struct IO_APIC_route_entry {
+ 		trigger		:  1,	/* 0: edge, 1: level */
+ 		mask		:  1,	/* 0: enabled, 1: disabled */
+ 		__reserved_2	: 15;
+-
+-	union {		struct { __u32
+-					__reserved_1	: 24,
+-					physical_dest	:  4,
+-					__reserved_2	:  4;
+-			} physical;
+-
+-			struct { __u32
+-					__reserved_1	: 24,
+-					logical_dest	:  8;
+-			} logical;
+-	} dest;
+-
++       __u32	__reserved_3	: 24,
++		dest		: 8;
+ } __attribute__ ((packed));
+ 
+ /*
+-- 
+1.5.3.5.645.gbb47
+

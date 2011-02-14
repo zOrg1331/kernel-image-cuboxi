@@ -1,0 +1,82 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 22 Feb 2010 14:04:39 -0500
+Subject: [x86_64] mce: avoid deadlocks during MCE broadcasts
+Message-id: <20100222140439.5120.96339.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 23392
+O-Subject: [RHEL5 PATCH]: Avoid deadlocks during MCE broadcasts [v2]
+Bugzilla: 562866
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+When a machine check occurs on Intel CPUs it is broadcasted to all CPUs
+which then tend to call panic in parallel when they see a fatal event.
+This is a bigger problem on CPUs with SMT support like Nehalem because
+there at least two CPU threads see the same set of machine check
+registers. When panic is entered from multiple CPUs in parallel it
+tends to deadlock and not properly reboot the system, making it harder
+to get useful information out.
+
+This "bandaid" patch catches this situation and stops the other
+CPUs before entering panic, but prints their information.
+
+In mainline this has been solved better by implementing full
+Monarch semantics, but that would be far too intrusive for old
+kernels.
+
+In addition also always set oops_in_progress before the MCE panic.
+
+Tested using Andi's old Nehalem error injector, which creates bogus ECC errors
+in memory.
+
+Successfully compiled by me.
+
+Resolves BZ 562866.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/mce.c b/arch/x86_64/kernel/mce.c
+index 7bc24a1..3f223e9 100644
+--- a/arch/x86_64/kernel/mce.c
++++ b/arch/x86_64/kernel/mce.c
+@@ -119,6 +119,32 @@ static void print_mce(struct mce *m)
+     "Run through mcelog --ascii to decode and contact your hardware vendor\n");
+ }
+ 
++static void print_mce_panic(char *msg)
++{
++	static atomic_t mce_entry = ATOMIC_INIT(0);
++	/*
++	 * Machine check panics often come up from multiple CPUs in parallel.
++	 * panic doesn't handle that well and deadlocks, so synchronize here.
++	 */
++	int first = atomic_add_return(1, &mce_entry) == 1;
++
++	if (!first) {
++		/*
++		 * Enable interrupts so that smp_stop_cpus() can interrupts us,
++		 * but prevent scheduling in case someone compiles this
++		 * preemptible.
++		 * Then wait for the other panic to shut us down.
++		 */
++		preempt_disable();
++		local_irq_enable();
++		printk("CPU %d: MCE PANIC: %s\n", smp_processor_id(), msg);
++		for (;;)
++			cpu_relax();
++	}
++
++	panic(msg);
++}
++
+ static void mce_panic(char *msg, struct mce *backup, unsigned long start)
+ { 
+ 	int i;
+@@ -136,7 +162,7 @@ static void mce_panic(char *msg, struct mce *backup, unsigned long start)
+ 	if (tolerant >= 3)
+ 		printk("Fake panic: %s\n", msg);
+ 	else
+-		panic(msg);
++		print_mce_panic(msg);
+ } 
+ 
+ static int mce_available(struct cpuinfo_x86 *c)

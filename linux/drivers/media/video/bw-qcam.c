@@ -74,7 +74,6 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <linux/sched.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
-#include <media/v4l2-ioctl.h>
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
 
@@ -83,15 +82,10 @@ OTHER DEALINGS IN THE SOFTWARE.
 static unsigned int maxpoll=250;   /* Maximum busy-loop count for qcam I/O */
 static unsigned int yieldlines=4;  /* Yield after this many during capture */
 static int video_nr = -1;
-static unsigned int force_init;		/* Whether to probe aggressively */
 
 module_param(maxpoll, int, 0);
 module_param(yieldlines, int, 0);
 module_param(video_nr, int, 0);
-
-/* Set force_init=1 to avoid detection by polling status register and
- * immediately attempt to initialize qcam */
-module_param(force_init, int, 0);
 
 static inline int read_lpstatus(struct qcam_device *q)
 {
@@ -110,17 +104,6 @@ static inline void write_lpdata(struct qcam_device *q, int d)
 
 static inline void write_lpcontrol(struct qcam_device *q, int d)
 {
-	if (d & 0x20) {
-		/* Set bidirectional mode to reverse (data in) */
-		parport_data_reverse(q->pport);
-	} else {
-		/* Set bidirectional mode to forward (data out) */
-		parport_data_forward(q->pport);
-	}
-
-	/* Now issue the regular port command, but strip out the
-	 * direction flag */
-	d &= ~0x20;
 	parport_write_control(q->pport, d);
 }
 
@@ -337,9 +320,6 @@ static int qc_detect(struct qcam_device *q)
 	int count = 0;
 	int i;
 
-	if (force_init)
-		return 1;
-
 	lastreg = reg = read_lpstatus(q) & 0xf0;
 
 	for (i = 0; i < 500; i++)
@@ -363,14 +343,11 @@ static int qc_detect(struct qcam_device *q)
 
 	/* Be (even more) liberal in what you accept...  */
 
-	if (count > 20 && count < 400) {
+/*	if (count > 30 && count < 200) */
+	if (count > 20 && count < 300)
 		return 1;	/* found */
-	} else {
-		printk(KERN_ERR "No Quickcam found on port %s\n",
-			q->pport->name);
-		printk(KERN_DEBUG "Quickcam detection counter: %u\n", count);
+	else
 		return 0;	/* not found */
-	}
 }
 
 
@@ -495,7 +472,7 @@ static void qc_set(struct qcam_device *q)
 		val2 = (((q->port_mode & QC_MODE_MASK) == QC_BIDIR) ? 24 : 8) *
 		    q->transfer_scale;
 	}
-	val = DIV_ROUND_UP(val, val2);
+	val = (val + val2 - 1) / val2;
 	qc_command(q, 0x13);
 	qc_command(q, val);
 
@@ -524,7 +501,7 @@ static inline int qc_readbytes(struct qcam_device *q, char buffer[])
 	int ret=1;
 	unsigned int hi, lo;
 	unsigned int hi2, lo2;
-	static int state;
+	static int state = 0;
 
 	if (buffer == NULL)
 	{
@@ -651,7 +628,7 @@ static long qc_capture(struct qcam_device * q, char __user *buf, unsigned long l
 	transperline = q->width * q->bpp;
 	divisor = (((q->port_mode & QC_MODE_MASK) == QC_BIDIR) ? 24 : 8) *
 	    q->transfer_scale;
-	transperline = DIV_ROUND_UP(transperline, divisor);
+	transperline = (transperline + divisor - 1) / divisor;
 
 	for (i = 0, yield = yieldlines; i < linestotrans; i++)
 	{
@@ -706,7 +683,8 @@ static long qc_capture(struct qcam_device * q, char __user *buf, unsigned long l
  *	Video4linux interfacing
  */
 
-static long qcam_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static int qcam_do_ioctl(struct inode *inode, struct file *file,
+			 unsigned int cmd, void *arg)
 {
 	struct video_device *dev = video_devdata(file);
 	struct qcam_device *qcam=(struct qcam_device *)dev;
@@ -863,10 +841,10 @@ static long qcam_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return 0;
 }
 
-static long qcam_ioctl(struct file *file,
+static int qcam_ioctl(struct inode *inode, struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
-	return video_usercopy(file, cmd, arg, qcam_do_ioctl);
+	return video_usercopy(inode, file, cmd, arg, qcam_do_ioctl);
 }
 
 static ssize_t qcam_read(struct file *file, char __user *buf,
@@ -893,40 +871,27 @@ static ssize_t qcam_read(struct file *file, char __user *buf,
 	return len;
 }
 
-static int qcam_exclusive_open(struct file *file)
-{
-	struct video_device *dev = video_devdata(file);
-	struct qcam_device *qcam = (struct qcam_device *)dev;
-
-	return test_and_set_bit(0, &qcam->in_use) ? -EBUSY : 0;
-}
-
-static int qcam_exclusive_release(struct file *file)
-{
-	struct video_device *dev = video_devdata(file);
-	struct qcam_device *qcam = (struct qcam_device *)dev;
-
-	clear_bit(0, &qcam->in_use);
-	return 0;
-}
-
-static const struct v4l2_file_operations qcam_fops = {
+static struct file_operations qcam_fops = {
 	.owner		= THIS_MODULE,
-	.open           = qcam_exclusive_open,
-	.release        = qcam_exclusive_release,
+	.open           = video_exclusive_open,
+	.release        = video_exclusive_release,
 	.ioctl          = qcam_ioctl,
+	.compat_ioctl	= v4l_compat_ioctl32,
 	.read		= qcam_read,
+	.llseek         = no_llseek,
 };
 static struct video_device qcam_template=
 {
+	.owner		= THIS_MODULE,
 	.name		= "Connectix Quickcam",
+	.type		= VID_TYPE_CAPTURE,
+	.hardware	= VID_HARDWARE_QCAM_BW,
 	.fops           = &qcam_fops,
-	.release 	= video_device_release_empty,
 };
 
 #define MAX_CAMS 4
 static struct qcam_device *qcams[MAX_CAMS];
-static unsigned int num_cams;
+static unsigned int num_cams = 0;
 
 static int init_bwqcam(struct parport *port)
 {
@@ -959,7 +924,8 @@ static int init_bwqcam(struct parport *port)
 
 	printk(KERN_INFO "Connectix Quickcam on %s\n", qcam->pport->name);
 
-	if (video_register_device(&qcam->vdev, VFL_TYPE_GRABBER, video_nr) < 0) {
+	if(video_register_device(&qcam->vdev, VFL_TYPE_GRABBER, video_nr)==-1)
+	{
 		parport_unregister_device(qcam->pdev);
 		kfree(qcam);
 		return -ENODEV;
@@ -992,7 +958,7 @@ static int accept_bwqcam(struct parport *port)
 
 	if (parport[0] && strncmp(parport[0], "auto", 4) != 0) {
 		/* user gave parport parameters */
-		for (n = 0; n < MAX_CAMS && parport[n]; n++) {
+		for(n=0; parport[n] && n<MAX_CAMS; n++){
 			char *ep;
 			unsigned long r;
 			r = simple_strtoul(parport[n], &ep, 0);

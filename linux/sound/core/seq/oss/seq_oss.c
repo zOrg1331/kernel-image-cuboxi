@@ -20,7 +20,9 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <sound/core.h>
@@ -164,8 +166,7 @@ odev_read(struct file *file, char __user *buf, size_t count, loff_t *offset)
 {
 	struct seq_oss_devinfo *dp;
 	dp = file->private_data;
-	if (snd_BUG_ON(!dp))
-		return -ENXIO;
+	snd_assert(dp != NULL, return -EIO);
 	return snd_seq_oss_read(dp, buf, count);
 }
 
@@ -175,8 +176,7 @@ odev_write(struct file *file, const char __user *buf, size_t count, loff_t *offs
 {
 	struct seq_oss_devinfo *dp;
 	dp = file->private_data;
-	if (snd_BUG_ON(!dp))
-		return -ENXIO;
+	snd_assert(dp != NULL, return -EIO);
 	return snd_seq_oss_write(dp, buf, count, file);
 }
 
@@ -185,8 +185,7 @@ odev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct seq_oss_devinfo *dp;
 	dp = file->private_data;
-	if (snd_BUG_ON(!dp))
-		return -ENXIO;
+	snd_assert(dp != NULL, return -EIO);
 	return snd_seq_oss_ioctl(dp, cmd, arg);
 }
 
@@ -201,8 +200,7 @@ odev_poll(struct file *file, poll_table * wait)
 {
 	struct seq_oss_devinfo *dp;
 	dp = file->private_data;
-	if (snd_BUG_ON(!dp))
-		return -ENXIO;
+	snd_assert(dp != NULL, return 0);
 	return snd_seq_oss_poll(dp, file, wait);
 }
 
@@ -210,7 +208,7 @@ odev_poll(struct file *file, poll_table * wait)
  * registration of sequencer minor device
  */
 
-static const struct file_operations seq_oss_f_ops =
+static struct file_operations seq_oss_f_ops =
 {
 	.owner =	THIS_MODULE,
 	.read =		odev_read,
@@ -305,7 +303,8 @@ register_proc(void)
 static void
 unregister_proc(void)
 {
-	snd_info_free_entry(info_entry);
+	if (info_entry)
+		snd_info_unregister(info_entry);
 	info_entry = NULL;
 }
 #endif /* CONFIG_PROC_FS */

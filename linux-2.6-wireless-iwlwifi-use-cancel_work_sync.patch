@@ -1,0 +1,107 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Wed, 14 Jul 2010 08:13:25 -0400
+Subject: [wireless] iwlwifi: use cancel_work_sync
+Message-id: <20100714081320.4740.8630.send-patch@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 26880
+O-Subject: [RHEL5 PATCH 6/7] iwlwifi: use cancel_work_sync
+Bugzilla: 582191
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index caf253a..e172025 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -2228,11 +2228,7 @@ static void iwl4965_setup_deferred_work(struct iwl_priv *priv)
+ 
+ static void iwl4965_cancel_deferred_work(struct iwl_priv *priv)
+ {
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&priv->txpower_work);
+-#else
+-	flush_workqueue(priv->workqueue);
+-#endif
+ }
+ 
+ #define IWL4965_UCODE_GET(item)						\
+diff --git a/drivers/net/wireless/iwlwifi/iwl-agn.c b/drivers/net/wireless/iwlwifi/iwl-agn.c
+index e1493b8..3a7091c 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-agn.c
++++ b/drivers/net/wireless/iwlwifi/iwl-agn.c
+@@ -2847,18 +2847,10 @@ static void iwl_cancel_deferred_work(struct iwl_priv *priv)
+ 	if (priv->cfg->ops->lib->cancel_deferred_work)
+ 		priv->cfg->ops->lib->cancel_deferred_work(priv);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&priv->init_alive_start);
+-#else
+-	cancel_delayed_work(&priv->init_alive_start);
+-#endif
+ 	cancel_delayed_work(&priv->scan_check);
+ 	cancel_delayed_work(&priv->alive_start);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&priv->beacon_update);
+-#else
+-	cancel_delayed_work(&priv->beacon_update);
+-#endif
+ 	del_timer_sync(&priv->statistics_periodic);
+ }
+ 
+diff --git a/drivers/net/wireless/iwlwifi/iwl-power.c b/drivers/net/wireless/iwlwifi/iwl-power.c
+index 07a99a7..8bed7f7 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-power.c
++++ b/drivers/net/wireless/iwlwifi/iwl-power.c
+@@ -833,13 +833,9 @@ void iwl_tt_exit(struct iwl_priv *priv)
+ 
+ 	/* stop ct_kill_exit_tm timer if activated */
+ 	del_timer_sync(&priv->thermal_throttle.ct_kill_exit_tm);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&priv->tt_work);
+ 	cancel_work_sync(&priv->ct_enter);
+ 	cancel_work_sync(&priv->ct_exit);
+-#else
+-	flush_workqueue(priv->workqueue);
+-#endif
+ 
+ 	if (priv->thermal_throttle.advanced_tt) {
+ 		/* free advance thermal throttling memory */
+diff --git a/drivers/net/wireless/iwlwifi/iwl3945-base.c b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+index 561a97a..168c948 100644
+--- a/drivers/net/wireless/iwlwifi/iwl3945-base.c
++++ b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+@@ -3736,18 +3736,10 @@ static void iwl3945_cancel_deferred_work(struct iwl_priv *priv)
+ {
+ 	iwl3945_hw_cancel_deferred_work(priv);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&priv->init_alive_start);
+-#else
+-	cancel_delayed_work(&priv->init_alive_start);
+-#endif
+ 	cancel_delayed_work(&priv->scan_check);
+ 	cancel_delayed_work(&priv->alive_start);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&priv->beacon_update);
+-#else
+-	cancel_delayed_work(&priv->beacon_update);
+-#endif
+ }
+ 
+ static struct attribute *iwl3945_sysfs_entries[] = {
+@@ -4152,13 +4144,7 @@ static void __devexit iwl3945_pci_remove(struct pci_dev *pdev)
+ 
+ 	sysfs_remove_group(&pdev->dev.kobj, &iwl3945_attribute_group);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&priv->rfkill_poll);
+-#else
+-	if (delayed_work_pending(&priv->rfkill_poll))
+-		cancel_rearming_delayed_workqueue(priv->workqueue,
+-							&priv->rfkill_poll);
+-#endif
+ 
+ 	iwl3945_dealloc_ucode_pci(priv);
+ 

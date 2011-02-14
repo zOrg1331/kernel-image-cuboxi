@@ -3,14 +3,17 @@
  */
 
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
+#include <linux/pci.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/mm.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/interrupt.h>
 #include <asm/io.h>
@@ -110,13 +113,15 @@ static int __init adummy_init(void)
 
 	printk(KERN_ERR "adummy: version %s\n", DRV_VERSION);
 
-	adummy_dev = kzalloc(sizeof(struct adummy_dev),
+	adummy_dev = (struct adummy_dev *) kmalloc(sizeof(struct adummy_dev),
 						   GFP_KERNEL);
 	if (!adummy_dev) {
-		printk(KERN_ERR DEV_LABEL ": kzalloc() failed\n");
+		printk(KERN_ERR DEV_LABEL ": kmalloc() failed\n");
 		err = -ENOMEM;
 		goto out;
 	}
+	memset(adummy_dev, 0, sizeof(struct adummy_dev));
+
 	atm_dev = atm_dev_register(DEV_LABEL, &adummy_ops, -1, NULL);
 	if (!atm_dev) {
 		printk(KERN_ERR DEV_LABEL ": atm_dev_register() failed\n");

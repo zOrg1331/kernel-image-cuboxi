@@ -1,0 +1,49 @@
+From: John W. Linville <linville@redhat.com>
+Date: Wed, 12 Dec 2007 11:02:27 -0500
+Subject: [net] sunhme: fix failures on x86
+Message-id: 20071212160227.GC22909@redhat.com
+O-Subject: [rhel5 patch] sunhme: fix failures on x86
+Bugzilla: 254234
+
+This is a backport of two upstream patches to sunhme.  They are
+required for proper operation on x86 platforms.
+
+BZ254234
+
+Testing provided by bug reporter, with positive results.
+
+	https://bugzilla.redhat.com/show_bug.cgi?id=254234#c3
+
+Thanks,
+
+John
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/drivers/net/sunhme.c b/drivers/net/sunhme.c
+index c6f5bc3..7c41814 100644
+--- a/drivers/net/sunhme.c
++++ b/drivers/net/sunhme.c
+@@ -3012,6 +3012,11 @@ static int __devinit happy_meal_pci_probe(struct pci_dev *pdev,
+ #endif
+ 
+ 	err = -ENODEV;
++
++	if (pci_enable_device(pdev))
++		goto err_out;
++	pci_set_master(pdev);
++
+ 	if (!strcmp(prom_name, "SUNW,qfe") || !strcmp(prom_name, "qfe")) {
+ 		qp = quattro_pci_find(pdev);
+ 		if (qp == NULL)
+@@ -3308,7 +3313,7 @@ static int __devexit hme_sbus_remove(struct of_device *dev)
+ 	struct happy_meal *hp = dev_get_drvdata(&dev->dev);
+ 	struct net_device *net_dev = hp->dev;
+ 
+-	unregister_netdevice(net_dev);
++	unregister_netdev(net_dev);
+ 
+ 	/* XXX qfe parent interrupt... */
+ 

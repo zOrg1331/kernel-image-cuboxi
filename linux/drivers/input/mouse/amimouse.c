@@ -36,7 +36,7 @@ MODULE_LICENSE("GPL");
 static int amimouse_lastx, amimouse_lasty;
 static struct input_dev *amimouse_dev;
 
-static irqreturn_t amimouse_interrupt(int irq, void *dummy)
+static irqreturn_t amimouse_interrupt(int irq, void *dummy, struct pt_regs *fp)
 {
 	unsigned short joy0dat, potgor;
 	int nx, ny, dx, dy;
@@ -58,6 +58,8 @@ static irqreturn_t amimouse_interrupt(int irq, void *dummy)
 	amimouse_lasty = ny;
 
 	potgor = amiga_custom.potgor;
+
+	input_regs(amimouse_dev, fp);
 
 	input_report_rel(amimouse_dev, REL_X, dx);
 	input_report_rel(amimouse_dev, REL_Y, dy);
@@ -95,13 +97,10 @@ static void amimouse_close(struct input_dev *dev)
 
 static int __init amimouse_init(void)
 {
-	int err;
-
 	if (!MACH_IS_AMIGA || !AMIGAHW_PRESENT(AMI_MOUSE))
 		return -ENODEV;
 
-	amimouse_dev = input_allocate_device();
-	if (!amimouse_dev)
+	if (!(amimouse_dev = input_allocate_device()))
 		return -ENOMEM;
 
 	amimouse_dev->name = "Amiga mouse";
@@ -111,18 +110,13 @@ static int __init amimouse_init(void)
 	amimouse_dev->id.product = 0x0002;
 	amimouse_dev->id.version = 0x0100;
 
-	amimouse_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL);
-	amimouse_dev->relbit[0] = BIT_MASK(REL_X) | BIT_MASK(REL_Y);
-	amimouse_dev->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
-		BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
+	amimouse_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REL);
+	amimouse_dev->relbit[0] = BIT(REL_X) | BIT(REL_Y);
+	amimouse_dev->keybit[LONG(BTN_LEFT)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
 	amimouse_dev->open = amimouse_open;
 	amimouse_dev->close = amimouse_close;
 
-	err = input_register_device(amimouse_dev);
-	if (err) {
-		input_free_device(amimouse_dev);
-		return err;
-	}
+	input_register_device(amimouse_dev);
 
 	return 0;
 }

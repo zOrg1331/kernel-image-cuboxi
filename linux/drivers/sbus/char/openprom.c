@@ -31,9 +31,9 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/string.h>
 #include <linux/miscdevice.h>
 #include <linux/init.h>
@@ -45,13 +45,13 @@
 #include <asm/openpromio.h>
 #ifdef CONFIG_PCI
 #include <linux/pci.h>
+#include <asm/pbm.h>
 #endif
 
 MODULE_AUTHOR("Thomas K. Dyas (tdyas@noc.rutgers.edu) and Eddie C. Dost  (ecd@skynet.be)");
 MODULE_DESCRIPTION("OPENPROM Configuration Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_ALIAS_MISCDEV(SUN_OPENPROM_MINOR);
 
 /* Private data kept by the driver for each descriptor. */
 typedef struct openprom_private_data
@@ -142,7 +142,7 @@ static int copyout(void __user *info, struct openpromio *opp, int len)
 
 static int opromgetprop(void __user *argp, struct device_node *dp, struct openpromio *op, int bufsize)
 {
-	const void *pval;
+	void *pval;
 	int len;
 
 	if (!dp ||
@@ -249,18 +249,18 @@ static int oprompci2node(void __user *argp, struct device_node *dp, struct openp
 	if (bufsize >= 2*sizeof(int)) {
 #ifdef CONFIG_PCI
 		struct pci_dev *pdev;
-		struct device_node *dp;
-
-		pdev = pci_get_bus_and_slot (((int *) op->oprom_array)[0],
+		struct pcidev_cookie *pcp;
+		pdev = pci_find_slot (((int *) op->oprom_array)[0],
 				      ((int *) op->oprom_array)[1]);
 
-		dp = pci_device_to_OF_node(pdev);
-		data->current_node = dp;
-		*((int *)op->oprom_array) = dp->node;
-		op->oprom_size = sizeof(int);
-		err = copyout(argp, op, bufsize + sizeof(int));
-
-		pci_dev_put(pdev);
+		pcp = pdev->sysdata;
+		if (pcp != NULL) {
+			dp = pcp->prom_node;
+			data->current_node = dp;
+			*((int *)op->oprom_array) = dp->node;
+			op->oprom_size = sizeof(int);
+			err = copyout(argp, op, bufsize + sizeof(int));
+		}
 #endif
 	}
 
@@ -303,7 +303,7 @@ static int openprom_sunos_ioctl(struct inode * inode, struct file * file,
 				struct device_node *dp)
 {
 	DATA *data = file->private_data;
-	struct openpromio *opp = NULL;
+	struct openpromio *opp;
 	int bufsize, error = 0;
 	static int cnt;
 	void __user *argp = (void __user *)arg;
@@ -410,7 +410,7 @@ static int opiocget(void __user *argp, DATA *data)
 	struct opiocdesc op;
 	struct device_node *dp;
 	char *str;
-	const void *pval;
+	void *pval;
 	int err, len;
 
 	if (copy_from_user(&op, argp, sizeof(op)))
@@ -630,7 +630,7 @@ static int openprom_ioctl(struct inode * inode, struct file * file,
 	case OPROMPATH2NODE:
 		if ((file->f_mode & FMODE_READ) == 0)
 			return -EPERM;
-		return openprom_sunos_ioctl(inode, file, cmd, arg, NULL);
+		return openprom_sunos_ioctl(inode, file, cmd, arg, 0);
 
 	case OPIOCGET:
 	case OPIOCNEXTPROP:
@@ -676,7 +676,7 @@ static long openprom_compat_ioctl(struct file *file, unsigned int cmd,
 	case OPROMSETCUR:
 	case OPROMPCI2NODE:
 	case OPROMPATH2NODE:
-		rval = openprom_ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
+		rval = openprom_ioctl(file->f_dentry->d_inode, file, cmd, arg);
 		break;
 	}
 
@@ -691,11 +691,9 @@ static int openprom_open(struct inode * inode, struct file * file)
 	if (!data)
 		return -ENOMEM;
 
-	lock_kernel();
 	data->current_node = of_find_node_by_path("/");
 	data->lastnode = data->current_node;
 	file->private_data = (void *) data;
-	unlock_kernel();
 
 	return 0;
 }
@@ -706,7 +704,7 @@ static int openprom_release(struct inode * inode, struct file * file)
 	return 0;
 }
 
-static const struct file_operations openprom_fops = {
+static struct file_operations openprom_fops = {
 	.owner =	THIS_MODULE,
 	.llseek =	no_llseek,
 	.ioctl =	openprom_ioctl,

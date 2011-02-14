@@ -1,0 +1,45 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 19:57:53 -0400
+Subject: [net] core: bug fix for vlan + gro issue
+Message-id: <20100903195751.7750.78510.stgit@localhost6.localdomain6>
+Patchwork-id: 28128
+O-Subject: [RHEL5.6 BZ556476 PATCH 2/6] net: bug fix for vlan + gro issue
+Bugzilla: 556476
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+From: Ajit Khaparde <ajitkhaparde@gmail.com>
+
+commit c4d49794ff2838038fd9756eae39c39a5a685833 upstream.
+
+ Traffic (tcp) does not start on a vlan interface when gro is enabled.
+ Even the tcp handshake was not taking place.
+ This is because, the eth_type_trans call before the netif_receive_skb
+ in napi_gro_finish() resets the skb->dev to napi->dev from the previously
+ set vlan netdev interface. This causes the ip_route_input to drop the
+ incoming packet considering it as a packet coming from a martian source.
+
+ I could repro this on 2.6.32.7 (stable) and 2.6.33-rc7.
+ With this fix, the traffic starts and the test runs fine on both vlan
+ and non-vlan interfaces.
+
+ CC: Herbert Xu <herbert@gondor.apana.org.au>
+ CC: Patrick McHardy <kaber@trash.net>
+ Signed-off-by: Ajit Khaparde <ajitk@serverengines.com>
+ Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+ Signed-off-by: David S. Miller <davem@davemloft.net>
+[bwh: Adjust context for RHEL 5]
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 1968d30..04bc9f8 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2252,7 +2252,7 @@ int napi_frags_finish(struct napi_struct *napi, struct sk_buff *skb, int ret)
+ 	switch (ret) {
+ 	case GRO_NORMAL:
+ 	case GRO_HELD:
+-		skb->protocol = eth_type_trans(skb, napi->dev);
++		skb->protocol = eth_type_trans(skb, skb->dev);
+ 
+ 		if (ret == GRO_NORMAL)
+ 			return netif_receive_skb(skb);

@@ -1,0 +1,72 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 2/10] xen: bimodal drivers, pvfb frontend
+Date: Fri, 15 Jun 2007 10:28:36 +0200
+Bugzilla: 222128
+Message-Id: <46724DB4.40905@redhat.com>
+Changelog: [xen] bimodal drivers, pvfb frontend
+
+
+  Hi,
+
+Starting with Xen 3.1 the 64bit hypervisor can run 32bit-pae paravirtual 
+guests.  Some paravirtual drivers have different data structures in 
+32bit vs. 64bit mode.  Thus the backend drivers must be bimodal, i.e.
+
+  (a) must be able to deal with multiple protocols.
+  (b) need to know which protocol the frontend driver speaks.
+
+This patch makes the paravirt framebuffer frontend driver signal the 
+protocol it speaks by adding a node to xenstore.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1169563646 0
+# Node ID b9ffa4b49d9711edba34d490a2263fd909b2acfe
+# Parent  ffe52263b430cff6cd31237f5872c71a3622306b
+bimodal: pvfb frontend
+
+Create a new node "protocol" in xenstore, add the protocol name it
+speaks there.
+
+Signed-off-by: Gerd Hoffmann <kraxel@suse.de>
+
+---
+ drivers/xen/fbfront/xenfb.c |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/fbfront/xenfb.c
++++ linux-2.6.18.noarch/drivers/xen/fbfront/xenfb.c
+@@ -27,6 +27,7 @@
+ #include <asm/hypervisor.h>
+ #include <xen/evtchn.h>
+ #include <xen/interface/io/fbif.h>
++#include <xen/interface/io/protocols.h>
+ #include <xen/xenbus.h>
+ #include <linux/kthread.h>
+ 
+@@ -416,7 +417,7 @@ static int __devinit xenfb_probe(struct 
+ 		goto error_nomem;
+ 
+ 	/* set up shared page */
+-	info->page = (void *)__get_free_page(GFP_KERNEL);
++	info->page = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+ 	if (!info->page)
+ 		goto error_nomem;
+ 
+@@ -580,6 +581,10 @@ static int xenfb_connect_backend(struct 
+ 			    info->evtchn);
+ 	if (ret)
+ 		goto error_xenbus;
++	ret = xenbus_printf(xbt, dev->nodename, "protocol", "%s",
++			    XEN_IO_PROTO_ABI_NATIVE);
++	if (ret)
++		goto error_xenbus;
+ 	ret = xenbus_printf(xbt, dev->nodename, "feature-update", "1");
+ 	if (ret)
+ 		goto error_xenbus;
+

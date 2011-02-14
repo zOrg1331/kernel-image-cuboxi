@@ -1,0 +1,77 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5.1 PATCH] bz248735 CCISS support for P700m
+Date: Fri, 3 Aug 2007 19:22:32 -0400 (EDT)
+Bugzilla: 248735
+Message-Id: <Pine.LNX.4.64.0708031920010.26752@bogart.boston.redhat.com>
+Changelog: [scssi] CCISS support for P700m
+
+
+
+This is a late request for support for new hardware in the CCISS
+driver; essentially it adds a new PCI ID.  It was submitted upstream
+by Mike Miller of HP and compile-tested by me
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=906960
+
+Patch with Mike Miller's comments is below.
+
+This patch adds support for the P700m. A new controller scheduled to ship in
+Fall 2007. This patch has been submitted upstream and queued for merge. This
+is a low risk but important change. This controller is targeted for blade
+environments and floppies or other media may not be available for driver 
+diskette installs.
+Please consider this for inclusion.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+--------------------------------------------------------------------------------
+
+ Documentation/cciss.txt |    1 +
+ drivers/block/cciss.c   |    4 +++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff -burNp linux-2.6.18.i386.orig/Documentation/cciss.txt linux-2.6.18.i386/Documentation/cciss.txt
+--- linux-2.6.18.i386.orig/Documentation/cciss.txt	2006-09-19 22:42:06.000000000 -0500
++++ linux-2.6.18.i386/Documentation/cciss.txt	2007-07-16 10:58:25.000000000 -0500
+@@ -21,6 +21,7 @@ This driver is known to work with the fo
+ 	* SA E200
+ 	* SA E200i
+ 	* SA E500
++	* SA P700m
+ 
+ If nodes are not already created in the /dev/cciss directory, run as root:
+ 
+diff -burNp linux-2.6.18.i386.orig/drivers/block/cciss.c linux-2.6.18.i386/drivers/block/cciss.c
+--- linux-2.6.18.i386.orig/drivers/block/cciss.c	2007-07-12 12:27:21.000000000 -0500
++++ linux-2.6.18.i386/drivers/block/cciss.c	2007-07-16 10:59:12.000000000 -0500
+@@ -54,7 +54,7 @@
+ MODULE_AUTHOR("Hewlett-Packard Company");
+ MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.16-RH1");
+ MODULE_SUPPORTED_DEVICE("HP SA5i SA5i+ SA532 SA5300 SA5312 SA641 SA642 SA6400"
+-			" SA6i P600 P800 P400 P400i E200 E200i E500");
++			" SA6i P600 P800 P400 P400i E200 E200i E500 P700m");
+ MODULE_VERSION("3.6.16-RH1");
+ MODULE_LICENSE("GPL");
+ 
+@@ -83,6 +83,7 @@ static const struct pci_device_id cciss_
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3214},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3215},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x3237},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x323D},
+ 	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,      PCI_ANY_ID, PCI_ANY_ID,
+ 		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
+ 	{0,}
+@@ -115,6 +116,7 @@ static struct board_type products[] = {
+ 	{0x3214103C, "Smart Array E200i", &SA5_access, 120},
+ 	{0x3215103C, "Smart Array E200i", &SA5_access, 120},
+ 	{0x3237103C, "Smart Array E500", &SA5_access, 512},
++	{0x323D103C, "Smart Array P700m", &SA5_access, 512},
+ 	{0xFFFF103C, "Unknown Smart Array", &SA5_access},
+ };
+ 
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

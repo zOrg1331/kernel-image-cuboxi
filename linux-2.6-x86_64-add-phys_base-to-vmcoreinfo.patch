@@ -1,0 +1,72 @@
+From: Muuhh IKEDA <mikeda@redhat.com>
+Date: Wed, 2 Apr 2008 11:26:00 -0400
+Subject: [x86_64] add phys_base to vmcoreinfo
+Message-id: 47F3A588.1070307@redhat.com
+O-Subject: [RHEL5.2 PATCH] Add phys_base to vmcoreinfo
+Bugzilla: 439304
+
+Hi all,
+
+Bugzilla: 439304
+https://bugzilla.redhat.com/show_bug.cgi?id=439304
+
+Description
+------------
+>From RHEL5.2, "makedumpfile", which is a filter to reduce the size of
+dumpfile, reads ELF note section of /proc/vmcore for virtual/physical
+address translation instead of kernel-debug-info as in RHEL5.1.
+The makedumpfile recognizes the kernel is relocatable if a symbol
+"phys_base" exists in ELF note section of /proc/vmcore.  If not,
+makedupfile recognizes the kernel as a non-relocatable one.
+RHEL5.2 kernel doesn't have "phys_base" in /proc/vmcore despite it is
+relocatalbe.  As a result of it, makedumpfile fails and dumpfile can't
+be created properly.
+This patch adds "phys_base" to /proc/vmcore to solve the problem.
+
+RHEL Version Found
+------------------
+5.2
+
+Test Status
+-----------
+Dump file was properly created with patch applied bare-metal kernel on
+x86_64.
+The test environment is:
+- RHEL5.2-Server-20080326.0
+- kernel.x86_64-2.6.18-87.el5
+- kexec-tools.x86_64-1.102pre-16.el5
+
+Now asking NEC folks to confirm no regression led by this patch in Xen
+environment.
+
+Upstream Status
+----------------
+Posted at:
+http://lists.infradead.org/pipermail/kexec/2008-March/001514.html
+
+* The posted patch doesn't include #ifndef CONFIG_XEN
+  because upstream kernel isn't capable for x86_64 + Xen.
+
+--
+Munehiro "Muuhh" IKEDA
+  On-site engineer from NEC in Westford
+    mikeda@redhat.com
+
+Acked-by: Dave Anderson <anderson@redhat.com>
+Acked-by: Vivek Goyal <vgoyal@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/arch/x86_64/kernel/machine_kexec.c b/arch/x86_64/kernel/machine_kexec.c
+index efb6a0a..7eb9457 100644
+--- a/arch/x86_64/kernel/machine_kexec.c
++++ b/arch/x86_64/kernel/machine_kexec.c
+@@ -240,6 +240,9 @@ void machine_kexec_cleanup(struct kimage *image)
+ 
+ void arch_crash_save_vmcoreinfo(void)
+ {
++#ifndef CONFIG_XEN
++	SYMBOL(phys_base);
++#endif
+ #ifdef CONFIG_ARCH_DISCONTIGMEM_ENABLE
+ 	SYMBOL(node_data);
+ 	LENGTH(node_data, MAX_NUMNODES);

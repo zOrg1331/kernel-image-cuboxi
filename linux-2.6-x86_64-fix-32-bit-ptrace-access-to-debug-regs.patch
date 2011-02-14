@@ -1,0 +1,29 @@
+From: Roland McGrath <roland@redhat.com>
+Subject: [RHEL5.1 PATCH] x86_64: fix 32-bit ptrace access to debug registers 	(RHBZ#247427)
+Date: Thu, 13 Sep 2007 11:46:44 -0700 (PDT)
+Bugzilla: 247427
+Message-Id: <20070913184644.A4CF24D0424@magilla.localdomain>
+Changelog: [x86_64] fix 32-bit ptrace access to debug registers
+
+
+This one-bit fix corrects the behavior of setting debug registers via
+ptrace in 32-bit mode on the x86_64 kernel.  This was a regression
+introduced by utrace.  It's long been fixed in Fedora/upstream utrace.
+
+
+Thanks,
+Roland
+
+
+--- linux-2.6.21.x86_64/arch/x86_64/ia32/ptrace32.c
++++ linux-2.6.21.x86_64/arch/x86_64/ia32/ptrace32.c
+@@ -381,7 +381,7 @@ ia32_dbregs_set(struct task_struct *targ
+ 	/*
+ 	 * We'll just hijack the native setter to do the real work for us.
+ 	 */
+-	const struct utrace_regset *dbregset = &utrace_x86_64_native.regsets[2];
++	const struct utrace_regset *dbregset = &utrace_x86_64_native.regsets[3];
+ 	int ret = 0;
+ 
+ 	for (pos >>= 2, count >>= 2; count > 0; --count, ++pos) {
+

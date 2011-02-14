@@ -1,0 +1,71 @@
+From: Josef Bacik <josef@redhat.com>
+Date: Thu, 7 Jan 2010 14:49:20 -0500
+Subject: [block] loop: fix aops check for GFS
+Message-id: <20100107144919.GC2199@localhost.localdomain>
+Patchwork-id: 22334
+O-Subject: [RHEL5.5][PATCH] loop: fix aops check for GFS
+Bugzilla: 549397
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+This is in reference to bz 549397.
+
+GFS can't deal with loop devices via the normal AOPs because of how locking
+works with GFS, so it does this trick where it doesn't set the .commit_write
+AOP's for it's inodes until we come into GFS's .prepare_write.  The loop code
+used to have something like this
+
+if (aops->prepare_write && aops->commit_write)
+	use aops
+else
+	dont
+
+but with the new AOPs patches this changed to
+
+if (aops->prepare_write || aops->write_begin)
+	use aops
+else
+	dont
+
+which has messed up this little hack in GFS.  So the solution is to just go in
+and change it to do this
+
+if ((aops->prepare_write && aops->commit_write) ||
+	(aops->write_being && aops->write_end))
+	use aops
+else
+	dont
+
+so that loop files on GFS can go back to working.  This won't be an issue with
+RHEL6 since GFS isn't there and GFS2 does its locking on the page level as
+opposed to the inode level.  This has been tested by the customer who it broke
+for and they confirmed it's now working fine.  Thanks,
+
+Josef
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/block/loop.c b/drivers/block/loop.c
+index 0b481f1..24cd1a9 100644
+--- a/drivers/block/loop.c
++++ b/drivers/block/loop.c
+@@ -764,13 +764,18 @@ static int loop_set_fd(struct loop_device *lo, struct file *lo_file,
+ 	error = -EINVAL;
+ 	if (S_ISREG(inode->i_mode) || S_ISBLK(inode->i_mode)) {
+ 		const struct address_space_operations *aops = mapping->a_ops;
++		struct address_space_operations_ext *axops =
++			(struct address_space_operations_ext *)mapping->a_ops;
++
+ 		/*
+ 		 * If we can't read - sorry. If we only can't write - well,
+ 		 * it's going to be read-only.
+ 		 */
+ 		if (!file->f_op->sendfile)
+ 			goto out_putf;
+-		if (aops->prepare_write || IS_NEWAOPS(inode))
++		if ((aops->prepare_write && aops->commit_write) ||
++		    (IS_NEWAOPS(inode) && axops->write_begin &&
++		     axops->write_end))
+ 			lo_flags |= LO_FLAGS_USE_AOPS;
+ 		if (!(lo_flags & LO_FLAGS_USE_AOPS) && !file->f_op->write)
+ 			lo_flags |= LO_FLAGS_READ_ONLY;

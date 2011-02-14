@@ -1,8 +1,8 @@
 /***************************************************************************
- * Plug-in for PAS106B image sensor connected to the SN9C1xx PC Camera     *
+ * Plug-in for PAS106B image sensor connected to the SN9C10x PC Camera     *
  * Controllers                                                             *
  *                                                                         *
- * Copyright (C) 2004-2007 by Luca Risolia <luca.risolia@studio.unibo.it>  *
+ * Copyright (C) 2004-2006 by Luca Risolia <luca.risolia@studio.unibo.it>  *
  *                                                                         *
  * This program is free software; you can redistribute it and/or modify    *
  * it under the terms of the GNU General Public License as published by    *
@@ -21,16 +21,21 @@
 
 #include <linux/delay.h>
 #include "sn9c102_sensor.h"
-#include "sn9c102_devtable.h"
+
+
+static struct sn9c102_sensor pas106b;
 
 
 static int pas106b_init(struct sn9c102_device* cam)
 {
 	int err = 0;
 
-	err = sn9c102_write_const_regs(cam, {0x00, 0x10}, {0x00, 0x11},
-				       {0x00, 0x14}, {0x20, 0x17},
-				       {0x20, 0x19}, {0x09, 0x18});
+	err += sn9c102_write_reg(cam, 0x00, 0x10);
+	err += sn9c102_write_reg(cam, 0x00, 0x11);
+	err += sn9c102_write_reg(cam, 0x00, 0x14);
+	err += sn9c102_write_reg(cam, 0x20, 0x17);
+	err += sn9c102_write_reg(cam, 0x20, 0x19);
+	err += sn9c102_write_reg(cam, 0x09, 0x18);
 
 	err += sn9c102_i2c_write(cam, 0x02, 0x0c);
 	err += sn9c102_i2c_write(cam, 0x05, 0x5a);
@@ -138,7 +143,7 @@ static int pas106b_set_ctrl(struct sn9c102_device* cam,
 static int pas106b_set_crop(struct sn9c102_device* cam,
 			    const struct v4l2_rect* rect)
 {
-	struct sn9c102_sensor* s = sn9c102_get_sensor(cam);
+	struct sn9c102_sensor* s = &pas106b;
 	int err = 0;
 	u8 h_start = (u8)(rect->left - s->cropcap.bounds.left) + 4,
 	   v_start = (u8)(rect->top - s->cropcap.bounds.top) + 3;
@@ -164,10 +169,9 @@ static int pas106b_set_pix_format(struct sn9c102_device* cam,
 }
 
 
-static const struct sn9c102_sensor pas106b = {
+static struct sn9c102_sensor pas106b = {
 	.name = "PAS106B",
 	.maintainer = "Luca Risolia <luca.risolia@studio.unibo.it>",
-	.supported_bridge = BRIDGE_SN9C101 | BRIDGE_SN9C102,
 	.sysfs_ops = SN9C102_I2C_READ | SN9C102_I2C_WRITE,
 	.frequency = SN9C102_I2C_400KHZ | SN9C102_I2C_100KHZ,
 	.interface = SN9C102_I2C_2WIRES,
@@ -274,21 +278,22 @@ static const struct sn9c102_sensor pas106b = {
 
 int sn9c102_probe_pas106b(struct sn9c102_device* cam)
 {
-	int r0 = 0, r1 = 0;
+	int r0 = 0, r1 = 0, err = 0;
 	unsigned int pid = 0;
 
 	/*
 	   Minimal initialization to enable the I2C communication
 	   NOTE: do NOT change the values!
 	*/
-	if (sn9c102_write_const_regs(cam,
-				     {0x01, 0x01}, /* sensor power down */
-				     {0x00, 0x01}, /* sensor power on */
-				    {0x28, 0x17})) /* sensor clock at 24 MHz */
+	err += sn9c102_write_reg(cam, 0x01, 0x01); /* sensor power down */
+	err += sn9c102_write_reg(cam, 0x00, 0x01); /* sensor power on */
+	err += sn9c102_write_reg(cam, 0x28, 0x17); /* sensor clock at 24 MHz */
+	if (err)
 		return -EIO;
 
 	r0 = sn9c102_i2c_try_read(cam, &pas106b, 0x00);
 	r1 = sn9c102_i2c_try_read(cam, &pas106b, 0x01);
+
 	if (r0 < 0 || r1 < 0)
 		return -EIO;
 

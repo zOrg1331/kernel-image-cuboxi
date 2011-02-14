@@ -1,0 +1,65 @@
+Patch from Alexey Kuznetsov:
+[GFS] misc bugs and debugging in GFS
+
+1. Reclaiming of glocks is leaky due to wrong reference counting.
+   I saw it once, but I am not certain. It is still not clear
+   how to fix this bug.
+2. gfs_glockd can spin uselessly, not freeing any glocks,
+   if a glock to reclaim is busy. Not certain.
+3. one place where bh can leak and result in deadlock at unmount.
+   Never happened.
+		    
+diff -urp ./fs/gfs/glock.c gfs-kernel-0.1.16/src/gfs/glock.c
+--- ./fs/gfs/glock.c	2007-05-20 19:18:19.000000000 +0400
++++ ./fs/gfs/glock.c	2007-05-20 19:13:43.000000000 +0400
+@@ -127,7 +127,9 @@ glock_put(struct gfs_glock *gl)
+ 	if (atomic_read(&gl->gl_count) == 1)
+ 		gfs_glock_schedule_for_reclaim(gl);
+ 	gfs_assert(gl->gl_sbd, atomic_read(&gl->gl_count) > 0,);
+-	atomic_dec(&gl->gl_count);
++	if (atomic_dec_and_test(&gl->gl_count)) {
++		printk("GFS: would leak glock %p\n", gl);
++	}
+ }
+ 
+ /**
+@@ -2395,7 +2397,7 @@ gfs_glock_schedule_for_reclaim(struct gf
+ 	spin_lock(&sdp->sd_reclaim_lock);
+ 	if (list_empty(&gl->gl_reclaim)) {
+ 		glock_hold(gl);
+-		list_add(&gl->gl_reclaim, &sdp->sd_reclaim_list);
++		list_add_tail(&gl->gl_reclaim, &sdp->sd_reclaim_list);
+ 		atomic_inc(&sdp->sd_reclaim_count);
+ 	}
+ 	spin_unlock(&sdp->sd_reclaim_lock);
+diff -urp ./fs/gfs/util.c gfs-kernel-0.1.16/src/gfs/util.c
+--- ./fs/gfs/util.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/util.c	2007-05-18 19:38:17.000000000 +0400
+@@ -284,6 +284,8 @@ gfs_assert_warn_i(struct gfs_sbd *sdp,
+ 	       sdp->sd_fsname, file, line,
+ 	       sdp->sd_fsname, get_seconds());
+ 
++	WARN_ON(1);
++
+ 	sdp->sd_last_warning = jiffies;
+ 	if (sdp->sd_args.ar_debug)
+ 		BUG();
+diff -urp ./fs/gfs/dir.c gfs-kernel-0.1.16/src/gfs/dir.c
+--- ./fs/gfs/dir.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/dir.c	2007-05-18 18:01:50.000000000 +0400
+@@ -432,8 +432,13 @@ get_leaf(struct gfs_inode *dip, uint64_t
+ 	int error;
+ 
+ 	error = gfs_dread(dip->i_gl, leaf_no, DIO_START | DIO_WAIT, bhp);
+-	if (!error && gfs_metatype_check(dip->i_sbd, *bhp, GFS_METATYPE_LF))
+-		error = -EIO;
++	if (!error) {
++		if (gfs_metatype_check(dip->i_sbd, *bhp, GFS_METATYPE_LF)) {
++			printk("GFS: would leak bh 1\n");
++			error = -EIO;
++			brelse(*bhp);
++		}
++	}
+ 
+ 	return error;
+ }

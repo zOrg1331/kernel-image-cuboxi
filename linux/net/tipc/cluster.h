@@ -1,6 +1,6 @@
 /*
  * net/tipc/cluster.h: Include file for TIPC cluster management routines
- *
+ * 
  * Copyright (c) 2000-2006, Ericsson AB
  * Copyright (c) 2005, Wind River Systems
  * All rights reserved.
@@ -50,28 +50,28 @@
  * @highest_node: id of highest numbered node within cluster
  * @highest_slave: (used for secondary node support)
  */
-
+ 
 struct cluster {
 	u32 addr;
 	struct _zone *owner;
-	struct tipc_node **nodes;
+	struct node **nodes;
 	u32 highest_node;
 	u32 highest_slave;
 };
 
 
-extern struct tipc_node **tipc_local_nodes;
+extern struct node **tipc_local_nodes;
 extern u32 tipc_highest_allowed_slave;
-extern struct tipc_node_map tipc_cltr_bcast_nodes;
+extern struct node_map tipc_cltr_bcast_nodes;
 
 void tipc_cltr_remove_as_router(struct cluster *c_ptr, u32 router);
 void tipc_cltr_send_ext_routes(struct cluster *c_ptr, u32 dest);
-struct tipc_node *tipc_cltr_select_node(struct cluster *c_ptr, u32 selector);
+struct node *tipc_cltr_select_node(struct cluster *c_ptr, u32 selector);
 u32 tipc_cltr_select_router(struct cluster *c_ptr, u32 ref);
 void tipc_cltr_recv_routing_table(struct sk_buff *buf);
 struct cluster *tipc_cltr_create(u32 addr);
 void tipc_cltr_delete(struct cluster *c_ptr);
-void tipc_cltr_attach_node(struct cluster *c_ptr, struct tipc_node *n_ptr);
+void tipc_cltr_attach_node(struct cluster *c_ptr, struct node *n_ptr);
 void tipc_cltr_send_slave_routes(struct cluster *c_ptr, u32 dest);
 void tipc_cltr_broadcast(struct sk_buff *buf);
 int tipc_cltr_init(void);

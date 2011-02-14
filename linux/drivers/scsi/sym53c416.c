@@ -6,7 +6,7 @@
  *  Changes : 
  * 
  *  Marcelo Tosatti <marcelo@conectiva.com.br> : Added io_request_lock locking
- *  Alan Cox <alan@lxorguk.ukuu.org.uk> : Cleaned up code formatting
+ *  Alan Cox <alan@redhat.com> : Cleaned up code formatting
  *				 Fixed an irq locking bug
  *				 Added ISAPnP support
  *  Bjoern A. Zeeb <bzeeb@zabbadoz.net> : Initial irq locking updates
@@ -32,6 +32,7 @@
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
@@ -187,16 +188,16 @@
 #define sym53c416_base_2 sym53c416_2
 #define sym53c416_base_3 sym53c416_3
 
-static unsigned int sym53c416_base[2];
-static unsigned int sym53c416_base_1[2];
-static unsigned int sym53c416_base_2[2];
-static unsigned int sym53c416_base_3[2];
+static unsigned int sym53c416_base[2] = {0,0};
+static unsigned int sym53c416_base_1[2] = {0,0};
+static unsigned int sym53c416_base_2[2] = {0,0};
+static unsigned int sym53c416_base_3[2] = {0,0};
 
 #endif
 
 #define MAXHOSTS 4
 
-#define SG_ADDRESS(buffer)     ((char *) sg_virt((buffer)))
+#define SG_ADDRESS(buffer)     ((char *) (page_address((buffer)->page)+(buffer)->offset))
 
 enum phases
 {
@@ -325,15 +326,31 @@ static __inline__ unsigned int sym53c416_write(int base, unsigned char *buffer, 
 	return orig_len - len;
 }
 
-static irqreturn_t sym53c416_intr_handle(int irq, void *dev_id)
+static irqreturn_t sym53c416_intr_handle(int irq, void *dev_id,
+					struct pt_regs *regs)
 {
 	struct Scsi_Host *dev = dev_id;
-	int base = dev->io_port;
+	int base = 0;
 	int i;
 	unsigned long flags = 0;
 	unsigned char status_reg, pio_int_reg, int_reg;
-	struct scatterlist *sg;
+	struct scatterlist *sglist;
+	unsigned int sgcount;
 	unsigned int tot_trans = 0;
+
+	/* We search the base address of the host adapter which caused the interrupt */
+	/* FIXME: should pass dev_id sensibly as hosts[i] */
+	for(i = 0; i < host_index && !base; i++)
+		if(irq == hosts[i].irq)
+			base = hosts[i].base;
+	/* If no adapter found, we cannot handle the interrupt. Leave a message */
+	/* and continue. This should never happen...                            */
+	if(!base)
+	{
+		printk(KERN_ERR "sym53c416: No host adapter defined for interrupt %d\n", irq);
+		return IRQ_NONE;
+	}
+	/* Now we have the base address and we can start handling the interrupt */
 
 	spin_lock_irqsave(dev->host_lock,flags);
 	status_reg = inb(base + STATUS_REG);
@@ -414,15 +431,19 @@ static irqreturn_t sym53c416_intr_handle(int irq, void *dev_id)
 			{
 				current_command->SCp.phase = data_out;
 				outb(FLUSH_FIFO, base + COMMAND_REG);
-				sym53c416_set_transfer_counter(base,
-							       scsi_bufflen(current_command));
+				sym53c416_set_transfer_counter(base, current_command->request_bufflen);
 				outb(TRANSFER_INFORMATION | PIO_MODE, base + COMMAND_REG);
-
-				scsi_for_each_sg(current_command,
-						 sg, scsi_sg_count(current_command), i) {
-					tot_trans += sym53c416_write(base,
-								     SG_ADDRESS(sg),
-								     sg->length);
+				if(!current_command->use_sg)
+					tot_trans = sym53c416_write(base, current_command->request_buffer, current_command->request_bufflen);
+				else
+				{
+					sgcount = current_command->use_sg;
+					sglist = current_command->request_buffer;
+					while(sgcount--)
+					{
+						tot_trans += sym53c416_write(base, SG_ADDRESS(sglist), sglist->length);
+						sglist++;
+					}
 				}
 				if(tot_trans < current_command->underflow)
 					printk(KERN_WARNING "sym53c416: Underflow, wrote %d bytes, request for %d bytes.\n", tot_trans, current_command->underflow);
@@ -436,16 +457,19 @@ static irqreturn_t sym53c416_intr_handle(int irq, void *dev_id)
 			{
 				current_command->SCp.phase = data_in;
 				outb(FLUSH_FIFO, base + COMMAND_REG);
-				sym53c416_set_transfer_counter(base,
-							       scsi_bufflen(current_command));
-
+				sym53c416_set_transfer_counter(base, current_command->request_bufflen);
 				outb(TRANSFER_INFORMATION | PIO_MODE, base + COMMAND_REG);
-
-				scsi_for_each_sg(current_command,
-						 sg, scsi_sg_count(current_command), i) {
-					tot_trans += sym53c416_read(base,
-								    SG_ADDRESS(sg),
-								    sg->length);
+				if(!current_command->use_sg)
+					tot_trans = sym53c416_read(base, current_command->request_buffer, current_command->request_bufflen);
+				else
+				{
+					sgcount = current_command->use_sg;
+					sglist = current_command->request_buffer;
+					while(sgcount--)
+					{
+						tot_trans += sym53c416_read(base, SG_ADDRESS(sglist), sglist->length);
+						sglist++;
+					}
 				}
 				if(tot_trans < current_command->underflow)
 					printk(KERN_WARNING "sym53c416: Underflow, read %d bytes, request for %d bytes.\n", tot_trans, current_command->underflow);
@@ -621,25 +645,25 @@ int __init sym53c416_detect(struct scsi_host_template *tpnt)
 	int ints[3];
 
 	ints[0] = 2;
-	if(sym53c416_base[0])
+	if(sym53c416_base)
 	{
 		ints[1] = sym53c416_base[0];
 		ints[2] = sym53c416_base[1];
 		sym53c416_setup(NULL, ints);
 	}
-	if(sym53c416_base_1[0])
+	if(sym53c416_base_1)
 	{
 		ints[1] = sym53c416_base_1[0];
 		ints[2] = sym53c416_base_1[1];
 		sym53c416_setup(NULL, ints);
 	}
-	if(sym53c416_base_2[0])
+	if(sym53c416_base_2)
 	{
 		ints[1] = sym53c416_base_2[0];
 		ints[2] = sym53c416_base_2[1];
 		sym53c416_setup(NULL, ints);
 	}
-	if(sym53c416_base_3[0])
+	if(sym53c416_base_3)
 	{
 		ints[1] = sym53c416_base_3[0];
 		ints[2] = sym53c416_base_3[1];

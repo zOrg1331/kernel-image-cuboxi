@@ -1,0 +1,94 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 5 Aug 2008 16:21:55 -0400
+Subject: [fs] dio: use kzalloc to zero out struct dio
+Message-id: x491w13dxgc.fsf@segfault.boston.devel.redhat.com
+O-Subject: [rhel5 patch] dio: zero struct dio with kzalloc instead of manually
+Bugzilla: 439918
+
+The following BUG was reported on lkml:
+
+BUG: unable to handle kernel paging request at virtual address 23c070bf
+EIP is at bio_get_nr_vecs+0x0/0x30
+...
+Call Trace:
+ [<c04a1c9d>] dio_new_bio+0x82/0xfe
+ [<c04a1f43>] dio_send_cur_page+0x4a/0x92
+ [<c04a2b46>] __blockdev_direct_IO+0xa09/0xc83
+ [<c0460466>] __pagevec_free+0x14/0x1a
+ [<c0462c0a>] release_pages+0x137/0x13f
+ [<f8856f30>] journal_start+0xaf/0xdd [jbd]
+ [<f8890fec>] ext3_direct_IO+0xfd/0x190 [ext3]
+ [<f888f6af>] ext3_get_block+0x0/0xd0 [ext3]
+ [<c045d803>] generic_file_direct_IO+0xe5/0x116
+ [<c045d890>] generic_file_direct_write+0x5c/0x137
+ [<c045e285>] __generic_file_aio_write_nolock+0x37b/0x4df
+ [<c045e43e>] generic_file_aio_write+0x55/0xb3
+ [<f888cfdc>] ext3_file_write+0x24/0x8f [ext3]
+ [<c0481af9>] do_sync_write+0xc7/0x10a
+ [<c04347d2>] check_kill_permission+0xec/0xf5
+ [<c043c557>] autoremove_wake_function+0x0/0x35
+ [<c0481a32>] do_sync_write+0x0/0x10a
+ [<c048233e>] vfs_write+0xa8/0x154
+ [<c0482a1a>] sys_pwrite64+0x48/0x5f
+ [<c0404e12>] syscall_call+0x7/0xb
+
+It was eventually tracked down by Badari Pulavarty:
+
+diff --git a/fs/direct-io.c b/fs/direct-io.c
+index aa9754b..59d889c 100644
+--- a/fs/direct-io.c
++++ b/fs/direct-io.c
+@@ -948,35 +948,21 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
+ 	ssize_t ret2;
+ 	size_t bytes;
+ 
+-	dio->bio = NULL;
+ 	dio->inode = inode;
+ 	dio->rw = rw;
+ 	dio->blkbits = blkbits;
+ 	dio->blkfactor = inode->i_blkbits - blkbits;
+-	dio->start_zero_done = 0;
+-	dio->size = 0;
+ 	dio->block_in_file = offset >> blkbits;
+-	dio->blocks_available = 0;
+-	dio->cur_page = NULL;
+-
+-	dio->boundary = 0;
+-	dio->reap_counter = 0;
+ 	dio->get_block = get_block;
+ 	dio->end_io = end_io;
+-	dio->map_bh.b_private = NULL;
+ 	dio->final_block_in_bio = -1;
+ 	dio->next_block_for_io = -1;
+ 
+-	dio->page_errors = 0;
+-	dio->io_error = 0;
+-	dio->result = 0;
+ 	dio->iocb = iocb;
+ 	dio->i_size = i_size_read(inode);
+ 
+ 	atomic_set(&dio->refcount, 1);
+ 	spin_lock_init(&dio->bio_lock);
+-	dio->bio_list = NULL;
+-	dio->waiter = NULL;
+ 
+ 	/*
+ 	 * In case of non-aligned buffers, we may need 2 more
+@@ -984,8 +970,6 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
+ 	 */
+ 	if (unlikely(dio->blkfactor))
+ 		dio->pages_in_io = 2;
+-	else
+-		dio->pages_in_io = 0;
+ 
+ 	for (seg = 0; seg < nr_segs; seg++) {
+ 		user_addr = (unsigned long)iov[seg].iov_base;
+@@ -1165,7 +1149,7 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
+ 		}
+ 	}
+ 
+-	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
++	dio = kzalloc(sizeof(*dio), GFP_KERNEL);
+ 	retval = -ENOMEM;
+ 	if (!dio)
+ 		goto out;

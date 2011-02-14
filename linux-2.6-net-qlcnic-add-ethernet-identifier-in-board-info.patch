@@ -1,0 +1,63 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 20 Jul 2010 15:31:35 -0400
+Subject: [net] qlcnic: add ethernet identifier in board info
+Message-id: <20100720153041.2978.51298.sendpatchset@localhost.localdomain>
+Patchwork-id: 26962
+O-Subject: [RHEL 5.6 PATCH 3/16] qlcnic: add ethernet identifier in board info
+Bugzilla: 562723
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+========
+
+562723
+
+Upstream Status
+===============
+
+net-2.6 commit id 02420be6fc5fc63526aca43b5bfc571547a1c926
+
+Description
+===========
+
+>From 5c69a7f001e75c42260731097eea990c9a8eb604 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Mon, 1 Feb 2010 05:24:55 +0000
+Subject: [PATCH] qlcnic: add ethernet identifier in board info
+
+Added missing identifier that distinguishes between
+FCOE/ISCSI/ETHERNET functions.
+
+Signed-off-by: Rajesh K Borundia <rajesh.borundia@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlcnic/qlcnic.h b/drivers/net/qlcnic/qlcnic.h
+index ff64419..f74dfce 100644
+--- a/drivers/net/qlcnic/qlcnic.h
++++ b/drivers/net/qlcnic/qlcnic.h
+@@ -1073,7 +1073,7 @@ int qlcnic_reset_context(struct qlcnic_adapter *);
+  * QLOGIC Board information
+  */
+ 
+-#define QLCNIC_MAX_BOARD_NAME_LEN 64
++#define QLCNIC_MAX_BOARD_NAME_LEN 100
+ struct qlcnic_brdinfo {
+ 	unsigned short  vendor;
+ 	unsigned short  device;
+@@ -1083,8 +1083,12 @@ struct qlcnic_brdinfo {
+ };
+ 
+ static const struct qlcnic_brdinfo qlcnic_boards[] = {
+-	{0x1077, 0x8020, 0x1077, 0x203, "8200 Series Single Port 10GbE CNA"},
+-	{0x1077, 0x8020, 0x1077, 0x207, "8200 Series Dual Port 10GbE CNA"},
++	{0x1077, 0x8020, 0x1077, 0x203,
++		"8200 Series Single Port 10GbE Converged Network Adapter \
++		(TCP/IP Networking)"},
++	{0x1077, 0x8020, 0x1077, 0x207,
++		"8200 Series Dual Port 10GbE Converged Network Adapter \
++		(TCP/IP Networking)"},
+ 	{0x1077, 0x8020, 0x1077, 0x20b,
+ 		"3200 Series Dual Port 10Gb Intelligent Ethernet Adapter"},
+ 	{0x1077, 0x8020, 0x1077, 0x20c,

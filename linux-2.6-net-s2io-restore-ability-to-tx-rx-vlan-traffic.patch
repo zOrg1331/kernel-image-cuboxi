@@ -1,0 +1,32 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 22 Feb 2010 17:51:50 -0500
+Subject: [net] s2io: restore ability to tx/rx vlan traffic
+Message-id: <20100222175150.GB3398@hmsreliant.think-freely.org>
+Patchwork-id: 23395
+O-Subject: [RHEL5.5 PATCH] s2io: restore ability to tx/rx vlan traffic (bz
+	532762)
+Bugzilla: 562732
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hey all-
+        The most recent s2io driver update removed VLAN_RX/TX from the feature
+flags for the driver, which prevents us from supporting vlans on those cards
+which the driver supports.  This patch restores those flags and allows vlan
+traffic to be managed on these cards again.  Satisfies bz 532762
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/s2io.c b/drivers/net/s2io.c
+index cd89a70..cf66d10 100644
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -8019,6 +8019,7 @@ s2io_init_nic(struct pci_dev *pdev, const struct pci_device_id *pre)
+ 	/*  Driver entry points */
+ 	s2io_set_netdev_ops(dev, &s2io_netdev_ops);
+ 	SET_ETHTOOL_OPS(dev, &netdev_ethtool_ops);
++	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 
+ 	dev->features |= NETIF_F_SG | NETIF_F_IP_CSUM;
+ 	if (sp->high_dma_flag == true)

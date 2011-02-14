@@ -1,0 +1,111 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 226829 : Break init() into two parts to avoid MODPOST warnings -v2
+Date: Fri, 2 Feb 2007 14:45:00 -0500
+Bugzilla: 226829
+Message-Id: <20070202194500.31268.73582.sendpatchset@prarit.boston.redhat.com>
+Changelog: [init] Break init() into two parts to avoid MODPOST warnings
+
+Backport of
+
+http://marc.theaimsgroup.com/?l=linux-kernel&m=116650565026592&w=2
+
+Sucessfully tested by me.
+
+Resovles 226829.
+
+--- linux-2.6.18.i386.orig/init/main.c	2007-02-02 10:42:46.000000000 -0500
++++ linux-2.6.18.i386/init/main.c	2007-02-02 13:17:12.000000000 -0500
+@@ -728,7 +728,49 @@ static void run_init_process(char *init_
+ 	execve(init_filename, argv_init, envp_init);
+ }
+ 
+-static int init(void * unused)
++/* This is a non __init function. Force it to be noinline otherwise gcc
++ * makes it inline to init() and it becomes part of init.text section
++ */
++static int noinline init_post(void)
++{
++	free_initmem();
++	unlock_kernel();
++	mark_rodata_ro();
++	system_state = SYSTEM_RUNNING;
++	numa_default_policy();
++
++	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
++		printk(KERN_WARNING "Warning: unable to open an initial console.\n");
++
++	(void) sys_dup(0);
++	(void) sys_dup(0);
++
++	if (ramdisk_execute_command) {
++		run_init_process(ramdisk_execute_command);
++		printk(KERN_WARNING "Failed to execute %s\n",
++				ramdisk_execute_command);
++	}
++
++	/*
++	 * We try each of these until one succeeds.
++	 *
++	 * The Bourne shell can be used instead of init if we are
++	 * trying to recover a really broken machine.
++	 */
++	if (execute_command) {
++		run_init_process(execute_command);
++		printk(KERN_WARNING "Failed to execute %s.  Attempting "
++					"defaults...\n", execute_command);
++	}
++	run_init_process("/sbin/init");
++	run_init_process("/etc/init");
++	run_init_process("/bin/init");
++	run_init_process("/bin/sh");
++
++	panic("No init found.  Try passing init= option to kernel.");
++}
++
++static int __init init(void * unused)
+ {
+ 	lock_kernel();
+ 	/*
+@@ -780,39 +822,6 @@ static int init(void * unused)
+ 	 * we're essentially up and running. Get rid of the
+ 	 * initmem segments and start the user-mode stuff..
+ 	 */
+-	free_initmem();
+-	unlock_kernel();
+-	mark_rodata_ro();
+-	system_state = SYSTEM_RUNNING;
+-	numa_default_policy();
+-
+-	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
+-		printk(KERN_WARNING "Warning: unable to open an initial console.\n");
+-
+-	(void) sys_dup(0);
+-	(void) sys_dup(0);
+-
+-	if (ramdisk_execute_command) {
+-		run_init_process(ramdisk_execute_command);
+-		printk(KERN_WARNING "Failed to execute %s\n",
+-				ramdisk_execute_command);
+-	}
+-
+-	/*
+-	 * We try each of these until one succeeds.
+-	 *
+-	 * The Bourne shell can be used instead of init if we are 
+-	 * trying to recover a really broken machine.
+-	 */
+-	if (execute_command) {
+-		run_init_process(execute_command);
+-		printk(KERN_WARNING "Failed to execute %s.  Attempting "
+-					"defaults...\n", execute_command);
+-	}
+-	run_init_process("/sbin/init");
+-	run_init_process("/etc/init");
+-	run_init_process("/bin/init");
+-	run_init_process("/bin/sh");
+-
+-	panic("No init found.  Try passing init= option to kernel.");
++	init_post();
++	return 0;
+ }
+

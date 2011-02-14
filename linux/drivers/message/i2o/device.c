@@ -52,16 +52,17 @@ static inline int i2o_device_issue_claim(struct i2o_device *dev, u32 cmd,
 /**
  *	i2o_device_claim - claim a device for use by an OSM
  *	@dev: I2O device to claim
+ *	@drv: I2O driver which wants to claim the device
  *
- *	Do the leg work to assign a device to a given OSM. If the claim succeeds,
- *	the owner is the primary. If the attempt fails a negative errno code
+ *	Do the leg work to assign a device to a given OSM. If the claim succeed
+ *	the owner of the rimary. If the attempt fails a negative errno code
  *	is returned. On success zero is returned.
  */
 int i2o_device_claim(struct i2o_device *dev)
 {
 	int rc = 0;
 
-	mutex_lock(&dev->lock);
+	down(&dev->lock);
 
 	rc = i2o_device_issue_claim(dev, I2O_CMD_UTIL_CLAIM, I2O_CLAIM_PRIMARY);
 	if (!rc)
@@ -71,7 +72,7 @@ int i2o_device_claim(struct i2o_device *dev)
 		pr_debug("i2o: claim of device %d failed %d\n",
 			 dev->lct_data.tid, rc);
 
-	mutex_unlock(&dev->lock);
+	up(&dev->lock);
 
 	return rc;
 }
@@ -79,6 +80,7 @@ int i2o_device_claim(struct i2o_device *dev)
 /**
  *	i2o_device_claim_release - release a device that the OSM is using
  *	@dev: device to release
+ *	@drv: driver which claimed the device
  *
  *	Drop a claim by an OSM on a given I2O device.
  *
@@ -94,7 +96,7 @@ int i2o_device_claim_release(struct i2o_device *dev)
 	int tries;
 	int rc = 0;
 
-	mutex_lock(&dev->lock);
+	down(&dev->lock);
 
 	/*
 	 *      If the controller takes a nonblocking approach to
@@ -116,7 +118,7 @@ int i2o_device_claim_release(struct i2o_device *dev)
 		pr_debug("i2o: claim release of device %d failed %d\n",
 			 dev->lct_data.tid, rc);
 
-	mutex_unlock(&dev->lock);
+	up(&dev->lock);
 
 	return rc;
 }
@@ -132,7 +134,7 @@ static void i2o_device_release(struct device *dev)
 {
 	struct i2o_device *i2o_dev = to_i2o_device(dev);
 
-	pr_debug("i2o: device %s released\n", dev_name(dev));
+	pr_debug("i2o: device %s released\n", dev->bus_id);
 
 	kfree(i2o_dev);
 }
@@ -196,7 +198,7 @@ static struct i2o_device *i2o_device_alloc(void)
 		return ERR_PTR(-ENOMEM);
 
 	INIT_LIST_HEAD(&dev->list);
-	mutex_init(&dev->lock);
+	init_MUTEX(&dev->lock);
 
 	dev->device.bus = &i2o_bus_type;
 	dev->device.release = &i2o_device_release;
@@ -206,109 +208,74 @@ static struct i2o_device *i2o_device_alloc(void)
 
 /**
  *	i2o_device_add - allocate a new I2O device and add it to the IOP
- *	@c: I2O controller that the device is on
+ *	@iop: I2O controller where the device is on
  *	@entry: LCT entry of the I2O device
  *
  *	Allocate a new I2O device and initialize it with the LCT entry. The
  *	device is appended to the device list of the controller.
  *
- *	Returns zero on success, or a -ve errno.
+ *	Returns a pointer to the I2O device on success or negative error code
+ *	on failure.
  */
-static int i2o_device_add(struct i2o_controller *c, i2o_lct_entry *entry)
+static struct i2o_device *i2o_device_add(struct i2o_controller *c,
+					 i2o_lct_entry * entry)
 {
 	struct i2o_device *i2o_dev, *tmp;
-	int rc;
 
 	i2o_dev = i2o_device_alloc();
 	if (IS_ERR(i2o_dev)) {
 		printk(KERN_ERR "i2o: unable to allocate i2o device\n");
-		return PTR_ERR(i2o_dev);
+		return i2o_dev;
 	}
 
 	i2o_dev->lct_data = *entry;
 
-	dev_set_name(&i2o_dev->device, "%d:%03x", c->unit,
-		     i2o_dev->lct_data.tid);
+	snprintf(i2o_dev->device.bus_id, BUS_ID_SIZE, "%d:%03x", c->unit,
+		 i2o_dev->lct_data.tid);
 
 	i2o_dev->iop = c;
 	i2o_dev->device.parent = &c->device;
 
-	rc = device_register(&i2o_dev->device);
-	if (rc)
-		goto err;
+	device_register(&i2o_dev->device);
 
 	list_add_tail(&i2o_dev->list, &c->devices);
 
 	/* create user entries for this device */
 	tmp = i2o_iop_find_device(i2o_dev->iop, i2o_dev->lct_data.user_tid);
-	if (tmp && (tmp != i2o_dev)) {
-		rc = sysfs_create_link(&i2o_dev->device.kobj,
-				       &tmp->device.kobj, "user");
-		if (rc)
-			goto unreg_dev;
-	}
+	if (tmp && (tmp != i2o_dev))
+		sysfs_create_link(&i2o_dev->device.kobj, &tmp->device.kobj,
+				  "user");
 
 	/* create user entries refering to this device */
 	list_for_each_entry(tmp, &c->devices, list)
 	    if ((tmp->lct_data.user_tid == i2o_dev->lct_data.tid)
-		&& (tmp != i2o_dev)) {
-		rc = sysfs_create_link(&tmp->device.kobj,
-				       &i2o_dev->device.kobj, "user");
-		if (rc)
-			goto rmlink1;
-	}
+		&& (tmp != i2o_dev))
+		sysfs_create_link(&tmp->device.kobj,
+				  &i2o_dev->device.kobj, "user");
 
 	/* create parent entries for this device */
 	tmp = i2o_iop_find_device(i2o_dev->iop, i2o_dev->lct_data.parent_tid);
-	if (tmp && (tmp != i2o_dev)) {
-		rc = sysfs_create_link(&i2o_dev->device.kobj,
-				       &tmp->device.kobj, "parent");
-		if (rc)
-			goto rmlink1;
-	}
+	if (tmp && (tmp != i2o_dev))
+		sysfs_create_link(&i2o_dev->device.kobj, &tmp->device.kobj,
+				  "parent");
 
 	/* create parent entries refering to this device */
 	list_for_each_entry(tmp, &c->devices, list)
 	    if ((tmp->lct_data.parent_tid == i2o_dev->lct_data.tid)
-		&& (tmp != i2o_dev)) {
-		rc = sysfs_create_link(&tmp->device.kobj,
-				       &i2o_dev->device.kobj, "parent");
-		if (rc)
-			goto rmlink2;
-	}
+		&& (tmp != i2o_dev))
+		sysfs_create_link(&tmp->device.kobj,
+				  &i2o_dev->device.kobj, "parent");
 
 	i2o_driver_notify_device_add_all(i2o_dev);
 
-	pr_debug("i2o: device %s added\n", dev_name(&i2o_dev->device));
+	pr_debug("i2o: device %s added\n", i2o_dev->device.bus_id);
 
-	return 0;
-
-rmlink2:
-	/* If link creating failed halfway, we loop whole list to cleanup.
-	 * And we don't care wrong removing of link, because sysfs_remove_link
-	 * will take care of it.
-	 */
-	list_for_each_entry(tmp, &c->devices, list) {
-		if (tmp->lct_data.parent_tid == i2o_dev->lct_data.tid)
-			sysfs_remove_link(&tmp->device.kobj, "parent");
-	}
-	sysfs_remove_link(&i2o_dev->device.kobj, "parent");
-rmlink1:
-	list_for_each_entry(tmp, &c->devices, list)
-		if (tmp->lct_data.user_tid == i2o_dev->lct_data.tid)
-			sysfs_remove_link(&tmp->device.kobj, "user");
-	sysfs_remove_link(&i2o_dev->device.kobj, "user");
-unreg_dev:
-	list_del(&i2o_dev->list);
-	device_unregister(&i2o_dev->device);
-err:
-	kfree(i2o_dev);
-	return rc;
+	return i2o_dev;
 }
 
 /**
  *	i2o_device_remove - remove an I2O device from the I2O core
- *	@i2o_dev: I2O device which should be released
+ *	@dev: I2O device which should be released
  *
  *	Is used on I2O controller removal or LCT modification, when the device
  *	is removed from the system. Note that the device could still hang
@@ -354,7 +321,7 @@ int i2o_device_parse_lct(struct i2o_controller *c)
 	u16 table_size;
 	u32 buf;
 
-	mutex_lock(&c->lct_lock);
+	down(&c->lct_lock);
 
 	kfree(c->lct);
 
@@ -363,7 +330,7 @@ int i2o_device_parse_lct(struct i2o_controller *c)
 
 	lct = c->lct = kmalloc(table_size * 4, GFP_KERNEL);
 	if (!lct) {
-		mutex_unlock(&c->lct_lock);
+		up(&c->lct_lock);
 		return -ENOMEM;
 	}
 
@@ -436,7 +403,7 @@ int i2o_device_parse_lct(struct i2o_controller *c)
 			i2o_device_remove(dev);
 	}
 
-	mutex_unlock(&c->lct_lock);
+	up(&c->lct_lock);
 
 	return 0;
 }
@@ -465,7 +432,7 @@ int i2o_parm_issue(struct i2o_device *i2o_dev, int cmd, void *oplist,
 
 	res.virt = NULL;
 
-	if (i2o_dma_alloc(dev, &res, reslen))
+	if (i2o_dma_alloc(dev, &res, reslen, GFP_KERNEL))
 		return -ENOMEM;
 
 	msg = i2o_msg_get_wait(c, I2O_TIMEOUT_MESSAGE_GET);
@@ -513,7 +480,7 @@ int i2o_parm_field_get(struct i2o_device *i2o_dev, int group, int field,
 	u8 *resblk;		/* 8 bytes for header */
 	int rc;
 
-	resblk = kmalloc(buflen + 8, GFP_KERNEL);
+	resblk = kmalloc(buflen + 8, GFP_KERNEL | GFP_ATOMIC);
 	if (!resblk)
 		return -ENOMEM;
 

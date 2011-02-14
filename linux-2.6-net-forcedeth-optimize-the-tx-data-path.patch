@@ -1,0 +1,55 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Subject: [RHEL5.1 PATCH] forcedeth: missed 2 chunks from 0.60 backport
+Date: Mon, 13 Aug 2007 16:47:21 -0400
+Bugzilla: 252034
+Message-Id: <20070813204719.GH19875@gospo.rdu.redhat.com>
+Changelog: [net] forcedeth: optimize the tx data path
+
+
+
+I somehow missed this small chunk from my recent forcedeth backport, so
+it needs to be added.  Dropping these calls simply removes calls that
+should ensure that the writel calls completed successfully, but
+apparently that isn't needed.  Without this it seems like we aren't
+actually trying to optimize the code path as hoped by the following
+commit (most of which was included):
+
+commit 445583b89d71b48cf8c64e26acc5a710248feed7
+Author: Ayaz Abdulla <aabdulla@nvidia.com>
+
+    forcedeth: tx data path optimization
+
+    This patch optimizes the tx data paths and cleans up the code (removes
+    vlan from descr1/2 since only valid for desc3, changes to make code
+    easier to read, etc).
+
+    Signed-Off-By: Ayaz Abdulla <aabdulla@nvidia.com>
+
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+This resolves BZ 252034.
+
+---
+
+ forcedeth.c |    2 --
+ 1 files changed, 2 deletions(-)
+
+--- linux-2.6.18.x86_64/drivers/net/forcedeth.c.orig
++++ linux-2.6.18.x86_64/drivers/net/forcedeth.c
+@@ -1722,7 +1722,6 @@ static int nv_start_xmit(struct sk_buff 
+ 
+ 	dev->trans_start = jiffies;
+ 	writel(NVREG_TXRXCTL_KICK|np->txrxctl_bits, get_hwbase(dev) + NvRegTxRxControl);
+-	pci_push(get_hwbase(dev));
+ 	return NETDEV_TX_OK;
+ }
+ 
+@@ -1851,7 +1850,6 @@ static int nv_start_xmit_optimized(struc
+ 
+ 	dev->trans_start = jiffies;
+ 	writel(NVREG_TXRXCTL_KICK|np->txrxctl_bits, get_hwbase(dev) + NvRegTxRxControl);
+-	pci_push(get_hwbase(dev));
+ 	return NETDEV_TX_OK;
+ }
+ 
+

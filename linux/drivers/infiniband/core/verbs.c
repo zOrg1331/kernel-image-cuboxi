@@ -34,6 +34,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: verbs.c 1349 2004-12-16 21:09:43Z roland $
  */
 
 #include <linux/errno.h>
@@ -76,39 +78,6 @@ enum ib_rate mult_to_ib_rate(int mult)
 	}
 }
 EXPORT_SYMBOL(mult_to_ib_rate);
-
-enum rdma_transport_type
-rdma_node_get_transport(enum rdma_node_type node_type)
-{
-	switch (node_type) {
-	case RDMA_NODE_IB_CA:
-	case RDMA_NODE_IB_SWITCH:
-	case RDMA_NODE_IB_ROUTER:
-		return RDMA_TRANSPORT_IB;
-	case RDMA_NODE_RNIC:
-		return RDMA_TRANSPORT_IWARP;
-	default:
-		BUG();
-		return 0;
-	}
-}
-EXPORT_SYMBOL(rdma_node_get_transport);
-
-enum rdma_link_layer rdma_port_link_layer(struct ib_device *device, u8 port_num)
-{
-	if (device->get_link_layer)
-		return device->get_link_layer(device, port_num);
-
-	switch (rdma_node_get_transport(device->node_type)) {
-	case RDMA_TRANSPORT_IB:
-		return IB_LINK_LAYER_INFINIBAND;
-	case RDMA_TRANSPORT_IWARP:
-		return IB_LINK_LAYER_ETHERNET;
-	default:
-		return IB_LINK_LAYER_UNSPECIFIED;
-	}
-}
-EXPORT_SYMBOL(rdma_port_link_layer);
 
 /* Protection domains */
 
@@ -181,7 +150,7 @@ int ib_init_ah_from_wc(struct ib_device *device, u8 port_num, struct ib_wc *wc,
 		ah_attr->grh.sgid_index = (u8) gid_index;
 		flow_class = be32_to_cpu(grh->version_tclass_flow);
 		ah_attr->grh.flow_label = flow_class & 0xFFFFF;
-		ah_attr->grh.hop_limit = 0xFF;
+		ah_attr->grh.hop_limit = grh->hop_limit;
 		ah_attr->grh.traffic_class = (flow_class >> 20) & 0xFF;
 	}
 	return 0;
@@ -262,9 +231,7 @@ int ib_modify_srq(struct ib_srq *srq,
 		  struct ib_srq_attr *srq_attr,
 		  enum ib_srq_attr_mask srq_attr_mask)
 {
-	return srq->device->modify_srq ?
-		srq->device->modify_srq(srq, srq_attr, srq_attr_mask, NULL) :
-		-ENOSYS;
+	return srq->device->modify_srq(srq, srq_attr, srq_attr_mask);
 }
 EXPORT_SYMBOL(ib_modify_srq);
 
@@ -331,6 +298,7 @@ static const struct {
 } qp_state_table[IB_QPS_ERR + 1][IB_QPS_ERR + 1] = {
 	[IB_QPS_RESET] = {
 		[IB_QPS_RESET] = { .valid = 1 },
+		[IB_QPS_ERR]   = { .valid = 1 },
 		[IB_QPS_INIT]  = {
 			.valid = 1,
 			.req_param = {
@@ -579,7 +547,7 @@ int ib_modify_qp(struct ib_qp *qp,
 		 struct ib_qp_attr *qp_attr,
 		 int qp_attr_mask)
 {
-	return qp->device->modify_qp(qp, qp_attr, qp_attr_mask, NULL);
+	return qp->device->modify_qp(qp, qp_attr, qp_attr_mask);
 }
 EXPORT_SYMBOL(ib_modify_qp);
 
@@ -624,11 +592,11 @@ EXPORT_SYMBOL(ib_destroy_qp);
 struct ib_cq *ib_create_cq(struct ib_device *device,
 			   ib_comp_handler comp_handler,
 			   void (*event_handler)(struct ib_event *, void *),
-			   void *cq_context, int cqe, int comp_vector)
+			   void *cq_context, int cqe)
 {
 	struct ib_cq *cq;
 
-	cq = device->create_cq(device, cqe, comp_vector, NULL, NULL);
+	cq = device->create_cq(device, cqe, NULL, NULL);
 
 	if (!IS_ERR(cq)) {
 		cq->device        = device;
@@ -642,13 +610,6 @@ struct ib_cq *ib_create_cq(struct ib_device *device,
 	return cq;
 }
 EXPORT_SYMBOL(ib_create_cq);
-
-int ib_modify_cq(struct ib_cq *cq, u16 cq_count, u16 cq_period)
-{
-	return cq->device->modify_cq ?
-		cq->device->modify_cq(cq, cq_count, cq_period) : -ENOSYS;
-}
-EXPORT_SYMBOL(ib_modify_cq);
 
 int ib_destroy_cq(struct ib_cq *cq)
 {
@@ -693,9 +654,6 @@ struct ib_mr *ib_reg_phys_mr(struct ib_pd *pd,
 			     u64 *iova_start)
 {
 	struct ib_mr *mr;
-
-	if (!pd->device->reg_phys_mr)
-		return ERR_PTR(-ENOSYS);
 
 	mr = pd->device->reg_phys_mr(pd, phys_buf_array, num_phys_buf,
 				     mr_access_flags, iova_start);
@@ -767,52 +725,6 @@ int ib_dereg_mr(struct ib_mr *mr)
 	return ret;
 }
 EXPORT_SYMBOL(ib_dereg_mr);
-
-struct ib_mr *ib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len)
-{
-	struct ib_mr *mr;
-
-	if (!pd->device->alloc_fast_reg_mr)
-		return ERR_PTR(-ENOSYS);
-
-	mr = pd->device->alloc_fast_reg_mr(pd, max_page_list_len);
-
-	if (!IS_ERR(mr)) {
-		mr->device  = pd->device;
-		mr->pd      = pd;
-		mr->uobject = NULL;
-		atomic_inc(&pd->usecnt);
-		atomic_set(&mr->usecnt, 0);
-	}
-
-	return mr;
-}
-EXPORT_SYMBOL(ib_alloc_fast_reg_mr);
-
-struct ib_fast_reg_page_list *ib_alloc_fast_reg_page_list(struct ib_device *device,
-							  int max_page_list_len)
-{
-	struct ib_fast_reg_page_list *page_list;
-
-	if (!device->alloc_fast_reg_page_list)
-		return ERR_PTR(-ENOSYS);
-
-	page_list = device->alloc_fast_reg_page_list(device, max_page_list_len);
-
-	if (!IS_ERR(page_list)) {
-		page_list->device = device;
-		page_list->max_page_list_len = max_page_list_len;
-	}
-
-	return page_list;
-}
-EXPORT_SYMBOL(ib_alloc_fast_reg_page_list);
-
-void ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list)
-{
-	page_list->device->free_fast_reg_page_list(page_list);
-}
-EXPORT_SYMBOL(ib_free_fast_reg_page_list);
 
 /* Memory windows */
 
@@ -920,13 +832,3 @@ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
 	return qp->device->detach_mcast(qp, gid, lid);
 }
 EXPORT_SYMBOL(ib_detach_mcast);
-
-int ib_get_eth_l2_addr(struct ib_device *device, u8 port, union ib_gid *gid,
-		       int sgid_idx, u8 *mac, __u16 *vlan_id)
-{
-	if (!device->get_eth_l2_addr)
-		return -ENOSYS;
-
-	return device->get_eth_l2_addr(device, port, gid, sgid_idx, mac, vlan_id);
-}
-EXPORT_SYMBOL(ib_get_eth_l2_addr);

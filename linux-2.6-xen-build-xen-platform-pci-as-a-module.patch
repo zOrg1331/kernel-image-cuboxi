@@ -1,0 +1,211 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 25 Nov 2008 18:03:37 -0500
+Subject: [xen] build xen-platform-pci as a module
+Message-id: 492C8449.3090609@redhat.com
+O-Subject: [RHEL5.3 PATCH] [BZ472504] - build xen-platform-pci as a module [V2]
+Bugzilla: 472504
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+
+BZ 472504
+
+Version 2: with changes due to reviewer feedback and extensive testing/shakedown
+           to ensure no other regressions, lost functionality.
+
+RHEL5.2 shipped an external driver update package, kmod-xenpv, containing
+four loadable modules: xen-platform-pci.ko, xen-balloon.ko, xen-vbd.ko, &
+xen-vnif.ko.
+When this functionality was included in RHEL5.3, the module configuation
+was changed to include the xen-platform-pci.ko into the built-in kernel module
+to mimic the equivalent functionality in the kernel-xen package for xen driver support.
+This causes havoc with module dependencies when there are older external
+modules installed on a 5.2 system and then an upgraded 5.3 kernel is added, because depmod is
+unable to determine the proper dependencies between the older modules and in-kernel symbols.
+
+Thus, if a RHEL5.2 fully-virtualized (FV) guest installation has the
+kmod-xenpv package installed, and then upgrades to RHEL5.3 (without this patch),
+the guest kernel will fail to load the xen-vbd.ko module, breaking
+the guest configuration.
+ -- a regression if rhel5.3 installed on rhel5.2+kmod-xenpv FV guest.
+Removing the kmod-xenpv prior to a RHEL5.3 upgrade would break older
+kernels, if the customer wants to keep both kernel versions in the guest,
+and is considered improper to break older kernels when a new kernel is installed.
+
+The following patch pulls the xen-platform-pci.ko functionality
+back out of the built-in kernel module, makes it a separate module as before,
+and depmod now creates the proper module dependencies, and xen-vbd.ko auto-loads
+correctly.
+
+Minor changes to other files were needed beyond just changing the Makefiles:
+ (a) drivers/xen/core/gnttab.c
+       -- changed gnttab_init() from __init to __devinit, so
+          it is guaranteed to be available during dynamic load of
+          xen-platform-pci.ko; without this fix, Section mismatch build warnings are generated.
+ (b) execve() is not exported, and call_usermodehelper() was designed
+     to do the equivalent for loadable modules, so update reboot.c to match upstream.
+ (c) xenbus_probe.c
+     there was code to remove unconnected xvd devices under /sys/devices/xen
+     to prevent an anaconda install failure.
+     that code was wired to the non-MODULE code path.
+     so, the addition to xenbus_probe() does the same thing (once) at
+     xen-platform-pci.ko load time to ensure.
+     The code is wrapped around with ifdef HVM & ifdef MODULE's so
+     kernel-xenU (PV guests) are not affected by this functionality
+     (coding to prevent regression on PV guests).
+ (d) platform-compat.c
+     ctrl_alt_del() functionality is not exported from the kernel.
+     when needed by the xenpv shutdown code, it has to provide an equivalent
+     version.  The only problem is the kernel/sys.c version has an ioctl that
+     can disable ctrl_alt_del.  That functionality is lost (for a FV guest) once
+     xen-platform-pci is made a loadable vs built-in to the main kernel module.
+     This is what upstream does and the current kmod-xenpv if loaded on a FV (5.2) guest,
+     so no regression with this change.
+
+Testing:
+(a) tested a FV x86_64 guest; none of the modified modules are 32/64-bit dependent.
+(b) ran kudzu -p -c HD to ensure only IDE shown, no xvd's;
+    xen tools will present both IDE & xvda for IDE attachment;
+    if the xvd is left in the system, it'll appear under /sys/devices/xen/vbd-xxxx
+    and that'll blow up anaconda at install time when it tries to open that
+    device as an optional boot device.
+(c) booted a PV x86_64 guest to ensure it still works
+(d) ran xm block-attach against FV guest -- can mount & traverse
+    the xvd-attached file system.
+    *** NOTE ***: Could not do an xm block-detach;
+                 -- after much struggling, proved that an old 5.2+kmod-xenpv
+                    block-detach failed as well (and it worked previously),
+                    so either my xen tools are broken, or a recent update broke them;
+                    -- outstanding email & possible BZ on this lost functionality.
+(e) rebuilt initrd to include xen-vbd & xen-vnif, and able to boot
+    a FV guest using xvd as boot device, xen-vnif as network device.
+(f) xm block-attach done to PV guest to ensure nothing gone a foul there as well.
+
+Full brew build on-going:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1588682
+
+Please review & ACK.
+
+- Don
+
+diff --git a/drivers/xen/core/gnttab.c b/drivers/xen/core/gnttab.c
+index 0b165b8..9ed6b50 100644
+--- a/drivers/xen/core/gnttab.c
++++ b/drivers/xen/core/gnttab.c
+@@ -579,7 +579,7 @@ static int gnttab_expand(unsigned int req_entries)
+ 	return rc;
+ }
+  
+-int __init gnttab_init(void)
++int __devinit gnttab_init(void)
+ {
+ 	int i;
+ 	unsigned int max_nr_glist_frames, nr_glist_frames;
+diff --git a/drivers/xen/core/reboot.c b/drivers/xen/core/reboot.c
+index 7c22041..929c590 100644
+--- a/drivers/xen/core/reboot.c
++++ b/drivers/xen/core/reboot.c
+@@ -240,7 +240,8 @@ static int shutdown_process(void *__unused)
+ 
+ 	if ((shutting_down == SHUTDOWN_POWEROFF) ||
+ 	    (shutting_down == SHUTDOWN_HALT)) {
+-		if (execve("/sbin/poweroff", poweroff_argv, envp) < 0) {
++		if (call_usermodehelper("/sbin/poweroff", poweroff_argv,
++					envp, 0) < 0) {
+ #ifdef CONFIG_XEN
+ 			sys_reboot(LINUX_REBOOT_MAGIC1,
+ 				   LINUX_REBOOT_MAGIC2,
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index 1142c8b..40cf81f 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -90,6 +90,8 @@ static int xenbus_probe_backend(const char *type, const char *domid);
+ static int xenbus_dev_probe(struct device *_dev);
+ static int xenbus_dev_remove(struct device *_dev);
+ static void xenbus_dev_shutdown(struct device *_dev);
++static int print_device_status(struct device *dev, void *data);
++static void xvd_dev_shutdown(void);
+ 
+ /* If something in array of ids matches this device, return it. */
+ static const struct xenbus_device_id *
+@@ -1037,6 +1039,11 @@ EXPORT_SYMBOL_GPL(unregister_xenstore_notifier);
+ 
+ void xenbus_probe(void *unused)
+ {
++#ifdef CONFIG_XEN_PV_ON_HVM
++#ifdef MODULE
++	struct device_driver *drv = NULL;
++#endif
++#endif
+ 	BUG_ON((xenstored_ready <= 0));
+ 
+ 	/* Enumerate devices in xenstore. */
+@@ -1050,6 +1057,16 @@ void xenbus_probe(void *unused)
+ 	register_xenbus_watch(&be_watch);
+ #endif
+ 
++#ifdef CONFIG_XEN_PV_ON_HVM
++#ifdef MODULE /* to mark unused xen devices after auto-load */
++	bus_for_each_dev(&xenbus_frontend.bus, NULL, drv,
++			 print_device_status);
++#endif
++	/* now see about removing unused xvd's */
++	xvd_dev_shutdown();
++#endif
++
++
+ 	/* Notify others that xenstore is up */
+ 	blocking_notifier_call_chain(&xenstore_notifier_list, 0, NULL);
+ }
+@@ -1273,6 +1290,11 @@ static void xendev_rem_add(struct xenbus_device *dev)
+ 	}
+ 	new->xendev = dev;
+ 
++	/* need to init if not done so already; for xen-platform-pci build */
++	if (xendev_rem_hd.list.next == NULL) {
++		INIT_LIST_HEAD(&xendev_rem_hd.list);
++	}
++
+ 	spin_lock(&xendev_rem_lock);
+ 	/* make sure xendev not already on the list */
+ 	list_for_each_entry(ptr, &xendev_rem_hd.list, list) {
+diff --git a/drivers/xenpv_hvm/balloon/Makefile b/drivers/xenpv_hvm/balloon/Makefile
+index a80677f..ed7faca 100644
+--- a/drivers/xenpv_hvm/balloon/Makefile
++++ b/drivers/xenpv_hvm/balloon/Makefile
+@@ -1,6 +1,6 @@
+ include $(src)/../overrides.mk
+ 
+-obj-y  = xen-balloon.o
++obj-m  = xen-balloon.o
+ 
+ EXTRA_CFLAGS += -I$(src)/../platform-pci
+ 
+diff --git a/drivers/xenpv_hvm/platform-pci/Makefile b/drivers/xenpv_hvm/platform-pci/Makefile
+index 901a4e0..1907af9 100644
+--- a/drivers/xenpv_hvm/platform-pci/Makefile
++++ b/drivers/xenpv_hvm/platform-pci/Makefile
+@@ -2,7 +2,7 @@ include $(src)/../overrides.mk
+ 
+ EXTRA_CFLAGS += -I$(src)/../platform-pci
+ 
+-obj-y += xen-platform-pci.o
++obj-m += xen-platform-pci.o
+ 
+ xen-platform-pci-objs := evtchn.o platform-compat.o platform-pci.o xen_support.o
+ xen-platform-pci-objs += ../../xen/core/gnttab.o
+diff --git a/drivers/xenpv_hvm/platform-pci/platform-compat.c b/drivers/xenpv_hvm/platform-pci/platform-compat.c
+index 2e77cec..abe5df9 100644
+--- a/drivers/xenpv_hvm/platform-pci/platform-compat.c
++++ b/drivers/xenpv_hvm/platform-pci/platform-compat.c
+@@ -12,7 +12,8 @@ static int system_state = 1;
+ EXPORT_SYMBOL(system_state);
+ #endif
+ 
+-#if 0
++#ifdef MODULE
++/* Need to include this for modular build; in kernel/sys.c if built into kernel */
+ void ctrl_alt_del(void)
+ {
+ 	kill_proc(1, SIGINT, 1); /* interrupt init */

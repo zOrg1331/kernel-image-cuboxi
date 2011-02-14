@@ -1,0 +1,67 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 23 Apr 2009 12:48:14 -0500
+Subject: [ppc64] adjust oprofile_cpu_type
+Message-id: 49F0A9DE.4010904@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.4 BZ496709] PPC64: adjust oprofile_cpu_type
+Bugzilla: 496709
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+Anyway, here is a new patch that uses compat-v1 for oprofile_cpu_type
+instead of compat-<arch>.
+It has been tested, does not break kabi, and brewbuild built fine:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1773955
+
+Thanks,
+
+--
+Ameet M. Paranjape
+aparanja@redhat.com
+IBM/Red Hat POWER Liason
+IRC name: aparanja
+
+diff --git a/arch/powerpc/kernel/cputable.c b/arch/powerpc/kernel/cputable.c
+index 4c54b56..4d0e934 100644
+--- a/arch/powerpc/kernel/cputable.c
++++ b/arch/powerpc/kernel/cputable.c
+@@ -275,6 +275,8 @@ static struct cpu_spec cpu_specs[] = {
+ 		.cpu_user_features	= COMMON_USER_POWER5_PLUS,
+ 		.icache_bsize		= 128,
+ 		.dcache_bsize		= 128,
++		.oprofile_cpu_type      = "ppc64/compat-v1",
++		.oprofile_type		= PPC_OPROFILE_POWER4,
+ 		.platform		= "power5+",
+ 	},
+ 	{	/* Power5++ */
+@@ -318,6 +320,8 @@ static struct cpu_spec cpu_specs[] = {
+ 		.cpu_user_features	= COMMON_USER_POWER6,
+ 		.icache_bsize		= 128,
+ 		.dcache_bsize		= 128,
++		.oprofile_cpu_type      = "ppc64/compat-v1",
++		.oprofile_type		= PPC_OPROFILE_POWER4,
+ 		.platform		= "power6",
+ 	},
+ 	{	/* Cell Broadband Engine */
+@@ -1205,6 +1209,23 @@ struct cpu_spec *identify_cpu(unsigned long offset, unsigned int pvr)
+ 				t->dcache_bsize = s->dcache_bsize;
+ 				t->cpu_setup = s->cpu_setup;
+ 				t->platform = s->platform;
++				/*
++				 * If we have passed through this logic once before and
++				 * have pulled the default case because the real PVR was
++				 * not found inside cpu_specs[], then we are possibly
++				 * running in compatibility mode. In that case, let the
++				 * oprofiler know which set of compatibility counters to
++				 * pull from by making sure the oprofile_cpu_type string
++				 * is set to that of compatibility mode. If the
++				 * oprofile_cpu_type already has a value, then we are
++				 * possibly overriding a real PVR with a logical one,
++				 * and, in that case, keep the current value for
++				 * oprofile_cpu_type.
++				 */
++				if (t->oprofile_cpu_type == NULL) {
++					t->oprofile_cpu_type = s->oprofile_cpu_type;
++					t->oprofile_type = s->oprofile_type;
++				}
+ 			} else
+ 				*t = *s;
+ 			*PTRRELOC(&cur_cpu_spec) = &the_cpu_spec;

@@ -18,7 +18,9 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <sound/driver.h>
 #include <linux/wait.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <sound/core.h>
@@ -93,10 +95,10 @@ int snd_emux_register(struct snd_emux *emu, struct snd_card *card, int index, ch
 	int err;
 	struct snd_sf_callback sf_cb;
 
-	if (snd_BUG_ON(!emu->hw || emu->max_voices <= 0))
-		return -EINVAL;
-	if (snd_BUG_ON(!card || !name))
-		return -EINVAL;
+	snd_assert(emu->hw != NULL, return -EINVAL);
+	snd_assert(emu->max_voices > 0, return -EINVAL);
+	snd_assert(card != NULL, return -EINVAL);
+	snd_assert(name != NULL, return -EINVAL);
 
 	emu->card = card;
 	emu->name = kstrdup(name, GFP_KERNEL);

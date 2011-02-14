@@ -1,0 +1,120 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 16 Jun 2009 09:44:19 +0200
+Subject: [net] 8139too: RTNL and flush_scheduled_work deadlock
+Message-id: 20090616074418.GD3521@psychotron.englab.brq.redhat.com
+O-Subject: Re: [RHEL5.5 patch] BZ487346 net: 8139too: RTNL and flush_scheduled_work deadlock [v2]
+Bugzilla: 487346
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+BZ487346
+https://bugzilla.redhat.com/show_bug.cgi?id=487346
+
+Description:
+There's been a possible deadlock during close operation of 8139too NIC on
+aquiring RTNL. With this NIC used as bonding slave there was 100% chance
+to hit this. This patch fixes the issue.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=83cbb4d2577174e27a91e63a47a2a27c3af50d4e
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1844366
+
+Test:
+Booted and tested on x86_64.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/drivers/net/8139too.c b/drivers/net/8139too.c
+index 24f561a..c582230 100644
+--- a/drivers/net/8139too.c
++++ b/drivers/net/8139too.c
+@@ -1112,6 +1112,8 @@ static void __devexit rtl8139_remove_one (struct pci_dev *pdev)
+ 
+ 	assert (dev != NULL);
+ 
++	flush_scheduled_work();
++
+ 	unregister_netdev (dev);
+ 
+ 	__rtl8139_cleanup_dev (dev);
+@@ -1605,18 +1607,21 @@ static void rtl8139_thread (void *_data)
+ 	struct rtl8139_private *tp = netdev_priv(dev);
+ 	unsigned long thr_delay = next_tick;
+ 
++	rtnl_lock();
++
++	if (!netif_running(dev))
++		goto out_unlock;
++
+ 	if (tp->watchdog_fired) {
+ 		tp->watchdog_fired = 0;
+ 		rtl8139_tx_timeout_task(_data);
+-	} else if (rtnl_trylock()) {
+-		rtl8139_thread_iter (dev, tp, tp->mmio_addr);
+-		rtnl_unlock ();
+-	} else {
+-		/* unlikely race.  mitigate with fast poll. */
+-		thr_delay = HZ / 2;
+-	}
++	} else
++		rtl8139_thread_iter(dev, tp, tp->mmio_addr);
+ 
+-	schedule_delayed_work(&tp->thread, thr_delay);
++	if (tp->have_thread)
++		schedule_delayed_work(&tp->thread, thr_delay);
++out_unlock:
++	rtnl_unlock ();
+ }
+ 
+ static void rtl8139_start_thread(struct rtl8139_private *tp)
+@@ -1628,19 +1633,11 @@ static void rtl8139_start_thread(struct rtl8139_private *tp)
+ 		return;
+ 
+ 	tp->have_thread = 1;
++	tp->watchdog_fired = 0;
+ 
+ 	schedule_delayed_work(&tp->thread, next_tick);
+ }
+ 
+-static void rtl8139_stop_thread(struct rtl8139_private *tp)
+-{
+-	if (tp->have_thread) {
+-		cancel_rearming_delayed_work(&tp->thread);
+-		tp->have_thread = 0;
+-	} else
+-		flush_scheduled_work();
+-}
+-
+ static inline void rtl8139_tx_clear (struct rtl8139_private *tp)
+ {
+ 	tp->cur_tx = 0;
+@@ -1697,12 +1694,11 @@ static void rtl8139_tx_timeout (struct net_device *dev)
+ {
+ 	struct rtl8139_private *tp = netdev_priv(dev);
+ 
++	tp->watchdog_fired = 1;
+ 	if (!tp->have_thread) {
+-		INIT_WORK(&tp->thread, rtl8139_tx_timeout_task, dev);
++		INIT_WORK(&tp->thread, rtl8139_thread, dev);
+ 		schedule_delayed_work(&tp->thread, next_tick);
+-	} else
+-		tp->watchdog_fired = 1;
+-
++	}
+ }
+ 
+ static int rtl8139_start_xmit (struct sk_buff *skb, struct net_device *dev)
+@@ -2257,8 +2253,6 @@ static int rtl8139_close (struct net_device *dev)
+ 
+ 	netif_stop_queue (dev);
+ 
+-	rtl8139_stop_thread(tp);
+-
+ 	if (netif_msg_ifdown(tp))
+ 		printk(KERN_DEBUG "%s: Shutting down ethercard, status was 0x%4.4x.\n",
+ 			dev->name, RTL_R16 (IntrStatus));

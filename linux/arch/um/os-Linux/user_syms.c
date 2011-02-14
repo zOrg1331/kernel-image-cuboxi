@@ -5,8 +5,7 @@
  * so I *must* declare good prototypes for them and then EXPORT them.
  * The kernel code uses the macro defined by include/linux/string.h,
  * so I undef macros; the userspace code does not include that and I
- * add an EXPORT for the glibc one.
- */
+ * add an EXPORT for the glibc one.*/
 
 #undef strlen
 #undef strstr
@@ -14,20 +13,20 @@
 #undef memset
 
 extern size_t strlen(const char *);
+extern void *memcpy(void *, const void *, size_t);
 extern void *memmove(void *, const void *, size_t);
 extern void *memset(void *, int, size_t);
 extern int printf(const char *, ...);
 
-/* If it's not defined, the export is included in lib/string.c.*/
+/* If they're not defined, the export is included in lib/string.c.*/
+#ifdef __HAVE_ARCH_STRLEN
+EXPORT_SYMBOL(strlen);
+#endif
 #ifdef __HAVE_ARCH_STRSTR
 EXPORT_SYMBOL(strstr);
 #endif
 
-#ifndef __x86_64__
-extern void *memcpy(void *, const void *, size_t);
 EXPORT_SYMBOL(memcpy);
-#endif
-
 EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(printf);
@@ -37,8 +36,8 @@ EXPORT_SYMBOL(printf);
  * good; so the versions of these symbols will always match
  */
 #define EXPORT_SYMBOL_PROTO(sym)       \
-	int sym(void);                  \
-	EXPORT_SYMBOL(sym);
+       int sym(void);                  \
+       EXPORT_SYMBOL(sym);
 
 extern void readdir64(void) __attribute__((weak));
 EXPORT_SYMBOL(readdir64);
@@ -62,18 +61,12 @@ EXPORT_SYMBOL_PROTO(dup2);
 EXPORT_SYMBOL_PROTO(__xstat);
 EXPORT_SYMBOL_PROTO(__lxstat);
 EXPORT_SYMBOL_PROTO(__lxstat64);
-EXPORT_SYMBOL_PROTO(__fxstat64);
 EXPORT_SYMBOL_PROTO(lseek);
 EXPORT_SYMBOL_PROTO(lseek64);
 EXPORT_SYMBOL_PROTO(chown);
-EXPORT_SYMBOL_PROTO(fchown);
 EXPORT_SYMBOL_PROTO(truncate);
-EXPORT_SYMBOL_PROTO(ftruncate64);
 EXPORT_SYMBOL_PROTO(utime);
-EXPORT_SYMBOL_PROTO(utimes);
-EXPORT_SYMBOL_PROTO(futimes);
 EXPORT_SYMBOL_PROTO(chmod);
-EXPORT_SYMBOL_PROTO(fchmod);
 EXPORT_SYMBOL_PROTO(rename);
 EXPORT_SYMBOL_PROTO(__xmknod);
 
@@ -109,3 +102,14 @@ EXPORT_SYMBOL(__stack_smash_handler);
 
 extern long __guard __attribute__((weak));
 EXPORT_SYMBOL(__guard);
+
+/*
+ * Overrides for Emacs so that we follow Linus's tabbing style.
+ * Emacs will notice this stuff at the end of the file and automatically
+ * adjust the settings for this buffer only.  This must remain at the end
+ * of the file.
+ * ---------------------------------------------------------------------------
+ * Local variables:
+ * c-file-style: "linux"
+ * End:
+ */

@@ -1,0 +1,61 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] 3/4: fix for slow DVD drive
+Date: Mon, 4 Jun 2007 11:58:04 -0400 (EDT)
+Bugzilla: 240910
+Message-Id: <Pine.LNX.4.64.0706041154470.19914@bogart.boston.redhat.com>
+Changelog: [scsi] fix for slow DVD drive
+
+
+bz240910
+
+    Doug Chapman writes:
+    
+    Upstream testing has found a regression in the LSI mptspi driver
+    which causes extremely slow DVD drive performance (on the order of
+    150x slower) on some of the high-end HP Integrity servers.  This
+    issue for the upstream kernels has been reported at:
+    
+    http://bugzilla.kernel.org/show_bug.cgi?id=8426
+    
+    We will need this fix included when the new LSI mptspi driver is
+    included in RHEL as per bug #225177
+    
+    I have provided a patch upstream for this however it has not yet
+     been accepted.  Either this or another fix for this issue will be
+     required.  My patch can be found at:
+    
+    http://www.mail-archive.com/linux-scsi@vger.kernel.org/msg06937.html
+    
+    This patch has been accepted by Eric Moore of LSI, so it will go upstream.
+
+diff --git a/drivers/message/fusion/mptspi.c b/drivers/message/fusion/mptspi.c
+index a3a6acb..545345a 100644
+--- a/drivers/message/fusion/mptspi.c
++++ b/drivers/message/fusion/mptspi.c
+@@ -726,13 +726,15 @@ static int mptspi_slave_configure(struct scsi_device *sdev)
+ 	struct _MPT_SCSI_HOST *hd =
+ 		(struct _MPT_SCSI_HOST *)sdev->host->hostdata;
+ 	VirtTarget *vtarget = scsi_target(sdev)->hostdata;
+-	int ret = mptscsih_slave_configure(sdev);
++	int ret;
++
++	mptspi_initTarget(hd, vtarget, sdev);
++
++	ret = mptscsih_slave_configure(sdev);
+ 
+ 	if (ret)
+ 		return ret;
+ 
+-	mptspi_initTarget(hd, vtarget, sdev);
+-
+ 	ddvprintk((MYIOC_s_INFO_FMT "id=%d min_period=0x%02x"
+ 		" max_offset=0x%02x max_width=%d\n", hd->ioc->name,
+ 		sdev->id, spi_min_period(scsi_target(sdev)),
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

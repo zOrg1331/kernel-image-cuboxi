@@ -29,10 +29,9 @@
 
 #include <linux/time.h>
 #include <linux/fs.h>
+#include <linux/ufs_fs.h>
 #include <linux/smp_lock.h>
-
-#include "ufs_fs.h"
-#include "ufs.h"
+#include "swab.h"	/* will go away - see comment in mknod() */
 #include "util.h"
 
 static inline int ufs_add_nondir(struct dentry *dentry, struct inode *inode)
@@ -58,10 +57,10 @@ static struct dentry *ufs_lookup(struct inode * dir, struct dentry *dentry, stru
 	lock_kernel();
 	ino = ufs_inode_by_name(dir, dentry);
 	if (ino) {
-		inode = ufs_iget(dir->i_sb, ino);
-		if (IS_ERR(inode)) {
+		inode = iget(dir->i_sb, ino);
+		if (!inode) {
 			unlock_kernel();
-			return ERR_CAST(inode);
+			return ERR_PTR(-EACCES);
 		}
 	}
 	unlock_kernel();
@@ -111,6 +110,7 @@ static int ufs_mknod (struct inode * dir, struct dentry *dentry, int mode, dev_t
 	err = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
 		init_special_inode(inode, mode, rdev);
+		/* NOTE: that'll go when we get wide dev_t */
 		ufs_set_inode_dev(inode->i_sb, UFS_I(inode), rdev);
 		mark_inode_dirty(inode);
 		lock_kernel();
@@ -147,7 +147,7 @@ static int ufs_symlink (struct inode * dir, struct dentry * dentry,
 	} else {
 		/* fast symlink */
 		inode->i_op = &ufs_fast_symlink_inode_operations;
-		memcpy(UFS_I(inode)->i_u1.i_symlink, symname, l);
+		memcpy((char*)&UFS_I(inode)->i_u1.i_data,symname,l);
 		inode->i_size = l-1;
 	}
 	mark_inode_dirty(inode);
@@ -308,7 +308,7 @@ static int ufs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ufs_set_link(new_dir, new_de, new_page, old_inode);
 		new_inode->i_ctime = CURRENT_TIME_SEC;
 		if (dir_de)
-			drop_nlink(new_inode);
+			new_inode->i_nlink--;
 		inode_dec_link_count(new_inode);
 	} else {
 		if (dir_de) {
@@ -355,7 +355,7 @@ out:
 	return err;
 }
 
-const struct inode_operations ufs_dir_inode_operations = {
+struct inode_operations ufs_dir_inode_operations = {
 	.create		= ufs_create,
 	.lookup		= ufs_lookup,
 	.link		= ufs_link,

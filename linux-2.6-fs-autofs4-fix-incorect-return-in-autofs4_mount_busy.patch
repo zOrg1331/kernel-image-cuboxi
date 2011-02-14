@@ -1,0 +1,30 @@
+From: Ian Kent <ikent@redhat.com>
+Date: Thu, 23 Apr 2009 14:54:02 +0800
+Subject: [fs] autofs4: fix incorect return in autofs4_mount_busy
+Message-id: 20090423065402.19816.76425.stgit@zeus.themaw.net
+O-Subject: [RHEL-5.4 PATCH] autofs4 - fix incorect return in autofs4_mount_busy()
+Bugzilla: 496766
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+From: Ian Kent <raven@themaw.net>
+
+This patch addresses bug 496766.
+
+Fix an obvious incorect return status in autofs4_mount_busy().
+
+diff --git a/fs/autofs4/expire.c b/fs/autofs4/expire.c
+index 75f7dda..3077d8f 100644
+--- a/fs/autofs4/expire.c
++++ b/fs/autofs4/expire.c
+@@ -70,8 +70,10 @@ static int autofs4_mount_busy(struct vfsmount *mnt, struct dentry *dentry)
+ 		 * Otherwise it's an offset mount and we need to check
+ 		 * if we can umount its mount, if there is one.
+ 		 */
+-		if (!d_mountpoint(dentry))
++		if (!d_mountpoint(dentry)) {
++			status = 0;
+ 			goto done;
++		}
+ 	}
+ 
+ 	/* Update the expiry counter if fs is busy */

@@ -1,6 +1,6 @@
 #include <linux/pci.h>
 #include <linux/kernel.h>
-#include <arch/hwregs/intr_vect.h>
+#include <asm/arch/hwregs/intr_vect.h>
 
 void __devinit  pcibios_fixup_bus(struct pci_bus *b)
 {
@@ -100,9 +100,7 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	if ((err = pcibios_enable_resources(dev, mask)) < 0)
 		return err;
 
-	if (!dev->msi_enabled)
-		pcibios_enable_irq(dev);
-	return 0;
+	return pcibios_enable_irq(dev);
 }
 
 int pcibios_assign_resources(void)

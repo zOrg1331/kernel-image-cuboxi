@@ -1,0 +1,689 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 22 Jan 2008 11:25:59 -0500
+Subject: [ppc64] cell: support for Performance Tools part1
+Message-id: 20080122162559.GB7132@bpeters-ibm
+O-Subject: Re: [PATCH RHEL5u2] bz253211 Cell/B.E. Kernel Support for Performance Tools [1/4]
+Bugzilla: 253211
+
+Update:
+
+Previous patch did not address possibility of phys_ctr >= NR_PHYS_CTRS.  This is addressed in the attached patch, which adds WARN_ON() calls in that instance.
+
+Notes:
+
+Cell Broadband Engine PMU management common functions and definitions.
+This is a backport for RHEL5U2 from the 2.6.22 kernel to the 2.6.18
+kernel.
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/Makefile b/arch/powerpc/platforms/cell/Makefile
+index 5773562..b86273e 100644
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -1,6 +1,6 @@
+ obj-$(CONFIG_PPC_CELL_NATIVE)		+= interrupt.o iommu.o setup.o \
+ 					   cbe_regs.o spider-pic.o pervasive.o \
+-					   io-workarounds.o
++					   pmu.o io-workarounds.o
+ obj-$(CONFIG_CBE_RAS)			+= ras.o
+ 
+ obj-$(CONFIG_CBE_THERM)			+= cbe_thermal.o
+diff --git a/arch/powerpc/platforms/cell/cbe_regs.c b/arch/powerpc/platforms/cell/cbe_regs.c
+index 1682aac..b0be07d 100644
+--- a/arch/powerpc/platforms/cell/cbe_regs.c
++++ b/arch/powerpc/platforms/cell/cbe_regs.c
+@@ -32,6 +32,7 @@ static struct cbe_regs_map
+ 	struct cbe_pmd_regs __iomem *pmd_regs;
+ 	struct cbe_iic_regs __iomem *iic_regs;
+ 	struct cbe_mic_tm_regs __iomem *mic_tm_regs;
++	struct cbe_pmd_shadow_regs pmd_shadow_regs;
+ } cbe_regs_maps[MAX_CBE];
+ static int cbe_regs_map_count;
+ 
+@@ -95,6 +96,22 @@ struct cbe_pmd_regs __iomem *cbe_get_cpu_pmd_regs(int cpu)
+ }
+ EXPORT_SYMBOL_GPL(cbe_get_cpu_pmd_regs);
+ 
++struct cbe_pmd_shadow_regs *cbe_get_pmd_shadow_regs(struct device_node *np)
++{
++	struct cbe_regs_map *map = cbe_find_map(np);
++	if (map == NULL)
++		return NULL;
++	return &map->pmd_shadow_regs;
++}
++
++struct cbe_pmd_shadow_regs *cbe_get_cpu_pmd_shadow_regs(int cpu)
++{
++	struct cbe_regs_map *map = cbe_thread_map[cpu].regs;
++	if (map == NULL)
++		return NULL;
++	return &map->pmd_shadow_regs;
++}
++
+ struct cbe_iic_regs __iomem *cbe_get_iic_regs(struct device_node *np)
+ {
+ 	struct cbe_regs_map *map = cbe_find_map(np);
+diff --git a/arch/powerpc/platforms/cell/cbe_regs.h b/arch/powerpc/platforms/cell/cbe_regs.h
+index a7f2866..081b06c 100644
+--- a/arch/powerpc/platforms/cell/cbe_regs.h
++++ b/arch/powerpc/platforms/cell/cbe_regs.h
+@@ -15,6 +15,8 @@
+ #ifndef CBE_REGS_H
+ #define CBE_REGS_H
+ 
++#include <asm/cell-pmu.h>
++
+ /*
+  *
+  * Some HID register definitions
+@@ -125,6 +127,38 @@ extern struct cbe_pmd_regs __iomem *cbe_get_pmd_regs(struct device_node *np);
+ extern struct cbe_pmd_regs __iomem *cbe_get_cpu_pmd_regs(int cpu);
+ 
+ /*
++ * PMU shadow registers
++ *
++ * Many of the registers in the performance monitoring unit are write-only,
++ * so we need to save a copy of what we write to those registers.
++ *
++ * The actual data counters are read/write. However, writing to the counters
++ * only takes effect if the PMU is enabled. Otherwise the value is stored in
++ * a hardware latch until the next time the PMU is enabled. So we save a copy
++ * of the counter values if we need to read them back while the PMU is
++ * disabled. The counter_value_in_latch field is a bitmap indicating which
++ * counters currently have a value waiting to be written.
++ */
++
++struct cbe_pmd_shadow_regs {
++	u32 group_control;
++	u32 debug_bus_control;
++	u32 trace_address;
++	u32 ext_tr_timer;
++	u32 pm_status;
++	u32 pm_control;
++	u32 pm_interval;
++	u32 pm_start_stop;
++	u32 pm07_control[NR_CTRS];
++
++	u32 pm_ctr[NR_PHYS_CTRS];
++	u32 counter_value_in_latch;
++};
++
++extern struct cbe_pmd_shadow_regs *cbe_get_pmd_shadow_regs(struct device_node *np);
++extern struct cbe_pmd_shadow_regs *cbe_get_cpu_pmd_shadow_regs(int cpu);
++
++/*
+  *
+  * IIC unit register definitions
+  *
+@@ -210,10 +244,11 @@ struct cbe_mic_tm_regs {
+ 	u64	slow_fast_timer_0;				/* 0x0090 */
+ 	u64	slow_next_timer_0;				/* 0x0098 */
+ 
+-	u8	pad_0x00a0_0x01c0[0x01c0 - 0x0a0];		/* 0x00a0 */
++	u8	pad_0x00a0_0x01c0[0x01c0 - 0x00a0];		/* 0x00a0 */
+ 
+ 	u64	mic_ctl_cnfg_1;					/* 0x01c0 */
+ #define CBE_MIC_DISABLE_PWR_SAV_1	0x8000000000000000LL
++
+ 	u64	pad_0x01c8;					/* 0x01c8 */
+ 
+ 	u64	slow_fast_timer_1;				/* 0x01d0 */
+diff --git a/arch/powerpc/platforms/cell/pmu.c b/arch/powerpc/platforms/cell/pmu.c
+new file mode 100644
+index 0000000..a403001
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/pmu.c
+@@ -0,0 +1,441 @@
++/*
++ * Cell Broadband Engine Performance Monitor
++ *
++ * (C) Copyright IBM Corporation 2001,2006
++ *
++ * Author:
++ *    David Erb (djerb at us.ibm.com)
++ *    Kevin Corry (kevcorry at us.ibm.com)
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/interrupt.h>
++#include <linux/types.h>
++#include <asm/io.h>
++#include <asm/machdep.h>
++#include <asm/pmc.h>
++#include <asm/reg.h>
++#include <asm/spu.h>
++
++#include "cbe_regs.h"
++#include "interrupt.h"
++
++/*
++ * When writing to write-only mmio addresses, save a shadow copy. All of the
++ * registers are 32-bit, but stored in the upper-half of a 64-bit field in
++ * pmd_regs.
++ */
++
++#define WRITE_WO_MMIO(reg, x)					\
++	do {							\
++		u32 _x = (x);					\
++		struct cbe_pmd_regs __iomem *pmd_regs;		\
++		struct cbe_pmd_shadow_regs *shadow_regs;	\
++		pmd_regs = cbe_get_cpu_pmd_regs(cpu);		\
++		shadow_regs = cbe_get_cpu_pmd_shadow_regs(cpu);	\
++		out_be64(&(pmd_regs->reg), (((u64)_x) << 32));	\
++		shadow_regs->reg = _x;				\
++	} while (0)
++
++#define READ_SHADOW_REG(val, reg)				\
++	do {							\
++		struct cbe_pmd_shadow_regs *shadow_regs;	\
++		shadow_regs = cbe_get_cpu_pmd_shadow_regs(cpu);	\
++		(val) = shadow_regs->reg;			\
++	} while (0)
++
++#define READ_MMIO_UPPER32(val, reg)				\
++	do {							\
++		struct cbe_pmd_regs __iomem *pmd_regs;		\
++		pmd_regs = cbe_get_cpu_pmd_regs(cpu);		\
++		(val) = (u32)(in_be64(&pmd_regs->reg) >> 32);	\
++	} while (0)
++
++/*
++ * Physical counter registers.
++ * Each physical counter can act as one 32-bit counter or two 16-bit counters.
++ */
++
++u32 cbe_read_phys_ctr(u32 cpu, u32 phys_ctr)
++{
++	u32 val_in_latch, val = 0;
++
++       WARN_ON(phys_ctr >= NR_PHYS_CTRS);
++
++	if (phys_ctr < NR_PHYS_CTRS) {
++		READ_SHADOW_REG(val_in_latch, counter_value_in_latch);
++
++		/* Read the latch or the actual counter, whichever is newer. */
++		if (val_in_latch & (1 << phys_ctr)) {
++			READ_SHADOW_REG(val, pm_ctr[phys_ctr]);
++		} else {
++			READ_MMIO_UPPER32(val, pm_ctr[phys_ctr]);
++		}
++	}
++
++	return val;
++}
++EXPORT_SYMBOL_GPL(cbe_read_phys_ctr);
++
++void cbe_write_phys_ctr(u32 cpu, u32 phys_ctr, u32 val)
++{
++	struct cbe_pmd_shadow_regs *shadow_regs;
++	u32 pm_ctrl;
++
++       WARN_ON(phys_ctr >= NR_PHYS_CTRS);
++
++	if (phys_ctr < NR_PHYS_CTRS) {
++		/* Writing to a counter only writes to a hardware latch.
++		 * The new value is not propagated to the actual counter
++		 * until the performance monitor is enabled.
++		 */
++		WRITE_WO_MMIO(pm_ctr[phys_ctr], val);
++
++		pm_ctrl = cbe_read_pm(cpu, pm_control);
++		if (pm_ctrl & CBE_PM_ENABLE_PERF_MON) {
++			/* The counters are already active, so we need to
++			 * rewrite the pm_control register to "re-enable"
++			 * the PMU.
++			 */
++			cbe_write_pm(cpu, pm_control, pm_ctrl);
++		} else {
++			shadow_regs = cbe_get_cpu_pmd_shadow_regs(cpu);
++			shadow_regs->counter_value_in_latch |= (1 << phys_ctr);
++		}
++	}
++}
++EXPORT_SYMBOL_GPL(cbe_write_phys_ctr);
++
++/*
++ * "Logical" counter registers.
++ * These will read/write 16-bits or 32-bits depending on the
++ * current size of the counter. Counters 4 - 7 are always 16-bit.
++ */
++
++u32 cbe_read_ctr(u32 cpu, u32 ctr)
++{
++	u32 val;
++	u32 phys_ctr;
++
++	WARN_ON(ctr > NR_PHYS_CTRS);
++
++	phys_ctr  = ctr & (NR_PHYS_CTRS - 1);
++	val = cbe_read_phys_ctr(cpu, phys_ctr);
++
++	if (cbe_get_ctr_size(cpu, phys_ctr) == 16)
++		val = (ctr < NR_PHYS_CTRS) ? (val >> 16) : (val & 0xffff);
++
++	return val;
++}
++EXPORT_SYMBOL_GPL(cbe_read_ctr);
++
++void cbe_write_ctr(u32 cpu, u32 ctr, u32 val)
++{
++	u32 phys_ctr;
++	u32 phys_val;
++
++       WARN_ON(ctr >= NR_PHYS_CTRS);
++
++	phys_ctr = ctr & (NR_PHYS_CTRS - 1);
++
++	if (cbe_get_ctr_size(cpu, phys_ctr) == 16) {
++		phys_val = cbe_read_phys_ctr(cpu, phys_ctr);
++
++		if (ctr < NR_PHYS_CTRS)
++			val = (val << 16) | (phys_val & 0xffff);
++		else
++			val = (val & 0xffff) | (phys_val & 0xffff0000);
++	}
++
++	cbe_write_phys_ctr(cpu, phys_ctr, val);
++}
++EXPORT_SYMBOL_GPL(cbe_write_ctr);
++
++/*
++ * Counter-control registers.
++ * Each "logical" counter has a corresponding control register.
++ */
++
++u32 cbe_read_pm07_control(u32 cpu, u32 ctr)
++{
++	u32 pm07_control = 0;
++
++	WARN_ON(ctr >= NR_CTRS);
++
++	if (ctr < NR_CTRS)
++		READ_SHADOW_REG(pm07_control, pm07_control[ctr]);
++
++	return pm07_control;
++}
++EXPORT_SYMBOL_GPL(cbe_read_pm07_control);
++
++void cbe_write_pm07_control(u32 cpu, u32 ctr, u32 val)
++{
++	WARN_ON(ctr >= NR_CTRS);
++	if (ctr < NR_CTRS)
++		WRITE_WO_MMIO(pm07_control[ctr], val);
++}
++EXPORT_SYMBOL_GPL(cbe_write_pm07_control);
++
++/*
++ * Other PMU control registers. Most of these are write-only.
++ */
++
++u32 cbe_read_pm(u32 cpu, enum pm_reg_name reg)
++{
++	u32 val = 0;
++
++	switch (reg) {
++	case group_control:
++		READ_SHADOW_REG(val, group_control);
++		break;
++
++	case debug_bus_control:
++		READ_SHADOW_REG(val, debug_bus_control);
++		break;
++
++	case trace_address:
++		READ_MMIO_UPPER32(val, trace_address);
++		break;
++
++	case ext_tr_timer:
++		READ_SHADOW_REG(val, ext_tr_timer);
++		break;
++
++	case pm_status:
++		READ_MMIO_UPPER32(val, pm_status);
++		break;
++
++	case pm_control:
++		READ_SHADOW_REG(val, pm_control);
++		break;
++
++	case pm_interval:
++		READ_SHADOW_REG(val, pm_interval);
++		break;
++
++	case pm_start_stop:
++		READ_SHADOW_REG(val, pm_start_stop);
++		break;
++	}
++
++	return val;
++}
++EXPORT_SYMBOL_GPL(cbe_read_pm);
++
++void cbe_write_pm(u32 cpu, enum pm_reg_name reg, u32 val)
++{
++	switch (reg) {
++	case group_control:
++		WRITE_WO_MMIO(group_control, val);
++		break;
++
++	case debug_bus_control:
++		WRITE_WO_MMIO(debug_bus_control, val);
++		break;
++
++	case trace_address:
++		WRITE_WO_MMIO(trace_address, val);
++		break;
++
++	case ext_tr_timer:
++		WRITE_WO_MMIO(ext_tr_timer, val);
++		break;
++
++	case pm_status:
++		WRITE_WO_MMIO(pm_status, val);
++		break;
++
++	case pm_control:
++		WRITE_WO_MMIO(pm_control, val);
++		break;
++
++	case pm_interval:
++		WRITE_WO_MMIO(pm_interval, val);
++		break;
++
++	case pm_start_stop:
++		WRITE_WO_MMIO(pm_start_stop, val);
++		break;
++	}
++}
++EXPORT_SYMBOL_GPL(cbe_write_pm);
++
++/*
++ * Get/set the size of a physical counter to either 16 or 32 bits.
++ */
++
++u32 cbe_get_ctr_size(u32 cpu, u32 phys_ctr)
++{
++	u32 pm_ctrl, size = 0;
++
++       WARN_ON(phys_ctr >= NR_PHYS_CTRS);
++
++	if (phys_ctr < NR_PHYS_CTRS) {
++		pm_ctrl = cbe_read_pm(cpu, pm_control);
++		size = (pm_ctrl & CBE_PM_16BIT_CTR(phys_ctr)) ? 16 : 32;
++	}
++
++	return size;
++}
++EXPORT_SYMBOL_GPL(cbe_get_ctr_size);
++
++void cbe_set_ctr_size(u32 cpu, u32 phys_ctr, u32 ctr_size)
++{
++	u32 pm_ctrl;
++
++       WARN_ON(phys_ctr >= NR_PHYS_CTRS);
++
++	if (phys_ctr < NR_PHYS_CTRS) {
++		pm_ctrl = cbe_read_pm(cpu, pm_control);
++		switch (ctr_size) {
++		case 16:
++			pm_ctrl |= CBE_PM_16BIT_CTR(phys_ctr);
++			break;
++
++		case 32:
++			pm_ctrl &= ~CBE_PM_16BIT_CTR(phys_ctr);
++			break;
++		}
++		cbe_write_pm(cpu, pm_control, pm_ctrl);
++	}
++}
++EXPORT_SYMBOL_GPL(cbe_set_ctr_size);
++
++/*
++ * Enable/disable the entire performance monitoring unit.
++ * When we enable the PMU, all pending writes to counters get committed.
++ */
++
++void cbe_enable_pm(u32 cpu)
++{
++	struct cbe_pmd_shadow_regs *shadow_regs;
++	u32 pm_ctrl;
++
++	shadow_regs = cbe_get_cpu_pmd_shadow_regs(cpu);
++	shadow_regs->counter_value_in_latch = 0;
++
++	pm_ctrl = cbe_read_pm(cpu, pm_control) | CBE_PM_ENABLE_PERF_MON;
++	cbe_write_pm(cpu, pm_control, pm_ctrl);
++}
++EXPORT_SYMBOL_GPL(cbe_enable_pm);
++
++void cbe_disable_pm(u32 cpu)
++{
++	u32 pm_ctrl;
++	pm_ctrl = cbe_read_pm(cpu, pm_control) & ~CBE_PM_ENABLE_PERF_MON;
++	cbe_write_pm(cpu, pm_control, pm_ctrl);
++}
++EXPORT_SYMBOL_GPL(cbe_disable_pm);
++
++/*
++ * Reading from the trace_buffer.
++ * The trace buffer is two 64-bit registers. Reading from
++ * the second half automatically increments the trace_address.
++ */
++
++void cbe_read_trace_buffer(u32 cpu, u64 *buf)
++{
++	struct cbe_pmd_regs __iomem *pmd_regs = cbe_get_cpu_pmd_regs(cpu);
++
++	*buf++ = in_be64(&pmd_regs->trace_buffer_0_63);
++	*buf++ = in_be64(&pmd_regs->trace_buffer_64_127);
++}
++EXPORT_SYMBOL_GPL(cbe_read_trace_buffer);
++
++/*
++ * Enabling/disabling interrupts for the entire performance monitoring unit.
++ */
++
++u32 cbe_get_and_clear_pm_interrupts(u32 cpu)
++{
++	/* Reading pm_status clears the interrupt bits. */
++	return cbe_read_pm(cpu, pm_status);
++}
++EXPORT_SYMBOL_GPL(cbe_get_and_clear_pm_interrupts);
++
++void cbe_enable_pm_interrupts(u32 cpu, u32 thread, u32 mask)
++{
++	/* Set which node and thread will handle the next interrupt. */
++	iic_set_interrupt_routing(cpu, thread, 0);
++
++	/* Enable the interrupt bits in the pm_status register. */
++	if (mask)
++		cbe_write_pm(cpu, pm_status, mask);
++}
++EXPORT_SYMBOL_GPL(cbe_enable_pm_interrupts);
++
++void cbe_disable_pm_interrupts(u32 cpu)
++{
++	cbe_get_and_clear_pm_interrupts(cpu);
++	cbe_write_pm(cpu, pm_status, 0);
++}
++EXPORT_SYMBOL_GPL(cbe_disable_pm_interrupts);
++
++static irqreturn_t cbe_pm_irq(int irq, void *dev_id, struct pt_regs *regs)
++{
++	perf_irq(regs);
++	return IRQ_HANDLED;
++}
++
++static int __init cbe_init_pm_irq(void)
++{
++	unsigned int irq;
++	int rc, node;
++
++	if (!machine_is(cell))
++		return 0;
++
++	for_each_node(node) {
++		irq = irq_create_mapping(NULL, IIC_IRQ_IOEX_PMI |
++					       (node << IIC_IRQ_NODE_SHIFT));
++		if (irq == NO_IRQ) {
++			printk("ERROR: Unable to allocate irq for node %d\n",
++			       node);
++			return -EINVAL;
++		}
++
++		rc = request_irq(irq, cbe_pm_irq,
++				 IRQF_DISABLED, "cbe-pmu-0", NULL);
++		if (rc) {
++			printk("ERROR: Request for irq on node %d failed\n",
++			       node);
++			return rc;
++		}
++	}
++
++	return 0;
++}
++arch_initcall(cbe_init_pm_irq);
++
++void cbe_sync_irq(int node)
++{
++	unsigned int irq;
++
++	irq = irq_find_mapping(NULL,
++			       IIC_IRQ_IOEX_PMI
++			       | (node << IIC_IRQ_NODE_SHIFT));
++
++	if (irq == NO_IRQ) {
++		printk(KERN_WARNING "ERROR, unable to get existing irq %d " \
++		"for node %d\n", irq, node);
++		return;
++	}
++
++	synchronize_irq(irq);
++}
++EXPORT_SYMBOL_GPL(cbe_sync_irq);
++
+diff --git a/include/asm-powerpc/cell-pmu.h b/include/asm-powerpc/cell-pmu.h
+new file mode 100644
+index 0000000..5cd6d2f
+--- /dev/null
++++ b/include/asm-powerpc/cell-pmu.h
+@@ -0,0 +1,105 @@
++/*
++ * Cell Broadband Engine Performance Monitor
++ *
++ * (C) Copyright IBM Corporation 2006
++ *
++ * Author:
++ *   David Erb (djerb at us.ibm.com)
++ *   Kevin Corry (kevcorry at us.ibm.com)
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#ifndef __ASM_CELL_PMU_H__
++#define __ASM_CELL_PMU_H__
++
++/* The Cell PMU has four hardware performance counters, which can be
++ * configured as four 32-bit counters or eight 16-bit counters.
++ */
++#define NR_PHYS_CTRS 4
++#define NR_CTRS      (NR_PHYS_CTRS * 2)
++
++/* Macros for the pm_control register. */
++#define CBE_PM_16BIT_CTR(ctr)              (1 << (24 - ((ctr) & (NR_PHYS_CTRS - 1))))
++#define CBE_PM_ENABLE_PERF_MON             0x80000000
++#define CBE_PM_STOP_AT_MAX                 0x40000000
++#define CBE_PM_TRACE_MODE_GET(pm_control)  (((pm_control) >> 28) & 0x3)
++#define CBE_PM_TRACE_MODE_SET(mode)        (((mode)  & 0x3) << 28)
++#define CBE_PM_COUNT_MODE_SET(count)       (((count) & 0x3) << 18)
++#define CBE_PM_FREEZE_ALL_CTRS             0x00100000
++#define CBE_PM_ENABLE_EXT_TRACE            0x00008000
++
++/* Macros for the trace_address register. */
++#define CBE_PM_TRACE_BUF_FULL              0x00000800
++#define CBE_PM_TRACE_BUF_EMPTY             0x00000400
++#define CBE_PM_TRACE_BUF_DATA_COUNT(ta)    ((ta) & 0x3ff)
++#define CBE_PM_TRACE_BUF_MAX_COUNT         0x400
++
++/* Macros for the pm07_control registers. */
++#define CBE_PM_CTR_INPUT_MUX(pm07_control) (((pm07_control) >> 26) & 0x3f)
++#define CBE_PM_CTR_INPUT_CONTROL           0x02000000
++#define CBE_PM_CTR_POLARITY                0x01000000
++#define CBE_PM_CTR_COUNT_CYCLES            0x00800000
++#define CBE_PM_CTR_ENABLE                  0x00400000
++#define PM07_CTR_INPUT_MUX(x)              (((x) & 0x3F) << 26)
++#define PM07_CTR_INPUT_CONTROL(x)          (((x) & 1) << 25)
++#define PM07_CTR_POLARITY(x)               (((x) & 1) << 24)
++#define PM07_CTR_COUNT_CYCLES(x)           (((x) & 1) << 23)
++#define PM07_CTR_ENABLE(x)                 (((x) & 1) << 22)
++
++/* Macros for the pm_status register. */
++#define CBE_PM_CTR_OVERFLOW_INTR(ctr)      (1 << (31 - ((ctr) & 7)))
++
++enum pm_reg_name {
++	group_control,
++	debug_bus_control,
++	trace_address,
++	ext_tr_timer,
++	pm_status,
++	pm_control,
++	pm_interval,
++	pm_start_stop,
++};
++
++/* Routines for reading/writing the PMU registers. */
++extern u32  cbe_read_phys_ctr(u32 cpu, u32 phys_ctr);
++extern void cbe_write_phys_ctr(u32 cpu, u32 phys_ctr, u32 val);
++extern u32  cbe_read_ctr(u32 cpu, u32 ctr);
++extern void cbe_write_ctr(u32 cpu, u32 ctr, u32 val);
++
++extern u32  cbe_read_pm07_control(u32 cpu, u32 ctr);
++extern void cbe_write_pm07_control(u32 cpu, u32 ctr, u32 val);
++extern u32  cbe_read_pm(u32 cpu, enum pm_reg_name reg);
++extern void cbe_write_pm(u32 cpu, enum pm_reg_name reg, u32 val);
++
++extern u32  cbe_get_ctr_size(u32 cpu, u32 phys_ctr);
++extern void cbe_set_ctr_size(u32 cpu, u32 phys_ctr, u32 ctr_size);
++
++extern void cbe_enable_pm(u32 cpu);
++extern void cbe_disable_pm(u32 cpu);
++
++extern void cbe_read_trace_buffer(u32 cpu, u64 *buf);
++
++extern void cbe_enable_pm_interrupts(u32 cpu, u32 thread, u32 mask);
++extern void cbe_disable_pm_interrupts(u32 cpu);
++extern u32  cbe_get_and_clear_pm_interrupts(u32 cpu);
++extern void cbe_sync_irq(int node);
++
++#define CBE_COUNT_SUPERVISOR_MODE       0
++#define CBE_COUNT_HYPERVISOR_MODE       1
++#define CBE_COUNT_PROBLEM_MODE          2
++#define CBE_COUNT_ALL_MODES             3
++
++#endif /* __ASM_CELL_PMU_H__ */

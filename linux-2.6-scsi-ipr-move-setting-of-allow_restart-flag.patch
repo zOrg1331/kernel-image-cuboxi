@@ -1,0 +1,78 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 30 Aug 2010 15:17:46 -0400
+Subject: [scsi] ipr: move setting of allow_restart flag
+Message-id: <20100830150600.5212.9308.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27924
+O-Subject: [PATCH RHEL5.6 BZ626566 10/16] ipr: move setting of the allow_restart
+	flag for vsets and disks
+Bugzilla: 626566
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626566
+
+Description:
+------------
+A problem was found where the call to scsi_add_device() fails intermittently
+for an adapter.  This is caused when __scsi_add_device() returns -ENODEV as
+a result of not calling scsi_probe_and_add_lun() since the call to
+scsi_host_scan_allowed() fails.  scsi_host_scan_allowed() fails because the
+adapter state is set to SHOST_RECOVERY instead of SHOST_RUNNING. The state of
+the adapter is being set to SHOST_RECOVERY by scsi_eh_scmd_add() during
+error handling.
+
+This problem is avoided by moving the setting of the allow_restart flag to
+later in the device initialization sequence.  This prevents further error
+handling if we get a NOT_READY response from a TUR command by causing
+scsi_check_sense() to return SUCCESS.  Therefore, scsi_eh_scmd_add() will
+not run and the adapter state will remain as SHOST_RUNNING.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Acked-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2713332
+
+Upstream Status:
+----------------
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;
+a=commit;h=56115598c571cadd4b465836e1423a452a908c89
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index b4e9c36..86bdd08 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -4327,8 +4327,6 @@ static int ipr_slave_configure(struct scsi_device *sdev)
+ 			sdev->timeout = IPR_VSET_RW_TIMEOUT;
+ 			blk_queue_max_sectors(sdev->request_queue, IPR_VSET_MAX_SECTORS);
+ 		}
+-		if (ipr_is_vset_device(res) || ipr_is_scsi_disk(res))
+-			sdev->allow_restart = 1;
+ 		if (ipr_is_gata(res) && res->sata_port) {
+ 			scsi_adjust_queue_depth(sdev, 0, IPR_MAX_CMD_PER_ATA_LUN);
+ 			ata_sas_slave_configure(sdev, res->sata_port->ap);
+@@ -6744,7 +6742,8 @@ static int ipr_init_res_table(struct ipr_cmnd *ipr_cmd)
+ 			list_move_tail(&res->queue, &ioa_cfg->used_res_q);
+ 			ipr_init_res_entry(res, &cfgtew);
+ 			res->add_to_ml = 1;
+-		}
++		} else if (res->sdev && (ipr_is_vset_device(res) || ipr_is_scsi_disk(res)))
++			res->sdev->allow_restart = 1;
+ 
+ 		if (found)
+ 			ipr_update_res_entry(res, &cfgtew);

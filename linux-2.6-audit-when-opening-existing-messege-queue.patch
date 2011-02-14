@@ -1,0 +1,324 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: Re: [RHEL5 PATCH] BZ 233919 audit when opening existing messege queue
+Date: Fri, 15 Jun 2007 15:17:36 -0400
+Bugzilla: 223919 
+Message-Id: <1181935056.3464.30.camel@dhcp231-215.rdu.redhat.com>
+Changelog: [audit] audit when opening existing messege queue
+
+
+On Fri, 2007-06-15 at 14:46 -0400, Don Zickus wrote:
+> On Thu, Jun 14, 2007 at 05:11:27PM -0400, Eric Paris wrote:
+> > So this conflicts with the subtree watch patch from al.  Assuming you
+> > take in the fix from this morning for the audit subtree watch null
+> > pointer deref before you take this patch this new one should work.  Oh
+> > yeah, and it appears to be kabi clean.  This does not apply to .25 but i
+> > think it will apply once we finish fixing al's patch.  Once you get the
+> > audit subtree watch stuff settled if I need to rebase again let me
+> > know.....
+> 
+> So I assume there will be another refresh here, based on our previous irc
+> conversation?
+> 
+> Cheers,
+> Don
+
+And here it is, Al Viro's subtree watch patch changed audit_child to use
+a dentry rather than an inode.  This patch originally used the old inode
+version, so here it is with the subtree stuff in.
+
+-Eric
+
+--- linux-2.6.18.audit/fs/namei.c.pre.mqueue	2007-06-14 17:48:15.000000000 -0400
++++ linux-2.6.18.audit/fs/namei.c	2007-06-14 17:51:31.000000000 -0400
+@@ -1693,7 +1693,7 @@ do_last:
+ 	 * It already exists.
+ 	 */
+ 	mutex_unlock(&dir->d_inode->i_mutex);
+-	audit_inode_update(path.dentry->d_inode);
++	audit_inode(pathname, path.dentry);
+ 
+ 	error = -EEXIST;
+ 	if (flag & O_EXCL)
+--- linux-2.6.18.audit/include/linux/audit.h.pre.mqueue	2007-06-14 17:48:16.000000000 -0400
++++ linux-2.6.18.audit/include/linux/audit.h	2007-06-14 17:53:56.000000000 -0400
+@@ -356,7 +356,6 @@ extern void audit_putname(const char *na
+ extern void __audit_inode(const char *name, const struct dentry *dentry);
+ extern void __audit_inode_child(const char *dname, const struct inode *inode,
+ 				const struct inode *parent);
+-extern void __audit_inode_update(const struct inode *inode);
+ extern void __audit_ptrace(struct task_struct *t);
+ 
+ static inline int audit_dummy_context(void)
+@@ -379,10 +378,6 @@ static inline void audit_inode_child(con
+ 	if (unlikely(!audit_dummy_context()))
+ 		__audit_inode_child(dname, inode, parent);
+ }
+-static inline void audit_inode_update(const struct inode *inode) {
+-	if (unlikely(!audit_dummy_context()))
+-		__audit_inode_update(inode);
+-}
+ 
+ static inline void audit_ptrace(struct task_struct *t)
+ {
+@@ -463,10 +458,8 @@ extern int audit_signals;
+ #define audit_putname(n) do { ; } while (0)
+ #define __audit_inode(n,d) do { ; } while (0)
+ #define __audit_inode_child(d,i,p) do { ; } while (0)
+-#define __audit_inode_update(i) do { ; } while (0)
+ #define audit_inode(n,d) do { ; } while (0)
+ #define audit_inode_child(d,i,p) do { ; } while (0)
+-#define audit_inode_update(i) do { ; } while (0)
+ #define auditsc_get_stamp(c,t,s) do { BUG(); } while (0)
+ #define audit_get_loginuid(c) ({ -1; })
+ #define audit_log_task_context(b) do { ; } while (0)
+--- linux-2.6.18.audit/ipc/mqueue.c.pre.mqueue	2007-06-14 17:48:16.000000000 -0400
++++ linux-2.6.18.audit/ipc/mqueue.c	2007-06-14 17:51:31.000000000 -0400
+@@ -680,6 +680,7 @@ asmlinkage long sys_mq_open(const char _
+ 
+ 	if (oflag & O_CREAT) {
+ 		if (dentry->d_inode) {	/* entry already exists */
++        		audit_inode(name, dentry);
+ 			error = -EEXIST;
+ 			if (oflag & O_EXCL)
+ 				goto out;
+@@ -692,6 +693,7 @@ asmlinkage long sys_mq_open(const char _
+ 		error = -ENOENT;
+ 		if (!dentry->d_inode)
+ 			goto out;
++        	audit_inode(name, dentry);
+ 		filp = do_open(dentry, oflag);
+ 	}
+ 
+@@ -839,6 +841,7 @@ asmlinkage long sys_mq_timedsend(mqd_t m
+ 	if (unlikely(filp->f_op != &mqueue_file_operations))
+ 		goto out_fput;
+ 	info = MQUEUE_I(inode);
++	audit_inode(NULL, filp->f_dentry);
+ 
+ 	if (unlikely(!(filp->f_mode & FMODE_WRITE)))
+ 		goto out_fput;
+@@ -922,6 +925,7 @@ asmlinkage ssize_t sys_mq_timedreceive(m
+ 	if (unlikely(filp->f_op != &mqueue_file_operations))
+ 		goto out_fput;
+ 	info = MQUEUE_I(inode);
++	audit_inode(NULL, filp->f_dentry);
+ 
+ 	if (unlikely(!(filp->f_mode & FMODE_READ)))
+ 		goto out_fput;
+--- linux-2.6.18.audit/kernel/auditsc.c.pre.mqueue	2007-06-14 17:51:00.000000000 -0400
++++ linux-2.6.18.audit/kernel/auditsc.c	2007-06-14 17:54:12.000000000 -0400
+@@ -78,11 +78,6 @@ extern int audit_enabled;
+  * for saving names from getname(). */
+ #define AUDIT_NAMES    20
+ 
+-/* AUDIT_NAMES_RESERVED is the number of slots we reserve in the
+- * audit_context from being used for nameless inodes from
+- * path_lookup. */
+-#define AUDIT_NAMES_RESERVED 7
+-
+ /* Indicates that audit should log the full pathname. */
+ #define AUDIT_NAME_FULL -1
+ 
+@@ -1559,6 +1554,28 @@ void audit_putname(const char *name)
+ #endif
+ }
+ 
++static int audit_inc_name_count(struct audit_context *context,
++				const struct inode *inode)
++{
++	if (context->name_count >= AUDIT_NAMES) {
++		if (inode)
++			printk(KERN_DEBUG "name_count maxed, losing inode data: "
++			       "dev=%02x:%02x, inode=%lu",
++			       MAJOR(inode->i_sb->s_dev),
++			       MINOR(inode->i_sb->s_dev),
++			       inode->i_ino);
++
++		else
++			printk(KERN_DEBUG "name_count maxed, losing inode data");
++		return 1;
++	}
++	context->name_count++;
++#if AUDIT_DEBUG
++	context->ino_count++;
++#endif
++	return 0;
++}
++
+ /* Copy inode data into an audit_names. */
+ static void audit_copy_inode(struct audit_names *name, const struct inode *inode)
+ {
+@@ -1597,13 +1614,10 @@ void __audit_inode(const char *name, con
+ 	else {
+ 		/* FIXME: how much do we care about inodes that have no
+ 		 * associated name? */
+-		if (context->name_count >= AUDIT_NAMES - AUDIT_NAMES_RESERVED)
++		if (audit_inc_name_count(context, inode))
+ 			return;
+-		idx = context->name_count++;
++		idx = context->name_count - 1;
+ 		context->names[idx].name = NULL;
+-#if AUDIT_DEBUG
+-		++context->ino_count;
+-#endif
+ 	}
+ 	handle_path(dentry);
+ 	audit_copy_inode(&context->names[idx], inode);
+@@ -1628,7 +1642,7 @@ void __audit_inode_child(const char *dna
+ {
+ 	int idx;
+ 	struct audit_context *context = current->audit_context;
+-	const char *found_name = NULL;
++	const char *found_parent = NULL, *found_child = NULL;
+ 	int dirlen = 0;
+ 
+ 	if (!context->in_syscall)
+@@ -1636,90 +1650,75 @@ void __audit_inode_child(const char *dna
+ 
+ 	if (inode)
+ 		handle_one(inode);
+-	/* determine matching parent */
++
+ 	if (!dname)
+-		goto update_context;
+-	for (idx = 0; idx < context->name_count; idx++)
+-		if (context->names[idx].ino == parent->i_ino) {
+-			const char *name = context->names[idx].name;
+-
+-			if (!name)
+-				continue;
+-
+-			if (audit_compare_dname_path(dname, name, &dirlen) == 0) {
+-				context->names[idx].name_len = dirlen;
+-				found_name = name;
+-				break;
+-			}
++		goto add_names;
++
++	/* parent is more likely, look for it first */
++	for (idx = 0; idx < context->name_count; idx++) {
++		struct audit_names *n = &context->names[idx];
++
++		if (!n->name)
++			continue;
++
++		if ((n->ino == parent->i_ino) &&
++		    !audit_compare_dname_path(dname, n->name, &dirlen)) {
++			n->name_len = dirlen; /* update parent data in place */
++			found_parent = n->name;
++			goto add_names;
+ 		}
++	}
+ 
+-update_context:
+-	idx = context->name_count;
+-	if (context->name_count == AUDIT_NAMES) {
+-		printk(KERN_DEBUG "name_count maxed and losing %s\n",
+-			found_name ?: "(null)");
+-		return;
+-	} 
+-	context->name_count++;
+-#if AUDIT_DEBUG
+-	context->ino_count++;
+-#endif
+-	/* Re-use the name belonging to the slot for a matching parent directory.
+-	 * All names for this context are relinquished in audit_free_names() */
+-	context->names[idx].name = found_name;
+-	context->names[idx].name_len = AUDIT_NAME_FULL;
+-	context->names[idx].name_put = 0;	/* don't call __putname() */
++	/* no matching parent, look for matching child */
++	for (idx = 0; idx < context->name_count; idx++) {
++		struct audit_names *n = &context->names[idx];
+ 
+-	if (!inode)
+-		context->names[idx].ino = (unsigned long)-1;
+-	else
+-		audit_copy_inode(&context->names[idx], inode);
++		if (!n->name)
++			continue;
+ 
+-	/* A parent was not found in audit_names, so copy the inode data for the
+-	 * provided parent. */
+-	if (!found_name) {
+-		idx = context->name_count;
+-		if (context->name_count == AUDIT_NAMES) {
+-			printk(KERN_DEBUG 
+-				"name_count maxed and losing parent inode data: dev=%02x:%02x, inode=%lu",
+-				MAJOR(parent->i_sb->s_dev),
+-				MINOR(parent->i_sb->s_dev),
+-				parent->i_ino);
+-			return;
++		/* strcmp() is the more likely scenario */
++		if (!strcmp(dname, n->name) ||
++		     !audit_compare_dname_path(dname, n->name, &dirlen)) {
++			if (inode)
++				audit_copy_inode(n, inode);
++			else
++				n->ino = (unsigned long)-1;
++			found_child = n->name;
++			goto add_names;
+ 		}
+-		context->name_count++;
+-#if AUDIT_DEBUG
+-		context->ino_count++;
+-#endif
++	}
++
++add_names:
++	if (!found_parent) {
++		if (audit_inc_name_count(context, parent))
++			return;
++		idx = context->name_count - 1;
++		context->names[idx].name = NULL;
+ 		audit_copy_inode(&context->names[idx], parent);
+ 	}
+-}
+ 
+-/**
+- * audit_inode_update - update inode info for last collected name
+- * @inode: inode being audited
+- *
+- * When open() is called on an existing object with the O_CREAT flag, the inode
+- * data audit initially collects is incorrect.  This additional hook ensures
+- * audit has the inode data for the actual object to be opened.
+- */
+-void __audit_inode_update(const struct inode *inode)
+-{
+-	struct audit_context *context = current->audit_context;
+-	int idx;
++	if (!found_child) {
++		if (audit_inc_name_count(context, inode))
++			return;
++		idx = context->name_count - 1;
+ 
+-	if (!context->in_syscall || !inode)
+-		return;
++		/* Re-use the name belonging to the slot for a matching parent
++		 * directory. All names for this context are relinquished in
++		 * audit_free_names() */
++		if (found_parent) {
++			context->names[idx].name = found_parent;
++			context->names[idx].name_len = AUDIT_NAME_FULL;
++			/* don't call __putname() */
++			context->names[idx].name_put = 0;
++		} else {
++			context->names[idx].name = NULL;
++		}
+ 
+-	if (context->name_count == 0) {
+-		context->name_count++;
+-#if AUDIT_DEBUG
+-		context->ino_count++;
+-#endif
++		if (inode)
++			audit_copy_inode(&context->names[idx], inode);
++		else
++			context->names[idx].ino = (unsigned long)-1;
+ 	}
+-	idx = context->name_count - 1;
+-
+-	audit_copy_inode(&context->names[idx], inode);
+ }
+ 
+ EXPORT_SYMBOL_GPL(__audit_inode_child);
+

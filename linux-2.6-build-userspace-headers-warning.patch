@@ -1,0 +1,48 @@
+It's a bad idea to use kernel headers directly.
+We have glibc-kernheaders for this purpose.
+
+diff -urNp --exclude-from=/home/davej/.exclude linux-3022/include/linux/config.h linux-10000/include/linux/config.h
+--- linux-3022/include/linux/config.h
++++ linux-10000/include/linux/config.h
+@@ -2,5 +2,7 @@
+ #define _LINUX_CONFIG_H
+ 
+ #include <linux/autoconf.h>
+-
++#ifndef __KERNEL__
++#error including kernel header in userspace; use the glibc headers instead!
++#endif
+ #endif
+
+In file included from include/asm/cputable.h:18,
+                 from include/asm/elf.h:6,
+                 from include/linux/elf.h:5,
+                 from arch/ppc64/boot/main.c:13:
+include/linux/config.h:6:2: error: #error including kernel header in userspace; use the glibc headers instead!
+make[1]: *** [arch/ppc64/boot/main.o] Error 1
+make[1]: *** Waiting for unfinished jobs....
+
+--- linux-2.6.13/arch/powerpc/boot/main.c~	2005-09-04 16:45:23.000000000 -0400
++++ linux-2.6.13/arch/powerpc/boot/main.c	2005-09-04 16:45:28.000000000 -0400
+@@ -8,6 +8,9 @@
+  * as published by the Free Software Foundation; either version
+  * 2 of the License, or (at your option) any later version.
+  */
++
++#define __KERNGLUE__
++
+ #include <stdarg.h>
+ #include <stddef.h>
+ #include "elf.h"
+diff -urNp --exclude-from=/home/davej/.exclude linux-10000/include/linux/config.h linux-10001/include/linux/config.h
+--- linux-10000/include/linux/config.h
++++ linux-10001/include/linux/config.h
+@@ -2,7 +2,7 @@
+ #define _LINUX_CONFIG_H
+ 
+ #include <linux/autoconf.h>
+-#ifndef __KERNEL__
++#if !defined (__KERNEL__) && !defined(__KERNGLUE__)
+ #error including kernel header in userspace; use the glibc headers instead!
+ #endif
+ #endif

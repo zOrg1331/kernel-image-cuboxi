@@ -1,0 +1,87 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:48 -0400
+Subject: [block] cciss: factor out scsi dma code
+Message-id: <1283097002-3341-50-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27874
+O-Subject: [RHEL6 PATCH 49/63] cciss: factor out scsi dma code
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+factor out scsi dma code
+
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index fca1178..e40341e 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -65,6 +65,8 @@ static int cciss_scsi_queue_command (struct scsi_cmnd *cmd,
+ 		void (* done)(struct scsi_cmnd *));
+ static int cciss_eh_device_reset_handler(struct scsi_cmnd *);
+ static int cciss_eh_abort_handler(struct scsi_cmnd *);
++static void cciss_scatter_gather_unmap(ctlr_info_t *h, CommandList_struct *c,
++	struct scsi_cmnd *cmd);
+ 
+ static struct cciss_scsi_hba_t ccissscsi[MAX_CTLR] = {
+ 	{ .name = "cciss0", .ndevices = 0 },
+@@ -553,7 +555,6 @@ complete_scsi_command( CommandList_struct *cp, int timeout, __u32 tag)
+ {
+ 	struct scsi_cmnd *cmd;
+ 	ctlr_info_t *ctlr;
+-	u64bit addr64;
+ 	ErrorInfo_struct *ei;
+ 
+ 	ei = cp->err_info;
+@@ -567,20 +568,7 @@ complete_scsi_command( CommandList_struct *cp, int timeout, __u32 tag)
+ 	cmd = (struct scsi_cmnd *) cp->scsi_cmd;	
+ 	ctlr = hba[cp->ctlr];
+ 
+-	/* undo the DMA mappings */
+-
+-	if (cmd->use_sg) {
+-		pci_unmap_sg(ctlr->pdev,
+-			cmd->request_buffer, cmd->use_sg,
+-				cmd->sc_data_direction); 
+-	}
+-	else if (cmd->request_bufflen) {
+-		addr64.val32.lower = cp->SG[0].Addr.lower;
+-                addr64.val32.upper = cp->SG[0].Addr.upper;
+-                pci_unmap_single(ctlr->pdev, (dma_addr_t) addr64.val,
+-                	cmd->request_bufflen, 
+-				cmd->sc_data_direction);
+-	}
++	cciss_scatter_gather_unmap(ctlr, cp, cmd);
+ 
+ 	cmd->result = (DID_OK << 16); 		/* host byte */
+ 	cmd->result |= (COMMAND_COMPLETE << 8);	/* msg byte */
+@@ -1213,7 +1201,7 @@ cciss_scatter_gather(struct pci_dev *pdev,
+ 			addr64 = (__u64) pci_map_single(pdev, 
+ 				cmd->request_buffer, 
+ 				cmd->request_bufflen, 
+-				cmd->sc_data_direction); 
++				cmd->sc_data_direction);
+ 	
+ 			cp->SG[0].Addr.lower = 
+ 			  (__u32) (addr64 & (__u64) 0x00000000FFFFFFFF);
+@@ -1245,6 +1233,23 @@ cciss_scatter_gather(struct pci_dev *pdev,
+ 	return;
+ }
+ 
++static void cciss_scatter_gather_unmap(ctlr_info_t *h, CommandList_struct *c,
++	struct scsi_cmnd *cmd)
++{
++	u64bit addr64;
++
++	if (cmd->use_sg) {
++		pci_unmap_sg(h->pdev, cmd->request_buffer, cmd->use_sg,
++				cmd->sc_data_direction);
++		return;
++	}
++	if (cmd->request_bufflen) {
++		addr64.val32.lower = c->SG[0].Addr.lower;
++		addr64.val32.upper = c->SG[0].Addr.upper;
++                pci_unmap_single(h->pdev, (dma_addr_t) addr64.val,
++			cmd->request_bufflen, cmd->sc_data_direction);
++	}
++}
+ 
+ static int
+ cciss_scsi_queue_command (struct scsi_cmnd *cmd, void (* done)(struct scsi_cmnd *))

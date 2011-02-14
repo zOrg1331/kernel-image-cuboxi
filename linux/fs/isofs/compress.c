@@ -33,7 +33,7 @@ static char zisofs_sink_page[PAGE_CACHE_SIZE];
  * allocation; this avoids failures at block-decompression time.
  */
 static void *zisofs_zlib_workspace;
-static DEFINE_MUTEX(zisofs_zlib_lock);
+static struct semaphore zisofs_zlib_semaphore;
 
 /*
  * When decompressing, we typically obtain more than one page
@@ -42,7 +42,7 @@ static DEFINE_MUTEX(zisofs_zlib_lock);
  */
 static int zisofs_readpage(struct file *file, struct page *page)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file->f_dentry->d_inode;
 	struct address_space *mapping = inode->i_mapping;
 	unsigned int maxpage, xpage, fpage, blockindex;
 	unsigned long offset;
@@ -72,17 +72,6 @@ static int zisofs_readpage(struct file *file, struct page *page)
 	offset = index & ~zisofs_block_page_mask;
 	blockindex = offset >> zisofs_block_page_shift;
 	maxpage = (inode->i_size + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
-
-	/*
-	 * If this page is wholly outside i_size we just return zero;
-	 * do_generic_file_read() will handle this for us
-	 */
-	if (page->index >= maxpage) {
-		SetPageUptodate(page);
-		unlock_page(page);
-		return 0;
-	}
-
 	maxpage = min(zisofs_block_pages, maxpage-offset);
 
 	for ( i = 0 ; i < maxpage ; i++, offset++ ) {
@@ -191,9 +180,9 @@ static int zisofs_readpage(struct file *file, struct page *page)
 
 		/* First block is special since it may be fractional.
 		   We also wait for it before grabbing the zlib
-		   mutex; odds are that the subsequent blocks are
+		   semaphore; odds are that the subsequent blocks are
 		   going to come in in short order so we don't hold
-		   the zlib mutex longer than necessary. */
+		   the zlib semaphore longer than necessary. */
 
 		if ( !bh || (wait_on_buffer(bh), !buffer_uptodate(bh)) ) {
 			printk(KERN_DEBUG "zisofs: Hit null buffer, fpage = %d, xpage = %d, csize = %ld\n",
@@ -205,7 +194,7 @@ static int zisofs_readpage(struct file *file, struct page *page)
 		csize -= stream.avail_in;
 
 		stream.workspace = zisofs_zlib_workspace;
-		mutex_lock(&zisofs_zlib_lock);
+		down(&zisofs_zlib_semaphore);
 		
 		zerr = zlib_inflateInit(&stream);
 		if ( zerr != Z_OK ) {
@@ -292,7 +281,7 @@ static int zisofs_readpage(struct file *file, struct page *page)
 		zlib_inflateEnd(&stream);
 
 	z_eio:
-		mutex_unlock(&zisofs_zlib_lock);
+		up(&zisofs_zlib_semaphore);
 
 	b_eio:
 		for ( i = 0 ; i < haveblocks ; i++ ) {
@@ -328,16 +317,31 @@ const struct address_space_operations zisofs_aops = {
 	/* No bmap operation supported */
 };
 
+static int initialized;
+
 int __init zisofs_init(void)
 {
+	if ( initialized ) {
+		printk("zisofs_init: called more than once\n");
+		return 0;
+	}
+
 	zisofs_zlib_workspace = vmalloc(zlib_inflate_workspacesize());
 	if ( !zisofs_zlib_workspace )
 		return -ENOMEM;
+	init_MUTEX(&zisofs_zlib_semaphore);
 
+	initialized = 1;
 	return 0;
 }
 
 void zisofs_cleanup(void)
 {
+	if ( !initialized ) {
+		printk("zisofs_cleanup: called without initialization\n");
+		return;
+	}
+
 	vfree(zisofs_zlib_workspace);
+	initialized = 0;
 }

@@ -1,0 +1,47 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Tue, 12 Aug 2008 12:13:40 -0400
+Subject: [ia64] fix to check module_free parameter
+Message-id: 48A1B6B4.9060209@redhat.com
+O-Subject: [PATCH RHEL5] BZ457961: fix to check module_free() parameter on ia64
+Bugzilla: 457961
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Luming Yu <luyu@redhat.com>
+RH-Acked-by: Luming Yu <luyu@redhat.com>
+
+This patch fixes a kernel crash bug on ia64.
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=457961
+
+Brew:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1426895
+
+Description:
+ module_free() on ia64 refers the first parameter before checking.
+ But it is called like below(in kernel/kprobes). The first parameter is always NULL.
+This happens when many probe points(>1024) are set by kprobes.
+I encountered this with using SystemTap. It can set many probes easily.
+
+Test:
+I tested systemtap script which is reported on the bugzilla on ia64 with
+this patch, and ensured it was fixed.
+
+Upstream:
+740a8de0796dd12890b3c8ddcfabfcb528b78d40
+
+Thank you,
+
+diff --git a/arch/ia64/kernel/module.c b/arch/ia64/kernel/module.c
+index 158e3c5..32e5e0a 100644
+--- a/arch/ia64/kernel/module.c
++++ b/arch/ia64/kernel/module.c
+@@ -321,7 +321,8 @@ module_alloc (unsigned long size)
+ void
+ module_free (struct module *mod, void *module_region)
+ {
+-	if (mod->arch.init_unw_table && module_region == mod->module_init) {
++	if (mod && mod->arch.init_unw_table &&
++	    module_region == mod->module_init) {
+ 		unw_remove_unwind_table(mod->arch.init_unw_table);
+ 		mod->arch.init_unw_table = NULL;
+ 	}

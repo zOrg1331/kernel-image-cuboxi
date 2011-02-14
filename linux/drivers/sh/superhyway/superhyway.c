@@ -22,7 +22,7 @@
 static int superhyway_devices;
 
 static struct device superhyway_bus_device = {
-	.init_name = "superhyway",
+	.bus_id = "superhyway",
 };
 
 static void superhyway_device_release(struct device *dev)
@@ -56,10 +56,11 @@ int superhyway_add_device(unsigned long base, struct superhyway_device *sdev,
 	struct superhyway_device *dev = sdev;
 
 	if (!dev) {
-		dev = kzalloc(sizeof(struct superhyway_device), GFP_KERNEL);
+		dev = kmalloc(sizeof(struct superhyway_device), GFP_KERNEL);
 		if (!dev)
 			return -ENOMEM;
 
+		memset(dev, 0, sizeof(struct superhyway_device));
 	}
 
 	dev->bus = bus;
@@ -83,7 +84,7 @@ int superhyway_add_device(unsigned long base, struct superhyway_device *sdev,
 	dev->id.id		= dev->vcr.mod_id;
 
 	sprintf(dev->name, "SuperHyway device %04x", dev->id.id);
-	dev_set_name(&dev->dev, "%02x", superhyway_devices);
+	sprintf(dev->dev.bus_id, "%02x", superhyway_devices);
 
 	superhyway_devices++;
 
@@ -107,17 +108,16 @@ int superhyway_add_devices(struct superhyway_bus *bus,
 static int __init superhyway_init(void)
 {
 	struct superhyway_bus *bus;
-	int ret;
+	int ret = 0;
 
-	ret = device_register(&superhyway_bus_device);
-	if (unlikely(ret))
-		return ret;
+	device_register(&superhyway_bus_device);
 
 	for (bus = superhyway_channels; bus->ops; bus++)
 		ret |= superhyway_scan_bus(bus);
 
 	return ret;
 }
+
 postcore_initcall(superhyway_init);
 
 static const struct superhyway_device_id *

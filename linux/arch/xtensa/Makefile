@@ -11,38 +11,25 @@
 # this architecture
 
 # Core configuration.
-# (Use VAR=<xtensa_config> to use another default compiler.)
+# (Use CPU=<xtensa_config> to use another default compiler.)
 
-variant-$(CONFIG_XTENSA_VARIANT_FSF)		:= fsf
-variant-$(CONFIG_XTENSA_VARIANT_DC232B)		:= dc232b
-variant-$(CONFIG_XTENSA_VARIANT_S6000)		:= s6000
-variant-$(CONFIG_XTENSA_VARIANT_LINUX_CUSTOM)	:= custom
+cpu-$(CONFIG_XTENSA_CPU_LINUX_BE)	:= linux_be
+cpu-$(CONFIG_XTENSA_CPU_LINUX_CUSTOM)	:= linux_custom
 
-VARIANT = $(variant-y)
-export VARIANT
+CPU = $(cpu-y)
+export CPU
 
 # Platform configuration
 
 platform-$(CONFIG_XTENSA_PLATFORM_XT2000)	:= xt2000
 platform-$(CONFIG_XTENSA_PLATFORM_ISS)		:= iss
-platform-$(CONFIG_XTENSA_PLATFORM_S6105)	:= s6105
 
 PLATFORM = $(platform-y)
 export PLATFORM
 
-# temporarily until string.h is fixed
-KBUILD_CFLAGS += -ffreestanding
-
-KBUILD_CFLAGS += -pipe -mlongcalls
-
-vardirs := $(patsubst %,arch/xtensa/variants/%/,$(variant-y))
-plfdirs := $(patsubst %,arch/xtensa/platforms/%/,$(platform-y))
-
-ifeq ($(KBUILD_SRC),)
-KBUILD_CPPFLAGS += $(patsubst %,-I%include,$(vardirs) $(plfdirs))
-else
-KBUILD_CPPFLAGS += $(patsubst %,-I$(srctree)/%include,$(vardirs) $(plfdirs))
-endif
+CPPFLAGS	+= $(if $(KBUILD_SRC),-I$(srctree)/include/asm-xtensa/)
+CPPFLAGS	+= -Iinclude/asm
+CFLAGS		+= -pipe -mlongcalls
 
 KBUILD_DEFCONFIG := iss_defconfig
 
@@ -54,32 +41,45 @@ core-$(CONFIG_EMBEDDED_RAMDISK)	+= arch/xtensa/boot/ramdisk/
 
 # Test for cross compiling
 
-ifneq ($(VARIANT),)
+ifneq ($(CPU),)
   COMPILE_ARCH = $(shell uname -m)
 
   ifneq ($(COMPILE_ARCH), xtensa)
     ifndef CROSS_COMPILE
-      CROSS_COMPILE = xtensa_$(VARIANT)-
+      CROSS_COMPILE = xtensa_$(CPU)-
     endif
   endif
 endif
 
-# Only build variant and/or platform if it includes a Makefile
+#
 
-buildvar := $(shell test -a $(srctree)/arch/xtensa/variants/$(VARIANT)/Makefile && echo arch/xtensa/variants/$(VARIANT)/)
-buildplf := $(shell test -a $(srctree)/arch/xtensa/platforms/$(PLATFORM)/Makefile && echo arch/xtensa/platforms/$(PLATFORM)/)
-
-# Find libgcc.a
-
-LIBGCC := $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
+LIBGCC := $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
 
 head-y		:= arch/xtensa/kernel/head.o
 core-y		+= arch/xtensa/kernel/ arch/xtensa/mm/
-core-y		+= $(buildvar) $(buildplf)
-
+ifneq ($(PLATFORM),)
+core-y		+= arch/xtensa/platform-$(PLATFORM)/
+endif
 libs-y		+= arch/xtensa/lib/ $(LIBGCC)
 
 boot		:= arch/xtensa/boot
+
+archinc		:= include/asm-xtensa
+
+archprepare: $(archinc)/.platform
+
+# Update machine cpu and platform symlinks if something which affects
+# them changed.
+
+$(archinc)/.platform: $(wildcard include/config/arch/*.h) include/config/auto.conf
+	@echo '  SYMLINK $(archinc)/xtensa/config -> $(archinc)/xtensa/config-$(CPU)'
+	$(Q)mkdir -p $(archinc)
+	$(Q)mkdir -p $(archinc)/xtensa
+	$(Q)ln -fsn $(srctree)/$(archinc)/xtensa/config-$(CPU) $(archinc)/xtensa/config
+	@echo '  SYMLINK $(archinc)/platform -> $(archinc)/platform-$(PLATFORM)'
+	$(Q)ln -fsn $(srctree)/$(archinc)/platform-$(PLATFORM) $(archinc)/platform
+	@touch $@
+
 
 all: zImage
 
@@ -87,6 +87,10 @@ bzImage : zImage
 
 zImage zImage.initrd: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $@
+
+CLEAN_FILES	+= arch/xtensa/vmlinux.lds                      \
+		   $(archinc)/platform $(archinc)/xtensa/config \
+		   $(archinc)/.platform
 
 define archhelp
   @echo '* zImage      - Compressed kernel image (arch/xtensa/boot/images/zImage.*)'

@@ -1,0 +1,37 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 6 Nov 2008 16:42:03 +0100
+Subject: [input] atkbd: cancel delayed work before freeing struct
+Message-id: 20081106164203.213d13d9@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.3 patch] BZ461233 atkbd: cancel delayed work before freeing its structure
+Bugzilla: 461233
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+
+BZ461233
+https://bugzilla.redhat.com/show_bug.cgi?id=461233
+
+﻿Description:
+Previously posted patch
+(http://post-office.corp.redhat.com/archives/rhkernel-list/2008-September/msg01120.html)
+introduced a following bug. During the disconnect phase, it may happen
+to delayed work to execute after its structure is freed. Therefore it's
+necessary to cancel pending delayed work before. I also posted similar
+patch upstream (http://lkml.org/lkml/2008/11/5/120).
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1561517
+
+Jirka
+
+diff --git a/drivers/input/keyboard/atkbd.c b/drivers/input/keyboard/atkbd.c
+index 46c96f0..3f12ebc 100644
+--- a/drivers/input/keyboard/atkbd.c
++++ b/drivers/input/keyboard/atkbd.c
+@@ -804,6 +804,7 @@ static void atkbd_disconnect(struct serio *serio)
+ 
+ 	/* make sure we don't have a command in flight */
+ 	synchronize_sched();  /* Allow atkbd_interrupt()s to complete. */
++	cancel_delayed_work(&atkbd->event_work);
+ 	flush_scheduled_work();
+ 
+ 	device_remove_file(&serio->dev, &atkbd_attr_extra);

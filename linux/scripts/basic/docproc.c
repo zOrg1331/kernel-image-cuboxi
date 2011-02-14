@@ -10,10 +10,8 @@
  *	documentation-frontend
  *		Scans the template file and call kernel-doc for
  *		all occurrences of ![EIF]file
- *		Beforehand each referenced file is scanned for
- *		any symbols that are exported via these macros:
- *			EXPORT_SYMBOL(), EXPORT_SYMBOL_GPL(), &
- *			EXPORT_SYMBOL_GPL_FUTURE()
+ *		Beforehand each referenced file are scanned for
+ *		any exported sympols "EXPORT_SYMBOL()" statements.
  *		This is used to create proper -function and
  *		-nofunction arguments in calls to kernel-doc.
  *		Usage: docproc doc file.tmpl
@@ -30,7 +28,6 @@
  *		!Ifilename
  *		!Dfilename
  *		!Ffilename
- *		!Pfilename
  *
  */
 
@@ -58,7 +55,6 @@ FILEONLY *symbolsonly;
 typedef void FILELINE(char * file, char * line);
 FILELINE * singlefunctions;
 FILELINE * entity_system;
-FILELINE * docsection;
 
 #define MAXLINESZ     2048
 #define MAXFILES      250
@@ -67,38 +63,33 @@ FILELINE * docsection;
 #define DOCBOOK       "-docbook"
 #define FUNCTION      "-function"
 #define NOFUNCTION    "-nofunction"
-#define NODOCSECTIONS "-no-doc-sections"
 
-static char *srctree, *kernsrctree;
-
-static void usage (void)
+void usage (void)
 {
 	fprintf(stderr, "Usage: docproc {doc|depend} file\n");
 	fprintf(stderr, "Input is read from file.tmpl. Output is sent to stdout\n");
 	fprintf(stderr, "doc: frontend when generating kernel documentation\n");
 	fprintf(stderr, "depend: generate list of files referenced within file\n");
-	fprintf(stderr, "Environment variable SRCTREE: absolute path to sources.\n");
-	fprintf(stderr, "                     KBUILD_SRC: absolute path to kernel source tree.\n");
 }
 
 /*
- * Execute kernel-doc with parameters given in svec
+ * Execute kernel-doc with parameters givin in svec
  */
-static void exec_kernel_doc(char **svec)
+void exec_kernel_doc(char **svec)
 {
 	pid_t pid;
 	int ret;
 	char real_filename[PATH_MAX + 1];
 	/* Make sure output generated so far are flushed */
 	fflush(stdout);
-	switch (pid=fork()) {
+	switch(pid=fork()) {
 		case -1:
 			perror("fork");
 			exit(1);
 		case  0:
 			memset(real_filename, 0, sizeof(real_filename));
-			strncat(real_filename, kernsrctree, PATH_MAX);
-			strncat(real_filename, "/" KERNELDOCPATH KERNELDOC,
+			strncat(real_filename, getenv("SRCTREE"), PATH_MAX);
+			strncat(real_filename, KERNELDOCPATH KERNELDOC,
 					PATH_MAX - strlen(real_filename));
 			execvp(real_filename, svec);
 			fprintf(stderr, "exec ");
@@ -129,7 +120,7 @@ struct symfile
 struct symfile symfilelist[MAXFILES];
 int symfilecnt = 0;
 
-static void add_new_symbol(struct symfile *sym, char * symname)
+void add_new_symbol(struct symfile *sym, char * symname)
 {
 	sym->symbollist =
           realloc(sym->symbollist, (sym->symbolcnt + 1) * sizeof(char *));
@@ -137,14 +128,13 @@ static void add_new_symbol(struct symfile *sym, char * symname)
 }
 
 /* Add a filename to the list */
-static struct symfile * add_new_file(char * filename)
+struct symfile * add_new_file(char * filename)
 {
 	symfilelist[symfilecnt++].filename = strdup(filename);
 	return &symfilelist[symfilecnt - 1];
 }
-
 /* Check if file already are present in the list */
-static struct symfile * filename_exist(char * filename)
+struct symfile * filename_exist(char * filename)
 {
 	int i;
 	for (i=0; i < symfilecnt; i++)
@@ -157,20 +147,20 @@ static struct symfile * filename_exist(char * filename)
  * List all files referenced within the template file.
  * Files are separated by tabs.
  */
-static void adddep(char * file)		   { printf("\t%s", file); }
-static void adddep2(char * file, char * line)     { line = line; adddep(file); }
-static void noaction(char * line)		   { line = line; }
-static void noaction2(char * file, char * line)   { file = file; line = line; }
+void adddep(char * file)		   { printf("\t%s", file); }
+void adddep2(char * file, char * line)     { line = line; adddep(file); }
+void noaction(char * line)		   { line = line; }
+void noaction2(char * file, char * line)   { file = file; line = line; }
 
 /* Echo the line without further action */
-static void printline(char * line)               { printf("%s", line); }
+void printline(char * line)               { printf("%s", line); }
 
 /*
- * Find all symbols in filename that are exported with EXPORT_SYMBOL &
- * EXPORT_SYMBOL_GPL (& EXPORT_SYMBOL_GPL_FUTURE implicitly).
+ * Find all symbols exported with EXPORT_SYMBOL and EXPORT_SYMBOL_GPL
+ * in filename.
  * All symbols located are stored in symfilelist.
  */
-static void find_export_symbols(char * filename)
+void find_export_symbols(char * filename)
 {
 	FILE * fp;
 	struct symfile *sym;
@@ -178,8 +168,7 @@ static void find_export_symbols(char * filename)
 	if (filename_exist(filename) == NULL) {
 		char real_filename[PATH_MAX + 1];
 		memset(real_filename, 0, sizeof(real_filename));
-		strncat(real_filename, srctree, PATH_MAX);
-		strncat(real_filename, "/", PATH_MAX - strlen(real_filename));
+		strncat(real_filename, getenv("SRCTREE"), PATH_MAX);
 		strncat(real_filename, filename,
 				PATH_MAX - strlen(real_filename));
 		sym = add_new_file(filename);
@@ -188,17 +177,16 @@ static void find_export_symbols(char * filename)
 		{
 			fprintf(stderr, "docproc: ");
 			perror(real_filename);
-			exit(1);
 		}
-		while (fgets(line, MAXLINESZ, fp)) {
+		while(fgets(line, MAXLINESZ, fp)) {
 			char *p;
 			char *e;
-			if (((p = strstr(line, "EXPORT_SYMBOL_GPL")) != NULL) ||
-                            ((p = strstr(line, "EXPORT_SYMBOL")) != NULL)) {
+			if (((p = strstr(line, "EXPORT_SYMBOL_GPL")) != 0) ||
+                            ((p = strstr(line, "EXPORT_SYMBOL")) != 0)) {
 				/* Skip EXPORT_SYMBOL{_GPL} */
 				while (isalnum(*p) || *p == '_')
 					p++;
-				/* Remove parentheses & additional whitespace */
+				/* Remove paranteses and additional ws */
 				while (isspace(*p))
 					p++;
 				if (*p != '(')
@@ -222,12 +210,12 @@ static void find_export_symbols(char * filename)
  * Document all external or internal functions in a file.
  * Call kernel-doc with following parameters:
  * kernel-doc -docbook -nofunction function_name1 filename
- * Function names are obtained from all the src files
+ * function names are obtained from all the the src files
  * by find_export_symbols.
  * intfunc uses -nofunction
  * extfunc uses -function
  */
-static void docfunctions(char * filename, char * type)
+void docfunctions(char * filename, char * type)
 {
 	int i,j;
 	int symcnt = 0;
@@ -236,14 +224,13 @@ static void docfunctions(char * filename, char * type)
 
 	for (i=0; i <= symfilecnt; i++)
 		symcnt += symfilelist[i].symbolcnt;
-	vec = malloc((2 + 2 * symcnt + 3) * sizeof(char *));
+	vec = malloc((2 + 2 * symcnt + 2) * sizeof(char*));
 	if (vec == NULL) {
 		perror("docproc: ");
 		exit(1);
 	}
 	vec[idx++] = KERNELDOC;
 	vec[idx++] = DOCBOOK;
-	vec[idx++] = NODOCSECTIONS;
 	for (i=0; i < symfilecnt; i++) {
 		struct symfile * sym = &symfilelist[i];
 		for (j=0; j < sym->symbolcnt; j++) {
@@ -258,15 +245,15 @@ static void docfunctions(char * filename, char * type)
 	fflush(stdout);
 	free(vec);
 }
-static void intfunc(char * filename) {	docfunctions(filename, NOFUNCTION); }
-static void extfunc(char * filename) { docfunctions(filename, FUNCTION);   }
+void intfunc(char * filename) {	docfunctions(filename, NOFUNCTION); }
+void extfunc(char * filename) { docfunctions(filename, FUNCTION);   }
 
 /*
- * Document specific function(s) in a file.
+ * Document spåecific function(s) in a file.
  * Call kernel-doc with the following parameters:
  * kernel-doc -docbook -function function1 [-function function2]
  */
-static void singfunc(char * filename, char * line)
+void singfunc(char * filename, char * line)
 {
 	char *vec[200]; /* Enough for specific functions */
         int i, idx = 0;
@@ -274,7 +261,7 @@ static void singfunc(char * filename, char * line)
 	vec[idx++] = KERNELDOC;
 	vec[idx++] = DOCBOOK;
 
-        /* Split line up in individual parameters preceded by FUNCTION */
+        /* Split line up in individual parameters preceeded by FUNCTION */
         for (i=0; line[i]; i++) {
                 if (isspace(line[i])) {
                         line[i] = '\0';
@@ -293,42 +280,18 @@ static void singfunc(char * filename, char * line)
 }
 
 /*
- * Insert specific documentation section from a file.
- * Call kernel-doc with the following parameters:
- * kernel-doc -docbook -function "doc section" filename
- */
-static void docsect(char *filename, char *line)
-{
-	char *vec[6]; /* kerneldoc -docbook -function "section" file NULL */
-	char *s;
-
-	for (s = line; *s; s++)
-		if (*s == '\n')
-			*s = '\0';
-
-	vec[0] = KERNELDOC;
-	vec[1] = DOCBOOK;
-	vec[2] = FUNCTION;
-	vec[3] = line;
-	vec[4] = filename;
-	vec[5] = NULL;
-	exec_kernel_doc(vec);
-}
-
-/*
  * Parse file, calling action specific functions for:
  * 1) Lines containing !E
  * 2) Lines containing !I
  * 3) Lines containing !D
  * 4) Lines containing !F
- * 5) Lines containing !P
- * 6) Default lines - lines not matching the above
+ * 5) Default lines - lines not matching the above
  */
-static void parse_file(FILE *infile)
+void parse_file(FILE *infile)
 {
 	char line[MAXLINESZ];
 	char * s;
-	while (fgets(line, MAXLINESZ, infile)) {
+	while(fgets(line, MAXLINESZ, infile)) {
 		if (line[0] == '!') {
 			s = line + 2;
 			switch (line[1]) {
@@ -356,15 +319,6 @@ static void parse_file(FILE *infile)
 						s++;
 					singlefunctions(line +2, s);
 					break;
-				case 'P':
-					/* filename */
-					while (*s && !isspace(*s)) s++;
-					*s++ = '\0';
-					/* DOC: section name */
-					while (isspace(*s))
-						s++;
-					docsection(line + 2, s);
-					break;
 				default:
 					defaultline(line);
 			}
@@ -380,13 +334,6 @@ static void parse_file(FILE *infile)
 int main(int argc, char *argv[])
 {
 	FILE * infile;
-
-	srctree = getenv("SRCTREE");
-	if (!srctree)
-		srctree = getcwd(NULL, 0);
-	kernsrctree = getenv("KBUILD_SRC");
-	if (!kernsrctree || !*kernsrctree)
-		kernsrctree = srctree;
 	if (argc != 3) {
 		usage();
 		exit(1);
@@ -403,9 +350,9 @@ int main(int argc, char *argv[])
 	{
 		/* Need to do this in two passes.
 		 * First pass is used to collect all symbols exported
-		 * in the various files;
+		 * in the various files.
 		 * Second pass generate the documentation.
-		 * This is required because some functions are declared
+		 * This is required because function are declared
 		 * and exported in different files :-((
 		 */
 		/* Collect symbols */
@@ -414,7 +361,6 @@ int main(int argc, char *argv[])
 		externalfunctions = find_export_symbols;
 		symbolsonly       = find_export_symbols;
 		singlefunctions   = noaction2;
-		docsection        = noaction2;
 		parse_file(infile);
 
 		/* Rewind to start from beginning of file again */
@@ -424,7 +370,6 @@ int main(int argc, char *argv[])
 		externalfunctions = extfunc;
 		symbolsonly       = printline;
 		singlefunctions   = singfunc;
-		docsection        = docsect;
 
 		parse_file(infile);
 	}
@@ -438,7 +383,6 @@ int main(int argc, char *argv[])
 		externalfunctions = adddep;
 		symbolsonly       = adddep;
 		singlefunctions   = adddep2;
-		docsection        = adddep2;
 		parse_file(infile);
 		printf("\n");
 	}
@@ -451,3 +395,4 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 	return exitstatus;
 }
+

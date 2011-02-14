@@ -1,9 +1,11 @@
 /*
- * linux/drivers/serial/21285.c
+ * linux/drivers/char/21285.c
  *
  * Driver for the serial port on the 21285 StrongArm-110 core logic chip.
  *
  * Based on drivers/char/serial.c
+ *
+ *  $Id: 21285.c,v 1.37 2002/07/28 10:03:27 rmk Exp $
  */
 #include <linux/module.h>
 #include <linux/tty.h>
@@ -14,12 +16,12 @@
 #include <linux/tty_flip.h>
 #include <linux/serial_core.h>
 #include <linux/serial.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/dec21285.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 
 #define BAUD_BASE		(mem_fclk_21285/64)
 
@@ -83,10 +85,10 @@ static void serial21285_enable_ms(struct uart_port *port)
 {
 }
 
-static irqreturn_t serial21285_rx_chars(int irq, void *dev_id)
+static irqreturn_t serial21285_rx_chars(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct uart_port *port = dev_id;
-	struct tty_struct *tty = port->state->port.tty;
+	struct tty_struct *tty = port->info->tty;
 	unsigned int status, ch, flag, rxs, max_count = 256;
 
 	status = *CSR_UARTFLG;
@@ -121,10 +123,10 @@ static irqreturn_t serial21285_rx_chars(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t serial21285_tx_chars(int irq, void *dev_id)
+static irqreturn_t serial21285_tx_chars(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct uart_port *port = dev_id;
-	struct circ_buf *xmit = &port->state->xmit;
+	struct circ_buf *xmit = &port->info->xmit;
 	int count = 256;
 
 	if (port->x_char) {
@@ -212,8 +214,8 @@ static void serial21285_shutdown(struct uart_port *port)
 }
 
 static void
-serial21285_set_termios(struct uart_port *port, struct ktermios *termios,
-			struct ktermios *old)
+serial21285_set_termios(struct uart_port *port, struct termios *termios,
+			struct termios *old)
 {
 	unsigned long flags;
 	unsigned int baud, quot, h_lcr;
@@ -234,12 +236,6 @@ serial21285_set_termios(struct uart_port *port, struct ktermios *termios,
 	 */
 	baud = uart_get_baud_rate(port, termios, old, 0, port->uartclk/16); 
 	quot = uart_get_divisor(port, baud);
-
-	if (port->state && port->state->port.tty) {
-		struct tty_struct *tty = port->state->port.tty;
-		unsigned int b = port->uartclk / (16 * quot);
-		tty_encode_baud_rate(tty, b, b);
-	}
 
 	switch (termios->c_cflag & CSIZE) {
 	case CS5:
@@ -492,7 +488,7 @@ static int __init serial21285_init(void)
 {
 	int ret;
 
-	printk(KERN_INFO "Serial: 21285 driver\n");
+	printk(KERN_INFO "Serial: 21285 driver $Revision: 1.37 $\n");
 
 	serial21285_setup_ports();
 
@@ -513,5 +509,5 @@ module_init(serial21285_init);
 module_exit(serial21285_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Intel Footbridge (21285) serial driver");
+MODULE_DESCRIPTION("Intel Footbridge (21285) serial driver $Revision: 1.37 $");
 MODULE_ALIAS_CHARDEV(SERIAL_21285_MAJOR, SERIAL_21285_MINOR);

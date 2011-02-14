@@ -1,0 +1,46 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 10 Mar 2009 10:58:28 +0100
+Subject: [net] ipv6: check hop limit setting in ancillary data
+Message-id: 20090310095827.GI3468@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ487406 net: ipv6: Check the hop limit setting in ancillary data.
+Bugzilla: 487406
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+BZ487406
+https://bugzilla.redhat.com/show_bug.cgi?id=487406
+
+Description:
+When specifing the outgoing hop limit as ancillary data for sendmsg(),
+the kernel doesn't check the integer hop limit value as specified in
+[RFC-3542] section 6.3.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e8766fc86b34d44a8c55a2f9d71da69e091b1ca4
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1719980
+
+Test:
+Booted on x86_64 and tested with reproducer.
+
+Note:
+To apply without a hunk, you should apply patch for BZ486215 first.
+
+Jirka
+
+diff --git a/net/ipv6/datagram.c b/net/ipv6/datagram.c
+index dc01dff..6f99322 100644
+--- a/net/ipv6/datagram.c
++++ b/net/ipv6/datagram.c
+@@ -695,6 +695,11 @@ int datagram_send_ctl(struct msghdr *msg, struct flowi *fl,
+ 			}
+ 
+ 			*hlimit = *(int *)CMSG_DATA(cmsg);
++			if (*hlimit < -1 || *hlimit > 0xff) {
++				err = -EINVAL;
++				goto exit_f;
++			}
++
+ 			break;
+ 
+ 		case IPV6_TCLASS:

@@ -1,0 +1,265 @@
+--- linux-2.6.17.i386.orig/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2006-09-20 13:15:48.000000000 -0400
++++ linux-2.6.17.i386/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2006-09-20 13:44:15.000000000 -0400
+@@ -37,6 +37,7 @@
+ #include <asm/msr.h>
+ #include <asm/io.h>
+ #include <asm/delay.h>
++#include <asm/pci-direct.h>
+ 
+ #ifdef CONFIG_X86_POWERNOW_K8_ACPI
+ #include <linux/acpi.h>
+@@ -46,13 +47,15 @@
+ 
+ #define PFX "powernow-k8: "
+ #define BFX PFX "BIOS error: "
+-#define VERSION "version 2.00.00"
++#define VERSION "version 2.10.00"
+ #include "powernow-k8.h"
+ 
+ /* serialize freq changes  */
+ static DEFINE_MUTEX(fidvid_mutex);
+ 
+ static struct powernow_k8_data *powernow_data[NR_CPUS];
++static int *req_state = NULL;
++static int tscsync __initdata = 0;
+ 
+ static int cpu_family = CPU_OPTERON;
+ 
+@@ -205,6 +208,17 @@ static int write_new_fid(struct powernow
+ 	dprintk("writing fid 0x%x, lo 0x%x, hi 0x%x\n",
+ 		fid, lo, data->plllock * PLL_LOCK_CONVERSION);
+ 
++	if (tscsync) {
++		int i;
++		cpumask_t oldmask = current->cpus_allowed;
++		for_each_online_cpu(i) {
++			set_cpus_allowed(current, cpumask_of_cpu(i));
++			schedule();
++			wrmsr(MSR_FIDVID_CTL, lo & ~MSR_C_LO_INIT_FID_VID, data->plllock * PLL_LOCK_CONVERSION);
++		}
++		set_cpus_allowed(current, oldmask);
++		schedule();
++	}
+ 	do {
+ 		wrmsr(MSR_FIDVID_CTL, lo, data->plllock * PLL_LOCK_CONVERSION);
+ 		if (i++ > 100) {
+@@ -247,6 +261,17 @@ static int write_new_vid(struct powernow
+ 	dprintk("writing vid 0x%x, lo 0x%x, hi 0x%x\n",
+ 		vid, lo, STOP_GRANT_5NS);
+ 
++	if (tscsync) {
++		int i;
++		cpumask_t oldmask = current->cpus_allowed;
++		for_each_online_cpu(i) {
++			set_cpus_allowed(current, cpumask_of_cpu(i));
++			schedule();
++			wrmsr(MSR_FIDVID_CTL, lo & ~MSR_C_LO_INIT_FID_VID, STOP_GRANT_5NS);
++		}
++		set_cpus_allowed(current, oldmask);
++		schedule();
++	}
+ 	do {
+ 		wrmsr(MSR_FIDVID_CTL, lo, STOP_GRANT_5NS);
+ 		if (i++ > 100) {
+@@ -386,7 +411,8 @@ static int core_frequency_transition(str
+ 	}
+ 
+ 	if (data->currfid == reqfid) {
+-		printk(KERN_ERR PFX "ph2 null fid transition 0x%x\n", data->currfid);
++		if (!tscsync)
++			printk(KERN_ERR PFX "ph2 null fid transition 0x%x\n", data->currfid);
+ 		return 0;
+ 	}
+ 
+@@ -960,9 +986,21 @@ static int transition_frequency_fidvid(s
+ 	u32 vid = 0;
+ 	int res, i;
+ 	struct cpufreq_freqs freqs;
++	cpumask_t changing_cores;
+ 
+ 	dprintk("cpu %d transition to index %u\n", smp_processor_id(), index);
+ 
++	/* if all processors are transitioning in step, find the highest
++	 * current state and go to that
++         */
++
++	if (tscsync && req_state) {
++		req_state[smp_processor_id()] = index;
++		for_each_online_cpu(i) 
++			if (req_state[i] < index)
++				index = req_state[i];
++	}
++
+ 	/* fid/vid correctness check for k8 */
+ 	/* fid are the lower 8 bits of the index we stored into
+ 	 * the cpufreq frequency table in find_psb_table, vid
+@@ -983,6 +1021,8 @@ static int transition_frequency_fidvid(s
+ 	}
+ 
+ 	if ((fid < HI_FID_TABLE_BOTTOM) && (data->currfid < HI_FID_TABLE_BOTTOM)) {
++		if (tscsync && (data->currfid == fid))
++			return 0;
+ 		printk(KERN_ERR PFX
+ 		       "ignoring illegal change in lo freq table-%x to 0x%x\n",
+ 		       data->currfid, fid);
+@@ -994,7 +1034,11 @@ static int transition_frequency_fidvid(s
+ 	freqs.old = find_khz_freq_from_fid(data->currfid);
+ 	freqs.new = find_khz_freq_from_fid(fid);
+ 
+-	for_each_cpu_mask(i, *(data->available_cores)) {
++	if (tscsync)
++		changing_cores = cpu_online_map;
++	else
++		changing_cores = *(data->available_cores);
++	for_each_cpu_mask(i, changing_cores) {
+ 		freqs.cpu = i;
+ 		cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
+ 	}
+@@ -1002,10 +1046,16 @@ static int transition_frequency_fidvid(s
+ 	res = transition_fid_vid(data, fid, vid);
+ 	freqs.new = find_khz_freq_from_fid(data->currfid);
+ 
+-	for_each_cpu_mask(i, *(data->available_cores)) {
++	for_each_cpu_mask(i, changing_cores) {
+ 		freqs.cpu = i;
+ 		cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
+ 	}
++	if (tscsync) 
++		for_each_online_cpu(i)
++			if (powernow_data[i]) {
++				powernow_data[i]->currfid = data->currfid;
++				powernow_data[i]->currvid = data->currvid;
++			}
+ 	return res;
+ }
+ 
+@@ -1089,7 +1139,7 @@ static int powernowk8_target(struct cpuf
+ 		dprintk("targ: curr fid 0x%x, vid 0x%x\n",
+ 		data->currfid, data->currvid);
+ 
+-		if ((checkvid != data->currvid) || (checkfid != data->currfid)) {
++		if (!tscsync && ((checkvid != data->currvid) || (checkfid != data->currfid))) {
+ 			printk(KERN_INFO PFX
+ 				"error - out of sync, fix 0x%x 0x%x, vid 0x%x 0x%x\n",
+ 				checkfid, data->currfid, checkvid, data->currvid);
+@@ -1100,7 +1150,6 @@ static int powernowk8_target(struct cpuf
+ 		goto err_out;
+ 
+ 	mutex_lock(&fidvid_mutex);
+-
+ 	powernow_k8_acpi_pst_values(data, newstate);
+ 
+ 	if (cpu_family == CPU_HW_PSTATE)
+@@ -1137,6 +1186,32 @@ static int powernowk8_verify(struct cpuf
+ 	return cpufreq_frequency_table_verify(pol, data->powernow_table);
+ }
+ 
++/* On an MP system that is transitioning all cores in sync, adjust the
++ * vids for each frequency to the highest.  Otherwise, systems made up
++ * of different steppings may fail.
++ */
++static void sync_tables(int curcpu)
++{
++	int j;
++	for (j = 0; j < powernow_data[curcpu]->numps; j++) {
++		int i;
++		int maxvid = 0;
++		for_each_online_cpu(i) {
++			int testvid;
++			if (!powernow_data[i] || !powernow_data[i]->powernow_table)
++				continue;
++			testvid = powernow_data[i]->powernow_table[j].index & 0xff00;
++			if (testvid > maxvid)
++				maxvid = testvid;
++		}	
++		for_each_online_cpu(i) {
++			if (!powernow_data[i] || ! powernow_data[i]->powernow_table)
++				continue;
++			powernow_data[i]->powernow_table[j].index &= 0xff;
++			powernow_data[i]->powernow_table[j].index |= maxvid;
++		}
++	}
++}
+ /* per CPU init entry point to the driver */
+ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ {
+@@ -1200,6 +1275,9 @@ static int __cpuinit powernowk8_cpu_init
+ 	if (cpu_family == CPU_OPTERON)
+ 		fidvid_msr_init();
+ 
++	if (tscsync && (cpu_family == CPU_OPTERON))
++		req_state[pol->cpu] = 0;
++
+ 	/* run on any CPU again */
+ 	set_cpus_allowed(current, oldmask);
+ 
+@@ -1241,6 +1319,18 @@ static int __cpuinit powernowk8_cpu_init
+ 
+ 	powernow_data[pol->cpu] = data;
+ 
++#ifdef CONFIG_SMP
++	if (tscsync && (cpu_family == CPU_OPTERON)) {
++		u32 reg;
++		struct cpuinfo_x86 *c = &cpu_data[pol->cpu];
++		sync_tables(pol->cpu);
++		reg = read_pci_config(0, NB_PCI_ADDR + c->cpu_core_id,
++				      NB_PM_DEV, NB_C1_REG);
++		/* turn off C1 clock ramping */
++		write_pci_config(0, NB_PCI_ADDR + c->cpu_core_id,
++				 NB_PM_DEV, NB_C1_REG, reg & NB_C1_MASK);
++	}
++#endif
+ 	return 0;
+ 
+ err_out:
+@@ -1322,7 +1412,18 @@ static int __cpuinit powernowk8_init(voi
+ 			supported_cpus++;
+ 	}
+ 
++#ifndef CONFIG_SMP
++	tscsync = 0;
++#endif
++
+ 	if (supported_cpus == num_online_cpus()) {
++		if (tscsync) {
++			req_state = kzalloc(sizeof(int)*NR_CPUS, GFP_KERNEL);
++			if (!req_state) {
++				printk(KERN_ERR PFX "Unable to allocate memory!\n");
++				return -ENOMEM;
++			}
++		}
+ 		printk(KERN_INFO PFX "Found %d %s "
+ 			"processors (" VERSION ")\n", supported_cpus,
+ 			boot_cpu_data.x86_model_id);
+@@ -1337,6 +1438,9 @@ static void __exit powernowk8_exit(void)
+ {
+ 	dprintk("exit\n");
+ 
++	if (tscsync)
++		kfree(req_state);
++
+ 	cpufreq_unregister_driver(&cpufreq_amd64_driver);
+ }
+ 
+@@ -1346,3 +1450,6 @@ MODULE_LICENSE("GPL");
+ 
+ late_initcall(powernowk8_init);
+ module_exit(powernowk8_exit);
++
++module_param(tscsync, int, 0);
++MODULE_PARM_DESC(tscsync, "enable tsc by synchronizing powernow-k8 changes");
+diff -urNp linux-2.6.17.i386.orig/arch/i386/kernel/cpu/cpufreq/powernow-k8.h linux-2.6.17.i386/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
+--- linux-2.6.17.i386.orig/arch/i386/kernel/cpu/cpufreq/powernow-k8.h	2006-09-20 13:15:48.000000000 -0400
++++ linux-2.6.17.i386/arch/i386/kernel/cpu/cpufreq/powernow-k8.h	2006-09-20 13:14:27.000000000 -0400
+@@ -173,6 +173,11 @@ struct powernow_k8_data {
+ #define EXT_VID_MASK 0x3f
+ #define EXT_FID_MASK 0x3f
+ 
++/* Defines for disabling C1 clock ramping */
++#define NB_PCI_ADDR	0x18
++#define NB_PM_DEV	3
++#define NB_C1_REG	0x84
++#define NB_C1_MASK	0xfcffffff
+ 
+ /*
+  * Version 1.4 of the PSB table. This table is constructed by BIOS and is

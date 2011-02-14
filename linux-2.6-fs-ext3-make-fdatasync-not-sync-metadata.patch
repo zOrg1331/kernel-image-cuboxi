@@ -1,0 +1,36 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Mon, 19 May 2008 11:41:15 -0400
+Subject: [fs] ext3: make fdatasync not sync metadata
+Message-id: 20080519154115.GH21522@unused.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] make fdatasync not sync metadata on ext3
+Bugzilla: 445649
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Hello,
+
+This is in reference to bz 445649.  It is a backport of the commit
+
+3d61f75eefedf75914ab4453c67aaa2ee64bcf93
+
+$SUBJECT says it all.  Thank you,
+
+Josef
+
+ fs/ext3/fsync.c |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/fs/ext3/fsync.c b/fs/ext3/fsync.c
+index 49382a2..b98095d 100644
+--- a/fs/ext3/fsync.c
++++ b/fs/ext3/fsync.c
+@@ -72,6 +72,9 @@ int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
+ 		goto out;
+ 	}
+ 
++	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
++		goto out;
++
+ 	/*
+ 	 * The VFS has written the file data.  If the inode is unaltered
+ 	 * then we need not start a commit.

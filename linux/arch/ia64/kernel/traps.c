@@ -16,16 +16,34 @@
 #include <linux/hardirq.h>
 #include <linux/kprobes.h>
 #include <linux/delay.h>		/* for ssleep() */
-#include <linux/kdebug.h>
 
 #include <asm/fpswa.h>
 #include <asm/ia32.h>
 #include <asm/intrinsics.h>
 #include <asm/processor.h>
 #include <asm/uaccess.h>
+#include <asm/kdebug.h>
+
+extern spinlock_t timerlist_lock;
 
 fpswa_interface_t *fpswa_interface;
 EXPORT_SYMBOL(fpswa_interface);
+
+ATOMIC_NOTIFIER_HEAD(ia64die_chain);
+
+int
+register_die_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&ia64die_chain, nb);
+}
+EXPORT_SYMBOL_GPL(register_die_notifier);
+
+int
+unregister_die_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&ia64die_chain, nb);
+}
+EXPORT_SYMBOL_GPL(unregister_die_notifier);
 
 void __init
 trap_init (void)
@@ -35,7 +53,35 @@ trap_init (void)
 		fpswa_interface = __va(ia64_boot_param->fpswa);
 }
 
-int
+/*
+ * Unlock any spinlocks which will prevent us from getting the message out (timerlist_lock
+ * is acquired through the console unblank code)
+ */
+void
+bust_spinlocks (int yes)
+{
+	int loglevel_save = console_loglevel;
+
+	if (yes) {
+		oops_in_progress = 1;
+		return;
+	}
+
+#ifdef CONFIG_VT
+	unblank_screen();
+#endif
+	oops_in_progress = 0;
+	/*
+	 * OK, the message is on the console.  Now we call printk() without
+	 * oops_in_progress set so that printk will give klogd a poke.  Hold onto
+	 * your hats...
+	 */
+	console_loglevel = 15;		/* NMI oopser may have shut the console up */
+	printk(" ");
+	console_loglevel = loglevel_save;
+}
+
+void
 die (const char *str, struct pt_regs *regs, long err)
 {
 	static struct {
@@ -43,9 +89,9 @@ die (const char *str, struct pt_regs *regs, long err)
 		u32 lock_owner;
 		int lock_owner_depth;
 	} die = {
-		.lock =	__SPIN_LOCK_UNLOCKED(die.lock),
-		.lock_owner = -1,
-		.lock_owner_depth = 0
+		.lock =			SPIN_LOCK_UNLOCKED,
+		.lock_owner =		-1,
+		.lock_owner_depth =	0
 	};
 	static int die_counter;
 	int cpu = get_cpu();
@@ -61,36 +107,27 @@ die (const char *str, struct pt_regs *regs, long err)
 
 	if (++die.lock_owner_depth < 3) {
 		printk("%s[%d]: %s %ld [%d]\n",
-		current->comm, task_pid_nr(current), str, err, ++die_counter);
-		if (notify_die(DIE_OOPS, str, regs, err, 255, SIGSEGV)
-	            != NOTIFY_STOP)
-			show_regs(regs);
-		else
-			regs = NULL;
+			current->comm, current->pid, str, err, ++die_counter);
+		(void) notify_die(DIE_OOPS, (char *)str, regs, err, 255, SIGSEGV);
+		show_regs(regs);
   	} else
 		printk(KERN_ERR "Recursive die() failure, output suppressed\n");
 
 	bust_spinlocks(0);
 	die.lock_owner = -1;
-	add_taint(TAINT_DIE);
 	spin_unlock_irq(&die.lock);
-
-	if (!regs)
-		return 1;
 
 	if (panic_on_oops)
 		panic("Fatal exception");
 
   	do_exit(SIGSEGV);
-	return 0;
 }
 
-int
+void
 die_if_kernel (char *str, struct pt_regs *regs, long err)
 {
 	if (!user_mode(regs))
-		return die(str, regs, err);
-	return 0;
+		die(str, regs, err);
 }
 
 void
@@ -110,8 +147,7 @@ __kprobes ia64_bad_break (unsigned long break_num, struct pt_regs *regs)
 		if (notify_die(DIE_BREAK, "break 0", regs, break_num, TRAP_BRKPT, SIGTRAP)
 			       	== NOTIFY_STOP)
 			return;
-		if (die_if_kernel("bugcheck!", regs, break_num))
-			return;
+		die_if_kernel("bugcheck!", regs, break_num);
 		sig = SIGILL; code = ILL_ILLOPC;
 		break;
 
@@ -164,9 +200,8 @@ __kprobes ia64_bad_break (unsigned long break_num, struct pt_regs *regs)
 		break;
 
 	      default:
-		if ((break_num < 0x40000 || break_num > 0x100000)
-		    && die_if_kernel("Bad break", regs, break_num))
-			return;
+		if (break_num < 0x40000 || break_num > 0x100000)
+			die_if_kernel("Bad break", regs, break_num);
 
 		if (break_num < 0x80000) {
 			sig = SIGILL; code = __ILL_BREAK;
@@ -272,15 +307,6 @@ fp_emulate (int fp_fault, void *bundle, long *ipsr, long *fpsr, long *isr, long 
 	return ret.status;
 }
 
-struct fpu_swa_msg {
-	unsigned long count;
-	unsigned long time;
-};
-static DEFINE_PER_CPU(struct fpu_swa_msg, cpulast);
-DECLARE_PER_CPU(struct fpu_swa_msg, cpulast);
-static struct fpu_swa_msg last __cacheline_aligned;
-
-
 /*
  * Handle floating-point assist faults and traps.
  */
@@ -290,6 +316,8 @@ handle_fpu_swa (int fp_fault, struct pt_regs *regs, unsigned long isr)
 	long exception, bundle[2];
 	unsigned long fault_ip;
 	struct siginfo siginfo;
+	static int fpu_swa_count = 0;
+	static unsigned long last_time;
 
 	fault_ip = regs->cr_iip;
 	if (!fp_fault && (ia64_psr(regs)->ri == 0))
@@ -297,37 +325,14 @@ handle_fpu_swa (int fp_fault, struct pt_regs *regs, unsigned long isr)
 	if (copy_from_user(bundle, (void __user *) fault_ip, sizeof(bundle)))
 		return -1;
 
-	if (!(current->thread.flags & IA64_THREAD_FPEMU_NOPRINT))  {
-		unsigned long count, current_jiffies = jiffies;
-		struct fpu_swa_msg *cp = &__get_cpu_var(cpulast);
-
-		if (unlikely(current_jiffies > cp->time))
-			cp->count = 0;
-		if (unlikely(cp->count < 5)) {
-			cp->count++;
-			cp->time = current_jiffies + 5 * HZ;
-
-			/* minimize races by grabbing a copy of count BEFORE checking last.time. */
-			count = last.count;
-			barrier();
-
-			/*
-			 * Lower 4 bits are used as a count. Upper bits are a sequence
-			 * number that is updated when count is reset. The cmpxchg will
-			 * fail is seqno has changed. This minimizes mutiple cpus
-			 * resetting the count.
-			 */
-			if (current_jiffies > last.time)
-				(void) cmpxchg_acq(&last.count, count, 16 + (count & ~15));
-
-			/* used fetchadd to atomically update the count */
-			if ((last.count & 15) < 5 && (ia64_fetchadd(1, &last.count, acq) & 15) < 5) {
-				last.time = current_jiffies + 5 * HZ;
-				printk(KERN_WARNING
-		       			"%s(%d): floating-point assist fault at ip %016lx, isr %016lx\n",
-		       			current->comm, task_pid_nr(current), regs->cr_iip + ia64_psr(regs)->ri, isr);
-			}
-		}
+	if (jiffies - last_time > 5*HZ)
+		fpu_swa_count = 0;
+	if ((fpu_swa_count < 4) && !(current->thread.flags & IA64_THREAD_FPEMU_NOPRINT)) {
+		last_time = jiffies;
+		++fpu_swa_count;
+		printk(KERN_WARNING
+		       "%s(%d): floating-point assist fault at ip %016lx, isr %016lx\n",
+		       current->comm, current->pid, regs->cr_iip + ia64_psr(regs)->ri, isr);
 	}
 
 	exception = fp_emulate(fp_fault, bundle, &regs->cr_ipsr, &regs->ar_fpsr, &isr, &regs->pr,
@@ -412,15 +417,14 @@ ia64_illegal_op_fault (unsigned long ec, long arg1, long arg2, long arg3,
 #endif
 
 	sprintf(buf, "IA-64 Illegal operation fault");
-	rv.fkt = 0;
-	if (die_if_kernel(buf, &regs, 0))
-		return rv;
+	die_if_kernel(buf, &regs, 0);
 
 	memset(&si, 0, sizeof(si));
 	si.si_signo = SIGILL;
 	si.si_code = ILL_ILLOPC;
 	si.si_addr = (void __user *) (regs.cr_iip + ia64_psr(&regs)->ri);
 	force_sig_info(SIGILL, &si, current);
+	rv.fkt = 0;
 	return rv;
 }
 
@@ -464,7 +468,7 @@ ia64_fault (unsigned long vector, unsigned long isr, unsigned long ifa,
 		if (code == 8) {
 # ifdef CONFIG_IA64_PRINT_HAZARDS
 			printk("%s[%d]: possible hazard @ ip=%016lx (pr = %016lx)\n",
-			       current->comm, task_pid_nr(current),
+			       current->comm, current->pid,
 			       regs.cr_iip + ia64_psr(&regs)->ri, regs.pr);
 # endif
 			return;
@@ -655,6 +659,6 @@ ia64_fault (unsigned long vector, unsigned long isr, unsigned long ifa,
 		sprintf(buf, "Fault %lu", vector);
 		break;
 	}
-	if (!die_if_kernel(buf, &regs, error))
-		force_sig(SIGILL, current);
+	die_if_kernel(buf, &regs, error);
+	force_sig(SIGILL, current);
 }

@@ -1,5 +1,5 @@
 /*
- * sound/oss/opl3.c
+ * sound/opl3.c
  *
  * A low level driver for Yamaha YM3812 and OPL-3 -chips
  *
@@ -34,6 +34,7 @@
 
 #include "sound_config.h"
 
+#include "opl3.h"
 #include "opl3_hw.h"
 
 #define MAX_VOICE	18
@@ -72,6 +73,7 @@ typedef struct opl_devinfo
 	unsigned char   cmask;
 
 	int             is_opl4;
+	int            *osp;
 } opl_devinfo;
 
 static struct opl_devinfo *devc = NULL;
@@ -142,7 +144,7 @@ static int opl3_ioctl(int dev, unsigned int cmd, void __user * arg)
 	}
 }
 
-static int opl3_detect(int ioaddr)
+int opl3_detect(int ioaddr, int *osp)
 {
 	/*
 	 * This function returns 1 if the FM chip is present at the given I/O port
@@ -164,7 +166,7 @@ static int opl3_detect(int ioaddr)
 		return 0;
 	}
 
-	devc = kzalloc(sizeof(*devc), GFP_KERNEL);
+	devc = (struct opl_devinfo *)kmalloc(sizeof(*devc), GFP_KERNEL);
 
 	if (devc == NULL)
 	{
@@ -173,6 +175,7 @@ static int opl3_detect(int ioaddr)
 		return 0;
 	}
 
+	memset(devc, 0, sizeof(*devc));
 	strcpy(devc->fm_info.name, "OPL2");
 
 	if (!request_region(ioaddr, 4, devc->fm_info.name)) {
@@ -180,6 +183,7 @@ static int opl3_detect(int ioaddr)
 		goto cleanup_devc;
 	}
 
+	devc->osp = osp;
 	devc->base = ioaddr;
 
 	/* Reset timers 1 and 2 */
@@ -1102,7 +1106,7 @@ static struct synth_operations opl3_operations =
 	.setup_voice	= opl3_setup_voice
 };
 
-static int opl3_init(int ioaddr, struct module *owner)
+int opl3_init(int ioaddr, int *osp, struct module *owner)
 {
 	int i;
 	int me;
@@ -1191,6 +1195,9 @@ static int opl3_init(int ioaddr, struct module *owner)
 	return me;
 }
 
+EXPORT_SYMBOL(opl3_init);
+EXPORT_SYMBOL(opl3_detect);
+
 static int me;
 
 static int io = -1;
@@ -1203,12 +1210,12 @@ static int __init init_opl3 (void)
 
 	if (io != -1)	/* User loading pure OPL3 module */
 	{
-		if (!opl3_detect(io))
+		if (!opl3_detect(io, NULL))
 		{
 			return -ENODEV;
 		}
 
-		me = opl3_init(io, THIS_MODULE);
+		me = opl3_init(io, NULL, THIS_MODULE);
 	}
 
 	return 0;

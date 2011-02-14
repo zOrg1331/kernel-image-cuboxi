@@ -1,0 +1,124 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:07 +0100
+Subject: [lockdep] various fixes
+Message-id: 20071218112315.840969939@chello.nl
+O-Subject: [RHEL5.2 PATCH 06/14] lockdep: various fixes
+Bugzilla: 193729
+
+ - update the copyright notices
+ - use the default hash function
+ - fix a thinko in a BUILD_BUG_ON
+ - add a WARN_ON to spot inconsitent naming
+ - fix a termination issue in /proc/lock_stat
+
+[akpm@linux-foundation.org: cleanups]
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
+index 098530b..1263d3d 100644
+--- a/include/linux/lockdep.h
++++ b/include/linux/lockdep.h
+@@ -1,7 +1,8 @@
+ /*
+  * Runtime locking correctness validator
+  *
+- *  Copyright (C) 2006 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2006,2007 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2007 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
+  *
+  * see Documentation/lockdep-design.txt for more details.
+  */
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 7f049e2..4d09e90 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -5,7 +5,8 @@
+  *
+  * Started by Ingo Molnar:
+  *
+- *  Copyright (C) 2006 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2006,2007 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2007 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
+  *
+  * this code maps all the lock dependencies as they occur in a live kernel
+  * and will warn about the following classes of locking bugs:
+@@ -37,6 +38,7 @@
+ #include <linux/debug_locks.h>
+ #include <linux/irqflags.h>
+ #include <linux/utsname.h>
++#include <linux/hash.h>
+ 
+ #include <asm/sections.h>
+ 
+@@ -217,8 +219,7 @@ LIST_HEAD(all_lock_classes);
+  */
+ #define CLASSHASH_BITS		(MAX_LOCKDEP_KEYS_BITS - 1)
+ #define CLASSHASH_SIZE		(1UL << CLASSHASH_BITS)
+-#define CLASSHASH_MASK		(CLASSHASH_SIZE - 1)
+-#define __classhashfn(key)	((((unsigned long)key >> CLASSHASH_BITS) + (unsigned long)key) & CLASSHASH_MASK)
++#define __classhashfn(key)	hash_long((unsigned long)key, CLASSHASH_BITS)
+ #define classhashentry(key)	(classhash_table + __classhashfn((key)))
+ 
+ static struct list_head classhash_table[CLASSHASH_SIZE];
+@@ -234,9 +235,7 @@ static struct lock_chain lock_chains[MAX_LOCKDEP_CHAINS];
+  */
+ #define CHAINHASH_BITS		(MAX_LOCKDEP_CHAINS_BITS-1)
+ #define CHAINHASH_SIZE		(1UL << CHAINHASH_BITS)
+-#define CHAINHASH_MASK		(CHAINHASH_SIZE - 1)
+-#define __chainhashfn(chain) \
+-		(((chain >> CHAINHASH_BITS) + chain) & CHAINHASH_MASK)
++#define __chainhashfn(chain)	hash_long(chain, CHAINHASH_BITS)
+ #define chainhashentry(chain)	(chainhash_table + __chainhashfn((chain)))
+ 
+ static struct list_head chainhash_table[CHAINHASH_SIZE];
+@@ -1286,7 +1285,7 @@ look_up_lock_class(struct lockdep_map *lock, unsigned int subclass)
+ 	 * (or spin_lock_init()) call - which acts as the key. For static
+ 	 * locks we use the lock object itself as the key.
+ 	 */
+-	if (sizeof(struct lock_class_key) > sizeof(struct lock_class))
++	if (sizeof(struct lock_class_key) > sizeof(struct lockdep_map))
+ 		__error_too_big_MAX_LOCKDEP_SUBCLASSES();
+ 
+ 	key = lock->key->subkeys + subclass;
+@@ -1297,9 +1296,12 @@ look_up_lock_class(struct lockdep_map *lock, unsigned int subclass)
+ 	 * We can walk the hash lockfree, because the hash only
+ 	 * grows, and we are careful when adding entries to the end:
+ 	 */
+-	list_for_each_entry(class, hash_head, hash_entry)
+-		if (class->key == key)
++	list_for_each_entry(class, hash_head, hash_entry) {
++		if (class->key == key) {
++			WARN_ON_ONCE(class->name != lock->name);
+ 			return class;
++		}
++	}
+ 
+ 	return NULL;
+ }
+diff --git a/kernel/lockdep_proc.c b/kernel/lockdep_proc.c
+index d51c167..72a34a4 100644
+--- a/kernel/lockdep_proc.c
++++ b/kernel/lockdep_proc.c
+@@ -5,7 +5,8 @@
+  *
+  * Started by Ingo Molnar:
+  *
+- *  Copyright (C) 2006 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2006,2007 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
++ *  Copyright (C) 2007 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
+  *
+  * Code for /proc/lockdep and /proc/lockdep_stats:
+  *
+@@ -480,6 +481,9 @@ static void *ls_start(struct seq_file *m, loff_t *pos)
+ 	if (data->iter == data->stats)
+ 		seq_header(m);
+ 
++	if (data->iter == data->iter_end)
++		data->iter = NULL;
++
+ 	return data->iter;
+ }
+ 

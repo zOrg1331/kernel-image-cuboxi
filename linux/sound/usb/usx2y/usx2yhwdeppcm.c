@@ -226,7 +226,7 @@ static inline int usX2Y_usbpcm_usbframe_complete(struct snd_usX2Y_substream *cap
 }
 
 
-static void i_usX2Y_usbpcm_urb_complete(struct urb *urb)
+static void i_usX2Y_usbpcm_urb_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct snd_usX2Y_substream *subs = urb->context;
 	struct usX2Ydev *usX2Y = subs->usX2Y;
@@ -243,7 +243,7 @@ static void i_usX2Y_usbpcm_urb_complete(struct urb *urb)
 		usX2Y_error_urb_status(usX2Y, subs, urb);
 		return;
 	}
-	if (likely((urb->start_frame & 0xFFFF) == (usX2Y->wait_iso_frame & 0xFFFF)))
+	if (likely((0xFFFF & urb->start_frame) == usX2Y->wait_iso_frame))
 		subs->completed_urb = urb;
 	else {
 		usX2Y_error_sequence(usX2Y, subs, urb);
@@ -256,9 +256,13 @@ static void i_usX2Y_usbpcm_urb_complete(struct urb *urb)
 	if (capsubs->completed_urb && atomic_read(&capsubs->state) >= state_PREPARED &&
 	    (NULL == capsubs2 || capsubs2->completed_urb) &&
 	    (playbacksubs->completed_urb || atomic_read(&playbacksubs->state) < state_PREPARED)) {
-		if (!usX2Y_usbpcm_usbframe_complete(capsubs, capsubs2, playbacksubs, urb->start_frame))
-			usX2Y->wait_iso_frame += nr_of_packs();
-		else {
+		if (!usX2Y_usbpcm_usbframe_complete(capsubs, capsubs2, playbacksubs, urb->start_frame)) {
+			if (nr_of_packs() <= urb->start_frame &&
+			    urb->start_frame <= (2 * nr_of_packs() - 1))	// uhci and ohci
+				usX2Y->wait_iso_frame = urb->start_frame - nr_of_packs();
+			else
+				usX2Y->wait_iso_frame +=  nr_of_packs();
+		} else {
 			snd_printdd("\n");
 			usX2Y_clients_stop(usX2Y);
 		}
@@ -290,7 +294,7 @@ static void usX2Y_usbpcm_subs_startup_finish(struct usX2Ydev * usX2Y)
 	usX2Y->prepare_subs = NULL;
 }
 
-static void i_usX2Y_usbpcm_subs_startup(struct urb *urb)
+static void i_usX2Y_usbpcm_subs_startup(struct urb *urb, struct pt_regs *regs)
 {
 	struct snd_usX2Y_substream *subs = urb->context;
 	struct usX2Ydev *usX2Y = subs->usX2Y;
@@ -307,7 +311,7 @@ static void i_usX2Y_usbpcm_subs_startup(struct urb *urb)
 		wake_up(&usX2Y->prepare_wait_queue);
 	}
 
-	i_usX2Y_usbpcm_urb_complete(urb);
+	i_usX2Y_usbpcm_urb_complete(urb, regs);
 }
 
 /*
@@ -429,6 +433,7 @@ static int usX2Y_usbpcm_urbs_start(struct snd_usX2Y_substream *subs)
 		if (subs != NULL && atomic_read(&subs->state) >= state_PREPARED)
 			goto start;
 	}
+	usX2Y->wait_iso_frame = -1;
 
  start:
 	usX2Y_usbpcm_subs_startup(subs);
@@ -454,7 +459,7 @@ static int usX2Y_usbpcm_urbs_start(struct snd_usX2Y_substream *subs)
 						goto cleanup;
 					}  else {
 						snd_printdd("%i\n", urb->start_frame);
-						if (u == 0)
+						if (0 > usX2Y->wait_iso_frame)
 							usX2Y->wait_iso_frame = urb->start_frame;
 					}
 					urb->transfer_flags = 0;
@@ -627,7 +632,7 @@ static int usX2Y_pcms_lock_check(struct snd_card *card)
 		for (s = 0; s < 2; ++s) {
 			struct snd_pcm_substream *substream;
 			substream = pcm->streams[s].substream;
-			if (substream && SUBSTREAM_BUSY(substream))
+			if (SUBSTREAM_BUSY(substream))
 				err = -EBUSY;
 		}
 	}
@@ -683,24 +688,30 @@ static void snd_usX2Y_hwdep_pcm_vm_close(struct vm_area_struct *area)
 }
 
 
-static int snd_usX2Y_hwdep_pcm_vm_fault(struct vm_area_struct *area,
-					struct vm_fault *vmf)
+static struct page * snd_usX2Y_hwdep_pcm_vm_nopage(struct vm_area_struct *area, unsigned long address, int *type)
 {
 	unsigned long offset;
+	struct page *page;
 	void *vaddr;
 
-	offset = vmf->pgoff << PAGE_SHIFT;
+	offset = area->vm_pgoff << PAGE_SHIFT;
+	offset += address - area->vm_start;
+	snd_assert((offset % PAGE_SIZE) == 0, return NOPAGE_OOM);
 	vaddr = (char*)((struct usX2Ydev *)area->vm_private_data)->hwdep_pcm_shm + offset;
-	vmf->page = virt_to_page(vaddr);
-	get_page(vmf->page);
-	return 0;
+	page = virt_to_page(vaddr);
+	get_page(page);
+
+	if (type)
+		*type = VM_FAULT_MINOR;
+
+	return page;
 }
 
 
-static const struct vm_operations_struct snd_usX2Y_hwdep_pcm_vm_ops = {
+static struct vm_operations_struct snd_usX2Y_hwdep_pcm_vm_ops = {
 	.open = snd_usX2Y_hwdep_pcm_vm_open,
 	.close = snd_usX2Y_hwdep_pcm_vm_close,
-	.fault = snd_usX2Y_hwdep_pcm_vm_fault,
+	.nopage = snd_usX2Y_hwdep_pcm_vm_nopage,
 };
 
 
@@ -722,7 +733,7 @@ static int snd_usX2Y_hwdep_pcm_mmap(struct snd_hwdep * hw, struct file *filp, st
 		return -ENODEV;
 	}
 	area->vm_ops = &snd_usX2Y_hwdep_pcm_vm_ops;
-	area->vm_flags |= VM_RESERVED | VM_DONTEXPAND;
+	area->vm_flags |= VM_RESERVED;
 	area->vm_private_data = hw->private_data;
 	return 0;
 }

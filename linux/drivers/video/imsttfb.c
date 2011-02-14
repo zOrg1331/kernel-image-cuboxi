@@ -29,7 +29,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <asm/io.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #if defined(CONFIG_PPC)
 #include <linux/nvram.h>
@@ -1151,10 +1151,8 @@ imsttfb_load_cursor_image(struct imstt_par *par, int width, int height, __u8 fgc
 				par->cmap_regs[TVPCRDAT] = 0xff;		eieio();
 			}
 		par->cmap_regs[TVPCADRW] = 0x00;	eieio();
-		for (x = 0; x < 12; x++) {
-			par->cmap_regs[TVPCDATA] = fgc;
-			eieio();
-		}
+		for (x = 0; x < 12; x++)
+			par->cmap_regs[TVPCDATA] = fgc;	eieio();
 	}
 	return 1;
 }
@@ -1393,7 +1391,7 @@ init_imstt(struct fb_info *info)
 		}
 	}
 
-#if USE_NV_MODES && defined(CONFIG_PPC32)
+#if USE_NV_MODES && defined(CONFIG_PPC)
 	{
 		int vmode = init_vmode, cmode = init_cmode;
 
@@ -1478,7 +1476,7 @@ imsttfb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	
 	dp = pci_device_to_OF_node(pdev);
 	if(dp)
-		printk(KERN_INFO "%s: OF name %s\n",__func__, dp->name);
+		printk(KERN_INFO "%s: OF name %s\n",__FUNCTION__, dp->name);
 	else
 		printk(KERN_ERR "imsttfb: no OF node for pci device\n");
 #endif /* CONFIG_PPC_OF */

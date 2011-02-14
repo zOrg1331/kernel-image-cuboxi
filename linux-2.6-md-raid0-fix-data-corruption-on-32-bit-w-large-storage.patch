@@ -1,0 +1,58 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 7 Oct 2010 08:47:48 -0400
+Subject: [md] raid0: fix data corruption on 32-bit w/large storage
+Message-id: <20101007084748.GB2435@redhat.com>
+Patchwork-id: 28646
+O-Subject: [RHEL5 PATCH] md: fix raid0 data corruption
+Bugzilla: 573185
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+BZ#573185
+
+Description:
+User report data corruption on large storage. Problem happens on 32 bit
+system with software raid0 configured on top of large (more than 8TB)
+block devices.
+
+We have 32-bit variable overflow in raid0_make_request function in line:
+
+rsect = (((chunk << chunksize_bits) + zone->dev_offset)<<1)
+
+If chunk is a 32 bit variable, it can overflow during shift operation by
+chunksize_bit, giving as result bad value of rsect.
+
+Upstream:
+commit 787f17feb204ed1c6331892fb8124b80dc9fe288
+Author: NeilBrown <neilb@suse.de>
+Date:   Wed May 23 13:58:09 2007 -0700
+
+    md: avoid overflow in raid0 calculation with large component
+
+Testing:
+Tested by creating raid0 on top of two 8TB sparse files. I attached
+reproducer to bug report. Not seeing corruption after apply the patch.
+
+
+diff --git a/drivers/md/raid0.c b/drivers/md/raid0.c
+index cb8c631..fca787e 100644
+--- a/drivers/md/raid0.c
++++ b/drivers/md/raid0.c
+@@ -398,7 +398,7 @@ static int raid0_make_request (request_queue_t *q, struct bio *bio)
+ 	raid0_conf_t *conf = mddev_to_conf(mddev);
+ 	struct strip_zone *zone;
+ 	mdk_rdev_t *tmp_dev;
+-	unsigned long chunk;
++	sector_t chunk;
+ 	sector_t block, rsect;
+ 	const int rw = bio_data_dir(bio);
+ 
+@@ -453,7 +453,6 @@ static int raid0_make_request (request_queue_t *q, struct bio *bio)
+ 
+ 		sector_div(x, zone->nb_dev);
+ 		chunk = x;
+-		BUG_ON(x != (sector_t)chunk);
+ 
+ 		x = block >> chunksize_bits;
+ 		tmp_dev = zone->dev[sector_div(x, zone->nb_dev)];

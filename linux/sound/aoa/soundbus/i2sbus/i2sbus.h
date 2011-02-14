@@ -10,7 +10,6 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
-#include <linux/completion.h>
 
 #include <sound/pcm.h>
 
@@ -18,7 +17,7 @@
 #include <asm/pmac_feature.h>
 #include <asm/dbdma.h>
 
-#include "interface.h"
+#include "i2sbus-interface.h"
 #include "../soundbus.h"
 
 struct i2sbus_control {
@@ -35,7 +34,6 @@ struct dbdma_command_mem {
 	void *space;
 	int size;
 	u32 running:1;
-	u32 stopping:1;
 };
 
 struct pcm_info {
@@ -47,7 +45,6 @@ struct pcm_info {
 	u32 frame_count;
 	struct dbdma_command_mem dbdma_ring;
 	volatile struct dbdma_regs __iomem *dbdma;
-	struct completion *stop_completion;
 };
 
 enum {
@@ -100,12 +97,9 @@ i2sbus_attach_codec(struct soundbus_dev *dev, struct snd_card *card,
 extern void
 i2sbus_detach_codec(struct soundbus_dev *dev, void *data);
 extern irqreturn_t
-i2sbus_tx_intr(int irq, void *devid);
+i2sbus_tx_intr(int irq, void *devid, struct pt_regs *regs);
 extern irqreturn_t
-i2sbus_rx_intr(int irq, void *devid);
-
-extern void i2sbus_wait_for_stop_both(struct i2sbus_dev *i2sdev);
-extern void i2sbus_pcm_prepare_both(struct i2sbus_dev *i2sdev);
+i2sbus_rx_intr(int irq, void *devid, struct pt_regs *regs);
 
 /* control specific functions */
 extern int i2sbus_control_init(struct macio_dev* dev,

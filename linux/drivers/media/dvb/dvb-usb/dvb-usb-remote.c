@@ -1,87 +1,20 @@
 /* dvb-usb-remote.c is part of the DVB USB library.
  *
- * Copyright (C) 2004-6 Patrick Boettcher (patrick.boettcher@desy.de)
+ * Copyright (C) 2004-5 Patrick Boettcher (patrick.boettcher@desy.de)
  * see dvb-usb-init.c for copyright information.
  *
- * This file contains functions for initializing the input-device and for handling remote-control-queries.
+ * This file contains functions for initializing the the input-device and for handling remote-control-queries.
  */
 #include "dvb-usb-common.h"
-#include <linux/usb/input.h>
-
-static int dvb_usb_getkeycode(struct input_dev *dev,
-				    int scancode, int *keycode)
-{
-	struct dvb_usb_device *d = input_get_drvdata(dev);
-
-	struct dvb_usb_rc_key *keymap = d->props.rc_key_map;
-	int i;
-
-	/* See if we can match the raw key code. */
-	for (i = 0; i < d->props.rc_key_map_size; i++)
-		if (keymap[i].scan == scancode) {
-			*keycode = keymap[i].event;
-			return 0;
-		}
-
-	/*
-	 * If is there extra space, returns KEY_RESERVED,
-	 * otherwise, input core won't let dvb_usb_setkeycode
-	 * to work
-	 */
-	for (i = 0; i < d->props.rc_key_map_size; i++)
-		if (keymap[i].event == KEY_RESERVED ||
-		    keymap[i].event == KEY_UNKNOWN) {
-			*keycode = KEY_RESERVED;
-			return 0;
-		}
-
-	return -EINVAL;
-}
-
-static int dvb_usb_setkeycode(struct input_dev *dev,
-				    int scancode, int keycode)
-{
-	struct dvb_usb_device *d = input_get_drvdata(dev);
-
-	struct dvb_usb_rc_key *keymap = d->props.rc_key_map;
-	int i;
-
-	/* Search if it is replacing an existing keycode */
-	for (i = 0; i < d->props.rc_key_map_size; i++)
-		if (keymap[i].scan == scancode) {
-			keymap[i].event = keycode;
-			return 0;
-		}
-
-	/* Search if is there a clean entry. If so, use it */
-	for (i = 0; i < d->props.rc_key_map_size; i++)
-		if (keymap[i].event == KEY_RESERVED ||
-		    keymap[i].event == KEY_UNKNOWN) {
-			keymap[i].scan = scancode;
-			keymap[i].event = keycode;
-			return 0;
-		}
-
-	/*
-	 * FIXME: Currently, it is not possible to increase the size of
-	 * scancode table. For it to happen, one possibility
-	 * would be to allocate a table with key_map_size + 1,
-	 * copying data, appending the new key on it, and freeing
-	 * the old one - or maybe just allocating some spare space
-	 */
-
-	return -EINVAL;
-}
 
 /* Remote-control poll function - called every dib->rc_query_interval ms to see
  * whether the remote control has received anything.
  *
  * TODO: Fix the repeat rate of the input device.
  */
-static void dvb_usb_read_remote_control(struct work_struct *work)
+static void dvb_usb_read_remote_control(void *data)
 {
-	struct dvb_usb_device *d =
-		container_of(work, struct dvb_usb_device, rc_query_work.work);
+	struct dvb_usb_device *d = data;
 	u32 event;
 	int state;
 
@@ -155,9 +88,7 @@ schedule:
 
 int dvb_usb_remote_init(struct dvb_usb_device *d)
 {
-	struct input_dev *input_dev;
 	int i;
-	int err;
 
 	if (d->props.rc_key_map == NULL ||
 		d->props.rc_query == NULL ||
@@ -165,26 +96,23 @@ int dvb_usb_remote_init(struct dvb_usb_device *d)
 		return 0;
 
 	usb_make_path(d->udev, d->rc_phys, sizeof(d->rc_phys));
-	strlcat(d->rc_phys, "/ir0", sizeof(d->rc_phys));
+	strlcpy(d->rc_phys, "/ir0", sizeof(d->rc_phys));
 
-	input_dev = input_allocate_device();
-	if (!input_dev)
+	d->rc_input_dev = input_allocate_device();
+	if (!d->rc_input_dev)
 		return -ENOMEM;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY);
-	input_dev->name = "IR-receiver inside an USB DVB receiver";
-	input_dev->phys = d->rc_phys;
-	usb_to_input_id(d->udev, &input_dev->id);
-	input_dev->dev.parent = &d->udev->dev;
-	input_dev->getkeycode = dvb_usb_getkeycode;
-	input_dev->setkeycode = dvb_usb_setkeycode;
+	d->rc_input_dev->evbit[0] = BIT(EV_KEY);
+	d->rc_input_dev->keycodesize = sizeof(unsigned char);
+	d->rc_input_dev->keycodemax = KEY_MAX;
+	d->rc_input_dev->name = "IR-receiver inside an USB DVB receiver";
+	d->rc_input_dev->phys = d->rc_phys;
 
 	/* set the bits for the keys */
 	deb_rc("key map size: %d\n", d->props.rc_key_map_size);
 	for (i = 0; i < d->props.rc_key_map_size; i++) {
-		deb_rc("setting bit for event %d item %d\n",
-			d->props.rc_key_map[i].event, i);
-		set_bit(d->props.rc_key_map[i].event, input_dev->keybit);
+		deb_rc("setting bit for event %d item %d\n",d->props.rc_key_map[i].event, i);
+		set_bit(d->props.rc_key_map[i].event, d->rc_input_dev->keybit);
 	}
 
 	/* Start the remote-control polling. */
@@ -192,20 +120,12 @@ int dvb_usb_remote_init(struct dvb_usb_device *d)
 		d->props.rc_interval = 100; /* default */
 
 	/* setting these two values to non-zero, we have to manage key repeats */
-	input_dev->rep[REP_PERIOD] = d->props.rc_interval;
-	input_dev->rep[REP_DELAY]  = d->props.rc_interval + 150;
+	d->rc_input_dev->rep[REP_PERIOD] = d->props.rc_interval;
+	d->rc_input_dev->rep[REP_DELAY]  = d->props.rc_interval + 150;
 
-	input_set_drvdata(input_dev, d);
+	input_register_device(d->rc_input_dev);
 
-	err = input_register_device(input_dev);
-	if (err) {
-		input_free_device(input_dev);
-		return err;
-	}
-
-	d->rc_input_dev = input_dev;
-
-	INIT_DELAYED_WORK(&d->rc_query_work, dvb_usb_read_remote_control);
+	INIT_WORK(&d->rc_query_work, dvb_usb_read_remote_control, d);
 
 	info("schedule remote query interval to %d msecs.", d->props.rc_interval);
 	schedule_delayed_work(&d->rc_query_work,msecs_to_jiffies(d->props.rc_interval));
@@ -218,7 +138,7 @@ int dvb_usb_remote_init(struct dvb_usb_device *d)
 int dvb_usb_remote_exit(struct dvb_usb_device *d)
 {
 	if (d->state & DVB_USB_STATE_REMOTE) {
-		cancel_rearming_delayed_work(&d->rc_query_work);
+		cancel_delayed_work(&d->rc_query_work);
 		flush_scheduled_work();
 		input_unregister_device(d->rc_input_dev);
 	}
@@ -247,8 +167,8 @@ int dvb_usb_nec_rc_key_to_event(struct dvb_usb_device *d,
 			}
 			/* See if we can match the raw key code. */
 			for (i = 0; i < d->props.rc_key_map_size; i++)
-				if (rc5_custom(&keymap[i]) == keybuf[1] &&
-					rc5_data(&keymap[i]) == keybuf[3]) {
+				if (keymap[i].custom == keybuf[1] &&
+					keymap[i].data == keybuf[3]) {
 					*event = keymap[i].event;
 					*state = REMOTE_KEY_PRESSED;
 					return 0;

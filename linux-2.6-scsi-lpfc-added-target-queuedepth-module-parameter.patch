@@ -1,0 +1,142 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:34 -0400
+Subject: [scsi] lpfc: added target queuedepth module parameter
+Message-id: <1286288695-20754-3-git-send-email-revers@redhat.com>
+Patchwork-id: 28600
+O-Subject: [RHEL5.6 PATCH 02/23] Added target queuedepth module parameter
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc.h b/drivers/scsi/lpfc/lpfc.h
+index e0686f7..aaa6867 100644
+--- a/drivers/scsi/lpfc/lpfc.h
++++ b/drivers/scsi/lpfc/lpfc.h
+@@ -46,7 +46,7 @@ struct lpfc_sli2_slim;
+ #define LPFC_TGTQ_INTERVAL	40000	/* Min amount of time between tgt
+ 					   queue depth change in millisecs */
+ #define LPFC_TGTQ_RAMPUP_PCENT	5	/* Target queue rampup in percentage */
+-#define LPFC_MIN_TGT_QDEPTH	100
++#define LPFC_MIN_TGT_QDEPTH	10
+ #define LPFC_MAX_TGT_QDEPTH	0xFFFF
+ 
+ #define  LPFC_MAX_BUCKET_COUNT 20	/* Maximum no. of buckets for stat data
+@@ -529,6 +529,7 @@ struct lpfc_vport {
+ 	uint32_t cfg_enable_da_id;
+ 	uint32_t cfg_enable_auth;
+ 	uint32_t cfg_max_scsicmpl_time;
++	uint32_t cfg_tgt_queue_depth;
+ 
+ 	uint32_t dev_loss_tmo_changed;
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index fd9c6ab..bb8a64a 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -2521,6 +2521,13 @@ LPFC_ATTR_R(hostmem_hgp, 0, 0, 1,
+ 	"Use host memory for host group pointers.");
+ 
+ /*
++# tgt_queue_depth:  This parameter is used to limit the number of outstanding
++# commands per target port. Value range is [10,65535]. Default value is 65535.
++*/
++LPFC_VPORT_ATTR_R(tgt_queue_depth, 65535, 10, 65535,
++	"Max number of FCP commands we can queue to a specific target port");
++
++/*
+ # hba_queue_depth:  This parameter is used to limit the number of outstanding
+ # commands per lpfc HBA. Value range is [32,8192]. If this parameter
+ # value is greater than the maximum number of exchanges supported by the HBA,
+@@ -3427,7 +3434,7 @@ lpfc_max_scsicmpl_time_set(struct lpfc_vport *vport, int val)
+ 			continue;
+ 		if (ndlp->nlp_state == NLP_STE_UNUSED_NODE)
+ 			continue;
+-		ndlp->cmd_qdepth = LPFC_MAX_TGT_QDEPTH;
++		ndlp->cmd_qdepth = vport->cfg_tgt_queue_depth;
+ 	}
+ 	spin_unlock_irq(shost->host_lock);
+ 	return 0;
+@@ -3689,6 +3696,7 @@ struct class_device_attribute *lpfc_hba_attrs[] = {
+ 	&class_device_attr_lpfc_temp_sensor,
+ 	&class_device_attr_lpfc_log_verbose,
+ 	&class_device_attr_lpfc_lun_queue_depth,
++	&class_device_attr_lpfc_tgt_queue_depth,
+ 	&class_device_attr_lpfc_hba_queue_depth,
+ 	&class_device_attr_lpfc_pci_max_read,
+ 	&class_device_attr_lpfc_peer_port_login,
+@@ -3777,6 +3785,7 @@ struct class_device_attribute *lpfc_hba_attrs_no_npiv[] = {
+ 	&class_device_attr_lpfc_temp_sensor,
+ 	&class_device_attr_lpfc_log_verbose,
+ 	&class_device_attr_lpfc_lun_queue_depth,
++	&class_device_attr_lpfc_tgt_queue_depth,
+ 	&class_device_attr_lpfc_hba_queue_depth,
+ 	&class_device_attr_lpfc_pci_max_read,
+ 	&class_device_attr_lpfc_peer_port_login,
+@@ -3849,6 +3858,7 @@ struct class_device_attribute *lpfc_vport_attrs[] = {
+ 	&class_device_attr_lpfc_enable_auth,
+ 	&class_device_attr_lpfc_log_verbose,
+ 	&class_device_attr_lpfc_lun_queue_depth,
++	&class_device_attr_lpfc_tgt_queue_depth,
+ 	&class_device_attr_lpfc_nodev_tmo,
+ 	&class_device_attr_lpfc_devloss_tmo,
+ 	&class_device_attr_lpfc_hba_queue_depth,
+@@ -5731,6 +5741,7 @@ lpfc_get_vport_cfgparam(struct lpfc_vport *vport)
+ {
+ 	lpfc_log_verbose_init(vport, lpfc_log_verbose);
+ 	lpfc_lun_queue_depth_init(vport, lpfc_lun_queue_depth);
++	lpfc_tgt_queue_depth_init(vport, lpfc_tgt_queue_depth);
+ 	lpfc_devloss_tmo_init(vport, lpfc_devloss_tmo);
+ 	lpfc_nodev_tmo_init(vport, lpfc_nodev_tmo);
+ 	lpfc_peer_port_login_init(vport, lpfc_peer_port_login);
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 8f12542..b744cc7 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -3706,7 +3706,7 @@ lpfc_initialize_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 	kref_init(&ndlp->kref);
+ 	NLP_INT_NODE_ACT(ndlp);
+ 	atomic_set(&ndlp->cmd_pending, 0);
+-	ndlp->cmd_qdepth = LPFC_MAX_TGT_QDEPTH;
++	ndlp->cmd_qdepth = vport->cfg_tgt_queue_depth;
+ }
+ 
+ struct lpfc_nodelist *
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index 3ab03f7..d0e15fa 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -1653,14 +1653,16 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
+ 		}
+ 		spin_unlock_irqrestore(shost->host_lock, flags);
+ 	} else if (pnode && NLP_CHK_NODE_ACT(pnode)) {
+-		if ((pnode->cmd_qdepth < LPFC_MAX_TGT_QDEPTH) &&
++		if ((pnode->cmd_qdepth < vport->cfg_tgt_queue_depth) &&
+ 		   time_after(jiffies, pnode->last_change_time +
+ 			      msecs_to_jiffies(LPFC_TGTQ_INTERVAL))) {
+ 			spin_lock_irqsave(shost->host_lock, flags);
+-			pnode->cmd_qdepth += pnode->cmd_qdepth *
+-				LPFC_TGTQ_RAMPUP_PCENT / 100;
+-			if (pnode->cmd_qdepth > LPFC_MAX_TGT_QDEPTH)
+-				pnode->cmd_qdepth = LPFC_MAX_TGT_QDEPTH;
++			depth = pnode->cmd_qdepth * LPFC_TGTQ_RAMPUP_PCENT
++				/ 100;
++			depth = depth ? depth : 1;
++			pnode->cmd_qdepth += depth;
++			if (pnode->cmd_qdepth > vport->cfg_tgt_queue_depth)
++				pnode->cmd_qdepth = vport->cfg_tgt_queue_depth;
+ 			pnode->last_change_time = jiffies;
+ 			spin_unlock_irqrestore(shost->host_lock, flags);
+ 		}
+@@ -2151,8 +2153,7 @@ lpfc_queuecommand(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
+ 		cmnd->result = ScsiResult(DID_TRANSPORT_DISRUPTED, 0);
+ 		goto out_fail_command;
+ 	}
+-	if (vport->cfg_max_scsicmpl_time &&
+-		(atomic_read(&ndlp->cmd_pending) >= ndlp->cmd_qdepth))
++	if (atomic_read(&ndlp->cmd_pending) >= ndlp->cmd_qdepth)
+ 		goto out_host_busy;
+ 
+ 	lpfc_cmd = lpfc_get_scsi_buf(phba);

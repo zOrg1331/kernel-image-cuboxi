@@ -1,0 +1,60 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 20 Jul 2010 15:32:55 -0400
+Subject: [net] qlcnic: Add QLCNIC to Kconfig and Makefile
+Message-id: <20100720153201.2978.75945.sendpatchset@localhost.localdomain>
+Patchwork-id: 26975
+O-Subject: [RHEL 5.6 PATCH 16/16] qlcnic: Add QLCNIC defintions to
+	drivers/net/Kconfig and drivers/net/Makefile
+Bugzilla: 562723
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+========
+
+562723
+
+Upstream Status
+===============
+
+RHEL 5 specific.
+
+Description
+===========
+
+>From fdb78b0c3952ee23de3d1e3109f246f98b099180 Mon Sep 17 00:00:00 2001
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 25 Jun 2010 15:01:57 -0400
+Subject: [PATCH] qlcnic: Add QLCNIC defintions to drivers/net/Kconfig and drivers/net/Makefile
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 3aca055..9bf2d25 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2613,6 +2613,13 @@ config MLX4_EN
+ 	  This driver supports Mellanox Technologies ConnectX Ethernet
+ 	  devices.
+ 
++config QLCNIC
++	tristate "QLOGIC QLCNIC 1/10Gb Converged Ethernet NIC Support"
++	depends on PCI
++	help
++	  This driver supports QLogic QLE8240 and QLE8242 Converged Ethernet
++	  devices.
++
+ config QLGE
+        tristate "QLogic QLGE 10Gb Ethernet Driver Support"
+        depends on PCI
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index 5dfcccf..c194da2 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -127,6 +127,7 @@ obj-$(CONFIG_NE_H8300) += ne-h8300.o 8390.o
+ 
+ obj-$(CONFIG_MV643XX_ETH) += mv643xx_eth.o
+ obj-$(CONFIG_QLA3XXX) += qla3xxx.o
++obj-$(CONFIG_QLCNIC) += qlcnic/
+ obj-$(CONFIG_QLGE) += qlge/
+ 
+ obj-$(CONFIG_PPP) += ppp_generic.o slhc.o

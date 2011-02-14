@@ -1,0 +1,41 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Sun, 22 Aug 2010 19:57:59 -0400
+Subject: [net] vxge: set func_id 0 as privileged for normal func
+Message-id: <20100822195759.24928.46896.sendpatchset@bob-desktop>
+Patchwork-id: 27765
+O-Subject: [RHEL5.7 PATCH 6/7] vxge: Set function-0 as the privilaged function
+	for normal function.
+Bugzilla: 580413
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From 1dc47a9b1b05e3ab039e7d2ab97455ff09a9e554 Mon Sep 17 00:00:00 2001
+From: Sreenivasa Honnur <Sreenivasa.Honnur@neterion.com>
+Date: Sun, 28 Mar 2010 22:12:33 +0000
+Subject: [PATCH 6/7] vxge: Set function-0 as the privilaged function for normal function.
+
+-  For Normal function (MR-IOV disabled, SR-IOV disabled) Function-0 is the
+   privilaged function.
+
+Signed-off-by: Sreenivasa Honnur <sreenivasa.honnur@neterion.com>
+Signed-off-by: Ramkrishna Vepa <ram.vepa@neterion.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/vxge/vxge-config.c b/drivers/net/vxge/vxge-config.c
+index 683a6b7..711614e 100644
+--- a/drivers/net/vxge/vxge-config.c
++++ b/drivers/net/vxge/vxge-config.c
+@@ -357,8 +357,10 @@ __vxge_hw_device_access_rights_get(u32 host_type, u32 func_id)
+ 
+ 	switch (host_type) {
+ 	case VXGE_HW_NO_MR_NO_SR_NORMAL_FUNCTION:
+-		access_rights |= VXGE_HW_DEVICE_ACCESS_RIGHT_MRPCIM |
+-				VXGE_HW_DEVICE_ACCESS_RIGHT_SRPCIM;
++		if (func_id == 0) {
++			access_rights |= VXGE_HW_DEVICE_ACCESS_RIGHT_MRPCIM |
++					VXGE_HW_DEVICE_ACCESS_RIGHT_SRPCIM;
++		}
+ 		break;
+ 	case VXGE_HW_MR_NO_SR_VH0_BASE_FUNCTION:
+ 		access_rights |= VXGE_HW_DEVICE_ACCESS_RIGHT_MRPCIM |

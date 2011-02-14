@@ -11,11 +11,12 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
+#include <linux/ptrace.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
-#include <mach/irqs.h>
+#include <asm/arch/irqs.h>
 
 #include "common.h"
 
@@ -73,11 +74,11 @@ void __init lh7a400_init_irq (void)
 		case IRQ_GPIO6INTR:
 		case IRQ_GPIO7INTR:
 			set_irq_chip (irq, &lh7a400_gpio_chip);
-			set_irq_handler (irq, handle_level_irq); /* OK default */
+			set_irq_handler (irq, do_level_IRQ); /* OK default */
 			break;
 		default:
 			set_irq_chip (irq, &lh7a400_internal_chip);
-			set_irq_handler (irq, handle_level_irq);
+			set_irq_handler (irq, do_level_IRQ);
 		}
 		set_irq_flags (irq, IRQF_VALID);
 	}

@@ -1,0 +1,55 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jul 2008 15:07:17 -0500
+Subject: [fs] introduce is_owner_or_cap
+Message-id: 4873C8F5.2060302@redhat.com
+O-Subject: [PATCH RHEL5 3/9] is_owner_or_cap
+Bugzilla: 443896
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+This is for:
+
+Bugzilla Bug 443896: RFE: [Ext4 enabler] backport vfs
+helpers to facilitate ext4 backport and testing
+
+From: Satyam Sharma <ssatyam@cse.iitk.ac.in>
+Date: Tue, 17 Jul 2007 09:30:08 +0000 (+0530)
+Subject: Introduce is_owner_or_cap() to wrap CAP_FOWNER use with fsuid check
+X-Git-Tag: v2.6.23-rc1~519
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=3bd858ab1c451725c07a805dcb315215dc85b86e
+
+Introduce is_owner_or_cap() to wrap CAP_FOWNER use with fsuid check
+
+Introduce is_owner_or_cap() macro in fs.h, and convert over relevant
+users to it. This is done because we want to avoid bugs in the future
+where we check for only effective fsuid of the current task against a
+file's owning uid, without simultaneously checking for CAP_FOWNER as
+well, thus violating its semantics.
+[ XFS uses special macros and structures, and in general looked ...
+untouchable, so we leave it alone -- but it has been looked over. ]
+
+The (current->fsuid != inode->i_uid) check in generic_permission() and
+exec_permission_lite() is left alone, because those operations are
+covered by CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH. Similarly operations
+falling under the purview of CAP_CHOWN and CAP_LEASE are also left alone.
+
+Signed-off-by: Satyam Sharma <ssatyam@cse.iitk.ac.in>
+Cc: Al Viro <viro@ftp.linux.org.uk>
+Acked-by: Serge E. Hallyn <serge@hallyn.com>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 28c201f..fd80f94 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -993,6 +993,9 @@ static inline void unlock_super(struct super_block * sb)
+ 	mutex_unlock(&sb->s_lock);
+ }
+ 
++#define is_owner_or_cap(inode)  \
++	((current->fsuid == (inode)->i_uid) || capable(CAP_FOWNER))
++
+ /*
+  * VFS helper functions..
+  */

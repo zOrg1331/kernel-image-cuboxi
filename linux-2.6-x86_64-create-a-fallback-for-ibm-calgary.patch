@@ -1,0 +1,374 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Thu, 11 Sep 2008 22:04:05 -0600
+Subject: [x86_64] create a fallback for IBM Calgary
+Message-id: 20080911220405.7cbf8159.zaitcev@redhat.com
+O-Subject: Re: [RHEL 5.3 patch] bz453680 Create a fallback for IBM Calgary
+Bugzilla: 453680
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+This patch ended in my lap because UHCI can only use 32 bits of DMA
+address, but the root cause is that Calgary IOMMU should not attempt
+to manage devices which are not connected to it.
+
+In the upstream kernel, this is done by giving every device its
+own dma_ops (inside the ->archarea). Then, UHCI gets a pointer
+to "fallback" ops set there (1956a96de488feb05e95c08c9d5e80f63a4be2b1).
+But we cannot add archarea to our struct device. So, we have
+the pci-calgary.c to check if the device should have a fallback
+and invoke it.
+
+The things to look out for: is end_pfn the correct indicator of
+DMA addresses overflowing 32 bits? Also, are all paths covered
+(e.g. do we use the same routine to free/unmap DMA areas  that
+we used to allocate them)?
+
+I did not seriously test this patch, only built it in Brew and
+sanity-tested on a couple of systems. It looks reasonably safe,
+but not super-safe.
+
+Please ACK
+
+On Tue, 02 Sep 2008 10:17:32 -0400, Prarit Bhargava <prarit@redhat.com> wrote:
+
+> Then I think you must do (sorry for the cut-and-paste)
+
+> +++ b/arch/x86_64/kernel/pci-calgary.c
+> @@ -393,7 +393,7 @@ static void calgary_unmap_sg(struct device *dev,
+>         struct iommu_table *tbl = find_iommu_table(dev);
+>
+>         if (!translation_enabled(tbl))
+> -               return;
+> +               return fallback_dma_ops->unmap_sg(dev, sg, nelems,
+> direction);
+
+Quite so. I corrected this, thanks.
+
+Also, I've run through all functions in the dma_ops and it occured
+to me that Calgary must implement all functions which _either_
+nommu or swiotlb implement, in order to perform fallback.
+So I added them.
+
+Most of them were just stubs, but the mapping_error was more
+interesting. Since it does not receive a device argument, it
+must detect two types of "bad" dma addresses: zero for nommu
+and Calgary itself, and another one for swiommu. Unfortunately,
+a 8MB Calgary table covers the "bad" address of swiotlb, and
+in order to avoid a conflict I reserved it in calgary_reserve_regions.
+I'm not quite sure this is legitimate... I'm going to confirm this
+with IBM.
+
+Also, if one case of fallback can have a NULL method, we should
+test for NULL before calling it :-). In case of alloc_consistent
+this creates a minor difficulty: you cannot just bail out of it.
+So this patch reuses the old code which was in Calgary before
+IBM fixed it.
+
+I think now I covered all of it. But this is what I thought
+the last time too.
+
+Unfortunately, this patch is not tested on actual Calgary yet,
+and it was significantly changed from the one IBM tested before.
+So, I'm concerned for regressions. It seems safe for non-Calgary
+at least.
+
+There was no word that we're postponing it to 5.4, so I would
+like to have acks. Given the history of it, it requires more than
+a cursory review, sorry.
+
+-- Pete
+
+P.S. I gave a thought to backporting what upstream has. That met
+with deveral obstacles:
+
+1. I'm having a hard time finding a place in struct device, and
+   I cannot just extend it and cover it with __GENKSYMS__, because
+   it's commonly embedded.
+2. Some methods are inline and thus drivers may bypass new function
+   pointers even if I find a place to store them.
+3. Changing all DMA support methods spills the risk outside of
+   Calgary, whereas a bug in the current patch only hurts those
+   who deserved it.
+
+Things like Calgary "knowing" how mapping_error works in swiotlb
+are nasty, but what can we do?
+
+diff --git a/arch/x86_64/kernel/pci-calgary.c b/arch/x86_64/kernel/pci-calgary.c
+index 59533ed..a79e968 100644
+--- a/arch/x86_64/kernel/pci-calgary.c
++++ b/arch/x86_64/kernel/pci-calgary.c
+@@ -44,11 +44,16 @@
+ #include <asm/dma.h>
+ #include <asm/rio.h>
+ 
++#ifdef CONFIG_SWIOTLB
++extern void *io_tlb_overflow_buffer;
++#endif
++
+ #ifdef CONFIG_CALGARY_IOMMU_ENABLED_BY_DEFAULT
+ int use_calgary __read_mostly = 1;
+ #else
+ int use_calgary __read_mostly = 0;
+ #endif /* CONFIG_CALGARY_DEFAULT_ENABLED */
++const struct dma_mapping_ops* fallback_dma_ops;
+ 
+ #define PCI_DEVICE_ID_IBM_CALGARY 0x02a1
+ #define PCI_DEVICE_ID_IBM_CALIOC2 0x0308
+@@ -387,13 +392,25 @@ static inline struct iommu_table *find_iommu_table(struct device *dev)
+ 	return tbl;
+ }
+ 
++static int calgary_mapping_error(dma_addr_t dma_addr)
++{
++#ifdef CONFIG_SWIOTLB
++	if (fallback_dma_ops->mapping_error != NULL) {	/* SWIOTLB */
++		if (fallback_dma_ops->mapping_error(dma_addr))
++			return 1;
++		/* We're not in the clear yet. This may be a Calgary address. */
++	}
++#endif
++	return (dma_addr == bad_dma_address);
++}
++
+ static void calgary_unmap_sg(struct device *dev,
+ 	struct scatterlist *sglist, int nelems, int direction)
+ {
+ 	struct iommu_table *tbl = find_iommu_table(dev);
+ 
+ 	if (!translation_enabled(tbl))
+-		return;
++		return fallback_dma_ops->unmap_sg(dev, sglist, nelems, direction);
+ 
+ 	while (nelems--) {
+ 		unsigned int npages;
+@@ -409,20 +426,6 @@ static void calgary_unmap_sg(struct device *dev,
+ 	}
+ }
+ 
+-static int calgary_nontranslate_map_sg(struct device* dev,
+-	struct scatterlist *sg, int nelems, int direction)
+-{
+-	int i;
+-
+-	for (i = 0; i < nelems; i++ ) {
+-		struct scatterlist *s = &sg[i];
+-		BUG_ON(!s->page);
+-		s->dma_address = virt_to_bus(page_address(s->page) +s->offset);
+-		s->dma_length = s->length;
+-	}
+-	return nelems;
+-}
+-
+ static int calgary_map_sg(struct device *dev, struct scatterlist *sg,
+ 	int nelems, int direction)
+ {
+@@ -433,7 +436,7 @@ static int calgary_map_sg(struct device *dev, struct scatterlist *sg,
+ 	int i;
+ 
+ 	if (!translation_enabled(tbl))
+-		return calgary_nontranslate_map_sg(dev, sg, nelems, direction);
++		return fallback_dma_ops->map_sg(dev, sg, nelems, direction);
+ 
+ 	for (i = 0; i < nelems; i++ ) {
+ 		struct scatterlist *s = &sg[i];
+@@ -476,13 +479,13 @@ static dma_addr_t calgary_map_single(struct device *dev, void *vaddr,
+ 	unsigned int npages;
+ 	struct iommu_table *tbl = find_iommu_table(dev);
+ 
++	if (!translation_enabled(tbl))
++		return fallback_dma_ops->map_single(dev, vaddr, size, direction);
++
+ 	uaddr = (unsigned long)vaddr;
+ 	npages = num_dma_pages(uaddr, size);
+ 
+-	if (translation_enabled(tbl))
+-		dma_handle = iommu_alloc(tbl, vaddr, npages, direction);
+-	else
+-		dma_handle = virt_to_bus(vaddr);
++	dma_handle = iommu_alloc(tbl, vaddr, npages, direction);
+ 
+ 	return dma_handle;
+ }
+@@ -493,8 +496,10 @@ static void calgary_unmap_single(struct device *dev, dma_addr_t dma_handle,
+ 	struct iommu_table *tbl = find_iommu_table(dev);
+ 	unsigned int npages;
+ 
+-	if (!translation_enabled(tbl))
++	if (!translation_enabled(tbl)) {
++		fallback_dma_ops->unmap_single(dev, dma_handle, size, direction);
+ 		return;
++	}
+ 
+ 	npages = num_dma_pages(dma_handle, size);
+ 	iommu_free(tbl, dma_handle, npages);
+@@ -508,6 +513,9 @@ static void* calgary_alloc_coherent(struct device *dev, size_t size,
+ 	unsigned int npages, order;
+ 	struct iommu_table *tbl = find_iommu_table(dev);
+ 
++	if (!translation_enabled(tbl) && fallback_dma_ops->alloc_coherent)
++		return fallback_dma_ops->alloc_coherent(dev, size, dma_handle, flag);
++
+ 	size = PAGE_ALIGN(size); /* size rounded up to full pages */
+ 	npages = size >> PAGE_SHIFT;
+ 	order = get_order(size);
+@@ -537,10 +545,87 @@ error:
+ 	return ret;
+ }
+ 
++static void calgary_free_coherent(struct device *dev, size_t size, void *vaddr,
++    dma_addr_t dma_addr)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl) && fallback_dma_ops->free_coherent)
++		fallback_dma_ops->free_coherent(dev, size, vaddr, dma_addr);
++}
++
++static void calgary_sync_single_for_cpu(struct device *dev,
++    dma_addr_t dma_addr, size_t size, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl) && fallback_dma_ops->sync_single_for_cpu)
++		fallback_dma_ops->sync_single_for_cpu(dev, dma_addr, size, dir);
++}
++
++static void calgary_sync_single_for_device(struct device *dev,
++    dma_addr_t dma_addr, size_t size, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl) && fallback_dma_ops->sync_single_for_device)
++		fallback_dma_ops->sync_single_for_device(dev, dma_addr, size, dir);
++}
++
++static void calgary_sync_single_range_for_cpu(struct device *dev,
++   dma_addr_t dma_addr, unsigned long offset, size_t size, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl)
++	  && fallback_dma_ops->sync_single_range_for_cpu)
++		fallback_dma_ops->sync_single_range_for_cpu(dev,
++		   dma_addr, offset, size, dir);
++}
++
++static void calgary_sync_single_range_for_device(struct device *dev,
++   dma_addr_t dma_addr, unsigned long offset, size_t size, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl)
++	  && fallback_dma_ops->sync_single_range_for_device)
++		fallback_dma_ops->sync_single_range_for_device(dev,
++		    dma_addr, offset, size, dir);
++}
++
++static void calgary_sync_sg_for_cpu(struct device *dev, struct scatterlist *sg,
++    int nelems, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl)
++	  && fallback_dma_ops->sync_sg_for_cpu)
++		fallback_dma_ops->sync_sg_for_cpu(dev, sg, nelems, dir);
++}
++
++static void calgary_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
++    int nelems, int dir)
++{
++	struct iommu_table *tbl = find_iommu_table(dev);
++
++	if (!translation_enabled(tbl)
++	  && fallback_dma_ops->sync_sg_for_device)
++		fallback_dma_ops->sync_sg_for_device(dev, sg, nelems, dir);
++}
++
+ static struct dma_mapping_ops calgary_dma_ops = {
++	.mapping_error = calgary_mapping_error,
+ 	.alloc_coherent = calgary_alloc_coherent,
++	.free_coherent = calgary_free_coherent,
+ 	.map_single = calgary_map_single,
+ 	.unmap_single = calgary_unmap_single,
++	.sync_single_for_cpu = calgary_sync_single_for_cpu,
++	.sync_single_for_device = calgary_sync_single_for_device,
++	.sync_single_range_for_cpu = calgary_sync_single_range_for_cpu,
++	.sync_single_range_for_device = calgary_sync_single_range_for_device,
++	.sync_sg_for_cpu = calgary_sync_sg_for_cpu,
++	.sync_sg_for_device = calgary_sync_sg_for_device,
+ 	.map_sg = calgary_map_sg,
+ 	.unmap_sg = calgary_unmap_sg,
+ };
+@@ -794,6 +879,12 @@ static void __init calgary_reserve_regions(struct pci_dev *dev)
+ 
+ 	/* reserve EMERGENCY_PAGES from bad_dma_address and up */
+ 	iommu_range_reserve(tbl, bad_dma_address, EMERGENCY_PAGES);
++#ifdef CONFIG_SWIOTLB
++	if (fallback_dma_ops->mapping_error != NULL) {	/* SWIOTLB */
++		dma_addr_t addr = virt_to_phys(io_tlb_overflow_buffer);
++		iommu_range_reserve(tbl, addr, 1);	/* Checks range */
++	}
++#endif
+ 
+ 	/* avoid the BIOS/VGA first 640KB-1MB region */
+ 	/* for CalIOC2 - avoid the entire first MB */
+diff --git a/arch/x86_64/kernel/pci-nommu.c b/arch/x86_64/kernel/pci-nommu.c
+index aad7609..8130a30 100644
+--- a/arch/x86_64/kernel/pci-nommu.c
++++ b/arch/x86_64/kernel/pci-nommu.c
+@@ -9,6 +9,7 @@
+ #include <asm/proto.h>
+ #include <asm/processor.h>
+ #include <asm/dma.h>
++#include <asm/calgary.h>
+ 
+ static int
+ check_addr(char *name, struct device *hwdev, dma_addr_t bus, size_t size)
+@@ -90,6 +91,11 @@ struct dma_mapping_ops nommu_dma_ops = {
+ 
+ void __init no_iommu_init(void)
+ {
++#ifdef CONFIG_CALGARY_IOMMU
++	if (use_calgary && (end_pfn <= MAX_DMA32_PFN))
++		fallback_dma_ops = &nommu_dma_ops;
++#endif
++
+ 	if (dma_ops)
+ 		return;
+ 
+diff --git a/arch/x86_64/kernel/pci-swiotlb.c b/arch/x86_64/kernel/pci-swiotlb.c
+index 6a55f87..f430f0b 100644
+--- a/arch/x86_64/kernel/pci-swiotlb.c
++++ b/arch/x86_64/kernel/pci-swiotlb.c
+@@ -7,6 +7,7 @@
+ #include <asm/proto.h>
+ #include <asm/swiotlb.h>
+ #include <asm/dma.h>
++#include <asm/calgary.h>
+ 
+ int swiotlb __read_mostly;
+ EXPORT_SYMBOL(swiotlb);
+@@ -39,5 +40,12 @@ void pci_swiotlb_init(void)
+ 		printk(KERN_INFO "PCI-DMA: Using software bounce buffering for IO (SWIOTLB)\n");
+ 		swiotlb_init();
+ 		dma_ops = &swiotlb_dma_ops;
++	} else {
++#ifdef CONFIG_CALGARY_IOMMU
++		if (use_calgary && (end_pfn > MAX_DMA32_PFN)) {
++			swiotlb_init();
++			fallback_dma_ops = &swiotlb_dma_ops;
++		}
++#endif
+ 	}
+ }
+diff --git a/include/asm-x86_64/calgary.h b/include/asm-x86_64/calgary.h
+index 67f6040..8387046 100644
+--- a/include/asm-x86_64/calgary.h
++++ b/include/asm-x86_64/calgary.h
+@@ -60,6 +60,7 @@ struct cal_chipset_ops {
+ #define TCE_TABLE_SIZE_8M		7
+ 
+ extern int use_calgary;
++extern const struct dma_mapping_ops* fallback_dma_ops;
+ 
+ #ifdef CONFIG_CALGARY_IOMMU
+ extern int calgary_iommu_init(void);

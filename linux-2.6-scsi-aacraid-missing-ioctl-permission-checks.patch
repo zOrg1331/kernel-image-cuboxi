@@ -1,0 +1,57 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Subject: [RHEL-5.1 patch] BZ298381 {CVE-2007-4308} Missing ioctl() permission 	checks in aacraid driver
+Date: Mon, 24 Sep 2007 17:41:55 +0200
+Bugzilla: 298381
+Message-Id: <m36420kr3w.fsf@gravicapa.englab.brq.redhat.com>
+Changelog: [scsi] aacraid: Missing ioctl() permission checks
+
+
+BZ#298381
+https://bugzilla.redhat.com/show_bug.cgi?id=298381
+
+Description:
+============
+On the SCSI layer ioctl path there is no implicit permissions check for
+ioctls (and indeed other drivers implement unprivileged ioctls). aacraid
+however allows all sorts of very admin only things to be done so should
+check.
+
+Upstream status of the patch:
+=============================
+Patch is upstream, see commit 719be62903a6e6419789557cb3ed0e840d3e4ca9
+
+
+Content-Description: proposed patch
+diff -up -bB ./drivers/scsi/aacraid/linit.c.orig ./drivers/scsi/aacraid/linit.c
+--- ./drivers/scsi/aacraid/linit.c.orig	2007-09-24 17:33:20.000000000 +0200
++++ ./drivers/scsi/aacraid/linit.c	2007-09-24 17:37:04.000000000 +0200
+@@ -628,6 +628,8 @@ static int aac_cfg_open(struct inode *in
+ static int aac_cfg_ioctl(struct inode *inode,  struct file *file,
+ 		unsigned int cmd, unsigned long arg)
+ {
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
+ 	return aac_do_ioctl(file->private_data, cmd, (void __user *)arg);
+ }
+ 
+@@ -681,6 +683,8 @@ static int aac_compat_ioctl(struct scsi_
+ 
+ static long aac_compat_cfg_ioctl(struct file *file, unsigned cmd, unsigned long arg)
+ {
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
+ 	return aac_compat_do_ioctl((struct aac_dev *)file->private_data, cmd, arg);
+ }
+ #endif
+
+
+-- 
+Vitaly Mayatskikh <vmayatsk@redhat.com>
+
+Kernel development
+Red Hat Czech, Brno
+
+Phone: +420 532 294 111
+IRC: vitaly on #kernel, #brno
+GPG: 0x4BA2E8FB
+

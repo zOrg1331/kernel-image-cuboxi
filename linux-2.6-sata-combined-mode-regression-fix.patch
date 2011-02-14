@@ -1,0 +1,52 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: [RHEL5 PATCH] SATA combined mode regression fix
+Date: Fri, 22 Jun 2007 05:04:31 -0400
+Bugzilla: 245052
+Message-Id: <20070622090431.GB9061@devserv.devel.redhat.com>
+Changelog: [sata] combined mode regression fix
+
+
+
+As reported in BZ# 245052, there was a regression in combined mode.
+Root cause:  I left out a patch that was in SATA preliminary patch, but
+not in the final patch.
+
+ drivers/ata/libata-sff.c |   18 +++++++++++++++++-
+ 1 files changed, 17 insertions(+), 1 deletion(-)
+
+diff -urN ../kernel-2.6.18/linux-2.6.18.i686/drivers/ata/libata-sff.c linux-2.6.18.i686/drivers/ata/libata-sff.c
+--- ../kernel-2.6.18/linux-2.6.18.i686/drivers/ata/libata-sff.c	2007-06-22 04:53:45.000000000 -0400
++++ linux-2.6.18.i686/drivers/ata/libata-sff.c	2007-06-22 03:43:56.000000000 -0400
+@@ -749,6 +749,21 @@
+ 	}
+ }
+ 
++static int ata_legacy_port_reserved(unsigned long res_start)
++{
++	struct resource *conflict, res;
++
++	res.start = res_start;
++	res.end = res_start + 8 - 1;
++	conflict = ____request_resource(&ioport_resource, &res);
++	while (conflict->child)
++		conflict = ____request_resource(conflict, &res);
++	if (!strcmp(conflict->name, "libata"))
++		return 1;	/* true */
++
++	return 0;		/* false */
++}
++
+ static int ata_init_legacy_port(struct ata_port *ap,
+ 				struct ata_legacy_devres *legacy_dr)
+ {
+@@ -765,7 +780,8 @@
+ 	}
+ 
+ 	/* request cmd_port */
+-	if (request_region(cmd_port, 8, "libata"))
++	if (request_region(cmd_port, 8, "libata") ||
++	    ata_legacy_port_reserved(cmd_port))
+ 		legacy_dr->cmd_port[port_no] = cmd_port;
+ 	else {
+ 		dev_printk(KERN_WARNING, host->dev,
+

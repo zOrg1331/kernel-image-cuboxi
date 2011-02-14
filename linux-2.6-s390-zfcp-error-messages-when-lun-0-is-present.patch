@@ -1,0 +1,115 @@
+From: Jan Glauber <jglauber@redhat.com>
+Date: Sat, 12 Jan 2008 15:20:32 +0100
+Subject: [s390] zfcp: error messages when LUN 0 is present
+Message-id: 1200147632.6182.49.camel@localhost.localdomain
+O-Subject: Re: [RHEL5 U2 PATCH 3/14] s390 - zfcp: Error messages when LUN 0 is present
+Bugzilla: 354811
+
+Description
+============
+
+When the FCP LUN 0 is present, the kernel messages can
+contain lots of messages like "scsi: host 0 channel 0
+id 1 lun2 has a LUN larger than allowed by the host
+adapter".
+
+The FC transport class triggers a scan for units. This
+triggers a REPORT LUNS command. When the units should
+be added to zfcp, this fails with the above message.
+With the current design of zfcp, this scan should
+never happen, since the units are managed by zfcp.
+
+The problem is fixed by introducig a flag that prevents the
+scan from the FC transport class.
+
+Bugzilla
+=========
+
+BZ 354811
+https://bugzilla.redhat.com/show_bug.cgi?id=354811
+
+Upstream status of the patch:
+=============================
+Problem fixed upstream in
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=cb7ec97c94520c78a52eff201cade337319d07e8
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Here is the new version of the patch. The changes are:
+- moved the extern to a header file
+- using an int for the flag instead of unsigned long
+
+The patch was also reviewed by Christof Schmitt.
+
+Please apply,
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/s390/scsi/zfcp_aux.c b/drivers/s390/scsi/zfcp_aux.c
+index 4b167de..d4d802c 100644
+--- a/drivers/s390/scsi/zfcp_aux.c
++++ b/drivers/s390/scsi/zfcp_aux.c
+@@ -320,6 +320,8 @@ zfcp_module_init(void)
+ 	zfcp_transport_template = fc_attach_transport(&zfcp_transport_functions);
+ 	if (!zfcp_transport_template)
+ 		return -ENODEV;
++	/* disable transport scan */
++	set_fc_internal_target_scan(zfcp_transport_template);
+ 
+ 	retval = misc_register(&zfcp_cfdc_misc);
+ 	if (retval != 0) {
+diff --git a/drivers/s390/scsi/zfcp_ext.h b/drivers/s390/scsi/zfcp_ext.h
+index f6ba8dc..6a559d5 100644
+--- a/drivers/s390/scsi/zfcp_ext.h
++++ b/drivers/s390/scsi/zfcp_ext.h
+@@ -193,4 +193,6 @@ extern struct zfcp_fsf_req *zfcp_reqlist_ismember(struct zfcp_adapter *,
+ 						  unsigned long);
+ extern int zfcp_reqlist_isempty(struct zfcp_adapter *);
+ 
++extern void set_fc_internal_target_scan(struct scsi_transport_template *t);
++
+ #endif	/* ZFCP_EXT_H */
+diff --git a/drivers/scsi/scsi_transport_fc.c b/drivers/scsi/scsi_transport_fc.c
+index cf8cdd6..d0962c6 100644
+--- a/drivers/scsi/scsi_transport_fc.c
++++ b/drivers/scsi/scsi_transport_fc.c
+@@ -279,10 +279,19 @@ struct fc_internal {
+ 	struct transport_container rport_attr_cont;
+ 	struct class_device_attribute private_rport_attrs[FC_RPORT_NUM_ATTRS];
+ 	struct class_device_attribute *rport_attrs[FC_RPORT_NUM_ATTRS + 1];
++
++	/* needed for kabi workaround for zfcp driver */
++	int disable_target_scan;
+ };
+ 
+ #define to_fc_internal(tmpl)	container_of(tmpl, struct fc_internal, t)
+ 
++void set_fc_internal_target_scan(struct scsi_transport_template *t)
++{
++	to_fc_internal(t)->disable_target_scan = 1;
++}
++EXPORT_SYMBOL_GPL(set_fc_internal_target_scan);
++
+ static int fc_target_setup(struct transport_container *tc, struct device *dev,
+ 			   struct class_device *cdev)
+ {
+@@ -2422,10 +2431,12 @@ fc_scsi_scan_rport(void *data)
+ {
+ 	struct fc_rport *rport = (struct fc_rport *)data;
+ 	struct Scsi_Host *shost = rport_to_shost(rport);
++	struct fc_internal *i = to_fc_internal(shost->transportt);
+ 	unsigned long flags;
+ 
+ 	if ((rport->port_state == FC_PORTSTATE_ONLINE) &&
+-	    (rport->roles & FC_RPORT_ROLE_FCP_TARGET)) {
++	    (rport->roles & FC_RPORT_ROLE_FCP_TARGET) &&
++	    !(i->disable_target_scan)) {
+ 		scsi_scan_target(&rport->dev, rport->channel,
+ 			rport->scsi_target_id, SCAN_WILD_CARD, 1);
+ 	}

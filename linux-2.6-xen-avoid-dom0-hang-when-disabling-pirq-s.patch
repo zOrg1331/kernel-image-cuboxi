@@ -1,0 +1,78 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 21 Nov 2007 10:23:09 -0500
+Subject: [xen] avoid dom0 hang when disabling pirq's
+Message-id: 47444D5D.2030806@redhat.com
+O-Subject: [RHEL5.2 PATCH]: Avoid Xen dom0 hang when disabling pirq's
+Bugzilla: 372741
+
+All,
+     Attached is a patch to fix BZ 372741.  The Lenovo *61 laptops have some
+sort of firmware bug where they continually send interrupts to a line that no
+driver is ACK'ing.  After 999,990 of 100,000 interrupts are ignored, the kernel
+decides to disable that interrupt line.  In the bare-metal kernel, this is done
+by masking out the interrupt line on the IOAPIC.  However, the Xen kernel
+currently just masks out the event channel, meaning that the physical hardware
+is still firing interrupts, but they never get delivered anywhere, which causes
+a deadlock and all interrupts to cease on the machine.
+
+The attached patch fixes the hang by doing a hypercall when disabling the IRQ;
+in turn, this makes the HV actually mask out that line on the IOAPIC, which is
+the right thing to do.
+
+Successfully tested by me on the Lenovo T61 laptop; before the patch, the
+machine would hang after 100,000 interrupts; after the patch, the machine
+properly disables that interrupt line.  Note that there is still a bug somewhere
+in the laptop, either with the firmware or with the interrupt routing, but that
+is not a Xen-specific problem.
+
+This has been committed in upstream Xen:
+http://xenbits.xensource.com/staging/linux-2.6.18-xen.hg?rev/51b2b0d0921c
+
+Please review and ACK.
+
+Chris Lalancette
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+
+diff --git a/drivers/xen/core/evtchn.c b/drivers/xen/core/evtchn.c
+index 77ca1bf..75ad2e5 100644
+--- a/drivers/xen/core/evtchn.c
++++ b/drivers/xen/core/evtchn.c
+@@ -629,20 +629,11 @@ static void shutdown_pirq(unsigned int irq)
+ 
+ static void enable_pirq(unsigned int irq)
+ {
+-	int evtchn = evtchn_from_irq(irq);
+-
+-	if (VALID_EVTCHN(evtchn)) {
+-		unmask_evtchn(evtchn);
+-		pirq_unmask_notify(irq_to_pirq(irq));
+-	}
++	startup_pirq(irq);
+ }
+ 
+ static void disable_pirq(unsigned int irq)
+ {
+-	int evtchn = evtchn_from_irq(irq);
+-
+-	if (VALID_EVTCHN(evtchn))
+-		mask_evtchn(evtchn);
+ }
+ 
+ static void ack_pirq(unsigned int irq)
+@@ -661,7 +652,10 @@ static void end_pirq(unsigned int irq)
+ {
+ 	int evtchn = evtchn_from_irq(irq);
+ 
+-	if (VALID_EVTCHN(evtchn) && !(irq_desc[irq].status & IRQ_DISABLED)) {
++	if ((irq_desc[irq].status & (IRQ_DISABLED|IRQ_PENDING)) ==
++	    (IRQ_DISABLED|IRQ_PENDING)) {
++		shutdown_pirq(irq);
++	} else if (VALID_EVTCHN(evtchn)) {
+ 		unmask_evtchn(evtchn);
+ 		pirq_unmask_notify(irq_to_pirq(irq));
+ 	}

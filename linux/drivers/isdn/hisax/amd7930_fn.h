@@ -1,4 +1,4 @@
-/* drivers/isdn/hisax/amd7930_fn.h
+/* 2001/10/02
  *
  * gerdes_amd7930.h     Header-file included by
  *                      gerdes_amd7930.c

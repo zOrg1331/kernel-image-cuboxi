@@ -1,0 +1,66 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 16 Nov 2009 14:22:47 -0500
+Subject: [cifs] enable dfs submounts to handle remote referrals
+Message-id: <1258381372-19132-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21378
+O-Subject: [RHEL5.5 PATCH 1/6] BZ#513410: cifs: Enable dfs submounts to handle
+	remote referrals.
+Bugzilla: 513410
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Igor Mammedov <niallain@gmail.com>
+
+Having remote dfs root support in cifs_mount, we can
+afford to pass into it UNC that is remote.
+
+Signed-off-by: Igor Mammedov <niallain@gmail.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/cifs_dfs_ref.c b/fs/cifs/cifs_dfs_ref.c
+index 5151497..6eb8005 100644
+--- a/fs/cifs/cifs_dfs_ref.c
++++ b/fs/cifs/cifs_dfs_ref.c
+@@ -349,27 +349,24 @@ cifs_dfs_follow_mountpoint(struct dentry *dentry, struct nameidata *nd)
+ 		cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MAP_SPECIAL_CHR);
+ 
+ 	for (i = 0; i < num_referrals; i++) {
++		int len;
+ 		dump_referral(referrals+i);
+-		/* connect to a storage node */
+-		if (referrals[i].flags & DFSREF_STORAGE_SERVER) {
+-			int len;
+-			len = strlen(referrals[i].node_name);
+-			if (len < 2) {
+-				cERROR(1, ("%s: Net Address path too short: %s",
++		/* connect to a node */
++		len = strlen(referrals[i].node_name);
++		if (len < 2) {
++			cERROR(1, ("%s: Net Address path too short: %s",
+ 					__func__, referrals[i].node_name));
+-				rc = -EINVAL;
+-				goto out_err;
+-			}
+-			mnt = cifs_dfs_do_refmount(nd->mnt, nd->dentry,
+-						referrals + i);
+-			cFYI(1, ("%s: cifs_dfs_do_refmount:%s , mnt:%p",
+-					 __func__,
++			rc = -EINVAL;
++			goto out_err;
++		}
++		mnt = cifs_dfs_do_refmount(nd->mnt,
++				nd->dentry, referrals + i);
++		cFYI(1, ("%s: cifs_dfs_do_refmount:%s , mnt:%p", __func__,
+ 					referrals[i].node_name, mnt));
+ 
+-			/* complete mount procedure if we accured submount */
+-			if (!IS_ERR(mnt))
+-				break;
+-		}
++		/* complete mount procedure if we accured submount */
++		if (!IS_ERR(mnt))
++			break;
+ 	}
+ 
+ 	/* we need it cause for() above could exit without valid submount */

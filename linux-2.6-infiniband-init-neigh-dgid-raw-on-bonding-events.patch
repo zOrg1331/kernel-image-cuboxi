@@ -1,0 +1,30 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 1 Dec 2009 19:33:18 -0500
+Subject: [infiniband] init neigh->dgid.raw on bonding events
+Message-id: <1259696003-21028-4-git-send-email-dledford@redhat.com>
+Patchwork-id: 21587
+O-Subject: [Patch RHEL5.5] [ipoib] init the neigh->dgid.raw struct on bonding
+	events
+Bugzilla: 538067
+
+We are confusing the bond structures by failing to init the dgid.raw struct
+to 0 in order to force re-setting arp and other info on a bonded slave when
+it was previously the active link, then it failed, then it came back to
+being active.
+
+Resolves bz538067
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_main.c b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+index c70f04f..acaa723 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_main.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+@@ -917,6 +917,7 @@ struct ipoib_neigh *ipoib_neigh_alloc(struct neighbour *neighbour,
+ 
+ 	neigh->neighbour = neighbour;
+ 	neigh->dev = dev;
++	memset(&neigh->dgid.raw, 0, sizeof(union ib_gid));
+ 	*to_ipoib_neigh(neighbour) = neigh;
+ 	skb_queue_head_init(&neigh->queue);
+ 	ipoib_cm_set(neigh, NULL);

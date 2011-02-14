@@ -1,6 +1,6 @@
 /*
  * net/tipc/msg.c: TIPC message header routines
- *
+ *     
  * Copyright (c) 2000-2006, Ericsson AB
  * Copyright (c) 2005, Wind River Systems
  * All rights reserved.
@@ -41,9 +41,7 @@
 #include "bearer.h"
 
 
-#ifdef CONFIG_TIPC_DEBUG
-
-void tipc_msg_dbg(struct print_buf *buf, struct tipc_msg *msg, const char *str)
+void tipc_msg_print(struct print_buf *buf, struct tipc_msg *msg, const char *str)
 {
 	u32 usr = msg_user(msg);
 	tipc_printf(buf, str);
@@ -75,10 +73,10 @@ void tipc_msg_dbg(struct print_buf *buf, struct tipc_msg *msg, const char *str)
 		tipc_printf(buf, "NO(%u/%u):",msg_long_msgno(msg),
 			    msg_fragm_no(msg));
 		break;
-	case TIPC_LOW_IMPORTANCE:
-	case TIPC_MEDIUM_IMPORTANCE:
-	case TIPC_HIGH_IMPORTANCE:
-	case TIPC_CRITICAL_IMPORTANCE:
+	case DATA_LOW:
+	case DATA_MEDIUM:
+	case DATA_HIGH:
+	case DATA_CRITICAL:
 		tipc_printf(buf, "DAT%u:", msg_user(msg));
 		if (msg_short(msg)) {
 			tipc_printf(buf, "CON:");
@@ -230,10 +228,13 @@ void tipc_msg_dbg(struct print_buf *buf, struct tipc_msg *msg, const char *str)
 
 	switch (usr) {
 	case CONN_MANAGER:
-	case TIPC_LOW_IMPORTANCE:
-	case TIPC_MEDIUM_IMPORTANCE:
-	case TIPC_HIGH_IMPORTANCE:
-	case TIPC_CRITICAL_IMPORTANCE:
+	case NAME_DISTRIBUTOR:
+	case DATA_LOW:
+	case DATA_MEDIUM:
+	case DATA_HIGH:
+	case DATA_CRITICAL:
+		if (msg_short(msg))
+			break;	/* No error */
 		switch (msg_errcode(msg)) {
 		case TIPC_OK:
 			break;
@@ -314,11 +315,9 @@ void tipc_msg_dbg(struct print_buf *buf, struct tipc_msg *msg, const char *str)
 	}
 	tipc_printf(buf, "\n");
 	if ((usr == CHANGEOVER_PROTOCOL) && (msg_msgcnt(msg))) {
-		tipc_msg_dbg(buf, msg_get_wrapped(msg), "      /");
+		tipc_msg_print(buf,msg_get_wrapped(msg),"      /");
 	}
 	if ((usr == MSG_FRAGMENTER) && (msg_type(msg) == FIRST_FRAGMENT)) {
-		tipc_msg_dbg(buf, msg_get_wrapped(msg), "      /");
+		tipc_msg_print(buf,msg_get_wrapped(msg),"      /");
 	}
 }
-
-#endif

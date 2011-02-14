@@ -1,0 +1,134 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Sat, 7 Aug 2010 07:16:50 -0400
+Subject: [virtio] make add_buf return capacity remaining
+Message-id: <6a0e22d032439fba8a6276b025a3d39f68ac8b30.1281129816.git.amit.shah@redhat.com>
+Patchwork-id: 27464
+O-Subject: [RHEL5.6 PATCH 5/9] virtio: make add_buf return capacity remaining
+Bugzilla: 620037
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+This API change means that virtio_net can tell how much capacity
+remains for buffers.  It's necessarily fuzzy, since
+VIRTIO_RING_F_INDIRECT_DESC means we can fit any number of descriptors
+in one, *if* we can kmalloc.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+Cc: Dinesh Subhraveti <dineshs@us.ibm.com>
+(cherry picked from commit 3c1b27d5043086a485f8526353ae9fe37bfa1065)
+
+(rhel5: Picked this one as virtio-console code depends on this
+functionality for nonblocking io.)
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/block/virtio_blk.c b/drivers/block/virtio_blk.c
+index 5fac2f7..49ac58e 100644
+--- a/drivers/block/virtio_blk.c
++++ b/drivers/block/virtio_blk.c
+@@ -120,7 +120,7 @@ static bool do_req(struct request_queue *q, struct virtio_blk *vblk,
+ 		in = 1 + num;
+ 	}
+ 
+-	if (vblk->vq->vq_ops->add_buf(vblk->vq, vblk->sg, out, in, vbr)) {
++	if (vblk->vq->vq_ops->add_buf(vblk->vq, vblk->sg, out, in, vbr) < 0) {
+ 		mempool_free(vbr, vblk->pool);
+ 		return false;
+ 	}
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 599dd2c..d80ef30 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -314,7 +314,7 @@ static bool try_fill_recv_maxbufs(struct virtnet_info *vi, gfp_t gfp)
+ 		skb_queue_head(&vi->recv, skb);
+ 
+ 		err = vi->rvq->vq_ops->add_buf(vi->rvq, sg, 0, num, skb);
+-		if (err) {
++		if (err < 0) {
+ 			skb_unlink(skb, &vi->recv);
+ 			trim_pages(vi, skb);
+ 			kfree_skb(skb);
+@@ -367,7 +367,7 @@ static bool try_fill_recv(struct virtnet_info *vi, gfp_t gfp)
+ 		skb_queue_head(&vi->recv, skb);
+ 
+ 		err = vi->rvq->vq_ops->add_buf(vi->rvq, sg, 0, 1, skb);
+-		if (err) {
++		if (err < 0) {
+ 			skb_unlink(skb, &vi->recv);
+ 			kfree_skb(skb);
+ 			break;
+@@ -524,7 +524,7 @@ static int xmit_skb(struct virtnet_info *vi, struct sk_buff *skb)
+ 	num = skb_to_sgvec(skb, sg+1, 0, skb->len) + 1;
+ 
+ 	err = vi->svq->vq_ops->add_buf(vi->svq, sg, num, 0, skb);
+-	if (!err && !vi->free_in_tasklet)
++	if (err >= 0 && !vi->free_in_tasklet)
+ 		mod_timer(&vi->xmit_free_timer, jiffies + (HZ/10));
+ 
+ 	return err;
+@@ -535,7 +535,7 @@ static void xmit_tasklet(unsigned long data)
+ 	struct virtnet_info *vi = (void *)data;
+ 
+ 	netif_tx_lock_bh(vi->dev);
+-	if (vi->last_xmit_skb && xmit_skb(vi, vi->last_xmit_skb) == 0) {
++	if (vi->last_xmit_skb && xmit_skb(vi, vi->last_xmit_skb) >= 0) {
+ 		vi->svq->vq_ops->kick(vi->svq);
+ 		vi->last_xmit_skb = NULL;
+ 	}
+@@ -556,7 +556,7 @@ again:
+ 
+ 	/* If we has a buffer left over from last time, send it now. */
+ 	if (unlikely(vi->last_xmit_skb) &&
+-	    xmit_skb(vi, vi->last_xmit_skb) != 0)
++	    xmit_skb(vi, vi->last_xmit_skb) < 0)
+ 		goto stop_queue;
+ 
+ 	vi->last_xmit_skb = NULL;
+@@ -564,7 +564,7 @@ again:
+ 	/* Put new one in send queue and do transmit */
+ 	if (likely(skb)) {
+ 		__skb_queue_head(&vi->send, skb);
+-		if (xmit_skb(vi, skb) != 0) {
++		if (xmit_skb(vi, skb) < 0) {
+ 			vi->last_xmit_skb = skb;
+ 			skb = NULL;
+ 			goto stop_queue;
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 6acf4fd..304e31f 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -86,7 +86,7 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
+ 	init_completion(&vb->acked);
+ 
+ 	/* We should always be able to add one buffer to an empty queue. */
+-	if (vq->vq_ops->add_buf(vq, &sg, 1, 0, vb) != 0)
++	if (vq->vq_ops->add_buf(vq, &sg, 1, 0, vb) < 0)
+ 		BUG();
+ 	vq->vq_ops->kick(vq);
+ 
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+index 5dc2601..fe74a9f 100644
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -147,7 +147,8 @@ static int vring_add_buf(struct virtqueue *_vq,
+ 
+ 	pr_debug("Added buffer head %i to %p\n", head, vq);
+ 	END_USE(vq);
+-	return 0;
++
++	return vq->num_free;
+ }
+ 
+ static void vring_kick(struct virtqueue *_vq)
+diff --git a/include/linux/virtio.h b/include/linux/virtio.h
+index df29c40..d25e3bb 100644
+--- a/include/linux/virtio.h
++++ b/include/linux/virtio.h
+@@ -34,7 +34,7 @@ struct virtqueue {
+  *	out_num: the number of sg readable by other side
+  *	in_num: the number of sg which are writable (after readable ones)
+  *	data: the token identifying the buffer.
+- *      Returns 0 or an error.
++ *      Returns remaining capacity of queue (sg segments) or a negative error.
+  * @kick: update after add_buf
+  *	vq: the struct virtqueue
+  *	After one or more add_buf calls, invoke this to kick the other side.

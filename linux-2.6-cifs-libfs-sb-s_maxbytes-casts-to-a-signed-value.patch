@@ -1,0 +1,67 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 30 Oct 2009 08:14:30 -0400
+Subject: [cifs] libfs: sb->s_maxbytes casts to a signed value
+Message-id: 1256904870-1610-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5 PATCH] BZ#486092: cifs/libfs: fix sb->s_maxbytes so that it casts properly to a signed value
+Bugzilla: 486092
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+This off-by-one bug causes sendfile() to not work properly. When a task
+calls sendfile() on a file on a CIFS filesystem, the syscall returns -1
+and sets errno to EOVERFLOW. The sendfile call itself though actually
+seems to succeed.
+
+do_sendfile() uses s_maxbytes to verify the returned offset of the file.
+The problem there is that this value is cast to a signed value (loff_t).
+When this is done on the s_maxbytes value that cifs uses, it becomes
+negative and the comparisons against it fail. The first part of this
+patch fixes the s_maxbytes values in CIFS to use the standard #define'd
+values for this.
+
+When do_sendfile() does this check, it actually checks against the
+minimum s_maxbytes value of the two filesystems between which it is
+splicing. The outfd for any sendfile call must be a socket, so this
+problem also exists in get_sb_pseudo. By fixing this there, this may
+also fix sendfile() on other 3rd party filesystems that set s_maxbytes
+too large.
+
+As part of this fix, I also pushed a patch upstream to make s_maxbytes
+type an loff_t, but that change probably isn't suitable for RHEL.
+
+This fixes the reproducer program I have that does a sendfile and also
+fixes the situation where apache is serving from a CIFS share.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index b7d5897..92cb173 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -2482,10 +2482,10 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 		tcon->nocase = volume_info->nocase;
+ 	}
+ 	if (pSesInfo) {
+-		if (pSesInfo->capabilities & CAP_LARGE_FILES) {
+-			sb->s_maxbytes = (u64) 1 << 63;
+-		} else
+-			sb->s_maxbytes = (u64) 1 << 31;	/* 2 GB */
++		if (pSesInfo->capabilities & CAP_LARGE_FILES)
++			sb->s_maxbytes = MAX_LFS_FILESIZE;
++		else
++			sb->s_maxbytes = MAX_NON_LFS;
+ 	}
+ 
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 10)
+diff --git a/fs/libfs.c b/fs/libfs.c
+index 7c12fa4..e09ecbf 100644
+--- a/fs/libfs.c
++++ b/fs/libfs.c
+@@ -208,7 +208,7 @@ int get_sb_pseudo(struct file_system_type *fs_type, char *name,
+ 		return PTR_ERR(s);
+ 
+ 	s->s_flags = MS_NOUSER;
+-	s->s_maxbytes = ~0ULL;
++	s->s_maxbytes = MAX_LFS_FILESIZE;
+ 	s->s_blocksize = 1024;
+ 	s->s_blocksize_bits = 10;
+ 	s->s_magic = magic;

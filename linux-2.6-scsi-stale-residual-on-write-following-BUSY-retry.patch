@@ -1,0 +1,55 @@
+From: Jonathan Lim <jolim@redhat.com>
+Date: Wed, 26 Sep 2007 14:38:19 -0400
+Subject: [scsi] stale residual on write following BUSY retry
+Message-id: 20070926183819.GA18638@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL 5.1 PATCH] BZ 300871: stale residual returned on write following BUSY retry
+Bugzilla: 300871
+
+A BUSY status returned on a write request results in a stale residual being
+returned when the write ultimately successfully completes.
+
+This can be reproduced as follows:
+
+1) issue immediate mode rewind to scsi tape drive
+2) issue write request
+
+The tape drive returns busy.  The low level driver detects underrun and sets
+the residual into the scsi command.  The low level driver responds with (DID_OK
+<< 16) | scsi_status.  scsi_status is 8, hence status_byte(result) == 4, i.e.,
+BUSY.
+
+scsi_softirq_done() calls scsi_decide_disposition() which returns
+ADD_TO_MLQUEUE.  scsi_softirq_done() then calls scsi_queue_insert() which, on
+the way to resubmitting the request to the driver, calls scsi_init_cmd_errh().
+
+The fix modifies scsi_init_cmd_errh() to clear the resid field.  This prevents
+a "stale" residual from being returned when the scsi command finally completes
+without a BUSY status.
+
+The patch has been successfully included in a kernel build on ia64 and checked
+into the scsi-misc tree:
+
+  http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=2fac3ee0de728a8cc39ee70249f57f46f966b45c
+
+Following is the diff against the 2.6.18-47.el5 kernel source:
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ drivers/scsi/scsi_lib.c |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index c109051..a869408 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -443,6 +443,7 @@ EXPORT_SYMBOL_GPL(scsi_execute_async);
+ static void scsi_init_cmd_errh(struct scsi_cmnd *cmd)
+ {
+ 	cmd->serial_number = 0;
++	cmd->resid = 0;
+ 	memset(cmd->sense_buffer, 0, sizeof cmd->sense_buffer);
+ 	if (cmd->cmd_len == 0)
+ 		cmd->cmd_len = COMMAND_SIZE(cmd->cmnd[0]);
+-- 
+1.5.3.5.645.gbb47
+

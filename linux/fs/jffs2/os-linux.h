@@ -1,11 +1,13 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright (C) 2002-2003 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
+ *
+ * $Id: os-linux.h,v 1.64 2005/09/30 13:59:13 dedekind Exp $
  *
  */
 
@@ -56,6 +58,10 @@ static inline void jffs2_init_inode_info(struct jffs2_inode_info *f)
 	f->target = NULL;
 	f->flags = 0;
 	f->usercompr = 0;
+#ifdef CONFIG_JFFS2_FS_POSIX_ACL
+	f->i_acl_access = JFFS2_ACL_NOT_CACHED;
+	f->i_acl_default = JFFS2_ACL_NOT_CACHED;
+#endif
 }
 
 
@@ -92,9 +98,6 @@ static inline void jffs2_init_inode_info(struct jffs2_inode_info *f)
 #define jffs2_nor_wbuf_flash(c) (0)
 #define jffs2_nor_wbuf_flash_setup(c) (0)
 #define jffs2_nor_wbuf_flash_cleanup(c) do {} while (0)
-#define jffs2_ubivol(c) (0)
-#define jffs2_ubivol_setup(c) (0)
-#define jffs2_ubivol_cleanup(c) do {} while (0)
 
 #else /* NAND and/or ECC'd NOR support present */
 
@@ -130,9 +133,6 @@ void jffs2_nand_flash_cleanup(struct jffs2_sb_info *c);
 #define jffs2_dataflash(c) (c->mtd->type == MTD_DATAFLASH)
 int jffs2_dataflash_setup(struct jffs2_sb_info *c);
 void jffs2_dataflash_cleanup(struct jffs2_sb_info *c);
-#define jffs2_ubivol(c) (c->mtd->type == MTD_UBIVOLUME)
-int jffs2_ubivol_setup(struct jffs2_sb_info *c);
-void jffs2_ubivol_cleanup(struct jffs2_sb_info *c);
 
 #define jffs2_nor_wbuf_flash(c) (c->mtd->type == MTD_NORFLASH && ! (c->mtd->flags & MTD_BIT_WRITEABLE))
 int jffs2_nor_wbuf_flash_setup(struct jffs2_sb_info *c);
@@ -153,36 +153,36 @@ void jffs2_garbage_collect_trigger(struct jffs2_sb_info *c);
 
 /* dir.c */
 extern const struct file_operations jffs2_dir_operations;
-extern const struct inode_operations jffs2_dir_inode_operations;
+extern struct inode_operations jffs2_dir_inode_operations;
 
 /* file.c */
 extern const struct file_operations jffs2_file_operations;
-extern const struct inode_operations jffs2_file_inode_operations;
+extern struct inode_operations jffs2_file_inode_operations;
 extern const struct address_space_operations jffs2_file_address_operations;
 int jffs2_fsync(struct file *, struct dentry *, int);
 int jffs2_do_readpage_unlock (struct inode *inode, struct page *pg);
 
 /* ioctl.c */
-long jffs2_ioctl(struct file *, unsigned int, unsigned long);
+int jffs2_ioctl(struct inode *, struct file *, unsigned int, unsigned long);
 
 /* symlink.c */
-extern const struct inode_operations jffs2_symlink_inode_operations;
+extern struct inode_operations jffs2_symlink_inode_operations;
 
 /* fs.c */
 int jffs2_setattr (struct dentry *, struct iattr *);
-int jffs2_do_setattr (struct inode *, struct iattr *);
-struct inode *jffs2_iget(struct super_block *, unsigned long);
+void jffs2_read_inode (struct inode *);
 void jffs2_clear_inode (struct inode *);
 void jffs2_dirty_inode(struct inode *inode);
 struct inode *jffs2_new_inode (struct inode *dir_i, int mode,
 			       struct jffs2_raw_inode *ri);
 int jffs2_statfs (struct dentry *, struct kstatfs *);
+void jffs2_write_super (struct super_block *);
 int jffs2_remount_fs (struct super_block *, int *, char *);
 int jffs2_do_fill_super(struct super_block *sb, void *data, int silent);
 void jffs2_gc_release_inode(struct jffs2_sb_info *c,
 			    struct jffs2_inode_info *f);
 struct jffs2_inode_info *jffs2_gc_fetch_inode(struct jffs2_sb_info *c,
-					      int inum, int unlinked);
+					      int inum, int nlink);
 
 unsigned char *jffs2_gc_fetch_page(struct jffs2_sb_info *c,
 				   struct jffs2_inode_info *f,

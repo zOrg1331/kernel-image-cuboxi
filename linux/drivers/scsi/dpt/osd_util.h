@@ -342,7 +342,7 @@ uLONG osdGetThreadID(void);
 /* wakes up the specifed thread */
 void osdWakeThread(uLONG);
 
-/* osd sleep for x milliseconds */
+/* osd sleep for x miliseconds */
 void osdSleep(uLONG);
 
 #define DPT_THREAD_PRIORITY_LOWEST 0x00

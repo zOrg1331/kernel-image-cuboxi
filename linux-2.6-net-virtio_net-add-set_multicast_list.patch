@@ -1,0 +1,56 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Mon, 5 Jul 2010 07:09:32 -0400
+Subject: [net] virtio_net: add set_multicast_list
+Message-id: <20100705070932.GA4030@gondor.apana.org.au>
+Patchwork-id: 26705
+O-Subject: [RHEL5 PATCH] virtio_net: Add set_multicast_list
+Bugzilla: 552574
+RH-Acked-by: Dor Laor <dlaor@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+RHEL5 bugzilla #552574
+
+RHEL5's virtio_net does not provide set_multicast_list, meaning
+that all attempts to add multicast addresses will fail.  This is
+despite that it always operates in promiscuous so multicast
+packets are always received.
+
+Upstream has fixed this by adding multicast filtering in the form
+of set_rx_mode.  Directly backporting this is difficult as RHEL5
+lacks the set_rx_mode infrastructure.
+
+The following patch simply adds a dummy set_multicast_list to allow
+the configuration of multicast addresses without affecting packet
+reception (as the NIC is always promiscuous).
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Thanks,
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index bfd0eaf..8697508 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -664,6 +664,10 @@ static int virtnet_change_mtu(struct net_device *dev, int new_mtu)
+ 	return 0;
+ }
+ 
++static void virtnet_mclist(struct net_device *dev)
++{
++}
++
+ static int virtnet_probe(struct virtio_device *vdev)
+ {
+ 	int err;
+@@ -681,6 +685,7 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 	dev->hard_start_xmit = start_xmit;
+ 	dev->get_stats = virtnet_get_stats;
+ 	dev->change_mtu = virtnet_change_mtu;
++	dev->set_multicast_list = virtnet_mclist;
+ 	dev->features = NETIF_F_HIGHDMA;
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	dev->poll_controller = virtnet_netpoll;

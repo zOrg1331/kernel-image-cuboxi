@@ -18,15 +18,19 @@
  *
  * Copyright (C) IBM Corporation, 2004
  *
- * Author: Max Asböck <amax@us.ibm.com>
+ * Author: Max Asböck <amax@us.ibm.com> 
  *
  */
 
-#include <linux/sched.h>
 #include "ibmasm.h"
 #include "lowlevel.h"
 
 static void exec_next_command(struct service_processor *sp);
+static void free_command(struct kobject *kobj);
+
+static struct kobj_type ibmasm_cmd_kobj_type = {
+	.release = free_command,
+};
 
 static atomic_t command_count = ATOMIC_INIT(0);
 
@@ -37,19 +41,22 @@ struct command *ibmasm_new_command(struct service_processor *sp, size_t buffer_s
 	if (buffer_size > IBMASM_CMD_MAX_BUFFER_SIZE)
 		return NULL;
 
-	cmd = kzalloc(sizeof(struct command), GFP_KERNEL);
+	cmd = kmalloc(sizeof(struct command), GFP_KERNEL);
 	if (cmd == NULL)
 		return NULL;
 
+	memset(cmd, 0, sizeof(*cmd));
 
-	cmd->buffer = kzalloc(buffer_size, GFP_KERNEL);
+	cmd->buffer = kmalloc(buffer_size, GFP_KERNEL);
 	if (cmd->buffer == NULL) {
 		kfree(cmd);
 		return NULL;
 	}
+	memset(cmd->buffer, 0, buffer_size);
 	cmd->buffer_size = buffer_size;
 
-	kref_init(&cmd->kref);
+	kobject_init(&cmd->kobj);
+	cmd->kobj.ktype = &ibmasm_cmd_kobj_type;
 	cmd->lock = &sp->lock;
 
 	cmd->status = IBMASM_CMD_PENDING;
@@ -62,10 +69,10 @@ struct command *ibmasm_new_command(struct service_processor *sp, size_t buffer_s
 	return cmd;
 }
 
-void ibmasm_free_command(struct kref *kref)
+static void free_command(struct kobject *kobj)
 {
-	struct command *cmd = to_command(kref);
-
+	struct command *cmd = to_command(kobj);
+ 
 	list_del(&cmd->queue_node);
 	atomic_dec(&command_count);
 	dbg("command count: %d\n", atomic_read(&command_count));
@@ -97,7 +104,7 @@ static inline void do_exec_command(struct service_processor *sp)
 {
 	char tsbuf[32];
 
-	dbg("%s:%d at %s\n", __func__, __LINE__, get_timestamp(tsbuf));
+	dbg("%s:%d at %s\n", __FUNCTION__, __LINE__, get_timestamp(tsbuf));
 
 	if (ibmasm_send_i2o_message(sp)) {
 		sp->current_command->status = IBMASM_CMD_FAILED;
@@ -106,21 +113,21 @@ static inline void do_exec_command(struct service_processor *sp)
 		exec_next_command(sp);
 	}
 }
-
+	
 /**
  * exec_command
  * send a command to a service processor
  * Commands are executed sequentially. One command (sp->current_command)
  * is sent to the service processor. Once the interrupt handler gets a
  * message of type command_response, the message is copied into
- * the current commands buffer,
+ * the current commands buffer, 
  */
 void ibmasm_exec_command(struct service_processor *sp, struct command *cmd)
 {
 	unsigned long flags;
 	char tsbuf[32];
 
-	dbg("%s:%d at %s\n", __func__, __LINE__, get_timestamp(tsbuf));
+	dbg("%s:%d at %s\n", __FUNCTION__, __LINE__, get_timestamp(tsbuf));
 
 	spin_lock_irqsave(&sp->lock, flags);
 
@@ -140,7 +147,7 @@ static void exec_next_command(struct service_processor *sp)
 	unsigned long flags;
 	char tsbuf[32];
 
-	dbg("%s:%d at %s\n", __func__, __LINE__, get_timestamp(tsbuf));
+	dbg("%s:%d at %s\n", __FUNCTION__, __LINE__, get_timestamp(tsbuf));
 
 	spin_lock_irqsave(&sp->lock, flags);
 	sp->current_command = dequeue_command(sp);
@@ -153,7 +160,7 @@ static void exec_next_command(struct service_processor *sp)
 	}
 }
 
-/**
+/** 
  * Sleep until a command has failed or a response has been received
  * and the command status been updated by the interrupt handler.
  * (see receive_response).
@@ -175,8 +182,8 @@ void ibmasm_receive_command_response(struct service_processor *sp, void *respons
 {
 	struct command *cmd = sp->current_command;
 
-	if (!sp->current_command)
-		return;
+	if (!sp->current_command) 
+		return; 
 
 	memcpy_fromio(cmd->buffer, response, min(size, cmd->buffer_size));
 	cmd->status = IBMASM_CMD_COMPLETE;

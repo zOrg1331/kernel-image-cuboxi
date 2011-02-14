@@ -1,0 +1,90 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Fri, 2 Jul 2010 23:15:19 -0400
+Subject: [pci] Add a probing code that seeks for an specific bus
+Message-id: <20100702201519.4d34cf2b@pedra>
+Patchwork-id: 26702
+O-Subject: [RHEL5 BZ#468877 2/5] pci: Add a probing code that seeks for an
+	specific bus
+Bugzilla: 468877
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This patch adds a probing code that seeks for an specific pci bus. It
+still needs testing, but it is hoped that this will help to identify the
+memory controller with Xeon 55xx series.
+
+[mchehab@redhat.com: backported to RHEL5]
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/pci/legacy.c b/arch/i386/pci/legacy.c
+index eca0178..3ee955f 100644
+--- a/arch/i386/pci/legacy.c
++++ b/arch/i386/pci/legacy.c
+@@ -5,32 +5,44 @@
+ #include <linux/pci.h>
+ #include "pci.h"
+ 
++void pcibios_scan_specific_bus(int busn)
++{
++	int devfn;
++	u32 l;
++	struct pci_sysdata *sd;
++
++	sd = kzalloc(sizeof(&sd), GFP_KERNEL);
++	if (!sd)
++		panic("Cannot allocate PCI domain sysdata");
++	if (pci_find_bus(0, busn))
++		return;
++	for (devfn = 0; devfn < 256; devfn += 8) {
++		if (!raw_pci_ops->read(0, busn, devfn, PCI_VENDOR_ID, 2, &l) &&
++			l != 0x0000 && l != 0xffff) {
++			DBG("Found device at %02x:%02x [%04x]\busn", busn, devfn, l);
++			printk(KERN_INFO "PCI: Discovered peer bus %02x\busn", busn);
++			if (!pci_scan_bus(busn, &pci_root_ops, sd))
++				kfree(sd);
++			break;
++		}
++	}
++}
++EXPORT_SYMBOL_GPL(pcibios_scan_specific_bus);
++
+ /*
+  * Discover remaining PCI buses in case there are peer host bridges.
+  * We use the number of last PCI bus provided by the PCI BIOS.
+  */
+ static void __devinit pcibios_fixup_peer_bridges(void)
+ {
+-	int n, devfn;
++	int n;
+ 
+ 	if (pcibios_last_bus <= 0 || pcibios_last_bus > 0xff)
+ 		return;
+ 	DBG("PCI: Peer bridge fixup\n");
+ 
+-	for (n=0; n <= pcibios_last_bus; n++) {
+-		u32 l;
+-		if (pci_find_bus(0, n))
+-			continue;
+-		for (devfn = 0; devfn < 256; devfn += 8) {
+-			if (!raw_pci_ops->read(0, n, devfn, PCI_VENDOR_ID, 2, &l) &&
+-			    l != 0x0000 && l != 0xffff) {
+-				DBG("Found device at %02x:%02x [%04x]\n", n, devfn, l);
+-				printk(KERN_INFO "PCI: Discovered peer bus %02x\n", n);
+-				pci_scan_bus_with_sysdata(n);
+-				break;
+-			}
+-		}
+-	}
++	for (n=0; n <= pcibios_last_bus; n++)
++		pcibios_scan_specific_bus(n);
+ }
+ 
+ static int __init pci_legacy_init(void)
+@@ -52,5 +64,6 @@ static int __init pci_legacy_init(void)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(pci_legacy_init);
+ 
+ subsys_initcall(pci_legacy_init);

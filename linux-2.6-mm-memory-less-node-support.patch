@@ -1,0 +1,67 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 228564: memory-less node support
+Date: Thu, 3 May 2007 12:02:22 -0400
+Bugzilla: 228564
+Message-Id: <20070503160222.8591.96821.sendpatchset@prarit.boston.redhat.com>
+Changelog: [mm] memory-less node support
+
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=8af5e2eb3cc4450ffba9496c875beac41bf4f4f8
+
+Resolves 228564.
+
+Compile & boot tested only.
+
+I was unable to test this as I do not have access to a system with memoryless
+nodes.  However, I was able to get a sign off on the patch by Christoph Lameter
+and as noted, the patch is upstream.
+
+
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/mm/mempolicy.c linux-2.6.18.x86_64/mm/mempolicy.c
+--- linux-2.6.18.x86_64.orig/mm/mempolicy.c	2007-04-04 09:01:08.000000000 -0400
++++ linux-2.6.18.x86_64/mm/mempolicy.c	2007-04-04 09:37:44.000000000 -0400
+@@ -142,7 +142,7 @@ static struct zonelist *bind_zonelist(no
+ 	max = 1 + MAX_NR_ZONES * nodes_weight(*nodes);
+ 	zl = kmalloc(sizeof(struct zone *) * max, GFP_KERNEL);
+ 	if (!zl)
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 	num = 0;
+ 	/* First put in the highest zones from all nodes, then all the next 
+ 	   lower zones etc. Avoid empty zones because the memory allocator
+@@ -155,6 +155,10 @@ static struct zonelist *bind_zonelist(no
+ 				zl->zones[num++] = z;
+ 		}
+ 	}
++	if (num == 0) {
++		kfree(zl);
++		return ERR_PTR(-EINVAL);
++	}
+ 	zl->zones[num] = NULL;
+ 	return zl;
+ }
+@@ -186,9 +190,10 @@ static struct mempolicy *mpol_new(int mo
+ 		break;
+ 	case MPOL_BIND:
+ 		policy->v.zonelist = bind_zonelist(nodes);
+-		if (policy->v.zonelist == NULL) {
++		if (IS_ERR(policy->v.zonelist)) {
++			void *error_code = policy->v.zonelist;
+ 			kmem_cache_free(policy_cache, policy);
+-			return ERR_PTR(-ENOMEM);
++			return error_code;
+ 		}
+ 		break;
+ 	}
+@@ -1655,7 +1660,7 @@ void mpol_rebind_policy(struct mempolicy
+ 		 * then zonelist_policy() will "FALL THROUGH" to MPOL_DEFAULT.
+ 		 */
+ 
+-		if (zonelist) {
++		if (!IS_ERR(zonelist)) {
+ 			/* Good - got mem - substitute new zonelist */
+ 			kfree(pol->v.zonelist);
+ 			pol->v.zonelist = zonelist;
+

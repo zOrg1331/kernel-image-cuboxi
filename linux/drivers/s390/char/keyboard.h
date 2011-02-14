@@ -25,9 +25,9 @@ struct kbd_data {
 	unsigned short **key_maps;
 	char **func_table;
 	fn_handler_fn **fn_handler;
-	struct kbdiacruc *accent_table;
+	struct kbdiacr *accent_table;
 	unsigned int accent_table_size;
-	unsigned int diacr;
+	unsigned char diacr;
 	unsigned short sysrq;
 };
 

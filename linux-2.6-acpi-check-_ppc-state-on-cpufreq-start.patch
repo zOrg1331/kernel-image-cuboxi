@@ -1,0 +1,52 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Fri, 27 Aug 2010 18:44:03 -0400
+Subject: [acpi] check _PPC state on cpufreq start
+Message-id: <1282934643-19423-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 27844
+O-Subject: [PATCH] [RHEL 5.6 PATCH] ACPI: Check _PPC state on cpufreq start
+Bugzilla: 581037
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+rhbz: #581037
+
+Some Thinkpads will provide bogus _PPC cpufreq limiting information if
+the method is queried before the CPUs have been onlined. The patch to
+fix that meant that we were no longer evaluating _PPC at all on cpufreq
+startup. Change that to ensure that we always evaluate _PPC on init, but
+not until then.
+
+diff --git a/drivers/acpi/processor_perflib.c b/drivers/acpi/processor_perflib.c
+index 208d159..988f10f 100644
+--- a/drivers/acpi/processor_perflib.c
++++ b/drivers/acpi/processor_perflib.c
+@@ -77,6 +77,8 @@ MODULE_PARM_DESC(ignore_ppc, "If the frequency of your machine gets wrongly" \
+ 
+ static int acpi_processor_ppc_status;
+ 
++static int acpi_processor_get_platform_limit(struct acpi_processor *pr);
++
+ static int acpi_processor_ppc_notifier(struct notifier_block *nb,
+ 				       unsigned long event, void *data)
+ {
+@@ -84,8 +86,12 @@ static int acpi_processor_ppc_notifier(struct notifier_block *nb,
+ 	struct acpi_processor *pr;
+ 	unsigned int ppc = 0;
+ 
+-	if (event == CPUFREQ_START && ignore_ppc < 0) {
++	pr = processors[policy->cpu];
++
++	if (event == CPUFREQ_START && ignore_ppc < 1) {
+ 		ignore_ppc = 0;
++		if (pr)
++			acpi_processor_get_platform_limit(pr);
+ 		return 0;
+ 	}
+ 	
+@@ -97,7 +103,6 @@ static int acpi_processor_ppc_notifier(struct notifier_block *nb,
+ 	if (event != CPUFREQ_INCOMPATIBLE)
+ 		goto out;
+ 
+-	pr = processors[policy->cpu];
+ 	if (!pr || !pr->performance)
+ 		goto out;
+ 

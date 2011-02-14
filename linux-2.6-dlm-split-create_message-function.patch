@@ -1,0 +1,98 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: split create_message function
+Date: Thu, 19 Apr 2007 11:45:58 -0500
+Bugzilla: 237125
+Message-Id: <20070419164558.GC23079@redhat.com>
+Changelog: [dlm] split create_message function
+
+
+bz 237125
+
+This splits the current create_message() function into two parts so that
+later patches can call the new lower-level _create_message() function when
+they don't have an rsb struct.  No functional change in this patch.
+
+Index: linux-2.6.21-rc5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.21-rc5-quilt.orig/fs/dlm/lock.c	2007-03-28 12:29:18.000000000 -0500
++++ linux-2.6.21-rc5-quilt/fs/dlm/lock.c	2007-03-28 12:39:43.000000000 -0500
+@@ -2301,31 +2301,14 @@
+  * receive_lookup_reply		send_lookup_reply
+  */
+ 
+-static int create_message(struct dlm_rsb *r, struct dlm_lkb *lkb,
+-			  int to_nodeid, int mstype,
+-			  struct dlm_message **ms_ret,
+-			  struct dlm_mhandle **mh_ret)
++static int _create_message(struct dlm_ls *ls, int mb_len,
++			   int to_nodeid, int mstype,
++			   struct dlm_message **ms_ret,
++			   struct dlm_mhandle **mh_ret)
+ {
+ 	struct dlm_message *ms;
+ 	struct dlm_mhandle *mh;
+ 	char *mb;
+-	int mb_len = sizeof(struct dlm_message);
+-
+-	switch (mstype) {
+-	case DLM_MSG_REQUEST:
+-	case DLM_MSG_LOOKUP:
+-	case DLM_MSG_REMOVE:
+-		mb_len += r->res_length;
+-		break;
+-	case DLM_MSG_CONVERT:
+-	case DLM_MSG_UNLOCK:
+-	case DLM_MSG_REQUEST_REPLY:
+-	case DLM_MSG_CONVERT_REPLY:
+-	case DLM_MSG_GRANT:
+-		if (lkb && lkb->lkb_lvbptr)
+-			mb_len += r->res_ls->ls_lvblen;
+-		break;
+-	}
+ 
+ 	/* get_buffer gives us a message handle (mh) that we need to
+ 	   pass into lowcomms_commit and a message buffer (mb) that we
+@@ -2340,7 +2323,7 @@
+ 	ms = (struct dlm_message *) mb;
+ 
+ 	ms->m_header.h_version = (DLM_HEADER_MAJOR | DLM_HEADER_MINOR);
+-	ms->m_header.h_lockspace = r->res_ls->ls_global_id;
++	ms->m_header.h_lockspace = ls->ls_global_id;
+ 	ms->m_header.h_nodeid = dlm_our_nodeid();
+ 	ms->m_header.h_length = mb_len;
+ 	ms->m_header.h_cmd = DLM_MSG;
+@@ -2352,6 +2335,33 @@
+ 	return 0;
+ }
+ 
++static int create_message(struct dlm_rsb *r, struct dlm_lkb *lkb,
++			  int to_nodeid, int mstype,
++			  struct dlm_message **ms_ret,
++			  struct dlm_mhandle **mh_ret)
++{
++	int mb_len = sizeof(struct dlm_message);
++
++	switch (mstype) {
++	case DLM_MSG_REQUEST:
++	case DLM_MSG_LOOKUP:
++	case DLM_MSG_REMOVE:
++		mb_len += r->res_length;
++		break;
++	case DLM_MSG_CONVERT:
++	case DLM_MSG_UNLOCK:
++	case DLM_MSG_REQUEST_REPLY:
++	case DLM_MSG_CONVERT_REPLY:
++	case DLM_MSG_GRANT:
++		if (lkb && lkb->lkb_lvbptr)
++			mb_len += r->res_ls->ls_lvblen;
++		break;
++	}
++
++	return _create_message(r->res_ls, mb_len, to_nodeid, mstype,
++			       ms_ret, mh_ret);
++}
++
+ /* further lowcomms enhancements or alternate implementations may make
+    the return value from this function useful at some point */
+ 
+

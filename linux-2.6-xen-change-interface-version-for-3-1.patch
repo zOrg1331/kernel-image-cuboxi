@@ -1,0 +1,62 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 20/21] change interface version for 3.1
+Date: Thu, 07 Jun 2007 03:48:42 -0400
+Bugzilla: 242989
+Message-Id: <4667B85A.1040903@redhat.com>
+Changelog: [xen] change interface version for 3.1
+
+
+bz242989
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242989
+
+Need to change interface version so that dom0 can
+work with xen-3.1 hypervisor and tools.
+
+Thanks,
+Kei
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/vmlinux.lds.S |    1 +
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/domctl.h |    2 +-
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/sysctl.h |    2 +-
+ 3 files changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN arch/ia64/kernel/vmlinux.lds.S~fix_for_dom0 arch/ia64/kernel/vmlinux.lds.S
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/kernel/vmlinux.lds.S~fix_for_dom0	2007-06-07 02:44:34.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/vmlinux.lds.S	2007-06-07 02:44:34.000000000 -0400
+@@ -163,6 +163,7 @@ SECTIONS
+ 	}
+ #endif
+ 
++  . = ALIGN(16);
+    __con_initcall_start = .;
+   .con_initcall.init : AT(ADDR(.con_initcall.init) - LOAD_OFFSET)
+ 	{ *(.con_initcall.init) }
+diff -puN include/xen/interface/domctl.h~fix_for_dom0 include/xen/interface/domctl.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/domctl.h~fix_for_dom0	2007-06-07 02:44:34.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/domctl.h	2007-06-07 02:44:34.000000000 -0400
+@@ -16,7 +16,7 @@
+ 
+ #include "xen.h"
+ 
+-#define XEN_DOMCTL_INTERFACE_VERSION 0x00000003
++#define XEN_DOMCTL_INTERFACE_VERSION 0x00000005
+ 
+ struct xenctl_cpumap {
+     XEN_GUEST_HANDLE(uint8_t) bitmap;
+diff -puN include/xen/interface/sysctl.h~fix_for_dom0 include/xen/interface/sysctl.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/sysctl.h~fix_for_dom0	2007-06-07 02:44:34.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/sysctl.h	2007-06-07 02:44:34.000000000 -0400
+@@ -16,7 +16,7 @@
+ #include "xen.h"
+ #include "domctl.h"
+ 
+-#define XEN_SYSCTL_INTERFACE_VERSION 0x00000002
++#define XEN_SYSCTL_INTERFACE_VERSION 0x00000003
+ 
+ /*
+  * Read console content from Xen buffer ring.
+
+_
+

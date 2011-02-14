@@ -1,0 +1,53 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 Nov 2007 17:00:00 +0100
+Subject: [s390] use IPL CLEAR for reipl under z/VM
+Message-id: 20071120160000.GA16152@redhat.com
+O-Subject: [RHEL5 U2 PATCH ] s390 - Use IPL CLEAR for reipl under z/VM
+Bugzilla: 386991
+
+Description
+============
+
+During reipl under z/VM Linux does not clear the memory.
+The result is that the pages are not freed in z/VM's memory
+management system.
+
+Bugzilla
+=========
+
+BZ 386991
+https://bugzilla.redhat.com/show_bug.cgi?id=386991
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 6517156cd0225d666f53ecaf49b5b4784b0df8b6
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index 33a2836..a9bf9e6 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -652,10 +652,10 @@ void do_reipl(void)
+ 	case IPL_METHOD_CCW_VM:
+ 		reipl_get_ascii_loadparm(loadparm);
+ 		if (strlen(loadparm) == 0)
+-			sprintf(buf, "IPL %X",
++			sprintf(buf, "IPL %X CLEAR",
+ 				reipl_block_ccw->ipl_info.ccw.devno);
+ 		else
+-			sprintf(buf, "IPL %X LOADPARM '%s'",
++			sprintf(buf, "IPL %X CLEAR LOADPARM '%s'",
+ 				reipl_block_ccw->ipl_info.ccw.devno, loadparm);
+ 		cpcmd(buf, NULL, 0, NULL);
+ 		break;

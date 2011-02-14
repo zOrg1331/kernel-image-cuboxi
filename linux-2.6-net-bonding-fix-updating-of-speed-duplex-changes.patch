@@ -1,0 +1,79 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 7 May 2010 14:10:25 -0400
+Subject: [net] bonding: fix updating of speed/duplex changes
+Message-id: <20100507141025.GD23636@gospo.rdu.redhat.com>
+Patchwork-id: 24899
+O-Subject: [PATCH RHEL5.6] bonding: Fix updating of speed/duplex changes
+Bugzilla: 567604
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Reports indicated that 802.3ad mode bonding was broken on RHEL5.4 and
+later.  After I started looking at it I realized we got bit by an
+upstream regression, so I backported the upstream fix:
+
+	commit 17d04500e2528217de5fe967599f98ee84348a9c
+	Author: Jay Vosburgh <fubar@us.ibm.com>
+	Date:   Wed Mar 18 18:38:25 2009 -0700
+
+	    bonding: Fix updating of speed/duplex changes
+
+		This patch corrects an omission from the following commit:
+
+	    commit f0c76d61779b153dbfb955db3f144c62d02173c2
+	    Author: Jay Vosburgh <fubar@us.ibm.com>
+	    Date:   Wed Jul 2 18:21:58 2008 -0700
+
+		bonding: refactor mii monitor
+
+		The un-refactored code checked the link speed and duplex of
+	    every slave on every pass; the refactored code did not do so.
+
+		The 802.3ad and balance-alb/tlb modes utilize the speed and
+	    duplex information, and require it to be kept up to date.  This patch
+	    adds a notifier check to perform the appropriate updating when the slave
+	    device speed changes.
+
+Reporter has verified this will resolve RHBZ 567604
+
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index d4d7815..018e61e 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -3604,11 +3604,29 @@ static int bond_slave_netdev_event(unsigned long event, struct net_device *slave
+ 		}
+ 		break;
+ 	case NETDEV_CHANGE:
+-		/*
+-		 * TODO: is this what we get if somebody
+-		 * sets up a hierarchical bond, then rmmod's
+-		 * one of the slave bonding devices?
+-		 */
++		if ((bond->params.mode == BOND_MODE_8023AD) ||
++		    (bond->params.mode == BOND_MODE_TLB) ||
++		    (bond->params.mode == BOND_MODE_ALB)) {
++			struct slave *slave;
++
++			slave = bond_get_slave_by_dev(bond, slave_dev);
++			if (slave) {
++				u16 old_speed = slave->speed;
++				u16 old_duplex = slave->duplex;
++
++				bond_update_speed_duplex(slave);
++
++				if ((bond->params.mode == BOND_MODE_TLB) ||
++				    (bond->params.mode == BOND_MODE_ALB))
++					break;
++
++				if (old_speed != slave->speed)
++					bond_3ad_adapter_speed_changed(slave);
++				if (old_duplex != slave->duplex)
++					bond_3ad_adapter_duplex_changed(slave);
++			}
++		}
++
+ 		break;
+ 	case NETDEV_DOWN:
+ 		/*

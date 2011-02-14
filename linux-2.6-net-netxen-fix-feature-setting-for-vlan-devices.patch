@@ -1,0 +1,46 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Wed, 22 Sep 2010 20:11:04 -0400
+Subject: [net] netxen: fix feature setting for vlan devices
+Message-id: <20100922201104.2527.75994.sendpatchset@localhost.localdomain>
+Patchwork-id: 28345
+O-Subject: [RHEL 5.6 PATCH 2/6] netxen: fix feature setting for vlan devices
+Bugzilla: 625079
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 625079 (https://bugzilla.redhat.com/show_bug.cgi?id=625079)
+
+Upstream Status
+---------------
+
+RHEL 5 specific.
+
+Description
+-----------
+
+>From 0205087a4de92edda07e3e6bc2b15b93f5c8732c Mon Sep 17 00:00:00 2001
+From: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Date: Wed, 18 Aug 2010 00:22:43 -0700
+Subject: [PATCH] netxen: fix feature setting for vlan devices
+
+Need to enable NETIF_F_VLAN_TSO and NETIF_F_VlAN_CSUM.
+
+Signed-off-by: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index d3ce1fb..335539f 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -1243,7 +1243,8 @@ netxen_setup_netdev(struct netxen_adapter *adapter,
+ 	netdev->features |= (NETIF_F_GRO);
+ 
+ 	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
+-		netdev->features |= (NETIF_F_HW_CSUM | NETIF_F_TSO6);
++		netdev->features |= (NETIF_F_HW_CSUM | NETIF_F_TSO6 |
++					NETIF_F_VLAN_TSO | NETIF_F_VLAN_CSUM);
+ 	}
+ 
+ 	if (adapter->pci_using_dac) {

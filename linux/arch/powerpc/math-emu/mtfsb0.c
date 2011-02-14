@@ -2,8 +2,7 @@
 #include <linux/errno.h>
 #include <asm/uaccess.h>
 
-#include <asm/sfp-machine.h>
-#include <math-emu/soft-fp.h>
+#include "soft-fp.h"
 
 int
 mtfsb0(int crbD)
@@ -12,7 +11,7 @@ mtfsb0(int crbD)
 		__FPU_FPSCR &= ~(1 << (31 - crbD));
 
 #ifdef DEBUG
-	printk("%s: %d %08lx\n", __func__, crbD, __FPU_FPSCR);
+	printk("%s: %d %08lx\n", __FUNCTION__, crbD, __FPU_FPSCR);
 #endif
 
 	return 0;

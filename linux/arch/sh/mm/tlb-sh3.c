@@ -18,6 +18,7 @@
 #include <linux/mman.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
 
 #include <asm/system.h>
@@ -27,15 +28,31 @@
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 
-void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
+void update_mmu_cache(struct vm_area_struct * vma,
+		      unsigned long address, pte_t pte)
 {
-	unsigned long flags, pteval, vpn;
+	unsigned long flags;
+	unsigned long pteval;
+	unsigned long vpn;
 
-	/*
-	 * Handle debugger faulting in for debugee.
-	 */
+	/* Ptrace may call this routine. */
 	if (vma && current->active_mm != vma->vm_mm)
 		return;
+
+#if defined(CONFIG_SH7705_CACHE_32KB)
+	{
+		struct page *page = pte_page(pte);
+		unsigned long pfn = pte_pfn(pte);
+
+		if (pfn_valid(pfn) && !test_bit(PG_mapped, &page->flags)) {
+			unsigned long phys = pte_val(pte) & PTE_PHYS_MASK;
+
+			__flush_wback_region((void *)P1SEGADDR(phys),
+					     PAGE_SIZE);
+			__set_bit(PG_mapped, &page->flags);
+		}
+	}
+#endif
 
 	local_irq_save(flags);
 
@@ -55,7 +72,7 @@ void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
 	local_irq_restore(flags);
 }
 
-void local_flush_tlb_one(unsigned long asid, unsigned long page)
+void __flush_tlb_page(unsigned long asid, unsigned long page)
 {
 	unsigned long addr, data;
 	int i, ways = MMU_NTLB_WAYS;
@@ -69,7 +86,7 @@ void local_flush_tlb_one(unsigned long asid, unsigned long page)
 	addr = MMU_TLB_ADDRESS_ARRAY | (page & 0x1F000);
 	data = (page & 0xfffe0000) | asid; /* VALID bit is off */
 
-	if ((current_cpu_data.flags & CPU_HAS_MMU_PAGE_ASSOC)) {
+	if ((cpu_data->flags & CPU_HAS_MMU_PAGE_ASSOC)) {
 		addr |= MMU_PAGE_ASSOC_BIT;
 		ways = 1;	/* we already know the way .. */
 	}
@@ -77,3 +94,4 @@ void local_flush_tlb_one(unsigned long asid, unsigned long page)
 	for (i = 0; i < ways; i++)
 		ctrl_outl(data, addr + (i << 8));
 }
+

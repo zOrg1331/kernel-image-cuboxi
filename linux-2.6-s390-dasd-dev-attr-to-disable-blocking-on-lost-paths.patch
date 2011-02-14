@@ -1,0 +1,181 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 14 Jul 2009 18:56:38 +0200
+Subject: [s390] dasd: dev attr to disable blocking on lost paths
+Message-id: 20090714165638.GB2417@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - dasd: add device attribute to disable blocking on lost paths
+Bugzilla: 503222
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+When the connection between host and storage server is lost, the
+dasd device driver usually blocks all I/O on affected devices and
+waits for them to reappear. In some setups however it would be
+better if the I/O is returned as error so that device can be
+recovered by some other means, eg. in a raid or multipath setup.
+
+Solution: Add a new dasd feature 'failfast' which controls the dasd
+driver handling of requests and can be configured per device
+independently of the setting of the FAILFAST flag per request.
+If the 'failfast' feature is enabled for a device, the dasd
+driver will handle requests as if the request had the FAILFAST
+flag set, particularly posting I/O failure, when no path is
+operational to the device.
+The 'failfast' feature can be configured via the new sysfs
+attribute 'failfast' or via the 'dasd=' parameter, just like
+any other feature. By default, the 'failfast' feature is not
+set.
+
+Bugzilla
+=========
+
+BZ 503222
+https://bugzilla.redhat.com/show_bug.cgi?id=503222
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of kernel version 2.6.29
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=13de227bcd80fbdaeebe1f31154487dddb7d5b1e
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/drivers/s390/block/dasd_devmap.c b/drivers/s390/block/dasd_devmap.c
+index 293ef05..5b88b1d 100644
+--- a/drivers/s390/block/dasd_devmap.c
++++ b/drivers/s390/block/dasd_devmap.c
+@@ -204,6 +204,8 @@ dasd_feature_list(char *str, char **endp)
+ 			features |= DASD_FEATURE_USEDIAG;
+ 		else if (len == 6 && !strncmp(str, "erplog", 6))
+ 			features |= DASD_FEATURE_ERPLOG;
++		else if (len == 8 && !strncmp(str, "failfast", 8))
++			features |= DASD_FEATURE_FAILFAST;
+ 		else {
+ 			MESSAGE(KERN_WARNING,
+ 				"unsupported feature: %*s, "
+@@ -661,6 +663,52 @@ dasd_device_from_cdev(struct ccw_device *cdev)
+  */
+ 
+ /*
++ * failfast controls the behaviour, if no path is available
++ */
++static ssize_t
++dasd_ff_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct dasd_devmap *devmap;
++	int ff_flag;
++
++	devmap = dasd_find_busid(dev->bus_id);
++	if (!IS_ERR(devmap))
++		ff_flag = (devmap->features & DASD_FEATURE_FAILFAST) != 0;
++	else
++		ff_flag = (DASD_FEATURE_DEFAULT & DASD_FEATURE_FAILFAST) != 0;
++	return snprintf(buf, PAGE_SIZE, ff_flag ? "1\n" : "0\n");
++}
++
++static ssize_t
++dasd_ff_store(struct device *dev, struct device_attribute *attr,
++	      const char *buf, size_t count)
++{
++	struct dasd_devmap *devmap;
++	int val;
++	char *endp;
++
++	devmap = dasd_devmap_from_cdev(to_ccwdev(dev));
++	if (IS_ERR(devmap))
++		return PTR_ERR(devmap);
++
++	val = simple_strtoul(buf, &endp, 0);
++	if (((endp + 1) < (buf + count)) || (val > 1))
++		return -EINVAL;
++
++	spin_lock(&dasd_devmap_lock);
++	if (val)
++		devmap->features |= DASD_FEATURE_FAILFAST;
++	else
++		devmap->features &= ~DASD_FEATURE_FAILFAST;
++	if (devmap->device)
++		devmap->device->features = devmap->features;
++	spin_unlock(&dasd_devmap_lock);
++	return count;
++}
++
++static DEVICE_ATTR(failfast, 0644, dasd_ff_show, dasd_ff_store);
++
++/*
+  * readonly controls the readonly status of a dasd
+  */
+ static ssize_t
+@@ -974,6 +1022,7 @@ static struct attribute * dasd_attrs[] = {
+ 	&dev_attr_use_diag.attr,
+ 	&dev_attr_eer_enabled.attr,
+ 	&dev_attr_erplog.attr,
++	&dev_attr_failfast.attr,
+ 	NULL,
+ };
+ 
+diff --git a/drivers/s390/block/dasd_diag.c b/drivers/s390/block/dasd_diag.c
+index 63bd607..a919fed 100644
+--- a/drivers/s390/block/dasd_diag.c
++++ b/drivers/s390/block/dasd_diag.c
+@@ -548,7 +548,8 @@ dasd_diag_build_cp(struct dasd_device * device, struct request *req)
+ 	}
+ 	cqr->retries = DIAG_MAX_RETRIES;
+ 	cqr->buildclk = get_clock();
+-	if (blk_noretry_ff_request(req))
++	if (blk_noretry_ff_request(req) ||
++	    device->features & DASD_FEATURE_FAILFAST)
+ 		set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+ 	cqr->device = device;
+ 	cqr->expires = DIAG_TIMEOUT;
+diff --git a/drivers/s390/block/dasd_eckd.c b/drivers/s390/block/dasd_eckd.c
+index 79f33c5..5c22065 100644
+--- a/drivers/s390/block/dasd_eckd.c
++++ b/drivers/s390/block/dasd_eckd.c
+@@ -1410,7 +1410,8 @@ dasd_eckd_build_cp(struct dasd_device * device, struct request *req)
+ 			recid++;
+ 		}
+ 	}
+-	if (blk_noretry_ff_request(req))
++	if (blk_noretry_ff_request(req) ||
++	    device->features & DASD_FEATURE_FAILFAST)
+ 		set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+ 	cqr->device = device;
+ 	cqr->expires = 5 * 60 * HZ;	/* 5 minutes */
+diff --git a/drivers/s390/block/dasd_fba.c b/drivers/s390/block/dasd_fba.c
+index f4a1c28..7250144 100644
+--- a/drivers/s390/block/dasd_fba.c
++++ b/drivers/s390/block/dasd_fba.c
+@@ -344,7 +344,8 @@ dasd_fba_build_cp(struct dasd_device * device, struct request *req)
+ 			recid++;
+ 		}
+ 	}
+-	if (blk_noretry_ff_request(req))
++	if (blk_noretry_ff_request(req) ||
++	    device->features & DASD_FEATURE_FAILFAST)
+ 		set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
+ 	cqr->device = device;
+ 	cqr->expires = 5 * 60 * HZ;	/* 5 minutes */
+diff --git a/include/asm-s390/dasd.h b/include/asm-s390/dasd.h
+index 1113967..eb602dc 100644
+--- a/include/asm-s390/dasd.h
++++ b/include/asm-s390/dasd.h
+@@ -77,6 +77,7 @@ typedef struct dasd_information2_t {
+ #define DASD_FEATURE_USEDIAG	     0x02
+ #define DASD_FEATURE_INITIAL_ONLINE  0x04
+ #define DASD_FEATURE_ERPLOG	     0x08
++#define DASD_FEATURE_FAILFAST	     0x10
+ 
+ #define DASD_PARTN_BITS 2
+ 

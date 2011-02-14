@@ -11,9 +11,6 @@
  *		 Stefan Bader <shbader@de.ibm.com>
  */
 
-#define KMSG_COMPONENT "tape"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/stddef.h>
 #include <linux/kernel.h>
 #include <linux/bio.h>
@@ -29,6 +26,8 @@
 #include "tape.h"
 #include "tape_std.h"
 
+#define PRINTK_HEADER "TAPE_STD: "
+
 /*
  * tape_std_assign
  */
@@ -40,15 +39,16 @@ tape_std_assign_timeout(unsigned long data)
 	int rc;
 
 	request = (struct tape_request *) data;
-	device = request->device;
-	BUG_ON(!device);
+	if ((device = request->device) == NULL)
+		BUG();
 
 	DBF_EVENT(3, "%08x: Assignment timeout. Device busy.\n",
 			device->cdev_id);
 	rc = tape_cancel_io(device, request);
 	if(rc)
-		DBF_EVENT(3, "(%s): Assign timeout: Cancel failed with rc = %i\n",
-			dev_name(&device->cdev->dev), rc);
+		PRINT_ERR("(%s): Assign timeout: Cancel failed with rc = %i\n",
+			device->cdev->dev.bus_id, rc);
+
 }
 
 int
@@ -71,7 +71,7 @@ tape_std_assign(struct tape_device *device)
 	 * to another host (actually this shouldn't happen but it does).
 	 * So we set up a timeout for this call.
 	 */
-	init_timer_on_stack(&timeout);
+	init_timer(&timeout);
 	timeout.function = tape_std_assign_timeout;
 	timeout.data     = (unsigned long) request;
 	timeout.expires  = jiffies + 2 * HZ;
@@ -82,6 +82,8 @@ tape_std_assign(struct tape_device *device)
 	del_timer(&timeout);
 
 	if (rc != 0) {
+		PRINT_WARN("%s: assign failed - device might be busy\n",
+			device->cdev->dev.bus_id);
 		DBF_EVENT(3, "%08x: assign failed - device might be busy\n",
 			device->cdev_id);
 	} else {
@@ -103,6 +105,8 @@ tape_std_unassign (struct tape_device *device)
 	if (device->tape_state == TS_NOT_OPER) {
 		DBF_EVENT(3, "(%08x): Can't unassign device\n",
 			device->cdev_id);
+		PRINT_WARN("(%s): Can't unassign device - device gone\n",
+			device->cdev->dev.bus_id);
 		return -EIO;
 	}
 
@@ -116,6 +120,7 @@ tape_std_unassign (struct tape_device *device)
 
 	if ((rc = tape_do_io(device, request)) != 0) {
 		DBF_EVENT(3, "%08x: Unassign failed\n", device->cdev_id);
+		PRINT_WARN("%s: Unassign failed\n", device->cdev->dev.bus_id);
 	} else {
 		DBF_EVENT(3, "%08x: Tape unassigned\n", device->cdev_id);
 	}
@@ -236,12 +241,14 @@ tape_std_mtsetblk(struct tape_device *device, int count)
 	if (count > MAX_BLOCKSIZE) {
 		DBF_EVENT(3, "Invalid block size (%d > %d) given.\n",
 			count, MAX_BLOCKSIZE);
+		PRINT_ERR("Invalid block size (%d > %d) given.\n",
+			count, MAX_BLOCKSIZE);
 		return -EINVAL;
 	}
 
 	/* Allocate a new idal buffer. */
 	new = idal_buffer_alloc(count, 0);
-	if (IS_ERR(new))
+	if (new == NULL)
 		return -ENOMEM;
 	if (device->char_data.idal_buf != NULL)
 		idal_buffer_free(device->char_data.idal_buf);
@@ -625,6 +632,14 @@ tape_std_mtcompression(struct tape_device *device, int mt_count)
 
 	if (mt_count < 0 || mt_count > 1) {
 		DBF_EXCEPTION(6, "xcom parm\n");
+		if (*device->modeset_byte & 0x08)
+			PRINT_INFO("(%s) Compression is currently on\n",
+				   device->cdev->dev.bus_id);
+		else
+			PRINT_INFO("(%s) Compression is currently off\n",
+				   device->cdev->dev.bus_id);
+		PRINT_INFO("Use 1 to switch compression on, 0 to "
+			   "switch it off\n");
 		return -EINVAL;
 	}
 	request = tape_alloc_request(2, 0);
@@ -632,10 +647,7 @@ tape_std_mtcompression(struct tape_device *device, int mt_count)
 		return PTR_ERR(request);
 	request->op = TO_NOP;
 	/* setup ccws */
-	if (mt_count == 0)
-		*device->modeset_byte &= ~0x08;
-	else
-		*device->modeset_byte |= 0x08;
+	*device->modeset_byte = (mt_count == 0) ? 0x00 : 0x08;
 	tape_ccw_cc(request->cpaddr, MODE_SET_DB, 1, device->modeset_byte);
 	tape_ccw_end(request->cpaddr + 1, NOP, 0, NULL);
 	/* execute it */

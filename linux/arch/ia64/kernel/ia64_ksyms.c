@@ -12,16 +12,17 @@ EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(strlen);
 
-#include<asm/pgtable.h>
-EXPORT_SYMBOL_GPL(empty_zero_page);
-
 #include <asm/checksum.h>
 EXPORT_SYMBOL(ip_fast_csum);		/* hand-coded assembly */
-EXPORT_SYMBOL(csum_ipv6_magic);
+
+#include <asm/semaphore.h>
+EXPORT_SYMBOL(__down);
+EXPORT_SYMBOL(__down_interruptible);
+EXPORT_SYMBOL(__down_trylock);
+EXPORT_SYMBOL(__up);
 
 #include <asm/page.h>
 EXPORT_SYMBOL(clear_page);
-EXPORT_SYMBOL(copy_page);
 
 #ifdef CONFIG_VIRTUAL_MEM_MAP
 #include <linux/bootmem.h>
@@ -84,18 +85,25 @@ EXPORT_SYMBOL(ia64_save_scratch_fpregs);
 #include <asm/unwind.h>
 EXPORT_SYMBOL(unw_init_running);
 
-#include <linux/efi.h>
-EXPORT_SYMBOL_GPL(efi_mem_type);
-
-#if defined(CONFIG_IA64_ESI) || defined(CONFIG_IA64_ESI_MODULE)
-extern void esi_call_phys (void);
-EXPORT_SYMBOL_GPL(esi_call_phys);
+#ifdef ASM_SUPPORTED
+# ifdef CONFIG_SMP
+#  if (__GNUC__ == 3 && __GNUC_MINOR__ < 3)
+/*
+ * This is not a normal routine and we don't want a function descriptor for it, so we use
+ * a fake declaration here.
+ */
+extern char ia64_spinlock_contention_pre3_4;
+EXPORT_SYMBOL(ia64_spinlock_contention_pre3_4);
+#  else
+/*
+ * This is not a normal routine and we don't want a function descriptor for it, so we use
+ * a fake declaration here.
+ */
+extern char ia64_spinlock_contention;
+EXPORT_SYMBOL(ia64_spinlock_contention);
+#  endif
+# endif
 #endif
+
 extern char ia64_ivt[];
 EXPORT_SYMBOL(ia64_ivt);
-
-#include <asm/ftrace.h>
-#ifdef CONFIG_FUNCTION_TRACER
-/* mcount is defined in assembly */
-EXPORT_SYMBOL(_mcount);
-#endif

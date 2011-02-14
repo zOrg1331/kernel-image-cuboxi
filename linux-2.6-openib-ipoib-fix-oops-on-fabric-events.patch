@@ -1,0 +1,123 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 17 Nov 2008 11:35:59 -0500
+Subject: [openib] IPoIB: fix oops on fabric events
+Message-id: 1226939759.4765.406.camel@firewall.xsintricity.com
+O-Subject: [Patch RHEL5.3] IPoIB: fix oops on fabric events
+Bugzilla: 471890
+RH-Acked-by: Jay Fenlason <fenlason@redhat.com>
+
+This is for https://bugzilla.redhat.com/show_bug.cgi?id=471890
+
+Long story short, when something happens to the IB fabric, each machine
+has to possibly record new paths.  There is an oopser in the IPoIB code
+such that the process of recording new paths might bring the machine
+down.  Here's the fun part: if a machine goes down because it oopsed, it
+will then trigger an *additional* fabric event for other machines in the
+fabric.  So, given an 8000 node cluster, if a fabric event happens,
+possibly all 8000 nodes risk oopsing as they record the event, and if
+any of them *do* oops, then they trigger a new event that the remaining
+7999 nodes must process in addition to the first event.  I think you get
+the idea.  This bug can, under the right conditions, act just like the
+process of thermonuclear fission inside an atomic weapon and eventually
+1 machine can take down the entire 8000 node cluster.
+
+I have the patch posted in the bug with a specific request that IBM test
+my exact patch and report their results back.  I have built and run
+tested the patch, but I don't have a cluster large enough to effectively
+test the patch.  I'm waiting on IBM feedback for that.  In the meantime,
+acks for the code itself would be appreciated.
+
+--
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+commit 252b989b87014fc820484abcab1cf2bf26549ee9
+Author: Doug Ledford <dledford@redhat.com>
+Date:   Mon Nov 17 11:23:43 2008 -0500
+
+    IPoIB: Fix crash when path record fails after path flush, rhel5 specific
+
+    This is a modified version of this upstream commit:
+
+    IPoIB: Fix crash when path record fails after path flush
+
+    Commit ee1e2c82 ("IPoIB: Refresh paths instead of flushing them on SM
+    change events") changed how paths are flushed on an SM event.  This
+    change introduces a problem if the path record query triggered by
+    fails, causing path->ah to become NULL.  A later successful path query
+    will then trigger WARN_ON() in path_rec_completion(), and crash
+    because path->ah has already been freed, so the ipoib_put_ah() inside
+    the lock in path_rec_completion() may actually drop the last reference
+    (contrary to the comment that claims this is safe).
+
+    Fix this by updating path->ah and freeing old_ah only when the path
+    record query is successful.  This prevents the neighbour AH and that
+    path AH from getting out of sync.
+
+    This fixes <https://bugs.openfabrics.org/show_bug.cgi?id=1194>
+
+    Reported-by: Rabah Salem <ravah@mellanox.com>
+    Debugged-by: Eli Cohen <eli@mellanox.co.il>
+    Signed-off-by: Roland Dreier <rolandd@cisco.com>
+
+    Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_main.c b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+index e95e58d..0f03d20 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_main.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_main.c
+@@ -385,6 +385,7 @@ static void path_rec_completion(int status,
+ 	struct net_device *dev = path->dev;
+ 	struct ipoib_dev_priv *priv = netdev_priv(dev);
+ 	struct ipoib_ah *ah = NULL;
++	struct ipoib_ah *old_ah = NULL;
+ 	struct ipoib_neigh *neigh, *tn;
+ 	struct sk_buff_head skqueue;
+ 	struct sk_buff *skb;
+@@ -408,11 +409,12 @@ static void path_rec_completion(int status,
+ 
+ 	spin_lock_irqsave(&priv->lock, flags);
+ 
+-	path->ah = ah;
+-
+ 	if (ah) {
+ 		path->pathrec = *pathrec;
+ 
++		old_ah = path->ah;
++		path->ah = ah;
++
+ 		ipoib_dbg(priv, "created address handle %p for LID 0x%04x, SL %d\n",
+ 			  ah, be16_to_cpu(pathrec->dlid), pathrec->sl);
+ 
+@@ -420,6 +422,17 @@ static void path_rec_completion(int status,
+ 			__skb_queue_tail(&skqueue, skb);
+ 
+ 		list_for_each_entry_safe(neigh, tn, &path->neigh_list, list) {
++			if (neigh->ah) {
++				WARN_ON(neigh->ah != old_ah);
++				/*
++				 * Dropping the ah reference inside
++				 * priv->lock is safe here, because we
++				 * will hold one more reference from
++				 * the original value of path->ah (ie
++				 * old_ah).
++				 */
++				ipoib_put_ah(neigh->ah);
++			}
+ 			kref_get(&path->ah->ref);
+ 			neigh->ah = path->ah;
+ 			memcpy(&neigh->dgid.raw, &path->pathrec.dgid.raw,
+@@ -449,6 +462,9 @@ static void path_rec_completion(int status,
+ 
+ 	spin_unlock_irqrestore(&priv->lock, flags);
+ 
++	if (old_ah)
++		ipoib_put_ah(old_ah);
++
+ 	while ((skb = __skb_dequeue(&skqueue))) {
+ 		skb->dev = dev;
+ 		if (dev_queue_xmit(skb))

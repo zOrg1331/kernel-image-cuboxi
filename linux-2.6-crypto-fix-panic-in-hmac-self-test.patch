@@ -1,0 +1,47 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 11 Sep 2008 08:28:32 -0400
+Subject: [crypto] fix panic in hmac self test
+Message-id: 20080911122832.GA12618@hmsendeavour.rdu.redhat.com
+O-Subject: Re: [RHEL 5.3 patch] crypto: Fix panic in hmac(md5) self test (bz 461537)
+Bugzilla: 461537
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+On Wed, Sep 10, 2008 at 01:42:48PM -0400, Neil Horman wrote:
+
+sorry for the noise, previous patch recindid.  It had an error, this is the
+corrected version, written by Herbert, tested successfully by Jarod.
+
+Neil
+
+diff --git a/crypto/hmac.c b/crypto/hmac.c
+index 28a713b..a2faf9d 100644
+--- a/crypto/hmac.c
++++ b/crypto/hmac.c
+@@ -56,9 +56,25 @@ static int hmac_setkey(struct crypto_hash *parent,
+ 
+ 	if (keylen > bs) {
+ 		struct scatterlist tmp;
++		int tmplen;
+ 
+-		sg_init_one(&tmp, (u8 *)inkey, keylen);
+-		crypto_digest_digest(tfm, &tmp, 1, digest);
++		crypto_digest_init(tfm);
++
++		tmplen = bs * 2 + ds;
++		sg_init_one(&tmp, ipad, tmplen);
++
++		for (; keylen > tmplen; inkey += tmplen, keylen -= tmplen) {
++			memcpy(ipad, inkey, tmplen);
++			crypto_digest_update(tfm, &tmp, 1);
++		}
++
++		if (keylen) {
++			memcpy(ipad, inkey, keylen);
++			tmp.length = keylen;
++			crypto_digest_update(tfm, &tmp, 1);
++		}
++
++		crypto_digest_final(tfm, digest);
+ 
+ 		inkey = digest;
+ 		keylen = ds;

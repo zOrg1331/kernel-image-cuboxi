@@ -33,19 +33,12 @@
 
 #include <asm/hw_irq.h>
 
-#if defined(CONFIG_RTC_DRV_CMOS) || defined(CONFIG_RTC_DRV_CMOS_MODULE)
-/* this needs a better home */
-DEFINE_SPINLOCK(rtc_lock);
-
-#ifdef CONFIG_RTC_DRV_CMOS_MODULE
-EXPORT_SYMBOL(rtc_lock);
-#endif
-#endif  /* pc-style 'CMOS' RTC support */
-
 #ifdef CONFIG_SMP
-extern void smp_local_timer_interrupt(void);
+extern void send_IPI_allbutself(int, int);
+extern void smp_local_timer_interrupt(struct pt_regs *);
 #endif
 
+extern unsigned long wall_jiffies;
 #define TICK_SIZE	(tick_nsec / 1000)
 
 /*
@@ -57,7 +50,7 @@ extern void smp_local_timer_interrupt(void);
 
 static unsigned long latch;
 
-u32 arch_gettimeoffset(void)
+static unsigned long do_gettimeoffset(void)
 {
 	unsigned long  elapsed_time = 0;  /* [us] */
 
@@ -75,7 +68,7 @@ u32 arch_gettimeoffset(void)
 		count = 0;
 
 	count = (latch - count) * TICK_SIZE;
-	elapsed_time = DIV_ROUND_CLOSEST(count, latch);
+	elapsed_time = (count + latch / 2) / latch;
 	/* NOTE: LATCH is equal to the "interval" value (= reload count). */
 
 #else /* CONFIG_SMP */
@@ -93,7 +86,7 @@ u32 arch_gettimeoffset(void)
 	p_count = count;
 
 	count = (latch - count) * TICK_SIZE;
-	elapsed_time = DIV_ROUND_CLOSEST(count, latch);
+	elapsed_time = (count + latch / 2) / latch;
 	/* NOTE: LATCH is equal to the "interval" value (= reload count). */
 #endif /* CONFIG_SMP */
 #elif defined(CONFIG_CHIP_M32310)
@@ -102,8 +95,85 @@ u32 arch_gettimeoffset(void)
 #error no chip configuration
 #endif
 
-	return elapsed_time * 1000;
+	return elapsed_time;
 }
+
+/*
+ * This version of gettimeofday has near microsecond resolution.
+ */
+void do_gettimeofday(struct timeval *tv)
+{
+	unsigned long seq;
+	unsigned long usec, sec;
+	unsigned long max_ntp_tick = tick_usec - tickadj;
+
+	do {
+		unsigned long lost;
+
+		seq = read_seqbegin(&xtime_lock);
+
+		usec = do_gettimeoffset();
+		lost = jiffies - wall_jiffies;
+
+		/*
+		 * If time_adjust is negative then NTP is slowing the clock
+		 * so make sure not to go into next possible interval.
+		 * Better to lose some accuracy than have time go backwards..
+		 */
+		if (unlikely(time_adjust < 0)) {
+			usec = min(usec, max_ntp_tick);
+			if (lost)
+				usec += lost * max_ntp_tick;
+		} else if (unlikely(lost))
+			usec += lost * tick_usec;
+
+		sec = xtime.tv_sec;
+		usec += (xtime.tv_nsec / 1000);
+	} while (read_seqretry(&xtime_lock, seq));
+
+	while (usec >= 1000000) {
+		usec -= 1000000;
+		sec++;
+	}
+
+	tv->tv_sec = sec;
+	tv->tv_usec = usec;
+}
+
+EXPORT_SYMBOL(do_gettimeofday);
+
+int do_settimeofday(struct timespec *tv)
+{
+	time_t wtm_sec, sec = tv->tv_sec;
+ 	long wtm_nsec, nsec = tv->tv_nsec;
+
+	if ((unsigned long)tv->tv_nsec >= NSEC_PER_SEC)
+		return -EINVAL;
+
+	write_seqlock_irq(&xtime_lock);
+	/*
+	 * This is revolting. We need to set "xtime" correctly. However, the
+	 * value in this location is the value at the most recent update of
+	 * wall time.  Discover what correction gettimeofday() would have
+	 * made, and then undo it!
+	 */
+	nsec -= do_gettimeoffset() * NSEC_PER_USEC;
+	nsec -= (jiffies - wall_jiffies) * TICK_NSEC;
+
+	wtm_sec = wall_to_monotonic.tv_sec + (xtime.tv_sec - sec);
+	wtm_nsec = wall_to_monotonic.tv_nsec + (xtime.tv_nsec - nsec);
+
+	set_normalized_timespec(&xtime, sec, nsec);
+	set_normalized_timespec(&wall_to_monotonic, wtm_sec, wtm_nsec);
+
+	ntp_clear();
+	write_sequnlock_irq(&xtime_lock);
+	clock_was_set();
+
+	return 0;
+}
+
+EXPORT_SYMBOL(do_settimeofday);
 
 /*
  * In order to set the CMOS clock precisely, set_rtc_mmss has to be
@@ -127,16 +197,15 @@ static long last_rtc_update = 0;
  * timer_interrupt() needs to keep up the real-time clock,
  * as well as call the "do_timer()" routine every clocktick
  */
-static irqreturn_t timer_interrupt(int irq, void *dev_id)
+irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 #ifndef CONFIG_SMP
-	profile_tick(CPU_PROFILING);
+	profile_tick(CPU_PROFILING, regs);
 #endif
-	/* XXX FIXME. Uh, the xtime_lock should be held here, no? */
-	do_timer(1);
+	do_timer(regs);
 
 #ifndef CONFIG_SMP
-	update_process_times(user_mode(get_irq_regs()));
+	update_process_times(user_mode(regs));
 #endif
 	/*
 	 * If we have an externally synchronized Linux clock, then update
@@ -161,18 +230,15 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id)
 	   a hack, so don't look closely for now.. */
 
 #ifdef CONFIG_SMP
-	smp_local_timer_interrupt();
+	smp_local_timer_interrupt(regs);
 	smp_send_timer();
 #endif
 
 	return IRQ_HANDLED;
 }
 
-static struct irqaction irq0 = {
-	.handler = timer_interrupt,
-	.flags = IRQF_DISABLED,
-	.name = "MFT2",
-};
+struct irqaction irq0 = { timer_interrupt, IRQF_DISABLED, CPU_MASK_NONE,
+			  "MFT2", NULL, NULL };
 
 void __init time_init(void)
 {
@@ -211,7 +277,7 @@ void __init time_init(void)
 
 		bus_clock = boot_cpu_data.bus_clock;
 		divide = boot_cpu_data.timer_divide;
-		latch = DIV_ROUND_CLOSEST(bus_clock/divide, HZ);
+		latch = (bus_clock/divide + HZ / 2) / HZ;
 
 		printk("Timer start : latch = %ld\n", latch);
 
@@ -228,4 +294,12 @@ void __init time_init(void)
 #else
 #error no chip configuration
 #endif
+}
+
+/*
+ *  Scheduler clock - returns current time in nanosec units.
+ */
+unsigned long long sched_clock(void)
+{
+	return (unsigned long long)jiffies * (1000000000 / HZ);
 }

@@ -6,6 +6,7 @@
  *  Please add a note about your changes to smbfs in the ChangeLog file.
  */
 
+#include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/fcntl.h>
@@ -13,6 +14,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>
+#include <linux/smp_lock.h>
 #include <linux/net.h>
 #include <linux/namei.h>
 
@@ -60,7 +62,7 @@ static void smb_put_link(struct dentry *dentry, struct nameidata *nd, void *p)
 		__putname(s);
 }
 
-const struct inode_operations smb_link_inode_operations =
+struct inode_operations smb_link_inode_operations =
 {
 	.readlink	= generic_readlink,
 	.follow_link	= smb_follow_link,

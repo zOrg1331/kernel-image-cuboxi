@@ -1,0 +1,46 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 28 Jun 2010 12:35:59 -0400
+Subject: [fs] nfs: use nfs_refresh_inode in __nfs_revalidate_inode
+Message-id: <1277728562-28052-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26583
+O-Subject: [RHEL5.6 PATCH 1/4] BZ#601800: NFS: Convert __nfs_revalidate_inode()
+	to use nfs_refresh_inode()
+Bugzilla: 601800
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+In the case where there are parallel RPC calls to the same inode, we may
+receive stale metadata due to the lack of ordering, hence the sanity
+checking of metadata in nfs_refresh_inode().
+Currently, __nfs_revalidate_inode() is calling nfs_update_inode() directly,
+without any further sanity checks, and hence may end up setting the inode
+up with stale metadata.
+
+Fix is to use nfs_refresh_inode() instead of nfs_update_inode().
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 2a5c1a1..af87e3d 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -677,16 +677,13 @@ __nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
+ 		goto out;
+ 	}
+ 
+-	spin_lock(&inode->i_lock);
+-	status = nfs_update_inode(inode, &fattr);
++	status = nfs_refresh_inode(inode, &fattr);
+ 	if (status) {
+-		spin_unlock(&inode->i_lock);
+ 		dfprintk(PAGECACHE, "nfs_revalidate_inode: (%s/%Ld) refresh failed, error=%d\n",
+ 			 inode->i_sb->s_id,
+ 			 (long long)NFS_FILEID(inode), status);
+ 		goto out;
+ 	}
+-	spin_unlock(&inode->i_lock);
+ 
+ 	if (nfsi->cache_validity & NFS_INO_INVALID_ACL)
+ 		nfs_zap_acl_cache(inode);

@@ -1,5 +1,4 @@
 #include <linux/linkage.h>
-#include <linux/init.h>
 
 #include <asm/entry.h>
 #include <asm/page.h>
@@ -30,7 +29,7 @@ kernel_pmd_table:              .skip 0x2000
 .globl kernel_pg_dir
 .equ    kernel_pg_dir,kernel_pmd_table
 
-	__HEAD
+	.section .head
 ENTRY(_stext)
 ENTRY(_start)
 
@@ -67,6 +66,16 @@ ENTRY(_start)
 /* Following code executes at high addresses (0xE000xxx). */
 1:	lea	init_task,%curptr			| get initial thread...
 	lea	init_thread_union+THREAD_SIZE,%sp	| ...and its stack.
+
+/* copy bootinfo records from the loader to _end */
+	lea	_end, %a1
+	lea	BI_START, %a0
+	/* number of longs to copy */
+	movel	%a0@, %d0
+1:	addl	#4, %a0
+	movel   %a0@, %a1@
+	addl	#4, %a1
+	dbf	%d0, 1b
 
 /* Point MSP at an invalid page to trap if it's used. --m */
 	movl	#(PAGESIZE),%d0

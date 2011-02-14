@@ -1,0 +1,69 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 16 Feb 2009 07:21:52 -0500
+Subject: [acpi] use vmalloc in acpi_system_read_dsdt
+Message-id: 20090216122151.4651.21452.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: Use vmalloc in acpi_system_read_dsdt()
+Bugzilla: 480142
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+PrimeQuest systems have a large DSDT table, larger than kmalloc can handle.
+Use vmalloc instead of kmalloc in acpi_system_read_dsdt() to allow for large
+DSDTs.
+
+Upstream is significantly different and does not require this patch.
+
+Tested by jmoyer on a PrimeQuest system in RHTS, and the resulting output from
+/proc/acpi/dsdt was passed into Intel's ASL which resulted in proper decoded
+output.
+
+Resolves BZ 480142.
+
+diff --git a/drivers/acpi/system.c b/drivers/acpi/system.c
+index d86dcb3..052cd4b 100644
+--- a/drivers/acpi/system.c
++++ b/drivers/acpi/system.c
+@@ -26,9 +26,11 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ #include <linux/init.h>
++#include <linux/vmalloc.h>
+ #include <asm/uaccess.h>
+ 
+ #include <acpi/acpi_drivers.h>
++#include <acpi/actables.h>
+ 
+ #define _COMPONENT		ACPI_SYSTEM_COMPONENT
+ ACPI_MODULE_NAME("acpi_system")
+@@ -76,17 +78,26 @@ acpi_system_read_dsdt(struct file *file,
+ 		      char __user * buffer, size_t count, loff_t * ppos)
+ {
+ 	acpi_status status = AE_OK;
+-	struct acpi_buffer dsdt = { ACPI_ALLOCATE_BUFFER, NULL };
++	struct acpi_table_header *tbl_ptr;
+ 	ssize_t res;
++	void *ptr;
+ 
+-
+-	status = acpi_get_table(ACPI_TABLE_ID_DSDT, 1, &dsdt);
++	status = acpi_tb_get_table_ptr(ACPI_TABLE_ID_DSDT, 1, &tbl_ptr);
+ 	if (ACPI_FAILURE(status))
+ 		return -ENODEV;
+ 
+-	res = simple_read_from_buffer(buffer, count, ppos,
+-				      dsdt.pointer, dsdt.length);
+-	kfree(dsdt.pointer);
++	ptr = vmalloc(tbl_ptr->length);
++	if (!ptr)
++		return -ENOMEM;
++
++	ACPI_MEMSET(ptr, 0, tbl_ptr->length);
++
++	ACPI_MEMCPY(ACPI_CAST_PTR(void, ptr),
++		    ACPI_CAST_PTR(void, tbl_ptr), tbl_ptr->length);
++
++	res = simple_read_from_buffer(buffer, count, ppos, ptr,
++				      tbl_ptr->length);
++	vfree(ptr);
+ 
+ 	return res;
+ }

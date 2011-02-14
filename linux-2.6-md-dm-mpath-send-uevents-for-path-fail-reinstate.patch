@@ -1,0 +1,47 @@
+From: dwysocha@redhat.com <dwysocha@redhat.com>
+Date: Tue, 18 Dec 2007 23:47:59 -0500
+Subject: [md] dm-mpath: send uevents for path fail/reinstate
+Message-id: 20071219044942.143063542@redhat.com
+O-Subject: [RHEL5.2 PATCH 5/5] bz#184778: dm-mpath - send uevents for path fail / reinstate
+Bugzilla: 184778
+
+This patch adds calls to dm_path_event for a failed path and a reinstated
+path.
+
+Signed-off-by: Mike Anderson <andmike@linux.vnet.ibm.com>
+Acked-by: Dave Wysochanski <dwysocha@redhat.com>
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 7a264b6..679bc96 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -10,6 +10,7 @@
+ #include "dm-hw-handler.h"
+ #include "dm-bio-list.h"
+ #include "dm-bio-record.h"
++#include "dm-uevent.h"
+ 
+ #include <linux/ctype.h>
+ #include <linux/init.h>
+@@ -855,6 +856,9 @@ static int fail_path(struct pgpath *pgpath)
+ 	if (pgpath == m->current_pgpath)
+ 		m->current_pgpath = NULL;
+ 
++	dm_path_uevent(DM_UEVENT_PATH_FAILED, m->ti,
++		      pgpath->path.dev->name, m->nr_valid_paths);
++
+ 	queue_work(kmultipathd, &m->trigger_event);
+ 
+ out:
+@@ -894,6 +898,9 @@ static int reinstate_path(struct pgpath *pgpath)
+ 	if (!m->nr_valid_paths++ && m->queue_size)
+ 		queue_work(kmultipathd, &m->process_queued_ios);
+ 
++	dm_path_uevent(DM_UEVENT_PATH_REINSTATED, m->ti,
++		      pgpath->path.dev->name, m->nr_valid_paths);
++
+ 	queue_work(kmultipathd, &m->trigger_event);
+ 
+ out:

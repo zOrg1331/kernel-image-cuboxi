@@ -1,0 +1,38 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Wed, 22 Sep 2010 05:55:35 -0400
+Subject: [virt] virtio_console: fix userspace NULL buffer submits
+Message-id: <9796a2e5b237682a2b3dbaf9595e137103a0d1a2.1285073493.git.amit.shah@redhat.com>
+Patchwork-id: 28334
+O-Subject: [RHEL5.7 / 5.6.z PATCH 4/4] virtio: console: Prevent userspace from
+	submitting NULL buffers
+Bugzilla: 636046
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+A userspace could submit a buffer with 0 length to be written to the
+host.  Prevent such a situation.
+
+This was not needed previously, but recent changes in the way write()
+works exposed this condition to trigger a virtqueue event to the host,
+causing a NULL buffer to be sent across.
+
+Bugzilla: 636046
+Upstream: Posted, sent for 2.6.36 and stable
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+CC: stable@kernel.org
+
+diff --git a/drivers/char/virtio_console.c b/drivers/char/virtio_console.c
+index a39d1c3..39ade39 100644
+--- a/drivers/char/virtio_console.c
++++ b/drivers/char/virtio_console.c
+@@ -661,6 +661,10 @@ static ssize_t port_fops_write(struct file *filp, const char __user *ubuf,
+ 	ssize_t ret;
+ 	bool nonblock;
+ 
++	/* Userspace could be out to fool us */
++	if (!count)
++		return 0;
++
+ 	port = filp->private_data;
+ 
+ 	nonblock = filp->f_flags & O_NONBLOCK;

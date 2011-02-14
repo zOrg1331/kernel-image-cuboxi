@@ -1,0 +1,107 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 20 Jul 2010 15:32:24 -0400
+Subject: [net] qlcnic: fix multicast handling
+Message-id: <20100720153131.2978.91347.sendpatchset@localhost.localdomain>
+Patchwork-id: 26970
+O-Subject: [RHEL 5.6 PATCH 11/16] qlcnic: fix multicast handling
+Bugzilla: 562723
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+========
+
+562723
+
+Upstream Status
+===============
+
+net-2.6 commit id 9ab17b3968f9521bb4fffd8767953d2b0148aad0
+
+Description
+===========
+
+>From c67a8b543be090a6bdfa6900e57a18d15c019fe8 Mon Sep 17 00:00:00 2001
+From: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Date: Mon, 8 Mar 2010 00:14:47 +0000
+Subject: [PATCH] qlcnic: fix multicast handling
+
+For promiscuous mode, driver send request to device for deleting
+multicast addresses and again it send request for adding them back
+while exiting from this mode, this is bad for performance.
+Just setting device in promiscuous mode is enough, no need to del/add
+multicast addresses.
+
+Signed-off-by: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlcnic/qlcnic_hw.c b/drivers/net/qlcnic/qlcnic_hw.c
+index fd4b283..c0e5b15 100644
+--- a/drivers/net/qlcnic/qlcnic_hw.c
++++ b/drivers/net/qlcnic/qlcnic_hw.c
+@@ -398,20 +398,16 @@ qlcnic_sre_macaddr_change(struct qlcnic_adapter *adapter, u8 *addr,
+ 	return qlcnic_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
+ }
+ 
+-static int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter,
+-		u8 *addr, struct list_head *del_list)
++static int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter, u8 *addr)
+ {
+ 	struct list_head *head;
+ 	struct qlcnic_mac_list_s *cur;
+ 
+ 	/* look up if already exists */
+-	list_for_each(head, del_list) {
++	list_for_each(head, &adapter->mac_list) {
+ 		cur = list_entry(head, struct qlcnic_mac_list_s, list);
+-
+-		if (memcmp(addr, cur->mac_addr, ETH_ALEN) == 0) {
+-			list_move_tail(head, &adapter->mac_list);
++		if (memcmp(addr, cur->mac_addr, ETH_ALEN) == 0)
+ 			return 0;
+-		}
+ 	}
+ 
+ 	cur = kzalloc(sizeof(struct qlcnic_mac_list_s), GFP_ATOMIC);
+@@ -433,14 +429,8 @@ void qlcnic_set_multi(struct net_device *netdev)
+ 	struct dev_mc_list *mc_ptr;
+ 	u8 bcast_addr[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+ 	u32 mode = VPORT_MISS_MODE_DROP;
+-	LIST_HEAD(del_list);
+-	struct list_head *head;
+-	struct qlcnic_mac_list_s *cur;
+-
+-	list_splice_init(&adapter->mac_list, &del_list);
+-
+-	qlcnic_nic_add_mac(adapter, adapter->mac_addr, &del_list);
+-	qlcnic_nic_add_mac(adapter, bcast_addr, &del_list);
++	qlcnic_nic_add_mac(adapter, adapter->mac_addr);
++	qlcnic_nic_add_mac(adapter, bcast_addr);
+ 
+ 	if (netdev->flags & IFF_PROMISC) {
+ 		mode = VPORT_MISS_MODE_ACCEPT_ALL;
+@@ -456,22 +446,12 @@ void qlcnic_set_multi(struct net_device *netdev)
+ 	if (netdev->mc_count > 0) {
+ 		for (mc_ptr = netdev->mc_list; mc_ptr;
+ 				     mc_ptr = mc_ptr->next) {
+-			qlcnic_nic_add_mac(adapter, mc_ptr->dmi_addr,
+-							&del_list);
++			qlcnic_nic_add_mac(adapter, mc_ptr->dmi_addr);
+ 		}
+ 	}
+ 
+ send_fw_cmd:
+ 	qlcnic_nic_set_promisc(adapter, mode);
+-	head = &del_list;
+-	while (!list_empty(head)) {
+-		cur = list_entry(head->next, struct qlcnic_mac_list_s, list);
+-
+-		qlcnic_sre_macaddr_change(adapter,
+-				cur->mac_addr, QLCNIC_MAC_DEL);
+-		list_del(&cur->list);
+-		kfree(cur);
+-	}
+ }
+ 
+ int qlcnic_nic_set_promisc(struct qlcnic_adapter *adapter, u32 mode)

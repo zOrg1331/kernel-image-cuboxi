@@ -1,0 +1,60 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 17 Jan 2008 10:20:26 -0500
+Subject: [mm] hugepages: leak due to pagetable page sharing
+Message-id: 478F723A.2010609@redhat.com
+O-Subject: [RHEL5-U2 patch] fix hugepages leak due to pagetable page sharing.
+Bugzilla: 428612
+
+The shared page table patch for hugetlb memory on x86 and x86_64
+is causing a leak.  When a user of hugepages exits using this code
+the system leaks some of the hugepages.
+
+-------------------------------------------------------
+Part of /proc/meminfo just before database startup:
+HugePages_Total:  5500
+HugePages_Free:   5500
+HugePages_Rsvd:      0
+Hugepagesize:     2048 kB
+
+Just before shutdown:
+HugePages_Total:  5500
+HugePages_Free:   4475
+HugePages_Rsvd:      0
+Hugepagesize:     2048 kB
+
+After shutdown:
+HugePages_Total:  5500 HugePages_Free:   4988 HugePages_Rsvd:      0
+Hugepagesize:     2048 kB
+----------------------------------------------------------
+
+The problem occurs durring a fork, in copy_hugetlb_page_range(). It
+locates the dst_pte using
+huge_pte_alloc().  Since huge_pte_alloc() calls huge_pmd_share() it will
+share the pmd page
+if can, yet the main loop in copy_hugetlb_page_range() does a get_page()
+on every hugepage.
+This is a violation of the shared hugepmd pagetable protocol and creates
+additional referenced
+to the hugepages causing a leak when the unmap of the VMA occurs.   We
+can skip the entire
+replication of the ptes when the hugepage pagetables are shared.
+
+The attached patch skips copying the ptes and the get_page() calls if
+the hugetlbpage pagetable
+is shared.   Fixes BZ 428612 and this patch was send upstream and ACK'd
+there.
+
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 0a80f51..e4157ca 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -369,6 +369,9 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 		dst_pte = huge_pte_alloc(dst, addr);
+ 		if (!dst_pte)
+ 			goto nomem;
++		/* if the page table is shared dont copy or take references */
++		if (dst_pte == src_pte)
++			continue;
+ 		spin_lock(&dst->page_table_lock);
+ 		spin_lock(&src->page_table_lock);
+ 		if (!pte_none(*src_pte)) {

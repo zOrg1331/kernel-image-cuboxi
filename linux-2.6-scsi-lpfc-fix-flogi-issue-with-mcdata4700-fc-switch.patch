@@ -1,0 +1,46 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:23:07 -0400
+Subject: [scsi] lpfc: fix FLOGI issue with McData4700 FC switch
+Message-id: <1288192999-24221-16-git-send-email-revers@redhat.com>
+Patchwork-id: 28943
+O-Subject: [RHEL5.6 PATCH 15/27] lpfc: Fixed FC-AL bit set issue in FLOGI
+	rejected by McData4700 FC swich in NPV setup (CR: 110237)
+Bugzilla: 639028
+
+lpfc: Fixed FC-AL bit set issue in FLOGI rejected by McData4700 FC swich in NPV setup (CR: 110237)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 97737ef..a88b1c4 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -525,12 +525,6 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 		spin_lock_irq(shost->host_lock);
+ 		vport->fc_flag |= FC_PUBLIC_LOOP;
+ 		spin_unlock_irq(shost->host_lock);
+-	} else {
+-		/*
+-		 * If we are a N-port connected to a Fabric, fixup sparam's so
+-		 * logins to devices on remote loops work.
+-		 */
+-		vport->fc_sparam.cmn.altBbCredit = 1;
+ 	}
+ 
+ 	vport->fc_myDID = irsp->un.ulpWord[4] & Mask_DID;
+@@ -1684,6 +1678,13 @@ lpfc_issue_els_plogi(struct lpfc_vport *vport, uint32_t did, uint8_t retry)
+ 	memcpy(pcmd, &vport->fc_sparam, sizeof(struct serv_parm));
+ 	sp = (struct serv_parm *) pcmd;
+ 
++	/*
++	 * If we are a N-port connected to a Fabric, fix-up paramm's so logins
++	 * to device on remote loops work.
++	 */
++	if ((vport->fc_flag & FC_FABRIC) && !(vport->fc_flag & FC_PUBLIC_LOOP))
++		sp->cmn.altBbCredit = 1;
++
+ 	if (sp->cmn.fcphLow < FC_PH_4_3)
+ 		sp->cmn.fcphLow = FC_PH_4_3;
+ 

@@ -1,0 +1,54 @@
+ipv4: dump dst on refcounter operation on the dead device
+
+Signed-off-by: Denis V. Lunev <den@parallels.com>
+===================================================================
+--- ./include/net/dst.h.dst3	2008-09-15 10:38:40.000000000 +0400
++++ ./include/net/dst.h	2008-09-29 14:53:24.000000000 +0400
+@@ -133,16 +133,38 @@ dst_metric_locked(struct dst_entry *dst,
+ 	return dst_metric(dst, RTAX_LOCK) & (1<<metric);
+ }
+ 
++static inline void
++dst_check_bad(struct dst_entry * dst)
++{
++	static int count = 0;
++	int i;
++	if (dst->dev == NULL || !dst->dev->is_leaked)
++		return;
++	if (++count > 3)
++		return;
++	printk("dead dst\n");
++	for (i = 0; i < dst->ops->entry_size; i++) {
++		if (i != 0 && (i % 32) == 0)
++			printk("\n");
++		printk("%02x ", ((unsigned char *)dst)[i]);
++	}
++	printk("\n");
++	dump_stack();
++}
++
+ static inline void dst_hold(struct dst_entry * dst)
+ {
+ 	atomic_inc(&dst->__refcnt);
++	dst_check_bad(dst);
+ }
+ 
+ static inline
+ struct dst_entry * dst_clone(struct dst_entry * dst)
+ {
+-	if (dst)
++	if (dst) {
+ 		atomic_inc(&dst->__refcnt);
++		dst_check_bad(dst);
++	}
+ 	return dst;
+ }
+ 
+@@ -153,6 +174,7 @@ void dst_release(struct dst_entry * dst)
+ 		WARN_ON(atomic_read(&dst->__refcnt) < 1);
+ 		smp_mb__before_atomic_dec();
+ 		atomic_dec(&dst->__refcnt);
++		dst_check_bad(dst);
+ 	}
+ }
+ 

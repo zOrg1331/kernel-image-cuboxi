@@ -216,13 +216,20 @@ struct serpent_ctx {
 
 
 static int serpent_setkey(struct crypto_tfm *tfm, const u8 *key,
-			  unsigned int keylen)
+			  unsigned int keylen, u32 *flags)
 {
 	struct serpent_ctx *ctx = crypto_tfm_ctx(tfm);
 	u32 *k = ctx->expkey;
 	u8  *k8 = (u8 *)k;
 	u32 r0,r1,r2,r3,r4;
 	int i;
+
+	if ((keylen < SERPENT_MIN_KEY_SIZE)
+			|| (keylen > SERPENT_MAX_KEY_SIZE))
+	{
+		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+		return -EINVAL;
+	}
 
 	/* Copy key, add padding */
 
@@ -364,10 +371,10 @@ static void serpent_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct serpent_ctx *ctx = crypto_tfm_ctx(tfm);
 	const u32
-		*k = ctx->expkey;
-	const __le32 *s = (const __le32 *)src;
-	__le32	*d = (__le32 *)dst;
-	u32	r0, r1, r2, r3, r4;
+		*k = ctx->expkey,
+		*s = (const u32 *)src;
+	u32	*d = (u32 *)dst,
+		r0, r1, r2, r3, r4;
 
 /*
  * Note: The conversions between u8* and u32* might cause trouble
@@ -423,10 +430,10 @@ static void serpent_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct serpent_ctx *ctx = crypto_tfm_ctx(tfm);
 	const u32
-		*k = ((struct serpent_ctx *)ctx)->expkey;
-	const __le32 *s = (const __le32 *)src;
-	__le32	*d = (__le32 *)dst;
-	u32	r0, r1, r2, r3, r4;
+		*k = ((struct serpent_ctx *)ctx)->expkey,
+		*s = (const u32 *)src;
+	u32	*d = (u32 *)dst,
+		r0, r1, r2, r3, r4;
 
 	r0 = le32_to_cpu(s[0]);
 	r1 = le32_to_cpu(s[1]);
@@ -490,15 +497,21 @@ static struct crypto_alg serpent_alg = {
 };
 
 static int tnepres_setkey(struct crypto_tfm *tfm, const u8 *key,
-			  unsigned int keylen)
+			  unsigned int keylen, u32 *flags)
 {
 	u8 rev_key[SERPENT_MAX_KEY_SIZE];
 	int i;
 
+	if ((keylen < SERPENT_MIN_KEY_SIZE)
+	    || (keylen > SERPENT_MAX_KEY_SIZE)) {
+		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+		return -EINVAL;
+	} 
+
 	for (i = 0; i < keylen; ++i)
 		rev_key[keylen - i - 1] = key[i];
  
-	return serpent_setkey(tfm, rev_key, keylen);
+	return serpent_setkey(tfm, rev_key, keylen, flags);
 }
 
 static void tnepres_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
@@ -557,7 +570,7 @@ static struct crypto_alg tnepres_alg = {
 	.cia_decrypt  		=	tnepres_decrypt } }
 };
 
-static int __init serpent_mod_init(void)
+static int __init init(void)
 {
 	int ret = crypto_register_alg(&serpent_alg);
 
@@ -572,14 +585,14 @@ static int __init serpent_mod_init(void)
 	return ret;
 }
 
-static void __exit serpent_mod_fini(void)
+static void __exit fini(void)
 {
 	crypto_unregister_alg(&tnepres_alg);
 	crypto_unregister_alg(&serpent_alg);
 }
 
-module_init(serpent_mod_init);
-module_exit(serpent_mod_fini);
+module_init(init);
+module_exit(fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Serpent and tnepres (kerneli compatible serpent reversed) Cipher Algorithm");

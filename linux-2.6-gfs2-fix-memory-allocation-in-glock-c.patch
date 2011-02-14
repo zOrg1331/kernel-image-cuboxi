@@ -1,0 +1,41 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] [GFS2] Fix memory allocation in glock.c (bz #204364)
+Date: Fri, 24 Nov 2006 11:38:49 +0000
+Bugzilla: 204364
+Message-Id: <1164368329.3392.153.camel@quoit.chygwyn.com>
+Changelog: GFS2: Fix memory allocation in glock.c
+
+
+Hi,
+
+This patch has gone upstream (awaiting a pull from Linus) and fixes bugzilla #204364
+
+Steve.
+
+>From 70411bdbedb9a2726cacd5c36879b78037153782 Mon Sep 17 00:00:00 2001
+
+Change from GFP_KERNEL to GFP_NOFS as this was causing a
+slow down when trying to push inodes from cache.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/glock.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 78fe0fa..e94e7c9 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -769,7 +769,7 @@ restart:
+ 	} else {
+ 		spin_unlock(&gl->gl_spin);
+ 
+-		new_gh = gfs2_holder_get(gl, state, LM_FLAG_TRY, GFP_KERNEL);
++		new_gh = gfs2_holder_get(gl, state, LM_FLAG_TRY, GFP_NOFS);
+ 		if (!new_gh)
+ 			return;
+ 		set_bit(HIF_DEMOTE, &new_gh->gh_iflags);
+-- 
+1.4.1
+
+

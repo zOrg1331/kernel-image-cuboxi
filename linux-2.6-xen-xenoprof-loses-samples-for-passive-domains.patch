@@ -1,0 +1,105 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Wed, 19 Dec 2007 11:06:55 +0100
+Subject: [xen] xenoprof: loses samples for passive domains
+Message-id: 87mys7dmm8.fsf@pike.pond.sub.org
+O-Subject: [PATCH RHEL-5.2] 426200: Fix Xenoprof not to lose samples for passive domains
+Bugzilla: 426200
+
+Xenoprof can get confused an lose samples for passive domains.  This
+leads to inaccurate profiles.
+
+This is actually an attempt to salvage a bug fix from the shipwrecked
+bug 241982.  That bug has all the acks, but I expect it to be
+dev-acked shortly.  I'm posting the relevant part of its patch now,
+before the new bug I created for it has all the acks.  Hope that's
+okay.
+
+This patch has been tested as part of the various incarnations of bug
+241982's patch.  It's been the same in all of them.  It's been
+upstream for a year.
+
+It has no real effect unless domain_switch gets set, which I believe
+can happen only under Xen (CPU_DOMAIN_SWITCH event).
+
+Please ACK.
+
+Derived from
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1163072862 0
+# Node ID eea9247ad5a06965dc46cbcab236402dd8f7431b
+# Parent  b8a2db59150a084e4e1a5a1cae660dbf7cc14c2d
+[XENOPROF] Oprofile user level samples for passive domains are being lost.
+The number of of lost samples is most significant when dom0 is idle.
+
+From: joserenato.santos@hp.com
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/drivers/oprofile/buffer_sync.c b/drivers/oprofile/buffer_sync.c
+index 13416ad..1b30909 100644
+--- a/drivers/oprofile/buffer_sync.c
++++ b/drivers/oprofile/buffer_sync.c
+@@ -42,6 +42,7 @@ static cpumask_t marked_cpus = CPU_MASK_NONE;
+ static DEFINE_SPINLOCK(task_mortuary);
+ static void process_task_mortuary(void);
+ 
++static int cpu_current_domain[NR_CPUS];
+ 
+ /* Take ownership of the task struct and place it on the
+  * list for processing. Only after two full buffer syncs
+@@ -150,6 +151,11 @@ static void end_sync(void)
+ int sync_start(void)
+ {
+ 	int err;
++	int i;
++
++	for (i = 0; i < NR_CPUS; i++) {
++		cpu_current_domain[i] = COORDINATOR_DOMAIN;
++	}
+ 
+ 	start_cpu_work();
+ 
+@@ -526,6 +532,11 @@ void sync_buffer(int cpu)
+  
+ 	add_cpu_switch(cpu);
+ 
++	/* We need to assign the first samples in this CPU buffer to the
++	   same domain that we were processing at the last sync_buffer */
++	if (cpu_current_domain[cpu] != COORDINATOR_DOMAIN) {
++		add_domain_switch(cpu_current_domain[cpu]);
++	}
+ 	/* Remember, only we can modify tail_pos */
+ 
+ 	available = get_slots(cpu_buf);
+@@ -559,10 +570,15 @@ void sync_buffer(int cpu)
+ 			}
+ 		} else {
+ 			if (domain_switch) {
++				cpu_current_domain[cpu] = s->eip;
+ 				add_domain_switch(s->eip);
+ 				domain_switch = 0;
+ 			} else {
+-				if (state >= sb_bt_start &&
++				if (cpu_current_domain[cpu] !=
++				    COORDINATOR_DOMAIN) {
++					add_sample_entry(s->eip, s->event);
++				}
++				else  if (state >= sb_bt_start &&
+ 				    !add_sample(mm, s, cpu_mode)) {
+ 					if (state == sb_bt_start) {
+ 						state = sb_bt_ignore;
+@@ -576,6 +592,11 @@ void sync_buffer(int cpu)
+ 	}
+ 	release_mm(mm);
+ 
++	/* We reset domain to COORDINATOR at each CPU switch */
++	if (cpu_current_domain[cpu] != COORDINATOR_DOMAIN) {
++		add_domain_switch(COORDINATOR_DOMAIN);
++	}
++
+ 	mark_done(cpu);
+ 
+ 	mutex_unlock(&buffer_mutex);

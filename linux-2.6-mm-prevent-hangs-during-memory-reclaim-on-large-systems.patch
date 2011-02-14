@@ -1,0 +1,124 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 4 Feb 2010 13:51:50 -0500
+Subject: [mm] prevent hangs during memory reclaim on large systems
+Message-id: <4B6AD0F6.7060709@redhat.com>
+Patchwork-id: 23125
+O-Subject: [RHEL5-U5 patch] Prevent large system from hanging for long periods
+	of time during memory reclaimation.
+Bugzilla: 546428
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Prevent large system from hanging for long periods of time during memory reclaimation.
+
+Several customers have reported long pauses and system hangs on large
+systems(~64GB and ~8CPUs)
+when memory exhaustion occurs and processes enter direct reclaim.  When
+this happens several processes(hundreds) enter the direct reclaim code
+and eventually try to acquire every zone->lru_lock
+on the zone list.  When hangs occur we see every CPU spinning on the
+same zone->lru_lock for
+minutes at a time.  In some cases applications timeout and the system
+gets rebooted.
+
+To prevent this we are limiting the number of processes that can be in
+shrink zone to a tunable number
+(/proc/sys/vm/max_reclaims_in_progress).  This is set to zero by
+default, thereby disabling this feature.
+However if you set max_reclaims_in_progress to 8, large systems
+eliminate these hangs and reduce the
+pauses from minutes down to a few seconds worst case.  This patch does
+not block processes in shrink_zone()
+but allow then to continue to attempt to reclaim from other zones in the
+zone list.  If it can not reclaim
+from any zone the process goes back into __alloc_pages where it sleeps
+for HZ/50 then retries the allocation
+and reclaim if necessary.
+
+The attached patch has been tested by several customers experiencing
+this problem with positive results.
+Fixes BZ546428 and several other BZs that havent been properly fixed.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index 24ebcf4..79bbde7 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -195,6 +195,7 @@ extern void swap_setup(void);
+ extern unsigned long try_to_free_pages(struct zone **, gfp_t);
+ extern unsigned long shrink_all_memory(unsigned long nr_pages);
+ extern int vm_swappiness;
++extern int max_reclaims_in_progress;
+ extern int remove_mapping(struct address_space *mapping, struct page *page);
+ extern long vm_total_pages;
+ 
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 7f51dbc..ad0a4ab 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -213,6 +213,7 @@ enum
+ 	VM_MAX_WRITEBACK_PAGES=40, /*maximum pages written per writeback loop */
+ 	VM_ZONE_RECLAIM_INTERVAL=41, /* interval between zone_reclaim failures */
+ 	VM_TOPDOWN_ALLOCATE_FAST=42, /* optimize speed over fragmentation in topdown alloc */
++	VM_MAX_RECLAIMS=43,     /* max reclaims allowed */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index cb68181..0b08bb8 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -1211,6 +1211,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_MAX_RECLAIMS,
++		.procname	= "max_reclaims_in_progress",
++		.data		= &max_reclaims_in_progress,
++		.maxlen		= sizeof(flush_mmap_pages),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index c9a94c9..79be7fd 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -117,6 +117,8 @@ struct shrinker {
+ int vm_swappiness = 60;
+ long vm_total_pages;	/* The total number of pages which the VM controls */
+ 
++int max_reclaims_in_progress = 0;
++
+ static LIST_HEAD(shrinker_list);
+ static DECLARE_RWSEM(shrinker_rwsem);
+ 
+@@ -898,6 +900,12 @@ static void shrink_zone(int priority, struct zone *zone,
+ 	unsigned long nr_reclaimed = sc->nr_reclaimed;
+ 	unsigned long swap_cluster_max = sc->swap_cluster_max;
+ 
++	if (max_reclaims_in_progress && !current_is_kswapd() &&
++	    atomic_read(&zone->reclaim_in_progress) > max_reclaims_in_progress) {
++		nr_reclaimed++;
++		goto out;
++	}
++
+ 	atomic_inc(&zone->reclaim_in_progress);
+ 
+ 	/*
+@@ -950,6 +958,7 @@ static void shrink_zone(int priority, struct zone *zone,
+ 			break;
+ 	}
+ 
++out:
+ 	sc->nr_reclaimed = nr_reclaimed;
+ 
+ 	throttle_vm_writeout();

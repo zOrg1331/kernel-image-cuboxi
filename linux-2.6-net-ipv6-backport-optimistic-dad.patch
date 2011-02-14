@@ -1,0 +1,773 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 7 Aug 2007 14:53:15 -0400
+Subject: [net] ipv6: backport optimistic DAD
+Message-id: 20070807185315.GI6353@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] backport optimistic DAD for IPv6 (bz 246723)
+Bugzilla: 246723
+
+Hey all-
+	This is a backport of my upstream patch to support RFC 4429 Optimistic
+Duplicate Address Detection for IPv6.  The patch is almost identical to
+upstream, save for one major point.  Because upstream, optimistic dad can be
+enabled per interface, the added devconf code is an ABI breaker in RHEL 5.  I've
+fixed that here by making optimistic dad a global sysctl instead.  This is
+required for our IPv6 stack by the DoD and satisfies BZ 246723
+
+Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/include/linux/if_addr.h b/include/linux/if_addr.h
+new file mode 100644
+index 0000000..e99aa71
+--- /dev/null
++++ b/include/linux/if_addr.h
+@@ -0,0 +1,53 @@
++#ifndef __LINUX_IF_ADDR_H
++#define __LINUX_IF_ADDR_H
++
++#include <linux/netlink.h>
++
++struct ifaddrmsg
++{
++	__u8		ifa_family;
++	__u8		ifa_prefixlen;	/* The prefix length		*/
++	__u8		ifa_flags;	/* Flags			*/
++	__u8		ifa_scope;	/* Address scope		*/
++	__u32		ifa_index;	/* Link index			*/
++};
++
++/*
++ * Important comment:
++ * IFA_ADDRESS is prefix address, rather than local interface address.
++ * It makes no difference for normally configured broadcast interfaces,
++ * but for point-to-point IFA_ADDRESS is DESTINATION address,
++ * local address is supplied in IFA_LOCAL attribute.
++ */
++enum
++{
++	IFA_UNSPEC,
++	IFA_ADDRESS,
++	IFA_LOCAL,
++	IFA_LABEL,
++	IFA_BROADCAST,
++	IFA_ANYCAST,
++	IFA_CACHEINFO,
++	IFA_MULTICAST,
++	__IFA_MAX,
++};
++
++#define IFA_MAX (__IFA_MAX - 1)
++
++/* ifa_flags */
++#define IFA_F_SECONDARY		0x01
++#define IFA_F_TEMPORARY		IFA_F_SECONDARY
++#define IFA_F_OPTIMISTIC	0x04
++#define IFA_F_DEPRECATED	0x20
++#define IFA_F_TENTATIVE		0x40
++#define IFA_F_PERMANENT		0x80
++
++struct ifa_cacheinfo
++{
++	__u32	ifa_prefered;
++	__u32	ifa_valid;
++	__u32	cstamp; /* created timestamp, hundredths of seconds */
++	__u32	tstamp; /* updated timestamp, hundredths of seconds */
++};
++
++#endif
+diff --git a/include/linux/ipv6.h b/include/linux/ipv6.h
+index 02d14a3..258c220 100644
+--- a/include/linux/ipv6.h
++++ b/include/linux/ipv6.h
+@@ -156,6 +156,8 @@ struct ipv6_devconf {
+ 	void		*sysctl;
+ };
+ 
++extern int sysctl_ip6_odad;
++
+ /* index values for the variables in ipv6_devconf */
+ enum {
+ 	DEVCONF_FORWARDING = 0,
+diff --git a/include/linux/rtnetlink.h b/include/linux/rtnetlink.h
+index fd3650d..41b8df5 100644
+--- a/include/linux/rtnetlink.h
++++ b/include/linux/rtnetlink.h
+@@ -383,62 +383,6 @@ struct rta_session
+ };
+ 
+ 
+-/*********************************************************
+- *		Interface address.
+- ****/
+-
+-struct ifaddrmsg
+-{
+-	unsigned char	ifa_family;
+-	unsigned char	ifa_prefixlen;	/* The prefix length		*/
+-	unsigned char	ifa_flags;	/* Flags			*/
+-	unsigned char	ifa_scope;	/* See above			*/
+-	int		ifa_index;	/* Link index			*/
+-};
+-
+-enum
+-{
+-	IFA_UNSPEC,
+-	IFA_ADDRESS,
+-	IFA_LOCAL,
+-	IFA_LABEL,
+-	IFA_BROADCAST,
+-	IFA_ANYCAST,
+-	IFA_CACHEINFO,
+-	IFA_MULTICAST,
+-	__IFA_MAX
+-};
+-
+-#define IFA_MAX (__IFA_MAX - 1)
+-
+-/* ifa_flags */
+-
+-#define IFA_F_SECONDARY		0x01
+-#define IFA_F_TEMPORARY		IFA_F_SECONDARY
+-
+-#define IFA_F_DEPRECATED	0x20
+-#define IFA_F_TENTATIVE		0x40
+-#define IFA_F_PERMANENT		0x80
+-
+-struct ifa_cacheinfo
+-{
+-	__u32	ifa_prefered;
+-	__u32	ifa_valid;
+-	__u32	cstamp; /* created timestamp, hundredths of seconds */
+-	__u32	tstamp; /* updated timestamp, hundredths of seconds */
+-};
+-
+-
+-#define IFA_RTA(r)  ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct ifaddrmsg))))
+-#define IFA_PAYLOAD(n) NLMSG_PAYLOAD(n,sizeof(struct ifaddrmsg))
+-
+-/*
+-   Important comment:
+-   IFA_ADDRESS is prefix address, rather than local interface address.
+-   It makes no difference for normally configured broadcast interfaces,
+-   but for point-to-point IFA_ADDRESS is DESTINATION address,
+-   local address is supplied in IFA_LOCAL attribute.
+- */
+ 
+ /**************************************************************
+  *		Neighbour discovery.
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 909fd90..98bc8c9 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -528,6 +528,7 @@ enum {
+ 	NET_IPV6_IP6FRAG_TIME=23,
+ 	NET_IPV6_IP6FRAG_SECRET_INTERVAL=24,
+ 	NET_IPV6_MLD_MAX_MSF=25,
++	NET_IPV6_OPTIMISTIC_DAD=26,
+ };
+ 
+ enum {
+diff --git a/include/net/addrconf.h b/include/net/addrconf.h
+index 3d71251..ed399f5 100644
+--- a/include/net/addrconf.h
++++ b/include/net/addrconf.h
+@@ -70,7 +70,9 @@ extern int			ipv6_get_saddr(struct dst_entry *dst,
+ extern int			ipv6_dev_get_saddr(struct net_device *dev, 
+ 					       struct in6_addr *daddr,
+ 					       struct in6_addr *saddr);
+-extern int			ipv6_get_lladdr(struct net_device *dev, struct in6_addr *);
++extern int			ipv6_get_lladdr(struct net_device *dev,
++						struct in6_addr *addr,
++						unsigned char banned_flags);
+ extern int			ipv6_rcv_saddr_equal(const struct sock *sk, 
+ 						      const struct sock *sk2);
+ extern void			addrconf_join_solict(struct net_device *dev,
+diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
+index aa7cff2..3571203 100644
+--- a/net/core/rtnetlink.c
++++ b/net/core/rtnetlink.c
+@@ -35,6 +35,7 @@
+ #include <linux/init.h>
+ #include <linux/security.h>
+ #include <linux/mutex.h>
++#include <linux/if_addr.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/system.h>
+diff --git a/net/decnet/dn_dev.c b/net/decnet/dn_dev.c
+index 9ab2e5b..88ea7a1 100644
+--- a/net/decnet/dn_dev.c
++++ b/net/decnet/dn_dev.c
+@@ -34,6 +34,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/timer.h>
+ #include <linux/string.h>
++#include <linux/if_addr.h>
+ #include <linux/if_arp.h>
+ #include <linux/if_ether.h>
+ #include <linux/skbuff.h>
+diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
+index 9f3ffbe..9466f82 100644
+--- a/net/ipv4/devinet.c
++++ b/net/ipv4/devinet.c
+@@ -43,6 +43,7 @@
+ #include <linux/in.h>
+ #include <linux/errno.h>
+ #include <linux/interrupt.h>
++#include <linux/if_addr.h>
+ #include <linux/if_ether.h>
+ #include <linux/inet.h>
+ #include <linux/netdevice.h>
+diff --git a/net/ipv4/fib_frontend.c b/net/ipv4/fib_frontend.c
+index 277706c..02b6ea9 100644
+--- a/net/ipv4/fib_frontend.c
++++ b/net/ipv4/fib_frontend.c
+@@ -32,6 +32,7 @@
+ #include <linux/inet.h>
+ #include <linux/inetdevice.h>
+ #include <linux/netdevice.h>
++#include <linux/if_addr.h>
+ #include <linux/if_arp.h>
+ #include <linux/skbuff.h>
+ #include <linux/netlink.h>
+diff --git a/net/ipv4/netfilter/ip_conntrack_netbios_ns.c b/net/ipv4/netfilter/ip_conntrack_netbios_ns.c
+index a566a81..8d31b60 100644
+--- a/net/ipv4/netfilter/ip_conntrack_netbios_ns.c
++++ b/net/ipv4/netfilter/ip_conntrack_netbios_ns.c
+@@ -20,6 +20,7 @@
+ #include <linux/init.h>
+ #include <linux/skbuff.h>
+ #include <linux/netdevice.h>
++#include <linux/if_addr.h>
+ #include <linux/inetdevice.h>
+ #include <linux/in.h>
+ #include <linux/ip.h>
+diff --git a/net/ipv6/Kconfig b/net/ipv6/Kconfig
+index 652f61a..5127d6d 100644
+--- a/net/ipv6/Kconfig
++++ b/net/ipv6/Kconfig
+@@ -57,6 +57,16 @@ config IPV6_ROUTE_INFO
+ 
+ 	  If unsure, say N.
+ 
++config IPV6_OPTIMISTIC_DAD
++	bool "IPv6: Enable RFC 4429 Optimistic DAD (EXPERIMENTAL)"
++	depends on IPV6 && EXPERIMENTAL
++	---help---
++	  This is experimental support for optimistic Duplicate
++	  Address Detection.  It allows for autoconfigured addresses
++	  to be used more quickly.
++
++	  If unsure, say N.
++
+ config INET6_AH
+ 	tristate "IPv6: AH transformation"
+ 	depends on IPV6
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index 464eaff..0fa6008 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -48,6 +48,7 @@
+ #include <linux/net.h>
+ #include <linux/in6.h>
+ #include <linux/netdevice.h>
++#include <linux/if_addr.h>
+ #include <linux/if_arp.h>
+ #include <linux/if_arcnet.h>
+ #include <linux/if_infiniband.h>
+@@ -205,6 +206,8 @@ static struct ipv6_devconf ipv6_devconf_dflt = {
+ #endif
+ };
+ 
++int sysctl_ip6_odad = 0;
++
+ /* IPv6 Wildcard Address and Loopback Address defined by RFC2553 */
+ #if 0
+ const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
+@@ -583,6 +586,16 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr, int pfxlen,
+ 
+ 	ifa->rt = rt;
+ 
++	/*
++	 * part one of RFC 4429, section 3.3
++	 * We should not configure an address as
++	 * optimistic if we do not yet know the link
++	 * layer address of our nexhop router
++	 */
++
++	if (rt->rt6i_nexthop == NULL)
++		ifa->flags &= ~IFA_F_OPTIMISTIC;
++
+ 	ifa->idev = idev;
+ 	in6_dev_hold(idev);
+ 	/* For caller */
+@@ -759,6 +772,7 @@ static int ipv6_create_tempaddr(struct inet6_ifaddr *ifp, struct inet6_ifaddr *i
+ 	int tmp_plen;
+ 	int ret = 0;
+ 	int max_addresses;
++	u32 addr_flags;
+ 
+ 	write_lock(&idev->lock);
+ 	if (ift) {
+@@ -816,10 +830,17 @@ retry:
+ 	spin_unlock_bh(&ifp->lock);
+ 
+ 	write_unlock(&idev->lock);
++ 
++	addr_flags = IFA_F_TEMPORARY;
++	/* set in addrconf_prefix_rcv() */
++	if (ifp->flags & IFA_F_OPTIMISTIC)
++		addr_flags |= IFA_F_OPTIMISTIC;
++
+ 	ift = !max_addresses ||
+ 	      ipv6_count_addresses(idev) < max_addresses ? 
+ 		ipv6_add_addr(idev, &addr, tmp_plen,
+-			      ipv6_addr_type(&addr)&IPV6_ADDR_SCOPE_MASK, IFA_F_TEMPORARY) : NULL;
++				ipv6_addr_type(&addr)&IPV6_ADDR_SCOPE_MASK,
++						addr_flags) : NULL;
+ 	if (!ift || IS_ERR(ift)) {
+ 		in6_ifa_put(ifp);
+ 		in6_dev_put(idev);
+@@ -837,7 +858,11 @@ retry:
+ 	ift->cstamp = tmp_cstamp;
+ 	ift->tstamp = tmp_tstamp;
+ 	spin_unlock_bh(&ift->lock);
+-
++	/*
++	 * Note that section 3.1 of RFC 4429 indicates
++	 * that the Optimistic flag should not be set for
++	 * manually configured addresses
++	 */
+ 	addrconf_dad_start(ift, 0);
+ 	in6_ifa_put(ift);
+ 	in6_dev_put(idev);
+@@ -951,13 +976,14 @@ int ipv6_dev_get_saddr(struct net_device *daddr_dev,
+ 			 * - Tentative Address (RFC2462 section 5.4)
+ 			 *  - A tentative address is not considered
+ 			 *    "assigned to an interface" in the traditional
+-			 *    sense.
++			 *    sense, unless it is also flagged as optimistic.
+ 			 * - Candidate Source Address (section 4)
+ 			 *  - In any case, anycast addresses, multicast
+ 			 *    addresses, and the unspecified address MUST
+ 			 *    NOT be included in a candidate set.
+ 			 */
+-			if (ifa->flags & IFA_F_TENTATIVE)
++			if ((ifa->flags & IFA_F_TENTATIVE) &&
++			    (!(ifa->flags & IFA_F_OPTIMISTIC)))
+ 				continue;
+ 			if (unlikely(score.addr_type == IPV6_ADDR_ANY ||
+ 				     score.addr_type & IPV6_ADDR_MULTICAST)) {
+@@ -1016,15 +1042,17 @@ int ipv6_dev_get_saddr(struct net_device *daddr_dev,
+ 				}
+ 			}
+ 
+-			/* Rule 3: Avoid deprecated address */
++			/* Rule 3: Avoid deprecated and optimistic addresses */
+ 			if (hiscore.rule < 3) {
+ 				if (ipv6_saddr_preferred(hiscore.addr_type) ||
+-				    !(ifa_result->flags & IFA_F_DEPRECATED))
++				   (((ifa_result->flags &
++				    (IFA_F_DEPRECATED|IFA_F_OPTIMISTIC)) == 0)))
+ 					hiscore.attrs |= IPV6_SADDR_SCORE_PREFERRED;
+ 				hiscore.rule++;
+ 			}
+ 			if (ipv6_saddr_preferred(score.addr_type) ||
+-			    !(ifa->flags & IFA_F_DEPRECATED)) {
++			   (((ifa_result->flags &
++			    (IFA_F_DEPRECATED|IFA_F_OPTIMISTIC)) == 0))) {
+ 				score.attrs |= IPV6_SADDR_SCORE_PREFERRED;
+ 				if (!(hiscore.attrs & IPV6_SADDR_SCORE_PREFERRED)) {
+ 					score.rule = 3;
+@@ -1145,7 +1173,8 @@ int ipv6_get_saddr(struct dst_entry *dst,
+ }
+ 
+ 
+-int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr)
++int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr,
++		    unsigned char banned_flags)
+ {
+ 	struct inet6_dev *idev;
+ 	int err = -EADDRNOTAVAIL;
+@@ -1156,7 +1185,7 @@ int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr)
+ 
+ 		read_lock_bh(&idev->lock);
+ 		for (ifp=idev->addr_list; ifp; ifp=ifp->if_next) {
+-			if (ifp->scope == IFA_LINK && !(ifp->flags&IFA_F_TENTATIVE)) {
++			if (ifp->scope == IFA_LINK && !(ifp->flags & banned_flags)) {
+ 				ipv6_addr_copy(addr, &ifp->addr);
+ 				err = 0;
+ 				break;
+@@ -1705,6 +1734,13 @@ ok:
+ 
+ 		if (ifp == NULL && valid_lft) {
+ 			int max_addresses = in6_dev->cnf.max_addresses;
++			u32 addr_flags = 0;
++
++#ifdef CONFIG_IPV6_OPTIMISTIC_DAD
++			if (sysctl_ip6_odad &&
++			    !ipv6_devconf.forwarding)
++				addr_flags = IFA_F_OPTIMISTIC;
++#endif
+ 
+ 			/* Do not allow to create too much of autoconfigured
+ 			 * addresses; this would be too easy way to crash kernel.
+@@ -1712,7 +1748,8 @@ ok:
+ 			if (!max_addresses ||
+ 			    ipv6_count_addresses(in6_dev) < max_addresses)
+ 				ifp = ipv6_add_addr(in6_dev, &addr, pinfo->prefix_len,
+-						    addr_type&IPV6_ADDR_SCOPE_MASK, 0);
++						    addr_type&IPV6_ADDR_SCOPE_MASK,
++						    addr_flags);
+ 
+ 			if (!ifp || IS_ERR(ifp)) {
+ 				in6_dev_put(in6_dev);
+@@ -2092,8 +2129,16 @@ static void init_loopback(struct net_device *dev)
+ static void addrconf_add_linklocal(struct inet6_dev *idev, struct in6_addr *addr)
+ {
+ 	struct inet6_ifaddr * ifp;
++	u32 addr_flags = IFA_F_PERMANENT;
++
++#ifdef CONFIG_IPV6_OPTIMISTIC_DAD
++	if (sysctl_ip6_odad &&
++	    !ipv6_devconf.forwarding)
++		addr_flags |= IFA_F_OPTIMISTIC;
++#endif
+ 
+-	ifp = ipv6_add_addr(idev, addr, 64, IFA_LINK, IFA_F_PERMANENT);
++
++	ifp = ipv6_add_addr(idev, addr, 64, IFA_LINK, addr_flags);
+ 	if (!IS_ERR(ifp)) {
+ 		addrconf_dad_start(ifp, 0);
+ 		in6_ifa_put(ifp);
+@@ -2158,7 +2203,7 @@ ipv6_inherit_linklocal(struct inet6_dev *idev, struct net_device *link_dev)
+ {
+ 	struct in6_addr lladdr;
+ 
+-	if (!ipv6_get_lladdr(link_dev, &lladdr)) {
++	if (!ipv6_get_lladdr(link_dev, &lladdr, IFA_F_TENTATIVE)) {
+ 		addrconf_add_linklocal(idev, &lladdr);
+ 		return 0;
+ 	}
+@@ -2493,7 +2538,11 @@ static void addrconf_dad_kick(struct inet6_ifaddr *ifp)
+ 	unsigned long rand_num;
+ 	struct inet6_dev *idev = ifp->idev;
+ 
+-	rand_num = net_random() % (idev->cnf.rtr_solicit_delay ? : 1);
++	if (ifp->flags & IFA_F_OPTIMISTIC)
++		rand_num = 0;
++	else
++		rand_num = net_random() % (idev->cnf.rtr_solicit_delay ? : 1);
++
+ 	ifp->probes = idev->cnf.dad_transmits;
+ 	addrconf_mod_timer(ifp, AC_DAD, rand_num);
+ }
+@@ -2519,7 +2568,7 @@ static void addrconf_dad_start(struct inet6_ifaddr *ifp, u32 flags)
+ 	if (dev->flags&(IFF_NOARP|IFF_LOOPBACK) ||
+ 	    !(dev->flags&IFF_MULTICAST) ||
+ 	    !(ifp->flags&IFA_F_TENTATIVE)) {
+-		ifp->flags &= ~IFA_F_TENTATIVE;
++		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC);
+ 		spin_unlock_bh(&ifp->lock);
+ 		read_unlock_bh(&idev->lock);
+ 
+@@ -2539,6 +2588,14 @@ static void addrconf_dad_start(struct inet6_ifaddr *ifp, u32 flags)
+ 		addrconf_dad_stop(ifp);
+ 		return;
+ 	}
++
++	/*
++	 * Optimistic nodes can start receiving
++	 * Frames right away
++	 */
++	if(ifp->flags & IFA_F_OPTIMISTIC)
++		ip6_ins_rt(ifp->rt, NULL, NULL, NULL);
++
+ 	addrconf_dad_kick(ifp);
+ 	spin_unlock_bh(&ifp->lock);
+ out:
+@@ -2563,7 +2620,7 @@ static void addrconf_dad_timer(unsigned long data)
+ 		 * DAD was successful
+ 		 */
+ 
+-		ifp->flags &= ~IFA_F_TENTATIVE;
++		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC);
+ 		spin_unlock_bh(&ifp->lock);
+ 		read_unlock_bh(&idev->lock);
+ 
+@@ -3544,7 +3601,15 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
+ 
+ 	switch (event) {
+ 	case RTM_NEWADDR:
+-		ip6_ins_rt(ifp->rt, NULL, NULL, NULL);
++	       /*
++		* If the address was optimistic
++		* we inserted the route at the start of
++		* our DAD process, so we don't need
++		* to do it again
++		*/
++		if (!(ifp->rt->rt6i_node))
++			ip6_ins_rt(ifp->rt, NULL, NULL,NULL );
++
+ 		if (ifp->idev->cnf.forwarding)
+ 			addrconf_join_anycast(ifp);
+ 		break;
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index a0e1980..c9cebb5 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -39,6 +39,7 @@
+ #include <linux/tcp.h>
+ #include <linux/route.h>
+ #include <linux/module.h>
++#include <linux/if_addr.h>
+ 
+ #include <linux/netfilter.h>
+ #include <linux/netfilter_ipv6.h>
+@@ -791,6 +792,41 @@ static int ip6_dst_lookup_tail(struct sock *sk,
+ 			goto out_err_release;
+ 	}
+ 
++#ifdef CONFIG_IPV6_OPTIMISTIC_DAD
++		/*
++		 * Here if the dst entry we've looked up
++		 * has a neighbour entry that is in the INCOMPLETE
++		 * state and the src address from the flow is
++		 * marked as OPTIMISTIC, we release the found
++		 * dst entry and replace it instead with the
++		 * dst entry of the nexthop router
++		 */
++		if (!((*dst)->neighbour->nud_state & NUD_VALID)) {
++			struct inet6_ifaddr *ifp;
++			struct flowi fl_gw;
++			int redirect;
++
++			ifp = ipv6_get_ifaddr(&fl->fl6_src, (*dst)->dev, 1);
++
++			redirect = (ifp && ifp->flags & IFA_F_OPTIMISTIC);
++			if (ifp)
++				in6_ifa_put(ifp);
++
++			if (redirect) {
++				/*
++				 * We need to get the dst entry for the
++				 * default router instead
++				 */
++				dst_release(*dst);
++				memcpy(&fl_gw, fl, sizeof(struct flowi));
++				memset(&fl_gw.fl6_dst, 0, sizeof(struct in6_addr));
++				*dst = ip6_route_output(sk, &fl_gw);
++				if ((err = (*dst)->error))
++					goto out_err_release;
++			}
++		}
++#endif
++
+ 	return 0;
+ 
+ out_err_release:
+diff --git a/net/ipv6/mcast.c b/net/ipv6/mcast.c
+index dc81880..c070724 100644
+--- a/net/ipv6/mcast.c
++++ b/net/ipv6/mcast.c
+@@ -45,6 +45,7 @@
+ #include <linux/init.h>
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
++#include <linux/if_addr.h>
+ 
+ #include <linux/netfilter.h>
+ #include <linux/netfilter_ipv6.h>
+@@ -1411,7 +1412,7 @@ static struct sk_buff *mld_newpack(struct net_device *dev, int size)
+ 
+ 	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+ 
+-	if (ipv6_get_lladdr(dev, &addr_buf)) {
++	if (ipv6_get_lladdr(dev, &addr_buf, IFA_F_TENTATIVE)) {
+ 		/* <draft-ietf-magma-mld-source-05.txt>:
+ 		 * use unspecified address as the source address 
+ 		 * when a valid link-local address is not available.
+@@ -1785,7 +1786,7 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
+ 
+ 	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+ 
+-	if (ipv6_get_lladdr(dev, &addr_buf)) {
++	if (ipv6_get_lladdr(dev, &addr_buf, IFA_F_TENTATIVE)) {
+ 		/* <draft-ietf-magma-mld-source-05.txt>:
+ 		 * use unspecified address as the source address 
+ 		 * when a valid link-local address is not available.
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index ad7fb18..36e6bbf 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -62,6 +62,7 @@
+ #include <linux/sysctl.h>
+ #endif
+ 
++#include <linux/if_addr.h>
+ #include <linux/if_arp.h>
+ #include <linux/ipv6.h>
+ #include <linux/icmpv6.h>
+@@ -446,6 +447,8 @@ static void ndisc_send_na(struct net_device *dev, struct neighbour *neigh,
+ 	ifp = ipv6_get_ifaddr(solicited_addr, dev, 1);
+  	if (ifp) {
+ 		src_addr = solicited_addr;
++		if (ifp->flags & IFA_F_OPTIMISTIC)
++			override = 0;
+ 		in6_ifa_put(ifp);
+ 	} else {
+ 		if (ipv6_dev_get_saddr(dev, daddr, &tmpaddr))
+@@ -539,7 +542,8 @@ void ndisc_send_ns(struct net_device *dev, struct neighbour *neigh,
+ 	int send_llinfo;
+ 
+ 	if (saddr == NULL) {
+-		if (ipv6_get_lladdr(dev, &addr_buf))
++		if (ipv6_get_lladdr(dev, &addr_buf,
++				   (IFA_F_TENTATIVE|IFA_F_OPTIMISTIC)))
+ 			return;
+ 		saddr = &addr_buf;
+ 	}
+@@ -617,9 +621,32 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+         struct sk_buff *skb;
+         struct icmp6hdr *hdr;
+ 	__u8 * opt;
++	struct inet6_ifaddr *ifp;
++	int send_sllao = dev->addr_len;
+         int len;
+ 	int err;
+-
++ 
++ #ifdef CONFIG_IPV6_OPTIMISTIC_DAD
++	/*
++	* According to section 2.2 of RFC 4429, we must not
++	* send router solicitations with a sllao from
++	* optimistic addresses, but we may send the solicitation
++	* if we don't include the sllao.  So here we check
++	* if our address is optimistic, and if so, we
++	* supress the inclusion of the sllao.
++	*/
++	if (send_sllao) {
++		ifp = ipv6_get_ifaddr(saddr, dev, 1);
++		if (ifp) {
++			if (ifp->flags & IFA_F_OPTIMISTIC)  {
++				send_sllao=0;
++				in6_ifa_put(ifp);
++			}
++		} else {
++			send_sllao = 0;
++		}
++	}
++#endif
+ 	ndisc_flow_init(&fl, NDISC_ROUTER_SOLICITATION, saddr, daddr,
+ 			dev->ifindex);
+ 
+@@ -632,7 +659,7 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+ 		return;
+ 
+ 	len = sizeof(struct icmp6hdr);
+-	if (dev->addr_len)
++	if (send_sllao)
+ 		len += ndisc_opt_addr_space(dev);
+ 
+         skb = sock_alloc_send_skb(sk, MAX_HEADER + len + LL_RESERVED_SPACE(dev),
+@@ -657,7 +684,7 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+ 
+ 	opt = (u8*) (hdr + 1);
+ 
+-	if (dev->addr_len)
++	if (send_sllao)
+ 		ndisc_fill_addr_option(opt, ND_OPT_SOURCE_LL_ADDR, dev->dev_addr,
+ 				       dev->addr_len, dev->type);
+ 
+@@ -787,30 +814,39 @@ static void ndisc_recv_ns(struct sk_buff *skb)
+ 	inc = ipv6_addr_is_multicast(daddr);
+ 
+ 	if ((ifp = ipv6_get_ifaddr(&msg->target, dev, 1)) != NULL) {
+-		if (ifp->flags & IFA_F_TENTATIVE) {
+-			/* Address is tentative. If the source
+-			   is unspecified address, it is someone
+-			   does DAD, otherwise we ignore solicitations
+-			   until DAD timer expires.
+-			 */
+-			if (!dad)
+-				goto out;
+-			if (dev->type == ARPHRD_IEEE802_TR) {
+-				unsigned char *sadr = skb->mac.raw;
+-				if (((sadr[8] ^ dev->dev_addr[0]) & 0x7f) == 0 &&
+-				    sadr[9] == dev->dev_addr[1] &&
+-				    sadr[10] == dev->dev_addr[2] &&
+-				    sadr[11] == dev->dev_addr[3] &&
+-				    sadr[12] == dev->dev_addr[4] &&
+-				    sadr[13] == dev->dev_addr[5]) {
+-					/* looped-back to us */
+-					goto out;
++		if (ifp->flags & (IFA_F_TENTATIVE|IFA_F_OPTIMISTIC)) {
++			if (dad) {
++				if (dev->type == ARPHRD_IEEE802_TR) {
++					unsigned char *sadr = skb->mac.raw;
++					if (((sadr[8] ^ dev->dev_addr[0]) & 0x7f) == 0 &&
++						sadr[9] == dev->dev_addr[1] &&
++						sadr[10] == dev->dev_addr[2] &&
++						sadr[11] == dev->dev_addr[3] &&
++						sadr[12] == dev->dev_addr[4] &&
++						sadr[13] == dev->dev_addr[5]) {
++							/* looped-back to us */
++							goto out;
++					}
+ 				}
++ 
++				/*
++				 * We are colliding with another node
++				 * who is doing DAD
++				 * so fail our DAD process
++				 */
++				addrconf_dad_failure(ifp);
++                                goto out;
++			} else {
++				/*
++				 * This is not a dad solicitation.
++				 * If we are an optimistic node,
++				 * we should respond.
++				 * Otherwise, we should ignore it.
++				 */
++				if (!(ifp->flags & IFA_F_OPTIMISTIC))
++					goto out;
+ 			}
+-			addrconf_dad_failure(ifp); 
+-			return;
+ 		}
+-
+ 		idev = ifp->idev;
+ 	} else {
+ 		idev = in6_dev_get(dev);
+@@ -1380,7 +1416,7 @@ void ndisc_send_redirect(struct sk_buff *skb, struct neighbour *neigh,
+ 
+ 	dev = skb->dev;
+ 
+-	if (ipv6_get_lladdr(dev, &saddr_buf)) {
++	if (ipv6_get_lladdr(dev, &saddr_buf, IFA_F_TENTATIVE)) {
+ 		ND_PRINTK2(KERN_WARNING
+ 			   "ICMPv6 Redirect: no link-local address on %s\n",
+ 			   dev->name);
+diff --git a/net/ipv6/sysctl_net_ipv6.c b/net/ipv6/sysctl_net_ipv6.c
+index 7a4639d..8d09102 100644
+--- a/net/ipv6/sysctl_net_ipv6.c
++++ b/net/ipv6/sysctl_net_ipv6.c
+@@ -80,6 +80,14 @@ static ctl_table ipv6_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec
+ 	},
++	{
++		.ctl_name	= NET_IPV6_OPTIMISTIC_DAD,
++		.procname	= "optimistic_dad",
++		.data		= &sysctl_ip6_odad,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 

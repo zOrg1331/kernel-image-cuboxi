@@ -12,7 +12,21 @@
 # EXTRA_AFLAGS += -DTRAP_DBG_INTERRUPT
 #
 
-asflags-$(CONFIG_FULLDEBUG) := -DDEBUGGER_COMPATIBLE_CACHE=1
+ifdef CONFIG_FULLDEBUG
+AFLAGS += -DDEBUGGER_COMPATIBLE_CACHE=1
+endif
 
-obj-y	+= config.o gpio.o
+obj-$(CONFIG_COLDFIRE)	+= entry.o vectors.o ints.o
+obj-$(CONFIG_M5206)	+= timers.o
+obj-$(CONFIG_M5206e)	+= timers.o
+obj-$(CONFIG_M520x)	+= pit.o
+obj-$(CONFIG_M523x)	+= pit.o
+obj-$(CONFIG_M5249)	+= timers.o
+obj-$(CONFIG_M527x)     += pit.o
+obj-$(CONFIG_M5272)	+= timers.o
+obj-$(CONFIG_M5307)	+= config.o timers.o
+obj-$(CONFIG_M532x)	+= timers.o
+obj-$(CONFIG_M528x)     += pit.o
+obj-$(CONFIG_M5407)	+= timers.o
 
+extra-y := head.o

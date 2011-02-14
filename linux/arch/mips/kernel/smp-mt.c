@@ -22,7 +22,6 @@
 #include <linux/cpumask.h>
 #include <linux/interrupt.h>
 #include <linux/compiler.h>
-#include <linux/smp.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
@@ -31,153 +30,239 @@
 #include <asm/system.h>
 #include <asm/hardirq.h>
 #include <asm/mmu_context.h>
+#include <asm/smp.h>
 #include <asm/time.h>
 #include <asm/mipsregs.h>
 #include <asm/mipsmtregs.h>
 #include <asm/mips_mt.h>
+#include <asm/mips-boards/maltaint.h>  /* This is f*cking wrong */
 
-static void __init smvp_copy_vpe_config(void)
+#define MIPS_CPU_IPI_RESCHED_IRQ 0
+#define MIPS_CPU_IPI_CALL_IRQ 1
+
+static int cpu_ipi_resched_irq, cpu_ipi_call_irq;
+
+#if 0
+static void dump_mtregisters(int vpe, int tc)
 {
-	write_vpe_c0_status(
-		(read_c0_status() & ~(ST0_IM | ST0_IE | ST0_KSU)) | ST0_CU0);
+	printk("vpe %d tc %d\n", vpe, tc);
 
-	/* set config to be the same as vpe0, particularly kseg0 coherency alg */
-	write_vpe_c0_config( read_c0_config());
+	settc(tc);
 
-	/* make sure there are no software interrupts pending */
-	write_vpe_c0_cause(0);
-
-	/* Propagate Config7 */
-	write_vpe_c0_config7(read_c0_config7());
-
-	write_vpe_c0_count(read_c0_count());
+	printk("  c0 status  0x%lx\n", read_vpe_c0_status());
+	printk("  vpecontrol 0x%lx\n", read_vpe_c0_vpecontrol());
+	printk("  vpeconf0    0x%lx\n", read_vpe_c0_vpeconf0());
+	printk("  tcstatus 0x%lx\n", read_tc_c0_tcstatus());
+	printk("  tcrestart 0x%lx\n", read_tc_c0_tcrestart());
+	printk("  tcbind 0x%lx\n", read_tc_c0_tcbind());
+	printk("  tchalt 0x%lx\n", read_tc_c0_tchalt());
 }
+#endif
 
-static unsigned int __init smvp_vpe_init(unsigned int tc, unsigned int mvpconf0,
-	unsigned int ncpu)
+void __init sanitize_tlb_entries(void)
 {
-	if (tc > ((mvpconf0 & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT))
-		return ncpu;
+	int i, tlbsiz;
+	unsigned long mvpconf0, ncpu;
 
-	/* Deactivate all but VPE 0 */
-	if (tc != 0) {
-		unsigned long tmp = read_vpe_c0_vpeconf0();
-
-		tmp &= ~VPECONF0_VPA;
-
-		/* master VPE */
-		tmp |= VPECONF0_MVP;
-		write_vpe_c0_vpeconf0(tmp);
-
-		/* Record this as available CPU */
-		set_cpu_possible(tc, true);
-		__cpu_number_map[tc]	= ++ncpu;
-		__cpu_logical_map[ncpu]	= tc;
-	}
-
-	/* Disable multi-threading with TC's */
-	write_vpe_c0_vpecontrol(read_vpe_c0_vpecontrol() & ~VPECONTROL_TE);
-
-	if (tc != 0)
-		smvp_copy_vpe_config();
-
-	return ncpu;
-}
-
-static void __init smvp_tc_init(unsigned int tc, unsigned int mvpconf0)
-{
-	unsigned long tmp;
-
-	if (!tc)
+	if (!cpu_has_mipsmt)
 		return;
 
-	/* bind a TC to each VPE, May as well put all excess TC's
-	   on the last VPE */
-	if (tc >= (((mvpconf0 & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT)+1))
-		write_tc_c0_tcbind(read_tc_c0_tcbind() | ((mvpconf0 & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT));
-	else {
-		write_tc_c0_tcbind(read_tc_c0_tcbind() | tc);
+	/* Enable VPC */
+	set_c0_mvpcontrol(MVPCONTROL_VPC);
 
-		/* and set XTC */
-		write_vpe_c0_vpeconf0(read_vpe_c0_vpeconf0() | (tc << VPECONF0_XTC_SHIFT));
+	back_to_back_c0_hazard();
+
+	/* Disable TLB sharing */
+	clear_c0_mvpcontrol(MVPCONTROL_STLB);
+
+	mvpconf0 = read_c0_mvpconf0();
+
+	printk(KERN_INFO "MVPConf0 0x%lx TLBS %lx PTLBE %ld\n", mvpconf0,
+		   (mvpconf0 & MVPCONF0_TLBS) >> MVPCONF0_TLBS_SHIFT,
+			   (mvpconf0 & MVPCONF0_PTLBE) >> MVPCONF0_PTLBE_SHIFT);
+
+	tlbsiz = (mvpconf0 & MVPCONF0_PTLBE) >> MVPCONF0_PTLBE_SHIFT;
+	ncpu = ((mvpconf0 & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT) + 1;
+
+	printk(" tlbsiz %d ncpu %ld\n", tlbsiz, ncpu);
+
+	if (tlbsiz > 0) {
+		/* share them out across the vpe's */
+		tlbsiz /= ncpu;
+
+		printk(KERN_INFO "setting Config1.MMU_size to %d\n", tlbsiz);
+
+		for (i = 0; i < ncpu; i++) {
+			settc(i);
+
+			if (i == 0)
+				write_c0_config1((read_c0_config1() & ~(0x3f << 25)) | (tlbsiz << 25));
+			else
+				write_vpe_c0_config1((read_vpe_c0_config1() & ~(0x3f << 25)) |
+						   (tlbsiz << 25));
+		}
 	}
 
-	tmp = read_tc_c0_tcstatus();
-
-	/* mark not allocated and not dynamically allocatable */
-	tmp &= ~(TCSTATUS_A | TCSTATUS_DA);
-	tmp |= TCSTATUS_IXMT;		/* interrupt exempt */
-	write_tc_c0_tcstatus(tmp);
-
-	write_tc_c0_tchalt(TCHALT_H);
+	clear_c0_mvpcontrol(MVPCONTROL_VPC);
 }
 
-static void vsmp_send_ipi_single(int cpu, unsigned int action)
+static void ipi_resched_dispatch (struct pt_regs *regs)
 {
-	int i;
-	unsigned long flags;
-	int vpflags;
-
-	local_irq_save(flags);
-
-	vpflags = dvpe();	/* cant access the other CPU's registers whilst MVPE enabled */
-
-	switch (action) {
-	case SMP_CALL_FUNCTION:
-		i = C_SW1;
-		break;
-
-	case SMP_RESCHEDULE_YOURSELF:
-	default:
-		i = C_SW0;
-		break;
-	}
-
-	/* 1:1 mapping of vpe and tc... */
-	settc(cpu);
-	write_vpe_c0_cause(read_vpe_c0_cause() | i);
-	evpe(vpflags);
-
-	local_irq_restore(flags);
+	do_IRQ(MIPSCPU_INT_BASE + MIPS_CPU_IPI_RESCHED_IRQ, regs);
 }
 
-static void vsmp_send_ipi_mask(const struct cpumask *mask, unsigned int action)
+static void ipi_call_dispatch (struct pt_regs *regs)
 {
-	unsigned int i;
-
-	for_each_cpu(i, mask)
-		vsmp_send_ipi_single(i, action);
+	do_IRQ(MIPSCPU_INT_BASE + MIPS_CPU_IPI_CALL_IRQ, regs);
 }
 
-static void __cpuinit vsmp_init_secondary(void)
+irqreturn_t ipi_resched_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	extern int gic_present;
-
-	/* This is Malta specific: IPI,performance and timer inetrrupts */
-	if (gic_present)
-		change_c0_status(ST0_IM, STATUSF_IP3 | STATUSF_IP4 |
-					 STATUSF_IP6 | STATUSF_IP7);
-	else
-		change_c0_status(ST0_IM, STATUSF_IP0 | STATUSF_IP1 |
-					 STATUSF_IP6 | STATUSF_IP7);
+	return IRQ_HANDLED;
 }
 
-static void __cpuinit vsmp_smp_finish(void)
+irqreturn_t ipi_call_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	/* CDFIXME: remove this? */
-	write_c0_compare(read_c0_count() + (8* mips_hpt_frequency/HZ));
+	smp_call_function_interrupt();
+
+	return IRQ_HANDLED;
+}
+
+static struct irqaction irq_resched = {
+	.handler	= ipi_resched_interrupt,
+	.flags		= IRQF_DISABLED,
+	.name		= "IPI_resched"
+};
+
+static struct irqaction irq_call = {
+	.handler	= ipi_call_interrupt,
+	.flags		= IRQF_DISABLED,
+	.name		= "IPI_call"
+};
+
+/*
+ * Common setup before any secondaries are started
+ * Make sure all CPU's are in a sensible state before we boot any of the
+ * secondarys
+ */
+void plat_smp_setup(void)
+{
+	unsigned long val;
+	int i, num;
 
 #ifdef CONFIG_MIPS_MT_FPAFF
 	/* If we have an FPU, enroll ourselves in the FPU-full mask */
 	if (cpu_has_fpu)
-		cpu_set(smp_processor_id(), mt_fpu_cpumask);
+		cpu_set(0, mt_fpu_cpumask);
 #endif /* CONFIG_MIPS_MT_FPAFF */
+	if (!cpu_has_mipsmt)
+		return;
 
-	local_irq_enable();
+	/* disable MT so we can configure */
+	dvpe();
+	dmt();
+
+	mips_mt_set_cpuoptions();
+
+	/* Put MVPE's into 'configuration state' */
+	set_c0_mvpcontrol(MVPCONTROL_VPC);
+
+	val = read_c0_mvpconf0();
+
+	/* we'll always have more TC's than VPE's, so loop setting everything
+	   to a sensible state */
+	for (i = 0, num = 0; i <= ((val & MVPCONF0_PTC) >> MVPCONF0_PTC_SHIFT); i++) {
+		settc(i);
+
+		/* VPE's */
+		if (i <= ((val & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT)) {
+
+			/* deactivate all but vpe0 */
+			if (i != 0) {
+				unsigned long tmp = read_vpe_c0_vpeconf0();
+
+				tmp &= ~VPECONF0_VPA;
+
+				/* master VPE */
+				tmp |= VPECONF0_MVP;
+				write_vpe_c0_vpeconf0(tmp);
+
+				/* Record this as available CPU */
+				cpu_set(i, phys_cpu_present_map);
+				__cpu_number_map[i]	= ++num;
+				__cpu_logical_map[num]	= i;
+			}
+
+			/* disable multi-threading with TC's */
+			write_vpe_c0_vpecontrol(read_vpe_c0_vpecontrol() & ~VPECONTROL_TE);
+
+			if (i != 0) {
+				write_vpe_c0_status((read_c0_status() & ~(ST0_IM | ST0_IE | ST0_KSU)) | ST0_CU0);
+
+				/* set config to be the same as vpe0, particularly kseg0 coherency alg */
+				write_vpe_c0_config( read_c0_config());
+
+				/* make sure there are no software interrupts pending */
+				write_vpe_c0_cause(read_vpe_c0_cause() & ~(C_SW1|C_SW0));
+
+				/* Propagate Config7 */
+				write_vpe_c0_config7(read_c0_config7());
+			}
+
+		}
+
+		/* TC's */
+
+		if (i != 0) {
+			unsigned long tmp;
+
+			/* bind a TC to each VPE, May as well put all excess TC's
+			   on the last VPE */
+			if ( i >= (((val & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT)+1) )
+				write_tc_c0_tcbind(read_tc_c0_tcbind() | ((val & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT) );
+			else {
+				write_tc_c0_tcbind( read_tc_c0_tcbind() | i);
+
+				/* and set XTC */
+				write_vpe_c0_vpeconf0( read_vpe_c0_vpeconf0() | (i << VPECONF0_XTC_SHIFT));
+			}
+
+			tmp = read_tc_c0_tcstatus();
+
+			/* mark not allocated and not dynamically allocatable */
+			tmp &= ~(TCSTATUS_A | TCSTATUS_DA);
+			tmp |= TCSTATUS_IXMT;		/* interrupt exempt */
+			write_tc_c0_tcstatus(tmp);
+
+			write_tc_c0_tchalt(TCHALT_H);
+		}
+	}
+
+	/* Release config state */
+	clear_c0_mvpcontrol(MVPCONTROL_VPC);
+
+	/* We'll wait until starting the secondaries before starting MVPE */
+
+	printk(KERN_INFO "Detected %i available secondary CPU(s)\n", num);
 }
 
-static void vsmp_cpus_done(void)
+void __init plat_prepare_cpus(unsigned int max_cpus)
 {
+	/* set up ipi interrupts */
+	if (cpu_has_vint) {
+		set_vi_handler (MIPS_CPU_IPI_RESCHED_IRQ, ipi_resched_dispatch);
+		set_vi_handler (MIPS_CPU_IPI_CALL_IRQ, ipi_call_dispatch);
+	}
+
+	cpu_ipi_resched_irq = MIPSCPU_INT_BASE + MIPS_CPU_IPI_RESCHED_IRQ;
+	cpu_ipi_call_irq = MIPSCPU_INT_BASE + MIPS_CPU_IPI_CALL_IRQ;
+
+	setup_irq(cpu_ipi_resched_irq, &irq_resched);
+	setup_irq(cpu_ipi_call_irq, &irq_call);
+
+	/* need to mark IPI's as IRQ_PER_CPU */
+	irq_desc[cpu_ipi_resched_irq].status |= IRQ_PER_CPU;
+	irq_desc[cpu_ipi_call_irq].status |= IRQ_PER_CPU;
 }
 
 /*
@@ -188,7 +273,7 @@ static void vsmp_cpus_done(void)
  * (unsigned long)idle->thread_info the gp
  * assumes a 1:1 mapping of TC => VPE
  */
-static void __cpuinit vsmp_boot_secondary(int cpu, struct task_struct *idle)
+void prom_boot_secondary(int cpu, struct task_struct *idle)
 {
 	struct thread_info *gp = task_thread_info(idle);
 	dvpe();
@@ -222,66 +307,54 @@ static void __cpuinit vsmp_boot_secondary(int cpu, struct task_struct *idle)
 	evpe(EVPE_ENABLE);
 }
 
-/*
- * Common setup before any secondaries are started
- * Make sure all CPU's are in a sensible state before we boot any of the
- * secondaries
- */
-static void __init vsmp_smp_setup(void)
+void prom_init_secondary(void)
 {
-	unsigned int mvpconf0, ntc, tc, ncpu = 0;
-	unsigned int nvpe;
+	write_c0_status((read_c0_status() & ~ST0_IM ) |
+	                (STATUSF_IP0 | STATUSF_IP1 | STATUSF_IP7));
+}
+
+void prom_smp_finish(void)
+{
+	write_c0_compare(read_c0_count() + (8* mips_hpt_frequency/HZ));
 
 #ifdef CONFIG_MIPS_MT_FPAFF
 	/* If we have an FPU, enroll ourselves in the FPU-full mask */
 	if (cpu_has_fpu)
-		cpu_set(0, mt_fpu_cpumask);
+		cpu_set(smp_processor_id(), mt_fpu_cpumask);
 #endif /* CONFIG_MIPS_MT_FPAFF */
-	if (!cpu_has_mipsmt)
-		return;
 
-	/* disable MT so we can configure */
-	dvpe();
-	dmt();
+	local_irq_enable();
+}
 
-	/* Put MVPE's into 'configuration state' */
-	set_c0_mvpcontrol(MVPCONTROL_VPC);
+void prom_cpus_done(void)
+{
+}
 
-	mvpconf0 = read_c0_mvpconf0();
-	ntc = (mvpconf0 & MVPCONF0_PTC) >> MVPCONF0_PTC_SHIFT;
+void core_send_ipi(int cpu, unsigned int action)
+{
+	int i;
+	unsigned long flags;
+	int vpflags;
 
-	nvpe = ((mvpconf0 & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT) + 1;
-	smp_num_siblings = nvpe;
+	local_irq_save (flags);
 
-	/* we'll always have more TC's than VPE's, so loop setting everything
-	   to a sensible state */
-	for (tc = 0; tc <= ntc; tc++) {
-		settc(tc);
+	vpflags = dvpe();	/* cant access the other CPU's registers whilst MVPE enabled */
 
-		smvp_tc_init(tc, mvpconf0);
-		ncpu = smvp_vpe_init(tc, mvpconf0, ncpu);
+	switch (action) {
+	case SMP_CALL_FUNCTION:
+		i = C_SW1;
+		break;
+
+	case SMP_RESCHEDULE_YOURSELF:
+	default:
+		i = C_SW0;
+		break;
 	}
 
-	/* Release config state */
-	clear_c0_mvpcontrol(MVPCONTROL_VPC);
+	/* 1:1 mapping of vpe and tc... */
+	settc(cpu);
+	write_vpe_c0_cause(read_vpe_c0_cause() | i);
+	evpe(vpflags);
 
-	/* We'll wait until starting the secondaries before starting MVPE */
-
-	printk(KERN_INFO "Detected %i available secondary CPU(s)\n", ncpu);
+	local_irq_restore(flags);
 }
-
-static void __init vsmp_prepare_cpus(unsigned int max_cpus)
-{
-	mips_mt_set_cpuoptions();
-}
-
-struct plat_smp_ops vsmp_smp_ops = {
-	.send_ipi_single	= vsmp_send_ipi_single,
-	.send_ipi_mask		= vsmp_send_ipi_mask,
-	.init_secondary		= vsmp_init_secondary,
-	.smp_finish		= vsmp_smp_finish,
-	.cpus_done		= vsmp_cpus_done,
-	.boot_secondary		= vsmp_boot_secondary,
-	.smp_setup		= vsmp_smp_setup,
-	.prepare_cpus		= vsmp_prepare_cpus,
-};

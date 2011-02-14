@@ -1,0 +1,62 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 10 Jan 2008 13:51:09 -0500
+Subject: [xen] kdump: fix dom0 /proc/vmcore layout
+Message-id: 20080110185109.GE4486@hmsendeavour.rdu.redhat.com
+O-Subject: [PATCH 5.2] fix dom0 /proc/vmcore layout
+Bugzilla: 423731
+
+Hey-
+	Recently found that kdump on dom0 kernels results in a vmcore file that
+has a bogus notes section in it, which prevents crash from reading it.  This is
+an artifact of the inclusion of /sys/kernel/vmcoreinfo support.  Apparently we
+cant currently obtain the apprpriate info from dom0 kernels to format the
+vmcoreinfo section in the crash file properly:
+http://lists.infradead.org/pipermail/kexec/2007-September/000790.html
+Best solution at this moment I think is this patch, which removes
+/sys/kernel/vmcoreinfo from dom0 kernels.  I've tested this and it allows us to
+produce readable crashdumps in a dom0 environment.  The only side effect is,
+without /sys/kernel/vmcoreinfo present, the makedumpfile dump filtering utility
+requires a kernels debuginfo pacakge to be installed.  Basically if you use
+makedumpfile in kdump, then you also need to install debuginfo on dom0 kernels.
+I think thats a pretty reasonable tradeoff though until we fix vmcoreinfo
+properly upstream.  Fixes bz 423731
+
+Regards
+Neil
+
+Acked-by: Dave Anderson <anderson@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/kernel/ksysfs.c b/kernel/ksysfs.c
+index 6ea6c10..121dfe1 100644
+--- a/kernel/ksysfs.c
++++ b/kernel/ksysfs.c
+@@ -61,6 +61,7 @@ static ssize_t kexec_crash_loaded_show(struct subsystem *subsys, char *page)
+ }
+ KERNEL_ATTR_RO(kexec_crash_loaded);
+ 
++#ifndef CONFIG_XEN
+ static ssize_t vmcoreinfo_show(struct kset *kset, char *page)
+ {
+ 	return sprintf(page, "%lx %x\n",
+@@ -68,6 +69,7 @@ static ssize_t vmcoreinfo_show(struct kset *kset, char *page)
+ 		       (unsigned int)vmcoreinfo_max_size);
+ }
+ KERNEL_ATTR_RO(vmcoreinfo);
++#endif /* CONFIG_XEN */
+ 
+ #endif /* CONFIG_KEXEC */
+ 
+@@ -82,8 +84,10 @@ static struct attribute * kernel_attrs[] = {
+ #ifdef CONFIG_KEXEC
+ 	&kexec_loaded_attr.attr,
+ 	&kexec_crash_loaded_attr.attr,
++#ifndef CONFIG_XEN
+ 	&vmcoreinfo_attr.attr,
+-#endif
++#endif /* CONFIG_XEN */
++#endif /* CONFIG_KEXEC */
+ 	NULL
+ };
+ 

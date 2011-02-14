@@ -1,0 +1,29 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 25 Mar 2008 11:45:34 -0400
+Subject: [net] ipv6: fix default address selection rule 3
+Message-id: 20080325154534.GB14434@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH]: fix default address selection rule 3 (bz 438429)
+Bugzilla: 438429
+
+Hey-
+	Backport of commit
+6ae5f983cf8de769214d2d9e8a783c881eccd4cd
+from upstream to fix the broken rule 3 for default address seleciton in ipv6.
+Resolves bz 438429
+
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index c2e3c1b..ab7c344 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -1063,7 +1063,7 @@ int ipv6_dev_get_saddr(struct net_device *daddr_dev,
+ 				hiscore.rule++;
+ 			}
+ 			if (ipv6_saddr_preferred(score.addr_type) ||
+-			   (((ifa_result->flags &
++			   (((ifa->flags &
+ 			    (IFA_F_DEPRECATED|IFA_F_OPTIMISTIC)) == 0))) {
+ 				score.attrs |= IPV6_SADDR_SCORE_PREFERRED;
+ 				if (!(hiscore.attrs & IPV6_SADDR_SCORE_PREFERRED)) {

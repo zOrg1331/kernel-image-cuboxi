@@ -6,12 +6,13 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/init.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
-#include <mach/shannon.h>
+#include <asm/arch/shannon.h>
 #include <asm/irq.h>
 #include "sa1100_generic.h"
 
@@ -73,19 +74,19 @@ shannon_pcmcia_configure_socket(struct soc_pcmcia_socket *skt,
 {
 	switch (state->Vcc) {
 	case 0:	/* power off */
-		printk(KERN_WARNING "%s(): CS asked for 0V, still applying 3.3V..\n", __func__);
+		printk(KERN_WARNING "%s(): CS asked for 0V, still applying 3.3V..\n", __FUNCTION__);
 		break;
 	case 50:
-		printk(KERN_WARNING "%s(): CS asked for 5V, applying 3.3V..\n", __func__);
+		printk(KERN_WARNING "%s(): CS asked for 5V, applying 3.3V..\n", __FUNCTION__);
 	case 33:
 		break;
 	default:
 		printk(KERN_ERR "%s(): unrecognized Vcc %u\n",
-		       __func__, state->Vcc);
+		       __FUNCTION__, state->Vcc);
 		return -1;
 	}
 
-	printk(KERN_WARNING "%s(): Warning, Can't perform reset\n", __func__);
+	printk(KERN_WARNING "%s(): Warning, Can't perform reset\n", __FUNCTION__);
 	
 	/* Silently ignore Vpp, output enable, speaker enable. */
 

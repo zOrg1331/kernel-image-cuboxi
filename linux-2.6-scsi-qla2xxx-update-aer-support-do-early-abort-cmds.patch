@@ -1,0 +1,82 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 3 Sep 2010 21:40:41 -0400
+Subject: [scsi] qla2xxx: update AER support, do early abort cmds
+Message-id: <20100903214041.2767.91990.sendpatchset@localhost.localdomain>
+Patchwork-id: 28150
+O-Subject: [RHEL 5.6 PATCH 8/9] qla2xxx: Update to AER support,
+	do early abort commands.
+Bugzilla: 619814
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+Bugzilla
+--------
+
+Bug 619814 (https://bugzilla.redhat.com/show_bug.cgi?id=619814)
+
+Upstream Status
+---------------
+
+Will be submitted upstream with our next patch submission.
+
+Description
+-----------
+
+>From eb2f0146370270f5a1f6f457c22d1fdefb5921a7 Mon Sep 17 00:00:00 2001
+From: root <root@labrat.lab.bos.redhat.com>
+Date: Fri, 3 Sep 2010 10:57:40 -0400
+Subject: [PATCH] qla2xxx: Update to AER support, do early abort commands.
+
+Currently the IOs are returned back in slot reset, this
+could be late and can cause error handler to invoke.
+If error handler invokes, eh_abort fails and escalate to
+device/bus/host resets causing issues.
+The commands need to be returned back to upper layer in
+io_error_detected.
+
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 9a5b6ab..34e41ac 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -3502,17 +3502,19 @@ qla2x00_abort_isp_cleanup(scsi_qla_host_t *ha)
+ 			    LOOP_DOWN_TIME);
+ 	}
+ 
+-	/* Make sure for ISP 82XX IO DMA is complete */
+-	if (IS_QLA82XX(ha)) {
+-		DEBUG2(qla_printk(KERN_INFO, ha,
+-		    "Waiting for pending commands\n"));
+-		qla2x00_eh_wait_for_pending_commands(ha);
+-		DEBUG2(qla_printk(KERN_INFO, ha,
+-		    "Done wait for pending commands\n"));
+-	}
++	if (!ha->flags.eeh_busy) {
++		/* Make sure for ISP 82XX IO DMA is complete */
++		if (IS_QLA82XX(ha)) {
++			DEBUG2(qla_printk(KERN_INFO, ha,
++			    "Waiting for pending commands\n"));
++			qla2x00_eh_wait_for_pending_commands(ha);
++			DEBUG2(qla_printk(KERN_INFO, ha,
++			    "Done wait for pending commands\n"));
++		}
+ 
+-	/* Requeue all commands in outstanding command list. */
+-	qla2x00_abort_all_cmds(ha, DID_RESET << 16);
++		/* Requeue all commands in outstanding command list. */
++		qla2x00_abort_all_cmds(ha, DID_RESET << 16);
++	}
+ }
+ 
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 8ce44f7..22595ce 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -3658,6 +3658,8 @@ qla2xxx_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
+ 		ha->flags.eeh_busy = 1;
+ 		qla2x00_free_irqs(ha);
+ 		pci_disable_device(pdev);
++		/* Return back all IOs */
++		qla2x00_abort_all_cmds(ha, DID_RESET << 16);
+ 		return PCI_ERS_RESULT_NEED_RESET;
+ 	case pci_channel_io_perm_failure:
+ 		ha->flags.pci_channel_io_perm_failure = 1;

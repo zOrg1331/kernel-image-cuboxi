@@ -1,0 +1,58 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:58:53 -0500
+Subject: [scsi] qla4xxx: free_irqs on failed initialize_adapter
+Message-id: <20101130195853.10450.87545.sendpatchset@localhost.localdomain>
+Patchwork-id: 29692
+O-Subject: [RHEL 5.6 PATCH 1/28] qla4xxx: free_irqs on failed initialize_adapter
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 3710c60c09f555df69d12b0232702d062fe3bcd6
+
+Description
+-----------
+
+>From f40600f1a594444d2ba1419db8ebd5f5680bd91f Mon Sep 17 00:00:00 2001
+From: Karen Higgins <karen.higgins@qlogic.com>
+Date: Sat, 20 Nov 2010 13:57:50 -0800
+Subject: [PATCH 02/29] qla4xxx: free_irqs on failed initialize_adapter
+
+Since interrupts are registered in start_firmware(load_risc) for 82xx,
+free them if init_firmware fails.
+
+Signed-off-by: Karen Higgins <karen.higgins@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_init.c b/drivers/scsi/qla4xxx/ql4_init.c
+index 03a08cf..c96e947 100644
+--- a/drivers/scsi/qla4xxx/ql4_init.c
++++ b/drivers/scsi/qla4xxx/ql4_init.c
+@@ -1343,7 +1343,7 @@ int qla4xxx_start_firmware(struct scsi_qla_host *ha)
+  * @renew_ddb_list: Indicates what to do with the adapter's ddb list
+  *	after adapter recovery has completed.
+  *	0=preserve ddb list, 1=destroy and rebuild ddb list
+- * 
++ *
+  * This routine parforms all of the steps necessary to initialize the adapter.
+  *
+  **/
+@@ -1422,6 +1422,12 @@ exit_init_hba0:
+ 	dev_info(&ha->pdev->dev, "%s: adapter ONLINE\n", __func__);
+ 
+ exit_init_hba:
++	if (is_qla8022(ha) && (status == QLA_ERROR)) {
++		/* Since interrupts are registered in start_firmware for
++		 * 82xx, release them here if initialize_adapter fails
++		 */
++		qla4xxx_free_irqs(ha);
++	}
+ 	return status;
+ }
+ 

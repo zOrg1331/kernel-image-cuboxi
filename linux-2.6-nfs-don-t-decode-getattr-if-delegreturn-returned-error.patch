@@ -1,0 +1,49 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 19 Apr 2010 13:37:42 -0400
+Subject: [nfs] don't decode GETATTR if DELEGRETURN returned error
+Message-id: <1271684262-18111-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 24228
+O-Subject: [RHEL5.6 PATCH] BZ#551028: NFS: don't try to decode GETATTR if
+	DELEGRETURN returned error
+Bugzilla: 551028
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+This patch just went upstream in 2.6.34. The bug is fairly benign, but
+it does cause a scary-looking printk to pop. I've not been able to
+reliably reproduce the problem that causes this, but one of the people
+following this bug was and he verified that this patch stopped the
+printk from popping.
+
+---------------------[snip]---------------
+
+The reply parsing code attempts to decode the GETATTR response even if
+the DELEGRETURN portion of the compound returned an error. The GETATTR
+response won't actually exist if that's the case and we're asking the
+parser to read past the end of the response.
+
+This bug is fairly benign. The parser catches this without reading past
+the end of the response and decode_getfattr returns -EIO. Earlier
+kernels however had decode_op_hdr using the READ_BUF macro, and this
+bug would make this printk pop any time the client got an error from
+a delegreturn:
+
+kernel: decode_op_hdr: reply buffer overflowed in line XXXX
+
+More recent kernels seem to have replaced this printk with a dprintk.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/nfs4xdr.c b/fs/nfs/nfs4xdr.c
+index f80cd46..888a5d3 100644
+--- a/fs/nfs/nfs4xdr.c
++++ b/fs/nfs/nfs4xdr.c
+@@ -4413,6 +4413,8 @@ static int nfs4_xdr_dec_delegreturn(struct rpc_rqst *rqstp, uint32_t *p, struct
+ 	if (status != 0)
+ 		goto out;
+ 	status = decode_delegreturn(&xdr);
++	if (status != 0)
++		goto out;
+ 	decode_getfattr(&xdr, res->fattr, res->server);
+ out:
+ 	return status;

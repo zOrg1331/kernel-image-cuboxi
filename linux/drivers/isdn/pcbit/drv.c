@@ -19,11 +19,11 @@
 
 #include <linux/module.h>
 
+#include <linux/sched.h>
 
 #include <linux/kernel.h>
 
 #include <linux/types.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
@@ -68,18 +68,21 @@ static void pcbit_set_msn(struct pcbit_dev *dev, char *list);
 static int pcbit_check_msn(struct pcbit_dev *dev, char *msn);
 
 
+extern void pcbit_deliver(void * data);
+
 int pcbit_init_dev(int board, int mem_base, int irq)
 {
 	struct pcbit_dev *dev;
 	isdn_if *dev_if;
 
-	if ((dev=kzalloc(sizeof(struct pcbit_dev), GFP_KERNEL)) == NULL)
+	if ((dev=kmalloc(sizeof(struct pcbit_dev), GFP_KERNEL)) == NULL)
 	{
 		printk("pcbit_init: couldn't malloc pcbit_dev struct\n");
 		return -ENOMEM;
 	}
 
 	dev_pcbit[board] = dev;
+	memset(dev, 0, sizeof(struct pcbit_dev));
 	init_waitqueue_head(&dev->set_running_wq);
 	spin_lock_init(&dev->lock);
 
@@ -103,7 +106,7 @@ int pcbit_init_dev(int board, int mem_base, int irq)
 		return -EACCES;
 	}
 
-	dev->b1 = kzalloc(sizeof(struct pcbit_chan), GFP_KERNEL);
+	dev->b1 = kmalloc(sizeof(struct pcbit_chan), GFP_KERNEL);
 	if (!dev->b1) {
 		printk("pcbit_init: couldn't malloc pcbit_chan struct\n");
 		iounmap(dev->sh_mem);
@@ -112,7 +115,7 @@ int pcbit_init_dev(int board, int mem_base, int irq)
 		return -ENOMEM;
 	}
     
-	dev->b2 = kzalloc(sizeof(struct pcbit_chan), GFP_KERNEL);
+	dev->b2 = kmalloc(sizeof(struct pcbit_chan), GFP_KERNEL);
 	if (!dev->b2) {
 		printk("pcbit_init: couldn't malloc pcbit_chan struct\n");
 		kfree(dev->b1);
@@ -122,9 +125,11 @@ int pcbit_init_dev(int board, int mem_base, int irq)
 		return -ENOMEM;
 	}
 
+	memset(dev->b1, 0, sizeof(struct pcbit_chan));
+	memset(dev->b2, 0, sizeof(struct pcbit_chan));
 	dev->b2->id = 1;
 
-	INIT_WORK(&dev->qdelivery, pcbit_deliver);
+	INIT_WORK(&dev->qdelivery, pcbit_deliver, dev);
 
 	/*
 	 *  interrupts
@@ -720,27 +725,23 @@ static int pcbit_stat(u_char __user *buf, int len, int driver, int channel)
 
 	if (stat_st < stat_end)
 	{
-		if (copy_to_user(buf, statbuf + stat_st, len))
-			return -EFAULT;
+		copy_to_user(buf, statbuf + stat_st, len);
 		stat_st += len;	   
 	}
 	else
 	{
 		if (len > STATBUF_LEN - stat_st)
 		{
-			if (copy_to_user(buf, statbuf + stat_st,
-				       STATBUF_LEN - stat_st))
-				return -EFAULT;
-			if (copy_to_user(buf, statbuf,
-				       len - (STATBUF_LEN - stat_st)))
-				return -EFAULT;
+			copy_to_user(buf, statbuf + stat_st, 
+				       STATBUF_LEN - stat_st);
+			copy_to_user(buf, statbuf, 
+				       len - (STATBUF_LEN - stat_st));
 
 			stat_st = len - (STATBUF_LEN - stat_st);
 		}
 		else
 		{
-			if (copy_to_user(buf, statbuf + stat_st, len))
-				return -EFAULT;
+			copy_to_user(buf, statbuf + stat_st, len);
 
 			stat_st += len;
 			
@@ -774,6 +775,10 @@ static void pcbit_logstat(struct pcbit_dev *dev, char *str)
 	dev->dev_if->statcallb(&ictl);
 }
 	
+extern char * isdn_state_table[];
+extern char * strisdnevent(unsigned short);
+
+
 void pcbit_state_change(struct pcbit_dev * dev, struct pcbit_chan * chan, 
 			unsigned short i, unsigned short ev, unsigned short f)
 {

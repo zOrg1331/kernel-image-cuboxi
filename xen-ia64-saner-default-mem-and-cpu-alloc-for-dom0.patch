@@ -1,0 +1,123 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Fri, 10 Aug 2007 13:02:18 -0400
+Subject: [xen] ia64: saner default mem and cpu alloc for dom0
+Message-id: 46BC9A1A.9030004@redhat.com
+O-Subject: Re: [UPDATED RHEL5.1 PATCH] ia64 xen: saner default mem and cpu alloc for dom0
+Bugzilla: 248967
+
+>>> At present, ia64 xen's dom0 comes up on only 512MB of RAM and one cpu,
+>>> unlike other arches, that come up on all memory and all cpus. However,
+>>> that can't reasonably be done (yet) on ia64, because the memory and cpu
+>>> counts can be so large, xen just falls on its face. For reference, see:
+>>>
+>>>
+http://www.binarytag.com/EXMAIL/mailinglists/binarytag_xen-ia64-devel/msg00182.html
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+[IA64] Saner dom0 memory and cpu defaults
+
+Some ia64 xen dom0 tweaks:
+* Increase default memory allocation from 512M to 4G
+* Increase default vcpu allocation from 1 to 4
+* Implement rough calculation of what the maximum memory
+  that can be safely allocated to dom0 is
+* If need be, scale down requested memory allocation to fit
+  available memory, rather than simply panicking
+* If dom0_mem=0 is specified, allocate all available mem
+
+Signed-off-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/xen/domain.c b/arch/ia64/xen/domain.c
+index d4aed1d..bb69b8d 100644
+--- a/arch/ia64/xen/domain.c
++++ b/arch/ia64/xen/domain.c
+@@ -52,10 +52,11 @@
+ #include <asm/perfmon.h>
+ #include <public/vcpu.h>
+ 
+-unsigned long dom0_size = 512*1024*1024;
++/* dom0_size: default memory allocation for dom0 (~4GB) */
++unsigned long dom0_size = 4096UL*1024UL*1024UL;
+ 
+ /* dom0_max_vcpus: maximum number of VCPUs to create for dom0.  */
+-static unsigned int dom0_max_vcpus = 1;
++static unsigned int dom0_max_vcpus = 4;
+ integer_param("dom0_max_vcpus", dom0_max_vcpus); 
+ 
+ extern unsigned long running_on_sim;
+@@ -1015,8 +1016,41 @@ static void loaddomainelfimage(struct domain *d, struct elf_binary *elf)
+ 	}
+ }
+ 
+-void alloc_dom0(void)
++static void calc_dom0_size(void)
+ {
++	unsigned long domheap_pages;
++	unsigned long p2m_pages;
++	unsigned long spare_hv_pages;
++	unsigned long max_dom0_size;
++
++	/* Estimate maximum memory we can safely allocate for dom0
++	 * by subtracting the p2m table allocation and a chunk of memory
++	 * for DMA and PCI mapping from the available domheap pages. The
++	 * chunk for DMA, PCI, etc., is a guestimate, as xen doesn't seem
++	 * to have a good idea of what those requirements might be ahead
++	 * of time, calculated at 1MB per 4GB of system memory */
++	domheap_pages = avail_domheap_pages();
++	p2m_pages = domheap_pages / PTRS_PER_PTE;
++	spare_hv_pages = domheap_pages / 4096;
++	max_dom0_size = (domheap_pages - (p2m_pages + spare_hv_pages))
++			 * PAGE_SIZE;
++	printk("Maximum permitted dom0 size: %luMB\n",
++	       max_dom0_size / (1024*1024));
++
++	/* validate proposed dom0_size, fix up as needed */
++	if (dom0_size > max_dom0_size) {
++		printk("Reducing dom0 memory allocation from %luK to %luK "
++		       "to fit available memory\n",
++		       dom0_size / 1024, max_dom0_size / 1024);
++		dom0_size = max_dom0_size;
++	}
++
++	/* dom0_mem=0 can be passed in to give all available mem to dom0 */
++	if (dom0_size == 0) {
++		printk("Allocating all available memory to dom0\n");
++		dom0_size = max_dom0_size;
++	}
++
+ 	/* Check dom0 size.  */
+ 	if (dom0_size < 4 * 1024 * 1024) {
+ 		panic("dom0_mem is too small, boot aborted"
+@@ -1081,6 +1115,8 @@ int construct_dom0(struct domain *d,
+ 
+ 	printk("*** LOADING DOMAIN 0 ***\n");
+ 
++	calc_dom0_size();
++
+ 	max_pages = dom0_size / PAGE_SIZE;
+ 	d->max_pages = max_pages;
+ 	d->tot_pages = 0;
+diff --git a/arch/ia64/xen/xensetup.c b/arch/ia64/xen/xensetup.c
+index fe067ff..ca6727a 100644
+--- a/arch/ia64/xen/xensetup.c
++++ b/arch/ia64/xen/xensetup.c
+@@ -46,7 +46,6 @@ extern long is_platform_hp_ski(void);
+ extern void early_setup_arch(char **);
+ extern void late_setup_arch(char **);
+ extern void hpsim_serial_init(void);
+-extern void alloc_dom0(void);
+ extern void setup_per_cpu_areas(void);
+ extern void mem_init(void);
+ extern void init_IRQ(void);
+@@ -409,8 +408,6 @@ void start_kernel(void)
+ 
+     trap_init();
+ 
+-    alloc_dom0();
+-
+     init_xenheap_pages(__pa(xen_heap_start), xenheap_phys_end);
+     printk("Xen heap: %luMB (%lukB)\n",
+ 	(xenheap_phys_end-__pa(xen_heap_start)) >> 20,

@@ -1,0 +1,549 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Wed, 19 Mar 2008 17:28:49 -0400
+Subject: [scsi] lpfc: update driver to 8.2.0.22
+Message-id: 1205962129-21432-2-git-send-email-coldwell@redhat.com
+O-Subject: [RHEL-5.2 PATCH 2/2] BZ437050: Update lpfc driver from 8.2.0.21 to 8.2.0.22
+Bugzilla: 437050
+
+This patch updates lpfc from 8.2.0.21 to 8.2.0.22.  It fixes a few issues in
+the driver.  The ChangeLog is short:
+
+* Changed version number to 8.2.0.22
+* Fix Devloss timeout failure while performing an fc swap test (CR 28949)
+* Remove unnecessary define for FC_ESTABLISH_LINK bit and associated code
+* Fix devloss timeout after HBA resets under heavy I/O (CR 28910)
+* Fix devloss while running fc swap test with vports (CR 29126)
+* Fix devloss log message to format the WWN correctly. (CR 28959)
+
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc.h b/drivers/scsi/lpfc/lpfc.h
+index f2009bb..398b7cd 100644
+--- a/drivers/scsi/lpfc/lpfc.h
++++ b/drivers/scsi/lpfc/lpfc.h
+@@ -340,7 +340,6 @@ struct lpfc_vport {
+ #define FC_NLP_MORE             0x40	 /* More node to process in node tbl */
+ #define FC_OFFLINE_MODE         0x80	 /* Interface is offline for diag */
+ #define FC_FABRIC               0x100	 /* We are fabric attached */
+-#define FC_ESTABLISH_LINK       0x200	 /* Reestablish Link */
+ #define FC_RSCN_DISCOVERY       0x400	 /* Auth all devices after RSCN */
+ #define FC_SCSI_SCAN_TMO        0x4000	 /* scsi scan timer running */
+ #define FC_ABORT_DISCOVERY      0x8000	 /* we want to abort discovery */
+@@ -510,8 +509,6 @@ struct lpfc_hba {
+ 
+ 	uint32_t fc_eventTag;	/* event tag for link attention */
+ 
+-
+-	struct timer_list fc_estabtmo;	/* link establishment timer */
+ 	/* These fields used to be binfo */
+ 	uint32_t fc_pref_DID;	/* preferred D_ID */
+ 	uint8_t  fc_pref_ALPA;	/* preferred AL_PA */
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index 153a119..6e93fe4 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -2754,7 +2754,11 @@ sysfs_mbox_read(struct kobject *kobj, char *buf, loff_t off, size_t count)
+ 
+ 		sysfs_mbox->mbox->vport = vport;
+ 
+-		if (phba->sli.sli_flag & LPFC_BLOCK_MGMT_IO) {
++		/* Don't allow mailbox commands to be sent when blocked
++		 * or when in the middle of discovery
++		 */
++		if (phba->sli.sli_flag & LPFC_BLOCK_MGMT_IO ||
++		    vport->fc_flag & FC_NDISC_ACTIVE) {
+ 			sysfs_mbox_idle(phba,sysfs_mbox);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			return  -EAGAIN;
+diff --git a/drivers/scsi/lpfc/lpfc_ct.c b/drivers/scsi/lpfc/lpfc_ct.c
+index 29b91d5..5434d87 100644
+--- a/drivers/scsi/lpfc/lpfc_ct.c
++++ b/drivers/scsi/lpfc/lpfc_ct.c
+@@ -542,7 +542,7 @@ lpfc_cmpl_ct_cmd_gid_ft(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 	struct lpfc_dmabuf *outp;
+ 	struct lpfc_sli_ct_request *CTrsp;
+ 	struct lpfc_nodelist *ndlp;
+-	int rc, retry;
++	int rc;
+ 
+ 	/* First save ndlp, before we overwrite it */
+ 	ndlp = cmdiocb->context_un.ndlp;
+@@ -562,45 +562,29 @@ lpfc_cmpl_ct_cmd_gid_ft(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 	if (vport->load_flag & FC_UNLOADING)
+ 		goto out;
+ 
+-	if (lpfc_els_chk_latt(vport) || lpfc_error_lost_link(irsp)) {
++	if (lpfc_els_chk_latt(vport)) {
+ 		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
+ 				 "0216 Link event during NS query\n");
+ 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
+ 		goto out;
+ 	}
+-
++	if (lpfc_error_lost_link(irsp)) {
++		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
++				 "0226 NS query failed due to link event\n");
++		goto out;
++	}
+ 	if (irsp->ulpStatus) {
+ 		/* Check for retry */
+ 		if (vport->fc_ns_retry < LPFC_MAX_NS_RETRY) {
+-			retry = 1;
+-			if (irsp->ulpStatus == IOSTAT_LOCAL_REJECT) {
+-				switch (irsp->un.ulpWord[4]) {
+-				case IOERR_NO_RESOURCES:
+-					/* We don't increment the retry
+-					 * count for this case.
+-					 */
+-					break;
+-				case IOERR_LINK_DOWN:
+-				case IOERR_SLI_ABORTED:
+-				case IOERR_SLI_DOWN:
+-					retry = 0;
+-					break;
+-				default:
+-					vport->fc_ns_retry++;
+-				}
+-			}
+-			else
++			if (irsp->ulpStatus != IOSTAT_LOCAL_REJECT ||
++			    irsp->un.ulpWord[4] != IOERR_NO_RESOURCES)
+ 				vport->fc_ns_retry++;
+ 
+-			if (retry) {
+-				/* CT command is being retried */
+-				rc = lpfc_ns_cmd(vport, SLI_CTNS_GID_FT,
++			/* CT command is being retried */
++			rc = lpfc_ns_cmd(vport, SLI_CTNS_GID_FT,
+ 					 vport->fc_ns_retry, 0);
+-				if (rc == 0) {
+-					/* success */
+-					goto out;
+-				}
+-			}
++			if (rc == 0)
++				goto out;
+ 		}
+ 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
+ 		lpfc_printf_vlog(vport, KERN_ERR, LOG_ELS,
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 1228c3d..981373e 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -3200,6 +3200,8 @@ lpfc_els_rcv_rscn(struct lpfc_vport *vport, struct lpfc_iocbq *cmdiocb,
+ 		/* Another thread is walking fc_rscn_id_list on this vport */
+ 		spin_unlock_irq(shost->host_lock);
+ 		vport->fc_flag |= FC_RSCN_DISCOVERY;
++		/* Send back ACC */
++		lpfc_els_rsp_acc(vport, ELS_CMD_ACC, cmdiocb, ndlp, NULL);
+ 		return 0;
+ 	}
+ 	/* Indicate we are walking fc_rscn_id_list on this vport */
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 901fd9c..350b32d 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -337,8 +337,8 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 	if (warn_on) {
+ 		lpfc_printf_vlog(vport, KERN_ERR, LOG_DISCOVERY,
+ 				 "0203 Devloss timeout on "
+-				 "WWPN %x:%x:%x:%x:%x:%x:%x:%x "
+-				 "NPort x%x Data: x%x x%x x%x\n",
++				 "WWPN %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x "
++				 "NPort x%06x Data: x%x x%x x%x\n",
+ 				 *name, *(name+1), *(name+2), *(name+3),
+ 				 *(name+4), *(name+5), *(name+6), *(name+7),
+ 				 ndlp->nlp_DID, ndlp->nlp_flag,
+@@ -346,8 +346,8 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 	} else {
+ 		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
+ 				 "0204 Devloss timeout on "
+-				 "WWPN %x:%x:%x:%x:%x:%x:%x:%x "
+-				 "NPort x%x Data: x%x x%x x%x\n",
++				 "WWPN %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x "
++				 "NPort x%06x Data: x%x x%x x%x\n",
+ 				 *name, *(name+1), *(name+2), *(name+3),
+ 				 *(name+4), *(name+5), *(name+6), *(name+7),
+ 				 ndlp->nlp_DID, ndlp->nlp_flag,
+@@ -530,7 +530,10 @@ lpfc_work_done(struct lpfc_hba *phba)
+ 				vport = vports[i];
+ 			if (vport == NULL)
+ 				break;
++			spin_lock_irq(&vport->work_port_lock);
+ 			work_port_events = vport->work_port_events;
++			vport->work_port_events &= ~work_port_events;
++			spin_unlock_irq(&vport->work_port_lock);
+ 			if (work_port_events & WORKER_DISC_TMO)
+ 				lpfc_disc_timeout_handler(vport);
+ 			if (work_port_events & WORKER_ELS_TMO)
+@@ -547,9 +550,6 @@ lpfc_work_done(struct lpfc_hba *phba)
+ 				lpfc_ramp_down_queue_handler(phba);
+ 			if (work_port_events & WORKER_RAMP_UP_QUEUE)
+ 				lpfc_ramp_up_queue_handler(phba);
+-			spin_lock_irq(&vport->work_port_lock);
+-			vport->work_port_events &= ~work_port_events;
+-			spin_unlock_irq(&vport->work_port_lock);
+ 		}
+ 	lpfc_destroy_vport_work_array(phba, vports);
+ 
+@@ -561,10 +561,10 @@ lpfc_work_done(struct lpfc_hba *phba)
+ 		if (pring->flag & LPFC_STOP_IOCB_EVENT) {
+ 			pring->flag |= LPFC_DEFERRED_RING_EVENT;
+ 		} else {
++			pring->flag &= ~LPFC_DEFERRED_RING_EVENT;
+ 			lpfc_sli_handle_slow_ring_event(phba, pring,
+ 							(status &
+ 							 HA_RXMASK));
+-			pring->flag &= ~LPFC_DEFERRED_RING_EVENT;
+ 		}
+ 		/*
+ 		 * Turn on Ring interrupts
+@@ -635,7 +635,9 @@ lpfc_do_work(void *p)
+ 
+ 		lpfc_work_done(phba);
+ 	}
++	spin_lock_irq(&phba->hbalock);
+ 	phba->work_wait = NULL;
++	spin_unlock_irq(&phba->hbalock);
+ 	return 0;
+ }
+ 
+@@ -949,11 +951,9 @@ out:
+ 	mempool_free(pmb, phba->mbox_mem_pool);
+ 
+ 	spin_lock_irq(shost->host_lock);
+-	vport->fc_flag &= ~(FC_ABORT_DISCOVERY | FC_ESTABLISH_LINK);
++	vport->fc_flag &= ~FC_ABORT_DISCOVERY;
+ 	spin_unlock_irq(shost->host_lock);
+ 
+-	del_timer_sync(&phba->fc_estabtmo);
+-
+ 	lpfc_can_disctmo(vport);
+ 
+ 	/* turn on Link Attention interrupts */
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 3532e3c..b730edb 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -627,8 +627,10 @@ lpfc_hb_timeout(unsigned long ptr)
+ 		phba->pport->work_port_events |= WORKER_HB_TMO;
+ 	spin_unlock_irqrestore(&phba->pport->work_port_lock, iflag);
+ 
++	spin_lock_irqsave(&phba->hbalock, iflag);
+ 	if (phba->work_wait)
+ 		wake_up(phba->work_wait);
++	spin_unlock_irqrestore(&phba->hbalock, iflag);
+ 	return;
+ }
+ 
+@@ -782,12 +784,10 @@ lpfc_handle_eratt(struct lpfc_hba *phba)
+ 	struct lpfc_vport *vport = phba->pport;
+ 	struct lpfc_sli   *psli = &phba->sli;
+ 	struct lpfc_sli_ring  *pring;
+-	struct lpfc_vport **vports;
+ 	uint32_t event_data;
+ 	unsigned long temperature;
+ 	struct temp_event temp_event_data;
+ 	struct Scsi_Host  *shost;
+-	int i;
+ 
+ 
+ 	/* If resets are disabled then leave the HBA alone and return */
+@@ -801,17 +801,7 @@ lpfc_handle_eratt(struct lpfc_hba *phba)
+ 				"Data: x%x x%x x%x\n",
+ 				phba->work_hs,
+ 				phba->work_status[0], phba->work_status[1]);
+-		vports = lpfc_create_vport_work_array(phba);
+-		if (vports != NULL)
+-			for(i = 0;
+-			    i <= phba->max_vpi && vports[i] != NULL;
+-			    i++){
+-				shost = lpfc_shost_from_vport(vports[i]);
+-				spin_lock_irq(shost->host_lock);
+-				vports[i]->fc_flag |= FC_ESTABLISH_LINK;
+-				spin_unlock_irq(shost->host_lock);
+-			}
+-		lpfc_destroy_vport_work_array(phba, vports);
++
+ 		spin_lock_irq(&phba->hbalock);
+ 		psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
+ 		spin_unlock_irq(&phba->hbalock);
+@@ -825,7 +815,6 @@ lpfc_handle_eratt(struct lpfc_hba *phba)
+ 		pring = &psli->ring[psli->fcp_ring];
+ 		lpfc_sli_abort_iocb_ring(phba, pring);
+ 
+-
+ 		/*
+ 		 * There was a firmware error.  Take the hba offline and then
+ 		 * attempt to restart it.
+@@ -834,7 +823,6 @@ lpfc_handle_eratt(struct lpfc_hba *phba)
+ 		lpfc_offline(phba);
+ 		lpfc_sli_brdrestart(phba);
+ 		if (lpfc_online(phba) == 0) {	/* Initialize the HBA */
+-			mod_timer(&phba->fc_estabtmo, jiffies + HZ * 60);
+ 			lpfc_unblock_mgmt_io(phba);
+ 			return;
+ 		}
+@@ -1563,31 +1551,6 @@ lpfc_cleanup(struct lpfc_vport *vport)
+ 	return;
+ }
+ 
+-static void
+-lpfc_establish_link_tmo(unsigned long ptr)
+-{
+-	struct lpfc_hba   *phba = (struct lpfc_hba *) ptr;
+-	struct lpfc_vport **vports;
+-	unsigned long iflag;
+-	int i;
+-
+-	/* Re-establishing Link, timer expired */
+-	lpfc_printf_log(phba, KERN_ERR, LOG_LINK_EVENT,
+-			"1300 Re-establishing Link, timer expired "
+-			"Data: x%x x%x\n",
+-			phba->pport->fc_flag, phba->pport->port_state);
+-	vports = lpfc_create_vport_work_array(phba);
+-	if (vports != NULL)
+-		for(i = 0; i <= phba->max_vpi && vports[i] != NULL; i++) {
+-			struct Scsi_Host *shost;
+-			shost = lpfc_shost_from_vport(vports[i]);
+-			spin_lock_irqsave(shost->host_lock, iflag);
+-			vports[i]->fc_flag &= ~FC_ESTABLISH_LINK;
+-			spin_unlock_irqrestore(shost->host_lock, iflag);
+-		}
+-	lpfc_destroy_vport_work_array(phba, vports);
+-}
+-
+ void
+ lpfc_stop_vport_timers(struct lpfc_vport *vport)
+ {
+@@ -1601,7 +1564,6 @@ static void
+ lpfc_stop_phba_timers(struct lpfc_hba *phba)
+ {
+ 	del_timer_sync(&phba->fcp_poll_timer);
+-	del_timer_sync(&phba->fc_estabtmo);
+ 	lpfc_stop_vport_timers(phba->pport);
+ 	del_timer_sync(&phba->sli.mbox_tmo);
+ 	del_timer_sync(&phba->fabric_block_timer);
+@@ -2131,10 +2093,6 @@ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 	phba->max_vpi = LPFC_MAX_VPI;
+ 
+ 	/* Initialize timers used by driver */
+-	init_timer(&phba->fc_estabtmo);
+-	phba->fc_estabtmo.function = lpfc_establish_link_tmo;
+-	phba->fc_estabtmo.data = (unsigned long)phba;
+-
+ 	init_timer(&phba->hb_tmofunc);
+ 	phba->hb_tmofunc.function = lpfc_hb_timeout;
+ 	phba->hb_tmofunc.data = (unsigned long)phba;
+@@ -2597,11 +2555,6 @@ static pci_ers_result_t lpfc_io_slot_reset(struct pci_dev *pdev)
+ 
+ 	pci_set_master(pdev);
+ 
+-	/* Re-establishing Link */
+-	spin_lock_irq(shost->host_lock);
+-	phba->pport->fc_flag |= FC_ESTABLISH_LINK;
+-	spin_unlock_irq(shost->host_lock);
+-
+ 	spin_lock_irq(&phba->hbalock);
+ 	psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
+ 	spin_unlock_irq(&phba->hbalock);
+@@ -2656,9 +2609,7 @@ static void lpfc_io_resume(struct pci_dev *pdev)
+ 	struct Scsi_Host *shost = pci_get_drvdata(pdev);
+ 	struct lpfc_hba *phba = ((struct lpfc_vport *)shost->hostdata)->phba;
+ 
+-	if (lpfc_online(phba) == 0) {
+-		mod_timer(&phba->fc_estabtmo, jiffies + HZ * 60);
+-	}
++	lpfc_online(phba);
+ }
+ 
+ static struct pci_device_id lpfc_id_table[] = {
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 51c4f21..c8ba14d 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -2707,7 +2707,6 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
+ 	spin_unlock_irq(&phba->pport->work_port_lock);
+ 	spin_lock_irq(&phba->hbalock);
+ 	phba->link_state = LPFC_LINK_UNKNOWN;
+-	phba->pport->fc_flag |= FC_ESTABLISH_LINK;
+ 	psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
+ 	spin_unlock_irq(&phba->hbalock);
+ 
+@@ -2728,8 +2727,7 @@ lpfc_mbox_timeout_handler(struct lpfc_hba *phba)
+ 	lpfc_offline_prep(phba);
+ 	lpfc_offline(phba);
+ 	lpfc_sli_brdrestart(phba);
+-	if (lpfc_online(phba) == 0)		/* Initialize the HBA */
+-		mod_timer(&phba->fc_estabtmo, jiffies + HZ * 60);
++	lpfc_online(phba);
+ 	lpfc_unblock_mgmt_io(phba);
+ 	return;
+ }
+@@ -2746,6 +2744,19 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 	unsigned long drvr_flag = 0;
+ 	volatile uint32_t word0, ldata;
+ 	void __iomem *to_slim;
++	int processing_queue = 0;
++
++	spin_lock_irqsave(&phba->hbalock, drvr_flag);
++	if (!pmbox) {
++		/* processing mbox queue from intr_handler */
++		processing_queue = 1;
++		phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
++		pmbox = lpfc_mbox_get(phba);
++		if (!pmbox) {
++			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
++			return MBX_SUCCESS;
++		}
++	}
+ 
+ 	if (pmbox->mbox_cmpl && pmbox->mbox_cmpl != lpfc_sli_def_mbox_cmpl &&
+ 		pmbox->mbox_cmpl != lpfc_sli_wake_mbox_wait) {
+@@ -2755,15 +2766,13 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 					"1806 Mbox x%x failed. No vport\n",
+ 					pmbox->mb.mbxCommand);
+ 			dump_stack();
+-			return MBX_NOT_FINISHED;
++			goto out_not_finished;
+ 		}
+ 	}
+ 
+ 
+-	spin_lock_irqsave(&phba->hbalock, drvr_flag);
+ 	psli = &phba->sli;
+ 
+-
+ 	mb = &pmbox->mb;
+ 	status = MBX_SUCCESS;
+ 
+@@ -2772,14 +2781,14 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 
+ 		/* Mbox command <mbxCommand> cannot issue */
+ 		LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
+-		return MBX_NOT_FINISHED;
++		goto out_not_finished;
+ 	}
+ 
+ 	if (mb->mbxCommand != MBX_KILL_BOARD && flag & MBX_NOWAIT &&
+ 	    !(readl(phba->HCregaddr) & HC_MBINT_ENA)) {
+ 		spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+ 		LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
+-		return MBX_NOT_FINISHED;
++		goto out_not_finished;
+ 	}
+ 
+ 	if (psli->sli_flag & LPFC_SLI_MBOX_ACTIVE) {
+@@ -2793,14 +2802,14 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 
+ 			/* Mbox command <mbxCommand> cannot issue */
+ 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
+-			return MBX_NOT_FINISHED;
++			goto out_not_finished;
+ 		}
+ 
+ 		if (!(psli->sli_flag & LPFC_SLI2_ACTIVE)) {
+ 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+ 			/* Mbox command <mbxCommand> cannot issue */
+ 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
+-			return MBX_NOT_FINISHED;
++			goto out_not_finished;
+ 		}
+ 
+ 		/* Another mailbox command is still being processed, queue this
+@@ -2847,7 +2856,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+ 			/* Mbox command <mbxCommand> cannot issue */
+ 			LOG_MBOX_CANNOT_ISSUE_DATA(phba, pmbox, psli, flag);
+-			return MBX_NOT_FINISHED;
++			goto out_not_finished;
+ 		}
+ 		/* timeout active mbox command */
+ 		mod_timer(&psli->mbox_tmo, (jiffies +
+@@ -2981,7 +2990,7 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 				psli->sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
+ 				spin_unlock_irqrestore(&phba->hbalock,
+ 						       drvr_flag);
+-				return MBX_NOT_FINISHED;
++				goto out_not_finished;
+ 			}
+ 
+ 			/* Check if we took a mbox interrupt while we were
+@@ -3056,6 +3065,13 @@ lpfc_sli_issue_mbox(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox, uint32_t flag)
+ 
+ 	spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+ 	return status;
++
++out_not_finished:
++	if (processing_queue) {
++		pmbox->mb.mbxStatus = MBX_NOT_FINISHED;
++		lpfc_mbox_cmpl_put(phba, pmbox);
++	}
++	return MBX_NOT_FINISHED;
+ }
+ 
+ /*
+@@ -4342,10 +4358,15 @@ lpfc_intr_handler(int irq, void *dev_id, struct pt_regs * regs)
+ 						pmb->context1 = mp;
+ 						pmb->context2 = ndlp;
+ 						pmb->vport = vport;
+-						spin_lock(&phba->hbalock);
+-						phba->sli.sli_flag &=
+-							~LPFC_SLI_MBOX_ACTIVE;
+-						spin_unlock(&phba->hbalock);
++						rc = lpfc_sli_issue_mbox(phba,
++								pmb,
++								MBX_NOWAIT);
++						if (rc != MBX_BUSY)
++							lpfc_printf_log(phba,
++							KERN_ERR,
++							LOG_MBOX | LOG_SLI,
++							"0306 rc should have"
++							"been MBX_BUSY");
+ 						goto send_current_mbox;
+ 					}
+ 				}
+@@ -4359,22 +4380,16 @@ lpfc_intr_handler(int irq, void *dev_id, struct pt_regs * regs)
+ 			spin_unlock(&phba->hbalock);
+ 		if ((work_ha_copy & HA_MBATT) &&
+ 		    (phba->sli.mbox_active == NULL)) {
+-send_next_mbox:
+-			spin_lock(&phba->hbalock);
+-			phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
+-			pmb = lpfc_mbox_get(phba);
+-			spin_unlock(&phba->hbalock);
+ send_current_mbox:
+ 			/* Process next mailbox command if there is one */
+-			if (pmb != NULL) {
+-				rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+-				if (rc == MBX_NOT_FINISHED) {
+-					pmb->mb.mbxStatus = MBX_NOT_FINISHED;
+-					lpfc_mbox_cmpl_put(phba, pmb);
+-					goto send_next_mbox;
+-				}
+-			}
+-
++			do {
++				rc = lpfc_sli_issue_mbox(phba, NULL,
++							 MBX_NOWAIT);
++			} while (rc == MBX_NOT_FINISHED);
++			if (rc != MBX_SUCCESS)
++				lpfc_printf_log(phba, KERN_ERR, LOG_MBOX |
++						LOG_SLI, "0349 rc should be "
++						"MBX_SUCCESS");
+ 		}
+ 
+ 		spin_lock(&phba->hbalock);
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 5077c59..d528d8e 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.21"
++#define LPFC_DRIVER_VERSION "8.2.0.22"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 

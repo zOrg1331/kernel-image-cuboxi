@@ -1,0 +1,83 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 22 Sep 2009 22:13:37 +0200
+Subject: [s390] dasd: fail requests when dev state is not ready
+Message-id: 20090922201337.GC32244@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - dasd: fail requests when device state is less then ready
+Bugzilla: 523219
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+===========
+Device mapper multipath device blocks when one path is set to state 'basic'
+
+In certain device mapper multipath / PPRC setups a DASD device
+gets quiesced and then set to state basic to flush it's queue
+and return all already queued requests back to device mapper.
+Sometimes it can happen that a request is queued after
+the device was set to basic, so that requests stays queued,
+is not processed and device mapper is blocked waiting for it.
+
+Solution: A DASD device that is not ready or online has no defined
+disk layout, so all requests that arrive in such a state
+need to be returned as failed.
+
+Bugzilla
+========
+
+BZ 523219
+https://bugzilla.redhat.com/show_bug.cgi?id=523219
+
+Upstream status of the patch
+============================
+
+The patch will be upstream as of kernel version 2.6.32
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=97f604b07473669f4da52b1f859ee45e8d48d42a
+
+Test status
+===========
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+        Hans
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index 17c7224..2ad10fb 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -267,12 +267,12 @@ dasd_state_ready_to_basic(struct dasd_device * device)
+ 	rc = dasd_flush_ccw_queue(device, 0);
+ 	if (rc)
+ 		return rc;
++	device->state = DASD_STATE_BASIC;
+ 	dasd_destroy_partitions(device);
+ 	dasd_flush_request_queue(device);
+ 	device->blocks = 0;
+ 	device->bp_block = 0;
+ 	device->s2b_shift = 0;
+-	device->state = DASD_STATE_BASIC;
+ 	return 0;
+ }
+ 
+@@ -1210,9 +1210,14 @@ __dasd_process_blk_queue(struct dasd_device * device)
+ 	 * for that. State DASD_STATE_ONLINE is normal block device
+ 	 * operation.
+ 	 */
+-	if (device->state != DASD_STATE_READY &&
+-	    device->state != DASD_STATE_ONLINE)
++	if (device->state < DASD_STATE_READY) {
++		while ((req = elv_next_request(queue))) {
++			blkdev_dequeue_request(req);
++			dasd_end_request(req, 0);
++		}
+ 		return;
++	}
++
+ 	nr_queued = 0;
+ 	/* Now we try to fetch requests from the request queue */
+ 	list_for_each_entry(cqr, &device->ccw_queue, list)

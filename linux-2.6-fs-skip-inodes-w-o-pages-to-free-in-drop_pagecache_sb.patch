@@ -1,0 +1,41 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Fri, 12 Jun 2009 15:18:33 -0400
+Subject: [fs] skip inodes w/o pages to free in drop_pagecache_sb
+Message-id: <1244819913.3212.12.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 20287
+O-Subject: [RHEL5 patch] skip inodes without pages to free in drop_pagecache_sb()
+Bugzilla: 528070
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+The attached patch is an upstream backport that prevents weird locking
+behavior when dropping the pagecache under heavy load.
+
+--------------------------------------------------------------------------
+commit af065b8a19041554196971d8b6ae1459798d3b14
+Author: Jan Kara <jack@suse.cz>
+Date:   Tue Apr 29 00:59:39 2008 -0700
+
+    vfs: skip inodes without pages to free in drop_pagecache_sb()
+
+    Many inodes have no pagecache, so we can avoid lots of lock-takings.
+
+    Signed-off-by: Jan Kara <jack@suse.cz>
+    Cc: Fengguang Wu <wfg@mail.ustc.edu.cn>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/drop_caches.c b/fs/drop_caches.c
+index 16db525..2b405cd 100644
+--- a/fs/drop_caches.c
++++ b/fs/drop_caches.c
+@@ -20,6 +20,8 @@ static void drop_pagecache_sb(struct super_block *sb)
+ 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+ 		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE))
+ 			continue;
++		if (inode->i_mapping->nrpages == 0)
++			continue;
+ 		__iget(inode);
+ 		spin_unlock(&inode_lock);
+ 		__invalidate_mapping_pages(inode->i_mapping, 0, -1, true);

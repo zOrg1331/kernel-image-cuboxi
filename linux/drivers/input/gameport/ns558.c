@@ -1,4 +1,6 @@
 /*
+ * $Id: ns558.c,v 1.43 2002/01/24 19:23:21 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  *  Copyright (c) 1999 Brian Gerst
  */
@@ -149,6 +151,7 @@ static int ns558_isa_probe(int io)
 		return -ENOMEM;
 	}
 
+	memset(ns558, 0, sizeof(struct ns558));
 	ns558->io = io;
 	ns558->size = 1 << i;
 	ns558->gameport = port;
@@ -226,7 +229,7 @@ static int ns558_pnp_probe(struct pnp_dev *dev, const struct pnp_device_id *did)
 	ns558->gameport = port;
 
 	gameport_set_name(port, "NS558 PnP Gameport");
-	gameport_set_phys(port, "pnp%s/gameport0", dev_name(&dev->dev));
+	gameport_set_phys(port, "pnp%s/gameport0", dev->dev.bus_id);
 	port->dev.parent = &dev->dev;
 	port->io = ioport;
 

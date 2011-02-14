@@ -82,9 +82,9 @@ unsigned char cia_able_irq(struct ciabase *base, unsigned char mask)
 	return old;
 }
 
-static irqreturn_t cia_handler(int irq, void *dev_id)
+static irqreturn_t cia_handler(int irq, void *dev_id, struct pt_regs *fp)
 {
-	struct ciabase *base = dev_id;
+	struct ciabase *base = (struct ciabase *)dev_id;
 	int mach_irq;
 	unsigned char ints;
 
@@ -93,7 +93,7 @@ static irqreturn_t cia_handler(int irq, void *dev_id)
 	amiga_custom.intreq = base->int_mask;
 	for (; ints; mach_irq++, ints >>= 1) {
 		if (ints & 1)
-			m68k_handle_int(mach_irq);
+			m68k_handle_int(mach_irq, fp);
 	}
 	return IRQ_HANDLED;
 }
@@ -123,7 +123,7 @@ static void cia_disable_irq(unsigned int irq)
 
 static struct irq_controller cia_irq_controller = {
 	.name		= "cia",
-	.lock		= __SPIN_LOCK_UNLOCKED(cia_irq_controller.lock),
+	.lock		= SPIN_LOCK_UNLOCKED,
 	.enable		= cia_enable_irq,
 	.disable	= cia_disable_irq,
 };
@@ -160,7 +160,7 @@ static void auto_disable_irq(unsigned int irq)
 
 static struct irq_controller auto_irq_controller = {
 	.name		= "auto",
-	.lock		= __SPIN_LOCK_UNLOCKED(auto_irq_controller.lock),
+	.lock		= SPIN_LOCK_UNLOCKED,
 	.enable		= auto_enable_irq,
 	.disable	= auto_disable_irq,
 };
@@ -176,7 +176,5 @@ void __init cia_init_IRQ(struct ciabase *base)
 	/* override auto int and install CIA handler */
 	m68k_setup_irq_controller(&auto_irq_controller, base->handler_irq, 1);
 	m68k_irq_startup(base->handler_irq);
-	if (request_irq(base->handler_irq, cia_handler, IRQF_SHARED,
-			base->name, base))
-		pr_err("Couldn't register %s interrupt\n", base->name);
+	request_irq(base->handler_irq, cia_handler, IRQF_SHARED, base->name, base);
 }

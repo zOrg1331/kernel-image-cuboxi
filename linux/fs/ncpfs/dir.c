@@ -53,12 +53,9 @@ const struct file_operations ncp_dir_operations =
 	.read		= generic_read_dir,
 	.readdir	= ncp_readdir,
 	.ioctl		= ncp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= ncp_compat_ioctl,
-#endif
 };
 
-const struct inode_operations ncp_dir_inode_operations =
+struct inode_operations ncp_dir_inode_operations =
 {
 	.create		= ncp_create,
 	.lookup		= ncp_lookup,
@@ -79,7 +76,7 @@ static int ncp_hash_dentry(struct dentry *, struct qstr *);
 static int ncp_compare_dentry (struct dentry *, struct qstr *, struct qstr *);
 static int ncp_delete_dentry(struct dentry *);
 
-static const struct dentry_operations ncp_dentry_operations =
+static struct dentry_operations ncp_dentry_operations =
 {
 	.d_revalidate	= ncp_lookup_validate,
 	.d_hash		= ncp_hash_dentry,
@@ -87,7 +84,7 @@ static const struct dentry_operations ncp_dentry_operations =
 	.d_delete	= ncp_delete_dentry,
 };
 
-const struct dentry_operations ncp_root_dentry_operations =
+struct dentry_operations ncp_root_dentry_operations =
 {
 	.d_hash		= ncp_hash_dentry,
 	.d_compare	= ncp_compare_dentry,
@@ -266,7 +263,7 @@ leave_me:;
 
 
 static int
-__ncp_lookup_validate(struct dentry *dentry)
+__ncp_lookup_validate(struct dentry * dentry, struct nameidata *nd)
 {
 	struct ncp_server *server;
 	struct dentry *parent;
@@ -340,7 +337,7 @@ ncp_lookup_validate(struct dentry * dentry, struct nameidata *nd)
 {
 	int res;
 	lock_kernel();
-	res = __ncp_lookup_validate(dentry);
+	res = __ncp_lookup_validate(dentry, nd);
 	unlock_kernel();
 	return res;
 }
@@ -402,7 +399,7 @@ static time_t ncp_obtain_mtime(struct dentry *dentry)
 
 static int ncp_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct dentry *dentry = filp->f_path.dentry;
+	struct dentry *dentry = filp->f_dentry;
 	struct inode *inode = dentry->d_inode;
 	struct page *page = NULL;
 	struct ncp_server *server = NCP_SERVER(inode);
@@ -554,7 +551,7 @@ static int
 ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 		struct ncp_cache_control *ctrl, struct ncp_entry_info *entry)
 {
-	struct dentry *newdent, *dentry = filp->f_path.dentry;
+	struct dentry *newdent, *dentry = filp->f_dentry;
 	struct inode *newino, *inode = dentry->d_inode;
 	struct ncp_cache_control ctl = *ctrl;
 	struct qstr qname;
@@ -649,7 +646,7 @@ static void
 ncp_read_volume_list(struct file *filp, void *dirent, filldir_t filldir,
 			struct ncp_cache_control *ctl)
 {
-	struct dentry *dentry = filp->f_path.dentry;
+	struct dentry *dentry = filp->f_dentry;
 	struct inode *inode = dentry->d_inode;
 	struct ncp_server *server = NCP_SERVER(inode);
 	struct ncp_volume_info info;
@@ -685,7 +682,7 @@ static void
 ncp_do_readdir(struct file *filp, void *dirent, filldir_t filldir,
 						struct ncp_cache_control *ctl)
 {
-	struct dentry *dentry = filp->f_path.dentry;
+	struct dentry *dentry = filp->f_dentry;
 	struct inode *dir = dentry->d_inode;
 	struct ncp_server *server = NCP_SERVER(dir);
 	struct nw_search_sequence seq;
@@ -1241,7 +1238,7 @@ ncp_date_unix2dos(int unix_date, __le16 *time, __le16 *date)
 		month = 2;
 	} else {
 		nl_day = (year & 3) || day <= 59 ? day : day - 1;
-		for (month = 1; month < 12; month++)
+		for (month = 0; month < 12; month++)
 			if (day_n[month] > nl_day)
 				break;
 	}

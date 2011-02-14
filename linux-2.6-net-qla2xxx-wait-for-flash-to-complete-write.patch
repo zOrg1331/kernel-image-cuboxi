@@ -1,0 +1,73 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Tue, 26 Feb 2008 14:05:12 -0500
+Subject: [net] qla2xxx: wait for flash to complete write
+Message-id: 20080226190512.10855.49123.sendpatchset@shell.boston.redhat.com
+O-Subject: [Bug 434992] [QLogic] [RHEL5.2 bug] qla2xxx - flash manipulation can make system unusable
+Bugzilla: 434992
+
+BZ 434992
+
+Recent testing of our new HBA's found a problem in the flash programming logic.
+
+The driver fails to wait for the write protect to be set on the flash chip. This can cause
+corruption of the contents if accesses occur before this period is complete.
+
+Since the driver will refuse to use a card with corrupted flash, this is a critical
+issue.
+
+This patch is low risk, it adds several lines of code to poll for completion of
+the write protect operation. It is tested at QLogic and was submitted upstream in January.
+
+==============
+qla2xxx: Wait for FLASH write-protection to complete after a write.
+
+Some flash parts have a slow enable write-protection (WP)
+operation whereby subsequent FLASH accesses would fail if the WP
+operation had not completed.  Software now polls the SPI's
+status-register for WP completion.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/scsi/qla2xxx/qla_sup.c b/drivers/scsi/qla2xxx/qla_sup.c
+index ad2fa01..347aafb 100644
+--- a/drivers/scsi/qla2xxx/qla_sup.c
++++ b/drivers/scsi/qla2xxx/qla_sup.c
+@@ -550,7 +550,7 @@ qla24xx_write_flash_data(scsi_qla_host_t *ha, uint32_t *dwptr, uint32_t faddr,
+ 	int ret;
+ 	uint32_t liter, miter;
+ 	uint32_t sec_mask, rest_addr, conf_addr;
+-	uint32_t fdata, findex ;
++	uint32_t fdata, findex, cnt;
+ 	uint8_t	man_id, flash_id;
+ 	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
+ 	dma_addr_t optrom_dma;
+@@ -690,8 +690,14 @@ qla24xx_write_flash_data(scsi_qla_host_t *ha, uint32_t *dwptr, uint32_t faddr,
+ 			    0xff0000) | ((fdata >> 16) & 0xff));
+ 	}
+ 
+-	/* Enable flash write-protection. */
++	/* Enable flash write-protection and wait for completion. */
+ 	qla24xx_write_flash_dword(ha, flash_conf_to_access_addr(0x101), 0x9c);
++	for (cnt = 300; cnt &&
++		qla24xx_read_flash_dword(ha,
++			flash_conf_to_access_addr(0x005)) & BIT_0;
++	    cnt--) {
++		udelay(10);
++	}
+ 
+ 	/* Disable flash write. */
+ 	WRT_REG_DWORD(&reg->ctrl_status,
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index 2f7d561..83f9b5a 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.02.00-k5-rhel5.2-02"
++#define QLA2XXX_VERSION      "8.02.00-k5-rhel5.2-03"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	1

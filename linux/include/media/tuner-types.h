@@ -6,11 +6,10 @@
 #define __TUNER_TYPES_H__
 
 enum param_type {
-	TUNER_PARAM_TYPE_RADIO,
-	TUNER_PARAM_TYPE_PAL,
-	TUNER_PARAM_TYPE_SECAM,
-	TUNER_PARAM_TYPE_NTSC,
-	TUNER_PARAM_TYPE_DIGITAL,
+	TUNER_PARAM_TYPE_RADIO, \
+	TUNER_PARAM_TYPE_PAL, \
+	TUNER_PARAM_TYPE_SECAM, \
+	TUNER_PARAM_TYPE_NTSC
 };
 
 struct tuner_range {
@@ -51,10 +50,6 @@ struct tuner_params {
 	   sensitivity. If this setting is 1, then set PORT2 to 1 to
 	   get proper FM reception. */
 	unsigned int port2_fm_high_sensitivity:1;
-	/* Some Philips tuners use tda9887 cGainNormal to select the FM radio
-	   sensitivity. If this setting is 1, e register will use cGainNormal
-	   instead of cGainLow. */
-	unsigned int fm_gain_normal:1;
 	/* Most tuners with a tda9887 use QSS mode. Some (cheaper) tuners
 	   use Intercarrier mode. If this setting is 1, then the tuner
 	   needs to be set to intercarrier mode. */
@@ -77,13 +72,6 @@ struct tuner_params {
 	unsigned int port2_invert_for_secam_lc:1;
 	/* Some cards require PORT1 to be 1 for mono Radio FM and 0 for stereo. */
 	unsigned int port1_set_for_fm_mono:1;
-	/* Select 18% (or according to datasheet 0%) L standard PLL gating,
-	   vs the driver default of 36%. */
-	unsigned int default_pll_gating_18:1;
-	/* IF to use in radio mode.  Tuners with a separate radio IF filter
-	   seem to use 10.7, while those without use 33.3 for PAL/SECAM tuners
-	   and 41.3 for NTSC tuners. 0 = 10.7, 1 = 33.3, 2 = 41.3 */
-	unsigned int radio_if:2;
 	/* Default tda9887 TOP value in dB for the low band. Default is 0.
 	   Range: -16:+15 */
 	signed int default_top_low:5;
@@ -106,7 +94,6 @@ struct tuner_params {
 	   the SECAM-L/L' standards. Range: -16:+15 */
 	signed int default_top_secam_high:5;
 
-	u16 iffreq;
 
 	unsigned int count;
 	struct tuner_range *ranges;
@@ -116,13 +103,6 @@ struct tunertype {
 	char *name;
 	unsigned int count;
 	struct tuner_params *params;
-
-	u16 min;
-	u16 max;
-	u32 stepsize;
-
-	u8 *initdata;
-	u8 *sleepdata;
 };
 
 extern struct tunertype tuners[];

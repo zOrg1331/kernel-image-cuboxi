@@ -1,0 +1,191 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 10 May 2010 16:13:42 -0400
+Subject: [virt] nmi: don't print NMI stuck messages on guests
+Message-id: <1273508022-2256-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 24926
+O-Subject: [RHEL-6 PATCH] [x86] virt: don't print NMI stuck messages on guests
+Bugzilla: 455323
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+https://bugzilla.redhat.com/process_bug.cgi
+
+Ok here is a controversial patch.  There has been a long time feud
+between myself, JeffB and some of the virt folks about a silly printk
+that is shown during boot
+
+testing NMI watchdog ... <4>WARNING: CPU#0: NMI appears to be stuck (0->0)!
+
+>From a testing perspective, seeing a warning set off some flags and we
+tried to hash out ways to get rid of it.  Unfortunately, xen/kvm don't
+emulate the MSR registers the nmi watchdogs uses to run correctly, so
+it is expected the nmi watchdog will not run on virt guests.
+
+The question is how to write the code to detect a virt guest and not
+print that message.  Chris L. finally wrote a small function for me
+that I incorporated to detect if the kernel is running on a guest or
+not.
+
+The next question was what to do when we detect we are on a guest.  Do
+we just automatically disable the nmi watchdog on the guest?  Or do we
+just hide the printk for now.
+
+Chris L.'s reasoning was it is the hypervisor that is preventing the guest
+from running correctly, so if we block the nmi watchdog from running in the
+guest, later on a smarter hypervisor will not allow the guest to work.
+Whereas blocking only the printk, allows a smarter hypervisor to let the
+guest use the nmi watchdog later without any change on the guest (magic!).
+
+So the patch below detects if the kernel is running on a guest and only
+blocks the printk for now.  Of course, if a smarter hypervisor comes along
+and there really is a problem, it gets masked.  Nothing is perfect in virt
+land.
+
+Also a little bit of extra code is in this patch to help clean-up a
+failed nmi_watchdog check by disabling various registers as noticed
+during testing.
+
+Tested on x86_64 and i386 bare-metal and FV guests.
+
+Have not pushed this upstream because I have reworked the code and this
+check will soon no longer exist upstream.
+
+Please review and ACK.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/i386/kernel/nmi.c b/arch/i386/kernel/nmi.c
+index 8a948b1..0947d35 100644
+--- a/arch/i386/kernel/nmi.c
++++ b/arch/i386/kernel/nmi.c
+@@ -73,6 +73,27 @@ static __init void nmi_cpu_busy(void *data)
+ }
+ #endif
+ 
++/* quick and dirty check to see if we are on a virt guest */
++static int on_a_virt_guest(void)
++{
++	unsigned int eax, ebx, ecx, edx;
++	char signature[13];
++
++	cpuid(0x40000000, &eax, &ebx, &ecx, &edx);
++	memcpy(signature + 0, &ebx, 4);
++	memcpy(signature + 4, &ecx, 4);
++	memcpy(signature + 8, &edx, 4);
++	signature[12] = 0;
++
++	if (strcmp(signature, "KVMKVMKVM") == 0)
++		return 1;
++
++	if (strcmp(signature, "XenVMMXenVMM") == 0)
++		return 1;
++
++	return 0;
++}
++
+ static int __init check_nmi_watchdog(void)
+ {
+ 	unsigned int *prev_nmi_count;
+@@ -110,14 +131,30 @@ static int __init check_nmi_watchdog(void)
+ #endif
+ 		if (nmi_count(cpu) - prev_nmi_count[cpu] <= 5) {
+ 			endflag = 1;
+-			printk(KERN_WARNING "WARNING: CPU#%d: NMI "
+-			       "appears to be stuck (%d->%d)!\n",
+-				cpu,
+-				prev_nmi_count[cpu],
+-				nmi_count(cpu));
++			/* most hypervisors do not emulate nmi watchdog
++			 * ticks correctly.  do not print anything if we
++			 * detect we are on a hypervisor.  the intent
++			 * is later when emulation works, nmi watchdog
++			 * will magically work without changing the code.
++			 * for now, do not confuse customers with bogus
++			 * warning messages.
++			 */
++			if (on_a_virt_guest()) {
++				printk(KERN_INFO " skipping (on a virtual guest)\n");
++			} else {
++				printk(KERN_WARNING "WARNING: CPU#%d: NMI "
++					"appears to be stuck (%d->%d)!\n",
++					cpu,
++					prev_nmi_count[cpu],
++					nmi_count(cpu));
++			}
+ 			if (atomic_dec_and_test(&nmi_watchdog_active))
+ 				nmi_active = 0;
+ 			per_cpu(wd_enabled, cpu) = 0;
++			if (nmi_watchdog == NMI_LOCAL_APIC)
++				lapic_watchdog_stop();
++			else
++				apic_write(APIC_LVT0, APIC_DM_NMI | APIC_LVT_MASKED);
+ 			kfree(prev_nmi_count);
+ 			return -1;
+ 		}
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index cb6f1ca..ce6f499 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -86,6 +86,27 @@ static __init void nmi_cpu_busy(void *data)
+ }
+ #endif
+ 
++/* quick and dirty check to see if we are on a virt guest */
++static int on_a_virt_guest(void)
++{
++	unsigned int eax, ebx, ecx, edx;
++	char signature[13];
++
++	cpuid(0x40000000, &eax, &ebx, &ecx, &edx);
++	memcpy(signature + 0, &ebx, 4);
++	memcpy(signature + 4, &ecx, 4);
++	memcpy(signature + 8, &edx, 4);
++	signature[12] = 0;
++
++	if (strcmp(signature, "KVMKVMKVM") == 0)
++		return 1;
++
++	if (strcmp(signature, "XenVMMXenVMM") == 0)
++		return 1;
++
++	return 0;
++}
++
+ int __init check_nmi_watchdog (void)
+ {
+ 	int *counts;
+@@ -116,14 +137,30 @@ int __init check_nmi_watchdog (void)
+ 
+ 		if (cpu_pda(cpu)->__nmi_count - counts[cpu] <= 5) {
+ 			endflag = 1;
+-			printk(KERN_WARNING "WARNING: CPU#%d: NMI "
+-			       "appears to be stuck (%d->%d)!\n",
+-			       cpu,
+-			       counts[cpu],
+-			       cpu_pda(cpu)->__nmi_count);
++			/* most hypervisors do not emulate nmi watchdog
++			 * ticks correctly.  do not print anything if we
++			 * detect we are on a hypervisor.  the intent
++			 * is later when emulation works, nmi watchdog
++			 * will magically work without changing the code.
++			 * for now, do not confuse customers with bogus
++			 * warning messages.
++			 */
++			if (on_a_virt_guest()) {
++				printk(KERN_INFO " skipping (on a virtual guest)\n");
++			} else {
++				printk(KERN_WARNING "WARNING: CPU#%d: NMI "
++					"appears to be stuck (%d->%d)!\n",
++					cpu,
++					counts[cpu],
++					cpu_pda(cpu)->__nmi_count);
++			}
+ 			if (atomic_dec_and_test(&nmi_watchdog_active))
+ 				nmi_active = 0;
+ 			per_cpu(wd_enabled, cpu) = 0;
++			if (nmi_watchdog == NMI_LOCAL_APIC)
++				lapic_watchdog_stop();
++			else
++				apic_write(APIC_LVT0, APIC_DM_NMI | APIC_LVT_MASKED);
+ 			kfree(counts);
+ 			return -1;
+ 		}

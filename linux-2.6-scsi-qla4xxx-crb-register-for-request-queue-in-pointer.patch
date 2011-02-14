@@ -1,0 +1,150 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:22 -0500
+Subject: [scsi] qla4xxx: CRB Register for Request Queue in-pointer
+Message-id: <20101130195922.10450.33228.sendpatchset@localhost.localdomain>
+Patchwork-id: 29697
+O-Subject: [RHEL 5.6 PATCH 6/28] qla4xxx: CRB Register for Request Queue
+	in-pointer
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+Upstream posting: http://marc.info/?l=git-commits-head&m=128868188524033&w=2
+
+Description
+-----------
+
+>From 2c2b86f90310c751b0537aa87532454f8cbd300f Mon Sep 17 00:00:00 2001
+From: Shyam Sundar <shyam.sundar@qlogic.com>
+Date: Sat, 20 Nov 2010 14:14:50 -0800
+Subject: [PATCH 07/29] qla4xxx: CRB Register for Request Queue in-pointer
+
+Switching from doorbell mechanism to CRB register based
+
+Signed-off-by: Shyam Sundar <shyam.sundar@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_fw.h b/drivers/scsi/qla4xxx/ql4_fw.h
+index b40050a..9f4cbad 100644
+--- a/drivers/scsi/qla4xxx/ql4_fw.h
++++ b/drivers/scsi/qla4xxx/ql4_fw.h
+@@ -454,6 +454,7 @@ struct addr_ctrl_blk {
+ #define	 FWOPT_SESSION_MODE		  0x0040
+ #define	 FWOPT_INITIATOR_MODE		  0x0020
+ #define	 FWOPT_TARGET_MODE		  0x0010
++#define	 FWOPT_ENABLE_CRBDB		  0x8000
+ 
+ 	uint16_t exec_throttle;	/* 04-05 */
+ 	uint8_t zio_count;	/* 06 */
+diff --git a/drivers/scsi/qla4xxx/ql4_iocb.c b/drivers/scsi/qla4xxx/ql4_iocb.c
+index da781fd..cc6ee64 100644
+--- a/drivers/scsi/qla4xxx/ql4_iocb.c
++++ b/drivers/scsi/qla4xxx/ql4_iocb.c
+@@ -216,19 +216,10 @@ void qla4xxx_build_scsi_iocbs(struct srb *srb,
+ void qla4_8xxx_queue_iocb(struct scsi_qla_host *ha)
+ {
+ 	uint32_t   dbval = 0;
+-	unsigned long wtime;
+ 
+ 	dbval = 0x14 | (ha->portnum << 5);
+ 	dbval = dbval | (0 << 8) | (ha->request_in << 16);
+-	writel(dbval, (unsigned long __iomem *)ha->nx_db_wr_ptr);
+-	wmb();
+-
+-	wtime = jiffies + (2 * HZ);
+-	while (readl(ha->nx_db_rd_ptr) != dbval &&
+-			!time_after_eq(jiffies, wtime)) {
+-		writel(dbval, (unsigned long __iomem *)ha->nx_db_wr_ptr);
+-		wmb();
+-	}
++	qla4_8xxx_wr_32(ha, ha->nx_db_wr_ptr, ha->request_in);
+ }
+ 
+ /**
+diff --git a/drivers/scsi/qla4xxx/ql4_mbx.c b/drivers/scsi/qla4xxx/ql4_mbx.c
+index de58bb6..a0531ea 100644
+--- a/drivers/scsi/qla4xxx/ql4_mbx.c
++++ b/drivers/scsi/qla4xxx/ql4_mbx.c
+@@ -366,6 +366,10 @@ qla4xxx_set_ifcb(struct scsi_qla_host *ha, uint32_t *mbox_cmd, uint32_t *mbox_st
+ {
+ 	memset(mbox_cmd, 0, sizeof(mbox_cmd[0]) * MBOX_REG_COUNT);
+ 	memset(mbox_sts, 0, sizeof(mbox_sts[0]) * MBOX_REG_COUNT);
++
++	if (is_qla8022(ha))
++		qla4_8xxx_wr_32(ha, ha->nx_db_wr_ptr, 0);
++
+ 	mbox_cmd[0] = MBOX_CMD_INITIALIZE_FIRMWARE;
+ 	mbox_cmd[1] = 0;
+ 	mbox_cmd[2] = LSDW(init_fw_cb_dma);
+@@ -536,6 +540,11 @@ int qla4xxx_initialize_fw_cb(struct scsi_qla_host * ha)
+ 	init_fw_cb->fw_options |=
+ 		__constant_cpu_to_le16(FWOPT_SESSION_MODE |
+ 				       FWOPT_INITIATOR_MODE);
++
++	if (is_qla8022(ha))
++		init_fw_cb->fw_options |=
++			__constant_cpu_to_le16(FWOPT_ENABLE_CRBDB);
++
+ 	init_fw_cb->fw_options &= __constant_cpu_to_le16(~FWOPT_TARGET_MODE);
+ 
+ 	if (qla4xxx_set_ifcb(ha, &mbox_cmd[0], &mbox_sts[0], init_fw_cb_dma)
+diff --git a/drivers/scsi/qla4xxx/ql4_nx.h b/drivers/scsi/qla4xxx/ql4_nx.h
+index ec3a915..b8ea49e 100644
+--- a/drivers/scsi/qla4xxx/ql4_nx.h
++++ b/drivers/scsi/qla4xxx/ql4_nx.h
+@@ -536,6 +536,9 @@
+ #define QLA82XX_PEG_HALT_STATUS1	(QLA82XX_CAM_RAM(0xa8))
+ #define QLA82XX_PEG_HALT_STATUS2	(QLA82XX_CAM_RAM(0xac))
+ #define QLA82XX_PEG_ALIVE_COUNTER	(QLA82XX_CAM_RAM(0xb0))
++#define QLA82XX_CAM_RAM_DB1		(QLA82XX_CAM_RAM(0x1b0))
++#define QLA82XX_CAM_RAM_DB2		(QLA82XX_CAM_RAM(0x1b4))
++
+ 
+ #define HALT_STATUS_UNRECOVERABLE	0x80000000
+ #define HALT_STATUS_RECOVERABLE		0x40000000
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index cd950ff..abfcb08 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -620,9 +620,6 @@ static void qla4xxx_mem_free(struct scsi_qla_host *ha)
+ 	if (is_qla8022(ha)) {
+ 		if (ha->nx_pcibase)
+ 			iounmap((struct device_reg_82xx __iomem *)ha->nx_pcibase);
+-
+-		if (ha->nx_db_wr_ptr)
+-			iounmap((struct device_reg_82xx __iomem *)ha->nx_db_wr_ptr);
+ 	} else if (ha->reg)
+ 		iounmap(ha->reg);
+ 	pci_release_regions(ha->pdev);
+@@ -1671,23 +1668,8 @@ int qla4_8xxx_iospace_config(struct scsi_qla_host *ha)
+ 	db_base = pci_resource_start(pdev, 4);  /* doorbell is on bar 4 */
+ 	db_len = pci_resource_len(pdev, 4);
+ 
+-	/* mapping of doorbell write pointer */
+-	ha->nx_db_wr_ptr = (unsigned long)ioremap(db_base +
+-			(ha->pdev->devfn << 12), 4);
+-	if (!ha->nx_db_wr_ptr) {
+-		printk(KERN_ERR
+-			"cannot remap MMIO doorbell-write (%s), aborting\n",
+-			pci_name(pdev));
+-		goto iospace_error_exit;
+-	}
+-
+-	/* mapping of doorbell read pointer */
+-	ha->nx_db_rd_ptr = (uint8_t *) ha->nx_pcibase + (512 * 1024) +
+-		(ha->pdev->devfn * 8);
+-	if (!ha->nx_db_rd_ptr)
+-		printk(KERN_ERR
+-			"cannot remap MMIO doorbell-read (%s), aborting\n",
+-			pci_name(pdev));
++	ha->nx_db_wr_ptr = (ha->pdev->devfn == 4 ? QLA82XX_CAM_RAM_DB1 :
++		QLA82XX_CAM_RAM_DB2);
+ 
+ 	return 0;
+ 

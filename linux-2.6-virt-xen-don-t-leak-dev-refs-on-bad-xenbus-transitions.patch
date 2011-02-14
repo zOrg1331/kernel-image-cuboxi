@@ -1,0 +1,393 @@
+From: Laszlo Ersek <lersek@redhat.com>
+Date: Mon, 22 Nov 2010 17:55:52 -0500
+Subject: [virt] xen: don't leak dev refs on bad xenbus transitions
+Message-id: <1290448552-11315-1-git-send-email-lersek@redhat.com>
+Patchwork-id: 4514
+O-Subject: [kernel team] [RHEL5.6 PATCH] (guest->host DoS) stop leaking device
+	references due to invalid guest xenbus transitions (BZ#635999)
+Bugzilla: 635999
+CVE: CVE-2010-3699
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Problem: a guest can cause the RHEL5 blkback / blktap driver to leak a
+kernel thread. Such leaked threads hold references to the device, which
+makes the device impossible to tear down. If shut down, the guest
+remains a zombie domain, the xenwatch process hangs, and most xm
+commands will stop working.
+
+For a detailed analysis, please see Paolo Bonzini's BZ Description:
+
+  https://bugzilla.redhat.com/show_bug.cgi?id=635999#c0
+
+Fix: please see comment 14:
+
+  https://bugzilla.redhat.com/show_bug.cgi?id=635999#c14
+
+  Quote:
+
+    This patch tries to do the following, for all of netback, blkback,
+    blktap:
+    - identify/extract idempotent teardown operations,
+    - add/move the invocation of said teardown operation right before we're
+      about to allocate new resources in the Connected states.
+
+    [...] We don't try to figure out the many paths over which the guest
+    could bring the host to the allocation point (= the potential leak),
+    we just ensure that whenever we're there, we don't leak the previous
+    set of resources. [...]
+
+Brew:
+
+  https://brewweb.devel.redhat.com/taskinfo?taskID=2906008
+
+Upstream status: I plan to port the patch to linux-2.6.18-xen and
+contact Keir Fraser & Ian Campbell privately.
+
+I managed to reproduce the bug for blkback / blktap:
+
+  blkback
+
+    host
+
+      # uname -r
+      2.6.18-232.el5xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vbd/51744/state 6 # XenbusStateClosed
+      # xenstore-write device/vbd/51744/state 1 # XenbusStateInitialising
+      # xenstore-write device/vbd/51744/state 3 # XenbusStateInitialised
+      # xenstore-write device/vbd/51744/state 4 # XenbusStateConnected
+      # shutdown -h now
+
+    host
+
+      # xm list
+      Name                                      ID Mem(MiB) VCPUs State   Time(s)
+      Zombie-rhel55-194-PV                       1      512     4 --ps-d     26.9
+
+      # dmesg
+      INFO: task xenwatch:21 blocked for more than 120 seconds.
+      "echo 0 > /proc/sys/kernel/hung_task_timeout_secs" disables this message.
+      xenwatch      D 000000a7e65681fb     0	21     19	     22       (L-TLB)
+       ffff8801d39ffdc0  0000000000000246  ffff8801ac835100  ffffffff802899f2
+       0000000000000009  ffff8801d39eb100  ffff880001ecd7e0  0000000000000519
+       ffff8801d39eb2e8  ffffffff8029de32
+      Call Trace:
+       [<ffffffff802899f2>] enqueue_task+0x41/0x56
+       [<ffffffff8029de32>] keventd_create_kthread+0x0/0xc4
+       [<ffffffff80262fcf>] wait_for_completion+0xa1/0xaa
+       [<ffffffff8029de32>] keventd_create_kthread+0x0/0xc4
+       [<ffffffff8890691b>] :blkbk:blkif_disconnect+0x88/0xdb
+       [<ffffffff8029e04a>] autoremove_wake_function+0x0/0x2e
+       [<ffffffff88906298>] :blkbk:frontend_changed+0x1ca/0x226
+       [<ffffffff803bbb3b>] xenbus_read_driver_state+0x26/0x3b
+
+  blktap
+
+    host
+
+      # uname -r
+      2.6.18-232.el5xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vbd/51728/state 6 # XenbusStateClosed
+      # xenstore-write device/vbd/51728/state 1 # XenbusStateInitialising
+      # xenstore-write device/vbd/51728/state 3 # XenbusStateInitialised
+      # xenstore-write device/vbd/51728/state 4 # XenbusStateConnected
+      # shutdown -h now
+
+    host
+
+      # xm list
+      Name                                      ID Mem(MiB) VCPUs State   Time(s)
+      Zombie-rhel55-194-PV                       3      512     4 --ps-d     54.4
+
+      # dmesg
+      INFO: task xenwatch:21 blocked for more than 120 seconds.
+      "echo 0 > /proc/sys/kernel/hung_task_timeout_secs" disables this message.
+      xenwatch      D ffff880001067460     0    21     19            22       (L-TLB)
+       ffff8801d39ffdc0  0000000000000246  000000000000000a  ffff8801d39eb100
+       000000000000000a  ffff8801d39eb100  ffff8801bec0c7e0  0000000000000302
+       ffff8801d39eb2e8  ffffffff803bceaa
+      Call Trace:
+       [<ffffffff803bceaa>] xenbus_read+0x47/0x53
+       [<ffffffff8020bb94>] kfree+0x15/0xc5
+       [<ffffffff802899f2>] enqueue_task+0x41/0x56
+       [<ffffffff80289a5d>] __activate_task+0x56/0x6d
+       [<ffffffff8029de32>] keventd_create_kthread+0x0/0xc4
+       [<ffffffff88918901>] :blktap:tap_blkif_free+0x72/0x97
+       [<ffffffff8029e04a>] autoremove_wake_function+0x0/0x2e
+       [<ffffffff889185e2>] :blktap:tap_frontend_changed+0x1d5/0x231
+       [<ffffffff803bbb3b>] xenbus_read_driver_state+0x26/0x3b
+
+  netback
+
+    host
+
+      # uname -r
+      2.6.18-232.el5xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vif/0/state 6 # XenbusStateClosed
+      # xenstore-write device/vif/0/state 3 # XenbusStateInitialised
+      # xenstore-write device/vif/0/state 4 # XenbusStateConnected
+
+    Different state transitions were used than above, because netback
+    already had deallocation code under XenbusStateInitialising. Under
+    XenbusStateConnected backend_create_netif() was idempotent anyway,
+    and during testing it seemed connect() -> connect_rings() ->
+    netif_map() wouldn't cause problems either. So I was unable to
+    reproduce the symptoms with netback.
+
+    The difference to blkback / blktap could be that netback creates no
+    kthread on its own, it only registers a tasklet, so it can't leak a
+    thread. I still think the patch makes the netback code nicer and
+    more similar to blkback / blktap.
+
+With the patch, the behavior is as follows:
+
+  blkback
+
+    host
+
+      # uname -r
+      2.6.18-232.el5.xenbus_transition_bz635999xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vbd/51744/state 6 # XenbusStateClosed
+      # xenstore-write device/vbd/51744/state 1 # XenbusStateInitialising
+      # xenstore-write device/vbd/51744/state 3 # XenbusStateInitialised
+
+    The guest reboots, but the host seems unaffected.
+
+  blktap
+
+    host
+
+      # uname -r
+      2.6.18-232.el5.xenbus_transition_bz635999xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vbd/51728/state 6 # XenbusStateClosed
+      # xenstore-write device/vbd/51728/state 1 # XenbusStateInitialising
+      # xenstore-write device/vbd/51728/state 3 # XenbusStateInitialised
+
+    The guest reboots, but the host seems otherwise unaffected:
+
+    host
+
+      # dmesg
+      Nov 22 13:11:44 lacos-workstation kernel: blktap: ring-ref 9, event-channel 18, protocol 1 (x86_64-abi)
+      Nov 22 13:11:44 lacos-workstation kernel: blk_tap: Bad number of segments in request (0)
+      Nov 22 13:11:44 lacos-workstation last message repeated 25 times
+
+  netback
+
+    host
+
+      # uname -r
+      2.6.18-232.el5.xenbus_transition_bz635999xen
+
+    guest
+
+      # uname -r
+      2.6.18-232.el5xen
+
+      # xenstore-write device/vif/0/state 6 # XenbusStateClosed
+      # xenstore-write device/vif/0/state 3 # XenbusStateInitialised
+      # xenstore-write device/vif/0/state 4 # XenbusStateConnected
+
+    The guest reboots (the host sort of "retaliates" with the patch),
+    but the host seems otherwise unaffected:
+
+    host
+
+      Nov 22 17:23:04 lacos-workstation kernel: #### netback grant fails
+      Nov 22 17:23:04 lacos-workstation last message repeated 4 times
+      Nov 22 17:23:04 lacos-workstation kernel: #### netback grant fails
+      Nov 22 17:23:04 lacos-workstation last message repeated 238 times
+
+    These messages seem to be independent from whether the guest
+    requested copying or flipping.
+
+Please review. I'm not subscribed to rhkernel-team-list, so please CC me
+with any followup. Thank you.
+
+Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+
+diff --git a/drivers/xen/blkback/xenbus.c b/drivers/xen/blkback/xenbus.c
+index 4da2651..cfc9f98 100644
+--- a/drivers/xen/blkback/xenbus.c
++++ b/drivers/xen/blkback/xenbus.c
+@@ -355,6 +355,11 @@ static void frontend_changed(struct xenbus_device *dev,
+ 		if (dev->state == XenbusStateConnected)
+ 			break;
+ 
++		/* Enforce precondition before potential leak point.
++		 * blkif_disconnect() is idempotent.
++		 */
++		blkif_disconnect(be->blkif);
++
+ 		err = connect_ring(be);
+ 		if (err)
+ 			break;
+@@ -372,6 +377,7 @@ static void frontend_changed(struct xenbus_device *dev,
+ 			break;
+ 		/* fall through if not online */
+ 	case XenbusStateUnknown:
++		/* implies blkif_disconnect() via blkback_remove() */
+ 		device_unregister(&dev->dev);
+ 		break;
+ 
+diff --git a/drivers/xen/blktap/xenbus.c b/drivers/xen/blktap/xenbus.c
+index d8c249b..7ef0640 100644
+--- a/drivers/xen/blktap/xenbus.c
++++ b/drivers/xen/blktap/xenbus.c
+@@ -324,6 +324,18 @@ static void tap_backend_changed(struct xenbus_watch *watch,
+ 	tap_update_blkif_status(be->blkif);
+ }
+ 
++
++static void blkif_disconnect(blkif_t *blkif)
++{
++	if (blkif->xenblkd) {
++		kthread_stop(blkif->xenblkd);
++		blkif->xenblkd = NULL;
++	}
++
++	/* idempotent */
++	tap_blkif_free(blkif);
++}
++
+ /**
+  * Callback received when the frontend's state changes.
+  */
+@@ -352,6 +364,11 @@ static void tap_frontend_changed(struct xenbus_device *dev,
+ 		if (dev->state == XenbusStateConnected)
+ 			break;
+ 
++		/* Enforce precondition before potential leak point.
++		 * blkif_disconnect() is idempotent.
++		 */
++		blkif_disconnect(be->blkif);
++
+ 		err = connect_ring(be);
+ 		if (err)
+ 			break;
+@@ -359,11 +376,7 @@ static void tap_frontend_changed(struct xenbus_device *dev,
+ 		break;
+ 
+ 	case XenbusStateClosing:
+-		if (be->blkif->xenblkd) {
+-			kthread_stop(be->blkif->xenblkd);
+-			be->blkif->xenblkd = NULL;
+-		}
+-		tap_blkif_free(be->blkif);
++		blkif_disconnect(be->blkif);
+ 		xenbus_switch_state(dev, XenbusStateClosing);
+ 		break;
+ 
+@@ -373,6 +386,9 @@ static void tap_frontend_changed(struct xenbus_device *dev,
+ 			break;
+ 		/* fall through if not online */
+ 	case XenbusStateUnknown:
++		/* Implies the effects of blkif_disconnect() via
++		 * blktap_remove().
++		 */
+ 		device_unregister(&dev->dev);
+ 		break;
+ 
+diff --git a/drivers/xen/netback/xenbus.c b/drivers/xen/netback/xenbus.c
+index 0e47109..9ef2fa7 100644
+--- a/drivers/xen/netback/xenbus.c
++++ b/drivers/xen/netback/xenbus.c
+@@ -39,20 +39,25 @@ struct backend_info {
+ static int connect_rings(struct backend_info *);
+ static void connect(struct backend_info *);
+ static void backend_create_netif(struct backend_info *be);
++static void netback_disconnect(struct backend_info *);
+ 
+ static int netback_remove(struct xenbus_device *dev)
+ {
+ 	struct backend_info *be = dev->dev.driver_data;
+ 
+-	if (be->netif) {
+-		netif_disconnect(be->netif);
+-		be->netif = NULL;
+-	}
++	netback_disconnect(be);
+ 	kfree(be);
+ 	dev->dev.driver_data = NULL;
+ 	return 0;
+ }
+ 
++static void netback_disconnect(struct backend_info *be)
++{
++	if (be->netif) {
++		netif_disconnect(be->netif);
++		be->netif = NULL;
++	}
++}
+ 
+ /**
+  * Entry point to this code when a new device is created.  Allocate the basic
+@@ -210,10 +215,6 @@ static void frontend_changed(struct xenbus_device *dev,
+ 		if (dev->state == XenbusStateClosed) {
+ 			printk("%s: %s: prepare for reconnect\n",
+ 			       __FUNCTION__, dev->nodename);
+-			if (be->netif) {
+-				netif_disconnect(be->netif);
+-				be->netif = NULL;
+-			}
+ 			xenbus_switch_state(dev, XenbusStateInitWait);
+ 		}
+ 		break;
+@@ -222,12 +223,18 @@ static void frontend_changed(struct xenbus_device *dev,
+ 		break;
+ 
+ 	case XenbusStateConnected:
++		/* Enforce precondition before potential leak point.
++		 * netback_disconnect() is idempotent.
++		 */
++		netback_disconnect(be);
++
+ 		backend_create_netif(be);
+ 		if (be->netif)
+ 			connect(be);
+ 		break;
+ 
+ 	case XenbusStateClosing:
++		netback_disconnect(be);
+ 		xenbus_switch_state(dev, XenbusStateClosing);
+ 		break;
+ 
+@@ -239,6 +246,8 @@ static void frontend_changed(struct xenbus_device *dev,
+ 	case XenbusStateUnknown:
+ 		if (be->netif != NULL)
+ 			kobject_uevent(&dev->dev.kobj, KOBJ_OFFLINE);
++
++		/* implies netback_disconnect() via netback_remove() */
+ 		device_unregister(&dev->dev);
+ 		break;
+ 

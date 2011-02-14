@@ -1,0 +1,151 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Date: Tue, 1 Dec 2009 16:17:53 -0500
+Subject: [scsi] st: display current settings of option bits
+Message-id: <1259684273.3963.26.camel@localhost.localdomain>
+Patchwork-id: 21570
+O-Subject: Re: [RHEL5.5 PATCH] st: display current settings of the st driver
+	option bits
+Bugzilla: 501030
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+To fix BZ https://bugzilla.redhat.com/show_bug.cgi?id=501030
+
+The SCSI tape driver (st) has numerous option bits that can be set by
+ioclt or by the mt-st utility.
+
+buffer-writes  buffered writes enabled
+async-writes   asynchronous writes enabled
+read-ahead     read-ahead for fixed block size
+debug          debugging (if compiled into driver)
+two-fms        write two filemarks when file closed
+fast-eod       space directly to eod (and lose file number)
+no-wait        dont wait until rewind, etc. complete
+auto-lock      automatically lock/unlock drive door
+def-writes     the block size and density are for writes
+can-bsr        drive can space backwards as well
+no-blklimits   drive doesnt support read block limits
+can-partitions drive can handle partitioned tapes
+scsi2logical   seek and tell use SCSI-2 logical block addresses instead
+of
+               device dependent addresses
+sysv           enable the System V semantics
+
+and the new bit we added in 5.4:
+
+sili           suppress incorrect length indicator (see BZ 457970).
+
+There is no easy way to determine the current settings of these option
+bits.
+
+The following upstream commit makes this information available in
+sysfs:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b174be02f3634460ac215d249617dee5ae446ae1
+
+This capability should be added to RHEL 5, to make system management and
+support easier.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2109990
+
+I tested this on a DLT8000 drive. I wrote the option bits with mt:
+
+mt -f /dev/st0 stoptions 0x4fa3
+
+and read them with sysfs:
+
+cat /sys/class/scsi_tape/st0/options
+0x00004fa3
+
+A newer version of the mt-st management utility also formats and
+displays this information nicely. This is under consideration for a
+future RHEL 5 update as well (BZ 501014).
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/Documentation/scsi/st.txt b/Documentation/scsi/st.txt
+index 00815c0..eb02cf0 100644
+--- a/Documentation/scsi/st.txt
++++ b/Documentation/scsi/st.txt
+@@ -2,7 +2,7 @@ This file contains brief information about the SCSI tape driver.
+ The driver is currently maintained by Kai Mäkisara (email
+ Kai.Makisara@kolumbus.fi)
+ 
+-Last modified: Thu Feb 21 21:54:16 2008 by kai.makisara
++Last modified: Sun Feb 24 21:59:07 2008 by kai.makisara
+ 
+ 
+ BASICS
+@@ -133,6 +133,11 @@ the defaults set by the user. The value -1 means the default is not set. The
+ file 'dev' contains the device numbers corresponding to this device. The links
+ 'device' and 'driver' point to the SCSI device and driver entries.
+ 
++Each directory also contains the entry 'options' which shows the currently
++enabled driver and mode options. The value in the file is a bit mask where the
++bit definitions are the same as those used with MTSETDRVBUFFER in setting the
++options.
++
+ A link named 'tape' is made from the SCSI device directory to the class
+ directory corresponding to the mode 0 auto-rewind device (e.g., st0). 
+ 
+diff --git a/drivers/scsi/st.c b/drivers/scsi/st.c
+index f50405f..2db8709 100644
+--- a/drivers/scsi/st.c
++++ b/drivers/scsi/st.c
+@@ -4325,6 +4325,46 @@ static ssize_t st_defcompression_show(struct class_device *class_dev, char *buf)
+ 
+ CLASS_DEVICE_ATTR(default_compression, S_IRUGO, st_defcompression_show, NULL);
+ 
++static ssize_t st_options_show(struct class_device *class_dev, char *buf)
++{
++	struct st_modedef *STm = (struct st_modedef *)class_get_devdata(class_dev);
++	struct scsi_tape *STp;
++	int i, j, options;
++	ssize_t l = 0;
++
++	for (i=0; i < st_dev_max; i++) {
++		for (j=0; j < ST_NBR_MODES; j++)
++			if (&scsi_tapes[i]->modes[j] == STm)
++				break;
++		if (j < ST_NBR_MODES)
++			break;
++	}
++	if (i == st_dev_max)
++		return 0;  /* should never happen */
++
++	STp = scsi_tapes[i];
++
++	options = STm->do_buffer_writes ? MT_ST_BUFFER_WRITES : 0;
++	options |= STm->do_async_writes ? MT_ST_ASYNC_WRITES : 0;
++	options |= STm->do_read_ahead ? MT_ST_READ_AHEAD : 0;
++	DEB( options |= debugging ? MT_ST_DEBUGGING : 0 );
++	options |= STp->two_fm ? MT_ST_TWO_FM : 0;
++	options |= STp->fast_mteom ? MT_ST_FAST_MTEOM : 0;
++	options |= STm->defaults_for_writes ? MT_ST_DEF_WRITES : 0;
++	options |= STp->can_bsr ? MT_ST_CAN_BSR : 0;
++	options |= STp->omit_blklims ? MT_ST_NO_BLKLIMS : 0;
++	options |= STp->can_partitions ? MT_ST_CAN_PARTITIONS : 0;
++	options |= STp->scsi2_logical ? MT_ST_SCSI2LOGICAL : 0;
++	options |= STm->sysv ? MT_ST_SYSV : 0;
++	options |= STp->immediate ? MT_ST_NOWAIT : 0;
++	options |= STp->sili ? MT_ST_SILI : 0;
++
++	l = snprintf(buf, PAGE_SIZE, "0x%08x\n", options);
++	return l;
++}
++
++CLASS_DEVICE_ATTR(options, S_IRUGO, st_options_show, NULL);
++
+ static void do_create_class_files(struct scsi_tape *STp, int dev_num, int mode)
+ {
+ 	int i, rew, error;
+@@ -4360,6 +4400,8 @@ static void do_create_class_files(struct scsi_tape *STp, int dev_num, int mode)
+ 					 &class_device_attr_default_density);
+ 		class_device_create_file(st_class_member,
+ 					 &class_device_attr_default_compression);
++		class_device_create_file(st_class_member,
++				        &class_device_attr_options);
+ 		if (mode == 0 && rew == 0) {
+ 			error = sysfs_create_link(&STp->device->sdev_gendev.kobj,
+ 						  &st_class_member->kobj,

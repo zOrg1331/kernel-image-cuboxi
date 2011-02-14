@@ -1,14 +1,15 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright (C) 2001-2003 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
  *
+ * $Id: scan.c,v 1.125 2005/09/30 13:59:13 dedekind Exp $
+ *
  */
-
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -97,12 +98,11 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 	size_t pointlen;
 
 	if (c->mtd->point) {
-		ret = c->mtd->point(c->mtd, 0, c->mtd->size, &pointlen,
-				    (void **)&flashbuf, NULL);
+		ret = c->mtd->point (c->mtd, 0, c->mtd->size, &pointlen, &flashbuf);
 		if (!ret && pointlen < c->mtd->size) {
 			/* Don't muck about if it won't let us point to the whole flash */
 			D1(printk(KERN_DEBUG "MTD point returned len too short: 0x%zx\n", pointlen));
-			c->mtd->unpoint(c->mtd, 0, pointlen);
+			c->mtd->unpoint(c->mtd, flashbuf, 0, c->mtd->size);
 			flashbuf = NULL;
 		}
 		if (ret)
@@ -128,18 +128,16 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 	}
 
 	if (jffs2_sum_active()) {
-		s = kzalloc(sizeof(struct jffs2_summary), GFP_KERNEL);
+		s = kmalloc(sizeof(struct jffs2_summary), GFP_KERNEL);
 		if (!s) {
 			JFFS2_WARNING("Can't allocate memory for summary\n");
-			ret = -ENOMEM;
-			goto out;
+			return -ENOMEM;
 		}
+		memset(s, 0, sizeof(struct jffs2_summary));
 	}
 
 	for (i=0; i<c->nr_blocks; i++) {
 		struct jffs2_eraseblock *jeb = &c->blocks[i];
-
-		cond_resched();
 
 		/* reset summary info for next eraseblock scan */
 		jffs2_sum_reset_collected(s);
@@ -196,7 +194,7 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 				if (c->nextblock) {
 					ret = file_dirty(c, c->nextblock);
 					if (ret)
-						goto out;
+						return ret;
 					/* deleting summary information of the old nextblock */
 					jffs2_sum_reset_collected(c->summary);
 				}
@@ -207,7 +205,7 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 			} else {
 				ret = file_dirty(c, jeb);
 				if (ret)
-					goto out;
+					return ret;
 			}
 			break;
 
@@ -268,7 +266,7 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 		kfree(flashbuf);
 #ifndef __ECOS
 	else
-		c->mtd->unpoint(c->mtd, 0, c->mtd->size);
+		c->mtd->unpoint(c->mtd, flashbuf, 0, c->mtd->size);
 #endif
 	if (s)
 		kfree(s);
@@ -450,20 +448,16 @@ static int jffs2_scan_eraseblock (struct jffs2_sb_info *c, struct jffs2_eraseblo
 
 #ifdef CONFIG_JFFS2_FS_WRITEBUFFER
 	if (jffs2_cleanmarker_oob(c)) {
-		int ret;
-
-		if (c->mtd->block_isbad(c->mtd, jeb->offset))
-			return BLK_STATE_BADBLOCK;
-
-		ret = jffs2_check_nand_cleanmarker(c, jeb);
+		int ret = jffs2_check_nand_cleanmarker(c, jeb);
 		D2(printk(KERN_NOTICE "jffs_check_nand_cleanmarker returned %d\n",ret));
-
 		/* Even if it's not found, we still scan to see
 		   if the block is empty. We use this information
 		   to decide whether to erase it or not. */
 		switch (ret) {
 		case 0:		cleanmarkerfound = 1; break;
 		case 1: 	break;
+		case 2: 	return BLK_STATE_BADBLOCK;
+		case 3:		return BLK_STATE_ALLDIRTY; /* Block has failed to erase min. once */
 		default: 	return ret;
 		}
 	}
@@ -636,17 +630,16 @@ scan_more:
 
 		if (*(uint32_t *)(&buf[ofs-buf_ofs]) == 0xffffffff) {
 			uint32_t inbuf_ofs;
-			uint32_t empty_start, scan_end;
+			uint32_t empty_start;
 
 			empty_start = ofs;
 			ofs += 4;
-			scan_end = min_t(uint32_t, EMPTY_SCAN_SIZE(c->sector_size)/8, buf_len);
 
 			D1(printk(KERN_DEBUG "Found empty flash at 0x%08x\n", ofs));
 		more_empty:
 			inbuf_ofs = ofs - buf_ofs;
-			while (inbuf_ofs < scan_end) {
-				if (unlikely(*(uint32_t *)(&buf[inbuf_ofs]) != 0xffffffff)) {
+			while (inbuf_ofs < buf_len) {
+				if (*(uint32_t *)(&buf[inbuf_ofs]) != 0xffffffff) {
 					printk(KERN_WARNING "Empty flash at 0x%08x ends at 0x%08x\n",
 					       empty_start, ofs);
 					if ((err = jffs2_scan_dirty_space(c, jeb, ofs-empty_start)))
@@ -667,11 +660,7 @@ scan_more:
 				D1(printk(KERN_DEBUG "%d bytes at start of block seems clean... assuming all clean\n", EMPTY_SCAN_SIZE(c->sector_size)));
 				return BLK_STATE_CLEANMARKER;
 			}
-			if (!buf_size && (scan_end != buf_len)) {/* XIP/point case */
-				scan_end = buf_len;
-				goto more_empty;
-			}
-			
+
 			/* See how much more there is to read in this eraseblock... */
 			buf_len = min_t(uint32_t, buf_size, jeb->offset + c->sector_size - ofs);
 			if (!buf_len) {
@@ -681,8 +670,6 @@ scan_more:
 					  empty_start));
 				break;
 			}
-			/* point never reaches here */
-			scan_end = buf_len;
 			D1(printk(KERN_DEBUG "Reading another 0x%x at 0x%08x\n", buf_len, ofs));
 			err = jffs2_fill_scan_buf(c, buf, ofs, buf_len);
 			if (err)
@@ -742,7 +729,8 @@ scan_more:
 			continue;
 		}
 
-		if (ofs + je32_to_cpu(node->totlen) > jeb->offset + c->sector_size) {
+		if (ofs + je32_to_cpu(node->totlen) >
+		    jeb->offset + c->sector_size) {
 			/* Eep. Node goes over the end of the erase block. */
 			printk(KERN_WARNING "Node at 0x%08x with length 0x%08x would run over the end of the erase block\n",
 			       ofs, je32_to_cpu(node->totlen));
@@ -864,7 +852,7 @@ scan_more:
 			switch (je16_to_cpu(node->nodetype) & JFFS2_COMPAT_MASK) {
 			case JFFS2_FEATURE_ROCOMPAT:
 				printk(KERN_NOTICE "Read-only compatible feature node (0x%04x) found at offset 0x%08x\n", je16_to_cpu(node->nodetype), ofs);
-				c->flags |= JFFS2_SB_FLAG_RO;
+			        c->flags |= JFFS2_SB_FLAG_RO;
 				if (!(jffs2_is_readonly(c)))
 					return -EROFS;
 				if ((err = jffs2_scan_dirty_space(c, jeb, PAD(je32_to_cpu(node->totlen)))))
@@ -941,7 +929,7 @@ struct jffs2_inode_cache *jffs2_scan_make_ino_cache(struct jffs2_sb_info *c, uin
 	ic->nodes = (void *)ic;
 	jffs2_add_ino_cache(c, ic);
 	if (ino == 1)
-		ic->pino_nlink = 1;
+		ic->nlink = 1;
 	return ic;
 }
 
@@ -949,7 +937,8 @@ static int jffs2_scan_inode_node(struct jffs2_sb_info *c, struct jffs2_erasebloc
 				 struct jffs2_raw_inode *ri, uint32_t ofs, struct jffs2_summary *s)
 {
 	struct jffs2_inode_cache *ic;
-	uint32_t crc, ino = je32_to_cpu(ri->ino);
+	uint32_t ino = je32_to_cpu(ri->ino);
+	int err;
 
 	D1(printk(KERN_DEBUG "jffs2_scan_inode_node(): Node at 0x%08x\n", ofs));
 
@@ -962,22 +951,21 @@ static int jffs2_scan_inode_node(struct jffs2_sb_info *c, struct jffs2_erasebloc
 	   Which means that the _full_ amount of time to get to proper write mode with GC
 	   operational may actually be _longer_ than before. Sucks to be me. */
 
-	/* Check the node CRC in any case. */
-	crc = crc32(0, ri, sizeof(*ri)-8);
-	if (crc != je32_to_cpu(ri->node_crc)) {
-		printk(KERN_NOTICE "jffs2_scan_inode_node(): CRC failed on "
-		       "node at 0x%08x: Read 0x%08x, calculated 0x%08x\n",
-		       ofs, je32_to_cpu(ri->node_crc), crc);
-		/*
-		 * We believe totlen because the CRC on the node
-		 * _header_ was OK, just the node itself failed.
-		 */
-		return jffs2_scan_dirty_space(c, jeb,
-					      PAD(je32_to_cpu(ri->totlen)));
-	}
-
 	ic = jffs2_get_ino_cache(c, ino);
 	if (!ic) {
+		/* Inocache get failed. Either we read a bogus ino# or it's just genuinely the
+		   first node we found for this inode. Do a CRC check to protect against the former
+		   case */
+		uint32_t crc = crc32(0, ri, sizeof(*ri)-8);
+
+		if (crc != je32_to_cpu(ri->node_crc)) {
+			printk(KERN_NOTICE "jffs2_scan_inode_node(): CRC failed on node at 0x%08x: Read 0x%08x, calculated 0x%08x\n",
+			       ofs, je32_to_cpu(ri->node_crc), crc);
+			/* We believe totlen because the CRC on the node _header_ was OK, just the node itself failed. */
+			if ((err = jffs2_scan_dirty_space(c, jeb, PAD(je32_to_cpu(ri->totlen)))))
+				return err;
+			return 0;
+		}
 		ic = jffs2_scan_make_ino_cache(c, ino);
 		if (!ic)
 			return -ENOMEM;
@@ -1005,7 +993,6 @@ static int jffs2_scan_dirent_node(struct jffs2_sb_info *c, struct jffs2_eraseblo
 {
 	struct jffs2_full_dirent *fd;
 	struct jffs2_inode_cache *ic;
-	uint32_t checkedlen;
 	uint32_t crc;
 	int err;
 
@@ -1026,18 +1013,12 @@ static int jffs2_scan_dirent_node(struct jffs2_sb_info *c, struct jffs2_eraseblo
 
 	pseudo_random += je32_to_cpu(rd->version);
 
-	/* Should never happen. Did. (OLPC trac #4184)*/
-	checkedlen = strnlen(rd->name, rd->nsize);
-	if (checkedlen < rd->nsize) {
-		printk(KERN_ERR "Dirent at %08x has zeroes in name. Truncating to %d chars\n",
-		       ofs, checkedlen);
-	}
-	fd = jffs2_alloc_full_dirent(checkedlen+1);
+	fd = jffs2_alloc_full_dirent(rd->nsize+1);
 	if (!fd) {
 		return -ENOMEM;
 	}
-	memcpy(&fd->name, rd->name, checkedlen);
-	fd->name[checkedlen] = 0;
+	memcpy(&fd->name, rd->name, rd->nsize);
+	fd->name[rd->nsize] = 0;
 
 	crc = crc32(0, fd->name, rd->nsize);
 	if (crc != je32_to_cpu(rd->name_crc)) {
@@ -1057,13 +1038,12 @@ static int jffs2_scan_dirent_node(struct jffs2_sb_info *c, struct jffs2_eraseblo
 		return -ENOMEM;
 	}
 
-	fd->raw = jffs2_link_node_ref(c, jeb, ofs | dirent_node_state(rd),
-				      PAD(je32_to_cpu(rd->totlen)), ic);
+	fd->raw = jffs2_link_node_ref(c, jeb, ofs | REF_PRISTINE, PAD(je32_to_cpu(rd->totlen)), ic);
 
 	fd->next = NULL;
 	fd->version = je32_to_cpu(rd->version);
 	fd->ino = je32_to_cpu(rd->ino);
-	fd->nhash = full_name_hash(fd->name, checkedlen);
+	fd->nhash = full_name_hash(fd->name, rd->nsize);
 	fd->type = rd->type;
 	jffs2_add_fd_to_list(c, fd, &ic->scan_dents);
 

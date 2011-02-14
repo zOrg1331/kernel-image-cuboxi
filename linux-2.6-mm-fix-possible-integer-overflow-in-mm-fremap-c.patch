@@ -1,0 +1,115 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Mon, 25 Oct 2010 14:27:23 -0400
+Subject: [mm] fix possible integer overflow in mm/fremap.c
+Message-id: <1288016843.3453.12.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 4496
+O-Subject: [kernel team] [RHEL5 Patch] Security Fix: Possible integer overflow
+	in	mm/fremap.c
+Bugzilla: 637047
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+rhel-5 tracking bug: see blocks bug list for full details of the
+security issue(s).
+
+This bug is never intended to be made public, please put any public
+notes in
+the 'blocks' bugs.
+
+NOTE: THIS ISSUE IS CURRENTLY EMBARGOED, DO NOT MAKE PUBLIC COMMITS OR
+COMMENTS
+ABOUT THIS ISSUE, NOT EVEN TO PARTNERS OR CUSTOMERS.
+
+Information with regards to this bug is considered Red Hat Confidential
+until
+the embargo has lifted. Please post the patch only to the
+'rhkernel-team-list'
+mailing list for review and acks.
+
+Reproducers, if any, will remain confidential and never be made public,
+unless
+done so by the security team.
+--------------------------------------------------------------------------
+Backported upstream patch to prevent security hole caused by integer
+overflow in remap_file_pages() system call:
+
+commit 5ec1055aa5632dd7a8283cdb5fa9be3c535eaa06
+Author: Larry Woodman <lwoodman@redhat.com>
+Date:   Fri Sep 24 12:04:48 2010 -0400
+
+    Avoid pgoff overflow in remap_file_pages
+
+    Thomas Pollet noticed that the remap_file_pages() system call in
+    fremap.c has a potential overflow in the first part of the if
+statement
+    below, which could cause it to process bogus input parameters.
+    Specifically the pgoff + size parameters could be wrap thereby
+    preventing the system call from failing when it should.
+
+    Reported-by: Thomas Pollet <thomas.pollet@gmail.com>
+    Signed-off-by: Larry Woodman <lwoodman@redhat.com>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+-----------------------------------------------------------------------------
+[bug automatically created by: add-tracking-bugs]
+Eugene Teo (Security Response)  2010-09-21 23:15:47 EDT
+Description of problem:
+Reported by Thomas Pollet.
+
+In mm/fremap.c :
+
+  146 #if PTE_FILE_MAX_BITS < BITS_PER_LONG
+  147         if (pgoff + (size >> PAGE_SHIFT) >= (1UL <<
+PTE_FILE_MAX_BITS))
+  148                 return err;
+
+the first part of the if statement could overflow .
+
+attached is some code that implements remap_file_pages if you want to
+check it:
+if run like ./a.out 6710886 10000, for example, the pgoff survives as a
+negative value and is used.
+
+Acknowledgements:
+
+Red Hat would like to thank Thomas Pollet for reporting this issue.
+----------------------------------------------------------------------------
+Fixes BZ637047
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/fremap.c b/mm/fremap.c
+index 8f37a25..02bab8f 100644
+--- a/mm/fremap.c
++++ b/mm/fremap.c
+@@ -154,7 +154,6 @@ asmlinkage long sys_remap_file_pages(unsigned long start, unsigned long size,
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	struct address_space *mapping;
+-	unsigned long end = start + size;
+ 	struct vm_area_struct *vma;
+ 	int err = -EINVAL;
+ 	int has_write_lock = 0;
+@@ -171,6 +170,10 @@ asmlinkage long sys_remap_file_pages(unsigned long start, unsigned long size,
+ 	if (start + size <= start)
+ 		return err;
+ 
++	/* Does pgoff wrap */
++	if (pgoff + (size >> PAGE_SHIFT) < pgoff)
++		return err;
++
+ 	/* Can we represent this offset inside this architecture's pte's? */
+ #if PTE_FILE_MAX_BITS < BITS_PER_LONG
+ 	if (pgoff + (size >> PAGE_SHIFT) >= (1UL << PTE_FILE_MAX_BITS))
+@@ -191,8 +194,8 @@ asmlinkage long sys_remap_file_pages(unsigned long start, unsigned long size,
+ 	if (vma && (vma->vm_flags & VM_SHARED) &&
+ 		(!vma->vm_private_data || (vma->vm_flags & VM_NONLINEAR)) &&
+ 		vma->vm_ops && vma->vm_ops->populate &&
+-			end > start && start >= vma->vm_start &&
+-				end <= vma->vm_end) {
++			start + size > start && start >= vma->vm_start &&
++				start + size <= vma->vm_end) {
+ 
+ 		/* Must set VM_NONLINEAR before any pages are populated. */
+ 		if (pgoff != linear_page_index(vma, start) &&

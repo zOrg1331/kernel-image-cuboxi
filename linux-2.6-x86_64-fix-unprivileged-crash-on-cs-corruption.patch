@@ -1,0 +1,48 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Mon, 31 Mar 2008 13:37:36 -0400
+Subject: [x86_64] fix unprivileged crash on %cs corruption
+Message-id: 200803311337.37034.jwilson@redhat.com
+O-Subject: [RHEL5.2 PATCH] fix unprivileged crash on x86_64 %cs corruption
+Bugzilla: 439788
+
+Bugzilla #439788
+https://bugzilla.redhat.com/show_bug.cgi?id=439788
+(bug 431430 is the master bug w/more details)
+
+Description
+-----------
+Specially crafted code can crash a machine from a non-root account.
+
+Steps to Reproduce:
+1. wget
+http://sources.redhat.com/cgi-bin/cvsweb.cgi/~checkout~/tests/ptrace-tests/tests/x86_64-cs.c?cvsroot=systemtap
+2. gcc -o x86_64-cs x86_64-cs.c -Wall -ggdb2 -D_GNU_SOURCE
+3. ./x86_64-cs
+
+Test status
+-----------
+Without patch, machine crashes (stack trace in bug 431430). With patch, machine doesn't crash.
+
+Upstream status
+---------------
+Backport credit goes to Roland McGrath, who also authored the upstream fix for
+the same issue:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=a57dae3aa4d00a000b5bac4238025438204c78b2
+
+At least, I believe that's it... Due to the addition of paravirt-ops code upstream, the upstream
+fix looks considerably different, but this patch does the trick for RHEL5 (and should for RHEL4 as
+well, another posting coming soon...).
+
+diff --git a/arch/x86_64/kernel/entry.S b/arch/x86_64/kernel/entry.S
+index e7860d1..a49bb32 100644
+--- a/arch/x86_64/kernel/entry.S
++++ b/arch/x86_64/kernel/entry.S
+@@ -778,7 +778,7 @@ paranoid_swapgs\trace:
+ 	swapgs
+ paranoid_restore\trace:
+ 	RESTORE_ALL 8
+-	iretq
++	jmp iret_label
+ paranoid_userspace\trace:
+ 	GET_THREAD_INFO(%rcx)
+ 	movl threadinfo_flags(%rcx),%ebx

@@ -8,9 +8,11 @@
 #define LINUX_ATM_TCP_H
 
 #include <linux/atmapi.h>
-#include <linux/atm.h>
-#include <linux/atmioc.h>
+
+#ifdef __KERNEL__
 #include <linux/types.h>
+#endif
+#include <linux/atmioc.h>
 
 
 /*
@@ -18,9 +20,9 @@
  */
 
 struct atmtcp_hdr {
-	__u16	vpi;
-	__u16	vci;
-	__u32	length;		/* ... of data part */
+	uint16_t	vpi;
+	uint16_t	vci;
+	uint32_t	length;		/* ... of data part */
 };
 
 /*

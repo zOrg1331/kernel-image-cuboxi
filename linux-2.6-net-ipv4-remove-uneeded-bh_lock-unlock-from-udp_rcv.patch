@@ -1,0 +1,34 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 27 Apr 2009 15:52:01 -0400
+Subject: [net] ipv4: remove uneeded bh_lock/unlock from udp_rcv
+Message-id: 20090427195201.GB19197@hmsreliant.think-freely.org
+O-Subject: [RHEL 5.4 PATCH] remove uneeded bh_lock/unlock from udp_rcv (bz 484590)
+Bugzilla: 484590
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+iHey all-
+	There have been several reports of crashes on RHEL5 when using openswan.
+Tuomo Soini tracked the problem down to the unecessecary unlocking of a socket
+in the udp receive path, which the attached patch fixes.
+
+Fixes bz 484590
+
+Neil
+
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index da88684..2b9f07d 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -1069,9 +1069,7 @@ static int udp_queue_rcv_skb(struct sock * sk, struct sk_buff *skb)
+ 		}
+ 		if (ret < 0) {
+ 			/* process the ESP packet */
+-			bh_unlock_sock(sk);
+ 			ret = xfrm4_rcv_encap(skb, up->encap_type);
+-			bh_lock_sock(sk);
+ 			return -ret;
+ 		}
+ 		/* FALLTHROUGH -- it's a UDP Packet */

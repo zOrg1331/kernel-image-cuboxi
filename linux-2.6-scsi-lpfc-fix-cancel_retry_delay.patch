@@ -1,0 +1,49 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Date: Fri, 5 Dec 2008 15:48:03 -0500
+Subject: [scsi] lpfc: fix cancel_retry_delay
+Message-id: 1228510083.30284.98.camel@p670.boston.redhat.com
+O-Subject: [RHEL5.3 PATCH] Emulex lpfc. Fix cancel_retry_delay.
+Bugzilla: 470610
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+lpfc HBAs fail to discover all the targets after a switch reboot when
+connected to a QLogic switch.  The fix is two lines (actually a single
+line moved by a few lines), plus the version change. The change moves
+the clearing of NLP_NPR_2B_DISC flag after the
+lpfc_cancel_retry_delay_tmo function call in lpfc_device_recov_npr_node
+function.
+
+This bug is a regression, introduced earlier in 5.3. The brew build was okay.
+
+Resolves Bug 470610.
+
+diff --git a/drivers/scsi/lpfc/lpfc_nportdisc.c b/drivers/scsi/lpfc/lpfc_nportdisc.c
+index 83ffa75..94ec512 100644
+--- a/drivers/scsi/lpfc/lpfc_nportdisc.c
++++ b/drivers/scsi/lpfc/lpfc_nportdisc.c
+@@ -1928,10 +1928,10 @@ lpfc_device_recov_npr_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 	if (vport->fc_flag & FC_RSCN_DEFERRED)
+ 		return ndlp->nlp_state;
+ 
++	lpfc_cancel_retry_delay_tmo(vport, ndlp);
+ 	spin_lock_irq(shost->host_lock);
+ 	ndlp->nlp_flag &= ~(NLP_NODEV_REMOVE | NLP_NPR_2B_DISC);
+ 	spin_unlock_irq(shost->host_lock);
+-	lpfc_cancel_retry_delay_tmo(vport, ndlp);
+ 	return ndlp->nlp_state;
+ }
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 55f5f23..297ba9c 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.33.2p"
++#define LPFC_DRIVER_VERSION "8.2.0.33.3p"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 

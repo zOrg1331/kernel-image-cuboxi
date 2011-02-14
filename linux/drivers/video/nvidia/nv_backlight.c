@@ -12,14 +12,14 @@
 #include <linux/backlight.h>
 #include <linux/fb.h>
 #include <linux/pci.h>
-
-#ifdef CONFIG_PMAC_BACKLIGHT
-#include <asm/backlight.h>
-#endif
-
 #include "nv_local.h"
 #include "nv_type.h"
 #include "nv_proto.h"
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+#include <asm/backlight.h>
+#include <asm/machdep.h>
+#endif
 
 /* We do not have any information about which values are allowed, thus
  * we used safe values.
@@ -28,6 +28,9 @@
 #define MAX_LEVEL 0x534
 #define LEVEL_STEP ((MAX_LEVEL - MIN_LEVEL) / FB_BACKLIGHT_MAX)
 
+static struct backlight_properties nvidia_bl_data;
+
+/* Call with fb_info->bl_mutex held */
 static int nvidia_bl_get_level_brightness(struct nvidia_par *par,
 		int level)
 {
@@ -35,7 +38,6 @@ static int nvidia_bl_get_level_brightness(struct nvidia_par *par,
 	int nlevel;
 
 	/* Get and convert the value */
-	/* No locking of bl_curve since we read a single value */
 	nlevel = MIN_LEVEL + info->bl_curve[level] * LEVEL_STEP;
 
 	if (nlevel < 0)
@@ -48,20 +50,21 @@ static int nvidia_bl_get_level_brightness(struct nvidia_par *par,
 	return nlevel;
 }
 
-static int nvidia_bl_update_status(struct backlight_device *bd)
+/* Call with fb_info->bl_mutex held */
+static int __nvidia_bl_update_status(struct backlight_device *bd)
 {
-	struct nvidia_par *par = bl_get_data(bd);
+	struct nvidia_par *par = class_get_devdata(&bd->class_dev);
 	u32 tmp_pcrt, tmp_pmc, fpcontrol;
 	int level;
 
 	if (!par->FlatPanel)
 		return 0;
 
-	if (bd->props.power != FB_BLANK_UNBLANK ||
-	    bd->props.fb_blank != FB_BLANK_UNBLANK)
+	if (bd->props->power != FB_BLANK_UNBLANK ||
+	    bd->props->fb_blank != FB_BLANK_UNBLANK)
 		level = 0;
 	else
-		level = bd->props.brightness;
+		level = bd->props->brightness;
 
 	tmp_pmc = NV_RD32(par->PMC, 0x10F0) & 0x0000FFFF;
 	tmp_pcrt = NV_RD32(par->PCRTC0, 0x081C) & 0xFFFFFFFC;
@@ -82,15 +85,44 @@ static int nvidia_bl_update_status(struct backlight_device *bd)
 	return 0;
 }
 
-static int nvidia_bl_get_brightness(struct backlight_device *bd)
+static int nvidia_bl_update_status(struct backlight_device *bd)
 {
-	return bd->props.brightness;
+	struct nvidia_par *par = class_get_devdata(&bd->class_dev);
+	struct fb_info *info = pci_get_drvdata(par->pci_dev);
+	int ret;
+
+	mutex_lock(&info->bl_mutex);
+	ret = __nvidia_bl_update_status(bd);
+	mutex_unlock(&info->bl_mutex);
+
+	return ret;
 }
 
-static struct backlight_ops nvidia_bl_ops = {
+static int nvidia_bl_get_brightness(struct backlight_device *bd)
+{
+	return bd->props->brightness;
+}
+
+static struct backlight_properties nvidia_bl_data = {
+	.owner		= THIS_MODULE,
 	.get_brightness = nvidia_bl_get_brightness,
 	.update_status	= nvidia_bl_update_status,
+	.max_brightness = (FB_BACKLIGHT_LEVELS - 1),
 };
+
+void nvidia_bl_set_power(struct fb_info *info, int power)
+{
+	mutex_lock(&info->bl_mutex);
+
+	if (info->bl_dev) {
+		down(&info->bl_dev->sem);
+		info->bl_dev->props->power = power;
+		__nvidia_bl_update_status(info->bl_dev);
+		up(&info->bl_dev->sem);
+	}
+
+	mutex_unlock(&info->bl_mutex);
+}
 
 void nvidia_bl_init(struct nvidia_par *par)
 {
@@ -109,22 +141,32 @@ void nvidia_bl_init(struct nvidia_par *par)
 
 	snprintf(name, sizeof(name), "nvidiabl%d", info->node);
 
-	bd = backlight_device_register(name, info->dev, par, &nvidia_bl_ops);
+	bd = backlight_device_register(name, par, &nvidia_bl_data);
 	if (IS_ERR(bd)) {
 		info->bl_dev = NULL;
 		printk(KERN_WARNING "nvidia: Backlight registration failed\n");
 		goto error;
 	}
 
+	mutex_lock(&info->bl_mutex);
 	info->bl_dev = bd;
 	fb_bl_default_curve(info, 0,
 		0x158 * FB_BACKLIGHT_MAX / MAX_LEVEL,
 		0x534 * FB_BACKLIGHT_MAX / MAX_LEVEL);
+	mutex_unlock(&info->bl_mutex);
 
-	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
-	bd->props.brightness = bd->props.max_brightness;
-	bd->props.power = FB_BLANK_UNBLANK;
-	backlight_update_status(bd);
+	down(&bd->sem);
+	bd->props->brightness = nvidia_bl_data.max_brightness;
+	bd->props->power = FB_BLANK_UNBLANK;
+	bd->props->update_status(bd);
+	up(&bd->sem);
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_lock(&pmac_backlight_mutex);
+	if (!pmac_backlight)
+		pmac_backlight = bd;
+	mutex_unlock(&pmac_backlight_mutex);
+#endif
 
 	printk("nvidia: Backlight initialized (%s)\n", name);
 
@@ -137,8 +179,25 @@ error:
 void nvidia_bl_exit(struct nvidia_par *par)
 {
 	struct fb_info *info = pci_get_drvdata(par->pci_dev);
-	struct backlight_device *bd = info->bl_dev;
 
-	backlight_device_unregister(bd);
-	printk("nvidia: Backlight unloaded\n");
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_lock(&pmac_backlight_mutex);
+#endif
+
+	mutex_lock(&info->bl_mutex);
+	if (info->bl_dev) {
+#ifdef CONFIG_PMAC_BACKLIGHT
+		if (pmac_backlight == info->bl_dev)
+			pmac_backlight = NULL;
+#endif
+
+		backlight_device_unregister(info->bl_dev);
+
+		printk("nvidia: Backlight unloaded\n");
+	}
+	mutex_unlock(&info->bl_mutex);
+
+#ifdef CONFIG_PMAC_BACKLIGHT
+	mutex_unlock(&pmac_backlight_mutex);
+#endif
 }

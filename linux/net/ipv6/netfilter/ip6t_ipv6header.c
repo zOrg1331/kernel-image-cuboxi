@@ -1,7 +1,7 @@
 /* ipv6header match - matches IPv6 packets based
    on whether they contain certain headers */
 
-/* Original idea: Brad Chapman
+/* Original idea: Brad Chapman 
  * Rewritten by: Andras Kis-Szabo <kisza@sch.bme.hu> */
 
 /* (C) 2001-2002 Andras Kis-Szabo <kisza@sch.bme.hu>
@@ -18,18 +18,24 @@
 #include <net/checksum.h>
 #include <net/ipv6.h>
 
-#include <linux/netfilter/x_tables.h>
 #include <linux/netfilter_ipv6/ip6_tables.h>
 #include <linux/netfilter_ipv6/ip6t_ipv6header.h>
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Xtables: IPv6 header types match");
+MODULE_DESCRIPTION("IPv6 headers match");
 MODULE_AUTHOR("Andras Kis-Szabo <kisza@sch.bme.hu>");
 
-static bool
-ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+ipv6header_match(const struct sk_buff *skb,
+		 const struct net_device *in,
+		 const struct net_device *out,
+		 const struct xt_match *match,
+		 const void *matchinfo,
+		 int offset,
+		 unsigned int protoff,
+		 int *hotdrop)
 {
-	const struct ip6t_ipv6header_info *info = par->matchinfo;
+	const struct ip6t_ipv6header_info *info = matchinfo;
 	unsigned int temp;
 	int len;
 	u8 nexthdr;
@@ -38,7 +44,7 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 	/* Make sure this isn't an evil packet */
 
 	/* type of the 1st exthdr */
-	nexthdr = ipv6_hdr(skb)->nexthdr;
+	nexthdr = skb->nh.ipv6h->nexthdr;
 	/* pointer to the 1st exthdr */
 	ptr = sizeof(struct ipv6hdr);
 	/* available length */
@@ -46,18 +52,17 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 	temp = 0;
 
 	while (ip6t_ext_hdr(nexthdr)) {
-		const struct ipv6_opt_hdr *hp;
-		struct ipv6_opt_hdr _hdr;
+		struct ipv6_opt_hdr _hdr, *hp;
 		int hdrlen;
 
+		/* Is there enough space for the next ext header? */
+		if (len < (int)sizeof(struct ipv6_opt_hdr))
+			return 0;
 		/* No more exthdr -> evaluate */
 		if (nexthdr == NEXTHDR_NONE) {
 			temp |= MASK_NONE;
 			break;
 		}
-		/* Is there enough space for the next ext header? */
-		if (len < (int)sizeof(struct ipv6_opt_hdr))
-			return false;
 		/* ESP -> evaluate */
 		if (nexthdr == NEXTHDR_ESP) {
 			temp |= MASK_ESP;
@@ -68,9 +73,9 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 		BUG_ON(hp == NULL);
 
 		/* Calculate the header length */
-		if (nexthdr == NEXTHDR_FRAGMENT)
+		if (nexthdr == NEXTHDR_FRAGMENT) {
 			hdrlen = 8;
-		else if (nexthdr == NEXTHDR_AUTH)
+		} else if (nexthdr == NEXTHDR_AUTH)
 			hdrlen = (hp->hdrlen + 2) << 2;
 		else
 			hdrlen = ipv6_optlen(hp);
@@ -93,7 +98,7 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 			temp |= MASK_DSTOPTS;
 			break;
 		default:
-			return false;
+			return 0;
 			break;
 		}
 
@@ -104,7 +109,7 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 			break;
 	}
 
-	if (nexthdr != NEXTHDR_NONE && nexthdr != NEXTHDR_ESP)
+	if ((nexthdr != NEXTHDR_NONE) && (nexthdr != NEXTHDR_ESP))
 		temp |= MASK_PROTO;
 
 	if (info->modeflag)
@@ -118,37 +123,42 @@ ipv6header_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 	}
 }
 
-static bool ipv6header_mt6_check(const struct xt_mtchk_param *par)
+static int
+ipv6header_checkentry(const char *tablename,
+		      const void *ip,
+		      const struct xt_match *match,
+		      void *matchinfo,
+		      unsigned int matchsize,
+		      unsigned int hook_mask)
 {
-	const struct ip6t_ipv6header_info *info = par->matchinfo;
+	const struct ip6t_ipv6header_info *info = matchinfo;
 
 	/* invflags is 0 or 0xff in hard mode */
 	if ((!info->modeflag) && info->invflags != 0x00 &&
 	    info->invflags != 0xFF)
-		return false;
+		return 0;
 
-	return true;
+	return 1;
 }
 
-static struct xt_match ipv6header_mt6_reg __read_mostly = {
+static struct ip6t_match ip6t_ipv6header_match = {
 	.name		= "ipv6header",
-	.family		= NFPROTO_IPV6,
-	.match		= ipv6header_mt6,
+	.match		= &ipv6header_match,
 	.matchsize	= sizeof(struct ip6t_ipv6header_info),
-	.checkentry	= ipv6header_mt6_check,
+	.checkentry	= &ipv6header_checkentry,
 	.destroy	= NULL,
 	.me		= THIS_MODULE,
 };
 
-static int __init ipv6header_mt6_init(void)
+static int __init ipv6header_init(void)
 {
-	return xt_register_match(&ipv6header_mt6_reg);
+	return ip6t_register_match(&ip6t_ipv6header_match);
 }
 
-static void __exit ipv6header_mt6_exit(void)
+static void __exit ipv6header_exit(void)
 {
-	xt_unregister_match(&ipv6header_mt6_reg);
+	ip6t_unregister_match(&ip6t_ipv6header_match);
 }
 
-module_init(ipv6header_mt6_init);
-module_exit(ipv6header_mt6_exit);
+module_init(ipv6header_init);
+module_exit(ipv6header_exit);

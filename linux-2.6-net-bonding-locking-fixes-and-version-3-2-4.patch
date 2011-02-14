@@ -1,0 +1,678 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 5 Feb 2008 15:53:37 -0500
+Subject: [net] bonding: locking fixes and version 3.2.4
+Message-id: 20080205205337.GD28559@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] bonding: upstream locking fixes and update to version 3.2.4
+Bugzilla: 268001
+
+These changes are a few that were committed to 2.6.24 and a few that are
+in Jeff's netdev-2.6 tree after 2.6.24 was released.  The conversion to
+workqueues went pretty well, but there were a few problems still lurking
+out there that were discovered.
+
+This update will resolve those issues and move bonding forward to
+version 3.2.4.  The difference between this and what is upstream is now
+quite small, with the only major difference being that RHEL5.2 currently
+doesn't support bonding and IPoIB.  (That may hit later, but it's not
+tested/approved yet.)
+
+This has been tested by several customers and partners and resolves
+their issues.
+
+This patch resolves BZ 268001 and in the process of updating to the
+latest also fixes BZ 430580.
+
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index 09a8a89..41f7b92 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -976,7 +976,7 @@ static void alb_swap_mac_addr(struct bonding *bond, struct slave *slave1, struct
+ /*
+  * Send learning packets after MAC address swap.
+  *
+- * Called with RTNL and bond->lock held for read.
++ * Called with RTNL and no other locks
+  */
+ static void alb_fasten_mac_swap(struct bonding *bond, struct slave *slave1,
+ 				struct slave *slave2)
+@@ -984,6 +984,8 @@ static void alb_fasten_mac_swap(struct bonding *bond, struct slave *slave1,
+ 	int slaves_state_differ = (SLAVE_IS_OK(slave1) != SLAVE_IS_OK(slave2));
+ 	struct slave *disabled_slave = NULL;
+ 
++	ASSERT_RTNL();
++
+ 	/* fasten the change in the switch */
+ 	if (SLAVE_IS_OK(slave1)) {
+ 		alb_send_learning_packets(slave1, slave1->dev->dev_addr);
+@@ -1028,7 +1030,7 @@ static void alb_fasten_mac_swap(struct bonding *bond, struct slave *slave1,
+  * a slave that has @slave's permanet address as its current address.
+  * We'll make sure that that slave no longer uses @slave's permanent address.
+  *
+- * Caller must hold bond lock
++ * Caller must hold RTNL and no other locks
+  */
+ static void alb_change_hw_addr_on_detach(struct bonding *bond, struct slave *slave)
+ {
+@@ -1539,7 +1541,12 @@ int bond_alb_init_slave(struct bonding *bond, struct slave *slave)
+ 	return 0;
+ }
+ 
+-/* Caller must hold bond lock for write */
++/*
++ * Remove slave from tlb and rlb hash tables, and fix up MAC addresses
++ * if necessary.
++ *
++ * Caller must hold RTNL and no other locks
++ */
+ void bond_alb_deinit_slave(struct bonding *bond, struct slave *slave)
+ {
+ 	if (bond->slave_cnt > 1) {
+@@ -1598,9 +1605,6 @@ void bond_alb_handle_active_change(struct bonding *bond, struct slave *new_slave
+ 	struct slave *swap_slave;
+ 	int i;
+ 
+-	if (new_slave)
+-		ASSERT_RTNL();
+-
+ 	if (bond->curr_active_slave == new_slave) {
+ 		return;
+ 	}
+@@ -1646,6 +1650,8 @@ void bond_alb_handle_active_change(struct bonding *bond, struct slave *new_slave
+ 	write_unlock_bh(&bond->curr_slave_lock);
+ 	read_unlock(&bond->lock);
+ 
++	ASSERT_RTNL();
++
+ 	/* curr_active_slave must be set before calling alb_swap_mac_addr */
+ 	if (swap_slave) {
+ 		/* swap mac address */
+@@ -1656,12 +1662,11 @@ void bond_alb_handle_active_change(struct bonding *bond, struct slave *new_slave
+ 				       bond->alb_info.rlb_enabled);
+ 	}
+ 
+-	read_lock(&bond->lock);
+-
+ 	if (swap_slave) {
+ 		alb_fasten_mac_swap(bond, swap_slave, new_slave);
++		read_lock(&bond->lock);
+ 	} else {
+-		/* fasten bond mac on new current slave */
++		read_lock(&bond->lock);
+ 		alb_send_learning_packets(new_slave, bond->dev->dev_addr);
+ 	}
+ 
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 4e8048e..8fa2ebb 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -1464,10 +1464,12 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ 			dev_set_allmulti(slave_dev, 1);
+ 		}
+ 
++		netif_tx_lock_bh(bond_dev);
+ 		/* upload master's mc_list to new slave */
+ 		for (dmi = bond_dev->mc_list; dmi; dmi = dmi->next) {
+ 			dev_mc_add (slave_dev, dmi->dmi_addr, dmi->dmi_addrlen, 0);
+ 		}
++		netif_tx_unlock_bh(bond_dev);
+ 	}
+ 
+ 	if (bond->params.mode == BOND_MODE_8023AD) {
+@@ -1751,7 +1753,9 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		 * has been cleared (if our_slave == old_current),
+ 		 * but before a new active slave is selected.
+ 		 */
++		write_unlock_bh(&bond->lock);
+ 		bond_alb_deinit_slave(bond, slave);
++		write_lock_bh(&bond->lock);
+ 	}
+ 
+ 	if (oldcurrent == slave) {
+@@ -1824,7 +1828,9 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		}
+ 
+ 		/* flush master's mc_list from slave */
++		netif_tx_lock_bh(bond_dev);
+ 		bond_mc_list_flush(bond_dev, slave_dev);
++		netif_tx_unlock_bh(bond_dev);
+ 	}
+ 
+ 	netdev_set_master(slave_dev, NULL);
+@@ -1910,6 +1916,12 @@ static int bond_release_all(struct net_device *bond_dev)
+ 		slave_dev = slave->dev;
+ 		bond_detach_slave(bond, slave);
+ 
++		/* now that the slave is detached, unlock and perform
++		 * all the undo steps that should not be called from
++		 * within a lock.
++		 */
++		write_unlock_bh(&bond->lock);
++
+ 		if ((bond->params.mode == BOND_MODE_TLB) ||
+ 		    (bond->params.mode == BOND_MODE_ALB)) {
+ 			/* must be called only after the slave
+@@ -1920,12 +1932,6 @@ static int bond_release_all(struct net_device *bond_dev)
+ 
+ 		bond_compute_features(bond);
+ 
+-		/* now that the slave is detached, unlock and perform
+-		 * all the undo steps that should not be called from
+-		 * within a lock.
+-		 */
+-		write_unlock_bh(&bond->lock);
+-
+ 		bond_destroy_slave_symlinks(bond_dev, slave_dev);
+ 		bond_del_vlans_from_slave(bond, slave_dev);
+ 
+@@ -1945,7 +1951,9 @@ static int bond_release_all(struct net_device *bond_dev)
+ 			}
+ 
+ 			/* flush master's mc_list from slave */
++			netif_tx_lock_bh(bond_dev);
+ 			bond_mc_list_flush(bond_dev, slave_dev);
++			netif_tx_unlock_bh(bond_dev);
+ 		}
+ 
+ 		netdev_set_master(slave_dev, NULL);
+@@ -2388,7 +2396,9 @@ void bond_mii_monitor(void *work_data)
+ 		rtnl_lock();
+ 		read_lock(&bond->lock);
+ 		__bond_mii_monitor(bond, 1);
+-		rtnl_unlock();
++		read_unlock(&bond->lock);
++		rtnl_unlock();	/* might sleep, hold no other locks */
++		read_lock(&bond->lock);
+ 	}
+ 
+ 	delay = ((bond->params.miimon * HZ) / 1000) ? : 1;
+@@ -2791,14 +2801,11 @@ void bond_loadbalance_arp_mon(void *work_data)
+ 	}
+ 
+ 	if (do_failover) {
+-		rtnl_lock();
+ 		write_lock_bh(&bond->curr_slave_lock);
+ 
+ 		bond_select_active_slave(bond);
+ 
+ 		write_unlock_bh(&bond->curr_slave_lock);
+-		rtnl_unlock();
+-
+ 	}
+ 
+ re_arm:
+@@ -2854,8 +2861,6 @@ void bond_activebackup_arp_mon(void *work_data)
+ 
+ 				slave->link = BOND_LINK_UP;
+ 
+-				rtnl_lock();
+-
+ 				write_lock_bh(&bond->curr_slave_lock);
+ 
+ 				if ((!bond->curr_active_slave) &&
+@@ -2891,7 +2896,6 @@ void bond_activebackup_arp_mon(void *work_data)
+ 				}
+ 
+ 				write_unlock_bh(&bond->curr_slave_lock);
+-				rtnl_unlock();
+ 			}
+ 		} else {
+ 			read_lock(&bond->curr_slave_lock);
+@@ -2961,7 +2965,6 @@ void bond_activebackup_arp_mon(void *work_data)
+ 			       bond->dev->name,
+ 			       slave->dev->name);
+ 
+-			rtnl_lock();
+ 			write_lock_bh(&bond->curr_slave_lock);
+ 
+ 			bond_select_active_slave(bond);
+@@ -2969,8 +2972,6 @@ void bond_activebackup_arp_mon(void *work_data)
+ 
+ 			write_unlock_bh(&bond->curr_slave_lock);
+ 
+-			rtnl_unlock();
+-
+ 			bond->current_arp_slave = slave;
+ 
+ 			if (slave) {
+@@ -2988,13 +2989,10 @@ void bond_activebackup_arp_mon(void *work_data)
+ 			       bond->primary_slave->dev->name);
+ 
+ 			/* primary is up so switch to it */
+-			rtnl_lock();
+ 			write_lock_bh(&bond->curr_slave_lock);
+ 			bond_change_active_slave(bond, bond->primary_slave);
+ 			write_unlock_bh(&bond->curr_slave_lock);
+ 
+-			rtnl_unlock();
+-
+ 			slave = bond->primary_slave;
+ 			slave->jiffies = jiffies;
+ 		} else {
+@@ -3403,9 +3401,7 @@ static int bond_master_netdev_event(unsigned long event, struct net_device *bond
+ 	case NETDEV_CHANGENAME:
+ 		return bond_event_changename(event_bond);
+ 	case NETDEV_UNREGISTER:
+-		/*
+-		 * TODO: remove a bond from the list?
+-		 */
++		bond_release_all(event_bond->dev);
+ 		break;
+ 	default:
+ 		break;
+@@ -3772,10 +3768,11 @@ static struct net_device_stats *bond_get_stats(struct net_device *bond_dev)
+ {
+ 	struct bonding *bond = bond_dev->priv;
+ 	struct net_device_stats *stats = &(bond->stats), *sstats;
++	struct net_device_stats local_stats;
+ 	struct slave *slave;
+ 	int i;
+ 
+-	memset(stats, 0, sizeof(struct net_device_stats));
++	memset(&local_stats, 0, sizeof(struct net_device_stats));
+ 
+ 	read_lock_bh(&bond->lock);
+ 
+@@ -3783,34 +3780,36 @@ static struct net_device_stats *bond_get_stats(struct net_device *bond_dev)
+ 		if (slave->dev->get_stats) {
+ 			sstats = slave->dev->get_stats(slave->dev);
+ 
+-			stats->rx_packets += sstats->rx_packets;
+-			stats->rx_bytes += sstats->rx_bytes;
+-			stats->rx_errors += sstats->rx_errors;
+-			stats->rx_dropped += sstats->rx_dropped;
+-
+-			stats->tx_packets += sstats->tx_packets;
+-			stats->tx_bytes += sstats->tx_bytes;
+-			stats->tx_errors += sstats->tx_errors;
+-			stats->tx_dropped += sstats->tx_dropped;
+-
+-			stats->multicast += sstats->multicast;
+-			stats->collisions += sstats->collisions;
+-
+-			stats->rx_length_errors += sstats->rx_length_errors;
+-			stats->rx_over_errors += sstats->rx_over_errors;
+-			stats->rx_crc_errors += sstats->rx_crc_errors;
+-			stats->rx_frame_errors += sstats->rx_frame_errors;
+-			stats->rx_fifo_errors += sstats->rx_fifo_errors;
+-			stats->rx_missed_errors += sstats->rx_missed_errors;
+-
+-			stats->tx_aborted_errors += sstats->tx_aborted_errors;
+-			stats->tx_carrier_errors += sstats->tx_carrier_errors;
+-			stats->tx_fifo_errors += sstats->tx_fifo_errors;
+-			stats->tx_heartbeat_errors += sstats->tx_heartbeat_errors;
+-			stats->tx_window_errors += sstats->tx_window_errors;
++			local_stats.rx_packets += sstats->rx_packets;
++			local_stats.rx_bytes += sstats->rx_bytes;
++			local_stats.rx_errors += sstats->rx_errors;
++			local_stats.rx_dropped += sstats->rx_dropped;
++
++			local_stats.tx_packets += sstats->tx_packets;
++			local_stats.tx_bytes += sstats->tx_bytes;
++			local_stats.tx_errors += sstats->tx_errors;
++			local_stats.tx_dropped += sstats->tx_dropped;
++
++			local_stats.multicast += sstats->multicast;
++			local_stats.collisions += sstats->collisions;
++
++			local_stats.rx_length_errors += sstats->rx_length_errors;
++			local_stats.rx_over_errors += sstats->rx_over_errors;
++			local_stats.rx_crc_errors += sstats->rx_crc_errors;
++			local_stats.rx_frame_errors += sstats->rx_frame_errors;
++			local_stats.rx_fifo_errors += sstats->rx_fifo_errors;
++			local_stats.rx_missed_errors += sstats->rx_missed_errors;
++
++			local_stats.tx_aborted_errors += sstats->tx_aborted_errors;
++			local_stats.tx_carrier_errors += sstats->tx_carrier_errors;
++			local_stats.tx_fifo_errors += sstats->tx_fifo_errors;
++			local_stats.tx_heartbeat_errors += sstats->tx_heartbeat_errors;
++			local_stats.tx_window_errors += sstats->tx_window_errors;
+ 		}
+ 	}
+ 
++	memcpy(stats,&local_stats,sizeof(struct net_device_stats));
++
+ 	read_unlock_bh(&bond->lock);
+ 
+ 	return stats;
+@@ -3943,8 +3942,6 @@ static void bond_set_multicast_list(struct net_device *bond_dev)
+ 	struct bonding *bond = bond_dev->priv;
+ 	struct dev_mc_list *dmi;
+ 
+-	write_lock_bh(&bond->lock);
+-
+ 	/*
+ 	 * Do promisc before checking multicast_mode
+ 	 */
+@@ -3965,6 +3962,8 @@ static void bond_set_multicast_list(struct net_device *bond_dev)
+ 		bond_set_allmulti(bond, -1);
+ 	}
+ 
++	read_lock(&bond->lock);
++
+ 	bond->flags = bond_dev->flags;
+ 
+ 	/* looking for addresses to add to slaves' mc list */
+@@ -3985,7 +3984,7 @@ static void bond_set_multicast_list(struct net_device *bond_dev)
+ 	bond_mc_list_destroy(bond);
+ 	bond_mc_list_copy(bond_dev->mc_list, bond, GFP_ATOMIC);
+ 
+-	write_unlock_bh(&bond->lock);
++	read_unlock(&bond->lock);
+ }
+ 
+ /*
+@@ -4535,7 +4534,9 @@ static void bond_free_all(void)
+ 		struct net_device *bond_dev = bond->dev;
+ 
+ 		bond_work_cancel_all(bond);
++		netif_tx_lock_bh(bond_dev);
+ 		bond_mc_list_destroy(bond);
++		netif_tx_unlock_bh(bond_dev);
+ 		/* Release the bonded slaves */
+ 		bond_release_all(bond_dev);
+ 		bond_deinit(bond_dev);
+@@ -4551,18 +4552,32 @@ static void bond_free_all(void)
+ 
+ /*
+  * Convert string input module parms.  Accept either the
+- * number of the mode or its string name.
++ * number of the mode or its string name.  A bit complicated because
++ * some mode names are substrings of other names, and calls from sysfs
++ * may have whitespace in the name (trailing newlines, for example).
+  */
+-int bond_parse_parm(char *mode_arg, struct bond_parm_tbl *tbl)
++int bond_parse_parm(const char *buf, struct bond_parm_tbl *tbl)
+ {
+-	int i;
++	int mode = -1, i, rv;
++	char *p, modestr[BOND_MAX_MODENAME_LEN + 1] = { 0, };
++
++	for (p = (char *)buf; *p; p++)
++		if (!(isdigit(*p) || isspace(*p)))
++			break;
++
++	if (*p)
++		rv = sscanf(buf, "%20s", modestr);
++	else
++		rv = sscanf(buf, "%d", &mode);
++
++	if (!rv)
++		return -1;
+ 
+ 	for (i = 0; tbl[i].modename; i++) {
+-		if ((isdigit(*mode_arg) &&
+-		     tbl[i].mode == simple_strtol(mode_arg, NULL, 0)) ||
+-		    (strcmp(mode_arg, tbl[i].modename) == 0)) {
++		if (mode == tbl[i].mode)
++			return tbl[i].mode;
++		if (strcmp(modestr, tbl[i].modename) == 0)
+ 			return tbl[i].mode;
+-		}
+ 	}
+ 
+ 	return -1;
+@@ -4876,9 +4891,24 @@ static struct lock_class_key bonding_netdev_xmit_lock_key;
+ int bond_create(char *name, struct bond_params *params, struct bonding **newbond)
+ {
+ 	struct net_device *bond_dev;
++	struct bonding *bond, *nxt;
+ 	int res;
+ 
+ 	rtnl_lock();
++	down_write(&bonding_rwsem);
++
++	/* Check to see if the bond already exists. */
++	if (name) {
++		list_for_each_entry_safe(bond, nxt, &bond_dev_list, bond_list)
++			if (strnicmp(bond->dev->name, name, IFNAMSIZ) == 0) {
++				printk(KERN_ERR DRV_NAME
++			       ": cannot add bond %s; it already exists\n",
++				       name);
++				res = -EPERM;
++				goto out_rtnl;
++			}
++	}
++
+ 	bond_dev = alloc_netdev(sizeof(struct bonding), name ? name : "",
+ 				ether_setup);
+ 	if (!bond_dev) {
+@@ -4919,10 +4949,12 @@ int bond_create(char *name, struct bond_params *params, struct bonding **newbond
+ 
+ 	netif_carrier_off(bond_dev);
+ 
++	up_write(&bonding_rwsem);
+ 	rtnl_unlock(); /* allows sysfs registration of net device */
+ 	res = bond_create_sysfs_entry(bond_dev->priv);
+ 	if (res < 0) {
+ 		rtnl_lock();
++		down_write(&bonding_rwsem);
+ 		goto out_bond;
+ 	}
+ 
+@@ -4933,6 +4965,7 @@ out_bond:
+ out_netdev:
+ 	free_netdev(bond_dev);
+ out_rtnl:
++	up_write(&bonding_rwsem);
+ 	rtnl_unlock();
+ 	return res;
+ }
+@@ -4953,6 +4986,9 @@ static int __init bonding_init(void)
+ #ifdef CONFIG_PROC_FS
+ 	bond_create_proc_dir();
+ #endif
++
++	init_rwsem(&bonding_rwsem);
++
+ 	for (i = 0; i < max_bonds; i++) {
+ 		res = bond_create(NULL, &bonding_defaults, NULL);
+ 		if (res)
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 51475a1..dbd9b96 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -110,11 +110,10 @@ static ssize_t bonding_store_bonds(struct class *cls, const char *buffer, size_t
+ {
+ 	char command[IFNAMSIZ + 1] = {0, };
+ 	char *ifname;
+-	int res = count;
++	int rv, res = count;
+ 	struct bonding *bond;
+ 	struct bonding *nxt;
+ 
+-	down_write(&(bonding_rwsem));
+ 	sscanf(buffer, "%16s", command); /* IFNAMSIZ*/
+ 	ifname = command + 1;
+ 	if ((strlen(command) <= 1) ||
+@@ -122,39 +121,28 @@ static ssize_t bonding_store_bonds(struct class *cls, const char *buffer, size_t
+ 		goto err_no_cmd;
+ 
+ 	if (command[0] == '+') {
+-
+-		/* Check to see if the bond already exists. */
+-		list_for_each_entry_safe(bond, nxt, &bond_dev_list, bond_list)
+-			if (strnicmp(bond->dev->name, ifname, IFNAMSIZ) == 0) {
+-				printk(KERN_ERR DRV_NAME
+-					": cannot add bond %s; it already exists\n",
+-					ifname);
+-				res = -EPERM;
+-				goto out;
+-			}
+-
+ 		printk(KERN_INFO DRV_NAME
+ 			": %s is being created...\n", ifname);
+-		if (bond_create(ifname, &bonding_defaults, &bond)) {
+-			printk(KERN_INFO DRV_NAME
+-			": %s interface already exists. Bond creation failed.\n",
+-			ifname);
+-			res = -EPERM;
++		rv = bond_create(ifname, &bonding_defaults, &bond);
++		if (rv) {
++			printk(KERN_INFO DRV_NAME ": Bond creation failed.\n");
++			res = rv;
+ 		}
+ 		goto out;
+ 	}
+ 
+ 	if (command[0] == '-') {
++		rtnl_lock();
++		down_write(&bonding_rwsem);
++
+ 		list_for_each_entry_safe(bond, nxt, &bond_dev_list, bond_list)
+ 			if (strnicmp(bond->dev->name, ifname, IFNAMSIZ) == 0) {
+-				rtnl_lock();
+ 				/* check the ref count on the bond's kobject.
+ 				 * If it's > expected, then there's a file open,
+ 				 * and we have to fail.
+ 				 */
+ 				if (atomic_read(&bond->dev->class_dev.kobj.kref.refcount)
+ 							> expected_refcount){
+-					rtnl_unlock();
+ 					printk(KERN_INFO DRV_NAME
+ 						": Unable remove bond %s due to open references.\n",
+ 						ifname);
+@@ -165,6 +153,7 @@ static ssize_t bonding_store_bonds(struct class *cls, const char *buffer, size_t
+ 					": %s is being deleted...\n",
+ 					bond->dev->name);
+ 				bond_destroy(bond);
++				up_write(&bonding_rwsem);
+ 				rtnl_unlock();
+ 				goto out;
+ 			}
+@@ -172,6 +161,8 @@ static ssize_t bonding_store_bonds(struct class *cls, const char *buffer, size_t
+ 		printk(KERN_ERR DRV_NAME
+ 			": unable to delete non-existent bond %s\n", ifname);
+ 		res = -ENODEV;
++		up_write(&bonding_rwsem);
++		rtnl_unlock();
+ 		goto out;
+ 	}
+ 
+@@ -184,7 +175,6 @@ err_no_cmd:
+ 	 * get called forever, which is bad.
+ 	 */
+ out:
+-	up_write(&(bonding_rwsem));
+ 	return res;
+ }
+ /* class attribute for bond_masters file.  This ends up in /sys/class/net */
+@@ -270,6 +260,9 @@ static ssize_t bonding_store_slaves(struct class_device *cd, const char *buffer,
+ 
+ 	/* Note:  We can't hold bond->lock here, as bond_create grabs it. */
+ 
++	rtnl_lock();
++	down_write(&(bonding_rwsem));
++
+ 	sscanf(buffer, "%16s", command); /* IFNAMSIZ*/
+ 	ifname = command + 1;
+ 	if ((strlen(command) <= 1) ||
+@@ -334,9 +327,7 @@ static ssize_t bonding_store_slaves(struct class_device *cd, const char *buffer,
+ 				dev->mtu = bond->dev->mtu;
+ 			}
+ 		}
+-		rtnl_lock();
+ 		res = bond_enslave(bond->dev, dev);
+-		rtnl_unlock();
+ 		if (res) {
+ 			ret = res;
+ 		}
+@@ -353,12 +344,10 @@ static ssize_t bonding_store_slaves(struct class_device *cd, const char *buffer,
+ 		if (dev) {
+ 			printk(KERN_INFO DRV_NAME ": %s: Removing slave %s\n",
+ 				bond->dev->name, dev->name);
+-			rtnl_lock();
+ 			if (bond->setup_by_slave)
+ 				res = bond_release_and_destroy(bond->dev, dev);
+ 			else
+ 				res = bond_release(bond->dev, dev);
+-			rtnl_unlock();
+ 			if (res) {
+ 				ret = res;
+ 				goto out;
+@@ -383,6 +372,8 @@ err_no_cmd:
+ 	ret = -EPERM;
+ 
+ out:
++	up_write(&(bonding_rwsem));
++	rtnl_unlock();
+ 	return ret;
+ }
+ 
+@@ -414,7 +405,7 @@ static ssize_t bonding_store_mode(struct class_device *cd, const char *buf, size
+ 		goto out;
+ 	}
+ 
+-	new_value = bond_parse_parm((char *)buf, bond_mode_tbl);
++	new_value = bond_parse_parm(buf, bond_mode_tbl);
+ 	if (new_value < 0)  {
+ 		printk(KERN_ERR DRV_NAME
+ 		       ": %s: Ignoring invalid mode value %.*s.\n",
+@@ -465,7 +456,7 @@ static ssize_t bonding_store_xmit_hash(struct class_device *cd, const char *buf,
+ 		goto out;
+ 	}
+ 
+-	new_value = bond_parse_parm((char *)buf, xmit_hashtype_tbl);
++	new_value = bond_parse_parm(buf, xmit_hashtype_tbl);
+ 	if (new_value < 0)  {
+ 		printk(KERN_ERR DRV_NAME
+ 		       ": %s: Ignoring invalid xmit hash policy value %.*s.\n",
+@@ -501,7 +492,7 @@ static ssize_t bonding_store_arp_validate(struct class_device *cd, const char *b
+ 	int new_value;
+ 	struct bonding *bond = to_bond(cd);
+ 
+-	new_value = bond_parse_parm((char *)buf, arp_validate_tbl);
++	new_value = bond_parse_parm(buf, arp_validate_tbl);
+ 	if (new_value < 0) {
+ 		printk(KERN_ERR DRV_NAME
+ 		       ": %s: Ignoring invalid arp_validate value %s\n",
+@@ -906,7 +897,7 @@ static ssize_t bonding_store_lacp(struct class_device *cd, const char *buf, size
+ 		goto out;
+ 	}
+ 
+-	new_value = bond_parse_parm((char *)buf, bond_lacp_tbl);
++	new_value = bond_parse_parm(buf, bond_lacp_tbl);
+ 
+ 	if ((new_value == 1) || (new_value == 0)) {
+ 		bond->params.lacp_fast = new_value;
+@@ -1365,8 +1356,6 @@ int bond_create_sysfs(void)
+ 	int ret = 0;
+ 	struct bonding *firstbond;
+ 
+-	init_rwsem(&bonding_rwsem);
+-
+ 	/* get the netdev class pointer */
+ 	firstbond = container_of(bond_dev_list.next, struct bonding, bond_list);
+ 	if (!firstbond)
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index aa27cbd..698c170 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -22,8 +22,8 @@
+ #include "bond_3ad.h"
+ #include "bond_alb.h"
+ 
+-#define DRV_VERSION	"3.2.3"
+-#define DRV_RELDATE	"December 6, 2007"
++#define DRV_VERSION	"3.2.4"
++#define DRV_RELDATE	"January 28, 2008"
+ #define DRV_NAME	"bonding"
+ #define DRV_DESCRIPTION	"Ethernet Channel Bonding Driver"
+ 
+@@ -141,6 +141,8 @@ struct bond_parm_tbl {
+ 	int mode;
+ };
+ 
++#define BOND_MAX_MODENAME_LEN 20
++
+ struct vlan_entry {
+ 	struct list_head vlan_list;
+ 	__be32 vlan_ip;
+@@ -313,7 +315,7 @@ void bond_mii_monitor(void *);
+ void bond_loadbalance_arp_mon(void *);
+ void bond_activebackup_arp_mon(void *);
+ void bond_set_mode_ops(struct bonding *bond, int mode);
+-int bond_parse_parm(char *mode_arg, struct bond_parm_tbl *tbl);
++int bond_parse_parm(const char *mode_arg, struct bond_parm_tbl *tbl);
+ void bond_select_active_slave(struct bonding *bond);
+ void bond_change_active_slave(struct bonding *bond, struct slave *new_active);
+ void bond_register_arp(struct bonding *);

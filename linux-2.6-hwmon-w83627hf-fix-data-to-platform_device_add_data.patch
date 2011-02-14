@@ -1,0 +1,33 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 12 Feb 2010 17:14:55 -0500
+Subject: [hwmon] w83627hf: fix data to platform_device_add_data
+Message-id: <20100212171454.3355.86870.send-patch@aqua>
+Patchwork-id: 23262
+O-Subject: [RHEL5.6 PATCH 5/5] hwmon: w83627hf: fix passing of &sio_data to
+	platform_device_add_data()
+Bugzilla: 557172
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Resolves RHBZ 557172.
+
+The call to platform_device_add_data() passes '&sio_data' as the second arg.
+This results in an "Unable to handle kernel paging request at ..." type panic
+when a 'modprobe w83627hf' is executed on a system with the relevant chip.
+
+The upstream version of this driver passes 'sio_data' minus the '&'.
+
+
+diff --git a/drivers/hwmon/w83627hf.c b/drivers/hwmon/w83627hf.c
+index e933ca4..114a2a3 100644
+--- a/drivers/hwmon/w83627hf.c
++++ b/drivers/hwmon/w83627hf.c
+@@ -1760,7 +1760,7 @@ static int __init w83627hf_device_add(unsigned short address,
+ 		goto exit_device_put;
+ 	}
+ 
+-	err = platform_device_add_data(pdev, &sio_data,
++	err = platform_device_add_data(pdev, sio_data,
+ 				       sizeof(struct w83627hf_sio_data));
+ 	if (err) {
+ 		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");

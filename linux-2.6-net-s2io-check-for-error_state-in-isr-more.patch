@@ -1,0 +1,41 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: Re: [PATCH RHEL5u1] bz276871 s2io card can't work on RHEL5.1-snap3
+Date: Thu, 20 Sep 2007 16:40:37 -0400 (EDT)
+Bugzilla: 276871
+Message-Id: <Pine.LNX.4.64.0709201639030.7851@squad5-lp1.lab.boston.redhat.com>
+Changelog: [net] s2io: check for error_state in ISR (more)
+
+
+> > > ACK (as long as the other comparisons between sp->pdev->error_state and
+> > > pci_channel_io_normal in s2io.c don't need the same fix)
+> > 
+> > Ugh... They do.
+> > 
+> > The developer attached those changes to the bug last night.
+> > 
+
+Index: b/drivers/net/s2io.c
+===================================================================
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -2665,7 +2665,8 @@ static void s2io_netpoll(struct net_devi
+ 	u64 val64 = 0xFFFFFFFFFFFFFFFFULL;
+ 	int i;
+ 
+-	if (nic->pdev->error_state != pci_channel_io_normal)
++	if ((nic->pdev->error_state != pci_channel_io_normal) &&
++	    (nic->pdev->error_state != 0))
+ 		return;
+ 
+ 	disable_irq(dev->irq);
+@@ -3187,7 +3188,8 @@ static void alarm_intr_handler(struct s2
+ 	int i;
+ 	if (atomic_read(&nic->card_state) == CARD_DOWN)
+ 		return;
+-	if (nic->pdev->error_state != pci_channel_io_normal)
++	if ((nic->pdev->error_state != pci_channel_io_normal) &&
++	    (nic->pdev->error_state != 0))
+ 		return;
+ 	nic->mac_control.stats_info->sw_stat.ring_full_cnt = 0;
+ 	/* Handling the XPAK counters update */
+

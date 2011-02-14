@@ -1,0 +1,208 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 22 Sep 2009 11:20:31 -0400
+Subject: [x86] fix nosmp option
+Message-id: 4AB8EB3F.1080003@redhat.com
+O-Subject: Re: [RHEL5 PATCH] fix nosmp option
+Bugzilla: 509581
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+nosmp should not enable the IOAPIC.
+
+This causes spurious interrupts to occur, and in some cases, the system will
+panic when the nosmp option is enabled.
+
+Successfully tested by me as well as the customer.
+
+Resolves BZ 509581.
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 43512d0..46a2755 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -963,7 +963,10 @@ running once the system is up.
+ 			Format: <1-256>
+ 
+ 	maxcpus=	[SMP] Maximum number of processors that	an SMP kernel
+-			should make use of
++			should make use of.  maxcpus=n : n >= 0 limits the
++			kernel to using 'n' processors.  n=0 is a special case,
++			it is equivalent to "nosmp", which also disables
++			the IO APIC.
+ 
+ 	max_addr=[KMG]	[KNL,BOOT,ia64] All physical memory greater than or
+ 			equal to this physical address is ignored.
+@@ -1217,7 +1220,8 @@ running once the system is up.
+ 
+ 	nosep		[BUGS=IA-32] Disables x86 SYSENTER/SYSEXIT support.
+ 
+-	nosmp		[SMP] Tells an SMP kernel to act as a UP kernel.
++	nosmp		[SMP] Tells an SMP kernel to act as a UP kernel,
++			and disable the IO APIC.  legacy for "maxcpus=0".
+ 
+ 	nosync		[HW,M68K] Disables sync negotiation for all devices.
+ 
+diff --git a/arch/i386/kernel/io_apic.c b/arch/i386/kernel/io_apic.c
+index 84889d1..2364d1d 100644
+--- a/arch/i386/kernel/io_apic.c
++++ b/arch/i386/kernel/io_apic.c
+@@ -691,14 +691,6 @@ static int pirq_entries [MAX_PIRQS];
+ static int pirqs_enabled;
+ int skip_ioapic_setup;
+ 
+-static int __init ioapic_setup(char *str)
+-{
+-	skip_ioapic_setup = 1;
+-	return 1;
+-}
+-
+-__setup("noapic", ioapic_setup);
+-
+ static int __init ioapic_pirq_setup(char *str)
+ {
+ 	int i, max;
+diff --git a/arch/i386/kernel/setup.c b/arch/i386/kernel/setup.c
+index 7d00734..dcb5564 100644
+--- a/arch/i386/kernel/setup.c
++++ b/arch/i386/kernel/setup.c
+@@ -957,6 +957,8 @@ static void __init parse_cmdline_early (char ** cmdline_p)
+ 
+ 		else if (!memcmp(from, "ipmi_dev_order=", 15))
+ 			ipmi_dev_order = simple_strtoul(from + 15, NULL, 0);
++		else if (!memcmp(from, "nosmp", 5))
++			nosmp(NULL);
+ 
+ 	next_char:
+ 		c = *(from++);
+diff --git a/arch/x86_64/kernel/io_apic-xen.c b/arch/x86_64/kernel/io_apic-xen.c
+index b47bcee..91f19de 100644
+--- a/arch/x86_64/kernel/io_apic-xen.c
++++ b/arch/x86_64/kernel/io_apic-xen.c
+@@ -284,11 +284,9 @@ static int pirqs_enabled;
+ int skip_ioapic_setup;
+ int ioapic_force;
+ 
+-/* dummy parsing: see setup.c */
+-
+-static int __init disable_ioapic_setup(char *str)
++static int __init parse_noapic(char *str)
+ {
+-	skip_ioapic_setup = 1;
++	disable_ioapic_setup();
+ 	return 1;
+ }
+ 
+@@ -299,7 +297,7 @@ static int __init enable_ioapic_setup(char *str)
+ 	return 1;
+ }
+ 
+-__setup("noapic", disable_ioapic_setup);
++__setup("noapic", parse_noapic);
+ __setup("apic", enable_ioapic_setup);
+ 
+ #ifndef CONFIG_XEN
+diff --git a/arch/x86_64/kernel/io_apic.c b/arch/x86_64/kernel/io_apic.c
+index 3caf95d..9a764b9 100644
+--- a/arch/x86_64/kernel/io_apic.c
++++ b/arch/x86_64/kernel/io_apic.c
+@@ -242,11 +242,9 @@ static int pirqs_enabled;
+ int skip_ioapic_setup;
+ int ioapic_force;
+ 
+-/* dummy parsing: see setup.c */
+-
+-static int __init disable_ioapic_setup(char *str)
++static int __init parse_noapic(char *str)
+ {
+-	skip_ioapic_setup = 1;
++	disable_ioapic_setup();
+ 	return 1;
+ }
+ 
+@@ -257,7 +255,7 @@ static int __init enable_ioapic_setup(char *str)
+ 	return 1;
+ }
+ 
+-__setup("noapic", disable_ioapic_setup);
++__setup("noapic", parse_noapic);
+ __setup("apic", enable_ioapic_setup);
+ 
+ static int __init setup_disable_8254_timer(char *s)
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index 3758b68..72f73ed 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -504,6 +504,8 @@ static __init void parse_cmdline_early (char ** cmdline_p)
+ 
+ 		else if (!memcmp(from, "ipmi_dev_order=", 15))
+ 			ipmi_dev_order = simple_strtoul(from + 15, NULL, 0);
++		else if (!memcmp(from, "nosmp", 5))
++			nosmp(NULL);
+ 
+ 	next_char:
+ 		c = *(from++);
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 7a6f5e9..8a35974 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -433,6 +433,8 @@ static __init void parse_cmdline_early (char ** cmdline_p)
+ 
+ 		else if (!memcmp(from, "ipmi_dev_order=", 15))
+ 			ipmi_dev_order = simple_strtoul(from + 15, NULL, 0);
++		else if (!memcmp(from, "nosmp", 5))
++			nosmp(NULL);
+ 
+ 	next_char:
+ 		c = *(from++);
+diff --git a/include/asm-x86_64/io_apic.h b/include/asm-x86_64/io_apic.h
+index 9a81eaf..f342532 100644
+--- a/include/asm-x86_64/io_apic.h
++++ b/include/asm-x86_64/io_apic.h
+@@ -183,6 +183,12 @@ static inline void io_apic_sync(unsigned int apic)
+ /* 1 if "noapic" boot option passed */
+ extern int skip_ioapic_setup;
+ 
++static inline void disable_ioapic_setup(void)
++{
++	skip_ioapic_setup = 1;
++}
++
++
+ /*
+  * If we use the IO-APIC for IRQ routing, disable automatic
+  * assignment of PCI IRQ's.
+diff --git a/include/linux/init.h b/include/linux/init.h
+index 263120d..772dddf 100644
+--- a/include/linux/init.h
++++ b/include/linux/init.h
+@@ -155,6 +155,7 @@ struct obs_kernel_param {
+ 
+ /* Relies on saved_command_line being set */
+ void __init parse_early_param(void);
++int __init nosmp(char *str);
+ #endif /* __ASSEMBLY__ */
+ 
+ /**
+diff --git a/init/main.c b/init/main.c
+index 06349fe..3d0e873 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -149,12 +149,15 @@ EXPORT_SYMBOL(reset_devices);
+  * greater than 0, limits the maximum number of CPUs activated in
+  * SMP mode to <NUM>.
+  */
+-static int __init nosmp(char *str)
++#ifndef CONFIG_X86_IO_APIC
++static inline void disable_ioapic_setup(void) {};
++#endif
++int __init nosmp(char *str)
+ {
+ 	max_cpus = 0;
++	disable_ioapic_setup();
+ 	return 1;
+ }
+-
+ __setup("nosmp", nosmp);
+ 
+ static int __init maxcpus(char *str)

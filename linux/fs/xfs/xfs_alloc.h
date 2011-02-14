@@ -37,15 +37,6 @@ typedef enum xfs_alloctype
 	XFS_ALLOCTYPE_THIS_BNO		/* at exactly this block */
 } xfs_alloctype_t;
 
-#define XFS_ALLOC_TYPES \
-	{ XFS_ALLOCTYPE_ANY_AG,		"ANY_AG" }, \
-	{ XFS_ALLOCTYPE_FIRST_AG,	"FIRST_AG" }, \
-	{ XFS_ALLOCTYPE_START_AG,	"START_AG" }, \
-	{ XFS_ALLOCTYPE_THIS_AG,	"THIS_AG" }, \
-	{ XFS_ALLOCTYPE_START_BNO,	"START_BNO" }, \
-	{ XFS_ALLOCTYPE_NEAR_BNO,	"NEAR_BNO" }, \
-	{ XFS_ALLOCTYPE_THIS_BNO,	"THIS_BNO" }
-
 /*
  * Flags for xfs_alloc_fix_freelist.
  */
@@ -109,27 +100,26 @@ typedef struct xfs_alloc_arg {
 #define XFS_ALLOC_USERDATA		1	/* allocation is for user data*/
 #define XFS_ALLOC_INITIAL_USER_DATA	2	/* special case start of file */
 
-/*
- * Find the length of the longest extent in an AG.
- */
-xfs_extlen_t
-xfs_alloc_longest_free_extent(struct xfs_mount *mp,
-		struct xfs_perag *pag);
 
 #ifdef __KERNEL__
 
-void
-xfs_alloc_mark_busy(xfs_trans_t *tp,
-		xfs_agnumber_t agno,
-		xfs_agblock_t bno,
-		xfs_extlen_t len);
+#if defined(XFS_ALLOC_TRACE)
+/*
+ * Allocation tracing buffer size.
+ */
+#define	XFS_ALLOC_TRACE_SIZE	4096
+extern ktrace_t *xfs_alloc_trace_buf;
 
-void
-xfs_alloc_clear_busy(xfs_trans_t *tp,
-		xfs_agnumber_t ag,
-		int idx);
-
-#endif	/* __KERNEL__ */
+/*
+ * Types for alloc tracing.
+ */
+#define	XFS_ALLOC_KTRACE_ALLOC	1
+#define	XFS_ALLOC_KTRACE_FREE	2
+#define	XFS_ALLOC_KTRACE_MODAGF	3
+#define	XFS_ALLOC_KTRACE_BUSY	4
+#define	XFS_ALLOC_KTRACE_UNBUSY	5
+#define	XFS_ALLOC_KTRACE_BUSYSEARCH	6
+#endif
 
 /*
  * Compute and fill in value of m_ag_maxlevels.
@@ -146,8 +136,7 @@ int				/* error */
 xfs_alloc_get_freelist(
 	struct xfs_trans *tp,	/* transaction pointer */
 	struct xfs_buf	*agbp,	/* buffer containing the agf structure */
-	xfs_agblock_t	*bnop,	/* block address retrieved from freelist */
-	int		btreeblk); /* destination is a AGF btree */
+	xfs_agblock_t	*bnop);	/* block address retrieved from freelist */
 
 /*
  * Log the given fields from the agf structure.
@@ -176,8 +165,7 @@ xfs_alloc_put_freelist(
 	struct xfs_trans *tp,	/* transaction pointer */
 	struct xfs_buf	*agbp,	/* buffer for a.g. freelist header */
 	struct xfs_buf	*agflbp,/* buffer for a.g. free block array */
-	xfs_agblock_t	bno,	/* block being freed */
-	int		btreeblk); /* owner was a AGF btree */
+	xfs_agblock_t	bno);	/* block being freed */
 
 /*
  * Read in the allocation group header (free/alloc section).
@@ -205,5 +193,19 @@ xfs_free_extent(
 	struct xfs_trans *tp,	/* transaction pointer */
 	xfs_fsblock_t	bno,	/* starting block number of extent */
 	xfs_extlen_t	len);	/* length of extent */
+
+void
+xfs_alloc_mark_busy(xfs_trans_t *tp,
+		xfs_agnumber_t agno,
+		xfs_agblock_t bno,
+		xfs_extlen_t len);
+
+void
+xfs_alloc_clear_busy(xfs_trans_t *tp,
+		xfs_agnumber_t ag,
+		int idx);
+
+
+#endif	/* __KERNEL__ */
 
 #endif	/* __XFS_ALLOC_H__ */

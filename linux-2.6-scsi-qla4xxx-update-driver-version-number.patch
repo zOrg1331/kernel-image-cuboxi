@@ -1,0 +1,31 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Sun, 6 Apr 2008 12:28:46 -0400
+Subject: [scsi] qla4xxx: update driver version number
+Message-id: 20080406162846.6813.52780.sendpatchset@shell.boston.redhat.com
+O-Subject: [rhel 5.2 bug] qla4xxx - update driver version number. [ V2 ]
+Bugzilla: 439316
+
+BZ 439316 qla4xxx: Fix driver version - addendum to Bugzilla 438214 Fix scsi completion, lun reset code
+
+Version 2.
+
+This patch was updated to provide a better version number. Instead of bumping the upstream
+version, we have appended a Red Hat specific version.
+
+In the last minute rush for the last patch, I neglected to update the driver
+version number. Since this is a significant update and also differentiates between
+rhel 5.1 and 5.2. This should be applied. Extremly low risk....
+
+Thank-you.
+
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index aa8227e..2d5a6a3 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -5,5 +5,5 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.01.00-k8_rhel5"
++#define QLA4XXX_DRIVER_VERSION	"5.01.00-k8_rhel5.2-01"
+ 

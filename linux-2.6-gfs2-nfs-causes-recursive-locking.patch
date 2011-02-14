@@ -1,0 +1,67 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL5.2 PATCH] 03/02 NFS fix - gfs2_drevalidate panic
+Date: Thu, 01 Mar 2007 16:02:09 -0500
+Bugzilla: 229349
+Message-Id: <45E73F51.40802@redhat.com>
+Changelog: [gfs2] NFS cause recursive locking
+
+
+Bugzilla 229349
+
+Glock assertion failure found in '07 NFS connectathon. One of the NFSDs 
+was doing a "readdirplus" procedure call. It passed the logic into 
+gfs2_readdir() where the call obtained its directory inode glock. It 
+then subsequently tried to construct the filehandle based on the 
+contents of the directory listing that ended up requiring the very same 
+lock again. This crashed RHEL5 if "ls" command was issued from NFS clients.
+
+-- Wendy
+
+
+--- linux-0227/fs/gfs2/ops_dentry.c	2007-02-27 17:26:07.000000000 -0500
++++ linux/fs/gfs2/ops_dentry.c	2007-02-27 17:33:56.000000000 -0500
+@@ -46,6 +46,7 @@ static int gfs2_drevalidate(struct dentr
+ 	struct gfs2_inum inum;
+ 	unsigned int type;
+ 	int error;
++	int had_lock=0;
+ 
+ 	if (inode && is_bad_inode(inode))
+ 		goto invalid;
+@@ -53,9 +54,12 @@ static int gfs2_drevalidate(struct dentr
+ 	if (sdp->sd_args.ar_localcaching)
+ 		goto valid;
+ 
+-	error = gfs2_glock_nq_init(dip->i_gl, LM_ST_SHARED, 0, &d_gh);
+-	if (error)
+-		goto fail;
++	had_lock = gfs2_glock_is_locked_by_me(dip->i_gl);
++	if (!had_lock) {
++		error = gfs2_glock_nq_init(dip->i_gl, LM_ST_SHARED, 0, &d_gh);
++		if (error)
++			goto fail;
++	} 
+ 
+ 	error = gfs2_dir_search(parent->d_inode, &dentry->d_name, &inum, &type);
+ 	switch (error) {
+@@ -82,13 +86,15 @@ static int gfs2_drevalidate(struct dentr
+ 	}
+ 
+ valid_gunlock:
+-	gfs2_glock_dq_uninit(&d_gh);
++	if (!had_lock)
++		gfs2_glock_dq_uninit(&d_gh);
+ valid:
+ 	dput(parent);
+ 	return 1;
+ 
+ invalid_gunlock:
+-	gfs2_glock_dq_uninit(&d_gh);
++	if (!had_lock)
++		gfs2_glock_dq_uninit(&d_gh);
+ invalid:
+ 	if (inode && S_ISDIR(inode->i_mode)) {
+ 		if (have_submounts(dentry))
+
+
+

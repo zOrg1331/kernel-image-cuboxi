@@ -34,6 +34,7 @@
 #include <linux/bitops.h>
 
 #include <asm/div64.h>
+#include <asm/ptrace.h>
 #include <asm/vfp.h>
 
 #include "vfpinstr.h"
@@ -55,7 +56,7 @@ static void vfp_double_normalise_denormal(struct vfp_double *vd)
 {
 	int bits = 31 - fls(vd->significand >> 32);
 	if (bits == 31)
-		bits = 63 - fls(vd->significand);
+		bits = 62 - fls(vd->significand);
 
 	vfp_double_dump("normalise_denormal: in", vd);
 
@@ -658,22 +659,22 @@ static u32 vfp_double_ftosiz(int dd, int unused, int dm, u32 fpscr)
 }
 
 
-static struct op fops_ext[32] = {
-	[FEXT_TO_IDX(FEXT_FCPY)]	= { vfp_double_fcpy,   0 },
-	[FEXT_TO_IDX(FEXT_FABS)]	= { vfp_double_fabs,   0 },
-	[FEXT_TO_IDX(FEXT_FNEG)]	= { vfp_double_fneg,   0 },
-	[FEXT_TO_IDX(FEXT_FSQRT)]	= { vfp_double_fsqrt,  0 },
-	[FEXT_TO_IDX(FEXT_FCMP)]	= { vfp_double_fcmp,   OP_SCALAR },
-	[FEXT_TO_IDX(FEXT_FCMPE)]	= { vfp_double_fcmpe,  OP_SCALAR },
-	[FEXT_TO_IDX(FEXT_FCMPZ)]	= { vfp_double_fcmpz,  OP_SCALAR },
-	[FEXT_TO_IDX(FEXT_FCMPEZ)]	= { vfp_double_fcmpez, OP_SCALAR },
-	[FEXT_TO_IDX(FEXT_FCVT)]	= { vfp_double_fcvts,  OP_SCALAR|OP_SD },
-	[FEXT_TO_IDX(FEXT_FUITO)]	= { vfp_double_fuito,  OP_SCALAR|OP_SM },
-	[FEXT_TO_IDX(FEXT_FSITO)]	= { vfp_double_fsito,  OP_SCALAR|OP_SM },
-	[FEXT_TO_IDX(FEXT_FTOUI)]	= { vfp_double_ftoui,  OP_SCALAR|OP_SD },
-	[FEXT_TO_IDX(FEXT_FTOUIZ)]	= { vfp_double_ftouiz, OP_SCALAR|OP_SD },
-	[FEXT_TO_IDX(FEXT_FTOSI)]	= { vfp_double_ftosi,  OP_SCALAR|OP_SD },
-	[FEXT_TO_IDX(FEXT_FTOSIZ)]	= { vfp_double_ftosiz, OP_SCALAR|OP_SD },
+static u32 (* const fop_extfns[32])(int dd, int unused, int dm, u32 fpscr) = {
+	[FEXT_TO_IDX(FEXT_FCPY)]	= vfp_double_fcpy,
+	[FEXT_TO_IDX(FEXT_FABS)]	= vfp_double_fabs,
+	[FEXT_TO_IDX(FEXT_FNEG)]	= vfp_double_fneg,
+	[FEXT_TO_IDX(FEXT_FSQRT)]	= vfp_double_fsqrt,
+	[FEXT_TO_IDX(FEXT_FCMP)]	= vfp_double_fcmp,
+	[FEXT_TO_IDX(FEXT_FCMPE)]	= vfp_double_fcmpe,
+	[FEXT_TO_IDX(FEXT_FCMPZ)]	= vfp_double_fcmpz,
+	[FEXT_TO_IDX(FEXT_FCMPEZ)]	= vfp_double_fcmpez,
+	[FEXT_TO_IDX(FEXT_FCVT)]	= vfp_double_fcvts,
+	[FEXT_TO_IDX(FEXT_FUITO)]	= vfp_double_fuito,
+	[FEXT_TO_IDX(FEXT_FSITO)]	= vfp_double_fsito,
+	[FEXT_TO_IDX(FEXT_FTOUI)]	= vfp_double_ftoui,
+	[FEXT_TO_IDX(FEXT_FTOUIZ)]	= vfp_double_ftouiz,
+	[FEXT_TO_IDX(FEXT_FTOSI)]	= vfp_double_ftosi,
+	[FEXT_TO_IDX(FEXT_FTOSIZ)]	= vfp_double_ftosiz,
 };
 
 
@@ -1107,16 +1108,16 @@ static u32 vfp_double_fdiv(int dd, int dn, int dm, u32 fpscr)
 	return FPSCR_IOC;
 }
 
-static struct op fops[16] = {
-	[FOP_TO_IDX(FOP_FMAC)]	= { vfp_double_fmac,  0 },
-	[FOP_TO_IDX(FOP_FNMAC)]	= { vfp_double_fnmac, 0 },
-	[FOP_TO_IDX(FOP_FMSC)]	= { vfp_double_fmsc,  0 },
-	[FOP_TO_IDX(FOP_FNMSC)]	= { vfp_double_fnmsc, 0 },
-	[FOP_TO_IDX(FOP_FMUL)]	= { vfp_double_fmul,  0 },
-	[FOP_TO_IDX(FOP_FNMUL)]	= { vfp_double_fnmul, 0 },
-	[FOP_TO_IDX(FOP_FADD)]	= { vfp_double_fadd,  0 },
-	[FOP_TO_IDX(FOP_FSUB)]	= { vfp_double_fsub,  0 },
-	[FOP_TO_IDX(FOP_FDIV)]	= { vfp_double_fdiv,  0 },
+static u32 (* const fop_fns[16])(int dd, int dn, int dm, u32 fpscr) = {
+	[FOP_TO_IDX(FOP_FMAC)]	= vfp_double_fmac,
+	[FOP_TO_IDX(FOP_FNMAC)]	= vfp_double_fnmac,
+	[FOP_TO_IDX(FOP_FMSC)]	= vfp_double_fmsc,
+	[FOP_TO_IDX(FOP_FNMSC)]	= vfp_double_fnmsc,
+	[FOP_TO_IDX(FOP_FMUL)]	= vfp_double_fmul,
+	[FOP_TO_IDX(FOP_FNMUL)]	= vfp_double_fnmul,
+	[FOP_TO_IDX(FOP_FADD)]	= vfp_double_fadd,
+	[FOP_TO_IDX(FOP_FSUB)]	= vfp_double_fsub,
+	[FOP_TO_IDX(FOP_FDIV)]	= vfp_double_fdiv,
 };
 
 #define FREG_BANK(x)	((x) & 0x0c)
@@ -1128,74 +1129,75 @@ u32 vfp_double_cpdo(u32 inst, u32 fpscr)
 	u32 exceptions = 0;
 	unsigned int dest;
 	unsigned int dn = vfp_get_dn(inst);
-	unsigned int dm;
+	unsigned int dm = vfp_get_dm(inst);
 	unsigned int vecitr, veclen, vecstride;
-	struct op *fop;
+	u32 (*fop)(int, int, s32, u32);
 
-	vecstride = (1 + ((fpscr & FPSCR_STRIDE_MASK) == FPSCR_STRIDE_MASK));
-
-	fop = (op == FOP_EXT) ? &fops_ext[FEXT_TO_IDX(inst)] : &fops[FOP_TO_IDX(op)];
+	veclen = fpscr & FPSCR_LENGTH_MASK;
+	vecstride = (1 + ((fpscr & FPSCR_STRIDE_MASK) == FPSCR_STRIDE_MASK)) * 2;
 
 	/*
 	 * fcvtds takes an sN register number as destination, not dN.
 	 * It also always operates on scalars.
 	 */
-	if (fop->flags & OP_SD)
+	if ((inst & FEXT_MASK) == FEXT_FCVT) {
+		veclen = 0;
 		dest = vfp_get_sd(inst);
-	else
+	} else
 		dest = vfp_get_dd(inst);
-
-	/*
-	 * f[us]ito takes a sN operand, not a dN operand.
-	 */
-	if (fop->flags & OP_SM)
-		dm = vfp_get_sm(inst);
-	else
-		dm = vfp_get_dm(inst);
 
 	/*
 	 * If destination bank is zero, vector length is always '1'.
 	 * ARM DDI0100F C5.1.3, C5.3.2.
 	 */
-	if ((fop->flags & OP_SCALAR) || (FREG_BANK(dest) == 0))
+	if (FREG_BANK(dest) == 0)
 		veclen = 0;
-	else
-		veclen = fpscr & FPSCR_LENGTH_MASK;
 
 	pr_debug("VFP: vecstride=%u veclen=%u\n", vecstride,
 		 (veclen >> FPSCR_LENGTH_BIT) + 1);
 
-	if (!fop->fn)
+	fop = (op == FOP_EXT) ? fop_extfns[FEXT_TO_IDX(inst)] : fop_fns[FOP_TO_IDX(op)];
+	if (!fop)
 		goto invalid;
 
 	for (vecitr = 0; vecitr <= veclen; vecitr += 1 << FPSCR_LENGTH_BIT) {
 		u32 except;
-		char type;
 
-		type = fop->flags & OP_SD ? 's' : 'd';
-		if (op == FOP_EXT)
-			pr_debug("VFP: itr%d (%c%u) = op[%u] (d%u)\n",
+		if (op == FOP_EXT && (inst & FEXT_MASK) == FEXT_FCVT)
+			pr_debug("VFP: itr%d (s%u) = op[%u] (d%u)\n",
 				 vecitr >> FPSCR_LENGTH_BIT,
-				 type, dest, dn, dm);
+				 dest, dn, dm);
+		else if (op == FOP_EXT)
+			pr_debug("VFP: itr%d (d%u) = op[%u] (d%u)\n",
+				 vecitr >> FPSCR_LENGTH_BIT,
+				 dest, dn, dm);
 		else
-			pr_debug("VFP: itr%d (%c%u) = (d%u) op[%u] (d%u)\n",
+			pr_debug("VFP: itr%d (d%u) = (d%u) op[%u] (d%u)\n",
 				 vecitr >> FPSCR_LENGTH_BIT,
-				 type, dest, dn, FOP_TO_IDX(op), dm);
+				 dest, dn, FOP_TO_IDX(op), dm);
 
-		except = fop->fn(dest, dn, dm, fpscr);
+		except = fop(dest, dn, dm, fpscr);
 		pr_debug("VFP: itr%d: exceptions=%08x\n",
 			 vecitr >> FPSCR_LENGTH_BIT, except);
 
 		exceptions |= except;
 
 		/*
+		 * This ensures that comparisons only operate on scalars;
+		 * comparisons always return with one FPSCR status bit set.
+		 */
+		if (except & (FPSCR_N|FPSCR_Z|FPSCR_C|FPSCR_V))
+			break;
+
+		/*
 		 * CHECK: It appears to be undefined whether we stop when
 		 * we encounter an exception.  We continue.
 		 */
-		dest = FREG_BANK(dest) + ((FREG_IDX(dest) + vecstride) & 3);
-		dn = FREG_BANK(dn) + ((FREG_IDX(dn) + vecstride) & 3);
+
+		dest = FREG_BANK(dest) + ((FREG_IDX(dest) + vecstride) & 6);
+		dn = FREG_BANK(dn) + ((FREG_IDX(dn) + vecstride) & 6);
 		if (FREG_BANK(dm) != 0)
-			dm = FREG_BANK(dm) + ((FREG_IDX(dm) + vecstride) & 3);
+			dm = FREG_BANK(dm) + ((FREG_IDX(dm) + vecstride) & 6);
 	}
 	return exceptions;
 

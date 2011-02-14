@@ -1,0 +1,25 @@
+
+Unicode by default. Join the 20th century.
+
+--- linux-2.6.11/drivers/char/vt.c.foo	2005-06-06 22:53:13.000000000 -0400
++++ linux-2.6.11/drivers/char/vt.c	2005-06-06 22:53:42.000000000 -0400
+@@ -1443,7 +1443,7 @@
+ 	vc->vc_charset		= 0;
+ 	vc->vc_need_wrap	= 0;
+ 	vc->vc_report_mouse	= 0;
+-	vc->vc_utf		= 0;
++	vc->vc_utf		= 1;
+ 	vc->vc_utf_count	= 0;
+ 
+ 	vc->vc_disp_ctrl	= 0;
+--- linux-2.6.17.noarch/drivers/char/keyboard.c~	2006-08-07 15:15:48.000000000 -0400
++++ linux-2.6.17.noarch/drivers/char/keyboard.c	2006-08-07 15:15:59.000000000 -0400
+@@ -1370,7 +1370,7 @@ int __init kbd_init(void)
+ 		kbd_table[i].lockstate = KBD_DEFLOCK;
+ 		kbd_table[i].slockstate = 0;
+ 		kbd_table[i].modeflags = KBD_DEFMODE;
+-		kbd_table[i].kbdmode = VC_XLATE;
++		kbd_table[i].kbdmode = VC_UNICODE;
+ 	}
+ 
+ 	input_register_handler(&kbd_handler);

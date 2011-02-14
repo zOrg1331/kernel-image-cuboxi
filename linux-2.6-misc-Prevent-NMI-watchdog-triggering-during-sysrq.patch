@@ -1,0 +1,83 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Date: Mon, 23 Jul 2007 15:59:23 -0400
+Subject: [misc] Prevent NMI watchdog triggering during sysrq-T
+Message-id: 20070723195923.GA10931@mars.boston.redhat.com
+O-Subject: [RHEL5 U2 PATCH] RHBZ# 248392: LTC32322-Prevent NMI watchdog triggering during long sysrq-T outputs.
+Bugzilla: 248392
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=248392
+
+Description:
+------------
+Prevent NMI watchdog triggering during long sysrq-T outputs.
+
+RHEL Version Found:
+------------------
+RHEL5 GA
+
+Upstream Status:
+----------------
+In v2.6.23-rc1
+
+Test Status:
+------------
+Tested for regression on machines with 2,4,32GB and 1,2,4,16 CPUs. No
+regressions found.  The call adds a 5% slow-down. The alt-sysrq-t call
+on average (of the machines I used) take about 12 milliseconds. The printk
+part of the function takes 1/100th of a second to seconds depending on the
+speed of the output (VGA screen to slow serial link).  In summary, this
+patch will make the operation on average 0.6 milliseconds slower.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-34
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+---
+ arch/i386/kernel/traps.c       |    1 +
+ arch/x86_64/kernel/traps-xen.c |    1 +
+ arch/x86_64/kernel/traps.c     |    1 +
+ 3 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index ad0e358..3217dc3 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -218,6 +218,7 @@ static void print_trace_address(void *data, unsigned long addr)
+ {
+ 	printk("%s [<%08lx>] ", (char *)data, addr);
+ 	print_symbol("%s\n", addr);
++	touch_nmi_watchdog();
+ }
+ 
+ static struct stacktrace_ops print_trace_ops = {
+diff --git a/arch/x86_64/kernel/traps-xen.c b/arch/x86_64/kernel/traps-xen.c
+index ffd9dea..9357d42 100644
+--- a/arch/x86_64/kernel/traps-xen.c
++++ b/arch/x86_64/kernel/traps-xen.c
+@@ -354,6 +354,7 @@ static int print_trace_stack(void *data, char *name)
+ static void print_trace_address(void *data, unsigned long addr)
+ {
+ 	printk_address(addr);
++	touch_nmi_watchdog();
+ }
+ 
+ static struct stacktrace_ops print_trace_ops = {
+diff --git a/arch/x86_64/kernel/traps.c b/arch/x86_64/kernel/traps.c
+index 1a6edc1..97a7b4b 100644
+--- a/arch/x86_64/kernel/traps.c
++++ b/arch/x86_64/kernel/traps.c
+@@ -353,6 +353,7 @@ static int print_trace_stack(void *data, char *name)
+ static void print_trace_address(void *data, unsigned long addr)
+ {
+ 	printk_address(addr);
++	touch_nmi_watchdog();
+ }
+ 
+ static struct stacktrace_ops print_trace_ops = {
+-- 
+1.5.3.5.645.gbb47
+

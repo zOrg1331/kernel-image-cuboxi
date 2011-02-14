@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:16 -0400
+Subject: [scsi] scsi_dh_rdac: add support for SUN devices
+Message-id: 20090930210514.22936.29416.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 2/7] scsi_dh_rdac: add two SUN devices to the list of devices supported by default
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+Add two SUN devices to the devlist as requested in the mailing list.
+Updated this patch to remove {"STK", "FLEXLINE 380"} which is already
+in rhel 5 kernel
+
+Reported-by: Rice Brown <rick.brown@oit.gatech.edu>
+Signed-off-by: Chandra Seetharaman <sekharan@us.ibm.com>
+Cc: Moger Babu <Babu.Moger@lsi.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index c7bede0..470f8c4 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -631,6 +631,7 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"SGI", "IS"},
+ 	{"STK", "OPENstorage D280"},
+ 	{"STK", "FLEXLINE 380"},
++	{"SUN", "CSM100_R_FC"},
+ 	{"SUN", "CSM200_R"},
+ 	{"SUN", "LCSM100_I"},
+ 	{"SUN", "LCSM100_S"},

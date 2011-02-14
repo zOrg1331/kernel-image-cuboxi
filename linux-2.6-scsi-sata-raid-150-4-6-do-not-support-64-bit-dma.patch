@@ -1,0 +1,40 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] bz248327 SATA RAID 150-4/6 do not support 64-bit DMA
+Date: Wed, 15 Aug 2007 12:05:20 -0400 (EDT)
+Bugzilla: 248327
+Message-Id: <Pine.LNX.4.64.0708151203380.24530@bogart.boston.redhat.com>
+Changelog: [scsi] SATA RAID 150-4/6 do not support 64-bit DMA
+
+
+
+This patch is a straightforward backport of the upstream commit
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff_plain;h=8741ca71a3f626a56595b88200ebf952ce77ceef
+
+to disable 64-bit DMA for some megaraid devices that are known not to
+support it.
+
+ drivers/scsi/megaraid/megaraid_mbox.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/megaraid/megaraid_mbox.c b/drivers/scsi/megaraid/megaraid_mbox.c
+index dcfb0d1..c0fc860 100644
+--- a/drivers/scsi/megaraid/megaraid_mbox.c
++++ b/drivers/scsi/megaraid/megaraid_mbox.c
+@@ -876,7 +876,7 @@ megaraid_init_mbox(adapter_t *adapter)
+ 
+ 	if (((magic64 == HBA_SIGNATURE_64_BIT) &&
+ 		((adapter->pdev->subsystem_device !=
+-		PCI_SUBSYS_ID_MEGARAID_SATA_150_6) ||
++		PCI_SUBSYS_ID_MEGARAID_SATA_150_6) &&
+ 		(adapter->pdev->subsystem_device !=
+ 		PCI_SUBSYS_ID_MEGARAID_SATA_150_4))) ||
+ 		(adapter->pdev->vendor == PCI_VENDOR_ID_LSI_LOGIC &&
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

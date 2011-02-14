@@ -1,0 +1,77 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 28 Jun 2010 12:36:01 -0400
+Subject: [fs] nfs: clean up inode handling functions
+Message-id: <1277728562-28052-4-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26584
+O-Subject: [RHEL5.6 PATCH 3/4] BZ#601800: NFS: Clean up nfs_refresh_inode() and
+	nfs_post_op_update_inode()
+Bugzilla: 601800
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Try to avoid taking and dropping the inode->i_lock more than once. Do so by
+moving the code in nfs_refresh_inode() that needs to be done under the
+spinlock into a function nfs_refresh_inode_locked(), and then having both
+nfs_refresh_inode() and nfs_post_op_update_inode() call it directly.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 0090188..a2662c4 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -852,6 +852,15 @@ static int nfs_check_inode_attributes(struct inode *inode, struct nfs_fattr *fat
+ 	return 0;
+ }
+ 
++static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr)
++{
++	struct nfs_inode *nfsi = NFS_I(inode);
++
++	if (time_after(fattr->time_start, nfsi->last_updated))
++		return nfs_update_inode(inode, fattr);
++	return nfs_check_inode_attributes(inode, fattr);
++}
++
+ /**
+  * nfs_refresh_inode - try to update the inode attribute cache
+  * @inode - pointer to inode
+@@ -864,17 +873,12 @@ static int nfs_check_inode_attributes(struct inode *inode, struct nfs_fattr *fat
+  */
+ int nfs_refresh_inode(struct inode *inode, struct nfs_fattr *fattr)
+ {
+-	struct nfs_inode *nfsi = NFS_I(inode);
+ 	int status;
+ 
+ 	if ((fattr->valid & NFS_ATTR_FATTR) == 0)
+ 		return 0;
+ 	spin_lock(&inode->i_lock);
+-	if (time_after(fattr->time_start, nfsi->last_updated))
+-		status = nfs_update_inode(inode, fattr);
+-	else
+-		status = nfs_check_inode_attributes(inode, fattr);
+-
++	status = nfs_refresh_inode_locked(inode, fattr);
+ 	spin_unlock(&inode->i_lock);
+ 	return status;
+ }
+@@ -890,13 +894,16 @@ int nfs_refresh_inode(struct inode *inode, struct nfs_fattr *fattr)
+ int nfs_post_op_update_inode(struct inode *inode, struct nfs_fattr *fattr)
+ {
+ 	struct nfs_inode *nfsi = NFS_I(inode);
++	int status = 0;
+ 
+ 	spin_lock(&inode->i_lock);
+ 	nfsi->cache_validity |= NFS_INO_INVALID_ATTR|NFS_INO_REVAL_PAGECACHE;
+ 	if (S_ISDIR(inode->i_mode))
+ 		nfsi->cache_validity |= NFS_INO_INVALID_DATA;
++	if ((fattr->valid & NFS_ATTR_FATTR) != 0)
++		status = nfs_refresh_inode_locked(inode, fattr);
+ 	spin_unlock(&inode->i_lock);
+-	return nfs_refresh_inode(inode, fattr);
++	return status;
+ }
+ 
+ /**

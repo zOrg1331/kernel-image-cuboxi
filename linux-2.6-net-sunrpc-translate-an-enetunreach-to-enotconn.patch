@@ -1,0 +1,78 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 19 Apr 2010 13:20:31 -0400
+Subject: [net] sunrpc: translate an -ENETUNREACH to -ENOTCONN
+Message-id: <1271683231-17802-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 24227
+O-Subject: [RHEL5.6 PATCH] BZ#481372: sunrpc: translate -ENETUNREACH to
+	-ENOTCONN in xs_tcp_connect_worker
+Bugzilla: 481372
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Chuck Lever <chuck.lever@oracle.com>
+
+The following patch is from Chuck Lever and prevents an issue where
+a network partition can cause system calls to return -EIO on a hard
+mount. The bug is here:
+
+    https://bugzilla.redhat.com/show_bug.cgi?id=481372
+
+The idea is to convert -ENETUNREACH (which can bubble up from the
+networking layer) to -ENOTCONN, so that the upper RPC layers can
+deal appropriately with the error.
+
+Tested with the provided reproducer and it seems to fix the issue. The
+originally supplied patch description follows:
+
+------------------------[snip]---------------------
+
+The attachment is based on changes that went into the RPC client roughly
+between 2.6.20 and 2.6.25.  The underlying transport-specific logic in
+the RPC client now changes all underlying network errors into ENOTCONN.
+That wasn't the case in 2.6.18.
+
+The network layer is returning ENETUNREACH on stream transports during
+network partitions that last longer than about 30 seconds.  Since the
+RPC client's reconnect logic doesn't explicitly recognize that error, it
+simply passes the error to the upper layers instead of continuing to
+attempt to re-establish the connection.
+
+The NFS client is designed to trust the RPC client to re-establish a
+stream connection, as well as retry any outstanding RPC requests, if
+hard retries are requested.  If the RPC client doesn't do this,
+outstanding NFS I/O will fail during a network partition on a hard
+mount.
+
+This was a real bug in kernels of that era, but it was addressed, along
+with many other issues, by a complete rewrite of the stream transport
+connect logic.  This rewrite is almost certainly not appropriate for
+RHEL5, given restrictions on ABI changes.  Thus, the attachment attempts
+to address the specific case presented here without requiring other
+extensive changes.
+
+A simpler reproducer might be this:
+
+  1. mount -o tcp,hard
+  2. start I/O on a file on that mount point (like a long dd)
+  3. partition the network for longer than a minute or two while
+     file I/O is underway.
+
+Any outstanding I/O that was pending when the network partition occurred
+will fail.  The desired behavior is that the I/O should remain pending,
+then succeed, once the network partition is healed.
+
+Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+diff --git a/net/sunrpc/xprtsock.c b/net/sunrpc/xprtsock.c
+index a46af3b..0be26a2 100644
+--- a/net/sunrpc/xprtsock.c
++++ b/net/sunrpc/xprtsock.c
+@@ -1232,6 +1232,9 @@ static void xs_tcp_connect_worker(void *args)
+ 			case -ECONNRESET:
+ 				/* retry with existing socket, after a delay */
+ 				break;
++			case -ENETUNREACH:
++				status = -ENOTCONN;
++				break;
+ 			default:
+ 				/* get rid of existing socket, and retry */
+ 				xs_close(xprt);

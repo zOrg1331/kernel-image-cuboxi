@@ -1,0 +1,116 @@
+From: John Linville <linville@redhat.com>
+Date: Wed, 2 Dec 2009 15:39:26 -0500
+Subject: [net] wireless: avoid deadlock when enabling rfkill
+Message-id: <20091202153926.GA30909@redhat.com>
+Patchwork-id: 21652
+O-Subject: [RHEL5.5 PATCH] wireless: avoid deadlock when enabling rfkill
+Bugzilla: 542593
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+The wireless update from 2.6.32 has a deadlock when enabling rfkill.
+I introduced this in the backport while trying to avoid another
+issue. :-(
+
+This patch more-or-less restores the original code (w/o my busted
+work-around), but moves a work item to a private workqueue.
+
+BZ542593
+
+ net/wireless/core.c |   27 ++++++++++++++++++---------
+ 1 files changed, 18 insertions(+), 9 deletions(-)
+
+Tested by me and Stanislaw with positive results.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index 6a6119a..911909d 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -29,6 +29,9 @@ MODULE_AUTHOR("Johannes Berg");
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("wireless configuration support");
+ 
++/* Global workqueue for cleanup_work */
++static struct workqueue_struct *workqueue;
++
+ /* RCU might be appropriate here since we usually
+  * only read the list, and that can happen quite
+  * often because we need to do it for each command */
+@@ -631,7 +634,6 @@ void wiphy_rfkill_set_hw_state(struct wiphy *wiphy, bool blocked)
+ }
+ EXPORT_SYMBOL(wiphy_rfkill_set_hw_state);
+ 
+-#if 0 /* Not in RHEL5... */
+ static void wdev_cleanup_work(void *w)
+ {
+ 	struct wireless_dev *wdev = w;
+@@ -656,7 +658,6 @@ static void wdev_cleanup_work(void *w)
+ 
+ 	dev_put(wdev->netdev);
+ }
+-#endif
+ 
+ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ 					 unsigned long state,
+@@ -681,9 +682,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ 		 * are added with nl80211.
+ 		 */
+ 		mutex_init(&wdev->mtx);
+-#if 0 /* Not in RHEL5... */
+ 		INIT_WORK(&wdev->cleanup_work, wdev_cleanup_work, wdev);
+-#endif
+ 		INIT_LIST_HEAD(&wdev->event_list);
+ 		spin_lock_init(&wdev->event_lock);
+ 		mutex_lock(&rdev->devlist_mtx);
+@@ -743,14 +742,11 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ 		}
+ 		break;
+ 	case NETDEV_DOWN:
+-#if 0 /* Not in RHEL5... (This and the NETDEV_UP bits cause hangs. -- JWL) */
+ 		dev_hold(dev);
++#if 0 /* Not in RHEL5... */
+ 		schedule_work(&wdev->cleanup_work);
+ #else
+-		mutex_lock(&rdev->devlist_mtx);
+-		rdev->opencount--;
+-		mutex_unlock(&rdev->devlist_mtx);
+-		wake_up(&rdev->dev_wait);
++		queue_work(workqueue, &wdev->cleanup_work);
+ #endif
+ 		break;
+ 	case NETDEV_UP:
+@@ -767,6 +763,14 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ 			mutex_unlock(&rdev->devlist_mtx);
+ 			dev_put(dev);
+ 		}
++#else
++		/*
++		 * Due to lack of infrastructure in RHEL5, simply insist
++		 * that cleanup_work (now on it's own workqueue) has
++		 * finished before we proceed.
++		 */
++		if (test_bit(0, &wdev->cleanup_work.pending))
++			flush_workqueue(workqueue);
+ #endif
+ #ifdef CONFIG_WIRELESS_EXT
+ 		cfg80211_lock_rdev(rdev);
+@@ -875,6 +879,10 @@ static int __init cfg80211_init(void)
+ 	if (err)
+ 		goto out_fail_reg;
+ 
++	workqueue = create_singlethread_workqueue("cfg80211");
++	if (!workqueue)
++		goto out_fail_reg;
++
+ 	return 0;
+ 
+ out_fail_reg:
+@@ -894,6 +902,7 @@ subsys_initcall(cfg80211_init);
+ 
+ static void cfg80211_exit(void)
+ {
++	destroy_workqueue(workqueue);
+ 	debugfs_remove(ieee80211_debugfs_dir);
+ 	nl80211_exit();
+ 	unregister_netdevice_notifier(&cfg80211_netdev_notifier);

@@ -1,8 +1,6 @@
 #ifndef _XT_POLICY_H
 #define _XT_POLICY_H
 
-#include <linux/types.h>
-
 #define XT_POLICY_MAX_ELEM	4
 
 enum xt_policy_flags
@@ -21,7 +19,7 @@ enum xt_policy_modes
 
 struct xt_policy_spec
 {
-	__u8	saddr:1,
+	u_int8_t	saddr:1,
 			daddr:1,
 			proto:1,
 			mode:1,
@@ -29,37 +27,22 @@ struct xt_policy_spec
 			reqid:1;
 };
 
-#ifndef __KERNEL__
 union xt_policy_addr
 {
 	struct in_addr	a4;
 	struct in6_addr	a6;
 };
-#endif
 
 struct xt_policy_elem
 {
-	union {
-#ifdef __KERNEL__
-		struct {
-			union nf_inet_addr saddr;
-			union nf_inet_addr smask;
-			union nf_inet_addr daddr;
-			union nf_inet_addr dmask;
-		};
-#else
-		struct {
-			union xt_policy_addr saddr;
-			union xt_policy_addr smask;
-			union xt_policy_addr daddr;
-			union xt_policy_addr dmask;
-		};
-#endif
-	};
-	__be32			spi;
-	__u32		reqid;
-	__u8		proto;
-	__u8		mode;
+	union xt_policy_addr	saddr;
+	union xt_policy_addr	smask;
+	union xt_policy_addr	daddr;
+	union xt_policy_addr	dmask;
+	u_int32_t		spi;
+	u_int32_t		reqid;
+	u_int8_t		proto;
+	u_int8_t		mode;
 
 	struct xt_policy_spec	match;
 	struct xt_policy_spec	invert;
@@ -68,8 +51,8 @@ struct xt_policy_elem
 struct xt_policy_info
 {
 	struct xt_policy_elem pol[XT_POLICY_MAX_ELEM];
-	__u16 flags;
-	__u16 len;
+	u_int16_t flags;
+	u_int16_t len;
 };
 
 #endif /* _XT_POLICY_H */

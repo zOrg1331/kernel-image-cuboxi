@@ -48,9 +48,11 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
 #include <linux/interrupt.h>
+#include <linux/ptrace.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
 #include <linux/slab.h>
@@ -68,7 +70,7 @@
 #include <asm/ecard.h>
 #include <asm/io.h>
 
-static char version[] __devinitdata = "ether3 ethernet driver (c) 1995-2000 R.M.King v1.17\n";
+static char version[] __initdata = "ether3 ethernet driver (c) 1995-2000 R.M.King v1.17\n";
 
 #include "ether3.h"
 
@@ -79,7 +81,7 @@ static int	ether3_rx(struct net_device *dev, unsigned int maxcnt);
 static void	ether3_tx(struct net_device *dev);
 static int	ether3_open (struct net_device *dev);
 static int	ether3_sendpacket (struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t ether3_interrupt (int irq, void *dev_id);
+static irqreturn_t ether3_interrupt (int irq, void *dev_id, struct pt_regs *regs);
 static int	ether3_close (struct net_device *dev);
 static struct net_device_stats *ether3_getstats (struct net_device *dev);
 static void	ether3_setmulticastlist (struct net_device *dev);
@@ -196,7 +198,7 @@ static inline void ether3_ledon(struct net_device *dev)
  * Read the ethernet address string from the on board rom.
  * This is an ascii string!!!
  */
-static int __devinit
+static int __init
 ether3_addr(char *addr, struct expansion_card *ec)
 {
 	struct in_chunk_dir cd;
@@ -221,7 +223,7 @@ ether3_addr(char *addr, struct expansion_card *ec)
 
 /* --------------------------------------------------------------------------- */
 
-static int __devinit
+static int __init
 ether3_ramtest(struct net_device *dev, unsigned char byte)
 {
 	unsigned char *buffer = kmalloc(RX_END, GFP_KERNEL);
@@ -270,7 +272,7 @@ ether3_ramtest(struct net_device *dev, unsigned char byte)
 
 /* ------------------------------------------------------------------------------- */
 
-static int __devinit ether3_init_2(struct net_device *dev)
+static int __init ether3_init_2(struct net_device *dev)
 {
 	int i;
 
@@ -463,7 +465,7 @@ static void ether3_setmulticastlist(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC) {
 		/* promiscuous mode */
 		priv(dev)->regs.config1 |= CFG1_RECVPROMISC;
-	} else if (dev->flags & IFF_ALLMULTI || dev->mc_count) {
+	} else if (dev->flags & IFF_ALLMULTI) {
 		priv(dev)->regs.config1 |= CFG1_RECVSPECBRMULTI;
 	} else
 		priv(dev)->regs.config1 |= CFG1_RECVSPECBROAD;
@@ -511,7 +513,7 @@ ether3_sendpacket(struct sk_buff *skb, struct net_device *dev)
 		dev_kfree_skb(skb);
 		priv(dev)->stats.tx_dropped ++;
 		netif_start_queue(dev);
-		return NETDEV_TX_OK;
+		return 0;
 	}
 
 	length = (length + 1) & ~1;
@@ -526,7 +528,7 @@ ether3_sendpacket(struct sk_buff *skb, struct net_device *dev)
 
 	if (priv(dev)->tx_tail == next_ptr) {
 		local_irq_restore(flags);
-		return NETDEV_TX_BUSY;	/* unable to queue */
+		return 1;	/* unable to queue */
 	}
 
 	dev->trans_start = jiffies;
@@ -562,11 +564,11 @@ ether3_sendpacket(struct sk_buff *skb, struct net_device *dev)
 		netif_stop_queue(dev);
 
  out:
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 static irqreturn_t
-ether3_interrupt(int irq, void *dev_id)
+ether3_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct net_device *dev = (struct net_device *)dev_id;
 	unsigned int status, handled = IRQ_NONE;
@@ -660,6 +662,7 @@ if (next_ptr < RX_START || next_ptr >= RX_END) {
 			if (skb) {
 				unsigned char *buf;
 
+				skb->dev = dev;
 				skb_reserve(skb, 2);
 				buf = skb_put(skb, length);
 				ether3_readbuffer(dev, buf + 12, length - 12);
@@ -762,7 +765,7 @@ static void ether3_tx(struct net_device *dev)
 	}
 }
 
-static void __devinit ether3_banner(void)
+static void __init ether3_banner(void)
 {
 	static unsigned version_printed = 0;
 
@@ -770,24 +773,12 @@ static void __devinit ether3_banner(void)
 		printk(KERN_INFO "%s", version);
 }
 
-static const struct net_device_ops ether3_netdev_ops = {
-	.ndo_open		= ether3_open,
-	.ndo_stop		= ether3_close,
-	.ndo_start_xmit		= ether3_sendpacket,
-	.ndo_get_stats		= ether3_getstats,
-	.ndo_set_multicast_list	= ether3_setmulticastlist,
-	.ndo_tx_timeout		= ether3_timeout,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
-};
-
 static int __devinit
 ether3_probe(struct expansion_card *ec, const struct ecard_id *id)
 {
 	const struct ether3_data *data = id->data;
 	struct net_device *dev;
-	int bus_type, ret;
+	int i, bus_type, ret;
 
 	ether3_banner();
 
@@ -801,9 +792,11 @@ ether3_probe(struct expansion_card *ec, const struct ecard_id *id)
 		goto release;
 	}
 
+	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &ec->dev);
 
-	priv(dev)->base = ecardm_iomap(ec, ECARD_RES_MEMC, 0, 0);
+	priv(dev)->base = ioremap(ecard_resource_start(ec, ECARD_RES_MEMC),
+				  ecard_resource_len(ec, ECARD_RES_MEMC));
 	if (!priv(dev)->base) {
 		ret = -ENOMEM;
 		goto free;
@@ -858,20 +851,28 @@ ether3_probe(struct expansion_card *ec, const struct ecard_id *id)
 		goto free;
 	}
 
-	dev->netdev_ops		= &ether3_netdev_ops;
+	dev->open		= ether3_open;
+	dev->stop		= ether3_close;
+	dev->hard_start_xmit	= ether3_sendpacket;
+	dev->get_stats		= ether3_getstats;
+	dev->set_multicast_list	= ether3_setmulticastlist;
+	dev->tx_timeout		= ether3_timeout;
 	dev->watchdog_timeo	= 5 * HZ / 100;
 
 	ret = register_netdev(dev);
 	if (ret)
 		goto free;
 
-	printk("%s: %s in slot %d, %pM\n",
-	       dev->name, data->name, ec->slot_no, dev->dev_addr);
+	printk("%s: %s in slot %d, ", dev->name, data->name, ec->slot_no);
+	for (i = 0; i < 6; i++)
+		printk("%2.2x%c", dev->dev_addr[i], i == 5 ? '\n' : ':');
 
 	ecard_set_drvdata(ec, dev);
 	return 0;
 
  free:
+	if (priv(dev)->base)
+		iounmap(priv(dev)->base);
 	free_netdev(dev);
  release:
 	ecard_release_resources(ec);
@@ -886,6 +887,7 @@ static void __devexit ether3_remove(struct expansion_card *ec)
 	ecard_set_drvdata(ec, NULL);
 
 	unregister_netdev(dev);
+	iounmap(priv(dev)->base);
 	free_netdev(dev);
 	ecard_release_resources(ec);
 }

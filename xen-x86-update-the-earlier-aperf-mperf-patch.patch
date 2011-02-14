@@ -1,0 +1,51 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 8 Apr 2009 10:52:42 +0200
+Subject: [xen] x86: update the earlier APERF/MPERF patch
+Message-id: 49DC65DA.6070709@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Update the earlier APERF/MPERF patch
+Bugzilla: 493557
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+All,
+     The patch to fix Xen APERF/MPERF updates that I submitted (and was
+subsequently committed to -138) had a slight bug in it.  Basically, if you used
+the APERF/MPERF writes in conjunction with a "dom0_max_cpus" setting less than
+the number of physical CPUs in the box, you would get the same crash as pointed
+out in BZ 485119.
+     This patch just updates the APERF/MPERF code path so it will not crash in
+that situation.  To avoid confusion, I've opened up BZ 493557 to track it, which
+is what this patch should be committed against.
+     This has been reviewed and tested by the reporter, and solves the issue for
+them.
+     Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index b6bf936..1f8d269 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -1810,6 +1810,8 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             if ( wrmsr_safe(regs->ecx, eax, edx) != 0 )
+                 goto fail;
+             break;
++        case MSR_IA32_MPERF:
++        case MSR_IA32_APERF:
+         case MSR_IA32_PERF_CTL:
+             if ( boot_cpu_data.x86_vendor != X86_VENDOR_INTEL )
+                 goto fail;
+@@ -1818,12 +1820,6 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             if ( wrmsr_safe(regs->ecx, eax, edx) != 0 )
+                 goto fail;
+             break;
+-	case MSR_IA32_MPERF:
+-	case MSR_IA32_APERF:
+-            if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
+-                 wrmsr_safe(regs->ecx, eax, edx) )
+-                goto fail;
+-            break;
+         default:
+             if ( wrmsr_hypervisor_regs(regs->ecx, eax, edx) )
+                 break;

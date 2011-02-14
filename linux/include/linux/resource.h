@@ -3,6 +3,8 @@
 
 #include <linux/time.h>
 
+struct task_struct;
+
 /*
  * Resource control/accounting header file for linux
  */
@@ -17,7 +19,6 @@
 #define	RUSAGE_SELF	0
 #define	RUSAGE_CHILDREN	(-1)
 #define RUSAGE_BOTH	(-2)		/* sys_wait4() uses this */
-#define	RUSAGE_THREAD	1		/* only the calling thread */
 
 struct	rusage {
 	struct timeval ru_utime;	/* user time used */
@@ -53,17 +54,14 @@ struct rlimit {
 /*
  * Limit the stack by to some sane default: root can always
  * increase this limit if needed..  8MB seems reasonable.
- *
- * (2MB more to cover randomization effects.)
  */
-#define _STK_LIM	(10*1024*1024)
-#define EXEC_STACK_BIAS	(2*1024*1024)
+#define _STK_LIM	(8*1024*1024)
 
 /*
- * GPG2 wants 64kB of mlocked memory, to make sure pass phrases
+ * GPG wants 32kB of mlocked memory, to make sure pass phrases
  * and other sensitive information are never written to disk.
  */
-#define MLOCK_LIMIT	((PAGE_SIZE > 64*1024) ? PAGE_SIZE : 64*1024)
+#define MLOCK_LIMIT	(8 * PAGE_SIZE)
 
 /*
  * Due to binary compatibility, the actual resource numbers
@@ -71,14 +69,6 @@ struct rlimit {
  */
 #include <asm/resource.h>
 
-#ifdef __KERNEL__
-
-struct task_struct;
-
 int getrusage(struct task_struct *p, int who, struct rusage __user *ru);
-int setrlimit(struct task_struct *tsk, unsigned int resource,
-		struct rlimit *new_rlim);
-
-#endif /* __KERNEL__ */
 
 #endif

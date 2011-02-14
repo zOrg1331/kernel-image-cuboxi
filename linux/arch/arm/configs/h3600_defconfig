@@ -90,6 +90,8 @@ CONFIG_ARCH_SA1100=y
 # CONFIG_SA1100_COLLIE is not set
 # CONFIG_SA1100_H3100 is not set
 CONFIG_SA1100_H3600=y
+# CONFIG_SA1100_H3800 is not set
+CONFIG_SA1100_H3XXX=y
 # CONFIG_SA1100_BADGE4 is not set
 # CONFIG_SA1100_JORNADA720 is not set
 # CONFIG_SA1100_HACKKIT is not set
@@ -98,6 +100,7 @@ CONFIG_SA1100_H3600=y
 # CONFIG_SA1100_SHANNON is not set
 # CONFIG_SA1100_SIMPAD is not set
 # CONFIG_SA1100_SSP is not set
+# CONFIG_H3600_SLEEVE is not set
 
 #
 # Processor Type
@@ -191,7 +194,6 @@ CONFIG_BINFMT_ELF=y
 # Power management options
 #
 CONFIG_PM=y
-# CONFIG_PM_LEGACY is not set
 # CONFIG_APM is not set
 
 #

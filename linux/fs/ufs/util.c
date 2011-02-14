@@ -8,10 +8,9 @@
  
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/ufs_fs.h>
 #include <linux/buffer_head.h>
 
-#include "ufs_fs.h"
-#include "ufs.h"
 #include "swab.h"
 #include "util.h"
 
@@ -185,13 +184,14 @@ void _ubh_memcpyubh_(struct ufs_sb_private_info * uspi,
 dev_t
 ufs_get_inode_dev(struct super_block *sb, struct ufs_inode_info *ufsi)
 {
-	__u32 fs32;
+	__fs32 fs32;
 	dev_t dev;
 
 	if ((UFS_SB(sb)->s_flags & UFS_ST_MASK) == UFS_ST_SUNx86)
-		fs32 = fs32_to_cpu(sb, ufsi->i_u1.i_data[1]);
+		fs32 = ufsi->i_u1.i_data[1];
 	else
-		fs32 = fs32_to_cpu(sb, ufsi->i_u1.i_data[0]);
+		fs32 = ufsi->i_u1.i_data[0];
+	fs32 = fs32_to_cpu(sb, fs32);
 	switch (UFS_SB(sb)->s_flags & UFS_ST_MASK) {
 	case UFS_ST_SUNx86:
 	case UFS_ST_SUN:
@@ -212,7 +212,7 @@ ufs_get_inode_dev(struct super_block *sb, struct ufs_inode_info *ufsi)
 void
 ufs_set_inode_dev(struct super_block *sb, struct ufs_inode_info *ufsi, dev_t dev)
 {
-	__u32 fs32;
+	__fs32 fs32;
 
 	switch (UFS_SB(sb)->s_flags & UFS_ST_MASK) {
 	case UFS_ST_SUNx86:
@@ -227,10 +227,11 @@ ufs_set_inode_dev(struct super_block *sb, struct ufs_inode_info *ufsi, dev_t dev
 		fs32 = old_encode_dev(dev);
 		break;
 	}
+	fs32 = cpu_to_fs32(sb, fs32);
 	if ((UFS_SB(sb)->s_flags & UFS_ST_MASK) == UFS_ST_SUNx86)
-		ufsi->i_u1.i_data[1] = cpu_to_fs32(sb, fs32);
+		ufsi->i_u1.i_data[1] = fs32;
 	else
-		ufsi->i_u1.i_data[0] = cpu_to_fs32(sb, fs32);
+		ufsi->i_u1.i_data[0] = fs32;
 }
 
 /**
@@ -252,11 +253,13 @@ struct page *ufs_get_locked_page(struct address_space *mapping,
 
 	page = find_lock_page(mapping, index);
 	if (!page) {
-		page = read_mapping_page(mapping, index, NULL);
+		page = read_cache_page(mapping, index,
+				       (filler_t*)mapping->a_ops->readpage,
+				       NULL);
 
 		if (IS_ERR(page)) {
 			printk(KERN_ERR "ufs_change_blocknr: "
-			       "read_mapping_page error: ino %lu, index: %lu\n",
+			       "read_cache_page error: ino %lu, index: %lu\n",
 			       mapping->host->i_ino, index);
 			goto out;
 		}

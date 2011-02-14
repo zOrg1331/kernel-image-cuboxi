@@ -18,6 +18,8 @@
 #include <linux/interrupt.h>
 #include <linux/isapnp.h>
 
+extern const char *CardType[];
+
 static const char *hfcsx_revision = "$Revision: 1.12.2.5 $";
 
 /***************************************/
@@ -689,7 +691,7 @@ receive_emsg(struct IsdnCardState *cs)
 /* Interrupt handler */
 /*********************/
 static irqreturn_t
-hfcsx_interrupt(int intno, void *dev_id)
+hfcsx_interrupt(int intno, void *dev_id, struct pt_regs *regs)
 {
 	struct IsdnCardState *cs = dev_id;
 	u_char exval;
@@ -968,7 +970,7 @@ HFCSX_l1hw(struct PStack *st, int pr, void *arg)
 			break;
 		case (HW_TESTLOOP | REQUEST):
 			spin_lock_irqsave(&cs->lock, flags);
-			switch ((long) arg) {
+			switch ((int) arg) {
 				case (1):
 					Write_hfc(cs, HFCSX_B1_SSL, 0x80);	/* tx slot */
 					Write_hfc(cs, HFCSX_B1_RSL, 0x80);	/* rx slot */
@@ -984,7 +986,7 @@ HFCSX_l1hw(struct PStack *st, int pr, void *arg)
 				default:
 					spin_unlock_irqrestore(&cs->lock, flags);
 					if (cs->debug & L1_DEB_WARN)
-						debugl1(cs, "hfcsx_l1hw loop invalid %4lx", arg);
+						debugl1(cs, "hfcsx_l1hw loop invalid %4x", (int) arg);
 					return;
 			}
 			cs->hw.hfcsx.trm |= 0x80;	/* enable IOM-loop */
@@ -1249,12 +1251,12 @@ setstack_2b(struct PStack *st, struct BCState *bcs)
 /* handle L1 state changes */
 /***************************/
 static void
-hfcsx_bh(struct work_struct *work)
+hfcsx_bh(struct IsdnCardState *cs)
 {
-	struct IsdnCardState *cs =
-		container_of(work, struct IsdnCardState, tqueue);
 	u_long flags;
 
+	if (!cs)
+		return;
 	if (test_and_clear_bit(D_L1STATECHANGE, &cs->event)) {
 		if (!cs->hw.hfcsx.nt_mode)
 			switch (cs->dc.hfcsx.ph_state) {
@@ -1326,7 +1328,8 @@ hfcsx_bh(struct work_struct *work)
 /********************************/
 /* called for card init message */
 /********************************/
-static void inithfcsx(struct IsdnCardState *cs)
+static void __devinit
+inithfcsx(struct IsdnCardState *cs)
 {
 	cs->setstack_d = setstack_hfcsx;
 	cs->BC_Send_Data = &hfcsx_send_data;
@@ -1415,7 +1418,7 @@ setup_hfcsx(struct IsdnCard *card)
 					err = pnp_activate_dev(pnp_d);
 					if (err<0) {
 						printk(KERN_WARNING "%s: pnp_activate_dev ret(%d)\n",
-							__func__, err);
+							__FUNCTION__, err);
 						return(0);
 					}
 					card->para[1] = pnp_port_start(pnp_d, 0);
@@ -1496,7 +1499,7 @@ setup_hfcsx(struct IsdnCard *card)
 	cs->dbusytimer.function = (void *) hfcsx_dbusy_timer;
 	cs->dbusytimer.data = (long) cs;
 	init_timer(&cs->dbusytimer);
-	INIT_WORK(&cs->tqueue, hfcsx_bh);
+	INIT_WORK(&cs->tqueue, (void *)(void *) hfcsx_bh, cs);
 	cs->readisac = NULL;
 	cs->writeisac = NULL;
 	cs->readisacfifo = NULL;

@@ -20,8 +20,9 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#include <mach/corgi.h>
-#include <mach/pxa2xx-gpio.h>
+#include <asm/arch/corgi.h>
+#include <asm/arch/hardware.h>
+#include <asm/arch/pxa-regs.h>
 #include <asm/hardware/scoop.h>
 
 #define KB_ROWS				8
@@ -78,9 +79,9 @@ struct corgikbd {
 #define KB_ACTIVATE_DELAY	10
 
 /* Helper functions for reading the keyboard matrix
- * Note: We should really be using the generic gpio functions to alter
- *       GPDR but it requires a function call per GPIO bit which is
- *       excessive when we need to access 12 bits at once, multiple times.
+ * Note: We should really be using pxa_gpio_mode to alter GPDR but it
+ *       requires a function call per GPIO bit which is excessive
+ *       when we need to access 12 bits at once multiple times.
  * These functions must be called within local_irq_save()/local_irq_restore()
  * or similar.
  */
@@ -128,7 +129,7 @@ static inline void corgikbd_reset_col(int col)
  */
 
 /* Scan the hardware keyboard and push any changes up through the input layer */
-static void corgikbd_scankeyboard(struct corgikbd *corgikbd_data)
+static void corgikbd_scankeyboard(struct corgikbd *corgikbd_data, struct pt_regs *regs)
 {
 	unsigned int row, col, rowd;
 	unsigned long flags;
@@ -138,6 +139,9 @@ static void corgikbd_scankeyboard(struct corgikbd *corgikbd_data)
 		return;
 
 	spin_lock_irqsave(&corgikbd_data->lock, flags);
+
+	if (regs)
+		input_regs(corgikbd_data->input, regs);
 
 	num_pressed = 0;
 	for (col = 0; col < KB_COLS; col++) {
@@ -187,14 +191,14 @@ static void corgikbd_scankeyboard(struct corgikbd *corgikbd_data)
 /*
  * corgi keyboard interrupt handler.
  */
-static irqreturn_t corgikbd_interrupt(int irq, void *dev_id)
+static irqreturn_t corgikbd_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct corgikbd *corgikbd_data = dev_id;
 
 	if (!timer_pending(&corgikbd_data->timer)) {
 		/** wait chattering delay **/
 		udelay(20);
-		corgikbd_scankeyboard(corgikbd_data);
+		corgikbd_scankeyboard(corgikbd_data, regs);
 	}
 
 	return IRQ_HANDLED;
@@ -206,7 +210,7 @@ static irqreturn_t corgikbd_interrupt(int irq, void *dev_id)
 static void corgikbd_timer_callback(unsigned long data)
 {
 	struct corgikbd *corgikbd_data = (struct corgikbd *) data;
-	corgikbd_scankeyboard(corgikbd_data);
+	corgikbd_scankeyboard(corgikbd_data, NULL);
 }
 
 /*
@@ -286,16 +290,19 @@ static int corgikbd_resume(struct platform_device *dev)
 #define corgikbd_resume		NULL
 #endif
 
-static int __devinit corgikbd_probe(struct platform_device *pdev)
+static int __init corgikbd_probe(struct platform_device *pdev)
 {
 	struct corgikbd *corgikbd;
 	struct input_dev *input_dev;
-	int i, err = -ENOMEM;
+	int i;
 
 	corgikbd = kzalloc(sizeof(struct corgikbd), GFP_KERNEL);
 	input_dev = input_allocate_device();
-	if (!corgikbd || !input_dev)
-		goto fail;
+	if (!corgikbd || !input_dev) {
+		kfree(corgikbd);
+		input_free_device(input_dev);
+		return -ENOMEM;
+	}
 
 	platform_set_drvdata(pdev, corgikbd);
 
@@ -322,10 +329,10 @@ static int __devinit corgikbd_probe(struct platform_device *pdev)
 	input_dev->id.vendor = 0x0001;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &pdev->dev;
+	input_dev->cdev.dev = &pdev->dev;
+	input_dev->private = corgikbd;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REP) |
-		BIT_MASK(EV_PWR) | BIT_MASK(EV_SW);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REP) | BIT(EV_PWR) | BIT(EV_SW);
 	input_dev->keycode = corgikbd->keycode;
 	input_dev->keycodesize = sizeof(unsigned char);
 	input_dev->keycodemax = ARRAY_SIZE(corgikbd_keycode);
@@ -337,9 +344,7 @@ static int __devinit corgikbd_probe(struct platform_device *pdev)
 	set_bit(SW_TABLET_MODE, input_dev->swbit);
 	set_bit(SW_HEADPHONE_INSERT, input_dev->swbit);
 
-	err = input_register_device(corgikbd->input);
-	if (err)
-		goto fail;
+	input_register_device(corgikbd->input);
 
 	mod_timer(&corgikbd->htimer, jiffies + msecs_to_jiffies(HINGE_SCAN_INTERVAL));
 
@@ -360,13 +365,9 @@ static int __devinit corgikbd_probe(struct platform_device *pdev)
 	pxa_gpio_mode(CORGI_GPIO_AK_INT | GPIO_IN);
 
 	return 0;
-
- fail:	input_free_device(input_dev);
-	kfree(corgikbd);
-	return err;
 }
 
-static int __devexit corgikbd_remove(struct platform_device *pdev)
+static int corgikbd_remove(struct platform_device *pdev)
 {
 	int i;
 	struct corgikbd *corgikbd = platform_get_drvdata(pdev);
@@ -386,16 +387,15 @@ static int __devexit corgikbd_remove(struct platform_device *pdev)
 
 static struct platform_driver corgikbd_driver = {
 	.probe		= corgikbd_probe,
-	.remove		= __devexit_p(corgikbd_remove),
+	.remove		= corgikbd_remove,
 	.suspend	= corgikbd_suspend,
 	.resume		= corgikbd_resume,
 	.driver		= {
 		.name	= "corgi-keyboard",
-		.owner	= THIS_MODULE,
 	},
 };
 
-static int __init corgikbd_init(void)
+static int __devinit corgikbd_init(void)
 {
 	return platform_driver_register(&corgikbd_driver);
 }
@@ -410,5 +410,4 @@ module_exit(corgikbd_exit);
 
 MODULE_AUTHOR("Richard Purdie <rpurdie@rpsys.net>");
 MODULE_DESCRIPTION("Corgi Keyboard Driver");
-MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:corgi-keyboard");
+MODULE_LICENSE("GPLv2");

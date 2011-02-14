@@ -1,0 +1,165 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 229874 Supress SELinux printk for messages users 	don't care about
+Date: Mon, 30 Apr 2007 16:25:59 -0400
+Bugzilla: 229874
+Message-Id: <1177964759.3920.11.camel@dhcp59-235.rdu.redhat.com>
+Changelog: [security] Supress SELinux printk for messages users don't care about
+
+
+BZ 229874
+
+The customer from the above BZ complained that on a system where they
+were mounting and unmounting lots of filesystems (read automounter) they
+got really tired of the log spam that looks like:
+
+Dec 18 16:32:06 buildrm55 kernel: SELinux: initialized (dev 0:39, type
+nfs), uses genfs_contexts
+
+Which comes every time a FS is mounted on a machine running with SELinux
+enabled.  So upstream we decided to do a run through all of the printk
+messages in SELinux code and attempted to demote messages users can
+almost always safely ignore to DEBUG and promote messages which are
+actually problems to ERR.  Very few printks were left at INFO since
+there aren't to many things SELinux can do that users might need to take
+action on but aren't actually errors.  In reality to fix the issue they
+were complaining about only requires the very first hunk of this patch,
+but this is the full patch upstream took.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=fadcdb451632d32d7c0d4c71df9ac2d3b7ae2348
+
+This should silence most all of the SELinux spam.
+
+-Eric
+
+--- linux-2.6.18.i686/security/selinux/hooks.c.pre.printk	2007-04-30 16:21:15.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/hooks.c	2007-04-30 16:23:26.000000000 -0400
+@@ -653,11 +653,11 @@ static int superblock_doinit(struct supe
+ 	sbsec->initialized = 1;
+ 
+ 	if (sbsec->behavior > ARRAY_SIZE(labeling_behaviors)) {
+-		printk(KERN_INFO "SELinux: initialized (dev %s, type %s), unknown behavior\n",
++		printk(KERN_ERR "SELinux: initialized (dev %s, type %s), unknown behavior\n",
+ 		       sb->s_id, sb->s_type->name);
+ 	}
+ 	else {
+-		printk(KERN_INFO "SELinux: initialized (dev %s, type %s), %s\n",
++		printk(KERN_DEBUG "SELinux: initialized (dev %s, type %s), %s\n",
+ 		       sb->s_id, sb->s_type->name,
+ 		       labeling_behaviors[sbsec->behavior-1]);
+ 	}
+@@ -4350,7 +4350,7 @@ static int selinux_ipc_permission(struct
+ static int selinux_register_security (const char *name, struct security_operations *ops)
+ {
+ 	if (secondary_ops != original_ops) {
+-		printk(KERN_INFO "%s:  There is already a secondary security "
++		printk(KERN_ERR "%s:  There is already a secondary security "
+ 		       "module registered.\n", __FUNCTION__);
+ 		return -EINVAL;
+  	}
+@@ -4367,7 +4367,7 @@ static int selinux_register_security (co
+ static int selinux_unregister_security (const char *name, struct security_operations *ops)
+ {
+ 	if (ops != secondary_ops) {
+-		printk (KERN_INFO "%s:  trying to unregister a security module "
++		printk(KERN_ERR "%s:  trying to unregister a security module "
+ 		        "that is not registered.\n", __FUNCTION__);
+ 		return -EINVAL;
+ 	}
+@@ -4812,9 +4812,9 @@ static __init int selinux_init(void)
+ 		panic("SELinux: Unable to register with kernel.\n");
+ 
+ 	if (selinux_enforcing) {
+-		printk(KERN_INFO "SELinux:  Starting in enforcing mode\n");
++		printk(KERN_DEBUG "SELinux:  Starting in enforcing mode\n");
+ 	} else {
+-		printk(KERN_INFO "SELinux:  Starting in permissive mode\n");
++		printk(KERN_DEBUG "SELinux:  Starting in permissive mode\n");
+ 	}
+ 
+ #ifdef CONFIG_KEYS
+@@ -4830,10 +4830,10 @@ static __init int selinux_init(void)
+ 
+ void selinux_complete_init(void)
+ {
+-	printk(KERN_INFO "SELinux:  Completing initialization.\n");
++	printk(KERN_DEBUG "SELinux:  Completing initialization.\n");
+ 
+ 	/* Set up any superblocks initialized prior to the policy load. */
+-	printk(KERN_INFO "SELinux:  Setting up existing superblocks.\n");
++	printk(KERN_DEBUG "SELinux:  Setting up existing superblocks.\n");
+ 	spin_lock(&sb_lock);
+ 	spin_lock(&sb_security_lock);
+ next_sb:
+@@ -4891,9 +4891,9 @@ static int __init selinux_nf_ip_init(voi
+ 
+ 	if (!selinux_enabled)
+ 		goto out;
+-		
+-	printk(KERN_INFO "SELinux:  Registering netfilter hooks\n");
+-	
++
++	printk(KERN_DEBUG "SELinux:  Registering netfilter hooks\n");
++
+ 	err = nf_register_hook(&selinux_ipv4_op);
+ 	if (err)
+ 		panic("SELinux: nf_register_hook for IPv4: error %d\n", err);
+@@ -4915,7 +4915,7 @@ __initcall(selinux_nf_ip_init);
+ #ifdef CONFIG_SECURITY_SELINUX_DISABLE
+ static void selinux_nf_ip_exit(void)
+ {
+-	printk(KERN_INFO "SELinux:  Unregistering netfilter hooks\n");
++	printk(KERN_DEBUG "SELinux:  Unregistering netfilter hooks\n");
+ 
+ 	nf_unregister_hook(&selinux_ipv4_op);
+ #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+--- linux-2.6.18.i686/security/selinux/ss/sidtab.c.pre.printk	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/sidtab.c	2007-04-30 16:23:26.000000000 -0400
+@@ -254,7 +254,7 @@ void sidtab_hash_eval(struct sidtab *h, 
+ 		}
+ 	}
+ 
+-	printk(KERN_INFO "%s:  %d entries and %d/%d buckets used, longest "
++	printk(KERN_DEBUG "%s:  %d entries and %d/%d buckets used, longest "
+ 	       "chain length %d\n", tag, h->nel, slots_used, SIDTAB_SIZE,
+ 	       max_chain_len);
+ }
+--- linux-2.6.18.i686/security/selinux/ss/avtab.c.pre.printk	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/avtab.c	2007-04-30 16:23:26.000000000 -0400
+@@ -278,7 +278,7 @@ void avtab_hash_eval(struct avtab *h, ch
+ 		}
+ 	}
+ 
+-	printk(KERN_INFO "%s:  %d entries and %d/%d buckets used, longest "
++	printk(KERN_DEBUG "%s:  %d entries and %d/%d buckets used, longest "
+ 	       "chain length %d\n", tag, h->nel, slots_used, AVTAB_SIZE,
+ 	       max_chain_len);
+ }
+--- linux-2.6.18.i686/security/selinux/ss/policydb.c.pre.printk	2007-04-30 16:21:09.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/policydb.c	2007-04-30 16:23:26.000000000 -0400
+@@ -374,7 +374,7 @@ static void symtab_hash_eval(struct symt
+ 		struct hashtab_info info;
+ 
+ 		hashtab_stat(h, &info);
+-		printk(KERN_INFO "%s:  %d entries and %d/%d buckets used, "
++		printk(KERN_DEBUG "%s:  %d entries and %d/%d buckets used, "
+ 		       "longest chain length %d\n", symtab_name[i], h->nel,
+ 		       info.slots_used, h->size, info.max_chain_len);
+ 	}
+@@ -391,14 +391,14 @@ static int policydb_index_others(struct 
+ {
+ 	int i, rc = 0;
+ 
+-	printk(KERN_INFO "security:  %d users, %d roles, %d types, %d bools",
++	printk(KERN_DEBUG "security:  %d users, %d roles, %d types, %d bools",
+ 	       p->p_users.nprim, p->p_roles.nprim, p->p_types.nprim, p->p_bools.nprim);
+ 	if (selinux_mls_enabled)
+ 		printk(", %d sens, %d cats", p->p_levels.nprim,
+ 		       p->p_cats.nprim);
+ 	printk("\n");
+ 
+-	printk(KERN_INFO "security:  %d classes, %d rules\n",
++	printk(KERN_DEBUG "security:  %d classes, %d rules\n",
+ 	       p->p_classes.nprim, p->te_avtab.nel);
+ 
+ #ifdef DEBUG_HASHES
+

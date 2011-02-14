@@ -13,19 +13,18 @@
 #include <linux/sysctl.h>
 #include <linux/input.h>
 #include <linux/module.h>
-#include <linux/kbd_kern.h>
 
 
 static struct input_dev *emumousebtn;
 static int emumousebtn_input_register(void);
-static int mouse_emulate_buttons;
+static int mouse_emulate_buttons = 0;
 static int mouse_button2_keycode = KEY_RIGHTCTRL;	/* right control key */
 static int mouse_button3_keycode = KEY_RIGHTALT;	/* right option key */
-static int mouse_last_keycode;
+static int mouse_last_keycode = 0;
 
 #if defined(CONFIG_SYSCTL)
 /* file(s) in /proc/sys/dev/mac_hid */
-static ctl_table mac_hid_files[] = {
+ctl_table mac_hid_files[] = {
 	{
 		.ctl_name	= DEV_MAC_HID_MOUSE_BUTTON_EMULATION,
 		.procname	= "mouse_button_emulation",
@@ -54,7 +53,7 @@ static ctl_table mac_hid_files[] = {
 };
 
 /* dir in /proc/sys/dev */
-static ctl_table mac_hid_dir[] = {
+ctl_table mac_hid_dir[] = {
 	{
 		.ctl_name	= DEV_MAC_HID,
 		.procname	= "mac_hid",
@@ -66,7 +65,7 @@ static ctl_table mac_hid_dir[] = {
 };
 
 /* /proc/sys/dev itself, in case that is not there yet */
-static ctl_table mac_hid_root_dir[] = {
+ctl_table mac_hid_root_dir[] = {
 	{
 		.ctl_name	= CTL_DEV,
 		.procname	= "dev",
@@ -103,19 +102,13 @@ int mac_hid_mouse_emulate_buttons(int caller, unsigned int keycode, int down)
 	return 0;
 }
 
-static struct lock_class_key emumousebtn_event_class;
-static struct lock_class_key emumousebtn_mutex_class;
+EXPORT_SYMBOL(mac_hid_mouse_emulate_buttons);
 
 static int emumousebtn_input_register(void)
 {
-	int ret;
-
 	emumousebtn = input_allocate_device();
 	if (!emumousebtn)
 		return -ENOMEM;
-
-	lockdep_set_class(&emumousebtn->event_lock, &emumousebtn_event_class);
-	lockdep_set_class(&emumousebtn->mutex, &emumousebtn_mutex_class);
 
 	emumousebtn->name = "Macintosh mouse button emulation";
 	emumousebtn->id.bustype = BUS_ADB;
@@ -123,19 +116,16 @@ static int emumousebtn_input_register(void)
 	emumousebtn->id.product = 0x0001;
 	emumousebtn->id.version = 0x0100;
 
-	emumousebtn->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL);
-	emumousebtn->keybit[BIT_WORD(BTN_MOUSE)] = BIT_MASK(BTN_LEFT) |
-		BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
-	emumousebtn->relbit[0] = BIT_MASK(REL_X) | BIT_MASK(REL_Y);
+	emumousebtn->evbit[0] = BIT(EV_KEY) | BIT(EV_REL);
+	emumousebtn->keybit[LONG(BTN_MOUSE)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
+	emumousebtn->relbit[0] = BIT(REL_X) | BIT(REL_Y);
 
-	ret = input_register_device(emumousebtn);
-	if (ret)
-		input_free_device(emumousebtn);
+	input_register_device(emumousebtn);
 
-	return ret;
+	return 0;
 }
 
-static int __init mac_hid_init(void)
+int __init mac_hid_init(void)
 {
 	int err;
 
@@ -144,7 +134,7 @@ static int __init mac_hid_init(void)
 		return err;
 
 #if defined(CONFIG_SYSCTL)
-	mac_hid_sysctl_header = register_sysctl_table(mac_hid_root_dir);
+	mac_hid_sysctl_header = register_sysctl_table(mac_hid_root_dir, 1);
 #endif /* CONFIG_SYSCTL */
 
 	return 0;

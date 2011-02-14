@@ -1,5 +1,5 @@
 /*
- * arch/xtensa/kernel/setup.c
+ * arch/xtensa/setup.c
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
@@ -16,7 +16,6 @@
 
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/mm.h>
 #include <linux/proc_fs.h>
 #include <linux/screen_info.h>
 #include <linux/bootmem.h>
@@ -42,9 +41,8 @@
 #include <asm/platform.h>
 #include <asm/page.h>
 #include <asm/setup.h>
-#include <asm/param.h>
 
-#include <platform/hardware.h>
+#include <xtensa/config/system.h>
 
 #if defined(CONFIG_VGA_CONSOLE) || defined(CONFIG_DUMMY_CONSOLE)
 struct screen_info screen_info = { 0, 24, 0, 0, 0, 80, 0, 0, 0, 24, 1, 16};
@@ -55,8 +53,18 @@ extern struct fd_ops no_fd_ops;
 struct fd_ops *fd_ops;
 #endif
 
+#if defined(CONFIG_BLK_DEV_IDE) || defined(CONFIG_BLK_DEV_IDE_MODULE)
+extern struct ide_ops no_ide_ops;
+struct ide_ops *ide_ops;
+#endif
+
 extern struct rtc_ops no_rtc_ops;
 struct rtc_ops *rtc_ops;
+
+#ifdef CONFIG_PC_KEYB
+extern struct kbd_ops no_kbd_ops;
+struct kbd_ops *kbd_ops;
+#endif
 
 #ifdef CONFIG_BLK_DEV_INITRD
 extern void *initrd_start;
@@ -72,7 +80,7 @@ extern unsigned long loops_per_jiffy;
 
 /* Command line specified as configuration option. */
 
-static char __initdata command_line[COMMAND_LINE_SIZE];
+static char command_line[COMMAND_LINE_SIZE];
 
 #ifdef CONFIG_CMDLINE_BOOL
 static char default_command_line[COMMAND_LINE_SIZE] __initdata = CONFIG_CMDLINE;
@@ -84,13 +92,7 @@ sysmem_info_t __initdata sysmem;
 int initrd_is_mapped;
 #endif
 
-#ifdef CONFIG_MMU
 extern void init_mmu(void);
-#else
-static inline void init_mmu(void) { }
-#endif
-
-extern void zones_init(void);
 
 /*
  * Boot parameter parsing.
@@ -253,8 +255,8 @@ void __init setup_arch(char **cmdline_p)
 	extern int mem_reserve(unsigned long, unsigned long, int);
 	extern void bootmem_init(void);
 
-	memcpy(boot_command_line, command_line, COMMAND_LINE_SIZE);
-	boot_command_line[COMMAND_LINE_SIZE-1] = '\0';
+	memcpy(saved_command_line, command_line, COMMAND_LINE_SIZE);
+	saved_command_line[COMMAND_LINE_SIZE-1] = '\0';
 	*cmdline_p = command_line;
 
 	/* Reserve some memory regions */
@@ -292,7 +294,6 @@ void __init setup_arch(char **cmdline_p)
 
 
 	paging_init();
-	zones_init();
 
 #ifdef CONFIG_VT
 # if defined(CONFIG_VGA_CONSOLE)
@@ -335,7 +336,7 @@ c_show(struct seq_file *f, void *slot)
 	/* high-level stuff */
 	seq_printf(f,"processor\t: 0\n"
 		     "vendor_id\t: Tensilica\n"
-		     "model\t\t: Xtensa " XCHAL_HW_VERSION_NAME "\n"
+		     "model\t\t: Xtensa " XCHAL_HW_RELEASE_NAME "\n"
 		     "core ID\t\t: " XCHAL_CORE_ID "\n"
 		     "build ID\t: 0x%x\n"
 		     "byte order\t: %s\n"
@@ -419,6 +420,25 @@ c_show(struct seq_file *f, void *slot)
 		     XCHAL_NUM_TIMERS,
 		     XCHAL_DEBUGLEVEL);
 
+	/* Coprocessors */
+#if XCHAL_HAVE_CP
+	seq_printf(f, "coprocessors\t: %d\n", XCHAL_CP_NUM);
+#else
+	seq_printf(f, "coprocessors\t: none\n");
+#endif
+
+	/* {I,D}{RAM,ROM} and XLMI */
+	seq_printf(f,"inst ROMs\t: %d\n"
+		     "inst RAMs\t: %d\n"
+		     "data ROMs\t: %d\n"
+		     "data RAMs\t: %d\n"
+		     "XLMI ports\t: %d\n",
+		     XCHAL_NUM_IROM,
+		     XCHAL_NUM_IRAM,
+		     XCHAL_NUM_DROM,
+		     XCHAL_NUM_DRAM,
+		     XCHAL_NUM_XLMI);
+
 	/* Cache */
 	seq_printf(f,"icache line size: %d\n"
 		     "icache ways\t: %d\n"
@@ -446,6 +466,24 @@ c_show(struct seq_file *f, void *slot)
 		     XCHAL_DCACHE_WAYS,
 		     XCHAL_DCACHE_SIZE);
 
+	/* MMU */
+	seq_printf(f,"ASID bits\t: %d\n"
+		     "ASID invalid\t: %d\n"
+		     "ASID kernel\t: %d\n"
+		     "rings\t\t: %d\n"
+		     "itlb ways\t: %d\n"
+		     "itlb AR ways\t: %d\n"
+		     "dtlb ways\t: %d\n"
+		     "dtlb AR ways\t: %d\n",
+		     XCHAL_MMU_ASID_BITS,
+		     XCHAL_MMU_ASID_INVALID,
+		     XCHAL_MMU_ASID_KERNEL,
+		     XCHAL_MMU_RINGS,
+		     XCHAL_ITLB_WAYS,
+		     XCHAL_ITLB_ARF_WAYS,
+		     XCHAL_DTLB_WAYS,
+		     XCHAL_DTLB_ARF_WAYS);
+
 	return 0;
 }
 
@@ -469,7 +507,7 @@ c_stop(struct seq_file *f, void *v)
 {
 }
 
-const struct seq_operations cpuinfo_op =
+struct seq_operations cpuinfo_op =
 {
 	start:  c_start,
 	next:   c_next,

@@ -1,0 +1,230 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Oct 2009 15:54:19 -0400
+Subject: [cifs] replace wrtPending with a real reference count
+Message-id: <1256572464-27293-5-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21214
+O-Subject: [RHEL5.5 PATCH 4/9] BZ#531005: cifs: Replace wrtPending with a real
+	reference count
+Bugzilla: 531005
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+
+Currently, cifs_close() tries to wait until all I/O is complete and then
+frees the file private data.  If I/O does not completely in a reasonable
+amount of time it frees the structure anyway, leaving a potential use-
+after-free situation.
+
+This patch changes the wrtPending counter to a complete reference count and
+lets the last user free the structure.
+
+Signed-off-by: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+Reviewed-by: Jeff Layton <jlayton@redhat.com>
+Tested-by: Shirish Pargaonkar <shirishp@us.ibm.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifsacl.c b/fs/cifs/cifsacl.c
+index 1403b5d..5ec08c6 100644
+--- a/fs/cifs/cifsacl.c
++++ b/fs/cifs/cifsacl.c
+@@ -608,7 +608,7 @@ static struct cifs_ntsd *get_cifs_acl(struct cifs_sb_info *cifs_sb,
+ 		return get_cifs_acl_by_path(cifs_sb, path, pacllen);
+ 
+ 	pntsd = get_cifs_acl_by_fid(cifs_sb, open_file->netfid, pacllen);
+-	atomic_dec(&open_file->wrtPending);
++	cifsFileInfo_put(open_file);
+ 	return pntsd;
+ }
+ 
+@@ -666,7 +666,7 @@ static int set_cifs_acl(struct cifs_ntsd *pnntsd, __u32 acllen,
+ 		return set_cifs_acl_by_path(cifs_sb, path, pnntsd, acllen);
+ 
+ 	rc = set_cifs_acl_by_fid(cifs_sb, open_file->netfid, pnntsd, acllen);
+-	atomic_dec(&open_file->wrtPending);
++	cifsFileInfo_put(open_file);
+ 	return rc;
+ }
+ 
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index a2bf6aa..9cee987 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -361,11 +361,24 @@ struct cifsFileInfo {
+ 	bool closePend:1;	/* file is marked to close */
+ 	bool invalidHandle:1;	/* file closed via session abend */
+ 	bool messageMode:1;	/* for pipes: message vs byte mode */
+-	atomic_t wrtPending;   /* handle in use - defer close */
++	atomic_t count;		/* reference count */
+ 	struct semaphore fh_sem; /* prevents reopen race after dead ses*/
+ 	struct cifs_search_info srch_inf;
+ };
+ 
++/* Take a reference on the file private data */
++static inline void cifsFileInfo_get(struct cifsFileInfo *cifs_file)
++{
++	atomic_inc(&cifs_file->count);
++}
++
++/* Release a reference on the file private data */
++static inline void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
++{
++	if (atomic_dec_and_test(&cifs_file->count))
++		kfree(cifs_file);
++}
++
+ /*
+  * One of these for each file inode
+  */
+diff --git a/fs/cifs/dir.c b/fs/cifs/dir.c
+index 333ef7b..d12e68f 100644
+--- a/fs/cifs/dir.c
++++ b/fs/cifs/dir.c
+@@ -430,7 +430,7 @@ cifs_create_set_dentry:
+ 		init_MUTEX(&pCifsFile->fh_sem);
+ 		mutex_init(&pCifsFile->lock_mutex);
+ 		INIT_LIST_HEAD(&pCifsFile->llist);
+-		atomic_set(&pCifsFile->wrtPending, 0);
++		atomic_set(&pCifsFile->count, 1);
+ 
+ 		/* set the following in open now
+ 				pCifsFile->pfile = file; */
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index b2b0d7c..e27e106 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -64,11 +64,9 @@ static inline struct cifsFileInfo *cifs_init_private(
+ 	private_data->pInode = inode;
+ 	private_data->invalidHandle = false;
+ 	private_data->closePend = false;
+-	/* we have to track num writers to the inode, since writepages
+-	does not tell us which handle the write is for so there can
+-	be a close (overlapping with write) of the filehandle that
+-	cifs_writepages chose to use */
+-	atomic_set(&private_data->wrtPending, 0);
++	/* Initialize reference count to one.  The private data is
++	freed on the release of the last reference */
++	atomic_set(&private_data->count, 1);
+ 
+ 	return private_data;
+ }
+@@ -664,7 +662,7 @@ int cifs_close(struct inode *inode, struct file *file)
+ 			if (!pTcon->need_reconnect) {
+ 				write_unlock(&GlobalSMBSeslock);
+ 				timeout = 2;
+-				while ((atomic_read(&pSMBFile->wrtPending) != 0)
++				while ((atomic_read(&pSMBFile->count) != 1)
+ 					&& (timeout <= 2048)) {
+ 					/* Give write a better chance to get to
+ 					server ahead of the close.  We do not
+@@ -678,8 +676,6 @@ int cifs_close(struct inode *inode, struct file *file)
+ 					msleep(timeout);
+ 					timeout *= 4;
+ 				}
+-				if (atomic_read(&pSMBFile->wrtPending))
+-					cERROR(1, ("close with pending write"));
+ 				if (!pTcon->need_reconnect &&
+ 				    !pSMBFile->invalidHandle)
+ 					rc = CIFSSMBClose(xid, pTcon,
+@@ -702,24 +698,7 @@ int cifs_close(struct inode *inode, struct file *file)
+ 		list_del(&pSMBFile->flist);
+ 		list_del(&pSMBFile->tlist);
+ 		write_unlock(&GlobalSMBSeslock);
+-		timeout = 10;
+-		/* We waited above to give the SMBWrite a chance to issue
+-		   on the wire (so we do not get SMBWrite returning EBADF
+-		   if writepages is racing with close.  Note that writepages
+-		   does not specify a file handle, so it is possible for a file
+-		   to be opened twice, and the application close the "wrong"
+-		   file handle - in these cases we delay long enough to allow
+-		   the SMBWrite to get on the wire before the SMB Close.
+-		   We allow total wait here over 45 seconds, more than
+-		   oplock break time, and more than enough to allow any write
+-		   to complete on the server, or to time out on the client */
+-		while ((atomic_read(&pSMBFile->wrtPending) != 0)
+-				&& (timeout <= 50000)) {
+-			cERROR(1, ("writes pending, delay free of handle"));
+-			msleep(timeout);
+-			timeout *= 8;
+-		}
+-		kfree(file->private_data);
++		cifsFileInfo_put(file->private_data);
+ 		file->private_data = NULL;
+ 	} else
+ 		rc = -EBADF;
+@@ -1297,7 +1276,7 @@ struct cifsFileInfo *find_readable_file(struct cifsInodeInfo *cifs_inode)
+ 			if (!open_file->invalidHandle) {
+ 				/* found a good file */
+ 				/* lock it so it will not be closed on us */
+-				atomic_inc(&open_file->wrtPending);
++				cifsFileInfo_get(open_file);
+ 				read_unlock(&GlobalSMBSeslock);
+ 				return open_file;
+ 			} /* else might as well continue, and look for
+@@ -1339,7 +1318,7 @@ refind_writable:
+ 		if (open_file->pfile &&
+ 		    ((open_file->pfile->f_flags & O_RDWR) ||
+ 		     (open_file->pfile->f_flags & O_WRONLY))) {
+-			atomic_inc(&open_file->wrtPending);
++			cifsFileInfo_get(open_file);
+ 
+ 			if (!open_file->invalidHandle) {
+ 				/* found a good writable file */
+@@ -1358,7 +1337,7 @@ refind_writable:
+ 					read_lock(&GlobalSMBSeslock);
+ 					/* can not use this handle, no write
+ 					pending on this one after all */
+-					atomic_dec(&open_file->wrtPending);
++					cifsFileInfo_put(open_file);
+ 					goto refind_writable;
+ 				}
+ 			}
+@@ -1374,7 +1353,7 @@ refind_writable:
+ 			read_lock(&GlobalSMBSeslock);
+ 			/* can not use this handle, no write
+ 			   pending on this one after all */
+-			atomic_dec(&open_file->wrtPending);
++			cifsFileInfo_put(open_file);
+ 
+ 			if (open_file->closePend) /* list could have changed */
+ 				goto refind_writable;
+@@ -1438,7 +1417,7 @@ static int cifs_partialpagewrite(struct page *page, unsigned from, unsigned to)
+ 	if (open_file) {
+ 		bytes_written = cifs_write(open_file->pfile, write_data,
+ 					   to-from, &offset);
+-		atomic_dec(&open_file->wrtPending);
++		cifsFileInfo_put(open_file);
+ 		/* Does mm or vfs already set times? */
+ 		inode->i_atime = inode->i_mtime = current_fs_time(inode->i_sb);
+ 		if ((bytes_written > 0) && (offset))
+@@ -1652,7 +1631,7 @@ retry:
+ 						   bytes_to_write, offset,
+ 						   &bytes_written, iov, n_iov,
+ 						   long_op);
+-				atomic_dec(&open_file->wrtPending);
++				cifsFileInfo_put(open_file);
+ 				cifs_update_eof(cifsi, offset, bytes_written);
+ 
+ 				if (rc || bytes_written < bytes_to_write) {
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index e5ae359..2e61150 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -857,7 +857,7 @@ set_via_filehandle:
+ 	if (open_file == NULL)
+ 		CIFSSMBClose(xid, pTcon, netfid);
+ 	else
+-		atomic_dec(&open_file->wrtPending);
++		cifsFileInfo_put(open_file);
+ out:
+ 	return rc;
+ }
+@@ -1739,7 +1739,7 @@ cifs_set_file_size(struct inode *inode, struct iattr *attrs,
+ 		__u32 npid = open_file->pid;
+ 		rc = CIFSSMBSetFileSize(xid, pTcon, attrs->ia_size, nfid,
+ 					npid, false);
+-		atomic_dec(&open_file->wrtPending);
++		cifsFileInfo_put(open_file);
+ 		cFYI(1, ("SetFSize for attrs rc = %d", rc));
+ 		if ((rc == -EINVAL) || (rc == -EOPNOTSUPP)) {
+ 			unsigned int bytes_written;

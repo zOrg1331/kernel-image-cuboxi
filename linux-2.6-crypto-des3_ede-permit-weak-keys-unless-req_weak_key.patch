@@ -1,0 +1,66 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Wed, 17 Dec 2008 09:33:02 -0500
+Subject: [crypto] des3_ede: permit weak keys unless REQ_WEAK_KEY
+Message-id: 200812170933.02363.jarod@redhat.com
+O-Subject: [RHEL5.4 PATCH] crypto: des3_ede - permit weak keys unless REQ_WEAK_KEY set
+Bugzilla: 474394
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+
+Bug #474394
+https://bugzilla.redhat.com/show_bug.cgi?id=474394
+
+Description
+-----------
+The des3_ede code currently rejects keys that use a single key
+replicated 3x, unconditionally. The FIPS 140-2 triple-des
+verification suite includes test vectors which use a single
+key. We can't obtain the expected answers and thus can't pass
+the testing if we don't permit use of these types of keys.
+
+Solution
+--------
+>From my upstream submission for the same:
+
+While its a slightly insane to bypass the key1 == key2 ||
+key2 == key3 check in triple-des, since it reduces it to the
+same strength as des, some folks do need to do this from time
+to time for backwards compatibility with des.
+
+My own case is FIPS CAVS test vectors. Many triple-des test
+vectors use a single key, replicated 3x. In order to get the
+expected results, des3_ede_setkey() needs to only reject weak
+keys if the CRYPTO_TFM_REQ_WEAK_KEY flag is set.
+
+Also sets a more appropriate RES flag when a weak key is found.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Test status
+-----------
+With CRYPTO_TFM_REQ_WEAK_KEY not set, all triple-des single-key
+test vectors now obtain the expected results.
+
+Upstream status
+---------------
+Committed to cryptodev-2.6 tree as of today.
+http://git.kernel.org/?p=linux/kernel/git/herbert/cryptodev-2.6.git;a=commit;h=3f46fa71cd6afb238e8fbe39cf23faacd2ddd1e3
+
+diff --git a/crypto/des.c b/crypto/des.c
+index a9d3c23..99cf12c 100644
+--- a/crypto/des.c
++++ b/crypto/des.c
+@@ -871,9 +871,10 @@ static int des3_ede_setkey(struct crypto_tfm *tfm, const u8 *key,
+ 	u32 *expkey = dctx->expkey;
+ 
+ 	if (unlikely(!((K[0] ^ K[2]) | (K[1] ^ K[3])) ||
+-		     !((K[2] ^ K[4]) | (K[3] ^ K[5]))))
++		     !((K[2] ^ K[4]) | (K[3] ^ K[5]))) &&
++		     (*flags & CRYPTO_TFM_REQ_WEAK_KEY))
+ 	{
+-		*flags |= CRYPTO_TFM_RES_BAD_KEY_SCHED;
++		*flags |= CRYPTO_TFM_RES_WEAK_KEY;
+ 		return -EINVAL;
+ 	}
+ 

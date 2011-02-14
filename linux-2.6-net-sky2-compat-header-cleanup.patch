@@ -1,0 +1,73 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:51:58 -0400
+Subject: [net] sky2: compat header cleanup
+Message-id: <20100510184942.2781.31080.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24976
+O-Subject: [RHEL5 PATCH 16/27] compat.h cleanup: sky2 driver changes
+Bugzilla: 546740
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+>From 61f27e8e7ad18a81a117afb96b3028ca7072e157 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:38:22 -0400
+Subject: [PATCH] sky2 driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/sky2.c b/drivers/net/sky2.c
+index be1b7f9..a2e9d5b 100644
+--- a/drivers/net/sky2.c
++++ b/drivers/net/sky2.c
+@@ -43,8 +43,6 @@
+ 
+ #include <asm/irq.h>
+ 
+-#include "sky2_compat.h"
+-
+ #if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
+ #define SKY2_VLAN_TAG_USED 1
+ #endif
+@@ -1000,19 +998,6 @@ static inline struct sky2_tx_le *get_tx_le(struct sky2_port *sky2)
+ 	return le;
+ }
+ 
+-static void tx_init(struct sky2_port *sky2)
+-{
+-	struct sky2_tx_le *le;
+-
+-	sky2->tx_prod = sky2->tx_cons = 0;
+-	sky2->tx_tcpsum = 0;
+-	sky2->tx_last_mss = 0;
+-
+-	le = get_tx_le(sky2);
+-	le->addr = 0;
+-	le->opcode = OP_ADDR64 | HW_OWNER;
+-}
+-
+ static inline struct tx_ring_info *tx_le_re(struct sky2_port *sky2,
+ 					    struct sky2_tx_le *le)
+ {
+diff --git a/drivers/net/sky2_compat.h b/drivers/net/sky2_compat.h
+deleted file mode 100644
+index 71d191e..0000000
+--- a/drivers/net/sky2_compat.h
++++ /dev/null
+@@ -1,18 +0,0 @@
+-#ifndef __SKY_COMPAT_H__
+-#define __SKY_COMPAT_H__
+-
+-#define CHECKSUM_PARTIAL	CHECKSUM_HW
+-#define CHECKSUM_COMPLETE	CHECKSUM_HW
+-
+-#ifndef PTR_ALIGN
+-#define PTR_ALIGN(p, a)         ((typeof(p))ALIGN((unsigned long)(p), (a)))
+-#endif
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-                                         struct net_device *dev)
+-{
+-	if (vg)
+-		vg->vlan_devices[vlan_id] = NULL;
+-}
+-
+-#endif /* __SKY_COMPAT_H__ */

@@ -1,0 +1,52 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Tue, 18 Dec 2007 15:56:08 -0500
+Subject: [xen] improve checking in vcpu_destroy_pagetables
+Message-id: 20071218205608.15371.86736.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 3/3] Improve checking in vcpu_destroy_pagetables
+Bugzilla: 227614
+
+x86, 32-on-64: Improve checking in vcpu_destroy_pagetables(). It *is*
+possible for 64-bit guest to have matching guest_table and
+guest_table_user.
+Original patch by John Levon <levon@movementarian.org>
+Signed-off-by: Keir Fraser <keir.fraser@eu.citrix.com>
+xen-unstable changeset: 16401:f62e6c697eeb68a7a62f4beb87e85a68b91b3c6a
+xen-unstable date: Tue Nov 20 15:34:25 2007 +0000
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 215d4f2..46ea2a0 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -1681,10 +1681,6 @@ static void vcpu_destroy_pagetables(struct vcpu *v)
+             put_page(mfn_to_page(pfn));
+         else
+             put_page_and_type(mfn_to_page(pfn));
+-#ifdef __x86_64__
+-        if ( pfn == pagetable_get_pfn(v->arch.guest_table_user) )
+-            v->arch.guest_table_user = pagetable_null();
+-#endif
+         v->arch.guest_table = pagetable_null();
+     }
+ 
+@@ -1693,10 +1689,13 @@ static void vcpu_destroy_pagetables(struct vcpu *v)
+     pfn = pagetable_get_pfn(v->arch.guest_table_user);
+     if ( pfn != 0 )
+     {
+-        if ( paging_mode_refcounts(d) )
+-            put_page(mfn_to_page(pfn));
+-        else
+-            put_page_and_type(mfn_to_page(pfn));
++        if ( !is_pv_32bit_vcpu(v) )
++        {
++            if ( paging_mode_refcounts(d) )
++                put_page(mfn_to_page(pfn));
++            else
++                put_page_and_type(mfn_to_page(pfn));
++        }
+         v->arch.guest_table_user = pagetable_null();
+     }
+ #endif

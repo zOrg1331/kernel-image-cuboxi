@@ -1,0 +1,2296 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 14 Dec 2007 14:04:09 -0500
+Subject: [net] dod ipv6 conformance
+Message-id: 20071214190409.GE8617@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH] repost of patch for bz 253278 to fix ABI issue
+Bugzilla: 253278
+
+Hey!
+        This monster patch is a conglomeration of several upstream commits that
+we need to meet DOD IPv6 conformance guidelines.  They are exclusively
+snmp/statistics related, with the exception of the first three that were so small
+I thought I would just roll them in together.  Tested by IBM with successful
+resutls.
+
+Specifically this backports the following commits:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=a11d206d0f88e092419877c7f706cafb5e1c2e57
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=30c4cf577fb5b68c16e5750d6bdbd7072e42b279
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d88ae4cc97b24783ee4480697fbdcc02ab4133a6
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=612f09e8495ba656032f89147ab999ef2be9c360
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=71ff6c0a857d11e70aec0c8f1e0d4ae9a45dd468
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e91a47ebb130b90790c7a8c625ade4dcea246842
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=704aed53b4e43bebfbd425cf95b66794a9cfa2c2
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=5506b54b36f067b9776935085c9f8e607b026b23
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=80787ebc2bbd8e675d8b9ff8cfa40f15134feebe
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=5bb1ab09e4f6287c0b6c9cdbd463147cbd003f54
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d831666e98b4f1e19ebdd2349735f47bf37cd293
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c61a7d10efbd187ab9bb54871238ebd1dfcacd44
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.24.git;a=commitdiff;h=661318cbdd27c48913c0d69b831cbb1a5d8f6b38
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.24.git;a=commit;h=4b125ee4a0ba2e127d140c173ee230d89690906f
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=064f3605be6b9b77151274f60693843cabaa09ec
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=bf0b48dfc368c07c42b5a3a5658c8ee81b4283ac
+
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/linux/snmp.h b/include/linux/snmp.h
+index 4db25d5..713cc98 100644
+--- a/include/linux/snmp.h
++++ b/include/linux/snmp.h
+@@ -40,6 +40,8 @@ enum
+ 	IPSTATS_MIB_FRAGCREATES,		/* FragCreates */
+ 	IPSTATS_MIB_INMCASTPKTS,		/* InMcastPkts */
+ 	IPSTATS_MIB_OUTMCASTPKTS,		/* OutMcastPkts */
++	IPSTATS_MIB_INBCASTPKTS,		/* InBcastPkts */
++	IPSTATS_MIB_OUTBCASTPKTS,		/* OutBcastPkts */
+ 	__IPSTATS_MIB_MAX
+ };
+ 
+@@ -80,6 +82,8 @@ enum
+ 	__ICMP_MIB_MAX
+ };
+ 
++#define __ICMPMSG_MIB_MAX 512	/* Out+In for all 8-bit ICMP types */
++
+ /* icmp6 mib definitions */
+ /*
+  * RFC 2466:  ICMPv6-MIB
+@@ -89,35 +93,12 @@ enum
+ 	ICMP6_MIB_NUM = 0,
+ 	ICMP6_MIB_INMSGS,			/* InMsgs */
+ 	ICMP6_MIB_INERRORS,			/* InErrors */
+-	ICMP6_MIB_INDESTUNREACHS,		/* InDestUnreachs */
+-	ICMP6_MIB_INPKTTOOBIGS,			/* InPktTooBigs */
+-	ICMP6_MIB_INTIMEEXCDS,			/* InTimeExcds */
+-	ICMP6_MIB_INPARMPROBLEMS,		/* InParmProblems */
+-	ICMP6_MIB_INECHOS,			/* InEchos */
+-	ICMP6_MIB_INECHOREPLIES,		/* InEchoReplies */
+-	ICMP6_MIB_INGROUPMEMBQUERIES,		/* InGroupMembQueries */
+-	ICMP6_MIB_INGROUPMEMBRESPONSES,		/* InGroupMembResponses */
+-	ICMP6_MIB_INGROUPMEMBREDUCTIONS,	/* InGroupMembReductions */
+-	ICMP6_MIB_INROUTERSOLICITS,		/* InRouterSolicits */
+-	ICMP6_MIB_INROUTERADVERTISEMENTS,	/* InRouterAdvertisements */
+-	ICMP6_MIB_INNEIGHBORSOLICITS,		/* InNeighborSolicits */
+-	ICMP6_MIB_INNEIGHBORADVERTISEMENTS,	/* InNeighborAdvertisements */
+-	ICMP6_MIB_INREDIRECTS,			/* InRedirects */
+ 	ICMP6_MIB_OUTMSGS,			/* OutMsgs */
+-	ICMP6_MIB_OUTDESTUNREACHS,		/* OutDestUnreachs */
+-	ICMP6_MIB_OUTPKTTOOBIGS,		/* OutPktTooBigs */
+-	ICMP6_MIB_OUTTIMEEXCDS,			/* OutTimeExcds */
+-	ICMP6_MIB_OUTPARMPROBLEMS,		/* OutParmProblems */
+-	ICMP6_MIB_OUTECHOREPLIES,		/* OutEchoReplies */
+-	ICMP6_MIB_OUTROUTERSOLICITS,		/* OutRouterSolicits */
+-	ICMP6_MIB_OUTNEIGHBORSOLICITS,		/* OutNeighborSolicits */
+-	ICMP6_MIB_OUTNEIGHBORADVERTISEMENTS,	/* OutNeighborAdvertisements */
+-	ICMP6_MIB_OUTREDIRECTS,			/* OutRedirects */
+-	ICMP6_MIB_OUTGROUPMEMBRESPONSES,	/* OutGroupMembResponses */
+-	ICMP6_MIB_OUTGROUPMEMBREDUCTIONS,	/* OutGroupMembReductions */
+ 	__ICMP6_MIB_MAX
+ };
+ 
++#define __ICMP6MSG_MIB_MAX 512 /* Out+In for all 8-bit ICMPv6 types */
++
+ /* tcp mib definitions */
+ /*
+  * RFC 1213:  MIB-II TCP group
+diff --git a/include/net/addrconf.h b/include/net/addrconf.h
+index ed399f5..cd98ca4 100644
+--- a/include/net/addrconf.h
++++ b/include/net/addrconf.h
+@@ -128,7 +128,7 @@ extern int unregister_inet6addr_notifier(struct notifier_block *nb);
+ static inline struct inet6_dev *
+ __in6_dev_get(struct net_device *dev)
+ {
+-	return (struct inet6_dev *)dev->ip6_ptr;
++	return rcu_dereference(dev->ip6_ptr);
+ }
+ 
+ extern rwlock_t addrconf_lock;
+@@ -137,11 +137,11 @@ static inline struct inet6_dev *
+ in6_dev_get(struct net_device *dev)
+ {
+ 	struct inet6_dev *idev = NULL;
+-	read_lock(&addrconf_lock);
+-	idev = dev->ip6_ptr;
++	rcu_read_lock();
++	idev = __in6_dev_get(dev);
+ 	if (idev)
+ 		atomic_inc(&idev->refcnt);
+-	read_unlock(&addrconf_lock);
++	rcu_read_unlock();
+ 	return idev;
+ }
+ 
+diff --git a/include/net/icmp.h b/include/net/icmp.h
+index 05f8ff7..64ac00b 100644
+--- a/include/net/icmp.h
++++ b/include/net/icmp.h
+@@ -30,9 +30,16 @@ struct icmp_err {
+ 
+ extern struct icmp_err icmp_err_convert[];
+ DECLARE_SNMP_STAT(struct icmp_mib, icmp_statistics);
++DECLARE_SNMP_STAT(struct icmpmsg_mib, icmpmsg_statistics);
+ #define ICMP_INC_STATS(field)		SNMP_INC_STATS(icmp_statistics, field)
+ #define ICMP_INC_STATS_BH(field)	SNMP_INC_STATS_BH(icmp_statistics, field)
+ #define ICMP_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(icmp_statistics, field)
++#define ICMPMSGOUT_INC_STATS(field)	SNMP_INC_STATS(icmpmsg_statistics, field+256)
++#define ICMPMSGOUT_INC_STATS_BH(field)	SNMP_INC_STATS_BH(icmpmsg_statistics, field+256)
++#define ICMPMSGOUT_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(icmpmsg_statistics, field+256)
++#define ICMPMSGIN_INC_STATS(field)	SNMP_INC_STATS(icmpmsg_statistics, field)
++#define ICMPMSGIN_INC_STATS_BH(field)	SNMP_INC_STATS_BH(icmpmsg_statistics, field)
++#define ICMPMSGIN_INC_STATS_USER(field) SNMP_INC_STATS_USER(icmpmsg_statistics, field)
+ 
+ struct dst_entry;
+ struct net_proto_family;
+@@ -42,6 +49,7 @@ extern void	icmp_send(struct sk_buff *skb_in,  int type, int code, u32 info);
+ extern int	icmp_rcv(struct sk_buff *skb);
+ extern int	icmp_ioctl(struct sock *sk, int cmd, unsigned long arg);
+ extern void	icmp_init(struct net_proto_family *ops);
++extern void	icmp_out_count(unsigned char type);
+ 
+ /* Move into dst.h ? */
+ extern int 	xrlim_allow(struct dst_entry *dst, int timeout);
+diff --git a/include/net/if_inet6.h b/include/net/if_inet6.h
+index e459e1a..2ee8a96 100644
+--- a/include/net/if_inet6.h
++++ b/include/net/if_inet6.h
+@@ -155,6 +155,13 @@ struct ipv6_devstat {
+ 	DEFINE_SNMP_STAT(struct icmpv6_mib, icmpv6);
+ };
+ 
++struct ipv6_devstat_ext {
++	struct proc_dir_entry	*proc_dir_entry;
++	DEFINE_SNMP_STAT(struct ipstats_mib, ipv6);
++	DEFINE_SNMP_STAT(struct icmpv6_mib, icmpv6);
++	DEFINE_SNMP_STAT(struct icmpv6msg_mib, icmpv6msg);
++};
++
+ struct inet6_dev 
+ {
+ 	struct net_device		*dev;
+@@ -189,6 +196,10 @@ struct inet6_dev
+ 	struct ipv6_devconf	cnf;
+ 	struct ipv6_devstat	stats;
+ 	unsigned long		tstamp; /* ipv6InterfaceTable update timestamp */
++#ifndef __GENKSYMS__
++	struct rcu_head         rcu;
++	struct ipv6_devstat_ext statsx;
++#endif
+ };
+ 
+ extern struct ipv6_devconf ipv6_devconf;
+diff --git a/include/net/ip6_fib.h b/include/net/ip6_fib.h
+index e2bfb31..72c7655 100644
+--- a/include/net/ip6_fib.h
++++ b/include/net/ip6_fib.h
+@@ -89,6 +89,11 @@ struct rt6_info
+ 	u8				rt6i_protocol;
+ };
+ 
++static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)
++{
++	return ((struct rt6_info *)dst)->rt6i_idev;
++}
++
+ struct fib6_walker_t
+ {
+ 	struct fib6_walker_t *prev, *next;
+diff --git a/include/net/ipv6.h b/include/net/ipv6.h
+index 1425ff7..c855f60 100644
+--- a/include/net/ipv6.h
++++ b/include/net/ipv6.h
+@@ -110,37 +110,52 @@ struct frag_hdr {
+ extern int sysctl_ipv6_bindv6only;
+ extern int sysctl_mld_max_msf;
+ 
+-/* MIBs */
+-DECLARE_SNMP_STAT(struct ipstats_mib, ipv6_statistics);
+-#define IP6_INC_STATS(field)		SNMP_INC_STATS(ipv6_statistics, field)
+-#define IP6_INC_STATS_BH(field)		SNMP_INC_STATS_BH(ipv6_statistics, field)
+-#define IP6_INC_STATS_USER(field) 	SNMP_INC_STATS_USER(ipv6_statistics, field)
+-DECLARE_SNMP_STAT(struct icmpv6_mib, icmpv6_statistics);
+-#define ICMP6_INC_STATS(idev, field)		({			\
+-	struct inet6_dev *_idev = (idev);				\
+-	if (likely(_idev != NULL))					\
+-		SNMP_INC_STATS(idev->stats.icmpv6, field); 		\
+-	SNMP_INC_STATS(icmpv6_statistics, field);			\
+-})
+-#define ICMP6_INC_STATS_BH(idev, field)		({			\
++#define _DEVINC(statname, modifier, idev, field)			\
++({									\
+ 	struct inet6_dev *_idev = (idev);				\
+ 	if (likely(_idev != NULL))					\
+-		SNMP_INC_STATS_BH((_idev)->stats.icmpv6, field);	\
+-	SNMP_INC_STATS_BH(icmpv6_statistics, field);			\
+-})
+-#define ICMP6_INC_STATS_USER(idev, field) 	({			\
+-	struct inet6_dev *_idev = (idev);				\
+-	if (likely(_idev != NULL))					\
+-		SNMP_INC_STATS_USER(_idev->stats.icmpv6, field);	\
+-	SNMP_INC_STATS_USER(icmpv6_statistics, field);			\
++		SNMP_INC_STATS##modifier((_idev)->statsx.statname, (field)); \
++	SNMP_INC_STATS##modifier(statname##_statistics, (field));       \
+ })
++
++ 
++/* MIBs */
++DECLARE_SNMP_STAT(struct ipstats_mib, ipv6_statistics);
++ 
++#define IP6_INC_STATS(idev,field)     _DEVINC(ipv6, , idev, field)
++#define IP6_INC_STATS_BH(idev,field)  _DEVINC(ipv6, _BH, idev, field)
++#define IP6_INC_STATS_USER(idev,field)        _DEVINC(ipv6, _USER, idev, field)
++
++DECLARE_SNMP_STAT(struct icmpv6_mib, icmpv6_statistics);
++
++DECLARE_SNMP_STAT(struct icmpv6msg_mib, icmpv6msg_statistics);
++ 
++#define ICMP6_INC_STATS(idev, field)  _DEVINC(icmpv6, , idev, field)
++#define ICMP6_INC_STATS_BH(idev, field)       _DEVINC(icmpv6, _BH, idev, field)
++#define ICMP6_INC_STATS_USER(idev, field) _DEVINC(icmpv6, _USER, idev, field)
++
++
+ #define ICMP6_INC_STATS_OFFSET_BH(idev, field, offset)	({			\
+ 	struct inet6_dev *_idev = idev;						\
+ 	__typeof__(offset) _offset = (offset);					\
+ 	if (likely(_idev != NULL))						\
+-		SNMP_INC_STATS_OFFSET_BH(_idev->stats.icmpv6, field, _offset);	\
++		SNMP_INC_STATS_OFFSET_BH(_idev->statsx.icmpv6, field, _offset);	\
+ 	SNMP_INC_STATS_OFFSET_BH(icmpv6_statistics, field, _offset);    	\
+ })
++
++#define ICMP6MSGOUT_INC_STATS(idev, field) \
++	_DEVINC(icmpv6msg, , idev, field +256)
++#define ICMP6MSGOUT_INC_STATS_BH(idev, field) \
++	_DEVINC(icmpv6msg, _BH, idev, field +256)
++#define ICMP6MSGOUT_INC_STATS_USER(idev, field) \
++	_DEVINC(icmpv6msg, _USER, idev, field +256)
++#define ICMP6MSGIN_INC_STATS(idev, field) \
++	 _DEVINC(icmpv6msg, , idev, field)
++#define ICMP6MSGIN_INC_STATS_BH(idev, field) \
++	_DEVINC(icmpv6msg, _BH, idev, field)
++#define ICMP6MSGIN_INC_STATS_USER(idev, field) \
++	_DEVINC(icmpv6msg, _USER, idev, field)
++
+ DECLARE_SNMP_STAT(struct udp_mib, udp_stats_in6);
+ #define UDP6_INC_STATS(field)		SNMP_INC_STATS(udp_stats_in6, field)
+ #define UDP6_INC_STATS_BH(field)	SNMP_INC_STATS_BH(udp_stats_in6, field)
+diff --git a/include/net/snmp.h b/include/net/snmp.h
+index a36bed8..63f37f8 100644
+--- a/include/net/snmp.h
++++ b/include/net/snmp.h
+@@ -82,12 +82,23 @@ struct icmp_mib {
+ 	unsigned long	mibs[ICMP_MIB_MAX];
+ } __SNMP_MIB_ALIGN__;
+ 
++#define ICMPMSG_MIB_MAX	__ICMPMSG_MIB_MAX
++struct icmpmsg_mib {
++	unsigned long	mibs[ICMPMSG_MIB_MAX];
++} __SNMP_MIB_ALIGN__;
++
+ /* ICMP6 (IPv6-ICMP) */
+ #define ICMP6_MIB_MAX	__ICMP6_MIB_MAX
+ struct icmpv6_mib {
+ 	unsigned long	mibs[ICMP6_MIB_MAX];
+ } __SNMP_MIB_ALIGN__;
+ 
++#define ICMP6MSG_MIB_MAX  __ICMP6MSG_MIB_MAX
++struct icmpv6msg_mib {
++	unsigned long	mibs[ICMP6MSG_MIB_MAX];
++} __SNMP_MIB_ALIGN__;
++
++
+ /* TCP */
+ #define TCP_MIB_MAX	__TCP_MIB_MAX
+ struct tcp_mib {
+diff --git a/net/core/pktgen.c b/net/core/pktgen.c
+index 6a7320b..72145d4 100644
+--- a/net/core/pktgen.c
++++ b/net/core/pktgen.c
+@@ -1786,7 +1786,7 @@ static void pktgen_setup_inject(struct pktgen_dev *pkt_dev)
+ 			 * use ipv6_get_lladdr if/when it's get exported
+ 			 */
+ 
+-			read_lock(&addrconf_lock);
++			rcu_read_lock();
+ 			if ((idev = __in6_dev_get(pkt_dev->odev)) != NULL) {
+ 				struct inet6_ifaddr *ifp;
+ 
+@@ -1805,7 +1805,7 @@ static void pktgen_setup_inject(struct pktgen_dev *pkt_dev)
+ 				}
+ 				read_unlock_bh(&idev->lock);
+ 			}
+-			read_unlock(&addrconf_lock);
++			rcu_read_unlock();
+ 			if (err)
+ 				printk("pktgen: ERROR: IPv6 link address not availble.\n");
+ 		}
+diff --git a/net/ipv4/af_inet.c b/net/ipv4/af_inet.c
+index de55928..a0cd985 100644
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1219,6 +1219,8 @@ static int __init init_ipv4_mibs(void)
+ 	ip_statistics[1] = alloc_percpu(struct ipstats_mib);
+ 	icmp_statistics[0] = alloc_percpu(struct icmp_mib);
+ 	icmp_statistics[1] = alloc_percpu(struct icmp_mib);
++	icmpmsg_statistics[0] = alloc_percpu(struct icmpmsg_mib);
++	icmpmsg_statistics[1] = alloc_percpu(struct icmpmsg_mib);
+ 	tcp_statistics[0] = alloc_percpu(struct tcp_mib);
+ 	tcp_statistics[1] = alloc_percpu(struct tcp_mib);
+ 	udp_statistics[0] = alloc_percpu(struct udp_mib);
+@@ -1226,7 +1228,8 @@ static int __init init_ipv4_mibs(void)
+ 	if (!
+ 	    (net_statistics[0] && net_statistics[1] && ip_statistics[0]
+ 	     && ip_statistics[1] && tcp_statistics[0] && tcp_statistics[1]
+-	     && udp_statistics[0] && udp_statistics[1]))
++	     && udp_statistics[0] && udp_statistics[1] && icmpmsg_statistics[0]
++	     && icmpmsg_statistics[1]))
+ 		return -ENOMEM;
+ 
+ 	(void) tcp_mib_init();
+diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
+index 9466f82..11b394d 100644
+--- a/net/ipv4/devinet.c
++++ b/net/ipv4/devinet.c
+@@ -156,9 +156,8 @@ struct in_device *inetdev_init(struct net_device *dev)
+ 			      NET_IPV4_NEIGH, "ipv4", NULL, NULL);
+ #endif
+ 
+-	/* Account for reference dev->ip_ptr */
++	/* Account for reference dev->ip_ptr (below) */
+ 	in_dev_hold(in_dev);
+-	rcu_assign_pointer(dev->ip_ptr, in_dev);
+ 
+ #ifdef CONFIG_SYSCTL
+ 	devinet_sysctl_register(in_dev, &in_dev->cnf);
+@@ -167,6 +166,8 @@ struct in_device *inetdev_init(struct net_device *dev)
+ 	if (dev->flags & IFF_UP)
+ 		ip_mc_up(in_dev);
+ out:
++	/* we can receive as soon as ip_ptr is set -- do this last */
++	rcu_assign_pointer(dev->ip_ptr, in_dev);
+ 	return in_dev;
+ out_kfree:
+ 	kfree(in_dev);
+diff --git a/net/ipv4/icmp.c b/net/ipv4/icmp.c
+index 6ad797c..b6ae67b 100644
+--- a/net/ipv4/icmp.c
++++ b/net/ipv4/icmp.c
+@@ -115,6 +115,7 @@ struct icmp_bxm {
+  *	Statistics
+  */
+ DEFINE_SNMP_STAT(struct icmp_mib, icmp_statistics) __read_mostly;
++DEFINE_SNMP_STAT(struct icmpmsg_mib, icmpmsg_statistics) __read_mostly;
+ 
+ /* An array of errno for error messages from dest unreach. */
+ /* RFC 1122: 3.2.2.1 States that NET_UNREACH, HOST_UNREACH and SR_FAILED MUST be considered 'transient errs'. */
+@@ -214,8 +215,6 @@ int sysctl_icmp_errors_use_inbound_ifaddr;
+  */
+ 
+ struct icmp_control {
+-	int output_entry;	/* Field for increment on output */
+-	int input_entry;	/* Field for increment on input */
+ 	void (*handler)(struct sk_buff *skb);
+ 	short   error;		/* This ICMP is classed as an error message */
+ };
+@@ -316,12 +315,10 @@ out:
+ /*
+  *	Maintain the counters used in the SNMP statistics for outgoing ICMP
+  */
+-static void icmp_out_count(int type)
++void icmp_out_count(unsigned char type)
+ {
+-	if (type <= NR_ICMP_TYPES) {
+-		ICMP_INC_STATS(icmp_pointers[type].output_entry);
+-		ICMP_INC_STATS(ICMP_MIB_OUTMSGS);
+-	}
++	ICMPMSGOUT_INC_STATS(type);
++	ICMP_INC_STATS(ICMP_MIB_OUTMSGS);
+ }
+ 
+ /*
+@@ -390,7 +387,6 @@ static void icmp_reply(struct icmp_bxm *icmp_param, struct sk_buff *skb)
+ 		return;
+ 
+ 	icmp_param->data.icmph.checksum = 0;
+-	icmp_out_count(icmp_param->data.icmph.type);
+ 
+ 	inet->tos = skb->nh.iph->tos;
+ 	daddr = ipc.addr = rt->rt_src;
+@@ -955,6 +951,7 @@ int icmp_rcv(struct sk_buff *skb)
+ 		goto error;
+ 
+ 
++	ICMPMSGIN_INC_STATS_BH(icmph->type);
+ 	/*
+ 	 *	Parse the ICMP message
+ 	 */
+@@ -979,7 +976,6 @@ int icmp_rcv(struct sk_buff *skb)
+   		}
+ 	}
+ 
+-	ICMP_INC_STATS_BH(icmp_pointers[icmph->type].input_entry);
+ 	icmp_pointers[icmph->type].handler(skb);
+ 
+ drop:
+@@ -995,109 +991,71 @@ error:
+  */
+ static const struct icmp_control icmp_pointers[NR_ICMP_TYPES + 1] = {
+ 	[ICMP_ECHOREPLY] = {
+-		.output_entry = ICMP_MIB_OUTECHOREPS,
+-		.input_entry = ICMP_MIB_INECHOREPS,
+ 		.handler = icmp_discard,
+ 	},
+ 	[1] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[2] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[ICMP_DEST_UNREACH] = {
+-		.output_entry = ICMP_MIB_OUTDESTUNREACHS,
+-		.input_entry = ICMP_MIB_INDESTUNREACHS,
+ 		.handler = icmp_unreach,
+ 		.error = 1,
+ 	},
+ 	[ICMP_SOURCE_QUENCH] = {
+-		.output_entry = ICMP_MIB_OUTSRCQUENCHS,
+-		.input_entry = ICMP_MIB_INSRCQUENCHS,
+ 		.handler = icmp_unreach,
+ 		.error = 1,
+ 	},
+ 	[ICMP_REDIRECT] = {
+-		.output_entry = ICMP_MIB_OUTREDIRECTS,
+-		.input_entry = ICMP_MIB_INREDIRECTS,
+ 		.handler = icmp_redirect,
+ 		.error = 1,
+ 	},
+ 	[6] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[7] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[ICMP_ECHO] = {
+-		.output_entry = ICMP_MIB_OUTECHOS,
+-		.input_entry = ICMP_MIB_INECHOS,
+ 		.handler = icmp_echo,
+ 	},
+ 	[9] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[10] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_INERRORS,
+ 		.handler = icmp_discard,
+ 		.error = 1,
+ 	},
+ 	[ICMP_TIME_EXCEEDED] = {
+-		.output_entry = ICMP_MIB_OUTTIMEEXCDS,
+-		.input_entry = ICMP_MIB_INTIMEEXCDS,
+ 		.handler = icmp_unreach,
+ 		.error = 1,
+ 	},
+ 	[ICMP_PARAMETERPROB] = {
+-		.output_entry = ICMP_MIB_OUTPARMPROBS,
+-		.input_entry = ICMP_MIB_INPARMPROBS,
+ 		.handler = icmp_unreach,
+ 		.error = 1,
+ 	},
+ 	[ICMP_TIMESTAMP] = {
+-		.output_entry = ICMP_MIB_OUTTIMESTAMPS,
+-		.input_entry = ICMP_MIB_INTIMESTAMPS,
+ 		.handler = icmp_timestamp,
+ 	},
+ 	[ICMP_TIMESTAMPREPLY] = {
+-		.output_entry = ICMP_MIB_OUTTIMESTAMPREPS,
+-		.input_entry = ICMP_MIB_INTIMESTAMPREPS,
+ 		.handler = icmp_discard,
+ 	},
+ 	[ICMP_INFO_REQUEST] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_DUMMY,
+ 		.handler = icmp_discard,
+ 	},
+  	[ICMP_INFO_REPLY] = {
+-		.output_entry = ICMP_MIB_DUMMY,
+-		.input_entry = ICMP_MIB_DUMMY,
+ 		.handler = icmp_discard,
+ 	},
+ 	[ICMP_ADDRESS] = {
+-		.output_entry = ICMP_MIB_OUTADDRMASKS,
+-		.input_entry = ICMP_MIB_INADDRMASKS,
+ 		.handler = icmp_address,
+ 	},
+ 	[ICMP_ADDRESSREPLY] = {
+-		.output_entry = ICMP_MIB_OUTADDRMASKREPS,
+-		.input_entry = ICMP_MIB_INADDRMASKREPS,
+ 		.handler = icmp_address_reply,
+ 	},
+ };
+@@ -1139,4 +1097,5 @@ void __init icmp_init(struct net_proto_family *ops)
+ EXPORT_SYMBOL(icmp_err_convert);
+ EXPORT_SYMBOL(icmp_send);
+ EXPORT_SYMBOL(icmp_statistics);
++EXPORT_SYMBOL(icmpmsg_statistics);
+ EXPORT_SYMBOL(xrlim_allow);
+diff --git a/net/ipv4/ip_input.c b/net/ipv4/ip_input.c
+index 212734c..64f1a6a 100644
+--- a/net/ipv4/ip_input.c
++++ b/net/ipv4/ip_input.c
+@@ -331,6 +331,7 @@ drop:
+ static inline int ip_rcv_finish(struct sk_buff *skb)
+ {
+ 	struct iphdr *iph = skb->nh.iph;
++	struct rtable *rt;
+ 
+ 	/*
+ 	 *	Initialise the virtual path cache for the packet. It describes
+@@ -342,6 +343,8 @@ static inline int ip_rcv_finish(struct sk_buff *skb)
+ 		if (unlikely(err)) {
+ 			if (err == -EHOSTUNREACH)
+ 				IP_INC_STATS_BH(IPSTATS_MIB_INADDRERRORS);
++			else if (err == -ENETUNREACH)
++				IP_INC_STATS_BH(IPSTATS_MIB_INNOROUTES);
+ 			goto drop; 
+ 		}
+ 	}
+@@ -360,6 +363,12 @@ static inline int ip_rcv_finish(struct sk_buff *skb)
+ 	if (iph->ihl > 5 && ip_rcv_options(skb))
+ 		goto drop;
+ 
++	rt = (struct rtable*)skb->dst;
++	if (rt->rt_type == RTN_MULTICAST)
++		IP_INC_STATS_BH(IPSTATS_MIB_INMCASTPKTS);
++	else if (rt->rt_type == RTN_BROADCAST)
++		IP_INC_STATS_BH(IPSTATS_MIB_INBCASTPKTS);
++
+ 	return dst_input(skb);
+ 
+ drop:
+@@ -416,7 +425,10 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt,
+ 		goto inhdr_error;
+ 
+ 	len = ntohs(iph->tot_len);
+-	if (skb->len < len || len < (iph->ihl*4))
++	if (skb->len < len) {
++		IP_INC_STATS_BH(IPSTATS_MIB_INTRUNCATEDPKTS);
++		goto drop;
++	} else if (len < (iph->ihl*4))
+ 		goto inhdr_error;
+ 
+ 	/* Our transport medium may have padded the buffer out. Now we know it
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index 308bdea..8c01b40 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -163,10 +163,16 @@ EXPORT_SYMBOL_GPL(ip_build_and_send_pkt);
+ static inline int ip_finish_output2(struct sk_buff *skb)
+ {
+ 	struct dst_entry *dst = skb->dst;
++	struct rtable *rt = (struct rtable *)dst;
+ 	struct hh_cache *hh = dst->hh;
+ 	struct net_device *dev = dst->dev;
+ 	int hh_len = LL_RESERVED_SPACE(dev);
+ 
++	if (rt->rt_type == RTN_MULTICAST)
++		IP_INC_STATS(IPSTATS_MIB_OUTMCASTPKTS);
++	else if (rt->rt_type == RTN_BROADCAST)
++		IP_INC_STATS(IPSTATS_MIB_OUTBCASTPKTS);
++
+ 	/* Be paranoid, rather than too clever. */
+ 	if (unlikely(skb_headroom(skb) < hh_len && dev->hard_header)) {
+ 		struct sk_buff *skb2;
+@@ -1264,6 +1270,10 @@ int ip_push_pending_frames(struct sock *sk)
+ 	skb->priority = sk->sk_priority;
+ 	skb->dst = dst_clone(&rt->u.dst);
+ 
++	if (iph->protocol == IPPROTO_ICMP)
++		icmp_out_count(((struct icmphdr *)
++			(iph + 1))->type);
++
+ 	/* Netfilter gets whole the not fragmented skb. */
+ 	err = NF_HOOK(PF_INET, NF_IP_LOCAL_OUT, skb, NULL, 
+ 		      skb->dst->dev, dst_output);
+diff --git a/net/ipv4/proc.c b/net/ipv4/proc.c
+index d61e2a9..40f1a60 100644
+--- a/net/ipv4/proc.c
++++ b/net/ipv4/proc.c
+@@ -120,36 +120,44 @@ static const struct snmp_mib snmp4_ipstats_list[] = {
+ 	SNMP_MIB_SENTINEL
+ };
+ 
++/* Following RFC4293 items are displayed in /proc/net/netstat */
++static const struct snmp_mib snmp4_ipextstats_list[] = {
++	SNMP_MIB_ITEM("InNoRoutes", IPSTATS_MIB_INNOROUTES),
++	SNMP_MIB_ITEM("InTruncatedPkts", IPSTATS_MIB_INTRUNCATEDPKTS),
++	SNMP_MIB_ITEM("InMcastPkts", IPSTATS_MIB_INMCASTPKTS),
++	SNMP_MIB_ITEM("OutMcastPkts", IPSTATS_MIB_OUTMCASTPKTS),
++	SNMP_MIB_ITEM("InBcastPkts", IPSTATS_MIB_INBCASTPKTS),
++	SNMP_MIB_ITEM("OutBcastPkts", IPSTATS_MIB_OUTBCASTPKTS),
++	SNMP_MIB_SENTINEL
++};
++
+ static const struct snmp_mib snmp4_icmp_list[] = {
+ 	SNMP_MIB_ITEM("InMsgs", ICMP_MIB_INMSGS),
+ 	SNMP_MIB_ITEM("InErrors", ICMP_MIB_INERRORS),
+-	SNMP_MIB_ITEM("InDestUnreachs", ICMP_MIB_INDESTUNREACHS),
+-	SNMP_MIB_ITEM("InTimeExcds", ICMP_MIB_INTIMEEXCDS),
+-	SNMP_MIB_ITEM("InParmProbs", ICMP_MIB_INPARMPROBS),
+-	SNMP_MIB_ITEM("InSrcQuenchs", ICMP_MIB_INSRCQUENCHS),
+-	SNMP_MIB_ITEM("InRedirects", ICMP_MIB_INREDIRECTS),
+-	SNMP_MIB_ITEM("InEchos", ICMP_MIB_INECHOS),
+-	SNMP_MIB_ITEM("InEchoReps", ICMP_MIB_INECHOREPS),
+-	SNMP_MIB_ITEM("InTimestamps", ICMP_MIB_INTIMESTAMPS),
+-	SNMP_MIB_ITEM("InTimestampReps", ICMP_MIB_INTIMESTAMPREPS),
+-	SNMP_MIB_ITEM("InAddrMasks", ICMP_MIB_INADDRMASKS),
+-	SNMP_MIB_ITEM("InAddrMaskReps", ICMP_MIB_INADDRMASKREPS),
+ 	SNMP_MIB_ITEM("OutMsgs", ICMP_MIB_OUTMSGS),
+ 	SNMP_MIB_ITEM("OutErrors", ICMP_MIB_OUTERRORS),
+-	SNMP_MIB_ITEM("OutDestUnreachs", ICMP_MIB_OUTDESTUNREACHS),
+-	SNMP_MIB_ITEM("OutTimeExcds", ICMP_MIB_OUTTIMEEXCDS),
+-	SNMP_MIB_ITEM("OutParmProbs", ICMP_MIB_OUTPARMPROBS),
+-	SNMP_MIB_ITEM("OutSrcQuenchs", ICMP_MIB_OUTSRCQUENCHS),
+-	SNMP_MIB_ITEM("OutRedirects", ICMP_MIB_OUTREDIRECTS),
+-	SNMP_MIB_ITEM("OutEchos", ICMP_MIB_OUTECHOS),
+-	SNMP_MIB_ITEM("OutEchoReps", ICMP_MIB_OUTECHOREPS),
+-	SNMP_MIB_ITEM("OutTimestamps", ICMP_MIB_OUTTIMESTAMPS),
+-	SNMP_MIB_ITEM("OutTimestampReps", ICMP_MIB_OUTTIMESTAMPREPS),
+-	SNMP_MIB_ITEM("OutAddrMasks", ICMP_MIB_OUTADDRMASKS),
+-	SNMP_MIB_ITEM("OutAddrMaskReps", ICMP_MIB_OUTADDRMASKREPS),
+ 	SNMP_MIB_SENTINEL
+ };
+ 
++static struct {
++	char *name;
++	int index;
++} icmpmibmap[] = {
++	{ "DestUnreachs", ICMP_DEST_UNREACH },
++	{ "TimeExcds", ICMP_TIME_EXCEEDED },
++	{ "ParmProbs", ICMP_PARAMETERPROB },
++	{ "SrcQuenchs", ICMP_SOURCE_QUENCH },
++	{ "Redirects", ICMP_REDIRECT },
++	{ "Echos", ICMP_ECHO },
++	{ "EchoReps", ICMP_ECHOREPLY },
++	{ "Timestamps", ICMP_TIMESTAMP },
++	{ "TimestampReps", ICMP_TIMESTAMPREPLY },
++	{ "AddrMasks", ICMP_ADDRESS },
++	{ "AddrMaskReps", ICMP_ADDRESSREPLY },
++	{ 0, 0 }
++};
++
++
+ static const struct snmp_mib snmp4_tcp_list[] = {
+ 	SNMP_MIB_ITEM("RtoAlgorithm", TCP_MIB_RTOALGORITHM),
+ 	SNMP_MIB_ITEM("RtoMin", TCP_MIB_RTOMIN),
+@@ -245,6 +253,72 @@ static const struct snmp_mib snmp4_net_list[] = {
+ 	SNMP_MIB_SENTINEL
+ };
+ 
++static void icmpmsg_put(struct seq_file *seq)
++{
++#define PERLINE	16
++
++	int j, i, count;
++	static int out[PERLINE];
++
++	count = 0;
++	for (i = 0; i < ICMPMSG_MIB_MAX; i++) {
++
++		if (fold_field((void **) icmpmsg_statistics, i))
++			out[count++] = i;
++		if (count < PERLINE)
++			continue;
++
++		seq_printf(seq, "\nIcmpMsg:");
++		for (j = 0; j < PERLINE; ++j)
++			seq_printf(seq, " %sType%u", i & 0x100 ? "Out" : "In",
++					i & 0xff);
++		seq_printf(seq, "\nIcmpMsg: ");
++		for (j = 0; j < PERLINE; ++j)
++			seq_printf(seq, " %lu",
++				fold_field((void **) icmpmsg_statistics,
++				out[j]));
++		seq_putc(seq, '\n');
++	}
++	if (count) {
++		seq_printf(seq, "\nIcmpMsg:");
++		for (j = 0; j < count; ++j)
++			seq_printf(seq, " %sType%u", out[j] & 0x100 ? "Out" :
++				"In", out[j] & 0xff);
++		seq_printf(seq, "\nIcmpMsg:");
++		for (j = 0; j < count; ++j)
++			seq_printf(seq, " %lu", fold_field((void **)
++				icmpmsg_statistics, out[j]));
++	}
++
++#undef PERLINE
++}
++
++static void icmp_put(struct seq_file *seq)
++{
++	int i;
++
++	seq_puts(seq, "\nIcmp: InMsgs InErrors");
++	for (i=0; icmpmibmap[i].name != NULL; i++)
++		seq_printf(seq, " In%s", icmpmibmap[i].name);
++	seq_printf(seq, " OutMsgs OutErrors");
++	for (i=0; icmpmibmap[i].name != NULL; i++)
++		seq_printf(seq, " Out%s", icmpmibmap[i].name);
++	seq_printf(seq, "\nIcmp: %lu %lu",
++		fold_field((void **) icmp_statistics, ICMP_MIB_INMSGS),
++		fold_field((void **) icmp_statistics, ICMP_MIB_INERRORS));
++	for (i=0; icmpmibmap[i].name != NULL; i++)
++		seq_printf(seq, " %lu",
++			fold_field((void **) icmpmsg_statistics,
++				icmpmibmap[i].index));
++	seq_printf(seq, " %lu %lu",
++		fold_field((void **) icmp_statistics, ICMP_MIB_OUTMSGS),
++		fold_field((void **) icmp_statistics, ICMP_MIB_OUTERRORS));
++	for (i=0; icmpmibmap[i].name != NULL; i++)
++		seq_printf(seq, " %lu",
++			fold_field((void **) icmpmsg_statistics,
++				icmpmibmap[i].index | 0x100 ));
++}
++
+ /*
+  *	Called from the PROCfs module. This outputs /proc/net/snmp.
+  */
+@@ -265,15 +339,8 @@ static int snmp_seq_show(struct seq_file *seq, void *v)
+ 			   fold_field((void **) ip_statistics, 
+ 				      snmp4_ipstats_list[i].entry));
+ 
+-	seq_puts(seq, "\nIcmp:");
+-	for (i = 0; snmp4_icmp_list[i].name != NULL; i++)
+-		seq_printf(seq, " %s", snmp4_icmp_list[i].name);
+-
+-	seq_puts(seq, "\nIcmp:");
+-	for (i = 0; snmp4_icmp_list[i].name != NULL; i++)
+-		seq_printf(seq, " %lu",
+-			   fold_field((void **) icmp_statistics, 
+-				      snmp4_icmp_list[i].entry));
++	icmp_put(seq);  /* RFC 2011 compatibility */
++	icmpmsg_put(seq);
+ 
+ 	seq_puts(seq, "\nTcp:");
+ 	for (i = 0; snmp4_tcp_list[i].name != NULL; i++)
+@@ -319,6 +386,8 @@ static struct file_operations snmp_seq_fops = {
+ 	.release = single_release,
+ };
+ 
++
++
+ /*
+  *	Output /proc/net/netstat
+  */
+@@ -336,6 +405,16 @@ static int netstat_seq_show(struct seq_file *seq, void *v)
+ 			   fold_field((void **) net_statistics, 
+ 				      snmp4_net_list[i].entry));
+ 
++	seq_puts(seq, "\nIpExt:");
++	for (i = 0; snmp4_ipextstats_list[i].name != NULL; i++)
++		seq_printf(seq, " %s", snmp4_ipextstats_list[i].name);
++
++	seq_puts(seq, "\nIpExt:");
++	for (i = 0; snmp4_ipextstats_list[i].name != NULL; i++)
++		seq_printf(seq, " %lu",
++			   fold_field((void **)ip_statistics,
++					   snmp4_ipextstats_list[i].entry));
++
+ 	seq_putc(seq, '\n');
+ 	return 0;
+ }
+diff --git a/net/ipv4/raw.c b/net/ipv4/raw.c
+index 76f3649..bb1b802 100644
+--- a/net/ipv4/raw.c
++++ b/net/ipv4/raw.c
+@@ -311,6 +311,9 @@ static int raw_send_hdrinc(struct sock *sk, void *from, size_t length,
+ 
+ 		iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+ 	}
++	if (iph->protocol == IPPROTO_ICMP)
++		icmp_out_count(((struct icmphdr *)
++			(iph + 1))->type);
+ 
+ 	err = NF_HOOK(PF_INET, NF_IP_LOCAL_OUT, skb, NULL, rt->u.dst.dev,
+ 		      dst_output);
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index 0fa6008..c2e3c1b 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -320,6 +320,12 @@ static void addrconf_mod_timer(struct inet6_ifaddr *ifp,
+ 
+ /* Nobody refers to this device, we may destroy it. */
+ 
++static void in6_dev_finish_destroy_rcu(struct rcu_head *head)
++{
++	struct inet6_dev *idev = container_of(head, struct inet6_dev, rcu);
++	kfree(idev);
++}
++
+ void in6_dev_finish_destroy(struct inet6_dev *idev)
+ {
+ 	struct net_device *dev = idev->dev;
+@@ -334,12 +340,13 @@ void in6_dev_finish_destroy(struct inet6_dev *idev)
+ 		return;
+ 	}
+ 	snmp6_free_dev(idev);
+-	kfree(idev);
++	call_rcu(&idev->rcu, in6_dev_finish_destroy_rcu);
+ }
+ 
+ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
+ {
+ 	struct inet6_dev *ndev;
++	struct in6_addr maddr;
+ 
+ 	ASSERT_RTNL();
+ 
+@@ -410,9 +417,6 @@ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
+ 	if (netif_carrier_ok(dev))
+ 		ndev->if_flags |= IF_READY;
+ 
+-	write_lock_bh(&addrconf_lock);
+-	dev->ip6_ptr = ndev;
+-	write_unlock_bh(&addrconf_lock);
+ 
+ 	ipv6_mc_init_dev(ndev);
+ 	ndev->tstamp = jiffies;
+@@ -423,6 +427,14 @@ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
+ 			      NULL);
+ 	addrconf_sysctl_register(ndev, &ndev->cnf);
+ #endif
++
++	/* protected by rtnl_lock */
++	rcu_assign_pointer(dev->ip6_ptr, ndev);
++ 
++	/* Join all-node multicast group */
++	ipv6_addr_all_nodes(&maddr);
++	ipv6_dev_mc_inc(dev, &maddr);
++
+ 	return ndev;
+ }
+ 
+@@ -476,7 +488,7 @@ static void addrconf_forward_change(void)
+ 
+ 	read_lock(&dev_base_lock);
+ 	for (dev=dev_base; dev; dev=dev->next) {
+-		read_lock(&addrconf_lock);
++		rcu_read_lock();
+ 		idev = __in6_dev_get(dev);
+ 		if (idev) {
+ 			int changed = (!idev->cnf.forwarding) ^ (!ipv6_devconf.forwarding);
+@@ -484,7 +496,7 @@ static void addrconf_forward_change(void)
+ 			if (changed)
+ 				dev_forward_change(idev);
+ 		}
+-		read_unlock(&addrconf_lock);
++		rcu_read_unlock();
+ 	}
+ 	read_unlock(&dev_base_lock);
+ }
+@@ -545,7 +557,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr, int pfxlen,
+ 	int hash;
+ 	int err = 0;
+ 
+-	read_lock_bh(&addrconf_lock);
++	rcu_read_lock_bh();
+ 	if (idev->dead) {
+ 		err = -ENODEV;			/*XXX*/
+ 		goto out2;
+@@ -624,7 +636,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr, int pfxlen,
+ 	in6_ifa_hold(ifa);
+ 	write_unlock(&idev->lock);
+ out2:
+-	read_unlock_bh(&addrconf_lock);
++	rcu_read_unlock_bh();
+ 
+ 	if (likely(err == 0))
+ 		atomic_notifier_call_chain(&inet6addr_chain, NETDEV_UP, ifa);
+@@ -939,7 +951,7 @@ int ipv6_dev_get_saddr(struct net_device *daddr_dev,
+ 	memset(&hiscore, 0, sizeof(hiscore));
+ 
+ 	read_lock(&dev_base_lock);
+-	read_lock(&addrconf_lock);
++	rcu_read_lock();
+ 
+ 	for (dev = dev_base; dev; dev=dev->next) {
+ 		struct inet6_dev *idev;
+@@ -1154,7 +1166,7 @@ record_it:
+ 		}
+ 		read_unlock_bh(&idev->lock);
+ 	}
+-	read_unlock(&addrconf_lock);
++	rcu_read_unlock();
+ 	read_unlock(&dev_base_lock);
+ 
+ 	if (!ifa_result)
+@@ -1179,7 +1191,7 @@ int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr,
+ 	struct inet6_dev *idev;
+ 	int err = -EADDRNOTAVAIL;
+ 
+-	read_lock(&addrconf_lock);
++	rcu_read_lock();
+ 	if ((idev = __in6_dev_get(dev)) != NULL) {
+ 		struct inet6_ifaddr *ifp;
+ 
+@@ -1193,7 +1205,7 @@ int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr,
+ 		}
+ 		read_unlock_bh(&idev->lock);
+ 	}
+-	read_unlock(&addrconf_lock);
++	rcu_read_unlock();
+ 	return err;
+ }
+ 
+@@ -1494,7 +1506,7 @@ static void ipv6_regen_rndid(unsigned long data)
+ 	struct inet6_dev *idev = (struct inet6_dev *) data;
+ 	unsigned long expires;
+ 
+-	read_lock_bh(&addrconf_lock);
++	rcu_read_lock_bh();
+ 	write_lock_bh(&idev->lock);
+ 
+ 	if (idev->dead)
+@@ -1518,7 +1530,7 @@ static void ipv6_regen_rndid(unsigned long data)
+ 
+ out:
+ 	write_unlock_bh(&idev->lock);
+-	read_unlock_bh(&addrconf_lock);
++	rcu_read_unlock_bh();
+ 	in6_dev_put(idev);
+ }
+ 
+@@ -2392,10 +2404,10 @@ static int addrconf_ifdown(struct net_device *dev, int how)
+ 	           Do not dev_put!
+ 	 */
+ 	if (how == 1) {
+-		write_lock_bh(&addrconf_lock);
+-		dev->ip6_ptr = NULL;
+ 		idev->dead = 1;
+-		write_unlock_bh(&addrconf_lock);
++
++		/* protected by rtnl_lock */
++		rcu_assign_pointer(dev->ip6_ptr, NULL);
+ 
+ 		/* Step 1.5: remove snmp6 entry */
+ 		snmp6_unregister_dev(idev);
+@@ -3626,10 +3638,10 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
+ 
+ static void ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
+ {
+-	read_lock_bh(&addrconf_lock);
++	rcu_read_lock_bh();
+ 	if (likely(ifp->idev->dead == 0))
+ 		__ipv6_ifa_notify(event, ifp);
+-	read_unlock_bh(&addrconf_lock);
++	rcu_read_unlock_bh();
+ }
+ 
+ #ifdef CONFIG_SYSCTL
+diff --git a/net/ipv6/af_inet6.c b/net/ipv6/af_inet6.c
+index 85be488..939db23 100644
+--- a/net/ipv6/af_inet6.c
++++ b/net/ipv6/af_inet6.c
+@@ -731,12 +731,17 @@ static int __init init_ipv6_mibs(void)
+ 	if (snmp6_mib_init((void **)icmpv6_statistics, sizeof (struct icmpv6_mib),
+ 			   __alignof__(struct icmpv6_mib)) < 0)
+ 		goto err_icmp_mib;
++	if (snmp6_mib_init((void **)icmpv6msg_statistics, sizeof (struct icmpv6msg_mib),
++			   __alignof__(struct icmpv6_mib)) < 0)
++		goto err_icmpmsg_mib;
+ 	if (snmp6_mib_init((void **)udp_stats_in6, sizeof (struct udp_mib),
+ 			   __alignof__(struct udp_mib)) < 0)
+ 		goto err_udp_mib;
+ 	return 0;
+ 
+ err_udp_mib:
++	snmp6_mib_free((void **)icmpv6msg_statistics);
++err_icmpmsg_mib:
+ 	snmp6_mib_free((void **)icmpv6_statistics);
+ err_icmp_mib:
+ 	snmp6_mib_free((void **)ipv6_statistics);
+diff --git a/net/ipv6/anycast.c b/net/ipv6/anycast.c
+index 6a9aee9..897dd37 100644
+--- a/net/ipv6/anycast.c
++++ b/net/ipv6/anycast.c
+@@ -56,7 +56,7 @@ ip6_onlink(struct in6_addr *addr, struct net_device *dev)
+ 	int	onlink;
+ 
+ 	onlink = 0;
+-	read_lock(&addrconf_lock);
++	rcu_read_lock();
+ 	idev = __in6_dev_get(dev);
+ 	if (idev) {
+ 		read_lock_bh(&idev->lock);
+@@ -68,7 +68,7 @@ ip6_onlink(struct in6_addr *addr, struct net_device *dev)
+ 		}
+ 		read_unlock_bh(&idev->lock);
+ 	}
+-	read_unlock(&addrconf_lock);
++	rcu_read_unlock();
+ 	return onlink;
+ }
+ 
+diff --git a/net/ipv6/exthdrs.c b/net/ipv6/exthdrs.c
+index 38fdd5f..2b2cd28 100644
+--- a/net/ipv6/exthdrs.c
++++ b/net/ipv6/exthdrs.c
+@@ -156,10 +156,12 @@ static int ipv6_destopt_rcv(struct sk_buff **skbp)
+ {
+ 	struct sk_buff *skb = *skbp;
+ 	struct inet6_skb_parm *opt = IP6CB(skb);
++	struct dst_entry *dst;
+ 
+ 	if (!pskb_may_pull(skb, (skb->h.raw-skb->data)+8) ||
+ 	    !pskb_may_pull(skb, (skb->h.raw-skb->data)+((skb->h.raw[1]+1)<<3))) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++			IPSTATS_MIB_INHDRERRORS);
+ 		kfree_skb(skb);
+ 		return -1;
+ 	}
+@@ -167,13 +169,16 @@ static int ipv6_destopt_rcv(struct sk_buff **skbp)
+ 	opt->lastopt = skb->h.raw - skb->nh.raw;
+ 	opt->dst1 = skb->h.raw - skb->nh.raw;
+ 
++	dst = dst_clone(skb->dst);
+ 	if (ip6_parse_tlv(tlvprocdestopt_lst, skb)) {
++		dst_release(dst);
+ 		skb->h.raw += ((skb->h.raw[1]+1)<<3);
+ 		opt->nhoff = opt->dst1;
+ 		return 1;
+ 	}
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++	IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_INHDRERRORS);
++	dst_release(dst);
+ 	return -1;
+ }
+ 
+@@ -228,7 +233,8 @@ static int ipv6_rthdr_rcv(struct sk_buff **skbp)
+ 
+ 	if (!pskb_may_pull(skb, (skb->h.raw-skb->data)+8) ||
+ 	    !pskb_may_pull(skb, (skb->h.raw-skb->data)+((skb->h.raw[1]+1)<<3))) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INHDRERRORS);
+ 		kfree_skb(skb);
+ 		return -1;
+ 	}
+@@ -244,14 +250,15 @@ static int ipv6_rthdr_rcv(struct sk_buff **skbp)
+ 		kfree_skb(skb);
+ 		return -1;
+ 	default:
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, (&hdr->type) - skb->nh.raw);
+ 		return -1;
+ 	}
+ 
+ 	if (ipv6_addr_is_multicast(&skb->nh.ipv6h->daddr) ||
+ 	    skb->pkt_type != PACKET_HOST) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INADDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INADDRERRORS);
+ 		kfree_skb(skb);
+ 		return -1;
+ 	}
+@@ -268,7 +275,7 @@ looped_back:
+ 	}
+ 
+ 	if (hdr->hdrlen & 0x01) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, (&hdr->hdrlen) - skb->nh.raw);
+ 		return -1;
+ 	}
+@@ -281,7 +288,8 @@ looped_back:
+ 	n = hdr->hdrlen >> 1;
+ 
+ 	if (hdr->segments_left > n) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, (&hdr->segments_left) - skb->nh.raw);
+ 		return -1;
+ 	}
+@@ -291,12 +299,14 @@ looped_back:
+ 	 */
+ 	if (skb_cloned(skb)) {
+ 		struct sk_buff *skb2 = skb_copy(skb, GFP_ATOMIC);
+-		kfree_skb(skb);
+ 		/* the copy is a forwarded packet */
+ 		if (skb2 == NULL) {
+-			IP6_INC_STATS_BH(IPSTATS_MIB_OUTDISCARDS);	
++			IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++					 IPSTATS_MIB_OUTDISCARDS);
++			kfree_skb(skb);
+ 			return -1;
+ 		}
++		kfree_skb(skb);
+ 		*skbp = skb = skb2;
+ 		opt = IP6CB(skb2);
+ 		hdr = (struct ipv6_rt_hdr *) skb2->h.raw;
+@@ -312,7 +322,8 @@ looped_back:
+ 	addr += i - 1;
+ 
+ 	if (ipv6_addr_is_multicast(addr)) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INADDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INADDRERRORS);
+ 		kfree_skb(skb);
+ 		return -1;
+ 	}
+@@ -331,7 +342,8 @@ looped_back:
+ 
+ 	if (skb->dst->dev->flags&IFF_LOOPBACK) {
+ 		if (skb->nh.ipv6h->hop_limit <= 1) {
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++			IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++					 IPSTATS_MIB_INHDRERRORS);
+ 			icmpv6_send(skb, ICMPV6_TIME_EXCEED, ICMPV6_EXC_HOPLIMIT,
+ 				    0, skb->dev);
+ 			kfree_skb(skb);
+@@ -450,24 +462,25 @@ static int ipv6_hop_jumbo(struct sk_buff *skb, int optoff)
+ 	if (skb->nh.raw[optoff+1] != 4 || (optoff&3) != 2) {
+ 		LIMIT_NETDEBUG(KERN_DEBUG "ipv6_hop_jumbo: wrong jumbo opt length/alignment %d\n",
+ 		               skb->nh.raw[optoff+1]);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INHDRERRORS);
+ 		goto drop;
+ 	}
+ 
+ 	pkt_len = ntohl(*(u32*)(skb->nh.raw+optoff+2));
+ 	if (pkt_len <= IPV6_MAXPLEN) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, optoff+2);
+ 		return 0;
+ 	}
+ 	if (skb->nh.ipv6h->payload_len) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, optoff);
+ 		return 0;
+ 	}
+ 
+ 	if (pkt_len > skb->len - sizeof(struct ipv6hdr)) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INTRUNCATEDPKTS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INTRUNCATEDPKTS);
+ 		goto drop;
+ 	}
+ 
+diff --git a/net/ipv6/icmp.c b/net/ipv6/icmp.c
+index dbfce08..983873b 100644
+--- a/net/ipv6/icmp.c
++++ b/net/ipv6/icmp.c
+@@ -69,6 +69,7 @@
+ #include <asm/system.h>
+ 
+ DEFINE_SNMP_STAT(struct icmpv6_mib, icmpv6_statistics) __read_mostly;
++DEFINE_SNMP_STAT(struct icmpv6msg_mib, icmpv6msg_statistics) __read_mostly;
+ 
+ /*
+  *	The ICMP socket(s). This is the most convenient way to flow control
+@@ -177,7 +178,8 @@ static inline int icmpv6_xrlim_allow(struct sock *sk, int type,
+ 	 */
+ 	dst = ip6_route_output(sk, fl);
+ 	if (dst->error) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTNOROUTES);
++		IP6_INC_STATS(ip6_dst_idev(dst),
++			      IPSTATS_MIB_OUTNOROUTES);
+ 	} else if (dst->dev && (dst->dev->flags&IFF_LOOPBACK)) {
+ 		res = 1;
+ 	} else {
+@@ -430,8 +432,6 @@ void icmpv6_send(struct sk_buff *skb, int type, int code, __u32 info,
+ 	}
+ 	err = icmpv6_push_pending_frames(sk, &fl, &tmp_hdr, len + sizeof(struct icmp6hdr));
+ 
+-	if (type >= ICMPV6_DEST_UNREACH && type <= ICMPV6_PARAMPROB)
+-		ICMP6_INC_STATS_OFFSET_BH(idev, ICMP6_MIB_OUTDESTUNREACHS, type - ICMPV6_DEST_UNREACH);
+ 	ICMP6_INC_STATS_BH(idev, ICMP6_MIB_OUTMSGS);
+ 
+ out_put:
+@@ -519,9 +519,6 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
+ 	}
+ 	err = icmpv6_push_pending_frames(sk, &fl, &tmp_hdr, skb->len + sizeof(struct icmp6hdr));
+ 
+-        ICMP6_INC_STATS_BH(idev, ICMP6_MIB_OUTECHOREPLIES);
+-        ICMP6_INC_STATS_BH(idev, ICMP6_MIB_OUTMSGS);
+-
+ out_put: 
+ 	if (likely(idev != NULL))
+ 		in6_dev_put(idev);
+@@ -628,10 +625,7 @@ static int icmpv6_rcv(struct sk_buff **pskb)
+ 
+ 	type = hdr->icmp6_type;
+ 
+-	if (type >= ICMPV6_DEST_UNREACH && type <= ICMPV6_PARAMPROB)
+-		ICMP6_INC_STATS_OFFSET_BH(idev, ICMP6_MIB_INDESTUNREACHS, type - ICMPV6_DEST_UNREACH);
+-	else if (type >= ICMPV6_ECHO_REQUEST && type <= NDISC_REDIRECT)
+-		ICMP6_INC_STATS_OFFSET_BH(idev, ICMP6_MIB_INECHOS, type - ICMPV6_ECHO_REQUEST);
++	ICMP6MSGIN_INC_STATS_BH(idev, type);
+ 
+ 	switch (type) {
+ 	case ICMPV6_ECHO_REQUEST:
+diff --git a/net/ipv6/ip6_input.c b/net/ipv6/ip6_input.c
+index 8a299d7..7b8d9ac 100644
+--- a/net/ipv6/ip6_input.c
++++ b/net/ipv6/ip6_input.c
+@@ -60,14 +60,22 @@ int ipv6_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt
+ {
+ 	struct ipv6hdr *hdr;
+ 	u32 		pkt_len;
++	struct inet6_dev *idev;
+ 
+-	if (skb->pkt_type == PACKET_OTHERHOST)
+-		goto drop;
++	if (skb->pkt_type == PACKET_OTHERHOST) {
++		kfree_skb(skb);
++		return 0;
++	}
++
++	rcu_read_lock();
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INRECEIVES);
++	idev = __in6_dev_get(skb->dev);
++
++	IP6_INC_STATS_BH(idev, IPSTATS_MIB_INRECEIVES);
+ 
+ 	if ((skb = skb_share_check(skb, GFP_ATOMIC)) == NULL) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INDISCARDS);
++		IP6_INC_STATS_BH(idev, IPSTATS_MIB_INDISCARDS);
++		rcu_read_unlock();
+ 		goto out;
+ 	}
+ 
+@@ -104,7 +112,7 @@ int ipv6_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt
+ 		if (pkt_len + sizeof(struct ipv6hdr) > skb->len)
+ 			goto truncated;
+ 		if (pskb_trim_rcsum(skb, pkt_len + sizeof(struct ipv6hdr))) {
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++			IP6_INC_STATS_BH(idev, IPSTATS_MIB_INHDRERRORS);
+ 			goto drop;
+ 		}
+ 		hdr = skb->nh.ipv6h;
+@@ -112,17 +120,21 @@ int ipv6_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt
+ 
+ 	if (hdr->nexthdr == NEXTHDR_HOP) {
+ 		if (ipv6_parse_hopopts(skb) < 0) {
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++			IP6_INC_STATS_BH(idev, IPSTATS_MIB_INHDRERRORS);
++			rcu_read_unlock();
+ 			return 0;
+ 		}
+ 	}
+ 
++	rcu_read_unlock();
++
+ 	return NF_HOOK(PF_INET6,NF_IP6_PRE_ROUTING, skb, dev, NULL, ip6_rcv_finish);
+ truncated:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INTRUNCATEDPKTS);
++	IP6_INC_STATS_BH(idev, IPSTATS_MIB_INTRUNCATEDPKTS);
+ err:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++	IP6_INC_STATS_BH(idev, IPSTATS_MIB_INHDRERRORS);
+ drop:
++	rcu_read_unlock();
+ 	kfree_skb(skb);
+ out:
+ 	return 0;
+@@ -140,6 +152,7 @@ static inline int ip6_input_finish(struct sk_buff *skb)
+ 	unsigned int nhoff;
+ 	int nexthdr;
+ 	u8 hash;
++	struct inet6_dev *idev;
+ 
+ 	/*
+ 	 *	Parse extension headers
+@@ -147,6 +160,7 @@ static inline int ip6_input_finish(struct sk_buff *skb)
+ 
+ 	rcu_read_lock();
+ resubmit:
++	idev = ip6_dst_idev(skb->dst);
+ 	if (!pskb_pull(skb, skb->h.raw - skb->data))
+ 		goto discard;
+ 	nhoff = IP6CB(skb)->nhoff;
+@@ -185,24 +199,24 @@ resubmit:
+ 		if (ret > 0)
+ 			goto resubmit;
+ 		else if (ret == 0)
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INDELIVERS);
++			IP6_INC_STATS_BH(idev, IPSTATS_MIB_INDELIVERS);
+ 	} else {
+ 		if (!raw_sk) {
+ 			if (xfrm6_policy_check(NULL, XFRM_POLICY_IN, skb)) {
+-				IP6_INC_STATS_BH(IPSTATS_MIB_INUNKNOWNPROTOS);
++				IP6_INC_STATS_BH(idev, IPSTATS_MIB_INUNKNOWNPROTOS);
+ 				icmpv6_send(skb, ICMPV6_PARAMPROB,
+ 				            ICMPV6_UNK_NEXTHDR, nhoff,
+ 				            skb->dev);
+ 			}
+ 		} else
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INDELIVERS);
++			IP6_INC_STATS_BH(idev, IPSTATS_MIB_INDELIVERS);
+ 		kfree_skb(skb);
+ 	}
+ 	rcu_read_unlock();
+ 	return 0;
+ 
+ discard:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INDISCARDS);
++	IP6_INC_STATS_BH(idev, IPSTATS_MIB_INDISCARDS);
+ 	rcu_read_unlock();
+ 	kfree_skb(skb);
+ 	return 0;
+@@ -219,7 +233,7 @@ int ip6_mc_input(struct sk_buff *skb)
+ 	struct ipv6hdr *hdr;
+ 	int deliver;
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INMCASTPKTS);
++	IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_INMCASTPKTS);
+ 
+ 	hdr = skb->nh.ipv6h;
+ 	deliver = unlikely(skb->dev->flags & (IFF_PROMISC|IFF_ALLMULTI)) ||
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index c9cebb5..9f647f2 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -89,7 +89,7 @@ static inline int ip6_output_finish(struct sk_buff *skb)
+ 	} else if (dst->neighbour)
+ 		return dst->neighbour->output(skb);
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
++	IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_OUTNOROUTES);
+ 	kfree_skb(skb);
+ 	return -EINVAL;
+ 
+@@ -119,6 +119,7 @@ static int ip6_output2(struct sk_buff *skb)
+ 
+ 	if (ipv6_addr_is_multicast(&skb->nh.ipv6h->daddr)) {
+ 		struct ipv6_pinfo* np = skb->sk ? inet6_sk(skb->sk) : NULL;
++		struct inet6_dev *idev = ip6_dst_idev(skb->dst);
+ 
+ 		if (!(dev->flags & IFF_LOOPBACK) && (!np || np->mc_loop) &&
+ 		    ipv6_chk_mcast_addr(dev, &skb->nh.ipv6h->daddr,
+@@ -134,13 +135,13 @@ static int ip6_output2(struct sk_buff *skb)
+ 					ip6_dev_loopback_xmit);
+ 
+ 			if (skb->nh.ipv6h->hop_limit == 0) {
+-				IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++				IP6_INC_STATS(idev, IPSTATS_MIB_OUTDISCARDS);
+ 				kfree_skb(skb);
+ 				return 0;
+ 			}
+ 		}
+ 
+-		IP6_INC_STATS(IPSTATS_MIB_OUTMCASTPKTS);
++		IP6_INC_STATS(idev, IPSTATS_MIB_OUTMCASTPKTS);
+ 	}
+ 
+ 	return NF_HOOK(PF_INET6, NF_IP6_POST_ROUTING, skb,NULL, skb->dev,ip6_output_finish);
+@@ -183,12 +184,14 @@ int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
+ 
+ 		if (skb_headroom(skb) < head_room) {
+ 			struct sk_buff *skb2 = skb_realloc_headroom(skb, head_room);
+-			kfree_skb(skb);
+-			skb = skb2;
+-			if (skb == NULL) {	
+-				IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++			if (skb2 == NULL) {
++				IP6_INC_STATS(ip6_dst_idev(skb->dst),
++					      IPSTATS_MIB_OUTDISCARDS);
++				kfree_skb(skb);
+ 				return -ENOBUFS;
+ 			}
++			kfree_skb(skb);
++			skb = skb2;
+ 			if (sk)
+ 				skb_set_owner_w(skb, sk);
+ 		}
+@@ -231,7 +234,8 @@ int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
+ 
+ 	mtu = dst_mtu(dst);
+ 	if ((skb->len <= mtu) || ipfragok || skb_is_gso(skb)) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++		IP6_INC_STATS(ip6_dst_idev(skb->dst),
++			      IPSTATS_MIB_OUTREQUESTS);
+ 		return NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev,
+ 				dst_output);
+ 	}
+@@ -240,7 +244,7 @@ int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
+ 		printk(KERN_DEBUG "IPv6: sending pkt_too_big to self\n");
+ 	skb->dev = dst->dev;
+ 	icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+-	IP6_INC_STATS(IPSTATS_MIB_FRAGFAILS);
++	IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_FRAGFAILS);
+ 	kfree_skb(skb);
+ 	return -EMSGSIZE;
+ }
+@@ -324,7 +328,7 @@ int ip6_forward(struct sk_buff *skb)
+ 		goto error;
+ 
+ 	if (!xfrm6_policy_check(NULL, XFRM_POLICY_FWD, skb)) {
+-		IP6_INC_STATS(IPSTATS_MIB_INDISCARDS);
++		IP6_INC_STATS(ip6_dst_idev(dst), IPSTATS_MIB_INDISCARDS);
+ 		goto drop;
+ 	}
+ 
+@@ -357,14 +361,14 @@ int ip6_forward(struct sk_buff *skb)
+ 		skb->dev = dst->dev;
+ 		icmpv6_send(skb, ICMPV6_TIME_EXCEED, ICMPV6_EXC_HOPLIMIT,
+ 			    0, skb->dev);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_INHDRERRORS);
+ 
+ 		kfree_skb(skb);
+ 		return -ETIMEDOUT;
+ 	}
+ 
+ 	if (!xfrm6_route_forward(skb)) {
+-		IP6_INC_STATS(IPSTATS_MIB_INDISCARDS);
++		IP6_INC_STATS(ip6_dst_idev(dst), IPSTATS_MIB_INDISCARDS);
+ 		goto drop;
+ 	}
+ 	dst = skb->dst;
+@@ -393,24 +397,31 @@ int ip6_forward(struct sk_buff *skb)
+ 		 */
+ 		if (xrlim_allow(dst, 1*HZ))
+ 			ndisc_send_redirect(skb, n, target);
+-	} else if (ipv6_addr_type(&hdr->saddr)&(IPV6_ADDR_MULTICAST|IPV6_ADDR_LOOPBACK
+-						|IPV6_ADDR_LINKLOCAL)) {
++	} else {
++		int addrtype = ipv6_addr_type(&hdr->saddr);
++
+ 		/* This check is security critical. */
+-		goto error;
++		if (addrtype & (IPV6_ADDR_MULTICAST|IPV6_ADDR_LOOPBACK))
++			goto error;
++		if (addrtype & IPV6_ADDR_LINKLOCAL) {
++			icmpv6_send(skb, ICMPV6_DEST_UNREACH,
++				ICMPV6_NOT_NEIGHBOUR, 0, skb->dev);
++			goto error;
++		}
+ 	}
+ 
+ 	if (skb->len > dst_mtu(dst)) {
+ 		/* Again, force OUTPUT device used as source address */
+ 		skb->dev = dst->dev;
+ 		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, dst_mtu(dst), skb->dev);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INTOOBIGERRORS);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_FRAGFAILS);
++		IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_INTOOBIGERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_FRAGFAILS);
+ 		kfree_skb(skb);
+ 		return -EMSGSIZE;
+ 	}
+ 
+ 	if (skb_cow(skb, dst->dev->hard_header_len)) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++		IP6_INC_STATS(ip6_dst_idev(dst), IPSTATS_MIB_OUTDISCARDS);
+ 		goto drop;
+ 	}
+ 
+@@ -420,11 +431,11 @@ int ip6_forward(struct sk_buff *skb)
+  
+ 	hdr->hop_limit--;
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_OUTFORWDATAGRAMS);
++	IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_OUTFORWDATAGRAMS);
+ 	return NF_HOOK(PF_INET6,NF_IP6_FORWARD, skb, skb->dev, dst->dev, ip6_forward_finish);
+ 
+ error:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_INADDRERRORS);
++	IP6_INC_STATS_BH(ip6_dst_idev(dst), IPSTATS_MIB_INADDRERRORS);
+ drop:
+ 	kfree_skb(skb);
+ 	return -EINVAL;
+@@ -553,7 +564,7 @@ static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ 
+ 		tmp_hdr = kmalloc(hlen, GFP_ATOMIC);
+ 		if (!tmp_hdr) {
+-			IP6_INC_STATS(IPSTATS_MIB_FRAGFAILS);
++			IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_FRAGFAILS);
+ 			return -ENOMEM;
+ 		}
+ 
+@@ -574,7 +585,8 @@ static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ 		skb->data_len = first_len - skb_headlen(skb);
+ 		skb->len = first_len;
+ 		skb->nh.ipv6h->payload_len = htons(first_len - sizeof(struct ipv6hdr));
+- 
++
++		dst_hold(&rt->u.dst);
+ 
+ 		for (;;) {
+ 			/* Prepare header of the next frame,
+@@ -598,7 +610,7 @@ static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ 			
+ 			err = output(skb);
+ 			if(!err)
+-				IP6_INC_STATS(IPSTATS_MIB_FRAGCREATES);
++				IP6_INC_STATS(ip6_dst_idev(&rt->u.dst), IPSTATS_MIB_FRAGCREATES);
+ 
+ 			if (err || !frag)
+ 				break;
+@@ -611,7 +623,8 @@ static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ 		kfree(tmp_hdr);
+ 
+ 		if (err == 0) {
+-			IP6_INC_STATS(IPSTATS_MIB_FRAGOKS);
++			IP6_INC_STATS(ip6_dst_idev(&rt->u.dst), IPSTATS_MIB_FRAGOKS);
++			dst_release(&rt->u.dst);
+ 			return 0;
+ 		}
+ 
+@@ -621,7 +634,8 @@ static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ 			frag = skb;
+ 		}
+ 
+-		IP6_INC_STATS(IPSTATS_MIB_FRAGFAILS);
++		IP6_INC_STATS(ip6_dst_idev(&rt->u.dst), IPSTATS_MIB_FRAGFAILS);
++		dst_release(&rt->u.dst);
+ 		return err;
+ 	}
+ 
+@@ -654,7 +668,8 @@ slow_path:
+ 
+ 		if ((frag = alloc_skb(len+hlen+sizeof(struct frag_hdr)+LL_RESERVED_SPACE(rt->u.dst.dev), GFP_ATOMIC)) == NULL) {
+ 			NETDEBUG(KERN_INFO "IPv6: frag: no memory for new fragment!\n");
+-			IP6_INC_STATS(IPSTATS_MIB_FRAGFAILS);
++			IP6_INC_STATS(ip6_dst_idev(skb->dst),
++				      IPSTATS_MIB_FRAGFAILS);
+ 			err = -ENOMEM;
+ 			goto fail;
+ 		}
+@@ -715,15 +730,17 @@ slow_path:
+ 		if (err)
+ 			goto fail;
+ 
+-		IP6_INC_STATS(IPSTATS_MIB_FRAGCREATES);
++		IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_FRAGCREATES);
+ 	}
++	IP6_INC_STATS(ip6_dst_idev(skb->dst),
++		      IPSTATS_MIB_FRAGOKS);
+ 	kfree_skb(skb);
+-	IP6_INC_STATS(IPSTATS_MIB_FRAGOKS);
+ 	return err;
+ 
+ fail:
++	IP6_INC_STATS(ip6_dst_idev(skb->dst),
++		      IPSTATS_MIB_FRAGFAILS);
+ 	kfree_skb(skb); 
+-	IP6_INC_STATS(IPSTATS_MIB_FRAGFAILS);
+ 	return err;
+ }
+ 
+@@ -1231,7 +1248,7 @@ alloc_new_skb:
+ 	return 0;
+ error:
+ 	inet->cork.length -= length;
+-	IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++	IP6_INC_STATS(rt->rt6i_idev, IPSTATS_MIB_OUTDISCARDS);
+ 	return err;
+ }
+ 
+@@ -1292,7 +1309,14 @@ int ip6_push_pending_frames(struct sock *sk)
+ 	skb->priority = sk->sk_priority;
+ 
+ 	skb->dst = dst_clone(&rt->u.dst);
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);	
++	IP6_INC_STATS(rt->rt6i_idev, IPSTATS_MIB_OUTREQUESTS);
++	if (proto == IPPROTO_ICMPV6) {
++		struct inet6_dev *idev = ip6_dst_idev(skb->dst);
++
++		ICMP6MSGOUT_INC_STATS_BH(idev, ((struct icmp6hdr *)(hdr + 1))->icmp6_type);
++		ICMP6_INC_STATS_BH(idev, ICMP6_MIB_OUTMSGS);
++	}
++
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, skb->dst->dev, dst_output);
+ 	if (err) {
+ 		if (err > 0)
+@@ -1323,7 +1347,8 @@ void ip6_flush_pending_frames(struct sock *sk)
+ 	struct sk_buff *skb;
+ 
+ 	while ((skb = __skb_dequeue_tail(&sk->sk_write_queue)) != NULL) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++		IP6_INC_STATS(ip6_dst_idev(skb->dst),
++			      IPSTATS_MIB_OUTDISCARDS);
+ 		kfree_skb(skb);
+ 	}
+ 
+diff --git a/net/ipv6/mcast.c b/net/ipv6/mcast.c
+index c070724..18de808 100644
+--- a/net/ipv6/mcast.c
++++ b/net/ipv6/mcast.c
+@@ -1466,7 +1466,7 @@ static void mld_sendpack(struct sk_buff *skb)
+ 	struct inet6_dev *idev = in6_dev_get(skb->dev);
+ 	int err;
+ 
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	payload_len = skb->tail - (unsigned char *)skb->nh.ipv6h -
+ 		sizeof(struct ipv6hdr);
+ 	mldlen = skb->tail - skb->h.raw;
+@@ -1477,10 +1477,11 @@ static void mld_sendpack(struct sk_buff *skb)
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, skb->dev,
+ 		mld_dev_queue_xmit);
+ 	if (!err) {
+-		ICMP6_INC_STATS(idev,ICMP6_MIB_OUTMSGS);
+-		IP6_INC_STATS(IPSTATS_MIB_OUTMCASTPKTS);
++		ICMP6MSGOUT_INC_STATS_BH(idev, ICMPV6_MLD2_REPORT);
++		ICMP6_INC_STATS_BH(idev, ICMP6_MIB_OUTMSGS);
++		IP6_INC_STATS_BH(idev, IPSTATS_MIB_OUTMCASTPKTS);
+ 	} else
+-		IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++		IP6_INC_STATS_BH(idev, IPSTATS_MIB_OUTDISCARDS);
+ 
+ 	if (likely(idev != NULL))
+ 		in6_dev_put(idev);
+@@ -1766,7 +1767,10 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
+ 		     IPV6_TLV_ROUTERALERT, 2, 0, 0,
+ 		     IPV6_TLV_PADN, 0 };
+ 
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++	rcu_read_lock();
++	IP6_INC_STATS(__in6_dev_get(dev),
++		      IPSTATS_MIB_OUTREQUESTS);
++	rcu_read_unlock();
+ 	snd_addr = addr;
+ 	if (type == ICMPV6_MGM_REDUCTION) {
+ 		snd_addr = &all_routers;
+@@ -1780,7 +1784,10 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
+ 	skb = sock_alloc_send_skb(sk, LL_RESERVED_SPACE(dev) + full_len, 1, &err);
+ 
+ 	if (skb == NULL) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++		rcu_read_lock();
++		IP6_INC_STATS(__in6_dev_get(dev),
++			      IPSTATS_MIB_OUTDISCARDS);
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -1814,14 +1821,11 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, skb->dev,
+ 		mld_dev_queue_xmit);
+ 	if (!err) {
+-		if (type == ICMPV6_MGM_REDUCTION)
+-			ICMP6_INC_STATS(idev, ICMP6_MIB_OUTGROUPMEMBREDUCTIONS);
+-		else
+-			ICMP6_INC_STATS(idev, ICMP6_MIB_OUTGROUPMEMBRESPONSES);
++		ICMP6MSGOUT_INC_STATS(idev, type);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+-		IP6_INC_STATS(IPSTATS_MIB_OUTMCASTPKTS);
++		IP6_INC_STATS(idev, IPSTATS_MIB_OUTMCASTPKTS);
+ 	} else
+-		IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++		IP6_INC_STATS(idev, IPSTATS_MIB_OUTDISCARDS);
+ 
+ 	if (likely(idev != NULL))
+ 		in6_dev_put(idev);
+@@ -2255,8 +2259,6 @@ void ipv6_mc_up(struct inet6_dev *idev)
+ 
+ void ipv6_mc_init_dev(struct inet6_dev *idev)
+ {
+-	struct in6_addr maddr;
+-
+ 	write_lock_bh(&idev->lock);
+ 	rwlock_init(&idev->mc_lock);
+ 	idev->mc_gq_running = 0;
+@@ -2272,10 +2274,6 @@ void ipv6_mc_init_dev(struct inet6_dev *idev)
+ 	idev->mc_maxdelay = IGMP6_UNSOLICITED_IVAL;
+ 	idev->mc_v1_seen = 0;
+ 	write_unlock_bh(&idev->lock);
+-
+-	/* Add all-nodes address. */
+-	ipv6_addr_all_nodes(&maddr);
+-	ipv6_dev_mc_inc(idev->dev, &maddr);
+ }
+ 
+ /*
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index 5bf8543..dacb4c2 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -515,10 +515,9 @@ static void ndisc_send_na(struct net_device *dev, struct neighbour *neigh,
+ 
+ 	skb->dst = dst;
+ 	idev = in6_dev_get(dst->dev);
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
+-		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTNEIGHBORADVERTISEMENTS);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+@@ -600,10 +599,9 @@ void ndisc_send_ns(struct net_device *dev, struct neighbour *neigh,
+ 	/* send it! */
+ 	skb->dst = dst;
+ 	idev = in6_dev_get(dst->dev);
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
+-		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTNEIGHBORSOLICITS);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+@@ -695,10 +693,9 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+ 	/* send it! */
+ 	skb->dst = dst;
+ 	idev = in6_dev_get(dst->dev);
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);	
++	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
+-		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTROUTERSOLICITS);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+@@ -1347,9 +1344,10 @@ static void ndisc_redirect_rcv(struct sk_buff *skb)
+ 
+ 	if (ipv6_addr_equal(dest, target)) {
+ 		on_link = 1;
+-	} else if (!(ipv6_addr_type(target) & IPV6_ADDR_LINKLOCAL)) {
++	} else if (ipv6_addr_type(target) !=
++		(IPV6_ADDR_UNICAST|IPV6_ADDR_LINKLOCAL)) {
+ 		ND_PRINTK2(KERN_WARNING 
+-			   "ICMPv6 Redirect: target address is not link-local.\n");
++			   "ICMPv6 Redirect: target address is not link-local unicast.\n");
+ 		return;
+ 	}
+ 
+@@ -1520,10 +1518,10 @@ void ndisc_send_redirect(struct sk_buff *skb, struct neighbour *neigh,
+ 
+ 	buff->dst = dst;
+ 	idev = in6_dev_get(dst->dev);
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);
++	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, buff, NULL, dst->dev, dst_output);
+ 	if (!err) {
+-		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTREDIRECTS);
++		ICMP6MSGOUT_INC_STATS(idev, NDISC_REDIRECT);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+diff --git a/net/ipv6/netfilter.c b/net/ipv6/netfilter.c
+index 395a417..f039de6 100644
+--- a/net/ipv6/netfilter.c
++++ b/net/ipv6/netfilter.c
+@@ -31,7 +31,7 @@ int ip6_route_me_harder(struct sk_buff *skb)
+ #endif
+ 
+ 	if (dst->error) {
+-		IP6_INC_STATS(IPSTATS_MIB_OUTNOROUTES);
++		IP6_INC_STATS(ip6_dst_idev(dst), IPSTATS_MIB_OUTNOROUTES);
+ 		LIMIT_NETDEBUG(KERN_DEBUG "ip6_route_me_harder: No more route.\n");
+ 		dst_release(dst);
+ 		return -EINVAL;
+diff --git a/net/ipv6/proc.c b/net/ipv6/proc.c
+index efee7a6..7394590 100644
+--- a/net/ipv6/proc.c
++++ b/net/ipv6/proc.c
+@@ -84,47 +84,35 @@ static struct snmp_mib snmp6_ipstats_list[] = {
+ };
+ 
+ static struct snmp_mib snmp6_icmp6_list[] = {
+-/* icmpv6 mib according to RFC 2466
+-
+-   Exceptions:  {In|Out}AdminProhibs are removed, because I see
+-                no good reasons to account them separately
+-		of another dest.unreachs.
+-		OutErrs is zero identically.
+-		OutEchos too.
+-		OutRouterAdvertisements too.
+-		OutGroupMembQueries too.
+- */
++/* icmpv6 mib according to RFC 2466 */
++
+ 	SNMP_MIB_ITEM("Icmp6InMsgs", ICMP6_MIB_INMSGS),
+ 	SNMP_MIB_ITEM("Icmp6InErrors", ICMP6_MIB_INERRORS),
+-	SNMP_MIB_ITEM("Icmp6InDestUnreachs", ICMP6_MIB_INDESTUNREACHS),
+-	SNMP_MIB_ITEM("Icmp6InPktTooBigs", ICMP6_MIB_INPKTTOOBIGS),
+-	SNMP_MIB_ITEM("Icmp6InTimeExcds", ICMP6_MIB_INTIMEEXCDS),
+-	SNMP_MIB_ITEM("Icmp6InParmProblems", ICMP6_MIB_INPARMPROBLEMS),
+-	SNMP_MIB_ITEM("Icmp6InEchos", ICMP6_MIB_INECHOS),
+-	SNMP_MIB_ITEM("Icmp6InEchoReplies", ICMP6_MIB_INECHOREPLIES),
+-	SNMP_MIB_ITEM("Icmp6InGroupMembQueries", ICMP6_MIB_INGROUPMEMBQUERIES),
+-	SNMP_MIB_ITEM("Icmp6InGroupMembResponses", ICMP6_MIB_INGROUPMEMBRESPONSES),
+-	SNMP_MIB_ITEM("Icmp6InGroupMembReductions", ICMP6_MIB_INGROUPMEMBREDUCTIONS),
+-	SNMP_MIB_ITEM("Icmp6InRouterSolicits", ICMP6_MIB_INROUTERSOLICITS),
+-	SNMP_MIB_ITEM("Icmp6InRouterAdvertisements", ICMP6_MIB_INROUTERADVERTISEMENTS),
+-	SNMP_MIB_ITEM("Icmp6InNeighborSolicits", ICMP6_MIB_INNEIGHBORSOLICITS),
+-	SNMP_MIB_ITEM("Icmp6InNeighborAdvertisements", ICMP6_MIB_INNEIGHBORADVERTISEMENTS),
+-	SNMP_MIB_ITEM("Icmp6InRedirects", ICMP6_MIB_INREDIRECTS),
+ 	SNMP_MIB_ITEM("Icmp6OutMsgs", ICMP6_MIB_OUTMSGS),
+-	SNMP_MIB_ITEM("Icmp6OutDestUnreachs", ICMP6_MIB_OUTDESTUNREACHS),
+-	SNMP_MIB_ITEM("Icmp6OutPktTooBigs", ICMP6_MIB_OUTPKTTOOBIGS),
+-	SNMP_MIB_ITEM("Icmp6OutTimeExcds", ICMP6_MIB_OUTTIMEEXCDS),
+-	SNMP_MIB_ITEM("Icmp6OutParmProblems", ICMP6_MIB_OUTPARMPROBLEMS),
+-	SNMP_MIB_ITEM("Icmp6OutEchoReplies", ICMP6_MIB_OUTECHOREPLIES),
+-	SNMP_MIB_ITEM("Icmp6OutRouterSolicits", ICMP6_MIB_OUTROUTERSOLICITS),
+-	SNMP_MIB_ITEM("Icmp6OutNeighborSolicits", ICMP6_MIB_OUTNEIGHBORSOLICITS),
+-	SNMP_MIB_ITEM("Icmp6OutNeighborAdvertisements", ICMP6_MIB_OUTNEIGHBORADVERTISEMENTS),
+-	SNMP_MIB_ITEM("Icmp6OutRedirects", ICMP6_MIB_OUTREDIRECTS),
+-	SNMP_MIB_ITEM("Icmp6OutGroupMembResponses", ICMP6_MIB_OUTGROUPMEMBRESPONSES),
+-	SNMP_MIB_ITEM("Icmp6OutGroupMembReductions", ICMP6_MIB_OUTGROUPMEMBREDUCTIONS),
+ 	SNMP_MIB_SENTINEL
+ };
+ 
++/* RFC 4293 v6 ICMPMsgStatsTable; named items for RFC 2466 compatibility */
++static char *icmp6type2name[256] = {
++	[ICMPV6_DEST_UNREACH] = "DestUnreachs",
++	[ICMPV6_PKT_TOOBIG] = "PktTooBigs",
++	[ICMPV6_TIME_EXCEED] = "TimeExcds",
++	[ICMPV6_PARAMPROB] = "ParmProblems",
++	[ICMPV6_ECHO_REQUEST] = "EchoRequest",
++	[ICMPV6_ECHO_REPLY] = "EchoReplies",
++	[ICMPV6_MGM_QUERY] = "GroupMembQueries",
++	[ICMPV6_MGM_REPORT] = "GroupMembResponses",
++	[ICMPV6_MGM_REDUCTION] = "GroupMembReductions",
++	[ICMPV6_MLD2_REPORT] = "MLDv2Reports",
++	[NDISC_ROUTER_ADVERTISEMENT] = "RouterAdvertisements",
++	[NDISC_ROUTER_SOLICITATION] = "RouterSolicits",
++	[NDISC_NEIGHBOUR_ADVERTISEMENT] = "NeighborAdvertisements",
++	[NDISC_NEIGHBOUR_SOLICITATION] = "NeighborSolicits",
++	[NDISC_REDIRECT] = "NeighborRedirects",
++};
++ 
++ 
++
+ static struct snmp_mib snmp6_udp6_list[] = {
+ 	SNMP_MIB_ITEM("Udp6InDatagrams", UDP_MIB_INDATAGRAMS),
+ 	SNMP_MIB_ITEM("Udp6NoPorts", UDP_MIB_NOPORTS),
+@@ -146,6 +134,40 @@ fold_field(void *mib[], int offt)
+         return res;
+ }
+ 
++static void snmp6_seq_show_icmpv6msg(struct seq_file *seq, void **mib)
++{
++	static char name[32];
++	int i;
++
++	/* print by name -- deprecated items */
++	for (i = 0; i < ICMP6MSG_MIB_MAX; i++) {
++		int icmptype;
++		char *p;
++
++		icmptype = i & 0xff;
++		p = icmp6type2name[icmptype];
++		if (!p)	/* don't print un-named types here */
++			continue;
++		(void) snprintf(name, sizeof(name)-1, "Icmp6%s%s",
++			i & 0x100 ? "Out" : "In", p);
++		seq_printf(seq, "%-32s\t%lu\n", name,
++			fold_field(mib, i));
++	}
++
++	/* print by number (nonzero only) - ICMPMsgStat format */
++	for (i = 0; i < ICMP6MSG_MIB_MAX; i++) {
++		unsigned long val;
++
++		val = fold_field(mib, i);
++		if (!val)
++			continue;
++		(void) snprintf(name, sizeof(name)-1, "Icmp6%sType%u",
++			i & 0x100 ?  "Out" : "In", i & 0xff);
++		seq_printf(seq, "%-32s\t%lu\n", name, val);
++	}
++	return;
++}
++
+ static inline void
+ snmp6_seq_show_item(struct seq_file *seq, void **mib, struct snmp_mib *itemlist)
+ {
+@@ -161,10 +183,13 @@ static int snmp6_seq_show(struct seq_file *seq, void *v)
+ 
+ 	if (idev) {
+ 		seq_printf(seq, "%-32s\t%u\n", "ifIndex", idev->dev->ifindex);
+-		snmp6_seq_show_item(seq, (void **)idev->stats.icmpv6, snmp6_icmp6_list);
++		snmp6_seq_show_item(seq, (void **)idev->statsx.ipv6, snmp6_ipstats_list);
++		snmp6_seq_show_item(seq, (void **)idev->statsx.icmpv6, snmp6_icmp6_list);
++		snmp6_seq_show_icmpv6msg(seq, (void **)idev->statsx.icmpv6msg);
+ 	} else {
+ 		snmp6_seq_show_item(seq, (void **)ipv6_statistics, snmp6_ipstats_list);
+ 		snmp6_seq_show_item(seq, (void **)icmpv6_statistics, snmp6_icmp6_list);
++		snmp6_seq_show_icmpv6msg(seq, (void **)icmpv6msg_statistics);
+ 		snmp6_seq_show_item(seq, (void **)udp_stats_in6, snmp6_udp6_list);
+ 	}
+ 	return 0;
+@@ -281,19 +306,31 @@ int snmp6_alloc_dev(struct inet6_dev *idev)
+ 	if (!idev || !idev->dev)
+ 		return -EINVAL;
+ 
+-	if (snmp6_mib_init((void **)idev->stats.icmpv6, sizeof(struct icmpv6_mib),
++	if (snmp6_mib_init((void **)idev->statsx.ipv6, sizeof(struct ipstats_mib),
++			   __alignof__(struct ipstats_mib)) < 0)
++		goto err_ip;
++	if (snmp6_mib_init((void **)idev->statsx.icmpv6, sizeof(struct icmpv6_mib),
+ 			   __alignof__(struct icmpv6_mib)) < 0)
+ 		goto err_icmp;
++	if (snmp6_mib_init((void **)idev->statsx.icmpv6msg,
++			sizeof(struct icmpv6msg_mib),
++			__alignof__(struct icmpv6msg_mib)) < 0)
++		goto err_icmpmsg;
+ 
+ 	return 0;
+-
++err_icmpmsg:
++	snmp6_mib_free((void **)idev->statsx.icmpv6);
+ err_icmp:
++	snmp6_mib_free((void **)idev->statsx.ipv6);
++err_ip:
+ 	return err;
+ }
+ 
+ int snmp6_free_dev(struct inet6_dev *idev)
+ {
+-	snmp6_mib_free((void **)idev->stats.icmpv6);
++	snmp6_mib_free((void **)idev->statsx.icmpv6);
++	snmp6_mib_free((void **)idev->statsx.ipv6);
++	snmp6_mib_free((void **)idev->statsx.icmpv6msg);
+ 	return 0;
+ }
+ 
+diff --git a/net/ipv6/raw.c b/net/ipv6/raw.c
+index 983568b..5411a56 100644
+--- a/net/ipv6/raw.c
++++ b/net/ipv6/raw.c
+@@ -559,7 +559,7 @@ static int rawv6_send_hdrinc(struct sock *sk, void *from, int length,
+ 	if (err)
+ 		goto error_fault;
+ 
+-	IP6_INC_STATS(IPSTATS_MIB_OUTREQUESTS);		
++	IP6_INC_STATS(rt->rt6i_idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, rt->u.dst.dev,
+ 		      dst_output);
+ 	if (err > 0)
+@@ -573,7 +573,7 @@ error_fault:
+ 	err = -EFAULT;
+ 	kfree_skb(skb);
+ error:
+-	IP6_INC_STATS(IPSTATS_MIB_OUTDISCARDS);
++	IP6_INC_STATS(rt->rt6i_idev, IPSTATS_MIB_OUTDISCARDS);
+ 	return err; 
+ }
+ 
+diff --git a/net/ipv6/reassembly.c b/net/ipv6/reassembly.c
+index 4e299c6..9eb8231 100644
+--- a/net/ipv6/reassembly.c
++++ b/net/ipv6/reassembly.c
+@@ -47,6 +47,7 @@
+ #include <net/snmp.h>
+ 
+ #include <net/ipv6.h>
++#include <net/ip6_route.h>
+ #include <net/protocol.h>
+ #include <net/transp_v6.h>
+ #include <net/rawv6.h>
+@@ -257,7 +258,7 @@ static __inline__ void fq_kill(struct frag_queue *fq)
+ 	}
+ }
+ 
+-static void ip6_evictor(void)
++static void ip6_evictor(struct inet6_dev *idev)
+ {
+ 	struct frag_queue *fq;
+ 	struct list_head *tmp;
+@@ -284,14 +285,14 @@ static void ip6_evictor(void)
+ 		spin_unlock(&fq->lock);
+ 
+ 		fq_put(fq, &work);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_REASMFAILS);
++		IP6_INC_STATS_BH(idev, IPSTATS_MIB_REASMFAILS);
+ 	}
+ }
+ 
+ static void ip6_frag_expire(unsigned long data)
+ {
+ 	struct frag_queue *fq = (struct frag_queue *) data;
+-	struct net_device *dev;
++	struct net_device *dev = NULL;
+ 
+ 	spin_lock(&fq->lock);
+ 
+@@ -300,17 +301,19 @@ static void ip6_frag_expire(unsigned long data)
+ 
+ 	fq_kill(fq);
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMTIMEOUT);
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMFAILS);
++	dev = dev_get_by_index(fq->iif);
++	if (!dev)
++		goto out;
++
++	rcu_read_lock();
++	IP6_INC_STATS_BH(__in6_dev_get(dev), IPSTATS_MIB_REASMTIMEOUT);
++	IP6_INC_STATS_BH(__in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
++	rcu_read_unlock();
+ 
+ 	/* Don't send error if the first segment did not arrive. */
+ 	if (!(fq->last_in&FIRST_IN) || !fq->fragments)
+ 		goto out;
+ 
+-	dev = dev_get_by_index(fq->iif);
+-	if (!dev)
+-		goto out;
+-
+ 	/*
+ 	   But use as source device on which LAST ARRIVED
+ 	   segment was received. And do not use fq->dev
+@@ -318,8 +321,9 @@ static void ip6_frag_expire(unsigned long data)
+ 	 */
+ 	fq->fragments->dev = dev;
+ 	icmpv6_send(fq->fragments, ICMPV6_TIME_EXCEED, ICMPV6_EXC_FRAGTIME, 0, dev);
+-	dev_put(dev);
+ out:
++	if (dev)
++		dev_put(dev);
+ 	spin_unlock(&fq->lock);
+ 	fq_put(fq, NULL);
+ }
+@@ -366,7 +370,8 @@ static struct frag_queue *ip6_frag_intern(struct frag_queue *fq_in)
+ 
+ 
+ static struct frag_queue *
+-ip6_frag_create(u32 id, struct in6_addr *src, struct in6_addr *dst)
++ip6_frag_create(u32 id, struct in6_addr *src, struct in6_addr *dst,
++		struct inet6_dev *idev)
+ {
+ 	struct frag_queue *fq;
+ 
+@@ -386,12 +391,13 @@ ip6_frag_create(u32 id, struct in6_addr *src, struct in6_addr *dst)
+ 	return ip6_frag_intern(fq);
+ 
+ oom:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMFAILS);
++	IP6_INC_STATS_BH(idev, IPSTATS_MIB_REASMFAILS);
+ 	return NULL;
+ }
+ 
+ static __inline__ struct frag_queue *
+-fq_find(u32 id, struct in6_addr *src, struct in6_addr *dst)
++fq_find(u32 id, struct in6_addr *src, struct in6_addr *dst,
++	struct inet6_dev *idev)
+ {
+ 	struct frag_queue *fq;
+ 	struct hlist_node *n;
+@@ -410,7 +416,7 @@ fq_find(u32 id, struct in6_addr *src, struct in6_addr *dst)
+ 	}
+ 	read_unlock(&ip6_frag_lock);
+ 
+-	return ip6_frag_create(id, src, dst);
++	return ip6_frag_create(id, src, dst, idev);
+ }
+ 
+ 
+@@ -428,7 +434,8 @@ static void ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 			((u8 *) (fhdr + 1) - (u8 *) (skb->nh.ipv6h + 1)));
+ 
+ 	if ((unsigned int)end > IPV6_MAXPLEN) {
+-		IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++				 IPSTATS_MIB_INHDRERRORS);
+  		icmpv6_param_prob(skb,ICMPV6_HDR_FIELD, (u8*)&fhdr->frag_off - skb->nh.raw);
+  		return;
+ 	}
+@@ -455,7 +462,8 @@ static void ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 			/* RFC2460 says always send parameter problem in
+ 			 * this case. -DaveM
+ 			 */
+-			IP6_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
++			IP6_INC_STATS_BH(ip6_dst_idev(skb->dst),
++					 IPSTATS_MIB_INHDRERRORS);
+ 			icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, 
+ 					  offsetof(struct ipv6hdr, payload_len));
+ 			return;
+@@ -571,7 +579,7 @@ static void ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
+ 	return;
+ 
+ err:
+-	IP6_INC_STATS(IPSTATS_MIB_REASMFAILS);
++	IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_REASMFAILS);
+ 	kfree_skb(skb);
+ }
+ 
+@@ -665,7 +673,9 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff **skb_in,
+ 	if (head->ip_summed == CHECKSUM_HW)
+ 		head->csum = csum_partial(head->nh.raw, head->h.raw-head->nh.raw, head->csum);
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMOKS);
++	rcu_read_lock();
++	IP6_INC_STATS_BH(__in6_dev_get(dev), IPSTATS_MIB_REASMOKS);
++	rcu_read_unlock();
+ 	fq->fragments = NULL;
+ 	return 1;
+ 
+@@ -677,7 +687,9 @@ out_oom:
+ 	if (net_ratelimit())
+ 		printk(KERN_DEBUG "ip6_frag_reasm: no memory for reassembly\n");
+ out_fail:
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMFAILS);
++	rcu_read_lock();
++	IP6_INC_STATS_BH(__in6_dev_get(dev), IPSTATS_MIB_REASMFAILS);
++	rcu_read_unlock();
+ 	return -1;
+ }
+ 
+@@ -691,16 +703,16 @@ static int ipv6_frag_rcv(struct sk_buff **skbp)
+ 
+ 	hdr = skb->nh.ipv6h;
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMREQDS);
++	IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_REASMREQDS);
+ 
+ 	/* Jumbo payload inhibits frag. header */
+ 	if (hdr->payload_len==0) {
+-		IP6_INC_STATS(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, skb->h.raw-skb->nh.raw);
+ 		return -1;
+ 	}
+ 	if (!pskb_may_pull(skb, (skb->h.raw-skb->data)+sizeof(struct frag_hdr))) {
+-		IP6_INC_STATS(IPSTATS_MIB_INHDRERRORS);
++		IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_INHDRERRORS);
+ 		icmpv6_param_prob(skb, ICMPV6_HDR_FIELD, skb->h.raw-skb->nh.raw);
+ 		return -1;
+ 	}
+@@ -711,16 +723,17 @@ static int ipv6_frag_rcv(struct sk_buff **skbp)
+ 	if (!(fhdr->frag_off & htons(0xFFF9))) {
+ 		/* It is not a fragmented frame */
+ 		skb->h.raw += sizeof(struct frag_hdr);
+-		IP6_INC_STATS_BH(IPSTATS_MIB_REASMOKS);
++		IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_REASMOKS);
+ 
+ 		IP6CB(skb)->nhoff = (u8*)fhdr - skb->nh.raw;
+ 		return 1;
+ 	}
+ 
+ 	if (atomic_read(&ip6_frag_mem) > sysctl_ip6frag_high_thresh)
+-		ip6_evictor();
++		ip6_evictor(ip6_dst_idev(skb->dst));
+ 
+-	if ((fq = fq_find(fhdr->identification, &hdr->saddr, &hdr->daddr)) != NULL) {
++	if ((fq = fq_find(fhdr->identification, &hdr->saddr, &hdr->daddr,
++			  ip6_dst_idev(skb->dst))) != NULL) {
+ 		int ret = -1;
+ 
+ 		spin_lock(&fq->lock);
+@@ -736,7 +749,7 @@ static int ipv6_frag_rcv(struct sk_buff **skbp)
+ 		return ret;
+ 	}
+ 
+-	IP6_INC_STATS_BH(IPSTATS_MIB_REASMFAILS);
++	IP6_INC_STATS_BH(ip6_dst_idev(skb->dst), IPSTATS_MIB_REASMFAILS);
+ 	kfree_skb(skb);
+ 	return -1;
+ }
+diff --git a/net/ipv6/route.c b/net/ipv6/route.c
+index 7ddf6c9..ca3c300 100644
+--- a/net/ipv6/route.c
++++ b/net/ipv6/route.c
+@@ -1809,13 +1809,22 @@ int ipv6_route_ioctl(unsigned int cmd, void __user *arg)
+  *	Drop the packet on the floor
+  */
+ 
+-static inline int ip6_pkt_drop(struct sk_buff *skb, int code)
+-{
+-	int type = ipv6_addr_type(&skb->nh.ipv6h->daddr);
+-	if (type == IPV6_ADDR_ANY || type == IPV6_ADDR_RESERVED)
+-		IP6_INC_STATS(IPSTATS_MIB_INADDRERRORS);
+-
+-	IP6_INC_STATS(IPSTATS_MIB_OUTNOROUTES);
++static inline int ip6_pkt_drop(struct sk_buff *skb, int code,
++			       int ipstats_mib_noroutes)
++{
++	int type;
++	switch (ipstats_mib_noroutes) {
++	case IPSTATS_MIB_INNOROUTES:
++		type = ipv6_addr_type(&skb->nh.ipv6h->daddr);
++		if (type == IPV6_ADDR_ANY || type == IPV6_ADDR_RESERVED) {
++			IP6_INC_STATS(ip6_dst_idev(skb->dst), IPSTATS_MIB_INADDRERRORS);
++			break;
++		}
++		/* FALLTHROUGH */
++	case IPSTATS_MIB_OUTNOROUTES:
++		IP6_INC_STATS(ip6_dst_idev(skb->dst), ipstats_mib_noroutes);
++		break;
++	}
+ 	icmpv6_send(skb, ICMPV6_DEST_UNREACH, code, 0, skb->dev);
+ 	kfree_skb(skb);
+ 	return 0;
+@@ -1823,26 +1832,26 @@ static inline int ip6_pkt_drop(struct sk_buff *skb, int code)
+ 
+ static int ip6_pkt_discard(struct sk_buff *skb)
+ {
+-	return ip6_pkt_drop(skb, ICMPV6_NOROUTE);
++	return ip6_pkt_drop(skb, ICMPV6_NOROUTE, IPSTATS_MIB_INNOROUTES);
+ }
+ 
+ static int ip6_pkt_discard_out(struct sk_buff *skb)
+ {
+ 	skb->dev = skb->dst->dev;
+-	return ip6_pkt_discard(skb);
++	return ip6_pkt_drop(skb, ICMPV6_NOROUTE, IPSTATS_MIB_OUTNOROUTES);
+ }
+ 
+ #ifdef CONFIG_IPV6_MULTIPLE_TABLES
+ 
+ static int ip6_pkt_prohibit(struct sk_buff *skb)
+ {
+-	return ip6_pkt_drop(skb, ICMPV6_ADM_PROHIBITED);
++	return ip6_pkt_drop(skb, ICMPV6_ADM_PROHIBITED, IPSTATS_MIB_INNOROUTES);
+ }
+ 
+ static int ip6_pkt_prohibit_out(struct sk_buff *skb)
+ {
+ 	skb->dev = skb->dst->dev;
+-	return ip6_pkt_prohibit(skb);
++	return ip6_pkt_drop(skb, ICMPV6_ADM_PROHIBITED, IPSTATS_MIB_OUTNOROUTES);
+ }
+ 
+ static int ip6_pkt_blk_hole(struct sk_buff *skb)
+diff --git a/net/sctp/ipv6.c b/net/sctp/ipv6.c
+index 99c0cef..c77deb4 100644
+--- a/net/sctp/ipv6.c
++++ b/net/sctp/ipv6.c
+@@ -322,9 +322,9 @@ static void sctp_v6_copy_addrlist(struct list_head *addrlist,
+ 	struct inet6_ifaddr *ifp;
+ 	struct sctp_sockaddr_entry *addr;
+ 
+-	read_lock(&addrconf_lock);
++	rcu_read_lock();
+ 	if ((in6_dev = __in6_dev_get(dev)) == NULL) {
+-		read_unlock(&addrconf_lock);
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -343,7 +343,7 @@ static void sctp_v6_copy_addrlist(struct list_head *addrlist,
+ 	}
+ 
+ 	read_unlock(&in6_dev->lock);
+-	read_unlock(&addrconf_lock);
++	rcu_read_unlock();
+ }
+ 
+ /* Initialize a sockaddr_storage from in incoming skb. */

@@ -1,0 +1,26 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 17 Nov 2010 22:15:23 -0500
+Subject: [scsi] lpfc: Update version for 8.2.0.87 driver release
+Message-id: <1290032123-5584-9-git-send-email-revers@redhat.com>
+Patchwork-id: 29483
+O-Subject: [RHEL5.6 PATCH 8/8] lpfc: Update lpfc version for 8.2.0.87 driver
+	release
+Bugzilla: 649489
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=649489
+
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 82ae656..a981412 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.86"
++#define LPFC_DRIVER_VERSION "8.2.0.87"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

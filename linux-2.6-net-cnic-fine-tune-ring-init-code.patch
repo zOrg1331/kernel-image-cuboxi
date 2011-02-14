@@ -1,0 +1,111 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 18 Nov 2010 17:00:44 -0500
+Subject: [net] cnic: Fine-tune ring init code
+Message-id: <1290099647-9514-2-git-send-email-mchristi@redhat.com>
+Patchwork-id: 29493
+O-Subject: [RHEL 5.6 PATCH 1/4] cnic: Fine-tune ring init code.
+Bugzilla: 651287
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 651287.
+
+>From upstream commit:
+
+commit 541a78103f097cd5120e55aaba56d099a64f153c
+Author: Michael Chan <mchan@broadcom.com>
+Date:   Wed Oct 6 03:17:22 2010 +0000
+
+    cnic: Fine-tune ring init code.
+
+    Initialize the rings only during cnic_uio_open() and shut them down
+    during cnic_uio_close().  Check for the new bit CNIC_LCL_FL_RINGS_INITED
+    before checking for ring interrupt.
+
+diff --git a/drivers/net/cnic.c b/drivers/net/cnic.c
+index 31a308e..f38c6b3 100644
+--- a/drivers/net/cnic.c
++++ b/drivers/net/cnic.c
+@@ -2187,10 +2187,14 @@ static int cnic_l2_completion(struct cnic_local *cp)
+ 
+ static void cnic_chk_pkt_rings(struct cnic_local *cp)
+ {
+-	u16 rx_cons = *cp->rx_cons_ptr;
+-	u16 tx_cons = *cp->tx_cons_ptr;
++	u16 rx_cons, tx_cons;
+ 	int comp = 0;
+ 
++	if (!test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
++		return;
++
++	rx_cons = *cp->rx_cons_ptr;
++	tx_cons = *cp->tx_cons_ptr;
+ 	if (cp->tx_cons != tx_cons || cp->rx_cons != rx_cons) {
+ 		if (test_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags))
+ 			comp = cnic_l2_completion(cp);
+@@ -4243,17 +4247,20 @@ static int cnic_start_bnx2x_hw(struct cnic_dev *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	cnic_init_bnx2x_tx_ring(dev);
+-	cnic_init_bnx2x_rx_ring(dev);
+-
+ 	return 0;
+ }
+ 
+ static void cnic_init_rings(struct cnic_dev *dev)
+ {
++	struct cnic_local *cp = dev->cnic_priv;
++
++	if (test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
++		return;
++
+ 	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
+ 		cnic_init_bnx2_tx_ring(dev);
+ 		cnic_init_bnx2_rx_ring(dev);
++		set_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
+ 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
+ 		struct cnic_local *cp = dev->cnic_priv;
+ 		u32 cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
+@@ -4276,6 +4283,8 @@ static void cnic_init_rings(struct cnic_dev *dev)
+ 		cnic_init_bnx2x_tx_ring(dev);
+ 		cnic_init_bnx2x_rx_ring(dev);
+ 
++		set_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
++
+ 		l5_data.phy_address.lo = cli;
+ 		l5_data.phy_address.hi = 0;
+ 		cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_ETH_CLIENT_SETUP,
+@@ -4296,6 +4305,11 @@ static void cnic_init_rings(struct cnic_dev *dev)
+ 
+ static void cnic_shutdown_rings(struct cnic_dev *dev)
+ {
++	struct cnic_local *cp = dev->cnic_priv;
++
++	if (!test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
++		return;
++
+ 	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
+ 		cnic_shutdown_bnx2_rx_ring(dev);
+ 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
+@@ -4329,6 +4343,7 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
+ 			(1 << SPE_HDR_COMMON_RAMROD_SHIFT), &l5_data);
+ 		msleep(10);
+ 	}
++	clear_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
+ }
+ 
+ static int cnic_start_hw(struct cnic_dev *dev)
+diff --git a/drivers/net/cnic.h b/drivers/net/cnic.h
+index 4827719..1797c62 100644
+--- a/drivers/net/cnic.h
++++ b/drivers/net/cnic.h
+@@ -183,6 +183,7 @@ struct cnic_local {
+ 	unsigned long cnic_local_flags;
+ #define	CNIC_LCL_FL_KWQ_INIT		0x0
+ #define	CNIC_LCL_FL_L2_WAIT		0x1
++#define	CNIC_LCL_FL_RINGS_INITED	0x2
+ 
+ 	struct cnic_dev *dev;
+ 

@@ -11,171 +11,182 @@
  * Copyright:	Jamal Hadi Salim (2002-4)
  */
 
+#include <asm/uaccess.h>
+#include <asm/system.h>
+#include <asm/bitops.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/string.h>
+#include <linux/mm.h>
+#include <linux/socket.h>
+#include <linux/sockios.h>
+#include <linux/in.h>
 #include <linux/errno.h>
+#include <linux/interrupt.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <linux/rtnetlink.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <net/netlink.h>
+#include <linux/proc_fs.h>
+#include <linux/kmod.h>
+#include <net/sock.h>
 #include <net/pkt_sched.h>
 #include <linux/tc_act/tc_ipt.h>
 #include <net/tc_act/tc_ipt.h>
 
 #include <linux/netfilter_ipv4/ip_tables.h>
 
+/* use generic hash table */
+#define MY_TAB_SIZE     16
+#define MY_TAB_MASK     15
 
-#define IPT_TAB_MASK     15
-static struct tcf_common *tcf_ipt_ht[IPT_TAB_MASK + 1];
-static u32 ipt_idx_gen;
+static u32 idx_gen;
+static struct tcf_ipt *tcf_ipt_ht[MY_TAB_SIZE];
+/* ipt hash table lock */
 static DEFINE_RWLOCK(ipt_lock);
 
-static struct tcf_hashinfo ipt_hash_info = {
-	.htab	=	tcf_ipt_ht,
-	.hmask	=	IPT_TAB_MASK,
-	.lock	=	&ipt_lock,
-};
+/* ovewrride the defaults */
+#define tcf_st		tcf_ipt
+#define tcf_t_lock	ipt_lock
+#define tcf_ht		tcf_ipt_ht
 
-static int ipt_init_target(struct ipt_entry_target *t, char *table, unsigned int hook)
+#define CONFIG_NET_ACT_INIT
+#include <net/pkt_act.h>
+
+static int
+ipt_init_target(struct ipt_entry_target *t, char *table, unsigned int hook)
 {
-	struct xt_tgchk_param par;
-	struct xt_target *target;
+	struct ipt_target *target;
 	int ret = 0;
 
-	target = xt_request_find_target(AF_INET, t->u.user.name,
-					t->u.user.revision);
+	target = xt_find_target(AF_INET, t->u.user.name, t->u.user.revision);
 	if (!target)
 		return -ENOENT;
 
+	DPRINTK("ipt_init_target: found %s\n", target->name);
 	t->u.kernel.target = target;
-	par.table     = table;
-	par.entryinfo = NULL;
-	par.target    = target;
-	par.targinfo  = t->data;
-	par.hook_mask = hook;
-	par.family    = NFPROTO_IPV4;
 
-	ret = xt_check_target(&par, t->u.target_size - sizeof(*t), 0, false);
-	if (ret < 0) {
-		module_put(t->u.kernel.target->me);
+	ret = xt_check_target(target, AF_INET, t->u.target_size - sizeof(*t),
+			      table, hook, 0, 0);
+	if (ret)
 		return ret;
+
+	if (t->u.kernel.target->checkentry
+	    && !t->u.kernel.target->checkentry(table, NULL,
+		    			       t->u.kernel.target, t->data,
+					       t->u.target_size - sizeof(*t),
+					       hook)) {
+		DPRINTK("ipt_init_target: check failed for `%s'.\n",
+			t->u.kernel.target->name);
+		module_put(t->u.kernel.target->me);
+		ret = -EINVAL;
 	}
-	return 0;
+
+	return ret;
 }
 
-static void ipt_destroy_target(struct ipt_entry_target *t)
+static void
+ipt_destroy_target(struct ipt_entry_target *t)
 {
-	struct xt_tgdtor_param par = {
-		.target   = t->u.kernel.target,
-		.targinfo = t->data,
-	};
-	if (par.target->destroy != NULL)
-		par.target->destroy(&par);
-	module_put(par.target->me);
+	if (t->u.kernel.target->destroy)
+		t->u.kernel.target->destroy(t->u.kernel.target, t->data,
+		                            t->u.target_size - sizeof(*t));
+        module_put(t->u.kernel.target->me);
 }
 
-static int tcf_ipt_release(struct tcf_ipt *ipt, int bind)
+static int
+tcf_ipt_release(struct tcf_ipt *p, int bind)
 {
 	int ret = 0;
-	if (ipt) {
+	if (p) {
 		if (bind)
-			ipt->tcf_bindcnt--;
-		ipt->tcf_refcnt--;
-		if (ipt->tcf_bindcnt <= 0 && ipt->tcf_refcnt <= 0) {
-			ipt_destroy_target(ipt->tcfi_t);
-			kfree(ipt->tcfi_tname);
-			kfree(ipt->tcfi_t);
-			tcf_hash_destroy(&ipt->common, &ipt_hash_info);
+			p->bindcnt--;
+		p->refcnt--;
+		if (p->bindcnt <= 0 && p->refcnt <= 0) {
+			ipt_destroy_target(p->t);
+			kfree(p->tname);
+			kfree(p->t);
+			tcf_hash_destroy(p);
 			ret = ACT_P_DELETED;
 		}
 	}
 	return ret;
 }
 
-static const struct nla_policy ipt_policy[TCA_IPT_MAX + 1] = {
-	[TCA_IPT_TABLE]	= { .type = NLA_STRING, .len = IFNAMSIZ },
-	[TCA_IPT_HOOK]	= { .type = NLA_U32 },
-	[TCA_IPT_INDEX]	= { .type = NLA_U32 },
-	[TCA_IPT_TARG]	= { .len = sizeof(struct ipt_entry_target) },
-};
-
-static int tcf_ipt_init(struct nlattr *nla, struct nlattr *est,
-			struct tc_action *a, int ovr, int bind)
+static int
+tcf_ipt_init(struct rtattr *rta, struct rtattr *est, struct tc_action *a,
+             int ovr, int bind)
 {
-	struct nlattr *tb[TCA_IPT_MAX + 1];
-	struct tcf_ipt *ipt;
-	struct tcf_common *pc;
+	struct rtattr *tb[TCA_IPT_MAX];
+	struct tcf_ipt *p;
 	struct ipt_entry_target *td, *t;
 	char *tname;
 	int ret = 0, err;
 	u32 hook = 0;
 	u32 index = 0;
 
-	if (nla == NULL)
+	if (rta == NULL || rtattr_parse_nested(tb, TCA_IPT_MAX, rta) < 0)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_IPT_MAX, nla, ipt_policy);
-	if (err < 0)
-		return err;
-
-	if (tb[TCA_IPT_HOOK] == NULL)
+	if (tb[TCA_IPT_HOOK-1] == NULL ||
+	    RTA_PAYLOAD(tb[TCA_IPT_HOOK-1]) < sizeof(u32))
 		return -EINVAL;
-	if (tb[TCA_IPT_TARG] == NULL)
+	if (tb[TCA_IPT_TARG-1] == NULL ||
+	    RTA_PAYLOAD(tb[TCA_IPT_TARG-1]) < sizeof(*t))
 		return -EINVAL;
-
-	td = (struct ipt_entry_target *)nla_data(tb[TCA_IPT_TARG]);
-	if (nla_len(tb[TCA_IPT_TARG]) < td->u.target_size)
+	td = (struct ipt_entry_target *)RTA_DATA(tb[TCA_IPT_TARG-1]);
+	if (RTA_PAYLOAD(tb[TCA_IPT_TARG-1]) < td->u.target_size)
 		return -EINVAL;
 
-	if (tb[TCA_IPT_INDEX] != NULL)
-		index = nla_get_u32(tb[TCA_IPT_INDEX]);
+	if (tb[TCA_IPT_INDEX-1] != NULL &&
+	    RTA_PAYLOAD(tb[TCA_IPT_INDEX-1]) >= sizeof(u32))
+		index = *(u32 *)RTA_DATA(tb[TCA_IPT_INDEX-1]);
 
-	pc = tcf_hash_check(index, a, bind, &ipt_hash_info);
-	if (!pc) {
-		pc = tcf_hash_create(index, est, a, sizeof(*ipt), bind,
-				     &ipt_idx_gen, &ipt_hash_info);
-		if (IS_ERR(pc))
-		    return PTR_ERR(pc);
+	p = tcf_hash_check(index, a, ovr, bind);
+	if (p == NULL) {
+		p = tcf_hash_create(index, est, a, sizeof(*p), ovr, bind);
+		if (p == NULL)
+			return -ENOMEM;
 		ret = ACT_P_CREATED;
 	} else {
 		if (!ovr) {
-			tcf_ipt_release(to_ipt(pc), bind);
+			tcf_ipt_release(p, bind);
 			return -EEXIST;
 		}
 	}
-	ipt = to_ipt(pc);
 
-	hook = nla_get_u32(tb[TCA_IPT_HOOK]);
+	hook = *(u32 *)RTA_DATA(tb[TCA_IPT_HOOK-1]);
 
 	err = -ENOMEM;
 	tname = kmalloc(IFNAMSIZ, GFP_KERNEL);
-	if (unlikely(!tname))
+	if (tname == NULL)
 		goto err1;
-	if (tb[TCA_IPT_TABLE] == NULL ||
-	    nla_strlcpy(tname, tb[TCA_IPT_TABLE], IFNAMSIZ) >= IFNAMSIZ)
+	if (tb[TCA_IPT_TABLE - 1] == NULL ||
+	    rtattr_strlcpy(tname, tb[TCA_IPT_TABLE-1], IFNAMSIZ) >= IFNAMSIZ)
 		strcpy(tname, "mangle");
 
-	t = kmemdup(td, td->u.target_size, GFP_KERNEL);
-	if (unlikely(!t))
+	t = kmalloc(td->u.target_size, GFP_KERNEL);
+	if (t == NULL)
 		goto err2;
+	memcpy(t, td, td->u.target_size);
 
 	if ((err = ipt_init_target(t, tname, hook)) < 0)
 		goto err3;
 
-	spin_lock_bh(&ipt->tcf_lock);
+	spin_lock_bh(&p->lock);
 	if (ret != ACT_P_CREATED) {
-		ipt_destroy_target(ipt->tcfi_t);
-		kfree(ipt->tcfi_tname);
-		kfree(ipt->tcfi_t);
+		ipt_destroy_target(p->t);
+		kfree(p->tname);
+		kfree(p->t);
 	}
-	ipt->tcfi_tname = tname;
-	ipt->tcfi_t     = t;
-	ipt->tcfi_hook  = hook;
-	spin_unlock_bh(&ipt->tcf_lock);
+	p->tname = tname;
+	p->t     = t;
+	p->hook  = hook;
+	spin_unlock_bh(&p->lock);
 	if (ret == ACT_P_CREATED)
-		tcf_hash_insert(pc, &ipt_hash_info);
+		tcf_hash_insert(p);
 	return ret;
 
 err3:
@@ -183,51 +194,51 @@ err3:
 err2:
 	kfree(tname);
 err1:
-	kfree(pc);
+	kfree(p);
 	return err;
 }
 
-static int tcf_ipt_cleanup(struct tc_action *a, int bind)
+static int
+tcf_ipt_cleanup(struct tc_action *a, int bind)
 {
-	struct tcf_ipt *ipt = a->priv;
-	return tcf_ipt_release(ipt, bind);
+	struct tcf_ipt *p = PRIV(a, ipt);
+	return tcf_ipt_release(p, bind);
 }
 
-static int tcf_ipt(struct sk_buff *skb, struct tc_action *a,
-		   struct tcf_result *res)
+static int
+tcf_ipt(struct sk_buff *skb, struct tc_action *a, struct tcf_result *res)
 {
 	int ret = 0, result = 0;
-	struct tcf_ipt *ipt = a->priv;
-	struct xt_target_param par;
+	struct tcf_ipt *p = PRIV(a, ipt);
 
 	if (skb_cloned(skb)) {
 		if (pskb_expand_head(skb, 0, 0, GFP_ATOMIC))
 			return TC_ACT_UNSPEC;
 	}
 
-	spin_lock(&ipt->tcf_lock);
+	spin_lock(&p->lock);
 
-	ipt->tcf_tm.lastuse = jiffies;
-	ipt->tcf_bstats.bytes += qdisc_pkt_len(skb);
-	ipt->tcf_bstats.packets++;
+	p->tm.lastuse = jiffies;
+	p->bstats.bytes += skb->len;
+	p->bstats.packets++;
 
 	/* yes, we have to worry about both in and out dev
 	 worry later - danger - this API seems to have changed
 	 from earlier kernels */
-	par.in       = skb->dev;
-	par.out      = NULL;
-	par.hooknum  = ipt->tcfi_hook;
-	par.target   = ipt->tcfi_t->u.kernel.target;
-	par.targinfo = ipt->tcfi_t->data;
-	ret = par.target->target(skb, &par);
 
+	/* iptables targets take a double skb pointer in case the skb
+	 * needs to be replaced. We don't own the skb, so this must not
+	 * happen. The pskb_expand_head above should make sure of this */
+	ret = p->t->u.kernel.target->target(&skb, skb->dev, NULL, p->hook,
+					    p->t->u.kernel.target, p->t->data,
+					    NULL);
 	switch (ret) {
 	case NF_ACCEPT:
 		result = TC_ACT_OK;
 		break;
 	case NF_DROP:
 		result = TC_ACT_SHOT;
-		ipt->tcf_qstats.drops++;
+		p->qstats.drops++;
 		break;
 	case IPT_CONTINUE:
 		result = TC_ACT_PIPE;
@@ -238,53 +249,60 @@ static int tcf_ipt(struct sk_buff *skb, struct tc_action *a,
 		result = TC_POLICE_OK;
 		break;
 	}
-	spin_unlock(&ipt->tcf_lock);
+	spin_unlock(&p->lock);
 	return result;
 
 }
 
-static int tcf_ipt_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
+static int
+tcf_ipt_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
 {
-	unsigned char *b = skb_tail_pointer(skb);
-	struct tcf_ipt *ipt = a->priv;
 	struct ipt_entry_target *t;
 	struct tcf_t tm;
 	struct tc_cnt c;
+	unsigned char *b = skb->tail;
+	struct tcf_ipt *p = PRIV(a, ipt);
 
 	/* for simple targets kernel size == user size
 	** user name = target name
 	** for foolproof you need to not assume this
 	*/
 
-	t = kmemdup(ipt->tcfi_t, ipt->tcfi_t->u.user.target_size, GFP_ATOMIC);
-	if (unlikely(!t))
-		goto nla_put_failure;
+	t = kmalloc(p->t->u.user.target_size, GFP_ATOMIC);
+	if (t == NULL)
+		goto rtattr_failure;
 
-	c.bindcnt = ipt->tcf_bindcnt - bind;
-	c.refcnt = ipt->tcf_refcnt - ref;
-	strcpy(t->u.user.name, ipt->tcfi_t->u.kernel.target->name);
+	c.bindcnt = p->bindcnt - bind;
+	c.refcnt = p->refcnt - ref;
+	memcpy(t, p->t, p->t->u.user.target_size);
+	strcpy(t->u.user.name, p->t->u.kernel.target->name);
 
-	NLA_PUT(skb, TCA_IPT_TARG, ipt->tcfi_t->u.user.target_size, t);
-	NLA_PUT_U32(skb, TCA_IPT_INDEX, ipt->tcf_index);
-	NLA_PUT_U32(skb, TCA_IPT_HOOK, ipt->tcfi_hook);
-	NLA_PUT(skb, TCA_IPT_CNT, sizeof(struct tc_cnt), &c);
-	NLA_PUT_STRING(skb, TCA_IPT_TABLE, ipt->tcfi_tname);
-	tm.install = jiffies_to_clock_t(jiffies - ipt->tcf_tm.install);
-	tm.lastuse = jiffies_to_clock_t(jiffies - ipt->tcf_tm.lastuse);
-	tm.expires = jiffies_to_clock_t(ipt->tcf_tm.expires);
-	NLA_PUT(skb, TCA_IPT_TM, sizeof (tm), &tm);
+	DPRINTK("\ttcf_ipt_dump tablename %s length %d\n", p->tname,
+		strlen(p->tname));
+	DPRINTK("\tdump target name %s size %d size user %d "
+	        "data[0] %x data[1] %x\n", p->t->u.kernel.target->name,
+	        p->t->u.target_size, p->t->u.user.target_size,
+	        p->t->data[0], p->t->data[1]);
+	RTA_PUT(skb, TCA_IPT_TARG, p->t->u.user.target_size, t);
+	RTA_PUT(skb, TCA_IPT_INDEX, 4, &p->index);
+	RTA_PUT(skb, TCA_IPT_HOOK, 4, &p->hook);
+	RTA_PUT(skb, TCA_IPT_CNT, sizeof(struct tc_cnt), &c);
+	RTA_PUT(skb, TCA_IPT_TABLE, IFNAMSIZ, p->tname);
+	tm.install = jiffies_to_clock_t(jiffies - p->tm.install);
+	tm.lastuse = jiffies_to_clock_t(jiffies - p->tm.lastuse);
+	tm.expires = jiffies_to_clock_t(p->tm.expires);
+	RTA_PUT(skb, TCA_IPT_TM, sizeof (tm), &tm);
 	kfree(t);
 	return skb->len;
 
-nla_put_failure:
-	nlmsg_trim(skb, b);
+      rtattr_failure:
+	skb_trim(skb, b - skb->data);
 	kfree(t);
 	return -1;
 }
 
 static struct tc_action_ops act_ipt_ops = {
 	.kind		=	"ipt",
-	.hinfo		=	&ipt_hash_info,
 	.type		=	TCA_ACT_IPT,
 	.capab		=	TCA_CAP_NONE,
 	.owner		=	THIS_MODULE,
@@ -300,12 +318,14 @@ MODULE_AUTHOR("Jamal Hadi Salim(2002-4)");
 MODULE_DESCRIPTION("Iptables target actions");
 MODULE_LICENSE("GPL");
 
-static int __init ipt_init_module(void)
+static int __init
+ipt_init_module(void)
 {
 	return tcf_register_action(&act_ipt_ops);
 }
 
-static void __exit ipt_cleanup_module(void)
+static void __exit
+ipt_cleanup_module(void)
 {
 	tcf_unregister_action(&act_ipt_ops);
 }

@@ -1,6 +1,8 @@
 /*
+ * $Id: iforce-packets.c,v 1.16 2002/07/07 10:22:50 jdeneux Exp $
+ *
  *  Copyright (c) 2000-2002 Vojtech Pavlik <vojtech@ucw.cz>
- *  Copyright (c) 2001-2002, 2007 Johann Deneux <johann.deneux@gmail.com>
+ *  Copyright (c) 2001-2002 Johann Deneux <deneux@ifrance.com>
  *
  *  USB/RS232 I-Force joysticks and wheels.
  */
@@ -37,10 +39,10 @@ void iforce_dump_packet(char *msg, u16 cmd, unsigned char *data)
 {
 	int i;
 
-	printk(KERN_DEBUG __FILE__ ": %s cmd = %04x, data = ", msg, cmd);
+	printk(KERN_DEBUG "iforce.c: %s ( cmd = %04x, data = ", msg, cmd);
 	for (i = 0; i < LO(cmd); i++)
 		printk("%02x ", data[i]);
-	printk("\n");
+	printk(")\n");
 }
 
 /*
@@ -63,10 +65,8 @@ int iforce_send_packet(struct iforce *iforce, u16 cmd, unsigned char* data)
 	head = iforce->xmit.head;
 	tail = iforce->xmit.tail;
 
-
 	if (CIRC_SPACE(head, tail, XMIT_SIZE) < n+2) {
-		dev_warn(&iforce->dev->dev,
-			 "not enough space in xmit buffer to send new packet\n");
+		printk(KERN_WARNING "iforce.c: not enough space in xmit buffer to send new packet\n");
 		spin_unlock_irqrestore(&iforce->xmit_lock, flags);
 		return -1;
 	}
@@ -126,6 +126,8 @@ int iforce_control_playback(struct iforce* iforce, u16 id, unsigned int value)
 {
 	unsigned char data[3];
 
+printk(KERN_DEBUG "iforce-packets.c: control_playback %d %d\n", id, value);
+
 	data[0] = LO(id);
 	data[1] = (value > 0) ? ((value > 1) ? 0x41 : 0x01) : 0;
 	data[2] = LO(value);
@@ -138,10 +140,7 @@ static int mark_core_as_ready(struct iforce *iforce, unsigned short addr)
 {
 	int i;
 
-	if (!iforce->dev->ff)
-		return 0;
-
-	for (i = 0; i < iforce->dev->ff->max_effects; ++i) {
+	for (i = 0; i < iforce->dev->ff_effects_max; ++i) {
 		if (test_bit(FF_CORE_IS_USED, iforce->core_effects[i].flags) &&
 		    (iforce->core_effects[i].mod1_chunk.start == addr ||
 		     iforce->core_effects[i].mod2_chunk.start == addr)) {
@@ -149,19 +148,18 @@ static int mark_core_as_ready(struct iforce *iforce, unsigned short addr)
 			return 0;
 		}
 	}
-	dev_warn(&iforce->dev->dev, "unused effect %04x updated !!!\n", addr);
+	printk(KERN_WARNING "iforce-packets.c: unused effect %04x updated !!!\n", addr);
 	return -1;
 }
 
-void iforce_process_packet(struct iforce *iforce, u16 cmd, unsigned char *data)
+void iforce_process_packet(struct iforce *iforce, u16 cmd, unsigned char *data, struct pt_regs *regs)
 {
 	struct input_dev *dev = iforce->dev;
 	int i;
 	static int being_used = 0;
 
 	if (being_used)
-		dev_warn(&iforce->dev->dev,
-			 "re-entrant call to iforce_process %d\n", being_used);
+		printk(KERN_WARNING "iforce-packets.c: re-entrant call to iforce_process %d\n", being_used);
 	being_used++;
 
 #ifdef CONFIG_JOYSTICK_IFORCE_232
@@ -182,6 +180,9 @@ void iforce_process_packet(struct iforce *iforce, u16 cmd, unsigned char *data)
 
 		case 0x01:	/* joystick position data */
 		case 0x03:	/* wheel position data */
+
+			input_regs(dev, regs);
+
 			if (HI(cmd) == 1) {
 				input_report_abs(dev, ABS_X, (__s16) (((__s16)data[1] << 8) | data[0]));
 				input_report_abs(dev, ABS_Y, (__s16) (((__s16)data[3] << 8) | data[2]));
@@ -220,6 +221,7 @@ void iforce_process_packet(struct iforce *iforce, u16 cmd, unsigned char *data)
 			break;
 
 		case 0x02:	/* status report */
+			input_regs(dev, regs);
 			input_report_key(dev, BTN_DEAD, data[0] & 0x02);
 			input_sync(dev);
 
@@ -227,17 +229,19 @@ void iforce_process_packet(struct iforce *iforce, u16 cmd, unsigned char *data)
 			i = data[1] & 0x7f;
 			if (data[1] & 0x80) {
 				if (!test_and_set_bit(FF_CORE_IS_PLAYED, iforce->core_effects[i].flags)) {
-					/* Report play event */
-					input_report_ff_status(dev, i, FF_STATUS_PLAYING);
+				/* Report play event */
+				input_report_ff_status(dev, i, FF_STATUS_PLAYING);
 				}
-			} else if (test_and_clear_bit(FF_CORE_IS_PLAYED, iforce->core_effects[i].flags)) {
+			}
+			else if (test_and_clear_bit(FF_CORE_IS_PLAYED, iforce->core_effects[i].flags)) {
 				/* Report stop event */
 				input_report_ff_status(dev, i, FF_STATUS_STOPPED);
 			}
 			if (LO(cmd) > 3) {
 				int j;
-				for (j = 3; j < LO(cmd); j += 2)
+				for (j=3; j<LO(cmd); j+=2) {
 					mark_core_as_ready(iforce, data[j] | (data[j+1]<<8));
+				}
 			}
 			break;
 	}
@@ -248,31 +252,25 @@ int iforce_get_id_packet(struct iforce *iforce, char *packet)
 {
 	switch (iforce->bus) {
 
-	case IFORCE_USB: {
-#ifdef CONFIG_JOYSTICK_IFORCE_USB
-		int status;
+	case IFORCE_USB:
 
+#ifdef CONFIG_JOYSTICK_IFORCE_USB
 		iforce->cr.bRequest = packet[0];
 		iforce->ctrl->dev = iforce->usbdev;
 
-		status = usb_submit_urb(iforce->ctrl, GFP_ATOMIC);
-		if (status) {
-			err("usb_submit_urb failed %d", status);
+		if (usb_submit_urb(iforce->ctrl, GFP_ATOMIC))
 			return -1;
-		}
 
 		wait_event_interruptible_timeout(iforce->wait,
 			iforce->ctrl->status != -EINPROGRESS, HZ);
 
 		if (iforce->ctrl->status) {
-			dbg("iforce->ctrl->status = %d", iforce->ctrl->status);
 			usb_unlink_urb(iforce->ctrl);
 			return -1;
 		}
 #else
-		dbg("iforce_get_id_packet: iforce->bus = USB!");
+		printk(KERN_ERR "iforce_get_id_packet: iforce->bus = USB!\n");
 #endif
-		}
 		break;
 
 	case IFORCE_232:
@@ -289,12 +287,13 @@ int iforce_get_id_packet(struct iforce *iforce, char *packet)
 			return -1;
 		}
 #else
-		err("iforce_get_id_packet: iforce->bus = SERIO!");
+		printk(KERN_ERR "iforce_get_id_packet: iforce->bus = SERIO!\n");
 #endif
 		break;
 
 	default:
-		err("iforce_get_id_packet: iforce->bus = %d", iforce->bus);
+		printk(KERN_ERR "iforce_get_id_packet: iforce->bus = %d\n",
+		       iforce->bus);
 		break;
 	}
 

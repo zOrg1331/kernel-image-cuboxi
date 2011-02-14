@@ -1,0 +1,79 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 May 2008 13:49:17 +0200
+Subject: [s390] zfcp: fix check for handles in abort handler
+Message-id: 20080520114917.GI16866@redhat.com
+O-Subject: [RHEL5 U3 PATCH 4/4] s390 - zfcp: Fix check for handles in abort handler
+Bugzilla: 447331
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+When an abort command is running in parallel to a port
+or unit reopen, zfcp could escalate the ERP without
+a reason.
+
+The response to the abort request provides two handles
+for a port or unit in the FSF status qualifier. The
+ode that compares them was wrong.
+
+Solution: Fix the comparison of the port or unit handles.
+
+Bugzilla
+=========
+
+BZ 447331
+https://bugzilla.redhat.com/show_bug.cgi?id=447331
+
+Upstream status of the patch:
+=============================
+
+The patch is included in linux-2.6 as git
+commit id  8627533c115c546649693d68fed6a74762c47d51
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix was verified by the IBM test team.
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/scsi/zfcp_fsf.c b/drivers/s390/scsi/zfcp_fsf.c
+index a9507ef..be113ec 100644
+--- a/drivers/s390/scsi/zfcp_fsf.c
++++ b/drivers/s390/scsi/zfcp_fsf.c
+@@ -1129,8 +1129,8 @@ zfcp_fsf_abort_fcp_command_handler(struct zfcp_fsf_req *new_fsf_req)
+ {
+ 	int retval = -EINVAL;
+ 	struct zfcp_unit *unit;
+-	unsigned char status_qual =
+-	    new_fsf_req->qtcb->header.fsf_status_qual.word[0];
++	union fsf_status_qual *fsf_stat_qual =
++		&new_fsf_req->qtcb->header.fsf_status_qual;
+ 
+ 	if (new_fsf_req->status & ZFCP_STATUS_FSFREQ_ERROR) {
+ 		/* do not set ZFCP_STATUS_FSFREQ_ABORTSUCCEEDED */
+@@ -1143,7 +1143,7 @@ zfcp_fsf_abort_fcp_command_handler(struct zfcp_fsf_req *new_fsf_req)
+ 	switch (new_fsf_req->qtcb->header.fsf_status) {
+ 
+ 	case FSF_PORT_HANDLE_NOT_VALID:
+-		if (status_qual >> 4 != status_qual % 0xf) {
++		if (fsf_stat_qual->word[0] != fsf_stat_qual->word[1]) {
+ 			/*
+ 			 * In this case a command that was sent prior to a port
+ 			 * reopen was aborted (handles are different). This is
+@@ -1169,8 +1169,7 @@ zfcp_fsf_abort_fcp_command_handler(struct zfcp_fsf_req *new_fsf_req)
+ 		break;
+ 
+ 	case FSF_LUN_HANDLE_NOT_VALID:
+-		if (status_qual >> 4 != status_qual % 0xf) {
+-			/* 2 */
++		if (fsf_stat_qual->word[0] != fsf_stat_qual->word[1]) {
+ 			/*
+ 			 * In this case a command that was sent prior to a unit
+ 			 * reopen was aborted (handles are different).

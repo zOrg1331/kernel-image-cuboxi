@@ -1,0 +1,40 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:00 -0400
+Subject: [block] cciss: disable scan thread, it prevents rmmod
+Message-id: <1283097002-3341-2-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27850
+O-Subject: [RHEL6 PATCH 01/63] cciss: disable scan thread,
+	it prevents rmmod from working
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+disable scan thread, it prevents rmmod from working
+(Scan thread will be removed later.)
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 87f5df8..b46304d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -4147,10 +4147,12 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+ 	hba[i]->cciss_sector_size = 2048;
+ 	hba[i]->busy_initializing = 0;
+ 	rebuild_lun_table(hba[i], 1);
++#if 0
+ 	hba[i]->cciss_scan_thread = kthread_run(scan_thread, hba[i],
+ 				"cciss_scan%02d", i);
+ 	if (IS_ERR(hba[i]->cciss_scan_thread))
+ 		return PTR_ERR(hba[i]->cciss_scan_thread);
++#endif
+ 
+ 	return 1;
+ 
+@@ -4238,7 +4240,9 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 		return;
+ 	}
+ 
++#if 0
+ 	kthread_stop(hba[i]->cciss_scan_thread);
++#endif
+ 
+ 	remove_proc_entry(hba[i]->devname, proc_cciss);
+ 	unregister_blkdev(hba[i]->major, hba[i]->devname);

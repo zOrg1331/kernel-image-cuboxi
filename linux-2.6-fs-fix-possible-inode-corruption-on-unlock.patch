@@ -1,0 +1,66 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 10 Dec 2009 17:16:47 -0500
+Subject: [fs] fix possible inode corruption on unlock
+Message-id: <4B212CFF.60901@redhat.com>
+Patchwork-id: 21853
+O-Subject: [PATCH RHEL5.5] fs: make sure data stored into inode is properly
+	seen before unlocking new inode
+Bugzilla: 545612
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+[fs] make sure data stored into inode is properly seen before unlocking new inode
+
+This is for:
+ Bug 545612 - Please implement upstream fix for potential filesystem corruption bug
+
+And is a trivial backport of the following upstream one-liner:
+
+From: Jan Kara <jack@suse.cz>
+Date: Tue, 22 Sep 2009 00:01:06 +0000 (-0700)
+Subject: fs: make sure data stored into inode is properly seen before unlocking new inode
+X-Git-Tag: v2.6.32-rc1~608
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=580be0837a7a59b207c3d5c661d044d8dd0a6a30
+
+fs: make sure data stored into inode is properly seen before unlocking new inode
+
+In theory it could happen that on one CPU we initialize a new inode but
+clearing of I_NEW | I_LOCK gets reordered before some of the
+initialization.  Thus on another CPU we return not fully uptodate inode
+from iget_locked().
+
+This seems to fix a corruption issue on ext3 mounted over NFS.
+
+[akpm@linux-foundation.org: add some commentary]
+Signed-off-by: Jan Kara <jack@suse.cz>
+Cc: Christoph Hellwig <hch@infradead.org>
+Cc: <stable@kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/inode.c b/fs/inode.c
+index 8875b3c..5b80cb0 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -570,13 +570,15 @@ EXPORT_SYMBOL(new_inode);
+ void unlock_new_inode(struct inode *inode)
+ {
+ 	/*
+-	 * This is special!  We do not need the spinlock
+-	 * when clearing I_LOCK, because we're guaranteed
+-	 * that nobody else tries to do anything about the
+-	 * state of the inode when it is locked, as we
+-	 * just created it (so there can be no old holders
+-	 * that haven't tested I_LOCK).
++	 * This is special!  We do not need the spinlock when clearing I_LOCK,
++	 * because we're guaranteed that nobody else tries to do anything about
++	 * the state of the inode when it is locked, as we just created it (so
++	 * there can be no old holders that haven't tested I_LOCK).
++	 * However we must emit the memory barrier so that other CPUs reliably
++	 * see the clearing of I_LOCK after the other inode initialisation has
++	 * completed.
+ 	 */
++	smp_mb();
+ 	inode->i_state &= ~(I_LOCK|I_NEW);
+ 	wake_up_inode(inode);
+ }

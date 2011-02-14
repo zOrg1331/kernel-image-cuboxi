@@ -1,0 +1,50 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 5 Mar 2009 14:21:20 +0100
+Subject: [xen] ia64: fix windows 2003 BSOD
+Message-id: 49AFD1D0.20002@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix ia64 Xen windows 2003 BSOD
+Bugzilla: 479923
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+All,
+     This patch fixes a windows BSOD issue caused by mis-setting pte's ED bit
+for itlb entry.  For hash vTLB, it uses unified tlb and doesn't differentiate
+itc and dtc in its implementation, so itlb_miss handler may reference dtlb entry
+in hash vTLB.
+     But it may result in issues, because dtlb's ED bit may be different with
+itlb's setting.  Since the case is very rare, just purge the corresponding entry
+in hash vTLB and let the guest OS determine how to set ED bit for itlb mapping
+once found it.
+     Tested by the reporter to fix the BSOD issue in the Windows 2003 guest.  A
+backport of xen-unstable c/s 18992, this should resolve BZ 479923.  Please
+review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/ia64/vmx/vtlb.c b/arch/ia64/vmx/vtlb.c
+index c03c5aa..8329bbe 100644
+--- a/arch/ia64/vmx/vtlb.c
++++ b/arch/ia64/vmx/vtlb.c
+@@ -673,11 +673,20 @@ thash_data_t *vtlb_lookup(VCPU *v, u64 va,int is_data)
+         cch = vtlb_thash(hcb->pta, va, vrr.rrval, &tag);
+         do {
+             if (cch->etag == tag && cch->ps == ps)
+-                return cch;
++                goto found;
+             cch = cch->next;
+         } while(cch);
+     }
+     return NULL;
++found:
++    if (unlikely(!cch->ed && is_data == ISIDE_TLB)) {
++        /*The case is very rare, and it may lead to incorrect setting
++          for itlb's ed bit! Purge it from hash vTLB and let guest os
++          determin the ed bit of the itlb entry.*/
++        vtlb_purge(v, va, ps);
++        cch = NULL;
++    }
++    return cch;
+ }
+ 
+ 

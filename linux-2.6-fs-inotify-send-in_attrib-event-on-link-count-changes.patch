@@ -1,0 +1,104 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Wed, 28 Jan 2009 17:41:47 -0500
+Subject: [fs] inotify: send IN_ATTRIB event on link count changes
+Message-id: 1233182507.3264.31.camel@localhost.localdomain
+O-Subject: Re: [rhel5.4][bz#471893] kernel's inotify subsystem not send notification on inode link count change
+Bugzilla: 471893
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Currently, no notification event has been sent when inode's link count
+changed.  This is inconvenient for the application in some cases:
+
+Suppose you have the following directory structure
+
+    foo/test
+    bar/
+
+and you watch test.  If someone does "mv foo/test bar/", you get event
+IN_MOVE_SELF and you know something has happened with the file "test".
+However if someone does "ln foo/test bar/test" and "rm foo/test" you get no
+inotify event for the file "test" (only directories "foo" and "bar" receive
+events).
+
+Furthermore it could be argued that link count belongs to file's metadata and
+thus IN_ATTRIB should be sent when it changes.
+
+The following patch implements sending of IN_ATTRIB inotify events when link
+count of the inode changes, i.e., when a hardlink to the inode is created or
+when it is removed.  This event is sent in addition to all the events sent so
+far.  In particular, when a last link to a file is removed, IN_ATTRIB event is
+sent in addition to IN_DELETE_SELF event.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Acked-by: Morten Welinder <mwelinder@gmail.com>
+Cc: Robert Love <rlove@google.com>
+Cc: John McCutchan <ttb@tentacle.dhs.org>
+Cc: Steven French <sfrench@us.ibm.com>
+Cc: Kamalesh Babulal <kamalesh@linux.vnet.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 680e491..4c303f4 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -2112,6 +2112,7 @@ int vfs_unlink(struct inode *dir, struct dentry *dentry)
+ 
+ 	/* We don't d_delete() NFS sillyrenamed files--they still exist. */
+ 	if (!error && !(dentry->d_flags & DCACHE_NFSFS_RENAMED)) {
++		fsnotify_link_count(dentry->d_inode);
+ 		d_delete(dentry);
+ 	}
+ 
+@@ -2281,7 +2282,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
+ 	error = dir->i_op->link(old_dentry, dir, new_dentry);
+ 	mutex_unlock(&old_dentry->d_inode->i_mutex);
+ 	if (!error)
+-		fsnotify_create(dir, new_dentry);
++		fsnotify_link(dir, old_dentry->d_inode, new_dentry);
+ 	return error;
+ }
+ 
+diff --git a/include/linux/fsnotify.h b/include/linux/fsnotify.h
+index d4f219f..8ec75ba 100644
+--- a/include/linux/fsnotify.h
++++ b/include/linux/fsnotify.h
+@@ -91,6 +91,14 @@ static inline void fsnotify_inoderemove(struct inode *inode)
+ }
+ 
+ /*
++ * fsnotify_link_count - inode's link count changed
++ */
++static inline void fsnotify_link_count(struct inode *inode)
++{
++	inotify_inode_queue_event(inode, IN_ATTRIB, 0, NULL, NULL);
++}
++
++/*
+  * fsnotify_create - 'name' was linked in
+  */
+ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
+@@ -102,6 +110,20 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
+ }
+ 
+ /*
++ * fsnotify_link - new hardlink in 'inode' directory
++ * Note: We have to pass also the linked inode ptr as some filesystems leave
++ *   new_dentry->d_inode NULL and instantiate inode pointer later
++ */
++static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct dentry *new_dentry)
++{
++	inode_dir_notify(dir, DN_CREATE);
++	inotify_inode_queue_event(dir, IN_CREATE, 0, new_dentry->d_name.name,
++				  inode);
++	fsnotify_link_count(inode);
++	audit_inode_child(new_dentry->d_name.name, inode, dir);
++}
++
++/*
+  * fsnotify_mkdir - directory 'name' was created
+  */
+ static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)

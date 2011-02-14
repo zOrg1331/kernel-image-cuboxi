@@ -1,0 +1,85 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 25 Jun 2009 22:40:44 -0400
+Subject: [net] tcp: do not use TSO/GSO when there is urgent data
+Message-id: 20090626024101.5124.50043.sendpatchset@dhcp-65-180.nay.redhat.com
+O-Subject: [PATCH RHEL5.5] tcp: Do not use TSO/GSO when there is urgent data
+Bugzilla: 502572
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=502572
+
+Description:
+===========
+telnet login to RHEL5 system, do a "cat <filename>" and press CTRL+C.
+This command stop the output on display succesfully.
+But on the 2nd attempt, cat <filename> the text scroll stop responding
+when the text scroll reach a position where I hit CTRL+C before.
+
+NOTE:
+1. This can only be reproduce by a special telnet connection:
+       PC =>(ssh) RHEL 4/5 =>(telnet) RHEL 5
+2. This can only be reproduced on some specific ethernet card:
+       Broadcom NetXtreme II BCM5708
+       Intel 82541GI
+       (Maybe some other I didn't find)
+
+RHEL Version Found:
+================
+RHEL 5.5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1861295
+
+Upstream Status:
+================
+The original patch, applied upstream is this one:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=33cf71cee14743185305c61625c4544885055733
+
+It is a very simple change, so the patch was not hard to port.
+
+Test Status:
+============
+Test has been done on following RHTS machines:
+dell-pesc1425-01.rhts.bos.redhat.com (Intel 82541GI ethernet card)
+ibm-e326m.rhts.bos.redhat.com (Broadcom NetXtreme II BCM5708 ethernet card)
+
+The proposed patch can fix this BZ.
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 1b4622b..05dec8a 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -513,7 +513,10 @@ static void tcp_queue_skb(struct sock *sk, struct sk_buff *skb)
+ 
+ static void tcp_set_skb_tso_segs(struct sock *sk, struct sk_buff *skb, unsigned int mss_now)
+ {
+-	if (skb->len <= mss_now || !sk_can_gso(sk)) {
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	if (skb->len <= mss_now || !sk_can_gso(sk) ||
++	    tp->urg_mode) {
+ 		/* Avoid the costly divide in the normal
+ 		 * non-TSO case.
+ 		 */
+@@ -913,8 +916,10 @@ static inline unsigned int tcp_cwnd_test(struct tcp_sock *tp, struct sk_buff *sk
+ static int tcp_init_tso_segs(struct sock *sk, struct sk_buff *skb, unsigned int mss_now)
+ {
+ 	int tso_segs = tcp_skb_pcount(skb);
++	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	if (!tso_segs || (tso_segs > 1 && tcp_skb_mss(skb) != mss_now)) {
++	if (!tso_segs || (tso_segs > 1 && (tcp_skb_mss(skb) != mss_now ||
++			tp->urg_mode))) {
+ 		tcp_set_skb_tso_segs(sk, skb, mss_now);
+ 		tso_segs = tcp_skb_pcount(skb);
+ 	}

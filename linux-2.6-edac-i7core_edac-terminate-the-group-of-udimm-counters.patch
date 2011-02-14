@@ -1,0 +1,27 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:42 -0500
+Subject: [edac] i7core_edac: terminate the group of udimm counters
+Message-id: <20101123153342.1173c3f4@pedra>
+Patchwork-id: 29559
+O-Subject: [PATCH RHEL5 03/29] BZ#:651869 i7core_edac: properly terminate the
+	group of udimm counters
+Bugzilla: 651869
+
+Upstream received a similar patch, that came via akpm tree, with
+changeset: 64aab720bdf8771214a7c88872bd8e3194c2d279
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index f70894f..ec7d883 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1140,6 +1140,7 @@ static const struct mcidev_sysfs_attribute i7core_udimm_counters_attrs[] = {
+ 	ATTR_COUNTER(0),
+ 	ATTR_COUNTER(1),
+ 	ATTR_COUNTER(2),
++	{ } /* End of list */
+ };
+ 
+ static const struct mcidev_sysfs_group i7core_udimm_counters = {

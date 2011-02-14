@@ -1,0 +1,94 @@
+From: Bryn M. Reeves <bmr@redhat.com>
+Date: Thu, 24 Jul 2008 17:47:12 +0100
+Subject: [fs] fix softlockups when repeatedly dropping caches
+Message-id: 4888B210.8080300@redhat.com
+O-Subject: [RHEL 5.3 PATCH] Fix softlockups when repeatedly dropping caches (bz 444961)
+Bugzilla: 444961
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+LLNL noticed that while repeatedly dropping page caches with file system
+activity going on the system will eventually start producing softlockup
+warnings and everything starts to contend for the inode_lock.
+
+This was reported on lkml (while running XFS stress tests):
+
+http://lkml.org/lkml/2008/3/18/150
+
+This can be easily reproduced, e.g. running a kernel build over NFS and
+dropping the page cache in a shell loop:
+
+make -j8 a kernel in a directory that is backed by NFS
+# while true;do echo 1 > /proc/sys/vm/drop_caches;sleep 2;done
+
+The problem is a lock inversion caused by holding inode_lock across
+calls to __invalidate_mapping_pages().
+
+Jan Kara proposed a fix (drop the lock across the call but keep a
+reference on the inode until the inode list scanning has resumed) that
+was merged into Linus' tree in commit the following commit:
+
+commit eccb95cee4f0d56faa46ef22fb94dd4a3578d3eb
+Author: Jan Kara <jack@suse.cz>
+Date:   Tue Apr 29 00:59:37 2008 -0700
+
+    vfs: fix lock inversion in drop_pagecache_sb()
+
+    Fix longstanding lock inversion in drop_pagecache_sb by dropping
+    inode_lock before calling __invalidate_mapping_pages().  We just
+    have to make sure inode won't go away from under us by keeping
+    reference to it and putting the reference only after we have safely
+    resumed the scan of the inode list.  A bit tricky but not too bad...
+
+    Signed-off-by: Jan Kara <jack@suse.cz>
+    Cc: Fengguang Wu <wfg@mail.ustc.edu.cn>
+    Cc: David Chinner <dgc@sgi.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+This patch is a straightforward re-diff of the upstream patch. Tested
+here and at LLNL applied to 2.6.18-89. I'm waiting for a build against
+2.6.18-99 to complete now.
+
+Regards,
+Bryn.
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.7 (GNU/Linux)
+Comment: Using GnuPG with Fedora - http://enigmail.mozdev.org
+
+iD8DBQFIiLIQ6YSQoMYUY94RAqW8AKDAX8cSXkDOmkSpWZosX7bqNJ6ymwCg38Z1
+WWXDDCtDyxWgiR0ok9v7bZM=
+=yHbT
+-----END PGP SIGNATURE-----
+
+diff --git a/fs/drop_caches.c b/fs/drop_caches.c
+index 59375ef..f5aae26 100644
+--- a/fs/drop_caches.c
++++ b/fs/drop_caches.c
+@@ -14,15 +14,21 @@ int sysctl_drop_caches;
+ 
+ static void drop_pagecache_sb(struct super_block *sb)
+ {
+-	struct inode *inode;
++	struct inode *inode, *toput_inode = NULL;
+ 
+ 	spin_lock(&inode_lock);
+ 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+ 		if (inode->i_state & (I_FREEING|I_WILL_FREE))
+ 			continue;
++		__iget(inode);
++		spin_unlock(&inode_lock);
+ 		__invalidate_mapping_pages(inode->i_mapping, 0, -1, true);
++		iput(toput_inode);
++		toput_inode = inode;
++		spin_lock(&inode_lock);
+ 	}
+ 	spin_unlock(&inode_lock);
++	iput(toput_inode);
+ }
+ 
+ void drop_pagecache(void)

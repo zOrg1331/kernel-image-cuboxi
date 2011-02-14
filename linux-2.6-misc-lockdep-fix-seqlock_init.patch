@@ -1,0 +1,54 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Wed, 7 Nov 2007 17:23:24 +0100
+Subject: [misc] lockdep: fix seqlock_init
+Message-id: 1194452604.5831.17.camel@taijtu
+O-Subject: [PATCH RHEL5.2] lockdep: fix seqlock_init()
+Bugzilla: 329851
+
+bz 329851
+
+seqlock_init() needs to use spin_lock_init() for dynamic locks, so that
+lockdep is notified about the presence of a new lock.
+
+(this is a fallout of the recent networking merge, which started using
+the so-far unused seqlock_init() API.)
+
+This fix solves the following lockdep-internal warning on current -git:
+
+ INFO: trying to register non-static key.
+ the code is fine but needs lockdep annotation.
+ turning off the locking correctness validator.
+     __lock_acquire+0x10c/0x9f9
+     lock_acquire+0x56/0x72
+     _spin_lock+0x35/0x42
+     neigh_destroy+0x9d/0x12e
+     neigh_periodic_timer+0x10a/0x15c
+     run_timer_softirq+0x126/0x18e
+     __do_softirq+0x6b/0xe6
+     do_softirq+0x64/0xd2
+     ksoftirqd+0x82/0x138
+---
+ include/linux/seqlock.h |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/seqlock.h b/include/linux/seqlock.h
+index 4600093..6b0648c 100644
+--- a/include/linux/seqlock.h
++++ b/include/linux/seqlock.h
+@@ -44,8 +44,11 @@ typedef struct {
+ #define SEQLOCK_UNLOCKED \
+ 		 __SEQLOCK_UNLOCKED(old_style_seqlock_init)
+ 
+-#define seqlock_init(x) \
+-		do { *(x) = (seqlock_t) __SEQLOCK_UNLOCKED(x); } while (0)
++#define seqlock_init(x)					\
++	do {						\
++		(x)->sequence = 0;			\
++		spin_lock_init(&(x)->lock);		\
++	} while (0)
+ 
+ #define DEFINE_SEQLOCK(x) \
+ 		seqlock_t x = __SEQLOCK_UNLOCKED(x)
+-- 
+1.5.3.5.645.gbb47
+

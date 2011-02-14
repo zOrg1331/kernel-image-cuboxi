@@ -1,0 +1,641 @@
+From: Takahiro Yasui <tyasui@redhat.com>
+Date: Sat, 1 Dec 2007 23:03:01 -0500
+Subject: [misc] core dump masking support
+Message-id: 47522E75.10205@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] BZ223616: core dump masking support
+Bugzilla: 223616
+
+BZ#223616:
+-----------
+  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=223616
+
+Description:
+-----------
+  This patch set introduces core dump masking feature. Each process
+  can be customize which memory segments will be dumped using using
+  /proc/<pid>/coredump_filter.
+
+  coredump_filter is a bitmask of memory types of:
+      - (bit 0) anonymous private memory
+      - (bit 1) anonymous shared memory
+      - (bit 2) file-backed private memory
+      - (bit 3) file-backed shared memory
+
+  This feature is especially useful for database which uses a huge
+  shared memory and this feature can limit not to dump a shared
+  memory segment into core dump file.
+
+Upstream status:
+-----------
+  This feature has already been incorporated upstream kernel since
+  2.6.23 and patches are included in git as commit:
+
+  - coredump masking: documentation for /proc/pid/coredump_filter
+    bb90110dcb9e93bf79e3c988abc6cbcabd46d57f
+
+  - coredump masking: ELF-FDPIC: enable core dump filtering
+    ee78b0a61f0514ffc3d59257fbe6863b43477829
+
+  - coredump masking: ELF-FDPIC: remove an unused argument
+    e2e00906a06f7e74c49ca0ca85b960f270c83d5e
+
+  - coredump masking: ELF: enable core dump filtering
+    a1b59e802f846b6b0e057507386068fcc6dff442
+
+  - coredump masking: add an interface for core dump filter
+    3cb4a0bb1e773e3c41800b33a3f7dab32bd06c64
+
+  - coredump masking: reimplementation of dumpable using two flags
+    6c5d523826dc639df709ed0f88c5d2ce25379652
+
+  - coredump masking: bound suid_dumpable sysctl
+    76fdbb25f963de5dc1e308325f0578a2f92b1c2d
+
+Test status:
+-----------
+  This feature is an architecture independent, however, test is
+  done on x86, x86_64 and IPF.
+
+Kernel version:
+-----------
+  This patch set is developed for 2.6.18-53.el5
+
+Patch info:
+-----------
+  An original patch set needs a change of mm_struct and the "dumpable"
+  member is replaced with "flags" member to control which memory
+  segments should be dumped into core dump file. However, this
+  mm_struct change breaks kABI. Therefore, the patch set is modified
+  so that it finds a flag in a hash table by a key associated with
+  the address of  mm_struct, instead of changing mm_struct.
+
+  [PATCH 1/4] coremask-add-an-interface-for-coredump-filter.patch
+  [PATCH 2/4] coremask-elf-add-coredump-filtering-feature.patch
+  [PATCH 3/4] coremask-documentation-for-proc-pid-coredump-filter.patch
+  [PATCH 4/4] add-mmf_dump_elf_headers.patch
+
+Additional info:
+-----------
+  Discussions are done on rhkernel-list in the thread as:
+    [RFC] how to avoid kABI issue of struct mm_struct in RHEL5
+
+Kernel version:
+-----------
+  This patch set is developed for 2.6.18-58.el5
+
+We appreciate your review on it.
+
+Regards,
+
+Taka (Takahiro Yasui)
+
+This patch introduces /proc/<pid>/coredump_filter as an interface
+for the coredump filtering feature.  It allows users to designate
+what type of memory segment should be dumped to a core file for
+each process.
+
+Lower four bits of the `coredump_filter' represent four flags,
+and each flag corresponds to a particular memory segment type.
+If a flag is cleared, the corresponding memory segments aren't
+dumped for the process.
+
+The flag status is stored into `struct mm_flags' object.  To
+save the memory space, the flag status is saved only if it differs
+from the default.  So when writing a non-default value to
+a `coredump_filter' or inheriting a non-default flag status when
+invoking fork(2) or execve(2), a new mm_flags object is created,
+then it is registered to a hash table.  A mm_flags object is freed
+with freeing mm_struct.
+
+Signed-off-by: Hidehiro Kawai <hidehiro.kawai.ez@hitachi.com>
+
+Acked-by: Dave Anderson <anderson@redhat.com>
+
+diff --git a/Documentation/filesystems/proc.txt b/Documentation/filesystems/proc.txt
+index 99902ae..cd0e692 100644
+--- a/Documentation/filesystems/proc.txt
++++ b/Documentation/filesystems/proc.txt
+@@ -39,6 +39,8 @@ Table of Contents
+   2.9	Appletalk
+   2.10	IPX
+   2.11	/proc/sys/fs/mqueue - POSIX message queues filesystem
++  2.12	/proc/<pid>/coredump_filter - Core dump filtering settings
++
+ 
+ ------------------------------------------------------------------------------
+ Preface
+@@ -1958,6 +1960,42 @@ a queue must be less or equal then msg_max.
+ maximum  message size value (it is every  message queue's attribute set during
+ its creation).
+ 
++2.12 /proc/<pid>/coredump_filter - Core dump filtering settings
++---------------------------------------------------------------
++When a process is dumped, all anonymous memory is written to a core file as
++long as the size of the core file isn't limited. But sometimes we don't want
++to dump some memory segments, for example, huge shared memory. Conversely,
++sometimes we want to save file-backed memory segments into a core file, not
++only the individual files.
++
++/proc/<pid>/coredump_filter allows you to customize which memory segments
++will be dumped when the <pid> process is dumped. coredump_filter is a bitmask
++of memory types. If a bit of the bitmask is set, memory segments of the
++corresponding memory type are dumped, otherwise they are not dumped.
++
++The following 4 memory types are supported:
++  - (bit 0) anonymous private memory
++  - (bit 1) anonymous shared memory
++  - (bit 2) file-backed private memory
++  - (bit 3) file-backed shared memory
++
++  Note that MMIO pages such as frame buffer are never dumped and vDSO pages
++  are always dumped regardless of the bitmask status.
++
++Default value of coredump_filter is 0x3; this means all anonymous memory
++segments are dumped.
++
++If you don't want to dump all shared memory segments attached to pid 1234,
++write 1 to the process's proc file.
++
++  $ echo 0x1 > /proc/1234/coredump_filter
++
++When a new process is created, the process inherits the bitmask status from its
++parent. It is useful to set up coredump_filter before the program runs.
++For example:
++
++  $ echo 0x7 > /proc/self/coredump_filter
++  $ ./some_program
+ 
+ ------------------------------------------------------------------------------
+ Summary
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index 0c9d7a3..da6713b 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -1233,31 +1233,68 @@ static int dump_seek(struct file *file, loff_t off)
+ }
+ 
+ /*
+- * Decide whether a segment is worth dumping; default is yes to be
+- * sure (missing info is worse than too much; etc).
+- * Personally I'd include everything, and use the coredump limit...
+- *
+- * I think we should skip something. But I am not sure how. H.J.
++ * Decide what to dump of a segment, part, all or none.
+  */
+-static int maydump(struct vm_area_struct *vma)
++static unsigned long vma_dump_size(struct vm_area_struct *vma,
++				   unsigned long mm_flags)
+ {
+ 	/* The vma can be set up to tell us the answer directly.  */
+ 	if (vma->vm_flags & VM_ALWAYSDUMP)
+-		return 1;
++		goto whole;
+ 
+ 	/* Do not dump I/O mapped devices or special mappings */
+ 	if (vma->vm_flags & (VM_IO | VM_RESERVED))
+ 		return 0;
+ 
+-	/* Dump shared memory only if mapped from an anonymous file. */
+-	if (vma->vm_flags & VM_SHARED)
+-		return vma->vm_file->f_dentry->d_inode->i_nlink == 0;
++#define FILTER(type)	(mm_flags & (1UL << MMF_DUMP_##type))
+ 
+-	/* If it hasn't been written to, don't write it out */
+-	if (!vma->anon_vma)
++	/* By default, dump shared memory if mapped from an anonymous file. */
++	if (vma->vm_flags & VM_SHARED) {
++		if (vma->vm_file->f_dentry->d_inode->i_nlink == 0 ?
++		    FILTER(ANON_SHARED) : FILTER(MAPPED_SHARED))
++			goto whole;
+ 		return 0;
++	}
+ 
+-	return 1;
++	/* Dump segments that have been written to.  */
++	if (vma->anon_vma && FILTER(ANON_PRIVATE))
++		goto whole;
++	if (vma->vm_file == NULL)
++		return 0;
++
++	if (FILTER(MAPPED_PRIVATE))
++		goto whole;
++
++	/*
++	 * If this looks like the beginning of a DSO or executable mapping,
++	 * check for an ELF header.  If we find one, dump the first page to
++	 * aid in determining what was mapped here.
++	 */
++	if (FILTER(ELF_HEADERS) && vma->vm_file != NULL && vma->vm_pgoff == 0) {
++		u32 __user *header = (u32 __user *) vma->vm_start;
++		u32 word;
++		/*
++		 * Doing it this way gets the constant folded by GCC.
++		 */
++		union {
++			u32 cmp;
++			char elfmag[SELFMAG];
++		} magic;
++		BUILD_BUG_ON(SELFMAG != sizeof word);
++		magic.elfmag[EI_MAG0] = ELFMAG0;
++		magic.elfmag[EI_MAG1] = ELFMAG1;
++		magic.elfmag[EI_MAG2] = ELFMAG2;
++		magic.elfmag[EI_MAG3] = ELFMAG3;
++		if (get_user(word, header) == 0 && word == magic.cmp)
++			return PAGE_SIZE;
++	}
++
++#undef	FILTER
++
++	return 0;
++
++whole:
++	return vma->vm_end - vma->vm_start;
+ }
+ 
+ /* An ELF note in memory */
+@@ -1518,6 +1555,7 @@ static int elf_core_dump(long signr, struct pt_regs *regs, struct file *file)
+ #endif
+ 	int thread_status_size = 0;
+ 	elf_addr_t *auxv;
++	unsigned long mm_flags;
+ 
+ 	/*
+ 	 * We no longer stop all VM operations.
+@@ -1652,19 +1690,23 @@ static int elf_core_dump(long signr, struct pt_regs *regs, struct file *file)
+ 	/* Page-align dumped data */
+ 	dataoff = offset = roundup(offset, ELF_EXEC_PAGESIZE);
+ 
++	/*
++	 * We must use the same mm_flags while dumping core to avoid
++	 * inconsistency between the program headers and bodies, otherwise an
++	 * unusable core file can be generated.
++	 */
++	mm_flags = get_mm_flags(current->mm);
++
+ 	/* Write program headers for segments dump */
+ 	for (vma = current->mm->mmap; vma != NULL; vma = vma->vm_next) {
+ 		struct elf_phdr phdr;
+-		size_t sz;
+-
+-		sz = vma->vm_end - vma->vm_start;
+ 
+ 		phdr.p_type = PT_LOAD;
+ 		phdr.p_offset = offset;
+ 		phdr.p_vaddr = vma->vm_start;
+ 		phdr.p_paddr = 0;
+-		phdr.p_filesz = maydump(vma) ? sz : 0;
+-		phdr.p_memsz = sz;
++		phdr.p_filesz = vma_dump_size(vma, mm_flags);
++		phdr.p_memsz = vma->vm_end - vma->vm_start;
+ 		offset += phdr.p_filesz;
+ 		phdr.p_flags = vma->vm_flags & VM_READ ? PF_R : 0;
+ 		if (vma->vm_flags & VM_WRITE)
+@@ -1702,13 +1744,11 @@ static int elf_core_dump(long signr, struct pt_regs *regs, struct file *file)
+ 
+ 	for (vma = current->mm->mmap; vma != NULL; vma = vma->vm_next) {
+ 		unsigned long addr;
++		unsigned long end;
+ 
+-		if (!maydump(vma))
+-			continue;
++		end = vma->vm_start + vma_dump_size(vma, mm_flags);
+ 
+-		for (addr = vma->vm_start;
+-		     addr < vma->vm_end;
+-		     addr += PAGE_SIZE) {
++		for (addr = vma->vm_start; addr < end; addr += PAGE_SIZE) {
+ 			struct page *page;
+ 			struct vm_area_struct *vma;
+ 
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 5b8a40f..5227dbb 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -72,6 +72,7 @@
+ #include <linux/cpuset.h>
+ #include <linux/audit.h>
+ #include <linux/poll.h>
++#include <linux/elf.h>
+ #include "internal.h"
+ 
+ /* NOTE:
+@@ -139,6 +140,9 @@ enum pid_directory_inos {
+ #endif
+ 	PROC_TGID_OOM_SCORE,
+ 	PROC_TGID_OOM_ADJUST,
++#if defined(USE_ELF_CORE_DUMP) && defined(CONFIG_ELF_CORE)
++	PROC_TGID_COREDUMP_FILTER,
++#endif
+ 	PROC_TID_INO,
+ 	PROC_TID_STATUS,
+ 	PROC_TID_MEM,
+@@ -244,6 +248,10 @@ static struct pid_entry tgid_base_stuff[] = {
+ #endif
+ 	E(PROC_TGID_LIMITS, "limits", S_IFREG|S_IRUSR),
+ 	E(PROC_TID_LIMITS, "limits", S_IFREG|S_IRUSR),
++#if defined(USE_ELF_CORE_DUMP) && defined(CONFIG_ELF_CORE)
++	E(PROC_TGID_COREDUMP_FILTER, "coredump_filter",
++	  S_IFREG|S_IRUGO|S_IWUSR),
++#endif
+ 
+ 	{0,0,NULL,0}
+ };
+@@ -1109,6 +1117,82 @@ static struct file_operations proc_loginuid_operations = {
+ };
+ #endif
+ 
++#if defined(USE_ELF_CORE_DUMP) && defined(CONFIG_ELF_CORE)
++static ssize_t proc_coredump_filter_read(struct file *file, char __user *buf,
++					 size_t count, loff_t *ppos)
++{
++	struct task_struct *task = get_proc_task(file->f_dentry->d_inode);
++	struct mm_struct *mm;
++	char buffer[PROC_NUMBUF];
++	size_t len;
++	int ret;
++
++	if (!task)
++		return -ESRCH;
++
++	ret = 0;
++	mm = get_task_mm(task);
++	if (mm) {
++		len = snprintf(buffer, sizeof(buffer), "%08lx\n",
++			       get_mm_flags(mm));
++		mmput(mm);
++		ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
++	}
++
++	put_task_struct(task);
++
++	return ret;
++}
++
++static ssize_t proc_coredump_filter_write(struct file *file,
++					  const char __user *buf,
++					  size_t count,
++					  loff_t *ppos)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	char buffer[PROC_NUMBUF], *end;
++	unsigned int val;
++	int ret;
++
++	ret = -EFAULT;
++	memset(buffer, 0, sizeof(buffer));
++	if (count > sizeof(buffer) - 1)
++		count = sizeof(buffer) - 1;
++	if (copy_from_user(buffer, buf, count))
++		goto out_no_task;
++
++	ret = -EINVAL;
++	val = (unsigned int)simple_strtoul(buffer, &end, 0);
++	if (*end == '\n')
++		end++;
++	if (end - buffer == 0)
++		goto out_no_task;
++
++	ret = -ESRCH;
++	task = get_proc_task(file->f_dentry->d_inode);
++	if (!task)
++		goto out_no_task;
++
++	ret = 0;
++	mm = get_task_mm(task);
++	if (!mm)
++		goto out_no_mm;
++	ret = set_mm_flags(mm, val, 1);
++	mmput(mm);
++
++ out_no_mm:
++	put_task_struct(task);
++ out_no_task:
++	return (ret < 0) ? ret : end - buffer;
++}
++
++static const struct file_operations proc_coredump_filter_operations = {
++	.read		= proc_coredump_filter_read,
++	.write		= proc_coredump_filter_write,
++};
++#endif /* USE_ELF_CORE_DUMP && CONFIG_ELF_CORE */
++
+ #ifdef CONFIG_SECCOMP
+ static ssize_t seccomp_read(struct file *file, char __user *buf,
+ 			    size_t count, loff_t *ppos)
+@@ -1955,6 +2039,11 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
+ 			inode->i_fop = &proc_loginuid_operations;
+ 			break;
+ #endif
++#if defined(USE_ELF_CORE_DUMP) && defined(CONFIG_ELF_CORE)
++		case PROC_TGID_COREDUMP_FILTER:
++			inode->i_fop = &proc_coredump_filter_operations;
++			break;
++#endif
+ 		default:
+ 			printk("procfs: impossible type (%d)",p->type);
+ 			iput(inode);
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index fd7059f..338ae7c 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -307,6 +307,23 @@ typedef unsigned long mm_counter_t;
+ 		(mm)->hiwater_vm = (mm)->total_vm;	\
+ } while (0)
+ 
++/* coredump filter bits */
++#define MMF_DUMP_ANON_PRIVATE	0
++#define MMF_DUMP_ANON_SHARED	1
++#define MMF_DUMP_MAPPED_PRIVATE	2
++#define MMF_DUMP_MAPPED_SHARED	3
++#define MMF_DUMP_ELF_HEADERS	4
++#define MMF_DUMP_FILTER_BITS	5
++#define MMF_DUMP_FILTER_MASK ((1 << MMF_DUMP_FILTER_BITS) - 1)
++#define MMF_DUMP_FILTER_DEFAULT \
++	((1 << MMF_DUMP_ANON_PRIVATE) | (1 << MMF_DUMP_ANON_SHARED))
++
++struct mm_flags {
++	struct hlist_node hlist;
++	void *addr;
++	unsigned long flags;
++};
++
+ struct mm_struct {
+ 	struct vm_area_struct * mmap;		/* list of VMAs */
+ 	struct rb_root mm_rb;
+@@ -1301,6 +1318,9 @@ extern struct mm_struct *get_task_mm(struct task_struct *task);
+ /* Remove the current tasks stale references to the old mm_struct */
+ extern void mm_release(struct task_struct *, struct mm_struct *);
+ 
++extern unsigned long get_mm_flags(struct mm_struct *);
++extern int set_mm_flags(struct mm_struct *, unsigned long, int);
++
+ extern int  copy_thread(int, unsigned long, unsigned long, unsigned long, struct task_struct *, struct pt_regs *);
+ extern void flush_thread(void);
+ extern void exit_thread(void);
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 6f2115a..bd74ccf 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -45,6 +45,7 @@
+ #include <linux/cn_proc.h>
+ #include <linux/delayacct.h>
+ #include <linux/taskstats_kern.h>
++#include <linux/hash.h>
+ #ifndef __GENKSYMS__
+ #include <linux/ptrace.h>
+ #endif
+@@ -69,6 +70,17 @@ DEFINE_PER_CPU(unsigned long, process_counts) = 0;
+ __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
+ EXPORT_SYMBOL(tasklist_lock);
+ 
++#define MM_FLAGS_HASH_BITS 10
++#define MM_FLAGS_HASH_SIZE (1 << MM_FLAGS_HASH_BITS)
++struct hlist_head mm_flags_hash[MM_FLAGS_HASH_SIZE] =
++	{ [ 0 ... MM_FLAGS_HASH_SIZE - 1 ] = HLIST_HEAD_INIT };
++DEFINE_SPINLOCK(mm_flags_lock);
++#define MM_HASH_SHIFT ((sizeof(struct mm_struct) >= 1024) ? 10	\
++		       : (sizeof(struct mm_struct) >= 512) ? 9	\
++		       : 8)
++#define mm_flags_hash_fn(mm) \
++	hash_long((unsigned long)(mm) >> MM_HASH_SHIFT, MM_FLAGS_HASH_BITS)
++
+ int nr_processes(void)
+ {
+ 	int cpu;
+@@ -188,6 +200,89 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
+ 	return tsk;
+ }
+ 
++/* Must be called with the mm_flags_lock held.  */
++static struct mm_flags *__find_mm_flags(struct mm_struct *addr)
++{
++	struct hlist_head *head;
++	struct hlist_node *node;
++	struct mm_flags *p;
++
++	head = &mm_flags_hash[mm_flags_hash_fn(addr)];
++	hlist_for_each_entry(p, node, head, hlist) {
++                if (p->addr == addr)
++			return p;
++	}
++	return NULL;
++}
++
++unsigned long get_mm_flags(struct mm_struct *mm)
++{
++	struct mm_flags *p;
++	unsigned long flags = MMF_DUMP_FILTER_DEFAULT;
++
++	spin_lock(&mm_flags_lock);
++	p = __find_mm_flags(mm);
++	if (p)
++		flags = p->flags;
++	spin_unlock(&mm_flags_lock);
++
++	return flags;
++}
++
++int set_mm_flags(struct mm_struct *mm, unsigned long flags, int check_dup)
++{
++	struct mm_flags *p, *new_p;
++
++	flags &= MMF_DUMP_FILTER_MASK;
++
++	if (check_dup) {
++		/* Check if the entry has already existed.  */
++		spin_lock(&mm_flags_lock);
++		p = __find_mm_flags(mm);
++		if (p) {
++			p->flags = flags;
++			spin_unlock(&mm_flags_lock);
++			return 0;
++		}
++		spin_unlock(&mm_flags_lock);
++
++		/* Do nothing if the `flags' is equal to the default.  */
++		if (flags == MMF_DUMP_FILTER_DEFAULT)
++			return 0;
++	}
++
++	/* Try to add a new entry.  */
++	new_p = kmalloc(sizeof(*new_p), GFP_KERNEL);
++	if (!new_p)
++		return -ENOMEM;
++
++	spin_lock(&mm_flags_lock);
++	if (!check_dup || !(p = __find_mm_flags(mm))) {
++		struct hlist_head *head;
++		head = &mm_flags_hash[mm_flags_hash_fn(mm)];
++		p = new_p;
++		p->addr = mm;
++		hlist_add_head(&p->hlist, head);
++	} else
++		kfree(new_p);
++	p->flags = flags;
++	spin_unlock(&mm_flags_lock);
++
++	return 0;
++}
++
++static void free_mm_flags(struct mm_struct *mm) {
++	struct mm_flags *p;
++
++	spin_lock(&mm_flags_lock);
++	p = __find_mm_flags(mm);
++	if (p) {
++		hlist_del(&p->hlist);
++		kfree(p);
++	}
++	spin_unlock(&mm_flags_lock);
++}
++
+ #ifdef CONFIG_MMU
+ static inline int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
+ {
+@@ -325,6 +420,8 @@ static inline void mm_free_pgd(struct mm_struct * mm)
+ 
+ static struct mm_struct * mm_init(struct mm_struct * mm)
+ {
++	unsigned long mm_flags;
++
+ 	atomic_set(&mm->mm_users, 1);
+ 	atomic_set(&mm->mm_count, 1);
+ 	init_rwsem(&mm->mmap_sem);
+@@ -339,10 +436,20 @@ static struct mm_struct * mm_init(struct mm_struct * mm)
+ 	mm->free_area_cache = TASK_UNMAPPED_BASE;
+ 	mm->cached_hole_size = ~0UL;
+ 
++	mm_flags = get_mm_flags(current->mm);
++	if (mm_flags != MMF_DUMP_FILTER_DEFAULT) {
++		if (unlikely(set_mm_flags(mm, mm_flags, 0) < 0))
++			goto fail_nomem;
++	}
++
+ 	if (likely(!mm_alloc_pgd(mm))) {
+ 		mm->def_flags = 0;
+ 		return mm;
+ 	}
++
++	if (mm_flags != MMF_DUMP_FILTER_DEFAULT)
++		free_mm_flags(mm);
++fail_nomem:
+ 	free_mm(mm);
+ 	return NULL;
+ }
+@@ -370,6 +477,7 @@ struct mm_struct * mm_alloc(void)
+ void fastcall __mmdrop(struct mm_struct *mm)
+ {
+ 	BUG_ON(mm == &init_mm);
++	free_mm_flags(mm);
+ 	mm_free_pgd(mm);
+ 	destroy_context(mm);
+ 	free_mm(mm);
+@@ -504,6 +612,7 @@ fail_nocontext:
+ 	 * If init_new_context() failed, we cannot use mmput() to free the mm
+ 	 * because it calls destroy_context()
+ 	 */
++	free_mm_flags(mm);
+ 	mm_free_pgd(mm);
+ 	free_mm(mm);
+ 	return NULL;

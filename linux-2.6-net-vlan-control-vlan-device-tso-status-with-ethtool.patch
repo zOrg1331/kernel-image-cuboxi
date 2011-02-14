@@ -1,0 +1,83 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 3 Sep 2010 21:43:48 -0400
+Subject: [net] vlan: control vlan device TSO status with ethtool
+Message-id: <1283550228-5099-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 28151
+O-Subject: [PATCH RHEL5.6] vlan: control vlan device TSO status with ethtool
+Bugzilla: 629457
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Patches were added in RHEL5.5 to enable TSO on vlan devices if the
+proper features were set for the driver.  There was a nice performance
+impact to this (I've seen 10-20% drop in CPU utilization with a simple
+netperf test on my test system), but I did not want to add this to all
+the network drivers unless there was a way to disable it.
+
+A reasonable solution to control TSO status was already available
+upstream, so I simply backported and tested the following upstream
+commit:
+
+	commit a204b48ed4dc31acf61090e530430ce3272b6aab
+	Author: Eric Dumazet <eric.dumazet@gmail.com>
+	Date:   Thu Jul 8 23:12:21 2010 -0700
+
+	    vlan: allow TSO setting on vlan interfaces
+
+As of right now, we will not ship with TSO on enabled on VLANs for all
+hardware that supports it upstream.  Hardware supported by mlx4_en add
+support in RHEL5.5 and my e1000e, ixgbe, and ixgbevf updates included
+support for it.  I will post more updates to drivers as the RHEL5.6
+driver updates are committed so I know my patches will actually apply.
+
+I have tested this on e1000e, igb, igbvf, ixgbe, and ixgbevf.
+
+This will help resolve RHBZ 629457.
+
+
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index b6c9f6c..f6d1855 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -319,6 +319,27 @@ static int unregister_vlan_device(const char *vlan_IF_name)
+ 	return ret;
+ }
+ 
++static int vlan_ethtool_set_tso(struct net_device *dev, u32 data)
++{
++	if (data) {
++		const struct vlan_dev_info *vlan = VLAN_DEV_INFO(dev);
++		struct net_device *real_dev = vlan->real_dev;
++
++		/* Underlying device must support TSO for VLAN-tagged packets
++		 * and must have TSO enabled now.
++		 */
++		if (!(real_dev->features & NETIF_F_VLAN_TSO))
++			return -EOPNOTSUPP;
++		if (!(real_dev->features & NETIF_F_TSO))
++			return -EINVAL;
++		dev->features |= NETIF_F_TSO;
++	} else {
++		dev->features &= ~NETIF_F_TSO;
++	}
++	return 0;
++}
++
++
+ static u32 vlan_ethtool_get_rx_csum(struct net_device *dev)
+ {
+ 	const struct vlan_dev_info *vlan = VLAN_DEV_INFO(dev);
+@@ -330,9 +351,11 @@ static u32 vlan_ethtool_get_rx_csum(struct net_device *dev)
+ 	return real_dev->ethtool_ops->get_rx_csum(real_dev);
+ }
+ 
+-static const struct ethtool_ops vlan_ethtool_ops = {
++static struct ethtool_ops vlan_ethtool_ops = {
+ 	.get_link		= ethtool_op_get_link,
+ 	.get_rx_csum		= vlan_ethtool_get_rx_csum,
++	.set_tso		= vlan_ethtool_set_tso,
++	.get_tso		= ethtool_op_get_tso,
+ };
+ 
+ static void vlan_setup(struct net_device *new_dev)

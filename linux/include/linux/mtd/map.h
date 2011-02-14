@@ -1,5 +1,6 @@
 
 /* Overhauled routines for dealing with different mmap regions of flash */
+/* $Id: map.h,v 1.54 2005/11/07 11:14:54 gleixner Exp $ */
 
 #ifndef __LINUX_MTD_MAP_H__
 #define __LINUX_MTD_MAP_H__
@@ -124,15 +125,7 @@
 #endif
 
 #ifndef map_bankwidth
-#warning "No CONFIG_MTD_MAP_BANK_WIDTH_xx selected. No NOR chip support can work"
-static inline int map_bankwidth(void *map)
-{
-	BUG();
-	return 0;
-}
-#define map_bankwidth_is_large(map) (0)
-#define map_words(map) (0)
-#define MAX_MAP_BANKWIDTH 1
+#error "No bus width supported. What's the point?"
 #endif
 
 static inline int map_bankwidth_supported(int w)
@@ -188,9 +181,9 @@ typedef union {
 */
 
 struct map_info {
-	const char *name;
+	char *name;
 	unsigned long size;
-	resource_size_t phys;
+	unsigned long phys;
 #define NO_XIP (-1UL)
 
 	void __iomem *virt;
@@ -223,7 +216,6 @@ struct map_info {
 	   must leave it enabled. */
 	void (*set_vpp)(struct map_info *, int);
 
-	unsigned long pfow_base;
 	unsigned long map_priv_1;
 	unsigned long map_priv_2;
 	void *fldrv_priv;

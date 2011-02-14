@@ -1,0 +1,44 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: BZ 227908 SB600 ide only has one channel
+Date: Thu, 29 Mar 2007 09:48:20 -0400
+Bugzilla: 227908
+Message-Id: <20070329134820.18277.24988.sendpatchset@prarit.boston.redhat.com>
+Changelog: [ide] SB600 ide only has one channel
+
+
+atiixp.c: SB600 ide only has one channel
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b25168dfdc162b4198fa6395cd191a20dddc6d34
+
+Successfully tested by me on HP dc5750.
+
+Resolves BZ 227908.
+
+--- linux-2.6.18.x86_64.orig/drivers/ide/pci/atiixp.c	2007-03-26 11:41:33.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/ide/pci/atiixp.c	2007-03-26 12:58:10.000000000 -0400
+@@ -326,6 +326,13 @@ static ide_pci_device_t atiixp_pci_info[
+ 		.autodma	= AUTODMA,
+ 		.enablebits	= {{0x48,0x01,0x00}, {0x48,0x08,0x00}},
+ 		.bootable	= ON_BOARD,
++	},{	/* 1 */
++		.name		= "SB600_PATA",
++		.init_hwif	= init_hwif_atiixp,
++		.channels	= 1,
++		.autodma	= AUTODMA,
++		.enablebits	= {{0x48,0x01,0x00}, {0x00,0x00,0x00}},
++		.bootable	= ON_BOARD,
+ 	}
+ };
+ 
+@@ -347,7 +354,7 @@ static struct pci_device_id atiixp_pci_t
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP200_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP300_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP400_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+-	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
++	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
+ 	{ 0, },
+ };
+ MODULE_DEVICE_TABLE(pci, atiixp_pci_tbl);
+

@@ -1,0 +1,600 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 12 Mar 2009 15:22:33 +0100
+Subject: [s390] provide service levels of HW & Hypervisor
+Message-id: 20090312142233.GD5103@redhat.com
+O-Subject: [RHEL5 U4 PATCH 3/20] FEAT: Provide service levels of HW & Hypervisor
+Bugzilla: 475570
+
+This patch has been previously acked by Pete Zaitcev:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2009-February/msg00467.html
+
+Description
+============
+
+Add a new proc interface /proc/service_levels that allows any code
+to report a relevant service level, e.g. the microcode level of
+devices, the service level of the hypervisor, etc.
+
+Bugzilla
+=========
+
+BZ 475570
+https://bugzilla.redhat.com/show_bug.cgi?id=475570
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit
+6bcac508fbebdca52f5a55d69a4316997ecb5391
+
+Test status:
+============
+
+The patch has been tested by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/arch/s390/kernel/topology.c b/arch/s390/kernel/topology.c
+index 1dc0e10..d4c9baf 100644
+--- a/arch/s390/kernel/topology.c
++++ b/arch/s390/kernel/topology.c
+@@ -17,6 +17,7 @@
+ #include <linux/smp.h>
+ #include <asm/delay.h>
+ #include <asm/s390_ext.h>
++#include <asm/sysinfo.h>
+ 
+ static DEFINE_MUTEX(smp_cpu_state_mutex);
+ 
+diff --git a/drivers/s390/net/qeth.h b/drivers/s390/net/qeth.h
+index d4a9ab9..629e021 100644
+--- a/drivers/s390/net/qeth.h
++++ b/drivers/s390/net/qeth.h
+@@ -22,6 +22,7 @@
+ #include <asm/qdio.h>
+ #include <asm/ccwdev.h>
+ #include <asm/ccwgroup.h>
++#include <asm/sysinfo.h>
+ 
+ #include "qeth_mpc.h"
+ 
+@@ -840,6 +841,7 @@ struct qeth_card {
+ 				unsigned char *);
+ 	struct qeth_osn_info osn_info;
+ 	atomic_t force_alloc_skb;
++	struct service_level qeth_service_level;
+ };
+ 
+ struct qeth_card_list_struct {
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 23182d6..16109c1 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -251,6 +251,7 @@ qeth_free_card(struct qeth_card *card)
+ 	qeth_clear_ipato_list(card);
+ 	kfree(card->ip_tbd_list);
+ 	qeth_free_qdio_buffers(card);
++	unregister_service_level(&card->qeth_service_level);
+ 	kfree(card);
+ }
+ 
+@@ -289,6 +290,14 @@ qeth_setup_channel(struct qeth_channel *channel)
+ 	return 0;
+ }
+ 
++static void qeth_core_sl_print(struct seq_file *m, struct service_level *slr)
++{
++	struct qeth_card *card = container_of(slr, struct qeth_card,
++					qeth_service_level);
++	seq_printf(m, "qeth: %s firmware level %s\n", CARD_BUS_ID(card),
++			card->info.mcl_level);
++}
++
+ /**
+  * alloc memory for card structure
+  */
+@@ -311,6 +320,8 @@ qeth_alloc_card(void)
+ 		kfree(card);
+ 		return NULL;
+ 	}
++	card->qeth_service_level.seq_print = qeth_core_sl_print;
++	register_service_level(&card->qeth_service_level);
+ 	return card;
+ }
+ 
+diff --git a/drivers/s390/scsi/zfcp_aux.c b/drivers/s390/scsi/zfcp_aux.c
+index 9117b3f..ad4a0d5 100644
+--- a/drivers/s390/scsi/zfcp_aux.c
++++ b/drivers/s390/scsi/zfcp_aux.c
+@@ -33,6 +33,7 @@
+  *            Ralph Wuerthner
+  */
+ 
++#include <linux/seq_file.h>
+ #include "zfcp_ext.h"
+ 
+ /* accumulated log level (module parameter) */
+@@ -552,6 +553,16 @@ zfcp_cfdc_dev_ioctl(struct file *file, unsigned int command,
+ }
+ 
+ 
++static void zfcp_print_sl(struct seq_file *m, struct service_level *sl)
++{
++	struct zfcp_adapter *adapter =
++		container_of(sl, struct zfcp_adapter, service_level);
++
++	seq_printf(m, "zfcp: %s microcode level %x\n",
++		   adapter->ccw_device->dev.bus_id,
++		   adapter->fsf_lic_version);
++}
++
+ /**
+  * zfcp_sg_list_alloc - create a scatter-gather list of the specified size
+  * @sg_list: structure describing a scatter gather list
+@@ -1118,6 +1129,8 @@ zfcp_adapter_enqueue(struct ccw_device *ccw_device)
+ 	INIT_WORK(&adapter->stat_work, _zfcp_status_read_scheduler,
+ 		  adapter);
+ 
++	adapter->service_level.seq_print = zfcp_print_sl;
++
+ 	/* mark adapter unusable as long as sysfs registration is not complete */
+ 	atomic_set_mask(ZFCP_STATUS_COMMON_REMOVE, &adapter->status);
+ 
+diff --git a/drivers/s390/scsi/zfcp_def.h b/drivers/s390/scsi/zfcp_def.h
+index 59ad68f..6aae76d 100644
+--- a/drivers/s390/scsi/zfcp_def.h
++++ b/drivers/s390/scsi/zfcp_def.h
+@@ -44,6 +44,7 @@
+ #include <asm/qdio.h>
+ #include <asm/debug.h>
+ #include <asm/ebcdic.h>
++#include <asm/sysinfo.h>
+ #include <linux/mempool.h>
+ #include <linux/syscalls.h>
+ #include <linux/ioctl.h>
+@@ -977,6 +978,7 @@ struct zfcp_adapter {
+ 	struct fc_host_statistics *fc_stats;
+ 	struct fsf_qtcb_bottom_port *stats_reset_data;
+ 	unsigned long		stats_reset;
++	struct service_level	service_level;
+ };
+ 
+ /*
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index 1599533..cfaf74c 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -2966,6 +2966,7 @@ zfcp_erp_action_cleanup(int action, struct zfcp_adapter *adapter,
+ 	case ZFCP_ERP_ACTION_REOPEN_ADAPTER:
+ 		if (result != ZFCP_ERP_SUCCEEDED) {
+ 			struct zfcp_port *port;
++			unregister_service_level(&adapter->service_level);
+ 			list_for_each_entry(port, &adapter->port_list_head, list)
+ 				if (port->rport &&
+ 				    !atomic_test_mask(ZFCP_STATUS_PORT_WKA,
+@@ -2973,7 +2974,8 @@ zfcp_erp_action_cleanup(int action, struct zfcp_adapter *adapter,
+ 					fc_remote_port_delete(port->rport);
+ 					port->rport = NULL;
+ 				}
+-		}
++		} else
++			register_service_level(&adapter->service_level);
+ 		zfcp_adapter_put(adapter);
+ 		break;
+ 	default:
+diff --git a/drivers/s390/sysinfo.c b/drivers/s390/sysinfo.c
+index 73979d2..0b05503 100644
+--- a/drivers/s390/sysinfo.c
++++ b/drivers/s390/sysinfo.c
+@@ -3,117 +3,18 @@
+  *
+  *    Copyright (C) 2001 IBM Deutschland Entwicklung GmbH, IBM Corporation
+  *    Author(s): Ulrich Weigand (Ulrich.Weigand@de.ibm.com)
++ *	         Martin Schwidefsky <schwidefsky@de.ibm.com>
+  */
+ 
+ #include <linux/kernel.h>
+ #include <linux/mm.h>
+ #include <linux/proc_fs.h>
++#include <linux/seq_file.h>
+ #include <linux/init.h>
++#include <linux/module.h>
+ #include <asm/ebcdic.h>
+-
+-struct sysinfo_1_1_1 {
+-	char reserved_0[32];
+-	char manufacturer[16];
+-	char type[4];
+-	char reserved_1[12];
+-	char model_capacity[16];
+-	char sequence[16];
+-	char plant[4];
+-	char model[16];
+-	char model_perm_cap[16];
+-	char model_temp_cap[16];
+-	char model_cap_rating[4];
+-	char model_perm_cap_rating[4];
+-	char model_temp_cap_rating[4];
+-};
+-
+-struct sysinfo_1_2_1 {
+-	char reserved_0[80];
+-	char sequence[16];
+-	char plant[4];
+-	char reserved_1[2];
+-	unsigned short cpu_address;
+-};
+-
+-struct sysinfo_1_2_2 {
+-	char format;
+-	char reserved_0[1];
+-	unsigned short acc_offset;
+-	char reserved_1[24];
+-	unsigned int secondary_capability;
+-	unsigned int capability;
+-	unsigned short cpus_total;
+-	unsigned short cpus_configured;
+-	unsigned short cpus_standby;
+-	unsigned short cpus_reserved;
+-	unsigned short adjustment[0];
+-};
+-
+-struct sysinfo_1_2_2_extension {
+-	unsigned int alt_capability;
+-	unsigned short alt_adjustment[0];
+-};
+-
+-struct sysinfo_2_2_1 {
+-	char reserved_0[80];
+-	char sequence[16];
+-	char plant[4];
+-	unsigned short cpu_id;
+-	unsigned short cpu_address;
+-};
+-
+-struct sysinfo_2_2_2 {
+-	char reserved_0[32];
+-	unsigned short lpar_number;
+-	char reserved_1;
+-	unsigned char characteristics;
+-	unsigned short cpus_total;
+-	unsigned short cpus_configured;
+-	unsigned short cpus_standby;
+-	unsigned short cpus_reserved;
+-	char name[8];
+-	unsigned int caf;
+-	char reserved_2[16];
+-	unsigned short cpus_dedicated;
+-	unsigned short cpus_shared;
+-};
+-
+-#define LPAR_CHAR_DEDICATED	(1 << 7)
+-#define LPAR_CHAR_SHARED	(1 << 6)
+-#define LPAR_CHAR_LIMITED	(1 << 5)
+-
+-struct sysinfo_3_2_2 {
+-	char reserved_0[31];
+-	unsigned char count;
+-	struct {
+-		char reserved_0[4];
+-		unsigned short cpus_total;
+-		unsigned short cpus_configured;
+-		unsigned short cpus_standby;
+-		unsigned short cpus_reserved;
+-		char name[8];
+-		unsigned int caf;
+-		char cpi[16];
+-		char reserved_1[24];
+-
+-	} vm[8];
+-};
+-
+-int stsi(void *sysinfo, int fc, int sel1, int sel2)
+-{
+-	register int r0 asm("0") = (fc << 28) | sel1;
+-	register int r1 asm("1") = sel2;
+-
+-	asm volatile(
+-		"   stsi 0(%2)\n"
+-		"0: jz   2f\n"
+-		"1: lhi  %0,%3\n"
+-		"2:\n"
+-		EX_TABLE(0b,1b)
+-		: "+d" (r0) : "d" (r1), "a" (sysinfo), "K" (-ENOSYS)
+-		: "cc", "memory" );
+-	return r0;
+-}
++#include <asm/sysinfo.h>
++#include <asm/cpcmd.h>
+ 
+ static inline int stsi_0(void)
+ {
+@@ -368,3 +269,134 @@ static __init int create_proc_sysinfo(void)
+ 
+ __initcall(create_proc_sysinfo);
+ 
++/*
++ * Service levels interface.
++ */
++
++static DECLARE_RWSEM(service_level_sem);
++static LIST_HEAD(service_level_list);
++
++int register_service_level(struct service_level *slr)
++{
++	struct service_level *ptr;
++
++	down_write(&service_level_sem);
++	list_for_each_entry(ptr, &service_level_list, list)
++		if (ptr == slr) {
++			up_write(&service_level_sem);
++			return -EEXIST;
++		}
++	list_add_tail(&slr->list, &service_level_list);
++	up_write(&service_level_sem);
++	return 0;
++}
++EXPORT_SYMBOL(register_service_level);
++
++int unregister_service_level(struct service_level *slr)
++{
++	struct service_level *ptr, *next;
++	int rc = -ENOENT;
++
++	down_write(&service_level_sem);
++	list_for_each_entry_safe(ptr, next, &service_level_list, list) {
++		if (ptr != slr)
++			continue;
++		list_del(&ptr->list);
++		rc = 0;
++		break;
++	}
++	up_write(&service_level_sem);
++	return rc;
++}
++EXPORT_SYMBOL(unregister_service_level);
++
++static void *service_level_start(struct seq_file *m, loff_t *pos)
++{
++	struct list_head *lh;
++	loff_t off = *pos;
++
++	down_read(&service_level_sem);
++	list_for_each(lh, &service_level_list)
++		if (off-- == 0)
++			return lh;
++	return NULL;
++}
++
++static void *service_level_next(struct seq_file *m, void *p, loff_t *pos)
++{
++	struct list_head *lh;
++
++	lh = ((struct list_head *) p)->next;
++	++*pos;
++	return lh == &service_level_list ? NULL : lh;
++}
++
++static void service_level_stop(struct seq_file *m, void *p)
++{
++	up_read(&service_level_sem);
++}
++
++static int service_level_show(struct seq_file *m, void *p)
++{
++	struct service_level *slr;
++
++	slr = list_entry(p, struct service_level, list);
++	slr->seq_print(m, slr);
++	return 0;
++}
++
++static struct seq_operations service_level_seq_ops = {
++	.start		= service_level_start,
++	.next		= service_level_next,
++	.stop		= service_level_stop,
++	.show		= service_level_show
++};
++
++static int service_level_open(struct inode *inode, struct file *file)
++{
++	return seq_open(file, &service_level_seq_ops);
++}
++
++static struct file_operations service_level_ops = {
++	.open           = service_level_open,
++	.read           = seq_read,
++	.llseek         = seq_lseek,
++	.release        = seq_release
++};
++
++static void service_level_vm_print(struct seq_file *m,
++				   struct service_level *slr)
++{
++	char *query_buffer, *str;
++
++	query_buffer = kmalloc(1024, GFP_KERNEL | GFP_DMA);
++	if (!query_buffer)
++		return;
++	cpcmd("QUERY CPLEVEL", query_buffer, 1024, NULL);
++	str = strchr(query_buffer, '\n');
++	if (str)
++		*str = 0;
++	seq_printf(m, "VM: %s\n", query_buffer);
++	kfree(query_buffer);
++}
++
++static struct service_level service_level_vm = {
++	.seq_print = service_level_vm_print
++};
++
++static struct proc_dir_entry *service_levels_entry = NULL;
++
++static __init int create_proc_service_level(void)
++{
++	service_levels_entry = create_proc_entry("service_levels", 0444,
++						 &proc_root);
++	if (service_levels_entry) {
++		service_levels_entry->proc_fops = &service_level_ops;
++		service_levels_entry->owner = THIS_MODULE;
++	}
++	if (MACHINE_IS_VM)
++		register_service_level(&service_level_vm);
++	return 0;
++}
++
++subsys_initcall(create_proc_service_level);
+diff --git a/include/asm-s390/sysinfo.h b/include/asm-s390/sysinfo.h
+new file mode 100644
+index 0000000..ad93212
+--- /dev/null
++++ b/include/asm-s390/sysinfo.h
+@@ -0,0 +1,132 @@
++/*
++ * definition for store system information stsi
++ *
++ * Copyright IBM Corp. 2001,2008
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License (version 2 only)
++ * as published by the Free Software Foundation.
++ *
++ *    Author(s): Ulrich Weigand <weigand@de.ibm.com>
++ *		 Christian Borntraeger <borntraeger@de.ibm.com>
++ */
++
++#ifndef __ASM_S390_SYSINFO_H
++#define __ASM_S390_SYSINFO_H
++
++struct sysinfo_1_1_1 {
++	char reserved_0[32];
++	char manufacturer[16];
++	char type[4];
++	char reserved_1[12];
++	char model_capacity[16];
++	char sequence[16];
++	char plant[4];
++	char model[16];
++	char model_perm_cap[16];
++	char model_temp_cap[16];
++	char model_cap_rating[4];
++	char model_perm_cap_rating[4];
++	char model_temp_cap_rating[4];
++};
++
++struct sysinfo_1_2_1 {
++	char reserved_0[80];
++	char sequence[16];
++	char plant[4];
++	char reserved_1[2];
++	unsigned short cpu_address;
++};
++
++struct sysinfo_1_2_2 {
++	char format;
++	char reserved_0[1];
++	unsigned short acc_offset;
++	char reserved_1[24];
++	unsigned int secondary_capability;
++	unsigned int capability;
++	unsigned short cpus_total;
++	unsigned short cpus_configured;
++	unsigned short cpus_standby;
++	unsigned short cpus_reserved;
++	unsigned short adjustment[0];
++};
++
++struct sysinfo_1_2_2_extension {
++	unsigned int alt_capability;
++	unsigned short alt_adjustment[0];
++};
++
++struct sysinfo_2_2_1 {
++	char reserved_0[80];
++	char sequence[16];
++	char plant[4];
++	unsigned short cpu_id;
++	unsigned short cpu_address;
++};
++
++struct sysinfo_2_2_2 {
++	char reserved_0[32];
++	unsigned short lpar_number;
++	char reserved_1;
++	unsigned char characteristics;
++	unsigned short cpus_total;
++	unsigned short cpus_configured;
++	unsigned short cpus_standby;
++	unsigned short cpus_reserved;
++	char name[8];
++	unsigned int caf;
++	char reserved_2[16];
++	unsigned short cpus_dedicated;
++	unsigned short cpus_shared;
++};
++
++#define LPAR_CHAR_DEDICATED	(1 << 7)
++#define LPAR_CHAR_SHARED	(1 << 6)
++#define LPAR_CHAR_LIMITED	(1 << 5)
++
++struct sysinfo_3_2_2 {
++	char reserved_0[31];
++	unsigned char count;
++	struct {
++		char reserved_0[4];
++		unsigned short cpus_total;
++		unsigned short cpus_configured;
++		unsigned short cpus_standby;
++		unsigned short cpus_reserved;
++		char name[8];
++		unsigned int caf;
++		char cpi[16];
++		char reserved_1[24];
++
++	} vm[8];
++};
++
++static inline int stsi(void *sysinfo, int fc, int sel1, int sel2)
++{
++	register int r0 asm("0") = (fc << 28) | sel1;
++	register int r1 asm("1") = sel2;
++
++	asm volatile(
++		"   stsi 0(%2)\n"
++		"0: jz   2f\n"
++		"1: lhi  %0,%3\n"
++		"2:\n"
++		EX_TABLE(0b, 1b)
++		: "+d" (r0) : "d" (r1), "a" (sysinfo), "K" (-ENOSYS)
++		: "cc", "memory");
++	return r0;
++}
++
++/*
++ * Service level reporting interface.
++ */
++struct service_level {
++	struct list_head list;
++	void (*seq_print)(struct seq_file *, struct service_level *);
++};
++
++int register_service_level(struct service_level *);
++int unregister_service_level(struct service_level *);
++
++#endif /* __ASM_S390_SYSINFO_H */
+diff --git a/include/asm-s390/system.h b/include/asm-s390/system.h
+index 589b7d4..f31d2d2 100644
+--- a/include/asm-s390/system.h
++++ b/include/asm-s390/system.h
+@@ -434,7 +434,6 @@ __set_psw_mask(unsigned long mask)
+ #define local_mcck_enable()  __set_psw_mask(PSW_KERNEL_BITS)
+ #define local_mcck_disable() __set_psw_mask(PSW_KERNEL_BITS & ~PSW_MASK_MCHECK)
+ 
+-int stsi(void *sysinfo, int fc, int sel1, int sel2);
+ int stfle(unsigned long long *list, int doublewords);
+ 
+ #ifdef CONFIG_SMP

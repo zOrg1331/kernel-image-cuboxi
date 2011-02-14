@@ -92,16 +92,14 @@ out:
 	return result;
 }
 
-#ifdef CONFIG_COLDFIRE
 /*
  *	This is a version of ip_compute_csum() optimized for IP headers,
  *	which always checksum on 4 octet boundaries.
  */
-__sum16 ip_fast_csum(const void *iph, unsigned int ihl)
+unsigned short ip_fast_csum(unsigned char * iph, unsigned int ihl)
 {
-	return (__force __sum16)~do_csum(iph,ihl*4);
+	return ~do_csum(iph,ihl*4);
 }
-#endif
 
 /*
  * computes the checksum of a memory block at buff, length len,
@@ -115,29 +113,38 @@ __sum16 ip_fast_csum(const void *iph, unsigned int ihl)
  *
  * it's best to have buff aligned on a 32-bit boundary
  */
-__wsum csum_partial(const void *buff, int len, __wsum sum)
+unsigned int csum_partial(const unsigned char * buff, int len, unsigned int sum)
 {
 	unsigned int result = do_csum(buff, len);
 
 	/* add in old sum, and carry.. */
-	result += (__force u32)sum;
-	if ((__force u32)sum > result)
+	result += sum;
+	if (sum > result)
 		result += 1;
-	return (__force __wsum)result;
+	return result;
 }
 
 EXPORT_SYMBOL(csum_partial);
 
 /*
+ * this routine is used for miscellaneous IP-like checksums, mainly
+ * in icmp.c
+ */
+unsigned short ip_compute_csum(const unsigned char * buff, int len)
+{
+	return ~do_csum(buff,len);
+}
+
+/*
  * copy from fs while checksumming, otherwise like csum_partial
  */
 
-__wsum
-csum_partial_copy_from_user(const void __user *src, void *dst,
-			    int len, __wsum sum, int *csum_err)
+unsigned int
+csum_partial_copy_from_user(const unsigned char *src, unsigned char *dst,
+			    int len, int sum, int *csum_err)
 {
 	if (csum_err) *csum_err = 0;
-	memcpy(dst, (__force const void *)src, len);
+	memcpy(dst, src, len);
 	return csum_partial(dst, len, sum);
 }
 
@@ -145,8 +152,8 @@ csum_partial_copy_from_user(const void __user *src, void *dst,
  * copy from ds while checksumming, otherwise like csum_partial
  */
 
-__wsum
-csum_partial_copy_nocheck(const void *src, void *dst, int len, __wsum sum)
+unsigned int
+csum_partial_copy(const unsigned char *src, unsigned char *dst, int len, int sum)
 {
 	memcpy(dst, src, len);
 	return csum_partial(dst, len, sum);

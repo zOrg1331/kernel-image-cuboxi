@@ -1,0 +1,66 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 19 Dec 2007 12:27:20 -0500
+Subject: [x86] add pci quirk to HT enabled systems
+Message-id: 20071219172720.GB28359@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] add pci quirk to Hypertransport enabled systems (bz 336371)
+Bugzilla: 336371
+
+Hey all-
+	LLNL reported a problem to us awhile back in which kdump kernel boots
+were hanging in calibrate_delay.  The root cuase was tracked down interrupts not
+being delivered to the booting cpu.  Hypertransport busses connecting AMD
+Opteron processors have a configuration register that allows for the use of
+extended 8 bit apic ids, and a secondary bit that defines a mask on the apic ID
+destination (0 for 0xf, 1 for 0xff) when delivering legacy mode interrupts.  If
+the mask bit is set to 0xf while extended apic id's are enabled, and kdump is
+booting on a cpu with an extended apic id, then interrupts will not be delivered
+to it, and we hang in calibrate_delay, as we wait for timer interrupts that will
+never arrive.  This patch adds a pci quirk to K8 northbridge chips that hold
+this config register. It checks to se if extended apic ids are enabled, and if
+they are, forces the destination mask to be 0xff.  The upstream variant of this
+patch is currently upstream as commit 16250610998946728f7814cae0662b8a7fd1585b
+in Ingos x86 tree.  Fixes bz 336371
+
+Regards
+Neil
+
+Acked-by: "John W. Linville" <linville@redhat.com>
+Acked-by: Chip Coldwell <coldwell@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Dave Anderson <anderson@redhat.com>
+
+diff --git a/arch/i386/kernel/quirks.c b/arch/i386/kernel/quirks.c
+index 9f6ab17..30b4f9f 100644
+--- a/arch/i386/kernel/quirks.c
++++ b/arch/i386/kernel/quirks.c
+@@ -44,7 +44,30 @@ static void __devinit quirk_intel_irqbalance(struct pci_dev *dev)
+ 	if (!(config & 0x2))
+ 		pci_write_config_byte(dev, 0xf4, config);
+ }
++
++static void __devinit fix_hypertransport_config(struct pci_dev *dev)
++{
++	u32 htcfg;
++	/*
++	 * we found a hypertransport bus
++	 * make sure that we are broadcasting
++	 * interrupts to all cpus on the ht bus
++	 * if we're using extended apic ids
++	 */
++	pci_read_config_dword(dev, 0x68, &htcfg);
++	if (htcfg & (1 << 18)) {
++		printk(KERN_INFO "Detected use of extended apic ids on hypertransport bus\n");
++		if ((htcfg & (1 << 17)) == 0) {
++			printk(KERN_INFO "Enabling hypertransport extended apic interrupt broadcast\n");
++			printk(KERN_INFO "Note this is a bios bug, please contact your vendor\n");
++			htcfg |= (1 << 17);
++			pci_write_config_dword(dev, 0x68, htcfg);
++		}
++	}
++}
++
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7320_MCH,	quirk_intel_irqbalance);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7525_MCH,	quirk_intel_irqbalance);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7520_MCH,	quirk_intel_irqbalance);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD,	PCI_DEVICE_ID_AMD_K8_NB, fix_hypertransport_config);
+ #endif

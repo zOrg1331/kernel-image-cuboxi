@@ -1,0 +1,76 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Wed, 12 Dec 2007 11:35:43 -0500
+Subject: [xen] x86-pae: support >4GB memory ia64 fixes
+Message-id: pt-dummy.1199828592.438128875.bnagendr@redhat.com
+O-Subject: 32-bit PAE HV hardware limitation > 4GB memory-1
+Bugzilla: 316371
+
+Bugzilla: 316371
+
+Resolves BZ 316371
+
+Fixes ia64 build.  Sorry I didn't mention that this was a 2 patch series when
+I submitted the 4GB patch.  This is the second patch.
+
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/mm.c b/arch/ia64/xen/mm.c
+index 6931be5..58e9602 100644
+--- a/arch/ia64/xen/mm.c
++++ b/arch/ia64/xen/mm.c
+@@ -1803,7 +1803,7 @@ steal_page(struct domain *d, struct page_info *page, unsigned int memflags)
+     return 0;
+ }
+ 
+-void
++int
+ guest_physmap_add_page(struct domain *d, unsigned long gpfn,
+                        unsigned long mfn)
+ {
+@@ -1817,6 +1817,7 @@ guest_physmap_add_page(struct domain *d, unsigned long gpfn,
+     //BUG_ON(mfn != ((lookup_domain_mpa(d, gpfn << PAGE_SHIFT) & _PFN_MASK) >> PAGE_SHIFT));
+ 
+     perfc_incr(guest_physmap_add_page);
++    return 0;
+ }
+ 
+ void
+diff --git a/include/asm-ia64/grant_table.h b/include/asm-ia64/grant_table.h
+index f10d92e..f5a38d9 100644
+--- a/include/asm-ia64/grant_table.h
++++ b/include/asm-ia64/grant_table.h
+@@ -12,7 +12,7 @@ int create_grant_host_mapping(unsigned long gpaddr, unsigned long mfn, unsigned
+ int destroy_grant_host_mapping(unsigned long gpaddr, unsigned long mfn, unsigned int flags);
+ 
+ // for grant transfer
+-void guest_physmap_add_page(struct domain *d, unsigned long gpfn, unsigned long mfn);
++int guest_physmap_add_page(struct domain *d, unsigned long gpfn, unsigned long mfn);
+ 
+ /* XXX
+  * somewhere appropriate
+diff --git a/include/asm-ia64/shadow.h b/include/asm-ia64/shadow.h
+index 12d16c0..d978a2b 100644
+--- a/include/asm-ia64/shadow.h
++++ b/include/asm-ia64/shadow.h
+@@ -40,7 +40,7 @@
+  * Utilities to change relationship of gpfn->mfn for designated domain,
+  * which is required by gnttab transfer, balloon, device model and etc.
+  */
+-void guest_physmap_add_page(struct domain *d, unsigned long gpfn, unsigned long mfn);
++int guest_physmap_add_page(struct domain *d, unsigned long gpfn, unsigned long mfn);
+ void guest_physmap_remove_page(struct domain *d, unsigned long gpfn, unsigned long mfn);
+ 
+ static inline int
+diff --git a/include/xen/paging.h b/include/xen/paging.h
+index 54ab4ad..3e77d94 100644
+--- a/include/xen/paging.h
++++ b/include/xen/paging.h
+@@ -18,7 +18,7 @@
+ #else
+ 
+ #define paging_mode_translate(d)              (0)
+-#define guest_physmap_add_page(d, p, m)       ((void)0)
++#define guest_physmap_add_page(d, p, m)       (0)
+ #define guest_physmap_remove_page(d, p, m)    ((void)0)
+ 
+ #endif

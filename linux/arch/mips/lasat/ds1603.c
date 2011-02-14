@@ -18,7 +18,7 @@
 #define TRIMMER_VALUE_MASK 0x38
 #define TRIMMER_SHIFT 3
 
-struct ds_defs *ds1603;
+struct ds_defs *ds1603 = NULL;
 
 /* HW specific register functions */
 static void rtc_reg_write(unsigned long val)
@@ -91,7 +91,7 @@ static void rtc_write_byte(unsigned int byte)
 {
 	int i;
 
-	for (i = 0; i <= 7; i++) {
+	for (i = 0; i<=7; i++) {
 		rtc_write_databit(byte & 1L);
 		byte >>= 1;
 	}
@@ -101,7 +101,7 @@ static void rtc_write_word(unsigned long word)
 {
 	int i;
 
-	for (i = 0; i <= 31; i++) {
+	for (i = 0; i<=31; i++) {
 		rtc_write_databit(word & 1L);
 		word >>= 1;
 	}
@@ -113,7 +113,7 @@ static unsigned long rtc_read_word(void)
 	unsigned long word = 0;
 	unsigned long shift = 0;
 
-	for (i = 0; i <= 31; i++) {
+	for (i = 0; i<=31; i++) {
 		word |= rtc_read_databit() << shift;
 		shift++;
 	}
@@ -135,7 +135,8 @@ static void rtc_end_op(void)
 	lasat_ndelay(1000);
 }
 
-void read_persistent_clock(struct timespec *ts)
+/* interface */
+unsigned long ds1603_read(void)
 {
 	unsigned long word;
 	unsigned long flags;
@@ -146,12 +147,10 @@ void read_persistent_clock(struct timespec *ts)
 	word = rtc_read_word();
 	rtc_end_op();
 	spin_unlock_irqrestore(&rtc_lock, flags);
-
-	ts->tv_sec = word;
-	ts->tv_nsec = 0;
+	return word;
 }
 
-int rtc_mips_set_mmss(unsigned long time)
+int ds1603_set(unsigned long time)
 {
 	unsigned long flags;
 

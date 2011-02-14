@@ -1,5 +1,5 @@
 /*
- * arch/sh/kernel/cpu/ubc.S
+ * arch/sh/kernel/ubc.S
  *
  * Set of management routines for the User Break Controller (UBC)
  *

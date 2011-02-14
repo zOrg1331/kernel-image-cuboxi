@@ -1,0 +1,160 @@
+Date: Tue, 3 Oct 2006 17:40:28 -0400
+From: Greg Edwards <gedwards@redhat.com>
+Subject: [RHEL5 RFC PATCH] exports for SGI XPMEM driver
+
+We (SGI) have an add-on product we are interested in layering on top of
+RHEL5.  One of the pieces is a highly optimized MPI library that
+exploits some unique characteristics of our hardware.  This requires a
+driver for cross-partition memory access, but we would need a few
+symbols exported for this module.
+
+The driver is GPL, but has not been pushed upstream yet.  Our XPMEM team
+is planning on doing that in the next year.
+
+The request is tracked in bugzilla:
+
+Bug 206215: ProPack XPMEM support
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=206215
+
+Note, we are only requesting the exports.  The fork() callout mentioned
+in the above bugzilla is no longer needed.
+
+One of our XPMEM developers wrote up the following description:
+
+
+One of the significant performance and reliability benefits that SGI
+ProPack has historically provided was a feature provided by XPMEM
+utilized by the SGI MPI library (MPT) for MPI ranks to coordinate memory
+access.
+
+The reliability gains come from taking a large machine which, because
+of its many parts, has a lowered MTBF.  By dividing that machine into
+smaller parts, confining accesses to user space, and handling user space
+errors, only the portion of the machine affected plus strictly the user
+code sharing those portions will be lost.
+
+The performance gains come when using this mode because no extra
+hardware or software other than the memory controller itself is used to
+arbitrate memory accesses from either local or remote hosts.
+
+MPT relies very heavily upon a kernel module called XPMEM to achieve
+this functionality.  It provides a mechanism analogous to System V shared
+memory extended beyond the partitions physical boundary.  A process
+on one partition creates a segment of memory for use and is given a
+handle to that memory.  The handle is transfered to the remote host
+which requests its local XPMEM attach the handle to his address space.
+References to the attached segment get page table entries which point at
+the memory on the owning partition and normal memory coherence protocols
+keep everything in order.
+
+The problems XPMEM encounters are constrained to working with page
+tables, which the majority of the Linux kernel assumes have page table
+entries that can be converted to a page frame and then a struct page.
+For these remotely owned pages, this assumption is not true.  This
+problem is similar to the execute-in-place feature of Xen.  It is
+different in that the shared object is not owned by the kernel, but
+rather a user page subject to changes by the hosting user application.
+
+
+There is a copy of the xpmem driver here for perusing:
+
+ftp://oss.sgi.com/projects/xpmem/xpmem.patch
+
+The following exports are used by the XPMEM driver, and we are
+interested in having them exported in the RHEL5 kernel.
+
+The generic exports are:
+
+	EXPORT_SYMBOL_GPL(tasklist_lock)
+	EXPORT_SYMBOL_GPL(__put_task_struct)
+	EXPORT_SYMBOL_GPL(schedule_on_each_cpu)
+
+The ia64-specific exports are:
+
+	EXPORT_SYMBOL_GPL(ia64_boot_param)
+	EXPORT_SYMBOL_GPL(node_to_cpu_mask)
+	EXPORT_SYMBOL_GPL(pio_phys_read_mmr)
+	EXPORT_SYMBOL_GPL(pio_phys_write_mmr)
+	EXPORT_SYMBOL_GPL(pio_atomic_phys_write_mmrs)
+
+---
+ arch/ia64/kernel/ia64_ksyms.c |    5 +++++
+ arch/ia64/kernel/numa.c       |    1 +
+ arch/ia64/kernel/setup.c      |    2 ++
+ kernel/fork.c                 |    2 ++
+ kernel/workqueue.c            |    1 +
+ 5 files changed, 11 insertions(+)
+
+Index: linux/kernel/fork.c
+===================================================================
+--- linux.orig/kernel/fork.c	2006-10-03 15:30:57.635422182 -0500
++++ linux/kernel/fork.c	2006-10-03 15:31:17.017862573 -0500
+@@ -64,6 +64,7 @@ int max_threads;		/* tunable limit on nr
+ DEFINE_PER_CPU(unsigned long, process_counts) = 0;
+ 
+ __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
++EXPORT_SYMBOL_GPL(tasklist_lock);
+ 
+ int nr_processes(void)
+ {
+@@ -122,6 +123,7 @@ void __put_task_struct(struct task_struc
+ 	if (!profile_handoff_task(tsk))
+ 		free_task(tsk);
+ }
++EXPORT_SYMBOL_GPL(__put_task_struct);
+ 
+ void __init fork_init(unsigned long mempages)
+ {
+Index: linux/arch/ia64/kernel/setup.c
+===================================================================
+--- linux.orig/arch/ia64/kernel/setup.c	2006-10-03 15:30:41.989452026 -0500
++++ linux/arch/ia64/kernel/setup.c	2006-10-03 15:31:17.021863077 -0500
+@@ -99,6 +99,8 @@ DEFINE_PER_CPU(unsigned long, local_per_
+ DEFINE_PER_CPU(unsigned long, ia64_phys_stacked_size_p8);
+ unsigned long ia64_cycles_per_usec;
+ struct ia64_boot_param *ia64_boot_param;
++EXPORT_SYMBOL_GPL(ia64_boot_param);
++
+ struct screen_info screen_info;
+ unsigned long vga_console_iobase;
+ unsigned long vga_console_membase;
+Index: linux/arch/ia64/kernel/numa.c
+===================================================================
+--- linux.orig/arch/ia64/kernel/numa.c	2006-09-19 22:42:06.000000000 -0500
++++ linux/arch/ia64/kernel/numa.c	2006-10-03 15:31:17.021863077 -0500
+@@ -28,6 +28,7 @@ u16 cpu_to_node_map[NR_CPUS] __cacheline
+ EXPORT_SYMBOL(cpu_to_node_map);
+ 
+ cpumask_t node_to_cpu_mask[MAX_NUMNODES] __cacheline_aligned;
++EXPORT_SYMBOL_GPL(node_to_cpu_mask);
+ 
+ /**
+  * build_cpu_to_node_map - setup cpu to node and node to cpumask arrays
+Index: linux/arch/ia64/kernel/ia64_ksyms.c
+===================================================================
+--- linux.orig/arch/ia64/kernel/ia64_ksyms.c	2006-10-03 15:30:43.513643962 -0500
++++ linux/arch/ia64/kernel/ia64_ksyms.c	2006-10-03 15:31:17.021863077 -0500
+@@ -116,3 +116,10 @@ EXPORT_SYMBOL(ia64_spinlock_contention);
+ 
+ extern char ia64_ivt[];
+ EXPORT_SYMBOL(ia64_ivt);
++
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#include <asm/sn/rw_mmr.h>
++EXPORT_SYMBOL_GPL(pio_phys_read_mmr);
++EXPORT_SYMBOL_GPL(pio_phys_write_mmr);
++EXPORT_SYMBOL_GPL(pio_atomic_phys_write_mmrs);
++#endif
+Index: linux/kernel/workqueue.c
+===================================================================
+--- linux.orig/kernel/workqueue.c	2006-09-19 22:42:06.000000000 -0500
++++ linux/kernel/workqueue.c	2006-10-03 15:31:17.025863581 -0500
+@@ -521,6 +521,7 @@ int schedule_on_each_cpu(void (*func)(vo
+ 	free_percpu(works);
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(schedule_on_each_cpu);
+ 
+ void flush_scheduled_work(void)
+ {
+

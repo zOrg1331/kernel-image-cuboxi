@@ -27,6 +27,7 @@
 #include <asm/mmu_context.h>
 #include <asm/dvma.h>
 
+extern void prom_reboot (char *) __attribute__ ((__noreturn__));
 
 #undef DEBUG_MMU_EMU
 #define DEBUG_PROM_MAPS
@@ -54,7 +55,7 @@ unsigned char pmeg_ctx[PMEGS_NUM];
 
 /* pointers to the mm structs for each task in each
    context. 0xffffffff is a marker for kernel context */
-static struct mm_struct *ctx_alloc[CONTEXTS_NUM] = {
+struct mm_struct *ctx_alloc[CONTEXTS_NUM] = {
     [0] = (struct mm_struct *)0xffffffff
 };
 
@@ -238,7 +239,7 @@ void clear_context(unsigned long context)
 /* gets an empty context.  if full, kills the next context listed to
    die first */
 /* This context invalidation scheme is, well, totally arbitrary, I'm
-   sure it could be much more intelligent...  but it gets the job done
+   sure it could be much more intellegent...  but it gets the job done
    for now without much overhead in making it's decision. */
 /* todo: come up with optimized scheme for flushing contexts */
 unsigned long get_free_context(struct mm_struct *mm)

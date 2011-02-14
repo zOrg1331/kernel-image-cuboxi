@@ -14,7 +14,6 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <linux/module.h>
 #include <asm/setup.h>
 #include <asm/system.h>
 #include <asm/page.h>
@@ -126,7 +125,7 @@ static void nubus_advance(unsigned char **ptr, int len, int map)
 	{
 		while(not_useful(p,map))
 			p++;
-		p++;
+			p++;
 		len--;
 	}
 	*ptr = p;
@@ -187,7 +186,6 @@ void nubus_get_rsrc_mem(void *dest, const struct nubus_dirent* dirent,
 		len--;
 	}
 }
-EXPORT_SYMBOL(nubus_get_rsrc_mem);
 
 void nubus_get_rsrc_str(void *dest, const struct nubus_dirent* dirent,
 			int len)
@@ -202,7 +200,6 @@ void nubus_get_rsrc_str(void *dest, const struct nubus_dirent* dirent,
 		len--;
 	}
 }
-EXPORT_SYMBOL(nubus_get_rsrc_str);
 
 int nubus_get_root_dir(const struct nubus_board* board,
 		       struct nubus_dir* dir)
@@ -212,7 +209,6 @@ int nubus_get_root_dir(const struct nubus_board* board,
 	dir->mask = board->lanes;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_get_root_dir);
 
 /* This is a slyly renamed version of the above */
 int nubus_get_func_dir(const struct nubus_dev* dev,
@@ -223,7 +219,6 @@ int nubus_get_func_dir(const struct nubus_dev* dev,
 	dir->mask = dev->board->lanes;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_get_func_dir);
 
 int nubus_get_board_dir(const struct nubus_board* board,
 			struct nubus_dir* dir)
@@ -242,7 +237,6 @@ int nubus_get_board_dir(const struct nubus_board* board,
 		return -1;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_get_board_dir);
 
 int nubus_get_subdir(const struct nubus_dirent *ent,
 		     struct nubus_dir *dir)
@@ -252,7 +246,6 @@ int nubus_get_subdir(const struct nubus_dirent *ent,
 	dir->mask = ent->mask;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_get_subdir);
 
 int nubus_readdir(struct nubus_dir *nd, struct nubus_dirent *ent)
 {
@@ -281,14 +274,12 @@ int nubus_readdir(struct nubus_dir *nd, struct nubus_dirent *ent)
 	ent->mask  = nd->mask;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_readdir);
 
 int nubus_rewinddir(struct nubus_dir* dir)
 {
 	dir->ptr = dir->base;
 	return 0;
 }
-EXPORT_SYMBOL(nubus_rewinddir);
 
 /* Driver interface functions, more or less like in pci.c */
 
@@ -312,7 +303,6 @@ nubus_find_device(unsigned short category,
 	}
 	return NULL;
 }
-EXPORT_SYMBOL(nubus_find_device);
 
 struct nubus_dev*
 nubus_find_type(unsigned short category,
@@ -330,7 +320,6 @@ nubus_find_type(unsigned short category,
 	}
 	return NULL;
 }
-EXPORT_SYMBOL(nubus_find_type);
 
 struct nubus_dev*
 nubus_find_slot(unsigned int slot,
@@ -346,7 +335,6 @@ nubus_find_slot(unsigned int slot,
 	}
 	return NULL;
 }
-EXPORT_SYMBOL(nubus_find_slot);
 
 int
 nubus_find_rsrc(struct nubus_dir* dir, unsigned char rsrc_type,
@@ -358,14 +346,13 @@ nubus_find_rsrc(struct nubus_dir* dir, unsigned char rsrc_type,
 	}	
 	return -1;
 }
-EXPORT_SYMBOL(nubus_find_rsrc);
 
 /* Initialization functions - decide which slots contain stuff worth
    looking at, and print out lots and lots of information from the
    resource blocks. */
 
 /* FIXME: A lot of this stuff will eventually be useful after
-   initialization, for intelligently probing Ethernet and video chips,
+   initializaton, for intelligently probing Ethernet and video chips,
    among other things.  The rest of it should go in the /proc code.
    For now, we just use it to give verbose boot logs. */
 
@@ -479,8 +466,9 @@ static struct nubus_dev* __init
 		       parent->base, dir.base);
 
 	/* Actually we should probably panic if this fails */
-	if ((dev = kzalloc(sizeof(*dev), GFP_ATOMIC)) == NULL)
+	if ((dev = kmalloc(sizeof(*dev), GFP_ATOMIC)) == NULL)
 		return NULL;	
+	memset(dev, 0, sizeof(*dev));
 	dev->resid = parent->type;
 	dev->directory = dir.base;
 	dev->board = board;
@@ -812,8 +800,9 @@ static struct nubus_board* __init nubus_add_board(int slot, int bytelanes)
 	nubus_rewind(&rp, FORMAT_BLOCK_SIZE, bytelanes);
 
 	/* Actually we should probably panic if this fails */
-	if ((board = kzalloc(sizeof(*board), GFP_ATOMIC)) == NULL)
+	if ((board = kmalloc(sizeof(*board), GFP_ATOMIC)) == NULL)
 		return NULL;	
+	memset(board, 0, sizeof(*board));
 	board->fblock = rp;
 
 	/* Dump the format block for debugging purposes */

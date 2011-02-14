@@ -1,0 +1,46 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 14 May 2008 12:57:54 -0400
+Subject: [ia64] properly unregister legacy interrupts
+Message-id: 20080514165736.21362.88497.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: Properly unregister legacy interrupts
+Bugzilla: 445886
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Backport of
+
+http://marc.info/?l=linux-ia64&m=121078083124228&w=2
+
+When unloading the uhci_hcd module on Hitachi ia64 hardware, false warnings
+are output to the console.
+
+acpi_unregister_gsi() should "undo" what acpi_register_gsi() does.
+
+On systems that have legacy interrupts, acpi_unregister_gsi erroneously calls
+iosapci_unregister_intr() which is wrong to do and causes a loud warning.
+
+acpi_unregister_gsi() should just return in these cases.
+
+Resolves BZ 445885.
+
+Successfully tested by me.
+
+ arch/ia64/kernel/acpi.c |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/arch/ia64/kernel/acpi.c b/arch/ia64/kernel/acpi.c
+index c9e3aae..97c2fbd 100644
+--- a/arch/ia64/kernel/acpi.c
++++ b/arch/ia64/kernel/acpi.c
+@@ -621,6 +621,9 @@ void acpi_unregister_gsi(u32 gsi)
+ 	if (acpi_irq_model == ACPI_IRQ_MODEL_PLATFORM)
+ 		return;
+ 
++	if (has_8259 && gsi < 16)
++		return;
++
+ 	iosapic_unregister_intr(gsi);
+ }
+ 

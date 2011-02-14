@@ -1,7 +1,7 @@
 /*
  *	Initialisation code for Cyrix/NatSemi VSA1 softaudio
  *
- *	(C) Copyright 2003 Red Hat Inc <alan@lxorguk.ukuu.org.uk>
+ *	(C) Copyright 2003 Red Hat Inc <alan@redhat.com>
  *
  * XpressAudio(tm) is used on the Cyrix MediaGX (now NatSemi Geode) systems.
  * The older version (VSA1) provides fairly good soundblaster emulation
@@ -67,7 +67,7 @@ static int __devinit probe_one(struct pci_dev *pdev, const struct pci_device_id 
 		return 1;
 	
 	mem = ioremap(base, 128);
-	if (!mem)
+	if(mem == 0UL)
 		return 1;
 	map = readw(mem + 0x18);	/* Read the SMI enables */
 	iounmap(mem);
@@ -139,12 +139,13 @@ static int __devinit probe_one(struct pci_dev *pdev, const struct pci_device_id 
 	printk(KERN_INFO "kahlua: XpressAudio on IRQ %d, DMA %d, %d\n",
 		irq, dma8, dma16);
 	
-	hw_config = kzalloc(sizeof(struct address_info), GFP_KERNEL);
+	hw_config = kmalloc(sizeof(struct address_info), GFP_KERNEL);
 	if(hw_config == NULL)
 	{
 		printk(KERN_ERR "kahlua: out of memory.\n");
 		return 1;
 	}
+	memset(hw_config, 0, sizeof(*hw_config));
 	
 	pci_set_drvdata(pdev, hw_config);
 	
@@ -199,7 +200,7 @@ MODULE_LICENSE("GPL");
  */
 
 static struct pci_device_id id_tbl[] = {
-	{ PCI_VDEVICE(CYRIX, PCI_DEVICE_ID_CYRIX_5530_AUDIO), 0 },
+	{ PCI_VENDOR_ID_CYRIX, PCI_DEVICE_ID_CYRIX_5530_AUDIO, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
 	{ }
 };
 

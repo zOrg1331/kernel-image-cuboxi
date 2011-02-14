@@ -1,4 +1,3 @@
-#include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/console.h>
 
@@ -8,10 +7,8 @@
 /* trivial console driver -- simply dump everything to stderr                    */
 
 /*
- * Don't register by default -- as this registers very early in the
+ * Don't register by default -- as this registeres very early in the
  * boot process it becomes the default console.
- *
- * Initialized at init time.
  */
 static int use_stderr_console = 0;
 

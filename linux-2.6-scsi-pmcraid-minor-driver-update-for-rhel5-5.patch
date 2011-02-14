@@ -1,0 +1,188 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 2 Dec 2009 16:43:37 -0500
+Subject: [scsi] pmcraid: minor driver update for rhel5.5
+Message-id: <20091202163611.24191.81644.sendpatchset@localhost.localdomain>
+Patchwork-id: 21655
+O-Subject: [RHEL5.5 PATCH 2/3] pmcraid minor driver update
+Bugzilla: 529979
+
+https://bugzilla.redhat.com/show_bug.cgi?id=529979
+
+Description:
+
+1. Fix driver build in PPC. This patch is submitted to the upstream
+   kernel and is accepted by the scsi-maintainer and will be part of
+   upstream kernel
+2. Fix a redundant check. This patch also submitted to be part of upstream
+   kernel
+3. Expose hidden RAID logical drives to suport storage pools.
+
+Commit and linux-scsi email postings for this patch:
+
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-rc-fixes-2.6.git;a=commit;h=88197966e1eeee6547764fa49bfce7e57549acd2
+
+http://marc.info/?l=linux-scsi&m=125874274506840&w=2
+
+http://marc.info/?l=linux-scsi&m=125849858905881&w=2
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/scsi/pmcraid.c b/drivers/scsi/pmcraid.c
+index 278264b..b4817dc 100644
+--- a/drivers/scsi/pmcraid.c
++++ b/drivers/scsi/pmcraid.c
+@@ -162,10 +162,10 @@ static int pmcraid_slave_alloc(struct scsi_device *scsi_dev)
+ 	spin_lock_irqsave(&pinstance->resource_lock, lock_flags);
+ 	list_for_each_entry(temp, &pinstance->used_res_q, queue) {
+ 
+-		/* do not expose VSETs with order-ids >= 240 */
++		/* do not expose VSETs with order-ids > MAX_VSET_TARGETS */
+ 		if (RES_IS_VSET(temp->cfg_entry)) {
+ 			target = temp->cfg_entry.unique_flags1;
+-			if (target >= PMCRAID_MAX_VSET_TARGETS)
++			if (target > PMCRAID_MAX_VSET_TARGETS)
+ 				continue;
+ 			bus = PMCRAID_VSET_BUS_ID;
+ 			lun = 0;
+@@ -1070,7 +1070,7 @@ static struct pmcraid_cmd *pmcraid_init_hcam
+ 
+ 	ioarcb->data_transfer_length = cpu_to_le32(rcb_size);
+ 
+-	ioadl[0].flags |= cpu_to_le32(IOADL_FLAGS_READ_LAST);
++	ioadl[0].flags |= IOADL_FLAGS_READ_LAST;
+ 	ioadl[0].data_len = cpu_to_le32(rcb_size);
+ 	ioadl[0].address = cpu_to_le32(dma);
+ 
+@@ -1204,7 +1204,7 @@ static int pmcraid_expose_resource(struct pmcraid_config_table_entry *cfgte)
+ 	int retval = 0;
+ 
+ 	if (cfgte->resource_type == RES_TYPE_VSET)
+-		retval = ((cfgte->unique_flags1 & 0xFF) < 0xFE);
++		retval = ((cfgte->unique_flags1 & 0x80) == 0);
+ 	else if (cfgte->resource_type == RES_TYPE_GSCSI)
+ 		retval = (RES_BUS(cfgte->resource_address) !=
+ 				PMCRAID_VIRTUAL_ENCL_BUS_ID);
+@@ -1363,9 +1363,10 @@ static void pmcraid_handle_config_change(struct pmcraid_instance *pinstance)
+ 	struct pmcraid_cmd *cmd;
+ 	struct pmcraid_cmd *cfgcmd;
+ 	struct pmcraid_resource_entry *res = NULL;
+-	u32 new_entry = 1;
+ 	unsigned long lock_flags;
+ 	unsigned long host_lock_flags;
++	u32 new_entry = 1;
++	u32 hidden_entry = 0;
+ 	int rc;
+ 
+ 	ccn_hcam = (struct pmcraid_hcam_ccn *)pinstance->ccn.hcam;
+@@ -1386,7 +1387,6 @@ static void pmcraid_handle_config_change(struct pmcraid_instance *pinstance)
+ 			RES_TARGET(cfg_entry->resource_address),
+ 		 RES_LUN(cfg_entry->resource_address));
+ 
+-
+ 	/* If this HCAM indicates a lost notification, read the config table */
+ 	if (pinstance->ccn.hcam->notification_lost) {
+ 		cfgcmd = pmcraid_get_free_cmd(pinstance);
+@@ -1401,9 +1401,15 @@ static void pmcraid_handle_config_change(struct pmcraid_instance *pinstance)
+ 	}
+ 
+ 	/* If this resource is not going to be added to mid-layer, just notify
+-	 * applications and return
++	 * applications and return. If this notification is about hiding a VSET
++	 * resource, check if it was exposed already.
+ 	 */
+-	if (!pmcraid_expose_resource(cfg_entry))
++	if (pinstance->ccn.hcam->notification_type ==
++	    NOTIFICATION_TYPE_ENTRY_CHANGED &&
++	    cfg_entry->resource_type == RES_TYPE_VSET &&
++	    cfg_entry->unique_flags1 & 0x80) {
++		hidden_entry = 1;
++	} else if (!pmcraid_expose_resource(cfg_entry))
+ 		goto out_notify_apps;
+ 
+ 	spin_lock_irqsave(&pinstance->resource_lock, lock_flags);
+@@ -1419,6 +1425,12 @@ static void pmcraid_handle_config_change(struct pmcraid_instance *pinstance)
+ 
+ 	if (new_entry) {
+ 
++		if (hidden_entry) {
++			spin_unlock_irqrestore(&pinstance->resource_lock,
++						lock_flags);
++			goto out_notify_apps;
++		}
++
+ 		/* If there are more number of resources than what driver can
+ 		 * manage, do not notify the applications about the CCN. Just
+ 		 * ignore this notifications and re-register the same HCAM
+@@ -1449,8 +1461,9 @@ static void pmcraid_handle_config_change(struct pmcraid_instance *pinstance)
+ 		sizeof(struct pmcraid_config_table_entry));
+ 
+ 	if (pinstance->ccn.hcam->notification_type ==
+-	    NOTIFICATION_TYPE_ENTRY_DELETED) {
++	    NOTIFICATION_TYPE_ENTRY_DELETED || hidden_entry) {
+ 		if (res->scsi_dev) {
++			res->cfg_entry.unique_flags1 &= 0x7F;
+ 			res->change_detected = RES_CHANGE_DEL;
+ 			res->cfg_entry.resource_handle =
+ 				PMCRAID_INVALID_RES_HANDLE;
+@@ -2251,7 +2264,7 @@ static void pmcraid_request_sense(struct pmcraid_cmd *cmd)
+ 
+ 	ioadl->address = cpu_to_le64(cmd->sense_buffer_dma);
+ 	ioadl->data_len = cpu_to_le32(SCSI_SENSE_BUFFERSIZE);
+-	ioadl->flags = cpu_to_le32(IOADL_FLAGS_LAST_DESC);
++	ioadl->flags = IOADL_FLAGS_LAST_DESC;
+ 
+ 	/* request sense might be called as part of error response processing
+ 	 * which runs in tasklets context. It is possible that mid-layer might
+@@ -3012,7 +3025,7 @@ static int pmcraid_build_ioadl(
+ 	}
+ 
+ 	/* setup last descriptor */
+-	ioadl[i - 1].flags = cpu_to_le32(IOADL_FLAGS_LAST_DESC);
++	ioadl[i - 1].flags = IOADL_FLAGS_LAST_DESC;
+ 
+ 	return 0;
+ }
+@@ -3384,7 +3397,7 @@ static int pmcraid_build_passthrough_ioadls(
+ 	}
+ 	
+ 	/* setup the last descriptor */
+-	ioadl[i - 1].flags = cpu_to_le32(IOADL_FLAGS_LAST_DESC);
++	ioadl[i - 1].flags = IOADL_FLAGS_LAST_DESC;
+ 
+ 	return 0;
+ }
+@@ -3728,12 +3741,6 @@ static int pmcraid_check_ioctl_buffer(
+ 		return -EINVAL;
+ 	}
+ 
+-	/* buffer length can't be negetive */
+-	if (hdr->buffer_length < 0) {
+-		pmcraid_err("ioctl: invalid buffer length specified\n");
+-		return -EINVAL;
+-	}
+-
+ 	/* check for appropriate buffer access */
+ 	if ((_IOC_DIR(cmd) & _IOC_READ) == _IOC_READ)
+ 		access = VERIFY_WRITE;
+@@ -5309,7 +5316,7 @@ static void pmcraid_querycfg(struct pmcraid_cmd *cmd)
+ 		cpu_to_le32(sizeof(struct pmcraid_config_table));
+ 
+ 	ioadl = &(ioarcb->add_data.u.ioadl[0]);
+-	ioadl->flags = cpu_to_le32(IOADL_FLAGS_LAST_DESC);
++	ioadl->flags = IOADL_FLAGS_LAST_DESC;
+ 	ioadl->address = cpu_to_le64(pinstance->cfg_table_bus_addr);
+ 	ioadl->data_len = cpu_to_le32(sizeof(struct pmcraid_config_table));
+ 
+diff --git a/drivers/scsi/pmcraid.h b/drivers/scsi/pmcraid.h
+index 82a1f9e..478960d 100644
+--- a/drivers/scsi/pmcraid.h
++++ b/drivers/scsi/pmcraid.h
+@@ -109,7 +109,7 @@
+ #define PMCRAID_VSET_LUN_ID                      0x0
+ #define PMCRAID_PHYS_BUS_ID                      0x0
+ #define PMCRAID_VIRTUAL_ENCL_BUS_ID              0x8
+-#define PMCRAID_MAX_VSET_TARGETS                 240
++#define PMCRAID_MAX_VSET_TARGETS                 0x7F
+ #define PMCRAID_MAX_VSET_LUNS_PER_TARGET         8
+ 
+ #define PMCRAID_IOA_MAX_SECTORS                  32767

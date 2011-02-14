@@ -1,0 +1,90 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:17:06 -0400
+Subject: [x86] nmi: update reserve_lapic_nmi
+Message-id: 20080820171651.250500000@redhat.com
+O-Subject: [RHEL5.3 PATCH 20/25] nmi: update reserve_lapic_nmi on i386
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+Fix {reserve,release}_lapic_nmi() so it'll behave the same
+
+upstream: not upstream, makes sense only for RHEL-5
+
+diff --git a/arch/i386/kernel/nmi.c b/arch/i386/kernel/nmi.c
+index 628eb28..6028df9 100644
+--- a/arch/i386/kernel/nmi.c
++++ b/arch/i386/kernel/nmi.c
+@@ -33,19 +33,7 @@ int unknown_nmi_panic;
+ static unsigned int nmi_hz = HZ;
+ extern void show_registers(struct pt_regs *regs);
+ 
+-/*
+- * lapic_nmi_owner tracks the ownership of the lapic NMI hardware:
+- * - it may be reserved by some other driver, or not
+- * - when not reserved by some other driver, it may be used for
+- *   the NMI watchdog, or not
+- *
+- * This is maintained separately from nmi_active because the NMI
+- * watchdog may also be driven from the I/O APIC timer.
+- */
+-static DEFINE_SPINLOCK(lapic_nmi_owner_lock);
+-static unsigned int lapic_nmi_owner;
+-#define LAPIC_NMI_WATCHDOG	(1<<0)
+-#define LAPIC_NMI_RESERVED	(1<<1)
++static volatile unsigned long lapic_nmi_reserved;
+ 
+ /*
+  * the upstream variable 'nmi_active' is called 'nmi_watchdog_active' on
+@@ -189,7 +177,6 @@ static int __init check_nmi_watchdog(void)
+ 				nmi_count(cpu));
+ 			if (atomic_dec_and_test(&nmi_watchdog_active))
+ 				nmi_active = 0;
+-			lapic_nmi_owner &= ~LAPIC_NMI_WATCHDOG;
+ 			kfree(prev_nmi_count);
+ 			return -1;
+ 		}
+@@ -258,31 +245,25 @@ static int __init setup_nmi_watchdog(char *str)
+ 
+ __setup("nmi_watchdog=", setup_nmi_watchdog);
+ 
++void acpi_nmi_enable(void);
++void acpi_nmi_disable(void);
+ int reserve_lapic_nmi(void)
+ {
+-	unsigned int old_owner;
+-
+-	spin_lock(&lapic_nmi_owner_lock);
+-	old_owner = lapic_nmi_owner;
+-	lapic_nmi_owner |= LAPIC_NMI_RESERVED;
+-	spin_unlock(&lapic_nmi_owner_lock);
+-	if (old_owner & LAPIC_NMI_RESERVED)
+-		return -EBUSY;
+-	if (old_owner & LAPIC_NMI_WATCHDOG)
+-		disable_lapic_nmi_watchdog();
+-	return 0;
++	if (!test_and_set_bit(1, &lapic_nmi_reserved)) {
++		if (nmi_watchdog == NMI_LOCAL_APIC)
++			disable_lapic_nmi_watchdog();
++		return 0;
++	}
++	return 1;
+ }
+ 
+ void release_lapic_nmi(void)
+ {
+-	unsigned int new_owner;
+-
+-	spin_lock(&lapic_nmi_owner_lock);
+-	new_owner = lapic_nmi_owner & ~LAPIC_NMI_RESERVED;
+-	lapic_nmi_owner = new_owner;
+-	spin_unlock(&lapic_nmi_owner_lock);
+-	if (new_owner & LAPIC_NMI_WATCHDOG)
++	if (nmi_watchdog == NMI_LOCAL_APIC) {
+ 		enable_lapic_nmi_watchdog();
++		touch_nmi_watchdog();
++	}
++	clear_bit(1, &lapic_nmi_reserved);
+ }
+ 
+ static int old_ioapic_count;

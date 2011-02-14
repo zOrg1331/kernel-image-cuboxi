@@ -20,6 +20,7 @@
 #include "hostap_wlan.h"
 
 
+static char *version = PRISM2_VERSION " (Jouni Malinen <jkmaline@cc.hut.fi>)";
 static char *dev_info = "hostap_pci";
 
 
@@ -28,6 +29,7 @@ MODULE_DESCRIPTION("Support for Intersil Prism2.5-based 802.11 wireless LAN "
 		   "PCI cards.");
 MODULE_SUPPORTED_DEVICE("Intersil Prism2.5-based WLAN PCI cards");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(PRISM2_VERSION);
 
 
 /* struct local_info::hw_priv */
@@ -128,8 +130,8 @@ static inline u16 hfa384x_inw_debug(struct net_device *dev, int a)
 #define HFA384X_INB(a) hfa384x_inb_debug(dev, (a))
 #define HFA384X_OUTW(v,a) hfa384x_outw_debug(dev, (a), (v))
 #define HFA384X_INW(a) hfa384x_inw_debug(dev, (a))
-#define HFA384X_OUTW_DATA(v,a) hfa384x_outw_debug(dev, (a), le16_to_cpu((v)))
-#define HFA384X_INW_DATA(a) cpu_to_le16(hfa384x_inw_debug(dev, (a)))
+#define HFA384X_OUTW_DATA(v,a) hfa384x_outw_debug(dev, (a), cpu_to_le16((v)))
+#define HFA384X_INW_DATA(a) (u16) le16_to_cpu(hfa384x_inw_debug(dev, (a)))
 
 #else /* PRISM2_IO_DEBUG */
 
@@ -173,8 +175,8 @@ static inline u16 hfa384x_inw(struct net_device *dev, int a)
 #define HFA384X_INB(a) hfa384x_inb(dev, (a))
 #define HFA384X_OUTW(v,a) hfa384x_outw(dev, (a), (v))
 #define HFA384X_INW(a) hfa384x_inw(dev, (a))
-#define HFA384X_OUTW_DATA(v,a) hfa384x_outw(dev, (a), le16_to_cpu((v)))
-#define HFA384X_INW_DATA(a) cpu_to_le16(hfa384x_inw(dev, (a)))
+#define HFA384X_OUTW_DATA(v,a) hfa384x_outw(dev, (a), cpu_to_le16((v)))
+#define HFA384X_INW_DATA(a) (u16) le16_to_cpu(hfa384x_inw(dev, (a)))
 
 #endif /* PRISM2_IO_DEBUG */
 
@@ -183,10 +185,10 @@ static int hfa384x_from_bap(struct net_device *dev, u16 bap, void *buf,
 			    int len)
 {
 	u16 d_off;
-	__le16 *pos;
+	u16 *pos;
 
 	d_off = (bap == 1) ? HFA384X_DATA1_OFF : HFA384X_DATA0_OFF;
-	pos = (__le16 *) buf;
+	pos = (u16 *) buf;
 
 	for ( ; len > 1; len -= 2)
 		*pos++ = HFA384X_INW_DATA(d_off);
@@ -201,10 +203,10 @@ static int hfa384x_from_bap(struct net_device *dev, u16 bap, void *buf,
 static int hfa384x_to_bap(struct net_device *dev, u16 bap, void *buf, int len)
 {
 	u16 d_off;
-	__le16 *pos;
+	u16 *pos;
 
 	d_off = (bap == 1) ? HFA384X_DATA1_OFF : HFA384X_DATA0_OFF;
-	pos = (__le16 *) buf;
+	pos = (u16 *) buf;
 
 	for ( ; len > 1; len -= 2)
 		HFA384X_OUTW_DATA(*pos++, d_off);
@@ -298,9 +300,10 @@ static int prism2_pci_probe(struct pci_dev *pdev,
 	struct hostap_interface *iface;
 	struct hostap_pci_priv *hw_priv;
 
-	hw_priv = kzalloc(sizeof(*hw_priv), GFP_KERNEL);
+	hw_priv = kmalloc(sizeof(*hw_priv), GFP_KERNEL);
 	if (hw_priv == NULL)
 		return -ENOMEM;
+	memset(hw_priv, 0, sizeof(*hw_priv));
 
 	if (pci_enable_device(pdev))
 		goto err_out_free;
@@ -312,7 +315,7 @@ static int prism2_pci_probe(struct pci_dev *pdev,
 		goto err_out_disable;
 	}
 
-	mem = pci_ioremap_bar(pdev, 0);
+	mem = ioremap(phymem, pci_resource_len(pdev, 0));
 	if (mem == NULL) {
 		printk(KERN_ERR "prism2: Cannot remap PCI memory region\n") ;
 		goto fail;
@@ -422,14 +425,8 @@ static int prism2_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 static int prism2_pci_resume(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
-	int err;
 
-	err = pci_enable_device(pdev);
-	if (err) {
-		printk(KERN_ERR "%s: pci_enable_device failed on resume\n",
-		       dev->name);
-		return err;
-	}
+	pci_enable_device(pdev);
 	pci_restore_state(pdev);
 	prism2_hw_config(dev, 0);
 	if (netif_running(dev)) {
@@ -444,7 +441,7 @@ static int prism2_pci_resume(struct pci_dev *pdev)
 
 MODULE_DEVICE_TABLE(pci, prism2_pci_id_table);
 
-static struct pci_driver prism2_pci_driver = {
+static struct pci_driver prism2_pci_drv_id = {
 	.name		= "hostap_pci",
 	.id_table	= prism2_pci_id_table,
 	.probe		= prism2_pci_probe,
@@ -453,18 +450,23 @@ static struct pci_driver prism2_pci_driver = {
 	.suspend	= prism2_pci_suspend,
 	.resume		= prism2_pci_resume,
 #endif /* CONFIG_PM */
+	/* Linux 2.4.6 added save_state and enable_wake that are not used here
+	 */
 };
 
 
 static int __init init_prism2_pci(void)
 {
-	return pci_register_driver(&prism2_pci_driver);
+	printk(KERN_INFO "%s: %s\n", dev_info, version);
+
+	return pci_register_driver(&prism2_pci_drv_id);
 }
 
 
 static void __exit exit_prism2_pci(void)
 {
-	pci_unregister_driver(&prism2_pci_driver);
+	pci_unregister_driver(&prism2_pci_drv_id);
+	printk(KERN_INFO "%s: Driver unloaded\n", dev_info);
 }
 
 

@@ -5,7 +5,7 @@
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation, Inc., 53 Temple Place Ste 330,
- *   Boston MA 02111-1307, USA; either version 2 of the License, or
+ *   Bostom MA 02111-1307, USA; either version 2 of the License, or
  *   (at your option) any later version; incorporated herein by reference.
  *
  * ----------------------------------------------------------------------- */
@@ -17,9 +17,9 @@
  *
  */
 
-#if (defined(__i386__) || defined(__x86_64__)) && !defined(__arch_um__)
+#if defined(__i386__) || defined(__x86_64__)
 
-#include <linux/raid/pq.h>
+#include "raid6.h"
 #include "raid6x86.h"
 
 static const struct raid6_sse_constants {
@@ -30,11 +30,17 @@ static const struct raid6_sse_constants {
 
 static int raid6_have_sse2(void)
 {
+#ifdef __KERNEL__
 	/* Not really boot_cpu but "all_cpus" */
 	return boot_cpu_has(X86_FEATURE_MMX) &&
 		boot_cpu_has(X86_FEATURE_FXSR) &&
 		boot_cpu_has(X86_FEATURE_XMM) &&
 		boot_cpu_has(X86_FEATURE_XMM2);
+#else
+	/* User space test code */
+	u32 features = cpuid_features();
+	return ( (features & (15<<23)) == (15<<23) );
+#endif
 }
 
 /*
@@ -45,12 +51,13 @@ static void raid6_sse21_gen_syndrome(int disks, size_t bytes, void **ptrs)
 	u8 **dptr = (u8 **)ptrs;
 	u8 *p, *q;
 	int d, z, z0;
+	raid6_sse_save_t sa;
 
 	z0 = disks - 3;		/* Highest data disk */
 	p = dptr[z0+1];		/* XOR parity */
 	q = dptr[z0+2];		/* RS syndrome */
 
-	kernel_fpu_begin();
+	raid6_before_sse2(&sa);
 
 	asm volatile("movdqa %0,%%xmm0" : : "m" (raid6_sse_constants.x1d[0]));
 	asm volatile("pxor %xmm5,%xmm5");	/* Zero temp */
@@ -86,8 +93,8 @@ static void raid6_sse21_gen_syndrome(int disks, size_t bytes, void **ptrs)
 		asm volatile("pxor %xmm4,%xmm4");
 	}
 
+	raid6_after_sse2(&sa);
 	asm volatile("sfence" : : : "memory");
-	kernel_fpu_end();
 }
 
 const struct raid6_calls raid6_sse2x1 = {
@@ -105,12 +112,13 @@ static void raid6_sse22_gen_syndrome(int disks, size_t bytes, void **ptrs)
 	u8 **dptr = (u8 **)ptrs;
 	u8 *p, *q;
 	int d, z, z0;
+	raid6_sse_save_t sa;
 
 	z0 = disks - 3;		/* Highest data disk */
 	p = dptr[z0+1];		/* XOR parity */
 	q = dptr[z0+2];		/* RS syndrome */
 
-	kernel_fpu_begin();
+	raid6_before_sse2(&sa);
 
 	asm volatile("movdqa %0,%%xmm0" : : "m" (raid6_sse_constants.x1d[0]));
 	asm volatile("pxor %xmm5,%xmm5"); /* Zero temp */
@@ -148,8 +156,8 @@ static void raid6_sse22_gen_syndrome(int disks, size_t bytes, void **ptrs)
 		asm volatile("movntdq %%xmm6,%0" : "=m" (q[d+16]));
 	}
 
+	raid6_after_sse2(&sa);
 	asm volatile("sfence" : : : "memory");
-	kernel_fpu_end();
 }
 
 const struct raid6_calls raid6_sse2x2 = {
@@ -161,7 +169,7 @@ const struct raid6_calls raid6_sse2x2 = {
 
 #endif
 
-#if defined(__x86_64__) && !defined(__arch_um__)
+#ifdef __x86_64__
 
 /*
  * Unrolled-by-4 SSE2 implementation
@@ -171,12 +179,13 @@ static void raid6_sse24_gen_syndrome(int disks, size_t bytes, void **ptrs)
 	u8 **dptr = (u8 **)ptrs;
 	u8 *p, *q;
 	int d, z, z0;
+	raid6_sse16_save_t sa;
 
 	z0 = disks - 3;		/* Highest data disk */
 	p = dptr[z0+1];		/* XOR parity */
 	q = dptr[z0+2];		/* RS syndrome */
 
-	kernel_fpu_begin();
+	raid6_before_sse16(&sa);
 
 	asm volatile("movdqa %0,%%xmm0" :: "m" (raid6_sse_constants.x1d[0]));
 	asm volatile("pxor %xmm2,%xmm2");	/* P[0] */
@@ -247,9 +256,8 @@ static void raid6_sse24_gen_syndrome(int disks, size_t bytes, void **ptrs)
 		asm volatile("movntdq %%xmm14,%0" : "=m" (q[d+48]));
 		asm volatile("pxor %xmm14,%xmm14");
 	}
-
 	asm volatile("sfence" : : : "memory");
-	kernel_fpu_end();
+	raid6_after_sse16(&sa);
 }
 
 const struct raid6_calls raid6_sse2x4 = {

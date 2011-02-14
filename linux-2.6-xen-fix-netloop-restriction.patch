@@ -1,0 +1,42 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 7 Aug 2008 08:09:59 -0400
+Subject: [xen] fix netloop restriction
+Message-id: 489AE617.7070206@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH] Xen Fix netloop restriction
+Bugzilla: 358281
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Bill Burns wrote:
+
+Fixes bz 358182 - default netloop driver creates too few devices by default
+
+diff --git a/drivers/xen/netback/loopback.c b/drivers/xen/netback/loopback.c
+index d1a03b6..6c45fae 100644
+--- a/drivers/xen/netback/loopback.c
++++ b/drivers/xen/netback/loopback.c
+@@ -298,9 +298,20 @@ static void __exit clean_loopback(int i)
+ static int __init loopback_init(void)
+ {
+ 	int i, err = 0;
++	struct net_device *tmp;
+ 
+-	if (nloopbacks == -1)
+-		nloopbacks = is_initial_xendomain() ? 4 : 0;
++	if (nloopbacks == -1) {
++		nloopbacks = 0;
++
++		if (is_initial_xendomain()) {
++			for(i = 1; (tmp = dev_get_by_index(i)); i++) {
++				nloopbacks++;
++				dev_put(tmp);
++			}
++		}
++	}
++
++	nloopbacks = max(nloopbacks, 4);
+ 
+ 	for (i = 0; i < nloopbacks; i++)
+ 		if ((err = make_loopback(i)) != 0)

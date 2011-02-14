@@ -1,0 +1,38 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 31 Jul 2009 08:38:45 -0400
+Subject: [net] sunrpc: set rq_daddr in svc_rqst on socket recv
+Message-id: 1249043927-10558-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH 1/3] BZ#500653: SUNRPC: set rq_daddr in svc_rqst when receiving on socket
+Bugzilla: 500653
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+The svc_rqst already has a rq_daddr field that gets populated with the
+destination address of the call in the UDP codepath. In order to do
+callbacks from the correct address, we'll need to track it for other
+socktypes too.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/net/sunrpc/svcsock.c b/net/sunrpc/svcsock.c
+index 99f0919..12e82f8 100644
+--- a/net/sunrpc/svcsock.c
++++ b/net/sunrpc/svcsock.c
+@@ -532,6 +532,7 @@ svc_recvfrom(struct svc_rqst *rqstp, struct kvec *iov, int nr, int buflen)
+ {
+ 	struct msghdr	msg;
+ 	struct socket	*sock;
++	struct sockaddr_in daddr;
+ 	int		len, alen;
+ 
+ 	rqstp->rq_addrlen = sizeof(rqstp->rq_addr);
+@@ -553,6 +554,10 @@ svc_recvfrom(struct svc_rqst *rqstp, struct kvec *iov, int nr, int buflen)
+ 	alen = sizeof(rqstp->rq_addr);
+ 	kernel_getpeername(sock, (struct sockaddr *)&rqstp->rq_addr, &alen);
+ 
++	alen = sizeof(daddr);
++	kernel_getsockname(sock, (struct sockaddr *)&daddr, &alen);
++	rqstp->rq_daddr = daddr.sin_addr.s_addr;
++
+ 	dprintk("svc: socket %p recvfrom(%p, %Zu) = %d\n",
+ 		rqstp->rq_sock, iov[0].iov_base, iov[0].iov_len, len);
+ 

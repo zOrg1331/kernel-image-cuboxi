@@ -1,0 +1,159 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: add orphan purging code
+Date: Thu, 19 Apr 2007 11:46:04 -0500
+Bugzilla: 237125
+Message-Id: <20070419164603.GD23079@redhat.com>
+Changelog: [dlm] add orphan purging code
+
+
+bz 237125
+
+Add code for purging orphan locks.  A process can also purge all of its
+own non-orphan locks by passing a pid of zero.  Code already exists for
+processes to create persistent locks that become orphans when the process
+exits, but the complimentary capability for another process to then purge
+these orphans has been missing.
+
+Index: linux-2.6.21-rc5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.21-rc5-quilt.orig/fs/dlm/lock.c	2007-03-28 12:39:43.000000000 -0500
++++ linux-2.6.21-rc5-quilt/fs/dlm/lock.c	2007-03-30 11:59:48.000000000 -0500
+@@ -85,6 +85,7 @@
+ static void __receive_convert_reply(struct dlm_rsb *r, struct dlm_lkb *lkb,
+ 				    struct dlm_message *ms);
+ static int receive_extralen(struct dlm_message *ms);
++static void do_purge(struct dlm_ls *ls, int nodeid, int pid);
+ 
+ /*
+  * Lock compatibilty matrix - thanks Steve
+@@ -2987,6 +2988,11 @@
+ 	dlm_dir_remove_entry(ls, from_nodeid, ms->m_extra, len);
+ }
+ 
++static void receive_purge(struct dlm_ls *ls, struct dlm_message *ms)
++{
++	do_purge(ls, ms->m_nodeid, ms->m_pid);
++}
++
+ static void receive_request_reply(struct dlm_ls *ls, struct dlm_message *ms)
+ {
+ 	struct dlm_lkb *lkb;
+@@ -3409,6 +3415,12 @@
+ 		receive_lookup_reply(ls, ms);
+ 		break;
+ 
++	/* other messages */
++
++	case DLM_MSG_PURGE:
++		receive_purge(ls, ms);
++		break;
++
+ 	default:
+ 		log_error(ls, "unknown message type %d", ms->m_type);
+ 	}
+@@ -4260,3 +4272,92 @@
+ 	unlock_recovery(ls);
+ }
+ 
++static void purge_proc_locks(struct dlm_ls *ls, struct dlm_user_proc *proc)
++{
++	struct dlm_lkb *lkb, *safe;
++
++	while (1) {
++		lkb = NULL;
++		spin_lock(&proc->locks_spin);
++		if (!list_empty(&proc->locks)) {
++			lkb = list_entry(proc->locks.next, struct dlm_lkb,
++					 lkb_ownqueue);
++			list_del_init(&lkb->lkb_ownqueue);
++		}
++		spin_unlock(&proc->locks_spin);
++
++		if (!lkb)
++			break;
++
++		lkb->lkb_flags |= DLM_IFL_DEAD;
++		unlock_proc_lock(ls, lkb);
++		dlm_put_lkb(lkb); /* ref from proc->locks list */
++	}
++
++	spin_lock(&proc->locks_spin);
++	list_for_each_entry_safe(lkb, safe, &proc->unlocking, lkb_ownqueue) {
++		list_del_init(&lkb->lkb_ownqueue);
++		lkb->lkb_flags |= DLM_IFL_DEAD;
++		dlm_put_lkb(lkb);
++	}
++	spin_unlock(&proc->locks_spin);
++
++	spin_lock(&proc->asts_spin);
++	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_astqueue) {
++		list_del(&lkb->lkb_astqueue);
++		dlm_put_lkb(lkb);
++	}
++	spin_unlock(&proc->asts_spin);
++}
++
++/* pid of 0 means purge all orphans */
++
++static void do_purge(struct dlm_ls *ls, int nodeid, int pid)
++{
++	struct dlm_lkb *lkb, *safe;
++
++	mutex_lock(&ls->ls_orphans_mutex);
++	list_for_each_entry_safe(lkb, safe, &ls->ls_orphans, lkb_ownqueue) {
++		if (pid && lkb->lkb_ownpid != pid)
++			continue;
++		unlock_proc_lock(ls, lkb);
++		list_del_init(&lkb->lkb_ownqueue);
++		dlm_put_lkb(lkb);
++	}
++	mutex_unlock(&ls->ls_orphans_mutex);
++}
++
++static int send_purge(struct dlm_ls *ls, int nodeid, int pid)
++{
++	struct dlm_message *ms;
++	struct dlm_mhandle *mh;
++	int error;
++
++	error = _create_message(ls, sizeof(struct dlm_message), nodeid,
++				DLM_MSG_PURGE, &ms, &mh);
++	if (error)
++		return error;
++	ms->m_nodeid = nodeid;
++	ms->m_pid = pid;
++
++	return send_message(mh, ms);
++}
++
++int dlm_user_purge(struct dlm_ls *ls, struct dlm_user_proc *proc,
++		   int nodeid, int pid)
++{
++	int error = 0;
++
++	if (nodeid != dlm_our_nodeid()) {
++		error = send_purge(ls, nodeid, pid);
++	} else {
++		lock_recovery(ls);
++		if (pid == current->pid)
++			purge_proc_locks(ls, proc);
++		else
++			do_purge(ls, nodeid, pid);
++		unlock_recovery(ls);
++	}
++	return error;
++}
++
+Index: linux-2.6.21-rc5-quilt/fs/dlm/dlm_internal.h
+===================================================================
+--- linux-2.6.21-rc5-quilt.orig/fs/dlm/dlm_internal.h	2007-03-28 12:47:33.000000000 -0500
++++ linux-2.6.21-rc5-quilt/fs/dlm/dlm_internal.h	2007-03-28 14:31:58.000000000 -0500
+@@ -342,6 +342,7 @@
+ #define DLM_MSG_LOOKUP		11
+ #define DLM_MSG_REMOVE		12
+ #define DLM_MSG_LOOKUP_REPLY	13
++#define DLM_MSG_PURGE		14
+ 
+ struct dlm_message {
+ 	struct dlm_header	m_header;
+

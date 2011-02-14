@@ -1,0 +1,44 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Tue, 11 Aug 2009 13:32:05 -0400
+Subject: [x86] re-register clock area in prepare_boot_cpu
+Message-id: 1250011926-31633-7-git-send-email-glommer@redhat.com
+O-Subject: [PATCH v2 6/7] re-register clock area in prepare_boot_cpu
+Bugzilla: 476075
+
+If we're smp, it is possible that we change kvmclock's per-cpu area
+after early initialization. So, we need to register a primary clock,
+besides the boot clock, that will be automatically thrown away.
+
+This is explained in upstream commit message for
+f6e16d5ad463d15f285666f588cfe49495c692d9
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/smpboot.c b/arch/i386/kernel/smpboot.c
+index f0ffcb9..dad3465 100644
+--- a/arch/i386/kernel/smpboot.c
++++ b/arch/i386/kernel/smpboot.c
+@@ -1340,6 +1340,9 @@ void __devinit smp_prepare_boot_cpu(void)
+ 	cpu_set(smp_processor_id(), cpu_present_map);
+ 	cpu_set(smp_processor_id(), cpu_possible_map);
+ 	per_cpu(cpu_state, smp_processor_id()) = CPU_ONLINE;
++#ifndef CONFIG_XEN
++	WARN_ON(kvm_register_clock("primary cpu clock"));
++#endif
+ }
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
+diff --git a/arch/x86_64/kernel/smpboot.c b/arch/x86_64/kernel/smpboot.c
+index bf879df..bad370b 100644
+--- a/arch/x86_64/kernel/smpboot.c
++++ b/arch/x86_64/kernel/smpboot.c
+@@ -1139,6 +1139,9 @@ void __init smp_prepare_boot_cpu(void)
+ 	cpu_set(me, cpu_online_map);
+ 	cpu_set(me, cpu_callout_map);
+ 	per_cpu(cpu_state, me) = CPU_ONLINE;
++#ifndef CONFIG_XEN
++	WARN_ON(kvm_register_clock("primary cpu clock"));
++#endif
+ }
+ 
+ /*

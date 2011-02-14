@@ -1,0 +1,42 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 13 Oct 2009 09:14:09 -0400
+Subject: [nfs] knfsd: query fs for v4 getattr of FATTR4_MAXNAME
+Message-id: 1255439649-14262-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#469689: knfsd: query filesystem for NFSv4 getattr of FATTR4_MAXNAME
+Bugzilla: 469689
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+(backported from a16e92edcd0a2846455a30823e1bac964e743baa)
+
+When a program calls pathconf on a file on NFSv4, it always returns
+2^32-1, which apparently indicates that there is no limit. This patch
+fixes it so that the NFS server queries the underlying filesystem for
+the maximum name length and returns that value instead.
+
+Tested by the reporter of this bug and myself using a simple program
+that calls pathconf(..., _PC_NAME_MAX) on a file.
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 227b9b7..b65b915 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -1443,7 +1443,8 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
+ 	status = vfs_getattr(exp->ex_mnt, dentry, &stat);
+ 	if (status)
+ 		goto out_nfserr;
+-	if ((bmval0 & (FATTR4_WORD0_FILES_FREE | FATTR4_WORD0_FILES_TOTAL)) ||
++	if ((bmval0 & (FATTR4_WORD0_FILES_FREE | FATTR4_WORD0_FILES_TOTAL |
++			FATTR4_WORD0_MAXNAME)) ||
+ 	    (bmval1 & (FATTR4_WORD1_SPACE_AVAIL | FATTR4_WORD1_SPACE_FREE |
+ 		       FATTR4_WORD1_SPACE_TOTAL))) {
+ 		status = vfs_statfs(dentry, &statfs);
+@@ -1680,7 +1681,7 @@ out_acl:
+ 	if (bmval0 & FATTR4_WORD0_MAXNAME) {
+ 		if ((buflen -= 4) < 0)
+ 			goto out_resource;
+-		WRITE32(~(u32) 0);
++		WRITE32(statfs.f_namelen);
+ 	}
+ 	if (bmval0 & FATTR4_WORD0_MAXREAD) {
+ 		if ((buflen -= 8) < 0)

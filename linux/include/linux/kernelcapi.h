@@ -47,7 +47,6 @@ typedef struct kcapi_carddef {
 
 #include <linux/list.h>
 #include <linux/skbuff.h>
-#include <linux/workqueue.h>
 
 #define	KCI_CONTRUP	0	/* arg: struct capi_profile */
 #define	KCI_CONTRDOWN	1	/* arg: NULL */
@@ -63,7 +62,7 @@ struct capi20_appl {
 	unsigned long nrecvdatapkt;
 	unsigned long nsentctlpkt;
 	unsigned long nsentdatapkt;
-	struct mutex recv_mtx;
+	struct semaphore recv_sem;
 	struct sk_buff_head recv_queue;
 	struct work_struct recv_work;
 	int release_in_progress;

@@ -1,0 +1,950 @@
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/include/linux/module.h linux-900/include/linux/module.h
+--- linux-811/include/linux/module.h
++++ linux-900/include/linux/module.h
+@@ -277,6 +277,9 @@ struct module
+ 
+ 	/* Am I GPL-compatible */
+ 	int license_gplok;
++	
++	/* Am I gpg signed */
++	int gpgsig_ok;
+ 
+ #ifdef CONFIG_MODULE_UNLOAD
+ 	/* Reference counts */
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/init/Kconfig linux-900/init/Kconfig
+--- linux-811/init/Kconfig
++++ linux-900/init/Kconfig
+@@ -434,6 +434,22 @@ config MODULE_SRCVERSION_ALL
+ 	  the version).  With this option, such a "srcversion" field
+ 	  will be created for all modules.  If unsure, say N.
+ 
++config MODULE_SIG
++	bool "Module signature verification (EXPERIMENTAL)"
++	depends on MODULES && EXPERIMENTAL
++	select CRYPTO
++	select CRYPTO_SHA1
++	select CRYPTO_SIGNATURE
++	help
++	  Check modules for valid signatures upon load.
++
++config MODULE_SIG_FORCE
++	bool "Required modules to be validly signed (EXPERIMENTAL)"
++	depends on MODULE_SIG
++	help
++	  Reject unsigned modules or signed modules for which we don't have a
++	  key.
++
+ config KMOD
+ 	bool "Automatic kernel module loading"
+ 	depends on MODULES
+--- linux-2.6.17.noarch/kernel/Makefile~	2006-06-21 23:47:11.000000000 -0400
++++ linux-2.6.17.noarch/kernel/Makefile	2006-06-21 23:47:19.000000000 -0400
+@@ -19,7 +19,8 @@ obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
+ obj-$(CONFIG_SMP) += cpu.o spinlock.o
+ obj-$(CONFIG_DEBUG_SPINLOCK) += spinlock.o
+ obj-$(CONFIG_UID16) += uid16.o
+-obj-$(CONFIG_MODULES) += module.o
++obj-$(CONFIG_MODULES) += module.o module-verify.o
++obj-$(CONFIG_MODULE_SIG) += module-verify-sig.o
+ obj-$(CONFIG_KALLSYMS) += kallsyms.o
+ obj-$(CONFIG_PM) += power/
+ obj-$(CONFIG_BSD_PROCESS_ACCT) += acct.o
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/kernel/module.c linux-900/kernel/module.c
+--- linux-811/kernel/module.c
++++ linux-900/kernel/module.c
+@@ -45,6 +45,7 @@
+ #include <asm/semaphore.h>
+ #include <asm/cacheflush.h>
+ #include <linux/license.h>
++#include "module-verify.h"
+ 
+ #if 0
+ #define DEBUGP printk
+@@ -1413,6 +1414,7 @@ static struct module *load_module(void _
+ 	long err = 0;
+ 	void *percpu = NULL, *ptr = NULL; /* Stops spurious gcc warning */
+ 	struct exception_table_entry *extable;
+	mm_segment_t old_fs;
++	int gpgsig_ok;
+ 
+ 	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n",
+@@ -1438,8 +1440,13 @@ static struct module *load_module(void _
+ 		goto free_hdr;
+ 	}
+ 
+-	if (len < hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr))
+-		goto truncated;
++	/* verify the module (validates ELF and checks signature) */
++	gpgsig_ok = 0;
++	err = module_verify(hdr, len);
++	if (err < 0)
++		goto free_hdr;
++	if (err == 1)
++		gpgsig_ok = 1;
+ 
+ 	/* Convenience variables */
+ 	sechdrs = (void *)hdr + hdr->e_shoff;
+@@ -1476,6 +1483,7 @@ static struct module *load_module(void _
+ 		goto free_hdr;
+ 	}
+ 	mod = (void *)sechdrs[modindex].sh_addr;
++	mod->gpgsig_ok = gpgsig_ok;
+ 
+ 	if (symindex == 0) {
+ 		printk(KERN_WARNING "%s: module has no symbols (stripped?)\n",
+@@ -2078,8 +2086,13 @@ void print_modules(void)
+ 	struct module *mod;
+ 
+ 	printk("Modules linked in:");
+-	list_for_each_entry(mod, &modules, list)
++	list_for_each_entry(mod, &modules, list) {
+ 		printk(" %s", mod->name);
++#if CONFIG_MODULE_SIG		
++		if (!mod->gpgsig_ok)
++			printk("(U)");
++#endif		
++	}
+ 	printk("\n");
+ }
+ 
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/kernel/module-verify.c linux-900/kernel/module-verify.c
+--- linux-811/kernel/module-verify.c
++++ linux-900/kernel/module-verify.c
+@@ -0,0 +1,339 @@
++/* module-verify.c: module verifier
++ *
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/elf.h>
++#include <linux/crypto.h>
++#include <linux/crypto/ksign.h>
++#include "module-verify.h"
++
++#if 0
++#define _debug(FMT, ...) printk(FMT, ##__VA_ARGS__)
++#else
++#define _debug(FMT, ...) do {} while (0)
++#endif
++
++static int module_verify_elf(struct module_verify_data *mvdata);
++
++/*****************************************************************************/
++/*
++ * verify a module's integrity
++ * - check the ELF is viable
++ * - check the module's signature if it has one
++ */
++int module_verify(const Elf_Ehdr *hdr, size_t size)
++{
++	struct module_verify_data mvdata;
++	int ret;
++
++	memset(&mvdata, 0, sizeof(mvdata));
++	mvdata.buffer	= hdr;
++	mvdata.hdr	= hdr;
++	mvdata.size	= size;
++
++	ret = module_verify_elf(&mvdata);
++	if (ret < 0) {
++		if (ret == -ELIBBAD)
++			printk("Module failed ELF checks\n");
++		goto error;
++	}
++
++#ifdef CONFIG_MODULE_SIG
++	ret = module_verify_signature(&mvdata);
++#endif
++
++ error:
++	kfree(mvdata.secsizes);
++	kfree(mvdata.canonlist);
++	return ret;
++
++} /* end module_verify() */
++
++/*****************************************************************************/
++/*
++ * verify the ELF structure of a module
++ */
++static int module_verify_elf(struct module_verify_data *mvdata)
++{
++	const Elf_Ehdr *hdr = mvdata->hdr;
++	const Elf_Shdr *section, *section2, *secstop;
++	const Elf_Rela *relas, *rela, *relastop;
++	const Elf_Rel *rels, *rel, *relstop;
++	const Elf_Sym *symbol, *symstop;
++	size_t size, sssize, *secsize, tmp, tmp2;
++	long last;
++	int line;
++
++	size = mvdata->size;
++	mvdata->nsects = hdr->e_shnum;
++
++#define elfcheck(X) \
++do { if (unlikely(!(X))) { line = __LINE__; goto elfcheck_error; } } while(0)
++
++#define seccheck(X) \
++do { if (unlikely(!(X))) { line = __LINE__; goto seccheck_error; } } while(0)
++
++#define symcheck(X) \
++do { if (unlikely(!(X))) { line = __LINE__; goto symcheck_error; } } while(0)
++
++#define relcheck(X) \
++do { if (unlikely(!(X))) { line = __LINE__; goto relcheck_error; } } while(0)
++
++#define relacheck(X) \
++do { if (unlikely(!(X))) { line = __LINE__; goto relacheck_error; } } while(0)
++
++	/* validate the ELF header */
++	elfcheck(hdr->e_ehsize < size);
++	elfcheck(hdr->e_entry == 0);
++	elfcheck(hdr->e_phoff == 0);
++	elfcheck(hdr->e_phnum == 0);
++
++	elfcheck(hdr->e_shnum < SHN_LORESERVE);
++	elfcheck(hdr->e_shoff < size);
++	elfcheck(hdr->e_shoff >= hdr->e_ehsize);
++	elfcheck((hdr->e_shoff & (sizeof(long) - 1)) == 0);
++	elfcheck(hdr->e_shstrndx > 0);
++	elfcheck(hdr->e_shstrndx < hdr->e_shnum);
++	elfcheck(hdr->e_shentsize == sizeof(Elf_Shdr));
++
++	tmp = (size_t) hdr->e_shentsize * (size_t) hdr->e_shnum;
++	elfcheck(tmp < size - hdr->e_shoff);
++
++	/* allocate a table to hold in-file section sizes */
++	mvdata->secsizes = kmalloc(hdr->e_shnum * sizeof(size_t), GFP_KERNEL);
++	if (!mvdata->secsizes)
++		return -ENOMEM;
++
++	memset(mvdata->secsizes, 0, hdr->e_shnum * sizeof(size_t));
++
++	/* validate the ELF section headers */
++	mvdata->sections = mvdata->buffer + hdr->e_shoff;
++	secstop = mvdata->sections + mvdata->nsects;
++
++	sssize = mvdata->sections[hdr->e_shstrndx].sh_size;
++	elfcheck(sssize > 0);
++
++	section = mvdata->sections;
++	seccheck(section->sh_type == SHT_NULL);
++	seccheck(section->sh_size == 0);
++	seccheck(section->sh_offset == 0);
++
++	secsize = mvdata->secsizes + 1;
++	for (section++; section < secstop; secsize++, section++) {
++		seccheck(section->sh_name < sssize);
++		seccheck(section->sh_link < hdr->e_shnum);
++
++		if (section->sh_entsize > 0)
++			seccheck(section->sh_size % section->sh_entsize == 0);
++
++		seccheck(section->sh_offset >= hdr->e_ehsize);
++		seccheck(section->sh_offset < size);
++
++		/* determine the section's in-file size */
++		tmp = size - section->sh_offset;
++		if (section->sh_offset < hdr->e_shoff)
++			tmp = hdr->e_shoff - section->sh_offset;
++
++		for (section2 = mvdata->sections + 1; section2 < secstop; section2++) {
++			if (section->sh_offset < section2->sh_offset) {
++				tmp2 = section2->sh_offset - section->sh_offset;
++				if (tmp2 < tmp)
++					tmp = tmp2;
++			}
++		}
++		*secsize = tmp;
++
++		_debug("Section %ld: %zx bytes at %lx\n",
++		       section - mvdata->sections,
++		       *secsize,
++		       section->sh_offset);
++
++		/* perform section type specific checks */
++		switch (section->sh_type) {
++		case SHT_NOBITS:
++			break;
++
++		case SHT_REL:
++			seccheck(section->sh_entsize == sizeof(Elf_Rel));
++			goto more_rel_checks;
++
++		case SHT_RELA:
++			seccheck(section->sh_entsize == sizeof(Elf_Rela));
++		more_rel_checks:
++			seccheck(section->sh_info > 0);
++			seccheck(section->sh_info < hdr->e_shnum);
++			goto more_sec_checks;
++
++		case SHT_SYMTAB:
++			seccheck(section->sh_entsize == sizeof(Elf_Sym));
++			goto more_sec_checks;
++
++		default:
++		more_sec_checks:
++			/* most types of section must be contained entirely
++			 * within the file */
++			seccheck(section->sh_size <= *secsize);
++			break;
++		}
++	}
++
++	/* validate the ELF section names */
++	section = &mvdata->sections[hdr->e_shstrndx];
++
++	seccheck(section->sh_offset != hdr->e_shoff);
++
++	mvdata->secstrings = mvdata->buffer + section->sh_offset;
++
++	last = -1;
++	for (section = mvdata->sections + 1; section < secstop; section++) {
++		const char *secname;
++		tmp = sssize - section->sh_name;
++		secname = mvdata->secstrings + section->sh_name;
++		seccheck(secname[0] != 0);
++		if (section->sh_name > last)
++			last = section->sh_name;
++	}
++
++	if (last > -1) {
++		tmp = sssize - last;
++		elfcheck(memchr(mvdata->secstrings + last, 0, tmp) != NULL);
++	}
++
++	/* look for various sections in the module */
++	for (section = mvdata->sections + 1; section < secstop; section++) {
++		switch (section->sh_type) {
++		case SHT_SYMTAB:
++			if (strcmp(mvdata->secstrings + section->sh_name,
++				   ".symtab") == 0
++			    ) {
++				seccheck(mvdata->symbols == NULL);
++				mvdata->symbols =
++					mvdata->buffer + section->sh_offset;
++				mvdata->nsyms =
++					section->sh_size / sizeof(Elf_Sym);
++				seccheck(section->sh_size > 0);
++			}
++			break;
++
++		case SHT_STRTAB:
++			if (strcmp(mvdata->secstrings + section->sh_name,
++				   ".strtab") == 0
++			    ) {
++				seccheck(mvdata->strings == NULL);
++				mvdata->strings =
++					mvdata->buffer + section->sh_offset;
++				sssize = mvdata->nstrings = section->sh_size;
++				seccheck(section->sh_size > 0);
++			}
++			break;
++		}
++	}
++
++	if (!mvdata->symbols) {
++		printk("Couldn't locate module symbol table\n");
++		goto format_error;
++	}
++
++	if (!mvdata->strings) {
++		printk("Couldn't locate module strings table\n");
++		goto format_error;
++	}
++
++	/* validate the symbol table */
++	symstop = mvdata->symbols + mvdata->nsyms;
++
++	symbol = mvdata->symbols;
++	symcheck(ELF_ST_TYPE(symbol[0].st_info) == STT_NOTYPE);
++	symcheck(symbol[0].st_shndx == SHN_UNDEF);
++	symcheck(symbol[0].st_value == 0);
++	symcheck(symbol[0].st_size == 0);
++
++	last = -1;
++	for (symbol++; symbol < symstop; symbol++) {
++		symcheck(symbol->st_name < sssize);
++		if (symbol->st_name > last)
++			last = symbol->st_name;
++		symcheck(symbol->st_shndx < mvdata->nsects ||
++			 symbol->st_shndx >= SHN_LORESERVE);
++	}
++
++	if (last > -1) {
++		tmp = sssize - last;
++		elfcheck(memchr(mvdata->strings + last, 0, tmp) != NULL);
++	}
++
++	/* validate each relocation table as best we can */
++	for (section = mvdata->sections + 1; section < secstop; section++) {
++		section2 = mvdata->sections + section->sh_info;
++
++		switch (section->sh_type) {
++		case SHT_REL:
++			rels = mvdata->buffer + section->sh_offset;
++			relstop = mvdata->buffer + section->sh_offset + section->sh_size;
++
++			for (rel = rels; rel < relstop; rel++) {
++				relcheck(rel->r_offset < section2->sh_size);
++				relcheck(ELF_R_SYM(rel->r_info) < mvdata->nsyms);
++			}
++
++			break;
++
++		case SHT_RELA:
++			relas = mvdata->buffer + section->sh_offset;
++			relastop = mvdata->buffer + section->sh_offset + section->sh_size;
++
++			for (rela = relas; rela < relastop; rela++) {
++				relacheck(rela->r_offset < section2->sh_size);
++				relacheck(ELF_R_SYM(rela->r_info) < mvdata->nsyms);
++			}
++
++			break;
++
++		default:
++			break;
++		}
++	}
++
++
++	_debug("ELF okay\n");
++	return 0;
++
++ elfcheck_error:
++	printk("Verify ELF error (assertion %d)\n", line);
++	goto format_error;
++
++ seccheck_error:
++	printk("Verify ELF error [sec %ld] (assertion %d)\n",
++	       (long)(section - mvdata->sections), line);
++	goto format_error;
++
++ symcheck_error:
++	printk("Verify ELF error [sym %ld] (assertion %d)\n",
++	       (long)(symbol - mvdata->symbols), line);
++	goto format_error;
++
++ relcheck_error:
++	printk("Verify ELF error [sec %ld rel %ld] (assertion %d)\n",
++	       (long)(section - mvdata->sections),
++	       (long)(rel - rels), line);
++	goto format_error;
++
++ relacheck_error:
++	printk("Verify ELF error [sec %ld rela %ld] (assertion %d)\n",
++	       (long)(section - mvdata->sections),
++	       (long)(rela - relas), line);
++	goto format_error;
++
++ format_error:
++	return -ELIBBAD;
++
++} /* end module_verify_elf() */
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/kernel/module-verify.h linux-900/kernel/module-verify.h
+--- linux-811/kernel/module-verify.h
++++ linux-900/kernel/module-verify.h
+@@ -0,0 +1,37 @@
++/* module-verify.h: module verification definitions
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/types.h>
++#include <asm/module.h>
++
++struct module_verify_data {
++	struct crypto_tfm	*digest;	/* module signature digest */
++	const void		*buffer;	/* module buffer */
++	const Elf_Ehdr		*hdr;		/* ELF header */
++	const Elf_Shdr		*sections;	/* ELF section table */
++	const Elf_Sym		*symbols;	/* ELF symbol table */
++	const char		*secstrings;	/* ELF section string table */
++	const char		*strings;	/* ELF string table */
++	size_t			*secsizes;	/* section size list */
++	size_t			size;		/* module object size */
++	size_t			nsects;		/* number of sections */
++	size_t			nsyms;		/* number of symbols */
++	size_t			nstrings;	/* size of strings section */
++	size_t			signed_size;	/* count of bytes contributed to digest */
++	int			*canonlist;	/* list of canonicalised sections */
++	int			*canonmap;	/* section canonicalisation map */
++	int			sig_index;	/* module signature section index */
++	uint8_t			xcsum;		/* checksum of bytes contributed to digest */
++	uint8_t			csum;		/* checksum of bytes representing a section */
++};
++
++extern int module_verify(const Elf_Ehdr *hdr, size_t size);
++extern int module_verify_signature(struct module_verify_data *mvdata);
+diff -urNp --exclude-from=/home/davej/.exclude linux-811/kernel/module-verify-sig.c linux-900/kernel/module-verify-sig.c
+--- linux-811/kernel/module-verify-sig.c
++++ linux-900/kernel/module-verify-sig.c
+@@ -0,0 +1,441 @@
++/* module-verify-sig.c: module signature checker
++ *
++ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ * - Derived from GregKH's RSA module signer
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/elf.h>
++#include <linux/crypto.h>
++#include <linux/crypto/ksign.h>
++#include "module-verify.h"
++
++#undef MODSIGN_DEBUG
++
++#ifdef MODSIGN_DEBUG
++#define _debug(FMT, ...) printk(FMT, ##__VA_ARGS__)
++#else
++#define _debug(FMT, ...) do {} while (0)
++#endif
++
++#ifdef MODSIGN_DEBUG
++#define count_and_csum(C, __p,__n)			\
++do {							\
++	int __loop;					\
++	for (__loop = 0; __loop < __n; __loop++) {	\
++		(C)->csum += __p[__loop];		\
++		(C)->xcsum += __p[__loop];		\
++	}						\
++	(C)->signed_size += __n;			\
++} while(0)
++#else
++#define count_and_csum(C, __p,__n)		\
++do {						\
++	(C)->signed_size += __n;		\
++} while(0)
++#endif
++
++#define crypto_digest_update_data(C,PTR,N)			\
++do {								\
++	size_t __n = (N);					\
++	uint8_t *__p = (uint8_t *)(PTR);			\
++	count_and_csum((C), __p, __n);				\
++	crypto_digest_update_kernel((C)->digest, __p, __n);	\
++} while(0)
++
++#define crypto_digest_update_val(C,VAL)				\
++do {								\
++	size_t __n = sizeof(VAL);				\
++	uint8_t *__p = (uint8_t *)&(VAL);			\
++	count_and_csum((C), __p, __n);				\
++	crypto_digest_update_kernel((C)->digest, __p, __n);	\
++} while(0)
++
++static int module_verify_canonicalise(struct module_verify_data *mvdata);
++
++static int extract_elf_rela(struct module_verify_data *mvdata,
++			    int secix,
++			    const Elf_Rela *relatab, size_t nrels,
++			    const char *sh_name);
++
++static int extract_elf_rel(struct module_verify_data *mvdata,
++			   int secix,
++			   const Elf_Rel *reltab, size_t nrels,
++			   const char *sh_name);
++
++static int signedonly;
++
++/*****************************************************************************/
++/*
++ * verify a module's signature
++ */
++int module_verify_signature(struct module_verify_data *mvdata)
++{
++	const Elf_Shdr *sechdrs = mvdata->sections;
++	const char *secstrings = mvdata->secstrings;
++	const char *sig;
++	unsigned sig_size;
++	int i, ret;
++
++	for (i = 1; i < mvdata->nsects; i++) {
++		switch (sechdrs[i].sh_type) {
++		case SHT_PROGBITS:
++			if (strcmp(mvdata->secstrings + sechdrs[i].sh_name,
++				   ".module_sig") == 0) {
++				mvdata->sig_index = i;
++			}
++			break;
++		}
++	}
++
++	if (mvdata->sig_index <= 0)
++		goto no_signature;
++
++	sig = mvdata->buffer + sechdrs[mvdata->sig_index].sh_offset;
++	sig_size = sechdrs[mvdata->sig_index].sh_size;
++
++	_debug("sig in section %d (size %d)\n",
++	       mvdata->sig_index, sig_size);
++
++	/* produce a canonicalisation map for the sections */
++	ret = module_verify_canonicalise(mvdata);
++	if (ret < 0)
++		return ret;
++
++	/* grab an SHA1 transformation context
++	 * - !!! if this tries to load the sha1.ko module, we will deadlock!!!
++	 */
++	mvdata->digest = crypto_alloc_tfm2("sha1", 0, 1);
++	if (!mvdata->digest) {
++		printk("Couldn't load module - SHA1 transform unavailable\n");
++		return -EPERM;
++	}
++
++	crypto_digest_init(mvdata->digest);
++
++#ifdef MODSIGN_DEBUG
++	mvdata->xcsum = 0;
++#endif
++
++	/* load data from each relevant section into the digest */
++	for (i = 1; i < mvdata->nsects; i++) {
++		unsigned long sh_type = sechdrs[i].sh_type;
++		unsigned long sh_info = sechdrs[i].sh_info;
++		unsigned long sh_size = sechdrs[i].sh_size;
++		unsigned long sh_flags = sechdrs[i].sh_flags;
++		const char *sh_name = secstrings + sechdrs[i].sh_name;
++		const void *data = mvdata->buffer + sechdrs[i].sh_offset;
++
++		if (i == mvdata->sig_index)
++			continue;
++
++#ifdef MODSIGN_DEBUG
++		mvdata->csum = 0;
++#endif
++
++		/* it would be nice to include relocation sections, but the act
++		 * of adding a signature to the module seems changes their
++		 * contents, because the symtab gets changed when sections are
++		 * added or removed */
++		if (sh_type == SHT_REL || sh_type == SHT_RELA) {
++			if (mvdata->canonlist[sh_info]) {
++				uint32_t xsh_info = mvdata->canonmap[sh_info];
++
++				crypto_digest_update_data(mvdata, sh_name, strlen(sh_name));
++				crypto_digest_update_val(mvdata, sechdrs[i].sh_type);
++				crypto_digest_update_val(mvdata, sechdrs[i].sh_flags);
++				crypto_digest_update_val(mvdata, sechdrs[i].sh_size);
++				crypto_digest_update_val(mvdata, sechdrs[i].sh_addralign);
++				crypto_digest_update_val(mvdata, xsh_info);
++
++				if (sh_type == SHT_RELA)
++					ret = extract_elf_rela(
++						mvdata, i,
++						data,
++						sh_size / sizeof(Elf_Rela),
++						sh_name);
++				else
++					ret = extract_elf_rel(
++						mvdata, i,
++						data,
++						sh_size / sizeof(Elf_Rel),
++						sh_name);
++
++				if (ret < 0)
++					goto format_error;
++			}
++
++			continue;
++		}
++
++		/* include allocatable loadable sections */
++		if (sh_type != SHT_NOBITS && sh_flags & SHF_ALLOC)
++			goto include_section;
++
++		continue;
++
++	include_section:
++		crypto_digest_update_data(mvdata, sh_name, strlen(sh_name));
++		crypto_digest_update_val(mvdata, sechdrs[i].sh_type);
++		crypto_digest_update_val(mvdata, sechdrs[i].sh_flags);
++		crypto_digest_update_val(mvdata, sechdrs[i].sh_size);
++		crypto_digest_update_val(mvdata, sechdrs[i].sh_addralign);
++		crypto_digest_update_data(mvdata, data, sh_size);
++
++		_debug("%08zx %02x digested the %s section, size %ld\n",
++		       mvdata->signed_size, mvdata->csum, sh_name, sh_size);
++
++		mvdata->canonlist[i] = 1;
++	}
++
++	_debug("Contributed %zu bytes to the digest (csum 0x%02x)\n",
++	       mvdata->signed_size, mvdata->xcsum);
++
++	/* do the actual signature verification */
++	i = ksign_verify_signature(sig, sig_size, mvdata->digest);
++
++	_debug("verify-sig : %d\n", i);
++
++	if (i == 0)
++		i = 1;
++	return i;
++
++ format_error:
++	crypto_free_tfm(mvdata->digest);
++	return -ELIBBAD;
++
++	/* deal with the case of an unsigned module */
++ no_signature:
++ 	if (!signedonly)
++		return 0;
++	printk("An attempt to load unsigned module was rejected\n");
++	return -EPERM;
++
++} /* end module_verify_signature() */
++
++/*****************************************************************************/
++/*
++ * canonicalise the section table index numbers
++ */
++static int module_verify_canonicalise(struct module_verify_data *mvdata)
++{
++	int canon, loop, changed, tmp;
++
++	/* produce a list of index numbers of sections that contribute
++	 * to the kernel's module image
++	 */
++	mvdata->canonlist =
++		kmalloc(sizeof(int) * mvdata->nsects * 2, GFP_KERNEL);
++	if (!mvdata->canonlist)
++		return -ENOMEM;
++
++	mvdata->canonmap = mvdata->canonlist + mvdata->nsects;
++	canon = 0;
++
++	for (loop = 1; loop < mvdata->nsects; loop++) {
++		const Elf_Shdr *section = mvdata->sections + loop;
++
++		if (loop != mvdata->sig_index) {
++			/* we only need to canonicalise allocatable sections */
++			if (section->sh_flags & SHF_ALLOC)
++				mvdata->canonlist[canon++] = loop;
++		}
++	}
++
++	/* canonicalise the index numbers of the contributing section */
++	do {
++		changed = 0;
++
++		for (loop = 0; loop < canon - 1; loop++) {
++			const char *x, *y;
++
++			x = mvdata->secstrings +
++				mvdata->sections[mvdata->canonlist[loop + 0]].sh_name;
++			y = mvdata->secstrings +
++				mvdata->sections[mvdata->canonlist[loop + 1]].sh_name;
++
++			if (strcmp(x, y) > 0) {
++				tmp = mvdata->canonlist[loop + 0];
++				mvdata->canonlist[loop + 0] =
++					mvdata->canonlist[loop + 1];
++				mvdata->canonlist[loop + 1] = tmp;
++				changed = 1;
++			}
++		}
++
++	} while(changed);
++
++	for (loop = 0; loop < canon; loop++)
++		mvdata->canonmap[mvdata->canonlist[loop]] = loop + 1;
++
++	return 0;
++
++} /* end module_verify_canonicalise() */
++
++/*****************************************************************************/
++/*
++ * extract a RELA table
++ * - need to canonicalise the entries in case section addition/removal has
++ *   rearranged the symbol table and the section table
++ */
++static int extract_elf_rela(struct module_verify_data *mvdata,
++			    int secix,
++			    const Elf_Rela *relatab, size_t nrels,
++			    const char *sh_name)
++{
++	struct {
++#if defined(MODULES_ARE_ELF32)
++		uint32_t	r_offset;
++		uint32_t	r_addend;
++		uint32_t	st_value;
++		uint32_t	st_size;
++		uint16_t	st_shndx;
++		uint8_t		r_type;
++		uint8_t		st_info;
++		uint8_t		st_other;
++#elif defined(MODULES_ARE_ELF64)
++		uint64_t	r_offset;
++		uint64_t	r_addend;
++		uint64_t	st_value;
++		uint64_t	st_size;
++		uint32_t	r_type;
++		uint16_t	st_shndx;
++		uint8_t		st_info;
++		uint8_t		st_other;
++#else
++#error unsupported module type
++#endif
++	} __attribute__((packed)) relocation;
++
++	const Elf_Rela *reloc;
++	const Elf_Sym *symbol;
++	size_t loop;
++
++	/* contribute the relevant bits from a join of { RELA, SYMBOL, SECTION } */
++	for (loop = 0; loop < nrels; loop++) {
++		int st_shndx;
++
++		reloc = &relatab[loop];
++
++		/* decode the relocation */
++		relocation.r_offset = reloc->r_offset;
++		relocation.r_addend = reloc->r_addend;
++		relocation.r_type = ELF_R_TYPE(reloc->r_info);
++
++		/* decode the symbol referenced by the relocation */
++		symbol = &mvdata->symbols[ELF_R_SYM(reloc->r_info)];
++		relocation.st_info = symbol->st_info;
++		relocation.st_other = symbol->st_other;
++		relocation.st_value = symbol->st_value;
++		relocation.st_size = symbol->st_size;
++		relocation.st_shndx = symbol->st_shndx;
++		st_shndx = symbol->st_shndx;
++
++		/* canonicalise the section used by the symbol */
++		if (st_shndx > SHN_UNDEF && st_shndx < mvdata->nsects)
++			relocation.st_shndx = mvdata->canonmap[st_shndx];
++
++		crypto_digest_update_val(mvdata, relocation);
++
++		/* undefined symbols must be named if referenced */
++		if (st_shndx == SHN_UNDEF) {
++			const char *name = mvdata->strings + symbol->st_name;
++			crypto_digest_update_data(mvdata,
++						  name, strlen(name) + 1);
++		}
++	}
++
++	_debug("%08zx %02x digested the %s section, nrels %zu\n",
++	       mvdata->signed_size, mvdata->csum, sh_name, nrels);
++
++	return 0;
++} /* end extract_elf_rela() */
++
++/*****************************************************************************/
++/*
++ *
++ */
++static int extract_elf_rel(struct module_verify_data *mvdata,
++			   int secix,
++			   const Elf_Rel *reltab, size_t nrels,
++			   const char *sh_name)
++{
++	struct {
++#if defined(MODULES_ARE_ELF32)
++		uint32_t	r_offset;
++		uint32_t	st_value;
++		uint32_t	st_size;
++		uint16_t	st_shndx;
++		uint8_t		r_type;
++		uint8_t		st_info;
++		uint8_t		st_other;
++#elif defined(MODULES_ARE_ELF64)
++		uint64_t	r_offset;
++		uint64_t	st_value;
++		uint64_t	st_size;
++		uint32_t	r_type;
++		uint16_t	st_shndx;
++		uint8_t		st_info;
++		uint8_t		st_other;
++#else
++#error unsupported module type
++#endif
++	} __attribute__((packed)) relocation;
++
++	const Elf_Rel *reloc;
++	const Elf_Sym *symbol;
++	size_t loop;
++
++	/* contribute the relevant bits from a join of { RELA, SYMBOL, SECTION } */
++	for (loop = 0; loop < nrels; loop++) {
++		int st_shndx;
++
++		reloc = &reltab[loop];
++
++		/* decode the relocation */
++		relocation.r_offset = reloc->r_offset;
++		relocation.r_type = ELF_R_TYPE(reloc->r_info);
++
++		/* decode the symbol referenced by the relocation */
++		symbol = &mvdata->symbols[ELF_R_SYM(reloc->r_info)];
++		relocation.st_info = symbol->st_info;
++		relocation.st_other = symbol->st_other;
++		relocation.st_value = symbol->st_value;
++		relocation.st_size = symbol->st_size;
++		relocation.st_shndx = symbol->st_shndx;
++		st_shndx = symbol->st_shndx;
++
++		/* canonicalise the section used by the symbol */
++		if (st_shndx > SHN_UNDEF && st_shndx < mvdata->nsects)
++			relocation.st_shndx = mvdata->canonmap[st_shndx];
++
++		crypto_digest_update_val(mvdata, relocation);
++
++		/* undefined symbols must be named if referenced */
++		if (st_shndx == SHN_UNDEF) {
++			const char *name = mvdata->strings + symbol->st_name;
++			crypto_digest_update_data(mvdata,
++						  name, strlen(name) + 1);
++		}
++	}
++
++	_debug("%08zx %02x digested the %s section, nrels %zu\n",
++	       mvdata->signed_size, mvdata->csum, sh_name, nrels);
++
++	return 0;
++} /* end extract_elf_rel() */
++
++static int __init sign_setup(char *str)
++{
++	signedonly = 1;
++	return 0;
++}
++__setup("enforcemodulesig", sign_setup);
+--- linux-2.6.12/kernel/module-verify.c.~1~	2005-08-07 17:39:38.000000000 -0700
++++ linux-2.6.12/kernel/module-verify.c	2005-08-10 00:48:43.000000000 -0700
+@@ -107,7 +107,7 @@ do { if (unlikely(!(X))) { line = __LINE
+ 	elfcheck(hdr->e_shentsize == sizeof(Elf_Shdr));
+ 
+ 	tmp = (size_t) hdr->e_shentsize * (size_t) hdr->e_shnum;
+-	elfcheck(tmp < size - hdr->e_shoff);
++	elfcheck(tmp <= size - hdr->e_shoff);
+ 
+ 	/* allocate a table to hold in-file section sizes */
+ 	mvdata->secsizes = kmalloc(hdr->e_shnum * sizeof(size_t), GFP_KERNEL);
+

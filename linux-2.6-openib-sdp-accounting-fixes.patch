@@ -1,0 +1,155 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 24 Mar 2008 14:24:29 -0400
+Subject: [openib] SDP accounting fixes
+Message-id: 1206383072-7299-9-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5 08/10] Infiniband: SDP accounting fixes
+Bugzilla: 253023
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/ulp/sdp/sdp_bcopy.c b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+index 5a1ff8d..1aeb264 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_bcopy.c
++++ b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+@@ -105,7 +105,7 @@ static void sdp_fin(struct sock *sk)
+ 	sock_set_flag(sk, SOCK_DONE);
+ 
+ 
+-	sk_mem_reclaim(sk);
++	sk_stream_mem_reclaim(sk);
+ 
+ 	if (!sock_flag(sk, SOCK_DEAD)) {
+ 		sk->sk_state_change(sk);
+@@ -684,7 +684,7 @@ static void sdp_handle_wc(struct sdp_sock *ssk, struct ib_wc *wc)
+ 		skb = sdp_send_completion(ssk, wc->wr_id);
+ 		if (unlikely(!skb))
+ 			return;
+-		sk_wmem_free_skb(&ssk->isk.sk, skb);
++		sk_stream_free_skb(&ssk->isk.sk, skb);
+ 		if (unlikely(wc->status)) {
+ 			if (wc->status != IB_WC_WR_FLUSH_ERR) {
+ 				sdp_dbg(&ssk->isk.sk,
+@@ -774,7 +774,7 @@ void sdp_work(struct work_struct *work)
+ 
+ 	sdp_poll_cq(ssk, cq);
+ 	release_sock(sk);
+-	sk_mem_reclaim(sk);
++	sk_stream_mem_reclaim(sk);
+ 	lock_sock(sk);
+ 	cq = ssk->cq;
+ 	if (unlikely(!cq))
+diff --git a/drivers/infiniband/ulp/sdp/sdp_main.c b/drivers/infiniband/ulp/sdp/sdp_main.c
+index 9616598..c85d412 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_main.c
++++ b/drivers/infiniband/ulp/sdp/sdp_main.c
+@@ -45,6 +45,7 @@
+    but for SDP HW checksum is always set, so ... */
+ 
+ #include <linux/errno.h>
++#include <linux/types.h>
+ #include <asm/checksum.h>
+ 
+ static inline
+@@ -131,7 +132,7 @@ static unsigned int sdp_keepalive_time = SDP_KEEPALIVE_TIME;
+ module_param_named(sdp_keepalive_time, sdp_keepalive_time, uint, 0644);
+ MODULE_PARM_DESC(sdp_keepalive_time, "Default idle time in seconds before keepalive probe sent.");
+ 
+-static int sdp_zcopy_thresh = 0;
++static int sdp_zcopy_thresh = 65536;
+ module_param_named(sdp_zcopy_thresh, sdp_zcopy_thresh, int, 0644);
+ MODULE_PARM_DESC(sdp_zcopy_thresh, "Zero copy send threshold; 0=0ff.");
+ 
+@@ -489,7 +490,7 @@ static void sdp_close(struct sock *sk, long timeout)
+ 		__kfree_skb(skb);
+ 	}
+ 
+-	sk_mem_reclaim(sk);
++	sk_stream_mem_reclaim(sk);
+ 
+ 	/* As outlined in draft-ietf-tcpimpl-prob-03.txt, section
+ 	 * 3.10, we send a RST here because data was lost.  To
+@@ -593,7 +594,7 @@ static int sdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+         if (addr_len < sizeof(struct sockaddr_in))
+                 return -EINVAL;
+ 
+-        if (uaddr->sa_family != AF_INET)
++        if (uaddr->sa_family != AF_INET && uaddr->sa_family != AF_INET_SDP)
+                 return -EAFNOSUPPORT;
+ 
+ 	if (!ssk->id) {
+@@ -900,6 +901,15 @@ static void sdp_shutdown(struct sock *sk, int how)
+ 	else
+ 		return;
+ 
++	/*
++	 * Just turn off CORK here.
++	 *   We could check for socket shutting down in main data path,
++	 * but this costs no extra cycles there.
++	 */
++	ssk->nonagle &= ~TCP_NAGLE_CORK;
++	if (ssk->nonagle & TCP_NAGLE_OFF)
++		ssk->nonagle |= TCP_NAGLE_PUSH;
++
+ 	sdp_post_sends(ssk, 0);
+ }
+ 
+@@ -1193,8 +1203,7 @@ static inline void skb_entail(struct sock *sk, struct sdp_sock *ssk,
+ {
+         skb_header_release(skb);
+         __skb_queue_tail(&sk->sk_write_queue, skb);
+-        sk->sk_wmem_queued += skb->truesize;
+-        sk_mem_charge(sk, skb->truesize);
++        sk_charge_skb(sk, skb);
+         if (!sk->sk_send_head)
+                 sk->sk_send_head = skb;
+         if (ssk->nonagle & TCP_NAGLE_PUSH)
+@@ -1358,7 +1367,7 @@ static inline int sdp_bcopy_get(struct sock *sk, struct sk_buff *skb,
+ 		if (copy > PAGE_SIZE - off)
+ 			copy = PAGE_SIZE - off;
+ 
+-		if (!sk_wmem_schedule(sk, copy))
++		if (!sk_stream_wmem_schedule(sk, copy))
+ 			return SDP_DO_WAIT_MEM;
+ 
+ 		if (!page) {
+@@ -1739,7 +1748,7 @@ do_fault:
+ 		if (sk->sk_send_head == skb)
+ 			sk->sk_send_head = NULL;
+ 		__skb_unlink(skb, &sk->sk_write_queue);
+-		sk_wmem_free_skb(sk, skb);
++		sk_stream_free_skb(sk, skb);
+ 	}
+ 
+ do_error:
+@@ -2034,17 +2043,27 @@ static inline unsigned int sdp_listen_poll(const struct sock *sk)
+ static unsigned int sdp_poll(struct file *file, struct socket *socket,
+ 			     struct poll_table_struct *wait)
+ {
+-	int mask;
++       unsigned int     mask;
++       struct sock     *sk  = socket->sk;
++       struct sdp_sock *ssk = sdp_sk(sk);
++
+ 	sdp_dbg_data(socket->sk, "%s\n", __func__);
+ 
+ 	mask = datagram_poll(file, socket, wait);
++
++       /*
++        * Adjust for memory in later kernels
++        */
++       if (!sk_stream_memory_free(sk) || !slots_free(ssk))
++               mask &= ~(POLLOUT | POLLWRNORM | POLLWRBAND);
++
+ 	/* TODO: Slightly ugly: it would be nicer if there was function
+ 	 * like datagram_poll that didn't include poll_wait,
+ 	 * then we could reverse the order. */
+-	if (socket->sk->sk_state == TCP_LISTEN)
+-		return sdp_listen_poll(socket->sk);
++       if (sk->sk_state == TCP_LISTEN)
++               return sdp_listen_poll(sk);
+ 
+-	if (sdp_sk(socket->sk)->urg_data & TCP_URG_VALID)
++       if (ssk->urg_data & TCP_URG_VALID)
+ 		mask |= POLLPRI;
+ 	return mask;
+ }

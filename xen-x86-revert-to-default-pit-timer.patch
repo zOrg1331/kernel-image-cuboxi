@@ -1,0 +1,67 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Fri, 15 Feb 2008 13:31:09 -0500
+Subject: [xen] x86: revert to default PIT timer
+Message-id: 47B5DA6D.70905@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Bug 428710] Kernel-xen hangs while trying to boot
+Bugzilla: 428710
+
+Resolves bz 428710
+
+This fixes a regression where the Xen Hypervisor/kernel will
+not boot on our Unisys es7000 as well as other systems with
+lots of CPUs and large memory. The failure manifests itself
+by dom0 reporting that time went backwards and getting hung
+up during initialization and eventually crashing.
+
+The problem can be worked around with boot args, but out of
+the box the systems won't work. Adjusting the amount of memory
+that the Hypervisor retains by either a dom0_mem arg or a xenheap
+arg can alleviate the issue. Also specifying a different clock
+source via a clocksource= arg will work around the problem.
+
+The underlying problem is due to a change where the default
+clock source was changed in the 3.1.2 Hypervisor. The new default
+is the ACPI pmtimer. Previously the PIT timer was used for
+these systems. The pmtimer code does not properly handle the
+situation where at Hypervisor startup, when initializing
+for a large number of CPUs and a lot of memory, interrupts
+are held off for a long period. The result of this that
+the speed parameters for CPU0 get incorrectly set. When the
+dom0 kernel starts up and reads these parameters the symptom
+occurs.
+
+The fix simply removes the pmtimer from being automatically
+selected over the PIT timer. The pmtimer can still be seleceted
+via the clocksource=pmtimer Hypervisor arg.
+
+This change is not upstream. There are various issues
+around the pmtimer that are being talked about but no
+real fix to the timer code appears to be coming forth.
+This change logically backs out a small piece of the
+3.1.2 Hypervisor rebase and reverts us to using the timers
+we have used in the past.
+
+Tested on the es7000 and desktop. Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1171497
+
+Please review and ack, thanks,
+ Bill
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Stephen Tweedie <sct@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86/time.c b/arch/x86/time.c
+index 45edc44..92c5b8c 100644
+--- a/arch/x86/time.c
++++ b/arch/x86/time.c
+@@ -554,8 +554,7 @@ static void init_platform_timer(void)
+ 
+     if ( (rc <= 0) &&
+          !init_cyclone(pts) &&
+-         !init_hpet(pts) &&
+-         !init_pmtimer(pts) )
++         !init_hpet(pts) )
+         init_pit(pts);
+ 
+     plt_mask = (u32)~0u >> (32 - pts->counter_bits);

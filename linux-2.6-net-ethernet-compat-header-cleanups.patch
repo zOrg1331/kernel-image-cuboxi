@@ -1,0 +1,46 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:53:05 -0400
+Subject: [net] ethernet: compat header cleanups
+Message-id: <20100510185050.2781.4894.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24987
+O-Subject: [RHEL5 PATCH 27/27] compat.h cleanup: print_mac() location change
+Bugzilla: 546740
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+>From 2739e139d1d77b9640f82cbb8b5e97486d27fae0 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:55:46 -0400
+Subject: [PATCH] Move print_mac to net/ethernet/eth.c
+
+Resolves 546740.
+
+diff --git a/net/ethernet/eth.c b/net/ethernet/eth.c
+index 387c71c..63ff070 100644
+--- a/net/ethernet/eth.c
++++ b/net/ethernet/eth.c
+@@ -300,3 +300,25 @@ struct net_device *alloc_etherdev(int sizeof_priv)
+ 	return alloc_netdev(sizeof_priv, "eth%d", ether_setup);
+ }
+ EXPORT_SYMBOL(alloc_etherdev);
++
++static size_t _format_mac_addr(char *buf, int buflen,
++                                const unsigned char *addr, int len)
++{
++	int i;
++	char *cp = buf;
++
++	for (i = 0; i < len; i++) {
++		cp += scnprintf(cp, buflen - (cp - buf), "%02x", addr[i]);
++		if (i == len - 1)
++			break;
++		cp += strlcpy(cp, ":", buflen - (cp - buf));
++	}
++	return cp - buf;
++}
++
++char *print_mac(char *buf, const unsigned char *addr)
++{
++	_format_mac_addr(buf, MAC_BUF_SIZE, addr, ETH_ALEN);
++	return buf;
++}
++EXPORT_SYMBOL(print_mac);

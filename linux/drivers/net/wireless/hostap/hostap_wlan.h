@@ -3,10 +3,7 @@
 
 #include <linux/wireless.h>
 #include <linux/netdevice.h>
-#include <linux/mutex.h>
 #include <net/iw_handler.h>
-#include <net/ieee80211_radiotap.h>
-#include <net/lib80211.h>
 
 #include "hostap_config.h"
 #include "hostap_common.h"
@@ -41,31 +38,20 @@ struct linux_wlan_ng_prism_hdr {
 } __attribute__ ((packed));
 
 struct linux_wlan_ng_cap_hdr {
-	__be32 version;
-	__be32 length;
-	__be64 mactime;
-	__be64 hosttime;
-	__be32 phytype;
-	__be32 channel;
-	__be32 datarate;
-	__be32 antenna;
-	__be32 priority;
-	__be32 ssi_type;
-	__be32 ssi_signal;
-	__be32 ssi_noise;
-	__be32 preamble;
-	__be32 encoding;
-} __attribute__ ((packed));
-
-struct hostap_radiotap_rx {
-	struct ieee80211_radiotap_header hdr;
-	__le64 tsft;
-	u8 rate;
-	u8 padding;
-	__le16 chan_freq;
-	__le16 chan_flags;
-	s8 dbm_antsignal;
-	s8 dbm_antnoise;
+	u32 version;
+	u32 length;
+	u64 mactime;
+	u64 hosttime;
+	u32 phytype;
+	u32 channel;
+	u32 datarate;
+	u32 antenna;
+	u32 priority;
+	u32 ssi_type;
+	s32 ssi_signal;
+	s32 ssi_noise;
+	u32 preamble;
+	u32 encoding;
 } __attribute__ ((packed));
 
 #define LWNG_CAP_DID_BASE   (4 | (1 << 6)) /* section 4, group 1 */
@@ -73,28 +59,28 @@ struct hostap_radiotap_rx {
 
 struct hfa384x_rx_frame {
 	/* HFA384X RX frame descriptor */
-	__le16 status; /* HFA384X_RX_STATUS_ flags */
-	__le32 time; /* timestamp, 1 microsecond resolution */
+	u16 status; /* HFA384X_RX_STATUS_ flags */
+	u32 time; /* timestamp, 1 microsecond resolution */
 	u8 silence; /* 27 .. 154; seems to be 0 */
 	u8 signal; /* 27 .. 154 */
 	u8 rate; /* 10, 20, 55, or 110 */
 	u8 rxflow;
-	__le32 reserved;
+	u32 reserved;
 
 	/* 802.11 */
-	__le16 frame_control;
-	__le16 duration_id;
+	u16 frame_control;
+	u16 duration_id;
 	u8 addr1[6];
 	u8 addr2[6];
 	u8 addr3[6];
-	__le16 seq_ctrl;
+	u16 seq_ctrl;
 	u8 addr4[6];
-	__le16 data_len;
+	u16 data_len;
 
 	/* 802.3 */
 	u8 dst_addr[6];
 	u8 src_addr[6];
-	__be16 len;
+	u16 len;
 
 	/* followed by frame data; max 2304 bytes */
 } __attribute__ ((packed));
@@ -102,28 +88,28 @@ struct hfa384x_rx_frame {
 
 struct hfa384x_tx_frame {
 	/* HFA384X TX frame descriptor */
-	__le16 status; /* HFA384X_TX_STATUS_ flags */
-	__le16 reserved1;
-	__le16 reserved2;
-	__le32 sw_support;
+	u16 status; /* HFA384X_TX_STATUS_ flags */
+	u16 reserved1;
+	u16 reserved2;
+	u32 sw_support;
 	u8 retry_count; /* not yet implemented */
 	u8 tx_rate; /* Host AP only; 0 = firmware, or 10, 20, 55, 110 */
-	__le16 tx_control; /* HFA384X_TX_CTRL_ flags */
+	u16 tx_control; /* HFA384X_TX_CTRL_ flags */
 
 	/* 802.11 */
-	__le16 frame_control; /* parts not used */
-	__le16 duration_id;
+	u16 frame_control; /* parts not used */
+	u16 duration_id;
 	u8 addr1[6];
 	u8 addr2[6]; /* filled by firmware */
 	u8 addr3[6];
-	__le16 seq_ctrl; /* filled by firmware */
+	u16 seq_ctrl; /* filled by firmware */
 	u8 addr4[6];
-	__le16 data_len;
+	u16 data_len;
 
 	/* 802.3 */
 	u8 dst_addr[6];
 	u8 src_addr[6];
-	__be16 len;
+	u16 len;
 
 	/* followed by frame data; max 2304 bytes */
 } __attribute__ ((packed));
@@ -131,8 +117,8 @@ struct hfa384x_tx_frame {
 
 struct hfa384x_rid_hdr
 {
-	__le16 len;
-	__le16 rid;
+	u16 len;
+	u16 rid;
 } __attribute__ ((packed));
 
 
@@ -143,78 +129,78 @@ struct hfa384x_rid_hdr
 #define HFA384X_LEVEL_TO_dBm_sign(v) (v) * 100 / 255 - 100
 
 struct hfa384x_scan_request {
-	__le16 channel_list;
-	__le16 txrate; /* HFA384X_RATES_* */
+	u16 channel_list;
+	u16 txrate; /* HFA384X_RATES_* */
 } __attribute__ ((packed));
 
 struct hfa384x_hostscan_request {
-	__le16 channel_list;
-	__le16 txrate;
-	__le16 target_ssid_len;
+	u16 channel_list;
+	u16 txrate;
+	u16 target_ssid_len;
 	u8 target_ssid[32];
 } __attribute__ ((packed));
 
 struct hfa384x_join_request {
 	u8 bssid[6];
-	__le16 channel;
+	u16 channel;
 } __attribute__ ((packed));
 
 struct hfa384x_info_frame {
-	__le16 len;
-	__le16 type;
+	u16 len;
+	u16 type;
 } __attribute__ ((packed));
 
 struct hfa384x_comm_tallies {
-	__le16 tx_unicast_frames;
-	__le16 tx_multicast_frames;
-	__le16 tx_fragments;
-	__le16 tx_unicast_octets;
-	__le16 tx_multicast_octets;
-	__le16 tx_deferred_transmissions;
-	__le16 tx_single_retry_frames;
-	__le16 tx_multiple_retry_frames;
-	__le16 tx_retry_limit_exceeded;
-	__le16 tx_discards;
-	__le16 rx_unicast_frames;
-	__le16 rx_multicast_frames;
-	__le16 rx_fragments;
-	__le16 rx_unicast_octets;
-	__le16 rx_multicast_octets;
-	__le16 rx_fcs_errors;
-	__le16 rx_discards_no_buffer;
-	__le16 tx_discards_wrong_sa;
-	__le16 rx_discards_wep_undecryptable;
-	__le16 rx_message_in_msg_fragments;
-	__le16 rx_message_in_bad_msg_fragments;
+	u16 tx_unicast_frames;
+	u16 tx_multicast_frames;
+	u16 tx_fragments;
+	u16 tx_unicast_octets;
+	u16 tx_multicast_octets;
+	u16 tx_deferred_transmissions;
+	u16 tx_single_retry_frames;
+	u16 tx_multiple_retry_frames;
+	u16 tx_retry_limit_exceeded;
+	u16 tx_discards;
+	u16 rx_unicast_frames;
+	u16 rx_multicast_frames;
+	u16 rx_fragments;
+	u16 rx_unicast_octets;
+	u16 rx_multicast_octets;
+	u16 rx_fcs_errors;
+	u16 rx_discards_no_buffer;
+	u16 tx_discards_wrong_sa;
+	u16 rx_discards_wep_undecryptable;
+	u16 rx_message_in_msg_fragments;
+	u16 rx_message_in_bad_msg_fragments;
 } __attribute__ ((packed));
 
 struct hfa384x_comm_tallies32 {
-	__le32 tx_unicast_frames;
-	__le32 tx_multicast_frames;
-	__le32 tx_fragments;
-	__le32 tx_unicast_octets;
-	__le32 tx_multicast_octets;
-	__le32 tx_deferred_transmissions;
-	__le32 tx_single_retry_frames;
-	__le32 tx_multiple_retry_frames;
-	__le32 tx_retry_limit_exceeded;
-	__le32 tx_discards;
-	__le32 rx_unicast_frames;
-	__le32 rx_multicast_frames;
-	__le32 rx_fragments;
-	__le32 rx_unicast_octets;
-	__le32 rx_multicast_octets;
-	__le32 rx_fcs_errors;
-	__le32 rx_discards_no_buffer;
-	__le32 tx_discards_wrong_sa;
-	__le32 rx_discards_wep_undecryptable;
-	__le32 rx_message_in_msg_fragments;
-	__le32 rx_message_in_bad_msg_fragments;
+	u32 tx_unicast_frames;
+	u32 tx_multicast_frames;
+	u32 tx_fragments;
+	u32 tx_unicast_octets;
+	u32 tx_multicast_octets;
+	u32 tx_deferred_transmissions;
+	u32 tx_single_retry_frames;
+	u32 tx_multiple_retry_frames;
+	u32 tx_retry_limit_exceeded;
+	u32 tx_discards;
+	u32 rx_unicast_frames;
+	u32 rx_multicast_frames;
+	u32 rx_fragments;
+	u32 rx_unicast_octets;
+	u32 rx_multicast_octets;
+	u32 rx_fcs_errors;
+	u32 rx_discards_no_buffer;
+	u32 tx_discards_wrong_sa;
+	u32 rx_discards_wep_undecryptable;
+	u32 rx_message_in_msg_fragments;
+	u32 rx_message_in_bad_msg_fragments;
 } __attribute__ ((packed));
 
 struct hfa384x_scan_result_hdr {
-	__le16 reserved;
-	__le16 scan_reason;
+	u16 reserved;
+	u16 scan_reason;
 #define HFA384X_SCAN_IN_PROGRESS 0 /* no results available yet */
 #define HFA384X_SCAN_HOST_INITIATED 1
 #define HFA384X_SCAN_FIRMWARE_INITIATED 2
@@ -224,30 +210,30 @@ struct hfa384x_scan_result_hdr {
 #define HFA384X_SCAN_MAX_RESULTS 32
 
 struct hfa384x_scan_result {
-	__le16 chid;
-	__le16 anl;
-	__le16 sl;
+	u16 chid;
+	u16 anl;
+	u16 sl;
 	u8 bssid[6];
-	__le16 beacon_interval;
-	__le16 capability;
-	__le16 ssid_len;
+	u16 beacon_interval;
+	u16 capability;
+	u16 ssid_len;
 	u8 ssid[32];
 	u8 sup_rates[10];
-	__le16 rate;
+	u16 rate;
 } __attribute__ ((packed));
 
 struct hfa384x_hostscan_result {
-	__le16 chid;
-	__le16 anl;
-	__le16 sl;
+	u16 chid;
+	u16 anl;
+	u16 sl;
 	u8 bssid[6];
-	__le16 beacon_interval;
-	__le16 capability;
-	__le16 ssid_len;
+	u16 beacon_interval;
+	u16 capability;
+	u16 ssid_len;
 	u8 ssid[32];
 	u8 sup_rates[10];
-	__le16 rate;
-	__le16 atim;
+	u16 rate;
+	u16 atim;
 } __attribute__ ((packed));
 
 struct comm_tallies_sums {
@@ -655,7 +641,7 @@ struct local_info {
 			      * when removing entries from the list.
 			      * TX and RX paths can use read lock. */
 	spinlock_t cmdlock, baplock, lock;
-	struct mutex rid_bap_mtx;
+	struct semaphore rid_bap_sem;
 	u16 infofid; /* MAC buffer id for info frame */
 	/* txfid, intransmitfid, next_txtid, and next_alloc are protected by
 	 * txfidlock */
@@ -674,7 +660,7 @@ struct local_info {
 #define HOSTAP_BITS_TRANSMIT 0
 #define HOSTAP_BITS_BAP_TASKLET 1
 #define HOSTAP_BITS_BAP_TASKLET2 2
-	unsigned long bits;
+	long bits;
 
 	struct ap_data *ap;
 
@@ -684,6 +670,7 @@ struct local_info {
 	u16 channel_mask; /* mask of allowed channels */
 	u16 scan_channel_mask; /* mask of channels to be scanned */
 	struct comm_tallies_sums comm_tallies;
+	struct net_device_stats stats;
 	struct proc_dir_entry *proc;
 	int iw_mode; /* operating mode (IW_MODE_*) */
 	int pseudo_adhoc; /* 0: IW_MODE_ADHOC is real 802.11 compliant IBSS
@@ -746,8 +733,10 @@ struct local_info {
 	unsigned long scan_timestamp; /* Time started to scan */
 	enum {
 		PRISM2_MONITOR_80211 = 0, PRISM2_MONITOR_PRISM = 1,
-		PRISM2_MONITOR_CAPHDR = 2, PRISM2_MONITOR_RADIOTAP = 3
+		PRISM2_MONITOR_CAPHDR = 2
 	} monitor_type;
+	int (*saved_eth_header_parse)(struct sk_buff *skb,
+				      unsigned char *haddr);
 	int monitor_allow_fcserr;
 
 	int hostapd; /* whether user space daemon, hostapd, is used for AP
@@ -763,7 +752,10 @@ struct local_info {
 
 #define WEP_KEYS 4
 #define WEP_KEY_LEN 13
-	struct lib80211_crypt_info crypt_info;
+	struct ieee80211_crypt_data *crypt[WEP_KEYS];
+	int tx_keyidx; /* default TX key index (crypt[tx_keyidx]) */
+	struct timer_list crypt_deinit_timer;
+	struct list_head crypt_deinit_list;
 
 	int open_wep; /* allow unencrypted frames */
 	int host_encrypt;
@@ -819,7 +811,7 @@ struct local_info {
 	int last_scan_results_count;
 	enum { PRISM2_SCAN, PRISM2_HOSTSCAN } last_scan_type;
 	struct work_struct info_queue;
-	unsigned long pending_info; /* bit field of pending info_queue items */
+	long pending_info; /* bit field of pending info_queue items */
 #define PRISM2_INFO_PENDING_LINKSTATUS 0
 #define PRISM2_INFO_PENDING_SCANRESULTS 1
 	int prev_link_status; /* previous received LinkStatus info */
@@ -915,12 +907,9 @@ struct hostap_interface {
 
 /*
  * TX meta data - stored in skb->cb buffer, so this must not be increased over
- * the 48-byte limit.
- * THE PADDING THIS STARTS WITH IS A HORRIBLE HACK THAT SHOULD NOT LIVE
- * TO SEE THE DAY.
+ * the 40-byte limit
  */
 struct hostap_skb_tx_data {
-	unsigned int __padding_for_default_qdiscs;
 	u32 magic; /* HOSTAP_SKB_TX_DATA_MAGIC */
 	u8 rate; /* transmit rate */
 #define HOSTAP_TX_FLAGS_WDS BIT(0)

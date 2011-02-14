@@ -18,6 +18,14 @@
 #ifndef	__XFS_ERROR_H__
 #define	__XFS_ERROR_H__
 
+#define XFS_ERECOVER	1	/* Failure to recover log */
+#define XFS_ELOGSTAT	2	/* Failure to stat log in user space */
+#define XFS_ENOLOGSPACE	3	/* Reservation too large */
+#define XFS_ENOTSUP	4	/* Operation not supported */
+#define	XFS_ENOLSN	5	/* Can't find the lsn you asked for */
+#define XFS_ENOTFOUND	6
+#define XFS_ENOTXFS	7	/* Not XFS filesystem */
+
 #ifdef DEBUG
 #define	XFS_ERROR_NTRAP	10
 extern int	xfs_etrap[XFS_ERROR_NTRAP];
@@ -125,22 +133,33 @@ extern void xfs_corruption_error(char *tag, int level, struct xfs_mount *mp,
 #define XFS_RANDOM_DIOWRITE_IOERR			(XFS_RANDOM_DEFAULT/10)
 #define	XFS_RANDOM_BMAPIFORMAT				XFS_RANDOM_DEFAULT
 
-#ifdef DEBUG
+#if (defined(DEBUG) || defined(INDUCE_IO_ERROR))
 extern int xfs_error_test(int, int *, char *, int, char *, unsigned long);
+extern void xfs_error_test_init(void);
 
 #define	XFS_NUM_INJECT_ERROR				10
+
+#ifdef __ANSI_CPP__
+#define XFS_TEST_ERROR(expr, mp, tag, rf)		\
+	((expr) || \
+	 xfs_error_test((tag), (mp)->m_fixedfsid, #expr, __LINE__, __FILE__, \
+			 (rf)))
+#else
 #define XFS_TEST_ERROR(expr, mp, tag, rf)		\
 	((expr) || \
 	 xfs_error_test((tag), (mp)->m_fixedfsid, "expr", __LINE__, __FILE__, \
 			(rf)))
+#endif /* __ANSI_CPP__ */
 
 extern int xfs_errortag_add(int error_tag, xfs_mount_t *mp);
-extern int xfs_errortag_clearall(xfs_mount_t *mp, int loud);
+extern int xfs_errortag_clear(int error_tag, xfs_mount_t *mp);
+extern int xfs_errortag_clearall(xfs_mount_t *mp);
+extern int xfs_errortag_clearall_umount(int64_t fsid, char *fsname, int loud);
 #else
 #define XFS_TEST_ERROR(expr, mp, tag, rf)	(expr)
 #define xfs_errortag_add(tag, mp)		(ENOSYS)
-#define xfs_errortag_clearall(mp, loud)		(ENOSYS)
-#endif /* DEBUG */
+#define xfs_errortag_clearall(mp)		(ENOSYS)
+#endif /* (DEBUG || INDUCE_IO_ERROR) */
 
 /*
  * XFS panic tags -- allow a call to xfs_cmn_err() be turned into
@@ -156,25 +175,18 @@ extern int xfs_errortag_clearall(xfs_mount_t *mp, int loud);
 #define		XFS_PTAG_SHUTDOWN_CORRUPT	0x00000010
 #define		XFS_PTAG_SHUTDOWN_IOERROR	0x00000020
 #define		XFS_PTAG_SHUTDOWN_LOGERROR	0x00000040
-#define		XFS_PTAG_FSBLOCK_ZERO		0x00000080
 
 struct xfs_mount;
-
-extern void xfs_fs_vcmn_err(int level, struct xfs_mount *mp,
-		char *fmt, va_list ap)
-	__attribute__ ((format (printf, 3, 0)));
+/* PRINTFLIKE4 */
 extern void xfs_cmn_err(int panic_tag, int level, struct xfs_mount *mp,
-			char *fmt, ...)
-	__attribute__ ((format (printf, 4, 5)));
-extern void xfs_fs_cmn_err(int level, struct xfs_mount *mp, char *fmt, ...)
-	__attribute__ ((format (printf, 3, 4)));
-
-extern void xfs_hex_dump(void *p, int length);
+			char *fmt, ...);
+/* PRINTFLIKE3 */
+extern void xfs_fs_cmn_err(int level, struct xfs_mount *mp, char *fmt, ...);
 
 #define xfs_fs_repair_cmn_err(level, mp, fmt, args...) \
 	xfs_fs_cmn_err(level, mp, fmt "  Unmount and run xfs_repair.", ## args)
 
 #define xfs_fs_mount_cmn_err(f, fmt, args...) \
-	((f & XFS_MFSI_QUIET)? (void)0 : cmn_err(CE_WARN, "XFS: " fmt, ## args))
+	((f & XFS_MFSI_QUIET)? cmn_err(CE_WARN, "XFS: " fmt, ## args) : (void)0)
 
 #endif	/* __XFS_ERROR_H__ */

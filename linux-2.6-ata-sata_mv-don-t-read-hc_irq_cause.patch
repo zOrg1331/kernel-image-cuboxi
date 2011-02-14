@@ -1,0 +1,63 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Wed, 18 Aug 2010 23:59:44 -0400
+Subject: [ata] sata_mv: don't read hc_irq_cause
+Message-id: <1282175987-21696-7-git-send-email-dmilburn@redhat.com>
+Patchwork-id: 27696
+O-Subject: [RHEL5.6 PATCH 6/9] BZ 554872 sata_mv: don't read hc_irq_cause
+Bugzilla: 554872
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+commit cae6edc3b5a536119374a5439d9b253cb26f05e1
+Author: Mark Lord <liml@rtr.ca>
+Date:   Mon Jan 19 18:05:42 2009 -0500
+
+    sata_mv: don't read hc_irq_cause
+
+BZ 544872
+
+diff --git a/drivers/ata/sata_mv.c b/drivers/ata/sata_mv.c
+index e0f0ea3..768ceb9 100644
+--- a/drivers/ata/sata_mv.c
++++ b/drivers/ata/sata_mv.c
+@@ -35,8 +35,6 @@
+  *
+  * --> Investigate problems with PCI Message Signalled Interrupts (MSI).
+  *
+- * --> Cache frequently-accessed registers in mv_port_priv to reduce overhead.
+- *
+  * --> Develop a low-power-consumption strategy, and implement it.
+  *
+  * --> [Experiment, low priority] Investigate interrupt coalescing.
+@@ -879,18 +877,14 @@ static void mv_start_dma(struct ata_port *ap, void __iomem *port_mmio,
+ 		int hardport = mv_hardport_from_port(ap->port_no);
+ 		void __iomem *hc_mmio = mv_hc_base_from_port(
+ 					mv_host_base(ap->host), ap->port_no);
+-		u32 hc_irq_cause, ipending;
++		u32 hc_irq_cause;
+ 
+ 		/* clear EDMA event indicators, if any */
+ 		writelfl(0, port_mmio + EDMA_ERR_IRQ_CAUSE_OFS);
+ 
+-		/* clear EDMA interrupt indicator, if any */
+-		hc_irq_cause = readl(hc_mmio + HC_IRQ_CAUSE_OFS);
+-		ipending = (DEV_IRQ | DMA_IRQ) << hardport;
+-		if (hc_irq_cause & ipending) {
+-			writelfl(hc_irq_cause & ~ipending,
+-				 hc_mmio + HC_IRQ_CAUSE_OFS);
+-		}
++		/* clear pending irq events */
++		hc_irq_cause = ~((DEV_IRQ | DMA_IRQ) << hardport);
++		writelfl(hc_irq_cause, hc_mmio + HC_IRQ_CAUSE_OFS);
+ 
+ 		mv_edma_cfg(ap, want_ncq);
+ 
+@@ -2821,8 +2815,7 @@ static void mv_eh_thaw(struct ata_port *ap)
+ 	writel(0, port_mmio + EDMA_ERR_IRQ_CAUSE_OFS);
+ 
+ 	/* clear pending irq events */
+-	hc_irq_cause = readl(hc_mmio + HC_IRQ_CAUSE_OFS);
+-	hc_irq_cause &= ~((DEV_IRQ | DMA_IRQ) << hardport);
++	hc_irq_cause = ~((DEV_IRQ | DMA_IRQ) << hardport);
+ 	writelfl(hc_irq_cause, hc_mmio + HC_IRQ_CAUSE_OFS);
+ 
+ 	mv_enable_port_irqs(ap, ERR_IRQ);

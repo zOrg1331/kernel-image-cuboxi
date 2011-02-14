@@ -121,14 +121,15 @@ unsigned long frv_dma_inprogress;
 /*
  * DMA irq handler - determine channel involved, grab status and call real handler
  */
-static irqreturn_t dma_irq_handler(int irq, void *_channel)
+static irqreturn_t dma_irq_handler(int irq, void *_channel, struct pt_regs *regs)
 {
 	struct frv_dma_channel *channel = _channel;
 
 	frv_clear_dma_inprogress(channel - frv_dma_channels);
 	return channel->handler(channel - frv_dma_channels,
 				__get_DMAC(channel->ioaddr, CSTR),
-				channel->data);
+				channel->data,
+				regs);
 
 } /* end dma_irq_handler() */
 

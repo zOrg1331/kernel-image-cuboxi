@@ -10,16 +10,15 @@
 #include <linux/wait.h>
 #include <linux/hash.h>
 
-void __init_waitqueue_head(wait_queue_head_t *q, struct lock_class_key *key)
+void init_waitqueue_head(wait_queue_head_t *q)
 {
 	spin_lock_init(&q->lock);
-	lockdep_set_class(&q->lock, key);
 	INIT_LIST_HEAD(&q->task_list);
 }
 
-EXPORT_SYMBOL(__init_waitqueue_head);
+EXPORT_SYMBOL(init_waitqueue_head);
 
-void add_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
+void fastcall add_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
 {
 	unsigned long flags;
 
@@ -30,7 +29,7 @@ void add_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
 }
 EXPORT_SYMBOL(add_wait_queue);
 
-void add_wait_queue_exclusive(wait_queue_head_t *q, wait_queue_t *wait)
+void fastcall add_wait_queue_exclusive(wait_queue_head_t *q, wait_queue_t *wait)
 {
 	unsigned long flags;
 
@@ -41,7 +40,7 @@ void add_wait_queue_exclusive(wait_queue_head_t *q, wait_queue_t *wait)
 }
 EXPORT_SYMBOL(add_wait_queue_exclusive);
 
-void remove_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
+void fastcall remove_wait_queue(wait_queue_head_t *q, wait_queue_t *wait)
 {
 	unsigned long flags;
 
@@ -62,9 +61,9 @@ EXPORT_SYMBOL(remove_wait_queue);
  * The spin_unlock() itself is semi-permeable and only protects
  * one way (it only protects stuff inside the critical region and
  * stops them from bleeding out - it would still allow subsequent
- * loads to move into the critical region).
+ * loads to move into the the critical region).
  */
-void
+void fastcall
 prepare_to_wait(wait_queue_head_t *q, wait_queue_t *wait, int state)
 {
 	unsigned long flags;
@@ -73,12 +72,17 @@ prepare_to_wait(wait_queue_head_t *q, wait_queue_t *wait, int state)
 	spin_lock_irqsave(&q->lock, flags);
 	if (list_empty(&wait->task_list))
 		__add_wait_queue(q, wait);
-	set_current_state(state);
+	/*
+	 * don't alter the task state if this is just going to
+	 * queue an async wait queue callback
+	 */
+	if (is_sync_wait(wait))
+		set_current_state(state);
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 EXPORT_SYMBOL(prepare_to_wait);
 
-void
+void fastcall
 prepare_to_wait_exclusive(wait_queue_head_t *q, wait_queue_t *wait, int state)
 {
 	unsigned long flags;
@@ -87,21 +91,17 @@ prepare_to_wait_exclusive(wait_queue_head_t *q, wait_queue_t *wait, int state)
 	spin_lock_irqsave(&q->lock, flags);
 	if (list_empty(&wait->task_list))
 		__add_wait_queue_tail(q, wait);
-	set_current_state(state);
+	/*
+	 * don't alter the task state if this is just going to
+ 	 * queue an async wait queue callback
+	 */
+	if (is_sync_wait(wait))
+		set_current_state(state);
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 EXPORT_SYMBOL(prepare_to_wait_exclusive);
 
-/*
- * finish_wait - clean up after waiting in a queue
- * @q: waitqueue waited on
- * @wait: wait descriptor
- *
- * Sets current thread back to running state and removes
- * the wait descriptor from the given waitqueue if still
- * queued.
- */
-void finish_wait(wait_queue_head_t *q, wait_queue_t *wait)
+void fastcall finish_wait(wait_queue_head_t *q, wait_queue_t *wait)
 {
 	unsigned long flags;
 
@@ -126,39 +126,6 @@ void finish_wait(wait_queue_head_t *q, wait_queue_t *wait)
 	}
 }
 EXPORT_SYMBOL(finish_wait);
-
-/*
- * abort_exclusive_wait - abort exclusive waiting in a queue
- * @q: waitqueue waited on
- * @wait: wait descriptor
- * @state: runstate of the waiter to be woken
- * @key: key to identify a wait bit queue or %NULL
- *
- * Sets current thread back to running state and removes
- * the wait descriptor from the given waitqueue if still
- * queued.
- *
- * Wakes up the next waiter if the caller is concurrently
- * woken up through the queue.
- *
- * This prevents waiter starvation where an exclusive waiter
- * aborts and is woken up concurrently and noone wakes up
- * the next waiter.
- */
-void abort_exclusive_wait(wait_queue_head_t *q, wait_queue_t *wait,
-			unsigned int mode, void *key)
-{
-	unsigned long flags;
-
-	__set_current_state(TASK_RUNNING);
-	spin_lock_irqsave(&q->lock, flags);
-	if (!list_empty(&wait->task_list))
-		list_del_init(&wait->task_list);
-	else if (waitqueue_active(q))
-		__wake_up_locked_key(q, mode, key);
-	spin_unlock_irqrestore(&q->lock, flags);
-}
-EXPORT_SYMBOL(abort_exclusive_wait);
 
 int autoremove_wake_function(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
@@ -190,7 +157,7 @@ EXPORT_SYMBOL(wake_bit_function);
  * waiting, the actions of __wait_on_bit() and __wait_on_bit_lock() are
  * permitted return codes. Nonzero return codes halt waiting and return.
  */
-int __sched
+int __sched fastcall
 __wait_on_bit(wait_queue_head_t *wq, struct wait_bit_queue *q,
 			int (*action)(void *), unsigned mode)
 {
@@ -206,7 +173,7 @@ __wait_on_bit(wait_queue_head_t *wq, struct wait_bit_queue *q,
 }
 EXPORT_SYMBOL(__wait_on_bit);
 
-int __sched out_of_line_wait_on_bit(void *word, int bit,
+int __sched fastcall out_of_line_wait_on_bit(void *word, int bit,
 					int (*action)(void *), unsigned mode)
 {
 	wait_queue_head_t *wq = bit_waitqueue(word, bit);
@@ -216,28 +183,25 @@ int __sched out_of_line_wait_on_bit(void *word, int bit,
 }
 EXPORT_SYMBOL(out_of_line_wait_on_bit);
 
-int __sched
+int __sched fastcall
 __wait_on_bit_lock(wait_queue_head_t *wq, struct wait_bit_queue *q,
 			int (*action)(void *), unsigned mode)
 {
-	do {
-		int ret;
+	int ret = 0;
 
+	do {
 		prepare_to_wait_exclusive(wq, &q->wait, mode);
-		if (!test_bit(q->key.bit_nr, q->key.flags))
-			continue;
-		ret = action(q->key.flags);
-		if (!ret)
-			continue;
-		abort_exclusive_wait(wq, &q->wait, mode, &q->key);
-		return ret;
+		if (test_bit(q->key.bit_nr, q->key.flags)) {
+			if ((ret = (*action)(q->key.flags)))
+				break;
+		}
 	} while (test_and_set_bit(q->key.bit_nr, q->key.flags));
 	finish_wait(wq, &q->wait);
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(__wait_on_bit_lock);
 
-int __sched out_of_line_wait_on_bit_lock(void *word, int bit,
+int __sched fastcall out_of_line_wait_on_bit_lock(void *word, int bit,
 					int (*action)(void *), unsigned mode)
 {
 	wait_queue_head_t *wq = bit_waitqueue(word, bit);
@@ -247,11 +211,11 @@ int __sched out_of_line_wait_on_bit_lock(void *word, int bit,
 }
 EXPORT_SYMBOL(out_of_line_wait_on_bit_lock);
 
-void __wake_up_bit(wait_queue_head_t *wq, void *word, int bit)
+void fastcall __wake_up_bit(wait_queue_head_t *wq, void *word, int bit)
 {
 	struct wait_bit_key key = __WAIT_BIT_KEY_INITIALIZER(word, bit);
 	if (waitqueue_active(wq))
-		__wake_up(wq, TASK_NORMAL, 1, &key);
+		__wake_up(wq, TASK_INTERRUPTIBLE|TASK_UNINTERRUPTIBLE, 1, &key);
 }
 EXPORT_SYMBOL(__wake_up_bit);
 
@@ -272,13 +236,13 @@ EXPORT_SYMBOL(__wake_up_bit);
  * may need to use a less regular barrier, such fs/inode.c's smp_mb(),
  * because spin_unlock() does not guarantee a memory barrier.
  */
-void wake_up_bit(void *word, int bit)
+void fastcall wake_up_bit(void *word, int bit)
 {
 	__wake_up_bit(bit_waitqueue(word, bit), word, bit);
 }
 EXPORT_SYMBOL(wake_up_bit);
 
-wait_queue_head_t *bit_waitqueue(void *word, int bit)
+fastcall wait_queue_head_t *bit_waitqueue(void *word, int bit)
 {
 	const int shift = BITS_PER_LONG == 32 ? 5 : 6;
 	const struct zone *zone = page_zone(virt_to_page(word));

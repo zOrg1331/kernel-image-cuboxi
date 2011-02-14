@@ -1,0 +1,51 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 16 Jul 2009 03:36:09 -0400
+Subject: [block] ll_rw_blk: more flexable read_ahead_kb store
+Message-id: 20090716073609.3545.67997.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] ll_rw_blk: allow more flexibility for read_ahead_kb store
+Bugzilla: 510257
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=510257
+
+Description:
+RHEL5 applies more restrictive checks to the setting of a device's
+read_ahead_kb parameter when setting the parameter via sysfs instead
+of via the BLKRASET ioctl.
+
+Upstream status:
+commit da20a2 fix this.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1887190
+
+KABI:
+no harm
+
+Test Status:
+Confirmed proposed patch fixed this bug.
+# echo 2048 > /sys/block/sda/queue/read_ahead_kb
+# cat /sys/block/sda/queue/read_ahead_kb
+2048
+#  blockdev --setra 4096 /dev/sda
+# cat /sys/block/sda/queue/read_ahead_kb
+2048
+
+Please review.
+
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index c9c227a..65950e9 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -3946,9 +3946,6 @@ queue_ra_store(struct request_queue *q, const char *page, size_t count)
+ 	ssize_t ret = queue_var_store(&ra_kb, page, count);
+ 
+ 	spin_lock_irq(q->queue_lock);
+-	if (ra_kb > (q->max_sectors >> 1))
+-		ra_kb = (q->max_sectors >> 1);
+-
+ 	q->backing_dev_info.ra_pages = ra_kb >> (PAGE_CACHE_SHIFT - 10);
+ 	spin_unlock_irq(q->queue_lock);
+ 

@@ -5,7 +5,7 @@
  * Cloned from Linux/m68k.
  *
  * No original Copyright holder listed,
- * Probable original (C) Roman Zippel (assigned DJD, 1999)
+ * Probabily original (C) Roman Zippel (assigned DJD, 1999)
  *
  * Copyright 1999-2000 D. Jeff Dionne, <jeff@rt-control.com>
  *
@@ -20,14 +20,12 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/bug.h>
 
 #include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/traps.h>
 #include <asm/page.h>
-
-static DEFINE_SPINLOCK(die_lock);
+#include <asm/gpio.h>
 
 /*
  * this must be called very early as the kernel might
@@ -96,19 +94,16 @@ static void dump(struct pt_regs *fp)
 	printk("\n\n");
 }
 
-void die(char *str, struct pt_regs *fp, unsigned long err)
+void die_if_kernel (char *str, struct pt_regs *fp, int nr)
 {
-	static int diecount;
+	extern int console_loglevel;
 
-	oops_enter();
+	if (!(fp->ccr & PS_S))
+		return;
 
-	console_verbose();
-	spin_lock_irq(&die_lock);
-	report_bug(fp->pc, fp);
-	printk(KERN_EMERG "%s: %04lx [#%d] ", str, err & 0xffff, ++diecount);
+	console_loglevel = 15;
 	dump(fp);
 
-	spin_unlock_irq(&die_lock);
 	do_exit(SIGSEGV);
 }
 
@@ -141,7 +136,7 @@ void show_stack(struct task_struct *task, unsigned long *esp)
 	printk("\nCall Trace:");
 	i = 0;
 	stack = esp;
-	while (((unsigned long)stack & (THREAD_SIZE - 1)) != 0) {
+	while (((unsigned long)stack & (THREAD_SIZE - 1)) == 0) {
 		addr = *stack++;
 		/*
 		 * If the address is either in the text segment of the

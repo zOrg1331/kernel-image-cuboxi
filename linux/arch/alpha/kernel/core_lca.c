@@ -19,7 +19,6 @@
 #include <linux/tty.h>
 
 #include <asm/ptrace.h>
-#include <asm/irq_regs.h>
 #include <asm/smp.h>
 
 #include "proto.h"
@@ -387,7 +386,8 @@ ioc_error(__u32 stat0, __u32 stat1)
 }
 
 void
-lca_machine_check(unsigned long vector, unsigned long la_ptr)
+lca_machine_check(unsigned long vector, unsigned long la_ptr,
+		  struct pt_regs *regs)
 {
 	const char * reason;
 	union el_lca el;
@@ -397,7 +397,7 @@ lca_machine_check(unsigned long vector, unsigned long la_ptr)
 	wrmces(rdmces());	/* reset machine check pending flag */
 
 	printk(KERN_CRIT "LCA machine check: vector=%#lx pc=%#lx code=%#x\n",
-	       vector, get_irq_regs()->pc, (unsigned int) el.c->code);
+	       vector, regs->pc, (unsigned int) el.c->code);
 
 	/*
 	 * The first quadword after the common header always seems to

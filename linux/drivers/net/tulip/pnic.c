@@ -1,6 +1,7 @@
 /*
 	drivers/net/tulip/pnic.c
 
+	Maintained by Jeff Garzik <jgarzik@pobox.com>
 	Copyright 2000,2001  The Linux Kernel Team
 	Written/copyright 1994-2001 by Donald Becker.
 
@@ -8,12 +9,13 @@
 	of the GNU General Public License, incorporated herein by reference.
 
 	Please refer to Documentation/DocBook/tulip-user.{pdf,ps,html}
-	for more information on this driver.
+	for more information on this driver, or visit the project
+	Web page at http://sourceforge.net/projects/tulip/
 
-	Please submit bugs to http://bugzilla.kernel.org/ .
 */
 
 #include <linux/kernel.h>
+#include <linux/pci.h>
 #include <linux/jiffies.h>
 #include "tulip.h"
 

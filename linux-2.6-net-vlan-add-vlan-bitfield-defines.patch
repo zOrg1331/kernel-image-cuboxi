@@ -1,0 +1,41 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 2 Sep 2010 04:02:25 -0400
+Subject: [net] vlan: add VLAN bitfield defines
+Message-id: <1283400146-18808-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 28011
+O-Subject: [PATCH RHEL5.6 1/2] vlan: add VLAN bitfield defines
+Bugzilla: 566027
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Partial backport of upstream commit:
+
+	commit 05423b241311c9380b7280179295bac7794281b6
+	Author: Eric Dumazet <eric.dumazet@gmail.com>
+	Date:   Mon Oct 26 18:40:35 2009 -0700
+
+	    vlan: allow null VLAN ID to be used
+
+I only added the new defines created here as that was really all that is
+needed to help with RHEL5 backports.
+
+This will help resolve the request in RHBZ 566027.
+
+
+diff --git a/include/linux/if_vlan.h b/include/linux/if_vlan.h
+index 6b14921..5c6a6b2 100644
+--- a/include/linux/if_vlan.h
++++ b/include/linux/if_vlan.h
+@@ -59,7 +59,11 @@ struct vlan_hdr {
+    __be16               h_vlan_encapsulated_proto; /* packet type ID field (or len) */
+ };
+ 
+-#define VLAN_VID_MASK	0xfff
++#define VLAN_PRIO_MASK		0xe000 /* Priority Code Point */
++#define VLAN_PRIO_SHIFT		13
++#define VLAN_CFI_MASK		0x1000 /* Canonical Format Indicator */
++#define VLAN_TAG_PRESENT	VLAN_CFI_MASK
++#define VLAN_VID_MASK		0x0fff /* VLAN Identifier */
+ 
+ /* found in socket.c */
+ extern void vlan_ioctl_set(int (*hook)(void __user *));

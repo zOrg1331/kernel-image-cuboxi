@@ -1,0 +1,681 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Thu, 11 Sep 2008 16:06:46 -0400
+Subject: [md] dm-log: clean interface
+Message-id: 1951551042.300251221163606490.JavaMail.root@zmail01.collab.prod.int.phx2.redhat.com
+O-Subject: Re: [RHEL 5.3 Patch 4 of 8]: device-mapper interface exposure (bz 429337)
+Bugzilla: 429337
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+Repost without unnecessary function declarations.
+
+ brassow
+
+Clean up the dm-log interface to prepare for publishing it in include/linux.
+
+Originator: Heinz Mauelshagen <hjm@redhat.com>
+Signed-off-by: Jonathan Brassow <jbrassow@redhat.com>
+
+diff --git a/drivers/md/dm-log.c b/drivers/md/dm-log.c
+index 2f46321..d4153ed 100644
+--- a/drivers/md/dm-log.c
++++ b/drivers/md/dm-log.c
+@@ -18,7 +18,7 @@
+ static LIST_HEAD(_log_types);
+ static DEFINE_SPINLOCK(_lock);
+ 
+-int dm_register_dirty_log_type(struct dirty_log_type *type)
++int dm_dirty_log_type_register(struct dm_dirty_log_type *type)
+ {
+ 	spin_lock(&_lock);
+ 	type->use_count = 0;
+@@ -27,8 +27,9 @@ int dm_register_dirty_log_type(struct dirty_log_type *type)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL(dm_dirty_log_type_register);
+ 
+-int dm_unregister_dirty_log_type(struct dirty_log_type *type)
++int dm_dirty_log_type_unregister(struct dm_dirty_log_type *type)
+ {
+ 	spin_lock(&_lock);
+ 
+@@ -42,10 +43,11 @@ int dm_unregister_dirty_log_type(struct dirty_log_type *type)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL(dm_dirty_log_type_unregister);
+ 
+-static struct dirty_log_type *_get_type(const char *type_name)
++static struct dm_dirty_log_type *_get_type(const char *type_name)
+ {
+-	struct dirty_log_type *type;
++	struct dm_dirty_log_type *type;
+ 
+ 	spin_lock(&_lock);
+ 	list_for_each_entry (type, &_log_types, list)
+@@ -67,7 +69,7 @@ static struct dirty_log_type *_get_type(const char *type_name)
+  * get_type
+  * @type_name
+  *
+- * Attempt to retrieve the dirty_log_type by name.
++ * Attempt to retrieve the dm_dirty_log_type by name.
+  * If not immediately available, attempt to find
+  * the appropriate module.
+  *
+@@ -84,12 +86,12 @@ static struct dirty_log_type *_get_type(const char *type_name)
+  *   dm-log-clustered-disk
+  *   dm-log-clustered
+  *
+- * Returns: dirty_log_type* on success, NULL on failure
++ * Returns: dm_dirty_log_type* on success, NULL on failure
+  */
+-static struct dirty_log_type *get_type(const char *type_name)
++static struct dm_dirty_log_type *get_type(const char *type_name)
+ {
+ 	char *p, *type_name_dup;
+-	struct dirty_log_type *type;
++	struct dm_dirty_log_type *type;
+ 
+ 	type = _get_type(type_name);
+ 	if (type)
+@@ -119,7 +121,7 @@ static struct dirty_log_type *get_type(const char *type_name)
+ 	return type;
+ }
+ 
+-static void put_type(struct dirty_log_type *type)
++static void put_type(struct dm_dirty_log_type *type)
+ {
+ 	spin_lock(&_lock);
+ 	if (!--type->use_count)
+@@ -127,11 +129,12 @@ static void put_type(struct dirty_log_type *type)
+ 	spin_unlock(&_lock);
+ }
+ 
+-struct dirty_log *dm_create_dirty_log(const char *type_name, struct dm_target *ti,
++struct dm_dirty_log *dm_dirty_log_create(const char *type_name,
++                                        struct dm_target *ti,
+ 				      unsigned int argc, char **argv)
+ {
+-	struct dirty_log_type *type;
+-	struct dirty_log *log;
++	struct dm_dirty_log_type *type;
++	struct dm_dirty_log *log;
+ 
+ 	log = kmalloc(sizeof(*log), GFP_KERNEL);
+ 	if (!log)
+@@ -152,13 +155,15 @@ struct dirty_log *dm_create_dirty_log(const char *type_name, struct dm_target *t
+ 
+ 	return log;
+ }
++EXPORT_SYMBOL(dm_dirty_log_create);
+ 
+-void dm_destroy_dirty_log(struct dirty_log *log)
++void dm_dirty_log_destroy(struct dm_dirty_log *log)
+ {
+ 	log->type->dtr(log);
+ 	put_type(log->type);
+ 	kfree(log);
+ }
++EXPORT_SYMBOL(dm_dirty_log_destroy);
+ 
+ /*-----------------------------------------------------------------
+  * Persistent and core logs share a lot of their implementation.
+@@ -226,7 +231,7 @@ struct log_c {
+  * The touched member needs to be updated every time we access
+  * one of the bitsets.
+  */
+-static  inline int log_test_bit(uint32_t *bs, unsigned bit)
++static inline int log_test_bit(uint32_t *bs, unsigned bit)
+ {
+ 	return ext2_test_bit(bit, (unsigned long *) bs) ? 1 : 0;
+ }
+@@ -314,7 +319,7 @@ static inline int write_header(struct log_c *log)
+  *   <region_size> [[no]sync] [block_on_error]
+  *--------------------------------------------------------------*/
+ #define BYTE_SHIFT 3
+-static int create_log_context(struct dirty_log *log, struct dm_target *ti,
++static int create_log_context(struct dm_dirty_log *log, struct dm_target *ti,
+ 			      unsigned int argc, char **argv,
+ 			      struct dm_dev *dev)
+ {
+@@ -450,7 +455,7 @@ static int create_log_context(struct dirty_log *log, struct dm_target *ti,
+ 	return 0;
+ }
+ 
+-static int core_ctr(struct dirty_log *log, struct dm_target *ti,
++static int core_ctr(struct dm_dirty_log *log, struct dm_target *ti,
+ 		    unsigned int argc, char **argv)
+ {
+ 	return create_log_context(log, ti, argc, argv, NULL);
+@@ -463,7 +468,7 @@ static void destroy_log_context(struct log_c *lc)
+ 	kfree(lc);
+ }
+ 
+-static void core_dtr(struct dirty_log *log)
++static void core_dtr(struct dm_dirty_log *log)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 
+@@ -477,7 +482,7 @@ static void core_dtr(struct dirty_log *log)
+  * argv contains 2 - 4 arguments:
+  *	<log_device> <region_size> [[no]sync] [block_on_error]
+  *--------------------------------------------------------------*/
+-static int disk_ctr(struct dirty_log *log, struct dm_target *ti,
++static int disk_ctr(struct dm_dirty_log *log, struct dm_target *ti,
+ 		    unsigned int argc, char **argv)
+ {
+ 	int r;
+@@ -502,7 +507,7 @@ static int disk_ctr(struct dirty_log *log, struct dm_target *ti,
+ 	return 0;
+ }
+ 
+-static void disk_dtr(struct dirty_log *log)
++static void disk_dtr(struct dm_dirty_log *log)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 
+@@ -537,7 +542,7 @@ static void restore_log_device(struct log_c *lc)
+ 	lc->log_dev_failed = 0;
+ }
+ 
+-static int disk_resume(struct dirty_log *log)
++static int disk_resume(struct dm_dirty_log *log)
+ {
+ 	int r;
+ 	unsigned i;
+@@ -589,43 +594,43 @@ static int disk_resume(struct dirty_log *log)
+ 	return r;
+ }
+ 
+-static uint32_t core_get_region_size(struct dirty_log *log)
++static uint32_t core_get_region_size(struct dm_dirty_log *log)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	return lc->region_size;
+ }
+ 
+-static int core_resume(struct dirty_log *log)
++static int core_resume(struct dm_dirty_log *log)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	lc->sync_search = 0;
+ 	return 0;
+ }
+ 
+-static int core_is_clean(struct dirty_log *log, region_t region)
++static int core_is_clean(struct dm_dirty_log *log, region_t region)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	return log_test_bit(lc->clean_bits, region);
+ }
+ 
+-static int core_in_sync(struct dirty_log *log, region_t region, int block)
++static int core_in_sync(struct dm_dirty_log *log, region_t region, int block)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	return log_test_bit(lc->sync_bits, region);
+ }
+ 
+-static int core_flush(struct dirty_log *log)
++static int core_flush(struct dm_dirty_log *log)
+ {
+ 	/* no op */
+ 	return 0;
+ }
+ 
+-static int disk_presuspend(struct dirty_log *log)
++static int disk_presuspend(struct dm_dirty_log *log)
+ {
+ 	return 0;
+ }
+ 
+-static int disk_flush(struct dirty_log *log)
++static int disk_flush(struct dm_dirty_log *log)
+ {
+ 	int r;
+ 	struct log_c *lc = (struct log_c *) log->context;
+@@ -644,19 +649,19 @@ static int disk_flush(struct dirty_log *log)
+ 	return r;
+ }
+ 
+-static void core_mark_region(struct dirty_log *log, region_t region)
++static void core_mark_region(struct dm_dirty_log *log, region_t region)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	log_clear_bit(lc, lc->clean_bits, region);
+ }
+ 
+-static void core_clear_region(struct dirty_log *log, region_t region)
++static void core_clear_region(struct dm_dirty_log *log, region_t region)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 	log_set_bit(lc, lc->clean_bits, region);
+ }
+ 
+-static int core_get_resync_work(struct dirty_log *log, region_t *region)
++static int core_get_resync_work(struct dm_dirty_log *log, region_t *region)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+ 
+@@ -679,7 +684,7 @@ static int core_get_resync_work(struct dirty_log *log, region_t *region)
+ 	return 1;
+ }
+ 
+-static void core_set_region_sync(struct dirty_log *log, region_t region,
++static void core_set_region_sync(struct dm_dirty_log *log, region_t region,
+ 				 int in_sync)
+ {
+ 	struct log_c *lc = (struct log_c *) log->context;
+@@ -694,7 +699,7 @@ static void core_set_region_sync(struct dirty_log *log, region_t region,
+ 	}
+ }
+ 
+-static region_t core_get_sync_count(struct dirty_log *log)
++static region_t core_get_sync_count(struct dm_dirty_log *log)
+ {
+         struct log_c *lc = (struct log_c *) log->context;
+ 
+@@ -705,7 +710,7 @@ static region_t core_get_sync_count(struct dirty_log *log)
+ 	if (lc->sync != DEFAULTSYNC) \
+ 		DMEMIT("%ssync ", lc->sync == NOSYNC ? "no" : "")
+ 
+-static int core_status(struct dirty_log *log, status_type_t status,
++static int core_status(struct dm_dirty_log *log, status_type_t status,
+ 		       char *result, unsigned int maxlen)
+ {
+ 	int sz = 0;
+@@ -730,7 +735,7 @@ static int core_status(struct dirty_log *log, status_type_t status,
+ 	return sz;
+ }
+ 
+-static int disk_status(struct dirty_log *log, status_type_t status,
++static int disk_status(struct dm_dirty_log *log, status_type_t status,
+ 		       char *result, unsigned int maxlen)
+ {
+ 	int sz = 0;
+@@ -759,14 +764,14 @@ static int disk_status(struct dirty_log *log, status_type_t status,
+ 	return sz;
+ }
+ 
+-static int core_get_failure_response(struct dirty_log *log)
++static int core_get_failure_response(struct dm_dirty_log *log)
+ {
+ 	struct log_c *lc = log->context;
+ 
+ 	return lc->failure_response;
+ }
+ 
+-static struct dirty_log_type _core_type = {
++static struct dm_dirty_log_type _core_type = {
+ 	.name = "core",
+ 	.module = THIS_MODULE,
+ 	.ctr = core_ctr,
+@@ -785,7 +790,7 @@ static struct dirty_log_type _core_type = {
+ 	.get_failure_response = core_get_failure_response,
+ };
+ 
+-static struct dirty_log_type _disk_type = {
++static struct dm_dirty_log_type _disk_type = {
+ 	.name = "disk",
+ 	.module = THIS_MODULE,
+ 	.ctr = disk_ctr,
+@@ -810,14 +815,14 @@ static int __init dm_dirty_log_init(void)
+ {
+ 	int r;
+ 
+-	r = dm_register_dirty_log_type(&_core_type);
++	r = dm_dirty_log_type_register(&_core_type);
+ 	if (r)
+ 		DMWARN("couldn't register core log");
+ 
+-	r = dm_register_dirty_log_type(&_disk_type);
++	r = dm_dirty_log_type_register(&_disk_type);
+ 	if (r) {
+ 		DMWARN("couldn't register disk type");
+-		dm_unregister_dirty_log_type(&_core_type);
++		dm_dirty_log_type_unregister(&_core_type);
+ 	}
+ 
+ 	return r;
+@@ -825,15 +830,10 @@ static int __init dm_dirty_log_init(void)
+ 
+ static void __exit dm_dirty_log_exit(void)
+ {
+-	dm_unregister_dirty_log_type(&_disk_type);
+-	dm_unregister_dirty_log_type(&_core_type);
++	dm_dirty_log_type_unregister(&_disk_type);
++	dm_dirty_log_type_unregister(&_core_type);
+ }
+ 
+-EXPORT_SYMBOL(dm_register_dirty_log_type);
+-EXPORT_SYMBOL(dm_unregister_dirty_log_type);
+-EXPORT_SYMBOL(dm_create_dirty_log);
+-EXPORT_SYMBOL(dm_destroy_dirty_log);
+-
+ module_init(dm_dirty_log_init);
+ module_exit(dm_dirty_log_exit);
+ 
+diff --git a/drivers/md/dm-log.h b/drivers/md/dm-log.h
+index ce6ca9d..d3df7f3 100644
+--- a/drivers/md/dm-log.h
++++ b/drivers/md/dm-log.h
+@@ -20,14 +20,14 @@
+ 
+ typedef sector_t region_t;
+ 
+-struct dirty_log_type;
++struct dm_dirty_log_type;
+ 
+-struct dirty_log {
+-	struct dirty_log_type *type;
++struct dm_dirty_log {
++	struct dm_dirty_log_type *type;
+ 	void *context;
+ };
+ 
+-struct dirty_log_type {
++struct dm_dirty_log_type {
+ 	uint64_t features;
+ 	struct list_head list;
+ 	const char *name;
+@@ -35,29 +35,29 @@ struct dirty_log_type {
+ 	unsigned int use_count;
+ 	unsigned int flags;
+ 
+-	int (*ctr)(struct dirty_log *log, struct dm_target *ti,
++	int (*ctr)(struct dm_dirty_log *log, struct dm_target *ti,
+ 		   unsigned int argc, char **argv);
+-	void (*dtr)(struct dirty_log *log);
++	void (*dtr)(struct dm_dirty_log *log);
+ 
+ 	/*
+ 	 * There are times when we don't want the log to touch
+ 	 * the disk.
+ 	 */
+-	int (*presuspend)(struct dirty_log *log);
+-	int (*postsuspend)(struct dirty_log *log);
+-	int (*resume)(struct dirty_log *log);
++	int (*presuspend)(struct dm_dirty_log *log);
++	int (*postsuspend)(struct dm_dirty_log *log);
++	int (*resume)(struct dm_dirty_log *log);
+ 
+ 	/*
+ 	 * Retrieves the smallest size of region that the log can
+ 	 * deal with.
+ 	 */
+-	uint32_t (*get_region_size)(struct dirty_log *log);
++	uint32_t (*get_region_size)(struct dm_dirty_log *log);
+ 
+         /*
+ 	 * A predicate to say whether a region is clean or not.
+ 	 * May block.
+ 	 */
+-	int (*is_clean)(struct dirty_log *log, region_t region);
++	int (*is_clean)(struct dm_dirty_log *log, region_t region);
+ 
+ 	/*
+ 	 *  Returns: 0, 1, -EWOULDBLOCK, < 0
+@@ -70,13 +70,14 @@ struct dirty_log_type {
+ 	 * passed to a daemon to deal with, since a daemon is
+ 	 * allowed to block.
+ 	 */
+-	int (*in_sync)(struct dirty_log *log, region_t region, int can_block);
++	int (*in_sync)(struct dm_dirty_log *log, region_t region,
++                      int can_block);
+ 
+ 	/*
+ 	 * Flush the current log state (eg, to disk).  This
+ 	 * function may block.
+ 	 */
+-	int (*flush)(struct dirty_log *log);
++	int (*flush)(struct dm_dirty_log *log);
+ 
+ 	/*
+ 	 * Mark an area as clean or dirty.  These functions may
+@@ -84,8 +85,8 @@ struct dirty_log_type {
+ 	 * be extremely rare (eg, allocating another chunk of
+ 	 * memory for some reason).
+ 	 */
+-	void (*mark_region)(struct dirty_log *log, region_t region);
+-	void (*clear_region)(struct dirty_log *log, region_t region);
++	void (*mark_region)(struct dm_dirty_log *log, region_t region);
++	void (*clear_region)(struct dm_dirty_log *log, region_t region);
+ 
+ 	/*
+ 	 * Returns: <0 (error), 0 (no region), 1 (region)
+@@ -99,32 +100,32 @@ struct dirty_log_type {
+ 	 * tells you if an area is synchronised, the other
+ 	 * assigns recovery work.
+ 	*/
+-	int (*get_resync_work)(struct dirty_log *log, region_t *region);
++	int (*get_resync_work)(struct dm_dirty_log *log, region_t *region);
+ 
+ 	/*
+ 	 * This notifies the log that the resync status of a region
+ 	 * has changed.  It also clears the region from the recovering
+ 	 * list (if present).
+ 	 */
+-	void (*set_region_sync)(struct dirty_log *log,
++	void (*set_region_sync)(struct dm_dirty_log *log,
+ 				region_t region, int in_sync);
+ 
+         /*
+ 	 * Returns the number of regions that are in sync.
+          */
+-        region_t (*get_sync_count)(struct dirty_log *log);
++        region_t (*get_sync_count)(struct dm_dirty_log *log);
+ 
+ 	/*
+ 	 * Support function for mirror status requests.
+ 	 */
+-	int (*status)(struct dirty_log *log, status_type_t status_type,
++	int (*status)(struct dm_dirty_log *log, status_type_t status_type,
+ 		      char *result, unsigned int maxlen);
+ 
+ 	/*
+ 	 * Return the code describing what to do in the event
+ 	 * of a device failure.
+ 	 */
+-	int (*get_failure_response)(struct dirty_log *log);
++	int (*get_failure_response)(struct dm_dirty_log *log);
+ 
+ 	/*
+ 	 * Returns: 0, 1
+@@ -134,21 +135,22 @@ struct dirty_log_type {
+ 	 * aren't writing concurrently.  This function is likely
+ 	 * to block (when a cluster log is used).
+ 	 */
+-	int (*is_remote_recovering)(struct dirty_log *log, region_t region);
++	int (*is_remote_recovering)(struct dm_dirty_log *log, region_t region);
+ 
+ 	int (*reserved[5])(int a);
+ };
+ 
+-int dm_register_dirty_log_type(struct dirty_log_type *type);
+-int dm_unregister_dirty_log_type(struct dirty_log_type *type);
++int dm_dirty_log_type_register(struct dm_dirty_log_type *type);
++int dm_dirty_log_type_unregister(struct dm_dirty_log_type *type);
+ 
+ 
+ /*
+  * Make sure you use these two functions, rather than calling
+  * type->constructor/destructor() directly.
+  */
+-struct dirty_log *dm_create_dirty_log(const char *type_name, struct dm_target *ti,
++struct dm_dirty_log *dm_dirty_log_create(const char *type_name,
++                                        struct dm_target *ti,
+ 				      unsigned int argc, char **argv);
+-void dm_destroy_dirty_log(struct dirty_log *log);
++void dm_dirty_log_destroy(struct dm_dirty_log *log);
+ 
+ #endif
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index 3a2a4a1..494dd63 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -69,7 +69,7 @@ struct region_hash {
+ 	unsigned region_shift;
+ 
+ 	/* holds persistent region state */
+-	struct dirty_log *log;
++	struct dm_dirty_log *log;
+ 
+ 	/* hash table */
+ 	rwlock_t hash_lock;
+@@ -172,7 +172,7 @@ static void queue_bio(struct mirror_set *ms, struct bio *bio, int rw);
+ #define MIN_REGIONS 64
+ #define MAX_RECOVERY 1
+ static int rh_init(struct region_hash *rh, struct mirror_set *ms,
+-		   struct dirty_log *log, uint32_t region_size,
++		   struct dm_dirty_log *log, uint32_t region_size,
+ 		   region_t nr_regions)
+ {
+ 	unsigned int nr_buckets, max_buckets;
+@@ -237,7 +237,7 @@ static void rh_exit(struct region_hash *rh)
+ 	}
+ 
+ 	if (rh->log)
+-		dm_destroy_dirty_log(rh->log);
++		dm_dirty_log_destroy(rh->log);
+ 	if (rh->region_pool)
+ 		mempool_destroy(rh->region_pool);
+ 	vfree(rh->buckets);
+@@ -766,7 +766,7 @@ static void do_recovery(struct mirror_set *ms)
+ {
+ 	int r;
+ 	struct region *reg;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	/*
+ 	 * Start quiescing some regions.
+@@ -1021,7 +1021,7 @@ static void __bio_mark_nosync(struct mirror_set *ms,
+ {
+ 	unsigned long flags;
+ 	struct region_hash *rh = &ms->rh;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 	struct region *reg;
+ 	region_t region = bio_to_region(rh, bio);
+ 	int recovering = 0;
+@@ -1138,7 +1138,7 @@ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
+ 	struct bio *bio;
+ 	struct bio_list sync, nosync, recover, *this_list = NULL;
+ 	struct bio_list requeue;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 	region_t region;
+ 
+ 	if (!writes->head)
+@@ -1222,7 +1222,7 @@ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
+ static void do_failures(struct mirror_set *ms, struct bio_list *failures)
+ {
+ 	struct bio *bio;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	if (!failures->head)
+ 		return;
+@@ -1304,7 +1304,7 @@ static void do_work(void *data)
+ static struct mirror_set *alloc_context(unsigned int nr_mirrors,
+ 					uint32_t region_size,
+ 					struct dm_target *ti,
+-					struct dirty_log *dl)
++					struct dm_dirty_log *dl)
+ {
+ 	size_t len;
+ 	struct mirror_set *ms = NULL;
+@@ -1396,12 +1396,12 @@ static int get_mirror(struct mirror_set *ms, struct dm_target *ti,
+ /*
+  * Create dirty log: log_type #log_params <log_params>
+  */
+-static struct dirty_log *create_dirty_log(struct dm_target *ti,
++static struct dm_dirty_log *create_dirty_log(struct dm_target *ti,
+ 					  unsigned int argc, char **argv,
+ 					  unsigned int *args_used)
+ {
+ 	unsigned int param_count;
+-	struct dirty_log *dl;
++	struct dm_dirty_log *dl;
+ 
+ 	if (argc < 2) {
+ 		ti->error = "Insufficient mirror log arguments";
+@@ -1420,7 +1420,7 @@ static struct dirty_log *create_dirty_log(struct dm_target *ti,
+ 		return NULL;
+ 	}
+ 
+-	dl = dm_create_dirty_log(argv[0], ti, param_count, argv + 2);
++	dl = dm_dirty_log_create(argv[0], ti, param_count, argv + 2);
+ 	if (!dl) {
+ 		ti->error = "Error creating mirror dirty log";
+ 		return NULL;
+@@ -1428,7 +1428,7 @@ static struct dirty_log *create_dirty_log(struct dm_target *ti,
+ 
+ 	if (!_check_region_size(ti, dl->type->get_region_size(dl))) {
+ 		ti->error = "Invalid region size";
+-		dm_destroy_dirty_log(dl);
++		dm_dirty_log_destroy(dl);
+ 		return NULL;
+ 	}
+ 
+@@ -1449,7 +1449,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 	int r;
+ 	unsigned int nr_mirrors, m, args_used;
+ 	struct mirror_set *ms;
+-	struct dirty_log *dl;
++	struct dm_dirty_log *dl;
+ 
+ 	dl = create_dirty_log(ti, argc, argv, &args_used);
+ 	if (!dl)
+@@ -1461,7 +1461,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 	if (!argc || sscanf(argv[0], "%u", &nr_mirrors) != 1 ||
+ 	    nr_mirrors < 2 || nr_mirrors > KCOPYD_MAX_REGIONS + 1) {
+ 		ti->error = "Invalid number of mirrors";
+-		dm_destroy_dirty_log(dl);
++		dm_dirty_log_destroy(dl);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1469,13 +1469,13 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 
+ 	if (argc != nr_mirrors * 2) {
+ 		ti->error = "Wrong number of mirror arguments";
+-		dm_destroy_dirty_log(dl);
++		dm_dirty_log_destroy(dl);
+ 		return -EINVAL;
+ 	}
+ 
+ 	ms = alloc_context(nr_mirrors, dl->type->get_region_size(dl), ti, dl);
+ 	if (!ms) {
+-		dm_destroy_dirty_log(dl);
++		dm_dirty_log_destroy(dl);
+ 		return -ENOMEM;
+ 	}
+ 
+@@ -1672,7 +1672,7 @@ out:
+ static void mirror_presuspend(struct dm_target *ti)
+ {
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	atomic_set(&ms->suspend, 1);
+ 
+@@ -1701,7 +1701,7 @@ static void mirror_presuspend(struct dm_target *ti)
+ static void mirror_postsuspend(struct dm_target *ti)
+ {
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	if (log->type->postsuspend && log->type->postsuspend(log))
+ 		/* FIXME: need better error handling */
+@@ -1711,7 +1711,7 @@ static void mirror_postsuspend(struct dm_target *ti)
+ static void mirror_resume(struct dm_target *ti)
+ {
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+-	struct dirty_log *log = ms->rh.log;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	atomic_set(&ms->suspend, 0);
+ 	if (log->type->resume && log->type->resume(log))

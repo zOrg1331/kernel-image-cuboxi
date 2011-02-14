@@ -1,0 +1,246 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Mon, 8 Mar 2010 21:10:46 -0500
+Subject: [cpu] fix amd l3 cache disable functionality
+Message-id: <20100308211046.GB32500@redhat.com>
+Patchwork-id: 23515
+O-Subject: [RHEL5 PATCH 2/2] Fix amd cache disable functionality
+Bugzilla: 517586
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Bugzilla #517586
+
+Backports the following upstream changesets (authored by AMD) to fix amd
+cache disable functionality:
+
+1. dcf39daf3d6d97f8741e82f0b9fb7554704ed2d1
+2. 897de50e08937663912c86fb12ad7f708af2386c
+3. 048a8774ca43488d78605031f11cc206d7a2682a
+4. f619b3d8427eb57f0134dab75b0d217325c72411
+
+Also backports some additional helper functions utilized by the latest
+upstream code, albeit in a private manner, due to differences in file
+layout post-i386/x86_64 merge upstream.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index c181137..81c2c40 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -33,6 +33,36 @@ struct _cache_table
+ 	short size;
+ };
+ 
++/* from include/linux/bitops.h upstream */
++#define BIT(nr)		(1UL << (nr))
++
++/* wbinvd code from arch/x86/lib/cache-smp.c upstream */
++static void __wbinvd(void *dummy)
++{
++	wbinvd();
++}
++
++static void wbinvd_on_cpu(int cpu)
++{
++	smp_call_function_single(cpu, __wbinvd, NULL, 0, 1);
++}
++
++static int wbinvd_on_all_cpus(void)
++{
++	return on_each_cpu(__wbinvd, NULL, 0, 1);
++}
++
++/* from arch/x86/kernel/cpu/amd.c upstream */
++static int amd_get_nb_id(int cpu)
++{
++	int id = 0;
++#ifdef CONFIG_SMP
++	id = cpu_llc_id[cpu];
++#endif
++	return id;
++}
++/* end backport bits */
++
+ /* all the cache descriptor types we care about (no TLB or trace cache entries) */
+ static struct _cache_table cache_table[] __cpuinitdata =
+ {
+@@ -132,7 +162,8 @@ struct _cpuid4_info {
+ 	union _cpuid4_leaf_ebx ebx;
+ 	union _cpuid4_leaf_ecx ecx;
+ 	unsigned long size;
+-	unsigned long can_disable;
++	bool can_disable;
++	unsigned int l3_indices;
+ 	cpumask_t shared_cpu_map;
+ };
+ 
+@@ -262,6 +293,29 @@ static void __cpuinit amd_cpuid4(int leaf, union _cpuid4_leaf_eax *eax,
+ 		(ebx->split.ways_of_associativity + 1) - 1;
+ }
+ 
++static unsigned int __cpuinit amd_calc_l3_indices(void)
++{
++	/*
++	 * We're called over smp_call_function_single() and therefore
++	 * are on the correct cpu.
++	 */
++	int cpu = smp_processor_id();
++	int node = cpu_to_node(cpu);
++	struct pci_dev *dev = node_to_k8_nb_misc(node);
++	unsigned int sc0, sc1, sc2, sc3;
++	u32 val = 0;
++
++	pci_read_config_dword(dev, 0x1C4, &val);
++
++	/* calculate subcache sizes */
++	sc0 = !(val & BIT(0));
++	sc1 = !(val & BIT(4));
++	sc2 = !(val & BIT(8))  + !(val & BIT(9));
++	sc3 = !(val & BIT(12)) + !(val & BIT(13));
++
++	return (max(max(max(sc0, sc1), sc2), sc3) << 10) - 1;
++}
++
+ static void __cpuinit
+ amd_check_l3_disable(int index, struct _cpuid4_info *this_leaf)
+ {
+@@ -271,11 +325,14 @@ amd_check_l3_disable(int index, struct _cpuid4_info *this_leaf)
+ 	if (boot_cpu_data.x86 == 0x11)
+ 		return;
+ 
+-	/* see erratum #382 */
+-	if ((boot_cpu_data.x86 == 0x10) && (boot_cpu_data.x86_model < 0x8))
++	/* see erratum #382 and #388 */
++	if ((boot_cpu_data.x86 == 0x10) &&
++	    ((boot_cpu_data.x86_model < 0x8) ||
++	     (boot_cpu_data.x86_mask  < 0x1)))
+ 		return;
+ 
+-	this_leaf->can_disable = 1;
++	this_leaf->can_disable = true;
++	this_leaf->l3_indices  = amd_calc_l3_indices();
+ }
+ 
+ static int __cpuinit cpuid4_cache_lookup(int index, struct _cpuid4_info *this_leaf)
+@@ -658,7 +715,7 @@ static ssize_t show_cache_disable(struct _cpuid4_info *this_leaf, char *buf,
+ 				  unsigned int index)
+ {
+ 	int cpu = first_cpu(this_leaf->shared_cpu_map);
+-	int node = cpu_to_node(cpu);
++	int node = amd_get_nb_id(cpu);
+ 	struct pci_dev *dev = node_to_k8_nb_misc(node);
+ 	unsigned int reg = 0;
+ 
+@@ -669,7 +726,7 @@ static ssize_t show_cache_disable(struct _cpuid4_info *this_leaf, char *buf,
+ 		return -EINVAL;
+ 
+ 	pci_read_config_dword(dev, 0x1BC + index * 4, &reg);
+-	return sprintf(buf, "%x\n", reg);
++	return sprintf(buf, "0x%08x\n", reg);
+ }
+ 
+ #define SHOW_CACHE_DISABLE(index)					\
+@@ -685,10 +742,12 @@ static ssize_t store_cache_disable(struct _cpuid4_info *this_leaf,
+ 	const char *buf, size_t count, unsigned int index)
+ {
+ 	int cpu = first_cpu(this_leaf->shared_cpu_map);
+-	int node = cpu_to_node(cpu);
++	int node = amd_get_nb_id(cpu);
+ 	struct pci_dev *dev = node_to_k8_nb_misc(node);
+ 	unsigned long val = 0;
+-	unsigned int scrubber = 0;
++
++#define SUBCACHE_MASK  (3UL << 20)
++#define SUBCACHE_INDEX 0xfff
+ 
+ 	if (!this_leaf->can_disable)
+ 		return -EINVAL;
+@@ -699,18 +758,22 @@ static ssize_t store_cache_disable(struct _cpuid4_info *this_leaf,
+ 	if (!dev)
+ 		return -EINVAL;
+ 
+-	if (simple_strtoul(buf, (char **)(10), (unsigned int)(&val)) < 0)
++	if (strict_strtoul(buf, 10, &val) < 0)
+ 		return -EINVAL;
+ 
+-	val |= 0xc0000000;
+-
+-	pci_read_config_dword(dev, 0x58, &scrubber);
+-	scrubber &= ~0x1f000000;
+-	pci_write_config_dword(dev, 0x58, scrubber);
++	/* do not allow writes outside of allowed bits */
++	if ((val & ~(SUBCACHE_MASK | SUBCACHE_INDEX)) ||
++	    ((val & SUBCACHE_INDEX) > this_leaf->l3_indices))
++		return -EINVAL;
+ 
+-	pci_write_config_dword(dev, 0x1BC + index * 4, val & ~0x40000000);
+-	wbinvd();
++	val |= BIT(30);
+ 	pci_write_config_dword(dev, 0x1BC + index * 4, val);
++	/*
++	 * We need to WBINVD on a core on the node containing the L3 cache which
++	 * indices we disable therefore a simple wbinvd() is not sufficient.
++	 */
++	wbinvd_on_cpu(cpu);
++	pci_write_config_dword(dev, 0x1BC + index * 4, val | BIT(31));
+ 	return count;
+ }
+ 
+@@ -748,15 +811,23 @@ static struct _cache_attr cache_disable_0 = __ATTR(cache_disable_0, 0644,
+ static struct _cache_attr cache_disable_1 = __ATTR(cache_disable_1, 0644,
+ 		show_cache_disable_1, store_cache_disable_1);
+ 
+-static struct attribute * default_attrs[] = {
+-	&type.attr,
+-	&level.attr,
+-	&coherency_line_size.attr,
+-	&physical_line_partition.attr,
+-	&ways_of_associativity.attr,
+-	&number_of_sets.attr,
+-	&size.attr,
+-	&shared_cpu_map.attr,
++#define DEFAULT_SYSFS_CACHE_ATTRS	\
++	&type.attr,			\
++	&level.attr,			\
++	&coherency_line_size.attr,	\
++	&physical_line_partition.attr,	\
++	&ways_of_associativity.attr,	\
++	&number_of_sets.attr,		\
++	&size.attr,			\
++	&shared_cpu_map.attr
++
++static struct attribute *default_attrs[] = {
++	DEFAULT_SYSFS_CACHE_ATTRS,
++	NULL
++};
++
++static struct attribute *default_l3_attrs[] = {
++	DEFAULT_SYSFS_CACHE_ATTRS,
+ 	&cache_disable_0.attr,
+ 	&cache_disable_1.attr,
+ 	NULL
+@@ -848,6 +919,7 @@ static int __cpuinit cache_add_dev(struct sys_device * sys_dev)
+ 	unsigned int cpu = sys_dev->id;
+ 	unsigned long i, j;
+ 	struct _index_kobject *this_object;
++	struct _cpuid4_info   *this_leaf;
+ 	int retval = 0;
+ 
+ 	retval = cpuid4_cache_sysfs_init(cpu);
+@@ -863,6 +935,14 @@ static int __cpuinit cache_add_dev(struct sys_device * sys_dev)
+ 		this_object = INDEX_KOBJECT_PTR(cpu,i);
+ 		this_object->cpu = cpu;
+ 		this_object->index = i;
++
++		this_leaf = CPUID4_INFO_IDX(cpu, i);
++
++		if (this_leaf->can_disable)
++			ktype_cache.default_attrs = default_l3_attrs;
++		else
++			ktype_cache.default_attrs = default_attrs;
++
+ 		this_object->kobj.parent = cache_kobject[cpu];
+ 		kobject_set_name(&(this_object->kobj), "index%1lu", i);
+ 		this_object->kobj.ktype = &ktype_cache;

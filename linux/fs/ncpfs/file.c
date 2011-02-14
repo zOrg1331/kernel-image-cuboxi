@@ -17,7 +17,6 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/sched.h>
 #include <linux/smp_lock.h>
 
 #include <linux/ncp_fs.h>
@@ -102,7 +101,7 @@ out:
 static ssize_t
 ncp_file_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
-	struct dentry *dentry = file->f_path.dentry;
+	struct dentry *dentry = file->f_dentry;
 	struct inode *inode = dentry->d_inode;
 	size_t already_read = 0;
 	off_t pos;
@@ -183,7 +182,7 @@ outrel:
 static ssize_t
 ncp_file_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
-	struct dentry *dentry = file->f_path.dentry;
+	struct dentry *dentry = file->f_dentry;
 	struct inode *inode = dentry->d_inode;
 	size_t already_written = 0;
 	off_t pos;
@@ -204,6 +203,7 @@ ncp_file_write(struct file *file, const char __user *buf, size_t count, loff_t *
 
 	if (pos + count > MAX_NON_LFS && !(file->f_flags&O_LARGEFILE)) {
 		if (pos >= MAX_NON_LFS) {
+			send_sig(SIGXFSZ, current, 0);
 			return -EFBIG;
 		}
 		if (count > MAX_NON_LFS - (u32)pos) {
@@ -212,6 +212,7 @@ ncp_file_write(struct file *file, const char __user *buf, size_t count, loff_t *
 	}
 	if (pos >= inode->i_sb->s_maxbytes) {
 		if (count || pos > inode->i_sb->s_maxbytes) {
+			send_sig(SIGXFSZ, current, 0);
 			return -EFBIG;
 		}
 	}
@@ -282,30 +283,18 @@ static int ncp_release(struct inode *inode, struct file *file) {
 	return 0;
 }
 
-static loff_t ncp_remote_llseek(struct file *file, loff_t offset, int origin)
-{
-	loff_t ret;
-	lock_kernel();
-	ret = generic_file_llseek_unlocked(file, offset, origin);
-	unlock_kernel();
-	return ret;
-}
-
 const struct file_operations ncp_file_operations =
 {
-	.llseek 	= ncp_remote_llseek,
+	.llseek		= remote_llseek,
 	.read		= ncp_file_read,
 	.write		= ncp_file_write,
 	.ioctl		= ncp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= ncp_compat_ioctl,
-#endif
 	.mmap		= ncp_mmap,
 	.release	= ncp_release,
 	.fsync		= ncp_fsync,
 };
 
-const struct inode_operations ncp_file_inode_operations =
+struct inode_operations ncp_file_inode_operations =
 {
 	.setattr	= ncp_notify_change,
 };

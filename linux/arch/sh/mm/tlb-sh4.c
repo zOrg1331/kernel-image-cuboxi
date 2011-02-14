@@ -4,26 +4,53 @@
  * SH-4 specific TLB operations
  *
  * Copyright (C) 1999  Niibe Yutaka
- * Copyright (C) 2002 - 2007 Paul Mundt
+ * Copyright (C) 2002  Paul Mundt
  *
  * Released under the terms of the GNU GPL v2.0.
  */
+#include <linux/signal.h>
+#include <linux/sched.h>
 #include <linux/kernel.h>
+#include <linux/errno.h>
+#include <linux/string.h>
+#include <linux/types.h>
+#include <linux/ptrace.h>
+#include <linux/mman.h>
 #include <linux/mm.h>
-#include <linux/io.h>
+#include <linux/smp.h>
+#include <linux/smp_lock.h>
+#include <linux/interrupt.h>
+
 #include <asm/system.h>
+#include <asm/io.h>
+#include <asm/uaccess.h>
+#include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 
-void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
+void update_mmu_cache(struct vm_area_struct * vma,
+		      unsigned long address, pte_t pte)
 {
-	unsigned long flags, pteval, vpn;
+	unsigned long flags;
+	unsigned long pteval;
+	unsigned long vpn;
+	struct page *page;
+	unsigned long pfn;
+	unsigned long ptea;
 
-	/*
-	 * Handle debugger faulting in for debugee.
-	 */
+	/* Ptrace may call this routine. */
 	if (vma && current->active_mm != vma->vm_mm)
 		return;
+
+	pfn = pte_pfn(pte);
+	if (pfn_valid(pfn)) {
+		page = pfn_to_page(pfn);
+		if (!test_bit(PG_mapped, &page->flags)) {
+			unsigned long phys = pte_val(pte) & PTE_PHYS_MASK;
+			__flush_wback_region((void *)P1SEGADDR(phys), PAGE_SIZE);
+			__set_bit(PG_mapped, &page->flags);
+		}
+	}
 
 	local_irq_save(flags);
 
@@ -31,29 +58,15 @@ void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
 	vpn = (address & MMU_VPN_MASK) | get_asid();
 	ctrl_outl(vpn, MMU_PTEH);
 
-	pteval = pte.pte_low;
-
+	pteval = pte_val(pte);
 	/* Set PTEA register */
-#ifdef CONFIG_X2TLB
-	/*
-	 * For the extended mode TLB this is trivial, only the ESZ and
-	 * EPR bits need to be written out to PTEA, with the remainder of
-	 * the protection bits (with the exception of the compat-mode SZ
-	 * and PR bits, which are cleared) being written out in PTEL.
-	 */
-	ctrl_outl(pte.pte_high, MMU_PTEA);
-#else
-	if (cpu_data->flags & CPU_HAS_PTEA) {
-		/* The last 3 bits and the first one of pteval contains
-		 * the PTEA timing control and space attribute bits
-		 */
-		ctrl_outl(copy_ptea_attributes(pteval), MMU_PTEA);
-	}
-#endif
+	/* TODO: make this look less hacky */
+	ptea = ((pteval >> 28) & 0xe) | (pteval & 0x1);
+	ctrl_outl(ptea, MMU_PTEA);
 
 	/* Set PTEL register */
 	pteval &= _PAGE_FLAGS_HARDWARE_MASK; /* drop software flags */
-#ifdef CONFIG_CACHE_WRITETHROUGH
+#ifdef CONFIG_SH_WRITETHROUGH
 	pteval |= _PAGE_WT;
 #endif
 	/* conveniently, we want all the software flags to be 0 anyway */
@@ -64,8 +77,7 @@ void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
 	local_irq_restore(flags);
 }
 
-void __uses_jump_to_uncached local_flush_tlb_one(unsigned long asid,
-						 unsigned long page)
+void __flush_tlb_page(unsigned long asid, unsigned long page)
 {
 	unsigned long addr, data;
 
@@ -77,7 +89,8 @@ void __uses_jump_to_uncached local_flush_tlb_one(unsigned long asid,
 	 */
 	addr = MMU_UTLB_ADDRESS_ARRAY | MMU_PAGE_ASSOC_BIT;
 	data = page | asid; /* VALID bit is off */
-	jump_to_uncached();
+	jump_to_P2();
 	ctrl_outl(data, addr);
-	back_to_cached();
+	back_to_P1();
 }
+

@@ -1,0 +1,39 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 21 Nov 2008 14:32:20 -0500
+Subject: [xen] increase maximum DMA buffer size
+Message-id: 20081121143220.08a94702@cuia.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 3/3] xen: increase maximum DMA buffer size
+Bugzilla: 412691
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+After more investigation, we have got the reason of the panic. Currently
+xen reserve 128M DMA buffer at most, while the on-board graphic card requires
+256M memory. With following patch + xen patch + your patch in comments 30+31,
+everything works quite well.
+
+Fixes bug 412691
+
+Signed-off-by: Jiang, Yunhong <yunhong.jiang@intel.com>
+Signed-off-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86/domain_build.c b/arch/x86/domain_build.c
+index c72c300..8dcf816 100644
+--- a/arch/x86/domain_build.c
++++ b/arch/x86/domain_build.c
+@@ -138,12 +138,12 @@ static unsigned long __init compute_dom0_nr_pages(void)
+     /*
+      * If domain 0 allocation isn't specified, reserve 1/16th of available
+      * memory for things like DMA buffers. This reservation is clamped to 
+-     * a maximum of 128MB.
++     * a maximum of 384MB.
+      */
+     if ( dom0_nrpages == 0 )
+     {
+         dom0_nrpages = avail;
+-        dom0_nrpages = min(dom0_nrpages / 16, 128L << (20 - PAGE_SHIFT));
++        dom0_nrpages = min(dom0_nrpages / 8, 384L << (20 - PAGE_SHIFT));
+         dom0_nrpages = -dom0_nrpages;
+     } else {
+         /* User specified a dom0_size.  Do not clamp the maximum. */

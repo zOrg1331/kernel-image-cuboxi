@@ -1,0 +1,57 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:56:15 +0100
+Subject: [s390] qeth: hipersockets supports IP packets only
+Message-id: 20071116125615.GN6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 6/14] s390 - qeth: HiperSockets (layer-3) supports IP packets only.
+Bugzilla: 329991
+
+Description
+============
+
+HiperSockets layer3 interface supports IP packets only. Non IPv4 or
+IPv6 packets disturbs TCP/IP stack on z/VM, which logs message
+about invalid packet. HiperSockets layer3 will drop non IPv4 or
+IPv6 packets and increase drop counter of hsi interface.
+
+Bugzilla
+=========
+
+BZ 329991
+https://bugzilla.redhat.com/show_bug.cgi?id=329991
+
+Upstream status of the patch:
+=============================
+Patch has been submitted for upstream integration:
+http://www.mail-archive.com/netdev@vger.kernel.org/msg46306.html
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 3724956..0150f93 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -4608,9 +4608,15 @@ qeth_send_packet(struct qeth_card *card, struct sk_buff *skb)
+ 	if (card->info.type != QETH_CARD_TYPE_IQD)
+ 		rc = qeth_do_send_packet(card, queue, new_skb, hdr,
+ 					 elements_needed, ctx);
+-	else
++	else {
++		if ((!card->options.layer2) &&
++		    (ipv == 0)) {
++			__qeth_free_new_skb(skb, new_skb);
++			return -EPERM;
++		}
+ 		rc = qeth_do_send_packet_fast(card, queue, new_skb, hdr,
+ 					      elements_needed, ctx);
++	}
+ 	if (!rc) {
+ 		card->stats.tx_packets++;
+ 		card->stats.tx_bytes += tx_bytes;

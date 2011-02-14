@@ -1,0 +1,348 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:36 +1100
+Subject: [ipsec] add async resume support on input
+Message-id: E1JBNlQ-0001CD-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 21/32] [IPSEC]: Add async resume support on input
+Bugzilla: 253051
+
+[IPSEC]: Add async resume support on input
+
+This patch adds support for async resumptions on input.  To do so, the
+transform would return -EINPROGRESS and subsequently invoke the
+function xfrm_input_resume to resume processing.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index b5541af..fff9c4c 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -15,6 +15,7 @@
+ 
+ #include <net/sock.h>
+ #include <net/dst.h>
++#include <net/ip.h>
+ #include <net/route.h>
+ #include <net/ipv6.h>
+ #include <net/ip6_fib.h>
+@@ -371,6 +372,22 @@ struct xfrm_mgr
+ extern int xfrm_register_km(struct xfrm_mgr *km);
+ extern int xfrm_unregister_km(struct xfrm_mgr *km);
+ 
++/*
++ * This structure is used for the duration where packets are being
++ * transformed by IPsec.  As soon as the packet leaves IPsec the
++ * area beyond the generic IP part may be overwritten.
++ */
++struct xfrm_skb_cb {
++	union {
++		struct inet_skb_parm h4;
++		struct inet6_skb_parm h6;
++        } header;
++
++        /* Sequence number for replay protection. */
++        u64 seq;
++};
++
++#define XFRM_SKB_CB(__skb) ((struct xfrm_skb_cb *)&((__skb)->cb[0]))
+ 
+ extern struct xfrm_policy *xfrm_policy_list[XFRM_POLICY_MAX*2];
+ 
+@@ -926,12 +943,14 @@ extern int xfrm_state_check(struct xfrm_state *x, struct sk_buff *skb);
+ extern int xfrm_state_mtu(struct xfrm_state *x, int mtu);
+ extern int xfrm_init_state(struct xfrm_state *x);
+ extern int xfrm4_rcv(struct sk_buff *skb);
++extern int xfrm4_input_resume(struct sk_buff *skb, int err);
+ extern int xfrm4_output(struct sk_buff *skb);
+ extern int xfrm4_output_resume(struct sk_buff *skb, int err);
+ extern int xfrm4_tunnel_register(struct xfrm_tunnel *handler);
+ extern int xfrm4_tunnel_deregister(struct xfrm_tunnel *handler);
+ extern int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi);
+ extern int xfrm6_rcv(struct sk_buff **pskb);
++extern int xfrm6_input_resume(struct sk_buff *skb, int nexthdr);
+ extern int xfrm6_tunnel_register(struct xfrm6_tunnel *handler);
+ extern int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler);
+ extern u32 xfrm6_tunnel_alloc_spi(xfrm_address_t *saddr);
+@@ -1045,5 +1064,9 @@ static inline void xfrm_aevent_doreplay(struct xfrm_state *x)
+ 		xfrm_replay_notify(x, XFRM_REPLAY_UPDATE);
+ }
+ 
++static inline struct xfrm_state *xfrm_input_state(struct sk_buff *skb)
++{
++        return skb->sp->xvec[skb->sp->len - 1];
++}
+ 
+ #endif	/* _NET_XFRM_H */
+diff --git a/net/ipv4/Makefile b/net/ipv4/Makefile
+index c3d9bfa..78867e0 100644
+--- a/net/ipv4/Makefile
++++ b/net/ipv4/Makefile
+@@ -11,6 +11,7 @@ obj-y     := route.o inetpeer.o protocol.o \
+ 	     datagram.o raw.o udp.o arp.o icmp.o devinet.o af_inet.o igmp.o \
+ 	     sysctl_net_ipv4.o fib_frontend.o fib_semantics.o
+ 
++xfrm4_esp-objs += xfrm4_ninput.o
+ xfrm4_esp-objs += xfrm4_noutput.o
+ obj-$(CONFIG_INET_ESP) += xfrm4_esp.o
+ 
+diff --git a/net/ipv4/xfrm4_ninput.c b/net/ipv4/xfrm4_ninput.c
+new file mode 100644
+index 0000000..7c08856
+--- /dev/null
++++ b/net/ipv4/xfrm4_ninput.c
+@@ -0,0 +1,121 @@
++/*
++ * xfrm4_ninput.c
++ *
++ * Changes:
++ *	YOSHIFUJI Hideaki @USAGI
++ *		Split up af-specific portion
++ *	Derek Atkins <derek@ihtfp.com>
++ *		Add Encapsulation support
++ * 	
++ */
++
++#include <linux/module.h>
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv4.h>
++#include <net/ip.h>
++#include <net/xfrm.h>
++
++static int xfrm4_rcv_encap_finish(struct sk_buff *skb)
++{
++	struct iphdr *iph = skb->nh.iph;
++
++	if (skb->dst == NULL) {
++		if (ip_route_input(skb, iph->daddr, iph->saddr, iph->tos,
++		                   skb->dev))
++			goto drop;
++	}
++	return dst_input(skb);
++drop:
++	kfree_skb(skb);
++	return NET_RX_DROP;
++}
++
++int xfrm4_input_resume(struct sk_buff *skb, int err)
++{
++	u32 spi, seq;
++	struct xfrm_state *x;
++	int decaps = 0;
++
++	x = skb->sp->xvec[skb->sp->len - 1];
++	seq = XFRM_SKB_CB(skb)->seq;
++	spin_lock(&x->lock);
++	goto resume;
++
++	do {
++		struct iphdr *iph = skb->nh.iph;
++
++		if (skb->sp->len == XFRM_MAX_DEPTH)
++			goto drop;
++
++		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, iph->protocol, AF_INET);
++		if (x == NULL)
++			goto drop;
++
++		skb->sp->xvec[skb->sp->len++] = x;
++
++		spin_lock(&x->lock);
++		if (unlikely(x->km.state != XFRM_STATE_VALID))
++			goto drop_unlock;
++
++		if (x->props.replay_window && xfrm_replay_check(x, seq))
++			goto drop_unlock;
++
++		if (xfrm_state_check_expire(x))
++			goto drop_unlock;
++
++		XFRM_SKB_CB(skb)->seq = seq;
++
++		err = x->type->input(x, skb);
++
++resume:
++		if (err)
++			goto drop_unlock;
++
++		if (x->props.replay_window)
++			xfrm_replay_advance(x, seq);
++
++		x->curlft.bytes += skb->len;
++		x->curlft.packets++;
++
++		spin_unlock(&x->lock);
++
++		if (x->mode->input(x, skb))
++			goto drop;
++
++		if (x->props.mode) {
++			decaps = 1;
++			break;
++		}
++
++		if ((err = xfrm_parse_spi(skb, skb->nh.iph->protocol, &spi, &seq)) < 0)
++			goto drop;
++	} while (!err);
++
++	nf_reset(skb);
++
++	if (decaps) {
++		if (!(skb->dev->flags&IFF_LOOPBACK)) {
++			dst_release(skb->dst);
++			skb->dst = NULL;
++		}
++		netif_rx(skb);
++		return 0;
++	} else {
++		__skb_push(skb, skb->data - skb->nh.raw);
++		skb->nh.iph->tot_len = htons(skb->len);
++		ip_send_check(skb->nh.iph);
++
++		NF_HOOK(PF_INET, NF_IP_PRE_ROUTING, skb, skb->dev, NULL,
++		        xfrm4_rcv_encap_finish);
++		return 0;
++	}
++
++drop_unlock:
++	spin_unlock(&x->lock);
++	if (err == -EINPROGRESS)
++		return 0;
++drop:
++	kfree_skb(skb);
++	return 0;
++}
++EXPORT_SYMBOL(xfrm4_input_resume);
+diff --git a/net/ipv6/Makefile b/net/ipv6/Makefile
+index 31a9c61..f97c175 100644
+--- a/net/ipv6/Makefile
++++ b/net/ipv6/Makefile
+@@ -16,6 +16,7 @@ ipv6-$(CONFIG_NETFILTER) += netfilter.o
+ ipv6-$(CONFIG_IPV6_MULTIPLE_TABLES) += fib6_rules.o
+ ipv6-objs += $(ipv6-y)
+ 
++xfrm6_esp-objs += xfrm6_ninput.o
+ xfrm6_esp-objs += xfrm6_noutput.o
+ obj-$(CONFIG_INET6_ESP) += xfrm6_esp.o
+ 
+diff --git a/net/ipv6/xfrm6_ninput.c b/net/ipv6/xfrm6_ninput.c
+new file mode 100644
+index 0000000..1778693
+--- /dev/null
++++ b/net/ipv6/xfrm6_ninput.c
+@@ -0,0 +1,114 @@
++/*
++ * xfrm6_ninput.c: based on net/ipv4/xfrm4_input.c
++ *
++ * Authors:
++ *	Mitsuru KANDA @USAGI
++ * 	Kazunori MIYAZAWA @USAGI
++ * 	Kunihiro Ishiguro <kunihiro@ipinfusion.com>
++ *	YOSHIFUJI Hideaki @USAGI
++ *		IPv6 support
++ */
++
++#include <linux/module.h>
++#include <linux/string.h>
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv6.h>
++#include <net/ipv6.h>
++#include <net/xfrm.h>
++
++int xfrm6_input_resume(struct sk_buff *skb, int nexthdr)
++{
++	int err;
++	int spi;
++	u32 seq;
++	struct xfrm_state *x;
++	int decaps = 0;
++	unsigned int nhoff;
++
++	nhoff = IP6CB(skb)->nhoff;
++	x = skb->sp->xvec[skb->sp->len - 1];
++	seq = XFRM_SKB_CB(skb)->seq;
++	spin_lock(&x->lock);
++	goto resume;
++
++	do {
++		struct ipv6hdr *iph = skb->nh.ipv6h;
++
++		if (skb->sp->len == XFRM_MAX_DEPTH)
++			goto drop;
++
++		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, nexthdr, AF_INET6);
++		if (x == NULL)
++			goto drop;
++
++		skb->sp->xvec[skb->sp->len++] = x;
++
++		spin_lock(&x->lock);
++		if (unlikely(x->km.state != XFRM_STATE_VALID))
++			goto drop_unlock;
++
++		if (x->props.replay_window && xfrm_replay_check(x, seq))
++			goto drop_unlock;
++
++		if (xfrm_state_check_expire(x))
++			goto drop_unlock;
++
++		XFRM_SKB_CB(skb)->seq = seq;
++
++		nexthdr = x->type->input(x, skb);
++
++resume:
++		if (nexthdr <= 0)
++			goto drop_unlock;
++
++		skb->nh.raw[nhoff] = nexthdr;
++
++		if (x->props.replay_window)
++			xfrm_replay_advance(x, seq);
++
++		x->curlft.bytes += skb->len;
++		x->curlft.packets++;
++
++		spin_unlock(&x->lock);
++
++		if (x->mode->input(x, skb))
++			goto drop;
++
++		if (x->props.mode) { /* XXX */
++			decaps = 1;
++			break;
++		}
++
++		if ((err = xfrm_parse_spi(skb, nexthdr, &spi, &seq)) < 0)
++			goto drop;
++	} while (!err);
++
++	skb->ip_summed = CHECKSUM_NONE;
++
++	nf_reset(skb);
++
++	if (decaps) {
++		if (!(skb->dev->flags&IFF_LOOPBACK)) {
++			dst_release(skb->dst);
++			skb->dst = NULL;
++		}
++		netif_rx(skb);
++		return -1;
++	} else {
++		skb->nh.ipv6h->payload_len = htons(skb->len);
++		__skb_push(skb, skb->data - skb->nh.raw);
++
++		NF_HOOK(PF_INET6, NF_IP6_PRE_ROUTING, skb, skb->dev, NULL,
++		        dst_input);
++		return -1;
++	}
++
++drop_unlock:
++	spin_unlock(&x->lock);
++	if (nexthdr == -EINPROGRESS)
++		return -1;
++drop:
++	kfree_skb(skb);
++	return -1;
++}
++EXPORT_SYMBOL(xfrm6_input_resume);

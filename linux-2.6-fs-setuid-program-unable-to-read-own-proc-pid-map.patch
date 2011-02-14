@@ -1,0 +1,52 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] 221173 - setuid program unable to read its own /proc/pid/maps file after giving up root privileges
+Date: Fri, 12 Jan 2007 13:40:48 -0500
+Bugzilla: 221173
+Message-Id: <20070112184048.GA17525@dyn448102.cambridge.ibm.com>
+Changelog: [fs] setuid program unable to read own /proc/pid/maps file
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=221173
+
+Description:
+------------
+Set-uid programs cannot read their own /proc/pid/maps file
+after giving up root privilege.
+
+
+RHEL Version Found:
+------------------
+RHEL5 RC1.
+
+Upstream Status:
+----------------
+In 2.6.19, in RHEL4 U5, in FC6 and rawhide.
+
+Test Status:
+------------
+Tested on a machine without the patch and with the patch. Without the patch
+test program cannot read the /proc/pid/map. With the patch the test
+program can read /proc/pid/map.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-1.3002
+
+diff -uNpr linux-2.6.18.i686.orig/fs/proc/base.c linux-2.6.18.i686/fs/proc/base.c
+--- linux-2.6.18.i686.orig/fs/proc/base.c	2007-01-12 11:22:15.000000000 -0500
++++ linux-2.6.18.i686/fs/proc/base.c	2007-01-12 11:23:37.000000000 -0500
+@@ -208,7 +208,7 @@ static struct pid_entry tgid_base_stuff[
+ 	E(PROC_TGID_CMDLINE,   "cmdline", S_IFREG|S_IRUGO),
+ 	E(PROC_TGID_STAT,      "stat",    S_IFREG|S_IRUGO),
+ 	E(PROC_TGID_STATM,     "statm",   S_IFREG|S_IRUGO),
+-	E(PROC_TGID_MAPS,      "maps",    S_IFREG|S_IRUSR),
++	E(PROC_TGID_MAPS,      "maps",    S_IFREG|S_IRUGO),
+ #ifdef CONFIG_NUMA
+ 	E(PROC_TGID_NUMA_MAPS, "numa_maps", S_IFREG|S_IRUGO),
+ #endif
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

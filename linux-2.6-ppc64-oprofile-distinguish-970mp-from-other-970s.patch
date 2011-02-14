@@ -1,0 +1,68 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Wed, 12 Dec 2007 14:03:35 -0500
+Subject: [ppc64] oprofile: distinguish 970MP from other 970s
+Message-id: Pine.LNX.4.64.0712121402550.19799@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz216458 distinguish PPC 970MP from other 970s in oprofile kernel mod
+Bugzilla: 216458
+
+Bug 216458 [1]
+---------------
+
+Description:
+-----------
+Kernel code for Oprofile does not distinguish PPC 970MP from the other 970
+variants.  The 970MP uses different event counters for profiling L2 cache
+behavior than the other 970s and so Oprofile and PAPI need to treat it as
+a different architecture.
+
+This patch will allow oprofile to see the processor as a 970MP.
+
+An upgrade of oprofile from 0.9.2 to 0.9.3 would (per bug 253109) would
+provide a solution to 232041, and thus we would also need this patch.
+
+I am posting this patch now, to make sure it gets in before the patch
+deadline.  However, I have not been able to verify whether or not the
+oprofile user space bug will be fixed.  Please do not pull this patch into
+RHEL5u2 if it is not.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-58
+
+Upstream Status:
+---------------
+These changes are present upstream with commit
+fecb352f6bb86564b24ecbf7e5bfec09346b9327
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-58 at [2].
+
+I have verified that oprofile is working with these kernel changes
+additionally, /dev/oprofile/cpu_type gets initialized to ppc64/970MP.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=216458
+[2]:http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1070129
+--
+ Note                           |    4 ----
+ arch/powerpc/kernel/cputable.c |    2 +-
+ 2 files changed, 1 insertion(+), 5 deletions(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/kernel/cputable.c b/arch/powerpc/kernel/cputable.c
+index f0228bd..d1ab8e0 100644
+--- a/arch/powerpc/kernel/cputable.c
++++ b/arch/powerpc/kernel/cputable.c
+@@ -215,7 +215,7 @@ static struct cpu_spec cpu_specs[] = {
+ 		.dcache_bsize		= 128,
+ 		.num_pmcs		= 8,
+ 		.cpu_setup		= __setup_cpu_ppc970,
+-		.oprofile_cpu_type	= "ppc64/970",
++		.oprofile_cpu_type	= "ppc64/970MP",
+ 		.oprofile_type		= PPC_OPROFILE_POWER4,
+ 		.platform		= "ppc970",
+ 	},

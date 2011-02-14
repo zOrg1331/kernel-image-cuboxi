@@ -24,10 +24,10 @@
  *              re-write/remove debug printks
  */
 
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
@@ -47,10 +47,27 @@
 #undef DEBUG_FRAG
 
 
+
+/*
+ *  task queue struct
+ */
+
+
+
+/*
+ *  Layer 3 packet demultiplexer
+ *  drv.c
+ */
+
+extern void pcbit_l3_receive(struct pcbit_dev *dev, ulong msg,
+			     struct sk_buff *skb,
+			     ushort hdr_len, ushort refnum);
+
 /*
  *  Prototypes
  */
 
+void pcbit_deliver(void *data);
 static void pcbit_transmit(struct pcbit_dev *dev);
 
 static void pcbit_recv_ack(struct pcbit_dev *dev, unsigned char ack);
@@ -84,7 +101,7 @@ pcbit_l2_write(struct pcbit_dev *dev, ulong msg, ushort refnum,
 		dev_kfree_skb(skb);
 		return -1;
 	}
-	if ((frame = kmalloc(sizeof(struct frame_buf),
+	if ((frame = (struct frame_buf *) kmalloc(sizeof(struct frame_buf),
 						  GFP_ATOMIC)) == NULL) {
 		printk(KERN_WARNING "pcbit_2_write: kmalloc failed\n");
 		dev_kfree_skb(skb);
@@ -282,12 +299,11 @@ pcbit_transmit(struct pcbit_dev *dev)
  */
 
 void
-pcbit_deliver(struct work_struct *work)
+pcbit_deliver(void *data)
 {
 	struct frame_buf *frame;
 	unsigned long flags, msg;
-	struct pcbit_dev *dev =
-		container_of(work, struct pcbit_dev, qdelivery);
+	struct pcbit_dev *dev = (struct pcbit_dev *) data;
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -295,7 +311,6 @@ pcbit_deliver(struct work_struct *work)
 		dev->read_queue = frame->next;
 		spin_unlock_irqrestore(&dev->lock, flags);
 
-		msg = 0;
 		SET_MSG_CPU(msg, 0);
 		SET_MSG_PROC(msg, 0);
 		SET_MSG_CMD(msg, frame->skb->data[2]);
@@ -348,16 +363,18 @@ pcbit_receive(struct pcbit_dev *dev)
 		if (dev->read_frame) {
 			printk(KERN_DEBUG "pcbit_receive: Type 0 frame and read_frame != NULL\n");
 			/* discard previous queued frame */
-			kfree_skb(dev->read_frame->skb);
+			if (dev->read_frame->skb)
+				kfree_skb(dev->read_frame->skb);
 			kfree(dev->read_frame);
 			dev->read_frame = NULL;
 		}
-		frame = kzalloc(sizeof(struct frame_buf), GFP_ATOMIC);
+		frame = kmalloc(sizeof(struct frame_buf), GFP_ATOMIC);
 
 		if (frame == NULL) {
 			printk(KERN_WARNING "kmalloc failed\n");
 			return;
 		}
+		memset(frame, 0, sizeof(struct frame_buf));
 
 		cpu = pcbit_readb(dev);
 		proc = pcbit_readb(dev);
@@ -495,7 +512,7 @@ pcbit_firmware_bug(struct pcbit_dev *dev)
 }
 
 irqreturn_t
-pcbit_irq_handler(int interrupt, void *devptr)
+pcbit_irq_handler(int interrupt, void *devptr, struct pt_regs *regs)
 {
 	struct pcbit_dev *dev;
 	u_char info,
@@ -601,7 +618,8 @@ pcbit_l2_err_recover(unsigned long data)
 	dev->w_busy = dev->r_busy = 1;
 
 	if (dev->read_frame) {
-		kfree_skb(dev->read_frame->skb);
+		if (dev->read_frame->skb)
+			kfree_skb(dev->read_frame->skb);
 		kfree(dev->read_frame);
 		dev->read_frame = NULL;
 	}

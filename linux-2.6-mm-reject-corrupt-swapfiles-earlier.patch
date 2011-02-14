@@ -1,0 +1,73 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5 PATCH] - reject corrupt swapfiles earlier
+Date: Wed, 22 Nov 2006 23:06:55 -0600
+Bugzilla: 213118
+Message-Id: <45652C6F.1010409@redhat.com>
+Changelog: mm: reject corrupt swapfiles earlier
+
+
+This is for bugzilla:
+
+213118: fsfuzzer generated corrupted swapfile image triggers OOM kills
+
+This patch is in -mm as of tonight.
+
+-Eric
+p.s. to those in the US, have a happy thanksgiving!  :) 
+
+-----
+
+The fsfuzzer found this; with a corrupt small swapfile that claims to have
+many pages:
+
+[root]# file swap.741.img 
+swap.741.img: Linux/i386 swap file (new style) 1 (4K pages) size 1040191487 
+pages
+[root]# ls -l swap.741.img 
+-rw-r--r-- 1 root root 16777216 Nov 22 05:18 swap.741.img
+
+sys_swapon() will try to vmalloc all those pages, and -then- check to see if
+the file is actually that large:
+
+             if (!(p->swap_map = vmalloc(maxpages * sizeof(short)))) {
+<snip>
+     if (swapfilesize && maxpages > swapfilesize) {
+             printk(KERN_WARNING
+                    "Swap area shorter than signature indicates\n");
+
+It seems to me that it would make more sense to move this test up before the
+vmalloc, with the other checks, to avoid the OOM-killer in this situation...
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+
+
+Index: linux-2.6.18/mm/swapfile.c
+===================================================================
+--- linux-2.6.18.orig/mm/swapfile.c
++++ linux-2.6.18/mm/swapfile.c
+@@ -1544,6 +1544,11 @@ asmlinkage long sys_swapon(const char __
+		error = -EINVAL;
+		if (!maxpages)
+			goto bad_swap;
++		if (swapfilesize && maxpages > swapfilesize) {
++			printk(KERN_WARNING
++			       "Swap area shorter than signature indicates\n");
++			goto bad_swap;
++		}
+		if (swap_header->info.nr_badpages && S_ISREG(inode->i_mode))
+			goto bad_swap;
+		if (swap_header->info.nr_badpages > MAX_SWAP_BADPAGES)
+@@ -1571,12 +1576,6 @@ asmlinkage long sys_swapon(const char __
+			goto bad_swap;
+	}
+
+-	if (swapfilesize && maxpages > swapfilesize) {
+-		printk(KERN_WARNING
+-		       "Swap area shorter than signature indicates\n");
+-		error = -EINVAL;
+-		goto bad_swap;
+-	}
+	if (nr_good_pages) {
+		p->swap_map[0] = SWAP_MAP_BAD;
+		p->max = maxpages;
+

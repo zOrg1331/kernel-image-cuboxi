@@ -84,7 +84,7 @@ static int __init validate_parameters(void)
 
 	if(!bridge) {
 		info("not configured, disabling.");
-		return -EINVAL;
+		return 1;
 	}
 	str = bridge;
 	if(!*str)
@@ -147,25 +147,19 @@ static int __init cpcihp_generic_init(void)
 
 	info(DRIVER_DESC " version: " DRIVER_VERSION);
 	status = validate_parameters();
-	if (status)
+	if(status != 0)
 		return status;
 
 	r = request_region(port, 1, "#ENUM hotswap signal register");
 	if(!r)
 		return -EBUSY;
 
-	bus = pci_find_bus(0, bridge_busnr);
-	if (!bus) {
-		err("Invalid bus number %d", bridge_busnr);
-		return -EINVAL;
-	}
-	dev = pci_get_slot(bus, PCI_DEVFN(bridge_slot, 0));
+	dev = pci_find_slot(bridge_busnr, PCI_DEVFN(bridge_slot, 0));
 	if(!dev || dev->hdr_type != PCI_HEADER_TYPE_BRIDGE) {
 		err("Invalid bridge device %s", bridge);
 		return -EINVAL;
 	}
 	bus = dev->subordinate;
-	pci_dev_put(dev);
 
 	memset(&generic_hpc, 0, sizeof (struct cpci_hp_controller));
 	generic_hpc_ops.query_enum = query_enum;

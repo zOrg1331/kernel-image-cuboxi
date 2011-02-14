@@ -1,0 +1,547 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 18 Aug 2009 16:59:32 -0400
+Subject: [misc] saner FASYNC handling on file close
+Message-id: <1250614772-3268-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 20751
+O-Subject: [RHEL5.5 PATCH v2] BZ510746: saner FASYNC handling on file close
+Bugzilla: 510746
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=510746
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1932337
+
+Upstream:
+    http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=233e70f
+    http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e5bc49b
+
+This bug is related to the SCM_RIGHTS DoS of bug 470201, in that it is
+triggered by the same testcase.  It is not as serious, however, because
+this is just a WARN_ON_ONCE rather than a kernel panic.
+
+This is a backport of an upstream cleanup patch whose comment was
+as follows:
+
+    As it is, all instances of ->release() for files that have ->fasync()
+    need to remember to evict file from fasync lists; forgetting that
+    creates a hole and we actually have a bunch that *does* forget.
+
+    So let's keep our lives simple - let __fput() check FASYNC in
+    file->f_flags and call ->fasync() there if it's been set.  And lose that
+    crap in ->release() instances - leaving it there is still valid, but we
+    don't have to bother anymore.
+
+    Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+It fixes the bug just by virtue of removing the code path leading to the
+"BUG: warning at kernel/softirq.c:138/local_bh_enable()" in the current
+RHEL5 kernel.  I cannot exclude in principle that a more complicated
+testcase involving FASYNC still exhibits the bug.
+
+Compared to v1, I squashed in Oleg's suggested patch (the second listed
+above), fixing a preexisting memory leak that this patch alone would
+turn into a crash.
+
+v1 was tested by Jan Tluka on RHTS for the Bugzilla testcase.  The
+difference between v1 and v2 is only related to pipes, so I tested it
+using some test code using FASYNC on pipes.  I couldn't reproduce any
+kind of crash though.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Cc: Prarit Bhargava <prarit@redhat.com>
+Cc: Oleg Nesterov <oleg@redhat.com>
+
+ drivers/char/hpet.c                   |    3 ---
+ drivers/char/ipmi/ipmi_devintf.c      |    2 --
+ drivers/char/ipmi/ipmi_watchdog.c     |    1 -
+ drivers/char/rtc.c                    |    3 ---
+ drivers/char/sonypi.c                 |    1 -
+ drivers/ieee1394/dv1394.c             |    3 ---
+ drivers/infiniband/core/uverbs_main.c |    2 --
+ drivers/input/evdev.c                 |    1 -
+ drivers/input/joydev.c                |    2 --
+ drivers/input/misc/hp_sdc_rtc.c       |   13 -------------
+ drivers/input/mousedev.c              |    2 --
+ drivers/input/serio/serio_raw.c       |    1 -
+ drivers/message/i2o/i2o_config.c      |   21 +++++----------------
+ drivers/net/tun.c                     |    2 --
+ drivers/rtc/rtc-dev.c                 |    3 ---
+ drivers/scsi/megaraid/megaraid_sas.c  |   12 ------------
+ drivers/scsi/sg.c                     |    1 -
+ drivers/telephony/ixj.c               |    1 -
+ drivers/uio/uio.c                     |    3 ---
+ drivers/usb/gadget/inode.c            |    1 -
+ fs/file_table.c                       |    4 ++++
+ fs/fuse/dev.c                         |    1 -
+ fs/pipe.c                             |   11 ++++-------
+ net/socket.c                          |    1 -
+ sound/core/control.c                  |    1 -
+ sound/core/init.c                     |    5 ++++-
+ sound/core/pcm_native.c               |    1 -
+ sound/core/timer.c                    |    1 -
+ 28 files changed, 17 insertions(+), 86 deletions(-)
+
+diff --git a/drivers/char/hpet.c b/drivers/char/hpet.c
+index 8afba33..aff9be4 100644
+--- a/drivers/char/hpet.c
++++ b/drivers/char/hpet.c
+@@ -340,9 +340,6 @@ static int hpet_release(struct inode *inode, struct file *file)
+ 	if (irq)
+ 		free_irq(irq, devp);
+ 
+-	if (file->f_flags & FASYNC)
+-		hpet_fasync(-1, file, 0);
+-
+ 	file->private_data = NULL;
+ 	return 0;
+ }
+diff --git a/drivers/char/ipmi/ipmi_devintf.c b/drivers/char/ipmi/ipmi_devintf.c
+index 2e70748..f67b789 100644
+--- a/drivers/char/ipmi/ipmi_devintf.c
++++ b/drivers/char/ipmi/ipmi_devintf.c
+@@ -157,8 +157,6 @@ static int ipmi_release(struct inode *inode, struct file *file)
+ 	if (rv)
+ 		return rv;
+ 
+-	ipmi_fasync (-1, file, 0);
+-
+ 	/* FIXME - free the messages in the list. */
+ 	kfree(priv);
+ 
+diff --git a/drivers/char/ipmi/ipmi_watchdog.c b/drivers/char/ipmi/ipmi_watchdog.c
+index 23ce321..23b14a4 100644
+--- a/drivers/char/ipmi/ipmi_watchdog.c
++++ b/drivers/char/ipmi/ipmi_watchdog.c
+@@ -820,7 +820,6 @@ static int ipmi_close(struct inode *ino, struct file *filep)
+ 		clear_bit(0, &ipmi_wdog_open);
+ 	}
+ 
+-	ipmi_fasync (-1, filep, 0);
+ 	expect_close = 0;
+ 
+ 	return 0;
+diff --git a/drivers/char/rtc.c b/drivers/char/rtc.c
+index bb0e5a3..85b0074 100644
+--- a/drivers/char/rtc.c
++++ b/drivers/char/rtc.c
+@@ -760,9 +760,6 @@ static int rtc_release(struct inode *inode, struct file *file)
+ 	}
+ 	spin_unlock_irq(&rtc_lock);
+ 
+-	if (file->f_flags & FASYNC) {
+-		rtc_fasync (-1, file, 0);
+-	}
+ no_irq:
+ #endif
+ 
+diff --git a/drivers/char/sonypi.c b/drivers/char/sonypi.c
+index d4e434d..e7de47c 100644
+--- a/drivers/char/sonypi.c
++++ b/drivers/char/sonypi.c
+@@ -938,7 +938,6 @@ static int sonypi_misc_fasync(int fd, struct file *filp, int on)
+ 
+ static int sonypi_misc_release(struct inode *inode, struct file *file)
+ {
+-	sonypi_misc_fasync(-1, file, 0);
+ 	down(&sonypi_device.lock);
+ 	sonypi_device.open_count--;
+ 	up(&sonypi_device.lock);
+diff --git a/drivers/ieee1394/dv1394.c b/drivers/ieee1394/dv1394.c
+index 87532dd..a774525 100644
+--- a/drivers/ieee1394/dv1394.c
++++ b/drivers/ieee1394/dv1394.c
+@@ -1836,9 +1836,6 @@ static int dv1394_release(struct inode *inode, struct file *file)
+ 	/* OK to free the DMA buffer, no more mappings can exist */
+ 	do_dv1394_shutdown(video, 1);
+ 
+-	/* clean up async I/O users */
+-	dv1394_fasync(-1, file, 0);
+-
+ 	/* give someone else a turn */
+ 	clear_bit(0, &video->open);
+ 
+diff --git a/drivers/infiniband/core/uverbs_main.c b/drivers/infiniband/core/uverbs_main.c
+index 68b75e7..151a411 100644
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -358,8 +358,6 @@ static int ib_uverbs_event_close(struct inode *inode, struct file *filp)
+ 	}
+ 	spin_unlock_irq(&file->lock);
+ 
+-	ib_uverbs_event_fasync(-1, filp, 0);
+-
+ 	if (file->is_async) {
+ 		ib_unregister_event_handler(&file->uverbs_file->event_handler);
+ 		kref_put(&file->uverbs_file->ref, ib_uverbs_release_file);
+diff --git a/drivers/input/evdev.c b/drivers/input/evdev.c
+index 4bf4818..df834a5 100644
+--- a/drivers/input/evdev.c
++++ b/drivers/input/evdev.c
+@@ -109,7 +109,6 @@ static int evdev_release(struct inode * inode, struct file * file)
+ 		list->evdev->grab = NULL;
+ 	}
+ 
+-	evdev_fasync(-1, file, 0);
+ 	list_del(&list->node);
+ 
+ 	if (!--list->evdev->open) {
+diff --git a/drivers/input/joydev.c b/drivers/input/joydev.c
+index d671575..87e0a46 100644
+--- a/drivers/input/joydev.c
++++ b/drivers/input/joydev.c
+@@ -149,8 +149,6 @@ static int joydev_release(struct inode * inode, struct file * file)
+ {
+ 	struct joydev_list *list = file->private_data;
+ 
+-	joydev_fasync(-1, file, 0);
+-
+ 	list_del(&list->node);
+ 
+ 	if (!--list->joydev->open) {
+diff --git a/drivers/input/misc/hp_sdc_rtc.c b/drivers/input/misc/hp_sdc_rtc.c
+index 1be9639..1f2ce29 100644
+--- a/drivers/input/misc/hp_sdc_rtc.c
++++ b/drivers/input/misc/hp_sdc_rtc.c
+@@ -69,7 +69,6 @@ static int hp_sdc_rtc_ioctl(struct inode *inode, struct file *file,
+ static unsigned int hp_sdc_rtc_poll(struct file *file, poll_table *wait);
+ 
+ static int hp_sdc_rtc_open(struct inode *inode, struct file *file);
+-static int hp_sdc_rtc_release(struct inode *inode, struct file *file);
+ static int hp_sdc_rtc_fasync (int fd, struct file *filp, int on);
+ 
+ static int hp_sdc_rtc_read_proc(char *page, char **start, off_t off,
+@@ -411,17 +410,6 @@ static int hp_sdc_rtc_open(struct inode *inode, struct file *file)
+         return 0;
+ }
+ 
+-static int hp_sdc_rtc_release(struct inode *inode, struct file *file)
+-{
+-	/* Turn off interrupts? */
+-
+-        if (file->f_flags & FASYNC) {
+-                hp_sdc_rtc_fasync (-1, file, 0);
+-        }
+-
+-        return 0;
+-}
+-
+ static int hp_sdc_rtc_fasync (int fd, struct file *filp, int on)
+ {
+         return fasync_helper (fd, filp, on, &hp_sdc_rtc_async_queue);
+@@ -677,7 +665,6 @@ static struct file_operations hp_sdc_rtc_fops = {
+         .poll =		hp_sdc_rtc_poll,
+         .ioctl =	hp_sdc_rtc_ioctl,
+         .open =		hp_sdc_rtc_open,
+-        .release =	hp_sdc_rtc_release,
+         .fasync =	hp_sdc_rtc_fasync,
+ };
+ 
+diff --git a/drivers/input/mousedev.c b/drivers/input/mousedev.c
+index ea8a5e4..7604379 100644
+--- a/drivers/input/mousedev.c
++++ b/drivers/input/mousedev.c
+@@ -384,8 +384,6 @@ static int mousedev_release(struct inode * inode, struct file * file)
+ {
+ 	struct mousedev_list *list = file->private_data;
+ 
+-	mousedev_fasync(-1, file, 0);
+-
+ 	list_del(&list->node);
+ 
+ 	if (!--list->mousedev->open) {
+diff --git a/drivers/input/serio/serio_raw.c b/drivers/input/serio/serio_raw.c
+index 71a8eea..e242ad8 100644
+--- a/drivers/input/serio/serio_raw.c
++++ b/drivers/input/serio/serio_raw.c
+@@ -131,7 +131,6 @@ static int serio_raw_release(struct inode *inode, struct file *file)
+ 
+ 	mutex_lock(&serio_raw_mutex);
+ 
+-	serio_raw_fasync(-1, file, 0);
+ 	serio_raw_cleanup(serio_raw);
+ 
+ 	mutex_unlock(&serio_raw_mutex);
+diff --git a/drivers/message/i2o/i2o_config.c b/drivers/message/i2o/i2o_config.c
+index 7d23e08..51c348b 100644
+--- a/drivers/message/i2o/i2o_config.c
++++ b/drivers/message/i2o/i2o_config.c
+@@ -1078,28 +1078,17 @@ static int cfg_fasync(int fd, struct file *fp, int on)
+ static int cfg_release(struct inode *inode, struct file *file)
+ {
+ 	ulong id = (ulong) file->private_data;
+-	struct i2o_cfg_info *p1, *p2;
++	struct i2o_cfg_info *p, **q;
+ 	unsigned long flags;
+ 
+ 	lock_kernel();
+-	p1 = p2 = NULL;
+-
+ 	spin_lock_irqsave(&i2o_config_lock, flags);
+-	for (p1 = open_files; p1;) {
+-		if (p1->q_id == id) {
+-
+-			if (p1->fasync)
+-				cfg_fasync(-1, file, 0);
+-			if (p2)
+-				p2->next = p1->next;
+-			else
+-				open_files = p1->next;
+-
+-			kfree(p1);
++	for (q = &open_files; (p = *q) != NULL; q = &p->next) {
++		if (p->q_id == id) {
++			*q = p->next;
++			kfree(p);
+ 			break;
+ 		}
+-		p2 = p1;
+-		p1 = p1->next;
+ 	}
+ 	spin_unlock_irqrestore(&i2o_config_lock, flags);
+ 	unlock_kernel();
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index c73f5cf..8dd6048 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -1072,8 +1072,6 @@ static int tun_chr_close(struct inode *inode, struct file *file)
+ 
+ 	DBG(KERN_INFO "%s: tun_chr_close\n", tun->dev->name);
+ 
+-	tun_chr_fasync(-1, file, 0);
+-
+ 	rtnl_lock();
+ 
+ 	/* Detach from net device */
+diff --git a/drivers/rtc/rtc-dev.c b/drivers/rtc/rtc-dev.c
+index 9a78ed7..e34165f 100644
+--- a/drivers/rtc/rtc-dev.c
++++ b/drivers/rtc/rtc-dev.c
+@@ -366,9 +366,6 @@ static int rtc_dev_release(struct inode *inode, struct file *file)
+ 	if (rtc->ops->release)
+ 		rtc->ops->release(rtc->class_dev.dev);
+ 
+-	if (file->f_flags & FASYNC)
+-		rtc_dev_fasync(-1, file, 0);
+-
+ 	mutex_unlock(&rtc->char_lock);
+ 	return 0;
+ }
+diff --git a/drivers/scsi/megaraid/megaraid_sas.c b/drivers/scsi/megaraid/megaraid_sas.c
+index 728cc63..7954f55 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.c
++++ b/drivers/scsi/megaraid/megaraid_sas.c
+@@ -3522,17 +3522,6 @@ static int megasas_mgmt_open(struct inode *inode, struct file *filep)
+ }
+ 
+ /**
+- * megasas_mgmt_release - char node "release" entry point
+- */
+-static int megasas_mgmt_release(struct inode *inode, struct file *filep)
+-{
+-	filep->private_data = NULL;
+-	fasync_helper(-1, filep, 0, &megasas_async_queue);
+-
+-	return 0;
+-}
+-
+-/**
+  * megasas_mgmt_fasync -	Async notifier registration from applications
+  *
+  * This function adds the calling process to a driver global queue. When an
+@@ -3897,7 +3886,6 @@ megasas_mgmt_compat_ioctl(struct file *file, unsigned int cmd,
+ static const struct file_operations megasas_mgmt_fops = {
+ 	.owner = THIS_MODULE,
+ 	.open = megasas_mgmt_open,
+-	.release = megasas_mgmt_release,
+ 	.fasync = megasas_mgmt_fasync,
+ 	.unlocked_ioctl = megasas_mgmt_ioctl,
+ 	.poll = megasas_mgmt_poll,
+diff --git a/drivers/scsi/sg.c b/drivers/scsi/sg.c
+index 7fe5bd6..79ecf4e 100644
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -316,7 +316,6 @@ sg_release(struct inode *inode, struct file *filp)
+ 	if ((!(sfp = (Sg_fd *) filp->private_data)) || (!(sdp = sfp->parentdp)))
+ 		return -ENXIO;
+ 	SCSI_LOG_TIMEOUT(3, printk("sg_release: %s\n", sdp->disk->disk_name));
+-	sg_fasync(-1, filp, 0);	/* remove filp from async notification list */
+ 	if (0 == sg_remove_sfp(sdp, sfp)) {	/* Returns 1 when sdp gone */
+ 		if (!sdp->detached) {
+ 			scsi_device_put(sdp->device);
+diff --git a/drivers/telephony/ixj.c b/drivers/telephony/ixj.c
+index f6b2948..dc9f0e6 100644
+--- a/drivers/telephony/ixj.c
++++ b/drivers/telephony/ixj.c
+@@ -2322,7 +2322,6 @@ static int ixj_release(struct inode *inode, struct file *file_p)
+ 	j->rec_codec = j->play_codec = 0;
+ 	j->rec_frame_size = j->play_frame_size = 0;
+ 	j->flags.cidsent = j->flags.cidring = 0;
+-	ixj_fasync(-1, file_p, 0);	/* remove from list of async notification */
+ 
+ 	if(j->cardtype == QTI_LINEJACK && !j->readers && !j->writers) {
+ 		ixj_set_port(j, PORT_PSTN);
+diff --git a/drivers/uio/uio.c b/drivers/uio/uio.c
+index cb24203..cf2cb47 100644
+--- a/drivers/uio/uio.c
++++ b/drivers/uio/uio.c
+@@ -331,9 +331,6 @@ static int uio_release(struct inode *inode, struct file *filep)
+ 		ret = idev->info->release(idev->info, inode);
+ 
+ 	module_put(idev->owner);
+-
+-	if (filep->f_flags & FASYNC)
+-		ret = uio_fasync(-1, filep, 0);
+ 	kfree(listener);
+ 	return ret;
+ }
+diff --git a/drivers/usb/gadget/inode.c b/drivers/usb/gadget/inode.c
+index 084fe62..2dd7808 100644
+--- a/drivers/usb/gadget/inode.c
++++ b/drivers/usb/gadget/inode.c
+@@ -1219,7 +1219,6 @@ dev_release (struct inode *inode, struct file *fd)
+ 	 * alternatively, all host requests will time out.
+ 	 */
+ 
+-	fasync_helper (-1, fd, 0, &dev->fasync);
+ 	kfree (dev->buf);
+ 	dev->buf = NULL;
+ 	put_dev (dev);
+diff --git a/fs/file_table.c b/fs/file_table.c
+index d363afd..a85718c 100644
+--- a/fs/file_table.c
++++ b/fs/file_table.c
+@@ -166,6 +166,10 @@ void fastcall __fput(struct file *file)
+ 	eventpoll_release(file);
+ 	locks_remove_flock(file);
+ 
++	if (unlikely(file->f_flags & FASYNC)) {
++		if (file->f_op && file->f_op->fasync)
++			file->f_op->fasync(-1, file, 0);
++	}
+ 	if (file->f_op && file->f_op->release)
+ 		file->f_op->release(inode, file);
+ 	security_file_free(file);
+diff --git a/fs/fuse/dev.c b/fs/fuse/dev.c
+index 671d3df..5f84970 100644
+--- a/fs/fuse/dev.c
++++ b/fs/fuse/dev.c
+@@ -1072,7 +1072,6 @@ static int fuse_dev_release(struct inode *inode, struct file *file)
+ 		end_requests(fc, &fc->pending);
+ 		end_requests(fc, &fc->processing);
+ 		spin_unlock(&fc->lock);
+-		fasync_helper(-1, file, 0, &fc->fasync);
+ 		fuse_conn_put(fc);
+ 	}
+ 
+diff --git a/fs/pipe.c b/fs/pipe.c
+index 77c2356..717a9bb 100644
+--- a/fs/pipe.c
++++ b/fs/pipe.c
+@@ -657,12 +657,12 @@ pipe_rdwr_fasync(int fd, struct file *filp, int on)
+ 	int retval;
+ 
+ 	mutex_lock(&inode->i_mutex);
+-
+ 	retval = fasync_helper(fd, filp, on, &pipe->fasync_readers);
+-
+-	if (retval >= 0)
++	if (retval >= 0) {
+ 		retval = fasync_helper(fd, filp, on, &pipe->fasync_writers);
+-
++		if (retval < 0) /* this can happen only if on == T */
++			fasync_helper(-1, filp, 0, &pipe->fasync_readers);
++	}
+ 	mutex_unlock(&inode->i_mutex);
+ 
+ 	if (retval < 0)
+@@ -675,14 +675,12 @@ pipe_rdwr_fasync(int fd, struct file *filp, int on)
+ static int
+ pipe_read_release(struct inode *inode, struct file *filp)
+ {
+-	pipe_read_fasync(-1, filp, 0);
+ 	return pipe_release(inode, 1, 0);
+ }
+ 
+ static int
+ pipe_write_release(struct inode *inode, struct file *filp)
+ {
+-	pipe_write_fasync(-1, filp, 0);
+ 	return pipe_release(inode, 0, 1);
+ }
+ 
+@@ -691,7 +689,6 @@ pipe_rdwr_release(struct inode *inode, struct file *filp)
+ {
+ 	int decr, decw;
+ 
+-	pipe_rdwr_fasync(-1, filp, 0);
+ 	decr = (filp->f_mode & FMODE_READ) != 0;
+ 	decw = (filp->f_mode & FMODE_WRITE) != 0;
+ 	return pipe_release(inode, decr, decw);
+diff --git a/net/socket.c b/net/socket.c
+index f82cd96..5589e76 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -1028,7 +1028,6 @@ static int sock_close(struct inode *inode, struct file *filp)
+ 		printk(KERN_DEBUG "sock_close: NULL inode\n");
+ 		return 0;
+ 	}
+-	sock_fasync(-1, filp, 0);
+ 	sock_release(SOCKET_I(inode));
+ 	return 0;
+ }
+diff --git a/sound/core/control.c b/sound/core/control.c
+index 5e7525c..2448150 100644
+--- a/sound/core/control.c
++++ b/sound/core/control.c
+@@ -114,7 +114,6 @@ static int snd_ctl_release(struct inode *inode, struct file *file)
+ 	unsigned int idx;
+ 
+ 	ctl = file->private_data;
+-	fasync_helper(-1, file, 0, &ctl->fasync);
+ 	file->private_data = NULL;
+ 	card = ctl->card;
+ 	write_lock_irqsave(&card->ctl_files_rwlock, flags);
+diff --git a/sound/core/init.c b/sound/core/init.c
+index cba0e25..8c7615d 100644
+--- a/sound/core/init.c
++++ b/sound/core/init.c
+@@ -217,8 +217,11 @@ static int snd_disconnect_release(struct inode *inode, struct file *file)
+ 	}
+ 	spin_unlock(&shutdown_lock);
+ 
+-	if (likely(df))
++	if (likely(df)) {
++		if ((file->f_flags & FASYNC) && df->disconnected_f_op->fasync)
++			df->disconnected_f_op->fasync(-1, file, 0);
+ 		return df->disconnected_f_op->release(inode, file);
++	}
+ 
+ 	panic("%s(%p, %p) failed!", __FUNCTION__, inode, file);
+ }
+diff --git a/sound/core/pcm_native.c b/sound/core/pcm_native.c
+index a0ead36..265f764 100644
+--- a/sound/core/pcm_native.c
++++ b/sound/core/pcm_native.c
+@@ -2179,7 +2179,6 @@ static int snd_pcm_release(struct inode *inode, struct file *file)
+ 	substream = pcm_file->substream;
+ 	snd_assert(substream != NULL, return -ENXIO);
+ 	pcm = substream->pcm;
+-	fasync_helper(-1, file, 0, &substream->runtime->fasync);
+ 	mutex_lock(&pcm->open_mutex);
+ 	snd_pcm_release_substream(substream);
+ 	kfree(pcm_file);
+diff --git a/sound/core/timer.c b/sound/core/timer.c
+index 160e40e..14a51d6 100644
+--- a/sound/core/timer.c
++++ b/sound/core/timer.c
+@@ -1250,7 +1250,6 @@ static int snd_timer_user_release(struct inode *inode, struct file *file)
+ 	if (file->private_data) {
+ 		tu = file->private_data;
+ 		file->private_data = NULL;
+-		fasync_helper(-1, file, 0, &tu->fasync);
+ 		if (tu->timeri)
+ 			snd_timer_close(tu->timeri);
+ 		kfree(tu->queue);

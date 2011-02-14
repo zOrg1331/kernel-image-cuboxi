@@ -1,0 +1,100 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 31 Mar 2009 11:04:58 -0400
+Subject: [ppc] msi: return the number of MSI-X available
+Message-id: 20090331150245.14954.871.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ492580 1/8]
+Bugzilla: 492580
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=492580
+
+Description:
+===========
+These 8 patches are required inorder to support any MSI-X interrupt capable
+devices running MSI-X effectively on Power systems.  Description of patch1 is
+below:
+
+There is code in msix_capability_init() which, when the requested number
+of MSI-X couldn't be allocated, calculates how many MSI-X /could/ be
+allocated and returns that to the driver. That allows the driver to then
+make a second request, with a number of MSIs that should succeed.
+
+The current code requires the arch code to setup as many msi_descs as it
+can, and then return to the generic code. On some platforms the arch
+code may already know how many MSI-X it can allocate, before it sets up
+any of the msi_descs.
+
+So change the logic such that if the arch code returns a positive error
+code, that is taken to be the number of MSI-X that could be allocated.
+If the error code is negative we still calculate the number available
+using the old method.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1744271
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/jbarnes/pci-2.6.git;a=commit;h=08a2938e40f013ef06d0bc425167294db361fc52
+
+Test Status:
+============
+There is a testcase provided in the Bugzilla.  A 'cat /proc/interrupts' should
+show the device drivers has two interrupt entries for each port.  Run I/O
+tests.  Then 'lspci -vv' should display the correct pci capabilities for the
+installed adapter and show the adapter is using MSI-X interrupts opposed to MSO
+or LSI interrupts.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/kernel/msi.c b/arch/powerpc/kernel/msi.c
+index e543d3b..d4d96a0 100644
+--- a/arch/powerpc/kernel/msi.c
++++ b/arch/powerpc/kernel/msi.c
+@@ -455,7 +455,9 @@ static int msix_capability_init(struct pci_dev *dev,
+ 	}
+ 
+ 	ret = arch_setup_msi_irqs(dev, nvec, PCI_CAP_ID_MSIX);
+-	if (ret) {
++	if (ret < 0) {
++		/* If we had some success report the number of irqs
++		 * we succeeded in setting up. */
+ 		int avail = 0;
+ 		list_for_each_entry(entry, &pdn->msi_list, list) {
+ 			if (entry->irq != 0) {
+@@ -463,14 +465,13 @@ static int msix_capability_init(struct pci_dev *dev,
+ 			}
+ 		}
+ 
+-		msi_free_irqs(dev);
++		if (avail != 0)
++			ret = avail;
++	}
+ 
+-		/* If we had some success report the number of irqs
+-		 * we succeeded in setting up.
+-		 */
+-		if (avail == 0)
+-			avail = ret;
+-		return avail;
++	if (ret) {
++		msi_free_irqs(dev);
++		return ret;
+ 	}
+ 
+ 	i = 0;

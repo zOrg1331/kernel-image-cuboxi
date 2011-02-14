@@ -1,0 +1,157 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:42:57 -0500
+Subject: [pci] intel-iommu: fix for isoch dmar w/no tlb space
+Message-id: <4B15AA01.6030707@redhat.com>
+Patchwork-id: 21631
+O-Subject: [RHEL5.5 PATCH V2] 3/9: AZALIA sound workaround for Isoch DMAR w-no
+	TLB space
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2 just changed the title.
+
+BZ 516727 (F12's bz: 490477)
+
+Backport of following commit:
+     intel-iommu: Yet another BIOS workaround: Isoch DMAR unit with no TLB space
+     commit e0fc7e0b4b5e69616f10a894ab9afff3c64be74e
+
+0/9 states build & tests.
+
+Please review & ACK.
+
+- Don
+>From 1c02c4804238465aa914018e37ae666cc791ee92 Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Mon, 16 Nov 2009 17:46:47 -0500
+Subject: [PATCH 3/9]   INTEL_IOMMU: AZALIA Sound workaround
+
+
+diff --git a/drivers/pci/intel-iommu.c b/drivers/pci/intel-iommu.c
+index 7898263..9cb7f43 100644
+--- a/drivers/pci/intel-iommu.c
++++ b/drivers/pci/intel-iommu.c
+@@ -47,6 +47,7 @@
+ 
+ #define IS_GFX_DEVICE(pdev) ((pdev->class >> 16) == PCI_BASE_CLASS_DISPLAY)
+ #define IS_ISA_DEVICE(pdev) ((pdev->class >> 8) == PCI_CLASS_BRIDGE_ISA)
++#define IS_AZALIA(pdev) ((pdev)->vendor == 0x8086 && (pdev)->device == 0x3a3e)
+ 
+ #define IOAPIC_RANGE_START	(0xfee00000)
+ #define IOAPIC_RANGE_END	(0xfeefffff)
+@@ -93,6 +94,7 @@ static inline unsigned long virt_to_dma_pfn(void *p)
+ /* global iommu list, set NULL for ignored DMAR units */
+ static struct intel_iommu **g_iommus;
+ 
++static void __init check_tylersburg_isoch(void);
+ static int rwbf_quirk;
+ 
+ /*
+@@ -1934,6 +1936,9 @@ error:
+ }
+ 
+ static int iommu_identity_mapping;
++#define IDENTMAP_ALL		1
++#define IDENTMAP_GFX		2
++#define IDENTMAP_AZALIA		4
+ 
+ static int iommu_domain_identity_map(struct dmar_domain *domain,
+ 				     unsigned long long start,
+@@ -2164,8 +2169,14 @@ static int domain_add_dev_info(struct dmar_domain *domain,
+ 
+ static int iommu_should_identity_map(struct pci_dev *pdev, int startup)
+ {
+-	if (iommu_identity_mapping == 2)
+-		return IS_GFX_DEVICE(pdev);
++	if ((iommu_identity_mapping & IDENTMAP_AZALIA) && IS_AZALIA(pdev))
++		return 1;
++
++	if ((iommu_identity_mapping & IDENTMAP_GFX) && IS_GFX_DEVICE(pdev))
++		return 1;
++
++	if (!(iommu_identity_mapping & IDENTMAP_ALL))
++		return 0;
+ 
+ 	/*
+ 	 * We want to start off with all devices in the 1:1 domain, and
+@@ -2346,11 +2357,14 @@ int __init init_dmars(void)
+ 	}
+ 
+ 	if (iommu_pass_through)
+-		iommu_identity_mapping = 1;
++		iommu_identity_mapping |= IDENTMAP_ALL;
++
+ #ifdef CONFIG_DMAR_BROKEN_GFX_WA
+-	else
+-		iommu_identity_mapping = 2;
++	iommu_identity_mapping |= IDENTMAP_GFX;
+ #endif
++
++	check_tylersburg_isoch();
++
+ 	/*
+ 	 * If pass through is not set or not enabled, setup context entries for
+ 	 * identity mappings for rmrr, gfx, and isa and may fall back to static
+@@ -3672,3 +3686,61 @@ static void __devinit quirk_iommu_rwbf(struct pci_dev *dev)
+ 
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x2a40, quirk_iommu_rwbf);
+ 
++/* On Tylersburg chipsets, some BIOSes have been known to enable the
++   ISOCH DMAR unit for the Azalia sound device, but not give it any
++   TLB entries, which causes it to deadlock. Check for that.  We do
++   this in a function called from init_dmars(), instead of in a PCI
++   quirk, because we don't want to print the obnoxious "BIOS broken"
++   message if VT-d is actually disabled.
++*/
++static void __init check_tylersburg_isoch(void)
++{
++	struct pci_dev *pdev;
++	uint32_t vtisochctrl;
++
++	/* If there's no Azalia in the system anyway, forget it. */
++	pdev = pci_get_device(PCI_VENDOR_ID_INTEL, 0x3a3e, NULL);
++	if (!pdev)
++		return;
++	pci_dev_put(pdev);
++
++	/* System Management Registers. Might be hidden, in which case
++	   we can't do the sanity check. But that's OK, because the
++	   known-broken BIOSes _don't_ actually hide it, so far. */
++	pdev = pci_get_device(PCI_VENDOR_ID_INTEL, 0x342e, NULL);
++	if (!pdev)
++		return;
++
++	if (pci_read_config_dword(pdev, 0x188, &vtisochctrl)) {
++		pci_dev_put(pdev);
++		return;
++	}
++
++	pci_dev_put(pdev);
++
++	/* If Azalia DMA is routed to the non-isoch DMAR unit, fine. */
++	if (vtisochctrl & 1)
++		return;
++
++	/* Drop all bits other than the number of TLB entries */
++	vtisochctrl &= 0x1c;
++
++	/* If we have the recommended number of TLB entries (16), fine. */
++	if (vtisochctrl == 0x10)
++		return;
++
++	/* Zero TLB entries? You get to ride the short bus to school. */
++	if (!vtisochctrl) {
++		printk(KERN_WARNING 
++		     "Your BIOS is broken; DMA routed to ISOCH DMAR unit but no TLB space.\n"
++		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++		     dmi_get_system_info(DMI_BIOS_VENDOR),
++		     dmi_get_system_info(DMI_BIOS_VERSION),
++		     dmi_get_system_info(DMI_PRODUCT_VERSION));
++		iommu_identity_mapping |= IDENTMAP_AZALIA;
++		return;
++	}
++	
++	printk(KERN_WARNING "DMAR: Recommended TLB entries for ISOCH unit is 16; your BIOS set %d\n",
++	       vtisochctrl);
++}

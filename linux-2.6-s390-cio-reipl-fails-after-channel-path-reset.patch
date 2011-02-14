@@ -1,0 +1,183 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 16:51:44 +0100
+Subject: [s390] cio: reipl fails after channel path reset
+Message-id: 20071030155144.GA6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/5] s390 cio: reipl fails after channel path reset
+Bugzilla: 231306
+
+Problem:
+=========
+
+Re-IPL channel program is terminated by a asynchronous channel path
+reset operation which is started during shutdown.
+The result in a hanging LPAR on reboot.
+The problem is fixed by  waiting for the completion of the notification
+of the channel path reset operation.
+
+Bugzilla
+=========
+
+BZ 231306
+https://bugzilla.redhat.com/show_bug.cgi?id=231306
+
+Upstream status of the patch:
+=============================
+Code was upstream but later on changed completely because of code rewrites
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/arch/s390/kernel/entry.S b/arch/s390/kernel/entry.S
+index 0c712b7..f7bc855 100644
+--- a/arch/s390/kernel/entry.S
++++ b/arch/s390/kernel/entry.S
+@@ -785,6 +785,20 @@ mcck_return:
+ 
+         RESTORE_ALL __LC_RETURN_MCCK_PSW,0
+ 
++/*
++ * Reset channel path machine check handler.
++ */
++	.globl rchp_mcck_int_handler
++rchp_mcck_int_handler:
++	SAVE_ALL_BASE __LC_SAVE_AREA+32
++	SAVE_ALL_SYNC __LC_MCK_OLD_PSW,__LC_SAVE_AREA+32
++	CREATE_STACK_FRAME __LC_MCK_OLD_PSW,__LC_SAVE_AREA+32
++
++	l	%r1,BASED(.Ldo_rchp_mcck)
++	basr	%r14,%r1		# call machine check handler
++
++	RESTORE_ALL __LC_RETURN_MCCK_PSW,0
++
+ #ifdef CONFIG_SMP
+ /*
+  * Restart interruption handler, kick starter for additional CPUs
+@@ -1031,6 +1045,7 @@ cleanup_io_leave_insn:
+ .Ldo_IRQ:      .long  do_IRQ
+ .Ldo_extint:   .long  do_extint
+ .Ldo_signal:   .long  do_signal
++.Ldo_rchp_mcck:.long  do_rchp_mcck
+ .Lhandle_per:  .long  do_single_step
+ .Ljump_table:  .long  pgm_check_table
+ .Lschedule:    .long  schedule
+diff --git a/arch/s390/kernel/entry64.S b/arch/s390/kernel/entry64.S
+index 8b956d1..1dbb84f 100644
+--- a/arch/s390/kernel/entry64.S
++++ b/arch/s390/kernel/entry64.S
+@@ -790,6 +790,19 @@ mcck_return:
+ #endif
+ 	lpswe	__LC_RETURN_MCCK_PSW	# back to caller
+ 
++/*
++ * Reset channel path machine check handler.
++ */
++	.globl rchp_mcck_int_handler
++rchp_mcck_int_handler:
++	SAVE_ALL_BASE __LC_SAVE_AREA+64
++	SAVE_ALL_SYNC __LC_MCK_OLD_PSW,__LC_SAVE_AREA+64
++	CREATE_STACK_FRAME __LC_MCK_OLD_PSW,__LC_SAVE_AREA+64
++
++	brasl	%r14,do_rchp_mcck
++
++	RESTORE_ALL __LC_RETURN_MCCK_PSW,0
++
+ #ifdef CONFIG_SMP
+ /*
+  * Restart interruption handler, kick starter for additional CPUs
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index 8117c41..b941d4a 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -15,12 +15,15 @@
+ #include <linux/device.h>
+ 
+ #include <asm/cio.h>
++#include <asm/lowcore.h>
++#include <asm/ptrace.h>
+ 
+ #include "css.h"
+ #include "cio.h"
+ #include "cio_debug.h"
+ #include "ioasm.h"
+ #include "chsc.h"
++#include "../s390mach.h"
+ 
+ static void *sei_page;
+ 
+@@ -1508,24 +1511,65 @@ static int reset_channel_path(struct channel_path *chp)
+ 	}
+ }
+ 
++static atomic_t chpid_count;
++
++void do_rchp_mcck(struct pt_regs *regs)
++{
++	struct crw crw;
++	struct mci *mci;
++
++	/* Check for pending channel report word; */
++	mci = (struct mci *) &S390_lowcore.mcck_interruption_code;
++	if (!mci->cp)
++		return;
++	/* Process channel report words. */
++	while (stcrw(&crw) == 0)
++		/* Count RCHP responses. */
++		if (crw.slct && crw.rsc == CRW_RSC_CPATH)
++			atomic_dec(&chpid_count);
++}
++
++#define RCHP_TIMEOUT	(30 * USEC_PER_SEC)
++
+ static void reset_channel_paths_css(struct channel_subsystem *css)
+ {
+ 	int i;
+ 
+-	for (i = 0; i <= __MAX_CHPID; i++) {
++	for (i = 0; i <= __MAX_CHPID; i++)
+ 		if (css->chps[i])
+-			reset_channel_path(css->chps[i]);
+-	}
++			if (reset_channel_path(css->chps[i]) == 0)
++				atomic_inc(&chpid_count);
+ }
+ 
++extern void rchp_mcck_int_handler(void);
++
+ void cio_reset_channel_paths(void)
+ {
+ 	int i;
+-
++	unsigned long long timeout;
++
++	/* Disable lowcore protection. */
++	__ctl_clear_bit(0,28);
++	/* Set local machine check handler. */
++	local_mcck_disable();
++	S390_lowcore.mcck_new_psw.mask =
++                PSW_KERNEL_BITS & ~PSW_MASK_MCHECK;
++	S390_lowcore.mcck_new_psw.addr =
++		PSW_ADDR_AMODE | (unsigned long) &rchp_mcck_int_handler;
++	local_mcck_enable();
++	/* Reset known channel paths. */
++	atomic_set(&chpid_count, 0);
+ 	for (i = 0; i <= __MAX_CSSID; i++) {
+ 		if (css[i] && css[i]->valid)
+ 			reset_channel_paths_css(css[i]);
+ 	}
++	/* Wait for reset acknowledgment. */
++	timeout = get_clock() + (RCHP_TIMEOUT << 12);
++	while (atomic_read(&chpid_count) != 0) {
++		if (get_clock() > timeout)
++			break;
++		cpu_relax();
++	}
+ }
+ 
+ static int __init

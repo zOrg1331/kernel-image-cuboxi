@@ -1,4 +1,6 @@
 /*
+ * $Id: ixp4xx.c,v 1.13 2005/11/16 16:23:21 dvrabel Exp $
+ *
  * drivers/mtd/maps/ixp4xx.c
  *
  * MTD Map file for IXP4XX based systems. Please do not make per-board
@@ -201,7 +203,7 @@ static int ixp4xx_flash_probe(struct platform_device *dev)
 		err = -ENOMEM;
 		goto Error;
 	}
-	memset(info, 0, sizeof(struct ixp4xx_flash_info));
+	memzero(info, sizeof(struct ixp4xx_flash_info));
 
 	platform_set_drvdata(dev, info);
 
@@ -218,7 +220,7 @@ static int ixp4xx_flash_probe(struct platform_device *dev)
 	 * handle that.
 	 */
 	info->map.bankwidth = 2;
-	info->map.name = dev_name(&dev->dev);
+	info->map.name = dev->dev.bus_id;
 	info->map.read = ixp4xx_read16,
 	info->map.write = ixp4xx_probe_write16,
 	info->map.copy_from = ixp4xx_copy_from,
@@ -251,7 +253,7 @@ static int ixp4xx_flash_probe(struct platform_device *dev)
 	/* Use the fast version */
 	info->map.write = ixp4xx_write16,
 
-	err = parse_mtd_partitions(info->mtd, probes, &info->partitions, dev->resource->start);
+	err = parse_mtd_partitions(info->mtd, probes, &info->partitions, 0);
 	if (err > 0) {
 		err = add_mtd_partitions(info->mtd, info->partitions, err);
 		if(err)
@@ -273,7 +275,6 @@ static struct platform_driver ixp4xx_flash_driver = {
 	.remove		= ixp4xx_flash_remove,
 	.driver		= {
 		.name	= "IXP4XX-Flash",
-		.owner	= THIS_MODULE,
 	},
 };
 
@@ -294,4 +295,3 @@ module_exit(ixp4xx_flash_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("MTD map driver for Intel IXP4xx systems");
 MODULE_AUTHOR("Deepak Saxena");
-MODULE_ALIAS("platform:IXP4XX-Flash");

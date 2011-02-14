@@ -8,9 +8,6 @@
 #include <asm/io.h>
 #include <video/mach64.h>
 #include "atyfb.h"
-#ifdef CONFIG_PPC
-#include <asm/machdep.h>
-#endif
 
 #undef DEBUG
 
@@ -30,7 +27,7 @@ u8 aty_ld_pll_ct(int offset, const struct atyfb_par *par)
 	return res;
 }
 
-static void aty_st_pll_ct(int offset, u8 val, const struct atyfb_par *par)
+void aty_st_pll_ct(int offset, u8 val, const struct atyfb_par *par)
 {
 	/* write addr byte */
 	aty_st_8(CLOCK_CNTL_ADDR, ((offset << 2) & PLL_ADDR) | PLL_WR_EN, par);
@@ -200,7 +197,7 @@ static int aty_dsp_gt(const struct fb_info *info, u32 bpp, struct pll_ct *pll)
 	pll->dsp_config = (dsp_precision << 20) | (pll->dsp_loop_latency << 16) | dsp_xclks;
 #ifdef DEBUG
 	printk("atyfb(%s): dsp_config 0x%08x, dsp_on_off 0x%08x\n",
-		__func__, pll->dsp_config, pll->dsp_on_off);
+		__FUNCTION__, pll->dsp_config, pll->dsp_on_off);
 #endif
 	return 0;
 }
@@ -228,7 +225,7 @@ static int aty_valid_pll_ct(const struct fb_info *info, u32 vclk_per, struct pll
 		(par->ref_clk_per * pll->pll_ref_div);
 #ifdef DEBUG
 	printk("atyfb(%s): pllvclk=%d MHz, vclk=%d MHz\n",
-		__func__, pllvclk, pllvclk / pll->vclk_post_div_real);
+		__FUNCTION__, pllvclk, pllvclk / pll->vclk_post_div_real);
 #endif
 	pll->pll_vclk_cntl = 0x03; /* VCLK = PLL_VCLK/VCLKx_POST */
 
@@ -272,7 +269,7 @@ static u32 aty_pll_to_var_ct(const struct fb_info *info, const union aty_pll *pl
 	}
 #endif
 #ifdef DEBUG
-	printk("atyfb(%s): calculated 0x%08X(%i)\n", __func__, ret, ret);
+	printk("atyfb(%s): calculated 0x%08X(%i)\n", __FUNCTION__, ret, ret);
 #endif
 	return ret;
 }
@@ -287,11 +284,11 @@ void aty_set_pll_ct(const struct fb_info *info, const union aty_pll *pll)
 #ifdef DEBUG
 	printk("atyfb(%s): about to program:\n"
 		"pll_ext_cntl=0x%02x pll_gen_cntl=0x%02x pll_vclk_cntl=0x%02x\n",
-		__func__,
+		__FUNCTION__,
 		pll->ct.pll_ext_cntl, pll->ct.pll_gen_cntl, pll->ct.pll_vclk_cntl);
 
 	printk("atyfb(%s): setting clock %lu for FeedBackDivider %i, ReferenceDivider %i, PostDivider %i(%i)\n",
-		__func__,
+		__FUNCTION__,
 		par->clk_wr_offset, pll->ct.vclk_fb_div,
 		pll->ct.pll_ref_div, pll->ct.vclk_post_div, pll->ct.vclk_post_div_real);
 #endif
@@ -373,8 +370,8 @@ void aty_set_pll_ct(const struct fb_info *info, const union aty_pll *pll)
 #endif
 }
 
-static void __devinit aty_get_pll_ct(const struct fb_info *info,
-				     union aty_pll *pll)
+static void __init aty_get_pll_ct(const struct fb_info *info,
+				  union aty_pll *pll)
 {
 	struct atyfb_par *par = (struct atyfb_par *) info->par;
 	u8 tmp, clock;
@@ -397,12 +394,12 @@ static void __devinit aty_get_pll_ct(const struct fb_info *info,
 	}
 }
 
-static int __devinit aty_init_pll_ct(const struct fb_info *info,
-				     union aty_pll *pll)
+static int __init aty_init_pll_ct(const struct fb_info *info,
+				 union aty_pll *pll)
 {
 	struct atyfb_par *par = (struct atyfb_par *) info->par;
-	u8 mpost_div, xpost_div, sclk_post_div_real;
-	u32 q, memcntl, trp;
+	u8 mpost_div, xpost_div, sclk_post_div_real, sclk_fb_div, spll_cntl2;
+	u32 q, i, memcntl, trp;
 	u32 dsp_config, dsp_on_off, vga_dsp_config, vga_dsp_on_off;
 #ifdef DEBUG
 	int pllmclk, pllsclk;
@@ -431,7 +428,7 @@ static int __devinit aty_init_pll_ct(const struct fb_info *info,
 
 #ifdef DEBUG
 	printk("atyfb(%s): mclk_fb_mult=%d, xclk_post_div=%d\n",
-		__func__, pll->ct.mclk_fb_mult, pll->ct.xclk_post_div);
+		__FUNCTION__, pll->ct.mclk_fb_mult, pll->ct.xclk_post_div);
 #endif
 
 	memcntl = aty_ld_le32(MEM_CNTL, par);
@@ -539,19 +536,11 @@ static int __devinit aty_init_pll_ct(const struct fb_info *info,
 	pll->ct.xclk_post_div_real = postdividers[xpost_div];
 	pll->ct.mclk_fb_div = q * pll->ct.xclk_post_div_real / 8;
 
-#ifdef CONFIG_PPC
-	if (machine_is(powermac)) {
-		/* Override PLL_EXT_CNTL & 0x07. */
-		pll->ct.xclk_post_div = xpost_div;
-		pll->ct.xclk_ref_div = 1;
-	}
-#endif
-
 #ifdef DEBUG
 	pllmclk = (1000000 * pll->ct.mclk_fb_mult * pll->ct.mclk_fb_div) /
 			(par->ref_clk_per * pll->ct.pll_ref_div);
 	printk("atyfb(%s): pllmclk=%d MHz, xclk=%d MHz\n",
-		__func__, pllmclk, pllmclk / pll->ct.xclk_post_div_real);
+		__FUNCTION__, pllmclk, pllmclk / pll->ct.xclk_post_div_real);
 #endif
 
 	if (M64_HAS(SDRAM_MAGIC_PLL) && (par->ram_type >= SDRAM))
@@ -586,29 +575,14 @@ static int __devinit aty_init_pll_ct(const struct fb_info *info,
 			mpost_div += (q <  32*8);
 		}
 		sclk_post_div_real = postdividers[mpost_div];
-		pll->ct.sclk_fb_div = q * sclk_post_div_real / 8;
-		pll->ct.spll_cntl2 = mpost_div << 4;
+		sclk_fb_div = q * sclk_post_div_real / 8;
+		spll_cntl2 = mpost_div << 4;
 #ifdef DEBUG
-		pllsclk = (1000000 * 2 * pll->ct.sclk_fb_div) /
+		pllsclk = (1000000 * 2 * sclk_fb_div) /
 			(par->ref_clk_per * pll->ct.pll_ref_div);
 		printk("atyfb(%s): use sclk, pllsclk=%d MHz, sclk=mclk=%d MHz\n",
-			__func__, pllsclk, pllsclk / sclk_post_div_real);
+			__FUNCTION__, pllsclk, pllsclk / sclk_post_div_real);
 #endif
-	}
-
-	/* Disable the extra precision pixel clock controls since we do not use them. */
-	pll->ct.ext_vpll_cntl = aty_ld_pll_ct(EXT_VPLL_CNTL, par);
-	pll->ct.ext_vpll_cntl &= ~(EXT_VPLL_EN | EXT_VPLL_VGA_EN | EXT_VPLL_INSYNC);
-
-	return 0;
-}
-
-static void aty_resume_pll_ct(const struct fb_info *info,
-			      union aty_pll *pll)
-{
-	struct atyfb_par *par = info->par;
-
-	if (par->mclk_per != par->xclk_per) {
 		/*
 		* This disables the sclk, crashes the computer as reported:
 		* aty_st_pll_ct(SPLL_CNTL2, 3, info);
@@ -616,20 +590,26 @@ static void aty_resume_pll_ct(const struct fb_info *info,
 		* So it seems the sclk must be enabled before it is used;
 		* so PLL_GEN_CNTL must be programmed *after* the sclk.
 		*/
-		aty_st_pll_ct(SCLK_FB_DIV, pll->ct.sclk_fb_div, par);
-		aty_st_pll_ct(SPLL_CNTL2, pll->ct.spll_cntl2, par);
+		aty_st_pll_ct(SCLK_FB_DIV, sclk_fb_div, par);
+		aty_st_pll_ct(SPLL_CNTL2, spll_cntl2, par);
 		/*
-		 * SCLK has been started. Wait for the PLL to lock. 5 ms
-		 * should be enough according to mach64 programmer's guide.
+		 * The sclk has been started. However, I believe the first clock
+		 * ticks it generates are not very stable. Hope this primitive loop
+		 * helps for Rage Mobilities that sometimes crash when
+		 * we switch to sclk. (Daniel Mantione, 13-05-2003)
 		 */
-		mdelay(5);
+		for (i=0;i<=0x1ffff;i++);
 	}
 
 	aty_st_pll_ct(PLL_REF_DIV, pll->ct.pll_ref_div, par);
 	aty_st_pll_ct(PLL_GEN_CNTL, pll->ct.pll_gen_cntl, par);
 	aty_st_pll_ct(MCLK_FB_DIV, pll->ct.mclk_fb_div, par);
 	aty_st_pll_ct(PLL_EXT_CNTL, pll->ct.pll_ext_cntl, par);
-	aty_st_pll_ct(EXT_VPLL_CNTL, pll->ct.ext_vpll_cntl, par);
+	/* Disable the extra precision pixel clock controls since we do not use them. */
+	aty_st_pll_ct(EXT_VPLL_CNTL, aty_ld_pll_ct(EXT_VPLL_CNTL, par) &
+		~(EXT_VPLL_EN | EXT_VPLL_VGA_EN | EXT_VPLL_INSYNC), par);
+
+	return 0;
 }
 
 static int dummy(void)
@@ -646,6 +626,5 @@ const struct aty_pll_ops aty_pll_ct = {
 	.pll_to_var	= aty_pll_to_var_ct,
 	.set_pll	= aty_set_pll_ct,
 	.get_pll	= aty_get_pll_ct,
-	.init_pll	= aty_init_pll_ct,
-	.resume_pll	= aty_resume_pll_ct,
+	.init_pll       = aty_init_pll_ct
 };

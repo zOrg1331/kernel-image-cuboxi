@@ -1,0 +1,27 @@
+--- linux-2.6/init/main.c~	2006-07-11 02:35:10.000000000 -0400
++++ linux-2.6/init/main.c	2006-07-11 02:49:01.000000000 -0400
+@@ -350,6 +350,9 @@ static void __init setup_per_cpu_areas(v
+ }
+ #endif /* !__GENERIC_PER_CPU */
+ 
++#include <linux/ext3_fs_i.h>
++#include <linux/skbuff.h>
++
+ /* Called by boot processor to activate the rest. */
+ static void __init smp_init(void)
+ {
+@@ -371,6 +374,14 @@ static void __init smp_init(void)
+ 
+ 	smp_commence();
+ #endif
++
++	printk(KERN_DEBUG "sizeof(vma)=%u bytes\n", (unsigned int) sizeof(struct vm_area_struct));
++	printk(KERN_DEBUG "sizeof(page)=%u bytes\n", (unsigned int) sizeof(struct page));
++	printk(KERN_DEBUG "sizeof(inode)=%u bytes\n", (unsigned int) sizeof(struct inode));
++	printk(KERN_DEBUG "sizeof(dentry)=%u bytes\n", (unsigned int) sizeof(struct dentry));
++	printk(KERN_DEBUG "sizeof(ext3inode)=%u bytes\n", (unsigned int) sizeof(struct ext3_inode_info));
++	printk(KERN_DEBUG "sizeof(buffer_head)=%u bytes\n", (unsigned int) sizeof(struct buffer_head));
++	printk(KERN_DEBUG "sizeof(skbuff)=%u bytes\n", (unsigned int) sizeof(struct sk_buff));
+ }
+ 
+ #endif

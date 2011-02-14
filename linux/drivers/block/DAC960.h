@@ -61,6 +61,20 @@
 #define DAC960_V2_MaxPhysicalDevices		272
 
 /*
+  Define the pci dma mask supported by DAC960 V1 and V2 Firmware Controlers
+ */
+
+#define DAC690_V1_PciDmaMask	0xffffffff
+#define DAC690_V2_PciDmaMask	0xffffffffffffffffULL
+
+/*
+  Define a Boolean data type.
+*/
+
+typedef enum { false, true } __attribute__ ((packed)) boolean;
+
+
+/*
   Define a 32/64 bit I/O Address data type.
 */
 
@@ -125,25 +139,25 @@ typedef struct DAC960_SCSI_Inquiry
   unsigned char PeripheralDeviceType:5;			/* Byte 0 Bits 0-4 */
   unsigned char PeripheralQualifier:3;			/* Byte 0 Bits 5-7 */
   unsigned char DeviceTypeModifier:7;			/* Byte 1 Bits 0-6 */
-  bool RMB:1;						/* Byte 1 Bit 7 */
+  boolean RMB:1;					/* Byte 1 Bit 7 */
   unsigned char ANSI_ApprovedVersion:3;			/* Byte 2 Bits 0-2 */
   unsigned char ECMA_Version:3;				/* Byte 2 Bits 3-5 */
   unsigned char ISO_Version:2;				/* Byte 2 Bits 6-7 */
   unsigned char ResponseDataFormat:4;			/* Byte 3 Bits 0-3 */
   unsigned char :2;					/* Byte 3 Bits 4-5 */
-  bool TrmIOP:1;					/* Byte 3 Bit 6 */
-  bool AENC:1;						/* Byte 3 Bit 7 */
+  boolean TrmIOP:1;					/* Byte 3 Bit 6 */
+  boolean AENC:1;					/* Byte 3 Bit 7 */
   unsigned char AdditionalLength;			/* Byte 4 */
   unsigned char :8;					/* Byte 5 */
   unsigned char :8;					/* Byte 6 */
-  bool SftRe:1;						/* Byte 7 Bit 0 */
-  bool CmdQue:1;					/* Byte 7 Bit 1 */
-  bool :1;						/* Byte 7 Bit 2 */
-  bool Linked:1;					/* Byte 7 Bit 3 */
-  bool Sync:1;						/* Byte 7 Bit 4 */
-  bool WBus16:1;					/* Byte 7 Bit 5 */
-  bool WBus32:1;					/* Byte 7 Bit 6 */
-  bool RelAdr:1;					/* Byte 7 Bit 7 */
+  boolean SftRe:1;					/* Byte 7 Bit 0 */
+  boolean CmdQue:1;					/* Byte 7 Bit 1 */
+  boolean :1;						/* Byte 7 Bit 2 */
+  boolean Linked:1;					/* Byte 7 Bit 3 */
+  boolean Sync:1;					/* Byte 7 Bit 4 */
+  boolean WBus16:1;					/* Byte 7 Bit 5 */
+  boolean WBus32:1;					/* Byte 7 Bit 6 */
+  boolean RelAdr:1;					/* Byte 7 Bit 7 */
   unsigned char VendorIdentification[8];		/* Bytes 8-15 */
   unsigned char ProductIdentification[16];		/* Bytes 16-31 */
   unsigned char ProductRevisionLevel[4];		/* Bytes 32-35 */
@@ -201,13 +215,13 @@ DAC960_SCSI_RequestSenseKey_T;
 typedef struct DAC960_SCSI_RequestSense
 {
   unsigned char ErrorCode:7;				/* Byte 0 Bits 0-6 */
-  bool Valid:1;						/* Byte 0 Bit 7 */
+  boolean Valid:1;					/* Byte 0 Bit 7 */
   unsigned char SegmentNumber;				/* Byte 1 */
   DAC960_SCSI_RequestSenseKey_T SenseKey:4;		/* Byte 2 Bits 0-3 */
   unsigned char :1;					/* Byte 2 Bit 4 */
-  bool ILI:1;						/* Byte 2 Bit 5 */
-  bool EOM:1;						/* Byte 2 Bit 6 */
-  bool Filemark:1;					/* Byte 2 Bit 7 */
+  boolean ILI:1;					/* Byte 2 Bit 5 */
+  boolean EOM:1;					/* Byte 2 Bit 6 */
+  boolean Filemark:1;					/* Byte 2 Bit 7 */
   unsigned char Information[4];				/* Bytes 3-6 */
   unsigned char AdditionalSenseLength;			/* Byte 7 */
   unsigned char CommandSpecificInformation[4];		/* Bytes 8-11 */
@@ -367,8 +381,8 @@ typedef struct DAC960_V1_Enquiry
   unsigned int LogicalDriveSizes[32];			/* Bytes 4-131 */
   unsigned short FlashAge;				/* Bytes 132-133 */
   struct {
-    bool DeferredWriteError:1;				/* Byte 134 Bit 0 */
-    bool BatteryLow:1;					/* Byte 134 Bit 1 */
+    boolean DeferredWriteError:1;			/* Byte 134 Bit 0 */
+    boolean BatteryLow:1;				/* Byte 134 Bit 1 */
     unsigned char :6;					/* Byte 134 Bits 2-7 */
   } StatusFlags;
   unsigned char :8;					/* Byte 135 */
@@ -396,7 +410,7 @@ typedef struct DAC960_V1_Enquiry
   unsigned char RebuildCount;				/* Byte 150 */
   struct {
     unsigned char :3;					/* Byte 151 Bits 0-2 */
-    bool BatteryBackupUnitPresent:1;			/* Byte 151 Bit 3 */
+    boolean BatteryBackupUnitPresent:1;			/* Byte 151 Bit 3 */
     unsigned char :3;					/* Byte 151 Bits 4-6 */
     unsigned char :1;					/* Byte 151 Bit 7 */
   } MiscFlags;
@@ -478,8 +492,8 @@ typedef struct DAC960_V1_Enquiry2
       DAC960_V1_ErrorCorrection_ECC =		0x2,
       DAC960_V1_ErrorCorrection_Last =		0x7
     } __attribute__ ((packed)) ErrorCorrection:3;	/* Byte 40 Bits 3-5 */
-    bool FastPageMode:1;				/* Byte 40 Bit 6 */
-    bool LowPowerMemory:1;				/* Byte 40 Bit 7 */
+    boolean FastPageMode:1;				/* Byte 40 Bit 6 */
+    boolean LowPowerMemory:1;				/* Byte 40 Bit 7 */
     unsigned char :8;					/* Bytes 41 */
   } MemoryType;
   unsigned short ClockSpeed;				/* Bytes 42-43 */
@@ -524,7 +538,7 @@ typedef struct DAC960_V1_Enquiry2
       DAC960_V1_Ultra =				0x1,
       DAC960_V1_Ultra2 =			0x2
     } __attribute__ ((packed)) BusSpeed:2;		/* Byte 106 Bits 2-3 */
-    bool Differential:1;				/* Byte 106 Bit 4 */
+    boolean Differential:1;				/* Byte 106 Bit 4 */
     unsigned char :3;					/* Byte 106 Bits 5-7 */
   } SCSICapability;
   unsigned char :8;					/* Byte 107 */
@@ -540,10 +554,10 @@ typedef struct DAC960_V1_Enquiry2
   } __attribute__ ((packed)) FaultManagementType;	/* Byte 114 */
   unsigned char :8;					/* Byte 115 */
   struct {
-    bool Clustering:1;					/* Byte 116 Bit 0 */
-    bool MylexOnlineRAIDExpansion:1;			/* Byte 116 Bit 1 */
-    bool ReadAhead:1;					/* Byte 116 Bit 2 */
-    bool BackgroundInitialization:1;			/* Byte 116 Bit 3 */
+    boolean Clustering:1;				/* Byte 116 Bit 0 */
+    boolean MylexOnlineRAIDExpansion:1;			/* Byte 116 Bit 1 */
+    boolean ReadAhead:1;				/* Byte 116 Bit 2 */
+    boolean BackgroundInitialization:1;			/* Byte 116 Bit 3 */
     unsigned int :28;					/* Bytes 116-119 */
   } FirmwareFeatures;
   unsigned int :32;					/* Bytes 120-123 */
@@ -575,7 +589,7 @@ typedef struct DAC960_V1_LogicalDriveInformation
   unsigned int LogicalDriveSize;			/* Bytes 0-3 */
   DAC960_V1_LogicalDriveState_T LogicalDriveState;	/* Byte 4 */
   unsigned char RAIDLevel:7;				/* Byte 5 Bits 0-6 */
-  bool WriteBack:1;					/* Byte 5 Bit 7 */
+  boolean WriteBack:1;					/* Byte 5 Bit 7 */
   unsigned short :16;					/* Bytes 6-7 */
 }
 DAC960_V1_LogicalDriveInformation_T;
@@ -616,13 +630,13 @@ typedef struct DAC960_V1_EventLogEntry
   unsigned char :2;					/* Byte 3 Bits 6-7 */
   unsigned short SequenceNumber;			/* Bytes 4-5 */
   unsigned char ErrorCode:7;				/* Byte 6 Bits 0-6 */
-  bool Valid:1;						/* Byte 6 Bit 7 */
+  boolean Valid:1;					/* Byte 6 Bit 7 */
   unsigned char SegmentNumber;				/* Byte 7 */
   DAC960_SCSI_RequestSenseKey_T SenseKey:4;		/* Byte 8 Bits 0-3 */
   unsigned char :1;					/* Byte 8 Bit 4 */
-  bool ILI:1;						/* Byte 8 Bit 5 */
-  bool EOM:1;						/* Byte 8 Bit 6 */
-  bool Filemark:1;					/* Byte 8 Bit 7 */
+  boolean ILI:1;					/* Byte 8 Bit 5 */
+  boolean EOM:1;					/* Byte 8 Bit 6 */
+  boolean Filemark:1;					/* Byte 8 Bit 7 */
   unsigned char Information[4];				/* Bytes 9-12 */
   unsigned char AdditionalSenseLength;			/* Byte 13 */
   unsigned char CommandSpecificInformation[4];		/* Bytes 14-17 */
@@ -656,7 +670,7 @@ DAC960_V1_PhysicalDeviceState_T;
 
 typedef struct DAC960_V1_DeviceState
 {
-  bool Present:1;					/* Byte 0 Bit 0 */
+  boolean Present:1;					/* Byte 0 Bit 0 */
   unsigned char :7;					/* Byte 0 Bits 1-7 */
   enum {
     DAC960_V1_OtherType =			0x0,
@@ -664,12 +678,12 @@ typedef struct DAC960_V1_DeviceState
     DAC960_V1_SequentialType =			0x2,
     DAC960_V1_CDROM_or_WORM_Type =		0x3
     } __attribute__ ((packed)) DeviceType:2;		/* Byte 1 Bits 0-1 */
-  bool :1;						/* Byte 1 Bit 2 */
-  bool Fast20:1;					/* Byte 1 Bit 3 */
-  bool Sync:1;						/* Byte 1 Bit 4 */
-  bool Fast:1;						/* Byte 1 Bit 5 */
-  bool Wide:1;						/* Byte 1 Bit 6 */
-  bool TaggedQueuingSupported:1;			/* Byte 1 Bit 7 */
+  boolean :1;						/* Byte 1 Bit 2 */
+  boolean Fast20:1;					/* Byte 1 Bit 3 */
+  boolean Sync:1;					/* Byte 1 Bit 4 */
+  boolean Fast:1;					/* Byte 1 Bit 5 */
+  boolean Wide:1;					/* Byte 1 Bit 6 */
+  boolean TaggedQueuingSupported:1;			/* Byte 1 Bit 7 */
   DAC960_V1_PhysicalDeviceState_T DeviceState;		/* Byte 2 */
   unsigned char :8;					/* Byte 3 */
   unsigned char SynchronousMultiplier;			/* Byte 4 */
@@ -751,15 +765,15 @@ DAC960_V1_ErrorTable_T;
 typedef struct DAC960_V1_Config2
 {
   unsigned char :1;					/* Byte 0 Bit 0 */
-  bool ActiveNegationEnabled:1;				/* Byte 0 Bit 1 */
+  boolean ActiveNegationEnabled:1;			/* Byte 0 Bit 1 */
   unsigned char :5;					/* Byte 0 Bits 2-6 */
-  bool NoRescanIfResetReceivedDuringScan:1;		/* Byte 0 Bit 7 */
-  bool StorageWorksSupportEnabled:1;			/* Byte 1 Bit 0 */
-  bool HewlettPackardSupportEnabled:1;			/* Byte 1 Bit 1 */
-  bool NoDisconnectOnFirstCommand:1;			/* Byte 1 Bit 2 */
+  boolean NoRescanIfResetReceivedDuringScan:1;		/* Byte 0 Bit 7 */
+  boolean StorageWorksSupportEnabled:1;			/* Byte 1 Bit 0 */
+  boolean HewlettPackardSupportEnabled:1;		/* Byte 1 Bit 1 */
+  boolean NoDisconnectOnFirstCommand:1;			/* Byte 1 Bit 2 */
   unsigned char :2;					/* Byte 1 Bits 3-4 */
-  bool AEMI_ARM:1;					/* Byte 1 Bit 5 */
-  bool AEMI_OFM:1;					/* Byte 1 Bit 6 */
+  boolean AEMI_ARM:1;					/* Byte 1 Bit 5 */
+  boolean AEMI_OFM:1;					/* Byte 1 Bit 6 */
   unsigned char :1;					/* Byte 1 Bit 7 */
   enum {
     DAC960_V1_OEMID_Mylex =			0x00,
@@ -773,13 +787,13 @@ typedef struct DAC960_V1_Config2
   unsigned char PhysicalSector;				/* Byte 4 */
   unsigned char LogicalSector;				/* Byte 5 */
   unsigned char BlockFactor;				/* Byte 6 */
-  bool ReadAheadEnabled:1;				/* Byte 7 Bit 0 */
-  bool LowBIOSDelay:1;					/* Byte 7 Bit 1 */
+  boolean ReadAheadEnabled:1;				/* Byte 7 Bit 0 */
+  boolean LowBIOSDelay:1;				/* Byte 7 Bit 1 */
   unsigned char :2;					/* Byte 7 Bits 2-3 */
-  bool ReassignRestrictedToOneSector:1;			/* Byte 7 Bit 4 */
+  boolean ReassignRestrictedToOneSector:1;		/* Byte 7 Bit 4 */
   unsigned char :1;					/* Byte 7 Bit 5 */
-  bool ForceUnitAccessDuringWriteRecovery:1;		/* Byte 7 Bit 6 */
-  bool EnableLeftSymmetricRAID5Algorithm:1;		/* Byte 7 Bit 7 */
+  boolean ForceUnitAccessDuringWriteRecovery:1;		/* Byte 7 Bit 6 */
+  boolean EnableLeftSymmetricRAID5Algorithm:1;		/* Byte 7 Bit 7 */
   unsigned char DefaultRebuildRate;			/* Byte 8 */
   unsigned char :8;					/* Byte 9 */
   unsigned char BlocksPerCacheLine;			/* Byte 10 */
@@ -791,10 +805,10 @@ typedef struct DAC960_V1_Config2
       DAC960_V1_Sync_5MHz =			0x2,
       DAC960_V1_Sync_10or20MHz =		0x3	/* Byte 11 Bits 0-1 */
     } __attribute__ ((packed)) Speed:2;
-    bool Force8Bit:1;					/* Byte 11 Bit 2 */
-    bool DisableFast20:1;				/* Byte 11 Bit 3 */
+    boolean Force8Bit:1;				/* Byte 11 Bit 2 */
+    boolean DisableFast20:1;				/* Byte 11 Bit 3 */
     unsigned char :3;					/* Byte 11 Bits 4-6 */
-    bool EnableTaggedQueuing:1;				/* Byte 11 Bit 7 */
+    boolean EnableTaggedQueuing:1;			/* Byte 11 Bit 7 */
   } __attribute__ ((packed)) ChannelParameters[6];	/* Bytes 12-17 */
   unsigned char SCSIInitiatorID;			/* Byte 18 */
   unsigned char :8;					/* Byte 19 */
@@ -805,8 +819,8 @@ typedef struct DAC960_V1_Config2
   unsigned char SimultaneousDeviceSpinUpCount;		/* Byte 21 */
   unsigned char SecondsDelayBetweenSpinUps;		/* Byte 22 */
   unsigned char Reserved1[29];				/* Bytes 23-51 */
-  bool BIOSDisabled:1;					/* Byte 52 Bit 0 */
-  bool CDROMBootEnabled:1;				/* Byte 52 Bit 1 */
+  boolean BIOSDisabled:1;				/* Byte 52 Bit 0 */
+  boolean CDROMBootEnabled:1;				/* Byte 52 Bit 1 */
   unsigned char :3;					/* Byte 52 Bits 2-4 */
   enum {
     DAC960_V1_Geometry_128_32 =			0x0,
@@ -835,7 +849,7 @@ typedef struct DAC960_V1_DCDB
     DAC960_V1_DCDB_DataTransferSystemToDevice = 2,
     DAC960_V1_DCDB_IllegalDataTransfer =	3
   } __attribute__ ((packed)) Direction:2;		 /* Byte 1 Bits 0-1 */
-  bool EarlyStatus:1;					 /* Byte 1 Bit 2 */
+  boolean EarlyStatus:1;				 /* Byte 1 Bit 2 */
   unsigned char :1;					 /* Byte 1 Bit 3 */
   enum {
     DAC960_V1_DCDB_Timeout_24_hours =		0,
@@ -843,8 +857,8 @@ typedef struct DAC960_V1_DCDB
     DAC960_V1_DCDB_Timeout_60_seconds =		2,
     DAC960_V1_DCDB_Timeout_10_minutes =		3
   } __attribute__ ((packed)) Timeout:2;			 /* Byte 1 Bits 4-5 */
-  bool NoAutomaticRequestSense:1;			 /* Byte 1 Bit 6 */
-  bool DisconnectPermitted:1;				 /* Byte 1 Bit 7 */
+  boolean NoAutomaticRequestSense:1;			 /* Byte 1 Bit 6 */
+  boolean DisconnectPermitted:1;			 /* Byte 1 Bit 7 */
   unsigned short TransferLength;			 /* Bytes 2-3 */
   DAC960_BusAddress32_T BusAddress;			 /* Bytes 4-7 */
   unsigned char CDBLength:4;				 /* Byte 8 Bits 0-3 */
@@ -906,7 +920,7 @@ typedef union DAC960_V1_CommandMailbox
     DAC960_V1_CommandIdentifier_T CommandIdentifier;	/* Byte 1 */
     unsigned char Dummy1[5];				/* Bytes 2-6 */
     unsigned char LogicalDriveNumber:6;			/* Byte 7 Bits 0-6 */
-    bool AutoRestore:1;					/* Byte 7 Bit 7 */
+    boolean AutoRestore:1;				/* Byte 7 Bit 7 */
     unsigned char Dummy2[8];				/* Bytes 8-15 */
   } __attribute__ ((packed)) Type3C;
   struct {
@@ -1056,9 +1070,9 @@ typedef struct DAC960_V2_MemoryType
     DAC960_V2_MemoryType_SDRAM =		0x04,
     DAC960_V2_MemoryType_Last =			0x1F
   } __attribute__ ((packed)) MemoryType:5;		/* Byte 0 Bits 0-4 */
-  bool :1;						/* Byte 0 Bit 5 */
-  bool MemoryParity:1;					/* Byte 0 Bit 6 */
-  bool MemoryECC:1;					/* Byte 0 Bit 7 */
+  boolean :1;						/* Byte 0 Bit 5 */
+  boolean MemoryParity:1;				/* Byte 0 Bit 6 */
+  boolean MemoryECC:1;					/* Byte 0 Bit 7 */
 }
 DAC960_V2_MemoryType_T;
 
@@ -1173,13 +1187,13 @@ typedef struct DAC960_V2_ControllerInfo
   unsigned char OEM_Code;				/* Byte 131 */
   unsigned char VendorName[16];				/* Bytes 132-147 */
   /* Other Physical/Controller/Operation Information */
-  bool BBU_Present:1;					/* Byte 148 Bit 0 */
-  bool ActiveActiveClusteringMode:1;			/* Byte 148 Bit 1 */
+  boolean BBU_Present:1;				/* Byte 148 Bit 0 */
+  boolean ActiveActiveClusteringMode:1;			/* Byte 148 Bit 1 */
   unsigned char :6;					/* Byte 148 Bits 2-7 */
   unsigned char :8;					/* Byte 149 */
   unsigned short :16;					/* Bytes 150-151 */
   /* Physical Device Scan Information */
-  bool PhysicalScanActive:1;				/* Byte 152 Bit 0 */
+  boolean PhysicalScanActive:1;				/* Byte 152 Bit 0 */
   unsigned char :7;					/* Byte 152 Bits 1-7 */
   unsigned char PhysicalDeviceChannelNumber;		/* Byte 153 */
   unsigned char PhysicalDeviceTargetID;			/* Byte 154 */
@@ -1291,8 +1305,8 @@ typedef struct DAC960_V2_ControllerInfo
   unsigned int FreeIOP;					/* Bytes 468-471 */
   unsigned short MaximumCombLengthInBlocks;		/* Bytes 472-473 */
   unsigned short NumberOfConfigurationGroups;		/* Bytes 474-475 */
-  bool InstallationAbortStatus:1;			/* Byte 476 Bit 0 */
-  bool MaintenanceModeStatus:1;				/* Byte 476 Bit 1 */
+  boolean InstallationAbortStatus:1;			/* Byte 476 Bit 0 */
+  boolean MaintenanceModeStatus:1;			/* Byte 476 Bit 1 */
   unsigned int :24;					/* Bytes 476-479 */
   unsigned char Reserved10[32];				/* Bytes 480-511 */
   unsigned char Reserved11[512];			/* Bytes 512-1023 */
@@ -1343,33 +1357,33 @@ typedef struct DAC960_V2_LogicalDeviceInfo
       DAC960_V2_IntelligentWriteCacheEnabled =	0x3,
       DAC960_V2_WriteCache_Last =		0x7
     } __attribute__ ((packed)) WriteCache:3;		/* Byte 8 Bits 3-5 */
-    bool :1;						/* Byte 8 Bit 6 */
-    bool LogicalDeviceInitialized:1;			/* Byte 8 Bit 7 */
+    boolean :1;						/* Byte 8 Bit 6 */
+    boolean LogicalDeviceInitialized:1;			/* Byte 8 Bit 7 */
   } LogicalDeviceControl;				/* Byte 8 */
   /* Logical Device Operations Status */
-  bool ConsistencyCheckInProgress:1;			/* Byte 9 Bit 0 */
-  bool RebuildInProgress:1;				/* Byte 9 Bit 1 */
-  bool BackgroundInitializationInProgress:1;		/* Byte 9 Bit 2 */
-  bool ForegroundInitializationInProgress:1;		/* Byte 9 Bit 3 */
-  bool DataMigrationInProgress:1;			/* Byte 9 Bit 4 */
-  bool PatrolOperationInProgress:1;			/* Byte 9 Bit 5 */
+  boolean ConsistencyCheckInProgress:1;			/* Byte 9 Bit 0 */
+  boolean RebuildInProgress:1;				/* Byte 9 Bit 1 */
+  boolean BackgroundInitializationInProgress:1;		/* Byte 9 Bit 2 */
+  boolean ForegroundInitializationInProgress:1;		/* Byte 9 Bit 3 */
+  boolean DataMigrationInProgress:1;			/* Byte 9 Bit 4 */
+  boolean PatrolOperationInProgress:1;			/* Byte 9 Bit 5 */
   unsigned char :2;					/* Byte 9 Bits 6-7 */
   unsigned char RAID5WriteUpdate;			/* Byte 10 */
   unsigned char RAID5Algorithm;				/* Byte 11 */
   unsigned short LogicalDeviceNumber;			/* Bytes 12-13 */
   /* BIOS Info */
-  bool BIOSDisabled:1;					/* Byte 14 Bit 0 */
-  bool CDROMBootEnabled:1;				/* Byte 14 Bit 1 */
-  bool DriveCoercionEnabled:1;				/* Byte 14 Bit 2 */
-  bool WriteSameDisabled:1;				/* Byte 14 Bit 3 */
-  bool HBA_ModeEnabled:1;				/* Byte 14 Bit 4 */
+  boolean BIOSDisabled:1;				/* Byte 14 Bit 0 */
+  boolean CDROMBootEnabled:1;				/* Byte 14 Bit 1 */
+  boolean DriveCoercionEnabled:1;			/* Byte 14 Bit 2 */
+  boolean WriteSameDisabled:1;				/* Byte 14 Bit 3 */
+  boolean HBA_ModeEnabled:1;				/* Byte 14 Bit 4 */
   enum {
     DAC960_V2_Geometry_128_32 =			0x0,
     DAC960_V2_Geometry_255_63 =			0x1,
     DAC960_V2_Geometry_Reserved1 =		0x2,
     DAC960_V2_Geometry_Reserved2 =		0x3
   } __attribute__ ((packed)) DriveGeometry:2;		/* Byte 14 Bits 5-6 */
-  bool SuperReadAheadEnabled:1;				/* Byte 14 Bit 7 */
+  boolean SuperReadAheadEnabled:1;			/* Byte 14 Bit 7 */
   unsigned char :8;					/* Byte 15 */
   /* Error Counters */
   unsigned short SoftErrors;				/* Bytes 16-17 */
@@ -1432,13 +1446,13 @@ typedef struct DAC960_V2_PhysicalDeviceInfo
   unsigned char TargetID;				/* Byte 2 */
   unsigned char LogicalUnit;				/* Byte 3 */
   /* Configuration Status Bits */
-  bool PhysicalDeviceFaultTolerant:1;			/* Byte 4 Bit 0 */
-  bool PhysicalDeviceConnected:1;			/* Byte 4 Bit 1 */
-  bool PhysicalDeviceLocalToController:1;		/* Byte 4 Bit 2 */
+  boolean PhysicalDeviceFaultTolerant:1;		/* Byte 4 Bit 0 */
+  boolean PhysicalDeviceConnected:1;			/* Byte 4 Bit 1 */
+  boolean PhysicalDeviceLocalToController:1;		/* Byte 4 Bit 2 */
   unsigned char :5;					/* Byte 4 Bits 3-7 */
   /* Multiple Host/Controller Status Bits */
-  bool RemoteHostSystemDead:1;				/* Byte 5 Bit 0 */
-  bool RemoteControllerDead:1;				/* Byte 5 Bit 1 */
+  boolean RemoteHostSystemDead:1;			/* Byte 5 Bit 0 */
+  boolean RemoteControllerDead:1;			/* Byte 5 Bit 1 */
   unsigned char :6;					/* Byte 5 Bits 2-7 */
   DAC960_V2_PhysicalDeviceState_T PhysicalDeviceState;	/* Byte 6 */
   unsigned char NegotiatedDataWidthBits;		/* Byte 7 */
@@ -1450,12 +1464,12 @@ typedef struct DAC960_V2_PhysicalDeviceInfo
   unsigned char NetworkAddress[16];			/* Bytes 16-31 */
   unsigned short MaximumTags;				/* Bytes 32-33 */
   /* Physical Device Operations Status */
-  bool ConsistencyCheckInProgress:1;			/* Byte 34 Bit 0 */
-  bool RebuildInProgress:1;				/* Byte 34 Bit 1 */
-  bool MakingDataConsistentInProgress:1;		/* Byte 34 Bit 2 */
-  bool PhysicalDeviceInitializationInProgress:1;	/* Byte 34 Bit 3 */
-  bool DataMigrationInProgress:1;			/* Byte 34 Bit 4 */
-  bool PatrolOperationInProgress:1;			/* Byte 34 Bit 5 */
+  boolean ConsistencyCheckInProgress:1;			/* Byte 34 Bit 0 */
+  boolean RebuildInProgress:1;				/* Byte 34 Bit 1 */
+  boolean MakingDataConsistentInProgress:1;		/* Byte 34 Bit 2 */
+  boolean PhysicalDeviceInitializationInProgress:1;	/* Byte 34 Bit 3 */
+  boolean DataMigrationInProgress:1;			/* Byte 34 Bit 4 */
+  boolean PatrolOperationInProgress:1;			/* Byte 34 Bit 5 */
   unsigned char :2;					/* Byte 34 Bits 6-7 */
   unsigned char LongOperationStatus;			/* Byte 35 */
   unsigned char ParityErrors;				/* Byte 36 */
@@ -1541,14 +1555,14 @@ DAC960_V2_Event_T;
 
 typedef struct DAC960_V2_CommandControlBits
 {
-  bool ForceUnitAccess:1;				/* Byte 0 Bit 0 */
-  bool DisablePageOut:1;				/* Byte 0 Bit 1 */
-  bool :1;						/* Byte 0 Bit 2 */
-  bool AdditionalScatterGatherListMemory:1;		/* Byte 0 Bit 3 */
-  bool DataTransferControllerToHost:1;			/* Byte 0 Bit 4 */
-  bool :1;						/* Byte 0 Bit 5 */
-  bool NoAutoRequestSense:1;				/* Byte 0 Bit 6 */
-  bool DisconnectProhibited:1;				/* Byte 0 Bit 7 */
+  boolean ForceUnitAccess:1;				/* Byte 0 Bit 0 */
+  boolean DisablePageOut:1;				/* Byte 0 Bit 1 */
+  boolean :1;						/* Byte 0 Bit 2 */
+  boolean AdditionalScatterGatherListMemory:1;		/* Byte 0 Bit 3 */
+  boolean DataTransferControllerToHost:1;		/* Byte 0 Bit 4 */
+  boolean :1;						/* Byte 0 Bit 5 */
+  boolean NoAutoRequestSense:1;				/* Byte 0 Bit 6 */
+  boolean DisconnectProhibited:1;			/* Byte 0 Bit 7 */
 }
 DAC960_V2_CommandControlBits_T;
 
@@ -1811,8 +1825,8 @@ typedef union DAC960_V2_CommandMailbox
     DAC960_V2_CommandTimeout_T CommandTimeout;		/* Byte 19 */
     unsigned char RequestSenseSize;			/* Byte 20 */
     unsigned char IOCTL_Opcode;				/* Byte 21 */
-    bool RestoreConsistency:1;				/* Byte 22 Bit 0 */
-    bool InitializedAreaOnly:1;				/* Byte 22 Bit 1 */
+    boolean RestoreConsistency:1;			/* Byte 22 Bit 0 */
+    boolean InitializedAreaOnly:1;			/* Byte 22 Bit 1 */
     unsigned char :6;					/* Byte 22 Bits 2-7 */
     unsigned char Reserved[9];				/* Bytes 23-31 */
     DAC960_V2_DataTransferMemoryAddress_T
@@ -2161,7 +2175,7 @@ static char
 struct DAC960_privdata {
 	DAC960_HardwareType_T	HardwareType;
 	DAC960_FirmwareType_T	FirmwareType;
-	irq_handler_t		InterruptHandler;
+	irqreturn_t (*InterruptHandler)(int, void *, struct pt_regs *);
 	unsigned int		MemoryWindowSize;
 };
 
@@ -2176,7 +2190,7 @@ typedef union DAC960_V1_StatusMailbox
   struct {
     DAC960_V1_CommandIdentifier_T CommandIdentifier;	/* Byte 0 */
     unsigned char :7;					/* Byte 1 Bits 0-6 */
-    bool Valid:1;					/* Byte 1 Bit 7 */
+    boolean Valid:1;					/* Byte 1 Bit 7 */
     DAC960_V1_CommandStatus_T CommandStatus;		/* Bytes 2-3 */
   } Fields;
 }
@@ -2308,12 +2322,12 @@ typedef struct DAC960_Controller
   unsigned long ShutdownMonitoringTimer;
   unsigned long LastProgressReportTime;
   unsigned long LastCurrentStatusTime;
-  bool ControllerInitialized;
-  bool MonitoringCommandDeferred;
-  bool EphemeralProgressMessage;
-  bool DriveSpinUpMessageDisplayed;
-  bool MonitoringAlertMode;
-  bool SuppressEnclosureMessages;
+  boolean ControllerInitialized;
+  boolean MonitoringCommandDeferred;
+  boolean EphemeralProgressMessage;
+  boolean DriveSpinUpMessageDisplayed;
+  boolean MonitoringAlertMode;
+  boolean SuppressEnclosureMessages;
   struct timer_list MonitoringTimer;
   struct gendisk *disks[DAC960_MaxLogicalDrives];
   struct pci_pool *ScatterGatherPool;
@@ -2328,11 +2342,11 @@ typedef struct DAC960_Controller
   DAC960_Command_T InitialCommand;
   DAC960_Command_T *Commands[DAC960_MaxDriverQueueDepth];
   struct proc_dir_entry *ControllerProcEntry;
-  bool LogicalDriveInitiallyAccessible[DAC960_MaxLogicalDrives];
+  boolean LogicalDriveInitiallyAccessible[DAC960_MaxLogicalDrives];
   void (*QueueCommand)(DAC960_Command_T *Command);
-  bool (*ReadControllerConfiguration)(struct DAC960_Controller *);
-  bool (*ReadDeviceConfiguration)(struct DAC960_Controller *);
-  bool (*ReportDeviceConfiguration)(struct DAC960_Controller *);
+  boolean (*ReadControllerConfiguration)(struct DAC960_Controller *);
+  boolean (*ReadDeviceConfiguration)(struct DAC960_Controller *);
+  boolean (*ReportDeviceConfiguration)(struct DAC960_Controller *);
   void (*QueueReadWriteCommand)(DAC960_Command_T *Command);
   union {
     struct {
@@ -2345,21 +2359,21 @@ typedef struct DAC960_Controller
       unsigned short OldEventLogSequenceNumber;
       unsigned short DeviceStateChannel;
       unsigned short DeviceStateTargetID;
-      bool DualModeMemoryMailboxInterface;
-      bool BackgroundInitializationStatusSupported;
-      bool SAFTE_EnclosureManagementEnabled;
-      bool NeedLogicalDriveInformation;
-      bool NeedErrorTableInformation;
-      bool NeedDeviceStateInformation;
-      bool NeedDeviceInquiryInformation;
-      bool NeedDeviceSerialNumberInformation;
-      bool NeedRebuildProgress;
-      bool NeedConsistencyCheckProgress;
-      bool NeedBackgroundInitializationStatus;
-      bool StartDeviceStateScan;
-      bool RebuildProgressFirst;
-      bool RebuildFlagPending;
-      bool RebuildStatusPending;
+      boolean DualModeMemoryMailboxInterface;
+      boolean BackgroundInitializationStatusSupported;
+      boolean SAFTE_EnclosureManagementEnabled;
+      boolean NeedLogicalDriveInformation;
+      boolean NeedErrorTableInformation;
+      boolean NeedDeviceStateInformation;
+      boolean NeedDeviceInquiryInformation;
+      boolean NeedDeviceSerialNumberInformation;
+      boolean NeedRebuildProgress;
+      boolean NeedConsistencyCheckProgress;
+      boolean NeedBackgroundInitializationStatus;
+      boolean StartDeviceStateScan;
+      boolean RebuildProgressFirst;
+      boolean RebuildFlagPending;
+      boolean RebuildStatusPending;
 
       dma_addr_t	FirstCommandMailboxDMA;
       DAC960_V1_CommandMailbox_T *FirstCommandMailbox;
@@ -2418,17 +2432,17 @@ typedef struct DAC960_Controller
       dma_addr_t NewInquiryUnitSerialNumberDMA;
 
       int DeviceResetCount[DAC960_V1_MaxChannels][DAC960_V1_MaxTargets];
-      bool DirectCommandActive[DAC960_V1_MaxChannels][DAC960_V1_MaxTargets];
+      boolean DirectCommandActive[DAC960_V1_MaxChannels][DAC960_V1_MaxTargets];
     } V1;
     struct {
       unsigned int StatusChangeCounter;
       unsigned int NextEventSequenceNumber;
       unsigned int PhysicalDeviceIndex;
-      bool NeedLogicalDeviceInformation;
-      bool NeedPhysicalDeviceInformation;
-      bool NeedDeviceSerialNumberInformation;
-      bool StartLogicalDeviceInformationScan;
-      bool StartPhysicalDeviceInformationScan;
+      boolean NeedLogicalDeviceInformation;
+      boolean NeedPhysicalDeviceInformation;
+      boolean NeedDeviceSerialNumberInformation;
+      boolean StartLogicalDeviceInformationScan;
+      boolean StartPhysicalDeviceInformationScan;
       struct pci_pool *RequestSensePool;
 
       dma_addr_t	FirstCommandMailboxDMA;
@@ -2473,7 +2487,7 @@ typedef struct DAC960_Controller
 
       DAC960_V2_PhysicalDevice_T
 	LogicalDriveToVirtualDevice[DAC960_MaxLogicalDrives];
-      bool LogicalDriveFoundDuringScan[DAC960_MaxLogicalDrives];
+      boolean LogicalDriveFoundDuringScan[DAC960_MaxLogicalDrives];
     } V2;
   } FW;
   unsigned char ProgressBuffer[DAC960_ProgressBufferSize];
@@ -2558,17 +2572,17 @@ typedef union DAC960_GEM_InboundDoorBellRegister
   unsigned int All;
   struct {
     unsigned int :24;
-    bool HardwareMailboxNewCommand:1;
-    bool AcknowledgeHardwareMailboxStatus:1;
-    bool GenerateInterrupt:1;
-    bool ControllerReset:1;
-    bool MemoryMailboxNewCommand:1;
+    boolean HardwareMailboxNewCommand:1;
+    boolean AcknowledgeHardwareMailboxStatus:1;
+    boolean GenerateInterrupt:1;
+    boolean ControllerReset:1;
+    boolean MemoryMailboxNewCommand:1;
     unsigned int :3;
   } Write;
   struct {
     unsigned int :24;
-    bool HardwareMailboxFull:1;
-    bool InitializationInProgress:1;
+    boolean HardwareMailboxFull:1;
+    boolean InitializationInProgress:1;
     unsigned int :6;
   } Read;
 }
@@ -2582,14 +2596,14 @@ typedef union DAC960_GEM_OutboundDoorBellRegister
   unsigned int All;
   struct {
     unsigned int :24;
-    bool AcknowledgeHardwareMailboxInterrupt:1;
-    bool AcknowledgeMemoryMailboxInterrupt:1;
+    boolean AcknowledgeHardwareMailboxInterrupt:1;
+    boolean AcknowledgeMemoryMailboxInterrupt:1;
     unsigned int :6;
   } Write;
   struct {
     unsigned int :24;
-    bool HardwareMailboxStatusAvailable:1;
-    bool MemoryMailboxStatusAvailable:1;
+    boolean HardwareMailboxStatusAvailable:1;
+    boolean MemoryMailboxStatusAvailable:1;
     unsigned int :6;
   } Read;
 }
@@ -2621,7 +2635,7 @@ typedef union DAC960_GEM_ErrorStatusRegister
   struct {
     unsigned int :24;
     unsigned int :5;
-    bool ErrorStatusPending:1;
+    boolean ErrorStatusPending:1;
     unsigned int :2;
   } Bits;
 }
@@ -2683,7 +2697,7 @@ void DAC960_GEM_MemoryMailboxNewCommand(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_GEM_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_GEM_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_GEM_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -2693,7 +2707,7 @@ bool DAC960_GEM_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_GEM_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_GEM_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_GEM_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -2734,7 +2748,7 @@ void DAC960_GEM_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_GEM_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_GEM_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_GEM_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -2744,7 +2758,7 @@ bool DAC960_GEM_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddr
 }
 
 static inline
-bool DAC960_GEM_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_GEM_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_GEM_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -2776,7 +2790,7 @@ void DAC960_GEM_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_GEM_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_GEM_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_GEM_InterruptMaskRegister_T InterruptMaskRegister;
   InterruptMaskRegister.All =
@@ -2820,7 +2834,7 @@ DAC960_GEM_ReadCommandStatus(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_GEM_CommandStatusOffset + 2);
 }
 
-static inline bool
+static inline boolean
 DAC960_GEM_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -2868,16 +2882,16 @@ typedef union DAC960_BA_InboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool HardwareMailboxNewCommand:1;			/* Bit 0 */
-    bool AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
-    bool GenerateInterrupt:1;				/* Bit 2 */
-    bool ControllerReset:1;				/* Bit 3 */
-    bool MemoryMailboxNewCommand:1;			/* Bit 4 */
+    boolean HardwareMailboxNewCommand:1;		/* Bit 0 */
+    boolean AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
+    boolean GenerateInterrupt:1;			/* Bit 2 */
+    boolean ControllerReset:1;				/* Bit 3 */
+    boolean MemoryMailboxNewCommand:1;			/* Bit 4 */
     unsigned char :3;					/* Bits 5-7 */
   } Write;
   struct {
-    bool HardwareMailboxEmpty:1;			/* Bit 0 */
-    bool InitializationNotInProgress:1;			/* Bit 1 */
+    boolean HardwareMailboxEmpty:1;			/* Bit 0 */
+    boolean InitializationNotInProgress:1;		/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -2892,13 +2906,13 @@ typedef union DAC960_BA_OutboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool AcknowledgeHardwareMailboxInterrupt:1;		/* Bit 0 */
-    bool AcknowledgeMemoryMailboxInterrupt:1;		/* Bit 1 */
+    boolean AcknowledgeHardwareMailboxInterrupt:1;	/* Bit 0 */
+    boolean AcknowledgeMemoryMailboxInterrupt:1;	/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Write;
   struct {
-    bool HardwareMailboxStatusAvailable:1;		/* Bit 0 */
-    bool MemoryMailboxStatusAvailable:1;		/* Bit 1 */
+    boolean HardwareMailboxStatusAvailable:1;		/* Bit 0 */
+    boolean MemoryMailboxStatusAvailable:1;		/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -2914,8 +2928,8 @@ typedef union DAC960_BA_InterruptMaskRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool DisableInterrupts:1;				/* Bit 2 */
-    bool DisableInterruptsI2O:1;			/* Bit 3 */
+    boolean DisableInterrupts:1;			/* Bit 2 */
+    boolean DisableInterruptsI2O:1;			/* Bit 3 */
     unsigned int :4;					/* Bits 4-7 */
   } Bits;
 }
@@ -2931,7 +2945,7 @@ typedef union DAC960_BA_ErrorStatusRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool ErrorStatusPending:1;				/* Bit 2 */
+    boolean ErrorStatusPending:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -2994,7 +3008,7 @@ void DAC960_BA_MemoryMailboxNewCommand(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_BA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_BA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_BA_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3003,7 +3017,7 @@ bool DAC960_BA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_BA_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_BA_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_BA_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3043,7 +3057,7 @@ void DAC960_BA_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_BA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_BA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_BA_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3052,7 +3066,7 @@ bool DAC960_BA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddre
 }
 
 static inline
-bool DAC960_BA_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_BA_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_BA_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3083,7 +3097,7 @@ void DAC960_BA_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_BA_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_BA_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_BA_InterruptMaskRegister_T InterruptMaskRegister;
   InterruptMaskRegister.All =
@@ -3126,7 +3140,7 @@ DAC960_BA_ReadCommandStatus(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_BA_CommandStatusOffset + 2);
 }
 
-static inline bool
+static inline boolean
 DAC960_BA_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -3174,16 +3188,16 @@ typedef union DAC960_LP_InboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool HardwareMailboxNewCommand:1;			/* Bit 0 */
-    bool AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
-    bool GenerateInterrupt:1;				/* Bit 2 */
-    bool ControllerReset:1;				/* Bit 3 */
-    bool MemoryMailboxNewCommand:1;			/* Bit 4 */
+    boolean HardwareMailboxNewCommand:1;		/* Bit 0 */
+    boolean AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
+    boolean GenerateInterrupt:1;			/* Bit 2 */
+    boolean ControllerReset:1;				/* Bit 3 */
+    boolean MemoryMailboxNewCommand:1;			/* Bit 4 */
     unsigned char :3;					/* Bits 5-7 */
   } Write;
   struct {
-    bool HardwareMailboxFull:1;				/* Bit 0 */
-    bool InitializationInProgress:1;			/* Bit 1 */
+    boolean HardwareMailboxFull:1;			/* Bit 0 */
+    boolean InitializationInProgress:1;			/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -3198,13 +3212,13 @@ typedef union DAC960_LP_OutboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool AcknowledgeHardwareMailboxInterrupt:1;		/* Bit 0 */
-    bool AcknowledgeMemoryMailboxInterrupt:1;		/* Bit 1 */
+    boolean AcknowledgeHardwareMailboxInterrupt:1;	/* Bit 0 */
+    boolean AcknowledgeMemoryMailboxInterrupt:1;	/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Write;
   struct {
-    bool HardwareMailboxStatusAvailable:1;		/* Bit 0 */
-    bool MemoryMailboxStatusAvailable:1;		/* Bit 1 */
+    boolean HardwareMailboxStatusAvailable:1;		/* Bit 0 */
+    boolean MemoryMailboxStatusAvailable:1;		/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -3220,7 +3234,7 @@ typedef union DAC960_LP_InterruptMaskRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool DisableInterrupts:1;				/* Bit 2 */
+    boolean DisableInterrupts:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -3236,7 +3250,7 @@ typedef union DAC960_LP_ErrorStatusRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool ErrorStatusPending:1;				/* Bit 2 */
+    boolean ErrorStatusPending:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -3299,7 +3313,7 @@ void DAC960_LP_MemoryMailboxNewCommand(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LP_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LP_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LP_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3308,7 +3322,7 @@ bool DAC960_LP_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LP_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LP_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LP_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3348,7 +3362,7 @@ void DAC960_LP_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LP_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LP_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LP_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3357,7 +3371,7 @@ bool DAC960_LP_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddre
 }
 
 static inline
-bool DAC960_LP_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LP_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LP_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3386,7 +3400,7 @@ void DAC960_LP_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LP_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LP_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LP_InterruptMaskRegister_T InterruptMaskRegister;
   InterruptMaskRegister.All =
@@ -3428,7 +3442,7 @@ DAC960_LP_ReadCommandStatus(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_LP_CommandStatusOffset + 2);
 }
 
-static inline bool
+static inline boolean
 DAC960_LP_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -3488,16 +3502,16 @@ typedef union DAC960_LA_InboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool HardwareMailboxNewCommand:1;			/* Bit 0 */
-    bool AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
-    bool GenerateInterrupt:1;				/* Bit 2 */
-    bool ControllerReset:1;				/* Bit 3 */
-    bool MemoryMailboxNewCommand:1;			/* Bit 4 */
+    boolean HardwareMailboxNewCommand:1;		/* Bit 0 */
+    boolean AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
+    boolean GenerateInterrupt:1;			/* Bit 2 */
+    boolean ControllerReset:1;				/* Bit 3 */
+    boolean MemoryMailboxNewCommand:1;			/* Bit 4 */
     unsigned char :3;					/* Bits 5-7 */
   } Write;
   struct {
-    bool HardwareMailboxEmpty:1;			/* Bit 0 */
-    bool InitializationNotInProgress:1;		/* Bit 1 */
+    boolean HardwareMailboxEmpty:1;			/* Bit 0 */
+    boolean InitializationNotInProgress:1;		/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -3512,13 +3526,13 @@ typedef union DAC960_LA_OutboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool AcknowledgeHardwareMailboxInterrupt:1;		/* Bit 0 */
-    bool AcknowledgeMemoryMailboxInterrupt:1;		/* Bit 1 */
+    boolean AcknowledgeHardwareMailboxInterrupt:1;	/* Bit 0 */
+    boolean AcknowledgeMemoryMailboxInterrupt:1;	/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Write;
   struct {
-    bool HardwareMailboxStatusAvailable:1;		/* Bit 0 */
-    bool MemoryMailboxStatusAvailable:1;		/* Bit 1 */
+    boolean HardwareMailboxStatusAvailable:1;		/* Bit 0 */
+    boolean MemoryMailboxStatusAvailable:1;		/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -3534,7 +3548,7 @@ typedef union DAC960_LA_InterruptMaskRegister
   unsigned char All;
   struct {
     unsigned char :2;					/* Bits 0-1 */
-    bool DisableInterrupts:1;				/* Bit 2 */
+    boolean DisableInterrupts:1;			/* Bit 2 */
     unsigned char :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -3550,7 +3564,7 @@ typedef union DAC960_LA_ErrorStatusRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool ErrorStatusPending:1;				/* Bit 2 */
+    boolean ErrorStatusPending:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -3613,7 +3627,7 @@ void DAC960_LA_MemoryMailboxNewCommand(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LA_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3622,7 +3636,7 @@ bool DAC960_LA_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LA_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LA_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LA_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3662,7 +3676,7 @@ void DAC960_LA_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LA_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3671,7 +3685,7 @@ bool DAC960_LA_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddre
 }
 
 static inline
-bool DAC960_LA_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LA_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LA_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3700,7 +3714,7 @@ void DAC960_LA_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_LA_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_LA_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_LA_InterruptMaskRegister_T InterruptMaskRegister;
   InterruptMaskRegister.All =
@@ -3749,7 +3763,7 @@ DAC960_LA_ReadStatusRegister(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_LA_StatusRegisterOffset);
 }
 
-static inline bool
+static inline boolean
 DAC960_LA_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -3808,16 +3822,16 @@ typedef union DAC960_PG_InboundDoorBellRegister
 {
   unsigned int All;
   struct {
-    bool HardwareMailboxNewCommand:1;			/* Bit 0 */
-    bool AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
-    bool GenerateInterrupt:1;				/* Bit 2 */
-    bool ControllerReset:1;				/* Bit 3 */
-    bool MemoryMailboxNewCommand:1;			/* Bit 4 */
+    boolean HardwareMailboxNewCommand:1;		/* Bit 0 */
+    boolean AcknowledgeHardwareMailboxStatus:1;		/* Bit 1 */
+    boolean GenerateInterrupt:1;			/* Bit 2 */
+    boolean ControllerReset:1;				/* Bit 3 */
+    boolean MemoryMailboxNewCommand:1;			/* Bit 4 */
     unsigned int :27;					/* Bits 5-31 */
   } Write;
   struct {
-    bool HardwareMailboxFull:1;				/* Bit 0 */
-    bool InitializationInProgress:1;			/* Bit 1 */
+    boolean HardwareMailboxFull:1;			/* Bit 0 */
+    boolean InitializationInProgress:1;			/* Bit 1 */
     unsigned int :30;					/* Bits 2-31 */
   } Read;
 }
@@ -3832,13 +3846,13 @@ typedef union DAC960_PG_OutboundDoorBellRegister
 {
   unsigned int All;
   struct {
-    bool AcknowledgeHardwareMailboxInterrupt:1;		/* Bit 0 */
-    bool AcknowledgeMemoryMailboxInterrupt:1;		/* Bit 1 */
+    boolean AcknowledgeHardwareMailboxInterrupt:1;	/* Bit 0 */
+    boolean AcknowledgeMemoryMailboxInterrupt:1;	/* Bit 1 */
     unsigned int :30;					/* Bits 2-31 */
   } Write;
   struct {
-    bool HardwareMailboxStatusAvailable:1;		/* Bit 0 */
-    bool MemoryMailboxStatusAvailable:1;		/* Bit 1 */
+    boolean HardwareMailboxStatusAvailable:1;		/* Bit 0 */
+    boolean MemoryMailboxStatusAvailable:1;		/* Bit 1 */
     unsigned int :30;					/* Bits 2-31 */
   } Read;
 }
@@ -3854,7 +3868,7 @@ typedef union DAC960_PG_InterruptMaskRegister
   unsigned int All;
   struct {
     unsigned int MessageUnitInterruptMask1:2;		/* Bits 0-1 */
-    bool DisableInterrupts:1;				/* Bit 2 */
+    boolean DisableInterrupts:1;			/* Bit 2 */
     unsigned int MessageUnitInterruptMask2:5;		/* Bits 3-7 */
     unsigned int Reserved0:24;				/* Bits 8-31 */
   } Bits;
@@ -3871,7 +3885,7 @@ typedef union DAC960_PG_ErrorStatusRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool ErrorStatusPending:1;				/* Bit 2 */
+    boolean ErrorStatusPending:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -3934,7 +3948,7 @@ void DAC960_PG_MemoryMailboxNewCommand(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PG_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PG_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PG_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3943,7 +3957,7 @@ bool DAC960_PG_HardwareMailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PG_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PG_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PG_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -3983,7 +3997,7 @@ void DAC960_PG_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PG_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PG_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PG_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -3992,7 +4006,7 @@ bool DAC960_PG_HardwareMailboxStatusAvailableP(void __iomem *ControllerBaseAddre
 }
 
 static inline
-bool DAC960_PG_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PG_MemoryMailboxStatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PG_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -4025,7 +4039,7 @@ void DAC960_PG_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PG_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PG_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PG_InterruptMaskRegister_T InterruptMaskRegister;
   InterruptMaskRegister.All =
@@ -4074,7 +4088,7 @@ DAC960_PG_ReadStatusRegister(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_PG_StatusRegisterOffset);
 }
 
-static inline bool
+static inline boolean
 DAC960_PG_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -4133,15 +4147,15 @@ typedef union DAC960_PD_InboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool NewCommand:1;					/* Bit 0 */
-    bool AcknowledgeStatus:1;				/* Bit 1 */
-    bool GenerateInterrupt:1;				/* Bit 2 */
-    bool ControllerReset:1;				/* Bit 3 */
+    boolean NewCommand:1;				/* Bit 0 */
+    boolean AcknowledgeStatus:1;			/* Bit 1 */
+    boolean GenerateInterrupt:1;			/* Bit 2 */
+    boolean ControllerReset:1;				/* Bit 3 */
     unsigned char :4;					/* Bits 4-7 */
   } Write;
   struct {
-    bool MailboxFull:1;					/* Bit 0 */
-    bool InitializationInProgress:1;			/* Bit 1 */
+    boolean MailboxFull:1;				/* Bit 0 */
+    boolean InitializationInProgress:1;			/* Bit 1 */
     unsigned char :6;					/* Bits 2-7 */
   } Read;
 }
@@ -4156,11 +4170,11 @@ typedef union DAC960_PD_OutboundDoorBellRegister
 {
   unsigned char All;
   struct {
-    bool AcknowledgeInterrupt:1;			/* Bit 0 */
+    boolean AcknowledgeInterrupt:1;			/* Bit 0 */
     unsigned char :7;					/* Bits 1-7 */
   } Write;
   struct {
-    bool StatusAvailable:1;				/* Bit 0 */
+    boolean StatusAvailable:1;				/* Bit 0 */
     unsigned char :7;					/* Bits 1-7 */
   } Read;
 }
@@ -4175,7 +4189,7 @@ typedef union DAC960_PD_InterruptEnableRegister
 {
   unsigned char All;
   struct {
-    bool EnableInterrupts:1;				/* Bit 0 */
+    boolean EnableInterrupts:1;				/* Bit 0 */
     unsigned char :7;					/* Bits 1-7 */
   } Bits;
 }
@@ -4191,7 +4205,7 @@ typedef union DAC960_PD_ErrorStatusRegister
   unsigned char All;
   struct {
     unsigned int :2;					/* Bits 0-1 */
-    bool ErrorStatusPending:1;				/* Bit 2 */
+    boolean ErrorStatusPending:1;			/* Bit 2 */
     unsigned int :5;					/* Bits 3-7 */
   } Bits;
 }
@@ -4244,7 +4258,7 @@ void DAC960_PD_ControllerReset(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PD_MailboxFullP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PD_MailboxFullP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PD_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -4253,7 +4267,7 @@ bool DAC960_PD_MailboxFullP(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PD_InitializationInProgressP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PD_InitializationInProgressP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PD_InboundDoorBellRegister_T InboundDoorBellRegister;
   InboundDoorBellRegister.All =
@@ -4272,7 +4286,7 @@ void DAC960_PD_AcknowledgeInterrupt(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PD_StatusAvailableP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PD_StatusAvailableP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PD_OutboundDoorBellRegister_T OutboundDoorBellRegister;
   OutboundDoorBellRegister.All =
@@ -4301,7 +4315,7 @@ void DAC960_PD_DisableInterrupts(void __iomem *ControllerBaseAddress)
 }
 
 static inline
-bool DAC960_PD_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
+boolean DAC960_PD_InterruptsEnabledP(void __iomem *ControllerBaseAddress)
 {
   DAC960_PD_InterruptEnableRegister_T InterruptEnableRegister;
   InterruptEnableRegister.All =
@@ -4336,7 +4350,7 @@ DAC960_PD_ReadStatusRegister(void __iomem *ControllerBaseAddress)
   return readw(ControllerBaseAddress + DAC960_PD_StatusRegisterOffset);
 }
 
-static inline bool
+static inline boolean
 DAC960_PD_ReadErrorStatus(void __iomem *ControllerBaseAddress,
 			  unsigned char *ErrorStatus,
 			  unsigned char *Parameter0,
@@ -4365,8 +4379,8 @@ static inline void DAC960_P_To_PD_TranslateEnquiry(void *Enquiry)
 static inline void DAC960_P_To_PD_TranslateDeviceState(void *DeviceState)
 {
   memcpy(DeviceState + 2, DeviceState + 3, 1);
-  memmove(DeviceState + 4, DeviceState + 5, 2);
-  memmove(DeviceState + 6, DeviceState + 8, 4);
+  memcpy(DeviceState + 4, DeviceState + 5, 2);
+  memcpy(DeviceState + 6, DeviceState + 8, 4);
 }
 
 static inline
@@ -4398,12 +4412,12 @@ static void DAC960_FinalizeController(DAC960_Controller_T *);
 static void DAC960_V1_QueueReadWriteCommand(DAC960_Command_T *);
 static void DAC960_V2_QueueReadWriteCommand(DAC960_Command_T *); 
 static void DAC960_RequestFunction(struct request_queue *);
-static irqreturn_t DAC960_BA_InterruptHandler(int, void *);
-static irqreturn_t DAC960_LP_InterruptHandler(int, void *);
-static irqreturn_t DAC960_LA_InterruptHandler(int, void *);
-static irqreturn_t DAC960_PG_InterruptHandler(int, void *);
-static irqreturn_t DAC960_PD_InterruptHandler(int, void *);
-static irqreturn_t DAC960_P_InterruptHandler(int, void *);
+static irqreturn_t DAC960_BA_InterruptHandler(int, void *, struct pt_regs *);
+static irqreturn_t DAC960_LP_InterruptHandler(int, void *, struct pt_regs *);
+static irqreturn_t DAC960_LA_InterruptHandler(int, void *, struct pt_regs *);
+static irqreturn_t DAC960_PG_InterruptHandler(int, void *, struct pt_regs *);
+static irqreturn_t DAC960_PD_InterruptHandler(int, void *, struct pt_regs *);
+static irqreturn_t DAC960_P_InterruptHandler(int, void *, struct pt_regs *);
 static void DAC960_V1_QueueMonitoringCommand(DAC960_Command_T *);
 static void DAC960_V2_QueueMonitoringCommand(DAC960_Command_T *);
 static void DAC960_MonitoringTimerFunction(unsigned long);

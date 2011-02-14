@@ -1,5 +1,5 @@
 /*
- * sound/oss/sb_common.c
+ * sound/sb_common.c
  *
  * Common routines for Sound Blaster compatible cards.
  *
@@ -132,7 +132,7 @@ static void sb_intr (sb_devc *devc)
 
 		if (src & 4)						/* MPU401 interrupt */
 			if(devc->midi_irq_cookie)
-				uart401intr(devc->irq, devc->midi_irq_cookie);
+				uart401intr(devc->irq, devc->midi_irq_cookie, NULL);
 
 		if (!(src & 3))
 			return;	/* Not a DSP interrupt */
@@ -157,7 +157,7 @@ static void sb_intr (sb_devc *devc)
 				break;
 
 			default:
-				/* printk(KERN_WARNING "Sound Blaster: Unexpected interrupt\n"); */
+				/* printk(KERN_WARN "Sound Blaster: Unexpected interrupt\n"); */
 				;
 		}
 	}
@@ -177,7 +177,7 @@ static void sb_intr (sb_devc *devc)
 				break;
 
 			default:
-				/* printk(KERN_WARNING "Sound Blaster: Unexpected interrupt\n"); */
+				/* printk(KERN_WARN "Sound Blaster: Unexpected interrupt\n"); */
 				;
 		}
 	}
@@ -200,7 +200,7 @@ static void pci_intr(sb_devc *devc)
 		sb_intr(devc);
 }
 
-static irqreturn_t sbintr(int irq, void *dev_id)
+static irqreturn_t sbintr(int irq, void *dev_id, struct pt_regs *dummy)
 {
 	sb_devc *devc = dev_id;
 
@@ -625,7 +625,7 @@ int sb_dsp_detect(struct address_info *hw_config, int pci, int pciio, struct sb_
 	 */
 
 
-	detected_devc = kmalloc(sizeof(sb_devc), GFP_KERNEL);
+	detected_devc = (sb_devc *)kmalloc(sizeof(sb_devc), GFP_KERNEL);
 	if (detected_devc == NULL)
 	{
 		printk(KERN_ERR "sb: Can't allocate memory for device information\n");
@@ -1228,8 +1228,7 @@ int probe_sbmpu(struct address_info *hw_config, struct module *owner)
 		}
 		attach_mpu401(hw_config, owner);
 		if (last_sb->irq == -hw_config->irq)
-			last_sb->midi_irq_cookie =
-				(void *)(long) hw_config->slots[1];
+			last_sb->midi_irq_cookie=(void *)hw_config->slots[1];
 		return 1;
 	}
 #endif

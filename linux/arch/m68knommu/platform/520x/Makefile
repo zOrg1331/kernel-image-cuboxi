@@ -12,6 +12,8 @@
 # EXTRA_AFLAGS += -DTRAP_DBG_INTERRUPT
 #
 
-asflags-$(CONFIG_FULLDEBUG) := -DDEBUGGER_COMPATIBLE_CACHE=1
+ifdef CONFIG_FULLDEBUG
+AFLAGS += -DDEBUGGER_COMPATIBLE_CACHE=1
+endif
 
-obj-y := config.o gpio.o
+obj-y := config.o

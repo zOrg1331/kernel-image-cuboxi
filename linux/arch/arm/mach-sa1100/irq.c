@@ -14,9 +14,10 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/ioport.h>
+#include <linux/ptrace.h>
 #include <linux/sysdev.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach/irq.h>
 
 #include "generic.h"
@@ -46,17 +47,17 @@ static int sa1100_gpio_type(unsigned int irq, unsigned int type)
 	else
 		mask = GPIO11_27_MASK(irq);
 
-	if (type == IRQ_TYPE_PROBE) {
+	if (type == IRQT_PROBE) {
 		if ((GPIO_IRQ_rising_edge | GPIO_IRQ_falling_edge) & mask)
 			return 0;
-		type = IRQ_TYPE_EDGE_RISING | IRQ_TYPE_EDGE_FALLING;
+		type = __IRQT_RISEDGE | __IRQT_FALEDGE;
 	}
 
-	if (type & IRQ_TYPE_EDGE_RISING) {
+	if (type & __IRQT_RISEDGE) {
 		GPIO_IRQ_rising_edge |= mask;
 	} else
 		GPIO_IRQ_rising_edge &= ~mask;
-	if (type & IRQ_TYPE_EDGE_FALLING) {
+	if (type & __IRQT_FALEDGE) {
 		GPIO_IRQ_falling_edge |= mask;
 	} else
 		GPIO_IRQ_falling_edge &= ~mask;
@@ -109,7 +110,8 @@ static struct irq_chip sa1100_low_gpio_chip = {
  * and call the handler.
  */
 static void
-sa1100_high_gpio_handler(unsigned int irq, struct irq_desc *desc)
+sa1100_high_gpio_handler(unsigned int irq, struct irqdesc *desc,
+			 struct pt_regs *regs)
 {
 	unsigned int mask;
 
@@ -122,12 +124,14 @@ sa1100_high_gpio_handler(unsigned int irq, struct irq_desc *desc)
 		GEDR = mask;
 
 		irq = IRQ_GPIO11;
+		desc = irq_desc + irq;
 		mask >>= 11;
 		do {
 			if (mask & 1)
-				generic_handle_irq(irq);
+				desc_handle_irq(irq, desc, regs);
 			mask >>= 1;
 			irq++;
+			desc++;
 		} while (mask);
 
 		mask = GEDR & 0xfffff800;
@@ -281,7 +285,7 @@ static int sa1100irq_resume(struct sys_device *dev)
 }
 
 static struct sysdev_class sa1100irq_sysclass = {
-	.name		= "sa11x0-irq",
+	set_kset_name("sa11x0-irq"),
 	.suspend	= sa1100irq_suspend,
 	.resume		= sa1100irq_resume,
 };
@@ -324,19 +328,19 @@ void __init sa1100_init_irq(void)
 
 	for (irq = 0; irq <= 10; irq++) {
 		set_irq_chip(irq, &sa1100_low_gpio_chip);
-		set_irq_handler(irq, handle_edge_irq);
+		set_irq_handler(irq, do_edge_IRQ);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 
 	for (irq = 12; irq <= 31; irq++) {
 		set_irq_chip(irq, &sa1100_normal_chip);
-		set_irq_handler(irq, handle_level_irq);
+		set_irq_handler(irq, do_level_IRQ);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 
 	for (irq = 32; irq <= 48; irq++) {
 		set_irq_chip(irq, &sa1100_high_gpio_chip);
-		set_irq_handler(irq, handle_edge_irq);
+		set_irq_handler(irq, do_edge_IRQ);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 
@@ -345,6 +349,4 @@ void __init sa1100_init_irq(void)
 	 */
 	set_irq_chip(IRQ_GPIO11_27, &sa1100_normal_chip);
 	set_irq_chained_handler(IRQ_GPIO11_27, sa1100_high_gpio_handler);
-
-	sa1100_init_gpio();
 }

@@ -7,7 +7,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/spinlock.h>
 
 #include <asm/irq.h>
 
@@ -29,11 +28,15 @@ static unsigned long timer1_gettimeoffset (void)
 }
 
 static irqreturn_t
-timer1_interrupt(int irq, void *dev_id)
+timer1_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
+	write_seqlock(&xtime_lock);
+
 	*CSR_TIMER1_CLR = 0;
 
-	timer_tick();
+	timer_tick(regs);
+
+	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
@@ -41,7 +44,7 @@ timer1_interrupt(int irq, void *dev_id)
 static struct irqaction footbridge_timer_irq = {
 	.name		= "Timer1 timer tick",
 	.handler	= timer1_interrupt,
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 };
 
 /*

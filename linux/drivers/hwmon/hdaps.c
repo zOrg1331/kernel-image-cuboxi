@@ -28,14 +28,12 @@
 
 #include <linux/delay.h>
 #include <linux/platform_device.h>
-#include <linux/input-polldev.h>
+#include <linux/input.h>
 #include <linux/kernel.h>
-#include <linux/mutex.h>
 #include <linux/module.h>
 #include <linux/timer.h>
 #include <linux/dmi.h>
-#include <linux/jiffies.h>
-#include <linux/io.h>
+#include <asm/io.h>
 
 #define HDAPS_LOW_PORT		0x1600	/* first port used by hdaps */
 #define HDAPS_NR_PORTS		0x30	/* number of ports: 0x1600 - 0x162f */
@@ -60,25 +58,22 @@
 #define INIT_TIMEOUT_MSECS	4000	/* wait up to 4s for device init ... */
 #define INIT_WAIT_MSECS		200	/* ... in 200ms increments */
 
-#define HDAPS_POLL_INTERVAL	50	/* poll for input every 1/20s (50 ms)*/
+#define HDAPS_POLL_PERIOD	(HZ/20)	/* poll for input every 1/20s */
 #define HDAPS_INPUT_FUZZ	4	/* input event threshold */
 #define HDAPS_INPUT_FLAT	4
 
-#define HDAPS_X_AXIS		(1 << 0)
-#define HDAPS_Y_AXIS		(1 << 1)
-#define HDAPS_BOTH_AXES		(HDAPS_X_AXIS | HDAPS_Y_AXIS)
-
+static struct timer_list hdaps_timer;
 static struct platform_device *pdev;
-static struct input_polled_dev *hdaps_idev;
+static struct input_dev *hdaps_idev;
 static unsigned int hdaps_invert;
 static u8 km_activity;
 static int rest_x;
 static int rest_y;
 
-static DEFINE_MUTEX(hdaps_mtx);
+static DECLARE_MUTEX(hdaps_sem);
 
 /*
- * __get_latch - Get the value from a given port.  Callers must hold hdaps_mtx.
+ * __get_latch - Get the value from a given port.  Callers must hold hdaps_sem.
  */
 static inline u8 __get_latch(u16 port)
 {
@@ -87,7 +82,7 @@ static inline u8 __get_latch(u16 port)
 
 /*
  * __check_latch - Check a port latch for a given value.  Returns zero if the
- * port contains the given value.  Callers must hold hdaps_mtx.
+ * port contains the given value.  Callers must hold hdaps_sem.
  */
 static inline int __check_latch(u16 port, u8 val)
 {
@@ -98,7 +93,7 @@ static inline int __check_latch(u16 port, u8 val)
 
 /*
  * __wait_latch - Wait up to 100us for a port latch to get a certain value,
- * returning zero if the value is obtained.  Callers must hold hdaps_mtx.
+ * returning zero if the value is obtained.  Callers must hold hdaps_sem.
  */
 static int __wait_latch(u16 port, u8 val)
 {
@@ -115,7 +110,7 @@ static int __wait_latch(u16 port, u8 val)
 
 /*
  * __device_refresh - request a refresh from the accelerometer.  Does not wait
- * for refresh to complete.  Callers must hold hdaps_mtx.
+ * for refresh to complete.  Callers must hold hdaps_sem.
  */
 static void __device_refresh(void)
 {
@@ -129,7 +124,7 @@ static void __device_refresh(void)
 /*
  * __device_refresh_sync - request a synchronous refresh from the
  * accelerometer.  We wait for the refresh to complete.  Returns zero if
- * successful and nonzero on error.  Callers must hold hdaps_mtx.
+ * successful and nonzero on error.  Callers must hold hdaps_sem.
  */
 static int __device_refresh_sync(void)
 {
@@ -139,7 +134,7 @@ static int __device_refresh_sync(void)
 
 /*
  * __device_complete - indicate to the accelerometer that we are done reading
- * data, and then initiate an async refresh.  Callers must hold hdaps_mtx.
+ * data, and then initiate an async refresh.  Callers must hold hdaps_sem.
  */
 static inline void __device_complete(void)
 {
@@ -157,7 +152,7 @@ static int hdaps_readb_one(unsigned int port, u8 *val)
 {
 	int ret;
 
-	mutex_lock(&hdaps_mtx);
+	down(&hdaps_sem);
 
 	/* do a sync refresh -- we need to be sure that we read fresh data */
 	ret = __device_refresh_sync();
@@ -168,7 +163,7 @@ static int hdaps_readb_one(unsigned int port, u8 *val)
 	__device_complete();
 
 out:
-	mutex_unlock(&hdaps_mtx);
+	up(&hdaps_sem);
 	return ret;
 }
 
@@ -185,11 +180,11 @@ static int __hdaps_read_pair(unsigned int port1, unsigned int port2,
 	km_activity = inb(HDAPS_PORT_KMACT);
 	__device_complete();
 
-	/* hdaps_invert is a bitvector to negate the axes */
-	if (hdaps_invert & HDAPS_X_AXIS)
+	/* if hdaps_invert is set, negate the two values */
+	if (hdaps_invert) {
 		*x = -*x;
-	if (hdaps_invert & HDAPS_Y_AXIS)
 		*y = -*y;
+	}
 
 	return 0;
 }
@@ -203,9 +198,9 @@ static int hdaps_read_pair(unsigned int port1, unsigned int port2,
 {
 	int ret;
 
-	mutex_lock(&hdaps_mtx);
+	down(&hdaps_sem);
 	ret = __hdaps_read_pair(port1, port2, val1, val2);
-	mutex_unlock(&hdaps_mtx);
+	up(&hdaps_sem);
 
 	return ret;
 }
@@ -218,7 +213,7 @@ static int hdaps_device_init(void)
 {
 	int total, ret = -ENXIO;
 
-	mutex_lock(&hdaps_mtx);
+	down(&hdaps_sem);
 
 	outb(0x13, 0x1610);
 	outb(0x01, 0x161f);
@@ -284,7 +279,7 @@ static int hdaps_device_init(void)
 	}
 
 out:
-	mutex_unlock(&hdaps_mtx);
+	up(&hdaps_sem);
 	return ret;
 }
 
@@ -318,29 +313,34 @@ static struct platform_driver hdaps_driver = {
 };
 
 /*
- * hdaps_calibrate - Set our "resting" values.  Callers must hold hdaps_mtx.
+ * hdaps_calibrate - Set our "resting" values.  Callers must hold hdaps_sem.
  */
 static void hdaps_calibrate(void)
 {
 	__hdaps_read_pair(HDAPS_PORT_XPOS, HDAPS_PORT_YPOS, &rest_x, &rest_y);
 }
 
-static void hdaps_mousedev_poll(struct input_polled_dev *dev)
+static void hdaps_mousedev_poll(unsigned long unused)
 {
-	struct input_dev *input_dev = dev->input;
 	int x, y;
 
-	mutex_lock(&hdaps_mtx);
+	/* Cannot sleep.  Try nonblockingly.  If we fail, try again later. */
+	if (down_trylock(&hdaps_sem)) {
+		mod_timer(&hdaps_timer,jiffies + HDAPS_POLL_PERIOD);
+		return;
+	}
 
 	if (__hdaps_read_pair(HDAPS_PORT_XPOS, HDAPS_PORT_YPOS, &x, &y))
 		goto out;
 
-	input_report_abs(input_dev, ABS_X, x - rest_x);
-	input_report_abs(input_dev, ABS_Y, y - rest_y);
-	input_sync(input_dev);
+	input_report_abs(hdaps_idev, ABS_X, x - rest_x);
+	input_report_abs(hdaps_idev, ABS_Y, y - rest_y);
+	input_sync(hdaps_idev);
+
+	mod_timer(&hdaps_timer, jiffies + HDAPS_POLL_PERIOD);
 
 out:
-	mutex_unlock(&hdaps_mtx);
+	up(&hdaps_sem);
 }
 
 
@@ -420,9 +420,9 @@ static ssize_t hdaps_calibrate_store(struct device *dev,
 				     struct device_attribute *attr,
 				     const char *buf, size_t count)
 {
-	mutex_lock(&hdaps_mtx);
+	down(&hdaps_sem);
 	hdaps_calibrate();
-	mutex_unlock(&hdaps_mtx);
+	up(&hdaps_sem);
 
 	return count;
 }
@@ -439,8 +439,7 @@ static ssize_t hdaps_invert_store(struct device *dev,
 {
 	int invert;
 
-	if (sscanf(buf, "%d", &invert) != 1 ||
-	    invert < 0 || invert > HDAPS_BOTH_AXES)
+	if (sscanf(buf, "%d", &invert) != 1 || (invert != 1 && invert != 0))
 		return -EINVAL;
 
 	hdaps_invert = invert;
@@ -478,68 +477,72 @@ static struct attribute_group hdaps_attribute_group = {
 /* Module stuff */
 
 /* hdaps_dmi_match - found a match.  return one, short-circuiting the hunt. */
-static int __init hdaps_dmi_match(const struct dmi_system_id *id)
+static int hdaps_dmi_match(struct dmi_system_id *id)
 {
 	printk(KERN_INFO "hdaps: %s detected.\n", id->ident);
 	return 1;
 }
 
 /* hdaps_dmi_match_invert - found an inverted match. */
-static int __init hdaps_dmi_match_invert(const struct dmi_system_id *id)
+static int hdaps_dmi_match_invert(struct dmi_system_id *id)
 {
-	hdaps_invert = (unsigned long)id->driver_data;
-	printk(KERN_INFO "hdaps: inverting axis (%u) readings.\n",
-	       hdaps_invert);
+	hdaps_invert = 1;
+	printk(KERN_INFO "hdaps: inverting axis readings.\n");
 	return hdaps_dmi_match(id);
 }
 
-#define HDAPS_DMI_MATCH_INVERT(vendor, model, axes) {	\
-	.ident = vendor " " model,			\
-	.callback = hdaps_dmi_match_invert,		\
-	.driver_data = (void *)axes,			\
+#define HDAPS_DMI_MATCH_NORMAL(model)	{		\
+	.ident = "IBM " model,				\
+	.callback = hdaps_dmi_match,			\
 	.matches = {					\
-		DMI_MATCH(DMI_BOARD_VENDOR, vendor),	\
+		DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),	\
 		DMI_MATCH(DMI_PRODUCT_VERSION, model)	\
 	}						\
 }
 
-#define HDAPS_DMI_MATCH_NORMAL(vendor, model)		\
-	HDAPS_DMI_MATCH_INVERT(vendor, model, 0)
+#define HDAPS_DMI_MATCH_INVERT(model)	{		\
+	.ident = "IBM " model,				\
+	.callback = hdaps_dmi_match_invert,		\
+	.matches = {					\
+		DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),	\
+		DMI_MATCH(DMI_PRODUCT_VERSION, model)	\
+	}						\
+}
 
-/* Note that HDAPS_DMI_MATCH_NORMAL("ThinkPad T42") would match
-   "ThinkPad T42p", so the order of the entries matters.
-   If your ThinkPad is not recognized, please update to latest
-   BIOS. This is especially the case for some R52 ThinkPads. */
-static struct dmi_system_id __initdata hdaps_whitelist[] = {
-	HDAPS_DMI_MATCH_INVERT("IBM", "ThinkPad R50p", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad R50"),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad R51"),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad R52"),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad R61i", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad R61", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("IBM", "ThinkPad T41p", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad T41"),
-	HDAPS_DMI_MATCH_INVERT("IBM", "ThinkPad T42p", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad T42"),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad T43"),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad T60", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad T61p", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad T61", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad X40"),
-	HDAPS_DMI_MATCH_INVERT("IBM", "ThinkPad X41", HDAPS_Y_AXIS),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad X60", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad X61s", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad X61", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad Z60m"),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad Z61m", HDAPS_BOTH_AXES),
-	HDAPS_DMI_MATCH_INVERT("LENOVO", "ThinkPad Z61p", HDAPS_BOTH_AXES),
-	{ .ident = NULL }
-};
+#define HDAPS_DMI_MATCH_LENOVO(model)   {               \
+        .ident = "Lenovo " model,                       \
+        .callback = hdaps_dmi_match_invert,             \
+        .matches = {                                    \
+                DMI_MATCH(DMI_BOARD_VENDOR, "LENOVO"),  \
+                DMI_MATCH(DMI_PRODUCT_VERSION, model)   \
+        }                                               \
+}
 
 static int __init hdaps_init(void)
 {
-	struct input_dev *idev;
 	int ret;
+
+	/* Note that HDAPS_DMI_MATCH_NORMAL("ThinkPad T42") would match
+	  "ThinkPad T42p", so the order of the entries matters */
+	struct dmi_system_id hdaps_whitelist[] = {
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad H"),
+		HDAPS_DMI_MATCH_INVERT("ThinkPad R50p"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad R50"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad R51"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad R52"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad H"),	 /* R52 (1846AQG) */
+		HDAPS_DMI_MATCH_INVERT("ThinkPad T41p"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad T41"),
+		HDAPS_DMI_MATCH_INVERT("ThinkPad T42p"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad T42"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad T43"),
+		HDAPS_DMI_MATCH_LENOVO("ThinkPad T60p"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad X40"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad X41"),
+		HDAPS_DMI_MATCH_LENOVO("ThinkPad X60"),
+		HDAPS_DMI_MATCH_NORMAL("ThinkPad Z60m"),
+		{ .ident = NULL }
+	};
 
 	if (!dmi_check_system(hdaps_whitelist)) {
 		printk(KERN_WARNING "hdaps: supported laptop not found!\n");
@@ -566,39 +569,35 @@ static int __init hdaps_init(void)
 	if (ret)
 		goto out_device;
 
-	hdaps_idev = input_allocate_polled_device();
+	hdaps_idev = input_allocate_device();
 	if (!hdaps_idev) {
 		ret = -ENOMEM;
 		goto out_group;
 	}
 
-	hdaps_idev->poll = hdaps_mousedev_poll;
-	hdaps_idev->poll_interval = HDAPS_POLL_INTERVAL;
-
 	/* initial calibrate for the input device */
 	hdaps_calibrate();
 
 	/* initialize the input class */
-	idev = hdaps_idev->input;
-	idev->name = "hdaps";
-	idev->phys = "isa1600/input0";
-	idev->id.bustype = BUS_ISA;
-	idev->dev.parent = &pdev->dev;
-	idev->evbit[0] = BIT_MASK(EV_ABS);
-	input_set_abs_params(idev, ABS_X,
+	hdaps_idev->name = "hdaps";
+	hdaps_idev->cdev.dev = &pdev->dev;
+	hdaps_idev->evbit[0] = BIT(EV_ABS);
+	input_set_abs_params(hdaps_idev, ABS_X,
 			-256, 256, HDAPS_INPUT_FUZZ, HDAPS_INPUT_FLAT);
-	input_set_abs_params(idev, ABS_Y,
+	input_set_abs_params(hdaps_idev, ABS_Y,
 			-256, 256, HDAPS_INPUT_FUZZ, HDAPS_INPUT_FLAT);
 
-	ret = input_register_polled_device(hdaps_idev);
-	if (ret)
-		goto out_idev;
+	input_register_device(hdaps_idev);
+
+	/* start up our timer for the input device */
+	init_timer(&hdaps_timer);
+	hdaps_timer.function = hdaps_mousedev_poll;
+	hdaps_timer.expires = jiffies + HDAPS_POLL_PERIOD;
+	add_timer(&hdaps_timer);
 
 	printk(KERN_INFO "hdaps: driver successfully loaded.\n");
 	return 0;
 
-out_idev:
-	input_free_polled_device(hdaps_idev);
 out_group:
 	sysfs_remove_group(&pdev->dev.kobj, &hdaps_attribute_group);
 out_device:
@@ -614,8 +613,8 @@ out:
 
 static void __exit hdaps_exit(void)
 {
-	input_unregister_polled_device(hdaps_idev);
-	input_free_polled_device(hdaps_idev);
+	del_timer_sync(&hdaps_timer);
+	input_unregister_device(hdaps_idev);
 	sysfs_remove_group(&pdev->dev.kobj, &hdaps_attribute_group);
 	platform_device_unregister(pdev);
 	platform_driver_unregister(&hdaps_driver);
@@ -627,9 +626,8 @@ static void __exit hdaps_exit(void)
 module_init(hdaps_init);
 module_exit(hdaps_exit);
 
-module_param_named(invert, hdaps_invert, int, 0);
-MODULE_PARM_DESC(invert, "invert data along each axis. 1 invert x-axis, "
-		 "2 invert y-axis, 3 invert both axes.");
+module_param_named(invert, hdaps_invert, bool, 0);
+MODULE_PARM_DESC(invert, "invert data along each axis");
 
 MODULE_AUTHOR("Robert Love");
 MODULE_DESCRIPTION("IBM Hard Drive Active Protection System (HDAPS) driver");

@@ -1,0 +1,181 @@
+From: Chris Lalancette <clalance@redhat.com>
+Subject: Re: [RHEL 5.1.z PATCH]: Fixes for the tick divider patch
+Date: Tue, 02 Oct 2007 16:53:22 -0400
+Bugzilla: 315471
+Message-Id: <4702AFC2.9020702@redhat.com>
+Changelog: [x86] Fixes for the tick divider patch
+
+All,
+     While testing the tick divider patch under VMware, a number of issues were
+found with it:
+
+1)  On i386, when specifying "divider=10 apic=verbose", a bogus value was
+printed for the CPU MHz and the host bus speed.  This is because during APIC
+calibration, we were using "HZ/10" loops instead of "REAL_HZ/10", causing the
+calculation to go out of bounds.
+
+2)  On x86_64, when using the tick divider, it wasn't dividing the local APIC as
+well as the external timer.  This causes problems under VMware since the
+hypervisor (ESX server) has to deliver 1000 local APIC interrupts per second to
+each logical processor, which can end up causing time drift.  By properly
+dividing the local APIC as well as the external time source, it significantly
+reduces the load on the HV, and the guests have less tendency to drift.
+
+3)  On x86_64, we weren't looping during smp_local_timer_interrupt(), so we were
+losing profiling ticks.
+
+3)  On x86_64, when using the tick divider with PM-Timer, lost tick compensation
+wasn't being calculated properly.  In particular, we would count ticks as lost
+when they really weren't, because we were using HZ instead of REAL_HZ in the
+lost calculation.
+
+4)  On x86_64, TSC suffers from the same problem as PM-Timer.
+
+The attached patch fixes all 4 of these problems.  Additionally, this patch also
+adds a "hz=" command-line parameter for both i386 and x86_64.  This is nicer way
+to specify the divider from a user point-of-view; they don't have to know the
+current value of HZ in order to specify the HZ value they want.
+
+These patches are not upstream, since upstream has since gone with the tickless
+kernel.
+
+Patches successfully tested by myself (just for verifying basic correctness),
+and HP and VMware using ESX server.
+
+This fixes BZ 305011.  Please review and ACK.
+
+Chris Lalancette
+
+
+> 
+> ACK less the hz= bits for 5.1.z, per Alan's concern about only certain
+> values in the currently accepted range actually being valid. I'd say
+> fully bake that part for 5.2 and just take the fixes for 5.1.z.
+> 
+
+Same patch, with hz= bits removed for the z-stream.
+
+Chris Lalancette
+
+diff -urp linux-2.6.18.noarch.orig/arch/i386/kernel/apic.c linux-2.6.18.noarch/arch/i386/kernel/apic.c
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/apic.c	2007-10-02 16:42:24.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/apic.c	2007-10-02 16:47:00.000000000 -0400
+@@ -1027,7 +1027,7 @@ static int __init calibrate_APIC_clock(v
+ 	long tt1, tt2;
+ 	long result;
+ 	int i;
+-	const int LOOPS = HZ/10;
++	const int LOOPS = REAL_HZ/10;
+ 
+ 	apic_printk(APIC_VERBOSE, "calibrating APIC timer ...\n");
+ 
+@@ -1076,13 +1076,13 @@ static int __init calibrate_APIC_clock(v
+ 	if (cpu_has_tsc)
+ 		apic_printk(APIC_VERBOSE, "..... CPU clock speed is "
+ 			"%ld.%04ld MHz.\n",
+-			((long)(t2-t1)/LOOPS)/(1000000/HZ),
+-			((long)(t2-t1)/LOOPS)%(1000000/HZ));
++			((long)(t2-t1)/LOOPS)/(1000000/REAL_HZ),
++			((long)(t2-t1)/LOOPS)%(1000000/REAL_HZ));
+ 
+ 	apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
+ 		"%ld.%04ld MHz.\n",
+-		result/(1000000/HZ),
+-		result%(1000000/HZ));
++		result/(1000000/REAL_HZ),
++		result%(1000000/REAL_HZ));
+ 
+ 	return result;
+ }
+diff -urp linux-2.6.18.noarch.orig/arch/x86_64/kernel/apic.c linux-2.6.18.noarch/arch/x86_64/kernel/apic.c
+--- linux-2.6.18.noarch.orig/arch/x86_64/kernel/apic.c	2007-10-02 16:42:30.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/apic.c	2007-10-02 16:47:00.000000000 -0400
+@@ -811,7 +811,7 @@ static int __init calibrate_APIC_clock(v
+ 	printk(KERN_INFO "Detected %d.%03d MHz APIC timer.\n",
+ 		result / 1000 / 1000, result / 1000 % 1000);
+ 
+-	return result * APIC_DIVISOR / HZ;
++	return result * APIC_DIVISOR / REAL_HZ;
+ }
+ 
+ static unsigned int calibration_result;
+@@ -941,10 +941,13 @@ void setup_APIC_extened_lvt(unsigned cha
+ 
+ void smp_local_timer_interrupt(struct pt_regs *regs)
+ {
+-	profile_tick(CPU_PROFILING, regs);
++	int i;
++	for (i = 0; i < tick_divider; i++) {
++		profile_tick(CPU_PROFILING, regs);
+ #ifdef CONFIG_SMP
+-	update_process_times(user_mode(regs));
++		update_process_times(user_mode(regs));
+ #endif
++	}
+ 	if (apic_runs_main_timer > 1 && smp_processor_id() == boot_cpu_id)
+ 		main_timer_handler(regs);
+ 	/*
+diff -urp linux-2.6.18.noarch.orig/arch/x86_64/kernel/pmtimer.c linux-2.6.18.noarch/arch/x86_64/kernel/pmtimer.c
+--- linux-2.6.18.noarch.orig/arch/x86_64/kernel/pmtimer.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/pmtimer.c	2007-10-02 16:47:00.000000000 -0400
+@@ -64,8 +64,8 @@ int pmtimer_mark_offset(void)
+ 
+ 	delta += offset_delay;
+ 
+-	lost = delta / (USEC_PER_SEC / HZ);
+-	offset_delay = delta % (USEC_PER_SEC / HZ);
++	lost = delta / (USEC_PER_SEC / REAL_HZ);
++	offset_delay = delta % (USEC_PER_SEC / REAL_HZ);
+ 
+ 	rdtscll(tsc);
+ 	vxtime.last_tsc = tsc - offset_delay * (u64)cpu_khz / 1000;
+diff -urp linux-2.6.18.noarch.orig/arch/x86_64/kernel/time.c linux-2.6.18.noarch/arch/x86_64/kernel/time.c
+--- linux-2.6.18.noarch.orig/arch/x86_64/kernel/time.c	2007-10-02 16:42:31.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/time.c	2007-10-02 16:47:43.000000000 -0400
+@@ -65,6 +65,8 @@ static int notsc __initdata = 0;
+ #define NSEC_PER_TICK (NSEC_PER_SEC / HZ)
+ #define FSEC_PER_TICK (FSEC_PER_SEC / HZ)
+ 
++#define USEC_PER_REAL_TICK (USEC_PER_SEC / REAL_HZ)
++
+ #define NS_SCALE	10 /* 2^10, carefully chosen */
+ #define US_SCALE	32 /* 2^32, arbitralrily chosen */
+ 
+@@ -304,7 +306,7 @@ unsigned long long monotonic_clock(void)
+ 			this_offset = hpet_readl(HPET_COUNTER);
+ 		} while (read_seqretry(&xtime_lock, seq));
+ 		offset = (this_offset - last_offset);
+-		offset *= NSEC_PER_TICK / hpet_tick;
++		offset *= NSEC_PER_TICK / hpet_tick_real;
+ 	} else {
+ 		do {
+ 			seq = read_seqbegin(&xtime_lock);
+@@ -406,7 +408,7 @@ void main_timer_handler(struct pt_regs *
+ 		}
+ 
+ 		monotonic_base += 
+-			(offset - vxtime.last) * NSEC_PER_TICK / hpet_tick;
++			(offset - vxtime.last) * NSEC_PER_TICK / hpet_tick_real;
+ 
+ 		vxtime.last = offset;
+ #ifdef CONFIG_X86_PM_TIMER
+@@ -415,14 +417,14 @@ void main_timer_handler(struct pt_regs *
+ #endif
+ 	} else {
+ 		offset = (((tsc - vxtime.last_tsc) *
+-			   vxtime.tsc_quot) >> US_SCALE) - USEC_PER_TICK;
++			   vxtime.tsc_quot) >> US_SCALE) - USEC_PER_REAL_TICK;
+ 
+ 		if (offset < 0)
+ 			offset = 0;
+ 
+-		if (offset > USEC_PER_TICK) {
+-			lost = offset / USEC_PER_TICK;
+-			offset %= USEC_PER_TICK;
++		if (offset > USEC_PER_REAL_TICK) {
++			lost = offset / USEC_PER_REAL_TICK;
++			offset %= USEC_PER_REAL_TICK;
+ 		}
+ 
+ 		/* FIXME: 1000 or 1000000? */
+

@@ -34,9 +34,14 @@ static int test_rtc_read_time(struct device *dev,
 	return 0;
 }
 
+static int test_rtc_set_time(struct device *dev,
+	struct rtc_time *tm)
+{
+	return 0;
+}
+
 static int test_rtc_set_mmss(struct device *dev, unsigned long secs)
 {
-	dev_info(dev, "%s, secs = %lu\n", __func__, secs);
 	return 0;
 }
 
@@ -70,9 +75,10 @@ static int test_rtc_ioctl(struct device *dev, unsigned int cmd,
 	}
 }
 
-static const struct rtc_class_ops test_rtc_ops = {
+static struct rtc_class_ops test_rtc_ops = {
 	.proc = test_rtc_proc,
 	.read_time = test_rtc_read_time,
+	.set_time = test_rtc_set_time,
 	.read_alarm = test_rtc_read_alarm,
 	.set_alarm = test_rtc_set_alarm,
 	.set_mmss = test_rtc_set_mmss,
@@ -94,11 +100,11 @@ static ssize_t test_irq_store(struct device *dev,
 
 	retval = count;
 	if (strncmp(buf, "tick", 4) == 0)
-		rtc_update_irq(rtc, 1, RTC_PF | RTC_IRQF);
+		rtc_update_irq(&rtc->class_dev, 1, RTC_PF | RTC_IRQF);
 	else if (strncmp(buf, "alarm", 5) == 0)
-		rtc_update_irq(rtc, 1, RTC_AF | RTC_IRQF);
+		rtc_update_irq(&rtc->class_dev, 1, RTC_AF | RTC_IRQF);
 	else if (strncmp(buf, "update", 6) == 0)
-		rtc_update_irq(rtc, 1, RTC_UF | RTC_IRQF);
+		rtc_update_irq(&rtc->class_dev, 1, RTC_UF | RTC_IRQF);
 	else
 		retval = -EINVAL;
 
@@ -115,18 +121,11 @@ static int test_probe(struct platform_device *plat_dev)
 		err = PTR_ERR(rtc);
 		return err;
 	}
-
-	err = device_create_file(&plat_dev->dev, &dev_attr_irq);
-	if (err)
-		goto err;
+	device_create_file(&plat_dev->dev, &dev_attr_irq);
 
 	platform_set_drvdata(plat_dev, rtc);
 
 	return 0;
-
-err:
-	rtc_device_unregister(rtc);
-	return err;
 }
 
 static int __devexit test_remove(struct platform_device *plat_dev)
@@ -139,7 +138,7 @@ static int __devexit test_remove(struct platform_device *plat_dev)
 	return 0;
 }
 
-static struct platform_driver test_driver = {
+static struct platform_driver test_drv = {
 	.probe	= test_probe,
 	.remove = __devexit_p(test_remove),
 	.driver = {
@@ -152,7 +151,7 @@ static int __init test_init(void)
 {
 	int err;
 
-	if ((err = platform_driver_register(&test_driver)))
+	if ((err = platform_driver_register(&test_drv)))
 		return err;
 
 	if ((test0 = platform_device_alloc("rtc-test", 0)) == NULL) {
@@ -183,7 +182,7 @@ exit_free_test0:
 	platform_device_put(test0);
 
 exit_driver_unregister:
-	platform_driver_unregister(&test_driver);
+	platform_driver_unregister(&test_drv);
 	return err;
 }
 
@@ -191,7 +190,7 @@ static void __exit test_exit(void)
 {
 	platform_device_unregister(test0);
 	platform_device_unregister(test1);
-	platform_driver_unregister(&test_driver);
+	platform_driver_unregister(&test_drv);
 }
 
 MODULE_AUTHOR("Alessandro Zummo <a.zummo@towertech.it>");

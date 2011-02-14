@@ -1,0 +1,44 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Thu, 2 Apr 2009 15:54:09 -0400
+Subject: [nfs] memory leak when reading files wth option 'noac'
+Message-id: 49D517E1.6030209@redhat.com
+O-Subject: [RHEL-5.5 PATCH] bz493045 memory leak when reading from files mounted with nfs mount option 'noac'
+Bugzilla: 493045
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Hi.
+
+Attached is a patch to address bz493045, "memory leak when
+reading from files mounted with nfs mount option 'noac'".
+This bugzilla describes a problem where the system leaks
+memory when reading from files located on NFS mounted file
+systems mounted with the mount option, "noac".
+
+The use of the mount option, "noac", causes the NFS client
+to follow a synchronous path when reading pages.  This path
+is not followed except in this case.
+
+This path allocates some memory, performs the over the wire
+READ operation, but then fails to free the memory which was
+allocated.  Interestingly, if the over the wire READ
+operation fails, then the memory is correctly freed.
+
+The solution is to simply add the call to free the allocated
+memory.
+
+    Thanx...
+
+       ps
+
+diff --git a/fs/nfs/read.c b/fs/nfs/read.c
+index 4dde1a0..8b14dfb 100644
+--- a/fs/nfs/read.c
++++ b/fs/nfs/read.c
+@@ -217,6 +217,7 @@ static int nfs_readpage_sync(struct nfs_open_context *ctx, struct inode *inode,
+ 	result = 0;
+ 
+ 	nfs_readpage_to_fscache(inode, page, 1);
++	nfs_readdata_free(rdata);
+ 	unlock_page(page);
+ 
+ 	return result;

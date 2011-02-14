@@ -66,6 +66,7 @@
  */
 /* ------ END OF USER CONFIGURABLE PARAMETERS ----- */
 
+#include  <linux/config.h>
 #include  <linux/stddef.h>
 #include  <linux/module.h>
 #include  <linux/kernel.h>

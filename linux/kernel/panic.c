@@ -8,23 +8,20 @@
  * This function is used through-out the kernel (including mm and fs)
  * to indicate a major problem.
  */
-#include <linux/debug_locks.h>
-#include <linux/interrupt.h>
-#include <linux/kallsyms.h>
-#include <linux/notifier.h>
 #include <linux/module.h>
-#include <linux/random.h>
-#include <linux/reboot.h>
-#include <linux/delay.h>
-#include <linux/kexec.h>
 #include <linux/sched.h>
-#include <linux/sysrq.h>
+#include <linux/delay.h>
+#include <linux/reboot.h>
+#include <linux/notifier.h>
 #include <linux/init.h>
+#include <linux/sysrq.h>
+#include <linux/interrupt.h>
 #include <linux/nmi.h>
-#include <linux/dmi.h>
+#include <linux/kexec.h>
+#include <linux/debug_locks.h>
 
-int panic_on_oops = 1;
-static unsigned long tainted_mask;
+int panic_on_oops;
+int tainted;
 static int pause_on_oops;
 static int pause_on_oops_flag;
 static DEFINE_SPINLOCK(pause_on_oops_lock);
@@ -34,6 +31,13 @@ int panic_timeout;
 ATOMIC_NOTIFIER_HEAD(panic_notifier_list);
 
 EXPORT_SYMBOL(panic_notifier_list);
+
+static int __init panic_setup(char *str)
+{
+	panic_timeout = simple_strtoul(str, NULL, 0);
+	return 1;
+}
+__setup("panic=", panic_setup);
 
 static long no_blink(long time)
 {
@@ -52,15 +56,19 @@ EXPORT_SYMBOL(panic_blink);
  *
  *	This function never returns.
  */
+ 
 NORET_TYPE void panic(const char * fmt, ...)
 {
+	long i;
 	static char buf[1024];
 	va_list args;
-	long i;
+#if defined(CONFIG_S390)
+        unsigned long caller = (unsigned long) __builtin_return_address(0);
+#endif
 
 	/*
-	 * It's possible to come here directly from a panic-assertion and
-	 * not have preempt disabled. Some functions called from here want
+	 * It's possible to come here directly from a panic-assertion and not
+	 * have preempt disabled. Some functions called from here want
 	 * preempt to be disabled. No point enabling it later though...
 	 */
 	preempt_disable();
@@ -70,9 +78,7 @@ NORET_TYPE void panic(const char * fmt, ...)
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 	printk(KERN_EMERG "Kernel panic - not syncing: %s\n",buf);
-#ifdef CONFIG_DEBUG_BUGVERBOSE
-	dump_stack();
-#endif
+	bust_spinlocks(0);
 
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
@@ -81,37 +87,35 @@ NORET_TYPE void panic(const char * fmt, ...)
 	 */
 	crash_kexec(NULL);
 
+#ifdef CONFIG_SMP
 	/*
 	 * Note smp_send_stop is the usual smp shutdown function, which
 	 * unfortunately means it may not be hardened to work in a panic
 	 * situation.
 	 */
 	smp_send_stop();
+#endif
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
-
-	bust_spinlocks(0);
 
 	if (!panic_blink)
 		panic_blink = no_blink;
 
 	if (panic_timeout > 0) {
 		/*
-		 * Delay timeout seconds before rebooting the machine.
-		 * We can't use the "normal" timers since we just panicked.
-		 */
-		printk(KERN_EMERG "Rebooting in %d seconds..", panic_timeout);
-
+	 	 * Delay timeout seconds before rebooting the machine. 
+		 * We can't use the "normal" timers since we just panicked..
+	 	 */
+		printk(KERN_EMERG "Rebooting in %d seconds..",panic_timeout);
 		for (i = 0; i < panic_timeout*1000; ) {
 			touch_nmi_watchdog();
 			i += panic_blink(i);
 			mdelay(1);
 			i++;
 		}
-		/*
-		 * This will not be a clean reboot, with everything
-		 * shutting down.  But if there is a chance of
-		 * rebooting the system it will be rebooted.
+		/*	This will not be a clean reboot, with everything
+		 *	shutting down.  But if there is a chance of
+		 *	rebooting the system it will be rebooted.
 		 */
 		emergency_restart();
 	}
@@ -124,15 +128,10 @@ NORET_TYPE void panic(const char * fmt, ...)
 	}
 #endif
 #if defined(CONFIG_S390)
-	{
-		unsigned long caller;
-
-		caller = (unsigned long)__builtin_return_address(0);
-		disabled_wait(caller);
-	}
+        disabled_wait(caller);
 #endif
 	local_irq_enable();
-	for (i = 0; ; ) {
+	for (i = 0;;) {
 		touch_softlockup_watchdog();
 		i += panic_blink(i);
 		mdelay(1);
@@ -142,45 +141,6 @@ NORET_TYPE void panic(const char * fmt, ...)
 
 EXPORT_SYMBOL(panic);
 
-
-struct tnt {
-	u8	bit;
-	char	true;
-	char	false;
-};
-
-static const struct tnt tnts[] = {
-	{ TAINT_PROPRIETARY_MODULE,	'P', 'G' },
-	{ TAINT_FORCED_MODULE,		'F', ' ' },
-	{ TAINT_UNSAFE_SMP,		'S', ' ' },
-	{ TAINT_FORCED_RMMOD,		'R', ' ' },
-	{ TAINT_MACHINE_CHECK,		'M', ' ' },
-	{ TAINT_BAD_PAGE,		'B', ' ' },
-	{ TAINT_USER,			'U', ' ' },
-	{ TAINT_DIE,			'D', ' ' },
-	{ TAINT_OVERRIDDEN_ACPI_TABLE,	'A', ' ' },
-	{ TAINT_WARN,			'W', ' ' },
-	{ TAINT_CRAP,			'C', ' ' },
-	{ TAINT_FIRMWARE_WORKAROUND,	'I', ' ' }, /* not in RHEL6 */
-	{ TAINT_12,			'?', '-' },
-	{ TAINT_13,			'?', '-' },
-	{ TAINT_14,			'?', '-' },
-	{ TAINT_15,			'?', '-' },
-	{ TAINT_16,			'?', '-' },
-	{ TAINT_17,			'?', '-' },
-	{ TAINT_18,			'?', '-' },
-	{ TAINT_19,			'?', '-' },
-	{ TAINT_20,			'?', '-' },
-	{ TAINT_21,			'?', '-' },
-	{ TAINT_22,			'?', '-' },
-	{ TAINT_23,			'?', '-' },
-	{ TAINT_24,			'?', '-' },
-	{ TAINT_25,			'?', '-' },
-	{ TAINT_26,			'?', '-' },
-	{ TAINT_27,			'?', '-' },
-	{ TAINT_HARDWARE_UNSUPPORTED,	'H', ' ' },
-};
-
 /**
  *	print_tainted - return a string to represent the kernel taint state.
  *
@@ -188,66 +148,42 @@ static const struct tnt tnts[] = {
  *  'F' - Module has been forcibly loaded.
  *  'S' - SMP with CPUs not designed for SMP.
  *  'R' - User forced a module unload.
- *  'M' - System experienced a machine check exception.
+ *  'M' - Machine had a machine check experience.
  *  'B' - System has hit bad_page.
- *  'U' - Userspace-defined naughtiness.
- *  'D' - Kernel has oopsed before
- *  'A' - ACPI table overridden.
- *  'W' - Taint on warning.
- *  'C' - modules from drivers/staging are loaded.
- *  'I' - Working around severe firmware bug, unusued in RHEL6
- *  'H' - Hardware is unsupported.
  *
- *	The string is overwritten by the next call to print_tainted().
+ *	The string is overwritten by the next call to print_taint().
  */
+ 
 const char *print_tainted(void)
 {
-	static char buf[ARRAY_SIZE(tnts) + sizeof("Tainted: ") + 1];
-
-	if (tainted_mask) {
-		char *s;
-		int i;
-
-		s = buf + sprintf(buf, "Tainted: ");
-		for (i = 0; i < ARRAY_SIZE(tnts); i++) {
-			const struct tnt *t = &tnts[i];
-			*s++ = test_bit(t->bit, &tainted_mask) ?
-					t->true : t->false;
-		}
-		*s = 0;
-	} else
+	static char buf[20];
+	if (tainted) {
+		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c%c",
+			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
+			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
+			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ',
+			tainted & TAINT_FORCED_RMMOD ? 'R' : ' ',
+ 			tainted & TAINT_MACHINE_CHECK ? 'M' : ' ',
+			tainted & TAINT_BAD_PAGE ? 'B' : ' ');
+	}
+	else
 		snprintf(buf, sizeof(buf), "Not tainted");
-
-	return buf;
-}
-EXPORT_SYMBOL(print_tainted);
-
-int test_taint(unsigned flag)
-{
-	return test_bit(flag, &tainted_mask);
-}
-EXPORT_SYMBOL(test_taint);
-
-unsigned long get_taint(void)
-{
-	return tainted_mask;
+	return(buf);
 }
 
 void add_taint(unsigned flag)
 {
-	/*
-	 * Can't trust the integrity of the kernel anymore.
-	 * We don't call directly debug_locks_off() because the issue
-	 * is not necessarily serious enough to set oops_in_progress to 1
-	 * Also we want to keep up lockdep for staging development and
-	 * post-warning case.
-	 */
-	if (flag != TAINT_CRAP && flag != TAINT_WARN && __debug_locks_off())
-		printk(KERN_WARNING "Disabling lock debugging due to kernel taint\n");
-
-	set_bit(flag, &tainted_mask);
+	debug_locks = 0; /* can't trust the integrity of the kernel anymore */
+	tainted |= flag;
 }
 EXPORT_SYMBOL(add_taint);
+
+static int __init pause_on_oops_setup(char *str)
+{
+	pause_on_oops = simple_strtoul(str, NULL, 0);
+	return 1;
+}
+__setup("pause_on_oops=", pause_on_oops_setup);
 
 static void spin_msec(int msecs)
 {
@@ -299,8 +235,8 @@ static void do_oops_enter_exit(void)
 }
 
 /*
- * Return true if the calling CPU is allowed to print oops-related info.
- * This is a bit racy..
+ * Return true if the calling CPU is allowed to print oops-related info.  This
+ * is a bit racy..
  */
 int oops_may_print(void)
 {
@@ -309,47 +245,21 @@ int oops_may_print(void)
 
 /*
  * Called when the architecture enters its oops handler, before it prints
- * anything.  If this is the first CPU to oops, and it's oopsing the first
- * time then let it proceed.
+ * anything.  If this is the first CPU to oops, and it's oopsing the first time
+ * then let it proceed.
  *
- * This is all enabled by the pause_on_oops kernel boot option.  We do all
- * this to ensure that oopses don't scroll off the screen.  It has the
- * side-effect of preventing later-oopsing CPUs from mucking up the display,
- * too.
+ * This is all enabled by the pause_on_oops kernel boot option.  We do all this
+ * to ensure that oopses don't scroll off the screen.  It has the side-effect
+ * of preventing later-oopsing CPUs from mucking up the display, too.
  *
- * It turns out that the CPU which is allowed to print ends up pausing for
- * the right duration, whereas all the other CPUs pause for twice as long:
- * once in oops_enter(), once in oops_exit().
+ * It turns out that the CPU which is allowed to print ends up pausing for the
+ * right duration, whereas all the other CPUs pause for twice as long: once in
+ * oops_enter(), once in oops_exit().
  */
 void oops_enter(void)
 {
-	tracing_off();
-	/* can't trust the integrity of the kernel anymore: */
-	debug_locks_off();
+	debug_locks_off(); /* can't trust the integrity of the kernel anymore */
 	do_oops_enter_exit();
-}
-
-/*
- * 64-bit random ID for oopses:
- */
-static u64 oops_id;
-
-static int init_oops_id(void)
-{
-	if (!oops_id)
-		get_random_bytes(&oops_id, sizeof(oops_id));
-	else
-		oops_id++;
-
-	return 0;
-}
-late_initcall(init_oops_id);
-
-static void print_oops_end_marker(void)
-{
-	init_oops_id();
-	printk(KERN_WARNING "---[ end trace %016llx ]---\n",
-		(unsigned long long)oops_id);
 }
 
 /*
@@ -359,83 +269,4 @@ static void print_oops_end_marker(void)
 void oops_exit(void)
 {
 	do_oops_enter_exit();
-	print_oops_end_marker();
 }
-
-#ifdef WANT_WARN_ON_SLOWPATH
-struct slowpath_args {
-	const char *fmt;
-	va_list args;
-};
-
-static void warn_slowpath_common(const char *file, int line, void *caller,
-				 unsigned taint, struct slowpath_args *args)
-{
-	const char *board;
-
-	printk(KERN_WARNING "------------[ cut here ]------------\n");
-	printk(KERN_WARNING "WARNING: at %s:%d %pS() (%s)\n",
-		file, line, caller, print_tainted());
-	board = dmi_get_system_info(DMI_PRODUCT_NAME);
-	if (board)
-		printk(KERN_WARNING "Hardware name: %s\n", board);
-
-	if (args)
-		vprintk(args->fmt, args->args);
-
-	print_modules();
-	dump_stack();
-	print_oops_end_marker();
-	add_taint(taint);
-}
-
-void warn_slowpath_fmt(const char *file, int line, const char *fmt, ...)
-{
-	struct slowpath_args args;
-
-	args.fmt = fmt;
-	va_start(args.args, fmt);
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     TAINT_WARN, &args);
-	va_end(args.args);
-}
-EXPORT_SYMBOL(warn_slowpath_fmt);
-
-void warn_slowpath_fmt_taint(const char *file, int line,
-			     unsigned taint, const char *fmt, ...)
-{
-	struct slowpath_args args;
-
-	args.fmt = fmt;
-	va_start(args.args, fmt);
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     taint, &args);
-	va_end(args.args);
-}
-EXPORT_SYMBOL(warn_slowpath_fmt_taint);
-
-void warn_slowpath_null(const char *file, int line)
-{
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     TAINT_WARN, NULL);
-}
-EXPORT_SYMBOL(warn_slowpath_null);
-#endif
-
-#ifdef CONFIG_CC_STACKPROTECTOR
-
-/*
- * Called when gcc's -fstack-protector feature is used, and
- * gcc detects corruption of the on-stack canary value
- */
-void __stack_chk_fail(void)
-{
-	panic("stack-protector: Kernel stack is corrupted in: %p\n",
-		__builtin_return_address(0));
-}
-EXPORT_SYMBOL(__stack_chk_fail);
-
-#endif
-
-core_param(panic, panic_timeout, int, 0644);
-core_param(pause_on_oops, pause_on_oops, int, 0644);

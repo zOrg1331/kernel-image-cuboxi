@@ -1,0 +1,54 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Thu, 9 Dec 2010 14:31:50 -0500
+Subject: [net] ipv6: try all routers with unknown reachable state
+Message-id: <20101209143150.GA10723@lsx.localdomain>
+Patchwork-id: 30024
+O-Subject: [RHEL5.6 PATCH] ipv6: Try to use all routers which are not known to
+	be unreachable (BZ661393)
+Bugzilla: 661393
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+rt6_check_neigh() is currently assuming that all !NUD_VALID
+neighbours are unreachable. This assumption is wrong and
+results in all routes being unreachable if the nexthop of such
+routes is not the default gateway. Instead we should consider
+all neighbours which are !NUD_FAILED while prioritizing
+neighbours known to be valid.
+
+Straight backport of:
+commit ea73ee23c43d6eb75f88c4fc9e1230b44673c0d2
+Author: YOSHIFUJI Hideaki <yoshfuji@linux-ipv6.org>
+Date:   Mon Nov 6 09:45:44 2006 -0800
+
+    [IPV6] ROUTE: Try to use router which is not known unreachable.
+
+    Only routers in "FAILED" state should be considered unreachable.
+    Otherwise, we do not try to use speicific routes unless all least specific
+    routers are considered unreachable.
+
+    Signed-off-by: YOSHIFUJI Hideaki <yoshfuji@linux-ipv6.org>
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2939324
+
+Tested by the customer.
+
+Please ACK!
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv6/route.c b/net/ipv6/route.c
+index 87a1d5c..17b6acc 100644
+--- a/net/ipv6/route.c
++++ b/net/ipv6/route.c
+@@ -341,6 +341,8 @@ static int inline rt6_check_neigh(struct rt6_info *rt)
+ 		read_lock_bh(&neigh->lock);
+ 		if (neigh->nud_state & NUD_VALID)
+ 			m = 2;
++		else if (!(neigh->nud_state & NUD_FAILED))
++			m = 1;
+ 		read_unlock_bh(&neigh->lock);
+ 	}
+ 	return m;

@@ -25,6 +25,7 @@
 #include <linux/types.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
+#include <linux/completion.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <asm/prom.h>
@@ -94,7 +95,7 @@ static s32 i2c_powermac_smbus_xfer(	struct i2c_adapter*	adap,
 	    	break;
 
 	/* Note that these are broken vs. the expected smbus API where
-	 * on reads, the length is actually returned from the function,
+	 * on reads, the lenght is actually returned from the function,
 	 * but I think the current API makes no sense and I don't want
 	 * any driver that I haven't verified for correctness to go
 	 * anywhere near a pmac i2c bus anyway ...
@@ -121,7 +122,8 @@ static s32 i2c_powermac_smbus_xfer(	struct i2c_adapter*	adap,
 		if (rc)
 			goto bail;
 		rc = pmac_i2c_xfer(bus, addrdir, 1, command,
-				   &data->block[1], data->block[0]);
+				   read ? data->block : &data->block[1],
+				   data->block[0]);
 		break;
 
         default:
@@ -173,16 +175,16 @@ static u32 i2c_powermac_func(struct i2c_adapter * adapter)
 }
 
 /* For now, we only handle smbus */
-static const struct i2c_algorithm i2c_powermac_algorithm = {
+static struct i2c_algorithm i2c_powermac_algorithm = {
 	.smbus_xfer	= i2c_powermac_smbus_xfer,
 	.master_xfer	= i2c_powermac_master_xfer,
 	.functionality	= i2c_powermac_func,
 };
 
 
-static int __devexit i2c_powermac_remove(struct platform_device *dev)
+static int i2c_powermac_remove(struct device *dev)
 {
-	struct i2c_adapter	*adapter = platform_get_drvdata(dev);
+	struct i2c_adapter	*adapter = dev_get_drvdata(dev);
 	struct pmac_i2c_bus	*bus = i2c_get_adapdata(adapter);
 	int			rc;
 
@@ -191,23 +193,21 @@ static int __devexit i2c_powermac_remove(struct platform_device *dev)
 	i2c_set_adapdata(adapter, NULL);
 	/* We aren't that prepared to deal with this... */
 	if (rc)
-		printk(KERN_WARNING
-		       "i2c-powermac.c: Failed to remove bus %s !\n",
+		printk("i2c-powermac.c: Failed to remove bus %s !\n",
 		       adapter->name);
-	platform_set_drvdata(dev, NULL);
+	dev_set_drvdata(dev, NULL);
 	kfree(adapter);
 
 	return 0;
 }
 
 
-static int __devinit i2c_powermac_probe(struct platform_device *dev)
+static int i2c_powermac_probe(struct device *dev)
 {
-	struct pmac_i2c_bus *bus = dev->dev.platform_data;
+	struct pmac_i2c_bus *bus = dev->platform_data;
 	struct device_node *parent = NULL;
 	struct i2c_adapter *adapter;
-	char name[32];
-	const char *basename;
+	char name[32], *basename;
 	int rc;
 
 	if (bus == NULL)
@@ -245,11 +245,11 @@ static int __devinit i2c_powermac_probe(struct platform_device *dev)
 		printk(KERN_ERR "i2c-powermac: can't allocate inteface !\n");
 		return -ENOMEM;
 	}
-	platform_set_drvdata(dev, adapter);
+	dev_set_drvdata(dev, adapter);
 	strcpy(adapter->name, name);
 	adapter->algo = &i2c_powermac_algorithm;
 	i2c_set_adapdata(adapter, bus);
-	adapter->dev.parent = &dev->dev;
+	adapter->dev.parent = dev;
 	pmac_i2c_attach_adapter(bus, adapter);
 	rc = i2c_add_adapter(adapter);
 	if (rc) {
@@ -260,61 +260,27 @@ static int __devinit i2c_powermac_probe(struct platform_device *dev)
 	}
 
 	printk(KERN_INFO "PowerMac i2c bus %s registered\n", name);
-
-	if (!strncmp(basename, "uni-n", 5)) {
-		struct device_node *np;
-		const u32 *prop;
-		struct i2c_board_info info;
-
-		/* Instantiate I2C motion sensor if present */
-		np = of_find_node_by_name(NULL, "accelerometer");
-		if (np && of_device_is_compatible(np, "AAPL,accelerometer_1") &&
-		    (prop = of_get_property(np, "reg", NULL))) {
-			int i2c_bus;
-			const char *tmp_bus;
-
-			/* look for bus either using "reg" or by path */
-			tmp_bus = strstr(np->full_name, "/i2c-bus@");
-			if (tmp_bus)
-				i2c_bus = *(tmp_bus + 9) - '0';
-			else
-				i2c_bus = ((*prop) >> 8) & 0x0f;
-
-			if (pmac_i2c_get_channel(bus) == i2c_bus) {
-				memset(&info, 0, sizeof(struct i2c_board_info));
-				info.addr = ((*prop) & 0xff) >> 1;
-				strlcpy(info.type, "ams", I2C_NAME_SIZE);
-				i2c_new_device(adapter, &info);
-			}
-		}
-	}
-
 	return rc;
 }
 
 
-/* work with hotplug and coldplug */
-MODULE_ALIAS("platform:i2c-powermac");
-
-static struct platform_driver i2c_powermac_driver = {
+static struct device_driver i2c_powermac_driver = {
+	.name = "i2c-powermac",
+	.bus = &platform_bus_type,
 	.probe = i2c_powermac_probe,
-	.remove = __devexit_p(i2c_powermac_remove),
-	.driver = {
-		.name = "i2c-powermac",
-		.bus = &platform_bus_type,
-	},
+	.remove = i2c_powermac_remove,
 };
 
 static int __init i2c_powermac_init(void)
 {
-	platform_driver_register(&i2c_powermac_driver);
+	driver_register(&i2c_powermac_driver);
 	return 0;
 }
 
 
 static void __exit i2c_powermac_cleanup(void)
 {
-	platform_driver_unregister(&i2c_powermac_driver);
+	driver_unregister(&i2c_powermac_driver);
 }
 
 module_init(i2c_powermac_init);

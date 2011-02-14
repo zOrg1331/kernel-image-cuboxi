@@ -1,0 +1,105 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 22 Feb 2010 21:16:18 -0500
+Subject: [pci] acpiphp: fix missing acpiphp_glue_exit
+Message-id: <20100222211618.7460.29467.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 23402
+O-Subject: [RHEL5 PATCH]: acpiphp: fix missing acpiphp_glue_exit()
+Bugzilla: 515556
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+This is a long standing bug that was initially rejected because we could not
+reproduce the issue in house.  It turns out a BIOS update was required to
+produce the bug.  Yes ... I know.  The reply back should have been "FIX YOUR
+BIOS", but I was somewhat confused as to why Sun was providing us with a patch
+that "fixed" this problem.
+
+After the BIOS update I was able to reproduce the panic.  I'm tossing aside the
+patch supplied by Sun because I still cannot see how modifying the way we
+add/remove subdrivers can effect the order in which we add and remove the
+drivers.
+
+It is interesting that if I do
+
+1.  modprobe -r shpchp
+2.  modprobe acpiphp
+
+there is no panic.
+
+I decided to look at what was going on in the acpi_pci_register_driver()
+function itself.  After using the reproducer supplied in comment #53, I quickly
+zeroed in on what the likely problem was -- stale data in the subdrivers list.
+>From quick code inspection the following is happening
+
+1.  modprobe acpiphp
+
+registers an instance of acpi_pci_hp_driver subdriver
+
+2.  modprobe acpiphp
+
+register a second instance of acpi_pci_hp_driver subdriver
+
+3.  modprobe -r shpchp
+
+has nothing to do with the case at hand, however, it is interesting that this
+"kicks" the panic
+
+4.  modprobe acpiphp
+
+register a third instance of acpi_pci_hp_driver which leads to some general
+craziness and a panic on a bogus pointer.
+
+This happens because init_acpi() calls acpiphp_glue_init() which calls
+acpi_pci_register_driver().  acpi_pci_register_driver() completes successfully
+and returns to acpiphp_glue_init(), which in turn returns to init_acpi().
+
+init_acpi() continues it's execution path and does
+
+	if (!retval) {
+		num_slots = acpiphp_get_num_slots();
+	if (num_slots == 0)
+		retval = -ENODEV;  <--- we end up here.
+
+which AFAICT, is bogus.  We have to clean up the subdrivers.
+
+So I did
+
+	/* read initial number of slots */
+	if (!retval) {
+		num_slots = acpiphp_get_num_slots();
+		if (num_slots == 0) {
+			acpiphp_glue_exit();
+			retval = -ENODEV;
+		}
+	}
+
+and that works.
+
+It turns out that this was fixed upstream in commit
+0a9dee2739fd4385e83c3316e3f3bee641796638.
+
+Successfully tested by me on a Sun x4750.
+
+Resolves BZ 515556.
+
+P.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/pci/hotplug/acpiphp_core.c b/drivers/pci/hotplug/acpiphp_core.c
+index 98f5854..65f3ea5 100644
+--- a/drivers/pci/hotplug/acpiphp_core.c
++++ b/drivers/pci/hotplug/acpiphp_core.c
+@@ -307,8 +307,10 @@ static int __init init_acpi(void)
+ 	/* read initial number of slots */
+ 	if (!retval) {
+ 		num_slots = acpiphp_get_num_slots();
+-		if (num_slots == 0)
++		if (num_slots == 0) {
++			acpiphp_glue_exit();
+ 			retval = -ENODEV;
++		}
+ 	}
+ 
+ 	return retval;

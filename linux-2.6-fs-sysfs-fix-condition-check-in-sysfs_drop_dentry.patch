@@ -1,0 +1,39 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5 PATCH 2/3] - sysfs: fix condition check in sysfs_drop_dentry()
+Date: Fri, 24 Aug 2007 14:47:12 -0500
+Bugzilla: 243728
+Message-Id: <46CF35C0.60204@redhat.com>
+Changelog: [fs] sysfs: fix condition check in sysfs_drop_dentry()
+
+
+For Bugzilla Bug 243728: CVE-2007-3104 Null pointer to an inode in a dentry can cause an oops in sysfs_readdir
+
+Backport from upstream.
+
+X-Git-Tag: v2.6.22-rc5~46
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=6aa054aadfea613a437ad0b15d38eca2b963fc0a
+
+sysfs: fix condition check in sysfs_drop_dentry()
+
+The condition check doesn't make much sense as it basically always
+succeeds.  This causes NULL dereferencing on certain cases.  It seems
+that parentheses are put in the wrong place.  Fix it.
+
+Signed-off-by: Tejun Heo <htejun@gmail.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+---
+
+Index: linux-2.6.18-24.el5/fs/sysfs/inode.c
+===================================================================
+--- linux-2.6.18-24.el5.orig/fs/sysfs/inode.c
++++ linux-2.6.18-24.el5/fs/sysfs/inode.c
+@@ -221,7 +221,7 @@ void sysfs_drop_dentry(struct sysfs_dire
+ 	if (dentry) {
+ 		spin_lock(&dcache_lock);
+ 		spin_lock(&dentry->d_lock);
+-		if (!(d_unhashed(dentry) && dentry->d_inode)) {
++		if (!d_unhashed(dentry) && dentry->d_inode) {
+ 			dget_locked(dentry);
+ 			__d_drop(dentry);
+ 			spin_unlock(&dentry->d_lock);
+

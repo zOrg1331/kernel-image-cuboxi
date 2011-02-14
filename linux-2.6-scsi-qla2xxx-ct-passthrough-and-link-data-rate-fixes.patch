@@ -1,0 +1,127 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Tue, 1 Dec 2009 16:09:43 -0500
+Subject: [scsi] qla2xxx: CT passthrough and link data rate fixes
+Message-id: <20091201160943.9308.77644.sendpatchset@file.bos.redhat.com>
+Patchwork-id: 21568
+O-Subject: [rhel 5.5 patch] qla2xxx - 3rd batch, testing updates
+Bugzilla: 543057
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 543057
+
+qla2xxx - rhel 5.5 updates, 3rd batch.
+
+These patches fix the problems described below. They apply and build cleanly on 2.6.18-175 on top of the earlier patches.
+
+Tested at QLogic.
+
+ - Correct CT pass through timeout value.
+
+    In qla2x00_wait_for_passthru_completion the timeout of 10
+    seconds is shorter than the 25 seconds or 2*ra_tov in the iocb,
+    causing premature [non-graceful] recovery.
+
+ - Recover gracefully on CT pass through timeout.
+
+    In the event the timeout occurs, the firmware dump /
+    restart clears the firmware resources for the CT request, however
+    the "ha->pass_thru_cmd_in_process"  flag remains set, preventing
+    subsequent CT pass through requests via sysfs.
+
+ - Get the link data rate explicitly during device resync.
+
+    When the hba port gets logged out of the fabric, or other
+    such transitional state when the physical link is still present,
+    the driver doesn't receive a loop up asyn event (where the link
+    data rate currently gets set). Hence send a explicit mailbox command
+    to get the link rate in such conditions
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index 0234348..a176cf0 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -586,10 +586,15 @@ qla2x00_wait_for_passthru_completion(struct scsi_qla_host *ha)
+ 	if (unlikely(pci_channel_offline(ha->pdev)))
+ 		return;
+ 
+-	if (!wait_for_completion_timeout(&ha->pass_thru_intr_comp, 10 * HZ)) {
++	if (!wait_for_completion_timeout(&ha->pass_thru_intr_comp,
++	    (ha->r_a_tov / 10 * 2) + 5) * HZ) {
+ 		DEBUG2(qla_printk(KERN_WARNING, ha,
+ 		    "Passthru request timed out.\n"));
+ 		ha->isp_ops->fw_dump(ha, 0);
++		set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
++		qla2xxx_wake_dpc(ha);
++		ha->pass_thru_cmd_result = 0;
++		ha->pass_thru_cmd_in_process = 0;
+ 	}
+ }
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index b3df11e..e484f26 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -301,6 +301,9 @@ qla2x00_read_ram_word(scsi_qla_host_t *, uint32_t, uint32_t *);
+ extern int
+ qla2x00_write_ram_word(scsi_qla_host_t *, uint32_t, uint32_t);
+ 
++extern int
++qla2x00_get_data_rate(scsi_qla_host_t *);
++
+ /*
+  * Global Function Prototypes in qla_isr.c source file.
+  */
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 7b61a89..87a1b11 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -1991,6 +1991,8 @@ qla2x00_configure_loop(scsi_qla_host_t *ha)
+ 	clear_bit(LOCAL_LOOP_UPDATE, &ha->dpc_flags);
+ 	clear_bit(RSCN_UPDATE, &ha->dpc_flags);
+ 
++	qla2x00_get_data_rate(ha);
++
+ 	/* Determine what we need to do */
+ 	if (ha->current_topology == ISP_CFG_FL &&
+ 	    (test_bit(LOCAL_LOOP_UPDATE, &flags))) {
+diff --git a/drivers/scsi/qla2xxx/qla_mbx.c b/drivers/scsi/qla2xxx/qla_mbx.c
+index 929e6e4..819a1db 100644
+--- a/drivers/scsi/qla2xxx/qla_mbx.c
++++ b/drivers/scsi/qla2xxx/qla_mbx.c
+@@ -3519,3 +3519,35 @@ qla2x00_write_ram_word(scsi_qla_host_t *ha, uint32_t risc_addr, uint32_t data)
+ 
+ 	return rval;
+ }
++
++int
++qla2x00_get_data_rate(scsi_qla_host_t *ha)
++{
++	int rval;
++	mbx_cmd_t mc;
++	mbx_cmd_t *mcp = &mc;
++
++	if (!IS_FWI2_CAPABLE(ha))
++		return QLA_FUNCTION_FAILED;
++
++	DEBUG11(printk(KERN_INFO "%s(%ld): entered.\n", __func__, ha->host_no));
++
++	mcp->mb[0] = MBC_DATA_RATE;
++	mcp->mb[1] = 0;
++	mcp->out_mb = MBX_1|MBX_0;
++	mcp->in_mb = MBX_2|MBX_1|MBX_0;
++	mcp->tov = MBX_TOV_SECONDS;
++	mcp->flags = 0;
++	rval = qla2x00_mailbox_command(ha, mcp);
++	if (rval != QLA_SUCCESS) {
++		DEBUG2_3_11(printk(KERN_INFO "%s(%ld): failed=%x mb[0]=%x.\n",
++		    __func__, ha->host_no, rval, mcp->mb[0]));
++	} else {
++		DEBUG11(printk(KERN_INFO
++		    "%s(%ld): done.\n", __func__, ha->host_no));
++		if (mcp->mb[1] != 0x7)
++			ha->link_data_rate = mcp->mb[1];
++	}
++
++	return rval;
++}

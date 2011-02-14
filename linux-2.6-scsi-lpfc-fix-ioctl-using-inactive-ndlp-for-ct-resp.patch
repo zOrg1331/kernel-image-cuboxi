@@ -1,0 +1,79 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:44 -0400
+Subject: [scsi] lpfc: fix ioctl using inactive ndlp for ct resp
+Message-id: <1286288695-20754-13-git-send-email-revers@redhat.com>
+Patchwork-id: 28594
+O-Subject: [RHEL5.6 PATCH 12/23] Fix bug with ioctl using an inactive ndlp for a
+	ct response after a cable swap. (CR: 104032)
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Fix bug with ioctl using an inactive ndlp for a ct response after a cable swap. (CR: 104032)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index 158e1ef..022e037 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -319,6 +319,8 @@ struct lpfc_nodelist *lpfc_find_node(struct lpfc_vport *, node_filter, void *);
+ struct lpfc_nodelist *lpfc_findnode_did(struct lpfc_vport *, uint32_t);
+ struct lpfc_nodelist *lpfc_findnode_wwpn(struct lpfc_vport *,
+ 					 struct lpfc_name *);
++struct lpfc_nodelist *lpfc_find_active_node_wwpn(struct lpfc_vport *,
++					 struct lpfc_name *);
+ 
+ int lpfc_sli_issue_mbox_wait(struct lpfc_hba *, LPFC_MBOXQ_t *, uint32_t);
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index ccc2885..f40c5dd 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -5042,6 +5042,32 @@ lpfc_findnode_wwpn(struct lpfc_vport *vport, struct lpfc_name *wwpn)
+ }
+ 
+ /*
++ * This routine looks up the ndlp lists for the given WWPN. If WWPN is found and
++ * it is active it returns the node element list pointer else NULL is returned.
++ * A WWPN may be listed more than once in the node list, however it should
++ * only have one active entry.
++ */
++struct lpfc_nodelist *
++lpfc_find_active_node_wwpn(struct lpfc_vport *vport, struct lpfc_name *wwpn)
++{
++	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
++	struct lpfc_nodelist *ndlp;
++	struct lpfc_nodelist *active_ndlp = NULL;
++
++	spin_lock_irq(shost->host_lock);
++	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
++		if (!NLP_CHK_NODE_ACT(ndlp))
++			continue;
++		if (lpfc_filter_by_wwpn(ndlp, wwpn)) {
++			active_ndlp = ndlp;
++			break;
++		}
++	}
++	spin_unlock_irq(shost->host_lock);
++	return active_ndlp;
++}
++
++/*
+  * This routine looks up the ndlp lists for the given WWNN. If WWNN found it
+  * returns the node element list pointer else return NULL.
+  */
+diff --git a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+index 209f808..d2bb920 100644
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c
+@@ -633,7 +633,7 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 			rc = EIO;
+ 			goto send_mgmt_cmd_exit;
+ 		}
+-		pndl = lpfc_findnode_wwpn(phba->pport, &findwwn);
++		pndl = lpfc_find_active_node_wwpn(phba->pport, &findwwn);
+ 		/* Do additional get to pndl found so that at the end of the
+ 		 * function we can do unditional lpfc_nlp_put on it.
+ 		 */

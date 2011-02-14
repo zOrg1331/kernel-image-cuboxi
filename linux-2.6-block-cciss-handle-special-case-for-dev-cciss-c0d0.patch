@@ -1,0 +1,83 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:24 -0400
+Subject: [block] cciss: handle special case for /dev/cciss/c0d0
+Message-id: <1283097002-3341-26-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27864
+O-Subject: [RHEL6 PATCH 25/63] cciss: handle special case for /dev/cciss/c0d0
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+For c0dx where x is not 0, we handle deletion and addition simply,
+but for c0d0, there is the special case that even when there's no
+disk, the device node exists so that the controller may be accessed.
+So, for c0d0, we only create the sysfs entries once, at driver init
+time,  and only remove them once, at driver exit time.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 9a0ec7b..c0e58b1 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -638,6 +638,10 @@ static long cciss_create_ld_sysfs_entry(struct ctlr_info *h,
+ 	drive_info_struct *drv = &h->drv[drv_index];
+ 	struct device *dev;
+ 
++	/* Special case for c*d0, we only create it once. */
++	if (drv_index == 0 && h->drv[drv_index].dev != NULL)
++		return 0;
++
+ 	dev = kzalloc(sizeof(struct device), GFP_KERNEL);
+ 	if (!dev)
+ 		return -ENOMEM;
+@@ -678,9 +682,15 @@ mem:
+ /*
+  * Remove sysfs entries for a logical drive.
+  */
+-static void cciss_destroy_ld_sysfs_entry(struct ctlr_info *h, int drv_index)
++static void cciss_destroy_ld_sysfs_entry(struct ctlr_info *h, int drv_index,
++	int driver_exiting)
+ {
+ 	struct device *dev = h->drv[drv_index].dev;
++
++	/* special case for c*d0, we only destroy it on driver exit */
++	if (drv_index == 0 && !driver_exiting)
++		return;
++
+ 	device_del(dev);
+ 	put_device(dev); /* the "final" put. */
+ 	h->drv[drv_index].dev = NULL;
+@@ -2141,7 +2151,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+  			h->drv[i].busy_configuring = 1;
+  			spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+  			return_code = deregister_disk(h, i, 1);
+-			cciss_destroy_ld_sysfs_entry(h, i);
++			cciss_destroy_ld_sysfs_entry(h, i, 0);
+  			h->drv[i].busy_configuring = 0;
+ 		}
+  	}
+@@ -2238,7 +2248,7 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 		if (disk) {
+ 			request_queue_t *q = disk->queue;
+ 			if (disk->flags & GENHD_FL_UP) {
+-				cciss_destroy_ld_sysfs_entry(h, drv_index);
++				cciss_destroy_ld_sysfs_entry(h, drv_index, 0);
+ 				del_gendisk(disk);
+ 			}
+ 			if (q) {
+@@ -4215,7 +4225,7 @@ clean4:
+ 			blk_cleanup_queue(drv->queue);
+ 		if (hba[i]->drv[j].dev != NULL &&
+ 			(j == 0 || hba[i]->drv[j].raid_level != -1))
+-				cciss_destroy_ld_sysfs_entry(hba[i], j);
++				cciss_destroy_ld_sysfs_entry(hba[i], j, 1);
+ 	}
+ 	pci_release_regions(pdev);
+ 	/* This call to pci_disable_device causes the driver to be unable
+@@ -4288,7 +4298,7 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 			request_queue_t *q = disk->queue;
+ 
+ 			if (disk->flags & GENHD_FL_UP) {
+-				cciss_destroy_ld_sysfs_entry(hba[i], j);
++				cciss_destroy_ld_sysfs_entry(hba[i], j, 1);
+ 				del_gendisk(disk);
+ 			}
+ 			if (q)

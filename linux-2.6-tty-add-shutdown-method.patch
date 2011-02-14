@@ -1,0 +1,140 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Tue, 2 Sep 2008 15:36:59 -0400
+Subject: [tty] add shutdown method
+Message-id: 20080902193659.GD10700@redhat.com
+O-Subject: [RHEL5.3 PATCH 2/3] tty: add shutdown() method v2
+Bugzilla: 239604
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=239604
+
+Most drivers check for tty->count from inside the close() method to determine
+if it's the last close. This is not safe and can cause the driver to not
+release the resources (two last close() calls at same time, for both,
+tty->count is 2).
+
+This patch adds shutdown() operation to tty_driver, to be called only when the
+tty is being freed.
+
+kabi: this patch adds shutdown() to tty_driver structure. Since this structure
+should be allocated by calling alloc_tty_driver() and the code is checking for
+a specific flag to use this new element, it is safe to do it, even failing the
+kabi test.
+
+Note: the flag is leaving space for another flag. I'll repost the DTR/DSR patch
+that includes two new elements on tty_driver using the same method, killing that
+ugly tty_register_..()
+Thanks to Rik to point this.
+
+Updated: using __GENKSYMS__
+
+upstream: 413c68538dc90edb4b0dea1eddab793804120d93 (linux-next)
+
+diff --git a/drivers/char/tty_io.c b/drivers/char/tty_io.c
+index 81cdad9..f2e58b9 100644
+--- a/drivers/char/tty_io.c
++++ b/drivers/char/tty_io.c
+@@ -2101,6 +2101,37 @@ release_mem_out:
+ 	goto end_init;
+ }
+ 
++void tty_free_termios(struct tty_struct *tty)
++{
++	struct termios *tp;
++	int idx = tty->index;
++	int devpts = tty->driver->flags & TTY_DRIVER_DEVPTS_MEM;
++
++	/* Kill this flag and push into drivers for locking etc */
++	if (tty->driver->flags & TTY_DRIVER_RESET_TERMIOS) {
++		/* FIXME: Locking on ->termios array */
++		tp = tty->termios;
++		if (!devpts)
++			tty->driver->termios[idx] = NULL;
++		kfree(tp);
++
++		tp = tty->termios_locked;
++		if (!devpts)
++			tty->driver->termios_locked[idx] = NULL;
++		kfree(tp);
++	}
++}
++EXPORT_SYMBOL(tty_free_termios);
++
++void tty_shutdown(struct tty_struct *tty)
++{
++	int devpts = tty->driver->flags & TTY_DRIVER_DEVPTS_MEM;
++
++	if (!devpts)
++		tty->driver->ttys[tty->index] = NULL;
++	tty_free_termios(tty);
++}
++
+ /**
+  *	release_one_tty		-	release tty structure memory
+  *
+@@ -2118,21 +2149,12 @@ static void release_one_tty(struct tty_struct *tty, int idx)
+ {
+ 	struct termios *tp;
+ 	int devpts = tty->driver->flags & TTY_DRIVER_DEVPTS_MEM;
++	void (*shutdown)(struct tty_struct *);
+ 
+-	if (!devpts)
+-		tty->driver->ttys[idx] = NULL;
+-	if (tty->driver->flags & TTY_DRIVER_RESET_TERMIOS) {
+-		tp = tty->termios;
+-		if (!devpts)
+-			tty->driver->termios[idx] = NULL;
+-		kfree(tp);
+-
+-		tp = tty->termios_locked;
+-		if (!devpts)
+-			tty->driver->termios_locked[idx] = NULL;
+-		kfree(tp);
+-	}
+-
++	if (tty->driver->flags & TTY_DRIVER_HAS_SHUTDOWN)
++		tty->driver->shutdown(tty);
++	else
++		tty_shutdown(tty);
+ 
+ 	tty->magic = 0;
+ 	tty->driver->refcount--;
+diff --git a/include/linux/tty_driver.h b/include/linux/tty_driver.h
+index 58c961c..2846f11 100644
+--- a/include/linux/tty_driver.h
++++ b/include/linux/tty_driver.h
+@@ -213,6 +213,9 @@ struct tty_driver {
+ 			unsigned int set, unsigned int clear);
+ 
+ 	struct list_head tty_drivers;
++#ifndef __GENKSYMS__
++	void (*shutdown)(struct tty_struct *tty);
++#endif
+ };
+ 
+ extern struct list_head tty_drivers;
+@@ -221,6 +224,8 @@ struct tty_driver *alloc_tty_driver(int lines);
+ void put_tty_driver(struct tty_driver *driver);
+ void tty_set_operations(struct tty_driver *driver, struct tty_operations *op);
+ 
++void tty_shutdown(struct tty_struct *tty);
++
+ /* tty driver magic number */
+ #define TTY_DRIVER_MAGIC		0x5402
+ 
+@@ -254,12 +259,15 @@ void tty_set_operations(struct tty_driver *driver, struct tty_operations *op);
+  * TTY_DRIVER_DEVPTS_MEM -- don't use the standard arrays, instead
+  *	use dynamic memory keyed through the devpts filesystem.  This
+  *	is only applicable to the pty driver.
++ * TTY_DRIVER_HAS_SHUTDOWN - if the driver implements the shutdown()
++ *	function
+  */
+ #define TTY_DRIVER_INSTALLED		0x0001
+ #define TTY_DRIVER_RESET_TERMIOS	0x0002
+ #define TTY_DRIVER_REAL_RAW		0x0004
+ #define TTY_DRIVER_DYNAMIC_DEV		0x0008
+ #define TTY_DRIVER_DEVPTS_MEM		0x0010
++#define TTY_DRIVER_HAS_SHUTDOWN		0x0020
+ 
+ /* tty driver types */
+ #define TTY_DRIVER_TYPE_SYSTEM		0x0001

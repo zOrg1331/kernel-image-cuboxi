@@ -1,0 +1,52 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 1 Dec 2008 14:30:20 -0600
+Subject: [fs] jbd: alter EIO test to avoid spurious jbd aborts
+Message-id: 4934495C.6050709@redhat.com
+O-Subject: [RHEL5.3 PATCH] Alter jbd EIO test to avoid spurious jbd aborts
+Bugzilla: 472276
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+
+For:
+Bug 472276 - [regression] fsstress cause journal commit I/O Error with ext3 filesystem on RHEL5.3-Beta
+
+This fixes a regression caught by a partner, caused by the
+linux-2.6-fs-jdb-add-missing-error-checks-for-file-data-writes.patch
+patch that went into RHEL5.
+
+There's a bit going on here; the root cause is that during some operations,
+a page is created with all new buffers, but if those buffers weren't in
+the range of the write in question, the buffers were simply mapped but
+never read, thus the buffers were *never* uptodate (also not dirty).
+(note that this also requires block size < page size, which is why it
+popped up quickly on PPC).
+
+Then, strangely enough, jbd was putting these (not uptodate, not dirty)
+buffers on the transaction (where they were found, but no IO was needed).
+
+The test for "!uptodate" below then resulted in EIO and a jbd abort, even
+though the buffers were actually superfluous to the whole transaction.
+I'm still still looking into more of the root cause, but at this
+point in the release cycle, the test below is the simplest, safest fix;
+it restricts any risk to the EIO error detection, and won't change any
+other behavior.  I've tested it on x86_64 w/ 1k blocksize, where I could
+easily reproduce before, and it's passing.
+
+I'll ask the reporter to re-test, but wanted to get it out on the list
+sooner than later.
+
+Thanks,
+-Eric
+
+diff --git a/fs/jbd/commit.c b/fs/jbd/commit.c
+index 53c2a84..072cb05 100644
+--- a/fs/jbd/commit.c
++++ b/fs/jbd/commit.c
+@@ -256,7 +256,7 @@ write_out_data:
+ 			put_bh(bh);
+ 		} else {
+ 			BUFFER_TRACE(bh, "writeout complete: unfile");
+-			if (unlikely(!buffer_uptodate(bh)))
++			if (unlikely(buffer_write_io_error(bh)))
+ 				err = -EIO;
+ 			__journal_unfile_buffer(jh);
+ 			jbd_unlock_bh_state(bh);

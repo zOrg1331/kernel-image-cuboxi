@@ -1,0 +1,36 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] GFS2: use log_error before LM_OUT_ERROR
+Date: Thu, 19 Apr 2007 11:46:18 -0500
+Bugzilla: 234338
+Message-Id: <20070419164618.GH23079@redhat.com>
+Changelog: [gfs2] use log_error before LM_OUT_ERROR
+
+
+bz 234338
+
+We always want to see the details of the error returned to gfs, but
+log_debug is often turned off, so use log_error (printk).
+
+Index: linux-2.6.21-rc5-quilt/fs/gfs2/locking/dlm/lock.c
+===================================================================
+--- linux-2.6.21-rc5-quilt.orig/fs/gfs2/locking/dlm/lock.c	2007-02-04 12:44:54.000000000 -0600
++++ linux-2.6.21-rc5-quilt/fs/gfs2/locking/dlm/lock.c	2007-03-28 12:46:53.000000000 -0500
+@@ -268,7 +268,7 @@
+ 	}
+ 
+ 	if (error) {
+-		log_debug("%s: gdlm_lock %x,%llx err=%d cur=%d req=%d lkf=%x "
++		log_error("%s: gdlm_lock %x,%llx err=%d cur=%d req=%d lkf=%x "
+ 			  "flags=%lx", ls->fsname, lp->lockname.ln_type,
+ 			  (unsigned long long)lp->lockname.ln_number, error,
+ 			  lp->cur, lp->req, lp->lkf, lp->flags);
+@@ -296,7 +296,7 @@
+ 	error = dlm_unlock(ls->dlm_lockspace, lp->lksb.sb_lkid, lkf, NULL, lp);
+ 
+ 	if (error) {
+-		log_debug("%s: gdlm_unlock %x,%llx err=%d cur=%d req=%d lkf=%x "
++		log_error("%s: gdlm_unlock %x,%llx err=%d cur=%d req=%d lkf=%x "
+ 			  "flags=%lx", ls->fsname, lp->lockname.ln_type,
+ 			  (unsigned long long)lp->lockname.ln_number, error,
+ 			  lp->cur, lp->req, lp->lkf, lp->flags);
+

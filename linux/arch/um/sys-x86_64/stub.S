@@ -1,24 +1,24 @@
-#include "as-layout.h"
+#include "uml-config.h"
 
 	.globl syscall_stub
-.section .__syscall_stub, "ax"
+.section .__syscall_stub, "x"
 syscall_stub:
 	syscall
 	/* We don't have 64-bit constants, so this constructs the address
 	 * we need.
 	 */
-	movq	$(STUB_DATA >> 32), %rbx
+	movq	$(UML_CONFIG_STUB_DATA >> 32), %rbx
 	salq	$32, %rbx
-	movq	$(STUB_DATA & 0xffffffff), %rcx
+	movq	$(UML_CONFIG_STUB_DATA & 0xffffffff), %rcx
 	or	%rcx, %rbx
 	movq	%rax, (%rbx)
 	int3
 
 	.globl batch_syscall_stub
 batch_syscall_stub:
-	mov	$(STUB_DATA >> 32), %rbx
+	mov	$(UML_CONFIG_STUB_DATA >> 32), %rbx
 	sal	$32, %rbx
-	mov	$(STUB_DATA & 0xffffffff), %rax
+	mov	$(UML_CONFIG_STUB_DATA & 0xffffffff), %rax
 	or	%rax, %rbx
 	/* load pointer to first operation */
 	mov	%rbx, %rsp

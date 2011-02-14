@@ -1,0 +1,58 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Fri, 12 Feb 2010 18:39:58 -0500
+Subject: [mm] xen: make mmap() with PROT_WRITE
+Message-id: <1265999998-13996-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 23264
+O-Subject: [PATCH 5.5] [xen] [mm] Make mmap() with PROT_WRITE
+Bugzilla: 562761
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Bugzilla 562761
+
+Using the PROT_WRITE flag with mmap() causes a SIGSEGV on first read.
+This was patched for the bare-metal kernels for all arches since kernel
+-95, but the *-xen files were missed. This patch makes the corresponding
+changes to the xen files so mmap bug is fixed on xen hosts as well.
+
+The commit for the bare-metal files is
+c9ee5e25fb02218bf5786a1cea19a0d9f5eaaa6d
+
+Tested by me on x86_64 with the following test program. Before the patch
+the program segfaults. With the patch it completes fine.
+
+main(void)
+{
+        char c, *p;
+        p = mmap(0, 1, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+        c = *p;   /* Reading a byte from the page */
+}
+
+Brew build is brewing.
+
+diff --git a/arch/i386/mm/fault-xen.c b/arch/i386/mm/fault-xen.c
+index 9561f24..1e3a18c 100644
+--- a/arch/i386/mm/fault-xen.c
++++ b/arch/i386/mm/fault-xen.c
+@@ -573,7 +573,7 @@ good_area:
+ 		case 1:		/* read, present */
+ 			goto bad_area;
+ 		case 0:		/* read, not present */
+-			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++			if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 				goto bad_area;
+ 	}
+ 
+diff --git a/arch/x86_64/mm/fault-xen.c b/arch/x86_64/mm/fault-xen.c
+index 5ff589a..8a9a09d 100644
+--- a/arch/x86_64/mm/fault-xen.c
++++ b/arch/x86_64/mm/fault-xen.c
+@@ -530,7 +530,7 @@ good_area:
+ 		case PF_PROT:		/* read, present */
+ 			goto bad_area;
+ 		case 0:			/* read, not present */
+-			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++			if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+ 				goto bad_area;
+ 	}
+ 

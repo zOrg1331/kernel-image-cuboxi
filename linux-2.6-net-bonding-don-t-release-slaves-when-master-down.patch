@@ -1,0 +1,78 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5 PATCH] [PATCH] bonding: Don't release slaves when master is admin down
+Date: Sat, 16 Dec 2006 01:48:34 +1100
+Bugzilla: 215887
+Message-Id: <20061215144834.GA15940@gondor.apana.org.au>
+Changelog: bonding: Don't release slaves when master is admin down
+
+
+Hi:
+
+RHEL5 blocker BZ 215887
+
+This patch changes bonding to not release slaves gratuitously.  This
+brings its behaviour in line with other network devices.  It has been
+upstream since September.
+
+This is needed for Xen because it has to bring the bonding device down
+in order to rename it so that it can put the Xen loopback device in its
+place.  Without this patch the bonding device has to be setup from
+scratch again.
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+author jamal <hadi@cyberus.ca> 1158987277 -0700
+committer Jeff Garzik <jeff@garzik.org> 1159229289 -0400
+
+[PATCH] bonding: Don't release slaves when master is admin down
+
+When a bonding netdevice is admin-ed down it loses the slaves
+attributes (set via ifenslave). This is not consistent with other
+behavior of netdevices (example a qdisc attached to a netdevice doesnt
+disappear or an attached IP address etc).
+The included patch fixes this. Ive tested by ifenslaving, downing the
+bond, checking /proc and making sure it still has the slaves, up-ing the
+bond and making sure things continue to work.
+
+Jay/Bonding folks if you are ok with it, just ACK it or include it in
+your tree etc. Otherwise we can discuss.
+
+Acked-by: Jay Vosburgh <fubar@us.ibm.com>
+
+Signed-off-by: Jeff Garzik <jeff@garzik.org>
+Index: latest/drivers/net/bonding/bond_main.c
+===================================================================
+--- latest.orig/drivers/net/bonding/bond_main.c
++++ latest/drivers/net/bonding/bond_main.c
+@@ -3420,7 +3420,6 @@ static int bond_close(struct net_device 
+ 
+ 	write_lock_bh(&bond->lock);
+ 
+-	bond_mc_list_destroy(bond);
+ 
+ 	/* signal timers not to re-arm */
+ 	bond->kill_timers = 1;
+@@ -3451,8 +3450,6 @@ static int bond_close(struct net_device 
+ 		break;
+ 	}
+ 
+-	/* Release the bonded slaves */
+-	bond_release_all(bond_dev);
+ 
+ 	if ((bond->params.mode == BOND_MODE_TLB) ||
+ 	    (bond->params.mode == BOND_MODE_ALB)) {
+@@ -4237,6 +4234,9 @@ static void bond_free_all(void)
+ 	list_for_each_entry_safe(bond, nxt, &bond_dev_list, bond_list) {
+ 		struct net_device *bond_dev = bond->dev;
+ 
++		bond_mc_list_destroy(bond);
++		/* Release the bonded slaves */
++		bond_release_all(bond_dev);
+ 		unregister_netdevice(bond_dev);
+ 		bond_deinit(bond_dev);
+ 	}

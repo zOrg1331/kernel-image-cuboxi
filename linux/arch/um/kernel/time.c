@@ -1,117 +1,182 @@
 /*
- * Copyright (C) 2000 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
+ * Copyright (C) 2000 Jeff Dike (jdike@karaya.com)
  * Licensed under the GPL
  */
 
-#include <linux/clockchips.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
-#include <linux/jiffies.h>
-#include <linux/threads.h>
-#include <asm/irq.h>
-#include <asm/param.h>
+#include "linux/kernel.h"
+#include "linux/module.h"
+#include "linux/unistd.h"
+#include "linux/stddef.h"
+#include "linux/spinlock.h"
+#include "linux/time.h"
+#include "linux/sched.h"
+#include "linux/interrupt.h"
+#include "linux/init.h"
+#include "linux/delay.h"
+#include "linux/hrtimer.h"
+#include "asm/irq.h"
+#include "asm/param.h"
+#include "asm/current.h"
 #include "kern_util.h"
+#include "user_util.h"
+#include "mode.h"
 #include "os.h"
 
-void timer_handler(int sig, struct uml_pt_regs *regs)
+int hz(void)
 {
-	unsigned long flags;
-
-	local_irq_save(flags);
-	do_IRQ(TIMER_IRQ, regs);
-	local_irq_restore(flags);
+	return(HZ);
 }
 
-static void itimer_set_mode(enum clock_event_mode mode,
-			    struct clock_event_device *evt)
+/*
+ * Scheduler clock - returns current time in nanosec units.
+ */
+unsigned long long sched_clock(void)
 {
-	switch (mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		set_interval();
-		break;
+	return (unsigned long long)jiffies_64 * (1000000000 / HZ);
+}
 
-	case CLOCK_EVT_MODE_SHUTDOWN:
-	case CLOCK_EVT_MODE_UNUSED:
-	case CLOCK_EVT_MODE_ONESHOT:
-		disable_timer();
-		break;
+/* Changed at early boot */
+int timer_irq_inited = 0;
 
-	case CLOCK_EVT_MODE_RESUME:
-		break;
+static unsigned long long prev_nsecs;
+#ifdef CONFIG_UML_REAL_TIME_CLOCK
+static long long delta;   		/* Deviation per interval */
+#endif
+
+void timer_irq(union uml_pt_regs *regs)
+{
+	unsigned long long ticks = 0;
+
+#ifdef CONFIG_UML_REAL_TIME_CLOCK
+	if(prev_nsecs){
+		/* We've had 1 tick */
+		unsigned long long nsecs = os_nsecs();
+
+		delta += nsecs - prev_nsecs;
+		prev_nsecs = nsecs;
+
+		/* Protect against the host clock being set backwards */
+		if(delta < 0)
+			delta = 0;
+
+		ticks += (delta * HZ) / BILLION;
+		delta -= (ticks * BILLION) / HZ;
+	}
+	else prev_nsecs = os_nsecs();
+#else
+	ticks = 1;
+#endif
+	while(ticks > 0){
+		do_IRQ(TIMER_IRQ, regs);
+		ticks--;
 	}
 }
 
-static int itimer_next_event(unsigned long delta,
-			     struct clock_event_device *evt)
+static DEFINE_SPINLOCK(timer_spinlock);
+
+static unsigned long long local_offset = 0;
+
+static inline unsigned long long get_time(void)
 {
-	return timer_one_shot(delta + 1);
+	unsigned long long nsecs;
+	unsigned long flags;
+
+	spin_lock_irqsave(&timer_spinlock, flags);
+	nsecs = os_nsecs();
+	nsecs += local_offset;
+	spin_unlock_irqrestore(&timer_spinlock, flags);
+
+	return nsecs;
 }
 
-static struct clock_event_device itimer_clockevent = {
-	.name		= "itimer",
-	.rating		= 250,
-	.cpumask	= cpu_all_mask,
-	.features	= CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT,
-	.set_mode	= itimer_set_mode,
-	.set_next_event = itimer_next_event,
-	.shift		= 32,
-	.irq		= 0,
-};
-
-static irqreturn_t um_timer(int irq, void *dev)
+irqreturn_t um_timer(int irq, void *dev, struct pt_regs *regs)
 {
-	(*itimer_clockevent.event_handler)(&itimer_clockevent);
+	unsigned long long nsecs;
+	unsigned long flags;
+
+	write_seqlock_irqsave(&xtime_lock, flags);
+
+	do_timer(regs);
+
+	nsecs = get_time() + local_offset;
+	xtime.tv_sec = nsecs / NSEC_PER_SEC;
+	xtime.tv_nsec = nsecs - xtime.tv_sec * NSEC_PER_SEC;
+
+	write_sequnlock_irqrestore(&xtime_lock, flags);
 
 	return IRQ_HANDLED;
 }
 
-static cycle_t itimer_read(struct clocksource *cs)
-{
-	return os_nsecs() / 1000;
-}
-
-static struct clocksource itimer_clocksource = {
-	.name		= "itimer",
-	.rating		= 300,
-	.read		= itimer_read,
-	.mask		= CLOCKSOURCE_MASK(64),
-	.mult		= 1000,
-	.shift		= 0,
-	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
-};
-
-static void __init setup_itimer(void)
+static void register_timer(void)
 {
 	int err;
 
 	err = request_irq(TIMER_IRQ, um_timer, IRQF_DISABLED, "timer", NULL);
-	if (err != 0)
-		printk(KERN_ERR "register_timer : request_irq failed - "
+	if(err != 0)
+		printk(KERN_ERR "timer_init : request_irq failed - "
 		       "errno = %d\n", -err);
 
-	itimer_clockevent.mult = div_sc(HZ, NSEC_PER_SEC, 32);
-	itimer_clockevent.max_delta_ns =
-		clockevent_delta2ns(60 * HZ, &itimer_clockevent);
-	itimer_clockevent.min_delta_ns =
-		clockevent_delta2ns(1, &itimer_clockevent);
-	err = clocksource_register(&itimer_clocksource);
-	if (err) {
-		printk(KERN_ERR "clocksource_register returned %d\n", err);
-		return;
-	}
-	clockevents_register_device(&itimer_clockevent);
+	timer_irq_inited = 1;
+
+	user_time_init();
 }
 
-void __init time_init(void)
+extern void (*late_time_init)(void);
+
+void time_init(void)
 {
 	long long nsecs;
 
-	timer_init();
-
 	nsecs = os_nsecs();
-	set_normalized_timespec(&wall_to_monotonic, -nsecs / NSEC_PER_SEC,
-				-nsecs % NSEC_PER_SEC);
-	set_normalized_timespec(&xtime, nsecs / NSEC_PER_SEC,
-				nsecs % NSEC_PER_SEC);
-	late_time_init = setup_itimer;
+	set_normalized_timespec(&wall_to_monotonic, -nsecs / BILLION,
+				-nsecs % BILLION);
+	late_time_init = register_timer;
+}
+
+void do_gettimeofday(struct timeval *tv)
+{
+	unsigned long long nsecs = get_time();
+
+	tv->tv_sec = nsecs / NSEC_PER_SEC;
+	/* Careful about calculations here - this was originally done as
+	 * (nsecs - tv->tv_sec * NSEC_PER_SEC) / NSEC_PER_USEC
+	 * which gave bogus (> 1000000) values.  Dunno why, suspect gcc
+	 * (4.0.0) miscompiled it, or there's a subtle 64/32-bit conversion
+	 * problem that I missed.
+	 */
+	nsecs -= tv->tv_sec * NSEC_PER_SEC;
+	tv->tv_usec = (unsigned long) nsecs / NSEC_PER_USEC;
+}
+
+static inline void set_time(unsigned long long nsecs)
+{
+	unsigned long long now;
+	unsigned long flags;
+
+	spin_lock_irqsave(&timer_spinlock, flags);
+	now = os_nsecs();
+	local_offset = nsecs - now;
+	spin_unlock_irqrestore(&timer_spinlock, flags);
+
+	clock_was_set();
+}
+
+int do_settimeofday(struct timespec *tv)
+{
+	set_time((unsigned long long) tv->tv_sec * NSEC_PER_SEC + tv->tv_nsec);
+
+	return 0;
+}
+
+void timer_handler(int sig, union uml_pt_regs *regs)
+{
+	local_irq_disable();
+	irq_enter();
+	update_process_times(CHOOSE_MODE(
+	                     (UPT_SC(regs) && user_context(UPT_SP(regs))),
+			     (regs)->skas.is_user));
+	irq_exit();
+	local_irq_enable();
+	if(current_thread->cpu == 0)
+		timer_irq(regs);
 }

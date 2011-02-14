@@ -1,0 +1,64 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Wed, 3 Oct 2007 07:44:03 -0400
+Subject: [mm] oom: prevent from killing several processes
+Message-id: 1191411844.8155.12.camel@dhcp83-56.boston.redhat.com
+O-Subject: [RHEL5-U2 patch] prevent systems that are "trying" to OOM kill from hanging and/or killing several processes.
+Bugzilla: 392351
+
+RHEL5 version of this patch:
+
+Often when processes must be OOM killed they are "stuck" down inside
+try_to_free_pages() trying to reclaim memory themselves.  When this
+happens the system hangs and/or starts killing lots of other
+processes.
+
+The attached patch fixes this by bailing out of try_to_free_pages() and
+__alloc_pages() if the calling process has been OOM killed.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 3798e77..b03e362 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -994,6 +994,8 @@ nofail_alloc:
+ 		goto nopage;
+ 
+ rebalance:
++	if (test_thread_flag(TIF_MEMDIE))
++		goto nopage;
+ 	cond_resched();
+ 
+ 	/* We now go into synchronous reclaim */
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index d50542f..bdd76ee 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -906,6 +906,8 @@ static unsigned long shrink_zone(int priority, struct zone *zone,
+ 		nr_inactive = 0;
+ 
+ 	while (nr_active || nr_inactive) {
++		if (test_thread_flag(TIF_MEMDIE))
++			return 0;
+ 		if (nr_active) {
+ 			nr_to_scan = min(nr_active,
+ 					(unsigned long)sc->swap_cluster_max);
+@@ -954,6 +956,8 @@ static unsigned long shrink_zones(int priority, struct zone **zones,
+ 	for (i = 0; zones[i] != NULL; i++) {
+ 		struct zone *zone = zones[i];
+ 
++		if (test_thread_flag(TIF_MEMDIE))
++			return 0;
+ 		if (!populated_zone(zone))
+ 			continue;
+ 
+@@ -1014,6 +1018,8 @@ unsigned long try_to_free_pages(struct zone **zones, gfp_t gfp_mask)
+ 	}
+ 
+ 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
++		if (test_thread_flag(TIF_MEMDIE))
++			goto out;
+ 		sc.nr_scanned = 0;
+ 		if (!priority)
+ 			disable_swap_token();

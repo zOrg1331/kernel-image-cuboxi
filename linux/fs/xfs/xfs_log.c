@@ -40,9 +40,7 @@
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
 #include "xfs_rw.h"
-#include "xfs_trace.h"
 
-kmem_zone_t	*xfs_log_ticket_zone;
 
 #define xlog_write_adv_cnt(ptr, len, off, bytes) \
 	{ (ptr) += (bytes); \
@@ -50,6 +48,7 @@ kmem_zone_t	*xfs_log_ticket_zone;
 	  (off) += (bytes);}
 
 /* Local miscellaneous function prototypes */
+STATIC int	 xlog_bdstrat_cb(struct xfs_buf *);
 STATIC int	 xlog_commit_record(xfs_mount_t *mp, xlog_ticket_t *ticket,
 				    xlog_in_core_t **, xfs_lsn_t *);
 STATIC xlog_t *  xlog_alloc_log(xfs_mount_t	*mp,
@@ -74,11 +73,18 @@ STATIC int  xlog_state_get_iclog_space(xlog_t		*log,
 				       xlog_ticket_t	*ticket,
 				       int		*continued_write,
 				       int		*logoffsetp);
+STATIC void xlog_state_put_ticket(xlog_t	*log,
+				  xlog_ticket_t *tic);
 STATIC int  xlog_state_release_iclog(xlog_t		*log,
 				     xlog_in_core_t	*iclog);
 STATIC void xlog_state_switch_iclogs(xlog_t		*log,
 				     xlog_in_core_t *iclog,
 				     int		eventual_size);
+STATIC int  xlog_state_sync(xlog_t			*log,
+			    xfs_lsn_t 			lsn,
+			    uint			flags,
+			    int				*log_flushed);
+STATIC int  xlog_state_sync_all(xlog_t *log, uint flags, int *log_flushed);
 STATIC void xlog_state_want_sync(xlog_t	*log, xlog_in_core_t *iclog);
 
 /* local functions to manipulate grant head */
@@ -95,11 +101,13 @@ STATIC void xlog_ungrant_log_space(xlog_t	 *log,
 
 
 /* local ticket functions */
-STATIC xlog_ticket_t	*xlog_ticket_alloc(xlog_t *log,
+STATIC void		xlog_state_ticket_alloc(xlog_t *log);
+STATIC xlog_ticket_t	*xlog_ticket_get(xlog_t *log,
 					 int	unit_bytes,
 					 int	count,
 					 char	clientid,
 					 uint	flags);
+STATIC void		xlog_ticket_put(xlog_t *log, xlog_ticket_t *ticket);
 
 #if defined(DEBUG)
 STATIC void	xlog_verify_dest_ptr(xlog_t *log, __psint_t ptr);
@@ -116,6 +124,57 @@ STATIC void	xlog_verify_tail_lsn(xlog_t *log, xlog_in_core_t *iclog,
 #endif
 
 STATIC int	xlog_iclogs_empty(xlog_t *log);
+
+#if defined(XFS_LOG_TRACE)
+void
+xlog_trace_loggrant(xlog_t *log, xlog_ticket_t *tic, xfs_caddr_t string)
+{
+	unsigned long cnts;
+
+	if (!log->l_grant_trace) {
+		log->l_grant_trace = ktrace_alloc(2048, KM_NOSLEEP);
+		if (!log->l_grant_trace)
+			return;
+	}
+	/* ticket counts are 1 byte each */
+	cnts = ((unsigned long)tic->t_ocnt) | ((unsigned long)tic->t_cnt) << 8;
+
+	ktrace_enter(log->l_grant_trace,
+		     (void *)tic,
+		     (void *)log->l_reserve_headq,
+		     (void *)log->l_write_headq,
+		     (void *)((unsigned long)log->l_grant_reserve_cycle),
+		     (void *)((unsigned long)log->l_grant_reserve_bytes),
+		     (void *)((unsigned long)log->l_grant_write_cycle),
+		     (void *)((unsigned long)log->l_grant_write_bytes),
+		     (void *)((unsigned long)log->l_curr_cycle),
+		     (void *)((unsigned long)log->l_curr_block),
+		     (void *)((unsigned long)CYCLE_LSN(log->l_tail_lsn)),
+		     (void *)((unsigned long)BLOCK_LSN(log->l_tail_lsn)),
+		     (void *)string,
+		     (void *)((unsigned long)tic->t_trans_type),
+		     (void *)cnts,
+		     (void *)((unsigned long)tic->t_curr_res),
+		     (void *)((unsigned long)tic->t_unit_res));
+}
+
+void
+xlog_trace_iclog(xlog_in_core_t *iclog, uint state)
+{
+	if (!iclog->ic_trace)
+		iclog->ic_trace = ktrace_alloc(256, KM_SLEEP);
+	ktrace_enter(iclog->ic_trace,
+		     (void *)((unsigned long)state),
+		     (void *)((unsigned long)current_pid()),
+		     (void *)NULL, (void *)NULL, (void *)NULL, (void *)NULL,
+		     (void *)NULL, (void *)NULL, (void *)NULL, (void *)NULL,
+		     (void *)NULL, (void *)NULL, (void *)NULL, (void *)NULL,
+		     (void *)NULL, (void *)NULL);
+}
+#else
+#define	xlog_trace_loggrant(log,tic,string)
+#define	xlog_trace_iclog(iclog,state)
+#endif /* XFS_LOG_TRACE */
 
 
 static void
@@ -169,24 +228,20 @@ xlog_grant_sub_space(struct log *log, int bytes)
 static void
 xlog_grant_add_space_write(struct log *log, int bytes)
 {
-	int tmp = log->l_logsize - log->l_grant_write_bytes;
-	if (tmp > bytes)
-		log->l_grant_write_bytes += bytes;
-	else {
+	log->l_grant_write_bytes += bytes;
+	if (log->l_grant_write_bytes > log->l_logsize) {
+		log->l_grant_write_bytes -= log->l_logsize;
 		log->l_grant_write_cycle++;
-		log->l_grant_write_bytes = bytes - tmp;
 	}
 }
 
 static void
 xlog_grant_add_space_reserve(struct log *log, int bytes)
 {
-	int tmp = log->l_logsize - log->l_grant_reserve_bytes;
-	if (tmp > bytes)
-		log->l_grant_reserve_bytes += bytes;
-	else {
+	log->l_grant_reserve_bytes += bytes;
+	if (log->l_grant_reserve_bytes > log->l_logsize) {
+		log->l_grant_reserve_bytes -= log->l_logsize;
 		log->l_grant_reserve_cycle++;
-		log->l_grant_reserve_bytes = bytes - tmp;
 	}
 }
 
@@ -197,29 +252,6 @@ xlog_grant_add_space(struct log *log, int bytes)
 	xlog_grant_add_space_reserve(log, bytes);
 }
 
-static void
-xlog_tic_reset_res(xlog_ticket_t *tic)
-{
-	tic->t_res_num = 0;
-	tic->t_res_arr_sum = 0;
-	tic->t_res_num_ophdrs = 0;
-}
-
-static void
-xlog_tic_add_region(xlog_ticket_t *tic, uint len, uint type)
-{
-	if (tic->t_res_num == XLOG_TIC_LEN_MAX) {
-		/* add to overflow and start again */
-		tic->t_res_o_flow += tic->t_res_arr_sum;
-		tic->t_res_num = 0;
-		tic->t_res_arr_sum = 0;
-	}
-
-	tic->t_res_arr[tic->t_res_num].r_len = len;
-	tic->t_res_arr[tic->t_res_num].r_type = type;
-	tic->t_res_arr_sum += len;
-	tic->t_res_num++;
-}
 
 /*
  * NOTES:
@@ -269,27 +301,67 @@ xfs_log_done(xfs_mount_t	*mp,
 
 	if ((ticket->t_flags & XLOG_TIC_PERM_RESERV) == 0 ||
 	    (flags & XFS_LOG_REL_PERM_RESERV)) {
-		trace_xfs_log_done_nonperm(log, ticket);
-
 		/*
 		 * Release ticket if not permanent reservation or a specific
 		 * request has been made to release a permanent reservation.
 		 */
+		xlog_trace_loggrant(log, ticket, "xfs_log_done: (non-permanent)");
 		xlog_ungrant_log_space(log, ticket);
-		xfs_log_ticket_put(ticket);
+		xlog_state_put_ticket(log, ticket);
 	} else {
-		trace_xfs_log_done_perm(log, ticket);
-
+		xlog_trace_loggrant(log, ticket, "xfs_log_done: (permanent)");
 		xlog_regrant_reserve_log_space(log, ticket);
-		/* If this ticket was a permanent reservation and we aren't
-		 * trying to release it, reset the inited flags; so next time
-		 * we write, a start record will be written out.
-		 */
-		ticket->t_flags |= XLOG_TIC_INITED;
 	}
+
+	/* If this ticket was a permanent reservation and we aren't
+	 * trying to release it, reset the inited flags; so next time
+	 * we write, a start record will be written out.
+	 */
+	if ((ticket->t_flags & XLOG_TIC_PERM_RESERV) &&
+	    (flags & XFS_LOG_REL_PERM_RESERV) == 0)
+		ticket->t_flags |= XLOG_TIC_INITED;
 
 	return lsn;
 }	/* xfs_log_done */
+
+
+/*
+ * Force the in-core log to disk.  If flags == XFS_LOG_SYNC,
+ *	the force is done synchronously.
+ *
+ * Asynchronous forces are implemented by setting the WANT_SYNC
+ * bit in the appropriate in-core log and then returning.
+ *
+ * Synchronous forces are implemented with a semaphore.  All callers
+ * to force a given lsn to disk will wait on a semaphore attached to the
+ * specific in-core log.  When given in-core log finally completes its
+ * write to disk, that thread will wake up all threads waiting on the
+ * semaphore.
+ */
+int
+_xfs_log_force(
+	xfs_mount_t	*mp,
+	xfs_lsn_t	lsn,
+	uint		flags,
+	int		*log_flushed)
+{
+	xlog_t		*log = mp->m_log;
+	int		dummy;
+
+	if (!log_flushed)
+		log_flushed = &dummy;
+
+	ASSERT(flags & XFS_LOG_FORCE);
+
+	XFS_STATS_INC(xs_log_force);
+
+	if (log->l_flags & XLOG_IO_ERROR)
+		return XFS_ERROR(EIO);
+	if (lsn == 0)
+		return xlog_state_sync_all(log, flags, log_flushed);
+	else
+		return xlog_state_sync(log, lsn, flags, log_flushed);
+}	/* xfs_log_force */
 
 /*
  * Attaches a new iclog I/O completion callback routine during
@@ -302,10 +374,12 @@ xfs_log_notify(xfs_mount_t	  *mp,		/* mount of partition */
 	       void		  *iclog_hndl,	/* iclog to hang callback off */
 	       xfs_log_callback_t *cb)
 {
+	xlog_t *log = mp->m_log;
 	xlog_in_core_t	  *iclog = (xlog_in_core_t *)iclog_hndl;
-	int	abortflg;
+	int	abortflg, spl;
 
-	spin_lock(&iclog->ic_callback_lock);
+	cb->cb_next = NULL;
+	spl = LOG_LOCK(log);
 	abortflg = (iclog->ic_state & XLOG_STATE_IOERROR);
 	if (!abortflg) {
 		ASSERT_ALWAYS((iclog->ic_state == XLOG_STATE_ACTIVE) ||
@@ -314,7 +388,7 @@ xfs_log_notify(xfs_mount_t	  *mp,		/* mount of partition */
 		*(iclog->ic_callback_tail) = cb;
 		iclog->ic_callback_tail = &(cb->cb_next);
 	}
-	spin_unlock(&iclog->ic_callback_lock);
+	LOG_UNLOCK(log, spl);
 	return abortflg;
 }	/* xfs_log_notify */
 
@@ -364,26 +438,22 @@ xfs_log_reserve(xfs_mount_t	 *mp,
 
 	XFS_STATS_INC(xs_try_logspace);
 
-
 	if (*ticket != NULL) {
 		ASSERT(flags & XFS_LOG_PERM_RESERV);
 		internal_ticket = (xlog_ticket_t *)*ticket;
-
-		trace_xfs_log_reserve(log, internal_ticket);
-
+		xlog_trace_loggrant(log, internal_ticket, "xfs_log_reserve: existing ticket (permanent trans)");
 		xlog_grant_push_ail(mp, internal_ticket->t_unit_res);
 		retval = xlog_regrant_write_log_space(log, internal_ticket);
 	} else {
 		/* may sleep if need to allocate more tickets */
-		internal_ticket = xlog_ticket_alloc(log, unit_bytes, cnt,
+		internal_ticket = xlog_ticket_get(log, unit_bytes, cnt,
 						  client, flags);
-		if (!internal_ticket)
-			return XFS_ERROR(ENOMEM);
 		internal_ticket->t_trans_type = t_type;
 		*ticket = internal_ticket;
-
-		trace_xfs_log_reserve(log, internal_ticket);
-
+		xlog_trace_loggrant(log, internal_ticket, 
+			(internal_ticket->t_flags & XLOG_TIC_PERM_RESERV) ?
+			"xfs_log_reserve: create new ticket (permanent trans)" :
+			"xfs_log_reserve: create new ticket");
 		xlog_grant_push_ail(mp,
 				    (internal_ticket->t_unit_res *
 				     internal_ticket->t_cnt));
@@ -405,71 +475,50 @@ xfs_log_reserve(xfs_mount_t	 *mp,
  * Return error or zero.
  */
 int
-xfs_log_mount(
-	xfs_mount_t	*mp,
-	xfs_buftarg_t	*log_target,
-	xfs_daddr_t	blk_offset,
-	int		num_bblks)
+xfs_log_mount(xfs_mount_t	*mp,
+	      xfs_buftarg_t	*log_target,
+	      xfs_daddr_t	blk_offset,
+	      int		num_bblks)
 {
-	int		error;
-
 	if (!(mp->m_flags & XFS_MOUNT_NORECOVERY))
 		cmn_err(CE_NOTE, "XFS mounting filesystem %s", mp->m_fsname);
 	else {
 		cmn_err(CE_NOTE,
 			"!Mounting filesystem \"%s\" in no-recovery mode.  Filesystem will be inconsistent.",
 			mp->m_fsname);
-		ASSERT(mp->m_flags & XFS_MOUNT_RDONLY);
+		ASSERT(XFS_MTOVFS(mp)->vfs_flag & VFS_RDONLY);
 	}
 
 	mp->m_log = xlog_alloc_log(mp, log_target, blk_offset, num_bblks);
-	if (IS_ERR(mp->m_log)) {
-		error = -PTR_ERR(mp->m_log);
-		goto out;
-	}
-
-	/*
-	 * Initialize the AIL now we have a log.
-	 */
-	error = xfs_trans_ail_init(mp);
-	if (error) {
-		cmn_err(CE_WARN, "XFS: AIL initialisation failed: error %d", error);
-		goto out_free_log;
-	}
-	mp->m_log->l_ailp = mp->m_ail;
 
 	/*
 	 * skip log recovery on a norecovery mount.  pretend it all
 	 * just worked.
 	 */
 	if (!(mp->m_flags & XFS_MOUNT_NORECOVERY)) {
-		int	readonly = (mp->m_flags & XFS_MOUNT_RDONLY);
+		bhv_vfs_t	*vfsp = XFS_MTOVFS(mp);
+		int		error, readonly = (vfsp->vfs_flag & VFS_RDONLY);
 
 		if (readonly)
-			mp->m_flags &= ~XFS_MOUNT_RDONLY;
+			vfsp->vfs_flag &= ~VFS_RDONLY;
 
 		error = xlog_recover(mp->m_log);
 
 		if (readonly)
-			mp->m_flags |= XFS_MOUNT_RDONLY;
+			vfsp->vfs_flag |= VFS_RDONLY;
 		if (error) {
 			cmn_err(CE_WARN, "XFS: log mount/recovery failed: error %d", error);
-			goto out_destroy_ail;
+			xlog_dealloc_log(mp->m_log);
+			return error;
 		}
 	}
 
 	/* Normal transactions can now occur */
 	mp->m_log->l_flags &= ~XLOG_ACTIVE_RECOVERY;
 
+	/* End mounting message in xfs_log_mount_finish */
 	return 0;
-
-out_destroy_ail:
-	xfs_trans_ail_destroy(mp);
-out_free_log:
-	xlog_dealloc_log(mp->m_log);
-out:
-	return error;
-}
+}	/* xfs_log_mount */
 
 /*
  * Finish the recovery of the file system.  This is separate from
@@ -480,17 +529,30 @@ out:
  * mp		- ubiquitous xfs mount point structure
  */
 int
-xfs_log_mount_finish(xfs_mount_t *mp)
+xfs_log_mount_finish(xfs_mount_t *mp, int mfsi_flags)
 {
 	int	error;
 
 	if (!(mp->m_flags & XFS_MOUNT_NORECOVERY))
-		error = xlog_recover_finish(mp->m_log);
+		error = xlog_recover_finish(mp->m_log, mfsi_flags);
 	else {
 		error = 0;
-		ASSERT(mp->m_flags & XFS_MOUNT_RDONLY);
+		ASSERT(XFS_MTOVFS(mp)->vfs_flag & VFS_RDONLY);
 	}
 
+	return error;
+}
+
+/*
+ * Unmount processing for the log.
+ */
+int
+xfs_log_unmount(xfs_mount_t *mp)
+{
+	int		error;
+
+	error = xfs_log_unmount_write(mp);
+	xfs_log_unmount_dealloc(mp);
 	return error;
 }
 
@@ -522,6 +584,7 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 	xfs_log_ticket_t tic = NULL;
 	xfs_lsn_t	 lsn;
 	int		 error;
+	SPLDECL(s);
 
 	/* the data section must be 32 bit size aligned */
 	struct {
@@ -534,11 +597,10 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 	 * Don't write out unmount record on read-only mounts.
 	 * Or, if we are doing a forced umount (typically because of IO errors).
 	 */
-	if (mp->m_flags & XFS_MOUNT_RDONLY)
+	if (XFS_MTOVFS(mp)->vfs_flag & VFS_RDONLY)
 		return 0;
 
-	error = _xfs_log_force(mp, XFS_LOG_SYNC, NULL);
-	ASSERT(error || !(XLOG_FORCED_SHUTDOWN(log)));
+	xfs_log_force(mp, 0, XFS_LOG_FORCE|XFS_LOG_SYNC);
 
 #ifdef DEBUG
 	first_iclog = iclog = log->l_iclog;
@@ -553,10 +615,9 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 	if (! (XLOG_FORCED_SHUTDOWN(log))) {
 		reg[0].i_addr = (void*)&magic;
 		reg[0].i_len  = sizeof(magic);
-		reg[0].i_type = XLOG_REG_TYPE_UNMOUNT;
+		XLOG_VEC_SET_TYPE(&reg[0], XLOG_REG_TYPE_UNMOUNT);
 
-		error = xfs_log_reserve(mp, 600, 1, &tic,
-					XFS_LOG, 0, XLOG_UNMOUNT_REC_TYPE);
+		error = xfs_log_reserve(mp, 600, 1, &tic, XFS_LOG, 0, 0);
 		if (!error) {
 			/* remove inited flag */
 			((xlog_ticket_t *)tic)->t_flags = 0;
@@ -575,30 +636,27 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 		}
 
 
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 		iclog = log->l_iclog;
-		atomic_inc(&iclog->ic_refcnt);
+		iclog->ic_refcnt++;
+		LOG_UNLOCK(log, s);
 		xlog_state_want_sync(log, iclog);
-		spin_unlock(&log->l_icloglock);
-		error = xlog_state_release_iclog(log, iclog);
+		(void) xlog_state_release_iclog(log, iclog);
 
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 		if (!(iclog->ic_state == XLOG_STATE_ACTIVE ||
 		      iclog->ic_state == XLOG_STATE_DIRTY)) {
 			if (!XLOG_FORCED_SHUTDOWN(log)) {
-				sv_wait(&iclog->ic_force_wait, PMEM,
+				sv_wait(&iclog->ic_forcesema, PMEM,
 					&log->l_icloglock, s);
 			} else {
-				spin_unlock(&log->l_icloglock);
+				LOG_UNLOCK(log, s);
 			}
 		} else {
-			spin_unlock(&log->l_icloglock);
+			LOG_UNLOCK(log, s);
 		}
-		if (tic) {
-			trace_xfs_log_umount_write(log, tic);
-			xlog_ungrant_log_space(log, tic);
-			xfs_log_ticket_put(tic);
-		}
+		if (tic)
+			xlog_state_put_ticket(log, tic);
 	} else {
 		/*
 		 * We're already in forced_shutdown mode, couldn't
@@ -613,40 +671,36 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 		 * a file system that went into forced_shutdown as
 		 * the result of an unmount..
 		 */
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 		iclog = log->l_iclog;
-		atomic_inc(&iclog->ic_refcnt);
+		iclog->ic_refcnt++;
+		LOG_UNLOCK(log, s);
 
 		xlog_state_want_sync(log, iclog);
-		spin_unlock(&log->l_icloglock);
-		error =  xlog_state_release_iclog(log, iclog);
+		(void) xlog_state_release_iclog(log, iclog);
 
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 
 		if ( ! (   iclog->ic_state == XLOG_STATE_ACTIVE
 			|| iclog->ic_state == XLOG_STATE_DIRTY
 			|| iclog->ic_state == XLOG_STATE_IOERROR) ) {
 
-				sv_wait(&iclog->ic_force_wait, PMEM,
+				sv_wait(&iclog->ic_forcesema, PMEM,
 					&log->l_icloglock, s);
 		} else {
-			spin_unlock(&log->l_icloglock);
+			LOG_UNLOCK(log, s);
 		}
 	}
 
-	return error;
+	return 0;
 }	/* xfs_log_unmount_write */
 
 /*
  * Deallocate log structures for unmount/relocation.
- *
- * We need to stop the aild from running before we destroy
- * and deallocate the log as the aild references the log.
  */
 void
-xfs_log_unmount(xfs_mount_t *mp)
+xfs_log_unmount_dealloc(xfs_mount_t *mp)
 {
-	xfs_trans_ail_destroy(mp);
 	xlog_dealloc_log(mp->m_log);
 }
 
@@ -682,18 +736,20 @@ xfs_log_move_tail(xfs_mount_t	*mp,
 	xlog_ticket_t	*tic;
 	xlog_t		*log = mp->m_log;
 	int		need_bytes, free_bytes, cycle, bytes;
+	SPLDECL(s);
 
 	if (XLOG_FORCED_SHUTDOWN(log))
 		return;
+	ASSERT(!XFS_FORCED_SHUTDOWN(mp));
 
 	if (tail_lsn == 0) {
 		/* needed since sync_lsn is 64 bits */
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 		tail_lsn = log->l_last_sync_lsn;
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 	}
 
-	spin_lock(&log->l_grant_lock);
+	s = GRANT_LOCK(log);
 
 	/* Also an invalid lsn.  1 implies that we aren't passing in a valid
 	 * tail_lsn.
@@ -717,7 +773,7 @@ xfs_log_move_tail(xfs_mount_t	*mp,
 				break;
 			tail_lsn = 0;
 			free_bytes -= tic->t_unit_res;
-			sv_signal(&tic->t_wait);
+			sv_signal(&tic->t_sema);
 			tic = tic->t_next;
 		} while (tic != log->l_write_headq);
 	}
@@ -738,56 +794,45 @@ xfs_log_move_tail(xfs_mount_t	*mp,
 				break;
 			tail_lsn = 0;
 			free_bytes -= need_bytes;
-			sv_signal(&tic->t_wait);
+			sv_signal(&tic->t_sema);
 			tic = tic->t_next;
 		} while (tic != log->l_reserve_headq);
 	}
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 }	/* xfs_log_move_tail */
 
 /*
  * Determine if we have a transaction that has gone to disk
- * that needs to be covered. To begin the transition to the idle state
- * firstly the log needs to be idle (no AIL and nothing in the iclogs).
- * If we are then in a state where covering is needed, the caller is informed
- * that dummy transactions are required to move the log into the idle state.
- *
- * Because this is called as part of the sync process, we should also indicate
- * that dummy transactions should be issued in anything but the covered or
- * idle states. This ensures that the log tail is accurately reflected in
- * the log at the end of the sync, hence if a crash occurrs avoids replay
- * of transactions where the metadata is already on disk.
+ * that needs to be covered. Log activity needs to be idle (no AIL and
+ * nothing in the iclogs). And, we need to be in the right state indicating
+ * something has gone out.
  */
 int
 xfs_log_need_covered(xfs_mount_t *mp)
 {
-	int		needed = 0;
+	SPLDECL(s);
+	int		needed = 0, gen;
 	xlog_t		*log = mp->m_log;
+	bhv_vfs_t	*vfsp = XFS_MTOVFS(mp);
 
-	if (!xfs_fs_writable(mp))
+	if (vfs_test_for_freeze(vfsp) || XFS_FORCED_SHUTDOWN(mp) ||
+	    (vfsp->vfs_flag & VFS_RDONLY))
 		return 0;
 
-	spin_lock(&log->l_icloglock);
-	switch (log->l_covered_state) {
-	case XLOG_STATE_COVER_DONE:
-	case XLOG_STATE_COVER_DONE2:
-	case XLOG_STATE_COVER_IDLE:
-		break;
-	case XLOG_STATE_COVER_NEED:
-	case XLOG_STATE_COVER_NEED2:
-		if (!xfs_trans_ail_tail(log->l_ailp) &&
-		    xlog_iclogs_empty(log)) {
-			if (log->l_covered_state == XLOG_STATE_COVER_NEED)
-				log->l_covered_state = XLOG_STATE_COVER_DONE;
-			else
-				log->l_covered_state = XLOG_STATE_COVER_DONE2;
+	s = LOG_LOCK(log);
+	if (((log->l_covered_state == XLOG_STATE_COVER_NEED) ||
+		(log->l_covered_state == XLOG_STATE_COVER_NEED2))
+			&& !xfs_trans_first_ail(mp, &gen)
+			&& xlog_iclogs_empty(log)) {
+		if (log->l_covered_state == XLOG_STATE_COVER_NEED)
+			log->l_covered_state = XLOG_STATE_COVER_DONE;
+		else {
+			ASSERT(log->l_covered_state == XLOG_STATE_COVER_NEED2);
+			log->l_covered_state = XLOG_STATE_COVER_DONE2;
 		}
-		/* FALLTHRU */
-	default:
 		needed = 1;
-		break;
 	}
-	spin_unlock(&log->l_icloglock);
+	LOG_UNLOCK(log, s);
 	return needed;
 }
 
@@ -812,16 +857,17 @@ xfs_lsn_t
 xlog_assign_tail_lsn(xfs_mount_t *mp)
 {
 	xfs_lsn_t tail_lsn;
+	SPLDECL(s);
 	xlog_t	  *log = mp->m_log;
 
-	tail_lsn = xfs_trans_ail_tail(mp->m_ail);
-	spin_lock(&log->l_grant_lock);
+	tail_lsn = xfs_trans_tail_ail(mp);
+	s = GRANT_LOCK(log);
 	if (tail_lsn != 0) {
 		log->l_tail_lsn = tail_lsn;
 	} else {
 		tail_lsn = log->l_tail_lsn = log->l_last_sync_lsn;
 	}
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 
 	return tail_lsn;
 }	/* xlog_assign_tail_lsn */
@@ -841,7 +887,7 @@ xlog_assign_tail_lsn(xfs_mount_t *mp)
  * the tail.  The details of this case are described below, but the end
  * result is that we return the size of the log as the amount of space left.
  */
-STATIC int
+int
 xlog_space_left(xlog_t *log, int cycle, int bytes)
 {
 	int free_bytes;
@@ -892,20 +938,13 @@ xlog_iodone(xfs_buf_t *bp)
 	ASSERT(XFS_BUF_FSPRIVATE2(bp, unsigned long) == (unsigned long) 2);
 	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
 	aborted = 0;
-	l = iclog->ic_log;
 
 	/*
-	 * If the _XFS_BARRIER_FAILED flag was set by a lower
-	 * layer, it means the underlying device no longer supports
-	 * barrier I/O. Warn loudly and turn off barriers.
+	 * Some versions of cpp barf on the recursive definition of
+	 * ic_log -> hic_fields.ic_log and expand ic_log twice when
+	 * it is passed through two macros.  Workaround broken cpp.
 	 */
-	if (bp->b_flags & _XFS_BARRIER_FAILED) {
-		bp->b_flags &= ~_XFS_BARRIER_FAILED;
-		l->l_mp->m_flags &= ~XFS_MOUNT_BARRIER;
-		xfs_fs_cmn_err(CE_WARN, l->l_mp,
-				"xlog_iodone: Barriers are no longer supported"
-				" by device. Disabling barriers\n");
-	}
+	l = iclog->ic_log;
 
 	/*
 	 * Race to shutdown the filesystem if we see an error.
@@ -924,22 +963,55 @@ xlog_iodone(xfs_buf_t *bp)
 	} else if (iclog->ic_state & XLOG_STATE_IOERROR) {
 		aborted = XFS_LI_ABORTED;
 	}
-
-	/* log I/O is always issued ASYNC */
-	ASSERT(XFS_BUF_ISASYNC(bp));
 	xlog_state_done_syncing(iclog, aborted);
-	/*
-	 * do not reference the buffer (bp) here as we could race
-	 * with it being freed after writing the unmount record to the
-	 * log.
-	 */
-
+	if (!(XFS_BUF_ISASYNC(bp))) {
+		/*
+		 * Corresponding psema() will be done in bwrite().  If we don't
+		 * vsema() here, panic.
+		 */
+		XFS_BUF_V_IODONESEMA(bp);
+	}
 }	/* xlog_iodone */
+
+/*
+ * The bdstrat callback function for log bufs. This gives us a central
+ * place to trap bufs in case we get hit by a log I/O error and need to
+ * shutdown. Actually, in practice, even when we didn't get a log error,
+ * we transition the iclogs to IOERROR state *after* flushing all existing
+ * iclogs to disk. This is because we don't want anymore new transactions to be
+ * started or completed afterwards.
+ */
+STATIC int
+xlog_bdstrat_cb(struct xfs_buf *bp)
+{
+	xlog_in_core_t *iclog;
+
+	iclog = XFS_BUF_FSPRIVATE(bp, xlog_in_core_t *);
+
+	if ((iclog->ic_state & XLOG_STATE_IOERROR) == 0) {
+	  /* note for irix bstrat will need  struct bdevsw passed
+	   * Fix the following macro if the code ever is merged
+	   */
+	    XFS_bdstrat(bp);
+		return 0;
+	}
+
+	xfs_buftrace("XLOG__BDSTRAT IOERROR", bp);
+	XFS_BUF_ERROR(bp, EIO);
+	XFS_BUF_STALE(bp);
+	xfs_biodone(bp);
+	return XFS_ERROR(EIO);
+
+
+}
 
 /*
  * Return size of each in-core log record buffer.
  *
- * All machines get 8 x 32kB buffers by default, unless tuned otherwise.
+ * Low memory machines only get 2 16KB buffers.  We don't want to waste
+ * memory here.  However, all other machines get at least 2 32KB buffers.
+ * The number is hard coded because we don't care about the minimum
+ * memory size, just 32MB systems.
  *
  * If the filesystem blocksize is too large, we may need to choose a
  * larger size since the directory code currently logs entire blocks.
@@ -952,10 +1024,17 @@ xlog_get_iclog_buffer_size(xfs_mount_t	*mp,
 	int size;
 	int xhdrs;
 
-	if (mp->m_logbufs <= 0)
-		log->l_iclog_bufs = XLOG_MAX_ICLOGS;
-	else
+	if (mp->m_logbufs <= 0) {
+		if (xfs_physmem <= btoc(128*1024*1024)) {
+			log->l_iclog_bufs = XLOG_MIN_ICLOGS;
+		} else if (xfs_physmem <= btoc(400*1024*1024)) {
+			log->l_iclog_bufs = XLOG_MED_ICLOGS;
+		} else {	/* 256K with 32K bufs */
+			log->l_iclog_bufs = XLOG_MAX_ICLOGS;
+		}
+	} else {
 		log->l_iclog_bufs = mp->m_logbufs;
+	}
 
 	/*
 	 * Buffer size passed in from mount system call.
@@ -968,9 +1047,9 @@ xlog_get_iclog_buffer_size(xfs_mount_t	*mp,
 			size >>= 1;
 		}
 
-		if (xfs_sb_version_haslogv2(&mp->m_sb)) {
-			/* # headers = size / 32k
-			 * one header holds cycles from 32k of data
+		if (XFS_SB_VERSION_HASLOGV2(&mp->m_sb)) {
+			/* # headers = size / 32K
+			 * one header holds cycles from 32K of data
 			 */
 
 			xhdrs = mp->m_logbsize / XLOG_HEADER_CYCLE_SIZE;
@@ -986,16 +1065,49 @@ xlog_get_iclog_buffer_size(xfs_mount_t	*mp,
 		goto done;
 	}
 
-	/* All machines use 32kB buffers by default. */
-	log->l_iclog_size = XLOG_BIG_RECORD_BSIZE;
-	log->l_iclog_size_log = XLOG_BIG_RECORD_BSHIFT;
+	/*
+	 * Special case machines that have less than 32MB of memory.
+	 * All machines with more memory use 32KB buffers.
+	 */
+	if (xfs_physmem <= btoc(32*1024*1024)) {
+		/* Don't change; min configuration */
+		log->l_iclog_size = XLOG_RECORD_BSIZE;		/* 16k */
+		log->l_iclog_size_log = XLOG_RECORD_BSHIFT;
+	} else {
+		log->l_iclog_size = XLOG_BIG_RECORD_BSIZE;	/* 32k */
+		log->l_iclog_size_log = XLOG_BIG_RECORD_BSHIFT;
+	}
 
 	/* the default log size is 16k or 32k which is one header sector */
 	log->l_iclog_hsize = BBSIZE;
 	log->l_iclog_heads = 1;
 
-done:
-	/* are we being asked to make the sizes selected above visible? */
+	/*
+	 * For 16KB, we use 3 32KB buffers.  For 32KB block sizes, we use
+	 * 4 32KB buffers.  For 64KB block sizes, we use 8 32KB buffers.
+	 */
+	if (mp->m_sb.sb_blocksize >= 16*1024) {
+		log->l_iclog_size = XLOG_BIG_RECORD_BSIZE;
+		log->l_iclog_size_log = XLOG_BIG_RECORD_BSHIFT;
+		if (mp->m_logbufs <= 0) {
+			switch (mp->m_sb.sb_blocksize) {
+			    case 16*1024:			/* 16 KB */
+				log->l_iclog_bufs = 3;
+				break;
+			    case 32*1024:			/* 32 KB */
+				log->l_iclog_bufs = 4;
+				break;
+			    case 64*1024:			/* 64 KB */
+				log->l_iclog_bufs = 8;
+				break;
+			    default:
+				xlog_panic("XFS: Invalid blocksize");
+				break;
+			}
+		}
+	}
+
+done:	/* are we being asked to make the sizes selected above visible? */
 	if (mp->m_logbufs == 0)
 		mp->m_logbufs = log->l_iclog_bufs;
 	if (mp->m_logbsize == 0)
@@ -1021,13 +1133,8 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	xfs_buf_t		*bp;
 	int			i;
 	int			iclogsize;
-	int			error = ENOMEM;
 
-	log = kmem_zalloc(sizeof(xlog_t), KM_MAYFAIL);
-	if (!log) {
-		xlog_warn("XFS: Log allocation failed: No memory!");
-		goto out;
-	}
+	log = (xlog_t *)kmem_zalloc(sizeof(xlog_t), KM_SLEEP);
 
 	log->l_mp	   = mp;
 	log->l_targ	   = log_target;
@@ -1038,54 +1145,38 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	log->l_flags	   |= XLOG_ACTIVE_RECOVERY;
 
 	log->l_prev_block  = -1;
-	log->l_tail_lsn	   = xlog_assign_lsn(1, 0);
+	ASSIGN_ANY_LSN_HOST(log->l_tail_lsn, 1, 0);
 	/* log->l_tail_lsn = 0x100000000LL; cycle = 1; current block = 0 */
 	log->l_last_sync_lsn = log->l_tail_lsn;
 	log->l_curr_cycle  = 1;	    /* 0 is bad since this is initial value */
 	log->l_grant_reserve_cycle = 1;
 	log->l_grant_write_cycle = 1;
 
-	error = EFSCORRUPTED;
-	if (xfs_sb_version_hassector(&mp->m_sb)) {
+	if (XFS_SB_VERSION_HASSECTOR(&mp->m_sb)) {
 		log->l_sectbb_log = mp->m_sb.sb_logsectlog - BBSHIFT;
-		if (log->l_sectbb_log < 0 ||
-		    log->l_sectbb_log > mp->m_sectbb_log) {
-			xlog_warn("XFS: Log sector size (0x%x) out of range.",
-						log->l_sectbb_log);
-			goto out_free_log;
-		}
-
+		ASSERT(log->l_sectbb_log <= mp->m_sectbb_log);
 		/* for larger sector sizes, must have v2 or external log */
-		if (log->l_sectbb_log != 0 &&
-		    (log->l_logBBstart != 0 &&
-		     !xfs_sb_version_haslogv2(&mp->m_sb))) {
-			xlog_warn("XFS: log sector size (0x%x) invalid "
-				  "for configuration.", log->l_sectbb_log);
-			goto out_free_log;
-		}
-		if (mp->m_sb.sb_logsectlog < BBSHIFT) {
-			xlog_warn("XFS: Log sector log (0x%x) too small.",
-						mp->m_sb.sb_logsectlog);
-			goto out_free_log;
-		}
+		ASSERT(log->l_sectbb_log == 0 ||
+			log->l_logBBstart == 0 ||
+			XFS_SB_VERSION_HASLOGV2(&mp->m_sb));
+		ASSERT(mp->m_sb.sb_logsectlog >= BBSHIFT);
 	}
 	log->l_sectbb_mask = (1 << log->l_sectbb_log) - 1;
 
 	xlog_get_iclog_buffer_size(mp, log);
 
-	error = ENOMEM;
 	bp = xfs_buf_get_empty(log->l_iclog_size, mp->m_logdev_targp);
-	if (!bp)
-		goto out_free_log;
 	XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
+	XFS_BUF_SET_BDSTRAT_FUNC(bp, xlog_bdstrat_cb);
 	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
 	ASSERT(XFS_BUF_ISBUSY(bp));
 	ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
 	log->l_xbuf = bp;
 
-	spin_lock_init(&log->l_icloglock);
-	spin_lock_init(&log->l_grant_lock);
-	sv_init(&log->l_flush_wait, 0, "flush_wait");
+	spinlock_init(&log->l_icloglock, "iclog");
+	spinlock_init(&log->l_grant_lock, "grhead_iclog");
+	initnsema(&log->l_flushsema, 0, "ic-flush");
+	xlog_state_ticket_alloc(log);  /* wait until after icloglock inited */
 
 	/* log record size must be multiple of BBSIZE; see xlog_rec_header_t */
 	ASSERT((XFS_BUF_SIZE(bp) & BBMASK) == 0);
@@ -1101,48 +1192,42 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	iclogsize = log->l_iclog_size;
 	ASSERT(log->l_iclog_size >= 4096);
 	for (i=0; i < log->l_iclog_bufs; i++) {
-		*iclogp = kmem_zalloc(sizeof(xlog_in_core_t), KM_MAYFAIL);
-		if (!*iclogp)
-			goto out_free_iclog;
-
+		*iclogp = (xlog_in_core_t *)
+			  kmem_zalloc(sizeof(xlog_in_core_t), KM_SLEEP);
 		iclog = *iclogp;
+		iclog->hic_data = (xlog_in_core_2_t *)
+			  kmem_zalloc(iclogsize, KM_SLEEP);
+
 		iclog->ic_prev = prev_iclog;
 		prev_iclog = iclog;
-
-		bp = xfs_buf_get_noaddr(log->l_iclog_size, mp->m_logdev_targp);
-		if (!bp)
-			goto out_free_iclog;
-		if (!XFS_BUF_CPSEMA(bp))
-			ASSERT(0);
-		XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
-		XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
-		iclog->ic_bp = bp;
-		iclog->ic_data = bp->b_addr;
-#ifdef DEBUG
 		log->l_iclog_bak[i] = (xfs_caddr_t)&(iclog->ic_header);
-#endif
+
 		head = &iclog->ic_header;
 		memset(head, 0, sizeof(xlog_rec_header_t));
-		head->h_magicno = cpu_to_be32(XLOG_HEADER_MAGIC_NUM);
-		head->h_version = cpu_to_be32(
-			xfs_sb_version_haslogv2(&log->l_mp->m_sb) ? 2 : 1);
-		head->h_size = cpu_to_be32(log->l_iclog_size);
+		INT_SET(head->h_magicno, ARCH_CONVERT, XLOG_HEADER_MAGIC_NUM);
+		INT_SET(head->h_version, ARCH_CONVERT,
+			XFS_SB_VERSION_HASLOGV2(&log->l_mp->m_sb) ? 2 : 1);
+		INT_SET(head->h_size, ARCH_CONVERT, log->l_iclog_size);
 		/* new fields */
-		head->h_fmt = cpu_to_be32(XLOG_FMT);
+		INT_SET(head->h_fmt, ARCH_CONVERT, XLOG_FMT);
 		memcpy(&head->h_fs_uuid, &mp->m_sb.sb_uuid, sizeof(uuid_t));
+
+		bp = xfs_buf_get_empty(log->l_iclog_size, mp->m_logdev_targp);
+		XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
+		XFS_BUF_SET_BDSTRAT_FUNC(bp, xlog_bdstrat_cb);
+		XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
+		iclog->ic_bp = bp;
 
 		iclog->ic_size = XFS_BUF_SIZE(bp) - log->l_iclog_hsize;
 		iclog->ic_state = XLOG_STATE_ACTIVE;
 		iclog->ic_log = log;
-		atomic_set(&iclog->ic_refcnt, 0);
-		spin_lock_init(&iclog->ic_callback_lock);
 		iclog->ic_callback_tail = &(iclog->ic_callback);
-		iclog->ic_datap = (char *)iclog->ic_data + log->l_iclog_hsize;
+		iclog->ic_datap = (char *)iclog->hic_data + log->l_iclog_hsize;
 
 		ASSERT(XFS_BUF_ISBUSY(iclog->ic_bp));
 		ASSERT(XFS_BUF_VALUSEMA(iclog->ic_bp) <= 0);
-		sv_init(&iclog->ic_force_wait, SV_DEFAULT, "iclog-force");
-		sv_init(&iclog->ic_write_wait, SV_DEFAULT, "iclog-write");
+		sv_init(&iclog->ic_forcesema, SV_DEFAULT, "iclog-force");
+		sv_init(&iclog->ic_writesema, SV_DEFAULT, "iclog-write");
 
 		iclogp = &iclog->ic_next;
 	}
@@ -1150,24 +1235,6 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	log->l_iclog->ic_prev = prev_iclog;	/* re-write 1st prev ptr */
 
 	return log;
-
-out_free_iclog:
-	for (iclog = log->l_iclog; iclog; iclog = prev_iclog) {
-		prev_iclog = iclog->ic_next;
-		if (iclog->ic_bp) {
-			sv_destroy(&iclog->ic_force_wait);
-			sv_destroy(&iclog->ic_write_wait);
-			xfs_buf_free(iclog->ic_bp);
-		}
-		kmem_free(iclog);
-	}
-	spinlock_destroy(&log->l_icloglock);
-	spinlock_destroy(&log->l_grant_lock);
-	xfs_buf_free(log->l_xbuf);
-out_free_log:
-	kmem_free(log);
-out:
-	return ERR_PTR(-error);
 }	/* xlog_alloc_log */
 
 
@@ -1186,7 +1253,7 @@ xlog_commit_record(xfs_mount_t  *mp,
 
 	reg[0].i_addr = NULL;
 	reg[0].i_len = 0;
-	reg[0].i_type = XLOG_REG_TYPE_COMMIT;
+	XLOG_VEC_SET_TYPE(&reg[0], XLOG_REG_TYPE_COMMIT);
 
 	ASSERT_ALWAYS(iclog);
 	if ((error = xlog_write(mp, reg, 1, ticket, commitlsnp,
@@ -1204,7 +1271,7 @@ xlog_commit_record(xfs_mount_t  *mp,
  * pushes on an lsn which is further along in the log once we reach the high
  * water mark.  In this manner, we would be creating a low water mark.
  */
-STATIC void
+void
 xlog_grant_push_ail(xfs_mount_t	*mp,
 		    int		need_bytes)
 {
@@ -1216,10 +1283,11 @@ xlog_grant_push_ail(xfs_mount_t	*mp,
     int		threshold_block;	/* block in lsn we'd like to be at */
     int		threshold_cycle;	/* lsn cycle we'd like to be at */
     int		free_threshold;
+    SPLDECL(s);
 
     ASSERT(BTOBB(need_bytes) < log->l_logBBsize);
 
-    spin_lock(&log->l_grant_lock);
+    s = GRANT_LOCK(log);
     free_bytes = xlog_space_left(log,
 				 log->l_grant_reserve_cycle,
 				 log->l_grant_reserve_bytes);
@@ -1241,7 +1309,8 @@ xlog_grant_push_ail(xfs_mount_t	*mp,
 	    threshold_block -= log->l_logBBsize;
 	    threshold_cycle += 1;
 	}
-	threshold_lsn = xlog_assign_lsn(threshold_cycle, threshold_block);
+	ASSIGN_ANY_LSN_HOST(threshold_lsn, threshold_cycle,
+		       threshold_block);
 
 	/* Don't pass in an lsn greater than the lsn of the last
 	 * log record known to be on disk.
@@ -1249,7 +1318,7 @@ xlog_grant_push_ail(xfs_mount_t	*mp,
 	if (XFS_LSN_CMP(threshold_lsn, log->l_last_sync_lsn) > 0)
 	    threshold_lsn = log->l_last_sync_lsn;
     }
-    spin_unlock(&log->l_grant_lock);
+    GRANT_UNLOCK(log, s);
 
     /*
      * Get the transaction layer to kick the dirty buffers out to
@@ -1258,40 +1327,9 @@ xlog_grant_push_ail(xfs_mount_t	*mp,
      */
     if (threshold_lsn &&
 	!XLOG_FORCED_SHUTDOWN(log))
-	    xfs_trans_ail_push(log->l_ailp, threshold_lsn);
+	    xfs_trans_push_ail(mp, threshold_lsn);
 }	/* xlog_grant_push_ail */
 
-/*
- * The bdstrat callback function for log bufs. This gives us a central
- * place to trap bufs in case we get hit by a log I/O error and need to
- * shutdown. Actually, in practice, even when we didn't get a log error,
- * we transition the iclogs to IOERROR state *after* flushing all existing
- * iclogs to disk. This is because we don't want anymore new transactions to be
- * started or completed afterwards.
- */
-STATIC int
-xlog_bdstrat(
-	struct xfs_buf		*bp)
-{
-	struct xlog_in_core	*iclog;
-
-	iclog = XFS_BUF_FSPRIVATE(bp, xlog_in_core_t *);
-	if (iclog->ic_state & XLOG_STATE_IOERROR) {
-		XFS_BUF_ERROR(bp, EIO);
-		XFS_BUF_STALE(bp);
-		xfs_biodone(bp);
-		/*
-		 * It would seem logical to return EIO here, but we rely on
-		 * the log state machine to propagate I/O errors instead of
-		 * doing it here.
-		 */
-		return 0;
-	}
-
-	bp->b_flags |= _XBF_RUN_QUEUES;
-	xfs_buf_iorequest(bp);
-	return 0;
-}
 
 /*
  * Flush out the in-core log (iclog) to the on-disk log in an asynchronous 
@@ -1318,22 +1356,23 @@ xlog_bdstrat(
  * is added immediately before calling bwrite().
  */
 
-STATIC int
+int
 xlog_sync(xlog_t		*log,
 	  xlog_in_core_t	*iclog)
 {
 	xfs_caddr_t	dptr;		/* pointer to byte sized element */
 	xfs_buf_t	*bp;
-	int		i;
+	int		i, ops;
 	uint		count;		/* byte count of bwrite */
 	uint		count_init;	/* initial count before roundup */
 	int		roundoff;       /* roundoff to BB or stripe */
 	int		split = 0;	/* split write into two regions */
 	int		error;
-	int		v2 = xfs_sb_version_haslogv2(&log->l_mp->m_sb);
+	SPLDECL(s);
+	int		v2 = XFS_SB_VERSION_HASLOGV2(&log->l_mp->m_sb);
 
 	XFS_STATS_INC(xs_log_writes);
-	ASSERT(atomic_read(&iclog->ic_refcnt) == 0);
+	ASSERT(iclog->ic_refcnt == 0);
 
 	/* Add for LR header */
 	count_init = log->l_iclog_hsize + iclog->ic_offset;
@@ -1354,26 +1393,30 @@ xlog_sync(xlog_t		*log,
 		 roundoff < BBTOB(1)));
 
 	/* move grant heads by roundoff in sync */
-	spin_lock(&log->l_grant_lock);
+	s = GRANT_LOCK(log);
 	xlog_grant_add_space(log, roundoff);
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 
 	/* put cycle number in every block */
 	xlog_pack_data(log, iclog, roundoff); 
 
 	/* real byte length */
 	if (v2) {
-		iclog->ic_header.h_len =
-			cpu_to_be32(iclog->ic_offset + roundoff);
+		INT_SET(iclog->ic_header.h_len, 
+			ARCH_CONVERT,
+			iclog->ic_offset + roundoff);
 	} else {
-		iclog->ic_header.h_len =
-			cpu_to_be32(iclog->ic_offset);
+		INT_SET(iclog->ic_header.h_len, ARCH_CONVERT, iclog->ic_offset);
 	}
+
+	/* put ops count in correct order */
+	ops = iclog->ic_header.h_num_logops;
+	INT_SET(iclog->ic_header.h_num_logops, ARCH_CONVERT, ops);
 
 	bp = iclog->ic_bp;
 	ASSERT(XFS_BUF_FSPRIVATE2(bp, unsigned long) == (unsigned long)1);
 	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)2);
-	XFS_BUF_SET_ADDR(bp, BLOCK_LSN(be64_to_cpu(iclog->ic_header.h_lsn)));
+	XFS_BUF_SET_ADDR(bp, BLOCK_LSN(INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT)));
 
 	XFS_STATS_ADD(xs_log_blocks, BTOBB(count));
 
@@ -1385,12 +1428,11 @@ xlog_sync(xlog_t		*log,
 	} else {
 		iclog->ic_bwritecnt = 1;
 	}
-	XFS_BUF_SET_COUNT(bp, count);
+	XFS_BUF_SET_PTR(bp, (xfs_caddr_t) &(iclog->ic_header), count);
 	XFS_BUF_SET_FSPRIVATE(bp, iclog);	/* save for later */
 	XFS_BUF_ZEROFLAGS(bp);
 	XFS_BUF_BUSY(bp);
 	XFS_BUF_ASYNC(bp);
-	bp->b_flags |= XBF_LOG_BUFFER;
 	/*
 	 * Do an ordered write for the log block.
 	 * Its unnecessary to flush the first split block in the log wrap case.
@@ -1411,7 +1453,7 @@ xlog_sync(xlog_t		*log,
 	 */
 	XFS_BUF_WRITE(bp);
 
-	if ((error = xlog_bdstrat(bp))) {
+	if ((error = XFS_bwrite(bp))) {
 		xfs_ioerror_alert("xlog_sync", log->l_mp, bp,
 				  XFS_BUF_ADDR(bp));
 		return error;
@@ -1428,7 +1470,6 @@ xlog_sync(xlog_t		*log,
 		XFS_BUF_ZEROFLAGS(bp);
 		XFS_BUF_BUSY(bp);
 		XFS_BUF_ASYNC(bp);
-		bp->b_flags |= XBF_LOG_BUFFER;
 		if (log->l_mp->m_flags & XFS_MOUNT_BARRIER)
 			XFS_BUF_ORDERED(bp);
 		dptr = XFS_BUF_PTR(bp);
@@ -1438,10 +1479,10 @@ xlog_sync(xlog_t		*log,
 		 * a new cycle.  Watch out for the header magic number
 		 * case, though.
 		 */
-		for (i = 0; i < split; i += BBSIZE) {
-			be32_add_cpu((__be32 *)dptr, 1);
-			if (be32_to_cpu(*(__be32 *)dptr) == XLOG_HEADER_MAGIC_NUM)
-				be32_add_cpu((__be32 *)dptr, 1);
+		for (i=0; i<split; i += BBSIZE) {
+			INT_MOD(*(uint *)dptr, ARCH_CONVERT, +1);
+			if (INT_GET(*(uint *)dptr, ARCH_CONVERT) == XLOG_HEADER_MAGIC_NUM)
+				INT_MOD(*(uint *)dptr, ARCH_CONVERT, +1);
 			dptr += BBSIZE;
 		}
 
@@ -1451,7 +1492,7 @@ xlog_sync(xlog_t		*log,
 		/* account for internal log which doesn't start at block #0 */
 		XFS_BUF_SET_ADDR(bp, XFS_BUF_ADDR(bp) + log->l_logBBstart);
 		XFS_BUF_WRITE(bp);
-		if ((error = xlog_bdstrat(bp))) {
+		if ((error = XFS_bwrite(bp))) {
 			xfs_ioerror_alert("xlog_sync (split)", log->l_mp,
 					  bp, XFS_BUF_ADDR(bp));
 			return error;
@@ -1464,27 +1505,60 @@ xlog_sync(xlog_t		*log,
 /*
  * Deallocate a log structure
  */
-STATIC void
+void
 xlog_dealloc_log(xlog_t *log)
 {
 	xlog_in_core_t	*iclog, *next_iclog;
+	xlog_ticket_t	*tic, *next_tic;
 	int		i;
+
 
 	iclog = log->l_iclog;
 	for (i=0; i<log->l_iclog_bufs; i++) {
-		sv_destroy(&iclog->ic_force_wait);
-		sv_destroy(&iclog->ic_write_wait);
+		sv_destroy(&iclog->ic_forcesema);
+		sv_destroy(&iclog->ic_writesema);
 		xfs_buf_free(iclog->ic_bp);
+#ifdef XFS_LOG_TRACE
+		if (iclog->ic_trace != NULL) {
+			ktrace_free(iclog->ic_trace);
+		}
+#endif
 		next_iclog = iclog->ic_next;
-		kmem_free(iclog);
+		kmem_free(iclog->hic_data, log->l_iclog_size);
+		kmem_free(iclog, sizeof(xlog_in_core_t));
 		iclog = next_iclog;
 	}
+	freesema(&log->l_flushsema);
 	spinlock_destroy(&log->l_icloglock);
 	spinlock_destroy(&log->l_grant_lock);
 
+	/* XXXsup take a look at this again. */
+	if ((log->l_ticket_cnt != log->l_ticket_tcnt)  &&
+	    !XLOG_FORCED_SHUTDOWN(log)) {
+		xfs_fs_cmn_err(CE_WARN, log->l_mp,
+			"xlog_dealloc_log: (cnt: %d, total: %d)",
+			log->l_ticket_cnt, log->l_ticket_tcnt);
+		/* ASSERT(log->l_ticket_cnt == log->l_ticket_tcnt); */
+
+	} else {
+		tic = log->l_unmount_free;
+		while (tic) {
+			next_tic = tic->t_next;
+			kmem_free(tic, NBPP);
+			tic = next_tic;
+		}
+	}
 	xfs_buf_free(log->l_xbuf);
+#ifdef XFS_LOG_TRACE
+	if (log->l_trace != NULL) {
+		ktrace_free(log->l_trace);
+	}
+	if (log->l_grant_trace != NULL) {
+		ktrace_free(log->l_grant_trace);
+	}
+#endif
 	log->l_mp->m_log = NULL;
-	kmem_free(log);
+	kmem_free(log, sizeof(xlog_t));
 }	/* xlog_dealloc_log */
 
 /*
@@ -1497,12 +1571,14 @@ xlog_state_finish_copy(xlog_t		*log,
 		       int		record_cnt,
 		       int		copy_bytes)
 {
-	spin_lock(&log->l_icloglock);
+	SPLDECL(s);
 
-	be32_add_cpu(&iclog->ic_header.h_num_logops, record_cnt);
+	s = LOG_LOCK(log);
+
+	iclog->ic_header.h_num_logops += record_cnt;
 	iclog->ic_offset += copy_bytes;
 
-	spin_unlock(&log->l_icloglock);
+	LOG_UNLOCK(log, s);
 }	/* xlog_state_finish_copy */
 
 
@@ -1655,7 +1731,7 @@ xlog_print_tic_res(xfs_mount_t *mp, xlog_ticket_t *ticket)
  *	we don't update ic_offset until the end when we know exactly how many
  *	bytes have been written out.
  */
-STATIC int
+int
 xlog_write(xfs_mount_t *	mp,
 	   xfs_log_iovec_t	reg[],
 	   int			nentries,
@@ -1690,14 +1766,14 @@ xlog_write(xfs_mount_t *	mp,
     len = 0;
     if (ticket->t_flags & XLOG_TIC_INITED) {    /* acct for start rec of xact */
 	len += sizeof(xlog_op_header_t);
-	ticket->t_res_num_ophdrs++;
+	XLOG_TIC_ADD_OPHDR(ticket);
     }
 
     for (index = 0; index < nentries; index++) {
 	len += sizeof(xlog_op_header_t);	    /* each region gets >= 1 */
-	ticket->t_res_num_ophdrs++;
+	XLOG_TIC_ADD_OPHDR(ticket);
 	len += reg[index].i_len;
-	xlog_tic_add_region(ticket, reg[index].i_len, reg[index].i_type);
+	XLOG_TIC_ADD_REGION(ticket, reg[index].i_len, reg[index].i_type);
     }
     contwr = *start_lsn = 0;
 
@@ -1726,7 +1802,7 @@ xlog_write(xfs_mount_t *	mp,
 
 	/* start_lsn is the first lsn written to. That's all we need. */
 	if (! *start_lsn)
-	    *start_lsn = be64_to_cpu(iclog->ic_header.h_lsn);
+	    *start_lsn = INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT);
 
 	/* This loop writes out as many regions as can fit in the amount
 	 * of space which was allocated by xlog_state_get_iclog_space().
@@ -1742,7 +1818,7 @@ xlog_write(xfs_mount_t *	mp,
 	     */
 	    if (ticket->t_flags & XLOG_TIC_INITED) {
 		logop_head		= (xlog_op_header_t *)ptr;
-		logop_head->oh_tid	= cpu_to_be32(ticket->t_tid);
+		INT_SET(logop_head->oh_tid, ARCH_CONVERT, ticket->t_tid);
 		logop_head->oh_clientid = ticket->t_clientid;
 		logop_head->oh_len	= 0;
 		logop_head->oh_flags    = XLOG_START_TRANS;
@@ -1756,7 +1832,7 @@ xlog_write(xfs_mount_t *	mp,
 
 	    /* Copy log operation header directly into data section */
 	    logop_head			= (xlog_op_header_t *)ptr;
-	    logop_head->oh_tid		= cpu_to_be32(ticket->t_tid);
+	    INT_SET(logop_head->oh_tid, ARCH_CONVERT, ticket->t_tid);
 	    logop_head->oh_clientid	= ticket->t_clientid;
 	    logop_head->oh_res2		= 0;
 
@@ -1791,14 +1867,13 @@ xlog_write(xfs_mount_t *	mp,
 
 	    copy_off = partial_copy_len;
 	    if (need_copy <= iclog->ic_size - log_offset) { /*complete write */
-	        copy_len = need_copy;
-		logop_head->oh_len = cpu_to_be32(copy_len);
+		INT_SET(logop_head->oh_len, ARCH_CONVERT, copy_len = need_copy);
 		if (partial_copy)
 		    logop_head->oh_flags|= (XLOG_END_TRANS|XLOG_WAS_CONT_TRANS);
 		partial_copy_len = partial_copy = 0;
 	    } else {					    /* partial write */
 		copy_len = iclog->ic_size - log_offset;
-		logop_head->oh_len = cpu_to_be32(copy_len);
+		INT_SET(logop_head->oh_len, ARCH_CONVERT, copy_len);
 		logop_head->oh_flags |= XLOG_CONTINUE_TRANS;
 		if (partial_copy)
 			logop_head->oh_flags |= XLOG_WAS_CONT_TRANS;
@@ -1807,7 +1882,7 @@ xlog_write(xfs_mount_t *	mp,
 		len += sizeof(xlog_op_header_t); /* from splitting of region */
 		/* account for new log op header */
 		ticket->t_curr_res -= sizeof(xlog_op_header_t);
-		ticket->t_res_num_ophdrs++;
+		XLOG_TIC_ADD_OPHDR(ticket);
 	    }
 	    xlog_verify_dest_ptr(log, ptr);
 
@@ -1834,9 +1909,7 @@ xlog_write(xfs_mount_t *	mp,
 		if (iclog->ic_size - log_offset <= sizeof(xlog_op_header_t)) {
 		    xlog_state_finish_copy(log, iclog, record_cnt, data_cnt);
 		    record_cnt = data_cnt = 0;
-		    spin_lock(&log->l_icloglock);
 		    xlog_state_want_sync(log, iclog);
-		    spin_unlock(&log->l_icloglock);
 		    if (commit_iclog) {
 			ASSERT(flags & XLOG_COMMIT_TRANS);
 			*commit_iclog = iclog;
@@ -1872,7 +1945,7 @@ xlog_write(xfs_mount_t *	mp,
 /* Clean iclogs starting from the head.  This ordering must be
  * maintained, so an iclog doesn't become ACTIVE beyond one that
  * is SYNCING.  This is also required to maintain the notion that we use
- * a ordered wait queue to hold off would be writers to the log when every
+ * a counting semaphore to hold off would be writers to the log when every
  * iclog is trying to sync to disk.
  *
  * State Change: DIRTY -> ACTIVE
@@ -1888,7 +1961,7 @@ xlog_state_clean_log(xlog_t *log)
 		if (iclog->ic_state == XLOG_STATE_DIRTY) {
 			iclog->ic_state	= XLOG_STATE_ACTIVE;
 			iclog->ic_offset       = 0;
-			ASSERT(iclog->ic_callback == NULL);
+			iclog->ic_callback	= NULL;   /* don't need to free */
 			/*
 			 * If the number of ops in this iclog indicate it just
 			 * contains the dummy transaction, we can
@@ -1898,8 +1971,7 @@ xlog_state_clean_log(xlog_t *log)
 			 * We don't need to cover the dummy.
 			 */
 			if (!changed &&
-			   (be32_to_cpu(iclog->ic_header.h_num_logops) ==
-			   		XLOG_COVER_OPS)) {
+			   (INT_GET(iclog->ic_header.h_num_logops, ARCH_CONVERT) == XLOG_COVER_OPS)) {
 				changed = 1;
 			} else {
 				/*
@@ -1967,7 +2039,7 @@ xlog_get_lowest_lsn(
 	lowest_lsn = 0;
 	do {
 	    if (!(lsn_log->ic_state & (XLOG_STATE_ACTIVE|XLOG_STATE_DIRTY))) {
-		lsn = be64_to_cpu(lsn_log->ic_header.h_lsn);
+		lsn = INT_GET(lsn_log->ic_header.h_lsn, ARCH_CONVERT);
 		if ((lsn && !lowest_lsn) ||
 		    (XFS_LSN_CMP(lsn, lowest_lsn) < 0)) {
 			lowest_lsn = lsn;
@@ -1996,9 +2068,9 @@ xlog_state_do_callback(
 	int		   funcdidcallbacks; /* flag: function did callbacks */
 	int		   repeats;	/* for issuing console warnings if
 					 * looping too many times */
-	int		   wake = 0;
+	SPLDECL(s);
 
-	spin_lock(&log->l_icloglock);
+	s = LOG_LOCK(log);
 	first_iclog = iclog = log->l_iclog;
 	ioerrors = 0;
 	funcdidcallbacks = 0;
@@ -2043,7 +2115,7 @@ xlog_state_do_callback(
 				 * to DO_CALLBACK, we will not process it when
 				 * we retry since a previous iclog is in the
 				 * CALLBACK and the state cannot change since
-				 * we are holding the l_icloglock.
+				 * we are holding the LOG_LOCK.
 				 */
 				if (!(iclog->ic_state &
 					(XLOG_STATE_DONE_SYNC |
@@ -2069,9 +2141,11 @@ xlog_state_do_callback(
 				 */
 
 				lowest_lsn = xlog_get_lowest_lsn(log);
-				if (lowest_lsn &&
-				    XFS_LSN_CMP(lowest_lsn,
-				    		be64_to_cpu(iclog->ic_header.h_lsn)) < 0) {
+				if (lowest_lsn && (
+					XFS_LSN_CMP(
+						lowest_lsn,
+						INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT)
+					)<0)) {
 					iclog = iclog->ic_next;
 					continue; /* Leave this iclog for
 						   * another thread */
@@ -2079,53 +2153,51 @@ xlog_state_do_callback(
 
 				iclog->ic_state = XLOG_STATE_CALLBACK;
 
-				spin_unlock(&log->l_icloglock);
+				LOG_UNLOCK(log, s);
 
 				/* l_last_sync_lsn field protected by
-				 * l_grant_lock. Don't worry about iclog's lsn.
+				 * GRANT_LOCK. Don't worry about iclog's lsn.
 				 * No one else can be here except us.
 				 */
-				spin_lock(&log->l_grant_lock);
-				ASSERT(XFS_LSN_CMP(log->l_last_sync_lsn,
-				       be64_to_cpu(iclog->ic_header.h_lsn)) <= 0);
-				log->l_last_sync_lsn =
-					be64_to_cpu(iclog->ic_header.h_lsn);
-				spin_unlock(&log->l_grant_lock);
+				s = GRANT_LOCK(log);
+				ASSERT(XFS_LSN_CMP(
+						log->l_last_sync_lsn,
+						INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT)
+					)<=0);
+				log->l_last_sync_lsn = INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT);
+				GRANT_UNLOCK(log, s);
 
+				/*
+				 * Keep processing entries in the callback list
+				 * until we come around and it is empty.  We
+				 * need to atomically see that the list is
+				 * empty and change the state to DIRTY so that
+				 * we don't miss any more callbacks being added.
+				 */
+				s = LOG_LOCK(log);
 			} else {
-				spin_unlock(&log->l_icloglock);
 				ioerrors++;
 			}
-
-			/*
-			 * Keep processing entries in the callback list until
-			 * we come around and it is empty.  We need to
-			 * atomically see that the list is empty and change the
-			 * state to DIRTY so that we don't miss any more
-			 * callbacks being added.
-			 */
-			spin_lock(&iclog->ic_callback_lock);
 			cb = iclog->ic_callback;
-			while (cb) {
+
+			while (cb != 0) {
 				iclog->ic_callback_tail = &(iclog->ic_callback);
 				iclog->ic_callback = NULL;
-				spin_unlock(&iclog->ic_callback_lock);
+				LOG_UNLOCK(log, s);
 
 				/* perform callbacks in the order given */
-				for (; cb; cb = cb_next) {
+				for (; cb != 0; cb = cb_next) {
 					cb_next = cb->cb_next;
 					cb->cb_func(cb->cb_arg, aborted);
 				}
-				spin_lock(&iclog->ic_callback_lock);
+				s = LOG_LOCK(log);
 				cb = iclog->ic_callback;
 			}
 
 			loopdidcallbacks++;
 			funcdidcallbacks++;
 
-			spin_lock(&log->l_icloglock);
-			ASSERT(iclog->ic_callback == NULL);
-			spin_unlock(&iclog->ic_callback_lock);
+			ASSERT(iclog->ic_callback == 0);
 			if (!(iclog->ic_state & XLOG_STATE_IOERROR))
 				iclog->ic_state = XLOG_STATE_DIRTY;
 
@@ -2136,17 +2208,13 @@ xlog_state_do_callback(
 			xlog_state_clean_log(log);
 
 			/* wake up threads waiting in xfs_log_force() */
-			sv_broadcast(&iclog->ic_force_wait);
+			sv_broadcast(&iclog->ic_forcesema);
 
 			iclog = iclog->ic_next;
 		} while (first_iclog != iclog);
-
-		if (repeats > 5000) {
-			flushcnt += repeats;
-			repeats = 0;
+		if (repeats && (repeats % 10) == 0) {
 			xfs_fs_cmn_err(CE_WARN, log->l_mp,
-				"%s: possible infinite loop (%d iterations)",
-				__func__, flushcnt);
+				"xlog_state_do_callback: looping %d", repeats);
 		}
 	} while (!ioerrors && loopdidcallbacks);
 
@@ -2165,7 +2233,7 @@ xlog_state_do_callback(
 			 *
 			 * SYNCING - i/o completion will go through logs
 			 * DONE_SYNC - interrupt thread should be waiting for
-			 *              l_icloglock
+			 *              LOG_LOCK
 			 * IOERROR - give up hope all ye who enter here
 			 */
 			if (iclog->ic_state == XLOG_STATE_WANT_SYNC ||
@@ -2178,13 +2246,14 @@ xlog_state_do_callback(
 	}
 #endif
 
-	if (log->l_iclog->ic_state & (XLOG_STATE_ACTIVE|XLOG_STATE_IOERROR))
-		wake = 1;
-	spin_unlock(&log->l_icloglock);
-
-	if (wake)
-		sv_broadcast(&log->l_flush_wait);
-}
+	if (log->l_iclog->ic_state & (XLOG_STATE_ACTIVE|XLOG_STATE_IOERROR)) {
+		flushcnt = log->l_flushcnt;
+		log->l_flushcnt = 0;
+	}
+	LOG_UNLOCK(log, s);
+	while (flushcnt--)
+		vsema(&log->l_flushsema);
+}	/* xlog_state_do_callback */
 
 
 /*
@@ -2198,20 +2267,22 @@ xlog_state_do_callback(
  * the second completion goes through.
  *
  * Callbacks could take time, so they are done outside the scope of the
- * global state machine log lock.
+ * global state machine log lock.  Assume that the calls to cvsema won't
+ * take a long time.  At least we know it won't sleep.
  */
-STATIC void
+void
 xlog_state_done_syncing(
 	xlog_in_core_t	*iclog,
 	int		aborted)
 {
 	xlog_t		   *log = iclog->ic_log;
+	SPLDECL(s);
 
-	spin_lock(&log->l_icloglock);
+	s = LOG_LOCK(log);
 
 	ASSERT(iclog->ic_state == XLOG_STATE_SYNCING ||
 	       iclog->ic_state == XLOG_STATE_IOERROR);
-	ASSERT(atomic_read(&iclog->ic_refcnt) == 0);
+	ASSERT(iclog->ic_refcnt == 0);
 	ASSERT(iclog->ic_bwritecnt == 1 || iclog->ic_bwritecnt == 2);
 
 
@@ -2223,7 +2294,7 @@ xlog_state_done_syncing(
 	 */
 	if (iclog->ic_state != XLOG_STATE_IOERROR) {
 		if (--iclog->ic_bwritecnt == 1) {
-			spin_unlock(&log->l_icloglock);
+			LOG_UNLOCK(log, s);
 			return;
 		}
 		iclog->ic_state = XLOG_STATE_DONE_SYNC;
@@ -2234,17 +2305,19 @@ xlog_state_done_syncing(
 	 * iclog buffer, we wake them all, one will get to do the
 	 * I/O, the others get to wait for the result.
 	 */
-	sv_broadcast(&iclog->ic_write_wait);
-	spin_unlock(&log->l_icloglock);
+	sv_broadcast(&iclog->ic_writesema);
+	LOG_UNLOCK(log, s);
 	xlog_state_do_callback(log, aborted, iclog);	/* also cleans log */
 }	/* xlog_state_done_syncing */
 
 
 /*
  * If the head of the in-core log ring is not (ACTIVE or DIRTY), then we must
- * sleep.  We wait on the flush queue on the head iclog as that should be
- * the first iclog to complete flushing. Hence if all iclogs are syncing,
- * we will wait here and all new writes will sleep until a sync completes.
+ * sleep.  The flush semaphore is set to the number of in-core buffers and
+ * decremented around disk syncing.  Therefore, if all buffers are syncing,
+ * this semaphore will cause new writes to sleep until a sync completes.
+ * Otherwise, this code just does p() followed by v().  This approximates
+ * a sleep/wakeup except we can't race.
  *
  * The in-core logs are used in a circular fashion. They are not used
  * out-of-order even when an iclog past the head is free.
@@ -2258,7 +2331,7 @@ xlog_state_done_syncing(
  *		needs to be incremented, depending on the amount of data which
  *		is copied.
  */
-STATIC int
+int
 xlog_state_get_iclog_space(xlog_t	  *log,
 			   int		  len,
 			   xlog_in_core_t **iclogp,
@@ -2266,30 +2339,33 @@ xlog_state_get_iclog_space(xlog_t	  *log,
 			   int		  *continued_write,
 			   int		  *logoffsetp)
 {
+	SPLDECL(s);
 	int		  log_offset;
 	xlog_rec_header_t *head;
 	xlog_in_core_t	  *iclog;
 	int		  error;
 
 restart:
-	spin_lock(&log->l_icloglock);
+	s = LOG_LOCK(log);
 	if (XLOG_FORCED_SHUTDOWN(log)) {
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 		return XFS_ERROR(EIO);
 	}
 
 	iclog = log->l_iclog;
-	if (iclog->ic_state != XLOG_STATE_ACTIVE) {
+	if (! (iclog->ic_state == XLOG_STATE_ACTIVE)) {
+		log->l_flushcnt++;
+		LOG_UNLOCK(log, s);
+		xlog_trace_iclog(iclog, XLOG_TRACE_SLEEP_FLUSH);
 		XFS_STATS_INC(xs_log_noiclogs);
-
-		/* Wait for log writes to have flushed */
-		sv_wait(&log->l_flush_wait, 0, &log->l_icloglock, 0);
+		/* Ensure that log writes happen */
+		psema(&log->l_flushsema, PINOD);
 		goto restart;
 	}
-
+	ASSERT(iclog->ic_state == XLOG_STATE_ACTIVE);
 	head = &iclog->ic_header;
 
-	atomic_inc(&iclog->ic_refcnt);	/* prevents sync */
+	iclog->ic_refcnt++;			/* prevents sync */
 	log_offset = iclog->ic_offset;
 
 	/* On the 1st write to an iclog, figure out lsn.  This works
@@ -2299,12 +2375,11 @@ restart:
 	 */
 	if (log_offset == 0) {
 		ticket->t_curr_res -= log->l_iclog_hsize;
-		xlog_tic_add_region(ticket,
+		XLOG_TIC_ADD_REGION(ticket,
 				    log->l_iclog_hsize,
 				    XLOG_REG_TYPE_LRHEADER);
-		head->h_cycle = cpu_to_be32(log->l_curr_cycle);
-		head->h_lsn = cpu_to_be64(
-			xlog_assign_lsn(log->l_curr_cycle, log->l_curr_block));
+		INT_SET(head->h_cycle, ARCH_CONVERT, log->l_curr_cycle);
+		ASSIGN_LSN(head->h_lsn, log);
 		ASSERT(log->l_curr_block >= 0);
 	}
 
@@ -2320,21 +2395,14 @@ restart:
 	if (iclog->ic_size - iclog->ic_offset < 2*sizeof(xlog_op_header_t)) {
 		xlog_state_switch_iclogs(log, iclog, iclog->ic_size);
 
-		/*
-		 * If I'm the only one writing to this iclog, sync it to disk.
-		 * We need to do an atomic compare and decrement here to avoid
-		 * racing with concurrent atomic_dec_and_lock() calls in
-		 * xlog_state_release_iclog() when there is more than one
-		 * reference to the iclog.
-		 */
-		if (!atomic_add_unless(&iclog->ic_refcnt, -1, 1)) {
-			/* we are the only one */
-			spin_unlock(&log->l_icloglock);
-			error = xlog_state_release_iclog(log, iclog);
-			if (error)
+		/* If I'm the only one writing to this iclog, sync it to disk */
+		if (iclog->ic_refcnt == 1) {
+			LOG_UNLOCK(log, s);
+			if ((error = xlog_state_release_iclog(log, iclog)))
 				return error;
 		} else {
-			spin_unlock(&log->l_icloglock);
+			iclog->ic_refcnt--;
+			LOG_UNLOCK(log, s);
 		}
 		goto restart;
 	}
@@ -2355,7 +2423,7 @@ restart:
 	*iclogp = iclog;
 
 	ASSERT(iclog->ic_offset <= iclog->ic_size);
-	spin_unlock(&log->l_icloglock);
+	LOG_UNLOCK(log, s);
 
 	*logoffsetp = log_offset;
 	return 0;
@@ -2373,6 +2441,7 @@ xlog_grant_log_space(xlog_t	   *log,
 {
 	int		 free_bytes;
 	int		 need_bytes;
+	SPLDECL(s);
 #ifdef DEBUG
 	xfs_lsn_t	 tail_lsn;
 #endif
@@ -2384,16 +2453,14 @@ xlog_grant_log_space(xlog_t	   *log,
 #endif
 
 	/* Is there space or do we need to sleep? */
-	spin_lock(&log->l_grant_lock);
-
-	trace_xfs_log_grant_enter(log, tic);
+	s = GRANT_LOCK(log);
+	xlog_trace_loggrant(log, tic, "xlog_grant_log_space: enter");
 
 	/* something is already sleeping; insert new transaction at end */
 	if (log->l_reserve_headq) {
 		xlog_ins_ticketq(&log->l_reserve_headq, tic);
-
-		trace_xfs_log_grant_sleep1(log, tic);
-
+		xlog_trace_loggrant(log, tic,
+				    "xlog_grant_log_space: sleep 1");
 		/*
 		 * Gotta check this before going to sleep, while we're
 		 * holding the grant lock.
@@ -2402,13 +2469,14 @@ xlog_grant_log_space(xlog_t	   *log,
 			goto error_return;
 
 		XFS_STATS_INC(xs_sleep_logspace);
-		sv_wait(&tic->t_wait, PINOD|PLTWAIT, &log->l_grant_lock, s);
+		sv_wait(&tic->t_sema, PINOD|PLTWAIT, &log->l_grant_lock, s);
 		/*
 		 * If we got an error, and the filesystem is shutting down,
 		 * we'll catch it down below. So just continue...
 		 */
-		trace_xfs_log_grant_wake1(log, tic);
-		spin_lock(&log->l_grant_lock);
+		xlog_trace_loggrant(log, tic,
+				    "xlog_grant_log_space: wake 1");
+		s = GRANT_LOCK(log);
 	}
 	if (tic->t_flags & XFS_LOG_PERM_RESERV)
 		need_bytes = tic->t_unit_res*tic->t_ocnt;
@@ -2424,22 +2492,20 @@ redo:
 	if (free_bytes < need_bytes) {
 		if ((tic->t_flags & XLOG_TIC_IN_Q) == 0)
 			xlog_ins_ticketq(&log->l_reserve_headq, tic);
-
-		trace_xfs_log_grant_sleep2(log, tic);
-
-		spin_unlock(&log->l_grant_lock);
-		xlog_grant_push_ail(log->l_mp, need_bytes);
-		spin_lock(&log->l_grant_lock);
-
+		xlog_trace_loggrant(log, tic,
+				    "xlog_grant_log_space: sleep 2");
 		XFS_STATS_INC(xs_sleep_logspace);
-		sv_wait(&tic->t_wait, PINOD|PLTWAIT, &log->l_grant_lock, s);
+		sv_wait(&tic->t_sema, PINOD|PLTWAIT, &log->l_grant_lock, s);
 
-		spin_lock(&log->l_grant_lock);
-		if (XLOG_FORCED_SHUTDOWN(log))
+		if (XLOG_FORCED_SHUTDOWN(log)) {
+			s = GRANT_LOCK(log);
 			goto error_return;
+		}
 
-		trace_xfs_log_grant_wake2(log, tic);
-
+		xlog_trace_loggrant(log, tic,
+				    "xlog_grant_log_space: wake 2");
+		xlog_grant_push_ail(log->l_mp, need_bytes);
+		s = GRANT_LOCK(log);
 		goto redo;
 	} else if (tic->t_flags & XLOG_TIC_IN_Q)
 		xlog_del_ticketq(&log->l_reserve_headq, tic);
@@ -2459,17 +2525,15 @@ redo:
 		ASSERT(log->l_grant_write_bytes <= BBTOB(BLOCK_LSN(tail_lsn)));
 	}
 #endif
-	trace_xfs_log_grant_exit(log, tic);
+	xlog_trace_loggrant(log, tic, "xlog_grant_log_space: exit");
 	xlog_verify_grant_head(log, 1);
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	return 0;
 
  error_return:
 	if (tic->t_flags & XLOG_TIC_IN_Q)
 		xlog_del_ticketq(&log->l_reserve_headq, tic);
-
-	trace_xfs_log_grant_error(log, tic);
-
+	xlog_trace_loggrant(log, tic, "xlog_grant_log_space: err_ret");
 	/*
 	 * If we are failing, make sure the ticket doesn't have any
 	 * current reservations. We don't want to add this back when
@@ -2477,7 +2541,7 @@ redo:
 	 */
 	tic->t_curr_res = 0;
 	tic->t_cnt = 0; /* ungrant will give back unit_res * t_cnt. */
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	return XFS_ERROR(EIO);
 }	/* xlog_grant_log_space */
 
@@ -2491,6 +2555,7 @@ STATIC int
 xlog_regrant_write_log_space(xlog_t	   *log,
 			     xlog_ticket_t *tic)
 {
+	SPLDECL(s);
 	int		free_bytes, need_bytes;
 	xlog_ticket_t	*ntic;
 #ifdef DEBUG
@@ -2498,7 +2563,7 @@ xlog_regrant_write_log_space(xlog_t	   *log,
 #endif
 
 	tic->t_curr_res = tic->t_unit_res;
-	xlog_tic_reset_res(tic);
+	XLOG_TIC_RESET_RES(tic);
 
 	if (tic->t_cnt > 0)
 		return 0;
@@ -2508,9 +2573,8 @@ xlog_regrant_write_log_space(xlog_t	   *log,
 		panic("regrant Recovery problem");
 #endif
 
-	spin_lock(&log->l_grant_lock);
-
-	trace_xfs_log_regrant_write_enter(log, tic);
+	s = GRANT_LOCK(log);
+	xlog_trace_loggrant(log, tic, "xlog_regrant_write_log_space: enter");
 
 	if (XLOG_FORCED_SHUTDOWN(log))
 		goto error_return;
@@ -2521,7 +2585,7 @@ xlog_regrant_write_log_space(xlog_t	   *log,
 	 * for more free space, otherwise try to get some space for
 	 * this transaction.
 	 */
-	need_bytes = tic->t_unit_res;
+
 	if ((ntic = log->l_write_headq)) {
 		free_bytes = xlog_space_left(log, log->l_grant_write_cycle,
 					     log->l_grant_write_bytes);
@@ -2531,7 +2595,7 @@ xlog_regrant_write_log_space(xlog_t	   *log,
 			if (free_bytes < ntic->t_unit_res)
 				break;
 			free_bytes -= ntic->t_unit_res;
-			sv_signal(&ntic->t_wait);
+			sv_signal(&ntic->t_sema);
 			ntic = ntic->t_next;
 		} while (ntic != log->l_write_headq);
 
@@ -2539,25 +2603,27 @@ xlog_regrant_write_log_space(xlog_t	   *log,
 			if ((tic->t_flags & XLOG_TIC_IN_Q) == 0)
 				xlog_ins_ticketq(&log->l_write_headq, tic);
 
-			trace_xfs_log_regrant_write_sleep1(log, tic);
-
-			spin_unlock(&log->l_grant_lock);
-			xlog_grant_push_ail(log->l_mp, need_bytes);
-			spin_lock(&log->l_grant_lock);
-
+			xlog_trace_loggrant(log, tic,
+				    "xlog_regrant_write_log_space: sleep 1");
 			XFS_STATS_INC(xs_sleep_logspace);
-			sv_wait(&tic->t_wait, PINOD|PLTWAIT,
+			sv_wait(&tic->t_sema, PINOD|PLTWAIT,
 				&log->l_grant_lock, s);
 
 			/* If we're shutting down, this tic is already
 			 * off the queue */
-			spin_lock(&log->l_grant_lock);
-			if (XLOG_FORCED_SHUTDOWN(log))
+			if (XLOG_FORCED_SHUTDOWN(log)) {
+				s = GRANT_LOCK(log);
 				goto error_return;
+			}
 
-			trace_xfs_log_regrant_write_wake1(log, tic);
+			xlog_trace_loggrant(log, tic,
+				    "xlog_regrant_write_log_space: wake 1");
+			xlog_grant_push_ail(log->l_mp, tic->t_unit_res);
+			s = GRANT_LOCK(log);
 		}
 	}
+
+	need_bytes = tic->t_unit_res;
 
 redo:
 	if (XLOG_FORCED_SHUTDOWN(log))
@@ -2568,21 +2634,19 @@ redo:
 	if (free_bytes < need_bytes) {
 		if ((tic->t_flags & XLOG_TIC_IN_Q) == 0)
 			xlog_ins_ticketq(&log->l_write_headq, tic);
-		spin_unlock(&log->l_grant_lock);
-		xlog_grant_push_ail(log->l_mp, need_bytes);
-		spin_lock(&log->l_grant_lock);
-
 		XFS_STATS_INC(xs_sleep_logspace);
-		trace_xfs_log_regrant_write_sleep2(log, tic);
-
-		sv_wait(&tic->t_wait, PINOD|PLTWAIT, &log->l_grant_lock, s);
+		sv_wait(&tic->t_sema, PINOD|PLTWAIT, &log->l_grant_lock, s);
 
 		/* If we're shutting down, this tic is already off the queue */
-		spin_lock(&log->l_grant_lock);
-		if (XLOG_FORCED_SHUTDOWN(log))
+		if (XLOG_FORCED_SHUTDOWN(log)) {
+			s = GRANT_LOCK(log);
 			goto error_return;
+		}
 
-		trace_xfs_log_regrant_write_wake2(log, tic);
+		xlog_trace_loggrant(log, tic,
+				    "xlog_regrant_write_log_space: wake 2");
+		xlog_grant_push_ail(log->l_mp, need_bytes);
+		s = GRANT_LOCK(log);
 		goto redo;
 	} else if (tic->t_flags & XLOG_TIC_IN_Q)
 		xlog_del_ticketq(&log->l_write_headq, tic);
@@ -2597,19 +2661,16 @@ redo:
 	}
 #endif
 
-	trace_xfs_log_regrant_write_exit(log, tic);
-
+	xlog_trace_loggrant(log, tic, "xlog_regrant_write_log_space: exit");
 	xlog_verify_grant_head(log, 1);
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	return 0;
 
 
  error_return:
 	if (tic->t_flags & XLOG_TIC_IN_Q)
 		xlog_del_ticketq(&log->l_reserve_headq, tic);
-
-	trace_xfs_log_regrant_write_error(log, tic);
-
+	xlog_trace_loggrant(log, tic, "xlog_regrant_write_log_space: err_ret");
 	/*
 	 * If we are failing, make sure the ticket doesn't have any
 	 * current reservations. We don't want to add this back when
@@ -2617,7 +2678,7 @@ redo:
 	 */
 	tic->t_curr_res = 0;
 	tic->t_cnt = 0; /* ungrant will give back unit_res * t_cnt. */
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	return XFS_ERROR(EIO);
 }	/* xlog_regrant_write_log_space */
 
@@ -2633,34 +2694,34 @@ STATIC void
 xlog_regrant_reserve_log_space(xlog_t	     *log,
 			       xlog_ticket_t *ticket)
 {
-	trace_xfs_log_regrant_reserve_enter(log, ticket);
+	SPLDECL(s);
 
+	xlog_trace_loggrant(log, ticket,
+			    "xlog_regrant_reserve_log_space: enter");
 	if (ticket->t_cnt > 0)
 		ticket->t_cnt--;
 
-	spin_lock(&log->l_grant_lock);
+	s = GRANT_LOCK(log);
 	xlog_grant_sub_space(log, ticket->t_curr_res);
 	ticket->t_curr_res = ticket->t_unit_res;
-	xlog_tic_reset_res(ticket);
-
-	trace_xfs_log_regrant_reserve_sub(log, ticket);
-
+	XLOG_TIC_RESET_RES(ticket);
+	xlog_trace_loggrant(log, ticket,
+			    "xlog_regrant_reserve_log_space: sub current res");
 	xlog_verify_grant_head(log, 1);
 
 	/* just return if we still have some of the pre-reserved space */
 	if (ticket->t_cnt > 0) {
-		spin_unlock(&log->l_grant_lock);
+		GRANT_UNLOCK(log, s);
 		return;
 	}
 
 	xlog_grant_add_space_reserve(log, ticket->t_unit_res);
-
-	trace_xfs_log_regrant_reserve_exit(log, ticket);
-
+	xlog_trace_loggrant(log, ticket,
+			    "xlog_regrant_reserve_log_space: exit");
 	xlog_verify_grant_head(log, 0);
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	ticket->t_curr_res = ticket->t_unit_res;
-	xlog_tic_reset_res(ticket);
+	XLOG_TIC_RESET_RES(ticket);
 }	/* xlog_regrant_reserve_log_space */
 
 
@@ -2682,15 +2743,17 @@ STATIC void
 xlog_ungrant_log_space(xlog_t	     *log,
 		       xlog_ticket_t *ticket)
 {
+	SPLDECL(s);
+
 	if (ticket->t_cnt > 0)
 		ticket->t_cnt--;
 
-	spin_lock(&log->l_grant_lock);
-	trace_xfs_log_ungrant_enter(log, ticket);
+	s = GRANT_LOCK(log);
+	xlog_trace_loggrant(log, ticket, "xlog_ungrant_log_space: enter");
 
 	xlog_grant_sub_space(log, ticket->t_curr_res);
 
-	trace_xfs_log_ungrant_sub(log, ticket);
+	xlog_trace_loggrant(log, ticket, "xlog_ungrant_log_space: sub current");
 
 	/* If this is a permanent reservation ticket, we may be able to free
 	 * up more space based on the remaining count.
@@ -2700,13 +2763,26 @@ xlog_ungrant_log_space(xlog_t	     *log,
 		xlog_grant_sub_space(log, ticket->t_unit_res*ticket->t_cnt);
 	}
 
-	trace_xfs_log_ungrant_exit(log, ticket);
-
+	xlog_trace_loggrant(log, ticket, "xlog_ungrant_log_space: exit");
 	xlog_verify_grant_head(log, 1);
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 	xfs_log_move_tail(log->l_mp, 1);
 }	/* xlog_ungrant_log_space */
 
+
+/*
+ * Atomically put back used ticket.
+ */
+void
+xlog_state_put_ticket(xlog_t	    *log,
+		      xlog_ticket_t *tic)
+{
+	unsigned long s;
+
+	s = LOG_LOCK(log);
+	xlog_ticket_put(log, tic);
+	LOG_UNLOCK(log, s);
+}	/* xlog_state_put_ticket */
 
 /*
  * Flush iclog to disk if this is the last reference to the given iclog and
@@ -2717,37 +2793,36 @@ xlog_ungrant_log_space(xlog_t	     *log,
  *
  *
  */
-STATIC int
-xlog_state_release_iclog(
-	xlog_t		*log,
-	xlog_in_core_t	*iclog)
+int
+xlog_state_release_iclog(xlog_t		*log,
+			 xlog_in_core_t	*iclog)
 {
+	SPLDECL(s);
 	int		sync = 0;	/* do we sync? */
 
-	if (iclog->ic_state & XLOG_STATE_IOERROR)
-		return XFS_ERROR(EIO);
+	xlog_assign_tail_lsn(log->l_mp);
 
-	ASSERT(atomic_read(&iclog->ic_refcnt) > 0);
-	if (!atomic_dec_and_lock(&iclog->ic_refcnt, &log->l_icloglock))
-		return 0;
+	s = LOG_LOCK(log);
 
 	if (iclog->ic_state & XLOG_STATE_IOERROR) {
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 		return XFS_ERROR(EIO);
 	}
+
+	ASSERT(iclog->ic_refcnt > 0);
 	ASSERT(iclog->ic_state == XLOG_STATE_ACTIVE ||
 	       iclog->ic_state == XLOG_STATE_WANT_SYNC);
 
-	if (iclog->ic_state == XLOG_STATE_WANT_SYNC) {
-		/* update tail before writing to iclog */
-		xlog_assign_tail_lsn(log->l_mp);
+	if (--iclog->ic_refcnt == 0 &&
+	    iclog->ic_state == XLOG_STATE_WANT_SYNC) {
 		sync++;
 		iclog->ic_state = XLOG_STATE_SYNCING;
-		iclog->ic_header.h_tail_lsn = cpu_to_be64(log->l_tail_lsn);
+		INT_SET(iclog->ic_header.h_tail_lsn, ARCH_CONVERT, log->l_tail_lsn);
 		xlog_verify_tail_lsn(log, iclog, log->l_tail_lsn);
 		/* cycle incremented when incrementing curr_block */
 	}
-	spin_unlock(&log->l_icloglock);
+
+	LOG_UNLOCK(log, s);
 
 	/*
 	 * We let the log lock go, so it's possible that we hit a log I/O
@@ -2756,9 +2831,11 @@ xlog_state_release_iclog(
 	 * this iclog has consistent data, so we ignore IOERROR
 	 * flags after this point.
 	 */
-	if (sync)
+	if (sync) {
 		return xlog_sync(log, iclog);
+	}
 	return 0;
+
 }	/* xlog_state_release_iclog */
 
 
@@ -2778,7 +2855,7 @@ xlog_state_switch_iclogs(xlog_t		*log,
 	if (!eventual_size)
 		eventual_size = iclog->ic_offset;
 	iclog->ic_state = XLOG_STATE_WANT_SYNC;
-	iclog->ic_header.h_prev_block = cpu_to_be32(log->l_prev_block);
+	INT_SET(iclog->ic_header.h_prev_block, ARCH_CONVERT, log->l_prev_block);
 	log->l_prev_block = log->l_curr_block;
 	log->l_prev_cycle = log->l_curr_cycle;
 
@@ -2786,7 +2863,7 @@ xlog_state_switch_iclogs(xlog_t		*log,
 	log->l_curr_block += BTOBB(eventual_size)+BTOBB(log->l_iclog_hsize);
 
 	/* Round up to next log-sunit */
-	if (xfs_sb_version_haslogv2(&log->l_mp->m_sb) &&
+	if (XFS_SB_VERSION_HASLOGV2(&log->l_mp->m_sb) &&
 	    log->l_mp->m_sb.sb_logsunit > 1) {
 		__uint32_t sunit_bb = BTOBB(log->l_mp->m_sb.sb_logsunit);
 		log->l_curr_block = roundup(log->l_curr_block, sunit_bb);
@@ -2802,6 +2879,7 @@ xlog_state_switch_iclogs(xlog_t		*log,
 	ASSERT(iclog == log->l_iclog);
 	log->l_iclog = iclog->ic_next;
 }	/* xlog_state_switch_iclogs */
+
 
 /*
  * Write out all data in the in-core log as of this exact moment in time.
@@ -2819,7 +2897,7 @@ xlog_state_switch_iclogs(xlog_t		*log,
  *	2. the current iclog is drity, and the previous iclog is in the
  *		active or dirty state.
  *
- * We may sleep if:
+ * We may sleep (call psema) if:
  *
  *	1. the current iclog is not in the active nor dirty state.
  *	2. the current iclog dirty, and the previous iclog is not in the
@@ -2830,23 +2908,18 @@ xlog_state_switch_iclogs(xlog_t		*log,
  *	   b) when we return from flushing out this iclog, it is still
  *		not in the active nor dirty state.
  */
-int
-_xfs_log_force(
-	struct xfs_mount	*mp,
-	uint			flags,
-	int			*log_flushed)
+STATIC int
+xlog_state_sync_all(xlog_t *log, uint flags, int *log_flushed)
 {
-	struct log		*log = mp->m_log;
-	struct xlog_in_core	*iclog;
-	xfs_lsn_t		lsn;
+	xlog_in_core_t	*iclog;
+	xfs_lsn_t	lsn;
+	SPLDECL(s);
 
-	XFS_STATS_INC(xs_log_force);
-
-	spin_lock(&log->l_icloglock);
+	s = LOG_LOCK(log);
 
 	iclog = log->l_iclog;
 	if (iclog->ic_state & XLOG_STATE_IOERROR) {
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 		return XFS_ERROR(EIO);
 	}
 
@@ -2863,8 +2936,7 @@ _xfs_log_force(
 		 * previous iclog and go to sleep.
 		 */
 		if (iclog->ic_state == XLOG_STATE_DIRTY ||
-		    (atomic_read(&iclog->ic_refcnt) == 0
-		     && iclog->ic_offset == 0)) {
+		    (iclog->ic_refcnt == 0 && iclog->ic_offset == 0)) {
 			iclog = iclog->ic_prev;
 			if (iclog->ic_state == XLOG_STATE_ACTIVE ||
 			    iclog->ic_state == XLOG_STATE_DIRTY)
@@ -2872,25 +2944,23 @@ _xfs_log_force(
 			else
 				goto maybe_sleep;
 		} else {
-			if (atomic_read(&iclog->ic_refcnt) == 0) {
+			if (iclog->ic_refcnt == 0) {
 				/* We are the only one with access to this
 				 * iclog.  Flush it out now.  There should
 				 * be a roundoff of zero to show that someone
 				 * has already taken care of the roundoff from
 				 * the previous sync.
 				 */
-				atomic_inc(&iclog->ic_refcnt);
-				lsn = be64_to_cpu(iclog->ic_header.h_lsn);
+				iclog->ic_refcnt++;
+				lsn = INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT);
 				xlog_state_switch_iclogs(log, iclog, 0);
-				spin_unlock(&log->l_icloglock);
+				LOG_UNLOCK(log, s);
 
 				if (xlog_state_release_iclog(log, iclog))
 					return XFS_ERROR(EIO);
-
-				if (log_flushed)
-					*log_flushed = 1;
-				spin_lock(&log->l_icloglock);
-				if (be64_to_cpu(iclog->ic_header.h_lsn) == lsn &&
+				*log_flushed = 1;
+				s = LOG_LOCK(log);
+				if (INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT) == lsn &&
 				    iclog->ic_state != XLOG_STATE_DIRTY)
 					goto maybe_sleep;
 				else
@@ -2915,16 +2985,16 @@ maybe_sleep:
 	if (flags & XFS_LOG_SYNC) {
 		/*
 		 * We must check if we're shutting down here, before
-		 * we wait, while we're holding the l_icloglock.
+		 * we wait, while we're holding the LOG_LOCK.
 		 * Then we check again after waking up, in case our
 		 * sleep was disturbed by a bad news.
 		 */
 		if (iclog->ic_state & XLOG_STATE_IOERROR) {
-			spin_unlock(&log->l_icloglock);
+			LOG_UNLOCK(log, s);
 			return XFS_ERROR(EIO);
 		}
 		XFS_STATS_INC(xs_log_force_sleep);
-		sv_wait(&iclog->ic_force_wait, PINOD, &log->l_icloglock, s);
+		sv_wait(&iclog->ic_forcesema, PINOD, &log->l_icloglock, s);
 		/*
 		 * No need to grab the log lock here since we're
 		 * only deciding whether or not to return EIO
@@ -2932,37 +3002,19 @@ maybe_sleep:
 		 */
 		if (iclog->ic_state & XLOG_STATE_IOERROR)
 			return XFS_ERROR(EIO);
-		if (log_flushed)
-			*log_flushed = 1;
+		*log_flushed = 1;
+
 	} else {
 
 no_sleep:
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 	}
 	return 0;
-}
+}	/* xlog_state_sync_all */
+
 
 /*
- * Wrapper for _xfs_log_force(), to be used when caller doesn't care
- * about errors or whether the log was flushed or not. This is the normal
- * interface to use when trying to unpin items or move the log forward.
- */
-void
-xfs_log_force(
-	xfs_mount_t	*mp,
-	uint		flags)
-{
-	int	error;
-
-	error = _xfs_log_force(mp, flags, NULL);
-	if (error) {
-		xfs_fs_cmn_err(CE_WARN, mp, "xfs_log_force: "
-			"error %d returned.", error);
-	}
-}
-
-/*
- * Force the in-core log to disk for a specific LSN.
+ * Used by code which implements synchronous log forces.
  *
  * Find in-core log with lsn.
  *	If it is in the DIRTY state, just return.
@@ -2970,151 +3022,122 @@ xfs_log_force(
  *		state and go to sleep or return.
  *	If it is in any other state, go to sleep or return.
  *
- * Synchronous forces are implemented with a signal variable. All callers
- * to force a given lsn to disk will wait on a the sv attached to the
- * specific in-core log.  When given in-core log finally completes its
- * write to disk, that thread will wake up all threads waiting on the
- * sv.
+ * If filesystem activity goes to zero, the iclog will get flushed only by
+ * bdflush().
  */
 int
-_xfs_log_force_lsn(
-	struct xfs_mount	*mp,
-	xfs_lsn_t		lsn,
-	uint			flags,
-	int			*log_flushed)
+xlog_state_sync(xlog_t	  *log,
+		xfs_lsn_t lsn,
+		uint	  flags,
+		int	  *log_flushed)
 {
-	struct log		*log = mp->m_log;
-	struct xlog_in_core	*iclog;
-	int			already_slept = 0;
+    xlog_in_core_t	*iclog;
+    int			already_slept = 0;
+    SPLDECL(s);
 
-	ASSERT(lsn != 0);
-
-	XFS_STATS_INC(xs_log_force);
 
 try_again:
-	spin_lock(&log->l_icloglock);
-	iclog = log->l_iclog;
-	if (iclog->ic_state & XLOG_STATE_IOERROR) {
-		spin_unlock(&log->l_icloglock);
-		return XFS_ERROR(EIO);
+    s = LOG_LOCK(log);
+    iclog = log->l_iclog;
+
+    if (iclog->ic_state & XLOG_STATE_IOERROR) {
+	    LOG_UNLOCK(log, s);
+	    return XFS_ERROR(EIO);
+    }
+
+    do {
+	if (INT_GET(iclog->ic_header.h_lsn, ARCH_CONVERT) != lsn) {
+	    iclog = iclog->ic_next;
+	    continue;
 	}
 
-	do {
-		if (be64_to_cpu(iclog->ic_header.h_lsn) != lsn) {
-			iclog = iclog->ic_next;
-			continue;
-		}
+	if (iclog->ic_state == XLOG_STATE_DIRTY) {
+		LOG_UNLOCK(log, s);
+		return 0;
+	}
 
-		if (iclog->ic_state == XLOG_STATE_DIRTY) {
-			spin_unlock(&log->l_icloglock);
-			return 0;
-		}
-
-		if (iclog->ic_state == XLOG_STATE_ACTIVE) {
-			/*
-			 * We sleep here if we haven't already slept (e.g.
-			 * this is the first time we've looked at the correct
-			 * iclog buf) and the buffer before us is going to
-			 * be sync'ed. The reason for this is that if we
-			 * are doing sync transactions here, by waiting for
-			 * the previous I/O to complete, we can allow a few
-			 * more transactions into this iclog before we close
-			 * it down.
-			 *
-			 * Otherwise, we mark the buffer WANT_SYNC, and bump
-			 * up the refcnt so we can release the log (which
-			 * drops the ref count).  The state switch keeps new
-			 * transaction commits from using this buffer.  When
-			 * the current commits finish writing into the buffer,
-			 * the refcount will drop to zero and the buffer will
-			 * go out then.
-			 */
-			if (!already_slept &&
-			    (iclog->ic_prev->ic_state &
-			     (XLOG_STATE_WANT_SYNC | XLOG_STATE_SYNCING))) {
-				ASSERT(!(iclog->ic_state & XLOG_STATE_IOERROR));
-
-				XFS_STATS_INC(xs_log_force_sleep);
-
-				sv_wait(&iclog->ic_prev->ic_write_wait,
-					PSWP, &log->l_icloglock, s);
-				if (log_flushed)
-					*log_flushed = 1;
-				already_slept = 1;
-				goto try_again;
-			}
-			atomic_inc(&iclog->ic_refcnt);
+	if (iclog->ic_state == XLOG_STATE_ACTIVE) {
+		/*
+		 * We sleep here if we haven't already slept (e.g.
+		 * this is the first time we've looked at the correct
+		 * iclog buf) and the buffer before us is going to
+		 * be sync'ed. The reason for this is that if we
+		 * are doing sync transactions here, by waiting for
+		 * the previous I/O to complete, we can allow a few
+		 * more transactions into this iclog before we close
+		 * it down.
+		 *
+		 * Otherwise, we mark the buffer WANT_SYNC, and bump
+		 * up the refcnt so we can release the log (which drops
+		 * the ref count).  The state switch keeps new transaction
+		 * commits from using this buffer.  When the current commits
+		 * finish writing into the buffer, the refcount will drop to
+		 * zero and the buffer will go out then.
+		 */
+		if (!already_slept &&
+		    (iclog->ic_prev->ic_state & (XLOG_STATE_WANT_SYNC |
+						 XLOG_STATE_SYNCING))) {
+			ASSERT(!(iclog->ic_state & XLOG_STATE_IOERROR));
+			XFS_STATS_INC(xs_log_force_sleep);
+			sv_wait(&iclog->ic_prev->ic_writesema, PSWP,
+				&log->l_icloglock, s);
+			*log_flushed = 1;
+			already_slept = 1;
+			goto try_again;
+		} else {
+			iclog->ic_refcnt++;
 			xlog_state_switch_iclogs(log, iclog, 0);
-			spin_unlock(&log->l_icloglock);
+			LOG_UNLOCK(log, s);
 			if (xlog_state_release_iclog(log, iclog))
 				return XFS_ERROR(EIO);
-			if (log_flushed)
-				*log_flushed = 1;
-			spin_lock(&log->l_icloglock);
+			*log_flushed = 1;
+			s = LOG_LOCK(log);
 		}
-
-		if ((flags & XFS_LOG_SYNC) && /* sleep */
-		    !(iclog->ic_state &
-		      (XLOG_STATE_ACTIVE | XLOG_STATE_DIRTY))) {
-			/*
-			 * Don't wait on completion if we know that we've
-			 * gotten a log write error.
-			 */
-			if (iclog->ic_state & XLOG_STATE_IOERROR) {
-				spin_unlock(&log->l_icloglock);
-				return XFS_ERROR(EIO);
-			}
-			XFS_STATS_INC(xs_log_force_sleep);
-			sv_wait(&iclog->ic_force_wait, PSWP, &log->l_icloglock, s);
-			/*
-			 * No need to grab the log lock here since we're
-			 * only deciding whether or not to return EIO
-			 * and the memory read should be atomic.
-			 */
-			if (iclog->ic_state & XLOG_STATE_IOERROR)
-				return XFS_ERROR(EIO);
-
-			if (log_flushed)
-				*log_flushed = 1;
-		} else {		/* just return */
-			spin_unlock(&log->l_icloglock);
-		}
-
-		return 0;
-	} while (iclog != log->l_iclog);
-
-	spin_unlock(&log->l_icloglock);
-	return 0;
-}
-
-/*
- * Wrapper for _xfs_log_force_lsn(), to be used when caller doesn't care
- * about errors or whether the log was flushed or not. This is the normal
- * interface to use when trying to unpin items or move the log forward.
- */
-void
-xfs_log_force_lsn(
-	xfs_mount_t	*mp,
-	xfs_lsn_t	lsn,
-	uint		flags)
-{
-	int	error;
-
-	error = _xfs_log_force_lsn(mp, lsn, flags, NULL);
-	if (error) {
-		xfs_fs_cmn_err(CE_WARN, mp, "xfs_log_force: "
-			"error %d returned.", error);
 	}
-}
+
+	if ((flags & XFS_LOG_SYNC) && /* sleep */
+	    !(iclog->ic_state & (XLOG_STATE_ACTIVE | XLOG_STATE_DIRTY))) {
+
+		/*
+		 * Don't wait on the forcesema if we know that we've
+		 * gotten a log write error.
+		 */
+		if (iclog->ic_state & XLOG_STATE_IOERROR) {
+			LOG_UNLOCK(log, s);
+			return XFS_ERROR(EIO);
+		}
+		XFS_STATS_INC(xs_log_force_sleep);
+		sv_wait(&iclog->ic_forcesema, PSWP, &log->l_icloglock, s);
+		/*
+		 * No need to grab the log lock here since we're
+		 * only deciding whether or not to return EIO
+		 * and the memory read should be atomic.
+		 */
+		if (iclog->ic_state & XLOG_STATE_IOERROR)
+			return XFS_ERROR(EIO);
+		*log_flushed = 1;
+	} else {		/* just return */
+		LOG_UNLOCK(log, s);
+	}
+	return 0;
+
+    } while (iclog != log->l_iclog);
+
+    LOG_UNLOCK(log, s);
+    return 0;
+}	/* xlog_state_sync */
+
 
 /*
  * Called when we want to mark the current iclog as being ready to sync to
  * disk.
  */
-STATIC void
+void
 xlog_state_want_sync(xlog_t *log, xlog_in_core_t *iclog)
 {
-	assert_spin_locked(&log->l_icloglock);
+	SPLDECL(s);
+
+	s = LOG_LOCK(log);
 
 	if (iclog->ic_state == XLOG_STATE_ACTIVE) {
 		xlog_state_switch_iclogs(log, iclog, 0);
@@ -3122,7 +3145,10 @@ xlog_state_want_sync(xlog_t *log, xlog_in_core_t *iclog)
 		ASSERT(iclog->ic_state &
 			(XLOG_STATE_WANT_SYNC|XLOG_STATE_IOERROR));
 	}
-}
+
+	LOG_UNLOCK(log, s);
+}	/* xlog_state_want_sync */
+
 
 
 /*****************************************************************************
@@ -3133,33 +3159,96 @@ xlog_state_want_sync(xlog_t *log, xlog_in_core_t *iclog)
  */
 
 /*
- * Free a used ticket when its refcount falls to zero.
+ *	Algorithm doesn't take into account page size. ;-(
  */
-void
-xfs_log_ticket_put(
-	xlog_ticket_t	*ticket)
+STATIC void
+xlog_state_ticket_alloc(xlog_t *log)
 {
-	ASSERT(atomic_read(&ticket->t_ref) > 0);
-	if (atomic_dec_and_test(&ticket->t_ref)) {
-		sv_destroy(&ticket->t_wait);
-		kmem_zone_free(xfs_log_ticket_zone, ticket);
-	}
-}
+	xlog_ticket_t	*t_list;
+	xlog_ticket_t	*next;
+	xfs_caddr_t	buf;
+	uint		i = (NBPP / sizeof(xlog_ticket_t)) - 2;
+	SPLDECL(s);
 
-xlog_ticket_t *
-xfs_log_ticket_get(
-	xlog_ticket_t	*ticket)
-{
-	ASSERT(atomic_read(&ticket->t_ref) > 0);
-	atomic_inc(&ticket->t_ref);
-	return ticket;
-}
+	/*
+	 * The kmem_zalloc may sleep, so we shouldn't be holding the
+	 * global lock.  XXXmiken: may want to use zone allocator.
+	 */
+	buf = (xfs_caddr_t) kmem_zalloc(NBPP, KM_SLEEP);
+
+	s = LOG_LOCK(log);
+
+	/* Attach 1st ticket to Q, so we can keep track of allocated memory */
+	t_list = (xlog_ticket_t *)buf;
+	t_list->t_next = log->l_unmount_free;
+	log->l_unmount_free = t_list++;
+	log->l_ticket_cnt++;
+	log->l_ticket_tcnt++;
+
+	/* Next ticket becomes first ticket attached to ticket free list */
+	if (log->l_freelist != NULL) {
+		ASSERT(log->l_tail != NULL);
+		log->l_tail->t_next = t_list;
+	} else {
+		log->l_freelist = t_list;
+	}
+	log->l_ticket_cnt++;
+	log->l_ticket_tcnt++;
+
+	/* Cycle through rest of alloc'ed memory, building up free Q */
+	for ( ; i > 0; i--) {
+		next = t_list + 1;
+		t_list->t_next = next;
+		t_list = next;
+		log->l_ticket_cnt++;
+		log->l_ticket_tcnt++;
+	}
+	t_list->t_next = NULL;
+	log->l_tail = t_list;
+	LOG_UNLOCK(log, s);
+}	/* xlog_state_ticket_alloc */
+
 
 /*
- * Allocate and initialise a new log ticket.
+ * Put ticket into free list
+ *
+ * Assumption: log lock is held around this call.
  */
-STATIC xlog_ticket_t *
-xlog_ticket_alloc(xlog_t		*log,
+STATIC void
+xlog_ticket_put(xlog_t		*log,
+		xlog_ticket_t	*ticket)
+{
+	sv_destroy(&ticket->t_sema);
+
+	/*
+	 * Don't think caching will make that much difference.  It's
+	 * more important to make debug easier.
+	 */
+#if 0
+	/* real code will want to use LIFO for caching */
+	ticket->t_next = log->l_freelist;
+	log->l_freelist = ticket;
+	/* no need to clear fields */
+#else
+	/* When we debug, it is easier if tickets are cycled */
+	ticket->t_next     = NULL;
+	if (log->l_tail != 0) {
+		log->l_tail->t_next = ticket;
+	} else {
+		ASSERT(log->l_freelist == 0);
+		log->l_freelist = ticket;
+	}
+	log->l_tail	    = ticket;
+#endif /* DEBUG */
+	log->l_ticket_cnt++;
+}	/* xlog_ticket_put */
+
+
+/*
+ * Grab ticket off freelist or allocation some more
+ */
+xlog_ticket_t *
+xlog_ticket_get(xlog_t		*log,
 		int		unit_bytes,
 		int		cnt,
 		char		client,
@@ -3167,10 +3256,23 @@ xlog_ticket_alloc(xlog_t		*log,
 {
 	xlog_ticket_t	*tic;
 	uint		num_headers;
+	SPLDECL(s);
 
-	tic = kmem_zone_zalloc(xfs_log_ticket_zone, KM_SLEEP|KM_MAYFAIL);
-	if (!tic)
-		return NULL;
+ alloc:
+	if (log->l_freelist == NULL)
+		xlog_state_ticket_alloc(log);		/* potentially sleep */
+
+	s = LOG_LOCK(log);
+	if (log->l_freelist == NULL) {
+		LOG_UNLOCK(log, s);
+		goto alloc;
+	}
+	tic		= log->l_freelist;
+	log->l_freelist	= tic->t_next;
+	if (log->l_freelist == NULL)
+		log->l_tail = NULL;
+	log->l_ticket_cnt--;
+	LOG_UNLOCK(log, s);
 
 	/*
 	 * Permanent reservations have up to 'cnt'-1 active log operations
@@ -3221,7 +3323,7 @@ xlog_ticket_alloc(xlog_t		*log,
 	unit_bytes += sizeof(xlog_op_header_t) * num_headers;
 
 	/* for roundoff padding for transaction data and one for commit record */
-	if (xfs_sb_version_haslogv2(&log->l_mp->m_sb) &&
+	if (XFS_SB_VERSION_HASLOGV2(&log->l_mp->m_sb) &&
 	    log->l_mp->m_sb.sb_logsunit > 1) {
 		/* log su roundoff */
 		unit_bytes += 2*log->l_mp->m_sb.sb_logsunit;
@@ -3230,7 +3332,6 @@ xlog_ticket_alloc(xlog_t		*log,
 		unit_bytes += 2*BBSIZE;
         }
 
-	atomic_set(&tic->t_ref, 1);
 	tic->t_unit_res		= unit_bytes;
 	tic->t_curr_res		= unit_bytes;
 	tic->t_cnt		= cnt;
@@ -3241,12 +3342,12 @@ xlog_ticket_alloc(xlog_t		*log,
 	tic->t_trans_type	= 0;
 	if (xflags & XFS_LOG_PERM_RESERV)
 		tic->t_flags |= XLOG_TIC_PERM_RESERV;
-	sv_init(&(tic->t_wait), SV_DEFAULT, "logtick");
+	sv_init(&(tic->t_sema), SV_DEFAULT, "logtick");
 
-	xlog_tic_reset_res(tic);
+	XLOG_TIC_RESET_RES(tic);
 
 	return tic;
-}
+}	/* xlog_ticket_get */
 
 
 /******************************************************************************
@@ -3346,36 +3447,37 @@ xlog_verify_iclog(xlog_t	 *log,
 	__uint8_t		clientid;
 	int			len, i, j, k, op_len;
 	int			idx;
+	SPLDECL(s);
 
 	/* check validity of iclog pointers */
-	spin_lock(&log->l_icloglock);
+	s = LOG_LOCK(log);
 	icptr = log->l_iclog;
 	for (i=0; i < log->l_iclog_bufs; i++) {
-		if (icptr == NULL)
+		if (icptr == 0)
 			xlog_panic("xlog_verify_iclog: invalid ptr");
 		icptr = icptr->ic_next;
 	}
 	if (icptr != log->l_iclog)
 		xlog_panic("xlog_verify_iclog: corrupt iclog ring");
-	spin_unlock(&log->l_icloglock);
+	LOG_UNLOCK(log, s);
 
 	/* check log magic numbers */
-	if (be32_to_cpu(iclog->ic_header.h_magicno) != XLOG_HEADER_MAGIC_NUM)
+	ptr = (xfs_caddr_t) &(iclog->ic_header);
+	if (INT_GET(*(uint *)ptr, ARCH_CONVERT) != XLOG_HEADER_MAGIC_NUM)
 		xlog_panic("xlog_verify_iclog: invalid magic num");
 
-	ptr = (xfs_caddr_t) &iclog->ic_header;
-	for (ptr += BBSIZE; ptr < ((xfs_caddr_t)&iclog->ic_header) + count;
+	for (ptr += BBSIZE; ptr < ((xfs_caddr_t)&(iclog->ic_header))+count;
 	     ptr += BBSIZE) {
-		if (be32_to_cpu(*(__be32 *)ptr) == XLOG_HEADER_MAGIC_NUM)
+		if (INT_GET(*(uint *)ptr, ARCH_CONVERT) == XLOG_HEADER_MAGIC_NUM)
 			xlog_panic("xlog_verify_iclog: unexpected magic num");
 	}
 
 	/* check fields */
-	len = be32_to_cpu(iclog->ic_header.h_num_logops);
+	len = INT_GET(iclog->ic_header.h_num_logops, ARCH_CONVERT);
 	ptr = iclog->ic_datap;
 	base_ptr = ptr;
 	ophead = (xlog_op_header_t *)ptr;
-	xhdr = iclog->ic_data;
+	xhdr = (xlog_in_core_2_t *)&iclog->ic_header;
 	for (i = 0; i < len; i++) {
 		ophead = (xlog_op_header_t *)ptr;
 
@@ -3389,11 +3491,9 @@ xlog_verify_iclog(xlog_t	 *log,
 			if (idx >= (XLOG_HEADER_CYCLE_SIZE / BBSIZE)) {
 				j = idx / (XLOG_HEADER_CYCLE_SIZE / BBSIZE);
 				k = idx % (XLOG_HEADER_CYCLE_SIZE / BBSIZE);
-				clientid = xlog_get_client_id(
-					xhdr[j].hic_xheader.xh_cycle_data[k]);
+				clientid = GET_CLIENT_ID(xhdr[j].hic_xheader.xh_cycle_data[k], ARCH_CONVERT);
 			} else {
-				clientid = xlog_get_client_id(
-					iclog->ic_header.h_cycle_data[idx]);
+				clientid = GET_CLIENT_ID(iclog->ic_header.h_cycle_data[idx], ARCH_CONVERT);
 			}
 		}
 		if (clientid != XFS_TRANSACTION && clientid != XFS_LOG)
@@ -3405,16 +3505,16 @@ xlog_verify_iclog(xlog_t	 *log,
 		field_offset = (__psint_t)
 			       ((xfs_caddr_t)&(ophead->oh_len) - base_ptr);
 		if (syncing == B_FALSE || (field_offset & 0x1ff)) {
-			op_len = be32_to_cpu(ophead->oh_len);
+			op_len = INT_GET(ophead->oh_len, ARCH_CONVERT);
 		} else {
 			idx = BTOBBT((__psint_t)&ophead->oh_len -
 				    (__psint_t)iclog->ic_datap);
 			if (idx >= (XLOG_HEADER_CYCLE_SIZE / BBSIZE)) {
 				j = idx / (XLOG_HEADER_CYCLE_SIZE / BBSIZE);
 				k = idx % (XLOG_HEADER_CYCLE_SIZE / BBSIZE);
-				op_len = be32_to_cpu(xhdr[j].hic_xheader.xh_cycle_data[k]);
+				op_len = INT_GET(xhdr[j].hic_xheader.xh_cycle_data[k], ARCH_CONVERT);
 			} else {
-				op_len = be32_to_cpu(iclog->ic_header.h_cycle_data[idx]);
+				op_len = INT_GET(iclog->ic_header.h_cycle_data[idx], ARCH_CONVERT);
 			}
 		}
 		ptr += sizeof(xlog_op_header_t) + op_len;
@@ -3423,7 +3523,7 @@ xlog_verify_iclog(xlog_t	 *log,
 #endif
 
 /*
- * Mark all iclogs IOERROR. l_icloglock is held by the caller.
+ * Mark all iclogs IOERROR. LOG_LOCK is held by the caller.
  */
 STATIC int
 xlog_state_ioerror(
@@ -3470,6 +3570,9 @@ xfs_log_force_umount(
 	xlog_ticket_t	*tic;
 	xlog_t		*log;
 	int		retval;
+	int		dummy;
+	SPLDECL(s);
+	SPLDECL(s2);
 
 	log = mp->m_log;
 
@@ -3480,8 +3583,7 @@ xfs_log_force_umount(
 	if (!log ||
 	    log->l_flags & XLOG_ACTIVE_RECOVERY) {
 		mp->m_flags |= XFS_MOUNT_FS_SHUTDOWN;
-		if (mp->m_sb_bp)
-			XFS_BUF_DONE(mp->m_sb_bp);
+		XFS_BUF_DONE(mp->m_sb_bp);
 		return 0;
 	}
 
@@ -3499,12 +3601,10 @@ xfs_log_force_umount(
 	 * before we mark the filesystem SHUTDOWN and wake
 	 * everybody up to tell the bad news.
 	 */
-	spin_lock(&log->l_icloglock);
-	spin_lock(&log->l_grant_lock);
+	s = GRANT_LOCK(log);
+	s2 = LOG_LOCK(log);
 	mp->m_flags |= XFS_MOUNT_FS_SHUTDOWN;
-	if (mp->m_sb_bp)
-		XFS_BUF_DONE(mp->m_sb_bp);
-
+	XFS_BUF_DONE(mp->m_sb_bp);
 	/*
 	 * This flag is sort of redundant because of the mount flag, but
 	 * it's good to maintain the separation between the log and the rest
@@ -3518,7 +3618,7 @@ xfs_log_force_umount(
 	 */
 	if (logerror)
 		retval = xlog_state_ioerror(log);
-	spin_unlock(&log->l_icloglock);
+	LOG_UNLOCK(log, s2);
 
 	/*
 	 * We don't want anybody waiting for log reservations
@@ -3530,30 +3630,29 @@ xfs_log_force_umount(
 	 */
 	if ((tic = log->l_reserve_headq)) {
 		do {
-			sv_signal(&tic->t_wait);
+			sv_signal(&tic->t_sema);
 			tic = tic->t_next;
 		} while (tic != log->l_reserve_headq);
 	}
 
 	if ((tic = log->l_write_headq)) {
 		do {
-			sv_signal(&tic->t_wait);
+			sv_signal(&tic->t_sema);
 			tic = tic->t_next;
 		} while (tic != log->l_write_headq);
 	}
-	spin_unlock(&log->l_grant_lock);
+	GRANT_UNLOCK(log, s);
 
-	if (!(log->l_iclog->ic_state & XLOG_STATE_IOERROR)) {
+	if (! (log->l_iclog->ic_state & XLOG_STATE_IOERROR)) {
 		ASSERT(!logerror);
 		/*
 		 * Force the incore logs to disk before shutting the
 		 * log down completely.
 		 */
-		_xfs_log_force(mp, XFS_LOG_SYNC, NULL);
-
-		spin_lock(&log->l_icloglock);
+		xlog_state_sync_all(log, XFS_LOG_FORCE|XFS_LOG_SYNC, &dummy);
+		s2 = LOG_LOCK(log);
 		retval = xlog_state_ioerror(log);
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s2);
 	}
 	/*
 	 * Wake up everybody waiting on xfs_log_force.
@@ -3566,13 +3665,13 @@ xfs_log_force_umount(
 	{
 		xlog_in_core_t	*iclog;
 
-		spin_lock(&log->l_icloglock);
+		s = LOG_LOCK(log);
 		iclog = log->l_iclog;
 		do {
 			ASSERT(iclog->ic_callback == 0);
 			iclog = iclog->ic_next;
 		} while (iclog != log->l_iclog);
-		spin_unlock(&log->l_icloglock);
+		LOG_UNLOCK(log, s);
 	}
 #endif
 	/* return non-zero if log IOERROR transition had already happened */

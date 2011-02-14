@@ -277,7 +277,7 @@ struct i596_rbd {
 	phys_addr pa_next;	/* va_to_pa(struct i596_tbd *next) */
 	phys_addr pa_data;	/* va_to_pa(char *data) */
 	phys_addr pa_prev;	/* va_to_pa(struct i596_tbd *prev) */
-
+	
 	/* Driver private part */
 	struct sk_buff *skb;
 };
@@ -350,6 +350,7 @@ struct i596_private {		/* aligned to a 16-byte boundary */
 	struct i596_cmd *cmd_head;
 	int cmd_backlog;
 	unsigned long last_cmd;
+	struct net_device_stats stats;
 	spinlock_t cmd_lock;
 };
 
@@ -377,9 +378,10 @@ static char init_setup[14] = {
 };
 
 static int i596_open(struct net_device *dev);
-static netdev_tx_t i596_start_xmit(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t i596_interrupt(int irq, void *dev_id);
+static int i596_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 static int i596_close(struct net_device *dev);
+static struct net_device_stats *i596_get_stats(struct net_device *dev);
 static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd);
 static void print_eth(char *);
 static void set_multicast_list(struct net_device *dev);
@@ -390,7 +392,7 @@ i596_timeout(struct net_device *dev, char *msg, int ct) {
 	struct i596_private *lp;
 	int boguscnt = ct;
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	while (lp->scb.command) {
 		if (--boguscnt == 0) {
 			printk("%s: %s timed out - stat %4.4x, cmd %4.4x\n",
@@ -411,7 +413,7 @@ init_rx_bufs(struct net_device *dev, int num) {
 	int i;
 	// struct i596_rbd *rbd;
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	lp->scb.pa_rfd = I596_NULL;
 
 	for (i = 0; i < num; i++) {
@@ -440,16 +442,16 @@ init_rx_bufs(struct net_device *dev, int num) {
 		if (rbd) {
 			rbd->pad = 0;
 			rbd->count = 0;
-			rbd->skb = dev_alloc_skb(RX_SKBSIZE);
+			rbd->skb = dev_alloc_skb(RX_SKB_SIZE);
 			if (!rbd->skb) {
 				printk("dev_alloc_skb failed");
 			}
 			rbd->next = rfd->rbd;
 			if (i) {
 				rfd->rbd->prev = rbd;
-				rbd->size = RX_SKBSIZE;
+				rbd->size = RX_SKB_SIZE;
 			} else {
-				rbd->size = (RX_SKBSIZE | RBD_EL);
+				rbd->size = (RX_SKB_SIZE | RBD_EL);
 				lp->rbd_tail = rbd;
 			}
 
@@ -468,7 +470,7 @@ remove_rx_bufs(struct net_device *dev) {
 	struct i596_private *lp;
 	struct i596_rfd *rfd;
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	lp->rx_tail->pa_next = I596_NULL;
 
 	do {
@@ -513,11 +515,13 @@ CLEAR_INT(void) {
 	outb(0, IOADDR+8);
 }
 
+#define SIZE(x)	(sizeof(x)/sizeof((x)[0]))
+
 #if 0
 /* selftest or dump */
 static void
 i596_port_do(struct net_device *dev, int portcmd, char *cmdname) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 	u16 *outp;
 	int i, m;
 
@@ -528,7 +532,7 @@ i596_port_do(struct net_device *dev, int portcmd, char *cmdname) {
 	mdelay(30);             /* random, unmotivated */
 
 	printk("lp486e i82596 %s result:\n", cmdname);
-	for (m = ARRAY_SIZE(lp->dump.dump); m && lp->dump.dump[m-1] == 0; m--)
+	for (m = SIZE(lp->dump.dump); m && lp->dump.dump[m-1] == 0; m--)
 		;
 	for (i = 0; i < m; i++) {
 		printk(" %04x", lp->dump.dump[i]);
@@ -541,7 +545,7 @@ i596_port_do(struct net_device *dev, int portcmd, char *cmdname) {
 
 static int
 i596_scp_setup(struct net_device *dev) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 	int boguscnt;
 
 	/* Setup SCP, ISCP, SCB */
@@ -622,7 +626,7 @@ init_i596(struct net_device *dev) {
 	if (i596_scp_setup(dev))
 		return 1;
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	lp->scb.command = 0;
 
 	memcpy ((void *)lp->i596_config, init_setup, 14);
@@ -643,7 +647,7 @@ init_i596(struct net_device *dev) {
 	CA();
 
 	barrier();
-
+	
 	if (lp->scb.command && i596_timeout(dev, "Receive Unit start", 100))
 		return 1;
 
@@ -668,35 +672,37 @@ i596_rx_one(struct net_device *dev, struct i596_private *lp,
 		if (skb == NULL) {
 			printk ("%s: i596_rx Memory squeeze, "
 				"dropping packet.\n", dev->name);
-			dev->stats.rx_dropped++;
+			lp->stats.rx_dropped++;
 			return 1;
 		}
 
+		skb->dev = dev;		
 		memcpy(skb_put(skb,pkt_len), rfd->data, pkt_len);
 
 		skb->protocol = eth_type_trans(skb,dev);
 		netif_rx(skb);
-		dev->stats.rx_packets++;
+		dev->last_rx = jiffies;
+		lp->stats.rx_packets++;
 	} else {
 #if 0
 		printk("Frame reception error status %04x\n",
 		       rfd->stat);
 #endif
-		dev->stats.rx_errors++;
+		lp->stats.rx_errors++;
 		if (rfd->stat & RFD_COLLISION)
-			dev->stats.collisions++;
+			lp->stats.collisions++;
 		if (rfd->stat & RFD_SHORT_FRAME_ERR)
-			dev->stats.rx_length_errors++;
+			lp->stats.rx_length_errors++;
 		if (rfd->stat & RFD_DMA_ERR)
-			dev->stats.rx_over_errors++;
+			lp->stats.rx_over_errors++;
 		if (rfd->stat & RFD_NOBUFS_ERR)
-			dev->stats.rx_fifo_errors++;
+			lp->stats.rx_fifo_errors++;
 		if (rfd->stat & RFD_ALIGN_ERR)
-			dev->stats.rx_frame_errors++;
+			lp->stats.rx_frame_errors++;
 		if (rfd->stat & RFD_CRC_ERR)
-			dev->stats.rx_crc_errors++;
+			lp->stats.rx_crc_errors++;
 		if (rfd->stat & RFD_LENGTH_ERR)
-			dev->stats.rx_length_errors++;
+			lp->stats.rx_length_errors++;
 	}
 	rfd->stat = rfd->count = 0;
 	return 0;
@@ -704,7 +710,7 @@ i596_rx_one(struct net_device *dev, struct i596_private *lp,
 
 static int
 i596_rx(struct net_device *dev) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = (struct i596_private *) dev->priv;
 	struct i596_rfd *rfd;
 	int frames = 0;
 
@@ -737,7 +743,7 @@ i596_cleanup_cmd(struct net_device *dev) {
 	struct i596_private *lp;
 	struct i596_cmd *cmd;
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	while (lp->cmd_head) {
 		cmd = (struct i596_cmd *)lp->cmd_head;
 
@@ -752,8 +758,8 @@ i596_cleanup_cmd(struct net_device *dev) {
 
 				dev_kfree_skb_any(tx_cmd_tbd->skb);
 
-				dev->stats.tx_errors++;
-				dev->stats.tx_aborted_errors++;
+				lp->stats.tx_errors++;
+				lp->stats.tx_aborted_errors++;
 
 				cmd->pa_next = I596_NULL;
 				kfree((unsigned char *)tx_cmd);
@@ -791,7 +797,7 @@ static void i596_reset(struct net_device *dev, struct i596_private *lp, int ioad
 	lp->scb.command = CUC_ABORT | RX_ABORT;
 	CA();
 	barrier();
-
+	
 	/* wait for shutdown */
 	if (lp->scb.command && i596_timeout(dev, "i596_reset(2)", 400))
 		;
@@ -805,7 +811,7 @@ static void i596_reset(struct net_device *dev, struct i596_private *lp, int ioad
 }
 
 static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 	int ioaddr = dev->base_addr;
 	unsigned long flags;
 
@@ -814,7 +820,7 @@ static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd) {
 	cmd->pa_next = I596_NULL;
 
 	spin_lock_irqsave(&lp->cmd_lock, flags);
-
+	
 	if (lp->cmd_head) {
 		lp->cmd_tail->pa_next = va_to_pa(cmd);
 	} else {
@@ -841,7 +847,7 @@ static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd) {
 	}
 }
 
-static int i596_open(struct net_device *dev)
+static int i596_open(struct net_device *dev) 
 {
 	int i;
 
@@ -863,24 +869,25 @@ static int i596_open(struct net_device *dev)
 	return 0;			/* Always succeed */
 }
 
-static netdev_tx_t i596_start_xmit (struct sk_buff *skb, struct net_device *dev) {
+static int i596_start_xmit (struct sk_buff *skb, struct net_device *dev) {
+	struct i596_private *lp = dev->priv;
 	struct tx_cmd *tx_cmd;
 	short length;
 
 	length = skb->len;
-
+	
 	if (length < ETH_ZLEN) {
 		if (skb_padto(skb, ETH_ZLEN))
-			return NETDEV_TX_OK;
+			return 0;
 		length = ETH_ZLEN;
 	}
-
+	
 	dev->trans_start = jiffies;
 
-	tx_cmd = kmalloc((sizeof (struct tx_cmd) + sizeof (struct i596_tbd)), GFP_ATOMIC);
+	tx_cmd = (struct tx_cmd *) kmalloc ((sizeof (struct tx_cmd) + sizeof (struct i596_tbd)), GFP_ATOMIC);
 	if (tx_cmd == NULL) {
 		printk(KERN_WARNING "%s: i596_xmit Memory squeeze, dropping packet.\n", dev->name);
-		dev->stats.tx_dropped++;
+		lp->stats.tx_dropped++;
 		dev_kfree_skb (skb);
 	} else {
 		struct i596_tbd *tx_cmd_tbd;
@@ -903,23 +910,23 @@ static netdev_tx_t i596_start_xmit (struct sk_buff *skb, struct net_device *dev)
 
 		i596_add_cmd (dev, (struct i596_cmd *) tx_cmd);
 
-		dev->stats.tx_packets++;
+		lp->stats.tx_packets++;
 	}
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 static void
 i596_tx_timeout (struct net_device *dev) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 	int ioaddr = dev->base_addr;
 
 	/* Transmitter timeout, serious problems. */
 	printk(KERN_WARNING "%s: transmit timed out, status resetting.\n", dev->name);
-	dev->stats.tx_errors++;
+	lp->stats.tx_errors++;
 
 	/* Try to restart the adaptor */
-	if (lp->last_restart == dev->stats.tx_packets) {
+	if (lp->last_restart == lp->stats.tx_packets) {
 		printk ("Resetting board.\n");
 
 		/* Shutdown and restart */
@@ -929,12 +936,12 @@ i596_tx_timeout (struct net_device *dev) {
 		printk ("Kicking board.\n");
 		lp->scb.command = (CUC_START | RX_START);
 		CA();
-		lp->last_restart = dev->stats.tx_packets;
+		lp->last_restart = lp->stats.tx_packets;
 	}
 	netif_wake_queue(dev);
 }
 
-static void print_eth(char *add)
+static void print_eth(char *add) 
 {
 	int i;
 
@@ -951,17 +958,6 @@ static void print_eth(char *add)
 	printk ("type %2.2X%2.2X\n",
 		(unsigned char) add[12], (unsigned char) add[13]);
 }
-
-static const struct net_device_ops i596_netdev_ops = {
-	.ndo_open		= i596_open,
-	.ndo_stop		= i596_close,
-	.ndo_start_xmit		= i596_start_xmit,
-	.ndo_set_multicast_list = set_multicast_list,
-	.ndo_tx_timeout		= i596_tx_timeout,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_validate_addr	= eth_validate_addr,
-};
 
 static int __init lp486e_probe(struct net_device *dev) {
 	struct i596_private *lp;
@@ -980,9 +976,9 @@ static int __init lp486e_probe(struct net_device *dev) {
 		return -EBUSY;
 	}
 
-	lp = netdev_priv(dev);
+	lp = (struct i596_private *) dev->priv;
 	spin_lock_init(&lp->cmd_lock);
-
+	
 	/*
 	 * Do we really have this thing?
 	 */
@@ -1025,8 +1021,13 @@ static int __init lp486e_probe(struct net_device *dev) {
 	printk("\n");
 
 	/* The LP486E-specific entries in the device structure. */
-	dev->netdev_ops = &i596_netdev_ops;
+	dev->open = &i596_open;
+	dev->stop = &i596_close;
+	dev->hard_start_xmit = &i596_start_xmit;
+	dev->get_stats = &i596_get_stats;
+	dev->set_multicast_list = &set_multicast_list;
 	dev->watchdog_timeo = 5*HZ;
+	dev->tx_timeout = i596_tx_timeout;
 
 #if 0
 	/* selftest reports 0x320925ae - don't know what that means */
@@ -1080,20 +1081,20 @@ i596_handle_CU_completion(struct net_device *dev,
 				if (i596_debug)
 					print_eth(pa_to_va(tx_cmd_tbd->pa_data));
 			} else {
-				dev->stats.tx_errors++;
+				lp->stats.tx_errors++;
 				if (i596_debug)
 					printk("transmission failure:%04x\n",
 					       cmd->status);
 				if (cmd->status & 0x0020)
-					dev->stats.collisions++;
+					lp->stats.collisions++;
 				if (!(cmd->status & 0x0040))
-					dev->stats.tx_heartbeat_errors++;
+					lp->stats.tx_heartbeat_errors++;
 				if (cmd->status & 0x0400)
-					dev->stats.tx_carrier_errors++;
+					lp->stats.tx_carrier_errors++;
 				if (cmd->status & 0x0800)
-					dev->stats.collisions++;
+					lp->stats.collisions++;
 				if (cmd->status & 0x1000)
-					dev->stats.tx_aborted_errors++;
+					lp->stats.tx_aborted_errors++;
 			}
 			dev_kfree_skb_irq(tx_cmd_tbd->skb);
 
@@ -1131,7 +1132,7 @@ i596_handle_CU_completion(struct net_device *dev,
 		default:
 			cmd->pa_next = I596_NULL;
 			lp->last_cmd = jiffies;
-
+			
 		}
 		barrier();
 	}
@@ -1150,12 +1151,13 @@ i596_handle_CU_completion(struct net_device *dev,
 }
 
 static irqreturn_t
-i596_interrupt(int irq, void *dev_instance)
-{
-	struct net_device *dev = dev_instance;
-	struct i596_private *lp = netdev_priv(dev);
+i596_interrupt (int irq, void *dev_instance, struct pt_regs *regs) {
+	struct net_device *dev = (struct net_device *) dev_instance;
+	struct i596_private *lp;
 	unsigned short status, ack_cmd = 0;
 	int frames_in = 0;
+
+	lp = (struct i596_private *) dev->priv;
 
 	/*
 	 * The 82596 examines the command, performs the required action,
@@ -1221,7 +1223,7 @@ i596_interrupt(int irq, void *dev_instance)
 }
 
 static int i596_close(struct net_device *dev) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 
 	netif_stop_queue(dev);
 
@@ -1243,12 +1245,18 @@ static int i596_close(struct net_device *dev) {
 	return 0;
 }
 
+static struct net_device_stats * i596_get_stats(struct net_device *dev) {
+	struct i596_private *lp = dev->priv;
+
+	return &lp->stats;
+}
+
 /*
 *	Set or clear the multicast filter for this adaptor.
 */
 
 static void set_multicast_list(struct net_device *dev) {
-	struct i596_private *lp = netdev_priv(dev);
+	struct i596_private *lp = dev->priv;
 	struct i596_cmd *cmd;
 
 	if (i596_debug > 1)
@@ -1258,7 +1266,7 @@ static void set_multicast_list(struct net_device *dev) {
 	if (dev->mc_count > 0) {
 		struct dev_mc_list *dmi;
 		char *cp;
-		cmd = kmalloc(sizeof(struct i596_cmd)+2+dev->mc_count*6, GFP_ATOMIC);
+		cmd = (struct i596_cmd *)kmalloc(sizeof(struct i596_cmd)+2+dev->mc_count*6, GFP_ATOMIC);
 		if (cmd == NULL) {
 			printk (KERN_ERR "%s: set_multicast Memory squeeze.\n", dev->name);
 			return;
@@ -1278,6 +1286,8 @@ static void set_multicast_list(struct net_device *dev) {
 			return;
 		}
 		if (dev->mc_count == 0 && !(dev->flags & (IFF_PROMISC | IFF_ALLMULTI))) {
+			if (dev->flags & IFF_ALLMULTI)
+				dev->flags |= IFF_PROMISC;
 			lp->i596_config[8] &= ~0x01;
 		} else {
 			lp->i596_config[8] |= 0x01;

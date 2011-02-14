@@ -1,0 +1,45 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 15 Aug 2008 10:14:55 -0400
+Subject: [x86] acpi: prevent resources from corrupting memory
+Message-id: 20080815141208.30307.97133.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: Prevent ACPI resources from corrupting memory
+Bugzilla: 458988
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=3d9befd2cdf65b1768b0d3078a65cc0ae9aa6412
+
+Prevent ACPI resources from overrunning an array and corrupting memory.  This
+causes some systems to crash.
+
+Compiled and boot tested by me.  Tested by customer.
+
+Resolves BZ 458988.
+
+diff --git a/arch/i386/pci/acpi.c b/arch/i386/pci/acpi.c
+index 1151a06..cae88fe 100644
+--- a/arch/i386/pci/acpi.c
++++ b/arch/i386/pci/acpi.c
+@@ -77,6 +77,9 @@ count_resource(struct acpi_resource *acpi_res, void *data)
+ 	struct acpi_resource_address64 addr;
+ 	acpi_status status;
+ 
++	if (info->res_num >= PCI_BUS_NUM_RESOURCES)
++		return AE_OK;
++
+ 	status = resource_to_addr(acpi_res, &addr);
+ 	if (ACPI_SUCCESS(status))
+ 		info->res_num++;
+@@ -93,6 +96,9 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
+ 	unsigned long flags;
+ 	struct resource *root;
+ 
++	if (info->res_num >= PCI_BUS_NUM_RESOURCES)
++		return AE_OK;
++
+ 	status = resource_to_addr(acpi_res, &addr);
+ 	if (!ACPI_SUCCESS(status))
+ 		return AE_OK;

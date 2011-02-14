@@ -1,0 +1,124 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 18 Dec 2007 12:33:31 +0100
+Subject: [misc] offlining a CPU with realtime process running
+Message-id: 20071218123331.30567648@hammerfall
+O-Subject: Re: [RHEL5.2 PATCH] offlining a CPU with a realtime process running
+Bugzilla: 240232
+
+Dne Sun, 16 Dec 2007 18:09:40 +0100
+Michal Schmidt <mschmidt@redhat.com> napsal(a):
+
+With more testing I discovered the fix was not perfect. While the
+reliability of CPU offlining improved considerably with the fix,
+occasionaly it still hung. A script putting CPUs offline and back
+online in a loop could hit it in a few seconds.
+
+Description:
+The problem is with kthread workqueue thread, the creator of other
+kernel threads. It runs as a normal priority task. There is a potential
+for priority inversion when a task wants to spawn a high-priority kernel
+thread. A middle priority SCHED_FIFO task can block kthread's
+execution indefinitely and thus prevent the timely creation of the
+high-priority kernel thread.
+
+In this case, when a runaway real-time task is eating 100% CPU and we
+attempt to put the CPU offline, sometimes we block while waiting for
+the creation of the highest-priority "kstopmachine" thread.
+
+Proposed fix:
+The fix is to run kthread with the highest possible SCHED_FIFO
+priority. Its children must still run as slightly negatively reniced
+SCHED_NORMAL tasks.
+
+Upstream status:
+I sent a similar fix upstream:
+http://www.ussg.iu.edu/hypermail/linux/kernel/0712.2/0683.html
+It's not merged yet.
+The patch is a bit different because upstream changed kthread from
+workqueue to a specialized kthreadd thread.
+
+kABI:
+No symbols harmed. The changed priority of kthread is noticeable from
+userspace, but I don't see how that could affect anything badly.
+
+Testing:
+I successfully tested it by taking CPUs offline and back online
+many thousands of times on a ia64 machine in RHTS.
+
+Please ACK this additional patch for the bug too.
+
+Thanks,
+Michal
+
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/include/linux/workqueue.h b/include/linux/workqueue.h
+index bf62923..20a73d8 100644
+--- a/include/linux/workqueue.h
++++ b/include/linux/workqueue.h
+@@ -103,4 +103,8 @@ static inline int delayed_work_pending(struct work_struct *work)
+ 	return test_bit(0, &work->pending);
+ }
+ 
++struct sched_param;
++extern int workqueue_setscheduler(struct workqueue_struct *wq, int policy,
++				  struct sched_param *param);
++
+ #endif
+diff --git a/kernel/kthread.c b/kernel/kthread.c
+index 4f9c60e..48a2e3b 100644
+--- a/kernel/kthread.c
++++ b/kernel/kthread.c
+@@ -121,10 +121,17 @@ static void keventd_create_kthread(void *_create)
+ 	if (pid < 0) {
+ 		create->result = ERR_PTR(pid);
+ 	} else {
++		struct sched_param param = { .sched_priority = 0 };
+ 		wait_for_completion(&create->started);
+ 		read_lock(&tasklist_lock);
+ 		create->result = find_task_by_pid(pid);
+ 		read_unlock(&tasklist_lock);
++		/*
++		 * We (the kthread wq) run with SCHED_FIFO, but we don't want
++		 * the kthreads we create to have it too by default.
++		 */
++		sched_setscheduler(create->result, SCHED_NORMAL, &param);
++		set_user_nice(create->result, -5);
+ 	}
+ 	complete(&create->done);
+ }
+@@ -244,8 +251,11 @@ EXPORT_SYMBOL(kthread_stop);
+ 
+ static __init int helper_init(void)
+ {
++	struct sched_param param = { .sched_priority = MAX_RT_PRIO - 1 };
++
+ 	helper_wq = create_singlethread_workqueue("kthread");
+ 	BUG_ON(!helper_wq);
++	workqueue_setscheduler(helper_wq, SCHED_FIFO, &param);
+ 
+ 	return 0;
+ }
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 8594efb..270969e 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -688,6 +688,18 @@ static int __devinit workqueue_cpu_callback(struct notifier_block *nfb,
+ }
+ #endif
+ 
++int workqueue_setscheduler(struct workqueue_struct *wq, int policy,
++			   struct sched_param *param)
++{
++	struct task_struct *t;
++
++	/* the only user of this (kthread.c) uses a singlethreaded wq */
++	BUG_ON(!is_single_threaded(wq));
++
++	t = per_cpu_ptr(wq->cpu_wq, singlethread_cpu)->thread;
++	return sched_setscheduler(t, policy, param);
++}
++
+ void init_workqueues(void)
+ {
+ 	singlethread_cpu = first_cpu(cpu_possible_map);

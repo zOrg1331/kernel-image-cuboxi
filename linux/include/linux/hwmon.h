@@ -16,9 +16,9 @@
 
 #include <linux/device.h>
 
-struct device *hwmon_device_register(struct device *dev);
+struct class_device *hwmon_device_register(struct device *dev);
 
-void hwmon_device_unregister(struct device *dev);
+void hwmon_device_unregister(struct class_device *cdev);
 
 /* Scale user input to sensible values */
 static inline int SENSORS_LIMIT(long value, long low, long high)

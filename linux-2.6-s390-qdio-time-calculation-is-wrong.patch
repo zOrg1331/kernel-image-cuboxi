@@ -1,0 +1,50 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:58:12 +0100
+Subject: [s390] qdio: time calculation is wrong
+Message-id: 20071116125812.GS6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 11/14] s390 - qdio: Time calculation is wrong.
+Bugzilla: 360631
+
+Description
+============
+
+Time calculation in qdio_get_micros does not return microseconds as expected.
+The return value of get_clock is shifted by 10, which does not return
+microseconds.
+
+The problem is fixed using value 12 for shift operation to get microseconds.
+
+Bugzilla
+=========
+
+BZ 360631
+https://bugzilla.redhat.com/show_bug.cgi?id=360631
+
+Upstream status of the patch:
+=============================
+Patch is upstream
+http://readlist.com/lists/vger.kernel.org/linux-kernel/50/252471.html
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index 280e6ff..ad672ac 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -139,7 +139,7 @@ static inline void qdio_perf_stat_dec(atomic_t *count)
+ static inline __u64 
+ qdio_get_micros(void)
+ {
+-        return (get_clock() >> 10); /* time>>12 is microseconds */
++        return (get_clock() >> 12); /* time>>12 is microseconds */
+ }
+ 
+ /* 

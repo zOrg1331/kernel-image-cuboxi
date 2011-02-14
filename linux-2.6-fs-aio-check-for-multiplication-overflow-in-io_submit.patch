@@ -1,0 +1,53 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Thu, 16 Sep 2010 20:21:15 -0400
+Subject: [fs] aio: check for multiplication overflow in io_submit
+Message-id: <x49ocbxtp6s.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 28274
+O-Subject: [rhel5 patch] aio: check for multiplication overflow in io_submit
+Bugzilla: 629449
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Hi,
+
+This is a backport of the following upstream commit:
+
+commit 75e1c70fc31490ef8a373ea2a4bea2524099b478
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Fri Sep 10 14:16:00 2010 -0700
+
+    aio: check for multiplication overflow in do_io_submit
+
+Tavis Ormandy pointed out that do_io_submit does not do proper bounds
+checking on the passed in iocb array:
+
+	if (unlikely(nr < 0))
+		return -EINVAL;
+
+	if (unlikely(!access_ok(VERIFY_READ, iocbpp, (nr*sizeof(*iocbpp)))))
+		return -EFAULT;                      ^^^^^^^^^^^^^^^^^^^^
+
+The attached patch ensures that that multiplication doesn't overflow by
+limiting nr if it does.  This is an ok thing to do, as sys_io_submit is
+documented as returning the number of iocbs submitted, so callers should
+handle a return value of less than the 'nr' argument passed in.
+
+Cheers,
+Jeff
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index a4386b6..aa2d9d3 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -1816,6 +1816,10 @@ asmlinkage long sys_io_submit(aio_context_t ctx_id, long nr,
+ 	if (unlikely(nr < 0))
+ 		return -EINVAL;
+ 
++	/* Check for overflow */
++	if (unlikely(nr > LONG_MAX/sizeof(*iocbpp)))
++		nr = LONG_MAX/sizeof(*iocbpp);
++
+ 	if (unlikely(!access_ok(VERIFY_READ, iocbpp, (nr*sizeof(*iocbpp)))))
+ 		return -EFAULT;
+ 

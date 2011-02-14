@@ -8,8 +8,6 @@
 #include <linux/usb.h>
 #include <linux/usb_usual.h>
 #include <linux/vmalloc.h>
-#include <linux/kthread.h>
-#include <linux/mutex.h>
 
 /*
  */
@@ -31,11 +29,35 @@ static atomic_t usu_bias = ATOMIC_INIT(USB_US_DEFAULT_BIAS);
 #define BIAS_NAME_SIZE  (sizeof("usb-storage"))
 static const char *bias_names[3] = { "none", "usb-storage", "ub" };
 
-static DEFINE_MUTEX(usu_probe_mutex);
+static DECLARE_MUTEX_LOCKED(usu_init_notify);
 static DECLARE_COMPLETION(usu_end_notify);
 static atomic_t total_threads = ATOMIC_INIT(0);
 
 static int usu_probe_thread(void *arg);
+
+/*
+ * The table.
+ */
+#define UNUSUAL_DEV(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax, \
+		    vendorName, productName,useProtocol, useTransport, \
+		    initFunction, flags) \
+{ USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin,bcdDeviceMax), \
+  .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
+
+#define USUAL_DEV(useProto, useTrans, useType) \
+{ USB_INTERFACE_INFO(USB_CLASS_MASS_STORAGE, useProto, useTrans), \
+  .driver_info = ((useType)<<24) }
+
+struct usb_device_id storage_usb_ids [] = {
+#	include "unusual_devs.h"
+	{ } /* Terminating entry */
+};
+
+#undef USUAL_DEV
+#undef UNUSUAL_DEV
+
+MODULE_DEVICE_TABLE(usb, storage_usb_ids);
+EXPORT_SYMBOL_GPL(storage_usb_ids);
 
 /*
  * @type: the module type as an integer
@@ -94,9 +116,8 @@ EXPORT_SYMBOL_GPL(usb_usual_check_type);
 static int usu_probe(struct usb_interface *intf,
 			 const struct usb_device_id *id)
 {
-	int rc;
 	unsigned long type;
-	struct task_struct* task;
+	int rc;
 	unsigned long flags;
 
 	type = USB_US_TYPE(id->driver_info);
@@ -111,9 +132,8 @@ static int usu_probe(struct usb_interface *intf,
 	stat[type].fls |= USU_MOD_FL_THREAD;
 	spin_unlock_irqrestore(&usu_lock, flags);
 
-	task = kthread_run(usu_probe_thread, (void*)type, "libusual_%ld", type);
-	if (IS_ERR(task)) {
-		rc = PTR_ERR(task);
+	rc = kernel_thread(usu_probe_thread, (void*)type, CLONE_VM);
+	if (rc < 0) {
 		printk(KERN_WARNING "libusual: "
 		    "Unable to start the thread for %s: %d\n",
 		    bias_names[type], rc);
@@ -136,7 +156,7 @@ static struct usb_driver usu_driver = {
 	.name =		"libusual",
 	.probe =	usu_probe,
 	.disconnect =	usu_disconnect,
-	.id_table =	usb_storage_usb_ids,
+	.id_table =	storage_usb_ids,
 };
 
 /*
@@ -155,7 +175,12 @@ static int usu_probe_thread(void *arg)
 	int rc;
 	unsigned long flags;
 
-	mutex_lock(&usu_probe_mutex);
+	daemonize("libusual_%d", type);	/* "usb-storage" is kinda too long */
+
+	/* A completion does not work here because it's counted. */
+	down(&usu_init_notify);
+	up(&usu_init_notify);
+
 	rc = request_module(bias_names[type]);
 	spin_lock_irqsave(&usu_lock, flags);
 	if (rc == 0 && (st->fls & USU_MOD_FL_PRESENT) == 0) {
@@ -168,7 +193,6 @@ static int usu_probe_thread(void *arg)
 	}
 	st->fls &= ~USU_MOD_FL_THREAD;
 	spin_unlock_irqrestore(&usu_lock, flags);
-	mutex_unlock(&usu_probe_mutex);
 
 	complete_and_exit(&usu_end_notify, 0);
 }
@@ -179,9 +203,8 @@ static int __init usb_usual_init(void)
 {
 	int rc;
 
-	mutex_lock(&usu_probe_mutex);
 	rc = usb_register(&usu_driver);
-	mutex_unlock(&usu_probe_mutex);
+	up(&usu_init_notify);
 	return rc;
 }
 

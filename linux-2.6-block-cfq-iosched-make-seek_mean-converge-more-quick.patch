@@ -1,0 +1,43 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:37 -0500
+Subject: [block] cfq-iosched: make seek_mean converge more quick
+Message-id: 1257266206-24003-4-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 03/12] cfq-iosched: make seek_mean converge more quickly
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This is a direct backport of the following commit.  It helps the close
+cooperator code by detecting sequential workloads more quickly.
+
+commit 4d00aa47e2337dcfe2d8a7215dbde3765b507167
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Tue Apr 21 07:25:04 2009 +0200
+
+    cfq-iosched: make seek_mean converge more quickly
+
+    Right now, depending on the first sector to which a process issues I/O,
+    the seek time may start out way out of whack. So make sure we start
+    with 0 sectors in seek, instead of the offset of the first request
+    issued.
+
+    Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 3772eea..78f4853 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -1851,7 +1851,9 @@ cfq_update_io_seektime(struct cfq_data *cfqd, struct cfq_io_context *cic,
+ 	sector_t sdist;
+ 	u64 total;
+ 
+-	if (cic->last_request_pos < crq->request->sector)
++	if (!cic->last_request_pos)
++		sdist = 0;
++	else if (cic->last_request_pos < crq->request->sector)
+ 		sdist = crq->request->sector - cic->last_request_pos;
+ 	else
+ 		sdist = cic->last_request_pos - crq->request->sector;

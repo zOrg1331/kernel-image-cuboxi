@@ -1,0 +1,95 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jul 2008 15:01:46 -0500
+Subject: [fs] add le32_add_cpu and friends
+Message-id: 4873C7AA.30803@redhat.com
+O-Subject: [PATCH RHEL5 1/9] add le32_add_cpu & friends
+Bugzilla: 443896
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+This is for:
+
+Bugzilla Bug 443896: RFE: [Ext4 enabler] backport vfs
+helpers to facilitate ext4 backport and testing
+
+Backport from upstream (but leaves ocfs2 alone)
+
+From: Marcin Slusarz <marcin.slusarz@gmail.com>
+Date: Fri, 8 Feb 2008 12:20:12 +0000 (-0800)
+Subject: byteorder: move le32_add_cpu & friends from OCFS2 to core
+X-Git-Tag: v2.6.25-rc1~166
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=8b5f6883683c91ad7e1af32b7ceeb604d68e2865
+
+byteorder: move le32_add_cpu & friends from OCFS2 to core
+
+This patchset moves le*_add_cpu and be*_add_cpu functions from OCFS2 to core
+header (1st), converts ext3 filesystem to this API (2nd) and replaces XFS
+different named functions with new ones (3rd).
+
+There are many places where these functions will be useful.  Just look at:
+grep -r 'cpu_to_[ble12346]*([ble12346]*_to_cpu.*[-+]' linux-src/ Patch for
+ext3 is an example how conversions will probably look like.
+
+This patch:
+
+- move inline functions which add native byte order variable to
+  little/big endian variable to core header
+  * le16_add_cpu(__le16 *var, u16 val)
+  * le32_add_cpu(__le32 *var, u32 val)
+  * le64_add_cpu(__le64 *var, u64 val)
+  * be32_add_cpu(__be32 *var, u32 val)
+- add for completeness:
+  * be16_add_cpu(__be16 *var, u16 val)
+  * be64_add_cpu(__be64 *var, u64 val)
+
+Signed-off-by: Marcin Slusarz <marcin.slusarz@gmail.com>
+Acked-by: Mark Fasheh <mark.fasheh@oracle.com>
+Cc: David Chinner <dgc@sgi.com>
+Cc: Timothy Shimmin <tes@sgi.com>
+Cc: <linux-ext4@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/byteorder/generic.h b/include/linux/byteorder/generic.h
+index e86e4a9..22f5708 100644
+--- a/include/linux/byteorder/generic.h
++++ b/include/linux/byteorder/generic.h
+@@ -170,6 +170,37 @@ extern __be16			htons(__u16);
+ 
+ #endif /* OPTIMIZE */
+ 
++static inline void le16_add_cpu(__le16 *var, u16 val)
++{
++	*var = cpu_to_le16(le16_to_cpu(*var) + val);
++}
++
++static inline void le32_add_cpu(__le32 *var, u32 val)
++{
++	*var = cpu_to_le32(le32_to_cpu(*var) + val);
++}
++
++
++static inline void le64_add_cpu(__le64 *var, u64 val)
++{
++	*var = cpu_to_le64(le64_to_cpu(*var) + val);
++}
++
++static inline void be16_add_cpu(__be16 *var, u16 val)
++{
++	*var = cpu_to_be16(be16_to_cpu(*var) + val);
++}
++
++static inline void be32_add_cpu(__be32 *var, u32 val)
++{
++	*var = cpu_to_be32(be32_to_cpu(*var) + val);
++}
++
++static inline void be64_add_cpu(__be64 *var, u64 val)
++{
++	*var = cpu_to_be64(be64_to_cpu(*var) + val);
++}
++
+ #endif /* KERNEL */
+ 
+ 

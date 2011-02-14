@@ -1,0 +1,62 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 9 Sep 2010 22:45:52 -0400
+Subject: [scsi] bnx2i: link hba and cnic device before device reg
+Message-id: <1284072352-13848-2-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28198
+O-Subject: [RHEL 5.6 PATCH 2/2] bnx2i: link bnx2i hba and cnic device before
+	registering the device
+Bugzilla: 578005
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ: 578005.
+
+Upstream commit:
+
+commit ce2d763a2cd09513cb0c0e9ea52c30373c00b2f1
+Author: Anil Veerabhadrappa <anilgv@broadcom.com>
+Date:   Thu Mar 25 10:54:42 2010 -0700
+
+    [SCSI] bnx2i: link bnx2i hba and cnic device before registering the
+device
+
+    When bnx2/cnic/bnx2i drivers are loaded in certain order, bnx2i will
+    will not initialize the device correctly because 'hba->cnic' will be
+    NULL when bnx2i_start() is called from register_device() context.
+    Under this condition 'ifdown' and 'ifup' of associated network
+    interface is required to bring iscsi adapter state to ready state so
+    that it will accept iscsi connection setup within the chip
+
+    Initializing 'hba->cnic' before calling register_device() will fix
+    this issue
+
+Broadcom and I have tested the patch by doing network ifup/down tests
+while running the driver.
+
+Patch was made over these patches:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2010-August/msg007
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_init.c b/drivers/scsi/bnx2i/bnx2i_init.c
+index 6e1e319..b53fd8b 100644
+--- a/drivers/scsi/bnx2i/bnx2i_init.c
++++ b/drivers/scsi/bnx2i/bnx2i_init.c
+@@ -331,6 +331,7 @@ static int bnx2i_init_one(struct bnx2i_hba *hba, struct cnic_dev *cnic)
+ 	int rc;
+ 
+ 	mutex_lock(&bnx2i_dev_lock);
++	hba->cnic = cnic;
+ 	rc = cnic->register_device(cnic, CNIC_ULP_ISCSI, hba);
+ 	if (!rc) {
+ 		hba->age++;
+@@ -377,8 +378,7 @@ void bnx2i_ulp_init(struct cnic_dev *dev)
+ 	if (bnx2i_init_one(hba, dev)) {
+ 		printk(KERN_ERR "bnx2i - hba %p init failed\n", hba);
+ 		bnx2i_free_hba(hba);
+-	} else
+-		hba->cnic = dev;
++	}
+ }
+ 
+ 

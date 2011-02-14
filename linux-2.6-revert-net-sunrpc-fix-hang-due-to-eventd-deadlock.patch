@@ -1,0 +1,209 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 20 Feb 2008 11:56:55 -0500
+Subject: Revert: [net] sunrpc: fix hang due to eventd deadlock
+Message-id: 20080220115655.65d9a3ec@barsoom.rdu.redhat.com
+O-Subject: Re: [RHEL5 PATCH] BZ#246642: SUNRPC: fix hang due to eventd deadlock...
+Bugzilla: 438044
+
+On Mon, 19 Nov 2007 07:34:11 -0500
+Jeff Layton <jlayton@redhat.com> wrote:
+
+> When NFS needs to cleanup or reconnect a socket, it queues the task to
+> the generic kevents workqueues. This can cause a deadlock in rare
+> situations if a workqueue already has a job that will block waiting
+> for an RPC call on that socket and the reconnect job gets submitted to
+> the same workqueue.
+>
+> The customer who reported this saw this problem using Lustre, but I
+> think it could also be possible to hit this on a root-on-NFS setup.
+> The description of the upstream patch is below, but it's actually not
+> correct. usermodehelper uses its own workqueue and so simply using it
+> cannot cause this deadlock. Doing a usermodehelper call from work
+> queued to the generic workqueue can cause this and that's what seems
+> to be happening in the original report.
+>
+> The fix is fairly simple -- rather than queuing the reconnection and
+> cleanup to the generic workqueue, we queue it to rpciod's workqueue.
+> Testing this internally is tough since this is such a subtle race, but
+> the customer who submitted this upstream has tested it and it seems
+> to have fixed the problem for them.
+>
+> -------------[snip]-----------------
+>
+> Backported from upstream commit
+> c1384c9c4c184543375b52a0997d06cd98145164:
+>
+> Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+> Date:   Thu Jun 14 18:00:42 2007 -0400
+>
+>     SUNRPC: fix hang due to eventd deadlock...
+>
+> Brian Behlendorf writes:
+>
+> The root cause of the NFS hang we were observing appears to be a rare
+> deadlock between the kernel provided usermodehelper API and the linux
+> NFS client.  The deadlock can arise because both of these services
+> use the generic linux work queues.  The usermodehelper API run the
+> specified user application in the context of the work queue.  And NFS
+> submits both cleanup and reconnect work to the generic work queue for
+> handling.  Normally this is fine but a deadlock can result in the
+> following situation.
+>
+>   - NFS client is in a disconnected state
+>   - [events/0] runs a usermodehelper app with an NFS dependent
+> operation, this triggers an NFS reconnect.
+>   - NFS reconnect happens to be submitted to [events/0] work queue.
+>   - Deadlock, the [events/0] work queue will never process the
+>     reconnect because it is blocked on the previous NFS dependent
+>     operation which will not complete.`
+>
+> The solution is simply to run reconnect requests on rpciod.
+>
+> Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+> ---
+>  net/sunrpc/xprt.c     |    4 ++--
+>  net/sunrpc/xprtsock.c |    8 ++++----
+>  2 files changed, 6 insertions(+), 6 deletions(-)
+>
+> diff --git a/net/sunrpc/xprt.c b/net/sunrpc/xprt.c
+> index 27fd06b..40dbb96 100644
+> --- a/net/sunrpc/xprt.c
+> +++ b/net/sunrpc/xprt.c
+> @@ -127,7 +127,7 @@ static void xprt_clear_locked(struct rpc_xprt
+> *xprt) clear_bit(XPRT_LOCKED, &xprt->state);
+>  		smp_mb__after_clear_bit();
+>  	} else
+> -		schedule_work(&xprt->task_cleanup);
+> +		queue_work(rpciod_workqueue, &xprt->task_cleanup);
+>  }
+>
+>  /*
+> @@ -516,7 +516,7 @@ xprt_init_autodisconnect(unsigned long data)
+>  	if (xprt_connecting(xprt))
+>  		xprt_release_write(xprt, NULL);
+>  	else
+> -		schedule_work(&xprt->task_cleanup);
+> +		queue_work(rpciod_workqueue, &xprt->task_cleanup);
+>  	return;
+>  out_abort:
+>  	spin_unlock(&xprt->transport_lock);
+> diff --git a/net/sunrpc/xprtsock.c b/net/sunrpc/xprtsock.c
+> index 9e300a3..50e525f 100644
+> --- a/net/sunrpc/xprtsock.c
+> +++ b/net/sunrpc/xprtsock.c
+> @@ -486,7 +486,7 @@ static void xs_destroy(struct rpc_xprt *xprt)
+>  	dprintk("RPC:      xs_destroy xprt %p\n", xprt);
+>
+>  	cancel_delayed_work(&xprt->connect_worker);
+> -	flush_scheduled_work();
+> +	flush_workqueue(rpciod_workqueue);
+>
+>  	xprt_disconnect(xprt);
+>  	xs_close(xprt);
+> @@ -837,7 +837,7 @@ static void xs_tcp_state_change(struct sock *sk)
+>  		/* Try to schedule an autoclose RPC calls */
+>  		set_bit(XPRT_CLOSE_WAIT, &xprt->state);
+>  		if (test_and_set_bit(XPRT_LOCKED, &xprt->state) == 0)
+> -			schedule_work(&xprt->task_cleanup);
+> +			queue_work(rpciod_workqueue,
+> &xprt->task_cleanup); default:
+>  		xprt_disconnect(xprt);
+>  	}
+> @@ -1232,14 +1232,14 @@ static void xs_connect(struct rpc_task *task)
+>  	if (xprt->sock != NULL) {
+>  		dprintk("RPC:      xs_connect delayed xprt %p for
+> %lu seconds\n", xprt, xprt->reestablish_timeout / HZ);
+> -		schedule_delayed_work(&xprt->connect_worker,
+> +		queue_delayed_work(rpciod_workqueue,
+> &xprt->connect_worker, xprt->reestablish_timeout);
+>  		xprt->reestablish_timeout <<= 1;
+>  		if (xprt->reestablish_timeout > XS_TCP_MAX_REEST_TO)
+>  			xprt->reestablish_timeout =
+> XS_TCP_MAX_REEST_TO; } else {
+>  		dprintk("RPC:      xs_connect scheduled xprt %p\n",
+> xprt);
+> -		schedule_work(&xprt->connect_worker);
+> +		queue_work(rpciod_workqueue, &xprt->connect_worker);
+>
+>  		/* flush_scheduled_work can sleep... */
+>  		if (!RPC_IS_ASYNC(task))
+> --
+> 1.5.3.3
+>
+
+Don,
+  Peter has been able to hit a reproducible deadlock that we believe
+is due to this patch. We think that the problem is that rpciod can
+occasionally call xs_destroy() and call flush_workqueue() on itself. I
+think I'll have to do a bit more research on workqueues to fix this.
+
+Peter's planning to test this assumption overnight by removing that
+patch from the kernel and stress testing it. If that seems to fix the
+deadlock, we'll probably want to pull that patch. I'll plan to let you
+know either way tomorrow sometime.
+
+Thanks,
+--
+Jeff Layton <jlayton@redhat.com>
+
+diff --git a/net/sunrpc/xprt.c b/net/sunrpc/xprt.c
+index 40dbb96..27fd06b 100644
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -127,7 +127,7 @@ static void xprt_clear_locked(struct rpc_xprt *xprt)
+ 		clear_bit(XPRT_LOCKED, &xprt->state);
+ 		smp_mb__after_clear_bit();
+ 	} else
+-		queue_work(rpciod_workqueue, &xprt->task_cleanup);
++		schedule_work(&xprt->task_cleanup);
+ }
+ 
+ /*
+@@ -516,7 +516,7 @@ xprt_init_autodisconnect(unsigned long data)
+ 	if (xprt_connecting(xprt))
+ 		xprt_release_write(xprt, NULL);
+ 	else
+-		queue_work(rpciod_workqueue, &xprt->task_cleanup);
++		schedule_work(&xprt->task_cleanup);
+ 	return;
+ out_abort:
+ 	spin_unlock(&xprt->transport_lock);
+diff --git a/net/sunrpc/xprtsock.c b/net/sunrpc/xprtsock.c
+index f28d016..6aac4df 100644
+--- a/net/sunrpc/xprtsock.c
++++ b/net/sunrpc/xprtsock.c
+@@ -486,7 +486,7 @@ static void xs_destroy(struct rpc_xprt *xprt)
+ 	dprintk("RPC:      xs_destroy xprt %p\n", xprt);
+ 
+ 	cancel_delayed_work(&xprt->connect_worker);
+-	flush_workqueue(rpciod_workqueue);
++	flush_scheduled_work();
+ 
+ 	xprt_disconnect(xprt);
+ 	xs_close(xprt);
+@@ -837,7 +837,7 @@ static void xs_tcp_state_change(struct sock *sk)
+ 		/* Try to schedule an autoclose RPC calls */
+ 		set_bit(XPRT_CLOSE_WAIT, &xprt->state);
+ 		if (test_and_set_bit(XPRT_LOCKED, &xprt->state) == 0)
+-			queue_work(rpciod_workqueue, &xprt->task_cleanup);
++			schedule_work(&xprt->task_cleanup);
+ 	default:
+ 		xprt_disconnect(xprt);
+ 	}
+@@ -1232,14 +1232,14 @@ static void xs_connect(struct rpc_task *task)
+ 	if (xprt->sock != NULL) {
+ 		dprintk("RPC:      xs_connect delayed xprt %p for %lu seconds\n",
+ 				xprt, xprt->reestablish_timeout / HZ);
+-		queue_delayed_work(rpciod_workqueue, &xprt->connect_worker,
++		schedule_delayed_work(&xprt->connect_worker,
+ 					xprt->reestablish_timeout);
+ 		xprt->reestablish_timeout <<= 1;
+ 		if (xprt->reestablish_timeout > XS_TCP_MAX_REEST_TO)
+ 			xprt->reestablish_timeout = XS_TCP_MAX_REEST_TO;
+ 	} else {
+ 		dprintk("RPC:      xs_connect scheduled xprt %p\n", xprt);
+-		queue_work(rpciod_workqueue, &xprt->connect_worker);
++		schedule_work(&xprt->connect_worker);
+ 
+ 		/* flush_scheduled_work can sleep... */
+ 		if (!RPC_IS_ASYNC(task))

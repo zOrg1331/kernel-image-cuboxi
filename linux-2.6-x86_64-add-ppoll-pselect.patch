@@ -1,0 +1,31 @@
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index 5a92fed..07399fe 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -687,8 +687,8 @@ #endif
+ 	.quad sys_readlinkat		/* 305 */
+ 	.quad sys_fchmodat
+ 	.quad sys_faccessat
+-	.quad quiet_ni_syscall		/* pselect6 for now */
+-	.quad quiet_ni_syscall		/* ppoll for now */
++	.quad compat_sys_pselect6
++	.quad compat_sys_ppoll
+ 	.quad sys_unshare		/* 310 */
+ 	.quad compat_sys_set_robust_list
+ 	.quad compat_sys_get_robust_list
+diff --git a/include/asm-x86_64/unistd.h b/include/asm-x86_64/unistd.h
+index feb77cb..0a08bbf 100644
+--- a/include/asm-x86_64/unistd.h
++++ b/include/asm-x86_64/unistd.h
+@@ -600,9 +600,9 @@ __SYSCALL(__NR_fchmodat, sys_fchmodat)
+ #define __NR_faccessat		269
+ __SYSCALL(__NR_faccessat, sys_faccessat)
+ #define __NR_pselect6		270
+-__SYSCALL(__NR_pselect6, sys_ni_syscall)	/* for now */
++__SYSCALL(__NR_pselect6, sys_pselect6)
+ #define __NR_ppoll		271
+-__SYSCALL(__NR_ppoll,	sys_ni_syscall)		/* for now */
++__SYSCALL(__NR_ppoll,	sys_ppoll)
+ #define __NR_unshare		272
+ __SYSCALL(__NR_unshare,	sys_unshare)
+ #define __NR_set_robust_list	273

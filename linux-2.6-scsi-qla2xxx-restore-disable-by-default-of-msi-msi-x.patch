@@ -1,0 +1,59 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Sat, 25 Oct 2008 21:52:13 -0400
+Subject: [scsi] qla2xxx: restore disable by default of MSI, MSI-X
+Message-id: 20081026015213.14145.54472.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 bug] qla2xxx - restore disable by default of MSI, MSI-X
+Bugzilla: 468555
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 468555 - qla2xxx - restore disable by default of MSI, MSI-X.
+
+When support for the FCoE adapters was added the default behavior of having MSI
+and MSIX interrupt handling disabled was removed.
+
+IBM's testing of the MRG product has shown problems under load, which were
+resolved by disabling MSI and MSI-X. This is described in: BZ 466903 - mailbox
+timeouts observed on ds4700 luns.
+
+This patch disables these interrupt handling mechanisms by default. MSI and
+MSI-X can be enabled by the module parameter "ql2xenablemsix=1".
+
+This applies and builds cleanly with 2.6.18-120 and causes use of legacy pci
+interrupts by default.
+
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index f5bb36d..5840c2f 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -1894,8 +1894,9 @@ qla2x00_request_irqs(scsi_qla_host_t *ha)
+ 	int ret;
+ 
+ 	/* If possible, enable MSI-X. */
+-	if (!IS_QLA2432(ha) && !IS_QLA2532(ha) && !IS_QLA8432(ha))
+-		goto skip_msix;
++	if ((!IS_QLA2432(ha) && !IS_QLA2532(ha) && !IS_QLA8432(ha))
++	    || !ql2xenablemsix)
++		goto skip_msi;
+ 
+ 	if (IS_QLA2432(ha) && (ha->chip_revision < QLA_MSIX_CHIP_REV_24XX ||
+ 	    !QLA_MSIX_FW_MODE_1(ha->fw_attributes))) {
+@@ -1926,17 +1927,15 @@ qla2x00_request_irqs(scsi_qla_host_t *ha)
+ 	}
+ 	qla_printk(KERN_WARNING, ha,
+ 	    "MSI-X: Falling back-to INTa mode -- %d.\n", ret);
+-skip_msix:
+-	if (!IS_QLA24XX(ha) && !IS_QLA2532(ha) && !IS_QLA8432(ha))
+-		goto skip_msi;
+ 
++skip_msix:
+ 	ret = pci_enable_msi(ha->pdev);
+ 	if (!ret) {
+ 		DEBUG2(qla_printk(KERN_INFO, ha, "MSI: Enabled.\n"));
+ 		ha->flags.msi_enabled = 1;
+ 	}
+-skip_msi:
+ 
++skip_msi:
+ 	ret = request_irq(ha->pdev->irq, ha->isp_ops->intr_handler,
+ 	    IRQF_DISABLED|IRQF_SHARED, QLA2XXX_DRIVER_NAME, ha);
+ 	if (!ret) {

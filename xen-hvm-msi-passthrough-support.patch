@@ -1,0 +1,480 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:23:35 -0600
+Subject: [xen] HVM MSI passthrough support
+Message-id: 200903231623.n2NGNZmw022152@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 20/21 V2] xen: HVM MSI passthrough support
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Xen hypervisor support for HVM guest passthrough MSI, add vmsi concept
+similar to vioapic delivered irq, add MSI type in bind_pt_irq hypercalls
+to allow device model to bind vmsi to msi pirq and the code to inject
+MSI to HVM guest.
+
+Upstream Status: Accepted (CS 17537)
+
+BZ: 484227
+
+Signed-off-by: Qing He <qing.he@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/x86/hvm/Makefile b/arch/x86/hvm/Makefile
+index d94fd08..7ef5e3e 100644
+--- a/arch/x86/hvm/Makefile
++++ b/arch/x86/hvm/Makefile
+@@ -16,3 +16,4 @@ obj-y += vioapic.o
+ obj-y += vlapic.o
+ obj-y += vpic.o
+ obj-y += save.o
++obj-y += vmsi.o
+diff --git a/arch/x86/hvm/vmsi.c b/arch/x86/hvm/vmsi.c
+new file mode 100644
+index 0000000..2ce5722
+--- /dev/null
++++ b/arch/x86/hvm/vmsi.c
+@@ -0,0 +1,196 @@
++/*
++ *  Copyright (C) 2001  MandrakeSoft S.A.
++ *
++ *    MandrakeSoft S.A.
++ *    43, rue d'Aboukir
++ *    75002 Paris - France
++ *    http://www.linux-mandrake.com/
++ *    http://www.mandrakesoft.com/
++ *
++ *  This library is free software; you can redistribute it and/or
++ *  modify it under the terms of the GNU Lesser General Public
++ *  License as published by the Free Software Foundation; either
++ *  version 2 of the License, or (at your option) any later version.
++ *
++ *  This library is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ *  Lesser General Public License for more details.
++ *
++ *  You should have received a copy of the GNU Lesser General Public
++ *  License along with this library; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ *
++ * Support for virtual MSI logic
++ * Will be merged it with virtual IOAPIC logic, since most is the same
++*/
++
++#include <xen/config.h>
++#include <xen/types.h>
++#include <xen/mm.h>
++#include <xen/xmalloc.h>
++#include <xen/lib.h>
++#include <xen/errno.h>
++#include <xen/sched.h>
++#include <public/hvm/ioreq.h>
++#include <asm/hvm/io.h>
++#include <asm/hvm/vpic.h>
++#include <asm/hvm/vlapic.h>
++#include <asm/hvm/support.h>
++#include <asm/current.h>
++#include <asm/event.h>
++
++static uint32_t vmsi_get_delivery_bitmask(
++    struct domain *d, uint16_t dest, uint8_t dest_mode)
++{
++    uint32_t mask = 0;
++    struct vcpu *v;
++
++    HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "ioapic_get_delivery_bitmask "
++                "dest %d dest_mode %d\n", dest, dest_mode);
++
++    if ( dest_mode == 0 ) /* Physical mode. */
++    {
++        if ( dest == 0xFF ) /* Broadcast. */
++        {
++            for_each_vcpu ( d, v )
++                mask |= 1 << v->vcpu_id;
++            goto out;
++        }
++
++        for_each_vcpu ( d, v )
++        {
++            if ( VLAPIC_ID(vcpu_vlapic(v)) == dest )
++            {
++                mask = 1 << v->vcpu_id;
++                break;
++            }
++        }
++    }
++    else if ( dest != 0 ) /* Logical mode, MDA non-zero. */
++    {
++        for_each_vcpu ( d, v )
++            if ( vlapic_match_logical_addr(vcpu_vlapic(v), dest) )
++                mask |= 1 << v->vcpu_id;
++    }
++
++ out:
++    HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "ioapic_get_delivery_bitmask mask %x\n",
++                mask);
++    return mask;
++}
++
++static void vmsi_inj_irq(
++    struct domain *d,
++    struct vlapic *target,
++    uint8_t vector,
++    uint8_t trig_mode,
++    uint8_t delivery_mode)
++{
++    HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "ioapic_inj_irq "
++                "irq %d trig %d delive mode %d\n",
++                vector, trig_mode, delivery_mode);
++
++    switch ( delivery_mode )
++    {
++    case dest_Fixed:
++    case dest_LowestPrio:
++        if ( vlapic_set_irq(target, vector, trig_mode) )
++            vcpu_kick(vlapic_vcpu(target));
++        break;
++    default:
++        gdprintk(XENLOG_WARNING, "error delivery mode %d\n", delivery_mode);
++        break;
++    }
++}
++
++#define VMSI_DEST_ID_MASK 0xff
++#define VMSI_RH_MASK      0x100
++#define VMSI_DM_MASK      0x200
++#define VMSI_DELIV_MASK   0x7000
++#define VMSI_TRIG_MODE    0x8000
++
++#define GFLAGS_SHIFT_DEST_ID        0
++#define GFLAGS_SHIFT_RH             8
++#define GFLAGS_SHIFT_DM             9
++#define GLFAGS_SHIFT_DELIV_MODE     12
++#define GLFAGS_SHIFT_TRG_MODE       15
++
++int vmsi_deliver(struct domain *d, int pirq)
++{
++    struct hvm_irq_dpci *hvm_irq_dpci = d->arch.hvm_domain.irq.dpci;
++    uint32_t flags = hvm_irq_dpci->mirq[pirq].gmsi.gflags;
++    int vector = hvm_irq_dpci->mirq[pirq].gmsi.gvec;
++    uint16_t dest = (flags & VMSI_DEST_ID_MASK) >> GFLAGS_SHIFT_DEST_ID;
++    uint8_t dest_mode = (flags & VMSI_DM_MASK) >> GFLAGS_SHIFT_DM;
++    uint8_t delivery_mode = (flags & VMSI_DELIV_MASK) >> GLFAGS_SHIFT_DELIV_MODE;
++    uint8_t trig_mode = (flags & VMSI_TRIG_MODE) >> GLFAGS_SHIFT_TRG_MODE;
++    uint32_t deliver_bitmask;
++    struct vlapic *target;
++    struct vcpu *v;
++
++    HVM_DBG_LOG(DBG_LEVEL_IOAPIC,
++                "msi: dest=%x dest_mode=%x delivery_mode=%x "
++                "vector=%x trig_mode=%x\n",
++                dest, dest_mode, delivery_mode, vector, trig_mode);
++
++    if ( !test_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags) )
++    {
++        gdprintk(XENLOG_WARNING, "pirq %x not msi \n", pirq);
++        return 0;
++    }
++
++    deliver_bitmask = vmsi_get_delivery_bitmask(d, dest, dest_mode);
++    if ( !deliver_bitmask )
++    {
++        HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "ioapic deliver "
++                    "no target on destination\n");
++        return 0;
++    }
++
++    switch ( delivery_mode )
++    {
++    case dest_LowestPrio:
++    {
++        /* N.B. backport, from apic_lowest_prio, vector is not used */
++        target = apic_round_robin(d, 0, deliver_bitmask);
++        if ( target != NULL )
++            vmsi_inj_irq(d, target, vector, trig_mode, delivery_mode);
++        else
++            HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "null round robin: "
++                        "mask=%x vector=%x delivery_mode=%x\n",
++                        deliver_bitmask, vector, dest_LowestPrio);
++        break;
++    }
++
++    case dest_Fixed:
++    case dest_ExtINT:
++    {
++        uint8_t bit;
++        for ( bit = 0; deliver_bitmask != 0; bit++ )
++        {
++            if ( !(deliver_bitmask & (1 << bit)) )
++                continue;
++            deliver_bitmask &= ~(1 << bit);
++            v = d->vcpu[bit];
++            if ( v != NULL )
++            {
++                target = vcpu_vlapic(v);
++                vmsi_inj_irq(d, target, vector, trig_mode, delivery_mode);
++            }
++        }
++        break;
++    }
++
++    case dest_SMI:
++    case dest_NMI:
++    case dest_INIT:
++    case dest__reserved_2:
++    default:
++        gdprintk(XENLOG_WARNING, "Unsupported delivery mode %d\n",
++                 delivery_mode);
++        break;
++    }
++    return 1;
++}
++
+diff --git a/drivers/passthrough/io.c b/drivers/passthrough/io.c
+index 1c96032..a627b99 100644
+--- a/drivers/passthrough/io.c
++++ b/drivers/passthrough/io.c
+@@ -88,65 +88,97 @@ int pt_irq_create_bind_vtd(
+         return -EINVAL;
+     }
+ 
+-    machine_gsi = pt_irq_bind->machine_irq;
+-    device = pt_irq_bind->u.pci.device;
+-    intx = pt_irq_bind->u.pci.intx;
+-    guest_gsi = hvm_pci_intx_gsi(device, intx);
+-    link = hvm_pci_intx_link(device, intx);
+-    hvm_irq_dpci->link_cnt[link]++;
+-
+-    digl = xmalloc(struct dev_intx_gsi_link);
+-    if ( !digl )
++    if ( pt_irq_bind->irq_type == PT_IRQ_TYPE_MSI )
+     {
+-        spin_unlock(&d->event_lock);
+-        return -ENOMEM;
+-    }
+-
+-    digl->device = device;
+-    digl->intx = intx;
+-    digl->gsi = guest_gsi;
+-    digl->link = link;
+-    list_add_tail(&digl->list,
+-                  &hvm_irq_dpci->mirq[machine_gsi].digl_list);
+-
+-    hvm_irq_dpci->girq[guest_gsi].valid = 1;
+-    hvm_irq_dpci->girq[guest_gsi].device = device;
+-    hvm_irq_dpci->girq[guest_gsi].intx = intx;
+-    hvm_irq_dpci->girq[guest_gsi].machine_gsi = machine_gsi;
+ 
+-    /* Bind the same mirq once in the same domain */
+-    if ( !test_and_set_bit(machine_gsi, hvm_irq_dpci->mapping))
+-    {
+-        unsigned int vector = domain_irq_to_vector(d, machine_gsi);
+-
+-        hvm_irq_dpci->mirq[machine_gsi].dom = d;
++        if ( !test_and_set_bit(pirq, hvm_irq_dpci->mapping))
++        {
++            set_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags);
++            hvm_irq_dpci->mirq[pirq].gmsi.gvec = pt_irq_bind->u.msi.gvec;
++            hvm_irq_dpci->mirq[pirq].gmsi.gflags = pt_irq_bind->u.msi.gflags;
++            hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = pirq;
++            /* bind after hvm_irq_dpci is setup to avoid race with irq handler*/
++            rc = pirq_guest_bind(d->vcpu[0], pirq, 0);
++            if ( unlikely(rc) )
++            {
++                hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = 0;
++                hvm_irq_dpci->mirq[pirq].gmsi.gflags = 0;
++                hvm_irq_dpci->mirq[pirq].gmsi.gvec = 0;
++                clear_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags);
++                clear_bit(pirq, hvm_irq_dpci->mapping);
++                spin_unlock(&d->event_lock);
++                return rc;
++            }
++        }
++        else if (hvm_irq_dpci->mirq[pirq].gmsi.gvec != pt_irq_bind->u.msi.gvec
++                ||hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] != pirq)
+ 
+-        /* Init timer before binding */
+-        init_timer(&hvm_irq_dpci->hvm_timer[vector],
+-                   pt_irq_time_out, &hvm_irq_dpci->mirq[machine_gsi], 0);
+-        /* Deal with gsi for legacy devices */
+-        rc = pirq_guest_bind(d->vcpu[0], machine_gsi, BIND_PIRQ__WILL_SHARE);
+-        if ( unlikely(rc) )
+         {
+-            kill_timer(&hvm_irq_dpci->hvm_timer[vector]);
+-            hvm_irq_dpci->mirq[machine_gsi].dom = NULL;
+-            clear_bit(machine_gsi, hvm_irq_dpci->mapping);
+-            hvm_irq_dpci->girq[guest_gsi].machine_gsi = 0;
+-            hvm_irq_dpci->girq[guest_gsi].intx = 0;
+-            hvm_irq_dpci->girq[guest_gsi].device = 0;
+-            hvm_irq_dpci->girq[guest_gsi].valid = 0;
+-            list_del(&digl->list);
+-            hvm_irq_dpci->link_cnt[link]--;
+             spin_unlock(&d->event_lock);
+-            xfree(digl);
+-            return rc;
++            return -EBUSY;
+         }
+     }
++    else
++    {
++        machine_gsi = pt_irq_bind->machine_irq;
++        device = pt_irq_bind->u.pci.device;
++        intx = pt_irq_bind->u.pci.intx;
++        guest_gsi = hvm_pci_intx_gsi(device, intx);
++        link = hvm_pci_intx_link(device, intx);
++        hvm_irq_dpci->link_cnt[link]++;
++
++        digl = xmalloc(struct dev_intx_gsi_link);
++        if ( !digl )
++        {
++            spin_unlock(&d->event_lock);
++            return -ENOMEM;
++        }
+ 
+-    gdprintk(XENLOG_INFO VTDPREFIX,
+-             "VT-d irq bind: m_irq = %x device = %x intx = %x\n",
+-             machine_gsi, device, intx);
++        digl->device = device;
++        digl->intx = intx;
++        digl->gsi = guest_gsi;
++        digl->link = link;
++        list_add_tail(&digl->list,
++                      &hvm_irq_dpci->mirq[machine_gsi].digl_list);
++
++        hvm_irq_dpci->girq[guest_gsi].valid = 1;
++        hvm_irq_dpci->girq[guest_gsi].device = device;
++        hvm_irq_dpci->girq[guest_gsi].intx = intx;
++        hvm_irq_dpci->girq[guest_gsi].machine_gsi = machine_gsi;
++
++        /* Bind the same mirq once in the same domain */
++        if ( !test_and_set_bit(machine_gsi, hvm_irq_dpci->mapping))
++        {
++            unsigned int vector = domain_irq_to_vector(d, machine_gsi);
+ 
++            hvm_irq_dpci->mirq[machine_gsi].dom = d;
++
++            /* Init timer before binding */
++            init_timer(&hvm_irq_dpci->hvm_timer[vector],
++                       pt_irq_time_out, &hvm_irq_dpci->mirq[machine_gsi], 0);
++            /* Deal with gsi for legacy devices */
++            rc = pirq_guest_bind(d->vcpu[0], machine_gsi, BIND_PIRQ__WILL_SHARE);
++            if ( unlikely(rc) )
++            {
++                kill_timer(&hvm_irq_dpci->hvm_timer[vector]);
++                hvm_irq_dpci->mirq[machine_gsi].dom = NULL;
++                clear_bit(machine_gsi, hvm_irq_dpci->mapping);
++                hvm_irq_dpci->girq[guest_gsi].machine_gsi = 0;
++                hvm_irq_dpci->girq[guest_gsi].intx = 0;
++                hvm_irq_dpci->girq[guest_gsi].device = 0;
++                hvm_irq_dpci->girq[guest_gsi].valid = 0;
++                list_del(&digl->list);
++                hvm_irq_dpci->link_cnt[link]--;
++                spin_unlock(&d->event_lock);
++                xfree(digl);
++                return rc;
++            }
++        }
++
++        gdprintk(XENLOG_INFO VTDPREFIX,
++                 "VT-d irq bind: m_irq = %x device = %x intx = %x\n",
++                 machine_gsi, device, intx);
++    }
+     spin_unlock(&d->event_lock);
+     return 0;
+ }
+@@ -243,12 +275,53 @@ int hvm_do_IRQ_dpci(struct domain *d, unsigned int mirq)
+     return 1;
+ }
+ 
++#ifdef SUPPORT_MSI_REMAPPING
++void hvm_dpci_msi_eoi(struct domain *d, int vector)
++{
++    struct hvm_irq_dpci *hvm_irq_dpci = d->arch.hvm_domain.irq.dpci;
++    irq_desc_t *desc;
++    int pirq;
++
++    if ( !iommu_enabled || (hvm_irq_dpci == NULL) )
++       return;
++
++    spin_lock(&d->event_lock);
++    pirq = hvm_irq_dpci->msi_gvec_pirq[vector];
++
++    if ( ( pirq >= 0 ) && (pirq < NR_IRQS) &&
++          test_bit(pirq, hvm_irq_dpci->mapping) &&
++         (test_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags)))
++     {
++         BUG_ON(!local_irq_is_enabled());
++         desc = domain_spin_lock_irq_desc(d, pirq, NULL);
++         if (!desc)
++         {
++            spin_unlock(&d->event_lock);
++            return;
++         }
++
++         desc->status &= ~IRQ_INPROGRESS;
++         spin_unlock_irq(&desc->lock);
++
++         pirq_guest_eoi(d, pirq);
++     }
++
++    spin_unlock(&d->event_lock);
++}
++
++extern int vmsi_deliver(struct domain *d, int pirq);
++static int hvm_pci_msi_assert(struct domain *d, int pirq)
++{
++    return vmsi_deliver(d, pirq);
++}
++#endif
++
+ void hvm_dirq_assist(struct vcpu *v)
+ {
+     unsigned int irq;
+     uint32_t device, intx;
+     struct domain *d = v->domain;
+-    struct hvm_irq_dpci *hvm_irq_dpci = domain_get_irq_dpci(d);
++    struct hvm_irq_dpci *hvm_irq_dpci = d->arch.hvm_domain.irq.dpci;
+     struct dev_intx_gsi_link *digl;
+ 
+     if ( !iommu_enabled || (v->vcpu_id != 0) || (hvm_irq_dpci == NULL) )
+@@ -262,6 +335,14 @@ void hvm_dirq_assist(struct vcpu *v)
+             continue;
+ 
+         spin_lock(&d->event_lock);
++#ifdef SUPPORT_MSI_REMAPPING
++        if ( test_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[irq].flags) )
++        {
++            hvm_pci_msi_assert(d, irq);
++            spin_unlock(&d->event_lock);
++            continue;
++        }
++#endif
+         stop_timer(&hvm_irq_dpci->hvm_timer[domain_irq_to_vector(d, irq)]);
+ 
+         list_for_each_entry ( digl, &hvm_irq_dpci->mirq[irq].digl_list, list )
+@@ -324,7 +405,8 @@ void hvm_dpci_eoi(struct domain *d, unsigned int guest_gsi,
+              * No need to get vector lock for timer
+              * since interrupt is still not EOIed
+              */
+-            stop_timer(&hvm_irq_dpci->hvm_timer[domain_irq_to_vector(d, machine_gsi)]);
++            stop_timer(&hvm_irq_dpci->hvm_timer[
++                domain_irq_to_vector(d, machine_gsi)]);
+             pirq_guest_eoi(d, machine_gsi);
+         }
+     }
+diff --git a/include/asm-x86/hvm/irq.h b/include/asm-x86/hvm/irq.h
+index b6e78ba..781b845 100644
+--- a/include/asm-x86/hvm/irq.h
++++ b/include/asm-x86/hvm/irq.h
+@@ -125,4 +125,11 @@ int cpu_has_pending_irq(struct vcpu *v);
+ int get_isa_irq_vector(struct vcpu *vcpu, int irq, int type);
+ int is_isa_irq_masked(struct vcpu *v, int isa_irq);
+ 
++/*
++ * Currently IA64 Xen doesn't support MSI. So for x86, we define this macro
++ * to control the conditional compilation of some MSI-related functions.
++ * This macro will be removed once IA64 has MSI support.
++ */
++#define SUPPORT_MSI_REMAPPING 1
++
+ #endif /* __ASM_X86_HVM_IRQ_H__ */

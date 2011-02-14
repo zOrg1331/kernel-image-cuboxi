@@ -1,0 +1,222 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 9 Oct 2008 16:16:40 -0400
+Subject: [xen] ia64: VT-i2 performance restoration
+Message-id: 20081009201640.9160.50573.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH] VT-i2 ia64 performance restoration
+Bugzilla: 467487
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Fixes bz 437096
+https://bugzilla.redhat.com/show_bug.cgi?id=437096
+
+Note that this is actually the 7th patch total
+for this BZ, the previous 6 were already integrated.
+
+Problem description:
+
+This future feature bugzilla is to add support for the
+next generation ia64 processor (Tukwila). The bulk of
+this support was already integrated into RHEL 5.3 but
+one patch was missed and never posted. All the patches
+were sourced from Intel.
+
+The missing patch was an answer to a performance regression
+concern raised with the initial patches by Fujitsu and it
+basically restores some code back to what was in RHEL 5.2.
+
+The missing patch arrived concurrently with an unexected
+bug fix patch and the bug fix patch was posted and integrated.
+
+This patch is needed to not have a performance regression
+from RHEL 5.2.
+
+Upstream status:
+Code is upstream and in fact this patch reverts code to
+what we had previously.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1507048
+
+Testing:
+Fujitsu is currently reviewing and testing this.
+Kernel has been provided to Intel for testing as well.
+
+Please review and ACK.
+
+Thanks,
+ Bill
+
+# HG changeset patch
+# User root@localhost.localdomain
+# Date 1219031000 -28800
+# Node ID 5c2dfc4bab4cc3d7962b9a03888da3c7995ef61a
+# Parent  2b427a08fe73dd4e4dad4dedfb22ef8687674b48
+Enable optimization code for handling virtualization faults.
+
+Signed-off-by Xiantao Zhang <xiantao.zhang@intel.com>
+
+diff --git a/arch/ia64/vmx/optvfault.S b/arch/ia64/vmx/optvfault.S
+index cf2090d..4556c70 100644
+--- a/arch/ia64/vmx/optvfault.S
++++ b/arch/ia64/vmx/optvfault.S
+@@ -20,12 +20,12 @@
+ #include <asm-ia64/vmx_mm_def.h>
+ #include <asm/virt_event.h>
+ 
+-//#define ACCE_MOV_FROM_AR
+-//#define ACCE_MOV_FROM_RR
+-//#define ACCE_MOV_TO_RR
+-//#define ACCE_RSM
+-//#define ACCE_SSM
+-//#define ACCE_MOV_TO_PSR
++#define ACCE_MOV_FROM_AR
++#define ACCE_MOV_FROM_RR
++#define ACCE_MOV_TO_RR
++#define ACCE_RSM
++#define ACCE_SSM
++#define ACCE_MOV_TO_PSR
+ #define ACCE_THASH
+ 
+ // Inputs are: r21 (= current), r24 (= cause), r25 (= insn), r31 (=saved pr)
+@@ -77,6 +77,25 @@ GLOBAL_ENTRY(vmx_vps_resume_normal)
+     br.sptk.many b0
+ END(vmx_vps_resume_normal)
+ 
++#define VMX_VPS_SYNC_READ		\
++     add r16=IA64_VPD_BASE_OFFSET,r21;	\
++     mov r17 = b0;			\
++     mov r18 = r24;			\
++     mov r19 = r25;			\
++     mov r20 = r31;			\
++     ;;					\
++     movl r24 = 1f;			\
++     ld8 r16 = [r16];			\
++     ;;					\
++     mov r25 =r16;			\
++     br.sptk.many vmx_vps_sync_read;	\
++1:					\
++     mov b0 = r17;			\
++     mov r24 = r18;			\
++     mov r25 = r19;			\
++     mov r31 = r20
++   
++
+ /*
+  *	Inputs:
+  *		r23 : pr
+@@ -114,7 +133,7 @@ GLOBAL_ENTRY(vmx_asm_mov_from_ar)
+     add r19=r19,r18
+     movl r20=asm_mov_to_reg
+     ;;
+-    adds r30=vmx_resume_to_guest-asm_mov_to_reg,r20
++    adds r30=vmx_resume_to_guest2-asm_mov_to_reg,r20
+     shladd r17=r17,4,r20
+     cmp.gtu p6,p0=r16,r19
+     ;;
+@@ -143,7 +162,7 @@ GLOBAL_ENTRY(vmx_asm_mov_from_rr)
+     br.many b0
+     ;;   
+ vmx_asm_mov_from_rr_back_1:  
+-    adds r30=vmx_resume_to_guest-asm_mov_from_reg,r20
++    adds r30=vmx_resume_to_guest2-asm_mov_from_reg,r20
+     adds r22=asm_mov_to_reg-asm_mov_from_reg,r20
+     shr.u r26=r19,61
+     ;;
+@@ -190,7 +209,7 @@ vmx_asm_mov_to_rr_back_1:
+     mov b0=r17
+     br.many b0
+ vmx_asm_mov_to_rr_back_2: 
+-    adds r30=vmx_resume_to_guest-asm_mov_from_reg,r20
++    adds r30=vmx_resume_to_guest2-asm_mov_from_reg,r20
+     shladd r27=r23,3,r27	// address of VRR
+     add r22=IA64_DOMAIN_RID_BITS_OFFSET,r22
+     ;;
+@@ -252,11 +271,11 @@ GLOBAL_ENTRY(vmx_asm_rsm)
+ #ifndef ACCE_RSM
+     br.many vmx_virtualization_fault_back
+ #endif
+-    add r16=IA64_VPD_BASE_OFFSET,r21
++    VMX_VPS_SYNC_READ
++    ;;
+     extr.u r26=r25,6,21
+     extr.u r27=r25,31,2
+     ;;
+-    ld8 r16=[r16]
+     extr.u r28=r25,36,1
+     dep r26=r27,r26,21,2
+     ;;
+@@ -314,11 +333,11 @@ GLOBAL_ENTRY(vmx_asm_ssm)
+ #ifndef ACCE_SSM
+     br.many vmx_virtualization_fault_back
+ #endif
+-    add r16=IA64_VPD_BASE_OFFSET,r21
++    VMX_VPS_SYNC_READ
++    ;;
+     extr.u r26=r25,6,21
+     extr.u r27=r25,31,2
+     ;;
+-    ld8 r16=[r16]
+     extr.u r28=r25,36,1
+     dep r26=r27,r26,21,2
+     ;;  //r26 is imm24
+@@ -388,10 +407,9 @@ GLOBAL_ENTRY(vmx_asm_mov_to_psr)
+ #ifndef ACCE_MOV_TO_PSR
+     br.many vmx_virtualization_fault_back
+ #endif
+-    add r16=IA64_VPD_BASE_OFFSET,r21
+-    extr.u r26=r25,13,7 //r2
++    VMX_VPS_SYNC_READ
+     ;;
+-    ld8 r16=[r16]
++    extr.u r26=r25,13,7 //r2
+     movl r20=asm_mov_from_reg
+     ;;
+     adds r30=vmx_asm_mov_to_psr_back-asm_mov_from_reg,r20
+@@ -486,7 +504,18 @@ END(vmx_asm_mov_to_psr)
+ 
+ ENTRY(vmx_asm_dispatch_vexirq)
+ //increment iip
++    mov r17 = b0
++    mov r18 = r31
++    add r25=IA64_VPD_BASE_OFFSET,r21;
++    movl r24 =1f
++    ;;
++    ld8 r25 = [r25]
++    br.sptk.many vmx_vps_sync_write
++1: 
++    mov b0 =r17
+     mov r16=cr.ipsr
++    mov r31 = r18
++    mov r19 = 37
+     ;;
+     extr.u r17=r16,IA64_PSR_RI_BIT,2
+     tbit.nz p6,p7=r16,IA64_PSR_RI_BIT+1
+@@ -560,7 +589,7 @@ vmx_asm_thash_back1:
+     ;;
+     or r19=r19,r22		// calc pval
+     shladd r17=r18,4,r26
+-    adds r30=vmx_resume_to_guest-asm_mov_from_reg,r20
++    adds r30=vmx_resume_to_guest2-asm_mov_from_reg,r20
+     ;;
+     mov b0=r17
+     br.many b0
+@@ -821,6 +850,18 @@ END(asm_mov_from_reg)
+  * r24: b0
+  */
+ ENTRY(vmx_resume_to_guest)
++    adds r19=IA64_VPD_BASE_OFFSET,r21
++    mov r16 = r31
++    mov r17 = r24
++    ;;
++    ld8 r25 =[r19]
++    movl r24 = 1f
++    br.sptk.many vmx_vps_sync_write
++1:
++    mov r31 = r16
++    mov r24 =r17
++    ;;
++vmx_resume_to_guest2:
+     mov r16=cr.ipsr
+     movl r20=__vsa_base
+     ;;

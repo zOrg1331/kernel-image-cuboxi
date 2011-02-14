@@ -1,0 +1,44 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 17 Jan 2008 16:43:20 -0500
+Subject: [mm] using hugepages panics the kernel
+Message-id: 478FCBF8.1040907@redhat.com
+O-Subject: [RHEL5-U2 Patch] using hugepages panics the RHEL5-U2 kernel 99.9% of the time.
+Bugzilla: 429205
+
+This problem was caused by the introduction of  alloc_pages_thisnode() in
+include/linux/gfp.h in kernel-2.6.18-63.el5 with
+linux-2.6-ppc64-unequal-allocation-of-hugepages.patch
+and linux-2.6-mm-fix-hugepage-allocation-with-memoryless-nodes.patch.
+Either a "echo <any number> > /proc/sys/vm/nr_hugepages" or
+"vm.nr_hugepages = <any number>"
+in /etc/sysctl.conf will panic the system.
+
+Durring the evolution of alloc_pages_thisnode() we went from copying the
+entire
+2056 byte zonelist to a private zonelist on the kernel stack(GULP!!!) to
+copying only
+what we need before passing it to __alloc_pages().  Since the private
+copy of the zonelist
+is not initialized on the kernel stack, the system panics in
+__alloc_pages if the 0th zonelist
+entry is junk(thats the only explanation of not panicing .01% of the time).
+
+The fix is to include the attached patch which starts the zonelist
+copying at the 0th entry
+rather than the 1st entry so it can never be junk.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index 5ef5296..ab4fb53 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -131,7 +131,7 @@ static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+ 	if (zl->zones[0]->zone_pgdat->node_id != nid)
+ 		return NULL;
+ 
+-	for (i = 1; zl->zones[i] != NULL; i++) {
++	for (i = 0; zl->zones[i] != NULL; i++) {
+ 		if (zl->zones[i]->zone_pgdat->node_id != nid)
+ 			break;
+ 		thisnode_zl.zones[i] = zl->zones[i];

@@ -27,12 +27,12 @@
 #include <linux/proc_fs.h>
 #include <linux/delay.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <asm/hardware/clps7111.h>
-#include <mach/syspld.h>
+#include <asm/arch/syspld.h>
 
 struct fb_info	*cfb;
 
@@ -366,10 +366,11 @@ int __init clps711xfb_init(void)
 	if (fb_get_options("clps711xfb", NULL))
 		return -ENODEV;
 
-	cfb = kzalloc(sizeof(*cfb), GFP_KERNEL);
+	cfb = kmalloc(sizeof(*cfb), GFP_KERNEL);
 	if (!cfb)
 		goto out;
 
+	memset(cfb, 0, sizeof(*cfb));
 	strcpy(cfb->fix.id, "clps711x");
 
 	cfb->fbops		= &clps7111fb_ops;
@@ -381,7 +382,7 @@ int __init clps711xfb_init(void)
 
 	/* Register the /proc entries. */
 	clps7111fb_backlight_proc_entry = create_proc_entry("backlight", 0444,
-		NULL);
+		&proc_root);
 	if (clps7111fb_backlight_proc_entry == NULL) {
 		printk("Couldn't create the /proc entry for the backlight.\n");
 		return -EINVAL;

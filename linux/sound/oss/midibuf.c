@@ -1,5 +1,5 @@
 /*
- * sound/oss/midibuf.c
+ * sound/midibuf.c
  *
  * Device file manager for /dev/midi#
  */
@@ -127,16 +127,15 @@ static void midi_poll(unsigned long dummy)
 		for (dev = 0; dev < num_midis; dev++)
 			if (midi_devs[dev] != NULL && midi_out_buf[dev] != NULL)
 			{
-				while (DATA_AVAIL(midi_out_buf[dev]))
+				int ok = 1;
+
+				while (DATA_AVAIL(midi_out_buf[dev]) && ok)
 				{
-					int ok;
 					int c = midi_out_buf[dev]->queue[midi_out_buf[dev]->head];
 
 					spin_unlock_irqrestore(&lock,flags);/* Give some time to others */
 					ok = midi_devs[dev]->outputc(dev, c);
 					spin_lock_irqsave(&lock, flags);
-					if (!ok)
-						break;
 					midi_out_buf[dev]->head = (midi_out_buf[dev]->head + 1) % MAX_QUEUE_SIZE;
 					midi_out_buf[dev]->len--;
 				}
@@ -415,11 +414,18 @@ unsigned int MIDIbuf_poll(int dev, struct file *file, poll_table * wait)
 }
 
 
+void MIDIbuf_init(void)
+{
+	/* drag in midi_syms.o */
+	{
+		extern char midi_syms_symbol;
+		midi_syms_symbol = 0;
+	}
+}
+
 int MIDIbuf_avail(int dev)
 {
 	if (midi_in_buf[dev])
 		return DATA_AVAIL (midi_in_buf[dev]);
 	return 0;
 }
-EXPORT_SYMBOL(MIDIbuf_avail);
-

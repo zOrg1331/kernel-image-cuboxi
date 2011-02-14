@@ -9,10 +9,10 @@
  *	modify it under the terms of the GNU General Public License
  *	as published by the Free Software Foundation; either version
  *	2 of the License, or (at your option) any later version.
- *
- *	Neither Alan Cox nor CymruNet Ltd. admit liability nor provide
- *	warranty for any of this software. This material is provided
- *	"AS-IS" and at no charge.
+ *	
+ *	Neither Alan Cox nor CymruNet Ltd. admit liability nor provide 
+ *	warranty for any of this software. This material is provided 
+ *	"AS-IS" and at no charge.	
  *
  *	(c) Copyright 1995    Alan Cox <alan@lxorguk.ukuu.org.uk>
  *
@@ -29,11 +29,11 @@
  *	Made SMP safe for 2.3.x
  *
  *  20011127 Joel Becker (jlbec@evilplan.org>
- *	Added soft_noboot; Allows testing the softdog trigger without
+ *	Added soft_noboot; Allows testing the softdog trigger without 
  *	requiring a recompile.
  *	Added WDIOC_GETTIMEOUT and WDIOC_SETTIMOUT.
  */
-
+ 
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -44,13 +44,12 @@
 #include <linux/reboot.h>
 #include <linux/smp_lock.h>
 #include <linux/init.h>
-#include <linux/spinlock.h>
 #include <asm/uaccess.h>
 #include "mconsole.h"
 
 MODULE_LICENSE("GPL");
 
-static DEFINE_SPINLOCK(lock);
+/* Locked by the BKL in harddog_open and harddog_release */
 static int timer_alive;
 static int harddog_in_fd = -1;
 static int harddog_out_fd = -1;
@@ -58,19 +57,18 @@ static int harddog_out_fd = -1;
 /*
  *	Allow only one person to hold it open
  */
-
+ 
 extern int start_watchdog(int *in_fd_ret, int *out_fd_ret, char *sock);
 
 static int harddog_open(struct inode *inode, struct file *file)
 {
-	int err = -EBUSY;
+	int err;
 	char *sock = NULL;
 
 	lock_kernel();
-	spin_lock(&lock);
 	if(timer_alive)
-		goto err;
-#ifdef CONFIG_WATCHDOG_NOWAYOUT
+		return -EBUSY;
+#ifdef CONFIG_HARDDOG_NOWAYOUT	 
 	__module_get(THIS_MODULE);
 #endif
 
@@ -78,17 +76,11 @@ static int harddog_open(struct inode *inode, struct file *file)
 	sock = mconsole_notify_socket();
 #endif
 	err = start_watchdog(&harddog_in_fd, &harddog_out_fd, sock);
-	if(err)
-		goto err;
+	if(err) return(err);
 
 	timer_alive = 1;
-	spin_unlock(&lock);
 	unlock_kernel();
 	return nonseekable_open(inode, file);
-err:
-	spin_unlock(&lock);
-	unlock_kernel();
-	return err;
 }
 
 extern void stop_watchdog(int in_fd, int out_fd);
@@ -98,16 +90,14 @@ static int harddog_release(struct inode *inode, struct file *file)
 	/*
 	 *	Shut off the timer.
 	 */
-
-	spin_lock(&lock);
+	lock_kernel();
 
 	stop_watchdog(harddog_in_fd, harddog_out_fd);
 	harddog_in_fd = -1;
 	harddog_out_fd = -1;
 
 	timer_alive=0;
-	spin_unlock(&lock);
-
+	unlock_kernel();
 	return 0;
 }
 
@@ -120,7 +110,7 @@ static ssize_t harddog_write(struct file *file, const char __user *data, size_t 
 	 *	Refresh the timer.
 	 */
 	if(len)
-		return ping_watchdog(harddog_out_fd);
+		return(ping_watchdog(harddog_out_fd));
 	return 0;
 }
 
@@ -144,11 +134,11 @@ static int harddog_ioctl(struct inode *inode, struct file *file,
 		case WDIOC_GETBOOTSTATUS:
 			return put_user(0,(int __user *)argp);
 		case WDIOC_KEEPALIVE:
-			return ping_watchdog(harddog_out_fd);
+			return(ping_watchdog(harddog_out_fd));
 	}
 }
 
-static const struct file_operations harddog_fops = {
+static struct file_operations harddog_fops = {
 	.owner		= THIS_MODULE,
 	.write		= harddog_write,
 	.ioctl		= harddog_ioctl,
@@ -175,7 +165,7 @@ static int __init harddog_init(void)
 
 	printk(banner);
 
-	return 0;
+	return(0);
 }
 
 static void __exit harddog_exit(void)
@@ -185,3 +175,14 @@ static void __exit harddog_exit(void)
 
 module_init(harddog_init);
 module_exit(harddog_exit);
+
+/*
+ * Overrides for Emacs so that we follow Linus's tabbing style.
+ * Emacs will notice this stuff at the end of the file and automatically
+ * adjust the settings for this buffer only.  This must remain at the end
+ * of the file.
+ * ---------------------------------------------------------------------------
+ * Local variables:
+ * c-file-style: "linux"
+ * End:
+ */

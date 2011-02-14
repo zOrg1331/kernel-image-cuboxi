@@ -1,0 +1,33 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 5 Aug 2010 18:04:04 -0400
+Subject: [edac] amd64_edac: restrict PCI config space access
+Message-id: <20100805180946.6566.74338.sendpatchset@localhost.localdomain>
+Patchwork-id: 27419
+O-Subject: [RHEL5.6 PATCH 5/10] amd64_edac - Restrict PCI config space access
+Bugzilla: 568576
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+>From b7dbfa63eb1b16bb64128a6c2aac686ba6e53b40 Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <borislav.petkov@amd.com>
+Date: Mon, 2 Aug 2010 23:08:59 +0200
+Subject: [PATCH] amd64_edac: restrict PCI config space access
+
+(Adapted from upstream commit 92389102b6832fc779f5c37f1d9e3eaadea6e059)
+
+Do not access F2x19[0,4] on K8 since they're undefined there.
+
+Signed-off-by: Borislav Petkov <borislav.petkov@amd.com>
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 49b479d..3bc7707 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -2134,7 +2134,7 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
+        if (err)
+                goto err_reg;
+ 
+-       if (!dct_ganging_enabled(pvt)) {
++       if (!dct_ganging_enabled(pvt) && boot_cpu_data.x86 >= 0x10) {
+                err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_1,
+                                                &pvt->dclr1);
+                if (err)

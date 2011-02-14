@@ -1,0 +1,50 @@
+From: Luming Yu <luyu@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 232657 Processed: platform_kernel_launch_event  is a noop in non-SN kernel
+Date: Mon, 14 May 2007 14:12:19 +0800
+Bugzilla: 232657
+Message-Id: <4647FDC3.8040801@redhat.com>
+Changelog: [ia64] platform_kernel_launch_event is a noop in non-SN kernel
+
+
+BZ 232657
+
+http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commit;h=6a3d039078b337856bd3cfa436be3b1b223440a5
+
+[PATCH] ia64: platform_kernel_launch_event is noop on generic kernel
+
+Add a missing #define for the platform_kernel_launch_event.  Without this
+fix, a call to platform_kernel_launch_event() becomes a noop on generic
+kernels.  SN systems require this fix to successfully kdump/kexec from
+certain hardware errors.
+
+[bwalle@suse.de: fix it]
+Signed-off-by: John Keller <jpk@sgi.com>
+Cc: Bernhard Walle <bwalle@suse.de>
+Acked-by: Simon Horman <horms@verge.net.au>
+Acked-by: Jay Lan <jlan@sgi.com>
+Acked-by: "Luck, Tony" <tony.luck@intel.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+The enclosed back port patch was posted on the bugzilla by Guy Streeter 
+<streeter@redhat.com>
+It is NOT tested by me, but t looks good to me, and need to go into RHEL 
+5.1.
+Please  ACK.
+
+Thanks,
+Luming
+
+
+
+--- linux-2.6.18.ia64/include/asm-ia64/machvec.h~	2007-03-15 13:07:33.000000000 -0400
++++ linux-2.6.18.ia64/include/asm-ia64/machvec.h	2007-03-15 13:11:42.000000000 -0400
+@@ -156,6 +156,7 @@
+ #  define platform_readq_relaxed        ia64_mv.readq_relaxed
+ #  define platform_migrate		ia64_mv.migrate
+ #  define platform_msi_init		ia64_mv.msi_init
++#  define platform_kernel_launch_event	ia64_mv.kernel_launch_event
+ # endif
+ 
+ /* __attribute__((__aligned__(16))) is required to make size of the
+

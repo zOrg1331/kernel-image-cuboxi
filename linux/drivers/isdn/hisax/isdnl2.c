@@ -1293,8 +1293,7 @@ l2_pull_iqueue(struct FsmInst *fi, int event, void *arg)
 		oskb = skb;
 		skb = alloc_skb(oskb->len + i, GFP_ATOMIC);
 		memcpy(skb_put(skb, i), header, i);
-		skb_copy_from_linear_data(oskb,
-					  skb_put(skb, oskb->len), oskb->len);
+		memcpy(skb_put(skb, oskb->len), oskb->data, oskb->len);
 		dev_kfree_skb(oskb);
 	}
 	st->l2.l2l1(st, PH_PULL | INDICATION, skb);
@@ -1443,7 +1442,7 @@ l2_tei_remove(struct FsmInst *fi, int event, void *arg)
 }
 
 static void
-l2_st14_persistent_da(struct FsmInst *fi, int event, void *arg)
+l2_st14_persistant_da(struct FsmInst *fi, int event, void *arg)
 {
 	struct PStack *st = fi->userdata;
 	
@@ -1454,7 +1453,7 @@ l2_st14_persistent_da(struct FsmInst *fi, int event, void *arg)
 }
 
 static void
-l2_st5_persistent_da(struct FsmInst *fi, int event, void *arg)
+l2_st5_persistant_da(struct FsmInst *fi, int event, void *arg)
 {
 	struct PStack *st = fi->userdata;
 
@@ -1467,7 +1466,7 @@ l2_st5_persistent_da(struct FsmInst *fi, int event, void *arg)
 }
 
 static void
-l2_st6_persistent_da(struct FsmInst *fi, int event, void *arg)
+l2_st6_persistant_da(struct FsmInst *fi, int event, void *arg)
 {
 	struct PStack *st = fi->userdata;
 
@@ -1478,7 +1477,7 @@ l2_st6_persistent_da(struct FsmInst *fi, int event, void *arg)
 }
 
 static void
-l2_persistent_da(struct FsmInst *fi, int event, void *arg)
+l2_persistant_da(struct FsmInst *fi, int event, void *arg)
 {
 	struct PStack *st = fi->userdata;
 
@@ -1613,15 +1612,17 @@ static struct FsmNode L2FnList[] __initdata =
 	{ST_L2_6, EV_L2_FRAME_ERROR, l2_frame_error},
 	{ST_L2_7, EV_L2_FRAME_ERROR, l2_frame_error_reest},
 	{ST_L2_8, EV_L2_FRAME_ERROR, l2_frame_error_reest},
-	{ST_L2_1, EV_L1_DEACTIVATE, l2_st14_persistent_da},
+	{ST_L2_1, EV_L1_DEACTIVATE, l2_st14_persistant_da},
 	{ST_L2_2, EV_L1_DEACTIVATE, l2_st24_tei_remove},
 	{ST_L2_3, EV_L1_DEACTIVATE, l2_st3_tei_remove},
-	{ST_L2_4, EV_L1_DEACTIVATE, l2_st14_persistent_da},
-	{ST_L2_5, EV_L1_DEACTIVATE, l2_st5_persistent_da},
-	{ST_L2_6, EV_L1_DEACTIVATE, l2_st6_persistent_da},
-	{ST_L2_7, EV_L1_DEACTIVATE, l2_persistent_da},
-	{ST_L2_8, EV_L1_DEACTIVATE, l2_persistent_da},
+	{ST_L2_4, EV_L1_DEACTIVATE, l2_st14_persistant_da},
+	{ST_L2_5, EV_L1_DEACTIVATE, l2_st5_persistant_da},
+	{ST_L2_6, EV_L1_DEACTIVATE, l2_st6_persistant_da},
+	{ST_L2_7, EV_L1_DEACTIVATE, l2_persistant_da},
+	{ST_L2_8, EV_L1_DEACTIVATE, l2_persistant_da},
 };
+
+#define L2_FN_COUNT (sizeof(L2FnList)/sizeof(struct FsmNode))
 
 static void
 isdnl2_l1l2(struct PStack *st, int pr, void *arg)
@@ -1834,7 +1835,7 @@ Isdnl2New(void)
 	l2fsm.event_count = L2_EVENT_COUNT;
 	l2fsm.strEvent = strL2Event;
 	l2fsm.strState = strL2State;
-	return FsmNew(&l2fsm, L2FnList, ARRAY_SIZE(L2FnList));
+	return FsmNew(&l2fsm, L2FnList, L2_FN_COUNT);
 }
 
 void

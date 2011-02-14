@@ -1,4 +1,5 @@
-/*
+/* $Id: time.c,v 1.5 2004/09/29 06:12:46 starvik Exp $
+ *
  *  linux/arch/cris/arch-v10/kernel/time.c
  *
  *  Copyright (C) 1991, 1992, 1995  Linus Torvalds
@@ -13,14 +14,12 @@
 #include <linux/swap.h>
 #include <linux/sched.h>
 #include <linux/init.h>
-#include <linux/mm.h>
-#include <arch/svinto.h>
+#include <asm/arch/svinto.h>
 #include <asm/types.h>
 #include <asm/signal.h>
 #include <asm/io.h>
 #include <asm/delay.h>
 #include <asm/rtc.h>
-#include <asm/irq_regs.h>
 
 /* define this if you need to use print_timestamp */
 /* it will make jiffies at 96 hz instead of 100 hz though */
@@ -28,6 +27,7 @@
 
 extern void update_xtime_from_cmos(void);
 extern int set_rtc_mmss(unsigned long nowtime);
+extern int setup_irq(int, struct irqaction *);
 extern int have_rtc;
 
 unsigned long get_ns_in_jiffie(void)
@@ -38,6 +38,7 @@ unsigned long get_ns_in_jiffie(void)
 	unsigned long flags;
 
 	local_irq_save(flags);
+	local_irq_disable();
 	timer_count = *R_TIMER0_DATA;
 	presc_count = *R_TIM_PRESC_STATUS;  
 	/* presc_count might be wrapped */
@@ -201,9 +202,8 @@ static long last_rtc_update = 0;
 extern void cris_do_profile(struct pt_regs *regs);
 
 static inline irqreturn_t
-timer_interrupt(int irq, void *dev_id)
+timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	struct pt_regs *regs = get_irq_regs();
 	/* acknowledge the timer irq */
 
 #ifdef USE_CASCADE_TIMERS
@@ -222,14 +222,12 @@ timer_interrupt(int irq, void *dev_id)
 #endif
 
 	/* reset watchdog otherwise it resets us! */
+
 	reset_watchdog();
 	
-	/* Update statistics. */
-	update_process_times(user_mode(regs));
-
 	/* call the real timer interrupt handler */
 
-	do_timer(1);
+	do_timer(regs);
 	
         cris_do_profile(regs); /* Save profiling information */
 
@@ -257,11 +255,8 @@ timer_interrupt(int irq, void *dev_id)
  * it needs to be IRQF_DISABLED to make the jiffies update work properly
  */
 
-static struct irqaction irq2  = {
-	.handler = timer_interrupt,
-	.flags = IRQF_SHARED | IRQF_DISABLED,
-	.name = "timer",
-};
+static struct irqaction irq2  = { timer_interrupt, IRQF_SHARED | IRQF_DISABLED,
+				  CPU_MASK_NONE, "timer", NULL, NULL};
 
 void __init
 time_init(void)

@@ -25,6 +25,8 @@
 #include <linux/types.h>
 #include <linux/wait.h>
 
+#include <linux/videodev.h>
+
 #ifndef O_NONCAP
 #define O_NONCAP	O_TRUNC
 #endif

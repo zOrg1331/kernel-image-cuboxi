@@ -1,0 +1,52 @@
+From: Dave Airlie <airlied@redhat.com>
+Date: Wed, 1 Dec 2010 04:27:29 -0500
+Subject: [char] drm: don't set signal blocker on master process
+Message-id: <1291177649-4260-1-git-send-email-airlied@redhat.com>
+Patchwork-id: 29759
+O-Subject: [PATCH] [RHEL5.6 PATCH] drm: don't set the signal blocker on the
+	master process.
+Bugzilla: 570604
+
+BZ: 570604
+upstream-commit-id: 3e5fc80a404a24c858468030b63555cccfb3e79c
+[straight backport]
+
+There is a problem with debugging the X server and gdb crashes in
+the xkb startup code.
+
+This avoids the problem by allowing the master process to get signals.
+It should be safe as the signal blocker is mainly so that you can
+Ctrl-Z a 3D application without locking up the whole box. Ctrl-Z the
+X server isn't something many people do.
+
+Signed-off-by: Dave Airlie <airlied@redhat.com>
+
+diff --git a/drivers/char/drm/drm_lock.c b/drivers/char/drm/drm_lock.c
+index f9e4530..6e523da 100644
+--- a/drivers/char/drm/drm_lock.c
++++ b/drivers/char/drm/drm_lock.c
+@@ -108,14 +108,16 @@ int drm_lock(struct inode *inode, struct file *filp,
+ 	if (ret)
+ 		return ret;
+ 
+-	sigemptyset(&dev->sigmask);
+-	sigaddset(&dev->sigmask, SIGSTOP);
+-	sigaddset(&dev->sigmask, SIGTSTP);
+-	sigaddset(&dev->sigmask, SIGTTIN);
+-	sigaddset(&dev->sigmask, SIGTTOU);
+-	dev->sigdata.context = lock.context;
+-	dev->sigdata.lock = dev->lock.hw_lock;
+-	block_all_signals(drm_notifier, &dev->sigdata, &dev->sigmask);
++	if (!priv->master) {
++		sigemptyset(&dev->sigmask);
++		sigaddset(&dev->sigmask, SIGSTOP);
++		sigaddset(&dev->sigmask, SIGTSTP);
++		sigaddset(&dev->sigmask, SIGTTIN);
++		sigaddset(&dev->sigmask, SIGTTOU);
++		dev->sigdata.context = lock.context;
++		dev->sigdata.lock = dev->lock.hw_lock;
++		block_all_signals(drm_notifier, &dev->sigdata, &dev->sigmask);
++	}
+ 
+ 	if (dev->driver->dma_ready && (lock.flags & _DRM_LOCK_READY))
+ 		dev->driver->dma_ready(dev);

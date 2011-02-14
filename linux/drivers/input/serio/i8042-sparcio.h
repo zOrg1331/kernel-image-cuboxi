@@ -1,11 +1,10 @@
 #ifndef _I8042_SPARCIO_H
 #define _I8042_SPARCIO_H
 
-#include <linux/of_device.h>
-
 #include <asm/io.h>
 #include <asm/oplib.h>
 #include <asm/prom.h>
+#include <asm/of_device.h>
 
 static int i8042_kbd_irq = -1;
 static int i8042_aux_irq = -1;
@@ -17,7 +16,6 @@ static int i8042_aux_irq = -1;
 #define I8042_MUX_PHYS_DESC "sparcps2/serio%d"
 
 static void __iomem *kbd_iobase;
-static struct resource *kbd_res;
 
 #define I8042_COMMAND_REG	(kbd_iobase + 0x64UL)
 #define I8042_DATA_REG		(kbd_iobase + 0x60UL)
@@ -42,8 +40,6 @@ static inline void i8042_write_command(int val)
 	writeb(val, kbd_iobase + 0x64UL);
 }
 
-#ifdef CONFIG_PCI
-
 #define OBP_PS2KBD_NAME1	"kb_ps2"
 #define OBP_PS2KBD_NAME2	"keyboard"
 #define OBP_PS2MS_NAME1		"kdmouse"
@@ -64,7 +60,6 @@ static int __devinit sparc_i8042_probe(struct of_device *op, const struct of_dev
 			i8042_kbd_irq = irq;
 			kbd_iobase = of_ioremap(&kbd->resource[0],
 						0, 8, "kbd");
-			kbd_res = &kbd->resource[0];
 		} else if (!strcmp(dp->name, OBP_PS2MS_NAME1) ||
 			   !strcmp(dp->name, OBP_PS2MS_NAME2)) {
 			struct of_device *ms = of_find_device_by_node(dp);
@@ -82,12 +77,12 @@ static int __devinit sparc_i8042_probe(struct of_device *op, const struct of_dev
 
 static int __devexit sparc_i8042_remove(struct of_device *op)
 {
-	of_iounmap(kbd_res, kbd_iobase, 8);
+	of_iounmap(kbd_iobase, 8);
 
 	return 0;
 }
 
-static const struct of_device_id sparc_i8042_match[] = {
+static struct of_device_id sparc_i8042_match[] = {
 	{
 		.name = "8042",
 	},
@@ -104,6 +99,9 @@ static struct of_platform_driver sparc_i8042_driver = {
 
 static int __init i8042_platform_init(void)
 {
+#ifndef CONFIG_PCI
+	return -ENODEV;
+#else
 	struct device_node *root = of_find_node_by_path("/");
 
 	if (!strcmp(root->name, "SUNW,JavaStation-1")) {
@@ -121,7 +119,7 @@ static int __init i8042_platform_init(void)
 		if (i8042_kbd_irq == -1 ||
 		    i8042_aux_irq == -1) {
 			if (kbd_iobase) {
-				of_iounmap(kbd_res, kbd_iobase, 8);
+				of_iounmap(kbd_iobase, 8);
 				kbd_iobase = (void __iomem *) NULL;
 			}
 			return -ENODEV;
@@ -131,25 +129,17 @@ static int __init i8042_platform_init(void)
 	i8042_reset = 1;
 
 	return 0;
+#endif /* CONFIG_PCI */
 }
 
 static inline void i8042_platform_exit(void)
 {
+#ifdef CONFIG_PCI
 	struct device_node *root = of_find_node_by_path("/");
 
 	if (strcmp(root->name, "SUNW,JavaStation-1"))
 		of_unregister_driver(&sparc_i8042_driver);
+#endif
 }
-
-#else /* !CONFIG_PCI */
-static int __init i8042_platform_init(void)
-{
-	return -ENODEV;
-}
-
-static inline void i8042_platform_exit(void)
-{
-}
-#endif /* !CONFIG_PCI */
 
 #endif /* _I8042_SPARCIO_H */

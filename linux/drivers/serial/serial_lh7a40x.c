@@ -41,10 +41,9 @@
 #include <linux/tty_flip.h>
 #include <linux/serial_core.h>
 #include <linux/serial.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
-#include <mach/hardware.h>
 
 #define DEV_MAJOR	204
 #define DEV_MINOR	16
@@ -136,9 +135,14 @@ static void lh7a40xuart_enable_ms (struct uart_port* port)
 	BIT_SET (port, UART_R_INTEN, ModemInt);
 }
 
-static void lh7a40xuart_rx_chars (struct uart_port* port)
+static void
+#ifdef SUPPORT_SYSRQ
+lh7a40xuart_rx_chars (struct uart_port* port, struct pt_regs* regs)
+#else
+lh7a40xuart_rx_chars (struct uart_port* port)
+#endif
 {
-	struct tty_struct* tty = port->state->port.tty;
+	struct tty_struct* tty = port->info->tty;
 	int cbRxMax = 256;	/* (Gross) limit on receive */
 	unsigned int data;	/* Received data and status */
 	unsigned int flag;
@@ -173,7 +177,7 @@ static void lh7a40xuart_rx_chars (struct uart_port* port)
 				flag = TTY_FRAME;
 		}
 
-		if (uart_handle_sysrq_char (port, (unsigned char) data))
+		if (uart_handle_sysrq_char (port, (unsigned char) data, regs))
 			continue;
 
 		uart_insert_char(port, data, RxOverrunError, data, flag);
@@ -184,7 +188,7 @@ static void lh7a40xuart_rx_chars (struct uart_port* port)
 
 static void lh7a40xuart_tx_chars (struct uart_port* port)
 {
-	struct circ_buf* xmit = &port->state->xmit;
+	struct circ_buf* xmit = &port->info->xmit;
 	int cbTxMax = port->fifosize;
 
 	if (port->x_char) {
@@ -241,10 +245,11 @@ static void lh7a40xuart_modem_status (struct uart_port* port)
 	if (delta & CTS)
 		uart_handle_cts_change (port, status & CTS);
 
-	wake_up_interruptible (&port->state->port.delta_msr_wait);
+	wake_up_interruptible (&port->info->delta_msr_wait);
 }
 
-static irqreturn_t lh7a40xuart_int (int irq, void* dev_id)
+static irqreturn_t lh7a40xuart_int (int irq, void* dev_id,
+				    struct pt_regs* regs)
 {
 	struct uart_port* port = dev_id;
 	unsigned int cLoopLimit = ISR_LOOP_LIMIT;
@@ -253,7 +258,11 @@ static irqreturn_t lh7a40xuart_int (int irq, void* dev_id)
 
 	do {
 		if (isr & (RxInt | RxTimeoutInt))
+#ifdef SUPPORT_SYSRQ
+			lh7a40xuart_rx_chars(port, regs);
+#else
 			lh7a40xuart_rx_chars(port);
+#endif
 		if (isr & ModemInt)
 			lh7a40xuart_modem_status (port);
 		if (isr & TxInt)
@@ -349,8 +358,8 @@ static void lh7a40xuart_shutdown (struct uart_port* port)
 }
 
 static void lh7a40xuart_set_termios (struct uart_port* port,
-				     struct ktermios* termios,
-				     struct ktermios* old)
+				     struct termios* termios,
+				     struct termios* old)
 {
 	unsigned int con;
 	unsigned int inten;
@@ -461,7 +470,7 @@ static int lh7a40xuart_verify_port (struct uart_port* port,
 
 	if (ser->type != PORT_UNKNOWN && ser->type != PORT_LH7A40X)
 		ret = -EINVAL;
-	if (ser->irq < 0 || ser->irq >= nr_irqs)
+	if (ser->irq < 0 || ser->irq >= NR_IRQS)
 		ret = -EINVAL;
 	if (ser->baud_base < 9600) /* *** FIXME: is this true? */
 		ret = -EINVAL;

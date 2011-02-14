@@ -1,0 +1,59 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 3 Jun 2010 09:19:08 -0400
+Subject: [net] cnic: fix panic when nl msg rcvd when device down
+Message-id: <20100603111908.2f3187ff@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 25958
+O-Subject: [RHEL5 PATCH] cnic: Fix panic in cnic_iscsi_nl_msg_recv() when
+	device is down
+Bugzilla: 595862
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ#595862
+
+Description (from upstream):
+    Some data structures are freed when the device is down and it will
+    crash if an ISCSI netlink message is received.  Add RCU protection
+    to prevent this.  In the shutdown path, ulp_ops[CNIC_ULP_L4] is
+    assigned NULL and rcu_synchronized before freeing the data
+    structures.
+
+Upstream:
+commit d02a5e6c2fba8b114c44cf05085fca07180f37f1
+Author: Michael Chan <mchan@broadcom.com>
+Date:   Wed Feb 24 14:42:06 2010 +0000
+
+    cnic: Fix panic in cnic_iscsi_nl_msg_recv() when device is down.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2484169
+
+Testing:
+I test by load/unload cnic module. Test kernel was provided to broadcom.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/cnic.c b/drivers/net/cnic.c
+index 2dd904d..f3881ce 100644
+--- a/drivers/net/cnic.c
++++ b/drivers/net/cnic.c
+@@ -326,6 +326,12 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
+ 		if (l5_cid >= MAX_CM_SK_TBL_SZ)
+ 			break;
+ 
++		rcu_read_lock();
++		if (!rcu_dereference(cp->ulp_ops[CNIC_ULP_L4])) {
++			rc = -ENODEV;
++			rcu_read_unlock();
++			break;
++		}
+ 		csk = &cp->csk_tbl[l5_cid];
+ 		csk_hold(csk);
+ 		if (cnic_in_use(csk)) {
+@@ -340,6 +346,7 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
+ 				cnic_cm_set_pg(csk);
+ 		}
+ 		csk_put(csk);
++		rcu_read_unlock();
+ 		rc = 0;
+ 		break;
+ 	}

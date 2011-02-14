@@ -1,0 +1,65 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 17 Sep 2009 13:29:26 -0400
+Subject: [nfs] nfsd4: idmap upcalls should use unsigned uid/gid
+Message-id: 1253208566-9625-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#519184: nfsd4: idmap upcalls should use unsigned uid and gid
+Bugzilla: 519184
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+(backported from 0a725fc4d3bfc4734164863d6c50208b109ca5c7)
+
+This problem fixes a rather nasty interaction between the kernel and
+rpc.idmapd. rpc.idmapd expects that the kernel will send it unsigned
+values for server-side upcalls. If it gets a negative value, it can
+cause it to stop responding.
+
+This is clearly also due to a bug in rpc.idmapd (bogus values shouldn't
+cause it to stop responding), but the kernel should also provide the
+correct info in the first place.
+
+I've already fixed the bug in idmapd and pushed a patch upstream for
+that. That portion of this problem is being tracked in bug 523285.
+
+Original patch description follows:
+
+-------------------------[snip]----------------------------
+
+We shouldn't be using negative uid's and gid's in the idmap upcalls.
+
+Signed-off-by: "J. Bruce Fields" <bfields@citi.umich.edu>
+Cc: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/nfsd/nfs4idmap.c b/fs/nfsd/nfs4idmap.c
+index 7915039..d4e7760 100644
+--- a/fs/nfsd/nfs4idmap.c
++++ b/fs/nfsd/nfs4idmap.c
+@@ -140,7 +140,7 @@ idtoname_request(struct cache_detail *cd, struct cache_head *ch, char **bpp,
+ 	char idstr[11];
+ 
+ 	qword_add(bpp, blen, ent->authname);
+-	snprintf(idstr, sizeof(idstr), "%d", ent->id);
++	snprintf(idstr, sizeof(idstr), "%u", ent->id);
+ 	qword_add(bpp, blen, ent->type == IDMAP_TYPE_GROUP ? "group" : "user");
+ 	qword_add(bpp, blen, idstr);
+ 
+@@ -167,7 +167,7 @@ idtoname_show(struct seq_file *m, struct cache_detail *cd, struct cache_head *h)
+ 		return 0;
+ 	}
+ 	ent = container_of(h, struct ent, h);
+-	seq_printf(m, "%s %s %d", ent->authname,
++	seq_printf(m, "%s %s %u", ent->authname,
+ 			ent->type == IDMAP_TYPE_GROUP ? "group" : "user",
+ 			ent->id);
+ 	if (test_bit(CACHE_VALID, &h->flags))
+@@ -351,7 +351,7 @@ nametoid_show(struct seq_file *m, struct cache_detail *cd, struct cache_head *h)
+ 			ent->type == IDMAP_TYPE_GROUP ? "group" : "user",
+ 			ent->name);
+ 	if (test_bit(CACHE_VALID, &h->flags))
+-		seq_printf(m, " %d", ent->id);
++		seq_printf(m, " %u", ent->id);
+ 	seq_printf(m, "\n");
+ 	return 0;
+ }

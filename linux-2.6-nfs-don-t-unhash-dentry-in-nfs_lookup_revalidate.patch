@@ -1,0 +1,57 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 29 Apr 2010 12:32:16 -0400
+Subject: [nfs] don't unhash dentry in nfs_lookup_revalidate
+Message-id: <1272544336-5374-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 24695
+O-Subject: [RHEL5.6 PATCH] BZ#582321: NFS: don't unhash disconnected dentry in
+	nfs_lookup_revalidate
+Bugzilla: 582321
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+When nfs_lookup_revalidate detects that a dentry is no longer valid,
+it'll generally try to d_drop it. This is problematic if the dentry has
+DCACHE_DISCONNECTED set, which is commonly the case with root dentries.
+
+Instead of unhashing it from the dcache hashtable, it unhashes it from
+sb->s_anon. If the dentry is the root of a subtree that was merged with
+a "bigger" tree, then it will become unreachable by
+shrink_dcache_for_umount which leads to a "Busy inodes after umount"
+situation. Eventually however, prune_dcache will be called due to memory
+pressure at which point the dentry will point to a now-freed superblock
+and *boom*.
+
+I've tested this patch against the reproducer that I have for this
+problem and it fixes the issue.
+
+Al's description of the upstream patch follows:
+
+---------------------[snip]----------------
+
+nfs d_revalidate() is too trigger-happy with d_drop()
+
+If dentry found stale happens to be a root of disconnected tree, we
+can't d_drop() it; its d_hash is actually part of s_anon and d_drop()
+would simply hide it from shrink_dcache_for_umount(), leading to
+all sorts of fun, including busy inodes on umount and oopsen after
+that.
+
+Bug had been there since at least 2006 (commit c636eb already has it),
+so it's definitely -stable fodder.
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Cc: stable@kernel.org
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 250cac3..e07dd1c 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -812,6 +812,8 @@ out_zap_parent:
+ 		/* If we have submounts, don't unhash ! */
+ 		if (have_submounts(dentry))
+ 			goto out_valid;
++		if (dentry->d_flags & DCACHE_DISCONNECTED)
++			goto out_valid;
+ 		shrink_dcache_parent(dentry);
+ 	}
+ 	d_drop(dentry);

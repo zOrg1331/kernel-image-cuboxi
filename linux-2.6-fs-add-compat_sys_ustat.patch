@@ -1,0 +1,308 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 30 Mar 2009 14:40:37 -0500
+Subject: [fs] add compat_sys_ustat
+Message-id: 49D12035.90805@redhat.com
+O-Subject: [PATCH RHEL5.4 V2] - compat_sys_ustat
+Bugzilla: 472426
+RH-Acked-by: Kyle McMartin <kyle@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Kyle McMartin <kyle@redhat.com>
+
+This is for
+Bug 472426 - ppc64: missing compat sys_ustat corrupts userspace when sys_ustat called from 32-bit
+
+Basically, calling sys_ustat on our RHEL5 ppc boxes will copy 32 bytes into a 20-byte
+userspace structure, and corrupt userspace.
+
+It's a backport of the following 2 (finally upstream) commits:
+
+commit 2b1c6bd77d4e6a727ffac8630cd154b2144b751a
+Author: Christoph Hellwig <hch@lst.de>
+
+    generic compat_sys_ustat
+
+commit 6e8a4fa651975ff808dba130eae442f4cea1671c
+Author: David S. Miller <davem@davemloft.net>
+
+    sparc64: We need to use compat_sys_ustat() as well.
+
+Thanks,
+-Eric
+
+diff --git a/arch/ia64/ia32/ia32_entry.S b/arch/ia64/ia32/ia32_entry.S
+index 17b090f..f0ac892 100644
+--- a/arch/ia64/ia32/ia32_entry.S
++++ b/arch/ia64/ia32/ia32_entry.S
+@@ -235,7 +235,7 @@ ia32_syscall_table:
+ 	data8 sys_ni_syscall
+ 	data8 sys_umask		  /* 60 */
+ 	data8 sys_chroot
+-	data8 sys_ustat
++	data8 compat_sys_ustat
+ 	data8 sys_dup2
+ 	data8 sys_getppid
+ 	data8 sys_getpgrp	  /* 65 */
+diff --git a/arch/mips/kernel/linux32.c b/arch/mips/kernel/linux32.c
+index 048e98c..2779c49 100644
+--- a/arch/mips/kernel/linux32.c
++++ b/arch/mips/kernel/linux32.c
+@@ -1063,40 +1063,6 @@ asmlinkage int sys32_personality(unsigned long personality)
+ 	return ret;
+ }
+ 
+-/* ustat compatibility */
+-struct ustat32 {
+-	compat_daddr_t	f_tfree;
+-	compat_ino_t	f_tinode;
+-	char		f_fname[6];
+-	char		f_fpack[6];
+-};
+-
+-extern asmlinkage long sys_ustat(dev_t dev, struct ustat __user * ubuf);
+-
+-asmlinkage int sys32_ustat(dev_t dev, struct ustat32 __user * ubuf32)
+-{
+-	int err;
+-        struct ustat tmp;
+-	struct ustat32 tmp32;
+-	mm_segment_t old_fs = get_fs();
+-
+-	set_fs(KERNEL_DS);
+-	err = sys_ustat(dev, (struct ustat __user *)&tmp);
+-	set_fs (old_fs);
+-
+-	if (err)
+-		goto out;
+-
+-        memset(&tmp32,0,sizeof(struct ustat32));
+-        tmp32.f_tfree = tmp.f_tfree;
+-        tmp32.f_tinode = tmp.f_tinode;
+-
+-        err = copy_to_user(ubuf32,&tmp32,sizeof(struct ustat32)) ? -EFAULT : 0;
+-
+-out:
+-	return err;
+-}
+-
+ asmlinkage int sys32_sendfile(int out_fd, int in_fd, compat_off_t __user *offset,
+ 	s32 count)
+ {
+diff --git a/arch/mips/kernel/scall64-n32.S b/arch/mips/kernel/scall64-n32.S
+index 98abbc5..dd56a34 100644
+--- a/arch/mips/kernel/scall64-n32.S
++++ b/arch/mips/kernel/scall64-n32.S
+@@ -253,7 +253,7 @@ EXPORT(sysn32_call_table)
+ 	PTR	compat_sys_utime		/* 6130 */
+ 	PTR	sys_mknod
+ 	PTR	sys32_personality
+-	PTR	sys32_ustat
++	PTR	compat_sys_ustat
+ 	PTR	compat_sys_statfs
+ 	PTR	compat_sys_fstatfs		/* 6135 */
+ 	PTR	sys_sysfs
+diff --git a/arch/mips/kernel/scall64-o32.S b/arch/mips/kernel/scall64-o32.S
+index 505c9ee..d16694e 100644
+--- a/arch/mips/kernel/scall64-o32.S
++++ b/arch/mips/kernel/scall64-o32.S
+@@ -267,7 +267,7 @@ sys_call_table:
+ 	PTR	sys_olduname
+ 	PTR	sys_umask			/* 4060 */
+ 	PTR	sys_chroot
+-	PTR	sys32_ustat
++	PTR	compat_sys_ustat
+ 	PTR	sys_dup2
+ 	PTR	sys_getppid
+ 	PTR	sys_getpgrp			/* 4065 */
+diff --git a/arch/parisc/kernel/syscall_table.S b/arch/parisc/kernel/syscall_table.S
+index e27b432..e428f7a 100644
+--- a/arch/parisc/kernel/syscall_table.S
++++ b/arch/parisc/kernel/syscall_table.S
+@@ -135,7 +135,7 @@
+ 	ENTRY_SAME(newuname)
+ 	ENTRY_SAME(umask)		/* 60 */
+ 	ENTRY_SAME(chroot)
+-	ENTRY_SAME(ustat)
++	ENTRY_COMP(ustat)
+ 	ENTRY_SAME(dup2)
+ 	ENTRY_SAME(getppid)
+ 	ENTRY_SAME(getpgrp)		/* 65 */
+diff --git a/arch/s390/kernel/compat_wrapper.S b/arch/s390/kernel/compat_wrapper.S
+index 236f1ef..24b19d7 100644
+--- a/arch/s390/kernel/compat_wrapper.S
++++ b/arch/s390/kernel/compat_wrapper.S
+@@ -254,7 +254,7 @@ sys32_chroot_wrapper:
+ sys32_ustat_wrapper:
+ 	llgfr	%r2,%r2			# dev_t 
+ 	llgtr	%r3,%r3			# struct ustat *
+-	jg	sys_ustat
++	jg	compat_sys_ustat
+ 
+ 	.globl  sys32_dup2_wrapper 
+ sys32_dup2_wrapper:
+diff --git a/arch/sparc64/kernel/systbls.S b/arch/sparc64/kernel/systbls.S
+index b2ae59c..46491e5 100644
+--- a/arch/sparc64/kernel/systbls.S
++++ b/arch/sparc64/kernel/systbls.S
+@@ -52,7 +52,7 @@ sys_call_table32:
+ /*150*/	.word sys_nis_syscall, sys_inotify_init, sys_inotify_add_watch, sys_poll, sys_getdents64
+ 	.word compat_sys_fcntl64, sys_inotify_rm_watch, compat_sys_statfs, compat_sys_fstatfs, sys_oldumount
+ /*160*/	.word compat_sys_sched_setaffinity, compat_sys_sched_getaffinity, sys32_getdomainname, sys32_setdomainname, sys_nis_syscall
+-	.word sys_quotactl, sys_set_tid_address, compat_sys_mount, sys_ustat, sys32_setxattr
++	.word sys_quotactl, sys_set_tid_address, compat_sys_mount, compat_sys_ustat, sys32_setxattr
+ /*170*/	.word sys32_lsetxattr, sys32_fsetxattr, sys_getxattr, sys_lgetxattr, compat_sys_getdents
+ 	.word sys_setsid, sys_fchdir, sys32_fgetxattr, sys_listxattr, sys_llistxattr
+ /*180*/	.word sys32_flistxattr, sys_removexattr, sys_lremovexattr, compat_sys_sigpending, sys_ni_syscall
+diff --git a/arch/x86_64/ia32/ia32entry-xen.S b/arch/x86_64/ia32/ia32entry-xen.S
+index 5e4efd7..8aa41fb 100644
+--- a/arch/x86_64/ia32/ia32entry-xen.S
++++ b/arch/x86_64/ia32/ia32entry-xen.S
+@@ -500,7 +500,7 @@ ia32_sys_call_table:
+ 	.quad sys32_olduname
+ 	.quad sys_umask		/* 60 */
+ 	.quad sys_chroot
+-	.quad sys32_ustat
++	.quad compat_sys_ustat
+ 	.quad sys_dup2
+ 	.quad sys_getppid
+ 	.quad sys_getpgrp		/* 65 */
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index 8321e2a..50ca6d6 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -467,7 +467,7 @@ ia32_sys_call_table:
+ 	.quad sys32_olduname
+ 	.quad sys_umask		/* 60 */
+ 	.quad sys_chroot
+-	.quad sys32_ustat
++	.quad compat_sys_ustat
+ 	.quad sys_dup2
+ 	.quad sys_getppid
+ 	.quad sys_getpgrp		/* 65 */
+diff --git a/arch/x86_64/ia32/sys_ia32.c b/arch/x86_64/ia32/sys_ia32.c
+index 8d967d0..7f83d82 100644
+--- a/arch/x86_64/ia32/sys_ia32.c
++++ b/arch/x86_64/ia32/sys_ia32.c
+@@ -828,27 +828,6 @@ long sys32_uname(struct old_utsname __user * name)
+ 	return err?-EFAULT:0;
+ }
+ 
+-long sys32_ustat(unsigned dev, struct ustat32 __user *u32p)
+-{
+-	struct ustat u;
+-	mm_segment_t seg;
+-	int ret;
+-	
+-	seg = get_fs(); 
+-	set_fs(KERNEL_DS); 
+-	ret = sys_ustat(dev,&u); 
+-	set_fs(seg);
+-	if (ret >= 0) { 
+-		if (!access_ok(VERIFY_WRITE,u32p,sizeof(struct ustat32)) || 
+-		    __put_user((__u32) u.f_tfree, &u32p->f_tfree) ||
+-		    __put_user((__u32) u.f_tinode, &u32p->f_tfree) ||
+-		    __copy_to_user(&u32p->f_fname, u.f_fname, sizeof(u.f_fname)) ||
+-		    __copy_to_user(&u32p->f_fpack, u.f_fpack, sizeof(u.f_fpack)))
+-			ret = -EFAULT;
+-	}
+-	return ret;
+-} 
+-
+ asmlinkage long sys32_execve(char __user *name, compat_uptr_t __user *argv,
+ 			     compat_uptr_t __user *envp, struct pt_regs *regs)
+ {
+diff --git a/fs/compat.c b/fs/compat.c
+index bf892a4..f6ad1db 100644
+--- a/fs/compat.c
++++ b/fs/compat.c
+@@ -467,6 +467,34 @@ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
+ 	return error;
+ }
+ 
++/*
++ * This is a copy of sys_ustat, just dealing with a structure layout.
++ * Given how simple this syscall is that apporach is more maintainable
++ * than the various conversion hacks.
++ */
++asmlinkage long compat_sys_ustat(unsigned dev, struct compat_ustat __user *u)
++{
++	struct super_block *sb;
++	struct compat_ustat tmp;
++	struct kstatfs sbuf;
++	int err;
++
++	sb = user_get_super(new_decode_dev(dev));
++	if (!sb)
++		return -EINVAL;
++	err = vfs_statfs(sb->s_root, &sbuf);
++	drop_super(sb);
++	if (err)
++		return err;
++
++	memset(&tmp, 0, sizeof(struct compat_ustat));
++	tmp.f_tfree = sbuf.f_bfree;
++	tmp.f_tinode = sbuf.f_ffree;
++	if (copy_to_user(u, &tmp, sizeof(struct compat_ustat)))
++		return -EFAULT;
++	return 0;
++}
++
+ static int get_compat_flock(struct flock *kfl, struct compat_flock __user *ufl)
+ {
+ 	if (!access_ok(VERIFY_READ, ufl, sizeof(*ufl)) ||
+diff --git a/include/asm-powerpc/systbl.h b/include/asm-powerpc/systbl.h
+index 311b894..f83bf6a 100644
+--- a/include/asm-powerpc/systbl.h
++++ b/include/asm-powerpc/systbl.h
+@@ -65,7 +65,7 @@ SYSCALL(ni_syscall)
+ SYSX(sys_ni_syscall,sys_olduname, sys_olduname)
+ COMPAT_SYS_SPU(umask)
+ SYSCALL_SPU(chroot)
+-SYSCALL(ustat)
++COMPAT_SYS(ustat)
+ SYSCALL_SPU(dup2)
+ SYSCALL_SPU(getppid)
+ SYSCALL_SPU(getpgrp)
+diff --git a/include/asm-x86_64/ia32.h b/include/asm-x86_64/ia32.h
+index 0190b7c..a9920e3 100644
+--- a/include/asm-x86_64/ia32.h
++++ b/include/asm-x86_64/ia32.h
+@@ -149,13 +149,6 @@ struct rt_sigframe32
+         struct _fpstate_ia32 fpstate;
+ };
+ 
+-struct ustat32 {
+-	__u32	f_tfree;
+-	compat_ino_t		f_tinode;
+-	char			f_fname[6];
+-	char			f_fpack[6];
+-};
+-
+ #define IA32_STACK_TOP IA32_PAGE_OFFSET
+ 
+ #ifdef __KERNEL__
+diff --git a/include/linux/compat.h b/include/linux/compat.h
+index 9760753..eaa41d6 100644
+--- a/include/linux/compat.h
++++ b/include/linux/compat.h
+@@ -124,6 +124,13 @@ struct compat_dirent {
+ 	char		d_name[256];
+ };
+ 
++struct compat_ustat {
++	compat_daddr_t		f_tfree;
++	compat_ino_t		f_tinode;
++	char			f_fname[6];
++	char			f_fpack[6];
++};
++
+ typedef union compat_sigval {
+ 	compat_int_t	sival_int;
+ 	compat_uptr_t	sival_ptr;
+@@ -177,6 +184,7 @@ long compat_sys_semtimedop(int semid, struct sembuf __user *tsems,
+ 		unsigned nsems, const struct compat_timespec __user *timeout);
+ asmlinkage long compat_sys_keyctl(u32 option,
+ 			      u32 arg2, u32 arg3, u32 arg4, u32 arg5);
++asmlinkage long compat_sys_ustat(unsigned dev, struct compat_ustat __user *u32);
+ 
+ asmlinkage ssize_t compat_sys_readv(unsigned long fd,
+ 		const struct compat_iovec __user *vec, unsigned long vlen);

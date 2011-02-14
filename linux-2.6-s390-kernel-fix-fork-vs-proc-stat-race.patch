@@ -1,0 +1,318 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 29 Sep 2010 10:38:28 -0400
+Subject: [s390] kernel: fix fork vs /proc/stat race
+Message-id: <20100929103826.GA20588@redhat.com>
+Patchwork-id: 28514
+O-Subject: Re: [RHEL5.6 PATCH 1/1 v2] [s390x] kernel: fork vs /proc/stat race
+Bugzilla: 627298
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+Description
+-----------
+Memory corruption in the child process of a fork if the /proc
+files of the parent process are accessed while the fork is
+carried out.
+
+The TLB flushing code uses the mm_users field of the mm_struct
+to decide if each page table entry needs to be flushed
+individually with IPTE or if a global flush for the mm_struct
+is sufficient after all page table updates have been done.
+The mm_users field is supposed to indicate how many processes
+use the mm_struct. But the /proc code increases mm_users after
+it found the process structure by pid. Which makes mm_users
+unusable for decision between the two TLB flush methods. Given
+a specific code execution sequence not all TLBs are correctly
+flushed for the fork operation.
+
+Make the TLB flushing logic independent from the mm_users
+field in the mm_struct.
+
+Bugzilla
+--------
+BZ 627298
+https://bugzilla.redhat.com/show_bug.cgi?id=627298
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.36
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=050eef364ad700590a605a0749f825cab4834b1e
+
+kABI
+----
+The problem fix requires and introduces members in the s390x specific
+memory context (mm_context_t).  This breaks the kABI for s390x.
+
+To prevent kABI breakage, the typedef of mm_context_t is not changed,
+but instead it is "overloaded" by another struct.  Whenever the context
+is needed, the original mm_context_t is cast to the "private" struct.
+
+The "private" struct __mm_context_t contains two members each of size
+'init'.  The two int's (32bit) have the size of an 'long' (64bit) which
+allows to store the struct data in the mm_context_t type.
+
+NOTE: The sizes are identical only when built for 64-bit,
+  which is the default for RHEL5.
+
+Brew
+----
+https://brewweb.devel.redhat.com/taskinfo?taskID=2771194
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/s390/kernel/smp.c b/arch/s390/kernel/smp.c
+index 12c27c2..8e1a2a6 100644
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -580,6 +580,7 @@ __cpu_up(unsigned int cpu)
+ 	struct task_struct *idle;
+         struct _lowcore    *cpu_lowcore;
+ 	struct stack_frame *sf;
++	__mm_context_t *mmc;
+         sigp_ccode          ccode;
+ 	int                 curr_cpu;
+ 
+@@ -612,6 +613,8 @@ __cpu_up(unsigned int cpu)
+ 	sf->gprs[9] = (unsigned long) sf;
+ 	cpu_lowcore->save_area[15] = (unsigned long) sf;
+ 	__ctl_store(cpu_lowcore->cregs_save_area[0], 0, 15);
++	mmc = (__mm_context_t *) &init_mm.context;
++	atomic_inc(&mmc->attach_count);
+ 	__asm__ __volatile__("stam  0,15,0(%0)"
+ 			     : : "a" (&cpu_lowcore->access_regs_save_area)
+ 			     : "memory");
+@@ -719,9 +722,13 @@ __cpu_disable(void)
+ void
+ __cpu_die(unsigned int cpu)
+ {
++	__mm_context_t *mmc;
++
+ 	/* Wait until target cpu is down */
+ 	while (!smp_cpu_not_running(cpu))
+ 		cpu_relax();
++	mmc = (__mm_context_t *) &init_mm.context;
++	atomic_dec(&mmc->attach_count);
+ 	printk("Processor %d spun down\n", cpu);
+ }
+ 
+diff --git a/arch/s390/mm/init.c b/arch/s390/mm/init.c
+index e04b4cd..c31e8f3 100644
+--- a/arch/s390/mm/init.c
++++ b/arch/s390/mm/init.c
+@@ -109,6 +109,7 @@ void __init paging_init(void)
+         static const int ssm_mask = 0x04000000L;
+ 	unsigned long ro_start_pfn, ro_end_pfn;
+ 	unsigned long zones_size[MAX_NR_ZONES];
++	__mm_context_t *mmc;
+ 
+ 	ro_start_pfn = PFN_DOWN((unsigned long)&__start_rodata);
+ 	ro_end_pfn = PFN_UP((unsigned long)&__end_rodata);
+@@ -162,6 +163,9 @@ void __init paging_init(void)
+                              "    SSM   %1" 
+ 			     : : "m" (pgdir_k), "m" (ssm_mask));
+ 
++	mmc = (__mm_context_t *) &init_mm.context;
++	atomic_set(&mmc->attach_count, 1);
++
+         local_flush_tlb();
+         return;
+ }
+@@ -182,6 +186,7 @@ void __init paging_init(void)
+ 	unsigned long zones_size[MAX_NR_ZONES];
+ 	unsigned long dma_pfn, high_pfn;
+ 	unsigned long ro_start_pfn, ro_end_pfn;
++	__mm_context_t *mmc;
+ 
+ 	memset(zones_size, 0, sizeof(zones_size));
+ 	dma_pfn = MAX_DMA_ADDRESS >> PAGE_SHIFT;
+@@ -258,6 +263,9 @@ void __init paging_init(void)
+                              "ssm   %1"
+ 			     : :"m" (pgdir_k), "m" (ssm_mask));
+ 
++	mmc = (__mm_context_t *) &init_mm.context;
++	atomic_set(&mmc->attach_count, 1);
++
+         local_flush_tlb();
+ 
+         return;
+diff --git a/include/asm-s390/mmu.h b/include/asm-s390/mmu.h
+index ccd36d2..4859c97 100644
+--- a/include/asm-s390/mmu.h
++++ b/include/asm-s390/mmu.h
+@@ -4,4 +4,10 @@
+ /* Default "unsigned long" context */
+ typedef unsigned long mm_context_t;
+ 
++/* KABI workaround mmu_context_t */
++typedef struct {
++	atomic_t attach_count;
++	unsigned int flush_mm;
++} __mm_context_t;
++
+ #endif
+diff --git a/include/asm-s390/mmu_context.h b/include/asm-s390/mmu_context.h
+index bcf24a8..3767fdc 100644
+--- a/include/asm-s390/mmu_context.h
++++ b/include/asm-s390/mmu_context.h
+@@ -9,10 +9,18 @@
+ #ifndef __S390_MMU_CONTEXT_H
+ #define __S390_MMU_CONTEXT_H
+ 
+-/*
+- * get a new mmu context.. S390 don't know about contexts.
+- */
+-#define init_new_context(tsk,mm)        0
++#include <asm/pgalloc.h>
++#include <asm/tlbflush.h>
++
++static inline int init_new_context(struct task_struct *tsk,
++				   struct mm_struct *mm)
++{
++	__mm_context_t *mmc = (__mm_context_t *) &mm->context;
++
++	atomic_set(&mmc->attach_count, 0);
++	mmc->flush_mm = 0;
++	return 0;
++}
+ 
+ #define destroy_context(mm)             do { } while (0)
+ 
+@@ -24,6 +32,8 @@ static inline void enter_lazy_tlb(struct mm_struct *mm,
+ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
+                              struct task_struct *tsk)
+ {
++	__mm_context_t *mmc;
++
+         if (prev != next) {
+ #ifndef __s390x__
+ 	        S390_lowcore.user_asce = (__pa(next->pgd)&PAGE_MASK) |
+@@ -40,6 +50,14 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
+ #endif /* __s390x__ */
+         }
+ 	cpu_set(smp_processor_id(), next->cpu_vm_mask);
++	mmc = (__mm_context_t *) &prev->context;
++	atomic_dec(&mmc->attach_count);
++	WARN_ON(atomic_read(&mmc->attach_count) < 0);
++	mmc = (__mm_context_t *) &next->context;
++	atomic_inc(&mmc->attach_count);
++	/* Check for TLBs not flushed yet */
++	if (mmc->flush_mm)
++		__tlb_flush_mm(next);
+ }
+ 
+ #define deactivate_mm(tsk,mm)	do { } while (0)
+diff --git a/include/asm-s390/page.h b/include/asm-s390/page.h
+index c572207..f00f839 100644
+--- a/include/asm-s390/page.h
++++ b/include/asm-s390/page.h
+@@ -24,6 +24,7 @@
+ #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
+ 
+ #define ARCH_HAS_SETCLEAR_HUGE_PTE
++#define ARCH_HAS_SETCLEAR_HUGE_PTE_NO_PROTO
+ #define ARCH_HAS_HUGE_PTE_TYPE
+ #define ARCH_HAS_PREPARE_HUGEPAGE
+ #define ARCH_HAS_HUGEPAGE_CLEAR_FLUSH
+diff --git a/include/asm-s390/pgtable.h b/include/asm-s390/pgtable.h
+index defa6f5..2890637 100644
+--- a/include/asm-s390/pgtable.h
++++ b/include/asm-s390/pgtable.h
+@@ -639,7 +639,9 @@ static inline void ptep_invalidate(unsigned long address, pte_t *ptep)
+ #define ptep_get_and_clear(__mm, __address, __ptep)			\
+ ({									\
+ 	pte_t __pte = *(__ptep);					\
+-	if (atomic_read(&(__mm)->mm_users) > 1 ||			\
++	__mm_context_t *__mmc = (__mm_context_t *) &(__mm)->context;	\
++	__mmc->flush_mm = 1;						\
++	if (atomic_read(&__mmc->attach_count) > 1 ||			\
+ 	    (__mm) != current->active_mm)				\
+ 		ptep_invalidate(__address, __ptep);			\
+ 	else								\
+@@ -688,8 +690,10 @@ ptep_establish(struct vm_area_struct *vma,
+ #define ptep_set_wrprotect(__mm, __addr, __ptep)			\
+ ({									\
+ 	pte_t __pte = *(__ptep);					\
++	__mm_context_t *__mmc = (__mm_context_t *) &(__mm)->context;	\
+ 	if (pte_write(__pte)) {						\
+-		if (atomic_read(&(__mm)->mm_users) > 1 ||		\
++		__mmc->flush_mm = 1;					\
++		if (atomic_read(&__mmc->attach_count) > 1 ||		\
+ 		    (__mm) != current->active_mm)			\
+ 			ptep_invalidate(__addr, __ptep);		\
+ 		set_pte_at(__mm, __addr, __ptep, pte_wrprotect(__pte));	\
+@@ -865,14 +869,16 @@ static inline pte_t huge_ptep_get(pte_t *ptep)
+ 	return pte;
+ }
+ 
+-static inline pte_t huge_ptep_get_and_clear(struct mm_struct *mm,
+-					    unsigned long addr, pte_t *ptep)
+-{
+-	pte_t pte = huge_ptep_get(ptep);
+-
+-	pmd_clear((pmd_t *) ptep);
+-	return pte;
+-}
++#define huge_ptep_get_and_clear(__mm, __addr, __ptep)			\
++({									\
++	pte_t __pte = huge_ptep_get(__ptep);				\
++	__mm_context_t *__mmc = (__mm_context_t *) &(__mm)->context;	\
++	__mmc->flush_mm = 1;					\
++	pmd_clear((pmd_t *) __ptep);					\
++	__pte;								\
++})
++void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
++		     pte_t *pteptr, pte_t pteval);
+ 
+ static inline void __pmd_csp(pmd_t *pmdp)
+ {
+diff --git a/include/asm-s390/tlb.h b/include/asm-s390/tlb.h
+index 5662b3a..7446c90 100644
+--- a/include/asm-s390/tlb.h
++++ b/include/asm-s390/tlb.h
+@@ -52,8 +52,7 @@ static inline struct mmu_gather *tlb_gather_mmu(struct mm_struct *mm,
+ 	struct mmu_gather *tlb = &get_cpu_var(mmu_gathers);
+ 
+ 	tlb->mm = mm;
+-	tlb->fullmm = full_mm_flush || (num_online_cpus() == 1) ||
+-		(atomic_read(&mm->mm_users) <= 1 && mm == current->active_mm);
++	tlb->fullmm = full_mm_flush;
+ 	tlb->nr_ptes = 0;
+ 	tlb->nr_pmds = TLB_NR_PTRS;
+ 	if (tlb->fullmm)
+diff --git a/include/asm-s390/tlbflush.h b/include/asm-s390/tlbflush.h
+index 81d0240..83353f5 100644
+--- a/include/asm-s390/tlbflush.h
++++ b/include/asm-s390/tlbflush.h
+@@ -87,8 +87,14 @@ static inline void __tlb_flush_mm(struct mm_struct * mm)
+ 
+ static inline void __tlb_flush_mm_cond(struct mm_struct * mm)
+ {
+-	if (atomic_read(&mm->mm_users) <= 1 && mm == current->active_mm)
++	__mm_context_t *mmc = (__mm_context_t *) &mm->context;
++
++	spin_lock(&mm->page_table_lock);
++	if (mmc->flush_mm) {
+ 		__tlb_flush_mm(mm);
++		mmc->flush_mm = 0;
++	}
++	spin_unlock(&mm->page_table_lock);
+ }
+ 
+ static inline void flush_tlb_pgtables(struct mm_struct *mm,
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index d0f4d51..a86d3ae 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -103,11 +103,13 @@ void arch_release_hugepage(struct page *page);
+ #define set_huge_pte_at(mm, addr, ptep, pte)	set_pte_at(mm, addr, ptep, pte)
+ #define huge_ptep_get_and_clear(mm, addr, ptep) ptep_get_and_clear(mm, addr, ptep)
+ #else
++#ifndef ARCH_HAS_SETCLEAR_HUGE_PTE_NO_PROTO
+ void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
+ 		     pte_t *ptep, pte_t pte);
+ pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+ 			      pte_t *ptep);
+ #endif
++#endif
+ 
+ #ifndef ARCH_HAS_HUGETLB_PREFAULT_HOOK
+ #define hugetlb_prefault_arch_hook(mm)		do { } while (0)

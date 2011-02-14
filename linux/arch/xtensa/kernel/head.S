@@ -15,12 +15,9 @@
  * Kevin Chea
  */
 
+#include <xtensa/cacheasm.h>
 #include <asm/processor.h>
 #include <asm/page.h>
-#include <asm/cacheasm.h>
-
-#include <linux/init.h>
-#include <linux/linkage.h>
 
 /*
  * This module contains the entry code for kernel images. It performs the
@@ -35,6 +32,13 @@
  *
  */
 
+	.macro	iterate	from, to , cmd
+		.ifeq	((\to - \from) & ~0xfff)
+			\cmd	\from
+			iterate "(\from+1)", \to, \cmd
+		.endif
+	.endm
+
 /*
  *  _start
  *
@@ -46,7 +50,7 @@
 	 * instruction.
 	 */
 
-	__HEAD
+	.section .head.text, "ax"
 	.globl _start
 _start:	_j	2f
 	.align	4
@@ -54,13 +58,13 @@ _start:	_j	2f
 2:	l32r	a0, 1b
 	jx	a0
 
-	.section .init.text, "ax"
+	.text
 	.align 4
 _startup:
 
 	/* Disable interrupts and exceptions. */
 
-	movi	a0, LOCKLEVEL
+	movi	a0, XCHAL_PS_EXCM_MASK
 	wsr	a0, PS
 
 	/* Preserve the pointer to the boot parameter list in EXCSAVE_1 */
@@ -87,11 +91,11 @@ _startup:
 	movi	a1, 15
 	wsr	a0, ICOUNTLEVEL
 
-	.set	_index, 0
-	.rept	XCHAL_NUM_DBREAK - 1
-	wsr	a0, DBREAKC + _index
-	.set	_index, _index + 1
-	.endr
+	.macro reset_dbreak num
+	wsr	a0, DBREAKC + \num
+	.endm
+
+        iterate 0, XCHAL_NUM_IBREAK-1, reset_dbreak
 #endif
 
 	/* Clear CCOUNT (not really necessary, but nice) */
@@ -106,11 +110,10 @@ _startup:
 
 	/* Disable all timers. */
 
-	.set	_index, 0
-	.rept	XCHAL_NUM_TIMERS - 1
-	wsr	a0, CCOMPARE + _index
-	.set	_index, _index + 1
-	.endr
+	.macro	reset_timer	num
+	wsr	a0, CCOMPARE_0 + \num
+	.endm
+	iterate	0, XCHAL_NUM_TIMERS-1, reset_timer
 
 	/* Interrupt initialization. */
 
@@ -136,21 +139,12 @@ _startup:
 	rsync
 
 	/*  Initialize the caches.
-	 *  a2, a3 are just working registers (clobbered).
+	 *  Does not include flushing writeback d-cache.
+	 *  a6, a7 are just working registers (clobbered).
 	 */
 
-#if XCHAL_DCACHE_LINE_LOCKABLE
-	___unlock_dcache_all a2 a3
-#endif
-
-#if XCHAL_ICACHE_LINE_LOCKABLE
-	___unlock_icache_all a2 a3
-#endif
-
-	___invalidate_dcache_all a2 a3
-	___invalidate_icache_all a2 a3
-
-	isync
+	icache_reset  a2, a3
+	dcache_reset  a2, a3
 
 	/* Unpack data sections
 	 *
@@ -187,9 +181,9 @@ _startup:
 	movi	a2, _bss_start	# start of BSS
 	movi	a3, _bss_end	# end of BSS
 
-	__loopt	a2, a3, a4, 2
+1:	addi	a2, a2, 4
 	s32i	a0, a2, 0
-	__endla	a2, a4, 4
+	blt	a2, a3, 1b
 
 #if XCHAL_DCACHE_IS_WRITEBACK
 
@@ -197,7 +191,7 @@ _startup:
 	 * instructions/data are available.
 	 */
 
-	___flush_dcache_all a2 a3
+	dcache_writeback_all	a2, a3
 #endif
 
 	/* Setup stack and enable window exceptions (keep irqs disabled) */
@@ -230,15 +224,13 @@ _startup:
 should_never_return:
 	j	should_never_return
 
+	/* Define some common data structures here.  We define them
+	 * here in this assembly file due to their unusual alignment
+	 * requirements.
+	 */
 
-/*
- * BSS section
- */
-	
-__PAGE_ALIGNED_BSS
-#ifdef CONFIG_MMU
-ENTRY(swapper_pg_dir)
-	.fill	PAGE_SIZE, 1, 0
-#endif
-ENTRY(empty_zero_page)
-	.fill	PAGE_SIZE, 1, 0
+	.comm   swapper_pg_dir,PAGE_SIZE,PAGE_SIZE
+	.comm	empty_bad_page_table,PAGE_SIZE,PAGE_SIZE
+	.comm	empty_bad_page,PAGE_SIZE,PAGE_SIZE
+	.comm	empty_zero_page,PAGE_SIZE,PAGE_SIZE
+

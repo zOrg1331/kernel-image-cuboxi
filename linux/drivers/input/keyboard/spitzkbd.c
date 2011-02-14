@@ -20,8 +20,9 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#include <mach/spitz.h>
-#include <mach/pxa2xx-gpio.h>
+#include <asm/arch/spitz.h>
+#include <asm/arch/hardware.h>
+#include <asm/arch/pxa-regs.h>
 
 #define KB_ROWS			7
 #define KB_COLS			11
@@ -99,9 +100,9 @@ struct spitzkbd {
 #define KB_ACTIVATE_DELAY	10
 
 /* Helper functions for reading the keyboard matrix
- * Note: We should really be using the generic gpio functions to alter
- *       GPDR but it requires a function call per GPIO bit which is
- *       excessive when we need to access 11 bits at once, multiple times.
+ * Note: We should really be using pxa_gpio_mode to alter GPDR but it
+ *       requires a function call per GPIO bit which is excessive
+ *       when we need to access 11 bits at once, multiple times.
  * These functions must be called within local_irq_save()/local_irq_restore()
  * or similar.
  */
@@ -175,7 +176,7 @@ static inline int spitzkbd_get_row_status(int col)
  */
 
 /* Scan the hardware keyboard and push any changes up through the input layer */
-static void spitzkbd_scankeyboard(struct spitzkbd *spitzkbd_data)
+static void spitzkbd_scankeyboard(struct spitzkbd *spitzkbd_data, struct pt_regs *regs)
 {
 	unsigned int row, col, rowd;
 	unsigned long flags;
@@ -185,6 +186,8 @@ static void spitzkbd_scankeyboard(struct spitzkbd *spitzkbd_data)
 		return;
 
 	spin_lock_irqsave(&spitzkbd_data->lock, flags);
+
+	input_regs(spitzkbd_data->input, regs);
 
 	num_pressed = 0;
 	for (col = 0; col < KB_COLS; col++) {
@@ -236,14 +239,14 @@ static void spitzkbd_scankeyboard(struct spitzkbd *spitzkbd_data)
 /*
  * spitz keyboard interrupt handler.
  */
-static irqreturn_t spitzkbd_interrupt(int irq, void *dev_id)
+static irqreturn_t spitzkbd_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct spitzkbd *spitzkbd_data = dev_id;
 
 	if (!timer_pending(&spitzkbd_data->timer)) {
 		/** wait chattering delay **/
 		udelay(20);
-		spitzkbd_scankeyboard(spitzkbd_data);
+		spitzkbd_scankeyboard(spitzkbd_data, regs);
 	}
 
 	return IRQ_HANDLED;
@@ -256,7 +259,7 @@ static void spitzkbd_timer_callback(unsigned long data)
 {
 	struct spitzkbd *spitzkbd_data = (struct spitzkbd *) data;
 
-	spitzkbd_scankeyboard(spitzkbd_data);
+	spitzkbd_scankeyboard(spitzkbd_data, NULL);
 }
 
 /*
@@ -264,7 +267,7 @@ static void spitzkbd_timer_callback(unsigned long data)
  * We debounce the switches and pass them to the input system.
  */
 
-static irqreturn_t spitzkbd_hinge_isr(int irq, void *dev_id)
+static irqreturn_t spitzkbd_hinge_isr(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct spitzkbd *spitzkbd_data = dev_id;
 
@@ -341,16 +344,21 @@ static int spitzkbd_resume(struct platform_device *dev)
 #define spitzkbd_resume		NULL
 #endif
 
-static int __devinit spitzkbd_probe(struct platform_device *dev)
+static int __init spitzkbd_probe(struct platform_device *dev)
 {
 	struct spitzkbd *spitzkbd;
 	struct input_dev *input_dev;
-	int i, err = -ENOMEM;
+	int i;
 
 	spitzkbd = kzalloc(sizeof(struct spitzkbd), GFP_KERNEL);
+	if (!spitzkbd)
+		return -ENOMEM;
+
 	input_dev = input_allocate_device();
-	if (!spitzkbd || !input_dev)
-		goto fail;
+	if (!input_dev) {
+		kfree(spitzkbd);
+		return -ENOMEM;
+	}
 
 	platform_set_drvdata(dev, spitzkbd);
 	strcpy(spitzkbd->phys, "spitzkbd/input0");
@@ -371,17 +379,17 @@ static int __devinit spitzkbd_probe(struct platform_device *dev)
 
 	spitzkbd->input = input_dev;
 
+	input_dev->private = spitzkbd;
 	input_dev->name = "Spitz Keyboard";
 	input_dev->phys = spitzkbd->phys;
-	input_dev->dev.parent = &dev->dev;
+	input_dev->cdev.dev = &dev->dev;
 
 	input_dev->id.bustype = BUS_HOST;
 	input_dev->id.vendor = 0x0001;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REP) |
-		BIT_MASK(EV_PWR) | BIT_MASK(EV_SW);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REP) | BIT(EV_PWR) | BIT(EV_SW);
 	input_dev->keycode = spitzkbd->keycode;
 	input_dev->keycodesize = sizeof(unsigned char);
 	input_dev->keycodemax = ARRAY_SIZE(spitzkbd_keycode);
@@ -390,14 +398,11 @@ static int __devinit spitzkbd_probe(struct platform_device *dev)
 	for (i = 0; i < ARRAY_SIZE(spitzkbd_keycode); i++)
 		set_bit(spitzkbd->keycode[i], input_dev->keybit);
 	clear_bit(0, input_dev->keybit);
-	set_bit(KEY_SUSPEND, input_dev->keybit);
 	set_bit(SW_LID, input_dev->swbit);
 	set_bit(SW_TABLET_MODE, input_dev->swbit);
 	set_bit(SW_HEADPHONE_INSERT, input_dev->swbit);
 
-	err = input_register_device(input_dev);
-	if (err)
-		goto fail;
+	input_register_device(input_dev);
 
 	mod_timer(&spitzkbd->htimer, jiffies + msecs_to_jiffies(HINGE_SCAN_INTERVAL));
 
@@ -431,18 +436,16 @@ static int __devinit spitzkbd_probe(struct platform_device *dev)
 	request_irq(SPITZ_IRQ_GPIO_SWB, spitzkbd_hinge_isr,
 		    IRQF_DISABLED | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 		    "Spitzkbd SWB", spitzkbd);
-	request_irq(SPITZ_IRQ_GPIO_AK_INT, spitzkbd_hinge_isr,
+ 	request_irq(SPITZ_IRQ_GPIO_AK_INT, spitzkbd_hinge_isr,
 		    IRQF_DISABLED | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 		    "Spitzkbd HP", spitzkbd);
 
-	return 0;
+	printk(KERN_INFO "input: Spitz Keyboard Registered\n");
 
- fail:	input_free_device(input_dev);
-	kfree(spitzkbd);
-	return err;
+	return 0;
 }
 
-static int __devexit spitzkbd_remove(struct platform_device *dev)
+static int spitzkbd_remove(struct platform_device *dev)
 {
 	int i;
 	struct spitzkbd *spitzkbd = platform_get_drvdata(dev);
@@ -468,16 +471,15 @@ static int __devexit spitzkbd_remove(struct platform_device *dev)
 
 static struct platform_driver spitzkbd_driver = {
 	.probe		= spitzkbd_probe,
-	.remove		= __devexit_p(spitzkbd_remove),
+	.remove		= spitzkbd_remove,
 	.suspend	= spitzkbd_suspend,
 	.resume		= spitzkbd_resume,
 	.driver		= {
 		.name	= "spitz-keyboard",
-		.owner	= THIS_MODULE,
 	},
 };
 
-static int __init spitzkbd_init(void)
+static int __devinit spitzkbd_init(void)
 {
 	return platform_driver_register(&spitzkbd_driver);
 }
@@ -492,5 +494,4 @@ module_exit(spitzkbd_exit);
 
 MODULE_AUTHOR("Richard Purdie <rpurdie@rpsys.net>");
 MODULE_DESCRIPTION("Spitz Keyboard Driver");
-MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:spitz-keyboard");
+MODULE_LICENSE("GPLv2");

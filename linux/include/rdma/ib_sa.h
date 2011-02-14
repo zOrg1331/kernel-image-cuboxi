@@ -1,7 +1,6 @@
 /*
  * Copyright (c) 2004 Topspin Communications.  All rights reserved.
  * Copyright (c) 2005 Voltaire, Inc.  All rights reserved.
- * Copyright (c) 2006 Intel Corporation.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,15 +29,14 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: ib_sa.h 2811 2005-07-06 18:11:43Z halr $
  */
 
 #ifndef IB_SA_H
 #define IB_SA_H
 
-#include <linux/completion.h>
 #include <linux/compiler.h>
-
-#include <asm/atomic.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_mad.h>
@@ -81,8 +79,8 @@ enum {
 };
 
 enum ib_sa_selector {
-	IB_SA_GT   = 0,
-	IB_SA_LT   = 1,
+	IB_SA_GTE  = 0,
+	IB_SA_LTE  = 1,
 	IB_SA_EQ   = 2,
 	/*
 	 * The meaning of "best" depends on the attribute: for
@@ -107,8 +105,8 @@ enum ib_sa_selector {
  * Reserved rows are indicated with comments to help maintainability.
  */
 
-#define IB_SA_PATH_REC_SERVICE_ID		       (IB_SA_COMP_MASK( 0) |\
-							IB_SA_COMP_MASK( 1))
+/* reserved:								 0 */
+/* reserved:								 1 */
 #define IB_SA_PATH_REC_DGID				IB_SA_COMP_MASK( 2)
 #define IB_SA_PATH_REC_SGID				IB_SA_COMP_MASK( 3)
 #define IB_SA_PATH_REC_DLID				IB_SA_COMP_MASK( 4)
@@ -121,7 +119,7 @@ enum ib_sa_selector {
 #define IB_SA_PATH_REC_REVERSIBLE			IB_SA_COMP_MASK(11)
 #define IB_SA_PATH_REC_NUMB_PATH			IB_SA_COMP_MASK(12)
 #define IB_SA_PATH_REC_PKEY				IB_SA_COMP_MASK(13)
-#define IB_SA_PATH_REC_QOS_CLASS			IB_SA_COMP_MASK(14)
+/* reserved:								14 */
 #define IB_SA_PATH_REC_SL				IB_SA_COMP_MASK(15)
 #define IB_SA_PATH_REC_MTU_SELECTOR			IB_SA_COMP_MASK(16)
 #define IB_SA_PATH_REC_MTU				IB_SA_COMP_MASK(17)
@@ -132,7 +130,8 @@ enum ib_sa_selector {
 #define IB_SA_PATH_REC_PREFERENCE			IB_SA_COMP_MASK(22)
 
 struct ib_sa_path_rec {
-	__be64       service_id;
+	/* reserved */
+	/* reserved */
 	union ib_gid dgid;
 	union ib_gid sgid;
 	__be16       dlid;
@@ -145,7 +144,7 @@ struct ib_sa_path_rec {
 	int          reversible;
 	u8           numb_path;
 	__be16       pkey;
-	__be16       qos_class;
+	/* reserved */
 	u8           sl;
 	u8           mtu_selector;
 	u8           mtu;
@@ -251,28 +250,11 @@ struct ib_sa_service_rec {
 	u64		data64[2];
 };
 
-struct ib_sa_client {
-	atomic_t users;
-	struct completion comp;
-};
-
-/**
- * ib_sa_register_client - Register an SA client.
- */
-void ib_sa_register_client(struct ib_sa_client *client);
-
-/**
- * ib_sa_unregister_client - Deregister an SA client.
- * @client: Client object to deregister.
- */
-void ib_sa_unregister_client(struct ib_sa_client *client);
-
 struct ib_sa_query;
 
 void ib_sa_cancel_query(int id, struct ib_sa_query *query);
 
-int ib_sa_path_rec_get(struct ib_sa_client *client,
-		       struct ib_device *device, u8 port_num,
+int ib_sa_path_rec_get(struct ib_device *device, u8 port_num,
 		       struct ib_sa_path_rec *rec,
 		       ib_sa_comp_mask comp_mask,
 		       int timeout_ms, gfp_t gfp_mask,
@@ -282,8 +264,18 @@ int ib_sa_path_rec_get(struct ib_sa_client *client,
 		       void *context,
 		       struct ib_sa_query **query);
 
-int ib_sa_service_rec_query(struct ib_sa_client *client,
-			 struct ib_device *device, u8 port_num,
+int ib_sa_mcmember_rec_query(struct ib_device *device, u8 port_num,
+			     u8 method,
+			     struct ib_sa_mcmember_rec *rec,
+			     ib_sa_comp_mask comp_mask,
+			     int timeout_ms, gfp_t gfp_mask,
+			     void (*callback)(int status,
+					      struct ib_sa_mcmember_rec *resp,
+					      void *context),
+			     void *context,
+			     struct ib_sa_query **query);
+
+int ib_sa_service_rec_query(struct ib_device *device, u8 port_num,
 			 u8 method,
 			 struct ib_sa_service_rec *rec,
 			 ib_sa_comp_mask comp_mask,
@@ -294,82 +286,89 @@ int ib_sa_service_rec_query(struct ib_sa_client *client,
 			 void *context,
 			 struct ib_sa_query **sa_query);
 
-struct ib_sa_multicast {
-	struct ib_sa_mcmember_rec rec;
-	ib_sa_comp_mask		comp_mask;
-	int			(*callback)(int status,
-					    struct ib_sa_multicast *multicast);
-	void			*context;
-};
-
 /**
- * ib_sa_join_multicast - Initiates a join request to the specified multicast
- *   group.
- * @client: SA client
- * @device: Device associated with the multicast group.
- * @port_num: Port on the specified device to associate with the multicast
- *   group.
- * @rec: SA multicast member record specifying group attributes.
- * @comp_mask: Component mask indicating which group attributes of %rec are
- *   valid.
- * @gfp_mask: GFP mask for memory allocations.
- * @callback: User callback invoked once the join operation completes.
- * @context: User specified context stored with the ib_sa_multicast structure.
+ * ib_sa_mcmember_rec_set - Start an MCMember set query
+ * @device:device to send query on
+ * @port_num: port number to send query on
+ * @rec:MCMember Record to send in query
+ * @comp_mask:component mask to send in query
+ * @timeout_ms:time to wait for response
+ * @gfp_mask:GFP mask to use for internal allocations
+ * @callback:function called when query completes, times out or is
+ * canceled
+ * @context:opaque user context passed to callback
+ * @sa_query:query context, used to cancel query
  *
- * This call initiates a multicast join request with the SA for the specified
- * multicast group.  If the join operation is started successfully, it returns
- * an ib_sa_multicast structure that is used to track the multicast operation.
- * Users must free this structure by calling ib_free_multicast, even if the
- * join operation later fails.  (The callback status is non-zero.)
+ * Send an MCMember Set query to the SA (eg to join a multicast
+ * group).  The callback function will be called when the query
+ * completes (or fails); status is 0 for a successful response, -EINTR
+ * if the query is canceled, -ETIMEDOUT is the query timed out, or
+ * -EIO if an error occurred sending the query.  The resp parameter of
+ * the callback is only valid if status is 0.
  *
- * If the join operation fails; status will be non-zero, with the following
- * failures possible:
- * -ETIMEDOUT: The request timed out.
- * -EIO: An error occurred sending the query.
- * -EINVAL: The MCMemberRecord values differed from the existing group's.
- * -ENETRESET: Indicates that an fatal error has occurred on the multicast
- *   group, and the user must rejoin the group to continue using it.
+ * If the return value of ib_sa_mcmember_rec_set() is negative, it is
+ * an error code.  Otherwise it is a query ID that can be used to
+ * cancel the query.
  */
-struct ib_sa_multicast *ib_sa_join_multicast(struct ib_sa_client *client,
-					     struct ib_device *device, u8 port_num,
-					     struct ib_sa_mcmember_rec *rec,
-					     ib_sa_comp_mask comp_mask, gfp_t gfp_mask,
-					     int (*callback)(int status,
-							     struct ib_sa_multicast
-								    *multicast),
-					     void *context);
+static inline int
+ib_sa_mcmember_rec_set(struct ib_device *device, u8 port_num,
+		       struct ib_sa_mcmember_rec *rec,
+		       ib_sa_comp_mask comp_mask,
+		       int timeout_ms, gfp_t gfp_mask,
+		       void (*callback)(int status,
+					struct ib_sa_mcmember_rec *resp,
+					void *context),
+		       void *context,
+		       struct ib_sa_query **query)
+{
+	return ib_sa_mcmember_rec_query(device, port_num,
+					IB_MGMT_METHOD_SET,
+					rec, comp_mask,
+					timeout_ms, gfp_mask, callback,
+					context, query);
+}
 
 /**
- * ib_free_multicast - Frees the multicast tracking structure, and releases
- *    any reference on the multicast group.
- * @multicast: Multicast tracking structure allocated by ib_join_multicast.
+ * ib_sa_mcmember_rec_delete - Start an MCMember delete query
+ * @device:device to send query on
+ * @port_num: port number to send query on
+ * @rec:MCMember Record to send in query
+ * @comp_mask:component mask to send in query
+ * @timeout_ms:time to wait for response
+ * @gfp_mask:GFP mask to use for internal allocations
+ * @callback:function called when query completes, times out or is
+ * canceled
+ * @context:opaque user context passed to callback
+ * @sa_query:query context, used to cancel query
  *
- * This call blocks until the multicast identifier is destroyed.  It may
- * not be called from within the multicast callback; however, returning a non-
- * zero value from the callback will result in destroying the multicast
- * tracking structure.
+ * Send an MCMember Delete query to the SA (eg to leave a multicast
+ * group).  The callback function will be called when the query
+ * completes (or fails); status is 0 for a successful response, -EINTR
+ * if the query is canceled, -ETIMEDOUT is the query timed out, or
+ * -EIO if an error occurred sending the query.  The resp parameter of
+ * the callback is only valid if status is 0.
+ *
+ * If the return value of ib_sa_mcmember_rec_delete() is negative, it
+ * is an error code.  Otherwise it is a query ID that can be used to
+ * cancel the query.
  */
-void ib_sa_free_multicast(struct ib_sa_multicast *multicast);
-
-/**
- * ib_get_mcmember_rec - Looks up a multicast member record by its MGID and
- *   returns it if found.
- * @device: Device associated with the multicast group.
- * @port_num: Port on the specified device to associate with the multicast
- *   group.
- * @mgid: MGID of multicast group.
- * @rec: Location to copy SA multicast member record.
- */
-int ib_sa_get_mcmember_rec(struct ib_device *device, u8 port_num,
-			   union ib_gid *mgid, struct ib_sa_mcmember_rec *rec);
-
-/**
- * ib_init_ah_from_mcmember - Initialize address handle attributes based on
- * an SA multicast member record.
- */
-int ib_init_ah_from_mcmember(struct ib_device *device, u8 port_num,
-			     struct ib_sa_mcmember_rec *rec,
-			     struct ib_ah_attr *ah_attr);
+static inline int
+ib_sa_mcmember_rec_delete(struct ib_device *device, u8 port_num,
+			  struct ib_sa_mcmember_rec *rec,
+			  ib_sa_comp_mask comp_mask,
+			  int timeout_ms, gfp_t gfp_mask,
+			  void (*callback)(int status,
+					   struct ib_sa_mcmember_rec *resp,
+					   void *context),
+			  void *context,
+			  struct ib_sa_query **query)
+{
+	return ib_sa_mcmember_rec_query(device, port_num,
+					IB_SA_METHOD_DELETE,
+					rec, comp_mask,
+					timeout_ms, gfp_mask, callback,
+					context, query);
+}
 
 /**
  * ib_init_ah_from_path - Initialize address handle attributes based on an SA
@@ -377,13 +376,6 @@ int ib_init_ah_from_mcmember(struct ib_device *device, u8 port_num,
  */
 int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
 			 struct ib_sa_path_rec *rec,
-			 struct ib_ah_attr *ah_attr,
-			 int force_grh);
-
-/**
- * ib_sa_unpack_path - Convert a path record from MAD format to struct
- * ib_sa_path_rec.
- */
-void ib_sa_unpack_path(void *attribute, struct ib_sa_path_rec *rec);
+			 struct ib_ah_attr *ah_attr);
 
 #endif /* IB_SA_H */

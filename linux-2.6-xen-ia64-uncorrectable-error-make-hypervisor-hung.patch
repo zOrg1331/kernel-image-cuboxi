@@ -1,0 +1,330 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 5/21] Uncorrectable error makes hypervisor hung (MCA  support)
+Date: Thu, 07 Jun 2007 03:35:14 -0400
+Bugzilla: 237549
+Message-Id: <4667B532.7030004@redhat.com>
+Changelog: [xen] ia64: Uncorrectable error makes hypervisor hung (MCA  support)
+
+
+bz237549
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=237549
+
+Backport of cset#12828, 12821, 12820, 12824, and 12832.
+
+The system hangs when MCA (Machine Check Abort) occurs
+because MCA support has not been implemented yet.  This
+patch set is to:
+
+  - add VIRQ definitions for MCA
+  - define MCA interrupt vector
+  - use xencomm to copy SAL error log
+  - fix timer and the log size issues and limit logs to
+    dom0
+
+Thanks,
+Kei
+
+
+
+
+rh bug 237549
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1162139243 25200
+# Node ID 8afae91f0d63e2c7a35d2cddc975831dc4e7008d
+# Parent  fd86132cc3cd97271ed30ea0d265e894fba78fa3
+[IA64] MCA support - Define VIRQs for MCA
+
+Signed-off-by: Yutaka Ezaki <yutaka.ezaki@jp.fujitsu.com>
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/arch-ia64.h |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff -puN include/xen/interface/arch-ia64.h~12828-IA64_MCA_support_-_Define_VIRQs_for_MCA include/xen/interface/arch-ia64.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/arch-ia64.h~12828-IA64_MCA_support_-_Define_VIRQs_for_MCA	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/arch-ia64.h	2007-06-07 02:44:27.000000000 -0400
+@@ -39,6 +39,8 @@ DEFINE_XEN_GUEST_HANDLE(xen_pfn_t);
+ 
+ /* Arch specific VIRQs definition */
+ #define VIRQ_ITC        VIRQ_ARCH_0 /* V. Virtual itc timer */
++#define VIRQ_MCA_CMC    VIRQ_ARCH_1 /* MCA cmc interrupt */
++#define VIRQ_MCA_CPE    VIRQ_ARCH_2 /* MCA cpe interrupt */
+ 
+ /* Maximum number of virtual CPUs in multi-processor guests. */
+ /* WARNING: before changing this, check that shared_info fits on a page */
+
+_
+
+
+rh bug 237549
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1162139235 25200
+# Node ID 6384ff71140557d9c1eef684a85b47e9fcdea0ad
+# Parent  1464adb95681e0e17ebb56ac5d0dc8c5a77179f7
+[IA64] MCA support - Define MCA interrupt vector
+
+Signed-off-by: Yutaka Ezaki <yutaka.ezaki@jp.fujitsu.com>
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/irq.h |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff -puN include/asm-ia64/irq.h~12821-IA64_MCA_support_-_Define_MCA_interrupt_vector include/asm-ia64/irq.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/irq.h~12821-IA64_MCA_support_-_Define_MCA_interrupt_vector	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/irq.h	2007-06-07 02:44:27.000000000 -0400
+@@ -42,7 +42,9 @@
+ 
+ #define RESCHEDULE_VECTOR	0
+ #define IPI_VECTOR		1
+-#define NR_IPIS			2
++#define CMCP_VECTOR		2
++#define CPEP_VECTOR		3
++#define NR_IPIS			4
+ #endif /* CONFIG_XEN */
+ 
+ static __inline__ int
+
+_
+
+
+rh bug 237549
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1162139234 25200
+# Node ID 1464adb95681e0e17ebb56ac5d0dc8c5a77179f7
+# Parent  efb346a02e704797e780dcaff9ea163059f10677
+[IA64] MCA support - Add binding of virq/ipi to irq
+
+Signed-off-by: Yutaka Ezaki <yutaka.ezaki@jp.fujitsu.com>
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/irq_ia64.c |   61 ++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff -puN arch/ia64/kernel/irq_ia64.c~12820-IA64_MCA_support_-_Add_binding_of_virqipi_to_irq arch/ia64/kernel/irq_ia64.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/kernel/irq_ia64.c~12820-IA64_MCA_support_-_Add_binding_of_virqipi_to_irq	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/irq_ia64.c	2007-06-07 02:44:27.000000000 -0400
+@@ -257,9 +257,15 @@ static struct irqaction ipi_irqaction = 
+ static DEFINE_PER_CPU(int, timer_irq) = -1;
+ static DEFINE_PER_CPU(int, ipi_irq) = -1;
+ static DEFINE_PER_CPU(int, resched_irq) = -1;
++static DEFINE_PER_CPU(int, cmc_irq) = -1;
++static DEFINE_PER_CPU(int, cmcp_irq) = -1;
++static DEFINE_PER_CPU(int, cpep_irq) = -1;
+ static char timer_name[NR_CPUS][15];
+ static char ipi_name[NR_CPUS][15];
+ static char resched_name[NR_CPUS][15];
++static char cmc_name[NR_CPUS][15];
++static char cmcp_name[NR_CPUS][15];
++static char cpep_name[NR_CPUS][15];
+ 
+ struct saved_irq {
+ 	unsigned int irq;
+@@ -339,6 +345,43 @@ xen_register_percpu_irq (unsigned int ir
+ 			break;
+ 		case IA64_SPURIOUS_INT_VECTOR:
+ 			break;
++		case IA64_CMC_VECTOR:
++			sprintf(cmc_name[cpu], "%s%d", action->name, cpu);
++			ret = bind_virq_to_irqhandler(VIRQ_MCA_CMC, cpu,
++			                              action->handler,
++			                              action->flags,
++			                              cmc_name[cpu],
++			                              action->dev_id);
++			per_cpu(cmc_irq,cpu) = ret;
++			printk(KERN_INFO "register VIRQ_MCA_CMC (%s) to xen "
++			       "irq (%d)\n", cmc_name[cpu], ret);
++			break;
++		case IA64_CMCP_VECTOR:
++			sprintf(cmcp_name[cpu], "%s%d", action->name, cpu);
++			ret = bind_ipi_to_irqhandler(CMCP_VECTOR, cpu,
++			                             action->handler,
++			                             action->flags,
++			                             cmcp_name[cpu],
++			                             action->dev_id);
++			per_cpu(cmcp_irq,cpu) = ret;
++			printk(KERN_INFO "register CMCP_VECTOR (%s) to xen "
++			       "irq (%d)\n", cmcp_name[cpu], ret);
++			break;
++		case IA64_CPEP_VECTOR:
++			sprintf(cpep_name[cpu], "%s%d", action->name, cpu);
++			ret = bind_ipi_to_irqhandler(CPEP_VECTOR, cpu,
++			                             action->handler,
++			                             action->flags,
++			                             cpep_name[cpu],
++			                             action->dev_id);
++			per_cpu(cpep_irq,cpu) = ret;
++			printk(KERN_INFO "register CPEP_VECTOR (%s) to xen "
++			       "irq (%d)\n", cpep_name[cpu], ret);
++			break;
++		case IA64_CPE_VECTOR:
++			printk(KERN_WARNING "register IA64_CPE_VECTOR "
++			       "IGNORED\n");
++			break;
+ 		default:
+ 			printk(KERN_WARNING "Percpu irq %d is unsupported by xen!\n", irq);
+ 			break;
+@@ -389,6 +432,18 @@ unbind_evtchn_callback(struct notifier_b
+ 
+ 	if (action == CPU_DEAD) {
+ 		/* Unregister evtchn.  */
++		if (per_cpu(cpep_irq,cpu) >= 0) {
++			unbind_from_irqhandler(per_cpu(cpep_irq, cpu), NULL);
++			per_cpu(cpep_irq, cpu) = -1;
++		}
++		if (per_cpu(cmcp_irq,cpu) >= 0) {
++			unbind_from_irqhandler(per_cpu(cmcp_irq, cpu), NULL);
++			per_cpu(cmcp_irq, cpu) = -1;
++		}
++		if (per_cpu(cmc_irq,cpu) >= 0) {
++			unbind_from_irqhandler(per_cpu(cmc_irq, cpu), NULL);
++			per_cpu(cmc_irq, cpu) = -1;
++		}
+ 		if (per_cpu(ipi_irq,cpu) >= 0) {
+ 			unbind_from_irqhandler (per_cpu(ipi_irq, cpu), NULL);
+ 			per_cpu(ipi_irq, cpu) = -1;
+@@ -523,6 +578,12 @@ ia64_send_ipi (int cpu, int vector, int 
+ 		case IA64_IPI_RESCHEDULE:
+ 			irq = per_cpu(ipi_to_irq, cpu)[RESCHEDULE_VECTOR];
+ 			break;
++		case IA64_CMCP_VECTOR:
++			irq = per_cpu(ipi_to_irq, cpu)[CMCP_VECTOR];
++			break;
++		case IA64_CPEP_VECTOR:
++			irq = per_cpu(ipi_to_irq, cpu)[CPEP_VECTOR];
++			break;
+ 		default:
+ 			printk(KERN_WARNING"Unsupported IPI type 0x%x\n", vector);
+ 			irq = 0;
+
+_
+
+
+rh bug 237549
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1162139238 25200
+# Node ID 44119a4b46bd2b334815e915066e076beadbfdcb
+# Parent  5dd8306e9032dd1c0e52ca392d4e3e7e331b4839
+[IA64] MCA support - use xencomm to copy SAL error log
+
+Signed-off-by: Yutaka Ezaki <yutaka.ezaki@jp.fujitsu.com>
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/sal.h |   21 ++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff -puN include/asm-ia64/sal.h~12824-IA64_MCA_support_-_use_xencomm_to_copy_SAL_error_log include/asm-ia64/sal.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/sal.h~12824-IA64_MCA_support_-_use_xencomm_to_copy_SAL_error_log	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/sal.h	2007-06-07 02:44:27.000000000 -0400
+@@ -42,6 +42,9 @@
+ #include <asm/pal.h>
+ #include <asm/system.h>
+ #include <asm/fpu.h>
++#ifdef CONFIG_XEN
++#include <asm/xen/xencomm.h>
++#endif
+ 
+ extern spinlock_t sal_lock;
+ 
+@@ -686,10 +689,28 @@ ia64_sal_clear_state_info (u64 sal_info_
+ /* Get the processor and platform information logged by SAL with respect to the machine
+  * state at the time of the MCAs, INITs, CMCs, or CPEs.
+  */
++#ifdef CONFIG_XEN
++static inline u64 ia64_sal_get_state_info_size (u64 sal_info_type);
++#endif
++
+ static inline u64
+ ia64_sal_get_state_info (u64 sal_info_type, u64 *sal_info)
+ {
+ 	struct ia64_sal_retval isrv;
++#ifdef CONFIG_XEN
++	if (is_running_on_xen()) {
++		struct xencomm_mini xc_area[2];
++		int nbr_area = 2;
++		struct xencomm_handle *desc;
++
++		if (xencomm_create_mini(xc_area, &nbr_area, sal_info,
++		           ia64_sal_get_state_info_size(sal_info_type), &desc))
++			return 0;
++
++		SAL_CALL_REENTRANT(isrv, SAL_GET_STATE_INFO, sal_info_type, 0,
++		                   desc, 0, 0, 0, 0);
++	} else
++#endif
+ 	SAL_CALL_REENTRANT(isrv, SAL_GET_STATE_INFO, sal_info_type, 0,
+ 	              sal_info, 0, 0, 0, 0);
+ 	if (isrv.status)
+
+_
+
+
+rh bug 237549
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1163615671 25200
+# Node ID cef0cc0a3236f425e377fe97ee8846adfb6cbd4e
+# Parent  22e58b2b0b451f3fec0611de61361b0dc12606b0
+[IA64] MCA support - fix timer issue, log size issue, and limit logs to dom0
+
+Signed-off-by: Yutaka Ezaki <yutaka.ezaki@jp.fujitsu.com>
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/sal.h |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff -puN include/asm-ia64/sal.h~12832-IA64_MCA_support_-_fix_timer_issue_log_size_issue_and_limit_logs_to_dom0 include/asm-ia64/sal.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/sal.h~12832-IA64_MCA_support_-_fix_timer_issue_log_size_issue_and_limit_logs_to_dom0	2007-06-07 02:44:28.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/sal.h	2007-06-07 02:44:28.000000000 -0400
+@@ -699,16 +699,16 @@ ia64_sal_get_state_info (u64 sal_info_ty
+ 	struct ia64_sal_retval isrv;
+ #ifdef CONFIG_XEN
+ 	if (is_running_on_xen()) {
+-		struct xencomm_mini xc_area[2];
+-		int nbr_area = 2;
+ 		struct xencomm_handle *desc;
+ 
+-		if (xencomm_create_mini(xc_area, &nbr_area, sal_info,
+-		           ia64_sal_get_state_info_size(sal_info_type), &desc))
++		if (xencomm_create(sal_info,
++		                   ia64_sal_get_state_info_size(sal_info_type),
++		                   &desc, GFP_KERNEL))
+ 			return 0;
+ 
+ 		SAL_CALL_REENTRANT(isrv, SAL_GET_STATE_INFO, sal_info_type, 0,
+ 		                   desc, 0, 0, 0, 0);
++		xencomm_free(desc);
+ 	} else
+ #endif
+ 	SAL_CALL_REENTRANT(isrv, SAL_GET_STATE_INFO, sal_info_type, 0,
+
+_
+

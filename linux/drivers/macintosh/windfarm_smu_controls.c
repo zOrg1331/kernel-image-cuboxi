@@ -56,7 +56,7 @@ static int smu_set_fan(int pwm, u8 id, u16 value)
 {
 	struct smu_cmd cmd;
 	u8 buffer[16];
-	DECLARE_COMPLETION_ONSTACK(comp);
+	DECLARE_COMPLETION(comp);
 	int rc;
 
 	/* Fill SMU command structure */
@@ -159,15 +159,14 @@ static struct smu_fan_control *smu_fan_create(struct device_node *node,
 					      int pwm_fan)
 {
 	struct smu_fan_control *fct;
-	const s32 *v;
-	const u32 *reg;
-	const char *l;
+	s32 *v; u32 *reg;
+	char *l;
 
 	fct = kmalloc(sizeof(struct smu_fan_control), GFP_KERNEL);
 	if (fct == NULL)
 		return NULL;
 	fct->ctrl.ops = &smu_fan_ops;
-	l = of_get_property(node, "location", NULL);
+	l = (char *)get_property(node, "location", NULL);
 	if (l == NULL)
 		goto fail;
 
@@ -202,8 +201,6 @@ static struct smu_fan_control *smu_fan_create(struct device_node *node,
 		fct->ctrl.name = "cpu-front-fan-1";
 	else if (!strcmp(l, "CPU A PUMP"))
 		fct->ctrl.name = "cpu-pump-0";
-	else if (!strcmp(l, "CPU B PUMP"))
-		fct->ctrl.name = "cpu-pump-1";
 	else if (!strcmp(l, "Slots Fan") || !strcmp(l, "Slots fan") ||
 		 !strcmp(l, "EXPANSION SLOTS INTAKE"))
 		fct->ctrl.name = "slots-fan";
@@ -220,27 +217,23 @@ static struct smu_fan_control *smu_fan_create(struct device_node *node,
 		fct->ctrl.name = "cpu-fan";
 	else if (!strcmp(l, "Hard Drive") || !strcmp(l, "Hard drive"))
 		fct->ctrl.name = "drive-bay-fan";
-	else if (!strcmp(l, "HDD Fan")) /* seen on iMac G5 iSight */
-		fct->ctrl.name = "hard-drive-fan";
-	else if (!strcmp(l, "ODD Fan")) /* same */
-		fct->ctrl.name = "optical-drive-fan";
 
 	/* Unrecognized fan, bail out */
 	if (fct->ctrl.name == NULL)
 		goto fail;
 
 	/* Get min & max values*/
-	v = of_get_property(node, "min-value", NULL);
+	v = (s32 *)get_property(node, "min-value", NULL);
 	if (v == NULL)
 		goto fail;
 	fct->min = *v;
-	v = of_get_property(node, "max-value", NULL);
+	v = (s32 *)get_property(node, "max-value", NULL);
 	if (v == NULL)
 		goto fail;
 	fct->max = *v;
 
 	/* Get "reg" value */
-	reg = of_get_property(node, "reg", NULL);
+	reg = (u32 *)get_property(node, "reg", NULL);
 	if (reg == NULL)
 		goto fail;
 	fct->reg = *reg;
@@ -269,7 +262,7 @@ static int __init smu_controls_init(void)
 	/* Look for RPM fans */
 	for (fans = NULL; (fans = of_get_next_child(smu, fans)) != NULL;)
 		if (!strcmp(fans->name, "rpm-fans") ||
-		    of_device_is_compatible(fans, "smu-rpm-fans"))
+		    device_is_compatible(fans, "smu-rpm-fans"))
 			break;
 	for (fan = NULL;
 	     fans && (fan = of_get_next_child(fans, fan)) != NULL;) {

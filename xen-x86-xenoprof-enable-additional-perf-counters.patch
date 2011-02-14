@@ -1,0 +1,80 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Thu, 7 Aug 2008 11:38:36 -0400
+Subject: [xen] x86: xenoprof enable additional perf counters
+Message-id: m3sktgu96r.fsf@crossbow.pond.sub.org
+O-Subject: [PATCH RHEL-5.3] Xenoprof enable intel family 6 add'l perf counters
+Bugzilla: 426096
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+According to intel, our current hypervisor code can use only one
+performance counter with intel family 6 cpus.  This patch fixes that.
+Straight from upstream (xen-unstable.hg cset 16614).  I built rpms,
+which intel tested successfully.
+
+Bug 426096.  Please ACK.
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1197628462 0
+# Node ID 301507ac350a08335790b99ac845811cfc2b0a55
+# Parent  61ff9b393c83d4750acdf2b26dd70fd7981e5145
+xenoprof: Fix more than one events can't be sampled concurrently for Intel CPU with family equal to 6
+
+The original code only sets EN bit of IA32_PERFEVTSEL0 when profiling
+is started.
+
+Signed-off-by: Xiaowei Yang <xiaowei.yang@intel.com>
+
+diff --git a/arch/x86/oprofile/op_model_ppro.c b/arch/x86/oprofile/op_model_ppro.c
+index 6c4344e..53ff218 100644
+--- a/arch/x86/oprofile/op_model_ppro.c
++++ b/arch/x86/oprofile/op_model_ppro.c
+@@ -104,6 +104,8 @@ static int ppro_check_ctrs(unsigned int const cpu,
+ 	int mode = xenoprofile_get_mode(current, regs);
+ 
+ 	for (i = 0 ; i < NUM_COUNTERS; ++i) {
++		if (!reset_value[i])
++			continue;
+ 		CTR_READ(low, high, msrs, i);
+ 		if (CTR_OVERFLOWED(low)) {
+ 			xenoprof_log_event(current, regs, eip, mode, i);
+@@ -123,18 +125,30 @@ static int ppro_check_ctrs(unsigned int const cpu,
+ static void ppro_start(struct op_msrs const * const msrs)
+ {
+ 	unsigned int low,high;
+-	CTRL_READ(low, high, msrs, 0);
+-	CTRL_SET_ACTIVE(low);
+-	CTRL_WRITE(low, high, msrs, 0);
++	int i;
++
++	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (reset_value[i]) {
++			CTRL_READ(low, high, msrs, i);
++			CTRL_SET_ACTIVE(low);
++			CTRL_WRITE(low, high, msrs, i);
++		}
++	}
+ }
+ 
+ 
+ static void ppro_stop(struct op_msrs const * const msrs)
+ {
+ 	unsigned int low,high;
+-	CTRL_READ(low, high, msrs, 0);
+-	CTRL_SET_INACTIVE(low);
+-	CTRL_WRITE(low, high, msrs, 0);
++	int i;
++
++	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (!reset_value[i])
++			continue;
++		CTRL_READ(low, high, msrs, i);
++		CTRL_SET_INACTIVE(low);
++		CTRL_WRITE(low, high, msrs, i);
++	}
+ }
+ 
+ 

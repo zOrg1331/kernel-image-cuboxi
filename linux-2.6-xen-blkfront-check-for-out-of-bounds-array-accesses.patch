@@ -1,0 +1,38 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu, 13 Aug 2009 18:00:26 +0200
+Subject: [xen] blkfront: check for out-of-bounds array accesses
+Message-id: 1250179227-23431-3-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ517238: correctly check for out-of-bounds array accesses
+Bugzilla: 517238
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/attachment.cgi?bugid=517238
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1927355
+
+Upstream: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/922
+
+This is a trivial fix to an out-of-bounds check.  free must not
+be exactly BLK_RING_SIZE, but this check was missed.
+
+No testcase known triggering the BUG_ON (and hopefully there is
+none), hence not tested beyond booting a domU.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+diff --git a/drivers/xen/blkfront/blkfront.c b/drivers/xen/blkfront/blkfront.c
+index f8cba8f..438ec0d 100644
+--- a/drivers/xen/blkfront/blkfront.c
++++ b/drivers/xen/blkfront/blkfront.c
+@@ -404,7 +404,7 @@ static inline int GET_ID_FROM_FREELIST(
+ 	struct blkfront_info *info)
+ {
+ 	unsigned long free = info->shadow_free;
+-	BUG_ON(free > BLK_RING_SIZE);
++	BUG_ON(free >= BLK_RING_SIZE);
+ 	info->shadow_free = info->shadow[free].req.id;
+ 	info->shadow[free].req.id = 0x0fffffee; /* debug */
+ 	return free;

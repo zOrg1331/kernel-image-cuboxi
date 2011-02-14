@@ -38,7 +38,7 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>
-#include <linux/namei.h>
+#include <linux/utsname.h>
 
 #define MLOG_MASK_PREFIX ML_NAMEI
 #include <cluster/masklog.h>
@@ -50,10 +50,36 @@
 #include "inode.h"
 #include "journal.h"
 #include "symlink.h"
-#include "xattr.h"
 
 #include "buffer_head_io.h"
 
+static char *ocfs2_page_getlink(struct dentry * dentry,
+				struct page **ppage);
+static char *ocfs2_fast_symlink_getlink(struct inode *inode,
+					struct buffer_head **bh);
+
+/* get the link contents into pagecache */
+static char *ocfs2_page_getlink(struct dentry * dentry,
+				struct page **ppage)
+{
+	struct page * page;
+	struct address_space *mapping = dentry->d_inode->i_mapping;
+	page = read_mapping_page(mapping, 0, NULL);
+	if (IS_ERR(page))
+		goto sync_fail;
+	wait_on_page_locked(page);
+	if (!PageUptodate(page))
+		goto async_fail;
+	*ppage = page;
+	return kmap(page);
+
+async_fail:
+	page_cache_release(page);
+	return ERR_PTR(-EIO);
+
+sync_fail:
+	return (char*)page;
+}
 
 static char *ocfs2_fast_symlink_getlink(struct inode *inode,
 					struct buffer_head **bh)
@@ -64,7 +90,11 @@ static char *ocfs2_fast_symlink_getlink(struct inode *inode,
 
 	mlog_entry_void();
 
-	status = ocfs2_read_inode_block(inode, bh);
+	status = ocfs2_read_block(OCFS2_SB(inode->i_sb),
+				  OCFS2_I(inode)->ip_blkno,
+				  bh,
+				  OCFS2_BH_CACHED,
+				  inode);
 	if (status < 0) {
 		mlog_errno(status);
 		link = ERR_PTR(status);
@@ -96,10 +126,6 @@ static int ocfs2_readlink(struct dentry *dentry,
 		goto out;
 	}
 
-	/*
-	 * Without vfsmount we can't update atime now,
-	 * but we will update atime here ultimately.
-	 */
 	ret = vfs_readlink(dentry, buffer, buflen, link);
 
 	brelse(bh);
@@ -108,70 +134,46 @@ out:
 	return ret;
 }
 
-static void *ocfs2_fast_follow_link(struct dentry *dentry,
-				    struct nameidata *nd)
+static void *ocfs2_follow_link(struct dentry *dentry,
+			       struct nameidata *nd)
 {
-	int status = 0;
-	int len;
-	char *target, *link = ERR_PTR(-ENOMEM);
+	int status;
+	char *link;
 	struct inode *inode = dentry->d_inode;
+	struct page *page = NULL;
 	struct buffer_head *bh = NULL;
-
-	mlog_entry_void();
-
-	BUG_ON(!ocfs2_inode_is_fast_symlink(inode));
-	target = ocfs2_fast_symlink_getlink(inode, &bh);
-	if (IS_ERR(target)) {
-		status = PTR_ERR(target);
+	
+	if (ocfs2_inode_is_fast_symlink(inode))
+		link = ocfs2_fast_symlink_getlink(inode, &bh);
+	else
+		link = ocfs2_page_getlink(dentry, &page);
+	if (IS_ERR(link)) {
+		status = PTR_ERR(link);
 		mlog_errno(status);
 		goto bail;
 	}
 
-	/* Fast symlinks can't be large */
-	len = strlen(target);
-	link = kzalloc(len + 1, GFP_NOFS);
-	if (!link) {
-		status = -ENOMEM;
+	status = vfs_follow_link(nd, link);
+	if (status && status != -ENOENT)
 		mlog_errno(status);
-		goto bail;
-	}
-
-	memcpy(link, target, len);
-	nd_set_link(nd, link);
-
 bail:
-	brelse(bh);
+	if (page) {
+		kunmap(page);
+		page_cache_release(page);
+	}
+	if (bh)
+		brelse(bh);
 
-	mlog_exit(status);
-	return status ? ERR_PTR(status) : link;
+	return ERR_PTR(status);
 }
 
-static void ocfs2_fast_put_link(struct dentry *dentry, struct nameidata *nd, void *cookie)
-{
-	char *link = cookie;
-
-	kfree(link);
-}
-
-const struct inode_operations ocfs2_symlink_inode_operations = {
+struct inode_operations ocfs2_symlink_inode_operations = {
 	.readlink	= page_readlink,
-	.follow_link	= page_follow_link_light,
-	.put_link	= page_put_link,
+	.follow_link	= ocfs2_follow_link,
 	.getattr	= ocfs2_getattr,
-	.setattr	= ocfs2_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
-	.listxattr	= ocfs2_listxattr,
-	.removexattr	= generic_removexattr,
 };
-const struct inode_operations ocfs2_fast_symlink_inode_operations = {
+struct inode_operations ocfs2_fast_symlink_inode_operations = {
 	.readlink	= ocfs2_readlink,
-	.follow_link	= ocfs2_fast_follow_link,
-	.put_link	= ocfs2_fast_put_link,
+	.follow_link	= ocfs2_follow_link,
 	.getattr	= ocfs2_getattr,
-	.setattr	= ocfs2_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
-	.listxattr	= ocfs2_listxattr,
-	.removexattr	= generic_removexattr,
 };

@@ -1,0 +1,31 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Wed, 6 Feb 2008 15:12:44 -0500
+Subject: [sound] enable S/PDIF in Fila/Converse - fixlet
+Message-id: 47AA14BC.6050005@redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH REPOST] Enable S/PDIF in Fila/Converse
+Bugzilla: 240783
+
+>>> Testing:
+>>> Still waiting for Dell to test the patch with Brew-built
+>>> RHEL5.1 rpms. A digital receiver is needed and there
+>>> has been some difficulty obtaining it for testing. When
+>>> the test results are available, I will update the list with
+>>> the results.
+bz240783 "S/PDIF audio out of D-Dock for Fila and Converse"
+failed when tested by Sigmatel on Dell's behalf. Sigmatel found
+the value of spec->gpio_mask should be 0x0000000b rather than
+0x00000007, otherwise everything is the same.
+
+diff --git a/sound/pci/hda/patch_sigmatel.c b/sound/pci/hda/patch_sigmatel.c
+index 3dddcd7..8e0e063 100644
+--- a/sound/pci/hda/patch_sigmatel.c
++++ b/sound/pci/hda/patch_sigmatel.c
+@@ -2207,7 +2207,7 @@ static int patch_stac9205(struct hda_codec *codec)
+ 	    stac92xx_set_config_reg(codec, 0x1f, 0x01441030);
+ 	    stac92xx_set_config_reg(codec, 0x20, 0x1c410030);
+ 
+-	    spec->gpio_mask = 0x00000007; /* GPIO0-2 */
++	    spec->gpio_mask = 0x0000000b; /* GPIO0-2 */
+ 	    /* GPIO0 High = EAPD, GPIO1 Low = DRM,
+ 	     * GPIO2 High = Headphone Mute
+ 	     */

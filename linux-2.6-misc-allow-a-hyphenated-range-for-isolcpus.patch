@@ -1,0 +1,113 @@
+From: Jonathan Lim <jolim@redhat.com>
+Date: Thu, 11 Oct 2007 15:19:21 -0400
+Subject: [misc] Allow a hyphenated range for isolcpus
+Message-id: 20071011191921.GE5008@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ 328151: Allow a hyphenated range for isolcpus
+Bugzilla: 328151
+
+Currently, the command line option "isolcpus=" takes as its argument a list of
+cpus.  This can get extremely long when isolating the majority of cpus on a
+large system.  This patch allows a hyphenated range of positive numbers in the
+string passed to command line helper function, get_options.  The kernel
+isolcpus code would not need any changing to use this feature.
+
+The patch has been tested on x86_64 and is upstream:
+
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=22f2e280179946b8be1e2205b8654f2cb4abbf64
+
+Following is the diff against the 2.6.18-52.el5 kernel source:
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 1e20a69..4f239be 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -727,7 +727,12 @@ running once the system is up.
+ 			Format: <RDP>,<reset>,<pci_scan>,<verbosity>
+ 
+ 	isolcpus=	[KNL,SMP] Isolate CPUs from the general scheduler.
+-			Format: <cpu number>,...,<cpu number>
++			Format:
++			<cpu number>,...,<cpu number>
++			or
++			<cpu number>-<cpu number>  (must be a positive range in ascending order)
++			or a mixture
++			<cpu number>,...,<cpu number>-<cpu number>
+ 			This option can be used to specify one or more CPUs
+ 			to isolate from the general SMP balancing and scheduling
+ 			algorithms. The only way to move a process onto or off
+diff --git a/lib/cmdline.c b/lib/cmdline.c
+index 0331ed8..8a5b530 100644
+--- a/lib/cmdline.c
++++ b/lib/cmdline.c
+@@ -16,6 +16,23 @@
+ #include <linux/kernel.h>
+ #include <linux/string.h>
+ 
++/*
++ *	If a hyphen was found in get_option, this will handle the
++ *	range of numbers, M-N.  This will expand the range and insert
++ *	the values[M, M+1, ..., N] into the ints array in get_options.
++ */
++
++static int get_range(char **str, int *pint)
++{
++	int x, inc_counter, upper_range;
++
++	(*str)++;
++	upper_range = simple_strtol((*str), NULL, 0);
++	inc_counter = upper_range - *pint;
++	for (x = *pint; x < upper_range; x++)
++		*pint++ = x;
++	return inc_counter;
++}
+ 
+ /**
+  *	get_option - Parse integer from an option string
+@@ -29,6 +46,7 @@
+  *	0 : no int in string
+  *	1 : int found, no subsequent comma
+  *	2 : int found including a subsequent comma
++ *	3 : hyphen found to denote a range
+  */
+ 
+ int get_option (char **str, int *pint)
+@@ -44,6 +62,8 @@ int get_option (char **str, int *pint)
+ 		(*str)++;
+ 		return 2;
+ 	}
++	if (**str == '-')
++		return 3;
+ 
+ 	return 1;
+ }
+@@ -55,7 +75,8 @@ int get_option (char **str, int *pint)
+  *	@ints: integer array
+  *
+  *	This function parses a string containing a comma-separated
+- *	list of integers.  The parse halts when the array is
++ *	list of integers, a hyphen-separated range of _positive_ integers,
++ *	or a combination of both.  The parse halts when the array is
+  *	full, or when no more numbers can be retrieved from the
+  *	string.
+  *
+@@ -72,6 +93,18 @@ char *get_options(const char *str, int nints, int *ints)
+ 		res = get_option ((char **)&str, ints + i);
+ 		if (res == 0)
+ 			break;
++		if (res == 3) {
++			int range_nums;
++			range_nums = get_range((char **)&str, ints + i);
++			if (range_nums < 0)
++				break;
++			/*
++			 * Decrement the result by one to leave out the
++			 * last number in the range.  The next iteration
++			 * will handle the upper number in the range
++			 */
++			i += (range_nums - 1);
++		}
+ 		i++;
+ 		if (res == 1)
+ 			break;

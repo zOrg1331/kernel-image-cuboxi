@@ -1,0 +1,62 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5 PATCH]: BZ 211301 Fix bogus warning in [un]lock_cpu_hotplug
+Date: Tue, 31 Oct 2006 13:28:52 -0500
+Bugzilla: 211301
+Message-Id: <20061031182852.32190.8482.sendpatchset@prarit.boston.redhat.com>
+Changelog: Fix bogus warning in [un]lock_cpu_hotplug
+
+
+Small patch to fix a race in the lock & unlock cpu hotplug code path.
+
+Noticed this on ia64 and x86_64 boxes.
+
+In void lock_cpu_hotplug(void),
+        struct task_struct *tsk = current;
+        .
+        .
+        .
+        mutex_lock(&cpu_bitmask_lock);
+        recursive = tsk;
+
+In void unlock_cpu_hotplug(void),
+
+        WARN_ON(recursive != current);
+        .
+        .
+        .
+        mutex_unlock(&cpu_bitmask_lock);
+        recursive = NULL;
+}
+
+So, process A comes in, acquires the lock and recursive = A.
+
+Process B attempts to acquire the lock and is busy waiting at the mutex_lock.
+
+Process A releases the lock in the unlock code.
+
+Process B "sees" the lock free, acquires it, and sets recursive = B.
+
+Process A continues and sets recursive = NULL in the unlock code.
+
+The next time that the unlock code executes, recursive == NULL when in fact it
+should be B.  This results in the WARN_ON being bogusly set off.
+
+The recursive = NULL should be moved inside of the mutex lock.
+
+As reported in BZ 211301, tested successfully on ia64 with scrashme test.
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+
+--- linux-2.6.18.ia64-orig/kernel/cpu.c.orig	2006-10-31 10:57:37.000000000 -0500
++++ linux-2.6.18.ia64/kernel/cpu.c	2006-10-31 10:57:46.000000000 -0500
+@@ -58,8 +58,8 @@ void unlock_cpu_hotplug(void)
+ 		recursive_depth--;
+ 		return;
+ 	}
+-	mutex_unlock(&cpu_bitmask_lock);
+ 	recursive = NULL;
++	mutex_unlock(&cpu_bitmask_lock);
+ }
+ EXPORT_SYMBOL_GPL(unlock_cpu_hotplug);
+ 
+

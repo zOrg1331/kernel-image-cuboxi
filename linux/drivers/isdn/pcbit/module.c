@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
@@ -30,6 +31,9 @@ module_param_array(irq, int, NULL, 0);
 
 static int num_boards;
 struct pcbit_dev * dev_pcbit[MAX_PCBIT_CARDS];
+
+extern void pcbit_terminate(int board);
+extern int pcbit_init_dev(int board, int mem_base, int irq);
 
 static int __init pcbit_init(void)
 {

@@ -1,0 +1,64 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Wed, 27 May 2009 15:13:41 -0400
+Subject: [powerpc] pass the PDN to check_msix_entries
+Message-id: 20090527191038.3372.81049.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ502906] Pass the PDN to check_msix_entries()
+Bugzilla: 502906
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=502906
+
+Description:
+===========
+In rtas_setup_msi_irqs(), we should have passed a struct pci_dn to
+check_msix_entries() rather than a struct pci_dev.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1816363
+
+Upstream Status:
+================
+This is not a issue upstream it was introduced by a backport to RHEL.
+
+Test Status:
+============
+Without this patch MSI-X supported device drivers fail to enable MSI-X
+interrupts.
+
+/var/log/messages showed:
+cxgb3 0003:01:00.0: only 8 MSI-X vectors left, not using MSI-X
+eth0: Chelsio T310 10GBASE-CX4 RNIC (rev 4) PCI Express x8 MSI
+
+With the patch applied MSI-X interrupts are supported.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/kernel/msi-rtas.c b/arch/powerpc/kernel/msi-rtas.c
+index 270caa8..75f4dfc 100644
+--- a/arch/powerpc/kernel/msi-rtas.c
++++ b/arch/powerpc/kernel/msi-rtas.c
+@@ -389,7 +389,7 @@ static int rtas_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
+ 	if (!pdn)
+ 		return -ENODEV;
+ 
+-	if (type == PCI_CAP_ID_MSIX && check_msix_entries(pdev))
++	if (type == PCI_CAP_ID_MSIX && check_msix_entries(pdn))
+ 		return -EINVAL;
+ 
+ 	/*

@@ -1,0 +1,41 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 14 Dec 2007 16:48:03 -0500
+Subject: [xen] rapid block device plug/unplug leads to crash
+Message-id: 4762FA13.5050907@redhat.com
+O-Subject: [RHEL5.2 PATCH] Bug 308971: rapid block device plug / unplug leads to kernel crash and/or soft lockup
+Bugzilla: 308971
+
+Description of problem:
+Rapidly pluging and unpluggin a block device eventually leads to a kernel crash
+when the device is unplugged before fully established due to a double free.
+
+Fix:
+Make sure that the device is fully ready before allowing release.
+
+Test:
+In a tight loop, perform xm block-attach/block-detach.
+
+Without the patch, the guest crashes; with the fix, the guest doesn't crash.
+
+Note: patch attached, not in-lined this time...
+
+See BZ if want to see in-line version.
+
+Note: will dupe this BZ & submit for 4.7.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/drivers/xen/blkfront/blkfront.c b/drivers/xen/blkfront/blkfront.c
+index 62d8417..bdb34e9 100644
+--- a/drivers/xen/blkfront/blkfront.c
++++ b/drivers/xen/blkfront/blkfront.c
+@@ -463,7 +463,7 @@ int blkif_release(struct inode *inode, struct file *filep)
+ 		struct xenbus_device * dev = info->xbdev;
+ 		enum xenbus_state state = xenbus_read_driver_state(dev->otherend);
+ 
+-		if (state == XenbusStateClosing)
++		if (state == XenbusStateClosing && info->is_ready)
+ 			blkfront_closing(dev);
+ 	}
+ 	return 0;

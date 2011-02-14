@@ -1,0 +1,99 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 19 Nov 2009 21:09:13 -0500
+Subject: [scsi] fix inconsistent usage of max lun
+Message-id: <20091119210913.GA6037@dhcp-210.hsv.redhat.com>
+Patchwork-id: 21443
+O-Subject: [RHEL5.5 PATCH] scsi: fix inconsistent usage of max lun
+Bugzilla: 531488
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+Promise reports stex driver may set max_lun to 256
+to represent actual valid lun range from 0 to 255,
+and the lun in stex payload message is u8. They
+have seen a problem where lun 256 can be added
+manually, and if lun 0 already exists this will
+make lun 256 seem to exist.
+
+# echo "scsi add-single-device <host> <channel> <id> <lun>" >
+/proc/scsi/scsi
+
+Ed Lin has submitted a patch to scsi-misc-2.6
+
+commit 71c309995bff5b5e84253931888b6e8163ee1df0
+Author: Ed Lin <ed.lin@promise.com>
+Date:   Fri Oct 9 15:23:27 2009 -0700
+
+    [SCSI] fix inconsistent usage of max_lun
+
+    max_lun in struct Scsi_Host is used as actual max lun
+    plus 1 in scsi_sequential_lun_scan()(scsi_scan.c).
+    However it is also used as actual max lun in some
+    other cases.
+
+    According to the comment in the definition of struct
+    Scsi_Host, max_lun should be set to 1 more than the
+    actual max lun, just like max_id. Fix the problem
+    according to this definition.
+
+    Signed-off-by: Ed Lin <ed.lin@promise.com>
+    Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+This is for BZ 531488, Promise has verified a 2.6.18-169.el5
+test kernel built with this patch. Please review and ACK.
+
+Thanks,
+David
+
+ drivers/scsi/3w-xxxx.c           |    2 +-
+ drivers/scsi/scsi_scan.c         |    4 ++--
+ drivers/scsi/scsi_transport_fc.c |    2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/scsi/3w-xxxx.c b/drivers/scsi/3w-xxxx.c
+index 89addb8..77f1ac3 100644
+--- a/drivers/scsi/3w-xxxx.c
++++ b/drivers/scsi/3w-xxxx.c
+@@ -2385,7 +2385,7 @@ static int __devinit tw_probe(struct pci_dev *pdev, const struct pci_device_id *
+ 	host->max_cmd_len = TW_MAX_CDB_LEN;
+ 
+ 	/* Luns and channels aren't supported by adapter */
+-	host->max_lun = 0;
++	host->max_lun = 1;
+ 	host->max_channel = 0;
+ 
+ 	/* Register the card with the kernel SCSI layer */
+diff --git a/drivers/scsi/scsi_scan.c b/drivers/scsi/scsi_scan.c
+index 3569200..d2b22ea 100644
+--- a/drivers/scsi/scsi_scan.c
++++ b/drivers/scsi/scsi_scan.c
+@@ -1317,7 +1317,7 @@ static int scsi_report_lun_scan(struct scsi_target *starget, int bflags,
+ 			for (i = 0; i < sizeof(struct scsi_lun); i++)
+ 				printk("%02x", data[i]);
+ 			printk(" has a LUN larger than currently supported.\n");
+-		} else if (lun > sdev->host->max_lun) {
++		} else if (lun >= sdev->host->max_lun) {
+ 			printk(KERN_WARNING "scsi: %s lun%d has a LUN larger"
+ 			       " than allowed by the host adapter\n",
+ 			       devname, lun);
+@@ -1521,7 +1521,7 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
+ 
+ 	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
+ 	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
+-	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
++	    ((lun != SCAN_WILD_CARD) && (lun >= shost->max_lun)))
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&shost->scan_mutex);
+diff --git a/drivers/scsi/scsi_transport_fc.c b/drivers/scsi/scsi_transport_fc.c
+index 0534988..042d027 100644
+--- a/drivers/scsi/scsi_transport_fc.c
++++ b/drivers/scsi/scsi_transport_fc.c
+@@ -1494,7 +1494,7 @@ fc_user_scan(struct Scsi_Host *shost, uint channel, uint id, uint lun)
+ 
+ 	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
+ 	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
+-	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
++	    ((lun != SCAN_WILD_CARD) && (lun >= shost->max_lun)))
+ 		return -EINVAL;
+ 
+ 	if (channel == SCAN_WILD_CARD) {

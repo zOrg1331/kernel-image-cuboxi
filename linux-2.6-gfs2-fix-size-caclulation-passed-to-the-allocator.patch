@@ -1,0 +1,54 @@
+From: Russell Cattelan <cattelan@redhat.com>
+Subject: [RHEL5] Fix size caclulation passed to the gfs2 allocator.
+Date: Thu, 07 Dec 2006 15:03:57 -0600
+Bugzilla: 218950
+Message-Id: <1165525437.18184.45.camel@xenon.msp.redhat.com>
+Changelog: gfs2: Fix size caclulation passed to the allocator.
+
+
+Simple fix to the allocator code, that was causing big
+problems in terms of performance and space used.
+
+-- 
+Russell Cattelan <cattelan@redhat.com>
+
+[GFS2] 
+
+Fix a size calculation error.
+The size was incorrectly being computed as a
+negative length and then passed to an
+unsigned parameter.
+
+This in turn would cause the allocator to
+setup enough indirect blocks to hold
+a gigabyte worth of file system blocks for
+each file created.
+
+Signed-off-by: Russell Cattelan <cattelan@redhat.com>
+
+
+Index: linux-2.6.18.noarch/fs/gfs2/ops_address.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/ops_address.c	2006-12-07 14:56:21.238160150 -0600
++++ linux-2.6.18.noarch/fs/gfs2/ops_address.c	2006-12-07 14:56:29.006254392 -0600
+@@ -370,15 +370,17 @@ static int gfs2_prepare_write(struct fil
+ 	loff_t pos = ((loff_t)page->index << PAGE_CACHE_SHIFT) + from;
+ 	loff_t end = ((loff_t)page->index << PAGE_CACHE_SHIFT) + to;
+ 	struct gfs2_alloc *al;
++	unsigned int write_len = to - from;
++
+ 
+ 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME|GL_AOP, &ip->i_gh);
+ 	error = gfs2_glock_nq_m_atime(1, &ip->i_gh);
+ 	if (error)
+ 		goto out_uninit;
+ 
+-	gfs2_write_calc_reserv(ip, to - from, &data_blocks, &ind_blocks);
++	gfs2_write_calc_reserv(ip, write_len, &data_blocks, &ind_blocks);
+ 
+-	error = gfs2_write_alloc_required(ip, pos, from - to, &alloc_required);
++	error = gfs2_write_alloc_required(ip, pos, write_len, &alloc_required);
+ 	if (error)
+ 		goto out_unlock;
+ 
+

@@ -1,0 +1,27 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:04 -0400
+Subject: [block] cciss: use uninterruptible timeout when waiting
+Message-id: <1283097002-3341-6-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27855
+O-Subject: [RHEL6 PATCH 05/63] cciss: use uninterruptible timeout when waiting
+	for device to become ready
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+use uninterruptible timeout when waiting for device to become ready
+so as not to be interrupted by signals.
+
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index e466324..b0d47b8 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -1484,8 +1484,7 @@ static int wait_for_device_to_become_ready(ctlr_info_t *h,
+ 		/* Wait for a bit.  do this first, because if we send
+ 		 * the TUR right away, the reset will just abort it.
+ 		 */
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule_timeout(waittime);
++		schedule_timeout_uninterruptible(waittime);
+ 		count++;
+ 
+ 		/* Increase wait time with each try, up to a point. */
