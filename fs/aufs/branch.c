@@ -992,11 +992,16 @@ static void au_farray_free(struct file **a, unsigned long long max)
 static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 {
 	int err, do_warn;
+	unsigned int mnt_flags;
 	unsigned long long ull, max;
 	aufs_bindex_t br_id;
+	unsigned char verbose;
 	struct file *file, *hf, **array;
 	struct inode *inode;
 	struct au_hfile *hfile;
+
+	mnt_flags = au_mntflags(sb);
+	verbose = !!au_opt_test(mnt_flags, VERBOSE);
 
 	array = au_farray_alloc(sb, &max);
 	err = PTR_ERR(array);
@@ -1012,6 +1017,8 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 		fi_read_lock(file);
 		if (unlikely(au_test_mmapped(file))) {
 			err = -EBUSY;
+			AuVerbose(verbose, "mmapped %.*s\n",
+				  AuDLNPair(file->f_dentry));
 			AuDbgFile(file);
 			FiMustNoWaiters(file);
 			fi_read_unlock(file);
