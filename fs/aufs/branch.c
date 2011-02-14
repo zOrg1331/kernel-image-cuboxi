@@ -530,6 +530,18 @@ out:
 		pr_info(fmt, ##__VA_ARGS__); \
 } while (0)
 
+static int au_test_ibusy(struct inode *inode, aufs_bindex_t bstart,
+			 aufs_bindex_t bend)
+{
+	return (inode && !S_ISDIR(inode->i_mode)) || bstart == bend;
+}
+
+static int au_test_dbusy(struct dentry *dentry, aufs_bindex_t bstart,
+			 aufs_bindex_t bend)
+{
+	return au_test_ibusy(dentry->d_inode, bstart, bend);
+}
+
 /*
  * test if the branch is deletable or not.
  */
@@ -541,7 +553,6 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 	struct au_dcsub_pages dpages;
 	struct au_dpage *dpage;
 	struct dentry *d;
-	struct inode *inode;
 
 	err = au_dpages_init(&dpages, GFP_NOFS);
 	if (unlikely(err))
@@ -578,14 +589,12 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 			}
 
 			/* AuDbgDentry(d); */
-			inode = d->d_inode;
 			bstart = au_dbstart(d);
 			bend = au_dbend(d);
 			if (bstart <= bindex
 			    && bindex <= bend
 			    && au_h_dptr(d, bindex)
-			    && ((inode && !S_ISDIR(inode->i_mode))
-				|| bstart == bend)) {
+			    && au_test_dbusy(d, bstart, bend)) {
 				err = -EBUSY;
 				AuVerbose(verbose, "busy %.*s\n", AuDLNPair(d));
 				AuDbgDentry(d);
@@ -640,7 +649,7 @@ static int test_inode_busy(struct super_block *sb, aufs_bindex_t bindex,
 		if (bstart <= bindex
 		    && bindex <= bend
 		    && au_h_iptr(i, bindex)
-		    && (!S_ISDIR(i->i_mode) || bstart == bend)) {
+		    && au_test_ibusy(i, bstart, bend)) {
 			err = -EBUSY;
 			AuVerbose(verbose, "busy i%lu\n", i->i_ino);
 			AuDbgInode(i);
