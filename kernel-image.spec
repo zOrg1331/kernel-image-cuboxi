@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt10
+Release: alt11
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Sat Feb 12 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt11
+- VE: shutrown environment only if pid ns child reaper is VE init
+  (by Stanislav Kinsbursky, see vz bug #1773)
+- Apply 042test007.1 patches
+- Backport 729a6a30 from mainline, see ALT #25055
+
 * Thu Feb 03 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt10
 - mm: check mm in __vm_enough_memory() (ALT #25000)
 - Check return value of crypto_alloc_shash() right
