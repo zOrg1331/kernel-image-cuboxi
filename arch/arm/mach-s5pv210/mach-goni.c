@@ -773,6 +773,7 @@ static struct platform_device *goni_devices[] __initdata = {
 	&goni_i2c_gpio5,
 	&mmc2_fixed_voltage,
 	&goni_device_gpiokeys,
+	&s3c_device_i2c0,
 	&s5p_device_fimc0,
 	&s5p_device_fimc1,
 	&s5p_device_fimc2,
@@ -808,6 +809,9 @@ static void __init goni_machine_init(void)
 {
 	/* Radio: call before I2C 1 registeration */
 	goni_radio_init();
+
+	/* I2C0 */
+	s3c_i2c0_set_platdata(NULL);
 
 	/* I2C1 */
 	s3c_i2c1_set_platdata(NULL);
