@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.36
-Release: alt3.1
+Release: alt3.2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -33,6 +33,8 @@ epoch:1
 %define kheaders_dir	%_prefix/include/linux-%kversion-%flavour
 %define kbuild_dir	%_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir	%_prefix/src/linux-%kversion-%flavour
+
+%brp_strip_none /boot/*
 
 Summary: The Linux kernel (the core of the Linux operating system)
 License: GPL
@@ -240,6 +242,7 @@ Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease > %version-%release
 Provides:  kernel-modules-uvcvideo-%kversion-%flavour-%krelease = %version-%release
 Provides:  kernel-modules-gspca-%kversion-%flavour-%krelease = %version-%release
 Provides:  kernel-modules-lirc-%kversion-%flavour-%krelease = %version-%release
+Provides:  kernel-modules-lirc-%flavour = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
@@ -587,6 +590,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Wed Feb 02 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3.2
+- r8712u added
+- nvidia backlight added
+
 * Tue Jan 25 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3.1
 - fix boot on i586
 
