@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab084
-%define ovzrel 2
+%define ovzrel 4
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -6082,6 +6082,13 @@ Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
 Patch100037: diff-rh-vdso-wall-to-monotonic-kvar-fix
 Patch100038: diff-ubc-batched-pte-acct-x86-fix
+Patch100039: diff-ubc-recharge-page-tables-in-ub_migrate_mm
+Patch100040: diff-ubc-recharge-vma-in-ub_migrate_mm
+Patch100041: diff-ubc-pbc-dont-create-dupicate-pbs-on-fork
+Patch100042: diff-rh-vdso-remove-note-part
+Patch100043: diff-rh-export-ip_outputs
+Patch100044: diff-ubc-fixup-percpu-held_pages-in-proc
+Patch100045: diff-ubc-migrate-pages-rcu-safe
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -11990,6 +11997,13 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100036 -p1
 %patch100037 -p1
 %patch100038 -p1
+%patch100039 -p1
+%patch100040 -p1
+%patch100041 -p1
+%patch100042 -p1
+%patch100043 -p1
+%patch100044 -p1
+%patch100045 -p1
 
 %patch101000 -p1
 %patch101001 -p1
