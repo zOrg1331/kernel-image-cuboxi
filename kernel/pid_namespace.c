@@ -285,22 +285,24 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	int nr;
 	int rc;
 	struct task_struct *task;
-	struct ve_struct *env = get_exec_env();
 
-	/*
-	 * Here the VE changes its state into "not running".
-	 * op_sem taken for write is a barrier to all VE manipulations from
-	 * ioctl: it waits for operations currently in progress and blocks all
-	 * subsequent operations until is_running is set to 0 and op_sem is
-	 * released.
-	 */
+	if (pid_ns->child_reaper == first_task_ve()) {
+		struct ve_struct *env = get_exec_env();
 
-	down_write(&env->op_sem);
-	env->is_running = 0;
-	up_write(&env->op_sem);
+		/*
+		 * Here the VE changes its state into "not running".
+		 * op_sem taken for write is a barrier to all VE manipulations from
+		 * ioctl: it waits for operations currently in progress and blocks all
+		 * subsequent operations until is_running is set to 0 and op_sem is
+		 * released.
+		 */
 
-	ve_hook_iterate_fini(VE_INIT_EXIT_CHAIN, env);
+		down_write(&env->op_sem);
+		env->is_running = 0;
+		up_write(&env->op_sem);
 
+		ve_hook_iterate_fini(VE_INIT_EXIT_CHAIN, env);
+	}
 	/*
 	 * The last thread in the cgroup-init thread group is terminating.
 	 * Find remaining pid_ts in the namespace, signal and wait for them
