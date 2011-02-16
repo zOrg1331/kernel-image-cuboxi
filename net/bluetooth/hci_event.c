@@ -776,6 +776,25 @@ static void hci_cc_pin_code_neg_reply(struct hci_dev *hdev, struct sk_buff *skb)
 		mgmt_pin_code_neg_reply_complete(hdev->id, &rp->bdaddr,
 								rp->status);
 }
+static void hci_cc_le_read_buffer_size(struct hci_dev *hdev,
+				       struct sk_buff *skb)
+{
+	struct hci_rp_le_read_buffer_size *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	hdev->le_mtu = __le16_to_cpu(rp->le_mtu);
+	hdev->le_pkts = rp->le_max_pkt;
+
+	hdev->le_cnt = hdev->le_pkts;
+
+	BT_DBG("%s le mtu %d:%d", hdev->name, hdev->le_mtu, hdev->le_pkts);
+
+	hci_req_complete(hdev, HCI_OP_LE_READ_BUFFER_SIZE, rp->status);
+}
 
 static inline void hci_cs_inquiry(struct hci_dev *hdev, __u8 status)
 {
@@ -1102,6 +1121,43 @@ static void hci_cs_exit_sniff_mode(struct hci_dev *hdev, __u8 status)
 
 		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
 			hci_sco_setup(conn, status);
+	}
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cs_le_create_conn(struct hci_dev *hdev, __u8 status)
+{
+	struct hci_cp_le_create_conn *cp;
+	struct hci_conn *conn;
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
+
+	cp = hci_sent_cmd_data(hdev, HCI_OP_LE_CREATE_CONN);
+	if (!cp)
+		return;
+
+	hci_dev_lock(hdev);
+
+	conn = hci_conn_hash_lookup_ba(hdev, LE_LINK, &cp->peer_addr);
+
+	BT_DBG("%s bdaddr %s conn %p", hdev->name, batostr(&cp->peer_addr),
+		conn);
+
+	if (status) {
+		if (conn && conn->state == BT_CONNECT) {
+			conn->state = BT_CLOSED;
+			hci_proto_connect_cfm(conn, status);
+			hci_conn_del(conn);
+		}
+	} else {
+		if (!conn) {
+			conn = hci_conn_add(hdev, LE_LINK, &cp->peer_addr);
+			if (conn)
+				conn->out = 1;
+			else
+				BT_ERR("No memory for new connection");
+		}
 	}
 
 	hci_dev_unlock(hdev);
@@ -1667,6 +1723,10 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 		hci_cc_pin_code_neg_reply(hdev, skb);
 		break;
 
+	case HCI_OP_LE_READ_BUFFER_SIZE:
+		hci_cc_le_read_buffer_size(hdev, skb);
+		break;
+
 	default:
 		BT_DBG("%s opcode 0x%x", hdev->name, opcode);
 		break;
@@ -1736,6 +1796,10 @@ static inline void hci_cmd_status_evt(struct hci_dev *hdev, struct sk_buff *skb)
 	case HCI_OP_DISCONNECT:
 		if (ev->status != 0)
 			mgmt_disconnect_failed(hdev->id);
+		break;
+
+	case HCI_OP_LE_CREATE_CONN:
+		hci_cs_le_create_conn(hdev, ev->status);
 		break;
 
 	default:
@@ -1808,6 +1872,16 @@ static inline void hci_num_comp_pkts_evt(struct hci_dev *hdev, struct sk_buff *s
 				hdev->acl_cnt += count;
 				if (hdev->acl_cnt > hdev->acl_pkts)
 					hdev->acl_cnt = hdev->acl_pkts;
+			} else if (conn->type == LE_LINK) {
+				if (hdev->le_pkts) {
+					hdev->le_cnt += count;
+					if (hdev->le_cnt > hdev->le_pkts)
+						hdev->le_cnt = hdev->le_pkts;
+				} else {
+					hdev->acl_cnt += count;
+					if (hdev->acl_cnt > hdev->acl_pkts)
+						hdev->acl_cnt = hdev->acl_pkts;
+				}
 			} else {
 				hdev->sco_cnt += count;
 				if (hdev->sco_cnt > hdev->sco_pkts)
@@ -2321,6 +2395,60 @@ static inline void hci_remote_host_features_evt(struct hci_dev *hdev, struct sk_
 	hci_dev_unlock(hdev);
 }
 
+static inline void hci_le_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	struct hci_ev_le_conn_complete *ev = (void *) skb->data;
+	struct hci_conn *conn;
+
+	BT_DBG("%s status %d", hdev->name, ev->status);
+
+	hci_dev_lock(hdev);
+
+	conn = hci_conn_hash_lookup_ba(hdev, LE_LINK, &ev->bdaddr);
+	if (!conn) {
+		conn = hci_conn_add(hdev, LE_LINK, &ev->bdaddr);
+		if (!conn) {
+			BT_ERR("No memory for new connection");
+			hci_dev_unlock(hdev);
+			return;
+		}
+	}
+
+	if (ev->status) {
+		hci_proto_connect_cfm(conn, ev->status);
+		conn->state = BT_CLOSED;
+		hci_conn_del(conn);
+		goto unlock;
+	}
+
+	conn->handle = __le16_to_cpu(ev->handle);
+	conn->state = BT_CONNECTED;
+
+	hci_conn_hold_device(conn);
+	hci_conn_add_sysfs(conn);
+
+	hci_proto_connect_cfm(conn, ev->status);
+
+unlock:
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_le_meta_evt(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	struct hci_ev_le_meta *le_ev = (void *) skb->data;
+
+	skb_pull(skb, sizeof(*le_ev));
+
+	switch (le_ev->subevent) {
+	case HCI_EV_LE_CONN_COMPLETE:
+		hci_le_conn_complete_evt(hdev, skb);
+		break;
+
+	default:
+		break;
+	}
+}
+
 void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_event_hdr *hdr = (void *) skb->data;
@@ -2459,6 +2587,10 @@ void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_EV_REMOTE_HOST_FEATURES:
 		hci_remote_host_features_evt(hdev, skb);
+		break;
+
+	case HCI_EV_LE_META:
+		hci_le_meta_evt(hdev, skb);
 		break;
 
 	default:

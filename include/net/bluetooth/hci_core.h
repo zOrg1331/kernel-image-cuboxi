@@ -60,6 +60,7 @@ struct hci_conn_hash {
 	spinlock_t       lock;
 	unsigned int     acl_num;
 	unsigned int     sco_num;
+	unsigned int     le_num;
 };
 
 struct bdaddr_list {
@@ -122,15 +123,19 @@ struct hci_dev {
 	atomic_t	cmd_cnt;
 	unsigned int	acl_cnt;
 	unsigned int	sco_cnt;
+	unsigned int	le_cnt;
 
 	unsigned int	acl_mtu;
 	unsigned int	sco_mtu;
+	unsigned int	le_mtu;
 	unsigned int	acl_pkts;
 	unsigned int	sco_pkts;
+	unsigned int	le_pkts;
 
 	unsigned long	cmd_last_tx;
 	unsigned long	acl_last_tx;
 	unsigned long	sco_last_tx;
+	unsigned long	le_last_tx;
 
 	struct workqueue_struct	*workqueue;
 
@@ -309,20 +314,36 @@ static inline void hci_conn_hash_add(struct hci_dev *hdev, struct hci_conn *c)
 {
 	struct hci_conn_hash *h = &hdev->conn_hash;
 	list_add(&c->list, &h->list);
-	if (c->type == ACL_LINK)
+	switch (c->type) {
+	case ACL_LINK:
 		h->acl_num++;
-	else
+		break;
+	case LE_LINK:
+		h->le_num++;
+		break;
+	case SCO_LINK:
+	case ESCO_LINK:
 		h->sco_num++;
+		break;
+	}
 }
 
 static inline void hci_conn_hash_del(struct hci_dev *hdev, struct hci_conn *c)
 {
 	struct hci_conn_hash *h = &hdev->conn_hash;
 	list_del(&c->list);
-	if (c->type == ACL_LINK)
+	switch (c->type) {
+	case ACL_LINK:
 		h->acl_num--;
-	else
+		break;
+	case LE_LINK:
+		h->le_num--;
+		break;
+	case SCO_LINK:
+	case ESCO_LINK:
 		h->sco_num--;
+		break;
+	}
 }
 
 static inline struct hci_conn *hci_conn_hash_lookup_handle(struct hci_dev *hdev,
@@ -504,6 +525,7 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
 #define lmp_esco_capable(dev)      ((dev)->features[3] & LMP_ESCO)
 #define lmp_ssp_capable(dev)       ((dev)->features[6] & LMP_SIMPLE_PAIR)
 #define lmp_no_flush_capable(dev)  ((dev)->features[6] & LMP_NO_FLUSH)
+#define lmp_le_capable(dev)        ((dev)->features[4] & LMP_LE)
 
 /* ----- HCI protocols ----- */
 struct hci_proto {
