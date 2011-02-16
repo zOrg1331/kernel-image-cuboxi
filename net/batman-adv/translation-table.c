@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2011 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -22,7 +22,6 @@
 #include "main.h"
 #include "translation-table.h"
 #include "soft-interface.h"
-#include "types.h"
 #include "hash.h"
 #include "originator.h"
 
