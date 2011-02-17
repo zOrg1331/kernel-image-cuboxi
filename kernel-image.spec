@@ -1,6 +1,6 @@
-Name: kernel-image-std-ng
+Name: kernel-image-gns-test
 Version: 2.6.37
-Release: alt3
+Release: alt4.38rc5
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Thu Feb 17 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.37-alt4.38rc5
+- 38-rc5
+
 * Sun Jan 23 2011 Valery Inozemtsev <shrek@altlinux.ru> 2.6.37-alt3
 - added aufs2.1
 
