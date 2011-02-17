@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
-Version: 2.6.36
-Release: alt3.2
+Version: 2.6.37
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -590,6 +590,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Feb 17 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt1
+- new version
+
 * Wed Feb 02 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3.2
 - r8712u added
 - nvidia backlight added
