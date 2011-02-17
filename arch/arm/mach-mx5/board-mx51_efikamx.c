@@ -121,22 +121,9 @@ static iomux_v3_cfg_t mx51efikamx_pads[] = {
 };
 
 /* Serial ports */
-#if defined(CONFIG_SERIAL_IMX) || defined(CONFIG_SERIAL_IMX_MODULE)
 static const struct imxuart_platform_data uart_pdata = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
-
-static inline void mxc_init_imx_uart(void)
-{
-	imx51_add_imx_uart(0, &uart_pdata);
-	imx51_add_imx_uart(1, &uart_pdata);
-	imx51_add_imx_uart(2, &uart_pdata);
-}
-#else /* !SERIAL_IMX */
-static inline void mxc_init_imx_uart(void)
-{
-}
-#endif /* SERIAL_IMX */
 
 /* This function is board specific as the bit mask for the plldiv will also
  * be different for other Freescale SoCs, thus a common bitmask is not
@@ -158,13 +145,15 @@ static int initialize_otg_port(struct platform_device *pdev)
 	v |= MX51_USB_PLL_DIV_24_MHZ;
 	__raw_writel(v, usbother_base + MXC_USB_PHY_CTR_FUNC2_OFFSET);
 	iounmap(usb_base);
-	return 0;
+
+	mdelay(10);
+
+	return mx51_initialize_usb_hw(0, MXC_EHCI_INTERNAL_PHY);
 }
 
 static struct mxc_usbh_platform_data dr_utmi_config = {
 	.init   = initialize_otg_port,
 	.portsc = MXC_EHCI_UTMI_16BIT,
-	.flags  = MXC_EHCI_INTERNAL_PHY,
 };
 
 /*   PCBID2  PCBID1 PCBID0  STATE
@@ -314,13 +303,15 @@ void mx51_efikamx_reset(void)
 		gpio_direction_output(EFIKAMX_RESET, 0);
 }
 
-static void __init mxc_board_init(void)
+static void __init mx51_efikamx_init(void)
 {
 	mxc_iomux_v3_setup_multiple_pads(mx51efikamx_pads,
 					ARRAY_SIZE(mx51efikamx_pads));
 	mx51_efikamx_board_id();
 	mxc_register_device(&mxc_usbdr_host_device, &dr_utmi_config);
-	mxc_init_imx_uart();
+	imx51_add_imx_uart(0, &uart_pdata);
+	imx51_add_imx_uart(1, &uart_pdata);
+	imx51_add_imx_uart(2, &uart_pdata);
 	imx51_add_sdhci_esdhc_imx(0, NULL);
 
 	/* on < 1.2 boards both SD controllers are used */
@@ -350,15 +341,16 @@ static void __init mx51_efikamx_timer_init(void)
 	mx51_clocks_init(32768, 24000000, 22579200, 24576000);
 }
 
-static struct sys_timer mxc_timer = {
-	.init	= mx51_efikamx_timer_init,
+static struct sys_timer mx51_efikamx_timer = {
+	.init = mx51_efikamx_timer_init,
 };
 
 MACHINE_START(MX51_EFIKAMX, "Genesi EfikaMX nettop")
 	/* Maintainer: Amit Kucheria <amit.kucheria@linaro.org> */
 	.boot_params = MX51_PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
+	.init_early = imx51_init_early,
 	.init_irq = mx51_init_irq,
-	.init_machine =  mxc_board_init,
-	.timer = &mxc_timer,
+	.timer = &mx51_efikamx_timer,
+	.init_machine = mx51_efikamx_init,
 MACHINE_END
