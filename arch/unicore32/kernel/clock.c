@@ -385,4 +385,4 @@ static int __init clk_init(void)
 	clk_register(&clk_ost_clk);
 	return 0;
 }
-arch_initcall(clk_init);
+core_initcall(clk_init);
