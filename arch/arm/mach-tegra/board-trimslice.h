@@ -1,11 +1,7 @@
 /*
- * arch/arm/mach-tegra/include/mach/system.h
+ * arch/arm/mach-tegra/board-trimslice.h
  *
- * Copyright (C) 2010 Google, Inc.
- *
- * Author:
- *	Colin Cross <ccross@google.com>
- *	Erik Gilling <konkers@google.com>
+ * Copyright (C) 2011 CompuLab, Ltd.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -18,16 +14,9 @@
  *
  */
 
-#ifndef __MACH_TEGRA_SYSTEM_H
-#define __MACH_TEGRA_SYSTEM_H
+#ifndef _MACH_TEGRA_BOARD_TRIMSLICE_H
+#define _MACH_TEGRA_BOARD_TRIMSLICE_H
 
-#include <mach/hardware.h>
-#include <mach/iomap.h>
-
-extern void (*arch_reset)(char mode, const char *cmd);
-
-static inline void arch_idle(void)
-{
-}
+void trimslice_pinmux_init(void);
 
 #endif
