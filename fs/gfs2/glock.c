@@ -1690,11 +1690,11 @@ int __init gfs2_glock_init(void)
 	}
 
 	glock_workqueue = alloc_workqueue("glock_workqueue", WQ_MEM_RECLAIM |
-					  WQ_HIGHPRI | WQ_FREEZEABLE, 0);
+					  WQ_HIGHPRI | WQ_FREEZABLE, 0);
 	if (IS_ERR(glock_workqueue))
 		return PTR_ERR(glock_workqueue);
 	gfs2_delete_workqueue = alloc_workqueue("delete_workqueue",
-						WQ_MEM_RECLAIM | WQ_FREEZEABLE,
+						WQ_MEM_RECLAIM | WQ_FREEZABLE,
 						0);
 	if (IS_ERR(gfs2_delete_workqueue)) {
 		destroy_workqueue(glock_workqueue);

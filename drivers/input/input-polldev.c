@@ -257,7 +257,7 @@ static int __init input_polldev_init(void)
 	 * system goes into sleep mode.
 	 */
 	polldev_wq = alloc_workqueue("ipolldev_wq",
-				     WQ_FREEZEABLE | WQ_UNBOUND, 0);
+				     WQ_FREEZABLE | WQ_UNBOUND, 0);
 	if (!polldev_wq) {
 		pr_err("failed to create ipolldev_wq workqueue\n");
 		return -ENOMEM;
