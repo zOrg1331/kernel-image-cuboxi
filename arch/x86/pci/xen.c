@@ -157,14 +157,14 @@ static int xen_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 		goto error;
 	i = 0;
 	list_for_each_entry(msidesc, &dev->msi_list, list) {
-		irq = xen_allocate_pirq(v[i], 0, /* not sharable */
+		xen_allocate_pirq_msi(
 			(type == PCI_CAP_ID_MSIX) ?
-			"pcifront-msi-x" : "pcifront-msi");
+			"pcifront-msi-x" : "pcifront-msi",
+			&irq, &v[i], XEN_ALLOC_IRQ);
 		if (irq < 0) {
 			ret = -1;
 			goto free;
 		}
-
 		ret = set_irq_msi(irq, msidesc);
 		if (ret)
 			goto error_while;
@@ -226,21 +226,27 @@ static int xen_pcifront_enable_irq(struct pci_dev *dev)
 {
 	int rc;
 	int share = 1;
+	u8 gsi;
 
-	dev_info(&dev->dev, "Xen PCI enabling IRQ: %d\n", dev->irq);
-
-	if (dev->irq < 0)
-		return -EINVAL;
-
-	if (dev->irq < NR_IRQS_LEGACY)
-		share = 0;
-
-	rc = xen_allocate_pirq(dev->irq, share, "pcifront");
+	rc = pci_read_config_byte(dev, PCI_INTERRUPT_LINE, &gsi);
 	if (rc < 0) {
-		dev_warn(&dev->dev, "Xen PCI IRQ: %d, failed to register:%d\n",
-			 dev->irq, rc);
+		dev_warn(&dev->dev, "Xen PCI: failed to read interrupt line: %d\n",
+			 rc);
 		return rc;
 	}
+
+	if (gsi < NR_IRQS_LEGACY)
+		share = 0;
+
+	rc = xen_allocate_pirq(gsi, share, "pcifront");
+	if (rc < 0) {
+		dev_warn(&dev->dev, "Xen PCI: failed to register GSI%d: %d\n",
+			 gsi, rc);
+		return rc;
+	}
+
+	dev->irq = rc;
+	dev_info(&dev->dev, "Xen PCI mapped GSI%d to IRQ%d\n", gsi, dev->irq);
 	return 0;
 }
 
