@@ -3,12 +3,12 @@ Version: 2.6.38
 Release: alt4.38rc5
 
 %define kernel_base_version	%version
-%define kernel_extra_version	%nil
+%define kernel_extra_version	rc5
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.5.0
 
 %define krelease	%release
 
