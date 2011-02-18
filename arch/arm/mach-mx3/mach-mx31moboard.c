@@ -268,8 +268,10 @@ static struct mc13783_leds_platform_data moboard_leds = {
 };
 
 static struct mc13783_platform_data moboard_pmic = {
-	.regulators = moboard_regulators,
-	.num_regulators = ARRAY_SIZE(moboard_regulators),
+	.regulators = {
+		.regulators = moboard_regulators,
+		.num_regulators = ARRAY_SIZE(moboard_regulators),
+	},
 	.leds = &moboard_leds,
 	.flags = MC13783_USE_REGULATOR | MC13783_USE_RTC |
 		MC13783_USE_ADC | MC13783_USE_LED,
