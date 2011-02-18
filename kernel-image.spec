@@ -76,6 +76,7 @@ Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
 Provides: kernel-module-drbd83
+Provides: kernel-module-igb
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -591,7 +592,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Feb 17 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt1
-- new version
+- new version (2.6.37.1)
 
 * Wed Feb 02 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3.2
 - r8712u added
