@@ -1,9 +1,9 @@
-Name: kernel-image-gns-test
+Name: kernel-image-pure-emerald
 Version: 2.6.38
-Release: alt4.38rc5
+Release: alt5.rc5.1
 
 %define kernel_base_version	%version
-%define kernel_extra_version	rc5
+%define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Fri Feb 18 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt5.rc5.1
+- flavour upgraded to be more clear
+
 * Thu Feb 17 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt4.38rc5
 - 38-rc5
 
