@@ -108,11 +108,17 @@ struct request {
 
 	/*
 	 * Three pointers are available for the IO schedulers, if they need
-	 * more they have to dynamically allocate it.
+	 * more they have to dynamically allocate it.  Flush requests are
+	 * never put on the IO scheduler. So let the flush fields share
+	 * space with the three elevator_private pointers.
 	 */
-	void *elevator_private;
-	void *elevator_private2;
-	void *elevator_private3;
+	union {
+		void *elevator_private[3];
+		struct {
+			unsigned int		seq;
+			struct list_head	list;
+		} flush;
+	};
 
 	struct gendisk *rq_disk;
 	struct hd_struct *part;
@@ -363,11 +369,12 @@ struct request_queue
 	 * for flush operations
 	 */
 	unsigned int		flush_flags;
-	unsigned int		flush_seq;
-	int			flush_err;
+	unsigned int		flush_pending_idx:1;
+	unsigned int		flush_running_idx:1;
+	unsigned long		flush_pending_since;
+	struct list_head	flush_queue[2];
+	struct list_head	flush_data_in_flight;
 	struct request		flush_rq;
-	struct request		*orig_flush_rq;
-	struct list_head	pending_flushes;
 
 	struct mutex		sysfs_lock;
 
