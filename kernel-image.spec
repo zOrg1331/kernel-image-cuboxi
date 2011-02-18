@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.38
-Release: alt5.rc5.1
+Release: alt5.rc5.2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -21,7 +21,7 @@ Release: alt5.rc5.1
 %define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
-%def_disable docs
+%def_enable docs
 
 ## Don't edit below this line ##################################
 
@@ -80,11 +80,10 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "std" variant of kernel packages is a generic 2.6.x kernel which
-should support wide range of hardware, but does not contain patches
-which are useful only for some special applications (and may have
-undesirable side effects in other cases).  This is the default 2.6.x
-kernel variant for ALT Linux distributions.
+Pure Emerald is a funny rolled package of 2.6.x series, prepared
+by gns@.
+
+This kernel generally should not be used by anyone.
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -340,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Fri Feb 18 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt5.rc5.2
+- description updated
+
 * Fri Feb 18 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt5.rc5.1
 - flavour upgraded to be more clear
 
