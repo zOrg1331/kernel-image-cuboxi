@@ -17,18 +17,13 @@
 
 #include "PKUnity.h"
 
-#define io_p2v(x)	((x) - PKUNITY_IOSPACE_BASE)
-#define io_v2p(x)	((x) + PKUNITY_IOSPACE_BASE)
+#define io_p2v(x)	((x) - PKUNITY_MMIO_BASE)
+#define io_v2p(x)	((x) + PKUNITY_MMIO_BASE)
 
 #ifndef __ASSEMBLY__
 
 # define __REG(x)	(*((volatile unsigned long *)io_p2v(x)))
 # define __PREG(x)	(io_v2p((unsigned long)&(x)))
-
-#else
-
-# define __REG(x)	io_p2v(x)
-# define __PREG(x)	io_v2p(x)
 
 #endif
 
