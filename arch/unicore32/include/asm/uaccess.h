@@ -21,7 +21,7 @@
 #define __copy_from_user	__copy_from_user
 #define __copy_to_user		__copy_to_user
 #define __strncpy_from_user	__strncpy_from_user
-#define strnlen_user		strnlen_user
+#define __strnlen_user		__strnlen_user
 #define __clear_user		__clear_user
 
 #define __kernel_ok		(segment_eq(get_fs(), KERNEL_DS))
