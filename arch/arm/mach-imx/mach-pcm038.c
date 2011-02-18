@@ -263,8 +263,10 @@ static struct mc13783_regulator_init_data pcm038_regulators[] = {
 };
 
 static struct mc13783_platform_data pcm038_pmic = {
-	.regulators = pcm038_regulators,
-	.num_regulators = ARRAY_SIZE(pcm038_regulators),
+	.regulators = {
+		.regulators = pcm038_regulators,
+		.num_regulators = ARRAY_SIZE(pcm038_regulators),
+	},
 	.flags = MC13783_USE_ADC | MC13783_USE_REGULATOR |
 		 MC13783_USE_TOUCHSCREEN,
 };
