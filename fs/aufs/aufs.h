@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,6 +41,7 @@
 #include "dbgaufs.h"
 #include "dentry.h"
 #include "dir.h"
+#include "dynop.h"
 #include "file.h"
 #include "fstype.h"
 #include "inode.h"

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ struct inode *au_igrab(struct inode *inode)
 {
 	if (inode) {
 		AuDebugOn(!atomic_read(&inode->i_count));
-		atomic_inc_return(&inode->i_count);
+		atomic_inc(&inode->i_count);
 	}
 	return inode;
 }
@@ -39,39 +39,39 @@ static void au_refresh_hinode_attr(struct inode *inode, int do_version)
 		inode->i_version++;
 }
 
-int au_refresh_hinode_self(struct inode *inode, int do_attr)
+static int au_ii_refresh(struct inode *inode, int *update)
 {
-	int err;
+	int err, e;
+	umode_t type;
 	aufs_bindex_t bindex, new_bindex;
-	unsigned char update;
-	struct inode *first;
-	struct au_hinode *p, *q, tmp;
 	struct super_block *sb;
 	struct au_iinfo *iinfo;
+	struct au_hinode *p, *q, tmp;
 
 	IiMustWriteLock(inode);
 
-	update = 0;
+	*update = 0;
 	sb = inode->i_sb;
+	type = inode->i_mode & S_IFMT;
 	iinfo = au_ii(inode);
 	err = au_ii_realloc(iinfo, au_sbend(sb) + 1);
 	if (unlikely(err))
 		goto out;
 
+	AuDebugOn(iinfo->ii_bstart < 0);
 	p = iinfo->ii_hinode + iinfo->ii_bstart;
-	first = p->hi_inode;
-	err = 0;
 	for (bindex = iinfo->ii_bstart; bindex <= iinfo->ii_bend;
 	     bindex++, p++) {
 		if (!p->hi_inode)
 			continue;
 
+		AuDebugOn(type != (p->hi_inode->i_mode & S_IFMT));
 		new_bindex = au_br_index(sb, p->hi_id);
 		if (new_bindex == bindex)
 			continue;
 
 		if (new_bindex < 0) {
-			update++;
+			*update = 1;
 			au_hiput(p);
 			p->hi_inode = NULL;
 			continue;
@@ -91,33 +91,47 @@ int au_refresh_hinode_self(struct inode *inode, int do_attr)
 			p--;
 		}
 	}
-	au_update_brange(inode, /*do_put_zero*/0);
-	if (do_attr)
+	au_update_ibrange(inode, /*do_put_zero*/0);
+	e = au_dy_irefresh(inode);
+	if (unlikely(e && !err))
+		err = e;
+
+out:
+	AuTraceErr(err);
+	return err;
+}
+
+int au_refresh_hinode_self(struct inode *inode)
+{
+	int err, update;
+
+	err = au_ii_refresh(inode, &update);
+	if (!err)
 		au_refresh_hinode_attr(inode, update && S_ISDIR(inode->i_mode));
 
- out:
+	AuTraceErr(err);
 	return err;
 }
 
 int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 {
-	int err, update;
+	int err, e, update;
 	unsigned int flags;
+	umode_t mode;
 	aufs_bindex_t bindex, bend;
 	unsigned char isdir;
-	struct inode *first;
 	struct au_hinode *p;
 	struct au_iinfo *iinfo;
 
-	err = au_refresh_hinode_self(inode, /*do_attr*/0);
+	err = au_ii_refresh(inode, &update);
 	if (unlikely(err))
 		goto out;
 
 	update = 0;
 	iinfo = au_ii(inode);
 	p = iinfo->ii_hinode + iinfo->ii_bstart;
-	first = p->hi_inode;
-	isdir = S_ISDIR(inode->i_mode);
+	mode = (inode->i_mode & S_IFMT);
+	isdir = S_ISDIR(mode);
 	flags = au_hi_flags(inode, isdir);
 	bend = au_dbend(dentry);
 	for (bindex = au_dbstart(dentry); bindex <= bend; bindex++) {
@@ -128,6 +142,7 @@ int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 		if (!h_d || !h_d->d_inode)
 			continue;
 
+		AuDebugOn(mode != (h_d->d_inode->i_mode & S_IFMT));
 		if (iinfo->ii_bstart <= bindex && bindex <= iinfo->ii_bend) {
 			h_i = au_h_iptr(inode, bindex);
 			if (h_i) {
@@ -144,14 +159,14 @@ int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 		au_set_h_iptr(inode, bindex, au_igrab(h_d->d_inode), flags);
 		update = 1;
 	}
-	au_update_brange(inode, /*do_put_zero*/0);
+	au_update_ibrange(inode, /*do_put_zero*/0);
+	e = au_dy_irefresh(inode);
+	if (unlikely(e && !err))
+		err = e;
+	if (!err)
+		au_refresh_hinode_attr(inode, update && isdir);
 
-	if (unlikely(err))
-		goto out;
-
-	au_refresh_hinode_attr(inode, update && isdir);
-
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
@@ -179,7 +194,9 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 		btail = au_dbtail(dentry);
 		inode->i_op = &aufs_iop;
 		inode->i_fop = &aufs_file_fop;
-		inode->i_mapping->a_ops = &aufs_aop;
+		err = au_dy_iaop(inode, bstart, h_inode);
+		if (unlikely(err))
+			goto out;
 		break;
 	case S_IFDIR:
 		isdir = 1;
@@ -205,13 +222,13 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 		goto out;
 	}
 
-	/* do not set inotify for whiteouted dirs (SHWH mode) */
+	/* do not set hnotify for whiteouted dirs (SHWH mode) */
 	flags = au_hi_flags(inode, isdir);
 	if (au_opt_test(au_mntflags(dentry->d_sb), SHWH)
-	    && au_ftest_hi(flags, HINOTIFY)
+	    && au_ftest_hi(flags, HNOTIFY)
 	    && dentry->d_name.len > AUFS_WH_PFX_LEN
 	    && !memcmp(dentry->d_name.name, AUFS_WH_PFX, AUFS_WH_PFX_LEN))
-		au_fclr_hi(flags, HINOTIFY);
+		au_fclr_hi(flags, HNOTIFY);
 	iinfo = au_ii(inode);
 	iinfo->ii_bstart = bstart;
 	iinfo->ii_bend = btail;
@@ -223,18 +240,21 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 	}
 	au_cpup_attr_all(inode, /*force*/1);
 
- out:
+out:
 	return err;
 }
 
-/* successful returns with iinfo write_locked */
-static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
+/*
+ * successful returns with iinfo write_locked
+ * minus: errno
+ * zero: success, matched
+ * plus: no error, but unmatched
+ */
+static int reval_inode(struct inode *inode, struct dentry *dentry)
 {
 	int err;
 	aufs_bindex_t bindex, bend;
 	struct inode *h_inode, *h_dinode;
-
-	*matched = 0;
 
 	/*
 	 * before this function, if aufs got any iinfo lock, it must be only
@@ -245,16 +265,15 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 	if (unlikely(inode->i_ino == parent_ino(dentry)))
 		goto out;
 
-	err = 0;
+	err = 1;
 	ii_write_lock_new_child(inode);
 	h_dinode = au_h_dptr(dentry, au_dbstart(dentry))->d_inode;
 	bend = au_ibend(inode);
 	for (bindex = au_ibstart(inode); bindex <= bend; bindex++) {
 		h_inode = au_h_iptr(inode, bindex);
 		if (h_inode && h_inode == h_dinode) {
-			*matched = 1;
 			err = 0;
-			if (au_iigen(inode) != au_digen(dentry))
+			if (au_iigen_test(inode, au_digen(dentry)))
 				err = au_refresh_hinode(inode, dentry);
 			break;
 		}
@@ -262,7 +281,7 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 
 	if (unlikely(err))
 		ii_write_unlock(inode);
- out:
+out:
 	return err;
 }
 
@@ -271,11 +290,10 @@ int au_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
 {
 	int err;
 	struct mutex *mtx;
-	const int isdir = (d_type == DT_DIR);
 
-	/* prevent hardlinks from race condition */
+	/* prevent hardlinked inode number from race condition */
 	mtx = NULL;
-	if (!isdir) {
+	if (d_type != DT_DIR) {
 		mtx = &au_sbr(sb, bindex)->br_xino.xi_nondir_mtx;
 		mutex_lock(mtx);
 	}
@@ -293,8 +311,8 @@ int au_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
 			goto out;
 	}
 
- out:
-	if (!isdir)
+out:
+	if (mtx)
 		mutex_unlock(mtx);
 	return err;
 }
@@ -303,22 +321,36 @@ int au_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
 /* todo: return with unlocked? */
 struct inode *au_new_inode(struct dentry *dentry, int must_new)
 {
-	struct inode *inode;
+	struct inode *inode, *h_inode;
 	struct dentry *h_dentry;
 	struct super_block *sb;
+	struct mutex *mtx;
 	ino_t h_ino, ino;
-	int err, match;
+	int err;
 	aufs_bindex_t bstart;
 
 	sb = dentry->d_sb;
 	bstart = au_dbstart(dentry);
 	h_dentry = au_h_dptr(dentry, bstart);
-	h_ino = h_dentry->d_inode->i_ino;
+	h_inode = h_dentry->d_inode;
+	h_ino = h_inode->i_ino;
+
+	/*
+	 * stop 'race'-ing between hardlinks under different
+	 * parents.
+	 */
+	mtx = NULL;
+	if (!S_ISDIR(h_inode->i_mode))
+		mtx = &au_sbr(sb, bstart)->br_xino.xi_nondir_mtx;
+
+new_ino:
+	if (mtx)
+		mutex_lock(mtx);
 	err = au_xino_read(sb, bstart, h_ino, &ino);
 	inode = ERR_PTR(err);
 	if (unlikely(err))
 		goto out;
- new_ino:
+
 	if (!ino) {
 		ino = au_xino_new_ino(sb);
 		if (unlikely(!ino)) {
@@ -342,15 +374,35 @@ struct inode *au_new_inode(struct dentry *dentry, int must_new)
 			goto out; /* success */
 		}
 
-		ii_write_unlock(inode);
+		/*
+		 * iget_failed() calls iput(), but we need to call
+		 * ii_write_unlock() after iget_failed(). so dirty hack for
+		 * i_count.
+		 */
+		atomic_inc(&inode->i_count);
 		iget_failed(inode);
-		goto out_err;
-	} else if (!must_new) {
-		err = reval_inode(inode, dentry, &match);
-		if (!err)
-			goto out; /* success */
-		else if (match)
+		ii_write_unlock(inode);
+		au_xino_write(sb, bstart, h_ino, /*ino*/0);
+		/* ignore this error */
+		goto out_iput;
+	} else if (!must_new && !IS_DEADDIR(inode) && inode->i_nlink) {
+		/*
+		 * horrible race condition between lookup, readdir and copyup
+		 * (or something).
+		 */
+		if (mtx)
+			mutex_unlock(mtx);
+		err = reval_inode(inode, dentry);
+		if (unlikely(err < 0)) {
+			mtx = NULL;
 			goto out_iput;
+		}
+
+		if (!err) {
+			mtx = NULL;
+			goto out; /* success */
+		} else if (mtx)
+			mutex_lock(mtx);
 	}
 
 	if (unlikely(au_test_fs_unique_ino(h_dentry->d_inode)))
@@ -362,14 +414,17 @@ struct inode *au_new_inode(struct dentry *dentry, int must_new)
 	err = au_xino_write(sb, bstart, h_ino, /*ino*/0);
 	if (!err) {
 		iput(inode);
+		if (mtx)
+			mutex_unlock(mtx);
 		goto new_ino;
 	}
 
- out_iput:
+out_iput:
 	iput(inode);
- out_err:
 	inode = ERR_PTR(err);
- out:
+out:
+	if (mtx)
+		mutex_unlock(mtx);
 	return inode;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,9 +29,11 @@ MODULE_PARM_DESC(debug, "debug print");
 module_param_named(debug, aufs_debug, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 char *au_plevel = KERN_DEBUG;
-#define dpri(fmt, ...) do { \
-	if (au_debug_test()) \
-		printk("%s" fmt, au_plevel, ##__VA_ARGS__); \
+#define dpri(fmt, ...) do {					\
+	if ((au_plevel						\
+	     && strcmp(au_plevel, KERN_DEBUG))			\
+	    || au_debug_test())					\
+		printk("%s" fmt, au_plevel, ##__VA_ARGS__);	\
 } while (0)
 
 /* ---------------------------------------------------------------------- */
@@ -96,14 +98,15 @@ static int do_pri_inode(aufs_bindex_t bindex, struct inode *inode,
 	}
 
 	dpri("i%d: i%lu, %s, cnt %d, nl %u, 0%o, sz %llu, blk %llu,"
-	     " ct %lld, np %lu, st 0x%lx, f 0x%x, g %x%s%.*s\n",
+	     " ct %lld, np %lu, st 0x%lx, f 0x%x, v %llu, g %x%s%.*s\n",
 	     bindex,
 	     inode->i_ino, inode->i_sb ? au_sbtype(inode->i_sb) : "??",
 	     atomic_read(&inode->i_count), inode->i_nlink, inode->i_mode,
 	     i_size_read(inode), (unsigned long long)inode->i_blocks,
 	     (long long)timespec_to_ns(&inode->i_ctime) & 0x0ffff,
 	     inode->i_mapping ? inode->i_mapping->nrpages : 0,
-	     inode->i_state, inode->i_flags, inode->i_generation,
+	     inode->i_state, inode->i_flags, inode->i_version,
+	     inode->i_generation,
 	     l ? ", wh " : "", l, n);
 	return 0;
 }
@@ -158,6 +161,7 @@ void au_dpri_dentry(struct dentry *dentry)
 	struct au_dinfo *dinfo;
 	aufs_bindex_t bindex;
 	int err;
+	struct au_hdentry *hdp;
 
 	err = do_pri_dentry(-1, dentry);
 	if (err || !au_test_aufs(dentry->d_sb))
@@ -171,8 +175,9 @@ void au_dpri_dentry(struct dentry *dentry)
 	     dinfo->di_bwh, dinfo->di_bdiropq, au_digen(dentry));
 	if (dinfo->di_bstart < 0)
 		return;
+	hdp = dinfo->di_hdentry;
 	for (bindex = dinfo->di_bstart; bindex <= dinfo->di_bend; bindex++)
-		do_pri_dentry(bindex, dinfo->di_hdentry[0 + bindex].hd_dentry);
+		do_pri_dentry(bindex, hdp[0 + bindex].hd_dentry);
 }
 
 static int do_pri_file(aufs_bindex_t bindex, struct file *file)
@@ -188,11 +193,11 @@ static int do_pri_file(aufs_bindex_t bindex, struct file *file)
 	    && file->f_dentry
 	    && au_test_aufs(file->f_dentry->d_sb)
 	    && au_fi(file))
-		snprintf(a, sizeof(a), ", mmapped %d",
-			 !!au_fi(file)->fi_h_vm_ops);
-	dpri("f%d: mode 0x%x, flags 0%o, cnt %ld, pos %llu%s\n",
+		snprintf(a, sizeof(a), ", gen %d, mmapped %d",
+			 au_figen(file), !!au_fi(file)->fi_hvmop);
+	dpri("f%d: mode 0x%x, flags 0%o, cnt %ld, v %llu, pos %llu%s\n",
 	     bindex, file->f_mode, file->f_flags, (long)file_count(file),
-	     file->f_pos, a);
+	     file->f_version, file->f_pos, a);
 	if (file->f_dentry)
 		do_pri_dentry(bindex, file->f_dentry);
 	return 0;
@@ -201,6 +206,8 @@ static int do_pri_file(aufs_bindex_t bindex, struct file *file)
 void au_dpri_file(struct file *file)
 {
 	struct au_finfo *finfo;
+	struct au_fidir *fidir;
+	struct au_hfile *hfile;
 	aufs_bindex_t bindex;
 	int err;
 
@@ -211,14 +218,18 @@ void au_dpri_file(struct file *file)
 	finfo = au_fi(file);
 	if (!finfo)
 		return;
-	if (finfo->fi_bstart < 0)
+	if (finfo->fi_btop < 0)
 		return;
-	for (bindex = finfo->fi_bstart; bindex <= finfo->fi_bend; bindex++) {
-		struct au_hfile *hf;
-
-		hf = finfo->fi_hfile + bindex;
-		do_pri_file(bindex, hf ? hf->hf_file : NULL);
-	}
+	fidir = finfo->fi_hdir;
+	if (!fidir)
+		do_pri_file(finfo->fi_btop, finfo->fi_htop.hf_file);
+	else
+		for (bindex = finfo->fi_btop;
+		     bindex >= 0 && bindex <= fidir->fd_bbot;
+		     bindex++) {
+			hfile = fidir->fd_hfile + bindex;
+			do_pri_file(bindex, hfile ? hfile->hf_file : NULL);
+		}
 }
 
 static int do_pri_br(aufs_bindex_t bindex, struct au_branch *br)
@@ -244,7 +255,7 @@ static int do_pri_br(aufs_bindex_t bindex, struct au_branch *br)
 	     atomic_read(&sb->s_active), !!br->br_xino.xi_file);
 	return 0;
 
- out:
+out:
 	dpri("s%d: err %ld\n", bindex, PTR_ERR(br));
 	return -1;
 }
@@ -324,24 +335,63 @@ void au_dbg_iattr(struct iattr *ia)
 
 /* ---------------------------------------------------------------------- */
 
+void __au_dbg_verify_dinode(struct dentry *dentry, const char *func, int line)
+{
+	struct inode *h_inode, *inode = dentry->d_inode;
+	struct dentry *h_dentry;
+	aufs_bindex_t bindex, bend, bi;
+
+	if (!inode /* || au_di(dentry)->di_lsc == AuLsc_DI_TMP */)
+		return;
+
+	bend = au_dbend(dentry);
+	bi = au_ibend(inode);
+	if (bi < bend)
+		bend = bi;
+	bindex = au_dbstart(dentry);
+	bi = au_ibstart(inode);
+	if (bi > bindex)
+		bindex = bi;
+
+	for (; bindex <= bend; bindex++) {
+		h_dentry = au_h_dptr(dentry, bindex);
+		if (!h_dentry)
+			continue;
+		h_inode = au_h_iptr(inode, bindex);
+		if (unlikely(h_inode != h_dentry->d_inode)) {
+			int old = au_debug_test();
+			if (!old)
+				au_debug(1);
+			AuDbg("b%d, %s:%d\n", bindex, func, line);
+			AuDbgDentry(dentry);
+			AuDbgInode(inode);
+			if (!old)
+				au_debug(0);
+			BUG();
+		}
+	}
+}
+
 void au_dbg_verify_dir_parent(struct dentry *dentry, unsigned int sigen)
 {
 	struct dentry *parent;
 
 	parent = dget_parent(dentry);
-	AuDebugOn(!S_ISDIR(dentry->d_inode->i_mode)
-		  || IS_ROOT(dentry)
-		  || au_digen(parent) != sigen);
+	AuDebugOn(!S_ISDIR(dentry->d_inode->i_mode));
+	AuDebugOn(IS_ROOT(dentry));
+	AuDebugOn(au_digen_test(parent, sigen));
 	dput(parent);
 }
 
 void au_dbg_verify_nondir_parent(struct dentry *dentry, unsigned int sigen)
 {
 	struct dentry *parent;
+	struct inode *inode;
 
 	parent = dget_parent(dentry);
-	AuDebugOn(S_ISDIR(dentry->d_inode->i_mode)
-		  || au_digen(parent) != sigen);
+	inode = dentry->d_inode;
+	AuDebugOn(inode && S_ISDIR(dentry->d_inode->i_mode));
+	AuDebugOn(au_digen_test(parent, sigen));
 	dput(parent);
 }
 
@@ -354,37 +404,37 @@ void au_dbg_verify_gen(struct dentry *parent, unsigned int sigen)
 
 	err = au_dpages_init(&dpages, GFP_NOFS);
 	AuDebugOn(err);
-	err = au_dcsub_pages_rev(&dpages, parent, /*do_include*/1, NULL, NULL);
+	err = au_dcsub_pages_rev_aufs(&dpages, parent, /*do_include*/1);
 	AuDebugOn(err);
 	for (i = dpages.ndpage - 1; !err && i >= 0; i--) {
 		dpage = dpages.dpages + i;
 		dentries = dpage->dentries;
 		for (j = dpage->ndentry - 1; !err && j >= 0; j--)
-			AuDebugOn(au_digen(dentries[j]) != sigen);
+			AuDebugOn(au_digen_test(dentries[j], sigen));
 	}
 	au_dpages_free(&dpages);
 }
 
-void au_dbg_verify_hf(struct au_finfo *finfo)
-{
-	struct au_hfile *hf;
-	aufs_bindex_t bend, bindex;
-
-	if (finfo->fi_bstart >= 0) {
-		bend = finfo->fi_bend;
-		for (bindex = finfo->fi_bstart; bindex <= bend; bindex++) {
-			hf = finfo->fi_hfile + bindex;
-			AuDebugOn(hf->hf_file || hf->hf_br);
-		}
-	}
-}
-
 void au_dbg_verify_kthread(void)
 {
-	if (au_test_wkq(current)) {
+	struct task_struct *tsk = current;
+
+	if ((tsk->flags & PF_KTHREAD)
+	    && !strncmp(tsk->comm, AUFS_WKQ_NAME "/", sizeof(AUFS_WKQ_NAME))) {
 		au_dbg_blocked();
 		BUG();
 	}
+}
+
+static void au_dbg_do_verify_wkq(void *args)
+{
+	BUG_ON(current_fsuid());
+	BUG_ON(current->signal->rlim[RLIMIT_FSIZE].rlim_cur != RLIM_INFINITY);
+}
+
+void au_dbg_verify_wkq(void)
+{
+	au_wkq_wait(au_dbg_do_verify_wkq, NULL);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -400,8 +450,8 @@ void au_debug_sbinfo_init(struct au_sbinfo *sbinfo __maybe_unused)
 #ifdef AuForceNoRefrof
 	au_opt_clr(sbinfo->si_mntflags, REFROF);
 #endif
-#ifdef AuForceHinotify
-	au_opt_set_udba(sbinfo->si_mntflags, UDBA_HINOTIFY);
+#ifdef AuForceHnotify
+	au_opt_set_udba(sbinfo->si_mntflags, UDBA_HNOTIFY);
 #endif
 #ifdef AuForceRd0
 	sbinfo->si_rdblk = 0;

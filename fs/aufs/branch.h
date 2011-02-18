@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/aufs_type.h>
+#include "dynop.h"
 #include "rwsem.h"
 #include "super.h"
 
@@ -50,7 +51,7 @@ enum {AuBrWh_BASE, AuBrWh_PLINK, AuBrWh_ORPH, AuBrWh_Last};
 struct au_wbr {
 	struct au_rwsem		wbr_wh_rwsem;
 	struct dentry		*wbr_wh[AuBrWh_Last];
-	atomic_t 		wbr_wh_running;
+	atomic_t		wbr_wh_running;
 #define wbr_whbase		wbr_wh[AuBrWh_BASE]	/* whiteout base */
 #define wbr_plink		wbr_wh[AuBrWh_PLINK]	/* pseudo-link dir */
 #define wbr_orph		wbr_wh[AuBrWh_ORPH]	/* dir for orphans */
@@ -58,6 +59,9 @@ struct au_wbr {
 	/* mfs mode */
 	unsigned long long	wbr_bytes;
 };
+
+/* ext2 has 3 types of operations at least, ext3 has 4 */
+#define AuBrDynOp (AuDyLast * 4)
 
 /* protected by superblock rwsem */
 struct au_branch {
@@ -67,6 +71,8 @@ struct au_branch {
 
 	int			br_perm;
 	struct vfsmount		*br_mnt;
+	spinlock_t		br_dykey_lock;
+	struct au_dykey		*br_dykey[AuBrDynOp];
 	atomic_t		br_count;
 
 	struct au_wbr		*br_wbr;
@@ -74,6 +80,11 @@ struct au_branch {
 	/* xino truncation */
 	blkcnt_t		br_xino_upper;	/* watermark in blocks */
 	atomic_t		br_xino_running;
+
+#ifdef CONFIG_AUFS_HFSNOTIFY
+	struct fsnotify_group	*br_hfsn_group;
+	struct fsnotify_ops	br_hfsn_ops;
+#endif
 
 #ifdef CONFIG_SYSFS
 	/* an entry under sysfs per mount-point */
@@ -117,9 +128,9 @@ static inline int au_br_rdonly(struct au_branch *br)
 		? -EROFS : 0;
 }
 
-static inline int au_br_hinotifyable(int brperm __maybe_unused)
+static inline int au_br_hnotifyable(int brperm __maybe_unused)
 {
-#ifdef CONFIG_AUFS_HINOTIFY
+#ifdef CONFIG_AUFS_HNOTIFY
 	return brperm != AuBrPerm_RR && brperm != AuBrPerm_RRWH;
 #else
 	return 0;
@@ -138,7 +149,7 @@ struct au_opt_del;
 int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount);
 struct au_opt_mod;
 int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
-	      int *do_update);
+	      int *do_refresh);
 
 /* xino.c */
 static const loff_t au_loff_max = LLONG_MAX;
@@ -151,8 +162,7 @@ ssize_t xino_fwrite(au_writef_t func, struct file *file, void *buf, size_t size,
 struct file *au_xino_create2(struct file *base_file, struct file *copy_src);
 struct file *au_xino_create(struct super_block *sb, char *fname, int silent);
 ino_t au_xino_new_ino(struct super_block *sb);
-int au_xino_write0(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
-		   ino_t ino);
+void au_xino_delete_inode(struct inode *inode, const int unlinked);
 int au_xino_write(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
 		  ino_t ino);
 int au_xino_read(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
@@ -190,7 +200,7 @@ struct super_block *au_sbr_sb(struct super_block *sb, aufs_bindex_t bindex)
 
 static inline void au_sbr_put(struct super_block *sb, aufs_bindex_t bindex)
 {
-	atomic_dec_return(&au_sbr(sb, bindex)->br_count);
+	atomic_dec(&au_sbr(sb, bindex)->br_count);
 }
 
 static inline int au_sbr_perm(struct super_block *sb, aufs_bindex_t bindex)

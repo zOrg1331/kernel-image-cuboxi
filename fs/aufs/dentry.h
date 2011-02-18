@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,10 +29,9 @@
 #include <linux/aufs_type.h>
 #include "rwsem.h"
 
-/* make a single member structure for future use */
-/* todo: remove this structure */
 struct au_hdentry {
 	struct dentry		*hd_dentry;
+	aufs_bindex_t		hd_id;
 };
 
 struct au_dinfo {
@@ -41,12 +40,12 @@ struct au_dinfo {
 	struct au_rwsem		di_rwsem;
 	aufs_bindex_t		di_bstart, di_bend, di_bwh, di_bdiropq;
 	struct au_hdentry	*di_hdentry;
-};
+} ____cacheline_aligned_in_smp;
 
 /* ---------------------------------------------------------------------- */
 
 /* dentry.c */
-extern struct dentry_operations aufs_dop;
+extern const struct dentry_operations aufs_dop;
 struct au_branch;
 struct dentry *au_lkup_one(struct qstr *name, struct dentry *h_parent,
 			   struct au_branch *br, struct nameidata *nd);
@@ -58,11 +57,17 @@ int au_h_verify(struct dentry *h_dentry, unsigned int udba, struct inode *h_dir,
 int au_lkup_dentry(struct dentry *dentry, aufs_bindex_t bstart, mode_t type,
 		   struct nameidata *nd);
 int au_lkup_neg(struct dentry *dentry, aufs_bindex_t bindex);
-int au_refresh_hdentry(struct dentry *dentry, mode_t type);
+int au_refresh_dentry(struct dentry *dentry, struct dentry *parent);
 int au_reval_dpath(struct dentry *dentry, unsigned int sigen);
 
 /* dinfo.c */
-int au_alloc_dinfo(struct dentry *dentry);
+void au_di_init_once(void *_di);
+struct au_dinfo *au_di_alloc(struct super_block *sb, unsigned int lsc);
+void au_di_free(struct au_dinfo *dinfo);
+void au_di_swap(struct au_dinfo *a, struct au_dinfo *b);
+void au_di_cp(struct au_dinfo *dst, struct au_dinfo *src);
+int au_di_init(struct dentry *dentry);
+void au_di_fin(struct dentry *dentry);
 int au_di_realloc(struct au_dinfo *dinfo, int nbr);
 
 void di_read_lock(struct dentry *d, int flags, unsigned int lsc);
@@ -80,6 +85,8 @@ aufs_bindex_t au_dbtaildir(struct dentry *dentry);
 
 void au_set_h_dptr(struct dentry *dentry, aufs_bindex_t bindex,
 		   struct dentry *h_dentry);
+int au_digen_test(struct dentry *dentry, unsigned int sigen);
+int au_dbrange_test(struct dentry *dentry);
 void au_update_digen(struct dentry *dentry);
 void au_update_dbrange(struct dentry *dentry, int do_put_zero);
 void au_update_dbstart(struct dentry *dentry);
@@ -98,11 +105,12 @@ static inline struct au_dinfo *au_di(struct dentry *dentry)
 /* lock subclass for dinfo */
 enum {
 	AuLsc_DI_CHILD,		/* child first */
-	AuLsc_DI_CHILD2,	/* rename(2), link(2), and cpup at hinotify */
+	AuLsc_DI_CHILD2,	/* rename(2), link(2), and cpup at hnotify */
 	AuLsc_DI_CHILD3,	/* copyup dirs */
 	AuLsc_DI_PARENT,
 	AuLsc_DI_PARENT2,
-	AuLsc_DI_PARENT3
+	AuLsc_DI_PARENT3,
+	AuLsc_DI_TMP		/* temp for replacing dinfo */
 };
 
 /*
@@ -155,7 +163,8 @@ static inline void au_h_dentry_init(struct au_hdentry *hdentry)
 
 static inline void au_hdput(struct au_hdentry *hd)
 {
-	dput(hd->hd_dentry);
+	if (hd)
+		dput(hd->hd_dentry);
 }
 
 static inline aufs_bindex_t au_dbstart(struct dentry *dentry)
@@ -210,19 +219,19 @@ static inline void au_set_dbdiropq(struct dentry *dentry, aufs_bindex_t bindex)
 
 /* ---------------------------------------------------------------------- */
 
-#ifdef CONFIG_AUFS_HINOTIFY
+#ifdef CONFIG_AUFS_HNOTIFY
 static inline void au_digen_dec(struct dentry *d)
 {
-	atomic_dec_return(&au_di(d)->di_generation);
+	atomic_dec(&au_di(d)->di_generation);
 }
 
-static inline void au_hin_di_reinit(struct dentry *dentry)
+static inline void au_hn_di_reinit(struct dentry *dentry)
 {
 	dentry->d_fsdata = NULL;
 }
 #else
-AuStubVoid(au_hin_di_reinit, struct dentry *dentry __maybe_unused)
-#endif /* CONFIG_AUFS_HINOTIFY */
+AuStubVoid(au_hn_di_reinit, struct dentry *dentry __maybe_unused)
+#endif /* CONFIG_AUFS_HNOTIFY */
 
 #endif /* __KERNEL__ */
 #endif /* __AUFS_DENTRY_H__ */

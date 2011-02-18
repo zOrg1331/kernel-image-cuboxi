@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2010 Junjiro R. Okajima
+ * Copyright (C) 2005-2011 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 
 #include <linux/fs.h>
 #include <linux/fs_stack.h>
+#include "debug.h"
 
 /* ---------------------------------------------------------------------- */
 
@@ -55,6 +56,19 @@ static inline void vfsub_copy_inode_size(struct inode *inode,
 	spin_lock(&inode->i_lock);
 	fsstack_copy_inode_size(inode, h_inode);
 	spin_unlock(&inode->i_lock);
+}
+
+static inline void vfsub_drop_nlink(struct inode *inode)
+{
+	AuDebugOn(!inode->i_nlink);
+	drop_nlink(inode);
+}
+
+static inline void vfsub_dead_dir(struct inode *inode)
+{
+	AuDebugOn(!S_ISDIR(inode->i_mode));
+	inode->i_flags |= S_DEAD;
+	clear_nlink(inode);
 }
 
 int vfsub_update_h_iattr(struct path *h_path, int *did);
@@ -94,6 +108,7 @@ ssize_t vfsub_write_u(struct file *file, const char __user *ubuf, size_t count,
 		      loff_t *ppos);
 ssize_t vfsub_write_k(struct file *file, void *kbuf, size_t count,
 		      loff_t *ppos);
+int vfsub_flush(struct file *file, fl_owner_t id);
 int vfsub_readdir(struct file *file, filldir_t filldir, void *arg);
 
 static inline unsigned int vfsub_file_flags(struct file *file)
@@ -138,9 +153,7 @@ static inline loff_t vfsub_llseek(struct file *file, loff_t offset, int origin)
 {
 	loff_t err;
 
-	/* lockdep_off(); */
 	err = vfs_llseek(file, offset, origin);
-	/* lockdep_on(); */
 	return err;
 }
 
