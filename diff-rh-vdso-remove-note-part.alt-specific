@@ -1,0 +1,49 @@
+The diff-rh-vdso-remove-note-part breakes build in hasher via rpmbuild on
+x86_64 arch. Fix it.
+
+--- a/arch/x86_64/vdso/vdso-note.S	2011-02-18 07:30:54 +0000
++++ /dev/null	2011-02-18 07:29:43 +0000
+@@ -1,25 +0,0 @@
+-/*
+- * This supplies .note.* sections to go into the PT_NOTE inside the vDSO text.
+- * Here we can supply some information useful to userland.
+- */
+-
+-#include <linux/uts.h>
+-#include <linux/version.h>
+-
+-#define ASM_ELF_NOTE_BEGIN(name, flags, vendor, type)                         \
+-        .section name, flags;                                                 \
+-        .balign 4;                                                            \
+-        .long 1f - 0f;          /* name length */                             \
+-        .long 3f - 2f;          /* data length */                             \
+-        .long type;             /* note type */                               \
+-0:      .asciz vendor;          /* vendor name */                             \
+-1:      .balign 4;                                                            \
+-2:
+-
+-#define ASM_ELF_NOTE_END                                                      \
+-3:      .balign 4;              /* pad out section */                         \
+-        .previous
+-
+-ASM_ELF_NOTE_BEGIN(".note.kernel-version", "a", UTS_SYSNAME, 0)
+-	.long LINUX_VERSION_CODE
+-ASM_ELF_NOTE_END
+--- a/arch/x86_64/vdso/vdso.lds.S	2011-02-18 07:49:15 +0000
++++ b/arch/x86_64/vdso/vdso.lds.S	2011-02-18 07:49:24 +0000
+@@ -35,7 +35,6 @@
+    .altinstructions : { *(.altinstructions) }                   :text
+    .altinstr_replacement  : { *(.altinstr_replacement) }        :text
+ 
+-   .note                  : { *(.note.*) }              :text :note
+    .eh_frame_hdr   : { *(.eh_frame_hdr) }       :text :eh_frame_hdr
+    .eh_frame       : { KEEP (*(.eh_frame)) }    :text
+    .dynamic        : { *(.dynamic) }            :text :dynamic
+@@ -55,7 +54,6 @@
+ {
+   text PT_LOAD FILEHDR PHDRS FLAGS(5); /* PF_R|PF_X */
+   dynamic PT_DYNAMIC FLAGS(4); /* PF_R */
+-  note PT_NOTE FLAGS(4); /* PF_R */
+   eh_frame_hdr 0x6474e550; /* PT_GNU_EH_FRAME, but ld doesn't match the name */
+ }
+ 

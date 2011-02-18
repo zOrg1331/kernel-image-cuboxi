@@ -6114,6 +6114,7 @@ Patch99999: linux-kernel-test.patch
 
 # ALT-specific patches
 Patch200000: our_kernel.patch
+Patch200001: diff-rh-vdso-remove-note-part.alt-specific
 
 # END OF PATCH DEFINITIONS
 
@@ -12037,6 +12038,7 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
+%patch200001 -p1
 
 # %patch210000 -p1
 # %patch210001 -p1
