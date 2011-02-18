@@ -23,6 +23,12 @@ static void be_mcc_notify(struct be_adapter *adapter)
 	struct be_queue_info *mccq = &adapter->mcc_obj.q;
 	u32 val = 0;
 
+	if (adapter->eeh_err) {
+		dev_info(&adapter->pdev->dev,
+			"Error in Card Detected! Cannot issue commands\n");
+		return;
+	}
+
 	val |= mccq->id & DB_MCCQ_RING_ID_MASK;
 	val |= 1 << DB_MCCQ_NUM_POSTED_SHIFT;
 
@@ -102,6 +108,7 @@ static void be_async_grp5_cos_priority_process(struct be_adapter *adapter,
 {
 	if (evt->valid) {
 		adapter->vlan_prio_bmap = evt->available_priority_bmap;
+		adapter->recommended_prio &= ~VLAN_PRIO_MASK;
 		adapter->recommended_prio =
 			evt->reco_default_priority << VLAN_PRIO_SHIFT;
 	}
@@ -216,6 +223,9 @@ static int be_mcc_wait_compl(struct be_adapter *adapter)
 	int i, num, status = 0;
 	struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
 
+	if (adapter->eeh_err)
+		return -EIO;
+
 	for (i = 0; i < mcc_timeout; i++) {
 		num = be_process_mcc(adapter, &status);
 		if (num)
@@ -244,6 +254,12 @@ static int be_mbox_db_ready_wait(struct be_adapter *adapter, void __iomem *db)
 {
 	int msecs = 0;
 	u32 ready;
+
+	if (adapter->eeh_err) {
+		dev_err(&adapter->pdev->dev,
+			"Error detected in card.Cannot issue commands\n");
+		return -EIO;
+	}
 
 	do {
 		ready = ioread32(db);
@@ -598,7 +614,7 @@ int be_cmd_mac_addr_query(struct be_adapter *adapter, u8 *mac_addr,
 
 /* Uses synchronous MCCQ */
 int be_cmd_pmac_add(struct be_adapter *adapter, u8 *mac_addr,
-		u32 if_id, u32 *pmac_id)
+		u32 if_id, u32 *pmac_id, u32 domain)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_pmac_add *req;
@@ -619,6 +635,7 @@ int be_cmd_pmac_add(struct be_adapter *adapter, u8 *mac_addr,
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
 		OPCODE_COMMON_NTWK_PMAC_ADD, sizeof(*req));
 
+	req->hdr.domain = domain;
 	req->if_id = cpu_to_le32(if_id);
 	memcpy(req->mac_address, mac_addr, ETH_ALEN);
 
@@ -634,7 +651,7 @@ err:
 }
 
 /* Uses synchronous MCCQ */
-int be_cmd_pmac_del(struct be_adapter *adapter, u32 if_id, u32 pmac_id)
+int be_cmd_pmac_del(struct be_adapter *adapter, u32 if_id, u32 pmac_id, u32 dom)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_pmac_del *req;
@@ -655,6 +672,7 @@ int be_cmd_pmac_del(struct be_adapter *adapter, u32 if_id, u32 pmac_id)
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
 		OPCODE_COMMON_NTWK_PMAC_DEL, sizeof(*req));
 
+	req->hdr.domain = dom;
 	req->if_id = cpu_to_le32(if_id);
 	req->pmac_id = cpu_to_le32(pmac_id);
 
@@ -995,7 +1013,7 @@ int be_cmd_if_create(struct be_adapter *adapter, u32 cap_flags, u32 en_flags,
 }
 
 /* Uses mbox */
-int be_cmd_if_destroy(struct be_adapter *adapter, u32 interface_id)
+int be_cmd_if_destroy(struct be_adapter *adapter, u32 interface_id, u32 domain)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_if_destroy *req;
@@ -1016,6 +1034,7 @@ int be_cmd_if_destroy(struct be_adapter *adapter, u32 interface_id)
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
 		OPCODE_COMMON_NTWK_INTERFACE_DESTROY, sizeof(*req));
 
+	req->hdr.domain = domain;
 	req->interface_id = cpu_to_le32(interface_id);
 
 	status = be_mbox_notify_wait(adapter);
@@ -1868,8 +1887,8 @@ int be_cmd_set_qos(struct be_adapter *adapter, u32 bps, u32 domain)
 			OPCODE_COMMON_SET_QOS, sizeof(*req));
 
 	req->hdr.domain = domain;
-	req->valid_bits = BE_QOS_BITS_NIC;
-	req->max_bps_nic = bps;
+	req->valid_bits = cpu_to_le32(BE_QOS_BITS_NIC);
+	req->max_bps_nic = cpu_to_le32(bps);
 
 	status = be_mcc_notify_wait(adapter);
 

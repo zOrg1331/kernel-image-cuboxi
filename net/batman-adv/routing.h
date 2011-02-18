@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2011 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -22,8 +22,6 @@
 #ifndef _NET_BATMAN_ADV_ROUTING_H_
 #define _NET_BATMAN_ADV_ROUTING_H_
 
-#include "types.h"
-
 void slide_own_bcast_window(struct batman_if *batman_if);
 void receive_bat_packet(struct ethhdr *ethhdr,
 				struct batman_packet *batman_packet,
@@ -42,7 +40,6 @@ int recv_vis_packet(struct sk_buff *skb, struct batman_if *recv_if);
 int recv_bat_packet(struct sk_buff *skb, struct batman_if *recv_if);
 struct neigh_node *find_router(struct bat_priv *bat_priv,
 		struct orig_node *orig_node, struct batman_if *recv_if);
-void update_bonding_candidates(struct bat_priv *bat_priv,
-			       struct orig_node *orig_node);
+void update_bonding_candidates(struct orig_node *orig_node);
 
 #endif /* _NET_BATMAN_ADV_ROUTING_H_ */
