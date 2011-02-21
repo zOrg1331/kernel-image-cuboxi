@@ -604,6 +604,13 @@ Who:	Jean Delvare <khali@linux-fr.org>
 
 ----------------------------
 
+What:	xt_connlimit rev 0
+When:	2012
+Who:	Jan Engelhardt <jengelh@medozas.de>
+Files:	net/netfilter/xt_connlimit.c
+
+----------------------------
+
 What:	noswapaccount kernel command line parameter
 When:	2.6.40
 Why:	The original implementation of memsw feature enabled by
