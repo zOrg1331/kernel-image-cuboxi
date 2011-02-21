@@ -80,9 +80,9 @@ static int heartbeat = WATCHDOG_HEARTBEAT;	/* in seconds */
 static int nowayout = WATCHDOG_NOWAYOUT;
 
 /**
- * 	sh_wdt_start - Start the Watchdog
+ *	sh_wdt_start - Start the Watchdog
  *
- * 	Starts the watchdog.
+ *	Starts the watchdog.
  */
 static void sh_wdt_start(void)
 {
@@ -131,8 +131,8 @@ static void sh_wdt_start(void)
 }
 
 /**
- * 	sh_wdt_stop - Stop the Watchdog
- * 	Stops the watchdog.
+ *	sh_wdt_stop - Stop the Watchdog
+ *	Stops the watchdog.
  */
 static void sh_wdt_stop(void)
 {
@@ -150,8 +150,8 @@ static void sh_wdt_stop(void)
 }
 
 /**
- * 	sh_wdt_keepalive - Keep the Userspace Watchdog Alive
- * 	The Userspace watchdog got a KeepAlive: schedule the next heartbeat.
+ *	sh_wdt_keepalive - Keep the Userspace Watchdog Alive
+ *	The Userspace watchdog got a KeepAlive: schedule the next heartbeat.
  */
 static inline void sh_wdt_keepalive(void)
 {
@@ -163,8 +163,8 @@ static inline void sh_wdt_keepalive(void)
 }
 
 /**
- * 	sh_wdt_set_heartbeat - Set the Userspace Watchdog heartbeat
- * 	Set the Userspace Watchdog heartbeat
+ *	sh_wdt_set_heartbeat - Set the Userspace Watchdog heartbeat
+ *	Set the Userspace Watchdog heartbeat
  */
 static int sh_wdt_set_heartbeat(int t)
 {
@@ -180,10 +180,10 @@ static int sh_wdt_set_heartbeat(int t)
 }
 
 /**
- * 	sh_wdt_ping - Ping the Watchdog
+ *	sh_wdt_ping - Ping the Watchdog
  *	@data: Unused
  *
- * 	Clears overflow bit, resets timer counter.
+ *	Clears overflow bit, resets timer counter.
  */
 static void sh_wdt_ping(unsigned long data)
 {
@@ -207,11 +207,11 @@ static void sh_wdt_ping(unsigned long data)
 }
 
 /**
- * 	sh_wdt_open - Open the Device
- * 	@inode: inode of device
- * 	@file: file handle of device
+ *	sh_wdt_open - Open the Device
+ *	@inode: inode of device
+ *	@file: file handle of device
  *
- * 	Watchdog device is opened and started.
+ *	Watchdog device is opened and started.
  */
 static int sh_wdt_open(struct inode *inode, struct file *file)
 {
@@ -226,11 +226,11 @@ static int sh_wdt_open(struct inode *inode, struct file *file)
 }
 
 /**
- * 	sh_wdt_close - Close the Device
- * 	@inode: inode of device
- * 	@file: file handle of device
+ *	sh_wdt_close - Close the Device
+ *	@inode: inode of device
+ *	@file: file handle of device
  *
- * 	Watchdog device is closed and stopped.
+ *	Watchdog device is closed and stopped.
  */
 static int sh_wdt_close(struct inode *inode, struct file *file)
 {
@@ -249,13 +249,13 @@ static int sh_wdt_close(struct inode *inode, struct file *file)
 }
 
 /**
- * 	sh_wdt_write - Write to Device
- * 	@file: file handle of device
- * 	@buf: buffer to write
- * 	@count: length of buffer
- * 	@ppos: offset
+ *	sh_wdt_write - Write to Device
+ *	@file: file handle of device
+ *	@buf: buffer to write
+ *	@count: length of buffer
+ *	@ppos: offset
  *
- * 	Pings the watchdog on write.
+ *	Pings the watchdog on write.
  */
 static ssize_t sh_wdt_write(struct file *file, const char *buf,
 			    size_t count, loff_t *ppos)
@@ -281,15 +281,15 @@ static ssize_t sh_wdt_write(struct file *file, const char *buf,
 }
 
 /**
- * 	sh_wdt_mmap - map WDT/CPG registers into userspace
- * 	@file: file structure for the device
- * 	@vma: VMA to map the registers into
+ *	sh_wdt_mmap - map WDT/CPG registers into userspace
+ *	@file: file structure for the device
+ *	@vma: VMA to map the registers into
  *
- * 	A simple mmap() implementation for the corner cases where the counter
- * 	needs to be mapped in userspace directly. Due to the relatively small
- * 	size of the area, neighbouring registers not necessarily tied to the
- * 	CPG will also be accessible through the register page, so this remains
- * 	configurable for users that really know what they're doing.
+ *	A simple mmap() implementation for the corner cases where the counter
+ *	needs to be mapped in userspace directly. Due to the relatively small
+ *	size of the area, neighbouring registers not necessarily tied to the
+ *	CPG will also be accessible through the register page, so this remains
+ *	configurable for users that really know what they're doing.
  *
  *	Additionaly, the register page maps in the CPG register base relative
  *	to the nearest page-aligned boundary, which requires that userspace do
@@ -330,13 +330,13 @@ static int sh_wdt_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 /**
- * 	sh_wdt_ioctl - Query Device
- * 	@file: file handle of device
- * 	@cmd: watchdog command
- * 	@arg: argument
+ *	sh_wdt_ioctl - Query Device
+ *	@file: file handle of device
+ *	@cmd: watchdog command
+ *	@arg: argument
  *
- * 	Query basic information from the device or ping it, as outlined by the
- * 	watchdog API.
+ *	Query basic information from the device or ping it, as outlined by the
+ *	watchdog API.
  */
 static long sh_wdt_ioctl(struct file *file, unsigned int cmd,
 							unsigned long arg)
@@ -387,13 +387,13 @@ static long sh_wdt_ioctl(struct file *file, unsigned int cmd,
 }
 
 /**
- * 	sh_wdt_notify_sys - Notifier Handler
- * 	@this: notifier block
- * 	@code: notifier event
- * 	@unused: unused
+ *	sh_wdt_notify_sys - Notifier Handler
+ *	@this: notifier block
+ *	@code: notifier event
+ *	@unused: unused
  *
- * 	Handles specific events, such as turning off the watchdog during a
- * 	shutdown event.
+ *	Handles specific events, such as turning off the watchdog during a
+ *	shutdown event.
  */
 static int sh_wdt_notify_sys(struct notifier_block *this,
 			     unsigned long code, void *unused)
@@ -432,9 +432,9 @@ static struct miscdevice sh_wdt_miscdev = {
 };
 
 /**
- * 	sh_wdt_init - Initialize module
- * 	Registers the device and notifier handler. Actual device
- * 	initialization is handled by sh_wdt_open().
+ *	sh_wdt_init - Initialize module
+ *	Registers the device and notifier handler. Actual device
+ *	initialization is handled by sh_wdt_open().
  */
 static int __init sh_wdt_init(void)
 {
@@ -478,9 +478,9 @@ static int __init sh_wdt_init(void)
 }
 
 /**
- * 	sh_wdt_exit - Deinitialize module
- * 	Unregisters the device and notifier handler. Actual device
- * 	deinitialization is handled by sh_wdt_close().
+ *	sh_wdt_exit - Deinitialize module
+ *	Unregisters the device and notifier handler. Actual device
+ *	deinitialization is handled by sh_wdt_close().
  */
 static void __exit sh_wdt_exit(void)
 {
