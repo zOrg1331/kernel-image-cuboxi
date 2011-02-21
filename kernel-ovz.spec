@@ -6132,10 +6132,17 @@ Obsoletes: kernel-modules-rhel5-1
 Obsoletes: kernel-modules-rhel5-2
 
 %description
-The kernel package contains the Linux kernel (vmlinuz), the core of any
-Linux operating system.  The kernel handles the basic functions
-of the operating system:  memory allocation, process allocation, device
-input and output, etc.
+This package contains the Linux kernel that is used to boot and run
+your system.
+
+Most hardware drivers for this kernel are built as modules.  Some of
+these drivers are built separately from the kernel; they are available
+in separate packages (kernel-modules-*-%flavour).
+
+The "ovz-rhel" variant of kernel packages is a RHEL5 based OpenVZ kernel.
+OpenVZ is container-based virtualization for Linux that creates multiple
+secure, isolated containers on a single physical server enabling better
+server utilization and ensuring that applications do not conflict.
 
 %package -n kernel-headers-modules-%flavour
 Summary: Headers and other files needed for building kernel modules
