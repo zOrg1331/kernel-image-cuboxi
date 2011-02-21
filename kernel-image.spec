@@ -88,11 +88,10 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "std" variant of kernel packages is a generic 2.6.x kernel which
-should support wide range of hardware, but does not contain patches
-which are useful only for some special applications (and may have
-undesirable side effects in other cases).  This is the default 2.6.x
-kernel variant for ALT Linux distributions.
+The "ovz-el" variant of kernel packages is a RHEL6 based OpenVZ kernel.
+OpenVZ is container-based virtualization for Linux that creates multiple
+secure, isolated containers on a single physical server enabling better
+server utilization and ensuring that applications do not conflict.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
