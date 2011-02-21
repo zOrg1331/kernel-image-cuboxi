@@ -54,6 +54,8 @@ int XGIfb_accel = 0;
 #define GPIOG_READ  (1<<1)
 int XGIfb_GetXG21DefaultLVDSModeIdx(void);
 
+#define XGIFB_ROM_SIZE	65536
+
 /* -------------------- Macro definitions ---------------------------- */
 
 #undef XGIFBDEBUG
@@ -1721,7 +1723,7 @@ static int XGIfb_get_fix(struct fb_fix_screeninfo *fix, int con,
 	fix->ywrapstep = 0;
 	fix->line_length = xgi_video_info.video_linelength;
 	fix->mmio_start = xgi_video_info.mmio_base;
-	fix->mmio_len = XGIfb_mmio_size;
+	fix->mmio_len = xgi_video_info.mmio_size;
 	if (xgi_video_info.chip >= XG40)
 		fix->accel = FB_ACCEL_XGI_XABRE;
 	else
@@ -2881,52 +2883,26 @@ XGIINITSTATIC int __init XGIfb_setup(char *options)
 	return 0;
 }
 
-static unsigned char VBIOS_BUF[65535];
-
-static unsigned char *attempt_map_rom(struct pci_dev *dev, void *copy_address)
+static unsigned char *xgifb_copy_rom(struct pci_dev *dev)
 {
-	u32 rom_size = 0;
-	u32 rom_address = 0;
-	int j;
+	void __iomem *rom_address;
+	unsigned char *rom_copy;
+	size_t rom_size;
 
-	/*  Get the size of the expansion rom */
-	pci_write_config_dword(dev, PCI_ROM_ADDRESS, 0xFFFFFFFF);
-	pci_read_config_dword(dev, PCI_ROM_ADDRESS, &rom_size);
-	if ((rom_size & 0x01) == 0) {
-		printk("No ROM\n");
+	rom_address = pci_map_rom(dev, &rom_size);
+	if (rom_address == NULL)
 		return NULL;
-	}
 
-	rom_size &= 0xFFFFF800;
-	rom_size = (~rom_size) + 1;
+	rom_copy = vzalloc(XGIFB_ROM_SIZE);
+	if (rom_copy == NULL)
+		goto done;
 
-	rom_address = pci_resource_start(dev, 0);
-	if (rom_address == 0 || rom_address == 0xFFFFFFF0) {
-		printk("No suitable rom address found\n");
-		return NULL;
-	}
+	rom_size = min_t(size_t, rom_size, XGIFB_ROM_SIZE);
+	memcpy_fromio(rom_copy, rom_address, rom_size);
 
-	printk("ROM Size is %dK, Address is %x\n", rom_size / 1024, rom_address);
-
-	/*  Map ROM */
-	pci_write_config_dword(dev, PCI_ROM_ADDRESS, rom_address
-			| PCI_ROM_ADDRESS_ENABLE);
-
-	/* memcpy(copy_address, rom_address, rom_size); */
-	{
-		unsigned char *virt_addr = ioremap(rom_address, 0x8000000);
-
-		unsigned char *from = (unsigned char *) virt_addr;
-		unsigned char *to = (unsigned char *) copy_address;
-		for (j = 0; j < 65536 /*rom_size*/; j++)
-			*to++ = *from++;
-	}
-
-	pci_write_config_dword(dev, PCI_ROM_ADDRESS, 0);
-
-	printk("Copy is done\n");
-
-	return copy_address;
+done:
+	pci_unmap_rom(dev, rom_address);
+	return rom_copy;
 }
 
 static int __devinit xgifb_probe(struct pci_dev *pdev,
@@ -2935,6 +2911,8 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 	u16 reg16;
 	u8 reg, reg1;
 	u8 CR48, CR38;
+	int ret;
+
 	if (XGIfb_off)
 		return -ENXIO;
 
@@ -2959,15 +2937,17 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 
 	xgi_video_info.video_base = pci_resource_start(pdev, 0);
 	xgi_video_info.mmio_base = pci_resource_start(pdev, 1);
-	XGIfb_mmio_size = pci_resource_len(pdev, 1);
+	xgi_video_info.mmio_size = pci_resource_len(pdev, 1);
 	xgi_video_info.vga_base = pci_resource_start(pdev, 2) + 0x30;
 	XGIhw_ext.pjIOAddress = (unsigned char *)xgi_video_info.vga_base;
 	/* XGI_Pr.RelIO  = ioremap(pci_resource_start(pdev, 2), 128) + 0x30; */
 	printk("XGIfb: Relocate IO address: %lx [%08lx]\n",
 			(unsigned long)pci_resource_start(pdev, 2), XGI_Pr.RelIO);
 
-	if (pci_enable_device(pdev))
-		return -EIO;
+	if (pci_enable_device(pdev)) {
+		ret = -EIO;
+		goto error;
+	}
 
 	XGIRegInit(&XGI_Pr, (unsigned long)XGIhw_ext.pjIOAddress);
 
@@ -2976,7 +2956,8 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 
 	if (reg1 != 0xa1) { /*I/O error */
 		printk("\nXGIfb: I/O error!!!");
-		return -EIO;
+		ret = -EIO;
+		goto error;
 	}
 
 	switch (xgi_video_info.chip_id) {
@@ -3011,7 +2992,8 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 		XGIfb_CRT2_write_enable = IND_XGI_CRT2_WRITE_ENABLE_315;
 		break;
 	default:
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 
 	printk("XGIfb:chipid = %x\n", xgi_video_info.chip);
@@ -3033,8 +3015,7 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 
 	XGIhw_ext.pDevice = NULL;
 	if ((xgi_video_info.chip == XG21) || (XGIfb_userom)) {
-		XGIhw_ext.pjVirtualRomBase = attempt_map_rom(pdev, VBIOS_BUF);
-
+		XGIhw_ext.pjVirtualRomBase = xgifb_copy_rom(pdev);
 		if (XGIhw_ext.pjVirtualRomBase)
 			printk(KERN_INFO "XGIfb: Video ROM found and mapped to %p\n", XGIhw_ext.pjVirtualRomBase);
 		else
@@ -3052,15 +3033,16 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 	XGIhw_ext.pSR = vmalloc(sizeof(struct XGI_DSReg) * SR_BUFFER_SIZE);
 	if (XGIhw_ext.pSR == NULL) {
 		printk(KERN_ERR "XGIfb: Fatal error: Allocating SRReg space failed.\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 	XGIhw_ext.pSR[0].jIdx = XGIhw_ext.pSR[0].jVal = 0xFF;
 
 	XGIhw_ext.pCR = vmalloc(sizeof(struct XGI_DSReg) * CR_BUFFER_SIZE);
 	if (XGIhw_ext.pCR == NULL) {
-		vfree(XGIhw_ext.pSR);
 		printk(KERN_ERR "XGIfb: Fatal error: Allocating CRReg space failed.\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 	XGIhw_ext.pCR[0].jIdx = XGIhw_ext.pCR[0].jVal = 0xFF;
 
@@ -3097,10 +3079,9 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 	}
 #endif
 	if (XGIfb_get_dram_size()) {
-		vfree(XGIhw_ext.pSR);
-		vfree(XGIhw_ext.pCR);
 		printk(KERN_INFO "XGIfb: Fatal error: Unable to determine RAM size.\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 
 	if ((xgifb_mode_idx < 0) || ((XGIbios_mode[xgifb_mode_idx].mode_no) != 0xFF)) {
@@ -3116,28 +3097,29 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 		printk("unable request memory size %x", xgi_video_info.video_size);
 		printk(KERN_ERR "XGIfb: Fatal error: Unable to reserve frame buffer memory\n");
 		printk(KERN_ERR "XGIfb: Is there another framebuffer driver active?\n");
-		vfree(XGIhw_ext.pSR);
-		vfree(XGIhw_ext.pCR);
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 
-	if (!request_mem_region(xgi_video_info.mmio_base, XGIfb_mmio_size, "XGIfb MMIO")) {
+	if (!request_mem_region(xgi_video_info.mmio_base,
+				xgi_video_info.mmio_size,
+				"XGIfb MMIO")) {
 		printk(KERN_ERR "XGIfb: Fatal error: Unable to reserve MMIO region\n");
-		release_mem_region(xgi_video_info.video_base, xgi_video_info.video_size);
-		vfree(XGIhw_ext.pSR);
-		vfree(XGIhw_ext.pCR);
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error_0;
 	}
 
 	xgi_video_info.video_vbase = XGIhw_ext.pjVideoMemoryAddress =
 	ioremap(xgi_video_info.video_base, xgi_video_info.video_size);
-	xgi_video_info.mmio_vbase = ioremap(xgi_video_info.mmio_base, XGIfb_mmio_size);
+	xgi_video_info.mmio_vbase = ioremap(xgi_video_info.mmio_base,
+					    xgi_video_info.mmio_size);
 
 	printk(KERN_INFO "XGIfb: Framebuffer at 0x%lx, mapped to 0x%p, size %dk\n",
 			xgi_video_info.video_base, xgi_video_info.video_vbase, xgi_video_info.video_size / 1024);
 
 	printk(KERN_INFO "XGIfb: MMIO at 0x%lx, mapped to 0x%p, size %ldk\n",
-			xgi_video_info.mmio_base, xgi_video_info.mmio_vbase, XGIfb_mmio_size / 1024);
+	       xgi_video_info.mmio_base, xgi_video_info.mmio_vbase,
+	       xgi_video_info.mmio_size / 1024);
 	printk("XGIfb: XGIInitNew() ...");
 	if (XGIInitNew(&XGIhw_ext))
 		printk("OK\n");
@@ -3413,8 +3395,10 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 			printk(KERN_INFO "XGIfb: Added MTRRs\n");
 #endif
 
-		if (register_framebuffer(fb_info) < 0)
-			return -EINVAL;
+		if (register_framebuffer(fb_info) < 0) {
+			ret = -EINVAL;
+			goto error_1;
+		}
 
 		XGIfb_registered = 1;
 
@@ -3426,6 +3410,20 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 	dumpVGAReg();
 
 	return 0;
+
+error_1:
+	iounmap(xgi_video_info.mmio_vbase);
+	iounmap(xgi_video_info.video_vbase);
+	release_mem_region(xgi_video_info.mmio_base, xgi_video_info.mmio_size);
+error_0:
+	release_mem_region(xgi_video_info.video_base,
+			   xgi_video_info.video_size);
+error:
+	vfree(XGIhw_ext.pjVirtualRomBase);
+	vfree(XGIhw_ext.pSR);
+	vfree(XGIhw_ext.pCR);
+	framebuffer_release(fb_info);
+	return ret;
 }
 
 /*****************************************************/
@@ -3434,15 +3432,16 @@ static int __devinit xgifb_probe(struct pci_dev *pdev,
 
 static void __devexit xgifb_remove(struct pci_dev *pdev)
 {
-	/* Unregister the framebuffer */
-	/* if (xgi_video_info.registered) { */
 	unregister_framebuffer(fb_info);
+	iounmap(xgi_video_info.mmio_vbase);
+	iounmap(xgi_video_info.video_vbase);
+	release_mem_region(xgi_video_info.mmio_base, xgi_video_info.mmio_size);
+	release_mem_region(xgi_video_info.video_base,
+			   xgi_video_info.video_size);
+	vfree(XGIhw_ext.pjVirtualRomBase);
 	framebuffer_release(fb_info);
-	/* } */
-
 	pci_set_drvdata(pdev, NULL);
-
-};
+}
 
 static struct pci_driver xgifb_driver = {
 	.name = "xgifb",
