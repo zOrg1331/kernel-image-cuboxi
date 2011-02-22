@@ -1,6 +1,6 @@
 %define original_kernel_version	2.6.38
 %define kernel_version		2.6.38
-%define patch_level		rc5
+%define patch_level		rc6
 
 %define testing			1
 
@@ -14,7 +14,7 @@
 # 0.0.X -- preX
 # 0.X.0 -- rcX, testX
 # 1.0.0 -- release
-%define patch_level_numeric     0.5.0
+%define patch_level_numeric     0.6.0
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
@@ -51,8 +51,11 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Tue Feb 22 2011 Mykola Grechukh <gns@altlinux.ru> 0.6.0-alt1
+- 2.6.38-rc6
+
 * Thu Feb 17 2011 Mykola Grechukh <gns@altlinux.ru> 0.5.0-alt1
-- 2.6.35-rc5
+- 2.6.38-rc5
 
 * Fri Jun 04 2010 Mykola Grechukh <gns@altlinux.ru> 1.0.0-alt1
 - 2.6.34
