@@ -18,21 +18,6 @@ config PUV3_UMAL
 	select MII
 	select PHYLIB
 
-config PUV3_UNIGFX
-	tristate "PKUnity v3 Unigfx display support"
-	select FB
-	select FB_SYS_FILLRECT
-	select FB_SYS_COPYAREA
-	select FB_SYS_IMAGEBLIT
-	select FB_SYS_FOPS
-	help
-	  Choose this option if you want to use the Unigfx device as a
-	  framebuffer device. Without the support of PCI & AGP.
-
-config PUV3_UNIGFX_HWACCEL
-	bool "PKUnity v3 Unigfx hardware accelerator support"
-	depends on PUV3_UNIGFX
-
 config PUV3_AC97
 	tristate "PKUnity v3 AC97 driver support"
 	select SND_PCM
