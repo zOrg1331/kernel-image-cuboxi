@@ -547,7 +547,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 
 %changelog
 * Fri Feb 18 2011 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt15
-- aufs2.1 
+- aufs2.1
+- disable pcsp build (ALT #24911)
 
 * Wed Feb 09 2011 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt14
 - aspsk:
