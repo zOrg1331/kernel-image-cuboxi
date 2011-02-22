@@ -753,7 +753,7 @@ static int unifb_resume(struct platform_device *dev)
 	if (dev->dev.power.power_state.event == PM_EVENT_ON)
 		return 0;
 
-	acquire_console_sem();
+	console_lock();
 
 	if (dev->dev.power.power_state.event == PM_EVENT_SUSPEND) {
 		UDE_FSA = unifb_regs[0];
@@ -769,7 +769,7 @@ static int unifb_resume(struct platform_device *dev)
 	}
 	dev->dev.power.power_state = PMSG_ON;
 
-	release_console_sem();
+	console_unlock();
 
 	return rc;
 }
@@ -798,11 +798,11 @@ static int unifb_suspend(struct platform_device *dev, pm_message_t mesg)
 		goto done;
 	}
 
-	acquire_console_sem();
+	console_lock();
 
 	/* do nothing... */
 
-	release_console_sem();
+	console_unlock();
 
 done:
 	dev->dev.power.power_state = mesg;
