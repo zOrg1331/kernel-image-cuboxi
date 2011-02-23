@@ -101,6 +101,19 @@ config DELL_WMI
 	  To compile this driver as a module, choose M here: the module will
 	  be called dell-wmi.
 
+config DELL_WMI_AIO
+	tristate "WMI Hotkeys for Dell All-In-One series"
+	depends on ACPI_WMI
+	depends on INPUT
+	select INPUT_SPARSEKMAP
+	---help---
+	  Say Y here if you want to support WMI-based hotkeys on Dell
+	  All-In-One machines.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called dell-wmi.
+
+
 config FUJITSU_LAPTOP
 	tristate "Fujitsu Laptop Extras"
 	depends on ACPI
@@ -616,6 +629,21 @@ config GPIO_INTEL_PMIC
 	  Say Y here to support GPIO via the SCU IPC interface
 	  on Intel MID platforms.
 
+config INTEL_MID_POWER_BUTTON
+	tristate "power button driver for Intel MID platforms"
+	depends on INTEL_SCU_IPC && INPUT
+	help
+	  This driver handles the power button on the Intel MID platforms.
+
+	  If unsure, say N.
+
+config INTEL_MFLD_THERMAL
+       tristate "Thermal driver for Intel Medfield platform"
+       depends on INTEL_SCU_IPC && THERMAL
+       help
+         Say Y here to enable thermal driver support for the  Intel Medfield
+         platform.
+
 config RAR_REGISTER
 	bool "Restricted Access Region Register Driver"
 	depends on PCI && X86_MRST
@@ -671,5 +699,14 @@ config XO1_RFKILL
 	---help---
 	  Support for enabling/disabling the WLAN interface on the OLPC XO-1
 	  laptop.
+
+config XO15_EBOOK
+	tristate "OLPC XO-1.5 ebook switch"
+	depends on ACPI && INPUT
+	---help---
+	  Support for the ebook switch on the OLPC XO-1.5 laptop.
+
+	  This switch is triggered as the screen is rotated and folded down to
+	  convert the device into ebook form.
 
 endif # X86_PLATFORM_DEVICES
