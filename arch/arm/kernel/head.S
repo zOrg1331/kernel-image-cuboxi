@@ -87,14 +87,10 @@ ENTRY(stext)
 	movs	r10, r5				@ invalid processor (r5=0)?
  THUMB( it	eq )		@ force fixup-able long branch encoding
 	beq	__error_p			@ yes, error 'p'
-	bl	__lookup_machine_type		@ r5=machinfo
-	movs	r8, r5				@ invalid machine (r5=0)?
- THUMB( it	eq )		@ force fixup-able long branch encoding
-	beq	__error_a			@ yes, error 'a'
 
 	/*
 	 * r1 = machine no, r2 = atags,
-	 * r8 = machinfo, r9 = cpuid, r10 = procinfo
+	 * r9 = cpuid, r10 = procinfo
 	 */
 	bl	__vet_atags
 #ifdef CONFIG_SMP_ON_UP
@@ -105,7 +101,7 @@ ENTRY(stext)
 	/*
 	 * The following calls CPU specific code in a position independent
 	 * manner.  See arch/arm/mm/proc-*.S for details.  r10 = base of
-	 * xxx_proc_info structure selected by __lookup_machine_type
+	 * xxx_proc_info structure selected by __lookup_processor_type
 	 * above.  On return, the CPU will be ready for the MMU to be
 	 * turned on, and r0 will hold the CPU control register value.
 	 */
@@ -124,7 +120,6 @@ ENDPROC(stext)
  * amount which are required to get the kernel running, which
  * generally means mapping in the kernel code.
  *
- * r8  = machinfo
  * r9  = cpuid
  * r10 = procinfo
  *
@@ -391,25 +386,24 @@ ENDPROC(__turn_mmu_on)
 
 
 #ifdef CONFIG_SMP_ON_UP
+	__INIT
 __fixup_smp:
-	mov	r4, #0x00070000
-	orr	r3, r4, #0xff000000	@ mask 0xff070000
-	orr	r4, r4, #0x41000000	@ val 0x41070000
-	and	r0, r9, r3
-	teq	r0, r4			@ ARM CPU and ARMv6/v7?
+	and	r3, r9, #0x000f0000	@ architecture version
+	teq	r3, #0x000f0000		@ CPU ID supported?
 	bne	__fixup_smp_on_up	@ no, assume UP
 
-	orr	r3, r3, #0x0000ff00
-	orr	r3, r3, #0x000000f0	@ mask 0xff07fff0
+	bic	r3, r9, #0x00ff0000
+	bic	r3, r3, #0x0000000f	@ mask 0xff00fff0
+	mov	r4, #0x41000000
 	orr	r4, r4, #0x0000b000
-	orr	r4, r4, #0x00000020	@ val 0x4107b020
-	and	r0, r9, r3
-	teq	r0, r4			@ ARM 11MPCore?
+	orr	r4, r4, #0x00000020	@ val 0x4100b020
+	teq	r3, r4			@ ARM 11MPCore?
 	moveq	pc, lr			@ yes, assume SMP
 
 	mrc	p15, 0, r0, c0, c0, 5	@ read MPIDR
-	tst	r0, #1 << 31
-	movne	pc, lr			@ bit 31 => SMP
+	and	r0, r0, #0xc0000000	@ multiprocessing extensions and
+	teq	r0, #0x80000000		@ not part of a uniprocessor system?
+	moveq	pc, lr			@ yes, assume SMP
 
 __fixup_smp_on_up:
 	adr	r0, 1f
@@ -417,18 +411,7 @@ __fixup_smp_on_up:
 	sub	r3, r0, r3
 	add	r4, r4, r3
 	add	r5, r5, r3
-2:	cmp	r4, r5
-	movhs	pc, lr
-	ldmia	r4!, {r0, r6}
- ARM(	str	r6, [r0, r3]	)
- THUMB(	add	r0, r0, r3	)
-#ifdef __ARMEB__
- THUMB(	mov	r6, r6, ror #16	)	@ Convert word order for big-endian.
-#endif
- THUMB(	strh	r6, [r0], #2	)	@ For Thumb-2, store as two halfwords
- THUMB(	mov	r6, r6, lsr #16	)	@ to be robust against misaligned r3.
- THUMB(	strh	r6, [r0]	)
-	b	2b
+	b	__do_fixup_smp_on_up
 ENDPROC(__fixup_smp)
 
 	.align
@@ -442,7 +425,31 @@ smp_on_up:
 	ALT_SMP(.long	1)
 	ALT_UP(.long	0)
 	.popsection
-
 #endif
+
+	.text
+__do_fixup_smp_on_up:
+	cmp	r4, r5
+	movhs	pc, lr
+	ldmia	r4!, {r0, r6}
+ ARM(	str	r6, [r0, r3]	)
+ THUMB(	add	r0, r0, r3	)
+#ifdef __ARMEB__
+ THUMB(	mov	r6, r6, ror #16	)	@ Convert word order for big-endian.
+#endif
+ THUMB(	strh	r6, [r0], #2	)	@ For Thumb-2, store as two halfwords
+ THUMB(	mov	r6, r6, lsr #16	)	@ to be robust against misaligned r3.
+ THUMB(	strh	r6, [r0]	)
+	b	__do_fixup_smp_on_up
+ENDPROC(__do_fixup_smp_on_up)
+
+ENTRY(fixup_smp)
+	stmfd	sp!, {r4 - r6, lr}
+	mov	r4, r0
+	add	r5, r0, r1
+	mov	r3, #0
+	bl	__do_fixup_smp_on_up
+	ldmfd	sp!, {r4 - r6, pc}
+ENDPROC(fixup_smp)
 
 #include "head-common.S"
