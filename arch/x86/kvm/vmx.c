@@ -93,14 +93,14 @@ module_param(yield_on_hlt, bool, S_IRUGO);
  * These 2 parameters are used to config the controls for Pause-Loop Exiting:
  * ple_gap:    upper bound on the amount of time between two successive
  *             executions of PAUSE in a loop. Also indicate if ple enabled.
- *             According to test, this time is usually small than 41 cycles.
+ *             According to test, this time is usually smaller than 128 cycles.
  * ple_window: upper bound on the amount of time a guest is allowed to execute
  *             in a PAUSE loop. Tests indicate that most spinlocks are held for
  *             less than 2^12 cycles
  * Time is measured based on a counter that runs at the same rate as the TSC,
  * refer SDM volume 3b section 21.6.13 & 22.1.3.
  */
-#define KVM_VMX_DEFAULT_PLE_GAP    41
+#define KVM_VMX_DEFAULT_PLE_GAP    128
 #define KVM_VMX_DEFAULT_PLE_WINDOW 4096
 static int ple_gap = KVM_VMX_DEFAULT_PLE_GAP;
 module_param(ple_gap, int, S_IRUGO);
@@ -1333,19 +1333,25 @@ static __init int vmx_disabled_by_bios(void)
 
 	rdmsrl(MSR_IA32_FEATURE_CONTROL, msr);
 	if (msr & FEATURE_CONTROL_LOCKED) {
+		/* launched w/ TXT and VMX disabled */
 		if (!(msr & FEATURE_CONTROL_VMXON_ENABLED_INSIDE_SMX)
 			&& tboot_enabled())
 			return 1;
+		/* launched w/o TXT and VMX only enabled w/ TXT */
 		if (!(msr & FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX)
+			&& (msr & FEATURE_CONTROL_VMXON_ENABLED_INSIDE_SMX)
 			&& !tboot_enabled()) {
 			printk(KERN_WARNING "kvm: disable TXT in the BIOS or "
-				" activate TXT before enabling KVM\n");
+				"activate TXT before enabling KVM\n");
 			return 1;
 		}
+		/* launched w/o TXT and VMX disabled */
+		if (!(msr & FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX)
+			&& !tboot_enabled())
+			return 1;
 	}
 
 	return 0;
-	/* locked but not enabled */
 }
 
 static void kvm_cpu_vmxon(u64 addr)
@@ -1683,6 +1689,7 @@ static void enter_pmode(struct kvm_vcpu *vcpu)
 	vmx->emulation_required = 1;
 	vmx->rmode.vm86_active = 0;
 
+	vmcs_write16(GUEST_TR_SELECTOR, vmx->rmode.tr.selector);
 	vmcs_writel(GUEST_TR_BASE, vmx->rmode.tr.base);
 	vmcs_write32(GUEST_TR_LIMIT, vmx->rmode.tr.limit);
 	vmcs_write32(GUEST_TR_AR_BYTES, vmx->rmode.tr.ar);
@@ -1756,6 +1763,7 @@ static void enter_rmode(struct kvm_vcpu *vcpu)
 	vmx->emulation_required = 1;
 	vmx->rmode.vm86_active = 1;
 
+	vmx->rmode.tr.selector = vmcs_read16(GUEST_TR_SELECTOR);
 	vmx->rmode.tr.base = vmcs_readl(GUEST_TR_BASE);
 	vmcs_writel(GUEST_TR_BASE, rmode_tss_base(vcpu->kvm));
 
@@ -2030,23 +2038,40 @@ static void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 	vmcs_writel(GUEST_CR4, hw_cr4);
 }
 
-static u64 vmx_get_segment_base(struct kvm_vcpu *vcpu, int seg)
-{
-	struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
-
-	return vmcs_readl(sf->base);
-}
-
 static void vmx_get_segment(struct kvm_vcpu *vcpu,
 			    struct kvm_segment *var, int seg)
 {
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
+	struct kvm_save_segment *save;
 	u32 ar;
 
+	if (vmx->rmode.vm86_active
+	    && (seg == VCPU_SREG_TR || seg == VCPU_SREG_ES
+		|| seg == VCPU_SREG_DS || seg == VCPU_SREG_FS
+		|| seg == VCPU_SREG_GS)
+	    && !emulate_invalid_guest_state) {
+		switch (seg) {
+		case VCPU_SREG_TR: save = &vmx->rmode.tr; break;
+		case VCPU_SREG_ES: save = &vmx->rmode.es; break;
+		case VCPU_SREG_DS: save = &vmx->rmode.ds; break;
+		case VCPU_SREG_FS: save = &vmx->rmode.fs; break;
+		case VCPU_SREG_GS: save = &vmx->rmode.gs; break;
+		default: BUG();
+		}
+		var->selector = save->selector;
+		var->base = save->base;
+		var->limit = save->limit;
+		ar = save->ar;
+		if (seg == VCPU_SREG_TR
+		    || var->selector == vmcs_read16(sf->selector))
+			goto use_saved_rmode_seg;
+	}
 	var->base = vmcs_readl(sf->base);
 	var->limit = vmcs_read32(sf->limit);
 	var->selector = vmcs_read16(sf->selector);
 	ar = vmcs_read32(sf->ar_bytes);
+use_saved_rmode_seg:
 	if ((ar & AR_UNUSABLE_MASK) && !emulate_invalid_guest_state)
 		ar = 0;
 	var->type = ar & 15;
@@ -2058,6 +2083,18 @@ static void vmx_get_segment(struct kvm_vcpu *vcpu,
 	var->db = (ar >> 14) & 1;
 	var->g = (ar >> 15) & 1;
 	var->unusable = (ar >> 16) & 1;
+}
+
+static u64 vmx_get_segment_base(struct kvm_vcpu *vcpu, int seg)
+{
+	struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
+	struct kvm_segment s;
+
+	if (to_vmx(vcpu)->rmode.vm86_active) {
+		vmx_get_segment(vcpu, &s, seg);
+		return s.base;
+	}
+	return vmcs_readl(sf->base);
 }
 
 static int vmx_get_cpl(struct kvm_vcpu *vcpu)
@@ -3962,7 +3999,7 @@ static void vmx_cancel_injection(struct kvm_vcpu *vcpu)
 #define Q "l"
 #endif
 
-static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
+static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
@@ -3991,6 +4028,7 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	asm(
 		/* Store host registers */
 		"push %%"R"dx; push %%"R"bp;"
+		"push %%"R"cx \n\t" /* placeholder for guest rcx */
 		"push %%"R"cx \n\t"
 		"cmp %%"R"sp, %c[host_rsp](%0) \n\t"
 		"je 1f \n\t"
@@ -4032,10 +4070,11 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		".Llaunched: " __ex(ASM_VMX_VMRESUME) "\n\t"
 		".Lkvm_vmx_return: "
 		/* Save guest registers, load host registers, keep flags */
-		"xchg %0,     (%%"R"sp) \n\t"
+		"mov %0, %c[wordsize](%%"R"sp) \n\t"
+		"pop %0 \n\t"
 		"mov %%"R"ax, %c[rax](%0) \n\t"
 		"mov %%"R"bx, %c[rbx](%0) \n\t"
-		"push"Q" (%%"R"sp); pop"Q" %c[rcx](%0) \n\t"
+		"pop"Q" %c[rcx](%0) \n\t"
 		"mov %%"R"dx, %c[rdx](%0) \n\t"
 		"mov %%"R"si, %c[rsi](%0) \n\t"
 		"mov %%"R"di, %c[rdi](%0) \n\t"
@@ -4053,7 +4092,7 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		"mov %%cr2, %%"R"ax   \n\t"
 		"mov %%"R"ax, %c[cr2](%0) \n\t"
 
-		"pop  %%"R"bp; pop  %%"R"bp; pop  %%"R"dx \n\t"
+		"pop  %%"R"bp; pop  %%"R"dx \n\t"
 		"setbe %c[fail](%0) \n\t"
 	      : : "c"(vmx), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu_vmx, launched)),
@@ -4076,7 +4115,8 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		[r14]"i"(offsetof(struct vcpu_vmx, vcpu.arch.regs[VCPU_REGS_R14])),
 		[r15]"i"(offsetof(struct vcpu_vmx, vcpu.arch.regs[VCPU_REGS_R15])),
 #endif
-		[cr2]"i"(offsetof(struct vcpu_vmx, vcpu.arch.cr2))
+		[cr2]"i"(offsetof(struct vcpu_vmx, vcpu.arch.cr2)),
+		[wordsize]"i"(sizeof(ulong))
 	      : "cc", "memory"
 		, R"ax", R"bx", R"di", R"si"
 #ifdef CONFIG_X86_64
