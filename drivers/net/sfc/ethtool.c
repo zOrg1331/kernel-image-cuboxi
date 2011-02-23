@@ -502,7 +502,7 @@ static void efx_ethtool_get_stats(struct net_device *net_dev,
 static int efx_ethtool_set_tso(struct net_device *net_dev, u32 enable)
 {
 	struct efx_nic *efx __attribute__ ((unused)) = netdev_priv(net_dev);
-	unsigned long features;
+	u32 features;
 
 	features = NETIF_F_TSO;
 	if (efx->type->offload_features & NETIF_F_V6_CSUM)
@@ -519,7 +519,7 @@ static int efx_ethtool_set_tso(struct net_device *net_dev, u32 enable)
 static int efx_ethtool_set_tx_csum(struct net_device *net_dev, u32 enable)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
-	unsigned long features = efx->type->offload_features & NETIF_F_ALL_CSUM;
+	u32 features = efx->type->offload_features & NETIF_F_ALL_CSUM;
 
 	if (enable)
 		net_dev->features |= features;
@@ -635,7 +635,7 @@ static int efx_ethtool_get_coalesce(struct net_device *net_dev,
 	/* Find lowest IRQ moderation across all used TX queues */
 	coalesce->tx_coalesce_usecs_irq = ~((u32) 0);
 	efx_for_each_channel(channel, efx) {
-		if (!efx_channel_get_tx_queue(channel, 0))
+		if (!efx_channel_has_tx_queues(channel))
 			continue;
 		if (channel->irq_moderation < coalesce->tx_coalesce_usecs_irq) {
 			if (channel->channel < efx->n_rx_channels)
@@ -680,8 +680,8 @@ static int efx_ethtool_set_coalesce(struct net_device *net_dev,
 
 	/* If the channel is shared only allow RX parameters to be set */
 	efx_for_each_channel(channel, efx) {
-		if (efx_channel_get_rx_queue(channel) &&
-		    efx_channel_get_tx_queue(channel, 0) &&
+		if (efx_channel_has_rx_queue(channel) &&
+		    efx_channel_has_tx_queues(channel) &&
 		    tx_usecs) {
 			netif_err(efx, drv, efx->net_dev, "Channel is shared. "
 				  "Only RX coalescing may be set\n");

@@ -225,6 +225,10 @@ struct be_rx_obj {
 	u32 cache_line_barrier[15];
 };
 
+struct be_drv_stats {
+	u8 be_on_die_temperature;
+};
+
 struct be_vf_cfg {
 	unsigned char vf_mac_addr[ETH_ALEN];
 	u32 vf_if_handle;
@@ -234,6 +238,7 @@ struct be_vf_cfg {
 };
 
 #define BE_INVALID_PMAC_ID		0xffffffff
+
 struct be_adapter {
 	struct pci_dev *pdev;
 	struct net_device *netdev;
@@ -269,6 +274,7 @@ struct be_adapter {
 	u32 big_page_size;	/* Compounded page size shared by rx wrbs */
 
 	u8 msix_vec_next_idx;
+	struct be_drv_stats drv_stats;
 
 	struct vlan_group *vlan_grp;
 	u16 vlans_added;
@@ -281,6 +287,7 @@ struct be_adapter {
 	struct be_dma_mem stats_cmd;
 	/* Work queue used to perform periodic tasks like getting statistics */
 	struct delayed_work work;
+	u16 work_counter;
 
 	/* Ethtool knobs and info */
 	bool rx_csum; 		/* BE card must perform rx-checksumming */
@@ -298,7 +305,7 @@ struct be_adapter {
 	u32 rx_fc;		/* Rx flow control */
 	u32 tx_fc;		/* Tx flow control */
 	bool ue_detected;
-	bool stats_ioctl_sent;
+	bool stats_cmd_sent;
 	int link_speed;
 	u8 port_type;
 	u8 transceiver;
@@ -311,6 +318,8 @@ struct be_adapter {
 	struct be_vf_cfg vf_cfg[BE_MAX_VF];
 	u8 is_virtfn;
 	u32 sli_family;
+	u8 hba_port_num;
+	u16 pvid;
 };
 
 #define be_physfn(adapter) (!adapter->is_virtfn)
@@ -450,9 +459,8 @@ static inline void be_vf_eth_addr_generate(struct be_adapter *adapter, u8 *mac)
 	mac[5] = (u8)(addr & 0xFF);
 	mac[4] = (u8)((addr >> 8) & 0xFF);
 	mac[3] = (u8)((addr >> 16) & 0xFF);
-	mac[2] = 0xC9;
-	mac[1] = 0x00;
-	mac[0] = 0x00;
+	/* Use the OUI from the current MAC address */
+	memcpy(mac, adapter->netdev->dev_addr, 3);
 }
 
 extern void be_cq_notify(struct be_adapter *adapter, u16 qid, bool arm,
