@@ -1038,15 +1038,6 @@ static pfn_t get_fault_pfn(void)
 	return fault_pfn;
 }
 
-static inline int check_user_page_hwpoison(unsigned long addr)
-{
-	int rc, flags = FOLL_TOUCH | FOLL_HWPOISON | FOLL_WRITE;
-
-	rc = __get_user_pages(current, current->mm, addr, 1,
-			      flags, NULL, NULL, NULL);
-	return rc == -EHWPOISON;
-}
-
 static pfn_t hva_to_pfn(struct kvm *kvm, unsigned long addr, bool atomic,
 			bool *async, bool write_fault, bool *writable)
 {
@@ -1094,7 +1085,7 @@ static pfn_t hva_to_pfn(struct kvm *kvm, unsigned long addr, bool atomic,
 			return get_fault_pfn();
 
 		down_read(&current->mm->mmap_sem);
-		if (check_user_page_hwpoison(addr)) {
+		if (is_hwpoison_address(addr)) {
 			up_read(&current->mm->mmap_sem);
 			get_page(hwpoison_page);
 			return page_to_pfn(hwpoison_page);
