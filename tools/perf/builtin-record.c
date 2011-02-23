@@ -538,11 +538,6 @@ static int __cmd_record(int argc, const char **argv)
 	if (have_tracepoints(&evsel_list->entries))
 		perf_header__set_feat(&session->header, HEADER_TRACE_INFO);
 
-	/*
- 	 * perf_session__delete(session) will be called at atexit_header()
-	 */
-	atexit(atexit_header);
-
 	if (forks) {
 		child_pid = fork();
 		if (child_pid < 0) {
@@ -600,6 +595,11 @@ static int __cmd_record(int argc, const char **argv)
 	open_counters(evsel_list);
 
 	perf_session__set_sample_type(session, sample_type);
+
+	/*
+	 * perf_session__delete(session) will be called at atexit_header()
+	 */
+	atexit(atexit_header);
 
 	if (pipe_output) {
 		err = perf_header__write_pipe(output);
@@ -807,6 +807,9 @@ const struct option record_options[] = {
 		    "do not update the buildid cache"),
 	OPT_BOOLEAN('B', "no-buildid", &no_buildid,
 		    "do not collect buildids in perf.data"),
+	OPT_CALLBACK('G', "cgroup", &evsel_list, "name",
+		     "monitor event in cgroup name only",
+		     parse_cgroups),
 	OPT_END()
 };
 
@@ -833,6 +836,12 @@ int cmd_record(int argc, const char **argv, const char *prefix __used)
 		write_mode = WRITE_APPEND;
 	} else {
 		write_mode = WRITE_FORCE;
+	}
+
+	if (nr_cgroups && !system_wide) {
+		fprintf(stderr, "cgroup monitoring only available in"
+			" system-wide mode\n");
+		usage_with_options(record_usage, record_options);
 	}
 
 	symbol__init();

@@ -1262,7 +1262,7 @@ static int probe_point_line_walker(const char *fname, int lineno,
 	ret = call_probe_finder(NULL, pf);
 
 	/* Continue if no error, because the line will be in inline function */
-	return ret < 0 ?: 0;
+	return ret < 0 ? ret : 0;
 }
 
 /* Find probe point from its line number */
@@ -1462,8 +1462,7 @@ static int find_probes(int fd, struct probe_finder *pf)
 	off = 0;
 	line_list__init(&pf->lcache);
 	/* Loop on CUs (Compilation Unit) */
-	while (!dwarf_nextcu(dbg, off, &noff, &cuhl, NULL, NULL, NULL) &&
-	       ret >= 0) {
+	while (!dwarf_nextcu(dbg, off, &noff, &cuhl, NULL, NULL, NULL)) {
 		/* Get the DIE(Debugging Information Entry) of this CU */
 		diep = dwarf_offdie(dbg, off + cuhl, &pf->cu_die);
 		if (!diep)
@@ -1484,6 +1483,8 @@ static int find_probes(int fd, struct probe_finder *pf)
 				pf->lno = pp->line;
 				ret = find_probe_point_by_line(pf);
 			}
+			if (ret < 0)
+				break;
 		}
 		off = noff;
 	}
