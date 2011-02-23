@@ -147,6 +147,11 @@ struct mgmt_cp_pin_code_reply {
 	__u8 pin_len;
 	__u8 pin_code[16];
 } __packed;
+struct mgmt_rp_pin_code_reply {
+	__le16 index;
+	bdaddr_t bdaddr;
+	uint8_t status;
+} __packed;
 
 #define MGMT_OP_PIN_CODE_NEG_REPLY	0x0012
 struct mgmt_cp_pin_code_neg_reply {
@@ -159,6 +164,31 @@ struct mgmt_cp_set_io_capability {
 	__le16 index;
 	__u8 io_capability;
 } __packed;
+
+#define MGMT_OP_PAIR_DEVICE		0x0014
+struct mgmt_cp_pair_device {
+	__le16 index;
+	bdaddr_t bdaddr;
+	__u8 io_cap;
+} __packed;
+struct mgmt_rp_pair_device {
+	__le16 index;
+	bdaddr_t bdaddr;
+	__u8 status;
+} __packed;
+
+#define MGMT_OP_USER_CONFIRM_REPLY	0x0015
+struct mgmt_cp_user_confirm_reply {
+	__le16 index;
+	bdaddr_t bdaddr;
+} __packed;
+struct mgmt_rp_user_confirm_reply {
+	__le16 index;
+	bdaddr_t bdaddr;
+	__u8 status;
+} __packed;
+
+#define MGMT_OP_USER_CONFIRM_NEG_REPLY	0x0016
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
@@ -226,4 +256,18 @@ struct mgmt_ev_connect_failed {
 struct mgmt_ev_pin_code_request {
 	__le16 index;
 	bdaddr_t bdaddr;
+} __packed;
+
+#define MGMT_EV_USER_CONFIRM_REQUEST	0x000F
+struct mgmt_ev_user_confirm_request {
+	__le16 index;
+	bdaddr_t bdaddr;
+	__le32 value;
+} __packed;
+
+#define MGMT_EV_AUTH_FAILED		0x0010
+struct mgmt_ev_auth_failed {
+	__le16 index;
+	bdaddr_t bdaddr;
+	__u8 status;
 } __packed;
