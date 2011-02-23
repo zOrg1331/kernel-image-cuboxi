@@ -57,8 +57,8 @@ void dhd_iscan_unlock(void);
 #error DHD_SDALIGN is not a power of 2!
 #endif
 
-#ifdef DHD_DEBUG
 #define EPI_VERSION_STR         "4.218.248.5"
+#ifdef DHD_DEBUG
 const char dhd_version[] =
 "Dongle Host Driver, version " EPI_VERSION_STR "\nCompiled on " __DATE__
 " at " __TIME__;
@@ -214,7 +214,7 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 		goto exit;
 
 	if (plen >= (int)sizeof(int_val))
-		bcopy(params, &int_val, sizeof(int_val));
+		memcpy(&int_val, params, sizeof(int_val));
 
 	switch (actionid) {
 	case IOV_GVAL(IOV_VERSION):
@@ -224,7 +224,7 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 
 	case IOV_GVAL(IOV_MSGLEVEL):
 		int_val = (s32) dhd_msg_level;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_MSGLEVEL):
@@ -239,12 +239,12 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 
 	case IOV_GVAL(IOV_BCMERROR):
 		int_val = (s32) dhd_pub->bcmerror;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_GVAL(IOV_WDTICK):
 		int_val = (s32) dhd_watchdog_ms;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_WDTICK):
@@ -262,7 +262,7 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 #ifdef DHD_DEBUG
 	case IOV_GVAL(IOV_DCONSOLE_POLL):
 		int_val = (s32) dhd_console_ms;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_DCONSOLE_POLL):
@@ -290,7 +290,7 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 
 	case IOV_GVAL(IOV_IOCTLTIMEOUT):{
 			int_val = (s32) dhd_os_get_ioctl_resp_timeout();
-			bcopy(&int_val, arg, sizeof(int_val));
+			memcpy(arg, &int_val, sizeof(int_val));
 			break;
 		}
 
@@ -310,21 +310,6 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, u32 actionid,
 
 exit:
 	return bcmerror;
-}
-
-/* Store the status of a connection attempt for later retrieval by an iovar */
-void dhd_store_conn_status(u32 event, u32 status, u32 reason)
-{
-	/* Do not overwrite a WLC_E_PRUNE with a WLC_E_SET_SSID
-	 * because an encryption/rsn mismatch results in both events, and
-	 * the important information is in the WLC_E_PRUNE.
-	 */
-	if (!(event == WLC_E_SET_SSID && status == WLC_E_STATUS_FAIL &&
-	      dhd_conn_event == WLC_E_PRUNE)) {
-		dhd_conn_event = event;
-		dhd_conn_status = status;
-		dhd_conn_reason = reason;
-	}
 }
 
 bool dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, struct sk_buff *pkt,
@@ -599,7 +584,7 @@ static void wl_show_host_event(wl_event_msg_t *event, void *event_data)
 	auth_type = ntoh32(event->auth_type);
 	datalen = ntoh32(event->datalen);
 	/* debug dump of event messages */
-	sprintf(eabuf, "%pM", event->addr.octet);
+	sprintf(eabuf, "%pM", event->addr);
 
 	event_name = "UNKNOWN";
 	for (i = 0; i < ARRAY_SIZE(event_names); i++) {
@@ -754,10 +739,11 @@ static void wl_show_host_event(wl_event_msg_t *event, void *event_data)
 			memcpy(&hdr, buf, MSGTRACE_HDRLEN);
 
 			if (hdr.version != MSGTRACE_VERSION) {
-				printf
+				DHD_ERROR(
 				    ("\nMACEVENT: %s [unsupported version --> "
 				     "dhd version:%d dongle version:%d]\n",
-				     event_name, MSGTRACE_VERSION, hdr.version);
+				     event_name, MSGTRACE_VERSION, hdr.version)
+				);
 				/* Reset datalen to avoid display below */
 				datalen = 0;
 				break;
@@ -768,18 +754,18 @@ static void wl_show_host_event(wl_event_msg_t *event, void *event_data)
 
 			if (ntoh32(hdr.discarded_bytes)
 			    || ntoh32(hdr.discarded_printf)) {
-				printf
+				DHD_ERROR(
 				    ("\nWLC_E_TRACE: [Discarded traces in dongle -->"
 				     "discarded_bytes %d discarded_printf %d]\n",
 				     ntoh32(hdr.discarded_bytes),
-				     ntoh32(hdr.discarded_printf));
+				     ntoh32(hdr.discarded_printf)));
 			}
 
 			nblost = ntoh32(hdr.seqnum) - seqnum_prev - 1;
 			if (nblost > 0) {
-				printf
+				DHD_ERROR(
 				    ("\nWLC_E_TRACE: [Event lost --> seqnum %d nblost %d\n",
-				     ntoh32(hdr.seqnum), nblost);
+				     ntoh32(hdr.seqnum), nblost));
 			}
 			seqnum_prev = ntoh32(hdr.seqnum);
 
@@ -790,10 +776,10 @@ static void wl_show_host_event(wl_event_msg_t *event, void *event_data)
 			p = (char *)&buf[MSGTRACE_HDRLEN];
 			while ((s = strstr(p, "\n")) != NULL) {
 				*s = '\0';
-				printf("%s\n", p);
+				printk(KERN_DEBUG"%s\n", p);
 				p = s + 1;
 			}
-			printf("%s\n", p);
+			printk(KERN_DEBUG "%s\n", p);
 
 			/* Reset datalen to avoid display below */
 			datalen = 0;
@@ -868,7 +854,7 @@ wl_host_event(struct dhd_info *dhd, int *ifidx, void *pktdata,
 				if (ifevent->action == WLC_E_IF_ADD)
 					dhd_add_if(dhd, ifevent->ifidx,
 						   NULL, event->ifname,
-						   pvt_data->eth.ether_dhost,
+						   pvt_data->eth.h_dest,
 						   ifevent->flags,
 						   ifevent->bssidx);
 				else
@@ -924,42 +910,6 @@ wl_host_event(struct dhd_info *dhd, int *ifidx, void *pktdata,
 #endif				/* SHOW_EVENTS */
 
 	return BCME_OK;
-}
-
-void wl_event_to_host_order(wl_event_msg_t *evt)
-{
-	/* Event struct members passed from dongle to host are stored
-	 * in network
-	 * byte order. Convert all members to host-order.
-	 */
-	evt->event_type = ntoh32(evt->event_type);
-	evt->flags = ntoh16(evt->flags);
-	evt->status = ntoh32(evt->status);
-	evt->reason = ntoh32(evt->reason);
-	evt->auth_type = ntoh32(evt->auth_type);
-	evt->datalen = ntoh32(evt->datalen);
-	evt->version = ntoh16(evt->version);
-}
-
-void print_buf(void *pbuf, int len, int bytes_per_line)
-{
-	int i, j = 0;
-	unsigned char *buf = pbuf;
-
-	if (bytes_per_line == 0)
-		bytes_per_line = len;
-
-	for (i = 0; i < len; i++) {
-		printf("%2.2x", *buf++);
-		j++;
-		if (j == bytes_per_line) {
-			printf("\n");
-			j = 0;
-		} else {
-			printf(":");
-		}
-	}
-	printf("\n");
 }
 
 /* Convert user's input in hex pattern to byte-size mask */
@@ -1242,7 +1192,7 @@ int dhd_preinit_ioctls(dhd_pub_t *dhd)
 	int scan_unassoc_time = 40;
 #ifdef GET_CUSTOM_MAC_ENABLE
 	int ret = 0;
-	struct ether_addr ea_addr;
+	u8 ea_addr[ETH_ALEN];
 #endif				/* GET_CUSTOM_MAC_ENABLE */
 
 	dhd_os_proto_block(dhd);
@@ -1254,9 +1204,9 @@ int dhd_preinit_ioctls(dhd_pub_t *dhd)
 	 ** firmware but unique per board mac address maybe provided by
 	 ** customer code
 	 */
-	ret = dhd_custom_get_mac_address(ea_addr.octet);
+	ret = dhd_custom_get_mac_address(ea_addr);
 	if (!ret) {
-		bcm_mkiovar("cur_etheraddr", (void *)&ea_addr, ETH_ALEN,
+		bcm_mkiovar("cur_etheraddr", (void *)ea_addr, ETH_ALEN,
 			    buf, sizeof(buf));
 		ret = dhdcdc_set_ioctl(dhd, 0, WLC_SET_VAR, buf, sizeof(buf));
 		if (ret < 0) {
@@ -1548,7 +1498,7 @@ int dhd_iscan_delete_bss(void *dhdp, void *addr, iscan_buf_t *iscan_skip)
 								(bi->length));
 /*
 			if(bi && bi_new) {
-				bcopy(bi, bi_new, results->buflen -
+				memcpy(bi_new, bi, results->buflen -
 				dtoh32(bi_new->length));
 				results->buflen -= dtoh32(bi_new->length);
 			}
@@ -1572,7 +1522,7 @@ int dhd_iscan_delete_bss(void *dhdp, void *addr, iscan_buf_t *iscan_skip)
 							    (wl_bss_info_t *)((unsigned long)bi +
 								 dtoh32
 								 (bi->length));
-							bcopy(bi, bi_new,
+							memcpy(bi_new, bi,
 							      dtoh32
 							      (bi->length));
 							bi_new =
