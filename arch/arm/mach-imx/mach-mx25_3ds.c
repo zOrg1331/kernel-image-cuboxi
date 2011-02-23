@@ -109,8 +109,8 @@ static const struct fec_platform_data mx25_fec_pdata __initconst = {
 	.phy    = PHY_INTERFACE_MODE_RMII,
 };
 
-#define FEC_ENABLE_GPIO		35
-#define FEC_RESET_B_GPIO	104
+#define FEC_ENABLE_GPIO		IMX_GPIO_NR(2, 3)
+#define FEC_RESET_B_GPIO	IMX_GPIO_NR(4, 8)
 
 static void __init mx25pdk_fec_reset(void)
 {
@@ -185,9 +185,14 @@ static const struct matrix_keymap_data mx25pdk_keymap_data __initconst = {
 	.keymap_size	= ARRAY_SIZE(mx25pdk_keymap),
 };
 
+static int mx25pdk_usbh2_init(struct platform_device *pdev)
+{
+	return mx25_initialize_usb_hw(pdev->id, MXC_EHCI_INTERNAL_PHY);
+}
+
 static const struct mxc_usbh_platform_data usbh2_pdata __initconst = {
+	.init	= mx25pdk_usbh2_init,
 	.portsc	= MXC_EHCI_MODE_SERIAL,
-	.flags	= MXC_EHCI_INTERNAL_PHY,
 };
 
 static const struct fsl_usb2_platform_data otg_device_pdata __initconst = {
@@ -226,10 +231,10 @@ static struct sys_timer mx25pdk_timer = {
 
 MACHINE_START(MX25_3DS, "Freescale MX25PDK (3DS)")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.boot_params    = MX25_PHYS_OFFSET + 0x100,
-	.map_io         = mx25_map_io,
-	.init_irq       = mx25_init_irq,
-	.init_machine   = mx25pdk_init,
-	.timer          = &mx25pdk_timer,
+	.boot_params = MX25_PHYS_OFFSET + 0x100,
+	.map_io = mx25_map_io,
+	.init_early = imx25_init_early,
+	.init_irq = mx25_init_irq,
+	.timer = &mx25pdk_timer,
+	.init_machine = mx25pdk_init,
 MACHINE_END
-
