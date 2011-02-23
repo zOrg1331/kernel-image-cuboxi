@@ -1485,11 +1485,6 @@ static struct omap_hwmod_class omap3xxx_dss_hwmod_class = {
 	.sysc = &omap3xxx_dss_sysc,
 };
 
-/* dss */
-static struct omap_hwmod_irq_info omap3xxx_dss_irqs[] = {
-	{ .irq = 25 },
-};
-
 static struct omap_hwmod_dma_info omap3xxx_dss_sdma_chs[] = {
 	{ .name = "dispc", .dma_req = 5 },
 	{ .name = "dsi1", .dma_req = 74 },
@@ -1561,8 +1556,6 @@ static struct omap_hwmod omap3430es1_dss_core_hwmod = {
 	.name		= "dss_core",
 	.class		= &omap3xxx_dss_hwmod_class,
 	.main_clk	= "dss1_alwon_fck", /* instead of dss_fck */
-	.mpu_irqs	= omap3xxx_dss_irqs,
-	.mpu_irqs_cnt	= ARRAY_SIZE(omap3xxx_dss_irqs),
 	.sdma_reqs	= omap3xxx_dss_sdma_chs,
 	.sdma_reqs_cnt	= ARRAY_SIZE(omap3xxx_dss_sdma_chs),
 
@@ -1589,8 +1582,6 @@ static struct omap_hwmod omap3xxx_dss_core_hwmod = {
 	.name		= "dss_core",
 	.class		= &omap3xxx_dss_hwmod_class,
 	.main_clk	= "dss1_alwon_fck", /* instead of dss_fck */
-	.mpu_irqs	= omap3xxx_dss_irqs,
-	.mpu_irqs_cnt	= ARRAY_SIZE(omap3xxx_dss_irqs),
 	.sdma_reqs	= omap3xxx_dss_sdma_chs,
 	.sdma_reqs_cnt	= ARRAY_SIZE(omap3xxx_dss_sdma_chs),
 
@@ -1636,6 +1627,10 @@ static struct omap_hwmod_class omap3xxx_dispc_hwmod_class = {
 	.sysc = &omap3xxx_dispc_sysc,
 };
 
+static struct omap_hwmod_irq_info omap3xxx_dispc_irqs[] = {
+	{ .irq = 25 },
+};
+
 static struct omap_hwmod_addr_space omap3xxx_dss_dispc_addrs[] = {
 	{
 		.pa_start	= 0x48050400,
@@ -1669,6 +1664,8 @@ static struct omap_hwmod_ocp_if *omap3xxx_dss_dispc_slaves[] = {
 static struct omap_hwmod omap3xxx_dss_dispc_hwmod = {
 	.name		= "dss_dispc",
 	.class		= &omap3xxx_dispc_hwmod_class,
+	.mpu_irqs	= omap3xxx_dispc_irqs,
+	.mpu_irqs_cnt	= ARRAY_SIZE(omap3xxx_dispc_irqs),
 	.main_clk	= "dss1_alwon_fck",
 	.prcm		= {
 		.omap2 = {
@@ -1692,6 +1689,10 @@ static struct omap_hwmod omap3xxx_dss_dispc_hwmod = {
 
 static struct omap_hwmod_class omap3xxx_dsi_hwmod_class = {
 	.name = "dsi",
+};
+
+static struct omap_hwmod_irq_info omap3xxx_dsi1_irqs[] = {
+	{ .irq = 25 },
 };
 
 /* dss_dsi1 */
@@ -1727,6 +1728,8 @@ static struct omap_hwmod_ocp_if *omap3xxx_dss_dsi1_slaves[] = {
 static struct omap_hwmod omap3xxx_dss_dsi1_hwmod = {
 	.name		= "dss_dsi1",
 	.class		= &omap3xxx_dsi_hwmod_class,
+	.mpu_irqs	= omap3xxx_dsi1_irqs,
+	.mpu_irqs_cnt	= ARRAY_SIZE(omap3xxx_dsi1_irqs),
 	.main_clk	= "dss1_alwon_fck",
 	.prcm		= {
 		.omap2 = {
