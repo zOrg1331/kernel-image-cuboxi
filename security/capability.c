@@ -12,11 +12,6 @@
 
 #include <linux/security.h>
 
-static int cap_sysctl(ctl_table *table, int op)
-{
-	return 0;
-}
-
 static int cap_syslog(int type)
 {
 	return 0;
@@ -118,7 +113,8 @@ static void cap_inode_free_security(struct inode *inode)
 }
 
 static int cap_inode_init_security(struct inode *inode, struct inode *dir,
-				   char **name, void **value, size_t *len)
+				   const struct qstr *qstr, char **name,
+				   void **value, size_t *len)
 {
 	return -EOPNOTSUPP;
 }
@@ -880,7 +876,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, capable);
 	set_to_cap_if_null(ops, quotactl);
 	set_to_cap_if_null(ops, quota_on);
-	set_to_cap_if_null(ops, sysctl);
 	set_to_cap_if_null(ops, syslog);
 	set_to_cap_if_null(ops, settime);
 	set_to_cap_if_null(ops, vm_enough_memory);
