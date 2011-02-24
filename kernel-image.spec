@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.37
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -56,6 +56,8 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
+Provides: kernel-module-drbd83-%flavour
+Provides: kernel-module-igb-%flavour
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
@@ -75,8 +77,6 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
-Provides: kernel-module-drbd83
-Provides: kernel-module-igb
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -591,6 +591,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Feb 21 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt1.1
+- in-kernel HDAPS enabled (#25127)
+- igb and drbd provides fixed
+
 * Thu Feb 17 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt1
 - new version (2.6.37.1)
 
