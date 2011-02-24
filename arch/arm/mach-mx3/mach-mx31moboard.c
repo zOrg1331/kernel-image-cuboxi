@@ -214,7 +214,7 @@ static struct regulator_init_data cam_vreg_data = {
 	.consumer_supplies = cam_consumers,
 };
 
-static struct mc13783_regulator_init_data moboard_regulators[] = {
+static struct mc13xxx_regulator_init_data moboard_regulators[] = {
 	{
 		.id = MC13783_REG_VMMC1,
 		.init_data = &sdhc_vreg_data,
@@ -267,12 +267,12 @@ static struct mc13783_leds_platform_data moboard_leds = {
 	.tc2_period = MC13783_LED_PERIOD_10MS,
 };
 
-static struct mc13783_platform_data moboard_pmic = {
+static struct mc13xxx_platform_data moboard_pmic = {
 	.regulators = moboard_regulators,
 	.num_regulators = ARRAY_SIZE(moboard_regulators),
 	.leds = &moboard_leds,
-	.flags = MC13783_USE_REGULATOR | MC13783_USE_RTC |
-		MC13783_USE_ADC | MC13783_USE_LED,
+	.flags = MC13XXX_USE_REGULATOR | MC13XXX_USE_RTC |
+		MC13XXX_USE_ADC | MC13XXX_USE_LED,
 };
 
 static struct spi_board_info moboard_spi_board_info[] __initdata = {
@@ -401,10 +401,14 @@ static void usb_xcvr_reset(void)
 }
 
 #if defined(CONFIG_USB_ULPI)
+static int moboard_usbh2_init_hw(struct platform_device *pdev)
+{
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
+}
 
 static struct mxc_usbh_platform_data usbh2_pdata __initdata = {
+	.init	= moboard_usbh2_init_hw,
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 
 static int __init moboard_usbh2_init(void)
@@ -503,7 +507,7 @@ core_param(mx31moboard_baseboard, mx31moboard_baseboard, int, 0444);
 /*
  * Board specific initialization.
  */
-static void __init mxc_board_init(void)
+static void __init mx31moboard_init(void)
 {
 	mxc_iomux_setup_multiple_pins(moboard_pins, ARRAY_SIZE(moboard_pins),
 		"moboard");
@@ -564,10 +568,10 @@ struct sys_timer mx31moboard_timer = {
 
 MACHINE_START(MX31MOBOARD, "EPFL Mobots mx31moboard")
 	/* Maintainer: Valentin Longchamp, EPFL Mobots group */
-	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
-	.map_io         = mx31_map_io,
-	.init_irq       = mx31_init_irq,
-	.init_machine   = mxc_board_init,
-	.timer          = &mx31moboard_timer,
+	.boot_params = MX3x_PHYS_OFFSET + 0x100,
+	.map_io = mx31_map_io,
+	.init_early = imx31_init_early,
+	.init_irq = mx31_init_irq,
+	.timer = &mx31moboard_timer,
+	.init_machine = mx31moboard_init,
 MACHINE_END
-
