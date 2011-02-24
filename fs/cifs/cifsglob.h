@@ -223,7 +223,7 @@ struct TCP_Server_Info {
 	wait_queue_head_t read_q; /* used by readpages */
 	atomic_t active_readpage_req; /* used by readpages */
 	atomic_t resp_rdy; /* used by readpages and demultiplex */
-	bool smb21_dialect:1;	/* True if newer SMB2.1 dialect */
+	__le16 smb21_minor version; /* SMB2.0 implemented, but 2.1 recognized */
 	struct task_struct *observe;
 	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE]; /* BB can we use cifs key */
 	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
