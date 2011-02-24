@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab084
-%define ovzrel 4
+%define ovzrel 6
 
 %if !%{buildup}
 %define _without_up 1
@@ -6438,6 +6438,14 @@ Patch100042: diff-rh-vdso-remove-note-part
 Patch100043: diff-rh-export-ip_outputs
 Patch100044: diff-ubc-fixup-percpu-held_pages-in-proc
 Patch100045: diff-ubc-migrate-pages-rcu-safe
+Patch100046: diff-ve-sysfs-root-handle-with-refs
+Patch100047: diff-ms-packet-reserve-sockopt
+Patch100048: diff-virtinfo-add-pre-oom-notifier
+Patch100049: diff-ms-split-skb_checksum_setup-into-two
+Patch100050: diff-ms-put-unlikelys-in-skb_checksum_setup
+Patch100051: diff-ms-ipv6-support-in-skb_checksum_setup
+Patch100052: diff-ubc-percpu-stat-add-exact-and-flush
+Patch100053: diff-ubc-get-exact-stat-in-balance-dirty-pages
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -12648,6 +12656,14 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100043 -p1
 %patch100044 -p1
 %patch100045 -p1
+%patch100046 -p1
+%patch100047 -p1
+%patch100048 -p1
+%patch100049 -p1
+%patch100050 -p1
+%patch100051 -p1
+%patch100052 -p1
+%patch100053 -p1
 
 %patch101000 -p1
 %patch101001 -p1

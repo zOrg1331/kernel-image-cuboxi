@@ -1,0 +1,80 @@
+Subject: [PATCH rhel5 v2] SYSFS: proper VE sysfs root handling during start/stop
+From: Stanislav Kinsbursky <skinsbursky@parallels.com>
+Date: Tue, 22 Feb 2011 12:41:17 +0300
+To: Pavel Emelianov <xemul@parallels.com>
+CC: "vzlin-dev@lists.sw.ru" <vzlin-dev@lists.sw.ru>
+Message-ID: <20110222094112.24169.82515.stgit@localhost6.localdomain6>
+
+
+Ported patch "diff-ve-sysfs-manage-root-properly" from RHEL6
+
+VE root SysFS direntry free on containers destroy races with sysfs_put().
+SysFS direntry must be allocated from appropriate cache and destroyed by
+generic sysfs_put() instead of hardcoded kfree().
+
+https://jira.sw.ru/browse/PSBM-7007
+
+Signed-off-by: Stanislav Kinsbursky <skinsbursky@parallels.com>
+
+---
+ fs/sysfs/mount.c    |    1 +
+ kernel/ve/vecalls.c |   10 ++++++----
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+
+diff-ve-sysfs-manage-root-properly.patch
+
+diff --git a/fs/sysfs/mount.c b/fs/sysfs/mount.c
+index 6ba48ed..1d07fae 100644
+--- a/fs/sysfs/mount.c
++++ b/fs/sysfs/mount.c
+@@ -21,6 +21,7 @@ struct super_block * sysfs_sb = NULL;
+ #endif
+ 
+ kmem_cache_t *sysfs_dir_cachep;
++EXPORT_SYMBOL(sysfs_dir_cachep);
+ 
+ static struct super_operations sysfs_ops = {
+ 	.statfs		= simple_statfs,
+diff --git a/kernel/ve/vecalls.c b/kernel/ve/vecalls.c
+index c8f5701..3bea2a4 100644
+--- a/kernel/ve/vecalls.c
++++ b/kernel/ve/vecalls.c
+@@ -686,14 +686,17 @@ static inline int init_ve_sysfs_root(struct ve_struct *ve)
+ {
+ 	struct sysfs_dirent *sysfs_root;
+ 
+-	sysfs_root = kzalloc(sizeof(struct sysfs_dirent), GFP_KERNEL);
++	sysfs_root = kmem_cache_alloc(sysfs_dir_cachep, GFP_KERNEL);
+ 	if (sysfs_root == NULL)
+ 		return -ENOMEM;
+ 
++	memset(sysfs_root, 0, sizeof(*sysfs_root));
+ 	atomic_set(&sysfs_root->s_count, 1);
+ 	INIT_LIST_HEAD(&sysfs_root->s_sibling);
+ 	INIT_LIST_HEAD(&sysfs_root->s_children);
++	sysfs_root->s_element = NULL;
+ 	sysfs_root->s_type = SYSFS_ROOT;
++	sysfs_root->s_mode = S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO;
+ 	ve->sysfs_root = sysfs_root;
+ 	return 0;
+ }
+@@ -856,7 +859,7 @@ out_class_obj:
+ 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
+ 	/* sysfs_fstype is freed in real_put_ve -> free_ve_filesystems */
+ out_fs_type:
+-	kfree(ve->sysfs_root);
++	sysfs_put(ve->sysfs_root);
+ 	ve->sysfs_root = NULL;
+ #endif
+ 	ve->class_subsys = NULL;
+@@ -879,8 +882,7 @@ static void fini_ve_sysfs(struct ve_struct *ve)
+ #ifdef CONFIG_SYSFS
+ 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
+ 	ve->sysfs_mnt = NULL;
+-	BUG_ON(atomic_read(&ve->sysfs_root->s_count) != 1);
+-	kfree(ve->sysfs_root);
++	sysfs_put(ve->sysfs_root);
+ 	ve->sysfs_root = NULL;
+ 	/* sysfs_fstype is freed in real_put_ve -> free_ve_filesystems */
+ #endif
