@@ -1591,10 +1591,10 @@ match_security(struct TCP_Server_Info *server, struct smb_vol *vol)
 
 	/* now check if signing mode is acceptible */
 	if ((secFlags & CIFSSEC_MAY_SIGN) == 0 &&
-	    (server->secMode & SECMODE_SIGN_REQUIRED))
+	    (server->sec_mode & SECMODE_SIGN_REQUIRED))
 			return false;
 	else if (((secFlags & CIFSSEC_MUST_SIGN) == CIFSSEC_MUST_SIGN) &&
-		 (server->secMode &
+		 (server->sec_mode &
 		  (SECMODE_SIGN_ENABLED|SECMODE_SIGN_REQUIRED)) == 0)
 			return false;
 
@@ -3005,7 +3005,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 	pSMB->AndXCommand = 0xFF;
 	pSMB->Flags = cpu_to_le16(TCON_EXTENDED_SECINFO);
 	bcc_ptr = &pSMB->Password[0];
-	if ((ses->server->secMode) & SECMODE_USER) {
+	if ((ses->server->sec_mode) & SECMODE_USER) {
 		pSMB->PasswordLength = cpu_to_le16(1);	/* minimum */
 		*bcc_ptr = 0; /* password is null byte */
 		bcc_ptr++;              /* skip password */
@@ -3022,7 +3022,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 		if ((global_secflags & CIFSSEC_MAY_LANMAN) &&
 		    (ses->server->secType == LANMAN))
 			calc_lanman_hash(tcon->password, ses->server->cryptkey,
-					 ses->server->secMode &
+					 ses->server->sec_mode &
 					    SECMODE_PW_ENCRYPT ? true : false,
 					 bcc_ptr);
 		else
@@ -3038,7 +3038,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 		}
 	}
 
-	if (ses->server->secMode &
+	if (ses->server->sec_mode &
 			(SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 		smb_buffer->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
@@ -3200,7 +3200,7 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
 		ses->capabilities &= (~CAP_UNIX);
 
 	cFYI(1, "Security Mode: 0x%x Capabilities: 0x%x TimeAdjust: %d",
-		 server->secMode, server->capabilities, server->timeAdj);
+		 server->sec_mode, server->capabilities, server->timeAdj);
 
 	rc = CIFS_SessSetup(xid, ses, nls_info);
 	if (rc) {

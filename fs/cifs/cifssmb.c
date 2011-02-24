@@ -442,7 +442,7 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
 			rc = -EOPNOTSUPP;
 			goto neg_err_exit;
 		}
-		server->secMode = (__u8)le16_to_cpu(rsp->SecurityMode);
+		server->sec_mode = le16_to_cpu(rsp->SecurityMode);
 		server->maxReq = le16_to_cpu(rsp->MaxMpxCount);
 		server->maxBuf = min((__u32)le16_to_cpu(rsp->MaxBufSize),
 				(__u32)CIFSMaxBufSize + MAX_CIFS_HDR_SIZE);
@@ -496,7 +496,7 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
 				cpu_to_le16(CIFS_CRYPTO_KEY_SIZE)) {
 			memcpy(ses->server->cryptkey, rsp->EncryptionKey,
 				CIFS_CRYPTO_KEY_SIZE);
-		} else if (server->secMode & SECMODE_PW_ENCRYPT) {
+		} else if (server->sec_mode & SECMODE_PW_ENCRYPT) {
 			rc = -EIO; /* need cryptkey unless plain text */
 			goto neg_err_exit;
 		}
@@ -518,11 +518,11 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
 		goto neg_err_exit;
 	}
 	/* else wct == 17 NTLM */
-	server->secMode = pSMBr->SecurityMode;
-	if ((server->secMode & SECMODE_USER) == 0)
+	server->sec_mode = pSMBr->SecurityMode;
+	if ((server->sec_mode & SECMODE_USER) == 0)
 		cFYI(1, "share mode security");
 
-	if ((server->secMode & SECMODE_PW_ENCRYPT) == 0)
+	if ((server->sec_mode & SECMODE_PW_ENCRYPT) == 0)
 #ifdef CONFIG_CIFS_WEAK_PW_HASH
 		if ((secFlags & CIFSSEC_MAY_PLNTXT) == 0)
 #endif /* CIFS_WEAK_PW_HASH */
@@ -569,7 +569,7 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
 	} else if ((pSMBr->hdr.Flags2 & SMBFLG2_EXT_SEC)
 			&& (pSMBr->EncryptionKeyLength == 0)) {
 		/* decode security blob */
-	} else if (server->secMode & SECMODE_PW_ENCRYPT) {
+	} else if (server->sec_mode & SECMODE_PW_ENCRYPT) {
 		rc = -EIO; /* no crypt key only if plain text pwd */
 		goto neg_err_exit;
 	}
@@ -630,27 +630,27 @@ signing_check:
 		/* MUST_SIGN already includes the MAY_SIGN FLAG
 		   so if this is zero it means that signing is disabled */
 		cFYI(1, "Signing disabled");
-		if (server->secMode & SECMODE_SIGN_REQUIRED) {
+		if (server->sec_mode & SECMODE_SIGN_REQUIRED) {
 			cERROR(1, "Server requires "
 				   "packet signing to be enabled in "
 				   "/proc/fs/cifs/SecurityFlags.");
 			rc = -EOPNOTSUPP;
 		}
-		server->secMode &=
+		server->sec_mode &=
 			~(SECMODE_SIGN_ENABLED | SECMODE_SIGN_REQUIRED);
 	} else if ((secFlags & CIFSSEC_MUST_SIGN) == CIFSSEC_MUST_SIGN) {
 		/* signing required */
 		cFYI(1, "Must sign - secFlags 0x%x", secFlags);
-		if ((server->secMode &
+		if ((server->sec_mode &
 			(SECMODE_SIGN_ENABLED | SECMODE_SIGN_REQUIRED)) == 0) {
 			cERROR(1, "signing required but server lacks support");
 			rc = -EOPNOTSUPP;
 		} else
-			server->secMode |= SECMODE_SIGN_REQUIRED;
+			server->sec_mode |= SECMODE_SIGN_REQUIRED;
 	} else {
 		/* signing optional ie CIFSSEC_MAY_SIGN */
-		if ((server->secMode & SECMODE_SIGN_REQUIRED) == 0)
-			server->secMode &=
+		if ((server->sec_mode & SECMODE_SIGN_REQUIRED) == 0)
+			server->sec_mode &=
 				~(SECMODE_SIGN_ENABLED | SECMODE_SIGN_REQUIRED);
 	}
 
@@ -774,7 +774,7 @@ CIFSSMBLogoff(const int xid, struct cifsSesInfo *ses)
 
 	pSMB->hdr.Mid = GetNextMid(ses->server);
 
-	if (ses->server->secMode &
+	if (ses->server->sec_mode &
 		   (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 			pSMB->hdr.Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
@@ -4228,7 +4228,7 @@ getDFSRetry:
 	}
 
 	if (ses->server) {
-		if (ses->server->secMode &
+		if (ses->server->sec_mode &
 		   (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 			pSMB->hdr.Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 	}
