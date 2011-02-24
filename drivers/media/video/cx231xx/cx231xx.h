@@ -64,6 +64,7 @@
 #define CX231XX_BOARD_HAUPPAUGE_EXETER  8
 #define CX231XX_BOARD_HAUPPAUGE_USBLIVE2 9
 #define CX231XX_BOARD_PV_PLAYTV_USB_HYBRID 10
+#define CX231XX_BOARD_PV_XCAPTURE_USB 11
 
 /* Limits minimum and default number of buffers */
 #define CX231XX_MIN_BUF                 4
@@ -353,7 +354,11 @@ struct cx231xx_board {
 
 	unsigned int max_range_640_480:1;
 	unsigned int has_dvb:1;
+	unsigned int has_417:1;
 	unsigned int valid:1;
+	unsigned int no_alt_vanc:1;
+	unsigned int external_av:1;
+	unsigned int dont_use_port_3:1;
 
 	unsigned char xclk, i2c_speed;
 

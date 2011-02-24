@@ -750,6 +750,7 @@ config SOC_CAMERA
 	tristate "SoC camera support"
 	depends on VIDEO_V4L2 && HAS_DMA && I2C
 	select VIDEOBUF_GEN
+	select VIDEOBUF2_CORE
 	help
 	  SoC Camera is a common API to several cameras, not connecting
 	  over a bus like PCI or USB. For example some i2c camera connected
@@ -837,6 +838,12 @@ config SOC_CAMERA_OV9640
 	help
 	  This is a ov9640 camera driver
 
+config SOC_CAMERA_OV9740
+	tristate "ov9740 camera support"
+	depends on SOC_CAMERA && I2C
+	help
+	  This is a ov9740 camera driver
+
 config MX1_VIDEO
 	bool
 
@@ -876,7 +883,7 @@ config VIDEO_SH_MOBILE_CSI2
 config VIDEO_SH_MOBILE_CEU
 	tristate "SuperH Mobile CEU Interface driver"
 	depends on VIDEO_DEV && SOC_CAMERA && HAS_DMA && HAVE_CLK
-	select VIDEOBUF_DMA_CONTIG
+	select VIDEOBUF2_DMA_CONTIG
 	---help---
 	  This is a v4l2 driver for the SuperH Mobile CEU Interface
 

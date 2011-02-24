@@ -305,7 +305,7 @@ static int ds3000_writeFW(struct ds3000_state *state, int reg,
 	struct i2c_msg msg;
 	u8 *buf;
 
-	buf = kmalloc(3, GFP_KERNEL);
+	buf = kmalloc(33, GFP_KERNEL);
 	if (buf == NULL) {
 		printk(KERN_ERR "Unable to kmalloc\n");
 		ret = -ENOMEM;
@@ -317,10 +317,10 @@ static int ds3000_writeFW(struct ds3000_state *state, int reg,
 	msg.addr = state->config->demod_address;
 	msg.flags = 0;
 	msg.buf = buf;
-	msg.len = 3;
+	msg.len = 33;
 
-	for (i = 0; i < len; i += 2) {
-		memcpy(buf + 1, data + i, 2);
+	for (i = 0; i < len; i += 32) {
+		memcpy(buf + 1, data + i, 32);
 
 		dprintk("%s: write reg 0x%02x, len = %d\n", __func__, reg, len);
 
@@ -1029,14 +1029,6 @@ static int ds3000_tune(struct dvb_frontend *fe,
 
 	dprintk("%s() ", __func__);
 
-	/* Load the firmware if required */
-	ret = ds3000_firmware_ondemand(fe);
-	if (ret != 0) {
-		printk(KERN_ERR "%s: Unable initialise the firmware\n",
-								__func__);
-		return ret;
-	}
-
 	state->dnxt.delivery = c->modulation;
 	state->dnxt.frequency = c->frequency;
 	state->dnxt.rolloff = 2; /* fixme */
@@ -1065,10 +1057,6 @@ static int ds3000_tune(struct dvb_frontend *fe,
 		/* Reset status register */
 		status = 0;
 		/* Tune */
-		/* TS2020 init */
-		ds3000_tuner_writereg(state, 0x42, 0x73);
-		ds3000_tuner_writereg(state, 0x05, 0x01);
-		ds3000_tuner_writereg(state, 0x62, 0xf5);
 		/* unknown */
 		ds3000_tuner_writereg(state, 0x07, 0x02);
 		ds3000_tuner_writereg(state, 0x10, 0x00);
@@ -1207,7 +1195,7 @@ static int ds3000_tune(struct dvb_frontend *fe,
 				ds3000_writereg(state,
 					ds3000_dvbs2_init_tab[i],
 					ds3000_dvbs2_init_tab[i + 1]);
-			ds3000_writereg(state, 0xfe, 0x54);
+			ds3000_writereg(state, 0xfe, 0x98);
 			break;
 		default:
 			return 1;
@@ -1306,7 +1294,25 @@ static enum dvbfe_algo ds3000_get_algo(struct dvb_frontend *fe)
  */
 static int ds3000_initfe(struct dvb_frontend *fe)
 {
+	struct ds3000_state *state = fe->demodulator_priv;
+	int ret;
+
 	dprintk("%s()\n", __func__);
+	/* hard reset */
+	ds3000_writereg(state, 0x08, 0x01 | ds3000_readreg(state, 0x08));
+	msleep(1);
+
+	/* TS2020 init */
+	ds3000_tuner_writereg(state, 0x42, 0x73);
+	ds3000_tuner_writereg(state, 0x05, 0x01);
+	ds3000_tuner_writereg(state, 0x62, 0xf5);
+	/* Load the firmware if required */
+	ret = ds3000_firmware_ondemand(fe);
+	if (ret != 0) {
+		printk(KERN_ERR "%s: Unable initialize firmware\n", __func__);
+		return ret;
+	}
+
 	return 0;
 }
 
