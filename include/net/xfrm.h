@@ -36,6 +36,7 @@
 #define XFRM_PROTO_ROUTING	IPPROTO_ROUTING
 #define XFRM_PROTO_DSTOPTS	IPPROTO_DSTOPTS
 
+#define XFRM_ALIGN4(len)	(((len) + 3) & ~3)
 #define XFRM_ALIGN8(len)	(((len) + 7) & ~7)
 #define MODULE_ALIAS_XFRM_MODE(family, encap) \
 	MODULE_ALIAS("xfrm-mode-" __stringify(family) "-" __stringify(encap))
@@ -272,13 +273,13 @@ struct xfrm_policy_afinfo {
 	void			(*decode_session)(struct sk_buff *skb,
 						  struct flowi *fl,
 						  int reverse);
-	int			(*get_tos)(struct flowi *fl);
+	int			(*get_tos)(const struct flowi *fl);
 	int			(*init_path)(struct xfrm_dst *path,
 					     struct dst_entry *dst,
 					     int nfheader_len);
 	int			(*fill_dst)(struct xfrm_dst *xdst,
 					    struct net_device *dev,
-					    struct flowi *fl);
+					    const struct flowi *fl);
 };
 
 extern int xfrm_policy_register_afinfo(struct xfrm_policy_afinfo *afinfo);
@@ -299,7 +300,8 @@ struct xfrm_state_afinfo {
 	const struct xfrm_type	*type_map[IPPROTO_MAX];
 	struct xfrm_mode	*mode_map[XFRM_MODE_MAX];
 	int			(*init_flags)(struct xfrm_state *x);
-	void			(*init_tempsel)(struct xfrm_selector *sel, struct flowi *fl);
+	void			(*init_tempsel)(struct xfrm_selector *sel,
+						const struct flowi *fl);
 	void			(*init_temprop)(struct xfrm_state *x, struct xfrm_tmpl *tmpl,
 						xfrm_address_t *daddr, xfrm_address_t *saddr);
 	int			(*tmpl_sort)(struct xfrm_tmpl **dst, struct xfrm_tmpl **src, int n);
@@ -332,7 +334,8 @@ struct xfrm_type {
 	void			(*destructor)(struct xfrm_state *);
 	int			(*input)(struct xfrm_state *, struct sk_buff *skb);
 	int			(*output)(struct xfrm_state *, struct sk_buff *pskb);
-	int			(*reject)(struct xfrm_state *, struct sk_buff *, struct flowi *);
+	int			(*reject)(struct xfrm_state *, struct sk_buff *,
+					  const struct flowi *);
 	int			(*hdr_offset)(struct xfrm_state *, struct sk_buff *, u8 **);
 	/* Estimate maximal size of result of transformation of a dgram */
 	u32			(*get_mtu)(struct xfrm_state *, int size);
@@ -762,10 +765,11 @@ static inline void xfrm_state_hold(struct xfrm_state *x)
 	atomic_inc(&x->refcnt);
 }
 
-static __inline__ int addr_match(void *token1, void *token2, int prefixlen)
+static inline bool addr_match(const void *token1, const void *token2,
+			      int prefixlen)
 {
-	__be32 *a1 = token1;
-	__be32 *a2 = token2;
+	const __be32 *a1 = token1;
+	const __be32 *a2 = token2;
 	int pdw;
 	int pbi;
 
@@ -774,7 +778,7 @@ static __inline__ int addr_match(void *token1, void *token2, int prefixlen)
 
 	if (pdw)
 		if (memcmp(a1, a2, pdw << 2))
-			return 0;
+			return false;
 
 	if (pbi) {
 		__be32 mask;
@@ -782,14 +786,14 @@ static __inline__ int addr_match(void *token1, void *token2, int prefixlen)
 		mask = htonl((0xffffffff) << (32 - pbi));
 
 		if ((a1[pdw] ^ a2[pdw]) & mask)
-			return 0;
+			return false;
 	}
 
-	return 1;
+	return true;
 }
 
 static __inline__
-__be16 xfrm_flowi_sport(struct flowi *fl)
+__be16 xfrm_flowi_sport(const struct flowi *fl)
 {
 	__be16 port;
 	switch(fl->proto) {
@@ -816,7 +820,7 @@ __be16 xfrm_flowi_sport(struct flowi *fl)
 }
 
 static __inline__
-__be16 xfrm_flowi_dport(struct flowi *fl)
+__be16 xfrm_flowi_dport(const struct flowi *fl)
 {
 	__be16 port;
 	switch(fl->proto) {
@@ -839,7 +843,8 @@ __be16 xfrm_flowi_dport(struct flowi *fl)
 	return port;
 }
 
-extern int xfrm_selector_match(struct xfrm_selector *sel, struct flowi *fl,
+extern int xfrm_selector_match(struct xfrm_selector *sel,
+			       const struct flowi *fl,
 			       unsigned short family);
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
@@ -1126,7 +1131,7 @@ static inline int xfrm6_policy_check_reverse(struct sock *sk, int dir,
 #endif
 
 static __inline__
-xfrm_address_t *xfrm_flowi_daddr(struct flowi *fl, unsigned short family)
+xfrm_address_t *xfrm_flowi_daddr(const struct flowi *fl, unsigned short family)
 {
 	switch (family){
 	case AF_INET:
@@ -1138,7 +1143,7 @@ xfrm_address_t *xfrm_flowi_daddr(struct flowi *fl, unsigned short family)
 }
 
 static __inline__
-xfrm_address_t *xfrm_flowi_saddr(struct flowi *fl, unsigned short family)
+xfrm_address_t *xfrm_flowi_saddr(const struct flowi *fl, unsigned short family)
 {
 	switch (family){
 	case AF_INET:
@@ -1150,7 +1155,7 @@ xfrm_address_t *xfrm_flowi_saddr(struct flowi *fl, unsigned short family)
 }
 
 static __inline__
-void xfrm_flowi_addr_get(struct flowi *fl,
+void xfrm_flowi_addr_get(const struct flowi *fl,
 			 xfrm_address_t *saddr, xfrm_address_t *daddr,
 			 unsigned short family)
 {
@@ -1203,7 +1208,7 @@ xfrm_state_addr_check(struct xfrm_state *x,
 }
 
 static __inline__ int
-xfrm_state_addr_flow_check(struct xfrm_state *x, struct flowi *fl,
+xfrm_state_addr_flow_check(struct xfrm_state *x, const struct flowi *fl,
 			   unsigned short family)
 {
 	switch (family) {
@@ -1323,8 +1328,10 @@ extern int xfrm_state_walk(struct net *net, struct xfrm_state_walk *walk,
 			   int (*func)(struct xfrm_state *, int, void*), void *);
 extern void xfrm_state_walk_done(struct xfrm_state_walk *walk);
 extern struct xfrm_state *xfrm_state_alloc(struct net *net);
-extern struct xfrm_state *xfrm_state_find(xfrm_address_t *daddr, xfrm_address_t *saddr, 
-					  struct flowi *fl, struct xfrm_tmpl *tmpl,
+extern struct xfrm_state *xfrm_state_find(xfrm_address_t *daddr,
+					  xfrm_address_t *saddr, 
+					  const struct flowi *fl,
+					  struct xfrm_tmpl *tmpl,
 					  struct xfrm_policy *pol, int *err,
 					  unsigned short family);
 extern struct xfrm_state *xfrm_stateonly_find(struct net *net, u32 mark,
