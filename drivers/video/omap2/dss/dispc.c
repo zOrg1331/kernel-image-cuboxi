@@ -32,6 +32,7 @@
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/hardirq.h>
+#include <linux/interrupt.h>
 
 #include <plat/sram.h>
 #include <plat/clock.h>
@@ -42,8 +43,6 @@
 #include "dss_features.h"
 
 /* DISPC */
-#define DISPC_BASE			0x48050400
-
 #define DISPC_SZ_REGS			SZ_4K
 
 struct dispc_reg { u16 idx; };
@@ -178,7 +177,9 @@ struct dispc_irq_stats {
 };
 
 static struct {
+	struct platform_device *pdev;
 	void __iomem    *base;
+	int irq;
 
 	u32	fifo_size[3];
 
@@ -552,9 +553,9 @@ void dispc_restore_context(void)
 static inline void enable_clocks(bool enable)
 {
 	if (enable)
-		dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK1);
+		dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK);
 	else
-		dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK1);
+		dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK);
 }
 
 bool dispc_go_busy(enum omap_channel channel)
@@ -2312,7 +2313,7 @@ unsigned long dispc_fclk_rate(void)
 	unsigned long r = 0;
 
 	if (dss_get_dispc_clk_source() == DSS_SRC_DSS1_ALWON_FCLK)
-		r = dss_clk_get_rate(DSS_CLK_FCK1);
+		r = dss_clk_get_rate(DSS_CLK_FCK);
 	else
 #ifdef CONFIG_OMAP2_DSS_DSI
 		r = dsi_get_dsi1_pll_rate();
@@ -2440,7 +2441,7 @@ void dispc_dump_regs(struct seq_file *s)
 {
 #define DUMPREG(r) seq_printf(s, "%-35s %08x\n", #r, dispc_read_reg(r))
 
-	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK);
 
 	DUMPREG(DISPC_REVISION);
 	DUMPREG(DISPC_SYSCONFIG);
@@ -2597,7 +2598,7 @@ void dispc_dump_regs(struct seq_file *s)
 	DUMPREG(DISPC_VID_PRELOAD(0));
 	DUMPREG(DISPC_VID_PRELOAD(1));
 
-	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK);
 #undef DUMPREG
 }
 
@@ -2866,10 +2867,10 @@ static void print_irq_status(u32 status)
  * but we presume they are on because we got an IRQ. However,
  * an irq handler may turn the clocks off, so we may not have
  * clock later in the function. */
-void dispc_irq_handler(void)
+static irqreturn_t omap_dispc_irq_handler(int irq, void *arg)
 {
 	int i;
-	u32 irqstatus;
+	u32 irqstatus, irqenable;
 	u32 handledirqs = 0;
 	u32 unhandled_errors;
 	struct omap_dispc_isr_data *isr_data;
@@ -2878,6 +2879,13 @@ void dispc_irq_handler(void)
 	spin_lock(&dispc.irq_lock);
 
 	irqstatus = dispc_read_reg(DISPC_IRQSTATUS);
+	irqenable = dispc_read_reg(DISPC_IRQENABLE);
+
+	/* IRQ is not for us */
+	if (!(irqstatus & irqenable)) {
+		spin_unlock(&dispc.irq_lock);
+		return IRQ_NONE;
+	}
 
 #ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
 	spin_lock(&dispc.irq_stats_lock);
@@ -2929,6 +2937,8 @@ void dispc_irq_handler(void)
 	}
 
 	spin_unlock(&dispc.irq_lock);
+
+	return IRQ_HANDLED;
 }
 
 static void dispc_error_worker(struct work_struct *work)
@@ -3269,47 +3279,6 @@ static void _omap_dispc_initial_config(void)
 	dispc_read_plane_fifo_sizes();
 }
 
-int dispc_init(void)
-{
-	u32 rev;
-
-	spin_lock_init(&dispc.irq_lock);
-
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-	spin_lock_init(&dispc.irq_stats_lock);
-	dispc.irq_stats.last_reset = jiffies;
-#endif
-
-	INIT_WORK(&dispc.error_work, dispc_error_worker);
-
-	dispc.base = ioremap(DISPC_BASE, DISPC_SZ_REGS);
-	if (!dispc.base) {
-		DSSERR("can't ioremap DISPC\n");
-		return -ENOMEM;
-	}
-
-	enable_clocks(1);
-
-	_omap_dispc_initial_config();
-
-	_omap_dispc_initialize_irq();
-
-	dispc_save_context();
-
-	rev = dispc_read_reg(DISPC_REVISION);
-	printk(KERN_INFO "OMAP DISPC rev %d.%d\n",
-	       FLD_GET(rev, 7, 4), FLD_GET(rev, 3, 0));
-
-	enable_clocks(0);
-
-	return 0;
-}
-
-void dispc_exit(void)
-{
-	iounmap(dispc.base);
-}
-
 int dispc_enable_plane(enum omap_plane plane, bool enable)
 {
 	DSSDBG("dispc_enable_plane %d, %d\n", plane, enable);
@@ -3358,4 +3327,95 @@ int dispc_setup_plane(enum omap_plane plane,
 	enable_clocks(0);
 
 	return r;
+}
+
+/* DISPC HW IP initialisation */
+static int omap_dispchw_probe(struct platform_device *pdev)
+{
+	u32 rev;
+	int r = 0;
+	struct resource *dispc_mem;
+
+	dispc.pdev = pdev;
+
+	spin_lock_init(&dispc.irq_lock);
+
+#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
+	spin_lock_init(&dispc.irq_stats_lock);
+	dispc.irq_stats.last_reset = jiffies;
+#endif
+
+	INIT_WORK(&dispc.error_work, dispc_error_worker);
+
+	dispc_mem = platform_get_resource(dispc.pdev, IORESOURCE_MEM, 0);
+	if (!dispc_mem) {
+		DSSERR("can't get IORESOURCE_MEM DISPC\n");
+		r = -EINVAL;
+		goto fail0;
+	}
+	dispc.base = ioremap(dispc_mem->start, resource_size(dispc_mem));
+	if (!dispc.base) {
+		DSSERR("can't ioremap DISPC\n");
+		r = -ENOMEM;
+		goto fail0;
+	}
+	dispc.irq = platform_get_irq(dispc.pdev, 0);
+	if (dispc.irq < 0) {
+		DSSERR("platform_get_irq failed\n");
+		r = -ENODEV;
+		goto fail1;
+	}
+
+	r = request_irq(dispc.irq, omap_dispc_irq_handler, IRQF_SHARED,
+		"OMAP DISPC", dispc.pdev);
+	if (r < 0) {
+		DSSERR("request_irq failed\n");
+		goto fail1;
+	}
+
+	enable_clocks(1);
+
+	_omap_dispc_initial_config();
+
+	_omap_dispc_initialize_irq();
+
+	dispc_save_context();
+
+	rev = dispc_read_reg(DISPC_REVISION);
+	dev_dbg(&pdev->dev, "OMAP DISPC rev %d.%d\n",
+	       FLD_GET(rev, 7, 4), FLD_GET(rev, 3, 0));
+
+	enable_clocks(0);
+
+	return 0;
+fail1:
+	iounmap(dispc.base);
+fail0:
+	return r;
+}
+
+static int omap_dispchw_remove(struct platform_device *pdev)
+{
+	free_irq(dispc.irq, dispc.pdev);
+	iounmap(dispc.base);
+	return 0;
+}
+
+static struct platform_driver omap_dispchw_driver = {
+	.probe          = omap_dispchw_probe,
+	.remove         = omap_dispchw_remove,
+	.driver         = {
+		.name   = "omap_dispc",
+		.owner  = THIS_MODULE,
+	},
+};
+
+int dispc_init_platform_driver(void)
+{
+	return platform_driver_register(&omap_dispchw_driver);
+}
+
+void dispc_uninit_platform_driver(void)
+{
+	return platform_driver_unregister(&omap_dispchw_driver);
 }
