@@ -179,7 +179,7 @@ struct TCP_Server_Info {
 	struct mutex srv_mutex;
 	struct task_struct *tsk;
 	char server_GUID[16];
-	char secMode;
+	__u16 sec_mode;
 	bool session_estab; /* mark when very first sess is established */
 	u16 dialect; /* dialect index that server chose */
 	enum securityEnum secType;
@@ -219,6 +219,15 @@ struct TCP_Server_Info {
 	atomic_t inSend; /* requests trying to send */
 	atomic_t num_waiters;   /* blocked waiting to get in sendrecv */
 #endif
+#ifdef CONFIG_CIFS_SMB2
+	wait_queue_head_t read_q; /* used by readpages */
+	atomic_t active_readpage_req; /* used by readpages */
+	atomic_t resp_rdy; /* used by readpages and demultiplex */
+	bool smb21_dialect:1;	/* True if newer SMB2.1 dialect */
+	struct task_struct *observe;
+	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE]; /* BB can we use cifs key */
+	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
+#endif /* CONFIG_CIFS_SMB2 */
 };
 
 /*
@@ -289,6 +298,7 @@ struct cifsSesInfo {
    which do not negotiate NTLM or POSIX dialects, but instead
    negotiate one of the older LANMAN dialects */
 #define CIFS_SES_LANMAN 8
+#define CIFS_SES_SMB2 16
 /*
  * there is one of these for each connection to a resource on a particular
  * session

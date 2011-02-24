@@ -360,7 +360,7 @@ cifs_call_async(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 		return rc;
 
 	/* enable signing if server requires it */
-	if (server->secMode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+	if (server->sec_mode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 		in_buf->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
 	mutex_lock(&server->srv_mutex);
@@ -636,7 +636,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(midQ->resp_buf, 80);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(midQ->resp_buf,
 						ses->server,
@@ -789,7 +789,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(out_buf, 92);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(out_buf,
 						ses->server,
@@ -1001,7 +1001,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	dump_smb(out_buf, 92);
 	/* convert the length into a more usable form */
 	if ((receive_len > 24) &&
-	    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+	    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 				     SECMODE_SIGN_ENABLED))) {
 		rc = cifs_verify_signature(out_buf,
 					   ses->server,
