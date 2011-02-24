@@ -359,6 +359,7 @@ int security_path_mkdir(struct path *dir, struct dentry *dentry, int mode)
 		return 0;
 	return security_ops->path_mkdir(dir, dentry, mode);
 }
+EXPORT_SYMBOL(security_path_mkdir);
 
 int security_path_rmdir(struct path *dir, struct dentry *dentry)
 {
@@ -373,6 +374,7 @@ int security_path_unlink(struct path *dir, struct dentry *dentry)
 		return 0;
 	return security_ops->path_unlink(dir, dentry);
 }
+EXPORT_SYMBOL(security_path_unlink);
 
 int security_path_symlink(struct path *dir, struct dentry *dentry,
 			  const char *old_name)
@@ -399,6 +401,7 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
 	return security_ops->path_rename(old_dir, old_dentry, new_dir,
 					 new_dentry);
 }
+EXPORT_SYMBOL(security_path_rename);
 
 int security_path_truncate(struct path *path)
 {
