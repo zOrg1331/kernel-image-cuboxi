@@ -249,6 +249,53 @@ static const struct file_operations cifs_debug_data_proc_fops = {
 };
 
 #ifdef CONFIG_CIFS_STATS
+
+#ifdef CONFIG_CIFS_SMB2
+static void smb2_clear_stats(struct smb2_tcon *tcon)
+{
+	int i;
+
+	atomic_set(&tcon->num_smbs_sent, 0);
+	for (i = 0; i < NUMBER_OF_SMB2_COMMANDS; i++) {
+		atomic_set(&tcon->stats->smb2_stats->smb2_com_sent[i], 0);
+		atomic_set(&tcon->stats->smb2_stats->smb2_com_fail[i], 0);
+	}
+}
+#endif /* CONFIG_CIFS_SMB2 */
+
+static void clear_cifs_stats(struct cifsTconInfo *tcon)
+{
+	atomic_set(&tcon->num_smbs_sent, 0);
+
+#ifdef CONFIG_CIFS_SMB2
+	if (tcon->ses->server->is_smb2)
+		return smb2_clear_smb2_stats;
+#endif /* CONFIG_CIFS_SMB2 */
+
+	/* cifs specific statistics, not applicable to smb2 sessions */
+	atomic_set(&tcon->stats.cifs_stats.num_writes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_reads, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_flushes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_oplock_brks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_opens, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_posixopens, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_posixmkdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_closes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_deletes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_mkdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_rmdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_renames, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_t2renames, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_ffirst, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_fnext, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_fclose, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_hardlinks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_symlinks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_locks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_acl_get, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_acl_set, 0);
+}
+
 static ssize_t cifs_stats_proc_write(struct file *file,
 		const char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -279,25 +326,7 @@ static ssize_t cifs_stats_proc_write(struct file *file,
 					tcon = list_entry(tmp3,
 							  struct cifsTconInfo,
 							  tcon_list);
-					atomic_set(&tcon->num_smbs_sent, 0);
-					atomic_set(&tcon->num_writes, 0);
-					atomic_set(&tcon->num_reads, 0);
-					atomic_set(&tcon->num_oplock_brks, 0);
-					atomic_set(&tcon->num_opens, 0);
-					atomic_set(&tcon->num_posixopens, 0);
-					atomic_set(&tcon->num_posixmkdirs, 0);
-					atomic_set(&tcon->num_closes, 0);
-					atomic_set(&tcon->num_deletes, 0);
-					atomic_set(&tcon->num_mkdirs, 0);
-					atomic_set(&tcon->num_rmdirs, 0);
-					atomic_set(&tcon->num_renames, 0);
-					atomic_set(&tcon->num_t2renames, 0);
-					atomic_set(&tcon->num_ffirst, 0);
-					atomic_set(&tcon->num_fnext, 0);
-					atomic_set(&tcon->num_fclose, 0);
-					atomic_set(&tcon->num_hardlinks, 0);
-					atomic_set(&tcon->num_symlinks, 0);
-					atomic_set(&tcon->num_locks, 0);
+					clear_cifs_stats(tcon);
 				}
 			}
 		}
@@ -305,6 +334,44 @@ static ssize_t cifs_stats_proc_write(struct file *file,
 	}
 
 	return count;
+}
+
+static void cifs_stats_print(struct seq_file *m, struct cifsTconInfo *tcon)
+{
+	if (tcon->need_reconnect)
+		seq_puts(m, "\tDISCONNECTED ");
+	seq_printf(m, "\nSMBs: %d Oplock Breaks: %d",
+		atomic_read(&tcon->num_smbs_sent),
+		atomic_read(&tcon->stats.cifs_stats.num_oplock_brks));
+	seq_printf(m, "\nReads:  %d Bytes: %lld",
+		atomic_read(&tcon->stats.cifs_stats.num_reads),
+		(long long)(tcon->bytes_read));
+	seq_printf(m, "\nWrites: %d Bytes: %lld",
+		atomic_read(&tcon->stats.cifs_stats.num_writes),
+		(long long)(tcon->bytes_written));
+	seq_printf(m, "\nFlushes: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_flushes));
+	seq_printf(m, "\nLocks: %d HardLinks: %d Symlinks: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_locks),
+		atomic_read(&tcon->stats.cifs_stats.num_hardlinks),
+		atomic_read(&tcon->stats.cifs_stats.num_symlinks));
+	seq_printf(m, "\nOpens: %d Closes: %d Deletes: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_opens),
+		atomic_read(&tcon->stats.cifs_stats.num_closes),
+		atomic_read(&tcon->stats.cifs_stats.num_deletes));
+	seq_printf(m, "\nPosix Opens: %d Posix Mkdirs: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_posixopens),
+		atomic_read(&tcon->stats.cifs_stats.num_posixmkdirs));
+	seq_printf(m, "\nMkdirs: %d Rmdirs: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_mkdirs),
+		atomic_read(&tcon->stats.cifs_stats.num_rmdirs));
+	seq_printf(m, "\nRenames: %d T2 Renames %d",
+		atomic_read(&tcon->stats.cifs_stats.num_renames),
+		atomic_read(&tcon->stats.cifs_stats.num_t2renames));
+	seq_printf(m, "\nFindFirst: %d FNext %d FClose %d",
+		atomic_read(&tcon->stats.cifs_stats.num_ffirst),
+		atomic_read(&tcon->stats.cifs_stats.num_fnext),
+		atomic_read(&tcon->stats.cifs_stats.num_fclose));
 }
 
 static int cifs_stats_proc_show(struct seq_file *m, void *v)
@@ -354,44 +421,7 @@ static int cifs_stats_proc_show(struct seq_file *m, void *v)
 						  tcon_list);
 				i++;
 				seq_printf(m, "\n%d) %s", i, tcon->treeName);
-				if (tcon->need_reconnect)
-					seq_puts(m, "\tDISCONNECTED ");
-				seq_printf(m, "\nSMBs: %d Oplock Breaks: %d",
-					atomic_read(&tcon->num_smbs_sent),
-					atomic_read(&tcon->num_oplock_brks));
-				seq_printf(m, "\nReads:  %d Bytes: %lld",
-					atomic_read(&tcon->num_reads),
-					(long long)(tcon->bytes_read));
-				seq_printf(m, "\nWrites: %d Bytes: %lld",
-					atomic_read(&tcon->num_writes),
-					(long long)(tcon->bytes_written));
-				seq_printf(m, "\nFlushes: %d",
-					atomic_read(&tcon->num_flushes));
-				seq_printf(m, "\nLocks: %d HardLinks: %d "
-					      "Symlinks: %d",
-					atomic_read(&tcon->num_locks),
-					atomic_read(&tcon->num_hardlinks),
-					atomic_read(&tcon->num_symlinks));
-				seq_printf(m, "\nOpens: %d Closes: %d "
-					      "Deletes: %d",
-					atomic_read(&tcon->num_opens),
-					atomic_read(&tcon->num_closes),
-					atomic_read(&tcon->num_deletes));
-				seq_printf(m, "\nPosix Opens: %d "
-					      "Posix Mkdirs: %d",
-					atomic_read(&tcon->num_posixopens),
-					atomic_read(&tcon->num_posixmkdirs));
-				seq_printf(m, "\nMkdirs: %d Rmdirs: %d",
-					atomic_read(&tcon->num_mkdirs),
-					atomic_read(&tcon->num_rmdirs));
-				seq_printf(m, "\nRenames: %d T2 Renames %d",
-					atomic_read(&tcon->num_renames),
-					atomic_read(&tcon->num_t2renames));
-				seq_printf(m, "\nFindFirst: %d FNext %d "
-					      "FClose %d",
-					atomic_read(&tcon->num_ffirst),
-					atomic_read(&tcon->num_fnext),
-					atomic_read(&tcon->num_fclose));
+				cifs_stats_print(m, tcon);
 			}
 		}
 	}
