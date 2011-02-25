@@ -86,8 +86,10 @@ static struct rcu_state *rcu_state;
 int rcu_scheduler_active __read_mostly;
 EXPORT_SYMBOL_GPL(rcu_scheduler_active);
 
-/* Control variables for per-CPU and per-rcu_node kthreads. */
-
+/*
+ * Control variables for per-CPU and per-rcu_node kthreads.  These
+ * handle all flavors of RCU.
+ */
 static DEFINE_PER_CPU(struct task_struct *, rcu_cpu_kthread_task);
 static DEFINE_PER_CPU(wait_queue_head_t, rcu_cpu_wq);
 static DEFINE_PER_CPU(char, rcu_cpu_has_work);
@@ -1027,6 +1029,8 @@ static void rcu_send_cbs_to_online(struct rcu_state *rsp)
 /*
  * Remove the outgoing CPU from the bitmasks in the rcu_node hierarchy
  * and move all callbacks from the outgoing CPU to the current one.
+ * There can only be one CPU hotplug operation at a time, so no other
+ * CPU can be attempting to update rcu_cpu_kthread_task.
  */
 static void __rcu_offline_cpu(int cpu, struct rcu_state *rsp)
 {
@@ -1424,7 +1428,9 @@ static void rcu_process_callbacks(void)
 
 /*
  * Wake up the current CPU's kthread.  This replaces raise_softirq()
- * in earlier versions of RCU.
+ * in earlier versions of RCU.  Note that because we are running on
+ * the current CPU with interrupts disabled, the rcu_cpu_kthread_task
+ * cannot disappear out from under us.
  */
 static void invoke_rcu_cpu_kthread(void)
 {
@@ -1561,6 +1567,10 @@ static int rcu_cpu_kthread(void *arg)
 
 /*
  * Spawn a per-CPU kthread, setting up affinity and priority.
+ * Because the CPU hotplug lock is held, no other CPU will be attempting
+ * to manipulate rcu_cpu_kthread_task.  There might be another CPU
+ * attempting to access it during boot, but the locking in kthread_bind()
+ * will enforce sufficient ordering.
  */
 static int __cpuinit rcu_spawn_one_cpu_kthread(int cpu)
 {
@@ -1584,7 +1594,9 @@ static int __cpuinit rcu_spawn_one_cpu_kthread(int cpu)
 
 /*
  * Per-rcu_node kthread, which is in charge of waking up the per-CPU
- * kthreads when needed.
+ * kthreads when needed.  We ignore requests to wake up kthreads
+ * for offline CPUs, which is OK because force_quiescent_state()
+ * takes care of this case.
  */
 static int rcu_node_kthread(void *arg)
 {
@@ -1609,12 +1621,12 @@ static int rcu_node_kthread(void *arg)
 			if ((mask & 0x1) == 0)
 				continue;
 			preempt_disable();
-			per_cpu(rcu_cpu_has_work, cpu) = 1;
 			t = per_cpu(rcu_cpu_kthread_task, cpu);
-			if (t == NULL) {
+			if (!cpu_online(cpu) || t == NULL) {
 				preempt_enable();
 				continue;
 			}
+			per_cpu(rcu_cpu_has_work, cpu) = 1;
 			sp.sched_priority = RCU_KTHREAD_PRIO;
 			sched_setscheduler_nocheck(t, SCHED_FIFO, &sp);
 			preempt_enable();
