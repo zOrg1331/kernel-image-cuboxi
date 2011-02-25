@@ -57,7 +57,7 @@
  *                Used by threaded interrupts which need to keep the
  *                irq line disabled until the threaded handler has been run.
  * IRQF_NO_SUSPEND - Do not disable this IRQ during suspend
- *
+ * IRQF_FORCE_RESUME - Force enable it on resume even if IRQF_NO_SUSPEND is set
  */
 #define IRQF_DISABLED		0x00000020
 #define IRQF_SAMPLE_RANDOM	0x00000040
@@ -69,22 +69,9 @@
 #define IRQF_IRQPOLL		0x00001000
 #define IRQF_ONESHOT		0x00002000
 #define IRQF_NO_SUSPEND		0x00004000
+#define IRQF_FORCE_RESUME	0x00008000
 
 #define IRQF_TIMER		(__IRQF_TIMER | IRQF_NO_SUSPEND)
-
-/*
- * Bits used by threaded handlers:
- * IRQTF_RUNTHREAD - signals that the interrupt handler thread should run
- * IRQTF_DIED      - handler thread died
- * IRQTF_WARNED    - warning "IRQ_WAKE_THREAD w/o thread_fn" has been printed
- * IRQTF_AFFINITY  - irq thread is requested to adjust affinity
- */
-enum {
-	IRQTF_RUNTHREAD,
-	IRQTF_DIED,
-	IRQTF_WARNED,
-	IRQTF_AFFINITY,
-};
 
 /*
  * These values can be returned by request_any_context_irq() and
@@ -345,16 +332,24 @@ static inline void enable_irq_lockdep_irqrestore(unsigned int irq, unsigned long
 }
 
 /* IRQ wakeup (PM) control: */
-extern int set_irq_wake(unsigned int irq, unsigned int on);
+extern int irq_set_irq_wake(unsigned int irq, unsigned int on);
+
+#ifndef CONFIG_GENERIC_HARDIRQS_NO_COMPAT
+/* Please do not use: Use the replacement functions instead */
+static inline int set_irq_wake(unsigned int irq, unsigned int on)
+{
+	return irq_set_irq_wake(irq, on);
+}
+#endif
 
 static inline int enable_irq_wake(unsigned int irq)
 {
-	return set_irq_wake(irq, 1);
+	return irq_set_irq_wake(irq, 1);
 }
 
 static inline int disable_irq_wake(unsigned int irq)
 {
-	return set_irq_wake(irq, 0);
+	return irq_set_irq_wake(irq, 0);
 }
 
 #else /* !CONFIG_GENERIC_HARDIRQS */
@@ -683,6 +678,7 @@ static inline void init_irq_proc(void)
 
 struct seq_file;
 int show_interrupts(struct seq_file *p, void *v);
+int arch_show_interrupts(struct seq_file *p, int prec);
 
 extern int early_irq_init(void);
 extern int arch_probe_nr_irqs(void);
