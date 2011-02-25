@@ -375,7 +375,6 @@ static struct xgi_hw_device_info XGIhw_ext;
 static struct vb_device_info  XGI_Pr;
 
 /* card parameters */
-static unsigned long XGIfb_mmio_size = 0;
 static u8            XGIfb_caps = 0;
 
 typedef enum _XGI_CMDTYPE {
@@ -798,7 +797,6 @@ extern void     fbcon_XGI_fillrect(struct fb_info *info,
                                    const struct fb_fillrect *rect);
 extern void     fbcon_XGI_copyarea(struct fb_info *info,
                                    const struct fb_copyarea *area);
-extern int      fbcon_XGI_sync(struct fb_info *info);
 
 static int XGIfb_ioctl(struct fb_info *info, unsigned int cmd,
 			    unsigned long arg);
