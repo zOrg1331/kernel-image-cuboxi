@@ -2,6 +2,9 @@ if ARCH_MXS
 
 source "arch/arm/mach-mxs/devices/Kconfig"
 
+config MXS_OCOTP
+	bool
+
 config SOC_IMX23
 	bool
 	select CPU_ARM926T
@@ -16,6 +19,7 @@ config MACH_MX23EVK
 	bool "Support MX23EVK Platform"
 	select SOC_IMX23
 	select MXS_HAVE_AMBA_DUART
+	select MXS_HAVE_PLATFORM_AUART
 	default y
 	help
 	  Include support for MX23EVK platform. This includes specific
@@ -25,7 +29,9 @@ config MACH_MX28EVK
 	bool "Support MX28EVK Platform"
 	select SOC_IMX28
 	select MXS_HAVE_AMBA_DUART
+	select MXS_HAVE_PLATFORM_AUART
 	select MXS_HAVE_PLATFORM_FEC
+	select MXS_OCOTP
 	default y
 	help
 	  Include support for MX28EVK platform. This includes specific

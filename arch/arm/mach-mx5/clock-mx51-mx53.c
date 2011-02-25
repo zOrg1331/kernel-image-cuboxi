@@ -867,10 +867,6 @@ static struct clk gpt_32k_clk = {
 	.parent = &ckil_clk,
 };
 
-static struct clk kpp_clk = {
-	.id = 0,
-};
-
 static struct clk dummy_clk = {
 	.id = 0,
 };
@@ -1302,7 +1298,7 @@ static struct clk_lookup mx51_lookups[] = {
 	_REGISTER_CLOCK("mxc-ehci.2", "usb_ahb", usb_ahb_clk)
 	_REGISTER_CLOCK("fsl-usb2-udc", "usb", usboh3_clk)
 	_REGISTER_CLOCK("fsl-usb2-udc", "usb_ahb", ahb_clk)
-	_REGISTER_CLOCK("imx-keypad", NULL, kpp_clk)
+	_REGISTER_CLOCK("imx-keypad", NULL, dummy_clk)
 	_REGISTER_CLOCK("mxc_nand", NULL, nfc_clk)
 	_REGISTER_CLOCK("imx-ssi.0", NULL, ssi1_clk)
 	_REGISTER_CLOCK("imx-ssi.1", NULL, ssi2_clk)
@@ -1340,6 +1336,8 @@ static struct clk_lookup mx53_lookups[] = {
 	_REGISTER_CLOCK("imx53-ecspi.0", NULL, ecspi1_clk)
 	_REGISTER_CLOCK("imx53-ecspi.1", NULL, ecspi2_clk)
 	_REGISTER_CLOCK("imx53-cspi.0", NULL, cspi_clk)
+	_REGISTER_CLOCK("imx2-wdt.0", NULL, dummy_clk)
+	_REGISTER_CLOCK("imx2-wdt.1", NULL, dummy_clk)
 };
 
 static void clk_tree_init(void)
