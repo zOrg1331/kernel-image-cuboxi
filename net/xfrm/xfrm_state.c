@@ -656,7 +656,7 @@ void xfrm_sad_getinfo(struct net *net, struct xfrmk_sadinfo *si)
 EXPORT_SYMBOL(xfrm_sad_getinfo);
 
 static int
-xfrm_init_tempstate(struct xfrm_state *x, struct flowi *fl,
+xfrm_init_tempstate(struct xfrm_state *x, const struct flowi *fl,
 		    struct xfrm_tmpl *tmpl,
 		    xfrm_address_t *daddr, xfrm_address_t *saddr,
 		    unsigned short family)
@@ -746,7 +746,7 @@ static void xfrm_hash_grow_check(struct net *net, int have_hash_collision)
 }
 
 static void xfrm_state_look_at(struct xfrm_policy *pol, struct xfrm_state *x,
-			       struct flowi *fl, unsigned short family,
+			       const struct flowi *fl, unsigned short family,
 			       xfrm_address_t *daddr, xfrm_address_t *saddr,
 			       struct xfrm_state **best, int *acq_in_progress,
 			       int *error)
@@ -785,7 +785,7 @@ static void xfrm_state_look_at(struct xfrm_policy *pol, struct xfrm_state *x,
 
 struct xfrm_state *
 xfrm_state_find(xfrm_address_t *daddr, xfrm_address_t *saddr,
-		struct flowi *fl, struct xfrm_tmpl *tmpl,
+		const struct flowi *fl, struct xfrm_tmpl *tmpl,
 		struct xfrm_policy *pol, int *err,
 		unsigned short family)
 {
