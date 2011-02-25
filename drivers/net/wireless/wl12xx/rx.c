@@ -29,14 +29,14 @@
 #include "rx.h"
 #include "io.h"
 
-static u8 wl1271_rx_get_mem_block(struct wl1271_fw_status *status,
+static u8 wl1271_rx_get_mem_block(struct wl1271_fw_common_status *status,
 				  u32 drv_rx_counter)
 {
 	return le32_to_cpu(status->rx_pkt_descs[drv_rx_counter]) &
 		RX_MEM_BLOCK_MASK;
 }
 
-static u32 wl1271_rx_get_buf_size(struct wl1271_fw_status *status,
+static u32 wl1271_rx_get_buf_size(struct wl1271_fw_common_status *status,
 				 u32 drv_rx_counter)
 {
 	return (le32_to_cpu(status->rx_pkt_descs[drv_rx_counter]) &
@@ -92,7 +92,7 @@ static int wl1271_rx_handle_data(struct wl1271 *wl, u8 *data, u32 length)
 {
 	struct wl1271_rx_descriptor *desc;
 	struct sk_buff *skb;
-	u16 *fc;
+	struct ieee80211_hdr *hdr;
 	u8 *buf;
 	u8 beacon = 0;
 
@@ -118,8 +118,8 @@ static int wl1271_rx_handle_data(struct wl1271 *wl, u8 *data, u32 length)
 	/* now we pull the descriptor out of the buffer */
 	skb_pull(skb, sizeof(*desc));
 
-	fc = (u16 *)skb->data;
-	if ((*fc & IEEE80211_FCTL_STYPE) == IEEE80211_STYPE_BEACON)
+	hdr = (struct ieee80211_hdr *)skb->data;
+	if (ieee80211_is_beacon(hdr->frame_control))
 		beacon = 1;
 
 	wl1271_rx_status(wl, desc, IEEE80211_SKB_RXCB(skb), beacon);
@@ -134,7 +134,7 @@ static int wl1271_rx_handle_data(struct wl1271 *wl, u8 *data, u32 length)
 	return 0;
 }
 
-void wl1271_rx(struct wl1271 *wl, struct wl1271_fw_status *status)
+void wl1271_rx(struct wl1271 *wl, struct wl1271_fw_common_status *status)
 {
 	struct wl1271_acx_mem_map *wl_mem_map = wl->target_mem_map;
 	u32 buf_size;

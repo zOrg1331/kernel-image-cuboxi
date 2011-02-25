@@ -30,10 +30,6 @@
 #define WL1271_RX_MAX_RSSI -30
 #define WL1271_RX_MIN_RSSI -95
 
-#define WL1271_RX_ALIGN_TO 4
-#define WL1271_RX_ALIGN(len) (((len) + WL1271_RX_ALIGN_TO - 1) & \
-			     ~(WL1271_RX_ALIGN_TO - 1))
-
 #define SHORT_PREAMBLE_BIT   BIT(0)
 #define OFDM_RATE_BIT        BIT(6)
 #define PBCC_RATE_BIT        BIT(7)
@@ -119,7 +115,7 @@ struct wl1271_rx_descriptor {
 	u8  reserved;
 } __packed;
 
-void wl1271_rx(struct wl1271 *wl, struct wl1271_fw_status *status);
+void wl1271_rx(struct wl1271 *wl, struct wl1271_fw_common_status *status);
 u8 wl1271_rate_to_idx(int rate, enum ieee80211_band band);
 void wl1271_set_default_filters(struct wl1271 *wl);
 

@@ -273,11 +273,9 @@ void p54_tx(struct p54_common *priv, struct sk_buff *skb)
 
 static int p54_rssi_to_dbm(struct p54_common *priv, int rssi)
 {
-	int band = priv->hw->conf.channel->band;
-
 	if (priv->rxhw != 5) {
-		return ((rssi * priv->rssical_db[band].mul) / 64 +
-			 priv->rssical_db[band].add) / 4;
+		return ((rssi * priv->cur_rssi->mul) / 64 +
+			 priv->cur_rssi->add) / 4;
 	} else {
 		/*
 		 * TODO: find the correct formula
@@ -369,7 +367,7 @@ static int p54_rx_data(struct p54_common *priv, struct sk_buff *skb)
 	rx_status->mactime = ((u64)priv->tsf_high32) << 32 | tsf32;
 	priv->tsf_low32 = tsf32;
 
-	rx_status->flag |= RX_FLAG_TSFT;
+	rx_status->flag |= RX_FLAG_MACTIME_MPDU;
 
 	if (hdr->flags & cpu_to_le16(P54_HDR_FLAG_DATA_ALIGN))
 		header_len += hdr->align[0];

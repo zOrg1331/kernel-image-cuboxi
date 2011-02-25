@@ -118,7 +118,6 @@ int iwl_rx_queue_space(const struct iwl_rx_queue *q)
 		s = 0;
 	return s;
 }
-EXPORT_SYMBOL(iwl_rx_queue_space);
 
 /**
  * iwl_rx_queue_update_write_ptr - Update the write pointer for the RX queue
@@ -170,7 +169,6 @@ void iwl_rx_queue_update_write_ptr(struct iwl_priv *priv, struct iwl_rx_queue *q
  exit_unlock:
 	spin_unlock_irqrestore(&q->lock, flags);
 }
-EXPORT_SYMBOL(iwl_rx_queue_update_write_ptr);
 
 int iwl_rx_queue_alloc(struct iwl_priv *priv)
 {
@@ -211,7 +209,6 @@ err_rb:
 err_bd:
 	return -ENOMEM;
 }
-EXPORT_SYMBOL(iwl_rx_queue_alloc);
 
 
 void iwl_rx_spectrum_measure_notif(struct iwl_priv *priv,
@@ -229,40 +226,25 @@ void iwl_rx_spectrum_measure_notif(struct iwl_priv *priv,
 	memcpy(&priv->measure_report, report, sizeof(*report));
 	priv->measurement_status |= MEASUREMENT_READY;
 }
-EXPORT_SYMBOL(iwl_rx_spectrum_measure_notif);
 
 void iwl_recover_from_statistics(struct iwl_priv *priv,
 				struct iwl_rx_packet *pkt)
 {
-	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
+	if (test_bit(STATUS_EXIT_PENDING, &priv->status) ||
+	    !iwl_is_any_associated(priv))
 		return;
-	if (iwl_is_any_associated(priv)) {
-		if (priv->cfg->ops->lib->check_ack_health) {
-			if (!priv->cfg->ops->lib->check_ack_health(
-			    priv, pkt)) {
-				/*
-				 * low ack count detected
-				 * restart Firmware
-				 */
-				IWL_ERR(priv, "low ack count detected, "
-					"restart firmware\n");
-				if (!iwl_force_reset(priv, IWL_FW_RESET, false))
-					return;
-			}
-		}
-		if (priv->cfg->ops->lib->check_plcp_health) {
-			if (!priv->cfg->ops->lib->check_plcp_health(
-			    priv, pkt)) {
-				/*
-				 * high plcp error detected
-				 * reset Radio
-				 */
-				iwl_force_reset(priv, IWL_RF_RESET, false);
-			}
-		}
+
+	if (priv->cfg->ops->lib->check_ack_health &&
+	    !priv->cfg->ops->lib->check_ack_health(priv, pkt)) {
+		IWL_ERR(priv, "low ack count detected, restart firmware\n");
+		if (!iwl_force_reset(priv, IWL_FW_RESET, false))
+			return;
 	}
+
+	if (priv->cfg->ops->lib->check_plcp_health &&
+	    !priv->cfg->ops->lib->check_plcp_health(priv, pkt))
+		iwl_force_reset(priv, IWL_RF_RESET, false);
 }
-EXPORT_SYMBOL(iwl_recover_from_statistics);
 
 /*
  * returns non-zero if packet should be dropped
@@ -315,4 +297,3 @@ int iwl_set_decrypted_flag(struct iwl_priv *priv,
 	}
 	return 0;
 }
-EXPORT_SYMBOL(iwl_set_decrypted_flag);
