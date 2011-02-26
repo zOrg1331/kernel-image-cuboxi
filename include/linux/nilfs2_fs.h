@@ -509,7 +509,7 @@ struct nilfs_checkpoint {
 	__le64 cp_create;
 	__le64 cp_nblk_inc;
 	__le64 cp_inodes_count;
-	__le64 cp_blocks_count;		/* Reserved (might be deleted) */
+	__le64 cp_blocks_count;
 
 	/* Do not change the byte offset of ifile inode.
 	   To keep the compatibility of the disk format,
