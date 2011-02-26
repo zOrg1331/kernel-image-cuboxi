@@ -251,14 +251,14 @@ static const struct file_operations cifs_debug_data_proc_fops = {
 #ifdef CONFIG_CIFS_STATS
 
 #ifdef CONFIG_CIFS_SMB2
-static void smb2_clear_stats(struct smb2_tcon *tcon)
+static void smb2_clear_stats(struct cifsTconInfo *tcon)
 {
 	int i;
 
 	atomic_set(&tcon->num_smbs_sent, 0);
 	for (i = 0; i < NUMBER_OF_SMB2_COMMANDS; i++) {
-		atomic_set(&tcon->stats->smb2_stats->smb2_com_sent[i], 0);
-		atomic_set(&tcon->stats->smb2_stats->smb2_com_fail[i], 0);
+		atomic_set(&tcon->stats.smb2_stats.smb2_com_sent[i], 0);
+		atomic_set(&tcon->stats.smb2_stats.smb2_com_fail[i], 0);
 	}
 }
 #endif /* CONFIG_CIFS_SMB2 */
@@ -268,8 +268,10 @@ static void clear_cifs_stats(struct cifsTconInfo *tcon)
 	atomic_set(&tcon->num_smbs_sent, 0);
 
 #ifdef CONFIG_CIFS_SMB2
-	if (tcon->ses->server->is_smb2)
-		return smb2_clear_smb2_stats;
+	if (tcon->ses->server->is_smb2) {
+		smb2_clear_stats(tcon);
+		return;
+	}
 #endif /* CONFIG_CIFS_SMB2 */
 
 	/* cifs specific statistics, not applicable to smb2 sessions */
