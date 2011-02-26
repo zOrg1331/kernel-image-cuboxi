@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/cifsglob.h
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2008
+ *   Copyright (C) International Business Machines  Corp., 2002,2011
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *              Jeremy Allison (jra@samba.org)
  *
@@ -595,13 +595,6 @@ struct mid_q_entry {
 	bool multiEnd:1;	/* both received */
 };
 
-struct oplock_q_entry {
-	struct list_head qhead;
-	struct inode *pinode;
-	struct cifsTconInfo *tcon;
-	__u16 netfid;
-};
-
 /* for pending dnotify requests */
 struct dir_notify_req {
 	struct list_head lhead;
@@ -651,6 +644,7 @@ struct cifs_fattr {
 	struct timespec	cf_atime;
 	struct timespec	cf_mtime;
 	struct timespec	cf_ctime;
+	u32 		ea_size;
 };
 
 static inline void free_dfs_info_param(struct dfs_info3_param *param)
@@ -681,6 +675,7 @@ static inline void free_dfs_info_array(struct dfs_info3_param *param,
 #define   MID_RESPONSE_RECEIVED 4
 #define   MID_RETRY_NEEDED      8 /* session closed while this request out */
 #define   MID_RESPONSE_MALFORMED 0x10
+#define   MID_NO_RESPONSE_NEEDED 0x20
 
 /* Types of response buffer returned from SendReceive2 */
 #define   CIFS_NO_BUFFER        0    /* Response buffer not returned */
@@ -739,13 +734,6 @@ require use of the stronger protocol */
 #define   CIFSSEC_DEF (CIFSSEC_MAY_SIGN | CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2)
 #define   CIFSSEC_MAX (CIFSSEC_MUST_SIGN | CIFSSEC_MUST_NTLMV2)
 #define   CIFSSEC_AUTH_MASK (CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2 | CIFSSEC_MAY_LANMAN | CIFSSEC_MAY_PLNTXT | CIFSSEC_MAY_KRB5 | CIFSSEC_MAY_NTLMSSP)
-/*
- *****************************************************************
- * All constants go here
- *****************************************************************
- */
-
-#define UID_HASH (16)
 
 /*
  * Note that ONE module should define _DECLARE_GLOBALS_HERE to cause the
