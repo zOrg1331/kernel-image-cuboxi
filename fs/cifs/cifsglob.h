@@ -27,6 +27,9 @@
 #include "cifsacl.h"
 #include <crypto/internal/hash.h>
 #include <linux/scatterlist.h>
+#ifdef CONFIG_CIFS_SMB2
+#include "smb2glob.h"
+#endif /* CONFIG_CIFS_SMB2 */
 
 /*
  * The sizes of various internal tables and strings
@@ -223,9 +226,9 @@ struct TCP_Server_Info {
 	wait_queue_head_t read_q; /* used by readpages */
 	atomic_t active_readpage_req; /* used by readpages */
 	atomic_t resp_rdy; /* used by readpages and demultiplex */
-	__le16 smb21_minor version; /* SMB2.0 implemented, but 2.1 recognized */
+	__le16 smb21_minor_version; /* SMB2.0 implemented, but 2.1 recognized */
 	struct task_struct *observe;
-	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE]; /* BB can we use cifs key */
+/*	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE];  BB can we use cifs key? */
 	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
 	__u8  speed;  /* helps us identify if this is a slow link */
 #endif /* CONFIG_CIFS_SMB2 */

@@ -1036,7 +1036,7 @@ cifs_parse_mount_options(char *options, const char *devname,
 			} else if ((strnicmp(value, "smb2", 4) == 0) ||
 				   (strnicmp(value, "2", 1) == 0)) {
 #ifdef CONFIG_CIFS_SMB2
-				use_smb2 = true;
+				vol->use_smb2 = true;
 #else
 				cERROR(1, "smb2 support not enabled");
 #endif /* CONFIG_CIFS_SMB2 */
