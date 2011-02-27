@@ -4,75 +4,75 @@
 /*
  * PM Control Reg PM_PMCR
  */
-#define PM_PMCR                 __REG(PKUNITY_PM_BASE + 0x0000)
+#define PM_PMCR                 io_p2v(PKUNITY_PM_BASE + 0x0000)
 /*
  * PM General Conf. Reg PM_PGCR
  */
-#define PM_PGCR                 __REG(PKUNITY_PM_BASE + 0x0004)
+#define PM_PGCR                 io_p2v(PKUNITY_PM_BASE + 0x0004)
 /*
  * PM PLL Conf. Reg PM_PPCR
  */
-#define PM_PPCR                 __REG(PKUNITY_PM_BASE + 0x0008)
+#define PM_PPCR                 io_p2v(PKUNITY_PM_BASE + 0x0008)
 /*
  * PM Wakeup Enable Reg PM_PWER
  */
-#define PM_PWER                 __REG(PKUNITY_PM_BASE + 0x000C)
+#define PM_PWER                 io_p2v(PKUNITY_PM_BASE + 0x000C)
 /*
  * PM GPIO Sleep Status Reg PM_PGSR
  */
-#define PM_PGSR                 __REG(PKUNITY_PM_BASE + 0x0010)
+#define PM_PGSR                 io_p2v(PKUNITY_PM_BASE + 0x0010)
 /*
  * PM Clock Gate Reg PM_PCGR
  */
-#define PM_PCGR                 __REG(PKUNITY_PM_BASE + 0x0014)
+#define PM_PCGR                 io_p2v(PKUNITY_PM_BASE + 0x0014)
 /*
  * PM SYS PLL Conf. Reg PM_PLLSYSCFG
  */
-#define PM_PLLSYSCFG            __REG(PKUNITY_PM_BASE + 0x0018)
+#define PM_PLLSYSCFG            io_p2v(PKUNITY_PM_BASE + 0x0018)
 /*
  * PM DDR PLL Conf. Reg PM_PLLDDRCFG
  */
-#define PM_PLLDDRCFG            __REG(PKUNITY_PM_BASE + 0x001C)
+#define PM_PLLDDRCFG            io_p2v(PKUNITY_PM_BASE + 0x001C)
 /*
  * PM VGA PLL Conf. Reg PM_PLLVGACFG
  */
-#define PM_PLLVGACFG            __REG(PKUNITY_PM_BASE + 0x0020)
+#define PM_PLLVGACFG            io_p2v(PKUNITY_PM_BASE + 0x0020)
 /*
  * PM Div Conf. Reg PM_DIVCFG
  */
-#define PM_DIVCFG               __REG(PKUNITY_PM_BASE + 0x0024)
+#define PM_DIVCFG               io_p2v(PKUNITY_PM_BASE + 0x0024)
 /*
  * PM SYS PLL Status Reg PM_PLLSYSSTATUS
  */
-#define PM_PLLSYSSTATUS         __REG(PKUNITY_PM_BASE + 0x0028)
+#define PM_PLLSYSSTATUS         io_p2v(PKUNITY_PM_BASE + 0x0028)
 /*
  * PM DDR PLL Status Reg PM_PLLDDRSTATUS
  */
-#define PM_PLLDDRSTATUS         __REG(PKUNITY_PM_BASE + 0x002C)
+#define PM_PLLDDRSTATUS         io_p2v(PKUNITY_PM_BASE + 0x002C)
 /*
  * PM VGA PLL Status Reg PM_PLLVGASTATUS
  */
-#define PM_PLLVGASTATUS         __REG(PKUNITY_PM_BASE + 0x0030)
+#define PM_PLLVGASTATUS         io_p2v(PKUNITY_PM_BASE + 0x0030)
 /*
  * PM Div Status Reg PM_DIVSTATUS
  */
-#define PM_DIVSTATUS            __REG(PKUNITY_PM_BASE + 0x0034)
+#define PM_DIVSTATUS            io_p2v(PKUNITY_PM_BASE + 0x0034)
 /*
  * PM Software Reset Reg PM_SWRESET
  */
-#define PM_SWRESET              __REG(PKUNITY_PM_BASE + 0x0038)
+#define PM_SWRESET              io_p2v(PKUNITY_PM_BASE + 0x0038)
 /*
  * PM DDR2 PAD Start Reg PM_DDR2START
  */
-#define PM_DDR2START            __REG(PKUNITY_PM_BASE + 0x003C)
+#define PM_DDR2START            io_p2v(PKUNITY_PM_BASE + 0x003C)
 /*
  * PM DDR2 PAD Status Reg PM_DDR2CAL0
  */
-#define PM_DDR2CAL0             __REG(PKUNITY_PM_BASE + 0x0040)
+#define PM_DDR2CAL0             io_p2v(PKUNITY_PM_BASE + 0x0040)
 /*
  * PM PLL DFC Done Reg PM_PLLDFCDONE
  */
-#define PM_PLLDFCDONE           __REG(PKUNITY_PM_BASE + 0x0044)
+#define PM_PLLDFCDONE           io_p2v(PKUNITY_PM_BASE + 0x0044)
 
 #define PM_PMCR_SFB             FIELD(1, 1, 0)
 #define PM_PMCR_IFB             FIELD(1, 1, 1)

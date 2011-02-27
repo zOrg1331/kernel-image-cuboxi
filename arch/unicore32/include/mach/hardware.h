@@ -17,13 +17,10 @@
 
 #include "PKUnity.h"
 
-#define io_p2v(x)	((x) - PKUNITY_MMIO_BASE)
-#define io_v2p(x)	((x) + PKUNITY_MMIO_BASE)
-
 #ifndef __ASSEMBLY__
-
-# define __REG(x)	(void __iomem *)io_p2v(x)
-
+#define io_p2v(x)	(void __iomem *)((x) - PKUNITY_MMIO_BASE)
+#else
+#define io_p2v(x)	((x) - PKUNITY_MMIO_BASE)
 #endif
 
 #define PCIBIOS_MIN_IO			0x4000 /* should lower than 64KB */
