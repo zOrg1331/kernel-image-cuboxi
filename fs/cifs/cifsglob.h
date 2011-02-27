@@ -647,7 +647,7 @@ struct cifs_fattr {
 	struct timespec	cf_atime;
 	struct timespec	cf_mtime;
 	struct timespec	cf_ctime;
-	u32 		ea_size;
+	u32		ea_size;
 };
 
 static inline void free_dfs_info_param(struct dfs_info3_param *param)
