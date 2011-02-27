@@ -130,7 +130,7 @@ struct smb2_hdr {
 	__le16 CreditRequest;  /* CreditResponse */
 	__le32 Flags;
 	__le32 NextCommand;
-	__u64  MessageId; 	/* opaque - so can stay little endian */
+	__u64  MessageId;	/* opaque - so can stay little endian */
 	__le32 ProcessId;
 	__u32  TreeId;		/* opaque - so do not make little endian */
 	__u64  SessionId;	/* opaque - so do not make little endian */
@@ -240,7 +240,7 @@ struct smb2_negotiate_rsp {
 	__le16 SecurityBufferOffset;
 	__le16 SecurityBufferLength;
 	__le32 Reserved2;	/* may be any value, Ignore */
-	__u8   Buffer[1]; 	/* variable length GSS security buffer */
+	__u8   Buffer[1];	/* variable length GSS security buffer */
 } __attribute__((packed));
 
 struct sess_setup_req {
