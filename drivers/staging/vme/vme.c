@@ -1363,9 +1363,8 @@ int vme_register_bridge(struct vme_bridge *bridge)
 
 	return retval;
 
-	i = VME_SLOTS_MAX;
 err_reg:
-	while (i > -1) {
+	while (--i >= 0) {
 		dev = &bridge->dev[i];
 		device_unregister(dev);
 	}

@@ -18,20 +18,6 @@
 #ifndef _XGIFB_ACCEL_H
 #define _XGIFB_ACCEL_H
 
-/* Guard accelerator accesses with spin_lock_irqsave? Works well without. */
-#undef XGIFB_USE_SPINLOCKS
-
-#ifdef XGIFB_USE_SPINLOCKS
-#include <linux/spinlock.h>
-#define CRITBEGIN  spin_lock_irqsave(&xgi_video_info.lockaccel), critflags);
-#define CRITEND	   spin_unlock_irqrestore(&xgi_video_info.lockaccel), critflags);
-#define CRITFLAGS  unsigned long critflags;
-#else
-#define CRITBEGIN
-#define CRITEND
-#define CRITFLAGS
-#endif
-
 /* Definitions for the XGI engine communication. */
 
 #define PATREGSIZE      384  /* Pattern register size. 384 bytes @ 0x8300 */
@@ -492,7 +478,6 @@ int fbcon_XGI_sync(struct fb_info *info);
 
 extern struct video_info xgi_video_info;
 
-extern int XGIfb_accel;
 void fbcon_XGI_fillrect(struct fb_info *info, const struct fb_fillrect *rect);
 void fbcon_XGI_copyarea(struct fb_info *info, const struct fb_copyarea *area);
 

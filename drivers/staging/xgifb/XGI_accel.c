@@ -99,111 +99,12 @@ XGI310Sync(void)
 	XGI310Idle
 }
 
-/* 310/325 series ------------------------------------------------ */
-
-static void
-XGI310SetupForScreenToScreenCopy(int xdir, int ydir, int rop,
-                                unsigned int planemask, int trans_color)
-{
-	XGI310SetupDSTColorDepth(xgi_video_info.DstColor);
-	XGI310SetupSRCPitch(xgi_video_info.video_linelength)
-	XGI310SetupDSTRect(xgi_video_info.video_linelength, 0xFFF)
-	if (trans_color != -1) {
-		XGI310SetupROP(0x0A)
-		XGI310SetupSRCTrans(trans_color)
-		XGI310SetupCMDFlag(TRANSPARENT_BITBLT)
-	} else {
-	        XGI310SetupROP(XGIALUConv[rop])
-		/* Set command - not needed, both 0 */
-		/* XGISetupCMDFlag(BITBLT | SRCVIDEO) */
-	}
-	XGI310SetupCMDFlag(xgi_video_info.XGI310_AccelDepth)
-	/* TW: The 310/325 series is smart enough to know the direction */
-}
-
-static void
-XGI310SubsequentScreenToScreenCopy(int src_x, int src_y, int dst_x, int dst_y,
-                                int width, int height)
-{
-	long srcbase, dstbase;
-	int mymin, mymax;
-
-	srcbase = dstbase = 0;
-	mymin = min(src_y, dst_y);
-	mymax = max(src_y, dst_y);
-
-	/* Although the chip knows the direction to use
-	 * if the source and destination areas overlap,
-	 * that logic fails if we fiddle with the bitmap
-	 * addresses. Therefore, we check if the source
-	 * and destination blitting areas overlap and
-	 * adapt the bitmap addresses synchronously
-	 * if the coordinates exceed the valid range.
-	 * The the areas do not overlap, we do our
-	 * normal check.
-	 */
-	if((mymax - mymin) < height) {
-	   if((src_y >= 2048) || (dst_y >= 2048)) {
-	      srcbase = xgi_video_info.video_linelength * mymin;
-	      dstbase = xgi_video_info.video_linelength * mymin;
-	      src_y -= mymin;
-	      dst_y -= mymin;
-	   }
-	} else {
-	   if(src_y >= 2048) {
-	      srcbase = xgi_video_info.video_linelength * src_y;
-	      src_y = 0;
-	   }
-	   if(dst_y >= 2048) {
-	      dstbase = xgi_video_info.video_linelength * dst_y;
-	      dst_y = 0;
-	   }
-	}
-
-	XGI310SetupSRCBase(srcbase);
-	XGI310SetupDSTBase(dstbase);
-	XGI310SetupRect(width, height)
-	XGI310SetupSRCXY(src_x, src_y)
-	XGI310SetupDSTXY(dst_x, dst_y)
-	XGI310DoCMD
-}
-
-static void
-XGI310SetupForSolidFill(int color, int rop, unsigned int planemask)
-{
-	XGI310SetupPATFG(color)
-	XGI310SetupDSTRect(xgi_video_info.video_linelength, 0xFFF)
-	XGI310SetupDSTColorDepth(xgi_video_info.DstColor);
-	XGI310SetupROP(XGIPatALUConv[rop])
-	XGI310SetupCMDFlag(PATFG | xgi_video_info.XGI310_AccelDepth)
-}
-
-static void
-XGI310SubsequentSolidFillRect(int x, int y, int w, int h)
-{
-	long dstbase;
-
-	dstbase = 0;
-	if(y >= 2048) {
-		dstbase = xgi_video_info.video_linelength * y;
-		y = 0;
-	}
-	XGI310SetupDSTBase(dstbase)
-	XGI310SetupDSTXY(x,y)
-	XGI310SetupRect(w,h)
-	XGI310SetupCMDFlag(BITBLT)
-	XGI310DoCMD
-}
-
 /* --------------------------------------------------------------------- */
 
 /* The exported routines */
 
 int XGIfb_initaccel(void)
 {
-#ifdef XGIFB_USE_SPINLOCKS
-    spin_lock_init(&xgi_video_info.lockaccel);
-#endif
     return(0);
 }
 
@@ -214,75 +115,19 @@ void XGIfb_syncaccel(void)
 
 }
 
-int fbcon_XGI_sync(struct fb_info *info)
-{
-    if(!XGIfb_accel) return 0;
-    CRITFLAGS
-
-    XGI310Sync();
-
-   CRITEND
-   return 0;
-}
-
 void fbcon_XGI_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
-   int col=0;
-   CRITFLAGS
+	if (!rect->width || !rect->height)
+		return;
 
-
-   if(!rect->width || !rect->height)
-   	return;
-
-   if(!XGIfb_accel) {
 	cfb_fillrect(info, rect);
 	return;
-   }
-
-   switch(info->var.bits_per_pixel) {
-		case 8: col = rect->color;
-			break;
-		case 16: col = ((u32 *)(info->pseudo_palette))[rect->color];
-			 break;
-		case 32: col = ((u32 *)(info->pseudo_palette))[rect->color];
-			 break;
-	}
-
-
-	   CRITBEGIN
-	   XGI310SetupForSolidFill(col, myrops[rect->rop], 0);
-	   XGI310SubsequentSolidFillRect(rect->dx, rect->dy, rect->width, rect->height);
-	   CRITEND
-	   XGI310Sync();
-
-
 }
 
 void fbcon_XGI_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 {
-   int xdir, ydir;
-   CRITFLAGS
-
-
-   if(!XGIfb_accel) {
    	cfb_copyarea(info, area);
 	return;
-   }
-
-   if(!area->width || !area->height)
-   	return;
-
-   if(area->sx < area->dx) xdir = 0;
-   else                    xdir = 1;
-   if(area->sy < area->dy) ydir = 0;
-   else                    ydir = 1;
-
-      CRITBEGIN
-      XGI310SetupForScreenToScreenCopy(xdir, ydir, 3, 0, -1);
-      XGI310SubsequentScreenToScreenCopy(area->sx, area->sy, area->dx, area->dy, area->width, area->height);
-      CRITEND
-      XGI310Sync();
-
 }
 
 
