@@ -24,6 +24,7 @@
 #include <linux/init.h>
 #include <linux/clk.h>
 #include <linux/gpio.h>
+#include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/smsc911x.h>
@@ -156,7 +157,9 @@ static int usbotg_init(struct platform_device *pdev)
 	gpio_request(IOMUX_TO_GPIO(MX31_PIN_DTR_DCE2), "USBH1 CS");
 	gpio_direction_output(IOMUX_TO_GPIO(MX31_PIN_DTR_DCE2), 0);
 
-	return 0;
+	mdelay(10);
+
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
 }
 
 static int usbh1_init(struct platform_device *pdev)
@@ -183,7 +186,10 @@ static int usbh1_init(struct platform_device *pdev)
 
 	mxc_iomux_set_gpr(MUX_PGP_USB_SUSPEND, true);
 
-	return 0;
+	mdelay(10);
+
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED |
+			MXC_EHCI_INTERFACE_SINGLE_UNI);
 }
 
 static int usbh2_init(struct platform_device *pdev)
@@ -220,25 +226,24 @@ static int usbh2_init(struct platform_device *pdev)
 	gpio_request(IOMUX_TO_GPIO(MX31_PIN_DTR_DCE1), "USBH2 CS");
 	gpio_direction_output(IOMUX_TO_GPIO(MX31_PIN_DTR_DCE1), 0);
 
-	return 0;
+	mdelay(10);
+
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
 }
 
 static struct mxc_usbh_platform_data usbotg_pdata = {
 	.init	= usbotg_init,
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 
 static const struct mxc_usbh_platform_data usbh1_pdata __initconst = {
 	.init	= usbh1_init,
 	.portsc	= MXC_EHCI_MODE_UTMI | MXC_EHCI_SERIAL,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED | MXC_EHCI_INTERFACE_SINGLE_UNI,
 };
 
 static struct mxc_usbh_platform_data usbh2_pdata __initdata = {
 	.init	= usbh2_init,
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 
 static void lilly1131_usb_init(void)
@@ -274,8 +279,8 @@ static const struct spi_imx_master spi1_pdata __initconst = {
 	.num_chipselect = ARRAY_SIZE(spi_internal_chipselect),
 };
 
-static struct mc13783_platform_data mc13783_pdata __initdata = {
-	.flags = MC13783_USE_RTC | MC13783_USE_TOUCHSCREEN,
+static struct mc13xxx_platform_data mc13783_pdata __initdata = {
+	.flags = MC13XXX_USE_RTC | MC13XXX_USE_TOUCHSCREEN,
 };
 
 static struct spi_board_info mc13783_dev __initdata = {
@@ -347,10 +352,10 @@ static struct sys_timer mx31lilly_timer = {
 };
 
 MACHINE_START(LILLY1131, "INCO startec LILLY-1131")
-	.boot_params	= MX3x_PHYS_OFFSET + 0x100,
-	.map_io		= mx31_map_io,
-	.init_irq	= mx31_init_irq,
-	.init_machine	= mx31lilly_board_init,
-	.timer		= &mx31lilly_timer,
+	.boot_params = MX3x_PHYS_OFFSET + 0x100,
+	.map_io = mx31_map_io,
+	.init_early = imx31_init_early,
+	.init_irq = mx31_init_irq,
+	.timer = &mx31lilly_timer,
+	.init_machine = mx31lilly_board_init,
 MACHINE_END
-
