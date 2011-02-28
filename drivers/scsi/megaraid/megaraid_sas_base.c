@@ -4242,9 +4242,8 @@ megasas_suspend(struct pci_dev *pdev, pm_message_t state)
 	/* cancel the delayed work if this work still in queue */
 	if (instance->ev != NULL) {
 		struct megasas_aen_event *ev = instance->ev;
-		cancel_delayed_work(
+		cancel_delayed_work_sync(
 			(struct delayed_work *)&ev->hotplug_work);
-		flush_scheduled_work();
 		instance->ev = NULL;
 	}
 
@@ -4417,9 +4416,8 @@ static void __devexit megasas_detach_one(struct pci_dev *pdev)
 	/* cancel the delayed work if this work still in queue*/
 	if (instance->ev != NULL) {
 		struct megasas_aen_event *ev = instance->ev;
-		cancel_delayed_work(
+		cancel_delayed_work_sync(
 			(struct delayed_work *)&ev->hotplug_work);
-		flush_scheduled_work();
 		instance->ev = NULL;
 	}
 
@@ -4611,6 +4609,9 @@ megasas_mgmt_fw_ioctl(struct megasas_instance *instance,
 	 * For each user buffer, create a mirror buffer and copy in
 	 */
 	for (i = 0; i < ioc->sge_count; i++) {
+		if (!ioc->sgl[i].iov_len)
+			continue;
+
 		kbuff_arr[i] = dma_alloc_coherent(&instance->pdev->dev,
 						    ioc->sgl[i].iov_len,
 						    &buf_handle, GFP_KERNEL);
