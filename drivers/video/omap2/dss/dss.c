@@ -26,14 +26,12 @@
 #include <linux/io.h>
 #include <linux/err.h>
 #include <linux/delay.h>
-#include <linux/interrupt.h>
 #include <linux/seq_file.h>
 #include <linux/clk.h>
 
 #include <plat/display.h>
+#include <plat/clock.h>
 #include "dss.h"
-
-#define DSS_BASE			0x48050000
 
 #define DSS_SZ_REGS			SZ_512
 
@@ -59,9 +57,17 @@ struct dss_reg {
 	dss_write_reg(idx, FLD_MOD(dss_read_reg(idx), val, start, end))
 
 static struct {
+	struct platform_device *pdev;
 	void __iomem    *base;
+	int             ctx_id;
 
 	struct clk	*dpll4_m4_ck;
+	struct clk	*dss_ick;
+	struct clk	*dss_fck;
+	struct clk	*dss_sys_clk;
+	struct clk	*dss_tv_fck;
+	struct clk	*dss_video_fck;
+	unsigned	num_clks_enabled;
 
 	unsigned long	cache_req_pck;
 	unsigned long	cache_prate;
@@ -73,6 +79,11 @@ static struct {
 
 	u32		ctx[DSS_SZ_REGS / sizeof(u32)];
 } dss;
+
+static void dss_clk_enable_all_no_ctx(void);
+static void dss_clk_disable_all_no_ctx(void);
+static void dss_clk_enable_no_ctx(enum dss_clock clks);
+static void dss_clk_disable_no_ctx(enum dss_clock clks);
 
 static int _omap_dss_wait_reset(void);
 
@@ -214,7 +225,7 @@ void dss_dump_clocks(struct seq_file *s)
 	unsigned long dpll4_ck_rate;
 	unsigned long dpll4_m4_ck_rate;
 
-	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK);
 
 	dpll4_ck_rate = clk_get_rate(clk_get_parent(dss.dpll4_m4_ck));
 	dpll4_m4_ck_rate = clk_get_rate(dss.dpll4_m4_ck);
@@ -227,21 +238,21 @@ void dss_dump_clocks(struct seq_file *s)
 		seq_printf(s, "dss1_alwon_fclk = %lu / %lu  = %lu\n",
 			dpll4_ck_rate,
 			dpll4_ck_rate / dpll4_m4_ck_rate,
-			dss_clk_get_rate(DSS_CLK_FCK1));
+			dss_clk_get_rate(DSS_CLK_FCK));
 	else
 		seq_printf(s, "dss1_alwon_fclk = %lu / %lu * 2 = %lu\n",
 			dpll4_ck_rate,
 			dpll4_ck_rate / dpll4_m4_ck_rate,
-			dss_clk_get_rate(DSS_CLK_FCK1));
+			dss_clk_get_rate(DSS_CLK_FCK));
 
-	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK);
 }
 
 void dss_dump_regs(struct seq_file *s)
 {
 #define DUMPREG(r) seq_printf(s, "%-35s %08x\n", #r, dss_read_reg(r))
 
-	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK);
 
 	DUMPREG(DSS_REVISION);
 	DUMPREG(DSS_SYSCONFIG);
@@ -252,7 +263,7 @@ void dss_dump_regs(struct seq_file *s)
 	DUMPREG(DSS_PLL_CONTROL);
 	DUMPREG(DSS_SDI_STATUS);
 
-	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK);
 #undef DUMPREG
 }
 
@@ -337,7 +348,7 @@ int dss_set_clock_div(struct dss_clock_info *cinfo)
 
 int dss_get_clock_div(struct dss_clock_info *cinfo)
 {
-	cinfo->fck = dss_clk_get_rate(DSS_CLK_FCK1);
+	cinfo->fck = dss_clk_get_rate(DSS_CLK_FCK);
 
 	if (cpu_is_omap34xx()) {
 		unsigned long prate;
@@ -378,7 +389,7 @@ int dss_calc_clock_div(bool is_tft, unsigned long req_pck,
 
 	prate = dss_get_dpll4_rate();
 
-	fck = dss_clk_get_rate(DSS_CLK_FCK1);
+	fck = dss_clk_get_rate(DSS_CLK_FCK);
 	if (req_pck == dss.cache_req_pck &&
 			((cpu_is_omap34xx() && prate == dss.cache_prate) ||
 			 dss.cache_dss_cinfo.fck == fck)) {
@@ -405,7 +416,7 @@ retry:
 	if (cpu_is_omap24xx()) {
 		struct dispc_clock_info cur_dispc;
 		/* XXX can we change the clock on omap2? */
-		fck = dss_clk_get_rate(DSS_CLK_FCK1);
+		fck = dss_clk_get_rate(DSS_CLK_FCK);
 		fck_div = 1;
 
 		dispc_find_clk_divs(is_tft, req_pck, fck, &cur_dispc);
@@ -482,31 +493,6 @@ found:
 	return 0;
 }
 
-
-
-static irqreturn_t dss_irq_handler_omap2(int irq, void *arg)
-{
-	dispc_irq_handler();
-
-	return IRQ_HANDLED;
-}
-
-static irqreturn_t dss_irq_handler_omap3(int irq, void *arg)
-{
-	u32 irqstatus;
-
-	irqstatus = dss_read_reg(DSS_IRQSTATUS);
-
-	if (irqstatus & (1<<0))	/* DISPC_IRQ */
-		dispc_irq_handler();
-#ifdef CONFIG_OMAP2_DSS_DSI
-	if (irqstatus & (1<<1))	/* DSI_IRQ */
-		dsi_irq_handler();
-#endif
-
-	return IRQ_HANDLED;
-}
-
 static int _omap_dss_wait_reset(void)
 {
 	int t = 0;
@@ -549,12 +535,19 @@ void dss_set_dac_pwrdn_bgz(bool enable)
 	REG_FLD_MOD(DSS_CONTROL, enable, 5, 5);	/* DAC Power-Down Control */
 }
 
-int dss_init(bool skip_init)
+static int dss_init(bool skip_init)
 {
 	int r;
 	u32 rev;
+	struct resource *dss_mem;
 
-	dss.base = ioremap(DSS_BASE, DSS_SZ_REGS);
+	dss_mem = platform_get_resource(dss.pdev, IORESOURCE_MEM, 0);
+	if (!dss_mem) {
+		DSSERR("can't get IORESOURCE_MEM DSS\n");
+		r = -EINVAL;
+		goto fail0;
+	}
+	dss.base = ioremap(dss_mem->start, resource_size(dss_mem));
 	if (!dss.base) {
 		DSSERR("can't ioremap DSS\n");
 		r = -ENOMEM;
@@ -590,23 +583,12 @@ int dss_init(bool skip_init)
 	REG_FLD_MOD(DSS_CONTROL, 0, 2, 2);	/* venc clock mode = normal */
 #endif
 
-	r = request_irq(INT_24XX_DSS_IRQ,
-			cpu_is_omap24xx()
-			? dss_irq_handler_omap2
-			: dss_irq_handler_omap3,
-			0, "OMAP DSS", NULL);
-
-	if (r < 0) {
-		DSSERR("omap2 dss: request_irq failed\n");
-		goto fail1;
-	}
-
 	if (cpu_is_omap34xx()) {
 		dss.dpll4_m4_ck = clk_get(NULL, "dpll4_m4_ck");
 		if (IS_ERR(dss.dpll4_m4_ck)) {
 			DSSERR("Failed to get dpll4_m4_ck\n");
 			r = PTR_ERR(dss.dpll4_m4_ck);
-			goto fail2;
+			goto fail1;
 		}
 	}
 
@@ -621,21 +603,386 @@ int dss_init(bool skip_init)
 
 	return 0;
 
-fail2:
-	free_irq(INT_24XX_DSS_IRQ, NULL);
 fail1:
 	iounmap(dss.base);
 fail0:
 	return r;
 }
 
-void dss_exit(void)
+static void dss_exit(void)
 {
 	if (cpu_is_omap34xx())
 		clk_put(dss.dpll4_m4_ck);
 
-	free_irq(INT_24XX_DSS_IRQ, NULL);
-
 	iounmap(dss.base);
 }
 
+/* CONTEXT */
+static int dss_get_ctx_id(void)
+{
+	struct omap_display_platform_data *pdata = dss.pdev->dev.platform_data;
+	int r;
+
+	if (!pdata->board_data->get_last_off_on_transaction_id)
+		return 0;
+	r = pdata->board_data->get_last_off_on_transaction_id(&dss.pdev->dev);
+	if (r < 0) {
+		dev_err(&dss.pdev->dev, "getting transaction ID failed, "
+				"will force context restore\n");
+		r = -1;
+	}
+	return r;
+}
+
+int dss_need_ctx_restore(void)
+{
+	int id = dss_get_ctx_id();
+
+	if (id < 0 || id != dss.ctx_id) {
+		DSSDBG("ctx id %d -> id %d\n",
+				dss.ctx_id, id);
+		dss.ctx_id = id;
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+static void save_all_ctx(void)
+{
+	DSSDBG("save context\n");
+
+	dss_clk_enable_no_ctx(DSS_CLK_ICK | DSS_CLK_FCK);
+
+	dss_save_context();
+	dispc_save_context();
+#ifdef CONFIG_OMAP2_DSS_DSI
+	dsi_save_context();
+#endif
+
+	dss_clk_disable_no_ctx(DSS_CLK_ICK | DSS_CLK_FCK);
+}
+
+static void restore_all_ctx(void)
+{
+	DSSDBG("restore context\n");
+
+	dss_clk_enable_all_no_ctx();
+
+	dss_restore_context();
+	dispc_restore_context();
+#ifdef CONFIG_OMAP2_DSS_DSI
+	dsi_restore_context();
+#endif
+
+	dss_clk_disable_all_no_ctx();
+}
+
+static int dss_get_clock(struct clk **clock, const char *clk_name)
+{
+	struct clk *clk;
+
+	clk = clk_get(&dss.pdev->dev, clk_name);
+
+	if (IS_ERR(clk)) {
+		DSSERR("can't get clock %s", clk_name);
+		return PTR_ERR(clk);
+	}
+
+	*clock = clk;
+
+	DSSDBG("clk %s, rate %ld\n", clk_name, clk_get_rate(clk));
+
+	return 0;
+}
+
+static int dss_get_clocks(void)
+{
+	int r;
+
+	dss.dss_ick = NULL;
+	dss.dss_fck = NULL;
+	dss.dss_sys_clk = NULL;
+	dss.dss_tv_fck = NULL;
+	dss.dss_video_fck = NULL;
+
+	r = dss_get_clock(&dss.dss_ick, "ick");
+	if (r)
+		goto err;
+
+	r = dss_get_clock(&dss.dss_fck, "fck");
+	if (r)
+		goto err;
+
+	r = dss_get_clock(&dss.dss_sys_clk, "sys_clk");
+	if (r)
+		goto err;
+
+	r = dss_get_clock(&dss.dss_tv_fck, "tv_clk");
+	if (r)
+		goto err;
+
+	r = dss_get_clock(&dss.dss_video_fck, "video_clk");
+	if (r)
+		goto err;
+
+	return 0;
+
+err:
+	if (dss.dss_ick)
+		clk_put(dss.dss_ick);
+	if (dss.dss_fck)
+		clk_put(dss.dss_fck);
+	if (dss.dss_sys_clk)
+		clk_put(dss.dss_sys_clk);
+	if (dss.dss_tv_fck)
+		clk_put(dss.dss_tv_fck);
+	if (dss.dss_video_fck)
+		clk_put(dss.dss_video_fck);
+
+	return r;
+}
+
+static void dss_put_clocks(void)
+{
+	if (dss.dss_video_fck)
+		clk_put(dss.dss_video_fck);
+	clk_put(dss.dss_tv_fck);
+	clk_put(dss.dss_fck);
+	clk_put(dss.dss_sys_clk);
+	clk_put(dss.dss_ick);
+}
+
+unsigned long dss_clk_get_rate(enum dss_clock clk)
+{
+	switch (clk) {
+	case DSS_CLK_ICK:
+		return clk_get_rate(dss.dss_ick);
+	case DSS_CLK_FCK:
+		return clk_get_rate(dss.dss_fck);
+	case DSS_CLK_SYSCK:
+		return clk_get_rate(dss.dss_sys_clk);
+	case DSS_CLK_TVFCK:
+		return clk_get_rate(dss.dss_tv_fck);
+	case DSS_CLK_VIDFCK:
+		return clk_get_rate(dss.dss_video_fck);
+	}
+
+	BUG();
+	return 0;
+}
+
+static unsigned count_clk_bits(enum dss_clock clks)
+{
+	unsigned num_clks = 0;
+
+	if (clks & DSS_CLK_ICK)
+		++num_clks;
+	if (clks & DSS_CLK_FCK)
+		++num_clks;
+	if (clks & DSS_CLK_SYSCK)
+		++num_clks;
+	if (clks & DSS_CLK_TVFCK)
+		++num_clks;
+	if (clks & DSS_CLK_VIDFCK)
+		++num_clks;
+
+	return num_clks;
+}
+
+static void dss_clk_enable_no_ctx(enum dss_clock clks)
+{
+	unsigned num_clks = count_clk_bits(clks);
+
+	if (clks & DSS_CLK_ICK)
+		clk_enable(dss.dss_ick);
+	if (clks & DSS_CLK_FCK)
+		clk_enable(dss.dss_fck);
+	if (clks & DSS_CLK_SYSCK)
+		clk_enable(dss.dss_sys_clk);
+	if (clks & DSS_CLK_TVFCK)
+		clk_enable(dss.dss_tv_fck);
+	if (clks & DSS_CLK_VIDFCK)
+		clk_enable(dss.dss_video_fck);
+
+	dss.num_clks_enabled += num_clks;
+}
+
+void dss_clk_enable(enum dss_clock clks)
+{
+	bool check_ctx = dss.num_clks_enabled == 0;
+
+	dss_clk_enable_no_ctx(clks);
+
+	if (check_ctx && cpu_is_omap34xx() && dss_need_ctx_restore())
+		restore_all_ctx();
+}
+
+static void dss_clk_disable_no_ctx(enum dss_clock clks)
+{
+	unsigned num_clks = count_clk_bits(clks);
+
+	if (clks & DSS_CLK_ICK)
+		clk_disable(dss.dss_ick);
+	if (clks & DSS_CLK_FCK)
+		clk_disable(dss.dss_fck);
+	if (clks & DSS_CLK_SYSCK)
+		clk_disable(dss.dss_sys_clk);
+	if (clks & DSS_CLK_TVFCK)
+		clk_disable(dss.dss_tv_fck);
+	if (clks & DSS_CLK_VIDFCK)
+		clk_disable(dss.dss_video_fck);
+
+	dss.num_clks_enabled -= num_clks;
+}
+
+void dss_clk_disable(enum dss_clock clks)
+{
+	if (cpu_is_omap34xx()) {
+		unsigned num_clks = count_clk_bits(clks);
+
+		BUG_ON(dss.num_clks_enabled < num_clks);
+
+		if (dss.num_clks_enabled == num_clks)
+			save_all_ctx();
+	}
+
+	dss_clk_disable_no_ctx(clks);
+}
+
+static void dss_clk_enable_all_no_ctx(void)
+{
+	enum dss_clock clks;
+
+	clks = DSS_CLK_ICK | DSS_CLK_FCK | DSS_CLK_SYSCK | DSS_CLK_TVFCK;
+	if (cpu_is_omap34xx())
+		clks |= DSS_CLK_VIDFCK;
+	dss_clk_enable_no_ctx(clks);
+}
+
+static void dss_clk_disable_all_no_ctx(void)
+{
+	enum dss_clock clks;
+
+	clks = DSS_CLK_ICK | DSS_CLK_FCK | DSS_CLK_SYSCK | DSS_CLK_TVFCK;
+	if (cpu_is_omap34xx())
+		clks |= DSS_CLK_VIDFCK;
+	dss_clk_disable_no_ctx(clks);
+}
+
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_OMAP2_DSS_DEBUG_SUPPORT)
+/* CLOCKS */
+static void core_dump_clocks(struct seq_file *s)
+{
+	int i;
+	struct clk *clocks[5] = {
+		dss.dss_ick,
+		dss.dss_fck,
+		dss.dss_sys_clk,
+		dss.dss_tv_fck,
+		dss.dss_video_fck
+	};
+
+	seq_printf(s, "- CORE -\n");
+
+	seq_printf(s, "internal clk count\t\t%u\n", dss.num_clks_enabled);
+
+	for (i = 0; i < 5; i++) {
+		if (!clocks[i])
+			continue;
+		seq_printf(s, "%-15s\t%lu\t%d\n",
+				clocks[i]->name,
+				clk_get_rate(clocks[i]),
+				clocks[i]->usecount);
+	}
+}
+#endif /* defined(CONFIG_DEBUG_FS) && defined(CONFIG_OMAP2_DSS_DEBUG_SUPPORT) */
+
+/* DEBUGFS */
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_OMAP2_DSS_DEBUG_SUPPORT)
+void dss_debug_dump_clocks(struct seq_file *s)
+{
+	core_dump_clocks(s);
+	dss_dump_clocks(s);
+	dispc_dump_clocks(s);
+#ifdef CONFIG_OMAP2_DSS_DSI
+	dsi_dump_clocks(s);
+#endif
+}
+#endif
+
+
+/* DSS HW IP initialisation */
+static int omap_dsshw_probe(struct platform_device *pdev)
+{
+	int r;
+	int skip_init = 0;
+
+	dss.pdev = pdev;
+
+	r = dss_get_clocks();
+	if (r)
+		goto err_clocks;
+
+	dss_clk_enable_all_no_ctx();
+
+	dss.ctx_id = dss_get_ctx_id();
+	DSSDBG("initial ctx id %u\n", dss.ctx_id);
+
+#ifdef CONFIG_FB_OMAP_BOOTLOADER_INIT
+	/* DISPC_CONTROL */
+	if (omap_readl(0x48050440) & 1)	/* LCD enabled? */
+		skip_init = 1;
+#endif
+
+	r = dss_init(skip_init);
+	if (r) {
+		DSSERR("Failed to initialize DSS\n");
+		goto err_dss;
+	}
+
+	dss_clk_disable_all_no_ctx();
+	return 0;
+
+err_dss:
+	dss_clk_disable_all_no_ctx();
+	dss_put_clocks();
+err_clocks:
+	return r;
+}
+
+static int omap_dsshw_remove(struct platform_device *pdev)
+{
+
+	dss_exit();
+
+	/*
+	 * As part of hwmod changes, DSS is not the only controller of dss
+	 * clocks; hwmod framework itself will also enable clocks during hwmod
+	 * init for dss, and autoidle is set in h/w for DSS. Hence, there's no
+	 * need to disable clocks if their usecounts > 1.
+	 */
+	WARN_ON(dss.num_clks_enabled > 0);
+
+	dss_put_clocks();
+	return 0;
+}
+
+static struct platform_driver omap_dsshw_driver = {
+	.probe          = omap_dsshw_probe,
+	.remove         = omap_dsshw_remove,
+	.driver         = {
+		.name   = "omap_dss",
+		.owner  = THIS_MODULE,
+	},
+};
+
+int dss_init_platform_driver(void)
+{
+	return platform_driver_register(&omap_dsshw_driver);
+}
+
+void dss_uninit_platform_driver(void)
+{
+	return platform_driver_unregister(&omap_dsshw_driver);
+}
