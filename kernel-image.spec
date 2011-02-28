@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt11
+Release: alt12
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -582,6 +582,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Mon Feb 28 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt12
+- Build e1000e as an external module
+- Change package description
+- apply patch from 1778 vz bug
+
 * Sat Feb 12 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt11
 - VE: shutrown environment only if pid ns child reaper is VE init
   (by Stanislav Kinsbursky, see vz bug #1773)
