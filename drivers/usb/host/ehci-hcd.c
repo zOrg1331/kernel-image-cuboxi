@@ -679,7 +679,12 @@ static int ehci_run (struct usb_hcd *hcd)
 	hcd->uses_new_polling = 1;
 
 	/* EHCI spec section 4.1 */
-	if ((retval = ehci_reset(ehci)) != 0) {
+	/*
+	 * TDI driver does the ehci_reset in their reset callback.
+	 * Don't reset here, because configuration settings will
+	 * vanish.
+	 */
+	if (!ehci_is_TDI(ehci) && (retval = ehci_reset(ehci)) != 0) {
 		ehci_mem_cleanup(ehci);
 		return retval;
 	}
@@ -1252,6 +1257,11 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_USB_EHCI_MSM
 #include "ehci-msm.c"
 #define PLATFORM_DRIVER		ehci_msm_driver
+#endif
+
+#ifdef CONFIG_USB_EHCI_HCD_PMC_MSP
+#include "ehci-pmcmsp.c"
+#define	PLATFORM_DRIVER		ehci_hcd_msp_driver
 #endif
 
 #if !defined(PCI_DRIVER) && !defined(PLATFORM_DRIVER) && \
