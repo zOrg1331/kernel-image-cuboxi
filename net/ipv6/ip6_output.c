@@ -274,12 +274,9 @@ int ip6_nd_hdr(struct sock *sk, struct sk_buff *skb, struct net_device *dev,
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6hdr *hdr;
-	int totlen;
 
 	skb->protocol = htons(ETH_P_IPV6);
 	skb->dev = dev;
-
-	totlen = len + sizeof(struct ipv6hdr);
 
 	skb_reset_network_header(skb);
 	skb_put(skb, sizeof(struct ipv6hdr));
@@ -479,10 +476,13 @@ int ip6_forward(struct sk_buff *skb)
 		else
 			target = &hdr->daddr;
 
+		if (!rt->rt6i_peer)
+			rt6_bind_peer(rt, 1);
+
 		/* Limit redirects both by destination (here)
 		   and by source (inside ndisc_send_redirect)
 		 */
-		if (xrlim_allow(dst, 1*HZ))
+		if (inet_peer_xrlim_allow(rt->rt6i_peer, 1*HZ))
 			ndisc_send_redirect(skb, n, target);
 	} else {
 		int addrtype = ipv6_addr_type(&hdr->saddr);
