@@ -218,7 +218,7 @@ static const struct of_device_id pasemi_nand_match[] =
 
 MODULE_DEVICE_TABLE(of, pasemi_nand_match);
 
-static struct latform_driver pasemi_nand_driver =
+static struct platform_driver pasemi_nand_driver =
 {
 	.driver = {
 		.name = (char*)driver_name,
