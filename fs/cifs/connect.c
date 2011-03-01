@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/connect.c
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2009
+ *   Copyright (C) International Business Machines  Corp., 2002,2011
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
  *   This library is free software; you can redistribute it and/or modify
@@ -1616,6 +1616,14 @@ cifs_find_tcp_session(struct sockaddr *addr, struct smb_vol *vol)
 				   (struct sockaddr *)&vol->srcaddr))
 			continue;
 
+#ifdef CONFIG_CIFS_SMB2
+		if ((server->is_smb2 == true) && (vol->use_smb2 == false))
+			continue;
+
+		if ((server->is_smb2 == false) && (vol->use_smb2 == true))
+			continue;
+#endif /* CONFIG_CIFS_SMB2 */
+
 		if (!match_port(server, addr))
 			continue;
 
@@ -1727,6 +1735,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 
 	tcp_ses->noblocksnd = volume_info->noblocksnd;
 	tcp_ses->noautotune = volume_info->noautotune;
+	/* BB should we set this unconditionally now, especially for SMB2 */
 	tcp_ses->tcp_nodelay = volume_info->sockopt_tcp_nodelay;
 	atomic_set(&tcp_ses->inFlight, 0);
 	init_waitqueue_head(&tcp_ses->response_q);
@@ -1769,6 +1778,11 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 		cERROR(1, "Error connecting to socket. Aborting operation");
 		goto out_err_crypto_release;
 	}
+
+#ifdef CONFIG_CIFS_SMB2
+	if (volume_info->use_smb2)
+		tcp_ses->is_smb2 = true;
+#endif /* CONFIG_CIFS_SMB2 */
 
 	/*
 	 * since we're in a cifs function already, we know that
