@@ -37,13 +37,13 @@
  * the socket has been reestablished (so we know whether to use vc 0).
  * Called while holding the cifs_tcp_ses_lock, so do not block
  */
-static bool is_first_ses_reconnect(struct cifsSesInfo *ses)
+static bool is_first_ses_reconnect(struct cifs_ses *ses)
 {
 	struct list_head *tmp;
-	struct cifsSesInfo *tmp_ses;
+	struct cifs_ses *tmp_ses;
 
 	list_for_each(tmp, &ses->server->smb_ses_list) {
-		tmp_ses = list_entry(tmp, struct cifsSesInfo,
+		tmp_ses = list_entry(tmp, struct cifs_ses,
 				     smb_ses_list);
 		if (tmp_ses->need_reconnect == false)
 			return false;
@@ -61,11 +61,11 @@ static bool is_first_ses_reconnect(struct cifsSesInfo *ses)
  *	any vc but zero (some servers reset the connection on vcnum zero)
  *
  */
-static __le16 get_next_vcnum(struct cifsSesInfo *ses)
+static __le16 get_next_vcnum(struct cifs_ses *ses)
 {
 	__u16 vcnum = 0;
 	struct list_head *tmp;
-	struct cifsSesInfo *tmp_ses;
+	struct cifs_ses *tmp_ses;
 	__u16 max_vcs = ses->server->max_vcs;
 	__u16 i;
 	int free_vc_found = 0;
@@ -87,7 +87,7 @@ static __le16 get_next_vcnum(struct cifsSesInfo *ses)
 		free_vc_found = 1;
 
 		list_for_each(tmp, &ses->server->smb_ses_list) {
-			tmp_ses = list_entry(tmp, struct cifsSesInfo,
+			tmp_ses = list_entry(tmp, struct cifs_ses,
 					     smb_ses_list);
 			if (tmp_ses->vcnum == i) {
 				free_vc_found = 0;
@@ -114,7 +114,7 @@ get_vc_num_exit:
 	return cpu_to_le16(vcnum);
 }
 
-static __u32 cifs_ssetup_hdr(struct cifsSesInfo *ses, SESSION_SETUP_ANDX *pSMB)
+static __u32 cifs_ssetup_hdr(struct cifs_ses *ses, SESSION_SETUP_ANDX *pSMB)
 {
 	__u32 capabilities = 0;
 
@@ -181,7 +181,7 @@ unicode_oslm_strings(char **pbcc_area, const struct nls_table *nls_cp)
 	*pbcc_area = bcc_ptr;
 }
 
-static void unicode_domain_string(char **pbcc_area, struct cifsSesInfo *ses,
+static void unicode_domain_string(char **pbcc_area, struct cifs_ses *ses,
 				   const struct nls_table *nls_cp)
 {
 	char *bcc_ptr = *pbcc_area;
@@ -204,7 +204,7 @@ static void unicode_domain_string(char **pbcc_area, struct cifsSesInfo *ses,
 }
 
 
-static void unicode_ssetup_strings(char **pbcc_area, struct cifsSesInfo *ses,
+static void unicode_ssetup_strings(char **pbcc_area, struct cifs_ses *ses,
 				   const struct nls_table *nls_cp)
 {
 	char *bcc_ptr = *pbcc_area;
@@ -236,7 +236,7 @@ static void unicode_ssetup_strings(char **pbcc_area, struct cifsSesInfo *ses,
 	*pbcc_area = bcc_ptr;
 }
 
-static void ascii_ssetup_strings(char **pbcc_area, struct cifsSesInfo *ses,
+static void ascii_ssetup_strings(char **pbcc_area, struct cifs_ses *ses,
 				 const struct nls_table *nls_cp)
 {
 	char *bcc_ptr = *pbcc_area;
@@ -276,7 +276,7 @@ static void ascii_ssetup_strings(char **pbcc_area, struct cifsSesInfo *ses,
 }
 
 static void
-decode_unicode_ssetup(char **pbcc_area, __u16 bleft, struct cifsSesInfo *ses,
+decode_unicode_ssetup(char **pbcc_area, __u16 bleft, struct cifs_ses *ses,
 		      const struct nls_table *nls_cp)
 {
 	int len;
@@ -323,7 +323,7 @@ decode_unicode_ssetup(char **pbcc_area, __u16 bleft, struct cifsSesInfo *ses,
 }
 
 static int decode_ascii_ssetup(char **pbcc_area, __u16 bleft,
-			       struct cifsSesInfo *ses,
+			       struct cifs_ses *ses,
 			       const struct nls_table *nls_cp)
 {
 	int rc = 0;
@@ -377,7 +377,7 @@ static int decode_ascii_ssetup(char **pbcc_area, __u16 bleft,
 }
 
 static int decode_ntlmssp_challenge(char *bcc_ptr, int blob_len,
-				    struct cifsSesInfo *ses)
+				    struct cifs_ses *ses)
 {
 	unsigned int tioffset; /* challenge message target info area */
 	unsigned int tilen; /* challenge message target info area length  */
@@ -424,7 +424,7 @@ static int decode_ntlmssp_challenge(char *bcc_ptr, int blob_len,
 /* We do not malloc the blob, it is passed in pbuffer, because
    it is fixed size, and small, making this approach cleaner */
 static void build_ntlmssp_negotiate_blob(unsigned char *pbuffer,
-					 struct cifsSesInfo *ses)
+					 struct cifs_ses *ses)
 {
 	NEGOTIATE_MESSAGE *sec_blob = (NEGOTIATE_MESSAGE *)pbuffer;
 	__u32 flags;
@@ -462,7 +462,7 @@ static void build_ntlmssp_negotiate_blob(unsigned char *pbuffer,
    This function returns the length of the data in the blob */
 static int build_ntlmssp_auth_blob(unsigned char *pbuffer,
 					u16 *buflen,
-				   struct cifsSesInfo *ses,
+				   struct cifs_ses *ses,
 				   const struct nls_table *nls_cp)
 {
 	int rc;
@@ -564,7 +564,7 @@ setup_ntlmv2_ret:
 }
 
 int
-CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses,
+CIFS_SessSetup(unsigned int xid, struct cifs_ses *ses,
 	       const struct nls_table *nls_cp)
 {
 	int rc = 0;

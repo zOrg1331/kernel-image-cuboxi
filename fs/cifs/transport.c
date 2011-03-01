@@ -302,7 +302,7 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 	return 0;
 }
 
-static int allocate_mid(struct cifsSesInfo *ses, struct smb_hdr *in_buf,
+static int allocate_mid(struct cifs_ses *ses, struct smb_hdr *in_buf,
 			struct mid_q_entry **ppmidQ)
 {
 	if (ses->server->tcpStatus == CifsExiting) {
@@ -414,7 +414,7 @@ out_err:
  *
  */
 int
-SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceiveNoRsp(const unsigned int xid, struct cifs_ses *ses,
 		struct smb_hdr *in_buf, int flags)
 {
 	int rc;
@@ -509,7 +509,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 }
 
 int
-SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	     struct kvec *iov, int n_vec, int *pRespBufType /* ret */,
 	     const int flags)
 {
@@ -674,7 +674,7 @@ out:
 }
 
 int
-SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive(const unsigned int xid, struct cifs_ses *ses,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned, const int long_op)
 {
@@ -827,12 +827,12 @@ out:
    blocking lock to return. */
 
 static int
-send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
+send_lock_cancel(const unsigned int xid, struct cifs_tcon *tcon,
 			struct smb_hdr *in_buf,
 			struct smb_hdr *out_buf)
 {
 	int bytes_returned;
-	struct cifsSesInfo *ses = tcon->ses;
+	struct cifs_ses *ses = tcon->ses;
 	LOCK_REQ *pSMB = (LOCK_REQ *)in_buf;
 
 	/* We just modify the current in_buf to change
@@ -849,7 +849,7 @@ send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
 }
 
 int
-SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
+SendReceiveBlockingLock(const unsigned int xid, struct cifs_tcon *tcon,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned)
 {
@@ -857,7 +857,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	int rstart = 0;
 	unsigned int receive_len;
 	struct mid_q_entry *midQ;
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 
 	if (tcon == NULL || tcon->ses == NULL) {
 		cERROR(1, "Null smb session");

@@ -84,7 +84,7 @@ static struct {
 
 /* Mark as invalid, all open files on tree connections since they
    were closed when session to server was lost */
-static void mark_open_files_invalid(struct cifsTconInfo *pTcon)
+static void mark_open_files_invalid(struct cifs_tcon *pTcon)
 {
 	struct cifsFileInfo *open_file = NULL;
 	struct list_head *tmp;
@@ -104,10 +104,10 @@ static void mark_open_files_invalid(struct cifsTconInfo *pTcon)
 
 /* reconnect the socket, tcon, and smb session if needed */
 static int
-cifs_reconnect_tcon(struct cifsTconInfo *tcon, int smb_command)
+cifs_reconnect_tcon(struct cifs_tcon *tcon, int smb_command)
 {
 	int rc = 0;
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 	struct TCP_Server_Info *server;
 	struct nls_table *nls_codepage;
 
@@ -226,7 +226,7 @@ out:
    SMB information in the SMB header.  If the return code is zero, this
    function must have filled in request_buf pointer */
 static int
-small_smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
+small_smb_init(int smb_command, int wct, struct cifs_tcon *tcon,
 		void **request_buf)
 {
 	int rc;
@@ -252,7 +252,7 @@ small_smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
 
 int
 small_smb_init_no_tc(const int smb_command, const int wct,
-		     struct cifsSesInfo *ses, void **request_buf)
+		     struct cifs_ses *ses, void **request_buf)
 {
 	int rc;
 	struct smb_hdr *buffer;
@@ -278,7 +278,7 @@ small_smb_init_no_tc(const int smb_command, const int wct,
 
 /* If the return code is zero, this function must fill in request_buf pointer */
 static int
-__smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
+__smb_init(int smb_command, int wct, struct cifs_tcon *tcon,
 			void **request_buf, void **response_buf)
 {
 	*request_buf = cifs_buf_get();
@@ -304,7 +304,7 @@ __smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
 
 /* If the return code is zero, this function must fill in request_buf pointer */
 static int
-smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
+smb_init(int smb_command, int wct, struct cifs_tcon *tcon,
 	 void **request_buf, void **response_buf)
 {
 	int rc;
@@ -317,7 +317,7 @@ smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
 }
 
 static int
-smb_init_no_reconnect(int smb_command, int wct, struct cifsTconInfo *tcon,
+smb_init_no_reconnect(int smb_command, int wct, struct cifs_tcon *tcon,
 			void **request_buf, void **response_buf)
 {
 	if (tcon->ses->need_reconnect || tcon->need_reconnect)
@@ -358,7 +358,7 @@ vt2_err:
 }
 
 int
-CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+CIFSSMBNegotiate(unsigned int xid, struct cifs_ses *ses)
 {
 	NEGOTIATE_REQ *pSMB;
 	NEGOTIATE_RSP *pSMBr;
@@ -658,7 +658,7 @@ neg_err_exit:
 }
 
 int
-CIFSSMBTDis(const int xid, struct cifsTconInfo *tcon)
+CIFSSMBTDis(const int xid, struct cifs_tcon *tcon)
 {
 	struct smb_hdr *smb_buffer;
 	int rc = 0;
@@ -743,7 +743,7 @@ CIFSSMBEcho(struct TCP_Server_Info *server)
 }
 
 int
-CIFSSMBLogoff(const int xid, struct cifsSesInfo *ses)
+CIFSSMBLogoff(const int xid, struct cifs_ses *ses)
 {
 	LOGOFF_ANDX_REQ *pSMB;
 	int rc = 0;
@@ -790,7 +790,7 @@ session_already_dead:
 }
 
 int
-CIFSPOSIXDelFile(const int xid, struct cifsTconInfo *tcon, const char *fileName,
+CIFSPOSIXDelFile(const int xid, struct cifs_tcon *tcon, const char *fileName,
 		 __u16 type, const struct nls_table *nls_codepage, int remap)
 {
 	TRANSACTION2_SPI_REQ *pSMB = NULL;
@@ -865,7 +865,7 @@ PsxDelete:
 }
 
 int
-CIFSSMBDelFile(const int xid, struct cifsTconInfo *tcon, const char *fileName,
+CIFSSMBDelFile(const int xid, struct cifs_tcon *tcon, const char *fileName,
 	       const struct nls_table *nls_codepage, int remap)
 {
 	DELETE_FILE_REQ *pSMB = NULL;
@@ -910,7 +910,7 @@ DelFileRetry:
 }
 
 int
-CIFSSMBRmDir(const int xid, struct cifsTconInfo *tcon, const char *dirName,
+CIFSSMBRmDir(const int xid, struct cifs_tcon *tcon, const char *dirName,
 	     const struct nls_table *nls_codepage, int remap)
 {
 	DELETE_DIRECTORY_REQ *pSMB = NULL;
@@ -953,7 +953,7 @@ RmDirRetry:
 }
 
 int
-CIFSSMBMkDir(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBMkDir(const int xid, struct cifs_tcon *tcon,
 	     const char *name, const struct nls_table *nls_codepage, int remap)
 {
 	int rc = 0;
@@ -996,7 +996,7 @@ MkDirRetry:
 }
 
 int
-CIFSPOSIXCreate(const int xid, struct cifsTconInfo *tcon, __u32 posix_flags,
+CIFSPOSIXCreate(const int xid, struct cifs_tcon *tcon, __u32 posix_flags,
 		__u64 mode, __u16 *netfid, FILE_UNIX_BASIC_INFO *pRetData,
 		__u32 *pOplock, const char *name,
 		const struct nls_table *nls_codepage, int remap)
@@ -1162,7 +1162,7 @@ access_flags_to_smbopen_mode(const int access_flags)
 }
 
 int
-SMBLegacyOpen(const int xid, struct cifsTconInfo *tcon,
+SMBLegacyOpen(const int xid, struct cifs_tcon *tcon,
 	    const char *fileName, const int openDisposition,
 	    const int access_flags, const int create_options, __u16 *netfid,
 	    int *pOplock, FILE_ALL_INFO *pfile_info,
@@ -1269,7 +1269,7 @@ OldOpenRetry:
 }
 
 int
-CIFSSMBOpen(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBOpen(const int xid, struct cifs_tcon *tcon,
 	    const char *fileName, const int openDisposition,
 	    const int access_flags, const int create_options, __u16 *netfid,
 	    int *pOplock, FILE_ALL_INFO *pfile_info,
@@ -1371,7 +1371,7 @@ openRetry:
 }
 
 int
-CIFSSMBRead(const int xid, struct cifsTconInfo *tcon, const int netfid,
+CIFSSMBRead(const int xid, struct cifs_tcon *tcon, const int netfid,
 	    const unsigned int count, const __u64 lseek, unsigned int *nbytes,
 	    char **buf, int *pbuf_type)
 {
@@ -1476,7 +1476,7 @@ CIFSSMBRead(const int xid, struct cifsTconInfo *tcon, const int netfid,
 
 
 int
-CIFSSMBWrite(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBWrite(const int xid, struct cifs_tcon *tcon,
 	     const int netfid, const unsigned int count,
 	     const __u64 offset, unsigned int *nbytes, const char *buf,
 	     const char __user *ubuf, const int long_op)
@@ -1595,7 +1595,7 @@ CIFSSMBWrite(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSSMBWrite2(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBWrite2(const int xid, struct cifs_tcon *tcon,
 	     const int netfid, const unsigned int count,
 	     const __u64 offset, unsigned int *nbytes, struct kvec *iov,
 	     int n_vec, const int long_op)
@@ -1696,7 +1696,7 @@ CIFSSMBWrite2(const int xid, struct cifsTconInfo *tcon,
 
 
 int
-CIFSSMBLock(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBLock(const int xid, struct cifs_tcon *tcon,
 	    const __u16 smb_file_id, const __u64 len,
 	    const __u64 offset, const __u32 numUnlock,
 	    const __u32 numLock, const __u8 lockType,
@@ -1766,7 +1766,7 @@ CIFSSMBLock(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSSMBPosixLock(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBPosixLock(const int xid, struct cifs_tcon *tcon,
 		const __u16 smb_file_id, const int get_flag, const __u64 len,
 		struct file_lock *pLockData, const __u16 lock_type,
 		const bool waitFlag)
@@ -1904,7 +1904,7 @@ plk_err_exit:
 
 
 int
-CIFSSMBClose(const int xid, struct cifsTconInfo *tcon, int smb_file_id)
+CIFSSMBClose(const int xid, struct cifs_tcon *tcon, int smb_file_id)
 {
 	int rc = 0;
 	CLOSE_REQ *pSMB = NULL;
@@ -1937,7 +1937,7 @@ CIFSSMBClose(const int xid, struct cifsTconInfo *tcon, int smb_file_id)
 }
 
 int
-CIFSSMBFlush(const int xid, struct cifsTconInfo *tcon, int smb_file_id)
+CIFSSMBFlush(const int xid, struct cifs_tcon *tcon, int smb_file_id)
 {
 	int rc = 0;
 	FLUSH_REQ *pSMB = NULL;
@@ -1958,7 +1958,7 @@ CIFSSMBFlush(const int xid, struct cifsTconInfo *tcon, int smb_file_id)
 }
 
 int
-CIFSSMBRename(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBRename(const int xid, struct cifs_tcon *tcon,
 	      const char *fromName, const char *toName,
 	      const struct nls_table *nls_codepage, int remap)
 {
@@ -2025,7 +2025,7 @@ renameRetry:
 	return rc;
 }
 
-int CIFSSMBRenameOpenFile(const int xid, struct cifsTconInfo *pTcon,
+int CIFSSMBRenameOpenFile(const int xid, struct cifs_tcon *pTcon,
 		int netfid, const char *target_name,
 		const struct nls_table *nls_codepage, int remap)
 {
@@ -2105,7 +2105,7 @@ int CIFSSMBRenameOpenFile(const int xid, struct cifsTconInfo *pTcon,
 }
 
 int
-CIFSSMBCopy(const int xid, struct cifsTconInfo *tcon, const char *fromName,
+CIFSSMBCopy(const int xid, struct cifs_tcon *tcon, const char *fromName,
 	    const __u16 target_tid, const char *toName, const int flags,
 	    const struct nls_table *nls_codepage, int remap)
 {
@@ -2173,7 +2173,7 @@ copyRetry:
 }
 
 int
-CIFSUnixCreateSymLink(const int xid, struct cifsTconInfo *tcon,
+CIFSUnixCreateSymLink(const int xid, struct cifs_tcon *tcon,
 		      const char *fromName, const char *toName,
 		      const struct nls_table *nls_codepage)
 {
@@ -2262,7 +2262,7 @@ createSymLinkRetry:
 }
 
 int
-CIFSUnixCreateHardLink(const int xid, struct cifsTconInfo *tcon,
+CIFSUnixCreateHardLink(const int xid, struct cifs_tcon *tcon,
 		       const char *fromName, const char *toName,
 		       const struct nls_table *nls_codepage, int remap)
 {
@@ -2347,7 +2347,7 @@ createHardLinkRetry:
 }
 
 int
-CIFSCreateHardLink(const int xid, struct cifsTconInfo *tcon,
+CIFSCreateHardLink(const int xid, struct cifs_tcon *tcon,
 		   const char *fromName, const char *toName,
 		   const struct nls_table *nls_codepage, int remap)
 {
@@ -2419,7 +2419,7 @@ winCreateHardLinkRetry:
 }
 
 int
-CIFSSMBUnixQuerySymLink(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBUnixQuerySymLink(const int xid, struct cifs_tcon *tcon,
 			const unsigned char *searchName, char **symlinkinfo,
 			const struct nls_table *nls_codepage)
 {
@@ -2524,7 +2524,7 @@ querySymLinkRetry:
  *	it is not compiled in by default until callers fixed up and more tested.
  */
 int
-CIFSSMBQueryReparseLinkInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBQueryReparseLinkInfo(const int xid, struct cifs_tcon *tcon,
 			const unsigned char *searchName,
 			char *symlinkinfo, const int buflen, __u16 fid,
 			const struct nls_table *nls_codepage)
@@ -2762,7 +2762,7 @@ static __u16 ACL_to_cifs_posix(char *parm_data, const char *pACL,
 }
 
 int
-CIFSSMBGetPosixACL(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBGetPosixACL(const int xid, struct cifs_tcon *tcon,
 		   const unsigned char *searchName,
 		   char *acl_inf, const int buflen, const int acl_type,
 		   const struct nls_table *nls_codepage, int remap)
@@ -2850,7 +2850,7 @@ queryAclRetry:
 }
 
 int
-CIFSSMBSetPosixACL(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBSetPosixACL(const int xid, struct cifs_tcon *tcon,
 		   const unsigned char *fileName,
 		   const char *local_acl, const int buflen,
 		   const int acl_type,
@@ -2930,7 +2930,7 @@ setACLerrorExit:
 
 /* BB fix tabs in this function FIXME BB */
 int
-CIFSGetExtAttr(const int xid, struct cifsTconInfo *tcon,
+CIFSGetExtAttr(const int xid, struct cifs_tcon *tcon,
 	       const int netfid, __u64 *pExtAttrBits, __u64 *pMask)
 {
 	int rc = 0;
@@ -3023,7 +3023,7 @@ GetExtAttrOut:
  */
 static int
 smb_init_nttransact(const __u16 sub_command, const int setup_count,
-		   const int parm_len, struct cifsTconInfo *tcon,
+		   const int parm_len, struct cifs_tcon *tcon,
 		   void **ret_buf)
 {
 	int rc;
@@ -3105,7 +3105,7 @@ validate_ntransact(char *buf, char **ppparm, char **ppdata,
 
 /* Get Security Descriptor (by handle) from remote server for a file or dir */
 int
-CIFSSMBGetCIFSACL(const int xid, struct cifsTconInfo *tcon, __u16 fid,
+CIFSSMBGetCIFSACL(const int xid, struct cifs_tcon *tcon, __u16 fid,
 		  struct cifs_ntsd **acl_inf, __u32 *pbuflen)
 {
 	int rc = 0;
@@ -3197,7 +3197,7 @@ qsec_out:
 }
 
 int
-CIFSSMBSetCIFSACL(const int xid, struct cifsTconInfo *tcon, __u16 fid,
+CIFSSMBSetCIFSACL(const int xid, struct cifs_tcon *tcon, __u16 fid,
 			struct cifs_ntsd *pntsd, __u32 acllen)
 {
 	__u16 byte_count, param_count, data_count, param_offset, data_offset;
@@ -3264,7 +3264,7 @@ setCifsAclRetry:
 
 /* Legacy Query Path Information call for lookup to old servers such
    as Win9x/WinME */
-int SMBQueryInformation(const int xid, struct cifsTconInfo *tcon,
+int SMBQueryInformation(const int xid, struct cifs_tcon *tcon,
 			const unsigned char *searchName,
 			FILE_ALL_INFO *pFinfo,
 			const struct nls_table *nls_codepage, int remap)
@@ -3332,7 +3332,7 @@ QInfRetry:
 }
 
 int
-CIFSSMBQFileInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBQFileInfo(const int xid, struct cifs_tcon *tcon,
 		 u16 netfid, FILE_ALL_INFO *pFindData)
 {
 	struct smb_t2_qfi_req *pSMB = NULL;
@@ -3399,7 +3399,7 @@ QFileInfoRetry:
 }
 
 int
-CIFSSMBQPathInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBQPathInfo(const int xid, struct cifs_tcon *tcon,
 		 const unsigned char *searchName,
 		 FILE_ALL_INFO *pFindData,
 		 int legacy /* old style infolevel */,
@@ -3500,7 +3500,7 @@ QPathInfoRetry:
 }
 
 int
-CIFSSMBUnixQFileInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBUnixQFileInfo(const int xid, struct cifs_tcon *tcon,
 		 u16 netfid, FILE_UNIX_BASIC_INFO *pFindData)
 {
 	struct smb_t2_qfi_req *pSMB = NULL;
@@ -3569,7 +3569,7 @@ UnixQFileInfoRetry:
 }
 
 int
-CIFSSMBUnixQPathInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBUnixQPathInfo(const int xid, struct cifs_tcon *tcon,
 		     const unsigned char *searchName,
 		     FILE_UNIX_BASIC_INFO *pFindData,
 		     const struct nls_table *nls_codepage, int remap)
@@ -3655,7 +3655,7 @@ UnixQPathInfoRetry:
 
 /* xid, tcon, searchName and codepage are input parms, rest are returned */
 int
-CIFSFindFirst(const int xid, struct cifsTconInfo *tcon,
+CIFSFindFirst(const int xid, struct cifs_tcon *tcon,
 	      const char *searchName,
 	      const struct nls_table *nls_codepage,
 	      __u16 *pnetfid,
@@ -3803,7 +3803,7 @@ findFirstRetry:
 	return rc;
 }
 
-int CIFSFindNext(const int xid, struct cifsTconInfo *tcon,
+int CIFSFindNext(const int xid, struct cifs_tcon *tcon,
 		 __u16 searchHandle, struct cifs_search_info *psrch_inf)
 {
 	TRANSACTION2_FNEXT_REQ *pSMB = NULL;
@@ -3941,7 +3941,7 @@ FNext2_err_exit:
 }
 
 int
-CIFSFindClose(const int xid, struct cifsTconInfo *tcon,
+CIFSFindClose(const int xid, struct cifs_tcon *tcon,
 	      const __u16 searchHandle)
 {
 	int rc = 0;
@@ -3973,7 +3973,7 @@ CIFSFindClose(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSGetSrvInodeNumber(const int xid, struct cifsTconInfo *tcon,
+CIFSGetSrvInodeNumber(const int xid, struct cifs_tcon *tcon,
 		      const unsigned char *searchName,
 		      __u64 *inode_number,
 		      const struct nls_table *nls_codepage, int remap)
@@ -4175,7 +4175,7 @@ parse_DFS_referrals_exit:
 }
 
 int
-CIFSGetDFSRefer(const int xid, struct cifsSesInfo *ses,
+CIFSGetDFSRefer(const int xid, struct cifs_ses *ses,
 		const unsigned char *searchName,
 		struct dfs_info3_param **target_nodes,
 		unsigned int *num_of_nodes,
@@ -4289,7 +4289,7 @@ GetDFSRefExit:
 
 /* Query File System Info such as free space to old servers such as Win 9x */
 int
-SMBOldQFSInfo(const int xid, struct cifsTconInfo *tcon, struct kstatfs *FSData)
+SMBOldQFSInfo(const int xid, struct cifs_tcon *tcon, struct kstatfs *FSData)
 {
 /* level 0x01 SMB_QUERY_FILE_SYSTEM_INFO */
 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
@@ -4368,7 +4368,7 @@ oldQFSInfoRetry:
 }
 
 int
-CIFSSMBQFSInfo(const int xid, struct cifsTconInfo *tcon, struct kstatfs *FSData)
+CIFSSMBQFSInfo(const int xid, struct cifs_tcon *tcon, struct kstatfs *FSData)
 {
 /* level 0x103 SMB_QUERY_FILE_SYSTEM_INFO */
 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
@@ -4447,7 +4447,7 @@ QFSInfoRetry:
 }
 
 int
-CIFSSMBQFSAttributeInfo(const int xid, struct cifsTconInfo *tcon)
+CIFSSMBQFSAttributeInfo(const int xid, struct cifs_tcon *tcon)
 {
 /* level 0x105  SMB_QUERY_FILE_SYSTEM_INFO */
 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
@@ -4517,7 +4517,7 @@ QFSAttributeRetry:
 }
 
 int
-CIFSSMBQFSDeviceInfo(const int xid, struct cifsTconInfo *tcon)
+CIFSSMBQFSDeviceInfo(const int xid, struct cifs_tcon *tcon)
 {
 /* level 0x104 SMB_QUERY_FILE_SYSTEM_INFO */
 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
@@ -4587,7 +4587,7 @@ QFSDeviceRetry:
 }
 
 int
-CIFSSMBQFSUnixInfo(const int xid, struct cifsTconInfo *tcon)
+CIFSSMBQFSUnixInfo(const int xid, struct cifs_tcon *tcon)
 {
 /* level 0x200  SMB_QUERY_CIFS_UNIX_INFO */
 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
@@ -4657,7 +4657,7 @@ QFSUnixRetry:
 }
 
 int
-CIFSSMBSetFSUnixInfo(const int xid, struct cifsTconInfo *tcon, __u64 cap)
+CIFSSMBSetFSUnixInfo(const int xid, struct cifs_tcon *tcon, __u64 cap)
 {
 /* level 0x200  SMB_SET_CIFS_UNIX_INFO */
 	TRANSACTION2_SETFSI_REQ *pSMB = NULL;
@@ -4731,7 +4731,7 @@ SETFSUnixRetry:
 
 
 int
-CIFSSMBQFSPosixInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBQFSPosixInfo(const int xid, struct cifs_tcon *tcon,
 		   struct kstatfs *FSData)
 {
 /* level 0x201  SMB_QUERY_CIFS_POSIX_INFO */
@@ -4824,7 +4824,7 @@ QFSPosixRetry:
    in Samba which this routine can run into */
 
 int
-CIFSSMBSetEOF(const int xid, struct cifsTconInfo *tcon, const char *fileName,
+CIFSSMBSetEOF(const int xid, struct cifs_tcon *tcon, const char *fileName,
 	      __u64 size, bool SetAllocation,
 	      const struct nls_table *nls_codepage, int remap)
 {
@@ -4913,7 +4913,7 @@ SetEOFRetry:
 }
 
 int
-CIFSSMBSetFileSize(const int xid, struct cifsTconInfo *tcon, __u64 size,
+CIFSSMBSetFileSize(const int xid, struct cifs_tcon *tcon, __u64 size,
 		   __u16 fid, __u32 pid_of_opener, bool SetAllocation)
 {
 	struct smb_com_transaction2_sfi_req *pSMB  = NULL;
@@ -4995,7 +4995,7 @@ CIFSSMBSetFileSize(const int xid, struct cifsTconInfo *tcon, __u64 size,
    time and resort to the original setpathinfo level which takes the ancient
    DOS time format with 2 second granularity */
 int
-CIFSSMBSetFileInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBSetFileInfo(const int xid, struct cifs_tcon *tcon,
 		    const FILE_BASIC_INFO *data, __u16 fid, __u32 pid_of_opener)
 {
 	struct smb_com_transaction2_sfi_req *pSMB  = NULL;
@@ -5057,7 +5057,7 @@ CIFSSMBSetFileInfo(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSSMBSetFileDisposition(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBSetFileDisposition(const int xid, struct cifs_tcon *tcon,
 			  bool delete_file, __u16 fid, __u32 pid_of_opener)
 {
 	struct smb_com_transaction2_sfi_req *pSMB  = NULL;
@@ -5113,7 +5113,7 @@ CIFSSMBSetFileDisposition(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSSMBSetPathInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBSetPathInfo(const int xid, struct cifs_tcon *tcon,
 		   const char *fileName, const FILE_BASIC_INFO *data,
 		   const struct nls_table *nls_codepage, int remap)
 {
@@ -5197,7 +5197,7 @@ SetTimesRetry:
 	  handling it anyway and NT4 was what we thought it would be needed for
 	  Do not delete it until we prove whether needed for Win9x though */
 int
-CIFSSMBSetAttrLegacy(int xid, struct cifsTconInfo *tcon, char *fileName,
+CIFSSMBSetAttrLegacy(int xid, struct cifs_tcon *tcon, char *fileName,
 		__u16 dos_attrs, const struct nls_table *nls_codepage)
 {
 	SETATTR_REQ *pSMB = NULL;
@@ -5285,7 +5285,7 @@ cifs_fill_unix_set_info(FILE_UNIX_BASIC_INFO *data_offset,
 }
 
 int
-CIFSSMBUnixSetFileInfo(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBUnixSetFileInfo(const int xid, struct cifs_tcon *tcon,
 		       const struct cifs_unix_set_info_args *args,
 		       u16 fid, u32 pid_of_opener)
 {
@@ -5348,7 +5348,7 @@ CIFSSMBUnixSetFileInfo(const int xid, struct cifsTconInfo *tcon,
 }
 
 int
-CIFSSMBUnixSetPathInfo(const int xid, struct cifsTconInfo *tcon, char *fileName,
+CIFSSMBUnixSetPathInfo(const int xid, struct cifs_tcon *tcon, char *fileName,
 		       const struct cifs_unix_set_info_args *args,
 		       const struct nls_table *nls_codepage, int remap)
 {
@@ -5435,7 +5435,7 @@ setPermsRetry:
  * the data isn't copied to it, but the length is returned.
  */
 ssize_t
-CIFSSMBQAllEAs(const int xid, struct cifsTconInfo *tcon,
+CIFSSMBQAllEAs(const int xid, struct cifs_tcon *tcon,
 		const unsigned char *searchName, const unsigned char *ea_name,
 		char *EAData, size_t buf_size,
 		const struct nls_table *nls_codepage, int remap)
@@ -5616,7 +5616,7 @@ QAllEAsOut:
 }
 
 int
-CIFSSMBSetEA(const int xid, struct cifsTconInfo *tcon, const char *fileName,
+CIFSSMBSetEA(const int xid, struct cifs_tcon *tcon, const char *fileName,
 	     const char *ea_name, const void *ea_value,
 	     const __u16 ea_value_len, const struct nls_table *nls_codepage,
 	     int remap)
@@ -5743,7 +5743,7 @@ SetEARetry:
  *	incompatible for network fs clients, we could instead simply
  *	expose this config flag by adding a future cifs (and smb2) notify ioctl.
  */
-int CIFSSMBNotify(const int xid, struct cifsTconInfo *tcon,
+int CIFSSMBNotify(const int xid, struct cifs_tcon *tcon,
 		  const int notify_subdirs, const __u16 netfid,
 		  __u32 filter, struct file *pfile, int multishot,
 		  const struct nls_table *nls_codepage)
