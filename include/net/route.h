@@ -49,6 +49,7 @@
 
 struct fib_nh;
 struct inet_peer;
+struct fib_info;
 struct rtable {
 	struct dst_entry	dst;
 
@@ -68,7 +69,9 @@ struct rtable {
 
 	/* Miscellaneous cached information */
 	__be32			rt_spec_dst; /* RFC1122 specific destination */
+	u32			rt_peer_genid;
 	struct inet_peer	*peer; /* long-living peer info */
+	struct fib_info		*fi; /* for client ref to shared metrics */
 };
 
 static inline bool rt_is_input_route(struct rtable *rt)
@@ -180,6 +183,8 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 
 	if (inet_sk(sk)->transparent)
 		fl.flags |= FLOWI_FLAG_ANYSRC;
+	if (protocol == IPPROTO_TCP)
+		fl.flags |= FLOWI_FLAG_PRECOW_METRICS;
 
 	if (!dst || !src) {
 		err = __ip_route_output_key(net, rp, &fl);
@@ -195,18 +200,23 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 }
 
 static inline int ip_route_newports(struct rtable **rp, u8 protocol,
+				    __be16 orig_sport, __be16 orig_dport,
 				    __be16 sport, __be16 dport, struct sock *sk)
 {
-	if (sport != (*rp)->fl.fl_ip_sport ||
-	    dport != (*rp)->fl.fl_ip_dport) {
-		struct flowi fl;
+	if (sport != orig_sport || dport != orig_dport) {
+		struct flowi fl = { .oif = (*rp)->fl.oif,
+				    .mark = (*rp)->fl.mark,
+				    .fl4_dst = (*rp)->fl.fl4_dst,
+				    .fl4_src = (*rp)->fl.fl4_src,
+				    .fl4_tos = (*rp)->fl.fl4_tos,
+				    .proto = (*rp)->fl.proto,
+				    .fl_ip_sport = sport,
+				    .fl_ip_dport = dport };
 
-		memcpy(&fl, &(*rp)->fl, sizeof(fl));
-		fl.fl_ip_sport = sport;
-		fl.fl_ip_dport = dport;
-		fl.proto = protocol;
 		if (inet_sk(sk)->transparent)
 			fl.flags |= FLOWI_FLAG_ANYSRC;
+		if (protocol == IPPROTO_TCP)
+			fl.flags |= FLOWI_FLAG_PRECOW_METRICS;
 		ip_rt_put(*rp);
 		*rp = NULL;
 		security_sk_classify_flow(sk, &fl);

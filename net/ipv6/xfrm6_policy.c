@@ -27,8 +27,8 @@
 static struct xfrm_policy_afinfo xfrm6_policy_afinfo;
 
 static struct dst_entry *xfrm6_dst_lookup(struct net *net, int tos,
-					  xfrm_address_t *saddr,
-					  xfrm_address_t *daddr)
+					  const xfrm_address_t *saddr,
+					  const xfrm_address_t *daddr)
 {
 	struct flowi fl = {};
 	struct dst_entry *dst;
@@ -67,7 +67,7 @@ static int xfrm6_get_saddr(struct net *net,
 	return 0;
 }
 
-static int xfrm6_get_tos(struct flowi *fl)
+static int xfrm6_get_tos(const struct flowi *fl)
 {
 	return 0;
 }
@@ -87,7 +87,7 @@ static int xfrm6_init_path(struct xfrm_dst *path, struct dst_entry *dst,
 }
 
 static int xfrm6_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
-			  struct flowi *fl)
+			  const struct flowi *fl)
 {
 	struct rt6_info *rt = (struct rt6_info*)xdst->route;
 
@@ -220,6 +220,7 @@ static void xfrm6_dst_destroy(struct dst_entry *dst)
 
 	if (likely(xdst->u.rt6.rt6i_idev))
 		in6_dev_put(xdst->u.rt6.rt6i_idev);
+	dst_destroy_metrics_generic(dst);
 	if (likely(xdst->u.rt6.rt6i_peer))
 		inet_putpeer(xdst->u.rt6.rt6i_peer);
 	xfrm_dst_destroy(xdst);
@@ -257,6 +258,7 @@ static struct dst_ops xfrm6_dst_ops = {
 	.protocol =		cpu_to_be16(ETH_P_IPV6),
 	.gc =			xfrm6_garbage_collect,
 	.update_pmtu =		xfrm6_update_pmtu,
+	.cow_metrics =		dst_cow_metrics_generic,
 	.destroy =		xfrm6_dst_destroy,
 	.ifdown =		xfrm6_dst_ifdown,
 	.local_out =		__ip6_local_out,

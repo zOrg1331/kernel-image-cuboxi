@@ -48,7 +48,8 @@ struct flowi {
 
 	__u8	proto;
 	__u8	flags;
-#define FLOWI_FLAG_ANYSRC 0x01
+#define FLOWI_FLAG_ANYSRC		0x01
+#define FLOWI_FLAG_PRECOW_METRICS	0x02
 	union {
 		struct {
 			__be16	sport;
@@ -101,17 +102,18 @@ struct flow_cache_ops {
 };
 
 typedef struct flow_cache_object *(*flow_resolve_t)(
-		struct net *net, struct flowi *key, u16 family,
+		struct net *net, const struct flowi *key, u16 family,
 		u8 dir, struct flow_cache_object *oldobj, void *ctx);
 
 extern struct flow_cache_object *flow_cache_lookup(
-		struct net *net, struct flowi *key, u16 family,
+		struct net *net, const struct flowi *key, u16 family,
 		u8 dir, flow_resolve_t resolver, void *ctx);
 
 extern void flow_cache_flush(void);
 extern atomic_t flow_cache_genid;
 
-static inline int flow_cache_uli_match(struct flowi *fl1, struct flowi *fl2)
+static inline int flow_cache_uli_match(const struct flowi *fl1,
+				       const struct flowi *fl2)
 {
 	return (fl1->proto == fl2->proto &&
 		!memcmp(&fl1->uli_u, &fl2->uli_u, sizeof(fl1->uli_u)));
