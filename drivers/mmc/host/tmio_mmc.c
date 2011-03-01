@@ -1199,7 +1199,7 @@ static const struct mmc_host_ops tmio_mmc_ops = {
 #ifdef CONFIG_PM
 static int tmio_mmc_suspend(struct platform_device *dev, pm_message_t state)
 {
-	struct mfd_cell	*cell = mfd_get_cell(dev);
+	const struct mfd_cell *cell = mfd_get_cell(dev);
 	struct mmc_host *mmc = platform_get_drvdata(dev);
 	int ret;
 
@@ -1214,7 +1214,7 @@ static int tmio_mmc_suspend(struct platform_device *dev, pm_message_t state)
 
 static int tmio_mmc_resume(struct platform_device *dev)
 {
-	struct mfd_cell	*cell = mfd_get_cell(dev);
+	const struct mfd_cell *cell = mfd_get_cell(dev);
 	struct mmc_host *mmc = platform_get_drvdata(dev);
 	int ret = 0;
 
@@ -1237,7 +1237,7 @@ out:
 
 static int __devinit tmio_mmc_probe(struct platform_device *dev)
 {
-	struct mfd_cell	*cell = mfd_get_cell(dev);
+	const struct mfd_cell *cell = mfd_get_cell(dev);
 	struct tmio_mmc_data *pdata;
 	struct resource *res_ctl;
 	struct tmio_mmc_host *host;
@@ -1352,7 +1352,7 @@ out:
 
 static int __devexit tmio_mmc_remove(struct platform_device *dev)
 {
-	struct mfd_cell	*cell = mfd_get_cell(dev);
+	const struct mfd_cell *cell = mfd_get_cell(dev);
 	struct mmc_host *mmc = platform_get_drvdata(dev);
 
 	platform_set_drvdata(dev, NULL);
