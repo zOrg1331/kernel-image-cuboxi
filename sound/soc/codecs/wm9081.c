@@ -169,7 +169,7 @@ struct wm9081_priv {
 	struct wm9081_retune_mobile_config *retune;
 };
 
-static int wm9081_volatile_register(unsigned int reg)
+static int wm9081_volatile_register(struct snd_soc_codec *codec, unsigned int reg)
 {
 	switch (reg) {
 	case WM9081_SOFTWARE_RESET:
@@ -1363,7 +1363,7 @@ MODULE_DEVICE_TABLE(i2c, wm9081_i2c_id);
 
 static struct i2c_driver wm9081_i2c_driver = {
 	.driver = {
-		.name = "wm9081-codec",
+		.name = "wm9081",
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm9081_i2c_probe,
