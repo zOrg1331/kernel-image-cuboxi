@@ -581,19 +581,31 @@ out:
 #include <../kernel/mutex.h>
 #endif
 
-static void au_fi_mmap_lock(struct file *file)
+static void au_fi_mmap_lock_and_sell(struct file *file)
 {
+	struct mutex *mtx;
+
 	FiMustWriteLock(file);
-	lockdep_off();
-	mutex_lock(&au_fi(file)->fi_mmap);
-	lockdep_on();
+
+	mtx = &au_fi(file)->fi_mmap;
+	mutex_lock(mtx);
+	mutex_release(&mtx->dep_map, /*nested*/0, _RET_IP_);
+}
+
+static void au_fi_mmap_buy(struct file *file)
+{
+	struct mutex *mtx;
+
+	mtx = &au_fi(file)->fi_mmap;
+	MtxMustLock(mtx);
+
+	mutex_set_owner(mtx);
+	mutex_acquire(&mtx->dep_map, /*subclass*/0, /*trylock*/0, _RET_IP_);
 }
 
 static void au_fi_mmap_unlock(struct file *file)
 {
-	lockdep_off();
 	mutex_unlock(&au_fi(file)->fi_mmap);
-	lockdep_on();
 }
 
 struct au_mmap_pre_args {
@@ -641,7 +653,7 @@ static int au_mmap_pre(struct file *file, struct vm_area_struct *vma,
 	*br = au_sbr(sb, bstart);
 	*h_file = au_hf_top(file);
 	get_file(*h_file);
-	au_fi_mmap_lock(file);
+	au_fi_mmap_lock_and_sell(file);
 
 out_unlock:
 	fi_write_unlock(file);
@@ -675,8 +687,7 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 		err = wkq_err;
 	if (unlikely(err))
 		goto out;
-	finfo = au_fi(file);
-	mutex_set_owner(&finfo->fi_mmap);
+	au_fi_mmap_buy(file);
 
 	h_dentry = args.h_file->f_dentry;
 	if (!args.mmapped && au_test_fs_bad_mapping(h_dentry->d_sb)) {
@@ -695,6 +706,7 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 	err = PTR_ERR(h_vmop);
 	if (IS_ERR(h_vmop))
 		goto out_unlock;
+	finfo = au_fi(file);
 	AuDebugOn(args.mmapped && h_vmop != finfo->fi_hvmop);
 
 	vmop = (void *)au_dy_vmop(file, args.br, h_vmop);
