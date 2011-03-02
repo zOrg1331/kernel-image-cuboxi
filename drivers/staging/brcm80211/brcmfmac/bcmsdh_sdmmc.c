@@ -17,7 +17,6 @@
 #include <linux/netdevice.h>
 #include <bcmdefs.h>
 #include <bcmdevs.h>
-#include <bcmendian.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <sdio.h>		/* SDIO Device and Protocol Specs */
@@ -441,7 +440,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 		val_size = sizeof(int);
 
 	if (plen >= (int)sizeof(int_val))
-		bcopy(params, &int_val, sizeof(int_val));
+		memcpy(&int_val, params, sizeof(int_val));
 
 	bool_val = (int_val != 0) ? true : false;
 
@@ -449,7 +448,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 	switch (actionid) {
 	case IOV_GVAL(IOV_MSGLEVEL):
 		int_val = (s32) sd_msglevel;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_MSGLEVEL):
@@ -458,7 +457,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_BLOCKMODE):
 		int_val = (s32) si->sd_blockmode;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_BLOCKMODE):
@@ -472,7 +471,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 			break;
 		}
 		int_val = (s32) si->client_block_size[int_val];
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_BLOCKSIZE):
@@ -514,12 +513,12 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_RXCHAIN):
 		int_val = false;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_GVAL(IOV_DMA):
 		int_val = (s32) si->sd_use_dma;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_DMA):
@@ -528,7 +527,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_USEINTS):
 		int_val = (s32) si->use_client_ints;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_USEINTS):
@@ -542,7 +541,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_DIVISOR):
 		int_val = (u32) sd_divisor;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_DIVISOR):
@@ -551,7 +550,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_POWER):
 		int_val = (u32) sd_power;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_POWER):
@@ -560,7 +559,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_CLOCK):
 		int_val = (u32) sd_clock;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_CLOCK):
@@ -569,7 +568,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_SDMODE):
 		int_val = (u32) sd_sdmode;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_SDMODE):
@@ -578,7 +577,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_HISPEED):
 		int_val = (u32) sd_hiok;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_SVAL(IOV_HISPEED):
@@ -587,12 +586,12 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_NUMINTS):
 		int_val = (s32) si->intrcount;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_GVAL(IOV_NUMLOCALINTS):
 		int_val = (s32) 0;
-		bcopy(&int_val, arg, val_size);
+		memcpy(arg, &int_val, val_size);
 		break;
 
 	case IOV_GVAL(IOV_HOSTREG):
@@ -621,7 +620,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 				int_val = 32;	/* sdioh_sdmmc_rreg(si,
 						 sd_ptr->offset); */
 
-			bcopy(&int_val, arg, sizeof(int_val));
+			memcpy(arg, &int_val, sizeof(int_val));
 			break;
 		}
 
@@ -657,7 +656,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 			}
 
 			int_val = (int)data;
-			bcopy(&int_val, arg, sizeof(int_val));
+			memcpy(arg, &int_val, sizeof(int_val));
 			break;
 		}
 
@@ -735,7 +734,7 @@ static int sdioh_sdmmc_get_cisaddr(sdioh_info_t *sd, u32 regaddr)
 	}
 
 	/* Only the lower 17-bits are valid */
-	scratch = ltoh32(scratch);
+	scratch = le32_to_cpu(scratch);
 	scratch &= 0x0001FFFF;
 	return scratch;
 }
@@ -1048,14 +1047,14 @@ sdioh_request_buffer(sdioh_info_t *sd, uint pio_dma, uint fix_inc, uint write,
 
 		/* For a write, copy the buffer data into the packet. */
 		if (write)
-			bcopy(buffer, mypkt->data, buflen_u);
+			memcpy(mypkt->data, buffer, buflen_u);
 
 		Status =
 		    sdioh_request_packet(sd, fix_inc, write, func, addr, mypkt);
 
 		/* For a read, copy the packet data back to the buffer. */
 		if (!write)
-			bcopy(mypkt->data, buffer, buflen_u);
+			memcpy(buffer, mypkt->data, buflen_u);
 
 		pkt_buf_free_skb(sd->osh, mypkt, write ? true : false);
 	} else if (((u32) (pkt->data) & DMA_ALIGN_MASK) != 0) {
@@ -1075,14 +1074,14 @@ sdioh_request_buffer(sdioh_info_t *sd, uint pio_dma, uint fix_inc, uint write,
 
 		/* For a write, copy the buffer data into the packet. */
 		if (write)
-			bcopy(pkt->data, mypkt->data, pkt->len);
+			memcpy(mypkt->data, pkt->data, pkt->len);
 
 		Status =
 		    sdioh_request_packet(sd, fix_inc, write, func, addr, mypkt);
 
 		/* For a read, copy the packet data back to the buffer. */
 		if (!write)
-			bcopy(mypkt->data, pkt->data, mypkt->len);
+			memcpy(pkt->data, mypkt->data, mypkt->len);
 
 		pkt_buf_free_skb(sd->osh, mypkt, write ? true : false);
 	} else {		/* case 3: We have a packet and

@@ -54,12 +54,12 @@
 #define PKTQ_MAX_PREC           16	/* Maximum precedence levels */
 #endif
 
-	typedef struct pktq_prec {
+	struct pktq_prec {
 		struct sk_buff *head;	/* first packet to dequeue */
 		struct sk_buff *tail;	/* last packet to dequeue */
 		u16 len;		/* number of queued packets */
 		u16 max;		/* maximum number of queued packets */
-	} pktq_prec_t;
+	};
 
 /* multi-priority pkt queue */
 	struct pktq {
@@ -71,27 +71,10 @@
 		struct pktq_prec q[PKTQ_MAX_PREC];
 	};
 
-/* simple, non-priority pkt queue */
-	struct spktq {
-		u16 num_prec;	/* number of precedences in use (always 1) */
-		u16 hi_prec;	/* rapid dequeue hint (>= highest non-empty prec) */
-		u16 max;	/* total max packets */
-		u16 len;	/* total number of packets */
-		/* q array must be last since # of elements can be either PKTQ_MAX_PREC or 1 */
-		struct pktq_prec q[1];
-	};
-
 #define PKTQ_PREC_ITER(pq, prec)        for (prec = (pq)->num_prec - 1; prec >= 0; prec--)
 
 /* fn(pkt, arg).  return true if pkt belongs to if */
 	typedef bool(*ifpkt_cb_t) (void *, int);
-
-/* forward definition of ether_addr structure used by some function prototypes */
-
-	struct ether_addr;
-
-	extern int ether_isbcast(const void *ea);
-	extern int ether_isnulladdr(const void *ea);
 
 /* operations on a specific precedence in packet queue */
 
@@ -110,6 +93,11 @@ extern struct sk_buff *pktq_penq_head(struct pktq *pq, int prec,
 				      struct sk_buff *p);
 extern struct sk_buff *pktq_pdeq(struct pktq *pq, int prec);
 extern struct sk_buff *pktq_pdeq_tail(struct pktq *pq, int prec);
+
+/* packet primitives */
+extern struct sk_buff *pkt_buf_get_skb(struct osl_info *osh, uint len);
+extern void pkt_buf_free_skb(struct osl_info *osh,
+	struct sk_buff *skb, bool send);
 
 /* Empty the queue at particular precedence level */
 #ifdef BRCM_FULLMAC
@@ -152,12 +140,12 @@ extern struct sk_buff *pktq_mdeq(struct pktq *pq, uint prec_bmp, int *prec_out);
 
 /* externs */
 /* packet */
-	extern uint pktfrombuf(struct osl_info *osh, struct sk_buff *p,
+	extern uint pktfrombuf(struct sk_buff *p,
 			       uint offset, int len, unsigned char *buf);
-	extern uint pkttotlen(struct osl_info *osh, struct sk_buff *p);
+	extern uint pkttotlen(struct sk_buff *p);
 
 /* ethernet address */
-	extern int bcm_ether_atoe(char *p, struct ether_addr *ea);
+	extern int bcm_ether_atoe(char *p, u8 *ea);
 
 /* ip address */
 	struct ipv4_addr;
@@ -167,9 +155,11 @@ extern struct sk_buff *pktq_mdeq(struct pktq *pq, uint prec_bmp, int *prec_out);
 	extern char *getvar(char *vars, const char *name);
 	extern int getintvar(char *vars, const char *name);
 #ifdef BCMDBG
-	extern void prpkt(const char *msg, struct osl_info *osh,
-			  struct sk_buff *p0);
+	extern void prpkt(const char *msg, struct sk_buff *p0);
+#else
+#define prpkt(a, b)
 #endif				/* BCMDBG */
+
 #define bcm_perf_enable()
 #define bcmstats(fmt)
 #define	bcmlog(fmt, a1, a2)
@@ -370,11 +360,11 @@ extern struct sk_buff *pktq_mdeq(struct pktq *pq, uint prec_bmp, int *prec_out);
 #endif
 
 /* Register operations */
-#define AND_REG(osh, r, v)	W_REG(osh, (r), R_REG(osh, r) & (v))
-#define OR_REG(osh, r, v)	W_REG(osh, (r), R_REG(osh, r) | (v))
+#define AND_REG(r, v)	W_REG((r), R_REG(r) & (v))
+#define OR_REG(r, v)	W_REG((r), R_REG(r) | (v))
 
-#define SET_REG(osh, r, mask, val) \
-		W_REG((osh), (r), ((R_REG((osh), r) & ~(mask)) | (val)))
+#define SET_REG(r, mask, val) \
+		W_REG((r), ((R_REG(r) & ~(mask)) | (val)))
 
 #ifndef setbit
 #ifndef NBBY			/* the BSD family defines NBBY */
@@ -498,18 +488,8 @@ extern struct sk_buff *pktq_mdeq(struct pktq *pq, uint prec_bmp, int *prec_out);
 	extern u16 bcm_qdbm_to_mw(u8 qdbm);
 	extern u8 bcm_mw_to_qdbm(u16 mw);
 
-/* generic datastruct to help dump routines */
-	struct fielddesc {
-		const char *nameandfmt;
-		u32 offset;
-		u32 len;
-	};
-
 	extern void bcm_binit(struct bcmstrbuf *b, char *buf, uint size);
 	extern int bcm_bprintf(struct bcmstrbuf *b, const char *fmt, ...);
-
-	typedef u32(*bcmutl_rdreg_rtn) (void *arg0, uint arg1,
-					   u32 offset);
 
 	extern uint bcm_mkiovar(char *name, char *data, uint datalen, char *buf,
 				uint len);
