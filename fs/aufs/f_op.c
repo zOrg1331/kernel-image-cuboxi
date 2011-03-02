@@ -653,7 +653,8 @@ static int au_mmap_pre(struct file *file, struct vm_area_struct *vma,
 	*br = au_sbr(sb, bstart);
 	*h_file = au_hf_top(file);
 	get_file(*h_file);
-	au_fi_mmap_lock_and_sell(file);
+	if (!*mmapped)
+		au_fi_mmap_lock_and_sell(file);
 
 out_unlock:
 	fi_write_unlock(file);
@@ -687,7 +688,8 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 		err = wkq_err;
 	if (unlikely(err))
 		goto out;
-	au_fi_mmap_buy(file);
+	if (!args.mmapped)
+		au_fi_mmap_buy(file);
 
 	h_dentry = args.h_file->f_dentry;
 	if (!args.mmapped && au_test_fs_bad_mapping(h_dentry->d_sb)) {
@@ -735,7 +737,8 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 	fsstack_copy_attr_atime(file->f_dentry->d_inode, h_dentry->d_inode);
 
 out_unlock:
-	au_fi_mmap_unlock(file);
+	if (!args.mmapped)
+		au_fi_mmap_unlock(file);
 	fput(args.h_file);
 out:
 	return err;
