@@ -231,6 +231,8 @@ struct TCP_Server_Info {
 /*	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE];  BB can we use cifs key? */
 	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
 	__u8  speed;  /* helps us identify if this is a slow link */
+	unsigned int	max_read;
+	unsigned int	max_write;
 #endif /* CONFIG_CIFS_SMB2 */
 };
 
@@ -386,6 +388,8 @@ struct cifs_tcon {
 #ifdef CONFIG_CIFS_SMB2
 	__u32 capabilities;
 	__u32 maximal_access;
+	__u32 vol_serial_number;
+	__le64 vol_create_time;
 #endif /* CONFIG_CIFS_SMB2 */
 #ifdef CONFIG_CIFS_FSCACHE
 	u64 resource_id;		/* server resource id */
@@ -688,6 +692,7 @@ static inline void free_dfs_info_array(struct dfs_info3_param *param,
 #define   CIFS_IOVEC            4    /* array of response buffers */
 
 /* Type of Request to SendReceive2 */
+#define   CIFS_STD_OP		0
 #define   CIFS_BLOCKING_OP      1    /* operation can block */
 #define   CIFS_ASYNC_OP         2    /* do not wait for response */
 #define   CIFS_TIMEOUT_MASK 0x003    /* only one of above set in req */

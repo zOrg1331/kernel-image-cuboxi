@@ -18,6 +18,8 @@
  *   the GNU Lesser General Public License for more details.
  *
  */
+#ifndef _SMB2_GLOB_H
+#define _SMB2_GLOB_H
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <linux/workqueue.h>
@@ -237,7 +239,6 @@ struct smb2_mid_entry {
 /*
  *  Global counters, updated atomically
  */
-extern atomic_t smb2_tcon_reconnect_count;
 
 /* Various Debug counters */
 extern atomic_t smb2_buf_alloc_count;    /* current number allocated */
@@ -253,3 +254,5 @@ extern unsigned int SMB2_max_buf_size;  /* max size not including hdr */
 extern unsigned int smb2_min_rcv;    /* min size of big ntwrk buf pool */
 extern unsigned int smb2_min_small;  /* min size of small buf pool */
 extern unsigned int smb2_max_pending; /* MAX requests at once to server*/
+
+#endif	/* _SMB2_GLOB_H */
