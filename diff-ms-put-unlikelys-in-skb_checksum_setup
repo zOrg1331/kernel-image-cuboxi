@@ -1,0 +1,47 @@
+Subject:
+[patch 2/3] [v2] use unlikely for rare conditions in func skb_checksum_setup
+From:
+Dmitry Skorodumov <sdmitry@parallels.com>
+Date:
+Wed, 16 Feb 2011 18:23:32 +0300
+To:
+Pavel Emelianov <xemul@parallels.com>
+CC:
+Denis Lunev <den@parallels.com>
+
+microoptimization. use unlikely for rare conditions in func skb_checksum_setup()
+
+Signed-off-by: Dmitry Skorodumov <sdmitry@parallels.com>
+
+
+patch2.patch
+
+microoptimization. use unlikely for rare conditions
+in func skb_checksum_setup()
+
+Signed-off-by: Dmitry Skorodumov <sdmitry@parallels.com>
+--- a/net/core/dev.c	2011-02-11 19:07:50.000000000 +0300
++++ a/net/core/dev.c	2011-02-11 19:09:29.000000000 +0300
+@@ -1542,9 +1542,9 @@ out_kfree_skb:
+ #if defined(CONFIG_XEN) || defined(CONFIG_VE)
+ static inline int skb_checksum_setup_v4(struct sk_buff *skb)
+ {
+-	if (skb->data < skb->nh.raw + sizeof(*skb->nh.iph) &&
++	if (unlikely(skb->data < skb->nh.raw + sizeof(*skb->nh.iph) &&
+ 	    !pskb_may_pull(skb, skb->nh.raw + sizeof(*skb->nh.iph) -
+-				skb->data))
++				skb->data)))
+ 		goto out;
+ 	skb->h.raw = (unsigned char *)skb->nh.iph + 4*skb->nh.iph->ihl;
+ 	switch (skb->nh.iph->protocol) {
+@@ -1561,8 +1561,8 @@ static inline int skb_checksum_setup_v4(
+ 			       " %d packet", skb->nh.iph->protocol);
+ 		goto out;
+ 	}
+-	if (skb->data < skb->h.raw + skb->csum + 2 &&
+-	    !pskb_may_pull(skb, skb->h.raw + skb->csum + 2 - skb->data))
++	if (unlikely(skb->data < skb->h.raw + skb->csum + 2 &&
++	    !pskb_may_pull(skb, skb->h.raw + skb->csum + 2 - skb->data)))
+ 		goto out;
+ 	skb->ip_summed = CHECKSUM_HW;
+ 	skb->proto_csum_blank = 0;

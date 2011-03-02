@@ -1,0 +1,44 @@
+Subject: [PATCH rh5] ub: add pre oom kill virtinfo notifier
+From: Konstantin Khlebnikov <khlebnikov@parallels.com>
+Date: Mon, 21 Feb 2011 16:15:52 +0300
+To: "vzlin-dev@sw.ru" <vzlin-dev@sw.ru>
+CC: Pavel Emelianov <xemul@parallels.com>
+Message-ID: <20110221131552.27772.12100.stgit@localhost6>
+
+Handlers in this chain can print some statistics before task killing.
+Or they can set task->oomkilladj = OOM_DISABLE and return NOTIFY_FAIL to save this task.
+
+Signed-off-by: Konstantin Khlebnikov <khlebnikov@openvz.org>
+---
+ include/linux/virtinfo.h |    1 +
+ mm/oom_kill.c            |    4 ++++
+ 2 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/include/linux/virtinfo.h b/include/linux/virtinfo.h
+index f03e715..1da9633 100644
+--- a/include/linux/virtinfo.h
++++ b/include/linux/virtinfo.h
+@@ -67,6 +67,7 @@ struct meminfo {
+ #define VIRTINFO_SYSINFO        12
+ #define VIRTINFO_NEWUBC         13
+ #define VIRTINFO_VMSTAT		14
++#define VIRTINFO_OOMKILL	15
+ 
+ #define VIRTINFO_IO_ACCOUNT	0
+ #define VIRTINFO_IO_PREPARE	1
+diff --git a/mm/oom_kill.c b/mm/oom_kill.c
+index a2646ab..f9feed5 100644
+--- a/mm/oom_kill.c
++++ b/mm/oom_kill.c
+@@ -308,6 +308,10 @@ static int oom_kill_task(struct task_struct *p, const char *message)
+ 	struct user_beancounter *ub;
+ 	struct task_struct *g, *q;
+ 
++	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, p)
++			& NOTIFY_FAIL)
++		return 1;
++
+ 	task_lock(p);
+ 	mm = p->mm;
+ 
+

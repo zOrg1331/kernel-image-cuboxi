@@ -1,0 +1,61 @@
+Subject: [PATCH rh5 1/2] ub: add percpu stat get-exact and flush-pcpu
+From: Konstantin Khlebnikov <khlebnikov@parallels.com>
+Date: Mon, 21 Feb 2011 16:15:46 +0300
+To: "vzlin-dev@sw.ru" <vzlin-dev@sw.ru>
+CC: Pavel Emelianov <xemul@parallels.com>
+Message-ID: <20110221131545.27711.33272.stgit@localhost6>
+
+Signed-off-by: Konstantin Khlebnikov <khlebnikov@openvz.org>
+---
+ include/ub/beancounter.h |   25 +++++++++++++++++++++++++
+ 1 files changed, 25 insertions(+), 0 deletions(-)
+
+diff --git a/include/ub/beancounter.h b/include/ub/beancounter.h
+index 29ac108..ec739f4 100644
+--- a/include/ub/beancounter.h
++++ b/include/ub/beancounter.h
+@@ -335,6 +335,19 @@ static inline void uncharge_beancounter(struct user_beancounter *ub,
+ 
+ #else /* CONFIG_USER_RESOURCE */
+ 
++#define ub_percpu(ub, cpu) (per_cpu_ptr((ub)->ub_percpu, (cpu)))
++
++#define __ub_percpu_sum(ub, field)	({			\
++		struct user_beancounter *__ub = (ub);		\
++		typeof(ub_percpu(__ub, 0)->field) __sum = 0;	\
++		int __cpu;					\
++		for_each_possible_cpu(__cpu)			\
++			__sum += ub_percpu(__ub, __cpu)->field;	\
++		__sum;						\
++	})
++
++#define ub_percpu_sum(ub, field) max(0l, __ub_percpu_sum(ub, field))
++
+ #define ub_percpu_add(ub, field, v)		do {			\
+ 		per_cpu_ptr(ub->ub_percpu, get_cpu())->field += (v);	\
+ 		put_cpu();						\
+@@ -379,11 +392,23 @@ static inline void uncharge_beancounter(struct user_beancounter *ub,
+ 	local_irq_restore(__flags);			\
+ } while (0)
+ 
++#define ub_stat_flush_pcpu(ub, name)	do {		\
++	unsigned long __flags;				\
++	int *__pcpu;					\
++							\
++	local_irq_save(__flags);			\
++	__pcpu = &(per_cpu_ptr((ub)->ub_percpu, smp_processor_id())->name); \
++	atomic_long_add(*__pcpu, &(ub)->name);		\
++	*__pcpu = 0;					\
++	local_irq_restore(__flags);			\
++} while (0)
++
+ #define ub_stat_inc(ub, name)		ub_stat_add(ub, name, 1)
+ #define ub_stat_dec(ub, name)		ub_stat_sub(ub, name, 1)
+ #define ub_stat_mod(ub, name, val)	atomic_long_add(val, &(ub)->name)
+ #define __ub_stat_get(ub, name)		atomic_long_read(&(ub)->name)
+ #define ub_stat_get(ub, name)		max(0l, atomic_long_read(&(ub)->name))
++#define ub_stat_get_exact(ub, name)	max(0l, __ub_stat_get(ub, name) + __ub_percpu_sum(ub, name))
+ 
+ #define mm_ub(mm)	((mm)->mm_ub)
+ /*
+
