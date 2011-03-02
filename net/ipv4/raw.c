@@ -555,7 +555,8 @@ static int raw_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 				    .fl4_tos = tos,
 				    .proto = inet->hdrincl ? IPPROTO_RAW :
 							     sk->sk_protocol,
-				  };
+				    .flags = FLOWI_FLAG_CAN_SLEEP,
+		};
 		if (!inet->hdrincl) {
 			err = raw_probe_proto_opt(&fl, msg);
 			if (err)
@@ -563,7 +564,7 @@ static int raw_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		}
 
 		security_sk_classify_flow(sk, &fl);
-		err = ip_route_output_flow(sock_net(sk), &rt, &fl, sk, 1);
+		err = ip_route_output_flow(sock_net(sk), &rt, &fl, sk);
 	}
 	if (err)
 		goto done;

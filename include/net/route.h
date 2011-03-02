@@ -49,6 +49,7 @@
 
 struct fib_nh;
 struct inet_peer;
+struct fib_info;
 struct rtable {
 	struct dst_entry	dst;
 
@@ -68,7 +69,9 @@ struct rtable {
 
 	/* Miscellaneous cached information */
 	__be32			rt_spec_dst; /* RFC1122 specific destination */
+	u32			rt_peer_genid;
 	struct inet_peer	*peer; /* long-living peer info */
+	struct fib_info		*fi; /* for client ref to shared metrics */
 };
 
 static inline bool rt_is_input_route(struct rtable *rt)
@@ -117,7 +120,8 @@ extern void		rt_cache_flush(struct net *net, int how);
 extern void		rt_cache_flush_batch(struct net *net);
 extern int		__ip_route_output_key(struct net *, struct rtable **, const struct flowi *flp);
 extern int		ip_route_output_key(struct net *, struct rtable **, struct flowi *flp);
-extern int		ip_route_output_flow(struct net *, struct rtable **rp, struct flowi *flp, struct sock *sk, int flags);
+extern int		ip_route_output_flow(struct net *, struct rtable **rp, struct flowi *flp, struct sock *sk);
+extern struct dst_entry *ipv4_blackhole_route(struct net *net, struct dst_entry *dst_orig);
 
 extern int ip_route_input_common(struct sk_buff *skb, __be32 dst, __be32 src,
 				 u8 tos, struct net_device *devin, bool noref);
@@ -165,7 +169,7 @@ static inline char rt_tos2priority(u8 tos)
 static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 				   __be32 src, u32 tos, int oif, u8 protocol,
 				   __be16 sport, __be16 dport, struct sock *sk,
-				   int flags)
+				   bool can_sleep)
 {
 	struct flowi fl = { .oif = oif,
 			    .mark = sk->sk_mark,
@@ -180,6 +184,10 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 
 	if (inet_sk(sk)->transparent)
 		fl.flags |= FLOWI_FLAG_ANYSRC;
+	if (protocol == IPPROTO_TCP)
+		fl.flags |= FLOWI_FLAG_PRECOW_METRICS;
+	if (can_sleep)
+		fl.flags |= FLOWI_FLAG_CAN_SLEEP;
 
 	if (!dst || !src) {
 		err = __ip_route_output_key(net, rp, &fl);
@@ -191,26 +199,31 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 		*rp = NULL;
 	}
 	security_sk_classify_flow(sk, &fl);
-	return ip_route_output_flow(net, rp, &fl, sk, flags);
+	return ip_route_output_flow(net, rp, &fl, sk);
 }
 
 static inline int ip_route_newports(struct rtable **rp, u8 protocol,
+				    __be16 orig_sport, __be16 orig_dport,
 				    __be16 sport, __be16 dport, struct sock *sk)
 {
-	if (sport != (*rp)->fl.fl_ip_sport ||
-	    dport != (*rp)->fl.fl_ip_dport) {
-		struct flowi fl;
+	if (sport != orig_sport || dport != orig_dport) {
+		struct flowi fl = { .oif = (*rp)->fl.oif,
+				    .mark = (*rp)->fl.mark,
+				    .fl4_dst = (*rp)->fl.fl4_dst,
+				    .fl4_src = (*rp)->fl.fl4_src,
+				    .fl4_tos = (*rp)->fl.fl4_tos,
+				    .proto = (*rp)->fl.proto,
+				    .fl_ip_sport = sport,
+				    .fl_ip_dport = dport };
 
-		memcpy(&fl, &(*rp)->fl, sizeof(fl));
-		fl.fl_ip_sport = sport;
-		fl.fl_ip_dport = dport;
-		fl.proto = protocol;
 		if (inet_sk(sk)->transparent)
 			fl.flags |= FLOWI_FLAG_ANYSRC;
+		if (protocol == IPPROTO_TCP)
+			fl.flags |= FLOWI_FLAG_PRECOW_METRICS;
 		ip_rt_put(*rp);
 		*rp = NULL;
 		security_sk_classify_flow(sk, &fl);
-		return ip_route_output_flow(sock_net(sk), rp, &fl, sk, 0);
+		return ip_route_output_flow(sock_net(sk), rp, &fl, sk);
 	}
 	return 0;
 }

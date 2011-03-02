@@ -1115,7 +1115,7 @@ static int inet_sk_reselect_saddr(struct sock *sk)
 			       RT_CONN_FLAGS(sk),
 			       sk->sk_bound_dev_if,
 			       sk->sk_protocol,
-			       inet->inet_sport, inet->inet_dport, sk, 0);
+			       inet->inet_sport, inet->inet_dport, sk, false);
 	if (err)
 		return err;
 
@@ -1174,7 +1174,7 @@ int inet_sk_rebuild_header(struct sock *sk)
 	};
 
 	security_sk_classify_flow(sk, &fl);
-	err = ip_route_output_flow(sock_net(sk), &rt, &fl, sk, 0);
+	err = ip_route_output_flow(sock_net(sk), &rt, &fl, sk);
 }
 	if (!err)
 		sk_setup_caps(sk, &rt->dst);
@@ -1231,7 +1231,7 @@ out:
 	return err;
 }
 
-static struct sk_buff *inet_gso_segment(struct sk_buff *skb, int features)
+static struct sk_buff *inet_gso_segment(struct sk_buff *skb, u32 features)
 {
 	struct sk_buff *segs = ERR_PTR(-EINVAL);
 	struct iphdr *iph;

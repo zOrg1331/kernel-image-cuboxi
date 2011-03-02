@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2011 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -25,7 +25,6 @@
 #include "translation-table.h"
 #include "soft-interface.h"
 #include "hard-interface.h"
-#include "types.h"
 #include "vis.h"
 #include "aggregation.h"
 #include "gateway_common.h"
@@ -49,7 +48,7 @@ static unsigned long own_send_time(struct bat_priv *bat_priv)
 }
 
 /* when do we schedule a forwarded packet to be sent */
-static unsigned long forward_send_time(struct bat_priv *bat_priv)
+static unsigned long forward_send_time(void)
 {
 	return jiffies + msecs_to_jiffies(random32() % (JITTER/2));
 }
@@ -356,7 +355,7 @@ void schedule_forward_packet(struct orig_node *orig_node,
 	else
 		batman_packet->flags &= ~DIRECTLINK;
 
-	send_time = forward_send_time(bat_priv);
+	send_time = forward_send_time();
 	add_bat_packet_to_list(bat_priv,
 			       (unsigned char *)batman_packet,
 			       sizeof(struct batman_packet) + hna_buff_len,

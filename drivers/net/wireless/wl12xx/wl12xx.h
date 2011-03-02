@@ -38,6 +38,13 @@
 #define DRIVER_NAME "wl1271"
 #define DRIVER_PREFIX DRIVER_NAME ": "
 
+/*
+ * FW versions support BA 11n
+ * versions marks x.x.x.50-60.x
+ */
+#define WL12XX_BA_SUPPORT_FW_COST_VER2_START    50
+#define WL12XX_BA_SUPPORT_FW_COST_VER2_END      60
+
 enum {
 	DEBUG_NONE	= 0,
 	DEBUG_IRQ	= BIT(0),
@@ -57,6 +64,8 @@ enum {
 	DEBUG_SDIO	= BIT(14),
 	DEBUG_FILTERS   = BIT(15),
 	DEBUG_ADHOC     = BIT(16),
+	DEBUG_AP	= BIT(17),
+	DEBUG_MASTER	= (DEBUG_ADHOC | DEBUG_AP),
 	DEBUG_ALL	= ~0,
 };
 
@@ -103,16 +112,27 @@ extern u32 wl12xx_debug_level;
 				       true);				\
 	} while (0)
 
-#define WL1271_DEFAULT_RX_CONFIG (CFG_UNI_FILTER_EN |	\
+#define WL1271_DEFAULT_STA_RX_CONFIG (CFG_UNI_FILTER_EN |	\
 				  CFG_BSSID_FILTER_EN | \
 				  CFG_MC_FILTER_EN)
 
-#define WL1271_DEFAULT_RX_FILTER (CFG_RX_RCTS_ACK | CFG_RX_PRSP_EN |  \
+#define WL1271_DEFAULT_STA_RX_FILTER (CFG_RX_RCTS_ACK | CFG_RX_PRSP_EN |  \
 				  CFG_RX_MGMT_EN | CFG_RX_DATA_EN |   \
 				  CFG_RX_CTL_EN | CFG_RX_BCN_EN |     \
 				  CFG_RX_AUTH_EN | CFG_RX_ASSOC_EN)
 
-#define WL1271_FW_NAME "wl1271-fw.bin"
+#define WL1271_DEFAULT_AP_RX_CONFIG  0
+
+#define WL1271_DEFAULT_AP_RX_FILTER  (CFG_RX_RCTS_ACK | CFG_RX_PREQ_EN | \
+				  CFG_RX_MGMT_EN | CFG_RX_DATA_EN | \
+				  CFG_RX_CTL_EN | CFG_RX_AUTH_EN | \
+				  CFG_RX_ASSOC_EN)
+
+
+
+#define WL1271_FW_NAME "wl1271-fw-2.bin"
+#define WL1271_AP_FW_NAME "wl1271-fw-ap.bin"
+
 #define WL1271_NVS_NAME "wl1271-nvs.bin"
 
 #define WL1271_TX_SECURITY_LO16(s) ((u16)((s) & 0xffff))
@@ -128,6 +148,14 @@ extern u32 wl12xx_debug_level;
 
 #define WL1271_DEFAULT_BEACON_INT  100
 #define WL1271_DEFAULT_DTIM_PERIOD 1
+
+#define WL1271_AP_GLOBAL_HLID      0
+#define WL1271_AP_BROADCAST_HLID   1
+#define WL1271_AP_STA_HLID_START   2
+
+#define WL1271_AP_BSS_INDEX        0
+#define WL1271_AP_DEF_INACTIV_SEC  300
+#define WL1271_AP_DEF_BEACON_EXP   20
 
 #define ACX_TX_DESCRIPTORS         32
 
@@ -161,10 +189,13 @@ struct wl1271_partition_set {
 
 struct wl1271;
 
+#define WL12XX_NUM_FW_VER 5
+
 /* FIXME: I'm not sure about this structure name */
 struct wl1271_chip {
 	u32 id;
-	char fw_ver[21];
+	char fw_ver_str[ETHTOOL_BUSINFO_LEN];
+	unsigned int fw_ver[WL12XX_NUM_FW_VER];
 };
 
 struct wl1271_stats {
@@ -178,8 +209,13 @@ struct wl1271_stats {
 #define NUM_TX_QUEUES              4
 #define NUM_RX_PKT_DESC            8
 
-/* FW status registers */
-struct wl1271_fw_status {
+#define AP_MAX_STATIONS            5
+
+/* Broadcast and Global links + links to stations */
+#define AP_MAX_LINKS               (AP_MAX_STATIONS + 2)
+
+/* FW status registers common for AP/STA */
+struct wl1271_fw_common_status {
 	__le32 intr;
 	u8  fw_rx_counter;
 	u8  drv_rx_counter;
@@ -188,8 +224,42 @@ struct wl1271_fw_status {
 	__le32 rx_pkt_descs[NUM_RX_PKT_DESC];
 	__le32 tx_released_blks[NUM_TX_QUEUES];
 	__le32 fw_localtime;
-	__le32 padding[2];
 } __packed;
+
+/* FW status registers for AP */
+struct wl1271_fw_ap_status {
+	struct wl1271_fw_common_status common;
+
+	/* Next fields valid only in AP FW */
+
+	/*
+	 * A bitmap (where each bit represents a single HLID)
+	 * to indicate if the station is in PS mode.
+	 */
+	__le32 link_ps_bitmap;
+
+	/* Number of freed MBs per HLID */
+	u8 tx_lnk_free_blks[AP_MAX_LINKS];
+	u8 padding_1[1];
+} __packed;
+
+/* FW status registers for STA */
+struct wl1271_fw_sta_status {
+	struct wl1271_fw_common_status common;
+
+	u8  tx_total;
+	u8  reserved1;
+	__le16 reserved2;
+} __packed;
+
+struct wl1271_fw_full_status {
+	union {
+		struct wl1271_fw_common_status common;
+		struct wl1271_fw_sta_status sta;
+		struct wl1271_fw_ap_status ap;
+	};
+} __packed;
+
 
 struct wl1271_rx_mem_pool_addr {
 	u32 addr;
@@ -218,6 +288,37 @@ struct wl1271_if_operations {
 	void (*disable_irq)(struct wl1271 *wl);
 };
 
+#define MAX_NUM_KEYS 14
+#define MAX_KEY_SIZE 32
+
+struct wl1271_ap_key {
+	u8 id;
+	u8 key_type;
+	u8 key_size;
+	u8 key[MAX_KEY_SIZE];
+	u8 hlid;
+	u32 tx_seq_32;
+	u16 tx_seq_16;
+};
+
+enum wl12xx_flags {
+	WL1271_FLAG_STA_ASSOCIATED,
+	WL1271_FLAG_JOINED,
+	WL1271_FLAG_GPIO_POWER,
+	WL1271_FLAG_TX_QUEUE_STOPPED,
+	WL1271_FLAG_IN_ELP,
+	WL1271_FLAG_PSM,
+	WL1271_FLAG_PSM_REQUESTED,
+	WL1271_FLAG_IRQ_PENDING,
+	WL1271_FLAG_IRQ_RUNNING,
+	WL1271_FLAG_IDLE,
+	WL1271_FLAG_IDLE_REQUESTED,
+	WL1271_FLAG_PSPOLL_FAILURE,
+	WL1271_FLAG_STA_STATE_SENT,
+	WL1271_FLAG_FW_TX_BUSY,
+	WL1271_FLAG_AP_STARTED
+};
+
 struct wl1271 {
 	struct platform_device *plat_dev;
 	struct ieee80211_hw *hw;
@@ -236,21 +337,6 @@ struct wl1271 {
 	enum wl1271_state state;
 	struct mutex mutex;
 
-#define WL1271_FLAG_STA_RATES_CHANGED  (0)
-#define WL1271_FLAG_STA_ASSOCIATED     (1)
-#define WL1271_FLAG_JOINED             (2)
-#define WL1271_FLAG_GPIO_POWER         (3)
-#define WL1271_FLAG_TX_QUEUE_STOPPED   (4)
-#define WL1271_FLAG_IN_ELP             (5)
-#define WL1271_FLAG_PSM                (6)
-#define WL1271_FLAG_PSM_REQUESTED      (7)
-#define WL1271_FLAG_IRQ_PENDING        (8)
-#define WL1271_FLAG_IRQ_RUNNING        (9)
-#define WL1271_FLAG_IDLE              (10)
-#define WL1271_FLAG_IDLE_REQUESTED    (11)
-#define WL1271_FLAG_PSPOLL_FAILURE    (12)
-#define WL1271_FLAG_STA_STATE_SENT    (13)
-#define WL1271_FLAG_FW_TX_BUSY        (14)
 	unsigned long flags;
 
 	struct wl1271_partition_set part;
@@ -262,6 +348,7 @@ struct wl1271 {
 
 	u8 *fw;
 	size_t fw_len;
+	u8 fw_bss_type;
 	struct wl1271_nvs_file *nvs;
 	size_t nvs_len;
 
@@ -343,7 +430,6 @@ struct wl1271 {
 	 *	bits 16-23 - 802.11n   MCS index mask
 	 * support only 1 stream, thus only 8 bits for the MCS rates (0-7).
 	 */
-	u32 sta_rate_set;
 	u32 basic_rate_set;
 	u32 basic_rate;
 	u32 rate_set;
@@ -378,13 +464,12 @@ struct wl1271 {
 	int last_rssi_event;
 
 	struct wl1271_stats stats;
-	struct dentry *rootdir;
 
 	__le32 buffer_32;
 	u32 buffer_cmd;
 	u32 buffer_busyword[WL1271_BUSY_WORD_CNT];
 
-	struct wl1271_fw_status *fw_status;
+	struct wl1271_fw_full_status *fw_status;
 	struct wl1271_tx_hw_res_if *tx_res_if;
 
 	struct ieee80211_vif *vif;
@@ -400,6 +485,23 @@ struct wl1271 {
 
 	/* Most recently reported noise in dBm */
 	s8 noise;
+
+	/* map for HLIDs of associated stations - when operating in AP mode */
+	unsigned long ap_hlid_map[BITS_TO_LONGS(AP_MAX_STATIONS)];
+
+	/* recoreded keys for AP-mode - set here before AP startup */
+	struct wl1271_ap_key *recorded_ap_keys[MAX_NUM_KEYS];
+
+	/* bands supported by this instance of wl12xx */
+	struct ieee80211_supported_band bands[IEEE80211_NUM_BANDS];
+
+	/* RX BA constraint value */
+	bool ba_support;
+	u8 ba_rx_bitmap;
+};
+
+struct wl1271_station {
+	u8 hlid;
 };
 
 int wl1271_plt_start(struct wl1271 *wl);
