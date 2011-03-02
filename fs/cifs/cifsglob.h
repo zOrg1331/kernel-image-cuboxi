@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/cifsglob.h
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2008
+ *   Copyright (C) International Business Machines  Corp., 2002,2011
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *              Jeremy Allison (jra@samba.org)
  *
@@ -27,6 +27,9 @@
 #include "cifsacl.h"
 #include <crypto/internal/hash.h>
 #include <linux/scatterlist.h>
+#ifdef CONFIG_CIFS_SMB2
+#include "smb2glob.h"
+#endif /* CONFIG_CIFS_SMB2 */
 
 /*
  * The sizes of various internal tables and strings
@@ -38,9 +41,8 @@
 #define MAX_TREE_SIZE (2 + MAX_SERVER_SIZE + 1 + MAX_SHARE_SIZE + 1)
 #define MAX_SERVER_SIZE 15
 #define MAX_SHARE_SIZE  64	/* used to be 20, this should still be enough */
-#define MAX_USERNAME_SIZE 32	/* 32 is to allow for 15 char names + null
-				   termination then *2 for unicode versions */
-#define MAX_PASSWORD_SIZE 512  /* max for windows seems to be 256 wide chars */
+#define MAX_USERNAME_SIZE 256	/* reasonable maximum for current servers */
+#define MAX_PASSWORD_SIZE 512	/* max for windows seems to be 256 wide chars */
 
 #define CIFS_MIN_RCV_POOL 4
 
@@ -179,7 +181,7 @@ struct TCP_Server_Info {
 	struct mutex srv_mutex;
 	struct task_struct *tsk;
 	char server_GUID[16];
-	char secMode;
+	__u16 sec_mode;
 	bool session_estab; /* mark when very first sess is established */
 	u16 dialect; /* dialect index that server chose */
 	enum securityEnum secType;
@@ -211,6 +213,7 @@ struct TCP_Server_Info {
 	bool	sec_kerberosu2u;	/* supports U2U Kerberos */
 	bool	sec_kerberos;		/* supports plain Kerberos */
 	bool	sec_mskerberos;		/* supports legacy MS Kerberos */
+	bool	is_smb2;		/* smb2 not cifs protocol negotiated */
 	struct delayed_work	echo; /* echo ping workqueue job */
 #ifdef CONFIG_CIFS_FSCACHE
 	struct fscache_cookie   *fscache; /* client index cache cookie */
@@ -219,6 +222,16 @@ struct TCP_Server_Info {
 	atomic_t inSend; /* requests trying to send */
 	atomic_t num_waiters;   /* blocked waiting to get in sendrecv */
 #endif
+#ifdef CONFIG_CIFS_SMB2
+	wait_queue_head_t read_q; /* used by readpages */
+	atomic_t active_readpage_req; /* used by readpages */
+	atomic_t resp_rdy; /* used by readpages and demultiplex */
+	__le16 smb21_minor_version; /* SMB2.0 implemented, but 2.1 recognized */
+	struct task_struct *observe;
+/*	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE];  BB can we use cifs key? */
+	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
+	__u8  speed;  /* helps us identify if this is a slow link */
+#endif /* CONFIG_CIFS_SMB2 */
 };
 
 /*
@@ -254,7 +267,7 @@ static inline void cifs_set_net_ns(struct TCP_Server_Info *srv, struct net *net)
 /*
  * Session structure.  One of these for each uid session with a particular host
  */
-struct cifsSesInfo {
+struct cifs_ses {
 	struct list_head smb_ses_list;
 	struct list_head tcon_list;
 	struct mutex session_mutex;
@@ -274,7 +287,8 @@ struct cifsSesInfo {
 	int capabilities;
 	char serverName[SERVER_NAME_LEN_WITH_NULL * 2];	/* BB make bigger for
 				TCP names - will ipv6 and sctp addresses fit? */
-	char userName[MAX_USERNAME_SIZE + 1];
+	char *user_name;	/* must not be null except during init of sess
+				   and after mount option parsing we fill it */
 	char *domainName;
 	char *password;
 	struct session_key auth_key;
@@ -289,15 +303,16 @@ struct cifsSesInfo {
    which do not negotiate NTLM or POSIX dialects, but instead
    negotiate one of the older LANMAN dialects */
 #define CIFS_SES_LANMAN 8
+#define CIFS_SES_SMB2 16
 /*
  * there is one of these for each connection to a resource on a particular
  * session
  */
-struct cifsTconInfo {
+struct cifs_tcon {
 	struct list_head tcon_list;
 	int tc_count;
 	struct list_head openFileList;
-	struct cifsSesInfo *ses;	/* pointer to session associated with */
+	struct cifs_ses *ses;	/* pointer to session associated with */
 	char treeName[MAX_TREE_SIZE + 1]; /* UNC name of resource in ASCII */
 	char *nativeFileSystem;
 	char *password;		/* for share-level security */
@@ -306,27 +321,37 @@ struct cifsTconInfo {
 	enum statusEnum tidStatus;
 #ifdef CONFIG_CIFS_STATS
 	atomic_t num_smbs_sent;
-	atomic_t num_writes;
-	atomic_t num_reads;
-	atomic_t num_flushes;
-	atomic_t num_oplock_brks;
-	atomic_t num_opens;
-	atomic_t num_closes;
-	atomic_t num_deletes;
-	atomic_t num_mkdirs;
-	atomic_t num_posixopens;
-	atomic_t num_posixmkdirs;
-	atomic_t num_rmdirs;
-	atomic_t num_renames;
-	atomic_t num_t2renames;
-	atomic_t num_ffirst;
-	atomic_t num_fnext;
-	atomic_t num_fclose;
-	atomic_t num_hardlinks;
-	atomic_t num_symlinks;
-	atomic_t num_locks;
-	atomic_t num_acl_get;
-	atomic_t num_acl_set;
+	union {
+		struct {
+			atomic_t num_writes;
+			atomic_t num_reads;
+			atomic_t num_flushes;
+			atomic_t num_oplock_brks;
+			atomic_t num_opens;
+			atomic_t num_closes;
+			atomic_t num_deletes;
+			atomic_t num_mkdirs;
+			atomic_t num_posixopens;
+			atomic_t num_posixmkdirs;
+			atomic_t num_rmdirs;
+			atomic_t num_renames;
+			atomic_t num_t2renames;
+			atomic_t num_ffirst;
+			atomic_t num_fnext;
+			atomic_t num_fclose;
+			atomic_t num_hardlinks;
+			atomic_t num_symlinks;
+			atomic_t num_locks;
+			atomic_t num_acl_get;
+			atomic_t num_acl_set;
+		} cifs_stats;
+#ifdef CONFIG_CIFS_SMB2
+		struct {
+			atomic_t smb2_com_sent[NUMBER_OF_SMB2_COMMANDS];
+			atomic_t smb2_com_fail[NUMBER_OF_SMB2_COMMANDS];
+		} smb2_stats;
+#endif /* CONFIG CIFS_SMB2 */
+	} stats;
 #ifdef CONFIG_CIFS_STATS2
 	unsigned long long time_writes;
 	unsigned long long time_reads;
@@ -357,6 +382,11 @@ struct cifsTconInfo {
 	bool local_lease:1; /* check leases (only) on local system not remote */
 	bool broken_posix_open; /* e.g. Samba server versions < 3.3.2, 3.2.9 */
 	bool need_reconnect:1; /* connection reset, tid now invalid */
+	bool bad_network_name:1;
+#ifdef CONFIG_CIFS_SMB2
+	__u32 capabilities;
+	__u32 maximal_access;
+#endif /* CONFIG_CIFS_SMB2 */
 #ifdef CONFIG_CIFS_FSCACHE
 	u64 resource_id;		/* server resource id */
 	struct fscache_cookie *fscache;	/* cookie for share */
@@ -379,12 +409,12 @@ struct tcon_link {
 #define TCON_LINK_IN_TREE	2
 	unsigned long		tl_time;
 	atomic_t		tl_count;
-	struct cifsTconInfo	*tl_tcon;
+	struct cifs_tcon	*tl_tcon;
 };
 
 extern struct tcon_link *cifs_sb_tlink(struct cifs_sb_info *cifs_sb);
 
-static inline struct cifsTconInfo *
+static inline struct cifs_tcon *
 tlink_tcon(struct tcon_link *tlink)
 {
 	return tlink->tl_tcon;
@@ -401,7 +431,7 @@ cifs_get_tlink(struct tcon_link *tlink)
 }
 
 /* This function is always expected to succeed */
-extern struct cifsTconInfo *cifs_sb_master_tcon(struct cifs_sb_info *cifs_sb);
+extern struct cifs_tcon *cifs_sb_master_tcon(struct cifs_sb_info *cifs_sb);
 
 /*
  * This info hangs off the cifsFileInfo structure, pointed to by llist.
@@ -511,7 +541,7 @@ static inline char CIFS_DIR_SEP(const struct cifs_sb_info *cifs_sb)
 #ifdef CONFIG_CIFS_STATS
 #define cifs_stats_inc atomic_inc
 
-static inline void cifs_stats_bytes_written(struct cifsTconInfo *tcon,
+static inline void cifs_stats_bytes_written(struct cifs_tcon *tcon,
 					    unsigned int bytes)
 {
 	if (bytes) {
@@ -521,7 +551,7 @@ static inline void cifs_stats_bytes_written(struct cifsTconInfo *tcon,
 	}
 }
 
-static inline void cifs_stats_bytes_read(struct cifsTconInfo *tcon,
+static inline void cifs_stats_bytes_read(struct cifs_tcon *tcon,
 					 unsigned int bytes)
 {
 	spin_lock(&tcon->stat_lock);
@@ -567,13 +597,6 @@ struct mid_q_entry {
 	bool largeBuf:1;	/* if valid response, is pointer to large buf */
 	bool multiRsp:1;	/* multiple trans2 responses for one request  */
 	bool multiEnd:1;	/* both received */
-};
-
-struct oplock_q_entry {
-	struct list_head qhead;
-	struct inode *pinode;
-	struct cifsTconInfo *tcon;
-	__u16 netfid;
 };
 
 /* for pending dnotify requests */
@@ -625,6 +648,7 @@ struct cifs_fattr {
 	struct timespec	cf_atime;
 	struct timespec	cf_mtime;
 	struct timespec	cf_ctime;
+	u32		ea_size;
 };
 
 static inline void free_dfs_info_param(struct dfs_info3_param *param)
@@ -655,6 +679,7 @@ static inline void free_dfs_info_array(struct dfs_info3_param *param,
 #define   MID_RESPONSE_RECEIVED 4
 #define   MID_RETRY_NEEDED      8 /* session closed while this request out */
 #define   MID_RESPONSE_MALFORMED 0x10
+#define   MID_NO_RESPONSE_NEEDED 0x20
 
 /* Types of response buffer returned from SendReceive2 */
 #define   CIFS_NO_BUFFER        0    /* Response buffer not returned */
@@ -713,13 +738,6 @@ require use of the stronger protocol */
 #define   CIFSSEC_DEF (CIFSSEC_MAY_SIGN | CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2)
 #define   CIFSSEC_MAX (CIFSSEC_MUST_SIGN | CIFSSEC_MUST_NTLMV2)
 #define   CIFSSEC_AUTH_MASK (CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2 | CIFSSEC_MAY_LANMAN | CIFSSEC_MAY_PLNTXT | CIFSSEC_MAY_KRB5 | CIFSSEC_MAY_NTLMSSP)
-/*
- *****************************************************************
- * All constants go here
- *****************************************************************
- */
-
-#define UID_HASH (16)
 
 /*
  * Note that ONE module should define _DECLARE_GLOBALS_HERE to cause the
@@ -780,10 +798,12 @@ GLOBAL_EXTERN spinlock_t		cifs_tcp_ses_lock;
  */
 GLOBAL_EXTERN spinlock_t	cifs_file_list_lock;
 
+#ifdef CONFIG_CIFS_DNOTIFY_EXPERIMENTAL /* unused temporarily */
 /* Outstanding dir notify requests */
 GLOBAL_EXTERN struct list_head GlobalDnotifyReqList;
 /* DirNotify response queue */
 GLOBAL_EXTERN struct list_head GlobalDnotifyRsp_Q;
+#endif /* was needed for dnotify, and will be needed for inotify when VFS fix */
 
 /*
  * Global transaction id (XID) information
@@ -817,7 +837,6 @@ GLOBAL_EXTERN unsigned int multiuser_mount; /* if enabled allows new sessions
 				have the uid/password or Kerberos credential
 				or equivalent for current user */
 GLOBAL_EXTERN unsigned int oplockEnabled;
-GLOBAL_EXTERN unsigned int experimEnabled;
 GLOBAL_EXTERN unsigned int lookupCacheEnabled;
 GLOBAL_EXTERN unsigned int global_secflags;	/* if on, session setup sent
 				with more secure ntlmssp2 challenge/resp */
@@ -827,6 +846,7 @@ GLOBAL_EXTERN unsigned int CIFSMaxBufSize;  /* max size not including hdr */
 GLOBAL_EXTERN unsigned int cifs_min_rcv;    /* min size of big ntwrk buf pool */
 GLOBAL_EXTERN unsigned int cifs_min_small;  /* min size of small buf pool */
 GLOBAL_EXTERN unsigned int cifs_max_pending; /* MAX requests at once to server*/
+GLOBAL_EXTERN bool sign_zero_copy; /* don't copy written pages with signing */
 
 /* reconnect after this many failed echo attempts */
 GLOBAL_EXTERN unsigned short echo_retries;
