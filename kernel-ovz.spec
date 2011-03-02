@@ -5984,6 +5984,11 @@ Patch26271: linux-2.6-fs-gfs2-fix-statfs-error-after-gfs2_grow.patch
 Patch26272: linux-2.6-mm-prevent-file-lock-corruption-using-popen-3.patch
 Patch26273: linux-2.6-net-sctp-fix-panic-from-bad-socket-lock-on-icmp-error.patch
 
+# 3 patches from kernel-2.6.18-238.5.1.el5
+Patch26284: linux-2.6-net-limit-socket-backlog-add-operation-to-prevent-dos.patch
+Patch26285: linux-2.6-net-core-clear-allocs-for-privileged-ethtool-actions.patch
+Patch26286: linux-2.6-net-fix-unix-socket-local-dos.patch
+
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
 
@@ -11935,6 +11940,11 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch26271 -p1
 %patch26272 -p1
 %patch26273 -p1
+
+# apply 3 patches from kernel-2.6.18-238.5.1.el5
+%patch26284 -p1
+%patch26285 -p1
+%patch26286 -p1
 
 %patch30000 -p1
 %patch30001 -p1
