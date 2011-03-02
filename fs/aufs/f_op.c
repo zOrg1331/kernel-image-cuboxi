@@ -581,6 +581,21 @@ out:
 #include <../kernel/mutex.h>
 #endif
 
+static void au_fi_mmap_lock(struct file *file)
+{
+	FiMustWriteLock(file);
+	lockdep_off();
+	mutex_lock(&au_fi(file)->fi_mmap);
+	lockdep_on();
+}
+
+static void au_fi_mmap_unlock(struct file *file)
+{
+	lockdep_off();
+	mutex_unlock(&au_fi(file)->fi_mmap);
+	lockdep_on();
+}
+
 struct au_mmap_pre_args {
 	/* input */
 	struct file *file;
