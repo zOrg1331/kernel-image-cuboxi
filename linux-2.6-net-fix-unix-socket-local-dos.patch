@@ -1,0 +1,182 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 9 Dec 2010 15:23:10 -0500
+Subject: [net] fix unix socket local dos
+Message-id: <20101209152310.GE4952@shamino.rdu.redhat.com>
+Patchwork-id: 30029
+O-Subject: [RHEL5.7 PATCH] fix CVE 2010-4249: unix socket local dos (bz 656760)
+Bugzilla: 656760
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+Ok, finally think I got this right
+
+This is a backport of upstream commits 9915672d41273f5b77f1b3c29b391ffb7732b84b
+and 25888e30319f8896fc656fc68643e6a078263060.  Together they are sufficient to
+prevent CVE 2010-4249, a unix socket local dos.  I've validated that the given
+reproducer cannot oom the system with this backport in place.  Fixes bz 656760
+Neil
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/net/af_unix.h b/include/net/af_unix.h
+index 4e462f8..8096e4b 100644
+--- a/include/net/af_unix.h
++++ b/include/net/af_unix.h
+@@ -89,6 +89,7 @@ struct unix_sock {
+ #ifndef __GENKSYMS__
+ 	unsigned int		gc_candidate : 1;
+ 	unsigned int		gc_maybe_cycle : 1;
++	unsigned char		recursion_level;
+ 	struct list_head	link;
+ #endif
+ };
+diff --git a/net/unix/af_unix.c b/net/unix/af_unix.c
+index e314ea6..9d24743 100644
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -1249,9 +1249,27 @@ static void unix_destruct_fds(struct sk_buff *skb)
+ 	sock_wfree(skb);
+ }
+ 
++#define MAX_RECURSION_LEVEL 4
++extern struct sock * unix_get_socket(struct file *filp);
++
+ static int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb)
+ {
+ 	int i;
++	unsigned char max_level = 0;
++	int unix_sock_count = 0;
++
++
++	for (i=scm->fp->count-1; i>=0; i--) {
++		struct sock *sk = unix_get_socket(scm->fp->fp[i]);
++		if (sk) {
++			unix_sock_count++;
++			max_level = max(max_level,
++					unix_sk(sk)->recursion_level);
++		}
++
++	}
++	if (unlikely(max_level > MAX_RECURSION_LEVEL))
++		return -ETOOMANYREFS;
+ 
+ 	/*
+ 	 * Need to duplicate file references for the sake of garbage
+@@ -1262,10 +1280,13 @@ static int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb)
+ 	if (!UNIXCB(skb).fp)
+ 		return -ENOMEM;
+ 
+-	for (i=scm->fp->count-1; i>=0; i--)
+-		unix_inflight(scm->fp->fp[i]);
++	if (unix_sock_count) {
++		for (i = scm->fp->count - 1; i >= 0; i--)
++			unix_inflight(scm->fp->fp[i]);
++	}
++
+ 	skb->destructor = unix_destruct_fds;
+-	return 0;
++	return max_level;
+ }
+ 
+ /*
+@@ -1286,6 +1307,7 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
+ 	struct sk_buff *skb;
+ 	long timeo;
+ 	struct scm_cookie tmp_scm;
++	int max_level = 0;
+ 
+ 	if (NULL == siocb->scm)
+ 		siocb->scm = &tmp_scm;
+@@ -1326,8 +1348,9 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
+ 	memcpy(UNIXCREDS(skb), &siocb->scm->creds, sizeof(struct ucred));
+ 	if (siocb->scm->fp) {
+ 		err = unix_attach_fds(siocb->scm, skb);
+-		if (err)
++		if (err < 0)
+ 			goto out_free;
++		max_level = err + 1;
+ 	}
+ 	unix_get_secdata(siocb->scm, skb);
+ 
+@@ -1410,6 +1433,8 @@ restart:
+ 	}
+ 
+ 	skb_queue_tail(&other->sk_receive_queue, skb);
++	if (max_level > unix_sk(other)->recursion_level)
++		unix_sk(other)->recursion_level = max_level;
+ 	unix_state_runlock(other);
+ 	other->sk_data_ready(other, len);
+ 	sock_put(other);
+@@ -1439,6 +1464,7 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
+ 	struct sk_buff *skb;
+ 	int sent=0;
+ 	struct scm_cookie tmp_scm;
++	int max_level = 0;
+ 
+ 	if (NULL == siocb->scm)
+ 		siocb->scm = &tmp_scm;
+@@ -1502,10 +1528,11 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
+ 		memcpy(UNIXCREDS(skb), &siocb->scm->creds, sizeof(struct ucred));
+ 		if (siocb->scm->fp) {
+ 			err = unix_attach_fds(siocb->scm, skb);
+-			if (err) {
++			if (err < 0) {
+ 				kfree_skb(skb);
+ 				goto out_err;
+ 			}
++			max_level = err + 1;
+ 		}
+ 
+ 		if ((err = memcpy_fromiovec(skb_put(skb,size), msg->msg_iov, size)) != 0) {
+@@ -1520,6 +1547,8 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
+ 			goto pipe_err_free;
+ 
+ 		skb_queue_tail(&other->sk_receive_queue, skb);
++		if (max_level > unix_sk(other)->recursion_level)
++			unix_sk(other)->recursion_level = max_level;
+ 		unix_state_runlock(other);
+ 		other->sk_data_ready(other, size);
+ 		sent+=size;
+@@ -1734,6 +1763,7 @@ static int unix_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
+ 		skb = skb_dequeue(&sk->sk_receive_queue);
+ 		if (skb==NULL)
+ 		{
++			unix_sk(sk)->recursion_level = 0;
+ 			if (copied >= target)
+ 				goto unlock;
+ 
+diff --git a/net/unix/garbage.c b/net/unix/garbage.c
+index bf52905..3122f87 100644
+--- a/net/unix/garbage.c
++++ b/net/unix/garbage.c
+@@ -97,7 +97,7 @@ static DECLARE_WAIT_QUEUE_HEAD(unix_gc_wait);
+ atomic_t unix_tot_inflight;
+ 
+ 
+-static struct sock *unix_get_socket(struct file *filp)
++struct sock *unix_get_socket(struct file *filp)
+ {
+ 	struct sock *u_sock = NULL;
+ 	struct inode *inode = filp->f_dentry->d_inode;
+@@ -270,11 +270,19 @@ static void inc_inflight_move_tail(struct unix_sock *u)
+ 
+ static bool gc_in_progress = false;
+ 
++#define UNIX_INFLIGHT_TRIGGER_GC 16000
+ void wait_for_unix_gc(void)
+ {
+ 	int error;
+ 
+ 	do {
++		/*
++		 * If number of inflight sockets is insane,
++		 * force a garbage collect right now.
++		 */
++		if (atomic_read(&unix_tot_inflight) > UNIX_INFLIGHT_TRIGGER_GC &&
++		    !gc_in_progress)
++			unix_gc();
+ 		error = wait_event_interruptible(unix_gc_wait,
+ 						 gc_in_progress == false);
+ 	} while(error);

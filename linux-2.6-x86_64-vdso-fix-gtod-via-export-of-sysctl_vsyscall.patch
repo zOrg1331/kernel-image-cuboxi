@@ -1,0 +1,67 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 7 Feb 2011 14:40:16 -0500
+Subject: [x86_64] vdso: fix gtod via export of sysctl_vsyscall
+Message-id: <20110207144004.5565.63651.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 33095
+O-Subject: [RHEL5 BZ 673616 PATCH] vdso: export sysctl_vsyscall
+Bugzilla: 673616
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+vdso kernel variables must be exported in vextern.h, o/w they are undefined
+pointers.  In the case of calling vdso gettimeofday() in RHEL5 a missing
+declaration leads to a segmentation fault.
+
+The patch below was suggested by the reporter, and properly exports
+sysctl_vsyscall which is missing from the original vdso backport.  I have
+tested it on a few systems and confirmed that the patch results in a valid
+gettimeofday().
+
+Resolves BZ 673616.
+
+P.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/vdso/vclock_gettime.c b/arch/x86_64/vdso/vclock_gettime.c
+index 5e15d01..3e586bf 100644
+--- a/arch/x86_64/vdso/vclock_gettime.c
++++ b/arch/x86_64/vdso/vclock_gettime.c
+@@ -105,7 +105,7 @@ static noinline int do_monotonic(struct timespec *ts)
+ 
+ int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
+ {
+-	if (likely(sysctl_vsyscall && (vdso_vxtime->mode != VXTIME_KVM)))
++	if (likely(vdso_sysctl_vsyscall && (vdso_vxtime->mode != VXTIME_KVM)))
+ 		switch (clock) {
+ 		case CLOCK_REALTIME:
+ 			return do_realtime(ts);
+@@ -121,7 +121,7 @@ int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
+ {
+ 	long ret;
+ 
+-	if (likely(sysctl_vsyscall && (vdso_vxtime->mode != VXTIME_KVM))) {
++	if (likely(vdso_sysctl_vsyscall && (vdso_vxtime->mode != VXTIME_KVM))) {
+ 		BUILD_BUG_ON(offsetof(struct timeval, tv_usec) !=
+ 			     offsetof(struct timespec, tv_nsec) ||
+ 			     sizeof(*tv) != sizeof(struct timespec));
+diff --git a/arch/x86_64/vdso/vextern.h b/arch/x86_64/vdso/vextern.h
+index 680c7ca..8cf4051 100644
+--- a/arch/x86_64/vdso/vextern.h
++++ b/arch/x86_64/vdso/vextern.h
+@@ -16,3 +16,4 @@ VEXTERN(xtime_lock)
+ VEXTERN(xtime)
+ VEXTERN(sys_tz)
+ VEXTERN(vgetcpu_mode)
++VEXTERN(sysctl_vsyscall)
+diff --git a/include/asm-x86_64/vsyscall.h b/include/asm-x86_64/vsyscall.h
+index dd90792..e9cb8e0 100644
+--- a/include/asm-x86_64/vsyscall.h
++++ b/include/asm-x86_64/vsyscall.h
+@@ -53,6 +53,7 @@ extern volatile unsigned long __jiffies;
+ extern unsigned long __wall_jiffies;
+ extern struct timezone __sys_tz;
+ extern seqlock_t __xtime_lock;
++extern int __sysctl_vsyscall;
+ 
+ /* kernel space (writeable) */
+ extern struct vxtime_data vxtime;

@@ -1,0 +1,44 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 5 Jan 2011 07:57:42 -0500
+Subject: [block] cciss: fix null pointer problem in tur usage
+Message-id: <4D242476.5060208@redhat.com>
+Patchwork-id: 31039
+O-Subject: [RHEL5.6 PATCH] cciss: fix a problem with tur
+Bugzilla: 664592
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+This is for bz#664592
+
+5.6 panics when running sg_turs
+
+When the tur is sent down, then in blk_rq_bytes is the rq->bio = null. This
+causes a null pointer dereference here in 'int nr_sectors = bio_sectors(rq->bio);'
+cciss has its own version of blk_rq_bytes
+
+The patch below seems to fix this.
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 2306b27..ca1c73d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -4501,10 +4501,12 @@ static inline void complete_fs_buffers(struct bio *bio, int status)
+  **/
+ static unsigned int blk_rq_bytes(struct request *rq)
+ {
+-	int nr_sectors = bio_sectors(rq->bio);
++	int nr_sectors;
+ 
+-	if (blk_fs_request(rq))
++	if (blk_fs_request(rq)) {
++		nr_sectors = bio_sectors(rq->bio);
+ 		return nr_sectors << 9;
++	}
+ 
+ 	return rq->data_len;
+ }

@@ -1,0 +1,99 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Wed, 22 Dec 2010 05:36:48 -0500
+Subject: [net] ipv6: fragment local tunnel IPSec6 pkts if needed
+Message-id: <20101222053648.GA4655@gondor.apana.org.au>
+Patchwork-id: 30890
+O-Subject: [RHEL5 PATCH] ipsec: fragment locally generated tunnel-mode IPSec6
+	packets as needed
+Bugzilla: 661110
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+RHEL5 Bugzilla #661110
+
+It was recently discovered that we didn't support IPv6 fragmentation
+at all over an IPsec tunnel.  This patch from IBM adds that support.
+It has been accepted upstream.
+
+From: David L Stevens <dlstevens@us.ibm.com>
+
+This patch modifies IPsec6 to fragment IPv6 packets that are
+locally generated as needed.
+
+This version of the patch only fragments in tunnel mode, so that fragment
+headers will not be obscured by ESP in transport mode.
+
+Signed-off-by: David L Stevens <dlstevens@us.ibm.com>
+
+Thanks,
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/net/ip6_route.h b/include/net/ip6_route.h
+index 5a27e12..518777a 100644
+--- a/include/net/ip6_route.h
++++ b/include/net/ip6_route.h
+@@ -184,5 +184,7 @@ static inline int ipv6_unicast_destination(struct sk_buff *skb)
+ 	return rt->rt6i_flags & RTF_LOCAL;
+ }
+ 
++int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
++
+ #endif
+ #endif
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index b965a61..91d48bd 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -57,7 +57,7 @@
+ #include <net/xfrm.h>
+ #include <net/checksum.h>
+ 
+-static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
++int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *));
+ 
+ static __inline__ void ipv6_select_ident(struct sk_buff *skb, struct frag_hdr *fhdr)
+ {
+@@ -517,7 +517,7 @@ int ip6_find_1stfragopt(struct sk_buff *skb, u8 **nexthdr)
+ }
+ EXPORT_SYMBOL_GPL(ip6_find_1stfragopt);
+ 
+-static int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
++int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ {
+ 	struct net_device *dev;
+ 	struct sk_buff *frag;
+diff --git a/net/ipv6/xfrm6_output.c b/net/ipv6/xfrm6_output.c
+index f2b4a46..1c26ff6 100644
+--- a/net/ipv6/xfrm6_output.c
++++ b/net/ipv6/xfrm6_output.c
+@@ -15,6 +15,7 @@
+ #include <linux/icmpv6.h>
+ #include <linux/netfilter_ipv6.h>
+ #include <net/ipv6.h>
++#include <net/ip6_route.h>
+ #include <net/xfrm.h>
+ 
+ static int xfrm6_tunnel_check_size(struct sk_buff *skb)
+@@ -159,8 +160,21 @@ static int xfrm6_output_finish(struct sk_buff *skb)
+ 	return 0;
+ }
+ 
++static int __xfrm6_output(struct sk_buff *skb)
++{
++	struct dst_entry *dst = skb->dst;
++	struct xfrm_state *x = dst->xfrm;
++
++	if ((x && x->props.mode == XFRM_MODE_TUNNEL) &&
++	    ((skb->len > dst_mtu(skb->dst) && !skb_is_gso(skb)) ||
++		dst_allfrag(skb->dst))) {
++			return ip6_fragment(skb, xfrm6_output_finish);
++	}
++	return xfrm6_output_finish(skb);
++}
++
+ int xfrm6_output(struct sk_buff *skb)
+ {
+ 	return NF_HOOK(PF_INET6, NF_IP6_POST_ROUTING, skb, NULL, skb->dst->dev,
+-		       xfrm6_output_finish);
++		       __xfrm6_output);
+ }

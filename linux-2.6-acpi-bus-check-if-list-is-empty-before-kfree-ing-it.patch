@@ -1,0 +1,38 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Tue, 18 Jan 2011 19:45:18 -0500
+Subject: [acpi] bus: check if list is empty before kfree()ing it
+Message-id: <1295379918-27321-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 32669
+O-Subject: [PATCH] [RHEL 5.7 PATCH] 670373 - Check whether list is empty before
+	kfree()ing it
+Bugzilla: 670373
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+rhbz: #670373
+
+acpi_bus_receive_event() left the acpi_bus_event_list unlocked between
+checking it was empty and calling kfree() on it. Backport upstream patch
+f0a37e008750ead1751b7d5e89d220a260a46147 to add a further check after the
+lock has been taken in order to prevent us racing and calling kfree() on
+an empty list.
+
+diff --git a/drivers/acpi/bus.c b/drivers/acpi/bus.c
+index 75404bb..d71b5c1 100644
+--- a/drivers/acpi/bus.c
++++ b/drivers/acpi/bus.c
+@@ -349,10 +349,11 @@ int acpi_bus_receive_event(struct acpi_bus_event *event)
+ 	}
+ 
+ 	spin_lock_irqsave(&acpi_bus_event_lock, flags);
+-	entry =
+-	    list_entry(acpi_bus_event_list.next, struct acpi_bus_event, node);
+-	if (entry)
++	if (!list_empty(&acpi_bus_event_list)) {
++		entry = list_entry(acpi_bus_event_list.next,
++				   struct acpi_bus_event, node);
+ 		list_del(&entry->node);
++	}
+ 	spin_unlock_irqrestore(&acpi_bus_event_lock, flags);
+ 
+ 	if (!entry)

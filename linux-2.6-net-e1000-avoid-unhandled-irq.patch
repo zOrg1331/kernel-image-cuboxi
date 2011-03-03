@@ -1,0 +1,57 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Wed, 19 Jan 2011 03:15:03 -0500
+Subject: [net] e1000: Avoid unhandled IRQ
+Message-id: <20110119031503.7619.24102.send-patch@localhost6.localdomain6>
+Patchwork-id: 32699
+O-Subject: [RHEL5.7 PATCH 2/2] e1000: Avoid unhandled IRQ
+Bugzilla: 651512
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Resolves RHBZ 651512
+
+Backport of:
+
+commit 4c11b8adbc48bd21885fbc671df2f8ac04a75473
+Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+Date:   Thu Jan 13 07:48:13 2011 +0000
+
+    e1000: Avoid unhandled IRQ
+
+    If hardware asserted an interrupt and driver is down,
+    then there is nothing to do so return IRQ_HANDLED
+    instead of IRQ_NONE. Returning IRQ_NONE in above
+    situation causes screaming IRQ on virtual machines.
+
+    CC: Andy Gospodarek <gospo@redhat.com>
+    Signed-off-by: Tushar Dave <tushar.n.dave@intel.com>
+    Signed-off-by: Jesse Brandeburg <jesse.brandeburg@intel.com>
+    Tested-by: <jeffrey.e.pieper@intel.com>
+    Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+
+
+diff --git a/drivers/net/e1000/e1000_main.c b/drivers/net/e1000/e1000_main.c
+index d839e38..1fbb4b5 100644
+--- a/drivers/net/e1000/e1000_main.c
++++ b/drivers/net/e1000/e1000_main.c
+@@ -4016,9 +4016,17 @@ static irqreturn_t e1000_intr(int irq, void *data, struct pt_regs *regs)
+ #ifndef CONFIG_E1000_NAPI
+ 	int i;
+ #endif
+-	if (unlikely((!icr) || test_bit(__E1000_DOWN, &adapter->flags)))
++	if (unlikely((!icr)))
+ 		return IRQ_NONE;  /* Not our interrupt */
+ 
++	/*
++	 * we might have caused the interrupt, but the above
++	 * read cleared it, and just in case the driver is
++	 * down there is nothing to do so return handled
++	 */
++	if (unlikely(test_bit(__E1000_DOWN, &adapter->flags)))
++		return IRQ_HANDLED;
++
+ #ifdef CONFIG_E1000_NAPI
+ 	/* IMS will not auto-mask if INT_ASSERTED is not set, and if it is
+ 	 * not set, then the adapter didn't send an interrupt */

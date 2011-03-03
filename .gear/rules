@@ -54,13 +54,9 @@ copy: diff-ms-alow-ve0-exceed-threads-max
 copy: diff-ms-devleak-dstdebug-20080504
 copy: diff-ms-devleaktime-20081111
 copy: diff-ms-ext4-nodelalloc-by-default
-copy: diff-ms-ipv6-support-in-skb_checksum_setup
 copy: diff-ms-mmap-min-addr
-copy: diff-ms-packet-reserve-sockopt
-copy: diff-ms-put-unlikelys-in-skb_checksum_setup
 copy: diff-ms-reboot-via-pci-port-cf9-20090922
 copy: diff-ms-splice-access-20080211
-copy: diff-ms-split-skb_checksum_setup-into-two
 copy: diff-nbd-compile-fixes
 copy: diff-nbd-forbid-socket-clear-without-disconnect-20090529
 copy: diff-nbd-from-current
@@ -76,26 +72,13 @@ copy: diff-openafs-exec-context
 copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
-copy: diff-rh-export-ip_outputs
 copy: diff-rh-hung-task-tunes-and-fixes
-copy: diff-rh-vdso-remove-note-part
-copy: diff-rh-vdso-wall-to-monotonic-kvar-fix
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-serial-pci-add-netmos-9901-support
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
-copy: diff-ubc-batched-pte-acct-x86-fix
 copy: diff-ubc-debug-sock-orphan-acct
-copy: diff-ubc-fixup-percpu-held_pages-in-proc
-copy: diff-ubc-get-exact-stat-in-balance-dirty-pages
-copy: diff-ubc-migrate-pages-rcu-safe
-copy: diff-ubc-pbc-dont-create-dupicate-pbs-on-fork
-copy: diff-ubc-percpu-stat-add-exact-and-flush
-copy: diff-ubc-recharge-page-tables-in-ub_migrate_mm
-copy: diff-ubc-recharge-vma-in-ub_migrate_mm
 copy: diff-ve-moreleaks-20090829
-copy: diff-ve-sysfs-root-handle-with-refs
-copy: diff-virtinfo-add-pre-oom-notifier
 copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
@@ -112,5 +95,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab084-core
+copy: patch-028stab085-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

@@ -1,0 +1,552 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Fri, 7 Jan 2011 15:29:49 -0500
+Subject: [net] limit socket backlog add operation to prevent DoS
+Message-id: <20110107152947.GA2759@psychotron.redhat.com>
+Patchwork-id: 31181
+O-Subject: [RHEL5.6 patch v3] BZ657309 net: limit socket backlog add operation
+	to prevent possible DoS
+Bugzilla: 657309
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ657309
+https://bugzilla.redhat.com/show_bug.cgi?id=657309
+
+Upstream:
+
+commit 8eae939f1400326b06d0c9afe53d2a484a326871
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:40 2010 +0000
+
+    net: add limit for socket backlog
+
+    We got system OOM while running some UDP netperf testing on the loopback
+    device. The case is multiple senders sent stream UDP packets to a single
+    receiver via loopback on local host. Of course, the receiver is not able
+    to handle all the packets in time. But we surprisingly found that these
+    packets were not discarded due to the receiver's sk->sk_rcvbuf limit.
+    Instead, they are kept queuing to sk->sk_backlog and finally ate up all
+    the memory. We believe this is a secure hole that a none privileged user
+    can crash the system.
+
+    The root cause for this problem is, when the receiver is doing
+    __release_sock() (i.e. after userspace recv, kernel udp_recvmsg ->
+    skb_free_datagram_locked -> release_sock), it moves skbs from backlog to
+    sk_receive_queue with the softirq enabled. In the above case, multiple
+    busy senders will almost make it an endless loop. The skbs in the
+    backlog end up eat all the system memory.
+
+    The issue is not only for UDP. Any protocols using socket backlog is
+    potentially affected. The patch adds limit for socket backlog so that
+    the backlog size cannot be expanded endlessly.
+
+commit 6b03a53a5ab7ccf2d5d69f96cf1c739c4d2a8fb9
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:41 2010 +0000
+
+    tcp: use limited socket backlog
+
+    Make tcp adapt to the limited socket backlog change.
+
+commit 55349790d7cbf0d381873a7ece1dcafcffd4aaa9
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:42 2010 +0000
+
+    udp: use limited socket backlog
+
+    Make udp adapt to the limited socket backlog change.
+
+commit 79545b681961d7001c1f4c3eb9ffb87bed4485db
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:43 2010 +0000
+
+    llc: use limited socket backlog
+
+    Make llc adapt to the limited socket backlog change.
+
+commit 50b1a782f845140f4138f14a1ce8a4a6dd0cc82f
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:44 2010 +0000
+
+    sctp: use limited socket backlog
+
+    Make sctp adapt to the limited socket backlog change.
+
+commit 2499849ee8f513e795b9f2c19a42d6356e4943a4
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:46 2010 +0000
+
+    x25: use limited socket backlog
+
+    Make x25 adapt to the limited socket backlog change.
+
+commit a3a858ff18a72a8d388e31ab0d98f7e944841a62
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Thu Mar 4 18:01:47 2010 +0000
+
+    net: backlog functions rename
+
+    sk_add_backlog -> __sk_add_backlog
+    sk_add_backlog_limited -> sk_add_backlog
+
+commit 4045635318538d3ddd2007720412fdc4b08f6a62
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Sun Mar 7 16:21:39 2010 +0000
+
+    net: add __must_check to sk_add_backlog
+
+    Add the "__must_check" tag to sk_add_backlog() so that any failure to
+    check and drop packets will be warned about.
+
+commit c377411f2494a931ff7facdbb3a6839b1266bcf6
+Author: Eric Dumazet <eric.dumazet@gmail.com>
+Date:   Tue Apr 27 15:13:20 2010 -0700
+
+    net: sk_add_backlog() take rmem_alloc into account
+
+    Current socket backlog limit is not enough to really stop DDOS attacks,
+    because user thread spend many time to process a full backlog each
+    round, and user might crazy spin on socket lock.
+
+    We should add backlog size and receive_queue size (aka rmem_alloc) to
+    pace writers, and let user run without being slow down too much.
+
+    Introduce a sk_rcvqueues_full() helper, to avoid taking socket lock in
+    stress situations.
+
+    Under huge stress from a multiqueue/RPS enabled NIC, a single flow udp
+    receiver can now process ~200.000 pps (instead of ~100 pps before the
+    patch) on a 8 core machine.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2971401
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/net/sock.h b/include/net/sock.h
+index af2d541..9297087 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -264,6 +264,30 @@ struct sock {
+ };
+ 
+ /*
++ * To prevent KABI-breakage, struct sock_extended is added here to extend
++ * the original struct sock. Also two helpers are added:
++ * sk_alloc_size
++ *	- is used to adjust prot->obj_size
++ * sk_extended
++ *	- should be used to access items in struct sock_extended
++ */
++
++struct sock_extended {
++	struct {
++		int len;
++	} sk_backlog;
++};
++
++#define SOCK_EXTENDED_SIZE ALIGN(sizeof(struct sock_extended), sizeof(long))
++
++static inline unsigned int sk_alloc_size(unsigned int prot_sock_size)
++{
++	return ALIGN(prot_sock_size, sizeof(long)) + SOCK_EXTENDED_SIZE;
++}
++
++static inline struct sock_extended *sk_extended(const struct sock *sk);
++
++/*
+  * Hashed lists helper routines
+  */
+ static inline struct sock *__sk_head(const struct hlist_head *head)
+@@ -453,8 +477,8 @@ static inline int sk_stream_memory_free(struct sock *sk)
+ 
+ extern void sk_stream_rfree(struct sk_buff *skb);
+ 
+-/* The per-socket spinlock must be held here. */
+-static inline void sk_add_backlog(struct sock *sk, struct sk_buff *skb)
++/* OOB backlog add */
++static inline void __sk_add_backlog(struct sock *sk, struct sk_buff *skb)
+ {
+ 	if (!sk->sk_backlog.tail) {
+ 		sk->sk_backlog.head = sk->sk_backlog.tail = skb;
+@@ -465,6 +489,28 @@ static inline void sk_add_backlog(struct sock *sk, struct sk_buff *skb)
+ 	skb->next = NULL;
+ }
+ 
++/*
++ * Take into account size of receive queue and backlog queue
++ */
++static inline bool sk_rcvqueues_full(const struct sock *sk, const struct sk_buff *skb)
++{
++	unsigned int qsize = sk_extended(sk)->sk_backlog.len +
++			     atomic_read(&sk->sk_rmem_alloc);
++
++	return qsize + skb->truesize > sk->sk_rcvbuf;
++}
++
++/* The per-socket spinlock must be held here. */
++static inline __must_check int sk_add_backlog(struct sock *sk, struct sk_buff *skb)
++{
++	if (sk_rcvqueues_full(sk, skb))
++		return -ENOBUFS;
++
++	__sk_add_backlog(sk, skb);
++	sk_extended(sk)->sk_backlog.len += skb->truesize;
++	return 0;
++}
++
+ #define sk_wait_event(__sk, __timeo, __condition)		\
+ ({	int rc;							\
+ 	release_sock(__sk);					\
+@@ -582,6 +628,14 @@ struct proto {
+ extern int proto_register(struct proto *prot, int alloc_slab);
+ extern void proto_unregister(struct proto *prot);
+ 
++static inline struct sock_extended *sk_extended(const struct sock *sk)
++{
++	unsigned int obj_size = sk->sk_prot_creator->obj_size;
++	unsigned int extended_offset = obj_size - SOCK_EXTENDED_SIZE;
++
++	return (struct sock_extended *) (((char *) sk) + extended_offset);
++}
++
+ #ifdef SOCK_REFCNT_DEBUG
+ static inline void sk_refcnt_debug_inc(struct sock *sk)
+ {
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 7411c3a..06fdb7c 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -314,6 +314,9 @@ int sk_receive_skb(struct sock *sk, struct sk_buff *skb)
+ 
+ 	skb->dev = NULL;
+ 
++	if (sk_rcvqueues_full(sk, skb))
++		goto discard_and_relse;
++
+ 	bh_lock_sock(sk);
+ 	if (!sock_owned_by_user(sk)) {
+ 		/*
+@@ -324,8 +327,11 @@ int sk_receive_skb(struct sock *sk, struct sk_buff *skb)
+ 		rc = sk->sk_backlog_rcv(sk, skb);
+ 
+ 		mutex_release(&sk->sk_lock.dep_map, 1, _RET_IP_);
+-	} else
+-		sk_add_backlog(sk, skb);
++	} else if (sk_add_backlog(sk, skb)) {
++		bh_unlock_sock(sk);
++		goto discard_and_relse;
++	}
++
+ 	bh_unlock_sock(sk);
+ out:
+ 	sock_put(sk);
+@@ -958,6 +964,7 @@ struct sock *sk_clone(struct sock *sk, const gfp_t priority)
+ 		newsk->sk_forward_alloc = 0;
+ 		newsk->sk_send_head	= NULL;
+ 		newsk->sk_backlog.head	= newsk->sk_backlog.tail = NULL;
++		sk_extended(newsk)->sk_backlog.len = 0;
+ 		newsk->sk_userlocks	= sk->sk_userlocks & ~SOCK_BINDPORT_LOCK;
+ 
+ 		sock_reset_flag(newsk, SOCK_DONE);
+@@ -1297,6 +1304,12 @@ static void __release_sock(struct sock *sk)
+ 
+ 		bh_lock_sock(sk);
+ 	} while((skb = sk->sk_backlog.head) != NULL);
++
++	/*
++	 * Doing the zeroing here guarantee we can not loop forever
++	 * while a wild producer attempts to flood us.
++	 */
++	sk_extended(sk)->sk_backlog.len = 0;
+ }
+ 
+ /**
+@@ -1830,6 +1843,9 @@ int proto_register(struct proto *prot, int alloc_slab)
+ 	char *timewait_sock_slab_name;
+ 	int rc = -ENOBUFS;
+ 
++	/* Adjust obj_size first */
++	prot->obj_size = sk_alloc_size(prot->obj_size);
++
+ 	if (alloc_slab) {
+ 		prot->slab = kmem_cache_create(prot->name, prot->obj_size, 0,
+ 					       SLAB_HWCACHE_ALIGN, NULL, NULL);
+diff --git a/net/dccp/minisocks.c b/net/dccp/minisocks.c
+index 9045438..4650d45 100644
+--- a/net/dccp/minisocks.c
++++ b/net/dccp/minisocks.c
+@@ -274,7 +274,7 @@ int dccp_child_process(struct sock *parent, struct sock *child,
+ 		 * in main socket hash table and lock on listening
+ 		 * socket does not protect us more.
+ 		 */
+-		sk_add_backlog(child, skb);
++		__sk_add_backlog(child, skb);
+ 	}
+ 
+ 	bh_unlock_sock(child);
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 506c781..5c8ba9d 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1126,8 +1126,10 @@ process:
+ 			if (!tcp_prequeue(sk, skb))
+ 			ret = tcp_v4_do_rcv(sk, skb);
+ 		}
+-	} else
+-		sk_add_backlog(sk, skb);
++	} else if (sk_add_backlog(sk, skb)) {
++		bh_unlock_sock(sk);
++		goto discard_and_relse;
++	}
+ 	bh_unlock_sock(sk);
+ 
+ 	sock_put(sk);
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 8799eec..a5bfc57 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -664,7 +664,7 @@ int tcp_child_process(struct sock *parent, struct sock *child,
+ 		 * in main socket hash table and lock on listening
+ 		 * socket does not protect us more.
+ 		 */
+-		sk_add_backlog(child, skb);
++		__sk_add_backlog(child, skb);
+ 	}
+ 
+ 	bh_unlock_sock(child);
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index 9d7d5f0..cfa03fd 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -1083,13 +1083,24 @@ static int udp_queue_rcv_skb(struct sock * sk, struct sk_buff *skb)
+ 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+ 
++
++	if (sk_rcvqueues_full(sk, skb)) {
++		UDP_INC_STATS_BH(UDP_MIB_INERRORS);
++		kfree_skb(skb);
++		return -1;
++	}
++
+ 	rc = 0;
+ 
+ 	bh_lock_sock(sk);
+ 	if (!sock_owned_by_user(sk))
+ 		rc = __udp_queue_rcv_skb(sk, skb);
+-	else
+-		sk_add_backlog(sk, skb);
++	else if (sk_add_backlog(sk, skb)) {
++		bh_unlock_sock(sk);
++		UDP_INC_STATS_BH(UDP_MIB_INERRORS);
++		kfree_skb(skb);
++		return -1;
++	}
+ 	bh_unlock_sock(sk);
+ 
+ 	return rc;
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index e73e1ad..5d5048d 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -1323,8 +1323,10 @@ process:
+ 			if (!tcp_prequeue(sk, skb))
+ 				ret = tcp_v6_do_rcv(sk, skb);
+ 		}
+-	} else
+-		sk_add_backlog(sk, skb);
++	} else if (sk_add_backlog(sk, skb)) {
++		bh_unlock_sock(sk);
++		goto discard_and_relse;
++	}
+ 	bh_unlock_sock(sk);
+ 
+ 	sock_put(sk);
+diff --git a/net/ipv6/udp.c b/net/ipv6/udp.c
+index 41f7f00..df46c4b 100644
+--- a/net/ipv6/udp.c
++++ b/net/ipv6/udp.c
+@@ -452,19 +452,27 @@ static void udpv6_mcast_deliver(struct udphdr *uh,
+ 					uh->source, saddr, dif))) {
+ 		struct sk_buff *buff = skb_clone(skb, GFP_ATOMIC);
+ 		if (buff) {
++			if (sk_rcvqueues_full(sk2, buff)) {
++				kfree_skb(buff);
++				continue;
++			}
+ 			bh_lock_sock(sk2);
+ 			if (!sock_owned_by_user(sk2))
+ 				udpv6_queue_rcv_skb(sk2, buff);
+-			else
+-				sk_add_backlog(sk2, buff);
++			else if (sk_add_backlog(sk2, buff))
++				kfree_skb(buff);
+ 			bh_unlock_sock(sk2);
+ 		}
+ 	}
++	if (sk_rcvqueues_full(sk, skb)) {
++		kfree_skb(skb);
++		goto out;
++	}
+ 	bh_lock_sock(sk);
+ 	if (!sock_owned_by_user(sk))
+ 		udpv6_queue_rcv_skb(sk, skb);
+-	else
+-		sk_add_backlog(sk, skb);
++	else if (sk_add_backlog(sk, skb))
++		kfree_skb(skb);
+ 	bh_unlock_sock(sk);
+ out:
+ 	read_unlock(&udp_hash_lock);
+@@ -549,12 +557,19 @@ static int udpv6_rcv(struct sk_buff **pskb)
+ 	}
+ 	
+ 	/* deliver */
+-	
++
++	if (sk_rcvqueues_full(sk, skb)) {
++		sock_put(sk);
++		goto discard;
++	}
+ 	bh_lock_sock(sk);
+ 	if (!sock_owned_by_user(sk))
+ 		udpv6_queue_rcv_skb(sk, skb);
+-	else
+-		sk_add_backlog(sk, skb);
++	else if (sk_add_backlog(sk, skb)) {
++		bh_unlock_sock(sk);
++		sock_put(sk);
++		goto discard;
++	}
+ 	bh_unlock_sock(sk);
+ 	sock_put(sk);
+ 	return(0);
+diff --git a/net/llc/llc_c_ac.c b/net/llc/llc_c_ac.c
+index 860140c..952d0ff 100644
+--- a/net/llc/llc_c_ac.c
++++ b/net/llc/llc_c_ac.c
+@@ -1434,7 +1434,7 @@ static void llc_process_tmr_ev(struct sock *sk, struct sk_buff *skb)
+ 			llc_conn_state_process(sk, skb);
+ 		else {
+ 			llc_set_backlog_type(skb, LLC_EVENT);
+-			sk_add_backlog(sk, skb);
++			__sk_add_backlog(sk, skb);
+ 		}
+ 	}
+ }
+diff --git a/net/llc/llc_conn.c b/net/llc/llc_conn.c
+index dd3684e..45749dd 100644
+--- a/net/llc/llc_conn.c
++++ b/net/llc/llc_conn.c
+@@ -761,7 +761,8 @@ void llc_conn_handler(struct llc_sap *sap, struct sk_buff *skb)
+ 	else {
+ 		dprintk("%s: adding to backlog...\n", __FUNCTION__);
+ 		llc_set_backlog_type(skb, LLC_PACKET);
+-		sk_add_backlog(sk, skb);
++		if (sk_add_backlog(sk, skb))
++			goto drop_unlock;
+ 	}
+ out:
+ 	bh_unlock_sock(sk);
+diff --git a/net/sctp/input.c b/net/sctp/input.c
+index 2a4ba84..9eb4570 100644
+--- a/net/sctp/input.c
++++ b/net/sctp/input.c
+@@ -73,7 +73,7 @@ static struct sctp_association *__sctp_lookup_association(
+ 					const union sctp_addr *peer,
+ 					struct sctp_transport **pt);
+ 
+-static void sctp_add_backlog(struct sock *sk, struct sk_buff *skb);
++static int sctp_add_backlog(struct sock *sk, struct sk_buff *skb);
+ 
+ 
+ /* Calculate the SCTP checksum of an SCTP packet.  */
+@@ -258,10 +258,16 @@ int sctp_rcv(struct sk_buff *skb)
+ 	 */
+ 	sctp_bh_lock_sock(sk);
+ 
+-	if (sock_owned_by_user(sk))
+-		sctp_add_backlog(sk, skb);
+-	else
++	if (sock_owned_by_user(sk)) {
++		if (sctp_add_backlog(sk, skb)) {
++			sctp_bh_unlock_sock(sk);
++			sctp_chunk_free(chunk);
++			skb = NULL; /* sctp_chunk_free already freed the skb */
++			goto discard_release;
++		}
++	} else {
+ 		sctp_inq_push(&chunk->rcvr->inqueue, chunk);
++	}
+ 
+ 	sctp_bh_unlock_sock(sk);
+ 
+@@ -326,8 +332,10 @@ int sctp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
+ 		sctp_bh_lock_sock(sk);
+ 
+ 		if (sock_owned_by_user(sk)) {
+-			sk_add_backlog(sk, skb);
+-			backloged = 1;
++			if (sk_add_backlog(sk, skb))
++				sctp_chunk_free(chunk);
++			else
++				backloged = 1;
+ 		} else
+ 			sctp_inq_push(inqueue, chunk);
+ 
+@@ -352,22 +360,27 @@ done:
+         return 0;
+ }
+ 
+-static void sctp_add_backlog(struct sock *sk, struct sk_buff *skb)
++static int sctp_add_backlog(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct sctp_chunk *chunk = SCTP_INPUT_CB(skb)->chunk;
+ 	struct sctp_ep_common *rcvr = chunk->rcvr;
++	int ret;
+ 
+-	/* Hold the assoc/ep while hanging on the backlog queue.
+-	 * This way, we know structures we need will not disappear from us
+-	 */
+-	if (SCTP_EP_TYPE_ASSOCIATION == rcvr->type)
+-		sctp_association_hold(sctp_assoc(rcvr));
+-	else if (SCTP_EP_TYPE_SOCKET == rcvr->type)
+-		sctp_endpoint_hold(sctp_ep(rcvr));
+-	else
+-		BUG();
++	ret = sk_add_backlog(sk, skb);
++	if (!ret) {
++		/* Hold the assoc/ep while hanging on the backlog queue.
++		 * This way, we know structures we need will not disappear
++		 * from us
++		 */
++		if (SCTP_EP_TYPE_ASSOCIATION == rcvr->type)
++			sctp_association_hold(sctp_assoc(rcvr));
++		else if (SCTP_EP_TYPE_SOCKET == rcvr->type)
++			sctp_endpoint_hold(sctp_ep(rcvr));
++		else
++			BUG();
++	}
++	return ret;
+ 
+-	sk_add_backlog(sk, skb);
+ }
+ 
+ /* Handle icmp frag needed error. */
+diff --git a/net/x25/x25_dev.c b/net/x25/x25_dev.c
+index 47b68a3..fd5103d 100644
+--- a/net/x25/x25_dev.c
++++ b/net/x25/x25_dev.c
+@@ -53,7 +53,7 @@ static int x25_receive_data(struct sk_buff *skb, struct x25_neigh *nb)
+ 		if (!sock_owned_by_user(sk)) {
+ 			queued = x25_process_rx_frame(sk, skb);
+ 		} else {
+-			sk_add_backlog(sk, skb);
++			queued = !sk_add_backlog(sk, skb);
+ 		}
+ 		bh_unlock_sock(sk);
+ 		return queued;

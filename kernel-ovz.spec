@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab084
-%define ovzrel 6
+%define ovzver 028stab085
+%define ovzrel 1
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 238.1.1%{?dist}%{?buildid}
+%define release 238.5.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -6332,6 +6332,21 @@ Patch26270: linux-2.6-scsi-megaraid-give-fw-more-time-to-recover-from-reset.patc
 Patch26271: linux-2.6-fs-gfs2-fix-statfs-error-after-gfs2_grow.patch
 Patch26272: linux-2.6-mm-prevent-file-lock-corruption-using-popen-3.patch
 Patch26273: linux-2.6-net-sctp-fix-panic-from-bad-socket-lock-on-icmp-error.patch
+Patch26274: linux-2.6-acpi-bus-check-if-list-is-empty-before-kfree-ing-it.patch
+Patch26275: linux-2.6-net-ipv6-fragment-local-tunnel-ipsec6-pkts-if-needed.patch
+Patch26276: linux-2.6-block-cciss-fix-null-pointer-problem-in-tur-usage.patch
+Patch26277: linux-2.6-net-e1000-fix-screaming-irq.patch
+Patch26278: linux-2.6-net-e1000-avoid-unhandled-irq.patch
+Patch26279: linux-2.6-virt-xen-no-enable-extended-pci-cfg-space-via-ioports.patch
+Patch26280: linux-2.6-net-tcp-fix-shrinking-windows-with-window-scaling.patch
+Patch26281: linux-2.6-char-virtio-make-console-port-names-a-kobj_add-event.patch
+Patch26282: linux-2.6-char-virtio-wake-console-outvq-on-host-notifications.patch
+Patch26283: linux-2.6-block-fix-accounting-bug-on-cross-partition-merges.patch
+Patch26284: linux-2.6-net-limit-socket-backlog-add-operation-to-prevent-dos.patch
+Patch26285: linux-2.6-net-core-clear-allocs-for-privileged-ethtool-actions.patch
+Patch26286: linux-2.6-net-fix-unix-socket-local-dos.patch
+Patch26287: linux-2.6-net-be2net-fix-missing-trans_start-update.patch
+Patch26288: linux-2.6-x86_64-vdso-fix-gtod-via-export-of-sysctl_vsyscall.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -6429,23 +6444,6 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
-Patch100037: diff-rh-vdso-wall-to-monotonic-kvar-fix
-Patch100038: diff-ubc-batched-pte-acct-x86-fix
-Patch100039: diff-ubc-recharge-page-tables-in-ub_migrate_mm
-Patch100040: diff-ubc-recharge-vma-in-ub_migrate_mm
-Patch100041: diff-ubc-pbc-dont-create-dupicate-pbs-on-fork
-Patch100042: diff-rh-vdso-remove-note-part
-Patch100043: diff-rh-export-ip_outputs
-Patch100044: diff-ubc-fixup-percpu-held_pages-in-proc
-Patch100045: diff-ubc-migrate-pages-rcu-safe
-Patch100046: diff-ve-sysfs-root-handle-with-refs
-Patch100047: diff-ms-packet-reserve-sockopt
-Patch100048: diff-virtinfo-add-pre-oom-notifier
-Patch100049: diff-ms-split-skb_checksum_setup-into-two
-Patch100050: diff-ms-put-unlikelys-in-skb_checksum_setup
-Patch100051: diff-ms-ipv6-support-in-skb_checksum_setup
-Patch100052: diff-ubc-percpu-stat-add-exact-and-flush
-Patch100053: diff-ubc-get-exact-stat-in-balance-dirty-pages
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -12571,6 +12569,21 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch26271 -p1
 %patch26272 -p1
 %patch26273 -p1
+%patch26274 -p1
+%patch26275 -p1
+%patch26276 -p1
+%patch26277 -p1
+%patch26278 -p1
+%patch26279 -p1
+%patch26280 -p1
+%patch26281 -p1
+%patch26282 -p1
+%patch26283 -p1
+%patch26284 -p1
+%patch26285 -p1
+%patch26286 -p1
+%patch26287 -p1
+%patch26288 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -12647,23 +12660,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
-%patch100037 -p1
-%patch100038 -p1
-%patch100039 -p1
-%patch100040 -p1
-%patch100041 -p1
-%patch100042 -p1
-%patch100043 -p1
-%patch100044 -p1
-%patch100045 -p1
-%patch100046 -p1
-%patch100047 -p1
-%patch100048 -p1
-%patch100049 -p1
-%patch100050 -p1
-%patch100051 -p1
-%patch100052 -p1
-%patch100053 -p1
 
 %patch101000 -p1
 %patch101001 -p1

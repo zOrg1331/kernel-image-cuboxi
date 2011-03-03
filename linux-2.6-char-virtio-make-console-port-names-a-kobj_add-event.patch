@@ -1,0 +1,42 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Thu, 20 Jan 2011 12:15:18 -0500
+Subject: [char] virtio: make console port names a KOBJ_ADD event
+Message-id: <901c9efbb0da661cbcf71dc0b4a0c8f220dab382.1295525716.git.amit.shah@redhat.com>
+Patchwork-id: 32727
+O-Subject: [RHEL 5.7 / 5.6.z PATCH] virtio: console: Announce port names as
+	KOBJ_ADD event
+Bugzilla: 669909
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+RH-Acked-by: Harald Hoyer <harald@redhat.com>
+
+RHEL5 has a stone-age version of udev (maintainer's words :-) which
+doesn't parse the KOBJ_CHANGE event.  Let's emit the KOBJ_ADD event
+instead so that symlinks are created when a port name is obtained.
+
+Before this change, symlinks in /dev/virtio-ports were not always
+created, which was noticed by the rhevm-agent team.
+
+Bugzilla: 669909
+Upstream: Not applicable (udev versions in rhel6 and upstream are fine
+                          with KOBJ_CHANGE events.)
+
+Brew: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=3051625
+
+Thanks to Harald Hoyer for the debugging and coming up with the
+solution.
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/char/virtio_console.c b/drivers/char/virtio_console.c
+index 9fc3862..9019c72 100644
+--- a/drivers/char/virtio_console.c
++++ b/drivers/char/virtio_console.c
+@@ -1441,7 +1441,7 @@ static void handle_control_message(struct ports_device *portdev,
+ 			 * symlinks can be created based on udev
+ 			 * rules.
+ 			 */
+-			kobject_uevent(&port->dev->kobj, KOBJ_CHANGE);
++			kobject_uevent(&port->dev->kobj, KOBJ_ADD);
+ 		}
+ 		break;
+ 	}
