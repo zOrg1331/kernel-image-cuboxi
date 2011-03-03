@@ -1,0 +1,45 @@
+Importing i2c based on 2.6.38-rc6-git4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 86e2fe9ff3f3eebca2066bcfc2d993f61af787f5
+HEAD is now at 86e2fe9 Merge branch 'kvm-updates/2.6.38' of git://git.kernel.org/pub/scm/virt/kvm/kvm
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-boardinfo-fix-typo-in-comment.patch
+i2c-instantiating-devices-fix-typo.patch
+i2c-adapter-nr-not-id.patch
+i2c-upgrading-clients-fixes.patch
+i2c-delete-linux-i2c-id-h.patch
+i2c-01-core-export-i2c_for_each_dev.patch
+i2c-02-dev-use-bus-notifier.patch
+i2c-03-deprecate-attach-detach_adapter.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 97b85bb...5b6a580 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.38-rc6-git4
+$ cd ../quilt-tmp
+$ git reset --hard 86e2fe9ff3f3eebca2066bcfc2d993f61af787f5
+HEAD is now at 86e2fe9 Merge branch 'kvm-updates/2.6.38' of git://git.kernel.org/pub/scm/virt/kvm/kvm
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-w83795-document-pin-mapping.patch
+hwmon-sht15-spelling-fix.patch
+hwmon-lis3lv02d-01-rework-dependencies.patch
+hwmon-lis3lv02d-02-move-hp_accel.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:427: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+hwmon-lis3lv02d-03-move-to-misc.patch
+hwmon-lis3lv02d-04-fix-hp_accel-driver-name.patch
+hwmon-lm75-01-add-support-for-lm75a.patch
+hwmon-lm75-02-speed-up-detection.patch
+hwmon-add-support-for-texas-instruments-ads1015.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + c25a0d5...67b4c6c master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.38-rc5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
