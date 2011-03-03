@@ -323,7 +323,7 @@ static int l2tp_ip_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len
 	rc = ip_route_connect(&rt, lsa->l2tp_addr.s_addr, saddr,
 			      RT_CONN_FLAGS(sk), oif,
 			      IPPROTO_L2TP,
-			      0, 0, sk, 1);
+			      0, 0, sk, true);
 	if (rc) {
 		if (rc == -ENETUNREACH)
 			IP_INC_STATS_BH(&init_net, IPSTATS_MIB_OUTNOROUTES);
@@ -489,7 +489,7 @@ static int l2tp_ip_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *m
 			 * itself out.
 			 */
 			security_sk_classify_flow(sk, &fl);
-			if (ip_route_output_flow(sock_net(sk), &rt, &fl, sk, 0))
+			if (ip_route_output_flow(sock_net(sk), &rt, &fl, sk))
 				goto no_route;
 		}
 		sk_setup_caps(sk, &rt->dst);
