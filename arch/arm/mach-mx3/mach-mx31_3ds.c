@@ -42,10 +42,6 @@
 /* CPLD IRQ line for external uart, external ethernet etc */
 #define EXPIO_PARENT_INT	IOMUX_TO_IRQ(MX31_PIN_GPIO1_1)
 
-/*
- * This file contains the board-specific initialization routines.
- */
-
 static int mx31_3ds_pins[] = {
 	/* UART1 */
 	MX31_PIN_CTS1__CTS1,
@@ -100,6 +96,9 @@ static int mx31_3ds_pins[] = {
 	IOMUX_MODE(MX31_PIN_PC_RW_B, IOMUX_CONFIG_ALT1),
 	/* USB Host2 reset */
 	IOMUX_MODE(MX31_PIN_USB_BYP, IOMUX_CONFIG_GPIO),
+	/* I2C1 */
+	MX31_PIN_I2C_CLK__I2C1_SCL,
+	MX31_PIN_I2C_DAT__I2C1_SDA,
 };
 
 /*
@@ -138,7 +137,7 @@ static struct regulator_init_data gpo_init = {
 	}
 };
 
-static struct mc13783_regulator_init_data mx31_3ds_regulators[] = {
+static struct mc13xxx_regulator_init_data mx31_3ds_regulators[] = {
 	{
 		.id = MC13783_REG_PWGT1SPI, /* Power Gate for ARM core. */
 		.init_data = &pwgtx_init,
@@ -156,10 +155,10 @@ static struct mc13783_regulator_init_data mx31_3ds_regulators[] = {
 };
 
 /* MC13783 */
-static struct mc13783_platform_data mc13783_pdata __initdata = {
+static struct mc13xxx_platform_data mc13783_pdata __initdata = {
 	.regulators = mx31_3ds_regulators,
 	.num_regulators = ARRAY_SIZE(mx31_3ds_regulators),
-	.flags  = MC13783_USE_REGULATOR | MC13783_USE_TOUCHSCREEN,
+	.flags  = MC13XXX_USE_REGULATOR | MC13XXX_USE_TOUCHSCREEN
 };
 
 /* SPI */
@@ -245,6 +244,12 @@ usbotg_free_reset:
 	return err;
 }
 
+#if defined(CONFIG_USB_ULPI)
+static int mx31_3ds_otg_init(struct platform_device *pdev)
+{
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
+}
+
 static int mx31_3ds_host2_init(struct platform_device *pdev)
 {
 	int err;
@@ -276,23 +281,24 @@ static int mx31_3ds_host2_init(struct platform_device *pdev)
 
 	mdelay(1);
 	gpio_set_value(USBH2_RST_B, 1);
-	return 0;
+
+	mdelay(10);
+
+	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
 
 usbotg_free_reset:
 	gpio_free(USBH2_RST_B);
 	return err;
 }
 
-#if defined(CONFIG_USB_ULPI)
 static struct mxc_usbh_platform_data otg_pdata __initdata = {
+	.init	= mx31_3ds_otg_init,
 	.portsc	= MXC_EHCI_MODE_ULPI,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 
 static struct mxc_usbh_platform_data usbh2_pdata __initdata = {
 	.init = mx31_3ds_host2_init,
 	.portsc	= MXC_EHCI_MODE_ULPI,
-	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 #endif
 
@@ -320,18 +326,11 @@ static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
 
-/*
- * Set up static virtual mappings.
- */
-static void __init mx31_3ds_map_io(void)
-{
-	mx31_map_io();
-}
+static const struct imxi2c_platform_data mx31_3ds_i2c0_data __initconst = {
+	.bitrate = 100000,
+};
 
-/*!
- * Board specific initialization.
- */
-static void __init mxc_board_init(void)
+static void __init mx31_3ds_init(void)
 {
 	mxc_iomux_setup_multiple_pins(mx31_3ds_pins, ARRAY_SIZE(mx31_3ds_pins),
 				      "mx31_3ds");
@@ -364,6 +363,7 @@ static void __init mxc_board_init(void)
 		printk(KERN_WARNING "Init of the debug board failed, all "
 				    "devices on the debug board are unusable.\n");
 	imx31_add_imx2_wdt(NULL);
+	imx31_add_imx_i2c0(&mx31_3ds_i2c0_data);
 }
 
 static void __init mx31_3ds_timer_init(void)
@@ -375,15 +375,12 @@ static struct sys_timer mx31_3ds_timer = {
 	.init	= mx31_3ds_timer_init,
 };
 
-/*
- * The following uses standard kernel macros defined in arch.h in order to
- * initialize __mach_desc_MX31_3DS data structure.
- */
 MACHINE_START(MX31_3DS, "Freescale MX31PDK (3DS)")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
-	.map_io         = mx31_3ds_map_io,
-	.init_irq       = mx31_init_irq,
-	.init_machine   = mxc_board_init,
-	.timer          = &mx31_3ds_timer,
+	.boot_params = MX3x_PHYS_OFFSET + 0x100,
+	.map_io = mx31_map_io,
+	.init_early = imx31_init_early,
+	.init_irq = mx31_init_irq,
+	.timer = &mx31_3ds_timer,
+	.init_machine = mx31_3ds_init,
 MACHINE_END
