@@ -35,9 +35,9 @@
 #include <linux/freezer.h>
 #include <linux/uaccess.h>
 #include <linux/leds.h>
+#include <linux/atomic.h>
 #include <acpi/acpi_drivers.h>
-#include <asm/atomic.h>
-#include "lis3lv02d.h"
+#include "../../hwmon/lis3lv02d.h"
 
 #define DRIVER_NAME     "lis3lv02d"
 #define ACPI_MDPS_CLASS "accelerometer"
