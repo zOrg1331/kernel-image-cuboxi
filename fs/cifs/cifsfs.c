@@ -53,7 +53,6 @@ int cifsFYI = 0;
 int cifsERROR = 1;
 int traceSMB = 0;
 unsigned int oplockEnabled = 1;
-unsigned int experimEnabled = 0;
 unsigned int linuxExtEnabled = 1;
 unsigned int lookupCacheEnabled = 1;
 unsigned int multiuser_mount = 0;
@@ -82,6 +81,10 @@ module_param(echo_retries, ushort, 0644);
 MODULE_PARM_DESC(echo_retries, "Number of echo attempts before giving up and "
 			       "reconnecting server. Default: 5. 0 means "
 			       "never reconnect.");
+bool sign_zero_copy;  /* globals init to false automatically */
+module_param(sign_zero_copy, bool, 0644);
+MODULE_PARM_DESC(sign_zero_copy, "Don't copy pages on write with signing "
+				 "enabled. Default: N");
 extern mempool_t *cifs_sm_req_poolp;
 extern mempool_t *cifs_req_poolp;
 extern mempool_t *cifs_mid_poolp;
@@ -163,7 +166,7 @@ cifs_read_super(struct super_block *sb, void *data,
 	sb->s_bdi = &cifs_sb->bdi;
 	sb->s_blocksize = CIFS_MAX_MSGSIZE;
 	sb->s_blocksize_bits = 14;	/* default 2**14 = CIFS_MAX_MSGSIZE */
-	inode = cifs_root_iget(sb, ROOT_I);
+	inode = cifs_root_iget(sb);
 
 	if (IS_ERR(inode)) {
 		rc = PTR_ERR(inode);
@@ -184,12 +187,12 @@ cifs_read_super(struct super_block *sb, void *data,
 	else
 		sb->s_d_op = &cifs_dentry_ops;
 
-#ifdef CONFIG_CIFS_EXPERIMENTAL
+#ifdef CIFS_NFSD_EXPORT
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM) {
 		cFYI(1, "export ops supported");
 		sb->s_export_op = &cifs_export_ops;
 	}
-#endif /* EXPERIMENTAL */
+#endif /* CIFS_NFSD_EXPORT */
 
 	return 0;
 
@@ -248,7 +251,7 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
-	struct cifsTconInfo *tcon = cifs_sb_master_tcon(cifs_sb);
+	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
 	int rc = -EOPNOTSUPP;
 	int xid;
 
@@ -401,7 +404,7 @@ static int
 cifs_show_options(struct seq_file *s, struct vfsmount *m)
 {
 	struct cifs_sb_info *cifs_sb = CIFS_SB(m->mnt_sb);
-	struct cifsTconInfo *tcon = cifs_sb_master_tcon(cifs_sb);
+	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
 	struct sockaddr *srcaddr;
 	srcaddr = (struct sockaddr *)&tcon->ses->server->srcaddr;
 
@@ -409,8 +412,8 @@ cifs_show_options(struct seq_file *s, struct vfsmount *m)
 
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MULTIUSER)
 		seq_printf(s, ",multiuser");
-	else if (tcon->ses->userName)
-		seq_printf(s, ",username=%s", tcon->ses->userName);
+	else if (tcon->ses->user_name)
+		seq_printf(s, ",username=%s", tcon->ses->user_name);
 
 	if (tcon->ses->domainName)
 		seq_printf(s, ",domain=%s", tcon->ses->domainName);
@@ -495,7 +498,7 @@ cifs_show_options(struct seq_file *s, struct vfsmount *m)
 static void cifs_umount_begin(struct super_block *sb)
 {
 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 
 	if (cifs_sb == NULL)
 		return;
@@ -981,10 +984,10 @@ init_cifs(void)
 	int rc = 0;
 	cifs_proc_init();
 	INIT_LIST_HEAD(&cifs_tcp_ses_list);
-#ifdef CONFIG_CIFS_EXPERIMENTAL
+#ifdef CONFIG_CIFS_DNOTIFY_EXPERIMENTAL /* unused temporarily */
 	INIT_LIST_HEAD(&GlobalDnotifyReqList);
 	INIT_LIST_HEAD(&GlobalDnotifyRsp_Q);
-#endif
+#endif /* was needed for dnotify, and will be needed for inotify when VFS fix */
 /*
  *  Initialize Global counters
  */
