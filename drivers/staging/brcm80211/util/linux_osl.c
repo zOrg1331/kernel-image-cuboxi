@@ -19,7 +19,6 @@
 #ifdef mips
 #include <asm/paccess.h>
 #endif				/* mips */
-#include <bcmendian.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
@@ -79,51 +78,6 @@ void osl_detach(struct osl_info *osh)
 	kfree(osh);
 }
 
-struct sk_buff *BCMFASTPATH pkt_buf_get_skb(struct osl_info *osh, uint len)
-{
-	struct sk_buff *skb;
-
-	skb = dev_alloc_skb(len);
-	if (skb) {
-		skb_put(skb, len);
-		skb->priority = 0;
-
-		osh->pktalloced++;
-	}
-
-	return skb;
-}
-
-/* Free the driver packet. Free the tag if present */
-void BCMFASTPATH pkt_buf_free_skb(struct osl_info *osh, struct sk_buff *skb, bool send)
-{
-	struct sk_buff *nskb;
-	int nest = 0;
-
-	ASSERT(skb);
-
-	/* perversion: we use skb->next to chain multi-skb packets */
-	while (skb) {
-		nskb = skb->next;
-		skb->next = NULL;
-
-		if (skb->destructor)
-			/* cannot kfree_skb() on hard IRQ (net/core/skbuff.c) if
-			 * destructor exists
-			 */
-			dev_kfree_skb_any(skb);
-		else
-			/* can free immediately (even in_irq()) if destructor
-			 * does not exist
-			 */
-			dev_kfree_skb(skb);
-
-		osh->pktalloced--;
-		nest++;
-		skb = nskb;
-	}
-}
-
 /* return bus # for the pci device pointed by osh->pdev */
 uint osl_pci_bus(struct osl_info *osh)
 {
@@ -138,48 +92,6 @@ uint osl_pci_slot(struct osl_info *osh)
 	ASSERT(osh && (osh->magic == OS_HANDLE_MAGIC) && osh->pdev);
 
 	return PCI_SLOT(((struct pci_dev *)osh->pdev)->devfn);
-}
-
-void *osl_dma_alloc_consistent(struct osl_info *osh, uint size, u16 align_bits,
-			       uint *alloced, unsigned long *pap)
-{
-	ASSERT((osh && (osh->magic == OS_HANDLE_MAGIC)));
-
-	if (align_bits) {
-		u16 align = (1 << align_bits);
-		if (!IS_ALIGNED(PAGE_SIZE, align))
-			size += align;
-		*alloced = size;
-	}
-	return pci_alloc_consistent(osh->pdev, size, (dma_addr_t *) pap);
-}
-
-void osl_dma_free_consistent(struct osl_info *osh, void *va, uint size,
-			     unsigned long pa)
-{
-	ASSERT((osh && (osh->magic == OS_HANDLE_MAGIC)));
-
-	pci_free_consistent(osh->pdev, size, va, (dma_addr_t) pa);
-}
-
-uint BCMFASTPATH osl_dma_map(struct osl_info *osh, void *va, uint size,
-			     int direction)
-{
-	int dir;
-
-	ASSERT((osh && (osh->magic == OS_HANDLE_MAGIC)));
-	dir = (direction == DMA_TX) ? PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE;
-	return pci_map_single(osh->pdev, va, size, dir);
-}
-
-void BCMFASTPATH osl_dma_unmap(struct osl_info *osh, uint pa, uint size,
-			       int direction)
-{
-	int dir;
-
-	ASSERT((osh && (osh->magic == OS_HANDLE_MAGIC)));
-	dir = (direction == DMA_TX) ? PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE;
-	pci_unmap_single(osh->pdev, (u32) pa, size, dir);
 }
 
 #if defined(BCMDBG_ASSERT)

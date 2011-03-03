@@ -113,7 +113,7 @@ inline int iioutils_get_type(unsigned *is_signed,
 	DIR *dp;
 	char *scan_el_dir, *builtname, *builtname_generic, *filename = 0;
 	char signchar;
-	unsigned sizeint, padint;
+	unsigned padint;
 	const struct dirent *ent;
 
 	ret = asprintf(&scan_el_dir, FORMAT_SCAN_ELEMENTS_DIR, device_dir);
@@ -159,7 +159,7 @@ inline int iioutils_get_type(unsigned *is_signed,
 			fscanf(sysfsfp,
 			       "%c%u/%u", &signchar, bits_used, &padint);
 			*bytes = padint / 8;
-			if (sizeint == 64)
+			if (*bits_used == 64)
 				*mask = ~0;
 			else
 				*mask = (1 << *bits_used) - 1;
@@ -290,15 +290,17 @@ inline int build_channel_array(const char *device_dir,
 			fscanf(sysfsfp, "%u", &ret);
 			if (ret == 1)
 				(*counter)++;
+			count++;
 			fclose(sysfsfp);
 			free(filename);
 		}
-	*ci_array = malloc(sizeof(**ci_array)*(*counter));
+	*ci_array = malloc(sizeof(**ci_array)*count);
 	if (*ci_array == NULL) {
 		ret = -ENOMEM;
 		goto error_close_dir;
 	}
 	seekdir(dp, 0);
+	count = 0;
 	while (ent = readdir(dp), ent != NULL) {
 		if (strcmp(ent->d_name + strlen(ent->d_name) - strlen("_en"),
 			   "_en") == 0) {
@@ -319,7 +321,6 @@ inline int build_channel_array(const char *device_dir,
 			}
 			fscanf(sysfsfp, "%u", &current->enabled);
 			fclose(sysfsfp);
-			free(filename);
 			current->scale = 1.0;
 			current->offset = 0;
 			current->name = strndup(ent->d_name,
@@ -375,7 +376,7 @@ inline int build_channel_array(const char *device_dir,
 		}
 	}
 	/* reorder so that the array is in index order*/
-	current = malloc(sizeof(**ci_array)**counter);
+	current = malloc(sizeof(**ci_array)*(*counter));
 	if (current == NULL) {
 		ret = -ENOMEM;
 		goto error_cleanup_array;
@@ -398,7 +399,7 @@ inline int build_channel_array(const char *device_dir,
 	return 0;
 
 error_cleanup_array:
-	for (i = count - 1;  i >= 0; i++)
+	for (i = count - 1;  i >= 0; i--)
 		free((*ci_array)[i].name);
 	free(*ci_array);
 error_close_dir:
