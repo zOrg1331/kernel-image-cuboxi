@@ -48,23 +48,6 @@
 
 extern int ath5k_modparam_nohwcrypt;
 
-/* functions used from base.c */
-void set_beacon_filter(struct ieee80211_hw *hw, bool enable);
-bool ath_any_vif_assoc(struct ath5k_softc *sc);
-int ath5k_tx_queue(struct ieee80211_hw *hw, struct sk_buff *skb,
-		   struct ath5k_txq *txq);
-int ath5k_init_hw(struct ath5k_softc *sc);
-int ath5k_stop_hw(struct ath5k_softc *sc);
-void ath5k_mode_setup(struct ath5k_softc *sc, struct ieee80211_vif *vif);
-void ath5k_update_bssid_mask_and_opmode(struct ath5k_softc *sc,
-					struct ieee80211_vif *vif);
-int ath5k_chan_set(struct ath5k_softc *sc, struct ieee80211_channel *chan);
-void ath5k_beacon_update_timers(struct ath5k_softc *sc, u64 bc_tsf);
-int ath5k_beacon_update(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
-void ath5k_beacon_config(struct ath5k_softc *sc);
-void ath5k_txbuf_free_skb(struct ath5k_softc *sc, struct ath5k_buf *bf);
-void ath5k_rxbuf_free_skb(struct ath5k_softc *sc, struct ath5k_buf *bf);
-
 /********************\
 * Mac80211 functions *
 \********************/
@@ -226,6 +209,7 @@ ath5k_config(struct ieee80211_hw *hw, u32 changed)
 	struct ath5k_hw *ah = sc->ah;
 	struct ieee80211_conf *conf = &hw->conf;
 	int ret = 0;
+	int i;
 
 	mutex_lock(&sc->lock);
 
@@ -241,6 +225,14 @@ ath5k_config(struct ieee80211_hw *hw, u32 changed)
 
 		/* Half dB steps */
 		ath5k_hw_set_txpower_limit(ah, (conf->power_level * 2));
+	}
+
+	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS) {
+		ah->ah_retry_long = conf->long_frame_max_tx_count;
+		ah->ah_retry_short = conf->short_frame_max_tx_count;
+
+		for (i = 0; i < ah->ah_capabilities.cap_queues.q_tx_num; i++)
+			ath5k_hw_set_tx_retry_limits(ah, i);
 	}
 
 	/* TODO:

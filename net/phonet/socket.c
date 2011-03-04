@@ -428,19 +428,19 @@ static int pn_socket_listen(struct socket *sock, int backlog)
 	struct sock *sk = sock->sk;
 	int err = 0;
 
-	if (sock->state != SS_UNCONNECTED)
-		return -EINVAL;
 	if (pn_socket_autobind(sock))
 		return -ENOBUFS;
 
 	lock_sock(sk);
-	if (sk->sk_state != TCP_CLOSE) {
+	if (sock->state != SS_UNCONNECTED) {
 		err = -EINVAL;
 		goto out;
 	}
 
-	sk->sk_state = TCP_LISTEN;
-	sk->sk_ack_backlog = 0;
+	if (sk->sk_state != TCP_LISTEN) {
+		sk->sk_state = TCP_LISTEN;
+		sk->sk_ack_backlog = 0;
+	}
 	sk->sk_max_ack_backlog = backlog;
 out:
 	release_sock(sk);
@@ -633,8 +633,8 @@ static int pn_sock_seq_show(struct seq_file *seq, void *v)
 
 		seq_printf(seq, "%2d %04X:%04X:%02X %02X %08X:%08X %5d %lu "
 			"%d %p %d%n",
-			sk->sk_protocol, pn->sobject, 0, pn->resource,
-			sk->sk_state,
+			sk->sk_protocol, pn->sobject, pn->dobject,
+			pn->resource, sk->sk_state,
 			sk_wmem_alloc_get(sk), sk_rmem_alloc_get(sk),
 			sock_i_uid(sk), sock_i_ino(sk),
 			atomic_read(&sk->sk_refcnt), sk,

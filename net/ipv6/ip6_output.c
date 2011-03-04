@@ -274,12 +274,9 @@ int ip6_nd_hdr(struct sock *sk, struct sk_buff *skb, struct net_device *dev,
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6hdr *hdr;
-	int totlen;
 
 	skb->protocol = htons(ETH_P_IPV6);
 	skb->dev = dev;
-
-	totlen = len + sizeof(struct ipv6hdr);
 
 	skb_reset_network_header(skb);
 	skb_put(skb, sizeof(struct ipv6hdr));
@@ -479,10 +476,13 @@ int ip6_forward(struct sk_buff *skb)
 		else
 			target = &hdr->daddr;
 
+		if (!rt->rt6i_peer)
+			rt6_bind_peer(rt, 1);
+
 		/* Limit redirects both by destination (here)
 		   and by source (inside ndisc_send_redirect)
 		 */
-		if (xrlim_allow(dst, 1*HZ))
+		if (inet_peer_xrlim_allow(rt->rt6i_peer, 1*HZ))
 			ndisc_send_redirect(skb, n, target);
 	} else {
 		int addrtype = ipv6_addr_type(&hdr->saddr);
@@ -1002,29 +1002,71 @@ int ip6_dst_lookup(struct sock *sk, struct dst_entry **dst, struct flowi *fl)
 EXPORT_SYMBOL_GPL(ip6_dst_lookup);
 
 /**
- *	ip6_sk_dst_lookup - perform socket cached route lookup on flow
- *	@sk: socket which provides the dst cache and route info
- *	@dst: pointer to dst_entry * for result
+ *	ip6_dst_lookup_flow - perform route lookup on flow with ipsec
+ *	@sk: socket which provides route info
  *	@fl: flow to lookup
+ *	@final_dst: final destination address for ipsec lookup
+ *	@can_sleep: we are in a sleepable context
+ *
+ *	This function performs a route lookup on the given flow.
+ *
+ *	It returns a valid dst pointer on success, or a pointer encoded
+ *	error code.
+ */
+struct dst_entry *ip6_dst_lookup_flow(struct sock *sk, struct flowi *fl,
+				      const struct in6_addr *final_dst,
+				      bool can_sleep)
+{
+	struct dst_entry *dst = NULL;
+	int err;
+
+	err = ip6_dst_lookup_tail(sk, &dst, fl);
+	if (err)
+		return ERR_PTR(err);
+	if (final_dst)
+		ipv6_addr_copy(&fl->fl6_dst, final_dst);
+	if (can_sleep)
+		fl->flags |= FLOWI_FLAG_CAN_SLEEP;
+
+	return xfrm_lookup(sock_net(sk), dst, fl, sk, 0);
+}
+EXPORT_SYMBOL_GPL(ip6_dst_lookup_flow);
+
+/**
+ *	ip6_sk_dst_lookup_flow - perform socket cached route lookup on flow
+ *	@sk: socket which provides the dst cache and route info
+ *	@fl: flow to lookup
+ *	@final_dst: final destination address for ipsec lookup
+ *	@can_sleep: we are in a sleepable context
  *
  *	This function performs a route lookup on the given flow with the
  *	possibility of using the cached route in the socket if it is valid.
  *	It will take the socket dst lock when operating on the dst cache.
  *	As a result, this function can only be used in process context.
  *
- *	It returns zero on success, or a standard errno code on error.
+ *	It returns a valid dst pointer on success, or a pointer encoded
+ *	error code.
  */
-int ip6_sk_dst_lookup(struct sock *sk, struct dst_entry **dst, struct flowi *fl)
+struct dst_entry *ip6_sk_dst_lookup_flow(struct sock *sk, struct flowi *fl,
+					 const struct in6_addr *final_dst,
+					 bool can_sleep)
 {
-	*dst = NULL;
-	if (sk) {
-		*dst = sk_dst_check(sk, inet6_sk(sk)->dst_cookie);
-		*dst = ip6_sk_dst_check(sk, *dst, fl);
-	}
+	struct dst_entry *dst = sk_dst_check(sk, inet6_sk(sk)->dst_cookie);
+	int err;
 
-	return ip6_dst_lookup_tail(sk, dst, fl);
+	dst = ip6_sk_dst_check(sk, dst, fl);
+
+	err = ip6_dst_lookup_tail(sk, &dst, fl);
+	if (err)
+		return ERR_PTR(err);
+	if (final_dst)
+		ipv6_addr_copy(&fl->fl6_dst, final_dst);
+	if (can_sleep)
+		fl->flags |= FLOWI_FLAG_CAN_SLEEP;
+
+	return xfrm_lookup(sock_net(sk), dst, fl, sk, 0);
 }
-EXPORT_SYMBOL_GPL(ip6_sk_dst_lookup);
+EXPORT_SYMBOL_GPL(ip6_sk_dst_lookup_flow);
 
 static inline int ip6_ufo_append_data(struct sock *sk,
 			int getfrag(void *from, char *to, int offset, int len,
@@ -1061,7 +1103,6 @@ static inline int ip6_ufo_append_data(struct sock *sk,
 
 		skb->ip_summed = CHECKSUM_PARTIAL;
 		skb->csum = 0;
-		sk->sk_sndmsg_off = 0;
 	}
 
 	err = skb_append_datato_frags(sk,skb, getfrag, from,
@@ -1118,6 +1159,7 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 	int err;
 	int offset = 0;
 	int csummode = CHECKSUM_NONE;
+	__u8 tx_flags = 0;
 
 	if (flags&MSG_PROBE)
 		return 0;
@@ -1200,6 +1242,13 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 			ipv6_local_error(sk, EMSGSIZE, fl, mtu-exthdrlen);
 			return -EMSGSIZE;
 		}
+	}
+
+	/* For UDP, check if TX timestamp is enabled */
+	if (sk->sk_type == SOCK_DGRAM) {
+		err = sock_tx_timestamp(sk, &tx_flags);
+		if (err)
+			goto error;
 	}
 
 	/*
@@ -1306,6 +1355,12 @@ alloc_new_skb:
 							   sk->sk_allocation);
 				if (unlikely(skb == NULL))
 					err = -ENOBUFS;
+				else {
+					/* Only the initial fragment
+					 * is time stamped.
+					 */
+					tx_flags = 0;
+				}
 			}
 			if (skb == NULL)
 				goto error;
@@ -1316,6 +1371,9 @@ alloc_new_skb:
 			skb->csum = 0;
 			/* reserve for fragmentation */
 			skb_reserve(skb, hh_len+sizeof(struct frag_hdr));
+
+			if (sk->sk_type == SOCK_DGRAM)
+				skb_shinfo(skb)->tx_flags = tx_flags;
 
 			/*
 			 *	Find where to start putting bytes
