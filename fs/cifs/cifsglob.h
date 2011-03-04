@@ -226,7 +226,7 @@ struct TCP_Server_Info {
 	wait_queue_head_t read_q; /* used by readpages */
 	atomic_t active_readpage_req; /* used by readpages */
 	atomic_t resp_rdy; /* used by readpages and demultiplex */
-	__le16 smb21_minor_version; /* SMB2.0 implemented, but 2.1 recognized */
+	__le16 smb2_dialect_revision; /* SMB2.0 implemented, 2.1 recognized */
 	struct task_struct *observe;
 /*	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE];  BB can we use cifs key? */
 	__u64 current_smb2_mid;         /* multiplex id - rotating counter */
@@ -296,6 +296,9 @@ struct cifs_ses {
 	struct session_key auth_key;
 	struct ntlmssp_auth *ntlmssp; /* ciphertext, flags, server challenge */
 	bool need_reconnect:1; /* connection reset, uid now invalid */
+#ifdef CONFIG_CIFS_SMB2
+	__u16 session_flags;
+#endif /* CONFIG_CIFS_SMB2 */
 };
 /* no more than one of the following three session flags may be set */
 #define CIFS_SES_NT4 1
@@ -376,6 +379,7 @@ struct cifs_tcon {
 	FILE_SYSTEM_ATTRIBUTE_INFO fsAttrInfo; /* ok if fs name truncated */
 	FILE_SYSTEM_UNIX_INFO fsUnixInfo;
 	bool ipc:1;		/* set if connection to IPC$ eg for RPC/PIPES */
+	bool print:1;		/* set if connection to printer share */
 	bool retry:1;
 	bool nocase:1;
 	bool seal:1;      /* transport encryption for this mounted share */
@@ -387,6 +391,7 @@ struct cifs_tcon {
 	bool bad_network_name:1;
 #ifdef CONFIG_CIFS_SMB2
 	__u32 capabilities;
+	__u32 share_flags;
 	__u32 maximal_access;
 	__u32 vol_serial_number;
 	__le64 vol_create_time;
