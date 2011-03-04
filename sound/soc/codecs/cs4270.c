@@ -193,12 +193,12 @@ static struct cs4270_mode_ratios cs4270_mode_ratios[] = {
 /* The number of MCLK/LRCK ratios supported by the CS4270 */
 #define NUM_MCLK_RATIOS		ARRAY_SIZE(cs4270_mode_ratios)
 
-static int cs4270_reg_is_readable(unsigned int reg)
+static int cs4270_reg_is_readable(struct snd_soc_codec *codec, unsigned int reg)
 {
 	return (reg >= CS4270_FIRSTREG) && (reg <= CS4270_LASTREG);
 }
 
-static int cs4270_reg_is_volatile(unsigned int reg)
+static int cs4270_reg_is_volatile(struct snd_soc_codec *codec, unsigned int reg)
 {
 	/* Unreadable registers are considered volatile */
 	if ((reg < CS4270_FIRSTREG) || (reg > CS4270_LASTREG))
@@ -743,8 +743,6 @@ static struct i2c_driver cs4270_i2c_driver = {
 
 static int __init cs4270_init(void)
 {
-	pr_info("Cirrus Logic CS4270 ALSA SoC Codec Driver\n");
-
 	return i2c_add_driver(&cs4270_i2c_driver);
 }
 module_init(cs4270_init);
