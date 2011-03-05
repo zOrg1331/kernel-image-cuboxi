@@ -178,11 +178,6 @@ config FIQ
 config ARCH_MTD_XIP
 	bool
 
-config ARM_L1_CACHE_SHIFT_6
-	bool
-	help
-	  Setting ARM L1 cache line size to 64 Bytes.
-
 config VECTORS_BASE
 	hex
 	default 0xffff0000 if MMU || CPU_HIGH_VECTOR
@@ -229,6 +224,7 @@ config ARCH_INTEGRATOR
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select PLAT_VERSATILE
+	select PLAT_VERSATILE_FPGA_IRQ
 	help
 	  Support for ARM's Integrator platform.
 
@@ -236,11 +232,11 @@ config ARCH_REALVIEW
 	bool "ARM Ltd. RealView family"
 	select ARM_AMBA
 	select CLKDEV_LOOKUP
-	select HAVE_SCHED_CLOCK
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select PLAT_VERSATILE
+	select PLAT_VERSATILE_CLCD
 	select ARM_TIMER_SP804
 	select GPIO_PL061 if GPIOLIB
 	help
@@ -251,11 +247,12 @@ config ARCH_VERSATILE
 	select ARM_AMBA
 	select ARM_VIC
 	select CLKDEV_LOOKUP
-	select HAVE_SCHED_CLOCK
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select PLAT_VERSATILE
+	select PLAT_VERSATILE_CLCD
+	select PLAT_VERSATILE_FPGA_IRQ
 	select ARM_TIMER_SP804
 	help
 	  This enables support for ARM Ltd Versatile board.
@@ -268,9 +265,10 @@ config ARCH_VEXPRESS
 	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select HAVE_CLK
-	select HAVE_SCHED_CLOCK
+	select HAVE_PATA_PLATFORM
 	select ICST
 	select PLAT_VERSATILE
+	select PLAT_VERSATILE_CLCD
 	help
 	  This enables support for the ARM Ltd Versatile Express boards.
 
@@ -346,7 +344,7 @@ config ARCH_FOOTBRIDGE
 	bool "FootBridge"
 	select CPU_SA110
 	select FOOTBRIDGE
-	select ARCH_USES_GETTIMEOFFSET
+	select GENERIC_CLOCKEVENTS
 	help
 	  Support for systems based on the DC21285 companion chip
 	  ("FootBridge"), such as the Simtec CATS and the Rebel NetWinder.
@@ -875,6 +873,16 @@ config PLAT_SPEAR
 	help
 	  Support for ST's SPEAr platform (SPEAr3xx, SPEAr6xx and SPEAr13xx).
 
+config ARCH_VT8500
+	bool "VIA/WonderMedia 85xx"
+	select CPU_ARM926T
+	select GENERIC_GPIO
+	select ARCH_HAS_CPUFREQ
+	select GENERIC_CLOCKEVENTS
+	select ARCH_REQUIRE_GPIOLIB
+	select HAVE_PWM
+	help
+	  Support for VIA/WonderMedia VT8500/WM85xx System-on-Chip.
 endchoice
 
 #
@@ -1006,6 +1014,9 @@ source "arch/arm/mach-ux500/Kconfig"
 source "arch/arm/mach-versatile/Kconfig"
 
 source "arch/arm/mach-vexpress/Kconfig"
+source "arch/arm/plat-versatile/Kconfig"
+
+source "arch/arm/mach-vt8500/Kconfig"
 
 source "arch/arm/mach-w90x900/Kconfig"
 
@@ -1140,7 +1151,7 @@ config ARM_ERRATA_742231
 
 config PL310_ERRATA_588369
 	bool "Clean & Invalidate maintenance operations do not invalidate clean lines"
-	depends on CACHE_L2X0 && ARCH_OMAP4
+	depends on CACHE_L2X0
 	help
 	   The PL310 L2 cache controller implements three types of Clean &
 	   Invalidate maintenance operations: by Physical Address
@@ -1149,8 +1160,7 @@ config PL310_ERRATA_588369
 	   clean operation followed immediately by an invalidate operation,
 	   both performing to the same memory location. This functionality
 	   is not correctly implemented in PL310 as clean lines are not
-	   invalidated as a result of these operations. Note that this errata
-	   uses Texas Instrument's secure monitor api.
+	   invalidated as a result of these operations.
 
 config ARM_ERRATA_720789
 	bool "ARM errata: TLBIASIDIS and TLBIMVAIS operations can broadcast a faulty ASID"
@@ -1177,6 +1187,16 @@ config ARM_ERRATA_743622
 	  visible impact on the overall performance or power consumption of the
 	  processor.
 
+config PL310_ERRATA_727915
+	bool "Background Clean & Invalidate by Way operation can cause data corruption"
+	depends on CACHE_L2X0
+	help
+	  PL310 implements the Clean & Invalidate by Way L2 cache maintenance
+	  operation (offset 0x7FC). This operation runs in background so that
+	  PL310 can handle normal accesses while it is in progress. Under very
+	  rare circumstances, due to this erratum, write data can be lost when
+	  PL310 treats a cacheable write transaction during a Clean &
+	  Invalidate by Way operation.
 endmenu
 
 source "arch/arm/common/Kconfig"
@@ -1391,7 +1411,7 @@ config AEABI
 
 config OABI_COMPAT
 	bool "Allow old ABI binaries to run with this kernel (EXPERIMENTAL)"
-	depends on AEABI && EXPERIMENTAL
+	depends on AEABI && EXPERIMENTAL && !THUMB2_KERNEL
 	default y
 	help
 	  This option preserves the old syscall interface along with the
@@ -1618,6 +1638,18 @@ config ZBOOT_ROM
 	help
 	  Say Y here if you intend to execute your compressed kernel image
 	  (zImage) directly from ROM or flash.  If unsure, say N.
+
+config ZBOOT_ROM_MMCIF
+	bool "Include MMCIF loader in zImage (EXPERIMENTAL)"
+	depends on ZBOOT_ROM && ARCH_SH7372 && EXPERIMENTAL
+	help
+	  Say Y here to include experimental MMCIF loading code in the
+	  ROM-able zImage. With this enabled it is possible to write the
+	  the ROM-able zImage kernel image to an MMC card and boot the
+	  kernel straight from the reset vector. At reset the processor
+	  Mask ROM will load the first part of the the ROM-able zImage
+	  which in turn loads the rest the kernel image to RAM using the
+	  MMCIF hardware block.
 
 config CMDLINE
 	string "Default kernel command string"
