@@ -1,0 +1,64 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Fri, 28 Jan 2011 13:32:05 -0500
+Subject: [char] virtio: Wake console outvq on host notifications
+Message-id: <cfff1911e5291b8173101043d34109d8a11bf36c.1296209907.git.amit.shah@redhat.com>
+Patchwork-id: 32974
+O-Subject: [RHEL 5.7/5.6.z PATCH] virtio: console: Wake up outvq on host
+	notifications
+Bugzilla: 673459
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+The outvq needs to be woken up on host notifications so that buffers
+consumed by the host can be reclaimed, outvq freed, and application
+writes may proceed again.
+
+The need for this is now finally noticed when I have qemu patches ready
+to use nonblocking IO and flow control.
+
+CC: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+Bugzilla: 673459
+Upstream: Will post; virtio_console.c got moved out to other location.
+          Waiting for that one to be moved back.
+
+diff --git a/drivers/char/virtio_console.c b/drivers/char/virtio_console.c
+index 9019c72..392eebd 100644
+--- a/drivers/char/virtio_console.c
++++ b/drivers/char/virtio_console.c
+@@ -1476,6 +1476,17 @@ static void control_work_handler(void *p)
+ 	spin_unlock(&portdev->cvq_lock);
+ }
+ 
++static void out_intr(struct virtqueue *vq)
++{
++	struct port *port;
++
++	port = find_port_by_vq(vq->vdev->priv, vq);
++	if (!port)
++		return;
++
++	wake_up_interruptible(&port->waitqueue);
++}
++
+ static void in_intr(struct virtqueue *vq)
+ {
+ 	struct port *port;
+@@ -1599,7 +1610,7 @@ static int init_vqs(struct ports_device *portdev)
+ 	 */
+ 	j = 0;
+ 	io_callbacks[j] = in_intr;
+-	io_callbacks[j + 1] = NULL;
++	io_callbacks[j + 1] = out_intr;
+ 	io_names[j] = "input";
+ 	io_names[j + 1] = "output";
+ 	j += 2;
+@@ -1613,7 +1624,7 @@ static int init_vqs(struct ports_device *portdev)
+ 		for (i = 1; i < nr_ports; i++) {
+ 			j += 2;
+ 			io_callbacks[j] = in_intr;
+-			io_callbacks[j + 1] = NULL;
++			io_callbacks[j + 1] = out_intr;
+ 			io_names[j] = "input";
+ 			io_names[j + 1] = "output";
+ 		}

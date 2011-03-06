@@ -1,0 +1,84 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Thu, 20 Jan 2011 23:23:22 -0500
+Subject: [virt] xen: no enable extended PCI cfg space via IOports
+Message-id: <4D38C3EA.4070803@redhat.com>
+Patchwork-id: 32754
+O-Subject: [RHEL5.7 PATCH] do not enable extended PCI config space via IOports
+	on kernel-xen
+Bugzilla: 661478
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ 661478 - lpfc adapter fails to initialize with xen 5.5 kernel
+
+Brew build:
+-- it was done a while ago, so no longer there.
+go to http://people.redhat.com/~ddutile/rhel5/bz661478/
+for x86_64 kernels (bare metal & xen).
+
+Problem/bug:
+Commit 9c96ac0d962ad0c754579792992dd13dde9714b3
+added extended PCI config space access via the
+legacy IOports (cf8, cfc) in order to provide EDAC
+support on AMD systems that don't have MMCONF support
+to reach extended PCI config space (greater than 1st 256 bytes
+per PCI device's config space).
+
+When that commit was made, an additional change
+was made to extend it to kernel-xen, thinking it was needed there,
+by making the same changes to arch/x86_64/kernel/setup-xen.c
+as was made for arch/x86_64/kernel/setup.c (for bare metal).
+
+That was a nice thought, but when running any xen guest (dom0 or domU),
+the hypervisor traps all accesses to 0xcf8 & 0xcfc and checks them for
+access, and makes appropriate 'substitutions' when need be (read: BAR values).
+
+The (RHEL5) xen hypervisor doesn't have support for AMD's Extended Config Space (ecs),
+so it gleefully truncates the config-space address to 8-bits, i.e., the standard
+config space access, and prevents accesses beyond 256 bytes via IOcfg regs cf8/cfc;
+in fact, it doesn't check for an address > 256, does the truncation, and effectively
+wraps the ecs access to a lower part of the 256 address space.
+
+When you add all these components up, what happens with a particular lpfc
+adapter(vid/did = 10df:f0e5) in an MMCONF-capable, AMD Barcelona (or higher) CPU system,
+running on kernel-xen with the additional patch to setup-xen.c is an IO-based PCI cfg
+access instead of an mmconf-based access (the latter works); PCI cfg accesses wrap,
+the driver thinks it messing with ecs when in fact it overwrites one of the BARs,
+and *boom*.
+
+Although Beaker has the AMD systems which have ecs in them,
+and has the particular lpfc device, it does not have the lethal combo together,
+thus the reason it wasn't caught in QA testing.
+
+Solution:
+Do not enable PCI ecs for kernel-xen.
+
+Testing:
+Created a brew-built kernel (as listed above) and tested at customer site
+on failing system, now able to boot & use lpfc.
+
+Please review and ack.
+
+Note: Due to mis-assignment in bugzilla, this rhel5.5-introduced bug
+      went unresolved through 5.6.  So, this patch is for 5.7, but is
+      being requested for a speed pass to 5.6.z.
+      So, please state your approval (or disapproval) for 5.6.z as well as 5.7.
+
+- Don
+
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index a4d6a81..53087c1 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -1198,9 +1198,6 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 
+ 	/* Fix cpuid4 emulation for more */
+ 	num_cache_leaves = 3;
+-
+-	if (c->x86 >= 0x10)
+-		amd_enable_pci_ext_cfg(c);
+ }
+ 
+ static void __cpuinit detect_ht(struct cpuinfo_x86 *c)
