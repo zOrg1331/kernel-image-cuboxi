@@ -353,7 +353,7 @@ SMBNTencrypt(unsigned char *passwd, unsigned char *c8, unsigned char *p24)
 	int rc;
 	unsigned char p16[16], p21[21];
 
-	memset(p16, '\0', 21);
+	memset(p16, '\0', 16);
 	memset(p21, '\0', 21);
 
 	rc = E_md4hash(passwd, p16);
