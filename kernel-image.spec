@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt12
+Release: alt13
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -582,6 +582,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Sun Mar 06 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt13
+- Enable suspend and hibernate
+- Enable /dev/psaux
+- Apply 042test008.1 patches
+
 * Mon Feb 28 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt12
 - Build e1000e as an external module
 - Change package description
