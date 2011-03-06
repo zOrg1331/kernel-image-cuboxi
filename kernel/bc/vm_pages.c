@@ -225,33 +225,32 @@ void ub_shmpages_uncharge(struct shmem_inode_info *shi, unsigned long size)
        uncharge_beancounter(ub, UB_SHMPAGES, size);
 }
 
-int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
+int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 {
+	int ret;
 	if (get_exec_ub() != ub)
 		return 0;
 
-	if (ub->ub_parms[UB_PHYSPAGES].limit == UB_MAXVALUE)
-		return 0;
+	ub_oom_start(&ub->oom_ctrl);
 
-	ub_oom_start(get_exec_oom_ctrl());
-
-	while (precharge_beancounter(ub, UB_PHYSPAGES, 1)) {
+	do {
 		unsigned long progress, flags;
-		int no_swap_left;
+		int no_swap_left = 0;
 
 		if (test_thread_flag(TIF_MEMDIE))
 			return -ENOMEM;
 
-		no_swap_left = precharge_beancounter(ub, UB_SWAPPAGES, 1) != 0;
-		progress = try_to_free_gang_pages(&ub->gang_set, no_swap_left, gfp_mask);
+		progress = try_to_free_gang_pages(&ub->gang_set, gfp_mask);
 		/* FIXME account there progress into throttler */
 		if (progress)
 			continue;
 
 		spin_lock_irqsave(&ub->ub_lock, flags);
 		ub->ub_parms[UB_PHYSPAGES].failcnt++;
-		if (no_swap_left)
+		if (!ub_resource_excess(ub, UB_SWAPPAGES, UB_SOFT)) {
 			ub->ub_parms[UB_SWAPPAGES].failcnt++;
+			no_swap_left = 1;
+		}
 		spin_unlock_irqrestore(&ub->ub_lock, flags);
 
 		if (nr_swap_pages <= 0 && !no_swap_left &&
@@ -262,20 +261,23 @@ int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 		}
 
 		if (gfp_mask & __GFP_WAIT) {
-			if (out_of_memory_in_ub(ub, gfp_mask) == -EAGAIN)
+			ret = out_of_memory_in_ub(ub, gfp_mask);
+			if (ret == -EAGAIN)
 				/*
 				 * We raced with some other OOM killer and nned
 				 * to ypdate generation to be sure, that we can
 				 * call OOM killer on next loop iteration.
 				 */
-				ub_oom_start(get_exec_oom_ctrl());
+				ub_oom_start(&ub->oom_ctrl);
+			else if (ret == -ENOMEM)
+				return -ENOMEM;
 		} else
 			return -ENOMEM;
-	}
+	} while (precharge_beancounter(ub, UB_PHYSPAGES, 1));
 
 	return 0;
 }
-EXPORT_SYMBOL(ub_check_ram_limits);
+EXPORT_SYMBOL(__ub_check_ram_limits);
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 void ub_swapentry_inc(struct swap_info_struct *si, pgoff_t num,

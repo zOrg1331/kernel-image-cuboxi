@@ -43,6 +43,7 @@ struct unix_bind_info {
 	struct sock *sk;
 	char path[128];
 	int path_off;
+	umode_t i_mode;
 	struct unix_bind_info *next;
 };
 

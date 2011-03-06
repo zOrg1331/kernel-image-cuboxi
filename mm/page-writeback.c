@@ -509,6 +509,11 @@ static void balance_dirty_pages(struct address_space *mapping,
 			bdi_thresh = background_thresh = ULONG_MAX;
 			nr_reclaimable = ub_dirty_pages(ub);
 			if (nr_reclaimable > dirty_thresh) {
+				nr_reclaimable = ub_stat_get_exact(ub, dirty_pages);
+				if (nr_reclaimable <= dirty_thresh) {
+					ub_stat_flush_pcpu(ub, dirty_pages);
+					goto no_ub_balance;
+				}
 				if (!ub->dirty_exceeded)
 					ub->dirty_exceeded = 1;
 				wbc.wb_ub = ub;
@@ -517,6 +522,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 				goto done;
 			}
 		}
+no_ub_balance:
 
 		if (ub->dirty_exceeded)
 			ub->dirty_exceeded = 0;

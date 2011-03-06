@@ -464,6 +464,8 @@ static int cpt_dump_unix_socket(struct sock *sk, struct cpt_sock_image *v, cpt_c
 				if (cpt_need_delayfs(unix_sk(sk)->mnt))
 					v->cpt_sockflags |= CPT_SOCK_DELAYED;
 
+				v->cpt_i_mode = d->d_inode->i_mode & S_IALLUGO;
+
 				err = cpt_dump_unix_mount(sk, v, ctx);
 			} else {
 				eprintk_ctx("cannot get path of an af_unix socket\n");

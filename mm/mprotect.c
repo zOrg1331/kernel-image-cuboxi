@@ -238,6 +238,7 @@ success:
                        !VM_UB_PRIVATE(newflags, vma->vm_file))
                uncharge_beancounter_fast(mm->mm_ub, UB_PRIVVMPAGES, nrpages);
 
+	perf_event_mmap(vma);
 	return 0;
 
 fail:
@@ -331,7 +332,6 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 		error = mprotect_fixup(vma, &prev, nstart, tmp, newflags);
 		if (error)
 			goto out;
-		perf_event_mmap(vma);
 		nstart = tmp;
 
 		if (nstart < prev->vm_end)

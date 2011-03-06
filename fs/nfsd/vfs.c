@@ -395,7 +395,7 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 		 * If we are changing the size of the file, then
 		 * we need to break all leases.
 		 */
-		host_err = break_lease(inode, FMODE_WRITE | O_NONBLOCK);
+		host_err = break_lease(inode, O_WRONLY | O_NONBLOCK);
 		if (host_err == -EWOULDBLOCK)
 			host_err = -ETIMEDOUT;
 		if (host_err) /* ENOMEM or EWOULDBLOCK */
@@ -830,7 +830,7 @@ nfsd_get_raparms(dev_t dev, ino_t ino)
 		if (ra->p_count == 0)
 			frap = rap;
 	}
-	depth = nfsdstats.ra_size*11/10;
+	depth = nfsdstats.ra_size;
 	if (!frap) {	
 		spin_unlock(&rab->pb_lock);
 		return NULL;

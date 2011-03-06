@@ -749,6 +749,7 @@ static int cpt_dump_veinfo(cpt_context_t *ctx)
 
 	i->last_pid = ve->ve_ns->pid_ns->last_pid;
 	i->rnd_va_space	= ve->_randomize_va_space + 1;
+	i->vpid_max = ve->ve_ns->pid_ns->pid_max;
 
 	ctx->write(i, sizeof(*i), ctx);
 	cpt_release_buf(ctx);

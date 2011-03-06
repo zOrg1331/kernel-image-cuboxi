@@ -31,6 +31,7 @@
 #include "cpt_files.h"
 #include "cpt_kernel.h"
 #include "cpt_socket.h"
+#include "cpt_syscalls.h"
 
 #define DEBUG
 
@@ -1041,6 +1042,8 @@ int rebind_unix_socket(struct vfsmount *rmnt, struct unix_bind_info *bi,
 			return err;
 		}
 
+		sc_chmod(name, (bi->i_mode & S_IALLUGO));
+
 		err = rst_path_lookup_at(rmnt,  rmnt->mnt_root, name, flags, &nd);
 		if (err < 0) {
 			printk("%s: lookup [%s] err %d\n", __func__, name, err);
@@ -1566,7 +1569,7 @@ int rst_delay_unix_bind(struct sock *sk, struct cpt_sock_image *v,
 		return err;
 	}
 
-	dbi = kmalloc(sizeof(*dbi), GFP_KERNEL);
+	dbi = kzalloc(sizeof(*dbi), GFP_KERNEL);
 	if (dbi == NULL)
 		return -ENOMEM;
 
@@ -1574,6 +1577,9 @@ int rst_delay_unix_bind(struct sock *sk, struct cpt_sock_image *v,
 	dbi->sk = sk;
 	strcpy(dbi->path, ((char *)v->cpt_laddr) + 2);
 	dbi->path_off = mntobj->o_lock;
+
+	if (cpt_object_has(v, cpt_i_mode))
+		dbi->i_mode = v->cpt_i_mode;
 
 	sbi = sb->s_fs_info;
 	dbi->next = sbi->bi_list;

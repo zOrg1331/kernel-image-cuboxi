@@ -2164,10 +2164,13 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 	if (unlikely(!zonelist->_zonerefs->zone))
 		return NULL;
 
+	get_mems_allowed();
 	/* The preferred zone is used for statistics later */
 	first_zones_zonelist(zonelist, high_zoneidx, nodemask, &preferred_zone);
-	if (!preferred_zone)
+	if (!preferred_zone) {
+		put_mems_allowed();
 		return NULL;
+	}
 
 	start = jiffies;
 	/* First allocation attempt */
@@ -2178,6 +2181,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 		page = __alloc_pages_slowpath(gfp_mask, order,
 				zonelist, high_zoneidx, nodemask,
 				preferred_zone, migratetype);
+	put_mems_allowed();
 
 	__alloc_collect_stats(gfp_mask, order, page, start);
 	if (page && (gfp_mask & __GFP_UBC) &&

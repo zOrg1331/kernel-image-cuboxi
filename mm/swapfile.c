@@ -728,6 +728,7 @@ int free_swap_and_cache(swp_entry_t entry)
 {
 	struct swap_info_struct *p;
 	struct page *page = NULL;
+	int uninitialized_var(full);
 
 	if (non_swap_entry(entry))
 		return 1;
@@ -736,6 +737,7 @@ int free_swap_and_cache(swp_entry_t entry)
 	if (p) {
 		if (swap_entry_free(p, entry, 1) == SWAP_HAS_CACHE) {
 			page = find_get_page(&swapper_space, entry.val);
+			full = ub_swap_full(get_swap_ub(entry));
 			if (page && !trylock_page(page)) {
 				page_cache_release(page);
 				page = NULL;
@@ -749,7 +751,7 @@ int free_swap_and_cache(swp_entry_t entry)
 		 * Also recheck PageSwapCache now page is locked (above).
 		 */
 		if (PageSwapCache(page) && !PageWriteback(page) &&
-				(!page_mapped(page) || vm_swap_full())) {
+				(!page_mapped(page) || full || vm_swap_full())) {
 			delete_from_swap_cache(page);
 			SetPageDirty(page);
 		}
@@ -1801,7 +1803,9 @@ static int swaps_open(struct inode *inode, struct file *file)
 
 static int swaps_release(struct inode *inode, struct file *file)
 {
-	if (!ve_is_super(file->owner_env))
+	struct seq_file *f = file->private_data;
+
+	if (f->op != &swaps_op)
 		return single_release(inode, file);
 	return seq_release(inode, file);
 }

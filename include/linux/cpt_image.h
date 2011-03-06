@@ -330,7 +330,9 @@ struct cpt_veinfo_image
 	/* later extension */
 	__u32	last_pid;
 	__u32	rnd_va_space;
-	__u64	reserved[8];
+	__u32	vpid_max;
+	__u32	__cpt_pad1;
+	__u64	reserved[7];
 } __attribute__ ((aligned (8)));
 
 /* CPT_OBJ_FILE: one struct file */ 
@@ -859,6 +861,10 @@ struct cpt_sock_image
 
 	__u32	cpt_rcvrtt_time;
 	__u32	__cpt_pad12;
+
+	__u16	cpt_i_mode;
+	__u16	__cpt_pad13;
+	__u32	__cpt_pad14;
 } __attribute__ ((aligned (8)));
 
 struct cpt_sockmc_image {

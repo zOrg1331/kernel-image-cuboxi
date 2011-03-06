@@ -284,7 +284,7 @@ static long do_sys_truncate(const char __user *pathname, loff_t length)
 	 * Make sure that there are no leases.  get_write_access() protects
 	 * against the truncate racing with a lease-granting setlease().
 	 */
-	error = break_lease(inode, FMODE_WRITE);
+	error = break_lease(inode, O_WRONLY);
 	if (error)
 		goto put_write_and_out;
 
@@ -690,6 +690,7 @@ SYSCALL_DEFINE2(chmod, const char __user *, filename, mode_t, mode)
 {
 	return do_fchmodat(AT_FDCWD, filename, mode, 0);
 }
+EXPORT_SYMBOL_GPL(sys_chmod);
 
 SYSCALL_DEFINE2(lchmod, const char __user *, filename, mode_t, mode)
 {

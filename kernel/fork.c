@@ -571,8 +571,8 @@ void mmput(struct mm_struct *mm)
 		put_swap_token(mm);
 		if (mm->binfmt)
 			module_put(mm->binfmt->module);
-		if (mm->oom_killed)
-			ub_oom_task_dead(mm);
+		if (mm->global_oom || mm->ub_oom)
+			ub_oom_mm_dead(mm);
 		mmdrop(mm);
 	}
 }

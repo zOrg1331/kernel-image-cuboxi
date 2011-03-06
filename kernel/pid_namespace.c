@@ -92,6 +92,7 @@ static struct pid_namespace *create_pid_namespace(struct pid_namespace *parent_p
 	kref_init(&ns->kref);
 	ns->level = level;
 	ns->parent = get_pid_ns(parent_pid_ns);
+	ns->pid_max = PID_MAX_NS_DEFAULT;
 
 	set_bit(0, ns->pidmap[0].page);
 	atomic_set(&ns->pidmap[0].nr_free, BITS_PER_PAGE - 1);
@@ -287,20 +288,21 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	struct task_struct *task;
 	struct ve_struct *env = get_exec_env();
 
-	/*
-	 * Here the VE changes its state into "not running".
-	 * op_sem taken for write is a barrier to all VE manipulations from
-	 * ioctl: it waits for operations currently in progress and blocks all
-	 * subsequent operations until is_running is set to 0 and op_sem is
-	 * released.
-	 */
+	if (pid_ns == env->ve_ns->pid_ns) {
+		/*
+		 * Here the VE changes its state into "not running".
+		 * op_sem taken for write is a barrier to all VE manipulations from
+		 * ioctl: it waits for operations currently in progress and blocks all
+		 * subsequent operations until is_running is set to 0 and op_sem is
+		 * released.
+		 */
 
-	down_write(&env->op_sem);
-	env->is_running = 0;
-	up_write(&env->op_sem);
+		down_write(&env->op_sem);
+		env->is_running = 0;
+		up_write(&env->op_sem);
 
-	ve_hook_iterate_fini(VE_INIT_EXIT_CHAIN, env);
-
+		ve_hook_iterate_fini(VE_INIT_EXIT_CHAIN, env);
+	}
 	/*
 	 * The last thread in the cgroup-init thread group is terminating.
 	 * Find remaining pid_ts in the namespace, signal and wait for them
@@ -342,8 +344,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	acct_exit_ns(pid_ns);
 
 #ifdef CONFIG_VE
-	if (get_exec_env()->ve_ns->pid_ns == pid_ns)
-		zap_ve_processes(get_exec_env());
+	if (pid_ns == env->ve_ns->pid_ns)
+		zap_ve_processes(env);
 #endif
 	return;
 }

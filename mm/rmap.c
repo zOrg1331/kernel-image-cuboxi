@@ -886,9 +886,19 @@ void page_add_anon_rmap(struct page *page,
 {
 	int first = atomic_inc_and_test(&page->_mapcount);
 	if (first) {
+		struct gang_set *gs = get_mm_gang(vma->vm_mm);
+
 		rcu_read_lock();
-		gang_map_anon_page(page_gang(page)->set);
+		if (page_gang(page)->set != gs) {
+			if (!isolate_lru_page(page)) {
+				gang_mod_user_page(page, gs);
+				putback_lru_page(page);
+			} else
+				gs = page_gang(page)->set;
+		}
+		gang_map_anon_page(gs);
 		rcu_read_unlock();
+
 		if (!PageTransHuge(page))
 			__inc_zone_page_state(page, NR_ANON_PAGES);
 		else

@@ -35,10 +35,10 @@ EXPORT_SYMBOL(sysfs_deprecated);
 
 static int __init sysfs_init_deprecated(char *str)
 {
-	sysfs_deprecated = 1;
+	sysfs_deprecated = simple_strtoul(str, NULL, 10);
 	return 1;
 }
-__setup("old_sysfs", sysfs_init_deprecated);
+early_param("sysfs.deprecated", sysfs_init_deprecated);
 #endif
 
 static const struct super_operations sysfs_ops = {

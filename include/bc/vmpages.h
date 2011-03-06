@@ -73,6 +73,12 @@ static inline unsigned long ub_mapped_pages(struct user_beancounter *ub)
 		ub_stat_get(ub, anonymous_pages);
 }
 
+static inline int ub_swap_full(struct user_beancounter *ub)
+{
+	return (ub->ub_parms[UB_SWAPPAGES].held * 2 >
+			ub->ub_parms[UB_SWAPPAGES].limit);
+}
+
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 #define SWP_DECLARE_FUNC(ret, decl)	UB_DECLARE_FUNC(ret, decl)
 #define SWP_DECLARE_VOID_FUNC(decl)	UB_DECLARE_VOID_FUNC(decl)
@@ -88,6 +94,15 @@ SWP_DECLARE_VOID_FUNC(ub_swapentry_inc(struct swap_info_struct *si, pgoff_t n,
 			struct user_beancounter *ub))
 SWP_DECLARE_VOID_FUNC(ub_swapentry_dec(struct swap_info_struct *si, pgoff_t n))
 
-extern int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask);
+int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask);
+
+static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
+{
+	if (likely(ub->ub_parms[UB_PHYSPAGES].limit == UB_MAXVALUE ||
+			!precharge_beancounter(ub, UB_PHYSPAGES, 1)))
+		return 0;
+
+	return __ub_check_ram_limits(ub, gfp_mask);
+}
 
 #endif /* __UB_PAGES_H_ */

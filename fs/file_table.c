@@ -50,7 +50,6 @@ static inline void file_free_rcu(struct rcu_head *head)
 	struct file *f = container_of(head, struct file, f_u.fu_rcuhead);
 
 	put_cred(f->f_cred);
-	put_ve(f->owner_env);
 	kmem_cache_free(filp_cachep, f);
 }
 
@@ -137,8 +136,6 @@ struct file *get_empty_filp(void)
 		goto fail_ch;
 	if (acct)
 		percpu_counter_inc(&nr_files);
-
-	f->owner_env = get_ve(get_exec_env());
 
 	if (security_file_alloc(f))
 		goto fail_sec;

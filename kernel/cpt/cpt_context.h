@@ -40,6 +40,7 @@ typedef struct cpt_context
 	struct file *errorfile;
 	struct file *statusfile;
 	struct file *lockfile;
+	int lockfile_new;
 
 	int	errno;
 	char	*error_msg;
