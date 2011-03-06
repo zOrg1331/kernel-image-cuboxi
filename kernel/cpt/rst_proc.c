@@ -356,6 +356,7 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		break;
 #endif
 	case CPT_SET_LOCKFD:
+	case CPT_SET_LOCKFD2:
 		if (ctx->ctx_state > 0) {
 			err = -EBUSY;
 			break;
@@ -370,6 +371,7 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		if (ctx->lockfile)
 			fput(ctx->lockfile);
 		ctx->lockfile = dfile;
+		ctx->lockfile_new = (cmd == CPT_SET_LOCKFD2);
 		break;
 	case CPT_SET_STATUSFD:
 		if (ctx->ctx_state > 0) {

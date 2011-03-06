@@ -92,6 +92,7 @@ static struct pid_namespace *create_pid_namespace(struct pid_namespace *parent_p
 	kref_init(&ns->kref);
 	ns->level = level;
 	ns->parent = get_pid_ns(parent_pid_ns);
+	ns->pid_max = PID_MAX_NS_DEFAULT;
 
 	set_bit(0, ns->pidmap[0].page);
 	atomic_set(&ns->pidmap[0].nr_free, BITS_PER_PAGE - 1);
@@ -285,10 +286,9 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	int nr;
 	int rc;
 	struct task_struct *task;
+	struct ve_struct *env = get_exec_env();
 
-	if (pid_ns->child_reaper == first_task_ve()) {
-		struct ve_struct *env = get_exec_env();
-
+	if (pid_ns == env->ve_ns->pid_ns) {
 		/*
 		 * Here the VE changes its state into "not running".
 		 * op_sem taken for write is a barrier to all VE manipulations from
@@ -344,8 +344,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	acct_exit_ns(pid_ns);
 
 #ifdef CONFIG_VE
-	if (get_exec_env()->ve_ns->pid_ns == pid_ns)
-		zap_ve_processes(get_exec_env());
+	if (pid_ns == env->ve_ns->pid_ns)
+		zap_ve_processes(env);
 #endif
 	return;
 }

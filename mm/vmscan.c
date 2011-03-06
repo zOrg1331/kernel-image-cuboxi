@@ -81,9 +81,6 @@ struct scan_control {
 
 	int order;
 
-	/* Do not allocate new swap entries */
-	int no_swap_left;
-
 	/* Reclaim this gang-set */
 	struct gang_set *gs;
 
@@ -145,7 +142,8 @@ long vm_total_pages;	/* The total number of pages which the VM controls */
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
 
-static unsigned long gang_reclaimable_pages(struct gang *gang);
+static unsigned long gang_reclaimable_pages(struct gang *gang,
+		struct scan_control *sc);
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
 #define scanning_global_lru(sc)	(!(sc)->mem_cgroup && !(sc)->gs)
@@ -729,8 +727,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if (PageAnon(page) && !PageSwapCache(page)) {
 			if (!(sc->gfp_mask & __GFP_IO))
 				goto keep_locked;
-			if (sc->no_swap_left ||
-					!add_to_swap(page, get_gang_ub(gang)))
+			if (!add_to_swap(page, get_gang_ub(gang)))
 				goto activate_locked;
 			may_enter_fs = 1;
 		}
@@ -879,7 +876,8 @@ cull_mlocked:
 
 activate_locked:
 		/* Not a candidate for swapping, so reclaim swap space. */
-		if (PageSwapCache(page) && vm_swap_full())
+		if (PageSwapCache(page) && (vm_swap_full() ||
+			(sc->gs && ub_swap_full(get_gangs_ub(sc->gs)))))
 			try_to_free_swap(page);
 		VM_BUG_ON(PageActive(page));
 		SetPageActive(page);
@@ -1789,6 +1787,16 @@ static struct gang *rotate_zone_gangs(struct zone *zone)
 
 #endif /* CONFIG_MEMORY_GANGS */
 
+static inline int no_swap_space(struct scan_control *sc)
+{
+	if (sc->gs && !ub_resource_excess(get_gangs_ub(sc->gs),
+				UB_SWAPPAGES, UB_SOFT))
+		return 1;
+	if (nr_swap_pages <= 0)
+		return 1;
+	return 0;
+}
+
 /*
  * This is a basic per-zone page freer.  Used by both kswapd and direct reclaim.
  */
@@ -1807,7 +1815,7 @@ static void shrink_zone(int priority, struct zone *zone,
 	int gangs_rotated = 0;
 
 	/* If we have no swap space, do not bother scanning anon pages. */
-	if (!sc->may_swap || (nr_swap_pages <= 0)) {
+	if (!sc->may_swap || no_swap_space(sc)) {
 		noswap = 1;
 		percent[0] = 0;
 		percent[1] = 100;
@@ -1884,7 +1892,7 @@ static void shrink_zone(int priority, struct zone *zone,
 	 * Even if we did not try to evict anon pages at all, we want to
 	 * rebalance the anon lru active/inactive ratio.
 	 */
-	if (inactive_anon_is_low(zone, sc) && nr_swap_pages > 0) {
+	if (inactive_anon_is_low(zone, sc) && !no_swap_space(sc)) {
 		if (!gang)
 			gang = rotate_zone_gangs(zone);
 		shrink_active_list(SWAP_CLUSTER_MAX, zone, gang, sc, priority, 0);
@@ -1939,7 +1947,7 @@ static void shrink_zones(int priority, struct zonelist *zonelist,
 			sc->all_unreclaimable = 0;
 		} if (sc->gs) {
 			struct gang *gang = mem_zone_gang(sc->gs, zone);
-			unsigned long reclaimable = gang_reclaimable_pages(gang);
+			unsigned long reclaimable = gang_reclaimable_pages(gang, sc);
 
 			if (reclaimable == 0)
 				continue;
@@ -1993,6 +2001,7 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	unsigned long writeback_threshold;
 
 	KSTAT_PERF_ENTER(ttfp);
+	get_mems_allowed();
 	delayacct_freepages_start();
 
 	if (scanning_global_lru(sc))
@@ -2096,6 +2105,7 @@ out:
 		mem_cgroup_record_reclaim_priority(sc->mem_cgroup, priority);
 
 	delayacct_freepages_end();
+	put_mems_allowed();
 
 	KSTAT_PERF_LEAVE(ttfp);
 	return ret;
@@ -2129,8 +2139,7 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 	return nr_reclaimed;
 }
 
-unsigned long try_to_free_gang_pages(struct gang_set *gs,
-					int no_swap_left, gfp_t gfp_mask)
+unsigned long try_to_free_gang_pages(struct gang_set *gs, gfp_t gfp_mask)
 {
 	struct zonelist *zonelist = NODE_DATA(numa_node_id())->node_zonelists;
 	struct scan_control sc = {
@@ -2141,7 +2150,6 @@ unsigned long try_to_free_gang_pages(struct gang_set *gs,
 		.swappiness = vm_swappiness,
 		.isolate_pages = isolate_pages_global,
 		.gs = gs,
-		.no_swap_left = no_swap_left,
 	};
 
 	return do_try_to_free_pages(zonelist, &sc);
@@ -2635,14 +2643,15 @@ unsigned long zone_reclaimable_pages(struct zone *zone)
 	return nr;
 }
 
-static unsigned long gang_reclaimable_pages(struct gang *gang)
+static unsigned long gang_reclaimable_pages(struct gang *gang,
+		struct scan_control *sc)
 {
 	unsigned long nr;
 
 	nr = gang->lru[LRU_INACTIVE_FILE].nr_pages +
 	     gang->lru[LRU_ACTIVE_FILE].nr_pages;
 
-	if (nr_swap_pages > 0) {
+	if (!no_swap_space(sc)) {
 		nr += gang->lru[LRU_INACTIVE_ANON].nr_pages +
 		      gang->lru[LRU_ACTIVE_ANON].nr_pages;
 	}

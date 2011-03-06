@@ -356,53 +356,8 @@ static void dump_tasks(const struct mem_cgroup *mem)
 	} while_each_thread_all(g, p);
 }
 
-#define K(x) ((x) << (PAGE_SHIFT-10))
-
-/*
- * Send SIGKILL to the selected  process irrespective of  CAP_SYS_RAW_IO
- * flag though it's unlikely that  we select a process with CAP_SYS_RAW_IO
- * set.
- */
-static void __oom_kill_task(struct task_struct *p, int verbose)
+static void __oom_kill_thread(struct task_struct *p)
 {
-	if (is_global_init(p)) {
-		WARN_ON(1);
-		printk(KERN_WARNING "tried to kill init!\n");
-		return;
-	}
-
-	if (!p->mm) {
-		WARN_ON(1);
-		printk(KERN_WARNING "tried to kill an mm-less task!\n");
-		return;
-	}
-
-	if (sysctl_would_have_oomkilled == 1) {
-		printk(KERN_ERR "Would have killed process %d (%s). But continuing instead.\n",
-				task_pid_nr(p), p->comm);
-		return;
-	}
-
-	if (verbose) {
-		struct ve_struct *ve;
-
-		printk(KERN_ERR "Killed process %d (%s) "
-				"vsz:%lukB, anon-rss:%lukB, file-rss:%lukB\n",
-				task_pid_nr(p), p->comm,
-				K(p->mm->total_vm),
-				K(get_mm_counter(p->mm, anon_rss)),
-				K(get_mm_counter(p->mm, file_rss)));
-#ifdef CONFIG_VE
-		ve = VE_TASK_INFO(p)->owner_env;
-		if (!ve_is_super(ve)) {
-			ve = set_exec_env(ve);
-			ve_printk(VE_LOG, KERN_ERR "Killed process %d (%s)\n",
-					task_pid_vnr(p), p->comm);
-			set_exec_env(ve);
-		}
-#endif
-	}
-
 	/*
 	 * We give our sacrificial lamb high priority and access to
 	 * all the memory it needs. That way it should be able to
@@ -412,37 +367,92 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 	set_tsk_thread_flag(p, TIF_MEMDIE);
 
 	force_sig(SIGKILL, p);
-	ub_oom_task_killed(p);
+	wake_up_process(p);
+
+	active_oom_ctrl()->kill_counter++;
 }
 
-static int oom_kill_task(struct task_struct *p)
+static void __oom_kill_task(struct task_struct *tsk)
 {
-	struct user_beancounter *ub;
+	struct task_struct *p = tsk;
 
-	task_lock(p);
-	if (p->mm == NULL) {
-		task_unlock(p);
-		return 1;
+	do {
+		__oom_kill_thread(p);
+		p = next_thread(p);
+	} while (p != tsk);
+}
+
+#define K(x) ((x) << (PAGE_SHIFT-10))
+
+static int oom_kill_task(struct task_struct *p, int verbose)
+{
+	static DEFINE_RATELIMIT_STATE(rl, 60*HZ, 5);
+	unsigned long total_vm, anon_rss, file_rss;
+	struct mm_struct *mm;
+
+	if (is_global_init(p)) {
+		WARN_ON(1);
+		printk(KERN_WARNING "tried to kill init!\n");
+		return -EAGAIN;
 	}
 
-	ub = get_beancounter(mm_ub(p->mm));
+	if (sysctl_would_have_oomkilled == 1) {
+		printk(KERN_ERR "Would have killed process %d (%s). But continuing instead.\n",
+				task_pid_nr(p), p->comm);
+		return -EAGAIN;
+	}
+
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, p)
+			& NOTIFY_FAIL)
+		return -EAGAIN;
+
+	if (p->signal->oom_adj == OOM_DISABLE)
+		return -EAGAIN;
+
+	task_lock(p);
+	mm = p->mm;
+	if (mm == NULL) {
+		/*
+		 * FIXME: this is not really good. If we selected this task
+		 * then it had valid mm. If we can't find mm here, then the
+		 * task has released it's mm and it's dying. So, in this case,
+		 * there is a probability, that some resources will be freed
+		 * very soon. So maybe we need to design something more
+		 * flexible here...
+		 */
+		task_unlock(p);
+		return -EAGAIN;
+	}
+
+	total_vm = mm->total_vm;
+	anon_rss = get_mm_counter(mm, anon_rss);
+	file_rss = get_mm_counter(mm, file_rss);
+	ub_oom_mark_mm(mm);
 	task_unlock(p);
 
-	/* WARNING: mm may not be dereferenced since we did not obtain its
-	 * value from get_task_mm(p).  This is OK since all we need to do is
-	 * compare mm to q->mm below.
-	 *
-	 * Furthermore, even if mm contains a non-NULL value, p->mm may
-	 * change to NULL at any time since we do not hold task_lock(p).
-	 * However, this is of no concern to us.
-	 */
-	if (p->signal->oom_adj == OOM_DISABLE)
-		return 1;
+	__oom_kill_task(p);
 
-	__oom_kill_task(p, 1);
+	if (verbose) {
+		struct ve_struct *ve;
 
-	ub_oom_mm_killed(ub);
-	put_beancounter(ub);
+		printk(KERN_ERR "Killed process %d (%s) "
+				"vsz:%lukB, anon-rss:%lukB, file-rss:%lukB\n",
+				task_pid_nr(p), p->comm,
+				K(total_vm),
+				K(anon_rss),
+				K(file_rss));
+#ifdef CONFIG_VE
+		ve = VE_TASK_INFO(p)->owner_env;
+		if (!ve_is_super(ve)) {
+			ve = set_exec_env(ve);
+			ve_printk(VE_LOG, KERN_ERR "Killed process %d (%s)\n",
+					task_pid_vnr(p), p->comm);
+			set_exec_env(ve);
+		}
+#endif
+		if (__ratelimit(&rl))
+			show_mem();
+	}
 	return 0;
 }
 
@@ -471,10 +481,8 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	 * If the task is already exiting, don't alarm the sysadmin or kill
 	 * its children or threads, just set TIF_MEMDIE so it can die quickly
 	 */
-	if (p->flags & PF_EXITING) {
-		__oom_kill_task(p, 0);
-		return 0;
-	}
+	if (p->flags & PF_EXITING)
+		return oom_kill_task(p, 0);
 
 	printk(KERN_ERR "%s: kill process %d (%s) or a child\n",
 					message, task_pid_nr(p), p->comm);
@@ -489,10 +497,10 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
 			continue;
-		if (!oom_kill_task(c))
+		if (!oom_kill_task(c, 1))
 			return 0;
 	}
-	return oom_kill_task(p);
+	return oom_kill_task(p, 1);
 }
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
@@ -635,13 +643,6 @@ void pagefault_out_of_memory(void)
 	if (freed > 0)
 		/* Got some memory back in the last second. */
 		return;
-
-	/*
-	 * If this is from memcg, oom-killer is already invoked.
-	 * and not worth to go system-wide-oom.
-	 */
-	if (mem_cgroup_oom_called(current))
-		goto rest_and_return;
 
 	if (sysctl_panic_on_oom)
 		panic("out of memory from page fault. panic_on_oom is selected.\n");

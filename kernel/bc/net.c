@@ -152,9 +152,9 @@ static void ub_sock_snd_wakeup(struct user_beancounter *ub)
 		 * act the same way as ub_tcp_snd_wakeup does.
 		 */
 		sock_hold(sk);
-		read_lock(&sk->sk_callback_lock);
 		spin_unlock(&ub->ub_lock);
 
+		read_lock(&sk->sk_callback_lock);
 		sk->sk_write_space(sk);
 		read_unlock(&sk->sk_callback_lock);
 
@@ -200,9 +200,9 @@ static void ub_tcp_snd_wakeup(struct user_beancounter *ub)
 		 * it belongs to the callback.
 		 */
 		sock_hold(sk);
-		read_lock(&sk->sk_callback_lock);
 		spin_unlock(&ub->ub_lock);
 
+		read_lock(&sk->sk_callback_lock);
 		sk->sk_write_space(sk);
 		read_unlock(&sk->sk_callback_lock);
 

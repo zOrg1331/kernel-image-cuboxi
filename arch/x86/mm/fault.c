@@ -860,6 +860,11 @@ mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 		 * 2) OOM-killed failed to provide us requred memory.
 		 * Current task can't execute in such circumstances.
 		 */
+		up_read(&current->mm->mmap_sem);
+		if (!(error_code & PF_USER)) {
+			no_context(regs, error_code, address);
+			return;
+		}
 		send_sig(SIGKILL, current, 0);
 	} else {
 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON))

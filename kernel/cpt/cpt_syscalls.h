@@ -37,7 +37,7 @@ static inline int sc_mknod(char *name, int mode, int dev)
 
 static inline int sc_chmod(char *name, int mode)
 {
-	WRAP2(mkdir, (name, mode));
+	WRAP2(chmod, (name, mode));
 }
 
 static inline int sc_chown(char *name, int uid, int gid)

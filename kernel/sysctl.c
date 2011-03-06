@@ -80,7 +80,6 @@ extern int core_uses_pid;
 extern int suid_dumpable;
 extern char core_pattern[];
 extern unsigned int core_pipe_limit;
-extern int pid_max;
 extern int min_free_kbytes;
 extern int pid_max_min, pid_max_max;
 extern int sysctl_drop_caches;
@@ -340,6 +339,16 @@ static int max_sched_shares_ratelimit = NSEC_PER_SEC; /* 1 second */
 static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
+
+static int proc_dointvec_pidmax(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct ctl_table tmp;
+
+	tmp = *table;
+	tmp.data = &current->nsproxy->pid_ns->pid_max;
+	return proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+}
 
 static struct ctl_table kern_table[] = {
 	{
@@ -836,10 +845,10 @@ static struct ctl_table kern_table[] = {
 	{
 		.ctl_name	= KERN_PIDMAX,
 		.procname	= "pid_max",
-		.data		= &pid_max,
+		.data		= NULL,
 		.maxlen		= sizeof (int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
+		.mode		= 0644 | S_ISVTX,
+		.proc_handler	= &proc_dointvec_pidmax,
 		.strategy	= sysctl_intvec,
 		.extra1		= &pid_max_min,
 		.extra2		= &pid_max_max,

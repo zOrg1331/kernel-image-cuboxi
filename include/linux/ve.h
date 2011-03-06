@@ -231,15 +231,8 @@ struct ve_struct {
 	struct venet_stat       *stat;
 #ifdef CONFIG_VE_IPTABLES
 /* core/netfilter.c virtualization */
-	struct xt_table		*_ve_ipt_filter_pf; /* packet_filter struct */
-	struct xt_table		*_ve_ip6t_filter_pf;
-	struct xt_table		*_ipt_mangle_table;
-	struct xt_table		*_ip6t_mangle_table;
-	struct list_head	_xt_tables[NPROTO];
-
 	__u64			ipt_mask;
 	__u64			_iptables_modules;
-	struct ve_nf_conntrack	*_nf_conntrack;
 	struct ve_ipt_recent	*_ipt_recent;
 	struct ve_xt_hashlimit	*_xt_hashlimit;
 #endif /* CONFIG_VE_IPTABLES */

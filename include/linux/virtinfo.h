@@ -60,6 +60,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 #define VIRTINFO_MEMINFO	0
 #define VIRTINFO_SYSINFO	2
 #define VIRTINFO_VMSTAT		3
+#define VIRTINFO_OOMKILL	4
 
 #define VIRTINFO_IO_ACCOUNT	0
 #define VIRTINFO_IO_PREPARE	1

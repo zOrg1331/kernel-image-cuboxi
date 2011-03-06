@@ -117,6 +117,8 @@ static int vps_rst_veinfo(struct cpt_context *ctx)
 	ctx->last_vpid = i->last_pid;
 	if (i->rnd_va_space)
 		ve->_randomize_va_space = i->rnd_va_space - 1;
+	if (i->vpid_max && i->vpid_max < PID_MAX_LIMIT)
+		ve->ve_ns->pid_ns->pid_max = i->vpid_max;
 
 	err = 0;
 out_rel:
@@ -276,6 +278,12 @@ static int hook(void *arg)
 			oldfs = get_fs(); set_fs(KERNEL_DS);
 			if (ctx->lockfile->f_op && ctx->lockfile->f_op->read)
 				err = ctx->lockfile->f_op->read(ctx->lockfile, &b, 1, &ctx->lockfile->f_pos);
+
+			if (err > 0) /* bytes appearred */
+				err = (ctx->lockfile_new ? 0 : -ECANCELED);
+			else if (err == 0) /* pipe was closed */
+				err = (ctx->lockfile_new ? -ECANCELED : 0);
+
 			set_fs(oldfs);
 			fput(ctx->lockfile);
 			ctx->lockfile = NULL;

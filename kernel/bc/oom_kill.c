@@ -17,10 +17,15 @@ void ub_oom_start(struct oom_control *oom_ctrl)
 	current->task_bc.oom_generation = oom_ctrl->generation;
 }
 
-void ub_oom_task_killed(struct task_struct *tsk)
+/*
+ * Must be called under task_lock() held
+ */
+void ub_oom_mark_mm(struct mm_struct *mm)
 {
+	mm_ub(mm)->ub_parms[UB_OOMGUARPAGES].failcnt++;
+
 	if (active_oom_ctrl() == &global_oom_ctrl)
-		tsk->mm->global_oom = 1;
+		mm->global_oom = 1;
 	else {
 		/*
 		 * Task can be killed when using either global oom ctl
@@ -29,12 +34,9 @@ void ub_oom_task_killed(struct task_struct *tsk)
 		 * to use lokking at this flag and we have to sure it
 		 * will use the proper one.
 		 */
-		BUG_ON(tsk->mm->mm_ub != get_exec_ub());
-		tsk->mm->global_oom = 0;
+		BUG_ON(mm->mm_ub != get_exec_ub());
+		mm->ub_oom = 1;
 	}
-
-	active_oom_ctrl()->kill_counter++;
-	wake_up_process(tsk);
 }
 
 static inline int ub_oom_completed(struct oom_control *oom_ctrl)
@@ -83,7 +85,7 @@ int ub_oom_lock(void)
 	while (1) {
 		if (ub_oom_completed(oom_ctrl)) {
 			spin_unlock(&oom_ctrl->lock);
-			return -EINVAL;
+			return -EAGAIN;
 		}
 
 		if (timeout == 0)
@@ -163,43 +165,34 @@ struct user_beancounter *ub_oom_select_worst(void)
 	return ub;
 }
 
-void ub_oom_mm_killed(struct user_beancounter *ub)
-{
-	static DEFINE_RATELIMIT_STATE(rl, 60*HZ, 5);
-
-	/* increment is serialized with ub->oom_ctrl */
-	ub->ub_parms[UB_OOMGUARPAGES].failcnt++;
-
-	if (__ratelimit(&rl))
-		show_mem();
-}
-
 void ub_oom_unlock(void)
 {
 	spin_unlock(&active_oom_ctrl()->lock);
 }
 
-void ub_oom_task_dead(struct mm_struct *mm)
+static void ub_release_oom_control(struct oom_control *oom_ctrl)
 {
-	struct oom_control *oom_ctrl;
-	
-	if (mm->global_oom)
-		oom_ctrl = &global_oom_ctrl;
-	else
-		oom_ctrl = &mm_ub(mm)->oom_ctrl;
-
 	spin_lock(&oom_ctrl->lock);
 	oom_ctrl->kill_counter = 0;
 	oom_ctrl->generation++;
 
-	printk("OOM killed process %s (pid=%d, ve=%d) exited, "
-			"free=%lu gen=%d.\n",
-			current->comm, current->pid,
-			VEID(current->ve_task_info.owner_env),
-			nr_free_pages(), oom_ctrl->generation);
 	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
 	wake_up_all(&oom_ctrl->wq);
 	spin_unlock(&oom_ctrl->lock);
+}
+
+void ub_oom_mm_dead(struct mm_struct *mm)
+{
+	if (mm->global_oom)
+		ub_release_oom_control(&global_oom_ctrl);
+	if (mm->ub_oom)
+		ub_release_oom_control(&mm_ub(mm)->oom_ctrl);
+
+	printk("OOM killed process %s (pid=%d, ve=%d) exited, "
+			"free=%lu.\n",
+			current->comm, current->pid,
+			VEID(current->ve_task_info.owner_env),
+			nr_free_pages());
 }
 
 int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
@@ -222,6 +215,8 @@ int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 	read_unlock(&tasklist_lock);
 	ub_oom_unlock();
 
+	if (!p)
+		res = -ENOMEM;
 out:
 	/*
 	 * Give "p" a good chance of killing itself before we

@@ -43,5 +43,6 @@
 #define CPT_HARDLNK_ON	_IOW(CPTCTLTYPE, 25, int)
 
 #define CPT_TEST_VERSION _IOW(CPTCTLTYPE, 26, int)
+#define CPT_SET_LOCKFD2 _IOW(CPTCTLTYPE, 27, int)
 
 #endif

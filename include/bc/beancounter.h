@@ -453,6 +453,17 @@ static inline void __ub_stat_sub(atomic_long_t *stat, int *pcpu, long val)
 	local_irq_restore(flags);
 }
 
+static inline void __ub_stat_flush_pcpu(atomic_long_t *stat, int *pcpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pcpu = per_cpu_ptr(pcpu, smp_processor_id());
+	atomic_long_add(*pcpu, stat);
+	*pcpu = 0;
+	local_irq_restore(flags);
+}
+
 #define ub_stat_add(ub, name, val)	__ub_stat_add(&(ub)->name, &(ub)->ub_percpu->name, val)
 #define ub_stat_sub(ub, name, val)	__ub_stat_sub(&(ub)->name, &(ub)->ub_percpu->name, val)
 #define ub_stat_inc(ub, name)		ub_stat_add(ub, name, 1)
@@ -460,6 +471,8 @@ static inline void __ub_stat_sub(atomic_long_t *stat, int *pcpu, long val)
 #define ub_stat_mod(ub, name, val)	atomic_long_add(val, &(ub)->name)
 #define __ub_stat_get(ub, name)		atomic_long_read(&(ub)->name)
 #define ub_stat_get(ub, name)		max(0l, atomic_long_read(&(ub)->name))
+#define ub_stat_get_exact(ub, name)	max(0l, __ub_stat_get(ub, name) + __ub_percpu_sum(ub, name))
+#define ub_stat_flush_pcpu(ub, name)	__ub_stat_flush_pcpu(&(ub)->name, &(ub)->ub_percpu->name)
 
 int ubstat_alloc_store(struct user_beancounter *ub);
 

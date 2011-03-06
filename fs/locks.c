@@ -127,6 +127,7 @@
 #include <linux/time.h>
 #include <linux/rcupdate.h>
 #include <linux/pid_namespace.h>
+#include <linux/fs_struct.h>
 
 #include <asm/uaccess.h>
 
@@ -1224,8 +1225,9 @@ int __break_lease(struct inode *inode, unsigned int mode)
 	struct file_lock *fl;
 	unsigned long break_time;
 	int i_have_this_lease = 0;
+	int want_write = (mode & O_ACCMODE) != O_RDONLY;
 
-	new_fl = lease_alloc(NULL, mode & FMODE_WRITE ? F_WRLCK : F_RDLCK);
+	new_fl = lease_alloc(NULL, want_write ? F_WRLCK : F_RDLCK);
 
 	lock_kernel();
 
@@ -1239,7 +1241,7 @@ int __break_lease(struct inode *inode, unsigned int mode)
 		if (fl->fl_owner == current->files)
 			i_have_this_lease = 1;
 
-	if (mode & FMODE_WRITE) {
+	if (want_write) {
 		/* If we want write access, we have to revoke any lease. */
 		future = F_UNLCK | F_INPROGRESS;
 	} else if (flock->fl_type & F_INPROGRESS) {
@@ -2202,7 +2204,7 @@ static int locks_show(struct seq_file *f, void *v)
 	struct file_lock *fl, *bfl;
 
 	fl = list_entry(v, struct file_lock, fl_link);
-	if (!ve_accessible(fl->fl_file->owner_env, get_exec_env()))
+	if (d_root_check(&fl->fl_file->f_path))
 		goto out;
 
 	lock_get_status(f, fl, (long)f->private, "");

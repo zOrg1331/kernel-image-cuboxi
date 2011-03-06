@@ -2030,7 +2030,7 @@ out:
 	if (deleted && buffer &&
 			prepend(&end, &buflen, " (deleted)", 10) != 0)
 		goto Elong;
-out_err:
+
 	spin_unlock(&vfsmount_lock);
 	return buffer ? retval : NULL;
 
@@ -2063,7 +2063,10 @@ global_root:
 
 Elong:
 	retval = ERR_PTR(-ENAMETOOLONG);
-	goto out_err;
+out_err:
+	spin_unlock(&vfsmount_lock);
+	return retval;
+
 }
 EXPORT_SYMBOL(__d_path);
 

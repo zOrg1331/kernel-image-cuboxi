@@ -157,11 +157,13 @@ static int get_task_root(struct task_struct *task, struct path *root)
 	task_lock(task);
 	if (task->fs) {
 		get_fs_root(task->fs, root);
+		task_unlock(task);
+
 		result = d_root_check(root);
 		if (result)
 			path_put(root);
-	}
-	task_unlock(task);
+	} else
+		task_unlock(task);
 	return result;
 }
 
@@ -186,11 +188,13 @@ static int proc_cwd_link(struct inode *inode, struct path *path)
 		task_lock(task);
 		if (task->fs) {
 			get_fs_pwd(task->fs, path);
+			task_unlock(task);
+
 			result = d_root_check(path);
 			if (result)
 				path_put(path);
-		}
-		task_unlock(task);
+		} else
+			task_unlock(task);
 		put_task_struct(task);
 	}
 	return result;

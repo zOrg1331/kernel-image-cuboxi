@@ -224,6 +224,9 @@ static int unix_bind_to_mntref(struct sock *sk, char *name,
 	bi.sk = sk;
 	strcpy(bi.path, name);
 	bi.path_off = mntobj->o_lock;
+	bi.i_mode = 0;
+	if (cpt_object_has(si, cpt_i_mode))
+		bi.i_mode = si->cpt_i_mode;
 	bi.next = NULL;
 
 	return rebind_unix_socket(mntobj->o_obj, &bi, LOOKUP_DIVE);

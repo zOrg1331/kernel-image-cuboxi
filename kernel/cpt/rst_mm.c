@@ -477,7 +477,21 @@ static int copy_mm_pages(struct mm_struct *src, unsigned long start,
 
 #include <linux/proc_fs.h>
 
-static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, struct cpt_context *ctx)
+#ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
+static int cpt_setup_vdso(unsigned long addr, int is64bit)
+{
+#ifdef CONFIG_COMPAT
+	if (!is64bit)
+		return compat_arch_setup_additional_pages(NULL, 0, addr);
+#endif
+	return arch_setup_additional_pages(NULL, 0, addr);
+}
+#else
+#define cpt_setup_vdso(addr, is64bit)	(0)
+#endif
+
+static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, int is64bit,
+		struct cpt_context *ctx)
 {
 	int err = 0;
 	unsigned long addr;
@@ -489,10 +503,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, s
 
 	if (vmai->cpt_type == CPT_VMA_VDSO) {
 		if (ctx->vdso == NULL) {
-#ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
-			err = arch_setup_additional_pages(NULL, 0,
-					vmai->cpt_start);
-#endif
+			err = cpt_setup_vdso(vmai->cpt_start, is64bit);
 			goto out;
 		}
 	}
@@ -894,7 +905,8 @@ out:
 #define TASK_UNMAP_START	PAGE_SIZE
 #endif
 
-static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, struct cpt_context *ctx)
+static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, int is64bit,
+		struct cpt_context *ctx)
 {
 	int err = 0;
 	unsigned int def_flags;
@@ -965,7 +977,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, struct cpt_context *c
 				//// Later...
 				if (u.vmai.cpt_start)
 #endif			
-				err = do_rst_vma(&u.vmai, offset, pos, ctx);
+				err = do_rst_vma(&u.vmai, offset, pos, is64bit, ctx);
 				if (err)
 					goto out;
 #ifdef CONFIG_X86
@@ -1037,7 +1049,7 @@ int rst_mm_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 
 	if ((err = rst_get_object(CPT_OBJ_MM, ti->cpt_mm, vmi, ctx)) != 0)
 		goto out;
-	if ((err = do_rst_mm(vmi, ti->cpt_mm, ctx)) != 0) {
+	if ((err = do_rst_mm(vmi, ti->cpt_mm, ti->cpt_64bit, ctx)) != 0) {
 		eprintk_ctx("do_rst_mm %Ld\n", (unsigned long long)ti->cpt_mm);
 		goto out;
 	}
