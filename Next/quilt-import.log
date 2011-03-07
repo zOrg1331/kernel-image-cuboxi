@@ -1,0 +1,25 @@
+Importing i2c based on 2.6.38-rc7
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-rc7
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.38-rc5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard ef3242859fae47e728b50b7ce3d17b201a71779a
+HEAD is now at ef32428 Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:console_don_t_access_vqs_if_device_was_unplugged.patch
+module:deal_with_alignment_issues_in_built_in_versions.patch
+module:do_not_hide_modver_version_show_declaration_behind_ifdef.patch
+Context reduced to (1/1) to apply fragment at 66
+module:remove-padding-64-bit.patch
+module:reorder_kparam_array_to_remove_alignment_padding_on_64_bit_builds.patch
+virtio:blk_allow_re_reading_config_space_at_runtime.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + a69e138...d1b8637 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
