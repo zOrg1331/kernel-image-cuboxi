@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/connect.c
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2009
+ *   Copyright (C) International Business Machines  Corp., 2002,2011
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
  *   This library is free software; you can redistribute it and/or modify
@@ -102,6 +102,7 @@ struct smb_vol {
 	bool fsc:1;	/* enable fscache */
 	bool mfsymlinks:1; /* use Minshall+French Symlinks */
 	bool multiuser:1;
+	bool use_smb2:1; /* force smb2 use on mount instead of cifs */
 	unsigned int rsize;
 	unsigned int wsize;
 	bool sockopt_tcp_nodelay:1;
@@ -134,8 +135,8 @@ cifs_reconnect(struct TCP_Server_Info *server)
 {
 	int rc = 0;
 	struct list_head *tmp, *tmp2;
-	struct cifsSesInfo *ses;
-	struct cifsTconInfo *tcon;
+	struct cifs_ses *ses;
+	struct cifs_tcon *tcon;
 	struct mid_q_entry *mid_entry;
 
 	spin_lock(&GlobalMid_Lock);
@@ -156,11 +157,11 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	cFYI(1, "%s: marking sessions and tcons for reconnect", __func__);
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each(tmp, &server->smb_ses_list) {
-		ses = list_entry(tmp, struct cifsSesInfo, smb_ses_list);
+		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
 		ses->need_reconnect = true;
 		ses->ipc_tid = 0;
 		list_for_each(tmp2, &ses->tcon_list) {
-			tcon = list_entry(tmp2, struct cifsTconInfo, tcon_list);
+			tcon = list_entry(tmp2, struct cifs_tcon, tcon_list);
 			tcon->need_reconnect = true;
 		}
 	}
@@ -722,7 +723,7 @@ multi_t2_fnd:
 		sock_release(csocket);
 		server->ssocket = NULL;
 	}
-	/* buffer usuallly freed in free_mid - need to free it here on exit */
+	/* buffer usually freed in free_mid - need to free it here on exit */
 	cifs_buf_release(bigbuf);
 	if (smallbuf) /* no sense logging a debug message if NULL */
 		cifs_small_buf_release(smallbuf);
@@ -881,7 +882,8 @@ cifs_parse_mount_options(char *options, const char *devname,
 				/* null user, ie anonymous, authentication */
 				vol->nullauth = 1;
 			}
-			if (strnlen(value, 200) < 200) {
+			if (strnlen(value, MAX_USERNAME_SIZE) <
+						MAX_USERNAME_SIZE) {
 				vol->username = value;
 			} else {
 				printk(KERN_WARNING "CIFS: username too long\n");
@@ -1022,6 +1024,22 @@ cifs_parse_mount_options(char *options, const char *devname,
 			} else {
 				cERROR(1, "bad security option: %s", value);
 				return 1;
+			}
+		} else if (strnicmp(data, "vers", 3) == 0) {
+			if (!value || !*value) {
+				cERROR(1, "no protocol version specified"
+					  " after vers= mount option");
+			} else if ((strnicmp(value, "cifs", 4) == 0) ||
+				   (strnicmp(value, "1", 1) == 0)) {
+				/* this is the default */
+				continue;
+			} else if ((strnicmp(value, "smb2", 4) == 0) ||
+				   (strnicmp(value, "2", 1) == 0)) {
+#ifdef CONFIG_CIFS_SMB2
+				vol->use_smb2 = true;
+#else
+				cERROR(1, "smb2 support not enabled");
+#endif /* CONFIG_CIFS_SMB2 */
 			}
 		} else if ((strnicmp(data, "unc", 3) == 0)
 			   || (strnicmp(data, "target", 6) == 0)
@@ -1574,10 +1592,10 @@ match_security(struct TCP_Server_Info *server, struct smb_vol *vol)
 
 	/* now check if signing mode is acceptible */
 	if ((secFlags & CIFSSEC_MAY_SIGN) == 0 &&
-	    (server->secMode & SECMODE_SIGN_REQUIRED))
+	    (server->sec_mode & SECMODE_SIGN_REQUIRED))
 			return false;
 	else if (((secFlags & CIFSSEC_MUST_SIGN) == CIFSSEC_MUST_SIGN) &&
-		 (server->secMode &
+		 (server->sec_mode &
 		  (SECMODE_SIGN_ENABLED|SECMODE_SIGN_REQUIRED)) == 0)
 			return false;
 
@@ -1597,6 +1615,14 @@ cifs_find_tcp_session(struct sockaddr *addr, struct smb_vol *vol)
 		if (!match_address(server, addr,
 				   (struct sockaddr *)&vol->srcaddr))
 			continue;
+
+#ifdef CONFIG_CIFS_SMB2
+		if ((server->is_smb2 == true) && (vol->use_smb2 == false))
+			continue;
+
+		if ((server->is_smb2 == false) && (vol->use_smb2 == true))
+			continue;
+#endif /* CONFIG_CIFS_SMB2 */
 
 		if (!match_port(server, addr))
 			continue;
@@ -1709,6 +1735,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 
 	tcp_ses->noblocksnd = volume_info->noblocksnd;
 	tcp_ses->noautotune = volume_info->noautotune;
+	/* BB should we set this unconditionally now, especially for SMB2 */
 	tcp_ses->tcp_nodelay = volume_info->sockopt_tcp_nodelay;
 	atomic_set(&tcp_ses->inFlight, 0);
 	init_waitqueue_head(&tcp_ses->response_q);
@@ -1752,6 +1779,11 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 		goto out_err_crypto_release;
 	}
 
+#ifdef CONFIG_CIFS_SMB2
+	if (volume_info->use_smb2)
+		tcp_ses->is_smb2 = true;
+#endif /* CONFIG_CIFS_SMB2 */
+
 	/*
 	 * since we're in a cifs function already, we know that
 	 * this will succeed. No need for try_module_get().
@@ -1794,10 +1826,10 @@ out_err:
 	return ERR_PTR(rc);
 }
 
-static struct cifsSesInfo *
+static struct cifs_ses *
 cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 {
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each_entry(ses, &server->smb_ses_list, smb_ses_list) {
@@ -1808,7 +1840,9 @@ cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 			break;
 		default:
 			/* anything else takes username/password */
-			if (strncmp(ses->userName, vol->username,
+			if (ses->user_name == NULL)
+				continue;
+			if (strncmp(ses->user_name, vol->username,
 				    MAX_USERNAME_SIZE))
 				continue;
 			if (strlen(vol->username) != 0 &&
@@ -1827,7 +1861,7 @@ cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 }
 
 static void
-cifs_put_smb_ses(struct cifsSesInfo *ses)
+cifs_put_smb_ses(struct cifs_ses *ses)
 {
 	int xid;
 	struct TCP_Server_Info *server = ses->server;
@@ -1851,11 +1885,11 @@ cifs_put_smb_ses(struct cifsSesInfo *ses)
 	cifs_put_tcp_session(server);
 }
 
-static struct cifsSesInfo *
+static struct cifs_ses *
 cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 {
 	int rc = -ENOMEM, xid;
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 	struct sockaddr_in *addr = (struct sockaddr_in *)&server->dstaddr;
 	struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&server->dstaddr;
 
@@ -1906,9 +1940,11 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 	else
 		sprintf(ses->serverName, "%pI4", &addr->sin_addr);
 
-	if (volume_info->username)
-		strncpy(ses->userName, volume_info->username,
-			MAX_USERNAME_SIZE);
+	if (volume_info->username) {
+		ses->user_name = kstrdup(volume_info->username, GFP_KERNEL);
+		if (!ses->user_name)
+			goto get_ses_fail;
+	}
 
 	/* volume_info->password freed at unmount */
 	if (volume_info->password) {
@@ -1947,15 +1983,15 @@ get_ses_fail:
 	return ERR_PTR(rc);
 }
 
-static struct cifsTconInfo *
-cifs_find_tcon(struct cifsSesInfo *ses, const char *unc)
+static struct cifs_tcon *
+cifs_find_tcon(struct cifs_ses *ses, const char *unc)
 {
 	struct list_head *tmp;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each(tmp, &ses->tcon_list) {
-		tcon = list_entry(tmp, struct cifsTconInfo, tcon_list);
+		tcon = list_entry(tmp, struct cifs_tcon, tcon_list);
 		if (tcon->tidStatus == CifsExiting)
 			continue;
 		if (strncmp(tcon->treeName, unc, MAX_TREE_SIZE))
@@ -1970,10 +2006,10 @@ cifs_find_tcon(struct cifsSesInfo *ses, const char *unc)
 }
 
 static void
-cifs_put_tcon(struct cifsTconInfo *tcon)
+cifs_put_tcon(struct cifs_tcon *tcon)
 {
 	int xid;
-	struct cifsSesInfo *ses = tcon->ses;
+	struct cifs_ses *ses = tcon->ses;
 
 	cFYI(1, "%s: tc_count=%d\n", __func__, tcon->tc_count);
 	spin_lock(&cifs_tcp_ses_lock);
@@ -1994,11 +2030,11 @@ cifs_put_tcon(struct cifsTconInfo *tcon)
 	cifs_put_smb_ses(ses);
 }
 
-static struct cifsTconInfo *
-cifs_get_tcon(struct cifsSesInfo *ses, struct smb_vol *volume_info)
+static struct cifs_tcon *
+cifs_get_tcon(struct cifs_ses *ses, struct smb_vol *volume_info)
 {
 	int rc, xid;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 
 	tcon = cifs_find_tcon(ses, volume_info->UNC);
 	if (tcon) {
@@ -2088,7 +2124,7 @@ cifs_put_tlink(struct tcon_link *tlink)
 }
 
 int
-get_dfs_path(int xid, struct cifsSesInfo *pSesInfo, const char *old_path,
+get_dfs_path(int xid, struct cifs_ses *pSesInfo, const char *old_path,
 	     const struct nls_table *nls_codepage, unsigned int *pnum_referrals,
 	     struct dfs_info3_param **preferrals, int remap)
 {
@@ -2387,7 +2423,7 @@ ip_connect(struct TCP_Server_Info *server)
 	return generic_ip_connect(server);
 }
 
-void reset_cifs_unix_caps(int xid, struct cifsTconInfo *tcon,
+void reset_cifs_unix_caps(int xid, struct cifs_tcon *tcon,
 			  struct super_block *sb, struct smb_vol *vol_info)
 {
 	/* if we are reconnecting then should we check to see if
@@ -2628,7 +2664,7 @@ static void setup_cifs_sb(struct smb_vol *pvolume_info,
 }
 
 static int
-is_path_accessible(int xid, struct cifsTconInfo *tcon,
+is_path_accessible(int xid, struct cifs_tcon *tcon,
 		   struct cifs_sb_info *cifs_sb, const char *full_path)
 {
 	int rc;
@@ -2702,8 +2738,8 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
 	int rc;
 	int xid;
 	struct smb_vol *volume_info;
-	struct cifsSesInfo *pSesInfo;
-	struct cifsTconInfo *tcon;
+	struct cifs_ses *pSesInfo;
+	struct cifs_tcon *tcon;
 	struct TCP_Server_Info *srvTcp;
 	char   *full_path;
 	char *mount_data = mount_data_global;
@@ -2955,8 +2991,8 @@ out:
 }
 
 int
-CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
-	 const char *tree, struct cifsTconInfo *tcon,
+CIFSTCon(unsigned int xid, struct cifs_ses *ses,
+	 const char *tree, struct cifs_tcon *tcon,
 	 const struct nls_table *nls_codepage)
 {
 	struct smb_hdr *smb_buffer;
@@ -2988,7 +3024,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 	pSMB->AndXCommand = 0xFF;
 	pSMB->Flags = cpu_to_le16(TCON_EXTENDED_SECINFO);
 	bcc_ptr = &pSMB->Password[0];
-	if ((ses->server->secMode) & SECMODE_USER) {
+	if ((ses->server->sec_mode) & SECMODE_USER) {
 		pSMB->PasswordLength = cpu_to_le16(1);	/* minimum */
 		*bcc_ptr = 0; /* password is null byte */
 		bcc_ptr++;              /* skip password */
@@ -3005,7 +3041,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 		if ((global_secflags & CIFSSEC_MAY_LANMAN) &&
 		    (ses->server->secType == LANMAN))
 			calc_lanman_hash(tcon->password, ses->server->cryptkey,
-					 ses->server->secMode &
+					 ses->server->sec_mode &
 					    SECMODE_PW_ENCRYPT ? true : false,
 					 bcc_ptr);
 		else
@@ -3021,7 +3057,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
 		}
 	}
 
-	if (ses->server->secMode &
+	if (ses->server->sec_mode &
 			(SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 		smb_buffer->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
@@ -3141,7 +3177,7 @@ cifs_umount(struct super_block *sb, struct cifs_sb_info *cifs_sb)
 	return 0;
 }
 
-int cifs_negotiate_protocol(unsigned int xid, struct cifsSesInfo *ses)
+int cifs_negotiate_protocol(unsigned int xid, struct cifs_ses *ses)
 {
 	int rc = 0;
 	struct TCP_Server_Info *server = ses->server;
@@ -3171,7 +3207,7 @@ int cifs_negotiate_protocol(unsigned int xid, struct cifsSesInfo *ses)
 }
 
 
-int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
+int cifs_setup_session(unsigned int xid, struct cifs_ses *ses,
 			struct nls_table *nls_info)
 {
 	int rc = 0;
@@ -3183,7 +3219,7 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
 		ses->capabilities &= (~CAP_UNIX);
 
 	cFYI(1, "Security Mode: 0x%x Capabilities: 0x%x TimeAdjust: %d",
-		 server->secMode, server->capabilities, server->timeAdj);
+		 server->sec_mode, server->capabilities, server->timeAdj);
 
 	rc = CIFS_SessSetup(xid, ses, nls_info);
 	if (rc) {
@@ -3215,14 +3251,16 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
 	return rc;
 }
 
-static struct cifsTconInfo *
+static struct cifs_tcon *
 cifs_construct_tcon(struct cifs_sb_info *cifs_sb, uid_t fsuid)
 {
-	struct cifsTconInfo *master_tcon = cifs_sb_master_tcon(cifs_sb);
-	struct cifsSesInfo *ses;
-	struct cifsTconInfo *tcon = NULL;
+	struct cifs_tcon *master_tcon = cifs_sb_master_tcon(cifs_sb);
+	struct cifs_ses *ses;
+	struct cifs_tcon *tcon = NULL;
 	struct smb_vol *vol_info;
-	char username[MAX_USERNAME_SIZE + 1];
+	char username[28]; /* big enough for "krb50x" + hex of ULONG_MAX 6+16 */
+			   /* We used to have this as MAX_USERNAME which is   */
+			   /* way too big now (256 instead of 32) */
 
 	vol_info = kzalloc(sizeof(*vol_info), GFP_KERNEL);
 	if (vol_info == NULL) {
@@ -3251,7 +3289,7 @@ cifs_construct_tcon(struct cifs_sb_info *cifs_sb, uid_t fsuid)
 
 	ses = cifs_get_smb_ses(master_tcon->ses->server, vol_info);
 	if (IS_ERR(ses)) {
-		tcon = (struct cifsTconInfo *)ses;
+		tcon = (struct cifs_tcon *)ses;
 		cifs_put_tcp_session(master_tcon->ses->server);
 		goto out;
 	}
@@ -3276,7 +3314,7 @@ cifs_sb_master_tlink(struct cifs_sb_info *cifs_sb)
 	return cifs_sb->master_tlink;
 }
 
-struct cifsTconInfo *
+struct cifs_tcon *
 cifs_sb_master_tcon(struct cifs_sb_info *cifs_sb)
 {
 	return tlink_tcon(cifs_sb_master_tlink(cifs_sb));
