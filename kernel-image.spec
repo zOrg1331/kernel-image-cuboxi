@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.38
-Release: alt6.rc6.1
+Release: alt7.rc7.1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt6.rc6.1
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.6.0
+%define kernel_extra_version_numeric 0.7.0
 
 %define krelease	%release
 
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Mar 07 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt7.rc7.1
+- rc7
+
 * Tue Feb 22 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt6.rc6.1
 - rc6
 - atom super optimized
