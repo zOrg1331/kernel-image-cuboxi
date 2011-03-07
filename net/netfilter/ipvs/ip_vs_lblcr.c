@@ -70,8 +70,6 @@
  *    entries that haven't been touched for a day.
  */
 #define COUNT_FOR_FULL_EXPIRATION   30
-static int sysctl_ip_vs_lblcr_expiration = 24*60*60*HZ;
-
 
 /*
  *     for IPVS lblcr entry hash table
@@ -180,8 +178,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 
 		if ((atomic_read(&least->weight) > 0)
 		    && (least->flags & IP_VS_DEST_F_AVAILABLE)) {
-			loh = atomic_read(&least->activeconns) * 50
-				+ atomic_read(&least->inactconns);
+			loh = ip_vs_dest_conn_overhead(least);
 			goto nextstage;
 		}
 	}
@@ -194,8 +191,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 		if (dest->flags & IP_VS_DEST_F_OVERLOAD)
 			continue;
 
-		doh = atomic_read(&dest->activeconns) * 50
-			+ atomic_read(&dest->inactconns);
+		doh = ip_vs_dest_conn_overhead(dest);
 		if ((loh * atomic_read(&dest->weight) >
 		     doh * atomic_read(&least->weight))
 		    && (dest->flags & IP_VS_DEST_F_AVAILABLE)) {
@@ -230,8 +226,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 	list_for_each_entry(e, &set->list, list) {
 		most = e->dest;
 		if (atomic_read(&most->weight) > 0) {
-			moh = atomic_read(&most->activeconns) * 50
-				+ atomic_read(&most->inactconns);
+			moh = ip_vs_dest_conn_overhead(most);
 			goto nextstage;
 		}
 	}
@@ -241,8 +236,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
   nextstage:
 	list_for_each_entry(e, &set->list, list) {
 		dest = e->dest;
-		doh = atomic_read(&dest->activeconns) * 50
-			+ atomic_read(&dest->inactconns);
+		doh = ip_vs_dest_conn_overhead(dest);
 		/* moh/mw < doh/dw ==> moh*dw < doh*mw, where mw,dw>0 */
 		if ((moh * atomic_read(&dest->weight) <
 		     doh * atomic_read(&most->weight))
@@ -296,15 +290,13 @@ struct ip_vs_lblcr_table {
 static ctl_table vs_vars_table[] = {
 	{
 		.procname	= "lblcr_expiration",
-		.data		= &sysctl_ip_vs_lblcr_expiration,
+		.data		= NULL,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_jiffies,
 	},
 	{ }
 };
-
-static struct ctl_table_header * sysctl_header;
 
 static inline void ip_vs_lblcr_free(struct ip_vs_lblcr_entry *en)
 {
@@ -425,14 +417,15 @@ static inline void ip_vs_lblcr_full_check(struct ip_vs_service *svc)
 	unsigned long now = jiffies;
 	int i, j;
 	struct ip_vs_lblcr_entry *en, *nxt;
+	struct netns_ipvs *ipvs = net_ipvs(svc->net);
 
 	for (i=0, j=tbl->rover; i<IP_VS_LBLCR_TAB_SIZE; i++) {
 		j = (j + 1) & IP_VS_LBLCR_TAB_MASK;
 
 		write_lock(&svc->sched_lock);
 		list_for_each_entry_safe(en, nxt, &tbl->bucket[j], list) {
-			if (time_after(en->lastuse+sysctl_ip_vs_lblcr_expiration,
-				       now))
+			if (time_after(en->lastuse
+					+ ipvs->sysctl_lblcr_expiration, now))
 				continue;
 
 			ip_vs_lblcr_free(en);
@@ -566,12 +559,7 @@ __ip_vs_lblcr_schedule(struct ip_vs_service *svc)
 	int loh, doh;
 
 	/*
-	 * We think the overhead of processing active connections is fifty
-	 * times higher than that of inactive connections in average. (This
-	 * fifty times might not be accurate, we will change it later.) We
-	 * use the following formula to estimate the overhead:
-	 *                dest->activeconns*50 + dest->inactconns
-	 * and the load:
+	 * We use the following formula to estimate the load:
 	 *                (dest overhead) / dest->weight
 	 *
 	 * Remember -- no floats in kernel mode!!!
@@ -588,8 +576,7 @@ __ip_vs_lblcr_schedule(struct ip_vs_service *svc)
 
 		if (atomic_read(&dest->weight) > 0) {
 			least = dest;
-			loh = atomic_read(&least->activeconns) * 50
-				+ atomic_read(&least->inactconns);
+			loh = ip_vs_dest_conn_overhead(least);
 			goto nextstage;
 		}
 	}
@@ -603,8 +590,7 @@ __ip_vs_lblcr_schedule(struct ip_vs_service *svc)
 		if (dest->flags & IP_VS_DEST_F_OVERLOAD)
 			continue;
 
-		doh = atomic_read(&dest->activeconns) * 50
-			+ atomic_read(&dest->inactconns);
+		doh = ip_vs_dest_conn_overhead(dest);
 		if (loh * atomic_read(&dest->weight) >
 		    doh * atomic_read(&least->weight)) {
 			least = dest;
@@ -664,6 +650,7 @@ ip_vs_lblcr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 	read_lock(&svc->sched_lock);
 	en = ip_vs_lblcr_get(svc->af, tbl, &iph.daddr);
 	if (en) {
+		struct netns_ipvs *ipvs = net_ipvs(svc->net);
 		/* We only hold a read lock, but this is atomic */
 		en->lastuse = jiffies;
 
@@ -675,7 +662,7 @@ ip_vs_lblcr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 		/* More than one destination + enough time passed by, cleanup */
 		if (atomic_read(&en->set.size) > 1 &&
 				time_after(jiffies, en->set.lastmod +
-				sysctl_ip_vs_lblcr_expiration)) {
+				ipvs->sysctl_lblcr_expiration)) {
 			struct ip_vs_dest *m;
 
 			write_lock(&en->set.lock);
@@ -694,7 +681,7 @@ ip_vs_lblcr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 		/* The cache entry is invalid, time to schedule */
 		dest = __ip_vs_lblcr_schedule(svc);
 		if (!dest) {
-			IP_VS_ERR_RL("LBLCR: no destination available\n");
+			ip_vs_scheduler_err(svc, "no destination available");
 			read_unlock(&svc->sched_lock);
 			return NULL;
 		}
@@ -744,23 +731,73 @@ static struct ip_vs_scheduler ip_vs_lblcr_scheduler =
 	.schedule =		ip_vs_lblcr_schedule,
 };
 
+/*
+ *  per netns init.
+ */
+static int __net_init __ip_vs_lblcr_init(struct net *net)
+{
+	struct netns_ipvs *ipvs = net_ipvs(net);
+
+	if (!net_eq(net, &init_net)) {
+		ipvs->lblcr_ctl_table = kmemdup(vs_vars_table,
+						sizeof(vs_vars_table),
+						GFP_KERNEL);
+		if (ipvs->lblcr_ctl_table == NULL)
+			return -ENOMEM;
+	} else
+		ipvs->lblcr_ctl_table = vs_vars_table;
+	ipvs->sysctl_lblcr_expiration = 24*60*60*HZ;
+	ipvs->lblcr_ctl_table[0].data = &ipvs->sysctl_lblcr_expiration;
+
+#ifdef CONFIG_SYSCTL
+	ipvs->lblcr_ctl_header =
+		register_net_sysctl_table(net, net_vs_ctl_path,
+					  ipvs->lblcr_ctl_table);
+	if (!ipvs->lblcr_ctl_header) {
+		if (!net_eq(net, &init_net))
+			kfree(ipvs->lblcr_ctl_table);
+		return -ENOMEM;
+	}
+#endif
+
+	return 0;
+}
+
+static void __net_exit __ip_vs_lblcr_exit(struct net *net)
+{
+	struct netns_ipvs *ipvs = net_ipvs(net);
+
+#ifdef CONFIG_SYSCTL
+	unregister_net_sysctl_table(ipvs->lblcr_ctl_header);
+#endif
+
+	if (!net_eq(net, &init_net))
+		kfree(ipvs->lblcr_ctl_table);
+}
+
+static struct pernet_operations ip_vs_lblcr_ops = {
+	.init = __ip_vs_lblcr_init,
+	.exit = __ip_vs_lblcr_exit,
+};
 
 static int __init ip_vs_lblcr_init(void)
 {
 	int ret;
 
-	sysctl_header = register_sysctl_paths(net_vs_ctl_path, vs_vars_table);
+	ret = register_pernet_subsys(&ip_vs_lblcr_ops);
+	if (ret)
+		return ret;
+
 	ret = register_ip_vs_scheduler(&ip_vs_lblcr_scheduler);
 	if (ret)
-		unregister_sysctl_table(sysctl_header);
+		unregister_pernet_subsys(&ip_vs_lblcr_ops);
 	return ret;
 }
 
-
 static void __exit ip_vs_lblcr_cleanup(void)
 {
-	unregister_sysctl_table(sysctl_header);
 	unregister_ip_vs_scheduler(&ip_vs_lblcr_scheduler);
+	unregister_pernet_subsys(&ip_vs_lblcr_ops);
 }
 
 

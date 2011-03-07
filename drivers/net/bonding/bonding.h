@@ -20,6 +20,7 @@
 #include <linux/if_bonding.h>
 #include <linux/cpumask.h>
 #include <linux/in6.h>
+#include <linux/netpoll.h>
 #include "bond_3ad.h"
 #include "bond_alb.h"
 
@@ -132,7 +133,7 @@ static inline void unblock_netpoll_tx(void)
 
 static inline int is_netpoll_tx_blocked(struct net_device *dev)
 {
-	if (unlikely(dev->priv_flags & IFF_IN_NETPOLL))
+	if (unlikely(netpoll_tx_running(dev)))
 		return atomic_read(&netpoll_block_tx);
 	return 0;
 }
@@ -198,6 +199,9 @@ struct slave {
 	u16    queue_id;
 	struct ad_slave_info ad_info; /* HUGE - better to dynamically alloc */
 	struct tlb_slave_info tlb_info;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	struct netpoll *np;
+#endif
 };
 
 /*
@@ -265,7 +269,8 @@ struct bonding {
  *
  * Caller must hold bond lock for read
  */
-static inline struct slave *bond_get_slave_by_dev(struct bonding *bond, struct net_device *slave_dev)
+static inline struct slave *bond_get_slave_by_dev(struct bonding *bond,
+						  struct net_device *slave_dev)
 {
 	struct slave *slave = NULL;
 	int i;
@@ -276,7 +281,7 @@ static inline struct slave *bond_get_slave_by_dev(struct bonding *bond, struct n
 		}
 	}
 
-	return 0;
+	return NULL;
 }
 
 static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
@@ -322,6 +327,22 @@ static inline unsigned long slave_last_rx(struct bonding *bond,
 
 	return slave->dev->last_rx;
 }
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static inline void bond_netpoll_send_skb(const struct slave *slave,
+					 struct sk_buff *skb)
+{
+	struct netpoll *np = slave->np;
+
+	if (np)
+		netpoll_send_skb(np, skb);
+}
+#else
+static inline void bond_netpoll_send_skb(const struct slave *slave,
+					 struct sk_buff *skb)
+{
+}
+#endif
 
 static inline void bond_set_slave_inactive_flags(struct slave *slave)
 {

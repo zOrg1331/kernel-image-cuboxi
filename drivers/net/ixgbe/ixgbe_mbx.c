@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -437,6 +437,7 @@ out_no_read:
 	return ret_val;
 }
 
+#ifdef CONFIG_PCI_IOV
 /**
  *  ixgbe_init_mbx_params_pf - set initial values for pf mailbox
  *  @hw: pointer to the HW structure
@@ -465,6 +466,7 @@ void ixgbe_init_mbx_params_pf(struct ixgbe_hw *hw)
 		break;
 	}
 }
+#endif /* CONFIG_PCI_IOV */
 
 struct ixgbe_mbx_operations mbx_ops_generic = {
 	.read                   = ixgbe_read_mbx_pf,

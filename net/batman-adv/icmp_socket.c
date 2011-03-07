@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2011 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner
  *
@@ -24,7 +24,6 @@
 #include <linux/slab.h>
 #include "icmp_socket.h"
 #include "send.h"
-#include "types.h"
 #include "hash.h"
 #include "originator.h"
 #include "hard-interface.h"

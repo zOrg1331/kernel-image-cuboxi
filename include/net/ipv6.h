@@ -524,12 +524,16 @@ extern void			ip6_flush_pending_frames(struct sock *sk);
 extern int			ip6_dst_lookup(struct sock *sk,
 					       struct dst_entry **dst,
 					       struct flowi *fl);
-extern int			ip6_dst_blackhole(struct sock *sk,
-						  struct dst_entry **dst,
-						  struct flowi *fl);
-extern int			ip6_sk_dst_lookup(struct sock *sk,
-						  struct dst_entry **dst,
-						  struct flowi *fl);
+extern struct dst_entry *	ip6_dst_lookup_flow(struct sock *sk,
+						    struct flowi *fl,
+						    const struct in6_addr *final_dst,
+						    bool can_sleep);
+extern struct dst_entry *	ip6_sk_dst_lookup_flow(struct sock *sk,
+						       struct flowi *fl,
+						       const struct in6_addr *final_dst,
+						       bool can_sleep);
+extern struct dst_entry *	ip6_blackhole_route(struct net *net,
+						    struct dst_entry *orig_dst);
 
 /*
  *	skb processing functions
