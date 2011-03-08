@@ -1272,6 +1272,9 @@ static void __devexit vt6656_disconnect(struct usb_interface *intf)
 
 	device_release_WPADEV(device);
 
+	if (device->firmware)
+		release_firmware(device->firmware);
+
 	usb_set_intfdata(intf, NULL);
 	usb_put_dev(interface_to_usbdev(intf));
 
@@ -1454,7 +1457,7 @@ static unsigned char *Config_FileOperation(PSDevice pDevice)
 
     buffer = kmalloc(1024, GFP_KERNEL);
     if(buffer==NULL) {
-      printk("alllocate mem for file fail?\n");
+      printk("allocate mem for file fail?\n");
       result = -1;
       goto error1;
     }
