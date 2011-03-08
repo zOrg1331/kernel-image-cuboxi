@@ -59,7 +59,7 @@ check_smb2_hdr(struct smb2_hdr *smb, __u16 mid)
 		}
 	} else { /* bad signature or mid */
 		if (*(__le32 *) smb->ProtocolId != cpu_to_le32(0x424d53fe))
-  			cERROR(1, "Bad protocol string signature header %x",
+ 			cERROR(1, "Bad protocol string signature header %x",
 				*(unsigned int *) smb->ProtocolId);
 		if (mid != smb->MessageId)
 			cERROR(1, "Mids do not match");

@@ -125,10 +125,10 @@ smb2_hdr_assemble(struct smb2_hdr *buffer, __le16 smb2_cmd /* command */ ,
 		/* For the multiuser case, there are few obvious technically  */
 		/* possible mechanisms to match the local linux user (uid)    */
 		/* to a valid remote smb user (smb_uid):		      */
-		/* 	1) Query Winbind (or other local pam/nss daemon       */
-		/* 	  for userid/password/logon_domain or credential      */
+		/*	1) Query Winbind (or other local pam/nss daemon       */
+		/*	  for userid/password/logon_domain or credential      */
 		/*      2) Query Winbind for uid to sid to username mapping   */
-		/* 	   and see if we have a matching password for existing*/
+		/*	   and see if we have a matching password for existing*/
 		/*         session for that user perhas getting password by   */
 		/*         adding a new pam_smb2 module that stores passwords */
 		/*         so that the smb2 vfs can get at that for all logged*/
@@ -137,15 +137,15 @@ smb2_hdr_assemble(struct smb2_hdr *buffer, __le16 smb2_cmd /* command */ ,
 		/*	   Search through sessions to the same server for a   */
 		/*	   a match on the uid that was passed in on mount     */
 		/*         with the current processes uid (or euid?) and use  */
-		/* 	   that smb uid.   If no existing smb session for     */
+		/*	   that smb uid.   If no existing smb session for     */
 		/* 	   that uid found, use the default smb session ie     */
 		/*         the smb session for the volume mounted which is    */
-		/* 	   the same as would be used if the multiuser mount   */
-		/* 	   flag were disabled.  */
+		/*	   the same as would be used if the multiuser mount   */
+		/*	   flag were disabled.  */
 
 		/*  BB Add support for establishing new tcon and SMB Session  */
 		/*      with userid/password pairs found on the smb session   */
-		/*	for other target tcp/ip addresses 		BB    */
+		/*	for other target tcp/ip addresses		BB    */
 		if (tcon->ses) {
 			/* Uid is not converted */
 			buffer->SessionId = tcon->ses->Suid;
