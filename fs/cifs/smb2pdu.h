@@ -1,5 +1,5 @@
 /*
- *   fs/smb2/smb2pdu.h
+ *   fs/cifs/smb2pdu.h
  *
  *   Copyright (c) International Business Machines  Corp., 2009, 2010
  *   Author(s): Steve French (sfrench@us.ibm.com)

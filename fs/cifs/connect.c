@@ -48,6 +48,9 @@
 #include "nterr.h"
 #include "rfc1002pdu.h"
 #include "fscache.h"
+#ifdef CONFIG_CIFS_SMB2
+#include "smb2proto.h"
+#endif /* CONFIG_CIFS_SMB2 */
 
 #define CIFS_PORT 445
 #define RFC1001_PORT 139
@@ -3186,6 +3189,17 @@ int cifs_negotiate_protocol(unsigned int xid, struct cifs_ses *ses)
 	if (server->maxBuf != 0)
 		return 0;
 
+#ifdef CONFIG_CIFS_SMB2
+	if (ses->server->is_smb2) {
+		rc = SMB2_negotiate(xid, ses);
+		/* BB we probably don't need to retry with modern servers */
+		if (rc == -EAGAIN)
+			rc = -EHOSTDOWN;
+
+		goto neg_prot_exit;
+	}
+#endif /* CONFIG_CIFS_SMB2 */
+
 	rc = CIFSSMBNegotiate(xid, ses);
 	if (rc == -EAGAIN) {
 		/* retry only once on 1st time connection */
@@ -3193,6 +3207,10 @@ int cifs_negotiate_protocol(unsigned int xid, struct cifs_ses *ses)
 		if (rc == -EAGAIN)
 			rc = -EHOSTDOWN;
 	}
+
+#ifdef CONFIG_CIFS_SMB2
+neg_prot_exit:
+#endif /* CONFIG_CIFS_SMB2 */
 	if (rc == 0) {
 		spin_lock(&GlobalMid_Lock);
 		if (server->tcpStatus != CifsExiting)

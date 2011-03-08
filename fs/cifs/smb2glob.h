@@ -1,5 +1,5 @@
 /*
- *   fs/smb2/smb2glob.h
+ *   fs/cifs/smb2glob.h
  *
  *   Definitions for various global variables and structures
  *
@@ -248,11 +248,5 @@ extern atomic_t smb2_total_smbuf_alloc;
 #endif
 extern atomic_t smb2_smbuf_alloc_count;
 extern atomic_t smb2_mid_count;
-
-/* Misc globals */
-extern unsigned int SMB2_max_buf_size;  /* max size not including hdr */
-extern unsigned int smb2_min_rcv;    /* min size of big ntwrk buf pool */
-extern unsigned int smb2_min_small;  /* min size of small buf pool */
-extern unsigned int smb2_max_pending; /* MAX requests at once to server*/
 
 #endif	/* _SMB2_GLOB_H */

@@ -226,6 +226,7 @@ struct TCP_Server_Info {
 	wait_queue_head_t read_q; /* used by readpages */
 	atomic_t active_readpage_req; /* used by readpages */
 	atomic_t resp_rdy; /* used by readpages and demultiplex */
+	atomic_t credits;  /* send no more simultaneous requests than this */
 	__le16 smb2_dialect_revision; /* SMB2.0 implemented, 2.1 recognized */
 	struct task_struct *observe;
 /*	char smb2_crypt_key[SMB2_CRYPTO_KEY_SIZE];  BB can we use cifs key? */
