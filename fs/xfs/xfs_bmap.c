@@ -2365,6 +2365,13 @@ xfs_bmap_rtalloc(
 	 */
 	if (ralen * mp->m_sb.sb_rextsize >= MAXEXTLEN)
 		ralen = MAXEXTLEN / mp->m_sb.sb_rextsize;
+
+	/*
+	 * Lock out other modifications to the RT bitmap inode.
+	 */
+	xfs_ilock(mp->m_rbmip, XFS_ILOCK_EXCL);
+	xfs_trans_ijoin_ref(ap->tp, mp->m_rbmip, XFS_ILOCK_EXCL);
+
 	/*
 	 * If it's an allocation to an empty file at offset 0,
 	 * pick an extent that will space things out in the rt area.
