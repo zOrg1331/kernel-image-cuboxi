@@ -1,0 +1,10 @@
+Importing i2c based on 2.6.38-rc7
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-rc7
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.38-rc5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
