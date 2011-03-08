@@ -125,8 +125,8 @@ static void be_queue_free(struct be_adapter *adapter, struct be_queue_info *q)
 {
 	struct be_dma_mem *mem = &q->dma_mem;
 	if (mem->va)
-		pci_free_consistent(adapter->pdev, mem->size,
-			mem->va, mem->dma);
+		dma_free_coherent(&adapter->pdev->dev, mem->size, mem->va,
+				  mem->dma);
 }
 
 static int be_queue_alloc(struct be_adapter *adapter, struct be_queue_info *q,
@@ -138,7 +138,8 @@ static int be_queue_alloc(struct be_adapter *adapter, struct be_queue_info *q,
 	q->len = len;
 	q->entry_size = entry_size;
 	mem->size = len * entry_size;
-	mem->va = pci_alloc_consistent(adapter->pdev, mem->size, &mem->dma);
+	mem->va = dma_alloc_coherent(&adapter->pdev->dev, mem->size, &mem->dma,
+				     GFP_KERNEL);
 	if (!mem->va)
 		return -1;
 	memset(mem->va, 0, mem->size);
@@ -235,12 +236,13 @@ static int be_mac_addr_set(struct net_device *netdev, void *p)
 	if (!be_physfn(adapter))
 		goto netdev_addr;
 
-	status = be_cmd_pmac_del(adapter, adapter->if_handle, adapter->pmac_id);
+	status = be_cmd_pmac_del(adapter, adapter->if_handle,
+				adapter->pmac_id, 0);
 	if (status)
 		return status;
 
 	status = be_cmd_pmac_add(adapter, (u8 *)addr->sa_data,
-			adapter->if_handle, &adapter->pmac_id);
+				adapter->if_handle, &adapter->pmac_id, 0);
 netdev_addr:
 	if (!status)
 		memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
@@ -484,7 +486,7 @@ static void wrb_fill_hdr(struct be_adapter *adapter, struct be_eth_hdr_wrb *hdr,
 	AMAP_SET_BITS(struct amap_eth_hdr_wrb, len, hdr, len);
 }
 
-static void unmap_tx_frag(struct pci_dev *pdev, struct be_eth_wrb *wrb,
+static void unmap_tx_frag(struct device *dev, struct be_eth_wrb *wrb,
 		bool unmap_single)
 {
 	dma_addr_t dma;
@@ -494,11 +496,10 @@ static void unmap_tx_frag(struct pci_dev *pdev, struct be_eth_wrb *wrb,
 	dma = (u64)wrb->frag_pa_hi << 32 | (u64)wrb->frag_pa_lo;
 	if (wrb->frag_len) {
 		if (unmap_single)
-			pci_unmap_single(pdev, dma, wrb->frag_len,
-				PCI_DMA_TODEVICE);
+			dma_unmap_single(dev, dma, wrb->frag_len,
+					 DMA_TO_DEVICE);
 		else
-			pci_unmap_page(pdev, dma, wrb->frag_len,
-				PCI_DMA_TODEVICE);
+			dma_unmap_page(dev, dma, wrb->frag_len, DMA_TO_DEVICE);
 	}
 }
 
@@ -507,7 +508,7 @@ static int make_tx_wrbs(struct be_adapter *adapter,
 {
 	dma_addr_t busaddr;
 	int i, copied = 0;
-	struct pci_dev *pdev = adapter->pdev;
+	struct device *dev = &adapter->pdev->dev;
 	struct sk_buff *first_skb = skb;
 	struct be_queue_info *txq = &adapter->tx_obj.q;
 	struct be_eth_wrb *wrb;
@@ -521,9 +522,8 @@ static int make_tx_wrbs(struct be_adapter *adapter,
 
 	if (skb->len > skb->data_len) {
 		int len = skb_headlen(skb);
-		busaddr = pci_map_single(pdev, skb->data, len,
-					 PCI_DMA_TODEVICE);
-		if (pci_dma_mapping_error(pdev, busaddr))
+		busaddr = dma_map_single(dev, skb->data, len, DMA_TO_DEVICE);
+		if (dma_mapping_error(dev, busaddr))
 			goto dma_err;
 		map_single = true;
 		wrb = queue_head_node(txq);
@@ -536,10 +536,9 @@ static int make_tx_wrbs(struct be_adapter *adapter,
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		struct skb_frag_struct *frag =
 			&skb_shinfo(skb)->frags[i];
-		busaddr = pci_map_page(pdev, frag->page,
-				       frag->page_offset,
-				       frag->size, PCI_DMA_TODEVICE);
-		if (pci_dma_mapping_error(pdev, busaddr))
+		busaddr = dma_map_page(dev, frag->page, frag->page_offset,
+				       frag->size, DMA_TO_DEVICE);
+		if (dma_mapping_error(dev, busaddr))
 			goto dma_err;
 		wrb = queue_head_node(txq);
 		wrb_fill(wrb, busaddr, frag->size);
@@ -563,7 +562,7 @@ dma_err:
 	txq->head = map_head;
 	while (copied) {
 		wrb = queue_head_node(txq);
-		unmap_tx_frag(pdev, wrb, map_single);
+		unmap_tx_frag(dev, wrb, map_single);
 		map_single = false;
 		copied -= wrb->frag_len;
 		queue_head_inc(txq);
@@ -743,11 +742,11 @@ static int be_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
 	if (adapter->vf_cfg[vf].vf_pmac_id != BE_INVALID_PMAC_ID)
 		status = be_cmd_pmac_del(adapter,
 					adapter->vf_cfg[vf].vf_if_handle,
-					adapter->vf_cfg[vf].vf_pmac_id);
+					adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
 
 	status = be_cmd_pmac_add(adapter, mac,
 				adapter->vf_cfg[vf].vf_if_handle,
-				&adapter->vf_cfg[vf].vf_pmac_id);
+				&adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
 
 	if (status)
 		dev_err(&adapter->pdev->dev, "MAC %pM set on VF %d Failed\n",
@@ -822,7 +821,7 @@ static int be_set_vf_tx_rate(struct net_device *netdev,
 		rate = 10000;
 
 	adapter->vf_cfg[vf].vf_tx_rate = rate;
-	status = be_cmd_set_qos(adapter, rate / 10, vf);
+	status = be_cmd_set_qos(adapter, rate / 10, vf + 1);
 
 	if (status)
 		dev_info(&adapter->pdev->dev,
@@ -866,14 +865,17 @@ static void be_rx_stats_update(struct be_rx_obj *rxo,
 
 static inline bool csum_passed(struct be_eth_rx_compl *rxcp)
 {
-	u8 l4_cksm, ipv6, ipcksm;
+	u8 l4_cksm, ipv6, ipcksm, tcpf, udpf;
 
 	l4_cksm = AMAP_GET_BITS(struct amap_eth_rx_compl, l4_cksm, rxcp);
 	ipcksm = AMAP_GET_BITS(struct amap_eth_rx_compl, ipcksm, rxcp);
 	ipv6 = AMAP_GET_BITS(struct amap_eth_rx_compl, ip_version, rxcp);
+	tcpf = AMAP_GET_BITS(struct amap_eth_rx_compl, tcpf, rxcp);
+	udpf = AMAP_GET_BITS(struct amap_eth_rx_compl, udpf, rxcp);
 
-	/* Ignore ipcksm for ipv6 pkts */
-	return l4_cksm && (ipcksm || ipv6);
+	/* L4 checksum is not reliable for non TCP/UDP packets.
+	 * Also ignore ipcksm for ipv6 pkts */
+	return (tcpf || udpf) && l4_cksm && (ipcksm || ipv6);
 }
 
 static struct be_rx_page_info *
@@ -888,8 +890,9 @@ get_rx_page_info(struct be_adapter *adapter,
 	BUG_ON(!rx_page_info->page);
 
 	if (rx_page_info->last_page_user) {
-		pci_unmap_page(adapter->pdev, dma_unmap_addr(rx_page_info, bus),
-			adapter->big_page_size, PCI_DMA_FROMDEVICE);
+		dma_unmap_page(&adapter->pdev->dev,
+			       dma_unmap_addr(rx_page_info, bus),
+			       adapter->big_page_size, DMA_FROM_DEVICE);
 		rx_page_info->last_page_user = false;
 	}
 
@@ -909,17 +912,11 @@ static void be_rx_compl_discard(struct be_adapter *adapter,
 	rxq_idx = AMAP_GET_BITS(struct amap_eth_rx_compl, fragndx, rxcp);
 	num_rcvd = AMAP_GET_BITS(struct amap_eth_rx_compl, numfrags, rxcp);
 
-	 /* Skip out-of-buffer compl(lancer) or flush compl(BE) */
-	if (likely(rxq_idx != rxo->last_frag_index && num_rcvd != 0)) {
-
-		rxo->last_frag_index = rxq_idx;
-
-		for (i = 0; i < num_rcvd; i++) {
-			page_info = get_rx_page_info(adapter, rxo, rxq_idx);
-			put_page(page_info->page);
-			memset(page_info, 0, sizeof(*page_info));
-			index_inc(&rxq_idx, rxq->len);
-		}
+	for (i = 0; i < num_rcvd; i++) {
+		page_info = get_rx_page_info(adapter, rxo, rxq_idx);
+		put_page(page_info->page);
+		memset(page_info, 0, sizeof(*page_info));
+		index_inc(&rxq_idx, rxq->len);
 	}
 }
 
@@ -1047,6 +1044,9 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 	if ((adapter->function_mode & 0x400) && !vtm)
 		vlanf = 0;
 
+	if ((adapter->pvid == vlanf) && !adapter->vlan_tag[vlanf])
+		vlanf = 0;
+
 	if (unlikely(vlanf)) {
 		if (!adapter->vlan_grp || adapter->vlans_added == 0) {
 			kfree_skb(skb);
@@ -1085,6 +1085,9 @@ static void be_rx_compl_process_gro(struct be_adapter *adapter,
 	/* vlanf could be wrongly set in some cards.
 	 * ignore if vtm is not set */
 	if ((adapter->function_mode & 0x400) && !vtm)
+		vlanf = 0;
+
+	if ((adapter->pvid == vlanf) && !adapter->vlan_tag[vlanf])
 		vlanf = 0;
 
 	skb = napi_get_frags(&eq_obj->napi);
@@ -1163,20 +1166,20 @@ static inline void be_rx_compl_reset(struct be_eth_rx_compl *rxcp)
 	rxcp->dw[offsetof(struct amap_eth_rx_compl, valid) / 32] = 0;
 }
 
-static inline struct page *be_alloc_pages(u32 size)
+static inline struct page *be_alloc_pages(u32 size, gfp_t gfp)
 {
-	gfp_t alloc_flags = GFP_ATOMIC;
 	u32 order = get_order(size);
+
 	if (order > 0)
-		alloc_flags |= __GFP_COMP;
-	return  alloc_pages(alloc_flags, order);
+		gfp |= __GFP_COMP;
+	return  alloc_pages(gfp, order);
 }
 
 /*
  * Allocate a page, split it to fragments of size rx_frag_size and post as
  * receive buffers to BE
  */
-static void be_post_rx_frags(struct be_rx_obj *rxo)
+static void be_post_rx_frags(struct be_rx_obj *rxo, gfp_t gfp)
 {
 	struct be_adapter *adapter = rxo->adapter;
 	struct be_rx_page_info *page_info_tbl = rxo->page_info_tbl;
@@ -1190,14 +1193,14 @@ static void be_post_rx_frags(struct be_rx_obj *rxo)
 	page_info = &rxo->page_info_tbl[rxq->head];
 	for (posted = 0; posted < MAX_RX_POST && !page_info->page; posted++) {
 		if (!pagep) {
-			pagep = be_alloc_pages(adapter->big_page_size);
+			pagep = be_alloc_pages(adapter->big_page_size, gfp);
 			if (unlikely(!pagep)) {
 				rxo->stats.rx_post_fail++;
 				break;
 			}
-			page_dmaaddr = pci_map_page(adapter->pdev, pagep, 0,
-						adapter->big_page_size,
-						PCI_DMA_FROMDEVICE);
+			page_dmaaddr = dma_map_page(&adapter->pdev->dev, pagep,
+						    0, adapter->big_page_size,
+						    DMA_FROM_DEVICE);
 			page_info->page_offset = 0;
 		} else {
 			get_page(pagep);
@@ -1270,8 +1273,8 @@ static void be_tx_compl_process(struct be_adapter *adapter, u16 last_index)
 	do {
 		cur_index = txq->tail;
 		wrb = queue_tail_node(txq);
-		unmap_tx_frag(adapter->pdev, wrb, (unmap_skb_hdr &&
-					skb_headlen(sent_skb)));
+		unmap_tx_frag(&adapter->pdev->dev, wrb,
+			      (unmap_skb_hdr && skb_headlen(sent_skb)));
 		unmap_skb_hdr = false;
 
 		num_wrbs++;
@@ -1573,9 +1576,6 @@ static int be_rx_queues_create(struct be_adapter *adapter)
 	adapter->big_page_size = (1 << get_order(rx_frag_size)) * PAGE_SIZE;
 	for_all_rx_queues(adapter, rxo, i) {
 		rxo->adapter = adapter;
-		/* Init last_frag_index so that the frag index in the first
-		 * completion will never match */
-		rxo->last_frag_index = 0xffff;
 		rxo->rx_eq.max_eqd = BE_MAX_EQD;
 		rxo->rx_eq.enable_aic = true;
 
@@ -1716,7 +1716,7 @@ static int be_poll_rx(struct napi_struct *napi, int budget)
 	struct be_queue_info *rx_cq = &rxo->cq;
 	struct be_eth_rx_compl *rxcp;
 	u32 work_done;
-	u16 frag_index, num_rcvd;
+	u16 num_rcvd;
 	u8 err;
 
 	rxo->stats.rx_polls++;
@@ -1726,16 +1726,10 @@ static int be_poll_rx(struct napi_struct *napi, int budget)
 			break;
 
 		err = AMAP_GET_BITS(struct amap_eth_rx_compl, err, rxcp);
-		frag_index = AMAP_GET_BITS(struct amap_eth_rx_compl, fragndx,
-								rxcp);
 		num_rcvd = AMAP_GET_BITS(struct amap_eth_rx_compl, numfrags,
 								rxcp);
-
-		/* Skip out-of-buffer compl(lancer) or flush compl(BE) */
-		if (likely(frag_index != rxo->last_frag_index &&
-				num_rcvd != 0)) {
-			rxo->last_frag_index = frag_index;
-
+		/* Ignore flush completions */
+		if (num_rcvd) {
 			if (do_gro(rxo, rxcp, err))
 				be_rx_compl_process_gro(adapter, rxo, rxcp);
 			else
@@ -1747,7 +1741,7 @@ static int be_poll_rx(struct napi_struct *napi, int budget)
 
 	/* Refill the queue */
 	if (atomic_read(&rxo->q.used) < RX_FRAGS_REFILL_WM)
-		be_post_rx_frags(rxo);
+		be_post_rx_frags(rxo, GFP_ATOMIC);
 
 	/* All consumed */
 	if (work_done < budget) {
@@ -1827,6 +1821,7 @@ void be_detect_dump_ue(struct be_adapter *adapter)
 
 	if (ue_status_lo || ue_status_hi) {
 		adapter->ue_detected = true;
+		adapter->eeh_err = true;
 		dev_err(&adapter->pdev->dev, "UE Detected!!\n");
 	}
 
@@ -1865,10 +1860,14 @@ static void be_worker(struct work_struct *work)
 			struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
 			be_cq_notify(adapter, mcc_obj->cq.id, false, mcc_compl);
 		}
+
+		if (!adapter->ue_detected && !lancer_chip(adapter))
+			be_detect_dump_ue(adapter);
+
 		goto reschedule;
 	}
 
-	if (!adapter->stats_ioctl_sent)
+	if (!adapter->stats_cmd_sent)
 		be_cmd_get_stats(adapter, &adapter->stats_cmd);
 
 	be_tx_rate_update(adapter);
@@ -1879,7 +1878,7 @@ static void be_worker(struct work_struct *work)
 
 		if (rxo->rx_post_starved) {
 			rxo->rx_post_starved = false;
-			be_post_rx_frags(rxo);
+			be_post_rx_frags(rxo, GFP_KERNEL);
 		}
 	}
 	if (!adapter->ue_detected && !lancer_chip(adapter))
@@ -2083,12 +2082,23 @@ static int be_close(struct net_device *netdev)
 
 	be_async_mcc_disable(adapter);
 
-	netif_stop_queue(netdev);
 	netif_carrier_off(netdev);
 	adapter->link_up = false;
 
 	if (!lancer_chip(adapter))
 		be_intr_set(adapter, false);
+
+	for_all_rx_queues(adapter, rxo, i)
+		napi_disable(&rxo->rx_eq.napi);
+
+	napi_disable(&tx_eq->napi);
+
+	if (lancer_chip(adapter)) {
+		be_cq_notify(adapter, adapter->tx_obj.cq.id, false, 0);
+		be_cq_notify(adapter, adapter->mcc_obj.cq.id, false, 0);
+		for_all_rx_queues(adapter, rxo, i)
+			 be_cq_notify(adapter, rxo->cq.id, false, 0);
+	}
 
 	if (adapter->msix_enabled) {
 		vec = be_msix_vec_get(adapter, tx_eq);
@@ -2102,11 +2112,6 @@ static int be_close(struct net_device *netdev)
 		synchronize_irq(netdev->irq);
 	}
 	be_irq_unregister(adapter);
-
-	for_all_rx_queues(adapter, rxo, i)
-		napi_disable(&rxo->rx_eq.napi);
-
-	napi_disable(&tx_eq->napi);
 
 	/* Wait for all pending tx completions to arrive so that
 	 * all tx skbs are freed.
@@ -2127,7 +2132,7 @@ static int be_open(struct net_device *netdev)
 	u16 link_speed;
 
 	for_all_rx_queues(adapter, rxo, i) {
-		be_post_rx_frags(rxo);
+		be_post_rx_frags(rxo, GFP_KERNEL);
 		napi_enable(&rxo->rx_eq.napi);
 	}
 	napi_enable(&tx_eq->napi);
@@ -2179,7 +2184,8 @@ static int be_setup_wol(struct be_adapter *adapter, bool enable)
 	memset(mac, 0, ETH_ALEN);
 
 	cmd.size = sizeof(struct be_cmd_req_acpi_wol_magic_config);
-	cmd.va = pci_alloc_consistent(adapter->pdev, cmd.size, &cmd.dma);
+	cmd.va = dma_alloc_coherent(&adapter->pdev->dev, cmd.size, &cmd.dma,
+				    GFP_KERNEL);
 	if (cmd.va == NULL)
 		return -1;
 	memset(cmd.va, 0, cmd.size);
@@ -2190,8 +2196,8 @@ static int be_setup_wol(struct be_adapter *adapter, bool enable)
 		if (status) {
 			dev_err(&adapter->pdev->dev,
 				"Could not enable Wake-on-lan\n");
-			pci_free_consistent(adapter->pdev, cmd.size, cmd.va,
-					cmd.dma);
+			dma_free_coherent(&adapter->pdev->dev, cmd.size, cmd.va,
+					  cmd.dma);
 			return status;
 		}
 		status = be_cmd_enable_magic_wol(adapter,
@@ -2204,7 +2210,7 @@ static int be_setup_wol(struct be_adapter *adapter, bool enable)
 		pci_enable_wake(adapter->pdev, PCI_D3cold, 0);
 	}
 
-	pci_free_consistent(adapter->pdev, cmd.size, cmd.va, cmd.dma);
+	dma_free_coherent(&adapter->pdev->dev, cmd.size, cmd.va, cmd.dma);
 	return status;
 }
 
@@ -2225,7 +2231,8 @@ static inline int be_vf_eth_addr_config(struct be_adapter *adapter)
 	for (vf = 0; vf < num_vfs; vf++) {
 		status = be_cmd_pmac_add(adapter, mac,
 					adapter->vf_cfg[vf].vf_if_handle,
-					&adapter->vf_cfg[vf].vf_pmac_id);
+					&adapter->vf_cfg[vf].vf_pmac_id,
+					vf + 1);
 		if (status)
 			dev_err(&adapter->pdev->dev,
 				"Mac address add failed for VF %d\n", vf);
@@ -2245,7 +2252,7 @@ static inline void be_vf_eth_addr_rem(struct be_adapter *adapter)
 		if (adapter->vf_cfg[vf].vf_pmac_id != BE_INVALID_PMAC_ID)
 			be_cmd_pmac_del(adapter,
 					adapter->vf_cfg[vf].vf_if_handle,
-					adapter->vf_cfg[vf].vf_pmac_id);
+					adapter->vf_cfg[vf].vf_pmac_id, vf + 1);
 	}
 }
 
@@ -2256,7 +2263,9 @@ static int be_setup(struct be_adapter *adapter)
 	int status;
 	u8 mac[ETH_ALEN];
 
-	cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED | BE_IF_FLAGS_BROADCAST;
+	cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED |
+				BE_IF_FLAGS_BROADCAST |
+				BE_IF_FLAGS_MULTICAST;
 
 	if (be_physfn(adapter)) {
 		cap_flags |= BE_IF_FLAGS_MCAST_PROMISCUOUS |
@@ -2277,22 +2286,26 @@ static int be_setup(struct be_adapter *adapter)
 		goto do_none;
 
 	if (be_physfn(adapter)) {
-		while (vf < num_vfs) {
-			cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED
-					| BE_IF_FLAGS_BROADCAST;
-			status = be_cmd_if_create(adapter, cap_flags, en_flags,
-					mac, true,
+		if (adapter->sriov_enabled) {
+			while (vf < num_vfs) {
+				cap_flags = en_flags = BE_IF_FLAGS_UNTAGGED |
+							BE_IF_FLAGS_BROADCAST;
+				status = be_cmd_if_create(adapter, cap_flags,
+					en_flags, mac, true,
 					&adapter->vf_cfg[vf].vf_if_handle,
 					NULL, vf+1);
-			if (status) {
-				dev_err(&adapter->pdev->dev,
-				"Interface Create failed for VF %d\n", vf);
-				goto if_destroy;
+				if (status) {
+					dev_err(&adapter->pdev->dev,
+					"Interface Create failed for VF %d\n",
+					vf);
+					goto if_destroy;
+				}
+				adapter->vf_cfg[vf].vf_pmac_id =
+							BE_INVALID_PMAC_ID;
+				vf++;
 			}
-			adapter->vf_cfg[vf].vf_pmac_id = BE_INVALID_PMAC_ID;
-			vf++;
 		}
-	} else if (!be_physfn(adapter)) {
+	} else {
 		status = be_cmd_mac_addr_query(adapter, mac,
 			MAC_ADDRESS_TYPE_NETWORK, false, adapter->if_handle);
 		if (!status) {
@@ -2313,44 +2326,46 @@ static int be_setup(struct be_adapter *adapter)
 	if (status != 0)
 		goto rx_qs_destroy;
 
-	if (be_physfn(adapter)) {
-		status = be_vf_eth_addr_config(adapter);
-		if (status)
-			goto mcc_q_destroy;
-	}
-
 	adapter->link_speed = -1;
 
 	return 0;
 
-mcc_q_destroy:
-	if (be_physfn(adapter))
-		be_vf_eth_addr_rem(adapter);
 	be_mcc_queues_destroy(adapter);
 rx_qs_destroy:
 	be_rx_queues_destroy(adapter);
 tx_qs_destroy:
 	be_tx_queues_destroy(adapter);
 if_destroy:
-	for (vf = 0; vf < num_vfs; vf++)
-		if (adapter->vf_cfg[vf].vf_if_handle)
-			be_cmd_if_destroy(adapter,
-					adapter->vf_cfg[vf].vf_if_handle);
-	be_cmd_if_destroy(adapter, adapter->if_handle);
+	if (be_physfn(adapter) && adapter->sriov_enabled)
+		for (vf = 0; vf < num_vfs; vf++)
+			if (adapter->vf_cfg[vf].vf_if_handle)
+				be_cmd_if_destroy(adapter,
+					adapter->vf_cfg[vf].vf_if_handle,
+					vf + 1);
+	be_cmd_if_destroy(adapter, adapter->if_handle, 0);
 do_none:
 	return status;
 }
 
 static int be_clear(struct be_adapter *adapter)
 {
-	if (be_physfn(adapter))
+	int vf;
+
+	if (be_physfn(adapter) && adapter->sriov_enabled)
 		be_vf_eth_addr_rem(adapter);
 
 	be_mcc_queues_destroy(adapter);
 	be_rx_queues_destroy(adapter);
 	be_tx_queues_destroy(adapter);
 
-	be_cmd_if_destroy(adapter, adapter->if_handle);
+	if (be_physfn(adapter) && adapter->sriov_enabled)
+		for (vf = 0; vf < num_vfs; vf++)
+			if (adapter->vf_cfg[vf].vf_if_handle)
+				be_cmd_if_destroy(adapter,
+					adapter->vf_cfg[vf].vf_if_handle,
+					vf + 1);
+
+	be_cmd_if_destroy(adapter, adapter->if_handle,  0);
 
 	/* tell fw we're done with firing cmds */
 	be_cmd_fw_clean(adapter);
@@ -2453,8 +2468,8 @@ static int be_flash_data(struct be_adapter *adapter,
 			continue;
 		if ((pflashcomp[i].optype == IMG_TYPE_REDBOOT) &&
 			(!be_flash_redboot(adapter, fw->data,
-			 pflashcomp[i].offset, pflashcomp[i].size,
-			 filehdr_size)))
+			pflashcomp[i].offset, pflashcomp[i].size, filehdr_size +
+			(num_of_images * sizeof(struct image_hdr)))))
 			continue;
 		p = fw->data;
 		p += filehdr_size + pflashcomp[i].offset
@@ -2528,8 +2543,8 @@ int be_load_fw(struct be_adapter *adapter, u8 *func)
 	dev_info(&adapter->pdev->dev, "Flashing firmware file %s\n", fw_file);
 
 	flash_cmd.size = sizeof(struct be_cmd_write_flashrom) + 32*1024;
-	flash_cmd.va = pci_alloc_consistent(adapter->pdev, flash_cmd.size,
-					&flash_cmd.dma);
+	flash_cmd.va = dma_alloc_coherent(&adapter->pdev->dev, flash_cmd.size,
+					  &flash_cmd.dma, GFP_KERNEL);
 	if (!flash_cmd.va) {
 		status = -ENOMEM;
 		dev_err(&adapter->pdev->dev,
@@ -2558,8 +2573,8 @@ int be_load_fw(struct be_adapter *adapter, u8 *func)
 		status = -1;
 	}
 
-	pci_free_consistent(adapter->pdev, flash_cmd.size, flash_cmd.va,
-				flash_cmd.dma);
+	dma_free_coherent(&adapter->pdev->dev, flash_cmd.size, flash_cmd.va,
+			  flash_cmd.dma);
 	if (status) {
 		dev_err(&adapter->pdev->dev, "Firmware load error\n");
 		goto fw_exit;
@@ -2700,13 +2715,13 @@ static void be_ctrl_cleanup(struct be_adapter *adapter)
 	be_unmap_pci_bars(adapter);
 
 	if (mem->va)
-		pci_free_consistent(adapter->pdev, mem->size,
-			mem->va, mem->dma);
+		dma_free_coherent(&adapter->pdev->dev, mem->size, mem->va,
+				  mem->dma);
 
 	mem = &adapter->mc_cmd_mem;
 	if (mem->va)
-		pci_free_consistent(adapter->pdev, mem->size,
-			mem->va, mem->dma);
+		dma_free_coherent(&adapter->pdev->dev, mem->size, mem->va,
+				  mem->dma);
 }
 
 static int be_ctrl_init(struct be_adapter *adapter)
@@ -2721,8 +2736,10 @@ static int be_ctrl_init(struct be_adapter *adapter)
 		goto done;
 
 	mbox_mem_alloc->size = sizeof(struct be_mcc_mailbox) + 16;
-	mbox_mem_alloc->va = pci_alloc_consistent(adapter->pdev,
-				mbox_mem_alloc->size, &mbox_mem_alloc->dma);
+	mbox_mem_alloc->va = dma_alloc_coherent(&adapter->pdev->dev,
+						mbox_mem_alloc->size,
+						&mbox_mem_alloc->dma,
+						GFP_KERNEL);
 	if (!mbox_mem_alloc->va) {
 		status = -ENOMEM;
 		goto unmap_pci_bars;
@@ -2734,8 +2751,9 @@ static int be_ctrl_init(struct be_adapter *adapter)
 	memset(mbox_mem_align->va, 0, sizeof(struct be_mcc_mailbox));
 
 	mc_cmd_mem->size = sizeof(struct be_cmd_req_mcast_mac_config);
-	mc_cmd_mem->va = pci_alloc_consistent(adapter->pdev, mc_cmd_mem->size,
-			&mc_cmd_mem->dma);
+	mc_cmd_mem->va = dma_alloc_coherent(&adapter->pdev->dev,
+					    mc_cmd_mem->size, &mc_cmd_mem->dma,
+					    GFP_KERNEL);
 	if (mc_cmd_mem->va == NULL) {
 		status = -ENOMEM;
 		goto free_mbox;
@@ -2751,8 +2769,8 @@ static int be_ctrl_init(struct be_adapter *adapter)
 	return 0;
 
 free_mbox:
-	pci_free_consistent(adapter->pdev, mbox_mem_alloc->size,
-		mbox_mem_alloc->va, mbox_mem_alloc->dma);
+	dma_free_coherent(&adapter->pdev->dev, mbox_mem_alloc->size,
+			  mbox_mem_alloc->va, mbox_mem_alloc->dma);
 
 unmap_pci_bars:
 	be_unmap_pci_bars(adapter);
@@ -2766,8 +2784,8 @@ static void be_stats_cleanup(struct be_adapter *adapter)
 	struct be_dma_mem *cmd = &adapter->stats_cmd;
 
 	if (cmd->va)
-		pci_free_consistent(adapter->pdev, cmd->size,
-			cmd->va, cmd->dma);
+		dma_free_coherent(&adapter->pdev->dev, cmd->size,
+				  cmd->va, cmd->dma);
 }
 
 static int be_stats_init(struct be_adapter *adapter)
@@ -2775,7 +2793,8 @@ static int be_stats_init(struct be_adapter *adapter)
 	struct be_dma_mem *cmd = &adapter->stats_cmd;
 
 	cmd->size = sizeof(struct be_cmd_req_get_stats);
-	cmd->va = pci_alloc_consistent(adapter->pdev, cmd->size, &cmd->dma);
+	cmd->va = dma_alloc_coherent(&adapter->pdev->dev, cmd->size, &cmd->dma,
+				     GFP_KERNEL);
 	if (cmd->va == NULL)
 		return -1;
 	memset(cmd->va, 0, cmd->size);
@@ -2845,6 +2864,10 @@ static int be_get_config(struct be_adapter *adapter)
 	else
 		adapter->max_vlans = BE_NUM_VLANS_SUPPORTED;
 
+	status = be_cmd_get_cntl_attributes(adapter);
+	if (status)
+		return status;
+
 	return 0;
 }
 
@@ -2886,6 +2909,54 @@ static int be_dev_family_check(struct be_adapter *adapter)
 	return 0;
 }
 
+static int lancer_wait_ready(struct be_adapter *adapter)
+{
+#define SLIPORT_READY_TIMEOUT 500
+	u32 sliport_status;
+	int status = 0, i;
+
+	for (i = 0; i < SLIPORT_READY_TIMEOUT; i++) {
+		sliport_status = ioread32(adapter->db + SLIPORT_STATUS_OFFSET);
+		if (sliport_status & SLIPORT_STATUS_RDY_MASK)
+			break;
+
+		msleep(20);
+	}
+
+	if (i == SLIPORT_READY_TIMEOUT)
+		status = -1;
+
+	return status;
+}
+
+static int lancer_test_and_set_rdy_state(struct be_adapter *adapter)
+{
+	int status;
+	u32 sliport_status, err, reset_needed;
+	status = lancer_wait_ready(adapter);
+	if (!status) {
+		sliport_status = ioread32(adapter->db + SLIPORT_STATUS_OFFSET);
+		err = sliport_status & SLIPORT_STATUS_ERR_MASK;
+		reset_needed = sliport_status & SLIPORT_STATUS_RN_MASK;
+		if (err && reset_needed) {
+			iowrite32(SLI_PORT_CONTROL_IP_MASK,
+					adapter->db + SLIPORT_CONTROL_OFFSET);
+
+			/* check adapter has corrected the error */
+			status = lancer_wait_ready(adapter);
+			sliport_status = ioread32(adapter->db +
+							SLIPORT_STATUS_OFFSET);
+			sliport_status &= (SLIPORT_STATUS_ERR_MASK |
+						SLIPORT_STATUS_RN_MASK);
+			if (status || sliport_status)
+				status = -1;
+		} else if (err || reset_needed) {
+			status = -1;
+		}
+	}
+	return status;
+}
+
 static int __devinit be_probe(struct pci_dev *pdev,
 			const struct pci_device_id *pdev_id)
 {
@@ -2918,11 +2989,11 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	adapter->netdev = netdev;
 	SET_NETDEV_DEV(netdev, &pdev->dev);
 
-	status = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
+	status = dma_set_mask(&pdev->dev, DMA_BIT_MASK(64));
 	if (!status) {
 		netdev->features |= NETIF_F_HIGHDMA;
 	} else {
-		status = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+		status = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
 		if (status) {
 			dev_err(&pdev->dev, "Could not set PCI DMA Mask\n");
 			goto free_netdev;
@@ -2934,6 +3005,14 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	status = be_ctrl_init(adapter);
 	if (status)
 		goto free_netdev;
+
+	if (lancer_chip(adapter)) {
+		status = lancer_test_and_set_rdy_state(adapter);
+		if (status) {
+			dev_err(&pdev->dev, "Adapter in non recoverable error\n");
+			goto free_netdev;
+		}
+	}
 
 	/* sync up with fw's ready state */
 	if (be_physfn(adapter)) {
@@ -2947,11 +3026,9 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	if (status)
 		goto ctrl_clean;
 
-	if (be_physfn(adapter)) {
-		status = be_cmd_reset_function(adapter);
-		if (status)
-			goto ctrl_clean;
-	}
+	status = be_cmd_reset_function(adapter);
+	if (status)
+		goto ctrl_clean;
 
 	status = be_stats_init(adapter);
 	if (status)
@@ -2975,10 +3052,18 @@ static int __devinit be_probe(struct pci_dev *pdev,
 		goto unsetup;
 	netif_carrier_off(netdev);
 
+	if (be_physfn(adapter) && adapter->sriov_enabled) {
+		status = be_vf_eth_addr_config(adapter);
+		if (status)
+			goto unreg_netdev;
+	}
+
 	dev_info(&pdev->dev, "%s port %d\n", nic_name(pdev), adapter->port_num);
 	schedule_delayed_work(&adapter->work, msecs_to_jiffies(100));
 	return 0;
 
+unreg_netdev:
+	unregister_netdev(netdev);
 unsetup:
 	be_clear(adapter);
 msix_disable:
@@ -3005,6 +3090,7 @@ static int be_suspend(struct pci_dev *pdev, pm_message_t state)
 	struct be_adapter *adapter = pci_get_drvdata(pdev);
 	struct net_device *netdev =  adapter->netdev;
 
+	cancel_delayed_work_sync(&adapter->work);
 	if (adapter->wol)
 		be_setup_wol(adapter, true);
 
@@ -3017,6 +3103,7 @@ static int be_suspend(struct pci_dev *pdev, pm_message_t state)
 	be_cmd_get_flow_control(adapter, &adapter->tx_fc, &adapter->rx_fc);
 	be_clear(adapter);
 
+	be_msix_disable(adapter);
 	pci_save_state(pdev);
 	pci_disable_device(pdev);
 	pci_set_power_state(pdev, pci_choose_state(pdev, state));
@@ -3038,6 +3125,7 @@ static int be_resume(struct pci_dev *pdev)
 	pci_set_power_state(pdev, 0);
 	pci_restore_state(pdev);
 
+	be_msix_enable(adapter);
 	/* tell fw we're ready to fire cmds */
 	status = be_cmd_fw_init(adapter);
 	if (status)
@@ -3053,6 +3141,8 @@ static int be_resume(struct pci_dev *pdev)
 
 	if (adapter->wol)
 		be_setup_wol(adapter, false);
+
+	schedule_delayed_work(&adapter->work, msecs_to_jiffies(100));
 	return 0;
 }
 
@@ -3063,6 +3153,9 @@ static void be_shutdown(struct pci_dev *pdev)
 {
 	struct be_adapter *adapter = pci_get_drvdata(pdev);
 	struct net_device *netdev =  adapter->netdev;
+
+	if (netif_running(netdev))
+		cancel_delayed_work_sync(&adapter->work);
 
 	netif_device_detach(netdev);
 
