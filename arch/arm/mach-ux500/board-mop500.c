@@ -20,6 +20,7 @@
 #include <linux/spi/spi.h>
 #include <linux/mfd/ab8500.h>
 #include <linux/mfd/tc3589x.h>
+#include <linux/mfd/tps6105x.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -114,6 +115,15 @@ static struct pl022_ssp_controller ssp0_platform_data = {
 };
 
 /*
+ * TPS61052
+ */
+
+static struct tps6105x_platform_data mop500_tps61052_data = {
+	.mode = TPS6105X_MODE_VOLTAGE,
+	.regulator_data = &tps61052_regulator,
+};
+
+/*
  * TC35892
  */
 
@@ -134,6 +144,10 @@ static struct tc3589x_platform_data mop500_tc35892_data = {
 };
 
 static struct i2c_board_info mop500_i2c0_devices[] = {
+	{
+		I2C_BOARD_INFO("tps61052", 0x33),
+		.platform_data  = &mop500_tps61052_data,
+	},
 	{
 		I2C_BOARD_INFO("tc3589x", 0x42),
 		.irq            = NOMADIK_GPIO_TO_IRQ(217),
