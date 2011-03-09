@@ -375,7 +375,6 @@ static struct xgi_hw_device_info XGIhw_ext;
 static struct vb_device_info  XGI_Pr;
 
 /* card parameters */
-static unsigned long XGIfb_mmio_size = 0;
 static u8            XGIfb_caps = 0;
 
 typedef enum _XGI_CMDTYPE {
@@ -794,14 +793,6 @@ static int      XGIfb_blank(int blank,
 /*static int 	XGIfb_mmap(struct fb_info *info, struct file *file,
 		           struct vm_area_struct *vma);
 */
-extern void     fbcon_XGI_fillrect(struct fb_info *info,
-                                   const struct fb_fillrect *rect);
-extern void     fbcon_XGI_copyarea(struct fb_info *info,
-                                   const struct fb_copyarea *area);
-extern int      fbcon_XGI_sync(struct fb_info *info);
-
-static int XGIfb_ioctl(struct fb_info *info, unsigned int cmd,
-			    unsigned long arg);
 
 /*
 extern int	XGIfb_mode_rate_to_dclock(VB_DEVICE_INFO *XGI_Pr,
@@ -820,10 +811,6 @@ extern unsigned char XGI_SearchModeID(unsigned short ModeNo,
 static int      XGIfb_get_fix(struct fb_fix_screeninfo *fix, int con,
 			      struct fb_info *info);
 
-/* Internal 2D accelerator functions */
-extern int      XGIfb_initaccel(void);
-extern void     XGIfb_syncaccel(void);
-
 /* Internal general routines */
 static void     XGIfb_search_mode(const char *name);
 static int      XGIfb_validate_mode(int modeindex);
@@ -836,18 +823,12 @@ static int      XGIfb_do_set_var(struct fb_var_screeninfo *var, int isactive,
 static void     XGIfb_pre_setmode(void);
 static void     XGIfb_post_setmode(void);
 
-static unsigned char  XGIfb_CheckVBRetrace(void);
-static unsigned char  XGIfbcheckvretracecrt2(void);
-static unsigned char  XGIfbcheckvretracecrt1(void);
-static unsigned char  XGIfb_bridgeisslave(void);
-
 struct XGI_memreq {
 	unsigned long offset;
 	unsigned long size;
 };
 
 /* XGI-specific Export functions */
-void            XGI_dispinfo(struct ap_data *rec);
 void            XGI_malloc(struct XGI_memreq *req);
 void            XGI_free(unsigned long base);
 
