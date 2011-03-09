@@ -167,8 +167,6 @@ mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 
 	WARN_ON(!host->claimed);
 
-	led_trigger_event(host->led, LED_FULL);
-
 	mrq->cmd->error = 0;
 	mrq->cmd->mrq = mrq;
 	if (mrq->data) {
@@ -194,6 +192,7 @@ mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 		}
 	}
 	mmc_host_clk_ungate(host);
+	led_trigger_event(host->led, LED_FULL);
 	host->ops->request(host, mrq);
 }
 
@@ -1495,6 +1494,12 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 		mmc_hostname(host), __func__, host->f_init);
 #endif
 	mmc_power_up(host);
+
+	/*
+	 * sdio_reset sends CMD52 to reset card.  Since we do not know
+	 * if the card is being re-initialzed just send it.  CMD52
+	 * should be ignored by SD/eMMC cards.
+	 */
 	sdio_reset(host);
 	mmc_go_idle(host);
 
@@ -1529,7 +1534,7 @@ void mmc_rescan(struct work_struct *work)
 	 * still present
 	 */
 	if (host->bus_ops && host->bus_ops->detect && !host->bus_dead
-	    && mmc_card_is_removable(host))
+	    && !(host->caps & MMC_CAP_NONREMOVABLE))
 		host->bus_ops->detect(host);
 
 	/*
