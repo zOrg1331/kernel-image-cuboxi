@@ -1,0 +1,21 @@
+Importing i2c based on 2.6.38-rc7
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-rc7
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.38-rc8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard a5abba989deceb731047425812d268daf7536575
+HEAD is now at a5abba9 Linux 2.6.38-rc8
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docum-remove-obsolete-indexes.patch
+docum-remove-ppc-old-indexes.patch
+docum-codingstyle-hdrfilename.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + 4180434...362d4ea master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
