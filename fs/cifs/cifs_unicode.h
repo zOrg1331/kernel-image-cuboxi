@@ -377,4 +377,11 @@ UniStrlwr(register wchar_t *upin)
 
 #endif
 
+#ifdef CONFIG_CIFS_SMB2
+extern int smb2_local_to_ucs2_bytes(const char *from, int len,
+				    const struct nls_table *codepage);
+extern __le16 *smb2_strndup_to_ucs(const char *src, const int maxlen,
+				   int *ucs_len, const struct nls_table *cp);
+#endif /* CONFIG_CIFS_SMB2 */
+
 #endif /* _CIFS_UNICODE_H */
