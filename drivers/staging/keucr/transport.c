@@ -333,7 +333,7 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 		int temp_result;
 		struct scsi_eh_save ses;
 
-		printk("Issuing auto-REQUEST_SENSE\n");
+		/* printk("Issuing auto-REQUEST_SENSE\n"); */
 
 		scsi_eh_prep_cmnd(srb, &ses, NULL, 0, US_SENSE_SIZE);
 
