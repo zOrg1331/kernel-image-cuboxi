@@ -26,10 +26,12 @@
 
 /* CLE266 Software Power Sequence */
 /* {Mask}, {Data}, {Delay} */
-int PowerSequenceOn[3][3] = { {0x10, 0x08, 0x06}, {0x10, 0x08, 0x06},
-	{0x19, 0x1FE, 0x01} };
-int PowerSequenceOff[3][3] = { {0x06, 0x08, 0x10}, {0x00, 0x00, 0x00},
-	{0xD2, 0x19, 0x01} };
+static const int PowerSequenceOn[3][3] = {
+	{0x10, 0x08, 0x06}, {0x10, 0x08, 0x06},	{0x19, 0x1FE, 0x01}
+};
+static const int PowerSequenceOff[3][3] = {
+	{0x06, 0x08, 0x10}, {0x00, 0x00, 0x00},	{0xD2, 0x19, 0x01}
+};
 
 static struct _lcd_scaling_factor lcd_scaling_factor = {
 	/* LCD Horizontal Scaling Factor Register */
@@ -1064,34 +1066,33 @@ static struct display_timing lcd_centering_timging(struct display_timing
 
 bool viafb_lcd_get_mobile_state(bool *mobile)
 {
-	unsigned char *romptr, *tableptr;
+	unsigned char __iomem *romptr, *tableptr, *biosptr;
 	u8 core_base;
-	unsigned char *biosptr;
 	/* Rom address */
-	u32 romaddr = 0x000C0000;
-	u16 start_pattern = 0;
+	const u32 romaddr = 0x000C0000;
+	u16 start_pattern;
 
 	biosptr = ioremap(romaddr, 0x10000);
+	start_pattern = readw(biosptr);
 
-	memcpy(&start_pattern, biosptr, 2);
 	/* Compare pattern */
 	if (start_pattern == 0xAA55) {
 		/* Get the start of Table */
 		/* 0x1B means BIOS offset position */
 		romptr = biosptr + 0x1B;
-		tableptr = biosptr + *((u16 *) romptr);
+		tableptr = biosptr + readw(romptr);
 
 		/* Get the start of biosver structure */
 		/* 18 means BIOS version position. */
 		romptr = tableptr + 18;
-		romptr = biosptr + *((u16 *) romptr);
+		romptr = biosptr + readw(romptr);
 
 		/* The offset should be 44, but the
 		   actual image is less three char. */
 		/* pRom += 44; */
 		romptr += 41;
 
-		core_base = *romptr++;
+		core_base = readb(romptr);
 
 		if (core_base & 0x8)
 			*mobile = false;
