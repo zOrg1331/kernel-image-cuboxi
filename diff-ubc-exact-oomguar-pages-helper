@@ -1,0 +1,42 @@
+Subject: [PATCH rh5 1/2] ub: exact oomguarpages
+From: Konstantin Khlebnikov <khlebnikov@parallels.com>
+Date: Wed, 9 Mar 2011 16:11:13 +0300
+To: "vzlin-dev@sw.ru" <vzlin-dev@sw.ru>
+CC: Pavel Emelianov <xemul@parallels.com>
+Message-ID: <20110309131113.22013.63441.stgit@localhost6>
+
+https://jira.sw.ru/browse/PCLIN-28924
+
+Signed-off-by: Konstantin Khlebnikov <khlebnikov@openvz.org>
+---
+ include/ub/ub_vmpages.h |   16 ++++++++++++++++
+ 1 files changed, 16 insertions(+), 0 deletions(-)
+
+diff --git a/include/ub/ub_vmpages.h b/include/ub/ub_vmpages.h
+index d659dca..28bfcbc 100644
+--- a/include/ub/ub_vmpages.h
++++ b/include/ub/ub_vmpages.h
+@@ -101,6 +101,22 @@ UB_DECLARE_FUNC(unsigned long, pages_in_vma_range(struct vm_area_struct *vma,
+ #define UB_PAGE_WEIGHT_SHIFT 24
+ #define UB_PAGE_WEIGHT (1 << UB_PAGE_WEIGHT_SHIFT)
+ 
++/* call it under ub->ub_lock */
++static inline long ub_oomguarpages(struct user_beancounter *ub)
++{
++	long long held_pages;
++	int cpu;
++
++	held_pages = ub->ub_held_pages;
++	for_each_possible_cpu(cpu)
++		held_pages += ub_percpu(ub, cpu)->held_pages;
++	held_pages = max(0ll, held_pages);
++
++	return (held_pages >> UB_PAGE_WEIGHT_SHIFT) +
++		ub->ub_parms[UB_SWAPPAGES].held +
++		ub->ub_tmpfs_respages;
++}
++
+ struct page_beancounter;
+ #define PBC_COPY_SAME	((struct page_beancounter *) 1)
+ 
+

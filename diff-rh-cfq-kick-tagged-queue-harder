@@ -1,0 +1,41 @@
+Subject: [PATCH rh5] cfq-iosched: kick out queue without idle window
+From: Konstantin Khlebnikov <khlebnikov@parallels.com>
+Date: Sat, 5 Mar 2011 21:03:53 +0300
+To: "vzlin-dev@sw.ru" <vzlin-dev@sw.ru>
+CC: Pavel Emelianov <xemul@parallels.com>
+Message-ID: <20110305180353.10177.78640.stgit@localhost6>
+
+Kick out seeky queues and allow to sumbmit more requests.
+
+https://jira.sw.ru/browse/PSBM-6793
+
+Something similar in mainstream:
+
+    v2.6.21-1090-gcc19747 by Jens Axboe <jens.axboe@oracle.com>
+
+    cfq-iosched: tighten queue request overlap condition
+
+    For tagged devices, allow overlap of requests if the idle window
+    isn't enabled on the current active queue.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+Signed-off-by: Konstantin Khlebnikov <khlebnikov@openvz.org>
+---
+ block/cfq-iosched.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 8be71e1..abaf099 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -1286,7 +1286,7 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
+ 		if (!cfqq->new_cfqq)
+ 			cfq_setup_merge(cfqq, new_cfqq);
+ 		goto expire;
+-	} else if (cfq_cfqq_dispatched(cfqq)) {
++	} else if (cfq_cfqq_dispatched(cfqq) && cfq_cfqq_idle_window(cfqq)) {
+ 		cfqq = NULL;
+ 		goto keep_queue;
+ 	} else if (cfq_cfqq_sync(cfqq)) {
+

@@ -71,6 +71,7 @@ copy: diff-openafs-configure-no-mod-check
 copy: diff-openafs-exec-context
 copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
+copy: diff-rh-cfq-kick-tagged-queue-harder
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 copy: diff-rh-hung-task-tunes-and-fixes
 copy: diff-scsi-add-modalias-mainstream
@@ -78,6 +79,7 @@ copy: diff-serial-pci-add-netmos-9901-support
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
 copy: diff-ubc-debug-sock-orphan-acct
+copy: diff-ubc-exact-oomguar-pages-helper
 copy: diff-ve-moreleaks-20090829
 copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
