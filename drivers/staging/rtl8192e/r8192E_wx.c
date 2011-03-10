@@ -215,14 +215,14 @@ static int r8192_wx_set_mode(struct net_device *dev, struct iw_request_info *a,
 	if (priv->bHwRadioOff)
 		return 0;
 
-	rtState = priv->ieee80211->eRFPowerState;
+	rtState = priv->eRFPowerState;
 	down(&priv->wx_sem);
 #ifdef ENABLE_IPS
 	if(wrqu->mode == IW_MODE_ADHOC){
 
-		if(priv->ieee80211->PowerSaveControl.bInactivePs){
+		if (priv->PowerSaveControl.bInactivePs) {
 			if(rtState == eRfOff){
-				if(priv->ieee80211->RfOffReason > RF_CHANGE_BY_IPS)
+				if(priv->RfOffReason > RF_CHANGE_BY_IPS)
 				{
 					RT_TRACE(COMP_ERR, "%s(): RF is OFF.\n",__FUNCTION__);
 					up(&priv->wx_sem);
@@ -301,8 +301,6 @@ static int rtl8180_wx_get_range(struct net_device *dev,
 //	range->old_num_channels;
 //	range->old_num_frequency;
 //	range->old_freq[6]; /* Filler to keep "version" at the same offset */
-	if(priv->rf_set_sens != NULL)
-		range->sensitivity = priv->max_sens;	/* signal level threshold range */
 
 	range->max_qual.qual = 100;
 	/* TODO: Find real max RSSI and stick here */
@@ -366,10 +364,10 @@ static int rtl8180_wx_get_range(struct net_device *dev,
 	}
 	range->num_frequency = val;
 	range->num_channels = val;
-#if WIRELESS_EXT > 17
+
 	range->enc_capa = IW_ENC_CAPA_WPA|IW_ENC_CAPA_WPA2|
 			  IW_ENC_CAPA_CIPHER_TKIP|IW_ENC_CAPA_CIPHER_CCMP;
-#endif
+
 	tmp->scan_capa = 0x01;
 	return 0;
 }
@@ -386,7 +384,7 @@ static int r8192_wx_set_scan(struct net_device *dev, struct iw_request_info *a,
 	if (priv->bHwRadioOff)
 		return 0;
 
-	rtState = priv->ieee80211->eRFPowerState;
+	rtState = priv->eRFPowerState;
 
 	if(!priv->up) return -ENETDOWN;
 	if (priv->ieee80211->LinkDetectInfo.bBusyTraffic == true)
@@ -408,9 +406,9 @@ static int r8192_wx_set_scan(struct net_device *dev, struct iw_request_info *a,
 #ifdef ENABLE_IPS
 	priv->ieee80211->actscanning = true;
 	if(priv->ieee80211->state != IEEE80211_LINKED){
-		if(priv->ieee80211->PowerSaveControl.bInactivePs){
+		if (priv->PowerSaveControl.bInactivePs) {
 			if(rtState == eRfOff){
-				if(priv->ieee80211->RfOffReason > RF_CHANGE_BY_IPS)
+				if(priv->RfOffReason > RF_CHANGE_BY_IPS)
 				{
 					RT_TRACE(COMP_ERR, "%s(): RF is OFF.\n",__FUNCTION__);
 					up(&priv->wx_sem);
@@ -477,7 +475,7 @@ static int r8192_wx_set_essid(struct net_device *dev,
 	if (priv->bHwRadioOff)
 		return 0;
 
-	rtState = priv->ieee80211->eRFPowerState;
+	rtState = priv->eRFPowerState;
 	down(&priv->wx_sem);
 
 #ifdef ENABLE_IPS
@@ -655,7 +653,7 @@ static int r8192_wx_set_enc(struct net_device *dev,
 
 	down(&priv->wx_sem);
 
-	RT_TRACE(COMP_SEC, "Setting SW wep key");
+	RT_TRACE(COMP_SEC, "Setting SW wep key\n");
 	ret = ieee80211_wx_set_encode(priv->ieee80211,info,wrqu,key);
 
 	up(&priv->wx_sem);
@@ -695,20 +693,6 @@ static int r8192_wx_set_enc(struct net_device *dev,
 				zero_addr[key_idx],
 				0,                      //DefaultKey
 				hwkey);                 //KeyContent
-
-#if 0
-			if(key_idx == 0){
-
-				//write_nic_byte(dev, SECR, 7);
-				setKey( dev,
-					4,                      //EntryNo
-					key_idx,                      //KeyIndex
-					KEY_TYPE_WEP40,        //KeyType
-					broadcast_addr,         //addr
-					0,                      //DefaultKey
-					hwkey);                 //KeyContent
-			}
-#endif
 		}
 
 		else if(wrqu->encoding.length==0xd){
@@ -721,43 +705,9 @@ static int r8192_wx_set_enc(struct net_device *dev,
 				zero_addr[key_idx],
 				0,                      //DefaultKey
 				hwkey);                 //KeyContent
-#if 0
-			if(key_idx == 0){
-
-				//write_nic_byte(dev, SECR, 7);
-				setKey( dev,
-					4,                      //EntryNo
-					key_idx,                      //KeyIndex
-					KEY_TYPE_WEP104,        //KeyType
-					broadcast_addr,         //addr
-					0,                      //DefaultKey
-					hwkey);                 //KeyContent
-			}
-#endif
 		}
 		else printk("wrong type in WEP, not WEP40 and WEP104\n");
-
-
 	}
-
-#if 0
-	//consider the setting different key index situation
-	//wrqu->encoding.flags = 801 means that we set key with index "1"
-	if(wrqu->encoding.length==0 && (wrqu->encoding.flags >>8) == 0x8 ){
-		printk("===>1\n");
-		//write_nic_byte(dev, SECR, 7);
-		EnableHWSecurityConfig8192(dev);
-		//copy wpa config from default key(key0~key3) to broadcast key(key5)
-		//
-		key_idx = (wrqu->encoding.flags & 0xf)-1 ;
-		write_cam(dev, (4*6),   0xffff0000|read_cam(dev, key_idx*6) );
-		write_cam(dev, (4*6)+1, 0xffffffff);
-		write_cam(dev, (4*6)+2, read_cam(dev, (key_idx*6)+2) );
-		write_cam(dev, (4*6)+3, read_cam(dev, (key_idx*6)+3) );
-		write_cam(dev, (4*6)+4, read_cam(dev, (key_idx*6)+4) );
-		write_cam(dev, (4*6)+5, read_cam(dev, (key_idx*6)+5) );
-	}
-#endif
 
 	priv->ieee80211->wx_set_enc = 0;
 
@@ -820,7 +770,7 @@ static int r8192_wx_set_retry(struct net_device *dev,
 	 * I'm unsure if whole reset is really needed
 	 */
 
- 	rtl8192_commit(dev);
+	rtl8192_commit(priv);
 	/*
 	if(priv->up){
 		rtl8180_rtx_disable(dev);
@@ -902,7 +852,6 @@ exit:
 	return err;
 }
 
-#if (WIRELESS_EXT >= 18)
 static int r8192_wx_set_enc_ext(struct net_device *dev,
                                         struct iw_request_info *info,
                                         union iwreq_data *wrqu, char *extra)
@@ -932,19 +881,13 @@ static int r8192_wx_set_enc_ext(struct net_device *dev,
 		u32 key[4] = {0};
 		struct iw_encode_ext *ext = (struct iw_encode_ext *)extra;
 		struct iw_point *encoding = &wrqu->encoding;
-#if 0
-		static u8 CAM_CONST_ADDR[4][6] = {
-			{0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-			{0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
-			{0x00, 0x00, 0x00, 0x00, 0x00, 0x02},
-			{0x00, 0x00, 0x00, 0x00, 0x00, 0x03}};
-#endif
 		u8 idx = 0, alg = 0, group = 0;
+
 		if ((encoding->flags & IW_ENCODE_DISABLED) ||
 		ext->alg == IW_ENCODE_ALG_NONE) //none is not allowed to use hwsec WB 2008.07.01
 		{
 			ieee->pairwise_key_type = ieee->group_key_type = KEY_TYPE_NA;
-			CamResetAllEntry(dev);
+			CamResetAllEntry(priv);
 			goto end_hw_sec;
 		}
 		alg =  (ext->alg == IW_ENCODE_ALG_CCMP)?KEY_TYPE_CCMP:ext->alg; // as IW_ENCODE_ALG_CCMP is defined to be 3 and KEY_TYPE_CCMP is defined to 4;
@@ -988,7 +931,7 @@ static int r8192_wx_set_enc_ext(struct net_device *dev,
 		else //pairwise key
 		{
 			if ((ieee->pairwise_key_type == KEY_TYPE_CCMP) && ieee->pHTInfo->bCurrentHTSupport){
-							write_nic_byte(dev, 0x173, 1); //fix aes bug
+							write_nic_byte(priv, 0x173, 1); //fix aes bug
 			}
 			setKey( dev,
 					4,//EntryNo
@@ -1042,7 +985,7 @@ static int r8192_wx_set_mlme(struct net_device *dev,
 	up(&priv->wx_sem);
 	return ret;
 }
-#endif
+
 static int r8192_wx_set_gen_ie(struct net_device *dev,
                                         struct iw_request_info *info,
                                         union iwreq_data *data, char *extra)
@@ -1074,7 +1017,7 @@ static int r8192_wx_adapter_power_status(struct net_device *dev,
 {
 	struct r8192_priv *priv = ieee80211_priv(dev);
 #ifdef ENABLE_LPS
-	PRT_POWER_SAVE_CONTROL pPSC = (PRT_POWER_SAVE_CONTROL)(&(priv->ieee80211->PowerSaveControl));
+	PRT_POWER_SAVE_CONTROL pPSC = &priv->PowerSaveControl;
 	struct ieee80211_device* ieee = priv->ieee80211;
 #endif
 	down(&priv->wx_sem);
@@ -1128,11 +1071,7 @@ static iw_handler r8192_wx_handlers[] =
         NULL,                     /* SIOCWIWTHRSPY */
         r8192_wx_set_wap,      	  /* SIOCSIWAP */
         r8192_wx_get_wap,         /* SIOCGIWAP */
-#if (WIRELESS_EXT >= 18)
-        r8192_wx_set_mlme,                     /* MLME-- */
-#else
-	 NULL,
-#endif
+	r8192_wx_set_mlme,        /* MLME-- */
         dummy,                     /* SIOCGIWAPLIST -- depricated */
         r8192_wx_set_scan,        /* SIOCSIWSCAN */
         r8192_wx_get_scan,        /* SIOCGIWSCAN */
@@ -1160,15 +1099,9 @@ static iw_handler r8192_wx_handlers[] =
 	NULL, 			/*---hole---*/
 	r8192_wx_set_gen_ie,//NULL, 			/* SIOCSIWGENIE */
 	NULL, 			/* SIOCSIWGENIE */
-#if (WIRELESS_EXT >= 18)
 	r8192_wx_set_auth,//NULL, 			/* SIOCSIWAUTH */
 	NULL,//r8192_wx_get_auth,//NULL, 			/* SIOCSIWAUTH */
 	r8192_wx_set_enc_ext, 			/* SIOCSIWENCODEEXT */
-#else
-	NULL,
-	NULL,
-	NULL,
-#endif
 	NULL,//r8192_wx_get_enc_ext,//NULL, 			/* SIOCSIWENCODEEXT */
 	NULL, 			/* SIOCSIWPMKSA */
 	NULL, 			 /*---hole---*/
@@ -1216,8 +1149,7 @@ static iw_handler r8192_private_handler[] = {
 	r8192_wx_adapter_power_status,
 };
 
-//#if WIRELESS_EXT >= 17
-struct iw_statistics *r8192_get_wireless_stats(struct net_device *dev)
+static struct iw_statistics *r8192_get_wireless_stats(struct net_device *dev)
 {
        struct r8192_priv *priv = ieee80211_priv(dev);
 	struct ieee80211_device* ieee = priv->ieee80211;
@@ -1245,7 +1177,6 @@ struct iw_statistics *r8192_get_wireless_stats(struct net_device *dev)
 	wstats->qual.updated = IW_QUAL_ALL_UPDATED | IW_QUAL_DBM;
 	return wstats;
 }
-//#endif
 
 
 struct iw_handler_def  r8192_wx_handlers_def={
@@ -1254,8 +1185,6 @@ struct iw_handler_def  r8192_wx_handlers_def={
 	.private = r8192_private_handler,
 	.num_private = sizeof(r8192_private_handler) / sizeof(iw_handler),
  	.num_private_args = sizeof(r8192_private_args) / sizeof(struct iw_priv_args),
-#if WIRELESS_EXT >= 17
 	.get_wireless_stats = r8192_get_wireless_stats,
-#endif
 	.private_args = (struct iw_priv_args *)r8192_private_args,
 };
