@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.38
-Release: alt7.rc7.1
+Release: alt8.rc8.1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt7.rc7.1
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.7.0
+%define kernel_extra_version_numeric 0.8.0
 
 %define krelease	%release
 
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Thu Mar 10 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt8.rc8.1
+- rc8
+
 * Mon Mar 07 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt7.rc7.1
 - rc7
 
