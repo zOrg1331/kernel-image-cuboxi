@@ -983,7 +983,7 @@ static int register_root_hub(struct usb_hcd *hcd)
 		spin_unlock_irq (&hcd_root_hub_lock);
 
 		/* Did the HC die before the root hub was registered? */
-		if (hcd->state == HC_STATE_HALT)
+		if (HCD_DEAD(hcd) || hcd->state == HC_STATE_HALT)
 			usb_hc_died (hcd);	/* This time clean up */
 	}
 
@@ -1089,13 +1089,10 @@ int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb)
 	 * Check the host controller's state and add the URB to the
 	 * endpoint's queue.
 	 */
-	switch (hcd->state) {
-	case HC_STATE_RUNNING:
-	case HC_STATE_RESUMING:
+	if (HCD_RH_RUNNING(hcd)) {
 		urb->unlinked = 0;
 		list_add_tail(&urb->urb_list, &urb->ep->urb_list);
-		break;
-	default:
+	} else {
 		rc = -ESHUTDOWN;
 		goto done;
 	}
@@ -1262,7 +1259,7 @@ static void hcd_free_coherent(struct usb_bus *bus, dma_addr_t *dma_handle,
 	*dma_handle = 0;
 }
 
-void unmap_urb_setup_for_dma(struct usb_hcd *hcd, struct urb *urb)
+void usb_hcd_unmap_urb_setup_for_dma(struct usb_hcd *hcd, struct urb *urb)
 {
 	if (urb->transfer_flags & URB_SETUP_MAP_SINGLE)
 		dma_unmap_single(hcd->self.controller,
@@ -1279,13 +1276,21 @@ void unmap_urb_setup_for_dma(struct usb_hcd *hcd, struct urb *urb)
 	/* Make it safe to call this routine more than once */
 	urb->transfer_flags &= ~(URB_SETUP_MAP_SINGLE | URB_SETUP_MAP_LOCAL);
 }
-EXPORT_SYMBOL_GPL(unmap_urb_setup_for_dma);
+EXPORT_SYMBOL_GPL(usb_hcd_unmap_urb_setup_for_dma);
 
-void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
+static void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
+{
+	if (hcd->driver->unmap_urb_for_dma)
+		hcd->driver->unmap_urb_for_dma(hcd, urb);
+	else
+		usb_hcd_unmap_urb_for_dma(hcd, urb);
+}
+
+void usb_hcd_unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
 {
 	enum dma_data_direction dir;
 
-	unmap_urb_setup_for_dma(hcd, urb);
+	usb_hcd_unmap_urb_setup_for_dma(hcd, urb);
 
 	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
 	if (urb->transfer_flags & URB_DMA_MAP_SG)
@@ -1314,10 +1319,19 @@ void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
 	urb->transfer_flags &= ~(URB_DMA_MAP_SG | URB_DMA_MAP_PAGE |
 			URB_DMA_MAP_SINGLE | URB_MAP_LOCAL);
 }
-EXPORT_SYMBOL_GPL(unmap_urb_for_dma);
+EXPORT_SYMBOL_GPL(usb_hcd_unmap_urb_for_dma);
 
 static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 			   gfp_t mem_flags)
+{
+	if (hcd->driver->map_urb_for_dma)
+		return hcd->driver->map_urb_for_dma(hcd, urb, mem_flags);
+	else
+		return usb_hcd_map_urb_for_dma(hcd, urb, mem_flags);
+}
+
+int usb_hcd_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
+			    gfp_t mem_flags)
 {
 	enum dma_data_direction dir;
 	int ret = 0;
@@ -1410,10 +1424,11 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 		}
 		if (ret && (urb->transfer_flags & (URB_SETUP_MAP_SINGLE |
 				URB_SETUP_MAP_LOCAL)))
-			unmap_urb_for_dma(hcd, urb);
+			usb_hcd_unmap_urb_for_dma(hcd, urb);
 	}
 	return ret;
 }
+EXPORT_SYMBOL_GPL(usb_hcd_map_urb_for_dma);
 
 /*-------------------------------------------------------------------------*/
 
@@ -1913,7 +1928,7 @@ int usb_hcd_get_frame_number (struct usb_device *udev)
 {
 	struct usb_hcd	*hcd = bus_to_hcd(udev->bus);
 
-	if (!HC_IS_RUNNING (hcd->state))
+	if (!HCD_RH_RUNNING(hcd))
 		return -ESHUTDOWN;
 	return hcd->driver->get_frame_number (hcd);
 }
@@ -1930,9 +1945,15 @@ int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg)
 
 	dev_dbg(&rhdev->dev, "bus %s%s\n",
 			(msg.event & PM_EVENT_AUTO ? "auto-" : ""), "suspend");
+	if (HCD_DEAD(hcd)) {
+		dev_dbg(&rhdev->dev, "skipped %s of dead bus\n", "suspend");
+		return 0;
+	}
+
 	if (!hcd->driver->bus_suspend) {
 		status = -ENOENT;
 	} else {
+		clear_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
 		hcd->state = HC_STATE_QUIESCING;
 		status = hcd->driver->bus_suspend(hcd);
 	}
@@ -1940,7 +1961,12 @@ int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg)
 		usb_set_device_state(rhdev, USB_STATE_SUSPENDED);
 		hcd->state = HC_STATE_SUSPENDED;
 	} else {
-		hcd->state = old_state;
+		spin_lock_irq(&hcd_root_hub_lock);
+		if (!HCD_DEAD(hcd)) {
+			set_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
+			hcd->state = old_state;
+		}
+		spin_unlock_irq(&hcd_root_hub_lock);
 		dev_dbg(&rhdev->dev, "bus %s fail, err %d\n",
 				"suspend", status);
 	}
@@ -1955,9 +1981,13 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 
 	dev_dbg(&rhdev->dev, "usb %s%s\n",
 			(msg.event & PM_EVENT_AUTO ? "auto-" : ""), "resume");
+	if (HCD_DEAD(hcd)) {
+		dev_dbg(&rhdev->dev, "skipped %s of dead bus\n", "resume");
+		return 0;
+	}
 	if (!hcd->driver->bus_resume)
 		return -ENOENT;
-	if (hcd->state == HC_STATE_RUNNING)
+	if (HCD_RH_RUNNING(hcd))
 		return 0;
 
 	hcd->state = HC_STATE_RESUMING;
@@ -1966,10 +1996,15 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 	if (status == 0) {
 		/* TRSMRCY = 10 msec */
 		msleep(10);
-		usb_set_device_state(rhdev, rhdev->actconfig
-				? USB_STATE_CONFIGURED
-				: USB_STATE_ADDRESS);
-		hcd->state = HC_STATE_RUNNING;
+		spin_lock_irq(&hcd_root_hub_lock);
+		if (!HCD_DEAD(hcd)) {
+			usb_set_device_state(rhdev, rhdev->actconfig
+					? USB_STATE_CONFIGURED
+					: USB_STATE_ADDRESS);
+			set_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
+			hcd->state = HC_STATE_RUNNING;
+		}
+		spin_unlock_irq(&hcd_root_hub_lock);
 	} else {
 		hcd->state = old_state;
 		dev_dbg(&rhdev->dev, "bus %s fail, err %d\n",
@@ -2080,7 +2115,7 @@ irqreturn_t usb_hcd_irq (int irq, void *__hcd)
 	 */
 	local_irq_save(flags);
 
-	if (unlikely(hcd->state == HC_STATE_HALT || !HCD_HW_ACCESSIBLE(hcd))) {
+	if (unlikely(HCD_DEAD(hcd) || !HCD_HW_ACCESSIBLE(hcd))) {
 		rc = IRQ_NONE;
 	} else if (hcd->driver->irq(hcd) == IRQ_NONE) {
 		rc = IRQ_NONE;
@@ -2114,6 +2149,8 @@ void usb_hc_died (struct usb_hcd *hcd)
 	dev_err (hcd->self.controller, "HC died; cleaning up\n");
 
 	spin_lock_irqsave (&hcd_root_hub_lock, flags);
+	clear_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
+	set_bit(HCD_FLAG_DEAD, &hcd->flags);
 	if (hcd->rh_registered) {
 		clear_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 
@@ -2256,6 +2293,12 @@ int usb_add_hcd(struct usb_hcd *hcd,
 	 */
 	device_init_wakeup(&rhdev->dev, 1);
 
+	/* HCD_FLAG_RH_RUNNING doesn't matter until the root hub is
+	 * registered.  But since the controller can die at any time,
+	 * let's initialize the flag before touching the hardware.
+	 */
+	set_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
+
 	/* "reset" is misnamed; its role is now one-time init. the controller
 	 * should already have been reset (and boot firmware kicked off etc).
 	 */
@@ -2323,6 +2366,7 @@ int usb_add_hcd(struct usb_hcd *hcd,
 	return retval;
 
 error_create_attr_group:
+	clear_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
 	if (HC_IS_RUNNING(hcd->state))
 		hcd->state = HC_STATE_QUIESCING;
 	spin_lock_irq(&hcd_root_hub_lock);
@@ -2375,6 +2419,7 @@ void usb_remove_hcd(struct usb_hcd *hcd)
 	usb_get_dev(rhdev);
 	sysfs_remove_group(&rhdev->dev.kobj, &usb_bus_attr_group);
 
+	clear_bit(HCD_FLAG_RH_RUNNING, &hcd->flags);
 	if (HC_IS_RUNNING (hcd->state))
 		hcd->state = HC_STATE_QUIESCING;
 
