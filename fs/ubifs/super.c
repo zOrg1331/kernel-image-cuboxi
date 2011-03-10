@@ -512,9 +512,12 @@ static int init_constants_early(struct ubifs_info *c)
 
 	c->leb_cnt = c->vi.size;
 	c->leb_size = c->vi.usable_leb_size;
+	c->leb_start = c->di.leb_start;
 	c->half_leb_size = c->leb_size / 2;
 	c->min_io_size = c->di.min_io_size;
 	c->min_io_shift = fls(c->min_io_size) - 1;
+	c->max_write_size = c->di.max_write_size;
+	c->max_write_shift = fls(c->max_write_size) - 1;
 
 	if (c->leb_size < UBIFS_MIN_LEB_SZ) {
 		ubifs_err("too small LEBs (%d bytes), min. is %d bytes",
@@ -534,6 +537,18 @@ static int init_constants_early(struct ubifs_info *c)
 	}
 
 	/*
+	 * Maximum write size has to be greater or equivalent to min. I/O
+	 * size, and be multiple of min. I/O size.
+	 */
+	if (c->max_write_size < c->min_io_size ||
+	    c->max_write_size % c->min_io_size ||
+	    !is_power_of_2(c->max_write_size)) {
+		ubifs_err("bad write buffer size %d for %d min. I/O unit",
+			  c->max_write_size, c->min_io_size);
+		return -EINVAL;
+	}
+
+	/*
 	 * UBIFS aligns all node to 8-byte boundary, so to make function in
 	 * io.c simpler, assume minimum I/O unit size to be 8 bytes if it is
 	 * less than 8.
@@ -541,6 +556,10 @@ static int init_constants_early(struct ubifs_info *c)
 	if (c->min_io_size < 8) {
 		c->min_io_size = 8;
 		c->min_io_shift = 3;
+		if (c->max_write_size < c->min_io_size) {
+			c->max_write_size = c->min_io_size;
+			c->max_write_shift = c->min_io_shift;
+		}
 	}
 
 	c->ref_node_alsz = ALIGN(UBIFS_REF_NODE_SZ, c->min_io_size);
@@ -1202,11 +1221,7 @@ static int mount_ubifs(struct ubifs_info *c)
 	if (c->bulk_read == 1)
 		bu_init(c);
 
-	/*
-	 * We have to check all CRCs, even for data nodes, when we mount the FS
-	 * (specifically, when we are replaying).
-	 */
-	c->always_chk_crc = 1;
+	c->mounting = 1;
 
 	err = ubifs_read_superblock(c);
 	if (err)
@@ -1382,7 +1397,7 @@ static int mount_ubifs(struct ubifs_info *c)
 	if (err)
 		goto out_infos;
 
-	c->always_chk_crc = 0;
+	c->mounting = 0;
 
 	ubifs_msg("mounted UBI device %d, volume %d, name \"%s\"",
 		  c->vi.ubi_num, c->vi.vol_id, c->vi.name);
@@ -1403,6 +1418,7 @@ static int mount_ubifs(struct ubifs_info *c)
 
 	dbg_msg("compiled on:         " __DATE__ " at " __TIME__);
 	dbg_msg("min. I/O unit size:  %d bytes", c->min_io_size);
+	dbg_msg("max. write size:     %d bytes", c->max_write_size);
 	dbg_msg("LEB size:            %d bytes (%d KiB)",
 		c->leb_size, c->leb_size >> 10);
 	dbg_msg("data journal heads:  %d",
@@ -1543,7 +1559,6 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 	mutex_lock(&c->umount_mutex);
 	dbg_save_space_info(c);
 	c->remounting_rw = 1;
-	c->always_chk_crc = 1;
 
 	err = check_free_space(c);
 	if (err)
@@ -1650,7 +1665,6 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 	dbg_gen("re-mounted read-write");
 	c->ro_mount = 0;
 	c->remounting_rw = 0;
-	c->always_chk_crc = 0;
 	err = dbg_check_space_info(c);
 	mutex_unlock(&c->umount_mutex);
 	return err;
@@ -1667,7 +1681,6 @@ out:
 	c->ileb_buf = NULL;
 	ubifs_lpt_free(c, 1);
 	c->remounting_rw = 0;
-	c->always_chk_crc = 0;
 	mutex_unlock(&c->umount_mutex);
 	return err;
 }
