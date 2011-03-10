@@ -30,79 +30,90 @@
 #define MCFSIM_ICR_LEVEL(l)	((l)<<3)	/* Level l intr */
 #define MCFSIM_ICR_PRI(p)	(p)		/* Priority p intr */
 
-/*
- *	Each vector needs a unique priority and level associated with it.
- *	We don't really care so much what they are, we don't rely on the
- *	traditional priority interrupt scheme of the m68k/ColdFire.
- */
-static u8 intc_intpri = MCFSIM_ICR_LEVEL(6) | MCFSIM_ICR_PRI(6);
-
 #ifdef MCFICM_INTC1
 #define NR_VECS	128
 #else
 #define NR_VECS	64
 #endif
 
-static void intc_irq_mask(unsigned int irq)
+static void intc_irq_mask(struct irq_data *d)
 {
-	if ((irq >= MCFINT_VECBASE) && (irq <= MCFINT_VECBASE + NR_VECS)) {
-		unsigned long imraddr;
-		u32 val, imrbit;
+	unsigned int irq = d->irq - MCFINT_VECBASE;
+	unsigned long imraddr;
+	u32 val, imrbit;
 
-		irq -= MCFINT_VECBASE;
-		imraddr = MCF_IPSBAR;
 #ifdef MCFICM_INTC1
-		imraddr += (irq & 0x40) ? MCFICM_INTC1 : MCFICM_INTC0;
+	imraddr = (irq & 0x40) ? MCFICM_INTC1 : MCFICM_INTC0;
 #else
-		imraddr += MCFICM_INTC0;
+	imraddr = MCFICM_INTC0;
 #endif
-		imraddr += (irq & 0x20) ? MCFINTC_IMRH : MCFINTC_IMRL;
-		imrbit = 0x1 << (irq & 0x1f);
+	imraddr += (irq & 0x20) ? MCFINTC_IMRH : MCFINTC_IMRL;
+	imrbit = 0x1 << (irq & 0x1f);
 
-		val = __raw_readl(imraddr);
-		__raw_writel(val | imrbit, imraddr);
-	}
+	val = __raw_readl(imraddr);
+	__raw_writel(val | imrbit, imraddr);
 }
 
-static void intc_irq_unmask(unsigned int irq)
+static void intc_irq_unmask(struct irq_data *d)
 {
-	if ((irq >= MCFINT_VECBASE) && (irq <= MCFINT_VECBASE + NR_VECS)) {
-		unsigned long intaddr, imraddr, icraddr;
-		u32 val, imrbit;
+	unsigned int irq = d->irq - MCFINT_VECBASE;
+	unsigned long imraddr;
+	u32 val, imrbit;
 
-		irq -= MCFINT_VECBASE;
-		intaddr = MCF_IPSBAR;
 #ifdef MCFICM_INTC1
-		intaddr += (irq & 0x40) ? MCFICM_INTC1 : MCFICM_INTC0;
+	imraddr = (irq & 0x40) ? MCFICM_INTC1 : MCFICM_INTC0;
 #else
-		intaddr += MCFICM_INTC0;
+	imraddr = MCFICM_INTC0;
 #endif
-		imraddr = intaddr + ((irq & 0x20) ? MCFINTC_IMRH : MCFINTC_IMRL);
-		icraddr = intaddr + MCFINTC_ICR0 + (irq & 0x3f);
-		imrbit = 0x1 << (irq & 0x1f);
+	imraddr += ((irq & 0x20) ? MCFINTC_IMRH : MCFINTC_IMRL);
+	imrbit = 0x1 << (irq & 0x1f);
 
-		/* Don't set the "maskall" bit! */
-		if ((irq & 0x20) == 0)
-			imrbit |= 0x1;
+	/* Don't set the "maskall" bit! */
+	if ((irq & 0x20) == 0)
+		imrbit |= 0x1;
 
-		if (__raw_readb(icraddr) == 0)
-			__raw_writeb(intc_intpri--, icraddr);
-
-		val = __raw_readl(imraddr);
-		__raw_writel(val & ~imrbit, imraddr);
-	}
+	val = __raw_readl(imraddr);
+	__raw_writel(val & ~imrbit, imraddr);
 }
 
-static int intc_irq_set_type(unsigned int irq, unsigned int type)
+static int intc_irq_set_type(struct irq_data *d, unsigned int type)
 {
+	return 0;
+}
+
+/*
+ *	Each vector needs a unique priority and level associated with it.
+ *	We don't really care so much what they are, we don't rely on the
+ *	traditional priority interrupt scheme of the m68k/ColdFire. This
+ *	only needs to be set once for an interrupt, and we will never change
+ *	these values once we have set them.
+ */
+static u8 intc_intpri = MCFSIM_ICR_LEVEL(6) | MCFSIM_ICR_PRI(6);
+
+static unsigned int intc_irq_startup(struct irq_data *d)
+{
+	unsigned int irq = d->irq - MCFINT_VECBASE;
+	unsigned long icraddr;
+
+#ifdef MCFICM_INTC1
+	icraddr = (irq & 0x40) ? MCFICM_INTC1 : MCFICM_INTC0;
+#else
+	icraddr = MCFICM_INTC0;
+#endif
+	icraddr += MCFINTC_ICR0 + (irq & 0x3f);
+	if (__raw_readb(icraddr) == 0)
+		__raw_writeb(intc_intpri--, icraddr);
+
+	intc_irq_unmask(d);
 	return 0;
 }
 
 static struct irq_chip intc_irq_chip = {
 	.name		= "CF-INTC",
-	.mask		= intc_irq_mask,
-	.unmask		= intc_irq_unmask,
-	.set_type	= intc_irq_set_type,
+	.irq_startup	= intc_irq_startup,
+	.irq_mask	= intc_irq_mask,
+	.irq_unmask	= intc_irq_unmask,
+	.irq_set_type	= intc_irq_set_type,
 };
 
 void __init init_IRQ(void)
@@ -112,12 +123,12 @@ void __init init_IRQ(void)
 	init_vectors();
 
 	/* Mask all interrupt sources */
-	__raw_writel(0x1, MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_IMRL);
+	__raw_writel(0x1, MCFICM_INTC0 + MCFINTC_IMRL);
 #ifdef MCFICM_INTC1
-	__raw_writel(0x1, MCF_IPSBAR + MCFICM_INTC1 + MCFINTC_IMRL);
+	__raw_writel(0x1, MCFICM_INTC1 + MCFINTC_IMRL);
 #endif
 
-	for (irq = 0; (irq < NR_IRQS); irq++) {
+	for (irq = MCFINT_VECBASE; (irq < MCFINT_VECBASE + NR_VECS); irq++) {
 		set_irq_chip(irq, &intc_irq_chip);
 		set_irq_type(irq, IRQ_TYPE_LEVEL_HIGH);
 		set_irq_handler(irq, handle_level_irq);
