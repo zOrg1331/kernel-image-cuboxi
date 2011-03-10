@@ -85,7 +85,7 @@
 
 #define ASYNC_PF_PER_VCPU 64
 
-extern spinlock_t kvm_lock;
+extern raw_spinlock_t kvm_lock;
 extern struct list_head vm_list;
 
 struct kvm_vcpu;
@@ -448,7 +448,7 @@ struct kvm_arch {
 
 	unsigned long irq_sources_bitmap;
 	s64 kvmclock_offset;
-	spinlock_t tsc_write_lock;
+	raw_spinlock_t tsc_write_lock;
 	u64 last_tsc_nsec;
 	u64 last_tsc_offset;
 	u64 last_tsc_write;
