@@ -453,8 +453,7 @@ static int __devinit pci_fire_pbm_init(struct pci_pbm_info *pbm,
 	return 0;
 }
 
-static int __devinit fire_probe(struct platform_device *op,
-				const struct of_device_id *match)
+static int __devinit fire_probe(struct platform_device *op)
 {
 	struct device_node *dp = op->dev.of_node;
 	struct pci_pbm_info *pbm;
@@ -505,7 +504,7 @@ static struct of_device_id __initdata fire_match[] = {
 	{},
 };
 
-static struct of_platform_driver fire_driver = {
+static struct platform_driver fire_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
@@ -516,7 +515,7 @@ static struct of_platform_driver fire_driver = {
 
 static int __init fire_init(void)
 {
-	return of_register_platform_driver(&fire_driver);
+	return platform_driver_register(&fire_driver);
 }
 
 subsys_initcall(fire_init);
