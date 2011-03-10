@@ -51,11 +51,11 @@ static int __net_init fib4_rules_init(struct net *net)
 {
 	struct fib_table *local_table, *main_table;
 
-	local_table = fib_hash_table(RT_TABLE_LOCAL);
+	local_table = fib_trie_table(RT_TABLE_LOCAL);
 	if (local_table == NULL)
 		return -ENOMEM;
 
-	main_table  = fib_hash_table(RT_TABLE_MAIN);
+	main_table  = fib_trie_table(RT_TABLE_MAIN);
 	if (main_table == NULL)
 		goto fail;
 
@@ -82,7 +82,7 @@ struct fib_table *fib_new_table(struct net *net, u32 id)
 	if (tb)
 		return tb;
 
-	tb = fib_hash_table(id);
+	tb = fib_trie_table(id);
 	if (!tb)
 		return NULL;
 	h = id & (FIB_TABLE_HASHSZ - 1);
@@ -114,21 +114,6 @@ struct fib_table *fib_get_table(struct net *net, u32 id)
 }
 #endif /* CONFIG_IP_MULTIPLE_TABLES */
 
-void fib_select_default(struct net *net,
-			const struct flowi *flp, struct fib_result *res)
-{
-	struct fib_table *tb;
-	int table = RT_TABLE_MAIN;
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	if (res->r == NULL || res->r->action != FR_ACT_TO_TBL)
-		return;
-	table = res->r->table;
-#endif
-	tb = fib_get_table(net, table);
-	if (FIB_RES_GW(*res) && FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK)
-		fib_table_select_default(tb, flp, res);
-}
-
 static void fib_flush(struct net *net)
 {
 	int flushed = 0;
@@ -146,46 +131,6 @@ static void fib_flush(struct net *net)
 	if (flushed)
 		rt_cache_flush(net, -1);
 }
-
-/**
- * __ip_dev_find - find the first device with a given source address.
- * @net: the net namespace
- * @addr: the source address
- * @devref: if true, take a reference on the found device
- *
- * If a caller uses devref=false, it should be protected by RCU, or RTNL
- */
-struct net_device *__ip_dev_find(struct net *net, __be32 addr, bool devref)
-{
-	struct flowi fl = {
-		.fl4_dst = addr,
-	};
-	struct fib_result res = { 0 };
-	struct net_device *dev = NULL;
-	struct fib_table *local_table;
-
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	res.r = NULL;
-#endif
-
-	rcu_read_lock();
-	local_table = fib_get_table(net, RT_TABLE_LOCAL);
-	if (!local_table ||
-	    fib_table_lookup(local_table, &fl, &res, FIB_LOOKUP_NOREF)) {
-		rcu_read_unlock();
-		return NULL;
-	}
-	if (res.type != RTN_LOCAL)
-		goto out;
-	dev = FIB_RES_DEV(res);
-
-	if (dev && devref)
-		dev_hold(dev);
-out:
-	rcu_read_unlock();
-	return dev;
-}
-EXPORT_SYMBOL(__ip_dev_find);
 
 /*
  * Find address type as if only "dev" was present in the system. If
@@ -945,10 +890,12 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 		fib_sync_up(dev);
 #endif
+		fib_update_nh_saddrs(dev);
 		rt_cache_flush(dev_net(dev), -1);
 		break;
 	case NETDEV_DOWN:
 		fib_del_ifaddr(ifa);
+		fib_update_nh_saddrs(dev);
 		if (ifa->ifa_dev->ifa_list == NULL) {
 			/* Last address was deleted from this interface.
 			 * Disable IP.
@@ -1101,5 +1048,5 @@ void __init ip_fib_init(void)
 	register_netdevice_notifier(&fib_netdev_notifier);
 	register_inetaddr_notifier(&fib_inetaddr_notifier);
 
-	fib_hash_init();
+	fib_trie_init();
 }

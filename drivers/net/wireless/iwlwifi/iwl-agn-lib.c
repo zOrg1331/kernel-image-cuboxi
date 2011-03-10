@@ -473,6 +473,11 @@ void iwlagn_rx_handler_setup(struct iwl_priv *priv)
 	priv->rx_handlers[CALIBRATION_COMPLETE_NOTIFICATION] =
 					iwlagn_rx_calib_complete;
 	priv->rx_handlers[REPLY_TX] = iwlagn_rx_reply_tx;
+
+	/* set up notification wait support */
+	spin_lock_init(&priv->_agn.notif_wait_lock);
+	INIT_LIST_HEAD(&priv->_agn.notif_waits);
+	init_waitqueue_head(&priv->_agn.notif_waitq);
 }
 
 void iwlagn_setup_deferred_work(struct iwl_priv *priv)
@@ -604,6 +609,7 @@ const u8 *iwlagn_eeprom_query_addr(const struct iwl_priv *priv,
 struct iwl_mod_params iwlagn_mod_params = {
 	.amsdu_size_8K = 1,
 	.restart_fw = 1,
+	.plcp_check = true,
 	/* the rest are 0 by default */
 };
 
@@ -1157,17 +1163,18 @@ void iwlagn_rx_reply_rx(struct iwl_priv *priv,
 
 	/* rx_status carries information about the packet to mac80211 */
 	rx_status.mactime = le64_to_cpu(phy_res->timestamp);
-	rx_status.freq =
-		ieee80211_channel_to_frequency(le16_to_cpu(phy_res->channel));
 	rx_status.band = (phy_res->phy_flags & RX_RES_PHY_FLAGS_BAND_24_MSK) ?
 				IEEE80211_BAND_2GHZ : IEEE80211_BAND_5GHZ;
+	rx_status.freq =
+		ieee80211_channel_to_frequency(le16_to_cpu(phy_res->channel),
+					       rx_status.band);
 	rx_status.rate_idx =
 		iwlagn_hwrate_to_mac80211_idx(rate_n_flags, rx_status.band);
 	rx_status.flag = 0;
 
 	/* TSF isn't reliable. In order to allow smooth user experience,
 	 * this W/A doesn't propagate it to the mac80211 */
-	/*rx_status.flag |= RX_FLAG_TSFT;*/
+	/*rx_status.flag |= RX_FLAG_MACTIME_MPDU;*/
 
 	priv->ucode_beacon_time = le32_to_cpu(phy_res->beacon_time_stamp);
 
@@ -1389,15 +1396,12 @@ int iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 		u32 extra;
 		u32 suspend_time = 100;
 		u32 scan_suspend_time = 100;
-		unsigned long flags;
 
 		IWL_DEBUG_INFO(priv, "Scanning while associated...\n");
-		spin_lock_irqsave(&priv->lock, flags);
 		if (priv->is_internal_short_scan)
 			interval = 0;
 		else
 			interval = vif->bss_conf.beacon_int;
-		spin_unlock_irqrestore(&priv->lock, flags);
 
 		scan->suspend_time = 0;
 		scan->max_out_time = cpu_to_le32(200 * 1024);
@@ -1801,26 +1805,39 @@ static const __le32 iwlagn_concurrent_lookup[12] = {
 
 void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
 {
-	struct iwlagn_bt_cmd bt_cmd = {
+	struct iwl_basic_bt_cmd basic = {
 		.max_kill = IWLAGN_BT_MAX_KILL_DEFAULT,
 		.bt3_timer_t7_value = IWLAGN_BT3_T7_DEFAULT,
 		.bt3_prio_sample_time = IWLAGN_BT3_PRIO_SAMPLE_DEFAULT,
 		.bt3_timer_t2_value = IWLAGN_BT3_T2_DEFAULT,
 	};
+	struct iwl6000_bt_cmd bt_cmd_6000;
+	struct iwl2000_bt_cmd bt_cmd_2000;
+	int ret;
 
 	BUILD_BUG_ON(sizeof(iwlagn_def_3w_lookup) !=
-			sizeof(bt_cmd.bt3_lookup_table));
+			sizeof(basic.bt3_lookup_table));
 
-	if (priv->cfg->bt_params)
-		bt_cmd.prio_boost = priv->cfg->bt_params->bt_prio_boost;
-	else
-		bt_cmd.prio_boost = 0;
-	bt_cmd.kill_ack_mask = priv->kill_ack_mask;
-	bt_cmd.kill_cts_mask = priv->kill_cts_mask;
+	if (priv->cfg->bt_params) {
+		if (priv->cfg->bt_params->bt_session_2) {
+			bt_cmd_2000.prio_boost = cpu_to_le32(
+				priv->cfg->bt_params->bt_prio_boost);
+			bt_cmd_2000.tx_prio_boost = 0;
+			bt_cmd_2000.rx_prio_boost = 0;
+		} else {
+			bt_cmd_6000.prio_boost =
+				priv->cfg->bt_params->bt_prio_boost;
+			bt_cmd_6000.tx_prio_boost = 0;
+			bt_cmd_6000.rx_prio_boost = 0;
+		}
+	} else {
+		IWL_ERR(priv, "failed to construct BT Coex Config\n");
+		return;
+	}
 
-	bt_cmd.valid = priv->bt_valid;
-	bt_cmd.tx_prio_boost = 0;
-	bt_cmd.rx_prio_boost = 0;
+	basic.kill_ack_mask = priv->kill_ack_mask;
+	basic.kill_cts_mask = priv->kill_cts_mask;
+	basic.valid = priv->bt_valid;
 
 	/*
 	 * Configure BT coex mode to "no coexistence" when the
@@ -1829,49 +1846,45 @@ void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
 	 * IBSS mode (no proper uCode support for coex then).
 	 */
 	if (!bt_coex_active || priv->iw_mode == NL80211_IFTYPE_ADHOC) {
-		bt_cmd.flags = 0;
+		basic.flags = IWLAGN_BT_FLAG_COEX_MODE_DISABLED;
 	} else {
-		bt_cmd.flags = IWLAGN_BT_FLAG_COEX_MODE_3W <<
+		basic.flags = IWLAGN_BT_FLAG_COEX_MODE_3W <<
 					IWLAGN_BT_FLAG_COEX_MODE_SHIFT;
 		if (priv->cfg->bt_params &&
 		    priv->cfg->bt_params->bt_sco_disable)
-			bt_cmd.flags |= IWLAGN_BT_FLAG_SYNC_2_BT_DISABLE;
+			basic.flags |= IWLAGN_BT_FLAG_SYNC_2_BT_DISABLE;
 
 		if (priv->bt_ch_announce)
-			bt_cmd.flags |= IWLAGN_BT_FLAG_CHANNEL_INHIBITION;
-		IWL_DEBUG_INFO(priv, "BT coex flag: 0X%x\n", bt_cmd.flags);
+			basic.flags |= IWLAGN_BT_FLAG_CHANNEL_INHIBITION;
+		IWL_DEBUG_INFO(priv, "BT coex flag: 0X%x\n", basic.flags);
 	}
-	priv->bt_enable_flag = bt_cmd.flags;
+	priv->bt_enable_flag = basic.flags;
 	if (priv->bt_full_concurrent)
-		memcpy(bt_cmd.bt3_lookup_table, iwlagn_concurrent_lookup,
+		memcpy(basic.bt3_lookup_table, iwlagn_concurrent_lookup,
 			sizeof(iwlagn_concurrent_lookup));
 	else
-		memcpy(bt_cmd.bt3_lookup_table, iwlagn_def_3w_lookup,
+		memcpy(basic.bt3_lookup_table, iwlagn_def_3w_lookup,
 			sizeof(iwlagn_def_3w_lookup));
 
 	IWL_DEBUG_INFO(priv, "BT coex %s in %s mode\n",
-		       bt_cmd.flags ? "active" : "disabled",
+		       basic.flags ? "active" : "disabled",
 		       priv->bt_full_concurrent ?
 		       "full concurrency" : "3-wire");
 
-	if (iwl_send_cmd_pdu(priv, REPLY_BT_CONFIG, sizeof(bt_cmd), &bt_cmd))
+	if (priv->cfg->bt_params->bt_session_2) {
+		memcpy(&bt_cmd_2000.basic, &basic,
+			sizeof(basic));
+		ret = iwl_send_cmd_pdu(priv, REPLY_BT_CONFIG,
+			sizeof(bt_cmd_2000), &bt_cmd_2000);
+	} else {
+		memcpy(&bt_cmd_6000.basic, &basic,
+			sizeof(basic));
+		ret = iwl_send_cmd_pdu(priv, REPLY_BT_CONFIG,
+			sizeof(bt_cmd_6000), &bt_cmd_6000);
+	}
+	if (ret)
 		IWL_ERR(priv, "failed to send BT Coex Config\n");
 
-	/*
-	 * When we are doing a restart, need to also reconfigure BT
-	 * SCO to the device. If not doing a restart, bt_sco_active
-	 * will always be false, so there's no need to have an extra
-	 * variable to check for it.
-	 */
-	if (priv->bt_sco_active) {
-		struct iwlagn_bt_sco_cmd sco_cmd = { .flags = 0 };
-
-		if (priv->bt_sco_active)
-			sco_cmd.flags |= IWLAGN_BT_SCO_ACTIVE;
-		if (iwl_send_cmd_pdu(priv, REPLY_BT_COEX_SCO,
-				     sizeof(sco_cmd), &sco_cmd))
-			IWL_ERR(priv, "failed to send BT SCO command\n");
-	}
 }
 
 static void iwlagn_bt_traffic_change_work(struct work_struct *work)
@@ -1880,6 +1893,11 @@ static void iwlagn_bt_traffic_change_work(struct work_struct *work)
 		container_of(work, struct iwl_priv, bt_traffic_change_work);
 	struct iwl_rxon_context *ctx;
 	int smps_request = -1;
+
+	if (priv->bt_enable_flag == IWLAGN_BT_FLAG_COEX_MODE_DISABLED) {
+		/* bt coex disabled */
+		return;
+	}
 
 	/*
 	 * Note: bt_traffic_load can be overridden by scan complete and
@@ -1991,12 +2009,14 @@ static void iwlagn_print_uartmsg(struct iwl_priv *priv,
 		(BT_UART_MSG_FRAME6DISCOVERABLE_MSK & uart_msg->frame6) >>
 			BT_UART_MSG_FRAME6DISCOVERABLE_POS);
 
-	IWL_DEBUG_NOTIF(priv, "Sniff Activity = 0x%X, Inquiry/Page SR Mode = "
-			"0x%X, Connectable = 0x%X",
+	IWL_DEBUG_NOTIF(priv, "Sniff Activity = 0x%X, Page = "
+			"0x%X, Inquiry = 0x%X, Connectable = 0x%X",
 		(BT_UART_MSG_FRAME7SNIFFACTIVITY_MSK & uart_msg->frame7) >>
 			BT_UART_MSG_FRAME7SNIFFACTIVITY_POS,
-		(BT_UART_MSG_FRAME7INQUIRYPAGESRMODE_MSK & uart_msg->frame7) >>
-			BT_UART_MSG_FRAME7INQUIRYPAGESRMODE_POS,
+		(BT_UART_MSG_FRAME7PAGE_MSK & uart_msg->frame7) >>
+			BT_UART_MSG_FRAME7PAGE_POS,
+		(BT_UART_MSG_FRAME7INQUIRY_MSK & uart_msg->frame7) >>
+			BT_UART_MSG_FRAME7INQUIRY_POS,
 		(BT_UART_MSG_FRAME7CONNECTABLE_MSK & uart_msg->frame7) >>
 			BT_UART_MSG_FRAME7CONNECTABLE_POS);
 }
@@ -2032,8 +2052,12 @@ void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 	unsigned long flags;
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_bt_coex_profile_notif *coex = &pkt->u.bt_coex_profile_notif;
-	struct iwlagn_bt_sco_cmd sco_cmd = { .flags = 0 };
 	struct iwl_bt_uart_msg *uart_msg = &coex->last_bt_uart_msg;
+
+	if (priv->bt_enable_flag == IWLAGN_BT_FLAG_COEX_MODE_DISABLED) {
+		/* bt coex disabled */
+		return;
+	}
 
 	IWL_DEBUG_NOTIF(priv, "BT Coex notification:\n");
 	IWL_DEBUG_NOTIF(priv, "    status: %d\n", coex->bt_status);
@@ -2062,15 +2086,6 @@ void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 			priv->bt_status = coex->bt_status;
 			queue_work(priv->workqueue,
 				   &priv->bt_traffic_change_work);
-		}
-		if (priv->bt_sco_active !=
-		    (uart_msg->frame3 & BT_UART_MSG_FRAME3SCOESCO_MSK)) {
-			priv->bt_sco_active = uart_msg->frame3 &
-				BT_UART_MSG_FRAME3SCOESCO_MSK;
-			if (priv->bt_sco_active)
-				sco_cmd.flags |= IWLAGN_BT_SCO_ACTIVE;
-			iwl_send_cmd_pdu_async(priv, REPLY_BT_COEX_SCO,
-				       sizeof(sco_cmd), &sco_cmd, NULL);
 		}
 	}
 
@@ -2388,4 +2403,45 @@ int iwl_dump_fh(struct iwl_priv *priv, char **buf, bool display)
 			iwl_read_direct32(priv, fh_tbl[i]));
 	}
 	return 0;
+}
+
+/* notification wait support */
+void iwlagn_init_notification_wait(struct iwl_priv *priv,
+				   struct iwl_notification_wait *wait_entry,
+				   void (*fn)(struct iwl_priv *priv,
+					      struct iwl_rx_packet *pkt),
+				   u8 cmd)
+{
+	wait_entry->fn = fn;
+	wait_entry->cmd = cmd;
+	wait_entry->triggered = false;
+
+	spin_lock_bh(&priv->_agn.notif_wait_lock);
+	list_add(&wait_entry->list, &priv->_agn.notif_waits);
+	spin_unlock_bh(&priv->_agn.notif_wait_lock);
+}
+
+signed long iwlagn_wait_notification(struct iwl_priv *priv,
+				     struct iwl_notification_wait *wait_entry,
+				     unsigned long timeout)
+{
+	int ret;
+
+	ret = wait_event_timeout(priv->_agn.notif_waitq,
+				 &wait_entry->triggered,
+				 timeout);
+
+	spin_lock_bh(&priv->_agn.notif_wait_lock);
+	list_del(&wait_entry->list);
+	spin_unlock_bh(&priv->_agn.notif_wait_lock);
+
+	return ret;
+}
+
+void iwlagn_remove_notification(struct iwl_priv *priv,
+				struct iwl_notification_wait *wait_entry)
+{
+	spin_lock_bh(&priv->_agn.notif_wait_lock);
+	list_del(&wait_entry->list);
+	spin_unlock_bh(&priv->_agn.notif_wait_lock);
 }
