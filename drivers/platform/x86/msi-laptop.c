@@ -445,8 +445,7 @@ static struct platform_device *msipf_device;
 
 static int dmi_check_cb(const struct dmi_system_id *id)
 {
-	printk(KERN_INFO "msi-laptop: Identified laptop model '%s'.\n",
-	       id->ident);
+	pr_info("msi-laptop: Identified laptop model '%s'.\n", id->ident);
 	return 1;
 }
 
@@ -834,8 +833,7 @@ static int load_scm_model_init(struct platform_device *sdev)
 
 	result = i8042_install_filter(msi_laptop_i8042_filter);
 	if (result) {
-		printk(KERN_ERR
-			"msi-laptop: Unable to install key filter\n");
+		pr_err("msi-laptop: Unable to install key filter\n");
 		goto fail_filter;
 	}
 
@@ -875,7 +873,7 @@ static int __init msi_init(void)
 	/* Register backlight stuff */
 
 	if (acpi_video_backlight_support()) {
-		printk(KERN_INFO "MSI: Brightness ignored, must be controlled "
+		pr_info("MSI: Brightness ignored, must be controlled "
 		       "by ACPI video driver\n");
 	} else {
 		struct backlight_properties props;
@@ -929,7 +927,8 @@ static int __init msi_init(void)
 	if (auto_brightness != 2)
 		set_auto_brightness(auto_brightness);
 
-	printk(KERN_INFO "msi-laptop: driver "MSI_DRIVER_VERSION" successfully loaded.\n");
+	pr_info("msi-laptop: driver "MSI_DRIVER_VERSION
+		" successfully loaded.\n");
 
 	return 0;
 
@@ -977,7 +976,7 @@ static void __exit msi_cleanup(void)
 	if (auto_brightness != 2)
 		set_auto_brightness(1);
 
-	printk(KERN_INFO "msi-laptop: driver unloaded.\n");
+	pr_info("msi-laptop: driver unloaded.\n");
 }
 
 module_init(msi_init);
