@@ -1545,9 +1545,27 @@ static void sdhci_data_irq(struct sdhci_host *host, u32 intmask)
 		 * boundaries, but as we can't disable the feature
 		 * we need to at least restart the transfer.
 		 */
-		if (intmask & SDHCI_INT_DMA_END)
-			sdhci_writel(host, sdhci_readl(host, SDHCI_DMA_ADDRESS),
-				SDHCI_DMA_ADDRESS);
+		if (intmask & SDHCI_INT_DMA_END) {
+			u32 dmastart, dmanow;
+			dmastart = sg_dma_address(host->data->sg);
+			dmanow = sdhci_readl(host, SDHCI_DMA_ADDRESS);
+			if (dmanow == dmastart) {
+				/*
+				 * HW failed to increase the address.
+				 * Update to the next 512KB block boundary.
+				 */
+				dmanow = (dmanow & ~0x7ffff) + 0x80000;
+				if (dmanow > dmastart + host->data->blksz *
+							host->data->blocks) {
+					WARN_ON(1);
+					dmanow = dmastart;
+				}
+				DBG("%s: next DMA address forced "
+				    "from 0x%08x to 0x%08x\n",
+				    mmc_hostname(host->mmc), dmastart, dmanow);
+			}
+			sdhci_writel(host, dmanow, SDHCI_DMA_ADDRESS);
+		}
 
 		if (intmask & SDHCI_INT_DATA_END) {
 			if (host->cmd) {
