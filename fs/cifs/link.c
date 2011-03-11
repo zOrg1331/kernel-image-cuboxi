@@ -175,7 +175,7 @@ CIFSFormatMFSymlink(u8 *buf, unsigned int buf_len, const char *link_str)
 }
 
 static int
-CIFSCreateMFSymLink(const int xid, struct cifsTconInfo *tcon,
+CIFSCreateMFSymLink(const int xid, struct cifs_tcon *tcon,
 		    const char *fromName, const char *toName,
 		    const struct nls_table *nls_codepage, int remap)
 {
@@ -219,7 +219,7 @@ CIFSCreateMFSymLink(const int xid, struct cifsTconInfo *tcon,
 }
 
 static int
-CIFSQueryMFSymLink(const int xid, struct cifsTconInfo *tcon,
+CIFSQueryMFSymLink(const int xid, struct cifs_tcon *tcon,
 		   const unsigned char *searchName, char **symlinkinfo,
 		   const struct nls_table *nls_codepage, int remap)
 {
@@ -291,7 +291,7 @@ CIFSCheckMFSymlink(struct cifs_fattr *fattr,
 	int oplock = 0;
 	__u16 netfid = 0;
 	struct tcon_link *tlink;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	u8 *buf;
 	char *pbuf;
 	unsigned int bytes_read = 0;
@@ -370,7 +370,7 @@ cifs_hardlink(struct dentry *old_file, struct inode *inode,
 	char *toName = NULL;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct tcon_link *tlink;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	struct cifsInodeInfo *cifsInode;
 
 	tlink = cifs_sb_tlink(cifs_sb);
@@ -445,7 +445,7 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 	char *target_path = NULL;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct tcon_link *tlink = NULL;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 
 	xid = GetXid();
 
@@ -518,7 +518,7 @@ cifs_symlink(struct inode *inode, struct dentry *direntry, const char *symname)
 	int xid;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct tcon_link *tlink;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	char *full_path = NULL;
 	struct inode *newinode = NULL;
 

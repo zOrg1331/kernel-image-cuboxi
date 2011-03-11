@@ -110,8 +110,8 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 	struct list_head *tmp1, *tmp2, *tmp3;
 	struct mid_q_entry *mid_entry;
 	struct TCP_Server_Info *server;
-	struct cifsSesInfo *ses;
-	struct cifsTconInfo *tcon;
+	struct cifs_ses *ses;
+	struct cifs_tcon *tcon;
 	int i, j;
 	__u32 dev_type;
 
@@ -152,7 +152,7 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 				    tcp_ses_list);
 		i++;
 		list_for_each(tmp2, &server->smb_ses_list) {
-			ses = list_entry(tmp2, struct cifsSesInfo,
+			ses = list_entry(tmp2, struct cifs_ses,
 					 smb_ses_list);
 			if ((ses->serverDomain == NULL) ||
 				(ses->serverOS == NULL) ||
@@ -171,7 +171,7 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 			seq_printf(m, "TCP status: %d\n\tLocal Users To "
 				   "Server: %d SecMode: 0x%x Req On Wire: %d",
 				   server->tcpStatus, server->srv_count,
-				   server->secMode,
+				   server->sec_mode,
 				   atomic_read(&server->inFlight));
 
 #ifdef CONFIG_CIFS_STATS2
@@ -183,7 +183,7 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 			seq_puts(m, "\n\tShares:");
 			j = 0;
 			list_for_each(tmp3, &ses->tcon_list) {
-				tcon = list_entry(tmp3, struct cifsTconInfo,
+				tcon = list_entry(tmp3, struct cifs_tcon,
 						  tcon_list);
 				++j;
 				dev_type = le32_to_cpu(tcon->fsDevInfo.DeviceType);
@@ -249,6 +249,55 @@ static const struct file_operations cifs_debug_data_proc_fops = {
 };
 
 #ifdef CONFIG_CIFS_STATS
+
+#ifdef CONFIG_CIFS_SMB2
+static void smb2_clear_stats(struct cifs_tcon *tcon)
+{
+	int i;
+
+	atomic_set(&tcon->num_smbs_sent, 0);
+	for (i = 0; i < NUMBER_OF_SMB2_COMMANDS; i++) {
+		atomic_set(&tcon->stats.smb2_stats.smb2_com_sent[i], 0);
+		atomic_set(&tcon->stats.smb2_stats.smb2_com_fail[i], 0);
+	}
+}
+#endif /* CONFIG_CIFS_SMB2 */
+
+static void clear_cifs_stats(struct cifs_tcon *tcon)
+{
+	atomic_set(&tcon->num_smbs_sent, 0);
+
+#ifdef CONFIG_CIFS_SMB2
+	if (tcon->ses->server->is_smb2) {
+		smb2_clear_stats(tcon);
+		return;
+	}
+#endif /* CONFIG_CIFS_SMB2 */
+
+	/* cifs specific statistics, not applicable to smb2 sessions */
+	atomic_set(&tcon->stats.cifs_stats.num_writes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_reads, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_flushes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_oplock_brks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_opens, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_posixopens, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_posixmkdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_closes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_deletes, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_mkdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_rmdirs, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_renames, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_t2renames, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_ffirst, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_fnext, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_fclose, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_hardlinks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_symlinks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_locks, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_acl_get, 0);
+	atomic_set(&tcon->stats.cifs_stats.num_acl_set, 0);
+}
+
 static ssize_t cifs_stats_proc_write(struct file *file,
 		const char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -256,8 +305,8 @@ static ssize_t cifs_stats_proc_write(struct file *file,
 	int rc;
 	struct list_head *tmp1, *tmp2, *tmp3;
 	struct TCP_Server_Info *server;
-	struct cifsSesInfo *ses;
-	struct cifsTconInfo *tcon;
+	struct cifs_ses *ses;
+	struct cifs_tcon *tcon;
 
 	rc = get_user(c, buffer);
 	if (rc)
@@ -273,31 +322,13 @@ static ssize_t cifs_stats_proc_write(struct file *file,
 			server = list_entry(tmp1, struct TCP_Server_Info,
 					    tcp_ses_list);
 			list_for_each(tmp2, &server->smb_ses_list) {
-				ses = list_entry(tmp2, struct cifsSesInfo,
+				ses = list_entry(tmp2, struct cifs_ses,
 						 smb_ses_list);
 				list_for_each(tmp3, &ses->tcon_list) {
 					tcon = list_entry(tmp3,
-							  struct cifsTconInfo,
+							  struct cifs_tcon,
 							  tcon_list);
-					atomic_set(&tcon->num_smbs_sent, 0);
-					atomic_set(&tcon->num_writes, 0);
-					atomic_set(&tcon->num_reads, 0);
-					atomic_set(&tcon->num_oplock_brks, 0);
-					atomic_set(&tcon->num_opens, 0);
-					atomic_set(&tcon->num_posixopens, 0);
-					atomic_set(&tcon->num_posixmkdirs, 0);
-					atomic_set(&tcon->num_closes, 0);
-					atomic_set(&tcon->num_deletes, 0);
-					atomic_set(&tcon->num_mkdirs, 0);
-					atomic_set(&tcon->num_rmdirs, 0);
-					atomic_set(&tcon->num_renames, 0);
-					atomic_set(&tcon->num_t2renames, 0);
-					atomic_set(&tcon->num_ffirst, 0);
-					atomic_set(&tcon->num_fnext, 0);
-					atomic_set(&tcon->num_fclose, 0);
-					atomic_set(&tcon->num_hardlinks, 0);
-					atomic_set(&tcon->num_symlinks, 0);
-					atomic_set(&tcon->num_locks, 0);
+					clear_cifs_stats(tcon);
 				}
 			}
 		}
@@ -307,13 +338,51 @@ static ssize_t cifs_stats_proc_write(struct file *file,
 	return count;
 }
 
+static void cifs_stats_print(struct seq_file *m, struct cifs_tcon *tcon)
+{
+	if (tcon->need_reconnect)
+		seq_puts(m, "\tDISCONNECTED ");
+	seq_printf(m, "\nSMBs: %d Oplock Breaks: %d",
+		atomic_read(&tcon->num_smbs_sent),
+		atomic_read(&tcon->stats.cifs_stats.num_oplock_brks));
+	seq_printf(m, "\nReads:  %d Bytes: %lld",
+		atomic_read(&tcon->stats.cifs_stats.num_reads),
+		(long long)(tcon->bytes_read));
+	seq_printf(m, "\nWrites: %d Bytes: %lld",
+		atomic_read(&tcon->stats.cifs_stats.num_writes),
+		(long long)(tcon->bytes_written));
+	seq_printf(m, "\nFlushes: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_flushes));
+	seq_printf(m, "\nLocks: %d HardLinks: %d Symlinks: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_locks),
+		atomic_read(&tcon->stats.cifs_stats.num_hardlinks),
+		atomic_read(&tcon->stats.cifs_stats.num_symlinks));
+	seq_printf(m, "\nOpens: %d Closes: %d Deletes: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_opens),
+		atomic_read(&tcon->stats.cifs_stats.num_closes),
+		atomic_read(&tcon->stats.cifs_stats.num_deletes));
+	seq_printf(m, "\nPosix Opens: %d Posix Mkdirs: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_posixopens),
+		atomic_read(&tcon->stats.cifs_stats.num_posixmkdirs));
+	seq_printf(m, "\nMkdirs: %d Rmdirs: %d",
+		atomic_read(&tcon->stats.cifs_stats.num_mkdirs),
+		atomic_read(&tcon->stats.cifs_stats.num_rmdirs));
+	seq_printf(m, "\nRenames: %d T2 Renames %d",
+		atomic_read(&tcon->stats.cifs_stats.num_renames),
+		atomic_read(&tcon->stats.cifs_stats.num_t2renames));
+	seq_printf(m, "\nFindFirst: %d FNext %d FClose %d",
+		atomic_read(&tcon->stats.cifs_stats.num_ffirst),
+		atomic_read(&tcon->stats.cifs_stats.num_fnext),
+		atomic_read(&tcon->stats.cifs_stats.num_fclose));
+}
+
 static int cifs_stats_proc_show(struct seq_file *m, void *v)
 {
 	int i;
 	struct list_head *tmp1, *tmp2, *tmp3;
 	struct TCP_Server_Info *server;
-	struct cifsSesInfo *ses;
-	struct cifsTconInfo *tcon;
+	struct cifs_ses *ses;
+	struct cifs_tcon *tcon;
 
 	seq_printf(m,
 			"Resources in use\nCIFS Session: %d\n",
@@ -346,52 +415,15 @@ static int cifs_stats_proc_show(struct seq_file *m, void *v)
 		server = list_entry(tmp1, struct TCP_Server_Info,
 				    tcp_ses_list);
 		list_for_each(tmp2, &server->smb_ses_list) {
-			ses = list_entry(tmp2, struct cifsSesInfo,
+			ses = list_entry(tmp2, struct cifs_ses,
 					 smb_ses_list);
 			list_for_each(tmp3, &ses->tcon_list) {
 				tcon = list_entry(tmp3,
-						  struct cifsTconInfo,
+						  struct cifs_tcon,
 						  tcon_list);
 				i++;
 				seq_printf(m, "\n%d) %s", i, tcon->treeName);
-				if (tcon->need_reconnect)
-					seq_puts(m, "\tDISCONNECTED ");
-				seq_printf(m, "\nSMBs: %d Oplock Breaks: %d",
-					atomic_read(&tcon->num_smbs_sent),
-					atomic_read(&tcon->num_oplock_brks));
-				seq_printf(m, "\nReads:  %d Bytes: %lld",
-					atomic_read(&tcon->num_reads),
-					(long long)(tcon->bytes_read));
-				seq_printf(m, "\nWrites: %d Bytes: %lld",
-					atomic_read(&tcon->num_writes),
-					(long long)(tcon->bytes_written));
-				seq_printf(m, "\nFlushes: %d",
-					atomic_read(&tcon->num_flushes));
-				seq_printf(m, "\nLocks: %d HardLinks: %d "
-					      "Symlinks: %d",
-					atomic_read(&tcon->num_locks),
-					atomic_read(&tcon->num_hardlinks),
-					atomic_read(&tcon->num_symlinks));
-				seq_printf(m, "\nOpens: %d Closes: %d "
-					      "Deletes: %d",
-					atomic_read(&tcon->num_opens),
-					atomic_read(&tcon->num_closes),
-					atomic_read(&tcon->num_deletes));
-				seq_printf(m, "\nPosix Opens: %d "
-					      "Posix Mkdirs: %d",
-					atomic_read(&tcon->num_posixopens),
-					atomic_read(&tcon->num_posixmkdirs));
-				seq_printf(m, "\nMkdirs: %d Rmdirs: %d",
-					atomic_read(&tcon->num_mkdirs),
-					atomic_read(&tcon->num_rmdirs));
-				seq_printf(m, "\nRenames: %d T2 Renames %d",
-					atomic_read(&tcon->num_renames),
-					atomic_read(&tcon->num_t2renames));
-				seq_printf(m, "\nFindFirst: %d FNext %d "
-					      "FClose %d",
-					atomic_read(&tcon->num_ffirst),
-					atomic_read(&tcon->num_fnext),
-					atomic_read(&tcon->num_fclose));
+				cifs_stats_print(m, tcon);
 			}
 		}
 	}
@@ -423,7 +455,6 @@ static const struct file_operations cifs_lookup_cache_proc_fops;
 static const struct file_operations traceSMB_proc_fops;
 static const struct file_operations cifs_multiuser_mount_proc_fops;
 static const struct file_operations cifs_security_flags_proc_fops;
-static const struct file_operations cifs_experimental_proc_fops;
 static const struct file_operations cifs_linux_ext_proc_fops;
 
 void
@@ -441,8 +472,6 @@ cifs_proc_init(void)
 	proc_create("cifsFYI", 0, proc_fs_cifs, &cifsFYI_proc_fops);
 	proc_create("traceSMB", 0, proc_fs_cifs, &traceSMB_proc_fops);
 	proc_create("OplockEnabled", 0, proc_fs_cifs, &cifs_oplock_proc_fops);
-	proc_create("Experimental", 0, proc_fs_cifs,
-		    &cifs_experimental_proc_fops);
 	proc_create("LinuxExtensionsEnabled", 0, proc_fs_cifs,
 		    &cifs_linux_ext_proc_fops);
 	proc_create("MultiuserMount", 0, proc_fs_cifs,
@@ -469,7 +498,6 @@ cifs_proc_clean(void)
 	remove_proc_entry("OplockEnabled", proc_fs_cifs);
 	remove_proc_entry("SecurityFlags", proc_fs_cifs);
 	remove_proc_entry("LinuxExtensionsEnabled", proc_fs_cifs);
-	remove_proc_entry("Experimental", proc_fs_cifs);
 	remove_proc_entry("LookupCacheEnabled", proc_fs_cifs);
 	remove_proc_entry("fs/cifs", NULL);
 }
@@ -548,45 +576,6 @@ static const struct file_operations cifs_oplock_proc_fops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 	.write		= cifs_oplock_proc_write,
-};
-
-static int cifs_experimental_proc_show(struct seq_file *m, void *v)
-{
-	seq_printf(m, "%d\n", experimEnabled);
-	return 0;
-}
-
-static int cifs_experimental_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, cifs_experimental_proc_show, NULL);
-}
-
-static ssize_t cifs_experimental_proc_write(struct file *file,
-		const char __user *buffer, size_t count, loff_t *ppos)
-{
-	char c;
-	int rc;
-
-	rc = get_user(c, buffer);
-	if (rc)
-		return rc;
-	if (c == '0' || c == 'n' || c == 'N')
-		experimEnabled = 0;
-	else if (c == '1' || c == 'y' || c == 'Y')
-		experimEnabled = 1;
-	else if (c == '2')
-		experimEnabled = 2;
-
-	return count;
-}
-
-static const struct file_operations cifs_experimental_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= cifs_experimental_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-	.write		= cifs_experimental_proc_write,
 };
 
 static int cifs_linux_ext_proc_show(struct seq_file *m, void *v)
