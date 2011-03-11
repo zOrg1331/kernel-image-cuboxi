@@ -7,6 +7,7 @@
 
 #define	CPU_NAME		"COLDFIRE(m54xx)"
 #define	CPU_INSTR_PER_JIFFY	2
+#define	MCF_BUSCLK		(MCF_CLK / 2)
 
 #include <asm/m54xxacr.h>
 
@@ -15,7 +16,8 @@
 /*
  *      Interrupt Controller Registers
  */
-#define MCFICM_INTC0		0x0700		/* Base for Interrupt Ctrl 0 */
+#define MCFICM_INTC0		(MCF_MBAR + 0x700) 	/* Base for Interrupt Ctrl 0 */
+
 #define MCFINTC_IPRH		0x00		/* Interrupt pending 32-63 */
 #define MCFINTC_IPRL		0x04		/* Interrupt pending 1-31 */
 #define MCFINTC_IMRH		0x08		/* Interrupt mask 32-63 */
