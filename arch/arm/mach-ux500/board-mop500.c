@@ -19,6 +19,7 @@
 #include <linux/amba/pl022.h>
 #include <linux/spi/spi.h>
 #include <linux/mfd/ab8500.h>
+#include <linux/regulator/ab8500.h>
 #include <linux/mfd/tc3589x.h>
 
 #include <asm/mach-types.h>
