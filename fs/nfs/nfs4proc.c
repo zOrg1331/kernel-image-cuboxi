@@ -3262,7 +3262,7 @@ static int buf_to_pages_noslab(const void *buf, size_t buflen,
 	spages = pages;
 
 	do {
-		len = min(PAGE_CACHE_SIZE, buflen);
+		len = min_t(size_t, PAGE_CACHE_SIZE, buflen);
 		newpage = alloc_page(GFP_KERNEL);
 
 		if (newpage == NULL)
@@ -4150,7 +4150,7 @@ static void nfs4_lock_release(void *calldata)
 		task = nfs4_do_unlck(&data->fl, data->ctx, data->lsp,
 				data->arg.lock_seqid);
 		if (!IS_ERR(task))
-			rpc_put_task(task);
+			rpc_put_task_async(task);
 		dprintk("%s: cancelling lock!\n", __func__);
 	} else
 		nfs_free_seqid(data->arg.lock_seqid);
@@ -5028,10 +5028,20 @@ int nfs4_proc_create_session(struct nfs_client *clp)
 	int status;
 	unsigned *ptr;
 	struct nfs4_session *session = clp->cl_session;
+	long timeout = 0;
+	int err;
 
 	dprintk("--> %s clp=%p session=%p\n", __func__, clp, session);
 
-	status = _nfs4_proc_create_session(clp);
+	do {
+		status = _nfs4_proc_create_session(clp);
+		if (status == -NFS4ERR_DELAY) {
+			err = nfs4_delay(clp->cl_rpcclient, &timeout);
+			if (err)
+				status = err;
+		}
+	} while (status == -NFS4ERR_DELAY);
+
 	if (status)
 		goto out;
 
@@ -5227,7 +5237,7 @@ static int nfs41_proc_async_sequence(struct nfs_client *clp, struct rpc_cred *cr
 	if (IS_ERR(task))
 		ret = PTR_ERR(task);
 	else
-		rpc_put_task(task);
+		rpc_put_task_async(task);
 	dprintk("<-- %s status=%d\n", __func__, ret);
 	return ret;
 }
@@ -5349,6 +5359,9 @@ static int nfs41_proc_reclaim_complete(struct nfs_client *clp)
 		status = PTR_ERR(task);
 		goto out;
 	}
+        status = nfs4_wait_for_completion_rpc_task(task);
+        if (status == 0)
+                status = task->tk_status;
 	rpc_put_task(task);
 	return 0;
 out:
