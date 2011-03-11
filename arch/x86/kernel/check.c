@@ -107,7 +107,7 @@ void __init setup_bios_corruption_check(void)
 	}
 
 	if (num_scan_areas)
-		printk(KERN_INFO "Scanning %d areas for low memory " "corruption\n", num_scan_areas);
+		printk(KERN_INFO "Scanning %d areas for low memory corruption\n", num_scan_areas);
 }
 
 
