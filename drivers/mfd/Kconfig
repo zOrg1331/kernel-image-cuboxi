@@ -167,6 +167,16 @@ config TWL4030_CORE
 	  high speed USB OTG transceiver, an audio codec (on most
 	  versions) and many other features.
 
+config TWL4030_MADC
+	tristate "Texas Instruments TWL4030 MADC"
+	depends on TWL4030_CORE
+	help
+	This driver provides support for triton TWL4030-MADC. The
+	driver supports both RT and SW conversion methods.
+
+	This driver can be built as a module. If so it will be
+	named twl4030-madc
+
 config TWL4030_POWER
 	bool "Support power resources on TWL4030 family chips"
 	depends on TWL4030_CORE && ARM
@@ -522,6 +532,13 @@ config AB8500_DEBUG
        help
          Select this option if you want debug information using the debug
          filesystem, debugfs.
+
+config AB8500_GPADC
+	bool "AB8500 GPADC driver"
+	depends on AB8500_CORE && REGULATOR_AB8500
+	default y
+	help
+	  AB8500 GPADC driver used to convert Acc and battery/ac/usb voltage
 
 config AB3550_CORE
         bool "ST-Ericsson AB3550 Mixed Signal Circuit core functions"
