@@ -1,5 +1,6 @@
 
 #include <asm/io.h>
+#include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/version.h>
 #include "XGIfb.h"
@@ -10,7 +11,7 @@
 #include "vb_struct.h"
 #include "vb_util.h"
 #include "vb_table.h"
-
+#include "vb_setmode.h"
 
 
 #define  IndexMask 0xff
@@ -20,177 +21,115 @@
 
 
 
-unsigned char  XGI_IsLCDDualLink(struct vb_device_info *pVBInfo);
-unsigned char  XGI_SetCRT2Group301(unsigned short ModeNo,
-			struct xgi_hw_device_info *HwDeviceExtension,
-			struct vb_device_info *pVBInfo);
-unsigned char  XGI_BacklightByDrv(struct vb_device_info *pVBInfo);
-
-unsigned char  XGI_IsLCDON(struct vb_device_info *pVBInfo);
-unsigned char  XGI_DisableChISLCD(struct vb_device_info *pVBInfo);
-unsigned char  XGI_EnableChISLCD(struct vb_device_info *pVBInfo);
-unsigned char  XGI_AjustCRT2Rate(unsigned short ModeNo,
+static unsigned char  XGI_AjustCRT2Rate(unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			unsigned short RefreshRateTableIndex,
 			unsigned short *i, struct vb_device_info *pVBInfo);
-unsigned char  XGI_SearchModeID(unsigned short ModeNo,
-			unsigned short *ModeIdIndex,
-			struct vb_device_info *pVBInfo);
-unsigned char  XGI_GetLCDInfo(unsigned short ModeNo,
+static unsigned char  XGI_GetModePtr(unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			struct vb_device_info *pVBInfo);
-unsigned char  XGISetModeNew(struct xgi_hw_device_info *HwDeviceExtension,
-			unsigned short ModeNo);
-unsigned char  XGI_BridgeIsOn(struct vb_device_info *pVBInfo);
-unsigned char  XGI_GetModePtr(unsigned short ModeNo,
-			unsigned short ModeIdIndex,
-			struct vb_device_info *pVBInfo);
-unsigned short XGI_GetOffset(unsigned short ModeNo,
+static unsigned short XGI_GetOffset(unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			unsigned short RefreshRateTableIndex,
 			struct xgi_hw_device_info *HwDeviceExtension,
 			struct vb_device_info *pVBInfo);
-unsigned short XGI_GetRatePtrCRT2(struct xgi_hw_device_info *pXGIHWDE,
-			unsigned short ModeNo,
+static unsigned short XGI_GetColorDepth(unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			struct vb_device_info *pVBInfo);
-unsigned short XGI_GetResInfo(unsigned short ModeNo,
-			unsigned short ModeIdIndex,
-			struct vb_device_info *pVBInfo);
-unsigned short XGI_GetColorDepth(unsigned short ModeNo,
-			unsigned short ModeIdIndex,
-			struct vb_device_info *pVBInfo);
-unsigned short XGI_GetVGAHT2(struct vb_device_info *pVBInfo);
-unsigned short XGI_GetVCLK2Ptr(unsigned short ModeNo,
+static unsigned short XGI_GetVGAHT2(struct vb_device_info *pVBInfo);
+static unsigned short XGI_GetVCLK2Ptr(unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			unsigned short RefreshRateTableIndex,
 			struct xgi_hw_device_info *HwDeviceExtension,
 			struct vb_device_info *pVBInfo);
-void     XGI_VBLongWait(struct vb_device_info *pVBInfo);
-void     XGI_SaveCRT2Info(unsigned short ModeNo, struct vb_device_info *pVBInfo);
-void     XGI_GetCRT2Data(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_GetCRT2ResInfo(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_PreSetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetLockRegs(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetLCDRegs(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetGroup2(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_SetGroup3(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetGroup4(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_SetGroup5(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     *XGI_GetLcdPtr(unsigned short BX,  unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     *XGI_GetTVPtr(unsigned short BX, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_FirePWDEnable(struct vb_device_info *pVBInfo);
-void     XGI_EnableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_DisableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_SetPanelDelay(unsigned short tempbl, struct vb_device_info *pVBInfo);
-void     XGI_SetPanelPower(unsigned short tempah, unsigned short tempbl, struct vb_device_info *pVBInfo);
-void     XGI_EnablePWD(struct vb_device_info *pVBInfo);
-void     XGI_DisablePWD(struct vb_device_info *pVBInfo);
-void     XGI_AutoThreshold(struct vb_device_info *pVBInfo);
-void     XGI_SetTap4Regs(struct vb_device_info *pVBInfo);
+static void XGI_VBLongWait(struct vb_device_info *pVBInfo);
+static void XGI_SaveCRT2Info(unsigned short ModeNo, struct vb_device_info *pVBInfo);
+static void XGI_GetCRT2Data(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_GetCRT2ResInfo(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_PreSetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetLockRegs(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetLCDRegs(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetGroup2(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_SetGroup3(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetGroup4(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_SetGroup5(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void *XGI_GetLcdPtr(unsigned short BX,  unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void *XGI_GetTVPtr(unsigned short BX, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_AutoThreshold(struct vb_device_info *pVBInfo);
+static void XGI_SetTap4Regs(struct vb_device_info *pVBInfo);
 
-void     XGI_DisplayOn(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_DisplayOff(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1Group(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetXG21CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetXG21LCD(struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex, unsigned short ModeNo);
-void     XGI_SetXG27CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetXG27LCD(struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex, unsigned short ModeNo);
-void	 XGI_UpdateXG21CRTC(unsigned short ModeNo, struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex);
-void     XGI_WaitDisply(struct vb_device_info *pVBInfo);
-void     XGI_SenseCRT1(struct vb_device_info *pVBInfo);
-void     XGI_SetSeqRegs(unsigned short ModeNo, unsigned short StandTableIndex, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetMiscRegs(unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetCRTCRegs(struct xgi_hw_device_info *HwDeviceExtension, unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetATTRegs(unsigned short ModeNo, unsigned short StandTableIndex, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetGRCRegs(unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_ClearExt1Regs(struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1Group(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetXG21CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetXG21LCD(struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex, unsigned short ModeNo);
+static void XGI_SetXG27CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetXG27LCD(struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex, unsigned short ModeNo);
+static void XGI_UpdateXG21CRTC(unsigned short ModeNo, struct vb_device_info *pVBInfo, unsigned short RefreshRateTableIndex);
+static void XGI_SetSeqRegs(unsigned short ModeNo, unsigned short StandTableIndex, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetMiscRegs(unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetCRTCRegs(struct xgi_hw_device_info *HwDeviceExtension, unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetATTRegs(unsigned short ModeNo, unsigned short StandTableIndex, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetGRCRegs(unsigned short StandTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_ClearExt1Regs(struct vb_device_info *pVBInfo);
 
-void     XGI_SetSync(unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo, struct xgi_hw_device_info *HwDeviceExtension);
-void     XGI_SetCRT1Timing_H(struct vb_device_info *pVBInfo, struct xgi_hw_device_info *HwDeviceExtension);
-void     XGI_SetCRT1Timing_V(unsigned short ModeIdIndex, unsigned short ModeNo, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1DE(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1VCLK(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1FIFO(unsigned short ModeNo, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1ModeRegs(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetVCLKState(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetSync(unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1CRTC(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo, struct xgi_hw_device_info *HwDeviceExtension);
+static void XGI_SetCRT1Timing_H(struct vb_device_info *pVBInfo, struct xgi_hw_device_info *HwDeviceExtension);
+static void XGI_SetCRT1Timing_V(unsigned short ModeIdIndex, unsigned short ModeNo, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1DE(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1VCLK(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1FIFO(unsigned short ModeNo, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1ModeRegs(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetVCLKState(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
 
-void     XGI_LoadDAC(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_WriteDAC(unsigned short dl, unsigned short ah, unsigned short al, unsigned short dh, struct vb_device_info *pVBInfo);
+static void XGI_LoadDAC(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_WriteDAC(unsigned short dl, unsigned short ah, unsigned short al, unsigned short dh, struct vb_device_info *pVBInfo);
 /*void     XGI_ClearBuffer(struct xgi_hw_device_info *HwDeviceExtension, unsigned short ModeNo, struct vb_device_info *pVBInfo);*/
-void     XGI_SetLCDAGroup(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_GetLVDSResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetLCDAGroup(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_GetLVDSResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
 			struct vb_device_info *pVBInfo);
-void     XGI_GetLVDSData(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-unsigned short XGI_GetLVDSOEMTableIndex(struct vb_device_info *pVBInfo);
-void     XGI_ModCRT1Regs(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetLVDSData(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_ModCRT1Regs(unsigned short ModeNo, unsigned short ModeIdIndex,
 			unsigned short RefreshRateTableIndex,
 			struct xgi_hw_device_info *HwDeviceExtension,
 			struct vb_device_info *pVBInfo);
-void     XGI_SetLVDSRegs(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_UpdateModeInfo(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_GetVGAType(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_GetVBType(struct vb_device_info *pVBInfo);
-void     XGI_GetVBInfo(unsigned short ModeNo, unsigned short ModeIdIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_GetTVInfo(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT2ECLK(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     InitTo330Pointer(unsigned char, struct vb_device_info *pVBInfo);
-void     XGI_GetLCDSync(unsigned short *HSyncWidth, unsigned short *VSyncWidth, struct vb_device_info *pVBInfo);
-void     XGI_DisableBridge(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_EnableBridge(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_SetCRT2VCLK(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_OEM310Setting(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetDelayComp(struct vb_device_info *pVBInfo);
-void     XGI_SetLCDCap(struct vb_device_info *pVBInfo);
-void     XGI_SetLCDCap_A(unsigned short tempcx, struct vb_device_info *pVBInfo);
-void     XGI_SetLCDCap_B(unsigned short tempcx, struct vb_device_info *pVBInfo);
-void     SetSpectrum(struct vb_device_info *pVBInfo);
-void     XGI_SetAntiFlicker(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetEdgeEnhance(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetPhaseIncr(struct vb_device_info *pVBInfo);
-void     XGI_SetYFilter(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_GetTVPtrIndex2(unsigned short *tempbx, unsigned char* tempcl,
+static void XGI_SetLVDSRegs(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_UpdateModeInfo(struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT2ECLK(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_GetLCDSync(unsigned short *HSyncWidth, unsigned short *VSyncWidth, struct vb_device_info *pVBInfo);
+static void XGI_SetCRT2VCLK(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGI_OEM310Setting(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetDelayComp(struct vb_device_info *pVBInfo);
+static void XGI_SetLCDCap(struct vb_device_info *pVBInfo);
+static void XGI_SetLCDCap_A(unsigned short tempcx, struct vb_device_info *pVBInfo);
+static void XGI_SetLCDCap_B(unsigned short tempcx, struct vb_device_info *pVBInfo);
+static void SetSpectrum(struct vb_device_info *pVBInfo);
+static void XGI_SetAntiFlicker(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetEdgeEnhance(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetPhaseIncr(struct vb_device_info *pVBInfo);
+static void XGI_SetYFilter(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_GetTVPtrIndex2(unsigned short *tempbx, unsigned char* tempcl,
 			unsigned char *tempch, struct vb_device_info *pVBInfo);
-unsigned short   XGI_GetTVPtrIndex(struct vb_device_info *pVBInfo);
-void     XGI_SetCRT2ModeRegs(unsigned short ModeNo, struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_CloseCRTC(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_OpenCRTC(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_GetRAMDAC2DATA(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
-void     XGI_UnLockCRT2(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGI_LockCRT2(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
-void     XGINew_EnableCRT2(struct vb_device_info *pVBInfo);
-void     XGINew_LCD_Wait_Time(unsigned char DelayTime, struct vb_device_info *pVBInfo);
-void     XGI_LongWait(struct vb_device_info *pVBInfo);
-void     XGI_SetCRT1Offset(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
-void     XGI_GetLCDVCLKPtr(unsigned char *di_0, unsigned char *di_1,
+static void XGI_CloseCRTC(struct xgi_hw_device_info *, struct vb_device_info *pVBInfo);
+static void XGI_GetRAMDAC2DATA(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct vb_device_info *pVBInfo);
+static void XGINew_EnableCRT2(struct vb_device_info *pVBInfo);
+static void XGI_SetCRT1Offset(unsigned short ModeNo, unsigned short ModeIdIndex, unsigned short RefreshRateTableIndex, struct xgi_hw_device_info *HwDeviceExtension, struct vb_device_info *pVBInfo);
+static void XGI_GetLCDVCLKPtr(unsigned char *di_0, unsigned char *di_1,
 			struct vb_device_info *pVBInfo);
-unsigned char    XGI_GetVCLKPtr(unsigned short RefreshRateTableIndex,
+static unsigned char XGI_GetVCLKPtr(unsigned short RefreshRateTableIndex,
 			unsigned short ModeNo,
 			unsigned short ModeIdIndex,
 			struct vb_device_info *pVBInfo);
-void     XGI_GetVCLKLen(unsigned char tempal, unsigned char *di_0,
+static void XGI_GetVCLKLen(unsigned char tempal, unsigned char *di_0,
 			unsigned char *di_1, struct vb_device_info *pVBInfo);
-unsigned short   XGI_GetLCDCapPtr(struct vb_device_info *pVBInfo);
-unsigned short   XGI_GetLCDCapPtr1(struct vb_device_info *pVBInfo);
-struct XGI301C_Tap4TimingStruct *XGI_GetTap4Ptr(unsigned short tempcx, struct vb_device_info *pVBInfo);
-void     XGI_SetXG21FPBits(struct vb_device_info *pVBInfo);
-void     XGI_SetXG27FPBits(struct vb_device_info *pVBInfo);
-unsigned char    XGI_XG21GetPSCValue(struct vb_device_info *pVBInfo);
-unsigned char    XGI_XG27GetPSCValue(struct vb_device_info *pVBInfo);
-void     XGI_XG21BLSignalVDD(unsigned short tempbh, unsigned short tempbl, struct vb_device_info *pVBInfo);
-void     XGI_XG27BLSignalVDD(unsigned short tempbh, unsigned short tempbl, struct vb_device_info *pVBInfo);
-void     XGI_XG21SetPanelDelay(unsigned short tempbl, struct vb_device_info *pVBInfo);
-unsigned char  XGI_XG21CheckLVDSMode(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetXG21LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-void     XGI_SetXG27LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
-unsigned char  XGI_SetDefaultVCLK(struct vb_device_info *pVBInfo);
-
-extern void ReadVBIOSTablData(unsigned char ChipType, struct vb_device_info *pVBInfo);
-
-/* unsigned short XGINew_flag_clearbuffer; 0: no clear frame buffer 1:clear frame buffer */
-
+static unsigned short XGI_GetLCDCapPtr(struct vb_device_info *pVBInfo);
+static unsigned short XGI_GetLCDCapPtr1(struct vb_device_info *pVBInfo);
+static struct XGI301C_Tap4TimingStruct *XGI_GetTap4Ptr(unsigned short tempcx, struct vb_device_info *pVBInfo);
+static unsigned char XGI_XG21GetPSCValue(struct vb_device_info *pVBInfo);
+static unsigned char XGI_XG27GetPSCValue(struct vb_device_info *pVBInfo);
+static void XGI_SetXG21LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static void XGI_SetXG27LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex, struct vb_device_info *pVBInfo);
+static unsigned char XGI_SetDefaultVCLK(struct vb_device_info *pVBInfo);
 
 static unsigned short XGINew_MDA_DAC[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -566,7 +505,7 @@ unsigned char XGISetModeNew(struct xgi_hw_device_info *HwDeviceExtension,
 	return 1;
 }
 
-void XGI_SetCRT1Group(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_SetCRT1Group(struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -680,7 +619,7 @@ void XGI_SetCRT1Group(struct xgi_hw_device_info *HwDeviceExtension,
 	/* XGI_ClearBuffer(HwDeviceExtension, ModeNo, pVBInfo); */
 }
 
-unsigned char XGI_GetModePtr(unsigned short ModeNo, unsigned short ModeIdIndex,
+static unsigned char XGI_GetModePtr(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char index;
@@ -707,7 +646,7 @@ unsigned char XGI_SetBIOSData(unsigned short ModeNo, unsigned short ModeIdIndex)
 }
 */
 
-void XGI_SetSeqRegs(unsigned short ModeNo, unsigned short StandTableIndex,
+static void XGI_SetSeqRegs(unsigned short ModeNo, unsigned short StandTableIndex,
 		unsigned short ModeIdIndex, struct vb_device_info *pVBInfo)
 {
 	unsigned char tempah, SRdata;
@@ -741,7 +680,7 @@ void XGI_SetSeqRegs(unsigned short ModeNo, unsigned short StandTableIndex,
 	}
 }
 
-void XGI_SetMiscRegs(unsigned short StandTableIndex,
+static void XGI_SetMiscRegs(unsigned short StandTableIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char Miscdata;
@@ -758,7 +697,7 @@ void XGI_SetMiscRegs(unsigned short StandTableIndex,
 	XGINew_SetReg3(pVBInfo->P3c2, Miscdata); /* Set Misc(3c2) */
 }
 
-void XGI_SetCRTCRegs(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_SetCRTCRegs(struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short StandTableIndex, struct vb_device_info *pVBInfo)
 {
 	unsigned char CRTCdata;
@@ -783,7 +722,7 @@ void XGI_SetCRTCRegs(struct xgi_hw_device_info *HwDeviceExtension,
 	*/
 }
 
-void XGI_SetATTRegs(unsigned short ModeNo, unsigned short StandTableIndex,
+static void XGI_SetATTRegs(unsigned short ModeNo, unsigned short StandTableIndex,
 		unsigned short ModeIdIndex, struct vb_device_info *pVBInfo)
 {
 	unsigned char ARdata;
@@ -823,7 +762,7 @@ void XGI_SetATTRegs(unsigned short ModeNo, unsigned short StandTableIndex,
 	XGINew_SetReg3(pVBInfo->P3c0, 0x20);
 }
 
-void XGI_SetGRCRegs(unsigned short StandTableIndex,
+static void XGI_SetGRCRegs(unsigned short StandTableIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char GRdata;
@@ -841,7 +780,7 @@ void XGI_SetGRCRegs(unsigned short StandTableIndex,
 	}
 }
 
-void XGI_ClearExt1Regs(struct vb_device_info *pVBInfo)
+static void XGI_ClearExt1Regs(struct vb_device_info *pVBInfo)
 {
 	unsigned short i;
 
@@ -849,7 +788,7 @@ void XGI_ClearExt1Regs(struct vb_device_info *pVBInfo)
 		XGINew_SetReg1(pVBInfo->P3c4, i, 0x00); /* Clear SR0A-SR0E */
 }
 
-unsigned char XGI_SetDefaultVCLK(struct vb_device_info *pVBInfo)
+static unsigned char XGI_SetDefaultVCLK(struct vb_device_info *pVBInfo)
 {
 
 	XGINew_SetRegANDOR(pVBInfo->P3c4, 0x31, ~0x30, 0x20);
@@ -983,7 +922,7 @@ unsigned short XGI_GetRatePtrCRT2(struct xgi_hw_device_info *pXGIHWDE,
 	return RefreshRateTableIndex + i; /* return (0x01 | (temp1<<1)); */
 }
 
-unsigned char XGI_AjustCRT2Rate(unsigned short ModeNo,
+static unsigned char XGI_AjustCRT2Rate(unsigned short ModeNo,
 		unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex, unsigned short *i,
 		struct vb_device_info *pVBInfo)
@@ -1125,7 +1064,7 @@ unsigned char XGI_AjustCRT2Rate(unsigned short ModeNo,
 	return 1;
 }
 
-void XGI_SetSync(unsigned short RefreshRateTableIndex,
+static void XGI_SetSync(unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short sync, temp;
@@ -1137,7 +1076,7 @@ void XGI_SetSync(unsigned short RefreshRateTableIndex,
 	XGINew_SetReg3(pVBInfo->P3c2, temp); /* Set Misc(3c2) */
 }
 
-void XGI_SetCRT1CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetCRT1CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo,
 		struct xgi_hw_device_info *HwDeviceExtension)
@@ -1168,7 +1107,7 @@ void XGI_SetCRT1CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 		XGINew_SetReg1(pVBInfo->P3d4, 0x14, 0x4F);
 }
 
-void XGI_SetCRT1Timing_H(struct vb_device_info *pVBInfo,
+static void XGI_SetCRT1Timing_H(struct vb_device_info *pVBInfo,
 		struct xgi_hw_device_info *HwDeviceExtension)
 {
 	unsigned char data, data1, pushax;
@@ -1231,7 +1170,7 @@ void XGI_SetCRT1Timing_H(struct vb_device_info *pVBInfo,
 	}
 }
 
-void XGI_SetCRT1Timing_V(unsigned short ModeIdIndex, unsigned short ModeNo,
+static void XGI_SetCRT1Timing_V(unsigned short ModeIdIndex, unsigned short ModeNo,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char data;
@@ -1288,7 +1227,7 @@ void XGI_SetCRT1Timing_V(unsigned short ModeIdIndex, unsigned short ModeNo,
 /* Output : Fill CRT Hsync/Vsync to SR2E/SR2F/SR30/SR33/SR34/SR3F */
 /* Description : Set LCD timing */
 /* --------------------------------------------------------------------- */
-void XGI_SetXG21CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetXG21CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -1426,7 +1365,7 @@ void XGI_SetXG21CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetXG27CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetXG27CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -1545,7 +1484,7 @@ void XGI_SetXG27CRTC(unsigned short ModeNo, unsigned short ModeIdIndex,
 /* Output : FCLK duty cycle, FCLK delay compensation */
 /* Description : All values set zero */
 /* --------------------------------------------------------------------- */
-void XGI_SetXG21LCD(struct vb_device_info *pVBInfo,
+static void XGI_SetXG21LCD(struct vb_device_info *pVBInfo,
 		unsigned short RefreshRateTableIndex, unsigned short ModeNo)
 {
 	unsigned short Data, Temp, b3CC;
@@ -1591,7 +1530,7 @@ void XGI_SetXG21LCD(struct vb_device_info *pVBInfo,
 	}
 }
 
-void XGI_SetXG27LCD(struct vb_device_info *pVBInfo,
+static void XGI_SetXG27LCD(struct vb_device_info *pVBInfo,
 		unsigned short RefreshRateTableIndex, unsigned short ModeNo)
 {
 	unsigned short Data, Temp, b3CC;
@@ -1645,7 +1584,7 @@ void XGI_SetXG27LCD(struct vb_device_info *pVBInfo,
 /* Output : CRT1 CRTC */
 /* Description : Modify CRT1 Hsync/Vsync to fix LCD mode timing */
 /* --------------------------------------------------------------------- */
-void XGI_UpdateXG21CRTC(unsigned short ModeNo, struct vb_device_info *pVBInfo,
+static void XGI_UpdateXG21CRTC(unsigned short ModeNo, struct vb_device_info *pVBInfo,
 		unsigned short RefreshRateTableIndex)
 {
 	int i, index = -1;
@@ -1685,7 +1624,7 @@ void XGI_UpdateXG21CRTC(unsigned short ModeNo, struct vb_device_info *pVBInfo,
 	}
 }
 
-void XGI_SetCRT1DE(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_SetCRT1DE(struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -1772,7 +1711,7 @@ unsigned short XGI_GetResInfo(unsigned short ModeNo,
 	return resindex;
 }
 
-void XGI_SetCRT1Offset(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetCRT1Offset(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
@@ -1855,7 +1794,7 @@ void XGI_SetCRT1Offset(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGINew_SetReg1(pVBInfo->P3c4, 0x10, ah);
 }
 
-void XGI_SetCRT1VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetCRT1VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -1912,7 +1851,7 @@ void XGI_SetCRT1VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetCRT1FIFO(unsigned short ModeNo,
+static void XGI_SetCRT1FIFO(unsigned short ModeNo,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
@@ -1948,7 +1887,7 @@ void XGI_SetCRT1FIFO(unsigned short ModeNo,
 		XGI_SetXG21FPBits(pVBInfo); /* Fix SR9[7:6] can't read back */
 }
 
-void XGI_SetCRT1ModeRegs(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_SetCRT1ModeRegs(struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -2063,7 +2002,7 @@ void XGI_SetCRT1ModeRegs(struct xgi_hw_device_info *HwDeviceExtension,
 
 }
 
-void XGI_SetVCLKState(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_SetVCLKState(struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short ModeNo, unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -2149,7 +2088,7 @@ void XGI_VesaLowResolution(unsigned short ModeNo, unsigned short ModeIdIndex, st
 }
 */
 
-void XGI_LoadDAC(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_LoadDAC(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short data, data2, time, i, j, k, m, n, o, si, di, bx, dl, al,
@@ -2241,7 +2180,7 @@ void XGI_LoadDAC(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_WriteDAC(unsigned short dl, unsigned short ah, unsigned short al,
+static void XGI_WriteDAC(unsigned short dl, unsigned short ah, unsigned short al,
 		unsigned short dh, struct vb_device_info *pVBInfo)
 {
 	unsigned short temp, bh, bl;
@@ -2268,7 +2207,7 @@ void XGI_WriteDAC(unsigned short dl, unsigned short ah, unsigned short al,
 	XGINew_SetReg3(pVBInfo->P3c9, (unsigned short) bl);
 }
 
-void XGI_SetLCDAGroup(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetLCDAGroup(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
@@ -2288,7 +2227,7 @@ void XGI_SetLCDAGroup(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGI_SetCRT2ECLK(ModeNo, ModeIdIndex, RefreshRateTableIndex, pVBInfo);
 }
 
-void XGI_GetLVDSResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetLVDSResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short resindex, xres, yres, modeflag;
@@ -2337,7 +2276,7 @@ void XGI_GetLVDSResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
 	pVBInfo->VDE = yres;
 }
 
-void XGI_GetLVDSData(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetLVDSData(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -2392,7 +2331,7 @@ void XGI_GetLVDSData(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_ModCRT1Regs(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_ModCRT1Regs(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
@@ -2507,7 +2446,7 @@ void XGI_ModCRT1Regs(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetLVDSRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetLVDSRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -2802,7 +2741,7 @@ void XGI_SetLVDSRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetCRT2ECLK(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetCRT2ECLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -2831,7 +2770,7 @@ void XGI_SetCRT2ECLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_UpdateModeInfo(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_UpdateModeInfo(struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempcl, tempch, temp, tempbl, tempax;
@@ -3702,7 +3641,7 @@ void XGI_DisplayOff(struct xgi_hw_device_info *pXGIHWDE,
 	XGINew_SetRegANDOR(pVBInfo->P3c4, 0x01, 0xDF, 0x20);
 }
 
-void XGI_WaitDisply(struct vb_device_info *pVBInfo)
+static void XGI_WaitDisply(struct vb_device_info *pVBInfo)
 {
 	while ((XGINew_GetReg2(pVBInfo->P3da) & 0x01))
 		break;
@@ -3788,7 +3727,7 @@ void XGI_SenseCRT1(struct vb_device_info *pVBInfo)
 	XGI_VBLongWait(pVBInfo);
 	XGI_VBLongWait(pVBInfo);
 
-	XGINew_LCD_Wait_Time(0x01, pVBInfo);
+	mdelay(1);
 
 	XGI_WaitDisply(pVBInfo);
 	temp = XGINew_GetReg2(pVBInfo->P3c2);
@@ -3860,13 +3799,13 @@ unsigned char XGI_SetCRT2Group301(unsigned short ModeNo,
 	return 1;
 }
 
-void XGI_AutoThreshold(struct vb_device_info *pVBInfo)
+static void XGI_AutoThreshold(struct vb_device_info *pVBInfo)
 {
 	if (!(pVBInfo->SetFlag & Win9xDOSMode))
 		XGINew_SetRegOR(pVBInfo->Part1Port, 0x01, 0x40);
 }
 
-void XGI_SaveCRT2Info(unsigned short ModeNo, struct vb_device_info *pVBInfo)
+static void XGI_SaveCRT2Info(unsigned short ModeNo, struct vb_device_info *pVBInfo)
 {
 	unsigned short temp1, temp2;
 
@@ -3876,7 +3815,7 @@ void XGI_SaveCRT2Info(unsigned short ModeNo, struct vb_device_info *pVBInfo)
 	XGINew_SetRegANDOR(pVBInfo->P3d4, 0x31, temp2, temp1);
 }
 
-void XGI_GetCRT2ResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetCRT2ResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short xres, yres, modeflag, resindex;
@@ -3951,7 +3890,7 @@ void XGI_GetCRT2ResInfo(unsigned short ModeNo, unsigned short ModeIdIndex,
 	pVBInfo->VDE = yres;
 }
 
-unsigned char XGI_IsLCDDualLink(struct vb_device_info *pVBInfo)
+static unsigned char XGI_IsLCDDualLink(struct vb_device_info *pVBInfo)
 {
 
 	if ((pVBInfo->VBInfo & (SetCRT2ToLCD | SetCRT2ToLCDA)) &&
@@ -3961,7 +3900,7 @@ unsigned char XGI_IsLCDDualLink(struct vb_device_info *pVBInfo)
 	return 0;
 }
 
-void XGI_GetCRT2Data(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetCRT2Data(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -4147,7 +4086,7 @@ void XGI_GetCRT2Data(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetCRT2VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetCRT2VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -4182,7 +4121,7 @@ void XGI_SetCRT2VCLK(unsigned short ModeNo, unsigned short ModeIdIndex,
 /* Output : al -> VCLK Index */
 /* Description : */
 /* --------------------------------------------------------------------- */
-void XGI_GetLCDVCLKPtr(unsigned char *di_0, unsigned char *di_1,
+static void XGI_GetLCDVCLKPtr(unsigned char *di_0, unsigned char *di_1,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short index;
@@ -4207,7 +4146,7 @@ void XGI_GetLCDVCLKPtr(unsigned char *di_0, unsigned char *di_1,
 	return;
 }
 
-unsigned char XGI_GetVCLKPtr(unsigned short RefreshRateTableIndex,
+static unsigned char XGI_GetVCLKPtr(unsigned short RefreshRateTableIndex,
 		unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -4364,7 +4303,7 @@ unsigned char XGI_GetVCLKPtr(unsigned short RefreshRateTableIndex,
 	return tempal;
 }
 
-void XGI_GetVCLKLen(unsigned char tempal, unsigned char *di_0,
+static void XGI_GetVCLKLen(unsigned char tempal, unsigned char *di_0,
 		unsigned char *di_1, struct vb_device_info *pVBInfo)
 {
 	if (pVBInfo->IF_DEF_CH7007 == 1) { /* [Billy] 2007/05/16 */
@@ -4406,7 +4345,7 @@ static void XGI_SetCRT2Offset(unsigned short ModeNo,
 	XGINew_SetReg1(pVBInfo->Part1Port, 0x03, temp);
 }
 
-unsigned short XGI_GetOffset(unsigned short ModeNo, unsigned short ModeIdIndex,
+static unsigned short XGI_GetOffset(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
@@ -4447,7 +4386,7 @@ static void XGI_SetCRT2FIFO(struct vb_device_info *pVBInfo)
 	XGINew_SetRegANDOR(pVBInfo->Part1Port, 0x02, ~(0x3F), 0x04); /* threshold low default 04h */
 }
 
-void XGI_PreSetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_PreSetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -4472,7 +4411,7 @@ void XGI_PreSetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGINew_SetReg1(pVBInfo->Part1Port, 0x02, 0x44); /* temp 0206 */
 }
 
-void XGI_SetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -4625,7 +4564,7 @@ void XGI_SetGroup1(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGINew_SetRegANDOR(pVBInfo->Part1Port, 0x2C, ~0x0C0, tempax);
 }
 
-void XGI_SetLockRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetLockRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -5004,7 +4943,7 @@ void XGI_SetLockRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 	return;
 }
 
-void XGI_SetGroup2(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetGroup2(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
@@ -5451,7 +5390,7 @@ void XGI_SetGroup2(unsigned short ModeNo, unsigned short ModeIdIndex,
 		return;
 }
 
-void XGI_SetLCDRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetLCDRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -5676,7 +5615,7 @@ void XGI_SetLCDRegs(unsigned short ModeNo, unsigned short ModeIdIndex,
 /* Output : di -> Tap4 Reg. Setting Pointer */
 /* Description : */
 /* --------------------------------------------------------------------- */
-struct XGI301C_Tap4TimingStruct *XGI_GetTap4Ptr(unsigned short tempcx,
+static struct XGI301C_Tap4TimingStruct *XGI_GetTap4Ptr(unsigned short tempcx,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempax, tempbx, i;
@@ -5722,7 +5661,7 @@ struct XGI301C_Tap4TimingStruct *XGI_GetTap4Ptr(unsigned short tempcx,
 	return &Tap4TimingPtr[i];
 }
 
-void XGI_SetTap4Regs(struct vb_device_info *pVBInfo)
+static void XGI_SetTap4Regs(struct vb_device_info *pVBInfo)
 {
 	unsigned short i, j;
 
@@ -5752,7 +5691,7 @@ void XGI_SetTap4Regs(struct vb_device_info *pVBInfo)
 #endif
 }
 
-void XGI_SetGroup3(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetGroup3(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short i;
@@ -5811,7 +5750,7 @@ void XGI_SetGroup3(unsigned short ModeNo, unsigned short ModeIdIndex,
 	return;
 } /* {end of XGI_SetGroup3} */
 
-void XGI_SetGroup4(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetGroup4(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
@@ -6014,7 +5953,7 @@ void XGI_SetGroup4(unsigned short ModeNo, unsigned short ModeIdIndex,
 				pVBInfo);
 }
 
-void XGI_SetGroup5(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetGroup5(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short Pindex, Pdata;
@@ -6031,7 +5970,7 @@ void XGI_SetGroup5(unsigned short ModeNo, unsigned short ModeIdIndex,
 	return;
 }
 
-void *XGI_GetLcdPtr(unsigned short BX, unsigned short ModeNo,
+static void *XGI_GetLcdPtr(unsigned short BX, unsigned short ModeNo,
 		unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -6502,7 +6441,7 @@ void *XGI_GetLcdPtr(unsigned short BX, unsigned short ModeNo,
 	return NULL;
 }
 
-void *XGI_GetTVPtr(unsigned short BX, unsigned short ModeNo,
+static void *XGI_GetTVPtr(unsigned short BX, unsigned short ModeNo,
 		unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
@@ -6651,7 +6590,7 @@ void *XGI_GetTVPtr(unsigned short BX, unsigned short ModeNo,
 /* Output : 1 -> Skip backlight control */
 /* Description : */
 /* --------------------------------------------------------------------- */
-unsigned char XGI_BacklightByDrv(struct vb_device_info *pVBInfo)
+static unsigned char XGI_BacklightByDrv(struct vb_device_info *pVBInfo)
 {
 	unsigned char tempah;
 
@@ -6681,18 +6620,18 @@ void XGI_FirePWDDisable(struct vb_device_info *pVBInfo)
 /* Output : */
 /* Description : Turn on VDD & Backlight : Fire enable procedure */
 /* --------------------------------------------------------------------- */
-void XGI_FirePWDEnable(struct vb_device_info *pVBInfo)
+static void XGI_FirePWDEnable(struct vb_device_info *pVBInfo)
 {
 	XGINew_SetRegANDOR(pVBInfo->Part1Port, 0x26, 0x03, 0xFC);
 }
 
-void XGI_EnableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_EnableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
 	XGINew_SetRegANDOR(pVBInfo->P3d4, 0x63, 0xBF, 0x40);
 }
 
-void XGI_DisableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_DisableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
 
@@ -6709,23 +6648,23 @@ void XGI_DisableGatingCRT(struct xgi_hw_device_info *HwDeviceExtension,
 /* : bl : 3 ; T3 : the duration between CPL off and signal off */
 /* : bl : 4 ; T4 : the duration signal off and Vdd off */
 /* --------------------------------------------------------------------- */
-void XGI_SetPanelDelay(unsigned short tempbl, struct vb_device_info *pVBInfo)
+static void XGI_SetPanelDelay(unsigned short tempbl, struct vb_device_info *pVBInfo)
 {
 	unsigned short index;
 
 	index = XGI_GetLCDCapPtr(pVBInfo);
 
 	if (tempbl == 1)
-		XGINew_LCD_Wait_Time(pVBInfo->LCDCapList[index].PSC_S1, pVBInfo);
+		mdelay(pVBInfo->LCDCapList[index].PSC_S1);
 
 	if (tempbl == 2)
-		XGINew_LCD_Wait_Time(pVBInfo->LCDCapList[index].PSC_S2, pVBInfo);
+		mdelay(pVBInfo->LCDCapList[index].PSC_S2);
 
 	if (tempbl == 3)
-		XGINew_LCD_Wait_Time(pVBInfo->LCDCapList[index].PSC_S3, pVBInfo);
+		mdelay(pVBInfo->LCDCapList[index].PSC_S3);
 
 	if (tempbl == 4)
-		XGINew_LCD_Wait_Time(pVBInfo->LCDCapList[index].PSC_S4, pVBInfo);
+		mdelay(pVBInfo->LCDCapList[index].PSC_S4);
 }
 
 /* --------------------------------------------------------------------- */
@@ -6738,7 +6677,7 @@ void XGI_SetPanelDelay(unsigned short tempbl, struct vb_device_info *pVBInfo)
 /* = 1011b = 0Bh ; Backlight off, Power on */
 /* = 1111b = 0Fh ; Backlight off, Power off */
 /* --------------------------------------------------------------------- */
-void XGI_SetPanelPower(unsigned short tempah, unsigned short tempbl,
+static void XGI_SetPanelPower(unsigned short tempah, unsigned short tempbl,
 		struct vb_device_info *pVBInfo)
 {
 	if (pVBInfo->VBType & (VB_XGI301LV | VB_XGI302LV | VB_XGI301C))
@@ -6767,7 +6706,7 @@ static unsigned char XG21GPIODataTransfer(unsigned char ujDate)
 /*      bl[1] : LVDS backlight                                                */
 /*      bl[0] : LVDS VDD                                                      */
 /*----------------------------------------------------------------------------*/
-unsigned char XGI_XG21GetPSCValue(struct vb_device_info *pVBInfo)
+static unsigned char XGI_XG21GetPSCValue(struct vb_device_info *pVBInfo)
 {
 	unsigned char CR4A, temp;
 
@@ -6788,7 +6727,7 @@ unsigned char XGI_XG21GetPSCValue(struct vb_device_info *pVBInfo)
 /*      bl[1] : LVDS backlight                                                */
 /*      bl[0] : LVDS VDD                                                      */
 /*----------------------------------------------------------------------------*/
-unsigned char XGI_XG27GetPSCValue(struct vb_device_info *pVBInfo)
+static unsigned char XGI_XG27GetPSCValue(struct vb_device_info *pVBInfo)
 {
 	unsigned char CR4A, CRB4, temp;
 
@@ -6897,20 +6836,16 @@ void XGI_XG21SetPanelDelay(unsigned short tempbl,
 
 	index = XGI_GetLVDSOEMTableIndex(pVBInfo);
 	if (tempbl == 1)
-		XGINew_LCD_Wait_Time(pVBInfo->XG21_LVDSCapList[index].PSC_S1,
-				pVBInfo);
+		mdelay(pVBInfo->XG21_LVDSCapList[index].PSC_S1);
 
 	if (tempbl == 2)
-		XGINew_LCD_Wait_Time(pVBInfo->XG21_LVDSCapList[index].PSC_S2,
-				pVBInfo);
+		mdelay(pVBInfo->XG21_LVDSCapList[index].PSC_S2);
 
 	if (tempbl == 3)
-		XGINew_LCD_Wait_Time(pVBInfo->XG21_LVDSCapList[index].PSC_S3,
-				pVBInfo);
+		mdelay(pVBInfo->XG21_LVDSCapList[index].PSC_S3);
 
 	if (tempbl == 4)
-		XGINew_LCD_Wait_Time(pVBInfo->XG21_LVDSCapList[index].PSC_S4,
-				pVBInfo);
+		mdelay(pVBInfo->XG21_LVDSCapList[index].PSC_S4);
 }
 
 unsigned char XGI_XG21CheckLVDSMode(unsigned short ModeNo,
@@ -6988,7 +6923,7 @@ void XGI_SetXG27FPBits(struct vb_device_info *pVBInfo)
 
 }
 
-void XGI_SetXG21LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetXG21LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char temp, Miscdata;
@@ -7174,7 +7109,7 @@ void XGI_SetXG21LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
 }
 
 /* no shadow case */
-void XGI_SetXG27LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetXG27LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned char temp, Miscdata;
@@ -7364,7 +7299,7 @@ void XGI_SetXG27LVDSPara(unsigned short ModeNo, unsigned short ModeIdIndex,
 /* 1: Disable PSC */
 /* Description : */
 /* --------------------------------------------------------------------- */
-unsigned char XGI_IsLCDON(struct vb_device_info *pVBInfo)
+static unsigned char XGI_IsLCDON(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempax;
 
@@ -7377,7 +7312,7 @@ unsigned char XGI_IsLCDON(struct vb_device_info *pVBInfo)
 	return 0;
 }
 
-void XGI_EnablePWD(struct vb_device_info *pVBInfo)
+static void XGI_EnablePWD(struct vb_device_info *pVBInfo)
 {
 	unsigned short index, temp;
 
@@ -7395,7 +7330,7 @@ void XGI_EnablePWD(struct vb_device_info *pVBInfo)
 	XGINew_SetRegOR(pVBInfo->Part4Port, 0x27, 0x80); /* enable PWD */
 }
 
-void XGI_DisablePWD(struct vb_device_info *pVBInfo)
+static void XGI_DisablePWD(struct vb_device_info *pVBInfo)
 {
 	XGINew_SetRegAND(pVBInfo->Part4Port, 0x27, 0x7F); /* disable PWD */
 }
@@ -7406,7 +7341,7 @@ void XGI_DisablePWD(struct vb_device_info *pVBInfo)
 /* Output : 0 -> Not LCD Mode */
 /* Description : */
 /* --------------------------------------------------------------------- */
-unsigned char XGI_DisableChISLCD(struct vb_device_info *pVBInfo)
+static unsigned char XGI_DisableChISLCD(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx, tempah;
 
@@ -7433,7 +7368,7 @@ unsigned char XGI_DisableChISLCD(struct vb_device_info *pVBInfo)
 /* Output : 0 -> Not LCD mode */
 /* Description : */
 /* --------------------------------------------------------------------- */
-unsigned char XGI_EnableChISLCD(struct vb_device_info *pVBInfo)
+static unsigned char XGI_EnableChISLCD(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx, tempah;
 
@@ -7454,7 +7389,7 @@ unsigned char XGI_EnableChISLCD(struct vb_device_info *pVBInfo)
 	return 0;
 }
 
-unsigned short XGI_GetLCDCapPtr(struct vb_device_info *pVBInfo)
+static unsigned short XGI_GetLCDCapPtr(struct vb_device_info *pVBInfo)
 {
 	unsigned char tempal, tempah, tempbl, i;
 
@@ -7481,7 +7416,7 @@ unsigned short XGI_GetLCDCapPtr(struct vb_device_info *pVBInfo)
 	return i;
 }
 
-unsigned short XGI_GetLCDCapPtr1(struct vb_device_info *pVBInfo)
+static unsigned short XGI_GetLCDCapPtr1(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempah, tempal, tempbl, i;
 
@@ -7513,7 +7448,7 @@ unsigned short XGI_GetLCDCapPtr1(struct vb_device_info *pVBInfo)
 	return i;
 }
 
-void XGI_GetLCDSync(unsigned short *HSyncWidth, unsigned short *VSyncWidth,
+static void XGI_GetLCDSync(unsigned short *HSyncWidth, unsigned short *VSyncWidth,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short Index;
@@ -7880,7 +7815,7 @@ void XGI_DisableBridge(struct xgi_hw_device_info *HwDeviceExtension,
 /* A : Ext750p */
 /* B : St750p */
 /* --------------------------------------------------------------------- */
-unsigned short XGI_GetTVPtrIndex(struct vb_device_info *pVBInfo)
+static unsigned short XGI_GetTVPtrIndex(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx = 0;
 
@@ -7906,7 +7841,7 @@ unsigned short XGI_GetTVPtrIndex(struct vb_device_info *pVBInfo)
 /* Output : */
 /* Description : Customized Param. for 301 */
 /* --------------------------------------------------------------------- */
-void XGI_OEM310Setting(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_OEM310Setting(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	if (pVBInfo->SetFlag & Win9xDOSMode)
@@ -7929,7 +7864,7 @@ void XGI_OEM310Setting(unsigned short ModeNo, unsigned short ModeIdIndex,
 	}
 }
 
-void XGI_SetDelayComp(struct vb_device_info *pVBInfo)
+static void XGI_SetDelayComp(struct vb_device_info *pVBInfo)
 {
 	unsigned short index;
 
@@ -7997,7 +7932,7 @@ void XGI_SetDelayComp(struct vb_device_info *pVBInfo)
 	}
 }
 
-void XGI_SetLCDCap(struct vb_device_info *pVBInfo)
+static void XGI_SetLCDCap(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempcx;
 
@@ -8034,7 +7969,7 @@ void XGI_SetLCDCap(struct vb_device_info *pVBInfo)
 	}
 }
 
-void XGI_SetLCDCap_A(unsigned short tempcx, struct vb_device_info *pVBInfo)
+static void XGI_SetLCDCap_A(unsigned short tempcx, struct vb_device_info *pVBInfo)
 {
 	unsigned short temp;
 
@@ -8067,7 +8002,7 @@ void XGI_SetLCDCap_A(unsigned short tempcx, struct vb_device_info *pVBInfo)
 /* Output : */
 /* Description : */
 /* --------------------------------------------------------------------- */
-void XGI_SetLCDCap_B(unsigned short tempcx, struct vb_device_info *pVBInfo)
+static void XGI_SetLCDCap_B(unsigned short tempcx, struct vb_device_info *pVBInfo)
 {
 	if (tempcx & EnableLCD24bpp) /* 24bits */
 		XGINew_SetRegANDOR(pVBInfo->Part2Port, 0x1A, 0xE0,
@@ -8079,7 +8014,7 @@ void XGI_SetLCDCap_B(unsigned short tempcx, struct vb_device_info *pVBInfo)
 						| 0x18)); /* Enable Dither */
 }
 
-void SetSpectrum(struct vb_device_info *pVBInfo)
+static void SetSpectrum(struct vb_device_info *pVBInfo)
 {
 	unsigned short index;
 
@@ -8108,7 +8043,7 @@ void SetSpectrum(struct vb_device_info *pVBInfo)
 /* Output : */
 /* Description : Set TV Customized Param. */
 /* --------------------------------------------------------------------- */
-void XGI_SetAntiFlicker(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetAntiFlicker(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx, index;
@@ -8133,7 +8068,7 @@ void XGI_SetAntiFlicker(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGINew_SetRegANDOR(pVBInfo->Part2Port, 0x0A, 0x8F, tempah);
 }
 
-void XGI_SetEdgeEnhance(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetEdgeEnhance(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx, index;
@@ -8155,7 +8090,7 @@ void XGI_SetEdgeEnhance(unsigned short ModeNo, unsigned short ModeIdIndex,
 	XGINew_SetRegANDOR(pVBInfo->Part2Port, 0x3A, 0x1F, tempah);
 }
 
-void XGI_SetPhaseIncr(struct vb_device_info *pVBInfo)
+static void XGI_SetPhaseIncr(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx;
 
@@ -8176,7 +8111,7 @@ void XGI_SetPhaseIncr(struct vb_device_info *pVBInfo)
 			& 0xFF000000) >> 24));
 }
 
-void XGI_SetYFilter(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_SetYFilter(unsigned short ModeNo, unsigned short ModeIdIndex,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx, index;
@@ -8273,7 +8208,7 @@ void XGI_SetYFilter(unsigned short ModeNo, unsigned short ModeIdIndex,
 /* 1 : 301B/302B/301LV/302LV */
 /* Description : */
 /* --------------------------------------------------------------------- */
-void XGI_GetTVPtrIndex2(unsigned short *tempbx, unsigned char *tempcl,
+static void XGI_GetTVPtrIndex2(unsigned short *tempbx, unsigned char *tempcl,
 		unsigned char *tempch, struct vb_device_info *pVBInfo)
 {
 	*tempbx = 0;
@@ -8520,7 +8455,7 @@ void XGI_SetCRT2ModeRegs(unsigned short ModeNo,
 	}
 }
 
-void XGI_CloseCRTC(struct xgi_hw_device_info *HwDeviceExtension,
+static void XGI_CloseCRTC(struct xgi_hw_device_info *HwDeviceExtension,
 		struct vb_device_info *pVBInfo)
 {
 	unsigned short tempbx;
@@ -8539,7 +8474,7 @@ void XGI_OpenCRTC(struct xgi_hw_device_info *HwDeviceExtension,
 	tempbx = 0;
 }
 
-void XGI_GetRAMDAC2DATA(unsigned short ModeNo, unsigned short ModeIdIndex,
+static void XGI_GetRAMDAC2DATA(unsigned short ModeNo, unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct vb_device_info *pVBInfo)
 {
@@ -8596,7 +8531,7 @@ void XGI_GetRAMDAC2DATA(unsigned short ModeNo, unsigned short ModeIdIndex,
 	pVBInfo->VT = tempbx;
 }
 
-unsigned short XGI_GetColorDepth(unsigned short ModeNo,
+static unsigned short XGI_GetColorDepth(unsigned short ModeNo,
 		unsigned short ModeIdIndex, struct vb_device_info *pVBInfo)
 {
 	unsigned short ColorDepth[6] = { 1, 2, 4, 4, 6, 8 };
@@ -8632,32 +8567,9 @@ void XGI_LockCRT2(struct xgi_hw_device_info *HwDeviceExtension,
 
 }
 
-void XGINew_EnableCRT2(struct vb_device_info *pVBInfo)
+static void XGINew_EnableCRT2(struct vb_device_info *pVBInfo)
 {
 	XGINew_SetRegANDOR(pVBInfo->P3c4, 0x1E, 0xFF, 0x20);
-}
-
-void XGINew_LCD_Wait_Time(unsigned char DelayTime,
-		struct vb_device_info *pVBInfo)
-{
-	unsigned short i, j;
-
-	unsigned long temp, flag;
-
-	flag = 0;
-	/* printk("XGINew_LCD_Wait_Time"); */
-	/* return; */
-	for (i = 0; i < DelayTime; i++) {
-		for (j = 0; j < 66; j++) {
-			temp = XGINew_GetReg3(0x61);
-			/* temp &= 0x10000000; */
-			temp &= 0x10;
-			if (temp == flag)
-				continue;
-
-			flag = temp;
-		}
-	}
 }
 
 unsigned char XGI_BridgeIsOn(struct vb_device_info *pVBInfo)
@@ -8694,7 +8606,7 @@ void XGI_LongWait(struct vb_device_info *pVBInfo)
 	}
 }
 
-void XGI_VBLongWait(struct vb_device_info *pVBInfo)
+static void XGI_VBLongWait(struct vb_device_info *pVBInfo)
 {
 	unsigned short tempal, temp, i, j;
 	return;
@@ -8726,7 +8638,7 @@ void XGI_VBLongWait(struct vb_device_info *pVBInfo)
 	return;
 }
 
-unsigned short XGI_GetVGAHT2(struct vb_device_info *pVBInfo)
+static unsigned short XGI_GetVGAHT2(struct vb_device_info *pVBInfo)
 {
 	unsigned long tempax, tempbx;
 
@@ -8738,7 +8650,7 @@ unsigned short XGI_GetVGAHT2(struct vb_device_info *pVBInfo)
 	return (unsigned short) tempax;
 }
 
-unsigned short XGI_GetVCLK2Ptr(unsigned short ModeNo,
+static unsigned short XGI_GetVCLK2Ptr(unsigned short ModeNo,
 		unsigned short ModeIdIndex,
 		unsigned short RefreshRateTableIndex,
 		struct xgi_hw_device_info *HwDeviceExtension,
