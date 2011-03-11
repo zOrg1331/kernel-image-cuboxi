@@ -23,8 +23,6 @@
 
 #include <asm/byteorder.h>
 
-#ifdef CONFIG_OF
-
 typedef u32 phandle;
 typedef u32 ihandle;
 
@@ -65,6 +63,8 @@ struct device_node {
 #endif
 };
 
+#ifdef CONFIG_OF
+
 /* Pointer for first entry in chain of all nodes. */
 extern struct device_node *allnodes;
 extern struct device_node *of_chosen;
@@ -103,7 +103,7 @@ extern void of_node_put(struct device_node *node);
 #endif
 
 /*
- * OF address retreival & translation
+ * OF address retrieval & translation
  */
 
 /* Helper to read a big number; size is in cells (not bytes) */
