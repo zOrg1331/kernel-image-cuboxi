@@ -109,7 +109,7 @@ void cifs_dump_mids(struct TCP_Server_Info *server)
 static void dump_smb2_debug_info(int i, struct seq_file *m,
 				struct TCP_Server_Info *server)
 {
-	seq_printf("dumping debug information for smb2 not supported yet\n");
+	seq_printf(m, "dumping debug information for smb2 not supported yet\n");
 }
 
 static void dump_cifs_debug_info(int i, struct seq_file *m,
