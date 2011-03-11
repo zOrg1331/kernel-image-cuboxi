@@ -20,7 +20,7 @@
 #include <net/addrconf.h>
 
 static void
-__xfrm6_init_tempsel(struct xfrm_selector *sel, struct flowi *fl)
+__xfrm6_init_tempsel(struct xfrm_selector *sel, const struct flowi *fl)
 {
 	/* Initialize temporary selector matching only
 	 * to current session. */
@@ -38,8 +38,8 @@ __xfrm6_init_tempsel(struct xfrm_selector *sel, struct flowi *fl)
 }
 
 static void
-xfrm6_init_temprop(struct xfrm_state *x, struct xfrm_tmpl *tmpl,
-		   xfrm_address_t *daddr, xfrm_address_t *saddr)
+xfrm6_init_temprop(struct xfrm_state *x, const struct xfrm_tmpl *tmpl,
+		   const xfrm_address_t *daddr, const xfrm_address_t *saddr)
 {
 	x->id = tmpl->id;
 	if (ipv6_addr_any((struct in6_addr*)&x->id.daddr))

@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 10 Gigabit PCI Express Linux driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -108,6 +108,33 @@ static int ixgbe_set_vf_vlan(struct ixgbe_adapter *adapter, int add, int vid,
 			     u32 vf)
 {
 	return adapter->hw.mac.ops.set_vfta(&adapter->hw, vid, vf, (bool)add);
+}
+
+void ixgbe_set_vf_lpe(struct ixgbe_adapter *adapter, u32 *msgbuf)
+{
+	struct ixgbe_hw *hw = &adapter->hw;
+	int new_mtu = msgbuf[1];
+	u32 max_frs;
+	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN;
+
+	/* Only X540 supports jumbo frames in IOV mode */
+	if (adapter->hw.mac.type != ixgbe_mac_X540)
+		return;
+
+	/* MTU < 68 is an error and causes problems on some kernels */
+	if ((new_mtu < 68) || (max_frame > IXGBE_MAX_JUMBO_FRAME_SIZE)) {
+		e_err(drv, "VF mtu %d out of range\n", new_mtu);
+		return;
+	}
+
+	max_frs = (IXGBE_READ_REG(hw, IXGBE_MAXFRS) &
+		   IXGBE_MHADD_MFS_MASK) >> IXGBE_MHADD_MFS_SHIFT;
+	if (max_frs < new_mtu) {
+		max_frs = new_mtu << IXGBE_MHADD_MFS_SHIFT;
+		IXGBE_WRITE_REG(hw, IXGBE_MAXFRS, max_frs);
+	}
+
+	e_info(hw, "VF requests change max MTU to %d\n", new_mtu);
 }
 
 static void ixgbe_set_vmolr(struct ixgbe_hw *hw, u32 vf, bool aupe)
@@ -302,7 +329,7 @@ static int ixgbe_rcv_msg_from_vf(struct ixgbe_adapter *adapter, u32 vf)
 		                                 hash_list, vf);
 		break;
 	case IXGBE_VF_SET_LPE:
-		WARN_ON((msgbuf[0] & 0xFFFF) == IXGBE_VF_SET_LPE);
+		ixgbe_set_vf_lpe(adapter, msgbuf);
 		break;
 	case IXGBE_VF_SET_VLAN:
 		add = (msgbuf[0] & IXGBE_VT_MSGINFO_MASK)

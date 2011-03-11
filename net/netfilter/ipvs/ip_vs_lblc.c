@@ -70,7 +70,6 @@
  *    entries that haven't been touched for a day.
  */
 #define COUNT_FOR_FULL_EXPIRATION   30
-static int sysctl_ip_vs_lblc_expiration = 24*60*60*HZ;
 
 
 /*
@@ -117,15 +116,13 @@ struct ip_vs_lblc_table {
 static ctl_table vs_vars_table[] = {
 	{
 		.procname	= "lblc_expiration",
-		.data		= &sysctl_ip_vs_lblc_expiration,
+		.data		= NULL,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_jiffies,
 	},
 	{ }
 };
-
-static struct ctl_table_header * sysctl_header;
 
 static inline void ip_vs_lblc_free(struct ip_vs_lblc_entry *en)
 {
@@ -248,6 +245,7 @@ static inline void ip_vs_lblc_full_check(struct ip_vs_service *svc)
 	struct ip_vs_lblc_entry *en, *nxt;
 	unsigned long now = jiffies;
 	int i, j;
+	struct netns_ipvs *ipvs = net_ipvs(svc->net);
 
 	for (i=0, j=tbl->rover; i<IP_VS_LBLC_TAB_SIZE; i++) {
 		j = (j + 1) & IP_VS_LBLC_TAB_MASK;
@@ -255,7 +253,8 @@ static inline void ip_vs_lblc_full_check(struct ip_vs_service *svc)
 		write_lock(&svc->sched_lock);
 		list_for_each_entry_safe(en, nxt, &tbl->bucket[j], list) {
 			if (time_before(now,
-					en->lastuse + sysctl_ip_vs_lblc_expiration))
+					en->lastuse +
+					ipvs->sysctl_lblc_expiration))
 				continue;
 
 			ip_vs_lblc_free(en);
@@ -390,12 +389,7 @@ __ip_vs_lblc_schedule(struct ip_vs_service *svc)
 	int loh, doh;
 
 	/*
-	 * We think the overhead of processing active connections is fifty
-	 * times higher than that of inactive connections in average. (This
-	 * fifty times might not be accurate, we will change it later.) We
-	 * use the following formula to estimate the overhead:
-	 *                dest->activeconns*50 + dest->inactconns
-	 * and the load:
+	 * We use the following formula to estimate the load:
 	 *                (dest overhead) / dest->weight
 	 *
 	 * Remember -- no floats in kernel mode!!!
@@ -411,8 +405,7 @@ __ip_vs_lblc_schedule(struct ip_vs_service *svc)
 			continue;
 		if (atomic_read(&dest->weight) > 0) {
 			least = dest;
-			loh = atomic_read(&least->activeconns) * 50
-				+ atomic_read(&least->inactconns);
+			loh = ip_vs_dest_conn_overhead(least);
 			goto nextstage;
 		}
 	}
@@ -426,8 +419,7 @@ __ip_vs_lblc_schedule(struct ip_vs_service *svc)
 		if (dest->flags & IP_VS_DEST_F_OVERLOAD)
 			continue;
 
-		doh = atomic_read(&dest->activeconns) * 50
-			+ atomic_read(&dest->inactconns);
+		doh = ip_vs_dest_conn_overhead(dest);
 		if (loh * atomic_read(&dest->weight) >
 		    doh * atomic_read(&least->weight)) {
 			least = dest;
@@ -511,7 +503,7 @@ ip_vs_lblc_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 	/* No cache entry or it is invalid, time to schedule */
 	dest = __ip_vs_lblc_schedule(svc);
 	if (!dest) {
-		IP_VS_ERR_RL("LBLC: no destination available\n");
+		ip_vs_scheduler_err(svc, "no destination available");
 		return NULL;
 	}
 
@@ -543,23 +535,73 @@ static struct ip_vs_scheduler ip_vs_lblc_scheduler =
 	.schedule =		ip_vs_lblc_schedule,
 };
 
+/*
+ *  per netns init.
+ */
+static int __net_init __ip_vs_lblc_init(struct net *net)
+{
+	struct netns_ipvs *ipvs = net_ipvs(net);
+
+	if (!net_eq(net, &init_net)) {
+		ipvs->lblc_ctl_table = kmemdup(vs_vars_table,
+						sizeof(vs_vars_table),
+						GFP_KERNEL);
+		if (ipvs->lblc_ctl_table == NULL)
+			return -ENOMEM;
+	} else
+		ipvs->lblc_ctl_table = vs_vars_table;
+	ipvs->sysctl_lblc_expiration = 24*60*60*HZ;
+	ipvs->lblc_ctl_table[0].data = &ipvs->sysctl_lblc_expiration;
+
+#ifdef CONFIG_SYSCTL
+	ipvs->lblc_ctl_header =
+		register_net_sysctl_table(net, net_vs_ctl_path,
+					  ipvs->lblc_ctl_table);
+	if (!ipvs->lblc_ctl_header) {
+		if (!net_eq(net, &init_net))
+			kfree(ipvs->lblc_ctl_table);
+		return -ENOMEM;
+	}
+#endif
+
+	return 0;
+}
+
+static void __net_exit __ip_vs_lblc_exit(struct net *net)
+{
+	struct netns_ipvs *ipvs = net_ipvs(net);
+
+#ifdef CONFIG_SYSCTL
+	unregister_net_sysctl_table(ipvs->lblc_ctl_header);
+#endif
+
+	if (!net_eq(net, &init_net))
+		kfree(ipvs->lblc_ctl_table);
+}
+
+static struct pernet_operations ip_vs_lblc_ops = {
+	.init = __ip_vs_lblc_init,
+	.exit = __ip_vs_lblc_exit,
+};
 
 static int __init ip_vs_lblc_init(void)
 {
 	int ret;
 
-	sysctl_header = register_sysctl_paths(net_vs_ctl_path, vs_vars_table);
+	ret = register_pernet_subsys(&ip_vs_lblc_ops);
+	if (ret)
+		return ret;
+
 	ret = register_ip_vs_scheduler(&ip_vs_lblc_scheduler);
 	if (ret)
-		unregister_sysctl_table(sysctl_header);
+		unregister_pernet_subsys(&ip_vs_lblc_ops);
 	return ret;
 }
 
-
 static void __exit ip_vs_lblc_cleanup(void)
 {
-	unregister_sysctl_table(sysctl_header);
 	unregister_ip_vs_scheduler(&ip_vs_lblc_scheduler);
+	unregister_pernet_subsys(&ip_vs_lblc_ops);
 }
 
 

@@ -234,7 +234,7 @@ out:
 }
 
 static int attach_one_algo(struct xfrm_algo **algpp, u8 *props,
-			   struct xfrm_algo_desc *(*get_byname)(char *, int),
+			   struct xfrm_algo_desc *(*get_byname)(const char *, int),
 			   struct nlattr *rta)
 {
 	struct xfrm_algo *p, *ualg;
@@ -497,9 +497,9 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_state *x;
 	int err;
 	struct km_event c;
-	uid_t loginuid = NETLINK_CB(skb).loginuid;
-	u32 sessionid = NETLINK_CB(skb).sessionid;
-	u32 sid = NETLINK_CB(skb).sid;
+	uid_t loginuid = audit_get_loginuid(current);
+	u32 sessionid = audit_get_sessionid(current);
+	u32 sid;
 
 	err = verify_newsa_info(p, attrs);
 	if (err)
@@ -515,6 +515,7 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	else
 		err = xfrm_state_update(x);
 
+	security_task_getsecid(current, &sid);
 	xfrm_audit_state_add(x, err ? 0 : 1, loginuid, sessionid, sid);
 
 	if (err < 0) {
@@ -575,9 +576,9 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	int err = -ESRCH;
 	struct km_event c;
 	struct xfrm_usersa_id *p = nlmsg_data(nlh);
-	uid_t loginuid = NETLINK_CB(skb).loginuid;
-	u32 sessionid = NETLINK_CB(skb).sessionid;
-	u32 sid = NETLINK_CB(skb).sid;
+	uid_t loginuid = audit_get_loginuid(current);
+	u32 sessionid = audit_get_sessionid(current);
+	u32 sid;
 
 	x = xfrm_user_state_lookup(net, p, attrs, &err);
 	if (x == NULL)
@@ -602,6 +603,7 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	km_state_notify(x, &c);
 
 out:
+	security_task_getsecid(current, &sid);
 	xfrm_audit_state_delete(x, err ? 0 : 1, loginuid, sessionid, sid);
 	xfrm_state_put(x);
 	return err;
@@ -1265,9 +1267,9 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct km_event c;
 	int err;
 	int excl;
-	uid_t loginuid = NETLINK_CB(skb).loginuid;
-	u32 sessionid = NETLINK_CB(skb).sessionid;
-	u32 sid = NETLINK_CB(skb).sid;
+	uid_t loginuid = audit_get_loginuid(current);
+	u32 sessionid = audit_get_sessionid(current);
+	u32 sid;
 
 	err = verify_newpolicy_info(p);
 	if (err)
@@ -1286,6 +1288,7 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	 * a type XFRM_MSG_UPDPOLICY - JHS */
 	excl = nlh->nlmsg_type == XFRM_MSG_NEWPOLICY;
 	err = xfrm_policy_insert(p->dir, xp, excl);
+	security_task_getsecid(current, &sid);
 	xfrm_audit_policy_add(xp, err ? 0 : 1, loginuid, sessionid, sid);
 
 	if (err) {
@@ -1522,10 +1525,11 @@ static int xfrm_get_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 					    NETLINK_CB(skb).pid);
 		}
 	} else {
-		uid_t loginuid = NETLINK_CB(skb).loginuid;
-		u32 sessionid = NETLINK_CB(skb).sessionid;
-		u32 sid = NETLINK_CB(skb).sid;
+		uid_t loginuid = audit_get_loginuid(current);
+		u32 sessionid = audit_get_sessionid(current);
+		u32 sid;
 
+		security_task_getsecid(current, &sid);
 		xfrm_audit_policy_delete(xp, err ? 0 : 1, loginuid, sessionid,
 					 sid);
 
@@ -1553,9 +1557,9 @@ static int xfrm_flush_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_audit audit_info;
 	int err;
 
-	audit_info.loginuid = NETLINK_CB(skb).loginuid;
-	audit_info.sessionid = NETLINK_CB(skb).sessionid;
-	audit_info.secid = NETLINK_CB(skb).sid;
+	audit_info.loginuid = audit_get_loginuid(current);
+	audit_info.sessionid = audit_get_sessionid(current);
+	security_task_getsecid(current, &audit_info.secid);
 	err = xfrm_state_flush(net, p->proto, &audit_info);
 	if (err) {
 		if (err == -ESRCH) /* empty table */
@@ -1582,7 +1586,7 @@ static inline size_t xfrm_aevent_msgsize(void)
 	       + nla_total_size(4); /* XFRM_AE_ETHR */
 }
 
-static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, struct km_event *c)
+static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
 {
 	struct xfrm_aevent_id *id;
 	struct nlmsghdr *nlh;
@@ -1720,9 +1724,9 @@ static int xfrm_flush_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (err)
 		return err;
 
-	audit_info.loginuid = NETLINK_CB(skb).loginuid;
-	audit_info.sessionid = NETLINK_CB(skb).sessionid;
-	audit_info.secid = NETLINK_CB(skb).sid;
+	audit_info.loginuid = audit_get_loginuid(current);
+	audit_info.sessionid = audit_get_sessionid(current);
+	security_task_getsecid(current, &audit_info.secid);
 	err = xfrm_policy_flush(net, type, &audit_info);
 	if (err) {
 		if (err == -ESRCH) /* empty table */
@@ -1789,9 +1793,11 @@ static int xfrm_add_pol_expire(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	err = 0;
 	if (up->hard) {
-		uid_t loginuid = NETLINK_CB(skb).loginuid;
-		uid_t sessionid = NETLINK_CB(skb).sessionid;
-		u32 sid = NETLINK_CB(skb).sid;
+		uid_t loginuid = audit_get_loginuid(current);
+		u32 sessionid = audit_get_sessionid(current);
+		u32 sid;
+
+		security_task_getsecid(current, &sid);
 		xfrm_policy_delete(xp, p->dir);
 		xfrm_audit_policy_delete(xp, 1, loginuid, sessionid, sid);
 
@@ -1830,9 +1836,11 @@ static int xfrm_add_sa_expire(struct sk_buff *skb, struct nlmsghdr *nlh,
 	km_state_expired(x, ue->hard, current->pid);
 
 	if (ue->hard) {
-		uid_t loginuid = NETLINK_CB(skb).loginuid;
-		uid_t sessionid = NETLINK_CB(skb).sessionid;
-		u32 sid = NETLINK_CB(skb).sid;
+		uid_t loginuid = audit_get_loginuid(current);
+		u32 sessionid = audit_get_sessionid(current);
+		u32 sid;
+
+		security_task_getsecid(current, &sid);
 		__xfrm_state_delete(x);
 		xfrm_audit_state_delete(x, 1, loginuid, sessionid, sid);
 	}
@@ -1986,7 +1994,7 @@ static int xfrm_do_migrate(struct sk_buff *skb, struct nlmsghdr *nlh,
 #endif
 
 #ifdef CONFIG_XFRM_MIGRATE
-static int copy_to_user_migrate(struct xfrm_migrate *m, struct sk_buff *skb)
+static int copy_to_user_migrate(const struct xfrm_migrate *m, struct sk_buff *skb)
 {
 	struct xfrm_user_migrate um;
 
@@ -2004,7 +2012,7 @@ static int copy_to_user_migrate(struct xfrm_migrate *m, struct sk_buff *skb)
 	return nla_put(skb, XFRMA_MIGRATE, sizeof(um), &um);
 }
 
-static int copy_to_user_kmaddress(struct xfrm_kmaddress *k, struct sk_buff *skb)
+static int copy_to_user_kmaddress(const struct xfrm_kmaddress *k, struct sk_buff *skb)
 {
 	struct xfrm_user_kmaddress uk;
 
@@ -2025,11 +2033,11 @@ static inline size_t xfrm_migrate_msgsize(int num_migrate, int with_kma)
 	      + userpolicy_type_attrsize();
 }
 
-static int build_migrate(struct sk_buff *skb, struct xfrm_migrate *m,
-			 int num_migrate, struct xfrm_kmaddress *k,
-			 struct xfrm_selector *sel, u8 dir, u8 type)
+static int build_migrate(struct sk_buff *skb, const struct xfrm_migrate *m,
+			 int num_migrate, const struct xfrm_kmaddress *k,
+			 const struct xfrm_selector *sel, u8 dir, u8 type)
 {
-	struct xfrm_migrate *mp;
+	const struct xfrm_migrate *mp;
 	struct xfrm_userpolicy_id *pol_id;
 	struct nlmsghdr *nlh;
 	int i;
@@ -2061,9 +2069,9 @@ nlmsg_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_send_migrate(struct xfrm_selector *sel, u8 dir, u8 type,
-			     struct xfrm_migrate *m, int num_migrate,
-			     struct xfrm_kmaddress *k)
+static int xfrm_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
+			     const struct xfrm_migrate *m, int num_migrate,
+			     const struct xfrm_kmaddress *k)
 {
 	struct net *net = &init_net;
 	struct sk_buff *skb;
@@ -2079,9 +2087,9 @@ static int xfrm_send_migrate(struct xfrm_selector *sel, u8 dir, u8 type,
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_MIGRATE, GFP_ATOMIC);
 }
 #else
-static int xfrm_send_migrate(struct xfrm_selector *sel, u8 dir, u8 type,
-			     struct xfrm_migrate *m, int num_migrate,
-			     struct xfrm_kmaddress *k)
+static int xfrm_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
+			     const struct xfrm_migrate *m, int num_migrate,
+			     const struct xfrm_kmaddress *k)
 {
 	return -ENOPROTOOPT;
 }
@@ -2220,7 +2228,7 @@ static inline size_t xfrm_expire_msgsize(void)
 	       + nla_total_size(sizeof(struct xfrm_mark));
 }
 
-static int build_expire(struct sk_buff *skb, struct xfrm_state *x, struct km_event *c)
+static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
 {
 	struct xfrm_user_expire *ue;
 	struct nlmsghdr *nlh;
@@ -2242,7 +2250,7 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_exp_state_notify(struct xfrm_state *x, struct km_event *c)
+static int xfrm_exp_state_notify(struct xfrm_state *x, const struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct sk_buff *skb;
@@ -2259,7 +2267,7 @@ static int xfrm_exp_state_notify(struct xfrm_state *x, struct km_event *c)
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_EXPIRE, GFP_ATOMIC);
 }
 
-static int xfrm_aevent_state_notify(struct xfrm_state *x, struct km_event *c)
+static int xfrm_aevent_state_notify(struct xfrm_state *x, const struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct sk_buff *skb;
@@ -2274,7 +2282,7 @@ static int xfrm_aevent_state_notify(struct xfrm_state *x, struct km_event *c)
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_AEVENTS, GFP_ATOMIC);
 }
 
-static int xfrm_notify_sa_flush(struct km_event *c)
+static int xfrm_notify_sa_flush(const struct km_event *c)
 {
 	struct net *net = c->net;
 	struct xfrm_usersa_flush *p;
@@ -2330,7 +2338,7 @@ static inline size_t xfrm_sa_len(struct xfrm_state *x)
 	return l;
 }
 
-static int xfrm_notify_sa(struct xfrm_state *x, struct km_event *c)
+static int xfrm_notify_sa(struct xfrm_state *x, const struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct xfrm_usersa_info *p;
@@ -2387,7 +2395,7 @@ nla_put_failure:
 	return -1;
 }
 
-static int xfrm_send_state_notify(struct xfrm_state *x, struct km_event *c)
+static int xfrm_send_state_notify(struct xfrm_state *x, const struct km_event *c)
 {
 
 	switch (c->event) {
@@ -2546,7 +2554,7 @@ static inline size_t xfrm_polexpire_msgsize(struct xfrm_policy *xp)
 }
 
 static int build_polexpire(struct sk_buff *skb, struct xfrm_policy *xp,
-			   int dir, struct km_event *c)
+			   int dir, const struct km_event *c)
 {
 	struct xfrm_user_polexpire *upe;
 	struct nlmsghdr *nlh;
@@ -2576,7 +2584,7 @@ nlmsg_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, struct km_event *c)
+static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, const struct km_event *c)
 {
 	struct net *net = xp_net(xp);
 	struct sk_buff *skb;
@@ -2591,7 +2599,7 @@ static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, struct km_eve
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_EXPIRE, GFP_ATOMIC);
 }
 
-static int xfrm_notify_policy(struct xfrm_policy *xp, int dir, struct km_event *c)
+static int xfrm_notify_policy(struct xfrm_policy *xp, int dir, const struct km_event *c)
 {
 	struct net *net = xp_net(xp);
 	struct xfrm_userpolicy_info *p;
@@ -2656,7 +2664,7 @@ nlmsg_failure:
 	return -1;
 }
 
-static int xfrm_notify_policy_flush(struct km_event *c)
+static int xfrm_notify_policy_flush(const struct km_event *c)
 {
 	struct net *net = c->net;
 	struct nlmsghdr *nlh;
@@ -2681,7 +2689,7 @@ nlmsg_failure:
 	return -1;
 }
 
-static int xfrm_send_policy_notify(struct xfrm_policy *xp, int dir, struct km_event *c)
+static int xfrm_send_policy_notify(struct xfrm_policy *xp, int dir, const struct km_event *c)
 {
 
 	switch (c->event) {

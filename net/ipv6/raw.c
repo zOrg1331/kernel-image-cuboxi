@@ -124,18 +124,18 @@ static __inline__ int icmpv6_filter(struct sock *sk, struct sk_buff *skb)
 }
 
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
-static int (*mh_filter)(struct sock *sock, struct sk_buff *skb);
+typedef int mh_filter_t(struct sock *sock, struct sk_buff *skb);
 
-int rawv6_mh_filter_register(int (*filter)(struct sock *sock,
-					   struct sk_buff *skb))
+static mh_filter_t __rcu *mh_filter __read_mostly;
+
+int rawv6_mh_filter_register(mh_filter_t filter)
 {
 	rcu_assign_pointer(mh_filter, filter);
 	return 0;
 }
 EXPORT_SYMBOL(rawv6_mh_filter_register);
 
-int rawv6_mh_filter_unregister(int (*filter)(struct sock *sock,
-					     struct sk_buff *skb))
+int rawv6_mh_filter_unregister(mh_filter_t filter)
 {
 	rcu_assign_pointer(mh_filter, NULL);
 	synchronize_rcu();
@@ -193,10 +193,10 @@ static int ipv6_raw_deliver(struct sk_buff *skb, int nexthdr)
 			 * policy is placed in rawv6_rcv() because it is
 			 * required for each socket.
 			 */
-			int (*filter)(struct sock *sock, struct sk_buff *skb);
+			mh_filter_t *filter;
 
 			filter = rcu_dereference(mh_filter);
-			filtered = filter ? filter(sk, skb) : 0;
+			filtered = filter ? (*filter)(sk, skb) : 0;
 			break;
 		}
 #endif
@@ -856,20 +856,11 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		fl.oif = np->mcast_oif;
 	security_sk_classify_flow(sk, &fl);
 
-	err = ip6_dst_lookup(sk, &dst, &fl);
-	if (err)
+	dst = ip6_dst_lookup_flow(sk, &fl, final_p, true);
+	if (IS_ERR(dst)) {
+		err = PTR_ERR(dst);
 		goto out;
-	if (final_p)
-		ipv6_addr_copy(&fl.fl6_dst, final_p);
-
-	err = __xfrm_lookup(sock_net(sk), &dst, &fl, sk, XFRM_LOOKUP_WAIT);
-	if (err < 0) {
-		if (err == -EREMOTE)
-			err = ip6_dst_blackhole(sk, &dst, &fl);
-		if (err < 0)
-			goto out;
 	}
-
 	if (hlimit < 0) {
 		if (ipv6_addr_is_multicast(&fl.fl6_dst))
 			hlimit = np->mcast_hops;

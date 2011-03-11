@@ -99,7 +99,7 @@ static int rt2x00mac_tx_rts_cts(struct rt2x00_dev *rt2x00dev,
 	return retval;
 }
 
-int rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
+void rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct rt2x00_dev *rt2x00dev = hw->priv;
 	struct ieee80211_tx_info *tx_info = IEEE80211_SKB_CB(skb);
@@ -139,9 +139,9 @@ int rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	 * either RTS or CTS-to-self frame and handles everything
 	 * inside the hardware.
 	 */
-	if ((tx_info->control.rates[0].flags & (IEEE80211_TX_RC_USE_RTS_CTS |
-						IEEE80211_TX_RC_USE_CTS_PROTECT)) &&
-	    !rt2x00dev->ops->hw->set_rts_threshold) {
+	if (!rt2x00dev->ops->hw->set_rts_threshold &&
+	    (tx_info->control.rates[0].flags & (IEEE80211_TX_RC_USE_RTS_CTS |
+						IEEE80211_TX_RC_USE_CTS_PROTECT))) {
 		if (rt2x00queue_available(queue) <= 1)
 			goto exit_fail;
 
@@ -155,12 +155,11 @@ int rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	if (rt2x00queue_threshold(queue))
 		rt2x00queue_pause_queue(queue);
 
-	return NETDEV_TX_OK;
+	return;
 
  exit_fail:
 	ieee80211_stop_queue(rt2x00dev->hw, qid);
 	dev_kfree_skb_any(skb);
-	return NETDEV_TX_OK;
 }
 EXPORT_SYMBOL_GPL(rt2x00mac_tx);
 
@@ -617,11 +616,47 @@ void rt2x00mac_bss_info_changed(struct ieee80211_hw *hw,
 				      bss_conf->bssid);
 
 	/*
-	 * Update the beacon.
+	 * Update the beacon. This is only required on USB devices. PCI
+	 * devices fetch beacons periodically.
 	 */
-	if (changes & (BSS_CHANGED_BEACON | BSS_CHANGED_BEACON_ENABLED))
-		rt2x00queue_update_beacon(rt2x00dev, vif,
-					  bss_conf->enable_beacon);
+	if (changes & BSS_CHANGED_BEACON && rt2x00_is_usb(rt2x00dev))
+		rt2x00queue_update_beacon(rt2x00dev, vif);
+
+	/*
+	 * Start/stop beaconing.
+	 */
+	if (changes & BSS_CHANGED_BEACON_ENABLED) {
+		if (!bss_conf->enable_beacon && intf->enable_beacon) {
+			rt2x00queue_clear_beacon(rt2x00dev, vif);
+			rt2x00dev->intf_beaconing--;
+			intf->enable_beacon = false;
+
+			if (rt2x00dev->intf_beaconing == 0) {
+				/*
+				 * Last beaconing interface disabled
+				 * -> stop beacon queue.
+				 */
+				mutex_lock(&intf->beacon_skb_mutex);
+				rt2x00queue_stop_queue(rt2x00dev->bcn);
+				mutex_unlock(&intf->beacon_skb_mutex);
+			}
+
+
+		} else if (bss_conf->enable_beacon && !intf->enable_beacon) {
+			rt2x00dev->intf_beaconing++;
+			intf->enable_beacon = true;
+
+			if (rt2x00dev->intf_beaconing == 1) {
+				/*
+				 * First beaconing interface enabled
+				 * -> start beacon queue.
+				 */
+				mutex_lock(&intf->beacon_skb_mutex);
+				rt2x00queue_start_queue(rt2x00dev->bcn);
+				mutex_unlock(&intf->beacon_skb_mutex);
+			}
+		}
+	}
 
 	/*
 	 * When the association status has changed we must reset the link

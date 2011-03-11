@@ -38,7 +38,8 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 		fl.oif = skb->sk ? skb->sk->sk_bound_dev_if : 0;
 		fl.mark = skb->mark;
 		fl.flags = skb->sk ? inet_sk_flowi_flags(skb->sk) : 0;
-		if (ip_route_output_key(net, &rt, &fl) != 0)
+		rt = ip_route_output_key(net, &fl);
+		if (IS_ERR(rt))
 			return -1;
 
 		/* Drop old route. */
@@ -48,7 +49,8 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 		/* non-local src, find valid iif to satisfy
 		 * rp-filter when calling ip_route_input. */
 		fl.fl4_dst = iph->saddr;
-		if (ip_route_output_key(net, &rt, &fl) != 0)
+		rt = ip_route_output_key(net, &fl);
+		if (IS_ERR(rt))
 			return -1;
 
 		orefdst = skb->_skb_refdst;
@@ -69,7 +71,8 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 	    xfrm_decode_session(skb, &fl, AF_INET) == 0) {
 		struct dst_entry *dst = skb_dst(skb);
 		skb_dst_set(skb, NULL);
-		if (xfrm_lookup(net, &dst, &fl, skb->sk, 0))
+		dst = xfrm_lookup(net, dst, &fl, skb->sk, 0);
+		if (IS_ERR(dst))
 			return -1;
 		skb_dst_set(skb, dst);
 	}
@@ -102,7 +105,8 @@ int ip_xfrm_me_harder(struct sk_buff *skb)
 		dst = ((struct xfrm_dst *)dst)->route;
 	dst_hold(dst);
 
-	if (xfrm_lookup(dev_net(dst->dev), &dst, &fl, skb->sk, 0) < 0)
+	dst = xfrm_lookup(dev_net(dst->dev), dst, &fl, skb->sk, 0);
+	if (IS_ERR(dst))
 		return -1;
 
 	skb_dst_drop(skb);
@@ -219,7 +223,11 @@ static __sum16 nf_ip_checksum_partial(struct sk_buff *skb, unsigned int hook,
 
 static int nf_ip_route(struct dst_entry **dst, struct flowi *fl)
 {
-	return ip_route_output_key(&init_net, (struct rtable **)dst, fl);
+	struct rtable *rt = ip_route_output_key(&init_net, fl);
+	if (IS_ERR(rt))
+		return PTR_ERR(rt);
+	*dst = &rt->dst;
+	return 0;
 }
 
 static const struct nf_afinfo nf_ip_afinfo = {
