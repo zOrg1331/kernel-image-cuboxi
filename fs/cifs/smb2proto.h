@@ -189,7 +189,6 @@ extern int new_read_req(struct kvec *iov, struct cifs_tcon *tcon,
 			int request_type);
 extern int smb2_sendv(struct TCP_Server_Info *server, struct kvec *iov,
 		      int n_vec);
-extern int wait_for_free_request(struct cifs_ses *ses, const int long_op);
 extern int smb2_wait_on_complex_mid(struct cifs_ses *ses,
 				    struct mid_q_entry *mid,
 				    unsigned long timeout,

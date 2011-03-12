@@ -260,7 +260,7 @@ smb_send(struct TCP_Server_Info *server, struct smb_hdr *smb_buffer,
 	return smb_sendv(server, &iov, 1);
 }
 
-static int wait_for_free_request(struct TCP_Server_Info *server,
+int wait_for_free_request(struct TCP_Server_Info *server,
 				 const int long_op)
 {
 	if (long_op == CIFS_ASYNC_OP) {
@@ -271,7 +271,8 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 
 	spin_lock(&GlobalMid_Lock);
 	while (1) {
-		if (atomic_read(&server->inFlight) >= cifs_max_pending) {
+		if ((server->is_smb2 == false) && 
+		    atomic_read(&server->inFlight) >= cifs_max_pending) {
 			spin_unlock(&GlobalMid_Lock);
 #ifdef CONFIG_CIFS_STATS2
 			atomic_inc(&server->num_waiters);
@@ -283,6 +284,20 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 			atomic_dec(&server->num_waiters);
 #endif
 			spin_lock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_SMB2
+		} else if (server->is_smb2 &&
+			  (atomic_read(&server->credits) < 1)) {
+			spin_unlock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_inc(&server->num_waiters);
+#endif
+			wait_event(server->request_q,
+				   atomic_read(&server->credits) > 0);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_dec(&server->num_waiters);
+#endif
+			spin_lock(&GlobalMid_Lock);
+#endif /* CONFIG_CIFS_SMB2 */
 		} else {
 			if (server->tcpStatus == CifsExiting) {
 				spin_unlock(&GlobalMid_Lock);
