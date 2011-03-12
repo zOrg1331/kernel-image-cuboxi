@@ -187,8 +187,6 @@ extern int new_read_req(struct kvec *iov, struct cifs_tcon *tcon,
 			const unsigned int count, const __u64 lseek,
 			unsigned int remaining_bytes,
 			int request_type);
-extern int allocate_mid(struct cifs_ses *ses, struct smb2_hdr *in_buf,
-			struct mid_q_entry **ppmidq);
 extern int smb2_sendv(struct TCP_Server_Info *server, struct kvec *iov,
 		      int n_vec);
 extern int wait_for_free_request(struct cifs_ses *ses, const int long_op);

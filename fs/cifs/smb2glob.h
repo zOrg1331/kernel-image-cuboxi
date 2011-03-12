@@ -160,29 +160,36 @@ struct page_req {
 	struct mid_q_entry *midq; /* queue structure for demultiplex */
 };
 
+struct smb2_mid_entry;
+
+typedef void (smb2_mid_callback_t)(struct smb2_mid_entry *mid);
+
 /* one of these for every pending SMB2 request to the server */
 struct smb2_mid_entry {
 	struct list_head qhead;	/* mids waiting on reply from this server */
-	__u64 mid;		/* multiplex id(s) */
-	__u16 pid;		/* process id */
-	__u32 sequence_number;	/* for signing */ /* BB check if needed */
+	int mid_state;	/* wish this were enum but can not pass to wait_event */
 	unsigned long when_alloc;  /* when mid was created */
 #ifdef CONFIG_CIFS_STATS2
 	unsigned long when_sent; /* time when smb send finished */
 	unsigned long when_received; /* when demux complete (taken off wire) */
 #endif
-	struct task_struct *tsk;	/* task waiting for response */
+	bool large_buf:1;	/* if valid response, is pointer to large buf */
+	smb2_mid_callback_t *callback;
+	void *callback_data;
+	__u64 mid;		/* multiplex id(s), bigger for smb2 */
+	__le16 command;		/* smb2 command code */
+	__u32 pid;		/* process id - bigger for smb2 than cifs */
 	struct smb2_hdr *resp_buf;	/* response buffer */
+
+	/* Additional fields below needed for handling async smb2 responses
+	and for asynchronous smb2_writepages support have been temporarily
+	removed from the port and will be reenabled as that gets merged in */
+
+#if 0 /* Fields needed for smb2_writepages, compound ops, async support */
 	char **pagebuf_list;	        /* response buffer */
 	int num_pages;
-	int mid_state;	/* wish this were enum but can not pass to wait_event */
-	__le16 command;	/* smb command code */
 	bool async_resp_rcvd:1; /* if server has responded with interim resp */
-	bool large_buf:1;	/* if valid response, is pointer to large buf */
 	bool is_kmap_buf:1;
-/*	bool multi_rsp:1; BB do we have to account for something in SMB2 like
-	we saw multiple trans2 responses for one request (possible in CIFS) */
-	/* Async things */
 	__u64 *mid_list;	/* multiplex id(s) */
 	int *mid_state_list;
 	short int *large_buf_list;
@@ -196,8 +203,7 @@ struct smb2_mid_entry {
 	bool complex_mid:1; /* complex entry - consists of several messages */
 	int result;
 	unsigned long last_rsp_time;
-	int (*callback)(struct smb2_mid_entry * , void *);
-	void *callback_data;
+#endif
 };
 
 

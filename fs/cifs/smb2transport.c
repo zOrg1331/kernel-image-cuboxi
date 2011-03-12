@@ -35,6 +35,8 @@
 #include "cifs_debug.h"
 #include "smb2status.h"
 
+extern mempool_t *smb2_mid_poolp;
+
 /*
  *  Send an (optionally, already signed) SMB2 request over a socket.
  *  This socket is already locked (by a mutex) by the caller so we
@@ -136,5 +138,73 @@ smb2_send_complex(const unsigned int xid, struct cifs_ses *ses,
 
 	return rc;
 }
+
+static void
+wake_up_smb2_task(struct smb2_mid_entry *mid)
+{
+	wake_up_process(mid->callback_data);
+}
+
+static struct smb2_mid_entry *
+smb2_mid_entry_alloc(const struct smb2_hdr *smb_buffer,
+		     struct TCP_Server_Info *server)
+{
+	struct smb2_mid_entry *temp;
+
+	if (server == NULL) {
+		cERROR(1, "Null TCP session in smb2_mid_entry_alloc");
+		return NULL;
+	}
+
+	temp = mempool_alloc(smb2_mid_poolp, GFP_NOFS);
+	if (temp == NULL)
+		return temp;
+	else {
+		memset(temp, 0, sizeof(struct smb2_mid_entry));
+		temp->mid = smb_buffer->MessageId;	/* always LE */
+		temp->pid = current->pid;
+		temp->command = smb_buffer->Command;	/* Always LE */
+		temp->when_alloc = jiffies;
+
+		/*
+		 * The default is for the mid to be synchronous, so the
+		 * default callback just wakes up the current task.
+		 */
+		temp->callback = wake_up_smb2_task;
+		temp->callback_data = current;
+	}
+
+	atomic_inc(&midCount);
+	temp->mid_state = MID_REQUEST_ALLOCATED;
+	return temp;
+}
+
+static int get_smb2_mid(struct cifs_ses *ses, struct smb2_hdr *in_buf,
+			struct smb2_mid_entry **ppmidQ)
+{
+	if (ses->server->tcpStatus == CifsExiting)
+		return -ENOENT;
+
+	if (ses->server->tcpStatus == CifsNeedReconnect) {
+		cFYI(1, "tcp session dead - return to caller to retry");
+		return -EAGAIN;
+	}
+
+	if (ses->status != CifsGood) {
+		/* check if SMB session is bad because we are setting it up */
+		if ((in_buf->Command != SMB2_SESSION_SETUP) &&
+			(in_buf->Command != SMB2_NEGOTIATE))
+			return -EAGAIN;
+		/* else ok - we are setting up session */
+	}
+	*ppmidQ = smb2_mid_entry_alloc(in_buf, ses->server);
+	if (*ppmidQ == NULL)
+		return -ENOMEM;
+	spin_lock(&GlobalMid_Lock);
+	list_add_tail(&(*ppmidQ)->qhead, &ses->server->pending_mid_q);
+	spin_unlock(&GlobalMid_Lock);
+	return 0;
+}
+
 
 /* BB add missing functions here */

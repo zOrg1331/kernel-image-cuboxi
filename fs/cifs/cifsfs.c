@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/cifsfs.c
  *
- *   Copyright (C) International Business Machines  Corp., 2002,2008
+ *   Copyright (C) International Business Machines  Corp., 2002,2011
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
  *   Common Internet FileSystem (CIFS) client
@@ -88,6 +88,11 @@ MODULE_PARM_DESC(sign_zero_copy, "Don't copy pages on write with signing "
 extern mempool_t *cifs_sm_req_poolp;
 extern mempool_t *cifs_req_poolp;
 extern mempool_t *cifs_mid_poolp;
+#ifdef CONFIG_CIFS_SMB2
+extern mempool_t *smb2_mid_poolp;
+mempool_t *smb2_mid_poolp;
+static struct kmem_cache *smb2_mid_cachep;
+#endif /* CONFIG_CIFS_SMB2 */
 
 void
 cifs_sb_active(struct super_block *sb)
@@ -967,6 +972,25 @@ cifs_init_mids(void)
 		kmem_cache_destroy(cifs_mid_cachep);
 		return -ENOMEM;
 	}
+
+#ifdef CONFIG_CIFS_SMB2
+	smb2_mid_cachep = kmem_cache_create("smb2_mpx_ids",
+					    sizeof(struct smb2_mid_entry), 0,
+					    SLAB_HWCACHE_ALIGN, NULL);
+	if (smb2_mid_cachep == NULL) {
+		mempool_destroy(cifs_mid_poolp);
+		kmem_cache_destroy(cifs_mid_cachep);
+		return -ENOMEM;
+	}
+
+	smb2_mid_poolp = mempool_create_slab_pool(3, smb2_mid_cachep);
+	if (smb2_mid_poolp == NULL) {
+		mempool_destroy(cifs_mid_poolp);
+		kmem_cache_destroy(cifs_mid_cachep);
+		kmem_cache_destroy(smb2_mid_cachep);
+		return -ENOMEM;
+	}
+#endif /* CONFIG_CIFS_SMB2 */
 
 	return 0;
 }
