@@ -250,6 +250,64 @@ smb2_mid_entry_free(struct smb2_mid_entry *mid_entry)
 	mempool_free(mid_entry, smb2_mid_poolp);
 }
 
+/* This is similar to cifs's wait_for_response but obviously for smb2 mids */
+static int
+wait_for_smb2_response(struct TCP_Server_Info *server,
+			struct smb2_mid_entry *midq)
+{
+	int error;
+
+	error = wait_event_killable(server->response_q,
+				    midq->mid_state != MID_REQUEST_SUBMITTED);
+	if (error < 0)
+		return -ERESTARTSYS;
+
+	return 0;
+}
+
+/* This is similar to cifs's sync_mid_result but for smb2 mids */
+static int
+sync_smb2_mid_result(struct smb2_mid_entry *mid, struct TCP_Server_Info *server)
+{
+	int rc = 0;
+
+	cFYI(1, "%s: cmd=%d mid=%lld state=%d", __func__,
+		le16_to_cpu(mid->command), mid->mid, mid->mid_state);
+
+	spin_lock(&GlobalMid_Lock);
+	/* ensure that it's no longer on the pending_mid_q */
+	list_del_init(&mid->qhead);
+
+	switch (mid->mid_state) {
+	case MID_RESPONSE_RECEIVED:
+		spin_unlock(&GlobalMid_Lock);
+		return rc;
+	case MID_REQUEST_SUBMITTED:
+		/* socket is going down, reject all calls */
+		if (server->tcpStatus == CifsExiting) {
+			cERROR(1, "%s: canceling mid=%lld cmd=0x%x state=%d",
+				__func__, mid->mid, le16_to_cpu(mid->command),
+				mid->mid_state);
+			rc = -EHOSTDOWN;
+			break;
+		}
+	case MID_RETRY_NEEDED:
+		rc = -EAGAIN;
+		break;
+	case MID_RESPONSE_MALFORMED:
+		rc = -EIO;
+		break;
+	default:
+		cERROR(1, "%s: invalid mid state mid=%lld state=%d", __func__,
+			mid->mid, mid->mid_state);
+		rc = -EIO;
+	}
+	spin_unlock(&GlobalMid_Lock);
+
+	smb2_mid_entry_free(mid);
+	return rc;
+}
+
 static void
 free_smb2_mid(struct smb2_mid_entry *mid)
 {
