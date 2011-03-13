@@ -573,7 +573,7 @@ struct smb2_lock_element {
 
 #define LOCKING_ANDX_OPLOCK_RELEASE  0x02
 
-struct lock_req {
+struct smb2_lock_req {
 	struct smb2_hdr hdr;
 	__le16 StructureSize; /* Must be 48 */
 	__le16 LockCount;
@@ -584,7 +584,7 @@ struct lock_req {
 	struct smb2_lock_element locks[1];
 } __attribute__((packed));
 
-struct lock_rsp {
+struct smb2_lock_rsp {
 	struct smb2_hdr hdr;
 	__le16 StructureSize; /* Must be 4 */
 	__le16 Reserved;
@@ -684,7 +684,7 @@ struct ioctl_req {
 	__le16 StructureSize;	/* Must be 57 */
 	__le16 Reserved;
 	__le32 Ctlcode;
-	__le64 Fileid[2];	/* persistent and volatile */
+	__u64 Fileid[2];	/* persistent and volatile */
 	__le32 Inputoffset;
 	__le32 Inputcount;
 	__le32 Maxinputresp;
@@ -701,7 +701,7 @@ struct ioctl_rsp {
 	__le16 StructureSize;	/* Must be 49 */
 	__le16 Reserved;
 	__le32 Ctlcode;
-	__le16 Fileid[2];	/* persistent and volatile */
+	__u64 Fileid[2];	/* persistent and volatile */
 	__le32 Inputoffset;
 	__le32 Inputcount;
 	__le32 Outputoffset;

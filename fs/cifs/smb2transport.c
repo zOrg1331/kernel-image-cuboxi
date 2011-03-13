@@ -87,9 +87,9 @@ smb2_send_lock_cancel(const unsigned int xid, struct cifs_tcon *tcon,
 {
 	int rsp_buf_type;
 	struct cifs_ses *ses = tcon->ses;
-	struct lock_req *pSMB2 = (struct lock_req *)iov[0].iov_base;
+	struct smb2_lock_req *pSMB2 = (struct smb2_lock_req *)iov[0].iov_base;
 
-	pSMB2->locks[0].Flags = SMB2_LOCKFLAG_UNLOCK;
+	pSMB2->locks[0].Flags = cpu_to_le16(SMB2_LOCKFLAG_UNLOCK);
 
 	return smb2_sendrcv2(xid, ses, iov, 1, &rsp_buf_type,
 				NULL, CIFS_STD_OP);

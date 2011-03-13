@@ -460,7 +460,7 @@ validate_and_copy_ea_buf(int ret_value,
 		next_ea_offset = le32_to_cpu(curr_ea->NextEntryOffset);
 		/*= curr_ea->Flags;*/
 		name_len = curr_ea->EaNameLength;
-		value_len = curr_ea->EaValueLength;
+		value_len = le16_to_cpu(curr_ea->EaValueLength);
 
 		/* check there aren't too many eas */
 		if (pdata_offset + name_len + 6 > pdata_len) {
@@ -955,7 +955,7 @@ SMB2_tcon(unsigned int xid, struct cifs_ses *ses,
 
 	strncpy(tcon->treeName, tree, MAX_TREE_SIZE);
 tcon_exit:
-	if (pSMB2r->hdr.Status == STATUS_BAD_NETWORK_NAME) {
+	if (pSMB2r->hdr.Status == cpu_to_le32(STATUS_BAD_NETWORK_NAME)) {
 		cERROR(1, "BAD_NETWORK_NAME: %s", tree);
 		tcon->bad_network_name = true;
 	}
@@ -1055,7 +1055,7 @@ int SMB2_open(const int xid, struct cifs_tcon *tcon, __le16 *path,
 	pSMB2->ImpersonationLevel = IL_IMPERSONATION;
 	pSMB2->DesiredAccess = desired_access;
 	pSMB2->FileAttributes = file_attributes; /* ignored on open */
-	pSMB2->ShareAccess = FILE_SHARE_ALL;
+	pSMB2->ShareAccess = FILE_SHARE_ALL_LE;
 	pSMB2->CreateDisposition = create_disposition;
 	pSMB2->CreateOptions = create_options;
 	uni_path_len = (2 * UniStrnlen(path, PATH_MAX)) + 2;
@@ -1292,7 +1292,7 @@ build_symlink_inputbuf(struct symlink_reparse_data_buf *inpbuf,
 	inpbuf->reserved1 = 0x0;
 	inpbuf->sub_nameoffset = 0x0;
 	inpbuf->sub_namelength = cpu_to_le16(2 * uni_sym_len);
-	inpbuf->print_nameoffset = 2 * uni_sym_len;
+	inpbuf->print_nameoffset = cpu_to_le16(2 * uni_sym_len);
 	inpbuf->print_namelength = cpu_to_le16(2 * uni_sym_len);
 	if (is_symlink_relative(symname))
 		inpbuf->flags = cpu_to_le32(SYMLINK_FLAG_RELATIVE);
@@ -1351,12 +1351,12 @@ SMB2_symlink_ioctl(const int xid, struct cifs_tcon *tcon, u32 ctlcode,
 	}
 	symbuflen = sizeof(struct symlink_reparse_data_buf) - 1;
 
-	pSMB2->Inputoffset = cpu_to_le16(sizeof(struct ioctl_req)
+	pSMB2->Inputoffset = cpu_to_le32(sizeof(struct ioctl_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
-	pSMB2->Inputcount = cpu_to_le16(symbuflen + pathbuflen);
+	pSMB2->Inputcount = cpu_to_le32(symbuflen + pathbuflen);
 	pSMB2->Maxinputresp = 0;
 
-	pSMB2->Outputoffset = cpu_to_le16(sizeof(struct ioctl_req)
+	pSMB2->Outputoffset = cpu_to_le32(sizeof(struct ioctl_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
 	pSMB2->Outputcount = 0;
 	pSMB2->Maxoutputresp = 0;
@@ -1486,8 +1486,8 @@ int SMB2_query_directory(const int xid, struct cifs_tcon *tcon,
 	pSMB2->FileNameLength = cpu_to_le16(len);
 	/*  BB could be 30 bytes or so longer if we used SMB2 specific
 	    buffer lengths, but this is safe and close enough */
-	pSMB2->OutputBufferLength = CIFSMaxBufSize -
-		sizeof(struct query_directory_rsp); 
+	pSMB2->OutputBufferLength = cpu_to_le32(CIFSMaxBufSize -
+		sizeof(struct query_directory_rsp));
 
 	iov[0].iov_base = (char *)pSMB2;
 	iov[0].iov_len = be32_to_cpu(pSMB2->hdr.smb2_buf_length) + 4 - 1;
@@ -1702,7 +1702,7 @@ int SMB2_QFS_attribute_info(const int xid, struct cifs_tcon *tcon,
 
 	pattr_inf = (struct fs_attribute_info *)(4 /* RFC1001 len field */ +
 		le16_to_cpu(pSMB2r->OutputBufferOffset) + (char *)&pSMB2r->hdr);
-	struct_len = le16_to_cpu(pSMB2r->OutputBufferLength);
+	struct_len = le32_to_cpu(pSMB2r->OutputBufferLength);
 	rc = validate_buf(le16_to_cpu(pSMB2r->OutputBufferOffset), struct_len,
 				&pSMB2r->hdr,
 				/* attr info includes a name so have to
@@ -1800,8 +1800,8 @@ int SMB2_query_info(const int xid, struct cifs_tcon *tcon,
 	pSMB2->VolatileFileId = volatile_fid;
 	pSMB2->InputBufferOffset = cpu_to_le16(sizeof(struct query_info_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
-	pSMB2->OutputBufferLength = sizeof(FILE_ALL_INFO_SMB2)
-			+ sizeof(struct query_info_rsp);
+	pSMB2->OutputBufferLength = cpu_to_le32(sizeof(FILE_ALL_INFO_SMB2)
+			+ sizeof(struct query_info_rsp));
 
 	iov[0].iov_base = (char *)pSMB2;
 	iov[0].iov_len = be32_to_cpu(pSMB2->hdr.smb2_buf_length) + 4;
@@ -1854,16 +1854,16 @@ int SMB2_query_full_ea_info(const int xid, struct cifs_tcon *tcon,
 	pSMB2->InfoType	= SMB2_O_INFO_FILE;
 	pSMB2->PersistentFileId = persistent_fid;
 	pSMB2->VolatileFileId = volatile_fid;
-	pSMB2->InputBufferLength = iov[1].iov_len;
+	pSMB2->InputBufferLength = cpu_to_le32(iov[1].iov_len);
 	pSMB2->InputBufferOffset =
 		cpu_to_le16(offsetof(struct query_info_req, Buffer) - 4);
 
 	if (rsp_output_len == 0) /* No hint output buffer size? */
-		pSMB2->OutputBufferLength =
-			sizeof(FILE_FULL_EA_INFO)*10*2;
+		pSMB2->OutputBufferLength = cpu_to_le32(
+			sizeof(FILE_FULL_EA_INFO)*10*2);
 	else /* Hint to output buffer size given (plus some for metadata) */
-		pSMB2->OutputBufferLength =
-			sizeof(FILE_FULL_EA_INFO)*rsp_output_len*2;
+		pSMB2->OutputBufferLength = cpu_to_le32(
+			sizeof(FILE_FULL_EA_INFO)*rsp_output_len*2);
 
 	iov[0].iov_base = (char *)pSMB2;
 
@@ -2252,8 +2252,8 @@ int new_read_req(struct kvec *iov, struct cifs_tcon *tcon,
 
 	if (request_type & CHAINED_REQUEST) {
 		if (!(request_type & END_OF_CHAIN)) {
-			pSMB2->hdr.NextCommand =
-				be32_to_cpu(pSMB2->hdr.smb2_buf_length) + 4;
+			pSMB2->hdr.NextCommand = cpu_to_le32(
+				be32_to_cpu(pSMB2->hdr.smb2_buf_length) + 4);
 		} else /* END_OF_CHAIN */
 			pSMB2->hdr.NextCommand = 0;
 		if (request_type & RELATED_REQUEST) {
@@ -2456,7 +2456,7 @@ int SMB2_lock(const int xid, struct cifs_tcon *tcon,
 	u64 length, u64 offset, u32 lockFlags, int wait)
 {
 	int rc = 0;
-	struct lock_req *pSMB2 = NULL;
+	struct smb2_lock_req *pSMB2 = NULL;
 /*	lock_rsp *pSMB2r = NULL; */ /* No resp data other than rc to parse */
 	int pbytes_returned;
 	int timeout = 0;
@@ -2470,14 +2470,14 @@ int SMB2_lock(const int xid, struct cifs_tcon *tcon,
 	if (wait)
 		timeout = CIFS_BLOCKING_OP; /* blocking operation, no timeout */
 
-	pSMB2->LockCount = 1;
+	pSMB2->LockCount = cpu_to_le16(1);
 
 	pSMB2->PersistentFileId = persistent_fid;
 	pSMB2->VolatileFileId = volatile_fid;
 
-	pSMB2->locks[0].Length = length;
-	pSMB2->locks[0].Offset = offset;
-	pSMB2->locks[0].Flags = lockFlags;
+	pSMB2->locks[0].Length = cpu_to_le64(length);
+	pSMB2->locks[0].Offset = cpu_to_le64(offset);
+	pSMB2->locks[0].Flags = cpu_to_le16(lockFlags);
 
 	pSMB2->hdr.smb2_buf_length =
 		cpu_to_be32(be32_to_cpu(pSMB2->hdr.smb2_buf_length)
