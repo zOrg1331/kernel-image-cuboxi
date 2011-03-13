@@ -1058,7 +1058,7 @@ int SMB2_open(const int xid, struct cifs_tcon *tcon, __le16 *path,
 	pSMB2->ShareAccess = FILE_SHARE_ALL_LE;
 	pSMB2->CreateDisposition = create_disposition;
 	pSMB2->CreateOptions = create_options;
-	uni_path_len = (2 * UniStrnlen(path, PATH_MAX)) + 2;
+	uni_path_len = (2 * UniStrnlen((wchar_t *)path, PATH_MAX)) + 2;
 	pSMB2->NameOffset = cpu_to_le16(sizeof(struct create_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
 
@@ -1986,7 +1986,7 @@ int SMB2_set_hardlink(const int xid, struct cifs_tcon *tcon,
 	pSMB2->BufferOffset = cpu_to_le16(sizeof(struct set_info_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
 
-	uni_path_len = (2 * UniStrnlen(target_file, PATH_MAX)) + 2;
+	uni_path_len = (2 * UniStrnlen((wchar_t *)target_file, PATH_MAX)) + 2;
 	pSMB2->BufferOffset = cpu_to_le16(sizeof(struct set_info_req) - 1
 		/* pad */ - 4 /* do not count rfc1001 len field */);
 	pSMB2->BufferLength = cpu_to_le32(sizeof(struct FileLinkInformation) +
@@ -2060,7 +2060,7 @@ int SMB2_rename(const int xid, struct cifs_tcon *tcon,
 	pSMB2->BufferOffset = cpu_to_le16(sizeof(struct set_info_req)
 			- 1 /* pad */ - 4 /* do not count rfc1001 len field */);
 
-	uni_path_len = (2 * UniStrnlen(target_file, PATH_MAX)) + 2;
+	uni_path_len = (2 * UniStrnlen((wchar_t *)target_file, PATH_MAX)) + 2;
 	pSMB2->BufferOffset = cpu_to_le16(sizeof(struct set_info_req) - 1
 		/* pad */ - 4 /* do not count rfc1001 len field */);
 	pSMB2->BufferLength = cpu_to_le32(sizeof(struct FileRenameInformation) +
