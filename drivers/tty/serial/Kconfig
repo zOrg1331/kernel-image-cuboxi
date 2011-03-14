@@ -1110,29 +1110,6 @@ config SERIAL_PMACZILOG_CONSOLE
 	  on your (Power)Mac as the console, you can do so by answering
 	  Y to this option.
 
-config SERIAL_LH7A40X
-	tristate "Sharp LH7A40X embedded UART support"
-	depends on ARM && ARCH_LH7A40X
-	select SERIAL_CORE
-	help
-	  This enables support for the three on-board UARTs of the
-	  Sharp LH7A40X series CPUs.  Choose Y or M.
-
-config SERIAL_LH7A40X_CONSOLE
-	bool "Support for console on Sharp LH7A40X serial port"
-	depends on SERIAL_LH7A40X=y
-	select SERIAL_CORE_CONSOLE
-	help
-	  Say Y here if you wish to use one of the serial ports as the
-	  system console--the system console is the device which
-	  receives all kernel messages and warnings and which allows
-	  logins in single user mode.
-
-	  Even if you say Y here, the currently visible framebuffer console
-	  (/dev/tty0) will still be used as the default system console, but
-	  you can alter that using a kernel command line, for example
-	  "console=ttyAM1".
-
 config SERIAL_CPM
 	tristate "CPM SCC/SMC serial port support"
 	depends on CPM2 || 8xx
@@ -1596,4 +1573,19 @@ config SERIAL_PCH_UART
 	  This driver is for PCH(Platform controller Hub) UART of Intel EG20T
 	  which is an IOH(Input/Output Hub) for x86 embedded processor.
 	  Enabling PCH_DMA, this PCH UART works as DMA mode.
+
+config SERIAL_MXS_AUART
+	depends on ARCH_MXS
+	tristate "MXS AUART support"
+	select SERIAL_CORE
+	help
+	  This driver supports the MXS Application UART (AUART) port.
+
+config SERIAL_MXS_AUART_CONSOLE
+	bool "MXS AUART console support"
+	depends on SERIAL_MXS_AUART=y
+	select SERIAL_CORE_CONSOLE
+	help
+	  Enable a MXS AUART port to be the system console.
+
 endmenu
