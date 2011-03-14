@@ -251,7 +251,7 @@ char * __init xen_memory_setup(void)
 			 * when 'allocate_resource' is called).
 			 */
 			if (delta &&
-				(xen_initial_domain() && end < 0x100000000UL))
+				(xen_initial_domain() && end < 0x100000000ULL))
 				e820_add_region(end, delta, E820_UNUSABLE);
 		}
 
