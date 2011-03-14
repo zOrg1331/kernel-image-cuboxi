@@ -539,8 +539,19 @@ static int ntrig_input_mapped(struct hid_device *hdev, struct hid_input *hi,
 static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 			struct hid_usage *usage, __s32 value)
 {
-	struct input_dev *input = field->hidinput->input;
 	struct ntrig_data *nd = hid_get_drvdata(hid);
+	struct input_dev *input;
+
+	/* Skip processing if not a claimed input */
+	if (!(hid->claimed & HID_CLAIMED_INPUT))
+		goto not_claimed_input;
+
+	/* This function is being called before the structures are fully
+	 * initialized */
+	if(!(field->hidinput && field->hidinput->input))
+		return -EINVAL;
+
+	input = field->hidinput->input;
 
 	/* No special handling needed for the pen */
 	if (field->application == HID_DG_PEN)
@@ -810,6 +821,8 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 		}
 	}
 
+not_claimed_input:
+
 	/* we have handled the hidinput part, now remains hiddev */
 	if ((hid->claimed & HID_CLAIMED_HIDDEV) && hid->hiddev_hid_event)
 		hid->hiddev_hid_event(hid, field, usage, value);
@@ -826,7 +839,8 @@ static int ntrig_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct hid_report *report;
 
 	if (id->driver_data)
-		hdev->quirks |= HID_QUIRK_MULTI_INPUT;
+		hdev->quirks |= HID_QUIRK_MULTI_INPUT
+				| HID_QUIRK_NO_INIT_REPORTS;
 
 	nd = kmalloc(sizeof(struct ntrig_data), GFP_KERNEL);
 	if (!nd) {
