@@ -16,4 +16,4 @@ cifs-$(CONFIG_CIFS_DFS_UPCALL) += dns_resolve.o cifs_dfs_ref.o
 
 cifs-$(CONFIG_CIFS_FSCACHE) += fscache.o cache.o
 
-cifs-$(CONFIG_CIFS_SMB2) += smb2pdu.o smb2misc.o smb2sess.o smb2transport.o
+cifs-$(CONFIG_CIFS_SMB2) += smb2pdu.o smb2misc.o smb2sess.o smb2transport.o maperror.o
