@@ -260,7 +260,7 @@ smb_send(struct TCP_Server_Info *server, struct smb_hdr *smb_buffer,
 	return smb_sendv(server, &iov, 1);
 }
 
-static int wait_for_free_request(struct TCP_Server_Info *server,
+int wait_for_free_request(struct TCP_Server_Info *server,
 				 const int long_op)
 {
 	if (long_op == CIFS_ASYNC_OP) {
@@ -271,7 +271,8 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 
 	spin_lock(&GlobalMid_Lock);
 	while (1) {
-		if (atomic_read(&server->inFlight) >= cifs_max_pending) {
+		if ((server->is_smb2 == false) && 
+		    atomic_read(&server->inFlight) >= cifs_max_pending) {
 			spin_unlock(&GlobalMid_Lock);
 #ifdef CONFIG_CIFS_STATS2
 			atomic_inc(&server->num_waiters);
@@ -283,6 +284,20 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 			atomic_dec(&server->num_waiters);
 #endif
 			spin_lock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_SMB2
+		} else if (server->is_smb2 &&
+			  (atomic_read(&server->credits) < 1)) {
+			spin_unlock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_inc(&server->num_waiters);
+#endif
+			wait_event(server->request_q,
+				   atomic_read(&server->credits) > 0);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_dec(&server->num_waiters);
+#endif
+			spin_lock(&GlobalMid_Lock);
+#endif /* CONFIG_CIFS_SMB2 */
 		} else {
 			if (server->tcpStatus == CifsExiting) {
 				spin_unlock(&GlobalMid_Lock);
@@ -302,7 +317,7 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 	return 0;
 }
 
-static int allocate_mid(struct cifsSesInfo *ses, struct smb_hdr *in_buf,
+static int allocate_mid(struct cifs_ses *ses, struct smb_hdr *in_buf,
 			struct mid_q_entry **ppmidQ)
 {
 	if (ses->server->tcpStatus == CifsExiting) {
@@ -360,7 +375,7 @@ cifs_call_async(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 		return rc;
 
 	/* enable signing if server requires it */
-	if (server->secMode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+	if (server->sec_mode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 		in_buf->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
 	mutex_lock(&server->srv_mutex);
@@ -414,7 +429,7 @@ out_err:
  *
  */
 int
-SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceiveNoRsp(const unsigned int xid, struct cifs_ses *ses,
 		struct smb_hdr *in_buf, int flags)
 {
 	int rc;
@@ -509,7 +524,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 }
 
 int
-SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	     struct kvec *iov, int n_vec, int *pRespBufType /* ret */,
 	     const int flags)
 {
@@ -636,7 +651,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(midQ->resp_buf, 80);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(midQ->resp_buf,
 						ses->server,
@@ -674,7 +689,7 @@ out:
 }
 
 int
-SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive(const unsigned int xid, struct cifs_ses *ses,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned, const int long_op)
 {
@@ -789,7 +804,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(out_buf, 92);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(out_buf,
 						ses->server,
@@ -827,12 +842,12 @@ out:
    blocking lock to return. */
 
 static int
-send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
+send_lock_cancel(const unsigned int xid, struct cifs_tcon *tcon,
 			struct smb_hdr *in_buf,
 			struct smb_hdr *out_buf)
 {
 	int bytes_returned;
-	struct cifsSesInfo *ses = tcon->ses;
+	struct cifs_ses *ses = tcon->ses;
 	LOCK_REQ *pSMB = (LOCK_REQ *)in_buf;
 
 	/* We just modify the current in_buf to change
@@ -849,7 +864,7 @@ send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
 }
 
 int
-SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
+SendReceiveBlockingLock(const unsigned int xid, struct cifs_tcon *tcon,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned)
 {
@@ -857,7 +872,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	int rstart = 0;
 	unsigned int receive_len;
 	struct mid_q_entry *midQ;
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 
 	if (tcon == NULL || tcon->ses == NULL) {
 		cERROR(1, "Null smb session");
@@ -1001,7 +1016,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	dump_smb(out_buf, 92);
 	/* convert the length into a more usable form */
 	if ((receive_len > 24) &&
-	    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+	    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 				     SECMODE_SIGN_ENABLED))) {
 		rc = cifs_verify_signature(out_buf,
 					   ses->server,
