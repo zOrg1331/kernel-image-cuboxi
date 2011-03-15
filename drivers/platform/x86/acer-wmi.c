@@ -84,7 +84,7 @@ MODULE_LICENSE("GPL");
 #define AMW0_GUID1		"67C3371D-95A3-4C37-BB61-DD47B491DAAB"
 #define AMW0_GUID2		"431F16ED-0C2B-444C-B267-27DEB140CF9C"
 #define WMID_GUID1		"6AF4F258-B401-42FD-BE91-3D4AC2D7C0D3"
-#define WMID_GUID2		"95764E09-FB56-4e83-B31A-37761F60994A"
+#define WMID_GUID2		"95764E09-FB56-4E83-B31A-37761F60994A"
 #define WMID_GUID3		"61EF69EA-865C-4BC3-A502-A0DEBA0CB531"
 
 /*
@@ -93,7 +93,7 @@ MODULE_LICENSE("GPL");
 #define ACERWMID_EVENT_GUID "676AA15E-6A47-4D9F-A2CC-1E6D18D14026"
 
 MODULE_ALIAS("wmi:67C3371D-95A3-4C37-BB61-DD47B491DAAB");
-MODULE_ALIAS("wmi:6AF4F258-B401-42fd-BE91-3D4AC2D7C0D3");
+MODULE_ALIAS("wmi:6AF4F258-B401-42Fd-BE91-3D4AC2D7C0D3");
 MODULE_ALIAS("wmi:676AA15E-6A47-4D9F-A2CC-1E6D18D14026");
 
 enum acer_wmi_event_ids {
@@ -108,7 +108,7 @@ static const struct key_entry acer_wmi_keymap[] = {
 	{KE_KEY, 0x23, {KEY_PROG3} },    /* P_Key */
 	{KE_KEY, 0x24, {KEY_PROG4} },    /* Social networking_Key */
 	{KE_KEY, 0x64, {KEY_SWITCHVIDEOMODE} },	/* Display Switch */
-	{KE_KEY, 0x82, {KEY_F22} },      /* Touch Pad On/Off */
+	{KE_KEY, 0x82, {KEY_TOUCHPAD_TOGGLE} },	/* Touch Pad On/Off */
 	{KE_END, 0}
 };
 
@@ -991,6 +991,7 @@ static int __devinit acer_led_init(struct device *dev)
 
 static void acer_led_exit(void)
 {
+	set_u32(LED_OFF, ACER_CAP_MAILLED);
 	led_classdev_unregister(&mail_led);
 }
 
@@ -1552,6 +1553,7 @@ pm_message_t state)
 
 	if (has_cap(ACER_CAP_MAILLED)) {
 		get_u32(&value, ACER_CAP_MAILLED);
+		set_u32(LED_OFF, ACER_CAP_MAILLED);
 		data->mailled = value;
 	}
 
@@ -1579,6 +1581,17 @@ static int acer_platform_resume(struct platform_device *device)
 	return 0;
 }
 
+static void acer_platform_shutdown(struct platform_device *device)
+{
+	struct acer_data *data = &interface->data;
+
+	if (!data)
+		return;
+
+	if (has_cap(ACER_CAP_MAILLED))
+		set_u32(LED_OFF, ACER_CAP_MAILLED);
+}
+
 static struct platform_driver acer_platform_driver = {
 	.driver = {
 		.name = "acer-wmi",
@@ -1588,6 +1601,7 @@ static struct platform_driver acer_platform_driver = {
 	.remove = acer_platform_remove,
 	.suspend = acer_platform_suspend,
 	.resume = acer_platform_resume,
+	.shutdown = acer_platform_shutdown,
 };
 
 static struct platform_device *acer_platform_device;
