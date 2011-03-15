@@ -75,7 +75,7 @@ static int __init aio_setup(void)
 	kiocb_cachep = KMEM_CACHE(kiocb, SLAB_HWCACHE_ALIGN|SLAB_PANIC);
 	kioctx_cachep = KMEM_CACHE(kioctx,SLAB_HWCACHE_ALIGN|SLAB_PANIC);
 
-	aio_wq = create_workqueue("aio");
+	aio_wq = alloc_workqueue("aio", 0, 1);	/* used to limit concurrency */
 	BUG_ON(!aio_wq);
 
 	pr_debug("aio_setup: sizeof(struct page) = %d\n", (int)sizeof(struct page));
@@ -566,7 +566,7 @@ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
 		spin_lock(&fput_lock);
 		list_add(&req->ki_list, &fput_head);
 		spin_unlock(&fput_lock);
-		queue_work(aio_wq, &fput_work);
+		schedule_work(&fput_work);
 	} else {
 		req->ki_filp = NULL;
 		really_put_req(ctx, req);
