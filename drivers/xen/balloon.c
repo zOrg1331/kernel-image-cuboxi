@@ -246,7 +246,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages)
 		set_phys_to_machine(pfn, frame_list[i]);
 
 		/* Link back into the page tables if not highmem. */
-		if (pfn < max_low_pfn) {
+		if (!xen_hvm_domain() && pfn < max_low_pfn) {
 			int ret;
 			ret = HYPERVISOR_update_va_mapping(
 				(unsigned long)__va(pfn << PAGE_SHIFT),
@@ -293,7 +293,7 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 
 		scrub_page(page);
 
-		if (!PageHighMem(page)) {
+		if (!xen_hvm_domain() && !PageHighMem(page)) {
 			ret = HYPERVISOR_update_va_mapping(
 				(unsigned long)__va(pfn << PAGE_SHIFT),
 				__pte_ma(0), 0);
@@ -429,15 +429,19 @@ EXPORT_SYMBOL(free_xenballooned_pages);
 
 static int __init balloon_init(void)
 {
-	unsigned long pfn, extra_pfn_end;
+ 	unsigned long pfn, nr_pages, extra_pfn_end;
 	struct page *page;
 
-	if (!xen_pv_domain())
+	if (!xen_domain())
 		return -ENODEV;
 
 	pr_info("xen/balloon: Initialising balloon driver.\n");
 
-	balloon_stats.current_pages = min(xen_start_info->nr_pages, max_pfn);
+ 	if (xen_pv_domain())
+ 		nr_pages = xen_start_info->nr_pages;
+ 	else
+ 		nr_pages = max_pfn;
+ 	balloon_stats.current_pages = min(nr_pages, max_pfn);
 	balloon_stats.target_pages  = balloon_stats.current_pages;
 	balloon_stats.balloon_low   = 0;
 	balloon_stats.balloon_high  = 0;
