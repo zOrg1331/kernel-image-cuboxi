@@ -1303,8 +1303,7 @@ static const struct ata_port_info sata_fsl_port_info[] = {
 	 },
 };
 
-static int sata_fsl_probe(struct platform_device *ofdev,
-			const struct of_device_id *match)
+static int sata_fsl_probe(struct platform_device *ofdev)
 {
 	int retval = -ENXIO;
 	void __iomem *hcr_base = NULL;
@@ -1448,7 +1447,7 @@ static struct of_device_id fsl_sata_match[] = {
 
 MODULE_DEVICE_TABLE(of, fsl_sata_match);
 
-static struct of_platform_driver fsl_sata_driver = {
+static struct platform_driver fsl_sata_driver = {
 	.driver = {
 		.name = "fsl-sata",
 		.owner = THIS_MODULE,
@@ -1464,13 +1463,13 @@ static struct of_platform_driver fsl_sata_driver = {
 
 static int __init sata_fsl_init(void)
 {
-	of_register_platform_driver(&fsl_sata_driver);
+	platform_driver_register(&fsl_sata_driver);
 	return 0;
 }
 
 static void __exit sata_fsl_exit(void)
 {
-	of_unregister_platform_driver(&fsl_sata_driver);
+	platform_driver_unregister(&fsl_sata_driver);
 }
 
 MODULE_LICENSE("GPL");
