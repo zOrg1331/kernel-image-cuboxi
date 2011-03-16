@@ -20,7 +20,7 @@
  #include <linux/random.h>
 --- ./drivers/block/drbd/drbd_main.c.drbdcfix	2009-10-12 20:33:49.000000000 +0400
 +++ ./drivers/block/drbd/drbd_main.c	2009-10-12 20:56:45.000000000 +0400
-@@ -40,17 +40,12 @@
+@@ -40,7 +40,6 @@
  #include <linux/proc_fs.h>
  #include <linux/init.h>
  #include <linux/mm.h>
@@ -28,16 +28,18 @@
  #include <linux/mm_inline.h>
  #include <linux/slab.h>
  #include <linux/random.h>
- #include <linux/reboot.h>
- #include <linux/notifier.h>
+@@ -50,11 +50,7 @@
+ #include "drbd_req.h" /* only for _req_mod in tl_release and tl_clear */
+ #include "drbd_vli.h"
+ 
 -#ifdef HAVE_LINUX_BYTEORDER_SWABB_H
  #include <linux/byteorder/swabb.h>
 -#else
 -#include <linux/swab.h>
 -#endif
  
- #define __KERNEL_SYSCALLS__
- #include <linux/unistd.h>
+ struct after_state_chg_work {
+ 	struct drbd_work w;
 @@ -3383,6 +3378,13 @@ void drbd_free_bc(struct drbd_backing_de
  	kfree(ldev);
  }

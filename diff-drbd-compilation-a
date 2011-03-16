@@ -1,0 +1,96 @@
+diff -up ./drivers/block/drbd/drbd_actlog.c.xxx ./drivers/block/drbd/drbd_actlog.c
+--- ./drivers/block/drbd/drbd_actlog.c.xxx	2011-03-14 13:42:14.000000000 +0300
++++ ./drivers/block/drbd/drbd_actlog.c	2011-03-14 14:04:15.000000000 +0300
+@@ -25,7 +25,6 @@
+ 
+ #include <linux/slab.h>
+ #include <linux/drbd.h>
+-#include <linux/dynamic_debug.h>
+ #include "drbd_int.h"
+ #include "drbd_tracing.h"
+ #include "drbd_wrappers.h"
+diff -up ./drivers/block/drbd/drbd_bitmap.c.xxx ./drivers/block/drbd/drbd_bitmap.c
+--- ./drivers/block/drbd/drbd_bitmap.c.xxx	2011-03-14 13:42:14.000000000 +0300
++++ ./drivers/block/drbd/drbd_bitmap.c	2011-03-14 14:03:58.000000000 +0300
+@@ -27,13 +27,11 @@
+ #include <linux/string.h>
+ #include <linux/drbd.h>
+ #include <linux/slab.h>
+-#include <linux/dynamic_debug.h>
+ #include <asm/kmap_types.h>
+ #include "drbd_int.h"
+ 
+ /* See the ifdefs and comments inside that header file.
+  * On recent kernels this is not needed. */
+-#include "compat/bitops.h"
+ 
+ /* OPAQUE outside this file!
+  * interface defined in drbd_int.h
+@@ -466,7 +464,10 @@ void drbd_bm_cleanup(struct drbd_conf *m
+  * this masks out the remaining bits.
+  * Returns the number of bits cleared.
+  */
++#ifndef BITS_PER_PAGE
+ #define BITS_PER_PAGE		(1UL << (PAGE_SHIFT + 3))
++#endif
++
+ #define BITS_PER_PAGE_MASK	(BITS_PER_PAGE - 1)
+ #define BITS_PER_LONG_MASK	(BITS_PER_LONG - 1)
+ STATIC int bm_clear_surplus(struct drbd_bitmap *b)
+diff -up ./drivers/block/drbd/drbd_main.c.xxx ./drivers/block/drbd/drbd_main.c
+--- ./drivers/block/drbd/drbd_main.c.xxx	2011-03-14 13:42:14.000000000 +0300
++++ ./drivers/block/drbd/drbd_main.c	2011-03-14 14:04:26.000000000 +0300
+@@ -48,7 +48,6 @@
+ #include <linux/unistd.h>
+ #include <linux/vmalloc.h>
+ #include <linux/device.h>
+-#include <linux/dynamic_debug.h>
+ 
+ #include <linux/drbd_limits.h>
+ #include "drbd_int.h"
+diff -up ./drivers/block/drbd/drbd_wrappers.h.xxx ./drivers/block/drbd/drbd_wrappers.h
+--- ./drivers/block/drbd/drbd_wrappers.h.xxx	2011-03-14 13:42:14.000000000 +0300
++++ ./drivers/block/drbd/drbd_wrappers.h	2011-03-14 14:03:21.000000000 +0300
+@@ -975,10 +975,11 @@ static inline signed long schedule_timeo
+    to 'fmt' in its body. */
+ #ifdef dynamic_dev_dbg
+ #undef dynamic_dev_dbg
++#endif
++
+ #define dynamic_dev_dbg(dev, fmt, ...)                               \
+         do { if (0) dev_printk(KERN_DEBUG, dev, fmt, ##__VA_ARGS__); } while (0)
+ #endif
+-#endif
+ 
+ #ifndef min_not_zero
+ #define min_not_zero(x, y) ({			\
+diff -up ./include/linux/drbd_config.h.xxx ./include/linux/drbd_config.h
+--- ./include/linux/drbd_config.h.xxx	2011-03-14 13:42:14.000000000 +0300
++++ ./include/linux/drbd_config.h	2011-03-14 14:05:37.000000000 +0300
+@@ -105,7 +105,7 @@ extern const char *drbd_buildtag(void);
+ 
+ /* Actually availabe since 2.6.26, but vendors have backported...
+  */
+-#define KERNEL_HAS_PROC_CREATE_DATA
++// #define KERNEL_HAS_PROC_CREATE_DATA
+ 
+ /* In 2.6.32 we finally fixed connector to pass netlink_skb_parms to the callback
+  */
+@@ -115,7 +115,7 @@ extern const char *drbd_buildtag(void);
+    blk_queue_max_(phys|hw)_segments() got blk_queue_max_segments()
+    See Linux commits: 086fa5ff0854c676ec333 8a78362c4eefc1deddbef */
+ //#define NEED_BLK_QUEUE_MAX_HW_SECTORS
+-//#define NEED_BLK_QUEUE_MAX_SEGMENTS
++#define NEED_BLK_QUEUE_MAX_SEGMENTS
+ 
+ /* For kernel versions 2.6.31 to 2.6.33 inclusive, even though
+  * blk_queue_max_hw_sectors is present, we actually need to use
+@@ -135,7 +135,7 @@ extern const char *drbd_buildtag(void);
+ 
+ /* before open_bdev_exclusive, there was a open_bdev_excl,
+  * see 30c40d2 */
+-#define COMPAT_HAVE_OPEN_BDEV_EXCLUSIVE
++// #define COMPAT_HAVE_OPEN_BDEV_EXCLUSIVE
+ 
+ /* some old kernels do not have atomic_add_unless() */
+ //#define NEED_ATOMIC_ADD_UNLESS

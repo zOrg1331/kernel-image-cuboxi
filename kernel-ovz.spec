@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab085
-%define ovzrel 2
+%define ovzver 028stab087
+%define ovzrel 1
 
 %if !%{buildup}
 %define _without_up 1
@@ -6369,9 +6369,10 @@ Patch60009: diff-tossing-headers-around
 Patch70003: diff-scsi-add-modalias-mainstream
 
 # DRBD
-Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.4
+Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.10
 Patch90001: diff-drbd-compilation
 Patch90002: diff-drbd-dont-use-connector
+Patch90003: diff-drbd-compilation-a
 
 # Areca
 # replaced with linux-2.6-scsi-add-kernel-support-for-areca-raid-controller.patch
@@ -6427,6 +6428,7 @@ Patch90503: diff-openafs-configure-no-mod-check
 Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
 Patch91004: diff-serial-pci-add-netmos-9901-support
+Patch91006: diff-serial-pci-add-netmos-9835-support
 
 # Bells and whistles
 Patch100001: diff-ms-devleak-dstdebug-20080504
@@ -6444,8 +6446,6 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
-Patch100037: diff-rh-cfq-kick-tagged-queue-harder
-Patch100038: diff-ubc-exact-oomguar-pages-helper
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -12608,6 +12608,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch90000 -p1
 %patch90001 -p1
 %patch90002 -p1
+%patch90003 -p1
 
 %patch90210 -p1
 %patch90211 -p1
@@ -12646,6 +12647,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91002 -p1
 %patch91003 -p1
 %patch91004 -p1
+%patch91006 -p1
 
 %patch100001 -p1
 %patch100002 -p1
@@ -12662,8 +12664,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
-%patch100037 -p1
-%patch100038 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -13532,7 +13532,7 @@ if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel/' /etc/sysconfig/kernel || exit $?
   fi
 fi
-/sbin/new-kernel-pkg --package kernel --mkinitrd --depmod --install %{KVERREL} || exit $?
+/sbin/new-kernel-pkg --package kernel --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL} || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL} || exit $?
@@ -13545,7 +13545,7 @@ if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel/' /etc/sysconfig/kernel || exit $?
   fi
 fi
-/sbin/new-kernel-pkg --package kernel-debug --mkinitrd --depmod --install %{KVERREL}debug || exit $?
+/sbin/new-kernel-pkg --package kernel-debug --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}debug || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}debug || exit $?
@@ -13564,7 +13564,7 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post smp
-/sbin/new-kernel-pkg --package kernel-smp --mkinitrd --depmod --install %{KVERREL}smp || exit $?
+/sbin/new-kernel-pkg --package kernel-smp --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}smp || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}smp || exit $?
@@ -13594,7 +13594,7 @@ fi
 if [ -f /etc/sysconfig/kernel ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-PAE/' /etc/sysconfig/kernel
 fi
-/sbin/new-kernel-pkg --package kernel-PAE --mkinitrd --depmod --install %{KVERREL}PAE || exit $?
+/sbin/new-kernel-pkg --package kernel-PAE --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}PAE || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}PAE || exit $?
@@ -13605,7 +13605,7 @@ exit 0
 if [ -f /etc/sysconfig/kernel ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-PAE/' /etc/sysconfig/kernel
 fi
-/sbin/new-kernel-pkg --package kernel-PAE-debug --mkinitrd --depmod --install %{KVERREL}PAE-debug || exit $?
+/sbin/new-kernel-pkg --package kernel-PAE-debug --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}PAE-debug || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}PAE-debug || exit $?
@@ -13627,7 +13627,7 @@ fi
 if [ -f /etc/sysconfig/kernel ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-ent/' /etc/sysconfig/kernel
 fi
-/sbin/new-kernel-pkg --package kernel-ent --mkinitrd --depmod --install %{KVERREL}ent || exit $?
+/sbin/new-kernel-pkg --package kernel-ent --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}ent || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}ent || exit $?
@@ -13638,7 +13638,7 @@ exit 0
 if [ -f /etc/sysconfig/kernel ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-ent/' /etc/sysconfig/kernel
 fi
-/sbin/new-kernel-pkg --package kernel-ent-debug --mkinitrd --depmod --install %{KVERREL}ent-debug || exit $?
+/sbin/new-kernel-pkg --package kernel-ent-debug --mkinitrd --depmod --install --banner OpenVZ --kernel-args="selinux=0" %{KVERREL}ent-debug || exit $?
 if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --add-kernel %{KVERREL}ent-debug || exit $?
