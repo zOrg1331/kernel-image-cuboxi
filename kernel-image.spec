@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.37
-Release: alt2
+Release: alt4
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -438,6 +438,7 @@ KbuildFiles="
 	scripts/checkconfig.pl
 	scripts/bin2c
 	scripts/gcc-version.sh
+	scripts/gcc-goto.sh
 	scripts/recordmcount.pl
 	scripts/gcc-x86_64-has-stack-protector.sh
 	scripts/module-common.lds
@@ -591,6 +592,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue Mar 15 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt4
+- 2.6.37.4
+- scripts/gcc-goto.sh packed into headers-modules
+
+* Mon Mar 14 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt3
+- 2.6.37.3
+
 * Sun Feb 27 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt2
 - 2.6.37.2
 - in-kernel HDAPS enabled (#25127)
