@@ -3202,6 +3202,7 @@ int cifs_negotiate_protocol(unsigned int xid, struct cifs_ses *ses)
 
 #ifdef CONFIG_CIFS_SMB2
 	if (ses->server->is_smb2) {
+		atomic_set(&server->credits, 1); /* we have one credit to start with */
 		rc = SMB2_negotiate(xid, ses);
 		/* BB we probably don't need to retry with modern servers */
 		if (rc == -EAGAIN)
