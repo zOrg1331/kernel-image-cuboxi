@@ -111,9 +111,6 @@ module_param(oos_shadow, bool, 0644);
 #define PT64_LEVEL_SHIFT(level) \
 		(PAGE_SHIFT + (level - 1) * PT64_LEVEL_BITS)
 
-#define PT64_LEVEL_MASK(level) \
-		(((1ULL << PT64_LEVEL_BITS) - 1) << PT64_LEVEL_SHIFT(level))
-
 #define PT64_INDEX(address, level)\
 	(((address) >> PT64_LEVEL_SHIFT(level)) & ((1 << PT64_LEVEL_BITS) - 1))
 
@@ -123,8 +120,6 @@ module_param(oos_shadow, bool, 0644);
 #define PT32_LEVEL_SHIFT(level) \
 		(PAGE_SHIFT + (level - 1) * PT32_LEVEL_BITS)
 
-#define PT32_LEVEL_MASK(level) \
-		(((1ULL << PT32_LEVEL_BITS) - 1) << PT32_LEVEL_SHIFT(level))
 #define PT32_LVL_OFFSET_MASK(level) \
 	(PT32_BASE_ADDR_MASK & ((1ULL << (PAGE_SHIFT + (((level) - 1) \
 						* PT32_LEVEL_BITS))) - 1))
@@ -379,15 +374,15 @@ static void mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc,
 static int mmu_topup_memory_cache_page(struct kvm_mmu_memory_cache *cache,
 				       int min)
 {
-	struct page *page;
+	void *page;
 
 	if (cache->nobjs >= min)
 		return 0;
 	while (cache->nobjs < ARRAY_SIZE(cache->objects)) {
-		page = alloc_page(GFP_KERNEL);
+		page = (void *)__get_free_page(GFP_KERNEL);
 		if (!page)
 			return -ENOMEM;
-		cache->objects[cache->nobjs++] = page_address(page);
+		cache->objects[cache->nobjs++] = page;
 	}
 	return 0;
 }
@@ -1032,9 +1027,9 @@ static void kvm_mmu_free_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 	ASSERT(is_empty_shadow_page(sp->spt));
 	hlist_del(&sp->hash_link);
 	list_del(&sp->link);
-	__free_page(virt_to_page(sp->spt));
+	free_page((unsigned long)sp->spt);
 	if (!sp->role.direct)
-		__free_page(virt_to_page(sp->gfns));
+		free_page((unsigned long)sp->gfns);
 	kmem_cache_free(mmu_page_header_cache, sp);
 	kvm_mod_used_mmu_pages(kvm, -1);
 }
@@ -3228,7 +3223,6 @@ static void mmu_guess_page_from_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 		kvm_release_pfn_clean(pfn);
 		return;
 	}
-	vcpu->arch.update_pte.gfn = gfn;
 	vcpu->arch.update_pte.pfn = pfn;
 }
 
@@ -3275,9 +3269,8 @@ void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 
 	/*
 	 * Assume that the pte write on a page table of the same type
-	 * as the current vcpu paging mode.  This is nearly always true
-	 * (might be false while changing modes).  Note it is verified later
-	 * by update_pte().
+	 * as the current vcpu paging mode since we update the sptes only
+	 * when they have the same mode.
 	 */
 	if ((is_pae(vcpu) && bytes == 4) || !new) {
 		/* Handle a 32-bit guest writing two halves of a 64-bit gpte */
@@ -3307,11 +3300,11 @@ void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 	spin_lock(&vcpu->kvm->mmu_lock);
 	if (atomic_read(&vcpu->kvm->arch.invlpg_counter) != invlpg_counter)
 		gentry = 0;
-	kvm_mmu_access_page(vcpu, gfn);
 	kvm_mmu_free_some_pages(vcpu);
 	++vcpu->kvm->stat.mmu_pte_write;
 	trace_kvm_mmu_audit(vcpu, AUDIT_PRE_PTE_WRITE);
 	if (guest_initiated) {
+		kvm_mmu_access_page(vcpu, gfn);
 		if (gfn == vcpu->arch.last_pt_write_gfn
 		    && !last_updated_pte_accessed(vcpu)) {
 			++vcpu->arch.last_pt_write_count;
@@ -3538,14 +3531,23 @@ void kvm_mmu_slot_remove_write_access(struct kvm *kvm, int slot)
 		if (!test_bit(slot, sp->slot_bitmap))
 			continue;
 
-		if (sp->role.level != PT_PAGE_TABLE_LEVEL)
-			continue;
-
 		pt = sp->spt;
-		for (i = 0; i < PT64_ENT_PER_PAGE; ++i)
+		for (i = 0; i < PT64_ENT_PER_PAGE; ++i) {
+			if (!is_shadow_present_pte(pt[i]) ||
+			      !is_last_spte(pt[i], sp->role.level))
+				continue;
+
+			if (is_large_pte(pt[i])) {
+				drop_spte(kvm, &pt[i],
+					  shadow_trap_nonpresent_pte);
+				--kvm->stat.lpages;
+				continue;
+			}
+
 			/* avoid RMW */
 			if (is_writable_pte(pt[i]))
 				update_spte(&pt[i], pt[i] & ~PT_WRITABLE_MASK);
+		}
 	}
 	kvm_flush_remote_tlbs(kvm);
 }
@@ -3583,7 +3585,7 @@ static int mmu_shrink(struct shrinker *shrink, int nr_to_scan, gfp_t gfp_mask)
 	if (nr_to_scan == 0)
 		goto out;
 
-	spin_lock(&kvm_lock);
+	raw_spin_lock(&kvm_lock);
 
 	list_for_each_entry(kvm, &vm_list, vm_list) {
 		int idx, freed_pages;
@@ -3606,7 +3608,7 @@ static int mmu_shrink(struct shrinker *shrink, int nr_to_scan, gfp_t gfp_mask)
 	if (kvm_freed)
 		list_move_tail(&kvm_freed->vm_list, &vm_list);
 
-	spin_unlock(&kvm_lock);
+	raw_spin_unlock(&kvm_lock);
 
 out:
 	return percpu_counter_read_positive(&kvm_total_used_mmu_pages);
