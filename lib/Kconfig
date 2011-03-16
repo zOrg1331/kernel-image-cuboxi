@@ -219,4 +219,7 @@ config LRU_CACHE
 config AVERAGE
 	bool
 
+config LLIST
+	bool
+
 endmenu
