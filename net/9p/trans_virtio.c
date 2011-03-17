@@ -141,34 +141,33 @@ static void req_done(struct virtqueue *vq)
 
 	P9_DPRINTK(P9_DEBUG_TRANS, ": request done\n");
 
-	do {
+	while (1) {
 		spin_lock_irqsave(&chan->lock, flags);
 		rc = virtqueue_get_buf(chan->vq, &len);
 
-		if (rc != NULL) {
-			if (!chan->ring_bufs_avail) {
-				chan->ring_bufs_avail = 1;
-				wake_up(chan->vc_wq);
-			}
+		if (rc == NULL) {
 			spin_unlock_irqrestore(&chan->lock, flags);
-			P9_DPRINTK(P9_DEBUG_TRANS, ": rc %p\n", rc);
-			P9_DPRINTK(P9_DEBUG_TRANS, ": lookup tag %d\n",
-					rc->tag);
-			req = p9_tag_lookup(chan->client, rc->tag);
-			req->status = REQ_STATUS_RCVD;
-			if (req->tc->private) {
-				struct trans_rpage_info *rp = req->tc->private;
-				/*Release pages */
-				p9_release_req_pages(rp);
-				if (rp->rp_alloc)
-					kfree(rp);
-				req->tc->private = NULL;
-			}
-			p9_client_cb(chan->client, req);
-		} else {
-			spin_unlock_irqrestore(&chan->lock, flags);
+			break;
 		}
-	} while (rc != NULL);
+
+		chan->ring_bufs_avail = 1;
+		spin_unlock_irqrestore(&chan->lock, flags);
+		/* Wakeup if anyone waiting for VirtIO ring space. */
+		wake_up(chan->vc_wq);
+		P9_DPRINTK(P9_DEBUG_TRANS, ": rc %p\n", rc);
+		P9_DPRINTK(P9_DEBUG_TRANS, ": lookup tag %d\n", rc->tag);
+		req = p9_tag_lookup(chan->client, rc->tag);
+		if (req->tc->private) {
+			struct trans_rpage_info *rp = req->tc->private;
+			/*Release pages */
+			p9_release_req_pages(rp);
+			if (rp->rp_alloc)
+				kfree(rp);
+			req->tc->private = NULL;
+		}
+		req->status = REQ_STATUS_RCVD;
+		p9_client_cb(chan->client, req);
+	}
 }
 
 /**
@@ -263,7 +262,6 @@ p9_virtio_request(struct p9_client *client, struct p9_req_t *req)
 
 	P9_DPRINTK(P9_DEBUG_TRANS, "9p debug: virtio request\n");
 
-req_retry:
 	req->status = REQ_STATUS_SENT;
 
 	if (req->tc->pbuf_size && (req->tc->pubuf && P9_IS_USER_CONTEXT)) {
@@ -296,6 +294,7 @@ req_retry:
 		}
 	}
 
+req_retry_pinned:
 	spin_lock_irqsave(&chan->lock, flags);
 
 	/* Handle out VirtIO ring buffers */
@@ -356,7 +355,7 @@ req_retry:
 				return err;
 
 			P9_DPRINTK(P9_DEBUG_TRANS, "9p:Retry virtio request\n");
-			goto req_retry;
+			goto req_retry_pinned;
 		} else {
 			spin_unlock_irqrestore(&chan->lock, flags);
 			P9_DPRINTK(P9_DEBUG_TRANS,
