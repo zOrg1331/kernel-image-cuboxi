@@ -303,18 +303,21 @@ static int __devinit fsl_msi_setup_hwirq(struct fsl_msi *msi,
 	return 0;
 }
 
-static int __devinit fsl_of_msi_probe(struct platform_device *dev,
-				const struct of_device_id *match)
+static int __devinit fsl_of_msi_probe(struct platform_device *dev)
 {
 	struct fsl_msi *msi;
 	struct resource res;
 	int err, i, j, irq_index, count;
 	int rc;
 	const u32 *p;
-	struct fsl_msi_feature *features = match->data;
+	struct fsl_msi_feature *features;
 	int len;
 	u32 offset;
 	static const u32 all_avail[] = { 0, NR_MSI_IRQS };
+
+	if (!dev->dev.of_match)
+		return -EINVAL;
+	features = dev->dev.of_match->data;
 
 	printk(KERN_DEBUG "Setting up Freescale MSI support\n");
 
@@ -432,7 +435,7 @@ static const struct of_device_id fsl_of_msi_ids[] = {
 	{}
 };
 
-static struct of_platform_driver fsl_of_msi_driver = {
+static struct platform_driver fsl_of_msi_driver = {
 	.driver = {
 		.name = "fsl-msi",
 		.owner = THIS_MODULE,
@@ -444,7 +447,7 @@ static struct of_platform_driver fsl_of_msi_driver = {
 
 static __init int fsl_of_msi_init(void)
 {
-	return of_register_platform_driver(&fsl_of_msi_driver);
+	return platform_driver_register(&fsl_of_msi_driver);
 }
 
 subsys_initcall(fsl_of_msi_init);
