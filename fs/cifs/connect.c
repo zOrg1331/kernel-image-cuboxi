@@ -320,12 +320,12 @@ static int coalesce_t2(struct smb_hdr *psecond, struct smb_hdr *pTargetSMB)
 	byte_count += total_in_buf2;
 	put_bcc_le(byte_count, pTargetSMB);
 
-	byte_count = pTargetSMB->smb_buf_length;
+	byte_count = be32_to_cpu(pTargetSMB->smb_buf_length);
 	byte_count += total_in_buf2;
 
 	/* BB also add check that we are not beyond maximum buffer size */
 
-	pTargetSMB->smb_buf_length = byte_count;
+	pTargetSMB->smb_buf_length = cpu_to_be32(byte_count);
 
 	if (remaining == total_in_buf2) {
 		cFYI(1, "found the last secondary response");
@@ -490,8 +490,7 @@ incomplete_rcv:
 		/* Note that FC 1001 length is big endian on the wire,
 		but we convert it here so it is always manipulated
 		as host byte order */
-		pdu_length = be32_to_cpu((__force __be32)smb_buffer->smb_buf_length);
-		smb_buffer->smb_buf_length = pdu_length;
+		pdu_length = be32_to_cpu(smb_buffer->smb_buf_length);
 
 		cFYI(1, "rfc1002 length 0x%x", pdu_length+4);
 
@@ -2299,7 +2298,7 @@ ip_rfc1001_connect(struct TCP_Server_Info *server)
 		smb_buf = (struct smb_hdr *)ses_init_buf;
 
 		/* sizeof RFC1002_SESSION_REQUEST with no scope */
-		smb_buf->smb_buf_length = 0x81000044;
+		smb_buf->smb_buf_length = cpu_to_be32(0x81000044);
 		rc = smb_send(server, smb_buf, 0x44);
 		kfree(ses_init_buf);
 		/*
@@ -3097,7 +3096,8 @@ CIFSTCon(unsigned int xid, struct cifs_ses *ses,
 	bcc_ptr += strlen("?????");
 	bcc_ptr += 1;
 	count = bcc_ptr - &pSMB->Password[0];
-	pSMB->hdr.smb_buf_length += count;
+	pSMB->hdr.smb_buf_length = cpu_to_be32(be32_to_cpu(
+					pSMB->hdr.smb_buf_length) + count);
 	pSMB->ByteCount = cpu_to_le16(count);
 
 	rc = SendReceive(xid, ses, smb_buffer, smb_buffer_response, &length,
