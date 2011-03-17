@@ -217,8 +217,7 @@ static int __devinit wl1273_core_probe(struct i2c_client *client,
 
 	cell = &core->cells[children];
 	cell->name = "wl1273_fm_radio";
-	cell->platform_data = &core;
-	cell->data_size = sizeof(core);
+	cell->mfd_data = &core;
 	children++;
 
 	core->read = wl1273_fm_read_reg;
@@ -232,8 +231,7 @@ static int __devinit wl1273_core_probe(struct i2c_client *client,
 
 		dev_dbg(&client->dev, "%s: Have codec.\n", __func__);
 		cell->name = "wl1273-codec";
-		cell->platform_data = &core;
-		cell->data_size = sizeof(core);
+		cell->mfd_data = &core;
 		children++;
 	}
 
