@@ -129,7 +129,7 @@ smb_sendv(struct TCP_Server_Info *server, struct kvec *iov, int n_vec)
 	unsigned int len = iov[0].iov_len;
 	unsigned int total_len;
 	int first_vec = 0;
-	unsigned int smb_buf_length = smb_buffer->smb_buf_length;
+	unsigned int smb_buf_length = be32_to_cpu(smb_buffer->smb_buf_length);
 	struct socket *ssocket = server->ssocket;
 
 	if (ssocket == NULL)
@@ -144,17 +144,10 @@ smb_sendv(struct TCP_Server_Info *server, struct kvec *iov, int n_vec)
 	else
 		smb_msg.msg_flags = MSG_NOSIGNAL;
 
-	/* smb header is converted in header_assemble. bcc and rest of SMB word
-	   area, and byte area if necessary, is converted to littleendian in
-	   cifssmb.c and RFC1001 len is converted to bigendian in smb_send
-	   Flags2 is converted in SendReceive */
-
-
 	total_len = 0;
 	for (i = 0; i < n_vec; i++)
 		total_len += iov[i].iov_len;
 
-	smb_buffer->smb_buf_length = cpu_to_be32(smb_buffer->smb_buf_length);
 	cFYI(1, "Sending smb:  total_len %d", total_len);
 	dump_smb(smb_buffer, len);
 
@@ -243,7 +236,7 @@ smb_sendv(struct TCP_Server_Info *server, struct kvec *iov, int n_vec)
 
 	/* Don't want to modify the buffer as a
 	   side effect of this call. */
-	smb_buffer->smb_buf_length = smb_buf_length;
+	smb_buffer->smb_buf_length = cpu_to_be32(smb_buf_length);
 
 	return rc;
 }
@@ -260,7 +253,7 @@ smb_send(struct TCP_Server_Info *server, struct smb_hdr *smb_buffer,
 	return smb_sendv(server, &iov, 1);
 }
 
-static int wait_for_free_request(struct TCP_Server_Info *server,
+int wait_for_free_request(struct TCP_Server_Info *server,
 				 const int long_op)
 {
 	if (long_op == CIFS_ASYNC_OP) {
@@ -271,7 +264,8 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 
 	spin_lock(&GlobalMid_Lock);
 	while (1) {
-		if (atomic_read(&server->inFlight) >= cifs_max_pending) {
+		if ((server->is_smb2 == false) && 
+		    atomic_read(&server->inFlight) >= cifs_max_pending) {
 			spin_unlock(&GlobalMid_Lock);
 #ifdef CONFIG_CIFS_STATS2
 			atomic_inc(&server->num_waiters);
@@ -283,6 +277,20 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 			atomic_dec(&server->num_waiters);
 #endif
 			spin_lock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_SMB2
+		} else if (server->is_smb2 &&
+			  (atomic_read(&server->credits) < 1)) {
+			spin_unlock(&GlobalMid_Lock);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_inc(&server->num_waiters);
+#endif
+			wait_event(server->request_q,
+				   atomic_read(&server->credits) > 0);
+#ifdef CONFIG_CIFS_STATS2
+			atomic_dec(&server->num_waiters);
+#endif
+			spin_lock(&GlobalMid_Lock);
+#endif /* CONFIG_CIFS_SMB2 */
 		} else {
 			if (server->tcpStatus == CifsExiting) {
 				spin_unlock(&GlobalMid_Lock);
@@ -302,7 +310,7 @@ static int wait_for_free_request(struct TCP_Server_Info *server,
 	return 0;
 }
 
-static int allocate_mid(struct cifsSesInfo *ses, struct smb_hdr *in_buf,
+static int allocate_mid(struct cifs_ses *ses, struct smb_hdr *in_buf,
 			struct mid_q_entry **ppmidQ)
 {
 	if (ses->server->tcpStatus == CifsExiting) {
@@ -360,7 +368,7 @@ cifs_call_async(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 		return rc;
 
 	/* enable signing if server requires it */
-	if (server->secMode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+	if (server->sec_mode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 		in_buf->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
 
 	mutex_lock(&server->srv_mutex);
@@ -387,7 +395,7 @@ cifs_call_async(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 #ifdef CONFIG_CIFS_STATS2
 	atomic_inc(&server->inSend);
 #endif
-	rc = smb_send(server, in_buf, in_buf->smb_buf_length);
+	rc = smb_send(server, in_buf, be32_to_cpu(in_buf->smb_buf_length));
 #ifdef CONFIG_CIFS_STATS2
 	atomic_dec(&server->inSend);
 	mid->when_sent = jiffies;
@@ -414,7 +422,7 @@ out_err:
  *
  */
 int
-SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceiveNoRsp(const unsigned int xid, struct cifs_ses *ses,
 		struct smb_hdr *in_buf, int flags)
 {
 	int rc;
@@ -422,7 +430,7 @@ SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
 	int resp_buf_type;
 
 	iov[0].iov_base = (char *)in_buf;
-	iov[0].iov_len = in_buf->smb_buf_length + 4;
+	iov[0].iov_len = be32_to_cpu(in_buf->smb_buf_length) + 4;
 	flags |= CIFS_NO_RESP;
 	rc = SendReceive2(xid, ses, iov, 1, &resp_buf_type, flags);
 	cFYI(DBG2, "SendRcvNoRsp flags %d rc %d", flags, rc);
@@ -488,7 +496,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 	int rc = 0;
 
 	/* -4 for RFC1001 length and +2 for BCC field */
-	in_buf->smb_buf_length = sizeof(struct smb_hdr) - 4  + 2;
+	in_buf->smb_buf_length = cpu_to_be32(sizeof(struct smb_hdr) - 4  + 2);
 	in_buf->Command = SMB_COM_NT_CANCEL;
 	in_buf->WordCount = 0;
 	put_bcc_le(0, in_buf);
@@ -499,7 +507,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 		mutex_unlock(&server->srv_mutex);
 		return rc;
 	}
-	rc = smb_send(server, in_buf, in_buf->smb_buf_length);
+	rc = smb_send(server, in_buf, be32_to_cpu(in_buf->smb_buf_length));
 	mutex_unlock(&server->srv_mutex);
 
 	cFYI(1, "issued NT_CANCEL for mid %u, rc = %d",
@@ -509,7 +517,7 @@ send_nt_cancel(struct TCP_Server_Info *server, struct smb_hdr *in_buf,
 }
 
 int
-SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	     struct kvec *iov, int n_vec, int *pRespBufType /* ret */,
 	     const int flags)
 {
@@ -612,7 +620,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 		return rc;
 	}
 
-	receive_len = midQ->resp_buf->smb_buf_length;
+	receive_len = be32_to_cpu(midQ->resp_buf->smb_buf_length);
 
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
 		cERROR(1, "Frame too large received.  Length: %d  Xid: %d",
@@ -636,7 +644,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(midQ->resp_buf, 80);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(midQ->resp_buf,
 						ses->server,
@@ -674,7 +682,7 @@ out:
 }
 
 int
-SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
+SendReceive(const unsigned int xid, struct cifs_ses *ses,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned, const int long_op)
 {
@@ -698,9 +706,10 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 	   to the same server. We may make this configurable later or
 	   use ses->maxReq */
 
-	if (in_buf->smb_buf_length > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4) {
+	if (be32_to_cpu(in_buf->smb_buf_length) > CIFSMaxBufSize +
+			MAX_CIFS_HDR_SIZE - 4) {
 		cERROR(1, "Illegal length, greater than maximum frame, %d",
-			   in_buf->smb_buf_length);
+			   be32_to_cpu(in_buf->smb_buf_length));
 		return -EIO;
 	}
 
@@ -733,7 +742,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 #ifdef CONFIG_CIFS_STATS2
 	atomic_inc(&ses->server->inSend);
 #endif
-	rc = smb_send(ses->server, in_buf, in_buf->smb_buf_length);
+	rc = smb_send(ses->server, in_buf, be32_to_cpu(in_buf->smb_buf_length));
 #ifdef CONFIG_CIFS_STATS2
 	atomic_dec(&ses->server->inSend);
 	midQ->when_sent = jiffies;
@@ -768,7 +777,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 		return rc;
 	}
 
-	receive_len = midQ->resp_buf->smb_buf_length;
+	receive_len = be32_to_cpu(midQ->resp_buf->smb_buf_length);
 
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
 		cERROR(1, "Frame too large received.  Length: %d  Xid: %d",
@@ -781,7 +790,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 
 	if (midQ->resp_buf && out_buf
 	    && (midQ->midState == MID_RESPONSE_RECEIVED)) {
-		out_buf->smb_buf_length = receive_len;
+		out_buf->smb_buf_length = cpu_to_be32(receive_len);
 		memcpy((char *)out_buf + 4,
 		       (char *)midQ->resp_buf + 4,
 		       receive_len);
@@ -789,7 +798,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 		dump_smb(out_buf, 92);
 		/* convert the length into a more usable form */
 		if ((receive_len > 24) &&
-		    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+		    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 					     SECMODE_SIGN_ENABLED))) {
 			rc = cifs_verify_signature(out_buf,
 						ses->server,
@@ -800,7 +809,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 			}
 		}
 
-		*pbytes_returned = out_buf->smb_buf_length;
+		*pbytes_returned = be32_to_cpu(out_buf->smb_buf_length);
 
 		/* BB special case reconnect tid and uid here? */
 		rc = map_smb_to_linux_error(out_buf, 0 /* no log */ );
@@ -827,12 +836,12 @@ out:
    blocking lock to return. */
 
 static int
-send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
+send_lock_cancel(const unsigned int xid, struct cifs_tcon *tcon,
 			struct smb_hdr *in_buf,
 			struct smb_hdr *out_buf)
 {
 	int bytes_returned;
-	struct cifsSesInfo *ses = tcon->ses;
+	struct cifs_ses *ses = tcon->ses;
 	LOCK_REQ *pSMB = (LOCK_REQ *)in_buf;
 
 	/* We just modify the current in_buf to change
@@ -849,7 +858,7 @@ send_lock_cancel(const unsigned int xid, struct cifsTconInfo *tcon,
 }
 
 int
-SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
+SendReceiveBlockingLock(const unsigned int xid, struct cifs_tcon *tcon,
 	    struct smb_hdr *in_buf, struct smb_hdr *out_buf,
 	    int *pbytes_returned)
 {
@@ -857,7 +866,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	int rstart = 0;
 	unsigned int receive_len;
 	struct mid_q_entry *midQ;
-	struct cifsSesInfo *ses;
+	struct cifs_ses *ses;
 
 	if (tcon == NULL || tcon->ses == NULL) {
 		cERROR(1, "Null smb session");
@@ -877,9 +886,10 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	   to the same server. We may make this configurable later or
 	   use ses->maxReq */
 
-	if (in_buf->smb_buf_length > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4) {
+	if (be32_to_cpu(in_buf->smb_buf_length) > CIFSMaxBufSize +
+			MAX_CIFS_HDR_SIZE - 4) {
 		cERROR(1, "Illegal length, greater than maximum frame, %d",
-			   in_buf->smb_buf_length);
+			   be32_to_cpu(in_buf->smb_buf_length));
 		return -EIO;
 	}
 
@@ -910,7 +920,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 #ifdef CONFIG_CIFS_STATS2
 	atomic_inc(&ses->server->inSend);
 #endif
-	rc = smb_send(ses->server, in_buf, in_buf->smb_buf_length);
+	rc = smb_send(ses->server, in_buf, be32_to_cpu(in_buf->smb_buf_length));
 #ifdef CONFIG_CIFS_STATS2
 	atomic_dec(&ses->server->inSend);
 	midQ->when_sent = jiffies;
@@ -977,7 +987,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	if (rc != 0)
 		return rc;
 
-	receive_len = midQ->resp_buf->smb_buf_length;
+	receive_len = be32_to_cpu(midQ->resp_buf->smb_buf_length);
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
 		cERROR(1, "Frame too large received.  Length: %d  Xid: %d",
 			receive_len, xid);
@@ -993,7 +1003,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 		goto out;
 	}
 
-	out_buf->smb_buf_length = receive_len;
+	out_buf->smb_buf_length = cpu_to_be32(receive_len);
 	memcpy((char *)out_buf + 4,
 	       (char *)midQ->resp_buf + 4,
 	       receive_len);
@@ -1001,7 +1011,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	dump_smb(out_buf, 92);
 	/* convert the length into a more usable form */
 	if ((receive_len > 24) &&
-	    (ses->server->secMode & (SECMODE_SIGN_REQUIRED |
+	    (ses->server->sec_mode & (SECMODE_SIGN_REQUIRED |
 				     SECMODE_SIGN_ENABLED))) {
 		rc = cifs_verify_signature(out_buf,
 					   ses->server,
@@ -1012,7 +1022,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 		}
 	}
 
-	*pbytes_returned = out_buf->smb_buf_length;
+	*pbytes_returned = be32_to_cpu(out_buf->smb_buf_length);
 
 	/* BB special case reconnect tid and uid here? */
 	rc = map_smb_to_linux_error(out_buf, 0 /* no log */ );

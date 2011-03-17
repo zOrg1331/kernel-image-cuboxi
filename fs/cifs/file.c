@@ -114,7 +114,7 @@ int cifs_posix_open(char *full_path, struct inode **pinode,
 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
 	struct cifs_fattr fattr;
 	struct tcon_link *tlink;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 
 	cFYI(1, "posix open %s", full_path);
 
@@ -168,7 +168,7 @@ posix_open_ret:
 
 static int
 cifs_nt_open(char *full_path, struct inode *inode, struct cifs_sb_info *cifs_sb,
-	     struct cifsTconInfo *tcon, unsigned int f_flags, __u32 *poplock,
+	     struct cifs_tcon *tcon, unsigned int f_flags, __u32 *poplock,
 	     __u16 *pnetfid, int xid)
 {
 	int rc;
@@ -285,7 +285,7 @@ cifs_new_fileinfo(__u16 fileHandle, struct file *file,
 void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
 {
 	struct inode *inode = cifs_file->dentry->d_inode;
-	struct cifsTconInfo *tcon = tlink_tcon(cifs_file->tlink);
+	struct cifs_tcon *tcon = tlink_tcon(cifs_file->tlink);
 	struct cifsInodeInfo *cifsi = CIFS_I(inode);
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct cifsLockInfo *li, *tmp;
@@ -343,7 +343,7 @@ int cifs_open(struct inode *inode, struct file *file)
 	int xid;
 	__u32 oplock;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	struct tcon_link *tlink;
 	struct cifsFileInfo *pCifsFile = NULL;
 	char *full_path = NULL;
@@ -457,7 +457,7 @@ static int cifs_reopen_file(struct cifsFileInfo *pCifsFile, bool can_flush)
 	int xid;
 	__u32 oplock;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	struct cifsInodeInfo *pCifsInode;
 	struct inode *inode;
 	char *full_path = NULL;
@@ -594,7 +594,7 @@ int cifs_closedir(struct inode *inode, struct file *file)
 	xid = GetXid();
 
 	if (pCFileStruct) {
-		struct cifsTconInfo *pTcon = tlink_tcon(pCFileStruct->tlink);
+		struct cifs_tcon *pTcon = tlink_tcon(pCFileStruct->tlink);
 
 		cFYI(1, "Freeing private data in close dir");
 		spin_lock(&cifs_file_list_lock);
@@ -651,7 +651,7 @@ int cifs_lock(struct file *file, int cmd, struct file_lock *pfLock)
 	__u64 length;
 	bool wait_flag = false;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	__u16 netfid;
 	__u8 lockType = LOCKING_ANDX_LARGE_FILES;
 	bool posix_locking = 0;
@@ -855,95 +855,6 @@ cifs_update_eof(struct cifsInodeInfo *cifsi, loff_t offset,
 		cifsi->server_eof = end_of_write;
 }
 
-ssize_t cifs_user_write(struct file *file, const char __user *write_data,
-	size_t write_size, loff_t *poffset)
-{
-	struct inode *inode = file->f_path.dentry->d_inode;
-	int rc = 0;
-	unsigned int bytes_written = 0;
-	unsigned int total_written;
-	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *pTcon;
-	int xid;
-	struct cifsFileInfo *open_file;
-	struct cifsInodeInfo *cifsi = CIFS_I(inode);
-
-	cifs_sb = CIFS_SB(file->f_path.dentry->d_sb);
-
-	/* cFYI(1, " write %d bytes to offset %lld of %s", write_size,
-	   *poffset, file->f_path.dentry->d_name.name); */
-
-	if (file->private_data == NULL)
-		return -EBADF;
-
-	open_file = file->private_data;
-	pTcon = tlink_tcon(open_file->tlink);
-
-	rc = generic_write_checks(file, poffset, &write_size, 0);
-	if (rc)
-		return rc;
-
-	xid = GetXid();
-
-	for (total_written = 0; write_size > total_written;
-	     total_written += bytes_written) {
-		rc = -EAGAIN;
-		while (rc == -EAGAIN) {
-			if (file->private_data == NULL) {
-				/* file has been closed on us */
-				FreeXid(xid);
-			/* if we have gotten here we have written some data
-			   and blocked, and the file has been freed on us while
-			   we blocked so return what we managed to write */
-				return total_written;
-			}
-			if (open_file->invalidHandle) {
-				/* we could deadlock if we called
-				   filemap_fdatawait from here so tell
-				   reopen_file not to flush data to server
-				   now */
-				rc = cifs_reopen_file(open_file, false);
-				if (rc != 0)
-					break;
-			}
-
-			rc = CIFSSMBWrite(xid, pTcon,
-				open_file->netfid,
-				min_t(const int, cifs_sb->wsize,
-				      write_size - total_written),
-				*poffset, &bytes_written,
-				NULL, write_data + total_written, 0);
-		}
-		if (rc || (bytes_written == 0)) {
-			if (total_written)
-				break;
-			else {
-				FreeXid(xid);
-				return rc;
-			}
-		} else {
-			cifs_update_eof(cifsi, *poffset, bytes_written);
-			*poffset += bytes_written;
-		}
-	}
-
-	cifs_stats_bytes_written(pTcon, total_written);
-
-/* Do not update local mtime - server will set its actual value on write
- *	inode->i_ctime = inode->i_mtime =
- * 		current_fs_time(inode->i_sb);*/
-	if (total_written > 0) {
-		spin_lock(&inode->i_lock);
-		if (*poffset > inode->i_size)
-			i_size_write(inode, *poffset);
-		spin_unlock(&inode->i_lock);
-	}
-	mark_inode_dirty_sync(inode);
-
-	FreeXid(xid);
-	return total_written;
-}
-
 static ssize_t cifs_write(struct cifsFileInfo *open_file,
 			  const char *write_data, size_t write_size,
 			  loff_t *poffset)
@@ -952,7 +863,7 @@ static ssize_t cifs_write(struct cifsFileInfo *open_file,
 	unsigned int bytes_written = 0;
 	unsigned int total_written;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	int xid;
 	struct dentry *dentry = open_file->dentry;
 	struct cifsInodeInfo *cifsi = CIFS_I(dentry->d_inode);
@@ -979,8 +890,8 @@ static ssize_t cifs_write(struct cifsFileInfo *open_file,
 				if (rc != 0)
 					break;
 			}
-			if (experimEnabled || (pTcon->ses->server &&
-				((pTcon->ses->server->secMode &
+			if (sign_zero_copy || (pTcon->ses->server &&
+				((pTcon->ses->server->sec_mode &
 				(SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
 				== 0))) {
 				struct kvec iov[2];
@@ -1207,7 +1118,7 @@ static int cifs_writepages(struct address_space *mapping,
 	int nr_pages;
 	__u64 offset = 0;
 	struct cifsFileInfo *open_file;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	struct cifsInodeInfo *cifsi = CIFS_I(mapping->host);
 	struct page *page;
 	struct pagevec pvec;
@@ -1240,7 +1151,7 @@ static int cifs_writepages(struct address_space *mapping,
 	}
 
 	tcon = tlink_tcon(open_file->tlink);
-	if (!experimEnabled && tcon->ses->server->secMode &
+	if (!sign_zero_copy && tcon->ses->server->sec_mode &
 			(SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED)) {
 		cifsFileInfo_put(open_file);
 		kfree(iov);
@@ -1527,7 +1438,7 @@ int cifs_strict_fsync(struct file *file, int datasync)
 {
 	int xid;
 	int rc = 0;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	struct cifsFileInfo *smbfile = file->private_data;
 	struct inode *inode = file->f_path.dentry->d_inode;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
@@ -1552,7 +1463,7 @@ int cifs_fsync(struct file *file, int datasync)
 {
 	int xid;
 	int rc = 0;
-	struct cifsTconInfo *tcon;
+	struct cifs_tcon *tcon;
 	struct cifsFileInfo *smbfile = file->private_data;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(file->f_path.dentry->d_sb);
 
@@ -1671,7 +1582,7 @@ cifs_iovec_write(struct file *file, const struct iovec *iov,
 	struct iov_iter it;
 	struct inode *inode;
 	struct cifsFileInfo *open_file;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	struct cifs_sb_info *cifs_sb;
 	int xid, rc;
 
@@ -1772,7 +1683,7 @@ cifs_iovec_write(struct file *file, const struct iovec *iov,
 	return total_written;
 }
 
-static ssize_t cifs_user_writev(struct kiocb *iocb, const struct iovec *iov,
+ssize_t cifs_user_writev(struct kiocb *iocb, const struct iovec *iov,
 				unsigned long nr_segs, loff_t pos)
 {
 	ssize_t written;
@@ -1826,7 +1737,7 @@ cifs_iovec_read(struct file *file, const struct iovec *iov,
 	size_t len, cur_len;
 	int iov_offset = 0;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	struct cifsFileInfo *open_file;
 	struct smb_com_read_rsp *pSMBr;
 	char *read_data;
@@ -1895,17 +1806,7 @@ cifs_iovec_read(struct file *file, const struct iovec *iov,
 	return total_read;
 }
 
-ssize_t cifs_user_read(struct file *file, char __user *read_data,
-		       size_t read_size, loff_t *poffset)
-{
-	struct iovec iov;
-	iov.iov_base = read_data;
-	iov.iov_len = read_size;
-
-	return cifs_iovec_read(file, &iov, 1, poffset);
-}
-
-static ssize_t cifs_user_readv(struct kiocb *iocb, const struct iovec *iov,
+ssize_t cifs_user_readv(struct kiocb *iocb, const struct iovec *iov,
 			       unsigned long nr_segs, loff_t pos)
 {
 	ssize_t read;
@@ -1947,7 +1848,7 @@ static ssize_t cifs_read(struct file *file, char *read_data, size_t read_size,
 	unsigned int total_read;
 	unsigned int current_read_size;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	int xid;
 	char *current_offset;
 	struct cifsFileInfo *open_file;
@@ -2096,7 +1997,7 @@ static int cifs_readpages(struct file *file, struct address_space *mapping,
 	loff_t offset;
 	struct page *page;
 	struct cifs_sb_info *cifs_sb;
-	struct cifsTconInfo *pTcon;
+	struct cifs_tcon *pTcon;
 	unsigned int bytes_read = 0;
 	unsigned int read_size, i;
 	char *smb_read_data = NULL;
