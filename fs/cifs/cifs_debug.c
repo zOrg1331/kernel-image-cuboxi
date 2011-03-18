@@ -146,7 +146,7 @@ static void dump_cifs_debug_info(int i, struct seq_file *m,
 
 #ifdef CONFIG_CIFS_STATS2
 		seq_printf(m, " In Send: %d In MaxReq Wait: %d",
-				atomic_read(&server->inSend),
+				atomic_read(&server->in_send),
 				atomic_read(&server->num_waiters));
 #endif
 
