@@ -4,6 +4,7 @@ config M68K
 	select HAVE_AOUT
 	select HAVE_IDE
 	select GENERIC_ATOMIC64
+	select ARCH_HAVE_NMI_SAFE_CMPXCHG if RMW_INSNS
 
 config MMU
 	bool
