@@ -77,3 +77,6 @@ GTAGS
 *.orig
 *~
 \#*#
+
+# don't ignore gear(1) stuff
+!.gear
