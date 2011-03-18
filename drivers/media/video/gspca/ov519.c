@@ -118,6 +118,7 @@ struct sd {
 };
 enum sensors {
 	SEN_OV2610,
+	SEN_OV2610AE,
 	SEN_OV3610,
 	SEN_OV6620,
 	SEN_OV6630,
@@ -238,6 +239,8 @@ static const struct ctrl sd_ctrls[] = {
 /* table of the disabled controls */
 static const unsigned ctrl_dis[] = {
 [SEN_OV2610] =		(1 << NCTRL) - 1,	/* no control */
+
+[SEN_OV2610AE] =	(1 << NCTRL) - 1,	/* no control */
 
 [SEN_OV3610] =		(1 << NCTRL) - 1,	/* no control */
 
@@ -428,6 +431,11 @@ static const struct v4l2_pix_format ovfx2_cif_mode[] = {
 		.priv = 0},
 };
 static const struct v4l2_pix_format ovfx2_ov2610_mode[] = {
+	{800, 600, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
+		.bytesperline = 800,
+		.sizeimage = 800 * 600,
+		.colorspace = V4L2_COLORSPACE_SRGB,
+		.priv = 1},
 	{1600, 1200, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
 		.bytesperline = 1600,
 		.sizeimage = 1600 * 1200,
@@ -544,6 +552,7 @@ static const struct v4l2_pix_format ovfx2_ov3610_mode[] = {
  * buffers, there are some pretty strict real time constraints for
  * isochronous transfer for larger frame sizes).
  */
+/*jfm: this value works well for 1600x1200, but not 800x600 - see isoc_init */
 #define OVFX2_BULK_SIZE (13 * 4096)
 
 /* I2C registers */
@@ -654,6 +663,24 @@ struct ov_i2c_regvals {
 /* Settings for OV2610 camera chip */
 static const struct ov_i2c_regvals norm_2610[] = {
 	{ 0x12, 0x80 },	/* reset */
+};
+
+static const struct ov_i2c_regvals norm_2610ae[] = {
+	{0x12, 0x80},	/* reset */
+	{0x13, 0xcd},
+	{0x09, 0x01},
+	{0x0d, 0x00},
+	{0x11, 0x80},
+	{0x12, 0x20},	/* 1600x1200 */
+	{0x33, 0x0c},
+	{0x35, 0x90},
+	{0x36, 0x37},
+/* ms-win traces */
+	{0x11, 0x83},	/* clock / 3 ? */
+	{0x2d, 0x00},	/* 60 Hz filter */
+	{0x24, 0xb0},	/* normal colors */
+	{0x25, 0x90},
+	{0x10, 0x43},
 };
 
 static const struct ov_i2c_regvals norm_3620b[] = {
@@ -2621,6 +2648,9 @@ static void ov_hires_configure(struct sd *sd)
 	if (high == 0x96 && low == 0x40) {
 		PDEBUG(D_PROBE, "Sensor is an OV2610");
 		sd->sensor = SEN_OV2610;
+	} else if (high == 0x96 && low == 0x41) {
+		PDEBUG(D_PROBE, "Sensor is an OV2610AE");
+		sd->sensor = SEN_OV2610AE;
 	} else if (high == 0x36 && (low & 0x0f) == 0x00) {
 		PDEBUG(D_PROBE, "Sensor is an OV3610");
 		sd->sensor = SEN_OV3610;
@@ -3295,15 +3325,22 @@ static int sd_init(struct gspca_dev *gspca_dev)
 		}
 		break;
 	case BRIDGE_OVFX2:
-		if (sd->sensor == SEN_OV2610) {
+		switch (sd->sensor) {
+		case SEN_OV2610:
+		case SEN_OV2610AE:
 			cam->cam_mode = ovfx2_ov2610_mode;
 			cam->nmodes = ARRAY_SIZE(ovfx2_ov2610_mode);
-		} else if (sd->sensor == SEN_OV3610) {
+			break;
+		case SEN_OV3610:
 			cam->cam_mode = ovfx2_ov3610_mode;
 			cam->nmodes = ARRAY_SIZE(ovfx2_ov3610_mode);
-		} else if (sd->sif) {
-			cam->cam_mode = ov519_sif_mode;
-			cam->nmodes = ARRAY_SIZE(ov519_sif_mode);
+			break;
+		default:
+			if (sd->sif) {
+				cam->cam_mode = ov519_sif_mode;
+				cam->nmodes = ARRAY_SIZE(ov519_sif_mode);
+			}
+			break;
 		}
 		break;
 	case BRIDGE_W9968CF:
@@ -3324,6 +3361,12 @@ static int sd_init(struct gspca_dev *gspca_dev)
 
 		/* Enable autogain, autoexpo, awb, bandfilter */
 		i2c_w_mask(sd, 0x13, 0x27, 0x27);
+		break;
+	case SEN_OV2610AE:
+		write_i2c_regvals(sd, norm_2610ae, ARRAY_SIZE(norm_2610ae));
+
+		/* enable autoexpo */
+		i2c_w_mask(sd, 0x13, 0x05, 0x05);
 		break;
 	case SEN_OV3610:
 		write_i2c_regvals(sd, norm_3620b, ARRAY_SIZE(norm_3620b));
@@ -3395,6 +3438,22 @@ static int sd_init(struct gspca_dev *gspca_dev)
 error:
 	PDEBUG(D_ERR, "OV519 Config failed");
 	return -EINVAL;
+}
+
+/* function called at start time before URB creation */
+static int sd_isoc_init(struct gspca_dev *gspca_dev)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+
+	switch (sd->bridge) {
+	case BRIDGE_OVFX2:
+		if (gspca_dev->width == 1600)
+			gspca_dev->cam.bulk_size = OVFX2_BULK_SIZE;
+		else
+			gspca_dev->cam.bulk_size = 7 * 4096;
+		break;
+	}
+	return 0;
 }
 
 /* Set up the OV511/OV511+ with the given image parameters.
@@ -3827,6 +3886,25 @@ static void mode_init_ov_sensor_regs(struct sd *sd)
 		i2c_w_mask(sd, 0x67, qvga ? 0xf0 : 0x90, 0xf0);
 		i2c_w_mask(sd, 0x74, qvga ? 0x20 : 0x00, 0x20);
 		return;
+	case SEN_OV2610AE: {
+		u8 v;
+
+		/* frame rates:
+		 *	10fps / 5 fps for 1600x1200
+		 *	40fps / 20fps for 800x600
+		 */
+		v = 80;
+		if (qvga) {
+			if (sd->frame_rate < 25)
+				v = 0x81;
+		} else {
+			if (sd->frame_rate < 10)
+				v = 0x81;
+		}
+		i2c_w(sd, 0x11, v);
+		i2c_w(sd, 0x12, qvga ? 0x60 : 0x20);
+		return;
+	    }
 	case SEN_OV3610:
 		if (qvga) {
 			xstart = (1040 - gspca_dev->width) / 2 + (0x1f << 4);
@@ -3975,6 +4053,7 @@ static void set_ov_sensor_window(struct sd *sd)
 	/* mode setup is fully handled in mode_init_ov_sensor_regs for these */
 	switch (sd->sensor) {
 	case SEN_OV2610:
+	case SEN_OV2610AE:
 	case SEN_OV3610:
 	case SEN_OV7670:
 		mode_init_ov_sensor_regs(sd);
@@ -4731,6 +4810,7 @@ static const struct sd_desc sd_desc = {
 	.nctrls = ARRAY_SIZE(sd_ctrls),
 	.config = sd_config,
 	.init = sd_init,
+	.isoc_init = sd_isoc_init,
 	.start = sd_start,
 	.stopN = sd_stopN,
 	.stop0 = sd_stop0,
