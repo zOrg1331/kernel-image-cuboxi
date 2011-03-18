@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab085
-%define ovzrel 2
+%define ovzver 028stab087
+%define ovzrel 1
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -6020,9 +6020,10 @@ Patch60009: diff-tossing-headers-around
 Patch70003: diff-scsi-add-modalias-mainstream
 
 # DRBD
-Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.4
+Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.10
 Patch90001: diff-drbd-compilation
 Patch90002: diff-drbd-dont-use-connector
+Patch90003: diff-drbd-compilation-a
 
 # Areca
 # replaced with linux-2.6-scsi-add-kernel-support-for-areca-raid-controller.patch
@@ -6078,6 +6079,7 @@ Patch90503: diff-openafs-configure-no-mod-check
 Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
 Patch91004: diff-serial-pci-add-netmos-9901-support
+Patch91006: diff-serial-pci-add-netmos-9835-support
 
 # Bells and whistles
 Patch100001: diff-ms-devleak-dstdebug-20080504
@@ -6095,8 +6097,6 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
-Patch100037: diff-rh-cfq-kick-tagged-queue-harder
-Patch100038: diff-ubc-exact-oomguar-pages-helper
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -11972,6 +11972,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch90000 -p1
 %patch90001 -p1
 %patch90002 -p1
+%patch90003 -p1
 
 %patch90210 -p1
 %patch90211 -p1
@@ -12010,6 +12011,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91002 -p1
 %patch91003 -p1
 %patch91004 -p1
+%patch91006 -p1
 
 %patch100001 -p1
 %patch100002 -p1
@@ -12026,8 +12028,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
-%patch100037 -p1
-%patch100038 -p1
 
 %patch101000 -p1
 %patch101001 -p1

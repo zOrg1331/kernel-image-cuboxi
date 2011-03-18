@@ -18,7 +18,7 @@ Index: linux-2.6.18-ovz/drivers/block/drbd/drbd_nl.c
 =====================================================================
 --- linux-2.6.18-ovz.orig/drivers/block/drbd/drbd_nl.c
 +++ linux-2.6.18-ovz/drivers/block/drbd/drbd_nl.c
-@@ -2358,22 +2358,11 @@ void drbd_bcast_sync_progress(struct drb
+@@ -2358,11 +2358,6 @@ void drbd_bcast_sync_progress(struct drb
  	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
  }
  
@@ -27,8 +27,10 @@ Index: linux-2.6.18-ovz/drivers/block/drbd/drbd_nl.c
 -void __exit cn_fini(void);
 -#endif
 -
- int __init drbd_nl_init(void)
- {
+ typedef int (*cn_add_callback_req_nsp_fn)(struct cb_id *, char *,
+ 	void (*cb)(struct cn_msg *req, struct netlink_skb_parms *nsp));
+ typedef int (*cn_add_callback_req_fn)(struct cb_id *, char *,
+@@ -2388,12 +2388,6 @@ void drbd_bcast_sync_progress(struct drb
  	static struct cb_id cn_id_drbd;
  	int err, try=10;
  
