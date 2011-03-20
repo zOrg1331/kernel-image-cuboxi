@@ -94,7 +94,7 @@ struct hci_dev {
 	__u8		bus;
 	__u8		dev_type;
 	bdaddr_t	bdaddr;
-	__u8		dev_name[248];
+	__u8		dev_name[HCI_MAX_NAME_LENGTH];
 	__u8		dev_class[3];
 	__u8		major_class;
 	__u8		minor_class;
@@ -767,6 +767,7 @@ int mgmt_user_confirm_reply_complete(u16 index, bdaddr_t *bdaddr, u8 status);
 int mgmt_user_confirm_neg_reply_complete(u16 index, bdaddr_t *bdaddr,
 								u8 status);
 int mgmt_auth_failed(u16 index, bdaddr_t *bdaddr, u8 status);
+int mgmt_set_local_name_complete(u16 index, u8 *name, u8 status);
 
 /* HCI info for socket */
 #define hci_pi(sk) ((struct hci_pinfo *) sk)
