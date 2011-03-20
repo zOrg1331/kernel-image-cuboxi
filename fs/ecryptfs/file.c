@@ -235,7 +235,8 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 				goto out_free;
 			}
 			rc = 0;
-			crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
+			crypt_stat->flags &= ~(ECRYPTFS_I_SIZE_INITIALIZED
+					       | ECRYPTFS_ENCRYPTED);
 			mutex_unlock(&crypt_stat->cs_mutex);
 			goto out;
 		}
@@ -273,7 +274,14 @@ static int ecryptfs_release(struct inode *inode, struct file *file)
 static int
 ecryptfs_fsync(struct file *file, int datasync)
 {
-	return vfs_fsync(ecryptfs_file_to_lower(file), datasync);
+	int rc = 0;
+
+	rc = generic_file_fsync(file, datasync);
+	if (rc)
+		goto out;
+	rc = vfs_fsync(ecryptfs_file_to_lower(file), datasync);
+out:
+	return rc;
 }
 
 static int ecryptfs_fasync(int fd, struct file *file, int flag)
