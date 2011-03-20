@@ -1,7 +1,7 @@
 /*
  *   fs/cifs/cifs_fs_sb.h
  *
- *   Copyright (c) International Business Machines  Corp., 2002,2004
+ *   Copyright (c) International Business Machines  Corp., 2002,2010
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
  *   This library is free software; you can redistribute it and/or modify
@@ -24,10 +24,12 @@
 
 #define CIFS_MOUNT_NO_PERM      1 /* do not do client vfs_perm check */
 #define CIFS_MOUNT_SET_UID      2 /* set current's euid in create etc. */
+/* SERVER_INUM is always set for SMB2 */
 #define CIFS_MOUNT_SERVER_INUM  4 /* inode numbers from uniqueid from server  */
 #define CIFS_MOUNT_DIRECT_IO    8 /* do not write nor read through page cache */
 #define CIFS_MOUNT_NO_XATTR     0x10  /* if set - disable xattr support       */
 #define CIFS_MOUNT_MAP_SPECIAL_CHR 0x20 /* remap illegal chars in filenames   */
+/* The following two are not supported for SMB2 */
 #define CIFS_MOUNT_POSIX_PATHS  0x40  /* Negotiate posix pathnames if possible*/
 #define CIFS_MOUNT_UNX_EMUL     0x80  /* Network compat with SFUnix emulation */
 #define CIFS_MOUNT_NO_BRL       0x100 /* No sending byte range locks to srv   */
