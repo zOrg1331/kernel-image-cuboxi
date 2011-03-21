@@ -180,6 +180,9 @@ static const char* fan_speed_keys[] = {
 #define INIT_TIMEOUT_MSECS	5000	/* wait up to 5s for device init ... */
 #define INIT_WAIT_MSECS		50	/* ... in 50ms increments */
 
+#define ACCESS_TIMEOUT_MSECS	500	/* wait up to 500ms when accessing a key */
+#define ACCESS_WAIT_MSECS	5	/* ... in 5ms increments */
+
 #define APPLESMC_POLL_INTERVAL	50	/* msecs */
 #define APPLESMC_INPUT_FUZZ	4	/* input event threshold */
 #define APPLESMC_INPUT_FLAT	4
@@ -278,12 +281,13 @@ static int send_command(u8 cmd)
 
 /*
  * applesmc_read_key - reads len bytes from a given key, and put them in buffer.
+ * Tries up to ACCESS_WAIT_MSECS to read the value.
  * Returns zero on success or a negative error on failure. Callers must
  * hold applesmc_lock.
  */
 static int applesmc_read_key(const char* key, u8* buffer, u8 len)
 {
-	int i;
+	int i, total, ret;
 
 	if (len > APPLESMC_MAX_DATA_LENGTH) {
 		printk(KERN_ERR	"applesmc_read_key: cannot read more than "
@@ -294,29 +298,54 @@ static int applesmc_read_key(const char* key, u8* buffer, u8 len)
 	if (send_command(APPLESMC_READ_CMD))
 		return -EIO;
 
-	for (i = 0; i < 4; i++) {
-		outb(key[i], APPLESMC_DATA_PORT);
-		if (__wait_status(0x04))
-			return -EIO;
-	}
-	if (debug)
-		printk(KERN_DEBUG "<%s", key);
+	for (total = ACCESS_TIMEOUT_MSECS; total > 0;
+						total -= ACCESS_WAIT_MSECS) {
+		ret = 0;
+		outb(APPLESMC_READ_CMD, APPLESMC_CMD_PORT);
+		if (__wait_status(0x0c)) {
+			ret = -EIO;
+			goto wait_fail;
+		}
 
-	outb(len, APPLESMC_DATA_PORT);
-	if (debug)
-		printk(KERN_DEBUG ">%x", len);
-
-	for (i = 0; i < len; i++) {
-		if (__wait_status(0x05))
-			return -EIO;
-		buffer[i] = inb(APPLESMC_DATA_PORT);
+		for (i = 0; i < 4; i++) {
+			outb(key[i], APPLESMC_DATA_PORT);
+			if (__wait_status(0x04)) {
+				ret = -EIO;
+				goto wait_fail;
+			}
+		}
 		if (debug)
-			printk(KERN_DEBUG "<%x", buffer[i]);
-	}
-	if (debug)
-		printk(KERN_DEBUG "\n");
+			printk(KERN_DEBUG "<%s", key);
 
-	return 0;
+		outb(len, APPLESMC_DATA_PORT);
+		if (debug)
+			printk(KERN_DEBUG ">%x", len);
+
+		for (i = 0; i < len; i++) {
+			if (__wait_status(0x05)) {
+				ret = -EIO;
+				goto wait_fail;
+			}
+			buffer[i] = inb(APPLESMC_DATA_PORT);
+			if (debug)
+				printk(KERN_DEBUG "<%x", buffer[i]);
+		}
+		if (debug)
+			printk(KERN_DEBUG "\n");
+
+		break;
+
+wait_fail:
+		msleep(ACCESS_WAIT_MSECS);
+		continue;		
+	}
+
+	if (total != ACCESS_TIMEOUT_MSECS) {
+		printk(KERN_DEBUG "Read: Waited %d ms for the value\n",
+						ACCESS_TIMEOUT_MSECS-total);
+	}
+
+	return ret;
 }
 
 /*
