@@ -257,19 +257,19 @@ struct ecryptfs_filename {
 struct ecryptfs_crypt_stat {
 #define ECRYPTFS_STRUCT_INITIALIZED   0x00000001
 #define ECRYPTFS_POLICY_APPLIED       0x00000002
-#define ECRYPTFS_NEW_FILE             0x00000004
-#define ECRYPTFS_ENCRYPTED            0x00000008
-#define ECRYPTFS_SECURITY_WARNING     0x00000010
-#define ECRYPTFS_ENABLE_HMAC          0x00000020
-#define ECRYPTFS_ENCRYPT_IV_PAGES     0x00000040
-#define ECRYPTFS_KEY_VALID            0x00000080
-#define ECRYPTFS_METADATA_IN_XATTR    0x00000100
-#define ECRYPTFS_VIEW_AS_ENCRYPTED    0x00000200
-#define ECRYPTFS_KEY_SET              0x00000400
-#define ECRYPTFS_ENCRYPT_FILENAMES    0x00000800
-#define ECRYPTFS_ENCFN_USE_MOUNT_FNEK 0x00001000
-#define ECRYPTFS_ENCFN_USE_FEK        0x00002000
-#define ECRYPTFS_UNLINK_SIGS	      0x00004000
+#define ECRYPTFS_ENCRYPTED            0x00000004
+#define ECRYPTFS_SECURITY_WARNING     0x00000008
+#define ECRYPTFS_ENABLE_HMAC          0x00000010
+#define ECRYPTFS_ENCRYPT_IV_PAGES     0x00000020
+#define ECRYPTFS_KEY_VALID            0x00000040
+#define ECRYPTFS_METADATA_IN_XATTR    0x00000080
+#define ECRYPTFS_VIEW_AS_ENCRYPTED    0x00000100
+#define ECRYPTFS_KEY_SET              0x00000200
+#define ECRYPTFS_ENCRYPT_FILENAMES    0x00000400
+#define ECRYPTFS_ENCFN_USE_MOUNT_FNEK 0x00000800
+#define ECRYPTFS_ENCFN_USE_FEK        0x00001000
+#define ECRYPTFS_UNLINK_SIGS          0x00002000
+#define ECRYPTFS_I_SIZE_INITIALIZED   0x00004000
 	u32 flags;
 	unsigned int file_version;
 	size_t iv_bytes;
@@ -297,7 +297,6 @@ struct ecryptfs_inode_info {
 	struct inode vfs_inode;
 	struct inode *wii_inode;
 	struct file *lower_file;
-	struct mutex lower_file_mutex;
 	struct ecryptfs_crypt_stat crypt_stat;
 };
 
@@ -630,6 +629,7 @@ struct ecryptfs_open_req {
 int ecryptfs_interpose(struct dentry *hidden_dentry,
 		       struct dentry *this_dentry, struct super_block *sb,
 		       u32 flags);
+void ecryptfs_i_size_init(const char *page_virt, struct inode *inode);
 int ecryptfs_lookup_and_interpose_lower(struct dentry *ecryptfs_dentry,
 					struct dentry *lower_dentry,
 					struct inode *ecryptfs_dir_inode);
