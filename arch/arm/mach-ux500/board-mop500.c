@@ -24,6 +24,7 @@
 #include <linux/leds-lp5521.h>
 #include <linux/input.h>
 #include <linux/gpio_keys.h>
+#include <linux/mfd/tps6105x.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -63,6 +64,15 @@ struct platform_device ab8500_device = {
 	},
 	.num_resources = 1,
 	.resource = ab8500_resources,
+};
+
+/*
+ * TPS61052
+ */
+
+static struct tps6105x_platform_data mop500_tps61052_data = {
+	.mode = TPS6105X_MODE_VOLTAGE,
+	.regulator_data = &tps61052_regulator,
 };
 
 /*
@@ -136,6 +146,10 @@ static struct lp5521_platform_data __initdata lp5521_sec_data = {
 };
 
 static struct i2c_board_info mop500_i2c0_devices[] = {
+	{
+		I2C_BOARD_INFO("tps61052", 0x33),
+		.platform_data  = &mop500_tps61052_data,
+	},
 	{
 		I2C_BOARD_INFO("tc3589x", 0x42),
 		.irq		= NOMADIK_GPIO_TO_IRQ(217),
