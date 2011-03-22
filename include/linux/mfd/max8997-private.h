@@ -24,8 +24,6 @@
 
 #include <linux/i2c.h>
 
-#define MAX8997_REG_INVALID	(0xff)
-
 enum max8997_pmic_reg {
 	MAX8997_REG_PMIC_ID0	= 0x00,
 	MAX8997_REG_PMIC_ID1	= 0x01,
@@ -315,7 +313,6 @@ enum max8997_irq {
 #define MAX8997_REG_BUCK2DVS(x)	(MAX8997_REG_BUCK2DVS1 + (x) - 1)
 #define MAX8997_REG_BUCK5DVS(x)	(MAX8997_REG_BUCK5DVS1 + (x) - 1)
 
-#define MAX8997_NUM_GPIO	12
 struct max8997_dev {
 	struct device *dev;
 	struct i2c_client *i2c; /* 0xcc / PMIC, Battery Control, and FLASH */
@@ -327,29 +324,17 @@ struct max8997_dev {
 	int type;
 	struct platform_device *battery; /* battery control (not fuel gauge) */
 
-	int irq;
-	int ono;
-	int irq_base;
 	bool wakeup;
-	struct mutex irqlock;
-	int irq_masks_cur[MAX8997_IRQ_GROUP_NR];
-	int irq_masks_cache[MAX8997_IRQ_GROUP_NR];
 
 	/* For hibernation */
 	u8 reg_dump[MAX8997_REG_PMIC_END + MAX8997_MUIC_REG_END +
 		MAX8997_HAPTIC_REG_END];
-
-	bool gpio_status[MAX8997_NUM_GPIO];
 };
 
 enum max8997_types {
 	TYPE_MAX8997,
 	TYPE_MAX8966,
 };
-
-extern int max8997_irq_init(struct max8997_dev *max8997);
-extern void max8997_irq_exit(struct max8997_dev *max8997);
-extern int max8997_irq_resume(struct max8997_dev *max8997);
 
 extern int max8997_read_reg(struct i2c_client *i2c, u8 reg, u8 *dest);
 extern int max8997_bulk_read(struct i2c_client *i2c, u8 reg, int count,
@@ -359,10 +344,4 @@ extern int max8997_bulk_write(struct i2c_client *i2c, u8 reg, int count,
 				u8 *buf);
 extern int max8997_update_reg(struct i2c_client *i2c, u8 reg, u8 val, u8 mask);
 
-#define MAX8997_GPIO_INT_BOTH	(0x3 << 4)
-#define MAX8997_GPIO_INT_RISE	(0x2 << 4)
-#define MAX8997_GPIO_INT_FALL	(0x1 << 4)
-
-#define MAX8997_GPIO_INT_MASK	(0x3 << 4)
-#define MAX8997_GPIO_DATA_MASK	(0x1 << 2)
 #endif /*  __LINUX_MFD_MAX8997_PRIV_H */
