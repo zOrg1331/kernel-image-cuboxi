@@ -186,7 +186,7 @@ UNUSUAL_DEV(  0x0421, 0x0434, 0x0100, 0x0100,
 UNUSUAL_DEV(  0x0421, 0x043e, 0x0000, 0x0366,
 		"Nokia",
 		"Nokia 6270",
-		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
 		US_FL_FIX_CAPACITY ),
 
 /* Reported by Sumedha Swamy <sumedhaswamy@gmail.com> and
