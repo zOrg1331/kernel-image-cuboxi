@@ -179,7 +179,7 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 	return oprofile_hwsampler_init(ops);
 }
 
-void oprofile_arch_exit(void)
+void __exit oprofile_arch_exit(void)
 {
 	oprofile_hwsampler_exit();
 }
