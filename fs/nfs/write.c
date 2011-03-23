@@ -179,8 +179,8 @@ static int wb_priority(struct writeback_control *wbc)
 	if (wbc->for_reclaim)
 		return FLUSH_HIGHPRI | FLUSH_STABLE;
 	if (wbc->for_kupdate || wbc->for_background)
-		return FLUSH_LOWPRI;
-	return 0;
+		return FLUSH_LOWPRI | FLUSH_COND_STABLE;
+	return FLUSH_COND_STABLE;
 }
 
 /*
@@ -863,7 +863,7 @@ static int nfs_write_rpcsetup(struct nfs_page *req,
 	data->args.context = get_nfs_open_context(req->wb_context);
 	data->args.lock_context = req->wb_lock_context;
 	data->args.stable  = NFS_UNSTABLE;
-	if (how & FLUSH_STABLE) {
+	if (how & (FLUSH_STABLE | FLUSH_COND_STABLE)) {
 		data->args.stable = NFS_DATA_SYNC;
 		if (!nfs_need_commit(NFS_I(inode)))
 			data->args.stable = NFS_FILE_SYNC;
@@ -911,6 +911,12 @@ static int nfs_flush_multi(struct nfs_pageio_descriptor *desc)
 	LIST_HEAD(list);
 
 	nfs_list_remove_request(req);
+
+	if ((desc->pg_ioflags & FLUSH_COND_STABLE) &&
+	    (desc->pg_moreio || NFS_I(desc->pg_inode)->ncommit ||
+	     desc->pg_count > wsize))
+		desc->pg_ioflags &= ~FLUSH_COND_STABLE;
+
 
 	nbytes = desc->pg_count;
 	do {
@@ -1001,6 +1007,10 @@ static int nfs_flush_one(struct nfs_pageio_descriptor *desc)
 	req = nfs_list_entry(data->pages.next);
 	if ((!lseg) && list_is_singular(&data->pages))
 		lseg = pnfs_update_layout(desc->pg_inode, req->wb_context, IOMODE_RW);
+
+	if ((desc->pg_ioflags & FLUSH_COND_STABLE) &&
+	    (desc->pg_moreio || NFS_I(desc->pg_inode)->ncommit))
+		desc->pg_ioflags &= ~FLUSH_COND_STABLE;
 
 	/* Set up the argument struct */
 	ret = nfs_write_rpcsetup(req, data, &nfs_write_full_ops, desc->pg_count, 0, lseg, desc->pg_ioflags);
@@ -1251,13 +1261,17 @@ void nfs_writeback_done(struct rpc_task *task, struct nfs_write_data *data)
 #if defined(CONFIG_NFS_V3) || defined(CONFIG_NFS_V4)
 static int nfs_commit_set_lock(struct nfs_inode *nfsi, int may_wait)
 {
+	int ret;
+
 	if (!test_and_set_bit(NFS_INO_COMMIT, &nfsi->flags))
 		return 1;
-	if (may_wait && !out_of_line_wait_on_bit_lock(&nfsi->flags,
-				NFS_INO_COMMIT, nfs_wait_bit_killable,
-				TASK_KILLABLE))
-		return 1;
-	return 0;
+	if (!may_wait)
+		return 0;
+	ret = out_of_line_wait_on_bit_lock(&nfsi->flags,
+				NFS_INO_COMMIT,
+				nfs_wait_bit_killable,
+				TASK_KILLABLE);
+	return (ret < 0) ? ret : 1;
 }
 
 static void nfs_commit_clear_lock(struct nfs_inode *nfsi)
@@ -1433,9 +1447,10 @@ int nfs_commit_inode(struct inode *inode, int how)
 {
 	LIST_HEAD(head);
 	int may_wait = how & FLUSH_SYNC;
-	int res = 0;
+	int res;
 
-	if (!nfs_commit_set_lock(NFS_I(inode), may_wait))
+	res = nfs_commit_set_lock(NFS_I(inode), may_wait);
+	if (res <= 0)
 		goto out_mark_dirty;
 	spin_lock(&inode->i_lock);
 	res = nfs_scan_commit(inode, &head, 0, 0);
@@ -1444,12 +1459,14 @@ int nfs_commit_inode(struct inode *inode, int how)
 		int error = nfs_commit_list(inode, &head, how);
 		if (error < 0)
 			return error;
-		if (may_wait)
-			wait_on_bit(&NFS_I(inode)->flags, NFS_INO_COMMIT,
-					nfs_wait_bit_killable,
-					TASK_KILLABLE);
-		else
+		if (!may_wait)
 			goto out_mark_dirty;
+		error = wait_on_bit(&NFS_I(inode)->flags,
+				NFS_INO_COMMIT,
+				nfs_wait_bit_killable,
+				TASK_KILLABLE);
+		if (error < 0)
+			return error;
 	} else
 		nfs_commit_clear_lock(NFS_I(inode));
 	return res;
