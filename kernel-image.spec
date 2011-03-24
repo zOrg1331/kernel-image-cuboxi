@@ -35,6 +35,8 @@ Epoch:   1
 %define kbuild_dir	%_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir	%_prefix/src/linux-%kversion-%flavour
 
+%brp_strip_none /boot/*
+
 Summary: The Linux kernel (the core of the Linux operating system)
 License: GPL
 Group: System/Kernel and hardware
