@@ -40,7 +40,7 @@
 static LIST_HEAD(blktrans_majors);
 static DEFINE_MUTEX(blktrans_ref_mutex);
 
-void blktrans_dev_release(struct kref *kref)
+static void blktrans_dev_release(struct kref *kref)
 {
 	struct mtd_blktrans_dev *dev =
 		container_of(kref, struct mtd_blktrans_dev, ref);
@@ -67,7 +67,7 @@ unlock:
 	return dev;
 }
 
-void blktrans_dev_put(struct mtd_blktrans_dev *dev)
+static void blktrans_dev_put(struct mtd_blktrans_dev *dev)
 {
 	mutex_lock(&blktrans_ref_mutex);
 	kref_put(&dev->ref, blktrans_dev_release);
@@ -119,11 +119,22 @@ static int do_blktrans_request(struct mtd_blktrans_ops *tr,
 	}
 }
 
+int mtd_blktrans_cease_background(struct mtd_blktrans_dev *dev)
+{
+	if (kthread_should_stop())
+		return 1;
+
+	return !elv_queue_empty(dev->rq);
+}
+EXPORT_SYMBOL_GPL(mtd_blktrans_cease_background);
+
 static int mtd_blktrans_thread(void *arg)
 {
 	struct mtd_blktrans_dev *dev = arg;
+	struct mtd_blktrans_ops *tr = dev->tr;
 	struct request_queue *rq = dev->rq;
 	struct request *req = NULL;
+	int background_done = 0;
 
 	spin_lock_irq(rq->queue_lock);
 
@@ -131,6 +142,19 @@ static int mtd_blktrans_thread(void *arg)
 		int res;
 
 		if (!req && !(req = blk_fetch_request(rq))) {
+			if (tr->background && !background_done) {
+				spin_unlock_irq(rq->queue_lock);
+				mutex_lock(&dev->lock);
+				tr->background(dev);
+				mutex_unlock(&dev->lock);
+				spin_lock_irq(rq->queue_lock);
+				/*
+				 * Do background processing just once per idle
+				 * period.
+				 */
+				background_done = 1;
+				continue;
+			}
 			set_current_state(TASK_INTERRUPTIBLE);
 
 			if (kthread_should_stop())
@@ -152,6 +176,8 @@ static int mtd_blktrans_thread(void *arg)
 
 		if (!__blk_end_request_cur(req, res))
 			req = NULL;
+
+		background_done = 0;
 	}
 
 	if (req)
@@ -379,9 +405,10 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	new->rq->queuedata = new;
 	blk_queue_logical_block_size(new->rq, tr->blksize);
 
-	if (tr->discard)
-		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD,
-					new->rq);
+	if (tr->discard) {
+		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, new->rq);
+		new->rq->limits.max_discard_sectors = UINT_MAX;
+	}
 
 	gd->queue = new->rq;
 
