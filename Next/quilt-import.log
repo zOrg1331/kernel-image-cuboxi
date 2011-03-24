@@ -1,0 +1,12 @@
+Importing i2c based on 2.6.38-git12
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c f741a79e982cf56d7584435bad663553ffe6715f
+Importing jdelvare-hwmon based on 2.6.38-git12
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon f741a79e982cf56d7584435bad663553ffe6715f
+Importing kernel-doc based on 2.6.38-rc8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
