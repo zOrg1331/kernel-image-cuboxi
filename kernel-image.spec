@@ -459,11 +459,17 @@ KbuildFiles="
 	scripts/checkincludes.pl
 	scripts/checkconfig.pl
 	scripts/bin2c
-	scripts/gcc-version.sh
 	scripts/recordmcount.pl
+	scripts/gcc-version.sh
+	scripts/gcc-goto.sh
+%ifarch i586
+	scripts/gcc-x86_32-has-stack-protector.sh
+%else
+%ifarch x86_64
 	scripts/gcc-x86_64-has-stack-protector.sh
+%endif
+%endif
 	scripts/module-common.lds
-
 
 	.config
 	.kernelrelease
