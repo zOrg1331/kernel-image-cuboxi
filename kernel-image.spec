@@ -639,6 +639,20 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Mar 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.37-alt1
+- Switch to 2.6.37.4
+- Setup cfq as default io scheduler (ALT 24861)
+- add files alt-fix, alt-feat to list merged fix-* and feat-* branches
+  These are now:
+  * fix-core--init
+  * fix-drivers-usb--storage
+  * fix-drivers-rtc
+  * fix-core--mactel
+  * fix-platform-macbookair
+  * feat-fs-aufs
+  * feat-drivers-wimax-u200
+- aufs2.1
+
 * Wed Dec 29 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt9.1
 - update aufs2
 
