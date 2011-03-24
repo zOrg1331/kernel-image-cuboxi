@@ -86,6 +86,7 @@ static int wlan_status = 1;
 static int bluetooth_status = 1;
 static int wimax_status = -1;
 static int wwan_status = -1;
+static int als_status = -1;
 
 module_param(wlan_status, int, 0444);
 MODULE_PARM_DESC(wlan_status, "Set the wireless status on boot "
@@ -106,6 +107,11 @@ module_param(wwan_status, int, 0444);
 MODULE_PARM_DESC(wwan_status, "Set the wireless status on boot "
 		 "(0 = disabled, 1 = enabled, -1 = don't do anything). "
 		 "default is 1");
+
+module_param(als_status, int, 0444);
+MODULE_PARM_DESC(als_status, "Set the ALS status on boot "
+		 "(0 = disabled, 1 = enabled, -1 = don't do anything). "
+		 "default is 0");
 
 /*
  * Some events we use, same for all Asus
@@ -1598,7 +1604,7 @@ static int __devinit asus_acpi_init(struct asus_laptop *asus)
 	asus->ledd_status = 0xFFF;
 
 	/* Set initial values of light sensor and level */
-	asus->light_switch = 0;	/* Default to light sensor disabled */
+	asus->light_switch = als_status >= 0 ? !!als_status : 0;
 	asus->light_level = 5;	/* level 5 for sensor sensitivity */
 
 	if (asus->have_pega_lucid) {
