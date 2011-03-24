@@ -193,6 +193,14 @@ struct asus_led {
 	const char *method;
 };
 
+#define PEGA_ACCEL_NAME "pega_accel"
+#define PEGA_ACCEL_DESC "Pegatron Lucid Tablet Accelerometer"
+#define METHOD_XLRX "XLRX"
+#define METHOD_XLRY "XLRY"
+#define METHOD_XLRZ "XLRZ"
+#define PEGA_ACC_CLAMP 512 /* 1G accel is reported as ~256, so clamp to 2G */
+#define PEGA_ACC_RETRIES 3
+
 /*
  * This is the main structure, we can use it to store anything interesting
  * about the hotk device
@@ -207,6 +215,7 @@ struct asus_laptop {
 
 	struct input_dev *inputdev;
 	struct key_entry *keymap;
+	struct input_polled_dev *pega_accel_poll;
 
 	struct asus_led mled;
 	struct asus_led tled;
@@ -219,7 +228,11 @@ struct asus_laptop {
 	int wireless_status;
 	bool have_rsts;
 	bool have_pega_lucid;
-	
+	bool pega_acc_live;
+	int pega_acc_x;
+	int pega_acc_y;
+	int pega_acc_z;
+ 
 	struct rfkill *gps_rfkill;
 
 	acpi_handle handle;	/* the handle of the hotk device */
@@ -339,6 +352,99 @@ static bool asus_check_pega_lucid(struct asus_laptop *asus)
 	   !acpi_check_handle(asus->handle, METHOD_PEGA_ENABLE, NULL) &&
 	   !acpi_check_handle(asus->handle, METHOD_PEGA_DISABLE, NULL) &&
 	   !acpi_check_handle(asus->handle, METHOD_PEGA_READ, NULL);
+}
+
+static int pega_acc_axis(struct asus_laptop *asus, int curr, char *method)
+{
+	int i, delta;
+	unsigned long long val;
+	for (i = 0; i < PEGA_ACC_RETRIES; i++) {
+		acpi_evaluate_integer(asus->handle, method, NULL, &val);
+
+		/* The output is noisy.  From reading the ASL
+		 * dissassembly, timeout errors are returned with 1's
+		 * in the high word, and the lack of locking around
+		 * thei hi/lo byte reads means that a transition
+		 * between (for example) -1 and 0 could be read as
+		 * 0xff00 or 0x00ff. */
+		delta = abs(curr - (short)val);
+		if (delta < 128 && !(val & ~0xffff))
+			break;
+	}
+	return clamp_val((short)val, -PEGA_ACC_CLAMP, PEGA_ACC_CLAMP);
+}
+
+static void pega_accel_poll(struct input_polled_dev *ipd)
+{
+	struct device *parent = ipd->input->dev.parent;
+	struct asus_laptop *asus = dev_get_drvdata(parent);
+
+	/* In some cases, the very first call to poll causes a
+	 * recursive fault under the polldev worker.  This is
+	 * apparently related to very early userspace access to the
+	 * device, and perhaps a firmware bug.  See related comments
+	 * in asus_platform_probe regarding the fragility of these
+	 * methods early in the boot.  Fake the first report. */
+	if (!asus->pega_acc_live) {
+		asus->pega_acc_live = true;
+		input_report_abs(ipd->input, ABS_X, 0);
+		input_report_abs(ipd->input, ABS_Y, 0);
+		input_report_abs(ipd->input, ABS_Z, 0);
+		input_sync(ipd->input);
+		return;
+	}
+
+	asus->pega_acc_x = pega_acc_axis(asus, asus->pega_acc_x, METHOD_XLRX);
+	asus->pega_acc_y = pega_acc_axis(asus, asus->pega_acc_y, METHOD_XLRY);
+	asus->pega_acc_z = pega_acc_axis(asus, asus->pega_acc_z, METHOD_XLRZ);
+
+	/* Note transform, convert to "right/up/out" in the native
+	 * landscape orientation (i.e. the vector is the direction of
+	 * "real up" in the device's cartiesian coordinates). */
+	input_report_abs(ipd->input, ABS_X, -asus->pega_acc_x);
+	input_report_abs(ipd->input, ABS_Y, -asus->pega_acc_y);
+	input_report_abs(ipd->input, ABS_Z,  asus->pega_acc_z);
+	input_sync(ipd->input);
+}
+
+static void pega_accel_probe(struct asus_laptop *asus)
+{
+	int err;
+	struct input_polled_dev *ipd;
+
+	if (!asus->have_pega_lucid ||
+	    acpi_check_handle(asus->handle, METHOD_XLRX, NULL) ||
+	    acpi_check_handle(asus->handle, METHOD_XLRY, NULL) ||
+	    acpi_check_handle(asus->handle, METHOD_XLRZ, NULL))
+		return;
+
+	ipd = input_allocate_polled_device();
+	if (!ipd)
+		return;
+
+	ipd->poll = pega_accel_poll;
+	ipd->poll_interval = 125;
+	ipd->poll_interval_min = 50;
+	ipd->poll_interval_max = 2000;
+
+	ipd->input->name = PEGA_ACCEL_DESC;
+	ipd->input->phys = PEGA_ACCEL_NAME "/input0";
+	ipd->input->dev.parent = &asus->platform_device->dev;
+	ipd->input->id.bustype = BUS_HOST;
+
+	set_bit(EV_ABS, ipd->input->evbit);
+	input_set_abs_params(ipd->input, ABS_X,
+			     -PEGA_ACC_CLAMP, PEGA_ACC_CLAMP, 0, 0);
+	input_set_abs_params(ipd->input, ABS_Y,
+			     -PEGA_ACC_CLAMP, PEGA_ACC_CLAMP, 0, 0);
+	input_set_abs_params(ipd->input, ABS_Z,
+			     -PEGA_ACC_CLAMP, PEGA_ACC_CLAMP, 0, 0);
+
+	err = input_register_polled_device(ipd);
+	if (err)
+		input_free_polled_device(ipd);
+	else
+		asus->pega_accel_poll = ipd;
 }
 
 /* Generic LED function */
@@ -1271,11 +1377,40 @@ static void asus_platform_exit(struct asus_laptop *asus)
 	platform_device_unregister(asus->platform_device);
 }
 
+static int asus_platform_probe(struct platform_device *pd)
+{
+	struct asus_laptop *asus = dev_get_drvdata(&pd->dev);
+
+	/* This is instantiated during platform driver initialization
+	 * becuase if it's done from underneath asus_acpi_add(), the
+	 * resulting input device can be grabbed by an early userspace
+	 * reader before ACPI initialization is finished and something
+	 * oopses underneath the acpi_evaluate_integer() call out of
+	 * pega_accel_poll().  Firmware bug? */
+	pega_accel_probe(asus);
+
+	return 0;
+}
+
+static int __devexit asus_platform_remove(struct platform_device *pd)
+{
+	struct asus_laptop *asus = dev_get_drvdata(&pd->dev);
+	if (asus->pega_accel_poll) {
+		input_unregister_polled_device(asus->pega_accel_poll);
+		input_free_polled_device(asus->pega_accel_poll);
+	}
+	asus->pega_accel_poll = NULL;
+	return 0;
+}
+
+
 static struct platform_driver platform_driver = {
 	.driver = {
 		.name = ASUS_LAPTOP_FILE,
 		.owner = THIS_MODULE,
-	}
+	},
+	.probe  = asus_platform_probe,
+	.remove = asus_platform_remove,
 };
 
 /*
