@@ -46,10 +46,18 @@ static struct inode *aufs_alloc_inode(struct super_block *sb __maybe_unused)
 	return NULL;
 }
 
+static void aufs_destroy_inode_cb(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+
+	INIT_LIST_HEAD(&inode->i_dentry);
+	au_cache_free_icntnr(container_of(inode, struct au_icntnr, vfs_inode));
+}
+
 static void aufs_destroy_inode(struct inode *inode)
 {
 	au_iinfo_fin(inode);
-	au_cache_free_icntnr(container_of(inode, struct au_icntnr, vfs_inode));
+	call_rcu(&inode->i_rcu, aufs_destroy_inode_cb);
 }
 
 struct inode *au_iget_locked(struct super_block *sb, ino_t ino)
@@ -808,6 +816,7 @@ static int aufs_fill_super(struct super_block *sb, void *raw_data,
 	/* all timestamps always follow the ones on the branch */
 	sb->s_flags |= MS_NOATIME | MS_NODIRATIME;
 	sb->s_op = &aufs_sop;
+	sb->s_d_op = &aufs_dop;
 	sb->s_magic = AUFS_SUPER_MAGIC;
 	sb->s_maxbytes = 0;
 	au_export_init(sb);
