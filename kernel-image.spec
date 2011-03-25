@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
-Version: 2.6.37
-Release: alt4
+Version: 2.6.38
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -592,6 +592,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Mar 25 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt1
+- 2.6.38.1
+
 * Tue Mar 15 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.37-alt4
 - 2.6.37.4
 - scripts/gcc-goto.sh packed into headers-modules
