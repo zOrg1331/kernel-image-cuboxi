@@ -342,6 +342,7 @@ static void __init mop500_init_machine(void)
 	snowball_pins_init();
 
 	mop500_i2c_init();
+	mop500_sdi_init();
 	mop500_spi_init();
 	mop500_uart_init();
 
