@@ -1,0 +1,53 @@
+Importing i2c based on 2.6.38-git12
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-git12
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard f741a79e982cf56d7584435bad663553ffe6715f
+HEAD is now at f741a79 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/mszeredi/fuse
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-f71882fg-01-better-array-init.patch
+hwmon-f71882fg-02-per-device-fan-and-temp-nr.patch
+hwmon-f71882fg-03-device-names.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+   f741a79..4a15362  master     -> quilt/jdelvare-hwmon
+Importing kernel-doc based on 2.6.38-git13
+$ cd ../quilt-tmp
+$ git reset --hard 6447f55da90b77faec1697d499ed7986bb4f6de6
+HEAD is now at 6447f55d Merge branch 'next' of git://git.kernel.org/pub/scm/linux/kernel/git/djbw/async_tx
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docum-kmemleak-update03.patch
+kern-signal-typo10.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:192: space before tab in indent.
+	 	 * so check explicitly for the right codes here.
+warning: 1 line adds whitespace errors.
+kern-signal-kerndoc11.patch
+docum-kernprms-panicvalues.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   a5abba9..17f9058  master     -> quilt/kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+$ cd ../quilt-tmp
+$ git reset --hard 055d219441cc23f631240335fd369b6b5852681a
+HEAD is now at 055d219 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/viro/vfs-2.6
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-fix-opening-log-and-cow-devices-for-read-only-tables.patch
+dm-add-flakey-target.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:14: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+dm-crypt-wipe-keys-string-immediately-after-key-is-set.patch
+dm-ioctl-prepare-for-crypt-key-wiping.patch
+dm-ioctl-add-flag-to-wipe-buffers-for-secure-data.patch
+dm-mpath-fail-message-ioctl-if-specified-path-is-not-valid.patch
+dm-mpath-allow-table-load-with-no-priority-groups.patch
+dm-stripe-implement-merge-method.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 03eb88a...53ef338 master     -> quilt/device-mapper  (forced update)
