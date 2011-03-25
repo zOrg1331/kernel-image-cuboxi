@@ -114,42 +114,64 @@ static const char *f71882fg_names[] = {
 	"f71862fg",
 	"f71869", /* Both f71869f and f71869e, reg. compatible and same id */
 	"f71882fg",
-	"f71889fg",
+	"f71889fg", /* f81801u too, same id */
 	"f71889ed",
 	"f8000",
 };
 
 static const char f71882fg_has_in[8][F71882FG_MAX_INS] = {
-	{ 1, 1, 1, 1, 1, 1, 0, 1, 1 }, /* f71808e */
-	{ 1, 1, 1, 0, 0, 0, 0, 0, 0 }, /* f71858fg */
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1 }, /* f71862fg */
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1 }, /* f71869 */
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1 }, /* f71882fg */
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1 }, /* f71889fg */
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1 }, /* f71889ed */
-	{ 1, 1, 1, 0, 0, 0, 0, 0, 0 }, /* f8000 */
+	[f71808e]	= { 1, 1, 1, 1, 1, 1, 0, 1, 1 },
+	[f71858fg]	= { 1, 1, 1, 0, 0, 0, 0, 0, 0 },
+	[f71862fg]	= { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	[f71869]	= { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	[f71882fg]	= { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	[f71889fg]	= { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	[f71889ed]	= { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	[f8000]		= { 1, 1, 1, 0, 0, 0, 0, 0, 0 },
 };
 
 static const char f71882fg_has_in1_alarm[8] = {
-	0, /* f71808e */
-	0, /* f71858fg */
-	0, /* f71862fg */
-	0, /* f71869 */
-	1, /* f71882fg */
-	1, /* f71889fg */
-	1, /* f71889ed */
-	0, /* f8000 */
+	[f71808e]	= 0,
+	[f71858fg]	= 0,
+	[f71862fg]	= 0,
+	[f71869]	= 0,
+	[f71882fg]	= 1,
+	[f71889fg]	= 1,
+	[f71889ed]	= 1,
+	[f8000]		= 0,
 };
 
 static const char f71882fg_has_beep[8] = {
-	0, /* f71808e */
-	0, /* f71858fg */
-	1, /* f71862fg */
-	1, /* f71869 */
-	1, /* f71882fg */
-	1, /* f71889fg */
-	1, /* f71889ed */
-	0, /* f8000 */
+	[f71808e]	= 0,
+	[f71858fg]	= 0,
+	[f71862fg]	= 1,
+	[f71869]	= 1,
+	[f71882fg]	= 1,
+	[f71889fg]	= 1,
+	[f71889ed]	= 1,
+	[f8000]		= 0,
+};
+
+static const char f71882fg_nr_fans[8] = {
+	[f71808e]	= 3,
+	[f71858fg]	= 3,
+	[f71862fg]	= 3,
+	[f71869]	= 3,
+	[f71882fg]	= 4,
+	[f71889fg]	= 3,
+	[f71889ed]	= 3,
+	[f8000]		= 3,
+};
+
+static const char f71882fg_nr_temps[8] = {
+	[f71808e]	= 2,
+	[f71858fg]	= 3,
+	[f71862fg]	= 3,
+	[f71869]	= 3,
+	[f71882fg]	= 3,
+	[f71889fg]	= 3,
+	[f71889ed]	= 3,
+	[f8000]		= 3,
 };
 
 static struct platform_device *f71882fg_pdev;
@@ -1071,9 +1093,9 @@ static u16 f71882fg_read_temp(struct f71882fg_data *data, int nr)
 static struct f71882fg_data *f71882fg_update_device(struct device *dev)
 {
 	struct f71882fg_data *data = dev_get_drvdata(dev);
+	int nr_fans = f71882fg_nr_fans[data->type];
+	int nr_temps = f71882fg_nr_temps[data->type];
 	int nr, reg, point;
-	int nr_fans = (data->type == f71882fg) ? 4 : 3;
-	int nr_temps = (data->type == f71808e) ? 2 : 3;
 
 	mutex_lock(&data->update_lock);
 
@@ -2042,8 +2064,9 @@ static int __devinit f71882fg_probe(struct platform_device *pdev)
 {
 	struct f71882fg_data *data;
 	struct f71882fg_sio_data *sio_data = pdev->dev.platform_data;
-	int err, i, nr_fans = (sio_data->type == f71882fg) ? 4 : 3;
-	int nr_temps = (sio_data->type == f71808e) ? 2 : 3;
+	int nr_fans = f71882fg_nr_fans[sio_data->type];
+	int nr_temps = f71882fg_nr_temps[sio_data->type];
+	int err, i;
 	u8 start_reg, reg;
 
 	data = kzalloc(sizeof(struct f71882fg_data), GFP_KERNEL);
@@ -2276,8 +2299,9 @@ exit_free:
 static int f71882fg_remove(struct platform_device *pdev)
 {
 	struct f71882fg_data *data = platform_get_drvdata(pdev);
-	int i, nr_fans = (data->type == f71882fg) ? 4 : 3;
-	int nr_temps = (data->type == f71808e) ? 2 : 3;
+	int nr_fans = f71882fg_nr_fans[data->type];
+	int nr_temps = f71882fg_nr_temps[data->type];
+	int i;
 	u8 start_reg = f71882fg_read8(data, F71882FG_REG_START);
 
 	if (data->hwmon_dev)
