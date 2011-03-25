@@ -12,6 +12,7 @@ ndiswrapper
 bcmwl
 #madwifi-hal
 rtl8192
+rtl8168
 
 #vendor specific  hardware features drives
 tp_smapi
@@ -42,3 +43,4 @@ ipset
 pf_ring
 xtables-addons
 
+lsadrv
