@@ -156,7 +156,7 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 			s += sprintf(s,"%s ", pm_states[i]);
 	}
 #endif
-#ifdef CONFIG_HIBERNATION
+#ifdef CONFIG_HIBERNATE_INTERFACE
 	s += sprintf(s, "%s\n", "disk");
 #else
 	if (s != buf)
