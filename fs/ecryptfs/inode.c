@@ -143,26 +143,6 @@ out:
 }
 
 /**
- * grow_file
- * @ecryptfs_dentry: the eCryptfs dentry
- *
- * This is the code which will grow the file to its correct size.
- */
-static int grow_file(struct dentry *ecryptfs_dentry)
-{
-	struct inode *ecryptfs_inode = ecryptfs_dentry->d_inode;
-	char zero_virt[] = { 0x00 };
-	int rc = 0;
-
-	rc = ecryptfs_write(ecryptfs_inode, zero_virt, 0, 1);
-	i_size_write(ecryptfs_inode, 0);
-	rc = ecryptfs_write_inode_size_to_metadata(ecryptfs_inode);
-	ecryptfs_inode_to_private(ecryptfs_inode)->crypt_stat.flags |=
-		ECRYPTFS_NEW_FILE;
-	return rc;
-}
-
-/**
  * ecryptfs_initialize_file
  *
  * Cause the file to be changed from a basic empty file to an ecryptfs
@@ -181,7 +161,6 @@ static int ecryptfs_initialize_file(struct dentry *ecryptfs_dentry)
 		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
 		goto out;
 	}
-	crypt_stat->flags |= ECRYPTFS_NEW_FILE;
 	ecryptfs_printk(KERN_DEBUG, "Initializing crypto context\n");
 	rc = ecryptfs_new_file_context(ecryptfs_dentry);
 	if (rc) {
@@ -202,9 +181,6 @@ static int ecryptfs_initialize_file(struct dentry *ecryptfs_dentry)
 		printk(KERN_ERR "Error writing headers; rc = [%d]\n", rc);
 		goto out;
 	}
-	rc = grow_file(ecryptfs_dentry);
-	if (rc)
-		printk(KERN_ERR "Error growing file; rc = [%d]\n", rc);
 out:
 	return rc;
 }
@@ -250,10 +226,8 @@ int ecryptfs_lookup_and_interpose_lower(struct dentry *ecryptfs_dentry,
 	struct dentry *lower_dir_dentry;
 	struct vfsmount *lower_mnt;
 	struct inode *lower_inode;
-	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
 	struct ecryptfs_crypt_stat *crypt_stat;
 	char *page_virt = NULL;
-	u64 file_size;
 	int rc = 0;
 
 	lower_dir_dentry = lower_dentry->d_parent;
@@ -326,18 +300,7 @@ int ecryptfs_lookup_and_interpose_lower(struct dentry *ecryptfs_dentry,
 		}
 		crypt_stat->flags |= ECRYPTFS_METADATA_IN_XATTR;
 	}
-	mount_crypt_stat = &ecryptfs_superblock_to_private(
-		ecryptfs_dentry->d_sb)->mount_crypt_stat;
-	if (mount_crypt_stat->flags & ECRYPTFS_ENCRYPTED_VIEW_ENABLED) {
-		if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
-			file_size = (crypt_stat->metadata_size
-				     + i_size_read(lower_dentry->d_inode));
-		else
-			file_size = i_size_read(lower_dentry->d_inode);
-	} else {
-		file_size = get_unaligned_be64(page_virt);
-	}
-	i_size_write(ecryptfs_dentry->d_inode, (loff_t)file_size);
+	ecryptfs_i_size_init(page_virt, ecryptfs_dentry->d_inode);
 out_free_kmem:
 	kmem_cache_free(ecryptfs_header_cache_2, page_virt);
 	goto out;
@@ -951,7 +914,8 @@ static int ecryptfs_setattr(struct dentry *dentry, struct iattr *ia)
 				goto out;
 			}
 			rc = 0;
-			crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
+			crypt_stat->flags &= ~(ECRYPTFS_I_SIZE_INITIALIZED
+					       | ECRYPTFS_ENCRYPTED);
 		}
 	}
 	mutex_unlock(&crypt_stat->cs_mutex);
