@@ -13,7 +13,7 @@ struct swsusp_info {
 	unsigned long		size;
 } __attribute__((aligned(PAGE_SIZE)));
 
-#ifdef CONFIG_HIBERNATION
+#ifdef CONFIG_HIBERNATE_INTERFACE
 /* kernel/power/snapshot.c */
 extern void __init hibernate_image_size_init(void);
 
@@ -53,10 +53,10 @@ extern int hibernation_snapshot(int platform_mode);
 extern int hibernation_restore(int platform_mode);
 extern int hibernation_platform_enter(void);
 
-#else /* !CONFIG_HIBERNATION */
+#else /* !CONFIG_HIBERNATE_INTERFACE */
 
 static inline void hibernate_image_size_init(void) {}
-#endif /* !CONFIG_HIBERNATION */
+#endif /* !CONFIG_HIBERNATE_INTERFACE */
 
 extern int pfn_is_nosave(unsigned long);
 
