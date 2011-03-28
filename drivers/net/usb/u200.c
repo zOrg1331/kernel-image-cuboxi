@@ -1374,7 +1374,7 @@ static int __init usb_u200_init(void)
 	printk("U200:init\n");
 	/* register this driver with the USB subsystem */
 	printk("Creating workqueue\n");
-	u200_wq=create_freezeable_workqueue("U200");
+	u200_wq = alloc_workqueue("U200", WQ_FREEZABLE, 0);
 	if(!u200_wq)
 		return -ENOMEM;
 	result = usb_register(&u200_driver);
