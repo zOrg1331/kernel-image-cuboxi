@@ -513,7 +513,7 @@ static int ethtool_set_one_feature(struct net_device *dev,
 	}
 }
 
-static int __ethtool_set_flags(struct net_device *dev, u32 data)
+int __ethtool_set_flags(struct net_device *dev, u32 data)
 {
 	u32 changed;
 
@@ -1456,6 +1456,9 @@ static int ethtool_set_pauseparam(struct net_device *dev, void __user *useraddr)
 static int __ethtool_set_sg(struct net_device *dev, u32 data)
 {
 	int err;
+
+	if (!dev->ethtool_ops->set_sg)
+		return -EOPNOTSUPP;
 
 	if (data && !(dev->features & NETIF_F_ALL_CSUM))
 		return -EINVAL;
