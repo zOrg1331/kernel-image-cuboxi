@@ -1,5 +1,5 @@
 Name:    kernel-image-std-def
-Version: 2.6.37
+Version: 2.6.38
 Release: alt1
 Epoch:   1
 
@@ -639,6 +639,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Mar 25 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt1
+- Update to 2.6.38.2
+- Add rtl8168 and lsadrv to modules.build
+- Update aufs2.1 to latest
+- Build with MPENTIUMII enabled (ALT 24984)
+- Enable KMS for radeon for x86_64 (ALT 24930)
+
 * Fri Mar 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.37-alt1
 - Switch to 2.6.37.4
 - Setup cfq as default io scheduler (ALT 24861)
