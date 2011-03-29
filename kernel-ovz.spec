@@ -12,7 +12,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab087
+%define ovzver 028stab088
 %define ovzrel 1
 
 %if !%{buildup}
