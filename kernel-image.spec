@@ -36,6 +36,8 @@ Release: alt13
 %define kbuild_dir	%_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir	%_prefix/src/linux-%kversion-%flavour
 
+%brp_strip_none /boot/*
+
 Summary: The Linux kernel (the core of the Linux operating system)
 License: GPL
 Group: System/Kernel and hardware
@@ -92,6 +94,18 @@ The "ovz-el" variant of kernel packages is a RHEL6 based OpenVZ kernel.
 OpenVZ is container-based virtualization for Linux that creates multiple
 secure, isolated containers on a single physical server enabling better
 server utilization and ensuring that applications do not conflict.
+
+%package -n kernel-image-domU-%flavour
+Summary: Uncompressed linux kernel for XEN domU boot
+Group: System/Kernel and hardware
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+
+%description -n kernel-image-domU-%flavour
+Most XEN virtualization system versions can not boot lzma-compressed
+kernel images. This is an optional package with uncompressed linux
+kernel image for this special case. If you do not know what is it XEN
+it seems that you do not need this package.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -335,6 +349,7 @@ KernelVer=%kversion-%flavour-%krelease
 install -Dp -m644 System.map %buildroot/boot/System.map-$KernelVer
 install -Dp -m644 arch/%base_arch/boot/bzImage \
 	%buildroot/boot/vmlinuz-$KernelVer
+install -Dp -m644 vmlinux %buildroot/boot/vmlinux-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
@@ -533,8 +548,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 %exclude %modules_dir/kernel/drivers/ide/
 /lib/firmware/*
+
+%files -n kernel-image-domU-%flavour
+/boot/vmlinux-%kversion-%flavour-%krelease
+
 %if_enabled oss
-# OSS drivers
 %exclude %modules_dir/kernel/sound/oss
 
 %files -n kernel-modules-oss-%flavour
