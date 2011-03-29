@@ -229,7 +229,7 @@ struct platform_hibernation_ops {
 	void (*recover)(void);
 };
 
-#ifdef CONFIG_HIBERNATION
+#ifdef CONFIG_HIBERNATE_INTERFACE
 /* kernel/power/snapshot.c */
 extern void __register_nosave_region(unsigned long b, unsigned long e, int km);
 static inline void __init register_nosave_region(unsigned long b, unsigned long e)
@@ -248,7 +248,9 @@ extern unsigned long get_safe_page(gfp_t gfp_mask);
 extern void hibernation_set_ops(const struct platform_hibernation_ops *ops);
 extern int hibernate(void);
 extern bool system_entering_hibernation(void);
-#else /* CONFIG_HIBERNATION */
+#else /* !CONFIG_HIBERNATE_INTERFACE */
+static inline void register_nosave_region(unsigned long b, unsigned long e) {}
+static inline void register_nosave_region_late(unsigned long b, unsigned long e) {}
 static inline int swsusp_page_is_forbidden(struct page *p) { return 0; }
 static inline void swsusp_set_page_free(struct page *p) {}
 static inline void swsusp_unset_page_free(struct page *p) {}
@@ -256,7 +258,7 @@ static inline void swsusp_unset_page_free(struct page *p) {}
 static inline void hibernation_set_ops(const struct platform_hibernation_ops *ops) {}
 static inline int hibernate(void) { return -ENOSYS; }
 static inline bool system_entering_hibernation(void) { return false; }
-#endif /* CONFIG_HIBERNATION */
+#endif /* !CONFIG_HIBERNATE_INTERFACE */
 
 #ifdef CONFIG_PM_SLEEP
 void save_processor_state(void);
@@ -298,13 +300,6 @@ static inline bool pm_wakeup_pending(void) { return false; }
 extern struct mutex pm_mutex;
 
 #ifndef CONFIG_HIBERNATION
-static inline void register_nosave_region(unsigned long b, unsigned long e)
-{
-}
-static inline void register_nosave_region_late(unsigned long b, unsigned long e)
-{
-}
-
 static inline void lock_system_sleep(void) {}
 static inline void unlock_system_sleep(void) {}
 
