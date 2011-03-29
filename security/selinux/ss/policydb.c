@@ -128,6 +128,11 @@ static struct policydb_compat_info policydb_compat[] = {
 		.sym_num	= SYM_NUM,
 		.ocon_num	= OCON_NUM,
 	},
+	{
+		.version	= POLICYDB_VERSION_ROLETRANS,
+		.sym_num	= SYM_NUM,
+		.ocon_num	= OCON_NUM,
+	},
 };
 
 static struct policydb_compat_info *policydb_lookup_compat(int version)
@@ -2302,8 +2307,17 @@ int policydb_read(struct policydb *p, void *fp)
 		tr->role = le32_to_cpu(buf[0]);
 		tr->type = le32_to_cpu(buf[1]);
 		tr->new_role = le32_to_cpu(buf[2]);
+		if (p->policyvers >= POLICYDB_VERSION_ROLETRANS) {
+			rc = next_entry(buf, fp, sizeof(u32));
+			if (rc)
+				goto bad;
+			tr->tclass = le32_to_cpu(buf[0]);
+		} else
+			tr->tclass = p->process_class;
+
 		if (!policydb_role_isvalid(p, tr->role) ||
 		    !policydb_type_isvalid(p, tr->type) ||
+		    !policydb_class_isvalid(p, tr->tclass) ||
 		    !policydb_role_isvalid(p, tr->new_role))
 			goto bad;
 		ltr = tr;
@@ -2521,8 +2535,9 @@ static int cat_write(void *vkey, void *datum, void *ptr)
 	return 0;
 }
 
-static int role_trans_write(struct role_trans *r, void *fp)
+static int role_trans_write(struct policydb *p, void *fp)
 {
+	struct role_trans *r = p->role_tr;
 	struct role_trans *tr;
 	u32 buf[3];
 	size_t nel;
@@ -2542,6 +2557,12 @@ static int role_trans_write(struct role_trans *r, void *fp)
 		rc = put_entry(buf, sizeof(u32), 3, fp);
 		if (rc)
 			return rc;
+		if (p->policyvers >= POLICYDB_VERSION_ROLETRANS) {
+			buf[0] = cpu_to_le32(tr->tclass);
+			rc = put_entry(buf, sizeof(u32), 1, fp);
+			if (rc)
+				return rc;
+		}
 	}
 
 	return 0;
@@ -3253,7 +3274,7 @@ int policydb_write(struct policydb *p, void *fp)
 	if (rc)
 		return rc;
 
-	rc = role_trans_write(p->role_tr, fp);
+	rc = role_trans_write(p, fp);
 	if (rc)
 		return rc;
 
