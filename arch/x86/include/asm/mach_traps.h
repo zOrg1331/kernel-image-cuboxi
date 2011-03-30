@@ -8,6 +8,7 @@
 #include <asm/mc146818rtc.h>
 
 #define NMI_REASON_PORT		0x61
+#define NMI_ENABLE_PORT		0x70 /* Real-Time Clock Address Register as well */
 
 #define NMI_REASON_SERR		0x80
 #define NMI_REASON_IOCHK	0x40
@@ -30,12 +31,19 @@ static inline void reassert_nmi(void)
 		old_reg = current_lock_cmos_reg();
 	else
 		lock_cmos(0); /* register doesn't matter here */
-	outb(0x8f, 0x70);
-	inb(0x71);		/* dummy */
-	outb(0x0f, 0x70);
-	inb(0x71);		/* dummy */
+
+	/*
+	 * This will cause the NMI output to transition low
+	 * then high if there are any pending NMI sources. The
+	 * CPU's NMI input logic will then register a new NMI.
+	 */
+	outb(0x8f, NMI_ENABLE_PORT);
+	inb(0x71);	/* dummy */
+	outb(0x0f, NMI_ENABLE_PORT);
+	inb(0x71);	/* dummy */
+
 	if (old_reg >= 0)
-		outb(old_reg, 0x70);
+		outb(old_reg, NMI_ENABLE_PORT);
 	else
 		unlock_cmos();
 }
