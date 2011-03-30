@@ -91,7 +91,7 @@ config MMC_SDHCI_OF
 	  If unsure, say N.
 
 config MMC_SDHCI_OF_ESDHC
-	bool "SDHCI OF support for the Freescale eSDHC controller"
+	tristate "SDHCI OF support for the Freescale eSDHC controller"
 	depends on MMC_SDHCI_OF
 	depends on PPC_OF
 	select MMC_SDHCI_BIG_ENDIAN_32BIT_BYTE_SWAPPER
@@ -101,7 +101,7 @@ config MMC_SDHCI_OF_ESDHC
 	  If unsure, say N.
 
 config MMC_SDHCI_OF_HLWD
-	bool "SDHCI OF support for the Nintendo Wii SDHCI controllers"
+	tristate "SDHCI OF support for the Nintendo Wii SDHCI controllers"
 	depends on MMC_SDHCI_OF
 	depends on PPC_OF
 	select MMC_SDHCI_BIG_ENDIAN_32BIT_BYTE_SWAPPER
@@ -124,7 +124,7 @@ config MMC_SDHCI_PLTFM
 	  If unsure, say N.
 
 config MMC_SDHCI_CNS3XXX
-	bool "SDHCI support on the Cavium Networks CNS3xxx SoC"
+	tristate "SDHCI support on the Cavium Networks CNS3xxx SoC"
 	depends on ARCH_CNS3XXX
 	depends on MMC_SDHCI_PLTFM
 	help
@@ -133,7 +133,7 @@ config MMC_SDHCI_CNS3XXX
 	  If unsure, say N.
 
 config MMC_SDHCI_ESDHC_IMX
-	bool "SDHCI platform support for the Freescale eSDHC i.MX controller"
+	tristate "SDHCI platform support for the Freescale eSDHC i.MX controller"
 	depends on MMC_SDHCI_PLTFM && (ARCH_MX25 || ARCH_MX35 || ARCH_MX5)
 	select MMC_SDHCI_IO_ACCESSORS
 	help
@@ -143,7 +143,7 @@ config MMC_SDHCI_ESDHC_IMX
 	  If unsure, say N.
 
 config MMC_SDHCI_DOVE
-	bool "SDHCI support on Marvell's Dove SoC"
+	tristate "SDHCI support on Marvell's Dove SoC"
 	depends on ARCH_DOVE
 	depends on MMC_SDHCI_PLTFM
 	select MMC_SDHCI_IO_ACCESSORS
