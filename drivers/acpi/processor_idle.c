@@ -82,7 +82,6 @@ module_param(latency_factor, uint, 0644);
 static int disabled_by_idle_boot_param(void)
 {
 	return boot_option_idle_override == IDLE_POLL ||
-		boot_option_idle_override == IDLE_FORCE_MWAIT ||
 		boot_option_idle_override == IDLE_HALT;
 }
 
