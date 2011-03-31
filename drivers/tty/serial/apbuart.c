@@ -555,9 +555,10 @@ static struct uart_driver grlib_apbuart_driver = {
 
 static int __devinit apbuart_probe(struct platform_device *op)
 {
-	int i;
+	int i = -1;
 	struct uart_port *port = NULL;
 
+	i = 0;
 	for (i = 0; i < grlib_apbuart_port_nr; i++) {
 		if (op->dev.of_node == grlib_apbuart_nodes[i])
 			break;
@@ -565,7 +566,6 @@ static int __devinit apbuart_probe(struct platform_device *op)
 
 	port = &grlib_apbuart_ports[i];
 	port->dev = &op->dev;
-	port->irq = op->archdata.irqs[0];
 
 	uart_add_one_port(&grlib_apbuart_driver, (struct uart_port *) port);
 
@@ -615,7 +615,7 @@ static int grlib_apbuart_configure(void)
 	freq_khz = *prop;
 
 	for_each_matching_node(np, apbuart_match) {
-		const int *ampopts;
+		const int *irqs, *ampopts;
 		const struct amba_prom_registers *regs;
 		struct uart_port *port;
 		unsigned long addr;
@@ -623,9 +623,11 @@ static int grlib_apbuart_configure(void)
 		ampopts = of_get_property(np, "ampopts", NULL);
 		if (ampopts && (*ampopts == 0))
 			continue; /* Ignore if used by another OS instance */
+
+		irqs = of_get_property(np, "interrupts", NULL);
 		regs = of_get_property(np, "reg", NULL);
 
-		if (!regs)
+		if (!irqs || !regs)
 			continue;
 
 		grlib_apbuart_nodes[line] = np;
@@ -636,7 +638,7 @@ static int grlib_apbuart_configure(void)
 
 		port->mapbase = addr;
 		port->membase = ioremap(addr, sizeof(struct grlib_apbuart_regs_map));
-		port->irq = 0;
+		port->irq = *irqs;
 		port->iotype = UPIO_MEM;
 		port->ops = &grlib_apbuart_ops;
 		port->flags = UPF_BOOT_AUTOCONF;
