@@ -333,11 +333,12 @@ directory.
 %package -n kernel-doc-%base_flavour
 Summary: Linux kernel %kversion-%base_flavour documentation
 Group: System/Kernel and hardware
+BuildArch: noarch
 
 %description -n kernel-doc-%base_flavour
 This package contains documentation files for ALT Linux kernel packages:
- * kernel-image-%base_flavour-up-%kversion-%krelease
- * kernel-image-%base_flavour-smp-%kversion-%krelease
+ * kernel-image-%base_flavour-def-%kversion-%krelease
+ * kernel-image-%base_flavour-pae-%kversion-%krelease
 
 The documentation files contained in this package may be different
 from the similar files in upstream kernel distributions, because some
