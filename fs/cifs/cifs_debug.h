@@ -1,6 +1,6 @@
 /*
  *
- *   Copyright (c) International Business Machines  Corp., 2000,2002
+ *   Copyright (c) International Business Machines  Corp., 2000,2011
  *   Modified by Steve French (sfrench@us.ibm.com)
  *
  *   This program is free software;  you can redistribute it and/or modify
@@ -18,7 +18,7 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
 */
-#define CIFS_DEBUG		/* BB temporary */
+#define CIFS_DEBUG		/* remove to disable cifserror logging */
 
 #ifndef _H_CIFS_DEBUG
 #define _H_CIFS_DEBUG
@@ -28,6 +28,9 @@ void cifs_dump_mem(char *label, void *data, int length);
 #define DBG2 2
 void cifs_dump_detail(struct smb_hdr *);
 void cifs_dump_mids(struct TCP_Server_Info *);
+#ifdef CONFIG_CIFS_SMB2
+void smb2_dump_detail(struct smb2_hdr *);
+#endif /* CONFIG_CIFS_SMB2 */
 #else
 #define DBG2 0
 #endif
@@ -37,12 +40,15 @@ void dump_smb(struct smb_hdr *, int);
 #define CIFS_RC		0x02
 #define CIFS_TIMER	0x04
 
+#ifdef CONFIG_CIFS_SMB2
+void dump_smb2(struct smb2_hdr *, int);
+#endif /* CONFIG_CIFS_SMB2 */
+
 /*
  *	debug ON
  *	--------
  */
 #ifdef CIFS_DEBUG
-
 /* information message: e.g., configuration, major event */
 extern int cifsFYI;
 #define cifsfyi(fmt, arg...)						\
