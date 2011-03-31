@@ -315,9 +315,9 @@ static int coalesce_t2(struct smb_hdr *psecond, struct smb_hdr *pTargetSMB)
 	memcpy(data_area_of_target, data_area_of_buf2, total_in_buf2);
 	total_in_buf += total_in_buf2;
 	put_unaligned_le16(total_in_buf, &pSMBt->t2_rsp.DataCount);
-	byte_count = get_bcc_le(pTargetSMB);
+	byte_count = get_bcc(pTargetSMB);
 	byte_count += total_in_buf2;
-	put_bcc_le(byte_count, pTargetSMB);
+	put_bcc(byte_count, pTargetSMB);
 
 	byte_count = be32_to_cpu(pTargetSMB->smb_buf_length);
 	byte_count += total_in_buf2;
