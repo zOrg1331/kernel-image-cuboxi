@@ -598,12 +598,24 @@ static struct platform_driver grlib_apbuart_of_driver = {
 
 static int grlib_apbuart_configure(void)
 {
-	struct device_node *np;
-	int line = 0;
+	struct device_node *np, *rp;
+	const u32 *prop;
+	int freq_khz, line = 0;
+
+	/* Get bus frequency */
+	rp = of_find_node_by_path("/");
+	if (!rp)
+		return -ENODEV;
+	rp = of_get_next_child(rp, NULL);
+	if (!rp)
+		return -ENODEV;
+	prop = of_get_property(rp, "clock-frequency", NULL);
+	if (!prop)
+		return -ENODEV;
+	freq_khz = *prop;
 
 	for_each_matching_node(np, apbuart_match) {
 		const int *ampopts;
-		const u32 *freq_hz;
 		const struct amba_prom_registers *regs;
 		struct uart_port *port;
 		unsigned long addr;
@@ -612,10 +624,8 @@ static int grlib_apbuart_configure(void)
 		if (ampopts && (*ampopts == 0))
 			continue; /* Ignore if used by another OS instance */
 		regs = of_get_property(np, "reg", NULL);
-		/* Frequency of APB Bus is frequency of UART */
-		freq_hz = of_get_property(np, "freq", NULL);
 
-		if (!regs || !freq_hz || (*freq_hz == 0))
+		if (!regs)
 			continue;
 
 		grlib_apbuart_nodes[line] = np;
@@ -631,7 +641,7 @@ static int grlib_apbuart_configure(void)
 		port->ops = &grlib_apbuart_ops;
 		port->flags = UPF_BOOT_AUTOCONF;
 		port->line = line;
-		port->uartclk = *freq_hz;
+		port->uartclk = freq_khz * 1000;
 		port->fifosize = apbuart_scan_fifo_size((struct uart_port *) port, line);
 		line++;
 
