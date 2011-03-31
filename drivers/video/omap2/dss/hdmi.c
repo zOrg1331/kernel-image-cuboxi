@@ -1275,7 +1275,7 @@ void omapdss_hdmi_display_disable(struct omap_dss_device *dssdev)
 }
 
 /* HDMI HW IP initialisation */
-static int omapdss_hdmihw_probe(struct platform_device *pdev)
+static int __init omapdss_hdmihw_probe(struct platform_device *pdev)
 {
 	struct resource *hdmi_mem;
 
@@ -1312,7 +1312,6 @@ static int omapdss_hdmihw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omapdss_hdmihw_driver = {
-	.probe          = omapdss_hdmihw_probe,
 	.remove         = omapdss_hdmihw_remove,
 	.driver         = {
 		.name   = "omapdss_hdmi",
@@ -1320,9 +1319,10 @@ static struct platform_driver omapdss_hdmihw_driver = {
 	},
 };
 
-int hdmi_init_platform_driver(void)
+int __init hdmi_init_platform_driver(void)
 {
-	return platform_driver_register(&omapdss_hdmihw_driver);
+	return platform_driver_probe(&omapdss_hdmihw_driver,
+			omapdss_hdmihw_probe);
 }
 
 void hdmi_uninit_platform_driver(void)

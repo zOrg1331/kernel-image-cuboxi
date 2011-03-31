@@ -575,7 +575,7 @@ void dss_overlay_setup_l4_manager(struct omap_overlay_manager *mgr)
 }
 #endif
 
-void dss_init_overlays(struct platform_device *pdev)
+void __init dss_init_overlays(struct platform_device *pdev)
 {
 	int i, r;
 

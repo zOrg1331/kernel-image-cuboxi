@@ -160,7 +160,7 @@ int sdi_init_display(struct omap_dss_device *dssdev)
 	return 0;
 }
 
-int sdi_init(void)
+int __init sdi_init(void)
 {
 	return 0;
 }

@@ -640,7 +640,7 @@ void dss_select_hdmi_venc_clk_source(enum dss_hdmi_venc_clk_source_select hdmi)
 	REG_FLD_MOD(DSS_CONTROL, hdmi, 15, 15);	/* VENC_HDMI_SWITCH */
 }
 
-static int dss_init(void)
+static int __init dss_init(void)
 {
 	int r;
 	u32 rev;
@@ -1056,7 +1056,7 @@ void dss_debug_dump_clocks(struct seq_file *s)
 
 
 /* DSS HW IP initialisation */
-static int omap_dsshw_probe(struct platform_device *pdev)
+static int __init omap_dsshw_probe(struct platform_device *pdev)
 {
 	int r;
 
@@ -1120,7 +1120,6 @@ static int omap_dsshw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_dsshw_driver = {
-	.probe          = omap_dsshw_probe,
 	.remove         = omap_dsshw_remove,
 	.driver         = {
 		.name   = "omapdss_dss",
@@ -1128,9 +1127,9 @@ static struct platform_driver omap_dsshw_driver = {
 	},
 };
 
-int dss_init_platform_driver(void)
+int __init dss_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dsshw_driver);
+	return platform_driver_probe(&omap_dsshw_driver, omap_dsshw_probe);
 }
 
 void dss_uninit_platform_driver(void)

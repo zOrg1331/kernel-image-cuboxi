@@ -3419,7 +3419,7 @@ int dispc_setup_plane(enum omap_plane plane,
 }
 
 /* DISPC HW IP initialisation */
-static int omap_dispchw_probe(struct platform_device *pdev)
+static int __init omap_dispchw_probe(struct platform_device *pdev)
 {
 	u32 rev;
 	int r = 0;
@@ -3491,7 +3491,6 @@ static int omap_dispchw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_dispchw_driver = {
-	.probe          = omap_dispchw_probe,
 	.remove         = omap_dispchw_remove,
 	.driver         = {
 		.name   = "omapdss_dispc",
@@ -3499,9 +3498,9 @@ static struct platform_driver omap_dispchw_driver = {
 	},
 };
 
-int dispc_init_platform_driver(void)
+int __init dispc_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dispchw_driver);
+	return platform_driver_probe(&omap_dispchw_driver, omap_dispchw_probe);
 }
 
 void dispc_uninit_platform_driver(void)

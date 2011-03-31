@@ -3816,7 +3816,7 @@ static void dsi_exit(void)
 }
 
 /* DSI1 HW IP initialisation */
-static int omap_dsi1hw_probe(struct platform_device *pdev)
+static int __init omap_dsi1hw_probe(struct platform_device *pdev)
 {
 	int r;
 	dsi.pdev = pdev;
@@ -3836,7 +3836,6 @@ static int omap_dsi1hw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_dsi1hw_driver = {
-	.probe          = omap_dsi1hw_probe,
 	.remove         = omap_dsi1hw_remove,
 	.driver         = {
 		.name   = "omapdss_dsi1",
@@ -3844,9 +3843,9 @@ static struct platform_driver omap_dsi1hw_driver = {
 	},
 };
 
-int dsi_init_platform_driver(void)
+int __init dsi_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dsi1hw_driver);
+	return platform_driver_probe(&omap_dsi1hw_driver, omap_dsi1hw_probe);
 }
 
 void dsi_uninit_platform_driver(void)

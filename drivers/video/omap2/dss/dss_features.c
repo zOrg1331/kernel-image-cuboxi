@@ -360,7 +360,7 @@ void dss_feat_get_reg_field(enum dss_feat_reg_field id, u8 *start, u8 *end)
 	*end = omap_current_dss_features->reg_fields[id].end;
 }
 
-void dss_features_init(void)
+void __init dss_features_init(void)
 {
 	if (cpu_is_omap24xx())
 		omap_current_dss_features = &omap2_dss_features;

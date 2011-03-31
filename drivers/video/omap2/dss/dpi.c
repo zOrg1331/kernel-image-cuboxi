@@ -322,7 +322,7 @@ int dpi_init_display(struct omap_dss_device *dssdev)
 	return 0;
 }
 
-int dpi_init(void)
+int __init dpi_init(void)
 {
 	return 0;
 }
