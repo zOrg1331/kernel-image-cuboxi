@@ -1,0 +1,20 @@
+Importing i2c based on 2.6.39-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0ce790e7d736cedc563e1fb4e998babf5a4dbc3d
+HEAD is now at 0ce790e Linux 2.6.39-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-core-better-deprecation-warnings.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   c585015..1df9cb1  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.39-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon 0ce790e7d736cedc563e1fb4e998babf5a4dbc3d
+Importing kernel-doc based on 2.6.38-git18
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc6-93-gef32428
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
