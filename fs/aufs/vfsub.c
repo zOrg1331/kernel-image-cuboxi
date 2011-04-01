@@ -50,51 +50,18 @@ int vfsub_update_h_iattr(struct path *h_path, int *did)
 
 /* ---------------------------------------------------------------------- */
 
-static int au_conv_oflags(int flags)
-{
-	int mask = 0;
-
-#ifdef CONFIG_IMA
-	fmode_t fmode;
-
-	/* mask = MAY_OPEN; */
-	fmode = OPEN_FMODE(flags);
-	if (fmode & FMODE_READ)
-		mask |= MAY_READ;
-	if ((fmode & FMODE_WRITE)
-	    || (flags & O_TRUNC))
-		mask |= MAY_WRITE;
-	/*
-	 * if (flags & O_APPEND)
-	 *	mask |= MAY_APPEND;
-	 */
-	if (flags & __FMODE_EXEC)
-		mask |= MAY_EXEC;
-
-	AuDbg("flags 0x%x, mask 0x%x\n", flags, mask);
-#endif
-
-	return mask;
-}
-
 struct file *vfsub_dentry_open(struct path *path, int flags)
 {
 	struct file *file;
-	int err;
 
 	path_get(path);
 	file = dentry_open(path->dentry, path->mnt,
 			   flags /* | __FMODE_NONOTIFY */,
 			   current_cred());
-	if (IS_ERR(file))
-		goto out;
+	if (!IS_ERR_OR_NULL(file)
+	    && (file->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
+		i_readcount_inc(path->dentry->d_inode);
 
-	err = ima_file_check(file, au_conv_oflags(flags));
-	if (unlikely(err)) {
-		fput(file);
-		file = ERR_PTR(err);
-	}
-out:
 	return file;
 }
 
