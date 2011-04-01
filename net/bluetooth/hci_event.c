@@ -195,14 +195,17 @@ static void hci_cc_write_local_name(struct hci_dev *hdev, struct sk_buff *skb)
 
 	BT_DBG("%s status 0x%x", hdev->name, status);
 
-	if (status)
-		return;
-
 	sent = hci_sent_cmd_data(hdev, HCI_OP_WRITE_LOCAL_NAME);
 	if (!sent)
 		return;
 
-	memcpy(hdev->dev_name, sent, 248);
+	if (test_bit(HCI_MGMT, &hdev->flags))
+		mgmt_set_local_name_complete(hdev->id, sent, status);
+
+	if (status)
+		return;
+
+	memcpy(hdev->dev_name, sent, HCI_MAX_NAME_LENGTH);
 }
 
 static void hci_cc_read_local_name(struct hci_dev *hdev, struct sk_buff *skb)
@@ -214,7 +217,7 @@ static void hci_cc_read_local_name(struct hci_dev *hdev, struct sk_buff *skb)
 	if (rp->status)
 		return;
 
-	memcpy(hdev->dev_name, rp->name, 248);
+	memcpy(hdev->dev_name, rp->name, HCI_MAX_NAME_LENGTH);
 }
 
 static void hci_cc_write_auth_enable(struct hci_dev *hdev, struct sk_buff *skb)
@@ -819,6 +822,17 @@ static void hci_cc_user_confirm_neg_reply(struct hci_dev *hdev,
 	if (test_bit(HCI_MGMT, &hdev->flags))
 		mgmt_user_confirm_neg_reply_complete(hdev->id, &rp->bdaddr,
 								rp->status);
+}
+
+static void hci_cc_read_local_oob_data_reply(struct hci_dev *hdev,
+							struct sk_buff *skb)
+{
+	struct hci_rp_read_local_oob_data *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	mgmt_read_local_oob_data_reply_complete(hdev->id, rp->hash,
+						rp->randomizer, rp->status);
 }
 
 static inline void hci_cs_inquiry(struct hci_dev *hdev, __u8 status)
@@ -1751,6 +1765,10 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 		hci_cc_pin_code_neg_reply(hdev, skb);
 		break;
 
+	case HCI_OP_READ_LOCAL_OOB_DATA:
+		hci_cc_read_local_oob_data_reply(hdev, skb);
+		break;
+
 	case HCI_OP_LE_READ_BUFFER_SIZE:
 		hci_cc_le_read_buffer_size(hdev, skb);
 		break;
@@ -2355,8 +2373,13 @@ static inline void hci_io_capa_request_evt(struct hci_dev *hdev, struct sk_buff 
 
 		bacpy(&cp.bdaddr, &ev->bdaddr);
 		cp.capability = conn->io_capability;
-		cp.oob_data = 0;
 		cp.authentication = hci_get_auth_req(conn);
+
+		if ((conn->out == 0x01 || conn->remote_oob == 0x01) &&
+				hci_find_remote_oob_data(hdev, &conn->dst))
+			cp.oob_data = 0x01;
+		else
+			cp.oob_data = 0x00;
 
 		hci_send_cmd(hdev, HCI_OP_IO_CAPABILITY_REPLY,
 							sizeof(cp), &cp);
@@ -2451,6 +2474,37 @@ static inline void hci_remote_host_features_evt(struct hci_dev *hdev, struct sk_
 	ie = hci_inquiry_cache_lookup(hdev, &ev->bdaddr);
 	if (ie)
 		ie->data.ssp_mode = (ev->features[0] & 0x01);
+
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_remote_oob_data_request_evt(struct hci_dev *hdev,
+							struct sk_buff *skb)
+{
+	struct hci_ev_remote_oob_data_request *ev = (void *) skb->data;
+	struct oob_data *data;
+
+	BT_DBG("%s", hdev->name);
+
+	hci_dev_lock(hdev);
+
+	data = hci_find_remote_oob_data(hdev, &ev->bdaddr);
+	if (data) {
+		struct hci_cp_remote_oob_data_reply cp;
+
+		bacpy(&cp.bdaddr, &ev->bdaddr);
+		memcpy(cp.hash, data->hash, sizeof(cp.hash));
+		memcpy(cp.randomizer, data->randomizer, sizeof(cp.randomizer));
+
+		hci_send_cmd(hdev, HCI_OP_REMOTE_OOB_DATA_REPLY, sizeof(cp),
+									&cp);
+	} else {
+		struct hci_cp_remote_oob_data_neg_reply cp;
+
+		bacpy(&cp.bdaddr, &ev->bdaddr);
+		hci_send_cmd(hdev, HCI_OP_REMOTE_OOB_DATA_NEG_REPLY, sizeof(cp),
+									&cp);
+	}
 
 	hci_dev_unlock(hdev);
 }
@@ -2655,6 +2709,10 @@ void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_EV_LE_META:
 		hci_le_meta_evt(hdev, skb);
+		break;
+
+	case HCI_EV_REMOTE_OOB_DATA_REQUEST:
+		hci_remote_oob_data_request_evt(hdev, skb);
 		break;
 
 	default:
