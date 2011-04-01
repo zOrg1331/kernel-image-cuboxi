@@ -163,6 +163,34 @@ out:
 	return path.dentry;
 }
 
+/*
+ * this is "VFS:__lookup_one_len()" which was removed and merged into
+ * VFS:lookup_one_len() by the commit.
+ *	6a96ba5 2011-03-14 kill __lookup_one_len()
+ * this function should always be equivalent to the corresponding part in
+ * VFS:lookup_one_len().
+ */
+int vfsub_name_hash(const char *name, struct qstr *this, int len)
+{
+	unsigned long hash;
+	unsigned int c;
+
+	this->name = name;
+	this->len = len;
+	if (!len)
+		return -EACCES;
+
+	hash = init_name_hash();
+	while (len--) {
+		c = *(const unsigned char *)name++;
+		if (c == '/' || c == '\0')
+			return -EACCES;
+		hash = partial_name_hash(c, hash);
+	}
+	this->hash = end_name_hash(hash);
+	return 0;
+}
+
 /* ---------------------------------------------------------------------- */
 
 struct dentry *vfsub_lock_rename(struct dentry *d1, struct au_hinode *hdir1,

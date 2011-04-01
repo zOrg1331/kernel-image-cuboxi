@@ -107,6 +107,7 @@ int vfsub_kern_path(const char *name, unsigned int flags, struct path *path);
 struct dentry *vfsub_lookup_one_len(const char *name, struct dentry *parent,
 				    int len);
 struct dentry *vfsub_lookup_hash(struct nameidata *nd);
+int vfsub_name_hash(const char *name, struct qstr *this, int len);
 
 /* ---------------------------------------------------------------------- */
 
