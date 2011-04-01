@@ -5,28 +5,36 @@ source "arch/arm/plat-mxc/devices/Kconfig"
 menu "Freescale MXC Implementations"
 
 choice
-	prompt "Freescale CPU family:"
+	prompt "Set of supported SoCs:"
 	default ARCH_MX3
 
+# don't use the symbols available in this choice in code. They should only be
+# used to select the machines that can be compiled into a single kernel.
 config ARCH_MX1
-	bool "MX1-based"
+	bool "MX1"
 	help
 	  This enables support for systems based on the Freescale i.MX1 family
 
-config ARCH_MX2
-	bool "MX2-based"
+config MACH_MX21
+	bool "i.MX21"
 	help
-	  This enables support for systems based on the Freescale i.MX2 family
+	  This enables support for machines using Freescale's i.MX21 processor.
 
 config ARCH_MX25
-	bool "MX25-based"
+	bool "i.MX25"
 	help
-	  This enables support for systems based on the Freescale i.MX25 family
+	  This enables support for machines using Freescale's i.MX25 processor.
+
+config MACH_MX27
+	bool "i.MX27"
+	help
+	  This enables support for machines using Freescale's i.MX27 processor.
 
 config ARCH_MX3
-	bool "MX3-based"
+	bool "i.MX31 + i.MX35"
 	help
-	  This enables support for systems based on the Freescale i.MX3 family
+	  This enables support for machines using Freescale's i.MX31 and i.MX35
+	  processors.
 
 config ARCH_MX5
 	bool "MX5-based"
