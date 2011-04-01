@@ -2107,6 +2107,8 @@ config RAPIDIO
 
 source "drivers/rapidio/Kconfig"
 
+source "drivers/vbus/Kconfig"
+
 endmenu
 
 
