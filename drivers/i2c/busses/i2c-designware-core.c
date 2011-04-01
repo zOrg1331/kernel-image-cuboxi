@@ -25,6 +25,7 @@
  * ----------------------------------------------------------------------------
  *
  */
+#include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/errno.h>
 #include <linux/err.h>
