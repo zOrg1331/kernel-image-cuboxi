@@ -82,10 +82,7 @@ static void __init check_hlt(void)
 		return;
 
 	printk(KERN_INFO "Checking 'hlt' instruction... ");
-	if (!boot_cpu_data.hlt_works_ok) {
-		printk("disabled\n");
-		return;
-	}
+
 	halt();
 	halt();
 	halt();

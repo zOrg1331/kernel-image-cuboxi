@@ -364,7 +364,7 @@ EXPORT_SYMBOL(enable_hlt);
 
 static inline int hlt_use_halt(void)
 {
-	return (!hlt_counter && boot_cpu_data.hlt_works_ok);
+	return !hlt_counter;
 }
 #else
 static inline int hlt_use_halt(void)
@@ -416,8 +416,7 @@ void stop_this_cpu(void *dummy)
 	disable_local_APIC();
 
 	for (;;) {
-		if (hlt_works(smp_processor_id()))
-			halt();
+		halt();
 	}
 }
 
