@@ -93,10 +93,6 @@ do {									\
 			"memory");					\
 } while (0)
 
-/*
- * disable hlt during certain critical i/o operations
- */
-#define HAVE_DISABLE_HLT
 #else
 #define __SAVE(reg, offset) "movq %%" #reg ",(14-" #offset ")*8(%%rsp)\n\t"
 #define __RESTORE(reg, offset) "movq (14-" #offset ")*8(%%rsp),%%" #reg "\n\t"
@@ -336,9 +332,6 @@ static inline void clflush(volatile void *__p)
 }
 
 #define nop() asm volatile ("nop")
-
-void disable_hlt(void);
-void enable_hlt(void);
 
 void cpu_idle_wait(void);
 
