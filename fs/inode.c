@@ -130,6 +130,7 @@ static DECLARE_RWSEM(iprune_sem);
  */
 const struct address_space_operations empty_aops = {
 };
+EXPORT_SYMBOL(empty_aops);
 
 /*
  * Statistics gathering..
