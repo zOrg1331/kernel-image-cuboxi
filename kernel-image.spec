@@ -142,7 +142,6 @@ rm -rf kernel-source-%kernel_base_version
 tar -jxf %kernel_src/kernel-source-%kernel_base_version.tar.bz2
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
-sed -i 's,inode_lock,inode->i_lock,' fs/aufs/*
 
 # this file should be usable both with make and sh (for broken modules
 # which do not use the kernel makefile system)
