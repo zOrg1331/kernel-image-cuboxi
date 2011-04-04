@@ -67,7 +67,7 @@ static int aufs_open_nondir(struct inode *inode __maybe_unused,
 	int err;
 	struct super_block *sb;
 
-	AuDbg("%.*s, f_ flags 0x%x, f_mode 0x%x\n",
+	AuDbg("%.*s, f_flags 0x%x, f_mode 0x%x\n",
 	      AuDLNPair(file->f_dentry), vfsub_file_flags(file),
 	      file->f_mode);
 
@@ -225,7 +225,9 @@ static ssize_t au_do_aio(struct file *h_file, int rw, struct kiocb *kio,
 	if (func) {
 		file = kio->ki_filp;
 		kio->ki_filp = h_file;
+		lockdep_off();
 		err = func(kio, iov, nv, pos);
+		lockdep_on();
 		kio->ki_filp = file;
 	} else
 		/* currently there is no such fs */
