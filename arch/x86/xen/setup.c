@@ -178,6 +178,12 @@ static unsigned long __init xen_set_identity(const struct e820entry *list,
 			start_pci = end;
 			continue;
 		}
+		/* Don't make E820_UNUSABLE region be 1-1. */
+		if (entry->type == E820_UNUSABLE) {
+			last = end;
+			start_pci = end;
+			continue;
+		}
 		start_pci = min(start, start_pci);
 		last = end;
 	}
