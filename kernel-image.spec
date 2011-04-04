@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.38
-Release: alt10
+Release: alt11
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Apr 04 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt11
+- .39-rc1-git3, also updated aufs
+
 * Mon Mar 28 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt10
 - merged mainline
 
