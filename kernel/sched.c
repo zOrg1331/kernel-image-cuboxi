@@ -2559,9 +2559,9 @@ out:
  * try_to_wake_up_local - try to wake up a local task with rq lock held
  * @p: the thread to be awakened
  *
- * Put @p on the run-queue if it's not already there.  The caller must
+ * Put @p on the run-queue if it's not already there. The caller must
  * ensure that this_rq() is locked, @p is bound to this_rq() and not
- * the current task.  this_rq() stays locked over invocation.
+ * the current task.
  */
 static void try_to_wake_up_local(struct task_struct *p)
 {
@@ -2569,16 +2569,21 @@ static void try_to_wake_up_local(struct task_struct *p)
 
 	BUG_ON(rq != this_rq());
 	BUG_ON(p == current);
-	lockdep_assert_held(&rq->lock);
+
+	raw_spin_unlock(&rq->lock);
+	raw_spin_lock(&p->pi_lock);
+	raw_spin_lock(&rq->lock);
 
 	if (!(p->state & TASK_NORMAL))
-		return;
+		goto out;
 
 	if (!p->on_rq)
 		activate_task(rq, p, ENQUEUE_WAKEUP);
 
 	ttwu_post_activation(p, rq, 0);
 	ttwu_stat(rq, p, smp_processor_id(), 0);
+out:
+	raw_spin_unlock(&p->pi_lock);
 }
 
 /**
@@ -4083,6 +4088,7 @@ pick_next_task(struct rq *rq)
  */
 asmlinkage void __sched schedule(void)
 {
+	struct task_struct *to_wakeup = NULL;
 	struct task_struct *prev, *next;
 	unsigned long *switch_count;
 	struct rq *rq;
@@ -4113,13 +4119,8 @@ need_resched:
 			 * task to maintain concurrency.  If so, wake
 			 * up the task.
 			 */
-			if (prev->flags & PF_WQ_WORKER) {
-				struct task_struct *to_wakeup;
-
+			if (prev->flags & PF_WQ_WORKER)
 				to_wakeup = wq_worker_sleeping(prev, cpu);
-				if (to_wakeup)
-					try_to_wake_up_local(to_wakeup);
-			}
 			deactivate_task(rq, prev, DEQUEUE_SLEEP);
 			prev->on_rq = 0;
 		}
@@ -4136,8 +4137,13 @@ need_resched:
 		raw_spin_lock(&rq->lock);
 	}
 
+	/*
+	 * All three: try_to_wake_up_local(), pre_schedule() and idle_balance()
+	 * can drop rq->lock.
+	 */
+	if (to_wakeup)
+		try_to_wake_up_local(to_wakeup);
 	pre_schedule(rq, prev);
-
 	if (unlikely(!rq->nr_running))
 		idle_balance(cpu, rq);
 
