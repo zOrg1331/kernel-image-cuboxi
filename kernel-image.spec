@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
-Version: 2.6.38
-Release: alt11
+Version: 2.6.39
+Release: alt1.rc1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt11
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.1.0
 
 %define krelease	%release
 
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Apr 05 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.39-alt1.rc1
+- .39-rc1
+
 * Mon Apr 04 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.38-alt11
 - .39-rc1-git3, also updated aufs
 
