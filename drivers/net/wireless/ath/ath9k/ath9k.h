@@ -120,13 +120,11 @@ void ath_descdma_cleanup(struct ath_softc *sc, struct ath_descdma *dd,
 /* RX / TX */
 /***********/
 
-#define ATH_MAX_ANTENNA         3
 #define ATH_RXBUF               512
 #define ATH_TXBUF               512
 #define ATH_TXBUF_RESERVE       5
 #define ATH_MAX_QDEPTH          (ATH_TXBUF / 4 - ATH_TXBUF_RESERVE)
 #define ATH_TXMAXTRY            13
-#define ATH_MGT_TXMAXTRY        4
 
 #define TID_TO_WME_AC(_tid)				\
 	((((_tid) == 0) || ((_tid) == 3)) ? WME_AC_BE :	\
@@ -362,7 +360,7 @@ struct ath_vif {
  * number of BSSIDs) if a given beacon does not go out even after waiting this
  * number of beacon intervals, the game's up.
  */
-#define BSTUCK_THRESH           	(9 * ATH_BCBUF)
+#define BSTUCK_THRESH           	9
 #define	ATH_BCBUF               	4
 #define ATH_DEFAULT_BINTVAL     	100 /* TU */
 #define ATH_DEFAULT_BMISS_LIMIT 	10
@@ -386,7 +384,7 @@ struct ath_beacon {
 	u32 beaconq;
 	u32 bmisscnt;
 	u32 ast_be_xmit;
-	u64 bc_tstamp;
+	u32 bc_tstamp;
 	struct ieee80211_vif *bslot[ATH_BCBUF];
 	int slottime;
 	int slotupdate;
@@ -687,8 +685,6 @@ void ath9k_ps_wakeup(struct ath_softc *sc);
 void ath9k_ps_restore(struct ath_softc *sc);
 
 u8 ath_txchainmask_reduction(struct ath_softc *sc, u8 chainmask, u32 rate);
-
-void ath9k_set_bssid_mask(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
 
 void ath_start_rfkill_poll(struct ath_softc *sc);
 extern void ath9k_rfkill_poll_state(struct ieee80211_hw *hw);
