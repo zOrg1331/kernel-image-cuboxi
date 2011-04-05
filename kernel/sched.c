@@ -2511,18 +2511,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	if (unlikely(task_running(rq, p)))
 		goto out_activate;
 
-	/*
-	 * In order to handle concurrent wakeups and release the rq->lock
-	 * we put the task in TASK_WAKING state.
-	 *
-	 * First fix up the nr_uninterruptible count:
-	 */
-	if (task_contributes_to_load(p)) {
-		if (likely(cpu_online(orig_cpu)))
-			rq->nr_uninterruptible--;
-		else
-			this_rq()->nr_uninterruptible--;
-	}
+	p->sched_contributes_to_load = !!task_contributes_to_load(p);
 	p->state = TASK_WAKING;
 
 	if (p->sched_class->task_waking) {
@@ -2546,6 +2535,9 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	 */
 	WARN_ON(task_cpu(p) != cpu);
 	WARN_ON(p->state != TASK_WAKING);
+
+	if (p->sched_contributes_to_load)
+		rq->nr_uninterruptible--;
 
 out_activate:
 #endif /* CONFIG_SMP */
