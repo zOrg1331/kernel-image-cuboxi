@@ -2423,10 +2423,10 @@ static inline void ttwu_activate(struct task_struct *p, struct rq *rq,
 	activate_task(rq, p, en_flags);
 }
 
-static inline void ttwu_post_activation(struct task_struct *p, struct rq *rq,
-					int wake_flags, bool success)
+static void
+ttwu_post_activation(struct task_struct *p, struct rq *rq, int wake_flags)
 {
-	trace_sched_wakeup(p, success);
+	trace_sched_wakeup(p, true);
 	check_preempt_curr(rq, p, wake_flags);
 
 	p->state = TASK_RUNNING;
@@ -2446,7 +2446,7 @@ static inline void ttwu_post_activation(struct task_struct *p, struct rq *rq,
 	}
 #endif
 	/* if a worker is waking up, notify workqueue */
-	if ((p->flags & PF_WQ_WORKER) && success)
+	if (p->flags & PF_WQ_WORKER)
 		wq_worker_waking_up(p, cpu_of(rq));
 }
 
@@ -2545,9 +2545,9 @@ out_activate:
 #endif /* CONFIG_SMP */
 	ttwu_activate(p, rq, wake_flags & WF_SYNC, orig_cpu != cpu,
 		      cpu == this_cpu, en_flags);
-	success = 1;
 out_running:
-	ttwu_post_activation(p, rq, wake_flags, success);
+	ttwu_post_activation(p, rq, wake_flags);
+	success = 1;
 out:
 	task_rq_unlock(rq, &flags);
 	put_cpu();
@@ -2566,7 +2566,6 @@ out:
 static void try_to_wake_up_local(struct task_struct *p)
 {
 	struct rq *rq = task_rq(p);
-	bool success = false;
 
 	BUG_ON(rq != this_rq());
 	BUG_ON(p == current);
@@ -2581,9 +2580,8 @@ static void try_to_wake_up_local(struct task_struct *p)
 			schedstat_inc(rq, ttwu_local);
 		}
 		ttwu_activate(p, rq, false, false, true, ENQUEUE_WAKEUP);
-		success = true;
 	}
-	ttwu_post_activation(p, rq, 0, success);
+	ttwu_post_activation(p, rq, 0);
 }
 
 /**
@@ -2746,7 +2744,7 @@ void wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 
 	rq = task_rq_lock(p, &flags);
 	activate_task(rq, p, 0);
-	trace_sched_wakeup_new(p, 1);
+	trace_sched_wakeup_new(p, true);
 	check_preempt_curr(rq, p, WF_FORK);
 #ifdef CONFIG_SMP
 	if (p->sched_class->task_woken)
