@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.38
-Release: alt1
+Release: alt2
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -640,6 +640,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Wed Apr 06 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt2
+- Synchronise configs (ALT 25386)
+- Build ipt_NETFLOW.ko (ALT 25312)
+- Build kernel-doc-std as noarch
+- Maintain devtmpfs and automount it
+
 * Fri Mar 25 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt1
 - Update to 2.6.38.2
 - Add rtl8168 and lsadrv to modules.build
