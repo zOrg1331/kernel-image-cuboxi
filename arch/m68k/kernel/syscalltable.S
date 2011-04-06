@@ -11,7 +11,6 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <linux/sys.h>
 #include <linux/linkage.h>
 #include <asm/unistd.h>
 
