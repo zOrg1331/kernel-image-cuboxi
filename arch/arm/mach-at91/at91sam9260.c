@@ -36,28 +36,18 @@ static struct map_desc at91sam9260_io_desc[] __initdata = {
 
 static struct map_desc at91sam9260_sram_desc[] __initdata = {
 	{
-		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9260_SRAM0_SIZE,
-		.pfn		= __phys_to_pfn(AT91SAM9260_SRAM0_BASE),
-		.length		= AT91SAM9260_SRAM0_SIZE,
-		.type		= MT_DEVICE,
-	}, {
-		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9260_SRAM0_SIZE - AT91SAM9260_SRAM1_SIZE,
-		.pfn		= __phys_to_pfn(AT91SAM9260_SRAM1_BASE),
-		.length		= AT91SAM9260_SRAM1_SIZE,
+		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9260_SRAM_SIZE,
+		.pfn		= __phys_to_pfn(AT91SAM9260_SRAM_BASE),
+		.length		= AT91SAM9260_SRAM_SIZE,
 		.type		= MT_DEVICE,
 	}
 };
 
 static struct map_desc at91sam9g20_sram_desc[] __initdata = {
 	{
-		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9G20_SRAM0_SIZE,
-		.pfn		= __phys_to_pfn(AT91SAM9G20_SRAM0_BASE),
-		.length		= AT91SAM9G20_SRAM0_SIZE,
-		.type		= MT_DEVICE,
-	}, {
-		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9G20_SRAM0_SIZE - AT91SAM9G20_SRAM1_SIZE,
-		.pfn		= __phys_to_pfn(AT91SAM9G20_SRAM1_BASE),
-		.length		= AT91SAM9G20_SRAM1_SIZE,
+		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9G20_SRAM_SIZE,
+		.pfn		= __phys_to_pfn(AT91SAM9G20_SRAM_BASE),
+		.length		= AT91SAM9G20_SRAM_SIZE,
 		.type		= MT_DEVICE,
 	}
 };
