@@ -426,17 +426,6 @@ extern unsigned long VMALLOC_START;
 # define PxD_SHADOW_SHIFT	2
 #endif /* __s390x__ */
 
-static inline void *get_shadow_table(void *table)
-{
-	unsigned long addr, offset;
-	struct page *page;
-
-	addr = (unsigned long) table;
-	offset = addr & ((PAGE_SIZE << PxD_SHADOW_SHIFT) - 1);
-	page = virt_to_page((void *)(addr ^ offset));
-	return (void *)(addr_t)(page->index ? (page->index | offset) : 0UL);
-}
-
 /*
  * Certain architectures need to do special things when PTEs
  * within a page table are directly modified.  Thus, the following
@@ -446,14 +435,6 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep, pte_t entry)
 {
 	*ptep = entry;
-	if (mm->context.noexec) {
-		if (!(pte_val(entry) & _PAGE_INVALID) &&
-		    (pte_val(entry) & _PAGE_SWX))
-			pte_val(entry) |= _PAGE_RO;
-		else
-			pte_val(entry) = _PAGE_TYPE_EMPTY;
-		ptep[PTRS_PER_PTE] = entry;
-	}
 }
 
 /*
@@ -662,11 +643,7 @@ static inline void pgd_clear_kernel(pgd_t * pgd)
 
 static inline void pgd_clear(pgd_t * pgd)
 {
-	pgd_t *shadow = get_shadow_table(pgd);
-
 	pgd_clear_kernel(pgd);
-	if (shadow)
-		pgd_clear_kernel(shadow);
 }
 
 static inline void pud_clear_kernel(pud_t *pud)
@@ -677,13 +654,8 @@ static inline void pud_clear_kernel(pud_t *pud)
 
 static inline void pud_clear(pud_t *pud)
 {
-	pud_t *shadow = get_shadow_table(pud);
-
 	pud_clear_kernel(pud);
-	if (shadow)
-		pud_clear_kernel(shadow);
 }
-
 #endif /* __s390x__ */
 
 static inline void pmd_clear_kernel(pmd_t * pmdp)
@@ -693,18 +665,12 @@ static inline void pmd_clear_kernel(pmd_t * pmdp)
 
 static inline void pmd_clear(pmd_t *pmd)
 {
-	pmd_t *shadow = get_shadow_table(pmd);
-
 	pmd_clear_kernel(pmd);
-	if (shadow)
-		pmd_clear_kernel(shadow);
 }
 
 static inline void pte_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 {
 	pte_val(*ptep) = _PAGE_TYPE_EMPTY;
-	if (mm->context.noexec)
-		pte_val(ptep[PTRS_PER_PTE]) = _PAGE_TYPE_EMPTY;
 }
 
 /*
@@ -903,10 +869,6 @@ static inline void ptep_invalidate(struct mm_struct *mm,
 	}
 	__ptep_ipte(address, ptep);
 	pte_val(*ptep) = _PAGE_TYPE_EMPTY;
-	if (mm->context.noexec) {
-		__ptep_ipte(address, ptep + PTRS_PER_PTE);
-		pte_val(*(ptep + PTRS_PER_PTE)) = _PAGE_TYPE_EMPTY;
-	}
 }
 
 /*
