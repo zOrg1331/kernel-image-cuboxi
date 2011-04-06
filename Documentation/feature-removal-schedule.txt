@@ -4,7 +4,7 @@ exactly is going away, why it is happening, and who is going to be doing
 the work.  When the feature is removed from the kernel, it should also
 be removed from this file.
 
----------------------------
+----------------------------
 
 What:	PRISM54
 When:	2.6.34
