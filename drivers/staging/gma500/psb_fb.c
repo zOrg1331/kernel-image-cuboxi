@@ -36,9 +36,7 @@
 #include "psb_drv.h"
 #include "psb_intel_reg.h"
 #include "psb_intel_drv.h"
-#include "psb_ttm_userobj_api.h"
 #include "psb_fb.h"
-#include "psb_sgx.h"
 #include "psb_pvr_glue.h"
 
 static void psb_user_framebuffer_destroy(struct drm_framebuffer *fb);
@@ -194,7 +192,7 @@ static int psbfb_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct drm_device *dev = psbfb->base.dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_gtt *pg = dev_priv->pg;
-	unsigned long phys_addr = (unsigned long)pg->stolen_base;;
+	unsigned long phys_addr = (unsigned long)pg->stolen_base;
 
 	page_num = (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
 
@@ -272,6 +270,31 @@ static int psbfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	return 0;
 }
 
+static int psbfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
+{
+	struct psb_fbdev *fbdev = info->par;
+	struct psb_framebuffer *psbfb = fbdev->pfb;
+	struct drm_device *dev = psbfb->base.dev;
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	u32 __user *p = (u32 __user *)arg;
+	u32 l;
+	u32 buf[32];
+	switch (cmd) {
+	case 0x12345678:
+		if (!capable(CAP_SYS_RAWIO))
+			return -EPERM;
+		if (get_user(l, p))
+			return -EFAULT;
+		if (l > 32)
+			return -EMSGSIZE;
+		if (copy_from_user(buf, p + 1, l * sizeof(u32)))
+			return -EFAULT;
+		psbfb_2d_submit(dev_priv, buf, l);
+		return 0;
+	default:
+		return -ENOTTY;
+	}
+}
 
 static struct fb_ops psbfb_ops = {
 	.owner = THIS_MODULE,
@@ -284,6 +307,7 @@ static struct fb_ops psbfb_ops = {
 	.fb_imageblit = psbfb_imageblit,
 	.fb_mmap = psbfb_mmap,
 	.fb_sync = psbfb_sync,
+	.fb_ioctl = psbfb_ioctl,
 };
 
 static struct drm_framebuffer *psb_framebuffer_create
@@ -317,6 +341,8 @@ static struct drm_framebuffer *psb_user_framebuffer_create
 			(struct drm_device *dev, struct drm_file *filp,
 			 struct drm_mode_fb_cmd *r)
 {
+        return NULL;
+#if 0
 	struct ttm_buffer_object *bo = NULL;
 	uint64_t size;
 
@@ -332,7 +358,6 @@ static struct drm_framebuffer *psb_user_framebuffer_create
 	/* JB: TODO not drop, refcount buffer */
 	return psb_framebuffer_create(dev, r, bo);
 
-#if 0
 	struct psb_framebuffer *psbfb;
 	struct drm_framebuffer *fb;
 	struct fb_info *info;
@@ -698,8 +723,15 @@ static void psb_setup_outputs(struct drm_device *dev)
 
 	psb_create_backlight_property(dev);
 
-	psb_intel_lvds_init(dev, &dev_priv->mode_dev);
-	/* psb_intel_sdvo_init(dev, SDVOB); */
+	if (IS_MRST(dev)) {
+		if (dev_priv->iLVDS_enable)
+			mrst_lvds_init(dev, &dev_priv->mode_dev);
+		else
+			DRM_ERROR("DSI is not supported\n");
+	} else {
+		psb_intel_lvds_init(dev, &dev_priv->mode_dev);
+		psb_intel_sdvo_init(dev, SDVOB);
+	}
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list,
 			    head) {
@@ -716,7 +748,10 @@ static void psb_setup_outputs(struct drm_device *dev)
 			break;
 		case INTEL_OUTPUT_LVDS:
 			PSB_DEBUG_ENTRY("LVDS.\n");
-			crtc_mask = (1 << 1);
+			if (IS_MRST(dev))
+				crtc_mask = (1 << 0);
+			else
+				crtc_mask = (1 << 1);
 			clone_mask = (1 << INTEL_OUTPUT_LVDS);
 			break;
 		case INTEL_OUTPUT_MIPI:

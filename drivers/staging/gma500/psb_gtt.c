@@ -75,11 +75,10 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	struct drm_device *dev = pg->dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	unsigned gtt_pages;
-	unsigned long stolen_size, vram_stolen_size, ci_stolen_size;
-	unsigned long rar_stolen_size;
+	unsigned long stolen_size, vram_stolen_size;
 	unsigned i, num_pages;
 	unsigned pfn_base;
-	uint32_t ci_pages, vram_pages;
+	uint32_t vram_pages;
 	uint32_t tt_pages;
 	uint32_t *ttm_gtt_map;
 	uint32_t dvmt_mode = 0;
@@ -102,7 +101,7 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	pg->gatt_start = pci_resource_start(dev->pdev, PSB_GATT_RESOURCE);
 	/* fix me: video mmu has hw bug to access 0x0D0000000,
 	 * then make gatt start at 0x0e000,0000 */
-	pg->mmu_gatt_start = PSB_MEM_TT_START;
+	pg->mmu_gatt_start = 0xE0000000;
 	pg->gtt_start = pci_resource_start(dev->pdev, PSB_GTT_RESOURCE);
 	gtt_pages =
 	    pci_resource_len(dev->pdev, PSB_GTT_RESOURCE) >> PAGE_SHIFT;
@@ -112,34 +111,19 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	pci_read_config_dword(dev->pdev, PSB_BSM, &pg->stolen_base);
 	vram_stolen_size = pg->gtt_phys_start - pg->stolen_base - PAGE_SIZE;
 
-	/* CI is not included in the stolen size since the TOPAZ MMU bug */
-	ci_stolen_size = dev_priv->ci_region_size;
-	/* Don't add CI & RAR share buffer space
-	 * managed by TTM to stolen_size */
 	stolen_size = vram_stolen_size;
-
-	rar_stolen_size = dev_priv->rar_region_size;
 
 	printk(KERN_INFO"GMMADR(region 0) start: 0x%08x (%dM).\n",
 		pg->gatt_start, pg->gatt_pages/256);
 	printk(KERN_INFO"GTTADR(region 3) start: 0x%08x (can map %dM RAM), and actual RAM base 0x%08x.\n",
 		pg->gtt_start, gtt_pages * 4, pg->gtt_phys_start);
-	printk(KERN_INFO "Stole memory information\n");
-	printk(KERN_INFO "      base in RAM: 0x%x\n", pg->stolen_base);
-	printk(KERN_INFO "      size: %luK, calculated by (GTT RAM base) - (Stolen base), seems wrong\n",
+	printk(KERN_INFO "Stolen memory information\n");
+	printk(KERN_INFO "       base in RAM: 0x%x\n", pg->stolen_base);
+	printk(KERN_INFO "       size: %luK, calculated by (GTT RAM base) - (Stolen base), seems wrong\n",
 		vram_stolen_size/1024);
 	dvmt_mode = (pg->gmch_ctrl >> 4) & 0x7;
 	printk(KERN_INFO "      the correct size should be: %dM(dvmt mode=%d)\n",
 		(dvmt_mode == 1) ? 1 : (2 << (dvmt_mode - 1)), dvmt_mode);
-
-	if (ci_stolen_size > 0)
-		printk(KERN_INFO"CI Stole memory: RAM base = 0x%08x, size = %lu M\n",
-				dev_priv->ci_region_start,
-				ci_stolen_size / 1024 / 1024);
-	if (rar_stolen_size > 0)
-		printk(KERN_INFO "RAR Stole memory: RAM base = 0x%08x, size = %lu M\n",
-			dev_priv->rar_region_start,
-			rar_stolen_size / 1024 / 1024);
 
 	if (resume && (gtt_pages != pg->gtt_pages) &&
 	    (stolen_size != pg->stolen_size)) {
@@ -151,8 +135,6 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	pg->gtt_pages = gtt_pages;
 	pg->stolen_size = stolen_size;
 	pg->vram_stolen_size = vram_stolen_size;
-	pg->ci_stolen_size = ci_stolen_size;
-	pg->rar_stolen_size = rar_stolen_size;
 	pg->gtt_map =
 	    ioremap_nocache(pg->gtt_phys_start, gtt_pages << PAGE_SHIFT);
 	if (!pg->gtt_map) {
@@ -196,33 +178,6 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	for (; i < tt_pages / 2 - 1; ++i)
 		iowrite32(pte, pg->gtt_map + i);
 
-	/*
-	 * insert CI stolen pages
-	 */
-
-	pfn_base = dev_priv->ci_region_start >> PAGE_SHIFT;
-	ci_pages = num_pages = ci_stolen_size >> PAGE_SHIFT;
-	printk(KERN_INFO"Set up %d CI stolen pages starting at 0x%08x, GTT offset %dK\n",
-	       num_pages, pfn_base, (ttm_gtt_map - pg->gtt_map) * 4);
-	for (i = 0; i < num_pages; ++i) {
-		pte = psb_gtt_mask_pte(pfn_base + i, 0);
-		iowrite32(pte, ttm_gtt_map + i);
-	}
-
-	/*
-	 * insert RAR stolen pages
-	 */
-	if (rar_stolen_size != 0) {
-		pfn_base = dev_priv->rar_region_start >> PAGE_SHIFT;
-		num_pages = rar_stolen_size >> PAGE_SHIFT;
-		printk(KERN_INFO"Set up %d RAR stolen pages starting at 0x%08x, GTT offset %dK\n",
-			num_pages, pfn_base,
-			(ttm_gtt_map - pg->gtt_map + i) * 4);
-		for (; i < num_pages + ci_pages; ++i) {
-			pte = psb_gtt_mask_pte(pfn_base + i - ci_pages, 0);
-			iowrite32(pte, ttm_gtt_map + i);
-		}
-	}
 	/*
 	 * Init rest of gtt managed by TTM.
 	 */

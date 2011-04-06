@@ -34,10 +34,6 @@
 #ifndef _WMI_H_
 #define _WMI_H_
 
-#ifndef ATH_TARGET
-#include "athstartpack.h"
-#endif
-
 #include "wmix.h"
 #include "wlan_defs.h"
 
@@ -118,7 +114,7 @@ typedef enum {
 typedef enum {
     WMI_DATA_HDR_DATA_TYPE_802_3 = 0,
     WMI_DATA_HDR_DATA_TYPE_802_11,
-    WMI_DATA_HDR_DATA_TYPE_ACL,
+    WMI_DATA_HDR_DATA_TYPE_ACL, /* used to be used for the PAL */
 } WMI_DATA_HDR_DATA_TYPE;
 
 #define WMI_DATA_HDR_DATA_TYPE_MASK     0x3
@@ -3121,10 +3117,6 @@ typedef PREPACK struct {
 /*
  * End of AP mode definitions
  */
-
-#ifndef ATH_TARGET
-#include "athendpack.h"
-#endif
 
 #ifdef __cplusplus
 }

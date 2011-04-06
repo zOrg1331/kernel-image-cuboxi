@@ -20,6 +20,8 @@
  *   Hank Janssen  <hjanssen@microsoft.com>
  *
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
@@ -121,11 +123,6 @@ int vmbus_connect(void)
 
 	spin_unlock_irqrestore(&vmbus_connection.channelmsg_lock, flags);
 
-	DPRINT_DBG(VMBUS, "Vmbus connection - interrupt pfn %llx, "
-		   "monitor1 pfn %llx,, monitor2 pfn %llx",
-		   msg->interrupt_page, msg->monitor_page1, msg->monitor_page2);
-
-	DPRINT_DBG(VMBUS, "Sending channel initiate msg...");
 	ret = vmbus_post_msg(msg,
 			       sizeof(struct vmbus_channel_initiate_contact));
 	if (ret != 0) {
@@ -156,13 +153,11 @@ int vmbus_connect(void)
 
 	/* Check if successful */
 	if (msginfo->response.version_response.version_supported) {
-		DPRINT_INFO(VMBUS, "Vmbus connected!!");
 		vmbus_connection.conn_state = CONNECTED;
-
 	} else {
-		DPRINT_ERR(VMBUS, "Vmbus connection failed!!..."
-			   "current version (%d) not supported",
-			   VMBUS_REVISION_NUMBER);
+		pr_err("Unable to connect, "
+			"Version %d not supported by Hyper-V\n",
+			VMBUS_REVISION_NUMBER);
 		ret = -1;
 		goto Cleanup;
 	}
@@ -223,7 +218,7 @@ int vmbus_disconnect(void)
 
 	vmbus_connection.conn_state = DISCONNECTED;
 
-	DPRINT_INFO(VMBUS, "Vmbus disconnected!!");
+	pr_info("hv_vmbus disconnected\n");
 
 Cleanup:
 	kfree(msg);
@@ -276,7 +271,7 @@ static void process_chn_event(void *context)
 		 *			  (void*)channel);
 		 */
 	} else {
-		DPRINT_ERR(VMBUS, "channel not found for relid - %d.", relid);
+		pr_err("channel not found for relid - %d\n", relid);
 	}
 }
 
@@ -300,11 +295,9 @@ void vmbus_on_event(unsigned long data)
 						(unsigned long *)
 						&recv_int_page[dword])) {
 						relid = (dword << 5) + bit;
-						DPRINT_DBG(VMBUS, "event detected for relid - %d", relid);
 
 						if (relid == 0) {
 							/* special case - vmbus channel protocol msg */
-							DPRINT_DBG(VMBUS, "invalid relid - %d", relid);
 							continue;
 						} else {
 							/* QueueWorkItem(VmbusProcessEvent, (void*)relid); */

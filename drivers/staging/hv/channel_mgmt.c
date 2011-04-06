@@ -18,6 +18,8 @@
  *   Haiyang Zhang <haiyangz@microsoft.com>
  *   Hank Janssen  <hjanssen@microsoft.com>
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
@@ -290,9 +292,7 @@ static void release_channel(struct work_struct *work)
 						     struct vmbus_channel,
 						     work);
 
-	DPRINT_DBG(VMBUS, "releasing channel (%p)", channel);
 	destroy_workqueue(channel->controlwq);
-	DPRINT_DBG(VMBUS, "channel released (%p)", channel);
 
 	kfree(channel);
 }
@@ -384,8 +384,6 @@ static void vmbus_process_offer(struct work_struct *work)
 	spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
 
 	if (!fnew) {
-		DPRINT_DBG(VMBUS, "Ignoring duplicate offer for relid (%d)",
-			   newchannel->offermsg.child_relid);
 		free_channel(newchannel);
 		return;
 	}
@@ -400,9 +398,6 @@ static void vmbus_process_offer(struct work_struct *work)
 		&newchannel->offermsg.offer.if_instance,
 		newchannel);
 
-	DPRINT_DBG(VMBUS, "child device object allocated - %p",
-		   newchannel->device_obj);
-
 	/*
 	 * Add the new device to the bus. This will kick off device-driver
 	 * binding which eventually invokes the device driver's AddDevice()
@@ -410,8 +405,7 @@ static void vmbus_process_offer(struct work_struct *work)
 	 */
 	ret = vmbus_child_device_register(newchannel->device_obj);
 	if (ret != 0) {
-		DPRINT_ERR(VMBUS,
-			   "unable to add child device object (relid %d)",
+		pr_err("unable to add child device object (relid %d)\n",
 			   newchannel->offermsg.child_relid);
 
 		spin_lock_irqsave(&vmbus_connection.channel_lock, flags);
@@ -437,8 +431,9 @@ static void vmbus_process_offer(struct work_struct *work)
 						 hv_cb_utils[cnt].callback,
 						 newchannel) == 0) {
 				hv_cb_utils[cnt].channel = newchannel;
-				DPRINT_INFO(VMBUS, "%s",
-						hv_cb_utils[cnt].log_msg);
+
+				pr_info("%s\n", hv_cb_utils[cnt].log_msg);
+
 				count_hv_channel();
 			}
 		}
@@ -470,48 +465,18 @@ static void vmbus_onoffer(struct vmbus_channel_message_header *hdr)
 		}
 	}
 
-	if (!fsupported) {
-		DPRINT_DBG(VMBUS, "Ignoring channel offer notification for "
-			   "child relid %d", offer->child_relid);
+	if (!fsupported)
 		return;
-	}
 
 	guidtype = &offer->offer.if_type;
 	guidinstance = &offer->offer.if_instance;
 
-	DPRINT_INFO(VMBUS, "Channel offer notification - "
-		    "child relid %d monitor id %d allocated %d, "
-		    "type {%02x%02x%02x%02x-%02x%02x-%02x%02x-"
-		    "%02x%02x%02x%02x%02x%02x%02x%02x} "
-		    "instance {%02x%02x%02x%02x-%02x%02x-%02x%02x-"
-		    "%02x%02x%02x%02x%02x%02x%02x%02x}",
-		    offer->child_relid, offer->monitorid,
-		    offer->monitor_allocated,
-		    guidtype->data[3], guidtype->data[2],
-		    guidtype->data[1], guidtype->data[0],
-		    guidtype->data[5], guidtype->data[4],
-		    guidtype->data[7], guidtype->data[6],
-		    guidtype->data[8], guidtype->data[9],
-		    guidtype->data[10], guidtype->data[11],
-		    guidtype->data[12], guidtype->data[13],
-		    guidtype->data[14], guidtype->data[15],
-		    guidinstance->data[3], guidinstance->data[2],
-		    guidinstance->data[1], guidinstance->data[0],
-		    guidinstance->data[5], guidinstance->data[4],
-		    guidinstance->data[7], guidinstance->data[6],
-		    guidinstance->data[8], guidinstance->data[9],
-		    guidinstance->data[10], guidinstance->data[11],
-		    guidinstance->data[12], guidinstance->data[13],
-		    guidinstance->data[14], guidinstance->data[15]);
-
 	/* Allocate the channel object and save this offer. */
 	newchannel = alloc_channel();
 	if (!newchannel) {
-		DPRINT_ERR(VMBUS, "unable to allocate channel object");
+		pr_err("Unable to allocate channel object\n");
 		return;
 	}
-
-	DPRINT_DBG(VMBUS, "channel object allocated - %p", newchannel);
 
 	memcpy(&newchannel->offermsg, offer,
 	       sizeof(struct vmbus_channel_offer_channel));
@@ -535,11 +500,10 @@ static void vmbus_onoffer_rescind(struct vmbus_channel_message_header *hdr)
 
 	rescind = (struct vmbus_channel_rescind_offer *)hdr;
 	channel = relid2channel(rescind->child_relid);
-	if (channel == NULL) {
-		DPRINT_DBG(VMBUS, "channel not found for relId %d",
-			   rescind->child_relid);
+
+	if (channel == NULL)
+		/* Just return here, no channel found */
 		return;
-	}
 
 	/* work is initialized for vmbus_process_rescind_offer() from
 	 * vmbus_process_offer() where the channel got created */
@@ -573,7 +537,6 @@ static void vmbus_onopen_result(struct vmbus_channel_message_header *hdr)
 	unsigned long flags;
 
 	result = (struct vmbus_channel_open_result *)hdr;
-	DPRINT_DBG(VMBUS, "vmbus open result - %d", result->status);
 
 	/*
 	 * Find the open msg, copy the result and signal/unblock the wait event
@@ -618,8 +581,6 @@ static void vmbus_ongpadl_created(struct vmbus_channel_message_header *hdr)
 	unsigned long flags;
 
 	gpadlcreated = (struct vmbus_channel_gpadl_created *)hdr;
-	DPRINT_DBG(VMBUS, "vmbus gpadl created result - %d",
-		   gpadlcreated->creation_status);
 
 	/*
 	 * Find the establish msg, copy the result and signal/unblock the wait
@@ -770,11 +731,8 @@ void vmbus_onmessage(void *context)
 	hdr = (struct vmbus_channel_message_header *)msg->u.payload;
 	size = msg->header.payload_size;
 
-	DPRINT_DBG(VMBUS, "message type %d size %d", hdr->msgtype, size);
-
 	if (hdr->msgtype >= CHANNELMSG_COUNT) {
-		DPRINT_ERR(VMBUS,
-			   "Received invalid channel message type %d size %d",
+		pr_err("Received invalid channel message type %d size %d\n",
 			   hdr->msgtype, size);
 		print_hex_dump_bytes("", DUMP_PREFIX_NONE,
 				     (unsigned char *)msg->u.payload, size);
@@ -784,8 +742,7 @@ void vmbus_onmessage(void *context)
 	if (gChannelMessageTable[hdr->msgtype].messageHandler)
 		gChannelMessageTable[hdr->msgtype].messageHandler(hdr);
 	else
-		DPRINT_ERR(VMBUS, "Unhandled channel message type %d",
-			   hdr->msgtype);
+		pr_err("Unhandled channel message type %d\n", hdr->msgtype);
 }
 
 /*
@@ -813,7 +770,7 @@ int vmbus_request_offers(void)
 	ret = vmbus_post_msg(msg,
 			       sizeof(struct vmbus_channel_message_header));
 	if (ret != 0) {
-		DPRINT_ERR(VMBUS, "Unable to request offers - %d", ret);
+		pr_err("Unable to request offers - %d\n", ret);
 
 		goto cleanup;
 	}
@@ -853,9 +810,8 @@ void vmbus_release_unattached_channels(void)
 
 		if (!channel->device_obj->drv) {
 			list_del(&channel->listentry);
-			DPRINT_INFO(VMBUS,
-				    "Releasing unattached device object %p",
-				    channel->device_obj);
+
+			pr_err("Releasing unattached device object\n");
 
 			vmbus_child_device_unregister(channel->device_obj);
 			free_channel(channel);

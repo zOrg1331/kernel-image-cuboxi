@@ -21,8 +21,6 @@
  *
  */
 
-#ifdef  ATH_AR6K_11N_SUPPORT
-
 #include <a_config.h>
 #include <athdefs.h>
 #include <a_types.h>
@@ -123,7 +121,7 @@ aggr_delete_tid_state(struct aggr_info *p_aggr, u8 tid)
     rxtid->hold_q_sz = 0;
 
     if(rxtid->hold_q) {
-        A_FREE(rxtid->hold_q);
+        kfree(rxtid->hold_q);
         rxtid->hold_q = NULL;
     }
 
@@ -154,7 +152,7 @@ aggr_module_destroy(void *cntxt)
                         A_NETBUF_FREE(rxtid->hold_q[k].osbuf);
                     }
                 }
-                A_FREE(rxtid->hold_q);
+                kfree(rxtid->hold_q);
             }
             /* Free the dispatch q contents*/
             while(A_NETBUF_QUEUE_SIZE(&rxtid->q)) {
@@ -168,7 +166,7 @@ aggr_module_destroy(void *cntxt)
         while(A_NETBUF_QUEUE_SIZE(&p_aggr->freeQ)) {
             A_NETBUF_FREE(A_NETBUF_DEQUEUE(&p_aggr->freeQ));
         }
-        A_FREE(p_aggr);
+        kfree(p_aggr);
     }
     A_PRINTF("out aggr_module_destroy\n");
 }
@@ -662,5 +660,3 @@ aggr_dump_stats(void *cntxt, PACKET_LOG **log_buf)
     A_PRINTF("================================================\n\n");
 
 }
-
-#endif  /* ATH_AR6K_11N_SUPPORT */

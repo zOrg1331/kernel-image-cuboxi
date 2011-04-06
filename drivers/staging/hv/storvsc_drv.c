@@ -36,7 +36,19 @@
 #include "version_info.h"
 #include "vmbus.h"
 #include "storvsc_api.h"
+#include "vstorage.h"
+#include "channel.h"
 
+
+static const char *g_driver_name = "storvsc";
+
+/* {ba6163d9-04a1-4d29-b605-72e2ffb1dc7f} */
+static const struct hv_guid gStorVscDeviceType = {
+	.data = {
+		0xd9, 0x63, 0x61, 0xba, 0xa1, 0x04, 0x29, 0x4d,
+		0xb6, 0x05, 0x72, 0xe2, 0xff, 0xb1, 0xdc, 0x7f
+	}
+};
 
 struct host_device_context {
 	/* must be 1st field
@@ -57,12 +69,58 @@ struct storvsc_cmd_request {
 	struct scatterlist *bounce_sgl;
 
 	struct hv_storvsc_request request;
-	/* !!!DO NOT ADD ANYTHING BELOW HERE!!! */
-	/* The extension buffer falls right here and is pointed to by
-	 * request.Extension;
-	 * Which sounds like a very bad design... */
 };
 
+
+/*
+ * stor_vsc_initialize - Main entry point
+ */
+static int stor_vsc_initialize(struct hv_driver *driver)
+{
+	struct storvsc_driver_object *stor_driver;
+
+	stor_driver = hvdr_to_stordr(driver);
+
+	DPRINT_DBG(STORVSC,
+		   "sizeof(struct hv_storvsc_request)=%zd "
+		   "sizeof(struct vstor_packet)=%zd, "
+		   "sizeof(struct vmscsi_request)=%zd",
+		   sizeof(struct hv_storvsc_request),
+		   sizeof(struct vstor_packet),
+		   sizeof(struct vmscsi_request));
+
+	/* Make sure we are at least 2 pages since 1 page is used for control */
+
+	driver->name = g_driver_name;
+	memcpy(&driver->dev_type, &gStorVscDeviceType,
+	       sizeof(struct hv_guid));
+
+
+	/*
+	 * Divide the ring buffer data size (which is 1 page less
+	 * than the ring buffer size since that page is reserved for
+	 * the ring buffer indices) by the max request size (which is
+	 * vmbus_channel_packet_multipage_buffer + struct vstor_packet + u64)
+	 */
+	stor_driver->max_outstanding_req_per_channel =
+		((stor_driver->ring_buffer_size - PAGE_SIZE) /
+		  ALIGN(MAX_MULTIPAGE_BUFFER_PACKET +
+			   sizeof(struct vstor_packet) + sizeof(u64),
+			   sizeof(u64)));
+
+	DPRINT_INFO(STORVSC, "max io %u, currently %u\n",
+		    stor_driver->max_outstanding_req_per_channel,
+		    STORVSC_MAX_IO_REQUESTS);
+
+	/* Setup the dispatch table */
+	stor_driver->base.dev_add	= stor_vsc_on_device_add;
+	stor_driver->base.dev_rm	= stor_vsc_on_device_remove;
+	stor_driver->base.cleanup	= stor_vsc_on_cleanup;
+
+	stor_driver->on_io_request	= stor_vsc_on_io_request;
+
+	return 0;
+}
 
 /* Static decl */
 static int storvsc_probe(struct device *dev);
@@ -128,7 +186,7 @@ static struct scsi_host_template scsi_driver = {
 /*
  * storvsc_drv_init - StorVsc driver initialization.
  */
-static int storvsc_drv_init(int (*drv_init)(struct hv_driver *drv))
+static int storvsc_drv_init(void)
 {
 	int ret;
 	struct storvsc_driver_object *storvsc_drv_obj = &g_storvsc_drv;
@@ -137,13 +195,12 @@ static int storvsc_drv_init(int (*drv_init)(struct hv_driver *drv))
 	storvsc_drv_obj->ring_buffer_size = storvsc_ringbuffer_size;
 
 	/* Callback to client driver to complete the initialization */
-	drv_init(&storvsc_drv_obj->base);
+	stor_vsc_initialize(&storvsc_drv_obj->base);
 
 	drv->priv = storvsc_drv_obj;
 
 	DPRINT_INFO(STORVSC_DRV,
-		    "request extension size %u, max outstanding reqs %u",
-		    storvsc_drv_obj->request_ext_size,
+		    "max outstanding reqs %u",
 		    storvsc_drv_obj->max_outstanding_req_per_channel);
 
 	if (storvsc_drv_obj->max_outstanding_req_per_channel <
@@ -164,6 +221,61 @@ static int storvsc_drv_init(int (*drv_init)(struct hv_driver *drv))
 	/* The driver belongs to vmbus */
 	ret = vmbus_child_driver_register(&drv->driver);
 
+	return ret;
+}
+
+
+static int stor_vsc_on_host_reset(struct hv_device *device)
+{
+	struct storvsc_device *stor_device;
+	struct hv_storvsc_request *request;
+	struct vstor_packet *vstor_packet;
+	int ret, t;
+
+	DPRINT_INFO(STORVSC, "resetting host adapter...");
+
+	stor_device = get_stor_device(device);
+	if (!stor_device) {
+		DPRINT_ERR(STORVSC, "unable to get stor device..."
+			   "device being destroyed?");
+		return -1;
+	}
+
+	request = &stor_device->reset_request;
+	vstor_packet = &request->vstor_packet;
+
+	init_completion(&request->wait_event);
+
+	vstor_packet->operation = VSTOR_OPERATION_RESET_BUS;
+	vstor_packet->flags = REQUEST_COMPLETION_FLAG;
+	vstor_packet->vm_srb.path_id = stor_device->path_id;
+
+	ret = vmbus_sendpacket(device->channel, vstor_packet,
+			       sizeof(struct vstor_packet),
+			       (unsigned long)&stor_device->reset_request,
+			       VM_PKT_DATA_INBAND,
+			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
+	if (ret != 0) {
+		DPRINT_ERR(STORVSC, "Unable to send reset packet %p ret %d",
+			   vstor_packet, ret);
+		goto cleanup;
+	}
+
+	t = wait_for_completion_timeout(&request->wait_event, HZ);
+	if (t == 0) {
+		ret = -ETIMEDOUT;
+		goto cleanup;
+	}
+
+	DPRINT_INFO(STORVSC, "host adapter reset completed");
+
+	/*
+	 * At this point, all outstanding requests in the adapter
+	 * should have been flushed out and return to us
+	 */
+
+cleanup:
+	put_stor_device(device);
 	return ret;
 }
 
@@ -241,8 +353,7 @@ static int storvsc_probe(struct device *device)
 
 	host_device_ctx->request_pool =
 				kmem_cache_create(dev_name(&device_obj->device),
-					sizeof(struct storvsc_cmd_request) +
-					storvsc_drv_obj->request_ext_size, 0,
+					sizeof(struct storvsc_cmd_request), 0,
 					SLAB_HWCACHE_ALIGN, NULL);
 
 	if (!host_device_ctx->request_pool) {
@@ -342,6 +453,7 @@ static void storvsc_commmand_completion(struct hv_storvsc_request *request)
 		(struct host_device_context *)scmnd->device->host->hostdata;
 	void (*scsi_done_fn)(struct scsi_cmnd *);
 	struct scsi_sense_hdr sense_hdr;
+	struct vmscsi_request *vm_srb;
 
 	/* ASSERT(request == &cmd_request->request); */
 	/* ASSERT(scmnd); */
@@ -361,17 +473,19 @@ static void storvsc_commmand_completion(struct hv_storvsc_request *request)
 				      cmd_request->bounce_sgl_count);
 	}
 
-	scmnd->result = request->status;
+	vm_srb = &request->vstor_packet.vm_srb;
+	scmnd->result = vm_srb->scsi_status;
 
 	if (scmnd->result) {
 		if (scsi_normalize_sense(scmnd->sense_buffer,
-				request->sense_buffer_size, &sense_hdr))
+				SCSI_SENSE_BUFFERSIZE, &sense_hdr))
 			scsi_print_sense_hdr("storvsc", &sense_hdr);
 	}
 
 	/* ASSERT(request->BytesXfer <= request->data_buffer.Length); */
 	scsi_set_resid(scmnd,
-		request->data_buffer.len - request->bytes_xfer);
+		request->data_buffer.len -
+		vm_srb->data_transfer_length);
 
 	scsi_done_fn = scmnd->scsi_done;
 
@@ -597,6 +711,7 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 	int i;
 	struct scatterlist *sgl;
 	unsigned int sg_count = 0;
+	struct vmscsi_request *vm_srb;
 
 	DPRINT_DBG(STORVSC_DRV, "scmnd %p dir %d, use_sg %d buf %p len %d "
 		   "queue depth %d tagged %d", scmnd, scmnd->sc_data_direction,
@@ -640,22 +755,20 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 	scmnd->host_scribble = (unsigned char *)cmd_request;
 
 	request = &cmd_request->request;
+	vm_srb = &request->vstor_packet.vm_srb;
 
-	request->extension =
-		(void *)((unsigned long)cmd_request + request_size);
-	DPRINT_DBG(STORVSC_DRV, "req %p size %d ext %d", request, request_size,
-		   storvsc_drv_obj->request_ext_size);
+	DPRINT_DBG(STORVSC_DRV, "req %p size %d", request, request_size);
 
 	/* Build the SRB */
 	switch (scmnd->sc_data_direction) {
 	case DMA_TO_DEVICE:
-		request->type = WRITE_TYPE;
+		vm_srb->data_in = WRITE_TYPE;
 		break;
 	case DMA_FROM_DEVICE:
-		request->type = READ_TYPE;
+		vm_srb->data_in = READ_TYPE;
 		break;
 	default:
-		request->type = UNKNOWN_TYPE;
+		vm_srb->data_in = UNKNOWN_TYPE;
 		break;
 	}
 
@@ -663,17 +776,17 @@ static int storvsc_queuecommand_lck(struct scsi_cmnd *scmnd,
 	request->context = cmd_request;/* scmnd; */
 
 	/* request->PortId = scmnd->device->channel; */
-	request->host = host_device_ctx->port;
-	request->bus = scmnd->device->channel;
-	request->target_id = scmnd->device->id;
-	request->lun_id = scmnd->device->lun;
+	vm_srb->port_number = host_device_ctx->port;
+	vm_srb->path_id = scmnd->device->channel;
+	vm_srb->target_id = scmnd->device->id;
+	vm_srb->lun = scmnd->device->lun;
 
 	/* ASSERT(scmnd->cmd_len <= 16); */
-	request->cdb_len = scmnd->cmd_len;
-	request->cdb = scmnd->cmnd;
+	vm_srb->cdb_length = scmnd->cmd_len;
+
+	memcpy(vm_srb->cdb, scmnd->cmnd, vm_srb->cdb_length);
 
 	request->sense_buffer = scmnd->sense_buffer;
-	request->sense_buffer_size = SCSI_SENSE_BUFFERSIZE;
 
 
 	request->data_buffer.len = scsi_bufflen(scmnd);
@@ -923,7 +1036,7 @@ static int __init storvsc_init(void)
 	int ret;
 
 	DPRINT_INFO(STORVSC_DRV, "Storvsc initializing....");
-	ret = storvsc_drv_init(stor_vsc_initialize);
+	ret = storvsc_drv_init();
 	return ret;
 }
 
