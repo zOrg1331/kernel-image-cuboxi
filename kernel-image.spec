@@ -510,7 +510,7 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
-find %buildroot%kheaders_dir -name '.*.cmd' | xargs rm -f
+find %buildroot%kheaders_dir -name '.*.cmd' -o -name '.install' | xargs rm -f
 
 # install documentation
 %if_enabled docs
