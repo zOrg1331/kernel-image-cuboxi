@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <linux/etherdevice.h>
+#include <linux/pci_ids.h>
 #include <net/mac80211.h>
 
 #include <bcmdefs.h>
@@ -4871,7 +4872,7 @@ void wlc_statsupd(struct wlc_info *wlc)
 
 bool wlc_chipmatch(u16 vendor, u16 device)
 {
-	if (vendor != VENDOR_BROADCOM) {
+	if (vendor != PCI_VENDOR_ID_BROADCOM) {
 		WL_ERROR("wlc_chipmatch: unknown vendor id %04x\n", vendor);
 		return false;
 	}
@@ -6948,11 +6949,6 @@ wlc_recvctl(struct wlc_info *wlc, d11rxhdr_t *rxh, struct sk_buff *p)
 #if defined(BCMDBG)
 	struct sk_buff *skb = p;
 #endif				/* BCMDBG */
-	/* Todo:
-	 * Cache plcp for first MPDU of AMPD and use chacched version for INTERMEDIATE.
-	 * Test for INTERMEDIATE  like so:
-	 * if (!(plcp[0] | plcp[1] | plcp[2]))
-	 */
 
 	memset(&rx_status, 0, sizeof(rx_status));
 	prep_mac80211_status(wlc, rxh, p, &rx_status);
