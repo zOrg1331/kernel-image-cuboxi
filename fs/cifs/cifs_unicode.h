@@ -44,7 +44,7 @@
  * reserved symbols (along with \ and /), otherwise illegal to store
  * in filenames in NTFS
  */
-#define UNI_ASTERIK     (__u16) ('*' + 0xF000)
+#define UNI_ASTERISK    (__u16) ('*' + 0xF000)
 #define UNI_QUESTION    (__u16) ('?' + 0xF000)
 #define UNI_COLON       (__u16) (':' + 0xF000)
 #define UNI_GRTRTHAN    (__u16) ('>' + 0xF000)
@@ -82,6 +82,9 @@ int cifs_strtoUCS(__le16 *, const char *, int, const struct nls_table *);
 char *cifs_strndup_from_ucs(const char *src, const int maxlen,
 			    const bool is_unicode,
 			    const struct nls_table *codepage);
+extern int cifsConvertToUCS(__le16 *target, const char *source, int maxlen,
+			const struct nls_table *cp, int mapChars);
+
 #endif
 
 /*
@@ -376,5 +379,12 @@ UniStrlwr(register wchar_t *upin)
 }
 
 #endif
+
+#ifdef CONFIG_CIFS_SMB2
+extern int smb2_local_to_ucs2_bytes(const char *from, int len,
+				    const struct nls_table *codepage);
+extern __le16 *smb2_strndup_to_ucs(const char *src, const int maxlen,
+				   int *ucs_len, const struct nls_table *cp);
+#endif /* CONFIG_CIFS_SMB2 */
 
 #endif /* _CIFS_UNICODE_H */
