@@ -5236,7 +5236,7 @@ u32 netdev_fix_features(struct net_device *dev, u32 features)
 }
 EXPORT_SYMBOL(netdev_fix_features);
 
-void netdev_update_features(struct net_device *dev)
+int __netdev_update_features(struct net_device *dev)
 {
 	u32 features;
 	int err = 0;
@@ -5250,7 +5250,7 @@ void netdev_update_features(struct net_device *dev)
 	features = netdev_fix_features(dev, features);
 
 	if (dev->features == features)
-		return;
+		return 0;
 
 	netdev_info(dev, "Features changed: 0x%08x -> 0x%08x\n",
 		dev->features, features);
@@ -5258,12 +5258,23 @@ void netdev_update_features(struct net_device *dev)
 	if (dev->netdev_ops->ndo_set_features)
 		err = dev->netdev_ops->ndo_set_features(dev, features);
 
-	if (!err)
-		dev->features = features;
-	else if (err < 0)
+	if (unlikely(err < 0)) {
 		netdev_err(dev,
 			"set_features() failed (%d); wanted 0x%08x, left 0x%08x\n",
 			err, features, dev->features);
+		return -1;
+	}
+
+	if (!err)
+		dev->features = features;
+
+	return 1;
+}
+
+void netdev_update_features(struct net_device *dev)
+{
+	if (__netdev_update_features(dev))
+		netdev_features_change(dev);
 }
 EXPORT_SYMBOL(netdev_update_features);
 
@@ -5414,6 +5425,14 @@ int register_netdevice(struct net_device *dev)
 		dev->features &= ~NETIF_F_GSO;
 	}
 
+	/* Turn on no cache copy if HW is doing checksum */
+	dev->hw_features |= NETIF_F_NOCACHE_COPY;
+	if ((dev->features & NETIF_F_ALL_CSUM) &&
+	    !(dev->features & NETIF_F_NO_CSUM)) {
+		dev->wanted_features |= NETIF_F_NOCACHE_COPY;
+		dev->features |= NETIF_F_NOCACHE_COPY;
+	}
+
 	/* Enable GRO and NETIF_F_HIGHDMA for vlans by default,
 	 * vlan_dev_init() will do the dev->features check, so these features
 	 * are enabled only if supported by underlying device.
@@ -5430,7 +5449,7 @@ int register_netdevice(struct net_device *dev)
 		goto err_uninit;
 	dev->reg_state = NETREG_REGISTERED;
 
-	netdev_update_features(dev);
+	__netdev_update_features(dev);
 
 	/*
 	 *	Default initial state at registry is that the
@@ -6170,6 +6189,10 @@ u32 netdev_increment_features(u32 all, u32 one, u32 mask)
 			all |= NETIF_F_HW_CSUM;
 		}
 	}
+
+	/* If device can't no cache copy, don't do for all */
+	if (!(one & NETIF_F_NOCACHE_COPY))
+		all &= ~NETIF_F_NOCACHE_COPY;
 
 	one |= NETIF_F_ALL_CSUM;
 
