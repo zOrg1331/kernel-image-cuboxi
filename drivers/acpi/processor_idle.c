@@ -82,7 +82,6 @@ module_param(latency_factor, uint, 0644);
 static int disabled_by_idle_boot_param(void)
 {
 	return boot_option_idle_override == IDLE_POLL ||
-		boot_option_idle_override == IDLE_FORCE_MWAIT ||
 		boot_option_idle_override == IDLE_HALT;
 }
 
@@ -161,7 +160,7 @@ static void lapic_timer_check_state(int state, struct acpi_processor *pr,
 	if (cpu_has(&cpu_data(pr->id), X86_FEATURE_ARAT))
 		return;
 
-	if (c1e_detected)
+	if (amd_e400_detected)
 		type = ACPI_STATE_C1;
 
 	/*
