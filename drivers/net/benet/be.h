@@ -84,14 +84,13 @@ static inline char *nic_name(struct pci_dev *pdev)
 #define MCC_CQ_LEN		256
 
 #define MAX_RSS_QS		4	/* BE limit is 4 queues/port */
-#define BE_MAX_MSIX_VECTORS	(MAX_RSS_QS + 1 + 1)/* RSS qs + 1 def Rx + Tx */
+#define MAX_RX_QS		(MAX_RSS_QS + 1) /* RSS qs + 1 def Rx */
+#define BE_MAX_MSIX_VECTORS	(MAX_RX_QS + 1)/* RX + TX */
 #define BE_NAPI_WEIGHT		64
 #define MAX_RX_POST 		BE_NAPI_WEIGHT /* Frags posted at a time */
 #define RX_FRAGS_REFILL_WM	(RX_Q_LEN - MAX_RX_POST)
 
 #define FW_VER_LEN		32
-
-#define BE_MAX_VF		32
 
 struct be_dma_mem {
 	void *va;
@@ -276,7 +275,7 @@ struct be_adapter {
 	spinlock_t mcc_cq_lock;
 
 	struct msix_entry msix_entries[BE_MAX_MSIX_VECTORS];
-	bool msix_enabled;
+	u32 num_msix_vec;
 	bool isr_registered;
 
 	/* TX Rings */
@@ -287,7 +286,7 @@ struct be_adapter {
 	u32 cache_line_break[8];
 
 	/* Rx rings */
-	struct be_rx_obj rx_obj[MAX_RSS_QS + 1]; /* one default non-rss Q */
+	struct be_rx_obj rx_obj[MAX_RX_QS];
 	u32 num_rx_qs;
 	u32 big_page_size;	/* Compounded page size shared by rx wrbs */
 
@@ -312,6 +311,7 @@ struct be_adapter {
 	char fw_ver[FW_VER_LEN];
 	u32 if_handle;		/* Used to configure filtering */
 	u32 pmac_id;		/* MAC addr handle used by BE card */
+	u32 beacon_state;	/* for set_phys_id */
 
 	bool eeh_err;
 	bool link_up;
@@ -334,7 +334,7 @@ struct be_adapter {
 
 	bool be3_native;
 	bool sriov_enabled;
-	struct be_vf_cfg vf_cfg[BE_MAX_VF];
+	struct be_vf_cfg *vf_cfg;
 	u8 is_virtfn;
 	u32 sli_family;
 	u8 hba_port_num;
@@ -351,6 +351,7 @@ struct be_adapter {
 
 extern const struct ethtool_ops be_ethtool_ops;
 
+#define msix_enabled(adapter)		(adapter->num_msix_vec > 0)
 #define tx_stats(adapter)		(&adapter->tx_stats)
 #define rx_stats(rxo)			(&rxo->stats)
 
@@ -455,18 +456,10 @@ static inline u8 is_udp_pkt(struct sk_buff *skb)
 
 static inline void be_check_sriov_fn_type(struct be_adapter *adapter)
 {
-	u8 data;
 	u32 sli_intf;
 
-	if (lancer_chip(adapter)) {
-		pci_read_config_dword(adapter->pdev, SLI_INTF_REG_OFFSET,
-								&sli_intf);
-		adapter->is_virtfn = (sli_intf & SLI_INTF_FT_MASK) ? 1 : 0;
-	} else {
-		pci_write_config_byte(adapter->pdev, 0xFE, 0xAA);
-		pci_read_config_byte(adapter->pdev, 0xFE, &data);
-		adapter->is_virtfn = (data != 0xAA);
-	}
+	pci_read_config_dword(adapter->pdev, SLI_INTF_REG_OFFSET, &sli_intf);
+	adapter->is_virtfn = (sli_intf & SLI_INTF_FT_MASK) ? 1 : 0;
 }
 
 static inline void be_vf_eth_addr_generate(struct be_adapter *adapter, u8 *mac)
@@ -480,6 +473,11 @@ static inline void be_vf_eth_addr_generate(struct be_adapter *adapter, u8 *mac)
 	mac[3] = (u8)((addr >> 16) & 0xFF);
 	/* Use the OUI from the current MAC address */
 	memcpy(mac, adapter->netdev->dev_addr, 3);
+}
+
+static inline bool be_multi_rxq(const struct be_adapter *adapter)
+{
+	return adapter->num_rx_qs > 1;
 }
 
 extern void be_cq_notify(struct be_adapter *adapter, u16 qid, bool arm,
