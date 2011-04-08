@@ -1,0 +1,23 @@
+Importing i2c based on 2.6.39-rc1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.39-rc2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 6221f222c0ebf1acdf7abcf927178f40e1a65e2a
+HEAD is now at 6221f222 Linux 2.6.39-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lm90-01-add-support-for-adt7461a-and-nct1008.patch
+hwmon-lm90-02-fix-update-interval-information-in-driver-documentation.patch
+hwmon-use-set_drvdata-helpers.patch
+hwmon-k10temp-add-support-for-fam15h-bulldozer.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 4f18e52...7e344f3 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.39-rc1-git3
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 78fca1b95837a44983608302e89c7258981be9b3
+Importing rr based on v2.6.39-rc1-184-g78fca1b9
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
