@@ -175,8 +175,6 @@
  *         Ignore first resume after we generate our own resume event
  *         after a suspend (Thomas Hood)
  *         Daemonize now gets rid of our controlling terminal (sfr).
- *         CONFIG_APM_CPU_IDLE now just affects the default value of
- *         idle_threshold (sfr).
  *         Change name of kernel apm daemon (as it no longer idles) (sfr).
  *   1.16ac: Fix up SMP support somewhat. You can now force SMP on and we
  *	   make _all_ APM calls on the CPU#0. Fix unsafe sign bug.
@@ -262,12 +260,6 @@ extern int (*console_blank_hook)(int);
  *	    [no-]smp			Use apm even on an SMP box
  *	    bounce[-_]interval=<n>	number of ticks to ignore suspend
  *	    				bounces
- *          idle[-_]threshold=<n>       System idle percentage above which to
- *                                      make APM BIOS idle calls. Set it to
- *                                      100 to disable.
- *          idle[-_]period=<n>          Period (in 1/100s of a second) over
- *                                      which the idle percentage is
- *                                      calculated.
  */
 
 /* KNOWN PROBLEM MACHINES:
@@ -357,26 +349,12 @@ struct apm_user {
 #define APM_BIOS_MAGIC		0x4101
 
 /*
- * idle percentage above which bios idle calls are done
- */
-#ifdef CONFIG_APM_CPU_IDLE
-#define DEFAULT_IDLE_THRESHOLD	95
-#else
-#define DEFAULT_IDLE_THRESHOLD	100
-#endif
-#define DEFAULT_IDLE_PERIOD	(100 / 3)
-
-/*
  * Local variables
  */
 static struct {
 	unsigned long	offset;
 	unsigned short	segment;
 } apm_bios_entry;
-static int clock_slowed;
-static int idle_threshold __read_mostly = DEFAULT_IDLE_THRESHOLD;
-static int idle_period __read_mostly = DEFAULT_IDLE_PERIOD;
-static int set_pm_idle;
 static int suspends_pending;
 static int standbys_pending;
 static int ignore_sys_suspend;
@@ -803,165 +781,6 @@ static int set_power_state(u_short what, u_short state)
 static int set_system_power_state(u_short state)
 {
 	return set_power_state(APM_DEVICE_ALL, state);
-}
-
-/**
- *	apm_do_idle	-	perform power saving
- *
- *	This function notifies the BIOS that the processor is (in the view
- *	of the OS) idle. It returns -1 in the event that the BIOS refuses
- *	to handle the idle request. On a success the function returns 1
- *	if the BIOS did clock slowing or 0 otherwise.
- */
-
-static int apm_do_idle(void)
-{
-	u32 eax;
-	u8 ret = 0;
-	int idled = 0;
-	int polling;
-	int err = 0;
-
-	polling = !!(current_thread_info()->status & TS_POLLING);
-	if (polling) {
-		current_thread_info()->status &= ~TS_POLLING;
-		/*
-		 * TS_POLLING-cleared state must be visible before we
-		 * test NEED_RESCHED:
-		 */
-		smp_mb();
-	}
-	if (!need_resched()) {
-		idled = 1;
-		ret = apm_bios_call_simple(APM_FUNC_IDLE, 0, 0, &eax, &err);
-	}
-	if (polling)
-		current_thread_info()->status |= TS_POLLING;
-
-	if (!idled)
-		return 0;
-
-	if (ret) {
-		static unsigned long t;
-
-		/* This always fails on some SMP boards running UP kernels.
-		 * Only report the failure the first 5 times.
-		 */
-		if (++t < 5) {
-			printk(KERN_DEBUG "apm_do_idle failed (%d)\n", err);
-			t = jiffies;
-		}
-		return -1;
-	}
-	clock_slowed = (apm_info.bios.flags & APM_IDLE_SLOWS_CLOCK) != 0;
-	return clock_slowed;
-}
-
-/**
- *	apm_do_busy	-	inform the BIOS the CPU is busy
- *
- *	Request that the BIOS brings the CPU back to full performance.
- */
-
-static void apm_do_busy(void)
-{
-	u32 dummy;
-	int err;
-
-	if (clock_slowed || ALWAYS_CALL_BUSY) {
-		(void)apm_bios_call_simple(APM_FUNC_BUSY, 0, 0, &dummy, &err);
-		clock_slowed = 0;
-	}
-}
-
-/*
- * If no process has really been interested in
- * the CPU for some time, we want to call BIOS
- * power management - we probably want
- * to conserve power.
- */
-#define IDLE_CALC_LIMIT	(HZ * 100)
-#define IDLE_LEAKY_MAX	16
-
-static void (*original_pm_idle)(void) __read_mostly;
-
-/**
- * apm_cpu_idle		-	cpu idling for APM capable Linux
- *
- * This is the idling function the kernel executes when APM is available. It
- * tries to do BIOS powermanagement based on the average system idle time.
- * Furthermore it calls the system default idle routine.
- */
-
-static void apm_cpu_idle(void)
-{
-	static int use_apm_idle; /* = 0 */
-	static unsigned int last_jiffies; /* = 0 */
-	static unsigned int last_stime; /* = 0 */
-
-	int apm_idle_done = 0;
-	unsigned int jiffies_since_last_check = jiffies - last_jiffies;
-	unsigned int bucket;
-
-recalc:
-	if (jiffies_since_last_check > IDLE_CALC_LIMIT) {
-		use_apm_idle = 0;
-		last_jiffies = jiffies;
-		last_stime = current->stime;
-	} else if (jiffies_since_last_check > idle_period) {
-		unsigned int idle_percentage;
-
-		idle_percentage = current->stime - last_stime;
-		idle_percentage *= 100;
-		idle_percentage /= jiffies_since_last_check;
-		use_apm_idle = (idle_percentage > idle_threshold);
-		if (apm_info.forbid_idle)
-			use_apm_idle = 0;
-		last_jiffies = jiffies;
-		last_stime = current->stime;
-	}
-
-	bucket = IDLE_LEAKY_MAX;
-
-	while (!need_resched()) {
-		if (use_apm_idle) {
-			unsigned int t;
-
-			t = jiffies;
-			switch (apm_do_idle()) {
-			case 0:
-				apm_idle_done = 1;
-				if (t != jiffies) {
-					if (bucket) {
-						bucket = IDLE_LEAKY_MAX;
-						continue;
-					}
-				} else if (bucket) {
-					bucket--;
-					continue;
-				}
-				break;
-			case 1:
-				apm_idle_done = 1;
-				break;
-			default: /* BIOS refused */
-				break;
-			}
-		}
-		if (original_pm_idle)
-			original_pm_idle();
-		else
-			default_idle();
-		local_irq_disable();
-		jiffies_since_last_check = jiffies - last_jiffies;
-		if (jiffies_since_last_check > idle_period)
-			goto recalc;
-	}
-
-	if (apm_idle_done)
-		apm_do_busy();
-
-	local_irq_enable();
 }
 
 /**
@@ -1872,12 +1691,6 @@ static int __init apm_setup(char *str)
 		if ((strncmp(str, "bounce-interval=", 16) == 0) ||
 		    (strncmp(str, "bounce_interval=", 16) == 0))
 			bounce_interval = simple_strtol(str + 16, NULL, 0);
-		if ((strncmp(str, "idle-threshold=", 15) == 0) ||
-		    (strncmp(str, "idle_threshold=", 15) == 0))
-			idle_threshold = simple_strtol(str + 15, NULL, 0);
-		if ((strncmp(str, "idle-period=", 12) == 0) ||
-		    (strncmp(str, "idle_period=", 12) == 0))
-			idle_period = simple_strtol(str + 12, NULL, 0);
 		invert = (strncmp(str, "no-", 3) == 0) ||
 			(strncmp(str, "no_", 3) == 0);
 		if (invert)
@@ -1889,7 +1702,6 @@ static int __init apm_setup(char *str)
 			power_off = !invert;
 		if (strncmp(str, "smp", 3) == 0) {
 			smp = !invert;
-			idle_threshold = 100;
 		}
 		if ((strncmp(str, "allow-ints", 10) == 0) ||
 		    (strncmp(str, "allow_ints", 10) == 0))
@@ -1986,17 +1798,6 @@ static int __init apm_is_horked_d850md(const struct dmi_system_id *d)
 		       "Disabling APM.\n", d->ident);
 		printk(KERN_INFO "This bug is fixed in bios P15 which is available for\n");
 		printk(KERN_INFO "download from support.intel.com\n");
-	}
-	return 0;
-}
-
-/* Some APM bioses hang on APM idle calls */
-static int __init apm_likes_to_melt(const struct dmi_system_id *d)
-{
-	if (apm_info.forbid_idle == 0) {
-		apm_info.forbid_idle = 1;
-		printk(KERN_INFO "%s machine detected. "
-		       "Disabling APM idle calls.\n", d->ident);
 	}
 	return 0;
 }
@@ -2140,16 +1941,6 @@ static struct dmi_system_id __initdata apm_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 2500"),
 			DMI_MATCH(DMI_BIOS_VENDOR, "Phoenix Technologies LTD"),
 			DMI_MATCH(DMI_BIOS_VERSION, "A11"), },
-	},
-	{	/* APM idle hangs */
-		apm_likes_to_melt, "Jabil AMD",
-		{	DMI_MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
-			DMI_MATCH(DMI_BIOS_VERSION, "0AASNP06"), },
-	},
-	{	/* APM idle hangs */
-		apm_likes_to_melt, "AMI Bios",
-		{	DMI_MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
-			DMI_MATCH(DMI_BIOS_VERSION, "0AASNP05"), },
 	},
 	{	/* Handle problems with APM on Sony Vaio PCG-N505X(DE) */
 		swab_apm_power_in_minutes, "Sony VAIO",
@@ -2380,14 +2171,6 @@ static int __init apm_init(void)
 	if (misc_register(&apm_device))
 		printk(KERN_WARNING "apm: Could not register misc device.\n");
 
-	if (HZ != 100)
-		idle_period = (idle_period * HZ) / 100;
-	if (idle_threshold < 100) {
-		original_pm_idle = pm_idle;
-		pm_idle  = apm_cpu_idle;
-		set_pm_idle = 1;
-	}
-
 	return 0;
 }
 
@@ -2395,15 +2178,6 @@ static void __exit apm_exit(void)
 {
 	int error;
 
-	if (set_pm_idle) {
-		pm_idle = original_pm_idle;
-		/*
-		 * We are about to unload the current idle thread pm callback
-		 * (pm_idle), Wait for all processors to update cached/local
-		 * copies of pm_idle before proceeding.
-		 */
-		cpu_idle_wait();
-	}
 	if (((apm_info.bios.flags & APM_BIOS_DISENGAGED) == 0)
 	    && (apm_info.connection_version > 0x0100)) {
 		error = apm_engage_power_management(APM_DEVICE_ALL, 0);
@@ -2440,12 +2214,6 @@ MODULE_PARM_DESC(broken_psr, "BIOS has a broken GetPowerStatus call");
 module_param(realmode_power_off, bool, 0444);
 MODULE_PARM_DESC(realmode_power_off,
 		"Switch to real mode before powering off");
-module_param(idle_threshold, int, 0444);
-MODULE_PARM_DESC(idle_threshold,
-	"System idle percentage above which to make APM BIOS idle calls");
-module_param(idle_period, int, 0444);
-MODULE_PARM_DESC(idle_period,
-	"Period (in sec/100) over which to caculate the idle percentage");
 module_param(smp, bool, 0444);
 MODULE_PARM_DESC(smp,
 	"Set this to enable APM use on an SMP platform. Use with caution on older systems");
