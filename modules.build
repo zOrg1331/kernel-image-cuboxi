@@ -44,3 +44,6 @@ pf_ring
 xtables-addons
 
 lsadrv
+
+# Deep Packet Inspection
+opendpi
