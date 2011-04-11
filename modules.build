@@ -39,3 +39,6 @@ drbd83
 
 ipset
 e1000e
+
+# Deep Packet Inspection
+opendpi
