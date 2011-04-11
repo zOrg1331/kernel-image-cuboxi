@@ -27,6 +27,10 @@
 
 #include <asm/kvm_host.h>
 
+#ifndef KVM_MMIO_SIZE
+#define KVM_MMIO_SIZE 8
+#endif
+
 /*
  * vcpu->requests bit members
  */
@@ -43,7 +47,6 @@
 #define KVM_REQ_DEACTIVATE_FPU    10
 #define KVM_REQ_EVENT             11
 #define KVM_REQ_APF_HALT          12
-#define KVM_REQ_NMI               13
 
 #define KVM_USERSPACE_IRQ_SOURCE_ID	0
 
@@ -133,7 +136,8 @@ struct kvm_vcpu {
 	int mmio_read_completed;
 	int mmio_is_write;
 	int mmio_size;
-	unsigned char mmio_data[8];
+	int mmio_index;
+	unsigned char mmio_data[KVM_MMIO_SIZE];
 	gpa_t mmio_phys_addr;
 #endif
 
@@ -365,7 +369,6 @@ pfn_t gfn_to_pfn_prot(struct kvm *kvm, gfn_t gfn, bool write_fault,
 		      bool *writable);
 pfn_t gfn_to_pfn_memslot(struct kvm *kvm,
 			 struct kvm_memory_slot *slot, gfn_t gfn);
-int memslot_id(struct kvm *kvm, gfn_t gfn);
 void kvm_release_pfn_dirty(pfn_t);
 void kvm_release_pfn_clean(pfn_t pfn);
 void kvm_set_pfn_dirty(pfn_t pfn);
@@ -595,6 +598,11 @@ static inline void kvm_guest_exit(void)
 {
 	account_system_vtime(current);
 	current->flags &= ~PF_VCPU;
+}
+
+static inline int memslot_id(struct kvm *kvm, gfn_t gfn)
+{
+	return gfn_to_memslot(kvm, gfn)->id;
 }
 
 static inline unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot,
