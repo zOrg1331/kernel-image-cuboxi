@@ -18,6 +18,8 @@
  *   Haiyang Zhang <haiyangz@microsoft.com>
  *   Hank Janssen  <hjanssen@microsoft.com>
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/highmem.h>
@@ -78,14 +80,14 @@ static int netvsc_open(struct net_device *net)
 		/* Open up the device */
 		ret = rndis_filter_open(device_obj);
 		if (ret != 0) {
-			DPRINT_ERR(NETVSC_DRV,
-				   "unable to open device (ret %d).", ret);
+			netdev_err(net, "unable to open device (ret %d).\n",
+				   ret);
 			return ret;
 		}
 
 		netif_start_queue(net);
 	} else {
-		DPRINT_ERR(NETVSC_DRV, "unable to open device...link is down.");
+		netdev_err(net, "unable to open device...link is down.\n");
 	}
 
 	return ret;
@@ -101,7 +103,7 @@ static int netvsc_close(struct net_device *net)
 
 	ret = rndis_filter_close(device_obj);
 	if (ret != 0)
-		DPRINT_ERR(NETVSC_DRV, "unable to close device (ret %d).", ret);
+		netdev_err(net, "unable to close device (ret %d).\n", ret);
 
 	return ret;
 }
@@ -137,9 +139,6 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 	int ret;
 	unsigned int i, num_pages;
 
-	DPRINT_DBG(NETVSC_DRV, "xmit packet - len %d data_len %d",
-		   skb->len, skb->data_len);
-
 	/* Add 1 for skb->data and additional one for RNDIS */
 	num_pages = skb_shinfo(skb)->nr_frags + 1 + 1;
 	if (num_pages > net_device_ctx->avail)
@@ -151,7 +150,7 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 			 net_drv_obj->req_ext_size, GFP_ATOMIC);
 	if (!packet) {
 		/* out of memory, silently drop packet */
-		DPRINT_ERR(NETVSC_DRV, "unable to allocate hv_netvsc_packet");
+		netdev_err(net, "unable to allocate hv_netvsc_packet\n");
 
 		dev_kfree_skb(skb);
 		net->stats.tx_dropped++;
@@ -197,10 +196,6 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
 		net->stats.tx_bytes += skb->len;
 		net->stats.tx_packets++;
 
-		DPRINT_DBG(NETVSC_DRV, "# of xmits %lu total size %lu",
-			   net->stats.tx_packets,
-			   net->stats.tx_bytes);
-
 		net_device_ctx->avail -= num_pages;
 		if (net_device_ctx->avail < PACKET_PAGES_LOWATER)
 			netif_stop_queue(net);
@@ -223,8 +218,8 @@ static void netvsc_linkstatus_callback(struct hv_device *device_obj,
 	struct net_device_context *ndev_ctx;
 
 	if (!net) {
-		DPRINT_ERR(NETVSC_DRV, "got link status but net device "
-				"not initialized yet");
+		netdev_err(net, "got link status but net device "
+				"not initialized yet\n");
 		return;
 	}
 
@@ -254,8 +249,8 @@ static int netvsc_recv_callback(struct hv_device *device_obj,
 	unsigned long flags;
 
 	if (!net) {
-		DPRINT_ERR(NETVSC_DRV, "got receive callback but net device "
-				"not initialized yet");
+		netdev_err(net, "got receive callback but net device"
+			" not initialized yet\n");
 		return 0;
 	}
 
@@ -300,9 +295,6 @@ static int netvsc_recv_callback(struct hv_device *device_obj,
 	 * TODO - use NAPI?
 	 */
 	netif_rx(skb);
-
-	DPRINT_DBG(NETVSC_DRV, "# of recvs %lu total size %lu",
-		   net->stats.rx_packets, net->stats.rx_bytes);
 
 	return 0;
 }
@@ -384,8 +376,7 @@ static int netvsc_probe(struct device *device)
 		free_netdev(net);
 		dev_set_drvdata(device, NULL);
 
-		DPRINT_ERR(NETVSC_DRV, "unable to add netvsc device (ret %d)",
-			   ret);
+		netdev_err(net, "unable to add netvsc device (ret %d)\n", ret);
 		return ret;
 	}
 
@@ -431,7 +422,7 @@ static int netvsc_remove(struct device *device)
 	int ret;
 
 	if (net == NULL) {
-		DPRINT_INFO(NETVSC, "no net device to remove");
+		dev_err(device, "No net device to remove\n");
 		return 0;
 	}
 
@@ -451,7 +442,7 @@ static int netvsc_remove(struct device *device)
 	ret = net_drv_obj->base.dev_rm(device_obj);
 	if (ret != 0) {
 		/* TODO: */
-		DPRINT_ERR(NETVSC, "unable to remove vsc device (ret %d)", ret);
+		netdev_err(net, "unable to remove vsc device (ret %d)\n", ret);
 	}
 
 	free_netdev(net);
@@ -480,16 +471,13 @@ static void netvsc_drv_exit(void)
 		/* Get the device */
 		ret = driver_for_each_device(&drv->driver, NULL,
 					     &current_dev, netvsc_drv_exit_cb);
-		if (ret)
-			DPRINT_WARN(NETVSC_DRV,
-				    "driver_for_each_device returned %d", ret);
 
 		if (current_dev == NULL)
 			break;
 
 		/* Initiate removal from the top-down */
-		DPRINT_INFO(NETVSC_DRV, "unregistering device (%p)...",
-			    current_dev);
+		dev_err(current_dev, "unregistering device (%s)...\n",
+			dev_name(current_dev));
 
 		device_unregister(current_dev);
 	}
@@ -543,7 +531,7 @@ MODULE_DEVICE_TABLE(dmi, hv_netvsc_dmi_table);
 
 static int __init netvsc_init(void)
 {
-	DPRINT_INFO(NETVSC_DRV, "Netvsc initializing....");
+	pr_info("initializing....");
 
 	if (!dmi_check_system(hv_netvsc_dmi_table))
 		return -ENODEV;
