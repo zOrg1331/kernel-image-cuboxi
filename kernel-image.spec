@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt14
+Release: alt15
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Mon Apr 11 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt15
+- Build reiserfs module (ALT 25390)
+- Build dm-multipath.ko
+
 * Thu Mar 31 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt14
 - don't pack unnecessary files in kernel-headers-*
 - Build kernel-doc-* as noarch package [but actually we don't build docs]
