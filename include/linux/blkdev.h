@@ -878,6 +878,13 @@ static inline void blk_flush_plug(struct task_struct *tsk)
 		__blk_flush_plug(tsk, plug);
 }
 
+static inline void blk_add_plug_callback(struct blk_plug *plug,
+					 struct blk_plug_cb *cb)
+{
+	BUG_ON(!cb->callback);
+	list_add_tail(&cb->list, &plug->cb_list);
+}
+
 static inline bool blk_needs_flush_plug(struct task_struct *tsk)
 {
 	struct blk_plug *plug = tsk->plug;
