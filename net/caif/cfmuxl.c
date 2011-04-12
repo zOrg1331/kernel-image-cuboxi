@@ -71,41 +71,6 @@ int cfmuxl_set_uplayer(struct cflayer *layr, struct cflayer *up, u8 linkid)
 	return 0;
 }
 
-bool cfmuxl_is_phy_inuse(struct cflayer *layr, u8 phyid)
-{
-	struct list_head *node;
-	struct cflayer *layer;
-	struct cfmuxl *muxl = container_obj(layr);
-	bool match = false;
-	spin_lock(&muxl->receive_lock);
-
-	list_for_each(node, &muxl->srvl_list) {
-		layer = list_entry(node, struct cflayer, node);
-		if (cfsrvl_phyid_match(layer, phyid)) {
-			match = true;
-			break;
-		}
-
-	}
-	spin_unlock(&muxl->receive_lock);
-	return match;
-}
-
-u8 cfmuxl_get_phyid(struct cflayer *layr, u8 channel_id)
-{
-	struct cflayer *up;
-	int phyid;
-	struct cfmuxl *muxl = container_obj(layr);
-	spin_lock(&muxl->receive_lock);
-	up = get_up(muxl, channel_id);
-	if (up != NULL)
-		phyid = cfsrvl_getphyid(up);
-	else
-		phyid = 0;
-	spin_unlock(&muxl->receive_lock);
-	return phyid;
-}
-
 int cfmuxl_set_dnlayer(struct cflayer *layr, struct cflayer *dn, u8 phyid)
 {
 	struct cfmuxl *muxl = (struct cfmuxl *) layr;
@@ -219,12 +184,12 @@ static int cfmuxl_receive(struct cflayer *layr, struct cfpkt *pkt)
 
 static int cfmuxl_transmit(struct cflayer *layr, struct cfpkt *pkt)
 {
-	int ret;
 	struct cfmuxl *muxl = container_obj(layr);
 	u8 linkid;
 	struct cflayer *dn;
 	struct caif_payload_info *info = cfpkt_info(pkt);
-	dn = get_dn(muxl, cfpkt_info(pkt)->dev_info);
+	BUG_ON(!info);
+	dn = get_dn(muxl, info->dev_info);
 	if (dn == NULL) {
 		pr_warn("Send data on unknown phy ID = %d (0x%x)\n",
 			info->dev_info->id, info->dev_info->id);
@@ -233,11 +198,7 @@ static int cfmuxl_transmit(struct cflayer *layr, struct cfpkt *pkt)
 	info->hdr_len += 1;
 	linkid = info->channel_id;
 	cfpkt_add_head(pkt, &linkid, 1);
-	ret = dn->transmit(dn, pkt);
-	/* Remove MUX protocol header upon error. */
-	if (ret < 0)
-		cfpkt_extr_head(pkt, &linkid, 1);
-	return ret;
+	return dn->transmit(dn, pkt);
 }
 
 static void cfmuxl_ctrlcmd(struct cflayer *layr, enum caif_ctrlcmd ctrl,
