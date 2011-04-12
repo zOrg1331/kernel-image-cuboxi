@@ -1812,17 +1812,6 @@ config APM_DO_ENABLE
 	  T400CDT. This is off by default since most machines do fine without
 	  this feature.
 
-config APM_CPU_IDLE
-	bool "Make CPU Idle calls when idle"
-	---help---
-	  Enable calls to APM CPU Idle/CPU Busy inside the kernel's idle loop.
-	  On some machines, this can activate improved power savings, such as
-	  a slowed CPU clock rate, when the machine is idle. These idle calls
-	  are made after the idle loop has run for some length of time (e.g.,
-	  333 mS). On some machines, this will cause a hang at boot time or
-	  whenever the CPU becomes idle. (On machines with more than one CPU,
-	  this option does nothing.)
-
 config APM_DISPLAY_BLANK
 	bool "Enable console blanking using APM"
 	---help---
