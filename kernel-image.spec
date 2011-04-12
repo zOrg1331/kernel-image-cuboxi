@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.39
-Release: alt1.rc2.1
+Release: alt1.rc3
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Apr 12 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.39-alt1.rc3
+- rc3
+
 * Fri Apr 08 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.39-alt1.rc2.1
 - config updated a little
 
