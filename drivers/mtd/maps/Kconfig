@@ -260,6 +260,15 @@ config MTD_BCM963XX
 	  Support for parsing CFE image tag and creating MTD partitions on
 	  Broadcom BCM63xx boards.
 
+config MTD_LANTIQ
+	tristate "Lantiq SoC NOR support"
+	depends on LANTIQ
+	select MTD_PARTITIONS
+	help
+	  Lantiq SoCs have a EBU (External Bus Unit). This IP allows to attach
+	  a number of different peripherals to the SoC. This driver adds
+	  support for NOR chips to be added.
+
 config MTD_DILNETPC
 	tristate "CFI Flash device mapped on DIL/Net PC"
 	depends on X86 && MTD_PARTITIONS && MTD_CFI_INTELEXT && BROKEN
