@@ -2644,6 +2644,7 @@ void blk_start_plug(struct blk_plug *plug)
 
 	plug->magic = PLUG_MAGIC;
 	INIT_LIST_HEAD(&plug->list);
+	INIT_LIST_HEAD(&plug->cb_list);
 	plug->should_sort = 0;
 
 	/*
@@ -2673,19 +2674,24 @@ static void flush_plug_list(struct blk_plug *plug)
 	struct request_queue *q;
 	unsigned long flags;
 	struct request *rq;
+	LIST_HEAD(list);
 
 	BUG_ON(plug->magic != PLUG_MAGIC);
 
 	if (list_empty(&plug->list))
 		return;
 
-	if (plug->should_sort)
-		list_sort(NULL, &plug->list, plug_rq_cmp);
+	list_splice_init(&plug->list, &list);
+
+	if (plug->should_sort) {
+		list_sort(NULL, &list, plug_rq_cmp);
+		plug->should_sort = 0;
+	}
 
 	q = NULL;
 	local_irq_save(flags);
-	while (!list_empty(&plug->list)) {
-		rq = list_entry_rq(plug->list.next);
+	while (!list_empty(&list)) {
+		rq = list_entry_rq(list.next);
 		list_del_init(&rq->queuelist);
 		BUG_ON(!(rq->cmd_flags & REQ_ON_PLUG));
 		BUG_ON(!rq->q);
@@ -2713,13 +2719,31 @@ static void flush_plug_list(struct blk_plug *plug)
 		spin_unlock(q->queue_lock);
 	}
 
-	BUG_ON(!list_empty(&plug->list));
 	local_irq_restore(flags);
+}
+
+static void flush_plug_callbacks(struct blk_plug *plug)
+{
+	LIST_HEAD(list);
+
+	if (list_empty(&plug->cb_list))
+		return;
+
+	list_splice_init(&plug->cb_list, &list);
+
+	while (!list_empty(&list)) {
+		struct blk_plug_cb *cb;
+
+		cb = list_first_entry(list.next, struct blk_plug_cb, list);
+		list_del(&cb->list);
+		cb->callback(cb);
+	}
 }
 
 static void __blk_finish_plug(struct task_struct *tsk, struct blk_plug *plug)
 {
 	flush_plug_list(plug);
+	flush_plug_callbacks(plug);
 
 	if (plug == tsk->plug)
 		tsk->plug = NULL;
