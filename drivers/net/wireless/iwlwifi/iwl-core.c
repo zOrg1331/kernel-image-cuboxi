@@ -2,7 +2,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2008 - 2010 Intel Corporation. All rights reserved.
+ * Copyright(c) 2008 - 2011 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -890,10 +890,8 @@ void iwl_print_rx_config_cmd(struct iwl_priv *priv,
 	IWL_DEBUG_RADIO(priv, "u16 assoc_id: 0x%x\n", le16_to_cpu(rxon->assoc_id));
 }
 #endif
-/**
- * iwl_irq_handle_error - called for HW or SW error interrupt from card
- */
-void iwl_irq_handle_error(struct iwl_priv *priv)
+
+void iwlagn_fw_error(struct iwl_priv *priv, bool ondemand)
 {
 	unsigned int reload_msec;
 	unsigned long reload_jiffies;
@@ -904,18 +902,62 @@ void iwl_irq_handle_error(struct iwl_priv *priv)
 	/* Cancel currently queued command. */
 	clear_bit(STATUS_HCMD_ACTIVE, &priv->status);
 
+	/* Keep the restart process from trying to send host
+	 * commands by clearing the ready bit */
+	clear_bit(STATUS_READY, &priv->status);
+
+	wake_up_interruptible(&priv->wait_command_queue);
+
+	if (!ondemand) {
+		/*
+		 * If firmware keep reloading, then it indicate something
+		 * serious wrong and firmware having problem to recover
+		 * from it. Instead of keep trying which will fill the syslog
+		 * and hang the system, let's just stop it
+		 */
+		reload_jiffies = jiffies;
+		reload_msec = jiffies_to_msecs((long) reload_jiffies -
+					(long) priv->reload_jiffies);
+		priv->reload_jiffies = reload_jiffies;
+		if (reload_msec <= IWL_MIN_RELOAD_DURATION) {
+			priv->reload_count++;
+			if (priv->reload_count >= IWL_MAX_CONTINUE_RELOAD_CNT) {
+				IWL_ERR(priv, "BUG_ON, Stop restarting\n");
+				return;
+			}
+		} else
+			priv->reload_count = 0;
+	}
+
+	if (!test_bit(STATUS_EXIT_PENDING, &priv->status)) {
+		if (priv->cfg->mod_params->restart_fw) {
+			IWL_DEBUG(priv, IWL_DL_FW_ERRORS,
+				  "Restarting adapter due to uCode error.\n");
+			queue_work(priv->workqueue, &priv->restart);
+		} else
+			IWL_DEBUG(priv, IWL_DL_FW_ERRORS,
+				  "Detected FW error, but not restarting\n");
+	}
+}
+
+/**
+ * iwl_irq_handle_error - called for HW or SW error interrupt from card
+ */
+void iwl_irq_handle_error(struct iwl_priv *priv)
+{
 	/* W/A for WiFi/WiMAX coex and WiMAX own the RF */
 	if (priv->cfg->internal_wimax_coex &&
 	    (!(iwl_read_prph(priv, APMG_CLK_CTRL_REG) &
 			APMS_CLK_VAL_MRB_FUNC_MODE) ||
 	     (iwl_read_prph(priv, APMG_PS_CTRL_REG) &
 			APMG_PS_CTRL_VAL_RESET_REQ))) {
-		wake_up_interruptible(&priv->wait_command_queue);
 		/*
-		 *Keep the restart process from trying to send host
-		 * commands by clearing the INIT status bit
+		 * Keep the restart process from trying to send host
+		 * commands by clearing the ready bit.
 		 */
 		clear_bit(STATUS_READY, &priv->status);
+		clear_bit(STATUS_HCMD_ACTIVE, &priv->status);
+		wake_up_interruptible(&priv->wait_command_queue);
 		IWL_ERR(priv, "RF is used by WiMAX\n");
 		return;
 	}
@@ -923,50 +965,17 @@ void iwl_irq_handle_error(struct iwl_priv *priv)
 	IWL_ERR(priv, "Loaded firmware version: %s\n",
 		priv->hw->wiphy->fw_version);
 
-	priv->cfg->ops->lib->dump_nic_error_log(priv);
-	if (priv->cfg->ops->lib->dump_csr)
-		priv->cfg->ops->lib->dump_csr(priv);
-	if (priv->cfg->ops->lib->dump_fh)
-		priv->cfg->ops->lib->dump_fh(priv, NULL, false);
-	priv->cfg->ops->lib->dump_nic_event_log(priv, false, NULL, false);
+	iwl_dump_nic_error_log(priv);
+	iwl_dump_csr(priv);
+	iwl_dump_fh(priv, NULL, false);
+	iwl_dump_nic_event_log(priv, false, NULL, false);
 #ifdef CONFIG_IWLWIFI_DEBUG
 	if (iwl_get_debug_level(priv) & IWL_DL_FW_ERRORS)
 		iwl_print_rx_config_cmd(priv,
 					&priv->contexts[IWL_RXON_CTX_BSS]);
 #endif
 
-	wake_up_interruptible(&priv->wait_command_queue);
-
-	/* Keep the restart process from trying to send host
-	 * commands by clearing the INIT status bit */
-	clear_bit(STATUS_READY, &priv->status);
-
-	/*
-	 * If firmware keep reloading, then it indicate something
-	 * serious wrong and firmware having problem to recover
-	 * from it. Instead of keep trying which will fill the syslog
-	 * and hang the system, let's just stop it
-	 */
-	reload_jiffies = jiffies;
-	reload_msec = jiffies_to_msecs((long) reload_jiffies -
-				(long) priv->reload_jiffies);
-	priv->reload_jiffies = reload_jiffies;
-	if (reload_msec <= IWL_MIN_RELOAD_DURATION) {
-		priv->reload_count++;
-		if (priv->reload_count >= IWL_MAX_CONTINUE_RELOAD_CNT) {
-			IWL_ERR(priv, "BUG_ON, Stop restarting\n");
-			return;
-		}
-	} else
-		priv->reload_count = 0;
-
-	if (!test_bit(STATUS_EXIT_PENDING, &priv->status)) {
-		IWL_DEBUG(priv, IWL_DL_FW_ERRORS,
-			  "Restarting adapter due to uCode error.\n");
-
-		if (priv->cfg->mod_params->restart_fw)
-			queue_work(priv->workqueue, &priv->restart);
-	}
+	iwlagn_fw_error(priv, false);
 }
 
 static int iwl_apm_stop_master(struct iwl_priv *priv)
@@ -1040,7 +1049,6 @@ int iwl_apm_init(struct iwl_priv *priv)
 	/*
 	 * Enable HAP INTA (interrupt from management bus) to
 	 * wake device's PCI Express link L1a -> L0s
-	 * NOTE:  This is no-op for 3945 (non-existent bit)
 	 */
 	iwl_set_bit(priv, CSR_HW_IF_CONFIG_REG,
 				    CSR_HW_IF_CONFIG_REG_BIT_HAP_WAKE_L1A);
@@ -1053,20 +1061,18 @@ int iwl_apm_init(struct iwl_priv *priv)
 	 * If not (unlikely), enable L0S, so there is at least some
 	 *    power savings, even without L1.
 	 */
-	if (priv->cfg->base_params->set_l0s) {
-		lctl = iwl_pcie_link_ctl(priv);
-		if ((lctl & PCI_CFG_LINK_CTRL_VAL_L1_EN) ==
-					PCI_CFG_LINK_CTRL_VAL_L1_EN) {
-			/* L1-ASPM enabled; disable(!) L0S  */
-			iwl_set_bit(priv, CSR_GIO_REG,
-					CSR_GIO_REG_VAL_L0S_ENABLED);
-			IWL_DEBUG_POWER(priv, "L1 Enabled; Disabling L0S\n");
-		} else {
-			/* L1-ASPM disabled; enable(!) L0S */
-			iwl_clear_bit(priv, CSR_GIO_REG,
-					CSR_GIO_REG_VAL_L0S_ENABLED);
-			IWL_DEBUG_POWER(priv, "L1 Disabled; Enabling L0S\n");
-		}
+	lctl = iwl_pcie_link_ctl(priv);
+	if ((lctl & PCI_CFG_LINK_CTRL_VAL_L1_EN) ==
+				PCI_CFG_LINK_CTRL_VAL_L1_EN) {
+		/* L1-ASPM enabled; disable(!) L0S  */
+		iwl_set_bit(priv, CSR_GIO_REG,
+				CSR_GIO_REG_VAL_L0S_ENABLED);
+		IWL_DEBUG_POWER(priv, "L1 Enabled; Disabling L0S\n");
+	} else {
+		/* L1-ASPM disabled; enable(!) L0S */
+		iwl_clear_bit(priv, CSR_GIO_REG,
+				CSR_GIO_REG_VAL_L0S_ENABLED);
+		IWL_DEBUG_POWER(priv, "L1 Disabled; Enabling L0S\n");
 	}
 
 	/* Configure analog phase-lock-loop before activating to D0A */
@@ -1094,21 +1100,13 @@ int iwl_apm_init(struct iwl_priv *priv)
 	}
 
 	/*
-	 * Enable DMA and BSM (if used) clocks, wait for them to stabilize.
-	 * BSM (Boostrap State Machine) is only in 3945 and 4965;
-	 * later devices (i.e. 5000 and later) have non-volatile SRAM,
-	 * and don't need BSM to restore data after power-saving sleep.
+	 * Enable DMA clock and wait for it to stabilize.
 	 *
 	 * Write to "CLK_EN_REG"; "1" bits enable clocks, while "0" bits
 	 * do not disable clocks.  This preserves any hardware bits already
 	 * set by default in "CLK_CTRL_REG" after reset.
 	 */
-	if (priv->cfg->base_params->use_bsm)
-		iwl_write_prph(priv, APMG_CLK_EN_REG,
-			APMG_CLK_VAL_DMA_CLK_RQT | APMG_CLK_VAL_BSM_CLK_RQT);
-	else
-		iwl_write_prph(priv, APMG_CLK_EN_REG,
-			APMG_CLK_VAL_DMA_CLK_RQT);
+	iwl_write_prph(priv, APMG_CLK_EN_REG, APMG_CLK_VAL_DMA_CLK_RQT);
 	udelay(20);
 
 	/* Disable L1-Active */
@@ -1430,7 +1428,6 @@ void iwl_mac_remove_interface(struct ieee80211_hw *hw,
 
 	iwl_teardown_interface(priv, vif, false);
 
-	memset(priv->bssid, 0, ETH_ALEN);
 	mutex_unlock(&priv->mutex);
 
 	IWL_DEBUG_MAC80211(priv, "leave\n");
@@ -1756,15 +1753,7 @@ int iwl_force_reset(struct iwl_priv *priv, int mode, bool external)
 			break;
 		}
 		IWL_ERR(priv, "On demand firmware reload\n");
-		/* Set the FW error flag -- cleared on iwl_down */
-		set_bit(STATUS_FW_ERROR, &priv->status);
-		wake_up_interruptible(&priv->wait_command_queue);
-		/*
-		 * Keep the restart process from trying to send host
-		 * commands by clearing the INIT status bit
-		 */
-		clear_bit(STATUS_READY, &priv->status);
-		queue_work(priv->workqueue, &priv->restart);
+		iwlagn_fw_error(priv, true);
 		break;
 	}
 	return 0;
@@ -1782,6 +1771,15 @@ int iwl_mac_change_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	newtype = ieee80211_iftype_p2p(newtype, newp2p);
 
 	mutex_lock(&priv->mutex);
+
+	if (!ctx->vif || !iwl_is_ready_rf(priv)) {
+		/*
+		 * Huh? But wait ... this can maybe happen when
+		 * we're in the middle of a firmware restart!
+		 */
+		err = -EBUSY;
+		goto out;
+	}
 
 	interface_modes = ctx->interface_modes | ctx->exclusive_interface_modes;
 
@@ -1810,6 +1808,7 @@ int iwl_mac_change_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	/* success */
 	iwl_teardown_interface(priv, vif, true);
 	vif->type = newtype;
+	vif->p2p = newp2p;
 	err = iwl_setup_interface(priv, ctx);
 	WARN_ON(err);
 	/*
