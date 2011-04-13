@@ -2572,7 +2572,7 @@ static s32 atl1_up(struct atl1_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 	int err;
-	int irq_flags = IRQF_SAMPLE_RANDOM;
+	int irq_flags = 0;
 
 	/* hardware has been reset, we need to reload some things */
 	atlx_set_multi(netdev);
@@ -2985,6 +2985,11 @@ static int __devinit atl1_probe(struct pci_dev *pdev,
 	netdev->features = NETIF_F_HW_CSUM;
 	netdev->features |= NETIF_F_SG;
 	netdev->features |= (NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX);
+
+	netdev->hw_features = NETIF_F_HW_CSUM | NETIF_F_SG | NETIF_F_TSO;
+
+	/* is this valid? see atl1_setup_mac_ctrl() */
+	netdev->features |= NETIF_F_RXCSUM;
 
 	/*
 	 * patch for some L1 of old version,
@@ -3595,12 +3600,6 @@ static int atl1_set_pauseparam(struct net_device *netdev,
 	return 0;
 }
 
-/* FIXME: is this right? -- CHS */
-static u32 atl1_get_rx_csum(struct net_device *netdev)
-{
-	return 1;
-}
-
 static void atl1_get_strings(struct net_device *netdev, u32 stringset,
 	u8 *data)
 {
@@ -3668,13 +3667,9 @@ static const struct ethtool_ops atl1_ethtool_ops = {
 	.set_ringparam		= atl1_set_ringparam,
 	.get_pauseparam		= atl1_get_pauseparam,
 	.set_pauseparam		= atl1_set_pauseparam,
-	.get_rx_csum		= atl1_get_rx_csum,
-	.set_tx_csum		= ethtool_op_set_tx_hw_csum,
 	.get_link		= ethtool_op_get_link,
-	.set_sg			= ethtool_op_set_sg,
 	.get_strings		= atl1_get_strings,
 	.nway_reset		= atl1_nway_reset,
 	.get_ethtool_stats	= atl1_get_ethtool_stats,
 	.get_sset_count		= atl1_get_sset_count,
-	.set_tso		= ethtool_op_set_tso,
 };
