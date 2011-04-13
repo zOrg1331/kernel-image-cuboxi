@@ -20,8 +20,6 @@ extern int dump_fpu(struct pt_regs *, elf_fpregset_t *);
 
 /* platform dependent support */
 
-EXPORT_SYMBOL(__ioremap);
-EXPORT_SYMBOL(iounmap);
 EXPORT_SYMBOL(dump_fpu);
 
 EXPORT_SYMBOL(ip_fast_csum);
@@ -30,13 +28,6 @@ EXPORT_SYMBOL(kernel_thread);
 
 /* Networking helper routines. */
 EXPORT_SYMBOL(csum_partial_copy_nocheck);
-
-/* The following are special because they're not called
-   explicitly (the C compiler generates them).  Fortunately,
-   their interface isn't gonna change any time soon now, so
-   it's OK to leave it out of version control.  */
-EXPORT_SYMBOL(memcpy);
-EXPORT_SYMBOL(memset);
 
 /*
  * libgcc functions - functions that are used internally by the
