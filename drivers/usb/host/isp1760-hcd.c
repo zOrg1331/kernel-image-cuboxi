@@ -295,7 +295,7 @@ static void alloc_mem(struct usb_hcd *hcd, struct isp1760_qtd *qtd)
 	}
 
 	dev_err(hcd->self.controller,
-				"%s: Can not allocate %lu bytes of memory\n"
+				"%s: Cannot allocate %zu bytes of memory\n"
 				"Current memory map:\n",
 				__func__, qtd->length);
 	for (i = 0; i < BLOCKS; i++) {
@@ -1676,12 +1676,14 @@ static irqreturn_t isp1760_irq(struct usb_hcd *hcd)
 	if (unlikely(!imask))
 		goto leave;
 
-	reg_write32(hcd->regs, HC_INTERRUPT_REG, imask);
 	if (imask & (HC_ATL_INT | HC_SOT_INT))
 		do_atl_int(hcd);
 
 	if (imask & HC_INTL_INT)
 		do_intl_int(hcd);
+
+	/* Clear interrupt mask on device after the work is done */
+	reg_write32(hcd->regs, HC_INTERRUPT_REG, imask);
 
 	irqret = IRQ_HANDLED;
 leave:
