@@ -12,7 +12,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab088
+%define ovzver 028stab089
 %define ovzrel 1
 
 %if !%{buildup}
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 238.5.1%{?dist}%{?buildid}
+%define release 238.9.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -6347,6 +6347,34 @@ Patch26285: linux-2.6-net-core-clear-allocs-for-privileged-ethtool-actions.patch
 Patch26286: linux-2.6-net-fix-unix-socket-local-dos.patch
 Patch26287: linux-2.6-net-be2net-fix-missing-trans_start-update.patch
 Patch26288: linux-2.6-x86_64-vdso-fix-gtod-via-export-of-sysctl_vsyscall.patch
+Patch26289: linux-2.6-net-bonding-convert-netpoll-tx-blocking-to-a-counter.patch
+Patch26290: linux-2.6-fs-gfs2-remove-iopen-glocks-from-cache-on-delete-fail.patch
+Patch26291: linux-2.6-misc-add-bootmem_debug-kernel-parameter.patch
+Patch26292: linux-2.6-misc-add-ignore_loglevel-kernel-parameter.patch
+Patch26293: linux-2.6-net-gro-reset-dev-pointer-on-reuse.patch
+Patch26294: linux-2.6-net-cnic-fix-big-endian-bug-with-device-page-tables.patch
+Patch26295: linux-2.6-scsi-device_handler-fix-alua_rtpg-port-group-id-check.patch
+Patch26296: linux-2.6-mm-fix-install_special_mapping-skips-security_file_mmap.patch
+Patch26297: linux-2.6-fs-nfs-pure-nfs-client-performance-using-odirect.patch
+Patch26298: linux-2.6-message-mptfusion-add-required-mptctl_release-call.patch
+Patch26299: linux-2.6-media-dvb-fix-av7110-negative-array-offset.patch
+Patch26300: linux-2.6-sound-alsa-cache-mixer-values-on-usb-audio-devices.patch
+Patch26301: linux-2.6-x86-fix-amd-family-0x15-guest-boot-issue-on-64-bit-host.patch
+Patch26302: linux-2.6-fs-partitions-validate-map_count-in-mac-part-tables.patch
+Patch26303: linux-2.6-misc-vmware-increase-apic_calibration_diff-to-10000.patch
+Patch26304: linux-2.6-x86_64-use-u32-not-long-to-set-reset-vector-back-to-0.patch
+Patch26305: linux-2.6-misc-vdso-export-wall_to_monotonic.patch
+Patch26306: linux-2.6-s390-remove-task_show_regs.patch
+Patch26307: linux-2.6-fs-nfs-fix-use-of-slab-alloc-d-pages-in-skb-frag-list.patch
+Patch26308: linux-2.6-message-mptfusion-fix-msgcontext-in-mptctl_hp_hostinfo.patch
+Patch26309: linux-2.6-md-dm-mpath-flush-workqueues-before-suspend-completes.patch
+Patch26310: linux-2.6-md-dm-mpath-add-mutex-to-sync-adding-and-flushing-work.patch
+Patch26311: linux-2.6-md-dm-mpath-prevent-io-from-work-queue-while-suspended.patch
+Patch26312: linux-2.6-md-dm-mpath-pass-struct-pgpath-to-pg-init-done.patch
+Patch26313: linux-2.6-md-dm-mpath-skip-activate_path-for-failed-paths.patch
+Patch26314: linux-2.6-md-dm-mpath-hold-io-until-all-pg_inits-completed.patch
+Patch26315: linux-2.6-md-dm-mpath-wait-for-pg_init-completion-on-suspend.patch
+Patch26316: linux-2.6-md-dm-mpath-fix-null-deref-when-path-parameter-missing.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -12586,6 +12614,34 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch26286 -p1
 %patch26287 -p1
 %patch26288 -p1
+%patch26289 -p1
+%patch26290 -p1
+%patch26291 -p1
+%patch26292 -p1
+%patch26293 -p1
+%patch26294 -p1
+%patch26295 -p1
+%patch26296 -p1
+%patch26297 -p1
+%patch26298 -p1
+%patch26299 -p1
+%patch26300 -p1
+%patch26301 -p1
+%patch26302 -p1
+%patch26303 -p1
+%patch26304 -p1
+%patch26305 -p1
+%patch26306 -p1
+%patch26307 -p1
+%patch26308 -p1
+%patch26309 -p1
+%patch26310 -p1
+%patch26311 -p1
+%patch26312 -p1
+%patch26313 -p1
+%patch26314 -p1
+%patch26315 -p1
+%patch26316 -p1
 
 %patch30000 -p1
 %patch30001 -p1

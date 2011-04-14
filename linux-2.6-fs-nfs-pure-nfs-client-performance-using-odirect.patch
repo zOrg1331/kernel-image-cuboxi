@@ -1,0 +1,53 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 4 Jan 2011 18:38:37 -0500
+Subject: [fs] nfs: pure nfs client performance using odirect
+Message-id: <1294166317-5086-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 31033
+O-Subject: [RHEL5.7 PATCH] BZ#643441: nfs: pure nfs client performance using
+	odirect.
+Bugzilla: 643441
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+
+From: Arun Bharadwaj <arun@linux.vnet.ibm.com>
+
+An application that's doing O_DIRECT can't return from a write call
+without ensuring that the server has committed it to disk. What
+the client typically does is issue all of the WRITE calls that it
+can and then a COMMIT before returning. If the writes are smaller
+than the wsize however, it'll just do stable write call to
+the server so that it won't have to follow up with a commit.
+
+There's a corner case in the code however, we currently will do
+the unstable write/commit when we could get away with a stable
+write. This (fairly obvious) patch fixes that corner case.
+
+IBM pushed the upstream version of this patch to Trond and it's
+slated for inclusion in 2.6.37.
+
+-----------------------[snip]-------------------
+
+When an application opens a file with O_DIRECT flag, if the size of
+the data that is written is equal to wsize, the client sends a
+WRITE RPC with stable flag set to UNSTABLE followed by a single
+COMMIT RPC rather than sending a single WRITE RPC with the stable
+flag set to FILE_SYNC. This a bug.
+
+Patch to fix this.
+
+Signed-off-by: Arun R Bharadwaj <arun@linux.vnet.ibm.com>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Upstream-commit: b47d19de2c714020ba8f5545a6e7d4968f37eb45
+
+diff --git a/fs/nfs/direct.c b/fs/nfs/direct.c
+index 83aaf42..4421dc8 100644
+--- a/fs/nfs/direct.c
++++ b/fs/nfs/direct.c
+@@ -720,7 +720,7 @@ static ssize_t nfs_direct_write(struct kiocb *iocb, unsigned long user_addr, siz
+ 		goto out;
+ 	nfs_alloc_commit_data(dreq);
+ 
+-	if (dreq->commit_data == NULL || count < wsize)
++	if (dreq->commit_data == NULL || count <= wsize)
+ 		sync = FLUSH_STABLE;
+ 
+ 	dreq->inode = inode;

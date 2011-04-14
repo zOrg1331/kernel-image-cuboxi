@@ -1,0 +1,44 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 4 Feb 2011 20:21:32 -0500
+Subject: [net] gro: reset dev pointer on reuse
+Message-id: <20110204202131.GA14951@gospo.rdu.redhat.com>
+Patchwork-id: 33078
+O-Subject: Re: [RHEL5 PATCH RHEL5.7] gro: Reset dev pointer on reuse
+Bugzilla: 600350
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Customers reported panics with GRO and VLANs on two different 10GbE
+adapters.  It appeared to be related to the adapters being in promiscous
+mode and receiving a frame tagged for a VLAN for which they were not a
+member.  Herbert took a look and discovered that we were not resetting
+skb->dev in the case where the skbuff might be reused and proposed this
+patch:
+
+66c46d741e2e60f0e8b625b80edb0ab820c46d7a gro: Reset dev pointer on reuse
+
+I suggested to Herbert that we should clear the input_dev field as well
+and he agreed.  The upstream patch for this was here:
+
+6d152e23ad1a7a5b40fef1f42e017d66e6115159 gro: reset skb_iif on reuse
+
+The first patch was tested by one of the reporters and resolves the
+issue.  The second patch should be added, but no crashes have been
+reported without it.
+
+This will resolve RHBZ 600350.
+
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 88313c8..a2791c5 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2212,6 +2212,8 @@ void napi_reuse_skb(struct napi_struct *napi, struct sk_buff *skb)
+ {
+ 	__skb_pull(skb, skb_headlen(skb));
+ 	skb_reserve(skb, NET_IP_ALIGN - skb_headroom(skb));
++	skb->dev = napi->dev;
++	skb->input_dev = NULL;
+ 
+ 	napi->skb = skb;
+ }

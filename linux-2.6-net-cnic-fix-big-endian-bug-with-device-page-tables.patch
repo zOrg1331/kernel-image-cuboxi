@@ -1,0 +1,90 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 31 Jan 2011 14:42:41 -0500
+Subject: [net] cnic: fix big endian bug with device page tables
+Message-id: <20110131143750.5104.33099.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 33013
+O-Subject: [PATCH RHEL5.7 BZ669527] cnic: Fix big endian bug
+Bugzilla: 669527
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=669527
+
+Description:
+------------
+The chip's page tables did not set up properly on big endian machines,
+causing EEH errors on PPC machines.
+
+Reported-by: Breno Leitao <leitao@linux.vnet.ibm.com>
+Signed-off-by: Michael Chan <mchan@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+RHEL Version Found:
+-------------------
+RHEL 5.6
+
+Brew:
+-----
+https://brewweb.devel.redhat.com/taskinfo?taskID=3073031
+
+Upstream:
+---------
+Commit:
+
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/davem/net-next-2.6.git;a=commitdiff;h=5138826b52f8bc441770
+
+Test Status:
+------------
+
+Tested by the IBM ppc stress test team.
+
+---------------------------------------------------------------
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/cnic.c b/drivers/net/cnic.c
+index e1dfc86..cf79803 100644
+--- a/drivers/net/cnic.c
++++ b/drivers/net/cnic.c
+@@ -694,13 +694,13 @@ static void cnic_free_dma(struct cnic_dev *dev, struct cnic_dma *dma)
+ static void cnic_setup_page_tbl(struct cnic_dev *dev, struct cnic_dma *dma)
+ {
+ 	int i;
+-	u32 *page_table = dma->pgtbl;
++	__le32 *page_table = (__le32 *) dma->pgtbl;
+ 
+ 	for (i = 0; i < dma->num_pages; i++) {
+ 		/* Each entry needs to be in big endian format. */
+-		*page_table = (u32) ((u64) dma->pg_map_arr[i] >> 32);
++		*page_table = cpu_to_le32((u64) dma->pg_map_arr[i] >> 32);
+ 		page_table++;
+-		*page_table = (u32) dma->pg_map_arr[i];
++		*page_table = cpu_to_le32(dma->pg_map_arr[i] & 0xffffffff);
+ 		page_table++;
+ 	}
+ }
+@@ -708,13 +708,13 @@ static void cnic_setup_page_tbl(struct cnic_dev *dev, struct cnic_dma *dma)
+ static void cnic_setup_page_tbl_le(struct cnic_dev *dev, struct cnic_dma *dma)
+ {
+ 	int i;
+-	u32 *page_table = dma->pgtbl;
++	__le32 *page_table = (__le32 *) dma->pgtbl;
+ 
+ 	for (i = 0; i < dma->num_pages; i++) {
+ 		/* Each entry needs to be in little endian format. */
+-		*page_table = dma->pg_map_arr[i] & 0xffffffff;
++		*page_table = cpu_to_le32(dma->pg_map_arr[i] & 0xffffffff);
+ 		page_table++;
+-		*page_table = (u32) ((u64) dma->pg_map_arr[i] >> 32);
++		*page_table = cpu_to_le32((u64) dma->pg_map_arr[i] >> 32);
+ 		page_table++;
+ 	}
+ }

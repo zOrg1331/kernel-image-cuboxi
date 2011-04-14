@@ -1,0 +1,53 @@
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Tue, 8 Feb 2011 18:49:05 -0500
+Subject: [md] dm-mpath: pass struct pgpath to pg init done
+Message-id: <1297190949-29149-6-git-send-email-snitzer@redhat.com>
+Patchwork-id: 33172
+O-Subject: [RHEL5.7 PATCH 4/8] dm mpath: pass struct pgpath to pg init done
+Bugzilla: 673058
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+BZ 673058
+
+Upstream commit 83c0d5d5388a8d45f7a45e0ec34adc52a78c81ad
+Author: Moger, Babu <Babu.Moger@lsi.com>
+Date:   Sat Mar 6 02:29:45 2010 +0000
+
+    dm mpath: pass struct pgpath to pg init done
+
+    This patch removes some unnecessary argument casting. There is no
+    functional change with this patch.
+
+    Passes 'struct pgpath' through to pg_init_done() instead of the enclosed
+    'struct dm_path'.
+
+    Tested the changes with LSI storage..
+
+    CC: Chandra Seetharaman <chandra.seetharaman@us.ibm.com>
+    Signed-off-by: Babu Moger <babu.moger@lsi.com>
+    Acked-by: Kiyoshi Ueda <k-ueda@ct.jp.nec.com>
+    Signed-off-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 3072c6d..c49bc0e 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -1184,8 +1184,7 @@ void dm_pg_init_complete(struct path *path, unsigned err_flags)
+ 
+ static void pg_init_done(void *data, int errors)
+ {
+-	struct path *path = data;
+-	struct pgpath *pgpath = path_to_pgpath(path);
++	struct pgpath *pgpath = data;
+ 	struct priority_group *pg = pgpath->pg;
+ 	struct multipath *m = pg->m;
+ 	unsigned long flags;
+@@ -1259,7 +1258,7 @@ static void activate_path(void *data)
+ 	struct pgpath *pgpath = (struct pgpath *) data;
+ 
+ 	scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
+-				pg_init_done, &pgpath->path);
++				pg_init_done, pgpath);
+ }
+ 
+ /*

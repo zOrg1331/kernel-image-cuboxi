@@ -1,0 +1,98 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Tue, 11 Jan 2011 11:59:09 -0500
+Subject: [misc] add ignore_loglevel kernel parameter
+Message-id: <1294747149-25274-2-git-send-email-amwang@redhat.com>
+Patchwork-id: 31473
+O-Subject: [RHEL5 Patch 2/2] Add "ignore_loglevel" kernel parameter
+Bugzilla: 662102
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=662102
+(This patch is not to fix this bug, but to debug it.)
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=3017179
+
+Description:
+
+This patch add "ignore_loglevel" to RHEL5, so that we can
+get more messages during boot.
+
+Upstream status:
+
+	commit c4772d99300a9fc13c86aaa370e630c5973664f6
+	Author: Ingo Molnar <mingo@elte.hu>
+	Date:   Thu Jan 31 22:45:23 2008 +0100
+
+	    debug: turn ignore_loglevel into an early param
+
+	    i was debugging early crashes and wondered where all the printks
+	    went. The reason: ignore_loglevel_setup() was not called yet ...
+
+	commit 99eea6a105106a94758724ccce996607f60bc0f2
+	Author: Adrian Bunk <bunk@stusta.de>
+	Date:   Fri Dec 22 01:07:00 2006 -0800
+
+	    [PATCH] make kernel/printk.c:ignore_loglevel_setup() static
+
+	commit 792908225064b1d841a8990b9d1d1cfc4e0e5bb2
+	Author: Ingo Molnar <mingo@elte.hu>
+	Date:   Wed Dec 6 20:40:51 2006 -0800
+
+	    [PATCH] add ignore_loglevel boot option
+
+Test status:
+I can get the desired debugging messages after this patch.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 5c2c271..e2cd125 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -703,6 +703,10 @@ running once the system is up.
+ 			MONITOR/MWAIT idle loop anyways.  Performance should 
+ 			be the same as idle=poll.
+ 
++	ignore_loglevel [KNL]
++			Ignore loglevel setting - this will print /all/
++			kernel messages to the console. Useful for debugging.
++
+ 	ihash_entries=	[KNL]
+ 			Set number of hash buckets for inode cache.
+ 
+diff --git a/kernel/printk.c b/kernel/printk.c
+index b6bdd58..edac3d7 100644
+--- a/kernel/printk.c
++++ b/kernel/printk.c
+@@ -366,6 +366,18 @@ asmlinkage long sys_syslog(int type, char __user *buf, int len)
+ 	return do_syslog(type, buf, len);
+ }
+ 
++static int __read_mostly ignore_loglevel;
++
++static int __init ignore_loglevel_setup(char *str)
++{
++	ignore_loglevel = 1;
++	printk(KERN_INFO "debug: ignoring loglevel setting.\n");
++
++	return 0;
++}
++
++early_param("ignore_loglevel", ignore_loglevel_setup);
++
+ /*
+  * Call the console drivers on a range of log_buf
+  */
+@@ -387,7 +399,7 @@ static void __call_console_drivers(unsigned long start, unsigned long end)
+ static void _call_console_drivers(unsigned long start,
+ 				unsigned long end, int msg_log_level)
+ {
+-	if (msg_log_level < console_loglevel &&
++	if ((msg_log_level < console_loglevel || ignore_loglevel) &&
+ 			console_drivers && start != end) {
+ 		if ((start & LOG_BUF_MASK) > (end & LOG_BUF_MASK)) {
+ 			/* wrapped write */

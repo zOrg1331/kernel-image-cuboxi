@@ -1,0 +1,82 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Thu, 10 Mar 2011 14:33:09 -0500
+Subject: [message] mptfusion: fix msgContext in mptctl_hp_hostinfo
+Message-id: <4D78E125.7000008@redhat.com>
+Patchwork-id: 33931
+O-Subject: [RHEL5.7 PATCH] mptfusion: fix msgContext in mptctl_hp_hostinfo
+Bugzilla: 646513
+
+Hi,
+
+this is for bz#646513
+
+Thanks to David Jeffery who found the issue and did the analysis.
+"With the mpt fusion driver update in 5.5, any  call to the HP_GETHOSTINFO ioctl
+in the mptctl module results in the controller being reset.
+
+The newer driver contains changes to the method used to detect the completion
+of ioctl commands.  In the 5.5 driver, the variable ioc->ioctl_cmds.msg_context
+is used to store the context ID of the command message which the ioctl is
+waiting for completion.  But the command's completed isn't being detected.
+
+A systemtap script was attached to log context IDs for commands set and
+completed by the mptctl module.  it produced the output:
+
+1286534058478249 cmascsid:4905 entering mptctl_hp_hostinfo mptctl_id=6
+1286534058478379 cmascsid:4905 mpt_put_msg_frame: 0xf7a0d000 cb_idx:6 req
+msg_context:0
+1286534058478599 swapper:0 mptctl_reply: 0xf7a0d000 mptctl_id:6 ioctl
+msg_context:0 req msg_context:393266
+1286534068477163 cmascsid:4905 entering mptctl_timeout_expired mptctl_id=6
+1286534074062524 cmascsid:4905 leaving mptctl_timeout_expired
+1286534074062588 cmascsid:4905 leaving mptctl_hp_hostinfo
+
+The message context the mptctl_hp_hostinfo() function is waiting on is 0!
+Later when a command completes, we see a message context of 393266.
+
+mptctl_hp_hostinfo() watches for a message context of 0 do to a memset to
+initialize the message structure.  Only after zeroing out the entire structure
+is the MsgContext field referenced.  mptctl_reply() then watches for a message
+completion with a MsgContext of 0.  But call to mpt_put_msg_frame() to send the
+message to the adapter restores The message's context ID.  Thus, the message's
+completion doesn't notify mptctl_hp_hostinfo().  When mptctl_hp_hostinfo then
+times out, it calls mptctl_timeout_expired() which then resets the adapter."
+
+Upstream post - http://www.spinics.net/lists/linux-scsi/msg50852.html
+
+This patch saves the MsgContext in a msgcontext variable and then restores
+the value.
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/message/fusion/mptctl.c b/drivers/message/fusion/mptctl.c
+index 4dbe546..43c0749 100644
+--- a/drivers/message/fusion/mptctl.c
++++ b/drivers/message/fusion/mptctl.c
+@@ -2423,9 +2423,9 @@ mptctl_hp_hostinfo(unsigned long arg, unsigned int data_size)
+ 	int			rc, cim_rev;
+ 	ToolboxIstwiReadWriteRequest_t	*IstwiRWRequest;
+ 	MPT_FRAME_HDR		*mf = NULL;
+-	MPIHeader_t		*mpi_hdr;
+ 	unsigned long		timeleft;
+ 	int			retval;
++	u32			msgcontext;
+ 
+ 	/* Reset long to int. Should affect IA64 and SPARC only
+ 	 */
+@@ -2572,11 +2572,11 @@ mptctl_hp_hostinfo(unsigned long arg, unsigned int data_size)
+ 	}
+ 
+ 	IstwiRWRequest = (ToolboxIstwiReadWriteRequest_t *)mf;
+-	mpi_hdr = (MPIHeader_t *) mf;
++	msgcontext = IstwiRWRequest->MsgContext;
+ 	memset(IstwiRWRequest,0,sizeof(ToolboxIstwiReadWriteRequest_t));
++	IstwiRWRequest->MsgContext = msgcontext;
+ 	IstwiRWRequest->Function = MPI_FUNCTION_TOOLBOX;
+ 	IstwiRWRequest->Tool = MPI_TOOLBOX_ISTWI_READ_WRITE_TOOL;
+-	IstwiRWRequest->MsgContext = mpi_hdr->MsgContext;
+ 	IstwiRWRequest->Flags = MPI_TB_ISTWI_FLAGS_READ;
+ 	IstwiRWRequest->NumAddressBytes = 0x01;
+ 	IstwiRWRequest->DataLength = cpu_to_le16(0x04);

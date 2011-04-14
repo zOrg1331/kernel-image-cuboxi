@@ -1,0 +1,43 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 24 Feb 2011 19:07:37 -0500
+Subject: [misc] vmware: increase apic_calibration_diff to 10000
+Message-id: <20110224190737.28328.60807.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 33610
+O-Subject: [RHEL5 BZ 665197 PATCH] increase apic_calibration_diff to 10000 for
+	VMware
+Bugzilla: 665197
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Increase the APIC calibration loop to 10000 for VMWare systems only.
+
+Tested by customer (VMware).
+
+Successfully compiled by me.
+
+Resolves BZ 665197.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/vmware.c b/arch/i386/kernel/cpu/vmware.c
+index 6fd9331..3343f7f 100644
+--- a/arch/i386/kernel/cpu/vmware.c
++++ b/arch/i386/kernel/cpu/vmware.c
+@@ -102,6 +102,7 @@ int vmware_platform(void)
+ }
+ 
+ extern int timekeeping_use_tsc;
++extern int apic_calibration_diff;
+ 
+ unsigned long vmware_get_tsc_khz(void)
+ {
+@@ -144,6 +145,9 @@ unsigned long vmware_get_tsc_khz(void)
+ 		preset_lpj = lpj;
+ 	}
+ 
++	if (!apic_calibration_diff)
++		apic_calibration_diff = 10000;
++
+ 	return vm_tsc_khz;
+ }
+ 

@@ -1,0 +1,60 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Thu, 10 Feb 2011 15:58:11 -0500
+Subject: [message] mptfusion: add required mptctl_release call
+Message-id: <4D540B13.9030804@redhat.com>
+Patchwork-id: 33210
+O-Subject: [RHEL5.7 PATCH] mptfusion: (Fix) mptctl_release is required in
+	mptctl.c
+Bugzilla: 660871
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+bz#660871
+
+Description of problem:
+When the mptctl_fasync() function has been called to enable async notification,
+the fasync_struct which is allocated is never freed.  It remains on mptctl's
+event list even after the file is closed and released.
+After the file is closed, the fasync_struct now has an invalid file pointer
+which is dereferenced when the mptctl module calls kill_fasync() to report any
+events.
+The use of the invalid file pointer resulted in a deadlock on one system.  The
+function send_sigio() tries to acquire the rwlock in the file's f_owner field.
+Since the memory has been freed and reused, the memory location which was the
+lock contains a value which causes the read_lock() attempt to spin forever.
+Patch comes from David Jeffery.
+LSI posted the patch on linux-scsi - http://marc.info/?l=linux-scsi&m=129732174317510&w=2
+
+Added missing release callback for file_operations mptctl_fops.
+Without release callback there will be never freed. It remains on
+mptctl's eent list even after the file is closed and released.
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/message/fusion/mptctl.c b/drivers/message/fusion/mptctl.c
+index f06b291..4dbe546 100644
+--- a/drivers/message/fusion/mptctl.c
++++ b/drivers/message/fusion/mptctl.c
+@@ -588,6 +588,13 @@ mptctl_event_process(MPT_ADAPTER *ioc, EventNotificationReply_t *pEvReply)
+ }
+ 
+ static int
++mptctl_release(struct inode *inode, struct file *filep)
++{
++	fasync_helper(-1, filep, 0, &async_queue);
++	return 0;
++}
++
++static int
+ mptctl_fasync(int fd, struct file *filep, int mode)
+ {
+ 	MPT_ADAPTER	*ioc;
+@@ -2796,6 +2803,7 @@ static const struct file_operations mptctl_fops = {
+ 	.llseek =	no_llseek,
+ 	.fasync = 	mptctl_fasync,
+ 	.unlocked_ioctl = mptctl_ioctl,
++	.release =	mptctl_release,
+ #ifdef CONFIG_COMPAT
+ 	.compat_ioctl = compat_mpctl_ioctl,
+ #endif
