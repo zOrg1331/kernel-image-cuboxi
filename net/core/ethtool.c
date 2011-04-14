@@ -21,6 +21,8 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
+#include <linux/rtnetlink.h>
+#include <linux/sched.h>
 
 /*
  * Some useful ethtool_ops methods that're device independent.
@@ -317,7 +319,7 @@ static int ethtool_set_features(struct net_device *dev, void __user *useraddr)
 
 	dev->wanted_features &= ~features[0].valid;
 	dev->wanted_features |= features[0].valid & features[0].requested;
-	netdev_update_features(dev);
+	__netdev_update_features(dev);
 
 	if ((dev->wanted_features ^ dev->features) & features[0].valid)
 		ret |= ETHTOOL_F_WISH;
@@ -359,7 +361,7 @@ static const char netdev_features_strings[ETHTOOL_DEV_FEATURE_WORDS * 32][ETH_GS
 	/* NETIF_F_NTUPLE */          "rx-ntuple-filter",
 	/* NETIF_F_RXHASH */          "rx-hashing",
 	/* NETIF_F_RXCSUM */          "rx-checksum",
-	"",
+	/* NETIF_F_NOCACHE_COPY */    "tx-nocache-copy"
 	"",
 };
 
@@ -499,7 +501,7 @@ static int ethtool_set_one_feature(struct net_device *dev,
 		else
 			dev->wanted_features &= ~mask;
 
-		netdev_update_features(dev);
+		__netdev_update_features(dev);
 		return 0;
 	}
 
@@ -551,7 +553,7 @@ int __ethtool_set_flags(struct net_device *dev, u32 data)
 	dev->wanted_features =
 		(dev->wanted_features & ~changed) | data;
 
-	netdev_update_features(dev);
+	__netdev_update_features(dev);
 
 	return 0;
 }
@@ -907,6 +909,9 @@ static noinline_for_stack int ethtool_set_rx_ntuple(struct net_device *dev,
 	const struct ethtool_ops *ops = dev->ethtool_ops;
 	struct ethtool_rx_ntuple_flow_spec_container *fsc = NULL;
 	int ret;
+
+	if (!ops->set_rx_ntuple)
+		return -EOPNOTSUPP;
 
 	if (!(dev->features & NETIF_F_NTUPLE))
 		return -EINVAL;
@@ -1441,6 +1446,35 @@ static int ethtool_set_ringparam(struct net_device *dev, void __user *useraddr)
 	return dev->ethtool_ops->set_ringparam(dev, &ringparam);
 }
 
+static noinline_for_stack int ethtool_get_channels(struct net_device *dev,
+						   void __user *useraddr)
+{
+	struct ethtool_channels channels = { .cmd = ETHTOOL_GCHANNELS };
+
+	if (!dev->ethtool_ops->get_channels)
+		return -EOPNOTSUPP;
+
+	dev->ethtool_ops->get_channels(dev, &channels);
+
+	if (copy_to_user(useraddr, &channels, sizeof(channels)))
+		return -EFAULT;
+	return 0;
+}
+
+static noinline_for_stack int ethtool_set_channels(struct net_device *dev,
+						   void __user *useraddr)
+{
+	struct ethtool_channels channels;
+
+	if (!dev->ethtool_ops->set_channels)
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(&channels, useraddr, sizeof(channels)))
+		return -EFAULT;
+
+	return dev->ethtool_ops->set_channels(dev, &channels);
+}
+
 static int ethtool_get_pauseparam(struct net_device *dev, void __user *useraddr)
 {
 	struct ethtool_pauseparam pauseparam = { ETHTOOL_GPAUSEPARAM };
@@ -1618,14 +1652,63 @@ out:
 static int ethtool_phys_id(struct net_device *dev, void __user *useraddr)
 {
 	struct ethtool_value id;
+	static bool busy;
+	int rc;
 
-	if (!dev->ethtool_ops->phys_id)
+	if (!dev->ethtool_ops->set_phys_id && !dev->ethtool_ops->phys_id)
 		return -EOPNOTSUPP;
+
+	if (busy)
+		return -EBUSY;
 
 	if (copy_from_user(&id, useraddr, sizeof(id)))
 		return -EFAULT;
 
-	return dev->ethtool_ops->phys_id(dev, id.data);
+	if (!dev->ethtool_ops->set_phys_id)
+		/* Do it the old way */
+		return dev->ethtool_ops->phys_id(dev, id.data);
+
+	rc = dev->ethtool_ops->set_phys_id(dev, ETHTOOL_ID_ACTIVE);
+	if (rc && rc != -EINVAL)
+		return rc;
+
+	/* Drop the RTNL lock while waiting, but prevent reentry or
+	 * removal of the device.
+	 */
+	busy = true;
+	dev_hold(dev);
+	rtnl_unlock();
+
+	if (rc == 0) {
+		/* Driver will handle this itself */
+		schedule_timeout_interruptible(
+			id.data ? (id.data * HZ) : MAX_SCHEDULE_TIMEOUT);
+	} else {
+		/* Driver expects to be called periodically */
+		do {
+			rtnl_lock();
+			rc = dev->ethtool_ops->set_phys_id(dev, ETHTOOL_ID_ON);
+			rtnl_unlock();
+			if (rc)
+				break;
+			schedule_timeout_interruptible(HZ / 2);
+
+			rtnl_lock();
+			rc = dev->ethtool_ops->set_phys_id(dev, ETHTOOL_ID_OFF);
+			rtnl_unlock();
+			if (rc)
+				break;
+			schedule_timeout_interruptible(HZ / 2);
+		} while (!signal_pending(current) &&
+			 (id.data == 0 || --id.data != 0));
+	}
+
+	rtnl_lock();
+	dev_put(dev);
+	busy = false;
+
+	(void)dev->ethtool_ops->set_phys_id(dev, ETHTOOL_ID_INACTIVE);
+	return rc;
 }
 
 static int ethtool_get_stats(struct net_device *dev, void __user *useraddr)
@@ -1952,6 +2035,12 @@ int dev_ethtool(struct net *net, struct ifreq *ifr)
 	case ETHTOOL_SGSO:
 	case ETHTOOL_SGRO:
 		rc = ethtool_set_one_feature(dev, useraddr, ethcmd);
+		break;
+	case ETHTOOL_GCHANNELS:
+		rc = ethtool_get_channels(dev, useraddr);
+		break;
+	case ETHTOOL_SCHANNELS:
+		rc = ethtool_set_channels(dev, useraddr);
 		break;
 	default:
 		rc = -EOPNOTSUPP;

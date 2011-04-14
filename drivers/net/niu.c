@@ -1233,7 +1233,7 @@ static int link_status_1g_rgmii(struct niu *np, int *link_up_p)
 
 	bmsr = err;
 	if (bmsr & BMSR_LSTATUS) {
-		u16 adv, lpa, common, estat;
+		u16 adv, lpa;
 
 		err = mii_read(np, np->phy_addr, MII_ADVERTISE);
 		if (err < 0)
@@ -1245,12 +1245,9 @@ static int link_status_1g_rgmii(struct niu *np, int *link_up_p)
 			goto out;
 		lpa = err;
 
-		common = adv & lpa;
-
 		err = mii_read(np, np->phy_addr, MII_ESTATUS);
 		if (err < 0)
 			goto out;
-		estat = err;
 		link_up = 1;
 		current_speed = SPEED_1000;
 		current_duplex = DUPLEX_FULL;
@@ -1650,7 +1647,7 @@ static int xcvr_init_10g(struct niu *np)
 		break;
 	}
 
-	return 0;
+	return err;
 }
 
 static int mii_reset(struct niu *np)
@@ -2381,17 +2378,14 @@ static int serdes_init_10g_serdes(struct niu *np)
 	struct niu_link_config *lp = &np->link_config;
 	unsigned long ctrl_reg, test_cfg_reg, pll_cfg, i;
 	u64 ctrl_val, test_cfg_val, sig, mask, val;
-	u64 reset_val;
 
 	switch (np->port) {
 	case 0:
-		reset_val =  ENET_SERDES_RESET_0;
 		ctrl_reg = ENET_SERDES_0_CTRL_CFG;
 		test_cfg_reg = ENET_SERDES_0_TEST_CFG;
 		pll_cfg = ENET_SERDES_0_PLL_CFG;
 		break;
 	case 1:
-		reset_val =  ENET_SERDES_RESET_1;
 		ctrl_reg = ENET_SERDES_1_CTRL_CFG;
 		test_cfg_reg = ENET_SERDES_1_TEST_CFG;
 		pll_cfg = ENET_SERDES_1_PLL_CFG;
@@ -6071,8 +6065,7 @@ static int niu_request_irq(struct niu *np)
 	for (i = 0; i < np->num_ldg; i++) {
 		struct niu_ldg *lp = &np->ldg[i];
 
-		err = request_irq(lp->irq, niu_interrupt,
-				  IRQF_SHARED | IRQF_SAMPLE_RANDOM,
+		err = request_irq(lp->irq, niu_interrupt, IRQF_SHARED,
 				  np->irq_name[i], lp);
 		if (err)
 			goto out_free_irqs;
@@ -7023,6 +7016,7 @@ static int niu_ethflow_to_class(int flow_type, u64 *class)
 	case UDP_V4_FLOW:
 		*class = CLASS_CODE_UDP_IPV4;
 		break;
+	case AH_ESP_V4_FLOW:
 	case AH_V4_FLOW:
 	case ESP_V4_FLOW:
 		*class = CLASS_CODE_AH_ESP_IPV4;
@@ -7036,6 +7030,7 @@ static int niu_ethflow_to_class(int flow_type, u64 *class)
 	case UDP_V6_FLOW:
 		*class = CLASS_CODE_UDP_IPV6;
 		break;
+	case AH_ESP_V6_FLOW:
 	case AH_V6_FLOW:
 	case ESP_V6_FLOW:
 		*class = CLASS_CODE_AH_ESP_IPV6;
@@ -7889,28 +7884,31 @@ static void niu_force_led(struct niu *np, int on)
 	nw64_mac(reg, val);
 }
 
-static int niu_phys_id(struct net_device *dev, u32 data)
+static int niu_set_phys_id(struct net_device *dev,
+			   enum ethtool_phys_id_state state)
+
 {
 	struct niu *np = netdev_priv(dev);
-	u64 orig_led_state;
-	int i;
 
 	if (!netif_running(dev))
 		return -EAGAIN;
 
-	if (data == 0)
-		data = 2;
+	switch (state) {
+	case ETHTOOL_ID_ACTIVE:
+		np->orig_led_state = niu_led_state_save(np);
+		return -EINVAL;
 
-	orig_led_state = niu_led_state_save(np);
-	for (i = 0; i < (data * 2); i++) {
-		int on = ((i % 2) == 0);
+	case ETHTOOL_ID_ON:
+		niu_force_led(np, 1);
+		break;
 
-		niu_force_led(np, on);
+	case ETHTOOL_ID_OFF:
+		niu_force_led(np, 0);
+		break;
 
-		if (msleep_interruptible(500))
-			break;
+	case ETHTOOL_ID_INACTIVE:
+		niu_led_state_restore(np, np->orig_led_state);
 	}
-	niu_led_state_restore(np, orig_led_state);
 
 	return 0;
 }
@@ -7933,7 +7931,7 @@ static const struct ethtool_ops niu_ethtool_ops = {
 	.get_strings		= niu_get_strings,
 	.get_sset_count		= niu_get_sset_count,
 	.get_ethtool_stats	= niu_get_ethtool_stats,
-	.phys_id		= niu_phys_id,
+	.set_phys_id		= niu_set_phys_id,
 	.get_rxnfc		= niu_get_nfc,
 	.set_rxnfc		= niu_set_nfc,
 	.set_flags		= niu_set_flags,
@@ -8131,7 +8129,7 @@ static int __devinit niu_pci_vpd_scan_props(struct niu *np,
 	netif_printk(np, probe, KERN_DEBUG, np->dev,
 		     "VPD_SCAN: start[%x] end[%x]\n", start, end);
 	while (start < end) {
-		int len, err, instance, type, prop_len;
+		int len, err, prop_len;
 		char namebuf[64];
 		u8 *prop_buf;
 		int max_len;
@@ -8147,8 +8145,6 @@ static int __devinit niu_pci_vpd_scan_props(struct niu *np,
 		len = err;
 		start += 3;
 
-		instance = niu_pci_eeprom_read(np, start);
-		type = niu_pci_eeprom_read(np, start + 3);
 		prop_len = niu_pci_eeprom_read(np, start + 4);
 		err = niu_pci_vpd_get_propname(np, start + 5, namebuf, 64);
 		if (err < 0)
