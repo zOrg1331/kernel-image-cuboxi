@@ -1,0 +1,36 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Sat, 15 Jan 2011 04:39:16 -0500
+Subject: [fs] gfs2: remove iopen glocks from cache on delete fail
+Message-id: <20110115043916.GN16598@ether.msp.redhat.com>
+Patchwork-id: 32603
+O-Subject: [RHEL 5.7 PATCH] GFS2: remove iopen glocks from cache on failed
+	deletes
+Bugzilla: 666080
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+When a file gets deleted on GFS2, if a node can't get an exclusive lock on the
+file's iopen glock, it punts on actually freeing up the space, because another
+node is using the file.  When it does this, it needs to drop the iopen glock
+from its cache so that the other node can get an exclusive lock on it. Now,
+gfs2_delete_inode() sets GL_NOCACHE before dropping the shared lock on the
+iopen glock in preparation for grabbing it in the exclusive state.  Since the
+node needs the glock in the exclusive state, dropping the shared lock from the
+cache doesn't slow down the case where no other nodes are using the file.
+
+This fixes bz #666080
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 81e01bd..89a0c09 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -549,6 +549,7 @@ static void gfs2_delete_inode(struct inode *inode)
+ 	if (error)
+ 		goto out_truncate;
+ 
++	ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
+ 	gfs2_glock_dq_wait(&ip->i_iopen_gh);
+ 	gfs2_holder_reinit(LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB | GL_NOCACHE,
+ 			   &ip->i_iopen_gh);

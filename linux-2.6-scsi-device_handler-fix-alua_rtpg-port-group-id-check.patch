@@ -1,0 +1,36 @@
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Wed, 19 Jan 2011 16:09:51 -0500
+Subject: [scsi] device_handler: fix alua_rtpg port group id check
+Message-id: <1295453391-15568-1-git-send-email-snitzer@redhat.com>
+Patchwork-id: 32707
+O-Subject: [RHEL5.7 PATCH] [SCSI] scsi_dh_alua: fix overflow in alua_rtpg port
+	group id check
+Bugzilla: 669961
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+BZ 669961
+
+For Target Portal Group IDs occupying the full 2 bytes in the RTPG
+response, the following group_id check in alua_rtpg() always fails
+because 'ucp' is only a signed char pointer:
+   if (h->group_id == (ucp[2] << 8) + ucp[3]) {
+
+Fix this signed char overflow by changing 'ucp' to an unsigned char
+pointer (same type used for 'buff' member of alua_dh_data structure).
+
+Reported-by: Martin George <marting@netapp.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 095a058..21f03b6 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -535,7 +535,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+ {
+ 	struct scsi_sense_hdr sense_hdr;
+ 	int len, k, off, valid_states = 0;
+-	char *ucp;
++	unsigned char *ucp;
+ 	unsigned err;
+ 	unsigned long expiry, interval = 10;
+ 

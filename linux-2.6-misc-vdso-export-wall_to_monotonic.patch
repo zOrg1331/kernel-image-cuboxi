@@ -1,0 +1,110 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 28 Feb 2011 18:23:47 -0500
+Subject: [misc] vdso: export wall_to_monotonic
+Message-id: <20110228182347.11156.42462.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 33685
+O-Subject: [RHEL5 BZ 675727 PATCH] vdso: export wall_to_monotonic
+Bugzilla: 675727
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Content-Type: text/plain; charset=us-ascii
+Properly export wall_to_monotonic in the vdso page.  Without this export, it
+is possible that userspace programs using a monotonic clock with vdso will
+segfault.
+
+This patch was not the result of an actual segfault.  The issue was noticed by
+the reporter and myself after a similar problem was found to exist with
+the vdso implementation of gettimeofday().
+
+I have written a simple program that causes a segfault to test with.
+
+Successfully tested by me.
+
+Resolves BZ 675727.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index abdea83..d36f1c0 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -86,6 +86,7 @@ struct vxtime_data __vxtime __section_vxtime;   /* for vsyscalls */
+ volatile unsigned long __jiffies __section_jiffies = INITIAL_JIFFIES;
+ unsigned long __wall_jiffies __section_wall_jiffies = INITIAL_JIFFIES;
+ struct timespec __xtime __section_xtime;
++struct timespec __wall_to_monotonic __section_wall_to_monotonic;
+ struct timezone __sys_tz __section_sys_tz;
+ #endif
+ 
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 830c7d6..187e252 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -99,6 +99,7 @@ struct vxtime_data __vxtime __section_vxtime;	/* for vsyscalls */
+ volatile unsigned long __jiffies __section_jiffies = INITIAL_JIFFIES;
+ unsigned long __wall_jiffies __section_wall_jiffies = INITIAL_JIFFIES;
+ struct timespec __xtime __section_xtime;
++struct timespec __wall_to_monotonic __section_wall_to_monotonic;
+ struct timezone __sys_tz __section_sys_tz;
+ 
+ /* -1=>disabled, 0=>autoconfigure, 1=>enabled */
+diff --git a/arch/x86_64/kernel/vmlinux.lds.S b/arch/x86_64/kernel/vmlinux.lds.S
+index daff4d4..4553021 100644
+--- a/arch/x86_64/kernel/vmlinux.lds.S
++++ b/arch/x86_64/kernel/vmlinux.lds.S
+@@ -121,6 +121,10 @@ SECTIONS
+   .xtime : AT(VLOAD(.xtime)) { *(.xtime) }
+   xtime = VVIRT(.xtime);
+ 
++  .wall_to_monotonic : AT(VLOAD(.wall_to_monotonic)) { *(.wall_to_monotonic) }
++  wall_to_monotonic = VVIRT(.wall_to_monotonic);
++
++
+   . = ALIGN(CONFIG_X86_L1_CACHE_BYTES);
+   .jiffies : AT(VLOAD(.jiffies)) { *(.jiffies) }
+   jiffies = VVIRT(.jiffies);
+diff --git a/arch/x86_64/vdso/vclock_gettime.c b/arch/x86_64/vdso/vclock_gettime.c
+index 3e586bf..d195db2 100644
+--- a/arch/x86_64/vdso/vclock_gettime.c
++++ b/arch/x86_64/vdso/vclock_gettime.c
+@@ -96,8 +96,8 @@ static noinline int do_monotonic(struct timespec *ts)
+ 		seq = read_seqbegin(vdso_xtime_lock);
+ 		secs = vdso_xtime->tv_sec;
+ 		ns = vdso_xtime->tv_nsec + vgetns();
+-		secs += wall_to_monotonic.tv_sec;
+-		ns += wall_to_monotonic.tv_nsec;
++		secs += vdso_wall_to_monotonic->tv_sec;
++		ns += vdso_wall_to_monotonic->tv_nsec;
+ 	} while (unlikely(read_seqretry(vdso_xtime_lock, seq)));
+ 	vset_normalized_timespec(ts, secs, ns);
+ 	return 0;
+diff --git a/arch/x86_64/vdso/vextern.h b/arch/x86_64/vdso/vextern.h
+index 8cf4051..c3abc27 100644
+--- a/arch/x86_64/vdso/vextern.h
++++ b/arch/x86_64/vdso/vextern.h
+@@ -16,4 +16,5 @@ VEXTERN(xtime_lock)
+ VEXTERN(xtime)
+ VEXTERN(sys_tz)
+ VEXTERN(vgetcpu_mode)
++VEXTERN(wall_to_monotonic)
+ VEXTERN(sysctl_vsyscall)
+diff --git a/include/asm-x86_64/vsyscall.h b/include/asm-x86_64/vsyscall.h
+index e9cb8e0..6221a6c 100644
+--- a/include/asm-x86_64/vsyscall.h
++++ b/include/asm-x86_64/vsyscall.h
+@@ -21,6 +21,7 @@ enum vsyscall_num {
+ #define __section_jiffies __attribute__ ((unused, __section__ (".jiffies"), aligned(16)))
+ #define __section_sys_tz __attribute__ ((unused, __section__ (".sys_tz"), aligned(16)))
+ #define __section_sysctl_vsyscall __attribute__ ((unused, __section__ (".sysctl_vsyscall"), aligned(16)))
++#define __section_wall_to_monotonic __attribute__ ((unused, __section__ (".wall_to_monotonic"), aligned(16)))
+ #define __section_xtime __attribute__ ((unused, __section__ (".xtime"), aligned(16)))
+ #define __section_xtime_lock __attribute__ ((unused, __section__ (".xtime_lock"), aligned(16)))
+ 
+@@ -49,6 +50,7 @@ struct vxtime_data {
+ extern struct vxtime_data __vxtime;
+ extern int __vgetcpu_mode;
+ extern struct timespec __xtime;
++extern struct timespec __wall_to_monotonic;
+ extern volatile unsigned long __jiffies;
+ extern unsigned long __wall_jiffies;
+ extern struct timezone __sys_tz;

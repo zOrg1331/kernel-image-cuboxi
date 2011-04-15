@@ -1,0 +1,51 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Fri, 28 Jan 2011 15:58:34 -0500
+Subject: [media] dvb: fix av7110 negative array offset
+Message-id: <4D42E7AA.6010003@redhat.com>
+Patchwork-id: 4542
+O-Subject: [kernel team] [RHEL5.7] Bug 672402 - CVE-2011-0521 kernel: av7110
+ negative array offset
+Bugzilla: 672402
+CVE: CVE-2011-0521
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+The av7110 DVB driver has an issue when used with a Conditional Access Module.
+It is fault of the current API that defined the CA slot number as a signed
+number. As the driver doesn't check for non-negative numbers, it ends by
+writing outside the ci_slot array.
+
+I've checked and other drivers on RHEL 5 seem safe.
+
+Btw, the same fixes also apply to RHEL5.6.z (BZ# 672401)
+
+So, we just need to backport this upstream patch:
+
+commit 308b7f9d090f970dd86a427c6320402365016aae
+Author: Dan Carpenter <error27@gmail.com>
+Date:   Fri Jan 7 16:41:54 2011 -0300
+
+    [media] [v3,media] av7110: check for negative array offset
+
+    info->num comes from the user.  It's type int.  If the user passes
+    in a negative value that would cause memory corruption.
+
+    Signed-off-by: Dan Carpenter <error27@gmail.com>
+    Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/media/dvb/ttpci/av7110_ca.c b/drivers/media/dvb/ttpci/av7110_ca.c
+index 6079e88..873895a 100644
+--- a/drivers/media/dvb/ttpci/av7110_ca.c
++++ b/drivers/media/dvb/ttpci/av7110_ca.c
+@@ -280,7 +280,7 @@ static int dvb_ca_ioctl(struct inode *inode, struct file *file,
+ 	{
+ 		ca_slot_info_t *info=(ca_slot_info_t *)parg;
+ 
+-		if (info->num > 1)
++		if (info->num < 0 || info->num > 1)
+ 			return -EINVAL;
+ 		av7110->ci_slot[info->num].num = info->num;
+ 		av7110->ci_slot[info->num].type = FW_CI_LL_SUPPORT(av7110->arm_app) ?

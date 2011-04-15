@@ -1,0 +1,62 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 28 Feb 2011 19:34:06 -0500
+Subject: [x86_64] Use u32, not long, to set reset vector back to 0
+Message-id: <1298921646-11724-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 33686
+O-Subject: [RHEL5 PATCH] x86: Use u32 instead of long to set reset vector back
+	to 0
+Bugzilla: 675258
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=675258
+
+Currently in Ingo's x86/urgent branch
+
+commit 299c56966a72b9109d47c71a6db52097098703dd
+Author: Don Zickus <dzickus@redhat.com>
+Date:   Mon Feb 7 23:25:00 2011 -0500
+
+    x86: Use u32 instead of long to set reset vector back to 0
+
+    A customer of ours, complained that when setting the reset
+    vector back to 0, it trashed other data and hung their box.
+    They noticed when only 4 bytes were set to 0 instead of 8,
+    everything worked correctly.
+
+    Mathew pointed out:
+
+     |
+     | We're supposed to be resetting trampoline_phys_low and
+     | trampoline_phys_high here, which are two 16-bit values.
+     | Writing 64 bits is definitely going to overwrite space
+     | that we're not supposed to be touching.
+     |
+
+    So limit the area modified to u32.
+
+    Signed-off-by: Don Zickus <dzickus@redhat.com>
+    Acked-by: Matthew Garrett <mjg@redhat.com>
+    Cc: <stable@kernel.org>
+    LKML-Reference: <1297139100-424-1-git-send-email-dzickus@redhat.com>
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+Modified for RHEL-5, tested by the customer to resolve their problem.  I
+couldn't duplicate the problem so just compile tested.
+
+Cheers,
+Don
+
+diff --git a/arch/x86_64/kernel/smpboot.c b/arch/x86_64/kernel/smpboot.c
+index 5f05cc8..411c229 100644
+--- a/arch/x86_64/kernel/smpboot.c
++++ b/arch/x86_64/kernel/smpboot.c
+@@ -942,7 +942,7 @@ do_rest:
+ 	 */
+ 	CMOS_WRITE(0, 0xf);
+ 
+-	*((volatile long *) phys_to_virt(0x467)) = 0;
++	*((volatile u32 *) phys_to_virt(0x467)) = 0;
+ 
+ 	return 0;
+ }

@@ -1,0 +1,99 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 10 Dec 2010 19:45:38 -0500
+Subject: [net] bonding: convert netpoll tx blocking to a counter
+Message-id: <20101210194538.GH13679@hmsreliant.think-freely.org>
+Patchwork-id: 30083
+O-Subject: [RHEL 5.7 PATCH] convert netpoll tx blocking in bonding driver to a
+	counter (bz 659594)
+Bugzilla: 659594
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+
+Hey all-
+	I backported netpoll support to bonding recently for RHEL 5 and there
+appears to be a regression.  When removing the bonding module, its possible to
+sleep while blocking netpoll transmission through the driver.  Since the
+blocking mechanism is implemented as a per-cpu flag, the intervening sleep can
+cause us to switch cpus and clear a flag that we didn't set.  Since we BUG check
+the flags to make sure that we only clear set flags and only set cleared flags
+we get a panic during module removal.  Looking at this mechanism, while I first
+thought using a per-cpu flag would be better performance wise, that doesn't
+actually appear to be the case (since the checking of this flag is gated on the
+IFF_IN_NETPOLL condition anyway, so we're not really doing this in any hot path.
+So I've converted teh per-cpu flag to a counter mechanism here.  This makes us
+insensitive to cpu rescheduling, as well as possible recursion should that ever
+become needed, and doesn't impact performance, while fixing the BUG halt panic
+in bz 659594.
+
+Tested by myself and the reporter successfully.
+
+Upstream status:
+Just accepted by Dave M., No commit ID yet.
+
+Brew Status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2966935
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 9c3b0d0..c7c9b6c 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -160,7 +160,7 @@ MODULE_PARM_DESC(debug, "Print debug messages; 0 for off (default), 1 for on");
+ /*----------------------------- Global variables ----------------------------*/
+ 
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+-cpumask_t netpoll_block_tx = CPU_MASK_NONE;
++atomic_t netpoll_block_tx = ATOMIC_INIT(0);
+ #endif
+ 
+ static const char * const version =
+@@ -5501,6 +5501,12 @@ static void __exit bonding_exit(void)
+ 	rtnl_lock();
+ 	bond_free_all();
+ 	rtnl_unlock();
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	/*
++	 * Make sure we don't have an imbalance on our netpoll blocking
++	 */
++	WARN_ON(atomic_read(&netpoll_block_tx));
++#endif
+ }
+ 
+ module_init(bonding_init);
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 3733fca..4ec56ca 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -126,26 +126,22 @@ extern int debug;
+ 
+ 
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+-extern cpumask_t netpoll_block_tx;
++extern atomic_t netpoll_block_tx;
+ 
+ static inline void block_netpoll_tx(void)
+ {
+-	preempt_disable();
+-	BUG_ON(cpu_test_and_set(smp_processor_id(),
+-					netpoll_block_tx));
++	atomic_inc(&netpoll_block_tx);
+ }
+ 
+ static inline void unblock_netpoll_tx(void)
+ {
+-	cpu_clear(smp_processor_id(),
+-		  netpoll_block_tx);
+-	preempt_enable();
++	atomic_dec(&netpoll_block_tx);
+ }
+ 
+ static inline int is_netpoll_tx_blocked(struct net_device *dev)
+ {
+ 	if (unlikely(dev->priv_flags & IFF_IN_NETPOLL))
+-		return cpu_isset(smp_processor_id(), netpoll_block_tx);
++		return atomic_read(&netpoll_block_tx);
+ 	return 0;
+ }
+ #else

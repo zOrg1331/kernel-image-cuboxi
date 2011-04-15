@@ -1,0 +1,167 @@
+From: Frantisek Hrbata <fhrbata@redhat.com>
+Date: Thu, 10 Feb 2011 14:05:21 -0500
+Subject: [mm] fix install_special_mapping skips security_file_mmap
+Message-id: <1297346721-24622-1-git-send-email-fhrbata@redhat.com>
+Patchwork-id: 33208
+O-Subject: [RHEL5.7 PATCH BZ662197 CVE-2010-4346 v2] install_special_mapping
+	skips security_file_mmap check
+Bugzilla: 662197
+CVE: CVE-2010-4346
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+
+Bugzilla: 662197
+https://bugzilla.redhat.com/show_bug.cgi?id=662197
+
+Description:
+The vdso can be mapped below mmap_min_addr if the address space is limited, e.g.
+by expanded .bss section. In this situation get_unmapped_area returns addr below
+mmap_min_addr and since there is no security_file_mmap check in
+install_special_mapping, the vdso is mapped bellow mmap_min_addr. The correct
+behaviour should be that install_special_mapping returns error and such process
+is killed after arch_setup_additional_page fails. This patch also adds missing
+security_file_mmap check in __bprm_mm_init before insert_vm_struct.
+
+Upstream status: 462e635e5b73ba9a4c03913b77138cd57ce4b050
+------------------------8<-------------------------------
+    commit 462e635e5b73ba9a4c03913b77138cd57ce4b050
+    Author: Tavis Ormandy <taviso@cmpxchg8b.com>
+    Date:   Thu Dec 9 15:29:42 2010 +0100
+
+    install_special_mapping skips security_file_mmap check.
+
+    The install_special_mapping routine (used, for example, to setup the
+    vdso) skips the security check before insert_vm_struct, allowing a local
+    attacker to bypass the mmap_min_addr security restriction by limiting
+    the available pages for special mappings.
+
+    bprm_mm_init() also skips the check, and although I don't think this can
+    be used to bypass any restrictions, I don't see any reason not to have
+    the security check.
+
+      $ uname -m
+      x86_64
+      $ cat /proc/sys/vm/mmap_min_addr
+      65536
+      $ cat install_special_mapping.s
+      section .bss
+          resb BSS_SIZE
+      section .text
+          global _start
+          _start:
+              mov     eax, __NR_pause
+              int     0x80
+      $ nasm -D__NR_pause=29 -DBSS_SIZE=0xfffed000 -f elf -o install_special_mapping.o install_special_mapping.s
+      $ ld -m elf_i386 -Ttext=0x10000 -Tbss=0x11000 -o install_special_mapping install_special_mapping.o
+      $ ./install_special_mapping &
+      [1] 14303
+      $ cat /proc/14303/maps
+      0000f000-00010000 r-xp 00000000 00:00 0       [vdso]
+      00010000-00011000 r-xp 00001000 00:19 2453665 /home/taviso/install_special_mapping
+      00011000-ffffe000 rwxp 00000000 00:00 0       [stack]
+
+    It's worth noting that Red Hat are shipping with mmap_min_addr set to
+    4096.
+
+    Signed-off-by: Tavis Ormandy <taviso@google.com>
+    Acked-by: Kees Cook <kees@ubuntu.com>
+    Acked-by: Robert Swiecki <swiecki@google.com>
+    [ Changed to not drop the error code - akpm ]
+    Reviewed-by: James Morris <jmorris@namei.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+------------------------8<-------------------------------
+
+Brew build: 3101538
+https://brewweb.devel.redhat.com/taskinfo?taskID=3101538
+
+Test status:
+Tested by me with reproducer.
+
+[root@amd-toonie2-02 test]# /sbin/sysctl vm.mmap_min_addr=65536
+vm.mmap_min_addr = 65536
+[root@amd-toonie2-02 test]# sysctl vm.overcommit_memory=1
+vm.overcommit_memory = 1
+[root@amd-toonie2-02 test]# cat install_special_mapping.s
+section .bss
+        resb BSS_SIZE
+section .text
+        global _start
+        _start:
+        mov eax, __NR_pause
+        int 0x80
+
+[root@amd-toonie2-02 test]# nasm -D__NR_pause=29 -DBSS_SIZE=0xbf00ed00 -f elf -o install_special_mapping.o install_special_mapping.s
+[root@amd-toonie2-02 test]# ld -m elf_i386 -Ttext=0x10000 -Tbss=0x11000 -o install_special_mapping install_special_mapping.o
+
+unpatched kernel:
+[test@amd-toonie2-02 ~]$ uname -a
+Linux amd-toonie2-02.lab.bos.redhat.com 2.6.18-241.el5PAE #1 SMP Tue Jan 25 13:06:20 EST 2011 i686 athlon i386 GNU/Linux
+[test@amd-toonie2-02 ~]$ ./install_special_mapping &
+[1] 5968
+[test@amd-toonie2-02 ~]$ cat /proc/5968/maps
+0000f000-00010000 r-xp 0000f000 00:00 0          [vdso]
+00010000-00011000 r-xp 00001000 fd:00 10813453   /home/test/install_special_mapping
+00011000-bf020000 rwxp 00011000 00:00 0
+bf8c5000-bf8da000 rwxp bffe9000 00:00 0          [stack]
+
+patched kernel:
+[test@amd-toonie2-02 ~]$ uname -a
+Linux amd-toonie2-02.lab.bos.redhat.com 2.6.18-243.el5.bz662197_2PAE #1 SMP Tue Feb 8 07:17:24 EST 2011 i686 athlon i386 GNU/Linux
+[test@amd-toonie2-02 ~]$ ./install_special_mapping
+Killed
+
+Signed-off-by: Frantisek Hrbata <fhrbata@redhat.com>
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 2b561ff..396925f 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -277,6 +277,13 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
+ 
+ 	vma->vm_flags = VM_STACK_FLAGS;
+ 	vma->vm_page_prot = protection_map[vma->vm_flags & 0x7];
++
++	err = security_file_mmap_addr(NULL, 0, 0, 0, vma->vm_start, 1);
++	if (err) {
++		up_write(&mm->mmap_sem);
++		goto err;
++	}
++
+ 	err = insert_vm_struct(mm, vma);
+ 	if (err) {
+ 		up_write(&mm->mmap_sem);
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 9bb8262..693512d 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -2317,10 +2317,14 @@ int install_special_mapping(struct mm_struct *mm,
+ 	vma->vm_ops = &special_mapping_vmops;
+ 	vma->vm_private_data = pages;
+ 
+-	if (unlikely(insert_vm_struct(mm, vma))) {
+-		kmem_cache_free(vm_area_cachep, vma);
+-		return -ENOMEM;
+-	}
++	err = security_file_mmap_addr(NULL, 0, 0, 0, vma->vm_start, 1);
++	if (err)
++		goto out;
++
++	err = insert_vm_struct(mm, vma);
++	if (err)
++		goto out;
++ 
+ 	mm->total_vm += len >> PAGE_SHIFT;
+ 
+ 	if (!vdso_populate)
+@@ -2339,6 +2343,10 @@ int install_special_mapping(struct mm_struct *mm,
+ 	}
+ 
+ 	return err;
++
++out:
++	kmem_cache_free(vm_area_cachep, vma);
++	return err;
+ }
+ 
+ static DEFINE_MUTEX(mm_all_locks_mutex);

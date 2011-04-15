@@ -1,0 +1,117 @@
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Tue, 8 Feb 2011 18:49:08 -0500
+Subject: [md] dm-mpath: wait for pg_init completion on suspend
+Message-id: <1297190949-29149-9-git-send-email-snitzer@redhat.com>
+Patchwork-id: 33174
+O-Subject: [RHEL5.7 PATCH 7/8] dm mpath: wait for pg_init completion when
+	suspending
+Bugzilla: 673058
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+BZ 673058
+
+Upstream commit 2bded7bd7e8b12a913b0b58167a48220560e1514
+Author: Kiyoshi Ueda <k-ueda@ct.jp.nec.com>
+Date:   Sat Mar 6 02:32:13 2010 +0000
+
+    dm mpath: wait for pg_init completion when suspending
+
+    When suspending the device we must wait for all I/O to complete, but
+    pg-init may be still in progress even after flushing the workqueue
+    for kmpath_handlerd in multipath_postsuspend.
+
+    This patch waits for pg-init completion correctly in
+    multipath_postsuspend().
+
+    Signed-off-by: Kiyoshi Ueda <k-ueda@ct.jp.nec.com>
+    Signed-off-by: Jun'ichi Nomura <j-nomura@ce.jp.nec.com>
+    Signed-off-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index b8adff1..b7afe41 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -69,6 +69,9 @@ struct multipath {
+ 	char *hw_handler_params;
+ 	unsigned nr_priority_groups;
+ 	struct list_head priority_groups;
++
++	wait_queue_head_t pg_init_wait;	/* Wait for pg_init completion */
++
+ 	unsigned pg_init_required;	/* pg_init needs calling? */
+ 	unsigned pg_init_in_progress;	/* Only one pg_init allowed at once */
+ 	unsigned pg_init_delay;		/* To delay or not to delay */
+@@ -199,6 +202,7 @@ static struct multipath *alloc_multipath(void)
+ 		m->pg_init_delay_secs = DM_PG_INIT_RETRY_DELAY;
+ 		INIT_WORK(&m->process_queued_ios, process_queued_ios, m);
+ 		INIT_WORK(&m->trigger_event, trigger_event, m);
++		init_waitqueue_head(&m->pg_init_wait);
+ 		mutex_init(&m->work_mutex);
+ 		m->mpio_pool = mempool_create_slab_pool(MIN_IOS, _mpio_cache);
+ 		if (!m->mpio_pool) {
+@@ -910,9 +914,34 @@ static int multipath_ctr(struct dm_target *ti, unsigned int argc,
+ 	return r;
+ }
+ 
+-static void flush_multipath_work(void)
++static void multipath_wait_for_pg_init_completion(struct multipath *m)
++{
++	DECLARE_WAITQUEUE(wait, current);
++	unsigned long flags;
++
++	add_wait_queue(&m->pg_init_wait, &wait);
++
++	while (1) {
++		set_current_state(TASK_UNINTERRUPTIBLE);
++
++		spin_lock_irqsave(&m->lock, flags);
++		if (!m->pg_init_in_progress) {
++			spin_unlock_irqrestore(&m->lock, flags);
++			break;
++		}
++		spin_unlock_irqrestore(&m->lock, flags);
++
++		io_schedule();
++	}
++	set_current_state(TASK_RUNNING);
++
++	remove_wait_queue(&m->pg_init_wait, &wait);
++}
++
++static void flush_multipath_work(struct multipath *m)
+ {
+ 	flush_workqueue(kmpath_handlerd);
++	multipath_wait_for_pg_init_completion(m);
+ 	flush_workqueue(kmultipathd);
+ 	flush_scheduled_work();
+ }
+@@ -921,7 +950,7 @@ static void multipath_dtr(struct dm_target *ti)
+ {
+ 	struct multipath *m = ti->private;
+ 
+-	flush_multipath_work();
++	flush_multipath_work(m);
+ 	free_multipath(m);
+ }
+ 
+@@ -1256,6 +1285,11 @@ static void pg_init_done(void *data, int errors)
+ 	m->pg_init_delay = delay;
+ 	queue_work(kmultipathd, &m->process_queued_ios);
+ 
++	/*
++	 * Wake up any thread waiting to suspend.
++	 */
++	wake_up(&m->pg_init_wait);
++
+ out:
+ 	spin_unlock_irqrestore(&m->lock, flags);
+ }
+@@ -1371,7 +1405,7 @@ static void multipath_postsuspend(struct dm_target *ti)
+ 
+ 	mutex_lock(&m->work_mutex);
+ 	m->suspended = 1;
+-	flush_multipath_work();
++	flush_multipath_work(m);
+ 	mutex_unlock(&m->work_mutex);
+ }
+ 

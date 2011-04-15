@@ -1,0 +1,84 @@
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Tue, 8 Feb 2011 18:49:02 -0500
+Subject: [md] dm-mpath: flush workqueues before suspend completes
+Message-id: <1297190949-29149-3-git-send-email-snitzer@redhat.com>
+Patchwork-id: 33168
+O-Subject: [RHEL5.7 PATCH 1/8] dm mpath: flush workqueues before suspend
+	completes
+Bugzilla: 673058
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+BZ 673058
+
+Upstream commit 6df400ab64c68fc4072a13019fc20fd7e3d51303
+Author: Kiyoshi Ueda <k-ueda@ct.jp.nec.com>
+Date:   Thu Dec 10 23:52:19 2009 +0000
+
+    dm mpath: flush workqueues before suspend completes
+
+    This patch stops the remaining dm-mpath activity during the suspend
+    sequence by flushing workqueues in postsuspend function.
+
+    The current dm-mpath target may not be quiet even after suspend completes
+    because some workqueues (e.g. device_handler's work, event handling)
+    are not flushed during the suspend sequence, even though suspended
+    devices/targets are supposed to be quiet in this state.
+
+    Signed-off-by: Kiyoshi Ueda <k-ueda@ct.jp.nec.com>
+    Signed-off-by: Jun'ichi Nomura <j-nomura@ce.jp.nec.com>
+    Signed-off-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index d0494b9..43a525c 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -902,13 +902,18 @@ static int multipath_ctr(struct dm_target *ti, unsigned int argc,
+ 	return r;
+ }
+ 
+-static void multipath_dtr(struct dm_target *ti)
++static void flush_multipath_work(void)
+ {
+-	struct multipath *m = (struct multipath *) ti->private;
+-
+ 	flush_workqueue(kmpath_handlerd);
+ 	flush_workqueue(kmultipathd);
+ 	flush_scheduled_work();
++}
++
++static void multipath_dtr(struct dm_target *ti)
++{
++	struct multipath *m = ti->private;
++
++	flush_multipath_work();
+ 	free_multipath(m);
+ }
+ 
+@@ -1349,6 +1354,11 @@ static void multipath_presuspend(struct dm_target *ti)
+ 	queue_if_no_path(m, 0, 1);
+ }
+ 
++static void multipath_postsuspend(struct dm_target *ti)
++{
++	flush_multipath_work();
++}
++
+ /*
+  * Restore the queue_if_no_path setting.
+  */
+@@ -1581,13 +1591,14 @@ static int multipath_ioctl(struct dm_target *ti, struct inode *inode,
+  *---------------------------------------------------------------*/
+ static struct target_type multipath_target = {
+ 	.name = "multipath",
+-	.version = {1, 0, 5},
++	.version = {1, 0, 6},
+ 	.module = THIS_MODULE,
+ 	.ctr = multipath_ctr,
+ 	.dtr = multipath_dtr,
+ 	.map = multipath_map,
+ 	.end_io = multipath_end_io,
+ 	.presuspend = multipath_presuspend,
++	.postsuspend = multipath_postsuspend,
+ 	.resume = multipath_resume,
+ 	.status = multipath_status,
+ 	.message = multipath_message,
