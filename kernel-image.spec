@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.38
-Release: alt2
+Release: alt3
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -592,6 +592,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Apr 15 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt3
+- 2.6.38.3
+
 * Wed Mar 30 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt2
 - 2.6.38.2
 
