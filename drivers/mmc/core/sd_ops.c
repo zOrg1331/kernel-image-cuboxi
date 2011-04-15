@@ -29,6 +29,8 @@ static int mmc_app_cmd(struct mmc_host *host, struct mmc_card *card)
 	BUG_ON(!host);
 	BUG_ON(card && (card->host != host));
 
+	memset(&cmd, 0, sizeof(struct mmc_command));
+
 	cmd.opcode = MMC_APP_CMD;
 
 	if (card) {
@@ -198,6 +200,8 @@ int mmc_send_if_cond(struct mmc_host *host, u32 ocr)
 	int err;
 	static const u8 test_pattern = 0xAA;
 	u8 result_pattern;
+
+	memset(&cmd, 0, sizeof(struct mmc_command));
 
 	/*
 	 * To support SD 2.0 cards, we must always invoke SD_SEND_IF_COND
