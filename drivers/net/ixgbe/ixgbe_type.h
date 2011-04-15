@@ -58,6 +58,7 @@
 #define IXGBE_DEV_ID_82599_SFP_FCOE      0x1529
 #define IXGBE_SUBDEV_ID_82599_SFP        0x11A9
 #define IXGBE_DEV_ID_82599_SFP_EM        0x1507
+#define IXGBE_DEV_ID_82599_SFP_SF2       0x154D
 #define IXGBE_DEV_ID_82599_XAUI_LOM      0x10FC
 #define IXGBE_DEV_ID_82599_COMBO_BACKPLANE 0x10F8
 #define IXGBE_SUBDEV_ID_82599_KX4_KR_MEZZ  0x000C
@@ -1616,10 +1617,18 @@
 #define IXGBE_FLUDONE_ATTEMPTS 20000
 #endif
 
+#define IXGBE_PCIE_CTRL2                 0x5   /* PCIe Control 2 Offset */
+#define IXGBE_PCIE_CTRL2_DUMMY_ENABLE    0x8   /* Dummy Function Enable */
+#define IXGBE_PCIE_CTRL2_LAN_DISABLE     0x2   /* LAN PCI Disable */
+#define IXGBE_PCIE_CTRL2_DISABLE_SELECT  0x1   /* LAN Disable Select */
+
 #define IXGBE_SAN_MAC_ADDR_PORT0_OFFSET  0x0
 #define IXGBE_SAN_MAC_ADDR_PORT1_OFFSET  0x3
 #define IXGBE_DEVICE_CAPS_ALLOW_ANY_SFP  0x1
 #define IXGBE_DEVICE_CAPS_FCOE_OFFLOADS  0x2
+#define IXGBE_FW_LESM_PARAMETERS_PTR     0x2
+#define IXGBE_FW_LESM_STATE_1            0x1
+#define IXGBE_FW_LESM_STATE_ENABLED      0x8000 /* LESM Enable bit */
 #define IXGBE_FW_PASSTHROUGH_PATCH_CONFIG_PTR   0x4
 #define IXGBE_FW_PATCH_VERSION_4   0x7
 
@@ -1718,6 +1727,8 @@
 #define IXGBE_MFLCN_DPF         0x00000002 /* Discard Pause Frame */
 #define IXGBE_MFLCN_RPFCE       0x00000004 /* Receive Priority FC Enable */
 #define IXGBE_MFLCN_RFCE        0x00000008 /* Receive FC Enable */
+
+#define IXGBE_MFLCN_RPFCE_SHIFT		 4
 
 /* Multiple Receive Queue Control */
 #define IXGBE_MRQC_RSSEN                 0x00000001  /* RSS Enable */
@@ -2597,6 +2608,7 @@ struct ixgbe_mac_info {
 	u32                             vft_size;
 	u32                             num_rar_entries;
 	u32                             rar_highwater;
+	u32				rx_pb_size;
 	u32                             max_tx_queues;
 	u32                             max_rx_queues;
 	u32                             max_msix_vectors;
