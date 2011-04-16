@@ -1,5 +1,5 @@
 /*
- * linux/arch/arm/mach-at91/board-usb-a9263.c
+ * linux/arch/arm/mach-at91/board-usb-a926x.c
  *
  *  Copyright (C) 2005 SAN People
  *  Copyright (C) 2007 Atmel Corporation.
@@ -80,6 +80,14 @@ static struct at91_udc_data __initdata ek_udc_data = {
 	.pullup_pin	= 0,		/* pull-up driven by UDC */
 };
 
+void ek_add_device_udc(void)
+{
+	if (machine_is_usb_a9260())
+		ek_udc_data.vbus_pin = AT91_PIN_PC5;
+
+	at91_add_device_udc(&ek_udc_data);
+}
+
 /*
  * SPI devices.
  */
@@ -94,6 +102,12 @@ static struct spi_board_info ek_spi_devices[] = {
 #endif
 };
 
+void ek_add_device_spi(void)
+{
+	if (machine_is_usb_a9263())
+		at91_add_device_spi(ek_spi_devices, ARRAY_SIZE(ek_spi_devices));
+}
+
 /*
  * MACB Ethernet device
  */
@@ -102,12 +116,20 @@ static struct at91_eth_data __initdata ek_macb_data = {
 	.is_rmii	= 1,
 };
 
+void ek_add_device_eth(void)
+{
+	if (machine_is_usb_a9260())
+		ek_macb_data.phy_irq_pin = AT91_PIN_PA31;
+
+	at91_add_device_eth(&ek_macb_data);
+}
+
 /*
  * NAND flash
  */
 static struct mtd_partition __initdata ek_nand_partition[] = {
 	{
-		.name	= "Linux Kernel",
+		.name	= "Uboot & Kernel",
 		.offset	= 0,
 		.size	= SZ_16M,
 	},
@@ -158,6 +180,11 @@ static struct sam9_smc_config __initdata ek_nand_smc_config = {
 
 static void __init ek_add_device_nand(void)
 {
+	if (machine_is_usb_a9260()) {
+		ek_nand_data.rdy_pin	= AT91_PIN_PC13;
+		ek_nand_data.enable_pin	= AT91_PIN_PC14;
+	}
+
 	/* configure chip-select 3 (NAND) */
 	sam9_smc_configure(3, &ek_nand_smc_config);
 
@@ -216,6 +243,14 @@ static struct gpio_led ek_leds[] = {
 	}
 };
 
+void ek_add_device_leds(void)
+{
+	if (machine_is_usb_a9260())
+		ek_leds[0].active_low = 0;
+
+	at91_gpio_leds(ek_leds, ARRAY_SIZE(ek_leds));
+}
+
 
 static void __init ek_board_init(void)
 {
@@ -224,11 +259,11 @@ static void __init ek_board_init(void)
 	/* USB Host */
 	at91_add_device_usbh(&ek_usbh_data);
 	/* USB Device */
-	at91_add_device_udc(&ek_udc_data);
+	ek_add_device_udc();
 	/* SPI */
-	at91_add_device_spi(ek_spi_devices, ARRAY_SIZE(ek_spi_devices));
+	ek_add_device_spi();
 	/* Ethernet */
-	at91_add_device_eth(&ek_macb_data);
+	ek_add_device_eth();
 	/* NAND */
 	ek_add_device_nand();
 	/* I2C */
@@ -236,13 +271,22 @@ static void __init ek_board_init(void)
 	/* Push Buttons */
 	ek_add_device_buttons();
 	/* LEDs */
-	at91_gpio_leds(ek_leds, ARRAY_SIZE(ek_leds));
+	ek_add_device_leds();
 	/* shutdown controller, wakeup button (5 msec low) */
 	at91_sys_write(AT91_SHDW_MR, AT91_SHDW_CPTWK0_(10) | AT91_SHDW_WKMODE0_LOW
 				| AT91_SHDW_RTTWKEN);
 }
 
 MACHINE_START(USB_A9263, "CALAO USB_A9263")
+	/* Maintainer: calao-systems */
+	.boot_params	= AT91_SDRAM_BASE + 0x100,
+	.timer		= &at91sam926x_timer,
+	.map_io		= ek_map_io,
+	.init_irq	= ek_init_irq,
+	.init_machine	= ek_board_init,
+MACHINE_END
+
+MACHINE_START(USB_A9260, "CALAO USB_A9260")
 	/* Maintainer: calao-systems */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
 	.timer		= &at91sam926x_timer,
