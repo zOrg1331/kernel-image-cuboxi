@@ -36,10 +36,11 @@
 
 #define _PAGE_PRESENT               (1<<6)  /* implemented in software */
 #define _PAGE_NO_READ               (1<<7)  /* implemented in software */
-#define _PAGE_WRITE                 (1<<8)  /* implemented in software */
-#define _PAGE_ACCESSED              (1<<9)  /* implemented in software */
-#define _PAGE_MODIFIED              (1<<10) /* implemented in software */
-#define _PAGE_FILE                  (1<<10) /* set:pagecache unset:swap */
+#define _PAGE_NO_EXEC               (1<<8)  /* implemented in software */
+#define _PAGE_WRITE                 (1<<9)  /* implemented in software */
+#define _PAGE_ACCESSED              (1<<10) /* implemented in software */
+#define _PAGE_MODIFIED              (1<<11) /* implemented in software */
+#define _PAGE_FILE                  (1<<11) /* set:pagecache unset:swap */
 
 #define _PAGE_R4KBUG                (1<<0)  /* workaround for r4k bug  */
 #define _PAGE_GLOBAL                (1<<0)
@@ -54,10 +55,11 @@
 
 #define _PAGE_PRESENT               (1<<0)  /* implemented in software */
 #define _PAGE_NO_READ               (1<<1)  /* implemented in software */
-#define _PAGE_WRITE                 (1<<2)  /* implemented in software */
-#define _PAGE_ACCESSED              (1<<3)  /* implemented in software */
-#define _PAGE_MODIFIED              (1<<4)  /* implemented in software */
-#define _PAGE_FILE                  (1<<4)  /* set:pagecache unset:swap */
+#define _PAGE_NO_EXEC               (1<<2)  /* implemented in software */
+#define _PAGE_WRITE                 (1<<3)  /* implemented in software */
+#define _PAGE_ACCESSED              (1<<4)  /* implemented in software */
+#define _PAGE_MODIFIED              (1<<5)  /* implemented in software */
+#define _PAGE_FILE                  (1<<5)  /* set:pagecache unset:swap */
 
 #define _PAGE_GLOBAL                (1<<8)
 #define _PAGE_VALID                 (1<<9)
@@ -133,9 +135,6 @@
 #endif
 #define _PFN_MASK		(~((1 << (_PFN_SHIFT)) - 1))
 
-#ifndef _PAGE_NO_EXEC
-#define _PAGE_NO_EXEC ({BUG(); 0; })
-#endif
 #ifndef _PAGE_GLOBAL_SHIFT
 #define _PAGE_GLOBAL_SHIFT ilog2(_PAGE_GLOBAL)
 #endif
