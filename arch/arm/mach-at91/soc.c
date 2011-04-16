@@ -20,6 +20,7 @@
 #include "generic.h"
 
 static struct at91_soc __initdata current_soc;
+static void __init at91_add_gpio(void);
 
 struct at91_cpu_id cpu_id;
 EXPORT_SYMBOL(cpu_id);
@@ -114,4 +115,100 @@ void __init at91_initialize(unsigned long main_clock)
 	pr_info("AT91: detected soc: %s\n", current_soc.name);
 
 	current_soc.init(main_clock);
+
+	/* Register GPIO subsystem */
+	at91_add_gpio();
+}
+
+/* --------------------------------------------------------------------
+ *  GPIO
+ * -------------------------------------------------------------------- */
+
+static struct resource pioa_resources[] = {
+	[0] = RES_MEM(SZ_512),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_pioa_device = {
+	.name		= "at91_gpio",
+	.id		= 0,
+	.resource	= pioa_resources,
+	.num_resources	= ARRAY_SIZE(pioa_resources),
+};
+
+static struct resource piob_resources[] = {
+	[0] = RES_MEM(SZ_512),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_piob_device = {
+	.name		= "at91_gpio",
+	.id		= 1,
+	.resource	= piob_resources,
+	.num_resources	= ARRAY_SIZE(piob_resources),
+};
+
+static struct resource pioc_resources[] = {
+	[0] = RES_MEM(SZ_512),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_pioc_device = {
+	.name		= "at91_gpio",
+	.id		= 2,
+	.resource	= pioc_resources,
+	.num_resources	= ARRAY_SIZE(pioc_resources),
+};
+
+static struct resource piod_resources[] = {
+	[0] = RES_MEM(SZ_512),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_piod_device = {
+	.name		= "at91_gpio",
+	.id		= 3,
+	.resource	= piod_resources,
+	.num_resources	= ARRAY_SIZE(piod_resources),
+};
+
+static struct resource pioe_resources[] = {
+	[0] = RES_MEM(SZ_512),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_pioe_device = {
+	.name		= "at91_gpio",
+	.id		= 4,
+	.resource	= pioe_resources,
+	.num_resources	= ARRAY_SIZE(pioe_resources),
+};
+
+static struct platform_device *at91_pio_devices[] __initdata = {
+	&at91_pioa_device,
+	&at91_piob_device,
+	&at91_pioc_device,
+	&at91_piod_device,
+	&at91_pioe_device,
+};
+
+static void __init at91_add_gpio(void)
+{
+	struct at91_dev_resource *gpios = current_soc.gpio.resource;
+	int nb = current_soc.gpio.num_resources;
+
+	int i;
+	struct resource *r;
+
+	BUG_ON(!gpios || nb < 0 || nb > ARRAY_SIZE(at91_pio_devices));
+
+	for (i = 0; i < nb; i++) {
+		r = at91_pio_devices[i]->resource;
+		set_resource_mem(&r[0], gpios[i].mmio_base);
+		set_resource_irq(&r[1], gpios[i].irq);
+	}
+
+	early_platform_add_devices(at91_pio_devices, nb);
+	early_platform_driver_register_all("early_at91_gpio");
+	early_platform_driver_probe("early_at91_gpio", nb , 0);
 }

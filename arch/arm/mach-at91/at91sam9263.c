@@ -196,9 +196,11 @@ static struct clk *periph_clocks[] __initdata = {
 };
 
 static struct clk_lookup periph_clocks_lookups[] = {
-	CLKDEV_CON_ID("pioA_clk", &pioA_clk),
-	CLKDEV_CON_ID("pioB_clk", &pioB_clk),
-	CLKDEV_CON_ID("pioCDE_clk", &pioCDE_clk),
+	CLKDEV_DEV_ID("at91_gpio.0", &pioA_clk),
+	CLKDEV_DEV_ID("at91_gpio.1", &pioB_clk),
+	CLKDEV_DEV_ID("at91_gpio.2", &pioCDE_clk),
+	CLKDEV_DEV_ID("at91_gpio.3", &pioCDE_clk),
+	CLKDEV_DEV_ID("at91_gpio.4", &pioCDE_clk),
 	CLKDEV_CON_ID("can_clk", &can_clk),
 	CLKDEV_CON_ID("twi_clk", &twi_clk),
 	CLKDEV_CON_ID("ac97_clk", &ac97_clk),
@@ -295,27 +297,22 @@ struct clk* __init at91sam9263_get_uart_clock(int id)
  *  GPIO
  * -------------------------------------------------------------------- */
 
-static struct at91_gpio_bank at91sam9263_gpio[] = {
+static struct at91_dev_resource at91sam9263_pios[] __initdata = {
 	{
-		.id		= AT91SAM9263_ID_PIOA,
-		.offset		= AT91_PIOA,
-		.clock		= &pioA_clk,
+		.mmio_base	= AT91_PIOA,
+		.irq		= AT91SAM9263_ID_PIOA,
 	}, {
-		.id		= AT91SAM9263_ID_PIOB,
-		.offset		= AT91_PIOB,
-		.clock		= &pioB_clk,
+		.mmio_base	= AT91_PIOB,
+		.irq		= AT91SAM9263_ID_PIOB,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOC,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOC,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOD,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOD,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOE,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOE,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}
 };
 
@@ -343,9 +340,6 @@ static void __init at91sam9263_initialize(unsigned long main_clock)
 
 	/* Register the processor-specific clocks */
 	at91sam9263_register_clocks();
-
-	/* Register GPIO subsystem */
-	at91_gpio_init(at91sam9263_gpio, 5);
 }
 
 /* --------------------------------------------------------------------
@@ -394,4 +388,8 @@ struct at91_soc __initdata at91sam9263_soc = {
 	.name = "at91sam9263",
 	.default_irq_priority = at91sam9263_default_irq_priority,
 	.init = at91sam9263_initialize,
+	.gpio = {
+		.resource = at91sam9263_pios,
+		.num_resources = ARRAY_SIZE(at91sam9263_pios),
+	},
 };

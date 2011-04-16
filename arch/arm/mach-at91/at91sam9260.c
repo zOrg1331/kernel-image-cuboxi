@@ -215,9 +215,9 @@ static struct clk *periph_clocks[] __initdata = {
 };
 
 static struct clk_lookup periph_clocks_lookups[] = {
-	CLKDEV_CON_ID("pioA_clk", &pioA_clk),
-	CLKDEV_CON_ID("pioB_clk", &pioB_clk),
-	CLKDEV_CON_ID("pioC_clk", &pioC_clk),
+	CLKDEV_DEV_ID("at91_gpio.0", &pioA_clk),
+	CLKDEV_DEV_ID("at91_gpio.1", &pioB_clk),
+	CLKDEV_DEV_ID("at91_gpio.2", &pioC_clk),
 	CLKDEV_CON_ID("adc_clk", &adc_clk),
 	CLKDEV_CON_ID("mci_clk", &mmc_clk),
 	CLKDEV_CON_ID("udc_clk", &udc_clk),
@@ -297,19 +297,16 @@ struct clk* __init at91sam9260_get_uart_clock(int id)
  *  GPIO
  * -------------------------------------------------------------------- */
 
-static struct at91_gpio_bank at91sam9260_gpio[] = {
+static struct at91_dev_resource at91sam9260_pios[] __initdata = {
 	{
-		.id		= AT91SAM9260_ID_PIOA,
-		.offset		= AT91_PIOA,
-		.clock		= &pioA_clk,
+		.mmio_base	= AT91_PIOA,
+		.irq		= AT91SAM9260_ID_PIOA,
 	}, {
-		.id		= AT91SAM9260_ID_PIOB,
-		.offset		= AT91_PIOB,
-		.clock		= &pioB_clk,
+		.mmio_base	= AT91_PIOB,
+		.irq		= AT91SAM9260_ID_PIOB,
 	}, {
-		.id		= AT91SAM9260_ID_PIOC,
-		.offset		= AT91_PIOC,
-		.clock		= &pioC_clk,
+		.mmio_base	= AT91_PIOC,
+		.irq		= AT91SAM9260_ID_PIOC,
 	}
 };
 
@@ -365,9 +362,6 @@ static void __init at91sam9260_initialize(unsigned long main_clock)
 
 	/* Register the processor-specific clocks */
 	at91sam9260_register_clocks();
-
-	/* Register GPIO subsystem */
-	at91_gpio_init(at91sam9260_gpio, 3);
 }
 
 /* --------------------------------------------------------------------
@@ -416,4 +410,8 @@ struct at91_soc __initdata at91sam9260_soc = {
 	.name = "at91sam9260",
 	.default_irq_priority = at91sam9260_default_irq_priority,
 	.init = at91sam9260_initialize,
+	.gpio = {
+		.resource = at91sam9260_pios,
+		.num_resources = ARRAY_SIZE(at91sam9260_pios),
+	},
 };

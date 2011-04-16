@@ -189,16 +189,16 @@ static struct clk *periph_clocks[] __initdata = {
 };
 
 static struct clk_lookup periph_clocks_lookups[] = {
+	CLKDEV_DEV_ID("at91_gpio.0", &pioA_clk),
+	CLKDEV_DEV_ID("at91_gpio.1", &pioB_clk),
+	CLKDEV_DEV_ID("at91_gpio.2", &pioC_clk),
+	CLKDEV_DEV_ID("at91_gpio.3", &pioD_clk),
 	CLKDEV_CON_ID("udc_clk", &udc_clk),
 	CLKDEV_CON_ID("ohci_clk", &ohci_clk),
 	CLKDEV_CON_ID("ether_clk", &ether_clk),
 	CLKDEV_CON_ID("mci_clk", &mmc_clk),
 	CLKDEV_CON_ID("twi_clk", &twi_clk),
 	CLKDEV_CON_ID("spi_clk", &spi_clk),
-	CLKDEV_CON_ID("pioA_clk", &pioA_clk),
-	CLKDEV_CON_ID("pioB_clk", &pioB_clk),
-	CLKDEV_CON_ID("pioC_clk", &pioC_clk),
-	CLKDEV_CON_ID("pioD_clk", &pioD_clk),
 	CLKDEV_CON_DEV_ID("t0_clk", "atmel_tcb.0", &tc0_clk),
 	CLKDEV_CON_DEV_ID("t1_clk", "atmel_tcb.0", &tc1_clk),
 	CLKDEV_CON_DEV_ID("t2_clk", "atmel_tcb.0", &tc2_clk),
@@ -284,23 +284,19 @@ struct clk* __init at91rm9200_get_uart_clock(int id)
  *  GPIO
  * -------------------------------------------------------------------- */
 
-static struct at91_gpio_bank at91rm9200_gpio[] = {
+static struct at91_dev_resource at91rm9200_pios[] __initdata = {
 	{
-		.id		= AT91RM9200_ID_PIOA,
-		.offset		= AT91_PIOA,
-		.clock		= &pioA_clk,
+		.mmio_base	= AT91_PIOA,
+		.irq		= AT91RM9200_ID_PIOA,
 	}, {
-		.id		= AT91RM9200_ID_PIOB,
-		.offset		= AT91_PIOB,
-		.clock		= &pioB_clk,
+		.mmio_base	= AT91_PIOB,
+		.irq		= AT91RM9200_ID_PIOB,
 	}, {
-		.id		= AT91RM9200_ID_PIOC,
-		.offset		= AT91_PIOC,
-		.clock		= &pioC_clk,
+		.mmio_base	= AT91_PIOC,
+		.irq		= AT91RM9200_ID_PIOC,
 	}, {
-		.id		= AT91RM9200_ID_PIOD,
-		.offset		= AT91_PIOD,
-		.clock		= &pioD_clk,
+		.mmio_base	= AT91_PIOD,
+		.irq		= AT91RM9200_ID_PIOD,
 	}
 };
 
@@ -318,6 +314,11 @@ static void at91rm9200_reset(void)
  * -------------------------------------------------------------------- */
 static void __init at91rm9200_initialize(unsigned long main_clock)
 {
+	if (cpu_is_at91rm9200_bga())
+		at91rm9200_soc.gpio.num_resources = AT91RM9200_BGA;
+	else
+		at91rm9200_soc.gpio.num_resources = AT91RM9200_PQFP;
+
 	/* Map peripherals */
 	iotable_init(at91rm9200_io_desc, ARRAY_SIZE(at91rm9200_io_desc));
 
@@ -332,10 +333,6 @@ static void __init at91rm9200_initialize(unsigned long main_clock)
 
 	/* Register the processor-specific clocks */
 	at91rm9200_register_clocks();
-
-	/* Initialize GPIO subsystem */
-	at91_gpio_init(at91rm9200_gpio,
-		cpu_is_at91rm9200_bga() ? AT91RM9200_BGA : AT91RM9200_PQFP);
 }
 
 
@@ -385,4 +382,8 @@ struct at91_soc __initdata at91rm9200_soc = {
 	.name = "at91rm9200",
 	.default_irq_priority = at91rm9200_default_irq_priority,
 	.init = at91rm9200_initialize,
+	.gpio = {
+		.resource = at91rm9200_pios,
+		.num_resources = ARRAY_SIZE(at91rm9200_pios),
+	},
 };

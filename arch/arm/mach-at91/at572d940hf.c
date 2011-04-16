@@ -202,9 +202,9 @@ static struct clk *periph_clocks[] __initdata = {
 };
 
 static struct clk_lookup periph_clocks_lookups[] = {
-	CLKDEV_CON_ID("pioA_clk", &pioA_clk),
-	CLKDEV_CON_ID("pioB_clk", &pioB_clk),
-	CLKDEV_CON_ID("pioC_clk", &pioC_clk),
+	CLKDEV_DEV_ID("at91_gpio.0", &pioA_clk),
+	CLKDEV_DEV_ID("at91_gpio.1", &pioB_clk),
+	CLKDEV_DEV_ID("at91_gpio.2", &pioC_clk),
 	CLKDEV_CON_ID("macb_clk", &macb_clk),
 	CLKDEV_CON_ID("mci_clk", &mmc_clk),
 	CLKDEV_CON_ID("udc_clk", &udc_clk),
@@ -336,19 +336,16 @@ struct clk* __init at572d940hf_get_uart_clock(int id)
  *  GPIO
  * -------------------------------------------------------------------- */
 
-static struct at91_gpio_bank at572d940hf_gpio[] = {
+static struct at91_dev_resource at572d940hf_pios[] __initdata = {
 	{
-		.id		= AT572D940HF_ID_PIOA,
-		.offset		= AT91_PIOA,
-		.clock		= &pioA_clk,
+		.mmio_base	= AT91_PIOA,
+		.irq		= AT572D940HF_ID_PIOA,
 	}, {
-		.id		= AT572D940HF_ID_PIOB,
-		.offset		= AT91_PIOB,
-		.clock		= &pioB_clk,
+		.mmio_base	= AT91_PIOB,
+		.irq		= AT572D940HF_ID_PIOB,
 	}, {
-		.id		= AT572D940HF_ID_PIOC,
-		.offset		= AT91_PIOC,
-		.clock		= &pioC_clk,
+		.mmio_base	= AT91_PIOC,
+		.irq		= AT572D940HF_ID_PIOC,
 	}
 };
 
@@ -376,9 +373,6 @@ static void __init at572d940hf_initialize(unsigned long main_clock)
 
 	/* Register the processor-specific clocks */
 	at572d940hf_register_clocks();
-
-	/* Register GPIO subsystem */
-	at91_gpio_init(at572d940hf_gpio, 3);
 }
 
 /* --------------------------------------------------------------------
@@ -427,4 +421,8 @@ struct at91_soc __initdata at572d940hf_soc = {
 	.name = "at572d940hf",
 	.default_irq_priority = at572d940hf_default_irq_priority,
 	.init = at572d940hf_initialize,
+	.gpio = {
+		.resource = at572d940hf_pios,
+		.num_resources = ARRAY_SIZE(at572d940hf_pios),
+	},
 };

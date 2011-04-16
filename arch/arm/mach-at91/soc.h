@@ -6,9 +6,13 @@
  *
  */
 
+#include "devices.h"
+
 struct at91_soc {
 	char *name;
 	unsigned int *default_irq_priority;
+
+	struct at91_dev_resource_array gpio;
 
 	void (*init)(unsigned long main_clock);
 };
