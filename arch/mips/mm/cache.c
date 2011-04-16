@@ -137,23 +137,31 @@ EXPORT_SYMBOL(_page_cachable_default);
 
 static inline void setup_protection_map(void)
 {
-	protection_map[0]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-	protection_map[1]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-	protection_map[2]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-	protection_map[3]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-	protection_map[4]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-	protection_map[5]  = __pgprot(_page_cachable_default | _PAGE_PRESENT);
-	protection_map[6]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-	protection_map[7]  = __pgprot(_page_cachable_default | _PAGE_PRESENT);
+	int i;
+	const unsigned long prot[] = {
+		/* private mappings (clear the dirty bit until written) */
+		[0]	= _PAGE_NO_EXEC | _PAGE_NO_READ,	/* --- */
+		[1]	= _PAGE_NO_EXEC,			/* r-- */
+		[2]	= _PAGE_NO_EXEC | _PAGE_NO_READ,	/* -w- */
+		[3]	= _PAGE_NO_EXEC,			/* rw- */
+		[4]	= _PAGE_NO_READ,			/* --x */
+		[5]	= 0,					/* r-x */
+		[6]	= _PAGE_NO_READ,			/* -wx */
+		[7]	= 0,					/* rwx */
+		/* shared mappings */
+		[8]	= _PAGE_NO_EXEC | _PAGE_NO_READ,	/* --- */
+		[9]	= _PAGE_NO_EXEC,			/* r-- */
+		[10]	= _PAGE_NO_EXEC | _PAGE_WRITE | _PAGE_NO_READ, /* -w- */
+		[11]	= _PAGE_NO_EXEC | _PAGE_WRITE,		/* rw- */
+		[12]	= _PAGE_NO_READ,			/* --x */
+		[13]	= 0,					/* r-x */
+		[14]	= _PAGE_WRITE | _PAGE_NO_READ,		/* -wx */
+		[15]	= _PAGE_WRITE,				/* rwx */
+	};
 
-	protection_map[8]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-	protection_map[9]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-	protection_map[10] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_WRITE | _PAGE_NO_READ);
-	protection_map[11] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_WRITE);
-	protection_map[12] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-	protection_map[13] = __pgprot(_page_cachable_default | _PAGE_PRESENT);
-	protection_map[14] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_WRITE  | _PAGE_NO_READ);
-	protection_map[15] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_WRITE);
+	for (i = 0; i < ARRAY_SIZE(protection_map); i++)
+		protection_map[i] = __pgprot(_page_cachable_default |
+					     _PAGE_PRESENT | prot[i]);
 }
 
 void __cpuinit cpu_cache_init(void)
