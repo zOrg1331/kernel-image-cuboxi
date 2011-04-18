@@ -28,33 +28,18 @@
 #include "trans.h"
 
 /**
- * ail_empty_gl - remove all buffers for a given lock from the AIL
+ * __gfs2_ail_flush - remove all buffers for a given lock from the AIL
  * @gl: the glock
  *
  * None of the buffers should be dirty, locked, or pinned.
  */
 
-static void gfs2_ail_empty_gl(struct gfs2_glock *gl)
+static void __gfs2_ail_flush(struct gfs2_glock *gl)
 {
 	struct gfs2_sbd *sdp = gl->gl_sbd;
 	struct list_head *head = &gl->gl_ail_list;
 	struct gfs2_bufdata *bd;
 	struct buffer_head *bh;
-	struct gfs2_trans tr;
-
-	memset(&tr, 0, sizeof(tr));
-	tr.tr_revokes = atomic_read(&gl->gl_ail_count);
-
-	if (!tr.tr_revokes)
-		return;
-
-	/* A shortened, inline version of gfs2_trans_begin() */
-	tr.tr_reserved = 1 + gfs2_struct2blk(sdp, tr.tr_revokes, sizeof(u64));
-	tr.tr_ip = (unsigned long)__builtin_return_address(0);
-	INIT_LIST_HEAD(&tr.tr_list_buf);
-	gfs2_log_reserve(sdp, tr.tr_reserved);
-	BUG_ON(current->journal_info);
-	current->journal_info = &tr;
 
 	spin_lock(&sdp->sd_ail_lock);
 	while (!list_empty(head)) {
@@ -76,7 +61,47 @@ static void gfs2_ail_empty_gl(struct gfs2_glock *gl)
 	}
 	gfs2_assert_withdraw(sdp, !atomic_read(&gl->gl_ail_count));
 	spin_unlock(&sdp->sd_ail_lock);
+}
 
+
+static void gfs2_ail_empty_gl(struct gfs2_glock *gl)
+{
+	struct gfs2_sbd *sdp = gl->gl_sbd;
+	struct gfs2_trans tr;
+
+	memset(&tr, 0, sizeof(tr));
+	tr.tr_revokes = atomic_read(&gl->gl_ail_count);
+
+	if (!tr.tr_revokes)
+		return;
+
+	/* A shortened, inline version of gfs2_trans_begin() */
+	tr.tr_reserved = 1 + gfs2_struct2blk(sdp, tr.tr_revokes, sizeof(u64));
+	tr.tr_ip = (unsigned long)__builtin_return_address(0);
+	INIT_LIST_HEAD(&tr.tr_list_buf);
+	gfs2_log_reserve(sdp, tr.tr_reserved);
+	BUG_ON(current->journal_info);
+	current->journal_info = &tr;
+
+	__gfs2_ail_flush(gl);
+
+	gfs2_trans_end(sdp);
+	gfs2_log_flush(sdp, NULL);
+}
+
+void gfs2_ail_flush(struct gfs2_glock *gl)
+{
+	struct gfs2_sbd *sdp = gl->gl_sbd;
+	unsigned int revokes = atomic_read(&gl->gl_ail_count);
+	int ret;
+
+	if (!revokes)
+		return;
+
+	ret = gfs2_trans_begin(sdp, 0, revokes);
+	if (ret)
+		return;
+	__gfs2_ail_flush(gl);
 	gfs2_trans_end(sdp);
 	gfs2_log_flush(sdp, NULL);
 }
@@ -385,6 +410,10 @@ static int trans_go_demote_ok(const struct gfs2_glock *gl)
 static void iopen_go_callback(struct gfs2_glock *gl)
 {
 	struct gfs2_inode *ip = (struct gfs2_inode *)gl->gl_object;
+	struct gfs2_sbd *sdp = gl->gl_sbd;
+
+	if (sdp->sd_vfs->s_flags & MS_RDONLY)
+		return;
 
 	if (gl->gl_demote_state == LM_ST_UNLOCKED &&
 	    gl->gl_state == LM_ST_SHARED && ip) {
