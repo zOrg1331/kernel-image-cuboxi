@@ -1,0 +1,14 @@
+if ARCH_ZYNQ
+
+choice
+        prompt "Board Selection"
+	default MACH_XILINX_EP107
+
+config MACH_XILINX_EP107
+	bool "Xilinx EP107 Board"
+	help
+	  Select if you are using a Xilinx EP107 board.
+
+endchoice
+
+endif
