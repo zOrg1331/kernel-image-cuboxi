@@ -31,6 +31,7 @@
 #ifndef _E1000_H_
 #define _E1000_H_
 
+#include <linux/bitops.h>
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
@@ -39,6 +40,7 @@
 #include <linux/pci.h>
 #include <linux/pci-aspm.h>
 #include <linux/crc32.h>
+#include <linux/if_vlan.h>
 
 #include "hw.h"
 
@@ -280,7 +282,7 @@ struct e1000_adapter {
 
 	const struct e1000_info *ei;
 
-	struct vlan_group *vlgrp;
+	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 	u32 bd_number;
 	u32 rx_buffer_len;
 	u16 mng_vlan_id;
@@ -456,6 +458,7 @@ struct e1000_info {
 #define FLAG2_HAS_PHY_STATS               (1 << 4)
 #define FLAG2_HAS_EEE                     (1 << 5)
 #define FLAG2_DMA_BURST                   (1 << 6)
+#define FLAG2_DISABLE_ASPM_L0S            (1 << 7)
 #define FLAG2_DISABLE_AIM                 (1 << 8)
 #define FLAG2_CHECK_PHY_HANG              (1 << 9)
 
@@ -502,7 +505,6 @@ extern void e1000e_set_interrupt_capability(struct e1000_adapter *adapter);
 extern void e1000e_reset_interrupt_capability(struct e1000_adapter *adapter);
 extern void e1000e_get_hw_control(struct e1000_adapter *adapter);
 extern void e1000e_release_hw_control(struct e1000_adapter *adapter);
-extern void e1000e_disable_aspm(struct pci_dev *pdev, u16 state);
 
 extern unsigned int copybreak;
 

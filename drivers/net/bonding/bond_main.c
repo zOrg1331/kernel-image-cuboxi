@@ -631,7 +631,8 @@ down:
 static int bond_update_speed_duplex(struct slave *slave)
 {
 	struct net_device *slave_dev = slave->dev;
-	struct ethtool_cmd etool;
+	struct ethtool_cmd etool = { .cmd = ETHTOOL_GSET };
+	u32 slave_speed;
 	int res;
 
 	/* Fake speed and duplex */
@@ -645,7 +646,8 @@ static int bond_update_speed_duplex(struct slave *slave)
 	if (res < 0)
 		return -1;
 
-	switch (etool.speed) {
+	slave_speed = ethtool_cmd_speed(&etool);
+	switch (slave_speed) {
 	case SPEED_10:
 	case SPEED_100:
 	case SPEED_1000:
@@ -663,7 +665,7 @@ static int bond_update_speed_duplex(struct slave *slave)
 		return -1;
 	}
 
-	slave->speed = etool.speed;
+	slave->speed = slave_speed;
 	slave->duplex = etool.duplex;
 
 	return 0;
@@ -1407,7 +1409,7 @@ static int bond_compute_features(struct bonding *bond)
 	int i;
 
 	features &= ~(NETIF_F_ALL_CSUM | BOND_VLAN_FEATURES);
-	features |=  NETIF_F_GSO_MASK | NETIF_F_NO_CSUM;
+	features |=  NETIF_F_GSO_MASK | NETIF_F_NO_CSUM | NETIF_F_NOCACHE_COPY;
 
 	if (!bond->first_slave)
 		goto done;
@@ -2493,7 +2495,7 @@ static void bond_miimon_commit(struct bonding *bond)
 
 			bond_update_speed_duplex(slave);
 
-			pr_info("%s: link status definitely up for interface %s, %d Mbps %s duplex.\n",
+			pr_info("%s: link status definitely up for interface %s, %u Mbps %s duplex.\n",
 				bond->dev->name, slave->dev->name,
 				slave->speed, slave->duplex ? "full" : "half");
 
@@ -3339,8 +3341,8 @@ static int bond_slave_netdev_event(unsigned long event,
 
 			slave = bond_get_slave_by_dev(bond, slave_dev);
 			if (slave) {
-				u16 old_speed = slave->speed;
-				u16 old_duplex = slave->duplex;
+				u32 old_speed = slave->speed;
+				u8  old_duplex = slave->duplex;
 
 				bond_update_speed_duplex(slave);
 
@@ -4357,9 +4359,9 @@ static u16 bond_select_queue(struct net_device *dev, struct sk_buff *skb)
 	u16 txq = skb_rx_queue_recorded(skb) ? skb_get_rx_queue(skb) : 0;
 
 	if (unlikely(txq >= dev->real_num_tx_queues)) {
-		do
+		do {
 			txq -= dev->real_num_tx_queues;
-		while (txq >= dev->real_num_tx_queues);
+		} while (txq >= dev->real_num_tx_queues);
 	}
 	return txq;
 }

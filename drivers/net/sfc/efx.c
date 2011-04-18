@@ -1876,6 +1876,17 @@ static void efx_set_multicast_list(struct net_device *net_dev)
 	/* Otherwise efx_start_port() will do this */
 }
 
+static int efx_set_features(struct net_device *net_dev, u32 data)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+
+	/* If disabling RX n-tuple filtering, clear existing filters */
+	if (net_dev->features & ~data & NETIF_F_NTUPLE)
+		efx_filter_clear_rx(efx, EFX_FILTER_PRI_MANUAL);
+
+	return 0;
+}
+
 static const struct net_device_ops efx_netdev_ops = {
 	.ndo_open		= efx_net_open,
 	.ndo_stop		= efx_net_stop,
@@ -1887,6 +1898,7 @@ static const struct net_device_ops efx_netdev_ops = {
 	.ndo_change_mtu		= efx_change_mtu,
 	.ndo_set_mac_address	= efx_set_mac_address,
 	.ndo_set_multicast_list = efx_set_multicast_list,
+	.ndo_set_features	= efx_set_features,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller = efx_netpoll,
 #endif
@@ -2235,7 +2247,7 @@ static bool efx_port_dummy_op_poll(struct efx_nic *efx)
 	return false;
 }
 
-static struct efx_phy_operations efx_dummy_phy_operations = {
+static const struct efx_phy_operations efx_dummy_phy_operations = {
 	.init		 = efx_port_dummy_op_int,
 	.reconfigure	 = efx_port_dummy_op_int,
 	.poll		 = efx_port_dummy_op_poll,
@@ -2251,7 +2263,7 @@ static struct efx_phy_operations efx_dummy_phy_operations = {
 /* This zeroes out and then fills in the invariants in a struct
  * efx_nic (including all sub-structures).
  */
-static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+static int efx_init_struct(struct efx_nic *efx, const struct efx_nic_type *type,
 			   struct pci_dev *pci_dev, struct net_device *net_dev)
 {
 	int i;
@@ -2271,7 +2283,6 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	strlcpy(efx->name, pci_name(pci_dev), sizeof(efx->name));
 
 	efx->net_dev = net_dev;
-	efx->rx_checksum_enabled = true;
 	spin_lock_init(&efx->stats_lock);
 	mutex_init(&efx->mac_lock);
 	efx->mac_op = type->default_mac_ops;
@@ -2442,7 +2453,7 @@ static int efx_pci_probe_main(struct efx_nic *efx)
 static int __devinit efx_pci_probe(struct pci_dev *pci_dev,
 				   const struct pci_device_id *entry)
 {
-	struct efx_nic_type *type = (struct efx_nic_type *) entry->driver_data;
+	const struct efx_nic_type *type = (const struct efx_nic_type *) entry->driver_data;
 	struct net_device *net_dev;
 	struct efx_nic *efx;
 	int i, rc;
@@ -2454,12 +2465,15 @@ static int __devinit efx_pci_probe(struct pci_dev *pci_dev,
 		return -ENOMEM;
 	net_dev->features |= (type->offload_features | NETIF_F_SG |
 			      NETIF_F_HIGHDMA | NETIF_F_TSO |
-			      NETIF_F_GRO);
+			      NETIF_F_RXCSUM);
 	if (type->offload_features & NETIF_F_V6_CSUM)
 		net_dev->features |= NETIF_F_TSO6;
 	/* Mask for features that also apply to VLAN devices */
 	net_dev->vlan_features |= (NETIF_F_ALL_CSUM | NETIF_F_SG |
-				   NETIF_F_HIGHDMA | NETIF_F_TSO);
+				   NETIF_F_HIGHDMA | NETIF_F_ALL_TSO |
+				   NETIF_F_RXCSUM);
+	/* All offloads can be toggled */
+	net_dev->hw_features = net_dev->features & ~NETIF_F_HIGHDMA;
 	efx = netdev_priv(net_dev);
 	pci_set_drvdata(pci_dev, efx);
 	SET_NETDEV_DEV(net_dev, &pci_dev->dev);
