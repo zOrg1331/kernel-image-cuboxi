@@ -1,0 +1,34 @@
+Importing i2c based on 2.6.39-rc3-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0ebc115da3ed67409792eb8de46361a5c673f072
+HEAD is now at 0ebc115 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/ericvh/v9fs
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-core-better-deprecation-warnings.patch
+i2c-algo-bit-call-pre-post_xfer-for-bit_test.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 1df9cb1...89bf315 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.39-rc3-git6
+$ cd ../quilt-tmp
+$ git reset --hard 0ebc115da3ed67409792eb8de46361a5c673f072
+HEAD is now at 0ebc115 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/ericvh/v9fs
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lm90-01-add-support-for-adt7461a-and-nct1008.patch
+hwmon-lm90-02-fix-update-interval-information-in-driver-documentation.patch
+hwmon-adm1021-drop-reference-to-xeon.patch
+hwmon-use-set_drvdata-helpers.patch
+hwmon-k10temp-add-support-for-fam15h-bulldozer.patch
+hwmon-add-driver-for-amd-fam15h-power.patch
+hwmon-jc42-change-class.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 7e344f3...e9535d4 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.39-rc1-git3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.39-rc1-184-g78fca1b9
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
