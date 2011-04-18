@@ -1,6 +1,6 @@
 Name:    kernel-image-std-pae
 Version: 2.6.38
-Release: alt2
+Release: alt3
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -497,6 +497,7 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
+find %buildroot%kheaders_dir -name '.*.cmd' -o -name '.install' | xargs rm -f
 
 #provide symlink to autoconf.h for back compat
 pushd %buildroot%old_kbuild_dir/include/linux
@@ -643,6 +644,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Apr 15 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt3
+- Update to 2.6.38.3
+- some cleanup in kernel-headers
+
 * Wed Apr 06 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt2
 - Synchronise configs (ALT 25386)
 - Build ipt_NETFLOW.ko (ALT 25312)
