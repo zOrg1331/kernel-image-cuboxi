@@ -1275,7 +1275,7 @@ int dsi_pll_set_clock_div(struct dsi_clock_info *cinfo)
 {
 	int r = 0;
 	u32 l;
-	int f;
+	int f = 0;
 	u8 regn_start, regn_end, regm_start, regm_end;
 	u8 regm_dispc_start, regm_dispc_end, regm_dsi_start, regm_dsi_end;
 
@@ -1349,19 +1349,19 @@ int dsi_pll_set_clock_div(struct dsi_clock_info *cinfo)
 	dsi_write_reg(DSI_PLL_CONFIGURATION1, l);
 
 	BUG_ON(cinfo->fint < dsi.fint_min || cinfo->fint > dsi.fint_max);
-	if (cinfo->fint < 1000000)
-		f = 0x3;
-	else if (cinfo->fint < 1250000)
-		f = 0x4;
-	else if (cinfo->fint < 1500000)
-		f = 0x5;
-	else if (cinfo->fint < 1750000)
-		f = 0x6;
-	else
-		f = 0x7;
+
+	if (dss_has_feature(FEAT_DSI_PLL_FREQSEL)) {
+		f = cinfo->fint < 1000000 ? 0x3 :
+			cinfo->fint < 1250000 ? 0x4 :
+			cinfo->fint < 1500000 ? 0x5 :
+			cinfo->fint < 1750000 ? 0x6 :
+			0x7;
+	}
 
 	l = dsi_read_reg(DSI_PLL_CONFIGURATION2);
-	l = FLD_MOD(l, f, 4, 1);		/* DSI_PLL_FREQSEL */
+
+	if (dss_has_feature(FEAT_DSI_PLL_FREQSEL))
+		l = FLD_MOD(l, f, 4, 1);	/* DSI_PLL_FREQSEL */
 	l = FLD_MOD(l, cinfo->use_sys_clk ? 0 : 1,
 			11, 11);		/* DSI_PLL_CLKSEL */
 	l = FLD_MOD(l, cinfo->highfreq,
@@ -1877,9 +1877,6 @@ static int dsi_complexio_init(struct omap_dss_device *dssdev)
 
 	DSSDBG("dsi_complexio_init\n");
 
-	/* CIO_CLK_ICG, enable L3 clk to CIO */
-	REG_FLD_MOD(DSI_CLK_CTRL, 1, 14, 14);
-
 	/* A dummy read using the SCP interface to any DSIPHY register is
 	 * required after DSIPHY reset to complete the reset of the DSI complex
 	 * I/O. */
@@ -1904,10 +1901,12 @@ static int dsi_complexio_init(struct omap_dss_device *dssdev)
 		goto err;
 	}
 
-	if (wait_for_bit_change(DSI_COMPLEXIO_CFG1, 21, 1) != 1) {
-		DSSERR("ComplexIO LDO power down.\n");
-		r = -ENODEV;
-		goto err;
+	if (dss_has_feature(FEAT_DSI_LDO_STATUS)) {
+		if (wait_for_bit_change(DSI_COMPLEXIO_CFG1, 21, 1) != 1) {
+			DSSERR("ComplexIO LDO power down.\n");
+			r = -ENODEV;
+			goto err;
+		}
 	}
 
 	dsi_complexio_timings();
@@ -2038,6 +2037,114 @@ static int dsi_force_tx_stop_mode_io(void)
 	return 0;
 }
 
+static bool dsi_vc_is_enabled(int channel)
+{
+	return REG_GET(DSI_VC_CTRL(channel), 0, 0);
+}
+
+static void dsi_packet_sent_handler_vp(void *data, u32 mask)
+{
+	const int channel = dsi.update_channel;
+	u8 bit = dsi.te_enabled ? 30 : 31;
+
+	if (REG_GET(DSI_VC_TE(channel), bit, bit) == 0)
+		complete((struct completion *)data);
+}
+
+static int dsi_sync_vc_vp(int channel)
+{
+	int r = 0;
+	u8 bit;
+
+	DECLARE_COMPLETION_ONSTACK(completion);
+
+	bit = dsi.te_enabled ? 30 : 31;
+
+	r = dsi_register_isr_vc(channel, dsi_packet_sent_handler_vp,
+		&completion, DSI_VC_IRQ_PACKET_SENT);
+	if (r)
+		goto err0;
+
+	/* Wait for completion only if TE_EN/TE_START is still set */
+	if (REG_GET(DSI_VC_TE(channel), bit, bit)) {
+		if (wait_for_completion_timeout(&completion,
+				msecs_to_jiffies(10)) == 0) {
+			DSSERR("Failed to complete previous frame transfer\n");
+			r = -EIO;
+			goto err1;
+		}
+	}
+
+	dsi_unregister_isr_vc(channel, dsi_packet_sent_handler_vp,
+		&completion, DSI_VC_IRQ_PACKET_SENT);
+
+	return 0;
+err1:
+	dsi_unregister_isr_vc(channel, dsi_packet_sent_handler_vp, &completion,
+		DSI_VC_IRQ_PACKET_SENT);
+err0:
+	return r;
+}
+
+static void dsi_packet_sent_handler_l4(void *data, u32 mask)
+{
+	const int channel = dsi.update_channel;
+
+	if (REG_GET(DSI_VC_CTRL(channel), 5, 5) == 0)
+		complete((struct completion *)data);
+}
+
+static int dsi_sync_vc_l4(int channel)
+{
+	int r = 0;
+
+	DECLARE_COMPLETION_ONSTACK(completion);
+
+	r = dsi_register_isr_vc(channel, dsi_packet_sent_handler_l4,
+		&completion, DSI_VC_IRQ_PACKET_SENT);
+	if (r)
+		goto err0;
+
+	/* Wait for completion only if TX_FIFO_NOT_EMPTY is still set */
+	if (REG_GET(DSI_VC_CTRL(channel), 5, 5)) {
+		if (wait_for_completion_timeout(&completion,
+				msecs_to_jiffies(10)) == 0) {
+			DSSERR("Failed to complete previous l4 transfer\n");
+			r = -EIO;
+			goto err1;
+		}
+	}
+
+	dsi_unregister_isr_vc(channel, dsi_packet_sent_handler_l4,
+		&completion, DSI_VC_IRQ_PACKET_SENT);
+
+	return 0;
+err1:
+	dsi_unregister_isr_vc(channel, dsi_packet_sent_handler_l4,
+		&completion, DSI_VC_IRQ_PACKET_SENT);
+err0:
+	return r;
+}
+
+static int dsi_sync_vc(int channel)
+{
+	WARN_ON(!dsi_bus_is_locked());
+
+	WARN_ON(in_interrupt());
+
+	if (!dsi_vc_is_enabled(channel))
+		return 0;
+
+	switch (dsi.vc[channel].mode) {
+	case DSI_VC_MODE_VP:
+		return dsi_sync_vc_vp(channel);
+	case DSI_VC_MODE_L4:
+		return dsi_sync_vc_l4(channel);
+	default:
+		BUG();
+	}
+}
+
 static int dsi_vc_enable(int channel, bool enable)
 {
 	DSSDBG("dsi_vc_enable channel %d, enable %d\n",
@@ -2074,6 +2181,8 @@ static void dsi_vc_initial_config(int channel)
 	r = FLD_MOD(r, 1, 7, 7); /* CS_TX_EN */
 	r = FLD_MOD(r, 1, 8, 8); /* ECC_TX_EN */
 	r = FLD_MOD(r, 0, 9, 9); /* MODE_SPEED, high speed on/off */
+	if (dss_has_feature(FEAT_DSI_VC_OCP_WIDTH))
+		r = FLD_MOD(r, 3, 11, 10);	/* OCP_WIDTH = 32 bit */
 
 	r = FLD_MOD(r, 4, 29, 27); /* DMA_RX_REQ_NB = no dma */
 	r = FLD_MOD(r, 4, 23, 21); /* DMA_TX_REQ_NB = no dma */
@@ -2088,6 +2197,8 @@ static int dsi_vc_config_l4(int channel)
 
 	DSSDBGF("%d", channel);
 
+	dsi_sync_vc(channel);
+
 	dsi_vc_enable(channel, 0);
 
 	/* VC_BUSY */
@@ -2097,6 +2208,10 @@ static int dsi_vc_config_l4(int channel)
 	}
 
 	REG_FLD_MOD(DSI_VC_CTRL(channel), 0, 1, 1); /* SOURCE, 0 = L4 */
+
+	/* DCS_CMD_ENABLE */
+	if (dss_has_feature(FEAT_DSI_DCS_CMD_CONFIG_VC))
+		REG_FLD_MOD(DSI_VC_CTRL(channel), 0, 30, 30);
 
 	dsi_vc_enable(channel, 1);
 
@@ -2112,6 +2227,8 @@ static int dsi_vc_config_vp(int channel)
 
 	DSSDBGF("%d", channel);
 
+	dsi_sync_vc(channel);
+
 	dsi_vc_enable(channel, 0);
 
 	/* VC_BUSY */
@@ -2121,6 +2238,10 @@ static int dsi_vc_config_vp(int channel)
 	}
 
 	REG_FLD_MOD(DSI_VC_CTRL(channel), 1, 1, 1); /* SOURCE, 1 = video port */
+
+	/* DCS_CMD_ENABLE */
+	if (dss_has_feature(FEAT_DSI_DCS_CMD_CONFIG_VC))
+		REG_FLD_MOD(DSI_VC_CTRL(channel), 1, 30, 30);
 
 	dsi_vc_enable(channel, 1);
 
@@ -2777,8 +2898,11 @@ static int dsi_proto_config(struct omap_dss_device *dssdev)
 	r = FLD_MOD(r, 2, 13, 12);	/* LINE_BUFFER, 2 lines */
 	r = FLD_MOD(r, 1, 14, 14);	/* TRIGGER_RESET_MODE */
 	r = FLD_MOD(r, 1, 19, 19);	/* EOT_ENABLE */
-	r = FLD_MOD(r, 1, 24, 24);	/* DCS_CMD_ENABLE */
-	r = FLD_MOD(r, 0, 25, 25);	/* DCS_CMD_CODE, 1=start, 0=continue */
+	if (!dss_has_feature(FEAT_DSI_DCS_CMD_CONFIG_VC)) {
+		r = FLD_MOD(r, 1, 24, 24);	/* DCS_CMD_ENABLE */
+		/* DCS_CMD_CODE, 1=start, 0=continue */
+		r = FLD_MOD(r, 0, 25, 25);
+	}
 
 	dsi_write_reg(DSI_CTRL, r);
 
@@ -3097,31 +3221,14 @@ static void dsi_te_timeout(unsigned long arg)
 }
 #endif
 
-static void dsi_framedone_bta_callback(void *data, u32 mask);
-
 static void dsi_handle_framedone(int error)
 {
-	const int channel = dsi.update_channel;
-
-	dsi_unregister_isr_vc(channel, dsi_framedone_bta_callback,
-			NULL, DSI_VC_IRQ_BTA);
-
-	cancel_delayed_work(&dsi.framedone_timeout_work);
-
 	/* SIDLEMODE back to smart-idle */
 	dispc_enable_sidle();
 
 	if (dsi.te_enabled) {
 		/* enable LP_RX_TO again after the TE */
 		REG_FLD_MOD(DSI_TIMING2, 1, 15, 15); /* LP_RX_TO */
-	}
-
-	/* RX_FIFO_NOT_EMPTY */
-	if (REG_GET(DSI_VC_CTRL(channel), 20, 20)) {
-		DSSERR("Received error during frame transfer:\n");
-		dsi_vc_flush_receive_data(channel);
-		if (!error)
-			error = -EIO;
 	}
 
 	dsi.framedone_callback(error, dsi.framedone_data);
@@ -3144,61 +3251,20 @@ static void dsi_framedone_timeout_work_callback(struct work_struct *work)
 	dsi_handle_framedone(-ETIMEDOUT);
 }
 
-static void dsi_framedone_bta_callback(void *data, u32 mask)
-{
-	dsi_handle_framedone(0);
-
-#ifdef CONFIG_OMAP2_DSS_FAKE_VSYNC
-	dispc_fake_vsync_irq();
-#endif
-}
-
 static void dsi_framedone_irq_callback(void *data, u32 mask)
 {
-	const int channel = dsi.update_channel;
-	int r;
-
 	/* Note: We get FRAMEDONE when DISPC has finished sending pixels and
 	 * turns itself off. However, DSI still has the pixels in its buffers,
 	 * and is sending the data.
 	 */
 
-	if (dsi.te_enabled) {
-		/* enable LP_RX_TO again after the TE */
-		REG_FLD_MOD(DSI_TIMING2, 1, 15, 15); /* LP_RX_TO */
-	}
+	__cancel_delayed_work(&dsi.framedone_timeout_work);
 
-	/* Send BTA after the frame. We need this for the TE to work, as TE
-	 * trigger is only sent for BTAs without preceding packet. Thus we need
-	 * to BTA after the pixel packets so that next BTA will cause TE
-	 * trigger.
-	 *
-	 * This is not needed when TE is not in use, but we do it anyway to
-	 * make sure that the transfer has been completed. It would be more
-	 * optimal, but more complex, to wait only just before starting next
-	 * transfer.
-	 *
-	 * Also, as there's no interrupt telling when the transfer has been
-	 * done and the channel could be reconfigured, the only way is to
-	 * busyloop until TE_SIZE is zero. With BTA we can do this
-	 * asynchronously.
-	 * */
+	dsi_handle_framedone(0);
 
-	r = dsi_register_isr_vc(channel, dsi_framedone_bta_callback,
-			NULL, DSI_VC_IRQ_BTA);
-	if (r) {
-		DSSERR("Failed to register BTA ISR\n");
-		dsi_handle_framedone(-EIO);
-		return;
-	}
-
-	r = dsi_vc_send_bta(channel);
-	if (r) {
-		DSSERR("BTA after framedone failed\n");
-		dsi_unregister_isr_vc(channel, dsi_framedone_bta_callback,
-				NULL, DSI_VC_IRQ_BTA);
-		dsi_handle_framedone(-EIO);
-	}
+#ifdef CONFIG_OMAP2_DSS_FAKE_VSYNC
+	dispc_fake_vsync_irq();
+#endif
 }
 
 int omap_dsi_prepare_update(struct omap_dss_device *dssdev,
@@ -3375,6 +3441,10 @@ static int dsi_display_init_dsi(struct omap_dss_device *dssdev)
 {
 	int r;
 
+	/* The SCPClk is required for both PLL and CIO registers on OMAP4 */
+	/* CIO_CLK_ICG, enable L3 clk to CIO */
+	REG_FLD_MOD(DSI_CLK_CTRL, 1, 14, 14);
+
 	_dsi_print_reset_status();
 
 	r = dsi_pll_init(dssdev, true, true);
@@ -3387,6 +3457,8 @@ static int dsi_display_init_dsi(struct omap_dss_device *dssdev)
 
 	dss_select_dispc_clk_source(DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC);
 	dss_select_dsi_clk_source(DSS_CLK_SRC_DSI_PLL_HSDIV_DSI);
+	dss_select_lcd_clk_source(dssdev->manager->id,
+		DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC);
 
 	DSSDBG("PLL OK\n");
 

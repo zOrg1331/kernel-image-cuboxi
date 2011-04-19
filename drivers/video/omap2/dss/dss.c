@@ -68,6 +68,7 @@ static struct {
 	struct clk	*dss_sys_clk;
 	struct clk	*dss_tv_fck;
 	struct clk	*dss_video_fck;
+	struct clk	*dss_dss_clk;
 	unsigned	num_clks_enabled;
 
 	unsigned long	cache_req_pck;
@@ -822,6 +823,7 @@ static int dss_get_clocks(void)
 	dss.dss_sys_clk = NULL;
 	dss.dss_tv_fck = NULL;
 	dss.dss_video_fck = NULL;
+	dss.dss_dss_clk	= NULL;
 
 	r = dss_get_clock(&dss.dss_ick, "ick");
 	if (r)
@@ -854,6 +856,12 @@ static int dss_get_clocks(void)
 			goto err;
 	}
 
+	if (pdata->opt_clock_available("dss_clk")) {
+		r = dss_get_clock(&dss.dss_dss_clk, "dss_clk");
+		if (r)
+			goto err;
+	}
+
 	return 0;
 
 err:
@@ -867,7 +875,8 @@ err:
 		clk_put(dss.dss_tv_fck);
 	if (dss.dss_video_fck)
 		clk_put(dss.dss_video_fck);
-
+	if (dss.dss_dss_clk)
+		clk_put(dss.dss_dss_clk);
 	return r;
 }
 
@@ -879,6 +888,8 @@ static void dss_put_clocks(void)
 		clk_put(dss.dss_tv_fck);
 	if (dss.dss_sys_clk)
 		clk_put(dss.dss_sys_clk);
+	if (dss.dss_dss_clk)
+		clk_put(dss.dss_dss_clk);
 	clk_put(dss.dss_fck);
 	clk_put(dss.dss_ick);
 }
@@ -888,8 +899,16 @@ unsigned long dss_clk_get_rate(enum dss_clock clk)
 	switch (clk) {
 	case DSS_CLK_ICK:
 		return clk_get_rate(dss.dss_ick);
+	/*
+	 * XXX: tie dss_dss_clk to FCK - this will change with following
+	 * pm_runtime patches. Needed for getting the correct clock rate
+	 * for DSS_CLK_FCLK on OMAP4.
+	 */
 	case DSS_CLK_FCK:
-		return clk_get_rate(dss.dss_fck);
+		if (dss.dss_dss_clk)
+			return clk_get_rate(dss.dss_dss_clk);
+		else
+			return clk_get_rate(dss.dss_fck);
 	case DSS_CLK_SYSCK:
 		return clk_get_rate(dss.dss_sys_clk);
 	case DSS_CLK_TVFCK:
@@ -926,8 +945,16 @@ static void dss_clk_enable_no_ctx(enum dss_clock clks)
 
 	if (clks & DSS_CLK_ICK)
 		clk_enable(dss.dss_ick);
-	if (clks & DSS_CLK_FCK)
+	/*
+	 * XXX: tie dss_dss_clk to FCK - this will change with following
+	 * pm_runtime patches. Needed for OMAP4 boot up due to stricter
+	 * clock cutting in pm framework post 2.6.38-rc5.
+	 */
+	if (clks & DSS_CLK_FCK) {
 		clk_enable(dss.dss_fck);
+		if (dss.dss_dss_clk)
+			clk_enable(dss.dss_dss_clk);
+	}
 	if ((clks & DSS_CLK_SYSCK) && dss.dss_sys_clk)
 		clk_enable(dss.dss_sys_clk);
 	if ((clks & DSS_CLK_TVFCK) && dss.dss_tv_fck)
@@ -962,8 +989,16 @@ static void dss_clk_disable_no_ctx(enum dss_clock clks)
 
 	if (clks & DSS_CLK_ICK)
 		clk_disable(dss.dss_ick);
-	if (clks & DSS_CLK_FCK)
+	/*
+	 * XXX: tie dss_dss_clk to FCK - this will change with following
+	 * pm_runtime patches. Needed for OMAP4 boot up due to stricter
+	 * clock cutting in pm framework post 2.6.38-rc5.
+	 */
+	if (clks & DSS_CLK_FCK) {
 		clk_disable(dss.dss_fck);
+		if (dss.dss_dss_clk)
+			clk_disable(dss.dss_dss_clk);
+	}
 	if ((clks & DSS_CLK_SYSCK) && dss.dss_sys_clk)
 		clk_disable(dss.dss_sys_clk);
 	if ((clks & DSS_CLK_TVFCK) && dss.dss_tv_fck)
@@ -1020,6 +1055,14 @@ static void core_dump_clocks(struct seq_file *s)
 		dss.dss_tv_fck,
 		dss.dss_video_fck
 	};
+
+	/*
+	 * XXX: tie dss_dss_clk to FCK - this will change with following
+	 * pm_runtime patches. Needed for getting the correct clock rate
+	 * for DSS_CLK_FCLK on OMAP4.
+	 */
+	if (dss.dss_dss_clk)
+		clocks[1] = dss.dss_dss_clk;
 
 	seq_printf(s, "- CORE -\n");
 
