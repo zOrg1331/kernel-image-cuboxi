@@ -1,0 +1,21 @@
+Importing i2c based on 2.6.39-rc3-git8
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c a1b49cb7e2a7961ec3aa8b64860bf480d4ec9077
+Importing jdelvare-hwmon based on 2.6.39-rc3-git6
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.39-rc3-git8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard a1b49cb7e2a7961ec3aa8b64860bf480d4ec9077
+HEAD is now at a1b49cb Merge branch 'i2c-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jdelvare/staging
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docum-dontdiff04.patch
+docum-epoll-remove-mui.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   78fca1b9..28fbb0e master     -> quilt/kernel-doc
+Importing rr based on v2.6.39-rc1-184-g78fca1b9
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
