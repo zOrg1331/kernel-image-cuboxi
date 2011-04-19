@@ -40,37 +40,61 @@ struct gfs2_inum_range_host {
 	u64 ir_length;
 };
 
+struct gfs2_skip_data {
+	u64 no_addr;
+	int skipped;
+	int non_block;
+};
+
 static int iget_test(struct inode *inode, void *opaque)
 {
 	struct gfs2_inode *ip = GFS2_I(inode);
-	u64 *no_addr = opaque;
+	struct gfs2_skip_data *data = opaque;
 
-	if (ip->i_no_addr == *no_addr)
+	if (ip->i_no_addr == data->no_addr) {
+		if (data->non_block &&
+		    inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)) {
+			data->skipped = 1;
+			return 0;
+		}
 		return 1;
-
+	}
 	return 0;
 }
 
 static int iget_set(struct inode *inode, void *opaque)
 {
 	struct gfs2_inode *ip = GFS2_I(inode);
-	u64 *no_addr = opaque;
+	struct gfs2_skip_data *data = opaque;
 
-	inode->i_ino = (unsigned long)*no_addr;
-	ip->i_no_addr = *no_addr;
+	if (data->skipped)
+		return -ENOENT;
+	inode->i_ino = (unsigned long)(data->no_addr);
+	ip->i_no_addr = data->no_addr;
 	return 0;
 }
 
-struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr)
+struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr, int non_block)
 {
 	unsigned long hash = (unsigned long)no_addr;
-	return ilookup5(sb, hash, iget_test, &no_addr);
+	struct gfs2_skip_data data;
+
+	data.no_addr = no_addr;
+	data.skipped = 0;
+	data.non_block = non_block;
+	return ilookup5(sb, hash, iget_test, &data);
 }
 
-static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr)
+static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr,
+			       int non_block)
 {
+	struct gfs2_skip_data data;
 	unsigned long hash = (unsigned long)no_addr;
-	return iget5_locked(sb, hash, iget_test, iget_set, &no_addr);
+
+	data.no_addr = no_addr;
+	data.skipped = 0;
+	data.non_block = non_block;
+	return iget5_locked(sb, hash, iget_test, iget_set, &data);
 }
 
 /**
@@ -111,19 +135,20 @@ static void gfs2_set_iop(struct inode *inode)
  * @sb: The super block
  * @no_addr: The inode number
  * @type: The type of the inode
+ * non_block: Can we block on inodes that are being freed?
  *
  * Returns: A VFS inode, or an error
  */
 
 struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
-				u64 no_addr, u64 no_formal_ino)
+				u64 no_addr, u64 no_formal_ino, int non_block)
 {
 	struct inode *inode;
 	struct gfs2_inode *ip;
 	struct gfs2_glock *io_gl = NULL;
 	int error;
 
-	inode = gfs2_iget(sb, no_addr);
+	inode = gfs2_iget(sb, no_addr, non_block);
 	ip = GFS2_I(inode);
 
 	if (!inode)
@@ -185,11 +210,12 @@ struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
 {
 	struct super_block *sb = sdp->sd_vfs;
 	struct gfs2_holder i_gh;
-	struct inode *inode;
+	struct inode *inode = NULL;
 	int error;
 
+	/* Must not read in block until block type is verified */
 	error = gfs2_glock_nq_num(sdp, no_addr, &gfs2_inode_glops,
-				  LM_ST_SHARED, LM_FLAG_ANY, &i_gh);
+				  LM_ST_EXCLUSIVE, GL_SKIP, &i_gh);
 	if (error)
 		return ERR_PTR(error);
 
@@ -197,7 +223,7 @@ struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
 	if (error)
 		goto fail;
 
-	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, no_addr, 0);
+	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, no_addr, 0, 1);
 	if (IS_ERR(inode))
 		goto fail;
 
@@ -312,65 +338,6 @@ int gfs2_inode_refresh(struct gfs2_inode *ip)
 	brelse(dibh);
 	clear_bit(GIF_INVALID, &ip->i_flags);
 
-	return error;
-}
-
-int gfs2_dinode_dealloc(struct gfs2_inode *ip)
-{
-	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
-	struct gfs2_alloc *al;
-	struct gfs2_rgrpd *rgd;
-	int error;
-
-	if (gfs2_get_inode_blocks(&ip->i_inode) != 1) {
-		if (gfs2_consist_inode(ip))
-			gfs2_dinode_print(ip);
-		return -EIO;
-	}
-
-	al = gfs2_alloc_get(ip);
-	if (!al)
-		return -ENOMEM;
-
-	error = gfs2_quota_hold(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
-	if (error)
-		goto out;
-
-	error = gfs2_rindex_hold(sdp, &al->al_ri_gh);
-	if (error)
-		goto out_qs;
-
-	rgd = gfs2_blk2rgrpd(sdp, ip->i_no_addr);
-	if (!rgd) {
-		gfs2_consist_inode(ip);
-		error = -EIO;
-		goto out_rindex_relse;
-	}
-
-	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0,
-				   &al->al_rgd_gh);
-	if (error)
-		goto out_rindex_relse;
-
-	error = gfs2_trans_begin(sdp, RES_RG_BIT + RES_STATFS + RES_QUOTA, 1);
-	if (error)
-		goto out_rg_gunlock;
-
-	set_bit(GLF_DIRTY, &ip->i_gl->gl_flags);
-	set_bit(GLF_LFLUSH, &ip->i_gl->gl_flags);
-
-	gfs2_free_di(rgd, ip);
-
-	gfs2_trans_end(sdp);
-
-out_rg_gunlock:
-	gfs2_glock_dq_uninit(&al->al_rgd_gh);
-out_rindex_relse:
-	gfs2_glock_dq_uninit(&al->al_ri_gh);
-out_qs:
-	gfs2_quota_unhold(ip);
-out:
-	gfs2_alloc_put(ip);
 	return error;
 }
 
@@ -843,7 +810,7 @@ struct inode *gfs2_createi(struct gfs2_holder *ghs, const struct qstr *name,
 		goto fail_gunlock2;
 
 	inode = gfs2_inode_lookup(dir->i_sb, IF2DT(mode), inum.no_addr,
-				  inum.no_formal_ino);
+				  inum.no_formal_ino, 0);
 	if (IS_ERR(inode))
 		goto fail_gunlock2;
 
