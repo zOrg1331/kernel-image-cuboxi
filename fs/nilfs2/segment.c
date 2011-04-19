@@ -906,6 +906,8 @@ static void nilfs_segctor_fill_in_super_root(struct nilfs_sc_info *sci,
 				 NILFS_SR_CPFILE_OFFSET(isz), 1);
 	nilfs_write_inode_common(nilfs->ns_sufile, (void *)raw_sr +
 				 NILFS_SR_SUFILE_OFFSET(isz), 1);
+	memset((void *)raw_sr + NILFS_SR_RESERVE_OFFSET(isz), 0,
+	       nilfs->ns_blocksize - NILFS_SR_RESERVE_OFFSET(isz));
 }
 
 static void nilfs_redirty_inodes(struct list_head *head)
