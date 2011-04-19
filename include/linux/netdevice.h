@@ -1035,7 +1035,7 @@ struct net_device {
 	u32			hw_features;
 	/* user-requested features */
 	u32			wanted_features;
-	/* VLAN feature mask */
+	/* mask of features inheritable by VLAN devices */
 	u32			vlan_features;
 
 	/* Net device feature bits; if you change something,
@@ -1066,6 +1066,7 @@ struct net_device {
 #define NETIF_F_NTUPLE		(1 << 27) /* N-tuple filters supported */
 #define NETIF_F_RXHASH		(1 << 28) /* Receive hashing offload */
 #define NETIF_F_RXCSUM		(1 << 29) /* Receive checksumming offload */
+#define NETIF_F_NOCACHE_COPY	(1 << 30) /* Use no-cache copyfromuser */
 
 	/* Segmentation offload features */
 #define NETIF_F_GSO_SHIFT	16
@@ -1081,7 +1082,7 @@ struct net_device {
 	/* = all defined minus driver/device-class-related */
 #define NETIF_F_NEVER_CHANGE	(NETIF_F_HIGHDMA | NETIF_F_VLAN_CHALLENGED | \
 				  NETIF_F_LLTX | NETIF_F_NETNS_LOCAL)
-#define NETIF_F_ETHTOOL_BITS	(0x3f3fffff & ~NETIF_F_NEVER_CHANGE)
+#define NETIF_F_ETHTOOL_BITS	(0x7f3fffff & ~NETIF_F_NEVER_CHANGE)
 
 	/* List of features with software fallbacks. */
 #define NETIF_F_GSO_SOFTWARE	(NETIF_F_TSO | NETIF_F_TSO_ECN | \
@@ -2550,6 +2551,7 @@ static inline u32 netdev_get_wanted_features(struct net_device *dev)
 }
 u32 netdev_increment_features(u32 all, u32 one, u32 mask);
 u32 netdev_fix_features(struct net_device *dev, u32 features);
+int __netdev_update_features(struct net_device *dev);
 void netdev_update_features(struct net_device *dev);
 
 void netif_stacked_transfer_operstate(const struct net_device *rootdev,

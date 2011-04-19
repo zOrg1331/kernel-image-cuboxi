@@ -156,6 +156,25 @@ be_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 }
 
 static int
+be_get_reg_len(struct net_device *netdev)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+	u32 log_size = 0;
+
+	be_cmd_get_reg_len(adapter, &log_size);
+	return log_size;
+}
+
+static void
+be_get_regs(struct net_device *netdev, struct ethtool_regs *regs, void *buf)
+{
+	struct be_adapter *adapter = netdev_priv(netdev);
+
+	memset(buf, 0, regs->len);
+	be_cmd_get_regs(adapter, regs->len, buf);
+}
+
+static int
 be_get_coalesce(struct net_device *netdev, struct ethtool_coalesce *coalesce)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
@@ -186,9 +205,9 @@ be_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *coalesce)
 	struct be_rx_obj *rxo;
 	struct be_eq_obj *rx_eq;
 	struct be_eq_obj *tx_eq = &adapter->tx_eq;
-	u32 tx_max, tx_min, tx_cur;
 	u32 rx_max, rx_min, rx_cur;
 	int status = 0, i;
+	u32 tx_cur;
 
 	if (coalesce->use_adaptive_tx_coalesce == 1)
 		return -EINVAL;
@@ -227,8 +246,6 @@ be_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *coalesce)
 		}
 	}
 
-	tx_max = coalesce->tx_coalesce_usecs_high;
-	tx_min = coalesce->tx_coalesce_usecs_low;
 	tx_cur = coalesce->tx_coalesce_usecs;
 
 	if (tx_cur > BE_MAX_EQD)
@@ -238,25 +255,6 @@ be_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *coalesce)
 		if (!status)
 			tx_eq->cur_eqd = tx_cur;
 	}
-
-	return 0;
-}
-
-static u32 be_get_rx_csum(struct net_device *netdev)
-{
-	struct be_adapter *adapter = netdev_priv(netdev);
-
-	return adapter->rx_csum;
-}
-
-static int be_set_rx_csum(struct net_device *netdev, uint32_t data)
-{
-	struct be_adapter *adapter = netdev_priv(netdev);
-
-	if (data)
-		adapter->rx_csum = true;
-	else
-		adapter->rx_csum = false;
 
 	return 0;
 }
@@ -507,29 +505,33 @@ be_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *ecmd)
 }
 
 static int
-be_phys_id(struct net_device *netdev, u32 data)
+be_set_phys_id(struct net_device *netdev,
+	       enum ethtool_phys_id_state state)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
-	int status;
-	u32 cur;
 
-	be_cmd_get_beacon_state(adapter, adapter->hba_port_num, &cur);
+	switch (state) {
+	case ETHTOOL_ID_ACTIVE:
+		be_cmd_get_beacon_state(adapter, adapter->hba_port_num,
+					&adapter->beacon_state);
+		return 1;	/* cycle on/off once per second */
 
-	if (cur == BEACON_STATE_ENABLED)
-		return 0;
+	case ETHTOOL_ID_ON:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					BEACON_STATE_ENABLED);
+		break;
 
-	if (data < 2)
-		data = 2;
+	case ETHTOOL_ID_OFF:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					BEACON_STATE_DISABLED);
+		break;
 
-	status = be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
-			BEACON_STATE_ENABLED);
-	set_current_state(TASK_INTERRUPTIBLE);
-	schedule_timeout(data*HZ);
+	case ETHTOOL_ID_INACTIVE:
+		be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
+					adapter->beacon_state);
+	}
 
-	status = be_cmd_set_beacon_state(adapter, adapter->hba_port_num, 0, 0,
-			BEACON_STATE_DISABLED);
-
-	return status;
+	return 0;
 }
 
 static bool
@@ -660,11 +662,9 @@ be_do_flash(struct net_device *netdev, struct ethtool_flash *efl)
 {
 	struct be_adapter *adapter = netdev_priv(netdev);
 	char file_name[ETHTOOL_FLASH_MAX_FILENAME];
-	u32 region;
 
 	file_name[ETHTOOL_FLASH_MAX_FILENAME - 1] = 0;
 	strcpy(file_name, efl->data);
-	region = efl->region;
 
 	return be_load_fw(adapter, file_name);
 }
@@ -725,18 +725,12 @@ const struct ethtool_ops be_ethtool_ops = {
 	.get_ringparam = be_get_ringparam,
 	.get_pauseparam = be_get_pauseparam,
 	.set_pauseparam = be_set_pauseparam,
-	.get_rx_csum = be_get_rx_csum,
-	.set_rx_csum = be_set_rx_csum,
-	.get_tx_csum = ethtool_op_get_tx_csum,
-	.set_tx_csum = ethtool_op_set_tx_hw_csum,
-	.get_sg = ethtool_op_get_sg,
-	.set_sg = ethtool_op_set_sg,
-	.get_tso = ethtool_op_get_tso,
-	.set_tso = ethtool_op_set_tso,
 	.get_strings = be_get_stat_strings,
-	.phys_id = be_phys_id,
+	.set_phys_id = be_set_phys_id,
 	.get_sset_count = be_get_sset_count,
 	.get_ethtool_stats = be_get_ethtool_stats,
+	.get_regs_len = be_get_reg_len,
+	.get_regs = be_get_regs,
 	.flash_device = be_do_flash,
 	.self_test = be_self_test,
 };

@@ -116,11 +116,6 @@ static char *ue_status_hi_desc[] = {
 	"Unknown"
 };
 
-static inline bool be_multi_rxq(struct be_adapter *adapter)
-{
-	return (adapter->num_rx_qs > 1);
-}
-
 static void be_queue_free(struct be_adapter *adapter, struct be_queue_info *q)
 {
 	struct be_dma_mem *mem = &q->dma_mem;
@@ -993,9 +988,10 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 			struct be_rx_obj *rxo,
 			struct be_rx_compl_info *rxcp)
 {
+	struct net_device *netdev = adapter->netdev;
 	struct sk_buff *skb;
 
-	skb = netdev_alloc_skb_ip_align(adapter->netdev, BE_HDR_LEN);
+	skb = netdev_alloc_skb_ip_align(netdev, BE_HDR_LEN);
 	if (unlikely(!skb)) {
 		if (net_ratelimit())
 			dev_warn(&adapter->pdev->dev, "skb alloc failed\n");
@@ -1005,13 +1001,16 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 
 	skb_fill_rx_data(adapter, rxo, skb, rxcp);
 
-	if (likely(adapter->rx_csum && csum_passed(rxcp)))
+	if (likely((netdev->features & NETIF_F_RXCSUM) && csum_passed(rxcp)))
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	else
 		skb_checksum_none_assert(skb);
 
 	skb->truesize = skb->len + sizeof(struct sk_buff);
-	skb->protocol = eth_type_trans(skb, adapter->netdev);
+	skb->protocol = eth_type_trans(skb, netdev);
+	if (adapter->netdev->features & NETIF_F_RXHASH)
+		skb->rxhash = rxcp->rss_hash;
+
 
 	if (unlikely(rxcp->vlanf)) {
 		if (!adapter->vlan_grp || adapter->vlans_added == 0) {
@@ -1072,6 +1071,8 @@ static void be_rx_compl_process_gro(struct be_adapter *adapter,
 	skb->data_len = rxcp->pkt_size;
 	skb->truesize += rxcp->pkt_size;
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	if (adapter->netdev->features & NETIF_F_RXHASH)
+		skb->rxhash = rxcp->rss_hash;
 
 	if (likely(!rxcp->vlanf))
 		napi_gro_frags(&eq_obj->napi);
@@ -1101,8 +1102,14 @@ static void be_parse_rx_compl_v1(struct be_adapter *adapter,
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, numfrags, compl);
 	rxcp->pkt_type =
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, cast_enc, compl);
-	rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vtm, compl);
-	rxcp->vid = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vlan_tag, compl);
+	rxcp->rss_hash =
+		AMAP_GET_BITS(struct amap_eth_rx_compl_v1, rsshash, rxcp);
+	if (rxcp->vlanf) {
+		rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vtm,
+				compl);
+		rxcp->vid = AMAP_GET_BITS(struct amap_eth_rx_compl_v1, vlan_tag,
+				compl);
+	}
 }
 
 static void be_parse_rx_compl_v0(struct be_adapter *adapter,
@@ -1127,8 +1134,14 @@ static void be_parse_rx_compl_v0(struct be_adapter *adapter,
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, numfrags, compl);
 	rxcp->pkt_type =
 		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, cast_enc, compl);
-	rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vtm, compl);
-	rxcp->vid = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vlan_tag, compl);
+	rxcp->rss_hash =
+		AMAP_GET_BITS(struct amap_eth_rx_compl_v0, rsshash, rxcp);
+	if (rxcp->vlanf) {
+		rxcp->vtm = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vtm,
+				compl);
+		rxcp->vid = AMAP_GET_BITS(struct amap_eth_rx_compl_v0, vlan_tag,
+				compl);
+	}
 }
 
 static struct be_rx_compl_info *be_rx_compl_get(struct be_rx_obj *rxo)
@@ -1150,15 +1163,19 @@ static struct be_rx_compl_info *be_rx_compl_get(struct be_rx_obj *rxo)
 	else
 		be_parse_rx_compl_v0(adapter, compl, rxcp);
 
-	/* vlanf could be wrongly set in some cards. ignore if vtm is not set */
-	if ((adapter->function_mode & 0x400) && !rxcp->vtm)
-		rxcp->vlanf = 0;
+	if (rxcp->vlanf) {
+		/* vlanf could be wrongly set in some cards.
+		 * ignore if vtm is not set */
+		if ((adapter->function_mode & 0x400) && !rxcp->vtm)
+			rxcp->vlanf = 0;
 
-	if (!lancer_chip(adapter))
-		rxcp->vid = swab16(rxcp->vid);
+		if (!lancer_chip(adapter))
+			rxcp->vid = swab16(rxcp->vid);
 
-	if ((adapter->pvid == rxcp->vid) && !adapter->vlan_tag[rxcp->vid])
-		rxcp->vlanf = 0;
+		if ((adapter->pvid == rxcp->vid) &&
+			!adapter->vlan_tag[rxcp->vid])
+			rxcp->vlanf = 0;
+	}
 
 	/* As the compl has been parsed, reset it; we wont touch it again */
 	compl->dw[offsetof(struct amap_eth_rx_compl_v1, valid) / 32] = 0;
@@ -1567,11 +1584,30 @@ static void be_rx_queues_destroy(struct be_adapter *adapter)
 	}
 }
 
+static u32 be_num_rxqs_want(struct be_adapter *adapter)
+{
+	if (multi_rxq && (adapter->function_caps & BE_FUNCTION_CAPS_RSS) &&
+		!adapter->sriov_enabled && !(adapter->function_mode & 0x400)) {
+		return 1 + MAX_RSS_QS; /* one default non-RSS queue */
+	} else {
+		dev_warn(&adapter->pdev->dev,
+			"No support for multiple RX queues\n");
+		return 1;
+	}
+}
+
 static int be_rx_queues_create(struct be_adapter *adapter)
 {
 	struct be_queue_info *eq, *q, *cq;
 	struct be_rx_obj *rxo;
 	int rc, i;
+
+	adapter->num_rx_qs = min(be_num_rxqs_want(adapter),
+				msix_enabled(adapter) ?
+					adapter->num_msix_vec - 1 : 1);
+	if (adapter->num_rx_qs != MAX_RX_QS)
+		dev_warn(&adapter->pdev->dev,
+			"Can create only %d RX queues", adapter->num_rx_qs);
 
 	adapter->big_page_size = (1 << get_order(rx_frag_size)) * PAGE_SIZE;
 	for_all_rx_queues(adapter, rxo, i) {
@@ -1837,6 +1873,9 @@ static void be_worker(struct work_struct *work)
 	struct be_rx_obj *rxo;
 	int i;
 
+	if (!adapter->ue_detected && !lancer_chip(adapter))
+		be_detect_dump_ue(adapter);
+
 	/* when interrupts are not yet enabled, just reap any pending
 	* mcc completions */
 	if (!netif_running(adapter->netdev)) {
@@ -1848,9 +1887,6 @@ static void be_worker(struct work_struct *work)
 			struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
 			be_cq_notify(adapter, mcc_obj->cq.id, false, mcc_compl);
 		}
-
-		if (!adapter->ue_detected && !lancer_chip(adapter))
-			be_detect_dump_ue(adapter);
 
 		goto reschedule;
 	}
@@ -1869,8 +1905,6 @@ static void be_worker(struct work_struct *work)
 			be_post_rx_frags(rxo, GFP_KERNEL);
 		}
 	}
-	if (!adapter->ue_detected && !lancer_chip(adapter))
-		be_detect_dump_ue(adapter);
 
 reschedule:
 	schedule_delayed_work(&adapter->work, msecs_to_jiffies(1000));
@@ -1878,51 +1912,35 @@ reschedule:
 
 static void be_msix_disable(struct be_adapter *adapter)
 {
-	if (adapter->msix_enabled) {
+	if (msix_enabled(adapter)) {
 		pci_disable_msix(adapter->pdev);
-		adapter->msix_enabled = false;
-	}
-}
-
-static int be_num_rxqs_get(struct be_adapter *adapter)
-{
-	if (multi_rxq && (adapter->function_caps & BE_FUNCTION_CAPS_RSS) &&
-		!adapter->sriov_enabled && !(adapter->function_mode & 0x400)) {
-		return 1 + MAX_RSS_QS; /* one default non-RSS queue */
-	} else {
-		dev_warn(&adapter->pdev->dev,
-			"No support for multiple RX queues\n");
-		return 1;
+		adapter->num_msix_vec = 0;
 	}
 }
 
 static void be_msix_enable(struct be_adapter *adapter)
 {
 #define BE_MIN_MSIX_VECTORS	(1 + 1) /* Rx + Tx */
-	int i, status;
+	int i, status, num_vec;
 
-	adapter->num_rx_qs = be_num_rxqs_get(adapter);
+	num_vec = be_num_rxqs_want(adapter) + 1;
 
-	for (i = 0; i < (adapter->num_rx_qs + 1); i++)
+	for (i = 0; i < num_vec; i++)
 		adapter->msix_entries[i].entry = i;
 
-	status = pci_enable_msix(adapter->pdev, adapter->msix_entries,
-			adapter->num_rx_qs + 1);
+	status = pci_enable_msix(adapter->pdev, adapter->msix_entries, num_vec);
 	if (status == 0) {
 		goto done;
 	} else if (status >= BE_MIN_MSIX_VECTORS) {
+		num_vec = status;
 		if (pci_enable_msix(adapter->pdev, adapter->msix_entries,
-				status) == 0) {
-			adapter->num_rx_qs = status - 1;
-			dev_warn(&adapter->pdev->dev,
-				"Could alloc only %d MSIx vectors. "
-				"Using %d RX Qs\n", status, adapter->num_rx_qs);
+				num_vec) == 0)
 			goto done;
-		}
 	}
 	return;
 done:
-	adapter->msix_enabled = true;
+	adapter->num_msix_vec = num_vec;
+	return;
 }
 
 static void be_sriov_enable(struct be_adapter *adapter)
@@ -1930,7 +1948,20 @@ static void be_sriov_enable(struct be_adapter *adapter)
 	be_check_sriov_fn_type(adapter);
 #ifdef CONFIG_PCI_IOV
 	if (be_physfn(adapter) && num_vfs) {
-		int status;
+		int status, pos;
+		u16 nvfs;
+
+		pos = pci_find_ext_capability(adapter->pdev,
+						PCI_EXT_CAP_ID_SRIOV);
+		pci_read_config_word(adapter->pdev,
+					pos + PCI_SRIOV_TOTAL_VF, &nvfs);
+
+		if (num_vfs > nvfs) {
+			dev_info(&adapter->pdev->dev,
+					"Device supports %d VFs and not %d\n",
+					nvfs, num_vfs);
+			num_vfs = nvfs;
+		}
 
 		status = pci_enable_sriov(adapter->pdev, num_vfs);
 		adapter->sriov_enabled = status ? false : true;
@@ -2003,8 +2034,7 @@ err_msix:
 err:
 	dev_warn(&adapter->pdev->dev,
 		"MSIX Request IRQ failed - err %d\n", status);
-	pci_disable_msix(adapter->pdev);
-	adapter->msix_enabled = false;
+	be_msix_disable(adapter);
 	return status;
 }
 
@@ -2013,7 +2043,7 @@ static int be_irq_register(struct be_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int status;
 
-	if (adapter->msix_enabled) {
+	if (msix_enabled(adapter)) {
 		status = be_msix_register(adapter);
 		if (status == 0)
 			goto done;
@@ -2046,7 +2076,7 @@ static void be_irq_unregister(struct be_adapter *adapter)
 		return;
 
 	/* INTx */
-	if (!adapter->msix_enabled) {
+	if (!msix_enabled(adapter)) {
 		free_irq(netdev->irq, adapter);
 		goto done;
 	}
@@ -2088,7 +2118,7 @@ static int be_close(struct net_device *netdev)
 			 be_cq_notify(adapter, rxo->cq.id, false, 0);
 	}
 
-	if (adapter->msix_enabled) {
+	if (msix_enabled(adapter)) {
 		vec = be_msix_vec_get(adapter, tx_eq);
 		synchronize_irq(vec);
 
@@ -2261,7 +2291,7 @@ static int be_setup(struct be_adapter *adapter)
 				BE_IF_FLAGS_PASS_L3L4_ERRORS;
 		en_flags |= BE_IF_FLAGS_PASS_L3L4_ERRORS;
 
-		if (be_multi_rxq(adapter)) {
+		if (adapter->function_caps & BE_FUNCTION_CAPS_RSS) {
 			cap_flags |= BE_IF_FLAGS_RSS;
 			en_flags |= BE_IF_FLAGS_RSS;
 		}
@@ -2318,7 +2348,6 @@ static int be_setup(struct be_adapter *adapter)
 
 	return 0;
 
-	be_mcc_queues_destroy(adapter);
 rx_qs_destroy:
 	be_rx_queues_destroy(adapter);
 tx_qs_destroy:
@@ -2599,10 +2628,14 @@ static void be_netdev_init(struct net_device *netdev)
 	struct be_rx_obj *rxo;
 	int i;
 
-	netdev->features |= NETIF_F_SG | NETIF_F_HW_VLAN_RX | NETIF_F_TSO |
-		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER |
-		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-		NETIF_F_GRO | NETIF_F_TSO6;
+	netdev->hw_features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
+		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_RXCSUM |
+		NETIF_F_HW_VLAN_TX;
+	if (be_multi_rxq(adapter))
+		netdev->hw_features |= NETIF_F_RXHASH;
+
+	netdev->features |= netdev->hw_features |
+		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
 
 	netdev->vlan_features |= NETIF_F_SG | NETIF_F_TSO |
 		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
@@ -2611,8 +2644,6 @@ static void be_netdev_init(struct net_device *netdev)
 		netdev->vlan_features |= NETIF_F_TSO6;
 
 	netdev->flags |= IFF_MULTICAST;
-
-	adapter->rx_csum = true;
 
 	/* Default settings for Rx and Tx flow control */
 	adapter->rx_fc = true;
@@ -2807,6 +2838,7 @@ static void __devexit be_remove(struct pci_dev *pdev)
 
 	be_ctrl_cleanup(adapter);
 
+	kfree(adapter->vf_cfg);
 	be_sriov_disable(adapter);
 
 	be_msix_disable(adapter);
@@ -2991,16 +3023,23 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	}
 
 	be_sriov_enable(adapter);
+	if (adapter->sriov_enabled) {
+		adapter->vf_cfg = kcalloc(num_vfs,
+			sizeof(struct be_vf_cfg), GFP_KERNEL);
+
+		if (!adapter->vf_cfg)
+			goto free_netdev;
+	}
 
 	status = be_ctrl_init(adapter);
 	if (status)
-		goto free_netdev;
+		goto free_vf_cfg;
 
 	if (lancer_chip(adapter)) {
 		status = lancer_test_and_set_rdy_state(adapter);
 		if (status) {
 			dev_err(&pdev->dev, "Adapter in non recoverable error\n");
-			goto free_netdev;
+			goto ctrl_clean;
 		}
 	}
 
@@ -3062,6 +3101,8 @@ stats_clean:
 	be_stats_cleanup(adapter);
 ctrl_clean:
 	be_ctrl_cleanup(adapter);
+free_vf_cfg:
+	kfree(adapter->vf_cfg);
 free_netdev:
 	be_sriov_disable(adapter);
 	free_netdev(netdev);
@@ -3146,15 +3187,14 @@ static void be_shutdown(struct pci_dev *pdev)
 	if (!adapter)
 		return;
 
-	if (netif_running(adapter->netdev))
-		cancel_delayed_work_sync(&adapter->work);
+	cancel_delayed_work_sync(&adapter->work);
 
 	netif_device_detach(adapter->netdev);
 
-	be_cmd_reset_function(adapter);
-
 	if (adapter->wol)
 		be_setup_wol(adapter, true);
+
+	be_cmd_reset_function(adapter);
 
 	pci_disable_device(pdev);
 }
@@ -3265,13 +3305,6 @@ static int __init be_init_module(void)
 			" : Module param rx_frag_size must be 2048/4096/8192."
 			" Using 2048\n");
 		rx_frag_size = 2048;
-	}
-
-	if (num_vfs > 32) {
-		printk(KERN_WARNING DRV_NAME
-			" : Module param num_vfs must not be greater than 32."
-			"Using 32\n");
-		num_vfs = 32;
 	}
 
 	return pci_register_driver(&be_driver);

@@ -89,8 +89,6 @@
 
 static int max_bonds	= BOND_DEFAULT_MAX_BONDS;
 static int tx_queues	= BOND_DEFAULT_TX_QUEUES;
-static int num_grat_arp = 1;
-static int num_unsol_na = 1;
 static int miimon	= BOND_LINK_MON_INTERV;
 static int updelay;
 static int downdelay;
@@ -113,10 +111,6 @@ module_param(max_bonds, int, 0);
 MODULE_PARM_DESC(max_bonds, "Max number of bonded devices");
 module_param(tx_queues, int, 0);
 MODULE_PARM_DESC(tx_queues, "Max number of transmit queues (default = 16)");
-module_param(num_grat_arp, int, 0644);
-MODULE_PARM_DESC(num_grat_arp, "Number of gratuitous ARP packets to send on failover event");
-module_param(num_unsol_na, int, 0644);
-MODULE_PARM_DESC(num_unsol_na, "Number of unsolicited IPv6 Neighbor Advertisements packets to send on failover event");
 module_param(miimon, int, 0);
 MODULE_PARM_DESC(miimon, "Link check interval in milliseconds");
 module_param(updelay, int, 0);
@@ -234,7 +228,6 @@ struct bond_parm_tbl ad_select_tbl[] = {
 
 /*-------------------------- Forward declarations ---------------------------*/
 
-static void bond_send_gratuitous_arp(struct bonding *bond);
 static int bond_init(struct net_device *bond_dev);
 static void bond_uninit(struct net_device *bond_dev);
 
@@ -631,7 +624,8 @@ down:
 static int bond_update_speed_duplex(struct slave *slave)
 {
 	struct net_device *slave_dev = slave->dev;
-	struct ethtool_cmd etool;
+	struct ethtool_cmd etool = { .cmd = ETHTOOL_GSET };
+	u32 slave_speed;
 	int res;
 
 	/* Fake speed and duplex */
@@ -645,7 +639,8 @@ static int bond_update_speed_duplex(struct slave *slave)
 	if (res < 0)
 		return -1;
 
-	switch (etool.speed) {
+	slave_speed = ethtool_cmd_speed(&etool);
+	switch (slave_speed) {
 	case SPEED_10:
 	case SPEED_100:
 	case SPEED_1000:
@@ -663,7 +658,7 @@ static int bond_update_speed_duplex(struct slave *slave)
 		return -1;
 	}
 
-	slave->speed = etool.speed;
+	slave->speed = slave_speed;
 	slave->duplex = etool.duplex;
 
 	return 0;
@@ -1160,14 +1155,6 @@ void bond_change_active_slave(struct bonding *bond, struct slave *new_active)
 				bond_do_fail_over_mac(bond, new_active,
 						      old_active);
 
-			if (netif_running(bond->dev)) {
-				bond->send_grat_arp = bond->params.num_grat_arp;
-				bond_send_gratuitous_arp(bond);
-
-				bond->send_unsol_na = bond->params.num_unsol_na;
-				bond_send_unsolicited_na(bond);
-			}
-
 			write_unlock_bh(&bond->curr_slave_lock);
 			read_unlock(&bond->lock);
 
@@ -1407,7 +1394,7 @@ static int bond_compute_features(struct bonding *bond)
 	int i;
 
 	features &= ~(NETIF_F_ALL_CSUM | BOND_VLAN_FEATURES);
-	features |=  NETIF_F_GSO_MASK | NETIF_F_NO_CSUM;
+	features |=  NETIF_F_GSO_MASK | NETIF_F_NO_CSUM | NETIF_F_NOCACHE_COPY;
 
 	if (!bond->first_slave)
 		goto done;
@@ -2493,7 +2480,7 @@ static void bond_miimon_commit(struct bonding *bond)
 
 			bond_update_speed_duplex(slave);
 
-			pr_info("%s: link status definitely up for interface %s, %d Mbps %s duplex.\n",
+			pr_info("%s: link status definitely up for interface %s, %u Mbps %s duplex.\n",
 				bond->dev->name, slave->dev->name,
 				slave->speed, slave->duplex ? "full" : "half");
 
@@ -2577,18 +2564,6 @@ void bond_mii_monitor(struct work_struct *work)
 
 	if (bond->slave_cnt == 0)
 		goto re_arm;
-
-	if (bond->send_grat_arp) {
-		read_lock(&bond->curr_slave_lock);
-		bond_send_gratuitous_arp(bond);
-		read_unlock(&bond->curr_slave_lock);
-	}
-
-	if (bond->send_unsol_na) {
-		read_lock(&bond->curr_slave_lock);
-		bond_send_unsolicited_na(bond);
-		read_unlock(&bond->curr_slave_lock);
-	}
 
 	if (bond_miimon_inspect(bond)) {
 		read_unlock(&bond->lock);
@@ -2748,44 +2723,6 @@ static void bond_arp_send_all(struct bonding *bond, struct slave *slave)
 				   rt->dst.dev ? rt->dst.dev->name : "NULL");
 		}
 		ip_rt_put(rt);
-	}
-}
-
-/*
- * Kick out a gratuitous ARP for an IP on the bonding master plus one
- * for each VLAN above us.
- *
- * Caller must hold curr_slave_lock for read or better
- */
-static void bond_send_gratuitous_arp(struct bonding *bond)
-{
-	struct slave *slave = bond->curr_active_slave;
-	struct vlan_entry *vlan;
-	struct net_device *vlan_dev;
-
-	pr_debug("bond_send_grat_arp: bond %s slave %s\n",
-		 bond->dev->name, slave ? slave->dev->name : "NULL");
-
-	if (!slave || !bond->send_grat_arp ||
-	    test_bit(__LINK_STATE_LINKWATCH_PENDING, &slave->dev->state))
-		return;
-
-	bond->send_grat_arp--;
-
-	if (bond->master_ip) {
-		bond_arp_send(slave->dev, ARPOP_REPLY, bond->master_ip,
-				bond->master_ip, 0);
-	}
-
-	if (!bond->vlgrp)
-		return;
-
-	list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
-		vlan_dev = vlan_group_get_device(bond->vlgrp, vlan->vlan_id);
-		if (vlan->vlan_ip) {
-			bond_arp_send(slave->dev, ARPOP_REPLY, vlan->vlan_ip,
-				      vlan->vlan_ip, vlan->vlan_id);
-		}
 	}
 }
 
@@ -3255,18 +3192,6 @@ void bond_activebackup_arp_mon(struct work_struct *work)
 	if (bond->slave_cnt == 0)
 		goto re_arm;
 
-	if (bond->send_grat_arp) {
-		read_lock(&bond->curr_slave_lock);
-		bond_send_gratuitous_arp(bond);
-		read_unlock(&bond->curr_slave_lock);
-	}
-
-	if (bond->send_unsol_na) {
-		read_lock(&bond->curr_slave_lock);
-		bond_send_unsolicited_na(bond);
-		read_unlock(&bond->curr_slave_lock);
-	}
-
 	if (bond_ab_arp_inspect(bond, delta_in_ticks)) {
 		read_unlock(&bond->lock);
 		rtnl_lock();
@@ -3339,8 +3264,8 @@ static int bond_slave_netdev_event(unsigned long event,
 
 			slave = bond_get_slave_by_dev(bond, slave_dev);
 			if (slave) {
-				u16 old_speed = slave->speed;
-				u16 old_duplex = slave->duplex;
+				u32 old_speed = slave->speed;
+				u8  old_duplex = slave->duplex;
 
 				bond_update_speed_duplex(slave);
 
@@ -3644,9 +3569,6 @@ static int bond_close(struct net_device *bond_dev)
 		bond_unregister_arp(bond);
 
 	write_lock_bh(&bond->lock);
-
-	bond->send_grat_arp = 0;
-	bond->send_unsol_na = 0;
 
 	/* signal timers not to re-arm */
 	bond->kill_timers = 1;
@@ -4357,9 +4279,9 @@ static u16 bond_select_queue(struct net_device *dev, struct sk_buff *skb)
 	u16 txq = skb_rx_queue_recorded(skb) ? skb_get_rx_queue(skb) : 0;
 
 	if (unlikely(txq >= dev->real_num_tx_queues)) {
-		do
+		do {
 			txq -= dev->real_num_tx_queues;
-		while (txq >= dev->real_num_tx_queues);
+		} while (txq >= dev->real_num_tx_queues);
 	}
 	return txq;
 }
@@ -4724,18 +4646,6 @@ static int bond_check_params(struct bond_params *params)
 		use_carrier = 1;
 	}
 
-	if (num_grat_arp < 0 || num_grat_arp > 255) {
-		pr_warning("Warning: num_grat_arp (%d) not in range 0-255 so it was reset to 1\n",
-			   num_grat_arp);
-		num_grat_arp = 1;
-	}
-
-	if (num_unsol_na < 0 || num_unsol_na > 255) {
-		pr_warning("Warning: num_unsol_na (%d) not in range 0-255 so it was reset to 1\n",
-			   num_unsol_na);
-		num_unsol_na = 1;
-	}
-
 	/* reset values for 802.3ad */
 	if (bond_mode == BOND_MODE_8023AD) {
 		if (!miimon) {
@@ -4925,8 +4835,6 @@ static int bond_check_params(struct bond_params *params)
 	params->mode = bond_mode;
 	params->xmit_policy = xmit_hashtype;
 	params->miimon = miimon;
-	params->num_grat_arp = num_grat_arp;
-	params->num_unsol_na = num_unsol_na;
 	params->arp_interval = arp_interval;
 	params->arp_validate = arp_validate_value;
 	params->updelay = updelay;
@@ -5121,7 +5029,6 @@ static int __init bonding_init(void)
 
 	register_netdevice_notifier(&bond_netdev_notifier);
 	register_inetaddr_notifier(&bond_inetaddr_notifier);
-	bond_register_ipv6_notifier();
 out:
 	return res;
 err:
@@ -5136,7 +5043,6 @@ static void __exit bonding_exit(void)
 {
 	unregister_netdevice_notifier(&bond_netdev_notifier);
 	unregister_inetaddr_notifier(&bond_inetaddr_notifier);
-	bond_unregister_ipv6_notifier();
 
 	bond_destroy_sysfs();
 	bond_destroy_debugfs();

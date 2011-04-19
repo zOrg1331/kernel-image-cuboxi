@@ -3904,10 +3904,9 @@ static void bnx2x_timer(unsigned long data)
 
 	if (poll) {
 		struct bnx2x_fastpath *fp = &bp->fp[0];
-		int rc;
 
 		bnx2x_tx_int(fp);
-		rc = bnx2x_rx_int(fp, 1000);
+		bnx2x_rx_int(fp, 1000);
 	}
 
 	if (!BP_NOMCP(bp)) {
@@ -4062,7 +4061,6 @@ static void bnx2x_init_sb(struct bnx2x *bp, dma_addr_t mapping, int vfid,
 	struct hc_status_block_data_e2 sb_data_e2;
 	struct hc_status_block_data_e1x sb_data_e1x;
 	struct hc_status_block_sm  *hc_sm_p;
-	struct hc_index_data *hc_index_p;
 	int data_size;
 	u32 *sb_data_p;
 
@@ -4083,7 +4081,6 @@ static void bnx2x_init_sb(struct bnx2x *bp, dma_addr_t mapping, int vfid,
 		sb_data_e2.common.host_sb_addr.hi = U64_HI(mapping);
 		sb_data_e2.common.host_sb_addr.lo = U64_LO(mapping);
 		hc_sm_p = sb_data_e2.common.state_machine;
-		hc_index_p = sb_data_e2.index_data;
 		sb_data_p = (u32 *)&sb_data_e2;
 		data_size = sizeof(struct hc_status_block_data_e2)/sizeof(u32);
 	} else {
@@ -4097,7 +4094,6 @@ static void bnx2x_init_sb(struct bnx2x *bp, dma_addr_t mapping, int vfid,
 		sb_data_e1x.common.host_sb_addr.hi = U64_HI(mapping);
 		sb_data_e1x.common.host_sb_addr.lo = U64_LO(mapping);
 		hc_sm_p = sb_data_e1x.common.state_machine;
-		hc_index_p = sb_data_e1x.index_data;
 		sb_data_p = (u32 *)&sb_data_e1x;
 		data_size = sizeof(struct hc_status_block_data_e1x)/sizeof(u32);
 	}
@@ -8635,7 +8631,7 @@ static void __devinit bnx2x_get_mac_hwinfo(struct bnx2x *bp)
 static int __devinit bnx2x_get_hwinfo(struct bnx2x *bp)
 {
 	int /*abs*/func = BP_ABS_FUNC(bp);
-	int vn, port;
+	int vn;
 	u32 val = 0;
 	int rc = 0;
 
@@ -8670,7 +8666,6 @@ static int __devinit bnx2x_get_hwinfo(struct bnx2x *bp)
 	bp->mf_ov = 0;
 	bp->mf_mode = 0;
 	vn = BP_E1HVN(bp);
-	port = BP_PORT(bp);
 
 	if (!CHIP_IS_E1(bp) && !BP_NOMCP(bp)) {
 		DP(NETIF_MSG_PROBE,
@@ -8904,8 +8899,6 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
 	bp->multi_mode = multi_mode;
 	bp->int_mode = int_mode;
 
-	bp->dev->features |= NETIF_F_GRO;
-
 	/* Set TPA flags */
 	if (disable_tpa) {
 		bp->flags &= ~TPA_ENABLE_FLAG;
@@ -8924,8 +8917,6 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
 	bp->mrrs = mrrs;
 
 	bp->tx_ring_size = MAX_TX_AVAIL;
-
-	bp->rx_csum = 1;
 
 	/* make sure that the numbers are in the right granularity */
 	bp->tx_ticks = (50 / BNX2X_BTR) * BNX2X_BTR;
@@ -9304,6 +9295,8 @@ static const struct net_device_ops bnx2x_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_do_ioctl		= bnx2x_ioctl,
 	.ndo_change_mtu		= bnx2x_change_mtu,
+	.ndo_fix_features	= bnx2x_fix_features,
+	.ndo_set_features	= bnx2x_set_features,
 	.ndo_tx_timeout		= bnx2x_tx_timeout,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= poll_bnx2x,
@@ -9430,20 +9423,17 @@ static int __devinit bnx2x_init_dev(struct pci_dev *pdev,
 
 	dev->netdev_ops = &bnx2x_netdev_ops;
 	bnx2x_set_ethtool_ops(dev);
-	dev->features |= NETIF_F_SG;
-	dev->features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
+
+	dev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 |
+		NETIF_F_RXCSUM | NETIF_F_LRO | NETIF_F_HW_VLAN_TX;
+
+	dev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 | NETIF_F_HIGHDMA;
+
+	dev->features |= dev->hw_features | NETIF_F_HW_VLAN_RX;
 	if (bp->flags & USING_DAC_FLAG)
 		dev->features |= NETIF_F_HIGHDMA;
-	dev->features |= (NETIF_F_TSO | NETIF_F_TSO_ECN);
-	dev->features |= NETIF_F_TSO6;
-	dev->features |= (NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX);
-
-	dev->vlan_features |= NETIF_F_SG;
-	dev->vlan_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
-	if (bp->flags & USING_DAC_FLAG)
-		dev->vlan_features |= NETIF_F_HIGHDMA;
-	dev->vlan_features |= (NETIF_F_TSO | NETIF_F_TSO_ECN);
-	dev->vlan_features |= NETIF_F_TSO6;
 
 #ifdef BCM_DCBNL
 	dev->dcbnl_ops = &bnx2x_dcbnl_ops;
@@ -10339,6 +10329,11 @@ static int bnx2x_drv_ctl(struct net_device *dev, struct drv_ctl_info *ctl)
 		smp_mb__before_atomic_inc();
 		atomic_add(count, &bp->cq_spq_left);
 		smp_mb__after_atomic_inc();
+		break;
+	}
+
+	case DRV_CTL_ISCSI_STOPPED_CMD: {
+		bnx2x_dcbx_set_params(bp, BNX2X_DCBX_STATE_ISCSI_STOPPED);
 		break;
 	}
 
