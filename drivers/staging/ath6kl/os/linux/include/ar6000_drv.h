@@ -33,9 +33,7 @@
 #include <linux/if_arp.h>
 #include <linux/ip.h>
 #include <linux/wireless.h>
-#ifdef ATH6K_CONFIG_CFG80211
 #include <net/cfg80211.h>
-#endif /* ATH6K_CONFIG_CFG80211 */
 #include <linux/module.h>
 #include <asm/io.h>
 
@@ -94,8 +92,6 @@
 #endif
 
 
-#ifdef USER_KEYS
-
 #define USER_SAVEDKEYS_STAT_INIT     0
 #define USER_SAVEDKEYS_STAT_RUN      1
 
@@ -106,7 +102,6 @@ struct USER_SAVEDKEYS {
     CRYPTO_TYPE               keyType;
     bool                    keyOk;
 };
-#endif
 
 #define DBG_INFO        0x00000001
 #define DBG_ERROR       0x00000002
@@ -215,23 +210,11 @@ typedef enum _AR6K_BIN_FILE {
 #define SETUPHCI_DEFAULT           0
 #endif /* SETUPHCI_ENABLED */
 
-#ifdef SETUPHCIPAL_ENABLED
-#define SETUPHCIPAL_DEFAULT           1
-#else
-#define SETUPHCIPAL_DEFAULT           0
-#endif /* SETUPHCIPAL_ENABLED */
-
 #ifdef SETUPBTDEV_ENABLED
 #define SETUPBTDEV_DEFAULT         1
 #else
 #define SETUPBTDEV_DEFAULT         0
 #endif /* SETUPBTDEV_ENABLED */
-
-#ifdef BMIENABLE_SET
-#define BMIENABLE_DEFAULT          1
-#else
-#define BMIENABLE_DEFAULT          0
-#endif /* BMIENABLE_SET */
 
 #ifdef ENABLEUARTPRINT_SET
 #define ENABLEUARTPRINT_DEFAULT    1
@@ -245,6 +228,25 @@ typedef enum _AR6K_BIN_FILE {
 #define NOHIFSCATTERSUPPORT_DEFAULT    0
 #endif /* ATH6K_CONFIG_HIF_VIRTUAL_SCATTER */
 
+
+#if defined(CONFIG_ATH6KL_ENABLE_COEXISTENCE)
+
+#ifdef CONFIG_AR600x_BT_QCOM
+#define ATH6KL_BT_DEV 1
+#elif defined(CONFIG_AR600x_BT_CSR)
+#define ATH6KL_BT_DEV 2
+#else
+#define ATH6KL_BT_DEV 3
+#endif
+
+#ifdef CONFIG_AR600x_DUAL_ANTENNA
+#define ATH6KL_BT_ANTENNA 2
+#else
+#define ATH6KL_BT_ANTENNA 1
+#endif
+
+#endif /* CONFIG_ATH6KL_ENABLE_COEXISTENCE */
+
 #ifdef AR600x_BT_AR3001
 #define AR3KHCIBAUD_DEFAULT        3000000
 #define HCIUARTSCALE_DEFAULT       1
@@ -255,11 +257,7 @@ typedef enum _AR6K_BIN_FILE {
 #define HCIUARTSTEP_DEFAULT        0
 #endif /* AR600x_BT_AR3001 */
 
-#ifdef INIT_MODE_DRV_ENABLED
 #define WLAN_INIT_MODE_DEFAULT     WLAN_INIT_MODE_DRV
-#else
-#define WLAN_INIT_MODE_DEFAULT     WLAN_INIT_MODE_USR
-#endif /* INIT_MODE_DRV_ENABLED */
 
 #define AR6K_PATCH_DOWNLOAD_ADDRESS(_param, _ver) do { \
     if ((_ver) == AR6003_REV1_VERSION) { \
@@ -304,11 +302,11 @@ typedef enum _AR6K_BIN_FILE {
 #define AR6003_REV1_ART_FIRMWARE_FILE       "ath6k/AR6003/hw1.0/device.bin"
 #define AR6003_REV1_PATCH_FILE              "ath6k/AR6003/hw1.0/data.patch.bin"
 #define AR6003_REV1_EPPING_FIRMWARE_FILE    "ath6k/AR6003/hw1.0/endpointping.bin"
-#ifdef AR600x_SD31_XXX
+#ifdef CONFIG_AR600x_SD31_XXX
 #define AR6003_REV1_BOARD_DATA_FILE         "ath6k/AR6003/hw1.0/bdata.SD31.bin"
-#elif defined(AR600x_SD32_XXX)
+#elif defined(CONFIG_AR600x_SD32_XXX)
 #define AR6003_REV1_BOARD_DATA_FILE         "ath6k/AR6003/hw1.0/bdata.SD32.bin"
-#elif defined(AR600x_WB31_XXX)
+#elif defined(CONFIG_AR600x_WB31_XXX)
 #define AR6003_REV1_BOARD_DATA_FILE         "ath6k/AR6003/hw1.0/bdata.WB31.bin"
 #else
 #define AR6003_REV1_BOARD_DATA_FILE         "ath6k/AR6003/hw1.0/bdata.CUSTOM.bin"
@@ -324,11 +322,11 @@ typedef enum _AR6K_BIN_FILE {
 #define AR6003_REV2_ART_FIRMWARE_FILE       "ath6k/AR6003/hw2.0/device.bin"
 #define AR6003_REV2_PATCH_FILE              "ath6k/AR6003/hw2.0/data.patch.bin"
 #define AR6003_REV2_EPPING_FIRMWARE_FILE    "ath6k/AR6003/hw2.0/endpointping.bin"
-#ifdef AR600x_SD31_XXX
+#ifdef CONFIG_AR600x_SD31_XXX
 #define AR6003_REV2_BOARD_DATA_FILE         "ath6k/AR6003/hw2.0/bdata.SD31.bin"
-#elif defined(AR600x_SD32_XXX)
+#elif defined(CONFIG_AR600x_SD32_XXX)
 #define AR6003_REV2_BOARD_DATA_FILE         "ath6k/AR6003/hw2.0/bdata.SD32.bin"
-#elif defined(AR600x_WB31_XXX)
+#elif defined(CONFIG_AR600x_WB31_XXX)
 #define AR6003_REV2_BOARD_DATA_FILE         "ath6k/AR6003/hw2.0/bdata.WB31.bin"
 #else
 #define AR6003_REV2_BOARD_DATA_FILE         "ath6k/AR6003/hw2.0/bdata.CUSTOM.bin"
@@ -385,7 +383,6 @@ struct ar_wep_key {
     u8 arKey[64];
 } ;
 
-#ifdef ATH6K_CONFIG_CFG80211
 struct ar_key {
     u8 key[WLAN_MAX_KEY_LEN];
     u8 key_len;
@@ -399,8 +396,6 @@ enum {
     SME_CONNECTING,
     SME_CONNECTED
 };
-#endif /* ATH6K_CONFIG_CFG80211 */
-
 
 struct ar_node_mapping {
     u8 macAddress[6];
@@ -557,11 +552,9 @@ struct ar6_softc {
     u32 log_cnt;
     u32 dbglog_init_done;
     u32 arConnectCtrlFlags;
-#ifdef USER_KEYS
     s32 user_savedkeys_stat;
     u32 user_key_ctrl;
     struct USER_SAVEDKEYS   user_saved_keys;
-#endif
     USER_RSSI_THOLD rssi_map[12];
     u8 arUserBssFilter;
     u16 ap_profile_flag;    /* AP mode */
@@ -577,7 +570,6 @@ struct ar6_softc {
 #ifndef EXPORT_HCI_BRIDGE_INTERFACE
     void                    *hcidev_info;
 #endif
-    void                    *hcipal_info;
     WMI_AP_MODE_STAT        arAPStats;
     u8 ap_hidden_ssid;
     u8 ap_country_code[3];
@@ -597,12 +589,10 @@ struct ar6_softc {
 	WMI_BTCOEX_STATS_EVENT  arBtcoexStats;
     s32 (*exitCallback)(void *config);  /* generic callback at AR6K exit */
     struct hif_device_os_device_info   osDevInfo;
-#ifdef ATH6K_CONFIG_CFG80211
     struct wireless_dev *wdev;
     struct cfg80211_scan_request    *scan_request;
     struct ar_key   keys[WMI_MAX_KEY_INDEX + 1];
     u32 smeState;
-#endif /* ATH6K_CONFIG_CFG80211 */
     u16 arWlanPowerState;
     bool                  arWlanOff;
 #ifdef CONFIG_PM
@@ -632,30 +622,10 @@ struct ar_virtual_interface {
 };
 #endif /* CONFIG_AP_VIRTUAL_ADAPTER_SUPPORT */
 
-#ifdef ATH6K_CONFIG_CFG80211
 static inline void *ar6k_priv(struct net_device *dev)
 {
     return (wdev_priv(dev->ieee80211_ptr));
 }
-#else
-#ifdef CONFIG_AP_VIRTUAL_ADAPTER_SUPPORT
-static inline void *ar6k_priv(struct net_device *dev)
-{
-    extern struct net_device *arApNetDev;
-
-    if (arApNetDev == dev) {
-        /* return arDev saved in virtual interface context */
-        struct ar_virtual_interface *arVirDev;
-        arVirDev = netdev_priv(dev);
-        return arVirDev->arDev;   
-    } else {
-        return netdev_priv(dev);
-    }
-}
-#else
-#define ar6k_priv   netdev_priv
-#endif /* CONFIG_AP_VIRTUAL_ADAPTER_SUPPORT */
-#endif /* ATH6K_CONFIG_CFG80211 */
 
 #define SET_HCI_BUS_TYPE(pHciDev, __bus, __type) do { \
     (pHciDev)->bus = (__bus); \
@@ -701,9 +671,6 @@ struct ar_giwscan_param {
     spin_unlock_bh(lock);                                               \
 } while (0)
 
-int ar6000_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
-int ar6000_ioctl_dispatcher(struct net_device *dev, struct ifreq *rq, int cmd);
-void ar6000_gpio_init(void);
 void ar6000_init_profile_info(struct ar6_softc *ar);
 void ar6000_install_static_wep_keys(struct ar6_softc *ar);
 int ar6000_init(struct net_device *dev);
