@@ -1475,7 +1475,7 @@ static void omap_dss_add_overlay_manager(struct omap_overlay_manager *manager)
 	list_add_tail(&manager->list, &manager_list);
 }
 
-int dss_init_overlay_managers(struct platform_device *pdev)
+int __init dss_init_overlay_managers(struct platform_device *pdev)
 {
 	int i, r;
 
