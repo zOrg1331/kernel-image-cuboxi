@@ -1,6 +1,6 @@
 Name: kernel-image-pure-emerald
 Version: 2.6.39
-Release: alt1.rc4
+Release: alt1.rc4.git2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Apr 20 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.39-alt1.rc4.git2
+- new mainline snapshot (just to test fixes in nouveau)
+
 * Tue Apr 19 2011 Mykola Grechukh <gns@altlinux.ru> 2.6.39-alt1.rc4
 - rc4
 - enabled ASUS_NB_WMI, MSI_WMI, SAMSUNG_LAPTOP
