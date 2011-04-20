@@ -182,7 +182,7 @@ static inline void get_next_buf(struct tm6000_dmaqueue *dma_q,
 	if (!buf)
 		return;
 
-	/* Cleans up buffer - Usefull for testing for frame/URB loss */
+	/* Cleans up buffer - Useful for testing for frame/URB loss */
 	outp = videobuf_to_vmalloc(&(*buf)->vb);
 
 	return;
@@ -228,7 +228,7 @@ static int copy_streams(u8 *data, unsigned long len,
 	unsigned long header = 0;
 	int rc = 0;
 	unsigned int cmd, cpysize, pktsize, size, field, block, line, pos = 0;
-	struct tm6000_buffer *vbuf;
+	struct tm6000_buffer *vbuf = NULL;
 	char *voutp = NULL;
 	unsigned int linewidth;
 
@@ -318,7 +318,7 @@ static int copy_streams(u8 *data, unsigned long len,
 					if (pos + size > vbuf->vb.size)
 						cmd = TM6000_URB_MSG_ERR;
 					dev->isoc_ctl.vfield = field;
-			}
+				}
 				break;
 			case TM6000_URB_MSG_VBI:
 				break;
