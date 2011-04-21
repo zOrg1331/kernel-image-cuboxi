@@ -1040,11 +1040,16 @@ init_cifs(void)
 	rc = register_key_type(&cifs_spnego_key_type);
 	if (rc)
 		goto out_unregister_filesystem;
+	rc = init_cifs_idmap();
+	if (rc)
+		goto out_unregister_keytype;
 #endif
 
 	return 0;
 
 #ifdef CONFIG_CIFS_UPCALL
+out_unregister_keytype:
+	unregister_key_type(&cifs_spnego_key_type);
 out_unregister_filesystem:
 	unregister_filesystem(&cifs_fs_type);
 #endif
@@ -1071,6 +1076,8 @@ exit_cifs(void)
 	cifs_dfs_release_automount_timer();
 #endif
 #ifdef CONFIG_CIFS_UPCALL
+	cifs_destroy_idmaptrees();
+	exit_cifs_idmap();
 	unregister_key_type(&cifs_spnego_key_type);
 #endif
 	unregister_filesystem(&cifs_fs_type);
