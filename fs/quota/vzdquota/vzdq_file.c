@@ -73,8 +73,13 @@ struct quotatree_data {
 /* serialized by vz_quota_mutex */
 static LIST_HEAD(qf_data_head);
 
+#define V2_REV0_INITQVERSIONS {\
+	0,		/* USRQUOTA */\
+	0		/* GRPQUOTA */\
+}
+
 static const u_int32_t vzquota_magics[] = V2_INITQMAGICS;
-static const u_int32_t vzquota_versions[] = V2_INITQVERSIONS;
+static const u_int32_t vzquota_versions[] = V2_REV0_INITQVERSIONS;
 static const char aquota_user[] = "aquota.user";
 static const char aquota_group[] = "aquota.group";
 
