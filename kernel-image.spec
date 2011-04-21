@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt15
+Release: alt16
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Apr 21 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt16
+- VZDQUOTA: downgrade quota revision from 1 to 0 for quota version 2
+  (ALT #25432, #25056)
+
 * Mon Apr 11 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt15
 - Build reiserfs module (ALT 25390)
 - Build dm-multipath.ko
