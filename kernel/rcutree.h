@@ -93,8 +93,9 @@ struct rcu_dynticks {
 #define RCU_KTHREAD_STOPPED  0
 #define RCU_KTHREAD_RUNNING  1
 #define RCU_KTHREAD_WAITING  2
-#define RCU_KTHREAD_YIELDING 3
-#define RCU_KTHREAD_MAX      3
+#define RCU_KTHREAD_OFFCPU   3
+#define RCU_KTHREAD_YIELDING 4
+#define RCU_KTHREAD_MAX      4
 
 /*
  * Definition for node within the RCU grace-period-detection hierarchy.
