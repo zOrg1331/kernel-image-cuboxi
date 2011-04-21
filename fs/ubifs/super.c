@@ -1773,10 +1773,12 @@ static void ubifs_put_super(struct super_block *sb)
 	 * of the media. For example, there will be dirty inodes if we failed
 	 * to write them back because of I/O errors.
 	 */
-	ubifs_assert(atomic_long_read(&c->dirty_pg_cnt) == 0);
-	ubifs_assert(c->bi.idx_growth == 0);
-	ubifs_assert(c->bi.dd_growth == 0);
-	ubifs_assert(c->bi.data_growth == 0);
+	if (!c->ro_error) {
+		ubifs_assert(atomic_long_read(&c->dirty_pg_cnt) == 0);
+		ubifs_assert(c->bi.idx_growth == 0);
+		ubifs_assert(c->bi.dd_growth == 0);
+		ubifs_assert(c->bi.data_growth == 0);
+	}
 
 	/*
 	 * The 'c->umount_lock' prevents races between UBIFS memory shrinker
