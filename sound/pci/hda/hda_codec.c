@@ -307,6 +307,12 @@ int snd_hda_get_sub_nodes(struct hda_codec *codec, hda_nid_t nid,
 }
 EXPORT_SYMBOL_HDA(snd_hda_get_sub_nodes);
 
+static int _hda_get_connections(struct hda_codec *codec, hda_nid_t nid,
+				hda_nid_t *conn_list, int max_conns);
+static bool add_conn_list(struct snd_array *array, hda_nid_t nid);
+static int copy_conn_list(hda_nid_t nid, hda_nid_t *dst, int max_dst,
+			  hda_nid_t *src, int len);
+
 /**
  * snd_hda_get_connections - get connection list
  * @codec: the HDA codec
@@ -320,7 +326,44 @@ EXPORT_SYMBOL_HDA(snd_hda_get_sub_nodes);
  * Returns the number of connections, or a negative error code.
  */
 int snd_hda_get_connections(struct hda_codec *codec, hda_nid_t nid,
-			    hda_nid_t *conn_list, int max_conns)
+			     hda_nid_t *conn_list, int max_conns)
+{
+	struct snd_array *array = &codec->conn_lists;
+	int i, len, old_used;
+	hda_nid_t list[HDA_MAX_CONNECTIONS];
+
+	/* look up the cached results */
+	for (i = 0; i < array->used; ) {
+		hda_nid_t *p = snd_array_elem(array, i);
+		len = p[1];
+		if (nid == *p)
+			return copy_conn_list(nid, conn_list, max_conns,
+					      p + 2, len);
+		i += len + 2;
+	}
+
+	len = _hda_get_connections(codec, nid, list, HDA_MAX_CONNECTIONS);
+	if (len < 0)
+		return len;
+
+	/* add to the cache */
+	old_used = array->used;
+	if (!add_conn_list(array, nid) || !add_conn_list(array, len))
+		goto error_add;
+	for (i = 0; i < len; i++)
+		if (!add_conn_list(array, list[i]))
+			goto error_add;
+
+	return copy_conn_list(nid, conn_list, max_conns, list, len);
+		
+ error_add:
+	array->used = old_used;
+	return -ENOMEM;
+}
+EXPORT_SYMBOL_HDA(snd_hda_get_connections);
+
+static int _hda_get_connections(struct hda_codec *codec, hda_nid_t nid,
+			     hda_nid_t *conn_list, int max_conns)
 {
 	unsigned int parm;
 	int i, conn_len, conns;
@@ -417,8 +460,28 @@ int snd_hda_get_connections(struct hda_codec *codec, hda_nid_t nid,
 	}
 	return conns;
 }
-EXPORT_SYMBOL_HDA(snd_hda_get_connections);
 
+static bool add_conn_list(struct snd_array *array, hda_nid_t nid)
+{
+	hda_nid_t *p = snd_array_new(array);
+	if (!p)
+		return false;
+	*p = nid;
+	return true;
+}
+
+static int copy_conn_list(hda_nid_t nid, hda_nid_t *dst, int max_dst,
+			  hda_nid_t *src, int len)
+{
+	if (len > max_dst) {
+		snd_printk(KERN_ERR "hda_codec: "
+			   "Too many connections %d for NID 0x%x\n",
+			   len, nid);
+		return -EINVAL;
+	}
+	memcpy(dst, src, len * sizeof(hda_nid_t));
+	return len;
+}
 
 /**
  * snd_hda_queue_unsol_event - add an unsolicited event to queue
@@ -937,6 +1000,7 @@ void snd_hda_shutup_pins(struct hda_codec *codec)
 }
 EXPORT_SYMBOL_HDA(snd_hda_shutup_pins);
 
+#ifdef SND_HDA_NEEDS_RESUME
 /* Restore the pin controls cleared previously via snd_hda_shutup_pins() */
 static void restore_shutup_pins(struct hda_codec *codec)
 {
@@ -953,6 +1017,7 @@ static void restore_shutup_pins(struct hda_codec *codec)
 	}
 	codec->pins_shutup = 0;
 }
+#endif
 
 static void init_hda_cache(struct hda_cache_rec *cache,
 			   unsigned int record_size);
@@ -1017,6 +1082,7 @@ static void snd_hda_codec_free(struct hda_codec *codec)
 	list_del(&codec->list);
 	snd_array_free(&codec->mixers);
 	snd_array_free(&codec->nids);
+	snd_array_free(&codec->conn_lists);
 	codec->bus->caddr_tbl[codec->addr] = NULL;
 	if (codec->patch_ops.free)
 		codec->patch_ops.free(codec);
@@ -1077,6 +1143,7 @@ int /*__devinit*/ snd_hda_codec_new(struct hda_bus *bus,
 	snd_array_init(&codec->init_pins, sizeof(struct hda_pincfg), 16);
 	snd_array_init(&codec->driver_pins, sizeof(struct hda_pincfg), 16);
 	snd_array_init(&codec->cvt_setups, sizeof(struct hda_cvt_setup), 8);
+	snd_array_init(&codec->conn_lists, sizeof(hda_nid_t), 64);
 	if (codec->bus->modelname) {
 		codec->modelname = kstrdup(codec->bus->modelname, GFP_KERNEL);
 		if (!codec->modelname) {
@@ -1329,6 +1396,7 @@ static void purify_inactive_streams(struct hda_codec *codec)
 	}
 }
 
+#ifdef SND_HDA_NEEDS_RESUME
 /* clean up all streams; called from suspend */
 static void hda_cleanup_all_streams(struct hda_codec *codec)
 {
@@ -1340,6 +1408,7 @@ static void hda_cleanup_all_streams(struct hda_codec *codec)
 			really_cleanup_stream(codec, p);
 	}
 }
+#endif
 
 /*
  * amp access functions
