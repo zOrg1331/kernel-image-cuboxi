@@ -54,6 +54,9 @@ unsigned int dss_debug;
 module_param_named(debug, dss_debug, bool, 0644);
 #endif
 
+static int omap_dss_register_device(struct omap_dss_device *);
+static void omap_dss_unregister_device(struct omap_dss_device *);
+
 /* REGULATORS */
 
 struct regulator *dss_get_vdds_dsi(void)
@@ -106,7 +109,7 @@ static const struct file_operations dss_debug_fops = {
 
 static struct dentry *dss_debugfs_dir;
 
-static int dss_initialize_debugfs(void)
+static int __init dss_initialize_debugfs(void)
 {
 	dss_debugfs_dir = debugfs_create_dir("omapdss", NULL);
 	if (IS_ERR(dss_debugfs_dir)) {
@@ -153,7 +156,7 @@ static void dss_uninitialize_debugfs(void)
 		debugfs_remove_recursive(dss_debugfs_dir);
 }
 #else /* CONFIG_DEBUG_FS && CONFIG_OMAP2_DSS_DEBUG_SUPPORT */
-static inline int dss_initialize_debugfs(void)
+static inline int __init dss_initialize_debugfs(void)
 {
 	return 0;
 }
@@ -163,7 +166,7 @@ static inline void dss_uninitialize_debugfs(void)
 #endif /* CONFIG_DEBUG_FS && CONFIG_OMAP2_DSS_DEBUG_SUPPORT */
 
 /* PLATFORM DEVICE */
-static int omap_dss_probe(struct platform_device *pdev)
+static int __init omap_dss_probe(struct platform_device *pdev)
 {
 	struct omap_dss_board_info *pdata = pdev->dev.platform_data;
 	int r;
@@ -304,7 +307,6 @@ static int omap_dss_resume(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_dss_driver = {
-	.probe          = omap_dss_probe,
 	.remove         = omap_dss_remove,
 	.shutdown	= omap_dss_shutdown,
 	.suspend	= omap_dss_suspend,
@@ -480,7 +482,7 @@ static void omap_dss_dev_release(struct device *dev)
 	reset_device(dev, 0);
 }
 
-int omap_dss_register_device(struct omap_dss_device *dssdev)
+static int __init omap_dss_register_device(struct omap_dss_device *dssdev)
 {
 	static int dev_num;
 
@@ -494,13 +496,13 @@ int omap_dss_register_device(struct omap_dss_device *dssdev)
 	return device_register(&dssdev->dev);
 }
 
-void omap_dss_unregister_device(struct omap_dss_device *dssdev)
+static void omap_dss_unregister_device(struct omap_dss_device *dssdev)
 {
 	device_unregister(&dssdev->dev);
 }
 
 /* BUS */
-static int omap_dss_bus_register(void)
+static int __init omap_dss_bus_register(void)
 {
 	int r;
 
@@ -539,7 +541,7 @@ static int __init omap_dss_init(void)
 	if (r)
 		return r;
 
-	r = platform_driver_register(&omap_dss_driver);
+	r = platform_driver_probe(&omap_dss_driver, omap_dss_probe);
 	if (r) {
 		omap_dss_bus_unregister();
 		return r;
@@ -575,7 +577,7 @@ static int __init omap_dss_init(void)
 
 static int __init omap_dss_init2(void)
 {
-	return platform_driver_register(&omap_dss_driver);
+	return platform_driver_probe(&omap_dss_driver, omap_dss_probe);
 }
 
 core_initcall(omap_dss_init);
