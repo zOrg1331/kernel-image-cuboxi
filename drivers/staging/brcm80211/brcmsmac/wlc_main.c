@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <linux/etherdevice.h>
+#include <linux/pci_ids.h>
 #include <net/mac80211.h>
 
 #include <bcmdefs.h>
@@ -524,7 +525,7 @@ void wlc_init(struct wlc_info *wlc)
 	/* Enable EDCF mode (while the MAC is suspended) */
 	if (EDCF_ENAB(wlc->pub)) {
 		OR_REG(&regs->ifs_ctl, IFS_USEEDCF);
-		wlc_edcf_setparams(wlc->cfg, false);
+		wlc_edcf_setparams(wlc, false);
 	}
 
 	/* Init precedence maps for empty FIFOs */
@@ -1355,17 +1356,16 @@ void wlc_wme_initparams_sta(struct wlc_info *wlc, wme_param_ie_t *pe)
 		  cpu_to_le16(EDCF_AC_VO_TXOP_STA)}
 		 }
 	};
-
-	ASSERT(sizeof(*pe) == WME_PARAM_IE_LEN);
 	memcpy(pe, &stadef, sizeof(*pe));
 }
 
-void wlc_wme_setparams(struct wlc_info *wlc, u16 aci, void *arg, bool suspend)
+void wlc_wme_setparams(struct wlc_info *wlc, u16 aci,
+		       const struct ieee80211_tx_queue_params *params,
+		       bool suspend)
 {
 	int i;
 	shm_acparams_t acp_shm;
 	u16 *shm_entry;
-	struct ieee80211_tx_queue_params *params = arg;
 
 	ASSERT(wlc);
 
@@ -1375,20 +1375,12 @@ void wlc_wme_setparams(struct wlc_info *wlc, u16 aci, void *arg, bool suspend)
 		return;
 	}
 
-	/*
-	 * AP uses AC params from wme_param_ie_ap.
-	 * AP advertises AC params from wme_param_ie.
-	 * STA uses AC params from wme_param_ie.
-	 */
-
 	wlc->wme_admctl = 0;
 
 	do {
 		memset((char *)&acp_shm, 0, sizeof(shm_acparams_t));
 		/* find out which ac this set of params applies to */
 		ASSERT(aci < AC_COUNT);
-		/* set the admission control policy for this AC */
-		/* wlc->wme_admctl |= 1 << aci; *//* should be set ??  seems like off by default */
 
 		/* fill in shm ac params struct */
 		acp_shm.txop = le16_to_cpu(params->txop);
@@ -1439,20 +1431,16 @@ void wlc_wme_setparams(struct wlc_info *wlc, u16 aci, void *arg, bool suspend)
 
 }
 
-void wlc_edcf_setparams(struct wlc_bsscfg *cfg, bool suspend)
+void wlc_edcf_setparams(struct wlc_info *wlc, bool suspend)
 {
-	struct wlc_info *wlc = cfg->wlc;
-	uint aci, i, j;
+	u16 aci;
+	int i_ac;
 	edcf_acparam_t *edcf_acp;
-	shm_acparams_t acp_shm;
-	u16 *shm_entry;
 
-	ASSERT(cfg);
+	struct ieee80211_tx_queue_params txq_pars;
+	struct ieee80211_tx_queue_params *params = &txq_pars;
+
 	ASSERT(wlc);
-
-	/* Only apply params if the core is out of reset and has clocks */
-	if (!wlc->clk)
-		return;
 
 	/*
 	 * AP uses AC params from wme_param_ie_ap.
@@ -1462,10 +1450,7 @@ void wlc_edcf_setparams(struct wlc_bsscfg *cfg, bool suspend)
 
 	edcf_acp = (edcf_acparam_t *) &wlc->wme_param_ie.acparam[0];
 
-	wlc->wme_admctl = 0;
-
-	for (i = 0; i < AC_COUNT; i++, edcf_acp++) {
-		memset((char *)&acp_shm, 0, sizeof(shm_acparams_t));
+	for (i_ac = 0; i_ac < AC_COUNT; i_ac++, edcf_acp++) {
 		/* find out which ac this set of params applies to */
 		aci = (edcf_acp->ACI & EDCF_ACI_MASK) >> EDCF_ACI_SHIFT;
 		ASSERT(aci < AC_COUNT);
@@ -1475,46 +1460,15 @@ void wlc_edcf_setparams(struct wlc_bsscfg *cfg, bool suspend)
 		}
 
 		/* fill in shm ac params struct */
-		acp_shm.txop = le16_to_cpu(edcf_acp->TXOP);
-		/* convert from units of 32us to us for ucode */
-		wlc->edcf_txop[aci] = acp_shm.txop =
-		    EDCF_TXOP2USEC(acp_shm.txop);
-		acp_shm.aifs = (edcf_acp->ACI & EDCF_AIFSN_MASK);
-
-		if (aci == AC_VI && acp_shm.txop == 0
-		    && acp_shm.aifs < EDCF_AIFSN_MAX)
-			acp_shm.aifs++;
-
-		if (acp_shm.aifs < EDCF_AIFSN_MIN
-		    || acp_shm.aifs > EDCF_AIFSN_MAX) {
-			WL_ERROR("wl%d: wlc_edcf_setparams: bad aifs %d\n",
-				 wlc->pub->unit, acp_shm.aifs);
-			continue;
-		}
+		params->txop = edcf_acp->TXOP;
+		params->aifs = edcf_acp->ACI;
 
 		/* CWmin = 2^(ECWmin) - 1 */
-		acp_shm.cwmin = EDCF_ECW2CW(edcf_acp->ECW & EDCF_ECWMIN_MASK);
+		params->cw_min = EDCF_ECW2CW(edcf_acp->ECW & EDCF_ECWMIN_MASK);
 		/* CWmax = 2^(ECWmax) - 1 */
-		acp_shm.cwmax = EDCF_ECW2CW((edcf_acp->ECW & EDCF_ECWMAX_MASK)
+		params->cw_max = EDCF_ECW2CW((edcf_acp->ECW & EDCF_ECWMAX_MASK)
 					    >> EDCF_ECWMAX_SHIFT);
-		acp_shm.cwcur = acp_shm.cwmin;
-		acp_shm.bslots =
-		    R_REG(&wlc->regs->tsf_random) & acp_shm.cwcur;
-		acp_shm.reggap = acp_shm.bslots + acp_shm.aifs;
-		/* Indicate the new params to the ucode */
-		acp_shm.status = wlc_read_shm(wlc, (M_EDCF_QINFO +
-						    wme_shmemacindex(aci) *
-						    M_EDCF_QLEN +
-						    M_EDCF_STATUS_OFF));
-		acp_shm.status |= WME_STATUS_NEWAC;
-
-		/* Fill in shm acparam table */
-		shm_entry = (u16 *) &acp_shm;
-		for (j = 0; j < (int)sizeof(shm_acparams_t); j += 2)
-			wlc_write_shm(wlc,
-				      M_EDCF_QINFO +
-				      wme_shmemacindex(aci) * M_EDCF_QLEN + j,
-				      *shm_entry++);
+		wlc_wme_setparams(wlc, aci, params, suspend);
 	}
 
 	if (suspend)
@@ -1732,39 +1686,6 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 
 	WL_NONE("wl%d: %s: vendor 0x%x device 0x%x\n",
 		unit, __func__, vendor, device);
-
-	ASSERT(WSEC_MAX_RCMTA_KEYS <= WSEC_MAX_KEYS);
-	ASSERT(WSEC_MAX_DEFAULT_KEYS == WLC_DEFAULT_KEYS);
-
-	/* some code depends on packed structures */
-	ASSERT(sizeof(struct ethhdr) == ETH_HLEN);
-	ASSERT(sizeof(d11regs_t) == SI_CORE_SIZE);
-	ASSERT(sizeof(ofdm_phy_hdr_t) == D11_PHY_HDR_LEN);
-	ASSERT(sizeof(cck_phy_hdr_t) == D11_PHY_HDR_LEN);
-	ASSERT(sizeof(d11txh_t) == D11_TXH_LEN);
-	ASSERT(sizeof(d11rxhdr_t) == RXHDR_LEN);
-	ASSERT(sizeof(struct ieee80211_hdr) == DOT11_A4_HDR_LEN);
-	ASSERT(sizeof(struct ieee80211_rts) == DOT11_RTS_LEN);
-	ASSERT(sizeof(tx_status_t) == TXSTATUS_LEN);
-	ASSERT(sizeof(struct ieee80211_ht_cap) == HT_CAP_IE_LEN);
-#ifdef BRCM_FULLMAC
-	ASSERT(offsetof(wl_scan_params_t, channel_list) ==
-	       WL_SCAN_PARAMS_FIXED_SIZE);
-#endif
-	ASSERT(IS_ALIGNED(offsetof(wsec_key_t, data), sizeof(u32)));
-	ASSERT(ISPOWEROF2(MA_WINDOW_SZ));
-
-	ASSERT(sizeof(wlc_d11rxhdr_t) <= WL_HWRXOFF);
-
-	/*
-	 * Number of replay counters value used in WPA IE must match # rxivs
-	 * supported in wsec_key_t struct. See 802.11i/D3.0 sect. 7.3.2.17
-	 * 'RSN Information Element' figure 8 for this mapping.
-	 */
-	ASSERT((WPA_CAP_16_REPLAY_CNTRS == WLC_REPLAY_CNTRS_VALUE
-		&& 16 == WLC_NUMRXIVS)
-	       || (WPA_CAP_4_REPLAY_CNTRS == WLC_REPLAY_CNTRS_VALUE
-		   && 4 == WLC_NUMRXIVS));
 
 	/* allocate struct wlc_info state and its substructures */
 	wlc = (struct wlc_info *) wlc_attach_malloc(unit, &err, device);
@@ -4871,7 +4792,7 @@ void wlc_statsupd(struct wlc_info *wlc)
 
 bool wlc_chipmatch(u16 vendor, u16 device)
 {
-	if (vendor != VENDOR_BROADCOM) {
+	if (vendor != PCI_VENDOR_ID_BROADCOM) {
 		WL_ERROR("wlc_chipmatch: unknown vendor id %04x\n", vendor);
 		return false;
 	}
@@ -6948,11 +6869,6 @@ wlc_recvctl(struct wlc_info *wlc, d11rxhdr_t *rxh, struct sk_buff *p)
 #if defined(BCMDBG)
 	struct sk_buff *skb = p;
 #endif				/* BCMDBG */
-	/* Todo:
-	 * Cache plcp for first MPDU of AMPD and use chacched version for INTERMEDIATE.
-	 * Test for INTERMEDIATE  like so:
-	 * if (!(plcp[0] | plcp[1] | plcp[2]))
-	 */
 
 	memset(&rx_status, 0, sizeof(rx_status));
 	prep_mac80211_status(wlc, rxh, p, &rx_status);
