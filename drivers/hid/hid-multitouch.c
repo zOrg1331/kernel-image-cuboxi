@@ -89,6 +89,7 @@ struct mt_class {
 #define MT_CLS_EGALAX				5
 #define MT_CLS_STANTUM				6
 #define MT_CLS_3M				7
+#define MT_CLS_CONFIDENCE			8
 
 #define MT_DEFAULT_MAXCONTACT	10
 
@@ -156,6 +157,8 @@ struct mt_class mt_classes[] = {
 		.sn_move = 2048,
 		.sn_width = 128,
 		.sn_height = 128 },
+	{ .name = MT_CLS_CONFIDENCE,
+		.quirks = MT_QUIRK_VALID_IS_CONFIDENCE },
 
 	{ }
 };
@@ -210,6 +213,7 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			/* touchscreen emulation */
 			set_abs(hi->input, ABS_X, field, cls->sn_move);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_GD_Y:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
@@ -221,6 +225,7 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			/* touchscreen emulation */
 			set_abs(hi->input, ABS_Y, field, cls->sn_move);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		}
 		return 0;
@@ -229,18 +234,22 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		switch (usage->hid) {
 		case HID_DG_INRANGE:
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_CONFIDENCE:
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_TIPSWITCH:
 			hid_map_usage(hi, usage, bit, max, EV_KEY, BTN_TOUCH);
 			input_set_capability(hi->input, EV_KEY, BTN_TOUCH);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_CONTACTID:
 			input_mt_init_slots(hi->input, td->maxcontacts);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_WIDTH:
 			hid_map_usage(hi, usage, bit, max,
@@ -248,6 +257,7 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			set_abs(hi->input, ABS_MT_TOUCH_MAJOR, field,
 				cls->sn_width);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_HEIGHT:
 			hid_map_usage(hi, usage, bit, max,
@@ -257,6 +267,7 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			input_set_abs_params(hi->input,
 					ABS_MT_ORIENTATION, 0, 1, 0, 0);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_TIPPRESSURE:
 			if (quirks & MT_QUIRK_EGALAX_XYZ_FIXUP)
@@ -269,13 +280,15 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			set_abs(hi->input, ABS_PRESSURE, field,
 				cls->sn_pressure);
 			td->last_slot_field = usage->hid;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_CONTACTCOUNT:
-			td->last_field_index = field->report->maxfield - 1;
+			td->last_field_index = field->index;
 			return 1;
 		case HID_DG_CONTACTMAX:
 			/* we don't set td->last_slot_field as contactcount and
 			 * contact max are global to the report */
+			td->last_field_index = field->index;
 			return -1;
 		}
 		/* let hid-input decide for the others */
@@ -424,23 +437,12 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 			break;
 
 		default:
-			if (td->last_field_index
-				&& field->index == td->last_field_index)
-				/* we reach here when the last field in the
-				 * report is not related to multitouch.
-				 * This is not good. As a temporary solution,
-				 * we trigger our mt event completion and
-				 * ignore the field.
-				 */
-				break;
 			/* fallback to the generic hidinput handling */
 			return 0;
 		}
 
 		if (usage->hid == td->last_slot_field) {
 			mt_complete_slot(td);
-			if (!td->last_field_index)
-				mt_emit_event(td, field->hidinput->input);
 		}
 
 		if (field->index == td->last_field_index
@@ -584,6 +586,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTID,
 		HID_USB_DEVICE(USB_VENDOR_ID_IRTOUCHSYSTEMS,
 			USB_DEVICE_ID_IRTOUCH_INFRARED_USB) },
+
+	/* PenMount panels */
+	{ .driver_data = MT_CLS_CONFIDENCE,
+		HID_USB_DEVICE(USB_VENDOR_ID_PENMOUNT,
+			USB_DEVICE_ID_PENMOUNT_PCI) },
 
 	/* PixCir-based panels */
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTID,
