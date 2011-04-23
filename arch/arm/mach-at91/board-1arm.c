@@ -65,7 +65,7 @@ static void __init onearm_map_io(void)
 
 static void __init onearm_init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata onearm_eth_data = {

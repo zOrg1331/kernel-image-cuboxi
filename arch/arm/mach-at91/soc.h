@@ -8,6 +8,7 @@
 
 struct at91_soc {
 	char *name;
+	unsigned int *default_irq_priority;
 
 	void (*init)(unsigned long main_clock);
 };

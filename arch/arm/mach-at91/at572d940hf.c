@@ -359,19 +359,8 @@ static unsigned int at572d940hf_default_irq_priority[NR_AIC_IRQS] __initdata = {
 	0,	/* Advanced Interrupt Controller */
 };
 
-void __init at572d940hf_init_interrupts(unsigned int priority[NR_AIC_IRQS])
-{
-	if (!priority)
-		priority = at572d940hf_default_irq_priority;
-
-	/* Initialize the AIC interrupt controller */
-	at91_aic_init(priority);
-
-	/* Enable GPIO interrupts */
-	at91_gpio_irq_setup();
-}
-
 struct at91_soc __initdata at572d940hf_soc = {
 	.name = "at572d940hf",
+	.default_irq_priority = at572d940hf_default_irq_priority,
 	.init = at572d940hf_initialize,
 };

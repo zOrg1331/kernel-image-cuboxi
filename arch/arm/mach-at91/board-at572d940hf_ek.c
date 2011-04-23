@@ -70,7 +70,7 @@ static void __init eb_map_io(void)
 
 static void __init eb_init_irq(void)
 {
-	at572d940hf_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 

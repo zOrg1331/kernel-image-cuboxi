@@ -66,7 +66,7 @@ static void __init ecb_at91map_io(void)
 
 static void __init ecb_at91init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata ecb_at91eth_data = {

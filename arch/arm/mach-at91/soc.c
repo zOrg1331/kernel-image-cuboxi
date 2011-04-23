@@ -20,6 +20,18 @@
 
 static struct at91_soc __initdata current_soc;
 
+void __init at91_init_interrupts(unsigned int *priority)
+{
+	if (!priority)
+		priority = current_soc.default_irq_priority;
+
+	/* Initialize the AIC interrupt controller */
+	at91_aic_init(priority);
+
+	/* Enable GPIO interrupts */
+	at91_gpio_irq_setup();
+}
+
 static struct map_desc at91_io_desc __initdata = {
 	.virtual	= AT91_VA_BASE_SYS,
 	.pfn		= __phys_to_pfn(AT91_BASE_SYS),

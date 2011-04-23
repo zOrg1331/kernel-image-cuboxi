@@ -57,7 +57,7 @@ static void __init snapper9260_map_io(void)
 
 static void __init snapper9260_init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_usbh_data __initdata snapper9260_usbh_data = {

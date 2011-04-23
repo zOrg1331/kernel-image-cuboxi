@@ -49,7 +49,7 @@ static void __init eco920_map_io(void)
 
 static void __init eco920_init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata eco920_eth_data = {

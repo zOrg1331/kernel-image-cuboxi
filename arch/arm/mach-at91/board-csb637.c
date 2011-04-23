@@ -54,7 +54,7 @@ static void __init csb637_map_io(void)
 
 static void __init csb637_init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata csb637_eth_data = {

@@ -59,7 +59,7 @@ static void __init cam60_map_io(void)
 
 static void __init cam60_init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 

@@ -67,7 +67,7 @@ static void __init cap9adk_map_io(void)
 
 static void __init cap9adk_init_irq(void)
 {
-	at91cap9_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 

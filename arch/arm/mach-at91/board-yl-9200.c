@@ -81,7 +81,7 @@ static void __init yl9200_map_io(void)
 
 static void __init yl9200_init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 

@@ -62,7 +62,7 @@ static void __init ek_map_io(void)
 
 static void __init ek_init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 
