@@ -31,16 +31,12 @@
 #include <mach/at91_pmc.h>
 #include <mach/at91_rstc.h>
 
+#include "soc.h"
 #include "generic.h"
 #include "clock.h"
 
 static struct map_desc at572d940hf_io_desc[] __initdata = {
 	{
-		.virtual	= AT91_VA_BASE_SYS,
-		.pfn		= __phys_to_pfn(AT91_BASE_SYS),
-		.length		= SZ_16K,
-		.type		= MT_DEVICE,
-	}, {
 		.virtual	= AT91_IO_VIRT_BASE - AT572D940HF_SRAM_SIZE,
 		.pfn		= __phys_to_pfn(AT572D940HF_SRAM_BASE),
 		.length		= AT572D940HF_SRAM_SIZE,
@@ -302,7 +298,7 @@ static void at572d940hf_reset(void)
  *  AT572D940HF processor initialization
  * -------------------------------------------------------------------- */
 
-void __init at572d940hf_initialize(unsigned long main_clock)
+static void __init at572d940hf_initialize(unsigned long main_clock)
 {
 	/* Map peripherals */
 	iotable_init(at572d940hf_io_desc, ARRAY_SIZE(at572d940hf_io_desc));
@@ -375,3 +371,7 @@ void __init at572d940hf_init_interrupts(unsigned int priority[NR_AIC_IRQS])
 	at91_gpio_irq_setup();
 }
 
+struct at91_soc __initdata at572d940hf_soc = {
+	.name = "at572d940hf",
+	.init = at572d940hf_initialize,
+};

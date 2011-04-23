@@ -42,7 +42,7 @@
 
 static void __init snapper9260_map_io(void)
 {
-	at91sam9260_initialize(18432000);
+	at91_initialize(18432000);
 
 	/* Debug on ttyS0 */
 	at91_register_uart(0, 0, 0);

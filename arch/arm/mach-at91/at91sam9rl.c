@@ -21,17 +21,9 @@
 #include <mach/at91_rstc.h>
 #include <mach/at91_shdwc.h>
 
+#include "soc.h"
 #include "generic.h"
 #include "clock.h"
-
-static struct map_desc at91sam9rl_io_desc[] __initdata = {
-	{
-		.virtual	= AT91_VA_BASE_SYS,
-		.pfn		= __phys_to_pfn(AT91_BASE_SYS),
-		.length		= SZ_16K,
-		.type		= MT_DEVICE,
-	},
-};
 
 static struct map_desc at91sam9rl_sram_desc[] __initdata = {
 	{
@@ -252,12 +244,11 @@ static void at91sam9rl_poweroff(void)
  *  AT91SAM9RL processor initialization
  * -------------------------------------------------------------------- */
 
-void __init at91sam9rl_initialize(unsigned long main_clock)
+static void __init at91sam9rl_initialize(unsigned long main_clock)
 {
 	unsigned long cidr, sram_size;
 
 	/* Map peripherals */
-	iotable_init(at91sam9rl_io_desc, ARRAY_SIZE(at91sam9rl_io_desc));
 
 	cidr = at91_sys_read(AT91_DBGU_CIDR);
 
@@ -343,3 +334,8 @@ void __init at91sam9rl_init_interrupts(unsigned int priority[NR_AIC_IRQS])
 	/* Enable GPIO interrupts */
 	at91_gpio_irq_setup();
 }
+
+struct at91_soc __initdata at91sam9rl_soc = {
+	.name = "at91sam9rl",
+	.init = at91sam9rl_initialize,
+};

@@ -47,7 +47,7 @@
 static void __init ek_map_io(void)
 {
 	/* Initialize processor: 18.432 MHz crystal */
-	at91sam9260_initialize(18432000);
+	at91_initialize(18432000);
 
 	/* Setup the LEDs */
 	at91_init_leds(AT91_PIN_PA9, AT91_PIN_PA6);

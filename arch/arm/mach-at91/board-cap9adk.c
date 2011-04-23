@@ -53,7 +53,7 @@
 static void __init cap9adk_map_io(void)
 {
 	/* Initialize processor: 12 MHz crystal */
-	at91cap9_initialize(12000000);
+	at91_initialize(12000000);
 
 	/* Setup the LEDs: USER1 and USER2 LED for cpu/timer... */
 	at91_init_leds(AT91_PIN_PA10, AT91_PIN_PA11);

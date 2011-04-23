@@ -16,6 +16,20 @@
 
 #include <asm/sizes.h>
 
+#if !defined(CONFIG_ARCH_AT91X40)
+/*
+ * on all at91 except rm9200 and x40 have the System Controller start in reallity
+ * at 0xffffc000 of 16KiB
+ *
+ * on rm9200 it's start at 0xfffe4000 of 111KiB with non reserved data starting
+ * at 0xfffff000
+ *
+ * so we will use a common AT91_BASE_SYS at 0xffffc000 of 16KiB
+ * and map the same memory space
+ */
+#define AT91_BASE_SYS	0xffffc000
+#endif
+
 #if defined(CONFIG_ARCH_AT91RM9200)
 #include <mach/at91rm9200.h>
 #elif defined(CONFIG_ARCH_AT91SAM9260) || defined(CONFIG_ARCH_AT91SAM9G20)
