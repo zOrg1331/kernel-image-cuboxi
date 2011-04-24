@@ -17,7 +17,7 @@ struct at91_soc {
 	struct at91_dev_resource *st;
 
 	void (*register_clocks)(void);
-	void (*init)(unsigned long main_clock);
+	void (*init)(void);
 };
 
 extern struct at91_soc at572d940hf_soc;

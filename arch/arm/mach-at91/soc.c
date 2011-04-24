@@ -115,7 +115,10 @@ void __init at91_initialize(unsigned long main_clock)
 
 	pr_info("AT91: detected soc: %s\n", current_soc.name);
 
-	current_soc.init(main_clock);
+	current_soc.init();
+
+	/* Init clock subsystem */
+	at91_clock_init(main_clock);
 
 	/* Register the processor-specific clocks */
 	current_soc.register_clocks();

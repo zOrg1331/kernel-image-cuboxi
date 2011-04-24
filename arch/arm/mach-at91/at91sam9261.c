@@ -311,7 +311,7 @@ static void at91sam9261_poweroff(void)
  *  AT91SAM9261 processor initialization
  * -------------------------------------------------------------------- */
 
-static void __init at91sam9261_initialize(unsigned long main_clock)
+static void __init at91sam9261_initialize(void)
 {
 	/* Map peripherals */
 
@@ -325,9 +325,6 @@ static void __init at91sam9261_initialize(unsigned long main_clock)
 	pm_power_off = at91sam9261_poweroff;
 	at91_extern_irq = (1 << AT91SAM9261_ID_IRQ0) | (1 << AT91SAM9261_ID_IRQ1)
 			| (1 << AT91SAM9261_ID_IRQ2);
-
-	/* Init clock subsystem */
-	at91_clock_init(main_clock);
 }
 
 /* --------------------------------------------------------------------

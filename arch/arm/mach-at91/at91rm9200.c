@@ -312,7 +312,7 @@ static void at91rm9200_reset(void)
 /* --------------------------------------------------------------------
  *  AT91RM9200 processor initialization
  * -------------------------------------------------------------------- */
-static void __init at91rm9200_initialize(unsigned long main_clock)
+static void __init at91rm9200_initialize(void)
 {
 	if (cpu_is_at91rm9200_bga())
 		at91rm9200_soc.gpio.num_resources = AT91RM9200_BGA;
@@ -327,9 +327,6 @@ static void __init at91rm9200_initialize(unsigned long main_clock)
 			| (1 << AT91RM9200_ID_IRQ2) | (1 << AT91RM9200_ID_IRQ3)
 			| (1 << AT91RM9200_ID_IRQ4) | (1 << AT91RM9200_ID_IRQ5)
 			| (1 << AT91RM9200_ID_IRQ6);
-
-	/* Init clock subsystem */
-	at91_clock_init(main_clock);
 }
 
 

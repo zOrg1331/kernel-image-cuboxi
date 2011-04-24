@@ -292,7 +292,7 @@ static void at91sam9rl_poweroff(void)
  *  AT91SAM9RL processor initialization
  * -------------------------------------------------------------------- */
 
-static void __init at91sam9rl_initialize(unsigned long main_clock)
+static void __init at91sam9rl_initialize(void)
 {
 	unsigned long cidr, sram_size;
 
@@ -318,9 +318,6 @@ static void __init at91sam9rl_initialize(unsigned long main_clock)
 	at91_arch_reset = at91sam9_alt_reset;
 	pm_power_off = at91sam9rl_poweroff;
 	at91_extern_irq = (1 << AT91SAM9RL_ID_IRQ0);
-
-	/* Init clock subsystem */
-	at91_clock_init(main_clock);
 }
 
 /* --------------------------------------------------------------------
