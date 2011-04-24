@@ -368,9 +368,6 @@ static void __init at91cap9_initialize(unsigned long main_clock)
 	/* Init clock subsystem */
 	at91_clock_init(main_clock);
 
-	/* Register the processor-specific clocks */
-	at91cap9_register_clocks();
-
 	/* Remember the silicon revision */
 	if (cpu_is_at91cap9_revB())
 		system_rev = 0xB;
@@ -428,6 +425,7 @@ struct at91_dev_resource at91cap9_pit __initdata = {
 struct at91_soc __initdata at91cap9_soc = {
 	.name = "at91cap9",
 	.default_irq_priority = at91cap9_default_irq_priority,
+	.register_clocks = at91cap9_register_clocks,
 	.init = at91cap9_initialize,
 	.gpio = {
 		.resource = at91cap9_pios,

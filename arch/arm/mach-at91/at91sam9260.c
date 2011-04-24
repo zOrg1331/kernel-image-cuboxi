@@ -359,9 +359,6 @@ static void __init at91sam9260_initialize(unsigned long main_clock)
 
 	/* Init clock subsystem */
 	at91_clock_init(main_clock);
-
-	/* Register the processor-specific clocks */
-	at91sam9260_register_clocks();
 }
 
 /* --------------------------------------------------------------------
@@ -414,6 +411,7 @@ struct at91_dev_resource at91sam9260_pit __initdata = {
 struct at91_soc __initdata at91sam9260_soc = {
 	.name = "at91sam9260",
 	.default_irq_priority = at91sam9260_default_irq_priority,
+	.register_clocks = at91sam9260_register_clocks,
 	.init = at91sam9260_initialize,
 	.gpio = {
 		.resource = at91sam9260_pios,

@@ -16,6 +16,7 @@ struct at91_soc {
 	struct at91_dev_resource *pit;
 	struct at91_dev_resource *st;
 
+	void (*register_clocks)(void);
 	void (*init)(unsigned long main_clock);
 };
 

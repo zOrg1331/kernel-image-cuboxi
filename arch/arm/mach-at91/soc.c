@@ -117,6 +117,9 @@ void __init at91_initialize(unsigned long main_clock)
 
 	current_soc.init(main_clock);
 
+	/* Register the processor-specific clocks */
+	current_soc.register_clocks();
+
 	/* Register GPIO subsystem */
 	at91_add_gpio();
 }

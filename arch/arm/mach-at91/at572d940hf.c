@@ -370,9 +370,6 @@ static void __init at572d940hf_initialize(unsigned long main_clock)
 
 	/* Init clock subsystem */
 	at91_clock_init(main_clock);
-
-	/* Register the processor-specific clocks */
-	at572d940hf_register_clocks();
 }
 
 /* --------------------------------------------------------------------
@@ -425,6 +422,7 @@ struct at91_dev_resource at572d940hf_pit __initdata = {
 struct at91_soc __initdata at572d940hf_soc = {
 	.name = "at572d940hf",
 	.default_irq_priority = at572d940hf_default_irq_priority,
+	.register_clocks = at572d940hf_register_clocks,
 	.init = at572d940hf_initialize,
 	.gpio = {
 		.resource = at572d940hf_pios,

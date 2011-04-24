@@ -330,9 +330,6 @@ static void __init at91rm9200_initialize(unsigned long main_clock)
 
 	/* Init clock subsystem */
 	at91_clock_init(main_clock);
-
-	/* Register the processor-specific clocks */
-	at91rm9200_register_clocks();
 }
 
 
@@ -386,6 +383,7 @@ struct at91_dev_resource at91rm9200_st __initdata = {
 struct at91_soc __initdata at91rm9200_soc = {
 	.name = "at91rm9200",
 	.default_irq_priority = at91rm9200_default_irq_priority,
+	.register_clocks = at91rm9200_register_clocks,
 	.init = at91rm9200_initialize,
 	.gpio = {
 		.resource = at91rm9200_pios,
