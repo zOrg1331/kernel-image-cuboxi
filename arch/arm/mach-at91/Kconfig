@@ -97,6 +97,10 @@ config AT91_PMC_UNIT
 	bool
 	default !ARCH_AT91X40
 
+config AT91_PIT
+	bool
+	default !ARCH_AT91X40 && !ARCH_AT91RM9200
+
 # ----------------------------------------------------------
 
 if ARCH_AT91RM9200

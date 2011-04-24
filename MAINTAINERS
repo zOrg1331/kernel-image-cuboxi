@@ -655,6 +655,7 @@ W:	http://www.linux4sam.org
 S:	Supported
 F:	arch/arm/mach-at91/
 F:	drivers/gpio/at91_gpio.c
+F:	drivers/clocksource/at91_*
 
 ARM/BCMRING ARM ARCHITECTURE
 M:	Jiandong Zheng <jdzheng@broadcom.com>
