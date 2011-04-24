@@ -101,6 +101,10 @@ config AT91_PIT
 	bool
 	default !ARCH_AT91X40 && !ARCH_AT91RM9200
 
+config AT91_ST
+	bool
+	default ARCH_AT91RM9200
+
 # ----------------------------------------------------------
 
 if ARCH_AT91RM9200
