@@ -11,6 +11,7 @@
 #include <linux/io.h>
 
 #include <asm/mach/map.h>
+#include <asm/mach/time.h>
 
 #include <mach/hardware.h>
 #include <mach/cpu.h>
@@ -212,3 +213,44 @@ static void __init at91_add_gpio(void)
 	early_platform_driver_register_all("early_at91_gpio");
 	early_platform_driver_probe("early_at91_gpio", nb , 0);
 }
+
+/*
+ * Set up both clocksource and clockevent support.
+ */
+static struct resource pit_resources[] = {
+	[0] = RES_MEM(SZ_16),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_pit_device = {
+	.name		= "at91_pit",
+	.id		= 0,
+	.resource	= pit_resources,
+	.num_resources	= ARRAY_SIZE(pit_resources),
+};
+
+static void __init at91_timer_init(void)
+{
+	struct at91_dev_resource *res;
+	struct platform_device *pdev;
+	struct resource *r;
+
+	BUG_ON(!current_soc.pit);
+
+	if (current_soc.pit) {
+		r = pit_resources;
+		res = current_soc.pit;
+		pdev = &at91_pit_device;
+	}
+
+	set_resource_mem(&r[0], res->mmio_base);
+	set_resource_irq(&r[1], res->irq);
+
+	early_platform_add_devices(&pdev, 1);
+	early_platform_driver_register_all("earlytimer");
+	early_platform_driver_probe("earlytimer", 1 , 0);
+}
+
+struct sys_timer at91_timer = {
+	.init		= at91_timer_init,
+};

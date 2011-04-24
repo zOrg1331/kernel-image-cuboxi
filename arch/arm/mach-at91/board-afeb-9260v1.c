@@ -219,7 +219,7 @@ static void __init afeb9260_board_init(void)
 MACHINE_START(AFEB9260, "Custom afeb9260 board")
 	/* Maintainer: Sergey Lapin <slapin@ossfans.org> */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= afeb9260_map_io,
 	.init_irq	= afeb9260_init_irq,
 	.init_machine	= afeb9260_board_init,

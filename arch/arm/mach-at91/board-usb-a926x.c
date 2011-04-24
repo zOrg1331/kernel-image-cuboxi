@@ -280,7 +280,7 @@ static void __init ek_board_init(void)
 MACHINE_START(USB_A9263, "CALAO USB_A9263")
 	/* Maintainer: calao-systems */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= ek_map_io,
 	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,
@@ -289,7 +289,7 @@ MACHINE_END
 MACHINE_START(USB_A9260, "CALAO USB_A9260")
 	/* Maintainer: calao-systems */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= ek_map_io,
 	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,

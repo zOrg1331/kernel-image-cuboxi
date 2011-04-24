@@ -397,7 +397,7 @@ static void __init cap9adk_board_init(void)
 MACHINE_START(AT91CAP9ADK, "Atmel AT91CAP9A-DK")
 	/* Maintainer: Stelian Pop <stelian.pop@leadtechdesign.com> */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= cap9adk_map_io,
 	.init_irq	= cap9adk_init_irq,
 	.init_machine	= cap9adk_board_init,

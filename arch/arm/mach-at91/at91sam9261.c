@@ -375,6 +375,11 @@ static unsigned int at91sam9261_default_irq_priority[NR_AIC_IRQS] __initdata = {
 	0,	/* Advanced Interrupt Controller */
 };
 
+struct at91_dev_resource at91sam9261_pit __initdata = {
+	.mmio_base	= AT91_PIT,
+	.irq		= AT91_ID_SYS,
+};
+
 struct at91_soc __initdata at91sam9261_soc = {
 	.name = "at91sam9261",
 	.default_irq_priority = at91sam9261_default_irq_priority,
@@ -383,4 +388,5 @@ struct at91_soc __initdata at91sam9261_soc = {
 		.resource = at91sam9261_pios,
 		.num_resources = ARRAY_SIZE(at91sam9261_pios),
 	},
+	.pit = &at91sam9261_pit,
 };

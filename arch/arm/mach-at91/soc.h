@@ -13,6 +13,7 @@ struct at91_soc {
 	unsigned int *default_irq_priority;
 
 	struct at91_dev_resource_array gpio;
+	struct at91_dev_resource *pit;
 
 	void (*init)(unsigned long main_clock);
 };

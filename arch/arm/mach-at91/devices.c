@@ -8,8 +8,8 @@
  *
  */
 
-#include <linux/platform_device.h>
 
-#include "devices.h"
+
+#include "soc.h"
 
 

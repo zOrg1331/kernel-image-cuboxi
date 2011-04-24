@@ -155,7 +155,7 @@ static void __init flexibity_board_init(void)
 MACHINE_START(FLEXIBITY, "Flexibity Connect")
 	/* Maintainer: Maxim Osipov */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= flexibity_map_io,
 	.init_irq	= flexibity_init_irq,
 	.init_machine	= flexibity_board_init,

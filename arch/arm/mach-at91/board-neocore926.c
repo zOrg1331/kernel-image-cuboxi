@@ -388,7 +388,7 @@ static void __init neocore926_board_init(void)
 MACHINE_START(NEOCORE926, "ADENEO NEOCORE 926")
 	/* Maintainer: ADENEO */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= neocore926_map_io,
 	.init_irq	= neocore926_init_irq,
 	.init_machine	= neocore926_board_init,

@@ -417,6 +417,11 @@ static unsigned int at572d940hf_default_irq_priority[NR_AIC_IRQS] __initdata = {
 	0,	/* Advanced Interrupt Controller */
 };
 
+struct at91_dev_resource at572d940hf_pit __initdata = {
+	.mmio_base	= AT91_PIT,
+	.irq		= AT91_ID_SYS,
+};
+
 struct at91_soc __initdata at572d940hf_soc = {
 	.name = "at572d940hf",
 	.default_irq_priority = at572d940hf_default_irq_priority,
@@ -425,4 +430,5 @@ struct at91_soc __initdata at572d940hf_soc = {
 		.resource = at572d940hf_pios,
 		.num_resources = ARRAY_SIZE(at572d940hf_pios),
 	},
+	.pit = &at572d940hf_pit,
 };
