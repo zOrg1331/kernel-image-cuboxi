@@ -9,7 +9,8 @@
  */
 
  /* Processors */
-extern void __init at91rm9200_initialize(unsigned long main_clock, unsigned short banks);
+extern void __init at91rm9200_set_type(int type);
+extern void __init at91rm9200_initialize(unsigned long main_clock);
 extern void __init at91sam9260_initialize(unsigned long main_clock);
 extern void __init at91sam9261_initialize(unsigned long main_clock);
 extern void __init at91sam9263_initialize(unsigned long main_clock);

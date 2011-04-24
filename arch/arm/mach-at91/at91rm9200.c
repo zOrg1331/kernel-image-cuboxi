@@ -18,6 +18,7 @@
 #include <mach/at91rm9200.h>
 #include <mach/at91_pmc.h>
 #include <mach/at91_st.h>
+#include <mach/cpu.h>
 
 #include "generic.h"
 #include "clock.h"
@@ -266,11 +267,18 @@ static void at91rm9200_reset(void)
 	at91_sys_write(AT91_ST_CR, AT91_ST_WDRST);
 }
 
+int rm9200_type;
+EXPORT_SYMBOL(rm9200_type);
+
+void __init at91rm9200_set_type(int type)
+{
+	rm9200_type = type;
+}
 
 /* --------------------------------------------------------------------
  *  AT91RM9200 processor initialization
  * -------------------------------------------------------------------- */
-void __init at91rm9200_initialize(unsigned long main_clock, unsigned short banks)
+void __init at91rm9200_initialize(unsigned long main_clock)
 {
 	/* Map peripherals */
 	iotable_init(at91rm9200_io_desc, ARRAY_SIZE(at91rm9200_io_desc));
@@ -288,7 +296,8 @@ void __init at91rm9200_initialize(unsigned long main_clock, unsigned short banks
 	at91rm9200_register_clocks();
 
 	/* Initialize GPIO subsystem */
-	at91_gpio_init(at91rm9200_gpio, banks);
+	at91_gpio_init(at91rm9200_gpio,
+		cpu_is_at91rm9200_bga() ? AT91RM9200_BGA : AT91RM9200_PQFP);
 }
 
 
