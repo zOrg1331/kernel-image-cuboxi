@@ -14,6 +14,7 @@ struct at91_soc {
 
 	struct at91_dev_resource_array gpio;
 	struct at91_dev_resource *pit;
+	struct at91_dev_resource *st;
 
 	void (*init)(unsigned long main_clock);
 };

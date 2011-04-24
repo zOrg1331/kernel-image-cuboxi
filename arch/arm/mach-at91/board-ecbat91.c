@@ -173,7 +173,7 @@ static void __init ecb_at91board_init(void)
 MACHINE_START(ECBAT91, "emQbit's ECB_AT91")
 	/* Maintainer: emQbit.com */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91rm9200_timer,
+	.timer		= &at91_timer,
 	.map_io		= ecb_at91map_io,
 	.init_irq	= ecb_at91init_irq,
 	.init_machine	= ecb_at91board_init,

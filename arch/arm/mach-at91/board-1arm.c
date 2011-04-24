@@ -97,7 +97,7 @@ static void __init onearm_board_init(void)
 MACHINE_START(ONEARM, "Ajeco 1ARM single board computer")
 	/* Maintainer: Lennert Buytenhek <buytenh@wantstofly.org> */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91rm9200_timer,
+	.timer		= &at91_timer,
 	.map_io		= onearm_map_io,
 	.init_irq	= onearm_init_irq,
 	.init_machine	= onearm_board_init,

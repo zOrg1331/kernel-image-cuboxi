@@ -229,18 +229,37 @@ static struct platform_device at91_pit_device = {
 	.num_resources	= ARRAY_SIZE(pit_resources),
 };
 
+/*
+ * ST (system timer) module supports both clockevents and clocksource.
+ */
+static struct resource st_resources[] = {
+	[0] = RES_MEM(SZ_256),
+	[1] = RES_IRQ(),
+};
+
+static struct platform_device at91_st_device = {
+	.name		= "at91_st",
+	.id		= 0,
+	.resource	= st_resources,
+	.num_resources	= ARRAY_SIZE(st_resources),
+};
+
 static void __init at91_timer_init(void)
 {
 	struct at91_dev_resource *res;
 	struct platform_device *pdev;
 	struct resource *r;
 
-	BUG_ON(!current_soc.pit);
+	BUG_ON(!current_soc.pit && !current_soc.st);
 
 	if (current_soc.pit) {
 		r = pit_resources;
 		res = current_soc.pit;
 		pdev = &at91_pit_device;
+	} else {
+		r = st_resources;
+		res = current_soc.st;
+		pdev = &at91_st_device;
 	}
 
 	set_resource_mem(&r[0], res->mmio_base);

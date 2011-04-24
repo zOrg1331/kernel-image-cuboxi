@@ -180,7 +180,7 @@ static void __init cpuat91_board_init(void)
 MACHINE_START(CPUAT91, "Eukrea")
 	/* Maintainer: Eric Benard - EUKREA Electromatique */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91rm9200_timer,
+	.timer		= &at91_timer,
 	.map_io		= cpuat91_map_io,
 	.init_irq	= cpuat91_init_irq,
 	.init_machine	= cpuat91_board_init,

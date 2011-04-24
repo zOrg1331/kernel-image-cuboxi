@@ -140,7 +140,7 @@ static void __init kb9202_board_init(void)
 MACHINE_START(KB9200, "KB920x")
 	/* Maintainer: KwikByte, Inc. */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91rm9200_timer,
+	.timer		= &at91_timer,
 	.map_io		= kb9202_map_io,
 	.init_irq	= kb9202_init_irq,
 	.init_machine	= kb9202_board_init,
