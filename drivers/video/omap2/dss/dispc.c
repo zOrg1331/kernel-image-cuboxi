@@ -2356,10 +2356,10 @@ unsigned long dispc_fclk_rate(void)
 	unsigned long r = 0;
 
 	switch (dss_get_dispc_clk_source()) {
-	case DSS_CLK_SRC_FCK:
+	case OMAP_DSS_CLK_SRC_FCK:
 		r = dss_clk_get_rate(DSS_CLK_FCK);
 		break;
-	case DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
+	case OMAP_DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
 		r = dsi_get_pll_hsdiv_dispc_rate();
 		break;
 	default:
@@ -2380,10 +2380,10 @@ unsigned long dispc_lclk_rate(enum omap_channel channel)
 	lcd = FLD_GET(l, 23, 16);
 
 	switch (dss_get_lcd_clk_source(channel)) {
-	case DSS_CLK_SRC_FCK:
+	case OMAP_DSS_CLK_SRC_FCK:
 		r = dss_clk_get_rate(DSS_CLK_FCK);
 		break;
-	case DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
+	case OMAP_DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
 		r = dsi_get_pll_hsdiv_dispc_rate();
 		break;
 	default:
@@ -2412,8 +2412,8 @@ void dispc_dump_clocks(struct seq_file *s)
 {
 	int lcd, pcd;
 	u32 l;
-	enum dss_clk_source dispc_clk_src = dss_get_dispc_clk_source();
-	enum dss_clk_source lcd_clk_src;
+	enum omap_dss_clk_source dispc_clk_src = dss_get_dispc_clk_source();
+	enum omap_dss_clk_source lcd_clk_src;
 
 	enable_clocks(1);
 
@@ -3419,7 +3419,7 @@ int dispc_setup_plane(enum omap_plane plane,
 }
 
 /* DISPC HW IP initialisation */
-static int omap_dispchw_probe(struct platform_device *pdev)
+static int __init omap_dispchw_probe(struct platform_device *pdev)
 {
 	u32 rev;
 	int r = 0;
@@ -3491,7 +3491,6 @@ static int omap_dispchw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_dispchw_driver = {
-	.probe          = omap_dispchw_probe,
 	.remove         = omap_dispchw_remove,
 	.driver         = {
 		.name   = "omapdss_dispc",
@@ -3499,9 +3498,9 @@ static struct platform_driver omap_dispchw_driver = {
 	},
 };
 
-int dispc_init_platform_driver(void)
+int __init dispc_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dispchw_driver);
+	return platform_driver_probe(&omap_dispchw_driver, omap_dispchw_probe);
 }
 
 void dispc_uninit_platform_driver(void)
