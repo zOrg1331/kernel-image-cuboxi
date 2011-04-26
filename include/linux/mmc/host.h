@@ -183,7 +183,6 @@ struct mmc_host {
 	struct work_struct	clk_gate_work; /* delayed clock gate */
 	unsigned int		clk_old;	/* old clock value cache */
 	spinlock_t		clk_lock;	/* lock for clk fields */
-	struct mutex		clk_gate_mutex;	/* mutex for clock gating */
 #endif
 
 	/* host specific block data */
@@ -321,10 +320,14 @@ static inline int mmc_card_is_removable(struct mmc_host *host)
 	return !(host->caps & MMC_CAP_NONREMOVABLE) && mmc_assume_removable;
 }
 
-static inline int mmc_card_is_powered_resumed(struct mmc_host *host)
+static inline int mmc_card_keep_power(struct mmc_host *host)
 {
 	return host->pm_flags & MMC_PM_KEEP_POWER;
 }
 
+static inline int mmc_card_wake_sdio_irq(struct mmc_host *host)
+{
+	return host->pm_flags & MMC_PM_WAKE_SDIO_IRQ;
+}
 #endif
 
