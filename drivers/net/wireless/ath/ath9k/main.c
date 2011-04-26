@@ -624,6 +624,43 @@ out:
 	ath9k_ps_restore(sc);
 }
 
+static void ath_hw_pll_rx_hang_check(struct ath_softc *sc, u32 pll_sqsum)
+{
+	static int count;
+	struct ath_common *common = ath9k_hw_common(sc->sc_ah);
+
+	if (pll_sqsum >= 0x40000) {
+		count++;
+		if (count == 3) {
+			/* Rx is hung for more than 500ms. Reset it */
+			ath_dbg(common, ATH_DBG_RESET,
+				"Possible RX hang, resetting");
+			ath_reset(sc, true);
+			count = 0;
+		}
+	} else
+		count = 0;
+}
+
+void ath_hw_pll_work(struct work_struct *work)
+{
+	struct ath_softc *sc = container_of(work, struct ath_softc,
+					    hw_pll_work.work);
+	u32 pll_sqsum;
+
+	if (AR_SREV_9485(sc->sc_ah)) {
+
+		ath9k_ps_wakeup(sc);
+		pll_sqsum = ar9003_get_pll_sqsum_dvc(sc->sc_ah);
+		ath9k_ps_restore(sc);
+
+		ath_hw_pll_rx_hang_check(sc, pll_sqsum);
+
+		ieee80211_queue_delayed_work(sc->hw, &sc->hw_pll_work, HZ/5);
+	}
+}
+
+
 void ath9k_tasklet(unsigned long data)
 {
 	struct ath_softc *sc = (struct ath_softc *)data;
@@ -1373,6 +1410,9 @@ static void ath9k_calculate_summary_state(struct ieee80211_hw *hw,
 	if ((iter_data.naps + iter_data.nadhocs) > 0) {
 		sc->sc_flags |= SC_OP_ANI_RUN;
 		ath_start_ani(common);
+	} else {
+		sc->sc_flags &= ~SC_OP_ANI_RUN;
+		del_timer_sync(&common->ani.timer);
 	}
 }
 
@@ -1733,10 +1773,28 @@ static int ath9k_sta_add(struct ieee80211_hw *hw,
 			 struct ieee80211_sta *sta)
 {
 	struct ath_softc *sc = hw->priv;
+	struct ath_common *common = ath9k_hw_common(sc->sc_ah);
+	struct ath_node *an = (struct ath_node *) sta->drv_priv;
+	struct ieee80211_key_conf ps_key = { };
 
 	ath_node_attach(sc, sta);
+	an->ps_key = ath_key_config(common, vif, sta, &ps_key);
 
 	return 0;
+}
+
+static void ath9k_del_ps_key(struct ath_softc *sc,
+			     struct ieee80211_vif *vif,
+			     struct ieee80211_sta *sta)
+{
+	struct ath_common *common = ath9k_hw_common(sc->sc_ah);
+	struct ath_node *an = (struct ath_node *) sta->drv_priv;
+	struct ieee80211_key_conf ps_key = { .hw_key_idx = an->ps_key };
+
+	if (!an->ps_key)
+	    return;
+
+	ath_key_delete(common, &ps_key);
 }
 
 static int ath9k_sta_remove(struct ieee80211_hw *hw,
@@ -1745,9 +1803,31 @@ static int ath9k_sta_remove(struct ieee80211_hw *hw,
 {
 	struct ath_softc *sc = hw->priv;
 
+	ath9k_del_ps_key(sc, vif, sta);
 	ath_node_detach(sc, sta);
 
 	return 0;
+}
+
+static void ath9k_sta_notify(struct ieee80211_hw *hw,
+			 struct ieee80211_vif *vif,
+			 enum sta_notify_cmd cmd,
+			 struct ieee80211_sta *sta)
+{
+	struct ath_softc *sc = hw->priv;
+	struct ath_node *an = (struct ath_node *) sta->drv_priv;
+
+	switch (cmd) {
+	case STA_NOTIFY_SLEEP:
+		an->sleeping = true;
+		if (ath_tx_aggr_sleep(sc, an))
+			ieee80211_sta_set_tim(sta);
+		break;
+	case STA_NOTIFY_AWAKE:
+		an->sleeping = false;
+		ath_tx_aggr_wakeup(sc, an);
+		break;
+	}
 }
 
 static int ath9k_conf_tx(struct ieee80211_hw *hw, u16 queue,
@@ -1826,6 +1906,9 @@ static int ath9k_set_key(struct ieee80211_hw *hw,
 
 	switch (cmd) {
 	case SET_KEY:
+		if (sta)
+			ath9k_del_ps_key(sc, vif, sta);
+
 		ret = ath_key_config(common, vif, sta, key);
 		if (ret >= 0) {
 			key->hw_key_idx = ret;
@@ -2173,9 +2256,7 @@ static void ath9k_flush(struct ieee80211_hw *hw, bool drop)
 	int timeout = 200; /* ms */
 	int i, j;
 
-	ath9k_ps_wakeup(sc);
 	mutex_lock(&sc->mutex);
-
 	cancel_delayed_work_sync(&sc->tx_complete_work);
 
 	if (drop)
@@ -2198,15 +2279,30 @@ static void ath9k_flush(struct ieee80211_hw *hw, bool drop)
 		    goto out;
 	}
 
+	ath9k_ps_wakeup(sc);
 	if (!ath_drain_all_txq(sc, false))
 		ath_reset(sc, false);
-
+	ath9k_ps_restore(sc);
 	ieee80211_wake_queues(hw);
 
 out:
 	ieee80211_queue_delayed_work(hw, &sc->tx_complete_work, 0);
 	mutex_unlock(&sc->mutex);
-	ath9k_ps_restore(sc);
+}
+
+static bool ath9k_tx_frames_pending(struct ieee80211_hw *hw)
+{
+	struct ath_softc *sc = hw->priv;
+	int i;
+
+	for (i = 0; i < ATH9K_NUM_TX_QUEUES; i++) {
+		if (!ATH_TXQ_SETUP(sc, i))
+			continue;
+
+		if (ath9k_has_pending_frames(sc, &sc->tx.txq[i]))
+			return true;
+	}
+	return false;
 }
 
 struct ieee80211_ops ath9k_ops = {
@@ -2220,6 +2316,7 @@ struct ieee80211_ops ath9k_ops = {
 	.configure_filter   = ath9k_configure_filter,
 	.sta_add	    = ath9k_sta_add,
 	.sta_remove	    = ath9k_sta_remove,
+	.sta_notify         = ath9k_sta_notify,
 	.conf_tx 	    = ath9k_conf_tx,
 	.bss_info_changed   = ath9k_bss_info_changed,
 	.set_key            = ath9k_set_key,
@@ -2231,4 +2328,5 @@ struct ieee80211_ops ath9k_ops = {
 	.rfkill_poll        = ath9k_rfkill_poll_state,
 	.set_coverage_class = ath9k_set_coverage_class,
 	.flush		    = ath9k_flush,
+	.tx_frames_pending  = ath9k_tx_frames_pending,
 };

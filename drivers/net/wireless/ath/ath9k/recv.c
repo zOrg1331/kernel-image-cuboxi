@@ -75,7 +75,6 @@ static void ath_rx_buf_link(struct ath_softc *sc, struct ath_buf *bf)
 		*sc->rx.rxlink = bf->bf_daddr;
 
 	sc->rx.rxlink = &ds->ds_link;
-	ath9k_hw_rxena(ah);
 }
 
 static void ath_setdefantenna(struct ath_softc *sc, u32 antenna)
@@ -426,9 +425,7 @@ u32 ath_calcrxfilter(struct ath_softc *sc)
 	else
 		rfilt |= ATH9K_RX_FILTER_BEACON;
 
-	if ((AR_SREV_9280_20_OR_LATER(sc->sc_ah) ||
-	    AR_SREV_9285_12_OR_LATER(sc->sc_ah)) &&
-	    (sc->sc_ah->opmode == NL80211_IFTYPE_AP) &&
+	if ((sc->sc_ah->opmode == NL80211_IFTYPE_AP) ||
 	    (sc->rx.rxfilter & FIF_PSPOLL))
 		rfilt |= ATH9K_RX_FILTER_PSPOLL;
 
@@ -1342,7 +1339,7 @@ static void ath_ant_comb_scan(struct ath_softc *sc, struct ath_rx_status *rs)
 	struct ath_hw_antcomb_conf div_ant_conf;
 	struct ath_ant_comb *antcomb = &sc->ant_comb;
 	int alt_ratio = 0, alt_rssi_avg = 0, main_rssi_avg = 0, curr_alt_set;
-	int curr_main_set, curr_bias;
+	int curr_main_set;
 	int main_rssi = rs->rs_rssi_ctl0;
 	int alt_rssi = rs->rs_rssi_ctl1;
 	int rx_ant_conf,  main_ant_conf;
@@ -1396,7 +1393,6 @@ static void ath_ant_comb_scan(struct ath_softc *sc, struct ath_rx_status *rs)
 	ath9k_hw_antdiv_comb_conf_get(sc->sc_ah, &div_ant_conf);
 	curr_alt_set = div_ant_conf.alt_lna_conf;
 	curr_main_set = div_ant_conf.main_lna_conf;
-	curr_bias = div_ant_conf.fast_div_bias;
 
 	antcomb->count++;
 
@@ -1746,7 +1742,7 @@ int ath_rx_tasklet(struct ath_softc *sc, int flush, bool hp)
 		if ((sc->ps_flags & (PS_WAIT_FOR_BEACON |
 					      PS_WAIT_FOR_CAB |
 					      PS_WAIT_FOR_PSPOLL_DATA)) ||
-					unlikely(ath9k_check_auto_sleep(sc)))
+						ath9k_check_auto_sleep(sc))
 			ath_rx_ps(sc, skb);
 		spin_unlock_irqrestore(&sc->sc_pm_lock, flags);
 
@@ -1767,6 +1763,7 @@ requeue:
 		} else {
 			list_move_tail(&bf->list, &sc->rx.rxbuf);
 			ath_rx_buf_link(sc, bf);
+			ath9k_hw_rxena(ah);
 		}
 	} while (1);
 

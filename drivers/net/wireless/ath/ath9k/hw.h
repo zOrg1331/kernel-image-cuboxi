@@ -43,6 +43,7 @@
 #define AR9287_DEVID_PCI	0x002d
 #define AR9287_DEVID_PCIE	0x002e
 #define AR9300_DEVID_PCIE	0x0030
+#define AR9300_DEVID_AR9340	0x0031
 #define AR9300_DEVID_AR9485_PCIE 0x0032
 
 #define AR5416_AR9100_DEVID	0x000b
@@ -121,7 +122,7 @@
 #define AR_GPIO_BIT(_gpio)          (1 << (_gpio))
 
 #define BASE_ACTIVATE_DELAY         100
-#define RTC_PLL_SETTLE_DELAY        100
+#define RTC_PLL_SETTLE_DELAY        (AR_SREV_9340(ah) ? 1000 : 100)
 #define COEF_SCALE_S                24
 #define HT40_CHANNEL_CENTER_SHIFT   10
 
@@ -626,6 +627,7 @@ struct ath_hw_ops {
 	void (*clr11n_aggr)(struct ath_hw *ah, void *ds);
 	void (*set11n_burstduration)(struct ath_hw *ah, void *ds,
 				     u32 burstDuration);
+	void (*set_clrdmask)(struct ath_hw *ah, void *ds, bool val);
 };
 
 struct ath_nf_limits {
@@ -798,6 +800,7 @@ struct ath_hw {
 	struct ar5416IniArray iniPcieSerdes;
 	struct ar5416IniArray iniPcieSerdesLowPower;
 	struct ar5416IniArray iniModesAdditional;
+	struct ar5416IniArray iniModesAdditional_40M;
 	struct ar5416IniArray iniModesRxGain;
 	struct ar5416IniArray iniModesTxGain;
 	struct ar5416IniArray iniModes_9271_1_0_only;
@@ -844,6 +847,16 @@ struct ath_hw {
 
 	/* Enterprise mode cap */
 	u32 ent_mode;
+
+	bool is_clk_25mhz;
+};
+
+struct ath_bus_ops {
+	enum ath_bus_type ath_bus_type;
+	void (*read_cachesize)(struct ath_common *common, int *csz);
+	bool (*eeprom_read)(struct ath_common *common, u32 off, u16 *data);
+	void (*bt_coex_prep)(struct ath_common *common);
+	void (*extn_synch_en)(struct ath_common *common);
 };
 
 static inline struct ath_common *ath9k_hw_common(struct ath_hw *ah)
@@ -919,7 +932,7 @@ void ath9k_hw_settsf64(struct ath_hw *ah, u64 tsf64);
 void ath9k_hw_reset_tsf(struct ath_hw *ah);
 void ath9k_hw_set_tsfadjust(struct ath_hw *ah, u32 setting);
 void ath9k_hw_init_global_settings(struct ath_hw *ah);
-unsigned long ar9003_get_pll_sqsum_dvc(struct ath_hw *ah);
+u32 ar9003_get_pll_sqsum_dvc(struct ath_hw *ah);
 void ath9k_hw_set11nmac2040(struct ath_hw *ah);
 void ath9k_hw_beaconinit(struct ath_hw *ah, u32 next_beacon, u32 beacon_period);
 void ath9k_hw_set_sta_beacon_timers(struct ath_hw *ah,

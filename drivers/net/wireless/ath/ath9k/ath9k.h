@@ -200,6 +200,7 @@ struct ath_atx_ac {
 	int sched;
 	struct list_head list;
 	struct list_head tid_q;
+	bool clear_ps_filter;
 };
 
 struct ath_frame_info {
@@ -255,8 +256,12 @@ struct ath_node {
 #endif
 	struct ath_atx_tid tid[WME_NUM_TID];
 	struct ath_atx_ac ac[WME_NUM_AC];
+	int ps_key;
+
 	u16 maxampdu;
 	u8 mpdudensity;
+
+	bool sleeping;
 };
 
 #define AGGR_CLEANUP         BIT(1)
@@ -338,6 +343,9 @@ int ath_tx_aggr_start(struct ath_softc *sc, struct ieee80211_sta *sta,
 void ath_tx_aggr_stop(struct ath_softc *sc, struct ieee80211_sta *sta, u16 tid);
 void ath_tx_aggr_resume(struct ath_softc *sc, struct ieee80211_sta *sta, u16 tid);
 
+void ath_tx_aggr_wakeup(struct ath_softc *sc, struct ath_node *an);
+bool ath_tx_aggr_sleep(struct ath_softc *sc, struct ath_node *an);
+
 /********/
 /* VIFs */
 /********/
@@ -415,6 +423,7 @@ void ath9k_set_beaconing_status(struct ath_softc *sc, bool status);
 #define ATH_PAPRD_TIMEOUT	100 /* msecs */
 
 void ath_hw_check(struct work_struct *work);
+void ath_hw_pll_work(struct work_struct *work);
 void ath_paprd_calibrate(struct work_struct *work);
 void ath_ani_calibrate(unsigned long data);
 
@@ -445,6 +454,7 @@ void ath9k_btcoex_timer_pause(struct ath_softc *sc);
 
 #define ATH_LED_PIN_DEF 		1
 #define ATH_LED_PIN_9287		8
+#define ATH_LED_PIN_9300		10
 #define ATH_LED_PIN_9485		6
 
 #ifdef CONFIG_MAC80211_LEDS
@@ -665,7 +675,7 @@ void ath_radio_disable(struct ath_softc *sc, struct ieee80211_hw *hw);
 bool ath9k_setpower(struct ath_softc *sc, enum ath9k_power_mode mode);
 bool ath9k_uses_beacons(int type);
 
-#ifdef CONFIG_PCI
+#ifdef CONFIG_ATH9K_PCI
 int ath_pci_init(void);
 void ath_pci_exit(void);
 #else
@@ -673,7 +683,7 @@ static inline int ath_pci_init(void) { return 0; };
 static inline void ath_pci_exit(void) {};
 #endif
 
-#ifdef CONFIG_ATHEROS_AR71XX
+#ifdef CONFIG_ATH9K_AHB
 int ath_ahb_init(void);
 void ath_ahb_exit(void);
 #else

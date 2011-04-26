@@ -479,6 +479,10 @@ struct fw_desc {
 	u32 len;		/* bytes */
 };
 
+struct fw_img {
+	struct fw_desc code, data;
+};
+
 /* v1/v2 uCode file layout */
 struct iwl_ucode_header {
 	__le32 ver;	/* major/minor/API/serial */
@@ -543,13 +547,12 @@ enum iwl_ucode_tlv_type {
  * enum iwl_ucode_tlv_flag - ucode API flags
  * @IWL_UCODE_TLV_FLAGS_PAN: This is PAN capable microcode; this previously
  *	was a separate TLV but moved here to save space.
- * @IWL_UCODE_TLV_FLAGS_BTSTATS: This uCode image uses BT statistics, which
- *	may be true even if the device doesn't have BT.
+ * @IWL_UCODE_TLV_FLAGS_RESERVED_1: reserved
  * @IWL_UCODE_TLV_FLAGS_MFP: This uCode image supports MFP (802.11w).
  */
 enum iwl_ucode_tlv_flag {
 	IWL_UCODE_TLV_FLAGS_PAN		= BIT(0),
-	IWL_UCODE_TLV_FLAGS_BTSTATS	= BIT(1),
+	IWL_UCODE_TLV_FLAGS_RESERVED_1	= BIT(1),
 	IWL_UCODE_TLV_FLAGS_MFP		= BIT(2),
 };
 
@@ -793,12 +796,6 @@ enum iwl_calib {
 struct iwl_calib_result {
 	void *buf;
 	size_t buf_len;
-};
-
-enum ucode_type {
-	UCODE_NONE = 0,
-	UCODE_INIT,
-	UCODE_RT
 };
 
 /* Sensitivity calib data */
@@ -1106,10 +1103,12 @@ struct iwl_force_reset {
 struct iwl_notification_wait {
 	struct list_head list;
 
-	void (*fn)(struct iwl_priv *priv, struct iwl_rx_packet *pkt);
+	void (*fn)(struct iwl_priv *priv, struct iwl_rx_packet *pkt,
+		   void *data);
+	void *fn_data;
 
 	u8 cmd;
-	bool triggered;
+	bool triggered, aborted;
 };
 
 enum iwl_rxon_context_id {
@@ -1170,6 +1169,8 @@ struct iwl_rxon_context {
 		bool enabled, is_40mhz;
 		u8 extension_chan_offset;
 	} ht;
+
+	bool last_tx_rejected;
 };
 
 enum iwl_scan_type {
@@ -1269,11 +1270,10 @@ struct iwl_priv {
 	int fw_index;			/* firmware we're trying to load */
 	u32 ucode_ver;			/* version of ucode, copy of
 					   iwl_ucode.ver */
-	struct fw_desc ucode_code;	/* runtime inst */
-	struct fw_desc ucode_data;	/* runtime data original */
-	struct fw_desc ucode_init;	/* initialization inst */
-	struct fw_desc ucode_init_data;	/* initialization data */
-	enum ucode_type ucode_type;
+	struct fw_img ucode_rt;
+	struct fw_img ucode_init;
+
+	enum iwlagn_ucode_subtype ucode_type;
 	u8 ucode_write_complete;	/* the image write is complete */
 	char firmware_name[25];
 
@@ -1355,6 +1355,31 @@ struct iwl_priv {
 	u64 timestamp;
 
 	struct {
+		__le32 flag;
+		struct statistics_general_common common;
+		struct statistics_rx_non_phy rx_non_phy;
+		struct statistics_rx_phy rx_ofdm;
+		struct statistics_rx_ht_phy rx_ofdm_ht;
+		struct statistics_rx_phy rx_cck;
+		struct statistics_tx tx;
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+		struct statistics_bt_activity bt_activity;
+		__le32 num_bt_kills, accum_num_bt_kills;
+#endif
+	} statistics;
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+	struct {
+		struct statistics_general_common common;
+		struct statistics_rx_non_phy rx_non_phy;
+		struct statistics_rx_phy rx_ofdm;
+		struct statistics_rx_ht_phy rx_ofdm_ht;
+		struct statistics_rx_phy rx_cck;
+		struct statistics_tx tx;
+		struct statistics_bt_activity bt_activity;
+	} accum_stats, delta_stats, max_delta_stats;
+#endif
+
+	struct {
 		/* INT ICT Table */
 		__le32 *ict_tbl;
 		void *ict_tbl_vir;
@@ -1385,19 +1410,9 @@ struct iwl_priv {
 		u8 phy_calib_chain_noise_reset_cmd;
 		u8 phy_calib_chain_noise_gain_cmd;
 
-		struct iwl_notif_statistics statistics;
-		struct iwl_bt_notif_statistics statistics_bt;
 		/* counts reply_tx error */
 		struct reply_tx_error_statistics reply_tx_stats;
 		struct reply_agg_tx_error_statistics reply_agg_tx_stats;
-#ifdef CONFIG_IWLWIFI_DEBUGFS
-		struct iwl_notif_statistics accum_statistics;
-		struct iwl_notif_statistics delta_statistics;
-		struct iwl_notif_statistics max_delta;
-		struct iwl_bt_notif_statistics accum_statistics_bt;
-		struct iwl_bt_notif_statistics delta_statistics_bt;
-		struct iwl_bt_notif_statistics max_delta_bt;
-#endif
 		/* notification wait support */
 		struct list_head notif_waits;
 		spinlock_t notif_wait_lock;
@@ -1422,7 +1437,6 @@ struct iwl_priv {
 	bool bt_ch_announce;
 	bool bt_full_concurrent;
 	bool bt_ant_couple_ok;
-	bool bt_statistics;
 	__le32 kill_ack_mask;
 	__le32 kill_cts_mask;
 	__le16 bt_valid;
@@ -1457,8 +1471,6 @@ struct iwl_priv {
 
 	struct tasklet_struct irq_tasklet;
 
-	struct delayed_work init_alive_start;
-	struct delayed_work alive_start;
 	struct delayed_work scan_check;
 
 	/* TX Power */
@@ -1487,12 +1499,10 @@ struct iwl_priv {
 	struct work_struct txpower_work;
 	u32 disable_sens_cal;
 	u32 disable_chain_noise_cal;
-	u32 disable_tx_power_cal;
 	struct work_struct run_time_calib_work;
 	struct timer_list statistics_periodic;
 	struct timer_list ucode_trace;
 	struct timer_list watchdog;
-	bool hw_ready;
 
 	struct iwl_event_log event_log;
 

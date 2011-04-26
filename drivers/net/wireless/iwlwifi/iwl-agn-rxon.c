@@ -29,6 +29,7 @@
 #include "iwl-sta.h"
 #include "iwl-core.h"
 #include "iwl-agn-calib.h"
+#include "iwl-helpers.h"
 
 static int iwlagn_disable_bss(struct iwl_priv *priv,
 			      struct iwl_rxon_context *ctx,
@@ -57,8 +58,9 @@ static int iwlagn_disable_pan(struct iwl_priv *priv,
 	u8 old_dev_type = send->dev_type;
 	int ret;
 
-	iwlagn_init_notification_wait(priv, &disable_wait, NULL,
-				      REPLY_WIPAN_DEACTIVATION_COMPLETE);
+	iwlagn_init_notification_wait(priv, &disable_wait,
+				      REPLY_WIPAN_DEACTIVATION_COMPLETE,
+				      NULL, NULL);
 
 	send->filter_flags &= ~RXON_FILTER_ASSOC_MSK;
 	send->dev_type = RXON_DEV_TYPE_P2P;
@@ -71,13 +73,9 @@ static int iwlagn_disable_pan(struct iwl_priv *priv,
 		IWL_ERR(priv, "Error disabling PAN (%d)\n", ret);
 		iwlagn_remove_notification(priv, &disable_wait);
 	} else {
-		signed long wait_res;
-
-		wait_res = iwlagn_wait_notification(priv, &disable_wait, HZ);
-		if (wait_res == 0) {
+		ret = iwlagn_wait_notification(priv, &disable_wait, HZ);
+		if (ret)
 			IWL_ERR(priv, "Timed out waiting for PAN disable\n");
-			ret = -EIO;
-		}
 	}
 
 	return ret;
@@ -595,6 +593,18 @@ void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 			priv->timestamp = bss_conf->timestamp;
 			ctx->staging.filter_flags |= RXON_FILTER_ASSOC_MSK;
 		} else {
+			/*
+			 * If we disassociate while there are pending
+			 * frames, just wake up the queues and let the
+			 * frames "escape" ... This shouldn't really
+			 * be happening to start with, but we should
+			 * not get stuck in this case either since it
+			 * can happen if userspace gets confused.
+			 */
+			if (ctx->last_tx_rejected) {
+				ctx->last_tx_rejected = false;
+				iwl_wake_any_queue(priv, ctx);
+			}
 			ctx->staging.filter_flags &= ~RXON_FILTER_ASSOC_MSK;
 		}
 	}

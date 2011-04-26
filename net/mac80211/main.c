@@ -33,12 +33,6 @@
 #include "cfg.h"
 #include "debugfs.h"
 
-
-static bool ieee80211_disable_40mhz_24ghz;
-module_param(ieee80211_disable_40mhz_24ghz, bool, 0644);
-MODULE_PARM_DESC(ieee80211_disable_40mhz_24ghz,
-		 "Disable 40MHz support in the 2.4GHz band");
-
 static struct lock_class_key ieee80211_rx_skb_queue_class;
 
 void ieee80211_configure_filter(struct ieee80211_local *local)
@@ -545,7 +539,9 @@ ieee80211_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
 	},
 	[NL80211_IFTYPE_MESH_POINT] = {
 		.tx = 0xffff,
-		.rx = BIT(IEEE80211_STYPE_ACTION >> 4),
+		.rx = BIT(IEEE80211_STYPE_ACTION >> 4) |
+			BIT(IEEE80211_STYPE_AUTH >> 4) |
+			BIT(IEEE80211_STYPE_DEAUTH >> 4),
 	},
 };
 
@@ -726,18 +722,6 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 		}
 		channels += sband->n_channels;
 
-		/*
-		 * Since ieee80211_disable_40mhz_24ghz is global, we can
-		 * modify the sband's ht data even if the driver uses a
-		 * global structure for that.
-		 */
-		if (ieee80211_disable_40mhz_24ghz &&
-		    band == IEEE80211_BAND_2GHZ &&
-		    sband->ht_cap.ht_supported) {
-			sband->ht_cap.cap &= ~IEEE80211_HT_CAP_SUP_WIDTH_20_40;
-			sband->ht_cap.cap &= ~IEEE80211_HT_CAP_SGI_40;
-		}
-
 		if (max_bitrates < sband->n_bitrates)
 			max_bitrates = sband->n_bitrates;
 		supp_ht = supp_ht || sband->ht_cap.ht_supported;
@@ -759,6 +743,11 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	/* mesh depends on Kconfig, but drivers should set it if they want */
 	local->hw.wiphy->interface_modes &= ~BIT(NL80211_IFTYPE_MESH_POINT);
 #endif
+
+	/* if the underlying driver supports mesh, mac80211 will (at least)
+	 * provide routing of mesh authentication frames to userspace */
+	if (local->hw.wiphy->interface_modes & BIT(NL80211_IFTYPE_MESH_POINT))
+		local->hw.wiphy->flags |= WIPHY_FLAG_MESH_AUTH;
 
 	/* mac80211 supports control port protocol changing */
 	local->hw.wiphy->flags |= WIPHY_FLAG_CONTROL_PORT_PROTOCOL;
