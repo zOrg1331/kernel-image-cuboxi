@@ -128,6 +128,14 @@ config GPIO_U300
 	  COH 901 335 and COH 901 571/3. They contain 3, 5 or 7
 	  ports of 8 GPIO pins each.
 
+config GPIO_NOMADIK
+	bool "ST-Ericsson Nomadik GPIO"
+	depends on GPIOLIB && (ARCH_U8500 || ARCH_NOMADIK)
+	help
+	  Say yes here to support GPIO interface for ST-Ericsson Nomadik.
+	  This is found in the Nomadik NHK8815, DB8500, DB5500 SoCs
+	  for example.
+
 config GPIO_VX855
 	tristate "VIA VX855/VX875 GPIO"
 	depends on GPIOLIB && MFD_SUPPORT && PCI
