@@ -56,7 +56,7 @@ static void __init pcontrol_g20_map_io(void)
 
 static void __init init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 
@@ -223,7 +223,7 @@ static void __init pcontrol_g20_board_init(void)
 MACHINE_START(PCONTROL_G20, "PControl G20")
 	/* Maintainer: pgsellmann@portner-elektronik.at */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= pcontrol_g20_map_io,
 	.init_irq	= init_irq,
 	.init_machine	= pcontrol_g20_board_init,

@@ -42,7 +42,7 @@
 
 static void __init snapper9260_map_io(void)
 {
-	at91sam9260_initialize(18432000);
+	at91_initialize(18432000);
 
 	/* Debug on ttyS0 */
 	at91_register_uart(0, 0, 0);
@@ -57,7 +57,7 @@ static void __init snapper9260_map_io(void)
 
 static void __init snapper9260_init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_usbh_data __initdata snapper9260_usbh_data = {
@@ -179,7 +179,7 @@ static void __init snapper9260_board_init(void)
 
 MACHINE_START(SNAPPER_9260, "Bluewater Systems Snapper 9260/9G20 module")
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= snapper9260_map_io,
 	.init_irq	= snapper9260_init_irq,
 	.init_machine	= snapper9260_board_init,
