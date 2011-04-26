@@ -25,6 +25,8 @@
 #ifndef _STORVSC_API_H_
 #define _STORVSC_API_H_
 
+#include <linux/kernel.h>
+#include "vstorage.h"
 #include "vmbus_api.h"
 
 /* Defines */
@@ -52,41 +54,29 @@ enum storvsc_request_type{
 	UNKNOWN_TYPE,
 };
 
+
 struct hv_storvsc_request {
-	enum storvsc_request_type type;
-	u32 host;
-	u32 bus;
-	u32 target_id;
-	u32 lun_id;
-	u8 *cdb;
-	u32 cdb_len;
-	u32 status;
-	u32 bytes_xfer;
+	struct hv_storvsc_request *request;
+	struct hv_device *device;
+
+	/* Synchronize the request/response if needed */
+	struct completion wait_event;
 
 	unsigned char *sense_buffer;
-	u32 sense_buffer_size;
-
 	void *context;
-
 	void (*on_io_completion)(struct hv_storvsc_request *request);
-
-	/* This points to the memory after DataBuffer */
-	void *extension;
-
 	struct hv_multipage_buffer data_buffer;
+
+	struct vstor_packet vstor_packet;
 };
+
 
 /* Represents the block vsc driver */
 struct storvsc_driver_object {
-	/* Must be the first field */
-	/* Which is a bug FIXME! */
 	struct hv_driver base;
 
 	/* Set by caller (in bytes) */
 	u32 ring_buffer_size;
-
-	/* Allocate this much private extension for each I/O request */
-	u32 request_ext_size;
 
 	/* Maximum # of requests in flight per channel/device */
 	u32 max_outstanding_req_per_channel;
@@ -102,9 +92,78 @@ struct storvsc_device_info {
 	unsigned char target_id;
 };
 
+struct storvsc_major_info {
+	int major;
+	int index;
+	bool do_register;
+	char *devname;
+	char *diskname;
+};
+
+/* A storvsc device is a device object that contains a vmbus channel */
+struct storvsc_device {
+	struct hv_device *device;
+
+	/* 0 indicates the device is being destroyed */
+	atomic_t ref_count;
+
+	atomic_t num_outstanding_req;
+
+	/*
+	 * Each unique Port/Path/Target represents 1 channel ie scsi
+	 * controller. In reality, the pathid, targetid is always 0
+	 * and the port is set by us
+	 */
+	unsigned int port_number;
+	unsigned char path_id;
+	unsigned char target_id;
+
+	/* Used for vsc/vsp channel reset process */
+	struct hv_storvsc_request init_request;
+	struct hv_storvsc_request reset_request;
+};
+
+
+/* Get the stordevice object iff exists and its refcount > 1 */
+static inline struct storvsc_device *get_stor_device(struct hv_device *device)
+{
+	struct storvsc_device *stor_device;
+
+	stor_device = (struct storvsc_device *)device->ext;
+	if (stor_device && atomic_read(&stor_device->ref_count) > 1)
+		atomic_inc(&stor_device->ref_count);
+	else
+		stor_device = NULL;
+
+	return stor_device;
+}
+
+
+static inline void put_stor_device(struct hv_device *device)
+{
+	struct storvsc_device *stor_device;
+
+	stor_device = (struct storvsc_device *)device->ext;
+
+	atomic_dec(&stor_device->ref_count);
+}
+
+static inline struct storvsc_driver_object *hvdr_to_stordr(struct hv_driver *d)
+{
+	return container_of(d, struct storvsc_driver_object, base);
+}
+
 /* Interface */
-int stor_vsc_initialize(struct hv_driver *driver);
-int stor_vsc_on_host_reset(struct hv_device *device);
-int blk_vsc_initialize(struct hv_driver *driver);
+
+int stor_vsc_on_device_add(struct hv_device *device,
+				void *additional_info);
+int stor_vsc_on_device_remove(struct hv_device *device);
+
+int stor_vsc_on_io_request(struct hv_device *device,
+				struct hv_storvsc_request *request);
+void stor_vsc_on_cleanup(struct hv_driver *driver);
+
+int stor_vsc_get_major_info(struct storvsc_device_info *device_info,
+				struct storvsc_major_info *major_info);
 
 #endif /* _STORVSC_API_H_ */
