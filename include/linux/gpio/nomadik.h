@@ -12,6 +12,8 @@
 #ifndef __GPIO_NOMADIK_H
 #define __GPIO_NOMADIK_H
 
+#include <linux/gpio.h>
+
 /*
  * "nmk_gpio" and "NMK_GPIO" stand for "Nomadik GPIO", leaving
  * the "gpio" namespace for generic and cross-machine functions

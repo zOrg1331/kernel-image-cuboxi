@@ -67,6 +67,14 @@ static DEFINE_SPINLOCK(nmk_gpio_slpm_lock);
 
 #define NUM_BANKS ARRAY_SIZE(nmk_gpio_chips)
 
+static inline struct nmk_gpio_chip *to_nmk_chip(struct gpio_chip *chip)
+{
+	struct nmk_gpio_chip *nmk_chip =
+		container_of(chip, struct nmk_gpio_chip, chip);
+
+	return nmk_chip;
+}
+
 static void __nmk_gpio_set_mode(struct nmk_gpio_chip *nmk_chip,
 				unsigned offset, int gpio_mode)
 {
@@ -523,6 +531,13 @@ int nmk_gpio_get_mode(int gpio)
 }
 EXPORT_SYMBOL(nmk_gpio_get_mode);
 
+static int nmk_gpio_config(struct gpio_chip *chip, unsigned offset,
+			   u16 param, unsigned long *data)
+{
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
+
+	return 0;
+}
 
 /* IRQ functions */
 static inline int nmk_gpio_get_bitmask(int gpio)
@@ -815,8 +830,7 @@ static int nmk_gpio_init_irq(struct nmk_gpio_chip *nmk_chip)
 /* I/O Functions */
 static int nmk_gpio_make_input(struct gpio_chip *chip, unsigned offset)
 {
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 
 	clk_enable(nmk_chip->clk);
 
@@ -829,8 +843,7 @@ static int nmk_gpio_make_input(struct gpio_chip *chip, unsigned offset)
 
 static int nmk_gpio_get_input(struct gpio_chip *chip, unsigned offset)
 {
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 	u32 bit = 1 << offset;
 	int value;
 
@@ -846,8 +859,7 @@ static int nmk_gpio_get_input(struct gpio_chip *chip, unsigned offset)
 static void nmk_gpio_set_output(struct gpio_chip *chip, unsigned offset,
 				int val)
 {
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 
 	clk_enable(nmk_chip->clk);
 
@@ -859,8 +871,7 @@ static void nmk_gpio_set_output(struct gpio_chip *chip, unsigned offset,
 static int nmk_gpio_make_output(struct gpio_chip *chip, unsigned offset,
 				int val)
 {
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 
 	clk_enable(nmk_chip->clk);
 
@@ -873,8 +884,7 @@ static int nmk_gpio_make_output(struct gpio_chip *chip, unsigned offset,
 
 static int nmk_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 {
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 
 	return NOMADIK_GPIO_TO_IRQ(nmk_chip->chip.base) + offset;
 }
@@ -889,8 +899,7 @@ static void nmk_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	unsigned		i;
 	unsigned		gpio = chip->base;
 	int			is_out;
-	struct nmk_gpio_chip *nmk_chip =
-		container_of(chip, struct nmk_gpio_chip, chip);
+	struct nmk_gpio_chip *nmk_chip = to_nmk_chip(chip);
 	const char *modes[] = {
 		[NMK_GPIO_ALT_GPIO]	= "gpio",
 		[NMK_GPIO_ALT_A]	= "altA",
@@ -958,6 +967,7 @@ static struct gpio_chip nmk_gpio_template = {
 	.get			= nmk_gpio_get_input,
 	.direction_output	= nmk_gpio_make_output,
 	.set			= nmk_gpio_set_output,
+	.config			= nmk_gpio_config,
 	.to_irq			= nmk_gpio_to_irq,
 	.dbg_show		= nmk_gpio_dbg_show,
 	.can_sleep		= 0,
