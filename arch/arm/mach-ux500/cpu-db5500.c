@@ -9,11 +9,10 @@
 #include <linux/amba/bus.h>
 #include <linux/io.h>
 #include <linux/irq.h>
+#include <linux/gpio/nomadik.h>
 
 #include <asm/mach/map.h>
 #include <asm/pmu.h>
-
-#include <plat/gpio.h>
 
 #include <mach/hardware.h>
 #include <mach/devices.h>
