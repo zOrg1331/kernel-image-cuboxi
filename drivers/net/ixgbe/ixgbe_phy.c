@@ -449,7 +449,8 @@ s32 ixgbe_setup_phy_link_generic(struct ixgbe_hw *hw)
 				     MDIO_MMD_AN,
 				     &autoneg_reg);
 
-		autoneg_reg &= ~ADVERTISE_100FULL;
+		autoneg_reg &= ~(ADVERTISE_100FULL |
+				 ADVERTISE_100HALF);
 		if (hw->phy.autoneg_advertised & IXGBE_LINK_SPEED_100_FULL)
 			autoneg_reg |= ADVERTISE_100FULL;
 
@@ -753,7 +754,7 @@ s32 ixgbe_reset_phy_nl(struct ixgbe_hw *hw)
 		                     &phy_data);
 		if ((phy_data & MDIO_CTRL1_RESET) == 0)
 			break;
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 
 	if ((phy_data & MDIO_CTRL1_RESET) != 0) {
@@ -782,7 +783,7 @@ s32 ixgbe_reset_phy_nl(struct ixgbe_hw *hw)
 		case IXGBE_DELAY_NL:
 			data_offset++;
 			hw_dbg(hw, "DELAY: %d MS\n", edata);
-			msleep(edata);
+			usleep_range(edata * 1000, edata * 2000);
 			break;
 		case IXGBE_DATA_NL:
 			hw_dbg(hw, "DATA:\n");

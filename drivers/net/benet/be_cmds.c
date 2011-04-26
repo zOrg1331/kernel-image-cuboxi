@@ -78,7 +78,8 @@ static int be_mcc_compl_process(struct be_adapter *adapter,
 	}
 
 	if (compl_status == MCC_STATUS_SUCCESS) {
-		if (compl->tag0 == OPCODE_ETH_GET_STATISTICS) {
+		if ((compl->tag0 == OPCODE_ETH_GET_STATISTICS) &&
+			(compl->tag1 == CMD_SUBSYSTEM_ETH)) {
 			struct be_cmd_resp_get_stats *resp =
 						adapter->stats_cmd.va;
 			be_dws_le_to_cpu(&resp->hw_stats,
@@ -1096,6 +1097,7 @@ int be_cmd_get_stats(struct be_adapter *adapter, struct be_dma_mem *nonemb_cmd)
 
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_ETH,
 		OPCODE_ETH_GET_STATISTICS, sizeof(*req));
+	wrb->tag1 = CMD_SUBSYSTEM_ETH;
 	sge->pa_hi = cpu_to_le32(upper_32_bits(nonemb_cmd->dma));
 	sge->pa_lo = cpu_to_le32(nonemb_cmd->dma & 0xFFFFFFFF);
 	sge->len = cpu_to_le32(nonemb_cmd->size);
@@ -1110,7 +1112,7 @@ err:
 
 /* Uses synchronous mcc */
 int be_cmd_link_status_query(struct be_adapter *adapter,
-			bool *link_up, u8 *mac_speed, u16 *link_speed)
+			bool *link_up, u8 *mac_speed, u16 *link_speed, u32 dom)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_link_status *req;
@@ -1184,6 +1186,113 @@ int be_cmd_get_die_temperature(struct be_adapter *adapter)
 err:
 	spin_unlock_bh(&adapter->mcc_lock);
 	return status;
+}
+
+/* Uses synchronous mcc */
+int be_cmd_get_reg_len(struct be_adapter *adapter, u32 *log_size)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_get_fat *req;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	if (!wrb) {
+		status = -EBUSY;
+		goto err;
+	}
+	req = embedded_payload(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0,
+			OPCODE_COMMON_MANAGE_FAT);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+		OPCODE_COMMON_MANAGE_FAT, sizeof(*req));
+	req->fat_operation = cpu_to_le32(QUERY_FAT);
+	status = be_mcc_notify_wait(adapter);
+	if (!status) {
+		struct be_cmd_resp_get_fat *resp = embedded_payload(wrb);
+		if (log_size && resp->log_size)
+			*log_size = le32_to_cpu(resp->log_size -
+					sizeof(u32));
+	}
+err:
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
+void be_cmd_get_regs(struct be_adapter *adapter, u32 buf_len, void *buf)
+{
+	struct be_dma_mem get_fat_cmd;
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_get_fat *req;
+	struct be_sge *sge;
+	u32 offset = 0, total_size, buf_size, log_offset = sizeof(u32);
+	int status;
+
+	if (buf_len == 0)
+		return;
+
+	total_size = buf_len;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	if (!wrb) {
+		status = -EBUSY;
+		goto err;
+	}
+	while (total_size) {
+		buf_size = min(total_size, (u32)60*1024);
+		total_size -= buf_size;
+
+		get_fat_cmd.size = sizeof(struct be_cmd_req_get_fat) + buf_size;
+		get_fat_cmd.va = pci_alloc_consistent(adapter->pdev,
+					get_fat_cmd.size,
+					&get_fat_cmd.dma);
+		if (!get_fat_cmd.va) {
+			status = -ENOMEM;
+			dev_err(&adapter->pdev->dev,
+					"Memory allocation failure while retrieving FAT data\n");
+			goto err;
+		}
+		req = get_fat_cmd.va;
+		sge = nonembedded_sgl(wrb);
+
+		be_wrb_hdr_prepare(wrb, get_fat_cmd.size, false, 1,
+				OPCODE_COMMON_MANAGE_FAT);
+
+		be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+				OPCODE_COMMON_MANAGE_FAT, get_fat_cmd.size);
+
+		sge->pa_hi = cpu_to_le32(upper_32_bits(get_fat_cmd.size));
+		sge->pa_lo = cpu_to_le32(get_fat_cmd.dma & 0xFFFFFFFF);
+		sge->len = cpu_to_le32(get_fat_cmd.size);
+
+		req->fat_operation = cpu_to_le32(RETRIEVE_FAT);
+		req->read_log_offset = cpu_to_le32(log_offset);
+		req->read_log_length = cpu_to_le32(buf_size);
+		req->data_buffer_size = cpu_to_le32(buf_size);
+
+		status = be_mcc_notify_wait(adapter);
+		if (!status) {
+			struct be_cmd_resp_get_fat *resp = get_fat_cmd.va;
+			memcpy(buf + offset,
+				resp->data_buffer,
+				resp->read_log_length);
+		}
+		pci_free_consistent(adapter->pdev, get_fat_cmd.size,
+				get_fat_cmd.va,
+				get_fat_cmd.dma);
+		if (status)
+			dev_err(&adapter->pdev->dev, "FAT Table Retrieve error\n");
+
+		offset += buf_size;
+		log_offset += buf_size;
+	}
+err:
+	spin_unlock_bh(&adapter->mcc_lock);
 }
 
 /* Uses Mbox */
