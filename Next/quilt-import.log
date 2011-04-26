@@ -1,0 +1,34 @@
+Importing i2c based on 2.6.39-rc4-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0f1d9f78ce41a8874d30271ef8480e6f8f7f1fce
+HEAD is now at 0f1d9f7 Merge branch 'tty-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/tty-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-i801-move-device-ids-to-driver.patch
+i2c-i801-smbus-patch-for-intel-panther-point-deviceids.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   a1b49cb..b91a581  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.39-rc4-git5
+$ cd ../quilt-tmp
+$ git reset --hard 0f1d9f78ce41a8874d30271ef8480e6f8f7f1fce
+HEAD is now at 0f1d9f7 Merge branch 'tty-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/tty-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lm90-01-add-support-for-adt7461a-and-nct1008.patch
+hwmon-lm90-02-fix-update-interval-information-in-driver-documentation.patch
+hwmon-adm1021-drop-reference-to-xeon.patch
+hwmon-use-set_drvdata-helpers.patch
+hwmon-k10temp-add-support-for-fam15h-bulldozer.patch
+hwmon-add-driver-for-amd-fam15h-power.patch
+hwmon-jc42-change-class.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + e9535d4...256542c master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.39-rc3-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.39-rc3-82-g85f2e68
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
