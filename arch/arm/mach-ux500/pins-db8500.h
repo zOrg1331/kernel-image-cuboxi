@@ -8,6 +8,8 @@
 #ifndef __MACH_PINS_DB8500_H
 #define __MACH_PINS_DB8500_H
 
+#include <linux/gpio/nomadik.h>
+
 /*
  * TODO: Eventually encode all non-board specific pull up/down configuration
  * here.

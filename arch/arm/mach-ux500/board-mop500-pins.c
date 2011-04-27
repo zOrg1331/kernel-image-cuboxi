@@ -9,7 +9,6 @@
 #include <linux/gpio/nomadik.h>
 
 #include <asm/mach-types.h>
-#include <plat/pincfg.h>
 #include <mach/hardware.h>
 
 #include "pins-db8500.h"
