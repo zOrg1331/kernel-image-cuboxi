@@ -1417,9 +1417,19 @@ static int make_indexed_dir(handle_t *handle, struct dentry *dentry,
 	frame->bh = bh;
 	bh = bh2;
 	de = do_split(handle,dir, &bh, frame, &hinfo, &retval);
-	dx_release (frames);
-	if (!(de))
+	if (!de) {
+		/*
+		 * Even if the block split failed, we have to properly write
+		 * out all the changes we did so far. Otherwise we can end up
+		 * with corrupted filesystem.
+		 */
+		ext3_mark_inode_dirty(handle, dir);
+		ext3_journal_dirty_metadata(handle, frame->bh);
+		ext3_journal_dirty_metadata(handle, bh);
+		dx_release(frames);
 		return retval;
+	}
+	dx_release(frames);
 
 	return add_dirent_to_buf(handle, dentry, inode, de, bh);
 }
@@ -2282,7 +2292,7 @@ out_stop:
 	return err;
 err_drop_inode:
 	unlock_new_inode(inode);
-	iput (inode);
+	iput(inode);
 	return err;
 }
 
