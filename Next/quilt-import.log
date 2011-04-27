@@ -1,0 +1,20 @@
+Importing i2c based on 2.6.39-rc4-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0f1d9f78ce41a8874d30271ef8480e6f8f7f1fce
+HEAD is now at 0f1d9f7 Merge branch 'tty-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/tty-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-i801-move-device-ids-to-driver.patch
+i2c-i801-smbus-patch-for-intel-panther-point-deviceids.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + b91a581...286b319 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.39-rc4-git5
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.39-rc3-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.39-rc3-82-g85f2e68
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
