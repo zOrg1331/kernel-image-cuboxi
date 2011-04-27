@@ -251,14 +251,16 @@ void rtl_init_rfkill(struct ieee80211_hw *hw)
 	bool blocked;
 	u8 valid = 0;
 
+	/*set init state to on */
+	rtlpriv->rfkill.rfkill_state = 1;
+	wiphy_rfkill_set_hw_state(hw->wiphy, 0);
+
 	radio_state = rtlpriv->cfg->ops->radio_onoff_checking(hw, &valid);
 
-	/*set init state to that of switch */
-	rtlpriv->rfkill.rfkill_state = radio_state;
-	printk(KERN_INFO "rtlwifi: wireless switch is %s\n",
-	       rtlpriv->rfkill.rfkill_state ? "on" : "off");
-
 	if (valid) {
+		printk(KERN_INFO "rtlwifi: wireless switch is %s\n",
+				rtlpriv->rfkill.rfkill_state ? "on" : "off");
+
 		rtlpriv->rfkill.rfkill_state = radio_state;
 
 		blocked = (rtlpriv->rfkill.rfkill_state == 1) ? 0 : 1;
@@ -432,7 +434,7 @@ static void _rtl_txrate_selectmode(struct ieee80211_hw *hw,
 	}
 
 	if (rtlpriv->dm.useramask) {
-		/* TODO we will differentiate adhoc and station futrue  */
+		/* TODO adhoc and station handled differently in the future */
 		tcb_desc->mac_id = 0;
 
 		if ((mac->mode == WIRELESS_MODE_N_24G) ||
@@ -630,7 +632,7 @@ u8 rtl_is_special_data(struct ieee80211_hw *hw, struct sk_buff *skb, u8 is_tx)
 	const struct iphdr *ip;
 
 	if (!ieee80211_is_data(fc))
-		goto end;
+		return false;
 
 	if (ieee80211_is_nullfunc(fc))
 		return true;
@@ -686,7 +688,6 @@ u8 rtl_is_special_data(struct ieee80211_hw *hw, struct sk_buff *skb, u8 is_tx)
 		return true;
 	}
 
-end:
 	return false;
 }
 

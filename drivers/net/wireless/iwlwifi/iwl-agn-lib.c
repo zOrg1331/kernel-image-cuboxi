@@ -2,7 +2,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2008 - 2010 Intel Corporation. All rights reserved.
+ * Copyright(c) 2008 - 2011 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -172,6 +172,7 @@ static void iwlagn_count_agg_tx_err_status(struct iwl_priv *priv, u16 status)
 
 static void iwlagn_set_tx_status(struct iwl_priv *priv,
 				 struct ieee80211_tx_info *info,
+				 struct iwl_rxon_context *ctx,
 				 struct iwlagn_tx_resp *tx_resp,
 				 int txq_id, bool is_agg)
 {
@@ -185,6 +186,13 @@ static void iwlagn_set_tx_status(struct iwl_priv *priv,
 				    info);
 	if (!iwl_is_tx_success(status))
 		iwlagn_count_tx_err_status(priv, status);
+
+	if (status == TX_STATUS_FAIL_PASSIVE_NO_RX &&
+	    iwl_is_associated_ctx(ctx) && ctx->vif &&
+	    ctx->vif->type == NL80211_IFTYPE_STATION) {
+		ctx->last_tx_rejected = true;
+		iwl_stop_queue(priv, &priv->txq[txq_id]);
+	}
 
 	IWL_DEBUG_TX_REPLY(priv, "TXQ %d status %s (0x%08x) rate_n_flags "
 			   "0x%x retries %d\n",
@@ -242,15 +250,16 @@ static int iwlagn_tx_status_reply_tx(struct iwl_priv *priv,
 
 	/* # frames attempted by Tx command */
 	if (agg->frame_count == 1) {
+		struct iwl_tx_info *txb;
+
 		/* Only one frame was attempted; no block-ack will arrive */
 		idx = start_idx;
 
 		IWL_DEBUG_TX_REPLY(priv, "FrameCnt = %d, StartIdx=%d idx=%d\n",
 				   agg->frame_count, agg->start_idx, idx);
-		iwlagn_set_tx_status(priv,
-				     IEEE80211_SKB_CB(
-					priv->txq[txq_id].txb[idx].skb),
-				     tx_resp, txq_id, true);
+		txb = &priv->txq[txq_id].txb[idx];
+		iwlagn_set_tx_status(priv, IEEE80211_SKB_CB(txb->skb),
+				     txb->ctx, tx_resp, txq_id, true);
 		agg->wait_for_ba = 0;
 	} else {
 		/* Two or more frames were attempted; expect block-ack */
@@ -391,7 +400,8 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 	struct iwl_tx_queue *txq = &priv->txq[txq_id];
 	struct ieee80211_tx_info *info;
 	struct iwlagn_tx_resp *tx_resp = (void *)&pkt->u.raw[0];
-	u32  status = le16_to_cpu(tx_resp->status.status);
+	struct iwl_tx_info *txb;
+	u32 status = le16_to_cpu(tx_resp->status.status);
 	int tid;
 	int sta_id;
 	int freed;
@@ -406,7 +416,8 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 	}
 
 	txq->time_stamp = jiffies;
-	info = IEEE80211_SKB_CB(txq->txb[txq->q.read_ptr].skb);
+	txb = &txq->txb[txq->q.read_ptr];
+	info = IEEE80211_SKB_CB(txb->skb);
 	memset(&info->status, 0, sizeof(info->status));
 
 	tid = (tx_resp->ra_tid & IWLAGN_TX_RES_TID_MSK) >>
@@ -450,12 +461,14 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 				iwl_wake_queue(priv, txq);
 		}
 	} else {
-		iwlagn_set_tx_status(priv, info, tx_resp, txq_id, false);
+		iwlagn_set_tx_status(priv, info, txb->ctx, tx_resp,
+				     txq_id, false);
 		freed = iwlagn_tx_queue_reclaim(priv, txq_id, index);
 		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
 
 		if (priv->mac80211_registered &&
-		    (iwl_queue_space(&txq->q) > txq->q.low_mark))
+		    iwl_queue_space(&txq->q) > txq->q.low_mark &&
+		    status != TX_STATUS_FAIL_PASSIVE_NO_RX)
 			iwl_wake_queue(priv, txq);
 	}
 
@@ -482,8 +495,10 @@ void iwlagn_rx_handler_setup(struct iwl_priv *priv)
 
 void iwlagn_setup_deferred_work(struct iwl_priv *priv)
 {
-	/* in agn, the tx power calibration is done in uCode */
-	priv->disable_tx_power_cal = 1;
+	/*
+	 * nothing need to be done here anymore
+	 * still keep for future use if needed
+	 */
 }
 
 int iwlagn_hw_valid_rtc_data_addr(u32 addr)
@@ -534,9 +549,7 @@ int iwlagn_send_tx_power(struct iwl_priv *priv)
 void iwlagn_temperature(struct iwl_priv *priv)
 {
 	/* store temperature from correct statistics (in Celsius) */
-	priv->temperature = le32_to_cpu((iwl_bt_statistics(priv)) ?
-		priv->_agn.statistics_bt.general.common.temperature :
-		priv->_agn.statistics.general.common.temperature);
+	priv->temperature = le32_to_cpu(priv->statistics.common.temperature);
 	iwl_tt_handler(priv);
 }
 
@@ -652,8 +665,7 @@ int iwlagn_rx_init(struct iwl_priv *priv, struct iwl_rx_queue *rxq)
 	const u32 rfdnlog = RX_QUEUE_SIZE_LOG; /* 256 RBDs */
 	u32 rb_timeout = 0; /* FIXME: RX_RB_TIMEOUT for all devices? */
 
-	if (!priv->cfg->base_params->use_isr_legacy)
-		rb_timeout = RX_RB_TIMEOUT;
+	rb_timeout = RX_RB_TIMEOUT;
 
 	if (priv->cfg->mod_params->amsdu_size_8K)
 		rb_size = FH_RCSR_RX_CONFIG_REG_VAL_RB_SIZE_8K;
@@ -913,7 +925,6 @@ void iwlagn_rx_allocate(struct iwl_priv *priv, gfp_t priority)
 
 		list_add_tail(&rxb->list, &rxq->rx_free);
 		rxq->free_count++;
-		priv->alloc_rxb_page++;
 
 		spin_unlock_irqrestore(&rxq->lock, flags);
 	}
