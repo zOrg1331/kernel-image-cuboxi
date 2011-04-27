@@ -373,8 +373,11 @@ static void venc_reset(void)
 		}
 	}
 
+#ifdef CONFIG_OMAP2_DSS_SLEEP_AFTER_VENC_RESET
 	/* the magical sleep that makes things work */
+	/* XXX more info? What bug this circumvents? */
 	msleep(20);
+#endif
 }
 
 static void venc_enable_clocks(int enable)
@@ -473,6 +476,12 @@ static int venc_panel_enable(struct omap_dss_device *dssdev)
 
 	mutex_lock(&venc.venc_lock);
 
+	r = omap_dss_start_device(dssdev);
+	if (r) {
+		DSSERR("failed to start device\n");
+		goto err0;
+	}
+
 	if (dssdev->state != OMAP_DSS_DISPLAY_DISABLED) {
 		r = -EINVAL;
 		goto err1;
@@ -484,10 +493,11 @@ static int venc_panel_enable(struct omap_dss_device *dssdev)
 
 	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
 
-	/* wait couple of vsyncs until enabling the LCD */
-	msleep(50);
-
+	mutex_unlock(&venc.venc_lock);
+	return 0;
 err1:
+	omap_dss_stop_device(dssdev);
+err0:
 	mutex_unlock(&venc.venc_lock);
 
 	return r;
@@ -510,10 +520,9 @@ static void venc_panel_disable(struct omap_dss_device *dssdev)
 
 	venc_power_off(dssdev);
 
-	/* wait at least 5 vsyncs after disabling the LCD */
-	msleep(100);
-
 	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
+
+	omap_dss_stop_device(dssdev);
 end:
 	mutex_unlock(&venc.venc_lock);
 }
@@ -714,7 +723,7 @@ void venc_dump_regs(struct seq_file *s)
 }
 
 /* VENC HW IP initialisation */
-static int omap_venchw_probe(struct platform_device *pdev)
+static int __init omap_venchw_probe(struct platform_device *pdev)
 {
 	u8 rev_id;
 	struct resource *venc_mem;
@@ -759,7 +768,6 @@ static int omap_venchw_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver omap_venchw_driver = {
-	.probe          = omap_venchw_probe,
 	.remove         = omap_venchw_remove,
 	.driver         = {
 		.name   = "omapdss_venc",
@@ -767,12 +775,12 @@ static struct platform_driver omap_venchw_driver = {
 	},
 };
 
-int venc_init_platform_driver(void)
+int __init venc_init_platform_driver(void)
 {
 	if (cpu_is_omap44xx())
 		return 0;
 
-	return platform_driver_register(&omap_venchw_driver);
+	return platform_driver_probe(&omap_venchw_driver, omap_venchw_probe);
 }
 
 void venc_uninit_platform_driver(void)
