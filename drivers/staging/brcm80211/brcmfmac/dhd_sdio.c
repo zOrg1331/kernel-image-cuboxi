@@ -15,6 +15,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/pci_ids.h>
 #include <bcmdefs.h>
 #include <linux/netdevice.h>
 #include <bcmsdh.h>
@@ -27,8 +28,6 @@
 #include <bcmutils.h>
 #include <bcmdevs.h>
 
-#include <siutils.h>
-#include <hndpmu.h>
 #include <hndsoc.h>
 #ifdef DHD_DEBUG
 #include <hndrte_armtrap.h>
@@ -51,7 +50,7 @@
 #include <dhd_dbg.h>
 #include <dhdioctl.h>
 #include <sdiovar.h>
-#include <siutils_priv.h>
+#include <bcmchip.h>
 
 #ifndef DHDSDIO_MEM_DUMP_FNAME
 #define DHDSDIO_MEM_DUMP_FNAME         "mem_dump"
@@ -165,12 +164,28 @@ typedef struct dhd_console {
 } dhd_console_t;
 #endif				/* DHD_DEBUG */
 
+/* misc chip info needed by some of the routines */
+struct chip_info {
+	u32 chip;
+	u32 chiprev;
+	u32 cccorebase;
+	u32 ccrev;
+	u32 cccaps;
+	u32 buscorebase;
+	u32 buscorerev;
+	u32 buscoretype;
+	u32 ramcorebase;
+	u32 armcorebase;
+	u32 pmurev;
+	u32 ramsize;
+};
+
 /* Private data for SDIO bus interaction */
 typedef struct dhd_bus {
 	dhd_pub_t *dhd;
 
 	bcmsdh_info_t *sdh;	/* Handle for BCMSDH calls */
-	si_t *sih;		/* Handle for SI calls */
+	struct chip_info *ci;	/* Chip info struct */
 	char *vars;		/* Variables (from CIS and/or other) */
 	uint varsz;		/* Size of variables buffer */
 	u32 sbaddr;		/* Current SB window pointer (-1, invalid) */
@@ -464,6 +479,12 @@ static int dhdsdio_download_nvram(struct dhd_bus *bus);
 #ifdef BCMEMBEDIMAGE
 static int dhdsdio_download_code_array(struct dhd_bus *bus);
 #endif
+static void dhdsdio_chip_disablecore(bcmsdh_info_t *sdh, u32 corebase);
+static int dhdsdio_chip_attach(struct dhd_bus *bus, void *regs);
+static void dhdsdio_chip_resetcore(bcmsdh_info_t *sdh, u32 corebase);
+static void dhdsdio_sdiod_drive_strength_init(struct dhd_bus *bus,
+					u32 drivestrength);
+static void dhdsdio_chip_detach(struct dhd_bus *bus);
 
 static void dhd_dongle_setmemsize(struct dhd_bus *bus, int mem_size)
 {
@@ -511,8 +532,8 @@ static int dhdsdio_htclk(dhd_bus_t *bus, bool on, bool pendok)
 		clkreq =
 		    bus->alp_only ? SBSDIO_ALP_AVAIL_REQ : SBSDIO_HT_AVAIL_REQ;
 
-		if ((bus->sih->chip == BCM4329_CHIP_ID)
-		    && (bus->sih->chiprev == 0))
+		if ((bus->ci->chip == BCM4329_CHIP_ID)
+		    && (bus->ci->chiprev == 0))
 			clkreq |= SBSDIO_FORCE_ALP;
 
 		bcmsdh_cfg_write(sdh, SDIO_FUNC_1, SBSDIO_FUNC1_CHIPCLKCSR,
@@ -523,8 +544,8 @@ static int dhdsdio_htclk(dhd_bus_t *bus, bool on, bool pendok)
 			return BCME_ERROR;
 		}
 
-		if (pendok && ((bus->sih->buscoretype == PCMCIA_CORE_ID)
-			       && (bus->sih->buscorerev == 9))) {
+		if (pendok && ((bus->ci->buscoretype == PCMCIA_CORE_ID)
+			       && (bus->ci->buscorerev == 9))) {
 			u32 dummy, retries;
 			R_SDREG(dummy, &bus->regs->clockctlstatus, retries);
 		}
@@ -557,7 +578,7 @@ static int dhdsdio_htclk(dhd_bus_t *bus, bool on, bool pendok)
 			DHD_INFO(("CLKCTL: set PENDING\n"));
 			bus->clkstate = CLK_PENDING;
 
-			return BCME_OK;
+			return 0;
 		} else if (bus->clkstate == CLK_PENDING) {
 			/* Cancel CA-only interrupt filter */
 			devctl =
@@ -633,7 +654,7 @@ static int dhdsdio_htclk(dhd_bus_t *bus, bool on, bool pendok)
 			return BCME_ERROR;
 		}
 	}
-	return BCME_OK;
+	return 0;
 }
 
 /* Change idle/active SD state */
@@ -720,7 +741,7 @@ static int dhdsdio_sdclk(dhd_bus_t *bus, bool on)
 		bus->clkstate = CLK_NONE;
 	}
 
-	return BCME_OK;
+	return 0;
 }
 
 /* Transition SD and backplane clock readiness */
@@ -738,7 +759,7 @@ static int dhdsdio_clkctl(dhd_bus_t *bus, uint target, bool pendok)
 			dhd_os_wd_timer(bus->dhd, dhd_watchdog_ms);
 			bus->activity = true;
 		}
-		return BCME_OK;
+		return 0;
 	}
 
 	switch (target) {
@@ -777,7 +798,7 @@ static int dhdsdio_clkctl(dhd_bus_t *bus, uint target, bool pendok)
 	DHD_INFO(("dhdsdio_clkctl: %d -> %d\n", oldstate, bus->clkstate));
 #endif				/* DHD_DEBUG */
 
-	return BCME_OK;
+	return 0;
 }
 
 int dhdsdio_bussleep(dhd_bus_t *bus, bool sleep)
@@ -792,7 +813,7 @@ int dhdsdio_bussleep(dhd_bus_t *bus, bool sleep)
 
 	/* Done if we're already in the requested state */
 	if (sleep == bus->sleeping)
-		return BCME_OK;
+		return 0;
 
 	/* Going to sleep: set the alarm and turn off the lights... */
 	if (sleep) {
@@ -818,8 +839,8 @@ int dhdsdio_bussleep(dhd_bus_t *bus, bool sleep)
 				 SBSDIO_FORCE_HW_CLKREQ_OFF, NULL);
 
 		/* Isolate the bus */
-		if (bus->sih->chip != BCM4329_CHIP_ID
-		    && bus->sih->chip != BCM4319_CHIP_ID) {
+		if (bus->ci->chip != BCM4329_CHIP_ID
+		    && bus->ci->chip != BCM4319_CHIP_ID) {
 			bcmsdh_cfg_write(sdh, SDIO_FUNC_1, SBSDIO_DEVICE_CTL,
 					 SBSDIO_DEVCTL_PADS_ISO, NULL);
 		}
@@ -835,8 +856,8 @@ int dhdsdio_bussleep(dhd_bus_t *bus, bool sleep)
 
 		/* Force pad isolation off if possible
 			 (in case power never toggled) */
-		if ((bus->sih->buscoretype == PCMCIA_CORE_ID)
-		    && (bus->sih->buscorerev >= 10))
+		if ((bus->ci->buscoretype == PCMCIA_CORE_ID)
+		    && (bus->ci->buscorerev >= 10))
 			bcmsdh_cfg_write(sdh, SDIO_FUNC_1, SBSDIO_DEVICE_CTL, 0,
 					 NULL);
 
@@ -864,7 +885,7 @@ int dhdsdio_bussleep(dhd_bus_t *bus, bool sleep)
 		}
 	}
 
-	return BCME_OK;
+	return 0;
 }
 
 #if defined(OOB_INTR_ONLY)
@@ -1114,7 +1135,7 @@ int dhd_bus_txdata(struct dhd_bus *bus, struct sk_buff *pkt)
 			DHD_ERROR(("%s: out of bus->txq !!!\n", __func__));
 			ret = BCME_NORESOURCE;
 		} else {
-			ret = BCME_OK;
+			ret = 0;
 		}
 		dhd_os_sdunlock_txq(bus->dhd);
 
@@ -1804,7 +1825,7 @@ static int dhdsdio_readshared(dhd_bus_t *bus, sdpcm_shared_t *sh)
 		return BCME_ERROR;
 	}
 
-	return BCME_OK;
+	return 0;
 }
 
 static int dhdsdio_checkdied(dhd_bus_t *bus, u8 *data, uint size)
@@ -2019,7 +2040,7 @@ static int dhdsdio_readconsole(dhd_bus_t *bus)
 	/* Skip reading the console buffer if the index pointer
 	 has not moved */
 	if (idx == c->last)
-		return BCME_OK;
+		return 0;
 
 	/* Read the console buffer */
 	addr = le32_to_cpu(c->log.buf);
@@ -2057,13 +2078,13 @@ static int dhdsdio_readconsole(dhd_bus_t *bus)
 	}
 break2:
 
-	return BCME_OK;
+	return 0;
 }
 #endif				/* DHD_DEBUG */
 
 int dhdsdio_downloadvars(dhd_bus_t *bus, void *arg, int len)
 {
-	int bcmerror = BCME_OK;
+	int bcmerror = 0;
 
 	DHD_TRACE(("%s: Enter\n", __func__));
 
@@ -2271,7 +2292,7 @@ dhdsdio_doiovar(dhd_bus_t *bus, const bcm_iovar_t *vi, u32 actionid,
 
 	case IOV_SVAL(IOV_SDIOD_DRIVE):
 		dhd_sdiod_drive_strength = int_val;
-		si_sdiod_drive_strength_init(bus->sih,
+		dhdsdio_sdiod_drive_strength_init(bus,
 					     dhd_sdiod_drive_strength);
 		break;
 
@@ -2596,42 +2617,18 @@ static int dhdsdio_write_vars(dhd_bus_t *bus)
 static int dhdsdio_download_state(dhd_bus_t *bus, bool enter)
 {
 	uint retries;
+	u32 regdata;
 	int bcmerror = 0;
 
 	/* To enter download state, disable ARM and reset SOCRAM.
 	 * To exit download state, simply reset ARM (default is RAM boot).
 	 */
 	if (enter) {
-
 		bus->alp_only = true;
 
-		if (!(si_setcore(bus->sih, ARM7S_CORE_ID, 0)) &&
-		    !(si_setcore(bus->sih, ARMCM3_CORE_ID, 0))) {
-			DHD_ERROR(("%s: Failed to find ARM core!\n", __func__));
-			bcmerror = BCME_ERROR;
-			goto fail;
-		}
+		dhdsdio_chip_disablecore(bus->sdh, bus->ci->armcorebase);
 
-		si_core_disable(bus->sih, 0);
-		if (bcmsdh_regfail(bus->sdh)) {
-			bcmerror = BCME_SDIO_ERROR;
-			goto fail;
-		}
-
-		if (!(si_setcore(bus->sih, SOCRAM_CORE_ID, 0))) {
-			DHD_ERROR(("%s: Failed to find SOCRAM core!\n",
-				   __func__));
-			bcmerror = BCME_ERROR;
-			goto fail;
-		}
-
-		si_core_reset(bus->sih, 0, 0);
-		if (bcmsdh_regfail(bus->sdh)) {
-			DHD_ERROR(("%s: Failure trying reset SOCRAM core?\n",
-				   __func__));
-			bcmerror = BCME_SDIO_ERROR;
-			goto fail;
-		}
+		dhdsdio_chip_resetcore(bus->sdh, bus->ci->ramcorebase);
 
 		/* Clear the top bit of memory */
 		if (bus->ramsize) {
@@ -2640,14 +2637,11 @@ static int dhdsdio_download_state(dhd_bus_t *bus, bool enter)
 					 (u8 *)&zeros, 4);
 		}
 	} else {
-		if (!(si_setcore(bus->sih, SOCRAM_CORE_ID, 0))) {
-			DHD_ERROR(("%s: Failed to find SOCRAM core!\n",
-				   __func__));
-			bcmerror = BCME_ERROR;
-			goto fail;
-		}
-
-		if (!si_iscoreup(bus->sih)) {
+		regdata = bcmsdh_reg_read(bus->sdh,
+			CORE_SB(bus->ci->ramcorebase, sbtmstatelow), 4);
+		regdata &= (SBTML_RESET | SBTML_REJ_MASK |
+			(SICF_CLOCK_EN << SBTML_SICF_SHIFT));
+		if ((SICF_CLOCK_EN << SBTML_SICF_SHIFT) != regdata) {
 			DHD_ERROR(("%s: SOCRAM core is down after reset?\n",
 				   __func__));
 			bcmerror = BCME_ERROR;
@@ -2660,41 +2654,16 @@ static int dhdsdio_download_state(dhd_bus_t *bus, bool enter)
 			bcmerror = 0;
 		}
 
-		if (!si_setcore(bus->sih, PCMCIA_CORE_ID, 0) &&
-		    !si_setcore(bus->sih, SDIOD_CORE_ID, 0)) {
-			DHD_ERROR(("%s: Can't change back to SDIO core?\n",
-				   __func__));
-			bcmerror = BCME_ERROR;
-			goto fail;
-		}
 		W_SDREG(0xFFFFFFFF, &bus->regs->intstatus, retries);
 
-		if (!(si_setcore(bus->sih, ARM7S_CORE_ID, 0)) &&
-		    !(si_setcore(bus->sih, ARMCM3_CORE_ID, 0))) {
-			DHD_ERROR(("%s: Failed to find ARM core!\n", __func__));
-			bcmerror = BCME_ERROR;
-			goto fail;
-		}
-
-		si_core_reset(bus->sih, 0, 0);
-		if (bcmsdh_regfail(bus->sdh)) {
-			DHD_ERROR(("%s: Failure trying to reset ARM core?\n",
-				   __func__));
-			bcmerror = BCME_SDIO_ERROR;
-			goto fail;
-		}
+		dhdsdio_chip_resetcore(bus->sdh, bus->ci->armcorebase);
 
 		/* Allow HT Clock now that the ARM is running. */
 		bus->alp_only = false;
 
 		bus->dhd->busstate = DHD_BUS_LOAD;
 	}
-
 fail:
-	/* Always return to SDIOD core */
-	if (!si_setcore(bus->sih, PCMCIA_CORE_ID, 0))
-		si_setcore(bus->sih, SDIOD_CORE_ID, 0);
-
 	return bcmerror;
 }
 
@@ -2739,7 +2708,7 @@ dhd_bus_iovar_op(dhd_pub_t *dhdp, const char *name,
 		if (set && strcmp(name, "sd_divisor") == 0) {
 			if (bcmsdh_iovar_op(bus->sdh, "sd_divisor", NULL, 0,
 					    &bus->sd_divisor, sizeof(s32),
-					    false) != BCME_OK) {
+					    false) != 0) {
 				bus->sd_divisor = -1;
 				DHD_ERROR(("%s: fail on %s get\n", __func__,
 					   name));
@@ -2752,7 +2721,7 @@ dhd_bus_iovar_op(dhd_pub_t *dhdp, const char *name,
 		if (set && strcmp(name, "sd_mode") == 0) {
 			if (bcmsdh_iovar_op(bus->sdh, "sd_mode", NULL, 0,
 					    &bus->sd_mode, sizeof(s32),
-					    false) != BCME_OK) {
+					    false) != 0) {
 				bus->sd_mode = -1;
 				DHD_ERROR(("%s: fail on %s get\n", __func__,
 					   name));
@@ -2767,7 +2736,7 @@ dhd_bus_iovar_op(dhd_pub_t *dhdp, const char *name,
 			if (bcmsdh_iovar_op
 			    (bus->sdh, "sd_blocksize", &fnum, sizeof(s32),
 			     &bus->blocksize, sizeof(s32),
-			     false) != BCME_OK) {
+			     false) != 0) {
 				bus->blocksize = 0;
 				DHD_ERROR(("%s: fail on %s get\n", __func__,
 					   "sd_blocksize"));
@@ -2948,14 +2917,11 @@ int dhd_bus_init(dhd_pub_t *dhdp, bool enforce_mutex)
 
 	/* If F2 successfully enabled, set core and enable interrupts */
 	if (ready == enable) {
-		/* Make sure we're talking to the core. */
-		bus->regs = si_setcore(bus->sih, PCMCIA_CORE_ID, 0);
-		if (!(bus->regs))
-			bus->regs = si_setcore(bus->sih, SDIOD_CORE_ID, 0);
-
 		/* Set up the interrupt mask and enable interrupts */
 		bus->hostintmask = HOSTINTMASK;
-		W_SDREG(bus->hostintmask, &bus->regs->hostintmask, retries);
+		W_SDREG(bus->hostintmask,
+			(unsigned int *)CORE_BUS_REG(bus->ci->buscorebase,
+			hostintmask), retries);
 
 		bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_1, SBSDIO_WATERMARK,
 				 (u8) watermark, &err);
@@ -5089,7 +5055,7 @@ static void *dhdsdio_probe(u16 venid, u16 devid, u16 bus_no,
 	/* Check the Vendor ID */
 	switch (venid) {
 	case 0x0000:
-	case VENDOR_BROADCOM:
+	case PCI_VENDOR_ID_BROADCOM:
 		break;
 	default:
 		DHD_ERROR(("%s: unknown vendor: 0x%04x\n", __func__, venid));
@@ -5215,7 +5181,10 @@ dhdsdio_probe_attach(struct dhd_bus *bus, void *sdh, void *regsva, u16 devid)
 
 #endif				/* DHD_DEBUG */
 
-	/* Force PLL off until si_attach() programs PLL control regs */
+	/*
+	 * Force PLL off until dhdsdio_chip_attach()
+	 * programs PLL control regs
+	 */
 
 	bcmsdh_cfg_write(sdh, SDIO_FUNC_1, SBSDIO_FUNC1_CHIPCLKCSR,
 			 DHD_INIT_CLKCTL1, &err);
@@ -5281,34 +5250,26 @@ dhdsdio_probe_attach(struct dhd_bus *bus, void *sdh, void *regsva, u16 devid)
 	}
 #endif				/* DHD_DEBUG */
 
-	/* si_attach() will provide an SI handle and scan the backplane */
-	bus->sih = si_attach((uint) devid, regsva, DHD_BUS, sdh,
-				   &bus->vars, &bus->varsz);
-	if (!(bus->sih)) {
-		DHD_ERROR(("%s: si_attach failed!\n", __func__));
+	if (dhdsdio_chip_attach(bus, regsva)) {
+		DHD_ERROR(("%s: dhdsdio_chip_attach failed!\n", __func__));
 		goto fail;
 	}
 
-	bcmsdh_chipinfo(sdh, bus->sih->chip, bus->sih->chiprev);
+	bcmsdh_chipinfo(sdh, bus->ci->chip, bus->ci->chiprev);
 
-	if (!dhdsdio_chipmatch((u16) bus->sih->chip)) {
+	if (!dhdsdio_chipmatch((u16) bus->ci->chip)) {
 		DHD_ERROR(("%s: unsupported chip: 0x%04x\n",
-			   __func__, bus->sih->chip));
+			   __func__, bus->ci->chip));
 		goto fail;
 	}
 
-	si_sdiod_drive_strength_init(bus->sih, dhd_sdiod_drive_strength);
+	dhdsdio_sdiod_drive_strength_init(bus, dhd_sdiod_drive_strength);
 
 	/* Get info on the ARM and SOCRAM cores... */
 	if (!DHD_NOPMU(bus)) {
-		if ((si_setcore(bus->sih, ARM7S_CORE_ID, 0)) ||
-		    (si_setcore(bus->sih, ARMCM3_CORE_ID, 0))) {
-			bus->armrev = si_corerev(bus->sih);
-		} else {
-			DHD_ERROR(("%s: failed to find ARM core!\n", __func__));
-			goto fail;
-		}
-		bus->orig_ramsize = si_socram_size(bus->sih);
+		bus->armrev = SBCOREREV(bcmsdh_reg_read(bus->sdh,
+			CORE_SB(bus->ci->armcorebase, sbidhigh), 4));
+		bus->orig_ramsize = bus->ci->ramsize;
 		if (!(bus->orig_ramsize)) {
 			DHD_ERROR(("%s: failed to find SOCRAM memory!\n",
 				   __func__));
@@ -5322,17 +5283,7 @@ dhdsdio_probe_attach(struct dhd_bus *bus, void *sdh, void *regsva, u16 devid)
 			   bus->ramsize, bus->orig_ramsize));
 	}
 
-	/* ...but normally deal with the SDPCMDEV core */
-	bus->regs = si_setcore(bus->sih, PCMCIA_CORE_ID, 0);
-	if (!bus->regs) {
-		bus->regs = si_setcore(bus->sih, SDIOD_CORE_ID, 0);
-		if (!bus->regs) {
-			DHD_ERROR(("%s: failed to find SDIODEV core!\n",
-					__func__));
-			goto fail;
-		}
-	}
-	bus->sdpcmrev = si_corerev(bus->sih);
+	bus->regs = (void *)bus->ci->buscorebase;
 
 	/* Set core control so an SDIO reset does a backplane reset */
 	OR_REG(&bus->regs->corecontrol, CC_BPRESEN);
@@ -5425,7 +5376,7 @@ static bool dhdsdio_probe_init(dhd_bus_t *bus, void *sdh)
 	/* Query the SD clock speed */
 	if (bcmsdh_iovar_op(sdh, "sd_divisor", NULL, 0,
 			    &bus->sd_divisor, sizeof(s32),
-			    false) != BCME_OK) {
+			    false) != 0) {
 		DHD_ERROR(("%s: fail on %s get\n", __func__, "sd_divisor"));
 		bus->sd_divisor = -1;
 	} else {
@@ -5435,7 +5386,7 @@ static bool dhdsdio_probe_init(dhd_bus_t *bus, void *sdh)
 
 	/* Query the SD bus mode */
 	if (bcmsdh_iovar_op(sdh, "sd_mode", NULL, 0,
-			    &bus->sd_mode, sizeof(s32), false) != BCME_OK) {
+			    &bus->sd_mode, sizeof(s32), false) != 0) {
 		DHD_ERROR(("%s: fail on %s get\n", __func__, "sd_mode"));
 		bus->sd_mode = -1;
 	} else {
@@ -5446,7 +5397,7 @@ static bool dhdsdio_probe_init(dhd_bus_t *bus, void *sdh)
 	/* Query the F2 block size, set roundup accordingly */
 	fnum = 2;
 	if (bcmsdh_iovar_op(sdh, "sd_blocksize", &fnum, sizeof(s32),
-			    &bus->blocksize, sizeof(s32), false) != BCME_OK) {
+			    &bus->blocksize, sizeof(s32), false) != 0) {
 		bus->blocksize = 0;
 		DHD_ERROR(("%s: fail on %s get\n", __func__, "sd_blocksize"));
 	} else {
@@ -5459,7 +5410,7 @@ static bool dhdsdio_probe_init(dhd_bus_t *bus, void *sdh)
 		 default to use if supported */
 	if (bcmsdh_iovar_op(sdh, "sd_rxchain", NULL, 0,
 			    &bus->sd_rxchain, sizeof(s32),
-			    false) != BCME_OK) {
+			    false) != 0) {
 		bus->sd_rxchain = false;
 	} else {
 		DHD_INFO(("%s: bus module (through bcmsdh API) %s chaining\n",
@@ -5509,10 +5460,8 @@ static void dhdsdio_release(dhd_bus_t *bus)
 		bcmsdh_intr_dereg(bus->sdh);
 
 		if (bus->dhd) {
-
-			dhdsdio_release_dongle(bus);
-
 			dhd_detach(bus->dhd);
+			dhdsdio_release_dongle(bus);
 			bus->dhd = NULL;
 		}
 
@@ -5548,13 +5497,10 @@ static void dhdsdio_release_dongle(dhd_bus_t *bus)
 	if (bus->dhd && bus->dhd->dongle_reset)
 		return;
 
-	if (bus->sih) {
+	if (bus->ci) {
 		dhdsdio_clkctl(bus, CLK_AVAIL, false);
-#if !defined(BCMLXSDMMC)
-		si_watchdog(bus->sih, 4);
-#endif				/* !defined(BCMLXSDMMC) */
 		dhdsdio_clkctl(bus, CLK_NONE, false);
-		si_detach(bus->sih);
+		dhdsdio_chip_detach(bus);
 		if (bus->vars && bus->varsz)
 			kfree(bus->vars);
 		bus->vars = NULL;
@@ -5980,8 +5926,8 @@ dhd_bcmsdh_send_buf(dhd_bus_t *bus, u32 addr, uint fn, uint flags,
 
 uint dhd_bus_chip(struct dhd_bus *bus)
 {
-	ASSERT(bus->sih != NULL);
-	return bus->sih->chip;
+	ASSERT(bus->ci != NULL);
+	return bus->ci->chip;
 }
 
 void *dhd_bus_pub(struct dhd_bus *bus)
@@ -6069,4 +6015,395 @@ int dhd_bus_devreset(dhd_pub_t *dhdp, u8 flag)
 		}
 	}
 	return bcmerror;
+}
+
+static int
+dhdsdio_chip_recognition(bcmsdh_info_t *sdh, struct chip_info *ci, void *regs)
+{
+	u32 regdata;
+
+	/*
+	 * Get CC core rev
+	 * Chipid is assume to be at offset 0 from regs arg
+	 * For different chiptypes or old sdio hosts w/o chipcommon,
+	 * other ways of recognition should be added here.
+	 */
+	ci->cccorebase = (u32)regs;
+	regdata = bcmsdh_reg_read(sdh, CORE_CC_REG(ci->cccorebase, chipid), 4);
+	ci->chip = regdata & CID_ID_MASK;
+	ci->chiprev = (regdata & CID_REV_MASK) >> CID_REV_SHIFT;
+
+	DHD_INFO(("%s: chipid=0x%x chiprev=%d\n",
+		__func__, ci->chip, ci->chiprev));
+
+	/* Address of cores for new chips should be added here */
+	switch (ci->chip) {
+	case BCM4329_CHIP_ID:
+		ci->buscorebase = BCM4329_CORE_BUS_BASE;
+		ci->ramcorebase = BCM4329_CORE_SOCRAM_BASE;
+		ci->armcorebase	= BCM4329_CORE_ARM_BASE;
+		ci->ramsize = BCM4329_RAMSIZE;
+		break;
+	default:
+		DHD_ERROR(("%s: chipid 0x%x is not supported\n",
+			__func__, ci->chip));
+		return -ENODEV;
+	}
+
+	regdata = bcmsdh_reg_read(sdh,
+		CORE_SB(ci->cccorebase, sbidhigh), 4);
+	ci->ccrev = SBCOREREV(regdata);
+
+	regdata = bcmsdh_reg_read(sdh,
+		CORE_CC_REG(ci->cccorebase, pmucapabilities), 4);
+	ci->pmurev = regdata & PCAP_REV_MASK;
+
+	regdata = bcmsdh_reg_read(sdh, CORE_SB(ci->buscorebase, sbidhigh), 4);
+	ci->buscorerev = SBCOREREV(regdata);
+	ci->buscoretype = (regdata & SBIDH_CC_MASK) >> SBIDH_CC_SHIFT;
+
+	DHD_INFO(("%s: ccrev=%d, pmurev=%d, buscore rev/type=%d/0x%x\n",
+		__func__, ci->ccrev, ci->pmurev,
+		ci->buscorerev, ci->buscoretype));
+
+	/* get chipcommon capabilites */
+	ci->cccaps = bcmsdh_reg_read(sdh,
+		CORE_CC_REG(ci->cccorebase, capabilities), 4);
+
+	return 0;
+}
+
+static void
+dhdsdio_chip_disablecore(bcmsdh_info_t *sdh, u32 corebase)
+{
+	u32 regdata;
+
+	regdata = bcmsdh_reg_read(sdh,
+		CORE_SB(corebase, sbtmstatelow), 4);
+	if (regdata & SBTML_RESET)
+		return;
+
+	regdata = bcmsdh_reg_read(sdh,
+		CORE_SB(corebase, sbtmstatelow), 4);
+	if ((regdata & (SICF_CLOCK_EN << SBTML_SICF_SHIFT)) != 0) {
+		/*
+		 * set target reject and spin until busy is clear
+		 * (preserve core-specific bits)
+		 */
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbtmstatelow), 4);
+		bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatelow), 4,
+			regdata | SBTML_REJ);
+
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbtmstatelow), 4);
+		udelay(1);
+		SPINWAIT((bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbtmstatehigh), 4) &
+			SBTMH_BUSY), 100000);
+
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbtmstatehigh), 4);
+		if (regdata & SBTMH_BUSY)
+			DHD_ERROR(("%s: ARM core still busy\n", __func__));
+
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbidlow), 4);
+		if (regdata & SBIDL_INIT) {
+			regdata = bcmsdh_reg_read(sdh,
+				CORE_SB(corebase, sbimstate), 4) |
+				SBIM_RJ;
+			bcmsdh_reg_write(sdh,
+				CORE_SB(corebase, sbimstate), 4,
+				regdata);
+			regdata = bcmsdh_reg_read(sdh,
+				CORE_SB(corebase, sbimstate), 4);
+			udelay(1);
+			SPINWAIT((bcmsdh_reg_read(sdh,
+				CORE_SB(corebase, sbimstate), 4) &
+				SBIM_BY), 100000);
+		}
+
+		/* set reset and reject while enabling the clocks */
+		bcmsdh_reg_write(sdh,
+			CORE_SB(corebase, sbtmstatelow), 4,
+			(((SICF_FGC | SICF_CLOCK_EN) << SBTML_SICF_SHIFT) |
+			SBTML_REJ | SBTML_RESET));
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbtmstatelow), 4);
+		udelay(10);
+
+		/* clear the initiator reject bit */
+		regdata = bcmsdh_reg_read(sdh,
+			CORE_SB(corebase, sbidlow), 4);
+		if (regdata & SBIDL_INIT) {
+			regdata = bcmsdh_reg_read(sdh,
+				CORE_SB(corebase, sbimstate), 4) &
+				~SBIM_RJ;
+			bcmsdh_reg_write(sdh,
+				CORE_SB(corebase, sbimstate), 4,
+				regdata);
+		}
+	}
+
+	/* leave reset and reject asserted */
+	bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatelow), 4,
+		(SBTML_REJ | SBTML_RESET));
+	udelay(1);
+}
+
+static int
+dhdsdio_chip_attach(struct dhd_bus *bus, void *regs)
+{
+	struct chip_info *ci;
+	int err;
+	u8 clkval, clkset;
+
+	DHD_TRACE(("%s: Enter\n", __func__));
+
+	/* alloc chip_info_t */
+	ci = kmalloc(sizeof(struct chip_info), GFP_ATOMIC);
+	if (NULL == ci) {
+		DHD_ERROR(("%s: malloc failed!\n", __func__));
+		return -ENOMEM;
+	}
+
+	memset((unsigned char *)ci, 0, sizeof(struct chip_info));
+
+	/* bus/core/clk setup for register access */
+	/* Try forcing SDIO core to do ALPAvail request only */
+	clkset = SBSDIO_FORCE_HW_CLKREQ_OFF | SBSDIO_ALP_AVAIL_REQ;
+	bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_1, SBSDIO_FUNC1_CHIPCLKCSR,
+			clkset, &err);
+	if (err) {
+		DHD_ERROR(("%s: error writing for HT off\n", __func__));
+		goto fail;
+	}
+
+	/* If register supported, wait for ALPAvail and then force ALP */
+	/* This may take up to 15 milliseconds */
+	clkval = bcmsdh_cfg_read(bus->sdh, SDIO_FUNC_1,
+			SBSDIO_FUNC1_CHIPCLKCSR, NULL);
+	if ((clkval & ~SBSDIO_AVBITS) == clkset) {
+		SPINWAIT(((clkval =
+				bcmsdh_cfg_read(bus->sdh, SDIO_FUNC_1,
+						SBSDIO_FUNC1_CHIPCLKCSR,
+						NULL)),
+				!SBSDIO_ALPAV(clkval)),
+				PMU_MAX_TRANSITION_DLY);
+		if (!SBSDIO_ALPAV(clkval)) {
+			DHD_ERROR(("%s: timeout on ALPAV wait, clkval 0x%02x\n",
+				__func__, clkval));
+			err = -EBUSY;
+			goto fail;
+		}
+		clkset = SBSDIO_FORCE_HW_CLKREQ_OFF |
+				SBSDIO_FORCE_ALP;
+		bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_1,
+				SBSDIO_FUNC1_CHIPCLKCSR,
+				clkset, &err);
+		udelay(65);
+	} else {
+		DHD_ERROR(("%s: ChipClkCSR access: wrote 0x%02x read 0x%02x\n",
+			__func__, clkset, clkval));
+		err = -EACCES;
+		goto fail;
+	}
+
+	/* Also, disable the extra SDIO pull-ups */
+	bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_1, SBSDIO_FUNC1_SDIOPULLUP, 0,
+			 NULL);
+
+	err = dhdsdio_chip_recognition(bus->sdh, ci, regs);
+	if (err)
+		goto fail;
+
+	/*
+	 * Make sure any on-chip ARM is off (in case strapping is wrong),
+	 * or downloaded code was already running.
+	 */
+	dhdsdio_chip_disablecore(bus->sdh, ci->armcorebase);
+
+	bcmsdh_reg_write(bus->sdh,
+		CORE_CC_REG(ci->cccorebase, gpiopullup), 4, 0);
+	bcmsdh_reg_write(bus->sdh,
+		CORE_CC_REG(ci->cccorebase, gpiopulldown), 4, 0);
+
+	/* Disable F2 to clear any intermediate frame state on the dongle */
+	bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_0, SDIOD_CCCR_IOEN,
+		SDIO_FUNC_ENABLE_1, NULL);
+
+	/* WAR: cmd52 backplane read so core HW will drop ALPReq */
+	clkval = bcmsdh_cfg_read(bus->sdh, SDIO_FUNC_1,
+			0, NULL);
+
+	/* Done with backplane-dependent accesses, can drop clock... */
+	bcmsdh_cfg_write(bus->sdh, SDIO_FUNC_1, SBSDIO_FUNC1_CHIPCLKCSR, 0,
+			 NULL);
+
+	bus->ci = ci;
+	return 0;
+fail:
+	bus->ci = NULL;
+	kfree(ci);
+	return err;
+}
+
+static void
+dhdsdio_chip_resetcore(bcmsdh_info_t *sdh, u32 corebase)
+{
+	u32 regdata;
+
+	/*
+	 * Must do the disable sequence first to work for
+	 * arbitrary current core state.
+	 */
+	dhdsdio_chip_disablecore(sdh, corebase);
+
+	/*
+	 * Now do the initialization sequence.
+	 * set reset while enabling the clock and
+	 * forcing them on throughout the core
+	 */
+	bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatelow), 4,
+		((SICF_FGC | SICF_CLOCK_EN) << SBTML_SICF_SHIFT) |
+		SBTML_RESET);
+	udelay(1);
+
+	regdata = bcmsdh_reg_read(sdh, CORE_SB(corebase, sbtmstatehigh), 4);
+	if (regdata & SBTMH_SERR)
+		bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatehigh), 4, 0);
+
+	regdata = bcmsdh_reg_read(sdh, CORE_SB(corebase, sbimstate), 4);
+	if (regdata & (SBIM_IBE | SBIM_TO))
+		bcmsdh_reg_write(sdh, CORE_SB(corebase, sbimstate), 4,
+			regdata & ~(SBIM_IBE | SBIM_TO));
+
+	/* clear reset and allow it to propagate throughout the core */
+	bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatelow), 4,
+		(SICF_FGC << SBTML_SICF_SHIFT) |
+		(SICF_CLOCK_EN << SBTML_SICF_SHIFT));
+	udelay(1);
+
+	/* leave clock enabled */
+	bcmsdh_reg_write(sdh, CORE_SB(corebase, sbtmstatelow), 4,
+		(SICF_CLOCK_EN << SBTML_SICF_SHIFT));
+	udelay(1);
+}
+
+/* SDIO Pad drive strength to select value mappings */
+struct sdiod_drive_str {
+	u8 strength;	/* Pad Drive Strength in mA */
+	u8 sel;		/* Chip-specific select value */
+};
+
+/* SDIO Drive Strength to sel value table for PMU Rev 1 */
+static const struct sdiod_drive_str sdiod_drive_strength_tab1[] = {
+	{
+	4, 0x2}, {
+	2, 0x3}, {
+	1, 0x0}, {
+	0, 0x0}
+	};
+
+/* SDIO Drive Strength to sel value table for PMU Rev 2, 3 */
+static const struct sdiod_drive_str sdiod_drive_strength_tab2[] = {
+	{
+	12, 0x7}, {
+	10, 0x6}, {
+	8, 0x5}, {
+	6, 0x4}, {
+	4, 0x2}, {
+	2, 0x1}, {
+	0, 0x0}
+	};
+
+/* SDIO Drive Strength to sel value table for PMU Rev 8 (1.8V) */
+static const struct sdiod_drive_str sdiod_drive_strength_tab3[] = {
+	{
+	32, 0x7}, {
+	26, 0x6}, {
+	22, 0x5}, {
+	16, 0x4}, {
+	12, 0x3}, {
+	8, 0x2}, {
+	4, 0x1}, {
+	0, 0x0}
+	};
+
+#define SDIOD_DRVSTR_KEY(chip, pmu)     (((chip) << 16) | (pmu))
+
+static void
+dhdsdio_sdiod_drive_strength_init(struct dhd_bus *bus, u32 drivestrength) {
+	struct sdiod_drive_str *str_tab = NULL;
+	u32 str_mask = 0;
+	u32 str_shift = 0;
+#ifdef BCMDBG
+	char chn[8];
+#endif
+
+	if (!(bus->ci->cccaps & CC_CAP_PMU))
+		return;
+
+	switch (SDIOD_DRVSTR_KEY(bus->ci->chip, bus->ci->pmurev)) {
+	case SDIOD_DRVSTR_KEY(BCM4325_CHIP_ID, 1):
+		str_tab = (struct sdiod_drive_str *)&sdiod_drive_strength_tab1;
+		str_mask = 0x30000000;
+		str_shift = 28;
+		break;
+	case SDIOD_DRVSTR_KEY(BCM4325_CHIP_ID, 2):
+	case SDIOD_DRVSTR_KEY(BCM4325_CHIP_ID, 3):
+		str_tab = (struct sdiod_drive_str *)&sdiod_drive_strength_tab2;
+		str_mask = 0x00003800;
+		str_shift = 11;
+		break;
+	case SDIOD_DRVSTR_KEY(BCM4336_CHIP_ID, 8):
+		str_tab = (struct sdiod_drive_str *)&sdiod_drive_strength_tab3;
+		str_mask = 0x00003800;
+		str_shift = 11;
+		break;
+	default:
+		DHD_ERROR(("No SDIO Drive strength init"
+			"done for chip %s rev %d pmurev %d\n",
+			bcm_chipname(bus->ci->chip, chn, 8),
+			bus->ci->chiprev, bus->ci->pmurev));
+		break;
+	}
+
+	if (str_tab != NULL) {
+		u32 drivestrength_sel = 0;
+		u32 cc_data_temp;
+		int i;
+
+		for (i = 0; str_tab[i].strength != 0; i++) {
+			if (drivestrength >= str_tab[i].strength) {
+				drivestrength_sel = str_tab[i].sel;
+				break;
+			}
+		}
+
+		bcmsdh_reg_write(bus->sdh,
+			CORE_CC_REG(bus->ci->cccorebase, chipcontrol_addr),
+			4, 1);
+		cc_data_temp = bcmsdh_reg_read(bus->sdh,
+			CORE_CC_REG(bus->ci->cccorebase, chipcontrol_addr), 4);
+		cc_data_temp &= ~str_mask;
+		drivestrength_sel <<= str_shift;
+		cc_data_temp |= drivestrength_sel;
+		bcmsdh_reg_write(bus->sdh,
+			CORE_CC_REG(bus->ci->cccorebase, chipcontrol_addr),
+			4, cc_data_temp);
+
+		DHD_INFO(("SDIO: %dmA drive strength selected, set to 0x%08x\n",
+			drivestrength, cc_data_temp));
+	}
+}
+
+static void
+dhdsdio_chip_detach(struct dhd_bus *bus)
+{
+	DHD_TRACE(("%s: Enter\n", __func__));
+
+	kfree(bus->ci);
+	bus->ci = NULL;
 }

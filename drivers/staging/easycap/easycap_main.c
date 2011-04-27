@@ -201,9 +201,9 @@ static int easycap_open(struct inode *inode, struct file *file)
 static int reset(struct easycap *peasycap)
 {
 	struct easycap_standard const *peasycap_standard;
-	int i, rc, input, rate;
+	int fmtidx, input, rate;
 	bool ntsc, other;
-	int fmtidx;
+	int rc;
 
 	if (!peasycap) {
 		SAY("ERROR: peasycap is NULL\n");
@@ -226,33 +226,27 @@ static int reset(struct easycap *peasycap)
 	JOM(8, "peasycap->ntsc=%d\n", peasycap->ntsc);
 
 	rate = ready_saa(peasycap->pusb_device);
-	if (0 > rate) {
+	if (rate < 0) {
 		JOM(8, "not ready to capture after %i ms ...\n", PATIENCE);
-		if (peasycap->ntsc) {
-			JOM(8, "... trying PAL ...\n");  ntsc = false;
-		} else {
-			JOM(8, "... trying NTSC ...\n"); ntsc = true;
-	}
-	rc = setup_stk(peasycap->pusb_device, ntsc);
-	if (0 == rc)
-		JOM(4, "setup_stk() OK\n");
-	else {
-		SAM("ERROR: setup_stk() rc = %i\n", rc);
-		return -EFAULT;
-	}
-	rc = setup_saa(peasycap->pusb_device, ntsc);
-	if (0 == rc)
-		JOM(4, "setup_saa() OK\n");
-	else {
-		SAM("ERROR: setup_saa() rc = %i\n", rc);
-		return -EFAULT;
-	}
-	rate = ready_saa(peasycap->pusb_device);
-	if (0 > rate) {
-		JOM(8, "not ready to capture after %i ms ...\n", PATIENCE);
-		JOM(8, "... saa register 0x1F has 0x%02X\n",
+		ntsc = !peasycap->ntsc;
+		JOM(8, "... trying  %s ..\n", ntsc ? "NTSC" : "PAL");
+		rc = setup_stk(peasycap->pusb_device, ntsc);
+		if (rc) {
+			SAM("ERROR: setup_stk() rc = %i\n", rc);
+			return -EFAULT;
+		}
+		rc = setup_saa(peasycap->pusb_device, ntsc);
+		if (rc) {
+			SAM("ERROR: setup_saa() rc = %i\n", rc);
+			return -EFAULT;
+		}
+
+		rate = ready_saa(peasycap->pusb_device);
+		if (rate < 0) {
+			JOM(8, "not ready to capture after %i ms\n", PATIENCE);
+			JOM(8, "... saa register 0x1F has 0x%02X\n",
 					read_saa(peasycap->pusb_device, 0x1F));
-		ntsc = peasycap->ntsc;
+			ntsc = peasycap->ntsc;
 		} else {
 			JOM(8, "... success at second try:  %i=rate\n", rate);
 			ntsc = (0 < (rate/2)) ? true : false ;
@@ -266,22 +260,17 @@ static int reset(struct easycap *peasycap)
 /*---------------------------------------------------------------------------*/
 
 	rc = setup_stk(peasycap->pusb_device, ntsc);
-	if (0 == rc)
-		JOM(4, "setup_stk() OK\n");
-	else {
+	if (rc) {
 		SAM("ERROR: setup_stk() rc = %i\n", rc);
 		return -EFAULT;
 	}
 	rc = setup_saa(peasycap->pusb_device, ntsc);
-	if (0 == rc)
-		JOM(4, "setup_saa() OK\n");
-	else {
+	if (rc) {
 		SAM("ERROR: setup_saa() rc = %i\n", rc);
 		return -EFAULT;
 	}
 
-	for (i = 0; i < 180; i++)
-		peasycap->merit[i] = 0;
+	memset(peasycap->merit, 0, sizeof(peasycap->merit));
 
 	peasycap->video_eof = 0;
 	peasycap->audio_eof = 0;
@@ -2986,25 +2975,19 @@ static const struct v4l2_file_operations v4l2_fops = {
  *  TIMES, ONCE FOR EACH OF THE THREE INTERFACES.  BEWARE.
  */
 /*---------------------------------------------------------------------------*/
-static int easycap_usb_probe(struct usb_interface *pusb_interface,
-			    const struct usb_device_id *pusb_device_id)
+static int easycap_usb_probe(struct usb_interface *intf,
+			    const struct usb_device_id *id)
 {
-	struct usb_device *pusb_device;
-	struct usb_host_interface *pusb_host_interface;
-	struct usb_endpoint_descriptor *pepd;
-	struct usb_interface_descriptor *pusb_interface_descriptor;
+	struct usb_device *usbdev;
+	struct usb_host_interface *alt;
+	struct usb_endpoint_descriptor *ep;
+	struct usb_interface_descriptor *interface;
 	struct urb *purb;
 	struct easycap *peasycap;
 	int ndong;
 	struct data_urb *pdata_urb;
 	size_t wMaxPacketSize;
-	int ISOCwMaxPacketSize;
-	int BULKwMaxPacketSize;
-	int INTwMaxPacketSize;
-	int CTRLwMaxPacketSize;
 	u8 bEndpointAddress;
-	u8 ISOCbEndpointAddress;
-	u8 INTbEndpointAddress;
 	int isin, i, j, k, m, rc;
 	u8 bInterfaceNumber;
 	u8 bInterfaceClass;
@@ -3021,23 +3004,17 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 	struct inputset *inputset;
 	struct v4l2_device *pv4l2_device;
 
-/*---------------------------------------------------------------------------*/
-/*
- *  GET POINTER TO STRUCTURE usb_device
- */
-/*---------------------------------------------------------------------------*/
-	pusb_device = interface_to_usbdev(pusb_interface);
+	usbdev = interface_to_usbdev(intf);
 
-	JOT(4, "bNumConfigurations=%i\n", pusb_device->descriptor.bNumConfigurations);
 /*---------------------------------------------------------------------------*/
-	pusb_host_interface = pusb_interface->cur_altsetting;
-	if (!pusb_host_interface) {
-		SAY("ERROR: pusb_host_interface is NULL\n");
+	alt = usb_altnum_to_altsetting(intf, 0);
+	if (!alt) {
+		SAY("ERROR: usb_host_interface not found\n");
 		return -EFAULT;
 	}
-	pusb_interface_descriptor = &(pusb_host_interface->desc);
-	if (!pusb_interface_descriptor) {
-		SAY("ERROR: pusb_interface_descriptor is NULL\n");
+	interface = &alt->desc;
+	if (!interface) {
+		SAY("ERROR: intf_descriptor is NULL\n");
 		return -EFAULT;
 	}
 /*---------------------------------------------------------------------------*/
@@ -3045,16 +3022,15 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  GET PROPERTIES OF PROBED INTERFACE
  */
 /*---------------------------------------------------------------------------*/
-	bInterfaceNumber = pusb_interface_descriptor->bInterfaceNumber;
-	bInterfaceClass = pusb_interface_descriptor->bInterfaceClass;
-	bInterfaceSubClass = pusb_interface_descriptor->bInterfaceSubClass;
+	bInterfaceNumber = interface->bInterfaceNumber;
+	bInterfaceClass = interface->bInterfaceClass;
+	bInterfaceSubClass = interface->bInterfaceSubClass;
 
 	JOT(4, "intf[%i]: num_altsetting=%i\n",
-			bInterfaceNumber, pusb_interface->num_altsetting);
+			bInterfaceNumber, intf->num_altsetting);
 	JOT(4, "intf[%i]: cur_altsetting - altsetting=%li\n",
 		bInterfaceNumber,
-		(long int)(pusb_interface->cur_altsetting -
-				pusb_interface->altsetting));
+		(long int)(intf->cur_altsetting - intf->altsetting));
 	JOT(4, "intf[%i]: bInterfaceClass=0x%02X bInterfaceSubClass=0x%02X\n",
 			bInterfaceNumber, bInterfaceClass, bInterfaceSubClass);
 /*---------------------------------------------------------------------------*/
@@ -3140,8 +3116,8 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  ... AND FURTHER INITIALIZE THE STRUCTURE
 */
 /*---------------------------------------------------------------------------*/
-		peasycap->pusb_device = pusb_device;
-		peasycap->pusb_interface = pusb_interface;
+		peasycap->pusb_device = usbdev;
+		peasycap->pusb_interface = intf;
 
 		peasycap->ilk = 0;
 		peasycap->microphone = false;
@@ -3275,7 +3251,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  */
 /*---------------------------------------------------------------------------*/
 		for (ndong = 0; ndong < DONGLE_MANY; ndong++) {
-			if (pusb_device == easycapdc60_dongle[ndong].peasycap->
+			if (usbdev == easycapdc60_dongle[ndong].peasycap->
 									pusb_device) {
 				peasycap = easycapdc60_dongle[ndong].peasycap;
 				JOT(8, "intf[%i]: dongle[%i].peasycap\n",
@@ -3302,7 +3278,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 */
 /*---------------------------------------------------------------------------*/
 		if (memcmp(&peasycap->telltale[0], TELLTALE, strlen(TELLTALE))) {
-			pv4l2_device = usb_get_intfdata(pusb_interface);
+			pv4l2_device = usb_get_intfdata(intf);
 			if (!pv4l2_device) {
 				SAY("ERROR: pv4l2_device is NULL\n");
 				return -ENODEV;
@@ -3351,70 +3327,63 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 /*---------------------------------------------------------------------------*/
 	isokalt = 0;
 
-	for (i = 0; i < pusb_interface->num_altsetting; i++) {
-		pusb_host_interface = &(pusb_interface->altsetting[i]);
-		if (!pusb_host_interface) {
-			SAM("ERROR: pusb_host_interface is NULL\n");
+	for (i = 0; i < intf->num_altsetting; i++) {
+		alt = usb_altnum_to_altsetting(intf, i);
+		if (!alt) {
+			SAM("ERROR: alt is NULL\n");
 			return -EFAULT;
 		}
-		pusb_interface_descriptor = &(pusb_host_interface->desc);
-		if (!pusb_interface_descriptor) {
-			SAM("ERROR: pusb_interface_descriptor is NULL\n");
+		interface = &alt->desc;
+		if (!interface) {
+			SAM("ERROR: intf_descriptor is NULL\n");
 			return -EFAULT;
 		}
 
 		JOM(4, "intf[%i]alt[%i]: desc.bDescriptorType=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bDescriptorType);
+		bInterfaceNumber, i, interface->bDescriptorType);
 		JOM(4, "intf[%i]alt[%i]: desc.bInterfaceNumber=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bInterfaceNumber);
+		bInterfaceNumber, i, interface->bInterfaceNumber);
 		JOM(4, "intf[%i]alt[%i]: desc.bAlternateSetting=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bAlternateSetting);
+		bInterfaceNumber, i, interface->bAlternateSetting);
 		JOM(4, "intf[%i]alt[%i]: desc.bNumEndpoints=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bNumEndpoints);
+		bInterfaceNumber, i, interface->bNumEndpoints);
 		JOM(4, "intf[%i]alt[%i]: desc.bInterfaceClass=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bInterfaceClass);
+		bInterfaceNumber, i, interface->bInterfaceClass);
 		JOM(4, "intf[%i]alt[%i]: desc.bInterfaceSubClass=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bInterfaceSubClass);
+		bInterfaceNumber, i, interface->bInterfaceSubClass);
 		JOM(4, "intf[%i]alt[%i]: desc.bInterfaceProtocol=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->bInterfaceProtocol);
+		bInterfaceNumber, i, interface->bInterfaceProtocol);
 		JOM(4, "intf[%i]alt[%i]: desc.iInterface=0x%02X\n",
-		bInterfaceNumber, i, pusb_interface_descriptor->iInterface);
+		bInterfaceNumber, i, interface->iInterface);
 
-		ISOCwMaxPacketSize = -1;
-		BULKwMaxPacketSize = -1;
-		INTwMaxPacketSize = -1;
-		CTRLwMaxPacketSize = -1;
-		ISOCbEndpointAddress = 0;
-		INTbEndpointAddress = 0;
-
-		if (0 == pusb_interface_descriptor->bNumEndpoints)
+		if (0 == interface->bNumEndpoints)
 			JOM(4, "intf[%i]alt[%i] has no endpoints\n",
 						bInterfaceNumber, i);
 /*---------------------------------------------------------------------------*/
-		for (j = 0; j < pusb_interface_descriptor->bNumEndpoints; j++) {
-			pepd = &(pusb_host_interface->endpoint[j].desc);
-			if (!pepd) {
-				SAM("ERROR:  pepd is NULL.\n");
+		for (j = 0; j < interface->bNumEndpoints; j++) {
+			ep = &alt->endpoint[j].desc;
+			if (!ep) {
+				SAM("ERROR:  ep is NULL.\n");
 				SAM("...... skipping\n");
 				continue;
 			}
-			wMaxPacketSize = le16_to_cpu(pepd->wMaxPacketSize);
-			bEndpointAddress = pepd->bEndpointAddress;
+			wMaxPacketSize = le16_to_cpu(ep->wMaxPacketSize);
+			bEndpointAddress = ep->bEndpointAddress;
 
 			JOM(4, "intf[%i]alt[%i]end[%i]: bEndpointAddress=0x%X\n",
 					bInterfaceNumber, i, j,
-					pepd->bEndpointAddress);
+					ep->bEndpointAddress);
 			JOM(4, "intf[%i]alt[%i]end[%i]: bmAttributes=0x%X\n",
 					bInterfaceNumber, i, j,
-					pepd->bmAttributes);
+					ep->bmAttributes);
 			JOM(4, "intf[%i]alt[%i]end[%i]: wMaxPacketSize=%i\n",
 					bInterfaceNumber, i, j,
-					pepd->wMaxPacketSize);
+					ep->wMaxPacketSize);
 			JOM(4, "intf[%i]alt[%i]end[%i]: bInterval=%i\n",
 					bInterfaceNumber, i, j,
-					pepd->bInterval);
+					ep->bInterval);
 
-			if (pepd->bEndpointAddress & USB_DIR_IN) {
+			if (ep->bEndpointAddress & USB_DIR_IN) {
 				JOM(4, "intf[%i]alt[%i]end[%i] is an  IN  endpoint\n",
 							bInterfaceNumber, i, j);
 				isin = 1;
@@ -3425,7 +3394,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 				SAM("...... continuing\n");
 				isin = 0;
 			}
-			if ((pepd->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) ==
+			if ((ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) ==
 						USB_ENDPOINT_XFER_ISOC) {
 				JOM(4, "intf[%i]alt[%i]end[%i] is an ISOC endpoint\n",
 							bInterfaceNumber, i, j);
@@ -3438,7 +3407,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 								"peasycap is NULL\n");
 							return -EFAULT;
 						}
-						if (pepd->wMaxPacketSize) {
+						if (ep->wMaxPacketSize) {
 							if (8 > isokalt) {
 								okalt[isokalt] = i;
 								JOM(4,
@@ -3446,7 +3415,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 								okalt[isokalt],
 								isokalt);
 								okepn[isokalt] =
-								pepd->
+								ep->
 								bEndpointAddress &
 								0x0F;
 								JOM(4,
@@ -3454,7 +3423,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 								okepn[isokalt],
 								isokalt);
 								okmps[isokalt] =
-								le16_to_cpu(pepd->
+								le16_to_cpu(ep->
 								wMaxPacketSize);
 								JOM(4,
 								"%i=okmps[%i]\n",
@@ -3496,7 +3465,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 							"peasycap is NULL\n");
 							return -EFAULT;
 						}
-						if (pepd->wMaxPacketSize) {
+						if (ep->wMaxPacketSize) {
 							if (8 > isokalt) {
 								okalt[isokalt] = i ;
 								JOM(4,
@@ -3504,7 +3473,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 								okalt[isokalt],
 								isokalt);
 								okepn[isokalt] =
-								pepd->
+								ep->
 								bEndpointAddress &
 								0x0F;
 								JOM(4,
@@ -3512,7 +3481,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 								okepn[isokalt],
 								isokalt);
 								okmps[isokalt] =
-								le16_to_cpu(pepd->
+								le16_to_cpu(ep->
 								wMaxPacketSize);
 								JOM(4,
 								"%i=okmps[%i]\n",
@@ -3550,12 +3519,12 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 						break;
 					}
 				}
-			} else if ((pepd->bmAttributes &
+			} else if ((ep->bmAttributes &
 							USB_ENDPOINT_XFERTYPE_MASK) ==
 							USB_ENDPOINT_XFER_BULK) {
 				JOM(4, "intf[%i]alt[%i]end[%i] is a  BULK endpoint\n",
 							bInterfaceNumber, i, j);
-			} else if ((pepd->bmAttributes &
+			} else if ((ep->bmAttributes &
 							USB_ENDPOINT_XFERTYPE_MASK) ==
 							USB_ENDPOINT_XFER_INT) {
 				JOM(4, "intf[%i]alt[%i]end[%i] is an  INT endpoint\n",
@@ -3564,7 +3533,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 				JOM(4, "intf[%i]alt[%i]end[%i] is a  CTRL endpoint\n",
 							bInterfaceNumber, i, j);
 			}
-			if (0 == pepd->wMaxPacketSize) {
+			if (0 == ep->wMaxPacketSize) {
 				JOM(4, "intf[%i]alt[%i]end[%i] "
 							"has zero packet size\n",
 							bInterfaceNumber, i, j);
@@ -3577,7 +3546,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  */
 /*---------------------------------------------------------------------------*/
 	JOM(4, "initialization begins for interface %i\n",
-		pusb_interface_descriptor->bInterfaceNumber);
+		interface->bInterfaceNumber);
 	switch (bInterfaceNumber) {
 /*---------------------------------------------------------------------------*/
 /*
@@ -3844,7 +3813,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  SAVE POINTER peasycap IN THIS INTERFACE.
  */
 /*--------------------------------------------------------------------------*/
-		usb_set_intfdata(pusb_interface, peasycap);
+		usb_set_intfdata(intf, peasycap);
 /*---------------------------------------------------------------------------*/
 /*
  *  IT IS ESSENTIAL TO INITIALIZE THE HARDWARE BEFORE, RATHER THAN AFTER,
@@ -3866,7 +3835,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  THE VIDEO DEVICE CAN BE REGISTERED NOW, AS IT IS READY.
  */
 /*--------------------------------------------------------------------------*/
-		if (0 != (v4l2_device_register(&(pusb_interface->dev),
+		if (0 != (v4l2_device_register(&(intf->dev),
 							&(peasycap->v4l2_device)))) {
 			SAM("v4l2_device_register() failed\n");
 			return -ENODEV;
@@ -3924,9 +3893,9 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  SAVE POINTER peasycap IN INTERFACE 1
  */
 /*--------------------------------------------------------------------------*/
-		usb_set_intfdata(pusb_interface, peasycap);
+		usb_set_intfdata(intf, peasycap);
 		JOM(4, "no initialization required for interface %i\n",
-					pusb_interface_descriptor->bInterfaceNumber);
+					interface->bInterfaceNumber);
 		break;
 	}
 /*--------------------------------------------------------------------------*/
@@ -4188,7 +4157,7 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
  *  SAVE POINTER peasycap IN THIS INTERFACE.
  */
 /*---------------------------------------------------------------------------*/
-		usb_set_intfdata(pusb_interface, peasycap);
+		usb_set_intfdata(intf, peasycap);
 /*---------------------------------------------------------------------------*/
 /*
  *  THE AUDIO DEVICE CAN BE REGISTERED NOW, AS IT IS READY.
@@ -4201,28 +4170,22 @@ static int easycap_usb_probe(struct usb_interface *pusb_interface,
 		if (rc) {
 			err("easycap_alsa_probe() rc = %i\n", rc);
 			return -ENODEV;
-		} else {
-			JOM(8, "kref_get() with %i=kref.refcount.counter\n",
-					peasycap->kref.refcount.counter);
-			kref_get(&peasycap->kref);
-			peasycap->registered_audio++;
 		}
 
 #else /* CONFIG_EASYCAP_OSS */
-		rc = usb_register_dev(pusb_interface, &easyoss_class);
+		rc = usb_register_dev(intf, &easyoss_class);
 		if (rc) {
 			SAY("ERROR: usb_register_dev() failed\n");
-			usb_set_intfdata(pusb_interface, NULL);
+			usb_set_intfdata(intf, NULL);
 			return -ENODEV;
-		} else {
-			JOM(8, "kref_get() with %i=kref.refcount.counter\n",
-					peasycap->kref.refcount.counter);
-			kref_get(&peasycap->kref);
-			peasycap->registered_audio++;
 		}
-		SAM("easyoss attached to minor #%d\n", pusb_interface->minor);
+		SAM("easyoss attached to minor #%d\n", intf->minor);
 #endif /* CONFIG_EASYCAP_OSS */
 
+		JOM(8, "kref_get() with %i=kref.refcount.counter\n",
+				peasycap->kref.refcount.counter);
+		kref_get(&peasycap->kref);
+		peasycap->registered_audio++;
 		break;
 	}
 /*---------------------------------------------------------------------------*/

@@ -164,10 +164,6 @@ struct ampdu_info *wlc_ampdu_attach(struct wlc_info *wlc)
 	struct ampdu_info *ampdu;
 	int i;
 
-	/* some code depends on packed structures */
-	ASSERT(DOT11_MAXNUMFRAGS == NBITS(u16));
-	ASSERT(ISPOWEROF2(AMPDU_TX_BA_MAX_WSIZE));
-	ASSERT(ISPOWEROF2(AMPDU_RX_BA_MAX_WSIZE));
 	ASSERT(wlc->pub->tunables->ampdunummpdu <= AMPDU_MAX_MPDU);
 	ASSERT(wlc->pub->tunables->ampdunummpdu > 0);
 
@@ -406,7 +402,7 @@ static int wlc_ffpld_check_txfunfl(struct wlc_info *wlc, int fid)
 		/*
 		   compute a new dma xfer rate for max_mpdu @ max mcs.
 		   This is the minimum dma rate that
-		   can achieve no unferflow condition for the current mpdu size.
+		   can achieve no underflow condition for the current mpdu size.
 		 */
 		/* note : we divide/multiply by 100 to avoid integer overflows */
 		fifo->dmaxferrate =
@@ -687,7 +683,10 @@ wlc_sendampdu(struct ampdu_info *ampdu, struct wlc_txq_info *qi,
 			WL_NONE("sendampdu: sgi %d, is40 %d, mcs %d\n",
 				sgi, is40, mcs);
 
-			maxlen = 64 * 1024;	/* XXX Fix me to honor real max_rxlen */
+			/* XXX Fix me to honor real max_rxlen */
+			/* can fix this as soon as ampdu_action() in mac80211.h
+			 * gets extra u8buf_size par */
+			maxlen = 64 * 1024;
 
 			if (is40)
 				mimo_ctlchbw =
@@ -1123,21 +1122,12 @@ wlc_ampdu_dotxstatus_complete(struct ampdu_info *ampdu, struct scb *scb,
 				ini->txretry[index] = 0;
 
 				/* ampdu_ack_len: number of acked aggregated frames */
-				/* ampdu_ack_map: block ack bit map for the aggregation */
 				/* ampdu_len: number of aggregated frames */
 				rate_status(wlc, tx_info, txs, mcs);
 				tx_info->flags |= IEEE80211_TX_STAT_ACK;
 				tx_info->flags |= IEEE80211_TX_STAT_AMPDU;
-
-				/* XXX TODO: Make these accurate. */
 				tx_info->status.ampdu_ack_len =
-				    (txs->
-				     status & TX_STATUS_FRM_RTX_MASK) >>
-				    TX_STATUS_FRM_RTX_SHIFT;
-				tx_info->status.ampdu_len =
-				    (txs->
-				     status & TX_STATUS_FRM_RTX_MASK) >>
-				    TX_STATUS_FRM_RTX_SHIFT;
+					tx_info->status.ampdu_len = 1;
 
 				skb_pull(p, D11_PHY_HDR_LEN);
 				skb_pull(p, D11_TXH_LEN);
@@ -1163,6 +1153,8 @@ wlc_ampdu_dotxstatus_complete(struct ampdu_info *ampdu, struct scb *scb,
 				/* Retry timeout */
 				ini->tx_in_transit--;
 				ieee80211_tx_info_clear_status(tx_info);
+				tx_info->status.ampdu_ack_len = 0;
+				tx_info->status.ampdu_len = 1;
 				tx_info->flags |=
 				    IEEE80211_TX_STAT_AMPDU_NO_BACK;
 				skb_pull(p, D11_PHY_HDR_LEN);
