@@ -11,7 +11,7 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/device.h>
+#include <linux/platform_device.h>
 #include <linux/list.h>
 #include <linux/errno.h>
 #include <linux/err.h>
@@ -31,8 +31,11 @@ static DEFINE_MUTEX(clocks_mutex);
  *  If an entry has a connection ID, it must match
  * Then we take the most specific entry - with the following
  * order of precedence: dev+con > dev only > con only.
+ *
+ * if id > 0 the dev_id will just contain the base name of the device
+ * it's need to search dev_id before slab is available
  */
-static struct clk *clk_find(const char *dev_id, const char *con_id)
+static struct clk *clk_find(const char *dev_id, int id, const char *con_id)
 {
 	struct clk_lookup *p;
 	struct clk *clk = NULL;
@@ -41,8 +44,19 @@ static struct clk *clk_find(const char *dev_id, const char *con_id)
 	list_for_each_entry(p, &clocks, node) {
 		match = 0;
 		if (p->dev_id) {
-			if (!dev_id || strcmp(p->dev_id, dev_id))
+			if (!dev_id) {
 				continue;
+			} else if (id < 0 && strcmp(p->dev_id, dev_id)) {
+				continue;
+			} else {
+				int len = strlen(dev_id);
+
+				if (strncmp(p->dev_id, dev_id, len))
+					continue;
+
+				if (simple_strtoul(p->dev_id + len + 1, NULL, 10) != id)
+					continue;
+			}
 			match += 2;
 		}
 		if (p->con_id) {
@@ -62,19 +76,36 @@ static struct clk *clk_find(const char *dev_id, const char *con_id)
 	return clk;
 }
 
-struct clk *clk_get_sys(const char *dev_id, const char *con_id)
+struct clk *clk_get_sys_id(const char *dev_id, int id, const char *con_id)
 {
 	struct clk *clk;
 
 	mutex_lock(&clocks_mutex);
-	clk = clk_find(dev_id, con_id);
+	clk = clk_find(dev_id, id, con_id);
 	if (clk && !__clk_get(clk))
 		clk = NULL;
 	mutex_unlock(&clocks_mutex);
 
 	return clk ? clk : ERR_PTR(-ENOENT);
 }
-EXPORT_SYMBOL(clk_get_sys);
+EXPORT_SYMBOL(clk_get_sys_id);
+
+struct clk *clk_get_pdev(struct platform_device *pdev, const char *con_id)
+{
+	const char *dev_id;
+
+	if (!pdev)
+		return clk_get_sys(NULL, con_id);
+
+	dev_id = dev_name(&pdev->dev);
+
+	/* if the slub is not available dev_id is NULL */
+	if (is_early_platform_device(pdev) && !dev_id)
+		return clk_get_sys_id(pdev->name, pdev->id, NULL);
+
+	return clk_get_sys(dev_id, con_id);
+}
+EXPORT_SYMBOL(clk_get_pdev);
 
 struct clk *clk_get(struct device *dev, const char *con_id)
 {
