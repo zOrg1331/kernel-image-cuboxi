@@ -163,7 +163,7 @@ cifs_read_super(struct super_block *sb, void *data,
 	sb->s_bdi = &cifs_sb->bdi;
 	sb->s_blocksize = CIFS_MAX_MSGSIZE;
 	sb->s_blocksize_bits = 14;	/* default 2**14 = CIFS_MAX_MSGSIZE */
-	inode = cifs_root_iget(sb, ROOT_I);
+	inode = cifs_root_iget(sb);
 
 	if (IS_ERR(inode)) {
 		rc = PTR_ERR(inode);
@@ -184,12 +184,12 @@ cifs_read_super(struct super_block *sb, void *data,
 	else
 		sb->s_d_op = &cifs_dentry_ops;
 
-#ifdef CONFIG_CIFS_EXPERIMENTAL
+#ifdef CIFS_NFSD_EXPORT
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM) {
 		cFYI(1, "export ops supported");
 		sb->s_export_op = &cifs_export_ops;
 	}
-#endif /* EXPERIMENTAL */
+#endif /* CIFS_NFSD_EXPORT */
 
 	return 0;
 
@@ -981,10 +981,10 @@ init_cifs(void)
 	int rc = 0;
 	cifs_proc_init();
 	INIT_LIST_HEAD(&cifs_tcp_ses_list);
-#ifdef CONFIG_CIFS_EXPERIMENTAL
+#ifdef CONFIG_CIFS_DNOTIFY_EXPERIMENTAL /* unused temporarily */
 	INIT_LIST_HEAD(&GlobalDnotifyReqList);
 	INIT_LIST_HEAD(&GlobalDnotifyRsp_Q);
-#endif
+#endif /* was needed for dnotify, and will be needed for inotify when VFS fix */
 /*
  *  Initialize Global counters
  */
@@ -1040,11 +1040,16 @@ init_cifs(void)
 	rc = register_key_type(&cifs_spnego_key_type);
 	if (rc)
 		goto out_unregister_filesystem;
+	rc = init_cifs_idmap();
+	if (rc)
+		goto out_unregister_keytype;
 #endif
 
 	return 0;
 
 #ifdef CONFIG_CIFS_UPCALL
+out_unregister_keytype:
+	unregister_key_type(&cifs_spnego_key_type);
 out_unregister_filesystem:
 	unregister_filesystem(&cifs_fs_type);
 #endif
@@ -1071,6 +1076,8 @@ exit_cifs(void)
 	cifs_dfs_release_automount_timer();
 #endif
 #ifdef CONFIG_CIFS_UPCALL
+	cifs_destroy_idmaptrees();
+	exit_cifs_idmap();
 	unregister_key_type(&cifs_spnego_key_type);
 #endif
 	unregister_filesystem(&cifs_fs_type);

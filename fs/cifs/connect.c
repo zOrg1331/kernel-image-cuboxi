@@ -102,6 +102,7 @@ struct smb_vol {
 	bool fsc:1;	/* enable fscache */
 	bool mfsymlinks:1; /* use Minshall+French Symlinks */
 	bool multiuser:1;
+	bool use_smb2:1; /* force smb2 use on mount instead of cifs */
 	unsigned int rsize;
 	unsigned int wsize;
 	bool sockopt_tcp_nodelay:1;
@@ -721,7 +722,7 @@ multi_t2_fnd:
 		sock_release(csocket);
 		server->ssocket = NULL;
 	}
-	/* buffer usuallly freed in free_mid - need to free it here on exit */
+	/* buffer usually freed in free_mid - need to free it here on exit */
 	cifs_buf_release(bigbuf);
 	if (smallbuf) /* no sense logging a debug message if NULL */
 		cifs_small_buf_release(smallbuf);
@@ -1023,6 +1024,22 @@ cifs_parse_mount_options(char *options, const char *devname,
 			} else {
 				cERROR(1, "bad security option: %s", value);
 				return 1;
+			}
+		} else if (strnicmp(data, "vers", 3) == 0) {
+			if (!value || !*value) {
+				cERROR(1, "no protocol version specified"
+					  " after vers= mount option");
+			} else if ((strnicmp(value, "cifs", 4) == 0) ||
+				   (strnicmp(value, "1", 1) == 0)) {
+				/* this is the default */
+				continue;
+			} else if ((strnicmp(value, "smb2", 4) == 0) ||
+				   (strnicmp(value, "2", 1) == 0)) {
+#ifdef CONFIG_CIFS_SMB2
+				use_smb2 = true;
+#else
+				cERROR(1, "smb2 support not enabled");
+#endif /* CONFIG_CIFS_SMB2 */
 			}
 		} else if ((strnicmp(data, "unc", 3) == 0)
 			   || (strnicmp(data, "target", 6) == 0)
@@ -3239,7 +3256,9 @@ cifs_construct_tcon(struct cifs_sb_info *cifs_sb, uid_t fsuid)
 	struct cifsSesInfo *ses;
 	struct cifsTconInfo *tcon = NULL;
 	struct smb_vol *vol_info;
-	char username[MAX_USERNAME_SIZE + 1];
+	char username[28]; /* big enough for "krb50x" + hex of ULONG_MAX 6+16 */
+			   /* We used to have this as MAX_USERNAME which is   */
+			   /* way too big now (256 instead of 32) */
 
 	vol_info = kzalloc(sizeof(*vol_info), GFP_KERNEL);
 	if (vol_info == NULL) {
