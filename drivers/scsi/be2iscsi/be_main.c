@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2010 ServerEngines
+ * Copyright (C) 2005 - 2011 Emulex
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -7,16 +7,16 @@
  * as published by the Free Software Foundation.  The full GNU General
  * Public License is included in this distribution in the file called COPYING.
  *
- * Written by: Jayamohan Kallickal (jayamohank@serverengines.com)
+ * Written by: Jayamohan Kallickal (jayamohan.kallickal@emulex.com)
  *
  * Contact Information:
- * linux-drivers@serverengines.com
+ * linux-drivers@emulex.com
  *
- *  ServerEngines
- * 209 N. Fair Oaks Ave
- * Sunnyvale, CA 94085
- *
+ * Emulex
+ * 3333 Susan Street
+ * Costa Mesa, CA 92626
  */
+
 #include <linux/reboot.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
@@ -420,7 +420,8 @@ static int beiscsi_setup_boot_info(struct beiscsi_hba *phba)
 	return 0;
 
 free_kset:
-	iscsi_boot_destroy_kset(phba->boot_kset);
+	if (phba->boot_kset)
+		iscsi_boot_destroy_kset(phba->boot_kset);
 	return -ENOMEM;
 }
 
@@ -4019,12 +4020,17 @@ static int beiscsi_mtask(struct iscsi_task *task)
 		hwi_write_buffer(pwrb, task);
 		break;
 	case ISCSI_OP_NOOP_OUT:
-		AMAP_SET_BITS(struct amap_iscsi_wrb, type, pwrb,
-			      INI_RD_CMD);
-		if (task->hdr->ttt == ISCSI_RESERVED_TAG)
+		if (task->hdr->ttt != ISCSI_RESERVED_TAG) {
+			AMAP_SET_BITS(struct amap_iscsi_wrb, type, pwrb,
+				      TGT_DM_CMD);
+			AMAP_SET_BITS(struct amap_iscsi_wrb, cmdsn_itt,
+				      pwrb, 0);
 			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 0);
-		else
+		} else {
+			AMAP_SET_BITS(struct amap_iscsi_wrb, type, pwrb,
+				      INI_RD_CMD);
 			AMAP_SET_BITS(struct amap_iscsi_wrb, dmsg, pwrb, 1);
+		}
 		hwi_write_buffer(pwrb, task);
 		break;
 	case ISCSI_OP_TEXT:
@@ -4144,10 +4150,11 @@ static void beiscsi_remove(struct pci_dev *pcidev)
 			    phba->ctrl.mbox_mem_alloced.size,
 			    phba->ctrl.mbox_mem_alloced.va,
 			    phba->ctrl.mbox_mem_alloced.dma);
+	if (phba->boot_kset)
+		iscsi_boot_destroy_kset(phba->boot_kset);
 	iscsi_host_remove(phba->shost);
 	pci_dev_put(phba->pcidev);
 	iscsi_host_free(phba->shost);
-	iscsi_boot_destroy_kset(phba->boot_kset);
 }
 
 static void beiscsi_msix_enable(struct beiscsi_hba *phba)
