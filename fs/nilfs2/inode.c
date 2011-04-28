@@ -596,6 +596,16 @@ void nilfs_write_inode_common(struct inode *inode,
 	raw_inode->i_flags = cpu_to_le32(ii->i_flags);
 	raw_inode->i_generation = cpu_to_le32(inode->i_generation);
 
+	if (NILFS_ROOT_METADATA_FILE(inode->i_ino)) {
+		struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+
+		/* zero-fill unused portion in the case of super root block */
+		raw_inode->i_xattr = 0;
+		raw_inode->i_pad = 0;
+		memset((void *)raw_inode + sizeof(*raw_inode), 0,
+		       nilfs->ns_inode_size - sizeof(*raw_inode));
+	}
+
 	if (has_bmap)
 		nilfs_bmap_write(ii->i_bmap, raw_inode);
 	else if (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode))
@@ -872,8 +882,7 @@ int nilfs_set_file_dirty(struct inode *inode, unsigned nr_dirty)
 			return -EINVAL; /* NILFS_I_DIRTY may remain for
 					   freeing inode */
 		}
-		list_del(&ii->i_dirty);
-		list_add_tail(&ii->i_dirty, &nilfs->ns_dirty_files);
+		list_move_tail(&ii->i_dirty, &nilfs->ns_dirty_files);
 		set_bit(NILFS_I_QUEUED, &ii->i_state);
 	}
 	spin_unlock(&nilfs->ns_inode_lock);
