@@ -1315,7 +1315,8 @@ void dev_disable_lro(struct net_device *dev)
 		return;
 
 	__ethtool_set_flags(dev, flags & ~ETH_FLAG_LRO);
-	WARN_ON(dev->features & NETIF_F_LRO);
+	if (unlikely(dev->features & NETIF_F_LRO))
+		netdev_WARN(dev, "failed to disable LRO!\n");
 }
 EXPORT_SYMBOL(dev_disable_lro);
 
@@ -2502,8 +2503,8 @@ static inline void ____napi_schedule(struct softnet_data *sd,
 __u32 __skb_get_rxhash(struct sk_buff *skb)
 {
 	int nhoff, hash = 0, poff;
-	struct ipv6hdr *ip6;
-	struct iphdr *ip;
+	const struct ipv6hdr *ip6;
+	const struct iphdr *ip;
 	u8 ip_proto;
 	u32 addr1, addr2, ihl;
 	union {
@@ -2518,7 +2519,7 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 		if (!pskb_may_pull(skb, sizeof(*ip) + nhoff))
 			goto done;
 
-		ip = (struct iphdr *) (skb->data + nhoff);
+		ip = (const struct iphdr *) (skb->data + nhoff);
 		if (ip->frag_off & htons(IP_MF | IP_OFFSET))
 			ip_proto = 0;
 		else
@@ -2531,7 +2532,7 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 		if (!pskb_may_pull(skb, sizeof(*ip6) + nhoff))
 			goto done;
 
-		ip6 = (struct ipv6hdr *) (skb->data + nhoff);
+		ip6 = (const struct ipv6hdr *) (skb->data + nhoff);
 		ip_proto = ip6->nexthdr;
 		addr1 = (__force u32) ip6->saddr.s6_addr32[3];
 		addr2 = (__force u32) ip6->daddr.s6_addr32[3];
@@ -3076,25 +3077,6 @@ void netdev_rx_handler_unregister(struct net_device *dev)
 }
 EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
 
-static void vlan_on_bond_hook(struct sk_buff *skb)
-{
-	/*
-	 * Make sure ARP frames received on VLAN interfaces stacked on
-	 * bonding interfaces still make their way to any base bonding
-	 * device that may have registered for a specific ptype.
-	 */
-	if (skb->dev->priv_flags & IFF_802_1Q_VLAN &&
-	    vlan_dev_real_dev(skb->dev)->priv_flags & IFF_BONDING &&
-	    skb->protocol == htons(ETH_P_ARP)) {
-		struct sk_buff *skb2 = skb_clone(skb, GFP_ATOMIC);
-
-		if (!skb2)
-			return;
-		skb2->dev = vlan_dev_real_dev(skb->dev);
-		netif_rx(skb2);
-	}
-}
-
 static int __netif_receive_skb(struct sk_buff *skb)
 {
 	struct packet_type *ptype, *pt_prev;
@@ -3129,6 +3111,12 @@ static int __netif_receive_skb(struct sk_buff *skb)
 another_round:
 
 	__this_cpu_inc(softnet_data.processed);
+
+	if (skb->protocol == cpu_to_be16(ETH_P_8021Q)) {
+		skb = vlan_untag(skb);
+		if (unlikely(!skb))
+			goto out;
+	}
 
 #ifdef CONFIG_NET_CLS_ACT
 	if (skb->tc_verd & TC_NCLS) {
@@ -3177,14 +3165,12 @@ ncls:
 			ret = deliver_skb(skb, pt_prev, orig_dev);
 			pt_prev = NULL;
 		}
-		if (vlan_hwaccel_do_receive(&skb)) {
+		if (vlan_do_receive(&skb)) {
 			ret = __netif_receive_skb(skb);
 			goto out;
 		} else if (unlikely(!skb))
 			goto out;
 	}
-
-	vlan_on_bond_hook(skb);
 
 	/* deliver only exact match when indicated */
 	null_or_dev = deliver_exact ? skb->dev : NULL;
@@ -5240,10 +5226,12 @@ u32 netdev_fix_features(struct net_device *dev, u32 features)
 }
 EXPORT_SYMBOL(netdev_fix_features);
 
-void netdev_update_features(struct net_device *dev)
+int __netdev_update_features(struct net_device *dev)
 {
 	u32 features;
 	int err = 0;
+
+	ASSERT_RTNL();
 
 	features = netdev_get_wanted_features(dev);
 
@@ -5254,7 +5242,7 @@ void netdev_update_features(struct net_device *dev)
 	features = netdev_fix_features(dev, features);
 
 	if (dev->features == features)
-		return;
+		return 0;
 
 	netdev_info(dev, "Features changed: 0x%08x -> 0x%08x\n",
 		dev->features, features);
@@ -5262,12 +5250,23 @@ void netdev_update_features(struct net_device *dev)
 	if (dev->netdev_ops->ndo_set_features)
 		err = dev->netdev_ops->ndo_set_features(dev, features);
 
-	if (!err)
-		dev->features = features;
-	else if (err < 0)
+	if (unlikely(err < 0)) {
 		netdev_err(dev,
 			"set_features() failed (%d); wanted 0x%08x, left 0x%08x\n",
 			err, features, dev->features);
+		return -1;
+	}
+
+	if (!err)
+		dev->features = features;
+
+	return 1;
+}
+
+void netdev_update_features(struct net_device *dev)
+{
+	if (__netdev_update_features(dev))
+		netdev_features_change(dev);
 }
 EXPORT_SYMBOL(netdev_update_features);
 
@@ -5418,6 +5417,14 @@ int register_netdevice(struct net_device *dev)
 		dev->features &= ~NETIF_F_GSO;
 	}
 
+	/* Turn on no cache copy if HW is doing checksum */
+	dev->hw_features |= NETIF_F_NOCACHE_COPY;
+	if ((dev->features & NETIF_F_ALL_CSUM) &&
+	    !(dev->features & NETIF_F_NO_CSUM)) {
+		dev->wanted_features |= NETIF_F_NOCACHE_COPY;
+		dev->features |= NETIF_F_NOCACHE_COPY;
+	}
+
 	/* Enable GRO and NETIF_F_HIGHDMA for vlans by default,
 	 * vlan_dev_init() will do the dev->features check, so these features
 	 * are enabled only if supported by underlying device.
@@ -5434,7 +5441,7 @@ int register_netdevice(struct net_device *dev)
 		goto err_uninit;
 	dev->reg_state = NETREG_REGISTERED;
 
-	netdev_update_features(dev);
+	__netdev_update_features(dev);
 
 	/*
 	 *	Default initial state at registry is that the
@@ -6174,6 +6181,10 @@ u32 netdev_increment_features(u32 all, u32 one, u32 mask)
 			all |= NETIF_F_HW_CSUM;
 		}
 	}
+
+	/* If device can't no cache copy, don't do for all */
+	if (!(one & NETIF_F_NOCACHE_COPY))
+		all &= ~NETIF_F_NOCACHE_COPY;
 
 	one |= NETIF_F_ALL_CSUM;
 

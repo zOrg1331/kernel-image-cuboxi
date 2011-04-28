@@ -154,7 +154,7 @@ static __inline__ int icmp_filter(struct sock *sk, struct sk_buff *skb)
  * RFC 1122: SHOULD pass TOS value up to the transport layer.
  * -> It does. And not only TOS, but all IP header.
  */
-static int raw_v4_input(struct sk_buff *skb, struct iphdr *iph, int hash)
+static int raw_v4_input(struct sk_buff *skb, const struct iphdr *iph, int hash)
 {
 	struct sock *sk;
 	struct hlist_head *head;
@@ -247,7 +247,7 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 	}
 
 	if (inet->recverr) {
-		struct iphdr *iph = (struct iphdr *)skb->data;
+		const struct iphdr *iph = (const struct iphdr *)skb->data;
 		u8 *payload = skb->data + (iph->ihl << 2);
 
 		if (inet->hdrincl)
@@ -265,7 +265,7 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 {
 	int hash;
 	struct sock *raw_sk;
-	struct iphdr *iph;
+	const struct iphdr *iph;
 	struct net *net;
 
 	hash = protocol & (RAW_HTABLE_SIZE - 1);
@@ -273,7 +273,7 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 	read_lock(&raw_v4_hashinfo.lock);
 	raw_sk = sk_head(&raw_v4_hashinfo.ht[hash]);
 	if (raw_sk != NULL) {
-		iph = (struct iphdr *)skb->data;
+		iph = (const struct iphdr *)skb->data;
 		net = dev_net(skb->dev);
 
 		while ((raw_sk = __raw_v4_lookup(net, raw_sk, protocol,
@@ -281,7 +281,7 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 						skb->dev->ifindex)) != NULL) {
 			raw_err(raw_sk, skb, info);
 			raw_sk = sk_next(raw_sk);
-			iph = (struct iphdr *)skb->data;
+			iph = (const struct iphdr *)skb->data;
 		}
 	}
 	read_unlock(&raw_v4_hashinfo.lock);
@@ -548,17 +548,13 @@ static int raw_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	}
 
 	{
-		struct flowi4 fl4 = {
-			.flowi4_oif = ipc.oif,
-			.flowi4_mark = sk->sk_mark,
-			.daddr = daddr,
-			.saddr = saddr,
-			.flowi4_tos = tos,
-			.flowi4_proto = (inet->hdrincl ?
-					 IPPROTO_RAW :
-					 sk->sk_protocol),
-			.flowi4_flags = FLOWI_FLAG_CAN_SLEEP,
-		};
+		struct flowi4 fl4;
+
+		flowi4_init_output(&fl4, ipc.oif, sk->sk_mark, tos,
+				   RT_SCOPE_UNIVERSE,
+				   inet->hdrincl ? IPPROTO_RAW : sk->sk_protocol,
+				   FLOWI_FLAG_CAN_SLEEP, daddr, saddr, 0, 0);
+
 		if (!inet->hdrincl) {
 			err = raw_probe_proto_opt(&fl4, msg);
 			if (err)
