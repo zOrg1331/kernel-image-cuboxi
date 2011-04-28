@@ -339,12 +339,13 @@ static int validate_t2(struct smb_t2_rsp *pSMB)
 	    get_unaligned_le16(&pSMB->t2_rsp.DataOffset) > 1024)
 		goto vt2_err;
 
-	/* check that bcc is at least as big as parms + data */
-	/* check that bcc is less than negotiated smb buffer */
 	total_size = get_unaligned_le16(&pSMB->t2_rsp.ParameterCount);
 	if (total_size >= 512)
 		goto vt2_err;
 
+	/* check that bcc is at least as big as parms + data, and that it is
+	 * less than negotiated smb buffer
+	 */
 	total_size += get_unaligned_le16(&pSMB->t2_rsp.DataCount);
 	if (total_size > get_bcc(&pSMB->hdr) ||
 	    total_size >= CIFSMaxBufSize + MAX_CIFS_HDR_SIZE)
@@ -541,10 +542,6 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
 		server->secType = RawNTLMSSP;
 	else if (secFlags & CIFSSEC_MAY_LANMAN)
 		server->secType = LANMAN;
-/* #ifdef CONFIG_CIFS_EXPERIMENTAL
-	else if (secFlags & CIFSSEC_MAY_PLNTXT)
-		server->secType = ??
-#endif */
 	else {
 		rc = -EOPNOTSUPP;
 		cERROR(1, "Invalid security type");
@@ -2516,7 +2513,17 @@ querySymLinkRetry:
 	return rc;
 }
 
-#ifdef CONFIG_CIFS_EXPERIMENTAL
+#ifdef CONFIG_CIFS_SYMLINK_EXPERIMENTAL
+/*
+ *	Recent Windows versions now create symlinks more frequently
+ *	and they use the "reparse point" mechanism below.  We can of course
+ *	do symlinks nicely to Samba and other servers which support the
+ *	CIFS Unix Extensions and we can also do SFU symlinks and "client only"
+ *	"MF" symlinks optionally, but for recent Windows we really need to
+ *	reenable the code below and fix the cifs_symlink callers to handle this.
+ *	In the interim this code has been moved to its own config option so
+ *	it is not compiled in by default until callers fixed up and more tested.
+ */
 int
 CIFSSMBQueryReparseLinkInfo(const int xid, struct cifsTconInfo *tcon,
 			const unsigned char *searchName,
@@ -2618,7 +2625,7 @@ qreparse_out:
 
 	return rc;
 }
-#endif /* CIFS_EXPERIMENTAL */
+#endif /* CIFS_SYMLINK_EXPERIMENTAL */ /* BB temporarily unused */
 
 #ifdef CONFIG_CIFS_POSIX
 
@@ -5418,79 +5425,6 @@ setPermsRetry:
 	return rc;
 }
 
-int CIFSSMBNotify(const int xid, struct cifsTconInfo *tcon,
-		  const int notify_subdirs, const __u16 netfid,
-		  __u32 filter, struct file *pfile, int multishot,
-		  const struct nls_table *nls_codepage)
-{
-	int rc = 0;
-	struct smb_com_transaction_change_notify_req *pSMB = NULL;
-	struct smb_com_ntransaction_change_notify_rsp *pSMBr = NULL;
-	struct dir_notify_req *dnotify_req;
-	int bytes_returned;
-
-	cFYI(1, "In CIFSSMBNotify for file handle %d", (int)netfid);
-	rc = smb_init(SMB_COM_NT_TRANSACT, 23, tcon, (void **) &pSMB,
-		      (void **) &pSMBr);
-	if (rc)
-		return rc;
-
-	pSMB->TotalParameterCount = 0 ;
-	pSMB->TotalDataCount = 0;
-	pSMB->MaxParameterCount = cpu_to_le32(2);
-	/* BB find exact data count max from sess structure BB */
-	pSMB->MaxDataCount = 0; /* same in little endian or be */
-/* BB VERIFY verify which is correct for above BB */
-	pSMB->MaxDataCount = cpu_to_le32((tcon->ses->server->maxBuf -
-					     MAX_CIFS_HDR_SIZE) & 0xFFFFFF00);
-
-	pSMB->MaxSetupCount = 4;
-	pSMB->Reserved = 0;
-	pSMB->ParameterOffset = 0;
-	pSMB->DataCount = 0;
-	pSMB->DataOffset = 0;
-	pSMB->SetupCount = 4; /* single byte does not need le conversion */
-	pSMB->SubCommand = cpu_to_le16(NT_TRANSACT_NOTIFY_CHANGE);
-	pSMB->ParameterCount = pSMB->TotalParameterCount;
-	if (notify_subdirs)
-		pSMB->WatchTree = 1; /* one byte - no le conversion needed */
-	pSMB->Reserved2 = 0;
-	pSMB->CompletionFilter = cpu_to_le32(filter);
-	pSMB->Fid = netfid; /* file handle always le */
-	pSMB->ByteCount = 0;
-
-	rc = SendReceive(xid, tcon->ses, (struct smb_hdr *) pSMB,
-			 (struct smb_hdr *)pSMBr, &bytes_returned,
-			 CIFS_ASYNC_OP);
-	if (rc) {
-		cFYI(1, "Error in Notify = %d", rc);
-	} else {
-		/* Add file to outstanding requests */
-		/* BB change to kmem cache alloc */
-		dnotify_req = kmalloc(
-						sizeof(struct dir_notify_req),
-						 GFP_KERNEL);
-		if (dnotify_req) {
-			dnotify_req->Pid = pSMB->hdr.Pid;
-			dnotify_req->PidHigh = pSMB->hdr.PidHigh;
-			dnotify_req->Mid = pSMB->hdr.Mid;
-			dnotify_req->Tid = pSMB->hdr.Tid;
-			dnotify_req->Uid = pSMB->hdr.Uid;
-			dnotify_req->netfid = netfid;
-			dnotify_req->pfile = pfile;
-			dnotify_req->filter = filter;
-			dnotify_req->multishot = multishot;
-			spin_lock(&GlobalMid_Lock);
-			list_add_tail(&dnotify_req->lhead,
-					&GlobalDnotifyReqList);
-			spin_unlock(&GlobalMid_Lock);
-		} else
-			rc = -ENOMEM;
-	}
-	cifs_buf_release(pSMB);
-	return rc;
-}
-
 #ifdef CONFIG_CIFS_XATTR
 /*
  * Do a path-based QUERY_ALL_EAS call and parse the result. This is a common
@@ -5787,5 +5721,99 @@ SetEARetry:
 
 	return rc;
 }
-
 #endif
+
+#ifdef CONFIG_CIFS_DNOTIFY_EXPERIMENTAL /* BB unused temporarily */
+/*
+ *	Years ago the kernel added a "dnotify" function for Samba server,
+ *	to allow network clients (such as Windows) to display updated
+ *	lists of files in directory listings automatically when
+ *	files are added by one user when another user has the
+ *	same directory open on their desktop.  The Linux cifs kernel
+ *	client hooked into the kernel side of this interface for
+ *	the same reason, but ironically when the VFS moved from
+ *	"dnotify" to "inotify" it became harder to plug in Linux
+ *	network file system clients (the most obvious use case
+ *	for notify interfaces is when multiple users can update
+ *	the contents of the same directory - exactly what network
+ *	file systems can do) although the server (Samba) could
+ *	still use it.  For the short term we leave the worker
+ *	function ifdeffed out (below) until inotify is fixed
+ *	in the VFS to make it easier to plug in network file
+ *	system clients.  If inotify turns out to be permanently
+ *	incompatible for network fs clients, we could instead simply
+ *	expose this config flag by adding a future cifs (and smb2) notify ioctl.
+ */
+int CIFSSMBNotify(const int xid, struct cifsTconInfo *tcon,
+		  const int notify_subdirs, const __u16 netfid,
+		  __u32 filter, struct file *pfile, int multishot,
+		  const struct nls_table *nls_codepage)
+{
+	int rc = 0;
+	struct smb_com_transaction_change_notify_req *pSMB = NULL;
+	struct smb_com_ntransaction_change_notify_rsp *pSMBr = NULL;
+	struct dir_notify_req *dnotify_req;
+	int bytes_returned;
+
+	cFYI(1, "In CIFSSMBNotify for file handle %d", (int)netfid);
+	rc = smb_init(SMB_COM_NT_TRANSACT, 23, tcon, (void **) &pSMB,
+		      (void **) &pSMBr);
+	if (rc)
+		return rc;
+
+	pSMB->TotalParameterCount = 0 ;
+	pSMB->TotalDataCount = 0;
+	pSMB->MaxParameterCount = cpu_to_le32(2);
+	/* BB find exact data count max from sess structure BB */
+	pSMB->MaxDataCount = 0; /* same in little endian or be */
+/* BB VERIFY verify which is correct for above BB */
+	pSMB->MaxDataCount = cpu_to_le32((tcon->ses->server->maxBuf -
+					     MAX_CIFS_HDR_SIZE) & 0xFFFFFF00);
+
+	pSMB->MaxSetupCount = 4;
+	pSMB->Reserved = 0;
+	pSMB->ParameterOffset = 0;
+	pSMB->DataCount = 0;
+	pSMB->DataOffset = 0;
+	pSMB->SetupCount = 4; /* single byte does not need le conversion */
+	pSMB->SubCommand = cpu_to_le16(NT_TRANSACT_NOTIFY_CHANGE);
+	pSMB->ParameterCount = pSMB->TotalParameterCount;
+	if (notify_subdirs)
+		pSMB->WatchTree = 1; /* one byte - no le conversion needed */
+	pSMB->Reserved2 = 0;
+	pSMB->CompletionFilter = cpu_to_le32(filter);
+	pSMB->Fid = netfid; /* file handle always le */
+	pSMB->ByteCount = 0;
+
+	rc = SendReceive(xid, tcon->ses, (struct smb_hdr *) pSMB,
+			 (struct smb_hdr *)pSMBr, &bytes_returned,
+			 CIFS_ASYNC_OP);
+	if (rc) {
+		cFYI(1, "Error in Notify = %d", rc);
+	} else {
+		/* Add file to outstanding requests */
+		/* BB change to kmem cache alloc */
+		dnotify_req = kmalloc(
+						sizeof(struct dir_notify_req),
+						 GFP_KERNEL);
+		if (dnotify_req) {
+			dnotify_req->Pid = pSMB->hdr.Pid;
+			dnotify_req->PidHigh = pSMB->hdr.PidHigh;
+			dnotify_req->Mid = pSMB->hdr.Mid;
+			dnotify_req->Tid = pSMB->hdr.Tid;
+			dnotify_req->Uid = pSMB->hdr.Uid;
+			dnotify_req->netfid = netfid;
+			dnotify_req->pfile = pfile;
+			dnotify_req->filter = filter;
+			dnotify_req->multishot = multishot;
+			spin_lock(&GlobalMid_Lock);
+			list_add_tail(&dnotify_req->lhead,
+					&GlobalDnotifyReqList);
+			spin_unlock(&GlobalMid_Lock);
+		} else
+			rc = -ENOMEM;
+	}
+	cifs_buf_release(pSMB);
+	return rc;
+}
+#endif /* was needed for dnotify, and will be needed for inotify when VFS fix */
