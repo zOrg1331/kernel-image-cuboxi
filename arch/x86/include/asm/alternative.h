@@ -4,7 +4,6 @@
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/stringify.h>
-#include <linux/jump_label.h>
 #include <asm/asm.h>
 
 /*
