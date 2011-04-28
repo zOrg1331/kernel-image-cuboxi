@@ -2142,8 +2142,8 @@ static void gsmld_detach_gsm(struct tty_struct *tty, struct gsm_mux *gsm)
 	gsm->tty = NULL;
 }
 
-static void gsmld_receive_buf(struct tty_struct *tty, const unsigned char *cp,
-			      char *fp, int count)
+static unsigned int gsmld_receive_buf(struct tty_struct *tty,
+		const unsigned char *cp, char *fp, int count)
 {
 	struct gsm_mux *gsm = tty->disc_data;
 	const unsigned char *dp;
@@ -2177,6 +2177,8 @@ static void gsmld_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 	}
 	/* FASYNC if needed ? */
 	/* If clogged call tty_throttle(tty); */
+
+	return count;
 }
 
 /**
