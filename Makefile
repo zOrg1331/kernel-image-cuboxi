@@ -382,6 +382,7 @@ export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE CFLAGS_GCOV
 export KBUILD_AFLAGS AFLAGS_KERNEL AFLAGS_MODULE
 export KBUILD_AFLAGS_MODULE KBUILD_CFLAGS_MODULE KBUILD_LDFLAGS_MODULE
 export KBUILD_AFLAGS_KERNEL KBUILD_CFLAGS_KERNEL
+export KBUILD_ARFLAGS
 
 # When compiling out-of-tree modules, put MODVERDIR in the module
 # tree rather than in the kernel tree. The kernel tree might
@@ -612,6 +613,9 @@ KBUILD_CFLAGS	+= $(call cc-option,-fno-strict-overflow)
 # conserve stack if available
 KBUILD_CFLAGS   += $(call cc-option,-fconserve-stack)
 
+# use the deterministic mode of AR if available
+KBUILD_ARFLAGS := $(call ar-option,D)
+
 # check for 'asm goto'
 ifeq ($(shell $(CONFIG_SHELL) $(srctree)/scripts/gcc-goto.sh $(CC)), y)
 	KBUILD_CFLAGS += -DCC_HAVE_ASM_GOTO
@@ -797,15 +801,17 @@ ifdef CONFIG_KALLSYMS
 # o The correct .tmp_kallsyms2.o is linked into the final vmlinux.
 # o Verify that the System.map from vmlinux matches the map from
 #   .tmp_vmlinux2, just in case we did not generate kallsyms correctly.
-# o If CONFIG_KALLSYMS_EXTRA_PASS is set, do an extra pass using
+# o If 'make KALLSYMS_EXTRA_PASS=1" was used, do an extra pass using
 #   .tmp_vmlinux3 and .tmp_kallsyms3.o.  This is only meant as a
 #   temporary bypass to allow the kernel to be built while the
 #   maintainers work out what went wrong with kallsyms.
 
-ifdef CONFIG_KALLSYMS_EXTRA_PASS
-last_kallsyms := 3
-else
 last_kallsyms := 2
+
+ifdef KALLSYMS_EXTRA_PASS
+ifneq ($(KALLSYMS_EXTRA_PASS),0)
+last_kallsyms := 3
+endif
 endif
 
 kallsyms.o := .tmp_kallsyms$(last_kallsyms).o
@@ -816,7 +822,8 @@ define verify_kallsyms
 	  $(cmd_sysmap) .tmp_vmlinux$(last_kallsyms) .tmp_System.map
 	$(Q)cmp -s System.map .tmp_System.map ||                             \
 		(echo Inconsistent kallsyms data;                            \
-		 echo Try setting CONFIG_KALLSYMS_EXTRA_PASS;                \
+		 echo This is a bug - please report about it;                \
+		 echo Try "make KALLSYMS_EXTRA_PASS=1" as a workaround;      \
 		 rm .tmp_kallsyms* ; /bin/false )
 endef
 
