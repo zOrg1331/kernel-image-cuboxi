@@ -32,6 +32,7 @@ char debugfs_path[MAXPATHLEN];
 
 static struct event_symbol event_symbols[] = {
   { CHW(CPU_CYCLES),		"cpu-cycles",		"cycles"	},
+  { CHW(STALLED_CYCLES),	"stalled-cycles",	"idle-cycles"	},
   { CHW(INSTRUCTIONS),		"instructions",		""		},
   { CHW(CACHE_REFERENCES),	"cache-references",	""		},
   { CHW(CACHE_MISSES),		"cache-misses",		""		},
@@ -53,9 +54,9 @@ static struct event_symbol event_symbols[] = {
 #define __PERF_EVENT_FIELD(config, name) \
 	((config & PERF_EVENT_##name##_MASK) >> PERF_EVENT_##name##_SHIFT)
 
-#define PERF_EVENT_RAW(config)	__PERF_EVENT_FIELD(config, RAW)
+#define PERF_EVENT_RAW(config)		__PERF_EVENT_FIELD(config, RAW)
 #define PERF_EVENT_CONFIG(config)	__PERF_EVENT_FIELD(config, CONFIG)
-#define PERF_EVENT_TYPE(config)	__PERF_EVENT_FIELD(config, TYPE)
+#define PERF_EVENT_TYPE(config)		__PERF_EVENT_FIELD(config, TYPE)
 #define PERF_EVENT_ID(config)		__PERF_EVENT_FIELD(config, EVENT)
 
 static const char *hw_event_names[] = {
@@ -66,11 +67,12 @@ static const char *hw_event_names[] = {
 	"branches",
 	"branch-misses",
 	"bus-cycles",
+	"stalled-cycles",
 };
 
 static const char *sw_event_names[] = {
-	"cpu-clock-msecs",
-	"task-clock-msecs",
+	"cpu-clock",
+	"task-clock",
 	"page-faults",
 	"context-switches",
 	"CPU-migrations",
@@ -307,7 +309,7 @@ const char *__event_name(int type, u64 config)
 
 	switch (type) {
 	case PERF_TYPE_HARDWARE:
-		if (config < PERF_COUNT_HW_MAX)
+		if (config < PERF_COUNT_HW_MAX && hw_event_names[config])
 			return hw_event_names[config];
 		return "unknown-hardware";
 
@@ -333,7 +335,7 @@ const char *__event_name(int type, u64 config)
 	}
 
 	case PERF_TYPE_SOFTWARE:
-		if (config < PERF_COUNT_SW_MAX)
+		if (config < PERF_COUNT_SW_MAX && sw_event_names[config])
 			return sw_event_names[config];
 		return "unknown-software";
 
@@ -648,13 +650,15 @@ static int check_events(const char *str, unsigned int i)
 	int n;
 
 	n = strlen(event_symbols[i].symbol);
-	if (!strncmp(str, event_symbols[i].symbol, n))
+	if (!strncasecmp(str, event_symbols[i].symbol, n))
 		return n;
 
 	n = strlen(event_symbols[i].alias);
-	if (n)
-		if (!strncmp(str, event_symbols[i].alias, n))
+	if (n) {
+		if (!strncasecmp(str, event_symbols[i].alias, n))
 			return n;
+	}
+
 	return 0;
 }
 
@@ -718,15 +722,19 @@ parse_numeric_event(const char **strp, struct perf_event_attr *attr)
 	return EVT_FAILED;
 }
 
-static enum event_result
+static int
 parse_event_modifier(const char **strp, struct perf_event_attr *attr)
 {
 	const char *str = *strp;
 	int exclude = 0;
 	int eu = 0, ek = 0, eh = 0, precise = 0;
 
-	if (*str++ != ':')
+	if (!*str)
 		return 0;
+
+	if (*str++ != ':')
+		return -1;
+
 	while (*str) {
 		if (*str == 'u') {
 			if (!exclude)
@@ -747,14 +755,16 @@ parse_event_modifier(const char **strp, struct perf_event_attr *attr)
 
 		++str;
 	}
-	if (str >= *strp + 2) {
-		*strp = str;
-		attr->exclude_user   = eu;
-		attr->exclude_kernel = ek;
-		attr->exclude_hv     = eh;
-		attr->precise_ip     = precise;
-		return 1;
-	}
+	if (str < *strp + 2)
+		return -1;
+
+	*strp = str;
+
+	attr->exclude_user   = eu;
+	attr->exclude_kernel = ek;
+	attr->exclude_hv     = eh;
+	attr->precise_ip     = precise;
+
 	return 0;
 }
 
@@ -797,7 +807,12 @@ parse_event_symbols(const struct option *opt, const char **str,
 	return EVT_FAILED;
 
 modifier:
-	parse_event_modifier(str, attr);
+	if (parse_event_modifier(str, attr) < 0) {
+		fprintf(stderr, "invalid event modifier: '%s'\n", *str);
+		fprintf(stderr, "Run 'perf list' for a list of valid events and modifiers\n");
+
+		return EVT_FAILED;
+	}
 
 	return ret;
 }
