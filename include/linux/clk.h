@@ -127,6 +127,42 @@ struct clk *clk_get_parent(struct clk *clk);
 
 /**
  * clk_get_sys - get a clock based upon the device name
+ * @dev_id: device base name
+ * @id:     device id
+ * @con_id: connection ID
+ *
+ * Returns a struct clk corresponding to the clock producer, or
+ * valid IS_ERR() condition containing errno.  The implementation
+ * uses @dev_id and @con_id to determine the clock consumer, and
+ * thereby the clock producer. In contrast to clk_get() this function
+ * takes the device name instead of the device itself for identification.
+ *
+ * Drivers must assume that the clock source is not enabled.
+ *
+ * clk_get_sys should not be called from within interrupt context.
+ */
+struct clk *clk_get_sys_id(const char *dev_id, int id, const char *con_id);
+
+/**
+ * clk_get_pdev - lookup and obtain a reference to a clock producer.
+ * @pdev: platform device for clock "consumer"
+ * @id: clock comsumer ID
+ *
+ * Returns a struct clk corresponding to the clock producer, or
+ * valid IS_ERR() condition containing errno.  The implementation
+ * uses @dev and @id to determine the clock consumer, and thereby
+ * the clock producer.  (IOW, @id may be identical strings, but
+ * clk_get may return different clock producers depending on @dev.)
+ *
+ * Drivers must assume that the clock source is not enabled.
+ *
+ * clk_get_pdev should not be called from within interrupt context.
+ */
+struct platform_device;
+struct clk *clk_get_pdev(struct platform_device *pdev, const char *con_id);
+
+/**
+ * clk_get_sys - get a clock based upon the device name
  * @dev_id: device name
  * @con_id: connection ID
  *
@@ -140,7 +176,10 @@ struct clk *clk_get_parent(struct clk *clk);
  *
  * clk_get_sys should not be called from within interrupt context.
  */
-struct clk *clk_get_sys(const char *dev_id, const char *con_id);
+static inline  struct clk *clk_get_sys(const char *dev_id, const char *con_id)
+{
+	return clk_get_sys_id(dev_id, -1, con_id);
+}
 
 /**
  * clk_add_alias - add a new clock alias

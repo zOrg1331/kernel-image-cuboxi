@@ -41,7 +41,7 @@
 static void __init ek_map_io(void)
 {
 	/* Initialize processor: 12.000 MHz crystal */
-	at91sam9rl_initialize(12000000);
+	at91_initialize(12000000);
 
 	/* DBGU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -55,7 +55,7 @@ static void __init ek_map_io(void)
 
 static void __init ek_init_irq(void)
 {
-	at91sam9rl_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 
@@ -330,7 +330,7 @@ static void __init ek_board_init(void)
 MACHINE_START(AT91SAM9RLEK, "Atmel AT91SAM9RL-EK")
 	/* Maintainer: Atmel */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= ek_map_io,
 	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,

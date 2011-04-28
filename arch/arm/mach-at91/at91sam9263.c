@@ -21,16 +21,12 @@
 #include <mach/at91_rstc.h>
 #include <mach/at91_shdwc.h>
 
+#include "soc.h"
 #include "generic.h"
 #include "clock.h"
 
 static struct map_desc at91sam9263_io_desc[] __initdata = {
 	{
-		.virtual	= AT91_VA_BASE_SYS,
-		.pfn		= __phys_to_pfn(AT91_BASE_SYS),
-		.length		= SZ_16K,
-		.type		= MT_DEVICE,
-	}, {
 		.virtual	= AT91_IO_VIRT_BASE - AT91SAM9263_SRAM0_SIZE,
 		.pfn		= __phys_to_pfn(AT91SAM9263_SRAM0_BASE),
 		.length		= AT91SAM9263_SRAM0_SIZE,
@@ -199,6 +195,39 @@ static struct clk *periph_clocks[] __initdata = {
 	// irq0 .. irq1
 };
 
+static struct clk_lookup periph_clocks_lookups[] = {
+	CLKDEV_DEV_ID("at91_gpio.0", &pioA_clk),
+	CLKDEV_DEV_ID("at91_gpio.1", &pioB_clk),
+	CLKDEV_DEV_ID("at91_gpio.2", &pioCDE_clk),
+	CLKDEV_DEV_ID("at91_gpio.3", &pioCDE_clk),
+	CLKDEV_DEV_ID("at91_gpio.4", &pioCDE_clk),
+	CLKDEV_CON_ID("can_clk", &can_clk),
+	CLKDEV_CON_ID("twi_clk", &twi_clk),
+	CLKDEV_CON_ID("ac97_clk", &ac97_clk),
+	CLKDEV_CON_ID("pwm_clk", &pwm_clk),
+	CLKDEV_CON_ID("macb_clk", &macb_clk),
+	CLKDEV_CON_ID("dma_clk", &dma_clk),
+	CLKDEV_CON_ID("2dge_clk", &twodge_clk),
+	CLKDEV_CON_ID("udc_clkk", &udc_clk),
+	CLKDEV_CON_ID("isi_clk", &isi_clk),
+	CLKDEV_CON_ID("lcdc_clk", &lcdc_clk),
+	CLKDEV_CON_ID("ohci_clk", &ohci_clk),
+	CLKDEV_CON_DEV_ID("pclk", "ssc.0", &ssc0_clk),
+	CLKDEV_CON_DEV_ID("pclk", "ssc.1", &ssc1_clk),
+	CLKDEV_CON_DEV_ID("mci_clk", "at91_mci.0", &mmc0_clk),
+	CLKDEV_CON_DEV_ID("mci_clk", "at91_mci.1", &mmc1_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.0", &spi0_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.1", &spi1_clk),
+	CLKDEV_CON_DEV_ID("t0_clk", "atmel_tcb.0", &tcb_clk),
+};
+
+static struct clk_lookup usart_clocks_lookups[] = {
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.0", &mck),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.1", &usart0_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.2", &usart1_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.3", &usart2_clk),
+};
+
 /*
  * The four programmable clocks.
  * You must configure pin multiplexing to bring these signals out.
@@ -228,6 +257,13 @@ static struct clk pck3 = {
 	.id		= 3,
 };
 
+static struct clk_lookup program_clocks_lookups[] = {
+	CLKDEV_CON_ID("pck0", &pck0),
+	CLKDEV_CON_ID("pck1", &pck1),
+	CLKDEV_CON_ID("pck2", &pck2),
+	CLKDEV_CON_ID("pck3", &pck3),
+};
+
 static void __init at91sam9263_register_clocks(void)
 {
 	int i;
@@ -235,37 +271,48 @@ static void __init at91sam9263_register_clocks(void)
 	for (i = 0; i < ARRAY_SIZE(periph_clocks); i++)
 		clk_register(periph_clocks[i]);
 
+	clkdev_add_table(periph_clocks_lookups,
+			 ARRAY_SIZE(periph_clocks_lookups));
+
+	clkdev_add_table(usart_clocks_lookups,
+			 ARRAY_SIZE(usart_clocks_lookups));
+
 	clk_register(&pck0);
 	clk_register(&pck1);
 	clk_register(&pck2);
 	clk_register(&pck3);
+
+	clkdev_add_table(program_clocks_lookups,
+			 ARRAY_SIZE(program_clocks_lookups));
+}
+
+struct clk* __init at91sam9263_get_uart_clock(int id)
+{
+	if (id >= ARRAY_SIZE(usart_clocks_lookups))
+		return NULL;
+	return usart_clocks_lookups[id].clk;
 }
 
 /* --------------------------------------------------------------------
  *  GPIO
  * -------------------------------------------------------------------- */
 
-static struct at91_gpio_bank at91sam9263_gpio[] = {
+static struct at91_dev_resource at91sam9263_pios[] __initdata = {
 	{
-		.id		= AT91SAM9263_ID_PIOA,
-		.offset		= AT91_PIOA,
-		.clock		= &pioA_clk,
+		.mmio_base	= AT91_PIOA,
+		.irq		= AT91SAM9263_ID_PIOA,
 	}, {
-		.id		= AT91SAM9263_ID_PIOB,
-		.offset		= AT91_PIOB,
-		.clock		= &pioB_clk,
+		.mmio_base	= AT91_PIOB,
+		.irq		= AT91SAM9263_ID_PIOB,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOC,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOC,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOD,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOD,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}, {
-		.id		= AT91SAM9263_ID_PIOCDE,
-		.offset		= AT91_PIOE,
-		.clock		= &pioCDE_clk,
+		.mmio_base	= AT91_PIOE,
+		.irq		= AT91SAM9263_ID_PIOCDE,
 	}
 };
 
@@ -279,7 +326,7 @@ static void at91sam9263_poweroff(void)
  *  AT91SAM9263 processor initialization
  * -------------------------------------------------------------------- */
 
-void __init at91sam9263_initialize(unsigned long main_clock)
+static void __init at91sam9263_initialize(void)
 {
 	/* Map peripherals */
 	iotable_init(at91sam9263_io_desc, ARRAY_SIZE(at91sam9263_io_desc));
@@ -287,15 +334,6 @@ void __init at91sam9263_initialize(unsigned long main_clock)
 	at91_arch_reset = at91sam9_alt_reset;
 	pm_power_off = at91sam9263_poweroff;
 	at91_extern_irq = (1 << AT91SAM9263_ID_IRQ0) | (1 << AT91SAM9263_ID_IRQ1);
-
-	/* Init clock subsystem */
-	at91_clock_init(main_clock);
-
-	/* Register the processor-specific clocks */
-	at91sam9263_register_clocks();
-
-	/* Register GPIO subsystem */
-	at91_gpio_init(at91sam9263_gpio, 5);
 }
 
 /* --------------------------------------------------------------------
@@ -340,14 +378,19 @@ static unsigned int at91sam9263_default_irq_priority[NR_AIC_IRQS] __initdata = {
 	0,	/* Advanced Interrupt Controller (IRQ1) */
 };
 
-void __init at91sam9263_init_interrupts(unsigned int priority[NR_AIC_IRQS])
-{
-	if (!priority)
-		priority = at91sam9263_default_irq_priority;
+struct at91_dev_resource at91sam9263_pit __initdata = {
+	.mmio_base	= AT91_PIT,
+	.irq		= AT91_ID_SYS,
+};
 
-	/* Initialize the AIC interrupt controller */
-	at91_aic_init(priority);
-
-	/* Enable GPIO interrupts */
-	at91_gpio_irq_setup();
-}
+struct at91_soc __initdata at91sam9263_soc = {
+	.name = "at91sam9263",
+	.default_irq_priority = at91sam9263_default_irq_priority,
+	.register_clocks = at91sam9263_register_clocks,
+	.init = at91sam9263_initialize,
+	.gpio = {
+		.resource = at91sam9263_pios,
+		.num_resources = ARRAY_SIZE(at91sam9263_pios),
+	},
+	.pit = &at91sam9263_pit,
+};

@@ -83,7 +83,6 @@
 #define AT572D940HF_BASE_EMAC	0xfffd8000
 #define AT572D940HF_BASE_CAN0	0xfffdc000
 #define AT572D940HF_BASE_CAN1	0xfffe0000
-#define AT91_BASE_SYS		0xffffea00
 
 
 /*
