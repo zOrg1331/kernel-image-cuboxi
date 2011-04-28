@@ -1607,27 +1607,28 @@ static void set_section_ro_nx(void *base,
 	}
 }
 
-/* Setting memory back to RW+NX before releasing it */
+/* Setting memory back to W+X before releasing it */
 void unset_section_ro_nx(struct module *mod, void *module_region)
 {
-	unsigned long total_pages;
-
 	if (mod->module_core == module_region) {
-		/* Set core as NX+RW */
-		total_pages = MOD_NUMBER_OF_PAGES(mod->module_core, mod->core_size);
-		set_memory_nx((unsigned long)mod->module_core, total_pages);
-		set_memory_rw((unsigned long)mod->module_core, total_pages);
-
+		set_page_attributes(mod->module_core + mod->core_text_size,
+			mod->module_core + mod->core_size,
+			set_memory_x);
+		set_page_attributes(mod->module_core,
+			mod->module_core + mod->core_ro_size,
+			set_memory_rw);
 	} else if (mod->module_init == module_region) {
-		/* Set init as NX+RW */
-		total_pages = MOD_NUMBER_OF_PAGES(mod->module_init, mod->init_size);
-		set_memory_nx((unsigned long)mod->module_init, total_pages);
-		set_memory_rw((unsigned long)mod->module_init, total_pages);
+		set_page_attributes(mod->module_init + mod->init_text_size,
+			mod->module_init + mod->init_size,
+			set_memory_x);
+		set_page_attributes(mod->module_init,
+			mod->module_init + mod->init_ro_size,
+			set_memory_rw);
 	}
 }
 
 /* Iterate through all modules and set each module's text as RW */
-void set_all_modules_text_rw()
+void set_all_modules_text_rw(void)
 {
 	struct module *mod;
 
@@ -1648,7 +1649,7 @@ void set_all_modules_text_rw()
 }
 
 /* Iterate through all modules and set each module's text as RO */
-void set_all_modules_text_ro()
+void set_all_modules_text_ro(void)
 {
 	struct module *mod;
 

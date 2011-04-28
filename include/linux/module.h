@@ -64,6 +64,9 @@ struct module_version_attribute {
 	const char *version;
 } __attribute__ ((__aligned__(sizeof(void *))));
 
+extern ssize_t __modver_version_show(struct module_attribute *,
+				     struct module *, char *);
+
 struct module_kobject
 {
 	struct kobject kobj;
@@ -172,12 +175,7 @@ extern struct module __this_module;
 #define MODULE_VERSION(_version) MODULE_INFO(version, _version)
 #else
 #define MODULE_VERSION(_version)					\
-	extern ssize_t __modver_version_show(struct module_attribute *,	\
-					     struct module *, char *);	\
-	static struct module_version_attribute __modver_version_attr	\
-	__used								\
-    __attribute__ ((__section__ ("__modver"),aligned(sizeof(void *)))) \
-	= {								\
+	static struct module_version_attribute ___modver_attr = {	\
 		.mattr	= {						\
 			.attr	= {					\
 				.name	= "version",			\
@@ -187,7 +185,10 @@ extern struct module __this_module;
 		},							\
 		.module_name	= KBUILD_MODNAME,			\
 		.version	= _version,				\
-	}
+	};								\
+	static const struct module_version_attribute			\
+	__used __attribute__ ((__section__ ("__modver")))		\
+	* __moduleparam_const __modver_attr = &___modver_attr
 #endif
 
 /* Optional firmware file (or files) needed by the module
@@ -367,34 +368,35 @@ struct module
 	struct module_notes_attrs *notes_attrs;
 #endif
 
+	/* The command line arguments (may be mangled).  People like
+	   keeping pointers to this stuff */
+	char *args;
+
 #ifdef CONFIG_SMP
 	/* Per-cpu data. */
 	void __percpu *percpu;
 	unsigned int percpu_size;
 #endif
 
-	/* The command line arguments (may be mangled).  People like
-	   keeping pointers to this stuff */
-	char *args;
 #ifdef CONFIG_TRACEPOINTS
-	struct tracepoint * const *tracepoints_ptrs;
 	unsigned int num_tracepoints;
+	struct tracepoint * const *tracepoints_ptrs;
 #endif
 #ifdef HAVE_JUMP_LABEL
 	struct jump_entry *jump_entries;
 	unsigned int num_jump_entries;
 #endif
 #ifdef CONFIG_TRACING
-	const char **trace_bprintk_fmt_start;
 	unsigned int num_trace_bprintk_fmt;
+	const char **trace_bprintk_fmt_start;
 #endif
 #ifdef CONFIG_EVENT_TRACING
 	struct ftrace_event_call **trace_events;
 	unsigned int num_trace_events;
 #endif
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
-	unsigned long *ftrace_callsites;
 	unsigned int num_ftrace_callsites;
+	unsigned long *ftrace_callsites;
 #endif
 
 #ifdef CONFIG_MODULE_UNLOAD
