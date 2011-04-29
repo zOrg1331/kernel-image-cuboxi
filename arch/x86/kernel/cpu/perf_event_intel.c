@@ -25,7 +25,7 @@ struct intel_percore {
 /*
  * Intel PerfMon, used on Core and later.
  */
-static const u64 intel_perfmon_event_map[] =
+static u64 intel_perfmon_event_map[PERF_COUNT_HW_MAX] __read_mostly =
 {
   [PERF_COUNT_HW_CPU_CYCLES]		= 0x003c,
   [PERF_COUNT_HW_INSTRUCTIONS]		= 0x00c0,
@@ -36,7 +36,7 @@ static const u64 intel_perfmon_event_map[] =
   [PERF_COUNT_HW_BUS_CYCLES]		= 0x013c,
 };
 
-static struct event_constraint intel_core_event_constraints[] =
+static struct event_constraint intel_core_event_constraints[] __read_mostly =
 {
 	INTEL_EVENT_CONSTRAINT(0x11, 0x2), /* FP_ASSIST */
 	INTEL_EVENT_CONSTRAINT(0x12, 0x2), /* MUL */
@@ -47,7 +47,7 @@ static struct event_constraint intel_core_event_constraints[] =
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_core2_event_constraints[] =
+static struct event_constraint intel_core2_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
@@ -70,7 +70,7 @@ static struct event_constraint intel_core2_event_constraints[] =
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_nehalem_event_constraints[] =
+static struct event_constraint intel_nehalem_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
@@ -86,19 +86,19 @@ static struct event_constraint intel_nehalem_event_constraints[] =
 	EVENT_CONSTRAINT_END
 };
 
-static struct extra_reg intel_nehalem_extra_regs[] =
+static struct extra_reg intel_nehalem_extra_regs[] __read_mostly =
 {
 	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff),
 	EVENT_EXTRA_END
 };
 
-static struct event_constraint intel_nehalem_percore_constraints[] =
+static struct event_constraint intel_nehalem_percore_constraints[] __read_mostly =
 {
 	INTEL_EVENT_CONSTRAINT(0xb7, 0),
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_westmere_event_constraints[] =
+static struct event_constraint intel_westmere_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
@@ -110,7 +110,7 @@ static struct event_constraint intel_westmere_event_constraints[] =
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_snb_event_constraints[] =
+static struct event_constraint intel_snb_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
@@ -123,21 +123,21 @@ static struct event_constraint intel_snb_event_constraints[] =
 	EVENT_CONSTRAINT_END
 };
 
-static struct extra_reg intel_westmere_extra_regs[] =
+static struct extra_reg intel_westmere_extra_regs[] __read_mostly =
 {
 	INTEL_EVENT_EXTRA_REG(0xb7, MSR_OFFCORE_RSP_0, 0xffff),
 	INTEL_EVENT_EXTRA_REG(0xbb, MSR_OFFCORE_RSP_1, 0xffff),
 	EVENT_EXTRA_END
 };
 
-static struct event_constraint intel_westmere_percore_constraints[] =
+static struct event_constraint intel_westmere_percore_constraints[] __read_mostly =
 {
 	INTEL_EVENT_CONSTRAINT(0xb7, 0),
 	INTEL_EVENT_CONSTRAINT(0xbb, 0),
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_gen_event_constraints[] =
+static struct event_constraint intel_gen_event_constraints[] __read_mostly =
 {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0), /* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1), /* CPU_CLK_UNHALTED.CORE */
@@ -933,6 +933,16 @@ static int intel_pmu_handle_irq(struct pt_regs *regs)
 
 	cpuc = &__get_cpu_var(cpu_hw_events);
 
+	/*
+	 * Some chipsets need to unmask the LVTPC in a particular spot
+	 * inside the nmi handler.  As a result, the unmasking was pushed
+	 * into all the nmi handlers.
+	 *
+	 * This handler doesn't seem to have any issues with the unmasking
+	 * so it was left at the top.
+	 */
+	apic_write(APIC_LVTPC, APIC_DM_NMI);
+
 	intel_pmu_disable_all();
 	handled = intel_pmu_drain_bts_buffer();
 	status = intel_pmu_get_status();
@@ -997,6 +1007,9 @@ intel_bts_constraints(struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
 	unsigned int hw_event, bts_event;
+
+	if (event->attr.freq)
+		return NULL;
 
 	hw_event = hwc->config & INTEL_ARCH_EVENT_MASK;
 	bts_event = x86_pmu.event_map(PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
@@ -1305,7 +1318,7 @@ static void intel_clovertown_quirks(void)
 	 * AJ106 could possibly be worked around by not allowing LBR
 	 *       usage from PEBS, including the fixup.
 	 * AJ68  could possibly be worked around by always programming
-	 * 	 a pebs_event_reset[0] value and coping with the lost events.
+	 *	 a pebs_event_reset[0] value and coping with the lost events.
 	 *
 	 * But taken together it might just make sense to not enable PEBS on
 	 * these chips.
@@ -1409,6 +1422,21 @@ static __init int intel_pmu_init(void)
 		x86_pmu.percore_constraints = intel_nehalem_percore_constraints;
 		x86_pmu.enable_all = intel_pmu_nhm_enable_all;
 		x86_pmu.extra_regs = intel_nehalem_extra_regs;
+
+		/* Install the stalled-cycles event: UOPS_EXECUTED.CORE_ACTIVE_CYCLES,c=1,i=1 */
+		intel_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES] = 0x1803fb1;
+
+		if (ebx & 0x40) {
+			/*
+			 * Erratum AAJ80 detected, we work it around by using
+			 * the BR_MISP_EXEC.ANY event. This will over-count
+			 * branch-misses, but it's still much better than the
+			 * architectural event which is often completely bogus:
+			 */
+			intel_perfmon_event_map[PERF_COUNT_HW_BRANCH_MISSES] = 0x7f89;
+
+			pr_cont("erratum AAJ80 worked around, ");
+		}
 		pr_cont("Nehalem events, ");
 		break;
 
