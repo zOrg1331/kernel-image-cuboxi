@@ -31,6 +31,8 @@ typedef int (*dbg_znode_callback)(struct ubifs_info *c,
 
 #ifdef CONFIG_UBIFS_FS_DEBUG
 
+#include <linux/random.h>
+
 /**
  * ubifs_debug_info - per-FS debugging information.
  * @old_zroot: old index root - used by 'dbg_check_old_index()'
@@ -50,7 +52,9 @@ typedef int (*dbg_znode_callback)(struct ubifs_info *c,
  * @new_ihead_offs: used by debugging to check @c->ihead_offs
  *
  * @saved_lst: saved lprops statistics (used by 'dbg_save_space_info()')
- * @saved_free: saved free space (used by 'dbg_save_space_info()')
+ * @saved_bi: saved budgeting information
+ * @saved_free: saved amount of free space
+ * @saved_idx_gc_cnt: saved value of @c->idx_gc_cnt
  *
  * dfs_dir_name: name of debugfs directory containing this file-system's files
  * dfs_dir: direntry object of the file-system debugfs directory
@@ -76,7 +80,9 @@ struct ubifs_debug_info {
 	int new_ihead_offs;
 
 	struct ubifs_lp_stats saved_lst;
+	struct ubifs_budg_info saved_bi;
 	long long saved_free;
+	int saved_idx_gc_cnt;
 
 	char dfs_dir_name[100];
 	struct dentry *dfs_dir;
@@ -233,11 +239,9 @@ enum {
 /*
  * Special testing flags.
  *
- * UBIFS_TST_FORCE_IN_THE_GAPS: force the use of in-the-gaps method
  * UBIFS_TST_RCVRY: failure mode for recovery testing
  */
 enum {
-	UBIFS_TST_FORCE_IN_THE_GAPS = 0x2,
 	UBIFS_TST_RCVRY             = 0x4,
 };
 
@@ -262,7 +266,7 @@ void dbg_dump_lpt_node(const struct ubifs_info *c, void *node, int lnum,
 		       int offs);
 void dbg_dump_budget_req(const struct ubifs_budget_req *req);
 void dbg_dump_lstats(const struct ubifs_lp_stats *lst);
-void dbg_dump_budg(struct ubifs_info *c);
+void dbg_dump_budg(struct ubifs_info *c, const struct ubifs_budg_info *bi);
 void dbg_dump_lprop(const struct ubifs_info *c, const struct ubifs_lprops *lp);
 void dbg_dump_lprops(struct ubifs_info *c);
 void dbg_dump_lpt_info(struct ubifs_info *c);
@@ -304,18 +308,16 @@ int dbg_check_data_nodes_order(struct ubifs_info *c, struct list_head *head);
 int dbg_check_nondata_nodes_order(struct ubifs_info *c, struct list_head *head);
 
 /* Force the use of in-the-gaps method for testing */
-
-#define dbg_force_in_the_gaps_enabled \
-	(ubifs_tst_flags & UBIFS_TST_FORCE_IN_THE_GAPS)
-
+static inline int dbg_force_in_the_gaps_enabled(void)
+{
+	return ubifs_chk_flags & UBIFS_CHK_GEN;
+}
 int dbg_force_in_the_gaps(void);
 
 /* Failure mode for recovery testing */
-
 #define dbg_failure_mode (ubifs_tst_flags & UBIFS_TST_RCVRY)
 
 #ifndef UBIFS_DBG_PRESERVE_UBI
-
 #define ubi_leb_read   dbg_leb_read
 #define ubi_leb_write  dbg_leb_write
 #define ubi_leb_change dbg_leb_change
@@ -323,7 +325,6 @@ int dbg_force_in_the_gaps(void);
 #define ubi_leb_unmap  dbg_leb_unmap
 #define ubi_is_mapped  dbg_is_mapped
 #define ubi_leb_map    dbg_leb_map
-
 #endif
 
 int dbg_leb_read(struct ubi_volume_desc *desc, int lnum, char *buf, int offset,
@@ -420,7 +421,9 @@ static inline void
 dbg_dump_budget_req(const struct ubifs_budget_req *req)           { return; }
 static inline void
 dbg_dump_lstats(const struct ubifs_lp_stats *lst)                 { return; }
-static inline void dbg_dump_budg(struct ubifs_info *c)            { return; }
+static inline void
+dbg_dump_budg(struct ubifs_info *c,
+	      const struct ubifs_budg_info *bi)                   { return; }
 static inline void dbg_dump_lprop(const struct ubifs_info *c,
 				  const struct ubifs_lprops *lp)  { return; }
 static inline void dbg_dump_lprops(struct ubifs_info *c)          { return; }
@@ -482,8 +485,8 @@ dbg_check_nondata_nodes_order(struct ubifs_info *c,
 			      struct list_head *head)             { return 0; }
 
 static inline int dbg_force_in_the_gaps(void)                     { return 0; }
-#define dbg_force_in_the_gaps_enabled 0
-#define dbg_failure_mode              0
+#define dbg_force_in_the_gaps_enabled() 0
+#define dbg_failure_mode                0
 
 static inline int dbg_debugfs_init(void)                          { return 0; }
 static inline void dbg_debugfs_exit(void)                         { return; }
