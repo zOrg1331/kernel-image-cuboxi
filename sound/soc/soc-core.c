@@ -1453,6 +1453,16 @@ static void soc_remove_dai_link(struct snd_soc_card *card, int num)
 	}
 }
 
+static void soc_remove_dai_links(struct snd_soc_card *card)
+{
+	int i;
+
+	for (i = 0; i < card->num_rtd; i++)
+		soc_remove_dai_link(card, i);
+
+	card->num_rtd = 0;
+}
+
 static void soc_set_name_prefix(struct snd_soc_card *card,
 				struct snd_soc_codec *codec)
 {
@@ -1493,6 +1503,9 @@ static int soc_probe_codec(struct snd_soc_card *card,
 		}
 	}
 
+	if (driver->controls)
+		snd_soc_add_controls(codec, driver->controls,
+				     driver->num_controls);
 	if (driver->dapm_widgets)
 		snd_soc_dapm_new_controls(&codec->dapm, driver->dapm_widgets,
 					  driver->num_dapm_widgets);
@@ -1865,6 +1878,10 @@ static void snd_soc_instantiate_card(struct snd_soc_card *card)
 	INIT_WORK(&card->deferred_resume_work, soc_resume_deferred);
 #endif
 
+	if (card->dapm_widgets)
+		snd_soc_dapm_new_controls(&card->dapm, card->dapm_widgets,
+					  card->num_dapm_widgets);
+
 	/* initialise the sound card only once */
 	if (card->probe) {
 		ret = card->probe(card);
@@ -1890,9 +1907,14 @@ static void snd_soc_instantiate_card(struct snd_soc_card *card)
 		}
 	}
 
-	if (card->dapm_widgets)
-		snd_soc_dapm_new_controls(&card->dapm, card->dapm_widgets,
-					  card->num_dapm_widgets);
+	/* We should have a non-codec control add function but we don't */
+	if (card->controls)
+		snd_soc_add_controls(list_first_entry(&card->codec_dev_list,
+						      struct snd_soc_codec,
+						      card_list),
+				     card->controls,
+				     card->num_controls);
+
 	if (card->dapm_routes)
 		snd_soc_dapm_add_routes(&card->dapm, card->dapm_routes,
 					card->num_dapm_routes);
@@ -1949,8 +1971,7 @@ probe_aux_dev_err:
 		soc_remove_aux_dev(card, i);
 
 probe_dai_err:
-	for (i = 0; i < card->num_links; i++)
-		soc_remove_dai_link(card, i);
+	soc_remove_dai_links(card);
 
 card_probe_error:
 	if (card->remove)
@@ -2012,8 +2033,7 @@ static int soc_cleanup_card_resources(struct snd_soc_card *card)
 		soc_remove_aux_dev(card, i);
 
 	/* remove and free each DAI */
-	for (i = 0; i < card->num_rtd; i++)
-		soc_remove_dai_link(card, i);
+	soc_remove_dai_links(card);
 
 	soc_cleanup_card_debugfs(card);
 
@@ -2150,6 +2170,42 @@ int snd_soc_codec_volatile_register(struct snd_soc_codec *codec,
 EXPORT_SYMBOL_GPL(snd_soc_codec_volatile_register);
 
 /**
+ * snd_soc_codec_readable_register: Report if a register is readable.
+ *
+ * @codec: CODEC to query.
+ * @reg: Register to query.
+ *
+ * Boolean function indicating if a CODEC register is readable.
+ */
+int snd_soc_codec_readable_register(struct snd_soc_codec *codec,
+				    unsigned int reg)
+{
+	if (codec->readable_register)
+		return codec->readable_register(codec, reg);
+	else
+		return 0;
+}
+EXPORT_SYMBOL_GPL(snd_soc_codec_readable_register);
+
+/**
+ * snd_soc_codec_writable_register: Report if a register is writable.
+ *
+ * @codec: CODEC to query.
+ * @reg: Register to query.
+ *
+ * Boolean function indicating if a CODEC register is writable.
+ */
+int snd_soc_codec_writable_register(struct snd_soc_codec *codec,
+				    unsigned int reg)
+{
+	if (codec->writable_register)
+		return codec->writable_register(codec, reg);
+	else
+		return 0;
+}
+EXPORT_SYMBOL_GPL(snd_soc_codec_writable_register);
+
+/**
  * snd_soc_new_ac97_codec - initailise AC97 device
  * @codec: audio codec
  * @ops: AC97 bus operations
@@ -2230,6 +2286,13 @@ unsigned int snd_soc_write(struct snd_soc_codec *codec,
 	return codec->write(codec, reg, val);
 }
 EXPORT_SYMBOL_GPL(snd_soc_write);
+
+unsigned int snd_soc_bulk_write_raw(struct snd_soc_codec *codec,
+				    unsigned int reg, const void *data, size_t len)
+{
+	return codec->bulk_write_raw(codec, reg, data, len);
+}
+EXPORT_SYMBOL_GPL(snd_soc_bulk_write_raw);
 
 /**
  * snd_soc_update_bits - update codec register bits
@@ -3669,6 +3732,7 @@ int snd_soc_register_codec(struct device *dev,
 	codec->read = codec_drv->read;
 	codec->volatile_register = codec_drv->volatile_register;
 	codec->readable_register = codec_drv->readable_register;
+	codec->writable_register = codec_drv->writable_register;
 	codec->dapm.bias_level = SND_SOC_BIAS_OFF;
 	codec->dapm.dev = dev;
 	codec->dapm.codec = codec;
@@ -3703,6 +3767,8 @@ int snd_soc_register_codec(struct device *dev,
 			codec->volatile_register = snd_soc_default_volatile_register;
 		if (!codec->readable_register)
 			codec->readable_register = snd_soc_default_readable_register;
+		if (!codec->writable_register)
+			codec->writable_register = snd_soc_default_writable_register;
 	}
 
 	for (i = 0; i < num_dai; i++) {
