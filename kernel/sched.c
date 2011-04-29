@@ -505,7 +505,7 @@ struct rq {
 
 	unsigned long cpu_power;
 
-	unsigned char idle_at_tick;
+	bool idle_at_tick;
 	/* For active balancing */
 	int post_schedule;
 	int active_balance;
