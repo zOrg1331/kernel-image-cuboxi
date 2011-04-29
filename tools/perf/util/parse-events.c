@@ -31,24 +31,25 @@ char debugfs_path[MAXPATHLEN];
 #define CSW(x) .type = PERF_TYPE_SOFTWARE, .config = PERF_COUNT_SW_##x
 
 static struct event_symbol event_symbols[] = {
-  { CHW(CPU_CYCLES),		"cpu-cycles",		"cycles"	},
-  { CHW(STALLED_CYCLES),	"stalled-cycles",	"idle-cycles"	},
-  { CHW(INSTRUCTIONS),		"instructions",		""		},
-  { CHW(CACHE_REFERENCES),	"cache-references",	""		},
-  { CHW(CACHE_MISSES),		"cache-misses",		""		},
-  { CHW(BRANCH_INSTRUCTIONS),	"branch-instructions",	"branches"	},
-  { CHW(BRANCH_MISSES),		"branch-misses",	""		},
-  { CHW(BUS_CYCLES),		"bus-cycles",		""		},
+  { CHW(CPU_CYCLES),			"cpu-cycles",			"cycles"		},
+  { CHW(STALLED_CYCLES_FRONTEND),	"stalled-cycles-frontend",	"idle-cycles-frontend"	},
+  { CHW(STALLED_CYCLES_BACKEND),	"stalled-cycles-backend",	"idle-cycles-backend"	},
+  { CHW(INSTRUCTIONS),			"instructions",			""			},
+  { CHW(CACHE_REFERENCES),		"cache-references",		""			},
+  { CHW(CACHE_MISSES),			"cache-misses",			""			},
+  { CHW(BRANCH_INSTRUCTIONS),		"branch-instructions",		"branches"		},
+  { CHW(BRANCH_MISSES),			"branch-misses",		""			},
+  { CHW(BUS_CYCLES),			"bus-cycles",			""			},
 
-  { CSW(CPU_CLOCK),		"cpu-clock",		""		},
-  { CSW(TASK_CLOCK),		"task-clock",		""		},
-  { CSW(PAGE_FAULTS),		"page-faults",		"faults"	},
-  { CSW(PAGE_FAULTS_MIN),	"minor-faults",		""		},
-  { CSW(PAGE_FAULTS_MAJ),	"major-faults",		""		},
-  { CSW(CONTEXT_SWITCHES),	"context-switches",	"cs"		},
-  { CSW(CPU_MIGRATIONS),	"cpu-migrations",	"migrations"	},
-  { CSW(ALIGNMENT_FAULTS),	"alignment-faults",	""		},
-  { CSW(EMULATION_FAULTS),	"emulation-faults",	""		},
+  { CSW(CPU_CLOCK),			"cpu-clock",			""			},
+  { CSW(TASK_CLOCK),			"task-clock",			""			},
+  { CSW(PAGE_FAULTS),			"page-faults",			"faults"		},
+  { CSW(PAGE_FAULTS_MIN),		"minor-faults",			""			},
+  { CSW(PAGE_FAULTS_MAJ),		"major-faults",			""			},
+  { CSW(CONTEXT_SWITCHES),		"context-switches",		"cs"			},
+  { CSW(CPU_MIGRATIONS),		"cpu-migrations",		"migrations"		},
+  { CSW(ALIGNMENT_FAULTS),		"alignment-faults",		""			},
+  { CSW(EMULATION_FAULTS),		"emulation-faults",		""			},
 };
 
 #define __PERF_EVENT_FIELD(config, name) \
@@ -59,7 +60,7 @@ static struct event_symbol event_symbols[] = {
 #define PERF_EVENT_TYPE(config)		__PERF_EVENT_FIELD(config, TYPE)
 #define PERF_EVENT_ID(config)		__PERF_EVENT_FIELD(config, EVENT)
 
-static const char *hw_event_names[] = {
+static const char *hw_event_names[PERF_COUNT_HW_MAX] = {
 	"cycles",
 	"instructions",
 	"cache-references",
@@ -67,10 +68,11 @@ static const char *hw_event_names[] = {
 	"branches",
 	"branch-misses",
 	"bus-cycles",
-	"stalled-cycles",
+	"stalled-cycles-frontend",
+	"stalled-cycles-backend",
 };
 
-static const char *sw_event_names[] = {
+static const char *sw_event_names[PERF_COUNT_SW_MAX] = {
 	"cpu-clock",
 	"task-clock",
 	"page-faults",
@@ -927,7 +929,7 @@ void print_tracepoint_events(const char *subsys_glob, const char *event_glob)
 
 			snprintf(evt_path, MAXPATHLEN, "%s:%s",
 				 sys_dirent.d_name, evt_dirent.d_name);
-			printf("  %-42s [%s]\n", evt_path,
+			printf("  %-50s [%s]\n", evt_path,
 				event_type_descriptors[PERF_TYPE_TRACEPOINT]);
 		}
 		closedir(evt_dir);
@@ -992,7 +994,7 @@ void print_events_type(u8 type)
 		else
 			snprintf(name, sizeof(name), "%s", syms->symbol);
 
-		printf("  %-42s [%s]\n", name,
+		printf("  %-50s [%s]\n", name,
 			event_type_descriptors[type]);
 	}
 }
@@ -1010,11 +1012,10 @@ int print_hwcache_events(const char *event_glob)
 			for (i = 0; i < PERF_COUNT_HW_CACHE_RESULT_MAX; i++) {
 				char *name = event_cache_name(type, op, i);
 
-				if (event_glob != NULL && 
-				    !strglobmatch(name, event_glob))
+				if (event_glob != NULL && !strglobmatch(name, event_glob))
 					continue;
 
-				printf("  %-42s [%s]\n", name,
+				printf("  %-50s [%s]\n", name,
 					event_type_descriptors[PERF_TYPE_HW_CACHE]);
 				++printed;
 			}
@@ -1024,14 +1025,16 @@ int print_hwcache_events(const char *event_glob)
 	return printed;
 }
 
+#define MAX_NAME_LEN 100
+
 /*
  * Print the help text for the event symbols:
  */
 void print_events(const char *event_glob)
 {
-	struct event_symbol *syms = event_symbols;
 	unsigned int i, type, prev_type = -1, printed = 0, ntypes_printed = 0;
-	char name[40];
+	struct event_symbol *syms = event_symbols;
+	char name[MAX_NAME_LEN];
 
 	printf("\n");
 	printf("List of pre-defined events (to be used in -e):\n");
@@ -1051,10 +1054,10 @@ void print_events(const char *event_glob)
 			continue;
 
 		if (strlen(syms->alias))
-			sprintf(name, "%s OR %s", syms->symbol, syms->alias);
+			snprintf(name, MAX_NAME_LEN, "%s OR %s", syms->symbol, syms->alias);
 		else
-			strcpy(name, syms->symbol);
-		printf("  %-42s [%s]\n", name,
+			strncpy(name, syms->symbol, MAX_NAME_LEN);
+		printf("  %-50s [%s]\n", name,
 			event_type_descriptors[type]);
 
 		prev_type = type;
@@ -1071,12 +1074,12 @@ void print_events(const char *event_glob)
 		return;
 
 	printf("\n");
-	printf("  %-42s [%s]\n",
+	printf("  %-50s [%s]\n",
 		"rNNN (see 'perf list --help' on how to encode it)",
 	       event_type_descriptors[PERF_TYPE_RAW]);
 	printf("\n");
 
-	printf("  %-42s [%s]\n",
+	printf("  %-50s [%s]\n",
 			"mem:<addr>[:access]",
 			event_type_descriptors[PERF_TYPE_BREAKPOINT]);
 	printf("\n");
