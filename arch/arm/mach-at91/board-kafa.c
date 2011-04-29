@@ -35,14 +35,18 @@
 
 #include <mach/board.h>
 #include <mach/gpio.h>
+#include <mach/cpu.h>
 
 #include "generic.h"
 
 
 static void __init kafa_map_io(void)
 {
+	/* Set cpu type: PQFP */
+	at91rm9200_set_type(ARCH_REVISON_9200_PQFP);
+
 	/* Initialize processor: 18.432 MHz crystal */
-	at91rm9200_initialize(18432000, AT91RM9200_PQFP);
+	at91_initialize(18432000);
 
 	/* Set up the LEDs */
 	at91_init_leds(AT91_PIN_PB4, AT91_PIN_PB4);
@@ -59,7 +63,7 @@ static void __init kafa_map_io(void)
 
 static void __init kafa_init_irq(void)
 {
-	at91rm9200_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata kafa_eth_data = {
@@ -95,7 +99,7 @@ static void __init kafa_board_init(void)
 MACHINE_START(KAFA, "Sperry-Sun KAFA")
 	/* Maintainer: Sergei Sharonov */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91rm9200_timer,
+	.timer		= &at91_timer,
 	.map_io		= kafa_map_io,
 	.init_irq	= kafa_init_irq,
 	.init_machine	= kafa_board_init,

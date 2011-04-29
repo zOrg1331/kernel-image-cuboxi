@@ -41,6 +41,7 @@
 #include <mach/board.h>
 #include <mach/gpio.h>
 #include <mach/at91sam9_smc.h>
+#include <mach/system_rev.h>
 
 #include "sam9_smc.h"
 #include "generic.h"
@@ -49,7 +50,7 @@
 static void __init eb_map_io(void)
 {
 	/* Initialize processor: 12.500 MHz crystal */
-	at572d940hf_initialize(12000000);
+	at91_initialize(12000000);
 
 	/* DBGU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -69,7 +70,7 @@ static void __init eb_map_io(void)
 
 static void __init eb_init_irq(void)
 {
-	at572d940hf_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 
@@ -216,11 +217,6 @@ static struct atmel_nand_data __initdata eb_nand_data = {
 /*	.rdy_pin	= AT91_PIN_PC16, */
 	.enable_pin	= AT91_PIN_PA15,
 	.partition_info	= nand_partitions,
-#if defined(CONFIG_MTD_NAND_ATMEL_BUSWIDTH_16)
-	.bus_width_16	= 1,
-#else
-	.bus_width_16	= 0,
-#endif
 };
 
 static struct sam9_smc_config __initdata eb_nand_smc_config = {
@@ -243,6 +239,7 @@ static struct sam9_smc_config __initdata eb_nand_smc_config = {
 
 static void __init eb_add_device_nand(void)
 {
+	ek_nand_data.bus_width_16 = board_have_nand_16bit();
 	/* setup bus-width (8 or 16) */
 	if (eb_nand_data.bus_width_16)
 		eb_nand_smc_config.mode |= AT91_SMC_DBW_16;
@@ -319,7 +316,7 @@ static void __init eb_board_init(void)
 MACHINE_START(AT572D940HFEB, "Atmel AT91D940HF-EB")
 	/* Maintainer: Atmel <costa.antonior@gmail.com> */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= eb_map_io,
 	.init_irq	= eb_init_irq,
 	.init_machine	= eb_board_init,

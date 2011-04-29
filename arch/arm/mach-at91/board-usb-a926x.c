@@ -1,8 +1,8 @@
 /*
- * linux/arch/arm/mach-at91/board-usb-a9260.c
+ * linux/arch/arm/mach-at91/board-usb-a926x.c
  *
  *  Copyright (C) 2005 SAN People
- *  Copyright (C) 2006 Atmel
+ *  Copyright (C) 2007 Atmel Corporation.
  *  Copyright (C) 2007 Calao-systems
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,7 +28,6 @@
 #include <linux/spi/spi.h>
 #include <linux/gpio_keys.h>
 #include <linux/input.h>
-#include <linux/clk.h>
 
 #include <asm/setup.h>
 #include <asm/mach-types.h>
@@ -50,8 +49,8 @@
 
 static void __init ek_map_io(void)
 {
-	/* Initialize processor: 12.000 MHz crystal */
-	at91sam9260_initialize(12000000);
+	/* Initialize processor: 12.00 MHz crystal */
+	at91_initialize(12000000);
 
 	/* DBGU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -62,7 +61,7 @@ static void __init ek_map_io(void)
 
 static void __init ek_init_irq(void)
 {
-	at91sam9260_init_interrupts(NULL);
+	at91_init_interrupts(NULL);
 }
 
 
@@ -77,17 +76,53 @@ static struct at91_usbh_data __initdata ek_usbh_data = {
  * USB Device port
  */
 static struct at91_udc_data __initdata ek_udc_data = {
-	.vbus_pin	= AT91_PIN_PC5,
+	.vbus_pin	= AT91_PIN_PB11,
 	.pullup_pin	= 0,		/* pull-up driven by UDC */
 };
+
+void ek_add_device_udc(void)
+{
+	if (machine_is_usb_a9260())
+		ek_udc_data.vbus_pin = AT91_PIN_PC5;
+
+	at91_add_device_udc(&ek_udc_data);
+}
+
+/*
+ * SPI devices.
+ */
+static struct spi_board_info ek_spi_devices[] = {
+#if !defined(CONFIG_MMC_AT91)
+	{	/* DataFlash chip */
+		.modalias	= "mtd_dataflash",
+		.chip_select	= 0,
+		.max_speed_hz	= 15 * 1000 * 1000,
+		.bus_num	= 0,
+	}
+#endif
+};
+
+void ek_add_device_spi(void)
+{
+	if (machine_is_usb_a9263())
+		at91_add_device_spi(ek_spi_devices, ARRAY_SIZE(ek_spi_devices));
+}
 
 /*
  * MACB Ethernet device
  */
 static struct at91_eth_data __initdata ek_macb_data = {
-	.phy_irq_pin	= AT91_PIN_PA31,
+	.phy_irq_pin	= AT91_PIN_PE31,
 	.is_rmii	= 1,
 };
+
+void ek_add_device_eth(void)
+{
+	if (machine_is_usb_a9260())
+		ek_macb_data.phy_irq_pin = AT91_PIN_PA31;
+
+	at91_add_device_eth(&ek_macb_data);
+}
 
 /*
  * NAND flash
@@ -120,8 +155,8 @@ static struct atmel_nand_data __initdata ek_nand_data = {
 	.ale		= 21,
 	.cle		= 22,
 //	.det_pin	= ... not connected
-	.rdy_pin	= AT91_PIN_PC13,
-	.enable_pin	= AT91_PIN_PC14,
+	.rdy_pin	= AT91_PIN_PA22,
+	.enable_pin	= AT91_PIN_PD15,
 	.partition_info	= nand_partitions,
 };
 
@@ -145,16 +180,21 @@ static struct sam9_smc_config __initdata ek_nand_smc_config = {
 
 static void __init ek_add_device_nand(void)
 {
+	if (machine_is_usb_a9260()) {
+		ek_nand_data.rdy_pin	= AT91_PIN_PC13;
+		ek_nand_data.enable_pin	= AT91_PIN_PC14;
+	}
+
 	/* configure chip-select 3 (NAND) */
 	sam9_smc_configure(3, &ek_nand_smc_config);
 
 	at91_add_device_nand(&ek_nand_data);
 }
 
+
 /*
  * GPIO Buttons
  */
-
 #if defined(CONFIG_KEYBOARD_GPIO) || defined(CONFIG_KEYBOARD_GPIO_MODULE)
 static struct gpio_keys_button ek_buttons[] = {
 	{	/* USER PUSH BUTTON */
@@ -198,10 +238,19 @@ static struct gpio_led ek_leds[] = {
 	{	/* user_led (green) */
 		.name			= "user_led",
 		.gpio			= AT91_PIN_PB21,
-		.active_low		= 0,
+		.active_low		= 1,
 		.default_trigger	= "heartbeat",
 	}
 };
+
+void ek_add_device_leds(void)
+{
+	if (machine_is_usb_a9260())
+		ek_leds[0].active_low = 0;
+
+	at91_gpio_leds(ek_leds, ARRAY_SIZE(ek_leds));
+}
+
 
 static void __init ek_board_init(void)
 {
@@ -210,26 +259,37 @@ static void __init ek_board_init(void)
 	/* USB Host */
 	at91_add_device_usbh(&ek_usbh_data);
 	/* USB Device */
-	at91_add_device_udc(&ek_udc_data);
+	ek_add_device_udc();
+	/* SPI */
+	ek_add_device_spi();
+	/* Ethernet */
+	ek_add_device_eth();
 	/* NAND */
 	ek_add_device_nand();
 	/* I2C */
 	at91_add_device_i2c(NULL, 0);
-	/* Ethernet */
-	at91_add_device_eth(&ek_macb_data);
 	/* Push Buttons */
 	ek_add_device_buttons();
 	/* LEDs */
-	at91_gpio_leds(ek_leds, ARRAY_SIZE(ek_leds));
+	ek_add_device_leds();
 	/* shutdown controller, wakeup button (5 msec low) */
 	at91_sys_write(AT91_SHDW_MR, AT91_SHDW_CPTWK0_(10) | AT91_SHDW_WKMODE0_LOW
 				| AT91_SHDW_RTTWKEN);
 }
 
+MACHINE_START(USB_A9263, "CALAO USB_A9263")
+	/* Maintainer: calao-systems */
+	.boot_params	= AT91_SDRAM_BASE + 0x100,
+	.timer		= &at91_timer,
+	.map_io		= ek_map_io,
+	.init_irq	= ek_init_irq,
+	.init_machine	= ek_board_init,
+MACHINE_END
+
 MACHINE_START(USB_A9260, "CALAO USB_A9260")
 	/* Maintainer: calao-systems */
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
-	.timer		= &at91sam926x_timer,
+	.timer		= &at91_timer,
 	.map_io		= ek_map_io,
 	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,

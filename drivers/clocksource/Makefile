@@ -1,3 +1,5 @@
+obj-$(CONFIG_AT91_PIT)		+= at91_pit.o
+obj-$(CONFIG_AT91_ST)		+= at91_st.o
 obj-$(CONFIG_ATMEL_TCB_CLKSRC)	+= tcb_clksrc.o
 obj-$(CONFIG_X86_CYCLONE_TIMER)	+= cyclone.o
 obj-$(CONFIG_X86_PM_TIMER)	+= acpi_pm.o
