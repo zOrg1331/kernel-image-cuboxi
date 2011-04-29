@@ -48,6 +48,8 @@
 #include "wl_ucode.h"
 #include "wl_mac80211.h"
 
+#define N_TX_QUEUES	4 /* #tx queues on mac80211<->driver interface */
+
 static void wl_timer(unsigned long data);
 static void _wl_timer(struct wl_timer *t);
 
@@ -552,7 +554,7 @@ wl_ops_conf_tx(struct ieee80211_hw *hw, u16 queue,
 		 params->txop, params->cw_min, params->cw_max, params->aifs);
 
 	WL_LOCK(wl);
-	wlc_wme_setparams(wl->wlc, queue, (void *)params, true);
+	wlc_wme_setparams(wl->wlc, queue, params, true);
 	WL_UNLOCK(wl);
 
 	return 0;
@@ -1070,8 +1072,7 @@ static int ieee_hw_init(struct ieee80211_hw *hw)
 	    | IEEE80211_HW_AMPDU_AGGREGATION;
 
 	hw->extra_tx_headroom = wlc_get_header_len();
-	/* FIXME: should get this from wlc->machwcap */
-	hw->queues = 4;
+	hw->queues = N_TX_QUEUES;
 	/* FIXME: this doesn't seem to be used properly in minstrel_ht.
 	 * mac80211/status.c:ieee80211_tx_status() checks this value,
 	 * but mac80211/rc80211_minstrel_ht.c:minstrel_ht_get_rate()
