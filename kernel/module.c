@@ -1610,14 +1610,14 @@ static void set_section_ro_nx(void *base,
 /* Setting memory back to W+X before releasing it */
 void unset_section_ro_nx(struct module *mod, void *module_region)
 {
-	if (mod->module_core == module_region) {
+	if (mod->module_core && mod->module_core == module_region) {
 		set_page_attributes(mod->module_core + mod->core_text_size,
 			mod->module_core + mod->core_size,
 			set_memory_x);
 		set_page_attributes(mod->module_core,
 			mod->module_core + mod->core_ro_size,
 			set_memory_rw);
-	} else if (mod->module_init == module_region) {
+	} else if (mod->module_init && mod->module_init == module_region) {
 		set_page_attributes(mod->module_init + mod->init_text_size,
 			mod->module_init + mod->init_size,
 			set_memory_x);
