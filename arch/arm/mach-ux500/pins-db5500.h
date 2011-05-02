@@ -8,6 +8,8 @@
 #ifndef __MACH_DB5500_PINS_H
 #define __MACH_DB5500_PINS_H
 
+#include <linux/gpio/nomadik.h>
+
 #define GPIO0_GPIO		PIN_CFG(0, GPIO)
 #define GPIO0_SM_CS3n		PIN_CFG(0, ALT_A)
 
