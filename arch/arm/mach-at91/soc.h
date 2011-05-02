@@ -1,0 +1,31 @@
+/*
+ * Copyright (C) 2007 Atmel Corporation.
+ * Copyright (C) 2011 Jean-Christophe PLAGNIOL-VILLARD <plagnioj@jcrosoft.com>
+ *
+ * Under GPLv2
+ *
+ */
+
+#include "devices.h"
+
+struct at91_soc {
+	char *name;
+	unsigned int *default_irq_priority;
+
+	struct at91_dev_resource_array gpio;
+	struct at91_dev_resource *pit;
+	struct at91_dev_resource *st;
+
+	void (*register_clocks)(void);
+	void (*init)(void);
+};
+
+extern struct at91_soc at572d940hf_soc;
+extern struct at91_soc at91cap9_soc;
+extern struct at91_soc at91rm9200_soc;
+extern struct at91_soc at91sam9260_soc;
+extern struct at91_soc at91sam9261_soc;
+extern struct at91_soc at91sam9263_soc;
+extern struct at91_soc at91sam9g45_soc;
+extern struct at91_soc at91sam9rl_soc;
+extern struct at91_soc at91sam9x5_soc;

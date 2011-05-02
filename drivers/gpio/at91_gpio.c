@@ -12,6 +12,7 @@
 #include <linux/clk.h>
 #include <linux/errno.h>
 #include <linux/interrupt.h>
+#include <linux/platform_device.h>
 #include <linux/irq.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -26,12 +27,11 @@
 
 #include <asm/gpio.h>
 
-#include "generic.h"
-
 struct at91_gpio_chip {
 	struct gpio_chip	chip;
+	unsigned short		id;		/* peripheral ID */
+	struct clk		*clock;		/* associated clock */
 	struct at91_gpio_chip	*next;		/* Bank sharing same clock */
-	struct at91_gpio_bank	*bank;		/* Bank definition */
 	void __iomem		*regbase;	/* Base of register bank */
 };
 
@@ -287,7 +287,7 @@ static int gpio_irq_set_wake(struct irq_data *d, unsigned state)
 	else
 		wakeups[bank] &= ~mask;
 
-	irq_set_irq_wake(gpio_chip[bank].bank->id, state);
+	irq_set_irq_wake(gpio_chip[bank].id, state);
 
 	return 0;
 }
@@ -304,7 +304,7 @@ void at91_gpio_suspend(void)
 		__raw_writel(wakeups[i], pio + PIO_IER);
 
 		if (!wakeups[i])
-			clk_disable(gpio_chip[i].bank->clock);
+			clk_disable(gpio_chip[i].clock);
 		else {
 #ifdef CONFIG_PM_DEBUG
 			printk(KERN_DEBUG "GPIO-%c may wake for %08x\n", 'A'+i, wakeups[i]);
@@ -321,7 +321,7 @@ void at91_gpio_resume(void)
 		void __iomem	*pio = gpio_chip[i].regbase;
 
 		if (!wakeups[i])
-			clk_enable(gpio_chip[i].bank->clock);
+			clk_enable(gpio_chip[i].clock);
 
 		__raw_writel(wakeups[i], pio + PIO_IDR);
 		__raw_writel(backups[i], pio + PIO_IER);
@@ -499,7 +499,7 @@ void __init at91_gpio_irq_setup(void)
 	for (pioc = 0, pin = PIN_BASE, this = gpio_chip, prev = NULL;
 			pioc++ < gpio_banks;
 			prev = this, this++) {
-		unsigned	id = this->bank->id;
+		unsigned	id = this->id;
 		unsigned	i;
 
 		__raw_writel(~0, this->regbase + PIO_IDR);
@@ -599,34 +599,56 @@ static void at91_gpiolib_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	}
 }
 
-/*
- * Called from the processor-specific init to enable GPIO pin support.
- */
-void __init at91_gpio_init(struct at91_gpio_bank *data, int nr_banks)
+static int __devinit at91_gpio_probe(struct platform_device *pdev)
 {
-	unsigned		i;
-	struct at91_gpio_chip *at91_gpio, *last = NULL;
+	int id = pdev->id;
+	struct at91_gpio_chip *at91_gpio;
 
-	BUG_ON(nr_banks > MAX_GPIO_BANKS);
+	if (!is_early_platform_device(pdev)) {
+		pr_info("at91_gpio.%d: call via non early plaform\n", id);
+		return 0;
+	}
 
-	gpio_banks = nr_banks;
+	BUG_ON(id > MAX_GPIO_BANKS);
 
-	for (i = 0; i < nr_banks; i++) {
-		at91_gpio = &gpio_chip[i];
+	gpio_banks = max(gpio_banks, id + 1);
 
-		at91_gpio->bank = &data[i];
-		at91_gpio->chip.base = PIN_BASE + i * 32;
-		at91_gpio->regbase = at91_gpio->bank->offset +
+	at91_gpio = &gpio_chip[id];
+	at91_gpio->id = platform_get_irq(pdev, 0);
+	at91_gpio->chip.base = PIN_BASE + id * 32;
+	at91_gpio->regbase = pdev->resource[0].start +
 			(void __iomem *)AT91_VA_BASE_SYS;
 
-		/* enable PIO controller's clock */
-		clk_enable(at91_gpio->bank->clock);
+	at91_gpio->clock = clk_get_pdev(pdev, NULL);
 
-		/* AT91SAM9263_ID_PIOCDE groups PIOC, PIOD, PIOE */
-		if (last && last->bank->id == at91_gpio->bank->id)
-			last->next = at91_gpio;
-		last = at91_gpio;
+	/* enable PIO controller's clock */
+	clk_enable(at91_gpio->clock);
 
-		gpiochip_add(&at91_gpio->chip);
-	}
+	/* AT91SAM9263_ID_PIOCDE groups PIOC, PIOD, PIOE */
+	if (id > 0 && gpio_chip[id - 1].id == at91_gpio->id)
+		gpio_chip[id - 1].next = at91_gpio;
+
+	gpiochip_add(&at91_gpio->chip);
+
+	pr_debug("at91_gpio.%d: offset = 0x%x, clk = 0x%p, irq = %d\n",
+		id, pdev->resource[0].start, at91_gpio->clock,
+		at91_gpio->id);
+
+	return 0;
 }
+
+static int __devexit at91_gpio_remove(struct platform_device *pdev)
+{
+	return -EBUSY; /* cannot unregister clockevent and clocksource */
+}
+
+static struct platform_driver at91_gpio_driver = {
+	.probe		= at91_gpio_probe,
+	.remove		= __devexit_p(at91_gpio_remove),
+	.driver		= {
+		.name	= "at91_gpio",
+		.owner	= THIS_MODULE,
+	},
+};
+
+early_platform_init("early_at91_gpio", &at91_gpio_driver);
