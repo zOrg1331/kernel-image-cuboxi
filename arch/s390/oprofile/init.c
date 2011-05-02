@@ -188,7 +188,7 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 #endif
 }
 
-void oprofile_arch_exit(void)
+void __exit oprofile_arch_exit(void)
 {
 #ifdef CONFIG_64BIT
 	oprofile_hwsampler_exit();
