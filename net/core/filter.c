@@ -631,18 +631,6 @@ int sk_chk_filter(struct sock_filter *filter, int flen)
 EXPORT_SYMBOL(sk_chk_filter);
 
 /**
- * 	sk_filter_release_rcu - Release a socket filter by rcu_head
- *	@rcu: rcu_head that contains the sk_filter to free
- */
-void sk_filter_release_rcu(struct rcu_head *rcu)
-{
-	struct sk_filter *fp = container_of(rcu, struct sk_filter, rcu);
-
-	kfree(fp);
-}
-EXPORT_SYMBOL(sk_filter_release_rcu);
-
-/**
  *	sk_attach_filter - attach a socket filter
  *	@fprog: the filter program
  *	@sk: the socket to use
