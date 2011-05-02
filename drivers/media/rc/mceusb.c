@@ -149,6 +149,8 @@ enum mceusb_model_type {
 	POLARIS_EVK,
 	CX_HYBRID_TV,
 	MULTIFUNCTION,
+	TIVO_KIT,
+	MCE_GEN2_NO_TX,
 };
 
 struct mceusb_model {
@@ -171,6 +173,10 @@ static const struct mceusb_model mceusb_model[] = {
 	},
 	[MCE_GEN2] = {
 		.mce_gen2 = 1,
+	},
+	[MCE_GEN2_NO_TX] = {
+		.mce_gen2 = 1,
+		.no_tx = 1,
 	},
 	[MCE_GEN2_TX_INV] = {
 		.mce_gen2 = 1,
@@ -197,6 +203,10 @@ static const struct mceusb_model mceusb_model[] = {
 		.mce_gen2 = 1,
 		.ir_intfnum = 2,
 	},
+	[TIVO_KIT] = {
+		.mce_gen2 = 1,
+		.rc_map = RC_MAP_TIVO,
+	},
 };
 
 static struct usb_device_id mceusb_dev_table[] = {
@@ -220,6 +230,8 @@ static struct usb_device_id mceusb_dev_table[] = {
 	{ USB_DEVICE(VENDOR_PHILIPS, 0x206c) },
 	/* Philips/Spinel plus IR transceiver for ASUS */
 	{ USB_DEVICE(VENDOR_PHILIPS, 0x2088) },
+	/* Philips IR transceiver (Dell branded) */
+	{ USB_DEVICE(VENDOR_PHILIPS, 0x2093) },
 	/* Realtek MCE IR Receiver and card reader */
 	{ USB_DEVICE(VENDOR_REALTEK, 0x0161),
 	  .driver_info = MULTIFUNCTION },
@@ -277,7 +289,8 @@ static struct usb_device_id mceusb_dev_table[] = {
 	/* Formosa21 / eHome Infrared Receiver */
 	{ USB_DEVICE(VENDOR_FORMOSA, 0xe016) },
 	/* Formosa aim / Trust MCE Infrared Receiver */
-	{ USB_DEVICE(VENDOR_FORMOSA, 0xe017) },
+	{ USB_DEVICE(VENDOR_FORMOSA, 0xe017),
+	  .driver_info = MCE_GEN2_NO_TX },
 	/* Formosa Industrial Computing / Beanbag Emulation Device */
 	{ USB_DEVICE(VENDOR_FORMOSA, 0xe018) },
 	/* Formosa21 / eHome Infrared Receiver */
@@ -306,7 +319,8 @@ static struct usb_device_id mceusb_dev_table[] = {
 	/* Northstar Systems, Inc. eHome Infrared Transceiver */
 	{ USB_DEVICE(VENDOR_NORTHSTAR, 0xe004) },
 	/* TiVo PC IR Receiver */
-	{ USB_DEVICE(VENDOR_TIVO, 0x2000) },
+	{ USB_DEVICE(VENDOR_TIVO, 0x2000),
+	  .driver_info = TIVO_KIT },
 	/* Conexant Hybrid TV "Shelby" Polaris SDK */
 	{ USB_DEVICE(VENDOR_CONEXANT, 0x58a1),
 	  .driver_info = POLARIS_EVK },
