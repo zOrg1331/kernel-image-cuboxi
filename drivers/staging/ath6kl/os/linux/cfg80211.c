@@ -552,7 +552,7 @@ ar6k_cfg80211_connect_event(struct ar6_softc *ar, u16 channel,
                                         ibss_channel, mgmt,
                                         le16_to_cpu(size),
                                         signal, GFP_KERNEL);
-        A_FREE(ieeemgmtbuf);
+        kfree(ieeemgmtbuf);
         cfg80211_put_bss(bss);
     }
 
@@ -627,6 +627,10 @@ ar6k_cfg80211_disconnect_event(struct ar6_softc *ar, u8 reason,
 
     AR_DEBUG_PRINTF(ATH_DEBUG_INFO, ("%s: reason=%u\n", __func__, reason));
 
+    if (ar->scan_request) {
+	cfg80211_scan_done(ar->scan_request, true);
+        ar->scan_request = NULL;
+    }
     if((ADHOC_NETWORK & ar->arNetworkType)) {
         if(NL80211_IFTYPE_ADHOC != ar->wdev->iftype) {
             AR_DEBUG_PRINTF(ATH_DEBUG_INFO,
@@ -729,7 +733,7 @@ ar6k_cfg80211_scan_node(void *arg, bss_t *ni)
                               le16_to_cpu(size),
                               signal, GFP_KERNEL);
 
-    A_FREE (ieeemgmtbuf);
+    kfree (ieeemgmtbuf);
 }
 
 static int
@@ -1205,10 +1209,10 @@ ar6k_cfg80211_set_power_mgmt(struct wiphy *wiphy,
 
     if(pmgmt) {
         AR_DEBUG_PRINTF(ATH_DEBUG_INFO, ("%s: Max Perf\n", __func__));
-        pwrMode.powerMode = MAX_PERF_POWER;
+        pwrMode.powerMode = REC_POWER;
     } else {
         AR_DEBUG_PRINTF(ATH_DEBUG_INFO, ("%s: Rec Power\n", __func__));
-        pwrMode.powerMode = REC_POWER;
+        pwrMode.powerMode = MAX_PERF_POWER;
     }
 
     if(wmi_powermode_cmd(ar->arWmi, pwrMode.powerMode) != 0) {
