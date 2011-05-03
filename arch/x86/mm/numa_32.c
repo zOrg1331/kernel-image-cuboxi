@@ -22,39 +22,11 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <linux/mm.h>
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
-#include <linux/mmzone.h>
-#include <linux/highmem.h>
-#include <linux/initrd.h>
-#include <linux/nodemask.h>
 #include <linux/module.h>
-#include <linux/kexec.h>
-#include <linux/pfn.h>
-#include <linux/swap.h>
-#include <linux/acpi.h>
 
-#include <asm/e820.h>
-#include <asm/setup.h>
-#include <asm/mmzone.h>
-#include <asm/bios_ebda.h>
-#include <asm/proto.h>
-
-struct pglist_data *node_data[MAX_NUMNODES] __read_mostly;
-EXPORT_SYMBOL(node_data);
-
-/*
- * numa interface - we expect the numa architecture specific code to have
- *                  populated the following initialisation.
- *
- * 1) node_online_map  - the map of all nodes configured (online) in the system
- * 2) node_start_pfn   - the starting page frame number for a node
- * 3) node_end_pfn     - the ending page fram number for a node
- */
-unsigned long node_start_pfn[MAX_NUMNODES] __read_mostly;
-unsigned long node_end_pfn[MAX_NUMNODES] __read_mostly;
-
+#include "numa_internal.h"
 
 #ifdef CONFIG_DISCONTIGMEM
 /*
@@ -99,81 +71,12 @@ unsigned long node_memmap_size_bytes(int nid, unsigned long start_pfn,
 }
 #endif
 
-extern unsigned long find_max_low_pfn(void);
 extern unsigned long highend_pfn, highstart_pfn;
 
 #define LARGE_PAGE_BYTES (PTRS_PER_PTE * PAGE_SIZE)
 
 static void *node_remap_start_vaddr[MAX_NUMNODES];
 void set_pmd_pfn(unsigned long vaddr, unsigned long pfn, pgprot_t flags);
-
-int __cpuinit numa_cpu_node(int cpu)
-{
-	return apic->x86_32_numa_cpu_node(cpu);
-}
-
-/*
- * FLAT - support for basic PC memory model with discontig enabled, essentially
- *        a single node with all available processors in it with a flat
- *        memory map.
- */
-int __init get_memcfg_numa_flat(void)
-{
-	printk(KERN_DEBUG "NUMA - single node, flat memory mode\n");
-
-	node_start_pfn[0] = 0;
-	node_end_pfn[0] = max_pfn;
-	memblock_x86_register_active_regions(0, 0, max_pfn);
-	memory_present(0, 0, max_pfn);
-
-        /* Indicate there is one node available. */
-	nodes_clear(node_online_map);
-	node_set_online(0);
-	return 1;
-}
-
-/*
- * Find the highest page frame number we have available for the node
- */
-static void __init propagate_e820_map_node(int nid)
-{
-	if (node_end_pfn[nid] > max_pfn)
-		node_end_pfn[nid] = max_pfn;
-	/*
-	 * if a user has given mem=XXXX, then we need to make sure 
-	 * that the node _starts_ before that, too, not just ends
-	 */
-	if (node_start_pfn[nid] > max_pfn)
-		node_start_pfn[nid] = max_pfn;
-	BUG_ON(node_start_pfn[nid] > node_end_pfn[nid]);
-}
-
-/* 
- * Allocate memory for the pg_data_t for this node via a crude pre-bootmem
- * method.  For node zero take this from the bottom of memory, for
- * subsequent nodes place them at node_remap_start_vaddr which contains
- * node local data in physically node local memory.  See setup_memory()
- * for details.
- */
-static void __init allocate_pgdat(int nid)
-{
-	char buf[16];
-
-	NODE_DATA(nid) = alloc_remap(nid, ALIGN(sizeof(pg_data_t), PAGE_SIZE));
-	if (!NODE_DATA(nid)) {
-		unsigned long pgdat_phys;
-		pgdat_phys = memblock_find_in_range(min_low_pfn<<PAGE_SHIFT,
-				 max_pfn_mapped<<PAGE_SHIFT,
-				 sizeof(pg_data_t),
-				 PAGE_SIZE);
-		NODE_DATA(nid) = (pg_data_t *)(pfn_to_kaddr(pgdat_phys>>PAGE_SHIFT));
-		memset(buf, 0, sizeof(buf));
-		sprintf(buf, "NODE_DATA %d",  nid);
-		memblock_x86_reserve_range(pgdat_phys, pgdat_phys + sizeof(pg_data_t), buf);
-	}
-	printk(KERN_DEBUG "allocate_pgdat: node %d NODE_DATA %08lx\n",
-		nid, (unsigned long)NODE_DATA(nid));
-}
 
 /*
  * Remap memory allocator
@@ -274,8 +177,10 @@ void resume_map_numa_kva(pgd_t *pgd_base)
  * opportunistically and the callers will fall back to other memory
  * allocation mechanisms on failure.
  */
-static __init void init_alloc_remap(int nid)
+void __init init_alloc_remap(int nid, u64 start, u64 end)
 {
+	unsigned long start_pfn = start >> PAGE_SHIFT;
+	unsigned long end_pfn = end >> PAGE_SHIFT;
 	unsigned long size, pfn;
 	u64 node_pa, remap_pa;
 	void *remap_va;
@@ -285,24 +190,15 @@ static __init void init_alloc_remap(int nid)
 	 * memory could be added but not currently present.
 	 */
 	printk(KERN_DEBUG "node %d pfn: [%lx - %lx]\n",
-	       nid, node_start_pfn[nid], node_end_pfn[nid]);
-	if (node_start_pfn[nid] > max_pfn)
-		return;
-	if (!node_end_pfn[nid])
-		return;
-	if (node_end_pfn[nid] > max_pfn)
-		node_end_pfn[nid] = max_pfn;
+	       nid, start_pfn, end_pfn);
 
 	/* calculate the necessary space aligned to large page size */
-	size = node_memmap_size_bytes(nid, node_start_pfn[nid],
-				      min(node_end_pfn[nid], max_pfn));
+	size = node_memmap_size_bytes(nid, start_pfn, end_pfn);
 	size += ALIGN(sizeof(pg_data_t), PAGE_SIZE);
 	size = ALIGN(size, LARGE_PAGE_BYTES);
 
 	/* allocate node memory and the lowmem remap area */
-	node_pa = memblock_find_in_range(node_start_pfn[nid] << PAGE_SHIFT,
-					 (u64)node_end_pfn[nid] << PAGE_SHIFT,
-					 size, LARGE_PAGE_BYTES);
+	node_pa = memblock_find_in_range(start, end, size, LARGE_PAGE_BYTES);
 	if (node_pa == MEMBLOCK_ERROR) {
 		pr_warning("remap_alloc: failed to allocate %lu bytes for node %d\n",
 			   size, nid);
@@ -340,13 +236,7 @@ static __init void init_alloc_remap(int nid)
 
 void __init initmem_init(void)
 {
-	int nid;
-
-	get_memcfg_numa();
-	numa_init_array();
-
-	for_each_online_node(nid)
-		init_alloc_remap(nid);
+	x86_numa_init();
 
 #ifdef CONFIG_HIGHMEM
 	highstart_pfn = highend_pfn = max_pfn;
@@ -367,47 +257,9 @@ void __init initmem_init(void)
 
 	printk(KERN_DEBUG "Low memory ends at vaddr %08lx\n",
 			(ulong) pfn_to_kaddr(max_low_pfn));
-	for_each_online_node(nid)
-		allocate_pgdat(nid);
 
 	printk(KERN_DEBUG "High memory starts at vaddr %08lx\n",
 			(ulong) pfn_to_kaddr(highstart_pfn));
-	for_each_online_node(nid)
-		propagate_e820_map_node(nid);
-
-	for_each_online_node(nid) {
-		memset(NODE_DATA(nid), 0, sizeof(struct pglist_data));
-		NODE_DATA(nid)->node_id = nid;
-	}
 
 	setup_bootmem_allocator();
 }
-
-#ifdef CONFIG_MEMORY_HOTPLUG
-static int paddr_to_nid(u64 addr)
-{
-	int nid;
-	unsigned long pfn = PFN_DOWN(addr);
-
-	for_each_node(nid)
-		if (node_start_pfn[nid] <= pfn &&
-		    pfn < node_end_pfn[nid])
-			return nid;
-
-	return -1;
-}
-
-/*
- * This function is used to ask node id BEFORE memmap and mem_section's
- * initialization (pfn_to_nid() can't be used yet).
- * If _PXM is not defined on ACPI's DSDT, node id must be found by this.
- */
-int memory_add_physaddr_to_nid(u64 addr)
-{
-	int nid = paddr_to_nid(addr);
-	return (nid >= 0) ? nid : 0;
-}
-
-EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
-#endif
-
