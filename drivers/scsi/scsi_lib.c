@@ -404,6 +404,10 @@ static void scsi_run_queue(struct request_queue *q)
 	LIST_HEAD(starved_list);
 	unsigned long flags;
 
+	/* if the device is dead, sdev will be NULL, so no queue to run */
+	if (!sdev)
+		return;
+
 	if (scsi_target(sdev)->single_lun)
 		scsi_single_lun_run(sdev);
 
