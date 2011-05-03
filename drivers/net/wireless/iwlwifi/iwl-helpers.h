@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2003 - 2010 Intel Corporation. All rights reserved.
+ * Copyright(c) 2003 - 2011 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project, as well
  * as portions of the ieee80211 subsystem header files.
@@ -129,6 +129,19 @@ static inline void iwl_stop_queue(struct iwl_priv *priv,
 	if (!test_and_set_bit(hwq, priv->queue_stopped))
 		if (atomic_inc_return(&priv->queue_stop_count[ac]) > 0)
 			ieee80211_stop_queue(priv->hw, ac);
+}
+
+static inline void iwl_wake_any_queue(struct iwl_priv *priv,
+				      struct iwl_rxon_context *ctx)
+{
+	u8 ac;
+
+	for (ac = 0; ac < AC_NUM; ac++) {
+		IWL_DEBUG_INFO(priv, "Queue Status: Q[%d] %s\n",
+			ac, (atomic_read(&priv->queue_stop_count[ac]) > 0)
+			      ? "stopped" : "awake");
+		iwl_wake_queue(priv, &priv->txq[ctx->ac_to_queue[ac]]);
+	}
 }
 
 #define ieee80211_stop_queue DO_NOT_USE_ieee80211_stop_queue
