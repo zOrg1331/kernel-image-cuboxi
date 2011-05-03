@@ -1,8 +1,4 @@
-# generic gpio support: dedicated expander chips, etc
-#
-# NOTE: platform-specific GPIO drivers don't belong in the
-# drivers/gpio directory; put them with other platform setup
-# code, IRQ controllers, board init, etc.
+# generic gpio support: platform drivers, dedicated expander chips, etc
 
 ccflags-$(CONFIG_DEBUG_GPIO)	+= -DDEBUG
 
@@ -37,6 +33,8 @@ obj-$(CONFIG_GPIO_WM831X)	+= wm831x-gpio.o
 obj-$(CONFIG_GPIO_WM8350)	+= wm8350-gpiolib.o
 obj-$(CONFIG_GPIO_WM8994)	+= wm8994-gpio.o
 obj-$(CONFIG_GPIO_SCH)		+= sch_gpio.o
+obj-$(CONFIG_GPIO_U300)		+= u300-gpio.o
+obj-$(CONFIG_GPIO_NOMADIK)	+= nomadik-gpio.o
 obj-$(CONFIG_GPIO_RDC321X)	+= rdc321x-gpio.o
 obj-$(CONFIG_GPIO_JANZ_TTL)	+= janz-ttl.o
 obj-$(CONFIG_GPIO_SX150X)	+= sx150x.o
