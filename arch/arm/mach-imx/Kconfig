@@ -342,7 +342,6 @@ config MACH_MX31ADS
 	select IMX_HAVE_PLATFORM_IMX_I2C
 	select IMX_HAVE_PLATFORM_IMX_SSI
 	select IMX_HAVE_PLATFORM_IMX_UART
-	default y
 	help
 	  Include support for MX31ADS platform. This includes specific
 	  configurations for the board and its peripherals.
@@ -490,7 +489,6 @@ config MACH_BUG
 	bool "Support Buglabs BUGBase platform"
 	select SOC_IMX31
 	select IMX_HAVE_PLATFORM_IMX_UART
-	default y
 	help
 	  Include support for BUGBase 1.3 platform. This includes specific
 	  configurations for the board and its peripherals.
