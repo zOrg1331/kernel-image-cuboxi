@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.38
-Release: alt4
+Release: alt5
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -115,8 +115,8 @@ Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-alsa-%flavour
 The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
@@ -142,8 +142,8 @@ Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease > %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-drm-%flavour
 The Direct Rendering Infrastructure, also known as the DRI, is a framework
@@ -163,8 +163,8 @@ Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%r
 Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-drm-nouveau-%flavour
 The Direct Rendering Infrastructure, also known as the DRI, is a framework
@@ -184,8 +184,8 @@ Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease > %version-%re
 Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-drm-radeon-%flavour
 The Direct Rendering Infrastructure, also known as the DRI, is a framework
@@ -204,8 +204,8 @@ Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-ide-%flavour
 This package contains  IDE driver modules for the Linux kernel
@@ -226,8 +226,8 @@ Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease > %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-kvm-%flavour
 Linux kernel module for Kernel Virtual Machine virtualization
@@ -246,8 +246,8 @@ Provides:  kernel-modules-lirc-%kversion-%flavour-%krelease = %version-%release
 Provides:  kernel-modules-lirc-%flavour = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
@@ -260,8 +260,8 @@ Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%relea
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
 
 %description -n kernel-modules-staging-%flavour
 Drivers and filesystems that are not ready to be merged into the main
@@ -592,6 +592,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue May 03 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt5
+- 2.6.38.5
+- epoch added to modules requires
+
 * Fri Apr 22 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt4
 - 2.6.38.4
 
