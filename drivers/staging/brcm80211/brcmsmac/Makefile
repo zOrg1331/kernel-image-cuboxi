@@ -38,23 +38,22 @@ BRCMSMAC_OFILES := \
 	wlc_channel.o \
 	wlc_main.o \
 	wlc_phy_shim.o \
+	wlc_pmu.o \
 	wlc_rate.o \
 	wlc_stf.o \
+	aiutils.o \
 	phy/wlc_phy_cmn.o \
 	phy/wlc_phy_lcn.o \
 	phy/wlc_phy_n.o \
 	phy/wlc_phytbl_lcn.o \
 	phy/wlc_phytbl_n.o \
-	../util/aiutils.o \
-	../util/siutils.o \
+	phy/wlc_phy_qmath.o \
 	../util/bcmutils.o \
 	../util/bcmwifi.o \
 	../util/bcmotp.o \
 	../util/bcmsrom.o \
 	../util/hnddma.o \
-	../util/hndpmu.o \
 	../util/nicpci.o \
-	../util/qmath.o \
 	../util/nvram/nvram_ro.o
 
 MODULEPFX := brcmsmac

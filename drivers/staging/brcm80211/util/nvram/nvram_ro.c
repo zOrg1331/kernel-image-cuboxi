@@ -22,7 +22,6 @@
 #include <bcmnvram.h>
 #include <sbchipc.h>
 #include <bcmsrom.h>
-#include <bcmotp.h>
 #include <bcmdevs.h>
 #include <hndsoc.h>
 
@@ -90,7 +89,7 @@ int nvram_append(void *si, char *varlst, uint varsz)
 
 	new = kmalloc(bufsz, GFP_ATOMIC);
 	if (new == NULL)
-		return BCME_NOMEM;
+		return -ENOMEM;
 
 	new->vars = varlst;
 	new->bufsz = bufsz;
@@ -98,7 +97,7 @@ int nvram_append(void *si, char *varlst, uint varsz)
 	new->next = vars;
 	vars = new;
 
-	return BCME_OK;
+	return 0;
 }
 
 void nvram_exit(void *si)
@@ -189,7 +188,7 @@ int nvram_getall(char *buf, int count)
 		while ((from < lim) && (*from)) {
 			len = strlen(from) + 1;
 			if (resid < (acc + len))
-				return BCME_BUFTOOSHORT;
+				return -EOVERFLOW;
 			memcpy(to, from, len);
 			acc += len;
 			from += len;
@@ -201,7 +200,7 @@ int nvram_getall(char *buf, int count)
 		this = this->next;
 	}
 	if (resid < 1)
-		return BCME_BUFTOOSHORT;
+		return -EOVERFLOW;
 	*buf = '\0';
 	return 0;
 }

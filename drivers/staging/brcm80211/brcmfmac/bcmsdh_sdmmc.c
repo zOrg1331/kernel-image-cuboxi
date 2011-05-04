@@ -68,6 +68,13 @@ DHD_PM_RESUME_WAIT_INIT(sdioh_request_buffer_wait);
 int sdioh_sdmmc_card_regread(sdioh_info_t *sd, int func, u32 regaddr,
 			     int regsize, u32 *data);
 
+void sdioh_sdio_set_host_pm_flags(int flag)
+{
+	if (sdio_set_host_pm_flags(gInstance->func[1], flag))
+		printk(KERN_ERR "%s: Failed to set pm_flags 0x%08x\n",\
+			 __func__, (unsigned int)flag);
+}
+
 static int sdioh_sdmmc_card_enablefuncs(sdioh_info_t *sd)
 {
 	int err_ret;
@@ -416,7 +423,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	vi = bcm_iovar_lookup(sdioh_iovars, name);
 	if (vi == NULL) {
-		bcmerror = BCME_UNSUPPORTED;
+		bcmerror = -ENOTSUPP;
 		goto exit;
 	}
 
@@ -465,7 +472,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 	case IOV_GVAL(IOV_BLOCKSIZE):
 		if ((u32) int_val > si->num_funcs) {
-			bcmerror = BCME_BADARG;
+			bcmerror = -EINVAL;
 			break;
 		}
 		int_val = (s32) si->client_block_size[int_val];
@@ -479,7 +486,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 			uint maxsize;
 
 			if (func > si->num_funcs) {
-				bcmerror = BCME_BADARG;
+				bcmerror = -EINVAL;
 				break;
 			}
 
@@ -497,7 +504,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 				maxsize = 0;
 			}
 			if (blksize > maxsize) {
-				bcmerror = BCME_BADARG;
+				bcmerror = -EINVAL;
 				break;
 			}
 			if (!blksize)
@@ -600,7 +607,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 			    || sd_ptr->offset > SD_MaxCurCap) {
 				sd_err(("%s: bad offset 0x%x\n", __func__,
 					sd_ptr->offset));
-				bcmerror = BCME_BADARG;
+				bcmerror = -EINVAL;
 				break;
 			}
 
@@ -630,7 +637,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 			    || sd_ptr->offset > SD_MaxCurCap) {
 				sd_err(("%s: bad offset 0x%x\n", __func__,
 					sd_ptr->offset));
-				bcmerror = BCME_BADARG;
+				bcmerror = -EINVAL;
 				break;
 			}
 
@@ -649,7 +656,7 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 			if (sdioh_cfg_read
 			    (si, sd_ptr->func, sd_ptr->offset, &data)) {
-				bcmerror = BCME_SDIO_ERROR;
+				bcmerror = -EIO;
 				break;
 			}
 
@@ -665,14 +672,14 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 
 			if (sdioh_cfg_write
 			    (si, sd_ptr->func, sd_ptr->offset, &data)) {
-				bcmerror = BCME_SDIO_ERROR;
+				bcmerror = -EIO;
 				break;
 			}
 			break;
 		}
 
 	default:
-		bcmerror = BCME_UNSUPPORTED;
+		bcmerror = -ENOTSUPP;
 		break;
 	}
 exit:
