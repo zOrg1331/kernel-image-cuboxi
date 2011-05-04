@@ -236,11 +236,9 @@ EXPORT_SYMBOL(mmc_wait_for_req);
  */
 int mmc_wait_for_cmd(struct mmc_host *host, struct mmc_command *cmd, int retries)
 {
-	struct mmc_request mrq;
+	struct mmc_request mrq = {0};
 
 	WARN_ON(!host->claimed);
-
-	memset(&mrq, 0, sizeof(struct mmc_request));
 
 	memset(cmd->resp, 0, sizeof(cmd->resp));
 	cmd->retries = retries;
@@ -1187,9 +1185,8 @@ void mmc_init_erase(struct mmc_card *card)
 	}
 }
 
-static void mmc_set_mmc_erase_timeout(struct mmc_card *card,
-				      struct mmc_command *cmd,
-				      unsigned int arg, unsigned int qty)
+static unsigned int mmc_mmc_erase_timeout(struct mmc_card *card,
+				          unsigned int arg, unsigned int qty)
 {
 	unsigned int erase_timeout;
 
@@ -1246,44 +1243,48 @@ static void mmc_set_mmc_erase_timeout(struct mmc_card *card,
 	if (mmc_host_is_spi(card->host) && erase_timeout < 1000)
 		erase_timeout = 1000;
 
-	cmd->erase_timeout = erase_timeout;
+	return erase_timeout;
 }
 
-static void mmc_set_sd_erase_timeout(struct mmc_card *card,
-				     struct mmc_command *cmd, unsigned int arg,
-				     unsigned int qty)
+static unsigned int mmc_sd_erase_timeout(struct mmc_card *card,
+					 unsigned int arg,
+					 unsigned int qty)
 {
+	unsigned int erase_timeout;
+
 	if (card->ssr.erase_timeout) {
 		/* Erase timeout specified in SD Status Register (SSR) */
-		cmd->erase_timeout = card->ssr.erase_timeout * qty +
-				     card->ssr.erase_offset;
+		erase_timeout = card->ssr.erase_timeout * qty +
+				card->ssr.erase_offset;
 	} else {
 		/*
 		 * Erase timeout not specified in SD Status Register (SSR) so
 		 * use 250ms per write block.
 		 */
-		cmd->erase_timeout = 250 * qty;
+		erase_timeout = 250 * qty;
 	}
 
 	/* Must not be less than 1 second */
-	if (cmd->erase_timeout < 1000)
-		cmd->erase_timeout = 1000;
+	if (erase_timeout < 1000)
+		erase_timeout = 1000;
+
+	return erase_timeout;
 }
 
-static void mmc_set_erase_timeout(struct mmc_card *card,
-				  struct mmc_command *cmd, unsigned int arg,
-				  unsigned int qty)
+static unsigned int mmc_erase_timeout(struct mmc_card *card,
+				      unsigned int arg,
+				      unsigned int qty)
 {
 	if (mmc_card_sd(card))
-		mmc_set_sd_erase_timeout(card, cmd, arg, qty);
+		return mmc_sd_erase_timeout(card, arg, qty);
 	else
-		mmc_set_mmc_erase_timeout(card, cmd, arg, qty);
+		return mmc_mmc_erase_timeout(card, arg, qty);
 }
 
 static int mmc_do_erase(struct mmc_card *card, unsigned int from,
 			unsigned int to, unsigned int arg)
 {
-	struct mmc_command cmd;
+	struct mmc_command cmd = {0};
 	unsigned int qty = 0;
 	int err;
 
@@ -1317,7 +1318,6 @@ static int mmc_do_erase(struct mmc_card *card, unsigned int from,
 		to <<= 9;
 	}
 
-	memset(&cmd, 0, sizeof(struct mmc_command));
 	if (mmc_card_sd(card))
 		cmd.opcode = SD_ERASE_WR_BLK_START;
 	else
@@ -1351,7 +1351,7 @@ static int mmc_do_erase(struct mmc_card *card, unsigned int from,
 	cmd.opcode = MMC_ERASE;
 	cmd.arg = arg;
 	cmd.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_AC;
-	mmc_set_erase_timeout(card, &cmd, arg, qty);
+	cmd.cmd_timeout_ms = mmc_erase_timeout(card, arg, qty);
 	err = mmc_wait_for_cmd(card->host, &cmd, 0);
 	if (err) {
 		printk(KERN_ERR "mmc_erase: erase error %d, status %#x\n",
@@ -1487,12 +1487,11 @@ EXPORT_SYMBOL(mmc_erase_group_aligned);
 
 int mmc_set_blocklen(struct mmc_card *card, unsigned int blocklen)
 {
-	struct mmc_command cmd;
+	struct mmc_command cmd = {0};
 
 	if (mmc_card_blockaddr(card) || mmc_card_ddr_mode(card))
 		return 0;
 
-	memset(&cmd, 0, sizeof(struct mmc_command));
 	cmd.opcode = MMC_SET_BLOCKLEN;
 	cmd.arg = blocklen;
 	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_AC;
@@ -1746,7 +1745,7 @@ int mmc_suspend_host(struct mmc_host *host)
 	}
 	mmc_bus_put(host);
 
-	if (!err && !(host->pm_flags & MMC_PM_KEEP_POWER))
+	if (!err && !mmc_card_keep_power(host))
 		mmc_power_off(host);
 
 	return err;
@@ -1764,7 +1763,7 @@ int mmc_resume_host(struct mmc_host *host)
 
 	mmc_bus_get(host);
 	if (host->bus_ops && !host->bus_dead) {
-		if (!(host->pm_flags & MMC_PM_KEEP_POWER)) {
+		if (!mmc_card_keep_power(host)) {
 			mmc_power_up(host);
 			mmc_select_voltage(host, host->ocr);
 			/*
