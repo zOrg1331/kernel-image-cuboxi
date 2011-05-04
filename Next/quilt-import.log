@@ -1,0 +1,20 @@
+Importing i2c based on 2.6.39-rc5-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard adadfe48df3858c3c1ba52963502f38885ab2f3c
+HEAD is now at adadfe4 Merge branch 'for-linus' of git://git.infradead.org/ubifs-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-parport-cleanups.patch
+i2c-i801-smbus-patch-for-intel-panther-point-deviceids.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + d057868...cd6cacb master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.39-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.39-rc3-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.39-rc4-245-g4175242
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
