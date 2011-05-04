@@ -54,6 +54,7 @@ static s32 ixgbe_device_supports_autoneg_fc(struct ixgbe_hw *hw);
 static s32 ixgbe_negotiate_fc(struct ixgbe_hw *hw, u32 adv_reg, u32 lp_reg,
 			      u32 adv_sym, u32 adv_asm, u32 lp_sym, u32 lp_asm);
 static s32 ixgbe_setup_fc(struct ixgbe_hw *hw, s32 packetbuf_num);
+static s32 ixgbe_poll_eerd_eewr_done(struct ixgbe_hw *hw, u32 ee_reg);
 
 /**
  *  ixgbe_start_hw_generic - Prepare hardware for Tx/Rx
@@ -91,6 +92,45 @@ s32 ixgbe_start_hw_generic(struct ixgbe_hw *hw)
 
 	/* Clear adapter stopped flag */
 	hw->adapter_stopped = false;
+
+	return 0;
+}
+
+/**
+ *  ixgbe_start_hw_gen2 - Init sequence for common device family
+ *  @hw: pointer to hw structure
+ *
+ * Performs the init sequence common to the second generation
+ * of 10 GbE devices.
+ * Devices in the second generation:
+ *     82599
+ *     X540
+ **/
+s32 ixgbe_start_hw_gen2(struct ixgbe_hw *hw)
+{
+	u32 i;
+	u32 regval;
+
+	/* Clear the rate limiters */
+	for (i = 0; i < hw->mac.max_tx_queues; i++) {
+		IXGBE_WRITE_REG(hw, IXGBE_RTTDQSEL, i);
+		IXGBE_WRITE_REG(hw, IXGBE_RTTBCNRC, 0);
+	}
+	IXGBE_WRITE_FLUSH(hw);
+
+	/* Disable relaxed ordering */
+	for (i = 0; i < hw->mac.max_tx_queues; i++) {
+		regval = IXGBE_READ_REG(hw, IXGBE_DCA_TXCTRL_82599(i));
+		regval &= ~IXGBE_DCA_TXCTRL_TX_WB_RO_EN;
+		IXGBE_WRITE_REG(hw, IXGBE_DCA_TXCTRL_82599(i), regval);
+	}
+
+	for (i = 0; i < hw->mac.max_rx_queues; i++) {
+		regval = IXGBE_READ_REG(hw, IXGBE_DCA_RXCTRL(i));
+		regval &= ~(IXGBE_DCA_RXCTRL_DESC_WRO_EN |
+					IXGBE_DCA_RXCTRL_DESC_HSRO_EN);
+		IXGBE_WRITE_REG(hw, IXGBE_DCA_RXCTRL(i), regval);
+	}
 
 	return 0;
 }
@@ -464,7 +504,7 @@ s32 ixgbe_stop_adapter_generic(struct ixgbe_hw *hw)
 	reg_val &= ~(IXGBE_RXCTRL_RXEN);
 	IXGBE_WRITE_REG(hw, IXGBE_RXCTRL, reg_val);
 	IXGBE_WRITE_FLUSH(hw);
-	msleep(2);
+	usleep_range(2000, 4000);
 
 	/* Clear interrupt mask to stop from interrupts being generated */
 	IXGBE_WRITE_REG(hw, IXGBE_EIMC, IXGBE_IRQ_CLEAR_MASK);
@@ -739,6 +779,47 @@ out:
 }
 
 /**
+ *  ixgbe_write_eewr_generic - Write EEPROM word using EEWR
+ *  @hw: pointer to hardware structure
+ *  @offset: offset of  word in the EEPROM to write
+ *  @data: word write to the EEPROM
+ *
+ *  Write a 16 bit word to the EEPROM using the EEWR register.
+ **/
+s32 ixgbe_write_eewr_generic(struct ixgbe_hw *hw, u16 offset, u16 data)
+{
+	u32 eewr;
+	s32 status;
+
+	hw->eeprom.ops.init_params(hw);
+
+	if (offset >= hw->eeprom.word_size) {
+		status = IXGBE_ERR_EEPROM;
+		goto out;
+	}
+
+	eewr = (offset << IXGBE_EEPROM_RW_ADDR_SHIFT) |
+	       (data << IXGBE_EEPROM_RW_REG_DATA) | IXGBE_EEPROM_RW_REG_START;
+
+	status = ixgbe_poll_eerd_eewr_done(hw, IXGBE_NVM_POLL_WRITE);
+	if (status != 0) {
+		hw_dbg(hw, "Eeprom write EEWR timed out\n");
+		goto out;
+	}
+
+	IXGBE_WRITE_REG(hw, IXGBE_EEWR, eewr);
+
+	status = ixgbe_poll_eerd_eewr_done(hw, IXGBE_NVM_POLL_WRITE);
+	if (status != 0) {
+		hw_dbg(hw, "Eeprom write EEWR timed out\n");
+		goto out;
+	}
+
+out:
+	return status;
+}
+
+/**
  *  ixgbe_poll_eerd_eewr_done - Poll EERD read or EEWR write status
  *  @hw: pointer to hardware structure
  *  @ee_reg: EEPROM flag for polling
@@ -746,7 +827,7 @@ out:
  *  Polls the status bit (bit 1) of the EERD or EEWR to determine when the
  *  read or write is done respectively.
  **/
-s32 ixgbe_poll_eerd_eewr_done(struct ixgbe_hw *hw, u32 ee_reg)
+static s32 ixgbe_poll_eerd_eewr_done(struct ixgbe_hw *hw, u32 ee_reg)
 {
 	u32 i;
 	u32 reg;
@@ -1112,8 +1193,12 @@ static void ixgbe_release_eeprom(struct ixgbe_hw *hw)
 
 	hw->mac.ops.release_swfw_sync(hw, IXGBE_GSSR_EEP_SM);
 
-	/* Delay before attempt to obtain semaphore again to allow FW access */
-	msleep(hw->eeprom.semaphore_delay);
+	/*
+	 * Delay before attempt to obtain semaphore again to allow FW
+	 * access. semaphore_delay is in ms we need us for usleep_range
+	 */
+	usleep_range(hw->eeprom.semaphore_delay * 1000,
+		     hw->eeprom.semaphore_delay * 2000);
 }
 
 /**
@@ -2189,7 +2274,7 @@ s32 ixgbe_acquire_swfw_sync(struct ixgbe_hw *hw, u16 mask)
 		 * thread currently using resource (swmask)
 		 */
 		ixgbe_release_eeprom_semaphore(hw);
-		msleep(5);
+		usleep_range(5000, 10000);
 		timeout--;
 	}
 
@@ -2263,7 +2348,7 @@ s32 ixgbe_blink_led_start_generic(struct ixgbe_hw *hw, u32 index)
 		autoc_reg |= IXGBE_AUTOC_AN_RESTART;
 		autoc_reg |= IXGBE_AUTOC_FLU;
 		IXGBE_WRITE_REG(hw, IXGBE_AUTOC, autoc_reg);
-		msleep(10);
+		usleep_range(10000, 20000);
 	}
 
 	led_reg &= ~IXGBE_LED_MODE_MASK(index);
@@ -2882,4 +2967,19 @@ void ixgbe_set_vlan_anti_spoofing(struct ixgbe_hw *hw, bool enable, int vf)
 	else
 		pfvfspoof &= ~(1 << vf_target_shift);
 	IXGBE_WRITE_REG(hw, IXGBE_PFVFSPOOF(vf_target_reg), pfvfspoof);
+}
+
+/**
+ *  ixgbe_get_device_caps_generic - Get additional device capabilities
+ *  @hw: pointer to hardware structure
+ *  @device_caps: the EEPROM word with the extra device capabilities
+ *
+ *  This function will read the EEPROM location for the device capabilities,
+ *  and return the word through device_caps.
+ **/
+s32 ixgbe_get_device_caps_generic(struct ixgbe_hw *hw, u16 *device_caps)
+{
+	hw->eeprom.ops.read(hw, IXGBE_DEVICE_CAPS, device_caps);
+
+	return 0;
 }

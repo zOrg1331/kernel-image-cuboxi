@@ -104,10 +104,10 @@ ixgb_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	ecmd->transceiver = XCVR_EXTERNAL;
 
 	if (netif_carrier_ok(adapter->netdev)) {
-		ecmd->speed = SPEED_10000;
+		ethtool_cmd_speed_set(ecmd, SPEED_10000);
 		ecmd->duplex = DUPLEX_FULL;
 	} else {
-		ecmd->speed = -1;
+		ethtool_cmd_speed_set(ecmd, -1);
 		ecmd->duplex = -1;
 	}
 
@@ -129,9 +129,10 @@ static int
 ixgb_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
+	u32 speed = ethtool_cmd_speed(ecmd);
 
 	if (ecmd->autoneg == AUTONEG_ENABLE ||
-	   ecmd->speed + ecmd->duplex != SPEED_10000 + DUPLEX_FULL)
+	    (speed + ecmd->duplex != SPEED_10000 + DUPLEX_FULL))
 		return -EINVAL;
 
 	if (netif_running(adapter->netdev)) {
