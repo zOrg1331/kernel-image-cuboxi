@@ -75,3 +75,26 @@ void __init ltq_register_gpio_stp(void)
 {
 	platform_device_register_simple("ltq_stp", 0, &ltq_stp_resource, 1);
 }
+
+/* ethernet */
+static struct resource ltq_etop_resources = {
+	.name	= "etop",
+	.start	= LTQ_ETOP_BASE_ADDR,
+	.end	= LTQ_ETOP_BASE_ADDR + LTQ_ETOP_SIZE - 1,
+	.flags	= IORESOURCE_MEM,
+};
+
+static struct platform_device ltq_etop = {
+	.name		= "ltq_etop",
+	.resource	= &ltq_etop_resources,
+	.num_resources	= 1,
+};
+
+void __init
+ltq_register_etop(struct ltq_eth_data *eth)
+{
+	if (eth) {
+		ltq_etop.dev.platform_data = eth;
+		platform_device_register(&ltq_etop);
+	}
+}
