@@ -17,15 +17,30 @@
 #define UVC_CTRL_DATA_TYPE_BITMASK	5
 
 /* Control flags */
+#define UVC_CTRL_FLAG_SET_CUR		(1 << 0)
+#define UVC_CTRL_FLAG_GET_CUR		(1 << 1)
+#define UVC_CTRL_FLAG_GET_MIN		(1 << 2)
+#define UVC_CTRL_FLAG_GET_MAX		(1 << 3)
+#define UVC_CTRL_FLAG_GET_RES		(1 << 4)
+#define UVC_CTRL_FLAG_GET_DEF		(1 << 5)
+/* Control should be saved at suspend and restored at resume. */
+#define UVC_CTRL_FLAG_RESTORE		(1 << 6)
+/* Control can be updated by the camera. */
+#define UVC_CTRL_FLAG_AUTO_UPDATE	(1 << 7)
+
+#define UVC_CTRL_FLAG_GET_RANGE \
+	(UVC_CTRL_FLAG_GET_CUR | UVC_CTRL_FLAG_GET_MIN | \
+	 UVC_CTRL_FLAG_GET_MAX | UVC_CTRL_FLAG_GET_RES | \
+	 UVC_CTRL_FLAG_GET_DEF)
+
+/* Old control flags, don't use */
 #define UVC_CONTROL_SET_CUR	(1 << 0)
 #define UVC_CONTROL_GET_CUR	(1 << 1)
 #define UVC_CONTROL_GET_MIN	(1 << 2)
 #define UVC_CONTROL_GET_MAX	(1 << 3)
 #define UVC_CONTROL_GET_RES	(1 << 4)
 #define UVC_CONTROL_GET_DEF	(1 << 5)
-/* Control should be saved at suspend and restored at resume. */
 #define UVC_CONTROL_RESTORE	(1 << 6)
-/* Control can be updated by the camera. */
 #define UVC_CONTROL_AUTO_UPDATE	(1 << 7)
 
 #define UVC_CONTROL_GET_RANGE	(UVC_CONTROL_GET_CUR | UVC_CONTROL_GET_MIN | \
@@ -57,7 +72,7 @@ struct uvc_xu_control_mapping {
 
 	__u8 size;
 	__u8 offset;
-	enum v4l2_ctrl_type v4l2_type;
+	__u32 v4l2_type;
 	__u32 data_type;
 
 	struct uvc_menu_info __user *menu_info;
@@ -73,11 +88,20 @@ struct uvc_xu_control {
 	__u8 __user *data;
 };
 
+struct uvc_xu_control_query {
+	__u8 unit;
+	__u8 selector;
+	__u8 query;
+	__u16 size;
+	__u8 __user *data;
+};
+
 #define UVCIOC_CTRL_ADD		_IOW('U', 1, struct uvc_xu_control_info)
 #define UVCIOC_CTRL_MAP_OLD	_IOWR('U', 2, struct uvc_xu_control_mapping_old)
 #define UVCIOC_CTRL_MAP		_IOWR('U', 2, struct uvc_xu_control_mapping)
 #define UVCIOC_CTRL_GET		_IOWR('U', 3, struct uvc_xu_control)
 #define UVCIOC_CTRL_SET		_IOW('U', 4, struct uvc_xu_control)
+#define UVCIOC_CTRL_QUERY	_IOWR('U', 5, struct uvc_xu_control_query)
 
 #ifdef __KERNEL__
 
@@ -151,6 +175,9 @@ struct uvc_xu_control {
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 #define UVC_GUID_FORMAT_BY8 \
 	{ 'B',  'Y',  '8',  ' ', 0x00, 0x00, 0x10, 0x00, \
+	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+#define UVC_GUID_FORMAT_RGBP \
+	{ 'R',  'G',  'B',  'P', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 
 /* ------------------------------------------------------------------------
@@ -638,7 +665,7 @@ extern int uvc_ctrl_set(struct uvc_video_chain *chain,
 		struct v4l2_ext_control *xctrl);
 
 extern int uvc_xu_ctrl_query(struct uvc_video_chain *chain,
-		struct uvc_xu_control *ctrl, int set);
+		struct uvc_xu_control_query *xqry);
 
 /* Utility functions */
 extern void uvc_simplify_fraction(uint32_t *numerator, uint32_t *denominator,

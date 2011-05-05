@@ -37,6 +37,10 @@
 #include "mt352_priv.h"
 #include "zl10353.h"
 #include "tda18212.h"
+#include "cx24116.h"
+#include "stv0900.h"
+#include "stv6110.h"
+#include "isl6423.h"
 
 /* debug */
 static int dvb_usb_anysee_debug;
@@ -300,6 +304,36 @@ static struct tda18212_config anysee_tda18212_config = {
 	.if_dvbc = 5000,
 };
 
+static struct cx24116_config anysee_cx24116_config = {
+	.demod_address = (0xaa >> 1),
+	.mpg_clk_pos_pol = 0x00,
+	.i2c_wr_max = 48,
+};
+
+static struct stv0900_config anysee_stv0900_config = {
+	.demod_address = (0xd0 >> 1),
+	.demod_mode = 0,
+	.xtal = 8000000,
+	.clkmode = 3,
+	.diseqc_mode = 2,
+	.tun1_maddress = 0,
+	.tun1_adc = 1, /* 1 Vpp */
+	.path1_mode = 3,
+};
+
+static struct stv6110_config anysee_stv6110_config = {
+	.i2c_address = (0xc0 >> 1),
+	.mclk = 16000000,
+	.clk_div = 1,
+};
+
+static struct isl6423_config anysee_isl6423_config = {
+	.current_max = SEC_CURRENT_800m,
+	.curlim  = SEC_CURRENT_LIM_OFF,
+	.mod_extern = 1,
+	.addr = (0x10 >> 1),
+};
+
 /*
  * New USB device strings: Mfr=1, Product=2, SerialNumber=0
  * Manufacturer: AMT.CO.KR
@@ -327,6 +361,13 @@ static struct tda18212_config anysee_tda18212_config = {
  * OEA=80 OEB=00 OEC=00 OED=ff OEF=fe
  * IOA=4f IOB=ff IOC=00 IOD=26 IOF=01
  * IOD[0] TDA10023 1=enabled
+ *
+ * E30 S2 Plus VID=04b4 PID=861f HW=11 FW=0.1 "anysee-S2(LP)"
+ * PCB: 507SI (rev2.1)
+ * parts: BS2N10WCC01(CX24116, CX24118), ISL6423, TDA8024
+ * OEA=80 OEB=00 OEC=ff OED=ff OEF=fe
+ * IOA=4d IOB=ff IOC=00 IOD=26 IOF=01
+ * IOD[0] CX24116 1=enabled
  *
  * E30 C Plus VID=1c73 PID=861f HW=15 FW=1.2 "anysee-FA(LP)"
  * PCB: 507FA (rev0.4)
@@ -364,6 +405,15 @@ static struct tda18212_config anysee_tda18212_config = {
  * IOD[5] TDA10023 0=disabled
  * IOD[6] ZL10353 1=enabled
  * IOE[0] IF 0=enabled
+ *
+ * E7 S2 VID=1c73 PID=861f HW=19 FW=0.4 AMTCI=0.5 "anysee-E7S2(LP)"
+ * PCB: 508S2 (rev0.7)
+ * parts: DNBU10512IST(STV0903, STV6110), ISL6423
+ * OEA=80 OEB=00 OEC=03 OED=f7 OEF=ff
+ * IOA=4d IOB=00 IOC=c4 IOD=08 IOF=e4
+ * IOA[7] TS 1=enabled
+ * IOE[5] STV0903 1=enabled
+ *
  */
 
 static int anysee_frontend_attach(struct dvb_usb_adapter *adap)
@@ -447,6 +497,19 @@ static int anysee_frontend_attach(struct dvb_usb_adapter *adap)
 		/* attach demod */
 		adap->fe = dvb_attach(tda10023_attach, &anysee_tda10023_config,
 			&adap->dev->i2c_adap, 0x48);
+
+		break;
+	case ANYSEE_HW_507SI: /* 11 */
+		/* E30 S2 Plus */
+
+		/* enable DVB-S/S2 demod on IOD[0] */
+		ret = anysee_wr_reg_mask(adap->dev, REG_IOD, (1 << 0), 0x01);
+		if (ret)
+			goto error;
+
+		/* attach demod */
+		adap->fe = dvb_attach(cx24116_attach, &anysee_cx24116_config,
+			&adap->dev->i2c_adap);
 
 		break;
 	case ANYSEE_HW_507FA: /* 15 */
@@ -581,6 +644,24 @@ static int anysee_frontend_attach(struct dvb_usb_adapter *adap)
 		}
 
 		break;
+	case ANYSEE_HW_508S2: /* 19 */
+		/* E7 S2 */
+
+		/* enable transport stream on IOA[7] */
+		ret = anysee_wr_reg_mask(adap->dev, REG_IOA, (1 << 7), 0x80);
+		if (ret)
+			goto error;
+
+		/* enable DVB-S/S2 demod on IOE[5] */
+		ret = anysee_wr_reg_mask(adap->dev, REG_IOE, (1 << 5), 0x20);
+		if (ret)
+			goto error;
+
+		/* attach demod */
+		adap->fe = dvb_attach(stv0900_attach, &anysee_stv0900_config,
+			&adap->dev->i2c_adap, 0);
+
+		break;
 	}
 
 	if (!adap->fe) {
@@ -623,6 +704,14 @@ static int anysee_tuner_attach(struct dvb_usb_adapter *adap)
 		/* attach tuner */
 		fe = dvb_attach(dvb_pll_attach, adap->fe, (0xc0 >> 1),
 			&adap->dev->i2c_adap, DVB_PLL_SAMSUNG_DTOS403IH102A);
+
+		break;
+	case ANYSEE_HW_507SI: /* 11 */
+		/* E30 S2 Plus */
+
+		/* attach LNB controller */
+		fe = dvb_attach(isl6423_attach, adap->fe, &adap->dev->i2c_adap,
+			&anysee_isl6423_config);
 
 		break;
 	case ANYSEE_HW_507FA: /* 15 */
@@ -678,6 +767,20 @@ static int anysee_tuner_attach(struct dvb_usb_adapter *adap)
 		/* attach tuner */
 		fe = dvb_attach(tda18212_attach, adap->fe, &adap->dev->i2c_adap,
 			&anysee_tda18212_config);
+
+		break;
+	case ANYSEE_HW_508S2: /* 19 */
+		/* E7 S2 */
+
+		/* attach tuner */
+		fe = dvb_attach(stv6110_attach, adap->fe,
+			&anysee_stv6110_config, &adap->dev->i2c_adap);
+
+		if (fe) {
+			/* attach LNB controller */
+			fe = dvb_attach(isl6423_attach, adap->fe,
+				&adap->dev->i2c_adap, &anysee_isl6423_config);
+		}
 
 		break;
 	default:
