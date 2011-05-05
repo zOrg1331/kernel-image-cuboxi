@@ -108,8 +108,7 @@ struct icmp_bxm {
 		__be32	       times[3];
 	} data;
 	int head_len;
-	struct ip_options replyopts;
-	unsigned char  optbuf[40];
+	struct ip_options_data replyopts;
 };
 
 /* An array of errno for error messages from dest unreach. */
@@ -333,7 +332,7 @@ static void icmp_reply(struct icmp_bxm *icmp_param, struct sk_buff *skb)
 	struct inet_sock *inet;
 	__be32 daddr;
 
-	if (ip_options_echo(&icmp_param->replyopts, skb))
+	if (ip_options_echo(&icmp_param->replyopts.opt.opt, skb))
 		return;
 
 	sk = icmp_xmit_lock(net);
@@ -347,10 +346,10 @@ static void icmp_reply(struct icmp_bxm *icmp_param, struct sk_buff *skb)
 	daddr = ipc.addr = rt->rt_src;
 	ipc.opt = NULL;
 	ipc.tx_flags = 0;
-	if (icmp_param->replyopts.optlen) {
-		ipc.opt = &icmp_param->replyopts;
-		if (ipc.opt->srr)
-			daddr = icmp_param->replyopts.faddr;
+	if (icmp_param->replyopts.opt.opt.optlen) {
+		ipc.opt = &icmp_param->replyopts.opt;
+		if (ipc.opt->opt.srr)
+			daddr = icmp_param->replyopts.opt.opt.faddr;
 	}
 	{
 		struct flowi4 fl4 = {
@@ -373,14 +372,14 @@ out_unlock:
 }
 
 static struct rtable *icmp_route_lookup(struct net *net, struct sk_buff *skb_in,
-					struct iphdr *iph,
+					const struct iphdr *iph,
 					__be32 saddr, u8 tos,
 					int type, int code,
 					struct icmp_bxm *param)
 {
 	struct flowi4 fl4 = {
-		.daddr = (param->replyopts.srr ?
-			  param->replyopts.faddr : iph->saddr),
+		.daddr = (param->replyopts.opt.opt.srr ?
+			  param->replyopts.opt.opt.faddr : iph->saddr),
 		.saddr = saddr,
 		.flowi4_tos = RT_TOS(tos),
 		.flowi4_proto = IPPROTO_ICMP,
@@ -581,7 +580,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 					   IPTOS_PREC_INTERNETCONTROL) :
 					  iph->tos;
 
-	if (ip_options_echo(&icmp_param.replyopts, skb_in))
+	if (ip_options_echo(&icmp_param.replyopts.opt.opt, skb_in))
 		goto out_unlock;
 
 
@@ -597,7 +596,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 	icmp_param.offset = skb_network_offset(skb_in);
 	inet_sk(sk)->tos = tos;
 	ipc.addr = iph->saddr;
-	ipc.opt = &icmp_param.replyopts;
+	ipc.opt = &icmp_param.replyopts.opt;
 	ipc.tx_flags = 0;
 
 	rt = icmp_route_lookup(net, skb_in, iph, saddr, tos,
@@ -613,7 +612,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 	room = dst_mtu(&rt->dst);
 	if (room > 576)
 		room = 576;
-	room -= sizeof(struct iphdr) + icmp_param.replyopts.optlen;
+	room -= sizeof(struct iphdr) + icmp_param.replyopts.opt.opt.optlen;
 	room -= sizeof(struct icmphdr);
 
 	icmp_param.data_len = skb_in->len - icmp_param.offset;
@@ -637,7 +636,7 @@ EXPORT_SYMBOL(icmp_send);
 
 static void icmp_unreach(struct sk_buff *skb)
 {
-	struct iphdr *iph;
+	const struct iphdr *iph;
 	struct icmphdr *icmph;
 	int hash, protocol;
 	const struct net_protocol *ipprot;
@@ -656,7 +655,7 @@ static void icmp_unreach(struct sk_buff *skb)
 		goto out_err;
 
 	icmph = icmp_hdr(skb);
-	iph   = (struct iphdr *)skb->data;
+	iph   = (const struct iphdr *)skb->data;
 
 	if (iph->ihl < 5) /* Mangled header, drop. */
 		goto out_err;
@@ -729,7 +728,7 @@ static void icmp_unreach(struct sk_buff *skb)
 	if (!pskb_may_pull(skb, iph->ihl * 4 + 8))
 		goto out;
 
-	iph = (struct iphdr *)skb->data;
+	iph = (const struct iphdr *)skb->data;
 	protocol = iph->protocol;
 
 	/*
@@ -758,7 +757,7 @@ out_err:
 
 static void icmp_redirect(struct sk_buff *skb)
 {
-	struct iphdr *iph;
+	const struct iphdr *iph;
 
 	if (skb->len < sizeof(struct iphdr))
 		goto out_err;
@@ -769,7 +768,7 @@ static void icmp_redirect(struct sk_buff *skb)
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		goto out;
 
-	iph = (struct iphdr *)skb->data;
+	iph = (const struct iphdr *)skb->data;
 
 	switch (icmp_hdr(skb)->code & 7) {
 	case ICMP_REDIR_NET:
