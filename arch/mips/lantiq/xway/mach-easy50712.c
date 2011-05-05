@@ -59,11 +59,16 @@ static struct ltq_pci_data ltq_pci_data = {
 	},
 };
 
+static struct ltq_eth_data ltq_eth_data = {
+	.mii_mode = PHY_INTERFACE_MODE_MII,
+};
+
 static void __init easy50712_init(void)
 {
 	ltq_register_gpio_stp();
 	ltq_register_nor(&easy50712_flash_data);
 	ltq_register_pci(&ltq_pci_data);
+	ltq_register_etop(&ltq_eth_data);
 }
 
 MIPS_MACHINE(LTQ_MACH_EASY50712,
