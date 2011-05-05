@@ -2017,6 +2017,12 @@ config FTMAC100
 	  from Faraday. It is used on Faraday A320, Andes AG101 and some
 	  other ARM/NDS32 SoC's.
 
+config MAC_PUV3
+	tristate "PKUnity v3 UMAL Gigabit Network Adapter support"
+	depends on UNICORE32 && ARCH_PUV3
+	select MII
+	select PHYLIB
+
 source "drivers/net/fs_enet/Kconfig"
 
 source "drivers/net/octeon/Kconfig"
