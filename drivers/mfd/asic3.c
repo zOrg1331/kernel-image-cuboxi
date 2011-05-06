@@ -144,7 +144,7 @@ static void asic3_irq_demux(unsigned int irq, struct irq_desc *desc)
 	int iter, i;
 	unsigned long flags;
 
-	data->chip->irq_ack(irq_data);
+	data->chip->irq_ack(data);
 
 	for (iter = 0 ; iter < MAX_ASIC_ISR_LOOPS; iter++) {
 		u32 status;
@@ -676,7 +676,8 @@ static struct mfd_cell asic3_cell_ds1wm = {
 	.name          = "ds1wm",
 	.enable        = ds1wm_enable,
 	.disable       = ds1wm_disable,
-	.mfd_data      = &ds1wm_pdata,
+	.platform_data = &ds1wm_pdata,
+	.pdata_size    = sizeof(ds1wm_pdata),
 	.num_resources = ARRAY_SIZE(ds1wm_resources),
 	.resources     = ds1wm_resources,
 };
@@ -777,7 +778,8 @@ static struct mfd_cell asic3_cell_mmc = {
 	.name          = "tmio-mmc",
 	.enable        = asic3_mmc_enable,
 	.disable       = asic3_mmc_disable,
-	.mfd_data      = &asic3_mmc_data,
+	.platform_data = &asic3_mmc_data,
+	.pdata_size    = sizeof(asic3_mmc_data),
 	.num_resources = ARRAY_SIZE(asic3_mmc_resources),
 	.resources     = asic3_mmc_resources,
 };
