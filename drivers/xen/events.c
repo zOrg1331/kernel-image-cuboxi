@@ -120,6 +120,7 @@ static struct irq_chip xen_percpu_chip;
 static struct irq_chip xen_pirq_chip;
 static void enable_dynirq(struct irq_data *data);
 static void disable_dynirq(struct irq_data *data);
+static void evtchn_noop(struct irq_data *data) { }
 
 /* Get info for IRQ */
 static struct irq_info *info_for_irq(unsigned irq)
@@ -1595,9 +1596,10 @@ static struct irq_chip xen_pirq_chip __read_mostly = {
 static struct irq_chip xen_percpu_chip __read_mostly = {
 	.name			= "xen-percpu",
 
+	.irq_enable		= enable_dynirq,
 	.irq_disable		= disable_dynirq,
-	.irq_mask		= disable_dynirq,
-	.irq_unmask		= enable_dynirq,
+	.irq_mask		= evtchn_noop,
+	.irq_unmask		= evtchn_noop,
 
 	.irq_ack		= ack_dynirq,
 };
