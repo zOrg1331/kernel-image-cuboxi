@@ -40,13 +40,15 @@
 
 int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
+	const struct sockaddr_in *usin = (struct sockaddr_in *)uaddr;
 	struct inet_sock *inet = inet_sk(sk);
 	struct dccp_sock *dp = dccp_sk(sk);
-	const struct sockaddr_in *usin = (struct sockaddr_in *)uaddr;
 	__be16 orig_sport, orig_dport;
-	struct rtable *rt;
 	__be32 daddr, nexthop;
+	struct flowi4 fl4;
+	struct rtable *rt;
 	int err;
+	struct ip_options_rcu *inet_opt;
 
 	dp->dccps_role = DCCP_ROLE_CLIENT;
 
@@ -57,15 +59,18 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		return -EAFNOSUPPORT;
 
 	nexthop = daddr = usin->sin_addr.s_addr;
-	if (inet->opt != NULL && inet->opt->srr) {
+
+	inet_opt = rcu_dereference_protected(inet->inet_opt,
+					     sock_owned_by_user(sk));
+	if (inet_opt != NULL && inet_opt->opt.srr) {
 		if (daddr == 0)
 			return -EINVAL;
-		nexthop = inet->opt->faddr;
+		nexthop = inet_opt->opt.faddr;
 	}
 
 	orig_sport = inet->inet_sport;
 	orig_dport = usin->sin_port;
-	rt = ip_route_connect(nexthop, inet->inet_saddr,
+	rt = ip_route_connect(&fl4, nexthop, inet->inet_saddr,
 			      RT_CONN_FLAGS(sk), sk->sk_bound_dev_if,
 			      IPPROTO_DCCP,
 			      orig_sport, orig_dport, sk, true);
@@ -77,19 +82,19 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		return -ENETUNREACH;
 	}
 
-	if (inet->opt == NULL || !inet->opt->srr)
-		daddr = rt->rt_dst;
+	if (inet_opt == NULL || !inet_opt->opt.srr)
+		daddr = fl4.daddr;
 
 	if (inet->inet_saddr == 0)
-		inet->inet_saddr = rt->rt_src;
+		inet->inet_saddr = fl4.saddr;
 	inet->inet_rcv_saddr = inet->inet_saddr;
 
 	inet->inet_dport = usin->sin_port;
 	inet->inet_daddr = daddr;
 
 	inet_csk(sk)->icsk_ext_hdr_len = 0;
-	if (inet->opt != NULL)
-		inet_csk(sk)->icsk_ext_hdr_len = inet->opt->optlen;
+	if (inet_opt)
+		inet_csk(sk)->icsk_ext_hdr_len = inet_opt->opt.optlen;
 	/*
 	 * Socket identity is still unknown (sport may be zero).
 	 * However we set state to DCCP_REQUESTING and not releasing socket
@@ -101,8 +106,7 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	if (err != 0)
 		goto failure;
 
-	rt = ip_route_newports(rt, IPPROTO_DCCP,
-			       orig_sport, orig_dport,
+	rt = ip_route_newports(&fl4, rt, orig_sport, orig_dport,
 			       inet->inet_sport, inet->inet_dport, sk);
 	if (IS_ERR(rt)) {
 		rt = NULL;
@@ -405,7 +409,7 @@ struct sock *dccp_v4_request_recv_sock(struct sock *sk, struct sk_buff *skb,
 	newinet->inet_daddr	= ireq->rmt_addr;
 	newinet->inet_rcv_saddr = ireq->loc_addr;
 	newinet->inet_saddr	= ireq->loc_addr;
-	newinet->opt	   = ireq->opt;
+	newinet->inet_opt	= ireq->opt;
 	ireq->opt	   = NULL;
 	newinet->mc_index  = inet_iif(skb);
 	newinet->mc_ttl	   = ip_hdr(skb)->ttl;
