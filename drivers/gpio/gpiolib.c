@@ -1635,6 +1635,34 @@ void gpio_set_value_cansleep(unsigned gpio, int value)
 }
 EXPORT_SYMBOL_GPL(gpio_set_value_cansleep);
 
+/**
+ * gpio_config() - configure a GPIO
+ * @gpio: gpio to configure
+ * @param: the custom parameter to set/get, typically an enum (only the
+ *	specific driver will know about these parameter)
+ * @data: optional data pointer: if you're getting a config, you can
+ *	pass data back using this pointer, either by dereferencing it
+ *	to a struct or using it to contain an enumerator.
+ * Context: process
+ *
+ * This is used to directly or indirectly to implement gpio_config().
+ * It invokes the associated gpio_chip.config() method. It can be
+ * used for setting things like drive modes, biasing, sleep modes etc.
+ * It returns a negative error code on error or 0 for successful
+ * operations. This is designed to work a bit like an ioctl() so you
+ * can use it to get/set specific parameters.
+ */
+int gpio_config(unsigned gpio, u16 param, unsigned long *data)
+{
+	struct gpio_chip	*chip;
+
+	chip = gpio_to_chip(gpio);
+	/* Implementing this is not mandatory */
+	if (chip->config)
+		return chip->config(chip, gpio - chip->base, param, data);
+	return -ENOTSUPP;
+}
+EXPORT_SYMBOL_GPL(gpio_config);
 
 #ifdef CONFIG_DEBUG_FS
 
