@@ -23,15 +23,14 @@
 
 #include "a_config.h"
 #include "athdefs.h"
-#include "a_types.h"
 
-#include "AR6002/hw2.0/hw/mbox_host_reg.h"
-#include "AR6002/hw2.0/hw/apb_map.h"
-#include "AR6002/hw2.0/hw/si_reg.h"
+#include "hw/mbox_host_reg.h"
+#include "hw/si_reg.h"
 #include "AR6002/hw2.0/hw/gpio_reg.h"
-#include "AR6002/hw2.0/hw/rtc_reg.h"
 #include "AR6002/hw2.0/hw/vmc_reg.h"
-#include "AR6002/hw2.0/hw/mbox_reg.h"
+#include "hw/rtc_reg.h"
+#include "hw/mbox_reg.h"
+#include "hw/apb_map.h"
 
 #include "a_osapi.h"
 #include "targaddrs.h"
@@ -681,40 +680,6 @@ int ar6000_set_htc_params(struct hif_device *hifDevice,
     } while (false);
 
     return status;
-}
-
-
-static int prepare_ar6002(struct hif_device *hifDevice, u32 TargetVersion)
-{
-    int status = 0;
-
-    /* placeholder */
-
-    return status;
-}
-
-static int prepare_ar6003(struct hif_device *hifDevice, u32 TargetVersion)
-{
-    int status = 0;
-
-    /* placeholder */
-
-    return status;
-}
-
-/* this function assumes the caller has already initialized the BMI APIs */
-int ar6000_prepare_target(struct hif_device *hifDevice,
-                               u32 TargetType,
-                               u32 TargetVersion)
-{
-    if (TargetType == TARGET_TYPE_AR6002) {
-            /* do any preparations for AR6002 devices */
-        return prepare_ar6002(hifDevice,TargetVersion);
-    } else if (TargetType == TARGET_TYPE_AR6003) {
-        return prepare_ar6003(hifDevice,TargetVersion);
-    }
-
-    return 0;
 }
 
 #if defined(CONFIG_AR6002_REV1_FORCE_HOST)

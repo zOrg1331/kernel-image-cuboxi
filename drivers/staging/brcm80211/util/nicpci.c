@@ -19,7 +19,7 @@
 #include <linux/pci.h>
 #include <bcmdefs.h>
 #include <bcmutils.h>
-#include <siutils.h>
+#include <aiutils.h>
 #include <hndsoc.h>
 #include <bcmdevs.h>
 #include <sbchipc.h>
@@ -83,8 +83,6 @@ void *pcicore_init(si_t *sih, void *pdev, void *regs)
 {
 	pcicore_info_t *pi;
 
-	ASSERT(sih->bustype == PCI_BUS);
-
 	/* alloc pcicore_info_t */
 	pi = kzalloc(sizeof(pcicore_info_t), GFP_ATOMIC);
 	if (pi == NULL) {
@@ -98,10 +96,8 @@ void *pcicore_init(si_t *sih, void *pdev, void *regs)
 	if (sih->buscoretype == PCIE_CORE_ID) {
 		u8 cap_ptr;
 		pi->regs.pcieregs = (sbpcieregs_t *) regs;
-		cap_ptr =
-		    pcicore_find_pci_capability(pi->dev, PCI_CAP_PCIECAP_ID,
-						NULL, NULL);
-		ASSERT(cap_ptr);
+		cap_ptr = pcicore_find_pci_capability(pi->dev, PCI_CAP_ID_EXP,
+						      NULL, NULL);
 		pi->pciecap_lcreg_offset = cap_ptr + PCIE_CAP_LINKCTRL_OFFSET;
 	} else
 		pi->regs.pciregs = (struct sbpciregs *) regs;
@@ -130,16 +126,16 @@ pcicore_find_pci_capability(void *dev, u8 req_cap_id,
 	u8 byte_val;
 
 	/* check for Header type 0 */
-	pci_read_config_byte(dev, PCI_CFG_HDR, &byte_val);
-	if ((byte_val & 0x7f) != PCI_HEADER_NORMAL)
+	pci_read_config_byte(dev, PCI_HEADER_TYPE, &byte_val);
+	if ((byte_val & 0x7f) != PCI_HEADER_TYPE_NORMAL)
 		goto end;
 
 	/* check if the capability pointer field exists */
-	pci_read_config_byte(dev, PCI_CFG_STAT, &byte_val);
-	if (!(byte_val & PCI_CAPPTR_PRESENT))
+	pci_read_config_byte(dev, PCI_STATUS, &byte_val);
+	if (!(byte_val & PCI_STATUS_CAP_LIST))
 		goto end;
 
-	pci_read_config_byte(dev, PCI_CFG_CAPPTR, &cap_ptr);
+	pci_read_config_byte(dev, PCI_CAPABILITY_LIST, &cap_ptr);
 	/* check if the capability pointer is 0x00 */
 	if (cap_ptr == 0x00)
 		goto end;
@@ -167,8 +163,8 @@ pcicore_find_pci_capability(void *dev, u8 req_cap_id,
 		*buflen = 0;
 		/* copy the cpability data excluding cap ID and next ptr */
 		cap_data = cap_ptr + 2;
-		if ((bufsize + cap_data) > SZPCR)
-			bufsize = SZPCR - cap_data;
+		if ((bufsize + cap_data) > PCI_SZPCR)
+			bufsize = PCI_SZPCR - cap_data;
 		*buflen = bufsize;
 		while (bufsize--) {
 			pci_read_config_byte(dev, cap_data, buf);
@@ -187,8 +183,6 @@ pcie_readreg(sbpcieregs_t *pcieregs, uint addrtype,
 {
 	uint retval = 0xFFFFFFFF;
 
-	ASSERT(pcieregs != NULL);
-
 	switch (addrtype) {
 	case PCIE_CONFIGREGS:
 		W_REG((&pcieregs->configaddr), offset);
@@ -201,7 +195,6 @@ pcie_readreg(sbpcieregs_t *pcieregs, uint addrtype,
 		retval = R_REG(&(pcieregs->pcieinddata));
 		break;
 	default:
-		ASSERT(0);
 		break;
 	}
 
@@ -212,8 +205,6 @@ uint
 pcie_writereg(sbpcieregs_t *pcieregs, uint addrtype,
 	      uint offset, uint val)
 {
-	ASSERT(pcieregs != NULL);
-
 	switch (addrtype) {
 	case PCIE_CONFIGREGS:
 		W_REG((&pcieregs->configaddr), offset);
@@ -224,7 +215,6 @@ pcie_writereg(sbpcieregs_t *pcieregs, uint addrtype,
 		W_REG((&pcieregs->pcieinddata), val);
 		break;
 	default:
-		ASSERT(0);
 		break;
 	}
 	return 0;
@@ -384,7 +374,6 @@ static void pcie_extendL1timer(pcicore_info_t *pi, bool extend)
 static void pcie_clkreq_upd(pcicore_info_t *pi, uint state)
 {
 	si_t *sih = pi->sih;
-	ASSERT(PCIE_PUB(sih));
 
 	switch (state) {
 	case SI_DOATTACH:
@@ -393,10 +382,10 @@ static void pcie_clkreq_upd(pcicore_info_t *pi, uint state)
 		break;
 	case SI_PCIDOWN:
 		if (sih->buscorerev == 6) {	/* turn on serdes PLL down */
-			si_corereg(sih, SI_CC_IDX,
+			ai_corereg(sih, SI_CC_IDX,
 				   offsetof(chipcregs_t, chipcontrol_addr), ~0,
 				   0);
-			si_corereg(sih, SI_CC_IDX,
+			ai_corereg(sih, SI_CC_IDX,
 				   offsetof(chipcregs_t, chipcontrol_data),
 				   ~0x40, 0);
 		} else if (pi->pcie_pr42767) {
@@ -405,10 +394,10 @@ static void pcie_clkreq_upd(pcicore_info_t *pi, uint state)
 		break;
 	case SI_PCIUP:
 		if (sih->buscorerev == 6) {	/* turn off serdes PLL down */
-			si_corereg(sih, SI_CC_IDX,
+			ai_corereg(sih, SI_CC_IDX,
 				   offsetof(chipcregs_t, chipcontrol_addr), ~0,
 				   0);
-			si_corereg(sih, SI_CC_IDX,
+			ai_corereg(sih, SI_CC_IDX,
 				   offsetof(chipcregs_t, chipcontrol_data),
 				   ~0x40, 0x40);
 		} else if (PCIE_ASPM(sih)) {	/* disable clkreq */
@@ -416,7 +405,6 @@ static void pcie_clkreq_upd(pcicore_info_t *pi, uint state)
 		}
 		break;
 	default:
-		ASSERT(0);
 		break;
 	}
 }
@@ -534,10 +522,8 @@ static void pcie_war_noplldown(pcicore_info_t *pi)
 	sbpcieregs_t *pcieregs = pi->regs.pcieregs;
 	u16 *reg16;
 
-	ASSERT(pi->sih->buscorerev == 7);
-
 	/* turn off serdes PLL down */
-	si_corereg(pi->sih, SI_CC_IDX, offsetof(chipcregs_t, chipcontrol),
+	ai_corereg(pi->sih, SI_CC_IDX, offsetof(chipcregs_t, chipcontrol),
 		   CHIPCTRL_4321_PLL_DOWN, CHIPCTRL_4321_PLL_DOWN);
 
 	/*  clear srom shadow backdoor */
@@ -693,16 +679,15 @@ bool pcicore_pmecap_fast(void *pch)
 	u8 cap_ptr;
 	u32 pmecap;
 
-	cap_ptr =
-	    pcicore_find_pci_capability(pi->dev, PCI_CAP_POWERMGMTCAP_ID, NULL,
-					NULL);
+	cap_ptr = pcicore_find_pci_capability(pi->dev, PCI_CAP_ID_PM, NULL,
+					      NULL);
 
 	if (!cap_ptr)
 		return false;
 
 	pci_read_config_dword(pi->dev, cap_ptr, &pmecap);
 
-	return (pmecap & PME_CAP_PM_STATES) != 0;
+	return (pmecap & (PCI_PM_CAP_PME_MASK << 16)) != 0;
 }
 
 /* return true if PM capability exists in the pci config space
@@ -714,10 +699,9 @@ static bool pcicore_pmecap(pcicore_info_t *pi)
 	u32 pmecap;
 
 	if (!pi->pmecap_offset) {
-		cap_ptr =
-		    pcicore_find_pci_capability(pi->dev,
-						PCI_CAP_POWERMGMTCAP_ID, NULL,
-						NULL);
+		cap_ptr = pcicore_find_pci_capability(pi->dev,
+						      PCI_CAP_ID_PM,
+						      NULL, NULL);
 		if (!cap_ptr)
 			return false;
 
@@ -727,7 +711,7 @@ static bool pcicore_pmecap(pcicore_info_t *pi)
 					&pmecap);
 
 		/* At least one state can generate PME */
-		pi->pmecap = (pmecap & PME_CAP_PM_STATES) != 0;
+		pi->pmecap = (pmecap & (PCI_PM_CAP_PME_MASK << 16)) != 0;
 	}
 
 	return pi->pmecap;
@@ -743,11 +727,11 @@ void pcicore_pmeen(void *pch)
 	if (!pcicore_pmecap(pi))
 		return;
 
-	pci_read_config_dword(pi->dev, pi->pmecap_offset + PME_CSR_OFFSET,
+	pci_read_config_dword(pi->dev, pi->pmecap_offset + PCI_PM_CTRL,
 				&w);
-	w |= (PME_CSR_PME_EN);
+	w |= (PCI_PM_CTRL_PME_ENABLE);
 	pci_write_config_dword(pi->dev,
-				pi->pmecap_offset + PME_CSR_OFFSET, w);
+				pi->pmecap_offset + PCI_PM_CTRL, w);
 }
 
 /*
@@ -761,10 +745,10 @@ bool pcicore_pmestat(void *pch)
 	if (!pcicore_pmecap(pi))
 		return false;
 
-	pci_read_config_dword(pi->dev, pi->pmecap_offset + PME_CSR_OFFSET,
+	pci_read_config_dword(pi->dev, pi->pmecap_offset + PCI_PM_CTRL,
 				&w);
 
-	return (w & PME_CSR_PME_STAT) == PME_CSR_PME_STAT;
+	return (w & PCI_PM_CTRL_PME_STATUS) == PCI_PM_CTRL_PME_STATUS;
 }
 
 /* Disable PME generation, clear the PME status bit if set
@@ -777,16 +761,16 @@ void pcicore_pmeclr(void *pch)
 	if (!pcicore_pmecap(pi))
 		return;
 
-	pci_read_config_dword(pi->dev, pi->pmecap_offset + PME_CSR_OFFSET,
+	pci_read_config_dword(pi->dev, pi->pmecap_offset + PCI_PM_CTRL,
 				&w);
 
 	PCI_ERROR(("pcicore_pci_pmeclr PMECSR : 0x%x\n", w));
 
 	/* PMESTAT is cleared by writing 1 to it */
-	w &= ~(PME_CSR_PME_EN);
+	w &= ~(PCI_PM_CTRL_PME_ENABLE);
 
 	pci_write_config_dword(pi->dev,
-				pi->pmecap_offset + PME_CSR_OFFSET, w);
+				pi->pmecap_offset + PCI_PM_CTRL, w);
 }
 
 u32 pcie_lcreg(void *pch, u32 mask, u32 val)
