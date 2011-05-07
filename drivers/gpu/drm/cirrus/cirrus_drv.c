@@ -57,6 +57,10 @@ static struct drm_driver driver = {
 		 .poll = drm_poll,
 		 .fasync = drm_fasync,
 		 },
+	.pci_driver = {
+		.name = DRIVER_NAME,
+		.id_table = pciidlist,
+	},
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -74,12 +78,12 @@ static struct pci_driver cirrus_pci_driver = {
 
 static int __init cirrus_init(void)
 {
-	return drm_pci_init(&driver, &cirrus_pci_driver);
+	return drm_init(&driver);
 }
 
 static void __exit cirrus_exit(void)
 {
-	drm_pci_exit(&driver, &cirrus_pci_driver);
+	drm_exit(&driver); 
 }
 
 module_init(cirrus_init);
