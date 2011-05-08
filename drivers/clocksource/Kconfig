@@ -1,0 +1,3 @@
+config CLKSRC_I8253
+	bool
+
