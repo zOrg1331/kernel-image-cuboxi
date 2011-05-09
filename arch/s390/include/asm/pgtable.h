@@ -40,6 +40,8 @@ extern void paging_init(void);
 extern void vmem_map_init(void);
 extern void fault_init(void);
 
+static inline int pte_present(pte_t pte);
+
 /*
  * The S390 doesn't have any external MMU info: the kernel page
  * tables contain all the necessary information.
@@ -426,6 +428,61 @@ extern unsigned long VMALLOC_START;
 # define PxD_SHADOW_SHIFT	2
 #endif /* __s390x__ */
 
+static inline void ptep_skey_to_pgste(pte_t *ptep, struct page *page)
+{
+#ifdef CONFIG_PGSTE
+	unsigned long int skey;
+	unsigned long int *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
+
+	BUG_ON(pte_present(*ptep));
+
+	skey = page_get_storage_key(page_to_phys(page));
+
+	*pgste = *pgste & 0x07fffffffffffffful;
+	*pgste = *pgste | ((skey & 0xf8ul) << 56);
+
+	skey = skey & 0x07ul;
+
+	page_set_storage_key(page_to_phys(page), skey, 1);
+#endif
+}
+
+static inline void ptep_pgste_to_skey(pte_t *ptep, struct page *page)
+{
+#ifdef CONFIG_PGSTE
+	unsigned long int skey;
+	unsigned long int *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
+
+	BUG_ON(pte_present(*ptep));
+
+	skey = page_get_storage_key(page_to_phys(page));
+
+	skey = skey & 0x07ul;
+	skey = skey | ((*pgste & 0xf800000000000000ul) >> 56);
+
+	page_set_storage_key(page_to_phys(page), skey, 1);
+#endif
+}
+
+static inline void rcp_lock(pte_t *ptep)
+{
+#ifdef CONFIG_PGSTE
+	unsigned long *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
+	preempt_disable();
+	while (test_and_set_bit(RCP_PCL_BIT, pgste))
+		;
+#endif
+}
+
+static inline void rcp_unlock(pte_t *ptep)
+{
+#ifdef CONFIG_PGSTE
+	unsigned long *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
+	clear_bit(RCP_PCL_BIT, pgste);
+	preempt_enable();
+#endif
+}
+
 /*
  * Certain architectures need to do special things when PTEs
  * within a page table are directly modified.  Thus, the following
@@ -434,6 +491,15 @@ extern unsigned long VMALLOC_START;
 static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep, pte_t entry)
 {
+	struct page *page = virt_to_page(pte_val(entry));
+
+	if (mm->context.has_pgste) {
+		rcp_lock(ptep);
+		ptep_pgste_to_skey(ptep, page);
+		*ptep = entry;
+		rcp_unlock(ptep);
+		return;
+	}
 	*ptep = entry;
 }
 
@@ -550,25 +616,6 @@ static inline int pte_special(pte_t pte)
 
 #define __HAVE_ARCH_PTE_SAME
 #define pte_same(a,b)  (pte_val(a) == pte_val(b))
-
-static inline void rcp_lock(pte_t *ptep)
-{
-#ifdef CONFIG_PGSTE
-	unsigned long *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
-	preempt_disable();
-	while (test_and_set_bit(RCP_PCL_BIT, pgste))
-		;
-#endif
-}
-
-static inline void rcp_unlock(pte_t *ptep)
-{
-#ifdef CONFIG_PGSTE
-	unsigned long *pgste = (unsigned long *) (ptep + PTRS_PER_PTE);
-	clear_bit(RCP_PCL_BIT, pgste);
-	preempt_enable();
-#endif
-}
 
 /* forward declaration for SetPageUptodate in page-flags.h*/
 static inline void page_clear_dirty(struct page *page, int mapped);
@@ -859,11 +906,14 @@ static inline void __ptep_ipte(unsigned long address, pte_t *ptep)
 static inline void ptep_invalidate(struct mm_struct *mm,
 				   unsigned long address, pte_t *ptep)
 {
+	struct page *page = virt_to_page(pte_val(*ptep));
+
 	if (mm->context.has_pgste) {
 		rcp_lock(ptep);
 		__ptep_ipte(address, ptep);
 		ptep_rcp_copy(ptep);
 		pte_val(*ptep) = _PAGE_TYPE_EMPTY;
+		ptep_skey_to_pgste(ptep, page);
 		rcp_unlock(ptep);
 		return;
 	}
