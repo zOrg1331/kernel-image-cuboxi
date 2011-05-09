@@ -138,22 +138,26 @@ static int oprofile_create_hwsampling_files(struct super_block *sb,
 
 static int oprofile_hwsampler_init(struct oprofile_operations *ops)
 {
+	long retval;
+
 	if (hwsampler_setup())
 		return -ENODEV;
 
 	/*
 	 * create hwsampler files only if hwsampler_setup() succeeds.
 	 */
-	oprofile_min_interval = hwsampler_query_min_interval();
-	if (oprofile_min_interval < 0) {
+	retval = hwsampler_query_min_interval();
+	if (retval < 0) {
 		oprofile_min_interval = 0;
 		return -ENODEV;
 	}
-	oprofile_max_interval = hwsampler_query_max_interval();
-	if (oprofile_max_interval < 0) {
+	oprofile_min_interval = retval;
+	retval = hwsampler_query_max_interval();
+	if (retval < 0) {
 		oprofile_max_interval = 0;
 		return -ENODEV;
 	}
+	oprofile_max_interval = retval;
 
 	if (oprofile_timer_init(ops))
 		return -ENODEV;
