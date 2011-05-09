@@ -1,0 +1,31 @@
+Importing i2c based on 2.6.39-rc6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0ee5623f9a6e52df90a78bd21179f8ab370e102e
+HEAD is now at 0ee5623f Linux 2.6.39-rc6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-writing-clients-fix-foo_driver-id_table.patch
+i2c-i801-smbus-patch-for-intel-panther-point-deviceids.patch
+i2c-parport-cleanups.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 152fe13...dc7166f master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.39-rc6
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.39-rc3-git8
+$ cd ../quilt-tmp
+$ git reset --hard a1b49cb7e2a7961ec3aa8b64860bf480d4ec9077
+HEAD is now at a1b49cb Merge branch 'i2c-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jdelvare/staging
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docum-dontdiff04.patch
+docum-epoll-remove-mui.patch
+docum-howto-fix-lxr.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + d5ed9eb...bd4cb70 master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.39-rc4-245-g4175242
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
