@@ -114,7 +114,12 @@ extern struct ctl_table usermodehelper_table[];
 
 extern void usermodehelper_init(void);
 
+#ifdef CONFIG_PM_SLEEP
 extern int usermodehelper_disable(void);
 extern void usermodehelper_enable(void);
+extern bool usermodehelper_is_disabled(void);
+#else
+static inline bool usermodehelper_is_disabled(void) { return false; }
+#endif
 
 #endif /* __LINUX_KMOD_H__ */
