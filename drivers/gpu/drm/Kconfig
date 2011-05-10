@@ -24,6 +24,7 @@ config DRM_KMS_HELPER
 	depends on DRM
 	select FB
 	select FRAMEBUFFER_CONSOLE if !EXPERT
+	select FRAMEBUFFER_CONSOLE_DETECT_PRIMARY if FRAMEBUFFER_CONSOLE
 	help
 	  FB and CRTC helpers for KMS drivers.
 
@@ -133,6 +134,15 @@ config DRM_I915_KMS
 	  like intelfb.
 
 endchoice
+
+config DRM_KVM_CIRRUS
+       tristate "Kernel modesetting driver for qemu-kvm Cirrus emulation"
+       depends on DRM && PCI
+       select FB_CFB_FILLRECT
+       select FB_CFB_COPYAREA
+       select FB_CFB_IMAGEBLIT
+       select DRM_KMS_HELPER
+
 
 config DRM_MGA
 	tristate "Matrox g200/g400"

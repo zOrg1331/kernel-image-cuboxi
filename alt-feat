@@ -1,3 +1,4 @@
 feat-drivers-wimax-u200
 feat-fs-aufs
 feat-network-ipt_netflow
+feat-kvm-kms

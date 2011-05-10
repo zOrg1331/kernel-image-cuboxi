@@ -1,6 +1,6 @@
 Name:    kernel-image-std-pae
 Version: 2.6.38
-Release: alt3
+Release: alt4
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -644,6 +644,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue May 10 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt4
+- Update to 2.6.38.6
+- drm: Add a driver for kvm emulated Cirrus
+
 * Fri Apr 15 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt3
 - Update to 2.6.38.3
 - some cleanup in kernel-headers
