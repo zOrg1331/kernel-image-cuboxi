@@ -74,6 +74,21 @@ TRACE_EVENT(drv_return_int,
 	TP_printk(LOCAL_PR_FMT " - %d", LOCAL_PR_ARG, __entry->ret)
 );
 
+TRACE_EVENT(drv_return_bool,
+	TP_PROTO(struct ieee80211_local *local, bool ret),
+	TP_ARGS(local, ret),
+	TP_STRUCT__entry(
+		LOCAL_ENTRY
+		__field(bool, ret)
+	),
+	TP_fast_assign(
+		LOCAL_ASSIGN;
+		__entry->ret = ret;
+	),
+	TP_printk(LOCAL_PR_FMT " - %s", LOCAL_PR_ARG, (__entry->ret) ?
+		  "true" : "false")
+);
+
 TRACE_EVENT(drv_return_u64,
 	TP_PROTO(struct ieee80211_local *local, u64 ret),
 	TP_ARGS(local, ret),
@@ -964,9 +979,41 @@ TRACE_EVENT(drv_get_ringparam,
 	)
 );
 
+DEFINE_EVENT(local_only_evt, drv_tx_frames_pending,
+	TP_PROTO(struct ieee80211_local *local),
+	TP_ARGS(local)
+);
+
 DEFINE_EVENT(local_only_evt, drv_offchannel_tx_cancel_wait,
 	TP_PROTO(struct ieee80211_local *local),
 	TP_ARGS(local)
+);
+
+TRACE_EVENT(drv_set_bitrate_mask,
+	TP_PROTO(struct ieee80211_local *local,
+		 struct ieee80211_sub_if_data *sdata,
+		 const struct cfg80211_bitrate_mask *mask),
+
+	TP_ARGS(local, sdata, mask),
+
+	TP_STRUCT__entry(
+		LOCAL_ENTRY
+		VIF_ENTRY
+		__field(u32, legacy_2g)
+		__field(u32, legacy_5g)
+	),
+
+	TP_fast_assign(
+		LOCAL_ASSIGN;
+		VIF_ASSIGN;
+		__entry->legacy_2g = mask->control[IEEE80211_BAND_2GHZ].legacy;
+		__entry->legacy_5g = mask->control[IEEE80211_BAND_5GHZ].legacy;
+	),
+
+	TP_printk(
+		LOCAL_PR_FMT  VIF_PR_FMT " 2G Mask:0x%x 5G Mask:0x%x",
+		LOCAL_PR_ARG, VIF_PR_ARG, __entry->legacy_2g, __entry->legacy_5g
+	)
 );
 
 /*

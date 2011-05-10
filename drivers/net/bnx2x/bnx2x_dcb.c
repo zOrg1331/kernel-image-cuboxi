@@ -1,6 +1,6 @@
 /* bnx2x_dcb.c: Broadcom Everest network driver.
  *
- * Copyright 2009-2010 Broadcom Corporation
+ * Copyright 2009-2011 Broadcom Corporation
  *
  * Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -571,6 +571,28 @@ void bnx2x_dcbx_set_params(struct bnx2x *bp, u32 state)
 {
 	switch (state) {
 	case BNX2X_DCBX_STATE_NEG_RECEIVED:
+#ifdef BCM_CNIC
+		if (bp->state != BNX2X_STATE_OPENING_WAIT4_LOAD) {
+			struct cnic_ops *c_ops;
+			struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
+			bp->flags |= NO_ISCSI_OOO_FLAG | NO_ISCSI_FLAG;
+			cp->drv_state |= CNIC_DRV_STATE_NO_ISCSI_OOO;
+			cp->drv_state |= CNIC_DRV_STATE_NO_ISCSI;
+
+			rcu_read_lock();
+			c_ops = rcu_dereference(bp->cnic_ops);
+			if (c_ops) {
+				bnx2x_cnic_notify(bp, CNIC_CTL_STOP_ISCSI_CMD);
+				rcu_read_unlock();
+				return;
+			}
+			rcu_read_unlock();
+		}
+
+		/* fall through if no CNIC initialized  */
+	case BNX2X_DCBX_STATE_ISCSI_STOPPED:
+#endif
+
 		{
 			DP(NETIF_MSG_LINK, "BNX2X_DCBX_STATE_NEG_RECEIVED\n");
 #ifdef BCM_DCBNL
@@ -1057,12 +1079,6 @@ static void bnx2x_dcbx_get_num_pg_traf_type(struct bnx2x *bp,
 	}
 }
 
-
-/*******************************************************************************
- * Description: single priority group
- *
- * Return:
- ******************************************************************************/
 static void bnx2x_dcbx_ets_disabled_entry_data(struct bnx2x *bp,
 					       struct cos_help_data *cos_data,
 					       u32 pri_join_mask)
@@ -1075,11 +1091,6 @@ static void bnx2x_dcbx_ets_disabled_entry_data(struct bnx2x *bp,
 	cos_data->num_of_cos = 1;
 }
 
-/*******************************************************************************
- * Description: updating the cos bw
- *
- * Return:
- ******************************************************************************/
 static inline void bnx2x_dcbx_add_to_cos_bw(struct bnx2x *bp,
 					    struct cos_entry_help_data *data,
 					    u8 pg_bw)
@@ -1090,11 +1101,6 @@ static inline void bnx2x_dcbx_add_to_cos_bw(struct bnx2x *bp,
 		data->cos_bw += pg_bw;
 }
 
-/*******************************************************************************
- * Description: single priority group
- *
- * Return:
- ******************************************************************************/
 static void bnx2x_dcbx_separate_pauseable_from_non(struct bnx2x *bp,
 			struct cos_help_data *cos_data,
 			u32 *pg_pri_orginal_spread,
@@ -1347,11 +1353,6 @@ static void bnx2x_dcbx_two_pg_to_cos_params(
 	}
 }
 
-/*******************************************************************************
- * Description: Still
- *
- * Return:
- ******************************************************************************/
 static void bnx2x_dcbx_three_pg_to_cos_params(
 			      struct bnx2x		*bp,
 			      struct pg_help_data	*pg_help_data,
@@ -1539,11 +1540,6 @@ static void bnx2x_dcbx_get_ets_pri_pg_tbl(struct bnx2x *bp,
 	}
 }
 
-/*******************************************************************************
- * Description: Fill pfc_config struct that will be sent in DCBX start ramrod
- *
- * Return:
- ******************************************************************************/
 static void bnx2x_pfc_fw_struct_e2(struct bnx2x *bp)
 {
 	struct flow_control_configuration   *pfc_fw_cfg = NULL;

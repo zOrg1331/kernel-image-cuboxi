@@ -488,8 +488,9 @@ struct ieee80211_if_mesh {
 	struct mesh_config mshcfg;
 	u32 mesh_seqnum;
 	bool accepting_plinks;
-	const u8 *vendor_ie;
-	u8 vendor_ie_len;
+	const u8 *ie;
+	u8 ie_len;
+	bool is_secure;
 };
 
 #ifdef CONFIG_MAC80211_MESH
@@ -765,6 +766,9 @@ struct ieee80211_local {
 
 	int tx_headroom; /* required headroom for hardware/radiotap */
 
+	/* count for keys needing tailroom space allocation */
+	int crypto_tx_tailroom_needed_cnt;
+
 	/* Tasklet and skb queue to process calls from IRQ mode. All frames
 	 * added to skb_queue will be processed, but frames in
 	 * skb_queue_unreliable may be dropped if the total length of these
@@ -809,8 +813,8 @@ struct ieee80211_local {
 
 	struct rate_control_ref *rate_ctrl;
 
-	struct crypto_blkcipher *wep_tx_tfm;
-	struct crypto_blkcipher *wep_rx_tfm;
+	struct crypto_cipher *wep_tx_tfm;
+	struct crypto_cipher *wep_rx_tfm;
 	u32 wep_iv;
 
 	/* see iface.c */
