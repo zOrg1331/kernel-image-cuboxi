@@ -147,7 +147,15 @@ extern int nfs4_validate_delegation_stateid(struct nfs_delegation *delegation,
 #define NFS41_BC_MAX_CALLBACKS 1
 
 extern unsigned int nfs_callback_set_tcpport;
+
+#ifndef CONFIG_VE
 extern unsigned short nfs_callback_tcpport;
 extern unsigned short nfs_callback_tcpport6;
+#else
+extern struct ve_nfs4_cb_data ve0_nfs4_cb_data;
+
+extern int ve_nfs4_cb_init(struct ve_struct *ve);
+extern void ve_nfs4_cb_fini(struct ve_struct *ve);
+#endif
 
 #endif /* __LINUX_FS_NFS_CALLBACK_H */

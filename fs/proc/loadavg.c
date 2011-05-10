@@ -24,7 +24,7 @@ static int loadavg_proc_show(struct seq_file *m, void *v)
 	} else {
 		get_avenrun_ve(ve, avnrun, FIXED_1/200, 0);
 		running = nr_running_ve(ve);
-		threads = atomic_read(&ve->pcounter);
+		threads = ve->pcounter;
 	}
 
 	seq_printf(m, "%lu.%02lu %lu.%02lu %lu.%02lu %ld/%ld %d\n",

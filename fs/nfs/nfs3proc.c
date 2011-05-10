@@ -294,11 +294,18 @@ static struct nfs3_createdata *nfs3_alloc_createdata(void)
 static int nfs3_do_create(struct inode *dir, struct dentry *dentry, struct nfs3_createdata *data)
 {
 	int status;
+	struct inode *dummy;
+
+	dummy = nfs_dq_reserve_inode(dir);
+	if (IS_ERR(dummy))
+		return -EDQUOT;
 
 	status = rpc_call_sync(NFS_CLIENT(dir), &data->msg, 0);
 	nfs_post_op_update_inode(dir, data->res.dir_attr);
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
+		status = nfs_instantiate(dentry, data->res.fh,
+						data->res.fattr, dummy);
+	nfs_dq_release_inode(dummy);
 	return status;
 }
 

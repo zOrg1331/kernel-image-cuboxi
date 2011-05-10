@@ -1293,7 +1293,7 @@ int rst_restore_process(struct cpt_context *ctx)
 
 		clear_stopped_child_used_math(tsk);
 
-		b = (void *)(ti+1);
+		b = (void *)ti + ti->cpt_hdrlen;
 		while ((void*)b < ((void*)ti) + ti->cpt_next) {
 			/* Siginfo objects are at the end of obj array */
 			if (b->cpt_object == CPT_OBJ_SIGINFO) {

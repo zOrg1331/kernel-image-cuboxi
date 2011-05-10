@@ -450,11 +450,6 @@ static inline struct vz_quota_ugid *__vzquota_get_ugid(struct vz_quota_ugid *qug
 #define VZ_QUOTAO_ON		12
 #define VZ_QUOTAO_RE_LOCK	13
 
-#define DQUOT_CMD_ALLOC		0
-#define DQUOT_CMD_PREALLOC	1
-#define DQUOT_CMD_CHECK		12
-#define DQUOT_CMD_FORCE		13
-
 extern struct mutex vz_quota_mutex;
 
 void inode_qmblk_lock(struct super_block *sb);

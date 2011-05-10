@@ -4,7 +4,9 @@
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
 
-#define PGALLOC_GFP GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO | __GFP_UBC
+#include <bc/kmem.h>
+
+#define PGALLOC_GFP GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO
 #define PGALLOC_KERN_GFP GFP_KERNEL | __GFP_NOTRACK | __GFP_REPEAT | __GFP_ZERO
 
 #ifdef CONFIG_HIGHPTE
@@ -233,6 +235,8 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgdp)
 
 			paravirt_release_pmd(pgd_val(pgd) >> PAGE_SHIFT);
 			pmd_free(mm, pmd);
+			mm->nr_ptds--;
+			ub_page_table_uncharge(mm);
 		}
 	}
 }
@@ -257,6 +261,8 @@ static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 			       sizeof(pmd_t) * PTRS_PER_PMD);
 
 		pud_populate(mm, pud, pmd);
+		ub_page_table_charge(mm);
+		mm->nr_ptds++;
 	}
 }
 
@@ -265,6 +271,9 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	pgd_t *pgd;
 	pmd_t *pmds[PREALLOCATED_PMDS];
 	unsigned long flags;
+
+	if (ub_page_table_precharge(mm, 1 + PREALLOCATED_PMDS))
+		return NULL;
 
 	pgd = (pgd_t *)__get_free_page(PGALLOC_GFP);
 
@@ -291,6 +300,9 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 
 	spin_unlock_irqrestore(&pgd_lock, flags);
 
+	ub_page_table_charge(mm);
+	mm->nr_ptds++;
+
 	return pgd;
 
 out_free_pmds:
@@ -298,6 +310,7 @@ out_free_pmds:
 out_free_pgd:
 	free_page((unsigned long)pgd);
 out:
+	ub_page_table_commit(mm);
 	return NULL;
 }
 
@@ -307,6 +320,9 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	pgd_dtor(pgd);
 	paravirt_pgd_free(mm, pgd);
 	free_page((unsigned long)pgd);
+	mm->nr_ptds--;
+	ub_page_table_uncharge(mm);
+	ub_page_table_commit(mm);
 }
 
 int ptep_set_access_flags(struct vm_area_struct *vma,

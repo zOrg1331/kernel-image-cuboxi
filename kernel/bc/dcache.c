@@ -78,7 +78,10 @@ static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter 
 	orig_root = d;
 
 	while (1) {
-		BUG_ON(d->d_ub != cub);
+		if (d->d_ub != cub) {
+			BUG_ON(!(d->d_flags & DCACHE_BCTOP));
+			goto skip_subtree;
+		}
 		if (!list_empty(&d->d_lru)) {
 			list_move(&d->d_bclru, &ub->ub_dentry_lru);
 			cub->ub_dentry_unused--;
@@ -95,6 +98,7 @@ static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter 
 		}
 		if (d == orig_root)
 			break;
+skip_subtree:
 		while (d == list_entry(d->d_parent->d_subdirs.prev,
 					struct dentry, d_u.d_child)) {
 			d = d->d_parent;
@@ -134,3 +138,13 @@ void ub_dcache_set_owner(struct dentry *root, struct user_beancounter *ub)
 	spin_unlock(&dcache_lock);
 }
 EXPORT_SYMBOL(ub_dcache_set_owner);
+
+void ub_dcache_change_owner(struct dentry *dentry, struct user_beancounter *ub)
+{
+	struct user_beancounter *cub = dentry->d_ub;
+	long size;
+
+	size = recharge_subtree(dentry, ub, cub);
+	__ub_dcache_uncharge(cub, size);
+	__ub_dcache_charge(ub, size, UB_FORCE);
+}

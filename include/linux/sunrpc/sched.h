@@ -215,7 +215,6 @@ void		rpc_put_task(struct rpc_task *);
 void		rpc_exit_task(struct rpc_task *);
 void		rpc_release_calldata(const struct rpc_call_ops *, void *);
 void		rpc_killall_tasks(struct rpc_clnt *);
-void		rpc_kill_client(struct rpc_clnt *);
 void		rpc_execute(struct rpc_task *);
 void		rpc_init_priority_wait_queue(struct rpc_wait_queue *, const char *);
 void		rpc_init_wait_queue(struct rpc_wait_queue *, const char *);
@@ -237,10 +236,15 @@ int		__rpc_wait_for_completion_task(struct rpc_task *task, int (*)(void *));
 #ifdef RPC_DEBUG
 void		rpc_show_tasks(void);
 #endif
+int		rpciod_start(void);
+void		rpciod_stop(void);
 int		rpc_init_mempool(void);
 void		rpc_destroy_mempool(void);
-extern struct workqueue_struct *rpciod_workqueue;
-extern struct rw_semaphore rpc_async_task_lock;
+#ifdef CONFIG_VE
+#define rpciod_workqueue	(get_exec_env()->rpc_data->_rpciod_workqueue)
+#else
+extern struct proc_dir_entry	*rpciod_workqueue;
+#endif
 void		rpc_prepare_task(struct rpc_task *task);
 
 static inline void rpc_exit(struct rpc_task *task, int status)

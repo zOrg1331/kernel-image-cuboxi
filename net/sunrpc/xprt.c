@@ -44,6 +44,8 @@
 #include <linux/workqueue.h>
 #include <linux/net.h>
 #include <linux/ktime.h>
+#include <linux/sched.h>
+#include <linux/ve_nfs.h>
 
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/metrics.h>
@@ -599,13 +601,10 @@ static void xprt_autoclose(struct work_struct *work)
 {
 	struct rpc_xprt *xprt =
 		container_of(work, struct rpc_xprt, task_cleanup);
-	struct ve_struct *ve;
 
-	ve = set_exec_env(xprt->owner_env);
 	xprt->ops->close(xprt);
 	clear_bit(XPRT_CLOSE_WAIT, &xprt->state);
 	xprt_release_write(xprt, NULL);
-	(void)set_exec_env(ve);
 }
 
 /**
@@ -674,6 +673,10 @@ xprt_init_autodisconnect(unsigned long data)
 	struct rpc_xprt *xprt = (struct rpc_xprt *)data;
 	struct ve_struct *ve;
 
+	/*
+	 * Here we have to change execution environment since this function is
+	 * called from timer handling code, which is executed in ve0.
+	 */
 	ve = set_exec_env(xprt->owner_env);
 	spin_lock(&xprt->transport_lock);
 	if (!list_empty(&xprt->recv) || xprt->shutdown)

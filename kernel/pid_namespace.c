@@ -245,14 +245,14 @@ static noinline void show_lost_task(struct task_struct *p)
 static void zap_ve_processes(struct ve_struct *env)
 {
 	/* wait for all init childs exit */
-	while (atomic_read(&env->pcounter) > 1) {
+	while (env->pcounter > 1) {
 		struct task_struct *g, *p;
 		long delay = 1;
 
 		if (sys_wait4(-1, NULL, __WALL | WNOHANG, NULL) > 0)
 			continue;
 		/* it was ENOCHLD or no more children somehow */
-		if (atomic_read(&env->pcounter) == 1)
+		if (env->pcounter == 1)
 			break;
 
 		/* clear all signals to avoid wakeups */

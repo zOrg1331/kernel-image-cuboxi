@@ -13,7 +13,6 @@
 
 #include <bc/beancounter.h>
 #include <bc/decl.h>
-#include <linux/mmgang.h>
 
 /*
  * UB_KMEMSIZE accounting
@@ -27,18 +26,6 @@
 #define CHARGE_SIZE(__s)		(__s)
 #endif
 
-#ifdef CONFIG_BEANCOUNTERS
-static inline struct user_beancounter *page_ub(struct page *page)
-{
-	/* kernel pages hold ub, so no rcu_dereference there */
-	struct gang *gang = page->gang;
-
-	return gang ? get_gang_ub(gang) : NULL;
-}
-#else
-#define page_ub(__page)	NULL
-#endif
-
 struct mm_struct;
 struct page;
 struct kmem_cache;
@@ -46,12 +33,71 @@ struct kmem_cache;
 UB_DECLARE_FUNC(struct user_beancounter *, vmalloc_ub(void *obj))
 UB_DECLARE_FUNC(struct user_beancounter *, mem_ub(void *obj))
 
-UB_DECLARE_FUNC(int, ub_page_charge(struct page *page, int order,
-			struct user_beancounter *ub, enum ub_severity strict))
-UB_DECLARE_VOID_FUNC(ub_page_uncharge(struct page *page, int order))
 UB_DECLARE_FUNC(int, ub_slab_charge(struct kmem_cache *cachep,
 			void *objp, gfp_t flags))
 UB_DECLARE_VOID_FUNC(ub_slab_uncharge(struct kmem_cache *cachep, void *obj))
+
+static inline struct user_beancounter* page_kmem_ub(struct page *page)
+{
+	return page->kmem_ub;
+}
+
+static inline int ub_page_charge(struct page *page, int order,
+		struct user_beancounter *ub, enum ub_severity strict)
+{
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE,
+				CHARGE_ORDER(order), strict))
+		return -ENOMEM;
+
+	BUG_ON(page->kmem_ub != NULL);
+	page->kmem_ub = get_beancounter(ub);
+	return 0;
+}
+
+static inline void ub_page_uncharge(struct page *page, int order)
+{
+	struct user_beancounter *ub = page->kmem_ub;
+
+	if (likely(ub == NULL))
+		return;
+
+	page->kmem_ub = NULL;
+	BUG_ON(ub->ub_magic != UB_MAGIC);
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, CHARGE_ORDER(order));
+	put_beancounter(ub);
+}
+
+static inline int ub_page_table_charge(struct mm_struct *mm)
+{
+	if (unlikely(mm->page_table_precharge == 0))
+		return charge_beancounter_fast(mm->mm_ub,
+				UB_KMEMSIZE, PAGE_SIZE, UB_SOFT);
+	mm->page_table_precharge--;
+	return 0;
+}
+
+static inline void ub_page_table_uncharge(struct mm_struct *mm)
+{
+	mm->page_table_precharge++;
+}
+
+static inline int ub_page_table_precharge(struct mm_struct *mm, long precharge)
+{
+	if (charge_beancounter_fast(mm->mm_ub, UB_KMEMSIZE,
+				precharge << PAGE_SHIFT, UB_SOFT))
+		return -ENOMEM;
+	mm->page_table_precharge += precharge;
+	return 0;
+}
+
+static inline void ub_page_table_commit(struct mm_struct *mm)
+{
+	if (unlikely(mm->page_table_precharge)) {
+		uncharge_beancounter_fast(mm->mm_ub, UB_KMEMSIZE,
+				mm->page_table_precharge << PAGE_SHIFT);
+		mm->page_table_precharge = 0;
+	}
+}
 
 static inline void *ub_kmem_alloc(struct user_beancounter *ub,
 		struct kmem_cache *cachep, gfp_t gfp_flags)

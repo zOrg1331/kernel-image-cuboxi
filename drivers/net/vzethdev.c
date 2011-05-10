@@ -672,11 +672,6 @@ err:
 	return ERR_PTR(err);
 }
 
-static int veth_start(void *data)
-{
-	return 0;
-}
-
 static void veth_stop(void *data)
 {
 	struct ve_struct *env;
@@ -691,7 +686,6 @@ static void veth_stop(void *data)
 }
 
 static struct ve_hook veth_ve_hook = {
-	.init	  = veth_start,
 	.fini	  = veth_stop,
 	.owner	  = THIS_MODULE,
 	.priority = HOOK_PRIO_NET,

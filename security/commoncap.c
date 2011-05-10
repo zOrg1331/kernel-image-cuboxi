@@ -966,6 +966,9 @@ error:
  */
 int cap_syslog(int type)
 {
+	if (dmesg_restrict && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
 	switch (type) {
 	case 3:		/* Read last kernel messages */
 	case 10:	/* Size of the log buffer */

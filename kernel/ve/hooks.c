@@ -52,7 +52,7 @@ static inline int ve_hook_init(struct ve_hook *vh, struct ve_struct *ve)
 	int err;
 
 	err = 0;
-	if (try_module_get(vh->owner)) {
+	if (vh->init != NULL && try_module_get(vh->owner)) {
 		err = vh->init(ve);
 		module_put(vh->owner);
 	}

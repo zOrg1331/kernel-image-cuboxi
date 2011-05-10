@@ -263,50 +263,6 @@ void ub_slab_uncharge(struct kmem_cache *cachep, void *objp)
 	*ub_ref = NULL;
 }
 
-/*
- * Pages accounting
- */
-
-int ub_page_charge(struct page *page, int order,
-		struct user_beancounter *ub, enum ub_severity strict)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-	if (charge_beancounter_fast(ub, UB_KMEMSIZE, CHARGE_ORDER(order), strict))
-		goto err;
-
-	inc_pages_charged(ub, order);
-	local_irq_restore(flags);
-	BUG_ON(page_gang(page) != NULL);
-	get_beancounter(ub);
-	gang_add_kernel_page(page, order, &ub->gang_set);
-	return 0;
-
-err:
-	local_irq_restore(flags);
-	BUG_ON(page_gang(page) != NULL);
-	return -ENOMEM;
-}
-
-void ub_page_uncharge(struct page *page, int order)
-{
-	struct user_beancounter *ub;
-	unsigned long flags;
-
-	ub = page_ub(page);
-	if (ub == NULL)
-		return;
-
-	BUG_ON(ub->ub_magic != UB_MAGIC);
-	dec_pages_charged(ub, order);
-	local_irq_save(flags);
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, CHARGE_ORDER(order));
-	local_irq_restore(flags);
-	put_beancounter(ub);
-	gang_del_kernel_page(page, order);
-}
-
 /* 
  * takes init_mm.page_table_lock 
  * some outer lock to protect pages from vmalloced area must be held
@@ -319,7 +275,7 @@ struct user_beancounter *vmalloc_ub(void *obj)
 	if (pg == NULL)
 		return NULL;
 
-	return page_ub(pg);
+	return page_kmem_ub(pg);
 }
 
 EXPORT_SYMBOL(vmalloc_ub);

@@ -164,7 +164,7 @@ static int proc_root_getattr(struct vfsmount *mnt, struct dentry *dentry, struct
 #ifdef CONFIG_VE
 	else
 		/* thread count. not really processes count */
-		stat->nlink += atomic_read(&ve->pcounter);
+		stat->nlink += ve->pcounter;
 	/* the same logic as in the proc_getattr */
 	stat->nlink += ve->proc_root->nlink - 2;
 #endif

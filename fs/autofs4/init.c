@@ -29,11 +29,6 @@ static struct file_system_type autofs_fs_type = {
 	.fs_flags	= FS_VIRTUALIZED,
 };
 
-static int ve_autofs_start(void *data)
-{
-	return 0;
-}
-
 static void ve_autofs_stop(void *data)
 {
 	struct ve_struct *ve = data;
@@ -42,7 +37,6 @@ static void ve_autofs_stop(void *data)
 }
 
 static struct ve_hook autofs4_hook = {
-	.init	  = ve_autofs_start,
 	.fini	  = ve_autofs_stop,
 	.owner	  = THIS_MODULE,
 	.priority = HOOK_PRIO_FS,

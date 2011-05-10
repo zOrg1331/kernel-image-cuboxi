@@ -91,13 +91,13 @@ EXPORT_SYMBOL(ve_allow_kthreads);
 #ifdef CONFIG_MAGIC_SYSRQ
 extern int sysrq_key_scancode;
 #endif
+extern unsigned relatime_interval; /* fs/inode.c */
 
 extern int alloc_fail_warn;
 int decode_call_traces = 1;
 
 #ifdef CONFIG_VE
 int glob_ve_meminfo = 0;
-EXPORT_SYMBOL(glob_ve_meminfo);
 #endif
 extern int latencytop_enabled;
 extern int sysctl_nr_open_min, sysctl_nr_open_max;
@@ -916,6 +916,15 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &ten_thousand,
 	},
+	{
+		.procname       = "dmesg_restrict",
+		.data           = &dmesg_restrict,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &zero,
+		.extra2         = &one,
+	},
 #endif
 	{
 		.ctl_name	= KERN_NGROUPS_MAX,
@@ -1366,7 +1375,7 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one_hundred,
 	},
 #ifdef CONFIG_HUGETLB_PAGE
-	 {
+	{
 		.procname	= "nr_hugepages",
 		.data		= NULL,
 		.maxlen		= sizeof(unsigned long),
@@ -1374,7 +1383,18 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= &hugetlb_sysctl_handler,
 		.extra1		= (void *)&hugetlb_zero,
 		.extra2		= (void *)&hugetlb_infinity,
-	 },
+	},
+#ifdef CONFIG_NUMA
+	{
+		.procname       = "nr_hugepages_mempolicy",
+		.data           = NULL,
+		.maxlen         = sizeof(unsigned long),
+		.mode           = 0644,
+		.proc_handler   = &hugetlb_mempolicy_sysctl_handler,
+		.extra1		= (void *)&hugetlb_zero,
+		.extra2		= (void *)&hugetlb_infinity,
+	},
+#endif
 	 {
 		.ctl_name	= VM_HUGETLB_GROUP,
 		.procname	= "hugetlb_shm_group",
@@ -1626,21 +1646,6 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one,
 	},
 #endif
-	{
-		.procname	= "vsyscall",
-		.data		= &sysctl_at_vsyscall,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "odirect_enable",
-		.data		= &odirect_enable,
-		.maxlen		= sizeof(int),
-		.mode           = 0644,
-		.proc_handler   = proc_dointvec,
-	},
 
 /*
  * NOTE: do not add new entries to this table unless you have read
@@ -1656,6 +1661,14 @@ static struct ctl_table binfmt_misc_table[] = {
 #endif
 
 static struct ctl_table fs_table[] = {
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "relatime_interval",
+		.data		= &relatime_interval,
+		.maxlen		= sizeof(unsigned),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 	{
 		.ctl_name	= FS_NRINODE,
 		.procname	= "inode-nr",
@@ -1809,6 +1822,14 @@ static struct ctl_table fs_table[] = {
 		.child		= binfmt_misc_table,
 	},
 #endif
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "odirect_enable",
+		.data		= &odirect_enable,
+		.maxlen		= sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt

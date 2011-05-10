@@ -739,6 +739,8 @@ int free_swap_and_cache(swp_entry_t entry)
 			page = find_get_page(&swapper_space, entry.val);
 			full = ub_swap_full(get_swap_ub(entry));
 			if (page && !trylock_page(page)) {
+				if (!page_mapped(page))
+					ub_swapentry_unuse(p, swp_offset(entry));
 				page_cache_release(page);
 				page = NULL;
 			}

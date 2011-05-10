@@ -140,12 +140,14 @@ struct sock_private {
 };
 
 struct ub_percpu_struct {
-	int mapped_file_pages;
-	int anonymous_pages;
 	int dirty_pages;
 
-	unsigned long unmap;
 	unsigned long swapin;
+	unsigned long swapout;
+
+	unsigned long vswapin;
+	unsigned long vswapout;
+
 #ifdef CONFIG_BC_IO_ACCOUNTING
 	unsigned long async_write_complete;
 	unsigned long async_write_canceled;
@@ -168,13 +170,10 @@ struct ub_percpu_struct {
 	unsigned long	frsync;
 	unsigned long	frsync_done;
 
-	unsigned long		write;
-	unsigned long		read;
-	unsigned long long	wchar;
-	unsigned long long	rchar;
-
 	/* percpu resource precharge */
 	int	precharge[UB_RESOURCES];
+
+	int pincount;
 };
 
 struct user_beancounter
@@ -207,11 +206,14 @@ struct user_beancounter
 #define ub_orphan_count		spriv.ubp_orphan_count
 #define ub_tw_count		spriv.ubp_tw_count
 
-	atomic_long_t		mapped_file_pages;
-	atomic_long_t		anonymous_pages;
 	atomic_long_t		dirty_pages;
 
 	struct gang_set		gang_set;
+
+	/* reclaim rate-limit */
+	spinlock_t		rl_lock;
+	unsigned		rl_step;	/* ns per page */
+	ktime_t			rl_wall;	/* wall time */
 
 	struct cgroup		*ub_cgroup;
 
@@ -383,6 +385,15 @@ extern const char *ub_rnames[];
 
 extern void release_beancounter(struct user_beancounter *ub);
 
+static inline void put_beancounter_longterm(struct user_beancounter *ub)
+{
+	if (unlikely(ub == NULL))
+		return;
+
+	if (atomic_dec_and_test(&ub->ub_refcount))
+		release_beancounter(ub);
+}
+
 static inline void __put_beancounter(struct user_beancounter *ub)
 {
 	if (atomic_dec_and_test(&ub->ub_refcount))
@@ -401,6 +412,16 @@ static inline void put_beancounter(struct user_beancounter *ub)
  *	Create a new beancounter reference
  */
 extern struct user_beancounter *get_beancounter_byuid(uid_t uid, int create);
+
+static inline
+struct user_beancounter *get_beancounter_longterm(struct user_beancounter *ub)
+{
+	if (unlikely(ub == NULL))
+		return NULL;
+
+	atomic_inc(&ub->ub_refcount);
+	return ub;
+}
 
 static inline 
 struct user_beancounter *get_beancounter(struct user_beancounter *ub)

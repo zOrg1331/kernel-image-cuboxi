@@ -171,7 +171,6 @@ config SPLIT_PTLOCK_CPUS
 # support for memory compaction
 config COMPACTION
 	bool "Allow for memory compaction"
-	depends on !MEMORY_GANGS
 	def_bool y
 	select MIGRATION
 	depends on EXPERIMENTAL && HUGETLB_PAGE && MMU
@@ -299,7 +298,7 @@ config NOMMU_INITIAL_TRIM_EXCESS
 
 config TRANSPARENT_HUGEPAGE
 	bool "Transparent Hugepage support" if EMBEDDED
-	depends on X86_64 && !MEMORY_GANGS
+	depends on X86_64
 	select COMPACTION
 	default y
 	help

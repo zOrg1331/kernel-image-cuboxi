@@ -181,7 +181,7 @@ static void delayed_put_task_struct(struct rcu_head *rhp)
 void release_task(struct task_struct * p)
 {
 	struct task_struct *leader;
-	int zap_leader;
+	int zap_leader, zap_ve;
 repeat:
 	tracehook_prepare_release_task(p);
 	/* don't need to get the RCU readlock here - the process is dead and
@@ -202,6 +202,7 @@ repeat:
 	 * group leader's parent process. (if it wants notification.)
 	 */
 	zap_leader = 0;
+	zap_ve = 0;
 	leader = p->group_leader;
 	if (leader != p && thread_group_empty(leader) && leader->exit_state == EXIT_ZOMBIE) {
 		BUG_ON(task_detached(leader));
@@ -224,10 +225,13 @@ repeat:
 			leader->exit_state = EXIT_DEAD;
 	}
 
+	if (--p->ve_task_info.owner_env->pcounter == 0)
+		zap_ve = 1;
 	write_unlock_irq(&tasklist_lock);
 	release_thread(p);
 	ub_task_uncharge(p->task_bc.task_ub);
-	pput_ve(p->ve_task_info.owner_env);
+	if (zap_ve)
+		ve_cleanup_schedule(p->ve_task_info.owner_env);
 	call_rcu(&p->rcu, delayed_put_task_struct);
 
 	p = leader;

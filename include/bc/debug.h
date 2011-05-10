@@ -86,7 +86,7 @@ struct vm_struct;
 	} while (0)
 #define dec_vmalloc_charged(vm)		do {				\
 		struct user_beancounter *ub;				\
-		ub = page_ub(vm->pages[0]);				\
+		ub = page_kmem_ub(vm->pages[0]);			\
 		if (ub != NULL)						\
 			ub_percpu_sub(ub, vmalloc_charged,		\
 					vm->nr_pages);			\

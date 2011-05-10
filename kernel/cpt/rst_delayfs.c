@@ -1350,7 +1350,7 @@ static int delay_first_timeout = 1 * HZ;
 
 struct ctl_table delayfs_table[] = {
 	{
-		.ctl_name	= 9486,
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "first_timeout",
 		.data		= &delay_first_timeout,
 		.maxlen		= sizeof(delay_first_timeout),
@@ -1358,7 +1358,7 @@ struct ctl_table delayfs_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
-		.ctl_name	= 9487,
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "max_timeout",
 		.data		= &delay_max_timeout,
 		.maxlen		= sizeof(delay_max_timeout),
@@ -1378,8 +1378,7 @@ static int delayfs_resume_fn(void *d)
 
 	dctx->dfs_daemon = current;
 
-	abort_timeout = (xprt_abort_timeout == RPC_MAX_ABORT_TIMEOUT ? 0 :
-		jiffies + (unsigned long)xprt_abort_timeout * HZ);
+	abort_timeout = jiffies + (unsigned long)300 * HZ;
 
 	daemonize("dfs_resume/%d", dctx->ve_id);
 	ve_printk(VE_LOG_BOTH, "DFS%d: resuming daemon started\n", dctx->ve_id);

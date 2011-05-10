@@ -15,6 +15,8 @@
 #include <bc/beancounter.h>
 #include <bc/decl.h>
 
+extern int glob_ve_meminfo;
+
 /*
  * Check whether vma has private or copy-on-write mapping.
  */
@@ -67,11 +69,6 @@ UB_DECLARE_VOID_FUNC(ub_lockedshm_uncharge(struct shmem_inode_info *shi,
 			unsigned long size))
 
 extern void __ub_update_oomguarpages(struct user_beancounter *ub);
-static inline unsigned long ub_mapped_pages(struct user_beancounter *ub)
-{
-	return ub_stat_get(ub, mapped_file_pages) +
-		ub_stat_get(ub, anonymous_pages);
-}
 
 static inline int ub_swap_full(struct user_beancounter *ub)
 {
@@ -93,6 +90,7 @@ SWP_DECLARE_VOID_FUNC(ub_swap_fini(struct swap_info_struct *si))
 SWP_DECLARE_VOID_FUNC(ub_swapentry_inc(struct swap_info_struct *si, pgoff_t n,
 			struct user_beancounter *ub))
 SWP_DECLARE_VOID_FUNC(ub_swapentry_dec(struct swap_info_struct *si, pgoff_t n))
+SWP_DECLARE_VOID_FUNC(ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t n))
 
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask);
 
@@ -104,5 +102,7 @@ static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mas
 
 	return __ub_check_ram_limits(ub, gfp_mask);
 }
+
+void show_ub_mem(struct user_beancounter *ub);
 
 #endif /* __UB_PAGES_H_ */

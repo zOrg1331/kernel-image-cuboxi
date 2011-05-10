@@ -85,8 +85,16 @@ void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
 		inc_zone_page_state(page, NR_MLOCK);
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
 		if (!isolate_lru_page(page)) {
-			gang_move_mapped_isolated_page(page,
-					get_mm_gang(vma->vm_mm));
+			struct gang_set *gs = get_mm_gang(vma->vm_mm);
+
+			rcu_read_lock();
+			if (page_gang(page)->set != gs) {
+				unpin_mem_gang(page_gang(page));
+				gang_mod_user_page(page, gs);
+				pin_mem_gang(page_gang(page));
+			}
+			rcu_read_unlock();
+
 			putback_lru_page(page);
 		}
 	}

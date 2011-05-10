@@ -172,16 +172,21 @@ static int do_rst_ldt(struct cpt_obj_bits *li, loff_t pos, struct cpt_context *c
 	int err;
 
 	if (li->cpt_size > PAGE_SIZE)
-		newldt = vmalloc(li->cpt_size);
+		newldt = ub_vmalloc(li->cpt_size);
 	else
-		newldt = kmalloc(li->cpt_size, GFP_KERNEL);
+		newldt = kmalloc(li->cpt_size, GFP_KERNEL_UBC);
 
 	if (!newldt)
 		return -ENOMEM;
 
 	err = ctx->pread(newldt, li->cpt_size, ctx, pos + li->cpt_hdrlen);
-	if (err)
+	if (err) {
+		if (li->cpt_size > PAGE_SIZE)
+			vfree(newldt);
+		else
+			kfree(newldt);
 		return err;
+	}
 
 	oldldt = mm->context.ldt;
 	mm->context.ldt = newldt;

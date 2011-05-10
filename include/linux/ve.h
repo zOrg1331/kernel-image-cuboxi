@@ -153,7 +153,7 @@ struct ve_struct {
 	struct list_head	vetask_lh;
 	/* capability bounding set */
 	kernel_cap_t		ve_cap_bset;
-	atomic_t		pcounter;
+	unsigned int		pcounter;
 	/* ref counter to ve from ipc */
 	atomic_t		counter;
 	unsigned int		class_id;
@@ -268,8 +268,12 @@ struct ve_struct {
 	unsigned long		_nlmsvc_grace_period;
 	unsigned long		_nlmsvc_timeout;
 	struct svc_rqst*	_nlmsvc_rqst;
+	struct workqueue_struct *_nfsiod_workqueue;
 
 	struct ve_nfsd_data	*nfsd_data;
+#ifdef CONFIG_NFS_V4
+	struct ve_nfs4_cb_data	*nfs4_cb_data;
+#endif
 #endif
 	atomic_t		locks_in_grace;
 
@@ -331,17 +335,7 @@ static inline void put_ve(struct ve_struct *ptr)
 		do_env_free(ptr);
 }
 
-static inline void pget_ve(struct ve_struct *ptr)
-{
-	atomic_inc(&ptr->pcounter);
-}
-
 void ve_cleanup_schedule(struct ve_struct *);
-static inline void pput_ve(struct ve_struct *ptr)
-{
-	if (unlikely(atomic_dec_and_test(&ptr->pcounter)))
-		ve_cleanup_schedule(ptr);
-}
 
 extern spinlock_t ve_cleanup_lock;
 extern struct list_head ve_cleanup_list;

@@ -39,8 +39,6 @@ enum {
 #else
 #define VDSO_DEFAULT	VDSO_ENABLED
 #endif
-#undef VDSO_DEFAULT
-#define VDSO_DEFAULT VDSO_DISABLED
 
 #ifdef CONFIG_X86_64
 #define vdso_enabled			sysctl_vsyscall32
@@ -287,7 +285,7 @@ static void map_compat_vdso(int map)
 
 int __init sysenter_setup(void)
 {
-	void *syscall_page = (void *)get_zeroed_page(GFP_ATOMIC_UBC);
+	void *syscall_page = (void *)get_zeroed_page(GFP_ATOMIC);
 	const void *vsyscall;
 	size_t vsyscall_len;
 

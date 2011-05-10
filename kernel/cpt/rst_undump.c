@@ -917,7 +917,7 @@ int rst_resume(struct cpt_context *ctx)
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMPROC);
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMFILE);
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_DCACHESIZE);
-	put_beancounter(bc);
+	put_beancounter_longterm(bc);
 #endif
 
 	rst_resume_network(ctx);

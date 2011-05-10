@@ -2328,12 +2328,12 @@ perf_mmap_data_alloc(struct perf_event *event, int nr_pages)
 	if (!data)
 		goto fail;
 
-	data->user_page = (void *)get_zeroed_page(GFP_KERNEL_UBC);
+	data->user_page = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!data->user_page)
 		goto fail_user_page;
 
 	for (i = 0; i < nr_pages; i++) {
-		data->data_pages[i] = (void *)get_zeroed_page(GFP_KERNEL_UBC);
+		data->data_pages[i] = (void *)get_zeroed_page(GFP_KERNEL);
 		if (!data->data_pages[i])
 			goto fail_data_pages;
 	}

@@ -38,6 +38,7 @@
 #ifdef CONFIG_NFS_V4_1
 #include <linux/sunrpc/bc_xprt.h>
 #endif
+#include <linux/ve_nfs.h>
 
 #include <net/sock.h>
 #include <net/checksum.h>
@@ -72,8 +73,6 @@ static unsigned int min_slot_table_size = RPC_MIN_SLOT_TABLE;
 static unsigned int max_slot_table_size = RPC_MAX_SLOT_TABLE;
 static unsigned int xprt_min_resvport_limit = RPC_MIN_RESVPORT;
 static unsigned int xprt_max_resvport_limit = RPC_MAX_RESVPORT;
-static int xprt_min_abort_timeout = RPC_MIN_ABORT_TIMEOUT;
-static int xprt_max_abort_timeout = RPC_MAX_ABORT_TIMEOUT;
 
 static struct ctl_table_header *sunrpc_table_header;
 
@@ -125,16 +124,6 @@ static ctl_table xs_tunables_table[] = {
 		.strategy	= &sysctl_intvec,
 		.extra1		= &xprt_min_resvport_limit,
 		.extra2		= &xprt_max_resvport_limit
-	},
-	{
-		.procname	= "abort_timeout",
-		.data		= &xprt_abort_timeout,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &xprt_min_abort_timeout,
-		.extra2		= &xprt_max_abort_timeout
 	},
 	{
 		.procname	= "tcp_fin_timeout",
@@ -1709,9 +1698,7 @@ static void xs_udp_connect_worker4(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
-	struct ve_struct *ve;
 
-	ve = set_exec_env(xprt->owner_env);
 	down_read(&xprt->owner_env->op_sem);
 	if (!xprt->owner_env->is_running)
 		goto out;
@@ -1746,7 +1733,6 @@ out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
 	up_read(&xprt->owner_env->op_sem);
-	(void)set_exec_env(ve);
 }
 
 /**
@@ -1762,9 +1748,7 @@ static void xs_udp_connect_worker6(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock = transport->sock;
 	int err, status = -EIO;
-	struct ve_struct *ve;
 
-	ve = set_exec_env(xprt->owner_env);
 	down_read(&xprt->owner_env->op_sem);
 	if (!xprt->owner_env->is_running)
 		goto out;
@@ -1799,7 +1783,6 @@ out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
 	up_read(&xprt->owner_env->op_sem);
-	(void)set_exec_env(ve);
 }
 
 /*
@@ -1895,9 +1878,7 @@ static void xs_tcp_setup_socket(struct rpc_xprt *xprt,
 {
 	struct socket *sock = transport->sock;
 	int status = -EIO;
-	struct ve_struct *ve;
 
-	ve = set_exec_env(xprt->owner_env);
 	down_read(&xprt->owner_env->op_sem);
 	if (!xprt->owner_env->is_running)
 		goto out;
@@ -1953,7 +1934,6 @@ static void xs_tcp_setup_socket(struct rpc_xprt *xprt,
 	case -EALREADY:
 		xprt_clear_connecting(xprt);
 		up_read(&xprt->owner_env->op_sem);
-		(void)set_exec_env(ve);
 		return;
 	case -EINVAL:
 		/* Happens, for instance, if the user specified a link
@@ -1967,7 +1947,6 @@ out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
 	up_read(&xprt->owner_env->op_sem);
-	(void)set_exec_env(ve);
 }
 
 static struct socket *xs_create_tcp_sock4(struct rpc_xprt *xprt,

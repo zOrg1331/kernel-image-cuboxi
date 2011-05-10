@@ -184,29 +184,6 @@ void add_mem_gangs(struct gang_set *gs)
 		add_zone_gang(zone, mem_zone_gang(gs, zone));
 }
 
-void gang_move_mapped_isolated_page(struct page *page, struct gang_set *gs)
-{
-	struct gang_set *page_gs;
-
-	VM_BUG_ON(!page_mapped(page));
-	VM_BUG_ON(PageLRU(page));
-
-	rcu_read_lock();
-	page_gs = page_gang(page)->set;
-	if (page_gs == gs) {
-		/* nop */
-	} else if (PageAnon(page)) {
-		gang_unmap_anon_page(page_gs);
-		gang_mod_user_page(page, gs);
-		gang_map_anon_page(gs);
-	} else {
-		gang_unmap_file_page(page_gs);
-		gang_mod_user_page(page, gs);
-		gang_map_file_page(gs);
-	}
-	rcu_read_unlock();
-}
-
 #define MAX_MOVE_BATCH	256
 
 static void move_gang_pages(struct gang *gang, struct gang *dst_gang)
@@ -222,13 +199,15 @@ again:
 	for_each_lru(lru) {
 		struct page *page, *next;
 		LIST_HEAD(list);
-		unsigned long nr_pages = 0, file_mapped = 0, anon_mapped = 0;
-		unsigned long file_mapped2 = 0, anon_mapped2 = 0;
+		unsigned long nr_pages = 0;
+		unsigned batch = 0;
 
 		spin_lock_irq(&gang->lru_lock);
 		list_splice(&gang->lru[lru].list, &list);
 		list_for_each_entry_reverse(page, &list, lru) {
-			if (nr_pages >= MAX_MOVE_BATCH) {
+			int numpages = hpage_nr_pages(page);
+
+			if (batch >= MAX_MOVE_BATCH) {
 				restart = 1;
 				break;
 			}
@@ -239,13 +218,8 @@ again:
 				page = next;
 				continue;
 			}
-			nr_pages++;
-			if (!atomic_inc_and_test(&page->_mapcount)) {
-				if (PageAnon(page))
-					anon_mapped2++;
-				else
-					file_mapped2++;
-			}
+			batch++;
+			nr_pages += numpages;
 			ClearPageLRU(page);
 			set_page_gang(page, dst_gang);
 		}
@@ -259,29 +233,14 @@ again:
 		spin_lock_irq(&dst_gang->lru_lock);
 		list_for_each_entry(page, &list, lru) {
 			SetPageLRU(page);
-			if (!atomic_add_negative(-1, &page->_mapcount)) {
-				if (PageAnon(page))
-					anon_mapped++;
-				else
-					file_mapped++;
-			}
 			put_page(page);
 		}
 		list_splice(&list, &dst_gang->lru[lru].list);
 		dst_gang->lru[lru].nr_pages += nr_pages;
 		spin_unlock_irq(&dst_gang->lru_lock);
 
-		/* FIXME NR_ANON_TRANSPARENT_HUGEPAGES */
-		mod_zone_page_state(gang->zone, NR_ANON_PAGES,
-				anon_mapped - anon_mapped2);
-		mod_zone_page_state(gang->zone, NR_FILE_MAPPED,
-				file_mapped - file_mapped2);
 		uncharge_beancounter_fast(src_ub, UB_PHYSPAGES, nr_pages);
 		charge_beancounter_fast(dst_ub, UB_PHYSPAGES, nr_pages, UB_FORCE);
-		ub_stat_mod(src_ub, mapped_file_pages, -file_mapped);
-		ub_stat_mod(src_ub, anonymous_pages, -anon_mapped);
-		ub_stat_mod(dst_ub, mapped_file_pages, file_mapped);
-		ub_stat_mod(dst_ub, anonymous_pages, anon_mapped);
 	}
 	if (restart)
 		goto again;
@@ -319,6 +278,67 @@ void gang_page_stat(struct gang_set *gs, unsigned long *stat)
 	}
 }
 
+void gang_show_state(struct gang_set *gs)
+{
+	struct zone *zone;
+	struct gang *gang;
+	unsigned long stat[NR_LRU_LISTS];
+
+	for_each_populated_zone(zone) {
+		gang = mem_zone_gang(gs, zone);
+		printk("Node %d %s scan:%lu"
+			" a_anon:%lu i_anon:%lu"
+			" a_file:%lu i_file:%lu"
+			" unevictable:%lu\n",
+			zone_to_nid(zone), zone->name, gang->pages_scanned,
+			gang->lru[LRU_ACTIVE_ANON].nr_pages,
+			gang->lru[LRU_INACTIVE_ANON].nr_pages,
+			gang->lru[LRU_ACTIVE_FILE].nr_pages,
+			gang->lru[LRU_INACTIVE_FILE].nr_pages,
+			gang->lru[LRU_UNEVICTABLE].nr_pages);
+	}
+
+	gang_page_stat(gs, stat);
+
+	printk("Total %lu anon:%lu file:%lu"
+			" a_anon:%lu i_anon:%lu"
+			" a_file:%lu i_file:%lu"
+			" unevictable:%lu\n",
+			stat[LRU_ACTIVE_ANON] + stat[LRU_INACTIVE_ANON] +
+			stat[LRU_ACTIVE_FILE] + stat[LRU_INACTIVE_FILE] +
+			stat[LRU_UNEVICTABLE],
+			stat[LRU_ACTIVE_ANON] + stat[LRU_INACTIVE_ANON],
+			stat[LRU_ACTIVE_FILE] + stat[LRU_INACTIVE_FILE],
+			stat[LRU_ACTIVE_ANON],
+			stat[LRU_INACTIVE_ANON],
+			stat[LRU_ACTIVE_FILE],
+			stat[LRU_INACTIVE_FILE],
+			stat[LRU_UNEVICTABLE]);
+}
+
+void gang_rate_limit(struct gang_set *gs, int wait, unsigned count)
+{
+	struct user_beancounter *ub = get_gangs_ub(gs);
+	ktime_t wall;
+	u64 step;
+
+	if (!ub->rl_step)
+		return;
+
+	spin_lock(&ub->rl_lock);
+	step = (u64)ub->rl_step * count;
+	wall = ktime_add_ns(ktime_get(), step);
+	if (wall.tv64 < ub->rl_wall.tv64)
+		wall = ktime_add_ns(ub->rl_wall, step);
+	ub->rl_wall = wall;
+	spin_unlock(&ub->rl_lock);
+
+	if (wait && !test_thread_flag(TIF_MEMDIE)) {
+		set_current_state(TASK_KILLABLE);
+		schedule_hrtimeout(&wall, HRTIMER_MODE_ABS);
+	}
+}
+
 #else /* CONFIG_MEMORY_GANGS */
 
 void gang_page_stat(struct gang_set *gs, unsigned long *stat)
@@ -328,6 +348,8 @@ void gang_page_stat(struct gang_set *gs, unsigned long *stat)
 	for_each_lru(lru)
 		stat[lru] = global_page_state(NR_LRU_BASE + lru);
 }
+
+void gang_show_state(struct gang_set *gs) { }
 
 #endif /* CONFIG_MEMORY_GANGS */
 

@@ -48,13 +48,13 @@ asmlinkage long sys_fairsched_cpumask(unsigned int id, unsigned int len,
 
 int fairsched_new_node(int id, unsigned int vcpus);
 int fairsched_move_task(int id, struct task_struct *tsk);
-void fairsched_drop_node(int id);
+void fairsched_drop_node(int id, int leave);
 
 #else /* CONFIG_VZ_FAIRSCHED */
 
 static inline int fairsched_new_node(int id, unsigned int vcpus) { return 0; }
 static inline int fairsched_move_task(int id, struct task_struct *tsk) { return 0; }
-static inline void fairsched_drop_node(int id) { }
+static inline void fairsched_drop_node(int id, int leave) { }
 
 
 #endif /* CONFIG_VZ_FAIRSCHED */

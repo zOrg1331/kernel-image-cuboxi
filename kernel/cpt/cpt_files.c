@@ -839,7 +839,11 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 		struct shm_file_data *sfd = file->private_data;
 
 		file = sfd->file;
-		return cpt_dump_content_sysvshm(file, ctx);
+		retval = cpt_dump_content_sysvshm(file, ctx);
+		if (retval < 0) {
+			eprintk_ctx("cannot dump SysV IPC Shared Memory %ld\n", retval);
+			return retval;
+		}
 	}
 
 	if (!(file->f_mode & FMODE_READ) || (file->f_flags & O_DIRECT)) {

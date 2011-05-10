@@ -811,7 +811,7 @@ int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	vcpu->vcpu_id = id;
 	init_waitqueue_head(&vcpu->wq);
 
-	page = alloc_page(GFP_KERNEL_UBC | __GFP_ZERO);
+	page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (!page) {
 		r = -ENOMEM;
 		goto fail;
@@ -1028,7 +1028,7 @@ static struct kvm *kvm_create_vm(void)
 	}
 
 #ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
-	page = alloc_page(GFP_KERNEL_UBC | __GFP_ZERO);
+	page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (!page) {
 		for (i = 0; i < KVM_NR_BUSES; i++)
 			kfree(kvm->buses[i]);

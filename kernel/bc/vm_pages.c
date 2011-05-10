@@ -25,10 +25,24 @@
 #include <bc/proc.h>
 #include <bc/oom_kill.h>
 
+/**
+ * Update oomguarpages.held value, it includes:
+ *  charged swap-backed pages:	present anonymous pages, swapcache, tmpfs
+ *  unevictable-pages:		mlocked pages, ramfs
+ *  swap-entries:		allocated swap-space
+ */
 void __ub_update_oomguarpages(struct user_beancounter *ub)
 {
-	ub->ub_parms[UB_OOMGUARPAGES].held = ub_mapped_pages(ub) +
+	unsigned long pages[NR_LRU_LISTS];
+
+	gang_page_stat(&ub->gang_set, pages);
+
+	ub->ub_parms[UB_OOMGUARPAGES].held =
+		pages[LRU_ACTIVE_ANON] +
+		pages[LRU_INACTIVE_ANON] +
+		pages[LRU_UNEVICTABLE] +
 		ub->ub_parms[UB_SWAPPAGES].held;
+
 	ub_adjust_maxheld(ub, UB_OOMGUARPAGES);
 }
 
@@ -36,12 +50,16 @@ long ub_oomguarpages_left(struct user_beancounter *ub)
 {
 	unsigned long flags;
 	long left;
+	int precharge[UB_RESOURCES];
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	__ub_update_oomguarpages(ub);
 	left = ub->ub_parms[UB_OOMGUARPAGES].barrier -
 		ub->ub_parms[UB_OOMGUARPAGES].held;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
+
+	ub_precharge_snapshot(ub, precharge);
+	left += precharge[UB_OOMGUARPAGES];
 
 	return left;
 }
@@ -241,7 +259,6 @@ int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 			return -ENOMEM;
 
 		progress = try_to_free_gang_pages(&ub->gang_set, gfp_mask);
-		/* FIXME account there progress into throttler */
 		if (progress)
 			continue;
 
@@ -299,6 +316,17 @@ void ub_swapentry_dec(struct swap_info_struct *si, pgoff_t num)
 }
 EXPORT_SYMBOL(ub_swapentry_dec);
 
+void ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t num)
+{
+	struct user_beancounter *ub;
+
+	ub = si->swap_ubs[num];
+	si->swap_ubs[num] = get_beancounter(&ub0);
+	uncharge_beancounter_fast(ub, UB_SWAPPAGES, 1);
+	charge_beancounter_fast(&ub0, UB_SWAPPAGES, 1, UB_FORCE);
+	put_beancounter(ub);
+}
+
 int ub_swap_init(struct swap_info_struct *si, pgoff_t num)
 {
 	struct user_beancounter **ubs;
@@ -321,40 +349,66 @@ void ub_swap_fini(struct swap_info_struct *si)
 }
 #endif
 
-static int bc_fill_sysinfo(struct user_beancounter *ub, struct sysinfo *si, int old_ret)
+static int bc_fill_sysinfo(struct user_beancounter *ub,
+		unsigned long meminfo_val, struct sysinfo *si)
 {
 	unsigned long used, total;
+	unsigned long totalram, totalswap;
 
-	if (ub->ub_parms[UB_PHYSPAGES].limit == UB_MAXVALUE ||
-	    ub->ub_parms[UB_SWAPPAGES].limit == UB_MAXVALUE)
-		return old_ret;
+	/* No virtualization */
+	if (meminfo_val == VE_MEMINFO_SYSTEM)
+		return NOTIFY_DONE | NOTIFY_STOP_MASK;
+
+	totalram = si->totalram;
+	totalswap = si->totalswap;
 
 	memset(si, 0, sizeof(*si));
 
 	total = ub->ub_parms[UB_PHYSPAGES].limit;
 	used = ub->ub_parms[UB_PHYSPAGES].held;
 
+	if (total == UB_MAXVALUE) {
+		if (meminfo_val == VE_MEMINFO_DEFAULT)
+			total = totalram;
+		else {
+			total = min(meminfo_val, totalram);
+			used = ub->ub_parms[UB_PRIVVMPAGES].held;
+			if (glob_ve_meminfo) {
+				ub_update_resources(ub);
+				used = ub->ub_parms[UB_OOMGUARPAGES].held;
+			}
+		}
+	}
+
 	si->totalram = total;
-	si->freeram = (total >= used ? total - used : 0);
+	si->freeram = (total > used ? total - used : 0);
 
 	total = ub->ub_parms[UB_SWAPPAGES].limit;
 	used = ub->ub_parms[UB_SWAPPAGES].held;
+
+	if (total == UB_MAXVALUE) {
+		if (meminfo_val == VE_MEMINFO_DEFAULT)
+			total = totalswap;
+		else
+			total = 0;
+	}
 
 	si->totalswap = total;
 	si->freeswap = (total > used ? total - used : 0);
 
 	si->mem_unit = PAGE_SIZE;
 
-	return NOTIFY_OK | NOTIFY_STOP_MASK;
+	return NOTIFY_OK;
 }
 
-static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int old_ret)
+static int bc_fill_meminfo(struct user_beancounter *ub,
+		unsigned long meminfo_val, struct meminfo *mi)
 {
 	int cpu, ret;
 	long dcache, kmem;
 
-	ret = bc_fill_sysinfo(ub, mi->si, old_ret);
-	if (!(ret & NOTIFY_STOP_MASK))
+	ret = bc_fill_sysinfo(ub, meminfo_val, mi->si);
+	if (ret & NOTIFY_STOP_MASK)
 		goto out;
 
 	gang_page_stat(&ub->gang_set, mi->pages);
@@ -367,21 +421,15 @@ static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int 
 	dcache = ub->ub_parms[UB_DCACHESIZE].held;
 	kmem = ub->ub_parms[UB_KMEMSIZE].held;
 
-	mi->file_mapped = __ub_stat_get(ub, mapped_file_pages);
-	mi->anon_mapped = __ub_stat_get(ub, anonymous_pages);
 	mi->dirty_pages = __ub_stat_get(ub, dirty_pages);
 	for_each_possible_cpu(cpu) {
 		struct ub_percpu_struct *pcpu = ub_percpu(ub, cpu);
 
-		mi->anon_mapped += pcpu->anonymous_pages;
-		mi->file_mapped += pcpu->mapped_file_pages;
 		mi->dirty_pages	+= pcpu->dirty_pages;
 		dcache		-= pcpu->precharge[UB_DCACHESIZE];
 		kmem		-= pcpu->precharge[UB_KMEMSIZE];
 	}
 
-	mi->anon_mapped = max_t(long, 0, mi->anon_mapped);
-	mi->file_mapped = max_t(long, 0, mi->file_mapped);
 	mi->dirty_pages = max_t(long, 0, mi->dirty_pages);
 
 	mi->slab_reclaimable = DIV_ROUND_UP(max(0L, dcache), PAGE_SIZE);
@@ -391,16 +439,36 @@ out:
 	return ret;
 }
 
+static int bc_fill_vmstat(struct user_beancounter *ub, unsigned long *stat)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		struct ub_percpu_struct *pcpu = ub_percpu(ub, cpu);
+
+		stat[NR_VM_ZONE_STAT_ITEMS + PSWPIN]	+= pcpu->swapin;
+		stat[NR_VM_ZONE_STAT_ITEMS + PSWPOUT]	+= pcpu->swapout;
+
+		stat[NR_VM_ZONE_STAT_ITEMS + PSWPIN]	+= pcpu->vswapin;
+		stat[NR_VM_ZONE_STAT_ITEMS + PSWPOUT]	+= pcpu->vswapout;
+	}
+
+	return NOTIFY_OK;
+}
+
 static int bc_mem_notify(struct vnotifier_block *self,
 		unsigned long event, void *arg, int old_ret)
 {
 	switch (event) {
 	case VIRTINFO_MEMINFO: {
 		struct meminfo *mi = arg;
-		return bc_fill_meminfo(mi->ub, mi, old_ret);
+		return bc_fill_meminfo(mi->ub, mi->meminfo_val, mi);
 	}
 	case VIRTINFO_SYSINFO:
-		return bc_fill_sysinfo(get_exec_ub(), arg, old_ret);
+		return bc_fill_sysinfo(get_exec_ub(),
+				get_exec_env()->meminfo_val, arg);
+	case VIRTINFO_VMSTAT:
+		return bc_fill_vmstat(get_exec_ub(), arg);
 	};
 
 	return old_ret;
@@ -408,7 +476,6 @@ static int bc_mem_notify(struct vnotifier_block *self,
 
 static struct vnotifier_block bc_mem_notifier_block = {
 	.notifier_call = bc_mem_notify,
-	.priority = INT_MAX,
 };
 
 static int __init init_vmguar_notifier(void)
@@ -425,46 +492,61 @@ static void __exit fini_vmguar_notifier(void)
 module_init(init_vmguar_notifier);
 module_exit(fini_vmguar_notifier);
 
+void show_ub_mem(struct user_beancounter *ub)
+{
+	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
+
+	gang_show_state(&ub->gang_set);
+
+	printk(KERN_INFO "UB: %d RAM: %lu / %lu [%lu]"
+			" SWAP: %lu / %lu [%lu]"
+			" KMEM: %lu / %lu [%lu]"
+			" Dirty %lu\n",
+			ub->ub_uid,
+			ub->ub_parms[UB_PHYSPAGES].held,
+			ub->ub_parms[UB_PHYSPAGES].limit,
+			ub->ub_parms[UB_PHYSPAGES].failcnt,
+			ub->ub_parms[UB_SWAPPAGES].held,
+			ub->ub_parms[UB_SWAPPAGES].limit,
+			ub->ub_parms[UB_SWAPPAGES].failcnt,
+			ub->ub_parms[UB_KMEMSIZE].held,
+			ub->ub_parms[UB_KMEMSIZE].limit,
+			ub->ub_parms[UB_KMEMSIZE].failcnt,
+			ub_stat_get(ub, dirty_pages));
+}
+
 #ifdef CONFIG_PROC_FS
 static int bc_vmaux_show(struct seq_file *f, void *v)
 {
 	struct user_beancounter *ub;
 	struct ub_percpu_struct *ub_pcpu;
-	unsigned long swap, unmap, phys_pages;
-	unsigned long mapped_file_pages, anonymous_pages;
+	unsigned long swapin, swapout, vswapin, vswapout, phys_pages;
 	int i;
 
 	ub = seq_beancounter(f);
 
-	swap = unmap = 0;
-	mapped_file_pages = __ub_stat_get(ub, mapped_file_pages);
-	anonymous_pages = __ub_stat_get(ub, anonymous_pages);
+	swapin = swapout = vswapin = vswapout = 0;
 	phys_pages = ub->ub_parms[UB_PHYSPAGES].held;
 	for_each_possible_cpu(i) {
 		ub_pcpu = ub_percpu(ub, i);
-		swap += ub_pcpu->swapin;
-		unmap += ub_pcpu->unmap;
+		swapin += ub_pcpu->swapin;
+		swapout += ub_pcpu->swapout;
+		vswapin += ub_pcpu->vswapin;
+		vswapout += ub_pcpu->vswapout;
 		phys_pages -= ub_pcpu->precharge[UB_PHYSPAGES];
-		mapped_file_pages += ub_pcpu->mapped_file_pages;
-		anonymous_pages += ub_pcpu->anonymous_pages;
 	}
 
 	phys_pages = max_t(long, 0, phys_pages);
-	mapped_file_pages = max_t(long, 0, mapped_file_pages);
-	anonymous_pages = max_t(long, 0, anonymous_pages);
 
 	seq_printf(f, bc_proc_lu_fmt, "tmpfs_respages",
 			ub->ub_tmpfs_respages);
 
-	seq_printf(f, bc_proc_lu_fmt, "swapin", swap);
-	seq_printf(f, bc_proc_lu_fmt, "unmap", unmap);
+	seq_printf(f, bc_proc_lu_fmt, "swapin", swapin);
+	seq_printf(f, bc_proc_lu_fmt, "swapout", swapout);
 
-	seq_printf(f, bc_proc_lu_fmt, "mapped_file",
-			mapped_file_pages);
-	seq_printf(f, bc_proc_lu_fmt, "anonymous",
-			anonymous_pages);
-	seq_printf(f, bc_proc_lu_fmt, "rss",
-			mapped_file_pages + anonymous_pages);
+	seq_printf(f, bc_proc_lu_fmt, "vswapin", vswapin);
+	seq_printf(f, bc_proc_lu_fmt, "vswapout", vswapout);
+
 	seq_printf(f, bc_proc_lu_fmt, "ram", phys_pages);
 
 	return 0;

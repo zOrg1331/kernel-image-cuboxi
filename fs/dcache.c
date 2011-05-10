@@ -1736,6 +1736,10 @@ already_unhashed:
 	switch_names(dentry, target);
 	swap(dentry->d_name.hash, target->d_name.hash);
 
+	if (dentry->d_ub != target->d_parent->d_ub &&
+			!(dentry->d_flags & DCACHE_BCTOP))
+		ub_dcache_change_owner(dentry, target->d_parent->d_ub);
+
 	/* ... and switch the parents */
 	if (IS_ROOT(dentry)) {
 		dentry->d_parent = target->d_parent;

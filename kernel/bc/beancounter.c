@@ -137,6 +137,7 @@ void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge)
 		for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
 			precharge[resource] += pcpu->precharge[resource];
 	}
+	precharge[UB_OOMGUARPAGES] = precharge[UB_SWAPPAGES];
 }
 
 static void uncharge_beancounter_precharge(struct user_beancounter *ub)
@@ -171,8 +172,8 @@ int set_task_exec_ub(struct task_struct *tsk, struct user_beancounter *ub)
 	if (err)
 		return err;
 
-	put_beancounter(tsk->task_bc.exec_ub);
-	tsk->task_bc.exec_ub = get_beancounter(ub);
+	put_beancounter_longterm(tsk->task_bc.exec_ub);
+	tsk->task_bc.exec_ub = get_beancounter_longterm(ub);
 
 	return 0;
 }
@@ -340,8 +341,6 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 	int i, clean;
 
 	ub_stat_mod(ub, dirty_pages, __ub_percpu_sum(ub, dirty_pages));
-	ub_stat_mod(ub, mapped_file_pages, __ub_percpu_sum(ub, mapped_file_pages));
-	ub_stat_mod(ub, anonymous_pages, __ub_percpu_sum(ub, anonymous_pages));
 	uncharge_beancounter_precharge(ub);
 	ub_update_resources_locked(ub);
 
@@ -352,10 +351,8 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 	clean &= verify_res(ub, "dirty_pages",
 			__ub_stat_get(ub, dirty_pages));
 	clean &= verify_res(ub, "tmpfs_respages", ub->ub_tmpfs_respages);
-	clean &= verify_res(ub, "mapped_file",
-			__ub_stat_get(ub, mapped_file_pages));
-	clean &= verify_res(ub, "anonymous",
-			__ub_stat_get(ub, anonymous_pages));
+
+	clean &= verify_res(ub, "pincount", __ub_percpu_sum(ub, pincount));
 
 	ub_debug_trace(!clean, 5, 60*HZ);
 }
@@ -398,6 +395,13 @@ static void delayed_release_beancounter(struct work_struct *w)
 	hlist_del_init_rcu(&ub->ub_hash);
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
+
+	refcount = __ub_percpu_sum(ub, pincount);
+	if (WARN_ON(refcount != 0)) {
+		printk(KERN_ERR "UB: Bad percpu pincount (%d) on put of %u (%p)\n",
+				refcount, ub->ub_uid, ub);
+		return;
+	}
 
 	BUG_ON(!list_empty(&ub->ub_dentry_lru));
 
@@ -700,6 +704,8 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 	INIT_WORK(&ub->work, delayed_release_beancounter);
 #endif
 	init_oom_control(&ub->oom_ctrl);
+	spin_lock_init(&ub->rl_lock);
+	ub->rl_wall.tv64 = LLONG_MIN;
 }
 
 static void init_beancounter_nolimits(struct user_beancounter *ub)
@@ -750,6 +756,8 @@ static void init_beancounter_syslimits(struct user_beancounter *ub)
 
 	ub->ub_ratelimit.burst = 4;
 	ub->ub_ratelimit.interval = 300*HZ;
+
+	ub->rl_step = NSEC_PER_SEC / 25600; /* 100 Mb/s */
 }
 
 static DEFINE_PER_CPU(struct ub_percpu_struct, ub0_percpu);
@@ -768,9 +776,9 @@ void __init ub_init_early(void)
 
 	memset(&current->task_bc, 0, sizeof(struct task_beancounter));
 	(void)set_exec_ub(ub);
-	current->task_bc.task_ub = get_beancounter(ub);
+	current->task_bc.task_ub = get_beancounter_longterm(ub);
 	__charge_beancounter_locked(ub, UB_NUMPROC, 1, UB_FORCE);
-	init_mm.mm_ub = get_beancounter(ub);
+	init_mm.mm_ub = get_beancounter_longterm(ub);
 
 	hlist_add_head(&ub->ub_hash, &ub_hash[ub->ub_uid]);
 	list_add(&ub->ub_list, &ub_list_head);

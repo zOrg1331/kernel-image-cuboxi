@@ -255,10 +255,9 @@ static inline void init_nodemask_of_node(nodemask_t *mask, int node)
 ({									\
 	typeof(_unused_nodemask_arg_) m;				\
 	if (sizeof(m) == sizeof(unsigned long)) {			\
-		m.bits[0] = 1UL<<(node);				\
+		m.bits[0] = 1UL << (node);				\
 	} else {							\
-		nodes_clear(m);						\
-		node_set((node), m);					\
+		init_nodemask_of_node(&m, (node));			\
 	}								\
 	m;								\
 })
@@ -487,14 +486,14 @@ static inline int num_node_state(enum node_states state)
 
 /*
  * For nodemask scrach area.(See CPUMASK_ALLOC() in cpumask.h)
+ * NODEMASK_ALLOC(x, m) allocates an object of type 'x' with the name 'm'.
  */
-
 #if NODES_SHIFT > 8 /* nodemask_t > 64 bytes */
-#define NODEMASK_ALLOC(x, m) struct x *m = kmalloc(sizeof(*m), GFP_KERNEL)
-#define NODEMASK_FREE(m) kfree(m)
+#define NODEMASK_ALLOC(x, m)		x *m = kmalloc(sizeof(*m), GFP_KERNEL)
+#define NODEMASK_FREE(m)		kfree(m)
 #else
-#define NODEMASK_ALLOC(x, m) struct x _m, *m = &_m
-#define NODEMASK_FREE(m)
+#define NODEMASK_ALLOC(x, m)		x _m, *m = &_m
+#define NODEMASK_FREE(m)		do {} while (0)
 #endif
 
 /* A example struture for using NODEMASK_ALLOC, used in mempolicy. */
@@ -503,8 +502,9 @@ struct nodemask_scratch {
 	nodemask_t	mask2;
 };
 
-#define NODEMASK_SCRATCH(x) NODEMASK_ALLOC(nodemask_scratch, x)
-#define NODEMASK_SCRATCH_FREE(x)  NODEMASK_FREE(x)
+#define NODEMASK_SCRATCH(x)	\
+		NODEMASK_ALLOC(struct nodemask_scratch, x)
+#define NODEMASK_SCRATCH_FREE(x)	NODEMASK_FREE(x)
 
 
 #endif /* __LINUX_NODEMASK_H */

@@ -19,6 +19,7 @@
 #include <linux/parser.h>
 #include <linux/bitops.h>
 #include <linux/magic.h>
+#include <linux/nsproxy.h>
 #include "autofs_i.h"
 #include <linux/module.h>
 
@@ -396,7 +397,10 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 
 		root_inode->i_uid = kd->i_uid;
 		root_inode->i_gid = kd->i_gid;
-		sbi->oz_pgrp = find_get_pid(kd->oz_pgrp);
+		rcu_read_lock();
+		sbi->oz_pgrp = get_pid(find_pid_ns(kd->oz_pgrp,
+					get_exec_env()->ve_ns->pid_ns));
+		rcu_read_unlock();
 		if (!sbi->oz_pgrp) {
 			printk("autofs: could not find process with group %d\n", kd->oz_pgrp);
 			goto fail_dput;

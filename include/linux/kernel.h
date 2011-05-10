@@ -253,6 +253,7 @@ void prepare_printk(void);
 
 
 extern int printk_delay_msec;
+extern int dmesg_restrict;
 
 /*
  * Print a one-time message (analogous to WARN_ONCE() et al):

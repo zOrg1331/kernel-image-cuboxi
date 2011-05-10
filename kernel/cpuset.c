@@ -226,6 +226,9 @@ static char cpuset_name[CPUSET_NAME_LEN];
 static char cpuset_nodelist[CPUSET_NODELIST_LEN];
 static DEFINE_SPINLOCK(cpuset_buffer_lock);
 
+/* Protected by cgroup_lock */
+static cpumask_var_t cpus_attach;
+
 /*
  * This is ugly, but preserves the userspace API for existing cpuset
  * users. If someone tries to mount the "cpuset" filesystem, we
@@ -429,8 +432,10 @@ static int validate_change(const struct cpuset *cur, const struct cpuset *trial)
 
 	/* Cpusets with tasks can't have empty cpus_allowed or mems_allowed */
 	if (cgroup_task_count(cur->css.cgroup)) {
-		if (cpumask_empty(trial->cpus_allowed) ||
-		    nodes_empty(trial->mems_allowed)) {
+		if ((!cpumask_empty(cur->cpus_allowed) &&
+		      cpumask_empty(trial->cpus_allowed)) ||
+		     (!nodes_empty(cur->mems_allowed) &&
+		       nodes_empty(trial->mems_allowed))) {
 			return -ENOSPC;
 		}
 	}
@@ -799,8 +804,7 @@ void rebuild_sched_domains(void)
 static int cpuset_test_cpumask(struct task_struct *tsk,
 			       struct cgroup_scanner *scan)
 {
-	return !cpumask_equal(&tsk->cpus_allowed,
-			(cgroup_cs(scan->cg))->cpus_allowed);
+	return !cpumask_equal(&tsk->cpus_allowed, cpus_attach);
 }
 
 /**
@@ -817,7 +821,7 @@ static int cpuset_test_cpumask(struct task_struct *tsk,
 static void cpuset_change_cpumask(struct task_struct *tsk,
 				  struct cgroup_scanner *scan)
 {
-	set_cpus_allowed_ptr(tsk, ((cgroup_cs(scan->cg))->cpus_allowed));
+	set_cpus_allowed_ptr(tsk, cpus_attach);
 }
 
 /**
@@ -837,6 +841,7 @@ static void update_tasks_cpumask(struct cpuset *cs, struct ptr_heap *heap)
 {
 	struct cgroup_scanner scan;
 
+	guarantee_online_cpus(cs, cpus_attach);
 	scan.cg = cs->css.cgroup;
 	scan.test_task = cpuset_test_cpumask;
 	scan.process_task = cpuset_change_cpumask;
@@ -1350,18 +1355,11 @@ static int fmeter_getrate(struct fmeter *fmp)
 	return val;
 }
 
-/* Protected by cgroup_lock */
-static cpumask_var_t cpus_attach;
-
 /* Called by cgroups to determine if a cpuset is usable; cgroup_mutex held */
 static int cpuset_can_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 			     struct task_struct *tsk, bool threadgroup)
 {
 	int ret;
-	struct cpuset *cs = cgroup_cs(cont);
-
-	if (cpumask_empty(cs->cpus_allowed) || nodes_empty(cs->mems_allowed))
-		return -ENOSPC;
 
 	/*
 	 * Kthreads bound to specific cpus cannot be moved to a new cpuset; we

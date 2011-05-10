@@ -509,43 +509,6 @@ static int lockd_authenticate(struct svc_rqst *rqstp)
 	return SVC_DENIED;
 }
 
-#ifdef CONFIG_VE
-extern void ve_nlm_shutdown_hosts(struct ve_struct *ve);
-
-static int ve_lockd_start(void *data)
-{
-	struct ve_struct *ve = (struct ve_struct *)data;
-
-	spin_lock_init(&ve->nlm_reserved_lock);
-	INIT_HLIST_HEAD(&ve->nlm_reserved_pids);
-	return 0;
-}
-
-static void ve_lockd_stop(void *data)
-{
-	struct ve_struct *ve = (struct ve_struct *)data;
-
-	ve_nlm_shutdown_hosts(ve);
-	flush_scheduled_work();
-
-	while (!hlist_empty(&ve->nlm_reserved_pids)) {
-		struct nlm_reserved_pid *p;
-
-		p = hlist_entry(ve->nlm_reserved_pids.first,
-				struct nlm_reserved_pid, list);
-		hlist_del(&p->list);
-		kfree(p);
-	}
-}
-
-static struct ve_hook lockd_hook = {
-	.init	  = ve_lockd_start,
-	.fini	  = ve_lockd_stop,
-	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_NET,
-};
-#endif
-
 param_set_min_max(port, int, simple_strtol, 0, 65535)
 param_set_min_max(grace_period, unsigned long, simple_strtoul,
 		  nlm_grace_period_min, nlm_grace_period_max)
@@ -573,20 +536,16 @@ module_param(nlm_max_connections, uint, 0644);
 
 static int __init init_nlm(void)
 {
-	ve_hook_register(VE_SS_CHAIN, &lockd_hook);
 #ifdef CONFIG_SYSCTL
 	nlm_sysctl_table = register_sysctl_table(nlm_sysctl_root);
-	if (nlm_sysctl_table == NULL) {
-		ve_hook_unregister(&lockd_hook);
+	if (nlm_sysctl_table == NULL)
 		return -ENOMEM;
-	}
 #endif
 	return 0;
 }
 
 static void __exit exit_nlm(void)
 {
-	ve_hook_unregister(&lockd_hook);
 	/* FIXME: delete all NLM clients */
 	nlm_shutdown_hosts();
 #ifdef CONFIG_SYSCTL
@@ -640,3 +599,28 @@ static struct svc_program	nlmsvc_program = {
 	.pg_stats		= &nlmsvc_stats,	/* stats table */
 	.pg_authenticate = &lockd_authenticate	/* export authentication */
 };
+
+#ifdef CONFIG_VE
+void ve_nlm_init(struct ve_struct *ve)
+{
+	spin_lock_init(&ve->nlm_reserved_lock);
+	INIT_HLIST_HEAD(&ve->nlm_reserved_pids);
+}
+EXPORT_SYMBOL_GPL(ve_nlm_init);
+
+void ve_nlm_prepare_to_shutdown(struct ve_struct *ve)
+{
+	if (!ve->_nlmsvc_rqst)
+		return;
+
+	while (!hlist_empty(&ve->nlm_reserved_pids)) {
+		struct nlm_reserved_pid *p;
+
+		p = hlist_entry(ve->nlm_reserved_pids.first,
+				struct nlm_reserved_pid, list);
+		hlist_del(&p->list);
+		kfree(p);
+	}
+}
+EXPORT_SYMBOL_GPL(ve_nlm_prepare_to_shutdown);
+#endif

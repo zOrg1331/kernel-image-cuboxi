@@ -129,16 +129,6 @@ static inline struct tun_sock *tun_sk(struct sock *sk)
 	return container_of(sk, struct tun_sock, sk);
 }
 
-static void __tun_attach(struct tun_struct *tun, struct tun_file *tfile)
-{
-	tfile->tun = tun;
-	tun->tfile = tfile;
-	tun->socket.file = tfile->file;
-	dev_hold(tun->dev);
-	sock_hold(tun->socket.sk);
-	atomic_inc(&tfile->count);
-}
-
 static int tun_attach(struct tun_struct *tun, struct file *file)
 {
 	struct tun_file *tfile = file->private_data;
@@ -157,7 +147,13 @@ static int tun_attach(struct tun_struct *tun, struct file *file)
 		goto out;
 
 	err = 0;
-	__tun_attach(tun, tfile);
+	tfile->tun = tun;
+	tun->tfile = tfile;
+	tun->socket.file = tfile->file;
+	dev_hold(tun->dev);
+	sock_hold(tun->socket.sk);
+	atomic_inc(&tfile->count);
+
 out:
 	netif_tx_unlock_bh(tun->dev);
 	return err;
@@ -1586,8 +1582,9 @@ static void tun_cpt(struct net_device *dev,
 
 	v.cpt_owner = tun->owner;
 	v.cpt_flags = tun->flags;
+	v.cpt_bindfile = 0;
 
-	if (tun->tfile->file)
+	if (tun->tfile)
 		v.cpt_bindfile = ops->lookup_object(CPT_OBJ_FILE, tun->tfile->file, ctx);
 
 	v.cpt_if_flags = 0;
@@ -1677,8 +1674,8 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 	struct net_device *dev;
 	struct file *bind_file = NULL;
 	struct tun_struct *tun;
-	struct tun_file *tfile;
 	struct sock *sk;
+	struct net *net = current->nsproxy->net_ns;
 	loff_t pos;
 
 	pos = start + di->cpt_hdrlen;
@@ -1691,21 +1688,19 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 		bind_file = ops->rst_file(ti.cpt_bindfile, -1, ctx);
 		if (IS_ERR(bind_file))
 			return PTR_ERR(bind_file);
+
+		err = tun_chr_open(NULL, bind_file);
+		if (err)
+			goto out_tf;
 	}
-
-	tfile = kmalloc(sizeof(*tfile), GFP_KERNEL);
-	if (!tfile)
-		goto out;
-
-	atomic_set(&tfile->count, 0);
-	tfile->tun = NULL;
-	tfile->net = get_net(current->nsproxy->net_ns);
-	tfile->file = bind_file;
 
 	err = -ENOMEM;
 	dev = alloc_netdev(sizeof(struct tun_struct), di->cpt_name, tun_setup);
 	if (!dev)
 		goto out_tf;
+
+	dev_net_set(dev, net);
+	dev->rtnl_link_ops = &tun_link_ops;
 
 	tun = netdev_priv(dev);
 
@@ -1714,7 +1709,7 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 	tun->flags = ti.cpt_flags;
 	tun_net_init(dev);
 
-	err = tun_sk_alloc_init(current->nsproxy->net_ns, tun, &sk);
+	err = tun_sk_alloc_init(net, tun, &sk);
 	if (err)
 		goto out_netdev;
 
@@ -1740,10 +1735,14 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 	}
 
 	sk->sk_destruct = tun_sock_destruct;
-	bind_file->private_data = tfile;
-	__tun_attach(tun, tfile);
 
-	fput(bind_file);
+	if (bind_file) {
+		err = tun_attach(tun, bind_file);
+		if (err)
+			goto out_unreg;
+		fput(bind_file);
+	}
+
 	return 0;
 
 out_unreg:
@@ -1753,10 +1752,8 @@ out_sk:
 out_netdev:
 	free_netdev(dev);
 out_tf:
-	put_net(tfile->net);
-	kfree(tfile);
-out:
-	fput(bind_file);
+	if (bind_file)
+		fput(bind_file);
 	return err;
 }
 

@@ -67,7 +67,7 @@ SYSCALL_DEFINE1(setluid, uid_t, uid)
 
 	error = set_task_exec_ub(current, ub);
 
-	put_beancounter(ub);
+	put_beancounter_longterm(ub);
 out:
 	return error;
 }
@@ -107,7 +107,7 @@ long do_setublimit(uid_t uid, unsigned long resource,
 	init_beancounter_precharge(ub, resource);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	put_beancounter(ub);
+	put_beancounter_longterm(ub);
 
 	error = 0;
 out:
