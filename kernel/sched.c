@@ -1729,9 +1729,10 @@ struct rq_iterator {
 #ifdef CONFIG_SMP
 static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
-	      unsigned long max_load_move, struct sched_domain *sd,
-	      enum cpu_idle_type idle, int *all_pinned,
-	      int *this_best_prio, struct rq_iterator *iterator);
+	      unsigned long max_load_move,
+	      struct sched_domain *sd, enum cpu_idle_type idle,
+	      int *all_pinned, unsigned int *loops_left,
+	      struct rq_iterator *iterator);
 
 static int
 iter_move_one_task(struct rq *this_rq, int this_cpu, struct rq *busiest,
@@ -1931,8 +1932,6 @@ static void update_group_shares_cpu(struct task_group *tg, int cpu,
 	}
 }
 
-static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq);
-
 /*
  * Re-compute the task group their per cpu shares over the given domain.
  * This needs to be done in a bottom-up fashion because the rq weight of a
@@ -1953,13 +1952,7 @@ static int tg_shares_up(struct task_group *tg, void *data)
 	usd_rq_weight = per_cpu_ptr(update_shares_data, smp_processor_id());
 
 	for_each_cpu(i, sched_domain_span(sd)) {
-		/*
-		 * Throttled cfs_rq cannot contribute to cpu load.
-		 */
-		if (cfs_rq_throttled(tg->cfs_rq[i]))
-			weight = 0;
-		else
-			weight = tg->cfs_rq[i]->load.weight;
+		weight = tg->cfs_rq[i]->load.weight;
 		usd_rq_weight[i] = weight;
 
 		rq_weight += weight;
@@ -2230,6 +2223,7 @@ static void set_load_weight(struct task_struct *p)
 
 	p->se.load.weight = prio_to_weight[p->static_prio - MAX_RT_PRIO];
 	p->se.load.inv_weight = prio_to_wmult[p->static_prio - MAX_RT_PRIO];
+	update_lb_weight(&p->se);
 }
 
 static void update_avg(u64 *avg, u64 sample)
@@ -2757,7 +2751,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 {
 	int cpu, orig_cpu, this_cpu, success = 0;
 	unsigned long flags;
-	struct rq *rq, *orig_rq;
+	struct rq *rq;
 
 	if (!sched_feat(SYNC_WAKEUPS))
 		wake_flags &= ~WF_SYNC;
@@ -2765,7 +2759,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	this_cpu = get_cpu();
 
 	smp_wmb();
-	rq = orig_rq = task_rq_lock(p, &flags);
+	rq = task_rq_lock(p, &flags);
 	update_rq_clock(rq);
 	if (!(p->state & state))
 		goto out;
@@ -3717,15 +3711,8 @@ unlock:
 static void pull_task(struct rq *src_rq, struct task_struct *p,
 		      struct rq *this_rq, int this_cpu)
 {
-	struct ve_struct *ve;
-	cycles_t cycles = get_cycles();
-
-	ve = VE_TASK_INFO(p)->owner_env;
-
 	deactivate_task(src_rq, p, 0);
-	ve_nr_running_dec(ve, task_cpu(p), cycles);
 	set_task_cpu(p, this_cpu);
-	ve_nr_running_inc(ve, task_cpu(p), cycles);
 	activate_task(this_rq, p, 0);
 	check_preempt_curr(this_rq, p, 0);
 }
@@ -3783,29 +3770,30 @@ int can_migrate_task(struct task_struct *p, struct rq *rq, int this_cpu,
 
 static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
-	      unsigned long max_load_move, struct sched_domain *sd,
-	      enum cpu_idle_type idle, int *all_pinned,
-	      int *this_best_prio, struct rq_iterator *iterator)
+	      unsigned long max_load_move,
+	      struct sched_domain *sd, enum cpu_idle_type idle,
+	      int *all_pinned, unsigned int *loops_left,
+	      struct rq_iterator *iterator)
 {
-	int loops = 0, pulled = 0, pinned = 0;
+	int pulled = 0;
 	struct task_struct *p;
 	long rem_load_move = max_load_move;
 
 	if (max_load_move == 0)
 		goto out;
 
-	pinned = 1;
-
 	/*
 	 * Start the load-balancing iterator:
 	 */
 	p = iterator->start(iterator->arg);
 next:
-	if (!p || loops++ > sysctl_sched_nr_migrate)
+	if (!p || !*loops_left)
 		goto out;
+	--*loops_left;
 
 	if ((p->se.load.weight >> 1) > rem_load_move ||
-	    !can_migrate_task(p, busiest, this_cpu, sd, idle, &pinned)) {
+	    !can_migrate_task(p, busiest, this_cpu, sd, idle,
+			      all_pinned)) {
 		p = iterator->next(iterator->arg);
 		goto next;
 	}
@@ -3820,16 +3808,16 @@ next:
 	 * will stop after the first task is pulled to minimize the critical
 	 * section.
 	 */
-	if (idle == CPU_NEWLY_IDLE)
+	if (idle == CPU_NEWLY_IDLE) {
+		*loops_left = 0;
 		goto out;
+	}
 #endif
 
 	/*
 	 * We only want to steal up to the prescribed amount of weighted load.
 	 */
 	if (rem_load_move > 0) {
-		if (p->prio < *this_best_prio)
-			*this_best_prio = p->prio;
 		p = iterator->next(iterator->arg);
 		goto next;
 	}
@@ -3840,9 +3828,6 @@ out:
 	 * inside pull_task().
 	 */
 	schedstat_add(sd, lb_gained[idle], pulled);
-
-	if (all_pinned)
-		*all_pinned = pinned;
 
 	return max_load_move - rem_load_move;
 }
@@ -3861,25 +3846,15 @@ static int move_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 {
 	const struct sched_class *class = sched_class_highest;
 	unsigned long total_load_moved = 0;
-	int this_best_prio = this_rq->curr->prio;
+	unsigned int loops_left = sysctl_sched_nr_migrate;
 
 	do {
 		total_load_moved +=
 			class->load_balance(this_rq, this_cpu, busiest,
 				max_load_move - total_load_moved,
-				sd, idle, all_pinned, &this_best_prio);
+				sd, idle, all_pinned, &loops_left);
 		class = class->next;
-
-#ifdef CONFIG_PREEMPT
-		/*
-		 * NEWIDLE balancing is a source of latency, so preemptible
-		 * kernels will stop after the first task is pulled to minimize
-		 * the critical section.
-		 */
-		if (idle == CPU_NEWLY_IDLE && this_rq->nr_running)
-			break;
-#endif
-	} while (class && max_load_move > total_load_moved);
+	} while (class && max_load_move > total_load_moved && loops_left);
 
 	return total_load_moved > 0;
 }
@@ -4879,6 +4854,7 @@ redo:
 		 * still unbalanced. ld_moved simply stays zero, so it is
 		 * correctly treated as an imbalance.
 		 */
+		all_pinned = 1;
 		local_irq_save(flags);
 		double_rq_lock(this_rq, busiest);
 		ld_moved = move_tasks(this_rq, this_cpu, busiest,
@@ -5032,6 +5008,7 @@ redo:
 	ld_moved = 0;
 	if (busiest->nr_running > 1) {
 		/* Attempt to move tasks */
+		all_pinned = 1;
 		double_lock_balance(this_rq, busiest);
 		/* this_rq->clock is already updated */
 		update_rq_clock(busiest);
@@ -10145,6 +10122,8 @@ static void init_tg_cfs_entry(struct task_group *tg, struct cfs_rq *cfs_rq,
 	se->load.weight = tg->shares;
 	se->load.inv_weight = 0;
 	se->parent = parent;
+
+	update_lb_weight(se);
 }
 #endif
 
@@ -10851,17 +10830,21 @@ void sched_move_task(struct task_struct *tsk)
 static void __set_se_shares(struct sched_entity *se, unsigned long shares)
 {
 	struct cfs_rq *cfs_rq = se->cfs_rq;
-	int on_rq;
+	int contributes_to_load;
 
-	on_rq = se->on_rq;
-	if (on_rq)
-		dequeue_entity(cfs_rq, se, 0);
+	if (se == cfs_rq->curr)
+		update_curr(cfs_rq);
+
+	contributes_to_load = entity_contributes_to_load(se);
+	if (contributes_to_load)
+		update_load_dequeue(cfs_rq, se);
 
 	se->load.weight = shares;
 	se->load.inv_weight = 0;
+	update_lb_weight(se);
 
-	if (on_rq)
-		enqueue_entity(cfs_rq, se, 0);
+	if (contributes_to_load)
+		update_load_enqueue(cfs_rq, se);
 }
 
 static void set_se_shares(struct sched_entity *se, unsigned long shares)
@@ -10967,7 +10950,7 @@ int sched_group_set_rate(struct task_group *tg, unsigned long rate)
 	tg->rate = rate;
 
 	for_each_possible_cpu(i) {
-		int on_rq;
+		int contributes_to_load;
 		struct sched_entity *se = tg->se[i];
 		struct cfs_rq *cfs_rq = tg->cfs_rq[i];
 		struct rq *rq = rq_of(cfs_rq);
@@ -10975,22 +10958,21 @@ int sched_group_set_rate(struct task_group *tg, unsigned long rate)
 		spin_lock_irq(&rq->lock);
 		update_rq_clock(rq);
 
-		if (sched_cpulimit_delay_cfs_rq_done(cfs_rq) > 0) {
+		if (sched_cpulimit_delay_cfs_rq_done(cfs_rq) > 0)
 			unthrottle_cfs_rq(cfs_rq);
-			if (rq->curr == rq->idle)
-				resched_task(rq->curr);
-		}
 
-		on_rq = se->on_rq;
-		if (on_rq)
-			account_entity_dequeue(cfs_rq_of(se), se);
+		contributes_to_load = entity_contributes_to_load(se);
+		if (contributes_to_load)
+			update_load_dequeue(cfs_rq_of(se), se);
 
 		cfs_rq->rate = rate;
 		cfs_rq->credit = credit_charge;
 		cfs_rq->credit_charge_start = rq->clock;
 
-		if (on_rq)
-			account_entity_enqueue(cfs_rq_of(se), se);
+		update_lb_weight(se);
+
+		if (contributes_to_load)
+			update_load_enqueue(cfs_rq_of(se), se);
 
 		spin_unlock_irq(&rq->lock);
 	}

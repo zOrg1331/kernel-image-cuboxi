@@ -20,7 +20,30 @@
 #include <linux/fairsched.h>
 #include <linux/uaccess.h>
 
-static struct cgroup *fairsched_root;
+static struct cgroup *fairsched_root, *fairsched_host;
+
+/* fairsched use node id = INT_MAX for ve0 tasks */
+#define FAIRSCHED_HOST_NODE 2147483647
+
+static void fairsched_name(char *buf, int len, int id)
+{
+	if (id == FAIRSCHED_HOST_NODE)
+		id = 0;
+
+	snprintf(buf, len, "%d", id);
+}
+
+static int fairsched_node_id(const char *name)
+{
+	unsigned long id;
+	char *endp;
+
+	id = simple_strtoul(name, &endp, 10);
+	if (*endp || id > INT_MAX)
+		return -1;
+
+	return id ?: FAIRSCHED_HOST_NODE;
+}
 
 SYSCALL_DEFINE3(fairsched_mknod, unsigned int, parent, unsigned int, weight,
 				 unsigned int, newid)
@@ -38,7 +61,7 @@ SYSCALL_DEFINE3(fairsched_mknod, unsigned int, parent, unsigned int, weight,
 	if (newid < 0 || newid > INT_MAX)
 		goto out;
 
-	snprintf(name, sizeof(name), "%d", newid);
+	fairsched_name(name, sizeof(name), newid);
 	node = cgroup_kernel_open(fairsched_root, CGRP_CREAT|CGRP_EXCL, name);
 	if (IS_ERR(node))
 		return PTR_ERR(node);
@@ -55,7 +78,7 @@ SYSCALL_DEFINE1(fairsched_rmnod, unsigned int, id)
 	if (!capable_setveid())
 		return -EPERM;
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	return cgroup_kernel_remove(fairsched_root, name);
 }
 
@@ -72,7 +95,7 @@ SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 	if (weight < 1 || weight > FSCHWEIGHT_MAX)
 		return -EINVAL;
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -96,7 +119,7 @@ SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 	if (id == 0)
 		return -EINVAL;
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -129,7 +152,7 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 		return -EINVAL;
 
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -178,7 +201,7 @@ SYSCALL_DEFINE2(fairsched_mvpr, pid_t, pid, unsigned int, id)
 	if (!capable_setveid())
 		return -EPERM;
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -230,7 +253,7 @@ SYSCALL_DEFINE3(fairsched_cpumask, unsigned int, id, unsigned int, len,
 	if (id == 0)
 		return -EINVAL;
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -263,51 +286,31 @@ out:
 	return retval;
 }
 
-/*
- * Init cgroup 'cgrp' and attach task 'tsk' to it.
- */
-static int init_cgroup(struct cgroup *cgrp, struct task_struct *tsk)
-{
-	int ret = 0;
-
-	cgroup_lock();
-	ret = cgroup_set_cpumask(cgrp, cpu_active_mask);
-	if (ret)
-		goto out;
-	ret = cgroup_set_nodemask(cgrp, &node_states[N_HIGH_MEMORY]);
-	if (ret)
-		goto out;
-	ret = cgroup_attach_task(cgrp, tsk);
-out:
-	cgroup_unlock();
-	return ret;
-}
-
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
 	int err;
 	char name[16];
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, CGRP_CREAT, name);
 	err = PTR_ERR(cgrp);
 	if (IS_ERR(cgrp)) {
-		printk(KERN_WARNING "Can't create fairsched node %d\n", id);
+		printk(KERN_ERR "Can't create fairsched node %d err=%d\n", id, err);
 		goto out;
 	}
 
 #if 0
 	err = do_fairsched_vcpus(id, vcpus);
 	if (err) {
-		printk(KERN_WARNING "Can't set sched vcpus on node %d\n", id);
+		printk(KERN_ERR "Can't set sched vcpus on node %d err=%d\n", id, err);
 		goto cleanup;
 	}
 #endif
 
-	err = init_cgroup(cgrp, current);
+	err = cgroup_kernel_attach(cgrp, current);
 	if (err) {
-		printk(KERN_WARNING "Can't switch to fairsched node %d\n", id);
+		printk(KERN_ERR "Can't switch to fairsched node %d err=%d\n", id, err);
 		goto cleanup;
 	}
 
@@ -316,20 +319,30 @@ int fairsched_new_node(int id, unsigned int vcpus)
 
 cleanup:
 	cgroup_kernel_close(cgrp);
-	if (cgroup_kernel_remove(fairsched_root, name))
-		printk(KERN_ERR "Can't clean fairsched node %d\n", id);
+	err = cgroup_kernel_remove(fairsched_root, name);
+	if (err)
+		printk(KERN_ERR "Can't clean fairsched node %d err=%d\n", id, err);
 out:
 	return err;
 }
 EXPORT_SYMBOL(fairsched_new_node);
 
-void fairsched_drop_node(int id)
+void fairsched_drop_node(int id, int leave)
 {
 	char name[16];
+	int err;
 
-	snprintf(name, sizeof(name), "%d", id);
-	if (cgroup_kernel_remove(fairsched_root, name))
-		printk(KERN_ERR "Can't remove fairsched node %d\n", id);
+	if (leave) {
+		err = cgroup_kernel_attach(fairsched_host, current);
+		if (err)
+			printk(KERN_ERR "Can't leave fairsched node %d "
+					"err=%d\n", id, err);
+	}
+
+	fairsched_name(name, sizeof(name), id);
+	err = cgroup_kernel_remove(fairsched_root, name);
+	if (err)
+		printk(KERN_ERR "Can't remove fairsched node %d err=%d\n", id, err);
 }
 EXPORT_SYMBOL(fairsched_drop_node);
 
@@ -338,7 +351,7 @@ int fairsched_move_task(int id, struct task_struct *tsk)
 	struct cgroup *cgrp;
 	char name[16];
 
-	snprintf(name, sizeof(name), "%d", id);
+	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
@@ -387,8 +400,7 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 	int nr_nodes;
 	struct dentry *root, *dentry;
 	struct cgroup *cgrp;
-	unsigned long id;
-	char *endp;
+	int id;
 
 	root = fairsched_root->dentry;
 	mutex_lock(&root->d_inode->i_mutex);
@@ -416,8 +428,8 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 		if (d_unhashed(dentry) || !dentry->d_inode ||
 				!S_ISDIR(dentry->d_inode->i_mode))
 			continue;
-		id = simple_strtoul(dentry->d_name.name, &endp, 10);
-		if (*endp || id > INT_MAX)
+		id = fairsched_node_id(dentry->d_name.name);
+		if (id < 0)
 			continue;
 		if (!ve_accessible_veid(id, get_exec_env()->veid))
 			continue;
@@ -669,7 +681,6 @@ static struct file_operations proc_fairsched_operations = {
 int __init fairsched_init(void)
 {
 	struct vfsmount *mnt;
-	struct cgroup *cgrp;
 	int ret;
 	struct cgroup_sb_opts opts = {
 		.subsys_bits	=
@@ -682,11 +693,10 @@ int __init fairsched_init(void)
 		return PTR_ERR(mnt);
 	fairsched_root = cgroup_get_root(mnt);
 
-	/* fairsched node INT_MAX for ve0 tasks */
-	cgrp = cgroup_kernel_open(fairsched_root, CGRP_CREAT, "2147483647");
-	if (IS_ERR(cgrp))
-		return PTR_ERR(cgrp);
-	ret = init_cgroup(cgrp, init_pid_ns.child_reaper);
+	fairsched_host = cgroup_kernel_open(fairsched_root, CGRP_CREAT, "0");
+	if (IS_ERR(fairsched_host))
+		return PTR_ERR(fairsched_host);
+	ret = cgroup_kernel_attach(fairsched_host, init_pid_ns.child_reaper);
 	if (ret)
 		return ret;
 

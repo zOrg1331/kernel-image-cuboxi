@@ -107,8 +107,6 @@ static inline int is_mlocked_vma(struct vm_area_struct *vma, struct page *page)
 		return 0;
 
 	if (!TestSetPageMlocked(page)) {
-		/* page is isolated by caller */
-		gang_move_mapped_isolated_page(page, get_mm_gang(vma->vm_mm));
 		inc_zone_page_state(page, NR_MLOCK);
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
 	}

@@ -97,7 +97,7 @@ inline void qmblk_data_write_unlock(struct vz_quota_master *qmblk)
 }
 
 struct quota_format_type vz_quota_empty_v2_format = {
-	.qf_fmt_id	= QFMT_VFS_V1,
+	.qf_fmt_id	= QFMT_VFS_V0,
 	.qf_ops		= NULL,
 	.qf_owner	= THIS_MODULE,
 };

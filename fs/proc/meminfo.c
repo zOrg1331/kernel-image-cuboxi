@@ -40,7 +40,6 @@ static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 		"SwapFree:       %8lu kB\n"
 		"Dirty:          %8lu kB\n"
 		"AnonPages:      %8lu kB\n"
-		"Mapped:         %8lu kB\n"
 		"Shmem:          %8lu kB\n"
 		"Slab:           %8lu kB\n"
 		"SReclaimable:   %8lu kB\n"
@@ -60,8 +59,7 @@ static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 		K(mi->si->totalswap),
 		K(mi->si->freeswap),
 		K(mi->dirty_pages),
-		K(mi->anon_mapped),
-		K(mi->file_mapped),
+		K(mi->pages[LRU_ACTIVE_ANON] + mi->pages[LRU_INACTIVE_ANON]),
 		K(mi->shmem),
 		K(mi->slab_reclaimable + mi->slab_unreclaimable),
 		K(mi->slab_reclaimable),
@@ -70,7 +68,8 @@ static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 	return 0;
 }
 
-int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *ub)
+int meminfo_proc_show_ub(struct seq_file *m, void *v,
+		struct user_beancounter *ub, unsigned long meminfo_val)
 {
 	int ret;
 	struct sysinfo i;
@@ -88,6 +87,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 	memset(&mi, 0, sizeof(mi));
 	mi.si = &i;
 	mi.ub = ub;
+	mi.meminfo_val = meminfo_val;
 
 	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi);
 	if (ret & NOTIFY_FAIL)
@@ -238,7 +238,8 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
-	return meminfo_proc_show_ub(m, v, current->mm->mm_ub);
+	return meminfo_proc_show_ub(m, v, current->mm->mm_ub,
+			get_exec_env()->meminfo_val);
 }
 
 static int meminfo_proc_open(struct inode *inode, struct file *file)

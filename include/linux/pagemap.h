@@ -434,6 +434,8 @@ static inline int fault_in_pages_readable(const char __user *uaddr, int size)
 	return ret;
 }
 
+int add_to_page_cache_nogang(struct page *page, struct address_space *mapping,
+				pgoff_t index, gfp_t gfp_mask);
 int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,

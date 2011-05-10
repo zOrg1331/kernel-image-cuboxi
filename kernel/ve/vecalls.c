@@ -100,7 +100,7 @@ static void real_do_env_free(struct ve_struct *ve);
 static inline void real_put_ve(struct ve_struct *ve)
 {
 	if (ve && atomic_dec_and_test(&ve->counter)) {
-		BUG_ON(atomic_read(&ve->pcounter) > 0);
+		BUG_ON(ve->pcounter > 0);
 		BUG_ON(ve->is_running);
 		real_do_env_free(ve);
 	}
@@ -592,9 +592,9 @@ static int init_ve_sched(struct ve_struct *ve)
 	return err;
 }
 
-static void fini_ve_sched(struct ve_struct *ve)
+static void fini_ve_sched(struct ve_struct *ve, int leave)
 {
-	fairsched_drop_node(ve->veid);
+	fairsched_drop_node(ve->veid, leave);
 }
 
 /*
@@ -871,12 +871,11 @@ static void __ve_move_task(struct task_struct *tsk, struct ve_struct *new,
 	list_del(&tsk->ve_task_info.aux_list);
 	list_add_tail(&tsk->ve_task_info.aux_list,
 			&new->vetask_auxlist);
+	old->pcounter--;
+	new->pcounter++;
 	write_unlock_irq(&tasklist_lock);
 
-	atomic_dec(&old->pcounter);
 	real_put_ve(old);
-
-	atomic_inc(&new->pcounter);
 	get_ve(new);
 
 	cgroup_kernel_attach(new->ve_cgroup, tsk);
@@ -1215,7 +1214,7 @@ err_sysfs:
 	VE_TASK_INFO(tsk)->owner_env = old;
 	VE_TASK_INFO(tsk)->exec_env = old_exec;
 
-	fini_ve_sched(ve);
+	fini_ve_sched(ve, 1);
 err_sched:
 	(void)set_exec_env(old_exec);
 
@@ -1368,7 +1367,7 @@ static void env_cleanup(struct ve_struct *ve)
 
 	/* no new packets in flight beyond this point */
 
-	fini_ve_sched(ve);
+	fini_ve_sched(ve, 0);
 
 	fini_ve_devpts(ve);
 	fini_ve_shmem(ve);
@@ -1963,86 +1962,6 @@ static struct file_operations proc_vz_version_oparations = {
 	.release = single_release,
 };
 
-static inline unsigned long ve_used_mem(struct user_beancounter *ub)
-{
-	extern int glob_ve_meminfo;
-
-	ub_update_resources(ub);
-
-	return glob_ve_meminfo ? ub->ub_parms[UB_OOMGUARPAGES].held :
-				 ub->ub_parms[UB_PRIVVMPAGES].held ;
-}
-
-static void ve_swapinfo(struct user_beancounter *ub, struct sysinfo *si)
-
-{
-	unsigned long size, used;
-
-	size = ub->ub_parms[UB_SWAPPAGES].limit;
-	used = ub->ub_parms[UB_SWAPPAGES].held;
-
-	if (size == UB_MAXVALUE)
-		size = 0;
-
-	si->totalswap = size;
-	si->freeswap = size > used ? size - used : 0;
-}
-
-static void ve_meminfo(struct user_beancounter *ub, struct sysinfo *si,
-		unsigned long meminfo_val)
-{
-	unsigned long nodettram;
-	unsigned long usedmem;
-
-	nodettram = si->totalram;
-	usedmem = ve_used_mem(ub);
-
-	memset(si, 0, sizeof(*si));
-	si->totalram = (meminfo_val > nodettram) ?  nodettram : meminfo_val;
-	si->freeram = (si->totalram > usedmem) ?  (si->totalram - usedmem) : 0;
-	si->mem_unit = PAGE_SIZE;
-}
-
-static inline int ve_mi_replace(struct user_beancounter *ub, struct sysinfo *si,
-		unsigned long meminfo_val)
-{
-#ifdef CONFIG_BEANCOUNTERS
-	ve_meminfo(ub, si, meminfo_val);
-	ve_swapinfo(ub, si);
-
-	return NOTIFY_OK | NOTIFY_STOP_MASK;
-#else
-	return NOTIFY_DONE;
-#endif
-}
-
-static int meminfo_call(struct vnotifier_block *self,
-                unsigned long event, void *arg, int old_ret)
-{
-	unsigned long meminfo_val;
-	struct meminfo *mi = arg;
-
-	if (event != VIRTINFO_MEMINFO && event != VIRTINFO_SYSINFO)
-		return old_ret;
-
-	meminfo_val = get_exec_env()->meminfo_val;
-	if (meminfo_val == VE_MEMINFO_DEFAULT)
-		return old_ret; /* Default behaviour */
-
-	if (meminfo_val == VE_MEMINFO_SYSTEM)
-		return NOTIFY_DONE | NOTIFY_STOP_MASK; /* No virtualization */
-
-	if (event == VIRTINFO_SYSINFO)
-		return ve_mi_replace(get_exec_ub(), arg, meminfo_val);
-
-	return ve_mi_replace(mi->ub, mi->si, meminfo_val);
-}
-
-
-static struct vnotifier_block meminfo_notifier_block = {
-	.notifier_call = meminfo_call
-};
-
 /* /proc/vz/veinfo */
 
 static ve_seq_print_t veaddr_seq_print_cb;
@@ -2067,8 +1986,7 @@ static int veinfo_seq_show(struct seq_file *m, void *v)
 
 	ve = list_entry((struct list_head *)v, struct ve_struct, ve_list);
 
-	seq_printf(m, "%10u %5u %5u", ve->veid,
-			ve->class_id, atomic_read(&ve->pcounter));
+	seq_printf(m, "%10u %5u %5u", ve->veid, ve->class_id, ve->pcounter);
 
 	rcu_read_lock();
 	veaddr_seq_print = rcu_dereference(veaddr_seq_print_cb);
@@ -2103,7 +2021,7 @@ static int __init init_vecalls_proc(void)
 {
 	struct proc_dir_entry *de;
 
-	de = proc_create("vestat", S_IFREG | S_IRUSR, proc_vz_dir,
+	de = proc_create("vestat", S_IFREG | S_IRUSR, glob_proc_vz_dir,
 			&proc_vestat_operations);
 	if (!de)
 		printk(KERN_WARNING "VZMON: can't make vestat proc entry\n");
@@ -2118,12 +2036,11 @@ static int __init init_vecalls_proc(void)
 	if (!de)
 		printk(KERN_WARNING "VZMON: can't make version proc entry\n");
 
-	de = proc_create("veinfo", S_IFREG | S_IRUSR, proc_vz_dir,
+	de = proc_create("veinfo", S_IFREG | S_IRUSR, glob_proc_vz_dir,
 			&proc_veinfo_operations);
 	if (!de)
 		printk(KERN_WARNING "VZMON: can't make veinfo proc entry\n");
 
-	virtinfo_notifier_register(VITYPE_GENERAL, &meminfo_notifier_block);
 	return 0;
 }
 
@@ -2131,9 +2048,8 @@ static void fini_vecalls_proc(void)
 {
 	remove_proc_entry("version", proc_vz_dir);
 	remove_proc_entry("devperms", proc_vz_dir);
-	remove_proc_entry("vestat", proc_vz_dir);
-	remove_proc_entry("veinfo", proc_vz_dir);
-	virtinfo_notifier_unregister(VITYPE_GENERAL, &meminfo_notifier_block);
+	remove_proc_entry("vestat", glob_proc_vz_dir);
+	remove_proc_entry("veinfo", glob_proc_vz_dir);
 }
 #else
 #define init_vecalls_proc()	(0)

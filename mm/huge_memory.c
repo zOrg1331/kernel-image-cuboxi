@@ -21,6 +21,8 @@
 #include <asm/pgalloc.h>
 #include "internal.h"
 
+#include <bc/kmem.h>
+
 /*
  * By default transparent hugepage support is enabled for all mappings
  * and khugepaged scans all mappings. Defrag is only invoked by
@@ -606,6 +608,12 @@ static int __do_huge_pmd_anonymous_page(struct mm_struct *mm,
 		mem_cgroup_uncharge_page(page);
 		put_page(page);
 		pte_free(mm, pgtable);
+	} else if (ub_page_table_charge(mm)) {
+		spin_unlock(&mm->page_table_lock);
+		mem_cgroup_uncharge_page(page);
+		put_page(page);
+		pte_free(mm, pgtable);
+		ret = VM_FAULT_OOM;
 	} else {
 		pmd_t entry;
 		entry = mk_pmd(page, vma->vm_page_prot);
@@ -663,8 +671,11 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 		page = alloc_hugepage_vma(transparent_hugepage_defrag(vma),
 					  vma, haddr);
-		if (unlikely(!page))
+		if (unlikely(!page)) {
+			count_vm_event(THP_FAULT_FALLBACK);
 			goto out;
+		}
+		count_vm_event(THP_FAULT_ALLOC);
 		if (unlikely(mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))) {
 			put_page(page);
 			goto out;
@@ -724,6 +735,11 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 
 		wait_split_huge_page(vma->anon_vma, src_pmd); /* src_vma */
 		goto out;
+	}
+	ret = -ENOMEM;
+	if (ub_page_table_charge(dst_mm)) {
+		pte_free(dst_mm, pgtable);
+		goto out_unlock;
 	}
 	src_page = pmd_page(pmd);
 	VM_BUG_ON(!PageHead(src_page));
@@ -887,11 +903,13 @@ int do_huge_pmd_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		new_page = NULL;
 
 	if (unlikely(!new_page)) {
+		count_vm_event(THP_FAULT_FALLBACK);
 		ret = do_huge_pmd_wp_page_fallback(mm, vma, address,
 						   pmd, orig_pmd, page, haddr);
 		put_page(page);
 		goto out;
 	}
+	count_vm_event(THP_FAULT_ALLOC);
 
 	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))) {
 		put_page(new_page);
@@ -984,6 +1002,7 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 			VM_BUG_ON(page_mapcount(page) < 0);
 			add_mm_counter(tlb->mm, anon_rss, -HPAGE_PMD_NR);
 			VM_BUG_ON(!PageHead(page));
+			ub_page_table_uncharge(tlb->mm);
 			spin_unlock(&tlb->mm->page_table_lock);
 			tlb_remove_page(tlb, page);
 			pte_free(tlb->mm, pgtable);
@@ -1132,6 +1151,7 @@ static void __split_huge_page_refcount(struct page *page)
 		BUG_ON(!PageSwapBacked(page_tail));
 
 		mem_cgroup_split_hugepage_commit(page_tail, page);
+		set_page_gang(page_tail, gang);
 		lru_add_page_tail(gang, page, page_tail);
 	}
 
@@ -1145,6 +1165,7 @@ static void __split_huge_page_refcount(struct page *page)
 	if (PageLRU(page)) {
 		zonestat = NR_LRU_BASE + page_lru(page);
 		__mod_zone_page_state(gang_zone(gang), zonestat, -(HPAGE_PMD_NR-1));
+		gang->lru[page_lru(page)].nr_pages -= HPAGE_PMD_NR-1;
 	}
 
 	ClearPageCompound(page);
@@ -1310,6 +1331,7 @@ int split_huge_page(struct page *page)
 
 	BUG_ON(!PageSwapBacked(page));
 	__split_huge_page(page, anon_vma);
+	count_vm_event(THP_SPLIT);
 
 	BUG_ON(PageCompound(page));
 out_unlock:
@@ -1702,6 +1724,7 @@ static void collapse_huge_page(struct mm_struct *mm,
 		*hpage = ERR_PTR(-ENOMEM);
 		goto out;
 	}
+	count_vm_event(THP_COLLAPSE_ALLOC);
 #endif
 	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL)))
 		goto out;
@@ -2013,8 +2036,11 @@ static void khugepaged_do_scan(struct page **hpage)
 #ifndef CONFIG_NUMA
 		if (!*hpage) {
 			*hpage = alloc_hugepage(khugepaged_defrag());
-			if (unlikely(!*hpage))
+			if (unlikely(!*hpage)) {
+				count_vm_event(THP_COLLAPSE_ALLOC_FAILED);
 				break;
+			}
+			count_vm_event(THP_COLLAPSE_ALLOC);
 		}
 #else
 		if (IS_ERR(*hpage))
@@ -2054,8 +2080,11 @@ static struct page *khugepaged_alloc_hugepage(void)
 
 	do {
 		hpage = alloc_hugepage(khugepaged_defrag());
-		if (!hpage)
+		if (!hpage) {
+			count_vm_event(THP_COLLAPSE_ALLOC_FAILED);
 			khugepaged_alloc_sleep();
+		} else
+			count_vm_event(THP_COLLAPSE_ALLOC);
 	} while (unlikely(!hpage) &&
 		 likely(khugepaged_enabled()));
 	return hpage;
@@ -2072,8 +2101,11 @@ static void khugepaged_loop(void)
 	while (likely(khugepaged_enabled())) {
 #ifndef CONFIG_NUMA
 		hpage = khugepaged_alloc_hugepage();
-		if (unlikely(!hpage))
+		if (unlikely(!hpage)) {
+			count_vm_event(THP_COLLAPSE_ALLOC_FAILED);
 			break;
+		}
+		count_vm_event(THP_COLLAPSE_ALLOC);
 #else
 		if (IS_ERR(hpage)) {
 			khugepaged_alloc_sleep();

@@ -132,9 +132,11 @@ static int sim_init_blkdev(struct super_block *sb)
 
 static void sim_free_blkdev(struct super_block *sb)
 {
-	/* set bd_part back to NULL */
-	sb->s_bdev->bd_part = NULL;
-	bdput(sb->s_bdev);
+	if (sb->s_bdev) {
+		/* set bd_part back to NULL */
+		sb->s_bdev->bd_part = NULL;
+		bdput(sb->s_bdev);
+	}
 }
 
 static void sim_quota_init(struct super_block *sb)
@@ -268,22 +270,20 @@ static void sim_free_export_op(struct super_block *sb)
 }
 #endif
 
-static int sim_fill_super(struct super_block *s, void *data)
+static int sim_fill_super(struct super_block *s, void *data, int silent)
 {
+	struct nameidata *nd = data;
 	int err;
-	struct nameidata *nd;
-
-	nd = (struct nameidata *)data;
 
 	err = sim_init_export_op(s, nd->path.dentry->d_sb);
 	if (err)
 		goto out;
 
-	err = set_anon_super(s, NULL);
-	if (err) {
-		sim_free_export_op(s);
+	err = sim_init_blkdev(s);
+	if (err)
 		goto out;
-	}
+
+	sim_quota_init(s);
 
 	err = 0;
 	s->s_fs_info = mntget(nd->path.mnt);
@@ -298,7 +298,6 @@ static int sim_get_sb(struct file_system_type *type, int flags,
 {
 	int err;
 	struct nameidata nd;
-	struct super_block *sb;
 
 	err = -EINVAL;
 	if (opt == NULL)
@@ -308,25 +307,8 @@ static int sim_get_sb(struct file_system_type *type, int flags,
 	if (err)
 		goto out;
 
-	sb = sget(type, NULL, sim_fill_super, &nd);
-	err = PTR_ERR(sb);
-	if (IS_ERR(sb))
-		goto out_path;
+	err = get_sb_nodev(type, flags, &nd, sim_fill_super, mnt);
 
-	err = sim_init_blkdev(sb);
-	if (err)
-		goto out_killsb;
-
-	sim_quota_init(sb);
-
-	path_put(&nd.path);
-	simple_set_mnt(mnt, sb);
-	return 0;
-
-out_killsb:
-	up_write(&sb->s_umount);
-	deactivate_super(sb);
-out_path:
 	path_put(&nd.path);
 out:
 	return err;

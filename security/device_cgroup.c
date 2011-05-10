@@ -316,11 +316,18 @@ static int devcgroup_seq_read(struct cgroup *cgroup, struct cftype *cft,
 		if (cft != NULL)
 			seq_printf(m, "%c %s:%s %s\n", type_to_char(wh->type),
 					maj, min, acc);
-		else if (!(wh->access & ACC_HIDDEN))
+		else if (!(wh->access & ACC_HIDDEN)) {
+			int access;
+
+			access = convert_bits(wh->access);
+			if (access & (ACC_READ | ACC_WRITE))
+				access |= S_IXOTH;
+
 			seq_printf(m, "%10u %c %03o %s:%s\n",
 				   (unsigned)(unsigned long)m->private,
 				   type_to_char(wh->type),
-				   convert_bits(wh->access), maj, min);
+				   access, maj, min);
+		}
 	}
 	rcu_read_unlock();
 

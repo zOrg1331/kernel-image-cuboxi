@@ -317,6 +317,9 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 	rb_link = &mm->mm_rb.rb_node;
 	rb_parent = NULL;
 	pprev = &mm->mmap;
+	retval = ub_page_table_precharge(mm, oldmm->nr_ptes + oldmm->nr_ptds);
+	if (retval)
+		goto out;
 	retval = ksm_fork(mm, oldmm);
 	if (retval)
 		goto out;
@@ -413,6 +416,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 	arch_dup_mmap(oldmm, mm);
 	retval = 0;
 out:
+	ub_page_table_commit(mm);
 	up_write(&mm->mmap_sem);
 	flush_tlb_mm(oldmm);
 	up_write(&oldmm->mmap_sem);
@@ -486,6 +490,8 @@ static struct mm_struct * mm_init(struct mm_struct * mm, struct task_struct *p)
 		(current->mm->flags & MMF_INIT_MASK) : default_dump_filter;
 	mm->core_state = NULL;
 	mm->nr_ptes = 0;
+	mm->nr_ptds = 0;
+	mm->page_table_precharge = 0;
 	set_mm_counter(mm, file_rss, 0);
 	set_mm_counter(mm, anon_rss, 0);
 	set_mm_counter(mm, swap_usage, 0);
@@ -1355,8 +1361,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		attach_pid(p, PIDTYPE_PID, pid);
 		nr_threads++;
 	}
+	p->ve_task_info.owner_env->pcounter++;
 	(void)get_ve(p->ve_task_info.owner_env);
-	pget_ve(p->ve_task_info.owner_env);
 
 #ifdef CONFIG_VE
 	seqcount_init(&p->ve_task_info.wakeup_lock);

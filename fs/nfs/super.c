@@ -272,6 +272,7 @@ struct file_system_type nfs_xdev_fs_type = {
 static const struct super_operations nfs_sops = {
 	.alloc_inode	= nfs_alloc_inode,
 	.destroy_inode	= nfs_destroy_inode,
+	.delete_inode	= nfs_dq_delete_inode,
 	.write_inode	= nfs_write_inode,
 	.put_super	= nfs_put_super,
 	.statfs		= nfs_statfs,
@@ -304,7 +305,8 @@ static struct file_system_type nfs4_fs_type = {
 	.name		= "nfs4",
 	.get_sb		= nfs4_get_sb,
 	.kill_sb	= nfs4_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 static struct file_system_type nfs4_remote_fs_type = {
@@ -312,7 +314,8 @@ static struct file_system_type nfs4_remote_fs_type = {
 	.name		= "nfs4",
 	.get_sb		= nfs4_remote_get_sb,
 	.kill_sb	= nfs4_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 struct file_system_type nfs4_xdev_fs_type = {
@@ -320,7 +323,8 @@ struct file_system_type nfs4_xdev_fs_type = {
 	.name		= "nfs4",
 	.get_sb		= nfs4_xdev_get_sb,
 	.kill_sb	= nfs4_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 static struct file_system_type nfs4_remote_referral_fs_type = {
@@ -328,7 +332,8 @@ static struct file_system_type nfs4_remote_referral_fs_type = {
 	.name		= "nfs4",
 	.get_sb		= nfs4_remote_referral_get_sb,
 	.kill_sb	= nfs4_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 struct file_system_type nfs4_referral_fs_type = {
@@ -336,7 +341,8 @@ struct file_system_type nfs4_referral_fs_type = {
 	.name		= "nfs4",
 	.get_sb		= nfs4_referral_get_sb,
 	.kill_sb	= nfs4_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 static const struct super_operations nfs4_sops = {
@@ -359,9 +365,28 @@ static struct shrinker acl_shrinker = {
 };
 
 #ifdef CONFIG_VE
-static int ve_nfs_start(void *data)
+static int ve_nfs_init(void *data)
 {
-	return 0;
+	int err;
+
+	ve_nlm_init(data);
+	err = nfsiod_start();
+#ifdef CONFIG_NFS_V4
+	if (!err) {
+		err = ve_nfs4_cb_init(data);
+		if (err)
+			nfsiod_stop();
+	}
+#endif
+	return err;
+}
+
+static void ve_nfs_fini(void *data)
+{
+	nfsiod_stop();
+#ifdef CONFIG_NFS_V4
+	ve_nfs4_cb_fini(data);
+#endif
 }
 
 inline int is_nfs_automount(struct vfsmount *mnt)
@@ -396,8 +421,7 @@ rescan:
 		if (sb->s_root && !(sb->s_flags & MS_RDONLY)) {
 			struct rpc_clnt *clnt = NFS_SB(sb)->client;
 			struct ve_struct *owner_env = clnt->cl_xprt->owner_env;
-			if (ve_accessible_strict(owner_env, env)  &&
-				!clnt->cl_broken) {
+			if (ve_accessible_strict(owner_env, env)) {
 				ret = __sync_filesystem(sb, NULL, wait);
 				if (ret < 0) {
 					up_read(&sb->s_umount);
@@ -420,50 +444,40 @@ rescan:
 }
 EXPORT_SYMBOL(ve_nfs_sync);
 
+static void ve_nfs_umount_begin(struct ve_struct *ve, struct file_system_type *nfs)
+{
+	struct super_block *sb;
+
+	spin_lock(&sb_lock);
+	list_for_each_entry(sb, &nfs->fs_supers, s_instances)
+		if (ve_accessible_strict(NFS_SB(sb)->nfs_client->owner_env, ve))
+			nfs_umount_begin(sb);
+	spin_unlock(&sb_lock);
+}
+
 static void ve_nfs_stop(void *data)
 {
 	struct ve_struct *ve;
-	struct super_block *sb;
-
-	flush_scheduled_work();
 
 	ve = (struct ve_struct *)data;
-	/* Basically, on a valid stop we can be here iff NFS was mounted
-	   read-only. In such a case client force-stop is not a problem.
-	   If we are here and NFS is read-write, we are in a FORCE stop, so
-	   force the client to stop.
-	   Lock daemon is already dead.
-	   Only superblock client remains. Den */
 
-	down_write(&rpc_async_task_lock);
+	ve_nfs_umount_begin(ve, &nfs_fs_type);
+	ve_nfs_umount_begin(ve, &nfs4_fs_type);
 
-	spin_lock(&sb_lock);
-	list_for_each_entry(sb, &nfs_fs_type.fs_supers, s_instances) {
-		struct nfs_server *srv;
-		struct ve_struct *owner_env;
-
-		srv = NFS_SB(sb);
-		owner_env = srv->client->cl_xprt->owner_env;
-
-		if (ve_accessible_strict(owner_env, ve)) {
-			rpc_kill_client(srv->client);
-			rpc_kill_client(srv->client_acl);
-		}
-	}
-	spin_unlock(&sb_lock);
-
-	rpcb_break_local();
-
-	/* Make sure no async RPC task is in progress */
-	up_write(&rpc_async_task_lock);
+	ve_nlm_prepare_to_shutdown(ve);
 
 	umount_ve_fs_type(&nfs_fs_type, ve->veid);
-
-	flush_scheduled_work();
+	umount_ve_fs_type(&nfs4_fs_type, ve->veid);
 }
 
+static struct ve_hook nfs_ss_hook = {
+	.init	  = ve_nfs_init,
+	.fini	  = ve_nfs_fini,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_FS,
+};
+
 static struct ve_hook nfs_hook = {
-	.init	  = ve_nfs_start,
 	.fini	  = ve_nfs_stop,
 	.owner	  = THIS_MODULE,
 	.priority = HOOK_PRIO_NET_POST,
@@ -488,8 +502,12 @@ int __init register_nfs_fs(void)
 	ret = register_filesystem(&nfs4_fs_type);
 	if (ret < 0)
 		goto error_2;
+
+	get_ve0()->nfs4_cb_data = &ve0_nfs4_cb_data;
+	mutex_init(&get_ve0()->nfs4_cb_data->_nfs_callback_mutex);
 #endif
 	register_shrinker(&acl_shrinker);
+	ve_hook_register(VE_SS_CHAIN, &nfs_ss_hook);
 	ve_hook_register(VE_INIT_EXIT_CHAIN, &nfs_hook);
 	return 0;
 
@@ -510,6 +528,7 @@ void __exit unregister_nfs_fs(void)
 {
 	unregister_shrinker(&acl_shrinker);
 	ve_hook_unregister(&nfs_hook);
+	ve_hook_unregister(&nfs_ss_hook);
 #ifdef CONFIG_NFS_V4
 	unregister_filesystem(&nfs4_fs_type);
 #endif
@@ -2132,6 +2151,8 @@ static inline void nfs_initialise_sb(struct super_block *sb)
 {
 	struct nfs_server *server = NFS_SB(sb);
 
+	nfs_dq_init_sb(sb);
+
 	sb->s_magic = NFS_SUPER_MAGIC;
 
 	/* We probably want something more informative here */
@@ -2719,6 +2740,11 @@ static int nfs4_remote_get_sb(struct file_system_type *fs_type,
 		.mntflags = flags,
 	};
 	int error = -ENOMEM;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	mntfh = nfs_alloc_fhandle();
 	if (data == NULL || mntfh == NULL)
@@ -2986,6 +3012,11 @@ static int nfs4_get_sb(struct file_system_type *fs_type,
 {
 	struct nfs_parsed_mount_data *data;
 	int error = -ENOMEM;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	data = nfs_alloc_parsed_mount_data(4);
 	if (data == NULL)
@@ -3038,8 +3069,13 @@ static int nfs4_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
+	struct ve_struct *ve;
 
 	dprintk("--> nfs4_xdev_get_sb()\n");
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	/* create a new volume representation */
 	server = nfs_clone_server(NFS_SB(data->sb), data->fh, data->fattr);
@@ -3123,8 +3159,13 @@ static int nfs4_remote_referral_get_sb(struct file_system_type *fs_type,
 		.mntflags = flags,
 	};
 	int error = -ENOMEM;
+	struct ve_struct *ve;
 
 	dprintk("--> nfs4_referral_get_sb()\n");
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	mntfh = nfs_alloc_fhandle();
 	if (mntfh == NULL)
@@ -3213,8 +3254,13 @@ static int nfs4_referral_get_sb(struct file_system_type *fs_type,
 	char *export_path;
 	struct vfsmount *root_mnt;
 	int error;
+	struct ve_struct *ve;
 
 	dprintk("--> nfs4_referral_get_sb()\n");
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	export_path = data->mnt_path;
 	data->mnt_path = "/";

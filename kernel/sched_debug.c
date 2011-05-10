@@ -85,6 +85,7 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu,
 	PN(se->throttle_max);
 	PN(se->throttle_sum);
 	P(se->throttle_count);
+	P(se->lb_weight);
 #endif
 #endif
 	P(se->load.weight);

@@ -52,7 +52,7 @@ EXPORT_SYMBOL(do_env_free_hook);
 
 void do_env_free(struct ve_struct *env)
 {
-	BUG_ON(atomic_read(&env->pcounter) > 0);
+	BUG_ON(env->pcounter > 0);
 	BUG_ON(env->is_running);
 
 	preempt_disable();
@@ -67,7 +67,7 @@ EXPORT_SYMBOL(do_ve_enter_hook);
 
 struct ve_struct ve0 = {
 	.counter		= ATOMIC_INIT(1),
-	.pcounter		= ATOMIC_INIT(1),
+	.pcounter		= 1,
 	.ve_list		= LIST_HEAD_INIT(ve0.ve_list),
 	.vetask_lh		= LIST_HEAD_INIT(ve0.vetask_lh),
 	.vetask_auxlist		= LIST_HEAD_INIT(ve0.vetask_auxlist),
@@ -82,6 +82,7 @@ struct ve_struct ve0 = {
 	._iptables_modules	= VE_IP_ALL,
 #endif
 	.features		= -1,
+	.meminfo_val		= VE_MEMINFO_SYSTEM,
 	._randomize_va_space	=
 #ifdef CONFIG_COMPAT_BRK
 					1,

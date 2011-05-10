@@ -514,7 +514,7 @@ static ctl_table debug_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
-		.ctl_name	= 9477,
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "delayfs",
 		.mode		= 0555,
 		.child		= delayfs_table,

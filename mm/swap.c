@@ -274,18 +274,12 @@ void activate_page(struct page *page)
 		if (page->mapping && !PageAnon(page) && !page_mapped(page)) {
 			struct gang_set *gs = get_mapping_gang(page->mapping);
 
-			if (unlikely(gang->set != gs) &&
-					atomic_cmpxchg(&page->_mapcount, -1, 0) == -1) {
+			if (unlikely(gang->set != gs)) {
 				ClearPageLRU(page);
 				spin_unlock(&gang->lru_lock);
 				gang_mod_user_page(page, gs);
 				gang = lock_page_lru(page);
 				SetPageLRU(page);
-
-				if (!atomic_add_negative(-1, &page->_mapcount)) {
-					gang_map_file_page(gs);
-					__inc_zone_page_state(page, NR_FILE_MAPPED);
-				}
 			}
 		}
 
@@ -513,6 +507,7 @@ void lru_add_page_tail(struct gang* gang,
 	VM_BUG_ON(!PageHead(page));
 	VM_BUG_ON(PageCompound(page_tail));
 	VM_BUG_ON(PageLRU(page_tail));
+	VM_BUG_ON(page_gang(page_tail) != gang);
 	VM_BUG_ON(!spin_is_locked(&gang->lru_lock));
 
 	SetPageLRU(page_tail);

@@ -889,14 +889,15 @@ void page_add_anon_rmap(struct page *page,
 		struct gang_set *gs = get_mm_gang(vma->vm_mm);
 
 		rcu_read_lock();
-		if (page_gang(page)->set != gs) {
+		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
+				unpin_mem_gang(page_gang(page));
 				gang_mod_user_page(page, gs);
+				pin_mem_gang(page_gang(page));
 				putback_lru_page(page);
 			} else
 				gs = page_gang(page)->set;
 		}
-		gang_map_anon_page(gs);
 		rcu_read_unlock();
 
 		if (!PageTransHuge(page))
@@ -929,13 +930,10 @@ void page_add_anon_rmap(struct page *page,
 void page_add_new_anon_rmap(struct page *page,
 	struct vm_area_struct *vma, unsigned long address)
 {
-	struct gang_set *gs = get_mm_gang(vma->vm_mm);
-
 	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	SetPageSwapBacked(page);
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
-	gang_add_user_page(page, gs);
-	gang_map_anon_page(gs);
+	gang_add_user_page(page, get_mm_gang(vma->vm_mm));
 	if (!PageTransHuge(page))
 		__inc_zone_page_state(page, NR_ANON_PAGES);
 	else
@@ -959,14 +957,14 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
 		struct gang_set *gs = get_mm_gang(mm);
 
 		rcu_read_lock();
-		if (unlikely(page_gang(page)->set != gs)) {
+		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
+				unpin_mem_gang(page_gang(page));
 				gang_mod_user_page(page, gs);
+				pin_mem_gang(page_gang(page));
 				putback_lru_page(page);
-			} else
-				gs = page_gang(page)->set;
+			}
 		}
-		gang_map_file_page(gs);
 		rcu_read_unlock();
 
 		__inc_zone_page_state(page, NR_FILE_MAPPED);
@@ -982,14 +980,9 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
  */
 void page_remove_rmap(struct page *page)
 {
-	struct gang *gang;
-
-	rcu_read_lock();
-	gang = page_gang(page);
-
 	/* page still mapped by someone else? */
 	if (!atomic_add_negative(-1, &page->_mapcount))
-		goto out;
+		return;
 
 	/*
 	 * Now that the last pte has gone, s390 must transfer dirty
@@ -1009,7 +1002,6 @@ void page_remove_rmap(struct page *page)
 	 */
 	ClearPageCheckpointed(page);
 	if (PageAnon(page)) {
-		gang_unmap_anon_page(gang->set);
 		mem_cgroup_uncharge_page(page);
 		if (!PageTransHuge(page))
 			__dec_zone_page_state(page, NR_ANON_PAGES);
@@ -1017,7 +1009,6 @@ void page_remove_rmap(struct page *page)
 			__dec_zone_page_state(page,
 					      NR_ANON_TRANSPARENT_HUGEPAGES);
 	} else {
-		gang_unmap_file_page(gang->set);
 		__dec_zone_page_state(page, NR_FILE_MAPPED);
 	}
 	mem_cgroup_update_mapped_file_stat(page, -1);
@@ -1030,8 +1021,6 @@ void page_remove_rmap(struct page *page)
 	 * Leaving it set also helps swapoff to reinstate ptes
 	 * faster for those pages still in swapcache.
 	 */
-out:
-	rcu_read_unlock();
 }
 
 /*
@@ -1130,7 +1119,6 @@ int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 		dec_mm_counter(mm, file_rss);
 
 	page_remove_rmap(page);
-	ub_percpu_inc(mm->mm_ub, unmap);
 	page_cache_release(page);
 
 out_unmap:
@@ -1257,7 +1245,6 @@ static int try_to_unmap_cluster(unsigned long cursor, unsigned int *mapcount,
 			set_page_dirty_mm(page, mm);
 
 		page_remove_rmap(page);
-		ub_percpu_inc(mm->mm_ub, unmap);
 		page_cache_release(page);
 		dec_mm_counter(mm, file_rss);
 		(*mapcount)--;

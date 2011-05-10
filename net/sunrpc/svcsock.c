@@ -229,9 +229,6 @@ static int svc_sendto(struct svc_rqst *rqstp, struct xdr_buf *xdr)
 	unsigned long tailoff;
 	unsigned long headoff;
 	RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
-	struct ve_struct *old_env;
-
-	old_env = set_exec_env(sock->sk->owner_env);
 
 	if (rqstp->rq_prot == IPPROTO_UDP) {
 		struct msghdr msg = {
@@ -257,8 +254,6 @@ out:
 	dprintk("svc: socket %p sendto([%p %Zu... ], %d) = %d (addr %s)\n",
 		svsk, xdr->head[0].iov_base, xdr->head[0].iov_len,
 		xdr->len, len, svc_print_addr(rqstp, buf, sizeof(buf)));
-
-	(void)set_exec_env(old_env);
 
 	return len;
 }
@@ -963,7 +958,6 @@ static int svc_tcp_recv_record(struct svc_sock *svsk, struct svc_rqst *rqstp)
 	return len;
  err_delete:
 	set_bit(XPT_CLOSE, &svsk->sk_xprt.xpt_flags);
-	svc_xprt_received(&svsk->sk_xprt);
  err_again:
 	return -EAGAIN;
 }

@@ -548,6 +548,11 @@ static int nfs_vm_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	int ret = -EINVAL;
 	struct address_space *mapping;
 
+	if (filp->f_op->get_host) {
+		filp = filp->f_op->get_host(filp);
+		dentry = filp->f_path.dentry;
+	}
+
 	dfprintk(PAGECACHE, "NFS: vm_page_mkwrite(%s/%s(%ld), offset %lld)\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name,
 		filp->f_mapping->host->i_ino,
@@ -602,6 +607,7 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 	struct inode * inode = dentry->d_inode;
 	ssize_t result;
 	size_t count = iov_length(iov, nr_segs);
+	long prealloc_blocks;
 
 	if (iocb->ki_filp->f_flags & O_DIRECT)
 		return nfs_file_direct_write(iocb, iov, nr_segs, pos);
@@ -626,6 +632,10 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 	if (!count)
 		goto out;
 
+	prealloc_blocks = nfs_dq_prealloc_space(inode, pos, count);
+	if (prealloc_blocks < 0)
+		return prealloc_blocks;
+
 	nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, count);
 	result = generic_file_aio_write(iocb, iov, nr_segs, pos);
 	/* Return error values for O_SYNC and IS_SYNC() */
@@ -634,6 +644,9 @@ static ssize_t nfs_file_write(struct kiocb *iocb, const struct iovec *iov,
 		if (err < 0)
 			result = err;
 	}
+
+	if (result < 0)
+		nfs_dq_release_preallocated_blocks(inode, prealloc_blocks);
 out:
 	return result;
 

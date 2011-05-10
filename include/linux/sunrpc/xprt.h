@@ -25,14 +25,6 @@
 #define RPC_MAX_SLOT_TABLE	(128U)
 
 /*
- * Grand abort timeout (stop the client if occures)
- */
-extern int xprt_abort_timeout;
-
-#define RPC_MIN_ABORT_TIMEOUT	300
-#define RPC_MAX_ABORT_TIMEOUT	INT_MAX
-
-/*
  * This describes a timeout strategy
  */
 struct rpc_timeout {

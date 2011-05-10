@@ -166,6 +166,7 @@ static void free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
 	pmd_clear(pmd);
 	pte_free_tlb(tlb, token, addr);
 	tlb->mm->nr_ptes--;
+	ub_page_table_uncharge(tlb->mm);
 }
 
 static inline void free_pmd_range(struct mmu_gather *tlb, pud_t *pud,
@@ -199,6 +200,10 @@ static inline void free_pmd_range(struct mmu_gather *tlb, pud_t *pud,
 	pmd = pmd_offset(pud, start);
 	pud_clear(pud);
 	pmd_free_tlb(tlb, pmd, start);
+#ifndef __PAGETABLE_PMD_FOLDED
+	tlb->mm->nr_ptds--;
+	ub_page_table_uncharge(tlb->mm);
+#endif
 }
 
 static inline void free_pud_range(struct mmu_gather *tlb, pgd_t *pgd,
@@ -232,6 +237,10 @@ static inline void free_pud_range(struct mmu_gather *tlb, pgd_t *pgd,
 	pud = pud_offset(pgd, start);
 	pgd_clear(pgd);
 	pud_free_tlb(tlb, pud, start);
+#ifndef __PAGETABLE_PUD_FOLDED
+	tlb->mm->nr_ptds--;
+	ub_page_table_uncharge(tlb->mm);
+#endif
 }
 
 /*
@@ -332,6 +341,7 @@ void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *vma,
 		}
 		vma = next;
 	}
+	ub_page_table_commit(tlb->mm);
 }
 
 int __pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
@@ -360,6 +370,11 @@ int __pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
 	spin_lock(&mm->page_table_lock);
 	wait_split_huge_page = 0;
 	if (likely(pmd_none(*pmd))) {	/* Has another populated it ? */
+		if (ub_page_table_charge(mm)) {
+			spin_unlock(&mm->page_table_lock);
+			pte_free(mm, new);
+			return -ENOMEM;
+		}
 		mm->nr_ptes++;
 		pmd_populate(mm, pmd, new);
 		new = NULL;
@@ -1635,10 +1650,6 @@ static int insert_page(struct vm_area_struct *vma, unsigned long addr,
 	/* Ok, finally just insert the thing.. */
 	get_page(page);
 	inc_mm_counter(mm, file_rss);
-#ifdef CONFIG_BEANCOUNTERS
-	if (WARN_ON_ONCE(page_gang(page) == NULL))
-		ub_page_charge(page, 0, get_ub0(), UB_FORCE);
-#endif
 	page_add_file_rmap(page, mm);
 	set_pte_at(mm, addr, pte, mk_pte(page, prot));
 
@@ -2637,6 +2648,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte_t pte;
 	struct mem_cgroup *ptr = NULL;
 	int ret = 0;
+	int gang_swap = 0;
 	cycles_t start;
 
 	start = get_cycles();
@@ -2689,7 +2701,8 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		ret = VM_FAULT_HWPOISON;
 		delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 		goto out_release;
-	}
+	} else
+		gang_swap = 1;
 
 	lock_page(page);
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
@@ -2748,7 +2761,6 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	inc_mm_counter(mm, anon_rss);
 	dec_mm_counter(mm, swap_usage);
-	ub_percpu_inc(mm->mm_ub, swapin);
 	pte = mk_pte(page, vma->vm_page_prot);
 	if ((flags & FAULT_FLAG_WRITE) && reuse_swap_page(page)) {
 		pte = maybe_mkwrite(pte_mkdirty(pte), vma);
@@ -2756,6 +2768,9 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 	flush_icache_page(vma, page);
 	set_pte_at(mm, address, page_table, pte);
+	if (gang_swap)
+		gang_swap = !page_mapped(page) &&
+			page_gang(page)->set != get_mm_gang(mm);
 	page_add_anon_rmap(page, vma, address);
 	/* It's better to call commit-charge after rmap is established */
 	mem_cgroup_commit_charge_swapin(page, ptr);
@@ -2794,6 +2809,12 @@ out:
 	KSTAT_LAT_ADD(&kstat_glob.swap_in, get_cycles() - start);
 	spin_unlock_irq(&kstat_glb_lock);
 	trace_mm_anon_pgin(mm, address);
+
+	if (gang_swap) {
+		ub_percpu_inc(mm->mm_ub, vswapin);
+		gang_rate_limit(get_mm_gang(mm), 1, 1);
+	}
+
 	return ret;
 out_nomap:
 	mem_cgroup_cancel_charge_swapin(ptr);
@@ -3061,34 +3082,6 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			page_add_new_anon_rmap(page, vma, address);
 		} else {
 			inc_mm_counter(mm, file_rss);
-#ifdef CONFIG_BEANCOUNTERS
-			if (unlikely(page_gang(page) == NULL)) {
-				static int warned = 10;
-				void *ptr;
-
-				if (warned) {
-					warned--;
-					printk(KERN_ALERT "Mapping uncharged kernel page."
-							"comm:%s address:%lx vm_ops:%pS\n",
-							current->comm, address, vma->vm_ops);
-					printk(KERN_ALERT "page:%p pfn:%05lx flags:%p "
-							"count:%d mapcount:%d "
-							"mapping:%p index:%lx\n",
-							page, page_to_pfn(page),
-							(void *)page->flags,
-							page_count(page),
-							page_mapcount(page),
-							page->mapping, page->index);
-
-					ptr = kmap_atomic(page, KM_USER0);
-					print_hex_dump_bytes("", DUMP_PREFIX_ADDRESS,
-							ptr, PAGE_SIZE);
-					kunmap_atomic(ptr, KM_USER0);
-				}
-
-				ub_page_charge(page, 0, get_ub0(), UB_FORCE);
-			}
-#endif
 			page_add_file_rmap(page, mm);
 			if (flags & FAULT_FLAG_WRITE) {
 				dirty_page = page;
@@ -3316,8 +3309,14 @@ int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 	spin_lock(&mm->page_table_lock);
 	if (pgd_present(*pgd))		/* Another has populated it */
 		pud_free(mm, new);
-	else
+	else if (ub_page_table_charge(mm)) {
+		spin_unlock(&mm->page_table_lock);
+		pud_free(mm, new);
+		return -ENOMEM;
+	} else {
 		pgd_populate(mm, pgd, new);
+		mm->nr_ptds++;
+	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
@@ -3341,13 +3340,25 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 #ifndef __ARCH_HAS_4LEVEL_HACK
 	if (pud_present(*pud))		/* Another has populated it */
 		pmd_free(mm, new);
-	else
+	else if (ub_page_table_charge(mm)) {
+		spin_unlock(&mm->page_table_lock);
+		pmd_free(mm, new);
+		return -ENOMEM;
+	} else {
 		pud_populate(mm, pud, new);
+		mm->nr_ptds++;
+	}
 #else
 	if (pgd_present(*pud))		/* Another has populated it */
 		pmd_free(mm, new);
-	else
+	else if (ub_page_table_charge(mm)) {
+		spin_unlock(&mm->page_table_lock);
+		pmd_free(mm, new);
+		return -ENOMEM;
+	} else {
 		pgd_populate(mm, pud, new);
+		mm->nr_ptds++;
+	}
 #endif /* __ARCH_HAS_4LEVEL_HACK */
 	spin_unlock(&mm->page_table_lock);
 	return 0;

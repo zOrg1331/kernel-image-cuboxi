@@ -136,7 +136,7 @@ static int nfs_do_call_unlink(struct dentry *parent, struct inode *dir, struct n
 		.rpc_message = &msg,
 		.callback_ops = &nfs_unlink_ops,
 		.callback_data = data,
-		.workqueue = nfsiod_workqueue,
+		.workqueue = inode_nfsiod_wq(dir),
 		.flags = RPC_TASK_ASYNC,
 	};
 	struct rpc_task *task;

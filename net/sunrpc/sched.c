@@ -20,12 +20,16 @@
 #include <linux/mutex.h>
 
 #include <linux/sunrpc/clnt.h>
+#include <linux/ve_nfs.h>
 
 #include "sunrpc.h"
 
 #ifdef RPC_DEBUG
 #define RPCDBG_FACILITY		RPCDBG_SCHED
 #endif
+
+static int rpc_serialize = 0;
+module_param(rpc_serialize, int, 0440);
 
 /*
  * RPC slabs and memory pools
@@ -50,9 +54,9 @@ static struct rpc_wait_queue delay_queue;
 /*
  * rpciod-related stuff
  */
+#ifndef CONFIG_VE
 struct workqueue_struct *rpciod_workqueue;
-DECLARE_RWSEM(rpc_async_task_lock);
-EXPORT_SYMBOL(rpc_async_task_lock);
+#endif
 
 /*
  * Disable the timer for a given RPC task. Should be called with
@@ -284,6 +288,16 @@ int __rpc_wait_for_completion_task(struct rpc_task *task, int (*action)(void *))
 }
 EXPORT_SYMBOL_GPL(__rpc_wait_for_completion_task);
 
+static struct ve_struct *rpc_task_ve(struct rpc_task *task)
+{
+	if (task->tk_client)
+		return task->tk_client->cl_xprt->owner_env;
+	else if (task->tk_rqstp)
+		return task->tk_rqstp->rq_xprt->owner_env;
+	else
+		BUG();
+}
+
 /*
  * Make an RPC task runnable.
  *
@@ -292,6 +306,8 @@ EXPORT_SYMBOL_GPL(__rpc_wait_for_completion_task);
  */
 static void rpc_make_runnable(struct rpc_task *task)
 {
+	BUG_ON(rpc_task_ve(task) != get_exec_env());
+
 	rpc_clear_queued(task);
 	if (rpc_test_and_set_running(task))
 		return;
@@ -549,11 +565,21 @@ static void __rpc_queue_timer_fn(unsigned long ptr)
 	spin_lock(&queue->lock);
 	expires = now = jiffies;
 	list_for_each_entry_safe(task, n, &queue->timer_list.list, u.tk_wait.timer_list) {
+		struct ve_struct *ve;
+
+		ve = rpc_task_ve(task);
 		timeo = task->u.tk_wait.expires;
 		if (time_after_eq(now, timeo)) {
 			dprintk("RPC: %5u timeout\n", task->tk_pid);
 			task->tk_status = -ETIMEDOUT;
+			/*
+			 * Here we have to change execution environment since
+			 * this function is called from timer handling code,
+			 * which is executed in ve0.
+			 */
+			ve = set_exec_env(ve);
 			rpc_wake_up_task_queue_locked(queue, task);
+			(void)set_exec_env(ve);
 			continue;
 		}
 		if (expires == now || time_after(expires, timeo))
@@ -610,6 +636,16 @@ void rpc_release_calldata(const struct rpc_call_ops *ops, void *calldata)
 		ops->rpc_release(calldata);
 }
 
+static inline int rpc_abort_task_ve(struct rpc_task *task)
+{
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	BUG_ON(rpc_task_ve(task) != ve);
+
+	return !(ve->is_running || (task->tk_flags & RPC_TASK_KILLED));
+}
+
 /*
  * This is the RPC `scheduler' (or rather, the finite state machine).
  */
@@ -618,29 +654,20 @@ static void __rpc_execute(struct rpc_task *task)
 	struct rpc_wait_queue *queue;
 	int task_is_async = RPC_IS_ASYNC(task);
 	int status = 0;
-	struct ve_struct *env;
 
-	env = set_exec_env(task->tk_client->cl_xprt->owner_env);
 	dprintk("RPC: %5u __rpc_execute flags=0x%x\n",
 			task->tk_pid, task->tk_flags);
 
 	BUG_ON(RPC_IS_QUEUED(task));
 
+	if (rpc_abort_task_ve(task)) {
+		dprintk("RPC: VE%d is not running. Drop task %d with EIO.",
+				get_exec_env()->veid, task->tk_pid);
+		task->tk_flags |= RPC_TASK_KILLED;
+		rpc_exit(task, -EIO);
+	}
+
 	for (;;) {
-
-		/*
-		 * Finish this task with error state if RPC client is already
-		 * broken.
-		 */
-		if (task->tk_client->cl_broken) {
-			dprintk("RPC: client 0x%p is broken. Drop task %d "
-				"with EIO.",
-					task->tk_client, task->tk_pid);
-			task->tk_flags |= RPC_TASK_KILLED;
-			rpc_exit(task, -EIO);
-			break;
-		}	
-
 		/*
 		 * Execute any pending callback.
 		 */
@@ -689,10 +716,8 @@ static void __rpc_execute(struct rpc_task *task)
 		}
 		rpc_clear_running(task);
 		spin_unlock_bh(&queue->lock);
-		if (task_is_async) {
-			(void)set_exec_env(env);
+		if (task_is_async)
 			return;
-		}
 
 		/* sync task: sleep here */
 		dprintk("RPC: %5u sync task going to sleep\n", task->tk_pid);
@@ -719,7 +744,6 @@ static void __rpc_execute(struct rpc_task *task)
 			task->tk_status);
 	/* Release all resources associated with the task */
 	rpc_release_task(task);
-	(void)set_exec_env(env);
 }
 
 /*
@@ -740,9 +764,7 @@ void rpc_execute(struct rpc_task *task)
 
 static void rpc_async_schedule(struct work_struct *work)
 {
-	down_read(&rpc_async_task_lock);
 	__rpc_execute(container_of(work, struct rpc_task, u.tk_work));
-	up_read(&rpc_async_task_lock);
 }
 
 /**
@@ -912,8 +934,13 @@ static void rpc_async_release(struct work_struct *work)
 
 void rpc_put_task(struct rpc_task *task)
 {
+	struct ve_struct *ve;
+
 	if (!atomic_dec_and_test(&task->tk_count))
 		return;
+
+	ve = set_exec_env(task->tk_client->cl_xprt->owner_env);
+
 	/* Release resources */
 	if (task->tk_rqstp)
 		xprt_release(task);
@@ -928,6 +955,8 @@ void rpc_put_task(struct rpc_task *task)
 		queue_work(task->tk_workqueue, &task->u.tk_work);
 	} else
 		rpc_free_task(task);
+
+	(void)set_exec_env(ve);
 }
 EXPORT_SYMBOL_GPL(rpc_put_task);
 
@@ -972,22 +1001,13 @@ void rpc_killall_tasks(struct rpc_clnt *clnt)
 		if (!(rovr->tk_flags & RPC_TASK_KILLED)) {
 			rovr->tk_flags |= RPC_TASK_KILLED;
 			rpc_exit(rovr, -EIO);
-			rpc_wake_up_task(rovr);
+			if (RPC_IS_QUEUED(rovr))
+				rpc_wake_up_task(rovr);
 		}
 	}
 	spin_unlock(&clnt->cl_lock);
 }
 EXPORT_SYMBOL_GPL(rpc_killall_tasks);
-
-void rpc_kill_client(struct rpc_clnt *clnt)
-{
-	if (!IS_ERR(clnt)) {
-		clnt->cl_broken = 1;
-		clnt->cl_pr_time = jiffies - xprt_abort_timeout * HZ - 1;
-		rpc_killall_tasks(clnt);
-	}
-}
-EXPORT_SYMBOL_GPL(rpc_kill_client);
 
 int rpciod_up(void)
 {
@@ -1002,7 +1022,7 @@ void rpciod_down(void)
 /*
  * Start up the rpciod workqueue.
  */
-static int rpciod_start(void)
+int rpciod_start(void)
 {
 	struct workqueue_struct *wq;
 
@@ -1010,12 +1030,17 @@ static int rpciod_start(void)
 	 * Create the rpciod thread and wait for it to start.
 	 */
 	dprintk("RPC:       creating workqueue rpciod\n");
-	wq = create_workqueue("rpciod");
+	if (rpc_serialize) {
+		wq = create_singlethread_workqueue_ve("rpciod", get_exec_env());
+	} else {
+		wq = create_workqueue_ve("rpciod", get_exec_env());
+	}
+
 	rpciod_workqueue = wq;
 	return rpciod_workqueue != NULL;
 }
 
-static void rpciod_stop(void)
+void rpciod_stop(void)
 {
 	struct workqueue_struct *wq = NULL;
 

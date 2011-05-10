@@ -59,6 +59,9 @@ struct scan_control {
 	/* Number of pages freed so far during a call to shrink_zones() */
 	unsigned long nr_reclaimed;
 
+	/* Reclaimed swapbacked pages */
+	unsigned long nr_reclaim_swapout;
+
 	/* How many pages shrink_list() should reclaim */
 	unsigned long nr_to_reclaim;
 
@@ -83,9 +86,6 @@ struct scan_control {
 
 	/* Reclaim this gang-set */
 	struct gang_set *gs;
-
-	/* Pages moved to other gang-set */
-	unsigned long nr_kicked;
 
 	/* Which cgroup do we reclaim from */
 	struct mem_cgroup *mem_cgroup;
@@ -533,6 +533,7 @@ void putback_lru_page(struct page *page)
 	int lru;
 	int active = !!TestClearPageActive(page);
 	int was_unevictable = PageUnevictable(page);
+	struct gang *gang = page_gang(page);
 
 	VM_BUG_ON(PageLRU(page));
 
@@ -575,6 +576,7 @@ redo:
 	if (lru == LRU_UNEVICTABLE && page_evictable(page, NULL)) {
 		if (!isolate_lru_page(page)) {
 			put_page(page);
+			unpin_mem_gang(gang);
 			goto redo;
 		}
 		/* This means someone else dropped this page from LRU
@@ -589,6 +591,7 @@ redo:
 		count_vm_event(UNEVICTABLE_PGCULLED);
 
 	put_page(page);		/* drop ref from isolate */
+	unpin_mem_gang(gang);
 }
 
 enum page_references {
@@ -658,7 +661,6 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 	struct pagevec freed_pvec;
 	int pgactivate = 0;
 	unsigned long nr_reclaimed = 0;
-	struct gang *another_gang;
 
 	cond_resched();
 
@@ -753,15 +755,17 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 		if (sc->gs) {
 			/* FIXME: remove this crap, add separate lru */
+			unpin_mem_gang(page_gang(page));
 			gang_mod_user_page(page, &init_gang_set);
-			if (sc->gs != &init_gang_set)
-				pin_mem_gang(page_gang(page));
+			pin_mem_gang(page_gang(page));
+			nr_reclaimed++;
+			if (PageSwapCache(page))
+				sc->nr_reclaim_swapout++;
 			/* move to inactive, but give chance for active */
 			if (TestClearPageActive(page))
 				SetPageReferenced(page);
 			else
 				ClearPageReferenced(page);
-			sc->nr_kicked++;
 			goto keep_locked;
 		}
 
@@ -833,9 +837,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 					 * leave it off the LRU).
 					 */
 					nr_reclaimed++;
-					another_gang = page_gang(page);
-					if (another_gang != gang)
-						unpin_mem_gang(another_gang);
+					unpin_mem_gang(page_gang(page));
 					continue;
 				}
 			}
@@ -853,9 +855,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		 */
 		__clear_page_locked(page);
 free_it:
-		another_gang = page_gang(page);
-		if (another_gang != gang)
-			unpin_mem_gang(another_gang);
+		unpin_mem_gang(page_gang(page));
 		gang_del_user_page(page);
 		nr_reclaimed++;
 		if (!pagevec_add(&freed_pvec, page)) {
@@ -867,11 +867,8 @@ free_it:
 cull_mlocked:
 		if (PageSwapCache(page))
 			try_to_free_swap(page);
-		another_gang = page_gang(page);
 		unlock_page(page);
 		putback_lru_page(page);
-		if (another_gang != gang)
-			unpin_mem_gang(another_gang);
 		continue;
 
 activate_locked:
@@ -906,7 +903,8 @@ keep:
  *
  * returns 0 on success, -ve errno on failure.
  */
-int __isolate_lru_page(struct page *page, int mode, int file)
+int __isolate_lru_page(struct page *page, int mode, int file,
+		struct gang **locked_gang)
 {
 	int ret = -EINVAL;
 
@@ -936,6 +934,25 @@ int __isolate_lru_page(struct page *page, int mode, int file)
 	ret = -EBUSY;
 
 	if (likely(get_page_unless_zero(page))) {
+		/*
+		 * Recheck page gang coherency, this is critical for isolating
+		 * pages found via pfn instead of iterating though lru lists.
+		 * Only after get_page we can trust page->gang if page in lru.
+		 */
+		if (unlikely(locked_gang && page_gang(page) != *locked_gang)) {
+			if (*locked_gang)
+				spin_unlock(&(*locked_gang)->lru_lock);
+			*locked_gang = try_lock_page_lru(page);
+			/*
+			 * Page not in LRU, we are reced with somebody
+			 * and we can put it back under lru_lock.
+			 */
+			if (!*locked_gang || !PageLRU(page)) {
+				put_page(page);
+				return -EINVAL;
+			}
+		}
+
 		/*
 		 * Be careful not to clear PageLRU until after we're
 		 * sure the page is not being freed elsewhere -- the
@@ -976,9 +993,10 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 	unsigned long nr_taken = 0;
 	unsigned long nr_lumpy_taken = 0, nr_lumpy_dirty = 0, nr_lumpy_failed = 0;
 	unsigned long scan;
+	int numpages;
 
 	for (scan = 0; scan < nr_to_scan && !list_empty(src); scan++) {
-		struct gang *another_gang;
+		struct gang *locked_gang;
 		struct page *page;
 		unsigned long pfn;
 		unsigned long end_pfn;
@@ -990,12 +1008,16 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 
 		VM_BUG_ON(!PageLRU(page));
 
-		switch (__isolate_lru_page(page, mode, file)) {
+		if (pin_mem_gang(gang))
+			return nr_taken;
+
+		switch (__isolate_lru_page(page, mode, file, NULL)) {
 		case 0:
 			list_move(&page->lru, dst);
-			gang->lru[lru].nr_pages--;
+			numpages = hpage_nr_pages(page);
+			gang->lru[lru].nr_pages -= numpages;
 			mem_cgroup_del_lru(page);
-			nr_taken += hpage_nr_pages(page);
+			nr_taken += numpages;
 			break;
 
 		case -EBUSY:
@@ -1024,7 +1046,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 		page_pfn = page_to_pfn(page);
 		pfn = page_pfn & ~((1 << order) - 1);
 		end_pfn = pfn + (1 << order);
-		another_gang = gang;
+		locked_gang = gang;
 		for (; pfn < end_pfn; pfn++) {
 			struct page *cursor_page;
 
@@ -1054,40 +1076,32 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 			if (!PageLRU(cursor_page))
 				continue;
 
-			if (page_gang(cursor_page) != another_gang) {
-				if (another_gang)
-					spin_unlock(&another_gang->lru_lock);
-				another_gang = try_lock_page_lru(cursor_page);
-				if (!another_gang)
+			if (__isolate_lru_page(cursor_page, mode, file, &locked_gang) == 0) {
+				if (pin_mem_gang(locked_gang)) {
+					SetPageLRU(cursor_page);
+					spin_unlock(&locked_gang->lru_lock);
+					locked_gang = NULL;
+					put_page(cursor_page);
 					continue;
-			}
+				}
 
-			if (another_gang != gang && pin_mem_gang(another_gang))
-				continue;
-
-			if (__isolate_lru_page(cursor_page, mode, file) == 0) {
 				list_move(&cursor_page->lru, dst);
-				another_gang->lru[page_lru(cursor_page)].nr_pages--;
+				numpages = hpage_nr_pages(page);
+				locked_gang->lru[page_lru(cursor_page)].nr_pages -= numpages;
 				mem_cgroup_del_lru(cursor_page);
-				nr_taken += hpage_nr_pages(page);
+				nr_taken += numpages;
 				scan++;
 				nr_lumpy_taken++;
 				if (PageDirty(cursor_page))
 					nr_lumpy_dirty++;
 			} else {
-				if (another_gang != gang)
-					unpin_mem_gang(another_gang);
 				if (mode == ISOLATE_BOTH &&
 					page_count(cursor_page))
 				nr_lumpy_failed++;
 			}
 		}
 
-		if (another_gang != gang) {
-			if (another_gang)
-				spin_unlock(&another_gang->lru_lock);
-			spin_lock(&gang->lru_lock);
-		}
+		locked_gang = relock_page_lru(locked_gang, gang);
 	}
 
 	*scanned = scan;
@@ -1175,13 +1189,17 @@ int isolate_lru_page(struct page *page)
 
 		local_irq_disable();
 		gang = lock_page_lru(page);
+		if (pin_mem_gang(gang))
+			goto out;
 		if (PageLRU(page) && get_page_unless_zero(page)) {
 			int lru = page_lru(page);
 			ret = 0;
 			ClearPageLRU(page);
 
 			del_page_from_lru_list(gang, page, lru);
-		}
+		} else
+			unpin_mem_gang(gang);
+out:
 		spin_unlock_irq(&gang->lru_lock);
 	}
 	return ret;
@@ -1249,6 +1267,7 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		unsigned long nr_anon;
 		unsigned long nr_file;
 		unsigned long nr_rotated[NR_LRU_LISTS] = { 0, };
+		struct gang *locked_gang;
 
 		nr_taken = sc->isolate_pages(SWAP_CLUSTER_MAX,
 			     &page_list, &nr_scan, sc->order, ISOLATE_INACTIVE,
@@ -1305,45 +1324,48 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		nr_reclaimed += nr_freed;
 
 		local_irq_disable();
-		if (current_is_kswapd())
-			__count_vm_events(KSWAPD_STEAL, nr_freed);
-		__count_zone_vm_events(PGSTEAL, zone, nr_freed);
 
-		spin_lock(&gang->lru_lock);
+		if (scanning_global_lru(sc)) {
+			if (current_is_kswapd())
+				__count_vm_events(KSWAPD_STEAL, nr_freed);
+			__count_zone_vm_events(PGSTEAL, zone, nr_freed);
+		}
+
+		locked_gang = NULL;
 		/*
 		 * Put back any unfreeable pages.
 		 */
 		while (!list_empty(&page_list)) {
-			struct gang *another_gang;
 			int lru;
 			page = lru_to_page(&page_list);
 			VM_BUG_ON(PageLRU(page));
 			list_del(&page->lru);
-			another_gang = page_gang(page);
-			if (unlikely(another_gang != gang)) {
-				spin_unlock_irq(&gang->lru_lock);
-				putback_lru_page(page);
-				unpin_mem_gang(another_gang);
-				spin_lock_irq(&gang->lru_lock);
-				continue;
-			}
 			if (unlikely(!page_evictable(page, NULL))) {
-				spin_unlock_irq(&gang->lru_lock);
+				if (locked_gang)
+					spin_unlock(&locked_gang->lru_lock);
+				local_irq_enable();
 				putback_lru_page(page);
-				spin_lock_irq(&gang->lru_lock);
+				local_irq_disable();
+				locked_gang = NULL;
 				continue;
 			}
+			locked_gang = relock_page_lru(locked_gang, page_gang(page));
 			SetPageLRU(page);
 			lru = page_lru(page);
-			add_page_to_lru_list(gang, page, lru);
+			add_page_to_lru_list(locked_gang, page, lru);
+			unpin_mem_gang(locked_gang);
 			/* XXX - mess with active/inactive? */
 			nr_rotated[lru] += hpage_nr_pages(page);
 			if (!pagevec_add(&pvec, page)) {
-				spin_unlock_irq(&gang->lru_lock);
+				spin_unlock_irq(&locked_gang->lru_lock);
 				__pagevec_release(&pvec);
-				spin_lock_irq(&gang->lru_lock);
+				local_irq_disable();
+				locked_gang = NULL;
 			}
 		}
+
+		locked_gang = relock_page_lru(locked_gang, gang);
+
 		__mod_zone_page_state(zone, NR_ISOLATED_ANON, -nr_anon);
 		__mod_zone_page_state(zone, NR_ISOLATED_FILE, -nr_file);
 
@@ -1402,39 +1424,39 @@ static void move_active_pages_to_lru(struct zone *zone,
 	unsigned long pgmoved = 0;
 	struct pagevec pvec;
 	struct page *page;
-	struct gang *another_gang;
+	struct gang *locked_gang = gang;
+	int numpages;
 
 	pagevec_init(&pvec, 1);
 
 	while (!list_empty(list)) {
 		page = lru_to_page(list);
 
-		another_gang = page_gang(page);
-		if (unlikely(another_gang != gang)) {
-			spin_unlock_irq(&gang->lru_lock);
-			list_del(&page->lru);
-			putback_lru_page(page);
-			unpin_mem_gang(another_gang);
-			spin_lock_irq(&gang->lru_lock);
-			continue;
-		}
+		locked_gang = relock_page_lru(locked_gang, page_gang(page));
 
 		VM_BUG_ON(PageLRU(page));
 		SetPageLRU(page);
 
-		list_move(&page->lru, &gang->lru[lru].list);
-		gang->lru[lru].nr_pages++;
+		list_move(&page->lru, &locked_gang->lru[lru].list);
+		numpages = hpage_nr_pages(page);
+		locked_gang->lru[lru].nr_pages += numpages;
 		mem_cgroup_add_lru_list(page, lru);
-		pgmoved += hpage_nr_pages(page);
+		pgmoved += numpages;
+
+		unpin_mem_gang(locked_gang);
 
 		if (!pagevec_add(&pvec, page) || list_empty(list)) {
-			spin_unlock_irq(&gang->lru_lock);
+			spin_unlock_irq(&locked_gang->lru_lock);
 			if (buffer_heads_over_limit)
 				pagevec_strip(&pvec);
 			__pagevec_release(&pvec);
-			spin_lock_irq(&gang->lru_lock);
+			local_irq_disable();
+			locked_gang = NULL;
 		}
 	}
+
+	locked_gang = relock_page_lru(locked_gang, gang);
+
 	__mod_zone_page_state(zone, NR_LRU_BASE + lru, pgmoved);
 	if (!is_active_lru(lru))
 		__count_vm_events(PGDEACTIVATE, pgmoved);
@@ -1453,7 +1475,6 @@ static void shrink_active_list(unsigned long nr_pages,
 	struct page *page;
 	struct zone_reclaim_stat *reclaim_stat = get_reclaim_stat(zone, sc);
 	unsigned long nr_rotated = 0;
-	struct gang *another_gang;
 
 	{KSTAT_PERF_ENTER(refill_inact)
 	lru_add_drain();
@@ -1487,10 +1508,7 @@ static void shrink_active_list(unsigned long nr_pages,
 		list_del(&page->lru);
 
 		if (unlikely(!page_evictable(page, NULL))) {
-			another_gang = page_gang(page);
 			putback_lru_page(page);
-			if (another_gang != gang)
-				unpin_mem_gang(another_gang);
 			continue;
 		}
 
@@ -1864,6 +1882,12 @@ static void shrink_zone(int priority, struct zone *zone,
 			if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
 				goto out;
 		}
+		/* Huge reclaim progress, stop internal OOM countdown */
+		if (sc->gs && nr_reclaimed >= nr_to_reclaim) {
+			spin_lock_irq(&zone->stat_lock);
+			gang->pages_scanned = 0;
+			spin_unlock_irq(&zone->stat_lock);
+		}
 		/*
 		 * On large memory systems, scan >> priority can become
 		 * really large. This is fine for the starting priority;
@@ -1877,12 +1901,6 @@ static void shrink_zone(int priority, struct zone *zone,
 		if ((sc->gs && gangs_rotated) ||
 				gangs_rotated > get_zone_nr_gangs(zone))
 			break;
-		if (sc->gs && sc->nr_kicked >= nr_to_reclaim) {
-			spin_lock_irq(&zone->stat_lock);
-			gang->pages_scanned = 0;
-			spin_unlock_irq(&zone->stat_lock);
-			break;
-		}
 	}
 
 	sc->nr_reclaimed = nr_reclaimed;
@@ -2041,11 +2059,6 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			goto out;
 		}
 
-		if (sc->nr_kicked >= sc->nr_to_reclaim) {
-			ret = sc->nr_kicked;
-			goto out;
-		}
-
 		/*
 		 * Try to write back as many pages as we just scanned.  This
 		 * tends to cause slow streaming writers to write data to the
@@ -2070,10 +2083,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			congestion_wait(BLK_RW_ASYNC, HZ/10);
 	}
 	/* top priority shrink_zones still had more to do? don't OOM, then */
-	if (!sc->all_unreclaimable && scanning_global_lru(sc))
+	if (!sc->all_unreclaimable)
 		ret = sc->nr_reclaimed;
-	if (!sc->all_unreclaimable && sc->gs)
-		ret = sc->nr_kicked;
 out:
 	/*
 	 * Now that we've scanned all the zones at this priority level, note
@@ -2151,8 +2162,16 @@ unsigned long try_to_free_gang_pages(struct gang_set *gs, gfp_t gfp_mask)
 		.isolate_pages = isolate_pages_global,
 		.gs = gs,
 	};
+	unsigned long progress;
 
-	return do_try_to_free_pages(zonelist, &sc);
+	progress = do_try_to_free_pages(zonelist, &sc);
+
+	if (sc.nr_reclaim_swapout) {
+		ub_percpu_add(get_gangs_ub(gs), vswapout, sc.nr_reclaim_swapout);
+		gang_rate_limit(gs, gfp_mask&__GFP_WAIT, sc.nr_reclaim_swapout);
+	}
+
+	return progress;
 }
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR

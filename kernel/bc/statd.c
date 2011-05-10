@@ -350,7 +350,7 @@ long do_ubstat(int func, unsigned long arg1, unsigned long arg2,
 		return -ESRCH;
 
 	retval = ubstat_get_stat(ub, func, buf, size);
-	put_beancounter(ub);
+	put_beancounter_longterm(ub);
 notify:
 	/* Handle request for notification */
 	if (retval >= 0) {

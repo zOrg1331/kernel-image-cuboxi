@@ -47,7 +47,7 @@ static int __init init_vdso_vars(void)
 		goto oom;
 	for (i = 0; i < npages; i++) {
 		struct page *p;
-		p = alloc_page(GFP_KERNEL_UBC);
+		p = alloc_page(GFP_KERNEL);
 		if (!p)
 			goto oom;
 		vdso_pages[i] = p;

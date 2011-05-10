@@ -31,7 +31,7 @@ int ub_set_ioprio(int id, int ioprio)
 		goto out;
 
 	ret = blkio_cgroup_set_weight(ub->ub_cgroup, ioprio_weight[ioprio]);
-	put_beancounter(ub);
+	put_beancounter_longterm(ub);
 out:
 	return ret;
 }

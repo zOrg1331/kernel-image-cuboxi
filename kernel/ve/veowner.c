@@ -44,7 +44,7 @@ void prepare_ve0_process(struct task_struct *tsk)
 				&get_ve0()->vetask_lh);
 		list_add(&tsk->ve_task_info.aux_list,
 			 &get_ve0()->vetask_auxlist);
-		atomic_inc(&get_ve0()->pcounter);
+		get_ve0()->pcounter++;
 	}
 }
 

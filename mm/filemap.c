@@ -427,6 +427,20 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 {
 	int error;
 
+	error = add_to_page_cache_nogang(page, mapping, offset, gfp_mask);
+	if (likely(!error))
+		gang_add_user_page(page, get_mapping_gang(mapping));
+
+	return error;
+}
+EXPORT_SYMBOL(add_to_page_cache_locked);
+
+/* add_to_page_cache_nogang - add a locked page to pagecache without gang linking */
+int add_to_page_cache_nogang(struct page *page, struct address_space *mapping,
+		pgoff_t offset, gfp_t gfp_mask)
+{
+	int error;
+
 	VM_BUG_ON(!PageLocked(page));
 
 	error = mem_cgroup_cache_charge(page, current->mm,
@@ -444,7 +458,6 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 		error = radix_tree_insert(&mapping->page_tree, offset, page);
 		if (likely(!error)) {
 			mapping->nrpages++;
-			gang_add_user_page(page, get_mapping_gang(mapping));
 			__inc_zone_page_state(page, NR_FILE_PAGES);
 			if (PageSwapBacked(page))
 				__inc_zone_page_state(page, NR_SHMEM);
@@ -461,7 +474,6 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 out:
 	return error;
 }
-EXPORT_SYMBOL(add_to_page_cache_locked);
 
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t offset, gfp_t gfp_mask)

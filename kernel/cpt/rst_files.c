@@ -39,6 +39,7 @@
 #include <linux/signalfd.h>
 #include <linux/proc_fs.h>
 #include <linux/init_task.h>
+#include <linux/anon_inodes.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -703,9 +704,12 @@ static int fixup_file_flags(struct file *file, const struct cred *cred,
 				}
 			}
 		}
-		if (file->f_flags != fi->cpt_flags) {
-			eprintk_ctx("file %ld flags mismatch %08x %08x\n", (long)pos, file->f_flags, fi->cpt_flags);
-			return -EINVAL;
+		if (file->f_dentry->d_sb->s_magic != ANON_INODE_FS_MAGIC) {
+			if (file->f_flags != fi->cpt_flags) {
+				eprintk_ctx("file %ld flags mismatch %08x %08x\n", 
+						(long)pos, file->f_flags, fi->cpt_flags);
+				return -EINVAL;
+			}
 		}
 	}
 	return 0;

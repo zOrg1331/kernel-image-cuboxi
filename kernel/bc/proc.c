@@ -97,6 +97,8 @@ static int bc_debug_show(struct seq_file *f, void *v)
 
 	seq_printf(f, "bc: %p\n", ub);
 	seq_printf(f, "sizeof: %lu\n", sizeof(struct user_beancounter));
+	seq_printf(f, "pincount: %d\n", __ub_percpu_sum(ub, pincount));
+
 	return 0;
 }
 
@@ -155,20 +157,8 @@ static struct bc_proc_entry bc_count_slab_entry = {
 
 static int bc_proc_meminfo_show(struct seq_file *f, void *v)
 {
-	struct user_beancounter *ub;
-	struct ve_struct *ve, *old;
-
-	ub = seq_beancounter(f);
-	ve = get_ve_by_id(ub->ub_uid);
-	if (ve == NULL)
-		return 0;
-
-	old = set_exec_env(ve);
-	meminfo_proc_show_ub(f, NULL, ub);
-	set_exec_env(old);
-
-	put_ve(ve);
-	return 0;
+	return meminfo_proc_show_ub(f, NULL,
+			seq_beancounter(f), VE_MEMINFO_DEFAULT);
 }
 
 static struct bc_proc_entry bc_meminfo_entry = {
@@ -360,7 +350,7 @@ static int bc_d_delete(struct dentry *d)
 
 static void bc_d_release(struct dentry *d)
 {
-	put_beancounter((struct user_beancounter *)d->d_fsdata);
+	put_beancounter_longterm((struct user_beancounter *)d->d_fsdata);
 }
 
 static struct inode_operations bc_entry_iops;
@@ -506,7 +496,7 @@ static struct dentry *bc_lookup(struct user_beancounter *ub, struct inode *dir,
 	return NULL;
 
 out_put:
-	put_beancounter(ub);
+	put_beancounter_longterm(ub);
 	return ERR_PTR(-ENOENT);
 }
 

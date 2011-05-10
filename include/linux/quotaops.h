@@ -326,7 +326,7 @@ static __inline__ void DQUOT_SYNC_BLOCKS(struct inode *inode, blkcnt_t blocks)
 		if (blocks > inode->i_blocks)
 			inode->i_sb->dq_op->alloc_space(inode,
 							(qsize_t)(blocks-inode->i_blocks)*512,
-							13 /*DQUOT_CMD_FORCE*/);
+							DQUOT_SPACE_NOFAIL);
 		else if (blocks < inode->i_blocks)
 			inode->i_sb->dq_op->free_space(inode, (qsize_t)(inode->i_blocks-blocks)*512);
 	} else

@@ -83,20 +83,14 @@ void ub_io_account_cancel(struct address_space *mapping)
 
 int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
 {
-	int dirty_ratio, unmapped_ratio;
+	int dirty_ratio;
 	unsigned long available_memory;
 
 	available_memory = ub->ub_parms[UB_PHYSPAGES].limit;
 	if (available_memory == UB_MAXVALUE || available_memory == 0)
 		return 0;
 
-	/* math taken from get_dirty_limits */
-	unmapped_ratio = 100 - (100 * ub_mapped_pages(ub)) / available_memory;
-
 	dirty_ratio = vm_dirty_ratio;
-	if ((dirty_ratio > unmapped_ratio / 2) && (dirty_ratio != 100))
-		dirty_ratio = unmapped_ratio / 2;
-
 	if (dirty_ratio < 5)
 		dirty_ratio = 5;
 
@@ -116,8 +110,6 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	unsigned long fsync, fsync_done;
 	unsigned long fdsync, fdsync_done;
 	unsigned long frsync, frsync_done;
-	unsigned long reads, writes;
-	unsigned long long rchar, wchar;
 	struct user_beancounter *ub;
 	unsigned long dirty_pages;
 	unsigned long long dirtied;
@@ -129,8 +121,6 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	read = write = cancel = 0;
 	sync = sync_done = fsync = fsync_done =
 		fdsync = fdsync_done = frsync = frsync_done = 0;
-	reads = writes = 0;
-	rchar = wchar = 0;
 	for_each_online_cpu(i) {
 		struct ub_percpu_struct *ub_percpu;
 		ub_percpu = per_cpu_ptr(ub->ub_percpu, i);
@@ -150,11 +140,6 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 		fsync_done += ub_percpu->fsync_done;
 		fdsync_done += ub_percpu->fdsync_done;
 		frsync_done += ub_percpu->frsync_done;
-
-		reads += ub_percpu->read;
-		writes += ub_percpu->write;
-		rchar += ub_percpu->rchar;
-		wchar += ub_percpu->wchar;
 	}
 
 	if ((long)dirty_pages < 0)
@@ -178,11 +163,6 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	seq_printf(f, bc_proc_lu_lfmt, "fsyncs_active", in_flight(fsync));
 	seq_printf(f, bc_proc_lu_lfmt, "fdatasyncs_active", in_flight(fsync));
 	seq_printf(f, bc_proc_lu_lfmt, "range_syncs_active", in_flight(frsync));
-
-	seq_printf(f, bc_proc_lu_lfmt, "vfs_reads", reads);
-	seq_printf(f, bc_proc_llu_fmt, "vfs_read_chars", rchar);
-	seq_printf(f, bc_proc_lu_lfmt, "vfs_writes", writes);
-	seq_printf(f, bc_proc_llu_fmt, "vfs_write_chars", wchar);
 
 	seq_printf(f, bc_proc_lu_lfmt, "io_pbs", dirty_pages);
 	return 0;

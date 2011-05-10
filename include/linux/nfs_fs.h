@@ -186,6 +186,10 @@ struct nfs_inode {
 	struct fscache_cookie	*fscache;
 #endif
 	struct inode		vfs_inode;
+#if defined CONFIG_VZ_QUOTA || defined CONFIG_VZ_QUOTA_MODULE
+	qsize_t			i_reserved_quota;
+	struct list_head	prealloc;
+#endif
 };
 
 /*
@@ -336,7 +340,7 @@ extern void nfs_zap_mapping(struct inode *inode, struct address_space *mapping);
 extern void nfs_zap_caches(struct inode *);
 extern void nfs_invalidate_atime(struct inode *);
 extern struct inode *nfs_fhget(struct super_block *, struct nfs_fh *,
-				struct nfs_fattr *);
+				struct nfs_fattr *, struct inode *);
 extern int nfs_refresh_inode(struct inode *, struct nfs_fattr *);
 extern int nfs_post_op_update_inode(struct inode *inode, struct nfs_fattr *fattr);
 extern int nfs_post_op_update_inode_force_wcc(struct inode *inode, struct nfs_fattr *fattr);
@@ -439,7 +443,8 @@ extern const struct file_operations nfs_dir_operations;
 extern const struct dentry_operations nfs_dentry_operations;
 
 extern void nfs_force_lookup_revalidate(struct inode *dir);
-extern int nfs_instantiate(struct dentry *dentry, struct nfs_fh *fh, struct nfs_fattr *fattr);
+extern int nfs_instantiate(struct dentry *dentry, struct nfs_fh *fh,
+				struct nfs_fattr *fattr, struct inode *inode);
 extern int nfs_may_open(struct inode *inode, struct rpc_cred *cred, int openflags);
 extern void nfs_access_zap_cache(struct inode *inode);
 
@@ -598,6 +603,7 @@ extern void * nfs_root_data(void);
 #define NFSDBG_CLIENT		0x0200
 #define NFSDBG_MOUNT		0x0400
 #define NFSDBG_FSCACHE		0x0800
+#define NFSDBG_QUOTA		0x1000
 #define NFSDBG_ALL		0xFFFF
 
 #ifdef __KERNEL__

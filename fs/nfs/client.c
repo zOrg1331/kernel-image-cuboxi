@@ -1019,6 +1019,8 @@ static struct nfs_server *nfs_alloc_server(void)
 		return NULL;
 	}
 
+	nfs_dq_init_prealloc_list(server);
+
 	return server;
 }
 

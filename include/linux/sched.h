@@ -1126,7 +1126,7 @@ struct sched_class {
 	unsigned long (*load_balance) (struct rq *this_rq, int this_cpu,
 			struct rq *busiest, unsigned long max_load_move,
 			struct sched_domain *sd, enum cpu_idle_type idle,
-			int *all_pinned, int *this_best_prio);
+			int *all_pinned, unsigned int *loops_left);
 
 	int (*move_one_task) (struct rq *this_rq, int this_cpu,
 			      struct rq *busiest, struct sched_domain *sd,
@@ -1175,7 +1175,15 @@ struct load_weight {
  *     6 se->load.weight
  */
 struct sched_entity {
-	struct load_weight	load;		/* for load-balancing */
+	struct load_weight	load;
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	/*
+	 * lb_weight is the contribution to the entity's parent load (and thus
+	 * to the corresponding cpu load). For tasks, it equals the load. For
+	 * group entities, it is also multiplied by the normed rate limit.
+	 */
+	unsigned long		lb_weight;
+#endif
 	struct rb_node		run_node;
 	struct list_head	group_node;
 	unsigned int		on_rq;

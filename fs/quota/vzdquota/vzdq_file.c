@@ -73,8 +73,13 @@ struct quotatree_data {
 /* serialized by vz_quota_mutex */
 static LIST_HEAD(qf_data_head);
 
+#define V2_REV0_INITQVERSIONS {\
+	0,		/* USRQUOTA */\
+	0		/* GRPQUOTA */\
+}
+
 static const u_int32_t vzquota_magics[] = V2_INITQMAGICS;
-static const u_int32_t vzquota_versions[] = V2_INITQVERSIONS;
+static const u_int32_t vzquota_versions[] = V2_REV0_INITQVERSIONS;
 static const char aquota_user[] = "aquota.user";
 static const char aquota_group[] = "aquota.group";
 
@@ -290,7 +295,7 @@ static int read_block(int num, void *buf, struct quotatree_tree *tree,
 /*
  * FIXME: this function can handle quota files up to 2GB only.
  */
-static int read_proc_quotafile(char *page, char **start, off_t off, int count,
+static int read_proc_quotafile(char *page, off_t off, int count,
 		int *eof, void *data)
 {
 	off_t blk_num, blk_off, buf_off;
@@ -301,7 +306,6 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 	struct dq_kinfo *dqi;
 	int res;
 
-	*start = NULL;
 	tmp = kmalloc(DQBLOCK_SIZE, GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
@@ -330,7 +334,7 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 		len = min((size_t)(DQBLOCK_SIZE-blk_off), buf_size);
 		res = read_block(blk_num, tmp, tree, dqi, qtd->type);
 		if (res < 0)
-			goto out_err;
+			goto out_dq;
 		if (res == BLOCK_NOT_FOUND) {
 			*eof = 1;
 			break;
@@ -344,8 +348,6 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 	}
 	res = buf_off;
 
-out_err:
-	*start += count;
 out_dq:
 	mutex_unlock(&qtd->qmblk->dq_mutex);
 	mutex_unlock(&vz_quota_mutex);
@@ -386,7 +388,6 @@ static ssize_t vzdq_aquotf_read(struct file *file,
 	char *page;
 	size_t bufsize;
 	ssize_t l, l2, copied;
-	char *start;
 	struct inode *inode;
 	struct block_device *bdev;
 	struct super_block *sb;
@@ -420,7 +421,7 @@ static ssize_t vzdq_aquotf_read(struct file *file,
 		if (bufsize <= 0)
 			break;
 
-		l = read_proc_quotafile(page, &start, *ppos, bufsize,
+		l = read_proc_quotafile(page, *ppos, bufsize,
 				&eof, &data);
 		if (l <= 0)
 			break;
@@ -432,7 +433,7 @@ static ssize_t vzdq_aquotf_read(struct file *file,
 
 		buf += l;
 		size -= l;
-		*ppos += (unsigned long)start;
+		*ppos += l;
 		l = l2 = 0;
 	}
 

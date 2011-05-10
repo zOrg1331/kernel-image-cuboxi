@@ -3309,6 +3309,12 @@ void destroy_irq(unsigned int irq)
 	spin_unlock_irqrestore(&vector_lock, flags);
 }
 
+int __irq_to_vector(int irq)
+{
+	return irq_cfg(irq)->vector;
+}
+EXPORT_SYMBOL(__irq_to_vector);
+
 /*
  * MSI message composition
  */
@@ -3622,6 +3628,7 @@ static int dmar_msi_set_affinity(unsigned int irq, const struct cpumask *mask)
 	msg.data |= MSI_DATA_VECTOR(cfg->vector);
 	msg.address_lo &= ~MSI_ADDR_DEST_ID_MASK;
 	msg.address_lo |= MSI_ADDR_DEST_ID(dest);
+	msg.address_hi = MSI_ADDR_BASE_HI | MSI_ADDR_EXT_DEST_ID(dest);
 
 	dmar_msi_write(irq, &msg);
 

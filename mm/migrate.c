@@ -223,6 +223,7 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 		/* Anonymous page without mapping */
 		if (page_count(page) != 1)
 			return -EAGAIN;
+		gang_add_user_page(newpage, page_gang(page)->set);
 		return 0;
 	}
 
@@ -722,6 +723,10 @@ unlock:
 	}
 
 move_newpage:
+
+	if (unlikely(!page_gang(newpage)))
+		gang_add_user_page(newpage, &init_gang_set);
+	pin_mem_gang(page_gang(newpage));
 
 	/*
 	 * Move the new page to the LRU. If migration was not successful

@@ -794,11 +794,14 @@ static int nfs_write_rpcsetup(struct nfs_page *req,
 		.rpc_message = &msg,
 		.callback_ops = call_ops,
 		.callback_data = data,
-		.workqueue = nfsiod_workqueue,
+		.workqueue = inode_nfsiod_wq(inode),
 		.flags = RPC_TASK_ASYNC,
 		.priority = priority,
 	};
 	int ret = 0;
+	struct ve_struct *ve;
+
+	ve = set_exec_env(NFS_SERVER(inode)->nfs_client->owner_env);
 
 	/* Set up the RPC argument and reply structs
 	 * NB: take care not to mess about with data->commit et al. */
@@ -848,6 +851,7 @@ static int nfs_write_rpcsetup(struct nfs_page *req,
 	}
 	rpc_put_task(task);
 out:
+	(void)set_exec_env(ve);
 	return ret;
 }
 
@@ -1250,10 +1254,13 @@ static int nfs_commit_rpcsetup(struct list_head *head,
 		.rpc_message = &msg,
 		.callback_ops = &nfs_commit_ops,
 		.callback_data = data,
-		.workqueue = nfsiod_workqueue,
+		.workqueue = inode_nfsiod_wq(inode),
 		.flags = RPC_TASK_ASYNC,
 		.priority = priority,
 	};
+	struct ve_struct *ve;
+
+	ve = set_exec_env(NFS_SERVER(inode)->nfs_client->owner_env);
 
 	/* Set up the RPC argument and reply structs
 	 * NB: take care not to mess about with data->commit et al. */
@@ -1279,9 +1286,12 @@ static int nfs_commit_rpcsetup(struct list_head *head,
 	dprintk("NFS: %5u initiated commit call\n", data->task.tk_pid);
 
 	task = rpc_run_task(&task_setup_data);
-	if (IS_ERR(task))
+	if (IS_ERR(task)) {
+		(void)set_exec_env(ve);
 		return PTR_ERR(task);
+	}
 	rpc_put_task(task);
+	(void)set_exec_env(ve);
 	return 0;
 }
 

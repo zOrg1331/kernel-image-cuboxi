@@ -380,8 +380,11 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		ctx->pagein_file_out = dfile;
 		break;
 	case CPT_SET_LAZY:
+		if (!arg)
+			break;
 		printk(KERN_ERR "%s: CPT_SET_LAZY ioctl is obsolete.\n", __func__);
 		eprintk_ctx("CPT_SET_LAZY ioctl is obsolete.\n");
+		err = -EOPNOTSUPP;
 		break;
 	case CPT_ITER:
 		err = cpt_iteration(ctx);

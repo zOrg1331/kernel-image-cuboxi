@@ -49,6 +49,7 @@ int br_handle_frame_finish(struct sk_buff *skb)
 	struct net_bridge_fdb_entry *dst;
 	struct net_bridge_mdb_entry *mdst;
 	struct sk_buff *skb2;
+	int err = 0;
 
 	if (!p || p->state == BR_STATE_DISABLED)
 		goto drop;
@@ -94,16 +95,20 @@ int br_handle_frame_finish(struct sk_buff *skb)
 		skb = NULL;
 	}
 
-	if (skb) {
-		if (dst)
-			br_forward(dst->dst, skb, skb2);
-		else
-			br_flood_forward(br, skb, skb2);
-	}
+	if (skb2 == skb)
+		skb2 = skb_clone(skb, GFP_ATOMIC);
 
 	if (skb2)
-		return br_pass_frame_up(br, skb2);
+		err = br_pass_frame_up(br, skb2);
 
+	if (skb) {
+		if (dst)
+			br_forward(dst->dst, skb, NULL);
+		else
+			br_flood_forward(br, skb, NULL);
+	}
+
+	return err;
 out:
 	return 0;
 drop:

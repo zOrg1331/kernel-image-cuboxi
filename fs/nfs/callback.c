@@ -29,6 +29,28 @@
 
 #define NFSDBG_FACILITY NFSDBG_CALLBACK
 
+#ifdef CONFIG_VE
+#include <linux/ve_nfs.h>
+
+#define nfs_callback_info		NFS4_CTX_FIELD(nfs_callback_info)
+#define nfs_callback_mutex 		NFS4_CTX_FIELD(nfs_callback_mutex)
+
+struct ve_nfs4_cb_data ve0_nfs4_cb_data;
+
+int ve_nfs4_cb_init(struct ve_struct *ve)
+{
+	ve->nfs4_cb_data = kzalloc(sizeof(struct ve_nfs4_cb_data), GFP_KERNEL);
+	if (ve->nfs4_cb_data == NULL)
+		return -ENOMEM;
+	mutex_init(&nfs_callback_mutex);
+	return 0;
+}
+
+void ve_nfs4_cb_fini(struct ve_struct *ve)
+{
+	kfree(ve->nfs4_cb_data);
+}
+#else
 struct nfs_callback_data {
 	unsigned int users;
 	struct svc_serv *serv;
@@ -38,11 +60,13 @@ struct nfs_callback_data {
 
 static struct nfs_callback_data nfs_callback_info[NFS4_MAX_MINOR_VERSION + 1];
 static DEFINE_MUTEX(nfs_callback_mutex);
+unsigned short nfs_callback_tcpport;
+unsigned short nfs_callback_tcpport6;
+#endif
+
 static struct svc_program nfs4_callback_program;
 
 unsigned int nfs_callback_set_tcpport;
-unsigned short nfs_callback_tcpport;
-unsigned short nfs_callback_tcpport6;
 #define NFS_CALLBACK_MAXPORTNR (65535U)
 
 static int param_set_portnr(const char *val, struct kernel_param *kp)
@@ -246,7 +270,6 @@ int nfs_callback_up(u32 minorversion, struct rpc_xprt *xprt)
 	struct svc_rqst *rqstp;
 	int (*callback_svc)(void *vrqstp);
 	struct nfs_callback_data *cb_info = &nfs_callback_info[minorversion];
-	char svc_name[12];
 	int ret = 0;
 	int minorversion_setup;
 
@@ -276,10 +299,11 @@ int nfs_callback_up(u32 minorversion, struct rpc_xprt *xprt)
 
 	svc_sock_update_bufs(serv);
 
-	sprintf(svc_name, "nfsv4.%u-svc", minorversion);
 	cb_info->serv = serv;
 	cb_info->rqst = rqstp;
-	cb_info->task = kthread_run(callback_svc, cb_info->rqst, svc_name);
+	cb_info->task = kthread_run_ve(xprt->owner_env, callback_svc, 
+					cb_info->rqst, "nfsv4.%u-svc/%d", 
+					minorversion, xprt->owner_env->veid);
 	if (IS_ERR(cb_info->task)) {
 		ret = PTR_ERR(cb_info->task);
 		svc_exit_thread(cb_info->rqst);

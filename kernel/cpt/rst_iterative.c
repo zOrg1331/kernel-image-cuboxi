@@ -333,7 +333,7 @@ int rst_iteration(cpt_context_t *ctx)
 	ub = ctx->iter_ub;
 	if (ub == NULL) {
 		if (ctx->ve_id == 0) {
-			ub = get_beancounter(mm_ub(&init_mm));
+			ub = get_beancounter_longterm(mm_ub(&init_mm));
 		} else {
 			ub = get_beancounter_byuid(ctx->ve_id, 1);
 			err = -ENOMEM;
@@ -476,7 +476,7 @@ void rst_drop_iter_rbtree(cpt_context_t *ctx)
 
 free_ub:
 	if (ctx->iter_ub) {
-		put_beancounter(ctx->iter_ub);
+		put_beancounter_longterm(ctx->iter_ub);
 		ctx->iter_ub = NULL;
 	}
 }

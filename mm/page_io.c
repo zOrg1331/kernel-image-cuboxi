@@ -11,6 +11,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/mmgang.h>
 #include <linux/kernel_stat.h>
 #include <linux/pagemap.h>
 #include <linux/swap.h>
@@ -109,6 +110,7 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 	if (wbc->sync_mode == WB_SYNC_ALL)
 		rw |= (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_UNPLUG);
 	count_vm_event(PSWPOUT);
+	ub_percpu_inc(get_gang_ub(page_gang(page)), swapout);
 	set_page_writeback(page);
 	unlock_page(page);
 	submit_bio(rw, bio);
@@ -130,6 +132,7 @@ int swap_readpage(struct page *page)
 		goto out;
 	}
 	count_vm_event(PSWPIN);
+	ub_percpu_inc(get_gang_ub(page_gang(page)), swapin);
 	submit_bio(READ, bio);
 out:
 	return ret;

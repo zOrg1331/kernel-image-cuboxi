@@ -171,7 +171,7 @@ static int vzquota_check_space(struct dq_kinfo *dq_info,
 	if (number == 0)
 		return QUOTA_OK;
 
-	if (prealloc == DQUOT_CMD_FORCE)
+	if (prealloc & DQUOT_SPACE_NOFAIL)
 		return QUOTA_OK;
 
 	if (bcurr + number >dqstat->bhardlimit && !ignore_hardlimit(dq_info)) {
@@ -258,7 +258,7 @@ static int vzquota_check_ugid_space(struct vz_quota_master *qmblk,
 	struct dq_kinfo *dqinfo;
 	struct dq_kstat *dqstat;
 
-	if (prealloc == DQUOT_CMD_FORCE)
+	if (prealloc & DQUOT_SPACE_NOFAIL)
 		return QUOTA_OK;
 
 	if (qugid[type] == NULL)
