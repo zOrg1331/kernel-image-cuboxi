@@ -95,7 +95,7 @@ int smt_enabled_at_boot = 1;
 static void (*crash_ipi_function_ptr)(struct pt_regs *) = NULL;
 
 #ifdef CONFIG_PPC64
-void __devinit smp_generic_kick_cpu(int nr)
+int __devinit smp_generic_kick_cpu(int nr)
 {
 	BUG_ON(nr < 0 || nr >= NR_CPUS);
 
@@ -106,6 +106,8 @@ void __devinit smp_generic_kick_cpu(int nr)
 	 */
 	paca[nr].cpu_start = 1;
 	smp_mb();
+
+	return 0;
 }
 #endif
 
@@ -434,7 +436,11 @@ int __cpuinit __cpu_up(unsigned int cpu)
 
 	/* wake up cpus */
 	DBG("smp: kicking cpu %d\n", cpu);
-	smp_ops->kick_cpu(cpu);
+	rc = smp_ops->kick_cpu(cpu);
+	if (rc) {
+		pr_err("smp: failed starting cpu %d (rc %d)\n", cpu, rc);
+		return rc;
+	}
 
 	/*
 	 * wait to see if the cpu made a callin (is actually up).
@@ -507,7 +513,7 @@ int cpu_first_thread_of_core(int core)
 }
 EXPORT_SYMBOL_GPL(cpu_first_thread_of_core);
 
-/* Must be called when no change can occur to cpu_present_map,
+/* Must be called when no change can occur to cpu_present_mask,
  * i.e. during cpu online or offline.
  */
 static struct device_node *cpu_to_l2cache(int cpu)
@@ -608,7 +614,7 @@ void __init smp_cpus_done(unsigned int max_cpus)
 	 * se we pin us down to CPU 0 for a short while
 	 */
 	alloc_cpumask_var(&old_mask, GFP_NOWAIT);
-	cpumask_copy(old_mask, &current->cpus_allowed);
+	cpumask_copy(old_mask, tsk_cpus_allowed(current));
 	set_cpus_allowed_ptr(current, cpumask_of(boot_cpuid));
 	
 	if (smp_ops && smp_ops->setup_cpu)
