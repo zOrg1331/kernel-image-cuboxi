@@ -2060,7 +2060,7 @@ int rdma_set_reuseaddr(struct rdma_cm_id *id, int reuse)
 
 	id_priv = container_of(id, struct rdma_id_private, id);
 	spin_lock_irqsave(&id_priv->lock, flags);
-	if (id_priv->state == CMA_IDLE) {
+	if (id_priv->state == RDMA_CM_IDLE) {
 		id_priv->reuseaddr = reuse;
 		ret = 0;
 	} else {
@@ -2167,7 +2167,7 @@ static int cma_check_port(struct rdma_bind_list *bind_list,
 		if (id_priv == cur_id)
 			continue;
 
-		if ((cur_id->state == CMA_LISTEN) ||
+		if ((cur_id->state == RDMA_CM_LISTEN) ||
 		    !reuseaddr || !cur_id->reuseaddr) {
 			cur_addr = (struct sockaddr *) &cur_id->id.route.addr.src_addr;
 			if (cma_any_addr(cur_addr))
