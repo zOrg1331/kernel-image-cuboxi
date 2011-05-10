@@ -60,6 +60,8 @@ static struct drm_driver driver = {
 	.pci_driver = {
 		.name = DRIVER_NAME,
 		.id_table = pciidlist,
+		.probe = cirrus_pci_probe,
+		.remove = cirrus_pci_remove,
 	},
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
