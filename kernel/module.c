@@ -57,6 +57,7 @@
 #include <linux/kmemleak.h>
 #include <linux/jump_label.h>
 #include <linux/pfn.h>
+#include <linux/bsearch.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/module.h>
@@ -240,23 +241,24 @@ static bool each_symbol_in_section(const struct symsearch *arr,
 				   struct module *owner,
 				   bool (*fn)(const struct symsearch *syms,
 					      struct module *owner,
-					      unsigned int symnum, void *data),
+					      void *data),
 				   void *data)
 {
-	unsigned int i, j;
+	unsigned int j;
 
 	for (j = 0; j < arrsize; j++) {
-		for (i = 0; i < arr[j].stop - arr[j].start; i++)
-			if (fn(&arr[j], owner, i, data))
-				return true;
+		if (fn(&arr[j], owner, data))
+			return true;
 	}
 
 	return false;
 }
 
 /* Returns true as soon as fn returns true, otherwise false. */
-bool each_symbol(bool (*fn)(const struct symsearch *arr, struct module *owner,
-			    unsigned int symnum, void *data), void *data)
+bool each_symbol_section(bool (*fn)(const struct symsearch *arr,
+				    struct module *owner,
+				    void *data),
+			 void *data)
 {
 	struct module *mod;
 	static const struct symsearch arr[] = {
@@ -309,7 +311,7 @@ bool each_symbol(bool (*fn)(const struct symsearch *arr, struct module *owner,
 	}
 	return false;
 }
-EXPORT_SYMBOL_GPL(each_symbol);
+EXPORT_SYMBOL_GPL(each_symbol_section);
 
 struct find_symbol_arg {
 	/* Input */
@@ -323,14 +325,11 @@ struct find_symbol_arg {
 	const struct kernel_symbol *sym;
 };
 
-static bool find_symbol_in_section(const struct symsearch *syms,
-				   struct module *owner,
-				   unsigned int symnum, void *data)
+static bool check_symbol(const struct symsearch *syms,
+				 struct module *owner,
+				 unsigned int symnum, void *data)
 {
 	struct find_symbol_arg *fsa = data;
-
-	if (strcmp(syms->start[symnum].name, fsa->name) != 0)
-		return false;
 
 	if (!fsa->gplok) {
 		if (syms->licence == GPL_ONLY)
@@ -365,6 +364,30 @@ static bool find_symbol_in_section(const struct symsearch *syms,
 	return true;
 }
 
+static int cmp_name(const void *va, const void *vb)
+{
+	const char *a;
+	const struct kernel_symbol *b;
+	a = va; b = vb;
+	return strcmp(a, b->name);
+}
+
+static bool find_symbol_in_section(const struct symsearch *syms,
+				   struct module *owner,
+				   void *data)
+{
+	struct find_symbol_arg *fsa = data;
+	struct kernel_symbol *sym;
+
+	sym = bsearch(fsa->name, syms->start, syms->stop - syms->start,
+			sizeof(struct kernel_symbol), cmp_name);
+
+	if (sym != NULL && check_symbol(syms, owner, sym - syms->start, data))
+		return true;
+
+	return false;
+}
+
 /* Find a symbol and return it, along with, (optional) crc and
  * (optional) module which owns it.  Needs preempt disabled or module_mutex. */
 const struct kernel_symbol *find_symbol(const char *name,
@@ -379,7 +402,7 @@ const struct kernel_symbol *find_symbol(const char *name,
 	fsa.gplok = gplok;
 	fsa.warn = warn;
 
-	if (each_symbol(find_symbol_in_section, &fsa)) {
+	if (each_symbol_section(find_symbol_in_section, &fsa)) {
 		if (owner)
 			*owner = fsa.owner;
 		if (crc)
@@ -1607,27 +1630,28 @@ static void set_section_ro_nx(void *base,
 	}
 }
 
-/* Setting memory back to RW+NX before releasing it */
+/* Setting memory back to W+X before releasing it */
 void unset_section_ro_nx(struct module *mod, void *module_region)
 {
-	unsigned long total_pages;
-
-	if (mod->module_core == module_region) {
-		/* Set core as NX+RW */
-		total_pages = MOD_NUMBER_OF_PAGES(mod->module_core, mod->core_size);
-		set_memory_nx((unsigned long)mod->module_core, total_pages);
-		set_memory_rw((unsigned long)mod->module_core, total_pages);
-
-	} else if (mod->module_init == module_region) {
-		/* Set init as NX+RW */
-		total_pages = MOD_NUMBER_OF_PAGES(mod->module_init, mod->init_size);
-		set_memory_nx((unsigned long)mod->module_init, total_pages);
-		set_memory_rw((unsigned long)mod->module_init, total_pages);
+	if (mod->module_core && mod->module_core == module_region) {
+		set_page_attributes(mod->module_core + mod->core_text_size,
+			mod->module_core + mod->core_size,
+			set_memory_x);
+		set_page_attributes(mod->module_core,
+			mod->module_core + mod->core_ro_size,
+			set_memory_rw);
+	} else if (mod->module_init && mod->module_init == module_region) {
+		set_page_attributes(mod->module_init + mod->init_text_size,
+			mod->module_init + mod->init_size,
+			set_memory_x);
+		set_page_attributes(mod->module_init,
+			mod->module_init + mod->init_ro_size,
+			set_memory_rw);
 	}
 }
 
 /* Iterate through all modules and set each module's text as RW */
-void set_all_modules_text_rw()
+void set_all_modules_text_rw(void)
 {
 	struct module *mod;
 
@@ -1648,7 +1672,7 @@ void set_all_modules_text_rw()
 }
 
 /* Iterate through all modules and set each module's text as RO */
-void set_all_modules_text_ro()
+void set_all_modules_text_ro(void)
 {
 	struct module *mod;
 
