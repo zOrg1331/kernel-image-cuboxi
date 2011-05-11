@@ -62,7 +62,6 @@ struct ath_node;
 #define	ATH_TXQ_SETUP(sc, i)        ((sc)->tx.txqsetup & (1<<i))
 
 struct ath_config {
-	u32 ath_aggr_prot;
 	u16 txpowlimit;
 	u8 cabqReadytime;
 };
@@ -565,6 +564,7 @@ struct ath_ant_comb {
 #define PS_WAIT_FOR_PSPOLL_DATA   BIT(2)
 #define PS_WAIT_FOR_TX_ACK        BIT(3)
 #define PS_BEACON_SYNC            BIT(4)
+#define PS_TSFOOR_SYNC            BIT(5)
 
 struct ath_rate_table;
 

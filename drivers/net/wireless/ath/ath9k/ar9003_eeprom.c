@@ -3442,17 +3442,15 @@ static void ar9003_hw_xpa_bias_level_apply(struct ath_hw *ah, bool is2ghz)
 {
 	int bias = ar9003_hw_xpa_bias_level_get(ah, is2ghz);
 
-	if (AR_SREV_9485(ah))
+	if (AR_SREV_9485(ah) || AR_SREV_9340(ah))
 		REG_RMW_FIELD(ah, AR_CH0_TOP2, AR_CH0_TOP2_XPABIASLVL, bias);
 	else {
 		REG_RMW_FIELD(ah, AR_CH0_TOP, AR_CH0_TOP_XPABIASLVL, bias);
-		if (!AR_SREV_9340(ah)) {
-			REG_RMW_FIELD(ah, AR_CH0_THERM,
-				      AR_CH0_THERM_XPABIASLVL_MSB,
-				      bias >> 2);
-			REG_RMW_FIELD(ah, AR_CH0_THERM,
-				      AR_CH0_THERM_XPASHORT2GND, 1);
-		}
+		REG_RMW_FIELD(ah, AR_CH0_THERM,
+				AR_CH0_THERM_XPABIASLVL_MSB,
+				bias >> 2);
+		REG_RMW_FIELD(ah, AR_CH0_THERM,
+				AR_CH0_THERM_XPASHORT2GND, 1);
 	}
 }
 
@@ -4003,6 +4001,16 @@ static int ar9003_hw_tx_power_regwrite(struct ath_hw *ah, u8 * pPwrArray)
 		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_11L], 16) |
 		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_5S], 8) |
 		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_1L_5L], 0)
+	    );
+
+        /* Write the power for duplicated frames - HT40 */
+
+        /* dup40_cck (LSB), dup40_ofdm, ext20_cck, ext20_ofdm (MSB) */
+	REG_WRITE(ah, 0xa3e0,
+		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_6_24], 24) |
+		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_1L_5L], 16) |
+		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_6_24],  8) |
+		  POW_SM(pPwrArray[ALL_TARGET_LEGACY_1L_5L],  0)
 	    );
 
 	/* Write the HT20 power per rate set */
