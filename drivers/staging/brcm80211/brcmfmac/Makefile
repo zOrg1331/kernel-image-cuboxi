@@ -36,8 +36,7 @@ ccflags-$(CONFIG_BRCMDBG)	+= -DDHD_DEBUG
 
 ccflags-y += \
 	-Idrivers/staging/brcm80211/brcmfmac	\
-	-Idrivers/staging/brcm80211/include		\
-	-Idrivers/staging/brcm80211/util
+	-Idrivers/staging/brcm80211/include
 
 DHDOFILES = \
 	wl_cfg80211.o \
@@ -52,12 +51,8 @@ DHDOFILES = \
 	bcmsdh_linux.o	\
 	bcmsdh_sdmmc.o \
 	bcmsdh_sdmmc_linux.o \
-	aiutils.o \
-	siutils.o \
-	sbutils.o \
 	bcmutils.o \
-	bcmwifi.o \
-	hndpmu.o
+	bcmwifi.o
 
 obj-m += brcmfmac.o
 brcmfmac-objs += $(DHDOFILES)
