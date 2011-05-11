@@ -163,7 +163,7 @@ static struct clk udpck = {
 	.parent		= &pllb,
 	.mode		= pmc_sys_mode,
 };
-static struct clk utmi_clk = {
+struct clk utmi_clk = {
 	.name		= "utmi_clk",
 	.parent		= &main_clk,
 	.pmc_mask	= AT91_PMC_UPLLEN,	/* in CKGR_UCKR */
@@ -182,7 +182,7 @@ static struct clk uhpck = {
  * memory, interfaces to on-chip peripherals, the AIC, and sometimes more
  * (e.g baud rate generation).  It's sourced from one of the primary clocks.
  */
-static struct clk mck = {
+struct clk mck = {
 	.name		= "mck",
 	.pmc_mask	= AT91_PMC_MCKRDY,	/* in PMC_SR */
 };
@@ -214,43 +214,6 @@ static struct clk __init *at91_css_to_clk(unsigned long css)
 
 	return NULL;
 }
-
-/*
- * Associate a particular clock with a function (eg, "uart") and device.
- * The drivers can then request the same 'function' with several different
- * devices and not care about which clock name to use.
- */
-void __init at91_clock_associate(const char *id, struct device *dev, const char *func)
-{
-	struct clk *clk = clk_get(NULL, id);
-
-	if (!dev || !clk || !IS_ERR(clk_get(dev, func)))
-		return;
-
-	clk->function = func;
-	clk->dev = dev;
-}
-
-/* clocks cannot be de-registered no refcounting necessary */
-struct clk *clk_get(struct device *dev, const char *id)
-{
-	struct clk *clk;
-
-	list_for_each_entry(clk, &clocks, node) {
-		if (strcmp(id, clk->name) == 0)
-			return clk;
-		if (clk->function && (dev == clk->dev) && strcmp(id, clk->function) == 0)
-			return clk;
-	}
-
-	return ERR_PTR(-ENOENT);
-}
-EXPORT_SYMBOL(clk_get);
-
-void clk_put(struct clk *clk)
-{
-}
-EXPORT_SYMBOL(clk_put);
 
 static void __clk_enable(struct clk *clk)
 {
@@ -662,6 +625,17 @@ static void __init at91_upll_usbfs_clock_init(unsigned long main_clock)
 	uhpck.rate_hz /= 1 + ((at91_sys_read(AT91_PMC_USB) & AT91_PMC_OHCIUSBDIV) >> 8);
 }
 
+static struct clk_lookup lookups[] = {
+	CLKDEV_CON_ID("clk32k", &clk32k),
+	CLKDEV_CON_ID("main", &main_clk),
+	CLKDEV_CON_ID("plla", &plla),
+	CLKDEV_CON_ID("mck", &mck),
+	CLKDEV_CON_ID("pllb", &pllb),
+	CLKDEV_CON_ID("udpck", &udpck),
+	CLKDEV_CON_ID("utmi_clk", &utmi_clk),
+	CLKDEV_CON_ID("uhpck", &uhpck),
+};
+
 int __init at91_clock_init(unsigned long main_clock)
 {
 	unsigned tmp, freq, mckr;
@@ -770,6 +744,8 @@ int __init at91_clock_init(unsigned long main_clock)
 
 	/* MCK and CPU clock are "always on" */
 	clk_enable(&mck);
+
+	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
 
 	printk("Clocks: CPU %u MHz, master %u MHz, main %u.%03u MHz\n",
 		freq / 1000000, (unsigned) mck.rate_hz / 1000000,
