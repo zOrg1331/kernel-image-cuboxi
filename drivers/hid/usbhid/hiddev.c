@@ -367,8 +367,10 @@ static ssize_t hiddev_read(struct file * file, char __user * buffer, size_t coun
 				/* let O_NONBLOCK tasks run */
 				mutex_unlock(&list->thread_lock);
 				schedule();
-				if (mutex_lock_interruptible(&list->thread_lock))
+				if (mutex_lock_interruptible(&list->thread_lock)) {
+					finish_wait(&list->hiddev->wait, &wait);
 					return -EINTR;
+				}
 				set_current_state(TASK_INTERRUPTIBLE);
 			}
 			finish_wait(&list->hiddev->wait, &wait);
@@ -509,7 +511,7 @@ static noinline int hiddev_ioctl_usage(struct hiddev *hiddev, unsigned int cmd, 
 				 (uref_multi->num_values > HID_MAX_MULTI_USAGES ||
 				  uref->usage_index + uref_multi->num_values > field->report_count))
 				goto inval;
-			}
+		}
 
 		switch (cmd) {
 		case HIDIOCGUSAGE:
