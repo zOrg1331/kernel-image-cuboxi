@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2010 QLogic Corporation
+ * Copyright (c)  2003-2011 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -1261,11 +1261,12 @@ qla2x00_get_port_database(scsi_qla_host_t *vha, fc_port_t *fcport, uint8_t opt)
 		/* Check for logged in state. */
 		if (pd24->current_login_state != PDS_PRLI_COMPLETE &&
 		    pd24->last_login_state != PDS_PRLI_COMPLETE) {
-			DEBUG2(printk("%s(%ld): Unable to verify "
-			    "login-state (%x/%x) for loop_id %x\n",
-			    __func__, vha->host_no,
-			    pd24->current_login_state,
-			    pd24->last_login_state, fcport->loop_id));
+			DEBUG2(qla_printk(KERN_WARNING, ha,
+			   "scsi(%ld): Unable to verify login-state (%x/%x) "
+			   " - portid=%02x%02x%02x.\n", vha->host_no,
+			   pd24->current_login_state, pd24->last_login_state,
+			   fcport->d_id.b.domain, fcport->d_id.b.area,
+			   fcport->d_id.b.al_pa));
 			rval = QLA_FUNCTION_FAILED;
 			goto gpd_error_out;
 		}
@@ -1289,6 +1290,12 @@ qla2x00_get_port_database(scsi_qla_host_t *vha, fc_port_t *fcport, uint8_t opt)
 		/* Check for logged in state. */
 		if (pd->master_state != PD_STATE_PORT_LOGGED_IN &&
 		    pd->slave_state != PD_STATE_PORT_LOGGED_IN) {
+			DEBUG2(qla_printk(KERN_WARNING, ha,
+			   "scsi(%ld): Unable to verify login-state (%x/%x) "
+			   " - portid=%02x%02x%02x.\n", vha->host_no,
+			   pd->master_state, pd->slave_state,
+			   fcport->d_id.b.domain, fcport->d_id.b.area,
+			   fcport->d_id.b.al_pa));
 			rval = QLA_FUNCTION_FAILED;
 			goto gpd_error_out;
 		}
@@ -1883,7 +1890,8 @@ qla24xx_fabric_logout(scsi_qla_host_t *vha, uint16_t loop_id, uint8_t domain,
 	lg->handle = MAKE_HANDLE(req->id, lg->handle);
 	lg->nport_handle = cpu_to_le16(loop_id);
 	lg->control_flags =
-	    __constant_cpu_to_le16(LCF_COMMAND_LOGO|LCF_IMPL_LOGO);
+	    __constant_cpu_to_le16(LCF_COMMAND_LOGO|LCF_IMPL_LOGO|
+		LCF_FREE_NPORT);
 	lg->port_id[0] = al_pa;
 	lg->port_id[1] = area;
 	lg->port_id[2] = domain;
@@ -2362,7 +2370,7 @@ qla24xx_abort_command(srb_t *sp)
 	abt->entry_count = 1;
 	abt->handle = MAKE_HANDLE(req->id, abt->handle);
 	abt->nport_handle = cpu_to_le16(fcport->loop_id);
-	abt->handle_to_abort = handle;
+	abt->handle_to_abort = MAKE_HANDLE(req->id, handle);
 	abt->port_id[0] = fcport->d_id.b.al_pa;
 	abt->port_id[1] = fcport->d_id.b.area;
 	abt->port_id[2] = fcport->d_id.b.domain;
