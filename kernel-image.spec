@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt17
+Release: alt18
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu May 12 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt18
+- Apply 042test012.1 patches
+
 * Tue May 10 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt17
 - Apply 042test011.1 patches
 
