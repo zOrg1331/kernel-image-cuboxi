@@ -4,6 +4,7 @@
 #include <linux/path.h>
 #include <linux/slab.h>
 #include <linux/fs_struct.h>
+#include <linux/pid_namespace.h>
 
 /*
  * Replace the fs->{rootmnt,root} with {mnt,dentry}. Put the old values.
@@ -156,15 +157,16 @@ void daemonize_fs_struct(void)
 
 	if (fs) {
 		int kill;
+		struct fs_struct *ve_fs = get_exec_env_init()->fs;
 
 		task_lock(current);
 
-		spin_lock(&init_fs.lock);
-		init_fs.users++;
-		spin_unlock(&init_fs.lock);
+		spin_lock(&ve_fs->lock);
+		ve_fs->users++;
+		spin_unlock(&ve_fs->lock);
 
 		spin_lock(&fs->lock);
-		current->fs = &init_fs;
+		current->fs = ve_fs;
 		kill = !--fs->users;
 		spin_unlock(&fs->lock);
 
@@ -173,3 +175,4 @@ void daemonize_fs_struct(void)
 			free_fs_struct(fs);
 	}
 }
+EXPORT_SYMBOL_GPL(daemonize_fs_struct);

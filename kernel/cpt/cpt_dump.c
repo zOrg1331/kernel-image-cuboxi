@@ -902,7 +902,7 @@ int cpt_dump(struct cpt_context *ctx)
 	if (!err)
 		err = cpt_dump_orphaned_sockets(ctx);
 #if defined(CONFIG_VE_IPTABLES) && \
-    (defined(CONFIG_IP_NF_CONNTRACK) || defined(CONFIG_IP_NF_CONNTRACK_MODULE))
+    (defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE))
 	if (!err)
 		err = cpt_dump_ip_conntrack(ctx);
 #endif

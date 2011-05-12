@@ -138,7 +138,8 @@ static struct bc_proc_entry bc_precharge_entry = {
 
 static void bc_count_slab_show_one(const char *name, int count, void *v)
 {
-	seq_printf((struct seq_file *)v, "%s: %u\n", name, count);
+	if (count != 0)
+		seq_printf((struct seq_file *)v, "%s: %u\n", name, count);
 }
 
 static int bc_count_slab_show(struct seq_file *f, void *v)

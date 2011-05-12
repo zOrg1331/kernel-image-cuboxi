@@ -33,6 +33,7 @@
 #include "cpt_obj.h"
 #include "cpt_context.h"
 #include "cpt_kernel.h"
+#include "cpt_mm.h"
 
 struct _warg {
 		struct file		*file;
@@ -74,59 +75,88 @@ static int fixup_shm(struct file *file, struct cpt_sysvshm_image *v)
 	return sysvipc_walk_shm(fixup_one_shm, &warg);
 }
 
+static int restore_shm_chunk(struct file *file, loff_t pos,
+		struct cpt_page_block * pgb, cpt_context_t *ctx)
+{
+	int err;
+	loff_t opos;
+	loff_t ipos;
+	int count;
+
+	ipos = pos + pgb->cpt_hdrlen;
+	opos = pgb->cpt_start;
+	count = pgb->cpt_end-pgb->cpt_start;
+	while (count > 0) {
+		mm_segment_t oldfs;
+		int copy = count;
+
+		if (copy > PAGE_SIZE)
+			copy = PAGE_SIZE;
+		(void)cpt_get_buf(ctx);
+		oldfs = get_fs(); set_fs(KERNEL_DS);
+		err = ctx->pread(ctx->tmpbuf, copy, ctx, ipos);
+		set_fs(oldfs);
+		if (err) {
+			__cpt_release_buf(ctx);
+			return err;
+		}
+		oldfs = get_fs(); set_fs(KERNEL_DS);
+		ipos += copy;
+		err = file->f_dentry->d_inode->i_fop->write(file, ctx->tmpbuf,
+								copy, &opos);
+		set_fs(oldfs);
+		__cpt_release_buf(ctx);
+		if (err != copy) {
+			eprintk_ctx("write() failure\n");
+			if (err >= 0)
+				err = -EIO;
+			return err;
+		}
+		count -= copy;
+	}
+	return 0;
+}
+
 static int fixup_shm_data(struct file *file, loff_t pos, loff_t end,
 			  struct cpt_context *ctx)
 {
 	struct cpt_page_block pgb;
-	ssize_t (*do_write)(struct file *, const char __user *, size_t, loff_t *ppos);
 
-	do_write = file->f_dentry->d_inode->i_fop->write;
-	if (do_write == NULL) {
+	if (file->f_dentry->d_inode->i_fop->write == NULL) {
 		eprintk_ctx("No TMPFS? Cannot restore content of SYSV SHM\n");
 		return -EINVAL;
 	}
 
 	while (pos < end) {
-		loff_t opos;
-		loff_t ipos;
-		int count;
 		int err;
 
-		err = rst_get_object(CPT_OBJ_PAGES, pos, &pgb, ctx);
+		err = rst_get_object(-1, pos, &pgb, ctx);
 		if (err)
 			return err;
 		dprintk_ctx("restoring SHM block: %08x-%08x\n",
 		       (__u32)pgb.cpt_start, (__u32)pgb.cpt_end);
-		ipos = pos + pgb.cpt_hdrlen;
-		opos = pgb.cpt_start;
-		count = pgb.cpt_end-pgb.cpt_start;
-		while (count > 0) {
-			mm_segment_t oldfs;
-			int copy = count;
 
-			if (copy > PAGE_SIZE)
-				copy = PAGE_SIZE;
-			(void)cpt_get_buf(ctx);
-			oldfs = get_fs(); set_fs(KERNEL_DS);
-			err = ctx->pread(ctx->tmpbuf, copy, ctx, ipos);
-			set_fs(oldfs);
-			if (err) {
-				__cpt_release_buf(ctx);
-				return err;
-			}
-			oldfs = get_fs(); set_fs(KERNEL_DS);
-			ipos += copy;
-			err = do_write(file, ctx->tmpbuf, copy, &opos);
-			set_fs(oldfs);
-			__cpt_release_buf(ctx);
-			if (err != copy) {
-				eprintk_ctx("write() failure\n");
-				if (err >= 0)
-					err = -EIO;
-				return err;
-			}
-			count -= copy;
+		switch (pgb.cpt_object) {
+			case CPT_OBJ_PAGES:
+				err = restore_shm_chunk(file, pos, &pgb, ctx);
+				if (err)
+					return err;
+				break;
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+			case CPT_OBJ_ITERPAGES:
+			case CPT_OBJ_ITERYOUNGPAGES:
+				err = rst_iter_chunk(file, pos, &pgb, ctx);
+				if (err)
+					return err;
+				break;
+#endif
+			default:
+				eprintk_ctx("unsupported page type: %d.\n", 
+							pgb.cpt_object);
+				return -EINVAL;
 		}
+
+
 		pos += pgb.cpt_next;
 	}
 	return 0;

@@ -51,7 +51,7 @@ struct delay_sb_info {
 	int state;
 	wait_queue_head_t blocked_tasks;
 
-	char *type;
+	struct file_system_type *hidden_type;
 	void *data;
 	struct vfsmount *real;
 	spinlock_t file_lock;
@@ -804,7 +804,7 @@ static void delay_kill_sb(struct super_block *s)
 	}
 
 	mntput(si->real);
-	kfree(si->type);
+	put_filesystem(si->hidden_type);
 	free_page((unsigned long )si->data);
 	kfree(si);
 	kill_anon_super(s);
@@ -859,7 +859,7 @@ static void delayfs_nfs_restore_mount_params(struct delay_sb_info *si)
 
 static void delayfs_prepare_for_remount_loop(struct delay_sb_info *si)
 {
-	if (!strcmp(si->type, "nfs")) {
+	if (!strcmp(si->hidden_type->name, "nfs")) {
 		struct nfs_mount_data *mount_data = si->data;
 
 		/*
@@ -918,8 +918,8 @@ struct vfsmount *rst_mount_delayfs(char *type, int flags,
 	copy_page(si->data, data);
 
 	err = -ENOMEM;
-	si->type = kstrdup(type, GFP_KERNEL);
-	if (!si->type)
+	si->hidden_type = get_fs_type(type);
+	if (!si->hidden_type)
 		goto out_put;
 
 	delayfs_prepare_for_remount_loop(si);
@@ -1087,7 +1087,7 @@ static int rst_remount_delayfs(struct vfsmount *mnt)
 	if (si->real)
 		return -EBUSY;
 
-	real_mnt = rst_kern_mount(si->type, mnt->mnt_sb->s_flags | MS_CPTMOUNT,
+	real_mnt = vfs_kern_mount(si->hidden_type, mnt->mnt_sb->s_flags | MS_CPTMOUNT,
 			mnt->mnt_devname, si->data);
 
 	if (IS_ERR(real_mnt))

@@ -859,6 +859,10 @@ static void __ve_move_task(struct task_struct *tsk, struct ve_struct *new,
 	tsk->ve_task_info.owner_env = new;
 	tsk->ve_task_info.exec_env = new;
 
+	/* set ve fs_struct for kernel threads */
+	if (current->flags & PF_KTHREAD)
+		daemonize_fs_struct();
+
 	write_lock_irq(&tasklist_lock);
 	list_del_rcu(&tsk->ve_task_info.vetask_list);
 	write_unlock_irq(&tasklist_lock);

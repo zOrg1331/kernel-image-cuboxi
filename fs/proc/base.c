@@ -642,7 +642,12 @@ static int proc_fd_access_allowed(struct inode *inode)
 	err = -ENOENT;
 	task = get_proc_task(inode);
 	if (task) {
-		if (ptrace_may_access(task, PTRACE_MODE_READ))
+		if (task->flags & PF_KTHREAD)
+			/*
+			 * Always allow access to kernel threads /proc entries.
+			 */
+			err = 0;
+		else if (ptrace_may_access(task, PTRACE_MODE_READ))
 			err = 0;
 		else
 			/*

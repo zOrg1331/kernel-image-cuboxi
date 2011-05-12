@@ -54,12 +54,16 @@ extern struct ve_struct ve0;
 		current->ve_task_info.exec_env = ve;	\
 		__old;				\
 	})
+#define get_env_init(ve)	(ve->ve_ns->pid_ns->child_reaper)
+#define get_exec_env_init()	get_env_init(get_exec_env())
 #else
 #define get_ve0()		(NULL)
 #define get_exec_env()		(NULL)
 #define set_exec_env(new_env)	(NULL)
 #define ve_save_context(t)	do { } while (0)
 #define ve_restore_context(t)	do { } while (0)
+#define get_env_init(ve)	(&init_task)
+#define get_exec_env_init()	(&init_task)
 #endif
 
 #endif /* __VE_TASK_H__ */

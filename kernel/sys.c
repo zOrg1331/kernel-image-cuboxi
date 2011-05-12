@@ -481,8 +481,7 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 
 		case LINUX_REBOOT_CMD_HALT:
 		case LINUX_REBOOT_CMD_POWER_OFF:
-			force_sig(SIGKILL,
-				get_exec_env()->ve_ns->pid_ns->child_reaper);
+			force_sig(SIGKILL, get_exec_env_init());
 
 		case LINUX_REBOOT_CMD_CAD_ON:
 		case LINUX_REBOOT_CMD_CAD_OFF:

@@ -1007,11 +1007,11 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 
 			e.tv64 = rb->nanosleep.expires;
 			e = ktime_sub(e, timespec_to_ktime(ctx->cpt_monotonic_time));
-			v->cpt_restart.arg0 = (unsigned int)rb->nanosleep.index;
+			v->cpt_restart.arg0 = (__u64)rb->nanosleep.index;
 			v->cpt_restart.arg1 = (unsigned long)rb->nanosleep.rmtp;
 			v->cpt_restart.arg2 = 0;
 			v->cpt_restart.arg3 = ktime_to_ns(e);
-			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
+			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (__u64)v->cpt_restart.arg0);
 			goto continue_dump;
 		}
 #if defined(CONFIG_X86_64) && defined(CONFIG_COMPAT)
@@ -1020,11 +1020,11 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 
 			e.tv64 = rb->nanosleep.expires;
 			e = ktime_sub(e, timespec_to_ktime(ctx->cpt_monotonic_time));
-			v->cpt_restart.arg0 = (unsigned int)rb->nanosleep.index;
-			v->cpt_restart.arg1 = (unsigned long)rb->nanosleep.rmtp;
-			v->cpt_restart.arg2 = (unsigned long)rb->nanosleep.compat_rmtp;
+			v->cpt_restart.arg0 = (__u64)rb->nanosleep.index;
+			v->cpt_restart.arg1 = (__u64)rb->nanosleep.rmtp;
+			v->cpt_restart.arg2 = (__u64)rb->nanosleep.compat_rmtp;
 			v->cpt_restart.arg3 = ktime_to_ns(e);
-			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
+			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (__u64)v->cpt_restart.arg0);
 			goto continue_dump;
 		}
 #endif
@@ -1036,10 +1036,10 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 
 			v->cpt_restart.fn = CPT_RBL_POLL;
 			v->cpt_restart.arg0 = (unsigned long)rb->poll.ufds;
-			v->cpt_restart.arg1 = (unsigned long)rb->poll.has_timeout << 32 | rb->poll.nfds;
+			v->cpt_restart.arg1 = (__u64)rb->poll.has_timeout << 32 | rb->poll.nfds;
 			v->cpt_restart.arg2 = timespec_to_ns(&ts);
 			v->cpt_restart.arg3 = 0;
-			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
+			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (__u64)v->cpt_restart.arg0);
 			goto continue_dump;
 		}
 		if (rb->fn == futex_wait_restart) {
@@ -1156,7 +1156,6 @@ continue_dump:
 
 	v->cpt_ptrace_message = tsk->ptrace_message;
 	v->cpt_stopped_state = tsk->stopped_state;
-	v->cpt_sigsuspend_state = 0;
 
 #ifdef CONFIG_X86_32
 	if (tsk->thread.vm86_info) {

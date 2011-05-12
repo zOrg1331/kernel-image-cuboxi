@@ -499,16 +499,67 @@ static int fixup_flocks(struct file *file,
 	return 0;
 }
 
+static int restore_reg_chunk(struct file *file, loff_t pos,
+		struct cpt_page_block * pgb, cpt_context_t *ctx)
+{
+	int err;
+	loff_t opos;
+	loff_t ipos;
+	int count;
+
+	ipos = pos + pgb->cpt_hdrlen;
+	opos = pgb->cpt_start;
+	count = pgb->cpt_end-pgb->cpt_start;
+	while (count > 0) {
+		mm_segment_t oldfs;
+		int copy = count;
+
+		if (copy > PAGE_SIZE)
+			copy = PAGE_SIZE;
+		(void)cpt_get_buf(ctx);
+		oldfs = get_fs(); set_fs(KERNEL_DS);
+		err = ctx->pread(ctx->tmpbuf, copy, ctx, ipos);
+		set_fs(oldfs);
+		if (err) {
+			__cpt_release_buf(ctx);
+			goto out;
+		}
+		if (!(file->f_mode & FMODE_WRITE) ||
+		    (file->f_flags&O_DIRECT)) {
+			fput(file);
+			file = dentry_open(dget(file->f_dentry),
+					   mntget(file->f_vfsmnt),
+					   O_WRONLY | O_LARGEFILE,
+					   current_cred());
+			if (IS_ERR(file)) {
+				__cpt_release_buf(ctx);
+				return PTR_ERR(file);
+			}
+		}
+		oldfs = get_fs(); set_fs(KERNEL_DS);
+		ipos += copy;
+		err = file->f_op->write(file, ctx->tmpbuf, copy, &opos);
+		set_fs(oldfs);
+		__cpt_release_buf(ctx);
+		if (err != copy) {
+			if (err >= 0)
+				err = -EIO;
+			goto out;
+		}
+		count -= copy;
+	}
+	err = 0;
+out:
+	return err;
+}
 
 static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 			  struct cpt_context *ctx)
 {
 	int err;
 	struct cpt_page_block pgb;
-	ssize_t (*do_write)(struct file *, const char __user *, size_t, loff_t *ppos);
 
-	do_write = file->f_op->write;
-	if (do_write == NULL) {
+	if (file->f_op->write == NULL) {
 		eprintk_ctx("no write method. Cannot restore contents of the file.\n");
 		return -EINVAL;
 	}
@@ -516,55 +567,34 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 	atomic_long_inc(&file->f_count);
 
 	while (pos < end) {
-		loff_t opos;
-		loff_t ipos;
-		int count;
-
-		err = rst_get_object(CPT_OBJ_PAGES, pos, &pgb, ctx);
+		err = rst_get_object(-1, pos, &pgb, ctx);
 		if (err)
 			goto out;
 		dprintk_ctx("restoring file data block: %08x-%08x\n",
 		       (__u32)pgb.cpt_start, (__u32)pgb.cpt_end);
-		ipos = pos + pgb.cpt_hdrlen;
-		opos = pgb.cpt_start;
-		count = pgb.cpt_end-pgb.cpt_start;
-		while (count > 0) {
-			mm_segment_t oldfs;
-			int copy = count;
 
-			if (copy > PAGE_SIZE)
-				copy = PAGE_SIZE;
-			(void)cpt_get_buf(ctx);
-			oldfs = get_fs(); set_fs(KERNEL_DS);
-			err = ctx->pread(ctx->tmpbuf, copy, ctx, ipos);
-			set_fs(oldfs);
-			if (err) {
-				__cpt_release_buf(ctx);
-				goto out;
-			}
-			if (!(file->f_mode & FMODE_WRITE) ||
-			    (file->f_flags&O_DIRECT)) {
-				fput(file);
-				file = dentry_open(dget(file->f_dentry),
-						   mntget(file->f_vfsmnt),
-						   O_WRONLY | O_LARGEFILE,
-						   current_cred());
-				if (IS_ERR(file)) {
-					__cpt_release_buf(ctx);
-					return PTR_ERR(file);
-				}
-			}
-			oldfs = get_fs(); set_fs(KERNEL_DS);
-			ipos += copy;
-			err = do_write(file, ctx->tmpbuf, copy, &opos);
-			set_fs(oldfs);
-			__cpt_release_buf(ctx);
-			if (err != copy) {
-				if (err >= 0)
-					err = -EIO;
-				goto out;
-			}
-			count -= copy;
+		switch (pgb.cpt_object) {
+			case CPT_OBJ_PAGES:
+				err = restore_reg_chunk(file, pos, &pgb, ctx); 
+				if (err)
+					goto out;
+				break;
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+			case CPT_OBJ_ITERPAGES:
+			case CPT_OBJ_ITERYOUNGPAGES:
+				err = -EINVAL;
+				if (file->f_vfsmnt != get_exec_env()->shmem_mnt)
+					goto out;
+				err = rst_iter_chunk(file, pos, &pgb, ctx);
+				if (err)
+					goto out;
+				break;
+#endif
+			default:
+				eprintk_ctx("unsupported page type: %d.\n", 
+						pgb.cpt_object);
+				err = -EINVAL;
+				break;
 		}
 		pos += pgb.cpt_next;
 	}
@@ -599,7 +629,11 @@ static int fixup_file_content(struct file **file_p, struct cpt_file_image *fi,
 		err = ctx->pread(&hdr, sizeof(struct cpt_object_hdr), ctx, fi->cpt_inode+ii->cpt_hdrlen);
 		if (err)
 			return err;
-		if (hdr.cpt_object == CPT_OBJ_PAGES) {
+		if ((hdr.cpt_object == CPT_OBJ_PAGES)
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+			|| (hdr.cpt_object == CPT_OBJ_ITERPAGES)
+#endif
+		) {
 			err = fixup_reg_data(file, fi->cpt_inode+ii->cpt_hdrlen,
 					fi->cpt_inode+ii->cpt_next, ctx);
 			if (err)
