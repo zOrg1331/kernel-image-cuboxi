@@ -743,7 +743,9 @@ static void sta_apply_parameters(struct ieee80211_local *local,
 			case PLINK_LISTEN:
 			case PLINK_ESTAB:
 			case PLINK_BLOCKED:
+#ifdef CONFIG_MAC80211_MESH
 				sta->plink_state = params->plink_state;
+#endif
 				break;
 			default:
 				/*  nothing  */
