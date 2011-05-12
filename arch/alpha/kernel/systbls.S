@@ -515,6 +515,7 @@ sys_call_table:
 	.quad sys_fanotify_init
 	.quad sys_fanotify_mark				/* 495 */
 	.quad sys_prlimit64
+	.quad sys_setns
 
 	.size sys_call_table, . - sys_call_table
 	.type sys_call_table, @object
