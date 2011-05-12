@@ -954,7 +954,7 @@ static int l2tp_build_l2tpv3_header(struct l2tp_session *session, void *buf)
 }
 
 static int l2tp_xmit_core(struct l2tp_session *session, struct sk_buff *skb,
-			  size_t data_len)
+			  struct flowi *fl, size_t data_len)
 {
 	struct l2tp_tunnel *tunnel = session->tunnel;
 	unsigned int len = skb->len;
@@ -987,7 +987,7 @@ static int l2tp_xmit_core(struct l2tp_session *session, struct sk_buff *skb,
 
 	/* Queue the packet to IP for output */
 	skb->local_df = 1;
-	error = ip_queue_xmit(skb);
+	error = ip_queue_xmit(skb, fl);
 
 	/* Update stats */
 	if (error >= 0) {
@@ -1028,6 +1028,7 @@ int l2tp_xmit_skb(struct l2tp_session *session, struct sk_buff *skb, int hdr_len
 	int data_len = skb->len;
 	struct l2tp_tunnel *tunnel = session->tunnel;
 	struct sock *sk = tunnel->sock;
+	struct flowi *fl;
 	struct udphdr *uh;
 	struct inet_sock *inet;
 	__wsum csum;
@@ -1060,14 +1061,21 @@ int l2tp_xmit_skb(struct l2tp_session *session, struct sk_buff *skb, int hdr_len
 			      IPSKB_REROUTED);
 	nf_reset(skb);
 
+	bh_lock_sock(sk);
+	if (sock_owned_by_user(sk)) {
+		dev_kfree_skb(skb);
+		goto out_unlock;
+	}
+
 	/* Get routing info from the tunnel socket */
 	skb_dst_drop(skb);
 	skb_dst_set(skb, dst_clone(__sk_dst_get(sk)));
 
+	inet = inet_sk(sk);
+	fl = &inet->cork.fl;
 	switch (tunnel->encap) {
 	case L2TP_ENCAPTYPE_UDP:
 		/* Setup UDP header */
-		inet = inet_sk(sk);
 		__skb_push(skb, sizeof(*uh));
 		skb_reset_transport_header(skb);
 		uh = udp_hdr(skb);
@@ -1105,7 +1113,9 @@ int l2tp_xmit_skb(struct l2tp_session *session, struct sk_buff *skb, int hdr_len
 
 	l2tp_skb_set_owner_w(skb, sk);
 
-	l2tp_xmit_core(session, skb, data_len);
+	l2tp_xmit_core(session, skb, fl, data_len);
+out_unlock:
+	bh_unlock_sock(sk);
 
 abort:
 	return 0;
