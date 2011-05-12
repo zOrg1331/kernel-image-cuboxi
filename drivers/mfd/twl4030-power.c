@@ -120,7 +120,7 @@ static u8 res_config_addrs[] = {
 	[RES_HFCLKOUT]	= 0x8b,
 	[RES_32KCLKOUT]	= 0x8e,
 	[RES_RESET]	= 0x91,
-	[RES_Main_Ref]	= 0x94,
+	[RES_MAIN_REF]	= 0x94,
 };
 
 static int __init twl4030_write_script_byte(u8 address, u8 byte)
@@ -447,12 +447,13 @@ static int __init load_twl4030_script(struct twl4030_script *tscript,
 		if (err)
 			goto out;
 	}
-	if (tscript->flags & TWL4030_SLEEP_SCRIPT)
-		if (order)
+	if (tscript->flags & TWL4030_SLEEP_SCRIPT) {
+		if (!order)
 			pr_warning("TWL4030: Bad order of scripts (sleep "\
 					"script before wakeup) Leads to boot"\
 					"failure on some boards\n");
 		err = twl4030_config_sleep_sequence(address);
+	}
 out:
 	return err;
 }
