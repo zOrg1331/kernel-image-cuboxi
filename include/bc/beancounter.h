@@ -229,9 +229,6 @@ struct user_beancounter
 	struct ubparm		*ub_store;
 
 	struct ub_percpu_struct	*ub_percpu;
-#ifdef CONFIG_BC_DEBUG_KMEM
-	struct list_head	ub_cclist;
-#endif
 	struct oom_control	oom_ctrl;
 };
 

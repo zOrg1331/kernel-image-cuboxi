@@ -168,7 +168,7 @@ struct file *ptmx_open(int index, unsigned int flags)
 		file = filp_open("/dev/ptmx", flags|O_NONBLOCK|O_NOCTTY|O_RDWR, 0);
 		if (IS_ERR(file))
 			break;
-		tty = file->private_data;
+		tty = file_tty(file);
 		if (tty->index == index)
 			break;
 
@@ -218,7 +218,7 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 	if (obj && obj->o_parent) {
 		dprintk_ctx("obtained pty as pair to existing\n");
 		master = obj->o_parent;
-		stty = master->private_data;
+		stty = file_tty(master);
 
 		if (stty->driver->subtype == PTY_TYPE_MASTER &&
 		    (stty->driver->flags&TTY_DRIVER_DEVPTS_MEM)) {
@@ -231,7 +231,7 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 				     mntget(master->f_vfsmnt), flags,
 				     current_cred());
 		if (!IS_ERR(master)) {
-			stty = master->private_data;
+			stty = file_tty(master);
 			if (stty->driver->subtype != PTY_TYPE_MASTER)
 				fixup_tty_attrs(ii, master, ctx);
 		}
@@ -265,7 +265,7 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 		cpt_release_buf(ctx);
 		return master;
 	}
-	stty = master->private_data;
+	stty = file_tty(master);
 	clear_bit(TTY_PTY_LOCK, &stty->flags);
 	if (pi->cpt_drv_flags&TTY_DRIVER_DEVPTS_MEM)
 		sprintf(pairname, "/dev/pts/%d", stty->index);
@@ -282,19 +282,19 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 	if (pi->cpt_drv_subtype != PTY_TYPE_MASTER)
 		fixup_tty_attrs(ii, slave, ctx);
 
-	cpt_object_add(CPT_OBJ_TTY, master->private_data, ctx);
-	cpt_object_add(CPT_OBJ_TTY, slave->private_data, ctx);
+	cpt_object_add(CPT_OBJ_TTY, file_tty(master), ctx);
+	cpt_object_add(CPT_OBJ_TTY, file_tty(slave), ctx);
 	cpt_object_add(CPT_OBJ_FILE, master, ctx);
 	cpt_object_add(CPT_OBJ_FILE, slave, ctx);
 
 	if (pi->cpt_drv_subtype == PTY_TYPE_MASTER) {
 		loff_t pos;
-		obj = lookup_cpt_object(CPT_OBJ_TTY, master->private_data, ctx);
+		obj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(master), ctx);
 		obj->o_parent = master;
 		cpt_obj_setpos(obj, fi->cpt_priv, ctx);
 		pty_setup(stty, fi->cpt_priv, pi, ctx);
 
-		obj = lookup_cpt_object(CPT_OBJ_TTY, slave->private_data, ctx);
+		obj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(slave), ctx);
 		obj->o_parent = slave;
 		pos = find_pty_pair(stty->link, fi->cpt_priv, pi, ctx);
 		cpt_obj_setpos(obj, pos, ctx);
@@ -306,12 +306,12 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 		return master;
 	} else {
 		loff_t pos;
-		obj = lookup_cpt_object(CPT_OBJ_TTY, slave->private_data, ctx);
+		obj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(slave), ctx);
 		obj->o_parent = slave;
 		cpt_obj_setpos(obj, fi->cpt_priv, ctx);
 		pty_setup(stty->link, fi->cpt_priv, pi, ctx);
 
-		obj = lookup_cpt_object(CPT_OBJ_TTY, master->private_data, ctx);
+		obj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(master), ctx);
 		obj->o_parent = master;
 		pos = find_pty_pair(stty, fi->cpt_priv, pi, ctx);
 		cpt_obj_setpos(obj, pos, ctx);

@@ -1394,14 +1394,11 @@ int rst_restore_process(struct cpt_context *ctx)
 		tsk->stopped_state = ti->cpt_stopped_state;
 		task_thread_info(tsk)->flags = ti->cpt_thrflags;
 
-		/* The image was created with kernel < 2.6.16, while
-		 * task hanged in sigsuspend -> do_signal.
-		 *
-		 * FIXME! This needs more brain efforts...
+		/*
+		 * Drop rhel5's _TIF_RESTORE_SIGMASK.
+		 * The int_ret_from_sys_call gets confused by one.
 		 */
-		if (ti->cpt_sigsuspend_state) {
-			set_restore_sigmask();
-		}
+		task_thread_info(tsk)->flags &= ~(1 << 9);
 
 #ifdef CONFIG_X86_64
 		task_thread_info(tsk)->flags |= _TIF_FORK | _TIF_RESUME;

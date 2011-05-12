@@ -192,11 +192,6 @@ void free_tty_struct(struct tty_struct *tty)
 	kfree(tty);
 }
 
-static inline struct tty_struct *file_tty(struct file *file)
-{
-	return ((struct tty_file_private *)file->private_data)->tty;
-}
-
 /* Associate a new file with the tty structure */
 void tty_add_file(struct tty_struct *tty, struct file *file)
 {

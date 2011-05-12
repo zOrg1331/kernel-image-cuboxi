@@ -49,6 +49,7 @@
 #include <linux/fs_struct.h>
 #include <linux/init_task.h>
 #include <linux/perf_event.h>
+#include <linux/ve_proto.h>
 #include <trace/events/sched.h>
 
 #include <bc/misc.h>
@@ -919,6 +920,32 @@ static void check_stack_usage(void)
 static inline void check_stack_usage(void) {}
 #endif
 
+#ifdef CONFIG_VE
+static void do_initproc_exit(struct task_struct *tsk)
+{
+	struct ve_struct *env;
+
+	env = get_exec_env();
+	if (tsk == get_env_init(env)) {
+		/*
+		 * Here the VE changes its state into "not running".
+		 * op_sem taken for write is a barrier to all VE manipulations from
+		 * ioctl: it waits for operations currently in progress and blocks all
+		 * subsequent operations until is_running is set to 0 and op_sem is
+		 * released.
+		 */
+
+		down_write(&env->op_sem);
+		env->is_running = 0;
+		up_write(&env->op_sem);
+
+		ve_hook_iterate_fini(VE_INIT_EXIT_CHAIN, env);
+	}
+}
+#else
+#define do_initproc_exit(tsk)	do { } while (0)
+#endif
+
 NORET_TYPE void do_exit(long code)
 {
 	struct task_struct *tsk = current;
@@ -932,6 +959,8 @@ NORET_TYPE void do_exit(long code)
 		panic("Aiee, killing interrupt handler!");
 	if (unlikely(!tsk->pid))
 		panic("Attempted to kill the idle task!");
+
+	do_initproc_exit(tsk);
 
 	tracehook_report_exit(&code);
 	validate_creds_for_do_exit(tsk);

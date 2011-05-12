@@ -305,6 +305,9 @@ static void page_get_desc(cpt_object_t *mmobj,
 		goto out_unsupported;
 	}
 #endif
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+retry:
+#endif
 	ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
 	pte = *ptep;
 	pte_unmap(ptep);
@@ -313,6 +316,9 @@ static void page_get_desc(cpt_object_t *mmobj,
 		goto out_absent_unlock;
 
 	if (!pte_present(pte)) {
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+		int err;
+#endif
 		if (pte_file(pte)) {
 			pdesc->index = pte_to_pgoff(pte);
 			goto out_absent_unlock;
@@ -322,8 +328,22 @@ static void page_get_desc(cpt_object_t *mmobj,
 			eprintk_ctx("shared mapping is not present: %08lx@%Ld\n", addr, mmobj->o_pos);
 			goto out_unsupported_unlock;
 		}
-		pdesc->type = PD_LAZY;
+#ifdef CONFIG_VZ_CHECKPOINT_ITER
+		/* 
+		 * raise it from swap now, so that we save at least when the
+		 * page is shared. 
+		 */
+		spin_unlock(ptl);
+		err = handle_mm_fault(mm, vma, addr, 0);
+		if (err == VM_FAULT_SIGBUS)
+			goto out_absent;
+		if (err == VM_FAULT_OOM)
+			goto out_absent;
+		goto retry;
+#else
+		pdesc->type = PD_COPY;
 		goto out_unlock;
+#endif
 	}
 
 	if ((pg = vm_normal_page(vma, addr, pte)) == NULL) {

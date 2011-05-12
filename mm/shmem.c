@@ -1200,7 +1200,7 @@ int shmem_insertpage(struct inode * inode, unsigned long index,
 		goto unlock_unmap;
 
 	err = -EINVAL;
-	if (!swap_duplicate(swap))
+	if (swap_duplicate(swap) < 0)
 		goto unlock_unmap;
 
 	info->alloced++;

@@ -29,16 +29,17 @@
 #include <linux/cpt_image.h>
 #include <linux/icmp.h>
 #include <linux/ip.h>
+#include <linux/rculist_nulls.h>
 
 #if defined(CONFIG_VE_IPTABLES) && \
-    (defined(CONFIG_IP_NF_CONNTRACK) || defined(CONFIG_IP_NF_CONNTRACK_MODULE))
+    (defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE))
 
 #include <linux/netfilter.h>
-#include <linux/netfilter_ipv4/ip_conntrack.h>
-#include <linux/netfilter_ipv4/ip_nat.h>
-#include <linux/netfilter_ipv4/ip_conntrack_protocol.h>
-#include <linux/netfilter_ipv4/ip_conntrack_helper.h>
-#include <linux/netfilter_ipv4/ip_conntrack_core.h>
+#include <net/netfilter/nf_conntrack.h>
+#include <net/netfilter/nf_nat.h>
+#include <net/netfilter/nf_conntrack_tuple.h>
+#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_core.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -61,23 +62,30 @@
 struct ct_holder
 {
 	struct ct_holder *next;
-	struct ip_conntrack_tuple_hash *cth;
+	struct nf_conntrack_tuple_hash *cth;
 	int index;
 };
 
-static void encode_tuple(struct cpt_ipct_tuple *v, struct ip_conntrack_tuple *tuple)
+static void encode_tuple(struct cpt_ipct_tuple *v, struct nf_conntrack_tuple *tuple)
 {
-	v->cpt_dst = tuple->dst.ip;
+	v->cpt_dst = tuple->dst.u3.ip;
+	v->cpt_l3num = tuple->src.l3num;
 	v->cpt_dstport = tuple->dst.u.all;
 	v->cpt_protonum = tuple->dst.protonum;
 	v->cpt_dir = tuple->dst.dir;
 
-	v->cpt_src = tuple->src.ip;
+	v->cpt_src = tuple->src.u3.ip;
+	v->cpt_srcport = tuple->src.u.all;
+}
+
+static void encode_tuple_mask(struct cpt_ipct_tuple *v, struct nf_conntrack_tuple_mask *tuple)
+{
+	v->cpt_src = tuple->src.u3.ip;
 	v->cpt_srcport = tuple->src.u.all;
 }
 
 static int dump_one_expect(struct cpt_ip_connexpect_image *v,
-			   struct ip_conntrack_expect *exp,
+			   struct nf_conntrack_expect *exp,
 			   int sibling, cpt_context_t *ctx)
 {
 	int err = 0;
@@ -88,19 +96,15 @@ static int dump_one_expect(struct cpt_ip_connexpect_image *v,
 	v->cpt_content = CPT_CONTENT_VOID;
 
 	encode_tuple(&v->cpt_tuple, &exp->tuple);
-	encode_tuple(&v->cpt_mask, &exp->mask);
+	encode_tuple_mask(&v->cpt_mask, &exp->mask);
 	v->cpt_sibling_conntrack = sibling;
 	v->cpt_flags = exp->flags;
-	v->cpt_seq = exp->id;
 	v->cpt_dir = 0;
-	v->cpt_manip_proto = 0;
 #ifdef CONFIG_IP_NF_NAT_NEEDED
 	v->cpt_manip_proto = exp->saved_proto.all;
 	v->cpt_dir = exp->dir;
 #endif
-	v->cpt_timeout = 0;
-	if (exp->master->helper->timeout)
-		v->cpt_timeout = exp->timeout.expires - jiffies;
+	v->cpt_timeout = exp->timeout.expires - jiffies;
 	return err;
 }
 
@@ -112,17 +116,26 @@ static int dump_one_expect(struct cpt_ip_connexpect_image *v,
  * expectations. Shortly, I am not going to repair this.
  */
 
-static int dump_expect_list(struct ip_conntrack *ct, struct ct_holder *list,
+static int dump_expect_list(struct nf_conn *ct, struct ct_holder *list,
 			    cpt_context_t *ctx)
 {
 	int err = 0;
 	unsigned long pg;
 	struct cpt_ip_connexpect_image *v;
-	struct ip_conntrack_expect *exp;
+	struct nf_conntrack_expect *exp;
+	struct nf_conn_help *help = nfct_help(ct);
+	struct hlist_node *next;
+	int expecting = 0, i;
 
-	if (ct->expecting == 0)
+	if (!help)
+		return 0;
+
+	for (i = 0; i < NF_CT_MAX_EXPECT_CLASSES; i++)
+		expecting += help->expecting[i];
+
+	if (expecting == 0)
 		return err;
-	if (ct->expecting*sizeof(struct cpt_ip_connexpect_image) > PAGE_SIZE)
+	if (expecting*sizeof(struct cpt_ip_connexpect_image) > PAGE_SIZE)
 		return -ENOBUFS;
 
 	pg = __get_free_page(GFP_KERNEL);
@@ -130,14 +143,14 @@ static int dump_expect_list(struct ip_conntrack *ct, struct ct_holder *list,
 		return -ENOMEM;
 	v = (struct cpt_ip_connexpect_image *)pg;
 
-	read_lock_bh(&ip_conntrack_lock);
-	list_for_each_entry(exp, &ve_ip_conntrack_expect_list, list) {
+	rcu_read_lock_bh();
+	hlist_for_each_entry_rcu(exp, next, &help->expectations, lnode) {
 		int sibling;
 
 		if (exp->master != ct)
 			continue;
 
-		if (ct->helper == NULL) {
+		if (help->helper == NULL) {
 			eprintk_ctx("conntrack: no helper and non-trivial expectation\n");
 			err = -EINVAL;
 			break;
@@ -167,20 +180,21 @@ static int dump_expect_list(struct ip_conntrack *ct, struct ct_holder *list,
 		/* If the expectation still does not have exp->sibling
 		 * and timer is not running, it is about to die on another
 		 * cpu. Skip it. */
-		if (!sibling &&
-		    ct->helper->timeout &&
-		    !timer_pending(&exp->timeout)) {
+		if (!del_timer(&exp->timeout)) {
 			dprintk_ctx("conntrack: expectation: no timer\n");
 			continue;
 		}
 
 		err = dump_one_expect(v, exp, sibling, ctx);
+
+		add_timer(&exp->timeout);
+
 		if (err)
 			break;
 
 		v++;
 	}
-	read_unlock_bh(&ip_conntrack_lock);
+	rcu_read_unlock_bh();
 
 	if (err == 0 && (unsigned long)v != pg)
 		ctx->write((void*)pg, (unsigned long)v - pg, ctx);
@@ -192,14 +206,18 @@ static int dump_expect_list(struct ip_conntrack *ct, struct ct_holder *list,
 static int dump_one_ct(struct ct_holder *c, struct ct_holder *list,
 		       cpt_context_t *ctx)
 {
-	struct ip_conntrack_tuple_hash *h = c->cth;
-	struct ip_conntrack *ct = tuplehash_to_ctrack(h);
+	struct nf_conntrack_tuple_hash *h = c->cth;
+	struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+	struct nf_conn_nat *nat = nfct_nat(ct);
 	struct cpt_ip_conntrack_image v;
 	int err = 0;
 
-	if (sizeof(v.cpt_proto_data) != sizeof(ct->proto)) {
-		eprintk_ctx("conntrack module ct->proto version mismatch\n");
-		return -EINVAL;
+	BUILD_BUG_ON(sizeof(v.cpt_proto_data) < sizeof(ct->proto));
+	BUILD_BUG_ON(sizeof(v.cpt_help_data) < sizeof(union nf_conntrack_help));
+
+	if (!strcmp(nfct_help(ct)->helper->name, "pptp")) {
+		eprintk_ctx("conntrack: PPTP isn't supported");
+		return -EBUSY;
 	}
 
 	cpt_open_object(NULL, ctx);
@@ -209,39 +227,39 @@ static int dump_one_ct(struct ct_holder *c, struct ct_holder *list,
 	v.cpt_hdrlen = sizeof(v);
 	v.cpt_content = CPT_CONTENT_ARRAY;
 
-	read_lock_bh(&ip_conntrack_lock);
+	rcu_read_lock_bh();
 	v.cpt_status = ct->status;
 	v.cpt_timeout = ct->timeout.expires - jiffies;
-	v.cpt_ct_helper = (ct->helper != NULL);
+	v.cpt_ct_helper = (nfct_help(ct) != NULL);
 	v.cpt_index = c->index;
-	v.cpt_id = ct->id;
 	v.cpt_mark = 0;
-#if defined(CONFIG_IP_NF_CONNTRACK_MARK)
+#if defined(CONFIG_NF_CONNTRACK_MARK)
 	v.cpt_mark = ct->mark;
 #endif
 	encode_tuple(&v.cpt_tuple[0], &ct->tuplehash[0].tuple);
 	encode_tuple(&v.cpt_tuple[1], &ct->tuplehash[1].tuple);
 	memcpy(&v.cpt_proto_data, &ct->proto, sizeof(v.cpt_proto_data));
-	memcpy(&v.cpt_help_data, &ct->help, sizeof(v.cpt_help_data));
+	if (nfct_help(ct))
+		memcpy(&v.cpt_help_data, &nfct_help(ct)->help, sizeof(v.cpt_help_data));
 
 	v.cpt_masq_index = 0;
-	v.cpt_initialized = 0;
-	v.cpt_num_manips = 0;
 	v.cpt_nat_helper = 0;
-#ifdef CONFIG_IP_NF_NAT_NEEDED
+	if (nat) {
+#ifdef CONFIG_NF_NAT_NEEDED
 #if defined(CONFIG_IP_NF_TARGET_MASQUERADE) || \
 	defined(CONFIG_IP_NF_TARGET_MASQUERADE_MODULE)
-	v.cpt_masq_index = ct->nat.masq_index;
+		v.cpt_masq_index = nat->masq_index;
 #endif
 	/* "help" data is used by pptp, difficult to support */
-	v.cpt_nat_seq[0].cpt_correction_pos = ct->nat.info.seq[0].correction_pos;
-	v.cpt_nat_seq[0].cpt_offset_before = ct->nat.info.seq[0].offset_before;
-	v.cpt_nat_seq[0].cpt_offset_after = ct->nat.info.seq[0].offset_after;
-	v.cpt_nat_seq[1].cpt_correction_pos = ct->nat.info.seq[1].correction_pos;
-	v.cpt_nat_seq[1].cpt_offset_before = ct->nat.info.seq[1].offset_before;
-	v.cpt_nat_seq[1].cpt_offset_after = ct->nat.info.seq[1].offset_after;
+		v.cpt_nat_seq[0].cpt_correction_pos = nat->seq[0].correction_pos;
+		v.cpt_nat_seq[0].cpt_offset_before = nat->seq[0].offset_before;
+		v.cpt_nat_seq[0].cpt_offset_after = nat->seq[0].offset_after;
+		v.cpt_nat_seq[1].cpt_correction_pos = nat->seq[1].correction_pos;
+		v.cpt_nat_seq[1].cpt_offset_before = nat->seq[1].offset_before;
+		v.cpt_nat_seq[1].cpt_offset_after = nat->seq[1].offset_after;
 #endif
-	read_unlock_bh(&ip_conntrack_lock);
+	}
+	rcu_read_unlock_bh();
 
 	ctx->write(&v, sizeof(v), ctx);
 
@@ -255,14 +273,14 @@ int cpt_dump_ip_conntrack(cpt_context_t * ctx)
 {
 	struct ct_holder *ct_list = NULL;
 	struct ct_holder *c, **cp;
+	struct nf_conn *ct;
 	int err = 0;
 	int index = 0;
 	int idx;
+	struct net *net = get_exec_env()->ve_netns;
+	struct hlist_nulls_node *n;
 
-	if (get_exec_env()->_ip_conntrack == NULL)
-		return 0;
-
-	for (idx = atomic_read(&(get_exec_env()->_ip_conntrack->_ip_conntrack_count)); idx >= 0; idx--) {
+	for (idx = atomic_read(&(net->ct.count)); idx >= 0; idx--) {
 		c = kmalloc(sizeof(struct ct_holder), GFP_KERNEL);
 		if (c == NULL) {
 			err = -ENOMEM;
@@ -275,19 +293,19 @@ int cpt_dump_ip_conntrack(cpt_context_t * ctx)
 
 	c = ct_list;
 
-	read_lock_bh(&ip_conntrack_lock);
-	for (idx = 0; idx < ip_conntrack_htable_size; idx++) {
-		struct ip_conntrack_tuple_hash *h;
-		list_for_each_entry(h, &ve_ip_conntrack_hash[idx], list) {
+	rcu_read_lock_bh();
+	for (idx = 0; idx < net->ct.htable_size; idx++) {
+		struct nf_conntrack_tuple_hash *h;
+                hlist_nulls_for_each_entry_rcu(h, n, &net->ct.hash[idx], hnnode) {
 			/* Skip reply tuples, they are covered by original
 			 * direction. */
-			if (DIRECTION(h))
+			if (NF_CT_DIRECTION(h))
 				continue;
 
 			/* Oops, we have not enough of holders...
 			 * It is impossible. */
 			if (unlikely(c == NULL)) {
-				read_unlock_bh(&ip_conntrack_lock);
+				rcu_read_unlock_bh();
 				eprintk_ctx("unexpected conntrack appeared\n");
 				err = -ENOMEM;
 				goto done;
@@ -297,7 +315,7 @@ int cpt_dump_ip_conntrack(cpt_context_t * ctx)
 			 * has just been scheduled on another cpu.
 			 * We should skip this conntrack, it is about to be
 			 * destroyed. */
-			if (!del_timer(&tuplehash_to_ctrack(h)->timeout)) {
+			if (!del_timer(&nf_ct_tuplehash_to_ctrack(h)->timeout)) {
 				dprintk_ctx("conntrack: no timer\n");
 				continue;
 			}
@@ -306,11 +324,13 @@ int cpt_dump_ip_conntrack(cpt_context_t * ctx)
 			 * We are going to restore the timer on exit
 			 * from this function. */
 			c->cth = h;
+			ct = nf_ct_tuplehash_to_ctrack(h);
+			nf_conntrack_get(&ct->ct_general);
 			c->index = ++index;
 			c = c->next;
 		}
 	}
-	read_unlock_bh(&ip_conntrack_lock);
+	rcu_read_unlock_bh();
 
 	/* No conntracks? Good. */
 	if (index == 0)
@@ -330,7 +350,7 @@ int cpt_dump_ip_conntrack(cpt_context_t * ctx)
 
 		/* Move conntracks attached to expectations to the beginning
 		 * of the list. */
-		if (tuplehash_to_ctrack(c->cth)->master && c != ct_list) {
+		if (nf_ct_tuplehash_to_ctrack(c->cth)->master && c != ct_list) {
 			*cp = c->next;
 			c->next = ct_list;
 			ct_list = c;
@@ -354,8 +374,10 @@ done:
 	while ((c = ct_list) != NULL) {
 		ct_list = c->next;
 		if (c->cth) {
+			ct = nf_ct_tuplehash_to_ctrack(c->cth);
+			nf_conntrack_put(&ct->ct_general);
 			/* Restore timer. refcnt is preserved. */
-			add_timer(&tuplehash_to_ctrack(c->cth)->timeout);
+			add_timer(&nf_ct_tuplehash_to_ctrack(c->cth)->timeout);
 		}
 		kfree(c);
 	}

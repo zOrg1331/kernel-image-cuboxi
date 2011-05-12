@@ -42,6 +42,7 @@
 #include <linux/miscdevice.h>
 #include <linux/eventpoll.h>
 #include <linux/splice.h>
+#include <linux/tty.h>
 
 #include <linux/nfs_mount.h>
 #include <linux/nfs_fs.h>
@@ -547,6 +548,16 @@ int cpt_dump_flock(struct file *file, struct cpt_context *ctx)
 	return err;
 }
 
+static int chrdev_is_tty(int major)
+{
+	return (major == PTY_MASTER_MAJOR ||
+	    (major >= UNIX98_PTY_MASTER_MAJOR &&
+	     major < UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT) ||
+	    major == PTY_SLAVE_MAJOR ||
+	    major == UNIX98_PTY_SLAVE_MAJOR ||
+	    major == TTYAUX_MAJOR);
+}
+
 static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ctx)
 {
 	int err = 0;
@@ -624,13 +635,17 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 	v->cpt_priv = CPT_NULL;
 	v->cpt_fown_fd = -1;
 	if (S_ISCHR(v->cpt_i_mode)) {
-		iobj = lookup_cpt_object(CPT_OBJ_TTY, file->private_data, ctx);
-		if (iobj) {
-			v->cpt_priv = iobj->o_pos;
-			if (file->f_flags&FASYNC)
-				v->cpt_fown_fd = cpt_tty_fasync(file, ctx);
-		}
-		if (imajor(file->f_dentry->d_inode) == MISC_MAJOR &&
+		int major;
+
+		major = imajor(file->f_dentry->d_inode);
+		if (chrdev_is_tty(major)) {
+			iobj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(file), ctx);
+			if (iobj) {
+				v->cpt_priv = iobj->o_pos;
+				if (file->f_flags&FASYNC)
+					v->cpt_fown_fd = cpt_tty_fasync(file, ctx);
+			}
+		} else if (major == MISC_MAJOR &&
 				iminor(file->f_dentry->d_inode) == TUN_MINOR)
 			v->cpt_lflags |= CPT_DENTRY_TUNTAP;
 	}
@@ -900,12 +915,7 @@ static int dump_content_chrdev(struct file *file, struct cpt_context *ctx)
 		/* Well, OK. */
 		return 0;
 	}
-	if (maj == PTY_MASTER_MAJOR ||
-	    (maj >= UNIX98_PTY_MASTER_MAJOR &&
-	     maj < UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT) ||
-	    maj == PTY_SLAVE_MAJOR ||
-	    maj == UNIX98_PTY_SLAVE_MAJOR ||
-	    maj == TTYAUX_MAJOR) {
+	if (chrdev_is_tty(maj)) {
 		return cpt_dump_content_tty(file, ctx);
 	}
 	if (maj == MISC_MAJOR && iminor(ino) == TUN_MINOR)

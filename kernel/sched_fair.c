@@ -1076,7 +1076,8 @@ static void throttle_cfs_rq(struct cfs_rq *cfs_rq, u64 delay)
 static void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *se = cfs_rq->tg->se[cpu_of(rq_of(cfs_rq))];
-	struct task_struct *curr = rq_of(cfs_rq)->curr;
+	struct rq *rq = rq_of(cfs_rq);
+	struct task_struct *curr = rq->curr;
 
 	cfs_rq->throttled = 0;
 	update_stats_throttle_end(cfs_rq_of(se), se);
@@ -1084,7 +1085,7 @@ static void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	/* Don't enqueue unthrottled cfs_rq if it has no entities to schedule */
 	if (cfs_rq->nr_running) {
 		enqueue_entity(se, ENQUEUE_WAKEUP | ENQUEUE_UNTHROTTLE);
-		if (unlikely(curr->policy == SCHED_IDLE))
+		if (unlikely(curr->policy == SCHED_IDLE) || curr == rq->idle)
 			resched_task(curr);
 	}
 }

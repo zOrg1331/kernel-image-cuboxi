@@ -1666,6 +1666,19 @@ struct cpt_ipct_tuple
 	__u16	cpt_dstport;
 	__u8	cpt_protonum;
 	__u8	cpt_dir;	/* TEMPORARY HACK TO VALIDATE CODE */
+	__u16	cpt_l3num;
+} __attribute__ ((aligned (8)));
+
+struct cpt_ipct_tuple_compat /* 2.6.18 */
+{
+	__u32	cpt_src;
+	__u16	cpt_srcport;
+	__u16	__cpt_pad1;
+
+	__u32	cpt_dst;
+	__u16	cpt_dstport;
+	__u8	cpt_protonum;
+	__u8	cpt_dir;	/* TEMPORARY HACK TO VALIDATE CODE */
 } __attribute__ ((aligned (8)));
 
 struct cpt_nat_manip
@@ -1698,11 +1711,28 @@ struct cpt_ip_connexpect_image
 
 	__u64	cpt_timeout;
 	__u32	cpt_sibling_conntrack;	/* Index of child conntrack */
-	__u32	cpt_seq;		/* id in 2.6.15 */
 
-	struct cpt_ipct_tuple	cpt_ct_tuple;	/* NU 2.6.15 */
 	struct cpt_ipct_tuple	cpt_tuple;
 	struct cpt_ipct_tuple	cpt_mask;
+
+	__u8	cpt_dir;
+	__u8	cpt_flags;
+} __attribute__ ((aligned (8)));
+
+struct cpt_ip_connexpect_image_compat
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u64	cpt_timeout;
+	__u32	cpt_sibling_conntrack;	/* Index of child conntrack */
+	__u32	cpt_seq;		/* id in 2.6.15 */
+
+	struct cpt_ipct_tuple_compat	cpt_ct_tuple;	/* NU 2.6.15 */
+	struct cpt_ipct_tuple_compat	cpt_tuple;
+	struct cpt_ipct_tuple_compat	cpt_mask;
 
 	/* union ip_conntrack_expect_help. Used by ftp, irc, amanda */
 	__u32	cpt_help[3];			/* NU 2.6.15 */
@@ -1712,6 +1742,36 @@ struct cpt_ip_connexpect_image
 } __attribute__ ((aligned (8)));
 
 struct cpt_ip_conntrack_image
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	struct cpt_ipct_tuple cpt_tuple[2];
+	__u64	cpt_status;
+	__u64	cpt_timeout;
+	__u32	cpt_index;
+	__u8	cpt_ct_helper;
+	__u8	cpt_nat_helper;
+	__u16	cpt_pad1;
+
+	/* union ip_conntrack_proto. Used by tcp and icmp. */
+	__u32	cpt_proto_data[16];
+
+	/* union ip_conntrack_help. Used by ftp and pptp helper.
+	 * We do not support pptp...
+	 */
+	__u32	cpt_help_data[8];
+
+	struct	cpt_nat_seq	cpt_nat_seq[2];
+
+	__u32	cpt_masq_index;
+	__u32	cpt_id;
+	__u32	cpt_mark;
+} __attribute__ ((aligned (8)));
+
+struct cpt_ip_conntrack_image_compat
 {
 	__u64	cpt_next;
 	__u32	cpt_object;
@@ -1744,39 +1804,6 @@ struct cpt_ip_conntrack_image
 	__u32	cpt_masq_index;
 	__u32	cpt_id;
 	__u32	cpt_mark;
-} __attribute__ ((aligned (8)));
-
-/* cpt_ip_conntrack_image struct from 2.6.9 kernel */
-struct cpt_ip_conntrack_image_compat
-{
-	__u64	cpt_next;
-	__u32	cpt_object;
-	__u16	cpt_hdrlen;
-	__u16	cpt_content;
-
-	struct cpt_ipct_tuple cpt_tuple[2];
-	__u64	cpt_status;
-	__u64	cpt_timeout;
-	__u32	cpt_index;
-	__u8	cpt_ct_helper;
-	__u8	cpt_nat_helper;
-	__u16	__cpt_pad1;
-
-	/* union ip_conntrack_proto. Used by tcp and icmp. */
-	__u32	cpt_proto_data[12];
-
-	/* union ip_conntrack_help. Used only by ftp helper. */
-	__u32	cpt_help_data[4];
-
-	/* nat info */
-	__u32	cpt_initialized;
-	__u32	cpt_num_manips;
-	struct  cpt_nat_manip	cpt_nat_manips[6];
-
-	struct	cpt_nat_seq	cpt_nat_seq[2];
-
-	__u32	cpt_masq_index;
-	__u32	__cpt_pad2;
 } __attribute__ ((aligned (8)));
 
 struct cpt_ubparm

@@ -30,7 +30,7 @@
 
 int cpt_dump_content_tty(struct file *file, struct cpt_context *ctx)
 {
-	struct tty_struct *tty = file->private_data;
+	struct tty_struct *tty = file_tty(file);
 	cpt_object_t *obj;
 	struct cpt_obj_ref o;
 	loff_t saved_pos;
@@ -55,7 +55,7 @@ int cpt_dump_content_tty(struct file *file, struct cpt_context *ctx)
 
 int cpt_collect_tty(struct file *file, cpt_context_t * ctx)
 {
-	struct tty_struct *tty = file->private_data;
+	struct tty_struct *tty = file_tty(file);
 
 	if (tty) {
 		if (cpt_object_add(CPT_OBJ_TTY, tty, ctx) == NULL)
@@ -205,7 +205,7 @@ __u32 cpt_tty_fasync(struct file *file, struct cpt_context *ctx)
 	struct tty_struct * tty;
 	struct fasync_struct *fa;
 
-	tty = (struct tty_struct *)file->private_data;
+	tty = (struct tty_struct *)file_tty(file);
 
 	for (fa = tty->fasync; fa; fa = fa->fa_next) {
 		if (fa->fa_file == file)

@@ -11,6 +11,8 @@ int rst_iteration(cpt_context_t *ctx);
 void rst_drop_iter_rbtree(cpt_context_t *ctx);
 int rst_iter(struct vm_area_struct *vma, u64 pfn,
 	     unsigned long addr, cpt_context_t * ctx);
+int rst_iter_chunk(struct file *file, loff_t pos, struct cpt_page_block * pgb,
+			cpt_context_t *ctx);
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
 struct linux_binprm;

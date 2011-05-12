@@ -643,7 +643,7 @@ static int make_baby(cpt_object_t *cobj,
 #endif
 
 	if (current->fs == NULL) {
-		tfs = get_exec_env()->ve_ns->pid_ns->child_reaper->fs;
+		tfs = get_exec_env_init()->fs;
 		if (tfs == NULL)
 			return -EINVAL;
 		spin_lock(&tfs->lock);
@@ -746,9 +746,10 @@ static int read_task_images(struct cpt_context *ctx)
 			cpt_release_buf(ctx);
 			return -ENOMEM;
 		}
-		memcpy(obj->o_image, ti, sizeof(*ti));
-		err = ctx->pread(obj->o_image + sizeof(*ti),
-				 ti->cpt_next - sizeof(*ti), ctx, start + sizeof(*ti));
+		memcpy(obj->o_image, ti, ti->cpt_hdrlen);
+		err = ctx->pread(obj->o_image + ti->cpt_hdrlen,
+				 ti->cpt_next - ti->cpt_hdrlen, ctx,
+				 start + ti->cpt_hdrlen);
 		cpt_release_buf(ctx);
 		if (err)
 			return err;

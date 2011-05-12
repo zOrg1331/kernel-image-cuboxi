@@ -561,5 +561,10 @@ extern int vt_ioctl(struct tty_struct *tty, struct file *file,
 extern long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
 		     unsigned int cmd, unsigned long arg);
 
+static inline struct tty_struct *file_tty(struct file *file)
+{
+	return ((struct tty_file_private *)file->private_data)->tty;
+}
+
 #endif /* __KERNEL__ */
 #endif

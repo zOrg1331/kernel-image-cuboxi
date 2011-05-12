@@ -54,7 +54,7 @@ static int sig_ve_ignored(int sig, struct siginfo *info, struct task_struct *t)
 		return 0;
 
 	ve = current->ve_task_info.owner_env;
-	if (ve->ve_ns->pid_ns->child_reaper != t)
+	if (get_env_init(ve) != t)
 		return 0;
 	if (ve_is_super(get_exec_env()))
 		return 0;
