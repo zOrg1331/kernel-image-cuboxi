@@ -1,0 +1,42 @@
+Importing i2c based on 2.6.39-rc7
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 693d92a1bbc9e42681c42ed190bd42b636ca876f
+HEAD is now at 693d92a Linux 2.6.39-rc7
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-writing-clients-fix-foo_driver-id_table.patch
+i2c-i801-smbus-patch-for-intel-panther-point-deviceids.patch
+i2c-i801-no-devices-on-idf-channels.patch
+i2c-parport-cleanups.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + df86808...feddc5b master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.39-rc7
+$ cd ../quilt-tmp
+$ git reset --hard 693d92a1bbc9e42681c42ed190bd42b636ca876f
+HEAD is now at 693d92a Linux 2.6.39-rc7
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-use-set_drvdata-helpers.patch
+hwmon-k10temp-add-support-for-fam15h-bulldozer.patch
+hwmon-add-driver-for-amd-fam15h-power.patch
+hwmon-jc42-change-class.patch
+hwmon-asc7621-drop-duplicate-dependency.patch
+hwmon-f71882fg-01-split-has_beep-in-fan_has_beep-and-temp_has_beep.patch
+hwmon-f71882fg-02-add-support-for-F71808A.patch
+move-acpi-power-meter-to-hwmon.patch
+hwmon-max6650-01-drop-detection.patch
+hwmon-max6650-02-properly-support-MAX6650.patch
+i8k-01-hwmon-integration.patch
+hwmon-sch5627-01-add-sch5627_send_cmd-function.patch
+hwmon-sch5627-02-trigger-vbat-measurements.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 95e1fc5...bbad82e master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.39-rc3-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.39-rc4-245-g4175242
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.38-rc4-213-g055d219
+Unchanged quilt series device-mapper
