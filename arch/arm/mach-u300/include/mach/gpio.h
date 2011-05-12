@@ -17,127 +17,13 @@
 #include <linux/io.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
+#include <asm-generic/gpio.h>
 
-/* Switch type depending on platform/chip variant */
-#if defined(CONFIG_MACH_U300_BS2X) || defined(CONFIG_MACH_U300_BS330)
-#define U300_COH901335
-#endif
-#if defined(CONFIG_MACH_U300_BS365) || defined(CONFIG_MACH_U300_BS335)
-#define U300_COH901571_3
-#endif
-
-/* Get base address for regs here */
-#include "u300-regs.h"
-/* IRQ numbers */
-#include "irqs.h"
-
-/*
- * This is the GPIO block definitions. GPIO (General Purpose I/O) can be
- * used for anything, and often is. The event/enable etc figures are for
- * the lowermost pin (pin 0 on each port), shift this left to match your
- * pin if you're gonna use these values.
- */
-#ifdef U300_COH901335
-#define U300_GPIO_PORTX_SPACING				(0x1C)
-/* Port X Pin Data Register 32bit, this is both input and output (R/W) */
-#define U300_GPIO_PXPDIR				(0x00)
-#define U300_GPIO_PXPDOR				(0x00)
-/* Port X Pin Config Register 32bit (R/W) */
-#define U300_GPIO_PXPCR					(0x04)
-#define U300_GPIO_PXPCR_ALL_PINS_MODE_MASK		(0x0000FFFFUL)
-#define U300_GPIO_PXPCR_PIN_MODE_MASK			(0x00000003UL)
-#define U300_GPIO_PXPCR_PIN_MODE_SHIFT			(0x00000002UL)
-#define U300_GPIO_PXPCR_PIN_MODE_INPUT			(0x00000000UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_PUSH_PULL	(0x00000001UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_OPEN_DRAIN	(0x00000002UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_OPEN_SOURCE	(0x00000003UL)
-/* Port X Interrupt Event Register 32bit (R/W) */
-#define U300_GPIO_PXIEV					(0x08)
-#define U300_GPIO_PXIEV_ALL_IRQ_EVENT_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIEV_IRQ_EVENT			(0x00000001UL)
-/* Port X Interrupt Enable Register 32bit (R/W) */
-#define U300_GPIO_PXIEN					(0x0C)
-#define U300_GPIO_PXIEN_ALL_IRQ_ENABLE_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIEN_IRQ_ENABLE			(0x00000001UL)
-/* Port X Interrupt Force Register 32bit (R/W) */
-#define U300_GPIO_PXIFR					(0x10)
-#define U300_GPIO_PXIFR_ALL_IRQ_FORCE_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIFR_IRQ_FORCE			(0x00000001UL)
-/* Port X Interrupt Config Register 32bit (R/W) */
-#define U300_GPIO_PXICR					(0x14)
-#define U300_GPIO_PXICR_ALL_IRQ_CONFIG_MASK		(0x000000FFUL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_MASK			(0x00000001UL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_FALLING_EDGE		(0x00000000UL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_RISING_EDGE		(0x00000001UL)
-/* Port X Pull-up Enable Register 32bit (R/W) */
-#define U300_GPIO_PXPER					(0x18)
-#define U300_GPIO_PXPER_ALL_PULL_UP_DISABLE_MASK	(0x000000FFUL)
-#define U300_GPIO_PXPER_PULL_UP_DISABLE			(0x00000001UL)
-/* Control Register 32bit (R/W) */
-#define U300_GPIO_CR					(0x54)
-#define U300_GPIO_CR_BLOCK_CLOCK_ENABLE			(0x00000001UL)
-/* three ports of 8 bits each = GPIO pins 0..23 */
-#define U300_GPIO_NUM_PORTS 3
-#define U300_GPIO_PINS_PER_PORT 8
-#define U300_GPIO_MAX	(U300_GPIO_PINS_PER_PORT * U300_GPIO_NUM_PORTS - 1)
-#endif
-
-#ifdef U300_COH901571_3
-/*
- * Control Register 32bit (R/W)
- * bit 15-9 (mask 0x0000FE00) contains the number of cores. 8*cores
- * gives the number of GPIO pins.
- * bit 8-2  (mask 0x000001FC) contains the core version ID.
- */
-#define U300_GPIO_CR					(0x00)
-#define U300_GPIO_CR_SYNC_SEL_ENABLE			(0x00000002UL)
-#define U300_GPIO_CR_BLOCK_CLKRQ_ENABLE			(0x00000001UL)
-#define U300_GPIO_PORTX_SPACING				(0x30)
-/* Port X Pin Data INPUT Register 32bit (R/W) */
-#define U300_GPIO_PXPDIR				(0x04)
-/* Port X Pin Data OUTPUT Register 32bit (R/W) */
-#define U300_GPIO_PXPDOR				(0x08)
-/* Port X Pin Config Register 32bit (R/W) */
-#define U300_GPIO_PXPCR					(0x0C)
-#define U300_GPIO_PXPCR_ALL_PINS_MODE_MASK		(0x0000FFFFUL)
-#define U300_GPIO_PXPCR_PIN_MODE_MASK			(0x00000003UL)
-#define U300_GPIO_PXPCR_PIN_MODE_SHIFT			(0x00000002UL)
-#define U300_GPIO_PXPCR_PIN_MODE_INPUT			(0x00000000UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_PUSH_PULL	(0x00000001UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_OPEN_DRAIN	(0x00000002UL)
-#define U300_GPIO_PXPCR_PIN_MODE_OUTPUT_OPEN_SOURCE	(0x00000003UL)
-/* Port X Pull-up Enable Register 32bit (R/W) */
-#define U300_GPIO_PXPER					(0x10)
-#define U300_GPIO_PXPER_ALL_PULL_UP_DISABLE_MASK	(0x000000FFUL)
-#define U300_GPIO_PXPER_PULL_UP_DISABLE			(0x00000001UL)
-/* Port X Interrupt Event Register 32bit (R/W) */
-#define U300_GPIO_PXIEV					(0x14)
-#define U300_GPIO_PXIEV_ALL_IRQ_EVENT_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIEV_IRQ_EVENT			(0x00000001UL)
-/* Port X Interrupt Enable Register 32bit (R/W) */
-#define U300_GPIO_PXIEN					(0x18)
-#define U300_GPIO_PXIEN_ALL_IRQ_ENABLE_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIEN_IRQ_ENABLE			(0x00000001UL)
-/* Port X Interrupt Force Register 32bit (R/W) */
-#define U300_GPIO_PXIFR					(0x1C)
-#define U300_GPIO_PXIFR_ALL_IRQ_FORCE_MASK		(0x000000FFUL)
-#define U300_GPIO_PXIFR_IRQ_FORCE			(0x00000001UL)
-/* Port X Interrupt Config Register 32bit (R/W) */
-#define U300_GPIO_PXICR					(0x20)
-#define U300_GPIO_PXICR_ALL_IRQ_CONFIG_MASK		(0x000000FFUL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_MASK			(0x00000001UL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_FALLING_EDGE		(0x00000000UL)
-#define U300_GPIO_PXICR_IRQ_CONFIG_RISING_EDGE		(0x00000001UL)
-#ifdef CONFIG_MACH_U300_BS335
-/* seven ports of 8 bits each = GPIO pins 0..55 */
-#define U300_GPIO_NUM_PORTS 7
-#else
-/* five ports of 8 bits each = GPIO pins 0..39 */
-#define U300_GPIO_NUM_PORTS 5
-#endif
-#define U300_GPIO_PINS_PER_PORT 8
-#define U300_GPIO_MAX (U300_GPIO_PINS_PER_PORT * U300_GPIO_NUM_PORTS - 1)
-#endif
+/* Map these overrides to gpiolib functions, simply */
+#define gpio_get_value  __gpio_get_value
+#define gpio_set_value  __gpio_set_value
+#define gpio_cansleep   __gpio_cansleep
+#define gpio_to_irq     __gpio_to_irq
 
 /*
  * Individual pin assignments for the B26/S26. Notice that the
@@ -253,42 +139,5 @@
 #endif
 
 #endif
-
-/* translates a pin number to a port number */
-#define PIN_TO_PORT(val) (val >> 3)
-
-/* These can be found in arch/arm/mach-u300/gpio.c */
-extern int gpio_is_valid(int number);
-extern int gpio_request(unsigned gpio, const char *label);
-extern void gpio_free(unsigned gpio);
-extern int gpio_direction_input(unsigned gpio);
-extern int gpio_direction_output(unsigned gpio, int value);
-extern int gpio_register_callback(unsigned gpio,
-				  int (*func)(void *arg),
-				  void *);
-extern int gpio_unregister_callback(unsigned gpio);
-extern void enable_irq_on_gpio_pin(unsigned gpio, int edge);
-extern void disable_irq_on_gpio_pin(unsigned gpio);
-extern void gpio_pullup(unsigned gpio, int value);
-extern int gpio_get_value(unsigned gpio);
-extern void gpio_set_value(unsigned gpio, int value);
-
-#define gpio_get_value_cansleep gpio_get_value
-#define gpio_set_value_cansleep gpio_set_value
-
-/* wrappers to sleep-enable the previous two functions */
-static inline unsigned gpio_to_irq(unsigned gpio)
-{
-	return PIN_TO_PORT(gpio) + IRQ_U300_GPIO_PORT0;
-}
-
-static inline unsigned irq_to_gpio(unsigned irq)
-{
-	/*
-	 * FIXME: This is no 1-1 mapping at all, it points to the
-	 * whole block of 8 pins.
-	 */
-	return (irq - IRQ_U300_GPIO_PORT0) << 3;
-}
 
 #endif

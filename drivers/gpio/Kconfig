@@ -1,5 +1,5 @@
 #
-# platform-neutral GPIO infrastructure and expanders
+# GPIO infrastructure and drivers
 #
 
 config ARCH_WANT_OPTIONAL_GPIOLIB
@@ -31,7 +31,7 @@ menuconfig GPIOLIB
 	help
 	  This enables GPIO support through the generic GPIO library.
 	  You only need to enable this, if you also want to enable
-	  one or more of the GPIO expansion card drivers below.
+	  one or more of the GPIO drivers below.
 
 	  If unsure, say N.
 
@@ -63,12 +63,12 @@ config GPIO_SYSFS
 	  Kernel drivers may also request that a particular GPIO be
 	  exported to userspace; this can be useful when debugging.
 
-# put expanders in the right section, in alphabetical order
+# put drivers in the right section, in alphabetical order
 
 config GPIO_MAX730X
 	tristate
 
-comment "Memory mapped GPIO expanders:"
+comment "Memory mapped GPIO drivers:"
 
 config GPIO_BASIC_MMIO
 	tristate "Basic memory-mapped GPIO controllers support"
@@ -118,6 +118,23 @@ config GPIO_SCH
 
 	  This driver can also be built as a module. If so, the module
 	  will be called sch-gpio.
+
+config GPIO_U300
+	bool "ST-Ericsson U300 COH 901 335/571 GPIO"
+	depends on GPIOLIB && ARCH_U300
+	help
+	  Say yes here to support GPIO interface on ST-Ericsson U300.
+	  The names of the two IP block variants supported are
+	  COH 901 335 and COH 901 571/3. They contain 3, 5 or 7
+	  ports of 8 GPIO pins each.
+
+config GPIO_NOMADIK
+	bool "ST-Ericsson Nomadik GPIO"
+	depends on GPIOLIB && (ARCH_U8500 || ARCH_NOMADIK)
+	help
+	  Say yes here to support GPIO interface for ST-Ericsson Nomadik.
+	  This is found in the Nomadik NHK8815, DB8500, DB5500 SoCs
+	  for example.
 
 config GPIO_VX855
 	tristate "VIA VX855/VX875 GPIO"

@@ -2,11 +2,7 @@
 # Makefile for the linux kernel, U300 machine.
 #
 
-obj-y		:= core.o clock.o timer.o gpio.o padmux.o
-obj-m		:=
-obj-n		:=
-obj-		:=
-
+obj-y				:= core.o clock.o timer.o padmux.o
 obj-$(CONFIG_ARCH_U300)	          += u300.o
 obj-$(CONFIG_MMC)                 += mmc.o
 obj-$(CONFIG_SPI_PL022)           += spi.o
