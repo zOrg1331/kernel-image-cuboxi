@@ -94,34 +94,16 @@ struct hv_driver {
 	/* the device type supported by this driver */
 	struct hv_guid dev_type;
 
-	/*
-	 * Device type specific drivers (net, blk etc.)
-	 * need a mechanism to get a pointer to
-	 * device type specific driver structure given
-	 * a pointer to the base hyperv driver structure.
-	 * The current code solves this problem using
-	 * a hack. Support this need explicitly
-	 */
-	void *priv;
-
 	struct device_driver driver;
 
-	int (*dev_add)(struct hv_device *device, void *data);
-	int (*dev_rm)(struct hv_device *device);
-	void (*cleanup)(struct hv_driver *driver);
+	int (*probe)(struct hv_device *);
+	int (*remove)(struct hv_device *);
+	void (*shutdown)(struct hv_device *);
+
 };
 
 /* Base device object */
 struct hv_device {
-	/* the driver for this device */
-	struct hv_driver *drv;
-
-	char name[64];
-
-	struct work_struct probe_failed_work_item;
-
-	int probe_error;
-
 	/* the device type id of this device */
 	struct hv_guid dev_type;
 
