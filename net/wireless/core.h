@@ -60,8 +60,11 @@ struct cfg80211_registered_device {
 	struct rb_root bss_tree;
 	u32 bss_generation;
 	struct cfg80211_scan_request *scan_req; /* protected by RTNL */
+	struct cfg80211_sched_scan_request *sched_scan_req;
 	unsigned long suspend_at;
 	struct work_struct scan_done_wk;
+	struct work_struct sched_scan_results_wk;
+	struct work_struct sched_scan_stopped_wk;
 
 #ifdef CONFIG_NL80211_TESTMODE
 	struct genl_info *testmode_info;
@@ -69,6 +72,8 @@ struct cfg80211_registered_device {
 
 	struct work_struct conn_work;
 	struct work_struct event_work;
+
+	struct cfg80211_wowlan *wowlan;
 
 	/* must be last because of the way we do wiphy_priv(),
 	 * and it should at least be aligned to NETDEV_ALIGN */
@@ -89,6 +94,18 @@ bool wiphy_idx_valid(int wiphy_idx)
 	return wiphy_idx >= 0;
 }
 
+static inline void
+cfg80211_rdev_free_wowlan(struct cfg80211_registered_device *rdev)
+{
+	int i;
+
+	if (!rdev->wowlan)
+		return;
+	for (i = 0; i < rdev->wowlan->n_patterns; i++)
+		kfree(rdev->wowlan->patterns[i].mask);
+	kfree(rdev->wowlan->patterns);
+	kfree(rdev->wowlan);
+}
 
 extern struct workqueue_struct *cfg80211_wq;
 extern struct mutex cfg80211_mutex;
@@ -397,6 +414,10 @@ void cfg80211_sme_rx_auth(struct net_device *dev, const u8 *buf, size_t len);
 void cfg80211_sme_disassoc(struct net_device *dev, int idx);
 void __cfg80211_scan_done(struct work_struct *wk);
 void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev, bool leak);
+void __cfg80211_sched_scan_results(struct work_struct *wk);
+int __cfg80211_stop_sched_scan(struct cfg80211_registered_device *rdev,
+			       bool driver_initiated);
+void __cfg80211_sched_scan_stopped(struct work_struct *wk);
 void cfg80211_upload_connect_keys(struct wireless_dev *wdev);
 int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 			  struct net_device *dev, enum nl80211_iftype ntype,

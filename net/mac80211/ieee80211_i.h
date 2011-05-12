@@ -490,7 +490,11 @@ struct ieee80211_if_mesh {
 	bool accepting_plinks;
 	const u8 *ie;
 	u8 ie_len;
-	bool is_secure;
+	enum {
+		IEEE80211_MESH_SEC_NONE = 0x0,
+		IEEE80211_MESH_SEC_AUTHED = 0x1,
+		IEEE80211_MESH_SEC_SECURED = 0x2,
+	} security;
 };
 
 #ifdef CONFIG_MAC80211_MESH
@@ -764,6 +768,9 @@ struct ieee80211_local {
 	/* device is started */
 	bool started;
 
+	/* wowlan is enabled -- don't reconfig on resume */
+	bool wowlan;
+
 	int tx_headroom; /* required headroom for hardware/radiotap */
 
 	/* count for keys needing tailroom space allocation */
@@ -839,6 +846,9 @@ struct ieee80211_local {
 	enum ieee80211_band hw_scan_band;
 	int scan_channel_idx;
 	int scan_ies_len;
+
+	bool sched_scanning;
+	struct ieee80211_sched_scan_ies sched_scan_ies;
 
 	unsigned long leave_oper_channel_time;
 	enum mac80211_scan_state next_scan_state;
@@ -1147,6 +1157,12 @@ ieee80211_rx_bss_get(struct ieee80211_local *local, u8 *bssid, int freq,
 void ieee80211_rx_bss_put(struct ieee80211_local *local,
 			  struct ieee80211_bss *bss);
 
+/* scheduled scan handling */
+int ieee80211_request_sched_scan_start(struct ieee80211_sub_if_data *sdata,
+				       struct cfg80211_sched_scan_request *req);
+int ieee80211_request_sched_scan_stop(struct ieee80211_sub_if_data *sdata,
+				      bool driver_initiated);
+
 /* off-channel helpers */
 bool ieee80211_cfg_on_oper_channel(struct ieee80211_local *local);
 void ieee80211_offchannel_enable_all_ps(struct ieee80211_local *local,
@@ -1250,7 +1266,8 @@ int ieee80211_reconfig(struct ieee80211_local *local);
 void ieee80211_stop_device(struct ieee80211_local *local);
 
 #ifdef CONFIG_PM
-int __ieee80211_suspend(struct ieee80211_hw *hw);
+int __ieee80211_suspend(struct ieee80211_hw *hw,
+			struct cfg80211_wowlan *wowlan);
 
 static inline int __ieee80211_resume(struct ieee80211_hw *hw)
 {
@@ -1263,7 +1280,8 @@ static inline int __ieee80211_resume(struct ieee80211_hw *hw)
 	return ieee80211_reconfig(hw_to_local(hw));
 }
 #else
-static inline int __ieee80211_suspend(struct ieee80211_hw *hw)
+static inline int __ieee80211_suspend(struct ieee80211_hw *hw,
+				      struct cfg80211_wowlan *wowlan)
 {
 	return 0;
 }
