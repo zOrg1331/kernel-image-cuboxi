@@ -1755,6 +1755,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 			ret = NETDEV_TX_OK;
 			goto fail;
 		}
+		rcu_read_lock();
 		if (!is_multicast_ether_addr(skb->data))
 			mppath = mpp_path_lookup(skb->data, sdata);
 
@@ -1769,13 +1770,13 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 		    !(mppath && compare_ether_addr(mppath->mpp, skb->data))) {
 			hdrlen = ieee80211_fill_mesh_addresses(&hdr, &fc,
 					skb->data, skb->data + ETH_ALEN);
+			rcu_read_unlock();
 			meshhdrlen = ieee80211_new_mesh_header(&mesh_hdr,
 					sdata, NULL, NULL);
 		} else {
 			int is_mesh_mcast = 1;
 			const u8 *mesh_da;
 
-			rcu_read_lock();
 			if (is_multicast_ether_addr(skb->data))
 				/* DA TA mSA AE:SA */
 				mesh_da = skb->data;
@@ -2538,8 +2539,9 @@ void ieee80211_tx_skb(struct ieee80211_sub_if_data *sdata, struct sk_buff *skb)
 	skb_set_network_header(skb, 0);
 	skb_set_transport_header(skb, 0);
 
-	/* send all internal mgmt frames on VO */
-	skb_set_queue_mapping(skb, 0);
+	/* Send all internal mgmt frames on VO. Accordingly set TID to 7. */
+	skb_set_queue_mapping(skb, IEEE80211_AC_VO);
+	skb->priority = 7;
 
 	/*
 	 * The other path calling ieee80211_xmit is from the tasklet,

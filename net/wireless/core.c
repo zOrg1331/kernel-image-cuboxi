@@ -370,7 +370,7 @@ struct wiphy *wiphy_new(const struct cfg80211_ops *ops, int sizeof_priv)
 	spin_lock_init(&rdev->bss_lock);
 	INIT_LIST_HEAD(&rdev->bss_list);
 	INIT_WORK(&rdev->scan_done_wk, __cfg80211_scan_done);
-
+	INIT_WORK(&rdev->sched_scan_results_wk, __cfg80211_sched_scan_results);
 #ifdef CONFIG_CFG80211_WEXT
 	rdev->wiphy.wext = &cfg80211_wext_handler;
 #endif
@@ -491,6 +491,13 @@ int wiphy_register(struct wiphy *wiphy)
 	if (!have_band) {
 		WARN_ON(1);
 		return -EINVAL;
+	}
+
+	if (rdev->wiphy.wowlan.n_patterns) {
+		if (WARN_ON(!rdev->wiphy.wowlan.pattern_min_len ||
+			    rdev->wiphy.wowlan.pattern_min_len >
+			    rdev->wiphy.wowlan.pattern_max_len))
+			return -EINVAL;
 	}
 
 	/* check and set up bitrates */
@@ -631,6 +638,7 @@ void cfg80211_dev_free(struct cfg80211_registered_device *rdev)
 	mutex_destroy(&rdev->devlist_mtx);
 	list_for_each_entry_safe(scan, tmp, &rdev->bss_list, list)
 		cfg80211_put_bss(&scan->pub);
+	cfg80211_rdev_free_wowlan(rdev);
 	kfree(rdev);
 }
 
@@ -662,6 +670,11 @@ static void wdev_cleanup_work(struct work_struct *work)
 	if (WARN_ON(rdev->scan_req && rdev->scan_req->dev == wdev->netdev)) {
 		rdev->scan_req->aborted = true;
 		___cfg80211_scan_done(rdev, true);
+	}
+
+	if (WARN_ON(rdev->sched_scan_req &&
+		    rdev->sched_scan_req->dev == wdev->netdev)) {
+		__cfg80211_stop_sched_scan(rdev, false);
 	}
 
 	cfg80211_unlock_rdev(rdev);
@@ -751,6 +764,10 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 			break;
 		case NL80211_IFTYPE_P2P_CLIENT:
 		case NL80211_IFTYPE_STATION:
+			cfg80211_lock_rdev(rdev);
+			__cfg80211_stop_sched_scan(rdev, false);
+			cfg80211_unlock_rdev(rdev);
+
 			wdev_lock(wdev);
 #ifdef CONFIG_CFG80211_WEXT
 			kfree(wdev->wext.ie);
@@ -769,6 +786,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 		default:
 			break;
 		}
+		wdev->beacon_interval = 0;
 		break;
 	case NETDEV_DOWN:
 		dev_hold(dev);
