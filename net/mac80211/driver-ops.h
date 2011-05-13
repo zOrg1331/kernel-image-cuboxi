@@ -552,4 +552,35 @@ static inline void drv_get_ringparam(struct ieee80211_local *local,
 	trace_drv_return_void(local);
 }
 
+static inline bool drv_tx_frames_pending(struct ieee80211_local *local)
+{
+	bool ret = false;
+
+	might_sleep();
+
+	trace_drv_tx_frames_pending(local);
+	if (local->ops->tx_frames_pending)
+		ret = local->ops->tx_frames_pending(&local->hw);
+	trace_drv_return_bool(local, ret);
+
+	return ret;
+}
+
+static inline int drv_set_bitrate_mask(struct ieee80211_local *local,
+				       struct ieee80211_sub_if_data *sdata,
+				       const struct cfg80211_bitrate_mask *mask)
+{
+	int ret = -EOPNOTSUPP;
+
+	might_sleep();
+
+	trace_drv_set_bitrate_mask(local, sdata, mask);
+	if (local->ops->set_bitrate_mask)
+		ret = local->ops->set_bitrate_mask(&local->hw,
+						   &sdata->vif, mask);
+	trace_drv_return_int(local, ret);
+
+	return ret;
+}
+
 #endif /* __MAC80211_DRIVER_OPS */

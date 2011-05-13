@@ -51,8 +51,12 @@
 char ixgbe_driver_name[] = "ixgbe";
 static const char ixgbe_driver_string[] =
 			      "Intel(R) 10 Gigabit PCI Express Network Driver";
-
-#define DRV_VERSION "3.2.9-k2"
+#define MAJ 3
+#define MIN 3
+#define BUILD 8
+#define KFIX 2
+#define DRV_VERSION __stringify(MAJ) "." __stringify(MIN) "." \
+	__stringify(BUILD) "-k" __stringify(KFIX)
 const char ixgbe_driver_version[] = DRV_VERSION;
 static const char ixgbe_copyright[] =
 				"Copyright (c) 1999-2011 Intel Corporation.";
@@ -120,6 +124,8 @@ static DEFINE_PCI_DEVICE_TABLE(ixgbe_pci_tbl) = {
 	 board_82599 },
 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_X540T),
 	 board_X540 },
+	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_SFP_SF2),
+	 board_82599 },
 
 	/* required last entry */
 	{0, }
@@ -943,8 +949,6 @@ static void ixgbe_update_rx_dca(struct ixgbe_adapter *adapter,
 	rxctrl |= IXGBE_DCA_RXCTRL_DESC_DCA_EN;
 	rxctrl |= IXGBE_DCA_RXCTRL_HEAD_DCA_EN;
 	rxctrl &= ~(IXGBE_DCA_RXCTRL_DESC_RRO_EN);
-	rxctrl &= ~(IXGBE_DCA_RXCTRL_DESC_WRO_EN |
-		    IXGBE_DCA_RXCTRL_DESC_HSRO_EN);
 	IXGBE_WRITE_REG(hw, IXGBE_DCA_RXCTRL(reg_idx), rxctrl);
 }
 
@@ -962,7 +966,6 @@ static void ixgbe_update_tx_dca(struct ixgbe_adapter *adapter,
 		txctrl &= ~IXGBE_DCA_TXCTRL_CPUID_MASK;
 		txctrl |= dca3_get_tag(&adapter->pdev->dev, cpu);
 		txctrl |= IXGBE_DCA_TXCTRL_DESC_DCA_EN;
-		txctrl &= ~IXGBE_DCA_TXCTRL_TX_WB_RO_EN;
 		IXGBE_WRITE_REG(hw, IXGBE_DCA_TXCTRL(reg_idx), txctrl);
 		break;
 	case ixgbe_mac_82599EB:
@@ -972,7 +975,6 @@ static void ixgbe_update_tx_dca(struct ixgbe_adapter *adapter,
 		txctrl |= (dca3_get_tag(&adapter->pdev->dev, cpu) <<
 			   IXGBE_DCA_TXCTRL_CPUID_SHIFT_82599);
 		txctrl |= IXGBE_DCA_TXCTRL_DESC_DCA_EN;
-		txctrl &= ~IXGBE_DCA_TXCTRL_TX_WB_RO_EN;
 		IXGBE_WRITE_REG(hw, IXGBE_DCA_TXCTRL_82599(reg_idx), txctrl);
 		break;
 	default:
@@ -1061,8 +1063,14 @@ static int __ixgbe_notify_dca(struct device *dev, void *data)
 
 	return 0;
 }
-
 #endif /* CONFIG_IXGBE_DCA */
+
+static inline void ixgbe_rx_hash(union ixgbe_adv_rx_desc *rx_desc,
+				 struct sk_buff *skb)
+{
+	skb->rxhash = le32_to_cpu(rx_desc->wb.lower.hi_dword.rss);
+}
+
 /**
  * ixgbe_receive_skb - Send a completed packet up the stack
  * @adapter: board private structure
@@ -1454,6 +1462,8 @@ static void ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 		}
 
 		ixgbe_rx_checksum(adapter, rx_desc, skb);
+		if (adapter->netdev->features & NETIF_F_RXHASH)
+			ixgbe_rx_hash(rx_desc, skb);
 
 		/* probably a little skewed due to removing CRC */
 		total_rx_bytes += skb->len;
@@ -2731,7 +2741,7 @@ void ixgbe_configure_tx_ring(struct ixgbe_adapter *adapter,
 
 	/* poll to verify queue is enabled */
 	do {
-		msleep(1);
+		usleep_range(1000, 2000);
 		txdctl = IXGBE_READ_REG(hw, IXGBE_TXDCTL(reg_idx));
 	} while (--wait_loop && !(txdctl & IXGBE_TXDCTL_ENABLE));
 	if (!wait_loop)
@@ -3023,7 +3033,7 @@ static void ixgbe_rx_desc_queue_enable(struct ixgbe_adapter *adapter,
 		return;
 
 	do {
-		msleep(1);
+		usleep_range(1000, 2000);
 		rxdctl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(reg_idx));
 	} while (--wait_loop && !(rxdctl & IXGBE_RXDCTL_ENABLE));
 
@@ -3860,9 +3870,10 @@ static void ixgbe_setup_gpie(struct ixgbe_adapter *adapter)
 	if (adapter->flags & IXGBE_FLAG_FAN_FAIL_CAPABLE)
 		gpie |= IXGBE_SDP1_GPIEN;
 
-	if (hw->mac.type == ixgbe_mac_82599EB)
+	if (hw->mac.type == ixgbe_mac_82599EB) {
 		gpie |= IXGBE_SDP1_GPIEN;
 		gpie |= IXGBE_SDP2_GPIEN;
+	}
 
 	IXGBE_WRITE_REG(hw, IXGBE_GPIE, gpie);
 }
@@ -3945,7 +3956,7 @@ void ixgbe_reinit_locked(struct ixgbe_adapter *adapter)
 {
 	WARN_ON(in_interrupt());
 	while (test_and_set_bit(__IXGBE_RESETTING, &adapter->state))
-		msleep(1);
+		usleep_range(1000, 2000);
 	ixgbe_down(adapter);
 	/*
 	 * If SR-IOV enabled then wait a bit before bringing the adapter
@@ -4150,7 +4161,7 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 		/* this call also flushes the previous write */
 		ixgbe_disable_rx_queue(adapter, adapter->rx_ring[i]);
 
-	msleep(10);
+	usleep_range(10000, 20000);
 
 	netif_tx_stop_all_queues(netdev);
 
@@ -4200,9 +4211,6 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 	default:
 		break;
 	}
-
-	/* clear n-tuple filters that are cached */
-	ethtool_ntuple_flush(netdev);
 
 	if (!pci_channel_offline(adapter->pdev))
 		ixgbe_reset(adapter);
@@ -4567,8 +4575,8 @@ static inline bool ixgbe_cache_ring_rss(struct ixgbe_adapter *adapter)
 #ifdef CONFIG_IXGBE_DCB
 
 /* ixgbe_get_first_reg_idx - Return first register index associated with ring */
-void ixgbe_get_first_reg_idx(struct ixgbe_adapter *adapter, u8 tc,
-			     unsigned int *tx, unsigned int *rx)
+static void ixgbe_get_first_reg_idx(struct ixgbe_adapter *adapter, u8 tc,
+				    unsigned int *tx, unsigned int *rx)
 {
 	struct net_device *dev = adapter->netdev;
 	struct ixgbe_hw *hw = &adapter->hw;
@@ -5904,8 +5912,13 @@ void ixgbe_update_stats(struct ixgbe_adapter *adapter)
 		hwstats->gotc += IXGBE_READ_REG(hw, IXGBE_GOTCH);
 		hwstats->tor += IXGBE_READ_REG(hw, IXGBE_TORH);
 		break;
-	case ixgbe_mac_82599EB:
 	case ixgbe_mac_X540:
+		/* OS2BMC stats are X540 only*/
+		hwstats->o2bgptc += IXGBE_READ_REG(hw, IXGBE_O2BGPTC);
+		hwstats->o2bspc += IXGBE_READ_REG(hw, IXGBE_O2BSPC);
+		hwstats->b2ospc += IXGBE_READ_REG(hw, IXGBE_B2OSPC);
+		hwstats->b2ogprc += IXGBE_READ_REG(hw, IXGBE_B2OGPRC);
+	case ixgbe_mac_82599EB:
 		hwstats->gorc += IXGBE_READ_REG(hw, IXGBE_GORCL);
 		IXGBE_READ_REG(hw, IXGBE_GORCH); /* to clear */
 		hwstats->gotc += IXGBE_READ_REG(hw, IXGBE_GOTCL);
@@ -7361,9 +7374,16 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	netdev->features |= NETIF_F_TSO;
 	netdev->features |= NETIF_F_TSO6;
 	netdev->features |= NETIF_F_GRO;
+	netdev->features |= NETIF_F_RXHASH;
 
-	if (adapter->hw.mac.type == ixgbe_mac_82599EB)
+	switch (adapter->hw.mac.type) {
+	case ixgbe_mac_82599EB:
+	case ixgbe_mac_X540:
 		netdev->features |= NETIF_F_SCTP_CSUM;
+		break;
+	default:
+		break;
+	}
 
 	netdev->vlan_features |= NETIF_F_TSO;
 	netdev->vlan_features |= NETIF_F_TSO6;
@@ -7435,6 +7455,9 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 	if (err)
 		goto err_sw_init;
 
+	if (!(adapter->flags & IXGBE_FLAG_RSS_ENABLED))
+		netdev->features &= ~NETIF_F_RXHASH;
+
 	switch (pdev->device) {
 	case IXGBE_DEV_ID_82599_SFP:
 		/* Only this subdevice supports WOL */
@@ -7463,8 +7486,8 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
 
 	/* print bus type/speed/width info */
 	e_dev_info("(PCI Express:%s:%s) %pM\n",
-		   (hw->bus.speed == ixgbe_bus_speed_5000 ? "5.0Gb/s" :
-		    hw->bus.speed == ixgbe_bus_speed_2500 ? "2.5Gb/s" :
+		   (hw->bus.speed == ixgbe_bus_speed_5000 ? "5.0GT/s" :
+		    hw->bus.speed == ixgbe_bus_speed_2500 ? "2.5GT/s" :
 		    "Unknown"),
 		   (hw->bus.width == ixgbe_bus_width_pcie_x8 ? "Width x8" :
 		    hw->bus.width == ixgbe_bus_width_pcie_x4 ? "Width x4" :
