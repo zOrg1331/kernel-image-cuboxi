@@ -78,13 +78,19 @@ DEFINE_PER_CPU(struct hrtimer_cpu_base, hrtimer_bases) =
 			.get_time = &ktime_get_boottime,
 			.resolution = KTIME_LOW_RES,
 		},
+		{
+			.index = CLOCK_REALTIME_COS,
+			.get_time = &ktime_get_real,
+			.resolution = KTIME_LOW_RES,
+		},
 	}
 };
 
-static int hrtimer_clock_to_base_table[MAX_CLOCKS] = {
+static const int hrtimer_clock_to_base_table[MAX_CLOCKS] = {
 	[CLOCK_REALTIME]	= HRTIMER_BASE_REALTIME,
 	[CLOCK_MONOTONIC]	= HRTIMER_BASE_MONOTONIC,
 	[CLOCK_BOOTTIME]	= HRTIMER_BASE_BOOTTIME,
+	[CLOCK_REALTIME_COS]	= HRTIMER_BASE_REALTIME_COS,
 };
 
 static inline int hrtimer_clockid_to_base(clockid_t clock_id)
@@ -110,6 +116,7 @@ static void hrtimer_get_softirq_time(struct hrtimer_cpu_base *base)
 	base->clock_base[HRTIMER_BASE_REALTIME].softirq_time = xtim;
 	base->clock_base[HRTIMER_BASE_MONOTONIC].softirq_time = mono;
 	base->clock_base[HRTIMER_BASE_BOOTTIME].softirq_time = boot;
+	base->clock_base[HRTIMER_BASE_REALTIME_COS].softirq_time = xtim;
 }
 
 /*
@@ -479,6 +486,8 @@ static inline void debug_deactivate(struct hrtimer *timer)
 	trace_hrtimer_cancel(timer);
 }
 
+static void hrtimer_expire_cancelable(struct hrtimer_cpu_base *cpu_base);
+
 /* High resolution timer related functions */
 #ifdef CONFIG_HIGH_RES_TIMERS
 
@@ -621,66 +630,6 @@ static int hrtimer_reprogram(struct hrtimer *timer,
 	return res;
 }
 
-
-/*
- * Retrigger next event is called after clock was set
- *
- * Called with interrupts disabled via on_each_cpu()
- */
-static void retrigger_next_event(void *arg)
-{
-	struct hrtimer_cpu_base *base;
-	struct timespec realtime_offset, wtm, sleep;
-
-	if (!hrtimer_hres_active())
-		return;
-
-	get_xtime_and_monotonic_and_sleep_offset(&realtime_offset, &wtm,
-							&sleep);
-	set_normalized_timespec(&realtime_offset, -wtm.tv_sec, -wtm.tv_nsec);
-
-	base = &__get_cpu_var(hrtimer_bases);
-
-	/* Adjust CLOCK_REALTIME offset */
-	raw_spin_lock(&base->lock);
-	base->clock_base[HRTIMER_BASE_REALTIME].offset =
-		timespec_to_ktime(realtime_offset);
-	base->clock_base[HRTIMER_BASE_BOOTTIME].offset =
-		timespec_to_ktime(sleep);
-
-	hrtimer_force_reprogram(base, 0);
-	raw_spin_unlock(&base->lock);
-}
-
-/*
- * Clock realtime was set
- *
- * Change the offset of the realtime clock vs. the monotonic
- * clock.
- *
- * We might have to reprogram the high resolution timer interrupt. On
- * SMP we call the architecture specific code to retrigger _all_ high
- * resolution timer interrupts. On UP we just disable interrupts and
- * call the high resolution interrupt code.
- */
-void clock_was_set(void)
-{
-	/* Retrigger the CPU local events everywhere */
-	on_each_cpu(retrigger_next_event, NULL, 1);
-}
-
-/*
- * During resume we might have to reprogram the high resolution timer
- * interrupt (on the local CPU):
- */
-void hres_timers_resume(void)
-{
-	WARN_ONCE(!irqs_disabled(),
-		  KERN_INFO "hres_timers_resume() called with IRQs enabled!");
-
-	retrigger_next_event(NULL);
-}
-
 /*
  * Initialize the high resolution related parts of cpu_base
  */
@@ -714,12 +663,14 @@ static inline int hrtimer_enqueue_reprogram(struct hrtimer *timer,
 	return 0;
 }
 
+static void retrigger_next_event(void *arg);
+
 /*
  * Switch to high resolution mode
  */
 static int hrtimer_switch_to_hres(void)
 {
-	int cpu = smp_processor_id();
+	int i, cpu = smp_processor_id();
 	struct hrtimer_cpu_base *base = &per_cpu(hrtimer_bases, cpu);
 	unsigned long flags;
 
@@ -735,9 +686,8 @@ static int hrtimer_switch_to_hres(void)
 		return 0;
 	}
 	base->hres_active = 1;
-	base->clock_base[HRTIMER_BASE_REALTIME].resolution = KTIME_HIGH_RES;
-	base->clock_base[HRTIMER_BASE_MONOTONIC].resolution = KTIME_HIGH_RES;
-	base->clock_base[HRTIMER_BASE_BOOTTIME].resolution = KTIME_HIGH_RES;
+	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++)
+		base->clock_base[i].resolution = KTIME_HIGH_RES;
 
 	tick_setup_sched_timer();
 
@@ -763,6 +713,71 @@ static inline int hrtimer_enqueue_reprogram(struct hrtimer *timer,
 static inline void hrtimer_init_hres(struct hrtimer_cpu_base *base) { }
 
 #endif /* CONFIG_HIGH_RES_TIMERS */
+
+/*
+ * Retrigger next event is called after clock was set
+ *
+ * Called with interrupts disabled via on_each_cpu()
+ */
+static void retrigger_next_event(void *arg)
+{
+	struct hrtimer_cpu_base *base = &__get_cpu_var(hrtimer_bases);
+	struct timespec realtime_offset, xtim, wtm, sleep;
+
+	if (!hrtimer_hres_active()) {
+		raw_spin_lock(&base->lock);
+		hrtimer_expire_cancelable(base);
+		raw_spin_unlock(&base->lock);
+		return;
+	}
+
+	/* Optimized out for !HIGH_RES */
+	get_xtime_and_monotonic_and_sleep_offset(&xtim, &wtm, &sleep);
+	set_normalized_timespec(&realtime_offset, -wtm.tv_sec, -wtm.tv_nsec);
+
+	/* Adjust CLOCK_REALTIME offset */
+	raw_spin_lock(&base->lock);
+	base->clock_base[HRTIMER_BASE_REALTIME].offset =
+		timespec_to_ktime(realtime_offset);
+	base->clock_base[HRTIMER_BASE_BOOTTIME].offset =
+		timespec_to_ktime(sleep);
+	base->clock_base[HRTIMER_BASE_REALTIME_COS].offset =
+		timespec_to_ktime(realtime_offset);
+
+	hrtimer_expire_cancelable(base);
+
+	hrtimer_force_reprogram(base, 0);
+	raw_spin_unlock(&base->lock);
+}
+
+/*
+ * Clock realtime was set
+ *
+ * Change the offset of the realtime clock vs. the monotonic
+ * clock.
+ *
+ * We might have to reprogram the high resolution timer interrupt. On
+ * SMP we call the architecture specific code to retrigger _all_ high
+ * resolution timer interrupts. On UP we just disable interrupts and
+ * call the high resolution interrupt code.
+ */
+void clock_was_set(void)
+{
+	/* Retrigger the CPU local events everywhere */
+	on_each_cpu(retrigger_next_event, NULL, 1);
+}
+
+/*
+ * During resume we might have to reprogram the high resolution timer
+ * interrupt (on the local CPU):
+ */
+void hrtimers_resume(void)
+{
+	WARN_ONCE(!irqs_disabled(),
+		  KERN_INFO "hrtimers_resume() called with IRQs enabled!");
+
+	retrigger_next_event(NULL);
+}
 
 static inline void timer_stats_hrtimer_set_start_info(struct hrtimer *timer)
 {
@@ -1223,6 +1238,22 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 	WARN_ON_ONCE(!(timer->state & HRTIMER_STATE_CALLBACK));
 
 	timer->state &= ~HRTIMER_STATE_CALLBACK;
+}
+
+static void hrtimer_expire_cancelable(struct hrtimer_cpu_base *cpu_base)
+{
+	struct timerqueue_node *node;
+	struct hrtimer_clock_base *base;
+	ktime_t now = ktime_get_real();
+
+	base = &cpu_base->clock_base[HRTIMER_BASE_REALTIME_COS];
+
+	while ((node = timerqueue_getnext(&base->active))) {
+			struct hrtimer *timer;
+
+			timer = container_of(node, struct hrtimer, node);
+			__run_hrtimer(timer, &now);
+	}
 }
 
 #ifdef CONFIG_HIGH_RES_TIMERS
