@@ -50,7 +50,6 @@
 extern ctxd_t *srmmu_ctx_table_phys;
 static int smp_processors_ready;
 extern volatile unsigned long cpu_callin_map[NR_CPUS];
-extern unsigned char boot_cpu_id;
 extern cpumask_t smp_commenced_mask;
 void __init leon_configure_cache_smp(void);
 
@@ -93,8 +92,6 @@ void __cpuinit leon_callin(void)
 
 	local_flush_cache_all();
 	local_flush_tlb_all();
-
-	cpu_probe();
 
 	/* Fix idle thread fields. */
 	__asm__ __volatile__("ld [%0], %%g6\n\t" : : "r"(&current_set[cpuid])
@@ -220,6 +217,10 @@ int __cpuinit leon_boot_one_cpu(int i)
 	       (unsigned int)&leon3_irqctrl_regs->mpstatus);
 	local_flush_cache_all();
 
+	/* Make sure all IRQs are of from the start for this new CPU */
+	LEON_BYPASS_STORE_PA(&leon3_irqctrl_regs->mask[i], 0);
+
+	/* Wake one CPU */
 	LEON_BYPASS_STORE_PA(&(leon3_irqctrl_regs->mpstatus), 1 << i);
 
 	/* wheee... it's going... */
@@ -386,27 +387,23 @@ void leon_cross_call_irq(void)
 	ccall_info.processors_out[i] = 1;
 }
 
-void leon_percpu_timer_interrupt(struct pt_regs *regs)
+irqreturn_t leon_percpu_timer_interrupt(int irq, void *unused)
 {
-	struct pt_regs *old_regs;
 	int cpu = smp_processor_id();
-
-	old_regs = set_irq_regs(regs);
 
 	leon_clear_profile_irq(cpu);
 
 	profile_tick(CPU_PROFILING);
 
 	if (!--prof_counter(cpu)) {
-		int user = user_mode(regs);
+		int user = user_mode(get_irq_regs());
 
-		irq_enter();
 		update_process_times(user);
-		irq_exit();
 
 		prof_counter(cpu) = prof_multiplier(cpu);
 	}
-	set_irq_regs(old_regs);
+
+	return IRQ_HANDLED;
 }
 
 static void __init smp_setup_percpu_timer(void)
