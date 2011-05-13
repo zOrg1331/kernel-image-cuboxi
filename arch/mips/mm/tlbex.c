@@ -404,6 +404,7 @@ static void __cpuinit build_tlb_write_entry(u32 **p, struct uasm_label **l,
 	case CPU_5KC:
 	case CPU_TX49XX:
 	case CPU_PR4450:
+	case CPU_XLR:
 		uasm_i_nop(p);
 		tlbw(p);
 		break;
@@ -1463,19 +1464,12 @@ static void __cpuinit
 build_pte_present(u32 **p, struct uasm_reloc **r,
 		  unsigned int pte, unsigned int ptr, enum label_id lid)
 {
-	if (kernel_uses_smartmips_rixi) {
-		if (use_bbit_insns()) {
-			uasm_il_bbit0(p, r, pte, ilog2(_PAGE_PRESENT), lid);
-			uasm_i_nop(p);
-		} else {
-			uasm_i_andi(p, pte, pte, _PAGE_PRESENT);
-			uasm_il_beqz(p, r, pte, lid);
-			iPTE_LW(p, pte, ptr);
-		}
+	if (use_bbit_insns()) {
+		uasm_il_bbit0(p, r, pte, ilog2(_PAGE_PRESENT), lid);
+		uasm_i_nop(p);
 	} else {
-		uasm_i_andi(p, pte, pte, _PAGE_PRESENT | _PAGE_READ);
-		uasm_i_xori(p, pte, pte, _PAGE_PRESENT | _PAGE_READ);
-		uasm_il_bnez(p, r, pte, lid);
+		uasm_i_andi(p, pte, pte, _PAGE_PRESENT);
+		uasm_il_beqz(p, r, pte, lid);
 		iPTE_LW(p, pte, ptr);
 	}
 }
