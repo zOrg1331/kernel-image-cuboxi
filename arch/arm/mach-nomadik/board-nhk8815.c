@@ -16,6 +16,7 @@
 #include <linux/amba/bus.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
+#include <linux/gpio/nomadik.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/onenand.h>
@@ -226,7 +227,7 @@ static int __init nhk8815_eth_init(void)
 	int err;
 
 	err = gpio_request(gpio_nr, "eth_irq");
-	if (!err) err = nmk_gpio_set_mode(gpio_nr, NMK_GPIO_ALT_GPIO);
+	if (!err) err = gpio_config(gpio_nr, GPIO_CONFIG_NMK_ALTF_GPIO, NULL);
 	if (!err) err = gpio_direction_input(gpio_nr);
 	if (err)
 		pr_err("Error %i in %s\n", err, __func__);

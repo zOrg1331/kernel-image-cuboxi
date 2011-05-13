@@ -12,8 +12,7 @@
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/amba/bus.h>
-
-#include <plat/gpio.h>
+#include <linux/gpio/nomadik.h>
 
 #include <mach/hardware.h>
 

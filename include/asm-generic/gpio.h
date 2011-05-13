@@ -61,6 +61,7 @@ struct device_node;
  * @set: assigns output value for signal "offset"
  * @to_irq: optional hook supporting non-static gpio_to_irq() mappings;
  *	implementation may not sleep
+ * @config: set/get a certain custom parameter for the GPIO
  * @dbg_show: optional routine to show contents in debugfs; default code
  *	will be used when this is omitted, but custom code can show extra
  *	state (such as pullup/pulldown configuration).
@@ -105,12 +106,14 @@ struct gpio_chip {
 						unsigned offset, int value);
 	int			(*set_debounce)(struct gpio_chip *chip,
 						unsigned offset, unsigned debounce);
-
 	void			(*set)(struct gpio_chip *chip,
 						unsigned offset, int value);
-
 	int			(*to_irq)(struct gpio_chip *chip,
 						unsigned offset);
+	int			(*config)(struct gpio_chip *chip,
+						unsigned offset,
+						u16 param,
+						unsigned long *data);
 
 	void			(*dbg_show)(struct seq_file *s,
 						struct gpio_chip *chip);
@@ -158,6 +161,7 @@ extern int gpio_set_debounce(unsigned gpio, unsigned debounce);
 extern int gpio_get_value_cansleep(unsigned gpio);
 extern void gpio_set_value_cansleep(unsigned gpio, int value);
 
+extern int gpio_config(unsigned gpio, u16 param, unsigned long *data);
 
 /* A platform's <asm/gpio.h> code may want to inline the I/O calls when
  * the GPIO is constant and refers to some always-present controller,
