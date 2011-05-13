@@ -85,7 +85,7 @@ static void smp_beatic_message_pass(int target, int msg)
 
 static int __init smp_beatic_probe(void)
 {
-	return cpus_weight(cpu_possible_map);
+	return cpumask_weight(cpu_possible_mask);
 }
 
 static void __devinit smp_beatic_setup_cpu(int cpu)
@@ -93,12 +93,11 @@ static void __devinit smp_beatic_setup_cpu(int cpu)
 	beatic_setup_cpu(cpu);
 }
 
-static void __devinit smp_celleb_kick_cpu(int nr)
+static int __devinit smp_celleb_kick_cpu(int nr)
 {
 	BUG_ON(nr < 0 || nr >= NR_CPUS);
 
-	if (!smp_startup_cpu(nr))
-		return;
+	return smp_startup_cpu(nr);
 }
 
 static int smp_celleb_cpu_bootable(unsigned int nr)
