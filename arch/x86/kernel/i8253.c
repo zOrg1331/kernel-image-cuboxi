@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/clocksource.h>
 
 #include <asm/i8253.h>
 #include <asm/hpet.h>
@@ -130,7 +131,7 @@ static int __init init_pit_clocksource(void)
 	    pit_ce.mode != CLOCK_EVT_MODE_PERIODIC)
 		return 0;
 
-	return clocksource_pit_init();
+	return clocksource_i8253_init();
 }
 arch_initcall(init_pit_clocksource);
 

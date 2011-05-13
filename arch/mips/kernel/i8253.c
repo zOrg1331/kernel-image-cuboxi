@@ -10,6 +10,7 @@
 #include <linux/smp.h>
 #include <linux/spinlock.h>
 #include <linux/irq.h>
+#include <linux/clocksource.h>
 
 #include <asm/delay.h>
 #include <asm/i8253.h>
@@ -130,6 +131,6 @@ static int __init init_pit_clocksource(void)
 	if (num_possible_cpus() > 1) /* PIT does not scale! */
 		return 0;
 
-	return clocksource_pit_init();
+	return clocksource_i8253_init();
 }
 arch_initcall(init_pit_clocksource);
