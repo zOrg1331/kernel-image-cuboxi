@@ -28,6 +28,7 @@
 #include <linux/list.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/completion.h>
 #include "ring_buffer.h"
 #include "vmbus_channel_interface.h"
 #include "vmbus_packet_format.h"
@@ -290,8 +291,7 @@ struct vmbus_channel_msginfo {
 	struct list_head submsglist;
 
 	/* Synchronize the request/response if needed */
-	int wait_condition;
-	wait_queue_head_t waitevent;
+	struct completion  waitevent;
 	union {
 		struct vmbus_channel_version_supported version_supported;
 		struct vmbus_channel_open_result open_result;
@@ -314,7 +314,5 @@ void free_channel(struct vmbus_channel *channel);
 void vmbus_onmessage(void *context);
 
 int vmbus_request_offers(void);
-
-void vmbus_release_unattached_channels(void);
 
 #endif /* _CHANNEL_MGMT_H_ */

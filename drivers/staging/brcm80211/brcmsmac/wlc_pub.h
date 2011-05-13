@@ -59,6 +59,10 @@
  */
 #define WLC_TXPWR_MAX		(127)	/* ~32 dBm = 1,500 mW */
 
+/* rate related definitions */
+#define	WLC_RATE_FLAG	0x80	/* Flag to indicate it is a basic rate */
+#define	WLC_RATE_MASK	0x7f	/* Rate value mask w/o basic rate flag */
+
 /* legacy rx Antenna diversity for SISO rates */
 #define	ANT_RX_DIV_FORCE_0		0	/* Use antenna 0 */
 #define	ANT_RX_DIV_FORCE_1		1	/* Use antenna 1 */
@@ -91,6 +95,8 @@
 #ifndef AIDMAPSZ
 #define AIDMAPSZ	(roundup(MAXSCB, NBBY)/NBBY)	/* aid bitmap size in bytes */
 #endif				/* AIDMAPSZ */
+
+struct ieee80211_tx_queue_params;
 
 typedef struct wlc_tunables {
 	int ntxd;		/* size of tx descriptor table */
@@ -478,7 +484,7 @@ extern const u8 wme_fifo2ac[];
 #define	WLC_PROT_N_OBSS		16	/* non-HT OBSS present */
 
 /* common functions for every port */
-extern void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit,
+extern void *wlc_attach(struct wl_info *wl, u16 vendor, u16 device, uint unit,
 			bool piomode, void *regsva, uint bustype, void *btparam,
 			uint *perr);
 extern uint wlc_detach(struct wlc_info *wlc);
@@ -508,6 +514,8 @@ extern int wlc_iovar_op(struct wlc_info *wlc, const char *name, void *params,
 			struct wlc_if *wlcif);
 extern int wlc_ioctl(struct wlc_info *wlc, int cmd, void *arg, int len,
 		     struct wlc_if *wlcif);
+extern bool wlc_aggregatable(struct wlc_info *wlc, u8 tid);
+
 /* helper functions */
 extern void wlc_statsupd(struct wlc_info *wlc);
 extern void wlc_protection_upd(struct wlc_info *wlc, uint idx, int val);
@@ -515,9 +523,9 @@ extern int wlc_get_header_len(void);
 extern void wlc_mac_bcn_promisc_change(struct wlc_info *wlc, bool promisc);
 extern void wlc_set_addrmatch(struct wlc_info *wlc, int match_reg_offset,
 			      const u8 *addr);
-extern void wlc_wme_setparams(struct wlc_info *wlc, u16 aci, void *arg,
+extern void wlc_wme_setparams(struct wlc_info *wlc, u16 aci,
+			      const struct ieee80211_tx_queue_params *arg,
 			      bool suspend);
-
 extern struct wlc_pub *wlc_pub(void *wlc);
 
 /* common functions for every port */
@@ -562,6 +570,8 @@ extern void wlc_enable_mac(struct wlc_info *wlc);
 extern void wlc_associate_upd(struct wlc_info *wlc, bool state);
 extern void wlc_scan_start(struct wlc_info *wlc);
 extern void wlc_scan_stop(struct wlc_info *wlc);
+extern int wlc_get_curband(struct wlc_info *wlc);
+extern void wlc_wait_for_tx_completion(struct wlc_info *wlc, bool drop);
 
 static inline int wlc_iovar_getuint(struct wlc_info *wlc, const char *name,
 				    uint *arg)

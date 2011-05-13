@@ -17,23 +17,16 @@
  * USA.
  */
 
-#include <linux/slab.h>
+#include <linux/string.h>
 
 #include "usbip_common.h"
 #include "stub.h"
 
-/* Version Information */
-#define DRIVER_VERSION "1.0"
 #define DRIVER_AUTHOR "Takahiro Hirofuchi"
-#define DRIVER_DESC "Stub Driver for USB/IP"
+#define DRIVER_DESC "USB/IP Host Driver"
 
 /* stub_priv is allocated from stub_priv_cache */
 struct kmem_cache *stub_priv_cache;
-
-/*-------------------------------------------------------------------------*/
-
-/* Define sysfs entries for the usbip driver */
-
 
 /*
  * busid_tables defines matching busids that usbip can grab. A user can change
@@ -43,7 +36,6 @@ struct kmem_cache *stub_priv_cache;
 #define MAX_BUSID 16
 static struct bus_id_priv busid_table[MAX_BUSID];
 static spinlock_t busid_table_lock;
-
 
 int match_busid(const char *busid)
 {
@@ -148,10 +140,10 @@ int del_match_busid(char *busid)
 
 	return -1;
 }
+
 static void init_busid_table(void)
 {
 	int i;
-
 
 	for (i = 0; i < MAX_BUSID; i++) {
 		memset(busid_table[i].name, 0, BUSID_SIZE);
@@ -160,11 +152,12 @@ static void init_busid_table(void)
 		busid_table[i].sdev = NULL;
 		busid_table[i].shutdown_busid = 0;
 	}
+
 	spin_lock_init(&busid_table_lock);
 }
 
 static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
-		size_t count)
+				 size_t count)
 {
 	int len;
 	char busid[BUSID_SIZE];
@@ -180,7 +173,6 @@ static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
 		return -EINVAL;
 
 	strncpy(busid, buf + 4, BUSID_SIZE);
-
 
 	if (!strncmp(buf, "add ", 4)) {
 		if (add_match_busid(busid) < 0)
@@ -199,15 +191,8 @@ static ssize_t store_match_busid(struct device_driver *dev, const char *buf,
 	} else
 		return -EINVAL;
 }
-
 static DRIVER_ATTR(match_busid, S_IRUSR|S_IWUSR, show_match_busid,
-							store_match_busid);
-
-
-
-/*-------------------------------------------------------------------------*/
-
-/* Cleanup functions used to free private data */
+		   store_match_busid);
 
 static struct stub_priv *stub_priv_pop_from_listhead(struct list_head *listhead)
 {
@@ -265,15 +250,11 @@ void stub_device_cleanup_urbs(struct stub_device *sdev)
 		kmem_cache_free(stub_priv_cache, priv);
 
 		kfree(urb->transfer_buffer);
-
 		kfree(urb->setup_packet);
 
 		usb_free_urb(urb);
 	}
 }
-
-
-/*-------------------------------------------------------------------------*/
 
 static int __init usb_stub_init(void)
 {
@@ -296,8 +277,8 @@ static int __init usb_stub_init(void)
 		goto error_usb_register;
 	}
 
-	printk(KERN_INFO KBUILD_MODNAME ":"
-	       DRIVER_DESC ":" DRIVER_VERSION "\n");
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_DESC " " USBIP_VERSION
+	       "\n");
 
 	init_busid_table();
 
@@ -337,3 +318,4 @@ module_exit(usb_stub_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
+MODULE_VERSION(USBIP_VERSION);
