@@ -161,7 +161,7 @@ struct clocksource {
 	/*
 	 * First part of structure is read mostly
 	 */
-	char *name;
+	const char *name;
 	struct list_head list;
 	int rating;
 	cycle_t (*read)(struct clocksource *cs);
@@ -340,5 +340,13 @@ static inline void update_vsyscall_tz(void)
 #endif
 
 extern void timekeeping_notify(struct clocksource *clock);
+
+extern cycle_t clocksource_mmio_readl_up(struct clocksource *);
+extern cycle_t clocksource_mmio_readl_down(struct clocksource *);
+extern cycle_t clocksource_mmio_readw_up(struct clocksource *);
+extern cycle_t clocksource_mmio_readw_down(struct clocksource *);
+
+extern int clocksource_mmio_init(void __iomem *, const char *,
+	unsigned long, int, unsigned, cycle_t (*)(struct clocksource *));
 
 #endif /* _LINUX_CLOCKSOURCE_H */
