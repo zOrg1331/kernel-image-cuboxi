@@ -1819,6 +1819,13 @@ enum ieee80211_ampdu_mlme_action {
  * @set_ringparam: Set tx and rx ring sizes.
  *
  * @get_ringparam: Get tx and rx ring current and maximum sizes.
+ *
+ * @tx_frames_pending: Check if there is any pending frame in the hardware
+ *	queues before entering power save.
+ *
+ * @set_bitrate_mask: Set a mask of rates to be used for rate control selection
+ *	when transmitting a frame. Currently only legacy rates are handled.
+ *	The callback can sleep.
  */
 struct ieee80211_ops {
 	void (*tx)(struct ieee80211_hw *hw, struct sk_buff *skb);
@@ -1906,6 +1913,9 @@ struct ieee80211_ops {
 	int (*set_ringparam)(struct ieee80211_hw *hw, u32 tx, u32 rx);
 	void (*get_ringparam)(struct ieee80211_hw *hw,
 			      u32 *tx, u32 *tx_max, u32 *rx, u32 *rx_max);
+	bool (*tx_frames_pending)(struct ieee80211_hw *hw);
+	int (*set_bitrate_mask)(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+				const struct cfg80211_bitrate_mask *mask);
 };
 
 /**
@@ -2223,6 +2233,18 @@ static inline int ieee80211_sta_ps_transition_ni(struct ieee80211_sta *sta,
 #define IEEE80211_TX_STATUS_HEADROOM	13
 
 /**
+ * ieee80211_sta_set_tim - set the TIM bit for a sleeping station
+ *
+ * If a driver buffers frames for a powersave station instead of passing
+ * them back to mac80211 for retransmission, the station needs to be told
+ * to wake up using the TIM bitmap in the beacon.
+ *
+ * This function sets the station's TIM bit - it will be cleared when the
+ * station wakes up.
+ */
+void ieee80211_sta_set_tim(struct ieee80211_sta *sta);
+
+/**
  * ieee80211_tx_status - transmit status callback
  *
  * Call this function for all transmitted frames after they have been
@@ -2274,6 +2296,17 @@ static inline void ieee80211_tx_status_ni(struct ieee80211_hw *hw,
  */
 void ieee80211_tx_status_irqsafe(struct ieee80211_hw *hw,
 				 struct sk_buff *skb);
+
+/**
+ * ieee80211_report_low_ack - report non-responding station
+ *
+ * When operating in AP-mode, call this function to report a non-responding
+ * connected STA.
+ *
+ * @sta: the non-responding connected sta
+ * @num_packets: number of packets sent to @sta without a response
+ */
+void ieee80211_report_low_ack(struct ieee80211_sta *sta, u32 num_packets);
 
 /**
  * ieee80211_beacon_get_tim - beacon generation function
