@@ -18,6 +18,7 @@
  * Authors:
  *   Haiyang Zhang <haiyangz@microsoft.com>
  *   Hank Janssen  <hjanssen@microsoft.com>
+ *   K. Y. Srinivasan <kys@microsoft.com>
  *
  */
 
@@ -29,12 +30,12 @@
 
 struct hv_ring_buffer {
 	/* Offset in bytes from the start of ring data below */
-	volatile u32 write_index;
+	u32 write_index;
 
 	/* Offset in bytes from the start of ring data below */
-	volatile u32 read_index;
+	u32 read_index;
 
-	volatile u32 interrupt_mask;
+	u32 interrupt_mask;
 
 	/* Pad it to PAGE_SIZE so that data starts on page boundary */
 	u8	reserved[4084];
@@ -44,7 +45,6 @@ struct hv_ring_buffer {
 	 * vmbus connection also uses this data structure and its data starts
 	 * here, we commented out this field.
 	 */
-	/* volatile u32 InterruptMask; */
 
 	/*
 	 * Ring data starts here + RingDataStartOffset
@@ -75,28 +75,28 @@ struct hv_ring_buffer_debug_info {
 /* Interface */
 
 
-int ringbuffer_init(struct hv_ring_buffer_info *ring_info, void *buffer,
+int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info, void *buffer,
 		   u32 buflen);
 
-void ringbuffer_cleanup(struct hv_ring_buffer_info *ring_info);
+void hv_ringbuffer_cleanup(struct hv_ring_buffer_info *ring_info);
 
-int ringbuffer_write(struct hv_ring_buffer_info *ring_info,
+int hv_ringbuffer_write(struct hv_ring_buffer_info *ring_info,
 		    struct scatterlist *sglist,
 		    u32 sgcount);
 
-int ringbuffer_peek(struct hv_ring_buffer_info *ring_info, void *buffer,
+int hv_ringbuffer_peek(struct hv_ring_buffer_info *ring_info, void *buffer,
 		   u32 buflen);
 
-int ringbuffer_read(struct hv_ring_buffer_info *ring_info,
+int hv_ringbuffer_read(struct hv_ring_buffer_info *ring_info,
 		   void *buffer,
 		   u32 buflen,
 		   u32 offset);
 
-u32 get_ringbuffer_interrupt_mask(struct hv_ring_buffer_info *ring_info);
+u32 hv_get_ringbuffer_interrupt_mask(struct hv_ring_buffer_info *ring_info);
 
-void dump_ring_info(struct hv_ring_buffer_info *ring_info, char *prefix);
+void hv_dump_ring_info(struct hv_ring_buffer_info *ring_info, char *prefix);
 
-void ringbuffer_get_debuginfo(struct hv_ring_buffer_info *ring_info,
+void hv_ringbuffer_get_debuginfo(struct hv_ring_buffer_info *ring_info,
 			    struct hv_ring_buffer_debug_info *debug_info);
 
 #endif /* _RING_BUFFER_H_ */
