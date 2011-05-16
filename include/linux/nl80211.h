@@ -203,6 +203,28 @@
  * @NL80211_CMD_SCAN_ABORTED: scan was aborted, for unspecified reasons,
  *	partial scan results may be available
  *
+ * @NL80211_CMD_START_SCHED_SCAN: start a scheduled scan at certain
+ *	intervals, as specified by %NL80211_ATTR_SCHED_SCAN_INTERVAL.
+ *	Like with normal scans, if SSIDs (%NL80211_ATTR_SCAN_SSIDS)
+ *	are passed, they are used in the probe requests.  For
+ *	broadcast, a broadcast SSID must be passed (ie. an empty
+ *	string).  If no SSID is passed, no probe requests are sent and
+ *	a passive scan is performed.  %NL80211_ATTR_SCAN_FREQUENCIES,
+ *	if passed, define which channels should be scanned; if not
+ *	passed, all channels allowed for the current regulatory domain
+ *	are used.  Extra IEs can also be passed from the userspace by
+ *	using the %NL80211_ATTR_IE attribute.
+ * @NL80211_CMD_STOP_SCHED_SCAN: stop a scheduled scan
+ * @NL80211_CMD_SCHED_SCAN_RESULTS: indicates that there are scheduled scan
+ *	results available.
+ * @NL80211_CMD_SCHED_SCAN_STOPPED: indicates that the scheduled scan has
+ *	stopped.  The driver may issue this event at any time during a
+ *	scheduled scan.  One reason for stopping the scan is if the hardware
+ *	does not support starting an association or a normal scan while running
+ *	a scheduled scan.  This event is also sent when the
+ *	%NL80211_CMD_STOP_SCHED_SCAN command is received or when the interface
+ *	is brought down while a scheduled scan was running.
+ *
  * @NL80211_CMD_GET_SURVEY: get survey resuls, e.g. channel occupation
  *      or noise level
  * @NL80211_CMD_NEW_SURVEY_RESULTS: survey data notification (as a reply to
@@ -420,6 +442,14 @@
  *      new station with the AUTHENTICATED flag unset and maybe change it later
  *      depending on the authentication result.
  *
+ * @NL80211_CMD_GET_WOWLAN: get Wake-on-Wireless-LAN (WoWLAN) settings.
+ * @NL80211_CMD_SET_WOWLAN: set Wake-on-Wireless-LAN (WoWLAN) settings.
+ *	Since wireless is more complex than wired ethernet, it supports
+ *	various triggers. These triggers can be configured through this
+ *	command with the %NL80211_ATTR_WOWLAN_TRIGGERS attribute. For
+ *	more background information, see
+ *	http://wireless.kernel.org/en/users/Documentation/WoWLAN.
+ *
  * @NL80211_CMD_MAX: highest used command number
  * @__NL80211_CMD_AFTER_LAST: internal use
  */
@@ -533,6 +563,14 @@ enum nl80211_commands {
 	NL80211_CMD_UNPROT_DISASSOCIATE,
 
 	NL80211_CMD_NEW_PEER_CANDIDATE,
+
+	NL80211_CMD_GET_WOWLAN,
+	NL80211_CMD_SET_WOWLAN,
+
+	NL80211_CMD_START_SCHED_SCAN,
+	NL80211_CMD_STOP_SCHED_SCAN,
+	NL80211_CMD_SCHED_SCAN_RESULTS,
+	NL80211_CMD_SCHED_SCAN_STOPPED,
 
 	/* add new commands above here */
 
@@ -902,6 +940,19 @@ enum nl80211_commands {
  * @NL80211_ATTR_SUPPORT_MESH_AUTH: Currently, this means the underlying driver
  *	allows auth frames in a mesh to be passed to userspace for processing via
  *	the @NL80211_MESH_SETUP_USERSPACE_AUTH flag.
+ * @NL80211_ATTR_STA_PLINK_STATE: The state of a mesh peer link. Used when
+ *      userspace is driving the peer link management state machine.
+ *      @NL80211_MESH_SETUP_USERSPACE_AMPE must be enabled.
+ *
+ * @NL80211_ATTR_WOWLAN_SUPPORTED: indicates, as part of the wiphy capabilities,
+ *	the supported WoWLAN triggers
+ * @NL80211_ATTR_WOWLAN_TRIGGERS: used by %NL80211_CMD_SET_WOWLAN to
+ *	indicate which WoW triggers should be enabled. This is also
+ *	used by %NL80211_CMD_GET_WOWLAN to get the currently enabled WoWLAN
+ *	triggers.
+
+ * @NL80211_ATTR_SCHED_SCAN_INTERVAL: Interval between scheduled scan
+ *	cycles, in msecs.
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -1091,6 +1142,12 @@ enum nl80211_attrs {
 	NL80211_ATTR_WIPHY_ANTENNA_AVAIL_RX,
 
 	NL80211_ATTR_SUPPORT_MESH_AUTH,
+	NL80211_ATTR_STA_PLINK_STATE,
+
+	NL80211_ATTR_WOWLAN_TRIGGERS,
+	NL80211_ATTR_WOWLAN_TRIGGERS_SUPPORTED,
+
+	NL80211_ATTR_SCHED_SCAN_INTERVAL,
 
 	/* add attributes here, update the policy in nl80211.c */
 
@@ -1748,6 +1805,15 @@ enum nl80211_meshconf_params {
  * @NL80211_MESH_SETUP_USERSPACE_AUTH: Enable this option if an authentication
  * daemon will be authenticating mesh candidates.
  *
+ * @NL80211_MESH_SETUP_USERSPACE_AMPE: Enable this option if an authentication
+ * daemon will be securing peer link frames.  AMPE is a secured version of Mesh
+ * Peering Management (MPM) and is implemented with the assistance of a
+ * userspace daemon.  When this flag is set, the kernel will send peer
+ * management frames to a userspace daemon that will implement AMPE
+ * functionality (security capabilities selection, key confirmation, and key
+ * management).  When the flag is unset (default), the kernel can autonomously
+ * complete (unsecured) mesh peering without the need of a userspace daemon.
+ *
  * @NL80211_MESH_SETUP_ATTR_MAX: highest possible mesh setup attribute number
  * @__NL80211_MESH_SETUP_ATTR_AFTER_LAST: Internal use
  */
@@ -1757,6 +1823,7 @@ enum nl80211_mesh_setup_params {
 	NL80211_MESH_SETUP_ENABLE_VENDOR_METRIC,
 	NL80211_MESH_SETUP_IE,
 	NL80211_MESH_SETUP_USERSPACE_AUTH,
+	NL80211_MESH_SETUP_USERSPACE_AMPE,
 
 	/* keep last */
 	__NL80211_MESH_SETUP_ATTR_AFTER_LAST,
@@ -2059,6 +2126,84 @@ enum nl80211_tx_power_setting {
 	NL80211_TX_POWER_AUTOMATIC,
 	NL80211_TX_POWER_LIMITED,
 	NL80211_TX_POWER_FIXED,
+};
+
+/**
+ * enum nl80211_wowlan_packet_pattern_attr - WoWLAN packet pattern attribute
+ * @__NL80211_WOWLAN_PKTPAT_INVALID: invalid number for nested attribute
+ * @NL80211_WOWLAN_PKTPAT_PATTERN: the pattern, values where the mask has
+ *	a zero bit are ignored
+ * @NL80211_WOWLAN_PKTPAT_MASK: pattern mask, must be long enough to have
+ *	a bit for each byte in the pattern. The lowest-order bit corresponds
+ *	to the first byte of the pattern, but the bytes of the pattern are
+ *	in a little-endian-like format, i.e. the 9th byte of the pattern
+ *	corresponds to the lowest-order bit in the second byte of the mask.
+ *	For example: The match 00:xx:00:00:xx:00:00:00:00:xx:xx:xx (where
+ *	xx indicates "don't care") would be represented by a pattern of
+ *	twelve zero bytes, and a mask of "0xed,0x07".
+ *	Note that the pattern matching is done as though frames were not
+ *	802.11 frames but 802.3 frames, i.e. the frame is fully unpacked
+ *	first (including SNAP header unpacking) and then matched.
+ * @NUM_NL80211_WOWLAN_PKTPAT: number of attributes
+ * @MAX_NL80211_WOWLAN_PKTPAT: max attribute number
+ */
+enum nl80211_wowlan_packet_pattern_attr {
+	__NL80211_WOWLAN_PKTPAT_INVALID,
+	NL80211_WOWLAN_PKTPAT_MASK,
+	NL80211_WOWLAN_PKTPAT_PATTERN,
+
+	NUM_NL80211_WOWLAN_PKTPAT,
+	MAX_NL80211_WOWLAN_PKTPAT = NUM_NL80211_WOWLAN_PKTPAT - 1,
+};
+
+/**
+ * struct nl80211_wowlan_pattern_support - pattern support information
+ * @max_patterns: maximum number of patterns supported
+ * @min_pattern_len: minimum length of each pattern
+ * @max_pattern_len: maximum length of each pattern
+ *
+ * This struct is carried in %NL80211_WOWLAN_TRIG_PKT_PATTERN when
+ * that is part of %NL80211_ATTR_WOWLAN_TRIGGERS_SUPPORTED in the
+ * capability information given by the kernel to userspace.
+ */
+struct nl80211_wowlan_pattern_support {
+	__u32 max_patterns;
+	__u32 min_pattern_len;
+	__u32 max_pattern_len;
+} __attribute__((packed));
+
+/**
+ * enum nl80211_wowlan_triggers - WoWLAN trigger definitions
+ * @__NL80211_WOWLAN_TRIG_INVALID: invalid number for nested attributes
+ * @NL80211_WOWLAN_TRIG_ANY: wake up on any activity, do not really put
+ *	the chip into a special state -- works best with chips that have
+ *	support for low-power operation already (flag)
+ * @NL80211_WOWLAN_TRIG_DISCONNECT: wake up on disconnect, the way disconnect
+ *	is detected is implementation-specific (flag)
+ * @NL80211_WOWLAN_TRIG_MAGIC_PKT: wake up on magic packet (6x 0xff, followed
+ *	by 16 repetitions of MAC addr, anywhere in payload) (flag)
+ * @NL80211_WOWLAN_TRIG_PKT_PATTERN: wake up on the specified packet patterns
+ *	which are passed in an array of nested attributes, each nested attribute
+ *	defining a with attributes from &struct nl80211_wowlan_trig_pkt_pattern.
+ *	Each pattern defines a wakeup packet. The matching is done on the MSDU,
+ *	i.e. as though the packet was an 802.3 packet, so the pattern matching
+ *	is done after the packet is converted to the MSDU.
+ *
+ *	In %NL80211_ATTR_WOWLAN_TRIGGERS_SUPPORTED, it is a binary attribute
+ *	carrying a &struct nl80211_wowlan_pattern_support.
+ * @NUM_NL80211_WOWLAN_TRIG: number of wake on wireless triggers
+ * @MAX_NL80211_WOWLAN_TRIG: highest wowlan trigger attribute number
+ */
+enum nl80211_wowlan_triggers {
+	__NL80211_WOWLAN_TRIG_INVALID,
+	NL80211_WOWLAN_TRIG_ANY,
+	NL80211_WOWLAN_TRIG_DISCONNECT,
+	NL80211_WOWLAN_TRIG_MAGIC_PKT,
+	NL80211_WOWLAN_TRIG_PKT_PATTERN,
+
+	/* keep last */
+	NUM_NL80211_WOWLAN_TRIG,
+	MAX_NL80211_WOWLAN_TRIG = NUM_NL80211_WOWLAN_TRIG - 1
 };
 
 #endif /* __LINUX_NL80211_H */

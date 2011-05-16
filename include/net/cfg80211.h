@@ -372,6 +372,33 @@ enum plink_actions {
 };
 
 /**
+ * enum plink_states - state of a mesh peer link finite state machine
+ *
+ * @PLINK_LISTEN: initial state, considered the implicit state of non
+ * existant mesh peer links
+ * @PLINK_OPN_SNT: mesh plink open frame has been sent to this mesh
+ * peer @PLINK_OPN_RCVD: mesh plink open frame has been received from
+ * this mesh peer
+ * @PLINK_CNF_RCVD: mesh plink confirm frame has been received from
+ * this mesh peer
+ * @PLINK_ESTAB: mesh peer link is established
+ * @PLINK_HOLDING: mesh peer link is being closed or cancelled
+ * @PLINK_BLOCKED: all frames transmitted from this mesh plink are
+ * discarded
+ * @PLINK_INVALID: reserved
+ */
+enum plink_state {
+	PLINK_LISTEN,
+	PLINK_OPN_SNT,
+	PLINK_OPN_RCVD,
+	PLINK_CNF_RCVD,
+	PLINK_ESTAB,
+	PLINK_HOLDING,
+	PLINK_BLOCKED,
+	PLINK_INVALID,
+};
+
+/**
  * struct station_parameters - station parameters
  *
  * Used to change and create a new station.
@@ -387,6 +414,7 @@ enum plink_actions {
  * @listen_interval: listen interval or -1 for no change
  * @aid: AID or zero for no change
  * @plink_action: plink action to take
+ * @plink_state: set the peer link state for a station
  * @ht_capa: HT capabilities of station
  */
 struct station_parameters {
@@ -397,6 +425,7 @@ struct station_parameters {
 	u16 aid;
 	u8 supported_rates_len;
 	u8 plink_action;
+	u8 plink_state;
 	struct ieee80211_ht_cap *ht_capa;
 };
 
@@ -695,7 +724,8 @@ struct mesh_config {
  * @path_metric: which metric to use
  * @ie: vendor information elements (optional)
  * @ie_len: length of vendor information elements
- * @is_secure: or not
+ * @is_authenticated: this mesh requires authentication
+ * @is_secure: this mesh uses security
  *
  * These parameters are fixed when the mesh is created.
  */
@@ -706,6 +736,7 @@ struct mesh_setup {
 	u8  path_metric;
 	const u8 *ie;
 	u8 ie_len;
+	bool is_authenticated;
 	bool is_secure;
 };
 
@@ -787,6 +818,35 @@ struct cfg80211_scan_request {
 	struct wiphy *wiphy;
 	struct net_device *dev;
 	bool aborted;
+
+	/* keep last */
+	struct ieee80211_channel *channels[0];
+};
+
+/**
+ * struct cfg80211_sched_scan_request - scheduled scan request description
+ *
+ * @ssids: SSIDs to scan for (passed in the probe_reqs in active scans)
+ * @n_ssids: number of SSIDs
+ * @n_channels: total number of channels to scan
+ * @interval: interval between each scheduled scan cycle
+ * @ie: optional information element(s) to add into Probe Request or %NULL
+ * @ie_len: length of ie in octets
+ * @wiphy: the wiphy this was for
+ * @dev: the interface
+ * @channels: channels to scan
+ */
+struct cfg80211_sched_scan_request {
+	struct cfg80211_ssid *ssids;
+	int n_ssids;
+	u32 n_channels;
+	u32 interval;
+	const u8 *ie;
+	size_t ie_len;
+
+	/* internal */
+	struct wiphy *wiphy;
+	struct net_device *dev;
 
 	/* keep last */
 	struct ieee80211_channel *channels[0];
@@ -1088,6 +1148,38 @@ struct cfg80211_pmksa {
 };
 
 /**
+ * struct cfg80211_wowlan_trig_pkt_pattern - packet pattern
+ * @mask: bitmask where to match pattern and where to ignore bytes,
+ *	one bit per byte, in same format as nl80211
+ * @pattern: bytes to match where bitmask is 1
+ * @pattern_len: length of pattern (in bytes)
+ *
+ * Internal note: @mask and @pattern are allocated in one chunk of
+ * memory, free @mask only!
+ */
+struct cfg80211_wowlan_trig_pkt_pattern {
+	u8 *mask, *pattern;
+	int pattern_len;
+};
+
+/**
+ * struct cfg80211_wowlan - Wake on Wireless-LAN support info
+ *
+ * This structure defines the enabled WoWLAN triggers for the device.
+ * @any: wake up on any activity -- special trigger if device continues
+ *	operating as normal during suspend
+ * @disconnect: wake up if getting disconnected
+ * @magic_pkt: wake up on receiving magic packet
+ * @patterns: wake up on receiving packet matching a pattern
+ * @n_patterns: number of patterns
+ */
+struct cfg80211_wowlan {
+	bool any, disconnect, magic_pkt;
+	struct cfg80211_wowlan_trig_pkt_pattern *patterns;
+	int n_patterns;
+};
+
+/**
  * struct cfg80211_ops - backend description for wireless configuration
  *
  * This struct is registered by fullmac card drivers and/or wireless stacks
@@ -1100,7 +1192,9 @@ struct cfg80211_pmksa {
  * wireless extensions but this is subject to reevaluation as soon as this
  * code is used more widely and we have a first user without wext.
  *
- * @suspend: wiphy device needs to be suspended
+ * @suspend: wiphy device needs to be suspended. The variable @wow will
+ *	be %NULL or contain the enabled Wake-on-Wireless triggers that are
+ *	configured for the device.
  * @resume: wiphy device needs to be resumed
  *
  * @add_virtual_intf: create a new virtual interface with the given name,
@@ -1227,6 +1321,10 @@ struct cfg80211_pmksa {
  * @set_power_mgmt: Configure WLAN power management. A timeout value of -1
  *	allows the driver to adjust the dynamic ps timeout value.
  * @set_cqm_rssi_config: Configure connection quality monitor RSSI threshold.
+ * @sched_scan_start: Tell the driver to start a scheduled scan.
+ * @sched_scan_stop: Tell the driver to stop an ongoing scheduled
+ *	scan.  The driver_initiated flag specifies whether the driver
+ *	itself has informed that the scan has stopped.
  *
  * @mgmt_frame_register: Notify driver that a management frame type was
  *	registered. Note that this callback may not sleep, and cannot run
@@ -1244,7 +1342,7 @@ struct cfg80211_pmksa {
  * @get_ringparam: Get tx and rx ring current and maximum sizes.
  */
 struct cfg80211_ops {
-	int	(*suspend)(struct wiphy *wiphy);
+	int	(*suspend)(struct wiphy *wiphy, struct cfg80211_wowlan *wow);
 	int	(*resume)(struct wiphy *wiphy);
 
 	struct net_device * (*add_virtual_intf)(struct wiphy *wiphy,
@@ -1413,6 +1511,11 @@ struct cfg80211_ops {
 	int	(*set_ringparam)(struct wiphy *wiphy, u32 tx, u32 rx);
 	void	(*get_ringparam)(struct wiphy *wiphy,
 				 u32 *tx, u32 *tx_max, u32 *rx, u32 *rx_max);
+
+	int	(*sched_scan_start)(struct wiphy *wiphy,
+				struct net_device *dev,
+				struct cfg80211_sched_scan_request *request);
+	int	(*sched_scan_stop)(struct wiphy *wiphy, struct net_device *dev);
 };
 
 /*
@@ -1455,10 +1558,9 @@ struct cfg80211_ops {
  *	control port protocol ethertype. The device also honours the
  *	control_port_no_encrypt flag.
  * @WIPHY_FLAG_IBSS_RSN: The device supports IBSS RSN.
- * @WIPHY_FLAG_SUPPORTS_SEPARATE_DEFAULT_KEYS: The device supports separate
- *	unicast and multicast TX keys.
  * @WIPHY_FLAG_MESH_AUTH: The device supports mesh authentication by routing
  *	auth frames to userspace. See @NL80211_MESH_SETUP_USERSPACE_AUTH.
+ * @WIPHY_FLAG_SCHED_SCAN: The device supports scheduled scans.
  */
 enum wiphy_flags {
 	WIPHY_FLAG_CUSTOM_REGULATORY		= BIT(0),
@@ -1470,8 +1572,8 @@ enum wiphy_flags {
 	WIPHY_FLAG_4ADDR_STATION		= BIT(6),
 	WIPHY_FLAG_CONTROL_PORT_PROTOCOL	= BIT(7),
 	WIPHY_FLAG_IBSS_RSN			= BIT(8),
-	WIPHY_FLAG_SUPPORTS_SEPARATE_DEFAULT_KEYS= BIT(9),
 	WIPHY_FLAG_MESH_AUTH			= BIT(10),
+	WIPHY_FLAG_SUPPORTS_SCHED_SCAN		= BIT(11),
 };
 
 struct mac_address {
@@ -1480,6 +1582,38 @@ struct mac_address {
 
 struct ieee80211_txrx_stypes {
 	u16 tx, rx;
+};
+
+/**
+ * enum wiphy_wowlan_support_flags - WoWLAN support flags
+ * @WIPHY_WOWLAN_ANY: supports wakeup for the special "any"
+ *	trigger that keeps the device operating as-is and
+ *	wakes up the host on any activity, for example a
+ *	received packet that passed filtering; note that the
+ *	packet should be preserved in that case
+ * @WIPHY_WOWLAN_MAGIC_PKT: supports wakeup on magic packet
+ *	(see nl80211.h)
+ * @WIPHY_WOWLAN_DISCONNECT: supports wakeup on disconnect
+ */
+enum wiphy_wowlan_support_flags {
+	WIPHY_WOWLAN_ANY	= BIT(0),
+	WIPHY_WOWLAN_MAGIC_PKT	= BIT(1),
+	WIPHY_WOWLAN_DISCONNECT	= BIT(2),
+};
+
+/**
+ * struct wiphy_wowlan_support - WoWLAN support data
+ * @flags: see &enum wiphy_wowlan_support_flags
+ * @n_patterns: number of supported wakeup patterns
+ *	(see nl80211.h for the pattern definition)
+ * @pattern_max_len: maximum length of each pattern
+ * @pattern_min_len: minimum length of each pattern
+ */
+struct wiphy_wowlan_support {
+	u32 flags;
+	int n_patterns;
+	int pattern_max_len;
+	int pattern_min_len;
 };
 
 /**
@@ -1549,6 +1683,8 @@ struct ieee80211_txrx_stypes {
  *
  * @max_remain_on_channel_duration: Maximum time a remain-on-channel operation
  *	may request, if implemented.
+ *
+ * @wowlan: WoWLAN support information
  */
 struct wiphy {
 	/* assign these fields before you register the wiphy */
@@ -1585,6 +1721,8 @@ struct wiphy {
 
 	char fw_version[ETHTOOL_BUSINFO_LEN];
 	u32 hw_version;
+
+	struct wiphy_wowlan_support wowlan;
 
 	u16 max_remain_on_channel_duration;
 
@@ -1769,6 +1907,8 @@ struct cfg80211_cached_keys;
  * @mgmt_registrations_lock: lock for the list
  * @mtx: mutex used to lock data in this struct
  * @cleanup_work: work struct used for cleanup that can't be done directly
+ * @beacon_interval: beacon interval used on this device for transmitting
+ *	beacons, 0 when not valid
  */
 struct wireless_dev {
 	struct wiphy *wiphy;
@@ -1808,6 +1948,8 @@ struct wireless_dev {
 
 	bool ps;
 	int ps_timeout;
+
+	int beacon_interval;
 
 #ifdef CONFIG_CFG80211_WEXT
 	/* wext data */
@@ -2255,6 +2397,24 @@ int cfg80211_wext_siwpmksa(struct net_device *dev,
  *	userspace will be notified of that
  */
 void cfg80211_scan_done(struct cfg80211_scan_request *request, bool aborted);
+
+/**
+ * cfg80211_sched_scan_results - notify that new scan results are available
+ *
+ * @wiphy: the wiphy which got scheduled scan results
+ */
+void cfg80211_sched_scan_results(struct wiphy *wiphy);
+
+/**
+ * cfg80211_sched_scan_stopped - notify that the scheduled scan has stopped
+ *
+ * @wiphy: the wiphy on which the scheduled scan stopped
+ *
+ * The driver can call this function to inform cfg80211 that the
+ * scheduled scan had to be stopped, for whatever reason.  The driver
+ * is then called back via the sched_scan_stop operation when done.
+ */
+void cfg80211_sched_scan_stopped(struct wiphy *wiphy);
 
 /**
  * cfg80211_inform_bss_frame - inform cfg80211 of a received BSS frame
