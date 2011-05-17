@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2010 QLogic Corporation
+ * Copyright (c)  2003-2011 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -164,6 +164,14 @@ module_param(ql2xasynctmfenable, int, S_IRUGO);
 MODULE_PARM_DESC(ql2xasynctmfenable,
 		"Enables issue of TM IOCBs asynchronously via IOCB mechanism"
 		"Default is 0 - Issue TM IOCBs via mailbox mechanism.");
+
+int ql2xdontresethba;
+module_param(ql2xdontresethba, int, S_IRUGO);
+MODULE_PARM_DESC(ql2xdontresethba,
+	"Option to specify reset behaviour\n"
+	" 0 (Default) -- Reset on failure.\n"
+	" 1 -- Do not reset on failure.\n");
+
 /*
  * SCSI host template entry points
  */
@@ -2544,7 +2552,7 @@ void qla2x00_mark_device_lost(scsi_qla_host_t *vha, fc_port_t *fcport,
 {
 	if (atomic_read(&fcport->state) == FCS_ONLINE &&
 	    vha->vp_idx == fcport->vp_idx) {
-		atomic_set(&fcport->state, FCS_DEVICE_LOST);
+		qla2x00_set_fcport_state(fcport, FCS_DEVICE_LOST);
 		qla2x00_schedule_rport_del(vha, fcport, defer);
 	}
 	/*
@@ -2552,7 +2560,7 @@ void qla2x00_mark_device_lost(scsi_qla_host_t *vha, fc_port_t *fcport,
 	 * port but do the retries.
 	 */
 	if (atomic_read(&fcport->state) != FCS_DEVICE_DEAD)
-		atomic_set(&fcport->state, FCS_DEVICE_LOST);
+		qla2x00_set_fcport_state(fcport, FCS_DEVICE_LOST);
 
 	if (!do_login)
 		return;
@@ -2607,7 +2615,7 @@ qla2x00_mark_all_devices_lost(scsi_qla_host_t *vha, int defer)
 		if (atomic_read(&fcport->state) == FCS_DEVICE_DEAD)
 			continue;
 		if (atomic_read(&fcport->state) == FCS_ONLINE) {
-			atomic_set(&fcport->state, FCS_DEVICE_LOST);
+			qla2x00_set_fcport_state(fcport, FCS_DEVICE_LOST);
 			if (defer)
 				qla2x00_schedule_rport_del(vha, fcport, defer);
 			else if (vha->vp_idx == fcport->vp_idx)
@@ -3214,6 +3222,17 @@ void qla2x00_relogin(struct scsi_qla_host *vha)
 							fcport->d_id.b.area,
 							fcport->d_id.b.al_pa);
 
+				if (fcport->loop_id == FC_NO_LOOP_ID) {
+					fcport->loop_id = next_loopid =
+					    ha->min_external_loopid;
+					status = qla2x00_find_new_loop_id(
+					    vha, fcport);
+					if (status != QLA_SUCCESS) {
+						/* Ran out of IDs to use */
+						break;
+					}
+				}
+
 				if (IS_ALOGIO_CAPABLE(ha)) {
 					fcport->flags |= FCF_ASYNC_SENT;
 					data[0] = 0;
@@ -3612,7 +3631,8 @@ qla2x00_timer(scsi_qla_host_t *vha)
 
 	/* Loop down handler. */
 	if (atomic_read(&vha->loop_down_timer) > 0 &&
-	    !(test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags))
+	    !(test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags)) &&
+	    !(test_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags))
 		&& vha->flags.online) {
 
 		if (atomic_read(&vha->loop_down_timer) ==
@@ -3648,7 +3668,11 @@ qla2x00_timer(scsi_qla_host_t *vha)
 					if (!(sfcp->flags & FCF_FCP2_DEVICE))
 						continue;
 
-					set_bit(ISP_ABORT_NEEDED,
+					if (IS_QLA82XX(ha))
+						set_bit(FCOE_CTX_RESET_NEEDED,
+							&vha->dpc_flags);
+					else
+						set_bit(ISP_ABORT_NEEDED,
 							&vha->dpc_flags);
 					break;
 				}
@@ -3667,7 +3691,12 @@ qla2x00_timer(scsi_qla_host_t *vha)
 				qla_printk(KERN_WARNING, ha,
 				    "Loop down - aborting ISP.\n");
 
-				set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+				if (IS_QLA82XX(ha))
+					set_bit(FCOE_CTX_RESET_NEEDED,
+						&vha->dpc_flags);
+				else
+					set_bit(ISP_ABORT_NEEDED,
+						&vha->dpc_flags);
 			}
 		}
 		DEBUG3(printk("scsi(%ld): Loop Down - seconds remaining %d\n",
