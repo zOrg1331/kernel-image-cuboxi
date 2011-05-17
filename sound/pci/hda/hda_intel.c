@@ -126,6 +126,7 @@ MODULE_SUPPORTED_DEVICE("{{Intel, ICH6},"
 			 "{Intel, ICH10},"
 			 "{Intel, PCH},"
 			 "{Intel, CPT},"
+			 "{Intel, PPT},"
 			 "{Intel, PBG},"
 			 "{Intel, SCH},"
 			 "{ATI, SB450},"
@@ -1446,6 +1447,17 @@ static int __devinit azx_codec_create(struct azx *chip, const char *model)
 		}
 	}
 
+	/* AMD chipsets often cause the communication stalls upon certain
+	 * sequence like the pin-detection.  It seems that forcing the synced
+	 * access works around the stall.  Grrr...
+	 */
+	if (chip->pci->vendor == PCI_VENDOR_ID_AMD ||
+	    chip->pci->vendor == PCI_VENDOR_ID_ATI) {
+		snd_printk(KERN_INFO SFX "Enable sync_write for AMD chipset\n");
+		chip->bus->sync_write = 1;
+		chip->bus->allow_bus_reset = 1;
+	}
+
 	/* Then create codec instances */
 	for (c = 0; c < max_slots; c++) {
 		if ((chip->codec_mask & (1 << c)) & chip->codec_probe_mask) {
@@ -2352,6 +2364,11 @@ static int __devinit check_position_fix(struct azx *chip, int fix)
 	case AZX_DRIVER_ATI:
 		/* Use link position directly, avoid any transfer problem. */
 		return POS_FIX_VIACOMBO;
+	case AZX_DRIVER_GENERIC:
+		/* AMD chipsets behave often badly, too */
+		if (chip->pci->vendor == PCI_VENDOR_ID_AMD)
+			return POS_FIX_VIACOMBO;
+		break;
 	}
 
 	return POS_FIX_AUTO;
@@ -2759,6 +2776,8 @@ static DEFINE_PCI_DEVICE_TABLE(azx_ids) = {
 	{ PCI_DEVICE(0x8086, 0x1c20), .driver_data = AZX_DRIVER_PCH },
 	/* PBG */
 	{ PCI_DEVICE(0x8086, 0x1d20), .driver_data = AZX_DRIVER_PCH },
+	/* Panther Point */
+	{ PCI_DEVICE(0x8086, 0x1e20), .driver_data = AZX_DRIVER_PCH },
 	/* SCH */
 	{ PCI_DEVICE(0x8086, 0x811b), .driver_data = AZX_DRIVER_SCH },
 	/* Generic Intel */
