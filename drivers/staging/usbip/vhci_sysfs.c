@@ -17,11 +17,11 @@
  * USA.
  */
 
+#include <linux/kthread.h>
+#include <linux/net.h>
+
 #include "usbip_common.h"
 #include "vhci.h"
-
-#include <linux/in.h>
-#include <linux/kthread.h>
 
 /* TODO: refine locking ?*/
 
@@ -53,20 +53,19 @@ static ssize_t show_status(struct device *dev, struct device_attribute *attr,
 		struct vhci_device *vdev = port_to_vdev(i);
 
 		spin_lock(&vdev->ud.lock);
-
 		out += sprintf(out, "%03u %03u ", i, vdev->ud.status);
 
 		if (vdev->ud.status == VDEV_ST_USED) {
 			out += sprintf(out, "%03u %08x ",
-					vdev->speed, vdev->devid);
+				       vdev->speed, vdev->devid);
 			out += sprintf(out, "%16p ", vdev->ud.tcp_socket);
 			out += sprintf(out, "%s", dev_name(&vdev->udev->dev));
 
-		} else
+		} else {
 			out += sprintf(out, "000 000 000 0000000000000000 0-0");
+		}
 
 		out += sprintf(out, "\n");
-
 		spin_unlock(&vdev->ud.lock);
 	}
 
@@ -127,6 +126,7 @@ static ssize_t store_detach(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 
 	usbip_dbg_vhci_sysfs("Leave\n");
+
 	return count;
 }
 static DEVICE_ATTR(detach, S_IWUSR, NULL, store_detach);
@@ -183,8 +183,7 @@ static ssize_t store_attach(struct device *dev, struct device_attribute *attr,
 	sscanf(buf, "%u %u %u %u", &rhport, &sockfd, &devid, &speed);
 
 	usbip_dbg_vhci_sysfs("rhport(%u) sockfd(%u) devid(%u) speed(%u)\n",
-				rhport, sockfd, devid, speed);
-
+			     rhport, sockfd, devid, speed);
 
 	/* check received parameters */
 	if (valid_args(rhport, speed) < 0)
@@ -199,9 +198,7 @@ static ssize_t store_attach(struct device *dev, struct device_attribute *attr,
 
 	/* begin a lock */
 	spin_lock(&the_controller->lock);
-
 	vdev = port_to_vdev(rhport);
-
 	spin_lock(&vdev->ud.lock);
 
 	if (vdev->ud.status != VDEV_ST_NULL) {
@@ -214,7 +211,7 @@ static ssize_t store_attach(struct device *dev, struct device_attribute *attr,
 	}
 
 	usbip_uinfo("rhport(%u) sockfd(%d) devid(%u) speed(%u)\n",
-				rhport, sockfd, devid, speed);
+		    rhport, sockfd, devid, speed);
 
 	vdev->devid         = devid;
 	vdev->speed         = speed;

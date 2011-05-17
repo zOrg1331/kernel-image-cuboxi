@@ -25,7 +25,7 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/if_ether.h>
-
+#include <linux/netdevice.h>
 #include "logging.h"
 #include "hv_api.h"
 #include "netvsc_api.h"
@@ -59,8 +59,7 @@ struct rndis_device {
 
 struct rndis_request {
 	struct list_head list_ent;
-	int wait_condition;
-	wait_queue_head_t wait_event;
+	struct completion  wait_event;
 
 	/*
 	 * FIXME: We assumed a fixed size response here. If we do ever need to
@@ -83,13 +82,6 @@ struct rndis_filter_packet {
 	struct rndis_message msg;
 };
 
-
-static int rndis_filte_device_add(struct hv_device *dev,
-				  void *additional_info);
-
-static int rndis_filter_device_remove(struct hv_device *dev);
-
-static void rndis_filter_cleanup(struct hv_driver *drv);
 
 static int rndis_filter_send(struct hv_device *dev,
 			     struct hv_netvsc_packet *pkt);
@@ -132,7 +124,7 @@ static struct rndis_request *get_rndis_request(struct rndis_device *dev,
 	if (!request)
 		return NULL;
 
-	init_waitqueue_head(&request->wait_event);
+	init_completion(&request->wait_event);
 
 	rndis_msg = &request->request_msg;
 	rndis_msg->ndis_msg_type = msg_type;
@@ -283,14 +275,6 @@ static void rndis_filter_receive_response(struct rndis_device *dev,
 		 */
 		if (request->request_msg.msg.init_req.req_id
 		    == resp->msg.init_complete.req_id) {
-			DPRINT_DBG(NETVSC, "found rndis request for "
-				"this response (id 0x%x req type 0x%x res "
-				"type 0x%x)",
-				request->request_msg.msg.
-				   init_req.req_id,
-				request->request_msg.ndis_msg_type,
-				resp->ndis_msg_type);
-
 			found = true;
 			break;
 		}
@@ -302,10 +286,11 @@ static void rndis_filter_receive_response(struct rndis_device *dev,
 			memcpy(&request->response_msg, resp,
 			       resp->msg_len);
 		} else {
-			DPRINT_ERR(NETVSC, "rndis response buffer overflow "
-				  "detected (size %u max %zu)",
-				  resp->msg_len,
-				  sizeof(struct rndis_filter_packet));
+			dev_err(&dev->net_dev->dev->device,
+				"rndis response buffer overflow "
+				"detected (size %u max %zu)\n",
+				resp->msg_len,
+				sizeof(struct rndis_filter_packet));
 
 			if (resp->ndis_msg_type ==
 			    REMOTE_NDIS_RESET_CMPLT) {
@@ -319,13 +304,13 @@ static void rndis_filter_receive_response(struct rndis_device *dev,
 			}
 		}
 
-		request->wait_condition = 1;
-		wake_up(&request->wait_event);
+		complete(&request->wait_event);
 	} else {
-		DPRINT_ERR(NETVSC, "no rndis request found for this response "
-			   "(id 0x%x res type 0x%x)",
-			   resp->msg.init_complete.req_id,
-			   resp->ndis_msg_type);
+		dev_err(&dev->net_dev->dev->device,
+			"no rndis request found for this response "
+			"(id 0x%x res type 0x%x)\n",
+			resp->msg.init_complete.req_id,
+			resp->ndis_msg_type);
 	}
 }
 
@@ -388,15 +373,15 @@ static int rndis_filter_receive(struct hv_device *dev,
 
 	/* Make sure the rndis device state is initialized */
 	if (!net_dev->extension) {
-		DPRINT_ERR(NETVSC, "got rndis message but no rndis device..."
-			  "dropping this message!");
+		dev_err(&dev->device, "got rndis message but no rndis device - "
+			  "dropping this message!\n");
 		return -1;
 	}
 
 	rndis_dev = (struct rndis_device *)net_dev->extension;
 	if (rndis_dev->state == RNDIS_DEV_UNINITIALIZED) {
-		DPRINT_ERR(NETVSC, "got rndis message but rndis device "
-			   "uninitialized...dropping this message!");
+		dev_err(&dev->device, "got rndis message but rndis device "
+			   "uninitialized...dropping this message!\n");
 		return -1;
 	}
 
@@ -417,8 +402,8 @@ static int rndis_filter_receive(struct hv_device *dev,
 		kunmap_atomic(rndis_hdr - pkt->page_buf[0].offset,
 			      KM_IRQ0);
 
-		DPRINT_ERR(NETVSC, "invalid rndis message? (expected %u "
-			   "bytes got %u)...dropping this message!",
+		dev_err(&dev->device, "invalid rndis message? (expected %u "
+			   "bytes got %u)...dropping this message!\n",
 			   rndis_hdr->msg_len,
 			   pkt->total_data_buflen);
 		return -1;
@@ -427,8 +412,8 @@ static int rndis_filter_receive(struct hv_device *dev,
 
 	if ((rndis_hdr->ndis_msg_type != REMOTE_NDIS_PACKET_MSG) &&
 	    (rndis_hdr->msg_len > sizeof(struct rndis_message))) {
-		DPRINT_ERR(NETVSC, "incoming rndis message buffer overflow "
-			   "detected (got %u, max %zu)...marking it an error!",
+		dev_err(&dev->device, "incoming rndis message buffer overflow "
+			   "detected (got %u, max %zu)..marking it an error!\n",
 			   rndis_hdr->msg_len,
 			   sizeof(struct rndis_message));
 	}
@@ -460,7 +445,8 @@ static int rndis_filter_receive(struct hv_device *dev,
 		rndis_filter_receive_indicate_status(rndis_dev, &rndis_msg);
 		break;
 	default:
-		DPRINT_ERR(NETVSC, "unhandled rndis message (type %u len %u)",
+		dev_err(&dev->device,
+			"unhandled rndis message (type %u len %u)\n",
 			   rndis_msg.ndis_msg_type,
 			   rndis_msg.msg_len);
 		break;
@@ -477,6 +463,7 @@ static int rndis_filter_query_device(struct rndis_device *dev, u32 oid,
 	struct rndis_query_request *query;
 	struct rndis_query_complete *query_complete;
 	int ret = 0;
+	int t;
 
 	if (!result)
 		return -EINVAL;
@@ -496,14 +483,12 @@ static int rndis_filter_query_device(struct rndis_device *dev, u32 oid,
 	query->info_buflen = 0;
 	query->dev_vc_handle = 0;
 
-	request->wait_condition = 0;
 	ret = rndis_filter_send_request(dev, request);
 	if (ret != 0)
 		goto Cleanup;
 
-	wait_event_timeout(request->wait_event, request->wait_condition,
-				msecs_to_jiffies(1000));
-	if (request->wait_condition == 0) {
+	t = wait_for_completion_timeout(&request->wait_event, HZ);
+	if (t == 0) {
 		ret = -ETIMEDOUT;
 		goto Cleanup;
 	}
@@ -555,7 +540,7 @@ static int rndis_filter_set_packet_filter(struct rndis_device *dev,
 	struct rndis_set_request *set;
 	struct rndis_set_complete *set_complete;
 	u32 status;
-	int ret;
+	int ret, t;
 
 	request = get_rndis_request(dev, REMOTE_NDIS_SET_MSG,
 			RNDIS_MESSAGE_SIZE(struct rndis_set_request) +
@@ -574,16 +559,16 @@ static int rndis_filter_set_packet_filter(struct rndis_device *dev,
 	memcpy((void *)(unsigned long)set + sizeof(struct rndis_set_request),
 	       &new_filter, sizeof(u32));
 
-	request->wait_condition = 0;
 	ret = rndis_filter_send_request(dev, request);
 	if (ret != 0)
 		goto Cleanup;
 
-	wait_event_timeout(request->wait_event, request->wait_condition,
-		msecs_to_jiffies(2000));
-	if (request->wait_condition == 0) {
+	t = wait_for_completion_timeout(&request->wait_event, HZ);
+
+	if (t == 0) {
 		ret = -1;
-		DPRINT_ERR(NETVSC, "timeout before we got a set response...");
+		dev_err(&dev->net_dev->dev->device,
+			"timeout before we got a set response...\n");
 		/*
 		 * We can't deallocate the request since we may still receive a
 		 * send completion for it.
@@ -605,9 +590,6 @@ Exit:
 
 int rndis_filter_init(struct netvsc_driver *drv)
 {
-	DPRINT_DBG(NETVSC, "sizeof(struct rndis_filter_packet) == %zd",
-		   sizeof(struct rndis_filter_packet));
-
 	drv->req_ext_size = sizeof(struct rndis_filter_packet);
 
 	/* Driver->Context = rndisDriver; */
@@ -620,20 +602,12 @@ int rndis_filter_init(struct netvsc_driver *drv)
 	rndisDriver->OnLinkStatusChanged = Driver->OnLinkStatusChanged;*/
 
 	/* Save the original dispatch handlers before we override it */
-	rndis_filter.inner_drv.base.dev_add = drv->base.dev_add;
-	rndis_filter.inner_drv.base.dev_rm =
-					drv->base.dev_rm;
-	rndis_filter.inner_drv.base.cleanup = drv->base.cleanup;
-
 	rndis_filter.inner_drv.send = drv->send;
 	rndis_filter.inner_drv.recv_cb = drv->recv_cb;
 	rndis_filter.inner_drv.link_status_change =
 					drv->link_status_change;
 
 	/* Override */
-	drv->base.dev_add = rndis_filte_device_add;
-	drv->base.dev_rm = rndis_filter_device_remove;
-	drv->base.cleanup = rndis_filter_cleanup;
 	drv->send = rndis_filter_send;
 	drv->recv_cb = rndis_filter_receive;
 
@@ -646,7 +620,7 @@ static int rndis_filter_init_device(struct rndis_device *dev)
 	struct rndis_initialize_request *init;
 	struct rndis_initialize_complete *init_complete;
 	u32 status;
-	int ret;
+	int ret, t;
 
 	request = get_rndis_request(dev, REMOTE_NDIS_INITIALIZE_MSG,
 			RNDIS_MESSAGE_SIZE(struct rndis_initialize_request));
@@ -664,7 +638,6 @@ static int rndis_filter_init_device(struct rndis_device *dev)
 
 	dev->state = RNDIS_DEV_INITIALIZING;
 
-	request->wait_condition = 0;
 	ret = rndis_filter_send_request(dev, request);
 	if (ret != 0) {
 		dev->state = RNDIS_DEV_UNINITIALIZED;
@@ -672,9 +645,9 @@ static int rndis_filter_init_device(struct rndis_device *dev)
 	}
 
 
-	wait_event_timeout(request->wait_event, request->wait_condition,
-		msecs_to_jiffies(1000));
-	if (request->wait_condition == 0) {
+	t = wait_for_completion_timeout(&request->wait_event, HZ);
+
+	if (t == 0) {
 		ret = -ETIMEDOUT;
 		goto Cleanup;
 	}
@@ -753,7 +726,7 @@ static int rndis_filter_close_device(struct rndis_device *dev)
 	return ret;
 }
 
-static int rndis_filte_device_add(struct hv_device *dev,
+int rndis_filte_device_add(struct hv_device *dev,
 				  void *additional_info)
 {
 	int ret;
@@ -765,14 +738,12 @@ static int rndis_filte_device_add(struct hv_device *dev,
 	if (!rndisDevice)
 		return -1;
 
-	DPRINT_DBG(NETVSC, "rndis device object allocated - %p", rndisDevice);
-
 	/*
 	 * Let the inner driver handle this first to create the netvsc channel
 	 * NOTE! Once the channel is created, we may get a receive callback
 	 * (RndisFilterOnReceive()) before this call is completed
 	 */
-	ret = rndis_filter.inner_drv.base.dev_add(dev, additional_info);
+	ret = netvsc_device_add(dev, additional_info);
 	if (ret != 0) {
 		kfree(rndisDevice);
 		return ret;
@@ -802,21 +773,20 @@ static int rndis_filte_device_add(struct hv_device *dev,
 		 */
 	}
 
-	DPRINT_INFO(NETVSC, "Device 0x%p mac addr %pM",
-		    rndisDevice, rndisDevice->hw_mac_adr);
-
 	memcpy(deviceInfo->mac_adr, rndisDevice->hw_mac_adr, ETH_ALEN);
 
 	rndis_filter_query_device_link_status(rndisDevice);
 
 	deviceInfo->link_state = rndisDevice->link_stat;
-	DPRINT_INFO(NETVSC, "Device 0x%p link state %s", rndisDevice,
-		    ((deviceInfo->link_state) ? ("down") : ("up")));
+
+	dev_info(&dev->device, "Device MAC %pM link state %s",
+		 rndisDevice->hw_mac_adr,
+		 ((deviceInfo->link_state) ? ("down\n") : ("up\n")));
 
 	return ret;
 }
 
-static int rndis_filter_device_remove(struct hv_device *dev)
+int rndis_filter_device_remove(struct hv_device *dev)
 {
 	struct netvsc_device *net_dev = dev->ext;
 	struct rndis_device *rndis_dev = net_dev->extension;
@@ -827,15 +797,11 @@ static int rndis_filter_device_remove(struct hv_device *dev)
 	kfree(rndis_dev);
 	net_dev->extension = NULL;
 
-	/* Pass control to inner driver to remove the device */
-	rndis_filter.inner_drv.base.dev_rm(dev);
+	netvsc_device_remove(dev);
 
 	return 0;
 }
 
-static void rndis_filter_cleanup(struct hv_driver *drv)
-{
-}
 
 int rndis_filter_open(struct hv_device *dev)
 {
