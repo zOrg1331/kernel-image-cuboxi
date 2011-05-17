@@ -17,6 +17,7 @@
 #include <asm/cputable.h>
 #include <asm/setup.h>
 #include <asm/thread_info.h>
+#include <asm/reg_a2.h>
 #include <asm/exception-64e.h>
 #include <asm/bug.h>
 #include <asm/irqflags.h>
@@ -864,8 +865,23 @@ have_hes:
 	 * that will have to be made dependent on whether we are running under
 	 * a hypervisor I suppose.
 	 */
-	ori	r3,r3,MAS0_HES | MAS0_WQ_ALLWAYS
-	mtspr	SPRN_MAS0,r3
+
+	/* BEWARE, MAGIC
+	 * This code is called as an ordinary function on the boot CPU. But to
+	 * avoid duplication, this code is also used in SCOM bringup of
+	 * secondary CPUs. We read the code between the initial_tlb_code_start
+	 * and initial_tlb_code_end labels one instruction at a time and RAM it
+	 * into the new core via SCOM. That doesn't process branches, so there
+	 * must be none between those two labels. It also means if this code
+	 * ever takes any parameters, the SCOM code must also be updated to
+	 * provide them.
+	 */
+	.globl a2_tlbinit_code_start
+a2_tlbinit_code_start:
+
+	ori	r11,r3,MAS0_WQ_ALLWAYS
+	oris	r11,r11,MAS0_ESEL(3)@h /* Use way 3: workaround A2 erratum 376 */
+	mtspr	SPRN_MAS0,r11
 	lis	r3,(MAS1_VALID | MAS1_IPROT)@h
 	ori	r3,r3,BOOK3E_PAGESZ_1GB << MAS1_TSIZE_SHIFT
 	mtspr	SPRN_MAS1,r3
@@ -879,17 +895,85 @@ have_hes:
 	/* Write the TLB entry */
 	tlbwe
 
+	.globl a2_tlbinit_after_linear_map
+a2_tlbinit_after_linear_map:
+
 	/* Now we branch the new virtual address mapped by this entry */
 	LOAD_REG_IMMEDIATE(r3,1f)
 	mtctr	r3
 	bctr
 
 1:	/* We are now running at PAGE_OFFSET, clean the TLB of everything
-	 * else (XXX we should scan for bolted crap from the firmware too)
+	 * else (including IPROTed things left by firmware)
+	 * r4 = TLBnCFG
+	 * r3 = current address (more or less)
 	 */
+
+	li	r5,0
+	mtspr	SPRN_MAS6,r5
+	tlbsx	0,r3
+
+	rlwinm	r9,r4,0,TLBnCFG_N_ENTRY
+	rlwinm	r10,r4,8,0xff
+	addi	r10,r10,-1	/* Get inner loop mask */
+
+	li	r3,1
+
+	mfspr	r5,SPRN_MAS1
+	rlwinm	r5,r5,0,(~(MAS1_VALID|MAS1_IPROT))
+
+	mfspr	r6,SPRN_MAS2
+	rldicr	r6,r6,0,51		/* Extract EPN */
+
+	mfspr	r7,SPRN_MAS0
+	rlwinm	r7,r7,0,0xffff0fff	/* Clear HES and WQ */
+
+	rlwinm	r8,r7,16,0xfff		/* Extract ESEL */
+
+2:	add	r4,r3,r8
+	and	r4,r4,r10
+
+	rlwimi	r7,r4,16,MAS0_ESEL_MASK
+
+	mtspr	SPRN_MAS0,r7
+	mtspr	SPRN_MAS1,r5
+	mtspr	SPRN_MAS2,r6
+	tlbwe
+
+	addi	r3,r3,1
+	and.	r4,r3,r10
+
+	bne	3f
+	addis	r6,r6,(1<<30)@h
+3:
+	cmpw	r3,r9
+	blt	2b
+
+	.globl  a2_tlbinit_after_iprot_flush
+a2_tlbinit_after_iprot_flush:
+
+#ifdef CONFIG_PPC_EARLY_DEBUG_WSP
+	/* Now establish early debug mappings if applicable */
+	/* Restore the MAS0 we used for linear mapping load */
+	mtspr	SPRN_MAS0,r11
+
+	lis	r3,(MAS1_VALID | MAS1_IPROT)@h
+	ori	r3,r3,(BOOK3E_PAGESZ_4K << MAS1_TSIZE_SHIFT)
+	mtspr	SPRN_MAS1,r3
+	LOAD_REG_IMMEDIATE(r3, WSP_UART_VIRT | MAS2_I | MAS2_G)
+	mtspr	SPRN_MAS2,r3
+	LOAD_REG_IMMEDIATE(r3, WSP_UART_PHYS | MAS3_SR | MAS3_SW)
+	mtspr	SPRN_MAS7_MAS3,r3
+	/* re-use the MAS8 value from the linear mapping */
+	tlbwe
+#endif /* CONFIG_PPC_EARLY_DEBUG_WSP */
+
 	PPC_TLBILX(0,0,0)
 	sync
 	isync
+
+	.globl a2_tlbinit_code_end
+a2_tlbinit_code_end:
 
 	/* We translate LR and return */
 	mflr	r3

@@ -33,7 +33,7 @@ struct kimage;
 struct smp_ops_t {
 	void  (*message_pass)(int target, int msg);
 	int   (*probe)(void);
-	void  (*kick_cpu)(int nr);
+	int   (*kick_cpu)(int nr);
 	void  (*setup_cpu)(int nr);
 	void  (*bringup_done)(void);
 	void  (*take_timebase)(void);
@@ -267,6 +267,7 @@ struct machdep_calls {
 
 extern void e500_idle(void);
 extern void power4_idle(void);
+extern void power7_idle(void);
 extern void ppc6xx_idle(void);
 extern void book3e_idle(void);
 
