@@ -27,10 +27,9 @@
 
 #include "max1363.h"
 
-/* Todo: test this */
 int max1363_single_channel_from_ring(long mask, struct max1363_state *st)
 {
-	struct iio_ring_buffer *ring = st->indio_dev->ring;
+	struct iio_ring_buffer *ring = iio_priv_to_dev(st)->ring;
 	int count = 0, ret;
 	u8 *ring_data;
 	if (!(st->current_mode->modemask & mask)) {
@@ -74,9 +73,9 @@ error_ret:
  **/
 static int max1363_ring_preenable(struct iio_dev *indio_dev)
 {
-	struct max1363_state *st = indio_dev->dev_data;
+	struct max1363_state *st = iio_priv(indio_dev);
 	struct iio_ring_buffer *ring = indio_dev->ring;
-	size_t d_size;
+	size_t d_size = 0;
 	unsigned long numvals;
 
 	/*
@@ -92,11 +91,13 @@ static int max1363_ring_preenable(struct iio_dev *indio_dev)
 
 	numvals = hweight_long(st->current_mode->modemask);
 	if (ring->access.set_bytes_per_datum) {
+		if (ring->scan_timestamp)
+			d_size += sizeof(s64);
 		if (st->chip_info->bits != 8)
-			d_size = numvals*2 + sizeof(s64);
+			d_size += numvals*2;
 		else
-			d_size = numvals + sizeof(s64);
-		if (d_size % 8)
+			d_size += numvals;
+		if (ring->scan_timestamp && (d_size % 8))
 			d_size += 8 - (d_size % 8);
 		ring->access.set_bytes_per_datum(ring, d_size);
 	}
@@ -114,7 +115,7 @@ static int max1363_ring_preenable(struct iio_dev *indio_dev)
  **/
 static void max1363_poll_func_th(struct iio_dev *indio_dev, s64 time)
 {
-	struct max1363_state *st = indio_dev->dev_data;
+	struct max1363_state *st = iio_priv(indio_dev);
 
 	schedule_work(&st->poll_work);
 
@@ -133,7 +134,7 @@ static void max1363_poll_bh_to_ring(struct work_struct *work_s)
 {
 	struct max1363_state *st = container_of(work_s, struct max1363_state,
 						  poll_work);
-	struct iio_dev *indio_dev = st->indio_dev;
+	struct iio_dev *indio_dev = iio_priv_to_dev(st);
 	struct iio_sw_ring_buffer *sw_ring = iio_to_sw_ring(indio_dev->ring);
 	s64 time_ns;
 	__u8 *rxbuf;
@@ -183,7 +184,7 @@ done:
 
 int max1363_register_ring_funcs_and_init(struct iio_dev *indio_dev)
 {
-	struct max1363_state *st = indio_dev->dev_data;
+	struct max1363_state *st = iio_priv(indio_dev);
 	int ret = 0;
 
 	indio_dev->ring = iio_sw_rb_allocate(indio_dev);
