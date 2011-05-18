@@ -2,8 +2,8 @@
  * Performance events core code:
  *
  *  Copyright (C) 2008 Thomas Gleixner <tglx@linutronix.de>
- *  Copyright (C) 2008-2009 Red Hat, Inc., Ingo Molnar
- *  Copyright (C) 2008-2009 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
+ *  Copyright (C) 2008-2011 Red Hat, Inc., Ingo Molnar
+ *  Copyright (C) 2008-2011 Red Hat, Inc., Peter Zijlstra <pzijlstr@redhat.com>
  *  Copyright  ©  2009 Paul Mackerras, IBM Corp. <paulus@au1.ibm.com>
  *
  * For licensing details see kernel-base/COPYING
@@ -39,10 +39,10 @@
 #include <asm/irq_regs.h>
 
 struct remote_function_call {
-	struct task_struct *p;
-	int (*func)(void *info);
-	void *info;
-	int ret;
+	struct task_struct	*p;
+	int			(*func)(void *info);
+	void			*info;
+	int			ret;
 };
 
 static void remote_function(void *data)
@@ -76,10 +76,10 @@ static int
 task_function_call(struct task_struct *p, int (*func) (void *info), void *info)
 {
 	struct remote_function_call data = {
-		.p = p,
-		.func = func,
-		.info = info,
-		.ret = -ESRCH, /* No such (running) process */
+		.p	= p,
+		.func	= func,
+		.info	= info,
+		.ret	= -ESRCH, /* No such (running) process */
 	};
 
 	if (task_curr(p))
@@ -100,10 +100,10 @@ task_function_call(struct task_struct *p, int (*func) (void *info), void *info)
 static int cpu_function_call(int cpu, int (*func) (void *info), void *info)
 {
 	struct remote_function_call data = {
-		.p = NULL,
-		.func = func,
-		.info = info,
-		.ret = -ENXIO, /* No such CPU */
+		.p	= NULL,
+		.func	= func,
+		.info	= info,
+		.ret	= -ENXIO, /* No such CPU */
 	};
 
 	smp_call_function_single(cpu, remote_function, &data, 1);
@@ -125,7 +125,7 @@ enum event_type_t {
  * perf_sched_events : >0 events exist
  * perf_cgroup_events: >0 per-cpu cgroup events exist on this cpu
  */
-atomic_t perf_sched_events __read_mostly;
+struct jump_label_key perf_sched_events __read_mostly;
 static DEFINE_PER_CPU(atomic_t, perf_cgroup_events);
 
 static atomic_t nr_mmap_events __read_mostly;
@@ -586,14 +586,6 @@ static void get_ctx(struct perf_event_context *ctx)
 	WARN_ON(!atomic_inc_not_zero(&ctx->refcount));
 }
 
-static void free_ctx(struct rcu_head *head)
-{
-	struct perf_event_context *ctx;
-
-	ctx = container_of(head, struct perf_event_context, rcu_head);
-	kfree(ctx);
-}
-
 static void put_ctx(struct perf_event_context *ctx)
 {
 	if (atomic_dec_and_test(&ctx->refcount)) {
@@ -601,7 +593,7 @@ static void put_ctx(struct perf_event_context *ctx)
 			put_ctx(ctx->parent_ctx);
 		if (ctx->task)
 			put_task_struct(ctx->task);
-		call_rcu(&ctx->rcu_head, free_ctx);
+		kfree_rcu(ctx, rcu_head);
 	}
 }
 
@@ -5331,14 +5323,6 @@ swevent_hlist_deref(struct swevent_htable *swhash)
 					 lockdep_is_held(&swhash->hlist_mutex));
 }
 
-static void swevent_hlist_release_rcu(struct rcu_head *rcu_head)
-{
-	struct swevent_hlist *hlist;
-
-	hlist = container_of(rcu_head, struct swevent_hlist, rcu_head);
-	kfree(hlist);
-}
-
 static void swevent_hlist_release(struct swevent_htable *swhash)
 {
 	struct swevent_hlist *hlist = swevent_hlist_deref(swhash);
@@ -5347,7 +5331,7 @@ static void swevent_hlist_release(struct swevent_htable *swhash)
 		return;
 
 	rcu_assign_pointer(swhash->swevent_hlist, NULL);
-	call_rcu(&hlist->rcu_head, swevent_hlist_release_rcu);
+	kfree_rcu(hlist, rcu_head);
 }
 
 static void swevent_hlist_put_cpu(struct perf_event *event, int cpu)
@@ -5429,7 +5413,7 @@ fail:
 	return err;
 }
 
-atomic_t perf_swevent_enabled[PERF_COUNT_SW_MAX];
+struct jump_label_key perf_swevent_enabled[PERF_COUNT_SW_MAX];
 
 static void sw_perf_event_destroy(struct perf_event *event)
 {
@@ -7445,11 +7429,11 @@ static void perf_cgroup_exit(struct cgroup_subsys *ss, struct cgroup *cgrp,
 }
 
 struct cgroup_subsys perf_subsys = {
-	.name = "perf_event",
-	.subsys_id = perf_subsys_id,
-	.create = perf_cgroup_create,
-	.destroy = perf_cgroup_destroy,
-	.exit = perf_cgroup_exit,
-	.attach = perf_cgroup_attach,
+	.name		= "perf_event",
+	.subsys_id	= perf_subsys_id,
+	.create		= perf_cgroup_create,
+	.destroy	= perf_cgroup_destroy,
+	.exit		= perf_cgroup_exit,
+	.attach		= perf_cgroup_attach,
 };
 #endif /* CONFIG_CGROUP_PERF */
