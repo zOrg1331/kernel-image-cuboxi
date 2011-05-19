@@ -8,6 +8,7 @@
 
 #include <bc/beancounter.h>
 #include <bc/oom_kill.h>
+#include <bc/vmpages.h>
 
 #define UB_OOM_TIMEOUT	(5 * HZ)
 
@@ -183,16 +184,25 @@ static void ub_release_oom_control(struct oom_control *oom_ctrl)
 
 void ub_oom_mm_dead(struct mm_struct *mm)
 {
-	if (mm->global_oom)
-		ub_release_oom_control(&global_oom_ctrl);
-	if (mm->ub_oom)
-		ub_release_oom_control(&mm_ub(mm)->oom_ctrl);
-
 	printk("OOM killed process %s (pid=%d, ve=%d) exited, "
 			"free=%lu.\n",
 			current->comm, current->pid,
 			VEID(current->ve_task_info.owner_env),
 			nr_free_pages());
+
+	if (mm->global_oom) {
+		ub_release_oom_control(&global_oom_ctrl);
+		if (printk_ratelimit())
+			show_mem();
+	}
+
+	if (mm->ub_oom) {
+		struct user_beancounter *ub = mm_ub(mm);
+
+		ub_release_oom_control(&ub->oom_ctrl);
+		if (__ratelimit(&ub->ub_ratelimit))
+			show_ub_mem(ub);
+	}
 }
 
 int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
@@ -210,7 +220,7 @@ int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 		p = select_bad_process(ub, NULL);
 		if (PTR_ERR(p) == -1UL || !p)
 			break;
-	} while (oom_kill_process(p, gfp_mask, 0, NULL, "Out of memory in UB"));
+	} while (oom_kill_process(p, gfp_mask, 0, NULL, ub, "Out of memory in UB"));
 
 	read_unlock(&tasklist_lock);
 	ub_oom_unlock();

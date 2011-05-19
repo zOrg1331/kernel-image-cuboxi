@@ -150,6 +150,9 @@ struct ve_struct {
 	struct list_head	ve_list;
 
 	envid_t			veid;
+	/*
+	 * this one is NOT rcu-protected
+	 */
 	struct list_head	vetask_lh;
 	/* capability bounding set */
 	kernel_cap_t		ve_cap_bset;

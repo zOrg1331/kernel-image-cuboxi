@@ -253,7 +253,6 @@ enum {
 	PD_ZERO,
 	PD_CLONE,
 	PD_FUNKEY,
-	PD_LAZY,
 	PD_ITER,
 	PD_ITERYOUNG,
 };
@@ -419,7 +418,7 @@ retry:
 		goto out_put;
 	}
 #endif
-	pdesc->type = pte_young(pte) ? PD_COPY : PD_LAZY;
+	pdesc->type = PD_COPY;
 
 out_put:
 	if (pg)
@@ -495,12 +494,12 @@ int dump_page_block(struct vm_area_struct *vma, struct cpt_page_block *pgb,
 
 	cpt_push_object(&saved_object, ctx);
 
-	pgb->cpt_object = (copy != PD_LAZY) ? CPT_OBJ_PAGES : CPT_OBJ_LAZYPAGES;
+	pgb->cpt_object = CPT_OBJ_PAGES;
 	pgb->cpt_hdrlen = sizeof(*pgb);
-	pgb->cpt_content = (copy == PD_COPY || copy == PD_LAZY) ? CPT_CONTENT_DATA : CPT_CONTENT_VOID;
+	pgb->cpt_content = (copy == PD_COPY) ? CPT_CONTENT_DATA : CPT_CONTENT_VOID;
 
 	ctx->write(pgb, sizeof(*pgb), ctx);
-	if (copy == PD_COPY || copy == PD_LAZY)
+	if (copy == PD_COPY)
 		dump_pages(vma, pgb->cpt_start, pgb->cpt_end, ctx);
 	cpt_close_object(ctx);
 	cpt_pop_object(&saved_object, ctx);
@@ -543,25 +542,6 @@ int dump_copypage_block(struct vm_area_struct *vma, struct page_area *pa,
 	pgb.cpt_end = pa->end;
 	pgb.cpt_source = pa->mm;
 
-	ctx->write(&pgb, sizeof(pgb), ctx);
-	cpt_close_object(ctx);
-	cpt_pop_object(&saved_object, ctx);
-	return 0;
-}
-
-int dump_lazypage_block(struct vm_area_struct *vma, struct page_area *pa,
-			cpt_context_t *ctx)
-{
-	struct cpt_lazypage_block pgb;
-	loff_t saved_object;
-
-	cpt_push_object(&saved_object, ctx);
-
-	pgb.cpt_object = CPT_OBJ_LAZYPAGES;
-	pgb.cpt_hdrlen = sizeof(pgb);
-	pgb.cpt_content = CPT_CONTENT_VOID;
-	pgb.cpt_start = pa->start;
-	pgb.cpt_end = pa->end;
 	ctx->write(&pgb, sizeof(pgb), ctx);
 	cpt_close_object(ctx);
 	cpt_pop_object(&saved_object, ctx);
@@ -700,9 +680,6 @@ static int dump_one_vma(cpt_object_t *mmobj,
 			return -EINVAL;
 		}
 
-		if (pd.type == PD_LAZY)
-			pd.type = PD_COPY;
-
 		if (!can_expand(&pa, &pd)) {
 			if (pa.type == PD_COPY ||
 			    pa.type == PD_ZERO) {
@@ -712,8 +689,6 @@ static int dump_one_vma(cpt_object_t *mmobj,
 			} else if (pa.type == PD_CLONE) {
 				dump_copypage_block(vma, &pa, ctx);
 				cloned_pages++;
-			} else if (pa.type == PD_LAZY) {
-				dump_lazypage_block(vma, &pa, ctx);
 			} else if (pa.type == PD_ITER || pa.type == PD_ITERYOUNG) {
 				dump_iterpage_block(vma, &pa, ctx);
 				cloned_pages++;
@@ -740,8 +715,6 @@ static int dump_one_vma(cpt_object_t *mmobj,
 		} else if (pa.type == PD_CLONE) {
 			dump_copypage_block(vma, &pa, ctx);
 			cloned_pages++;
-		} else if (pa.type == PD_LAZY) {
-			dump_lazypage_block(vma, &pa, ctx);
 		} else if (pa.type == PD_ITER || pa.type == PD_ITERYOUNG) {
 			dump_iterpage_block(vma, &pa, ctx);
 			cloned_pages++;

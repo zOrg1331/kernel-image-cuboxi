@@ -19,7 +19,7 @@ struct ve_task_info {
 	struct ve_struct *owner_env;
 	struct ve_struct *exec_env;
 	struct ve_struct *saved_env;
-	struct list_head vetask_list;
+	struct list_head vetask_list; /* ve->vetask_lh */
 	struct list_head aux_list;
 /* statistics: scheduling latency */
 	cycles_t sleep_time;

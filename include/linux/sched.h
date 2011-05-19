@@ -2472,7 +2472,7 @@ static inline struct task_struct *__first_task_ve(struct ve_struct *ve)
 		if (tsk == &init_task)
 			tsk = NULL;
 	} else {
-		tsk = ve_lh2task(ve, rcu_dereference(ve->vetask_lh.next));
+		tsk = ve_lh2task(ve, ve->vetask_lh.next);
 	}
 	return tsk;
 }
@@ -2486,8 +2486,7 @@ static inline struct task_struct *__next_task_ve(struct ve_struct *ve,
 			tsk = NULL;
 	} else {
 		BUG_ON(tsk->ve_task_info.owner_env != ve);
-		tsk = ve_lh2task(ve, rcu_dereference(tsk->
-					ve_task_info.vetask_list.next));
+		tsk = ve_lh2task(ve, tsk->ve_task_info.vetask_list.next);
 	}
 	return tsk;
 }

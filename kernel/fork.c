@@ -455,7 +455,35 @@ static inline void mm_free_pgd(struct mm_struct * mm)
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(mmlist_lock);
 EXPORT_SYMBOL(mmlist_lock);
 
-#define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))
+#ifdef CONFIG_BEANCOUNTERS
+
+static inline struct mm_struct *allocate_mm(struct user_beancounter *ub)
+{
+	return ub_kmem_alloc(ub, mm_cachep, GFP_KERNEL);
+}
+
+static inline void set_mm_ub(struct mm_struct *mm, struct user_beancounter *ub)
+{
+	mm->mm_ub = get_beancounter_longterm(ub);
+}
+
+static inline void put_mm_ub(struct mm_struct *mm)
+{
+	VM_BUG_ON(mm->page_table_precharge);
+	uncharge_beancounter_fast(mm->mm_ub, UB_KMEMSIZE,
+			mm_cachep->objuse + (mm->nr_ptds << PAGE_SHIFT));
+	put_beancounter_longterm(mm->mm_ub);
+	mm->mm_ub = NULL;
+}
+
+#else /* CONFIG_BEANCOUNTERS */
+
+#define allocate_mm(ub)  (kmem_cache_alloc(mm_cachep, GFP_KERNEL))
+#define set_mm_ub(mm, ub)
+#define put_mm_ub(mm)
+
+#endif /* CONFIG_BEANCOUNTERS */
+
 #define free_mm(mm)	(kmem_cache_free(mm_cachep, (mm)))
 
 static unsigned long default_dump_filter = MMF_DUMP_FILTER_DEFAULT;
@@ -500,15 +528,6 @@ static struct mm_struct * mm_init(struct mm_struct * mm, struct task_struct *p)
 	mm->cached_hole_size = ~0UL;
 	mm_init_aio(mm);
 	mm_init_owner(mm, p);
-	/*
-	 * This looks ugly, buy when we came from
-	 *      sys_execve -> mm_alloc -> here
-	 * we need to get exec_ub, not task_ub. But when
-	 * we're here like this
-	 *      sys_fork() -> dup_mm -> here
-	 * we need task_ub, not the exec one... xemul
-	 */
-	set_mm_ub(mm, p);
 
 	if (likely(!mm_alloc_pgd(mm))) {
 		mm->def_flags = 0;
@@ -528,9 +547,10 @@ struct mm_struct * mm_alloc(void)
 {
 	struct mm_struct * mm;
 
-	mm = allocate_mm();
+	mm = allocate_mm(get_exec_ub());
 	if (mm) {
 		memset(mm, 0, sizeof(*mm));
+		set_mm_ub(mm, get_exec_ub());
 		mm = mm_init(mm, current);
 	}
 	return mm;
@@ -548,7 +568,6 @@ void __mmdrop(struct mm_struct *mm)
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_mm_destroy(mm);
-	put_mm_ub(mm);
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	VM_BUG_ON(mm->pmd_huge_pte);
 #endif
@@ -579,6 +598,7 @@ void mmput(struct mm_struct *mm)
 			module_put(mm->binfmt->module);
 		if (mm->global_oom || mm->ub_oom)
 			ub_oom_mm_dead(mm);
+		put_mm_ub(mm);
 		mmdrop(mm);
 	}
 }
@@ -687,7 +707,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (!oldmm)
 		return NULL;
 
-	mm = allocate_mm();
+	mm = allocate_mm(tsk->task_bc.task_ub);
 	if (!mm)
 		goto fail_nomem;
 
@@ -701,6 +721,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 	mm->pmd_huge_pte = NULL;
 #endif
 
+	set_mm_ub(mm, tsk->task_bc.task_ub);
 	if (!mm_init(mm, tsk))
 		goto fail_nomem;
 
@@ -734,8 +755,8 @@ fail_nocontext:
 	 * If init_new_context() failed, we cannot use mmput() to free the mm
 	 * because it calls destroy_context()
 	 */
-	mm_free_pgd(mm);
 	put_mm_ub(mm);
+	mm_free_pgd(mm);
 	free_mm(mm);
 	return NULL;
 }
@@ -1595,7 +1616,7 @@ void __init proc_caches_init(void)
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK|SLAB_UBC, NULL);
 	mm_cachep = kmem_cache_create("mm_struct",
 			sizeof(struct mm_struct), ARCH_MIN_MMSTRUCT_ALIGN,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK|SLAB_UBC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK, NULL);
 	__vm_area_cachep = KMEM_CACHE(vm_area_struct, SLAB_PANIC);
 	mmap_init();
 }

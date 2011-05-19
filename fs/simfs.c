@@ -283,12 +283,12 @@ static int sim_fill_super(struct super_block *s, void *data, int silent)
 	if (err)
 		goto out;
 
-	sim_quota_init(s);
-
 	err = 0;
 	s->s_fs_info = mntget(nd->path.mnt);
 	s->s_root = dget(nd->path.dentry);
 	s->s_op = &sim_super_ops;
+
+	sim_quota_init(s);
 out:
 	return err;
 }

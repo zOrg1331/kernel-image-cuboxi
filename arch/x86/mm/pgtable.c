@@ -236,7 +236,6 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgdp)
 			paravirt_release_pmd(pgd_val(pgd) >> PAGE_SHIFT);
 			pmd_free(mm, pmd);
 			mm->nr_ptds--;
-			ub_page_table_uncharge(mm);
 		}
 	}
 }
@@ -321,8 +320,6 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	paravirt_pgd_free(mm, pgd);
 	free_page((unsigned long)pgd);
 	mm->nr_ptds--;
-	ub_page_table_uncharge(mm);
-	ub_page_table_commit(mm);
 }
 
 int ptep_set_access_flags(struct vm_area_struct *vma,

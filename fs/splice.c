@@ -292,6 +292,8 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 	req_pages = (len + loff + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 	nr_pages = min(req_pages, (unsigned)PIPE_BUFFERS);
 
+	check_pagecache_limits(mapping, mapping_gfp_mask(mapping));
+
 	/*
 	 * Lookup the (hopefully) full range of pages we need.
 	 */

@@ -39,18 +39,8 @@ UB_DECLARE_VOID_FUNC(ub_pty_uncharge(struct tty_struct *tty))
 		WARN_ON((fl)->fl_charged == 0);	\
 		(fl)->fl_charged = 0;		\
 	} while (0)
-#define set_mm_ub(mm, tsk)	do {				\
-		(mm)->mm_ub = get_beancounter_longterm(tsk != current ?	\
-			tsk->task_bc.task_ub : get_exec_ub());	\
-	} while (0)
-#define put_mm_ub(mm)		do {				\
-		put_beancounter_longterm((mm)->mm_ub);		\
-		(mm)->mm_ub = NULL;				\
-	} while (0)
 #else
 #define set_flock_charged(fl)	do { } while (0)
 #define unset_flock_charged(fl)	do { } while (0)
-#define set_mm_ub(mm, tsk)	do { } while (0)
-#define put_mm_ub(mm)		do { } while (0)
 #endif
 #endif

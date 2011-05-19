@@ -232,11 +232,60 @@ int pid_ns_attach_init(struct pid_namespace *ns, struct task_struct *tsk)
 }
 EXPORT_SYMBOL_GPL(pid_ns_attach_init);
 
+#ifdef CONFIG_VE
+static noinline void show_lost_task(struct task_struct *p)
+{
+	printk("Lost task: %d/%s/%p blocked: %lx pending: %lx\n",
+			p->pid, p->comm, p,
+			p->blocked.sig[0],
+			p->pending.signal.sig[0]);
+}
+
+static void zap_ve_processes(struct ve_struct *env)
+{
+	/* wait for all init childs exit */
+	while (env->pcounter > 1) {
+		struct task_struct *g, *p;
+		long delay = 1;
+
+		if (sys_wait4(-1, NULL, __WALL | WNOHANG, NULL) > 0)
+			continue;
+		/* it was ENOCHLD or no more children somehow */
+		if (env->pcounter == 1)
+			break;
+
+		/* clear all signals to avoid wakeups */
+		if (signal_pending(current))
+			flush_signals(current);
+		/* we have child without signal sent */
+		__set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(delay);
+		delay = (delay < HZ) ? (delay << 1) : HZ;
+		read_lock(&tasklist_lock);
+		do_each_thread_ve(g, p) {
+			if (p != current) {
+				/*
+				 * by that time no processes other then entered
+				 * may exist in the VE. if some were missed by
+				 * zap_pid_ns_processes() this was a BUG
+				 */
+				if (!p->did_ve_enter)
+					show_lost_task(p);
+
+				force_sig_specific(SIGKILL, p);
+			}
+		} while_each_thread_ve(g, p);
+		read_unlock(&tasklist_lock);
+	}
+}
+#endif
+
 void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 {
 	int nr;
 	int rc;
 	struct task_struct *task;
+	struct ve_struct *env = get_exec_env();
 
 	/*
 	 * The last thread in the cgroup-init thread group is terminating.
@@ -279,7 +328,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	acct_exit_ns(pid_ns);
 
 #ifdef CONFIG_VE
-	BUG_ON(get_exec_env()->pcounter > 1);
+	if (pid_ns == env->ve_ns->pid_ns)
+		zap_ve_processes(env);
 #endif
 	return;
 }

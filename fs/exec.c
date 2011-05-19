@@ -1716,7 +1716,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 	 *	next_thread().
 	 */
 	rcu_read_lock();
-	for_each_process_ve(g) {
+	for_each_process_all(g) {
 		if (g == tsk->group_leader)
 			continue;
 		if (g->flags & PF_KTHREAD)
@@ -1731,7 +1731,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 				}
 				break;
 			}
-		} while_each_thread_ve(g, p);
+		} while_each_thread_all(g, p);
 	}
 	rcu_read_unlock();
 done:

@@ -12,6 +12,7 @@
 #define __UB_PAGES_H_
 
 #include <linux/linkage.h>
+#include <linux/sched.h>	/* for get_exec_ub() */
 #include <bc/beancounter.h>
 #include <bc/decl.h>
 

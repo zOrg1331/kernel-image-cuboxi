@@ -424,7 +424,7 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 	spin_lock(&dcache_lock);
 
 	p = dump->nodes;
-	list_for_each_entry(dentry, &root->d_subdirs, d_u.d_child) {
+	list_for_each_entry_reverse(dentry, &root->d_subdirs, d_u.d_child) {
 		if (d_unhashed(dentry) || !dentry->d_inode ||
 				!S_ISDIR(dentry->d_inode->i_mode))
 			continue;

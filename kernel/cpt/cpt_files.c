@@ -1177,9 +1177,14 @@ struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
 		goto out_put;
 	}
 
-	if (d == NULL)
-		err = vfs_create(dirde->d_inode, hardde, 0600, NULL);
-	else
+	if (d == NULL) {
+		struct nameidata nd;
+
+		nd.flags = LOOKUP_CREATE;
+		nd.intent.open.flags = O_EXCL;
+
+		err = vfs_create(dirde->d_inode, hardde, 0600, &nd);
+	} else
 		err = vfs_link(d, dirde->d_inode, hardde);
 	if (err) {
 		eprintk_ctx("error hardlink %s, %d\n", name, err);

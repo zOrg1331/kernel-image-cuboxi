@@ -366,16 +366,11 @@ int rst_tty_jobcontrol(struct cpt_context *ctx)
 				}
 			}
 			if ((int)pibuf->cpt_session > 0) {
-				struct pid *sess;
-
 				rcu_read_lock();
-				sess = get_pid(alloc_vpid_safe(pibuf->cpt_session));
+				stty->session = get_pid(alloc_vpid_safe(pibuf->cpt_session));
 				rcu_read_unlock();
-				if (!sess) {
+				if (!stty->session)
 					dprintk_ctx("unknown tty session %d\n", pibuf->cpt_session);
-				} else if (!stty->session) {
-					stty->session = sess;
-				}
 			}
 		}
 		sec += pibuf->cpt_next;
