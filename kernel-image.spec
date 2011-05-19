@@ -202,7 +202,7 @@ Prereq: %name = %version-%release
 Requires(postun): %name = %version-%release
 
 %package -n kernel-modules-drm-radeon-%flavour
-Summary: The Direct Rendering Infrastructure modules for NVIDIA cards
+Summary: The Direct Rendering Infrastructure modules for ATI cards
 Group: System/Kernel and hardware
 Provides:  kernel-modules-drm-radeon-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease < %version-%release
