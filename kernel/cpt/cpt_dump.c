@@ -20,6 +20,7 @@
 #include <linux/errno.h>
 #include <linux/pagemap.h>
 #include <linux/ptrace.h>
+#include <linux/utrace.h>
 #include <linux/smp_lock.h>
 #include <linux/ve.h>
 #include <linux/ve_proto.h>
@@ -150,11 +151,7 @@ enum
 static int check_trace(struct task_struct *tsk, struct task_struct *root,
 			cpt_context_t *ctx)
 {
-#ifdef CONFIG_UTRACE
-	if (tsk->utrace)
-		return 1;
-#endif
-	return 0;
+	return task_utrace_attached(tsk);
 }
 
 static int vps_stop_tasks(struct cpt_context *ctx)
@@ -724,8 +721,10 @@ static int cpt_dump_veinfo(cpt_context_t *ctx)
 	ve = get_exec_env();
 	ns = ve->ve_ns->ipc_ns;
 
+	i->shm_ctl_all = ns->shm_ctlall;
 	if (ns->shm_ctlall > 0xFFFFFFFFU)
 		i->shm_ctl_all = 0xFFFFFFFFU;
+	i->shm_ctl_max = ns->shm_ctlmax;
 	if (ns->shm_ctlmax > 0xFFFFFFFFU)
 		i->shm_ctl_max = 0xFFFFFFFFU;
 	i->shm_ctl_mni = ns->shm_ctlmni;

@@ -372,10 +372,11 @@ static int hook(void *arg)
 	if (!ti->cpt_64bit) {
 		/* 32bit app from 32bit OS, won't have PER_LINUX32 set... :/ */
 		__set_personality(PER_LINUX32);
-		/*
-		 * Task forked from 64bit app and thus has wrong binfmt pointer
-		 */
-		set_binfmt(&compat_elf_format);
+		if (current->mm)
+			/*
+			 * Task forked from 64bit app and thus has wrong binfmt pointer
+			 */
+			set_binfmt(&compat_elf_format);
 	}
 #endif
 

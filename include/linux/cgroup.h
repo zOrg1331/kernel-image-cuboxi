@@ -183,6 +183,9 @@ struct cgroup {
 	 */
 	atomic_t count;
 
+	/* Count of in-progress RCU-delayed css-set puts */
+	atomic_t puts_in_flight;
+
 	/*
 	 * We link our 'sibling' struct into our parent's 'children'.
 	 * Our children link their 'sibling' into our 'children'.

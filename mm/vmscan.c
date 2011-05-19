@@ -1022,6 +1022,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 
 		case -EBUSY:
 			/* else it is being freed elsewhere */
+			unpin_mem_gang(gang);
 			list_move(&page->lru, src);
 			mem_cgroup_rotate_lru_list(page, page_lru(page));
 			continue;

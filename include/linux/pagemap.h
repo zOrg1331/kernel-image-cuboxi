@@ -13,7 +13,8 @@
 #include <linux/gfp.h>
 #include <linux/bitops.h>
 #include <linux/hardirq.h> /* for in_interrupt() */
-#include <bc/vmpages.h>
+
+#include <bc/vmpages.h> /* for ub_check_ram_limits() */
 
 /*
  * Bits in mapping->flags.  The lower __GFP_BITS_SHIFT bits are the page
@@ -221,6 +222,12 @@ static inline struct page *page_cache_alloc(struct address_space *x)
 static inline struct page *page_cache_alloc_cold(struct address_space *x)
 {
 	return __page_cache_alloc(mapping_gfp_mask(x)|__GFP_COLD);
+}
+
+static inline void check_pagecache_limits(struct address_space *mapping,
+					  gfp_t gfp_mask)
+{
+	ub_check_ram_limits(get_exec_ub(), gfp_mask);
 }
 
 typedef int filler_t(void *, struct page *);

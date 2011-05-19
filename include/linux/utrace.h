@@ -129,7 +129,14 @@ static inline void task_utrace_proc_status(struct seq_file *m,
 {
 }
 
+static inline int task_utrace_attached(struct task_struct *task)
+{
+	return 0;
+}
+
 #else  /* CONFIG_UTRACE */
+
+int task_utrace_attached(struct task_struct *task);
 
 static inline unsigned long task_utrace_flags(struct task_struct *task)
 {

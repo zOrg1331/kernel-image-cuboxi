@@ -845,7 +845,7 @@ static int __svc_register(const char *progname,
 	}
 
 	if (error < 0)
-		printk(KERN_WARNING "svc: failed to register %sv%u RPC "
+		ve_printk(VE_LOG, KERN_WARNING "svc: failed to register %sv%u RPC "
 			"service (errno %d).\n", progname, version, -error);
 	return error;
 }

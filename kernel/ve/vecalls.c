@@ -864,17 +864,8 @@ static void __ve_move_task(struct task_struct *tsk, struct ve_struct *new,
 		daemonize_fs_struct();
 
 	write_lock_irq(&tasklist_lock);
-	list_del_rcu(&tsk->ve_task_info.vetask_list);
-	write_unlock_irq(&tasklist_lock);
-
-	synchronize_rcu();
-
-	write_lock_irq(&tasklist_lock);
-	list_add_tail_rcu(&tsk->ve_task_info.vetask_list,
-			&new->vetask_lh);
-	list_del(&tsk->ve_task_info.aux_list);
-	list_add_tail(&tsk->ve_task_info.aux_list,
-			&new->vetask_auxlist);
+	list_move_tail(&tsk->ve_task_info.vetask_list, &new->vetask_lh);
+	list_move_tail(&tsk->ve_task_info.aux_list, &new->vetask_auxlist);
 	old->pcounter--;
 	new->pcounter++;
 	write_unlock_irq(&tasklist_lock);

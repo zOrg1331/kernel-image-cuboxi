@@ -409,15 +409,17 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		cpt_object_t *obj = lookup_cpt_obj_bypos(CPT_OBJ_TTY, si->cpt_ctty, ctx);
 		if (obj) {
 			struct tty_struct *tty = obj->o_obj;
-			if (!tty->session || tty->session ==
-					task_session(current)) {
-				put_pid(tty->session);
-				tty->session = get_pid(task_session(current));
+
+			if (current->signal->tty) {
+				wprintk_ctx("strange, current->signal->tty == 0x%p for task '%s'\n",
+							current->signal->tty,
+							current->comm);
 				tty_kref_put(current->signal->tty);
-				current->signal->tty = tty_kref_get(tty);
-			} else {
-				wprintk_ctx("tty session mismatch\n");
 			}
+			current->signal->tty = tty_kref_get(tty);
+		} else {
+			wprintk_ctx("oops, can't find tty for task '%s' (si->cpt_ctty: %Ld)",
+						current->comm, si->cpt_ctty);
 		}
 	}
 

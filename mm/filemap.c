@@ -656,12 +656,6 @@ void __lock_page_nosync(struct page *page)
 							TASK_UNINTERRUPTIBLE);
 }
 
-static inline void check_pagecache_limits(struct address_space *mapping)
-{
-	if (mapping != &swapper_space)
-		ub_check_ram_limits(get_exec_ub(), GFP_NOWAIT);
-}
-
 /**
  * find_get_page - find and get a page reference
  * @mapping: the address_space to search
@@ -674,8 +668,6 @@ struct page *find_get_page(struct address_space *mapping, pgoff_t offset)
 {
 	void **pagep;
 	struct page *page;
-
-	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 repeat:
@@ -758,6 +750,7 @@ struct page *find_or_create_page(struct address_space *mapping,
 	struct page *page;
 	int err;
 repeat:
+	check_pagecache_limits(mapping, gfp_mask);
 	page = find_lock_page(mapping, index);
 	if (!page) {
 		page = __page_cache_alloc(gfp_mask);
@@ -804,8 +797,6 @@ unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
 	unsigned int i;
 	unsigned int ret;
 	unsigned int nr_found;
-
-	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 restart:
@@ -859,8 +850,6 @@ unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 	unsigned int i;
 	unsigned int ret;
 	unsigned int nr_found;
-
-	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 restart:
@@ -918,8 +907,6 @@ unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
 	unsigned int i;
 	unsigned int ret;
 	unsigned int nr_found;
-
-	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 restart:
@@ -1054,6 +1041,7 @@ static void do_generic_file_read(struct file *filp, loff_t *ppos,
 
 		cond_resched();
 find_page:
+		check_pagecache_limits(mapping, mapping_gfp_mask(mapping));
 		page = find_get_page(mapping, index);
 		if (!page) {
 			page_cache_sync_readahead(mapping,
@@ -1750,6 +1738,7 @@ static struct page *__read_cache_page(struct address_space *mapping,
 	struct page *page;
 	int err;
 repeat:
+	check_pagecache_limits(mapping, gfp);
 	page = find_get_page(mapping, index);
 	if (!page) {
 		page = __page_cache_alloc(gfp | __GFP_COLD);
@@ -2273,6 +2262,7 @@ struct page *grab_cache_page_write_begin(struct address_space *mapping,
 	if (flags & AOP_FLAG_NOFS)
 		gfp_notmask = __GFP_FS;
 repeat:
+	check_pagecache_limits(mapping, mapping_gfp_mask(mapping) & ~gfp_notmask);
 	page = find_lock_page(mapping, index);
 	if (likely(page))
 		return page;

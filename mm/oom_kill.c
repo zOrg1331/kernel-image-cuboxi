@@ -31,6 +31,7 @@
 
 #include <bc/beancounter.h>
 #include <bc/oom_kill.h>
+#include <bc/vmpages.h>
 
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
@@ -386,7 +387,6 @@ static void __oom_kill_task(struct task_struct *tsk)
 
 static int oom_kill_task(struct task_struct *p, int verbose)
 {
-	static DEFINE_RATELIMIT_STATE(rl, 60*HZ, 5);
 	unsigned long total_vm, anon_rss, file_rss;
 	struct mm_struct *mm;
 
@@ -450,14 +450,13 @@ static int oom_kill_task(struct task_struct *p, int verbose)
 			set_exec_env(ve);
 		}
 #endif
-		if (__ratelimit(&rl))
-			show_mem();
 	}
 	return 0;
 }
 
 int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
-			    struct mem_cgroup *mem, const char *message)
+			    struct mem_cgroup *mem, struct user_beancounter *ub,
+			    const char *message)
 {
 	struct task_struct *c;
 	int group, child_group;
@@ -472,7 +471,10 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		task_unlock(current);
 		dump_stack();
 		mem_cgroup_print_oom_info(mem, p);
-		show_mem();
+		if (!ub)
+			show_mem();
+		else if (__ratelimit(&ub->ub_ratelimit))
+			show_ub_mem(ub);
 		if (sysctl_oom_dump_tasks)
 			dump_tasks(mem);
 	}
@@ -494,6 +496,8 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		if (child_group > group)
 			continue;
 		if (c->mm == p->mm)
+			continue;
+		if (ub_oom_task_skip(ub, c))
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
 			continue;
@@ -518,7 +522,7 @@ retry:
 	if (!p)
 		p = current;
 
-	if (oom_kill_process(p, gfp_mask, 0, mem,
+	if (oom_kill_process(p, gfp_mask, 0, mem, NULL,
 				"Memory cgroup out of memory"))
 		goto retry;
 out:
@@ -599,7 +603,7 @@ static void __out_of_memory(gfp_t gfp_mask, int order)
 	struct user_beancounter *ub = NULL;
 
 	if (sysctl_oom_kill_allocating_task)
-		if (!oom_kill_process(current, gfp_mask, order, NULL,
+		if (!oom_kill_process(current, gfp_mask, order, NULL, NULL,
 				"Out of memory (oom_kill_allocating_task)"))
 			return;
 retry:
@@ -625,7 +629,7 @@ retry:
 		panic("Out of memory and no killable processes...\n");
 	}
 
-	if (oom_kill_process(p, gfp_mask, order, NULL, "Out of memory"))
+	if (oom_kill_process(p, gfp_mask, order, NULL, ub, "Out of memory"))
 		goto retry;
 
 	put_beancounter(ub);
@@ -719,7 +723,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 
 	switch (constraint) {
 	case CONSTRAINT_MEMORY_POLICY:
-		oom_kill_process(current, gfp_mask, order, NULL,
+		oom_kill_process(current, gfp_mask, order, NULL, NULL,
 				"No available memory (MPOL_BIND)");
 		break;
 

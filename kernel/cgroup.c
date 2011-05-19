@@ -287,7 +287,7 @@ static void free_css_set_rcu(struct rcu_head *obj)
  * compiled into their kernel but not actually in use */
 static int use_task_css_set_links __read_mostly;
 
-static void __put_css_set(struct css_set *cg, int taskexit)
+static void __put_css_set(struct css_set *cg, int taskexit, int rcu)
 {
 	struct cg_cgroup_link *link;
 	struct cg_cgroup_link *saved_link;
@@ -313,6 +313,8 @@ static void __put_css_set(struct css_set *cg, int taskexit)
 		struct cgroup *cgrp = link->cgrp;
 		list_del(&link->cg_link_list);
 		list_del(&link->cgrp_link_list);
+		if (rcu)
+			atomic_dec(&cgrp->puts_in_flight);
 		if (atomic_dec_and_test(&cgrp->count) &&
 		    cgroup_is_disposable(cgrp)) {
 			if (taskexit)
@@ -337,12 +339,50 @@ static inline void get_css_set(struct css_set *cg)
 
 static inline void put_css_set(struct css_set *cg)
 {
-	__put_css_set(cg, 0);
+	__put_css_set(cg, 0, 0);
 }
 
 static inline void put_css_set_taskexit(struct css_set *cg)
 {
-	__put_css_set(cg, 1);
+	__put_css_set(cg, 1, 0);
+}
+
+static DECLARE_WAIT_QUEUE_HEAD(css_set_put_waitq);
+
+struct css_set_rcu_put {
+	struct css_set *css_set;
+	struct rcu_head rcu_head;
+};
+
+static void put_css_set_rcu_func(struct rcu_head *head)
+{
+	struct css_set_rcu_put *put;
+
+	if (call_rcu_in_process(head, put_css_set_rcu_func))
+		return;
+
+	put = container_of(head, struct css_set_rcu_put, rcu_head);
+	__put_css_set(put->css_set, 0, 1);
+	wake_up_all(&css_set_put_waitq);
+	kfree(put);
+}
+
+static inline void put_css_set_rcu(struct css_set *cg)
+{
+	struct css_set_rcu_put *put;
+	struct cg_cgroup_link *link;
+
+	put = kmalloc(sizeof(*put), GFP_KERNEL);
+	if (!put) {
+		synchronize_rcu();
+		put_css_set(cg);
+	} else {
+		/* notify cgroups about this rcu-delayed put */
+		list_for_each_entry(link, &cg->cg_links, cg_link_list)
+			atomic_inc(&link->cgrp->puts_in_flight);
+		put->css_set = cg;
+		call_rcu(&put->rcu_head, put_css_set_rcu_func);
+	}
 }
 
 /*
@@ -1596,8 +1636,7 @@ int cgroup_attach_task(struct cgroup *cgrp, struct task_struct *tsk)
 			ss->attach(ss, cgrp, oldcgrp, tsk, false);
 	}
 	set_bit(CGRP_RELEASABLE, &oldcgrp->flags);
-	synchronize_rcu();
-	put_css_set(cg);
+	put_css_set_rcu(cg);
 
 	/*
 	 * wake up rmdir() waiter. the rmdir should fail since the cgroup
@@ -3144,6 +3183,13 @@ static int cgroup_rmdir(struct inode *unused_dir, struct dentry *dentry)
 
 	/* the vfs holds both inode->i_mutex already */
 again:
+	/* waiting for all in-progress RCU-delayed css-set puts */
+	if (wait_event_interruptible(css_set_put_waitq,
+				!atomic_read(&cgrp->puts_in_flight) ||
+				(atomic_read(&cgrp->puts_in_flight) !=
+				 atomic_read(&cgrp->count))))
+		return -EINTR;
+
 	mutex_lock(&cgroup_mutex);
 	if (atomic_read(&cgrp->count) != 0) {
 		mutex_unlock(&cgroup_mutex);
