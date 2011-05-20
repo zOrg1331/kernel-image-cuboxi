@@ -33,6 +33,8 @@
 #include <plat/sdhci.h>
 #include <plat/gpio-cfg.h>
 #include <plat/iic.h>
+#include <plat/ehci.h>
+#include <plat/clock.h>
 
 #include <mach/map.h>
 
@@ -347,6 +349,16 @@ static struct i2c_board_info i2c5_devs[] __initdata = {
 	/* max8997, To be updated */
 };
 
+/* USB EHCI */
+static struct s5p_ehci_platdata nuri_ehci_pdata;
+
+static void __init nuri_ehci_init(void)
+{
+	struct s5p_ehci_platdata *pdata = &nuri_ehci_pdata;
+
+	s5p_ehci_set_platdata(pdata);
+}
+
 static struct platform_device *nuri_devices[] __initdata = {
 	/* Samsung Platform Devices */
 	&emmc_fixed_voltage,
@@ -356,6 +368,7 @@ static struct platform_device *nuri_devices[] __initdata = {
 	&s3c_device_wdt,
 	&s3c_device_timer[0],
 	&s3c_device_i2c3,
+	&s5p_device_ehci,
 
 	/* NURI Devices */
 	&nuri_gpio_keys,
@@ -379,6 +392,9 @@ static void __init nuri_machine_init(void)
 	s3c_i2c3_set_platdata(&i2c3_data);
 	i2c_register_board_info(3, i2c3_devs, ARRAY_SIZE(i2c3_devs));
 	i2c_register_board_info(5, i2c5_devs, ARRAY_SIZE(i2c5_devs));
+
+	nuri_ehci_init();
+	clk_xusbxti.rate = 24000000;
 
 	/* Last */
 	platform_add_devices(nuri_devices, ARRAY_SIZE(nuri_devices));
