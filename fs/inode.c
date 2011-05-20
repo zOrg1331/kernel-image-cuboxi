@@ -26,6 +26,7 @@
 #include <linux/posix_acl.h>
 #include <linux/ima.h>
 #include <linux/cred.h>
+#include <linux/prefetch.h>
 #include "internal.h"
 
 /*
