@@ -8,6 +8,19 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/clkdev.h>
+
+ /* Map io */
+extern void __init at91rm9200_map_io(void);
+extern void __init at91sam9260_map_io(void);
+extern void __init at91sam9261_map_io(void);
+extern void __init at91sam9263_map_io(void);
+extern void __init at91sam9rl_map_io(void);
+extern void __init at91sam9g45_map_io(void);
+extern void __init at91x40_map_io(void);
+extern void __init at91cap9_map_io(void);
+extern void __init at572d940hf_map_io(void);
+
  /* Processors */
 extern void __init at91rm9200_initialize(unsigned long main_clock, unsigned short banks);
 extern void __init at91sam9260_initialize(unsigned long main_clock);
@@ -39,8 +52,16 @@ extern struct sys_timer at91x40_timer;
 
  /* Clocks */
 extern int __init at91_clock_init(unsigned long main_clock);
+extern struct clk* __init at91rm9200_get_uart_clock(int id);
+extern struct clk* __init at91sam9260_get_uart_clock(int id);
+extern struct clk* __init at91sam9261_get_uart_clock(int id);
+extern struct clk* __init at91sam9263_get_uart_clock(int id);
+extern struct clk* __init at91sam9rl_get_uart_clock(int id);
+extern struct clk* __init at91sam9g45_get_uart_clock(int id);
+extern struct clk* __init at91x40_get_uart_clock(int id);
+extern struct clk* __init at91cap9_get_uart_clock(int id);
+extern struct clk* __init at572d940hf_get_uart_clock(int id);
 struct device;
-extern void __init at91_clock_associate(const char *id, struct device *dev, const char *func);
 
  /* Power Management */
 extern void at91_irq_suspend(void);
