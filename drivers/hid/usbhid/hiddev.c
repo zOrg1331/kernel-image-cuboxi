@@ -367,8 +367,10 @@ static ssize_t hiddev_read(struct file * file, char __user * buffer, size_t coun
 				/* let O_NONBLOCK tasks run */
 				mutex_unlock(&list->thread_lock);
 				schedule();
-				if (mutex_lock_interruptible(&list->thread_lock))
+				if (mutex_lock_interruptible(&list->thread_lock)) {
+					finish_wait(&list->hiddev->wait, &wait);
 					return -EINTR;
+				}
 				set_current_state(TASK_INTERRUPTIBLE);
 			}
 			finish_wait(&list->hiddev->wait, &wait);
@@ -509,7 +511,7 @@ static noinline int hiddev_ioctl_usage(struct hiddev *hiddev, unsigned int cmd, 
 				 (uref_multi->num_values > HID_MAX_MULTI_USAGES ||
 				  uref->usage_index + uref_multi->num_values > field->report_count))
 				goto inval;
-			}
+		}
 
 		switch (cmd) {
 		case HIDIOCGUSAGE:
@@ -801,14 +803,7 @@ static long hiddev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 
 		if (_IOC_NR(cmd) == _IOC_NR(HIDIOCGNAME(0))) {
-			int len;
-
-			if (!hid->name) {
-				r = 0;
-				break;
-			}
-
-			len = strlen(hid->name) + 1;
+			int len = strlen(hid->name) + 1;
 			if (len > _IOC_SIZE(cmd))
 				 len = _IOC_SIZE(cmd);
 			r = copy_to_user(user_arg, hid->name, len) ?
@@ -817,14 +812,7 @@ static long hiddev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 
 		if (_IOC_NR(cmd) == _IOC_NR(HIDIOCGPHYS(0))) {
-			int len;
-
-			if (!hid->phys) {
-				r = 0;
-				break;
-			}
-
-			len = strlen(hid->phys) + 1;
+			int len = strlen(hid->phys) + 1;
 			if (len > _IOC_SIZE(cmd))
 				len = _IOC_SIZE(cmd);
 			r = copy_to_user(user_arg, hid->phys, len) ?
