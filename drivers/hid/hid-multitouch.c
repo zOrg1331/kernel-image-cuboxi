@@ -88,7 +88,6 @@ struct mt_class {
 #define MT_CLS_DUAL_INRANGE_CONTACTNUMBER	3
 #define MT_CLS_CYPRESS				4
 #define MT_CLS_EGALAX				5
-#define MT_CLS_STANTUM				6
 #define MT_CLS_3M				7
 #define MT_CLS_CONFIDENCE			8
 #define MT_CLS_CONFIDENCE_MINUS_ONE		9
@@ -154,8 +153,6 @@ struct mt_class mt_classes[] = {
 		.sn_move = 4096,
 		.sn_pressure = 32,
 	},
-	{ .name = MT_CLS_STANTUM,
-		.quirks = MT_QUIRK_VALID_IS_CONFIDENCE },
 	{ .name = MT_CLS_3M,
 		.quirks = MT_QUIRK_VALID_IS_CONFIDENCE |
 			MT_QUIRK_SLOT_IS_CONTACTID,
@@ -570,6 +567,11 @@ static const struct hid_device_id mt_devices[] = {
 		HID_USB_DEVICE(USB_VENDOR_ID_3M,
 			USB_DEVICE_ID_3M2256) },
 
+	/* ActionStar panels */
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_ACTIONSTAR,
+			USB_DEVICE_ID_ACTIONSTAR_1011) },
+
 	/* Cando panels */
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTNUMBER,
 		HID_USB_DEVICE(USB_VENDOR_ID_CANDO,
@@ -583,6 +585,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTNUMBER,
 		HID_USB_DEVICE(USB_VENDOR_ID_CANDO,
 			USB_DEVICE_ID_CANDO_MULTI_TOUCH_15_6) },
+
+	/* CVTouch panels */
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_CVTOUCH,
+			USB_DEVICE_ID_CVTOUCH_SCREEN) },
 
 	/* Cypress panel */
 	{ .driver_data = MT_CLS_CYPRESS,
@@ -598,6 +605,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_DUAL_INRANGE_CONTACTNUMBER,
 		HID_USB_DEVICE(USB_VENDOR_ID_GENERAL_TOUCH,
 			USB_DEVICE_ID_GENERAL_TOUCH_WIN7_TWOFINGERS) },
+
+	/* GoodTouch panels */
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_GOODTOUCH,
+			USB_DEVICE_ID_GOODTOUCH_000f) },
 
 	/* Ilitek dual touch panel */
 	{  .driver_data = MT_CLS_DEFAULT,
@@ -658,15 +670,28 @@ static const struct hid_device_id mt_devices[] = {
 			USB_DEVICE_ID_DWAV_EGALAX_MULTITOUCH4) },
 
 	/* Stantum panels */
-	{ .driver_data = MT_CLS_STANTUM,
+	{ .driver_data = MT_CLS_CONFIDENCE,
 		HID_USB_DEVICE(USB_VENDOR_ID_STANTUM,
 			USB_DEVICE_ID_MTP)},
-	{ .driver_data = MT_CLS_STANTUM,
+	{ .driver_data = MT_CLS_CONFIDENCE,
 		HID_USB_DEVICE(USB_VENDOR_ID_STANTUM,
 			USB_DEVICE_ID_MTP_STM)},
-	{ .driver_data = MT_CLS_STANTUM,
+	{ .driver_data = MT_CLS_CONFIDENCE,
 		HID_USB_DEVICE(USB_VENDOR_ID_STANTUM,
 			USB_DEVICE_ID_MTP_SITRONIX)},
+
+	/* Touch International panels */
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_TOUCH_INTL,
+			USB_DEVICE_ID_TOUCH_INTL_MULTI_TOUCH) },
+
+	/* Unitec panels */
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_UNITEC,
+			USB_DEVICE_ID_UNITEC_USB_TOUCH_0709) },
+	{ .driver_data = MT_CLS_DEFAULT,
+		HID_USB_DEVICE(USB_VENDOR_ID_UNITEC,
+			USB_DEVICE_ID_UNITEC_USB_TOUCH_0A19) },
 
 	{ }
 };

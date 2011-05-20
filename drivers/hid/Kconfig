@@ -303,9 +303,12 @@ config HID_MULTITOUCH
 
 	  Say Y here if you have one of the following devices:
 	  - 3M PCT touch screens
+	  - ActionStar dual touch panels
 	  - Cando dual touch panel
+	  - CVTouch panels
 	  - Cypress TrueTouch panels
 	  - Elo TouchSystems IntelliTouch Plus panels
+	  - GoodTouch panels
 	  - Hanvon dual touch panels
 	  - Ilitek dual touch panel
 	  - IrTouch Infrared USB panels
@@ -317,6 +320,8 @@ config HID_MULTITOUCH
           - eGalax dual-touch panels, including the
 	    Joojoo and Wetab tablets
 	  - Stantum multitouch panels
+	  - Touch International Panels
+	  - Unitec Panels
 
 	  If unsure, say N.
 
