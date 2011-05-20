@@ -561,13 +561,6 @@ static ssize_t show_rps_map(struct netdev_rx_queue *queue,
 	return len;
 }
 
-static void rps_map_release(struct rcu_head *rcu)
-{
-	struct rps_map *map = container_of(rcu, struct rps_map, rcu);
-
-	kfree(map);
-}
-
 static ssize_t store_rps_map(struct netdev_rx_queue *queue,
 		      struct rx_queue_attribute *attribute,
 		      const char *buf, size_t len)
@@ -615,7 +608,7 @@ static ssize_t store_rps_map(struct netdev_rx_queue *queue,
 	spin_unlock(&rps_map_lock);
 
 	if (old_map)
-		call_rcu(&old_map->rcu, rps_map_release);
+		kfree_rcu(old_map, rcu);
 
 	free_cpumask_var(mask);
 	return len;
@@ -724,7 +717,7 @@ static void rx_queue_release(struct kobject *kobj)
 	map = rcu_dereference_raw(queue->rps_map);
 	if (map) {
 		RCU_INIT_POINTER(queue->rps_map, NULL);
-		call_rcu(&map->rcu, rps_map_release);
+		kfree_rcu(map, rcu);
 	}
 
 	flow_table = rcu_dereference_raw(queue->rps_flow_table);
@@ -894,21 +887,6 @@ static ssize_t show_xps_map(struct netdev_queue *queue,
 	return len;
 }
 
-static void xps_map_release(struct rcu_head *rcu)
-{
-	struct xps_map *map = container_of(rcu, struct xps_map, rcu);
-
-	kfree(map);
-}
-
-static void xps_dev_maps_release(struct rcu_head *rcu)
-{
-	struct xps_dev_maps *dev_maps =
-	    container_of(rcu, struct xps_dev_maps, rcu);
-
-	kfree(dev_maps);
-}
-
 static DEFINE_MUTEX(xps_map_mutex);
 #define xmap_dereference(P)		\
 	rcu_dereference_protected((P), lockdep_is_held(&xps_map_mutex))
@@ -1005,7 +983,7 @@ static ssize_t store_xps_map(struct netdev_queue *queue,
 		map = dev_maps ?
 			xmap_dereference(dev_maps->cpu_map[cpu]) : NULL;
 		if (map && xmap_dereference(new_dev_maps->cpu_map[cpu]) != map)
-			call_rcu(&map->rcu, xps_map_release);
+			kfree_rcu(map, rcu);
 		if (new_dev_maps->cpu_map[cpu])
 			nonempty = 1;
 	}
@@ -1018,7 +996,7 @@ static ssize_t store_xps_map(struct netdev_queue *queue,
 	}
 
 	if (dev_maps)
-		call_rcu(&dev_maps->rcu, xps_dev_maps_release);
+		kfree_rcu(dev_maps, rcu);
 
 	netdev_queue_numa_node_write(queue, (numa_node >= 0) ? numa_node :
 					    NUMA_NO_NODE);
@@ -1080,7 +1058,7 @@ static void netdev_queue_release(struct kobject *kobj)
 				else {
 					RCU_INIT_POINTER(dev_maps->cpu_map[i],
 					    NULL);
-					call_rcu(&map->rcu, xps_map_release);
+					kfree_rcu(map, rcu);
 					map = NULL;
 				}
 			}
@@ -1090,7 +1068,7 @@ static void netdev_queue_release(struct kobject *kobj)
 
 		if (!nonempty) {
 			RCU_INIT_POINTER(dev->xps_maps, NULL);
-			call_rcu(&dev_maps->rcu, xps_dev_maps_release);
+			kfree_rcu(dev_maps, rcu);
 		}
 	}
 

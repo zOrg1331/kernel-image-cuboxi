@@ -119,7 +119,7 @@ static irqreturn_t call_function_action(int irq, void *data)
 
 static irqreturn_t reschedule_action(int irq, void *data)
 {
-	/* we just need the return path side effect of checking need_resched */
+	scheduler_ipi();
 	return IRQ_HANDLED;
 }
 
