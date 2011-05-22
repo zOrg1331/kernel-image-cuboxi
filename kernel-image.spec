@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.38
-Release: alt6
+Release: alt7
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -592,6 +592,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Sun May 22 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt7
+- 2.6.38.7
+- cirrus kms limited to 1024x768
+
 * Tue May 10 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt6
 - 2.6.38.6
 - KMS on kvm emulated cirrus fixed
