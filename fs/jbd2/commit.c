@@ -805,6 +805,10 @@ wait_for_iobuf:
 		jbd2_journal_abort(journal, err);
 
 	jbd_debug(3, "JBD: commit phase 5\n");
+	write_lock(&journal->j_state_lock);
+	J_ASSERT(commit_transaction->t_state == T_COMMIT);
+	commit_transaction->t_state = T_COMMIT_RECORD;
+	write_unlock(&journal->j_state_lock);
 
 	if (!JBD2_HAS_INCOMPAT_FEATURE(journal,
 				       JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
@@ -960,7 +964,7 @@ restart_loop:
 
 	jbd_debug(3, "JBD: commit phase 7\n");
 
-	J_ASSERT(commit_transaction->t_state == T_COMMIT);
+	J_ASSERT(commit_transaction->t_state == T_COMMIT_RECORD);
 
 	commit_transaction->t_start = jiffies;
 	stats.run.rs_logging = jbd2_time_diff(stats.run.rs_logging,
