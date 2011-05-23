@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.38
-Release: alt4
+Release: alt7.1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -641,6 +641,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon May 23 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt7.1
+- Update to 2.6.38.7
+- drivers/gpu/drm/cirrus/cirrus_vga.c: remove 1280x1024 mode
+
 * Tue May 10 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt4
 - Update to 2.6.38.6
 - drm: Add a driver for kvm emulated Cirrus
