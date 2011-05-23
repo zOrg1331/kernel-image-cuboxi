@@ -40,6 +40,7 @@
 #include <linux/string.h>
 #include <linux/platform_device.h>
 #include <linux/init.h>
+#include <linux/kernel.h>
 
 #include <linux/uaccess.h>
 
@@ -411,15 +412,15 @@ static ssize_t pm_qos_power_write(struct file *filp, const char __user *buf,
 	if (count == sizeof(s32)) {
 		if (copy_from_user(&value, buf, sizeof(s32)))
 			return -EFAULT;
-	} else if (count == 11) { /* len('0x12345678/0') */
-		if (copy_from_user(ascii_value, buf, 11))
+	} else if (count == 10 || count == 11) { /* '0x12345678' or
+						    '0x12345678/n'*/
+		ascii_value[count] = 0;
+		if (copy_from_user(ascii_value, buf, count))
 			return -EFAULT;
-		if (strlen(ascii_value) != 10)
+		if ((x=strict_strtol(ascii_value, 16, &value)) != 0){
+			pr_debug("%s, 0x%x, 0x%x\n",ascii_value, value, x);
 			return -EINVAL;
-		x = sscanf(ascii_value, "%x", &value);
-		if (x != 1)
-			return -EINVAL;
-		pr_debug("%s, %d, 0x%x\n", ascii_value, x, value);
+		}
 	} else
 		return -EINVAL;
 
