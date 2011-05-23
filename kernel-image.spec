@@ -58,6 +58,7 @@ BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
 Provides: kernel-module-drbd83-%flavour
 Provides: kernel-module-igb-%flavour
+Provides: kernel-module-ipset-%flavour
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
