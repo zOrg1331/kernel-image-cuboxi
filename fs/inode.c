@@ -435,7 +435,8 @@ static void show_inode(struct inode *inode)
 /*
  * Invalidate all inodes for a device.
  */
-static int invalidate_list(struct list_head *head, struct list_head *dispose, int check)
+static int invalidate_list(struct list_head *head, struct list_head *dispose,
+			   bool kill_dirty, int check)
 {
 	struct list_head *next;
 	int busy = 0, count = 0, once = 1;
@@ -459,6 +460,10 @@ static int invalidate_list(struct list_head *head, struct list_head *dispose, in
 		inode = list_entry(tmp, struct inode, i_sb_list);
 		if (inode->i_state & I_NEW)
 			continue;
+		if (inode->i_state & I_DIRTY && !kill_dirty) {
+			busy = 1;
+			continue;
+		}
 		invalidate_inode_buffers(inode);
 		if (!atomic_read(&inode->i_count)) {
 			list_move(&inode->i_list, dispose);
@@ -485,12 +490,15 @@ static int invalidate_list(struct list_head *head, struct list_head *dispose, in
 /**
  *	invalidate_inodes	- discard the inodes on a device
  *	@sb: superblock
+ *	@kill_dirty: flag to guide handling of dirty inodes
  *
  *	Discard all of the inodes for a given superblock. If the discard
  *	fails because there are busy inodes then a non zero value is returned.
  *	If the discard is successful all the inodes have been discarded.
+ *	If @kill_dirty is set, discard dirty inodes too, otherwise treat
+ *	them as busy.
  */
-int invalidate_inodes_check(struct super_block *sb, int check)
+int invalidate_inodes_check(struct super_block *sb, bool kill_dirty, int check)
 {
 	int busy;
 	LIST_HEAD(throw_away);
@@ -499,7 +507,7 @@ int invalidate_inodes_check(struct super_block *sb, int check)
 	spin_lock(&inode_lock);
 	inotify_unmount_inodes(&sb->s_inodes);
 	fsnotify_unmount_inodes(&sb->s_inodes);
-	busy = invalidate_list(&sb->s_inodes, &throw_away, check);
+	busy = invalidate_list(&sb->s_inodes, &throw_away, kill_dirty, check);
 	spin_unlock(&inode_lock);
 
 	dispose_list(&throw_away);

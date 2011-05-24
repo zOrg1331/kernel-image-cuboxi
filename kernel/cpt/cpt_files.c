@@ -58,6 +58,15 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
+void (*vefs_track_notify_hook)(struct dentry *vdentry, int track_cow);
+void (*vefs_track_force_stop_hook)(struct super_block *super);
+struct dentry * (*vefs_replaced_dentry_hook)(struct dentry *de);
+int (*vefs_is_renamed_dentry_hook)(struct dentry *vde, struct dentry *pde);
+EXPORT_SYMBOL(vefs_track_notify_hook);
+EXPORT_SYMBOL(vefs_track_force_stop_hook);
+EXPORT_SYMBOL(vefs_replaced_dentry_hook);
+EXPORT_SYMBOL(vefs_is_renamed_dentry_hook);
+
 static inline int is_signalfd_file(struct file *file)
 {
 	/* no other users of it yet */
@@ -147,8 +156,6 @@ static int
 cpt_replaced(struct dentry * de, struct vfsmount *mnt, cpt_context_t * ctx)
 {
 	int result = 0;
-
-#if defined(CONFIG_VZFS_FS) || defined(CONFIG_VZFS_FS_MODULE)
 	char *path;
 	unsigned long pg;
 	struct dentry * renamed_dentry;
@@ -160,7 +167,7 @@ cpt_replaced(struct dentry * de, struct vfsmount *mnt, cpt_context_t * ctx)
 	    atomic_read(&de->d_inode->i_writecount) > 0) 
 		return 0;
 
-	renamed_dentry = vefs_replaced_dentry(de);
+	renamed_dentry = vefs_replaced_dentry_hook(de);
 	if (renamed_dentry == NULL)
 		return 0;
 
@@ -184,13 +191,12 @@ cpt_replaced(struct dentry * de, struct vfsmount *mnt, cpt_context_t * ctx)
 
 		if (path_lookup(path, 0, &nd) == 0) {
 			if (mnt == nd.path.mnt &&
-			    vefs_is_renamed_dentry(nd.path.dentry, renamed_dentry))
+			    vefs_is_renamed_dentry_hook(nd.path.dentry, renamed_dentry))
 				result = 1;
 			path_put(&nd.path);
 		}
 	}
 	free_page(pg);
-#endif
 	return result;
 }
 
@@ -692,7 +698,7 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 			return err;
 		if ((file->f_mode & FMODE_WRITE) &&
 				file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_VEFS)
-			vefs_track_notify(file->f_dentry, 1);
+			vefs_track_notify_hook(file->f_dentry, 1);
 	}
 
 	if (file->f_dentry->d_inode->i_flock)
@@ -1322,7 +1328,7 @@ static void cpt_stop_vzfs_trackers(struct cpt_context *ctx)
 	for_each_object(obj, CPT_OBJ_VFSMOUNT_REF) {
 		struct vfsmount *mnt = obj->o_obj;
 		if (mnt->mnt_sb->s_magic == FSMAGIC_VEFS)
-			vefs_track_force_stop(mnt->mnt_sb);
+			vefs_track_force_stop_hook(mnt->mnt_sb);
 	}
 }
 

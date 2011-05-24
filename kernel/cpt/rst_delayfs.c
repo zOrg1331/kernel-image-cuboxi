@@ -81,7 +81,7 @@ static int delay_remmap(struct vm_area_struct *vma,
 	struct address_space *mapping;
 
 	if (vma->vm_file != fake)
-		return VM_FAULT_RESTART;
+		return VM_FAULT_RETRY;
 
 	if (IS_ERR(real))
 		return VM_FAULT_OOM;
@@ -106,7 +106,7 @@ static int delay_remmap(struct vm_area_struct *vma,
 	vma->vm_flags &= ~VM_DONTEXPAND;
 	fput(fake);
 
-	return VM_FAULT_RESTART;
+	return VM_FAULT_RETRY;
 }
 
 static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
@@ -120,7 +120,7 @@ static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	mutex_lock(&lock);
 	if (vma->vm_ops->fault != delay_fault) {
 		mutex_unlock(&lock);
-		return VM_FAULT_RESTART;	/* race with other thread */
+		return VM_FAULT_RETRY;	/* race with other thread */
 	}
 	fake = vma->vm_file;
 	get_file(fake);

@@ -137,12 +137,6 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 	long ret;
 	int err;
 
-	/*
-	 * TODO: vcpus must be the *real* number of virtual cpus
-	 * available to the group.
-	 */
-	unsigned int vcpus = num_online_cpus();
-
 	if (!capable_setveid())
 		return -EPERM;
 
@@ -161,15 +155,9 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 
 	switch (op) {
 		case FAIRSCHED_SET_RATE:
-			/*
-			 * We "spread" the rate among all availabe vcpus.
-			 */
-			rate /= vcpus;
 			err = sched_cgroup_set_rate(cgrp, rate);
 			WARN_ON(err);
-			rate = sched_cgroup_get_rate(cgrp);
-			rate *= vcpus;
-			ret = rate;
+			ret = sched_cgroup_get_rate(cgrp);
 			break;
 		case FAIRSCHED_DROP_RATE:
 			err = sched_cgroup_drop_rate(cgrp);
@@ -177,10 +165,8 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 			ret = 0;
 			break;
 		case FAIRSCHED_GET_RATE:
-			rate = sched_cgroup_get_rate(cgrp);
-			if (rate)
-				ret = rate * vcpus;
-			else
+			ret = sched_cgroup_get_rate(cgrp);
+			if (!ret)
 				ret = -ENODATA;
 			break;
 		default:

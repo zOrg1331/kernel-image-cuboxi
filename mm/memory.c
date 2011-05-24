@@ -1463,7 +1463,8 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 					if (ret & VM_FAULT_OOM)
 						return i ? i : -ENOMEM;
 					if (ret &
-					    (VM_FAULT_HWPOISON|VM_FAULT_SIGBUS))
+					    (VM_FAULT_HWPOISON|VM_FAULT_HWPOISON_LARGE|
+					     VM_FAULT_SIGBUS))
 						return i ? i : -EFAULT;
 					BUG();
 				}
@@ -2646,7 +2647,9 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct page *page = NULL, *swapcache = NULL;
 	swp_entry_t entry;
 	pte_t pte;
+	int locked;
 	struct mem_cgroup *ptr = NULL;
+	int exclusive = 0;
 	int ret = 0;
 	int gang_swap = 0;
 	cycles_t start;
@@ -2704,8 +2707,12 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	} else
 		gang_swap = 1;
 
-	lock_page(page);
+	locked = lock_page_or_retry(page, mm, flags);
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
+	if (!locked) {
+		ret |= VM_FAULT_RETRY;
+		goto out_release;
+	}
 
 	/*
 	 * Make sure try_to_free_swap or reuse_swap_page or swapoff did not
@@ -2765,13 +2772,14 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if ((flags & FAULT_FLAG_WRITE) && reuse_swap_page(page)) {
 		pte = maybe_mkwrite(pte_mkdirty(pte), vma);
 		flags &= ~FAULT_FLAG_WRITE;
+		exclusive = 1;
 	}
 	flush_icache_page(vma, page);
 	set_pte_at(mm, address, page_table, pte);
 	if (gang_swap)
 		gang_swap = !page_mapped(page) &&
 			page_gang(page)->set != get_mm_gang(mm);
-	page_add_anon_rmap(page, vma, address);
+	do_page_add_anon_rmap(page, vma, address, exclusive);
 	/* It's better to call commit-charge after rmap is established */
 	mem_cgroup_commit_charge_swapin(page, ptr);
 
@@ -2973,11 +2981,9 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	vmf.page = NULL;
 
 	ret = vma->vm_ops->fault(vma, &vmf);
-	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RESTART))) {
-		if (ret == VM_FAULT_RESTART)
-			ret = VM_FAULT_MINOR;
+	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE |
+			    VM_FAULT_RETRY)))
 		return ret;
-	}
 
 	if (unlikely(PageHWPoison(vmf.page))) {
 		if (ret & VM_FAULT_LOCKED)
@@ -3711,15 +3717,15 @@ void clear_huge_page(struct page *page,
 	}
 }
 
-static void copy_gigantic_page(struct page *dst, struct page *src,
-			       unsigned long addr,
-			       struct vm_area_struct *vma,
-			       unsigned int pages_per_huge_page)
+static void copy_user_gigantic_page(struct page *dst, struct page *src,
+				    unsigned long addr,
+				    struct vm_area_struct *vma,
+				    unsigned int pages_per_huge_page)
 {
 	int i;
 	struct page *dst_base = dst;
 	struct page *src_base = src;
-	might_sleep();
+
 	for (i = 0; i < pages_per_huge_page; ) {
 		cond_resched();
 		copy_user_highpage(dst, src, addr + i*PAGE_SIZE, vma);
@@ -3729,22 +3735,23 @@ static void copy_gigantic_page(struct page *dst, struct page *src,
 		src = mem_map_next(src, src_base, i);
 	}
 }
-void copy_huge_page(struct page *dst, struct page *src,
-		    unsigned long addr, struct vm_area_struct *vma,
-		    unsigned int pages_per_huge_page)
+
+void copy_user_huge_page(struct page *dst, struct page *src,
+			 unsigned long addr, struct vm_area_struct *vma,
+			 unsigned int pages_per_huge_page)
 {
 	int i;
 
 	if (unlikely(pages_per_huge_page > MAX_ORDER_NR_PAGES)) {
-		copy_gigantic_page(dst, src, addr, vma, pages_per_huge_page);
+		copy_user_gigantic_page(dst, src, addr, vma,
+					pages_per_huge_page);
 		return;
 	}
 
 	might_sleep();
 	for (i = 0; i < pages_per_huge_page; i++) {
 		cond_resched();
-		copy_user_highpage(dst + i, src + i, addr + i*PAGE_SIZE,
-				   vma);
+		copy_user_highpage(dst + i, src + i, addr + i*PAGE_SIZE, vma);
 	}
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE || CONFIG_HUGETLBFS */

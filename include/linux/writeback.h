@@ -66,8 +66,10 @@ struct bdi_writeback;
 struct user_beancounter;
 int inode_wait(void *);
 void writeback_inodes_sb(struct super_block *);
+void writeback_inodes_sb_nr(struct super_block *, unsigned long nr);
 void writeback_inodes_sb_ub(struct super_block *, struct user_beancounter *);
 int writeback_inodes_sb_if_idle(struct super_block *);
+int writeback_inodes_sb_nr_if_idle(struct super_block *, unsigned long nr);
 void sync_inodes_sb(struct super_block *);
 void sync_inodes_sb_ub(struct super_block *, struct user_beancounter *);
 void writeback_inodes_wb(struct bdi_writeback *wb,
@@ -145,6 +147,8 @@ typedef int (*writepage_t)(struct page *page, struct writeback_control *wbc,
 
 int generic_writepages(struct address_space *mapping,
 		       struct writeback_control *wbc);
+void tag_pages_for_writeback(struct address_space *mapping,
+			     pgoff_t start, pgoff_t end);
 int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data);

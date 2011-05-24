@@ -1185,6 +1185,12 @@ int rst_restore_process(struct cpt_context *ctx)
 			return -EFAULT;
 		}
 
+		if ((ti->cpt_state & __TASK_TRACED) && 
+				(ctx->image_version < CPT_VERSION_32)) {
+			eprintk_ctx("restoring traced task '%s' is not supported\n", ti->cpt_comm);
+			return -EFAULT;
+		}
+
 		wait_task_inactive(tsk, 0);
 #ifdef CONFIG_BEANCOUNTERS
 		tbc = &tsk->task_bc;

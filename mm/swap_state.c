@@ -341,18 +341,33 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		SetPageSwapBacked(new_page);
 		err = __add_to_swap_cache(new_page, entry);
 		if (likely(!err)) {
+			struct user_beancounter *ub;
+
 			radix_tree_preload_end();
 			/*
 			 * Initiate read into locked page and return.
 			 */
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
-			gang_add_user_page(new_page,
-					&get_swap_ub(entry)->gang_set);
+			rcu_read_lock();
+			ub = get_swap_ub(entry);
+			if (!get_beancounter_rcu(ub)) {
+				/* speedup unuse pass */
+				ub_unuse_swap_page(new_page);
+				ub = get_beancounter(get_exec_ub());
+			}
+			rcu_read_unlock();
 #else
-			gang_add_user_page(new_page, vma->vm_mm ?
-					get_mm_gang(vma->vm_mm) : &init_gang_set);
+			/* can be NULL for shmem, see shmem_swapin() */
+			if (vma && vma->vm_mm)
+				ub = mm_ub(vma->vm_mm);
+			else
+				ub = get_exec_ub();
+			get_beancounter(ub);
 #endif
+
+			gang_add_user_page(new_page, &ub->gang_set);
+			put_beancounter(ub);
 			lru_cache_add_anon(new_page);
 			swap_readpage(new_page);
 			return new_page;

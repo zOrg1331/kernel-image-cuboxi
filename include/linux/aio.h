@@ -220,6 +220,8 @@ extern void kick_iocb(struct kiocb *iocb);
 extern int aio_complete(struct kiocb *iocb, long res, long res2);
 struct mm_struct;
 extern void exit_aio(struct mm_struct *mm);
+extern long do_io_submit(aio_context_t ctx_id, long nr,
+			 struct iocb __user *__user *iocbpp, bool compat);
 #else
 static void wait_for_all_aios(struct kioctx *ctx) { }
 static void aio_kick_handler(struct work_struct *) { }
@@ -230,6 +232,9 @@ static inline void kick_iocb(struct kiocb *iocb) { }
 static inline int aio_complete(struct kiocb *iocb, long res, long res2) { return 0; }
 struct mm_struct;
 static inline void exit_aio(struct mm_struct *mm) { }
+static inline long do_io_submit(aio_context_t ctx_id, long nr,
+				struct iocb __user * __user *iocbpp,
+				bool compat) { return 0; }
 #endif /* CONFIG_AIO */
 
 #define io_wait_to_kiocb(wait) container_of(wait, struct kiocb, ki_wait)

@@ -129,7 +129,7 @@ static struct nlm_host *nlm_lookup_host(struct nlm_lookup_host_info *ni)
 			continue;
 		if (host->h_server != ni->server)
 			continue;
-		if (ni->server &&
+		if (ni->server && ni->src_len != 0 &&
 		    !rpc_cmp_addr(nlm_srcaddr(host), ni->src_sap))
 			continue;
 
@@ -172,6 +172,7 @@ static struct nlm_host *nlm_lookup_host(struct nlm_lookup_host_info *ni)
 	host->h_addrlen = ni->salen;
 	rpc_set_port(nlm_addr(host), 0);
 	memcpy(nlm_srcaddr(host), ni->src_sap, ni->src_len);
+	host->h_srcaddrlen = ni->src_len;
 	host->h_version    = ni->version;
 	host->h_proto      = ni->protocol;
 	host->h_rpcclnt    = NULL;
@@ -244,9 +245,6 @@ struct nlm_host *nlmclnt_lookup_host(const struct sockaddr *sap,
 				     const char *hostname,
 				     int noresvport)
 {
-	const struct sockaddr source = {
-		.sa_family	= AF_UNSPEC,
-	};
 	struct nlm_lookup_host_info ni = {
 		.server		= 0,
 		.sap		= sap,
@@ -255,8 +253,6 @@ struct nlm_host *nlmclnt_lookup_host(const struct sockaddr *sap,
 		.version	= version,
 		.hostname	= hostname,
 		.hostname_len	= strlen(hostname),
-		.src_sap	= &source,
-		.src_len	= sizeof(source),
 		.noresvport	= noresvport,
 	};
 
@@ -359,10 +355,10 @@ nlm_bind_host(struct nlm_host *host)
 			.to_retries	= 5U,
 		};
 		struct rpc_create_args args = {
+			.net		= &init_net,
 			.protocol	= host->h_proto,
 			.address	= nlm_addr(host),
 			.addrsize	= host->h_addrlen,
-			.saddress	= nlm_srcaddr(host),
 			.timeout	= &timeparms,
 			.servername	= host->h_name,
 			.program	= &nlm_program,
@@ -381,6 +377,8 @@ nlm_bind_host(struct nlm_host *host)
 			args.flags |= RPC_CLNT_CREATE_HARDRTRY;
 		if (host->h_noresvport)
 			args.flags |= RPC_CLNT_CREATE_NONPRIVPORT;
+		if (host->h_srcaddrlen)
+			args.saddress = nlm_srcaddr(host);
 
 		clnt = rpc_create(&args);
 		if (!IS_ERR(clnt))

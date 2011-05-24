@@ -142,7 +142,7 @@ static int discard_swap(struct swap_info_struct *si)
 	nr_blocks = ((sector_t)se->nr_pages - 1) << (PAGE_SHIFT - 9);
 	if (nr_blocks) {
 		err = blkdev_issue_discard(si->bdev, start_block,
-				nr_blocks, GFP_KERNEL, DISCARD_FL_BARRIER);
+				nr_blocks, GFP_KERNEL, 0);
 		if (err)
 			return err;
 		cond_resched();
@@ -153,7 +153,7 @@ static int discard_swap(struct swap_info_struct *si)
 		nr_blocks = (sector_t)se->nr_pages << (PAGE_SHIFT - 9);
 
 		err = blkdev_issue_discard(si->bdev, start_block,
-				nr_blocks, GFP_KERNEL, DISCARD_FL_BARRIER);
+				nr_blocks, GFP_KERNEL, 0);
 		if (err)
 			break;
 
@@ -192,7 +192,7 @@ static void discard_swap_cluster(struct swap_info_struct *si,
 			start_block <<= PAGE_SHIFT - 9;
 			nr_blocks <<= PAGE_SHIFT - 9;
 			if (blkdev_issue_discard(si->bdev, start_block,
-				    nr_blocks, GFP_NOIO, DISCARD_FL_BARRIER))
+				    nr_blocks, GFP_NOIO, 0))
 				break;
 		}
 
@@ -486,7 +486,8 @@ noswap:
 
 struct user_beancounter *get_swap_ub(swp_entry_t entry)
 {
-	return swap_info[swp_type(entry)]->swap_ubs[swp_offset(entry)];
+	return rcu_dereference(swap_info[swp_type(entry)
+			]->swap_ubs[swp_offset(entry)]);
 }
 
 #endif
@@ -682,6 +683,66 @@ int reuse_swap_page(struct page *page)
 	return count <= 1;
 }
 
+void ub_unuse_swap_page(struct page *page)
+{
+	struct swap_info_struct *p;
+	swp_entry_t entry;
+
+	if (!PageSwapCache(page))
+		return;
+
+	entry.val = page_private(page);
+	p = swap_info_get(entry);
+	if (p) {
+		ub_swapentry_unuse(p, swp_offset(entry));
+		spin_unlock(&swap_lock);
+	}
+}
+
+void ub_unuse_swap(struct user_beancounter *ub)
+{
+	struct swap_info_struct *si;
+	unsigned int type, i;
+	unsigned long usage;
+
+	spin_lock(&swap_lock);
+
+	usage = __get_beancounter_usage_percpu(ub, UB_SWAPPAGES);
+
+	if (usage)
+		printk(KERN_NOTICE "UB: %d has %ld swap entries to unuse.\n",
+				ub->ub_uid, usage);
+
+	for (type = 0 ; type < nr_swapfiles && usage ; type++) {
+		si = swap_info[type];
+		if (!(si->flags & SWP_USED))
+			continue;
+
+		si->flags += SWP_SCANNING;
+		spin_unlock(&swap_lock);
+
+		for ( i = 0 ; i < si->max && usage ; i++ ) {
+			if (si->swap_ubs[i] != ub)
+				continue;
+
+			spin_lock(&swap_lock);
+			if (si->swap_ubs[i] == ub) {
+				ub_swapentry_unuse(si, i);
+				usage--;
+			}
+			spin_unlock(&swap_lock);
+		}
+
+		spin_lock(&swap_lock);
+		si->flags -= SWP_SCANNING;
+	}
+
+	usage = __get_beancounter_usage_percpu(ub, UB_SWAPPAGES);
+	BUG_ON(usage);
+
+	spin_unlock(&swap_lock);
+}
+
 /*
  * If swap is getting full, or if there are no more mappings of this page,
  * then try_to_free_swap is called to free its swap space.
@@ -763,6 +824,37 @@ int free_swap_and_cache(swp_entry_t entry)
 	return p != NULL;
 }
 EXPORT_SYMBOL(free_swap_and_cache);
+
+#ifdef CONFIG_CGROUP_MEM_RES_CTLR
+/**
+ * mem_cgroup_count_swap_user - count the user of a swap entry
+ * @ent: the swap entry to be checked
+ * @pagep: the pointer for the swap cache page of the entry to be stored
+ *
+ * Returns the number of the user of the swap entry. The number is valid only
+ * for swaps of anonymous pages.
+ * If the entry is found on swap cache, the page is stored to pagep with
+ * refcount of it being incremented.
+ */
+int mem_cgroup_count_swap_user(swp_entry_t ent, struct page **pagep)
+{
+	struct page *page;
+	struct swap_info_struct *p;
+	int count = 0;
+
+	page = find_get_page(&swapper_space, ent.val);
+	if (page)
+		count += page_mapcount(page);
+	p = swap_info_get(ent);
+	if (p) {
+		count += swap_count(p->swap_map[swp_offset(ent)]);
+		spin_unlock(&swap_lock);
+	}
+
+	*pagep = page;
+	return count;
+}
+#endif
 
 #ifdef CONFIG_HIBERNATION
 /*

@@ -213,6 +213,7 @@ struct rpc_task *rpc_run_bc_task(struct rpc_rqst *req,
 				const struct rpc_call_ops *ops);
 void		rpc_put_task(struct rpc_task *);
 void		rpc_exit_task(struct rpc_task *);
+void		rpc_exit(struct rpc_task *, int);
 void		rpc_release_calldata(const struct rpc_call_ops *, void *);
 void		rpc_killall_tasks(struct rpc_clnt *);
 void		rpc_execute(struct rpc_task *);
@@ -246,12 +247,6 @@ void		rpc_destroy_mempool(void);
 extern struct proc_dir_entry	*rpciod_workqueue;
 #endif
 void		rpc_prepare_task(struct rpc_task *task);
-
-static inline void rpc_exit(struct rpc_task *task, int status)
-{
-	task->tk_status = status;
-	task->tk_action = rpc_exit_task;
-}
 
 static inline int rpc_wait_for_completion_task(struct rpc_task *task)
 {
