@@ -3098,6 +3098,7 @@ static const struct snd_pci_quirk cxt5066_cfg_tbl[] = {
  	SND_PCI_QUIRK(0x17aa, 0x215e, "Lenovo Thinkpad", CXT5066_THINKPAD),
 	SND_PCI_QUIRK(0x17aa, 0x21da, "Lenovo X220", CXT5066_THINKPAD),
 	SND_PCI_QUIRK(0x17aa, 0x21db, "Lenovo X220-tablet", CXT5066_THINKPAD),
+	SND_PCI_QUIRK(0x17aa, 0x3a0d, "Lenovo U350", CXT5066_ASUS),
 	SND_PCI_QUIRK(0x17aa, 0x38af, "Lenovo G560", CXT5066_ASUS),
 	SND_PCI_QUIRK_VENDOR(0x17aa, "Lenovo", CXT5066_IDEAPAD), /* Fallback for Lenovos without dock mic */
 	{}
@@ -3696,13 +3697,14 @@ static int cx_auto_mux_enum_update(struct hda_codec *codec,
 {
 	struct conexant_spec *spec = codec->spec;
 	hda_nid_t adc;
+	int changed = 1;
 
 	if (!imux->num_items)
 		return 0;
 	if (idx >= imux->num_items)
 		idx = imux->num_items - 1;
 	if (spec->cur_mux[0] == idx)
-		return 0;
+		changed = 0;
 	adc = spec->imux_info[idx].adc;
 	select_input_connection(codec, spec->imux_info[idx].adc,
 				spec->imux_info[idx].pin);
@@ -3715,7 +3717,7 @@ static int cx_auto_mux_enum_update(struct hda_codec *codec,
 					   spec->cur_adc_format);
 	}
 	spec->cur_mux[0] = idx;
-	return 1;
+	return changed;
 }
 
 static int cx_auto_mux_enum_put(struct snd_kcontrol *kcontrol,
@@ -3789,7 +3791,7 @@ static void cx_auto_check_auto_mic(struct hda_codec *codec)
 	int pset[INPUT_PIN_ATTR_NORMAL + 1];
 	int i;
 
-	for (i = 0; i < INPUT_PIN_ATTR_NORMAL; i++)
+	for (i = 0; i < ARRAY_SIZE(pset); i++)
 		pset[i] = -1;
 	for (i = 0; i < spec->private_imux.num_items; i++) {
 		hda_nid_t pin = spec->imux_info[i].pin;
