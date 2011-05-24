@@ -593,7 +593,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
-* Thu May 19 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.39-alt0.1
+* Tue May 24 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.39-alt0.1
 - 2.6.39
 
 * Sun May 22 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.38-alt7
