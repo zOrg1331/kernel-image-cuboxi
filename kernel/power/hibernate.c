@@ -261,6 +261,10 @@ static int create_image(int platform_mode)
 {
 	int error;
 
+	error = arch_prepare_suspend();
+	if (error)
+		return error;
+
 	error = dpm_suspend_noirq(PMSG_FREEZE);
 	if (error) {
 		printk(KERN_ERR "PM: Some devices failed to power down, "
