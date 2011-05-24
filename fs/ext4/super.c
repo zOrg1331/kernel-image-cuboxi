@@ -39,6 +39,8 @@
 #include <linux/log2.h>
 #include <linux/crc16.h>
 #include <asm/uaccess.h>
+#include <linux/kthread.h>
+#include <linux/utsname.h>
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
@@ -75,10 +77,26 @@ static void ext4_write_super(struct super_block *sb);
 static int ext4_freeze(struct super_block *sb);
 static struct dentry *ext4_mount(struct file_system_type *fs_type, int flags,
 		       const char *dev_name, void *data);
+static inline int ext2_feature_set_ok(struct super_block *sb);
+static inline int ext3_feature_set_ok(struct super_block *sb);
 static int ext4_feature_set_ok(struct super_block *sb, int readonly);
 static void ext4_destroy_lazyinit_thread(void);
 static void ext4_unregister_li_request(struct super_block *sb);
 static void ext4_clear_request_list(void);
+
+#if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
+static struct file_system_type ext2_fs_type = {
+	.owner		= THIS_MODULE,
+	.name		= "ext2",
+	.mount		= ext4_mount,
+	.kill_sb	= kill_block_super,
+	.fs_flags	= FS_REQUIRES_DEV,
+};
+#define IS_EXT2_SB(sb) ((sb)->s_bdev->bd_holder == &ext2_fs_type)
+#else
+#define IS_EXT2_SB(sb) (0)
+#endif
+
 
 #if !defined(CONFIG_EXT3_FS) && !defined(CONFIG_EXT3_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
 static struct file_system_type ext3_fs_type = {
@@ -806,6 +824,8 @@ static void ext4_put_super(struct super_block *sb)
 		invalidate_bdev(sbi->journal_bdev);
 		ext4_blkdev_remove(sbi);
 	}
+	if (sbi->s_mmp_tsk)
+		kthread_stop(sbi->s_mmp_tsk);
 	sb->s_fs_info = NULL;
 	/*
 	 * Now that we are completely done shutting down the
@@ -1096,13 +1116,356 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 
 	if (!test_opt(sb, INIT_INODE_TABLE))
 		seq_puts(seq, ",noinit_inode_table");
-	else if (sbi->s_li_wait_mult)
+	else if (sbi->s_li_wait_mult != EXT4_DEF_LI_WAIT_MULT)
 		seq_printf(seq, ",init_inode_table=%u",
 			   (unsigned) sbi->s_li_wait_mult);
 
 	ext4_show_quota_options(seq, sb);
 
 	return 0;
+}
+
+
+/*
+ * Write the MMP block using WRITE_SYNC to try to get the block on-disk
+ * faster.
+ */
+static int write_mmp_block(struct buffer_head *bh)
+{
+	mark_buffer_dirty(bh);
+	lock_buffer(bh);
+	bh->b_end_io = end_buffer_write_sync;
+	get_bh(bh);
+	submit_bh(WRITE_SYNC, bh);
+	wait_on_buffer(bh);
+	if (unlikely(!buffer_uptodate(bh)))
+		return 1;
+
+	return 0;
+}
+
+/*
+ * Read the MMP block. It _must_ be read from disk and hence we clear the
+ * uptodate flag on the buffer.
+ */
+static int read_mmp_block(struct super_block *sb, struct buffer_head **bh,
+			  ext4_fsblk_t mmp_block)
+{
+	struct mmp_struct *mmp;
+
+	if (*bh)
+		clear_buffer_uptodate(*bh);
+
+	/* This would be sb_bread(sb, mmp_block), except we need to be sure
+	 * that the MD RAID device cache has been bypassed, and that the read
+	 * is not blocked in the elevator. */
+	if (!*bh)
+		*bh = sb_getblk(sb, mmp_block);
+	if (*bh) {
+		get_bh(*bh);
+		lock_buffer(*bh);
+		(*bh)->b_end_io = end_buffer_read_sync;
+		submit_bh(READ_SYNC, *bh);
+		wait_on_buffer(*bh);
+		if (!buffer_uptodate(*bh)) {
+			brelse(*bh);
+			*bh = NULL;
+		}
+	}
+	if (!*bh) {
+		ext4_warning(sb, "Error while reading MMP block %llu",
+			     mmp_block);
+		return -EIO;
+	}
+
+	mmp = (struct mmp_struct *)((*bh)->b_data);
+	if (le32_to_cpu(mmp->mmp_magic) != EXT4_MMP_MAGIC)
+		return -EINVAL;
+
+	return 0;
+}
+
+/*
+ * Dump as much information as possible to help the admin.
+ */
+void __dump_mmp_msg(struct super_block *sb, struct mmp_struct *mmp,
+		    const char *function, unsigned int line, const char *msg)
+{
+	__ext4_warning(sb, function, line, msg);
+	__ext4_warning(sb, function, line,
+		       "MMP failure info: last update time: %llu, last update "
+		       "node: %s, last update device: %s\n",
+		       (long long unsigned int) le64_to_cpu(mmp->mmp_time),
+		       mmp->mmp_nodename, mmp->mmp_bdevname);
+}
+
+/*
+ * kmmpd will update the MMP sequence every s_mmp_update_interval seconds
+ */
+static int kmmpd(void *data)
+{
+	struct super_block *sb = ((struct mmpd_data *) data)->sb;
+	struct buffer_head *bh = ((struct mmpd_data *) data)->bh;
+	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
+	struct mmp_struct *mmp;
+	ext4_fsblk_t mmp_block;
+	u32 seq = 0;
+	unsigned long failed_writes = 0;
+	int mmp_update_interval = le16_to_cpu(es->s_mmp_update_interval);
+	unsigned mmp_check_interval;
+	unsigned long last_update_time;
+	unsigned long diff;
+	int retval;
+
+	mmp_block = le64_to_cpu(es->s_mmp_block);
+	mmp = (struct mmp_struct *)(bh->b_data);
+	mmp->mmp_time = cpu_to_le64(get_seconds());
+	/*
+	 * Start with the higher mmp_check_interval and reduce it if
+	 * the MMP block is being updated on time.
+	 */
+	mmp_check_interval = max(EXT4_MMP_CHECK_MULT * mmp_update_interval,
+				 EXT4_MMP_MIN_CHECK_INTERVAL);
+	mmp->mmp_check_interval = cpu_to_le16(mmp_check_interval);
+	bdevname(bh->b_bdev, mmp->mmp_bdevname);
+
+	memcpy(mmp->mmp_nodename, init_utsname()->sysname,
+	       sizeof(mmp->mmp_nodename));
+
+	while (!kthread_should_stop()) {
+		if (++seq > EXT4_MMP_SEQ_MAX)
+			seq = 1;
+
+		mmp->mmp_seq = cpu_to_le32(seq);
+		mmp->mmp_time = cpu_to_le64(get_seconds());
+		last_update_time = jiffies;
+
+		retval = write_mmp_block(bh);
+		/*
+		 * Don't spew too many error messages. Print one every
+		 * (s_mmp_update_interval * 60) seconds.
+		 */
+		if (retval && (failed_writes % 60) == 0) {
+			ext4_error(sb, "Error writing to MMP block");
+			failed_writes++;
+		}
+
+		if (!(le32_to_cpu(es->s_feature_incompat) &
+		    EXT4_FEATURE_INCOMPAT_MMP)) {
+			ext4_warning(sb, "kmmpd being stopped since MMP feature"
+				     " has been disabled.");
+			EXT4_SB(sb)->s_mmp_tsk = NULL;
+			goto failed;
+		}
+
+		if (sb->s_flags & MS_RDONLY) {
+			ext4_warning(sb, "kmmpd being stopped since filesystem "
+				     "has been remounted as readonly.");
+			EXT4_SB(sb)->s_mmp_tsk = NULL;
+			goto failed;
+		}
+
+		diff = jiffies - last_update_time;
+		if (diff < mmp_update_interval * HZ)
+			schedule_timeout_interruptible(mmp_update_interval *
+						       HZ - diff);
+
+		/*
+		 * We need to make sure that more than mmp_check_interval
+		 * seconds have not passed since writing. If that has happened
+		 * we need to check if the MMP block is as we left it.
+		 */
+		diff = jiffies - last_update_time;
+		if (diff > mmp_check_interval * HZ) {
+			struct buffer_head *bh_check = NULL;
+			struct mmp_struct *mmp_check;
+
+			retval = read_mmp_block(sb, &bh_check, mmp_block);
+			if (retval) {
+				ext4_error(sb, "error reading MMP data: %d",
+					   retval);
+
+				EXT4_SB(sb)->s_mmp_tsk = NULL;
+				goto failed;
+			}
+
+			mmp_check = (struct mmp_struct *)(bh_check->b_data);
+			if (mmp->mmp_seq != mmp_check->mmp_seq ||
+			    memcmp(mmp->mmp_nodename, mmp_check->mmp_nodename,
+				   sizeof(mmp->mmp_nodename))) {
+				dump_mmp_msg(sb, mmp_check,
+					     "Error while updating MMP info. "
+					     "The filesystem seems to have been"
+					     " multiply mounted.");
+				ext4_error(sb, "abort");
+				goto failed;
+			}
+			put_bh(bh_check);
+		}
+
+		 /*
+		 * Adjust the mmp_check_interval depending on how much time
+		 * it took for the MMP block to be written.
+		 */
+		mmp_check_interval = max(min(EXT4_MMP_CHECK_MULT * diff / HZ,
+					     EXT4_MMP_MAX_CHECK_INTERVAL),
+					 EXT4_MMP_MIN_CHECK_INTERVAL);
+		mmp->mmp_check_interval = cpu_to_le16(mmp_check_interval);
+	}
+
+	/*
+	 * Unmount seems to be clean.
+	 */
+	mmp->mmp_seq = cpu_to_le32(EXT4_MMP_SEQ_CLEAN);
+	mmp->mmp_time = cpu_to_le64(get_seconds());
+
+	retval = write_mmp_block(bh);
+
+failed:
+	kfree(data);
+	brelse(bh);
+	return retval;
+}
+
+/*
+ * Get a random new sequence number but make sure it is not greater than
+ * EXT4_MMP_SEQ_MAX.
+ */
+static unsigned int mmp_new_seq(void)
+{
+	u32 new_seq;
+
+	do {
+		get_random_bytes(&new_seq, sizeof(u32));
+	} while (new_seq > EXT4_MMP_SEQ_MAX);
+
+	return new_seq;
+}
+
+/*
+ * Protect the filesystem from being mounted more than once.
+ */
+static int ext4_multi_mount_protect(struct super_block *sb,
+				    ext4_fsblk_t mmp_block)
+{
+	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
+	struct buffer_head *bh = NULL;
+	struct mmp_struct *mmp = NULL;
+	struct mmpd_data *mmpd_data;
+	u32 seq;
+	unsigned int mmp_check_interval = le16_to_cpu(es->s_mmp_update_interval);
+	unsigned int wait_time = 0;
+	int retval;
+
+	if (mmp_block < le32_to_cpu(es->s_first_data_block) ||
+	    mmp_block >= ext4_blocks_count(es)) {
+		ext4_warning(sb, "Invalid MMP block in superblock");
+		goto failed;
+	}
+
+	retval = read_mmp_block(sb, &bh, mmp_block);
+	if (retval)
+		goto failed;
+
+	mmp = (struct mmp_struct *)(bh->b_data);
+
+	if (mmp_check_interval < EXT4_MMP_MIN_CHECK_INTERVAL)
+		mmp_check_interval = EXT4_MMP_MIN_CHECK_INTERVAL;
+
+	/*
+	 * If check_interval in MMP block is larger, use that instead of
+	 * update_interval from the superblock.
+	 */
+	if (mmp->mmp_check_interval > mmp_check_interval)
+		mmp_check_interval = mmp->mmp_check_interval;
+
+	seq = le32_to_cpu(mmp->mmp_seq);
+	if (seq == EXT4_MMP_SEQ_CLEAN)
+		goto skip;
+
+	if (seq == EXT4_MMP_SEQ_FSCK) {
+		dump_mmp_msg(sb, mmp, "fsck is running on the filesystem");
+		goto failed;
+	}
+
+	wait_time = min(mmp_check_interval * 2 + 1,
+			mmp_check_interval + 60);
+
+	/* Print MMP interval if more than 20 secs. */
+	if (wait_time > EXT4_MMP_MIN_CHECK_INTERVAL * 4)
+		ext4_warning(sb, "MMP interval %u higher than expected, please"
+			     " wait.\n", wait_time * 2);
+
+	if (schedule_timeout_interruptible(HZ * wait_time) != 0) {
+		ext4_warning(sb, "MMP startup interrupted, failing mount\n");
+		goto failed;
+	}
+
+	retval = read_mmp_block(sb, &bh, mmp_block);
+	if (retval)
+		goto failed;
+	mmp = (struct mmp_struct *)(bh->b_data);
+	if (seq != le32_to_cpu(mmp->mmp_seq)) {
+		dump_mmp_msg(sb, mmp,
+			     "Device is already active on another node.");
+		goto failed;
+	}
+
+skip:
+	/*
+	 * write a new random sequence number.
+	 */
+	mmp->mmp_seq = seq = cpu_to_le32(mmp_new_seq());
+
+	retval = write_mmp_block(bh);
+	if (retval)
+		goto failed;
+
+	/*
+	 * wait for MMP interval and check mmp_seq.
+	 */
+	if (schedule_timeout_interruptible(HZ * wait_time) != 0) {
+		ext4_warning(sb, "MMP startup interrupted, failing mount\n");
+		goto failed;
+	}
+
+	retval = read_mmp_block(sb, &bh, mmp_block);
+	if (retval)
+		goto failed;
+	mmp = (struct mmp_struct *)(bh->b_data);
+	if (seq != le32_to_cpu(mmp->mmp_seq)) {
+		dump_mmp_msg(sb, mmp,
+			     "Device is already active on another node.");
+		goto failed;
+	}
+
+	mmpd_data = kmalloc(sizeof(struct mmpd_data), GFP_KERNEL);
+	if (!mmpd_data) {
+		ext4_warning(sb, "not enough memory for mmpd_data");
+		goto failed;
+	}
+	mmpd_data->sb = sb;
+	mmpd_data->bh = bh;
+
+	/*
+	 * Start a kernel thread to update the MMP block periodically.
+	 */
+	EXT4_SB(sb)->s_mmp_tsk = kthread_run(kmmpd, mmpd_data, "kmmpd-%s",
+					     bdevname(bh->b_bdev,
+						      mmp->mmp_bdevname));
+	if (IS_ERR(EXT4_SB(sb)->s_mmp_tsk)) {
+		EXT4_SB(sb)->s_mmp_tsk = NULL;
+		kfree(mmpd_data);
+		ext4_warning(sb, "Unable to create kmmpd thread for %s.",
+			     sb->s_id);
+		goto failed;
+	}
+
+	return 0;
+
+failed:
+	brelse(bh);
+	return 1;
 }
 
 static struct inode *ext4_nfs_get_inode(struct super_block *sb,
@@ -1187,9 +1550,7 @@ static ssize_t ext4_quota_write(struct super_block *sb, int type,
 				const char *data, size_t len, loff_t off);
 
 static const struct dquot_operations ext4_quota_operations = {
-#ifdef CONFIG_QUOTA
 	.get_reserved_space = ext4_get_reserved_space,
-#endif
 	.write_dquot	= ext4_write_dquot,
 	.acquire_dquot	= ext4_acquire_dquot,
 	.release_dquot	= ext4_release_dquot,
@@ -1900,7 +2261,7 @@ static int ext4_setup_super(struct super_block *sb, struct ext4_super_block *es,
 		ext4_msg(sb, KERN_WARNING,
 			 "warning: mounting fs with errors, "
 			 "running e2fsck is recommended");
-	else if ((__s16) le16_to_cpu(es->s_max_mnt_count) >= 0 &&
+	else if ((__s16) le16_to_cpu(es->s_max_mnt_count) > 0 &&
 		 le16_to_cpu(es->s_mnt_count) >=
 		 (unsigned short) (__s16) le16_to_cpu(es->s_max_mnt_count))
 		ext4_msg(sb, KERN_WARNING,
@@ -2425,6 +2786,18 @@ static ssize_t lifetime_write_kbytes_show(struct ext4_attr *a,
 			  EXT4_SB(sb)->s_sectors_written_start) >> 1)));
 }
 
+static ssize_t extent_cache_hits_show(struct ext4_attr *a,
+				      struct ext4_sb_info *sbi, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%lu\n", sbi->extent_cache_hits);
+}
+
+static ssize_t extent_cache_misses_show(struct ext4_attr *a,
+					struct ext4_sb_info *sbi, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%lu\n", sbi->extent_cache_misses);
+}
+
 static ssize_t inode_readahead_blks_store(struct ext4_attr *a,
 					  struct ext4_sb_info *sbi,
 					  const char *buf, size_t count)
@@ -2482,6 +2855,8 @@ static struct ext4_attr ext4_attr_##name = __ATTR(name, mode, show, store)
 EXT4_RO_ATTR(delayed_allocation_blocks);
 EXT4_RO_ATTR(session_write_kbytes);
 EXT4_RO_ATTR(lifetime_write_kbytes);
+EXT4_RO_ATTR(extent_cache_hits);
+EXT4_RO_ATTR(extent_cache_misses);
 EXT4_ATTR_OFFSET(inode_readahead_blks, 0644, sbi_ui_show,
 		 inode_readahead_blks_store, s_inode_readahead_blks);
 EXT4_RW_ATTR_SBI_UI(inode_goal, s_inode_goal);
@@ -2497,6 +2872,8 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(delayed_allocation_blocks),
 	ATTR_LIST(session_write_kbytes),
 	ATTR_LIST(lifetime_write_kbytes),
+	ATTR_LIST(extent_cache_hits),
+	ATTR_LIST(extent_cache_misses),
 	ATTR_LIST(inode_readahead_blks),
 	ATTR_LIST(inode_goal),
 	ATTR_LIST(mb_stats),
@@ -2659,12 +3036,6 @@ static void print_daily_error_info(unsigned long arg)
 	mod_timer(&sbi->s_err_report, jiffies + 24*60*60*HZ);  /* Once a day */
 }
 
-static void ext4_lazyinode_timeout(unsigned long data)
-{
-	struct task_struct *p = (struct task_struct *)data;
-	wake_up_process(p);
-}
-
 /* Find next suitable group and run ext4_init_inode_table */
 static int ext4_run_li_request(struct ext4_li_request *elr)
 {
@@ -2696,11 +3067,8 @@ static int ext4_run_li_request(struct ext4_li_request *elr)
 		ret = ext4_init_inode_table(sb, group,
 					    elr->lr_timeout ? 0 : 1);
 		if (elr->lr_timeout == 0) {
-			timeout = jiffies - timeout;
-			if (elr->lr_sbi->s_li_wait_mult)
-				timeout *= elr->lr_sbi->s_li_wait_mult;
-			else
-				timeout *= 20;
+			timeout = (jiffies - timeout) *
+				  elr->lr_sbi->s_li_wait_mult;
 			elr->lr_timeout = timeout;
 		}
 		elr->lr_next_sched = jiffies + elr->lr_timeout;
@@ -2712,7 +3080,7 @@ static int ext4_run_li_request(struct ext4_li_request *elr)
 
 /*
  * Remove lr_request from the list_request and free the
- * request tructure. Should be called with li_list_mtx held
+ * request structure. Should be called with li_list_mtx held
  */
 static void ext4_remove_li_request(struct ext4_li_request *elr)
 {
@@ -2730,14 +3098,16 @@ static void ext4_remove_li_request(struct ext4_li_request *elr)
 
 static void ext4_unregister_li_request(struct super_block *sb)
 {
-	struct ext4_li_request *elr = EXT4_SB(sb)->s_li_request;
-
-	if (!ext4_li_info)
+	mutex_lock(&ext4_li_mtx);
+	if (!ext4_li_info) {
+		mutex_unlock(&ext4_li_mtx);
 		return;
+	}
 
 	mutex_lock(&ext4_li_info->li_list_mtx);
-	ext4_remove_li_request(elr);
+	ext4_remove_li_request(EXT4_SB(sb)->s_li_request);
 	mutex_unlock(&ext4_li_info->li_list_mtx);
+	mutex_unlock(&ext4_li_mtx);
 }
 
 static struct task_struct *ext4_lazyinit_task;
@@ -2756,16 +3126,9 @@ static int ext4_lazyinit_thread(void *arg)
 	struct ext4_lazy_init *eli = (struct ext4_lazy_init *)arg;
 	struct list_head *pos, *n;
 	struct ext4_li_request *elr;
-	unsigned long next_wakeup;
-	DEFINE_WAIT(wait);
+	unsigned long next_wakeup, cur;
 
 	BUG_ON(NULL == eli);
-
-	eli->li_timer.data = (unsigned long)current;
-	eli->li_timer.function = ext4_lazyinode_timeout;
-
-	eli->li_task = current;
-	wake_up(&eli->li_wait_task);
 
 cont_thread:
 	while (true) {
@@ -2797,19 +3160,15 @@ cont_thread:
 		if (freezing(current))
 			refrigerator();
 
-		if ((time_after_eq(jiffies, next_wakeup)) ||
+		cur = jiffies;
+		if ((time_after_eq(cur, next_wakeup)) ||
 		    (MAX_JIFFY_OFFSET == next_wakeup)) {
 			cond_resched();
 			continue;
 		}
 
-		eli->li_timer.expires = next_wakeup;
-		add_timer(&eli->li_timer);
-		prepare_to_wait(&eli->li_wait_daemon, &wait,
-				TASK_INTERRUPTIBLE);
-		if (time_before(jiffies, next_wakeup))
-			schedule();
-		finish_wait(&eli->li_wait_daemon, &wait);
+		schedule_timeout_interruptible(next_wakeup - cur);
+
 		if (kthread_should_stop()) {
 			ext4_clear_request_list();
 			goto exit_thread;
@@ -2833,12 +3192,7 @@ exit_thread:
 		goto cont_thread;
 	}
 	mutex_unlock(&eli->li_list_mtx);
-	del_timer_sync(&ext4_li_info->li_timer);
-	eli->li_task = NULL;
-	wake_up(&eli->li_wait_task);
-
 	kfree(ext4_li_info);
-	ext4_lazyinit_task = NULL;
 	ext4_li_info = NULL;
 	mutex_unlock(&ext4_li_mtx);
 
@@ -2866,7 +3220,6 @@ static int ext4_run_lazyinit_thread(void)
 	if (IS_ERR(ext4_lazyinit_task)) {
 		int err = PTR_ERR(ext4_lazyinit_task);
 		ext4_clear_request_list();
-		del_timer_sync(&ext4_li_info->li_timer);
 		kfree(ext4_li_info);
 		ext4_li_info = NULL;
 		printk(KERN_CRIT "EXT4: error %d creating inode table "
@@ -2875,8 +3228,6 @@ static int ext4_run_lazyinit_thread(void)
 		return err;
 	}
 	ext4_li_info->li_state |= EXT4_LAZYINIT_RUNNING;
-
-	wait_event(ext4_li_info->li_wait_task, ext4_li_info->li_task != NULL);
 	return 0;
 }
 
@@ -2911,13 +3262,9 @@ static int ext4_li_info_new(void)
 	if (!eli)
 		return -ENOMEM;
 
-	eli->li_task = NULL;
 	INIT_LIST_HEAD(&eli->li_request_list);
 	mutex_init(&eli->li_list_mtx);
 
-	init_waitqueue_head(&eli->li_wait_daemon);
-	init_waitqueue_head(&eli->li_wait_task);
-	init_timer(&eli->li_timer);
 	eli->li_state |= EXT4_LAZYINIT_QUIT;
 
 	ext4_li_info = eli;
@@ -2960,20 +3307,19 @@ static int ext4_register_li_request(struct super_block *sb,
 	ext4_group_t ngroups = EXT4_SB(sb)->s_groups_count;
 	int ret = 0;
 
-	if (sbi->s_li_request != NULL)
+	if (sbi->s_li_request != NULL) {
+		/*
+		 * Reset timeout so it can be computed again, because
+		 * s_li_wait_mult might have changed.
+		 */
+		sbi->s_li_request->lr_timeout = 0;
 		return 0;
+	}
 
 	if (first_not_zeroed == ngroups ||
 	    (sb->s_flags & MS_RDONLY) ||
-	    !test_opt(sb, INIT_INODE_TABLE)) {
-		sbi->s_li_request = NULL;
+	    !test_opt(sb, INIT_INODE_TABLE))
 		return 0;
-	}
-
-	if (first_not_zeroed == ngroups) {
-		sbi->s_li_request = NULL;
-		return 0;
-	}
 
 	elr = ext4_li_request_new(sb, first_not_zeroed);
 	if (!elr)
@@ -3166,6 +3512,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	    ((def_mount_opts & EXT4_DEFM_NODELALLOC) == 0))
 		set_opt(sb, DELALLOC);
 
+	/*
+	 * set default s_li_wait_mult for lazyinit, for the case there is
+	 * no mount option specified.
+	 */
+	sbi->s_li_wait_mult = EXT4_DEF_LI_WAIT_MULT;
+
 	if (!parse_options((char *) sbi->s_es->s_mount_opts, sb,
 			   &journal_devnum, &journal_ioprio, NULL, 0)) {
 		ext4_msg(sb, KERN_WARNING,
@@ -3186,6 +3538,28 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		ext4_msg(sb, KERN_WARNING,
 		       "feature flags set on rev 0 fs, "
 		       "running e2fsck is recommended");
+
+	if (IS_EXT2_SB(sb)) {
+		if (ext2_feature_set_ok(sb))
+			ext4_msg(sb, KERN_INFO, "mounting ext2 file system "
+				 "using the ext4 subsystem");
+		else {
+			ext4_msg(sb, KERN_ERR, "couldn't mount as ext2 due "
+				 "to feature incompatibilities");
+			goto failed_mount;
+		}
+	}
+
+	if (IS_EXT3_SB(sb)) {
+		if (ext3_feature_set_ok(sb))
+			ext4_msg(sb, KERN_INFO, "mounting ext3 file system "
+				 "using the ext4 subsystem");
+		else {
+			ext4_msg(sb, KERN_ERR, "couldn't mount as ext3 due "
+				 "to feature incompatibilities");
+			goto failed_mount;
+		}
+	}
 
 	/*
 	 * Check feature flags regardless of the revision level, since we
@@ -3459,6 +3833,11 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			  EXT4_HAS_INCOMPAT_FEATURE(sb,
 				    EXT4_FEATURE_INCOMPAT_RECOVER));
 
+	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_MMP) &&
+	    !(sb->s_flags & MS_RDONLY))
+		if (ext4_multi_mount_protect(sb, le64_to_cpu(es->s_mmp_block)))
+			goto failed_mount3;
+
 	/*
 	 * The first inode we look at is the journal inode.  Don't try
 	 * root first: it may be modified in the journal!
@@ -3474,7 +3853,6 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_mount_wq;
 	} else {
 		clear_opt(sb, DATA_FLAGS);
-		set_opt(sb, WRITEBACK_DATA);
 		sbi->s_journal = NULL;
 		needs_recovery = 0;
 		goto no_journal;
@@ -3707,6 +4085,8 @@ failed_mount3:
 	percpu_counter_destroy(&sbi->s_freeinodes_counter);
 	percpu_counter_destroy(&sbi->s_dirs_counter);
 	percpu_counter_destroy(&sbi->s_dirtyblocks_counter);
+	if (sbi->s_mmp_tsk)
+		kthread_stop(sbi->s_mmp_tsk);
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);
@@ -4242,7 +4622,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	int enable_quota = 0;
 	ext4_group_t g;
 	unsigned int journal_ioprio = DEFAULT_JOURNAL_IOPRIO;
-	int err;
+	int err = 0;
 #ifdef CONFIG_QUOTA
 	int i;
 #endif
@@ -4368,6 +4748,13 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 				goto restore_opts;
 			if (!ext4_setup_super(sb, es, 0))
 				sb->s_flags &= ~MS_RDONLY;
+			if (EXT4_HAS_INCOMPAT_FEATURE(sb,
+						     EXT4_FEATURE_INCOMPAT_MMP))
+				if (ext4_multi_mount_protect(sb,
+						le64_to_cpu(es->s_mmp_block))) {
+					err = -EROFS;
+					goto restore_opts;
+				}
 			enable_quota = 1;
 		}
 	}
@@ -4652,6 +5039,9 @@ static int ext4_quota_off(struct super_block *sb, int type)
 	if (test_opt(sb, DELALLOC))
 		sync_filesystem(sb);
 
+	if (!inode)
+		goto out;
+
 	/* Update modification times of quota files when userspace can
 	 * start looking at them */
 	handle = ext4_journal_start(inode, 1);
@@ -4772,14 +5162,6 @@ static struct dentry *ext4_mount(struct file_system_type *fs_type, int flags,
 }
 
 #if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
-static struct file_system_type ext2_fs_type = {
-	.owner		= THIS_MODULE,
-	.name		= "ext2",
-	.mount		= ext4_mount,
-	.kill_sb	= kill_block_super,
-	.fs_flags	= FS_REQUIRES_DEV,
-};
-
 static inline void register_as_ext2(void)
 {
 	int err = register_filesystem(&ext2_fs_type);
@@ -4792,10 +5174,22 @@ static inline void unregister_as_ext2(void)
 {
 	unregister_filesystem(&ext2_fs_type);
 }
+
+static inline int ext2_feature_set_ok(struct super_block *sb)
+{
+	if (EXT4_HAS_INCOMPAT_FEATURE(sb, ~EXT2_FEATURE_INCOMPAT_SUPP))
+		return 0;
+	if (sb->s_flags & MS_RDONLY)
+		return 1;
+	if (EXT4_HAS_RO_COMPAT_FEATURE(sb, ~EXT2_FEATURE_RO_COMPAT_SUPP))
+		return 0;
+	return 1;
+}
 MODULE_ALIAS("ext2");
 #else
 static inline void register_as_ext2(void) { }
 static inline void unregister_as_ext2(void) { }
+static inline int ext2_feature_set_ok(struct super_block *sb) { return 0; }
 #endif
 
 #if !defined(CONFIG_EXT3_FS) && !defined(CONFIG_EXT3_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
@@ -4811,10 +5205,24 @@ static inline void unregister_as_ext3(void)
 {
 	unregister_filesystem(&ext3_fs_type);
 }
+
+static inline int ext3_feature_set_ok(struct super_block *sb)
+{
+	if (EXT4_HAS_INCOMPAT_FEATURE(sb, ~EXT3_FEATURE_INCOMPAT_SUPP))
+		return 0;
+	if (!EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL))
+		return 0;
+	if (sb->s_flags & MS_RDONLY)
+		return 1;
+	if (EXT4_HAS_RO_COMPAT_FEATURE(sb, ~EXT3_FEATURE_RO_COMPAT_SUPP))
+		return 0;
+	return 1;
+}
 MODULE_ALIAS("ext3");
 #else
 static inline void register_as_ext3(void) { }
 static inline void unregister_as_ext3(void) { }
+static inline int ext3_feature_set_ok(struct super_block *sb) { return 0; }
 #endif
 
 static struct file_system_type ext4_fs_type = {
@@ -4898,8 +5306,8 @@ static int __init ext4_init_fs(void)
 	err = init_inodecache();
 	if (err)
 		goto out1;
-	register_as_ext2();
 	register_as_ext3();
+	register_as_ext2();
 	err = register_filesystem(&ext4_fs_type);
 	if (err)
 		goto out;
