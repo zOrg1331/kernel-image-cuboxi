@@ -999,6 +999,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			With this option on every unmap_single operation will
 			result in a hardware IOTLB flush operation as opposed
 			to batching them for performance.
+		no_x2apic_optout [Default Off]
+			With this option BIOS x2APIC opt-out request will be
+			ignored.
 
 	intremap=	[X86-64, Intel-IOMMU]
 			Format: { on (default) | off | nosid }
