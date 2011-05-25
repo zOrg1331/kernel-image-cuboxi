@@ -2868,8 +2868,7 @@ wl_bss_roaming_done(struct wl_priv *wl, struct net_device *ndev,
 	wl_get_assoc_ies(wl);
 	wl_update_prof(wl, NULL, &e->addr, WL_PROF_BSSID);
 	wl_update_bss_info(wl);
-
-	cfg80211_roamed(ndev,
+	cfg80211_roamed(ndev, NULL,
 			(u8 *)wl_read_prof(wl, WL_PROF_BSSID),
 			conn_info->req_ie, conn_info->req_ie_len,
 			conn_info->resp_ie, conn_info->resp_ie_len, GFP_KERNEL);
