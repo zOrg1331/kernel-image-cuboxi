@@ -2,3 +2,4 @@ fix-core--init
 fix-drivers-usb--storage
 fix-drivers-rtc
 fix-core--mactel
+fix-drivers-nouveau
