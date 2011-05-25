@@ -127,6 +127,14 @@ config DRM_I915_KMS
 	  the driver to bind to PCI devices, which precludes loading things
 	  like intelfb.
 
+config DRM_KVM_CIRRUS
+       tristate "Kernel modesetting driver for qemu-kvm Cirrus emulation"
+       depends on DRM && PCI
+       select FB_CFB_FILLRECT
+       select FB_CFB_COPYAREA
+       select FB_CFB_IMAGEBLIT
+       select DRM_KMS_HELPER
+
 config DRM_MGA
 	tristate "Matrox g200/g400"
 	depends on DRM && PCI
