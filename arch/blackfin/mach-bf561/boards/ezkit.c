@@ -247,7 +247,15 @@ static struct mtd_partition ezkit_partitions[] = {
 		.offset     = MTDPART_OFS_APPEND,
 	}, {
 		.name       = "file system(nor)",
-		.size       = MTDPART_SIZ_FULL,
+		.size       = 0x800000 - 0x40000 - 0x1C0000 - 0x2000 * 8,
+		.offset     = MTDPART_OFS_APPEND,
+	}, {
+		.name       = "config(nor)",
+		.size       = 0x2000 * 7,
+		.offset     = MTDPART_OFS_APPEND,
+	}, {
+		.name       = "u-boot env(nor)",
+		.size       = 0x2000,
 		.offset     = MTDPART_OFS_APPEND,
 	}
 };
@@ -508,6 +516,24 @@ static struct platform_device *ezkit_devices[] __initdata = {
 #endif
 };
 
+static int __init net2272_init(void)
+{
+#if defined(CONFIG_USB_NET2272) || defined(CONFIG_USB_NET2272_MODULE)
+	int ret;
+
+	ret = gpio_request(GPIO_PF11, "net2272");
+	if (ret)
+		return ret;
+
+	/* Reset the USB chip */
+	gpio_direction_output(GPIO_PF11, 0);
+	mdelay(2);
+	gpio_set_value(GPIO_PF11, 1);
+#endif
+
+	return 0;
+}
+
 static int __init ezkit_init(void)
 {
 	int ret;
@@ -533,6 +559,9 @@ static int __init ezkit_init(void)
 	 */
 	udelay(400);
 #endif
+
+	if (net2272_init())
+		pr_warning("unable to configure net2272; it probably won't work\n");
 
 	spi_register_board_info(bfin_spi_board_info, ARRAY_SIZE(bfin_spi_board_info));
 	return 0;
