@@ -35,19 +35,6 @@ int asm_kernel_thread(int (*fn)(void *),
 		unsigned long flags,
 		pid_t pid);
 
-#if defined(CONFIG_VZFS_FS) || defined(CONFIG_VZFS_FS_MODULE)
-void vefs_track_force_stop(struct super_block *super);
-
-void vefs_track_notify(struct dentry *vdentry, int track_cow);
-
-struct dentry * vefs_replaced_dentry(struct dentry *de);
-int vefs_is_renamed_dentry(struct dentry *vde, struct dentry *pde);
-#else
-static inline void vefs_track_force_stop(struct super_block *super) { };
-
-static inline void vefs_track_notify(struct dentry *vdentry, int track_cow) { };
-#endif
-
 unsigned int test_cpu_caps_and_features(void);
 int rst_image_acceptable(unsigned long version);
 unsigned int test_kernel_config(void);

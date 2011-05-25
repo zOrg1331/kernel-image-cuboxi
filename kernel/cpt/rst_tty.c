@@ -39,17 +39,16 @@
 static int pty_setup(struct tty_struct *stty, loff_t pos,
 		     struct cpt_tty_image *pi, struct cpt_context *ctx)
 {
-	unsigned long flags;
-
 	stty->pgrp = NULL;
 	stty->session = NULL;
 	stty->packet = pi->cpt_packet;
 	stty->stopped = pi->cpt_stopped;
 	stty->hw_stopped = pi->cpt_hw_stopped;
 	stty->flow_stopped = pi->cpt_flow_stopped;
-#define DONOT_CHANGE ((1<<TTY_CHARGED)|(1<<TTY_CLOSING)|(1<<TTY_LDISC))
-	flags = stty->flags & DONOT_CHANGE;
-	stty->flags = flags | (pi->cpt_flags & ~DONOT_CHANGE);
+#define TTY_BEHAVIOR_FLAGS ((1<<TTY_EXCLUSIVE)|(1<<TTY_HW_COOK_OUT)| \
+				(1<<TTY_HW_COOK_IN)|(1<<TTY_PTY_LOCK))
+	stty->flags &= ~TTY_BEHAVIOR_FLAGS;
+	stty->flags |= pi->cpt_flags & TTY_BEHAVIOR_FLAGS;
 	stty->ctrl_status = pi->cpt_ctrl_status;
 	stty->winsize.ws_row = pi->cpt_ws_row;
 	stty->winsize.ws_col = pi->cpt_ws_col;

@@ -339,7 +339,8 @@ static void rlb_update_entry_from_arp(struct bonding *bond, struct arp_pkt *arp)
 
 	if ((client_info->assigned) &&
 	    (client_info->ip_src == arp->ip_dst) &&
-	    (client_info->ip_dst == arp->ip_src)) {
+	    (client_info->ip_dst == arp->ip_src) &&
+	    (compare_ether_addr_64bits(client_info->mac_dst, arp->mac_src))) {
 		/* update the clients MAC address */
 		memcpy(client_info->mac_dst, arp->mac_src, ETH_ALEN);
 		client_info->ntt = 1;
@@ -701,7 +702,7 @@ static struct slave *rlb_choose_channel(struct sk_buff *skb, struct bonding *bon
 			client_info->ntt = 0;
 		}
 
-		if (!list_empty(&bond->vlan_list)) {
+		if (bond->vlgrp) {
 			if (!vlan_get_tag(skb, &client_info->vlan_id))
 				client_info->tag = 1;
 		}
@@ -924,7 +925,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[])
 		skb->priority = TC_PRIO_CONTROL;
 		skb->dev = slave->dev;
 
-		if (!list_empty(&bond->vlan_list)) {
+		if (bond->vlgrp) {
 			struct vlan_entry *vlan;
 
 			vlan = bond_next_vlan(bond,

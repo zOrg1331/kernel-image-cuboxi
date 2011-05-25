@@ -31,6 +31,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/mmgang.h>
+#include <linux/swap.h>
 #include <linux/sched.h>
 #include <linux/random.h>
 #include <linux/cgroup.h>
@@ -406,6 +407,7 @@ static void delayed_release_beancounter(struct work_struct *w)
 	BUG_ON(!list_empty(&ub->ub_dentry_lru));
 
 	del_mem_gangs(&ub->gang_set);
+	ub_unuse_swap(ub);
 	bc_verify_held(ub);
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);

@@ -1172,7 +1172,6 @@ static int ep_loop_check(struct eventpoll *ep, struct file *file)
 			      ep_loop_check_proc, file, ep, current);
 }
 
-
 /*
  * Open an eventpoll file descriptor.
  */

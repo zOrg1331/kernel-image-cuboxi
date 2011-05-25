@@ -300,7 +300,7 @@ EXPORT_SYMBOL(__ub_check_ram_limits);
 void ub_swapentry_inc(struct swap_info_struct *si, pgoff_t num,
 		struct user_beancounter *ub)
 {
-	si->swap_ubs[num] = get_beancounter(ub);
+	rcu_assign_pointer(si->swap_ubs[num], ub);
 	charge_beancounter_fast(ub, UB_SWAPPAGES, 1, UB_FORCE);
 }
 EXPORT_SYMBOL(ub_swapentry_inc);
@@ -310,9 +310,8 @@ void ub_swapentry_dec(struct swap_info_struct *si, pgoff_t num)
 	struct user_beancounter *ub;
 
 	ub = si->swap_ubs[num];
-	si->swap_ubs[num] = NULL;
+	rcu_assign_pointer(si->swap_ubs[num], NULL);
 	uncharge_beancounter_fast(ub, UB_SWAPPAGES, 1);
-	put_beancounter(ub);
 }
 EXPORT_SYMBOL(ub_swapentry_dec);
 
@@ -321,10 +320,9 @@ void ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t num)
 	struct user_beancounter *ub;
 
 	ub = si->swap_ubs[num];
-	si->swap_ubs[num] = get_beancounter(&ub0);
+	rcu_assign_pointer(si->swap_ubs[num], &ub0);
 	uncharge_beancounter_fast(ub, UB_SWAPPAGES, 1);
 	charge_beancounter_fast(&ub0, UB_SWAPPAGES, 1, UB_FORCE);
-	put_beancounter(ub);
 }
 
 int ub_swap_init(struct swap_info_struct *si, pgoff_t num)

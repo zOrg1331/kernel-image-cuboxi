@@ -524,18 +524,6 @@ static int restore_reg_chunk(struct file *file, loff_t pos,
 			__cpt_release_buf(ctx);
 			goto out;
 		}
-		if (!(file->f_mode & FMODE_WRITE) ||
-		    (file->f_flags&O_DIRECT)) {
-			fput(file);
-			file = dentry_open(dget(file->f_dentry),
-					   mntget(file->f_vfsmnt),
-					   O_WRONLY | O_LARGEFILE,
-					   current_cred());
-			if (IS_ERR(file)) {
-				__cpt_release_buf(ctx);
-				return PTR_ERR(file);
-			}
-		}
 		oldfs = get_fs(); set_fs(KERNEL_DS);
 		ipos += copy;
 		err = file->f_op->write(file, ctx->tmpbuf, copy, &opos);
@@ -575,6 +563,18 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 
 		switch (pgb.cpt_object) {
 			case CPT_OBJ_PAGES:
+				if (!(file->f_mode & FMODE_WRITE) ||
+				    (file->f_flags&O_DIRECT)) {
+					fput(file);
+					file = dentry_open(dget(file->f_dentry),
+							   mntget(file->f_vfsmnt),
+							   O_WRONLY | O_LARGEFILE,
+							   current_cred());
+					if (IS_ERR(file)) {
+						__cpt_release_buf(ctx);
+						return PTR_ERR(file);
+					}
+				}
 				err = restore_reg_chunk(file, pos, &pgb, ctx); 
 				if (err)
 					goto out;

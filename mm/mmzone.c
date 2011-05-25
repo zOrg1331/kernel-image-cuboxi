@@ -9,8 +9,12 @@
 #include <linux/mm.h>
 #include <linux/mmzone.h>
 #include <linux/mmgang.h>
+#include <linux/pagemap.h>
 #include <linux/swap.h>
 #include <linux/module.h>
+#include <linux/mm_inline.h>
+
+#include "internal.h"
 
 struct pglist_data *first_online_pgdat(void)
 {
@@ -193,6 +197,7 @@ static void move_gang_pages(struct gang *gang, struct gang *dst_gang)
 	struct user_beancounter *src_ub = get_gang_ub(gang);
 	struct user_beancounter *dst_ub = get_gang_ub(dst_gang);
 	LIST_HEAD(pages_to_wait);
+	LIST_HEAD(pages_to_free);
 
 again:
 	restart = 0;
@@ -230,17 +235,41 @@ again:
 		if (!nr_pages)
 			continue;
 
-		spin_lock_irq(&dst_gang->lru_lock);
-		list_for_each_entry(page, &list, lru) {
-			SetPageLRU(page);
-			put_page(page);
+		if (!is_file_lru(lru)) {
+			list_for_each_entry(page, &list, lru) {
+				if (PageSwapCache(page)) {
+					lock_page(page);
+					ub_unuse_swap_page(page);
+					unlock_page(page);
+				}
+			}
 		}
-		list_splice(&list, &dst_gang->lru[lru].list);
-		dst_gang->lru[lru].nr_pages += nr_pages;
-		spin_unlock_irq(&dst_gang->lru_lock);
 
 		uncharge_beancounter_fast(src_ub, UB_PHYSPAGES, nr_pages);
 		charge_beancounter_fast(dst_ub, UB_PHYSPAGES, nr_pages, UB_FORCE);
+
+		spin_lock_irq(&dst_gang->lru_lock);
+		dst_gang->lru[lru].nr_pages += nr_pages;
+		list_for_each_entry_safe(page, next, &list, lru) {
+			SetPageLRU(page);
+			if (unlikely(put_page_testzero(page))) {
+				__ClearPageLRU(page);
+				del_page_from_lru(dst_gang, page);
+				gang_del_user_page(page);
+				list_add(&page->lru, &pages_to_free);
+			}
+		}
+		list_splice(&list, &dst_gang->lru[lru].list);
+		spin_unlock_irq(&dst_gang->lru_lock);
+
+		list_for_each_entry_safe(page, next, &pages_to_free, lru) {
+			list_del(&page->lru);
+			VM_BUG_ON(PageTail(page));
+			if (PageCompound(page))
+				get_compound_page_dtor(page)(page);
+			else
+				free_hot_page(page);
+		}
 	}
 	if (restart)
 		goto again;

@@ -233,7 +233,7 @@ void show_regs(struct pt_regs *regs)
 {
 	printk(KERN_INFO "CPU %d:", smp_processor_id());
 	__show_regs(regs, 1);
-	show_trace(NULL, regs, &regs->sp, regs->bp);
+	show_trace(NULL, regs, &regs->sp);
 	if (!decode_call_traces)
 		printk(" EIP: [<%08lx>]\n", regs->ip);
 }

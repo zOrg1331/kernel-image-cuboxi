@@ -114,6 +114,8 @@ struct tun_struct {
 	struct tap_filter       txflt;
 	struct socket		socket;
 
+	int			vnet_hdr_sz;
+
 #ifdef TUN_DEBUG
 	int debug;
 #endif
@@ -566,7 +568,7 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
 	}
 
 	if (tun->flags & TUN_VNET_HDR) {
-		if ((len -= sizeof(gso)) > count)
+		if ((len -= tun->vnet_hdr_sz) > count)
 			return -EINVAL;
 
 		if (memcpy_fromiovecend((void *)&gso, iv, offset, sizeof(gso)))
@@ -578,7 +580,7 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
 
 		if (gso.hdr_len > len)
 			return -EINVAL;
-		offset += sizeof(gso);
+		offset += tun->vnet_hdr_sz;
 	}
 
 	if ((tun->flags & TUN_TYPE_MASK) == TUN_TAP_DEV) {
@@ -721,7 +723,7 @@ static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
 
 	if (tun->flags & TUN_VNET_HDR) {
 		struct virtio_net_hdr gso = { 0 }; /* no info leak */
-		if ((len -= sizeof(gso)) < 0)
+		if ((len -= tun->vnet_hdr_sz) < 0)
 			return -EINVAL;
 
 		if (skb_is_gso(skb)) {
@@ -762,7 +764,7 @@ static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
 		if (unlikely(memcpy_toiovecend(iv, (void *)&gso, total,
 					       sizeof(gso))))
 			return -EFAULT;
-		total += sizeof(gso);
+		total += tun->vnet_hdr_sz;
 	}
 
 	len = min_t(int, skb->len, len);
@@ -1071,6 +1073,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		tun->dev = dev;
 		tun->flags = flags;
 		tun->txflt.count = 0;
+		tun->vnet_hdr_sz = sizeof(struct virtio_net_hdr);
 
 		err = tun_sk_alloc_init(net, tun, &sk);
 		if (err)
@@ -1201,6 +1204,7 @@ static long tun_chr_ioctl(struct file *file, unsigned int cmd,
 	void __user* argp = (void __user*)arg;
 	struct ifreq ifr;
 	int sndbuf;
+	int vnet_hdr_sz;
 	int ret;
 
 	if (cmd == TUNSETIFF || _IOC_TYPE(cmd) == 0x89)
@@ -1344,6 +1348,25 @@ static long tun_chr_ioctl(struct file *file, unsigned int cmd,
 		}
 
 		tun->socket.sk->sk_sndbuf = sndbuf;
+		break;
+
+	case TUNGETVNETHDRSZ:
+		vnet_hdr_sz = tun->vnet_hdr_sz;
+		if (copy_to_user(argp, &vnet_hdr_sz, sizeof(vnet_hdr_sz)))
+			ret = -EFAULT;
+		break;
+
+	case TUNSETVNETHDRSZ:
+		if (copy_from_user(&vnet_hdr_sz, argp, sizeof(vnet_hdr_sz))) {
+			ret = -EFAULT;
+			break;
+		}
+		if (vnet_hdr_sz < (int)sizeof(struct virtio_net_hdr)) {
+			ret = -EINVAL;
+			break;
+		}
+
+		tun->vnet_hdr_sz = vnet_hdr_sz;
 		break;
 
 	default:
