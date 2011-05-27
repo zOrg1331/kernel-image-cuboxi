@@ -488,7 +488,11 @@ endchoice
 
 config VZ_FAIRSCHED
 	bool "OpenVZ fairsched compat"
-	depends on CGROUP_SCHED
+	select CPUSETS
+	select CGROUP_SCHED
+	select FAIR_GROUP_SCHED
+	select FAIR_GROUP_SCHED_CPU_LIMITS
+	select FAIR_GROUP_SCHED_NRCPU_LIMITS
 	default y
 	help
 	  This option add task cpu cgroup control with OpenVZ compatible
@@ -497,10 +501,20 @@ config VZ_FAIRSCHED
 config FAIR_GROUP_SCHED_CPU_LIMITS
 	bool "CPU limits for fair group scheduler"
 	depends on FAIR_GROUP_SCHED && CGROUP_SCHED
-	default VZ_FAIRSCHED
+	default n
 	help
 	  This option allows you to explicitly limit CPU usage of
 	  a fair task group.
+
+	  Say N if unsure
+
+config FAIR_GROUP_SCHED_NRCPU_LIMITS
+	bool "Number CPU limits for fair group scheduler"
+	depends on FAIR_GROUP_SCHED && FAIR_GROUP_SCHED_CPU_LIMITS && CGROUP_SCHED
+	default n
+	help
+	  This option adds support for limiting the number of CPUs available
+	  to a fair task group.
 
 	  Say N if unsure
 

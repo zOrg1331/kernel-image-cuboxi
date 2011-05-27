@@ -565,6 +565,8 @@ EXPORT_SYMBOL(mm_alloc);
 void __mmdrop(struct mm_struct *mm)
 {
 	BUG_ON(mm == &init_mm);
+	if (unlikely(atomic_read(&mm->mm_users)))
+		put_mm_ub(mm);
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_mm_destroy(mm);

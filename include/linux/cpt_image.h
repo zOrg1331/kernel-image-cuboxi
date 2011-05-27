@@ -1778,7 +1778,7 @@ struct cpt_ip_conntrack_image_compat
 	__u16	cpt_hdrlen;
 	__u16	cpt_content;
 
-	struct cpt_ipct_tuple cpt_tuple[2];
+	struct cpt_ipct_tuple_compat cpt_tuple[2];
 	__u64	cpt_status;
 	__u64	cpt_timeout;
 	__u32	cpt_index;

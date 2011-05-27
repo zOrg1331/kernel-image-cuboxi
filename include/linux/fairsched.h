@@ -56,7 +56,6 @@ static inline int fairsched_new_node(int id, unsigned int vcpus) { return 0; }
 static inline int fairsched_move_task(int id, struct task_struct *tsk) { return 0; }
 static inline void fairsched_drop_node(int id, int leave) { }
 
-
 #endif /* CONFIG_VZ_FAIRSCHED */
 #endif /* __KERNEL__ */
 

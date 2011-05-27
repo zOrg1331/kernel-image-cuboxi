@@ -355,7 +355,6 @@ static void convert_conntrack_image(struct cpt_ip_conntrack_image *ci)
 	long size, n = sizeof(struct cpt_ip_conntrack_image);
 
 	memcpy(&img, ci, sizeof(struct cpt_ip_conntrack_image_compat));
-	memset(ci, 0, sizeof(struct cpt_ip_conntrack_image));
 
 	/* convert cpt_tuple */
 	pt = &ci->cpt_tuple[0].cpt_l3num;

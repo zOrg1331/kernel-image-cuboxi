@@ -1089,7 +1089,10 @@ void writeback_inodes_sb_nr_ub(struct super_block *sb, unsigned long nr, struct 
 
 void writeback_inodes_sb_ub(struct super_block *sb, struct user_beancounter *ub)
 {
-	writeback_inodes_sb_nr_ub(sb, ub_dirty_pages(ub), ub);
+	if (ub == NULL)
+		writeback_inodes_sb(sb);
+	else
+		writeback_inodes_sb_nr_ub(sb, ub_dirty_pages(ub), ub);
 }
 
 void writeback_inodes_sb_nr(struct super_block *sb, unsigned long nr)

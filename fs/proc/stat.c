@@ -24,15 +24,15 @@
 
 static int show_stat_ve(struct seq_file *p, struct ve_struct *ve, unsigned long jif)
 {
-	int i;
+	int i, j;
+	unsigned int nr_ve_vcpus;
 	u64 user, nice, system;
 	cycles_t idle, iowait;
-	cpumask_t ve_cpus;
 
-	ve_cpu_online_map(ve, &ve_cpus);
+	nr_ve_vcpus = num_online_vcpus();
 
 	user = nice = system = idle = iowait = 0;
-	for_each_cpu_mask(i, ve_cpus) {
+	for_each_possible_cpu(i) {
 		user += VE_CPU_STATS(ve, i)->user;
 		nice += VE_CPU_STATS(ve, i)->nice;
 		system += VE_CPU_STATS(ve, i)->system;
@@ -47,12 +47,17 @@ static int show_stat_ve(struct seq_file *p, struct ve_struct *ve, unsigned long 
 		(unsigned long long)cycles_to_clocks(idle),
 		(unsigned long long)cycles_to_clocks(iowait));
 
-	for_each_cpu_mask(i, ve_cpus) {
-		user = VE_CPU_STATS(ve, i)->user;
-		nice = VE_CPU_STATS(ve, i)->nice;
-		system = VE_CPU_STATS(ve, i)->system;
-		idle = ve_sched_get_idle_time(ve, i);
-		iowait = ve_sched_get_iowait_time(ve, i);
+	for (i = 0; i < nr_ve_vcpus; i++) {
+		user = nice = system = idle = iowait = 0;
+		for_each_online_cpu(j) {
+			if (j % nr_ve_vcpus == i) {
+				user += VE_CPU_STATS(ve, j)->user;
+				nice += VE_CPU_STATS(ve, j)->nice;
+				system += VE_CPU_STATS(ve, j)->system;
+				idle += ve_sched_get_idle_time(ve, j);
+				iowait += ve_sched_get_iowait_time(ve, j);
+			}
+		}
 		seq_printf(p, "cpu%d %llu %llu %llu %llu %llu 0 0 0\n",
 			i,
 			(unsigned long long)cputime64_to_clock_t(user),

@@ -135,6 +135,9 @@ struct ve_cpu_stats {
 	cputime64_t	user;
 	cputime64_t	nice;
 	cputime64_t	system;
+#ifdef CONFIG_VZ_FAIRSCHED
+	unsigned long	*idle_scale;
+#endif
 } ____cacheline_aligned;
 
 struct ve_ipt_recent;
@@ -349,11 +352,6 @@ extern void (*do_env_free_hook)(struct ve_struct *ve);
 
 extern unsigned long long ve_relative_clock(struct timespec * ts);
 
-#ifdef CONFIG_FAIRSCHED
-#define ve_cpu_online_map(ve, mask) fairsched_cpu_online_map(ve->veid, mask)
-#else
-#define ve_cpu_online_map(ve, mask) do { *(mask) = cpu_online_map; } while (0)
-#endif
 #else	/* CONFIG_VE */
 #define ve_utsname	system_utsname
 #define get_ve(ve)	(NULL)

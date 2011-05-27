@@ -112,6 +112,7 @@ SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 {
 	struct cgroup *cgrp;
 	char name[16];
+	int retval = 0;
 
 	if (!capable_setveid())
 		return -EPERM;
@@ -125,9 +126,11 @@ SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 		return PTR_ERR(cgrp);
 	if (cgrp == NULL)
 		return -ENOENT;
+
+	retval = sched_cgroup_set_nr_cpus(cgrp, vcpus);
 	cgroup_kernel_close(cgrp);
 
-	return 0;
+	return retval;
 }
 
 SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
@@ -272,6 +275,18 @@ out:
 	return retval;
 }
 
+static inline void fairsched_init_ve_idle_scale(struct ve_struct *ve,
+						  struct cgroup *cgrp)
+{
+#ifdef CONFIG_VE
+	int i;
+
+	for_each_possible_cpu(i)
+		VE_CPU_STATS(ve, i)->idle_scale =
+			sched_cgroup_cpu_rate_ptr(cgrp, i);
+#endif
+}
+
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
@@ -286,19 +301,19 @@ int fairsched_new_node(int id, unsigned int vcpus)
 		goto out;
 	}
 
-#if 0
-	err = do_fairsched_vcpus(id, vcpus);
+	err = sched_cgroup_set_nr_cpus(cgrp, vcpus);
 	if (err) {
 		printk(KERN_ERR "Can't set sched vcpus on node %d err=%d\n", id, err);
 		goto cleanup;
 	}
-#endif
 
 	err = cgroup_kernel_attach(cgrp, current);
 	if (err) {
 		printk(KERN_ERR "Can't switch to fairsched node %d err=%d\n", id, err);
 		goto cleanup;
 	}
+
+	fairsched_init_ve_idle_scale(get_exec_env(), cgrp);
 
 	cgroup_kernel_close(cgrp);
 	return 0;
@@ -682,6 +697,9 @@ int __init fairsched_init(void)
 	fairsched_host = cgroup_kernel_open(fairsched_root, CGRP_CREAT, "0");
 	if (IS_ERR(fairsched_host))
 		return PTR_ERR(fairsched_host);
+
+	fairsched_init_ve_idle_scale(get_ve0(), fairsched_host);
+
 	ret = cgroup_kernel_attach(fairsched_host, init_pid_ns.child_reaper);
 	if (ret)
 		return ret;

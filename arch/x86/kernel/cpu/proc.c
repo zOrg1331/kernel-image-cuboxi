@@ -3,6 +3,7 @@
 #include <linux/string.h>
 #include <linux/seq_file.h>
 #include <linux/cpufreq.h>
+#include <linux/sched.h>
 
 /*
  *	Get CPU information for use by the procfs.
@@ -144,7 +145,7 @@ static void *c_start(struct seq_file *m, loff_t *pos)
 		*pos = cpumask_first(cpu_online_mask);
 	else
 		*pos = cpumask_next(*pos - 1, cpu_online_mask);
-	if ((*pos) < nr_cpu_ids)
+	if (__cpus_weight(cpu_online_mask, *pos) < num_online_vcpus())
 		return &cpu_data(*pos);
 	return NULL;
 }
