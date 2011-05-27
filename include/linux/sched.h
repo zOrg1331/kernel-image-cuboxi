@@ -2799,6 +2799,23 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 #endif /* CONFIG_SMP */
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+extern unsigned int task_nr_cpus(struct task_struct *p);
+extern unsigned int task_vcpu_id(struct task_struct *p);
+#else
+static inline unsigned int task_nr_cpus(struct task_struct *p)
+{
+	return num_online_cpus();
+}
+
+static inline unsigned int task_vcpu_id(struct task_struct *p)
+{
+	return task_cpu(p);
+}
+#endif
+
+#define num_online_vcpus() task_nr_cpus(current)
+
 extern void arch_pick_mmap_layout(struct mm_struct *mm);
 
 #ifdef CONFIG_TRACING
@@ -2843,6 +2860,12 @@ extern unsigned long sched_group_rate(struct task_group *tg);
 extern int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate);
 extern int sched_cgroup_drop_rate(struct cgroup *cgrp);
 extern unsigned long sched_cgroup_get_rate(struct cgroup *cgrp);
+#endif
+#ifdef CONFIG_VZ_FAIRSCHED
+extern unsigned long *sched_cgroup_cpu_rate_ptr(struct cgroup *cgrp, int cpu);
+#endif
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+extern int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus);
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED
 extern int sched_group_set_rt_runtime(struct task_group *tg,

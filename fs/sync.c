@@ -150,7 +150,7 @@ SYSCALL_DEFINE0(sync)
 	 */
 	if (!ve_is_super(ve) &&
 			(!sysctl_fsync_enable ||
-			current == get_env_init(ve)));
+			current == get_env_init(ve)))
 		goto skip;
 
 	if (!ve_is_super(ve) && sysctl_fsync_enable == 2)

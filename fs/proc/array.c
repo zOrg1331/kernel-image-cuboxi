@@ -414,6 +414,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	char ub_task_info[64];
 	char ub_mm_info[64];
 #endif
+	int is_super = ve_is_super(get_exec_env());
 
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
@@ -563,7 +564,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		0UL,
 		0UL,
 		task->exit_signal,
-		task_cpu(task),
+		is_super ? task_cpu(task) : task_vcpu_id(task),
 		task->rt_priority,
 		task->policy,
 		(unsigned long long)delayacct_blkio_ticks(task),

@@ -13,12 +13,8 @@ config VE
 	select UTS_NS
 	select NET_NS
 	select USER_NS
-	select CPUSETS
 	select CGROUPS
 	select CGROUP_DEVICE
-	select GROUP_SCHED
-	select FAIR_GROUP_SCHED
-	select FAIR_GROUP_SCHED_CPU_LIMITS
 	help
 	  This option adds support of virtual Linux running on the original box
 	  with fully supported virtual network driver, tty subsystem and

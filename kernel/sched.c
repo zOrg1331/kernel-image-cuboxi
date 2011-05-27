@@ -266,6 +266,11 @@ struct task_group {
 	unsigned long rate;
 #endif
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+	/* number of cpus available to this group (default: 0 = all cpus) */
+	unsigned int nr_cpus;
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
@@ -304,6 +309,27 @@ static inline unsigned long tg_rate(struct task_group *tg)
 }
 
 static inline void tg_set_rate(struct task_group *tg, unsigned long rate)
+{
+}
+#endif
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+static inline unsigned int tg_nr_cpus(struct task_group *tg)
+{
+	return tg->nr_cpus;
+}
+
+static inline void tg_set_nr_cpus(struct task_group *tg, unsigned int nr_cpus)
+{
+	tg->nr_cpus = nr_cpus;
+}
+#else
+static inline unsigned int tg_nr_cpus(struct task_group *tg)
+{
+	return 0;
+}
+
+static inline void tg_set_nr_cpus(struct task_group *tg, unsigned int nr_cpus)
 {
 }
 #endif
@@ -405,6 +431,28 @@ static inline struct task_group *task_group(struct task_struct *p)
 #endif
 	return tg;
 }
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+unsigned int task_nr_cpus(struct task_struct *p)
+{
+	unsigned int nr_cpus = 0;
+	unsigned int max_nr_cpus = num_online_cpus();
+
+	rcu_read_lock();
+	nr_cpus = task_group(p)->nr_cpus;
+	rcu_read_unlock();
+
+	if (!nr_cpus || nr_cpus > max_nr_cpus)
+		nr_cpus = max_nr_cpus;
+
+	return nr_cpus;
+}
+
+unsigned int task_vcpu_id(struct task_struct *p)
+{
+	return task_cpu(p) % task_nr_cpus(p);
+}
+#endif
 
 /* Change a task's cfs_rq and parent entity if it moves across CPUs/groups */
 static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
@@ -1189,6 +1237,16 @@ static inline void ve_nr_unint_dec(struct ve_struct *ve, int cpu)
 	VE_CPU_STATS(ve, cpu)->nr_unint--;
 }
 
+static inline cycles_t ve_scale_idle_time(struct ve_cpu_stats *ve_stat,
+					  cycles_t cycles)
+{
+#ifdef CONFIG_VZ_FAIRSCHED
+	if (likely(ve_stat->idle_scale))
+		cycles = cycles * *ve_stat->idle_scale / MAX_RATE;
+#endif
+	return cycles;
+}
+
 #define cycles_after(a, b)	((long long)(b) - (long long)(a) < 0)
 
 cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
@@ -1205,7 +1263,8 @@ cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 		if (strt && nr_iowait_ve(ve) == 0) {
 			cycles = get_cycles();
 			if (cycles_after(cycles, strt))
-				ret += cycles - strt;
+				ret += ve_scale_idle_time(ve_stat,
+							  cycles - strt);
 		}
 	} while (read_seqcount_retry(&ve_stat->stat_lock, v));
 	return ret;
@@ -1226,7 +1285,8 @@ cycles_t ve_sched_get_iowait_time(struct ve_struct *ve, int cpu)
 		if (strt && nr_iowait_ve(ve) > 0) {
 			cycles = get_cycles();
 			if (cycles_after(cycles, strt))
-				ret += cycles - strt;
+				ret += ve_scale_idle_time(ve_stat,
+							  cycles - strt);
 		}
 	} while (read_seqcount_retry(&ve_stat->stat_lock, v));
 	return ret;
@@ -1242,12 +1302,12 @@ static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles
 	write_seqcount_begin(&ve_stat->stat_lock);
 	if (ve_stat->strt_idle_time) {
 		if (cycles_after(cycles, ve_stat->strt_idle_time)) {
+			cycles_t idle_time = ve_scale_idle_time(ve_stat,
+					cycles - ve_stat->strt_idle_time);
 			if (nr_iowait_ve(ve) == 0)
-				ve_stat->idle_time +=
-					cycles - ve_stat->strt_idle_time;
+				ve_stat->idle_time += idle_time;
 			else
-				ve_stat->iowait_time +=
-					cycles - ve_stat->strt_idle_time;
+				ve_stat->iowait_time += idle_time;
 		}
 		ve_stat->strt_idle_time = 0;
 	}
@@ -2000,7 +2060,7 @@ spread_sd_rate(const struct cpumask *_sd_cpus, unsigned long sd_rate,
 		if (rate > MAX_RATE)
 			rate = MAX_RATE;
 		for_each_cpu(i, sd_cpus)
-			usd_rq_weight[i] = rate;
+			usd_rq_rate[i] = rate;
 		return;
 	}
 
@@ -2036,7 +2096,7 @@ again:
 	}
 
 	if (sd_rate > sum_rate && nr_sd_cpus) {
-		rate = (sum_rate - sd_rate) / nr_sd_cpus;
+		rate = (sd_rate - sum_rate) / nr_sd_cpus;
 		if (rate) {
 			for_each_cpu(i, sd_cpus) {
 				usd_rq_rate[i] += rate;
@@ -2131,7 +2191,8 @@ static inline unsigned long tg_cpu_rate(struct task_group *tg, int cpu);
 static int tg_shares_up(struct task_group *tg, void *data)
 {
 	unsigned long weight, rq_weight = 0, sum_weight = 0, shares = 0;
-	unsigned long rate = 0;
+	unsigned long max_rate, rate = 0;
+	unsigned int nr_cpus;
 	unsigned long *usd_rq_weight;
 	unsigned long *usd_rq_rate = NULL;
 	struct sched_domain *sd = data;
@@ -2140,6 +2201,12 @@ static int tg_shares_up(struct task_group *tg, void *data)
 
 	if (!tg->se[0])
 		return 0;
+
+	max_rate = tg_rate(tg);
+	nr_cpus = tg_nr_cpus(tg);
+	if (nr_cpus && nr_cpus < num_online_cpus() &&
+	    (!max_rate || max_rate > sched_cpulimit_max_rate() * nr_cpus))
+		max_rate = sched_cpulimit_max_rate() * nr_cpus;
 
 	local_irq_save(flags);
 	usd_rq_weight = per_cpu_ptr(update_shares_data, smp_processor_id());
@@ -2165,15 +2232,15 @@ static int tg_shares_up(struct task_group *tg, void *data)
 	if ((!shares && rq_weight) || shares > tg->shares)
 		shares = tg->shares;
 
-	if ((!rate && rq_weight) || rate > tg_rate(tg))
-		rate = tg_rate(tg);
+	if ((!rate && rq_weight) || rate > max_rate)
+		rate = max_rate;
 
 	if (!sd->parent || !(sd->parent->flags & SD_LOAD_BALANCE)) {
 		shares = tg->shares;
-		rate = tg_rate(tg);
+		rate = max_rate;
 	}
 
-	if (tg_rate(tg)) {
+	if (max_rate) {
 		usd_rq_rate = update_rate_per_cpu_data(smp_processor_id());
 		spread_sd_rate(sched_domain_span(sd), rate, rq_weight,
 			       usd_rq_weight, usd_rq_rate);
@@ -3583,10 +3650,8 @@ unsigned long nr_running_ve(struct ve_struct *ve)
 {
 	int i;
 	long sum = 0;
-	cpumask_t ve_cpus;
 
-	ve_cpu_online_map(ve, &ve_cpus);
-	for_each_cpu_mask(i, ve_cpus)
+	for_each_online_cpu(i)
 		sum += VE_CPU_STATS(ve, i)->nr_running;
 	return (unsigned long)(sum < 0 ? 0 : sum);
 }
@@ -3596,11 +3661,9 @@ unsigned long nr_uninterruptible_ve(struct ve_struct *ve)
 {
 	int i;
 	long sum = 0;
-	cpumask_t ve_cpus;
 
 	sum = 0;
-	ve_cpu_online_map(ve, &ve_cpus);
-	for_each_cpu_mask(i, ve_cpus)
+	for_each_possible_cpu(i)
 		sum += VE_CPU_STATS(ve, i)->nr_unint;
 	return (unsigned long)(sum < 0 ? 0 : sum);
 }
@@ -3610,10 +3673,8 @@ unsigned long nr_iowait_ve(struct ve_struct *ve)
 {
 	int i;
 	long sum = 0;
-	cpumask_t ve_cpus;
 
-	ve_cpu_online_map(ve, &ve_cpus);
-	for_each_cpu_mask(i, ve_cpus)
+	for_each_possible_cpu(i)
 		sum += VE_CPU_STATS(ve, i)->nr_iowait;
 	return (unsigned long)(sum < 0 ? 0 : sum);
 }
@@ -7522,6 +7583,9 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
 
+	if (!ve_is_super(get_exec_env()))
+		return 0;
+
 	get_online_cpus();
 	rcu_read_lock();
 
@@ -10376,7 +10440,7 @@ int in_sched_functions(unsigned long addr)
 
 static void init_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
 {
-	cfs_rq->rate = 0;
+	cfs_rq->rate = MAX_RATE;
 	cfs_rq->throttled = 0;
 	cfs_rq->credit = sched_cpulimit_credit_charge();
 	cfs_rq->credit_charge_start = rq_of(cfs_rq)->clock;
@@ -11250,7 +11314,8 @@ static void set_tg_cpu_params(struct task_group *tg, int cpu,
 static DEFINE_MUTEX(cpu_params_mutex);
 
 static int sched_group_set_cpu_params(struct task_group *tg,
-				      unsigned long shares, unsigned long rate)
+				      unsigned long shares, unsigned long rate,
+				      unsigned int nr_cpus)
 {
 	int i;
 	unsigned long flags;
@@ -11273,7 +11338,8 @@ static int sched_group_set_cpu_params(struct task_group *tg,
 	}
 
 	mutex_lock(&cpu_params_mutex);
-	if (tg->shares == shares && tg_rate(tg) == rate)
+	if (tg->shares == shares && tg_rate(tg) == rate &&
+	    tg_nr_cpus(tg) == nr_cpus)
 		goto done;
 
 	spin_lock_irqsave(&task_group_lock, flags);
@@ -11291,6 +11357,7 @@ static int sched_group_set_cpu_params(struct task_group *tg,
 	 */
 	tg->shares = shares;
 	tg_set_rate(tg, rate);
+	tg_set_nr_cpus(tg, nr_cpus);
 	for_each_possible_cpu(i) {
 		/*
 		 * force a rebalance
@@ -11315,7 +11382,8 @@ done:
 
 int sched_group_set_shares(struct task_group *tg, unsigned long shares)
 {
-	return sched_group_set_cpu_params(tg, shares, tg_rate(tg));
+	return sched_group_set_cpu_params(tg, shares, tg_rate(tg),
+					  tg_nr_cpus(tg));
 }
 
 unsigned long sched_group_shares(struct task_group *tg)
@@ -11328,7 +11396,7 @@ unsigned long sched_group_shares(struct task_group *tg)
 
 int sched_group_set_rate(struct task_group *tg, unsigned long rate)
 {
-	return sched_group_set_cpu_params(tg, tg->shares, rate);
+	return sched_group_set_cpu_params(tg, tg->shares, rate, tg_nr_cpus(tg));
 }
 
 unsigned long sched_group_rate(struct task_group *tg)
@@ -11810,6 +11878,39 @@ unsigned long sched_cgroup_get_rate(struct cgroup *cgrp)
 }
 #endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
+#ifdef CONFIG_VZ_FAIRSCHED
+unsigned long *sched_cgroup_cpu_rate_ptr(struct cgroup *cgrp, int cpu)
+{
+	return &cgroup_tg(cgrp)->cfs_rq[cpu]->rate;
+}
+#endif
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus)
+{
+	struct task_group *tg;
+
+	tg = cgroup_tg(cgrp);
+	return sched_group_set_cpu_params(tg, tg->shares, tg_rate(tg), nr_cpus);
+}
+
+static inline unsigned int sched_cgroup_get_nr_cpus(struct cgroup *cgrp)
+{
+	return min(cgroup_tg(cgrp)->nr_cpus, num_online_cpus());
+}
+
+static int cpu_nr_write_u64(struct cgroup *cgrp, struct cftype *cftype,
+			    u64 nr_cpus)
+{
+	return sched_cgroup_set_nr_cpus(cgrp, (unsigned int)nr_cpus);
+}
+
+static u64 cpu_nr_read_u64(struct cgroup *cgrp, struct cftype *cft)
+{
+	return (u64)sched_cgroup_get_nr_cpus(cgrp);
+}
+#endif /* CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS */
+
 #ifdef CONFIG_RT_GROUP_SCHED
 static int cpu_rt_runtime_write(struct cgroup *cgrp, struct cftype *cft,
 				s64 val)
@@ -11847,6 +11948,13 @@ static struct cftype cpu_files[] = {
 		.name = "rate",
 		.read_u64 = cpu_rate_read_u64,
 		.write_u64 = cpu_rate_write_u64,
+	},
+#endif
+#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+	{
+		.name = "nr_cpus",
+		.read_u64 = cpu_nr_read_u64,
+		.write_u64 = cpu_nr_write_u64,
 	},
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED

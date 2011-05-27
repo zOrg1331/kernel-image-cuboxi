@@ -190,7 +190,7 @@ forward:
 
 		out = p->br->via_phys_dev ? p->br->master_dev : p->br->dev;
 
-		if (out && !compare_ether_addr(p->br->dev->dev_addr, dest))
+		if (out && !compare_ether_addr(out->dev_addr, dest))
 			skb->pkt_type = PACKET_HOST;
 
 		NF_HOOK(PF_BRIDGE, NF_BR_PRE_ROUTING, skb, skb->dev, NULL,

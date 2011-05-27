@@ -782,6 +782,9 @@ static int restore_registers(struct task_struct *tsk, struct pt_regs *regs,
 	if (b->cpt_object != CPT_OBJ_X86_REGS)
 		return -EINVAL;
 
+	if (ctx->image_version < CPT_VERSION_32)
+		b->cpt_ugs = b->cpt_gs;
+
 	tsk->thread.sp = (unsigned long) regs;
 	tsk->thread.sp0 = (unsigned long) (regs+1);
 	tsk->thread.ip = (unsigned long) &i386_ret_from_resume;
@@ -874,6 +877,9 @@ static int restore_registers(struct task_struct *tsk, struct pt_regs *regs,
 		regs->ss = decode_segment(b->cpt_ss);
 	} else if (hdr->cpt_object == CPT_OBJ_X86_REGS) {
 		struct cpt_x86_regs *b = (void*)hdr;
+
+		if (ctx->image_version < CPT_VERSION_32)
+			b->cpt_ugs = b->cpt_gs;
 
 		tsk->thread.sp = (unsigned long) regs;
 		tsk->thread.sp0 = (unsigned long) (regs+1);
