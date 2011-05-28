@@ -1,6 +1,6 @@
 Name:    kernel-image-std-pae
 Version: 2.6.38
-Release: alt7.1
+Release: alt7.2
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -644,6 +644,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu May 26 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt7.2
+- drm/nv50: use "nv86" tlb flush method on everything except 0x50/0xac
+
 * Mon May 23 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt7.1
 - Update to 2.6.38.7
 - drivers/gpu/drm/cirrus/cirrus_vga.c: remove 1280x1024 mode
