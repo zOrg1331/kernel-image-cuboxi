@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.39
-Release: alt0.1
+Release: alt0.2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -593,6 +593,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon May 30 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.39-alt0.2
+- cirrus kms enabled
+- possible fix for scsi workqueue
+
 * Tue May 24 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.39-alt0.1
 - 2.6.39
 
