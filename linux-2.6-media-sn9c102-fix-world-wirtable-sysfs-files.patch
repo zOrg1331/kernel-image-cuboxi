@@ -1,0 +1,44 @@
+From: Don Howard <dhoward@redhat.com>
+Date: Tue, 29 Mar 2011 19:22:48 -0400
+Subject: [media] sn9c102: fix world-wirtable sysfs files
+Message-id: <1301426568-7899-1-git-send-email-dhoward@redhat.com>
+Patchwork-id: 35137
+O-Subject: [RHEL5.7 PATCH] video: sn9c102: world-wirtable sysfs files
+Bugzilla: 679305
+
+Backport from upstream.
+
+commit 14ddc3188d50855ae2a419a6aced995e2834e5d4
+Author: Vasiliy Kulikov <segoon@openwall.com>
+Date:   Fri Feb 4 09:23:33 2011 -0300
+
+    [media] video: sn9c102: world-wirtable sysfs files
+
+    Don't allow everybody to change video settings.
+
+    Signed-off-by: Vasiliy Kulikov <segoon@openwall.com>
+    Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+    Acked-by: Luca Risolia <luca.risolia@studio.unibo.it>
+    Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Fixes bz 679305.
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=3209602
+Signed-off-by: Don Howard <dhoward@redhat.com>
+
+diff --git a/drivers/media/video/sn9c102/sn9c102_core.c b/drivers/media/video/sn9c102/sn9c102_core.c
+index 48d138a..534a42c 100644
+--- a/drivers/media/video/sn9c102/sn9c102_core.c
++++ b/drivers/media/video/sn9c102/sn9c102_core.c
+@@ -1233,9 +1233,9 @@ static CLASS_DEVICE_ATTR(i2c_reg, S_IRUGO | S_IWUSR,
+ 			 sn9c102_show_i2c_reg, sn9c102_store_i2c_reg);
+ static CLASS_DEVICE_ATTR(i2c_val, S_IRUGO | S_IWUSR,
+ 			 sn9c102_show_i2c_val, sn9c102_store_i2c_val);
+-static CLASS_DEVICE_ATTR(green, S_IWUGO, NULL, sn9c102_store_green);
+-static CLASS_DEVICE_ATTR(blue, S_IWUGO, NULL, sn9c102_store_blue);
+-static CLASS_DEVICE_ATTR(red, S_IWUGO, NULL, sn9c102_store_red);
++static CLASS_DEVICE_ATTR(green, S_IWUSR, NULL, sn9c102_store_green);
++static CLASS_DEVICE_ATTR(blue, S_IWUSR, NULL, sn9c102_store_blue);
++static CLASS_DEVICE_ATTR(red, S_IWUSR, NULL, sn9c102_store_red);
+ static CLASS_DEVICE_ATTR(frame_header, S_IRUGO,
+ 			 sn9c102_show_frame_header, NULL);
+ 

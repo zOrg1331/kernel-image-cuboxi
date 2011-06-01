@@ -1,0 +1,73 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Thu, 31 Mar 2011 02:35:45 -0400
+Subject: [misc] pm: add comment explaining is_registered kabi work-around
+Message-id: <1301538945-5198-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 35178
+O-Subject: [RHEL5 PATCH V4] driver: Fix potential deadlock in driver core
+Bugzilla: 637930
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=637930
+
+commit f2eaae197f4590c4d96f31b09b0ee9067421a95c
+Author: Alan Stern <stern@rowland.harvard.edu>
+Date:   Mon Sep 18 16:22:34 2006 -0400
+
+        Driver core: Fix potential deadlock in driver core
+
+        There is a potential deadlock in the driver core.  It boils down to
+        the fact that bus_remove_device() calls klist_remove() instead of
+        klist_del(), thereby waiting until the reference count of the
+        klist_node in the bus's klist of devices drops to 0.  The refcount
+        can't reach 0 so long as a modprobe process is trying to bind a new
+        driver to the device being removed, by calling __driver_attach().  The
+        problem is that __driver_attach() tries to acquire the device's
+        parent's semaphore, but the caller of bus_remove_device() is quite
+        likely to own that semaphore already.
+
+        It isn't sufficient just to replace klist_remove() with klist_del().
+        Doing so runs the risk that the device would remain on the bus's klist
+        of devices for some time, and so could be bound to another driver even
+        after it was unregistered.  What's needed is a new way to distinguish
+        whether or not a device is registered, based on a criterion other than
+        whether its klist_node is linked into the bus's klist of devices.  That
+        way driver binding can fail when the device is unregistered, even if
+        it is still linked into the klist.
+
+        This patch (as782) implements the solution, by adding a new bitflag to
+        indiate when a struct device is registered, by testing the flag before
+        allowing a driver to bind a device, and by changing the definition of
+        the device_is_registered() inline.
+
+        Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+        Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Of course, the solution as described above is a big kabi breaker.  As a result
+I had to find a way to workaround it.  There was no room in the struct device
+itself, so I stuck the fix inside the power management struct (Thanks
+Paolo!).
+
+I tested it locally with success.  I am waiting for the customer to provide
+feedback to make sure it continues to fix their problem (they tested the
+original kabi breaking patch and this patch isn't much different).
+
+V4:
+  add a comment in struct pm explaining why the bit is there
+V3:
+  use a different bit in the pm struct
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/pm.h b/include/linux/pm.h
+index 82ad84e..1469868 100644
+--- a/include/linux/pm.h
++++ b/include/linux/pm.h
+@@ -175,6 +175,7 @@ struct dev_pm_info {
+ 	unsigned		should_wakeup:1;
+ #endif
+ #ifndef __GENKSYMS__
++	/* avoid kabi breakage, put bit here instead of struct device */
+ 	unsigned		is_registered:1;
+ #endif
+ #ifdef	CONFIG_PM

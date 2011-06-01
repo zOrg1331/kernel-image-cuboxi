@@ -1,0 +1,50 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Wed, 9 Mar 2011 17:18:53 -0500
+Subject: [scsi] qla2xxx: no reset/fw-dump on CT/ELS pt req timeout
+Message-id: <20110309171853.5017.41039.sendpatchset@localhost6.localdomain6>
+Patchwork-id: 33908
+O-Subject: [RHEL 5.7 PATCH 20/24] qla2xxx: Do not perform reset/fw-dump if
+	CT/ELS passthru requests timeout.
+Bugzilla: 660386
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Bugzilla
+--------
+
+Bug 660386 (https://bugzilla.redhat.com/show_bug.cgi?id=660386)
+
+Upstream Status
+---------------
+
+RHEL 5 specific as passthrough commands use bsg in later kernels.
+
+Description
+-----------
+
+>From a4d466c512873982e89641880536de6c772896f3 Mon Sep 17 00:00:00 2001
+From: Andrew Vasquez <andrew.vasquez@qlogic.com>
+Date: Tue, 15 Feb 2011 10:27:26 +0530
+Subject: [PATCH] qla2xxx: Do not perform reset/fw-dump if CT/ELS passthru requests timeout.
+
+Jira Key: RHEL5.5FC-74
+
+Signed-off-by: Saurav Kashyap <saurav.kashyap@qlogic.com>
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index e28776c..b12934a 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -622,13 +622,6 @@ qla2x00_wait_for_passthru_completion(struct scsi_qla_host *ha)
+ 	    timeout)) {
+ 		DEBUG2(qla_printk(KERN_WARNING, ha,
+ 		    "Passthru request timed out.\n"));
+-		if (IS_QLA82XX(ha)) {
+-			set_bit(FCOE_CTX_RESET_NEEDED, &ha->dpc_flags);
+-		} else {
+-			ha->isp_ops->fw_dump(ha, 0);
+-			set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+-		}
+-		qla2xxx_wake_dpc(ha);
+ 		ha->pass_thru_cmd_result = 0;
+ 		ha->pass_thru_cmd_in_process = 0;
+ 	}

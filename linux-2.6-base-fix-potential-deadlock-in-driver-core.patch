@@ -1,0 +1,132 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Fri, 25 Mar 2011 21:13:53 -0400
+Subject: [base] Fix potential deadlock in driver core
+Message-id: <1301087633-32382-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 35079
+O-Subject: [RHEL5 PATCH V3] driver: Fix potential deadlock in driver core
+Bugzilla: 637930
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=637930
+
+commit f2eaae197f4590c4d96f31b09b0ee9067421a95c
+Author: Alan Stern <stern@rowland.harvard.edu>
+Date:   Mon Sep 18 16:22:34 2006 -0400
+
+	Driver core: Fix potential deadlock in driver core
+
+	There is a potential deadlock in the driver core.  It boils down to
+	the fact that bus_remove_device() calls klist_remove() instead of
+	klist_del(), thereby waiting until the reference count of the
+	klist_node in the bus's klist of devices drops to 0.  The refcount
+	can't reach 0 so long as a modprobe process is trying to bind a new
+	driver to the device being removed, by calling __driver_attach().  The
+	problem is that __driver_attach() tries to acquire the device's
+	parent's semaphore, but the caller of bus_remove_device() is quite
+	likely to own that semaphore already.
+
+	It isn't sufficient just to replace klist_remove() with klist_del().
+	Doing so runs the risk that the device would remain on the bus's klist
+	of devices for some time, and so could be bound to another driver even
+	after it was unregistered.  What's needed is a new way to distinguish
+	whether or not a device is registered, based on a criterion other than
+	whether its klist_node is linked into the bus's klist of devices.  That
+	way driver binding can fail when the device is unregistered, even if
+	it is still linked into the klist.
+
+	This patch (as782) implements the solution, by adding a new bitflag to
+	indiate when a struct device is registered, by testing the flag before
+	allowing a driver to bind a device, and by changing the definition of
+	the device_is_registered() inline.
+
+	Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+	Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Of course, the solution as described above is a big kabi breaker.  As a result
+I had to find a way to workaround it.  There was no room in the struct device
+itself, so I stuck the fix inside the power management struct (Thanks
+Paolo!).
+
+I tested it locally with success.  I am waiting for the customer to provide
+feedback to make sure it continues to fix their problem (they tested the
+original kabi breaking patch and this patch isn't much different).
+
+V3:
+  use a different bit in the pm struct
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/base/bus.c b/drivers/base/bus.c
+index 6f7d9f5..3660ba0 100644
+--- a/drivers/base/bus.c
++++ b/drivers/base/bus.c
+@@ -396,6 +396,7 @@ int bus_add_device(struct device * dev)
+  *	bus_attach_device - add device to bus
+  *	@dev:	device tried to attach to a driver
+  *
++ *	- Add device to bus's list of devices.
+  *	- Try to attach to driver.
+  */
+ void bus_attach_device(struct device * dev)
+@@ -403,6 +404,7 @@ void bus_attach_device(struct device * dev)
+ 	struct bus_type * bus = dev->bus;
+ 
+ 	if (bus) {
++		dev->power.is_registered = 1;
+ 		device_attach(dev);
+ 		klist_add_tail(&dev->knode_bus, &bus->klist_devices);
+ 	}
+@@ -424,7 +426,8 @@ void bus_remove_device(struct device * dev)
+ 		sysfs_remove_link(&dev->kobj, "bus");
+ 		sysfs_remove_link(&dev->bus->devices.kobj, dev->bus_id);
+ 		device_remove_attrs(dev->bus, dev);
+-		klist_remove(&dev->knode_bus);
++		dev->power.is_registered = 0;
++		klist_del(&dev->knode_bus);
+ 		pr_debug("bus %s: remove device %s\n", dev->bus->name, dev->bus_id);
+ 		device_release_driver(dev);
+ 		put_bus(dev->bus);
+diff --git a/drivers/base/dd.c b/drivers/base/dd.c
+index 669e71d..229602b 100644
+--- a/drivers/base/dd.c
++++ b/drivers/base/dd.c
+@@ -81,6 +81,8 @@ int driver_probe_device(struct device_driver * drv, struct device * dev)
+ {
+ 	int ret = 0;
+ 
++	if (!device_is_registered(dev))
++		return -ENODEV;
+ 	if (drv->bus->match && !drv->bus->match(dev, drv))
+ 		goto Done;
+ 
+diff --git a/include/linux/device.h b/include/linux/device.h
+index 813e48c..453aae4 100644
+--- a/include/linux/device.h
++++ b/include/linux/device.h
+@@ -423,7 +423,7 @@ dev_set_drvdata (struct device *dev, void *data)
+ 
+ static inline int device_is_registered(struct device *dev)
+ {
+-	return klist_node_attached(&dev->knode_bus);
++	return dev->power.is_registered;
+ }
+ 
+ /*
+diff --git a/include/linux/pm.h b/include/linux/pm.h
+index 658c1b9..82ad84e 100644
+--- a/include/linux/pm.h
++++ b/include/linux/pm.h
+@@ -173,6 +173,11 @@ struct dev_pm_info {
+ 	unsigned		can_wakeup:1;
+ #ifdef	CONFIG_PM
+ 	unsigned		should_wakeup:1;
++#endif
++#ifndef __GENKSYMS__
++	unsigned		is_registered:1;
++#endif
++#ifdef	CONFIG_PM
+ 	pm_message_t		prev_state;
+ 	void			* saved_state;
+ 	struct device		* pm_parent;

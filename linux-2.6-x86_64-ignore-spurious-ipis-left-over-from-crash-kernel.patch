@@ -1,0 +1,73 @@
+From: Myron Stowe <myron.stowe@redhat.com>
+Date: Thu, 21 Apr 2011 22:28:16 -0400
+Subject: [x86_64] Ignore spurious IPIs left over from crash kernel
+Message-id: <20110421222816.24449.93760.stgit@amt.stowe>
+Patchwork-id: 35595
+O-Subject: [RHEL5.7 kernel PATCH 2/2] x86: Ignore spurious IPIs left over from
+	crash kernel (x86_64)
+Bugzilla: 692921
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+From: Myron Stowe <mstowe@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=692921
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=3272349
+Upstream commit: The patch is based upon work that is not upstream.
+
+This patch addresses a kdump hang which occurs as follows:
+  (1)  The kdump kernel boots up after the initial kernel crashes/panics
+
+  (2)  A pending IPI from the initial kernel occurs after the kdump
+       kernel unmasks its interrupts in start_kernel() at the following
+       point -
+         asmlinkage void __init start_kernel(void)
+         {
+                ...
+                early_boot_irq_on();
+                local_irq_enable();     <======= Here
+
+  (3)  The kdump kernel tries to handle the interrupt, but its associated
+       data structures are not properly initialized.  As a result, in
+       smp_call_function_interrupt(), a bad pointer dereference
+       occurs when trying to initialize/de-reference 'func' -
+         fastcall void smp_call_function_interrupt(struct pt_regs *regs)
+         {
+                void (*func) (void *info) = call_data->func;
+                ...
+                (*func)(info);
+
+Upstream has diverged significantly with respect to RHEL5 in this
+particular area: upstream utilizes a list within the processor's
+'per_cpu' data area, whereas RHEL5 uses a single 'struct call_data_struct'
+that is single-threaded via locking.  As such, a more direct backport of
+upstream is not feasible.
+
+This patch is conceptually similar to the tack being proposed in patch
+version 2 for upstream - see https://lkml.org/lkml/2011/3/23/417 (v0),
+https://lkml.org/lkml/2011/3/25/317 (v1), and
+https://lkml.org/lkml/2011/3/29/259 (v2).
+
+diff --git a/arch/x86_64/kernel/smp.c b/arch/x86_64/kernel/smp.c
+index f0d55b5..ba7957b 100644
+--- a/arch/x86_64/kernel/smp.c
++++ b/arch/x86_64/kernel/smp.c
+@@ -315,7 +315,16 @@ struct call_data_struct {
+ 	int wait;
+ };
+ 
+-static struct call_data_struct * call_data;
++static void nop_fn(void *unused)
++{
++}
++
++static struct call_data_struct nop_call_data = {
++	.func = nop_fn,
++	.info = NULL,
++};
++
++static struct call_data_struct *call_data = &nop_call_data;
+ 
+ void lock_ipi_call_lock(void)
+ {

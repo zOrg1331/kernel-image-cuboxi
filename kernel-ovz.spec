@@ -12,7 +12,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab089
+%define ovzver 028stab091
 %define ovzrel 1
 
 %if !%{buildup}
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 238.9.1%{?dist}%{?buildid}
+%define release 238.12.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -1111,6 +1111,8 @@ Patch20238: xen-hvm-correct-accuracy-of-pmtimer.patch
 Patch20239: xen-vtd-let-iommu-use-another-irq-without-conflict.patch
 Patch20240: xen-hvm-add-hvmop_get_time-hypercall.patch
 Patch20241: xen-fix-64-bit-pv-guest-user-mode-segv-crashing-host.patch
+Patch20242: xen-x86-domain-fix-error-checks-in-arch_set_info_guest.patch
+Patch20243: xen-fix-max_evtchns-definition.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -6375,6 +6377,45 @@ Patch26313: linux-2.6-md-dm-mpath-skip-activate_path-for-failed-paths.patch
 Patch26314: linux-2.6-md-dm-mpath-hold-io-until-all-pg_inits-completed.patch
 Patch26315: linux-2.6-md-dm-mpath-wait-for-pg_init-completion-on-suspend.patch
 Patch26316: linux-2.6-md-dm-mpath-fix-null-deref-when-path-parameter-missing.patch
+Patch26317: linux-2.6-fs-nfs-break-lease-on-nfsd-v4-setattr.patch
+Patch26318: linux-2.6-fs-nfs-break-nfsd-v4-lease-on-unlink-link-and-rename.patch
+Patch26319: linux-2.6-net-bluetooth-fix-bnep-buffer-overflow.patch
+Patch26320: linux-2.6-net-dccp-fix-oops-in-dccp_rcv_state_process.patch
+Patch26321: linux-2.6-fs-proc-protect-mm-start_-end_code-in-proc-pid-stat.patch
+Patch26322: linux-2.6-fs-lockd-make-lockd_down-wait-for-lockd-to-come-down.patch
+Patch26323: linux-2.6-net-ixgbe-limit-vf-access-to-network-traffic.patch
+Patch26324: linux-2.6-net-ixgbe-fix-for-82599-erratum-on-header-splitting.patch
+Patch26325: linux-2.6-net-forcedeth-r8169-call-netif_carrier_off-at-end-of-probe.patch
+Patch26326: linux-2.6-base-fix-potential-deadlock-in-driver-core.patch
+Patch26327: linux-2.6-net-netfilter-arp_tables-fix-infoleak-to-userspace.patch
+Patch26328: linux-2.6-net-netfilter-ip_tables-fix-infoleak-to-userspace.patch
+Patch26329: linux-2.6-net-netfilter-ip6_tables-fix-infoleak-to-userspace.patch
+Patch26330: linux-2.6-net-netfilter-ipt_clusterip-fix-buffer-overflow.patch
+Patch26331: linux-2.6-fs-block-fix-submit_bh-discarding-barrier-flag-on-sync-write.patch
+Patch26332: linux-2.6-scsi-scsi_dh_rdac-add-two-new-ibm-devices-to-rdac_dev_list.patch
+Patch26333: linux-2.6-media-sn9c102-fix-world-wirtable-sysfs-files.patch
+Patch26334: linux-2.6-misc-pm-add-comment-explaining-is_registered-kabi-work-around.patch
+Patch26335: linux-2.6-fs-partitions-fix-corrupted-osf-partition-table-parsing.patch
+Patch26336: linux-2.6-usb-fix-usbfs-isochronous-data-transfer-regression.patch
+Patch26337: linux-2.6-virt-hypervisor-overflow-fix-for-clocks-4ghz.patch
+Patch26338: linux-2.6-fs-gfs2-creating-large-files-suddenly-slow-to-a-crawl.patch
+Patch26339: linux-2.6-s390-dasd-fix-race-between-open-and-offline.patch
+Patch26340: linux-2.6-mm-set-barrier-and-send-tlb-flush-to-all-affected-cpus.patch
+Patch26341: linux-2.6-scsi-qla2xxx-no-reset-fw-dump-on-ct-els-pt-req-timeout.patch
+Patch26342: linux-2.6-fs-nfsd-fix-auth_domain-reference-leak-on-nlm-operations.patch
+Patch26343: linux-2.6-net-bridge-fix-initial-packet-flood-if-stp.patch
+Patch26344: linux-2.6-fs-fix-corrupted-guid-partition-table-kernel-oops.patch
+Patch26345: linux-2.6-net-bluetooth-fix-sco-information-leak-to-userspace.patch
+Patch26346: linux-2.6-net-bridge-netfilter-fix-ebtables-information-leak.patch
+Patch26347: linux-2.6-scsi-mpt2sas-prevent-heap-overflows-and-unchecked-access.patch
+Patch26348: linux-2.6-fs-gfs2-unlock-on-gfs2_trans_begin-error.patch
+Patch26349: linux-2.6-fs-gfs2-restructure-reclaim-of-unlinked-dinodes.patch
+Patch26350: linux-2.6-fs-gfs2-fix-filesystem-hang-caused-by-incorrect-lock-order.patch
+Patch26351: linux-2.6-block-cciss-fix-lost-command-problem.patch
+Patch26352: linux-2.6-net-netxen-limit-skb-frags-for-non-tso-packet.patch
+Patch26353: linux-2.6-net-ixgbe-fix-for-link-failure-on-sfp-da-cables.patch
+Patch26354: linux-2.6-i386-ignore-spurious-ipis-left-over-from-crash-kernel.patch
+Patch26355: linux-2.6-x86_64-ignore-spurious-ipis-left-over-from-crash-kernel.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -12642,6 +12683,45 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch26314 -p1
 %patch26315 -p1
 %patch26316 -p1
+%patch26317 -p1
+%patch26318 -p1
+%patch26319 -p1
+%patch26320 -p1
+%patch26321 -p1
+%patch26322 -p1
+%patch26323 -p1
+%patch26324 -p1
+%patch26325 -p1
+%patch26326 -p1
+%patch26327 -p1
+%patch26328 -p1
+%patch26329 -p1
+%patch26330 -p1
+%patch26331 -p1
+%patch26332 -p1
+%patch26333 -p1
+%patch26334 -p1
+%patch26335 -p1
+%patch26336 -p1
+%patch26337 -p1
+%patch26338 -p1
+%patch26339 -p1
+%patch26340 -p1
+%patch26341 -p1
+%patch26342 -p1
+%patch26343 -p1
+%patch26344 -p1
+%patch26345 -p1
+%patch26346 -p1
+%patch26347 -p1
+%patch26348 -p1
+%patch26349 -p1
+%patch26350 -p1
+%patch26351 -p1
+%patch26352 -p1
+%patch26353 -p1
+%patch26354 -p1
+%patch26355 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -13096,6 +13176,8 @@ cd ../xen
 %patch20239 -p1
 %patch20240 -p1
 %patch20241 -p1
+%patch20242 -p1
+%patch20243 -p1
 # end of necessary hypervisor patches
 %endif
 %endif

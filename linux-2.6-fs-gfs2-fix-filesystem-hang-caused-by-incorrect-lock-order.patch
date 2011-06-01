@@ -1,0 +1,234 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Thu, 07 Apr 2011 16:14:50 -0000
+Subject: [fs] gfs2: fix filesystem hang caused by incorrect lock order
+Message-id: <1384613617.798723.1302192890092.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 35389
+O-Subject: [RHEL5.6.z Patch][3 of 3] Bug 688855 - GFS2 filesystem hang caused
+	by incorrect lock order
+Bugzilla: 688855
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+Here is the third patch for bug #688855.  It is already
+upstream and a nearly identical patch was posted for RHEL5.7
+for bz 656032.  All three have been tested at customer sites and
+received positive feedback.
+
+This patch fixes a deadlock in GFS2 where two processes are trying
+to reclaim an unlinked dinode:
+One holds the inode glock and calls gfs2_lookup_by_inum trying to look
+up the inode, which it can't, due to I_FREEING.  The other has set
+I_FREEING from vfs and is at the beginning of gfs2_delete_inode
+waiting for the glock, which is held by the first.  The solution is to
+add a new non_block parameter to the gfs2_iget function that causes it
+to return -ENOENT if the inode is being freed.
+
+rhbz#688855
+
+Regards,
+
+Bob Peterson
+Red Hat File Systems
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+commit 970bd969357b839230dff2adbc484f41739ba402
+Author: Bob Peterson <rpeterso@redhat.com>
+Date:   Fri Mar 18 08:28:47 2011 -0500
+
+    GFS2 filesystem hang caused by incorrect lock order
+    
+    This patch fixes a deadlock in GFS2 where two processes are trying
+    to reclaim an unlinked dinode:
+    One holds the inode glock and calls gfs2_lookup_by_inum trying to look
+    up the inode, which it can't, due to I_FREEING.  The other has set
+    I_FREEING from vfs and is at the beginning of gfs2_delete_inode
+    waiting for the glock, which is held by the first.  The solution is to
+    add a new non_block parameter to the gfs2_iget function that causes it
+    to return -ENOENT if the inode is being freed.
+    
+    rhbz#688855
+diff --git a/fs/gfs2/dir.c b/fs/gfs2/dir.c
+index 47e98b4..444fc71 100644
+--- a/fs/gfs2/dir.c
++++ b/fs/gfs2/dir.c
+@@ -1500,7 +1500,7 @@ struct inode *gfs2_dir_search(struct inode *dir, const struct qstr *name)
+ 		inode = gfs2_inode_lookup(dir->i_sb,
+ 				be16_to_cpu(dent->de_type),
+ 				be64_to_cpu(dent->de_inum.no_addr),
+-				be64_to_cpu(dent->de_inum.no_formal_ino));
++				be64_to_cpu(dent->de_inum.no_formal_ino), 0);
+ 		brelse(bh);
+ 		return inode;
+ 	}
+diff --git a/fs/gfs2/inode.c b/fs/gfs2/inode.c
+index 8eac5af..034afaf 100644
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -42,24 +42,38 @@ struct gfs2_inum_range_host {
+ 	u64 ir_length;
+ };
+ 
++struct gfs2_skip_data {
++	u64 no_addr;
++	int skipped;
++	int non_block;
++};
++
+ static int iget_test(struct inode *inode, void *opaque)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+-	u64 *no_addr = opaque;
++	struct gfs2_skip_data *data = opaque;
+ 
+-	if (ip->i_no_addr == *no_addr && test_bit(GIF_USER, &ip->i_flags))
++	if (ip->i_no_addr == data->no_addr &&
++	    test_bit(GIF_USER, &ip->i_flags)) {
++		if (data->non_block &&
++		    inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)) {
++			data->skipped = 1;
++			return 0;
++		}
+ 		return 1;
+-
++	}
+ 	return 0;
+ }
+ 
+ static int iget_set(struct inode *inode, void *opaque)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+-	u64 *no_addr = opaque;
++	struct gfs2_skip_data *data = opaque;
+ 
+-	inode->i_ino = (unsigned long)*no_addr;
+-	ip->i_no_addr = *no_addr;
++	if (data->skipped)
++		return -ENOENT;
++	inode->i_ino = (unsigned long)(data->no_addr);
++	ip->i_no_addr = data->no_addr;
+ 	set_bit(GIF_USER, &ip->i_flags);
+ 	return 0;
+ }
+@@ -67,13 +81,24 @@ static int iget_set(struct inode *inode, void *opaque)
+ struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr)
+ {
+ 	unsigned long hash = (unsigned long)no_addr;
+-	return ilookup5(sb, hash, iget_test, &no_addr);
++	struct gfs2_skip_data data;
++
++	data.no_addr = no_addr;
++	data.skipped = 0;
++	data.non_block = 0;
++	return ilookup5(sb, hash, iget_test, &data);
+ }
+ 
+-static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr)
++static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr,
++			       int non_block)
+ {
++	struct gfs2_skip_data data;
+ 	unsigned long hash = (unsigned long)no_addr;
+-	return iget5_locked(sb, hash, iget_test, iget_set, &no_addr);
++
++	data.no_addr = no_addr;
++	data.skipped = 0;
++	data.non_block = non_block;
++	return iget5_locked(sb, hash, iget_test, iget_set, &data);
+ }
+ 
+ /**
+@@ -114,19 +139,20 @@ static void gfs2_set_iop(struct inode *inode)
+  * @sb: The super block
+  * @no_addr: The inode number
+  * @type: The type of the inode
++ * non_block: Can we block on inodes that are being freed?
+  *
+  * Returns: A VFS inode, or an error
+  */
+ 
+ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
+-				u64 no_addr, u64 no_formal_ino)
++				u64 no_addr, u64 no_formal_ino, int non_block)
+ {
+ 	struct inode *inode;
+ 	struct gfs2_inode *ip;
+ 	struct gfs2_glock *io_gl = NULL;
+ 	int error;
+ 
+-	inode = gfs2_iget(sb, no_addr);
++	inode = gfs2_iget(sb, no_addr, non_block);
+ 	ip = GFS2_I(inode);
+ 
+ 	if (!inode)
+@@ -203,7 +229,7 @@ struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
+ 	if (error)
+ 		goto fail;
+ 
+-	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, no_addr, 0);
++	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, no_addr, 0, 1);
+ 	if (IS_ERR(inode))
+ 		goto fail;
+ 
+@@ -993,7 +1019,7 @@ struct inode *gfs2_createi(struct gfs2_holder *ghs, const struct qstr *name,
+ 		goto fail_gunlock2;
+ 
+ 	inode = gfs2_inode_lookup(dir->i_sb, IF2DT(mode), inum.no_addr,
+-				  inum.no_formal_ino);
++				  inum.no_formal_ino, 0);
+ 	if (IS_ERR(inode))
+ 		goto fail_gunlock2;
+ 
+diff --git a/fs/gfs2/inode.h b/fs/gfs2/inode.h
+index 3d24fa3..e6762d9 100644
+--- a/fs/gfs2/inode.h
++++ b/fs/gfs2/inode.h
+@@ -75,7 +75,7 @@ static inline void gfs2_inum_out(const struct gfs2_inode *ip,
+ 
+ void gfs2_inode_attr_in(struct gfs2_inode *ip);
+ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned type,
+-				u64 no_addr, u64 no_formal_ino);
++				u64 no_addr, u64 no_formal_ino, int non_block);
+ extern struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
+ 					 u64 *no_formal_ino,
+ 					 unsigned int blktype);
+diff --git a/fs/gfs2/ops_export.c b/fs/gfs2/ops_export.c
+index d45765d..9bf0342 100644
+--- a/fs/gfs2/ops_export.c
++++ b/fs/gfs2/ops_export.c
+@@ -198,15 +198,17 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb, void *inum_obj)
+ 			iput(inode);
+ 			return ERR_PTR(-ESTALE);
+ 		}
+-		goto out_inode;
++	} else {
++		inode = gfs2_lookup_by_inum(sdp, inum->no_addr,
++					    &inum->no_formal_ino,
++					    GFS2_BLKST_DINODE);
++		if (inode == ERR_PTR(-ENOENT))
++			inode = gfs2_ilookup(sb, inum->no_addr);
+ 	}
+ 
+-	inode = gfs2_lookup_by_inum(sdp, inum->no_addr, &inum->no_formal_ino,
+-				    GFS2_BLKST_DINODE);
+ 	if (IS_ERR(inode))
+ 		return ERR_CAST(inode);
+ 
+-out_inode:
+ 	dentry = d_alloc_anon(inode);
+ 	if (!dentry) {
+ 		iput(inode);
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index d4b7de4..75dbe03 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -499,7 +499,7 @@ static int gfs2_lookup_root(struct super_block *sb, struct dentry **dptr,
+ 	struct dentry *dentry;
+ 	struct inode *inode;
+ 
+-	inode = gfs2_inode_lookup(sb, DT_DIR, no_addr, 0);
++	inode = gfs2_inode_lookup(sb, DT_DIR, no_addr, 0, 0);
+ 	if (IS_ERR(inode)) {
+ 		fs_err(sdp, "can't read in %s inode: %ld\n", name, PTR_ERR(inode));
+ 		return PTR_ERR(inode);

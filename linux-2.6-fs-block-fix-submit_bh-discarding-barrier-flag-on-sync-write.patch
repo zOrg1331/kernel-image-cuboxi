@@ -1,0 +1,53 @@
+From: Lukas Czerner <lczerner@redhat.com>
+Date: Fri, 25 Mar 2011 09:43:45 -0400
+Subject: [fs] block: fix submit_bh discarding barrier flag on sync write
+Message-id: <1301046225-19448-1-git-send-email-lczerner@redhat.com>
+Patchwork-id: 35047
+O-Subject: [RHEL5.7 PATCH] block: submit_bh() inadvertently discards barrier
+	flag on a sync write
+Bugzilla: 667673
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+BZ 667673
+https://bugzilla.redhat.com/show_bug.cgi?id=667673
+
+  From 48fd4f93a00eac844678629f2f00518e146ed30d Mon Sep 17 00:00:00 2001
+  From: Jens Axboe <jens.axboe@oracle.com>
+  Date: Fri, 22 Aug 2008 10:00:36 +0200
+  Subject: [PATCH] block: submit_bh() inadvertently discards barrier flag on a sync write
+
+  Reported by Milan Broz <mbroz@redhat.com>, commit 18ce3751 inadvertently
+  made submit_bh() discard the barrier bit for a WRITE_SYNC request. Fix
+  that up.
+
+  Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+diff --git a/fs/buffer.c b/fs/buffer.c
+index 6c25df2..46c97d1 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -3186,14 +3186,17 @@ int submit_bh(int rw, struct buffer_head * bh)
+ 	BUG_ON(!buffer_mapped(bh));
+ 	BUG_ON(!bh->b_end_io);
+ 
+-	if (buffer_ordered(bh) && (rw == WRITE))
+-		rw = WRITE_BARRIER;
++	/*
++	 * Mask in barrier bit for a write (could be either a WRITE or a
++	 * WRITE_SYNC
++	 */
++	if (buffer_ordered(bh) && (rw & WRITE))
++		rw |= WRITE_BARRIER;
+ 
+ 	/*
+-	 * Only clear out a write error when rewriting, should this
+-	 * include WRITE_SYNC as well?
++	 * Only clear out a write error when rewriting
+ 	 */
+-	if (test_set_buffer_req(bh) && (rw == WRITE || rw == WRITE_BARRIER))
++	if (test_set_buffer_req(bh) && (rw & WRITE))
+ 		clear_buffer_write_io_error(bh);
+ 
+ 	/*

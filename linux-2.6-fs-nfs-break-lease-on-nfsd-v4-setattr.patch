@@ -1,0 +1,70 @@
+From: J. Bruce Fields <bfields@redhat.com>
+Date: Fri, 4 Feb 2011 22:13:53 -0500
+Subject: [fs] nfs: break lease on nfsd v4 setattr
+Message-id: <1296857634-4533-1-git-send-email-bfields@redhat.com>
+Patchwork-id: 33080
+O-Subject: [RHEL5.7 PATCH 1/2] nfsd4: break lease on nfsd setattr
+Bugzilla: 610093
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Leases (delegations) should really be broken on any metadata change, not
+just on size change.
+
+Bugzilla 610093
+Upstream commit 6a76bebefe15d9a08864f824d7f8d5beaf37c997
+
+(Note RHEL5 backport uses FMODE_WRITE rather than O_WRONLY as RHEL5 is
+missing upstream 8737c9305bd5602b11f7eb4655d5695d4a42a0c6 "Switch
+may_open() and break_lease() to passing O_...".)
+
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index bc4c754..7667f30 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -258,6 +258,16 @@ out:
+ 	return err;
+ }
+ 
++static int nfsd_break_lease(struct inode *inode)
++{
++	int err;
++
++	err = break_lease(inode, FMODE_WRITE | O_NONBLOCK);
++	if (err == -EWOULDBLOCK)
++		err = -ETIMEDOUT;
++	return err;
++}
++
+ /*
+  * Set various file attributes.
+  * N.B. After this call fhp needs an fh_put
+@@ -332,16 +342,6 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 				goto out;
+ 		}
+ 
+-		/*
+-		 * If we are changing the size of the file, then
+-		 * we need to break all leases.
+-		 */
+-		err = break_lease(inode, FMODE_WRITE | O_NONBLOCK);
+-		if (err == -EWOULDBLOCK)
+-			err = -ETIMEDOUT;
+-		if (err) /* ENOMEM or EWOULDBLOCK */
+-			goto out_nfserr;
+-
+ 		err = get_write_access(inode);
+ 		if (err)
+ 			goto out_nfserr;
+@@ -382,6 +382,10 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 
+ 	err = nfserr_notsync;
+ 	if (!check_guard || guardtime == inode->i_ctime.tv_sec) {
++		err = nfsd_break_lease(inode);
++		if (err) /* ENOMEM or EWOULDBLOCK */
++			goto out_nfserr;
++
+ 		fh_lock(fhp);
+ 		err = notify_change(dentry, iap);
+ 		err = nfserrno(err);

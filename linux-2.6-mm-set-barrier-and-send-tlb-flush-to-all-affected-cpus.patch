@@ -1,0 +1,121 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 22 Feb 2011 13:51:39 -0500
+Subject: [mm] set barrier and send tlb flush to all affected cpus
+Message-id: <20110222135139.10242.94132.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 33532
+O-Subject: [RHEL5 BZ 675793 PATCH V2] mm: send tlb flush to all affected cpus
+Bugzilla: 675793
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+A month ago I updated my RHEL5 system with the latest RHEL5 build and an
+additional 4G of memory.  The system does one thing (besides being a RHEL5
+system that I can look at) -- it does incremental backups of my RHEL6 day-to-day
+workstation.
+
+After the upgrade, the system would fail once a week in the TLB code.  This
+failure occurred 50% of the time when doing a backup.
+
+After posting version 1, bpicco correctly noted that my assessment of the
+situation was incorrect, and the right thing to do was introduce a memory
+barrier to make sure that the mask passed into the IPI request was up-to-date.
+
+lwoodman suggested keeping my original change (it is that way upstream) and
+adding the memory barrier code.
+
+I've tested this change on my RHEL5 box and backups are now back to 100% a
+success rate.
+
+Resolves BZ 675793.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/smp-xen.c b/arch/i386/kernel/smp-xen.c
+index 2ece371..29e53c6 100644
+--- a/arch/i386/kernel/smp-xen.c
++++ b/arch/i386/kernel/smp-xen.c
+@@ -357,11 +357,17 @@ static void flush_tlb_others(cpumask_t cpumask, struct mm_struct *mm,
+ 			atomic_set_mask(cpu_mask[k], &flush_mask[k]);
+ 	}
+ #endif
++
++	/*
++	 * Make the above memory operations globally visible before
++	 * sending the IPI.
++	 */
++	smp_mb();
+ 	/*
+ 	 * We have to send the IPI only to
+ 	 * CPUs affected.
+ 	 */
+-	send_IPI_mask(cpumask, INVALIDATE_TLB_VECTOR);
++	send_IPI_mask(flush_cpumask, INVALIDATE_TLB_VECTOR);
+ 
+ 	while (!cpus_empty(flush_cpumask))
+ 		/* nothing. lockup detection does not belong here */
+diff --git a/arch/i386/kernel/smp.c b/arch/i386/kernel/smp.c
+index d62f54d..8b4a0b3 100644
+--- a/arch/i386/kernel/smp.c
++++ b/arch/i386/kernel/smp.c
+@@ -395,11 +395,17 @@ static void flush_tlb_others(cpumask_t cpumask, struct mm_struct *mm,
+ 			atomic_set_mask(cpu_mask[k], &flush_mask[k]);
+ 	}
+ #endif
++
++	/*
++	 * Make the above memory operations globally visible before
++	 * sending the IPI.
++	 */
++	smp_mb();
+ 	/*
+ 	 * We have to send the IPI only to
+ 	 * CPUs affected.
+ 	 */
+-	send_IPI_mask(cpumask, INVALIDATE_TLB_VECTOR);
++	send_IPI_mask(flush_cpumask, INVALIDATE_TLB_VECTOR);
+ 
+ 	while (!cpus_empty(flush_cpumask))
+ 		/* nothing. lockup detection does not belong here */
+diff --git a/arch/x86_64/kernel/smp-xen.c b/arch/x86_64/kernel/smp-xen.c
+index bb2eaf1..d0abebc 100644
+--- a/arch/x86_64/kernel/smp-xen.c
++++ b/arch/x86_64/kernel/smp-xen.c
+@@ -192,10 +192,15 @@ static void flush_tlb_others(cpumask_t cpumask, struct mm_struct *mm,
+ 	cpus_or(f->flush_cpumask, cpumask, f->flush_cpumask);
+ 
+ 	/*
++	 * Make the above memory operations globally visible before
++	 * sending the IPI.
++	 */
++	smp_mb();
++	/*
+ 	 * We have to send the IPI only to
+ 	 * CPUs affected.
+ 	 */
+-	send_IPI_mask(cpumask, INVALIDATE_TLB_VECTOR_START + sender);
++	send_IPI_mask(f->flush_cpumask, INVALIDATE_TLB_VECTOR_START + sender);
+ 
+ 	while (!cpus_empty(f->flush_cpumask))
+ 		cpu_relax();
+diff --git a/arch/x86_64/kernel/smp.c b/arch/x86_64/kernel/smp.c
+index 0b6ecdc..f0d55b5 100644
+--- a/arch/x86_64/kernel/smp.c
++++ b/arch/x86_64/kernel/smp.c
+@@ -186,10 +186,15 @@ static void flush_tlb_others(cpumask_t cpumask, struct mm_struct *mm,
+ 	cpus_or(f->flush_cpumask, cpumask, f->flush_cpumask);
+ 
+ 	/*
++	 * Make the above memory operations globally visible before
++	 * sending the IPI.
++	 */
++	smp_mb();
++	/*
+ 	 * We have to send the IPI only to
+ 	 * CPUs affected.
+ 	 */
+-	send_IPI_mask(cpumask, INVALIDATE_TLB_VECTOR_START + sender);
++	send_IPI_mask(f->flush_cpumask, INVALIDATE_TLB_VECTOR_START + sender);
+ 
+ 	while (!cpus_empty(f->flush_cpumask))
+ 		cpu_relax();

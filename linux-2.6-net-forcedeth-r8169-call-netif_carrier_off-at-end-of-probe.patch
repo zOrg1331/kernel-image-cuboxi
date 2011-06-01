@@ -1,0 +1,54 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Fri, 18 Mar 2011 17:43:34 -0400
+Subject: [net] forcedeth/r8169: call netif_carrier_off at end of probe
+Message-id: <1300470214-6787-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 34559
+O-Subject: [PATCH] forcedeth/r8169: call netif_carrier_off at the end of the
+	probe
+Bugzilla: 664705 664707
+
+BZs:
+#664705 - Wrong "operstate" status on nvidia nforce card with forcedeth driver
+#664707 - Wrong "operstate" status on Realtek nics
+
+Description:
+Without calling of netif_carrier_off at the end of the probe the operstate
+is unknown when the device is initially opened. By default the carrier is
+on so when the device is opened and netif_carrier_on is called the link
+watch event is not fired and operstate remains zero (unknown).
+This patch fixes this behavior in forcedeth and r8169.
+
+Test status:
+Tested inhouse by myself
+
+Upstream commit:
+0d672e9 drivers/net: Call netif_carrier_off at the end of the probe
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index 0c5dcf5..ae39a48 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -5810,6 +5810,8 @@ static int __devinit nv_probe(struct pci_dev *pci_dev, const struct pci_device_i
+ 		goto out_error;
+ 	}
+ 
++	netif_carrier_off(dev);
++
+ 	dev_printk(KERN_INFO, &pci_dev->dev, "ifname %s, PHY OUI 0x%x @ %d, "
+ 		   "addr %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x\n",
+ 		   dev->name,
+diff --git a/drivers/net/r8169.c b/drivers/net/r8169.c
+index 2447a55..317e3d5 100644
+--- a/drivers/net/r8169.c
++++ b/drivers/net/r8169.c
+@@ -3216,6 +3216,8 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 
+ 	device_set_wakeup_enable(&pdev->dev, tp->features & RTL_FEATURE_WOL);
+ 
++	netif_carrier_off(dev);
++
+ out:
+ 	return rc;
+ 

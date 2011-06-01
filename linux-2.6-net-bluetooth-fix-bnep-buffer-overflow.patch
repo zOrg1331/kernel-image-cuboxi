@@ -1,0 +1,44 @@
+From: Don Howard <dhoward@redhat.com>
+Date: Fri, 18 Mar 2011 18:51:47 -0400
+Subject: [net] bluetooth: fix bnep buffer overflow
+Message-id: <alpine.LFD.2.02.1103171350420.9159@localhost6.localdomain6>
+Patchwork-id: 34654
+O-Subject: [RHEL5.7 PATCH] Bluetooth: bnep: fix buffer overflow.
+Bugzilla: 681319
+CVE: CVE-2011-1079
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Backport from upstream 2.6.
+Fixes bug 681319, CVE-2011-1079.
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=3180653
+
+commit 43629f8f5ea32a998d06d1bb41eefa0e821ff573
+Author: Vasiliy Kulikov <segoon@openwall.com>
+Date:   Mon Feb 14 13:54:31 2011 +0300
+
+    Bluetooth: bnep: fix buffer overflow
+
+    Struct ca is copied from userspace.  It is not checked whether the "device"
+    field is NULL terminated.  This potentially leads to BUG() inside of
+    alloc_netdev_mqs() and/or information leak by creating a device with a name
+    made of contents of kernel stack.
+
+    Signed-off-by: Vasiliy Kulikov <segoon@openwall.com>
+    Signed-off-by: Gustavo F. Padovan <padovan@profusion.mobi>
+
+Signed-off-by: Don Howard <dhoward@redhat.com>
+
+diff --git a/net/bluetooth/bnep/sock.c b/net/bluetooth/bnep/sock.c
+index 0ef2783..2c04576 100644
+--- a/net/bluetooth/bnep/sock.c
++++ b/net/bluetooth/bnep/sock.c
+@@ -98,6 +98,7 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long
+ 			fput(nsock->file);
+ 			return -EBADFD;
+ 		}
++		ca.device[sizeof(ca.device)-1] = 0;
+ 
+ 		err = bnep_add_connection(&ca, nsock);
+ 		if (!err) {

@@ -1,0 +1,69 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 28 Mar 2011 00:44:38 -0400
+Subject: [usb] fix usbfs isochronous data transfer regression
+Message-id: <1301273078-26203-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 35087
+O-Subject: [RHEL5 PATCH] USB: fix usbfs regression
+Bugzilla: 688926
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=688926
+
+commit 7152b592593b9d48b33f8997b1dfd6df9143f7ec
+Author: Alan Stern <stern@rowland.harvard.edu>
+Date:   Sat Mar 6 15:04:03 2010 -0500
+
+    USB: fix usbfs regression
+
+    This patch (as1352) fixes a bug in the way isochronous input data is
+    returned to userspace for usbfs transfers.  The entire buffer must be
+    copied, not just the first actual_length bytes, because the individual
+    packets will be discontiguous if any of them are short.
+
+    Reported-by: Markus Rechberger <mrechberger@gmail.com>
+    Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+    CC: stable <stable@kernel.org>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Tested by the customer.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/usb/core/devio.c b/drivers/usb/core/devio.c
+index 4e4365b..2618d6f 100644
+--- a/drivers/usb/core/devio.c
++++ b/drivers/usb/core/devio.c
+@@ -1028,6 +1028,13 @@ static int proc_do_submiturb(struct dev_state *ps, struct usbdevfs_urb *uurb,
+ 		free_async(as);
+ 		return -ENOMEM;
+ 	}
++
++	/* Isochronous input data may end up being discontiguous
++	 * if some of the packets are short.  Clear the buffer so
++	 * that the gaps don't leak kernel data to userspace.
++	 */
++	if ((uurb->endpoint & USB_DIR_IN) && uurb->type == USBDEVFS_URB_TYPE_ISO)
++		memset(as->urb->transfer_buffer, 0, uurb->buffer_length);
+         as->urb->dev = ps->dev;
+         as->urb->pipe = (uurb->type << 30) | __create_pipe(ps->dev, uurb->endpoint & 0xf) | (uurb->endpoint & USB_DIR_IN);
+         as->urb->transfer_flags = uurb->flags;
+@@ -1106,9 +1113,14 @@ static int processcompl(struct async *as, void __user * __user *arg)
+ 	void __user *addr = as->userurb;
+ 	unsigned int i;
+ 
+-	if (as->userbuffer && urb->actual_length)
+-		if (copy_to_user(as->userbuffer, urb->transfer_buffer, urb->actual_length))
++	if (as->userbuffer && urb->actual_length) {
++		if (urb->number_of_packets > 0)		/* Isochronous */
++			i = urb->transfer_buffer_length;
++		else					/* Non-Isoc */
++			i = urb->actual_length;
++		if (copy_to_user(as->userbuffer, urb->transfer_buffer, i))
+ 			return -EFAULT;
++	}
+ 	if (put_user(urb->status, &userurb->status))
+ 		return -EFAULT;
+ 	if (put_user(urb->actual_length, &userurb->actual_length))

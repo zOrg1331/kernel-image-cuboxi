@@ -1,0 +1,87 @@
+From: Laszlo Ersek <lersek@redhat.com>
+Date: Mon, 18 Apr 2011 09:10:55 -0400
+Subject: [xen] x86/domain: fix error checks in arch_set_info_guest
+Message-id: <1303117855-6632-1-git-send-email-lersek@redhat.com>
+Patchwork-id: 4566
+O-Subject: [kernel team] [RHEL5.7 Xen PATCH] CVE-2011-1166: x86_64: fix error
+	checking in arch_set_info_guest() (BZ#688582)
+Bugzilla:
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+This is a backport of upstream Xen changeset 23034:c79aae866ad8. I
+reproduced the bug and tested the fix with -256; the patch rebased to
+-257 verbatim.
+
+Upstream commit message:
+
+  http://xenbits.xen.org/hg/staging/xen-unstable.hg/rev/c79aae866ad8
+
+    Cannot specify user mode execution without specifying user-mode
+    pagetables.
+
+Reference:
+
+  https://bugzilla.novell.com/show_bug.cgi?id=679344
+
+    The problem is that a 64-bit guest can get one of its vcpus into
+    non-kernel mode without first providing a valid non-kernel
+    pagetable. The iret-into-userspace path has the right checks, but
+    just setting the context on a fresh vcpu doesn't. :(  The observed
+    failure mode is usually a hard lockup of the host.
+
+Reproducing the bug:
+
+  (1) Install an x86_64 NetBSD-5.1 PV guest. See comment 9 of bug 688579
+      [0] (the blocked vulnerability bug) for what files to download and
+      how to proceed with the guest config and the installation. It is
+      important to configure at least two VCPUs. I tested with four.
+
+  (2) Reboot the PV guest with a "problematic" NetBSD 5.99.46 kernel.
+      See bug 688579 attachment 492827 [1] for a local copy of said
+      kernel, and comment 11 [2] for the vm config.
+
+  (3) Observe lockup symptoms: dom0 doesn't respond to ping or TCP SYN,
+      login to dom0 over serial doesn't work, Xen cannot reboot the
+      machine with the 'R' hotkey.
+
+Testing the fix:
+
+  The patched HV successfully boots the NetBSD guest with the
+  problematic kernel. Everything keeps working. See guest and HV logs in
+  bug 688579 comment 13 [3].
+
+Brew:
+
+  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=3261014
+
+Please review. Thanks.
+
+[0] https://bugzilla.redhat.com/show_bug.cgi?id=688579#c9
+[1] https://bugzilla.redhat.com/attachment.cgi?id=492827
+[2] https://bugzilla.redhat.com/show_bug.cgi?id=688579#c11
+[3] https://bugzilla.redhat.com/show_bug.cgi?id=688579#c13
+
+Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+---
+ arch/x86/domain.c |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 9d17b46..f9a89f4 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -735,6 +735,11 @@ int arch_set_info_guest(
+ 
+                 v->arch.guest_table_user = pagetable_from_pfn(cr3_pfn);
+             }
++            else if ( !(flags & VGCF_in_kernel) )
++            {
++                destroy_gdt(v);
++                return -EINVAL;
++            }
+ #endif
+         }
+ #ifdef CONFIG_COMPAT
