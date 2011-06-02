@@ -298,6 +298,7 @@ struct ve_struct {
 
 	struct nsproxy		*ve_ns;
 	struct user_namespace	*user_ns;
+	struct cred		*init_cred;
 	struct net		*ve_netns;
 	struct cgroup		*ve_cgroup;
 	struct list_head	vetask_auxlist;
