@@ -706,6 +706,8 @@ static int __vzquota_sync_list(struct list_head *lh,
 
 		inode_qmblk_unlock(qmblk->dq_sb);
 
+		wbc.range_start = 0;
+		wbc.range_end = LONG_MAX;
 		wbc.nr_to_write = LONG_MAX;
 		ret = sync_inode(inode, &wbc);
 		if (ret)

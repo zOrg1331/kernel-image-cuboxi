@@ -2121,7 +2121,7 @@ static unsigned long
 __load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		unsigned long max_load_move,
 		struct sched_domain *sd, enum cpu_idle_type idle,
-		int *all_pinned, unsigned int *loops_left,
+		int *all_pinned, unsigned int *nr_migrate,
 		struct cfs_rq *cfs_rq)
 {
 	struct rq_iterator cfs_rq_iterator;
@@ -2131,7 +2131,7 @@ __load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	cfs_rq_iterator.arg = cfs_rq;
 
 	return balance_tasks(this_rq, this_cpu, busiest,
-			max_load_move, sd, idle, all_pinned, loops_left,
+			max_load_move, sd, idle, all_pinned, nr_migrate,
 			&cfs_rq_iterator);
 }
 
@@ -2140,7 +2140,7 @@ static unsigned long
 load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		  unsigned long max_load_move,
 		  struct sched_domain *sd, enum cpu_idle_type idle,
-		  int *all_pinned, unsigned int *loops_left)
+		  int *all_pinned, unsigned int *nr_migrate)
 {
 	long rem_load_move = max_load_move;
 	int busiest_cpu = cpu_of(busiest);
@@ -2165,17 +2165,19 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		rem_load = div_u64(rem_load, busiest_h_load + 1);
 
 		moved_load = __load_balance_fair(this_rq, this_cpu, busiest,
-				rem_load, sd, idle, all_pinned, loops_left,
+				rem_load, sd, idle, all_pinned, nr_migrate,
 				tg->cfs_rq[busiest_cpu]);
 
-		if (!moved_load)
-			continue;
+		if (moved_load) {
+			moved_load *= busiest_h_load;
+			moved_load = div_u64(moved_load, busiest_weight + 1);
 
-		moved_load *= busiest_h_load;
-		moved_load = div_u64(moved_load, busiest_weight + 1);
+			rem_load_move -= moved_load;
+			if (rem_load_move < 0)
+				break;
+		}
 
-		rem_load_move -= moved_load;
-		if (rem_load_move < 0 || !*loops_left)
+		if (!*nr_migrate)
 			break;
 	}
 	rcu_read_unlock();
@@ -2187,10 +2189,10 @@ static unsigned long
 load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		  unsigned long max_load_move,
 		  struct sched_domain *sd, enum cpu_idle_type idle,
-		  int *all_pinned, unsigned int *loops_left)
+		  int *all_pinned, unsigned int *nr_migrate)
 {
 	return __load_balance_fair(this_rq, this_cpu, busiest,
-			max_load_move, sd, idle, all_pinned, loops_left,
+			max_load_move, sd, idle, all_pinned, nr_migrate,
 			&busiest->cfs);
 }
 #endif

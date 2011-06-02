@@ -709,6 +709,24 @@ static struct inode_operations bc_root_iops = {
 	.getattr = bc_root_getattr,
 };
 
+static int ub_vswap_show(struct seq_file *f, void *unused)
+{
+	seq_puts(f, "Version: 1.0\n");
+	return 0;
+}
+
+static int ub_vswap_open(struct inode *inode, struct file *filp)
+{
+	return single_open(filp, ub_vswap_show, NULL);
+}
+
+static struct file_operations ub_vswap_fops = {
+	.open		= ub_vswap_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static int __init ub_init_proc(void)
 {
 	struct proc_dir_entry *entry;
@@ -732,6 +750,7 @@ static int __init ub_init_proc(void)
 
 	entry = proc_create("user_beancounters",
 			S_IRUSR, &glob_proc_root, &ub_file_operations);
+	proc_create("vswap", S_IRUSR, proc_vz_dir, &ub_vswap_fops);
 	return 0;
 }
 

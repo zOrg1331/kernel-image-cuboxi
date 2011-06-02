@@ -1872,7 +1872,7 @@ static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	      unsigned long max_load_move,
 	      struct sched_domain *sd, enum cpu_idle_type idle,
-	      int *all_pinned, unsigned int *loops_left,
+	      int *all_pinned, unsigned int *nr_migrate,
 	      struct rq_iterator *iterator);
 
 static int
@@ -4070,7 +4070,7 @@ static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	      unsigned long max_load_move,
 	      struct sched_domain *sd, enum cpu_idle_type idle,
-	      int *all_pinned, unsigned int *loops_left,
+	      int *all_pinned, unsigned int *nr_migrate,
 	      struct rq_iterator *iterator)
 {
 	int pulled = 0;
@@ -4085,9 +4085,8 @@ balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	 */
 	p = iterator->start(iterator->arg);
 next:
-	if (!p || !*loops_left)
+	if (!p || !*nr_migrate)
 		goto out;
-	--*loops_left;
 
 	if ((p->se.load.weight >> 1) > rem_load_move ||
 	    !can_migrate_task(p, busiest, this_cpu, sd, idle,
@@ -4099,6 +4098,7 @@ next:
 	pull_task(busiest, p, this_rq, this_cpu);
 	pulled++;
 	rem_load_move -= p->se.load.weight;
+	--*nr_migrate;
 
 #ifdef CONFIG_PREEMPT
 	/*
@@ -4107,7 +4107,7 @@ next:
 	 * section.
 	 */
 	if (idle == CPU_NEWLY_IDLE) {
-		*loops_left = 0;
+		*nr_migrate = 0;
 		goto out;
 	}
 #endif
@@ -4144,15 +4144,15 @@ static int move_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 {
 	const struct sched_class *class = sched_class_highest;
 	unsigned long total_load_moved = 0;
-	unsigned int loops_left = sysctl_sched_nr_migrate;
+	unsigned int nr_migrate = sysctl_sched_nr_migrate;
 
 	do {
 		total_load_moved +=
 			class->load_balance(this_rq, this_cpu, busiest,
 				max_load_move - total_load_moved,
-				sd, idle, all_pinned, &loops_left);
+				sd, idle, all_pinned, &nr_migrate);
 		class = class->next;
-	} while (class && max_load_move > total_load_moved && loops_left);
+	} while (class && max_load_move > total_load_moved && nr_migrate);
 
 	return total_load_moved > 0;
 }
@@ -8473,11 +8473,27 @@ static void migrate_dead(unsigned int dead_cpu, struct task_struct *p)
 	put_task_struct(p);
 }
 
+static void unthrottle_offline_cfs_rqs(struct rq *rq)
+{
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	struct cfs_rq *cfs_rq;
+
+	for_each_leaf_cfs_rq(rq, cfs_rq) {
+		if (sched_cpulimit_delay_cfs_rq_done(cfs_rq) >= 0 &&
+		    cfs_rq->throttled)
+			unthrottle_cfs_rq(cfs_rq);
+	}
+#endif
+}
+
 /* release_task() removes task from tasklist, so we won't find dead tasks. */
 static void migrate_dead_tasks(unsigned int dead_cpu)
 {
 	struct rq *rq = cpu_rq(dead_cpu);
 	struct task_struct *next;
+
+	/* ensure any throttled groups are reachable by pick_next_task() */
+	unthrottle_offline_cfs_rqs(rq);
 
 	for ( ; ; ) {
 		if (!rq->nr_running)
@@ -10454,11 +10470,6 @@ static inline void destroy_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
 	hrtimer_cancel(&cfs_rq->delay_timer);
 }
 
-static inline void init_tg_cpulimit(struct task_group *tg)
-{
-	tg->rate = 0;
-}
-
 #else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 static inline void init_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
@@ -10467,11 +10478,6 @@ static inline void init_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
 }
 
 static inline void destroy_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
-{
-	return;
-}
-
-static inline void init_tg_cpulimit(struct task_group *tg)
 {
 	return;
 }
@@ -10686,8 +10692,6 @@ void __init sched_init(void)
 					     __alignof__(unsigned long));
 #endif
 #endif
-
-	init_tg_cpulimit(&init_task_group);
 
 	for_each_possible_cpu(i) {
 		struct rq *rq;
@@ -11015,8 +11019,6 @@ int alloc_fair_sched_group(struct task_group *tg, struct task_group *parent)
 		goto err;
 
 	tg->shares = NICE_0_LOAD;
-
-	init_tg_cpulimit(tg);
 
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);

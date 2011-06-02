@@ -641,7 +641,7 @@ static inline void fini_ve_namespaces(struct ve_struct *ve,
 		ve->ve_ns = get_nsproxy(old);
 		put_nsproxy(tmp);
 	} else {
-		put_user_ns(ve->user_ns);
+		put_cred(ve->init_cred);
 		put_nsproxy(ve->ve_ns);
 		ve->ve_ns = NULL;
 	}
@@ -819,7 +819,7 @@ static void ve_list_del(struct ve_struct *ve)
 	write_unlock_irq(&ve_list_lock);
 }
 
-static void set_task_ve_caps(struct ve_struct *ve, struct cred *new)
+static void init_ve_cred(struct ve_struct *ve, struct cred *new)
 {
 	const struct cred *cur;
 	kernel_cap_t bset;
@@ -831,25 +831,25 @@ static void set_task_ve_caps(struct ve_struct *ve, struct cred *new)
 	new->cap_permitted = cap_intersect(cur->cap_permitted, bset);
 	new->cap_bset = cap_intersect(cur->cap_bset, bset);
 
-	if (commit_creds(new))
-		/* too late to rollback, but commit currently just works */
-		BUG();
+	ve->init_cred = new;
+	ve->user_ns = new->user->user_ns;
 }
 
-static void __ve_move_task(struct task_struct *tsk, struct ve_struct *new,
-				struct cred *new_creds)
+static void ve_move_task(struct ve_struct *new)
 {
+	struct task_struct *tsk = current;
 	struct ve_struct *old;
 
 	might_sleep();
-	BUG_ON(tsk != current);
 	BUG_ON(!(thread_group_leader(tsk) && thread_group_empty(tsk)));
 
 	/* this probihibts ptracing of task entered to VE from host system */
 	if (tsk->mm)
 		tsk->mm->vps_dumpable = 0;
+
 	/* setup capabilities before enter */
-	set_task_ve_caps(new, new_creds);
+	if (commit_creds(get_new_cred(new->init_cred)))
+		BUG();
 
 	/* Drop OOM protection. */
 	if (tsk->signal->oom_adj == OOM_DISABLE)
@@ -874,23 +874,7 @@ static void __ve_move_task(struct task_struct *tsk, struct ve_struct *new,
 	get_ve(new);
 
 	cgroup_kernel_attach(new->ve_cgroup, tsk);
-
-	new->user_ns = get_user_ns(new_creds->user->user_ns);
 }
-
-void ve_move_task(struct task_struct *tsk, struct ve_struct *new,
-			struct cred *new_creds, unsigned int flags)
-{
-	__ve_move_task(tsk, new, new_creds);
-
-	/* Check that the process is not a leader of non-empty group/session.
-	 * If it is, we cannot virtualize its PID. Do not fail, just leave
-	 * it non-virtual.
-	 */
-	if (alone_in_pgrp(tsk) && !(flags & VE_SKIPLOCK))
-		pid_ns_attach_task(new->ve_ns->pid_ns, tsk);
-}
-EXPORT_SYMBOL(ve_move_task);
 
 #ifdef CONFIG_VE_IPTABLES
 
@@ -1145,8 +1129,10 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	put_nsproxy(old_ns);
 	put_nsproxy(old_ns_net);
 
+	init_ve_cred(ve, new_creds);
+
 	/* finally: set vpids and move inside */
-	__ve_move_task(tsk, ve, new_creds);
+	ve_move_task(ve);
 
 	ve->is_running = 1;
 	up_write(&ve->op_sem);
@@ -1330,7 +1316,10 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 #endif
 	ve_sched_attach(ve);
 	switch_ve_namespaces(ve, tsk);
-	ve_move_task(current, ve, new_creds, flags);
+	ve_move_task(ve);
+
+	if (alone_in_pgrp(tsk) && !(flags & VE_SKIPLOCK))
+		pid_ns_attach_task(ve->ve_ns->pid_ns, tsk);
 
 	/* Unlike VE_CREATE, we do not setsid() in VE_ENTER.
 	 * Process is allowed to be in an external group/session.
