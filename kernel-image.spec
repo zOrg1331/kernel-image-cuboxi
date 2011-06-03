@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.38
-Release: alt7.2
+Release: alt8.1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -641,6 +641,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Jun 03 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt8.1
+- Update to 2.6.38.8
+
 * Thu May 26 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt7.2
 - drm/nv50: use "nv86" tlb flush method on everything except 0x50/0xac
 
