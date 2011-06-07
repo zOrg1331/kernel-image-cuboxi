@@ -39,6 +39,9 @@ struct env_create_param3;
 extern int real_env_create(envid_t veid, unsigned flags, u32 class_id,
 			   struct env_create_param3 *data, int datalen);
 
+extern int ve_freeze(struct ve_struct *env);
+extern void ve_thaw(struct ve_struct *env);
+
 int set_device_perms_ve(struct ve_struct *, unsigned, dev_t, unsigned);
 int get_device_perms_ve(int dev_type, dev_t dev, int access_mode);
 int devperms_seq_show(struct seq_file *m, void *v);

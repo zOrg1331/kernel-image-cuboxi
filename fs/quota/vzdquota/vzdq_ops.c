@@ -257,6 +257,7 @@ static int vzquota_check_ugid_space(struct vz_quota_master *qmblk,
 {
 	struct dq_kinfo *dqinfo;
 	struct dq_kstat *dqstat;
+	qsize_t btotal;
 
 	if (prealloc & DQUOT_SPACE_NOFAIL)
 		return QUOTA_OK;
@@ -275,13 +276,14 @@ static int vzquota_check_ugid_space(struct vz_quota_master *qmblk,
 
 	dqinfo = &qmblk->dq_ugid_info[type];
 	dqstat = &qugid[type]->qugid_stat;
+	btotal = dqstat->bcurrent + dqstat->breserved + number;
 
 	if (dqstat->bhardlimit != 0 &&
-	    dqstat->bcurrent + number > dqstat->bhardlimit)
+	    btotal > dqstat->bhardlimit)
 		return NO_QUOTA;
 
 	if (dqstat->bsoftlimit != 0 &&
-	    dqstat->bcurrent + number > dqstat->bsoftlimit) {
+	    btotal > dqstat->bsoftlimit) {
 		if (dqstat->btime == (time_t)0) {
 			if (!prealloc)
 				dqstat->btime = CURRENT_TIME_SECONDS

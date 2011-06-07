@@ -63,9 +63,20 @@ static inline int try_to_freeze(void)
 extern bool freeze_task(struct task_struct *p, bool sig_only);
 extern void cancel_freezing(struct task_struct *p);
 
+enum freezer_state {
+	CGROUP_THAWED = 0,
+	CGROUP_FREEZING,
+	CGROUP_FROZEN,
+};
+
 #ifdef CONFIG_CGROUP_FREEZER
+extern int freezer_change_state(struct cgroup *, enum freezer_state);
 extern int cgroup_freezing_or_frozen(struct task_struct *task);
 #else /* !CONFIG_CGROUP_FREEZER */
+static inline int freezer_change_state(struct cgroup *c, enum freezer_state s)
+{
+	return -ENOSYS;
+}
 static inline int cgroup_freezing_or_frozen(struct task_struct *task)
 {
 	return 0;
@@ -163,8 +174,6 @@ static inline void set_freezable_with_signal(void)
 	} while (try_to_freeze());					\
 	__retval;							\
 })
-
-extern atomic_t global_suspend;
 #else /* !CONFIG_FREEZER */
 static inline int frozen(struct task_struct *p) { return 0; }
 static inline int freezing(struct task_struct *p) { return 0; }

@@ -565,6 +565,26 @@ static inline unsigned cfq_group_get_avg_queues(struct cfq_data *cfqd,
 	return cfqg->busy_queues_avg[rt];
 }
 
+static inline u64
+cfq_group_vslice(struct cfq_data *cfqd, struct cfq_group *cfqg)
+{
+	struct cfq_rb_root *st = &cfqd->grp_service_tree;
+	u64 vslice;
+
+	/* FIXME no group slices in iops mode? */
+	if (iops_mode(cfqd))
+		return 0;
+
+	/*
+	 * Equal to cfq_scale_slice(cfq_group_slice(cfqd, cfqg), cfqg).
+	 * Add group weight beacuse it currently not in service tree.
+	 */
+	vslice = (u64)cfq_target_latency << CFQ_SERVICE_SHIFT;
+	vslice *= BLKIO_WEIGHT_DEFAULT;
+	do_div(vslice, st->total_weight + cfqg->weight);
+	return vslice;
+}
+
 static inline unsigned
 cfq_group_slice(struct cfq_data *cfqd, struct cfq_group *cfqg)
 {
@@ -861,16 +881,20 @@ cfq_group_notify_queue_add(struct cfq_data *cfqd, struct cfq_group *cfqg)
 		return;
 
 	/*
-	 * Currently put the group at the end. Later implement something
-	 * so that groups get lesser vtime based on their weights, so that
-	 * if group does not loose all if it was not continously backlogged.
+	 * Bump vdisktime to be greater or equal min_vdisktime.
+	 */
+	cfqg->vdisktime = max_vdisktime(cfqg->vdisktime, st->min_vdisktime);
+
+	/*
+	 * Put the group at the end, but save one slice from unused time.
 	 */
 	n = rb_last(&st->rb);
 	if (n) {
 		__cfqg = rb_entry_cfqg(n);
-		cfqg->vdisktime = __cfqg->vdisktime + CFQ_IDLE_DELAY;
-	} else
-		cfqg->vdisktime = st->min_vdisktime;
+		cfqg->vdisktime = max_vdisktime(cfqg->vdisktime,
+				__cfqg->vdisktime -
+					cfq_group_vslice(cfqd, cfqg));
+	}
 	cfq_group_service_tree_add(st, cfqg);
 }
 
@@ -3553,6 +3577,17 @@ static inline int __cfq_may_queue(struct cfq_queue *cfqq)
 		return ELV_MQUEUE_MUST;
 	}
 
+#ifdef CONFIG_CFQ_GROUP_IOSCHED
+	/*
+	 * force queueing first queue in the group after long sleep
+	 */
+	if (!cfq_cfqq_must_alloc_slice(cfqq) && cfqq->cfqg->nr_cfqq == 0 &&
+	    cfqg_key(&cfqq->cfqd->grp_service_tree, cfqq->cfqg) < 0) {
+		cfq_mark_cfqq_must_alloc_slice(cfqq);
+		return ELV_MQUEUE_MUST;
+	}
+#endif
+
 	return ELV_MQUEUE_MAY;
 }
 
@@ -3904,7 +3939,7 @@ static void *cfq_init_queue(struct request_queue *q)
 	cfqd->cfq_slice_idle = cfq_slice_idle;
 	cfqd->cfq_group_idle = cfq_group_idle;
 	cfqd->cfq_latency = 1;
-	cfqd->cfq_group_isolation = 0;
+	cfqd->cfq_group_isolation = 1;
 	cfqd->hw_tag = -1;
 	/*
 	 * we optimistically start assuming sync ops weren't delayed in last

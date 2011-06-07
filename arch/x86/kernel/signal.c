@@ -17,7 +17,6 @@
 #include <linux/tracehook.h>
 #include <linux/unistd.h>
 #include <linux/stddef.h>
-#include <linux/freezer.h>
 #include <linux/personality.h>
 #include <linux/uaccess.h>
 #include <linux/user-return-notifier.h>
@@ -794,9 +793,6 @@ static void do_signal(struct pt_regs *regs)
 	if (!user_mode(regs))
 		return;
 
-	if (try_to_freeze() && !signal_pending(current))
- 		goto no_signal;
-
 	if (current_thread_info()->status & TS_RESTORE_SIGMASK)
 		oldset = &current->saved_sigmask;
 	else
@@ -826,7 +822,6 @@ static void do_signal(struct pt_regs *regs)
 		return;
 	}
 
-no_signal:
 	/* Did we come from a system call? */
 	if (syscall_get_nr(current, regs) >= 0) {
 		/* Restart the system call - no handlers present */

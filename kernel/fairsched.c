@@ -440,7 +440,7 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 		p->nr_runtasks = sched_cgroup_get_nr_running(cgrp);
 		p->weight = FSCHWEIGHT_BASE / sched_cgroup_get_shares(cgrp);
 		p->nr_pcpu = num_online_cpus();
-		p->rate = sched_cgroup_get_rate(cgrp) * p->nr_pcpu;
+		p->rate = sched_cgroup_get_rate(cgrp);
 		p++;
 		if (!--nr_nodes)
 			break;

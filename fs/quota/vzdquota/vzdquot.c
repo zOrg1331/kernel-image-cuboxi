@@ -1959,6 +1959,58 @@ static int vzquota_dstat(struct inode *inode, struct dq_kstat *qstat)
 	return 0;
 }
 
+int
+vzquota_snap_init(struct super_block *vsuper, void *vzs, struct path *path)
+{
+	int err;
+	struct vz_quota_master *qmblk;
+
+	qmblk = vzquota_find_qmblk(vsuper);
+	if (qmblk == NULL)
+		return -ENOENT;
+	if (qmblk == VZ_QUOTA_BAD)
+		return -ENOENT;
+
+	err = -EBUSY;
+	qmblk_data_write_lock(qmblk);
+	if (!qmblk->dq_snap && qmblk->dq_root_path.mnt &&
+			qmblk->dq_root_path.dentry &&
+			qmblk->dq_root_path.mnt->mnt_sb->s_bdev) {
+		qmblk->dq_snap = vzs;
+		*path = qmblk->dq_root_path;
+		path_get(path);
+		err = 0;
+	}
+	qmblk_data_write_unlock(qmblk);
+
+	qmblk_put(qmblk);
+	return err;
+}
+EXPORT_SYMBOL(vzquota_snap_init);
+
+int vzquota_snap_stop(struct super_block *super, void *vzs)
+{
+	int err;
+	struct vz_quota_master *qmblk;
+
+	qmblk = vzquota_find_qmblk(super);
+	if (qmblk == NULL)
+		return -ENOENT;
+	if (qmblk == VZ_QUOTA_BAD)
+		return -ENOENT;
+
+	err = -ENOENT;
+	qmblk_data_write_lock(qmblk);
+	if (qmblk->dq_snap == vzs) {
+		err = 0;
+		qmblk->dq_snap = NULL;
+	}
+	qmblk_data_write_unlock(qmblk);
+
+	qmblk_put(qmblk);
+	return err;
+}
+EXPORT_SYMBOL(vzquota_snap_stop);
 
 /* ----------------------------------------------------------------------
  *

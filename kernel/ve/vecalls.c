@@ -972,7 +972,9 @@ static void fini_ve_cgroups(struct ve_struct *ve)
 static int __init init_vecalls_cgroups(void)
 {
 	struct cgroup_sb_opts opts = {
-		.subsys_bits = 1ul << devices_subsys_id,
+		.subsys_bits	=
+			(1ul << devices_subsys_id) |
+			(1ul << freezer_subsys_id),
 	};
 
 	ve_cgroup_mnt = cgroup_kernel_mount(&opts);
