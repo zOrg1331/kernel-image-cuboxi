@@ -925,8 +925,10 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	}
 
 	err = rst_get_object(CPT_OBJ_FILE, pos, &fi, ctx);
-	if (err < 0)
+	if (err < 0) {
+		eprintk_ctx("%s: failed to get file object: %d\n", __func__, err);
 		goto err_out;
+	}
 
 	flags = make_flags(&fi);
 
@@ -972,15 +974,19 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 		}
 
 		err = rst_get_object(CPT_OBJ_INODE, fi.cpt_inode, &ii, ctx);
-		if (err)
+		if (err) {
+			eprintk_ctx("%s: failed to get file inode object (cpt_inode: %Ld): %d\n", __func__, fi.cpt_inode, err);
 			goto err_out;
+		}
 
 		if (ii.cpt_next > ii.cpt_hdrlen) {
 			struct cpt_object_hdr hdr;
 			err = ctx->pread(&hdr, sizeof(hdr), ctx,
 					fi.cpt_inode + ii.cpt_hdrlen);
-			if (err)
+			if (err) {
+				eprintk_ctx("%s: failed to read file inode (cpt_inode: %Ld): %d\n", __func__, fi.cpt_inode, err);
 				goto err_out;
+			}
 			if (hdr.cpt_object == CPT_OBJ_NAME) {
 				rst_put_name(name, ctx);
 				name = rst_get_name(fi.cpt_inode+ii.cpt_hdrlen,
@@ -1030,8 +1036,10 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 					goto map_file;
 			}
 			file = open_deleted(name, flags, &fi, &ii, ctx);
-			if (IS_ERR(file))
+			if (IS_ERR(file)) {
+				eprintk_ctx("%s: failed to open deleted file '%s': %d\n", __func__, name, err);
 				goto out;
+			}
 		} else {
 			eprintk_ctx("not a regular deleted file.\n");
 			err = -EINVAL;
@@ -1039,8 +1047,10 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 		}
 
 		err = fixup_file_content(&file, &fi, &ii, ctx);
-		if (err)
+		if (err) {
+			eprintk_ctx("%s: failed to fix up file content: %d\n", __func__, err);
 			goto err_put;
+		}
 		goto map_file;
 	} else {
 open_file:
@@ -1111,8 +1121,10 @@ open_file:
 	}
 
 	err = rst_path_lookup(mntobj, name, LOOKUP_FOLLOW, &nd);
-	if (err)
+	if (err) {
+		eprintk_ctx("%s: failed to lookup path '%s': %d\n", __func__, name, err);
 		goto err_out;
+	}
 	file = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
 
 	if (proc_dead_file) {
@@ -1126,8 +1138,10 @@ map_file:
 
 		if (S_ISFIFO(fi.cpt_i_mode) && !was_dentry_open) {
 			err = fixup_pipe_data(file, &fi, ctx);
-			if (err)
+			if (err) {
+				eprintk_ctx("%s: failed to fixup file '%s' pipe data: %d\n", __func__, name, err);
 				goto err_put;
+			}
 		}
 
 		/* This is very special hack. Logically, cwd/root are
@@ -1166,8 +1180,10 @@ map_file:
 
 		if (fi.cpt_next > fi.cpt_hdrlen) {
 			err = fixup_flocks(file, &fi, pos, ctx);
-			if (err)
+			if (err) {
+				eprintk_ctx("%s: failed to fixup file '%s' flocks: %d\n", __func__, name, err);
 				goto err_put;
+			}
 		}
 	} else {
 		if ((fi.cpt_lflags & CPT_DENTRY_PROC) &&

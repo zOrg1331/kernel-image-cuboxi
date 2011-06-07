@@ -15,8 +15,6 @@
 #include <linux/syscalls.h>
 #include <linux/freezer.h>
 
-atomic_t global_suspend = ATOMIC_INIT(0);
-
 /* 
  * Timeout for stopping processes
  */
@@ -111,7 +109,6 @@ int freeze_processes(void)
 {
 	int error;
 
-	atomic_inc(&global_suspend);
 	printk("Freezing user space processes ... ");
 	error = try_to_freeze_tasks(true);
 	if (error)
@@ -128,7 +125,6 @@ int freeze_processes(void)
  Exit:
 	BUG_ON(in_atomic());
 	printk("\n");
-	atomic_dec(&global_suspend);
 
 	return error;
 }

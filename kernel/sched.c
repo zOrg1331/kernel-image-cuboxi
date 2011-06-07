@@ -11360,6 +11360,8 @@ static int sched_group_set_cpu_params(struct task_group *tg,
 	tg->shares = shares;
 	tg_set_rate(tg, rate);
 	tg_set_nr_cpus(tg, nr_cpus);
+	if (rate == 0)
+		rate = sched_cpulimit_max_rate() * num_online_cpus();
 	for_each_possible_cpu(i) {
 		/*
 		 * force a rebalance

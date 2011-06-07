@@ -109,6 +109,9 @@ static int delay_remmap(struct vm_area_struct *vma,
 	return VM_FAULT_RETRY;
 }
 
+/*
+ * NOTE: Called with mmap_sem held for read.
+ */
 static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct delay_sb_info *si;
@@ -120,7 +123,8 @@ static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	mutex_lock(&lock);
 	if (vma->vm_ops->fault != delay_fault) {
 		mutex_unlock(&lock);
-		return VM_FAULT_RETRY;	/* race with other thread */
+		ret = VM_FAULT_RETRY;	/* race with other thread */
+		goto out;
 	}
 	fake = vma->vm_file;
 	get_file(fake);
@@ -149,6 +153,9 @@ static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	mutex_unlock(&lock);
 out_put:
 	fput(fake);
+out:
+	if (ret == VM_FAULT_RETRY)
+		up_read(&current->mm->mmap_sem);
 	return ret;
 }
 

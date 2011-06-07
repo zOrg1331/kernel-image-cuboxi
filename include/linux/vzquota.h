@@ -13,6 +13,7 @@
 
 #include <linux/types.h>
 #include <linux/quota.h>
+#include <linux/sched.h>
 
 /* vzquotactl syscall commands */
 #define VZ_DQ_CREATE		5 /* create quota master block */
@@ -362,6 +363,7 @@ struct vz_quota_master {
 
 	struct path		dq_root_path;	/* path of fs tree */
 	struct super_block	*dq_sb;	      /* superblock of our quota root */
+	void			*dq_snap;       /* pointer to vzsnap struct */
 };
 
 /* UID/GID quota record - one per pair (quota_master, uid or gid) */
@@ -585,6 +587,11 @@ struct vz_quota_master *vzquota_find_qmblk(struct super_block *);
 
 void vzaquota_init(void);
 void vzaquota_fini(void);
+
+struct vzsnap_struct;
+extern int vzquota_snap_init(struct super_block *, void *, struct path *);
+extern int vzquota_snap_stop(struct super_block *, void *);
+
 int need_fake_fstype(const struct task_struct * tsk);
 #endif /* __KERNEL__ */
 

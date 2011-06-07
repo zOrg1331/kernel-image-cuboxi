@@ -18,6 +18,7 @@
 #include <linux/ve.h>
 #include <linux/smp_lock.h>
 #include <linux/init.h>
+#include <linux/freezer.h>
 
 #include <linux/errno.h>
 #include <linux/unistd.h>
@@ -153,3 +154,42 @@ void ve_cleanup_schedule(struct ve_struct *ve)
 
 	wake_up_process(ve_cleanup_thread);
 }
+
+int ve_freeze(struct ve_struct *env)
+{
+	int err;
+
+	down_write(&env->op_sem);
+	err = -ESRCH;
+	if (!env->is_running)
+		goto out;
+	err = -EBUSY;
+	if (env->is_locked)
+		goto out;
+	env->is_locked = 1;
+	up_write(&env->op_sem);
+
+	err = freezer_change_state(env->ve_cgroup, CGROUP_FROZEN);
+	if (err)
+		ve_thaw(env);
+
+	return err;
+
+out:
+	up_write(&env->op_sem);
+	return err;
+}
+EXPORT_SYMBOL(ve_freeze);
+
+void ve_thaw(struct ve_struct *env)
+{
+	int err;
+
+	freezer_change_state(env->ve_cgroup, CGROUP_THAWED);
+
+	down_write(&env->op_sem);
+	WARN_ON(!env->is_locked);
+	env->is_locked = 0;
+	up_write(&env->op_sem);
+}
+EXPORT_SYMBOL(ve_thaw);
