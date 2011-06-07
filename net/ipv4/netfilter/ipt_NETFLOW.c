@@ -23,7 +23,8 @@
 #include <net/tcp.h>
 #include <net/route.h>
 #include <net/dst.h>
-#include <linux/netfilter/x_tables.h>
+#include <linux/netfilter_ipv4/ip_tables.h>
+#include <linux/version.h>
 #include <asm/unaligned.h>
 #include <linux/netfilter_ipv4/ipt_NETFLOW.h>
 #ifdef CONFIG_BRIDGE_NETFILTER
@@ -33,19 +34,20 @@
 #include <linux/sysctl.h>
 #endif
 
+#ifndef NIPQUAD
 #define NIPQUAD(addr) \
-	        ((unsigned char *)&addr)[0], \
-        ((unsigned char *)&addr)[1], \
-        ((unsigned char *)&addr)[2], \
-        ((unsigned char *)&addr)[3]
-
+	((unsigned char *)&addr)[0], \
+	((unsigned char *)&addr)[1], \
+	((unsigned char *)&addr)[2], \
+	((unsigned char *)&addr)[3]
+#endif
 #ifndef HIPQUAD
 #if defined(__LITTLE_ENDIAN)
 #define HIPQUAD(addr) \
 	((unsigned char *)&addr)[3], \
-((unsigned char *)&addr)[2], \
-((unsigned char *)&addr)[1], \
-((unsigned char *)&addr)[0]
+	((unsigned char *)&addr)[2], \
+	((unsigned char *)&addr)[1], \
+	((unsigned char *)&addr)[0]
 #elif defined(__BIG_ENDIAN)
 #define HIPQUAD NIPQUAD
 #else
@@ -53,7 +55,12 @@
 #endif /* __LITTLE_ENDIAN */
 #endif
 
-#define IPT_NETFLOW_VERSION "1.6"
+#ifndef IPT_CONTINUE
+#define IPT_CONTINUE XT_CONTINUE
+#define ipt_target xt_target
+#endif
+
+#define IPT_NETFLOW_VERSION "1.7.1"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("<abc@telekom.ru>");
@@ -117,8 +124,13 @@ static DEFINE_SPINLOCK(pdu_lock);
 static long long pdu_packets = 0, pdu_traf = 0;
 static struct netflow5_pdu pdu;
 static unsigned long pdu_ts_mod;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void netflow_work_fn(void *work);
+static DECLARE_WORK(netflow_work, netflow_work_fn, NULL);
+#else
 static void netflow_work_fn(struct work_struct *work);
 static DECLARE_DELAYED_WORK(netflow_work, netflow_work_fn);
+#endif
 static struct timer_list rate_timer;
 
 #define TCP_FIN_RST 0x05
@@ -133,6 +145,7 @@ static void destination_fini(void);
 static int add_destinations(char *ptr);
 static void aggregation_fini(struct list_head *list);
 static int add_aggregation(char *ptr);
+static void netflow_scan_inactive_timeout(long timeout);
 
 static inline __be32 bits2mask(int bits) {
 	return (bits? 0xffffffff << (32 - bits) : 0);
@@ -145,6 +158,12 @@ static inline int mask2bits(__be32 mask) {
 		mask = (mask << 1) & 0xffffffff;
 	return n;
 }
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+#define INIT_NET(x) x
+#else
+#define INIT_NET(x) init_net.x
+#endif
 
 #ifdef CONFIG_PROC_FS
 /* procfs statistics /proc/net/stat/ipt_netflow */
@@ -194,7 +213,7 @@ static int nf_seq_show(struct seq_file *seq, void *v)
 
 #define FFLOAT(x, prec) (int)(x) / prec, (int)(x) % prec
 	seq_printf(seq, "Hash: size %u (mem %uK), metric %d.%d, %d.%d, %d.%d, %d.%d. MemTraf: %llu pkt, %llu K (pdu %llu, %llu).\n",
-		   ipt_netflow_hash_size,
+		   ipt_netflow_hash_size, 
 		   (unsigned int)((ipt_netflow_hash_size * sizeof(struct hlist_head)) >> 10),
 		   FFLOAT(metric, 10),
 		   FFLOAT(min_metric, 10),
@@ -301,15 +320,23 @@ static struct file_operations nf_seq_fops = {
 #endif /* CONFIG_PROC_FS */
 
 #ifdef CONFIG_SYSCTL
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+#define BEFORE2632(x,y) x,y
+#else /* since 2.6.32 */
+#define BEFORE2632(x,y)
+#endif
+
 /* sysctl /proc/sys/net/netflow */
-static int hsize_procctl(ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *fpos)
+static int hsize_procctl(ctl_table *ctl, int write, BEFORE2632(struct file *filp,)
+			 void __user *buffer, size_t *lenp, loff_t *fpos)
 {
 	void *orig = ctl->data;
 	int ret, hsize;
 
 	if (write)
 		ctl->data = &hsize;
-	ret = proc_dointvec(ctl, write, buffer, lenp, fpos);
+	ret = proc_dointvec(ctl, write, BEFORE2632(filp,) buffer, lenp, fpos);
 	if (write) {
 		ctl->data = orig;
 		if (hsize < 1)
@@ -319,11 +346,12 @@ static int hsize_procctl(ctl_table *ctl, int write, void __user *buffer, size_t 
 		return ret;
 }
 
-static int sndbuf_procctl(ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *fpos)
+static int sndbuf_procctl(ctl_table *ctl, int write, BEFORE2632(struct file *filp,)
+			 void __user *buffer, size_t *lenp, loff_t *fpos)
 {
 	int ret;
 	struct ipt_netflow_sock *usock;
-
+       
 	read_lock(&sock_lock);
 	if (list_empty(&usock_list)) {
 		read_unlock(&sock_lock);
@@ -334,7 +362,7 @@ static int sndbuf_procctl(ctl_table *ctl, int write, void __user *buffer, size_t
 	read_unlock(&sock_lock);
 
 	ctl->data = &sndbuf;
-	ret = proc_dointvec(ctl, write, buffer, lenp, fpos);
+	ret = proc_dointvec(ctl, write, BEFORE2632(filp,) buffer, lenp, fpos);
 	if (!write)
 		return ret;
 	if (sndbuf < SOCK_MIN_SNDBUF)
@@ -347,11 +375,12 @@ static int sndbuf_procctl(ctl_table *ctl, int write, void __user *buffer, size_t
 	return ret;
 }
 
-static int destination_procctl(ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *fpos)
+static int destination_procctl(ctl_table *ctl, int write, BEFORE2632(struct file *filp,)
+			 void __user *buffer, size_t *lenp, loff_t *fpos)
 {
 	int ret;
 
-	ret = proc_dostring(ctl, write, buffer, lenp, fpos);
+	ret = proc_dostring(ctl, write, BEFORE2632(filp,) buffer, lenp, fpos);
 	if (ret >= 0 && write) {
 		destination_fini();
 		add_destinations(destination_buf);
@@ -359,23 +388,51 @@ static int destination_procctl(ctl_table *ctl, int write, void __user *buffer, s
 	return ret;
 }
 
-static int aggregation_procctl(ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *fpos)
+static int aggregation_procctl(ctl_table *ctl, int write, BEFORE2632(struct file *filp,)
+			 void __user *buffer, size_t *lenp, loff_t *fpos)
 {
 	int ret;
 
 	if (debug > 1)
 		printk(KERN_INFO "aggregation_procctl (%d) %u %llu\n", write, (unsigned int)(*lenp), *fpos);
-	ret = proc_dostring(ctl, write, buffer, lenp, fpos);
+	ret = proc_dostring(ctl, write, BEFORE2632(filp,) buffer, lenp, fpos);
 	if (ret >= 0 && write) {
 		add_aggregation(aggregation_buf);
 	}
 	return ret;
 }
 
+static int flush_procctl(ctl_table *ctl, int write, BEFORE2632(struct file *filp,)
+			 void __user *buffer, size_t *lenp, loff_t *fpos)
+{
+	int ret;
+	int val;
+
+	val = 0;
+	ctl->data = &val;
+	ret = proc_dointvec(ctl, write, BEFORE2632(filp,) buffer, lenp, fpos);
+
+	if (!write)
+		return ret;
+
+	if (val > 0) {
+		printk(KERN_INFO "ipt_NETFLOW: forced flush\n");
+		netflow_scan_inactive_timeout(0);
+	}
+
+	return ret;
+}
+
 static struct ctl_table_header *netflow_sysctl_header;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+#define _CTL_NAME(x) .ctl_name = x,
+#else
+#define _CTL_NAME(x)
+#endif
 static struct ctl_table netflow_sysctl_table[] = {
 	{
+		_CTL_NAME(1)
 		.procname	= "active_timeout",
 		.mode		= 0644,
 		.data		= &active_timeout,
@@ -383,6 +440,7 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+		_CTL_NAME(2)
 		.procname	= "inactive_timeout",
 		.mode		= 0644,
 		.data		= &inactive_timeout,
@@ -390,6 +448,7 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+		_CTL_NAME(3)
 		.procname	= "debug",
 		.mode		= 0644,
 		.data		= &debug,
@@ -397,6 +456,7 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+		_CTL_NAME(4)
 		.procname	= "hashsize",
 		.mode		= 0644,
 		.data		= &ipt_netflow_hash_size,
@@ -404,12 +464,14 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &hsize_procctl,
 	},
 	{
+		_CTL_NAME(5)
 		.procname	= "sndbuf",
 		.mode		= 0644,
 		.maxlen		= sizeof(int),
 		.proc_handler	= &sndbuf_procctl,
 	},
 	{
+		_CTL_NAME(6)
 		.procname	= "destination",
 		.mode		= 0644,
 		.data		= &destination_buf,
@@ -417,6 +479,7 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &destination_procctl,
 	},
 	{
+		_CTL_NAME(7)
 		.procname	= "aggregation",
 		.mode		= 0644,
 		.data		= &aggregation_buf,
@@ -424,20 +487,55 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.proc_handler	= &aggregation_procctl,
 	},
 	{
+		_CTL_NAME(8)
 		.procname	= "maxflows",
 		.mode		= 0644,
 		.data		= &maxflows,
 		.maxlen		= sizeof(int),
 		.proc_handler	= &proc_dointvec,
 	},
+	{
+		_CTL_NAME(9)
+		.procname	= "flush",
+		.mode		= 0644,
+		.maxlen		= sizeof(int),
+		.proc_handler	= &flush_procctl,
+	},
 	{ }
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+static struct ctl_table netflow_sysctl_root[] = {
+	{
+		_CTL_NAME(33)
+		.procname	= "netflow",
+		.mode		= 0555,
+		.child		= netflow_sysctl_table,
+	},
+	{ }
+};
+
+static struct ctl_table netflow_net_table[] = {
+	{
+		.ctl_name	= CTL_NET,
+		.procname	= "net",
+		.mode		= 0555,
+		.child		= netflow_sysctl_root,
+	},
+	{ }
+};
+#else /* >= 2.6.25 */
 static struct ctl_path netflow_sysctl_path[] = {
-	{ .procname = "net" },
+	{
+		.procname = "net",
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		.ctl_name = CTL_NET
+#endif
+	},
 	{ .procname = "netflow" },
 	{ }
 };
+#endif /* 2.6.25 */
 #endif /* CONFIG_SYSCTL */
 
 /* socket code */
@@ -505,7 +603,7 @@ static void usock_free(struct ipt_netflow_sock *usock)
 	if (usock->sock)
 		sock_release(usock->sock);
 	usock->sock = NULL;
-	vfree(usock);
+	vfree(usock); 
 }
 
 static void destination_fini(void)
@@ -584,7 +682,7 @@ static struct socket *usock_alloc(__be32 ipaddr, unsigned short port)
 static int add_destinations(char *ptr)
 {
 	while (ptr) {
-		unsigned char ip[4];
+		unsigned char ip[4]; 
 		unsigned short port;
 
 		ptr += strspn(ptr, SEPARATORS);
@@ -638,7 +736,7 @@ static int add_aggregation(char *ptr)
 	LIST_HEAD(old_aggr_list);
 
 	while (ptr && *ptr) {
-		unsigned char ip[4];
+		unsigned char ip[4]; 
 		unsigned int mask;
 		unsigned int port1, port2;
 		unsigned int aggr_to;
@@ -924,7 +1022,7 @@ static void netflow_scan_inactive_timeout(long timeout)
 	spin_lock_bh(&ipt_netflow_lock);
 	while (!list_empty(&ipt_netflow_list)) {
 		struct ipt_netflow *nf;
-
+	       
 		nf = list_entry(ipt_netflow_list.prev, struct ipt_netflow, list);
 		/* Note: i_timeout checked with >= to allow specifying zero timeout
 		 * to purge all flows on module unload */
@@ -954,7 +1052,11 @@ static void netflow_scan_inactive_timeout(long timeout)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void netflow_work_fn(void *dummy)
+#else
 static void netflow_work_fn(struct work_struct *dummy)
+#endif
 {
 	netflow_scan_inactive_timeout(inactive_timeout);
 	schedule_delayed_work(&netflow_work, HZ / 10);
@@ -1019,10 +1121,36 @@ static void rate_timer_calc(unsigned long dummy)
 
 /* packet receiver */
 static unsigned int netflow_target(
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+			   struct sk_buff **pskb,
+#else
 			   struct sk_buff *skb,
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
+			   const struct net_device *if_in,
+			   const struct net_device *if_out,
+			   unsigned int hooknum,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,17)
+			   const struct xt_target *target,
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+			   const void *targinfo,
+			   void *userinfo
+#else
+			   const void *targinfo
+#endif
+#else /* since 2.6.28 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35)
+			   const struct xt_target_param *par
+#else
 			   const struct xt_action_param *par
+#endif
+#endif
 		)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+	struct sk_buff *skb = *pskb;
+#endif
 	struct iphdr _iph, *iph;
 	struct ipt_netflow_tuple tuple;
 	struct ipt_netflow *nf;
@@ -1036,14 +1164,18 @@ static unsigned int netflow_target(
 	if (iph == NULL) {
 		NETFLOW_STAT_INC(truncated);
 		NETFLOW_STAT_INC(pkt_drop);
-		return XT_CONTINUE;
+		return IPT_CONTINUE;
 	}
 
 	tuple.s_addr	= iph->saddr;
 	tuple.d_addr	= iph->daddr;
 	tuple.s_port	= 0;
 	tuple.d_port	= 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
+	tuple.i_ifc	= if_in? if_in->ifindex : -1;
+#else
 	tuple.i_ifc	= par->in? par->in->ifindex : -1;
+#endif
 	tuple.protocol	= iph->protocol;
 	tuple.tos	= iph->tos;
 	tcp_flags	= 0; /* Cisco sometimes have TCP ACK for non TCP packets, don't get it */
@@ -1087,7 +1219,7 @@ static unsigned int netflow_target(
 				tuple.d_port = hp->type;
 			}
 			break;
-		}
+	       	}
 	} /* not fragmented */
 
 	/* aggregate networks */
@@ -1096,13 +1228,13 @@ static unsigned int netflow_target(
 		if ((ntohl(tuple.s_addr) & aggr_n->mask) == aggr_n->addr) {
 			tuple.s_addr &= htonl(aggr_n->aggr_mask);
 			s_mask = aggr_n->prefix;
-			break;
+			break; 
 		}
 	list_for_each_entry(aggr_n, &aggr_n_list, list)
 		if ((ntohl(tuple.d_addr) & aggr_n->mask) == aggr_n->addr) {
 			tuple.d_addr &= htonl(aggr_n->aggr_mask);
 			d_mask = aggr_n->prefix;
-			break;
+			break; 
 		}
 
 	/* aggregate ports */
@@ -1131,7 +1263,7 @@ static unsigned int netflow_target(
 			NETFLOW_STAT_INC(pkt_drop);
 			NETFLOW_STAT_ADD(traf_drop, ntohs(iph->tot_len));
 			spin_unlock_bh(&ipt_netflow_lock);
-			return XT_CONTINUE;
+			return IPT_CONTINUE;
 		}
 
 		nf = init_netflow(&tuple, skb);
@@ -1140,12 +1272,16 @@ static unsigned int netflow_target(
 			NETFLOW_STAT_INC(pkt_drop);
 			NETFLOW_STAT_ADD(traf_drop, ntohs(iph->tot_len));
 			spin_unlock_bh(&ipt_netflow_lock);
-			return XT_CONTINUE;
+			return IPT_CONTINUE;
 		}
 
 		nf->ts_first = jiffies;
 		nf->tcp_flags = tcp_flags;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,28)
+		nf->o_ifc = if_out? if_out->ifindex : -1;
+#else
 		nf->o_ifc = par->out? par->out->ifindex : -1;
+#endif
 		nf->s_mask = s_mask;
 		nf->d_mask = d_mask;
 
@@ -1184,16 +1320,32 @@ static unsigned int netflow_target(
 
 	spin_unlock_bh(&ipt_netflow_lock);
 
-	return XT_CONTINUE;
+	return IPT_CONTINUE;
 }
 
-static struct xt_target ipt_netflow_reg __read_mostly = {
+static struct ipt_target ipt_netflow_reg = {
 	.name		= "NETFLOW",
-	.family		= NFPROTO_IPV4,
 	.target		= netflow_target,
+	.family		= AF_INET,
+#ifndef RAW_PROMISC_HACK
 	.table		= "filter",
+#ifndef NF_IP_LOCAL_IN /* 2.6.25 */
 	.hooks		= (1 << NF_INET_LOCAL_IN) | (1 << NF_INET_FORWARD) |
 				(1 << NF_INET_LOCAL_OUT),
+#else
+	.hooks		= (1 << NF_IP_LOCAL_IN) | (1 << NF_IP_FORWARD) |
+				(1 << NF_IP_LOCAL_OUT),
+#endif /* NF_IP_LOCAL_IN */
+#else
+	.table          = "raw",
+#ifndef NF_IP_LOCAL_IN
+	.hooks          = (1 << NF_INET_LOCAL_IN) | (1 << NF_INET_FORWARD) |
+				(1 << NF_INET_LOCAL_OUT) | (1 << NF_INET_PRE_ROUTING),
+#else
+	.hooks          = (1 << NF_IP_LOCAL_IN) | (1 << NF_IP_FORWARD) |
+				(1 << NF_IP_LOCAL_OUT) | (1 << NF_IP_PRE_ROUTING),
+#endif /* NF_IP_LOCAL_IN */
+#endif /* !RAW_PROMISC_HACK */
 	.me		= THIS_MODULE
 };
 
@@ -1227,6 +1379,9 @@ static int __init ipt_netflow_init(void)
 	ipt_netflow_cachep = kmem_cache_create("ipt_netflow",
 						sizeof(struct ipt_netflow), 0,
 						0, NULL
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23)
+						, NULL
+#endif
 					      );
 	if (!ipt_netflow_cachep) {
 		printk(KERN_ERR "Unable to create ipt_netflow slab cache\n");
@@ -1234,17 +1389,28 @@ static int __init ipt_netflow_init(void)
 	}
 
 #ifdef CONFIG_PROC_FS
-	proc_stat = create_proc_entry("ipt_netflow", S_IRUGO, init_net.proc_net_stat);
+	proc_stat = create_proc_entry("ipt_netflow", S_IRUGO, INIT_NET(proc_net_stat));
 	if (!proc_stat) {
 		printk(KERN_ERR "Unable to create /proc/net/stat/ipt_netflow entry\n");
 		goto err_free_netflow_slab;
 	}
 	proc_stat->proc_fops = &nf_seq_fops;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30)
+	proc_stat->owner = THIS_MODULE;
+#endif
 	printk(KERN_INFO "netflow: registered: /proc/net/stat/ipt_netflow\n");
 #endif
 
 #ifdef CONFIG_SYSCTL
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+	netflow_sysctl_header = register_sysctl_table(netflow_net_table
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,21)
+						      , 0 /* insert_at_head */
+#endif
+						      );
+#else /* 2.6.25 */
 	netflow_sysctl_header = register_sysctl_paths(netflow_sysctl_path, netflow_sysctl_table);
+#endif
 	if (!netflow_sysctl_header) {
 		printk(KERN_ERR "netflow: can't register to sysctl\n");
 		goto err_free_proc_stat;
@@ -1296,9 +1462,9 @@ err_free_sysctl:
 err_free_proc_stat:
 #endif
 #ifdef CONFIG_PROC_FS
-	remove_proc_entry("ipt_netflow", init_net.proc_net_stat);
+	remove_proc_entry("ipt_netflow", INIT_NET(proc_net_stat));
 err_free_netflow_slab:
-#endif
+#endif  
 	kmem_cache_destroy(ipt_netflow_cachep);
 err_free_hash:
 	vfree(ipt_netflow_hash);
@@ -1321,7 +1487,7 @@ static void __exit ipt_netflow_fini(void)
 	unregister_sysctl_table(netflow_sysctl_header);
 #endif
 #ifdef CONFIG_PROC_FS
-	remove_proc_entry("ipt_netflow", init_net.proc_net_stat);
+	remove_proc_entry("ipt_netflow", INIT_NET(proc_net_stat));
 #endif
 
 	netflow_scan_inactive_timeout(0); /* flush cache and pdu */
