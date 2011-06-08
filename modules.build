@@ -1,5 +1,4 @@
 #video drivers
-fglrx
 nvidia
 
 #network card drivers
@@ -23,14 +22,11 @@ virtualbox
 virtualbox-addition
 
 #other drivers
-lirc
-subfs
 vhba
 #svgalib_helper
 #etercifs
 
 #telephony drivers
-dahdi
 #wanpipe 
 #cronyx
 
