@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
-Version: 2.6.38
-Release: alt8.1
+Version: 2.6.39
+Release: alt1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -641,6 +641,14 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Jun 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt1
+- Update to 2.6.39.1
+- Update ipt_NETFLOW to 1.7.1 (ALT 25697)
+- Build asix.ko as a separate module with src from vendor (ALT 25709)
+- Build u200.ko as a separate module (ALT 24265)
+- Update aufs to the latest one
+- Don't build broken subfs, fglrx, dahdi, lirc
+
 * Fri Jun 03 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.38-alt8.1
 - Update to 2.6.38.8
 
