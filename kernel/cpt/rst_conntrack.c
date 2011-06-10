@@ -273,8 +273,8 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 		nat->seq[1].offset_after = ci->cpt_nat_seq[1].cpt_offset_after;
 
 		nf_nat_hash_conntrack(get_exec_env()->ve_netns, ct);
-	}
 #endif
+	}
 
 	nf_conntrack_hash_insert(ct);
 	ct->timeout.expires = jiffies + ci->cpt_timeout;

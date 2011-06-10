@@ -2855,8 +2855,6 @@ unsigned long sched_cgroup_get_shares(struct cgroup *cgrp);
 extern unsigned long sched_cgroup_get_nr_running(struct cgroup *cgrp);
 #endif
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-extern int sched_group_set_rate(struct task_group *tg, unsigned long rate);
-extern unsigned long sched_group_rate(struct task_group *tg);
 extern int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate);
 extern int sched_cgroup_drop_rate(struct cgroup *cgrp);
 extern unsigned long sched_cgroup_get_rate(struct cgroup *cgrp);

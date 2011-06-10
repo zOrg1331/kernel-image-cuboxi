@@ -24,6 +24,7 @@
 #include <linux/vmalloc.h>
 #include <linux/rmap.h>
 #include <linux/hash.h>
+#include <linux/binfmts.h>
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
@@ -53,6 +54,10 @@
 #include "cpt_syscalls.h"
 
 #define __PAGE_NX (1ULL<<63)
+
+#ifdef CONFIG_IA32_EMULATION
+extern struct linux_binfmt compat_elf_format;
+#endif
 
 static unsigned long make_prot(struct cpt_vma_image *vmai)
 {
@@ -483,19 +488,19 @@ static int copy_mm_pages(struct mm_struct *src, unsigned long start,
 #include <linux/proc_fs.h>
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
-static int cpt_setup_vdso(unsigned long addr, int is64bit)
+static int cpt_setup_vdso(unsigned long addr)
 {
 #ifdef CONFIG_COMPAT
-	if (!is64bit)
+	if (test_thread_flag(TIF_IA32))
 		return compat_arch_setup_additional_pages(NULL, 0, addr);
 #endif
 	return arch_setup_additional_pages(NULL, 0, addr);
 }
 #else
-#define cpt_setup_vdso(addr, is64bit)	(0)
+#define cpt_setup_vdso(addr)	(0)
 #endif
 
-static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, int is64bit,
+static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 		struct cpt_context *ctx)
 {
 	int err = 0;
@@ -508,7 +513,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos, i
 
 	if (vmai->cpt_type == CPT_VMA_VDSO) {
 		if (ctx->vdso == NULL) {
-			err = cpt_setup_vdso(vmai->cpt_start, is64bit);
+			err = cpt_setup_vdso(vmai->cpt_start);
 			goto out;
 		}
 	}
@@ -910,7 +915,7 @@ out:
 #define TASK_UNMAP_START	PAGE_SIZE
 #endif
 
-static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, int is64bit,
+static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
 		struct cpt_context *ctx)
 {
 	int err = 0;
@@ -947,9 +952,23 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, int is64bit,
 	mm->def_flags = 0;
 	def_flags = vmi->cpt_def_flags;
 
-	mm->flags = vmi->cpt_dumpable;
-	if (ctx->image_version < CPT_VERSION_24)
-		mm->flags |= MMF_DUMP_FILTER_DEFAULT << MMF_DUMPABLE_BITS;
+#ifdef CONFIG_X86_64
+	if (test_thread_flag(TIF_IA32)) {
+		mm->free_area_cache = TASK_UNMAPPED_BASE;
+		arch_pick_mmap_layout(mm);
+		/*
+		 * Task forked from 64bit app and thus has wrong binfmt pointer
+		 */
+#ifdef CONFIG_IA32_EMULATION
+		set_binfmt(&compat_elf_format);
+#endif
+	}
+#endif
+
+	if (cpt_object_has(vmi, cpt_mm_flags))
+		mm->flags = vmi->cpt_mm_flags;
+	else
+		set_dumpable(mm, vmi->cpt_dumpable);
 
 	mm->vps_dumpable = vmi->cpt_vps_dumpable;
 #ifndef CONFIG_IA64
@@ -982,7 +1001,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos, int is64bit,
 				//// Later...
 				if (u.vmai.cpt_start)
 #endif			
-				err = do_rst_vma(&u.vmai, offset, pos, is64bit, ctx);
+				err = do_rst_vma(&u.vmai, offset, pos, ctx);
 				if (err)
 					goto out;
 #ifdef CONFIG_X86
@@ -1054,7 +1073,7 @@ int rst_mm_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 
 	if ((err = rst_get_object(CPT_OBJ_MM, ti->cpt_mm, vmi, ctx)) != 0)
 		goto out;
-	if ((err = do_rst_mm(vmi, ti->cpt_mm, ti->cpt_64bit, ctx)) != 0) {
+	if ((err = do_rst_mm(vmi, ti->cpt_mm, ctx)) != 0) {
 		eprintk_ctx("do_rst_mm %Ld\n", (unsigned long long)ti->cpt_mm);
 		goto out;
 	}

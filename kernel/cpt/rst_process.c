@@ -1406,7 +1406,12 @@ int rst_restore_process(struct cpt_context *ctx)
 
 		tsk->ptrace_message = ti->cpt_ptrace_message;
 		tsk->stopped_state = ti->cpt_stopped_state;
-		task_thread_info(tsk)->flags = ti->cpt_thrflags;
+
+		/*
+		 * TIF_IA32 thread flag was restored early
+		 */
+		task_thread_info(tsk)->flags &= _TIF_IA32;
+		task_thread_info(tsk)->flags |= ti->cpt_thrflags;
 
 		/*
 		 * Drop rhel5's _TIF_RESTORE_SIGMASK.
@@ -1416,8 +1421,6 @@ int rst_restore_process(struct cpt_context *ctx)
 
 #ifdef CONFIG_X86_64
 		task_thread_info(tsk)->flags |= _TIF_FORK | _TIF_RESUME;
-		if (!ti->cpt_64bit)
-			task_thread_info(tsk)->flags |= _TIF_IA32;
 #endif
 
 #ifdef CONFIG_X86_32

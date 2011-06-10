@@ -1078,6 +1078,7 @@ struct cpt_mm_image {
 	__u8	cpt_used_hugetlb;
 	__u8	__cpt_pad;
 	__u32	cpt_vdso;
+	__u64	cpt_mm_flags;
 } __attribute__ ((aligned (8)));
 
 struct cpt_page_block

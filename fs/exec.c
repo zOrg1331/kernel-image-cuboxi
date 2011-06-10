@@ -1860,6 +1860,7 @@ void set_dumpable(struct mm_struct *mm, int value)
 		break;
 	}
 }
+EXPORT_SYMBOL_GPL(set_dumpable);
 
 int get_dumpable(struct mm_struct *mm)
 {

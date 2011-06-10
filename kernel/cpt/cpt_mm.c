@@ -800,9 +800,7 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 #ifdef CONFIG_BEANCOUNTERS
 	v->cpt_mmub = cpt_lookup_ubc(mm->mm_ub, ctx);
 #endif
-	/* FIXME when coredump mask exceeds 8 bits */
-	WARN_ON(mm->flags >> 8);
-	v->cpt_dumpable = mm->flags;
+	v->cpt_mm_flags = mm->flags;
 	v->cpt_vps_dumpable = mm->vps_dumpable;
 	v->cpt_used_hugetlb = 0; /* not used */
 #ifndef CONFIG_IA64

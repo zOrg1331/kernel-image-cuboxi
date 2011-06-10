@@ -86,6 +86,7 @@ SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 {
 	struct cgroup *cgrp;
 	char name[16];
+	int retval;
 
 	if (!capable_setveid())
 		return -EPERM;
@@ -102,10 +103,10 @@ SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 	if (cgrp == NULL)
 		return -ENOENT;
 
-	sched_cgroup_set_shares(cgrp, FSCHWEIGHT_BASE / weight);
+	retval = sched_cgroup_set_shares(cgrp, FSCHWEIGHT_BASE / weight);
 	cgroup_kernel_close(cgrp);
 
-	return 0;
+	return retval;
 }
 
 SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
@@ -138,7 +139,6 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 	struct cgroup *cgrp;
 	char name[16];
 	long ret;
-	int err;
 
 	if (!capable_setveid())
 		return -EPERM;
@@ -158,14 +158,12 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 
 	switch (op) {
 		case FAIRSCHED_SET_RATE:
-			err = sched_cgroup_set_rate(cgrp, rate);
-			WARN_ON(err);
-			ret = sched_cgroup_get_rate(cgrp);
+			ret = sched_cgroup_set_rate(cgrp, rate);
+			if (!ret)
+				ret = sched_cgroup_get_rate(cgrp);
 			break;
 		case FAIRSCHED_DROP_RATE:
-			err = sched_cgroup_drop_rate(cgrp);
-			WARN_ON(err);
-			ret = 0;
+			ret = sched_cgroup_drop_rate(cgrp);
 			break;
 		case FAIRSCHED_GET_RATE:
 			ret = sched_cgroup_get_rate(cgrp);
@@ -186,6 +184,7 @@ SYSCALL_DEFINE2(fairsched_mvpr, pid_t, pid, unsigned int, id)
 	struct cgroup *cgrp;
 	struct task_struct *tsk;
 	char name[16];
+	int retval;
 
 	if (!capable_setveid())
 		return -EPERM;
@@ -207,14 +206,12 @@ SYSCALL_DEFINE2(fairsched_mvpr, pid_t, pid, unsigned int, id)
 	get_task_struct(tsk);
 	write_unlock_irq(&tasklist_lock);
 
-	cgroup_lock();
-	cgroup_attach_task(cgrp, tsk);
-	cgroup_unlock();
+	retval = cgroup_kernel_attach(cgrp, tsk);
 
 	cgroup_kernel_close(cgrp);
 	put_task_struct(tsk);
 
-	return 0;
+	return retval;
 }
 
 static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
@@ -290,7 +287,7 @@ static inline void fairsched_init_ve_idle_scale(struct ve_struct *ve,
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
-	int err;
+	int err, err2;
 	char name[16];
 
 	fairsched_name(name, sizeof(name), id);
@@ -320,9 +317,9 @@ int fairsched_new_node(int id, unsigned int vcpus)
 
 cleanup:
 	cgroup_kernel_close(cgrp);
-	err = cgroup_kernel_remove(fairsched_root, name);
-	if (err)
-		printk(KERN_ERR "Can't clean fairsched node %d err=%d\n", id, err);
+	err2 = cgroup_kernel_remove(fairsched_root, name);
+	if (err2)
+		printk(KERN_ERR "Can't clean fairsched node %d err=%d\n", id, err2);
 out:
 	return err;
 }
@@ -351,6 +348,7 @@ int fairsched_move_task(int id, struct task_struct *tsk)
 {
 	struct cgroup *cgrp;
 	char name[16];
+	int err;
 
 	fairsched_name(name, sizeof(name), id);
 	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
@@ -359,13 +357,10 @@ int fairsched_move_task(int id, struct task_struct *tsk)
 	if (cgrp == NULL)
 		return -ENOENT;
 
-	cgroup_lock();
-	cgroup_attach_task(cgrp, tsk);
-	cgroup_unlock();
-
+	err = cgroup_kernel_attach(cgrp, tsk);
 	cgroup_kernel_close(cgrp);
 
-	return 0;
+	return err;
 }
 EXPORT_SYMBOL(fairsched_move_task);
 
