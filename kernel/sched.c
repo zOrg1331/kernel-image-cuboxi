@@ -11398,12 +11398,12 @@ unsigned long sched_group_shares(struct task_group *tg)
 
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 
-int sched_group_set_rate(struct task_group *tg, unsigned long rate)
+static int sched_group_set_rate(struct task_group *tg, unsigned long rate)
 {
 	return sched_group_set_cpu_params(tg, tg->shares, rate, tg_nr_cpus(tg));
 }
 
-unsigned long sched_group_rate(struct task_group *tg)
+static unsigned long sched_group_rate(struct task_group *tg)
 {
 	return tg->rate;
 }

@@ -486,4 +486,6 @@ config BLK_DEV_HD
 
 	  If unsure, say N.
 
+source "drivers/block/drbd/Kconfig"
+
 endif # BLK_DEV

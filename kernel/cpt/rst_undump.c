@@ -24,7 +24,6 @@
 #include <linux/mnt_namespace.h>
 #include <linux/posix-timers.h>
 #include <linux/personality.h>
-#include <linux/binfmts.h>
 #include <linux/smp_lock.h>
 #include <linux/ve_proto.h>
 #include <linux/compat.h>
@@ -51,10 +50,6 @@
 #include "cpt_net.h"
 #include "cpt_ubc.h"
 #include "cpt_kernel.h"
-
-#ifdef CONFIG_IA32_EMULATION
-extern struct linux_binfmt compat_elf_format;
-#endif
 
 static int rst_utsname(cpt_context_t *ctx);
 
@@ -335,6 +330,14 @@ static int hook(void *arg)
 #endif
 	}
 
+#ifdef CONFIG_X86_64
+	if (!ti->cpt_64bit) {
+		set_thread_flag(TIF_IA32);
+		/* for __set_personality below */
+		ti->cpt_personality |= PER_LINUX32;
+	}
+#endif
+
 	if ((err = rst_creds(ti, ctx)) != 0) {
 		eprintk_ctx("rst_creds: %d\n", err);
 		goto out;
@@ -367,18 +370,6 @@ static int hook(void *arg)
 
 	if (ti->cpt_personality != 0)
 		__set_personality(ti->cpt_personality);
-
-#ifdef CONFIG_X86_64
-	if (!ti->cpt_64bit) {
-		/* 32bit app from 32bit OS, won't have PER_LINUX32 set... :/ */
-		__set_personality(PER_LINUX32);
-		if (current->mm)
-			/*
-			 * Task forked from 64bit app and thus has wrong binfmt pointer
-			 */
-			set_binfmt(&compat_elf_format);
-	}
-#endif
 
 	current->set_child_tid = NULL;
 	current->clear_child_tid = NULL;
