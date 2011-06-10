@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt23
+Release: alt24
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Jun 10 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt24
+- Apply 042stab017.1 patches
+
 * Tue Jun 07 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt23
 - Apply 042stab016.1 patches
 
