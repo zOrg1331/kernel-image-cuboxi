@@ -20242,3 +20242,14 @@ index 58c6d39..3da65fe 100644
  
  	bio->bi_phys_segments = bio->bi_idx; /* count of completed segments*/
  	spin_lock_irq(&card->lock);
+--- a/drivers/video/sstfb.c	2011-06-14 16:33:08 +0000
++++ b/drivers/video/sstfb.c	2011-06-14 16:33:17 +0000
+@@ -147,7 +147,7 @@
+     0, 0, -1, -1, 0,
+     39721 ,  38, 26 ,  25 ,18  , 96 ,2,
+     0, FB_VMODE_NONINTERLACED };
+-#elif
++#else
+     #error "Invalid DEFAULT_MODE value !"
+ #endif
+ 
