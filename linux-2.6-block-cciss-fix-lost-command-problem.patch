@@ -1,0 +1,56 @@
+From: Phillip Lougher <plougher@redhat.com>
+Date: Wed, 04 May 2011 20:54:50 -0000
+Subject: [block] cciss: fix lost command problem
+Message-id: <20110504205450.9BCAB3FF90@plougher.csb>
+Patchwork-id: 35808
+O-Subject: [RHEL5.6.z PATCH] BZ#696503 cciss: fix lost command problem 
+Bugzilla: 696503
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ#696503
+
+This is a trivial fix-up to allow it to be applied to 5.6.z.
+
+Thanks
+
+Phillip
+
+>From e8c9bcabfe56f2ac3702e9b69f7549ae091f1d3a Mon Sep 17 00:00:00 2001
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 13 Apr 2011 18:31:02 +0000
+Subject: [PATCH] cciss: fix lost command problem
+
+This is for bz#696153
+
+Upstream - 1ddd5049545e0aa, https://patchwork.kernel.org/patch/656801/
+
+"Under certain workloads a command may seem to get lost. IOW, the Smart Array
+thinks all commands have been completed but we still have commands in our
+completion queue. This may lead to system instability, filesystems going
+read-only, or even panics depending on the affected filesystem. We add an
+extra read to force the write to complete.
+
+Testing shows this extra read avoids the problem."
+
+TomasAcked-by: Jeff Moyer <jmoyer@redhat.com>
+---
+ drivers/block/cciss.h |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+diff --git a/drivers/block/cciss.h b/drivers/block/cciss.h
+index 5558cce..ec3cda1 100644
+--- a/drivers/block/cciss.h
++++ b/drivers/block/cciss.h
+@@ -168,9 +168,10 @@ static void SA5_submit_command( ctlr_info_t *h, CommandList_struct *c)
+ #ifdef CCISS_DEBUG
+ 	 printk("Sending %x - down to controller\n", c->busaddr );
+ #endif /* CCISS_DEBUG */ 
+-         writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
+-	 h->commands_outstanding++;
+-	 if ( h->commands_outstanding > h->max_outstanding)
++	writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
++	readl(h->vaddr + SA5_REQUEST_PORT_OFFSET);
++	h->commands_outstanding++;
++	if ( h->commands_outstanding > h->max_outstanding)
+ 		h->max_outstanding = h->commands_outstanding;
+ }
+ 

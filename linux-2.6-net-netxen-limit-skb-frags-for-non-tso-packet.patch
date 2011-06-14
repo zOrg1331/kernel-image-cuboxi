@@ -1,0 +1,131 @@
+From: Phillip Lougher <plougher@redhat.com>
+Date: Thu, 05 May 2011 16:07:20 -0000
+Subject: [net] netxen: limit skb frags for non tso packet
+Message-id: <20110505160720.5374A44A53@plougher.csb>
+Patchwork-id: 35819
+O-Subject: [RHEL5.6.z PATCH] BZ#699609 netxen: limit skb frags for non tso
+	packet 
+Bugzilla: 699609
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+BZ#699609
+
+This is a trivial fix-up of the following patch to allow it to be
+applied to 5.6.z.
+
+Thanks
+
+Phillip
+
+>From 5a5586b79bee9aa909c92d8091c9f7cb090f1912 Mon Sep 17 00:00:00 2001
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 19 Apr 2011 18:50:11 +0000
+Subject: [PATCH] netxen: limit skb frags for non tso packet
+
+Bugzilla
+--------
+
+Bug 672368 (https://bugzilla.redhat.com/show_bug.cgi?id=672368)
+
+Upstream Status
+---------------
+
+net-2.6 commit id c968bdf6912cad6d0fc63d7037cc1c870604a808
+
+Brew Build
+----------
+
+3266338
+
+Testing
+-------
+
+This patch was test built against the 2.6.18-257.el5 kernel.  The patch was
+functionally tested at QLogic.
+
+Description
+-----------
+
+>From c968bdf6912cad6d0fc63d7037cc1c870604a808 Mon Sep 17 00:00:00 2001
+From: amit salecha <amit.salecha@qlogic.com>
+Date: Mon, 11 Apr 2011 02:10:22 +0000
+Subject: [PATCH] netxen: limit skb frags for non tso packet
+
+Machines are getting deadlock in four node cluster environment.
+All nodes are accessing (find /gfs2 -depth -print|cpio -ocv > /dev/null)
+200 GB storage on a GFS2 filesystem.
+This result in memory fragmentation and driver receives 18 frags for
+1448 byte packets.
+For non tso packet, fw drops the tx request, if it has >14 frags.
+
+Fixing it by pulling extra frags.
+
+Cc: stable@kernel.org
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Bob Picco <bpicco@redhat.com>
+Acked-by: John Feeney <jfeeney@redhat.com>
+Acked-by: Jiri Pirko <jpirko@redhat.com>
+---
+ drivers/net/netxen/netxen_nic.h      |    4 ++--
+ drivers/net/netxen/netxen_nic_main.c |   17 +++++++++++++++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+diff --git a/drivers/net/netxen/netxen_nic.h b/drivers/net/netxen/netxen_nic.h
+index f93b706..8346632 100644
+--- a/drivers/net/netxen/netxen_nic.h
++++ b/drivers/net/netxen/netxen_nic.h
+@@ -175,7 +175,7 @@
+ 
+ #define	MAX_NUM_CARDS		4
+ 
+-#define MAX_BUFFERS_PER_CMD	32
++#define NETXEN_MAX_FRAGS_PER_TX	14
+ #define TX_STOP_THRESH		((MAX_SKB_FRAGS >> 2) + 4)
+ #define NX_MAX_TX_TIMEOUTS	2
+ 
+@@ -551,7 +551,7 @@ struct netxen_recv_crb {
+  */
+ struct netxen_cmd_buffer {
+ 	struct sk_buff *skb;
+-	struct netxen_skb_frag frag_array[MAX_BUFFERS_PER_CMD + 1];
++	struct netxen_skb_frag frag_array[MAX_SKB_FRAGS + 1];
+ 	u32 frag_count;
+ };
+ 
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 5d0c042..2a3853f 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -1853,6 +1853,8 @@ netxen_nic_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
+ 	struct cmd_desc_type0 *hwdesc, *first_desc;
+ 	struct pci_dev *pdev;
+ 	int i, k;
++	int delta = 0;
++	struct skb_frag_struct *frag;
+ 
+ 	u32 producer;
+ 	int frag_count, no_of_desc;
+@@ -1860,6 +1862,21 @@ netxen_nic_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
+ 
+ 	frag_count = skb_shinfo(skb)->nr_frags + 1;
+ 
++	/* 14 frags supported for normal packet and
++	 * 32 frags supported for TSO packet
++	 */
++	if (!skb_is_gso(skb) && frag_count > NETXEN_MAX_FRAGS_PER_TX) {
++
++		for (i = 0; i < (frag_count - NETXEN_MAX_FRAGS_PER_TX); i++) {
++			frag = &skb_shinfo(skb)->frags[i];
++			delta += frag->size;
++		}
++
++		if (!__pskb_pull_tail(skb, delta))
++			goto drop_packet;
++
++		frag_count = 1 + skb_shinfo(skb)->nr_frags;
++	}
+ 	/* 4 fragments per cmd des */
+ 	no_of_desc = (frag_count + 3) >> 2;
+ 

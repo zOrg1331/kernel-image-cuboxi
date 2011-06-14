@@ -1,0 +1,71 @@
+From: J. Bruce Fields <bfields@redhat.com>
+Date: Fri, 4 Feb 2011 22:13:54 -0500
+Subject: [fs] nfs: break nfsd v4 lease on unlink, link, and rename
+Message-id: <1296857634-4533-2-git-send-email-bfields@redhat.com>
+Patchwork-id: 33079
+O-Subject: [RHEL5.7 PATCH 2/2] nfsd: break lease on unlink, link, and rename
+Bugzilla: 610093
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Any change to any of the links pointing to an entry should also break
+delegations.
+
+Bugzilla 610093
+Upstream commit 4795bb37effb7b8fe77e2d2034545d062d3788a8
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 7667f30..5f8f28c 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1564,6 +1564,14 @@ nfsd_link(struct svc_rqst *rqstp, struct svc_fh *ffhp,
+ 	dold = tfhp->fh_dentry;
+ 	dest = dold->d_inode;
+ 
++	err = nfserr_noent;
++	if (!dold->d_inode)
++		goto out_dput;
++	err = nfsd_break_lease(dold->d_inode);
++	if (err) {
++		err = nfserrno(err);
++		goto out_dput;
++	}
+ 	err = vfs_link(dold, dirp, dnew);
+ 	if (!err) {
+ 		if (EX_ISSYNC(ffhp->fh_export)) {
+@@ -1577,6 +1585,7 @@ nfsd_link(struct svc_rqst *rqstp, struct svc_fh *ffhp,
+ 			err = nfserrno(err);
+ 	}
+ 
++out_dput:
+ 	dput(dnew);
+ out_unlock:
+ 	fh_unlock(ffhp);
+@@ -1648,6 +1657,9 @@ nfsd_rename(struct svc_rqst *rqstp, struct svc_fh *ffhp, char *fname, int flen,
+ 	if (ndentry == trap)
+ 		goto out_dput_new;
+ 
++	err = nfsd_break_lease(odentry->d_inode);
++	if (err)
++		goto out_dput_new;
+ #ifdef MSNFS
+ 	if ((ffhp->fh_export->ex_flags & NFSEXP_MSNFS) &&
+ 		((atomic_read(&odentry->d_count) > 1)
+@@ -1720,6 +1732,9 @@ nfsd_unlink(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
+ 	if (!type)
+ 		type = rdentry->d_inode->i_mode & S_IFMT;
+ 
++	err = nfsd_break_lease(rdentry->d_inode);
++	if (err)
++		goto out_put;
+ 	if (type != S_IFDIR) { /* It's UNLINK */
+ #ifdef MSNFS
+ 		if ((fhp->fh_export->ex_flags & NFSEXP_MSNFS) &&
+@@ -1732,6 +1747,7 @@ nfsd_unlink(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
+ 		err = vfs_rmdir(dirp, rdentry);
+ 	}
+ 
++out_put:
+ 	dput(rdentry);
+ 
+ 	if (err == 0 &&

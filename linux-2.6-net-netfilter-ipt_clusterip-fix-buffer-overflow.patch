@@ -1,0 +1,44 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Fri, 25 Mar 2011 15:28:52 -0400
+Subject: [net] netfilter/ipt_CLUSTERIP: fix buffer overflow
+Message-id: <1301066932-21746-5-git-send-email-jpirko@redhat.com>
+Patchwork-id: 35055
+O-Subject: [patch rhel5 4/4] BZ689340 netfilter: ipt_CLUSTERIP: fix buffer
+	overflow
+Bugzilla: 689340
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+upstream:
+commit 961ed183a9fd080cf306c659b8736007e44065a5
+Author: Vasiliy Kulikov <segoon@openwall.com>
+Date:   Sun Mar 20 15:42:52 2011 +0100
+
+    netfilter: ipt_CLUSTERIP: fix buffer overflow
+
+    'buffer' string is copied from userspace.  It is not checked whether it is
+    zero terminated.  This may lead to overflow inside of simple_strtoul().
+    Changli Gao suggested to copy not more than user supplied 'size' bytes.
+
+    It was introduced before the git epoch.  Files "ipt_CLUSTERIP/*" are
+    root writable only by default, however, on some setups permissions might be
+    relaxed to e.g. network admin user.
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/ipv4/netfilter/ipt_CLUSTERIP.c b/net/ipv4/netfilter/ipt_CLUSTERIP.c
+index ffc7309..2634da1 100644
+--- a/net/ipv4/netfilter/ipt_CLUSTERIP.c
++++ b/net/ipv4/netfilter/ipt_CLUSTERIP.c
+@@ -686,8 +686,11 @@ static ssize_t clusterip_proc_write(struct file *file, const char __user *input,
+ 	struct clusterip_config *c = pde->data;
+ 	unsigned long nodenum;
+ 
+-	if (copy_from_user(buffer, input, PROC_WRITELEN))
++	if (size > PROC_WRITELEN)
++		return -EIO;
++	if (copy_from_user(buffer, input, size))
+ 		return -EFAULT;
++	buffer[size] = 0;
+ 
+ 	if (*buffer == '+') {
+ 		nodenum = simple_strtoul(buffer+1, NULL, 10);

@@ -1,0 +1,49 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 4 Mar 2011 21:26:51 -0500
+Subject: [net] ixgbe: limit VF access to network traffic
+Message-id: <1299274011-12690-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 33819
+O-Subject: [PATCH RHEL5.7 1/2] ixgbe: limit VF access to network traffic
+Bugzilla: 680531
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This is a backport of the followup upstream commit:
+
+96cc637235892a102fb829218adac048bd730ab7 ixgbe: limit VF access to network traffic
+
+We are adding this to RHEL5.7 now so we can add it to 5.6.z.  More
+updates to ixgbe for RHEL5.7 are coming.  This will satisfy Intel's
+request for 5.6.z from RHBZ 653236.
+
+
+diff --git a/drivers/net/ixgbe/ixgbe_common.c b/drivers/net/ixgbe/ixgbe_common.c
+index 393558d..e8b63ba 100644
+--- a/drivers/net/ixgbe/ixgbe_common.c
++++ b/drivers/net/ixgbe/ixgbe_common.c
+@@ -1287,6 +1287,9 @@ s32 ixgbe_init_rx_addrs_generic(struct ixgbe_hw *hw)
+ 		hw_dbg(hw, " New MAC Addr =%pM\n", hw->mac.addr);
+ 
+ 		hw->mac.ops.set_rar(hw, 0, hw->mac.addr, 0, IXGBE_RAH_AV);
++
++		/*  clear VMDq pool/queue selection for RAR 0 */
++		hw->mac.ops.clear_vmdq(hw, 0, IXGBE_CLEAR_VMDQ_ALL);
+ 	}
+ 	hw->addr_ctrl.overflow_promisc = 0;
+ 
+diff --git a/drivers/net/ixgbe/ixgbe_sriov.c b/drivers/net/ixgbe/ixgbe_sriov.c
+index cf06f6b..978186b 100644
+--- a/drivers/net/ixgbe/ixgbe_sriov.c
++++ b/drivers/net/ixgbe/ixgbe_sriov.c
+@@ -109,12 +109,10 @@ int ixgbe_set_vf_vlan(struct ixgbe_adapter *adapter, int add, int vid, u32 vf)
+ 	return adapter->hw.mac.ops.set_vfta(&adapter->hw, vid, vf, (bool)add);
+ }
+ 
+-
+ void ixgbe_set_vmolr(struct ixgbe_hw *hw, u32 vf, bool aupe)
+ {
+ 	u32 vmolr = IXGBE_READ_REG(hw, IXGBE_VMOLR(vf));
+ 	vmolr |= (IXGBE_VMOLR_ROMPE |
+-		  IXGBE_VMOLR_ROPE |
+ 		  IXGBE_VMOLR_BAM);
+ 	if (aupe)
+ 		vmolr |= IXGBE_VMOLR_AUPE;

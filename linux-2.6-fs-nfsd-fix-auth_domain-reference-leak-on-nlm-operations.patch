@@ -1,0 +1,39 @@
+From: J. Bruce Fields <bfields@redhat.com>
+Date: Fri, 25 Mar 2011 21:00:53 -0400
+Subject: [fs] nfsd: fix auth_domain reference leak on nlm operations
+Message-id: <1301086853-10824-7-git-send-email-bfields@redhat.com>
+Patchwork-id: 35078
+O-Subject: [RHEL5.7 PATCH 6/6] nfsd: fix auth_domain reference leak on nlm
+	operations
+Bugzilla: 589512
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+This was noticed by users who performed more than 2^32 lock operations
+and hence made this counter overflow (eventually leading to
+use-after-free's).  Setting rq_client to NULL here means that it won't
+later get auth_domain_put() when it should be.
+
+Appears to have been introduced in 2.5.42 by "[PATCH] kNFSd: Move auth
+domain lookup into svcauth" which moved most of the rq_client handling
+to common svcauth code, but left behind this one line.
+
+Cc: Neil Brown <neilb@suse.de>
+Cc: stable@kernel.org
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+
+Bugzilla 589512
+Upstream 954032d2527f2fce7355ba70709b5e143d6b686f
+
+diff --git a/fs/nfsd/lockd.c b/fs/nfsd/lockd.c
+index d160080..7327264 100644
+--- a/fs/nfsd/lockd.c
++++ b/fs/nfsd/lockd.c
+@@ -37,7 +37,6 @@ nlm_fopen(struct svc_rqst *rqstp, struct nfs_fh *f, struct file **filp)
+ 	exp_readlock();
+ 	nfserr = nfsd_open(rqstp, &fh, S_IFREG, MAY_LOCK, filp);
+ 	fh_put(&fh);
+-	rqstp->rq_client = NULL;
+ 	exp_readunlock();
+ 	/* We return nlm error codes as nlm doesn't know
+ 	 * about nfsd, but nfsd does know about nlm.. */

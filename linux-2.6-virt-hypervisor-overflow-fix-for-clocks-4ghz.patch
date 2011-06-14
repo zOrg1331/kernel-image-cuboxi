@@ -1,0 +1,51 @@
+From: Zachary Amsden <zamsden@redhat.com>
+Date: Wed, 23 Mar 2011 04:50:39 -0000
+Subject: [virt] hypervisor: Overflow fix for clocks > 4GHz
+Message-id: <4D897C1F.1000800@redhat.com>
+Patchwork-id: 34995
+O-Subject: [PATCH RHEL 5.6.z x86] Overflow fix for clocks > 4GHz
+Bugzilla: 690134
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+Same patch needed to be ported to 5.4, 5.5, 5.6, 5.7
+This is the 5.6 version.
+>From bf8372c267041b2a4e1fa2aa6f493e1b26f01923 Mon Sep 17 00:00:00 2001
+From: Zachary Amsden <zamsden@redhat.com>
+Date: Wed, 23 Mar 2011 00:09:27 -0400
+Subject: [PATCH] BZ: 673242
+
+Fix for 4GHZ TSC issue.
+
+Description of problem:
+
+We have seen that the time in virtualized RHEL 5.4 or later guest runs too
+fast, when run on processors supporting more than 4GHZ TSC frequency.
+
+This is due to a bug in calculation in get_hypervisor_cycles_per_sec, this
+affects only VMware VM's which use the tsc_based_timekeeping.
+
+The fix is trivial and is attached. Please apply it for the next update.
+This bug fix is necessary for all updates of RHEL 5.4, 5.5 & 5.6.
+
+Signed-off-by: Zachary Amsden <zamsden@redhat.com>
+CC: Alok Kataria <akataria@vmware.com>
+---
+ arch/i386/kernel/cpu/hypervisor.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletions(-)
+diff --git a/arch/i386/kernel/cpu/hypervisor.c b/arch/i386/kernel/cpu/hypervisor.c
+index aeb609e..1020734 100644
+--- a/arch/i386/kernel/cpu/hypervisor.c
++++ b/arch/i386/kernel/cpu/hypervisor.c
+@@ -52,7 +52,10 @@ unsigned long get_hypervisor_tsc_freq(void)
+ 
+ cycles_t get_hypervisor_cycles_per_tick(void)
+ {
+-	return (cpu_khz * 1000) / REAL_HZ;
++	/* Same thing for VMware or baremetal, in case we force it */
++	cycles_t cycles_per_tick = cpu_khz * 1000ULL;
++	do_div(cycles_per_tick, REAL_HZ);
++	return cycles_per_tick;
+ }
+ 
+ static inline void __cpuinit

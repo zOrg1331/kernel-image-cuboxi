@@ -1,0 +1,42 @@
+From: Eugene Teo <eugene@redhat.com>
+Date: Tue, 15 Mar 2011 03:25:17 -0400
+Subject: [fs] proc: protect mm start_/end_code in /proc/pid/stat
+Message-id: <20110315032517.GA25980@infradead.org>
+Patchwork-id: 33993
+O-Subject: [RHEL5.7] BZ#684571 CVE-2011-0726 proc: protect mm
+	start_code/end_code in /proc/pid/stat
+Bugzilla: 684571
+CVE: CVE-2011-0726
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+
+Backport of http://www.spinics.net/lists/mm-commits/msg82726.html.
+Fixes CVE-2011-0726.
+
+While mm->start_stack was protected from cross-uid viewing (commit f83ce3e6b02d5 ("proc: avoid information leaks to non-privileged processes")), the start_code and end_code values were not.  This would allow the text location of a PIE binary to leak, defeating ASLR.
+
+Note that the value "1" is used instead of "0" for a protected value since "ps", "killall", and likely other readers of /proc/pid/stat, take start_code of "0" to mean a kernel thread and will misbehave.  Thanks to Brad Spengler for pointing this out.
+
+Signed-off-by: Eugene Teo <eugene@redhat.com>
+--
+ fs/proc/array.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index 09551b1..10611ef 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -453,8 +453,8 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ 		vsize,
+ 		mm ? get_mm_rss(mm) : 0,
+ 	        rsslim,
+-		mm ? mm->start_code : 0,
+-		mm ? mm->end_code : 0,
++		mm ? (permitted ? mm->start_code : 1) : 0,
++		mm ? (permitted ? mm->end_code : 1) : 0,
+ 		(permitted && mm) ? mm->start_stack : 0,
+ 		esp,
+ 		eip,

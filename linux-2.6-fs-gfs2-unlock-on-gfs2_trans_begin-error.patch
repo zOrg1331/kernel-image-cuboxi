@@ -1,0 +1,49 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Thu, 07 Apr 2011 16:12:16 -0000
+Subject: [fs] gfs2: unlock on gfs2_trans_begin error
+Message-id: <800165577.798674.1302192736849.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 35387
+O-Subject: [RHEL5.6.z Patch][1 of 3] Bug 688855 - GFS2 filesystem hang caused
+	by incorrect lock order
+Bugzilla: 688855
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This is the first of three patches for 5.6.z bug #688855.  It is already
+upstream and a nearly identical patch was posted for RHEL5.7 for bz 656032.
+All three have been tested at customer sites and received positive feedback.
+
+This patch fixes an error path that caused a glock to not be unlocked.
+
+rhbz#688855
+
+Regards,
+
+Bob Peterson
+Red Hat File Systems
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+commit 7ddf7bdbf0838800af9d7f0ad3c3741663e7be44
+Author: Bob Peterson <rpeterso@redhat.com>
+Date:   Fri Mar 18 08:18:47 2011 -0500
+
+    GFS2 filesystem hang caused by incorrect lock order
+    
+    This patch fixes an error path that caused a glock to not be unlocked.
+    
+    rhbz#656032
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index 7b4613f..e1078da 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -312,7 +312,7 @@ static int gfs2_unlink(struct inode *dir, struct dentry *dentry)
+ 
+ 	error = gfs2_trans_begin(sdp, 2*RES_DINODE + RES_LEAF + RES_RG_BIT, 0);
+ 	if (error)
+-		goto out_rgrp;
++		goto out_gunlock;
+ 
+ 	error = gfs2_dir_del(dip, &dentry->d_name);
+         if (error)

@@ -1,0 +1,90 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Sat, 2 Apr 2011 11:31:42 -0400
+Subject: [fs] partitions: Fix corrupted OSF partition table parsing
+Message-id: <20110402113142.3839.81664.sendpatchset@dhcp-65-98.nay.redhat.com>
+Patchwork-id: 35327
+O-Subject: [PATCH RHEL5] Fix corrupted OSF partition table parsing
+Bugzilla: 688023
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=688023
+
+Description:
+The kernel automatically evaluates partition tables of storage devices.
+The code for evaluating OSF partitions (in fs/partitions/osf.c) contains a
+bug that leaks data from kernel heap memory to userspace for certain
+corrupted OSF partitions.
+
+In more detail (from Kernel 2.6.37 fs/partition/osf.c):
+
+(66)    for (i = 0 ; i < le16_to_cpu(label->d_npartitions); i++, partition++) {
+
+iterates from 0 to d_npartitions - 1, where
+
+    d_npartitions is read from the partition table without validation and
+    partition is a pointer to an array of at most 8 d_partitions.
+
+(70)        put_partition(state, slot,
+(71)          le32_to_cpu(partition->p_offset),
+(72)          le32_to_cpu(partition->p_size));
+
+adds a partition based on data referenced by partition.  As partition may
+point beyond the partition table data structure, p_offset and p_size are
+read from kernel heap beyond the partition table.
+
+In some cases, put_partition logs error messages to userspace including
+the p_offset and p_size values.  Hence, some values from kernel heap are
+leaked to userspace.
+
+So validate the value of d_npartitions.
+
+upstream status:
+http://git.kernel.org/linus/1eafbfeb7bdf59cfe173304c76188f3fd5f1fd05
+http://git.kernel.org/linus/34d211a2d5df4984a35b18d8ccacbe1d10abb067
+
+Brew build#:
+https://brewweb.devel.redhat.com/taskinfo?taskID=3224335
+
+resolves CVE-2011-1163
+
+diff --git a/fs/partitions/osf.c b/fs/partitions/osf.c
+index c05c17b..9ddca58 100644
+--- a/fs/partitions/osf.c
++++ b/fs/partitions/osf.c
+@@ -10,10 +10,13 @@
+ #include "check.h"
+ #include "osf.h"
+ 
++#define MAX_OSF_PARTITIONS 18
++
+ int osf_partition(struct parsed_partitions *state, struct block_device *bdev)
+ {
+ 	int i;
+ 	int slot = 1;
++	unsigned int npartitions;
+ 	Sector sect;
+ 	unsigned char *data;
+ 	struct disklabel {
+@@ -45,7 +48,7 @@ int osf_partition(struct parsed_partitions *state, struct block_device *bdev)
+ 			u8  p_fstype;
+ 			u8  p_frag;
+ 			__le16 p_cpg;
+-		} d_partitions[8];
++		} d_partitions[MAX_OSF_PARTITIONS];
+ 	} * label;
+ 	struct d_partition * partition;
+ 
+@@ -63,7 +66,12 @@ int osf_partition(struct parsed_partitions *state, struct block_device *bdev)
+ 		put_dev_sector(sect);
+ 		return 0;
+ 	}
+-	for (i = 0 ; i < le16_to_cpu(label->d_npartitions); i++, partition++) {
++	npartitions = le16_to_cpu(label->d_npartitions);
++	if (npartitions > MAX_OSF_PARTITIONS) {
++		put_dev_sector(sect);
++		return 0;
++	}
++	for (i = 0 ; i < npartitions; i++, partition++) {
+ 		if (slot == state->limit)
+ 		        break;
+ 		if (le32_to_cpu(partition->p_size))

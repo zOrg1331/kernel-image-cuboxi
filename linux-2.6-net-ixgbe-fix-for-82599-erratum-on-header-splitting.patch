@@ -1,0 +1,41 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 4 Mar 2011 21:27:01 -0500
+Subject: [net] ixgbe: fix for 82599 erratum on Header Splitting
+Message-id: <1299274021-12732-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 33820
+O-Subject: [PATCH RHEL5.7 2/2] ixgbe: fix for 82599 erratum on Header Splitting
+Bugzilla: 680531
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This is a backport of the followup upstream commit:
+
+a124339ad28389093ed15eca990d39c51c5736cc ixgbe: fix for 82599 erratum on Header Splitting
+
+We are adding this to RHEL5.7 now so we can add it to 5.6.z.  More
+updates to ixgbe for RHEL5.7 are coming.  This will satisfy Intel's
+request for 5.6.z from RHBZ 653236 and will resolve RHBZ 680998.
+
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 760bd56..d4ab838 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -2696,9 +2696,16 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
+ 	int rx_buf_len;
+ 
+ 	/* Decide whether to use packet split mode or not */
++	/* On by default */
++	adapter->flags |= IXGBE_FLAG_RX_PS_ENABLED;
++
+ 	/* Do not use packet split if we're in SR-IOV Mode */
+-	if (!adapter->num_vfs)
+-		adapter->flags |= IXGBE_FLAG_RX_PS_ENABLED;
++	if (adapter->num_vfs)
++		adapter->flags &= ~IXGBE_FLAG_RX_PS_ENABLED;
++
++	/* Disable packet split due to 82599 erratum #45 */
++	if (hw->mac.type == ixgbe_mac_82599EB)
++		adapter->flags &= ~IXGBE_FLAG_RX_PS_ENABLED;
+ 
+ 	/* Set the RX buffer length according to the mode */
+ 	if (adapter->flags & IXGBE_FLAG_RX_PS_ENABLED) {

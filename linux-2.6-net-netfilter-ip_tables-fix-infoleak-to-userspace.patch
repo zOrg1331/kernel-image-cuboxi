@@ -1,0 +1,61 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Fri, 25 Mar 2011 15:28:50 -0400
+Subject: [net] netfilter/ip_tables: fix infoleak to userspace
+Message-id: <1301066932-21746-3-git-send-email-jpirko@redhat.com>
+Patchwork-id: 35052
+O-Subject: [patch rhel5 2/4] BZ689332 CVE-2011-1171 netfilter: ip_tables: fix
+	infoleak to userspace
+Bugzilla: 689332
+CVE: CVE-2011-1171
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+BZ689332 - CVE-2011-1171
+
+upstream:
+commit 78b79876761b86653df89c48a7010b5cbd41a84a
+Author: Vasiliy Kulikov <segoon@openwall.com>
+Date:   Tue Mar 15 13:36:05 2011 +0100
+
+    netfilter: ip_tables: fix infoleak to userspace
+
+    Structures ipt_replace, compat_ipt_replace, and xt_get_revision are
+    copied from userspace.  Fields of these structs that are
+    zero-terminated strings are not checked.  When they are used as argument
+    to a format string containing "%s" in request_module(), some sensitive
+    information is leaked to userspace via argument of spawned modprobe
+    process.
+
+    The first and the third bugs were introduced before the git epoch; the
+    second was introduced in 2722971c (v2.6.17-rc1).  To trigger the bug
+    one should have CAP_NET_ADMIN.
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/ipv4/netfilter/ip_tables.c b/net/ipv4/netfilter/ip_tables.c
+index e06d024..685f18b 100644
+--- a/net/ipv4/netfilter/ip_tables.c
++++ b/net/ipv4/netfilter/ip_tables.c
+@@ -1269,6 +1269,7 @@ do_replace(void __user *user, unsigned int len)
+ 	/* overflow check */
+ 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
+ 		return -ENOMEM;
++	tmp.name[sizeof(tmp.name)-1] = 0;
+ 
+ 	newinfo = xt_alloc_table_info(tmp.size);
+ 	if (!newinfo)
+@@ -1811,6 +1812,7 @@ compat_do_replace(void __user *user, unsigned int len)
+ 		return -ENOMEM;
+ 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
+ 		return -ENOMEM;
++	tmp.name[sizeof(tmp.name)-1] = 0;
+ 
+ 	newinfo = xt_alloc_table_info(tmp.size);
+ 	if (!newinfo)
+@@ -2075,6 +2077,7 @@ do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
+ 			ret = -EFAULT;
+ 			break;
+ 		}
++		rev.name[sizeof(rev.name)-1] = 0;
+ 
+ 		if (cmd == IPT_SO_GET_REVISION_TARGET)
+ 			target = 1;

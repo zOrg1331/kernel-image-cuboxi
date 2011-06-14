@@ -1,0 +1,328 @@
+From: Phillip Lougher <plougher@redhat.com>
+Date: Wed, 04 May 2011 20:36:06 -0000
+Subject: [fs] gfs2: restructure reclaim of unlinked dinodes
+Message-id: <20110504203606.9F34E3FF90@plougher.csb>
+Patchwork-id: 35807
+O-Subject: [RHEL5.6.z Patch V2] Bug 688855 - GFS2 filesystem hang caused by
+	incorrect lock order
+Bugzilla: 688855
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+BZ #688855
+
+This is a re-send of the following patch, with some trivial
+mods to allow it to be applied to 5.6.z.
+
+Thanks
+
+Phillip
+
+>From 5b13feefad28bbecdf1f3ec0886de2b7c59a41d8 Mon Sep 17 00:00:00 2001
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Thu, 7 Apr 2011 21:13:43 +0000
+Subject: [PATCH] gfs2: restructure reclaiming of unlinked dinodes
+
+Hi,
+
+This is the second patch for bz 688855.   It is already
+upstream and a nearly identical patch was posted for RHEL5.7
+for bz 656032.  All three have been tested at customer sites and
+received positive feedback.
+
+This is a restructure of the gfs2 code that reclaims unlinked dinodes.
+
+Description of the upstream patch:
+
+In the (impossible, except if there is fs corruption) error path
+in gfs2_lookup_by_inum() if the call to gfs2_inode_refresh()
+fails, it was leaving the function by calling iput() rather
+than iget_failed(). This would cause future lookups of the same
+inode to block forever.
+
+This patch fixes the problem by moving the call to gfs2_inode_refresh()
+into gfs2_inode_lookup() where iget_failed() is part of the error path
+already. Also this cleans up some unreachable code and makes
+gfs2_set_iop() static.
+
+rhbz#688855
+
+Regards,
+
+Bob Peterson
+Red Hat File Systems
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+---
+commit 6169702b10cbffdb121b8362b2dde6e5da86f5ea
+Author: Bob Peterson <rpeterso@redhat.com>
+Date:   Fri Mar 18 08:27:24 2011 -0500
+
+    GFS2 filesystem hang caused by incorrect lock order
+
+    In the (impossible, except if there is fs corruption) error path
+    in gfs2_lookup_by_inum() if the call to gfs2_inode_refresh()
+    fails, it was leaving the function by calling iput() rather
+    than iget_failed(). This would cause future lookups of the same
+    inode to block forever.
+
+    This patch fixes the problem by moving the call to gfs2_inode_refresh()
+    into gfs2_inode_lookup() where iget_failed() is part of the error path
+    already. Also this cleans up some unreachable code and makes
+    gfs2_set_iop() static.
+
+    rhbz#688855
+---
+ fs/gfs2/glock.c     |   14 ++++-----
+ fs/gfs2/inode.c     |   78 +++++++++++++++++----------------------------------
+ fs/gfs2/inode.h     |    1 -
+ fs/gfs2/ops_super.c |    9 +++++-
+ fs/gfs2/rgrp.c      |    4 +-
+ 5 files changed, 42 insertions(+), 64 deletions(-)
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 22a0d7b..83eaecf 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -1315,10 +1315,8 @@ int gfs2_glock_nq_m(unsigned int num_gh, struct gfs2_holder *ghs)
+ 
+ void gfs2_glock_dq_m(unsigned int num_gh, struct gfs2_holder *ghs)
+ {
+-	unsigned int x;
+-
+-	for (x = 0; x < num_gh; x++)
+-		gfs2_glock_dq(&ghs[x]);
++	while (num_gh--)
++		gfs2_glock_dq(&ghs[num_gh]);
+ }
+ 
+ /**
+@@ -1330,10 +1328,8 @@ void gfs2_glock_dq_m(unsigned int num_gh, struct gfs2_holder *ghs)
+ 
+ void gfs2_glock_dq_uninit_m(unsigned int num_gh, struct gfs2_holder *ghs)
+ {
+-	unsigned int x;
+-
+-	for (x = 0; x < num_gh; x++)
+-		gfs2_glock_dq_uninit(&ghs[x]);
++	while (num_gh--)
++		gfs2_glock_dq_uninit(&ghs[num_gh]);
+ }
+ 
+ static int gfs2_lm_hold_lvb(struct gfs2_sbd *sdp, void *lock, char **lvbp)
+@@ -1448,8 +1444,10 @@ void gfs2_glock_cb(void *cb_data, unsigned int type, void *data)
+ 		gl = gfs2_glock_find(sdp, &async->lc_name);
+ 		if (gfs2_assert_warn(sdp, gl))
+ 			return;
++		spin_lock(&gl->gl_spin);
+ 		gl->gl_reply = async->lc_ret;
+ 		set_bit(GLF_REPLY_PENDING, &gl->gl_flags);
++		spin_unlock(&gl->gl_spin);
+ 		if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 			gfs2_glock_put(gl);
+ 		return;
+diff --git a/fs/gfs2/inode.c b/fs/gfs2/inode.c
+index e32df3a..8eac5af 100644
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -77,16 +77,14 @@ static struct inode *gfs2_iget(struct super_block *sb, u64 no_addr)
+ }
+ 
+ /**
+- * GFS2 lookup code fills in vfs inode contents based on info obtained
+- * from directory entry inside gfs2_inode_lookup(). This has caused issues
+- * with NFS code path since its get_dentry routine doesn't have the relevant
+- * directory entry when gfs2_inode_lookup() is invoked. Part of the code
+- * segment inside gfs2_inode_lookup code needs to get moved around.
++ * gfs2_set_iop - Sets inode operations
++ * @inode: The inode with correct i_mode filled in
+  *
+- * Clean up I_LOCK and I_NEW as well.
+- **/
++ * GFS2 lookup code fills in vfs inode contents based on info obtained
++ * from directory entry inside gfs2_inode_lookup().
++ */
+ 
+-void gfs2_set_iop(struct inode *inode)
++static void gfs2_set_iop(struct inode *inode)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(inode);
+ 	umode_t mode = inode->i_mode;
+@@ -109,8 +107,6 @@ void gfs2_set_iop(struct inode *inode)
+ 		inode->i_op = &gfs2_file_iops;
+ 		init_special_inode(inode, inode->i_mode, inode->i_rdev);
+ 	}
+-
+-	unlock_new_inode(inode);
+ }
+ 
+ /**
+@@ -122,10 +118,8 @@ void gfs2_set_iop(struct inode *inode)
+  * Returns: A VFS inode, or an error
+  */
+ 
+-struct inode *gfs2_inode_lookup(struct super_block *sb,
+-				unsigned int type,
+-				u64 no_addr,
+-				u64 no_formal_ino)
++struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
++				u64 no_addr, u64 no_formal_ino)
+ {
+ 	struct inode *inode;
+ 	struct gfs2_inode *ip;
+@@ -156,51 +150,38 @@ struct inode *gfs2_inode_lookup(struct super_block *sb,
+ 		error = gfs2_glock_nq_init(io_gl, LM_ST_SHARED, GL_EXACT, &ip->i_iopen_gh);
+ 		if (unlikely(error))
+ 			goto fail_iopen;
+-		ip->i_iopen_gh.gh_gl->gl_object = ip;
+ 
++		ip->i_iopen_gh.gh_gl->gl_object = ip;
+ 		gfs2_glock_put(io_gl);
+ 		io_gl = NULL;
+ 
+-		if ((type == DT_UNKNOWN) && (no_formal_ino == 0))
+-			goto gfs2_nfsbypass;
+-
+-		inode->i_mode = DT2IF(type);
+-
+-		/*
+-		 * We must read the inode in order to work out its type in
+-		 * this case. Note that this doesn't happen often as we normally
+-		 * know the type beforehand. This code path only occurs during
+-		 * unlinked inode recovery (where it is safe to do this glock,
+-		 * which is not true in the general case).
+-		 */
+ 		if (type == DT_UNKNOWN) {
+-			struct gfs2_holder gh;
+-			error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
+-			if (unlikely(error))
+-				goto fail_glock;
+-			/* Inode is now uptodate */
+-			gfs2_glock_dq_uninit(&gh);
++			/* Inode glock must be locked already */
++			error = gfs2_inode_refresh(GFS2_I(inode));
++			if (error)
++				goto fail_refresh;
++		} else {
++			inode->i_mode = DT2IF(type);
+ 		}
+ 
+ 		gfs2_set_iop(inode);
++		unlock_new_inode(inode);
++
+ 	}
+ 
+-gfs2_nfsbypass:
+ 	return inode;
+-fail_glock:
+-	gfs2_glock_dq(&ip->i_iopen_gh);
++
++fail_refresh:
++	ip->i_iopen_gh.gh_gl->gl_object = NULL;
++	gfs2_glock_dq_uninit(&ip->i_iopen_gh);
+ fail_iopen:
+ 	if (io_gl)
+ 		gfs2_glock_put(io_gl);
+ fail_put:
+-	if (inode->i_state & I_NEW)
+-		ip->i_gl->gl_object = NULL;
++	ip->i_gl->gl_object = NULL;
+ 	gfs2_glock_put(ip->i_gl);
+ fail:
+-	if (inode->i_state & I_NEW)
+-		iget_failed(inode);
+-	else
+-		iput(inode);
++	iget_failed(inode);
+ 	return ERR_PTR(error);
+ }
+ 
+@@ -209,11 +190,12 @@ struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
+ {
+ 	struct super_block *sb = sdp->sd_vfs;
+ 	struct gfs2_holder i_gh;
+-	struct inode *inode;
++	struct inode *inode = NULL;
+ 	int error;
+ 
++	/* Must not read in block until block type is verified */
+ 	error = gfs2_glock_nq_num(sdp, no_addr, &gfs2_inode_glops,
+-				  LM_ST_SHARED, LM_FLAG_ANY, &i_gh);
++				  LM_ST_EXCLUSIVE, GL_SKIP, &i_gh);
+ 	if (error)
+ 		return ERR_PTR(error);
+ 
+@@ -225,14 +207,6 @@ struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
+ 	if (IS_ERR(inode))
+ 		goto fail;
+ 
+-	error = gfs2_inode_refresh(GFS2_I(inode));
+-	if (error)
+-		goto fail_iput;
+-
+-	/* Pick up the works we bypass in gfs2_inode_lookup */
+-	if (inode->i_state & I_NEW)
+-		gfs2_set_iop(inode);
+-
+ 	/* Two extra checks for NFS only */
+ 	if (no_formal_ino) {
+ 		error = -ESTALE;
+diff --git a/fs/gfs2/inode.h b/fs/gfs2/inode.h
+index f61d123..3d24fa3 100644
+--- a/fs/gfs2/inode.h
++++ b/fs/gfs2/inode.h
+@@ -74,7 +74,6 @@ static inline void gfs2_inum_out(const struct gfs2_inode *ip,
+ 
+ 
+ void gfs2_inode_attr_in(struct gfs2_inode *ip);
+-void gfs2_set_iop(struct inode *inode);
+ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned type,
+ 				u64 no_addr, u64 no_formal_ino);
+ extern struct inode *gfs2_lookup_by_inum(struct gfs2_sbd *sdp, u64 no_addr,
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 89a0c09..bd92d4b 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -539,7 +539,8 @@ static void gfs2_delete_inode(struct inode *inode)
+ 	if (!test_bit(GIF_USER, &ip->i_flags))
+ 		goto out;
+ 
+-	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
++	/* Must not read inode block until block type has been verified */
++	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_SKIP, &gh);
+ 	if (unlikely(error)) {
+ 		gfs2_glock_dq_uninit(&ip->i_iopen_gh);
+ 		goto out;
+@@ -549,6 +550,12 @@ static void gfs2_delete_inode(struct inode *inode)
+ 	if (error)
+ 		goto out_truncate;
+ 
++	if (test_bit(GIF_INVALID, &ip->i_flags)) {
++		error = gfs2_inode_refresh(ip);
++		if (error)
++			goto out_truncate;
++	}
++
+ 	ip->i_iopen_gh.gh_flags |= GL_NOCACHE;
+ 	gfs2_glock_dq_wait(&ip->i_iopen_gh);
+ 	gfs2_holder_reinit(LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB | GL_NOCACHE,
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 9eac00d..b63925e 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -910,7 +910,7 @@ static void try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked, u64 skip
+ 		/* rgblk_search can return a block < goal, so we need to
+ 		   keep it marching forward. */
+ 		no_addr = block + rgd->rd_data0;
+-		goal++;
++		goal = max(block + 1, goal + 1);
+ 		if (*last_unlinked != NO_BLOCK && no_addr <= *last_unlinked)
+ 			continue;
+ 		if (no_addr == skip)
+@@ -936,7 +936,7 @@ static void try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked, u64 skip
+ 			found++;
+ 
+ 		/* Limit reclaim to sensible number of tasks */
+-		if (found > 2*NR_CPUS)
++		if (found > NR_CPUS)
+ 			return;
+ 	}
+ 

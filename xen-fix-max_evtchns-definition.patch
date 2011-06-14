@@ -1,0 +1,66 @@
+From: Laszlo Ersek <lersek@redhat.com>
+Date: Tue, 3 May 2011 11:45:27 -0400
+Subject: [xen] fix MAX_EVTCHNS definition
+Message-id: <1304423127-21050-1-git-send-email-lersek@redhat.com>
+Patchwork-id: 4576
+O-Subject: [kernel team] [RHEL5.7 Xen PATCH] fix MAX_EVTCHNS() definition
+	(EMBARGOED BZ#701243)
+Bugzilla:
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Problem:
+
+  The MAX_EVTCHNS() macro in the RH Xen hypervisor source contains an
+  unwarranted multiplier of 64, starting with commit 766d4dc9. This
+  macro is used to determine the maximum allowed offset in any specific
+  domain's event channel bucket array. The storage allocated for any
+  such array has a hypervisor-global constant size. Due to the spurious
+  multiplier, MAX_EVTCHNS() is out of sync, and the allocated storage
+  can be overrun by unprivileged domains.
+
+Fix & upstream status:
+
+  Backport xen-unstable c/s 19365:2dcdd2fcb945. It removes the
+  multiplication by 64.
+
+Testing:
+
+  A reproducer is attached to the BZ. Running it in PV domUs:
+
+    32-bit guest, 32-bit Xen: Xen crash
+    32-bit guest, 64-bit Xen: guest crash
+                              (most probably due to Xen corruption)
+    64-bit guest, 64-bit Xen: Xen crash
+
+  An HVM domU can also trigger the bug through eg. pv-on-hvm drivers
+  that allocate a high enough number of event channels (see BZ#697927).
+  With the patch applied, all of the above are fixed; the reproducer
+  gets ENOSPC.
+
+Brew:
+
+  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=3294437
+
+Please review. Thanks.
+
+Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+---
+ include/xen/sched.h |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/xen/sched.h b/include/xen/sched.h
+index 38ccc1d..2889bb4 100644
+--- a/include/xen/sched.h
++++ b/include/xen/sched.h
+@@ -35,7 +35,7 @@ extern struct domain *dom0;
+ #else
+ #define BITS_PER_EVTCHN_WORD(d) (has_32bit_shinfo(d) ? 32 : BITS_PER_LONG)
+ #endif
+-#define MAX_EVTCHNS(d) (BITS_PER_EVTCHN_WORD(d) * BITS_PER_EVTCHN_WORD(d) * 64)
++#define MAX_EVTCHNS(d) (BITS_PER_EVTCHN_WORD(d) * BITS_PER_EVTCHN_WORD(d))
+ #define EVTCHNS_PER_BUCKET 128
+ #define NR_EVTCHN_BUCKETS  (NR_EVENT_CHANNELS / EVTCHNS_PER_BUCKET)
+ 

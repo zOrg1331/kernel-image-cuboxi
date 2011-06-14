@@ -1,0 +1,101 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 16 Mar 2011 13:38:28 -0400
+Subject: [fs] lockd: make lockd_down wait for lockd to come down
+Message-id: <1300282708-23520-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 34123
+O-Subject: [RHEL5 PATCH] BZ#653286: lockd: make lockd_down wait indefinitely for
+	lockd to come down
+Bugzilla: 653286
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+It's possible that lockd can block for a bit when we ask it to come down
+(by sending it a SIGKILL). If that happens, lockd_down will give up
+after waiting 1s for it to come down and will reset everything so that a
+new one can be started.
+
+If a new one is started before the old one has come all the way down,
+then we have a big problem. Much of the code that lockd calls doesn't do
+any locking since it's never expected to be called by multiple threads
+at the same time.
+
+One thing that can be corrupted due to this is the
+nlm_grace_period_timer.  The new lockd can (re)add it, and then the old
+lockd can delete it. The new lockd can then end up calling mod_timer to
+change it, at which point we end up with an oops since we're trying to
+mod a timer that's deleted.
+
+There are a number of ways to fix this, but I think this is the probably
+the best one. We really do not want more than one lockd running at a
+time, so lockd_down should wait for the old one to be down before
+proceeding.
+
+This change mirrors the semantics for lockd_down that went upstream in
+d751a7cd. It does not convert the code to use kthreads however. We could
+consider that here, but it's a larger change and isn't really necessary
+to fix this.
+
+I verified that this fixed the provided reproducer. The reporter of the
+problem has not verified the fix, but they're in Japan and likely have
+larger concerns at the moment. For now, I suggest we proceed with this
+patch as-is.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/lockd/svc.c b/fs/lockd/svc.c
+index 7a5709b..c0f956b 100644
+--- a/fs/lockd/svc.c
++++ b/fs/lockd/svc.c
+@@ -154,7 +154,7 @@ lockd(struct svc_rqst *rqstp)
+ 	 * NFS mount or NFS daemon has gone away, and we've been sent a
+ 	 * signal, or else another process has taken over our job.
+ 	 */
+-	while ((nlmsvc_users || !signalled()) && nlmsvc_pid == current->pid) {
++	while (nlmsvc_users) {
+ 		long timeout = MAX_SCHEDULE_TIMEOUT;
+ 
+ 		/* update sv_maxconn if it has changed */
+@@ -204,19 +204,11 @@ lockd(struct svc_rqst *rqstp)
+ 
+ 	del_timer(&nlm_grace_period_timer);
+ 
+-	/*
+-	 * Check whether there's a new lockd process before
+-	 * shutting down the hosts and clearing the slot.
+-	 */
+-	if (!nlmsvc_pid || current->pid == nlmsvc_pid) {
+-		if (nlmsvc_ops)
+-			nlmsvc_invalidate_all();
+-		nlm_shutdown_hosts();
+-		nlmsvc_pid = 0;
+-		nlmsvc_serv = NULL;
+-	} else
+-		printk(KERN_DEBUG
+-			"lockd: new process, skipping host shutdown\n");
++	if (nlmsvc_ops)
++		nlmsvc_invalidate_all();
++	nlm_shutdown_hosts();
++	nlmsvc_pid = 0;
++	nlmsvc_serv = NULL;
+ 	wake_up(&lockd_exit);
+ 
+ 	/* Exit the RPC thread */
+@@ -365,17 +357,8 @@ lockd_down(void)
+ 	warned = 0;
+ 
+ 	kill_proc(nlmsvc_pid, SIGKILL, 1);
+-	/*
+-	 * Wait for the lockd process to exit, but since we're holding
+-	 * the lockd semaphore, we can't wait around forever ...
+-	 */
+ 	clear_thread_flag(TIF_SIGPENDING);
+-	wait_event_timeout(lockd_exit, nlmsvc_pid == 0, HZ);
+-	if (nlmsvc_pid) {
+-		printk(KERN_WARNING 
+-			"lockd_down: lockd failed to exit, clearing pid\n");
+-		nlmsvc_pid = 0;
+-	}
++	wait_event(lockd_exit, nlmsvc_pid == 0);
+ 	spin_lock_irq(&current->sighand->siglock);
+ 	recalc_sigpending();
+ 	spin_unlock_irq(&current->sighand->siglock);

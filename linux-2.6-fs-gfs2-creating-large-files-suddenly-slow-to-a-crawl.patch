@@ -1,0 +1,260 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Fri, 25 Mar 2011 12:40:12 -0000
+Subject: [fs] gfs2: creating large files suddenly slow to a crawl
+Message-id: <1495726904.598357.1301056812654.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 35049
+O-Subject: [PATCH 5.6.z] Bug 690239 - gfs2: creating large files suddenly slow
+	to a crawl
+Bugzilla: 690239
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This patch is for bugzilla 690239.  It is a RHEL5.6.z crosswrite of
+this upstream patch:
+
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commitdiff;h=9cabcdbd4638cf884839ee4cd15780800c223b90
+
+The 5.7 patch was posted here:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2011-March/msg00620.html
+
+The problem is that when allocating blocks to a file, when GFS2
+can't find any rgrps in its "recent rgrp" list, it starts thrashing
+badly.  This patch doesn't solve the thrashing directly, but it
+avoids the problem altogether by eliminating the "recent rgrp" list
+in favor or a "mru" (most recently used) list, as the upstream code
+does.  The mru list doesn't have a size restriction, so it will
+never thrash the way the old code did.
+
+It was tested on my roth cluster, and received positive customer
+feedback.
+
+Steve's original patch description:
+
+This patch removes the "recent list" which is used during allocation
+and replaces it with the (already existing) mru list used during
+deletion. The "recent list" was not a true mru list leading to a number
+of inefficiencies including a "next" function which made scanning the
+list an order N^2 operation wrt to the number of list elements.
+
+This should increase allocation performance with large numbers of rgrps.
+Its also a useful preparation and cleanup before some further changes
+which are planned in this area.
+
+Regards,
+
+Bob Peterson
+Red Hat File Systems
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com> 
+--
+ fs/gfs2/incore.h     |    2 -
+ fs/gfs2/ops_fstype.c |    1 -
+ fs/gfs2/rgrp.c       |  106 +++++++-------------------------------------------
+ 3 files changed, 15 insertions(+), 94 deletions(-)
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index 1e5f8d8..0053fdd 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -71,7 +71,6 @@ struct gfs2_bitmap {
+ struct gfs2_rgrpd {
+ 	struct list_head rd_list;	/* Link with superblock */
+ 	struct list_head rd_list_mru;
+-	struct list_head rd_recent;	/* Recently used rgrps */
+ 	struct gfs2_glock *rd_gl;	/* Glock for this rgrp */
+ 	u64 rd_addr;			/* grp block disk address */
+ 	u64 rd_data0;			/* first data location */
+@@ -526,7 +525,6 @@ struct gfs2_sbd {
+ 	struct mutex sd_rindex_mutex;
+ 	struct list_head sd_rindex_list;
+ 	struct list_head sd_rindex_mru_list;
+-	struct list_head sd_rindex_recent_list;
+ 	struct gfs2_rgrpd *sd_rindex_forward;
+ 	unsigned int sd_rgrps;
+ 
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index d4b7de4..be31b32 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -94,7 +94,6 @@ static struct gfs2_sbd *init_sbd(struct super_block *sb)
+ 	mutex_init(&sdp->sd_rindex_mutex);
+ 	INIT_LIST_HEAD(&sdp->sd_rindex_list);
+ 	INIT_LIST_HEAD(&sdp->sd_rindex_mru_list);
+-	INIT_LIST_HEAD(&sdp->sd_rindex_recent_list);
+ 
+ 	INIT_LIST_HEAD(&sdp->sd_jindex_list);
+ 	spin_lock_init(&sdp->sd_jindex_spin);
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 72ce9cc..9eac00d 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -93,8 +93,11 @@ static void gfs2_setbit(struct gfs2_rgrpd *rgd, unsigned char *buffer,
+ 	if (valid_change[new_state * 4 + cur_state]) {
+ 		*byte ^= cur_state << bit;
+ 		*byte |= new_state << bit;
+-	} else
++	} else {
++		printk("block = 0x%llx old_state=%d, new_state=%d\n",
++		       (unsigned long long)block, cur_state, new_state);
+ 		gfs2_consist_rgrpd(rgd);
++	}
+ }
+ 
+ /**
+@@ -360,11 +363,6 @@ static void clear_rgrpdi(struct gfs2_sbd *sdp)
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 	sdp->sd_rindex_forward = NULL;
+-	head = &sdp->sd_rindex_recent_list;
+-	while (!list_empty(head)) {
+-		rgd = list_entry(head->next, struct gfs2_rgrpd, rd_recent);
+-		list_del(&rgd->rd_recent);
+-	}
+ 	spin_unlock(&sdp->sd_rindex_spin);
+ 
+ 	head = &sdp->sd_rindex_list;
+@@ -943,37 +941,6 @@ static void try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked, u64 skip
+ 	}
+ 
+ 	rgd->rd_flags &= ~GFS2_RDF_CHECK;
+-	return;
+-}
+-
+-/**
+- * recent_rgrp_first - get first RG from "recent" list
+- * @sdp: The GFS2 superblock
+- * @rglast: address of the rgrp used last
+- *
+- * Returns: The first rgrp in the recent list
+- */
+-
+-static struct gfs2_rgrpd *recent_rgrp_first(struct gfs2_sbd *sdp,
+-					    u64 rglast)
+-{
+-	struct gfs2_rgrpd *rgd;
+-
+-	spin_lock(&sdp->sd_rindex_spin);
+-
+-	if (rglast) {
+-		list_for_each_entry(rgd, &sdp->sd_rindex_recent_list, rd_recent) {
+-			if (rgrp_contains_block(rgd, rglast))
+-				goto out;
+-		}
+-	}
+-	rgd = NULL;
+-	if (!list_empty(&sdp->sd_rindex_recent_list))
+-		rgd = list_entry(sdp->sd_rindex_recent_list.next,
+-				 struct gfs2_rgrpd, rd_recent);
+-out:
+-	spin_unlock(&sdp->sd_rindex_spin);
+-	return rgd;
+ }
+ 
+ /**
+@@ -984,8 +951,7 @@ out:
+  * Returns: The next rgrp in the recent list
+  */
+ 
+-static struct gfs2_rgrpd *recent_rgrp_next(struct gfs2_rgrpd *cur_rgd,
+-					   int remove)
++static struct gfs2_rgrpd *recent_rgrp_next(struct gfs2_rgrpd *cur_rgd)
+ {
+ 	struct gfs2_sbd *sdp = cur_rgd->rd_sbd;
+ 	struct list_head *head;
+@@ -993,61 +959,18 @@ static struct gfs2_rgrpd *recent_rgrp_next(struct gfs2_rgrpd *cur_rgd,
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 
+-	head = &sdp->sd_rindex_recent_list;
+-
+-	list_for_each_entry(rgd, head, rd_recent) {
+-		if (rgd == cur_rgd) {
+-			if (cur_rgd->rd_recent.next != head)
+-				rgd = list_entry(cur_rgd->rd_recent.next,
+-						 struct gfs2_rgrpd, rd_recent);
+-			else
+-				rgd = NULL;
+-
+-			if (remove)
+-				list_del(&cur_rgd->rd_recent);
+-
+-			goto out;
+-		}
++	head = &sdp->sd_rindex_mru_list;
++	if (unlikely(cur_rgd->rd_list_mru.next == head)) {
++		spin_unlock(&sdp->sd_rindex_spin);
++		return NULL;
+ 	}
+ 
+-	rgd = NULL;
+-	if (!list_empty(head))
+-		rgd = list_entry(head->next, struct gfs2_rgrpd, rd_recent);
+-
+-out:
++	rgd = list_entry(cur_rgd->rd_list_mru.next, struct gfs2_rgrpd, rd_list_mru);
+ 	spin_unlock(&sdp->sd_rindex_spin);
+ 	return rgd;
+ }
+ 
+ /**
+- * recent_rgrp_add - add an RG to tail of "recent" list
+- * @new_rgd: The rgrp to add
+- *
+- */
+-
+-static void recent_rgrp_add(struct gfs2_rgrpd *new_rgd)
+-{
+-	struct gfs2_sbd *sdp = new_rgd->rd_sbd;
+-	struct gfs2_rgrpd *rgd;
+-	unsigned int count = 0;
+-	unsigned int max = sdp->sd_rgrps / gfs2_jindex_size(sdp);
+-
+-	spin_lock(&sdp->sd_rindex_spin);
+-
+-	list_for_each_entry(rgd, &sdp->sd_rindex_recent_list, rd_recent) {
+-		if (rgd == new_rgd)
+-			goto out;
+-
+-		if (++count >= max)
+-			goto out;
+-	}
+-	list_add_tail(&new_rgd->rd_recent, &sdp->sd_rindex_recent_list);
+-
+-out:
+-	spin_unlock(&sdp->sd_rindex_spin);
+-}
+-
+-/**
+  * forward_rgrp_get - get an rgrp to try next from full list
+  * @sdp: The GFS2 superblock
+  *
+@@ -1113,8 +1036,7 @@ static int get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 	int loops = 0;
+ 	int error, rg_locked;
+ 
+-	/* Try recently successful rgrps */
+-	rgd = recent_rgrp_first(sdp, ip->i_goal);
++	rgd = gfs2_blk2rgrpd(sdp, ip->i_goal);
+ 
+ 	while (rgd) {
+ 		rg_locked = 0;
+@@ -1136,7 +1058,7 @@ static int get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 				gfs2_glock_dq_uninit(&al->al_rgd_gh);
+ 			/* fall through */
+ 		case GLR_TRYFAILED:
+-			rgd = recent_rgrp_next(rgd, 0);
++			rgd = recent_rgrp_next(rgd);
+ 			break;
+ 
+ 		default:
+@@ -1193,7 +1115,9 @@ static int get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 
+ out:
+ 	if (begin) {
+-		recent_rgrp_add(rgd);
++		spin_lock(&sdp->sd_rindex_spin);
++		list_move(&rgd->rd_list_mru, &sdp->sd_rindex_mru_list);
++		spin_unlock(&sdp->sd_rindex_spin);
+ 		rgd = gfs2_rgrpd_get_next(rgd);
+ 		if (!rgd)
+ 			rgd = gfs2_rgrpd_get_first(sdp);

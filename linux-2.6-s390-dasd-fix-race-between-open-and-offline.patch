@@ -1,0 +1,399 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Fri, 15 Apr 2011 13:24:16 -0400
+Subject: [s390] dasd: fix race between open and offline
+Message-id: <1302873856-32138-1-git-send-email-brueckner@redhat.com>
+Patchwork-id: 35515
+O-Subject: [RHEL5.7 PATCH] [s390x] dasd: fix race between open and offline
+Bugzilla: 695357
+
+Description
+-----------
+Oops when dasd_open tries to dereference an invalid pointer.
+
+The dasd_open function uses the private_data pointer of
+the gendisk to find the drivers internal structures that
+represent this DASD device. When a DASD device is set
+offline, and a process tries to open the device at the
+same time, then there is a small race window, in which
+dasd_open could first read a pointer from the
+private_data field and then try to use it, after the
+structure has already been freed.
+
+To close this race window, we will store a pointer to a
+different internal structure (dasd_devmap) in the
+private_data field. The devmap entries are not deleted
+when a device is set offline, and we already have proper
+locking and reference counting in place, so that we can
+safely get from a devmap to the other structures of
+a DASD device.
+
+Bugzilla
+--------
+BZ 695357
+https://bugzilla.redhat.com/show_bug.cgi?id=695357
+
+Upstream status of the patch
+----------------------------
+The patch is ready for inclusion into a kernel release candidate:
+http://148.100.100.18/cgi-bin/gitweb.cgi?p=linux-2.6.git;a=commit;h=ac174322eebc95cd34778c9eb0872e204e97947f
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index e3181a6..6d36a49 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -1866,9 +1866,13 @@ static int
+ dasd_open(struct inode *inp, struct file *filp)
+ {
+ 	struct gendisk *disk = inp->i_bdev->bd_disk;
+-	struct dasd_device *device = disk->private_data;
++	struct dasd_device *device;
+ 	int rc;
+ 
++	device = dasd_device_from_gendisk(disk);
++	if (!device)
++		return -ENODEV;
++
+         atomic_inc(&device->open_count);
+ 	if (test_bit(DASD_FLAG_OFFLINE, &device->flags)) {
+ 		rc = -ENODEV;
+@@ -1894,12 +1898,14 @@ dasd_open(struct inode *inp, struct file *filp)
+ 		goto out;
+ 	}
+ 
++	dasd_put_device(device);
+ 	return 0;
+ 
+ out:
+ 	module_put(device->discipline->owner);
+ unlock:
+ 	atomic_dec(&device->open_count);
++	dasd_put_device(device);
+ 	return rc;
+ }
+ 
+@@ -1907,10 +1913,14 @@ static int
+ dasd_release(struct inode *inp, struct file *filp)
+ {
+ 	struct gendisk *disk = inp->i_bdev->bd_disk;
+-	struct dasd_device *device = disk->private_data;
++	struct dasd_device *device;
+ 
++	device = dasd_device_from_gendisk(disk);
++	if (!device)
++		return -ENODEV;
+ 	atomic_dec(&device->open_count);
+ 	module_put(device->discipline->owner);
++	dasd_put_device(device);
+ 	return 0;
+ }
+ 
+@@ -1922,16 +1932,17 @@ dasd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
+ {
+ 	struct dasd_device *device;
+ 
+-	device = bdev->bd_disk->private_data;
++	device = dasd_device_from_gendisk(bdev->bd_disk);
+ 	if (!device)
+ 		return -ENODEV;
+-
+ 	if (!device->discipline ||
+-	    !device->discipline->fill_geometry)
++	    !device->discipline->fill_geometry) {
++		dasd_put_device(device);
+ 		return -EINVAL;
+-
++	}
+ 	device->discipline->fill_geometry(device, geo);
+ 	geo->start = get_start_sect(bdev) >> device->s2b_shift;
++	dasd_put_device(device);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/s390/block/dasd_devmap.c b/drivers/s390/block/dasd_devmap.c
+index df68549..4707779 100644
+--- a/drivers/s390/block/dasd_devmap.c
++++ b/drivers/s390/block/dasd_devmap.c
+@@ -658,6 +658,36 @@ dasd_device_from_cdev(struct ccw_device *cdev)
+ 	return device;
+ }
+ 
++void dasd_add_link_to_gendisk(struct gendisk *gdp, struct dasd_device *device)
++{
++	struct dasd_devmap *devmap;
++
++	devmap = dasd_find_busid(device->cdev->dev.bus_id);
++	if (IS_ERR(devmap))
++		return;
++	spin_lock(&dasd_devmap_lock);
++	gdp->private_data = devmap;
++	spin_unlock(&dasd_devmap_lock);
++}
++
++struct dasd_device *dasd_device_from_gendisk(struct gendisk *gdp)
++{
++	struct dasd_device *device;
++	struct dasd_devmap *devmap;
++
++	if (!gdp->private_data)
++		return NULL;
++	device = NULL;
++	spin_lock(&dasd_devmap_lock);
++	devmap = gdp->private_data;
++	if (devmap && devmap->device) {
++		device = devmap->device;
++		dasd_get_device(device);
++	}
++	spin_unlock(&dasd_devmap_lock);
++	return device;
++}
++
+ /*
+  * SECTION: files in sysfs
+  */
+diff --git a/drivers/s390/block/dasd_genhd.c b/drivers/s390/block/dasd_genhd.c
+index d163632..13206bf 100644
+--- a/drivers/s390/block/dasd_genhd.c
++++ b/drivers/s390/block/dasd_genhd.c
+@@ -69,7 +69,7 @@ dasd_gendisk_alloc(struct dasd_device *device)
+ 
+ 	if (device->features & DASD_FEATURE_READONLY)
+ 		set_disk_ro(gdp, 1);
+-	gdp->private_data = device;
++	dasd_add_link_to_gendisk(gdp, device);
+ 	gdp->queue = device->request_queue;
+ 	device->gdp = gdp;
+ 	set_capacity(device->gdp, 0);
+diff --git a/drivers/s390/block/dasd_int.h b/drivers/s390/block/dasd_int.h
+index 929fab0..70392be 100644
+--- a/drivers/s390/block/dasd_int.h
++++ b/drivers/s390/block/dasd_int.h
+@@ -549,6 +549,9 @@ struct dasd_device *dasd_device_from_cdev(struct ccw_device *);
+ struct dasd_device *dasd_device_from_cdev_locked(struct ccw_device *);
+ struct dasd_device *dasd_device_from_devindex(int);
+ 
++void dasd_add_link_to_gendisk(struct gendisk *, struct dasd_device *);
++struct dasd_device *dasd_device_from_gendisk(struct gendisk *);
++
+ int dasd_parse(void);
+ int dasd_busid_known(char *);
+ 
+diff --git a/drivers/s390/block/dasd_ioctl.c b/drivers/s390/block/dasd_ioctl.c
+index 80747dc..1ed4e34 100644
+--- a/drivers/s390/block/dasd_ioctl.c
++++ b/drivers/s390/block/dasd_ioctl.c
+@@ -38,16 +38,19 @@ dasd_ioctl_api_version(void __user *argp)
+ static int
+ dasd_ioctl_enable(struct block_device *bdev)
+ {
+-	struct dasd_device *device = bdev->bd_disk->private_data;
++	struct dasd_device *device;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+-
++	device = dasd_device_from_gendisk(bdev->bd_disk);
++	if (!device)
++		return -ENODEV;
+ 	dasd_enable_device(device);
+ 	/* Formatting the dasd device can change the capacity. */
+ 	mutex_lock(&bdev->bd_mutex);
+ 	i_size_write(bdev->bd_inode, (loff_t)get_capacity(device->gdp) << 9);
+ 	mutex_unlock(&bdev->bd_mutex);
++	dasd_put_device(device);
+ 	return 0;
+ }
+ 
+@@ -58,11 +61,13 @@ dasd_ioctl_enable(struct block_device *bdev)
+ static int
+ dasd_ioctl_disable(struct block_device *bdev)
+ {
+-	struct dasd_device *device = bdev->bd_disk->private_data;
++	struct dasd_device *device;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+-
++	device = dasd_device_from_gendisk(bdev->bd_disk);
++	if (!device)
++		return -ENODEV;
+ 	/*
+ 	 * Man this is sick. We don't do a real disable but only downgrade
+ 	 * the device to DASD_STATE_BASIC. The reason is that dasdfmt uses
+@@ -79,6 +84,7 @@ dasd_ioctl_disable(struct block_device *bdev)
+ 	mutex_lock(&bdev->bd_mutex);
+ 	i_size_write(bdev->bd_inode, 0);
+ 	mutex_unlock(&bdev->bd_mutex);
++	dasd_put_device(device);
+ 	return 0;
+ }
+ 
+@@ -186,24 +192,36 @@ dasd_format(struct dasd_device * device, struct format_data_t * fdata)
+ static int
+ dasd_ioctl_format(struct block_device *bdev, void __user *argp)
+ {
+-	struct dasd_device *device = bdev->bd_disk->private_data;
++	struct dasd_device *device;
+ 	struct format_data_t fdata;
++	int rc;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+ 	if (!argp)
+ 		return -EINVAL;
+ 
+-	if (device->features & DASD_FEATURE_READONLY)
++	device = dasd_device_from_gendisk(bdev->bd_disk);
++	if (!device)
++		return -ENODEV;
++
++	if (device->features & DASD_FEATURE_READONLY) {
++		dasd_put_device(device);
+ 		return -EROFS;
+-	if (copy_from_user(&fdata, argp, sizeof(struct format_data_t)))
++	}
++	if (copy_from_user(&fdata, argp, sizeof(struct format_data_t))) {
++		dasd_put_device(device);
+ 		return -EFAULT;
++	}
+ 	if (bdev != bdev->bd_contains) {
+ 		DEV_MESSAGE(KERN_WARNING, device, "%s",
+ 			    "Cannot low-level format a partition");
++		dasd_put_device(device);
+ 		return -EINVAL;
+ 	}
+-	return dasd_format(device, &fdata);
++	rc = dasd_format(device, &fdata);
++	dasd_put_device(device);
++	return rc;
+ }
+ 
+ #ifdef CONFIG_DASD_PROFILE
+@@ -337,8 +355,8 @@ dasd_ioctl_information(struct dasd_device *device,
+ static int
+ dasd_ioctl_set_ro(struct block_device *bdev, void __user *argp)
+ {
+-	struct dasd_device *device =  bdev->bd_disk->private_data;
+-	int intval;
++	struct dasd_device *device;
++	int intval, rc;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+@@ -347,9 +365,13 @@ dasd_ioctl_set_ro(struct block_device *bdev, void __user *argp)
+ 		return -EINVAL;
+ 	if (get_user(intval, (int __user *)argp))
+ 		return -EFAULT;
+-
++	device = dasd_device_from_gendisk(bdev->bd_disk);
++	if (!device)
++		return -ENODEV;
+ 	set_disk_ro(bdev->bd_disk, intval);
+-	return dasd_set_feature(device->cdev, DASD_FEATURE_READONLY, intval);
++	rc = dasd_set_feature(device->cdev, DASD_FEATURE_READONLY, intval);
++	dasd_put_device(device);
++	return rc;
+ }
+ 
+ static int
+@@ -372,56 +394,72 @@ dasd_ioctl(struct inode *inode, struct file *file,
+ 	   unsigned int cmd, unsigned long arg)
+ {
+ 	struct block_device *bdev = inode->i_bdev;
+-	struct dasd_device *device = bdev->bd_disk->private_data;
++	struct dasd_device *device;
+ 	void __user *argp = (void __user *)arg;
+-
+-	if (!device)
+-                return -ENODEV;
++	int rc;
+ 
+ 	if ((_IOC_DIR(cmd) != _IOC_NONE) && !arg) {
+ 		PRINT_DEBUG("empty data ptr");
+ 		return -EINVAL;
+ 	}
++	device = dasd_device_from_gendisk(bdev->bd_disk);
++	if (!device)
++		return -ENODEV;
+ 
+ 	switch (cmd) {
+ 	case BIODASDDISABLE:
+-		return dasd_ioctl_disable(bdev);
++		rc = dasd_ioctl_disable(bdev);
++		break;
+ 	case BIODASDENABLE:
+-		return dasd_ioctl_enable(bdev);
++		rc = dasd_ioctl_enable(bdev);
++		break;
+ 	case BIODASDQUIESCE:
+-		return dasd_ioctl_quiesce(device);
++		rc = dasd_ioctl_quiesce(device);
++		break;
+ 	case BIODASDRESUME:
+-		return dasd_ioctl_resume(device);
++		rc = dasd_ioctl_resume(device);
++		break;
+ 	case BIODASDFMT:
+-		return dasd_ioctl_format(bdev, argp);
++		rc = dasd_ioctl_format(bdev, argp);
++		break;
+ 	case BIODASDINFO:
+-		return dasd_ioctl_information(device, cmd, argp);
++		rc = dasd_ioctl_information(device, cmd, argp);
++		break;
+ 	case BIODASDINFO2:
+-		return dasd_ioctl_information(device, cmd, argp);
++		rc = dasd_ioctl_information(device, cmd, argp);
++		break;
+ 	case BIODASDPRRD:
+-		return dasd_ioctl_read_profile(device, argp);
++		rc = dasd_ioctl_read_profile(device, argp);
++		break;
+ 	case BIODASDPRRST:
+-		return dasd_ioctl_reset_profile(device);
++		rc = dasd_ioctl_reset_profile(device);
++		break;
+ 	case BLKROSET:
+-		return dasd_ioctl_set_ro(bdev, argp);
++		rc = dasd_ioctl_set_ro(bdev, argp);
++		break;
+ 	case DASDAPIVER:
+-		return dasd_ioctl_api_version(argp);
++		rc = dasd_ioctl_api_version(argp);
++		break;
+ 	case BIODASDCMFENABLE:
+-		return enable_cmf(device->cdev);
++		rc = enable_cmf(device->cdev);
++		break;
+ 	case BIODASDCMFDISABLE:
+-		return disable_cmf(device->cdev);
++		rc = disable_cmf(device->cdev);
++		break;
+ 	case BIODASDREADALLCMB:
+-		return dasd_ioctl_readall_cmb(device, cmd, arg);
++		rc = dasd_ioctl_readall_cmb(device, cmd, arg);
++		break;
+ 	default:
+ 		/* if the discipline has an ioctl method try it. */
+ 		if (device->discipline->ioctl) {
+-			int rval = device->discipline->ioctl(device, cmd, argp);
+-			if (rval != -ENOIOCTLCMD)
+-				return rval;
+-		}
+-
+-		return -EINVAL;
++			rc = device->discipline->ioctl(device, cmd, argp);
++			if (rc == -ENOIOCTLCMD)
++				rc = -EINVAL;
++		} else
++			rc = -EINVAL;
+ 	}
++	dasd_put_device(device);
++	return rc;
+ }
+ 
+ long

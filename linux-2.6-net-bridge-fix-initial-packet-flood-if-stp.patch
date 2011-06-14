@@ -1,0 +1,54 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 26 Apr 2011 11:12:04 -0400
+Subject: [net] bridge: fix initial packet flood if !STP
+Message-id: <1303816324-4941-1-git-send-email-jpirko@redhat.com>
+Patchwork-id: 35618
+O-Subject: [rhel5 PATCH] net: bridge: fix initial packet flood if !STP
+Bugzilla: 695369
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ695369
+
+upstream:
+commit 4f0611af47e25807cf18cd2b4d4e94206c75b29e
+Author: Stephen Hemminger <shemminger@vyatta.com>
+Date:   Fri May 15 06:11:58 2009 +0000
+
+    bridge: fix initial packet flood if !STP
+
+    If bridge is configured with no STP and forwarding delay of 0 (which
+    is typical for virtualization) then when link starts it will flood all
+    packets for the first 20 seconds.
+
+    This bug was introduced by a combination of earlier changes:
+      * forwarding database uses hold time of zero to indicate
+        user wants to always flood packets
+      * optimzation of the case of forwarding delay of 0 avoids the initial
+        timer tick
+
+    The fix is to just skip all the topology change detection code if
+    kernel STP is not being used.
+
+brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=3260785
+
+Tested by customer
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/bridge/br_stp.c b/net/bridge/br_stp.c
+index 59dd541..184f0de 100644
+--- a/net/bridge/br_stp.c
++++ b/net/bridge/br_stp.c
+@@ -298,6 +298,9 @@ void br_topology_change_detection(struct net_bridge *br)
+ {
+ 	int isroot = br_is_root_bridge(br);
+ 
++	if (!br->stp_enabled)
++		return;
++
+ 	pr_info("%s: topology change detected, %s\n", br->dev->name,
+ 		isroot ? "propagating" : "sending tcn bpdu");
+ 
