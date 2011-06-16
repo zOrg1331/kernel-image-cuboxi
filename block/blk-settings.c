@@ -120,7 +120,7 @@ void blk_set_default_limits(struct queue_limits *lim)
 	lim->discard_granularity = 0;
 	lim->discard_alignment = 0;
 	lim->discard_misaligned = 0;
-	lim->discard_zeroes_data = -1;
+	lim->discard_zeroes_data = 1;
 	lim->logical_block_size = lim->physical_block_size = lim->io_min = 512;
 	lim->bounce_pfn = (unsigned long)(BLK_BOUNCE_ANY >> PAGE_SHIFT);
 	lim->alignment_offset = 0;
@@ -166,6 +166,7 @@ void blk_queue_make_request(struct request_queue *q, make_request_fn *mfn)
 
 	blk_set_default_limits(&q->limits);
 	blk_queue_max_hw_sectors(q, BLK_SAFE_MAX_SECTORS);
+	q->limits.discard_zeroes_data = 0;
 
 	/*
 	 * by default assume old behaviour and bounce for any highmem page
@@ -790,21 +791,11 @@ void blk_queue_flush(struct request_queue *q, unsigned int flush)
 }
 EXPORT_SYMBOL_GPL(blk_queue_flush);
 
-/**
- * blk_queue_unplugged - register a callback for an unplug event
- * @q:		the request queue for the device
- * @fn:		the function to call
- *
- * Some stacked drivers may need to know when IO is dispatched on an
- * unplug event. By registrering a callback here, they will be notified
- * when someone flushes their on-stack queue plug. The function will be
- * called with the queue lock held.
- */
-void blk_queue_unplugged(struct request_queue *q, unplugged_fn *fn)
+void blk_queue_flush_queueable(struct request_queue *q, bool queueable)
 {
-	q->unplugged_fn = fn;
+	q->flush_not_queueable = !queueable;
 }
-EXPORT_SYMBOL(blk_queue_unplugged);
+EXPORT_SYMBOL_GPL(blk_queue_flush_queueable);
 
 static int __init blk_settings_init(void)
 {

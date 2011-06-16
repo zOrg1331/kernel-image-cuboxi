@@ -87,6 +87,10 @@ MODULE_FIRMWARE("radeon/CYPRESS_rlc.bin");
 MODULE_FIRMWARE("radeon/PALM_pfp.bin");
 MODULE_FIRMWARE("radeon/PALM_me.bin");
 MODULE_FIRMWARE("radeon/SUMO_rlc.bin");
+MODULE_FIRMWARE("radeon/SUMO_pfp.bin");
+MODULE_FIRMWARE("radeon/SUMO_me.bin");
+MODULE_FIRMWARE("radeon/SUMO2_pfp.bin");
+MODULE_FIRMWARE("radeon/SUMO2_me.bin");
 
 int r600_debugfs_mc_info_init(struct radeon_device *rdev);
 
@@ -2024,6 +2028,14 @@ int r600_init_microcode(struct radeon_device *rdev)
 		chip_name = "PALM";
 		rlc_chip_name = "SUMO";
 		break;
+	case CHIP_SUMO:
+		chip_name = "SUMO";
+		rlc_chip_name = "SUMO";
+		break;
+	case CHIP_SUMO2:
+		chip_name = "SUMO2";
+		rlc_chip_name = "SUMO";
+		break;
 	default: BUG();
 	}
 
@@ -3231,7 +3243,7 @@ static inline u32 r600_get_ih_wptr(struct radeon_device *rdev)
 	u32 wptr, tmp;
 
 	if (rdev->wb.enabled)
-		wptr = rdev->wb.wb[R600_WB_IH_WPTR_OFFSET/4];
+		wptr = le32_to_cpu(rdev->wb.wb[R600_WB_IH_WPTR_OFFSET/4]);
 	else
 		wptr = RREG32(IH_RB_WPTR);
 
