@@ -417,6 +417,7 @@ static int __sock_charge(struct sock *sk, int res)
 			added_reserv = 0;
 		}
 		skbc->poll_reserv = added_reserv;
+		ub_adjust_maxheld(ub, UB_TCPSNDBUF);
 
 		added_forw = SK_MEM_QUANTUM * 4;
 		ub->ub_parms[UB_TCPRCVBUF].held += added_forw;
@@ -425,6 +426,7 @@ static int __sock_charge(struct sock *sk, int res)
 			added_forw = 0;
 		}
 		skbc->forw_space = added_forw;
+		ub_adjust_maxheld(ub, UB_TCPRCVBUF);
 	}
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 

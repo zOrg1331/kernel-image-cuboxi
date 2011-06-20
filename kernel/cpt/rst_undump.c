@@ -332,7 +332,6 @@ static int hook(void *arg)
 
 #ifdef CONFIG_X86_64
 	if (!ti->cpt_64bit) {
-		set_thread_flag(TIF_IA32);
 		/* for __set_personality below */
 		ti->cpt_personality |= PER_LINUX32;
 	}
@@ -498,27 +497,27 @@ static int hook(void *arg)
 #endif
 		if ((err = rst_sockets_complete(ctx)) != 0) {
 			eprintk_ctx("rst_sockets_complete: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if ((err = rst_stray_files(ctx)) != 0) {
 			eprintk_ctx("rst_stray_files: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if ((err = rst_posix_locks(ctx)) != 0) {
 			eprintk_ctx("rst_posix_locks: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if ((err = rst_tty_jobcontrol(ctx)) != 0) {
 			eprintk_ctx("rst_tty_jobcontrol: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if ((err = rst_restore_fs(ctx)) != 0) {
 			eprintk_ctx("rst_restore_fs: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if ((err = rst_init_delayfs_daemon(ctx)) != 0) {
 			eprintk_ctx("rst_init_delayfs_daemon: %d\n", err);
-			goto out;
+			goto out_sock;
 		}
 		if (ctx->last_vpid)
 			get_exec_env()->ve_ns->pid_ns->last_pid =
@@ -526,6 +525,9 @@ static int hook(void *arg)
 	}
 
 out:
+	if (err && ti->cpt_pid == 1)
+		rst_rollback_sockets(ctx);
+out_sock:
 	thr_ctx->error = err;
 	complete(&thr_ctx->task_done);
 

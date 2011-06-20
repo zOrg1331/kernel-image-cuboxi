@@ -1041,6 +1041,26 @@ int rst_orphans(struct cpt_context *ctx)
 	return 0;
 }
 
+/* In this function we release sockets without links.
+ * If nothing fails this sockets will be linked with skbs in
+ * rst_sockets_complete() -> restore_unix_rqueue()
+ */
+void rst_rollback_sockets(struct cpt_context *ctx)
+{
+	cpt_object_t *obj;
+
+	for_each_object(obj, CPT_OBJ_SOCKET) {
+		struct sock *sk = obj->o_obj;
+
+		if (sk == NULL) continue;
+
+		if (sk->sk_family != AF_UNIX)
+			continue;
+
+		if (sk->sk_socket->file == NULL)
+			sock_release(sk->sk_socket);
+	}
+}
 
 /* Pass 3: I understand, this is not funny already :-),
  * but we have to do another pass to establish links between

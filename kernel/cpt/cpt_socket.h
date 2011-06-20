@@ -8,6 +8,7 @@ int cpt_dump_accept_queue(struct sock *sk, int index, struct cpt_context *ctx);
 int cpt_dump_synwait_queue(struct sock *sk, int index, struct cpt_context *ctx);
 int rst_sockets(struct cpt_context *ctx);
 int rst_sockets_complete(struct cpt_context *ctx);
+void rst_rollback_sockets(struct cpt_context *ctx);
 int cpt_dump_orphaned_sockets(struct cpt_context *ctx);
 
 int rst_sock_attr(loff_t *pos_p, struct sock *sk, cpt_context_t *ctx);
