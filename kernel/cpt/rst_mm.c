@@ -915,7 +915,7 @@ out:
 #define TASK_UNMAP_START	PAGE_SIZE
 #endif
 
-static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
+static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 		struct cpt_context *ctx)
 {
 	int err = 0;
@@ -953,7 +953,8 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
 	def_flags = vmi->cpt_def_flags;
 
 #ifdef CONFIG_X86_64
-	if (test_thread_flag(TIF_IA32)) {
+	if (!ti->cpt_64bit) {
+		set_thread_flag(TIF_IA32);
 		mm->free_area_cache = TASK_UNMAPPED_BASE;
 		arch_pick_mmap_layout(mm);
 		/*
@@ -986,7 +987,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
 	up_write(&mm->mmap_sem);
 
 	if (vmi->cpt_next > vmi->cpt_hdrlen) {
-		loff_t offset = pos + vmi->cpt_hdrlen;
+		loff_t offset = ti->cpt_mm + vmi->cpt_hdrlen;
 		do {
 			union {
 				struct cpt_vma_image vmai;
@@ -1001,7 +1002,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
 				//// Later...
 				if (u.vmai.cpt_start)
 #endif			
-				err = do_rst_vma(&u.vmai, offset, pos, ctx);
+				err = do_rst_vma(&u.vmai, offset, ti->cpt_mm, ctx);
 				if (err)
 					goto out;
 #ifdef CONFIG_X86
@@ -1021,7 +1022,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, loff_t pos,
 				goto out;
 			}
 			offset += u.vmai.cpt_next;
-		} while (offset < pos + vmi->cpt_next);
+		} while (offset < ti->cpt_mm + vmi->cpt_next);
 	}
 
 	down_write(&mm->mmap_sem);
@@ -1073,7 +1074,7 @@ int rst_mm_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 
 	if ((err = rst_get_object(CPT_OBJ_MM, ti->cpt_mm, vmi, ctx)) != 0)
 		goto out;
-	if ((err = do_rst_mm(vmi, ti->cpt_mm, ctx)) != 0) {
+	if ((err = do_rst_mm(vmi, ti, ctx)) != 0) {
 		eprintk_ctx("do_rst_mm %Ld\n", (unsigned long long)ti->cpt_mm);
 		goto out;
 	}
