@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt1
+Release: alt2
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -641,6 +641,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Jun 24 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt2
+- Update to 2.6.39.2
+
 * Tue Jun 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt1
 - Update to 2.6.39.1
 - Update ipt_NETFLOW to 1.7.1 (ALT 25697)
