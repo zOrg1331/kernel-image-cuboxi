@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt2
+Release: alt1.M60T.1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -641,6 +641,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Jun 24 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt1.M60T.1
+- Build on t6 branch
+
 * Fri Jun 24 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt2
 - Update to 2.6.39.2
 
