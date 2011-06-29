@@ -519,6 +519,7 @@ static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 	if (unlikely(err))
 		goto out_reset;
 
+	au_vm_prfile_set(vma, file);
 	vfsub_file_accessed(args.h_file);
 	/* update without lock, I don't think it a problem */
 	fsstack_copy_attr_atime(file->f_dentry->d_inode,
