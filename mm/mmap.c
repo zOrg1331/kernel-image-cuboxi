@@ -1989,6 +1989,8 @@ static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
 		if (vma->vm_flags & VM_EXECUTABLE)
 			removed_exe_file_vma(mm);
 		fput(new->vm_file);
+		if (new->vm_prfile)
+			fput(new->vm_prfile);
 	}
  out_free_mpol:
 	mpol_put(pol);
