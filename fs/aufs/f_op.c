@@ -45,7 +45,7 @@ int au_do_open_nondir(struct file *file, int flags)
 
 	finfo = au_fi(file);
 	memset(&finfo->fi_htop, 0, sizeof(finfo->fi_htop));
-	finfo->fi_hvmop = NULL;
+	atomic_set(&finfo->fi_mmapped, 0);
 	bindex = au_dbstart(dentry);
 	/*
 	 * O_TRUNC is processed already.
@@ -617,12 +617,10 @@ struct au_mmap_pre_args {
 	int *errp;
 	struct file *h_file;
 	struct au_branch *br;
-	int mmapped;
 };
 
 static int au_mmap_pre(struct file *file, struct vm_area_struct *vma,
-		       struct file **h_file, struct au_branch **br,
-		       int *mmapped)
+		       struct file **h_file, struct au_branch **br)
 {
 	int err;
 	aufs_bindex_t bstart;
@@ -638,7 +636,6 @@ static int au_mmap_pre(struct file *file, struct vm_area_struct *vma,
 	if (unlikely(err))
 		goto out;
 
-	*mmapped = !!au_test_mmapped(file);
 	if (wlock) {
 		struct au_pin pin;
 
@@ -653,8 +650,7 @@ static int au_mmap_pre(struct file *file, struct vm_area_struct *vma,
 	*br = au_sbr(sb, bstart);
 	*h_file = au_hf_top(file);
 	get_file(*h_file);
-	if (!*mmapped)
-		au_fi_mmap_lock_and_sell(file);
+	au_set_mmapped(file);
 
 out_unlock:
 	fi_write_unlock(file);
@@ -666,79 +662,51 @@ out:
 static void au_call_mmap_pre(void *args)
 {
 	struct au_mmap_pre_args *a = args;
-	*a->errp = au_mmap_pre(a->file, a->vma, &a->h_file, &a->br,
-			       &a->mmapped);
+	*a->errp = au_mmap_pre(a->file, a->vma, &a->h_file, &a->br);
 }
 
 static int aufs_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	int err, wkq_err;
-	unsigned long h_vmflags;
-	struct au_finfo *finfo;
-	struct dentry *h_dentry;
-	struct vm_operations_struct *h_vmop, *vmop;
+	unsigned long prot;
 	struct au_mmap_pre_args args = {
 		.file		= file,
 		.vma		= vma,
 		.errp		= &err
 	};
 
+	AuDbgVmRegion(file, vma);
 	wkq_err = au_wkq_wait_pre(au_call_mmap_pre, &args);
 	if (unlikely(wkq_err))
 		err = wkq_err;
 	if (unlikely(err))
 		goto out;
-	if (!args.mmapped)
-		au_fi_mmap_buy(file);
 
-	h_dentry = args.h_file->f_dentry;
-	if (!args.mmapped && au_test_fs_bad_mapping(h_dentry->d_sb)) {
-		/*
-		 * by this assignment, f_mapping will differs from aufs inode
-		 * i_mapping.
-		 * if someone else mixes the use of f_dentry->d_inode and
-		 * f_mapping->host, then a problem may arise.
-		 */
-		file->f_mapping = args.h_file->f_mapping;
-	}
-
-	/* always try this internal mmap to get vma flags */
-	h_vmflags = 0; /* gcc warning */
-	h_vmop = au_hvmop(args.h_file, vma, &h_vmflags);
-	err = PTR_ERR(h_vmop);
-	if (IS_ERR(h_vmop))
-		goto out_unlock;
-	finfo = au_fi(file);
-	AuDebugOn(args.mmapped && h_vmop != finfo->fi_hvmop);
-
-	vmop = (void *)au_dy_vmop(file, args.br, h_vmop);
-	err = PTR_ERR(vmop);
-	if (IS_ERR(vmop))
-		goto out_unlock;
-
-	/*
-	 * unnecessary to handle MAP_DENYWRITE and deny_write_access()?
-	 * currently MAP_DENYWRITE from userspace is ignored, but elf loader
-	 * sets it. when FMODE_EXEC is set (by open_exec() or sys_uselib()),
-	 * both of the aufs file and the lower file is deny_write_access()-ed.
-	 * finally I hope we can skip handlling MAP_DENYWRITE here.
-	 */
-	err = generic_file_mmap(file, vma);
+	au_vm_file_reset(vma, args.h_file);
+	prot = au_prot_conv(vma->vm_flags);
+	err = security_file_mmap(args.h_file, /*reqprot*/prot, prot,
+				 au_flag_conv(vma->vm_flags), vma->vm_start, 0);
 	if (unlikely(err))
-		goto out_unlock;
+		goto out_reset;
 
-	vma->vm_ops = vmop;
-	vma->vm_flags = h_vmflags;
-	if (!args.mmapped)
-		finfo->fi_hvmop = h_vmop;
+	err = ima_file_mmap(args.h_file, prot);
+	if (unlikely(err))
+		goto out_reset;
+
+	err = args.h_file->f_op->mmap(args.h_file, vma);
+	if (unlikely(err))
+		goto out_reset;
 
 	vfsub_file_accessed(args.h_file);
 	/* update without lock, I don't think it a problem */
-	fsstack_copy_attr_atime(file->f_dentry->d_inode, h_dentry->d_inode);
+	fsstack_copy_attr_atime(file->f_dentry->d_inode,
+				args.h_file->f_dentry->d_inode);
+	goto out_fput; /* success */
 
-out_unlock:
-	if (!args.mmapped)
-		au_fi_mmap_unlock(file);
+out_reset:
+	au_unset_mmapped(file);
+	au_vm_file_reset(vma, file);
+out_fput:
 	fput(args.h_file);
 out:
 	return err;
