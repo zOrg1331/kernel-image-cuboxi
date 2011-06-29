@@ -381,108 +381,6 @@ out:
 
 /* ---------------------------------------------------------------------- */
 
-static struct file *au_safe_file(struct vm_area_struct *vma)
-{
-	struct file *file;
-
-	file = vma->vm_file;
-	if (au_fi(file) && au_test_aufs(file->f_dentry->d_sb))
-		return file;
-	return NULL;
-}
-
-static void au_reset_file(struct vm_area_struct *vma, struct file *file)
-{
-	vma->vm_file = file;
-	/* smp_mb(); */ /* flush vm_file */
-}
-
-static int aufs_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-	int err;
-	static DECLARE_WAIT_QUEUE_HEAD(wq);
-	struct file *file, *h_file;
-	struct au_finfo *finfo;
-
-	/* todo: non-robr mode, user vm_file as it is? */
-	wait_event(wq, (file = au_safe_file(vma)));
-
-	/* do not revalidate, no si lock */
-	finfo = au_fi(file);
-	AuDebugOn(finfo->fi_hdir);
-	h_file = finfo->fi_htop.hf_file;
-	AuDebugOn(!h_file || !finfo->fi_hvmop);
-
-	mutex_lock(&finfo->fi_vm_mtx);
-	vma->vm_file = h_file;
-	err = finfo->fi_hvmop->fault(vma, vmf);
-	/* todo: necessary? */
-	/* file->f_ra = h_file->f_ra; */
-	au_reset_file(vma, file);
-	mutex_unlock(&finfo->fi_vm_mtx);
-#if 0 /* def CONFIG_SMP */
-	/* wake_up_nr(&wq, online_cpu - 1); */
-	wake_up_all(&wq);
-#else
-	wake_up(&wq);
-#endif
-
-	return err;
-}
-
-static int aufs_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-	int err;
-	static DECLARE_WAIT_QUEUE_HEAD(wq);
-	struct file *file, *h_file;
-	struct au_finfo *finfo;
-
-	wait_event(wq, (file = au_safe_file(vma)));
-
-	finfo = au_fi(file);
-	AuDebugOn(finfo->fi_hdir);
-	h_file = finfo->fi_htop.hf_file;
-	AuDebugOn(!h_file || !finfo->fi_hvmop);
-
-	mutex_lock(&finfo->fi_vm_mtx);
-	vma->vm_file = h_file;
-	err = finfo->fi_hvmop->page_mkwrite(vma, vmf);
-	au_reset_file(vma, file);
-	mutex_unlock(&finfo->fi_vm_mtx);
-	wake_up(&wq);
-
-	return err;
-}
-
-static void aufs_vm_close(struct vm_area_struct *vma)
-{
-	static DECLARE_WAIT_QUEUE_HEAD(wq);
-	struct file *file, *h_file;
-	struct au_finfo *finfo;
-
-	wait_event(wq, (file = au_safe_file(vma)));
-
-	finfo = au_fi(file);
-	AuDebugOn(finfo->fi_hdir);
-	h_file = finfo->fi_htop.hf_file;
-	AuDebugOn(!h_file || !finfo->fi_hvmop);
-
-	mutex_lock(&finfo->fi_vm_mtx);
-	vma->vm_file = h_file;
-	finfo->fi_hvmop->close(vma);
-	au_reset_file(vma, file);
-	mutex_unlock(&finfo->fi_vm_mtx);
-	wake_up(&wq);
-}
-
-const struct vm_operations_struct aufs_vm_ops = {
-	.close		= aufs_vm_close,
-	.fault		= aufs_fault,
-	.page_mkwrite	= aufs_page_mkwrite
-};
-
-/* ---------------------------------------------------------------------- */
-
 /* cf. linux/include/linux/mman.h: calc_vm_prot_bits() */
 #define AuConv_VM_PROT(f, b)	_calc_vm_trans(f, VM_##b, PROT_##b)
 
@@ -518,48 +416,6 @@ static unsigned long au_flag_conv(unsigned long flags)
 		| AuConv_VM_MAP(flags, LOCKED);
 }
 
-static struct vm_operations_struct *
-au_hvmop(struct file *h_file, struct vm_area_struct *vma, unsigned long *flags)
-{
-	struct vm_operations_struct *h_vmop;
-	unsigned long prot;
-	int err;
-
-	h_vmop = ERR_PTR(-ENODEV);
-	if (!h_file->f_op || !h_file->f_op->mmap)
-		goto out;
-
-	prot = au_prot_conv(vma->vm_flags);
-	err = security_file_mmap(h_file, /*reqprot*/prot, prot,
-				 au_flag_conv(vma->vm_flags), vma->vm_start, 0);
-	h_vmop = ERR_PTR(err);
-	if (unlikely(err))
-		goto out;
-
-	err = ima_file_mmap(h_file, prot);
-	h_vmop = ERR_PTR(err);
-	if (unlikely(err))
-		goto out;
-
-	err = h_file->f_op->mmap(h_file, vma);
-	h_vmop = ERR_PTR(err);
-	if (unlikely(err))
-		goto out;
-
-	h_vmop = vma->vm_ops;
-	*flags = vma->vm_flags;
-	err = do_munmap(current->mm, vma->vm_start,
-			vma->vm_end - vma->vm_start);
-	if (unlikely(err)) {
-		AuIOErr("failed internal unmapping %.*s, %d\n",
-			AuDLNPair(h_file->f_dentry), err);
-		h_vmop = ERR_PTR(-EIO);
-	}
-
-out:
-	return h_vmop;
-}
-
 /*
  * This is another ugly approach to keep the lock order, particularly
  * mm->mmap_sem and aufs rwsem. The previous approach was reverted and you can
@@ -573,40 +429,6 @@ out:
  * To address this problem, aufs_mmap() delegates the part which requires aufs
  * rwsem to its internal workqueue.
  */
-
-/* very ugly approach */
-#ifdef CONFIG_DEBUG_MUTEXES
-#include <../kernel/mutex-debug.h>
-#else
-#include <../kernel/mutex.h>
-#endif
-
-static void au_fi_mmap_lock_and_sell(struct file *file)
-{
-	struct mutex *mtx;
-
-	FiMustWriteLock(file);
-
-	mtx = &au_fi(file)->fi_mmap;
-	mutex_lock(mtx);
-	mutex_release(&mtx->dep_map, /*nested*/0, _RET_IP_);
-}
-
-static void au_fi_mmap_buy(struct file *file)
-{
-	struct mutex *mtx;
-
-	mtx = &au_fi(file)->fi_mmap;
-	MtxMustLock(mtx);
-
-	mutex_set_owner(mtx);
-	mutex_acquire(&mtx->dep_map, /*subclass*/0, /*trylock*/0, _RET_IP_);
-}
-
-static void au_fi_mmap_unlock(struct file *file)
-{
-	mutex_unlock(&au_fi(file)->fi_mmap);
-}
 
 struct au_mmap_pre_args {
 	/* input */

@@ -60,9 +60,6 @@ struct au_finfo {
 	/* do not union them */
 	struct {				/* for non-dir */
 		struct au_hfile			fi_htop;
-		struct vm_operations_struct	*fi_hvmop;
-		struct mutex			fi_vm_mtx;
-		struct mutex			fi_mmap;
 		atomic_t			fi_mmapped;
 	};
 	struct au_fidir		*fi_hdir;	/* for dir only */
@@ -108,7 +105,6 @@ AuStubVoid(au_h_open_post, struct dentry *dentry, aufs_bindex_t bindex,
 
 /* f_op.c */
 extern const struct file_operations aufs_file_fop;
-extern const struct vm_operations_struct aufs_vm_ops;
 int au_do_open_nondir(struct file *file, int flags);
 int aufs_release_nondir(struct inode *inode __maybe_unused, struct file *file);
 
