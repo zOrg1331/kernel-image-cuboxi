@@ -1,1 +1,1 @@
-tar.bz2: v2.6.39:. name=linux-2.6.39
+tar.bz2: v3.0-rc5:. name=linux-3.0.0
