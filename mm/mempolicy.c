@@ -2430,8 +2430,9 @@ int show_numa_map(struct seq_file *m, void *v)
 	seq_printf(m, "%08lx %s", vma->vm_start, buffer);
 
 	if (file) {
-		/* todo: vm_prfile? */
 		seq_printf(m, " file=");
+		if (vma->vm_prfile)
+			file = vma->vm_prfile;
 		seq_path(m, &file->f_path, "\n\t= ");
 	} else if (vma->vm_start <= mm->brk && vma->vm_end >= mm->start_brk) {
 		seq_printf(m, " heap");
