@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt2
+Release: alt2.1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -645,6 +645,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Jul 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt2.1
+- fix build of cirrus.ko
+- kernel-modules-v4l: provide kernel-modules-lirc
+- return dahdi to modules.build
+- drm/nouveau: fix assumption that semaphore dmaobj
+  is valid in x-chan sync (ALT 25827)
+
 * Fri Jun 24 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt2
 - Update to 2.6.39.2
 
