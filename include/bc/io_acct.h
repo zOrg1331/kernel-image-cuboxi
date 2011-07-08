@@ -17,6 +17,8 @@
 #include <bc/beancounter.h>
 #include <linux/virtinfo.h>
 
+extern int ub_dirty_radio;
+
 /*
  * IO ub is required in task context only, so if exec_ub is set
  * to NULL this means that uses doesn't need to charge some
@@ -70,6 +72,13 @@ extern void ub_io_account_cancel(struct address_space *mapping);
 #define ub_dirty_pages(ub)	ub_stat_get(ub, dirty_pages)
 
 extern int ub_dirty_limits(long *pdirty, struct user_beancounter *ub);
+
+static inline void ub_writeback_io(unsigned long requests, unsigned long sectors)
+{
+	struct user_beancounter *ub = get_exec_ub();
+	ub_stat_add(ub, wb_requests, requests);
+	ub_stat_add(ub, wb_sectors, sectors);
+}
 
 #else /* UBC_IO_ACCT */
 

@@ -281,6 +281,11 @@ extern int nfs_migrate_page(struct address_space *,
 #endif
 
 /* quota.c */
+typedef enum  {
+	NFS_DQ_SYNC_PREALLOC_RELEASE,
+	NFS_DQ_SYNC_PREALLOC_HOLD,
+} nfs_dq_sync_flags_t;
+
 #if defined CONFIG_VZ_QUOTA || defined CONFIG_VZ_QUOTA_MODULE
 extern void nfs_dq_init(struct inode *inode);
 extern struct inode * nfs_dq_reserve_inode(struct inode * dir);
@@ -295,7 +300,8 @@ extern void nfs_dq_init_nfs_inode(struct nfs_inode *nfsi);
 extern long nfs_dq_prealloc_space(struct inode *inode, loff_t pos, size_t size);
 extern void nfs_dq_release_preallocated_blocks(struct inode *inode,
 						blkcnt_t blocks);
-extern void nfs_dq_sync_blocks(struct inode *inode, struct nfs_fattr *fattr);
+extern void nfs_dq_sync_blocks(struct inode *inode, struct nfs_fattr *fattr,
+						nfs_dq_sync_flags_t flag);
 extern void nfs_dq_init_prealloc_list(struct nfs_server *server);
 
 extern blkcnt_t nfs_quota_reserve_barrier;
@@ -336,7 +342,8 @@ static inline void nfs_dq_release_preallocated_blocks(struct inode *inode,
 {
 }
 static inline void nfs_dq_sync_blocks(struct inode *inode,
-					struct nfs_fattr *fattr)
+					struct nfs_fattr *fattr,
+					nfs_dq_sync_flags_t flag)
 {
 }
 static void nfs_dq_init_prealloc_list(struct nfs_server *server)

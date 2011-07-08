@@ -1311,7 +1311,7 @@ SYSCALL_DEFINE0(getppid)
 	int pid;
 
 	rcu_read_lock();
-	pid = task_tgid_vnr(current->real_parent);
+	pid = ve_task_ppid_nr_ns(current, current->nsproxy->pid_ns);
 	rcu_read_unlock();
 
 	return pid;

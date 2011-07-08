@@ -13,6 +13,7 @@
 #include <linux/rbtree.h>
 #include <linux/ioprio.h>
 #include <linux/blktrace_api.h>
+#include <bc/io_acct.h>
 #include "cfq.h"
 
 /*
@@ -2029,6 +2030,11 @@ static void cfq_dispatch_insert(struct request_queue *q, struct request *rq)
 	cfqq->nr_sectors += blk_rq_sectors(rq);
 	cfq_blkiocg_update_dispatch_stats(&cfqq->cfqg->blkg, blk_rq_bytes(rq),
 					rq_data_dir(rq), rq_is_sync(rq));
+
+	if (get_exec_ub() != (RQ_CFQG(rq))->blkg.blk_ub)
+		ub_writeback_io(1, blk_rq_sectors(rq));
+
+	virtinfo_notifier_call_irq(VITYPE_IO, VIRTINFO_IO_OP_ACCOUNT, NULL);
 }
 
 /*
@@ -3273,17 +3279,17 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
 	if (rq_is_sync(rq) && !cfq_cfqq_sync(cfqq))
 		return true;
 
+	/* Allow preemption only if we are idling on sync-noidle tree */
+	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD &&
+	    cfqq_type(new_cfqq) == SYNC_NOIDLE_WORKLOAD &&
+	    new_cfqq->service_tree->count == 1 + (new_cfqq->cfqg == cfqq->cfqg) &&
+	    RB_EMPTY_ROOT(&cfqq->sort_list))
+		return true;
+
 	if (new_cfqq->cfqg != cfqq->cfqg)
 		return false;
 
 	if (cfq_slice_used(cfqq))
-		return true;
-
-	/* Allow preemption only if we are idling on sync-noidle tree */
-	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD &&
-	    cfqq_type(new_cfqq) == SYNC_NOIDLE_WORKLOAD &&
-	    new_cfqq->service_tree->count == 2 &&
-	    RB_EMPTY_ROOT(&cfqq->sort_list))
 		return true;
 
 	/*

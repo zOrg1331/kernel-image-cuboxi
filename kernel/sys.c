@@ -154,11 +154,15 @@ void virtinfo_notifier_unregister(int type, struct vnotifier_block *nb)
 	struct vnotifier_block **p;
 	int entry_cpu, exit_cpu;
 	unsigned long cnt, ent;
+	struct rcu_synchronize rcu;
 
 	down(&virtinfo_sem);
 	for (p = &virtinfo_chain[type]; *p != nb; p = &(*p)->next);
 	*p = nb->next;
 	smp_mb();
+
+	init_completion(&rcu.completion);
+	call_rcu_sched(&rcu.head, wakeme_after_rcu);
 
 	for_each_cpu_mask(entry_cpu, cpu_possible_map) {
 		while (1) {
@@ -174,21 +178,18 @@ void virtinfo_notifier_unregister(int type, struct vnotifier_block *nb)
 			schedule_timeout(HZ / 100);
 		}
 	}
+
+	wait_for_completion(&rcu.completion);
+
 	up(&virtinfo_sem);
 }
 
 EXPORT_SYMBOL(virtinfo_notifier_unregister);
 
-int virtinfo_notifier_call(int type, unsigned long n, void *data)
+static int do_virtinfo_notifier_call(int type, unsigned long n, void *data)
 {
 	int ret;
-	int entry_cpu, exit_cpu;
 	struct vnotifier_block *nb;
-
-	entry_cpu = get_cpu();
-	per_cpu(virtcnt, entry_cpu).entry++;
-	smp_wmb();
-	put_cpu();
 
 	nb = virtinfo_chain[type];
 	ret = NOTIFY_DONE;
@@ -202,6 +203,21 @@ int virtinfo_notifier_call(int type, unsigned long n, void *data)
 		nb = nb->next;
 	}
 
+	return ret;
+}
+
+int virtinfo_notifier_call(int type, unsigned long n, void *data)
+{
+	int ret;
+	int entry_cpu, exit_cpu;
+
+	entry_cpu = get_cpu();
+	per_cpu(virtcnt, entry_cpu).entry++;
+	smp_wmb();
+	put_cpu();
+
+	ret = do_virtinfo_notifier_call(type, n, data);
+
 	exit_cpu = get_cpu();
 	smp_wmb();
 	per_cpu(virtcnt, entry_cpu).exit[exit_cpu]++;
@@ -209,8 +225,15 @@ int virtinfo_notifier_call(int type, unsigned long n, void *data)
 
 	return ret;
 }
-
 EXPORT_SYMBOL(virtinfo_notifier_call);
+
+int virtinfo_notifier_call_irq(int type, unsigned long n, void *data)
+{
+	if (!in_interrupt())
+		return virtinfo_notifier_call(type, n, data);
+	return do_virtinfo_notifier_call(type, n, data);
+}
+EXPORT_SYMBOL(virtinfo_notifier_call_irq);
 
 /*
  * set the priority of a task

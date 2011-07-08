@@ -487,19 +487,20 @@ error_return:
 }
 
 /**
- * ext4_free_blocks() -- Free given blocks and update quota
+ * ext4_free_blocks() -- Free given blocks and (if any) update quota
  * @handle:		handle for this transaction
  * @inode:		inode
  * @block:		start physical block to free
  * @count:		number of blocks to count
- * @metadata: 		Are these metadata blocks
+ * @flags: 		Are these metadata blocks, quota update needed
  */
 void ext4_free_blocks(handle_t *handle, struct inode *inode,
 			ext4_fsblk_t block, unsigned long count,
-			int metadata)
+			int flags)
 {
 	struct super_block *sb;
 	unsigned long dquot_freed_blocks;
+	int metadata  = flags & EXT4_FREE_BLOCKS_METADATA ? 1 : 0;
 
 	/* this isn't the right place to decide whether block is metadata
 	 * inode.c/extents.c knows better, but for safety ... */
@@ -519,7 +520,7 @@ void ext4_free_blocks(handle_t *handle, struct inode *inode,
 
 	ext4_mb_free_blocks(handle, inode, block, count,
 			    metadata, &dquot_freed_blocks);
-	if (dquot_freed_blocks)
+	if (dquot_freed_blocks && !(flags & EXT4_FREE_BLOCKS_SKIP_QUPD))
 		vfs_dq_free_block(inode, dquot_freed_blocks);
 	return;
 }

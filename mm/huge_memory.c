@@ -670,6 +670,8 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 		if (unlikely(khugepaged_enter(vma)))
 			return VM_FAULT_OOM;
+		if (unlikely(ub_precharge_hpage(mm)))
+			goto out;
 		page = alloc_hugepage_vma(transparent_hugepage_defrag(vma),
 					  vma, haddr, numa_node_id(), 0);
 		if (unlikely(!page)) {
@@ -896,6 +898,11 @@ int do_huge_pmd_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 	get_page(page);
 	spin_unlock(&mm->page_table_lock);
+
+	if (unlikely(ub_precharge_hpage(mm))) {
+		ret |= VM_FAULT_OOM;
+		goto out;
+	}
 
 	if (transparent_hugepage_enabled(vma) &&
 	    !transparent_hugepage_debug_cow())

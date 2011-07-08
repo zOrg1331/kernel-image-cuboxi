@@ -202,6 +202,8 @@ struct ve_struct {
 	struct vfsmount		*sysfs_mnt;
 	struct super_block	*sysfs_sb;
 	struct sysfs_dirent	*_sysfs_root;
+	struct kobject		*fs_kobj;
+	struct kobject		*cgroup_kobj;
 #endif
 	struct kobject		*_virtual_dir;
 	struct kset		*class_kset;

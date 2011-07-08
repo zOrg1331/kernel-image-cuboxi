@@ -430,16 +430,6 @@ static int validate_change(const struct cpuset *cur, const struct cpuset *trial)
 			return -EINVAL;
 	}
 
-	/* Cpusets with tasks can't have empty cpus_allowed or mems_allowed */
-	if (cgroup_task_count(cur->css.cgroup)) {
-		if ((!cpumask_empty(cur->cpus_allowed) &&
-		      cpumask_empty(trial->cpus_allowed)) ||
-		     (!nodes_empty(cur->mems_allowed) &&
-		       nodes_empty(trial->mems_allowed))) {
-			return -ENOSPC;
-		}
-	}
-
 	return 0;
 }
 

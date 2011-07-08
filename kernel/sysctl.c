@@ -478,6 +478,14 @@ static struct ctl_table kern_table[] = {
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 	{
 		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "sched_cpulimit_scale_cpufreq",
+		.data		= &sysctl_sched_cpulimit_scale_cpufreq,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "sched_cpulimit_thresh",
 		.data		= &sysctl_sched_cpulimit_thresh,
 		.maxlen		= sizeof(int),

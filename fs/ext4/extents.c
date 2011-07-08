@@ -1061,7 +1061,8 @@ cleanup:
 		for (i = 0; i < depth; i++) {
 			if (!ablocks[i])
 				continue;
-			ext4_free_blocks(handle, inode, ablocks[i], 1, 1);
+			ext4_free_blocks(handle, inode, ablocks[i], 1,
+					 EXT4_FREE_BLOCKS_METADATA);
 		}
 	}
 	kfree(ablocks);
@@ -2092,7 +2093,7 @@ static int ext4_ext_rm_idx(handle_t *handle, struct inode *inode,
 	ext_debug("index is empty, remove it, free block %llu\n", leaf);
 	bh = sb_find_get_block(inode->i_sb, leaf);
 	ext4_forget(handle, 1, inode, bh, leaf);
-	ext4_free_blocks(handle, inode, leaf, 1, 1);
+	ext4_free_blocks(handle, inode, leaf, 1, EXT4_FREE_BLOCKS_METADATA);
 	return err;
 }
 
@@ -2193,7 +2194,8 @@ static int ext4_remove_blocks(handle_t *handle, struct inode *inode,
 			bh = sb_find_get_block(inode->i_sb, start + i);
 			ext4_forget(handle, metadata, inode, bh, start + i);
 		}
-		ext4_free_blocks(handle, inode, start, num, metadata);
+		ext4_free_blocks(handle, inode, start, num,
+				 metadata ? EXT4_FREE_BLOCKS_METADATA : 0);
 	} else if (from == le32_to_cpu(ex->ee_block)
 		   && to <= le32_to_cpu(ex->ee_block) + ee_len - 1) {
 		printk(KERN_INFO "strange request: removal %u-%u from %u:%u\n",
@@ -3583,12 +3585,14 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 
 	err = ext4_ext_insert_extent(handle, inode, path, &newex, flags);
 	if (err) {
+		int fb_flags = flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE ?
+			EXT4_FREE_BLOCKS_SKIP_QUPD : 0;
 		/* free data blocks we just allocated */
 		/* not a good idea to call discard here directly,
 		 * but otherwise we'd need to call it every free() */
 		ext4_discard_preallocations(inode);
 		ext4_free_blocks(handle, inode, ext_pblock(&newex),
-					ext4_ext_get_actual_len(&newex), 0);
+				 ext4_ext_get_actual_len(&newex), fb_flags);
 		goto out2;
 	}
 

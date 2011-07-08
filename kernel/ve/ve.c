@@ -183,8 +183,6 @@ EXPORT_SYMBOL(ve_freeze);
 
 void ve_thaw(struct ve_struct *env)
 {
-	int err;
-
 	freezer_change_state(env->ve_cgroup, CGROUP_THAWED);
 
 	down_write(&env->op_sem);

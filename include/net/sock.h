@@ -1443,7 +1443,7 @@ static inline void sock_poll_wait(struct file *filp,
 static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 {
 	WARN_ON(skb->destructor);
-	skb_orphan(skb);
+	__skb_orphan(skb);
 	skb->sk = sk;
 	skb->destructor = sock_wfree;
 	/*
@@ -1457,7 +1457,7 @@ static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 static inline void skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
 {
 	WARN_ON(skb->destructor);
-	skb_orphan(skb);
+	__skb_orphan(skb);
 	skb->sk = sk;
 	skb->destructor = sock_rfree;
 	atomic_add(skb->truesize, &sk->sk_rmem_alloc);

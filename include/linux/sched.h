@@ -2101,6 +2101,7 @@ extern unsigned int sysctl_sched_nr_migrate;
 extern unsigned int sysctl_sched_time_avg;
 extern unsigned int sysctl_timer_migration;
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+extern int sysctl_sched_cpulimit_scale_cpufreq;
 extern int sysctl_sched_cpulimit_thresh;
 extern int sysctl_sched_cpulimit_update_iter;
 extern int sysctl_sched_cpulimit_credit_charge;
@@ -2815,6 +2816,15 @@ static inline unsigned int task_vcpu_id(struct task_struct *p)
 #endif
 
 #define num_online_vcpus() task_nr_cpus(current)
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+extern unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq);
+#else
+static inline unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq)
+{
+	return freq;
+}
+#endif
 
 extern void arch_pick_mmap_layout(struct mm_struct *mm);
 

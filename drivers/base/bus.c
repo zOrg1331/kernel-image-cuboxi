@@ -15,6 +15,7 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/string.h>
+#include <linux/sched.h>
 #include "base.h"
 #include "power/power.h"
 

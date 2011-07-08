@@ -38,6 +38,7 @@
 #include <linux/pid_namespace.h>
 
 #include <bc/beancounter.h>
+#include <bc/io_acct.h>
 #include <bc/vmpages.h>
 #include <bc/proc.h>
 
@@ -80,12 +81,14 @@ const char *ub_rnames[] = {
 
 unsigned int ub_dcache_threshold __read_mostly = 1024;
 
+static int ubc_ioprio = 1;
+
 /* default maximum perpcu resources precharge */
 static int resource_precharge[UB_RESOURCES] = {
 	[UB_KMEMSIZE]	= 32 * PAGE_SIZE,
        [UB_PRIVVMPAGES]= 256,
 	[UB_NUMPROC]	= 4,
-	[UB_PHYSPAGES]	= 256,	/* up to 1Mb */
+	[UB_PHYSPAGES]	= 512,	/* up to 2Mb, 1 huge page */
 	[UB_NUMSIGINFO]	= 4,
 	[UB_DCACHESIZE] = 4 * PAGE_SIZE,
 	[UB_NUMFILE]	= 8,
@@ -169,9 +172,11 @@ int set_task_exec_ub(struct task_struct *tsk, struct user_beancounter *ub)
 {
 	int err;
 
-	err = cgroup_kernel_attach(ub->ub_cgroup, tsk);
-	if (err)
-		return err;
+	if (ub->ub_cgroup) {
+		err = cgroup_kernel_attach(ub->ub_cgroup, tsk);
+		if (err)
+			return err;
+	}
 
 	put_beancounter_longterm(tsk->task_bc.exec_ub);
 	tsk->task_bc.exec_ub = get_beancounter_longterm(ub);
@@ -209,11 +214,14 @@ static struct user_beancounter *alloc_ub(uid_t uid)
 
 	init_beancounter_precharges(new_ub);
 
-	snprintf(name, sizeof(name), "%u", uid);
-	new_ub->ub_cgroup = cgroup_kernel_open(ub_cgroup_root,
-			CGRP_CREAT|CGRP_WEAK, name);
-	if (IS_ERR(new_ub->ub_cgroup))
-		goto fail_cgroup;
+	if (ubc_ioprio) {
+		snprintf(name, sizeof(name), "%u", uid);
+		new_ub->ub_cgroup = cgroup_kernel_open(ub_cgroup_root,
+				CGRP_CREAT|CGRP_WEAK, name);
+		if (IS_ERR(new_ub->ub_cgroup))
+			goto fail_cgroup;
+		ub_init_ioprio(new_ub);
+	}
 
 	if (alloc_mem_gangs(&new_ub->gang_set))
 		goto fail_gangs;
@@ -233,7 +241,10 @@ fail_free:
 fail_pcpu:
 	free_mem_gangs(&new_ub->gang_set);
 fail_gangs:
-	cgroup_kernel_close(new_ub->ub_cgroup);
+	if (new_ub->ub_cgroup) {
+		ub_fini_ioprio(new_ub);
+		cgroup_kernel_close(new_ub->ub_cgroup);
+	}
 fail_cgroup:
 	kmem_cache_free(ub_cachep, new_ub);
 	return NULL;
@@ -251,7 +262,10 @@ static inline void __free_ub(struct user_beancounter *ub)
 static inline void free_ub(struct user_beancounter *ub)
 {
 	percpu_counter_destroy(&ub->ub_orphan_count);
-	cgroup_kernel_close(ub->ub_cgroup);
+	if (ub->ub_cgroup) {
+		ub_fini_ioprio(ub);
+		cgroup_kernel_close(ub->ub_cgroup);
+	}
 	__free_ub(ub);
 }
 
@@ -411,7 +425,10 @@ static void delayed_release_beancounter(struct work_struct *w)
 	bc_verify_held(ub);
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);
-	cgroup_kernel_close(ub->ub_cgroup);
+	if (ub->ub_cgroup) {
+		ub_fini_ioprio(ub);
+		cgroup_kernel_close(ub->ub_cgroup);
+	}
 
 	call_rcu(&ub->rcu, bc_free_rcu);
 	return;
@@ -542,9 +559,6 @@ static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 
 	if (likely(ub_pcpu->precharge[resource] >= val))
 		return 0;
-
-	if (val > ub->ub_parms[resource].max_precharge)
-		return -ENOMEM;
 
 	spin_lock(&ub->ub_lock);
 	charge = max((int)val, ub->ub_parms[resource].max_precharge >> 1) -
@@ -832,6 +846,24 @@ static ctl_table ub_sysctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+	{
+		.procname	= "ioprio",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &ubc_ioprio,
+		.maxlen		= sizeof(ubc_ioprio),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#ifdef CONFIG_BC_IO_ACCOUNTING
+	{
+		.procname	= "dirty_ratio",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &ub_dirty_radio,
+		.maxlen		= sizeof ub_dirty_radio,
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif /* CONFIG_BC_IO_ACCOUNTING */
 	{ .ctl_name = 0 }
 };
 
@@ -877,6 +909,7 @@ int __init ub_init_cgroup(void)
 {
 	struct vfsmount *mnt;
 	struct cgroup_sb_opts opts = {
+		.name		= "beancounter",
 		.subsys_bits    = 1ul << blkio_subsys_id,
 	};
 
@@ -885,6 +918,9 @@ int __init ub_init_cgroup(void)
 		return PTR_ERR(mnt);
 	ub_cgroup_root = cgroup_get_root(mnt);
 
+	if (!ubc_ioprio)
+		return 0;
+
 	ub0.ub_cgroup = cgroup_kernel_open(ub_cgroup_root, CGRP_CREAT, "0");
 	if (IS_ERR(ub0.ub_cgroup))
 		return PTR_ERR(ub0.ub_cgroup);
@@ -892,3 +928,10 @@ int __init ub_init_cgroup(void)
 	return cgroup_kernel_attach(ub0.ub_cgroup, init_pid_ns.child_reaper);
 }
 late_initcall(ub_init_cgroup);
+
+static int __init parse_ubc_ioprio(char *arg)
+{
+	ubc_ioprio = simple_strtoul(arg, NULL, 0);
+	return 0;
+}
+__setup("ubc.ioprio=", parse_ubc_ioprio);

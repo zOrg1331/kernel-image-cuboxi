@@ -154,7 +154,7 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 
 	table = sysctl_ve_table(table, &onstack, write);
 	if (table == NULL) {
-		error = res;
+		error = write;
 		goto out;
 	}
 

@@ -229,7 +229,8 @@ static blkcnt_t nfs_dq_get_reserved_blocks(struct inode *inode)
 	return nfs_calc_block_size(inode, *reserve);
 }
 
-static void nfs_dq_update_grow(struct inode *inode, blkcnt_t grow)
+static void nfs_dq_update_grow(struct inode *inode, blkcnt_t grow,
+						nfs_dq_sync_flags_t flag)
 {
 	blkcnt_t reserved_blocks;
 
@@ -240,7 +241,8 @@ static void nfs_dq_update_grow(struct inode *inode, blkcnt_t grow)
 
 	if (reserved_blocks >= grow) {
 		nfs_dq_claim_preallocated_blocks(inode, grow);
-		nfs_dq_release_preallocated_blocks(inode, reserved_blocks - grow);
+		if (flag == NFS_DQ_SYNC_PREALLOC_RELEASE)
+			nfs_dq_release_preallocated_blocks(inode, reserved_blocks - grow);
 	} else {
 		blkcnt_t blocks_to_alloc = grow - reserved_blocks;
 
@@ -271,7 +273,8 @@ static void nfs_dq_update_shrink(struct inode *inode, blkcnt_t shrink)
 	nfs_dq_free_blocks(inode, shrink);
 }
 
-void nfs_dq_sync_blocks(struct inode *inode, struct nfs_fattr *fattr)
+void nfs_dq_sync_blocks(struct inode *inode, struct nfs_fattr *fattr,
+				nfs_dq_sync_flags_t flag)
 {
 	blkcnt_t blocks;
 
@@ -288,7 +291,7 @@ void nfs_dq_sync_blocks(struct inode *inode, struct nfs_fattr *fattr)
 		blocks = fattr->du.nfs2.blocks;
 
 	if (blocks > inode->i_blocks)
-		nfs_dq_update_grow(inode, blocks - inode->i_blocks);
+		nfs_dq_update_grow(inode, blocks - inode->i_blocks, flag);
 	else
 		nfs_dq_update_shrink(inode, inode->i_blocks - blocks);
 }

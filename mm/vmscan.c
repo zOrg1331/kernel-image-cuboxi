@@ -2095,8 +2095,10 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			congestion_wait(BLK_RW_ASYNC, HZ/10);
 	}
 	/* top priority shrink_zones still had more to do? don't OOM, then */
-	if (!sc->all_unreclaimable)
+	if (sc->nr_reclaimed)
 		ret = sc->nr_reclaimed;
+	else if (!sc->all_unreclaimable)
+		ret = 1;
 out:
 	/*
 	 * Now that we've scanned all the zones at this priority level, note

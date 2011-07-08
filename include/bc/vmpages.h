@@ -13,6 +13,7 @@
 
 #include <linux/linkage.h>
 #include <linux/sched.h>	/* for get_exec_ub() */
+#include <linux/mm.h>
 #include <bc/beancounter.h>
 #include <bc/decl.h>
 
@@ -93,7 +94,7 @@ SWP_DECLARE_VOID_FUNC(ub_swapentry_inc(struct swap_info_struct *si, pgoff_t n,
 SWP_DECLARE_VOID_FUNC(ub_swapentry_dec(struct swap_info_struct *si, pgoff_t n))
 SWP_DECLARE_VOID_FUNC(ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t n))
 
-int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask);
+int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size);
 
 static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 {
@@ -101,7 +102,18 @@ static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mas
 			!precharge_beancounter(ub, UB_PHYSPAGES, 1)))
 		return 0;
 
-	return __ub_check_ram_limits(ub, gfp_mask);
+	return __ub_check_ram_limits(ub, gfp_mask, 1);
+}
+
+static inline int ub_precharge_hpage(struct mm_struct *mm)
+{
+	struct user_beancounter *ub = mm_ub(mm);
+
+	if (likely(ub->ub_parms[UB_PHYSPAGES].limit == UB_MAXVALUE ||
+	    !precharge_beancounter(ub, UB_PHYSPAGES, HPAGE_PMD_SIZE)))
+		return 0;
+
+	return __ub_check_ram_limits(ub, GFP_TRANSHUGE, HPAGE_PMD_SIZE);
 }
 
 void show_ub_mem(struct user_beancounter *ub);

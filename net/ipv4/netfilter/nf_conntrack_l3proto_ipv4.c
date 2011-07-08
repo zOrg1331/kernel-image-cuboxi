@@ -198,7 +198,7 @@ static ctl_table ip_ct_sysctl_table[] = {
 	{
 		.ctl_name	= NET_IPV4_NF_CONNTRACK_MAX,
 		.procname	= "ip_conntrack_max",
-		.data		= &nf_conntrack_max,
+		.data		= &init_net.ct.max,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,

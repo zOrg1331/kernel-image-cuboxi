@@ -112,48 +112,6 @@ struct quota_format_type vz_quota_empty_v2_format = {
 
 static struct kmem_cache *vzquota_cachep;
 
-/* This is the ugliest hack of the release, we have to fixup filesystem type
- * in order to support quota tools.
- */
-int need_fake_fstype(const struct task_struct *tsk)
-{
-	const char **p;
-	const char *comm;
-	const char *comm_list[] = {
-		"convertquota",
-		"edquota",
-		"quota",
-		"quot",
-		"quotacheck",
-		"quotadebug",
-		"quotaon",
-		"quotaoff",
-		"quotastats",
-		"quota_nld",
-		"repquota",
-		"rpc.rquotad",
-		"setquota",
-		"setup_quota_group",
-		"xqmstats"
-		"warnquota",
-		NULL,
-	};
-	comm = strrchr(tsk->comm, '/');
-	if (comm)
-		comm++;
-	else
-		comm = tsk->comm;
-
-	p = comm_list;
-	while (*p != NULL) {
-		if (!strcmp(*p, comm))
-			return 1;
-		p++;
-	}
-	return 0;
-}
-EXPORT_SYMBOL(need_fake_fstype);
-
 /*
  * Hash function.
  */

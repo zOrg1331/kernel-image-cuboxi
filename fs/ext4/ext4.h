@@ -464,6 +464,14 @@ struct ext4_new_group_data {
 					 EXT4_GET_BLOCKS_DIO_CREATE_EXT)
 
 /*
+ * Flags used by ext4_free_blocks()
+ */
+	/* Blocks to free are metadata ones */
+#define EXT4_FREE_BLOCKS_METADATA		0x0001
+	/* Don't update quota */
+#define EXT4_FREE_BLOCKS_SKIP_QUPD		0x0002
+
+/*
  * ioctl commands
  */
 #define	EXT4_IOC_GETFLAGS		FS_IOC_GETFLAGS
@@ -1495,7 +1503,7 @@ extern ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 extern int ext4_claim_free_blocks(struct ext4_sb_info *sbi, s64 nblocks);
 extern int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks);
 extern void ext4_free_blocks(handle_t *handle, struct inode *inode,
-			ext4_fsblk_t block, unsigned long count, int metadata);
+			ext4_fsblk_t block, unsigned long count, int flags);
 extern void ext4_add_groupblocks(handle_t *handle, struct super_block *sb,
 				ext4_fsblk_t block, unsigned long count);
 extern ext4_fsblk_t ext4_count_free_blocks(struct super_block *);

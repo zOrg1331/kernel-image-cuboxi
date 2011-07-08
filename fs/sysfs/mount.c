@@ -30,12 +30,12 @@ struct super_block * sysfs_sb = NULL;
 struct kmem_cache *sysfs_dir_cachep;
 
 #ifdef CONFIG_SYSFS_DEPRECATED_DYN
-unsigned sysfs_deprecated __read_mostly;
-EXPORT_SYMBOL(sysfs_deprecated);
+unsigned _sysfs_deprecated __read_mostly;
+EXPORT_SYMBOL(_sysfs_deprecated);
 
 static int __init sysfs_init_deprecated(char *str)
 {
-	sysfs_deprecated = simple_strtoul(str, NULL, 10);
+	_sysfs_deprecated = simple_strtoul(str, NULL, 10);
 	return 1;
 }
 early_param("sysfs.deprecated", sysfs_init_deprecated);
