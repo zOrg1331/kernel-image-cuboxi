@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt25
+Release: alt26
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Jul 08 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt26
+- Update to 042stab020.1 kernel
+- Enable BLK_DEV_THROTTLING (ALT 25836)
+- Add ipt-netflow to modules.build
+
 * Mon Jun 20 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt25
 - Apply 042stab018.1 patches
 
