@@ -368,7 +368,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr,
 
 		if (dummy) {
 			inode->i_blocks = 0;
-			nfs_dq_sync_blocks(inode, fattr);
+			nfs_dq_sync_blocks(inode, fattr, NFS_DQ_SYNC_PREALLOC_RELEASE);
 		}
 		nfsi->attrtimeo = NFS_MINATTRTIMEO(inode);
 		nfsi->attrtimeo_timestamp = now;
@@ -1098,7 +1098,7 @@ int nfs_refresh_inode(struct inode *inode, struct nfs_fattr *fattr)
 	spin_unlock(&inode->i_lock);
 
 	if (status == 0)
-		nfs_dq_sync_blocks(inode, fattr);
+		nfs_dq_sync_blocks(inode, fattr, NFS_DQ_SYNC_PREALLOC_RELEASE);
 	return status;
 }
 
@@ -1136,7 +1136,7 @@ int nfs_post_op_update_inode(struct inode *inode, struct nfs_fattr *fattr)
 	status = nfs_post_op_update_inode_locked(inode, fattr);
 	spin_unlock(&inode->i_lock);
 	if (status == 0)
-		nfs_dq_sync_blocks(inode, fattr);
+		nfs_dq_sync_blocks(inode, fattr, NFS_DQ_SYNC_PREALLOC_RELEASE);
 	return status;
 }
 
@@ -1189,7 +1189,7 @@ out_noforce:
 	status = nfs_post_op_update_inode_locked(inode, fattr);
 	spin_unlock(&inode->i_lock);
 	if (status == 0)
-		nfs_dq_sync_blocks(inode, fattr);
+		nfs_dq_sync_blocks(inode, fattr, NFS_DQ_SYNC_PREALLOC_HOLD);
 	return status;
 }
 

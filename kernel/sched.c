@@ -454,6 +454,26 @@ unsigned int task_vcpu_id(struct task_struct *p)
 }
 #endif
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq)
+{
+	unsigned long rate, max_rate;
+
+	if (!sysctl_sched_cpulimit_scale_cpufreq)
+		return freq;
+
+	rcu_read_lock();
+	rate = task_group(current)->rate;
+	rcu_read_unlock();
+
+	max_rate = num_online_vcpus() * MAX_RATE;
+	if (!rate || rate >= max_rate)
+		return freq;
+
+	return (freq / max_rate) * rate; /* avoid 32bit overflow */
+}
+#endif
+
 /* Change a task's cfs_rq and parent entity if it moves across CPUs/groups */
 static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
 {
@@ -649,6 +669,7 @@ struct rq {
 	unsigned long nr_running;
 	#define CPU_LOAD_IDX_MAX 5
 	unsigned long cpu_load[CPU_LOAD_IDX_MAX];
+	unsigned long nr_running_cfs;
 #ifndef __GENKSYMS__
 	unsigned long last_load_update_tick;
 #endif
@@ -1029,6 +1050,12 @@ static inline u64 global_rt_runtime(void)
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 
 /*
+ * If set, cpu frequency shown to user will be scaled
+ * proportionally to cpu limit.
+ */
+int sysctl_sched_cpulimit_scale_cpufreq = 1;
+
+/*
  * Threshold of changing per-cpu group rate.
  */
 int sysctl_sched_cpulimit_thresh = 4;
@@ -1382,11 +1409,7 @@ static inline void update_sched_lat(struct task_struct *t, cycles_t cycles)
 
 static inline void update_ve_task_info(struct task_struct *prev, cycles_t cycles)
 {
-#ifdef CONFIG_FAIRSCHED
-	if (prev != this_pcpu()->idle) {
-#else
 	if (prev != this_rq()->idle) {
-#endif
 		VE_CPU_STATS(prev->ve_task_info.owner_env,
 				smp_processor_id())->used_time +=
 			cycles - prev->ve_task_info.sched_time;
@@ -2258,6 +2281,9 @@ static int tg_shares_up(struct task_group *tg, void *data)
 	return 0;
 }
 
+static inline unsigned long entity_lb_weight(struct sched_entity *se);
+static inline int entity_contributes_to_load(struct sched_entity *se);
+
 /*
  * Compute the cpu's hierarchical load factor for each task group.
  * This needs to be done in a top-down fashion because the load of a child
@@ -2270,10 +2296,12 @@ static int tg_load_down(struct task_group *tg, void *data)
 
 	if (!tg->parent) {
 		load = cpu_rq(cpu)->load.weight;
-	} else {
+	} else if (entity_contributes_to_load(tg->se[cpu])) {
 		load = tg->parent->cfs_rq[cpu]->h_load;
-		load *= tg->cfs_rq[cpu]->shares;
+		load *= entity_lb_weight(tg->se[cpu]);
 		load /= tg->parent->cfs_rq[cpu]->load.weight + 1;
+	} else {
+		load = 0;
 	}
 
 	tg->cfs_rq[cpu]->h_load = load;
@@ -4574,6 +4602,8 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 			int *balance, struct sg_lb_stats *sgs)
 {
 	unsigned long load, max_cpu_load, min_cpu_load;
+	unsigned long weighted_load;
+	unsigned long nr_running;
 	int i;
 	unsigned int balance_cpu = -1, first_idle_cpu = 0;
 	unsigned long avg_load_per_task = 0;
@@ -4588,8 +4618,8 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 	for_each_cpu_and(i, sched_group_cpus(group), cpus) {
 		struct rq *rq = cpu_rq(i);
 
-		if (*sd_idle && rq->nr_running)
-			*sd_idle = 0;
+		nr_running = rq->nr_running;
+		weighted_load = weighted_cpuload(i);
 
 		/* Bias balancing toward cpus of our domain */
 		if (local_group) {
@@ -4598,7 +4628,23 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 				balance_cpu = i;
 			}
 
-			load = target_load(i, load_idx);
+			if (idle != CPU_NOT_IDLE &&
+			    !rq->cfs.nr_running &&
+			    rq->nr_running == rq->nr_running_cfs)
+				/*
+				 * We're doing idle balance for group. Portray
+				 * its cpus all tasks of which are in throttled
+				 * cfs task groups as having no load in order to
+				 * higher our chances of moving some tasks to
+				 * this_cpu and prevent it from idling.
+				 *
+				 * (Note that throttled tasks are accounted as
+				 * running so their load is not subtracted from
+				 * the cpu load)
+				 */
+				load = weighted_load = nr_running = 0;
+			else
+				load = target_load(i, load_idx);
 		} else {
 			load = source_load(i, load_idx);
 			if (load > max_cpu_load)
@@ -4608,9 +4654,11 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 		}
 
 		sgs->group_load += load;
-		sgs->sum_nr_running += rq->nr_running;
-		sgs->sum_weighted_load += weighted_cpuload(i);
+		sgs->sum_nr_running += nr_running;
+		sgs->sum_weighted_load += weighted_load;
 
+		if (*sd_idle && nr_running)
+			*sd_idle = 0;
 	}
 
 	/*
@@ -6445,7 +6493,7 @@ pick_next_task(struct rq *rq)
 	 * Optimization: we know that if all tasks are in
 	 * the fair class we can call that function directly:
 	 */
-	if (likely(rq->nr_running == rq->cfs.nr_running)) {
+	if (likely(rq->nr_running == rq->nr_running_cfs)) {
 		p = fair_sched_class.pick_next_task(rq);
 		if (likely(p))
 			return p;
@@ -6503,7 +6551,13 @@ need_resched_nonpreemptible:
 
 	pre_schedule(rq, prev);
 
-	if (unlikely(!rq->nr_running))
+	if (unlikely(!rq->cfs.nr_running &&
+		     rq->nr_running == rq->nr_running_cfs))
+		/*
+		 * Either cpu has no tasks running on it or all the tasks are in
+		 * throttled cfs task groups. In either way, try to pull some
+		 * tasks in order to prevent it from idling.
+		 */
 		idle_balance(cpu, rq);
 
 	put_prev_task(rq, prev);
@@ -10699,6 +10753,7 @@ void __init sched_init(void)
 		rq = cpu_rq(i);
 		spin_lock_init(&rq->lock);
 		rq->nr_running = 0;
+		rq->nr_running_cfs = 0;
 		rq->calc_load_active = 0;
 		rq->calc_load_update = jiffies + LOAD_FREQ;
 		init_cfs_rq(&rq->cfs, rq);

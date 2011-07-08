@@ -300,7 +300,7 @@ static void inode_wait_for_writeback(struct inode *inode)
  * Called under inode_lock.
  */
 static int
-writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
+__writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	struct address_space *mapping = inode->i_mapping;
 	unsigned dirty;
@@ -432,6 +432,23 @@ select_queue:
 		}
 	}
 	inode_sync_complete(inode);
+	return ret;
+}
+
+static int
+writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
+{
+	struct user_beancounter *ub = inode->i_mapping->dirtied_ub;
+	int ret;
+
+	if (likely(get_exec_ub() == ub || !ub))
+		return __writeback_single_inode(inode, wbc);
+
+	ub = get_beancounter_rcu(ub) ? set_exec_ub(ub) : NULL;
+	ret = __writeback_single_inode(inode, wbc);
+	if (ub)
+		put_beancounter(set_exec_ub(ub));
+
 	return ret;
 }
 

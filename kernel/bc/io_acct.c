@@ -23,6 +23,11 @@
 #include <bc/proc.h>
 #include <bc/vmpages.h>
 
+/*
+ * starts writeback at this dirty memory percentage from physpages limit
+ */
+int ub_dirty_radio = 50;
+
 /* under write lock mapping->tree_lock */
 
 void ub_io_account_dirty(struct address_space *mapping)
@@ -86,13 +91,13 @@ int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
 	int dirty_ratio;
 	unsigned long available_memory;
 
+	dirty_ratio = ub_dirty_radio;
+	if (!dirty_ratio)
+		return 0;
+
 	available_memory = ub->ub_parms[UB_PHYSPAGES].limit;
 	if (available_memory == UB_MAXVALUE || available_memory == 0)
 		return 0;
-
-	dirty_ratio = vm_dirty_ratio;
-	if (dirty_ratio < 5)
-		dirty_ratio = 5;
 
 	*pdirty = (dirty_ratio * available_memory) / 100;
 

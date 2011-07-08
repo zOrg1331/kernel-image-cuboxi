@@ -86,8 +86,10 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 	PN(se->throttle_max);
 	PN(se->throttle_sum);
 	P(se->throttle_count);
-	P(se->lb_weight);
 #endif
+#endif
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	P(se->lb_weight);
 #endif
 	P(se->load.weight);
 #undef PN
@@ -265,6 +267,7 @@ static void print_cpu(struct seq_file *m, int cpu)
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", #x, SPLIT_NS(rq->x))
 
 	P(nr_running);
+	P(nr_running_cfs);
 	SEQ_printf(m, "  .%-30s: %lu\n", "load",
 		   rq->load.weight);
 	P(nr_switches);

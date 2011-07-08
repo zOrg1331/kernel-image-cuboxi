@@ -708,11 +708,11 @@ static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 	struct ip_entry_struct *entry;
 	struct veip_struct *veip;
 
-	rcu_read_lock();
+	spin_lock(&veip_lock);
 	veip = ACCESS_ONCE(ve->veip);
 	if (veip == NULL)
 		goto unlock;
-	list_for_each_entry_rcu (entry, &veip->ip_lh, ve_list) {
+	list_for_each_entry (entry, &veip->ip_lh, ve_list) {
 		char addr[40];
 
 		if (entry->active_env == NULL)
@@ -725,7 +725,7 @@ static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 			seq_printf(m, " %39s", addr);
 	}
 unlock:
-	rcu_read_unlock();
+	spin_unlock(&veip_lock);
 }
 
 static void *veip_seq_start(struct seq_file *m, loff_t *pos)

@@ -70,6 +70,7 @@ static void prepare_proc(void)
 	glob_proc_vz_dir = proc_mkdir("vz", &glob_proc_root);
 	if (!proc_vz_dir)
 		panic("Can't create /proc/vz dir\n");
+	proc_create("container", S_IFDIR|S_IRUSR|S_IXUSR, proc_vz_dir, NULL);
 }
 #endif
 

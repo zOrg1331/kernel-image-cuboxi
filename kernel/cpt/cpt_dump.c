@@ -37,6 +37,7 @@
 #include <linux/netdevice.h>
 #include <linux/mount.h>
 #include <linux/ve_nfs.h>
+#include <linux/freezer.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -90,12 +91,7 @@ static void wake_ve(cpt_context_t *ctx)
 	struct task_struct *p, *g;
 
 	do_each_thread_ve(g, p) {
-		spin_lock_irq(&p->sighand->siglock);
-		if (p->flags & PF_FROZEN) {
-			p->flags &= ~PF_FROZEN;
-			wake_up_process(p);
-		}
-		spin_unlock_irq(&p->sighand->siglock);
+		thaw_process(p);
 	} while_each_thread_ve(g, p);
 }
 

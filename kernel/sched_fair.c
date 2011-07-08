@@ -274,6 +274,11 @@ static inline unsigned long tg_cpu_rate(struct task_group *tg, int cpu)
 	return tg->cfs_rq[cpu]->rate;
 }
 
+static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq)
+{
+	return cfs_rq->throttled;
+}
+
 static inline int task_throttled(struct task_struct *p)
 {
 	struct sched_entity *se = &p->se;
@@ -298,6 +303,11 @@ static inline int entity_contributes_to_load(struct sched_entity *se)
 #else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 static inline unsigned long tg_cpu_rate(struct task_group *tg, int cpu)
+{
+	return 0;
+}
+
+static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq)
 {
 	return 0;
 }
@@ -1398,6 +1408,7 @@ static void
 enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	enqueue_entity(&p->se, flags);
+	rq->nr_running_cfs++;
 	hrtick_update(rq);
 }
 
@@ -1409,6 +1420,7 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	dequeue_entity(&p->se, flags);
+	rq->nr_running_cfs--;
 	hrtick_update(rq);
 }
 
@@ -1524,7 +1536,7 @@ static long effective_load(struct task_group *tg, int cpu,
 		a = S*(rw + wl);
 		b = S*rw + s*wg;
 
-		wl = s*(a-b);
+		wl = entity_lb_weight(se) * (a - b);
 
 		if (likely(b))
 			wl /= b;
@@ -2150,6 +2162,7 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	update_h_load(busiest_cpu);
 
 	list_for_each_entry_rcu(tg, &task_groups, list) {
+		struct cfs_rq *this_cfs_rq = tg->cfs_rq[this_cpu];
 		struct cfs_rq *busiest_cfs_rq = tg->cfs_rq[busiest_cpu];
 		unsigned long busiest_h_load = busiest_cfs_rq->h_load;
 		unsigned long busiest_weight = busiest_cfs_rq->load.weight;
@@ -2159,6 +2172,13 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		 * empty group
 		 */
 		if (!busiest_cfs_rq->task_weight)
+			continue;
+
+		/*
+		 * If we're doing idle balance, it is no use pulling tasks that
+		 * can't execute on this_cpu because this_cpu remains idle then.
+		 */
+		if (idle != CPU_NOT_IDLE && cfs_rq_throttled(this_cfs_rq))
 			continue;
 
 		rem_load = (u64)rem_load_move * busiest_weight;

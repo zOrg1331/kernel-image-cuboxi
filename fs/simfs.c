@@ -157,10 +157,11 @@ static void sim_quota_free(struct super_block *sb)
 
 static void sim_show_type(struct seq_file *m, struct super_block *sb)
 {
-	if (need_fake_fstype(current))
-		seq_escape(m,  SIMFS_GET_LOWER_FS_SB(sb)->s_type->name,
-			" \t\n\\");
+#ifdef CONFIG_QUOTA
+	if (vzquota_fake_fstype(current))
+		seq_escape(m, VZQUOTA_FAKE_FSTYPE, " \t\n\\");
 	else
+#endif
 		seq_escape(m, sb->s_type->name, " \t\n\\");
 }
 

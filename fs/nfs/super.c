@@ -2570,11 +2570,6 @@ static int nfs_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
-	struct ve_struct *ve;
-
-	ve = get_exec_env();
-	if (!(ve->features & VE_FEATURE_NFS))
-		return -ENODEV;
 
 	dprintk("--> nfs_xdev_get_sb()\n");
 

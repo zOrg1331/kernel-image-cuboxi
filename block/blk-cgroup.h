@@ -36,6 +36,8 @@ enum stat_type {
 	BLKIO_STAT_SERVICED,
 	/* Total time spent waiting in scheduler queue in ns */
 	BLKIO_STAT_WAIT_TIME,
+	/* Maximum time spent waiting in scheduler queue in ns */
+	BLKIO_STAT_WAIT_MAX,
 	/* Number of IOs merged */
 	BLKIO_STAT_MERGED,
 	/* Number of IOs queued up */
@@ -77,6 +79,7 @@ enum blkcg_file_name_prop {
 	BLKIO_PROP_sectors,
 	BLKIO_PROP_io_service_time,
 	BLKIO_PROP_io_wait_time,
+	BLKIO_PROP_io_wait_max,
 	BLKIO_PROP_io_merged,
 	BLKIO_PROP_io_queued,
 	BLKIO_PROP_avg_queue_size,
@@ -102,6 +105,7 @@ struct blkio_cgroup {
 	spinlock_t lock;
 	struct hlist_head blkg_list;
 	struct list_head policy_list; /* list of blkio_policy_node */
+	struct user_beancounter *blk_ub;
 };
 
 struct blkio_group_stats {
@@ -144,6 +148,7 @@ struct blkio_group {
 	/* The device MKDEV(major, minor), this group has been created for */
 	dev_t dev;
 	char *dev_name;
+	struct user_beancounter *blk_ub;
 
 	/* policy which owns this blk group */
 	enum blkio_policy_id plid;
@@ -304,6 +309,7 @@ void blkiocg_update_io_add_stats(struct blkio_group *blkg,
 void blkiocg_update_io_remove_stats(struct blkio_group *blkg,
 					bool direction, bool sync);
 int blkio_cgroup_set_weight(struct cgroup *cgroup, u64 weight);
+void blkio_cgroup_set_ub(struct cgroup *cgroup, struct user_beancounter *ub);
 #else
 struct cgroup;
 static inline struct blkio_cgroup *
@@ -335,5 +341,7 @@ static inline int blkio_cgroup_set_weight(struct cgroup *cgroup, u64 weight)
 {
 	return -EINVAL;
 }
+static inline void blkio_cgroup_set_ub(struct cgroup *cgroup,
+		struct user_beancounter *ub) { }
 #endif
 #endif /* _BLK_CGROUP_H */

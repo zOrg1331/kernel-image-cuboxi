@@ -1047,6 +1047,7 @@ static int ext4_mark_dquot_dirty(struct dquot *dquot);
 static int ext4_write_info(struct super_block *sb, int type);
 static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 				char *path, int remount);
+static int ext4_quota_off(struct super_block *sb, int type, int remount);
 static int ext4_quota_on_mount(struct super_block *sb, int type);
 static ssize_t ext4_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off);
@@ -1082,7 +1083,7 @@ static const struct dquot_operations ext4_quota_operations = {
 
 static const struct quotactl_ops ext4_qctl_operations = {
 	.quota_on	= ext4_quota_on,
-	.quota_off	= vfs_quota_off,
+	.quota_off	= ext4_quota_off,
 	.quota_sync	= vfs_quota_sync,
 	.get_info	= vfs_get_dqinfo,
 	.set_info	= vfs_set_dqinfo,
@@ -3953,6 +3954,18 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 	err = vfs_quota_on_path(sb, type, format_id, &path);
 	path_put(&path);
 	return err;
+}
+
+static int ext4_quota_off(struct super_block *sb, int type, int remount)
+{
+	/* Force all delayed allocation blocks to be allocated */
+	if (test_opt(sb, DELALLOC)) {
+		down_read(&sb->s_umount);
+		sync_filesystem(sb);
+		up_read(&sb->s_umount);
+	}
+
+	return vfs_quota_off(sb, type, remount);
 }
 
 /* Read data from quotafile - avoid pagecache and such because we cannot afford

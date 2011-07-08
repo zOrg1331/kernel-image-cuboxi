@@ -330,13 +330,6 @@ static int hook(void *arg)
 #endif
 	}
 
-#ifdef CONFIG_X86_64
-	if (!ti->cpt_64bit) {
-		/* for __set_personality below */
-		ti->cpt_personality |= PER_LINUX32;
-	}
-#endif
-
 	if ((err = rst_creds(ti, ctx)) != 0) {
 		eprintk_ctx("rst_creds: %d\n", err);
 		goto out;
@@ -367,6 +360,10 @@ static int hook(void *arg)
 		goto out;
 	}
 
+#ifdef CONFIG_X86_64
+	if (test_thread_flag(TIF_IA32))
+		ti->cpt_personality |= PER_LINUX32;
+#endif
 	if (ti->cpt_personality != 0)
 		__set_personality(ti->cpt_personality);
 

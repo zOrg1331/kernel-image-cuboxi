@@ -29,6 +29,7 @@ void __virtinfo_notifier_register(int type, struct vnotifier_block *nb);
 void virtinfo_notifier_register(int type, struct vnotifier_block *nb);
 void virtinfo_notifier_unregister(int type, struct vnotifier_block *nb);
 int virtinfo_notifier_call(int type, unsigned long n, void *data);
+int virtinfo_notifier_call_irq(int type, unsigned long n, void *data);
 
 struct page_info {
 	unsigned long nr_file_dirty;
@@ -68,6 +69,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v,
 #define VIRTINFO_IO_JOURNAL	2
 #define VIRTINFO_IO_READAHEAD	3
 #define VIRTINFO_IO_CONGESTION	4
+#define VIRTINFO_IO_OP_ACCOUNT	5
 
 enum virt_info_types {
 	VITYPE_GENERAL,

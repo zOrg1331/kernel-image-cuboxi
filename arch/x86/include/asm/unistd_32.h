@@ -350,6 +350,7 @@
 #define __NR_fairsched_rate	504
 #define __NR_fairsched_vcpus	505
 #define __NR_fairsched_cpumask	506
+#define __NR_fairsched_nodemask	507
 #define __NR_getluid		510
 #define __NR_setluid		511
 #define __NR_setublimit		512

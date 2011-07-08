@@ -436,6 +436,26 @@ void fini_ve_mem_class(void)
 	class_destroy(ve_mem_class);
 }
 
+static void fini_ve_sysfs_fs(struct ve_struct *ve)
+{
+	kobject_put(ve->cgroup_kobj);
+	kobject_put(ve->fs_kobj);
+}
+
+static int init_ve_sysfs_fs(struct ve_struct *ve)
+{
+	ve->fs_kobj = kobject_create_and_add("fs", NULL);
+	if (!ve->fs_kobj)
+		goto err;
+	ve->cgroup_kobj = kobject_create_and_add("cgroup", ve->fs_kobj);
+	if (!ve->fs_kobj)
+		goto err;
+	return 0;
+err:
+	fini_ve_sysfs_fs(ve);
+	return -ENOMEM;
+}
+
 static int init_ve_sysfs(struct ve_struct *ve)
 {
 	int err;
@@ -475,8 +495,14 @@ static int init_ve_sysfs(struct ve_struct *ve)
 	if (err != 0)
 		goto err_mem;
 
+	err = init_ve_sysfs_fs(ve);
+	if (err != 0)
+		goto err_fs;
+
 	return 0;
 
+err_fs:
+	fini_ve_mem_class();
 err_mem:
 	fini_ve_tty_class();
 err_tty:
@@ -499,6 +525,7 @@ out:
 
 static void fini_ve_sysfs(struct ve_struct *ve)
 {
+	fini_ve_sysfs_fs(ve);
 	fini_ve_mem_class();
 	fini_ve_tty_class();
 	fini_ve_netclass();
@@ -972,6 +999,7 @@ static void fini_ve_cgroups(struct ve_struct *ve)
 static int __init init_vecalls_cgroups(void)
 {
 	struct cgroup_sb_opts opts = {
+		.name		= "container",
 		.subsys_bits	=
 			(1ul << devices_subsys_id) |
 			(1ul << freezer_subsys_id),

@@ -272,6 +272,50 @@ out:
 	return retval;
 }
 
+static int get_user_node_mask(unsigned long __user *user_mask_ptr, unsigned len,
+			      nodemask_t *new_mask)
+{
+	if (len < sizeof(nodemask_t))
+		nodes_clear(*new_mask);
+	else if (len > sizeof(nodemask_t))
+		len = sizeof(nodemask_t);
+
+	return copy_from_user(new_mask, user_mask_ptr, len) ? -EFAULT : 0;
+}
+
+SYSCALL_DEFINE3(fairsched_nodemask, unsigned int, id, unsigned int, len,
+		unsigned long __user *, user_mask_ptr)
+{
+	struct cgroup *cgrp;
+	char name[16];
+	int retval;
+	nodemask_t new_mask, in_mask;
+
+	if (!capable_setveid())
+		return -EPERM;
+
+	if (id == 0)
+		return -EINVAL;
+
+	fairsched_name(name, sizeof(name), id);
+	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	if (IS_ERR(cgrp))
+		return PTR_ERR(cgrp);
+	if (cgrp == NULL)
+		return -ENOENT;
+
+	retval = get_user_node_mask(user_mask_ptr, len, &in_mask);
+	if (retval == 0) {
+		nodes_and(new_mask, in_mask, node_states[N_HIGH_MEMORY]);
+		cgroup_lock();
+		retval = cgroup_set_nodemask(cgrp, &new_mask);
+		cgroup_unlock();
+	}
+
+	cgroup_kernel_close(cgrp);
+	return retval;
+}
+
 static inline void fairsched_init_ve_idle_scale(struct ve_struct *ve,
 						  struct cgroup *cgrp)
 {
@@ -679,6 +723,7 @@ int __init fairsched_init(void)
 	struct vfsmount *mnt;
 	int ret;
 	struct cgroup_sb_opts opts = {
+		.name		= "fairsched",
 		.subsys_bits	=
 			(1ul << cpu_cgroup_subsys_id) |
 			(1ul << cpuset_subsys_id),
@@ -704,6 +749,7 @@ int __init fairsched_init(void)
 			&proc_fairsched_operations);
 	proc_create("fairsched2", S_IRUGO, &glob_proc_root,
 			&proc_fairsched_operations);
+	proc_create("fairsched", S_IFDIR|S_IRUSR|S_IXUSR, proc_vz_dir, NULL);
 #endif /* CONFIG_PROC_FS */
 	return 0;
 }

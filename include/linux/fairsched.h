@@ -45,6 +45,8 @@ asmlinkage long sys_fairsched_chwt(unsigned int id, unsigned int weight);
 asmlinkage long sys_fairsched_rate(unsigned int id, int op, unsigned int rate);
 asmlinkage long sys_fairsched_cpumask(unsigned int id, unsigned int len,
 				      unsigned long __user *user_mask_ptr);
+asmlinkage long sys_fairsched_nodemask(unsigned int id, unsigned int len,
+				       unsigned long __user *user_mask_ptr);
 
 int fairsched_new_node(int id, unsigned int vcpus);
 int fairsched_move_task(int id, struct task_struct *tsk);

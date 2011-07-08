@@ -592,7 +592,51 @@ struct vzsnap_struct;
 extern int vzquota_snap_init(struct super_block *, void *, struct path *);
 extern int vzquota_snap_stop(struct super_block *, void *);
 
-int need_fake_fstype(const struct task_struct * tsk);
+
+/* This is the ugliest hack of the release, we have to fixup filesystem type
+ * in order to support quota tools.
+ */
+static inline int vzquota_fake_fstype(const struct task_struct *tsk)
+{
+	const char **p;
+	const char *comm;
+	const char *comm_list[] = {
+		"convertquota",
+		"edquota",
+		"quota",
+		"quot",
+		"quotacheck",
+		"quotadebug",
+		"quotaon",
+		"quotaoff",
+		"quotastats",
+		"quota_nld",
+		"repquota",
+		"rpc.rquotad",
+		"setquota",
+		"setup_quota_group",
+		"xqmstats"
+		"warnquota",
+		NULL,
+	};
+	comm = strrchr(tsk->comm, '/');
+	if (comm)
+		comm++;
+	else
+		comm = tsk->comm;
+
+	p = comm_list;
+	while (*p != NULL) {
+		if (!strcmp(*p, comm))
+			return 1;
+		p++;
+	}
+	return 0;
+}
+
+/* quotacheck uses direct scan mode for ext2/ext3 */
+#define VZQUOTA_FAKE_FSTYPE "reiserfs"
+
 #endif /* __KERNEL__ */
 
 #endif /* _VZDQUOTA_H */

@@ -243,7 +243,7 @@ void ub_shmpages_uncharge(struct shmem_inode_info *shi, unsigned long size)
        uncharge_beancounter(ub, UB_SHMPAGES, size);
 }
 
-int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
+int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 {
 	int ret;
 	if (get_exec_ub() != ub)
@@ -258,9 +258,13 @@ int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 		if (test_thread_flag(TIF_MEMDIE))
 			return -ENOMEM;
 
-		progress = try_to_free_gang_pages(&ub->gang_set, gfp_mask);
+		progress = try_to_free_gang_pages(&ub->gang_set,
+				gfp_mask | __GFP_HIGHMEM);
 		if (progress)
 			continue;
+
+		if (gfp_mask & __GFP_NOWARN)
+			goto nowarn;
 
 		spin_lock_irqsave(&ub->ub_lock, flags);
 		ub->ub_parms[UB_PHYSPAGES].failcnt++;
@@ -277,6 +281,10 @@ int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 					ub_rnames[UB_SWAPPAGES], ub->ub_uid);
 		}
 
+nowarn:
+		if (gfp_mask & __GFP_NORETRY)
+			return -ENOMEM;
+
 		if (gfp_mask & __GFP_WAIT) {
 			ret = out_of_memory_in_ub(ub, gfp_mask);
 			if (ret == -EAGAIN)
@@ -290,7 +298,7 @@ int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 				return -ENOMEM;
 		} else
 			return -ENOMEM;
-	} while (precharge_beancounter(ub, UB_PHYSPAGES, 1));
+	} while (precharge_beancounter(ub, UB_PHYSPAGES, size));
 
 	return 0;
 }

@@ -18,7 +18,12 @@
 #include <asm/atomic.h>
 
 #ifdef CONFIG_SYSFS_DEPRECATED_DYN
-extern unsigned sysfs_deprecated;
+extern unsigned _sysfs_deprecated;
+#ifdef CONFIG_VE
+#define sysfs_deprecated (ve_is_super(get_exec_env()) && _sysfs_deprecated)
+#else
+#define sysfs_deprecated (_sysfs_deprecated)
+#endif
 #else
 
 /* static deprecation */

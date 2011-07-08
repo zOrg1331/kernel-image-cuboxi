@@ -195,5 +195,6 @@ cond_syscall(sys_fairsched_vcpus);
 cond_syscall(sys_fairsched_chwt);
 cond_syscall(sys_fairsched_rate);
 cond_syscall(sys_fairsched_cpumask);
+cond_syscall(sys_fairsched_nodemask);
 
 cond_syscall(compat_sys_lutime);

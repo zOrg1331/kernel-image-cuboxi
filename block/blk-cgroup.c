@@ -180,6 +180,19 @@ static void blkio_add_stat(uint64_t *stat, uint64_t add, bool direction,
 		stat[BLKIO_STAT_ASYNC] += add;
 }
 
+static void blkio_max_stat(uint64_t *stat, uint64_t cur, bool direction,
+				bool sync)
+{
+	if (direction)
+		stat[BLKIO_STAT_WRITE] = max(stat[BLKIO_STAT_WRITE], cur);
+	else
+		stat[BLKIO_STAT_READ] = max(stat[BLKIO_STAT_READ], cur);
+	if (sync)
+		stat[BLKIO_STAT_SYNC] = max(stat[BLKIO_STAT_SYNC], cur);
+	else
+		stat[BLKIO_STAT_ASYNC] = max(stat[BLKIO_STAT_ASYNC], cur);
+}
+
 /*
  * Decrements the appropriate stat variable if non-zero depending on the
  * request type. Panics on value being zero.
@@ -398,9 +411,12 @@ void blkiocg_update_completion_stats(struct blkio_group *blkg,
 	if (time_after64(now, io_start_time))
 		blkio_add_stat(stats->stat_arr[BLKIO_STAT_SERVICE_TIME],
 				now - io_start_time, direction, sync);
-	if (time_after64(io_start_time, start_time))
+	if (time_after64(io_start_time, start_time)) {
 		blkio_add_stat(stats->stat_arr[BLKIO_STAT_WAIT_TIME],
 				io_start_time - start_time, direction, sync);
+		blkio_max_stat(stats->stat_arr[BLKIO_STAT_WAIT_MAX],
+				io_start_time - start_time, direction, sync);
+	}
 	spin_unlock_irqrestore(&blkg->stats_lock, flags);
 }
 EXPORT_SYMBOL_GPL(blkiocg_update_completion_stats);
@@ -429,6 +445,7 @@ void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 	blkg->blkcg_id = css_id(&blkcg->css);
 	hlist_add_head_rcu(&blkg->blkcg_node, &blkcg->blkg_list);
 	blkg->plid = plid;
+	blkg->blk_ub = blkcg->blk_ub;
 	spin_unlock_irqrestore(&blkcg->lock, flags);
 	/* Need to take css reference ? */
 	cgroup_path(blkcg->css.cgroup, blkg->path, sizeof(blkg->path));
@@ -1106,6 +1123,9 @@ static int blkiocg_file_read_map(struct cgroup *cgrp, struct cftype *cft,
 		case BLKIO_PROP_io_wait_time:
 			return blkio_read_blkg_stats(blkcg, cft, cb,
 						BLKIO_STAT_WAIT_TIME, 1);
+		case BLKIO_PROP_io_wait_max:
+			return blkio_read_blkg_stats(blkcg, cft, cb,
+						BLKIO_STAT_WAIT_MAX, 0);
 		case BLKIO_PROP_io_merged:
 			return blkio_read_blkg_stats(blkcg, cft, cb,
 						BLKIO_STAT_MERGED, 1);
@@ -1226,6 +1246,20 @@ int blkio_cgroup_set_weight(struct cgroup *cgroup, u64 weight)
 	return blkio_weight_write(cgroup_to_blkio_cgroup(cgroup), weight);
 }
 
+void blkio_cgroup_set_ub(struct cgroup *cgroup, struct user_beancounter *ub)
+{
+	struct blkio_cgroup *blkcg = cgroup_to_blkio_cgroup(cgroup);
+	struct blkio_group *blkg;
+	struct hlist_node *n;
+	unsigned long flags;
+
+	spin_lock_irqsave(&blkcg->lock, flags);
+	blkcg->blk_ub = ub;
+	hlist_for_each_entry(blkg, n, &blkcg->blkg_list, blkcg_node)
+		blkg->blk_ub = ub;
+	spin_unlock_irqrestore(&blkcg->lock, flags);
+}
+
 struct cftype blkio_files[] = {
 	{
 		.name = "weight_device",
@@ -1276,6 +1310,12 @@ struct cftype blkio_files[] = {
 		.name = "io_wait_time",
 		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
 				BLKIO_PROP_io_wait_time),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_wait_max",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_wait_max),
 		.read_map = blkiocg_file_read_map,
 	},
 	{
@@ -1454,6 +1494,7 @@ done:
 	INIT_HLIST_HEAD(&blkcg->blkg_list);
 
 	INIT_LIST_HEAD(&blkcg->policy_list);
+	blkcg->blk_ub = &ub0;
 	return &blkcg->css;
 }
 

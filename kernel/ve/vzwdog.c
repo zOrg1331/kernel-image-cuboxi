@@ -148,12 +148,7 @@ static void show_header(void)
 			tv.tv_sec, (long)tv.tv_usec,
 			(unsigned long long)get_jiffies_64(),
 			smp_processor_id());
-#ifdef CONFIG_FAIRSCHED
-	printk("*** cycles_per_jiffy %lu jiffies_per_second %u ***\n",
-			cycles_per_jiffy, HZ);
-#else
 	printk("*** jiffies_per_second %u ***\n", HZ);
-#endif
 	preempt_enable();
 }
 

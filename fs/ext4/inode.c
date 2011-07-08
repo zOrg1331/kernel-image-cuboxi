@@ -4427,7 +4427,8 @@ static void ext4_clear_blocks(handle_t *handle, struct inode *inode,
 		}
 	}
 
-	ext4_free_blocks(handle, inode, block_to_free, count, is_metadata);
+	ext4_free_blocks(handle, inode, block_to_free, count,
+			 is_metadata ? EXT4_FREE_BLOCKS_METADATA : 0);
 }
 
 /**
@@ -4615,7 +4616,8 @@ static void ext4_free_branches(handle_t *handle, struct inode *inode,
 					    blocks_for_truncate(inode));
 			}
 
-			ext4_free_blocks(handle, inode, nr, 1, 1);
+			ext4_free_blocks(handle, inode, nr, 1,
+					 EXT4_FREE_BLOCKS_METADATA);
 
 			if (parent_bh) {
 				/*

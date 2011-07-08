@@ -663,6 +663,8 @@ __SYSCALL(__NR_rt_tgsigqueueinfo, sys_rt_tgsigqueueinfo)
 __SYSCALL(__NR_perf_event_open, sys_perf_event_open)
 #define __NR_recvmmsg				299
 __SYSCALL(__NR_recvmmsg, sys_recvmmsg)
+#define __NR_fairsched_nodemask			497
+__SYSCALL(__NR_fairsched_nodemask, sys_fairsched_nodemask)
 #define __NR_fairsched_cpumask			498
 __SYSCALL(__NR_fairsched_cpumask, sys_fairsched_cpumask)
 #define __NR_fairsched_vcpus			499
