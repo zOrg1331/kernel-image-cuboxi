@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt2.1
+Release: alt3
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -645,6 +645,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Sun Jul 10 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3
+- Update to 2.6.39.3
+- Enable several bluetooth devices (ALT 25888)
+
 * Thu Jul 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt2.1
 - fix build of cirrus.ko
 - kernel-modules-v4l: provide kernel-modules-lirc
