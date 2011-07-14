@@ -226,6 +226,7 @@ struct user_beancounter
 
 	struct list_head	ub_dentry_lru;
 	int			ub_dentry_unused;
+	int			ub_dentry_batch;
 
 	/* resources statistic and settings */
 	struct ubparm		ub_parms[UB_RESOURCES];
@@ -516,18 +517,80 @@ int charge_beancounter(struct user_beancounter *ub, int resource,
 void uncharge_beancounter(struct user_beancounter *ub, int resource,
 		unsigned long val);
 
+extern int ub_resource_precharge[UB_RESOURCES];
 void init_beancounter_precharge(struct user_beancounter *ub, int resource);
 
+static inline int __try_charge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu, int resource, unsigned long val)
+{
+	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
+
+	if (likely(ub_pcpu->precharge[resource] >= val)) {
+		ub_pcpu->precharge[resource] -= val;
+		return 0;
+	}
+	return -ENOMEM;
+}
+
+static inline int __try_uncharge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu, int resource, unsigned long val)
+{
+	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
+
+	if (likely(ub_pcpu->precharge[resource] + val <=
+				ub->ub_parms[resource].max_precharge)) {
+		ub_pcpu->precharge[resource] += val;
+		return 0;
+	}
+
+	return -E2BIG;
+}
+
+int __charge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu,
+		int resource, unsigned long val, enum ub_severity strict);
+
 void __uncharge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu,
 		int resource, unsigned long val);
+
+static inline int charge_beancounter_fast(struct user_beancounter *ub,
+		int resource, unsigned long val, enum ub_severity strict)
+{
+	struct ub_percpu_struct *ub_pcpu;
+	unsigned long flags;
+	int retval = 0;
+
+	if (val > UB_MAXVALUE)
+		return -EINVAL;
+
+	local_irq_save(flags);
+	ub_pcpu = ub_percpu(ub, smp_processor_id());
+	if (__try_charge_beancounter_percpu(ub, ub_pcpu, resource, val))
+		retval = __charge_beancounter_percpu(ub, ub_pcpu, resource,
+							val, strict);
+	local_irq_restore(flags);
+
+	return retval;
+}
+
+static inline void uncharge_beancounter_fast(struct user_beancounter *ub,
+		int resource, unsigned long val)
+{
+	struct ub_percpu_struct *ub_pcpu;
+	unsigned long flags;
+
+	local_irq_save(flags);
+	ub_pcpu = ub_percpu(ub, smp_processor_id());
+	if (__try_uncharge_beancounter_percpu(ub, ub_pcpu, resource, val))
+		__uncharge_beancounter_percpu(ub, ub_pcpu, resource, val);
+	local_irq_restore(flags);
+}
+
 unsigned long __get_beancounter_usage_percpu(struct user_beancounter *ub,
 		int resource);
 
 int precharge_beancounter(struct user_beancounter *ub,
-		int resource, unsigned long val);
-int charge_beancounter_fast(struct user_beancounter *ub,
-		int resource, unsigned long val, enum ub_severity strict);
-void uncharge_beancounter_fast(struct user_beancounter *ub,
 		int resource, unsigned long val);
 void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge);
 

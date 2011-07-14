@@ -105,16 +105,20 @@ static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mas
 	return __ub_check_ram_limits(ub, gfp_mask, 1);
 }
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+
 static inline int ub_precharge_hpage(struct mm_struct *mm)
 {
 	struct user_beancounter *ub = mm_ub(mm);
 
 	if (likely(ub->ub_parms[UB_PHYSPAGES].limit == UB_MAXVALUE ||
-	    !precharge_beancounter(ub, UB_PHYSPAGES, HPAGE_PMD_SIZE)))
+	    !precharge_beancounter(ub, UB_PHYSPAGES, HPAGE_PMD_NR)))
 		return 0;
 
-	return __ub_check_ram_limits(ub, GFP_TRANSHUGE, HPAGE_PMD_SIZE);
+	return __ub_check_ram_limits(ub, GFP_TRANSHUGE, HPAGE_PMD_NR);
 }
+
+#endif
 
 void show_ub_mem(struct user_beancounter *ub);
 

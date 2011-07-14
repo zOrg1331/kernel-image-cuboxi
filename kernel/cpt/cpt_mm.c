@@ -598,6 +598,28 @@ static struct anon_vma *find_first_anon_vma(struct vm_area_struct *vma)
 	return avc->anon_vma;
 }
 
+#ifdef CONFIG_X86_64
+extern int vdso_is_rhel5(struct page *page);
+static int vdso_is_old(struct vm_area_struct *vma)
+{
+	int n, ret;
+	struct page *p;
+
+	n = get_user_pages(current, vma->vm_mm, vma->vm_start, 1,
+			   0, 0, &p, NULL);
+	if (n < 1)
+		return -EINVAL;
+
+	ret = vdso_is_rhel5(p);
+
+	page_cache_release(p);
+
+	return ret;
+}
+#else
+#define vdso_is_old(page) 0
+#endif
+
 static int dump_one_vma(cpt_object_t *mmobj,
 			struct vm_area_struct *vma, struct cpt_context *ctx)
 {
@@ -627,9 +649,20 @@ static int dump_one_vma(cpt_object_t *mmobj,
 	v->cpt_file = CPT_NULL;
 #ifndef CONFIG_IA64
 	if ((void *)vma->vm_start == vma->vm_mm->context.vdso &&
-			vma->vm_ops == &special_mapping_vmops)
-		v->cpt_type = CPT_VMA_VDSO;
-	else
+			vma->vm_ops == &special_mapping_vmops) {
+		int old = vdso_is_old(vma);
+
+		if (old < 0) {
+			eprintk_ctx("can't get vdso page\n");
+			cpt_release_buf(ctx);
+			return old;
+		}
+
+		if (old)
+			v->cpt_type = CPT_VMA_VDSO_OLD;
+		else
+			v->cpt_type = CPT_VMA_VDSO;
+	} else
 #endif
 		v->cpt_type = CPT_VMA_TYPE_0;
 	v->cpt_anonvma = 0;
@@ -660,7 +693,7 @@ static int dump_one_vma(cpt_object_t *mmobj,
 
 	ctx->write(v, sizeof(*v), ctx);
 	cpt_release_buf(ctx);
-	if (v->cpt_type == CPT_VMA_VDSO)
+	if (v->cpt_type == CPT_VMA_VDSO || v->cpt_type == CPT_VMA_VDSO_OLD)
 		goto out;
 
 	pa.type = PD_ABSENT;

@@ -1853,13 +1853,13 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 		stat(c, ALLOC_FASTPATH);
 	}
 
+	local_irq_restore(flags);
+
 	if (object && should_charge(s->flags, gfpflags) &&
 			ub_slab_charge(s, object, gfpflags)) {
 		kmem_cache_free(s, object);
 		object = NULL;
 	}
-
-	local_irq_restore(flags);
 
 	if (unlikely((gfpflags & __GFP_ZERO) && object))
 		memset(object, 0, objsize);

@@ -967,6 +967,8 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 
 	if (test_opt(sb, NOLOAD))
 		seq_puts(seq, ",norecovery");
+	if (sbi->s_balloon_ino)
+		seq_printf(seq, ",balloon_ino=%ld", sbi->s_balloon_ino->i_ino);
 
 	ext4_show_quota_options(seq, sb);
 
@@ -1158,7 +1160,7 @@ enum {
 	Opt_stripe, Opt_delalloc, Opt_nodelalloc,
 	Opt_block_validity, Opt_noblock_validity,
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
-	Opt_discard, Opt_nodiscard,
+	Opt_discard, Opt_nodiscard, Opt_balloon_ino,
 };
 
 static const match_table_t tokens = {
@@ -1227,6 +1229,7 @@ static const match_table_t tokens = {
 	{Opt_noauto_da_alloc, "noauto_da_alloc"},
 	{Opt_discard, "discard"},
 	{Opt_nodiscard, "nodiscard"},
+	{Opt_balloon_ino, "balloon_ino=%u"},
 	{Opt_err, NULL},
 };
 
@@ -1258,6 +1261,7 @@ static ext4_fsblk_t get_sb_block(void **data)
 static int parse_options(char *options, struct super_block *sb,
 			 unsigned long *journal_devnum,
 			 unsigned int *journal_ioprio,
+			 unsigned long *balloon_ino,
 			 ext4_fsblk_t *n_blocks_count, int is_remount)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
@@ -1664,6 +1668,11 @@ set_qf_format:
 			break;
 		case Opt_nodiscard:
 			clear_opt(sbi->s_mount_opt, DISCARD);
+			break;
+		case Opt_balloon_ino:
+			if (match_int(&args[0], &option))
+				return 0;
+			*balloon_ino = option;
 			break;
 		default:
 			ext4_msg(sb, KERN_ERR,
@@ -2315,6 +2324,7 @@ EXT4_RW_ATTR_SBI_UI(mb_order2_req, s_mb_order2_reqs);
 EXT4_RW_ATTR_SBI_UI(mb_stream_req, s_mb_stream_request);
 EXT4_RW_ATTR_SBI_UI(mb_group_prealloc, s_mb_group_prealloc);
 EXT4_RW_ATTR_SBI_UI(max_writeback_mb_bump, s_max_writeback_mb_bump);
+EXT4_RW_ATTR_SBI_UI(bd_full_ratelimit, s_bd_full_ratelimit);
 
 static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(delayed_allocation_blocks),
@@ -2329,6 +2339,7 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(mb_stream_req),
 	ATTR_LIST(mb_group_prealloc),
 	ATTR_LIST(max_writeback_mb_bump),
+	ATTR_LIST(bd_full_ratelimit),
 	NULL,
 };
 
@@ -2371,6 +2382,54 @@ static struct kobj_type ext4_ktype = {
 	.sysfs_ops	= &ext4_attr_ops,
 	.release	= ext4_sb_release,
 };
+
+static void ext4_load_balloon(struct super_block *sb, unsigned long ino)
+{
+	struct inode *inode;
+	struct ext4_sb_info *sbi;
+
+	sbi = EXT4_SB(sb);
+
+	if (!ino) {
+		/* FIXME locking */
+		if (sbi->s_balloon_ino) {
+			iput(sbi->s_balloon_ino);
+			sbi->s_balloon_ino = NULL;
+		}
+
+		return;
+	}
+
+	if (ino < EXT4_FIRST_INO(sb)) {
+		ext4_msg(sb, KERN_WARNING, "bad balloon inode specified");
+		return;
+	}
+
+	inode = ext4_iget(sb, ino);
+	if (IS_ERR(inode)) {
+		ext4_msg(sb, KERN_WARNING, "can't load balloon inode (%ld)", PTR_ERR(inode));
+		return;
+	}
+
+	if (!S_ISREG(inode->i_mode)) {
+		iput(inode);
+		ext4_msg(sb, KERN_WARNING, "balloon should be regular");
+		return;
+	}
+
+	if (!(EXT4_I(inode)->i_flags & EXT4_EXTENTS_FL)) {
+		iput(inode);
+		ext4_msg(sb, KERN_WARNING, "balloon should support extents");
+		return;
+	}
+
+	/* FIXME - locking */
+	if (sbi->s_balloon_ino)
+		iput(sbi->s_balloon_ino);
+	sbi->s_balloon_ino = inode;
+	ext4_msg(sb, KERN_INFO, "loaded balloon from %ld (%ld blocks)",
+			inode->i_ino, inode->i_blocks);
+}
 
 /*
  * Check whether this filesystem can be mounted based on
@@ -2439,6 +2498,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	__u64 blocks_count;
 	int err;
 	unsigned int journal_ioprio = DEFAULT_JOURNAL_IOPRIO;
+	unsigned long balloon_ino = 0;
 
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
@@ -2542,7 +2602,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	set_opt(sbi->s_mount_opt, DELALLOC);
 
 	if (!parse_options((char *) data, sb, &journal_devnum,
-			   &journal_ioprio, NULL, 0))
+			   &journal_ioprio, &balloon_ino, NULL, 0))
 		goto failed_mount;
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
@@ -2798,6 +2858,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 
 	sbi->s_stripe = ext4_get_stripe_size(sbi);
 	sbi->s_max_writeback_mb_bump = 128;
+	sbi->s_bd_full_ratelimit = 1024;
 
 	/*
 	 * set up enough so that it can read an inode
@@ -3028,6 +3089,8 @@ no_journal:
 			descr = " writeback data mode";
 	} else
 		descr = "out journal";
+
+	ext4_load_balloon(sb, balloon_ino);
 
 	ext4_msg(sb, KERN_INFO, "mounted filesystem with%s", descr);
 
@@ -3569,6 +3632,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 #ifdef CONFIG_QUOTA
 	int i;
 #endif
+	unsigned long balloon_ino = 0;
 
 	lock_kernel();
 
@@ -3592,7 +3656,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	/*
 	 * Allow the "check" option to be passed as a remount option.
 	 */
-	if (!parse_options(data, sb, NULL, &journal_ioprio,
+	if (!parse_options(data, sb, NULL, &journal_ioprio, &balloon_ino,
 			   &n_blocks_count, 1)) {
 		err = -EINVAL;
 		goto restore_opts;
@@ -3701,6 +3765,9 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 			kfree(old_opts.s_qf_names[i]);
 #endif
 	unlock_super(sb);
+
+	ext4_load_balloon(sb, balloon_ino);
+
 	unlock_kernel();
 	return 0;
 
@@ -3787,6 +3854,20 @@ static int ext4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	       le64_to_cpup((void *)es->s_uuid + sizeof(u64));
 	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
 	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
+
+	if (sbi->s_balloon_ino) {
+		struct ext4_inode_info *ei;
+		blkcnt_t balloon_blocks;
+
+		balloon_blocks = sbi->s_balloon_ino->i_blocks;
+		ei = EXT4_I(sbi->s_balloon_ino);
+		spin_lock(&ei->i_block_reservation_lock);
+		balloon_blocks += ei->i_reserved_data_blocks;
+		spin_unlock(&ei->i_block_reservation_lock);
+
+		BUG_ON(sbi->s_balloon_ino->i_blkbits < 9);
+		buf->f_blocks -= balloon_blocks >> (sbi->s_balloon_ino->i_blkbits - 9);
+	}
 
 	return 0;
 }
@@ -3959,11 +4040,8 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 static int ext4_quota_off(struct super_block *sb, int type, int remount)
 {
 	/* Force all delayed allocation blocks to be allocated */
-	if (test_opt(sb, DELALLOC)) {
-		down_read(&sb->s_umount);
+	if (test_opt(sb, DELALLOC))
 		sync_filesystem(sb);
-		up_read(&sb->s_umount);
-	}
 
 	return vfs_quota_off(sb, type, remount);
 }
@@ -4108,11 +4186,22 @@ static int ext4_get_sb(struct file_system_type *fs_type, int flags,
 	return get_sb_bdev(fs_type, flags, dev_name, data, ext4_fill_super,mnt);
 }
 
+static void ext4_kill_sb(struct super_block *sb)
+{
+	struct ext4_sb_info *sbi;
+
+	sbi = EXT4_SB(sb);
+	if (sbi->s_balloon_ino)
+		iput(sbi->s_balloon_ino);
+
+	kill_block_super(sb);
+}
+
 static struct file_system_type ext4_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "ext4",
 	.get_sb		= ext4_get_sb,
-	.kill_sb	= kill_block_super,
+	.kill_sb	= ext4_kill_sb,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 

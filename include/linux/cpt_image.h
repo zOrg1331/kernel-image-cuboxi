@@ -1152,6 +1152,7 @@ struct cpt_vma_image
 #define CPT_VMA_TYPE_0		0
 #define CPT_VMA_TYPE_SHM	1
 #define CPT_VMA_VDSO		2
+#define CPT_VMA_VDSO_OLD	3 /* 64 bit rhel5 vdso */
 	__u32	cpt_anonvma;
 	__u64	cpt_anonvmaid;
 

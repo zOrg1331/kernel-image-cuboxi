@@ -1055,6 +1055,9 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, stru
 			} else {
 				return ERR_CAST(inode);
 			}
+		} else if (inode == EXT4_SB(inode->i_sb)->s_balloon_ino) {
+			iput(inode);
+			return ERR_PTR(-EPERM);
 		}
 	}
 	return d_splice_alias(inode, dentry);
@@ -2190,6 +2193,10 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 
 	retval = -EIO;
 	if (le32_to_cpu(de->inode) != inode->i_ino)
+		goto end_unlink;
+
+	retval = -EPERM;
+	if (inode == EXT4_SB(dir->i_sb)->s_balloon_ino)
 		goto end_unlink;
 
 	if (!inode->i_nlink) {

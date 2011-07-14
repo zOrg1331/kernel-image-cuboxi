@@ -488,11 +488,15 @@ static int copy_mm_pages(struct mm_struct *src, unsigned long start,
 #include <linux/proc_fs.h>
 
 #ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
-static int cpt_setup_vdso(unsigned long addr)
+static int cpt_setup_vdso(unsigned long addr, int is_rhel5)
 {
 #ifdef CONFIG_COMPAT
 	if (test_thread_flag(TIF_IA32))
 		return compat_arch_setup_additional_pages(NULL, 0, addr);
+#endif
+#ifdef CONFIG_X86_64
+	if (is_rhel5)
+		return arch_setup_additional_pages_rhel5(NULL, 0, addr);
 #endif
 	return arch_setup_additional_pages(NULL, 0, addr);
 }
@@ -511,9 +515,14 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 	unsigned long prot;
 	int checked = 0;
 
-	if (vmai->cpt_type == CPT_VMA_VDSO) {
-		if (ctx->vdso == NULL) {
-			err = cpt_setup_vdso(vmai->cpt_start);
+	if (vmai->cpt_type == CPT_VMA_VDSO || vmai->cpt_type == CPT_VMA_VDSO_OLD) {
+		if (ctx->vdso == NULL || !test_thread_flag(TIF_IA32)) {
+			int is_rhel5;
+
+			is_rhel5 = (ctx->image_version < CPT_VERSION_32 ||
+					vmai->cpt_type == CPT_VMA_VDSO_OLD);
+
+			err = cpt_setup_vdso(vmai->cpt_start, is_rhel5);
 			goto out;
 		}
 	}

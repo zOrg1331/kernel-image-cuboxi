@@ -53,6 +53,8 @@
 
 #include "internal.h"
 
+#include <bc/dcache.h>
+
 struct scan_control {
 	/* Incremented by the number of inactive pages that were scanned */
 	unsigned long nr_scanned;
@@ -765,6 +767,10 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		}
 
 		if (sc->gs) {
+			/* forbid tmpfs internal reclaim */
+			if (!PageAnon(page) && PageSwapBacked(page))
+				goto activate_locked;
+
 			/* FIXME: remove this crap, add separate lru */
 			unpin_mem_gang(page_gang(page));
 			gang_mod_user_page(page, &init_gang_set);
@@ -2047,6 +2053,10 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 
 			lru_pages += zone_reclaimable_pages(zone);
 		}
+	} else if (sc->gs) {
+		for_each_zone_zonelist(zone, z, zonelist, high_zoneidx)
+			lru_pages += gang_reclaimable_pages(
+					mem_zone_gang(sc->gs, zone), sc);
 	}
 
 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {
@@ -2060,6 +2070,13 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 		 */
 		if (scanning_global_lru(sc)) {
 			shrink_slab(sc->nr_scanned, sc->gfp_mask, lru_pages);
+			if (reclaim_state) {
+				sc->nr_reclaimed += reclaim_state->reclaimed_slab;
+				reclaim_state->reclaimed_slab = 0;
+			}
+		} else if (sc->gs && (sc->gfp_mask & __GFP_FS)) {
+			ub_dcache_reclaim(get_gangs_ub(sc->gs),
+					sc->nr_scanned/4 + 1, lru_pages + 1);
 			if (reclaim_state) {
 				sc->nr_reclaimed += reclaim_state->reclaimed_slab;
 				reclaim_state->reclaimed_slab = 0;

@@ -492,6 +492,7 @@ struct ext4_new_group_data {
  /* note ioctl 11 reserved for filesystem-independent FIEMAP ioctl */
 #define EXT4_IOC_ALLOC_DA_BLKS		_IO('f', 12)
 #define EXT4_IOC_MOVE_EXT		_IOWR('f', 15, struct move_extent)
+#define EXT4_IOC_OPEN_BALLOON		_IO('f', 42)
 
 /*
  * ioctl commands in 32 bit emulation
@@ -1090,6 +1091,7 @@ struct ext4_sb_info {
 	unsigned int s_mb_order2_reqs;
 	unsigned int s_mb_group_prealloc;
 	unsigned int s_max_writeback_mb_bump;
+	unsigned int s_bd_full_ratelimit;
 	/* where last allocation was done - for stream allocation */
 	unsigned long s_mb_last_group;
 	unsigned long s_mb_last_start;
@@ -1110,6 +1112,8 @@ struct ext4_sb_info {
 	atomic_t s_mb_preallocated;
 	atomic_t s_mb_discarded;
 	atomic_t s_lock_busy;
+
+	struct inode *s_balloon_ino;
 
 	/* locality groups */
 	struct ext4_locality_group *s_locality_groups;
@@ -1952,6 +1956,47 @@ extern wait_queue_head_t aio_wq[];
 #define to_aio_wq(v) (&aio_wq[((unsigned long)v) % WQ_HASH_SZ])
 extern void ext4_aio_wait(struct inode *inode);
 
+/*
+ * Ploop support
+ */
+DECLARE_PER_CPU(unsigned long, ext4_bd_full_ratelimits);
+
+static inline int check_bd_full(struct inode *inode, long long nblocks)
+{
+	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+	int (*bd_full_fn) (struct backing_dev_info *, long long, int);
+	unsigned long ratelimit;
+	unsigned long *p;
+
+	bd_full_fn = inode->i_sb->s_bdi->bd_full_fn;
+	if (likely(!bd_full_fn))
+		return 0;
+
+	if (unlikely(inode->i_sb->s_bdi->bd_full))
+		ratelimit = 0;
+	else
+		ratelimit = sbi->s_bd_full_ratelimit;
+
+	preempt_disable();
+
+	p =  &__get_cpu_var(ext4_bd_full_ratelimits);
+	*p += nblocks;
+	if (unlikely(*p >= ratelimit)) {
+		*p = 0;
+		preempt_enable();
+		if (unlikely(bd_full_fn(inode->i_sb->s_bdi,
+					nblocks << inode->i_blkbits,
+					sbi->s_resuid == current_fsuid()))) {
+			inode->i_sb->s_bdi->bd_full = 1;
+			return 1;
+		}
+		inode->i_sb->s_bdi->bd_full = 0;
+		return 0;
+	}
+
+	preempt_enable();
+	return 0;
+}
 #endif	/* __KERNEL__ */
 
 #endif	/* _EXT4_H */
