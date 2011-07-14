@@ -25,7 +25,7 @@ Release: alt26
 %def_disable oss
 %def_enable kvm
 %def_enable v4l
-%def_disable staging
+%def_enable staging
 
 ## Don't edit below this line ##################################
 
