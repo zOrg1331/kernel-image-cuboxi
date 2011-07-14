@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt26
+Release: alt27
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Jul 14 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt27
+- Update to 042stab021.1 kernel
+- Build staging drivers
+
 * Fri Jul 08 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt26
 - Update to 042stab020.1 kernel
 - Enable BLK_DEV_THROTTLING (ALT 25836)
