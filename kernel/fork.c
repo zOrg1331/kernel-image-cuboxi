@@ -470,7 +470,7 @@ static inline void set_mm_ub(struct mm_struct *mm, struct user_beancounter *ub)
 static inline void put_mm_ub(struct mm_struct *mm)
 {
 	VM_BUG_ON(mm->page_table_precharge);
-	uncharge_beancounter_fast(mm->mm_ub, UB_KMEMSIZE,
+	ub_kmem_uncharge(mm->mm_ub,
 			mm_cachep->objuse + (mm->nr_ptds << PAGE_SHIFT));
 	put_beancounter_longterm(mm->mm_ub);
 	mm->mm_ub = NULL;

@@ -3593,6 +3593,7 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 	cache_alloc_debugcheck_before(cachep, flags);
 	local_irq_save(save_flags);
 	objp = __do_cache_alloc(cachep, flags);
+	local_irq_restore(save_flags);
 	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
 	kmemleak_alloc_recursive(objp, obj_size(cachep), 1, cachep->flags,
 				 flags);
@@ -3602,7 +3603,6 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 		kmem_cache_free(cachep, objp);
 		objp = NULL;
 	}
-	local_irq_restore(save_flags);
 
 	if (likely(objp))
 		kmemcheck_slab_alloc(cachep, flags, objp, obj_size(cachep));

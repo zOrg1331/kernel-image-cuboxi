@@ -4269,6 +4269,12 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 			*errp = -EDQUOT;
 			goto out3;
 		}
+
+		if (check_bd_full(ar->inode, inquota)) {
+			ar->len = 0;
+			*errp = -ENOSPC;
+			goto out1;
+		}
 	}
 
 	ac = kmem_cache_alloc(ext4_ac_cachep, GFP_NOFS);

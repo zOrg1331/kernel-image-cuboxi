@@ -176,20 +176,18 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 
 	old_size = kmem_cache_objuse(pid->numbers[pid->level - 1].ns->pid_cachep);
 	new_size = kmem_cache_objuse(pid->numbers[pid->level].ns->pid_cachep);
-	local_irq_disable();
 	/*
 	 * Depending on sizeof(struct foo), cache flags (redzoning, etc)
 	 * and actual CPU (cacheline_size() jump from 64 to 128 bytes after
 	 * CPU detection) new size can very well be smaller than old size.
 	 */
 	if (new_size > old_size) {
-		if (charge_beancounter_fast(pid->ub, UB_KMEMSIZE,
-					new_size - old_size, UB_HARD) < 0)
+		if (ub_kmem_charge(pid->ub, new_size - old_size, UB_HARD) < 0)
 			goto out_enable;
 	} else
-		uncharge_beancounter_fast(pid->ub, UB_KMEMSIZE, old_size - new_size);
+		ub_kmem_uncharge(pid->ub, old_size - new_size);
 
-	write_lock(&tasklist_lock);
+	write_lock_irq(&tasklist_lock);
 
 	spin_lock(&pidmap_lock);
 	reattach_pid(tsk, PIDTYPE_SID, pid);

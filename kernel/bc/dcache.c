@@ -5,7 +5,9 @@
 #include <linux/sched.h>
 
 #include <bc/beancounter.h>
+#include <bc/vmpages.h>
 #include <bc/dcache.h>
+#include <bc/kmem.h>
 
 static unsigned int dcache_charge_size(int name_len)
 {
@@ -18,7 +20,7 @@ static int __ub_dcache_charge(struct user_beancounter *ub,
 {
 	int ret;
 
-	ret = charge_beancounter_fast(ub, UB_KMEMSIZE, size, strict);
+	ret = ub_kmem_charge(ub, size, strict);
 	if (unlikely(ret))
 		goto no_kmem;
 
@@ -29,7 +31,7 @@ static int __ub_dcache_charge(struct user_beancounter *ub,
 	return 0;
 
 no_dcache:
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+	ub_kmem_uncharge(ub, size);
 no_kmem:
 	return ret;
 }
@@ -38,12 +40,15 @@ static void __ub_dcache_uncharge(struct user_beancounter *ub,
 		unsigned long size)
 {
 	uncharge_beancounter_fast(ub, UB_DCACHESIZE, size);
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+	ub_kmem_uncharge(ub, size);
 }
 
 int ub_dcache_charge(struct user_beancounter *ub, int name_len)
 {
 	int size, shrink;
+
+	if (ub_check_ram_limits(ub, GFP_KERNEL))
+		return -ENOMEM;
 
 	size = dcache_charge_size(name_len);
 	do {
@@ -147,4 +152,27 @@ void ub_dcache_change_owner(struct dentry *dentry, struct user_beancounter *ub)
 	size = recharge_subtree(dentry, ub, cub);
 	__ub_dcache_uncharge(cub, size);
 	__ub_dcache_charge(ub, size, UB_FORCE);
+}
+
+#define UB_DCACHE_BATCH 32
+
+void ub_dcache_reclaim(struct user_beancounter *ub,
+		unsigned long numerator, unsigned long denominator)
+{
+	unsigned long flags, batch;
+
+	if (ub->ub_dentry_unused <= ub_dcache_threshold)
+		return;
+
+	spin_lock_irqsave(&ub->ub_lock, flags);
+	batch = ub->ub_dentry_unused * numerator / denominator;
+	batch = ub->ub_dentry_batch = batch + ub->ub_dentry_batch;
+	if (batch < UB_DCACHE_BATCH)
+		batch = 0;
+	else
+		ub->ub_dentry_batch = 0;
+	spin_unlock_irqrestore(&ub->ub_lock, flags);
+
+	if (batch)
+		shrink_dcache_ub(ub, batch);
 }

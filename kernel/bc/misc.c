@@ -29,7 +29,7 @@
 
 int ub_task_charge(struct user_beancounter *ub)
 {
-	if (charge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE, UB_HARD))
+	if (ub_kmem_charge(ub, TASK_KMEM_SIZE, UB_HARD))
 		goto no_mem;
 
 	if (charge_beancounter_fast(ub, UB_NUMPROC, 1, UB_HARD))
@@ -38,7 +38,7 @@ int ub_task_charge(struct user_beancounter *ub)
 	return 0;
 
 no_num:
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE);
+	ub_kmem_uncharge(ub, TASK_KMEM_SIZE);
 no_mem:
 	return -ENOMEM;
 }
@@ -46,7 +46,7 @@ no_mem:
 void ub_task_uncharge(struct user_beancounter *ub)
 {
 	uncharge_beancounter_fast(ub, UB_NUMPROC, 1);
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE);
+	ub_kmem_uncharge(ub, TASK_KMEM_SIZE);
 }
 
 void ub_task_get(struct user_beancounter *ub, struct task_struct *task)
@@ -79,7 +79,7 @@ int ub_file_charge(struct file *f)
 	if (unlikely(err))
 		goto no_file;
 
-	err = charge_beancounter_fast(ub, UB_KMEMSIZE,
+	err = ub_kmem_charge(ub,
 			CHARGE_SIZE(kmem_cache_objuse(filp_cachep)), UB_HARD);
 	if (unlikely(err))
 		goto no_kmem;
@@ -98,7 +98,7 @@ void ub_file_uncharge(struct file *f)
 {
 	struct user_beancounter *ub = f->f_ub;
 
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE,
+	ub_kmem_uncharge(ub,
 			CHARGE_SIZE(kmem_cache_objuse(filp_cachep)));
 	uncharge_beancounter_fast(ub, UB_NUMFILE, 1);
 	put_beancounter(ub);
@@ -142,7 +142,7 @@ int ub_siginfo_charge(struct sigqueue *sq, struct user_beancounter *ub)
 	unsigned long size;
 
 	size = CHARGE_SIZE(kmem_obj_objuse(sq));
-	if (charge_beancounter_fast(ub, UB_KMEMSIZE, size, UB_HARD))
+	if (ub_kmem_charge(ub, size, UB_HARD))
 		goto out_kmem;
 
 	if (charge_beancounter_fast(ub, UB_NUMSIGINFO, 1, UB_HARD))
@@ -152,7 +152,7 @@ int ub_siginfo_charge(struct sigqueue *sq, struct user_beancounter *ub)
 	return 0;
 
 out_num:
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+	ub_kmem_uncharge(ub, size);
 out_kmem:
 	return -ENOMEM;
 }
@@ -167,7 +167,7 @@ void ub_siginfo_uncharge(struct sigqueue *sq)
 	sq->sig_ub = NULL;
 	size = CHARGE_SIZE(kmem_obj_objuse(sq));
 	uncharge_beancounter_fast(ub, UB_NUMSIGINFO, 1);
-	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+	ub_kmem_uncharge(ub, size);
 	put_beancounter(ub);
 }
 

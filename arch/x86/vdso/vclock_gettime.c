@@ -111,7 +111,7 @@ notrace static noinline int do_monotonic_coarse(struct timespec *ts)
 	return 0;
 }
 
-notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
+notrace noinline int ___vdso_clock_gettime(clockid_t clock, struct timespec *ts)
 {
 	if (likely(gtod->sysctl_enabled))
 		switch (clock) {
@@ -130,10 +130,17 @@ notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
 		}
 	return vdso_fallback_gettime(clock, ts);
 }
+
+int __vdso_clock_gettime(clockid_t clock, struct timespec *ts) __attribute__((section("CLOCKGETTIME")));
+notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
+{
+	return ___vdso_clock_gettime(clock, ts);
+}
+
 int clock_gettime(clockid_t, struct timespec *)
 	__attribute__((weak, alias("__vdso_clock_gettime")));
 
-notrace int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
+notrace int ___vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
 	long ret;
 	if (likely(gtod->sysctl_enabled && gtod->clock.vread)) {
@@ -155,5 +162,12 @@ notrace int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
 	    "0" (__NR_gettimeofday), "D" (tv), "S" (tz) : "memory");
 	return ret;
 }
+
+int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz) __attribute__((section("GETTIMEOFDAY")));
+notrace int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
+{
+	return ___vdso_gettimeofday(tv, tz);
+}
+
 int gettimeofday(struct timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));

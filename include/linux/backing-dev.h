@@ -67,6 +67,8 @@ struct backing_dev_info {
 	void *congested_data;	/* Pointer to aux data for congested func */
 	void (*unplug_io_fn)(struct backing_dev_info *, struct page *);
 	void *unplug_io_data;
+	int (*bd_full_fn) (struct backing_dev_info *, long long, int);
+	int bd_full; /* backing dev is full */
 
 	char *name;
 

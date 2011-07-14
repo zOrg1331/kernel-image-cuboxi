@@ -40,10 +40,16 @@
 int check_task_state(struct task_struct *tsk, struct cpt_context *ctx)
 {
 #ifdef CONFIG_X86_64
+	struct vm_area_struct *vma;
 	if (!(task_thread_info(tsk)->flags&_TIF_IA32)) {
 		if (task_pt_regs(tsk)->ip >= VSYSCALL_START &&
 				task_pt_regs(tsk)->ip < VSYSCALL_END) {
 			eprintk_ctx(CPT_FID "cannot be checkpointied while vsyscall, try later\n", CPT_TID(tsk));
+			return -EAGAIN;
+		}
+		vma = find_vma(current->mm, task_pt_regs(tsk)->ip);
+		if (vma && vma->vm_mm && vma->vm_start == (long)vma->vm_mm->context.vdso) {
+			eprintk_ctx(CPT_FID "cannot be checkpointied while vdso, try later\n", CPT_TID(tsk));
 			return -EAGAIN;
 		}
 	}

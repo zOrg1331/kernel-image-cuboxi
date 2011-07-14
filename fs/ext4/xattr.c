@@ -787,6 +787,10 @@ inserted:
 				error = -EDQUOT;
 				if (vfs_dq_alloc_block(inode, 1))
 					goto cleanup;
+				if (check_bd_full(inode, 1)) {
+					error = -ENOSPC;
+					goto cleanup_dquot;
+				}
 				error = ext4_journal_get_write_access(handle,
 								      new_bh);
 				if (error)

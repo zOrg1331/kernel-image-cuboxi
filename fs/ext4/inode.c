@@ -48,6 +48,8 @@
 
 #define MPAGE_DA_EXTENT_TAIL 0x01
 
+DEFINE_PER_CPU(unsigned long, ext4_bd_full_ratelimits) = 0;
+
 static inline int ext4_begin_ordered_truncate(struct inode *inode,
 					      loff_t new_size)
 {
@@ -1942,6 +1944,11 @@ repeat:
 	 */
 	if (vfs_dq_reserve_block(inode, 1))
 		return -EDQUOT;
+
+	if (check_bd_full(inode, 1)) {
+		vfs_dq_release_reservation_block(inode, 1);
+		return -ENOSPC;
+	}
 
 	/*
 	 * We do still charge estimated metadata to the sb though;

@@ -301,10 +301,9 @@ void free_pid(struct pid *pid)
 		if (!hlist_unhashed(&upid->pid_chain))
 			hlist_del_rcu(&upid->pid_chain);
 	}
-	spin_unlock(&pidmap_lock);
-	uncharge_beancounter_fast(pid->ub, UB_KMEMSIZE,
+	spin_unlock_irqrestore(&pidmap_lock, flags);
+	ub_kmem_uncharge(pid->ub,
 		kmem_cache_objuse(pid->numbers[pid->level].ns->pid_cachep));
-	local_irq_restore(flags);
 
 	for (i = 0; i <= pid->level; i++)
 		free_pidmap(pid->numbers + i);
@@ -340,23 +339,20 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t vpid)
 		tmp = tmp->parent;
 	}
 
+#ifdef CONFIG_BEANCOUNTERS
+	ub = get_exec_ub();
+	if (ub_kmem_charge(ub, kmem_cache_objuse(ns->pid_cachep), UB_HARD))
+		goto out_free;
+	pid->ub = get_beancounter(ub);
+#endif
+
 	get_pid_ns(ns);
 	pid->level = ns->level;
 	atomic_set(&pid->count, 1);
 	for (type = 0; type < PIDTYPE_MAX; ++type)
 		INIT_HLIST_HEAD(&pid->tasks[type]);
 
-#ifdef CONFIG_BEANCOUNTERS
-	ub = get_exec_ub();
-	local_irq_disable();
-	if (charge_beancounter_fast(ub, UB_KMEMSIZE,
-				kmem_cache_objuse(ns->pid_cachep), UB_HARD))
-		goto out_enable;
-	pid->ub = get_beancounter(ub);
-	spin_lock(&pidmap_lock);
-#else
 	spin_lock_irq(&pidmap_lock);
-#endif
 	for (i = ns->level; i >= 0; i--) {
 		upid = &pid->numbers[i];
 		hlist_add_head_rcu(&upid->pid_chain,
@@ -370,9 +366,6 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t vpid)
 out:
 	return pid;
 
-out_enable:
-	local_irq_enable();
-	put_pid_ns(ns);
 out_free:
 	while (++i <= ns->level)
 		free_pidmap(pid->numbers + i);

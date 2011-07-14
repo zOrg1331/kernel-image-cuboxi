@@ -84,7 +84,7 @@ unsigned int ub_dcache_threshold __read_mostly = 1024;
 static int ubc_ioprio = 1;
 
 /* default maximum perpcu resources precharge */
-static int resource_precharge[UB_RESOURCES] = {
+int ub_resource_precharge[UB_RESOURCES] = {
 	[UB_KMEMSIZE]	= 32 * PAGE_SIZE,
        [UB_PRIVVMPAGES]= 256,
 	[UB_NUMPROC]	= 4,
@@ -103,7 +103,7 @@ void init_beancounter_precharge(struct user_beancounter *ub, int resource)
 {
 	/* limit maximum precharge with one half of current resource excess */
 	ub->ub_parms[resource].max_precharge = min_t(long,
-			resource_precharge[resource],
+			ub_resource_precharge[resource],
 			ub_resource_excess(ub, resource, UB_SOFT) /
 			(2 * num_possible_cpus()));
 }
@@ -123,11 +123,11 @@ static void __init init_beancounter_precharges_early(struct user_beancounter *ub
 	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ ) {
 
 		/* DEBUG: sanity checks for initial prechage bounds */
-		BUG_ON(resource_precharge[resource] < resource_precharge_min);
-		BUG_ON(resource_precharge[resource] > resource_precharge_max);
+		BUG_ON(ub_resource_precharge[resource] < resource_precharge_min);
+		BUG_ON(ub_resource_precharge[resource] > resource_precharge_max);
 
 		ub->ub_parms[resource].max_precharge =
-			resource_precharge[resource];
+			ub_resource_precharge[resource];
 	}
 }
 
@@ -154,6 +154,8 @@ static void uncharge_beancounter_precharge(struct user_beancounter *ub)
 		ub->ub_parms[resource].max_precharge = -1;
 		ub->ub_parms[resource].held -= precharge[resource];
 	}
+
+	ub->ub_parms[UB_PHYSPAGES].held -= precharge[UB_KMEMSIZE] >> PAGE_SHIFT;
 }
 
 static void init_beancounter_struct(struct user_beancounter *ub);
@@ -573,18 +575,11 @@ static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 }
 
 /* called with disabled interrupts */
-static int __charge_beancounter_percpu(struct user_beancounter *ub,
+int __charge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu,
 		int resource, unsigned long val, enum ub_severity strict)
 {
-	struct ub_percpu_struct *ub_pcpu = ub_percpu(ub, smp_processor_id());
 	int retval, precharge;
-
-	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
-
-	if (likely(ub_pcpu->precharge[resource] >= val)) {
-		ub_pcpu->precharge[resource] -= val;
-		return 0;
-	}
 
 	spin_lock(&ub->ub_lock);
 	precharge = max(0, (ub->ub_parms[resource].max_precharge >> 1) -
@@ -602,25 +597,18 @@ static int __charge_beancounter_percpu(struct user_beancounter *ub,
 
 	return retval;
 }
+EXPORT_SYMBOL(__charge_beancounter_percpu);
 
 /* called with disabled interrupts */
 void __uncharge_beancounter_percpu(struct user_beancounter *ub,
+		struct ub_percpu_struct *ub_pcpu,
 		int resource, unsigned long val)
 {
-	struct ub_percpu_struct *ub_pcpu = ub_percpu(ub, smp_processor_id());
 	int uncharge;
-
-	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
-
-	if (likely(ub_pcpu->precharge[resource] + val <=
-				ub->ub_parms[resource].max_precharge)) {
-		ub_pcpu->precharge[resource] += val;
-		return;
-	}
 
 	spin_lock(&ub->ub_lock);
 	if (ub->ub_parms[resource].max_precharge !=
-			resource_precharge[resource])
+			ub_resource_precharge[resource])
 		init_beancounter_precharge(ub, resource);
 	uncharge = max(0, ub_pcpu->precharge[resource] -
 			(ub->ub_parms[resource].max_precharge >> 1));
@@ -629,6 +617,7 @@ void __uncharge_beancounter_percpu(struct user_beancounter *ub,
 	__uncharge_beancounter_locked(ub, resource, val + uncharge);
 	spin_unlock(&ub->ub_lock);
 }
+EXPORT_SYMBOL(__uncharge_beancounter_percpu);
 
 unsigned long __get_beancounter_usage_percpu(struct user_beancounter *ub,
 		int resource)
@@ -660,37 +649,6 @@ out:
 	return retval;
 }
 EXPORT_SYMBOL(precharge_beancounter);
-
-int charge_beancounter_fast(struct user_beancounter *ub,
-		int resource, unsigned long val, enum ub_severity strict)
-{
-	unsigned long flags;
-	int retval;
-
-	retval = -EINVAL;
-	if (val > UB_MAXVALUE)
-		goto out;
-
-	local_irq_save(flags);
-	if (ub)
-		retval = __charge_beancounter_percpu(ub, resource, val, strict);
-	local_irq_restore(flags);
-out:
-	return retval;
-}
-EXPORT_SYMBOL(charge_beancounter_fast);
-
-void uncharge_beancounter_fast(struct user_beancounter *ub,
-		int resource, unsigned long val)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-	if (ub)
-		__uncharge_beancounter_percpu(ub, resource, val);
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL(uncharge_beancounter_fast);
 
 /*
  *	Initialization
@@ -831,10 +789,10 @@ static ctl_table ub_sysctl_table[] = {
 	{
 		.procname	= "resource_precharge",
 		.ctl_name	= -2,
-		.data		= &resource_precharge,
+		.data		= &ub_resource_precharge,
 		.extra1		= &resource_precharge_min,
 		.extra2		= &resource_precharge_max,
-		.maxlen		= sizeof(resource_precharge),
+		.maxlen		= sizeof(ub_resource_precharge),
 		.mode		= 0644,
 		.proc_handler	= &proc_resource_precharge,
 	},
