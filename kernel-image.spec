@@ -82,6 +82,10 @@ Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: mkinitrd >= 1:2.9.9-alt1
 
+Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
+
 %description
 This package contains the Linux kernel that is used to boot and run
 your system.
@@ -152,34 +156,6 @@ still useful for some hardware, if the corresponding PATA drivers do
 not work well.
 
 Install this package only if you really need it.
-
-
-%package -n kernel-modules-alsa-%flavour
-Summary: The Advanced Linux Sound Architecture modules
-Group: System/Kernel and hardware
-Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-alsa-%flavour
-The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
-functionality to the Linux operating system. ALSA has the following
-significant features:
-1. Efficient support for all types of audio interfaces, from consumer
-soundcards to professional multichannel audio interfaces.
-2. Fully modularized sound drivers.
-3. SMP and thread-safe design.
-4. User space library (alsa-lib) to simplify application programming
-and provide higher level functionality.
-5. Support for the older OSS API, providing binary compatibility for
-most OSS programs.
-
-These are sound drivers for your ALT Linux system.
-
 
 %package -n kernel-modules-drm-%flavour
 Summary: The Direct Rendering Infrastructure modules
@@ -320,7 +296,6 @@ If possible, try to use glibc-kernheaders instead of this package.
 Summary: Headers and other files needed for building kernel modules
 Group: Development/Kernel 
 Requires: gcc%kgcc_version
-#Requires: kernel-headers-alsa
 
 %description -n kernel-headers-modules-%flavour
 This package contains header files, Makefiles and other parts of the
@@ -556,16 +531,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-v4l-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-%post -n kernel-modules-alsa-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
 %post -n kernel-modules-staging-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-staging-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-alsa-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
 %post -n kernel-headers-%flavour
@@ -580,17 +549,17 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
 %exclude %modules_dir/build
-%exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/arch/x86/kvm
 %exclude %modules_dir/kernel/drivers/ide/
-/lib/firmware/*
 %if_enabled oss
-# OSS drivers
 %exclude %modules_dir/kernel/sound/oss
+%endif
+/lib/firmware/*
 
+%if_enabled oss
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
 %endif #oss
@@ -601,10 +570,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-ide-%flavour
 %modules_dir/kernel/drivers/ide/
 
-
 %files -n kernel-headers-%flavour
 %kheaders_dir
-
 
 %files -n kernel-headers-modules-%flavour
 %kbuild_dir
@@ -615,11 +582,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %if_enabled docs
 %files -n kernel-doc-%base_flavour
 %doc %_docdir/kernel-doc-%base_flavour-%version
-%endif
-%files -n kernel-modules-alsa-%flavour
-%modules_dir/kernel/sound/
-%if_enabled oss
-%exclude %modules_dir/kernel/sound/oss
 %endif
 
 %files -n kernel-modules-drm-%flavour
