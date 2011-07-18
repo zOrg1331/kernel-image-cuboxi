@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt3
+Release: alt3.1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -613,6 +613,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Jul 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.1
+- Pack alsa into kernel-image
+- Move two modules with deps on staging into staging
+- Staging depends on v4l and drm
+- Disable USB_GADGET
+
 * Sun Jul 10 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3
 - Update to 2.6.39.3
 - Enable several bluetooth devices (ALT 25888)
