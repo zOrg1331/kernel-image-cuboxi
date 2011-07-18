@@ -260,6 +260,8 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Requires: kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
