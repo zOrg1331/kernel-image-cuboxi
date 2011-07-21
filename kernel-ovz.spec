@@ -6,14 +6,14 @@
 %define buildxen 1
 %define buildopenafs 0
 
-%define builddebug 0
+%define builddebug 1
 %define builddoc 0
 %define buildkdump 0
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab091
-%define ovzrel 1
+%define ovzver 028stab092
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 238.12.1%{?dist}%{?buildid}
+%define release 238.19.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -1113,6 +1113,7 @@ Patch20240: xen-hvm-add-hvmop_get_time-hypercall.patch
 Patch20241: xen-fix-64-bit-pv-guest-user-mode-segv-crashing-host.patch
 Patch20242: xen-x86-domain-fix-error-checks-in-arch_set_info_guest.patch
 Patch20243: xen-fix-max_evtchns-definition.patch
+Patch20246: xen-hvm-secure-vmx-cpuid.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -6416,6 +6417,27 @@ Patch26352: linux-2.6-net-netxen-limit-skb-frags-for-non-tso-packet.patch
 Patch26353: linux-2.6-net-ixgbe-fix-for-link-failure-on-sfp-da-cables.patch
 Patch26354: linux-2.6-i386-ignore-spurious-ipis-left-over-from-crash-kernel.patch
 Patch26355: linux-2.6-x86_64-ignore-spurious-ipis-left-over-from-crash-kernel.patch
+Patch26356: linux-2.6-fs-gfs2-fix-processes-waiting-on-already-available-inode-glock.patch
+Patch26357: linux-2.6-input-evdev-rename-list-to-client-in-handlers.patch
+Patch26358: linux-2.6-input-evdev-implement-proper-locking.patch
+Patch26359: linux-2.6-message-mptfusion-add-ioc_reset_in_progress-reset-in-softreset.patch
+Patch26360: linux-2.6-scsi-iscsi_tcp-fix-iscsi-s-sk_user_data-access.patch
+Patch26361: linux-2.6-pci-sriov-release-vf-bar-resources-when-device-is-hot-unplug.patch
+Patch26362: linux-2.6-net-core-fix-memory-leak-corruption-on-vlan-gro_drop.patch
+Patch26363: linux-2.6-fs-xfs-prevent-leaking-uninit-stack-memory-in-fsgeometry_v1.patch
+Patch26364: linux-2.6-fs-xfs-prevent-leaking-uninit-stack-memory-in-fsgeometry_v1-p2.patch
+Patch26365: linux-2.6-net-sctp-fix-calc-of-init-init-ack-chunk-length-to-set.patch
+Patch26366: linux-2.6-fs-gfs2-fix-resource-group-bitmap-corruption.patch
+Patch26367: linux-2.6-block-cciss-reading-a-write-only-register-causes-a-hang.patch
+Patch26368: linux-2.6-fs-validate-size-of-efi-guid-partition-entries.patch
+Patch26369: linux-2.6-infiniband-core-fix-panic-in-ib_cm-cm_work_handler.patch
+Patch26370: linux-2.6-infiniband-core-handle-large-number-of-entries-in-poll-cq.patch
+Patch26371: linux-2.6-char-agp-fix-arbitrary-kernel-memory-writes.patch
+Patch26372: linux-2.6-char-agp-fix-oom-and-buffer-overflow.patch
+Patch26373: linux-2.6-fs-proc-fix-signedness-issue-in-next_pidmap.patch
+Patch26374: linux-2.6-misc-signal-fix-kill-signal-spoofing-issue.patch
+Patch26375: linux-2.6-net-inet_diag-fix-inet_diag_bc_audit-data-validation.patch
+Patch26376: linux-2.6-net-bluetooth-l2cap-and-rfcomm-fix-info-leak-to-userspace.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -12722,6 +12744,27 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch26353 -p1
 %patch26354 -p1
 %patch26355 -p1
+%patch26356 -p1
+%patch26357 -p1
+%patch26358 -p1
+%patch26359 -p1
+%patch26360 -p1
+%patch26361 -p1
+%patch26362 -p1
+%patch26363 -p1
+%patch26364 -p1
+%patch26365 -p1
+%patch26366 -p1
+%patch26367 -p1
+%patch26368 -p1
+%patch26369 -p1
+%patch26370 -p1
+%patch26371 -p1
+%patch26372 -p1
+%patch26373 -p1
+%patch26374 -p1
+%patch26375 -p1
+%patch26376 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -13178,6 +13221,7 @@ cd ../xen
 %patch20241 -p1
 %patch20242 -p1
 %patch20243 -p1
+%patch20246 -p1
 # end of necessary hypervisor patches
 %endif
 %endif
