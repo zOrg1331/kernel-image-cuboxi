@@ -821,8 +821,10 @@ update_load_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	if (entity_is_task(se))
+	if (entity_is_task(se)) {
+		cfs_rq->nr_tasks_running++;
 		list_add(&se->group_node, &cfs_rq->tasks);
+	}
 	cfs_rq->nr_running++;
 	se->on_rq = 1;
 }
@@ -830,8 +832,10 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	if (entity_is_task(se))
+	if (entity_is_task(se)) {
+		cfs_rq->nr_tasks_running--;
 		list_del_init(&se->group_node);
+	}
 	cfs_rq->nr_running--;
 	se->on_rq = 0;
 }
@@ -1768,6 +1772,40 @@ static int select_idle_sibling(struct task_struct *p, int target)
 	return target;
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+static inline int rq_runnable(int cpu, struct task_struct *p)
+{
+	return cpu_cfs_rq(task_cfs_rq(p), cpu)->rate > 0;
+}
+
+static int find_runnable_rq(int cpu, struct task_struct *p)
+{
+	int dest_cpu;
+	const struct cpumask *nodemask;
+
+	if (rq_runnable(cpu, p))
+		return cpu;
+
+	/* First, try to locate any allowed, runnable CPU in the same node. */
+	nodemask = cpumask_of_node(cpu_to_node(cpu));
+	for_each_cpu_and(dest_cpu, nodemask, cpu_active_mask)
+		if (cpumask_test_cpu(dest_cpu, &p->cpus_allowed) &&
+		    rq_runnable(dest_cpu, p))
+			return dest_cpu;
+
+	for_each_cpu_and(dest_cpu, cpu_active_mask, &p->cpus_allowed)
+		if (rq_runnable(dest_cpu, p))
+			return dest_cpu;
+
+	return cpu;
+}
+#else
+static inline int find_runnable_rq(int cpu, struct task_struct *p)
+{
+	return cpu;
+}
+#endif
+
 /*
  * sched_balance_self: balance the current task (running on cpu) in domains
  * that have the 'flag' flag set. In practice, this is SD_BALANCE_FORK and
@@ -1862,9 +1900,10 @@ select_task_rq_fair(struct rq *rq, struct task_struct *p, int sd_flag, int wake_
 
 	if (affine_sd) {
 		if (cpu == prev_cpu || wake_affine(affine_sd, p, sync))
-			return select_idle_sibling(p, cpu);
+			new_cpu = select_idle_sibling(p, cpu);
 		else
-			return select_idle_sibling(p, prev_cpu);
+			new_cpu = select_idle_sibling(p, prev_cpu);
+		goto out;
 	}
 
 	while (sd) {
@@ -1906,7 +1945,8 @@ select_task_rq_fair(struct rq *rq, struct task_struct *p, int sd_flag, int wake_
 		/* while loop will break here if sd == NULL */
 	}
 
-	return new_cpu;
+out:
+	return find_runnable_rq(new_cpu, p);
 }
 #endif /* CONFIG_SMP */
 
@@ -2132,7 +2172,7 @@ static struct task_struct *load_balance_next_fair(void *arg)
 static unsigned long
 __load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		unsigned long max_load_move,
-		struct sched_domain *sd, enum cpu_idle_type idle,
+		struct sched_domain *sd, enum cpu_idle_type idle, int force,
 		int *all_pinned, unsigned int *nr_migrate,
 		struct cfs_rq *cfs_rq)
 {
@@ -2143,7 +2183,7 @@ __load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	cfs_rq_iterator.arg = cfs_rq;
 
 	return balance_tasks(this_rq, this_cpu, busiest,
-			max_load_move, sd, idle, all_pinned, nr_migrate,
+			max_load_move, sd, idle, force, all_pinned, nr_migrate,
 			&cfs_rq_iterator);
 }
 
@@ -2167,6 +2207,7 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		unsigned long busiest_h_load = busiest_cfs_rq->h_load;
 		unsigned long busiest_weight = busiest_cfs_rq->load.weight;
 		u64 rem_load, moved_load;
+		int force = 0;
 
 		/*
 		 * empty group
@@ -2184,8 +2225,26 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		rem_load = (u64)rem_load_move * busiest_weight;
 		rem_load = div_u64(rem_load, busiest_h_load + 1);
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+		/*
+		 * Try not to scatter cpu rate too wide:
+		 * If the rate of this_cfs_rq = 0, try to pull all tasks from
+		 * busiest_cfs_rq, or skip it if impossible.
+		 */
+		if (!this_cfs_rq->rate) {
+			struct sched_entity *se = tg->se[busiest_cpu];
+
+			if ((busiest_cfs_rq->task_weight >> 1) > rem_load ||
+			    *nr_migrate < busiest_cfs_rq->nr_tasks_running ||
+			    se == cfs_rq_of(se)->curr)
+				continue;
+			force = 1;
+		}
+#endif
+
 		moved_load = __load_balance_fair(this_rq, this_cpu, busiest,
-				rem_load, sd, idle, all_pinned, nr_migrate,
+				rem_load, sd, idle, force,
+				all_pinned, nr_migrate,
 				tg->cfs_rq[busiest_cpu]);
 
 		if (moved_load) {
@@ -2212,7 +2271,7 @@ load_balance_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 		  int *all_pinned, unsigned int *nr_migrate)
 {
 	return __load_balance_fair(this_rq, this_cpu, busiest,
-			max_load_move, sd, idle, all_pinned, nr_migrate,
+			max_load_move, sd, idle, 0, all_pinned, nr_migrate,
 			&busiest->cfs);
 }
 #endif
@@ -2228,6 +2287,16 @@ move_one_task_fair(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	cfs_rq_iterator.next = load_balance_next_fair;
 
 	for_each_leaf_cfs_rq(busiest, busy_cfs_rq) {
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+		/*
+		 * To prevent cpu rate from scattering too wide, skip task
+		 * groups that have their rate = 0 on this_cpu.
+		 */
+		if (busy_cfs_rq->nr_tasks_running > 1 &&
+		    !cpu_cfs_rq(busy_cfs_rq, this_cpu)->rate)
+			continue;
+#endif
+
 		/*
 		 * pass busy_cfs_rq argument into
 		 * load_balance_[start|next]_fair iterators

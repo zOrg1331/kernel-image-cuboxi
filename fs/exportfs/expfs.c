@@ -354,7 +354,7 @@ int exportfs_encode_fh(struct dentry *dentry, struct fid *fid, int *max_len,
 
 	return error;
 }
-EXPORT_SYMBOL_GPL(exportfs_encode_fh);
+EXPORT_SYMBOL(exportfs_encode_fh);
 
 struct dentry *exportfs_decode_fh(struct vfsmount *mnt, struct fid *fid,
 		int fh_len, int fileid_type,

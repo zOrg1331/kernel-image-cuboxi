@@ -2971,6 +2971,7 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct vm_fault vmf;
 	int ret;
 	int page_mkwrite = 0;
+	cycles_t start;
 
 	if (unlikely(check_memory_limits(mm)))
 		return VM_FAULT_OOM;
@@ -2980,6 +2981,7 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	vmf.flags = flags;
 	vmf.page = NULL;
 
+	start = get_cycles();
 	ret = vma->vm_ops->fault(vma, &vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE |
 			    VM_FAULT_RETRY)))
@@ -2999,6 +3001,11 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		lock_page(vmf.page);
 	else
 		VM_BUG_ON(!PageLocked(vmf.page));
+
+	preempt_disable();
+	KSTAT_LAT_PCPU_ADD(&kstat_glob.page_in, smp_processor_id(),
+			get_cycles() - start);
+	preempt_enable();
 
 	/*
 	 * Should we do an early C-O-W break?
@@ -3276,7 +3283,7 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (!pmd)
 		return VM_FAULT_OOM;
 	if (pmd_none(*pmd) && transparent_hugepage_enabled(vma)) {
-		if (!vma->vm_ops)
+		if (!vma->vm_ops && !vma->vm_file)
 			return do_huge_pmd_anonymous_page(mm, vma, address,
 							  pmd, flags);
 	} else {

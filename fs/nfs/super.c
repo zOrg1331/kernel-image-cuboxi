@@ -3151,13 +3151,8 @@ static int nfs4_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
-	struct ve_struct *ve;
 
 	dprintk("--> nfs4_xdev_get_sb()\n");
-
-	ve = get_exec_env();
-	if (!(ve->features & VE_FEATURE_NFS))
-		return -ENODEV;
 
 	/* create a new volume representation */
 	server = nfs_clone_server(NFS_SB(data->sb), data->fh, data->fattr);

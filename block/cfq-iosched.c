@@ -289,6 +289,13 @@ struct cfq_data {
 	/* List of cfq groups being managed on this device*/
 	struct hlist_head cfqg_list;
 	struct rcu_head rcu;
+
+	/*
+	 * Revert to former behaviour ensuring fairness between
+	 * seeky and seeky&deep tasks sacrificing overall
+	 * performance.
+	 */
+	int cfq_enable_idle_for_deep;
 };
 
 static struct cfq_group *cfq_get_next_cfqg(struct cfq_data *cfqd);
@@ -3233,8 +3240,9 @@ cfq_update_idle_window(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	if (cfqq->next_rq && (cfqq->next_rq->cmd_flags & REQ_NOIDLE))
 		enable_idle = 0;
 	else if (!atomic_read(&cic->ioc->nr_tasks) || !cfqd->cfq_slice_idle ||
-	    (!cfq_cfqq_deep(cfqq) && sample_valid(cfqq->seek_samples)
-	     && CFQQ_SEEKY(cfqq)))
+		 ((!cfq_cfqq_deep(cfqq) || !cfqd->cfq_enable_idle_for_deep) &&
+		  sample_valid(cfqq->seek_samples)
+		  && CFQQ_SEEKY(cfqq)))
 		enable_idle = 0;
 	else if (sample_valid(cic->ttime_samples)) {
 		if (cic->ttime_mean > cfqd->cfq_slice_idle)
@@ -4023,6 +4031,7 @@ SHOW_FUNCTION(cfq_slice_async_show, cfqd->cfq_slice[0], 1);
 SHOW_FUNCTION(cfq_slice_async_rq_show, cfqd->cfq_slice_async_rq, 0);
 SHOW_FUNCTION(cfq_low_latency_show, cfqd->cfq_latency, 0);
 SHOW_FUNCTION(cfq_group_isolation_show, cfqd->cfq_group_isolation, 0);
+SHOW_FUNCTION(cfq_enable_idle_for_deep_show, cfqd->cfq_enable_idle_for_deep, 0);
 #undef SHOW_FUNCTION
 
 #define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
@@ -4057,6 +4066,7 @@ STORE_FUNCTION(cfq_slice_async_rq_store, &cfqd->cfq_slice_async_rq, 1,
 		UINT_MAX, 0);
 STORE_FUNCTION(cfq_low_latency_store, &cfqd->cfq_latency, 0, 1, 0);
 STORE_FUNCTION(cfq_group_isolation_store, &cfqd->cfq_group_isolation, 0, 1, 0);
+STORE_FUNCTION(cfq_enable_idle_for_deep_store, &cfqd->cfq_enable_idle_for_deep, 0, UINT_MAX, 0);
 #undef STORE_FUNCTION
 
 #define CFQ_ATTR(name) \
@@ -4075,6 +4085,7 @@ static struct elv_fs_entry cfq_attrs[] = {
 	CFQ_ATTR(group_idle),
 	CFQ_ATTR(low_latency),
 	CFQ_ATTR(group_isolation),
+	CFQ_ATTR(enable_idle_for_deep),
 	__ATTR_NULL
 };
 

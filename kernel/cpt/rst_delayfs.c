@@ -811,7 +811,8 @@ static void delay_kill_sb(struct super_block *s)
 	}
 
 	mntput(si->real);
-	put_filesystem(si->hidden_type);
+	if (si->hidden_type)
+		put_filesystem(si->hidden_type);
 	free_page((unsigned long )si->data);
 	kfree(si);
 	kill_anon_super(s);
@@ -1537,6 +1538,29 @@ out1:
 	kfree(dfi);
 out:
 	return err;
+}
+
+void rst_put_delayed_sockets(cpt_context_t *ctx)
+{
+	cpt_object_t *obj;
+
+	for_each_object(obj, CPT_OBJ_VFSMOUNT_REF) {
+		struct vfsmount *mnt = obj->o_obj;
+		struct delay_sb_info *si;
+
+		if (mnt->mnt_sb->s_op != &delay_super_ops)
+			continue;
+
+		si = mnt->mnt_sb->s_fs_info;
+		while (si->bi_list) {
+			struct unix_bind_info *i;
+
+			i = si->bi_list;
+			si->bi_list = i->next;
+
+			sock_put(i->sk);
+		}
+	}
 }
 
 int rst_delay_unix_bind(struct sock *sk, struct cpt_sock_image *v,

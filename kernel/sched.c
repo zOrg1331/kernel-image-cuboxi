@@ -509,6 +509,7 @@ struct cfs_rq {
 	struct rb_root tasks_timeline;
 	struct rb_node *rb_leftmost;
 
+	unsigned long nr_tasks_running;
 	struct list_head tasks;
 	struct list_head *balance_iterator;
 
@@ -810,6 +811,7 @@ DEFINE_SPINLOCK(kstat_glb_lock);
 EXPORT_SYMBOL(kstat_glob);
 EXPORT_SYMBOL(kstat_glb_lock);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, glob_kstat_lat);
+static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, glob_kstat_page_in);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, alloc_kstat_lat[KSTAT_ALLOCSTAT_NR]);
 
 void __init kstat_init(void)
@@ -817,6 +819,7 @@ void __init kstat_init(void)
 	int i;
 
 	kstat_glob.sched_lat.cur = &per_cpu_var(glob_kstat_lat);
+	kstat_glob.page_in.cur = &per_cpu_var(glob_kstat_page_in);
 	for ( i = 0 ; i < KSTAT_ALLOCSTAT_NR ; i++)
 		kstat_glob.alloc_lat[i].cur = &per_cpu_var(alloc_kstat_lat[i]);
 }
@@ -1065,6 +1068,12 @@ int sysctl_sched_cpulimit_thresh = 4;
  * per-cpu group rates.
  */
 int sysctl_sched_cpulimit_update_iter = 2;
+
+/*
+ * Maximal number of task groups to iterate in
+ * a single cpulimit balance run.
+ */
+int sysctl_sched_cpulimit_nr_balance = 4;
 
 /*
  * Once throttled, a cfs_rq will remain throttled until
@@ -1894,7 +1903,7 @@ struct rq_iterator {
 static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	      unsigned long max_load_move,
-	      struct sched_domain *sd, enum cpu_idle_type idle,
+	      struct sched_domain *sd, enum cpu_idle_type idle, int force,
 	      int *all_pinned, unsigned int *nr_migrate,
 	      struct rq_iterator *iterator);
 
@@ -2119,13 +2128,11 @@ again:
 	}
 
 	if (sd_rate > sum_rate && nr_sd_cpus) {
-		rate = (sd_rate - sum_rate) / nr_sd_cpus;
-		if (rate) {
-			for_each_cpu(i, sd_cpus) {
-				usd_rq_rate[i] += rate;
-				if (usd_rq_rate[i] > MAX_RATE)
-					usd_rq_rate[i] = MAX_RATE;
-			}
+		rate = DIV_ROUND_UP(sd_rate - sum_rate, nr_sd_cpus);
+		for_each_cpu(i, sd_cpus) {
+			usd_rq_rate[i] += rate;
+			if (usd_rq_rate[i] > MAX_RATE)
+				usd_rq_rate[i] = MAX_RATE;
 		}
 	}
 }
@@ -4049,7 +4056,7 @@ static void pull_task(struct rq *src_rq, struct task_struct *p,
 static
 int can_migrate_task(struct task_struct *p, struct rq *rq, int this_cpu,
 		     struct sched_domain *sd, enum cpu_idle_type idle,
-		     int *all_pinned)
+		     int force, int *all_pinned)
 {
 	int tsk_cache_hot = 0;
 	/*
@@ -4076,7 +4083,7 @@ int can_migrate_task(struct task_struct *p, struct rq *rq, int this_cpu,
 	 */
 
 	tsk_cache_hot = task_hot(p, rq->clock, sd);
-	if (!tsk_cache_hot ||
+	if (!tsk_cache_hot || force ||
 		sd->nr_balance_failed > sd->cache_nice_tries) {
 #ifdef CONFIG_SCHEDSTATS
 		if (tsk_cache_hot) {
@@ -4097,7 +4104,7 @@ int can_migrate_task(struct task_struct *p, struct rq *rq, int this_cpu,
 static unsigned long
 balance_tasks(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	      unsigned long max_load_move,
-	      struct sched_domain *sd, enum cpu_idle_type idle,
+	      struct sched_domain *sd, enum cpu_idle_type idle, int force,
 	      int *all_pinned, unsigned int *nr_migrate,
 	      struct rq_iterator *iterator)
 {
@@ -4116,8 +4123,8 @@ next:
 	if (!p || !*nr_migrate)
 		goto out;
 
-	if ((p->se.load.weight >> 1) > rem_load_move ||
-	    !can_migrate_task(p, busiest, this_cpu, sd, idle,
+	if ((!force && (p->se.load.weight >> 1) > rem_load_move) ||
+	    !can_migrate_task(p, busiest, this_cpu, sd, idle, force,
 			      all_pinned)) {
 		p = iterator->next(iterator->arg);
 		goto next;
@@ -4143,7 +4150,7 @@ next:
 	/*
 	 * We only want to steal up to the prescribed amount of weighted load.
 	 */
-	if (rem_load_move > 0) {
+	if (force || rem_load_move > 0) {
 		p = iterator->next(iterator->arg);
 		goto next;
 	}
@@ -4194,7 +4201,8 @@ iter_move_one_task(struct rq *this_rq, int this_cpu, struct rq *busiest,
 	int pinned = 0;
 
 	while (p) {
-		if (can_migrate_task(p, busiest, this_cpu, sd, idle, &pinned)) {
+		if (can_migrate_task(p, busiest, this_cpu, sd, idle, 0,
+				     &pinned)) {
 			pull_task(busiest, p, this_rq, this_cpu);
 			/*
 			 * Right now, this is only the second place pull_task()
@@ -5549,6 +5557,146 @@ static void active_load_balance(struct rq *busiest_rq, int busiest_cpu)
 	double_unlock_balance(busiest_rq, target_rq);
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+static int find_cfs_rq_complement(struct cfs_rq *this_cfs_rq,
+				  const struct cpumask *cpus)
+{
+	struct task_group *tg = this_cfs_rq->tg;
+	int i, complement = -1;
+	unsigned long diff, min_diff = ~0UL;
+
+	for_each_cpu(i, cpus) {
+		struct cfs_rq *cfs_rq = tg->cfs_rq[i];
+
+		if (cfs_rq == this_cfs_rq ||
+		    !cfs_rq->rate || cfs_rq->rate >= MAX_RATE)
+			continue;
+		diff = abs(MAX_RATE - this_cfs_rq->rate - cfs_rq->rate);
+		if (diff < min_diff) {
+			complement = i;
+			min_diff = diff;
+		}
+	}
+
+	return complement;
+}
+
+static DEFINE_PER_CPU(struct migration_req, cpulimit_balance_migration_req);
+
+static inline void init_cpulimit_balance_migration_req(int cpu)
+{
+	struct migration_req *req;
+
+	req = &per_cpu(cpulimit_balance_migration_req, cpu);
+	init_completion(&req->done);
+	req->done.done = 1;
+}
+
+static int
+cpulimit_balance_tg(struct task_group *tg, int this_cpu, struct rq *this_rq,
+		    struct sched_domain *sd, unsigned int *nr_migrate,
+		    int *balance)
+{
+	int target_cpu;
+	struct rq *target_rq;
+	struct cfs_rq *target_cfs_rq;
+	struct cfs_rq *this_cfs_rq = tg->cfs_rq[this_cpu];
+	struct task_struct *p, *tmp;
+	struct migration_req *req;
+	unsigned long flags;
+	int ld_moved = 0, wake_up_migration_thread = 0;
+
+	if (!this_cfs_rq->task_weight ||
+	    tg->rate == this_cfs_rq->rate ||
+	    !this_cfs_rq->rate || this_cfs_rq->rate >= MAX_RATE)
+		return 0;
+
+	target_cpu = find_cfs_rq_complement(this_cfs_rq, sched_domain_span(sd));
+	if (target_cpu == -1) {
+		*balance = 1;
+		return 0;
+	}
+	target_rq = cpu_rq(target_cpu);
+	target_cfs_rq = tg->cfs_rq[target_cpu];
+
+	if (target_cfs_rq->task_weight > this_cfs_rq->task_weight ||
+	    *nr_migrate < target_cfs_rq->nr_tasks_running)
+		return 0;
+
+	req = &per_cpu(cpulimit_balance_migration_req, this_cpu);
+
+	local_irq_save(flags);
+	double_rq_lock(this_rq, target_rq);
+	list_for_each_entry_safe(p, tmp, &target_cfs_rq->tasks, se.group_node) {
+		if (!cpumask_test_cpu(this_cpu, &p->cpus_allowed))
+			continue;
+		if (!task_current(target_rq, p)) {
+			pull_task(target_rq, p, this_rq, this_cpu);
+			--*nr_migrate;
+			ld_moved = 1;
+		} else if (completion_done(&req->done)) {
+			INIT_COMPLETION(req->done);
+			req->task = p;
+			req->dest_cpu = this_cpu;
+			list_add(&req->list, &target_rq->migration_queue);
+			wake_up_migration_thread = 1;
+		}
+	}
+	double_rq_unlock(this_rq, target_rq);
+	local_irq_restore(flags);
+
+	if (wake_up_migration_thread)
+		wake_up_process(target_rq->migration_thread);
+
+	return ld_moved;
+}
+
+static int cpulimit_balance(int this_cpu, struct rq *this_rq,
+			    struct sched_domain *sd, int *balance)
+{
+	unsigned int nr_migrate = sysctl_sched_nr_migrate;
+	unsigned int nr_balance = sysctl_sched_cpulimit_nr_balance;
+	int ld_moved = 0;
+	struct task_group *tg;
+
+	*balance = 0;
+	if (!nr_migrate || !nr_balance)
+		return 0;
+
+	update_shares(sd);
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(tg, &task_groups, list) {
+		if (cpulimit_balance_tg(tg, this_cpu, this_rq,
+					sd, &nr_migrate, balance)) {
+			ld_moved = 1;
+			nr_balance--;
+			if (!nr_migrate || !nr_balance)
+				break;
+		}
+	}
+	rcu_read_unlock();
+
+	if (ld_moved) {
+		update_shares(sd);
+		sd->balance_interval = sd->min_interval;
+	}
+
+	return ld_moved;
+}
+#else
+static inline void init_cpulimit_balance_migration_req(int cpu)
+{
+}
+
+static inline int cpulimit_balance(int this_cpu, struct rq *this_rq,
+				   struct sched_domain *sd, int *balance)
+{
+	*balance = 0;
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_NO_HZ
 
 static DEFINE_PER_CPU(struct call_single_data, remote_sched_softirq_cb);
@@ -5820,6 +5968,7 @@ static DEFINE_SPINLOCK(balancing);
 static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 {
 	int balance = 1;
+	int balance_cpulimit;
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long interval;
 	struct sched_domain *sd;
@@ -5827,6 +5976,8 @@ static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 	unsigned long next_balance = jiffies + 60*HZ;
 	int update_next_balance = 0;
 	int need_serialize;
+
+	balance_cpulimit = rq->nr_running_cfs > 0;
 
 	for_each_domain(cpu, sd) {
 		if (!(sd->flags & SD_LOAD_BALANCE))
@@ -5851,7 +6002,15 @@ static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 		}
 
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
-			if (load_balance(cpu, rq, sd, idle, &balance)) {
+			if (balance_cpulimit &&
+			    cpulimit_balance(cpu, rq, sd, &balance_cpulimit)) {
+				balance = 0;
+				if (rq->cfs.nr_running)
+					idle = CPU_NOT_IDLE;
+			}
+
+			if (balance &&
+			    load_balance(cpu, rq, sd, idle, &balance)) {
 				/*
 				 * We've pulled tasks over so either we're no
 				 * longer idle, or one of our SMT siblings is
@@ -5874,7 +6033,7 @@ out:
 		 * CPU in our sched group which is doing load balancing more
 		 * actively.
 		 */
-		if (!balance)
+		if (!balance && !balance_cpulimit)
 			break;
 	}
 
@@ -10844,6 +11003,8 @@ void __init sched_init(void)
 #endif
 		init_rq_hrtick(rq);
 		atomic_set(&rq->nr_iowait, 0);
+
+		init_cpulimit_balance_migration_req(i);
 	}
 
 	set_load_weight(&init_task);
