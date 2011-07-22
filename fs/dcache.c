@@ -2032,7 +2032,7 @@ char *__d_path(const struct path *path, struct path *root,
 
 out:
 	if (deleted && buffer &&
-			prepend(&end, &buflen, " (deleted)", 10) != 0)
+			prepend(&retval, &buflen, " (deleted)", 10) != 0)
 		goto Elong;
 
 	spin_unlock(&vfsmount_lock);

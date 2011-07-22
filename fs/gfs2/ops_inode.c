@@ -167,6 +167,10 @@ static int gfs2_link(struct dentry *old_dentry, struct inode *dir,
 	if (error)
 		goto out_child;
 
+	error = -ENOENT;
+	if (inode->i_nlink == 0)
+		goto out_gunlock;
+
 	error = gfs2_permission(dir, MAY_WRITE | MAY_EXEC);
 	if (error)
 		goto out_gunlock;
@@ -341,6 +345,10 @@ static int gfs2_unlink(struct inode *dir, struct dentry *dentry)
 	error = gfs2_glock_nq(ghs + 1); /* child */
 	if (error)
 		goto out_child;
+
+	error = -ENOENT;
+	if (ip->i_inode.i_nlink == 0)
+		goto out_rgrp;
 
 	error = gfs2_glock_nq(ghs + 2); /* rgrp */
 	if (error)
@@ -605,6 +613,10 @@ static int gfs2_rmdir(struct inode *dir, struct dentry *dentry)
 	if (error)
 		goto out_child;
 
+	error = -ENOENT;
+	if (ip->i_inode.i_nlink == 0)
+		goto out_rgrp;
+
 	error = gfs2_glock_nq(ghs + 2); /* rgrp */
 	if (error)
 		goto out_rgrp;
@@ -812,6 +824,10 @@ static int gfs2_rename(struct inode *odir, struct dentry *odentry,
 			goto out_gunlock;
 	}
 
+	error = -ENOENT;
+	if (ip->i_inode.i_nlink == 0)
+		goto out_gunlock;
+
 	/* Check out the old directory */
 
 	error = gfs2_unlink_ok(odip, &odentry->d_name, ip);
@@ -824,6 +840,11 @@ static int gfs2_rename(struct inode *odir, struct dentry *odentry,
 		error = gfs2_unlink_ok(ndip, &ndentry->d_name, nip);
 		if (error)
 			goto out_gunlock;
+
+		if (nip->i_inode.i_nlink == 0) {
+			error = -EAGAIN;
+			goto out_gunlock;
+		}
 
 		if (S_ISDIR(nip->i_inode.i_mode)) {
 			if (nip->i_entries < 2) {
@@ -855,7 +876,7 @@ static int gfs2_rename(struct inode *odir, struct dentry *odentry,
 
 		if (odip != ndip) {
 			if (!ndip->i_inode.i_nlink) {
-				error = -EINVAL;
+				error = -ENOENT;
 				goto out_gunlock;
 			}
 			if (ndip->i_entries == (u32)-1) {

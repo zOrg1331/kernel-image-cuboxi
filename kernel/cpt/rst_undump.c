@@ -525,6 +525,9 @@ out:
 	if (err && ti->cpt_pid == 1)
 		rst_rollback_sockets(ctx);
 out_sock:
+	if (err && ti->cpt_pid == 1)
+		rst_put_delayed_sockets(ctx);
+
 	thr_ctx->error = err;
 	complete(&thr_ctx->task_done);
 
