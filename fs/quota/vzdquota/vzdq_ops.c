@@ -12,7 +12,7 @@
 #include <linux/quota.h>
 #include <linux/vzquota.h>
 #include <linux/quotaops.h>
-
+#include <linux/vzsnap.h>
 
 /* ----------------------------------------------------------------------
  * Quota superblock operations - helper functions.
@@ -358,6 +358,7 @@ static int __vzquota_alloc_space(struct inode *inode,
 {
 	struct vz_quota_master *qmblk;
 	struct vz_quota_datast data;
+	struct vzsnap_struct *vzs = NULL;
 	int ret = QUOTA_OK;
 
 	qmblk = vzquota_inode_data(inode, &data);
@@ -393,6 +394,8 @@ static int __vzquota_alloc_space(struct inode *inode,
 		}
 #endif
 		vzquota_incr_space(&qmblk->dq_stat, number, rsv);
+		if (qmblk->dq_snap && !rsv)
+			vzs = vzsnap_get(qmblk->dq_snap);
 		vzquota_data_unlock(inode, &data);
 		/* Reservation doesn't change state of on-disk quota's data,
 		   skip quota dirtying */
@@ -409,6 +412,8 @@ static int __vzquota_alloc_space(struct inode *inode,
 	}
 out:
 	inode_incr_space(inode, number, rsv);
+	if (vzs)
+		vzs->ops->addblock(vzs, inode);
 	might_sleep();
 	return QUOTA_OK;
 
@@ -432,6 +437,7 @@ static int vzquota_claim_reserved_space(struct inode *inode, qsize_t number)
 {
 	struct vz_quota_master *qmblk;
 	struct vz_quota_datast data;
+	struct vzsnap_struct *vzs = NULL;
 
 	qmblk = vzquota_inode_data(inode, &data);
 	if (qmblk == VZ_QUOTA_BAD)
@@ -443,6 +449,9 @@ static int vzquota_claim_reserved_space(struct inode *inode, qsize_t number)
 #endif
 
 		vzquota_claim_rsv_space(&qmblk->dq_stat, number);
+		if(qmblk->dq_snap)
+			vzs = vzsnap_get(qmblk->dq_snap);
+
 #ifdef CONFIG_VZ_QUOTA_UGID
 		for (cnt = 0; cnt < MAXQUOTAS; cnt++) {
 			qugid[cnt] = INODE_QLNK(inode)->qugid[cnt];
@@ -465,6 +474,8 @@ static int vzquota_claim_reserved_space(struct inode *inode, qsize_t number)
 	}
 	/* Update inode bytes */
 	inode_claim_rsv_space(inode, number);
+	if (vzs)
+		vzs->ops->addblock(vzs, inode);
 	might_sleep();
 	return QUOTA_OK;
 }
