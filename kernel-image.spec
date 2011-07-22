@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
-Version: 2.6.39
-Release: alt3
+Version: 3.0.0
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -593,6 +593,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Jul 22 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.0-alt1
+- 3.0.0
+
 * Mon Jul 11 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.39-alt3
 - 2.6.39.3
 
