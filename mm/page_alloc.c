@@ -2132,11 +2132,17 @@ static void __alloc_collect_stats(gfp_t gfp_mask, unsigned int order,
 
 	time = (jiffies - time) * cycles_per_jiffy;
 	if (!(gfp_mask & __GFP_WAIT))
-		ind = 0;
+		ind = KSTAT_ALLOCSTAT_ATOMIC;
 	else if (!(gfp_mask & __GFP_HIGHMEM))
-		ind = (order > 0 ? 2 : 1);
+		if (order > 0)
+			ind = KSTAT_ALLOCSTAT_LOW_MP;
+		else
+			ind = KSTAT_ALLOCSTAT_LOW;
 	else
-		ind = (order > 0 ? 4 : 3);
+		if (order > 0)
+			ind = KSTAT_ALLOCSTAT_HIGH_MP;
+		else
+			ind = KSTAT_ALLOCSTAT_HIGH;
 
 	cpu = get_cpu();
 	KSTAT_LAT_PCPU_ADD(&kstat_glob.alloc_lat[ind], cpu, time);

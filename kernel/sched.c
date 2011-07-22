@@ -810,6 +810,7 @@ DEFINE_SPINLOCK(kstat_glb_lock);
 EXPORT_SYMBOL(kstat_glob);
 EXPORT_SYMBOL(kstat_glb_lock);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, glob_kstat_lat);
+static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, glob_kstat_page_in);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, alloc_kstat_lat[KSTAT_ALLOCSTAT_NR]);
 
 void __init kstat_init(void)
@@ -817,6 +818,7 @@ void __init kstat_init(void)
 	int i;
 
 	kstat_glob.sched_lat.cur = &per_cpu_var(glob_kstat_lat);
+	kstat_glob.page_in.cur = &per_cpu_var(glob_kstat_page_in);
 	for ( i = 0 ; i < KSTAT_ALLOCSTAT_NR ; i++)
 		kstat_glob.alloc_lat[i].cur = &per_cpu_var(alloc_kstat_lat[i]);
 }

@@ -56,7 +56,14 @@ struct kstat_zone_avg {
 				nr_inactive_avg[3];
 };
 
-#define KSTAT_ALLOCSTAT_NR 5
+enum {
+	KSTAT_ALLOCSTAT_ATOMIC,
+	KSTAT_ALLOCSTAT_LOW,
+	KSTAT_ALLOCSTAT_HIGH,
+	KSTAT_ALLOCSTAT_LOW_MP,
+	KSTAT_ALLOCSTAT_HIGH_MP,
+	KSTAT_ALLOCSTAT_NR,
+};
 
 struct kernel_stat_glob {
 	unsigned long nr_unint_avg[3];
@@ -64,6 +71,7 @@ struct kernel_stat_glob {
 	unsigned long alloc_fails[NR_CPUS][KSTAT_ALLOCSTAT_NR];
 	struct kstat_lat_pcpu_struct alloc_lat[KSTAT_ALLOCSTAT_NR];
 	struct kstat_lat_pcpu_struct sched_lat;
+	struct kstat_lat_pcpu_struct page_in;
 	struct kstat_lat_struct swap_in;
 
 	struct kstat_perf_struct ttfp, cache_reap,

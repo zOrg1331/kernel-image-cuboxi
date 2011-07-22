@@ -811,7 +811,8 @@ static void delay_kill_sb(struct super_block *s)
 	}
 
 	mntput(si->real);
-	put_filesystem(si->hidden_type);
+	if (si->hidden_type)
+		put_filesystem(si->hidden_type);
 	free_page((unsigned long )si->data);
 	kfree(si);
 	kill_anon_super(s);

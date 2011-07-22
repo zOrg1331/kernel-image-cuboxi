@@ -293,6 +293,10 @@ static struct file *open_pipe(cpt_object_t *mntobj, char *name,
 			return rf;
 		wf = dentry_open(dget(rf->f_dentry),
 				 mntget(rf->f_vfsmnt), flags, current_cred());
+		if (IS_ERR(wf)) {
+			fput(rf);
+			return wf;
+		}
 	}
 
 	/* Add pipe inode to obj table. */
