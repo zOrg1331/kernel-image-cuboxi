@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt27
+Release: alt28
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Jul 22 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt28
+- Update to 042stab022.1 kernel
+
 * Thu Jul 14 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt27
 - Update to 042stab021.1 kernel
 - Build staging drivers
