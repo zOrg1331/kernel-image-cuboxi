@@ -453,6 +453,7 @@ KbuildFiles="
 %endif
 %endif
 	scripts/module-common.lds
+	scripts/depmod.sh
 
 	.config
 	.kernelrelease
