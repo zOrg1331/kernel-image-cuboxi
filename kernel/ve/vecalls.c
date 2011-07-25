@@ -608,11 +608,11 @@ static void fini_venet(struct ve_struct *ve)
 #endif
 }
 
-static int init_ve_sched(struct ve_struct *ve)
+static int init_ve_sched(struct ve_struct *ve, unsigned int vcpus)
 {
 	int err;
 
-	err = fairsched_new_node(ve->veid, 0);
+	err = fairsched_new_node(ve->veid, vcpus);
 	if (err == 0)
 		ve_sched_attach(ve);
 
@@ -1098,7 +1098,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 
 	old_exec = set_exec_env(ve);
 
-	if ((err = init_ve_sched(ve)) < 0)
+	if ((err = init_ve_sched(ve, data->total_vcpus)) < 0)
 		goto err_sched;
 
 	set_ve_root(ve, tsk);

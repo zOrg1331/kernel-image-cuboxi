@@ -174,6 +174,7 @@ struct vz_quota_master *vzquota_alloc_master(unsigned int quota_id,
 	qmblk->dq_ugid_max = 0;
 	qmblk->dq_flags = 0;
 	qmblk->qfile = NULL;
+	qmblk->dq_snap = NULL;
 	memset(qmblk->dq_ugid_info, 0, sizeof(qmblk->dq_ugid_info));
 	INIT_LIST_HEAD(&qmblk->dq_ilink_list);
 

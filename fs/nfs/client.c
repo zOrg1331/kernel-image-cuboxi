@@ -1655,6 +1655,7 @@ struct nfs_server *nfs_clone_server(struct nfs_server *source,
 	struct nfs_server *server;
 	struct nfs_fattr *fattr_fsinfo;
 	int error;
+	struct ve_struct *ve;
 
 	dprintk("--> nfs_clone_server(,%llx:%llx,)\n",
 		(unsigned long long) fattr->fsid.major,
@@ -1663,6 +1664,8 @@ struct nfs_server *nfs_clone_server(struct nfs_server *source,
 	server = nfs_alloc_server();
 	if (!server)
 		return ERR_PTR(-ENOMEM);
+
+	ve = set_exec_env(source->nfs_client->owner_env);
 
 	error = -ENOMEM;
 	fattr_fsinfo = nfs_alloc_fattr();
@@ -1709,12 +1712,14 @@ struct nfs_server *nfs_clone_server(struct nfs_server *source,
 
 	nfs_free_fattr(fattr_fsinfo);
 	dprintk("<-- nfs_clone_server() = %p\n", server);
+	(void)set_exec_env(ve);
 	return server;
 
 out_free_server:
 	nfs_free_fattr(fattr_fsinfo);
 	nfs_free_server(server);
 	dprintk("<-- nfs_clone_server() = error %d\n", error);
+	(void)set_exec_env(ve);
 	return ERR_PTR(error);
 }
 
