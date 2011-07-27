@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 3.0.0
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -76,7 +76,7 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.4.12-alt1
+Requires: bootloader-utils >= 0.4.13-alt1
 Requires: module-init-tools >= 3.1
 Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
@@ -569,6 +569,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Wed Jul 27 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.0-alt2
+- dependence on bootloader-utils 0.4.13 added
+
 * Fri Jul 22 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.0-alt1
 - 3.0.0
 
