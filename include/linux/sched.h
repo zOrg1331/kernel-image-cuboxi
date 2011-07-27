@@ -2104,6 +2104,7 @@ extern unsigned int sysctl_timer_migration;
 extern int sysctl_sched_cpulimit_scale_cpufreq;
 extern int sysctl_sched_cpulimit_thresh;
 extern int sysctl_sched_cpulimit_update_iter;
+extern int sysctl_sched_cpulimit_nr_balance;
 extern int sysctl_sched_cpulimit_credit_charge;
 extern int sysctl_sched_cpulimit_credit_max;
 
