@@ -57,7 +57,7 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
-Provides: kernel-module-ipset-%flavour
+Provides: kernel-modules-ipset-%flavour
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
