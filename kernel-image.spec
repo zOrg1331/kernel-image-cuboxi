@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
-Version: 2.6.39
-Release: alt3.1
+Version: 3.0.0
+Release: alt1
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -615,6 +615,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Jul 28 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.0-alt1
+- Update to 3.0.0
+- Update aufs to latest
+- Enable ipset in kernel
+
 * Mon Jul 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.1
 - Pack alsa into kernel-image
 - Move two modules with deps on staging into staging
