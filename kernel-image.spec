@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt3.1
+Release: alt3.2
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -615,6 +615,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Aug 01 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.2
+- Fix broken alsa dependence
+
 * Mon Jul 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.1
 - Pack alsa into kernel-image
 - Move two modules with deps on staging into staging
