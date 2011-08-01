@@ -83,6 +83,7 @@ Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: mkinitrd >= 1:2.9.9-alt1
 
+Provides:  kernel-modules-alsa-%flavour = %epoch:%version-%release
 Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
