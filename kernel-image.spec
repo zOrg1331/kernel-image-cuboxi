@@ -1,6 +1,6 @@
 Name:    kernel-image-std-pae
 Version: 2.6.39
-Release: alt3.1
+Release: alt3.2
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -83,6 +83,7 @@ Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: mkinitrd >= 1:2.9.9-alt1
 
+Provides:  kernel-modules-alsa-%flavour = %epoch:%version-%release
 Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
@@ -617,6 +618,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Aug 01 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.2
+- Fix broken alsa dependence
+
 * Mon Jul 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.1
 - Pack alsa into kernel-image
 - Move two modules with deps on staging into staging
