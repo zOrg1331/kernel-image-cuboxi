@@ -56,8 +56,13 @@ BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
-Provides: kernel-modules-eeepc-%flavour
-Provides: kernel-module-ipset-%flavour
+Provides: kernel-modules-eeepc-%flavour = %version-%release
+Provides: kernel-modules-ipset-%flavour = %version-%release
+Provides: kernel-modules-drbd83-%flavour = %version-%release
+Provides: kernel-modules-alsa-%flavour = %version-%release
+Provides: kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
@@ -77,15 +82,10 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
-Provides: kernel-module-drbd83
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: mkinitrd >= 1:2.9.9-alt1
-
-Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
 
 %description
 This package contains the Linux kernel that is used to boot and run
