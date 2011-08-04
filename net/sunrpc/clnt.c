@@ -650,6 +650,7 @@ struct rpc_task *rpc_run_task(const struct rpc_task_setup *task_setup_data)
 	if (task->tk_status != 0) {
 		int ret = task->tk_status;
 		rpc_put_task(task);
+		(void)set_exec_env(ve);
 		return ERR_PTR(ret);
 	}
 

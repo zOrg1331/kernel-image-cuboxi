@@ -111,7 +111,7 @@ EXPORT_SYMBOL(is_container_init);
 
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
 
-static void free_pidmap(struct upid *upid)
+void free_pidmap(struct upid *upid)
 {
 	int nr = upid->nr;
 	struct pidmap *map = upid->ns->pidmap + nr / BITS_PER_PAGE;
