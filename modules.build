@@ -35,7 +35,7 @@ vhba
 #gnbd
 #gfs
 #network additional features
-# ipset
+ipset
 pf_ring
 xtables-addons
 
