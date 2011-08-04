@@ -1,6 +1,6 @@
 Name:    kernel-image-std-def
 Version: 2.6.39
-Release: alt3.2
+Release: alt4
 Epoch:   1
 
 %define kernel_base_version	%version
@@ -614,6 +614,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Aug 04 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt4
+- Update to 2.6.39.4
+- return of ipset
+
 * Mon Aug 01 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.39-alt3.2
 - Fix broken alsa dependence
 
