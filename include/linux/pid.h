@@ -102,6 +102,7 @@ extern void transfer_pid(struct task_struct *old, struct task_struct *new,
 extern void reattach_pid(struct task_struct *, enum pid_type, struct pid *);
 extern int alloc_pidmap(struct pid_namespace *pid_ns);
 extern int set_pidmap(struct pid_namespace *pid_ns, pid_t pid);
+extern void free_pidmap(struct upid *upid);
 
 extern spinlock_t pidmap_lock;
 

@@ -2595,10 +2595,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	set_opt(sbi->s_mount_opt, BARRIER);
 
 	/*
-	 * enable delayed allocation by default
-	 * Use -o nodelalloc to turn it off
+	 * disable delayed allocation by default
+	 * Use -o delalloc to turn it on
 	 */
-	set_opt(sbi->s_mount_opt, DELALLOC);
+	clear_opt(sbi->s_mount_opt, DELALLOC);
 
 	if (!parse_options((char *) data, sb, &journal_devnum,
 			   &journal_ioprio, &balloon_ino, NULL, 0))

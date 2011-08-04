@@ -204,6 +204,7 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 
 out_enable:
 	local_irq_enable();
+	free_pidmap(pid->numbers + pid->level);
 	put_pid_ns(ns);
 out_free:
 	kmem_cache_free(ns->pid_cachep, pid);
