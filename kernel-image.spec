@@ -1,9 +1,9 @@
 Name: kernel-image-un-def
-Version: 3.0.0
-Release: alt2
+Release: alt1
 epoch:1 
-%define kernel_base_version	%version
-%define kernel_extra_version	%nil
+%define kernel_base_version	3.0
+%define kernel_extra_version	.1
+Version: %kernel_base_version%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
@@ -55,13 +55,11 @@ BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
-Provides: kernel-modules-eeepc-%flavour
-Provides: kernel-module-drbd83-%flavour
-Provides: kernel-module-igb-%flavour
-Provides: kernel-module-ipset-%flavour
-Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
+Provides: kernel-modules-eeepc-%flavour = %version-%release
+Provides: kernel-modules-drbd83-%flavour = %version-%release
+Provides: kernel-modules-igb-%flavour = %version-%release
+Provides: kernel-modules-ipset-%flavour = %version-%release
+Provides:  kernel-modules-alsa = %version-%release
 
 
 %if_enabled docs
@@ -569,6 +567,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt1
+- 3.0.1
+- modules provides fixed
+
 * Wed Jul 27 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.0-alt2
 - dependence on bootloader-utils 0.4.13 added
 
