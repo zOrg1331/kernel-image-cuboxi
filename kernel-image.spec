@@ -2,8 +2,9 @@ Name: kernel-image-un-def
 Release: alt1
 epoch:1 
 %define kernel_base_version	3.0
-%define kernel_extra_version	.1
-Version: %kernel_base_version%kernel_extra_version
+%define kernel_sublevel	.1
+%define kernel_extra_version	%nil
+Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
@@ -27,7 +28,7 @@ Version: %kernel_base_version%kernel_extra_version
 %def_disable oss
 ## Don't edit below this line ##################################
 
-%define kversion	%kernel_base_version%kernel_extra_version
+%define kversion	%kernel_base_version%kernel_sublevel%kernel_extra_version
 %define modules_dir	/lib/modules/%kversion-%flavour-%krelease
 
 %define kheaders_dir	%_prefix/include/linux-%kversion-%flavour
