@@ -1,10 +1,10 @@
 Name:    kernel-image-std-def
-Version: 3.0.0
 Release: alt1
-Epoch:   1
-
-%define kernel_base_version	%version
+Epoch:   1 
+%define kernel_base_version	3.0
+%define kernel_sublevel	.1
 %define kernel_extra_version	%nil
+Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
@@ -28,7 +28,7 @@ Epoch:   1
 %def_disable oss
 ## Don't edit below this line ##################################
 
-%define kversion	%kernel_base_version%kernel_extra_version
+%define kversion	%kernel_base_version%kernel_sublevel%kernel_extra_version
 %define modules_dir	/lib/modules/%kversion-%flavour-%krelease
 
 %define kheaders_dir	%_prefix/include/linux-%kversion-%flavour
@@ -615,6 +615,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt1
+- 3.0.1
+- version calculation changed
+
 * Thu Jul 28 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.0-alt1
 - Update to 3.0.0
 - Update aufs to latest
