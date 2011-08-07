@@ -57,7 +57,6 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour = %version-%release
-Provides: kernel-modules-ipset-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
 Provides: kernel-modules-alsa-%flavour = %version-%release
 Provides: kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
@@ -618,6 +617,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt0.M60P.1
 - 3.0.1
 - version calculation changed
+- build for p6 without in-kernel ipset
 
 * Thu Jul 28 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.0-alt1
 - Update to 3.0.0
