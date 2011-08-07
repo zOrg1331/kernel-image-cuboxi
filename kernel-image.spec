@@ -1,5 +1,5 @@
 Name:    kernel-image-std-def
-Release: alt1
+Release: alt0.M60P.1
 Epoch:   1 
 %define kernel_base_version	3.0
 %define kernel_sublevel	.1
@@ -615,7 +615,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
-* Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt1
+* Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt0.M60P.1
 - 3.0.1
 - version calculation changed
 
