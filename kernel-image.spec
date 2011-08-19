@@ -2,7 +2,7 @@ Name:    kernel-image-std-def
 Release: alt0.M60P.1
 Epoch:   1 
 %define kernel_base_version	3.0
-%define kernel_sublevel	.1
+%define kernel_sublevel	.3
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -57,6 +57,7 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour = %version-%release
+Provides: kernel-modules-igb-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
 Provides: kernel-modules-alsa-%flavour = %version-%release
 Provides: kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
@@ -614,6 +615,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Aug 19 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.3-alt0.M60P.1
+- 3.0.3
+- Provides for kernel-modules-igb added
+
 * Fri Aug 05 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.1-alt0.M60P.1
 - 3.0.1
 - version calculation changed
