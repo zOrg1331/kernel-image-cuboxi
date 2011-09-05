@@ -455,6 +455,13 @@ unsigned int task_vcpu_id(struct task_struct *p)
 #endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+/*
+ * If set, cpu frequency shown to user will be scaled
+ * proportionally to cpu limit.
+ */
+int sysctl_sched_cpulimit_scale_cpufreq = 1;
+
 unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq)
 {
 	unsigned long rate, max_rate;
@@ -1052,11 +1059,6 @@ static inline u64 global_rt_runtime(void)
 
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 
-/*
- * If set, cpu frequency shown to user will be scaled
- * proportionally to cpu limit.
- */
-int sysctl_sched_cpulimit_scale_cpufreq = 1;
 
 /*
  * Threshold of changing per-cpu group rate.
@@ -1283,7 +1285,7 @@ static inline cycles_t ve_scale_idle_time(struct ve_cpu_stats *ve_stat,
 	return cycles;
 }
 
-#define cycles_after(a, b)	((long long)(b) - (long long)(a) < 0)
+#define clock_after(a, b)	((long long)(b) - (long long)(a) < 0)
 
 cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 {
@@ -1298,7 +1300,7 @@ cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 		strt = ve_stat->strt_idle_time;
 		if (strt && nr_iowait_ve(ve) == 0) {
 			cycles = get_cycles();
-			if (cycles_after(cycles, strt))
+			if (clock_after(cycles, strt))
 				ret += ve_scale_idle_time(ve_stat,
 							  cycles - strt);
 		}
@@ -1320,7 +1322,7 @@ cycles_t ve_sched_get_iowait_time(struct ve_struct *ve, int cpu)
 		strt = ve_stat->strt_idle_time;
 		if (strt && nr_iowait_ve(ve) > 0) {
 			cycles = get_cycles();
-			if (cycles_after(cycles, strt))
+			if (clock_after(cycles, strt))
 				ret += ve_scale_idle_time(ve_stat,
 							  cycles - strt);
 		}
@@ -1337,7 +1339,7 @@ static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles
 
 	write_seqcount_begin(&ve_stat->stat_lock);
 	if (ve_stat->strt_idle_time) {
-		if (cycles_after(cycles, ve_stat->strt_idle_time)) {
+		if (clock_after(cycles, ve_stat->strt_idle_time)) {
 			cycles_t idle_time = ve_scale_idle_time(ve_stat,
 					cycles - ve_stat->strt_idle_time);
 			if (nr_iowait_ve(ve) == 0)
@@ -1455,15 +1457,6 @@ static inline void update_ve_task_info(struct task_struct *prev, cycles_t cycles
 {
 }
 #endif
-
-struct task_nrs_struct {
-	long nr_running;
-	long nr_unint;
-	long nr_stopped;
-	long nr_sleeping;
-	long nr_iowait;
-	long long nr_switches;
-} ____cacheline_aligned_in_smp;
 
 unsigned long nr_zombie = 0;	/* protected by tasklist_lock */
 EXPORT_SYMBOL(nr_zombie);
@@ -4637,7 +4630,7 @@ static inline void update_sg_lb_stats(struct sched_domain *sd,
 			}
 
 			if (idle != CPU_NOT_IDLE &&
-			    !rq->cfs.nr_running &&
+			    !rq->cfs.nr_running && rq->nr_running_cfs &&
 			    rq->nr_running == rq->nr_running_cfs)
 				/*
 				 * We're doing idle balance for group. Portray
@@ -5564,6 +5557,39 @@ static int find_cfs_rq_complement(struct cfs_rq *this_cfs_rq,
 	struct task_group *tg = this_cfs_rq->tg;
 	int i, complement = -1;
 	unsigned long diff, min_diff = ~0UL;
+	unsigned long rate_defect = 0;
+
+	for_each_cpu(i, cpus) {
+		unsigned long rate = tg->cfs_rq[i]->rate;
+
+		if (rate && rate < MAX_RATE) {
+			rate_defect += MAX_RATE - rate;
+			/*
+			 * Optimization: there is no need to calculate the rate
+			 * defect further (see below).
+			 */
+			if (rate_defect >= MAX_RATE)
+				break;
+		}
+	}
+
+	/*
+	 * If rate_defect < MAX_RATE, moving all tasks from any cfs_rq of the
+	 * task group in question to any other will lead to an excess of cpu
+	 * rate on the target cfs_rq. If the rate of the source cfs_rq is RS,
+	 * and the rate of the target cfs_rq is RT, the excess is equal to
+	 *
+	 * RT + RS - MAX_RATE = MAX_RATE - (MAX_RATE - RS) - (MAX_RATE - RT)
+	 *
+	 * that is greater than the rate defect left after the move. As a
+	 * result, after the move the excess will be scattered not only among
+	 * cpus executing tasks of the task group but also among other cpus of
+	 * the given range (see spread_sd_rate()). We have to avoid this because
+	 * otherwise the load balancer would be able to move the tasks back to
+	 * the source cfs_rq discarding work done by the cpulimit balancer.
+	 */
+	if (rate_defect < MAX_RATE)
+		return -1;
 
 	for_each_cpu(i, cpus) {
 		struct cfs_rq *cfs_rq = tg->cfs_rq[i];
@@ -5603,6 +5629,7 @@ cpulimit_balance_tg(struct task_group *tg, int this_cpu, struct rq *this_rq,
 	struct cfs_rq *this_cfs_rq = tg->cfs_rq[this_cpu];
 	struct task_struct *p, *tmp;
 	struct migration_req *req;
+	int req_done;
 	unsigned long flags;
 	int ld_moved = 0, wake_up_migration_thread = 0;
 
@@ -5623,7 +5650,8 @@ cpulimit_balance_tg(struct task_group *tg, int this_cpu, struct rq *this_rq,
 	    *nr_migrate < target_cfs_rq->nr_tasks_running)
 		return 0;
 
-	req = &per_cpu(cpulimit_balance_migration_req, this_cpu);
+	req = &__get_cpu_var(cpulimit_balance_migration_req);
+	req_done = completion_done(&req->done);
 
 	local_irq_save(flags);
 	double_rq_lock(this_rq, target_rq);
@@ -5634,7 +5662,7 @@ cpulimit_balance_tg(struct task_group *tg, int this_cpu, struct rq *this_rq,
 			pull_task(target_rq, p, this_rq, this_cpu);
 			--*nr_migrate;
 			ld_moved = 1;
-		} else if (completion_done(&req->done)) {
+		} else if (req_done) {
 			INIT_COMPLETION(req->done);
 			req->task = p;
 			req->dest_cpu = this_cpu;

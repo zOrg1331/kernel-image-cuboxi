@@ -320,7 +320,7 @@ static int do_rst_aio(struct cpt_aio_ctx_image *aimg, loff_t pos, cpt_context_t 
 	init_waitqueue_head(&aio_ctx->wait);
 	INIT_LIST_HEAD(&aio_ctx->active_reqs);
 	INIT_LIST_HEAD(&aio_ctx->run_list);
-	INIT_WORK(&aio_ctx->wq.work, aio_kick_handler);
+	INIT_DELAYED_WORK(&aio_ctx->wq, aio_kick_handler);
 
 	spin_lock(&aio_nr_lock);
 	aio_nr += aio_ctx->max_reqs;
@@ -392,7 +392,11 @@ static int verify_create_anonvma(struct mm_struct *mm,
 	if (!vma->anon_vma) {
 		if (avma) {
 			vma->anon_vma = avma;
-			anon_vma_link(vma);
+			if (anon_vma_link(vma)) {
+				vma->anon_vma = NULL;
+				up_read(&mm->mmap_sem);
+				return -ENOMEM;
+			}
 		} else {
 			int err;
 
@@ -654,7 +658,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 				struct anon_vma *src_anon;
 				cpt_object_t *mobj;
 
-				if (!vmai->cpt_anonvmaid) {
+				if (!vmai->cpt_anonvmaid || !vmai->cpt_anonvma) {
 					err = -EINVAL;
 					eprintk_ctx("CPT_OBJ_COPYPAGES in !anonvma\n");
 					goto out;

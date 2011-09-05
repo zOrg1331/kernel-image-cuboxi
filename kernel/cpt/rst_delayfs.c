@@ -58,7 +58,6 @@ struct delay_sb_info {
 
 	struct unix_bind_info *bi_list;
 
-	int block_intr;
 	unsigned long delay_tmo;
 	void (*handle_mount_failure)(struct delay_sb_info *si);
 	void (*restore_mount_params)(struct delay_sb_info *si);
@@ -397,7 +396,7 @@ static int delayfs_restart(void)
 static int delayfs_wait_mnt(struct super_block *sb)
 {
 	struct delay_sb_info *si = sb->s_fs_info;
-	int res;
+	long res;
 
 	if (si->state == SB_INITIAL) {
 		WARN_ON(1);
@@ -411,17 +410,13 @@ static int delayfs_wait_mnt(struct super_block *sb)
 	if (debug_level > 3)
 		dump_stack();
 
-	if (si->block_intr)
-		res = wait_event_timeout(si->blocked_tasks, 
+	res = wait_event_interruptible_timeout(si->blocked_tasks,
 						si->state >= SB_FINISHED,
 						si->delay_tmo);
-	else
-		res = wait_event_interruptible_timeout(si->blocked_tasks,
-						si->state >= SB_FINISHED,
-						si->delay_tmo);
-
 	if (!res)
 		return -EIO;
+	if (res < 0)
+		return -EINTR;
 
 	delay_switch_current(sb);
 
@@ -434,7 +429,7 @@ static int delayfs_wait_file(struct file *fake)
 {
 	struct delay_sb_info *si = fake->f_dentry->d_sb->s_fs_info;
 	struct file **real = (struct file **)&fake->f_dentry->d_fsdata;
-	int res;
+	long res;
 
 	if (si->state == SB_INITIAL) {
 		WARN_ON(1);
@@ -446,15 +441,12 @@ static int delayfs_wait_file(struct file *fake)
 	if (debug_level > 3)
 		dump_stack();
 
-	if (si->block_intr)
-		res = wait_event_timeout(si->blocked_tasks, si->real,
-							si->delay_tmo);
-	else
-		res = wait_event_interruptible_timeout(si->blocked_tasks, si->real,
-							si->delay_tmo);
-
+	res = wait_event_interruptible_timeout(si->blocked_tasks,
+				si->real, si->delay_tmo);
 	if (!res)
 		return -EIO;
+	if (res < 0)
+		return -EINTR;
 
 	if (!*real) {
 		if (delayfs_preopen(fake, si))
@@ -882,7 +874,6 @@ static void delayfs_prepare_for_remount_loop(struct delay_sb_info *si)
 		si->delay_tmo = (si->nfs_mnt_soft ?
 				(si->nfs_delay_tmo * si->nfs_mnt_retrans * HZ) :
 				MAX_SCHEDULE_TIMEOUT);
-		si->block_intr = (mount_data->flags & NFS_MOUNT_INTR) ? 0 : 1;
 		si->handle_mount_failure = delayfs_nfs_handle_mount_failure;
 		si->restore_mount_params = delayfs_nfs_restore_mount_params;
 		/*
@@ -892,7 +883,6 @@ static void delayfs_prepare_for_remount_loop(struct delay_sb_info *si)
 		mount_data->timeo = 1;
 		mount_data->retrans = 1;
 	} else {
-		si->block_intr = 0;
 		si->delay_tmo = MAX_SCHEDULE_TIMEOUT;
 		si->handle_mount_failure = NULL;
 		si->restore_mount_params = NULL;
@@ -1106,6 +1096,7 @@ static int rst_remount_delayfs(struct vfsmount *mnt)
 	D("prnt: %p(%s)", mnt->mnt_parent, mnt->mnt_parent->mnt_sb->s_type->name);
 
 	si->real = mntget(real_mnt);
+	real_mnt->mnt_flags = mnt->mnt_flags & MNT_BEHAVIOR_FLAGS;
 
 	replace_mount(real_mnt, mnt);
 

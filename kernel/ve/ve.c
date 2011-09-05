@@ -36,6 +36,7 @@
 #include <linux/ve_proto.h>
 #include <linux/devpts_fs.h>
 #include <linux/user_namespace.h>
+#include <linux/init_task.h>
 
 #include <linux/vzcalluser.h>
 
@@ -90,7 +91,8 @@ struct ve_struct ve0 = {
 #else
 					2,
 #endif
-	.devices		= LIST_HEAD_INIT(ve0.devices)
+	.devices		= LIST_HEAD_INIT(ve0.devices),
+	.init_cred		= &init_cred,
 };
 
 EXPORT_SYMBOL(ve0);
@@ -142,6 +144,7 @@ void init_ve0(void)
 	ve->cpu_stats = &per_cpu_var(ve0_cpustats);
 	ve->sched_lat_ve.cur = &per_cpu_var(ve0_lat_stats);
 	list_add(&ve->ve_list, &ve_list_head);
+	INIT_LIST_HEAD(&ve->_kthread_create_list);
 }
 
 void ve_cleanup_schedule(struct ve_struct *ve)

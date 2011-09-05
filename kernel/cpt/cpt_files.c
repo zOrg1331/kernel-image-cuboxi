@@ -43,6 +43,8 @@
 #include <linux/eventpoll.h>
 #include <linux/splice.h>
 #include <linux/tty.h>
+#include <linux/timerfd.h>
+#include <linux/cgroup.h>
 
 #include <linux/nfs_mount.h>
 #include <linux/nfs_fs.h>
@@ -71,6 +73,12 @@ static inline int is_signalfd_file(struct file *file)
 {
 	/* no other users of it yet */
 	return file->f_op == &signalfd_fops;
+}
+
+static inline int is_timerfd_file(struct file *file)
+{
+	/* no other users of it yet */
+	return file->f_op == &timerfd_fops;
 }
 
 void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
@@ -564,6 +572,36 @@ static int chrdev_is_tty(int major)
 	    major == TTYAUX_MAJOR);
 }
 
+static int dump_content_timerfd(struct file *file, struct cpt_context *ctx)
+{
+	struct cpt_timerfd_image o;
+	loff_t saved_pos;
+	struct timerfd_ctx *timerfd_ctx = file->private_data;
+	struct timespec tv;
+
+	cpt_push_object(&saved_pos, ctx);
+
+	o.cpt_next = sizeof(o);
+	o.cpt_object = CPT_OBJ_TIMERFD;
+	o.cpt_hdrlen = sizeof(o);
+	o.cpt_content = CPT_CONTENT_VOID;
+
+	o.cpt_clockid = timerfd_ctx->clockid;
+	o.cpt_ticks = timerfd_ctx->ticks;
+	o.cpt_expired = timerfd_ctx->expired;
+
+	tv = ktime_to_timespec(timerfd_get_remaining(timerfd_ctx));
+	o.cpt_it_value = cpt_timespec_export(&tv);
+	tv = ktime_to_timespec(timerfd_ctx->tintv);
+	o.cpt_it_interval = cpt_timespec_export(&tv);
+
+	ctx->write(&o, sizeof(o), ctx);
+
+	cpt_pop_object(&saved_pos, ctx);
+
+	return 0;
+}
+
 static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ctx)
 {
 	int err = 0;
@@ -684,7 +722,8 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 		struct signalfd_ctx *ctx = file->private_data;
 		v->cpt_lflags |= CPT_DENTRY_SIGNALFD;
 		v->cpt_priv = cpt_sigset_export(&ctx->sigmask);
-	}
+	} else if (is_timerfd_file(file))
+		v->cpt_lflags |= CPT_DENTRY_TIMERFD;
 
 	v->cpt_vfsmount = mntobj ? mntobj->o_pos : CPT_NULL;
 
@@ -700,6 +739,9 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 				file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_VEFS)
 			vefs_track_notify_hook(file->f_dentry, 1);
 	}
+
+	if (is_timerfd_file(file))
+		dump_content_timerfd(file, ctx);
 
 	if (file->f_dentry->d_inode->i_flock)
 		err = cpt_dump_flock(file, ctx);
@@ -1947,6 +1989,11 @@ static int loopy_root(struct vfsmount *mnt)
 	return 0;
 }
 
+static int bindmount_root(struct vfsmount *mnt)
+{
+	return mnt->mnt_root != mnt->mnt_sb->s_root;
+}
+
 static cpt_object_t *cpt_lookup_bind_source(struct vfsmount *mnt,
 		cpt_context_t *ctx)
 {
@@ -1977,6 +2024,7 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 	char *path_buf, *path;
 	struct path p;
 	cpt_object_t *obj, *bind_obj = NULL;
+	int is_cgroup;
 
 	if (is_autofs_mount(mnt->mnt_parent))
 		return 0;
@@ -2009,12 +2057,22 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 	v.cpt_content = CPT_CONTENT_ARRAY;
 
 	v.cpt_mntflags = mnt->mnt_flags;
+	v.cpt_mnt_bind = CPT_NULL;
+
+	is_cgroup = !strcmp(mnt->mnt_sb->s_type->name, "cgroup");
+
 	if (slab_ub(mnt) != get_exec_ub()) {
 		v.cpt_mntflags |= CPT_MNT_EXT;
 	} else if (cpt_need_delayfs(mnt)) {
 		v.cpt_mntflags |= CPT_MNT_DELAYFS;
 		obj->o_flags |= CPT_VFSMOUNT_DELAYFS;
-	} else if (mnt->mnt_root != mnt->mnt_sb->s_root || loopy_root(mnt)) {
+	} else if (is_cgroup) {
+		v.cpt_mnt_bind = cpt_add_cgroup(mnt, ctx);
+		if (v.cpt_mnt_bind == CPT_NOINDEX) {
+			err = -ENOENT;
+			goto out_err;
+		}
+	} else if (loopy_root(mnt) || (bindmount_root(mnt))) {
 		v.cpt_mntflags |= CPT_MNT_BIND;
 		bind_obj = cpt_lookup_bind_source(mnt, ctx);
 		if (!bind_obj) {
@@ -2022,10 +2080,9 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 			eprintk_ctx("bind mount source not found: %s\n", path);
 			goto out_err;
 		}
+		v.cpt_mnt_bind = bind_obj->o_pos;
 	}
-
 	v.cpt_flags = mnt->mnt_sb->s_flags;
-	v.cpt_mnt_bind = bind_obj ? bind_obj->o_pos : CPT_NULL;
 
 	ctx->write(&v, sizeof(v), ctx);
 

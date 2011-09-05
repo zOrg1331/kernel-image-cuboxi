@@ -212,7 +212,9 @@ struct user_beancounter
 	atomic_long_t		wb_requests;
 	atomic_long_t		wb_sectors;
 
+#ifdef CONFIG_BC_RSS_ACCOUNTING
 	struct gang_set		gang_set;
+#endif
 
 	/* reclaim rate-limit */
 	spinlock_t		rl_lock;

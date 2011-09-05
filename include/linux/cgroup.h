@@ -37,6 +37,7 @@ extern void cgroup_exit(struct task_struct *p, int run_callbacks);
 extern int cgroupstats_build(struct cgroupstats *stats,
 				struct dentry *dentry);
 
+extern struct file_system_type cgroup_fs_type;
 extern const struct file_operations proc_cgroup_operations;
 
 /* Define the enumeration of all cgroup subsystems */
@@ -207,6 +208,10 @@ struct cgroup {
 
 	struct cgroupfs_root *root;
 	struct cgroup *top_cgroup;
+
+	/* The path to use for release notifications. */
+	char *release_agent;
+	struct workqueue_struct *khelper_wq;
 
 	/*
 	 * List of cg_cgroup_links pointing at css_sets with
@@ -602,6 +607,13 @@ struct cgroup *cgroup_kernel_open(struct cgroup *parent,
 int cgroup_kernel_remove(struct cgroup *parent, char *name);
 int cgroup_kernel_attach(struct cgroup *cgrp, struct task_struct *tsk);
 void cgroup_kernel_close(struct cgroup *cgrp);
+int cpt_collect_cgroups(struct vfsmount *mnt,
+			int (*cb)(struct cgroup *cgrp, void *arg), void *arg);
+
+static inline void __cgroup_kernel_open(struct cgroup *cgrp)
+{
+	atomic_inc(&cgrp->count);
+}
 
 #else /* !CONFIG_CGROUPS */
 

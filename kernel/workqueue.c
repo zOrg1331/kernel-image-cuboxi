@@ -792,14 +792,14 @@ init_cpu_workqueue(struct workqueue_struct *wq, int cpu)
 	return cwq;
 }
 
-static int create_workqueue_thread(struct cpu_workqueue_struct *cwq, int cpu)
+static int create_workqueue_thread(struct cpu_workqueue_struct *cwq, int cpu, struct ve_struct *ve)
 {
 	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
 	struct workqueue_struct *wq = cwq->wq;
 	const char *fmt = is_wq_single_threaded(wq) ? "%s" : "%s/%d";
 	struct task_struct *p;
 
-	p = kthread_create(worker_thread, cwq, fmt, wq->name, cpu);
+	p = kthread_create_ve(ve, worker_thread, cwq, fmt, wq->name, cpu);
 	/*
 	 * Nobody can add the work_struct to this cwq,
 	 *	if (caller is __create_workqueue)
@@ -878,7 +878,7 @@ struct workqueue_struct *__create_workqueue_key(const char *name,
 
 	if (singlethread) {
 		cwq = init_cpu_workqueue(wq, singlethread_cpu);
-		err = create_workqueue_thread(cwq, singlethread_cpu);
+		err = create_workqueue_thread(cwq, singlethread_cpu, env);
 		start_workqueue_thread(cwq, -1);
 	} else {
 		cpu_maps_update_begin();
@@ -901,7 +901,7 @@ struct workqueue_struct *__create_workqueue_key(const char *name,
 			cwq = init_cpu_workqueue(wq, cpu);
 			if (err || !cpu_online(cpu))
 				continue;
-			err = create_workqueue_thread(cwq, cpu);
+			err = create_workqueue_thread(cwq, cpu, env);
 			start_workqueue_thread(cwq, cpu);
 		}
 		cpu_maps_update_done();
@@ -993,7 +993,7 @@ undo:
 
 		switch (action) {
 		case CPU_UP_PREPARE:
-			if (!create_workqueue_thread(cwq, cpu))
+			if (!create_workqueue_thread(cwq, cpu, wq->owner_env))
 				break;
 			printk(KERN_ERR "workqueue [%s] for %i failed\n",
 				wq->name, cpu);

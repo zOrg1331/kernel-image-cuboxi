@@ -370,8 +370,13 @@ extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
 
+#ifdef CONFIG_BC_SWAP_ACCOUNTING
 extern void ub_unuse_swap_page(struct page *);
 extern void ub_unuse_swap(struct user_beancounter *);
+#else
+static inline void ub_unuse_swap_page(struct page *pg) { }
+static inline void ub_unuse_swap(struct user_beancounter *ub)  { }
+#endif
 
 /* linux/mm/thrash.c */
 extern struct mm_struct *swap_token_mm;

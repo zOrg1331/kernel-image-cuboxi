@@ -261,6 +261,8 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 			continue;
 		if (ub_oom_task_skip(ub, p))
 			continue;
+		if (p->flags & PF_FROZEN)
+			continue;
 
 		/*
 		 * This task already has access to memory reserves and is
@@ -357,7 +359,8 @@ static void dump_tasks(const struct mem_cgroup *mem)
 	} while_each_thread_all(g, p);
 }
 
-static void __oom_kill_thread(struct task_struct *p)
+static void __oom_kill_thread(struct task_struct *p,
+		struct oom_control *oom_ctrl)
 {
 	/*
 	 * We give our sacrificial lamb high priority and access to
@@ -370,22 +373,24 @@ static void __oom_kill_thread(struct task_struct *p)
 	force_sig(SIGKILL, p);
 	wake_up_process(p);
 
-	active_oom_ctrl()->kill_counter++;
+	oom_ctrl->kill_counter++;
 }
 
-static void __oom_kill_task(struct task_struct *tsk)
+static void __oom_kill_task(struct task_struct *tsk,
+		struct oom_control *oom_ctrl)
 {
 	struct task_struct *p = tsk;
 
 	do {
-		__oom_kill_thread(p);
+		__oom_kill_thread(p, oom_ctrl);
 		p = next_thread(p);
 	} while (p != tsk);
 }
 
 #define K(x) ((x) << (PAGE_SHIFT-10))
 
-static int oom_kill_task(struct task_struct *p, int verbose)
+static int oom_kill_task(struct task_struct *p,
+		struct oom_control *oom_ctrl, int verbose)
 {
 	unsigned long total_vm, anon_rss, file_rss;
 	struct mm_struct *mm;
@@ -427,10 +432,10 @@ static int oom_kill_task(struct task_struct *p, int verbose)
 	total_vm = mm->total_vm;
 	anon_rss = get_mm_counter(mm, anon_rss);
 	file_rss = get_mm_counter(mm, file_rss);
-	ub_oom_mark_mm(mm);
+	ub_oom_mark_mm(mm, oom_ctrl);
 	task_unlock(p);
 
-	__oom_kill_task(p);
+	__oom_kill_task(p, oom_ctrl);
 
 	if (verbose) {
 		struct ve_struct *ve;
@@ -458,6 +463,7 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			    struct mem_cgroup *mem, struct user_beancounter *ub,
 			    const char *message)
 {
+	struct oom_control *oom_ctrl = ub ? &ub->oom_ctrl : &global_oom_ctrl;
 	struct task_struct *c;
 	int group, child_group;
 
@@ -469,11 +475,11 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		task_lock(current);
 		cpuset_print_task_mems_allowed(current);
 		task_unlock(current);
-		dump_stack();
 		mem_cgroup_print_oom_info(mem, p);
-		if (!ub)
+		if (!ub) {
+			dump_stack();
 			show_mem();
-		else if (__ratelimit(&ub->ub_ratelimit))
+		} else if (__ratelimit(&ub->ub_ratelimit))
 			show_ub_mem(ub);
 		if (sysctl_oom_dump_tasks)
 			dump_tasks(mem);
@@ -484,7 +490,7 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	 * its children or threads, just set TIF_MEMDIE so it can die quickly
 	 */
 	if (p->flags & PF_EXITING)
-		return oom_kill_task(p, 0);
+		return oom_kill_task(p, oom_ctrl, 0);
 
 	printk(KERN_ERR "%s: kill process %d (%s) or a child\n",
 					message, task_pid_nr(p), p->comm);
@@ -501,10 +507,10 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
 			continue;
-		if (!oom_kill_task(c, 1))
+		if (!oom_kill_task(c, oom_ctrl, 1))
 			return 0;
 	}
-	return oom_kill_task(p, 1);
+	return oom_kill_task(p, oom_ctrl, 1);
 }
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
@@ -625,7 +631,7 @@ retry:
 			goto retry;
 
 		read_unlock(&tasklist_lock);
-		ub_oom_unlock();
+		ub_oom_unlock(&global_oom_ctrl);
 		panic("Out of memory and no killable processes...\n");
 	}
 
@@ -651,7 +657,7 @@ void pagefault_out_of_memory(void)
 	if (sysctl_panic_on_oom)
 		panic("out of memory from page fault. panic_on_oom is selected.\n");
 
-	if (ub_oom_lock())
+	if (ub_oom_lock(&global_oom_ctrl))
 		goto rest_and_return;
 
 	if (printk_ratelimit()) {
@@ -666,7 +672,7 @@ void pagefault_out_of_memory(void)
 	__out_of_memory(0, 0); /* unknown gfp_mask and order */
 	read_unlock(&tasklist_lock);
 
-	ub_oom_unlock();
+	ub_oom_unlock(&global_oom_ctrl);
 
 	/*
 	 * Give "p" a good chance of killing itself before we
@@ -701,7 +707,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 	if (sysctl_panic_on_oom == 2)
 		panic("out of memory. Compulsory panic_on_oom is selected.\n");
 
-	if (ub_oom_lock())
+	if (ub_oom_lock(&global_oom_ctrl))
 		goto out_oom_lock;
 
 	if (printk_ratelimit()) {
@@ -737,7 +743,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 	}
 
 	read_unlock(&tasklist_lock);
-	ub_oom_unlock();
+	ub_oom_unlock(&global_oom_ctrl);
 
 out_oom_lock:
 	/*

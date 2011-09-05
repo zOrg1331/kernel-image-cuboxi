@@ -8,8 +8,18 @@ int rst_undump_ubc(struct cpt_context *ctx);
 
 void cpt_finish_ubc(struct cpt_context *ctx);
 void rst_finish_ubc(struct cpt_context *ctx);
-void copy_one_ubparm(struct ubparm *from, struct ubparm *to, int bc_parm_id);
-void set_one_ubparm_to_max(struct ubparm *ubprm, int bc_parm_id);
+static inline void copy_one_ubparm(struct ubparm *from,
+				   struct ubparm *to,
+				   int bc_parm_id)
+{
+	to[bc_parm_id].barrier = from[bc_parm_id].barrier;
+	to[bc_parm_id].limit = from[bc_parm_id].limit;
+}
+static inline void set_one_ubparm_to_max(struct ubparm *ubprm, int bc_parm_id)
+{
+	ubprm[bc_parm_id].barrier = UB_MAXVALUE;
+	ubprm[bc_parm_id].limit = UB_MAXVALUE;
+}
 #else
 static int inline cpt_dump_ubc(struct cpt_context *ctx)
 { return 0; }

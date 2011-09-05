@@ -14,18 +14,17 @@
 
 void ub_oom_start(struct oom_control *oom_ctrl)
 {
-	current->task_bc.oom_ctrl = oom_ctrl;
 	current->task_bc.oom_generation = oom_ctrl->generation;
 }
 
 /*
  * Must be called under task_lock() held
  */
-void ub_oom_mark_mm(struct mm_struct *mm)
+void ub_oom_mark_mm(struct mm_struct *mm, struct oom_control *oom_ctrl)
 {
 	mm_ub(mm)->ub_parms[UB_OOMGUARPAGES].failcnt++;
 
-	if (active_oom_ctrl() == &global_oom_ctrl)
+	if (oom_ctrl == &global_oom_ctrl)
 		mm->global_oom = 1;
 	else {
 		/*
@@ -61,21 +60,19 @@ static void ub_clear_oom(void)
 	rcu_read_unlock();
 }
 
-int ub_oom_lock(void)
+int ub_oom_lock(struct oom_control *oom_ctrl)
 {
 	int timeout;
-	struct oom_control *oom_ctrl = active_oom_ctrl();
 	DEFINE_WAIT(oom_w);
 
-	if (oom_ctrl != &global_oom_ctrl) {
+	if (oom_ctrl != &global_oom_ctrl && global_oom_ctrl.kill_counter) {
 		/*
 		 * Check if global OOM killeris on the way. If so -
 		 * let the senior handle the situation.
 		 */
 		wait_event_killable(global_oom_ctrl.wq,
 					global_oom_ctrl.kill_counter == 0);
-		if (test_thread_flag(TIF_MEMDIE))
-			return -EINVAL;
+		return -EAGAIN;
 	}
 
 	spin_lock(&oom_ctrl->lock);
@@ -86,6 +83,12 @@ int ub_oom_lock(void)
 	while (1) {
 		if (ub_oom_completed(oom_ctrl)) {
 			spin_unlock(&oom_ctrl->lock);
+			/*
+			 * We raced with some other OOM killer and need
+			 * to update generation to be sure, that we can
+			 * call OOM killer on next loop iteration.
+			 */
+			ub_oom_start(oom_ctrl);
 			return -EAGAIN;
 		}
 
@@ -166,9 +169,9 @@ struct user_beancounter *ub_oom_select_worst(void)
 	return ub;
 }
 
-void ub_oom_unlock(void)
+void ub_oom_unlock(struct oom_control *oom_ctrl)
 {
-	spin_unlock(&active_oom_ctrl()->lock);
+	spin_unlock(&oom_ctrl->lock);
 }
 
 static void ub_release_oom_control(struct oom_control *oom_ctrl)
@@ -208,10 +211,9 @@ void ub_oom_mm_dead(struct mm_struct *mm)
 int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 {
 	struct task_struct *p;
-	int res;
+	int res = 0;
 
-	res = ub_oom_lock();
-	if (res)
+	if (ub_oom_lock(&ub->oom_ctrl))
 		goto out;
 
 	read_lock(&tasklist_lock);
@@ -223,7 +225,7 @@ int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 	} while (oom_kill_process(p, gfp_mask, 0, NULL, ub, "Out of memory in UB"));
 
 	read_unlock(&tasklist_lock);
-	ub_oom_unlock();
+	ub_oom_unlock(&ub->oom_ctrl);
 
 	if (!p)
 		res = -ENOMEM;

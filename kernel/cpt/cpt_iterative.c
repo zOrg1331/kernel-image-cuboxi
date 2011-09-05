@@ -211,6 +211,7 @@ iter_one_pud(struct vm_area_struct * vma, pud_t *pud,
 	do {
 		int err;
 		next = pmd_addr_end(addr, end);
+		split_huge_page_pmd(vma->vm_mm, pmd);
 		if (pmd_none_or_clear_bad(pmd))
 			continue;
 		err = iter_one_pmd(vma, pmd, addr, next, iter, ctx);

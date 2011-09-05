@@ -220,6 +220,10 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 #endif
 #ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 	SEQ_printf(m, "  .%-30s: %lu\n", "rate", cfs_rq->rate);
+	SEQ_printf(m, "  .%-30s: %lld.%06ld\n", "credit",
+			SPLIT_NS(cfs_rq->credit));
+	SEQ_printf(m, "  .%-30s: %lld.%06ld\n", "credit_charge_start",
+			SPLIT_NS(cfs_rq->credit_charge_start));
 #endif
 	print_cfs_group_stats(m, cpu, cfs_rq->tg);
 #endif

@@ -80,7 +80,8 @@ int rst_path_lookup(cpt_object_t *mntobj, const char *path,
 	 strcmp(mnt->mnt_sb->s_type->name, "sysfs") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "binfmt_misc") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "ext4") != 0 && \
-	 strcmp(mnt->mnt_sb->s_type->name, "vzfs") != 0)
+	 strcmp(mnt->mnt_sb->s_type->name, "vzfs") != 0 && \
+	 strcmp(mnt->mnt_sb->s_type->name, "cgroup") != 0)
 
 #define is_autofs_mount(mnt) ((mnt)->mnt_sb->s_magic == FSMAGIC_AUTOFS)
 
@@ -102,3 +103,12 @@ struct vfsmount *rst_mount_delayfs(char *type, int flags,
 int rst_freeze_delayfs(cpt_context_t *ctx);
 int rst_init_delayfs_daemon(cpt_context_t *ctx);
 int rst_delay_flock(struct file *, struct cpt_flock_image *, cpt_context_t *);
+
+int cpt_dump_string(const char *s, struct cpt_context *ctx);
+
+int cpt_dump_cgroups(struct cpt_context *ctx);
+int rst_cgroups(struct cpt_context *ctx);
+
+int cpt_add_cgroup(struct vfsmount *mnt, struct cpt_context *ctx);
+int rst_cgroup_task(struct cpt_context * ctx);
+void rst_cgroup_close(struct cpt_context * ctx);

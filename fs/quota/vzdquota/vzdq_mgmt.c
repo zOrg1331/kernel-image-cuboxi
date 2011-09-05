@@ -676,17 +676,12 @@ static int vzquota_destroy(unsigned int quota_id)
  */
 
 static int __vzquota_sync_list(struct list_head *lh,
-		struct vz_quota_master *qmblk,
-		enum writeback_sync_modes sync_mode)
+		struct vz_quota_master *qmblk, int sync)
 {
-	struct writeback_control wbc;
 	LIST_HEAD(list);
 	struct vz_quota_ilink *qlnk;
 	struct inode *inode;
 	int err, ret;
-
-	memset(&wbc, 0, sizeof(wbc));
-	wbc.sync_mode = sync_mode;
 
 	err = ret = 0;
 	while (!list_empty(lh)) {
@@ -705,11 +700,7 @@ static int __vzquota_sync_list(struct list_head *lh,
 			continue;
 
 		inode_qmblk_unlock(qmblk->dq_sb);
-
-		wbc.range_start = 0;
-		wbc.range_end = LONG_MAX;
-		wbc.nr_to_write = LONG_MAX;
-		ret = sync_inode(inode, &wbc);
+		ret = write_inode_now(inode, sync);
 		if (ret)
 			err = ret;
 		iput(inode);
@@ -724,8 +715,8 @@ static int __vzquota_sync_list(struct list_head *lh,
 static int vzquota_sync_list(struct list_head *lh,
 		struct vz_quota_master *qmblk)
 {
-	(void)__vzquota_sync_list(lh, qmblk, WB_SYNC_NONE);
-	return __vzquota_sync_list(lh, qmblk, WB_SYNC_ALL);
+	(void)__vzquota_sync_list(lh, qmblk, 0);
+	return __vzquota_sync_list(lh, qmblk, 1);
 }
 
 static int vzquota_sync_inodes(struct vz_quota_master *qmblk)

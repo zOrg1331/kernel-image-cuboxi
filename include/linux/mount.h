@@ -38,6 +38,10 @@ struct mnt_namespace;
 
 #define MNT_CPT		0x1000000
 
+#define MNT_BEHAVIOR_FLAGS	(MNT_NOSUID | MNT_NODEV | MNT_NOEXEC |		\
+				MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME |	\
+				MNT_READONLY | MNT_STRICTATIME | MNT_SHRINKABLE)
+
 struct vfsmount {
 	struct list_head mnt_hash;
 	struct vfsmount *mnt_parent;	/* fs we are mounted on */

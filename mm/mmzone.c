@@ -129,7 +129,11 @@ static void del_zone_gang(struct zone *zone, struct gang *gang)
 
 	for_each_lru(lru) {
 		BUG_ON(!list_empty(&gang->lru[lru].list));
-		BUG_ON(gang->lru[lru].nr_pages);
+		if (gang->lru[lru].nr_pages) {
+			printk(KERN_EMERG "gang leak:%ld lru:%d gang:%p\n",
+					gang->lru[lru].nr_pages, lru, gang);
+			add_taint(TAINT_CRAP);
+		}
 	}
 
 	spin_lock_irqsave(&zone->gangs_lock, flags);
@@ -193,14 +197,14 @@ void add_mem_gangs(struct gang_set *gs)
 static void move_gang_pages(struct gang *gang, struct gang *dst_gang)
 {
 	enum lru_list lru;
-	int restart;
+	int restart, wait;
 	struct user_beancounter *src_ub = get_gang_ub(gang);
 	struct user_beancounter *dst_ub = get_gang_ub(dst_gang);
 	LIST_HEAD(pages_to_wait);
 	LIST_HEAD(pages_to_free);
 
 again:
-	restart = 0;
+	restart = wait = 0;
 	for_each_lru(lru) {
 		struct page *page, *next;
 		LIST_HEAD(list);
@@ -209,7 +213,7 @@ again:
 
 		spin_lock_irq(&gang->lru_lock);
 		list_splice(&gang->lru[lru].list, &list);
-		list_for_each_entry_reverse(page, &list, lru) {
+		list_for_each_entry_safe_reverse(page, next, &list, lru) {
 			int numpages = hpage_nr_pages(page);
 
 			if (batch >= MAX_MOVE_BATCH) {
@@ -217,10 +221,8 @@ again:
 				break;
 			}
 			if (!get_page_unless_zero(page)) {
-				next = list_entry(page->lru.prev,
-						struct page, lru);
 				list_move(&page->lru, &pages_to_wait);
-				page = next;
+				restart = wait = 1;
 				continue;
 			}
 			batch++;
@@ -229,12 +231,14 @@ again:
 			set_page_gang(page, dst_gang);
 		}
 		list_cut_position(&gang->lru[lru].list, &list, &page->lru);
+		list_splice_init(&pages_to_wait, &gang->lru[lru].list);
 		gang->lru[lru].nr_pages -= nr_pages;
 		spin_unlock_irq(&gang->lru_lock);
 
 		if (!nr_pages)
 			continue;
 
+#ifdef CONFIG_BC_SWAP_ACCOUNTING
 		if (!is_file_lru(lru)) {
 			list_for_each_entry(page, &list, lru) {
 				if (PageSwapCache(page)) {
@@ -244,6 +248,7 @@ again:
 				}
 			}
 		}
+#endif
 
 		uncharge_beancounter_fast(src_ub, UB_PHYSPAGES, nr_pages);
 		charge_beancounter_fast(dst_ub, UB_PHYSPAGES, nr_pages, UB_FORCE);
@@ -271,12 +276,10 @@ again:
 				free_hot_page(page);
 		}
 	}
+	if (wait)
+		schedule_timeout_uninterruptible(1);
 	if (restart)
 		goto again;
-
-	/* wait for page releasing */
-	while (!list_empty(&pages_to_wait))
-		schedule_timeout_uninterruptible(1);
 }
 
 void del_mem_gangs(struct gang_set *gs)
@@ -386,6 +389,8 @@ struct gang *init_gang_array[MAX_NUMNODES];
 
 #ifndef CONFIG_BC_RSS_ACCOUNTING
 struct gang_set init_gang_set = {
+#ifdef CONFIG_MEMORY_GANGS
 	.gangs = init_gang_array,
-}
+#endif
+};
 #endif

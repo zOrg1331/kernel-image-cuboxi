@@ -1510,6 +1510,8 @@ static void ve_exit_nfsctl(void *data)
 	if (d == NULL)
 		return;
 
+	wait_for_completion(&nfsd_exited);
+
 	nfsd_stat_shutdown();
 
 	unregister_ve_fs_type(d->nfsd_fs, NULL);

@@ -14,6 +14,8 @@
 #include <linux/err.h>
 #include <linux/acct.h>
 #include <linux/module.h>
+#include <linux/ve_proto.h>
+#include <linux/kthread.h>
 
 #include <bc/kmem.h>
 
@@ -147,7 +149,7 @@ void free_pid_ns(struct kref *kref)
 static int __pid_ns_attach_task(struct pid_namespace *ns,
 		struct task_struct *tsk, pid_t nr)
 {
-	struct pid *pid;
+	struct pid *pid, *old_pid;
 	enum pid_type type;
 	unsigned long old_size, new_size;
 
@@ -163,18 +165,18 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	if (nr < 0)
 		goto out_free;
 
-	memcpy(pid, task_pid(tsk),
+	old_pid = task_pid(tsk);
+	memcpy(pid, old_pid,
 		sizeof(struct pid) + (ns->level - 1) * sizeof(struct upid));
-	get_pid_ns(ns);
-	pid->level++;
-	BUG_ON(pid->level != ns->level);
+
+	pid->level = ns->level;
 	pid->numbers[pid->level].nr = nr;
-	pid->numbers[pid->level].ns = ns;
+	pid->numbers[pid->level].ns = get_pid_ns(ns);
 	atomic_set(&pid->count, 1);
 	for (type = 0; type < PIDTYPE_MAX; ++type)
 		INIT_HLIST_HEAD(&pid->tasks[type]);
 
-	old_size = kmem_cache_objuse(pid->numbers[pid->level - 1].ns->pid_cachep);
+	old_size = kmem_cache_objuse(old_pid->numbers[old_pid->level].ns->pid_cachep);
 	new_size = kmem_cache_objuse(pid->numbers[pid->level].ns->pid_cachep);
 	/*
 	 * Depending on sizeof(struct foo), cache flags (redzoning, etc)
@@ -184,21 +186,20 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	if (new_size > old_size) {
 		if (ub_kmem_charge(pid->ub, new_size - old_size, UB_HARD) < 0)
 			goto out_enable;
-	} else
+	} else if (new_size < old_size)
 		ub_kmem_uncharge(pid->ub, old_size - new_size);
 
 	write_lock_irq(&tasklist_lock);
 
+	change_pid(tsk, PIDTYPE_SID, pid);
+	change_pid(tsk, PIDTYPE_PGID, pid);
+
 	spin_lock(&pidmap_lock);
-	reattach_pid(tsk, PIDTYPE_SID, pid);
-	reattach_pid(tsk, PIDTYPE_PGID, pid);
 	tsk->signal->leader_pid = pid;
+	put_pid(current->signal->tty_old_pgrp);
 	current->signal->tty_old_pgrp = NULL;
 
-	reattach_pid(tsk, PIDTYPE_PID, pid);
-	spin_unlock(&pidmap_lock);
-
-	write_unlock_irq(&tasklist_lock);
+	reattach_pid(tsk, pid);
 
 	return 0;
 
@@ -242,8 +243,9 @@ static noinline void show_lost_task(struct task_struct *p)
 
 static void zap_ve_processes(struct ve_struct *env)
 {
+	int kthreads = 0;
 	/* wait for all init childs exit */
-	while (env->pcounter > 1) {
+	while (env->pcounter > 1 + kthreads) {
 		struct task_struct *g, *p;
 		long delay = 1;
 
@@ -261,7 +263,12 @@ static void zap_ve_processes(struct ve_struct *env)
 		schedule_timeout(delay);
 		delay = (delay < HZ) ? (delay << 1) : HZ;
 		read_lock(&tasklist_lock);
+		kthreads = 0;
 		do_each_thread_ve(g, p) {
+			if (p->flags & PF_KTHREAD) {
+				kthreads++;
+				continue;
+			}
 			if (p != current) {
 				/*
 				 * by that time no processes other then entered
@@ -276,6 +283,11 @@ static void zap_ve_processes(struct ve_struct *env)
 		} while_each_thread_ve(g, p);
 		read_unlock(&tasklist_lock);
 	}
+
+	ve_hook_iterate_fini(VE_SS_CHAIN, get_exec_env());
+
+	destroy_workqueue(env->khelper_wq);
+	kthreadd_stop(env);
 }
 #endif
 

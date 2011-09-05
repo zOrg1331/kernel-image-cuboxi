@@ -166,6 +166,7 @@ static void free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
 	pmd_clear(pmd);
 	pte_free_tlb(tlb, token, addr);
 	tlb->mm->nr_ptes--;
+	tlb->ptes_freed++;
 	ub_page_table_uncharge(tlb->mm);
 }
 
@@ -768,7 +769,10 @@ static inline int copy_pmd_range(struct mm_struct *dst_mm, struct mm_struct *src
 		next = pmd_addr_end(addr, end);
 		if (pmd_trans_huge(*src_pmd)) {
 			int err;
-			VM_BUG_ON(next-addr != HPAGE_PMD_SIZE);
+			if (next-addr != HPAGE_PMD_SIZE) {
+				split_huge_page_pmd(src_mm, src_pmd);
+				goto split_fallthrough;
+			}
 			err = copy_huge_pmd(dst_mm, src_mm,
 					    dst_pmd, src_pmd, addr, vma);
 			if (err == -ENOMEM)
@@ -777,6 +781,7 @@ static inline int copy_pmd_range(struct mm_struct *dst_mm, struct mm_struct *src
 				continue;
 			/* fall through */
 		}
+split_fallthrough:
 		if (pmd_none_or_clear_bad(src_pmd))
 			continue;
 		if (copy_pte_range(dst_mm, src_mm, dst_pmd, src_pmd,
@@ -2820,7 +2825,7 @@ out:
 
 	if (gang_swap) {
 		ub_percpu_inc(mm->mm_ub, vswapin);
-		gang_rate_limit(get_mm_gang(mm), 1, 1);
+		gang_rate_limit(get_mm_gang(mm), get_exec_ub() == mm_ub(mm), 1);
 	}
 
 	return ret;

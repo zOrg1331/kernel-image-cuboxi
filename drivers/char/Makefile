@@ -114,8 +114,6 @@ js-rtc-y = rtc.o
 
 obj-$(CONFIG_CRASH)		+= crash.o
 
-obj-$(CONFIG_TTY_NULL)		+= tty_null.o
-
 # Files generated that shall be removed upon make clean
 clean-files := consolemap_deftbl.c defkeymap.c
 

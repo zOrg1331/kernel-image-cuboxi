@@ -232,7 +232,6 @@ struct ve_struct {
 	cycles_t 		start_cycles;
 	unsigned long		avenrun[3];	/* loadavg data */
 
-	cycles_t 		cpu_used_ve;
 	struct kstat_lat_pcpu_struct	sched_lat_ve;
 
 #ifdef CONFIG_INET
@@ -307,6 +306,9 @@ struct ve_struct {
 #if defined(CONFIG_HOTPLUG)
 	u64 _uevent_seqnum;
 #endif
+	struct list_head	_kthread_create_list;
+	struct task_struct	*_kthreadd_task;
+	struct workqueue_struct	*khelper_wq;
 };
 
 #define VE_MEMINFO_DEFAULT      1       /* default behaviour */

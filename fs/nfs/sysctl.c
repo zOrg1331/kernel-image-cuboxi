@@ -63,6 +63,14 @@ static ctl_table nfs_cb_sysctls[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "nfs4_ct_enable",
+		.data		= &nfs_enable_v4_in_ct,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 #if defined CONFIG_VZ_QUOTA || defined CONFIG_VZ_QUOTA_MODULE
 	{
 		.ctl_name	= CTL_UNNUMBERED,

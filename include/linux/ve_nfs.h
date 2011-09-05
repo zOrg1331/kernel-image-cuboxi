@@ -63,6 +63,7 @@ struct ve_nfsd_data {
 	struct nfsd_stats stats;
 	struct svc_stat *svc_stat;
 	char raparm_mem[VE_RAPARM_SIZE];
+	struct completion exited;
 };
 
 struct ve_rpc_data {

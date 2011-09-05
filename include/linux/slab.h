@@ -368,5 +368,6 @@ static inline void *kzalloc_node(size_t size, gfp_t flags, int node)
 }
 
 void __init kmem_cache_init_late(void);
+void slab_obj_walk(struct kmem_cache *c, void (*f)(void *));
 
 #endif	/* _LINUX_SLAB_H */

@@ -254,6 +254,8 @@ extern void __exit unregister_nfs_fs(void);
 extern void nfs_sb_active(struct super_block *sb);
 extern void nfs_sb_deactive(struct super_block *sb);
 
+extern int nfs_enable_v4_in_ct;
+
 /* namespace.c */
 extern char *nfs_path(const char *base,
 		      const struct dentry *droot,

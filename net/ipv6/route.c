@@ -2758,6 +2758,26 @@ static struct notifier_block ip6_route_dev_notifier = {
 	.priority = 0,
 };
 
+static void ip6_rt_dump_dst(void *o)
+{
+	struct rt6_info *r = (struct rt6_info *)o;
+
+	if (r->u.dst.flags & DST_FREE)
+		return;
+
+	printk("=== %p\n", o);
+	dst_dump_one(&r->u.dst);
+	printk("\tidev %p flags %x ref %d prot %d\n",
+			r->rt6i_dev, r->rt6i_flags, atomic_read(&r->rt6i_ref),
+			(int)r->rt6i_protocol);
+}
+
+static void _ip6_rt_dump_dsts(void)
+{
+	printk("IPv6 dst cache:\n");
+	slab_obj_walk(ip6_dst_ops_template.kmem_cachep, ip6_rt_dump_dst);
+}
+
 int __init ip6_route_init(void)
 {
 	int ret;
@@ -2808,6 +2828,7 @@ int __init ip6_route_init(void)
 	if (ret)
 		goto fib6_rules_init;
 
+	ip6_rt_dump_dsts = _ip6_rt_dump_dsts;
 out:
 	return ret;
 

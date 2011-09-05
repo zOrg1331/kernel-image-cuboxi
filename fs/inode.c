@@ -1541,9 +1541,18 @@ EXPORT_SYMBOL(touch_atime);
 
 void file_update_time(struct file *file)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file->f_mapping->host;
 	struct timespec now;
 	enum { S_MTIME = 1, S_CTIME = 2, S_VERSION = 4 } sync_it = 0;
+
+	/*
+	 * Most files has following invariant
+	 * (f_path.dentry->d_inode ==  f_mapping->host)
+	 * but stacked filestems usually store real inode in f_mapped->host,
+	 * and blkdev store real inode f_path.dentry->d_inode
+	 */
+	if (S_ISBLK(inode->i_mode))
+		inode = file->f_path.dentry->d_inode;
 
 	/* First try to exhaust all avenues to not sync */
 	if (IS_NOCMTIME(inode))

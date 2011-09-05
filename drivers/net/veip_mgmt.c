@@ -140,6 +140,7 @@ out_source:
 void veip_cleanup(void)
 {
 	int i;
+	struct veip_struct *veip;
 
 	spin_lock(&veip_lock);
 	for (i = 0; i < VEIP_HASH_SZ; i++)
@@ -152,6 +153,12 @@ void veip_cleanup(void)
 			list_del(&entry->ve_list);
 			kfree(entry);
 		}
+
+	/*vzredir may remain some veip-s*/
+	while (!list_empty(&veip_lh)) {
+		veip = list_first_entry(&veip_lh, struct veip_struct, list);
+		veip_put(veip);
+	}
 	spin_unlock(&veip_lock);
 }
 

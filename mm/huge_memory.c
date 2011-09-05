@@ -1417,6 +1417,7 @@ void __split_huge_page_pmd(struct mm_struct *mm, pmd_t *pmd)
 	put_page(page);
 	BUG_ON(pmd_trans_huge(*pmd));
 }
+EXPORT_SYMBOL(__split_huge_page_pmd);
 
 static int __init khugepaged_slab_init(void)
 {

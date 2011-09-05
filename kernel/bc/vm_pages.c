@@ -25,6 +25,8 @@
 #include <bc/proc.h>
 #include <bc/oom_kill.h>
 
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+
 /**
  * Update oomguarpages.held value, it includes:
  *  charged swap-backed pages:	present anonymous pages, swapcache, tmpfs
@@ -35,7 +37,7 @@ void __ub_update_oomguarpages(struct user_beancounter *ub)
 {
 	unsigned long pages[NR_LRU_LISTS];
 
-	gang_page_stat(&ub->gang_set, pages);
+	gang_page_stat(get_ub_gs(ub), pages);
 
 	ub->ub_parms[UB_OOMGUARPAGES].held =
 		pages[LRU_ACTIVE_ANON] +
@@ -45,6 +47,21 @@ void __ub_update_oomguarpages(struct user_beancounter *ub)
 
 	ub_adjust_maxheld(ub, UB_OOMGUARPAGES);
 }
+
+#else
+
+void __ub_update_oomguarpages(struct user_beancounter *ub)
+{
+	ub->ub_parms[UB_OOMGUARPAGES].held =
+		ub->ub_parms[UB_PRIVVMPAGES].held +
+		ub->ub_parms[UB_LOCKEDPAGES].held +
+		ub->ub_parms[UB_PHYSPAGES].held +
+		ub->ub_parms[UB_SWAPPAGES].held;
+
+	ub_adjust_maxheld(ub, UB_OOMGUARPAGES);
+}
+
+#endif
 
 long ub_oomguarpages_left(struct user_beancounter *ub)
 {
@@ -243,66 +260,63 @@ void ub_shmpages_uncharge(struct shmem_inode_info *shi, unsigned long size)
        uncharge_beancounter(ub, UB_SHMPAGES, size);
 }
 
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask)
+{
+	unsigned long progress, flags;
+	int no_swap_left = 0;
+
+	if (test_thread_flag(TIF_MEMDIE))
+		return -ENOMEM;
+
+	progress = try_to_free_gang_pages(get_ub_gs(ub),
+			gfp_mask | __GFP_HIGHMEM);
+	if (progress)
+		return 0;
+
+	if (gfp_mask & __GFP_NOWARN)
+		goto nowarn;
+
+	spin_lock_irqsave(&ub->ub_lock, flags);
+	ub->ub_parms[UB_PHYSPAGES].failcnt++;
+	if (!ub_resource_excess(ub, UB_SWAPPAGES, UB_SOFT)) {
+		ub->ub_parms[UB_SWAPPAGES].failcnt++;
+		no_swap_left = 1;
+	}
+	spin_unlock_irqrestore(&ub->ub_lock, flags);
+
+	if (nr_swap_pages <= 0 && !no_swap_left &&
+			__ratelimit(&ub->ub_ratelimit)) {
+		printk(KERN_INFO "Fatal resource shortage: %s, UB %d."
+				" More physical swap space required.\n",
+				ub_rnames[UB_SWAPPAGES], ub->ub_uid);
+	}
+
+nowarn:
+	if ((gfp_mask & __GFP_NORETRY) || !(gfp_mask & __GFP_WAIT) ||
+			out_of_memory_in_ub(ub, gfp_mask))
+		return -ENOMEM;
+
+	return 0;
+}
+
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 {
-	int ret;
 	if (get_exec_ub() != ub)
 		return 0;
 
 	ub_oom_start(&ub->oom_ctrl);
 
 	do {
-		unsigned long progress, flags;
-		int no_swap_left = 0;
-
-		if (test_thread_flag(TIF_MEMDIE))
-			return -ENOMEM;
-
-		progress = try_to_free_gang_pages(&ub->gang_set,
-				gfp_mask | __GFP_HIGHMEM);
-		if (progress)
-			continue;
-
-		if (gfp_mask & __GFP_NOWARN)
-			goto nowarn;
-
-		spin_lock_irqsave(&ub->ub_lock, flags);
-		ub->ub_parms[UB_PHYSPAGES].failcnt++;
-		if (!ub_resource_excess(ub, UB_SWAPPAGES, UB_SOFT)) {
-			ub->ub_parms[UB_SWAPPAGES].failcnt++;
-			no_swap_left = 1;
-		}
-		spin_unlock_irqrestore(&ub->ub_lock, flags);
-
-		if (nr_swap_pages <= 0 && !no_swap_left &&
-				__ratelimit(&ub->ub_ratelimit)) {
-			printk(KERN_INFO "Fatal resource shortage: %s, UB %d."
-					" More physical swap space required.\n",
-					ub_rnames[UB_SWAPPAGES], ub->ub_uid);
-		}
-
-nowarn:
-		if (gfp_mask & __GFP_NORETRY)
-			return -ENOMEM;
-
-		if (gfp_mask & __GFP_WAIT) {
-			ret = out_of_memory_in_ub(ub, gfp_mask);
-			if (ret == -EAGAIN)
-				/*
-				 * We raced with some other OOM killer and nned
-				 * to ypdate generation to be sure, that we can
-				 * call OOM killer on next loop iteration.
-				 */
-				ub_oom_start(&ub->oom_ctrl);
-			else if (ret == -ENOMEM)
-				return -ENOMEM;
-		} else
+		if (ub_try_to_free_pages(ub, gfp_mask))
 			return -ENOMEM;
 	} while (precharge_beancounter(ub, UB_PHYSPAGES, size));
 
 	return 0;
 }
 EXPORT_SYMBOL(__ub_check_ram_limits);
+
+#endif
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 void ub_swapentry_inc(struct swap_info_struct *si, pgoff_t num,
@@ -417,7 +431,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub,
 	if (ret & NOTIFY_STOP_MASK)
 		goto out;
 
-	gang_page_stat(&ub->gang_set, mi->pages);
+	gang_page_stat(get_ub_gs(ub), mi->pages);
 
 	mi->cached = min(mi->si->totalram - mi->si->freeram,
 			mi->pages[LRU_INACTIVE_FILE] +
@@ -502,7 +516,7 @@ void show_ub_mem(struct user_beancounter *ub)
 {
 	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
 
-	gang_show_state(&ub->gang_set);
+	gang_show_state(get_ub_gs(ub));
 
 	printk(KERN_INFO "UB: %d RAM: %lu / %lu [%lu]"
 			" SWAP: %lu / %lu [%lu]"

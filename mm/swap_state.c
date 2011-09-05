@@ -285,6 +285,33 @@ struct page * lookup_swap_cache(swp_entry_t entry)
 	return page;
 }
 
+static struct user_beancounter *get_swapin_ub(struct page *page,
+					      swp_entry_t entry,
+					      struct vm_area_struct *vma)
+{
+	struct user_beancounter *ub;
+
+#ifdef CONFIG_BC_SWAP_ACCOUNTING
+	rcu_read_lock();
+	ub = get_swap_ub(entry);
+	if (!get_beancounter_rcu(ub)) {
+		/* speedup unuse pass */
+		ub_unuse_swap_page(page);
+		ub = get_beancounter(get_exec_ub());
+	}
+	rcu_read_unlock();
+#else
+	/* can be NULL for shmem, see shmem_swapin() */
+	if (vma && vma->vm_mm)
+		ub = mm_ub(vma->vm_mm);
+	else
+		ub = get_exec_ub();
+	get_beancounter(ub);
+#endif
+
+	return ub;
+}
+
 /* 
  * Locate a page of swap in physical memory, reserving swap cache space
  * and reading the disk if it is not already cached.
@@ -348,25 +375,8 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			 * Initiate read into locked page and return.
 			 */
 
-#ifdef CONFIG_BC_SWAP_ACCOUNTING
-			rcu_read_lock();
-			ub = get_swap_ub(entry);
-			if (!get_beancounter_rcu(ub)) {
-				/* speedup unuse pass */
-				ub_unuse_swap_page(new_page);
-				ub = get_beancounter(get_exec_ub());
-			}
-			rcu_read_unlock();
-#else
-			/* can be NULL for shmem, see shmem_swapin() */
-			if (vma && vma->vm_mm)
-				ub = mm_ub(vma->vm_mm);
-			else
-				ub = get_exec_ub();
-			get_beancounter(ub);
-#endif
-
-			gang_add_user_page(new_page, &ub->gang_set);
+			ub = get_swapin_ub(new_page, entry, vma);
+			gang_add_user_page(new_page, get_ub_gs(ub));
 			put_beancounter(ub);
 			lru_cache_add_anon(new_page);
 			swap_readpage(new_page);
