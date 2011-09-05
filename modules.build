@@ -37,7 +37,6 @@ drbd83
 #gnbd
 #gfs
 
-ipset
 e1000e
 
 # Deep Packet Inspection
