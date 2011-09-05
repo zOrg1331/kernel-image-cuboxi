@@ -21,6 +21,11 @@ static inline struct gang_set *get_mm_gang(struct mm_struct *mm)
 	return &init_gang_set;
 }
 
+static inline struct gang_set *get_ub_gs(struct user_beancounter *ub)
+{
+	return &init_gang_set;
+}
+
 static inline struct user_beancounter *get_gangs_ub(struct gang_set *gs)
 {
 	return get_ub0();
@@ -43,6 +48,11 @@ static inline struct gang_set *get_mapping_gang(struct address_space *mapping)
 static inline struct gang_set *get_mm_gang(struct mm_struct *mm)
 {
 	return &mm_ub(mm)->gang_set;
+}
+
+static inline struct gang_set *get_ub_gs(struct user_beancounter *ub)
+{
+	return &ub->gang_set;
 }
 
 static inline struct user_beancounter *get_gangs_ub(struct gang_set *gs)
@@ -173,6 +183,8 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 
 extern struct gang *init_gang_array[];
 
+void gang_rate_limit(struct gang_set *gs, int wait, unsigned count);
+
 #else /* CONFIG_MEMORY_GANGS */
 
 static inline struct gang *page_gang(struct page *page)
@@ -197,7 +209,7 @@ static inline struct gang *mem_page_gang(struct gang_set *gs, struct page *page)
 static inline void add_zone_gang(struct zone *zone, struct gang *gang) { }
 static inline int get_zone_nr_gangs(struct zone *zone) { return 1; }
 static inline void free_mem_gangs(struct gang_set *gs) { }
-static inline int alloc_mem_gangs(struct gang_set *gs) { return -EFAULT; }
+static inline int alloc_mem_gangs(struct gang_set *gs) { return 0; }
 static inline void add_mem_gangs(struct gang_set *gs) { }
 static inline void del_mem_gangs(struct gang_set *gs) { }
 #define for_each_gang(gang, zone)			\
@@ -222,6 +234,8 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 {
 	return lock_page_lru(page);
 }
+
+static inline void gang_rate_limit(struct gang_set *gs, int wait, unsigned count) { }
 
 #endif /* CONFIG_MEMORY_GANGS */
 
@@ -251,7 +265,5 @@ static inline struct user_beancounter *get_page_ub(struct page *page)
 
 void gang_page_stat(struct gang_set *gs, unsigned long *stat);
 void gang_show_state(struct gang_set *gs);
-
-void gang_rate_limit(struct gang_set *gs, int wait, unsigned count);
 
 #endif /* _LINIX_MMGANG_H */

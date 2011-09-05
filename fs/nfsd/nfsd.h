@@ -33,6 +33,7 @@ extern struct svc_version	nfsd_version2, nfsd_version3,
 extern u32			nfsd_supported_minorversion;
 extern struct mutex		nfsd_mutex;
 #define nfsd_serv	(get_exec_env()->nfsd_data->_nfsd_serv)
+#define nfsd_exited	(get_exec_env()->nfsd_data->exited)
 extern spinlock_t		nfsd_drc_lock;
 extern unsigned int		nfsd_drc_max_mem;
 extern unsigned int		nfsd_drc_mem_used;

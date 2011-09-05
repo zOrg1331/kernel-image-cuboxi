@@ -16,6 +16,7 @@
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
+#include "cpt_ubc.h"
 
 struct user_beancounter *rst_lookup_ubc(__u64 pos, struct cpt_context *ctx)
 {
@@ -27,18 +28,6 @@ struct user_beancounter *rst_lookup_ubc(__u64 pos, struct cpt_context *ctx)
 		return get_beancounter(get_exec_ub());
 	}
 	return get_beancounter(obj->o_obj);
-}
-
-void copy_one_ubparm(struct ubparm *from, struct ubparm *to, int bc_parm_id)
-{
-	to[bc_parm_id].barrier = from[bc_parm_id].barrier;
-	to[bc_parm_id].limit = from[bc_parm_id].limit;
-}
-
-void set_one_ubparm_to_max(struct ubparm *ubprm, int bc_parm_id)
-{
-	ubprm[bc_parm_id].barrier = UB_MAXVALUE;
-	ubprm[bc_parm_id].limit = UB_MAXVALUE;
 }
 
 static void restore_one_bc_parm(struct cpt_ubparm *dmp, struct ubparm *prm,

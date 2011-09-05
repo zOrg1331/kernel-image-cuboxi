@@ -254,6 +254,8 @@ static void nfsd_last_thread(struct svc_serv *serv)
 	nfsd_shutdown();
 
 	nfsd_export_flush();
+
+	complete(&nfsd_exited);
 }
 
 void nfsd_reset_versions(void)

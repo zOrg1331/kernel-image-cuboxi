@@ -4849,3 +4849,33 @@ size_t ksize(const void *objp)
 	return obj_size(virt_to_cache(objp));
 }
 EXPORT_SYMBOL(ksize);
+
+static void __slab_obj_walk(struct kmem_cache *c, struct slab *s, void (*f)(void *))
+{
+	int i;
+
+	for (i = 0; i < c->num; i++)
+		f(index_to_obj(c, s, i));
+}
+
+void slab_obj_walk(struct kmem_cache *c, void (*f)(void *))
+{
+	int node;
+	struct kmem_list3 *l3;
+	unsigned long flags;
+	struct slab *slab;
+
+	for_each_online_node(node) {
+		l3 = c->nodelists[node];
+		if (l3 == NULL)
+			continue;
+
+		spin_lock_irqsave(&l3->list_lock, flags);
+		list_for_each_entry(slab, &l3->slabs_full, list)
+			__slab_obj_walk(c, slab, f);
+		list_for_each_entry(slab, &l3->slabs_partial, list)
+			__slab_obj_walk(c, slab, f);
+		spin_unlock_irqrestore(&l3->list_lock, flags);
+	}
+}
+EXPORT_SYMBOL(slab_obj_walk);

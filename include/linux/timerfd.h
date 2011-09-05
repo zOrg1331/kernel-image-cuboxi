@@ -28,4 +28,16 @@
 /* Flags for timerfd_settime.  */
 #define TFD_SETTIME_FLAGS TFD_TIMER_ABSTIME
 
+struct timerfd_ctx {
+	struct hrtimer tmr;
+	ktime_t tintv;
+	wait_queue_head_t wqh;
+	u64 ticks;
+	int expired;
+	int clockid;
+};
+
+extern const struct file_operations timerfd_fops;
+ktime_t timerfd_get_remaining(struct timerfd_ctx *ctx);
+
 #endif /* _LINUX_TIMERFD_H */

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2007 SWsoft
+ * Copyright (C) 2007-2011 SWsoft
  * All rights reserved.
  * 
  */
@@ -37,6 +37,7 @@
 #define VZSNAPCTL_GETBMAPMAP2	19
 #define VZSNAPCTL_GETIMAPMAP2	20
 #define VZSNAPCTL_GETROOT_TMPL	21
+#define VZSNAPCTL_SUBTREE_FD	22
 
 /* ioctl request structure for VZSNAPCTL_SCAN_NAME. "Novel idea" is to use
  * 64bit interface even on 32bit hosts. I know, I know... */
@@ -61,11 +62,10 @@ struct vzsnap_scan_inode_req
 #define VZSNAP_PRIVATE_PGOFF	0
 #define VZSNAP_TEMPLATE_PGOFF	0x10000
 
-#define VZSNAP_BMAP_PR_PGOFF    VZSNAP_BMAP_PGOFF|VZSNAP_PRIVATE_PGOFF	/* Block map for private root */
-#define VZSNAP_IMAP_PR_PGOFF	VZSNAP_IMAP_PGOFF|VZSNAP_PRIVATE_PGOFF	/* Inode map for private root */
-#define VZSNAP_BMAP_TMPL_PGOFF  VZSNAP_BMAP_PGOFF|VZSNAP_TEMPLATE_PGOFF	/* Block map for template root */
-#define VZSNAP_IMAP_TMPL_PGOFF  VZSNAP_IMAP_PGOFF|VZSNAP_TEMPLATE_PGOFF	/* Inode map for template root */
-
+#define VZSNAP_BMAP_PR_PGOFF    (VZSNAP_BMAP_PGOFF|VZSNAP_PRIVATE_PGOFF) /* Block map for private root */
+#define VZSNAP_IMAP_PR_PGOFF	(VZSNAP_IMAP_PGOFF|VZSNAP_PRIVATE_PGOFF) /* Inode map for private root */
+#define VZSNAP_BMAP_TMPL_PGOFF  (VZSNAP_BMAP_PGOFF|VZSNAP_TEMPLATE_PGOFF) /* Block map for template root */
+#define VZSNAP_IMAP_TMPL_PGOFF  (VZSNAP_IMAP_PGOFF|VZSNAP_TEMPLATE_PGOFF) /* Inode map for template root */
 
 enum
 {

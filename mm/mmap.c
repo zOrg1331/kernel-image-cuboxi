@@ -2369,6 +2369,7 @@ void exit_mmap(struct mm_struct *mm)
 	struct vm_area_struct *vma;
 	unsigned long nr_accounted = 0;
 	unsigned long end;
+	unsigned int ptes_before;
 
 	/* mm's last user has gone, and its about to be pulled down */
 	mmu_notifier_release(mm);
@@ -2395,6 +2396,8 @@ void exit_mmap(struct mm_struct *mm)
 	end = unmap_vmas(&tlb, vma, 0, -1, &nr_accounted, NULL, 1);
 	vm_unacct_memory(nr_accounted);
 
+	ptes_before = mm->nr_ptes;
+	tlb->ptes_freed = 0;
 	free_pgtables(tlb, vma, FIRST_USER_ADDRESS, 0);
 	tlb_finish_mmu(tlb, 0, end);
 	arch_flush_exec_range(mm);
@@ -2406,7 +2409,11 @@ void exit_mmap(struct mm_struct *mm)
 	while (vma)
 		vma = remove_vma(vma);
 
-	BUG_ON(mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
+	if (mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT) {
+		printk(KERN_ERR "PTE pages leak: had %u freed %u has %u\n",
+				ptes_before, tlb->ptes_freed, (unsigned int)mm->nr_ptes);
+		dump_stack();
+	}
 }
 
 /* Insert vm structure into process list sorted by address

@@ -50,8 +50,14 @@ struct task_struct *kthread_create_ve(struct ve_struct *ve,
 void kthread_bind(struct task_struct *k, unsigned int cpu);
 int kthread_stop(struct task_struct *k);
 int kthread_should_stop(void);
+int kthreadd_create(void);
+void kthreadd_stop(struct ve_struct *ve);
 
 int kthreadd(void *unused);
+#ifdef CONFIG_VE
+#define kthreadd_task get_exec_env()->_kthreadd_task
+#else
 extern struct task_struct *kthreadd_task;
+#endif
 
 #endif /* _LINUX_KTHREAD_H */

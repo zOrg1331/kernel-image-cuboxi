@@ -1049,6 +1049,7 @@ static int ext4_mark_dquot_dirty(struct dquot *dquot);
 static int ext4_write_info(struct super_block *sb, int type);
 static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 				char *path, int remount);
+static int ext4_quota_off(struct super_block *sb, int type, int remount);
 static int ext4_quota_on_mount(struct super_block *sb, int type);
 static ssize_t ext4_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off);
@@ -1084,7 +1085,7 @@ static const struct dquot_operations ext4_quota_operations = {
 
 static const struct quotactl_ops ext4_qctl_operations = {
 	.quota_on	= ext4_quota_on,
-	.quota_off	= vfs_quota_off,
+	.quota_off	= ext4_quota_off,
 	.quota_sync	= vfs_quota_sync,
 	.get_info	= vfs_get_dqinfo,
 	.set_info	= vfs_set_dqinfo,
@@ -2007,13 +2008,14 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 
 		list_add(&EXT4_I(inode)->i_orphan, &EXT4_SB(sb)->s_orphan);
 		vi.cookie = EXT4_I(inode)->i_dq_cookie;
-		ret = virtinfo_notifier_call(VITYPE_QUOTA, VIRTINFO_ORPHAN_CLEAN, &vi);
-		if (ret != NOTIFY_OK)
-			printk(KERN_ERR "BUG: Quota files for %d are broken: %s\n", vi.cookie,
-					ret == NOTIFY_BAD ?
+		if (vi.cookie) {
+			ret = virtinfo_notifier_call(VITYPE_QUOTA, VIRTINFO_ORPHAN_CLEAN, &vi);
+			if (ret != NOTIFY_OK)
+				printk(KERN_ERR "BUG: Quota files for %d are broken: %s\n", vi.cookie,
+						ret == NOTIFY_BAD ?
 						"error starting orphan cleanup" :
 						"no quota engine running");
-
+		}
 		vfs_dq_init(inode);
 		if (inode->i_nlink) {
 			ext4_msg(sb, KERN_DEBUG,
@@ -4034,6 +4036,15 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 	err = vfs_quota_on_path(sb, type, format_id, &path);
 	path_put(&path);
 	return err;
+}
+
+static int ext4_quota_off(struct super_block *sb, int type, int remount)
+{
+	/* Force all delayed allocation blocks to be allocated */
+	if (test_opt(sb, DELALLOC))
+		sync_filesystem(sb);
+
+	return vfs_quota_off(sb, type, remount);
 }
 
 /* Read data from quotafile - avoid pagecache and such because we cannot afford

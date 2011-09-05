@@ -3485,3 +3485,25 @@ void __init ip_static_sysctl_init(void)
 EXPORT_SYMBOL(__ip_select_ident);
 EXPORT_SYMBOL(ip_route_input);
 EXPORT_SYMBOL(ip_route_output_key);
+
+static void ip_rt_dump_dst(void *o)
+{
+	struct rtable *rt = (struct rtable *)o;
+
+	if (rt->u.dst.flags & DST_FREE)
+		return;
+
+	printk("=== %p\n", o);
+	dst_dump_one(&rt->u.dst);
+	printk("\tidev %p gen %x flags %x type %d\n", rt->idev,
+			rt->rt_genid, rt->rt_flags, (int)rt->rt_type);
+}
+
+void ip_rt_dump_dsts(void)
+{
+	printk("IPv4 dst cache (%d entries):\n", atomic_read(&ipv4_dst_ops.entries));
+	slab_obj_walk(ipv4_dst_ops.kmem_cachep, ip_rt_dump_dst);
+}
+
+void (*ip6_rt_dump_dsts)(void);
+EXPORT_SYMBOL_GPL(ip6_rt_dump_dsts);

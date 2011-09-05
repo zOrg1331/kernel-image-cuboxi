@@ -649,7 +649,13 @@ static enum page_references page_check_references(struct page *page,
 		 */
 		SetPageReferenced(page);
 
-		if (referenced_page)
+		if (referenced_page || referenced_ptes > 1)
+			return PAGEREF_ACTIVATE;
+
+		/*
+		 * Activate file-backed executable pages after first usage.
+		 */
+		if (vm_flags & VM_EXEC)
 			return PAGEREF_ACTIVATE;
 
 		return PAGEREF_KEEP;
@@ -1713,6 +1719,36 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 	return shrink_inactive_list(nr_to_scan, zone, gang, sc, priority, file);
 }
 
+static inline int no_swap_space(struct scan_control *sc)
+{
+	if (sc->gs && !ub_resource_excess(get_gangs_ub(sc->gs),
+				UB_SWAPPAGES, UB_SOFT))
+		return 1;
+	if (nr_swap_pages <= 0)
+		return 1;
+	return 0;
+}
+
+/*
+ * Smallish @nr_to_scan's are deposited in @nr_saved_scan,
+ * until we collected @swap_cluster_max pages to scan.
+ */
+static unsigned long nr_scan_try_batch(unsigned long nr_to_scan,
+				       unsigned long *nr_saved_scan)
+{
+	unsigned long nr;
+
+	*nr_saved_scan += nr_to_scan;
+	nr = *nr_saved_scan;
+
+	if (nr >= SWAP_CLUSTER_MAX)
+		*nr_saved_scan = 0;
+	else
+		nr = 0;
+
+	return nr;
+}
+
 /*
  * Determine how aggressively the anon and file LRU lists should be
  * scanned.  The relative value of each set of LRU lists is determined
@@ -1722,18 +1758,32 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
  * percent[0] specifies how much pressure to put on ram/swap backed
  * memory, while percent[1] determines pressure on the file LRUs.
  */
-static void get_scan_ratio(struct zone *zone, struct scan_control *sc,
-					unsigned long *percent)
+static void get_scan_count(struct zone *zone, struct scan_control *sc,
+					unsigned long *nr, int priority)
 {
 	unsigned long anon, file, free;
 	unsigned long anon_prio, file_prio;
 	unsigned long ap, fp;
+	unsigned long reclaimable;
+	enum lru_list l;
+	int force_scan = 0;
+	int percent[2];
 	struct zone_reclaim_stat *reclaim_stat = get_reclaim_stat(zone, sc);
 
 	anon  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_ANON) +
 		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_ANON);
 	file  = zone_nr_lru_pages(zone, sc, LRU_ACTIVE_FILE) +
 		zone_nr_lru_pages(zone, sc, LRU_INACTIVE_FILE);
+
+	reclaimable = file;
+
+	/* If we have no swap space, do not bother scanning anon pages. */
+	if (!sc->may_swap || no_swap_space(sc)) {
+		percent[0] = 0;
+		percent[1] = 100;
+		goto out;
+	} else
+		reclaimable += anon;
 
 	if (scanning_global_lru(sc)) {
 		free  = zone_page_state(zone, NR_FREE_PAGES);
@@ -1742,7 +1792,7 @@ static void get_scan_ratio(struct zone *zone, struct scan_control *sc,
 		if (unlikely(file + free <= high_wmark_pages(zone))) {
 			percent[0] = 100;
 			percent[1] = 0;
-			return;
+			goto out;
 		}
 	}
 
@@ -1792,26 +1842,34 @@ static void get_scan_ratio(struct zone *zone, struct scan_control *sc,
 	/* Normalize to percentages */
 	percent[0] = 100 * ap / (ap + fp + 1);
 	percent[1] = 100 - percent[0];
-}
 
-/*
- * Smallish @nr_to_scan's are deposited in @nr_saved_scan,
- * until we collected @swap_cluster_max pages to scan.
- */
-static unsigned long nr_scan_try_batch(unsigned long nr_to_scan,
-				       unsigned long *nr_saved_scan)
-{
-	unsigned long nr;
+out:
+	if (reclaimable >> priority < SWAP_CLUSTER_MAX) {
+		/* cotainer may have small limit and need to avoid priority drop */
+		if (!scanning_global_lru(sc))
+			force_scan = 1;
+		/* kswapd does zone balancing and need to scan this zone */
+		else if (current_is_kswapd())
+			force_scan = 1;
+	}
 
-	*nr_saved_scan += nr_to_scan;
-	nr = *nr_saved_scan;
+	for_each_evictable_lru(l) {
+		int file = is_file_lru(l);
+		unsigned long scan;
 
-	if (nr >= SWAP_CLUSTER_MAX)
-		*nr_saved_scan = 0;
-	else
-		nr = 0;
+		scan = zone_nr_lru_pages(zone, sc, l);
+		if (priority || !percent[0] || !percent[1]) {
+			scan >>= priority;
+			scan = (scan * percent[file]) / 100;
+		}
+		spin_lock_irq(&zone->stat_lock);
+		nr[l] = nr_scan_try_batch(scan,
+					  &reclaim_stat->nr_saved_scan[l]);
+		spin_unlock_irq(&zone->stat_lock);
 
-	return nr;
+		if (!nr[l] && force_scan && percent[file])
+			nr[l] = SWAP_CLUSTER_MAX;
+	}
 }
 
 #ifdef CONFIG_MEMORY_GANGS
@@ -1840,16 +1898,6 @@ static struct gang *rotate_zone_gangs(struct zone *zone)
 
 #endif /* CONFIG_MEMORY_GANGS */
 
-static inline int no_swap_space(struct scan_control *sc)
-{
-	if (sc->gs && !ub_resource_excess(get_gangs_ub(sc->gs),
-				UB_SWAPPAGES, UB_SOFT))
-		return 1;
-	if (nr_swap_pages <= 0)
-		return 1;
-	return 0;
-}
-
 /*
  * This is a basic per-zone page freer.  Used by both kswapd and direct reclaim.
  */
@@ -1859,36 +1907,12 @@ static void shrink_zone(int priority, struct zone *zone,
 	struct gang *gang = NULL;
 	unsigned long nr[NR_LRU_LISTS];
 	unsigned long nr_to_scan;
-	unsigned long percent[2];	/* anon @ 0; file @ 1 */
 	enum lru_list l;
 	unsigned long nr_reclaimed = sc->nr_reclaimed;
 	unsigned long nr_to_reclaim = sc->nr_to_reclaim;
-	struct zone_reclaim_stat *reclaim_stat = get_reclaim_stat(zone, sc);
-	int noswap = 0;
 	int gangs_rotated = 0;
 
-	/* If we have no swap space, do not bother scanning anon pages. */
-	if (!sc->may_swap || no_swap_space(sc)) {
-		noswap = 1;
-		percent[0] = 0;
-		percent[1] = 100;
-	} else
-		get_scan_ratio(zone, sc, percent);
-
-	for_each_evictable_lru(l) {
-		int file = is_file_lru(l);
-		unsigned long scan;
-
-		scan = zone_nr_lru_pages(zone, sc, l);
-		if (priority || noswap) {
-			scan >>= priority;
-			scan = (scan * percent[file]) / 100;
-		}
-		spin_lock_irq(&zone->stat_lock);
-		nr[l] = nr_scan_try_batch(scan,
-					  &reclaim_stat->nr_saved_scan[l]);
-		spin_unlock_irq(&zone->stat_lock);
-	}
+	get_scan_count(zone, sc, nr, priority);
 
 	if (sc->gs)
 		gang = mem_zone_gang(sc->gs, zone);

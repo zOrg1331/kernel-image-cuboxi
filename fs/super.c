@@ -219,8 +219,8 @@ void deactivate_super(struct super_block *s)
 	if (atomic_dec_and_lock(&s->s_active, &sb_lock)) {
 		s->s_count -= S_BIAS-1;
 		spin_unlock(&sb_lock);
-		vfs_dq_off(s, 0);
 		down_write(&s->s_umount);
+		vfs_dq_off(s, 0);
 		fs->kill_sb(s);
 		put_filesystem(fs);
 		put_super(s);

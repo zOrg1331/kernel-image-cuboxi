@@ -683,6 +683,8 @@ int reuse_swap_page(struct page *page)
 	return count <= 1;
 }
 
+#ifdef CONFIG_BC_SWAP_ACCOUNTING
+
 void ub_unuse_swap_page(struct page *page)
 {
 	struct swap_info_struct *p;
@@ -742,6 +744,8 @@ void ub_unuse_swap(struct user_beancounter *ub)
 
 	spin_unlock(&swap_lock);
 }
+
+#endif /* CONFIG_BC_SWAP_ACCOUNTING */
 
 /*
  * If swap is getting full, or if there are no more mappings of this page,

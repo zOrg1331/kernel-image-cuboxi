@@ -75,7 +75,7 @@ void ip_entry_unhash(struct ip_entry_struct *entry)
 {
 	list_del(&entry->ve_list);
 	hlist_del_rcu(&entry->ip_hash);
-	call_rcu_bh(&entry->rcu, ip_entry_free);
+	call_rcu(&entry->rcu, ip_entry_free);
 }
 
 static void veip_free(struct rcu_head *rcu)
@@ -96,7 +96,7 @@ int veip_put(struct veip_struct *veip)
 		return 0;
 
 	list_del(&veip->list);
-	call_rcu_bh(&veip->rcu, veip_free);
+	call_rcu(&veip->rcu, veip_free);
 	return 1;
 }
 
@@ -168,7 +168,7 @@ static void venet_ext_free(struct rcu_head *rcu)
 static void venet_ext_release(struct ext_entry_struct *e)
 {
 	list_del_rcu(&e->list);
-	call_rcu_bh(&e->rcu, venet_ext_free);
+	call_rcu(&e->rcu, venet_ext_free);
 }
 
 static int venet_ext_del(struct ve_struct *ve, struct ve_addr_struct *addr)
@@ -1050,6 +1050,9 @@ __exit void venet_exit(void)
 #endif
 	venet_stop(get_ve0());
 	veip_cleanup();
+
+	/* Ensure there are no outstanding rcu callbacks */
+	rcu_barrier();
 
 	BUG_ON(!list_empty(&veip_lh));
 }

@@ -1940,6 +1940,8 @@ static int nfs_parse_devname(const char *dev_name,
 					 export_path, maxpathlen);
 }
 
+int nfs_enable_v4_in_ct = 0;
+
 /*
  * Validate the NFS2/NFS3 mount data
  * - fills in the mount root filehandle
@@ -2072,13 +2074,16 @@ static int nfs_validate_mount_data(void *options,
 		if (!nfs_verify_server_address(sap))
 			goto out_no_address;
 
-		if (args->version == 4)
+		if (args->version == 4) {
+			if (!nfs_enable_v4_in_ct && !ve_is_super(get_exec_env()))
+				goto out_v4_not_compiled;
 #ifdef CONFIG_NFS_V4
 			return nfs4_validate_text_mount_data(options,
 							     args, dev_name);
 #else
 			goto out_v4_not_compiled;
 #endif
+		}
 
 		nfs_set_port(sap, &args->nfs_server.port, 0);
 
@@ -2133,11 +2138,9 @@ out_v3_not_compiled:
 	return -EPROTONOSUPPORT;
 #endif /* !CONFIG_NFS_V3 */
 
-#ifndef CONFIG_NFS_V4
 out_v4_not_compiled:
 	dfprintk(MOUNT, "NFS: NFSv4 is not compiled into kernel\n");
 	return -EPROTONOSUPPORT;
-#endif /* !CONFIG_NFS_V4 */
 
 out_nomem:
 	dfprintk(MOUNT, "NFS: not enough memory to handle mount options\n");

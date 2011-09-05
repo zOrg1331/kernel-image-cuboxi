@@ -397,40 +397,43 @@ struct pid *find_vpid(int nr)
 }
 EXPORT_SYMBOL_GPL(find_vpid);
 
-void reattach_pid(struct task_struct *tsk, enum pid_type type,
-		struct pid *pid)
+void reattach_pid(struct task_struct *tsk, struct pid *pid)
 {
 	int i;
 	struct pid *old_pid;
 	struct pid_link *link;
 	struct upid *upid;
 
-	link = &tsk->pids[type];
+	link = &tsk->pids[PIDTYPE_PID];
 	old_pid = link->pid;
 
 	hlist_del_rcu(&link->node);
 	link->pid = pid;
-	hlist_add_head_rcu(&link->node, &pid->tasks[type]);
+	hlist_add_head_rcu(&link->node, &pid->tasks[PIDTYPE_PID]);
 
-	if (type != PIDTYPE_PID) {
-		for (i = PIDTYPE_MAX; --i >= 0; )
-			if (!hlist_empty(&old_pid->tasks[i]))
-				return;
+	for (i = PIDTYPE_MAX; --i >= 0; )
+		if (!hlist_empty(&old_pid->tasks[i]))
+			BUG();
 
-		for (i = 0; i < pid->level; i++)
-			hlist_del_rcu(&old_pid->numbers[i].pid_chain);
-	} else {
-		for (i = PIDTYPE_MAX; --i >= 0; )
-			if (!hlist_empty(&old_pid->tasks[i]))
-				BUG();
+	for (i = 0; i < pid->level; i++)
+		hlist_replace_rcu(&old_pid->numbers[i].pid_chain,
+				&pid->numbers[i].pid_chain);
 
-		for (i = 0; i < pid->level; i++)
-			hlist_replace_rcu(&old_pid->numbers[i].pid_chain,
-					&pid->numbers[i].pid_chain);
+	if (old_pid->level > 0) {
+		upid = &old_pid->numbers[old_pid->level];
+		hlist_del_rcu(&upid->pid_chain);
+	}
 
-		upid = &pid->numbers[pid->level];
-		hlist_add_head_rcu(&upid->pid_chain,
-				&pid_hash[pid_hashfn(upid->nr, upid->ns)]);
+	upid = &pid->numbers[pid->level];
+	hlist_add_head_rcu(&upid->pid_chain,
+			&pid_hash[pid_hashfn(upid->nr, upid->ns)]);
+
+	spin_unlock(&pidmap_lock);
+	write_unlock_irq(&tasklist_lock);
+
+	if (old_pid->level > 0) {
+		upid = &old_pid->numbers[old_pid->level];
+		pid_ns_release_proc(upid->ns);
 	}
 
 	call_rcu(&old_pid->rcu, delayed_put_pid);

@@ -41,6 +41,7 @@
 #include <linux/slab.h>
 #include <linux/oom.h>
 #include <linux/nmi.h>
+#include <net/dst.h>
 
 #include <bc/oom_kill.h>
 
@@ -353,6 +354,7 @@ static struct sysrq_key_op sysrq_term_op = {
 static void moom_callback(struct work_struct *ignored)
 {
 	ub_oom_start(&global_oom_ctrl);
+	global_oom_ctrl.kill_counter = 0;
 	out_of_memory(node_zonelist(0, GFP_KERNEL), GFP_KERNEL, 0);
 }
 
@@ -564,6 +566,17 @@ static struct sysrq_key_op debug_dump_mem = {
 	.action_msg	= "Enter address:",
 };
 
+static void handle_dump_net(int key, struct tty_struct *tty)
+{
+	dst_cache_dump();
+}
+
+static struct sysrq_key_op debug_dump_net = {
+	.handler	= handle_dump_net,
+	.help_msg	= "Net",
+	.action_msg	= "Dumping networking guts:",
+};
+
 static void return_resolve(char *str)
 {
 	unsigned long address;
@@ -646,6 +659,7 @@ static struct sysrq_key_op debug_quit = {
 
 static struct sysrq_key_op *sysrq_debug_key_table[SYSRQ_KEY_TABLE_LENGTH] = {
 	[13] = &debug_dump_mem,		/* d */
+	[23] = &debug_dump_net,		/* n */
 	[26] = &debug_quit,		/* q */
 	[27] = &debug_resolve,		/* r */
 	[32] = &debug_write_mem,	/* w */

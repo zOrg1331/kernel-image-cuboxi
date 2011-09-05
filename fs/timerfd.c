@@ -21,15 +21,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/timerfd.h>
 #include <linux/syscalls.h>
-
-struct timerfd_ctx {
-	struct hrtimer tmr;
-	ktime_t tintv;
-	wait_queue_head_t wqh;
-	u64 ticks;
-	int expired;
-	int clockid;
-};
+#include <linux/module.h>
 
 /*
  * This gets called when the timer event triggers. We set the "expired"
@@ -50,13 +42,14 @@ static enum hrtimer_restart timerfd_tmrproc(struct hrtimer *htmr)
 	return HRTIMER_NORESTART;
 }
 
-static ktime_t timerfd_get_remaining(struct timerfd_ctx *ctx)
+ktime_t timerfd_get_remaining(struct timerfd_ctx *ctx)
 {
 	ktime_t remaining;
 
 	remaining = hrtimer_expires_remaining(&ctx->tmr);
 	return remaining.tv64 < 0 ? ktime_set(0, 0): remaining;
 }
+EXPORT_SYMBOL(timerfd_get_remaining);
 
 static void timerfd_setup(struct timerfd_ctx *ctx, int flags,
 			  const struct itimerspec *ktmr)
@@ -156,11 +149,12 @@ static ssize_t timerfd_read(struct file *file, char __user *buf, size_t count,
 	return res;
 }
 
-static const struct file_operations timerfd_fops = {
+const struct file_operations timerfd_fops = {
 	.release	= timerfd_release,
 	.poll		= timerfd_poll,
 	.read		= timerfd_read,
 };
+EXPORT_SYMBOL(timerfd_fops);
 
 static struct file *timerfd_fget(int fd)
 {
@@ -206,6 +200,7 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 
 	return ufd;
 }
+EXPORT_SYMBOL(sys_timerfd_create);
 
 SYSCALL_DEFINE4(timerfd_settime, int, ufd, int, flags,
 		const struct itimerspec __user *, utmr,
@@ -264,6 +259,7 @@ SYSCALL_DEFINE4(timerfd_settime, int, ufd, int, flags,
 
 	return 0;
 }
+EXPORT_SYMBOL(sys_timerfd_settime);
 
 SYSCALL_DEFINE2(timerfd_gettime, int, ufd, struct itimerspec __user *, otmr)
 {

@@ -45,7 +45,9 @@
 static struct kmem_cache *ub_cachep;
 static struct user_beancounter default_beancounter;
 struct user_beancounter ub0 = {
+#ifdef CONFIG_BC_RSS_ACCOUNTING
 	.gang_set.gangs = init_gang_array,
+#endif
 };
 EXPORT_SYMBOL(ub0);
 
@@ -79,7 +81,7 @@ const char *ub_rnames[] = {
 	"swappages",
 };
 
-unsigned int ub_dcache_threshold __read_mostly = 1024;
+unsigned int ub_dcache_threshold __read_mostly = 4 * 1024; /* ~7Mb per container */
 
 static int ubc_ioprio = 1;
 
@@ -225,7 +227,7 @@ static struct user_beancounter *alloc_ub(uid_t uid)
 		ub_init_ioprio(new_ub);
 	}
 
-	if (alloc_mem_gangs(&new_ub->gang_set))
+	if (alloc_mem_gangs(get_ub_gs(new_ub)))
 		goto fail_gangs;
 
 	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
@@ -241,7 +243,7 @@ static struct user_beancounter *alloc_ub(uid_t uid)
 fail_free:
 	percpu_counter_destroy(&new_ub->ub_orphan_count);
 fail_pcpu:
-	free_mem_gangs(&new_ub->gang_set);
+	free_mem_gangs(get_ub_gs(new_ub));
 fail_gangs:
 	if (new_ub->ub_cgroup) {
 		ub_fini_ioprio(new_ub);
@@ -256,7 +258,7 @@ static inline void __free_ub(struct user_beancounter *ub)
 {
 	free_percpu(ub->ub_percpu);
 	kfree(ub->ub_store);
-	free_mem_gangs(&ub->gang_set);
+	free_mem_gangs(get_ub_gs(ub));
 	kfree(ub->private_data2);
 	kmem_cache_free(ub_cachep, ub);
 }
@@ -327,7 +329,7 @@ struct user_beancounter *get_beancounter_byuid(uid_t uid, int create)
 	ub_count++;
 	list_add_rcu(&new_ub->ub_list, &ub_list_head);
 	hlist_add_head_rcu(&new_ub->ub_hash, hash);
-	add_mem_gangs(&new_ub->gang_set);
+	add_mem_gangs(get_ub_gs(new_ub));
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
 	return new_ub;
@@ -422,7 +424,7 @@ static void delayed_release_beancounter(struct work_struct *w)
 
 	BUG_ON(!list_empty(&ub->ub_dentry_lru));
 
-	del_mem_gangs(&ub->gang_set);
+	del_mem_gangs(get_ub_gs(ub));
 	ub_unuse_swap(ub);
 	bc_verify_held(ub);
 	ub_free_counters(ub);
@@ -691,6 +693,11 @@ static void init_beancounter_nolimits(struct user_beancounter *ub)
 		/* FIXME: whether this is right for physpages and guarantees? */
 		ub->ub_parms[k].barrier = UB_MAXVALUE;
 	}
+
+	ub->ub_parms[UB_VMGUARPAGES].limit = 0;
+	ub->ub_parms[UB_VMGUARPAGES].barrier = 0;
+	ub->ub_parms[UB_OOMGUARPAGES].limit = 0;
+	ub->ub_parms[UB_OOMGUARPAGES].barrier = 0;
 
 	/* FIXME: set unlimited rate? */
 	ub->ub_ratelimit.burst = 4;

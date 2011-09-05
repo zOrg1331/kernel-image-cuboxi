@@ -139,7 +139,8 @@ enum lru_list {
 
 #define for_each_lru(l) for (l = 0; l < NR_LRU_LISTS; l++)
 
-#define for_each_evictable_lru(l) for (l = 0; l <= LRU_ACTIVE_FILE; l++)
+#define for_each_evictable_lru(l) \
+	for (l = LRU_ACTIVE_FILE; (int)l >= LRU_INACTIVE_ANON; l--)
 
 static inline int is_file_lru(enum lru_list l)
 {

@@ -58,6 +58,8 @@
 #include <linux/mount.h>
 #include <linux/kthread.h>
 #include <linux/oom.h>
+#include <linux/kthread.h>
+#include <linux/workqueue.h>
 
 #include <net/route.h>
 #include <net/ip_fib.h>
@@ -884,7 +886,6 @@ static void ve_move_task(struct ve_struct *new)
 
 	old = tsk->ve_task_info.owner_env;
 	tsk->ve_task_info.owner_env = new;
-	tsk->ve_task_info.exec_env = new;
 
 	/* set ve fs_struct for kernel threads */
 	if (current->flags & PF_KTHREAD)
@@ -1009,6 +1010,7 @@ static int __init init_vecalls_cgroups(void)
 	if (IS_ERR(ve_cgroup_mnt))
 		return PTR_ERR(ve_cgroup_mnt);
 	ve_cgroup_root = cgroup_get_root(ve_cgroup_mnt);
+	get_ve0()->ve_cgroup = ve_cgroup_root;
 	return 0;
 }
 
@@ -1022,6 +1024,37 @@ static int fini_ve_cgroups(struct ve_struct *ve) { }
 static int init_vecalls_cgroups(void) { return 0; }
 static void fini_vecalls_cgroups(void) { ; }
 #endif /* CONFIG_CGROUP_DEVICE */
+
+void fini_kthreadd(struct ve_struct *ve)
+{
+	long delay = 1;
+
+	if (ve->khelper_wq)
+		destroy_workqueue(ve->khelper_wq);
+	kthreadd_stop(ve);
+
+	while (ve->pcounter > 1) {
+		schedule_timeout(delay);
+		delay = (delay < HZ) ? (delay << 1) : HZ;
+	}
+}
+
+int init_kthreadd(struct ve_struct *ve)
+{
+	int err;
+
+	err = kthreadd_create();
+	if (err < 0)
+		return err;
+
+	ve->khelper_wq = create_singlethread_workqueue_ve("khelper", ve);
+	if (ve->khelper_wq == NULL) {
+		fini_kthreadd(ve);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
 
 static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 			 env_create_param_t *data, int datalen)
@@ -1146,6 +1179,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = pid_ns_attach_init(ve->ve_ns->pid_ns, tsk)) < 0)
 		goto err_vpid;
 
+	err = -ENOMEM;
 	new_creds = prepare_creds();
 	if (new_creds == NULL)
 		goto err_creds;
@@ -1153,16 +1187,18 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = create_user_ns(new_creds)) < 0)
 		goto err_uns;
 
+	init_ve_cred(ve, new_creds);
+
+	ve_move_task(ve);
+
+	if ((err = init_kthreadd(ve)) < 0)
+		goto err_kthreadd;
+
 	if ((err = ve_hook_iterate_init(VE_SS_CHAIN, ve)) < 0)
 		goto err_ve_hook;
 
 	put_nsproxy(old_ns);
 	put_nsproxy(old_ns_net);
-
-	init_ve_cred(ve, new_creds);
-
-	/* finally: set vpids and move inside */
-	ve_move_task(ve);
 
 	ve->is_running = 1;
 	up_write(&ve->op_sem);
@@ -1171,6 +1207,9 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	return veid;
 
 err_ve_hook:
+	fini_kthreadd(ve);
+err_kthreadd:
+	ve_move_task(old);
 	/* creds will put user and user ns */
 err_uns:
 	abort_creds(new_creds);
@@ -1346,6 +1385,7 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 #endif
 	ve_sched_attach(ve);
 	switch_ve_namespaces(ve, tsk);
+	set_exec_env(ve);
 	ve_move_task(ve);
 
 	if (alone_in_pgrp(tsk) && !(flags & VE_SKIPLOCK))
@@ -1374,8 +1414,6 @@ static void env_cleanup(struct ve_struct *ve)
 
 	down_read(&ve->op_sem);
 	old_ve = set_exec_env(ve);
-
-	ve_hook_iterate_fini(VE_SS_CHAIN, ve);
 
 	fini_venet(ve);
 
@@ -2571,7 +2609,7 @@ out_cgroups:
 	return err;
 }
 
-static void vecalls_exit(void)
+static void __exit vecalls_exit(void)
 {
 	do_env_free_hook = NULL;
 	do_ve_enter_hook = NULL;

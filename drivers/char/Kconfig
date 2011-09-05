@@ -1126,13 +1126,6 @@ config DEVPORT
 	depends on ISA || PCI
 	default y
 
-config TTY_NULL
-	tristate "TTY driver with the same idea as /dev/null"
-	default m
-	help
-	  Discards all data written to it and provides no data to any process
-	  that reads from it.
-
 source "drivers/s390/char/Kconfig"
 
 endmenu

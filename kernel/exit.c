@@ -355,11 +355,18 @@ kill_orphaned_pgrp(struct task_struct *tsk, struct task_struct *parent)
  */
 static void reparent_to_kthreadd(void)
 {
+	struct task_struct *parent;
 	write_lock_irq(&tasklist_lock);
 
 	ptrace_unlink(current);
 	/* Reparent to init */
-	current->real_parent = current->parent = kthreadd_task;
+	if (kthreadd_task == NULL)
+		/* reparent CT's kthreadd */
+		parent = get_ve0()->_kthreadd_task;
+	else
+		parent = kthreadd_task;
+
+	current->real_parent = current->parent = parent;
 	list_move_tail(&current->sibling, &current->real_parent->children);
 
 	/* Set the exit signal to SIGCHLD so we signal init on exit */
@@ -373,8 +380,8 @@ static void reparent_to_kthreadd(void)
 	memcpy(current->signal->rlim, init_task.signal->rlim,
 	       sizeof(current->signal->rlim));
 
-	atomic_inc(&init_cred.usage);
-	commit_creds(&init_cred);
+	atomic_inc(&get_exec_env()->init_cred->usage);
+	commit_creds(get_exec_env()->init_cred);
 	write_unlock_irq(&tasklist_lock);
 }
 
@@ -444,7 +451,11 @@ void daemonize(const char *name, ...)
 {
 	va_list args;
 	sigset_t blocked;
-
+#ifdef CONFIG_VE
+	struct nsproxy *root_nsproxy = get_exec_env()->ve_ns;
+#else
+	struct nsproxy *root_nsproxy = &init_nsproxy;
+#endif
 	va_start(args, name);
 	vsnprintf(current->comm, sizeof(current->comm), name, args);
 	va_end(args);
@@ -461,9 +472,9 @@ void daemonize(const char *name, ...)
 	 */
 	current->flags |= (PF_NOFREEZE | PF_KTHREAD);
 
-	if (current->nsproxy != &init_nsproxy) {
-		get_nsproxy(&init_nsproxy);
-		switch_task_namespaces(current, &init_nsproxy);
+	if (current->nsproxy != root_nsproxy) {
+		get_nsproxy(root_nsproxy);
+		switch_task_namespaces(current, root_nsproxy);
 	}
 	set_special_pids(&init_struct_pid);
 	proc_clear_tty(current);

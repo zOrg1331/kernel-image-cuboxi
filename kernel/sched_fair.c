@@ -509,6 +509,7 @@ static inline void cfs_rq_update_credit_charge_end(struct cfs_rq *cfs_rq)
 {
 	u64 delta_wait = rq_of(cfs_rq)->clock - cfs_rq->credit_charge_start;
 	cfs_rq_charge_credit(cfs_rq, delta_wait);
+	cfs_rq->credit_charge_start = 0;
 }
 
 static inline void cfs_rq_update_credit_charge_restart(struct cfs_rq *cfs_rq)
@@ -989,7 +990,8 @@ enqueue_entity(struct sched_entity *se, int flags)
 		update_curr(cfs_rq);
 
 		if (enqueue) {
-			enqueue = !cfs_rq->nr_running && !cfs_rq->throttled;
+			enqueue = !cfs_rq->nr_running &&
+				!cfs_rq_throttled(cfs_rq);
 
 			account_entity_enqueue(cfs_rq, se);
 			if (wakeup) {
@@ -1060,7 +1062,8 @@ dequeue_entity(struct sched_entity *se, int flags)
 			if (!sleep)
 				se->vruntime -= cfs_rq->min_vruntime;
 
-			dequeue = !cfs_rq->nr_running && !cfs_rq->throttled;
+			dequeue = !cfs_rq->nr_running &&
+				!cfs_rq_throttled(cfs_rq);
 		}
 
 		if (sub_load)  {

@@ -470,15 +470,14 @@ static int __shrink_dcache_ub(struct user_beancounter *ub, int count)
 		if (dentry->d_flags & DCACHE_REFERENCED) {
 			dentry->d_flags &= ~DCACHE_REFERENCED;
 			list_move(&dentry->d_bclru, &referenced);
-			spin_unlock(&dentry->d_lock);
-		} else {
+		} else
 			list_move_tail(&dentry->d_bclru, &tmp);
-			spin_unlock(&dentry->d_lock);
-			count--;
-			if (!count)
-				break;
-		}
+		spin_unlock(&dentry->d_lock);
 		cond_resched_lock(&dcache_lock);
+
+		count--;
+		if (!count)
+			break;
 	}
 
 	while (!list_empty(&tmp)) {
@@ -622,9 +621,6 @@ static void prune_dcache(int count, gfp_t gfp_mask)
 
 	rcu_read_lock();
 	for_each_beancounter(ub) {
-		if (!(gfp_mask & __GFP_REPEAT) &&
-				ub->ub_dentry_unused <= ub_dcache_threshold)
-			continue;
 		if (!get_beancounter_rcu(ub))
 			continue;
 		rcu_read_unlock();
@@ -634,8 +630,17 @@ static void prune_dcache(int count, gfp_t gfp_mask)
 		else
 			w_count = ub->ub_dentry_unused;
 
+		if (!(gfp_mask & __GFP_REPEAT)) {
+			int delta;
+
+			delta = ub->ub_dentry_unused - ub_dcache_threshold;
+			if (delta <= 0)
+				continue;
+			if (w_count > delta)
+				w_count = delta;
+		}
+
 		__shrink_dcache_ub(ub, w_count);
-		count -= w_count;
 
 		rcu_read_lock();
 		put_beancounter(ub);

@@ -754,11 +754,17 @@ int cpt_check_unsupported(struct task_struct *tsk, cpt_context_t *ctx)
 
 int cpt_skip_task(struct task_struct *tsk)
 {
+	if (tsk->flags & PF_KTHREAD)
+		return 1;
+
 	if (tsk == current)
 		return 1;
 
+#if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
+	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
 	if (tsk->ve_task_info.owner_env->_nlmsvc_task == tsk)
 		return 1;
+#endif
 
 	return 0;
 }

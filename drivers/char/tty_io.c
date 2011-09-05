@@ -3213,9 +3213,8 @@ int init_ve_tty_class(void)
 	if (IS_ERR(ve_tty_class))
 		return -ENOMEM;
 
-	/* report to CT tty_null as console */
 	res = device_create(ve_tty_class, NULL,
-				MKDEV(TTYAUX_MAJOR, 240), NULL, "console");
+				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
 	if (IS_ERR(res))
 		goto err_class;
 

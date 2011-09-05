@@ -38,17 +38,16 @@ struct inode * nfs_dq_reserve_inode(struct inode * dir)
 #ifdef CONFIG_NFS_FSCACHE
 	nfsi->fscache = NULL;
 #endif
-
-	if (vfs_dq_alloc_inode(inode) == NO_QUOTA)
-		goto err_drop;
-
-	dprintk("NFS: DQ reserve inode (ino: %ld)\n", inode->i_ino);
-
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
 	/* Is this optional? */
 	if (dir->i_mode & S_ISGID)
 		inode->i_gid = dir->i_gid;
+
+	if (vfs_dq_alloc_inode(inode) == NO_QUOTA)
+		goto err_drop;
+
+	dprintk("NFS: DQ reserve inode (ino: %ld)\n", inode->i_ino);
 
 	return inode;
 

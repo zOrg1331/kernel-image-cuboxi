@@ -55,6 +55,8 @@ enum _cpt_object_type
 	CPT_OBJ_SLM_REGOBJ,
 	CPT_OBJ_SLM_MM,
 	CPT_OBJ_VFSMOUNT_REF,
+	CPT_OBJ_CGROUP,
+	CPT_OBJ_CGROUPS,
 	CPT_OBJ_MAX,
 	/* The objects above are stored in memory while checkpointing */
 
@@ -108,6 +110,7 @@ enum _cpt_object_type
 	CPT_OBJ_NET_VETH,
 	CPT_OBJ_NET_STATS,
 	CPT_OBJ_NET_IPIP_TUNNEL,
+	CPT_OBJ_TIMERFD,
 
 	/* 2.6.27-specific */
 	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
@@ -240,6 +243,7 @@ enum
 	CPT_SECT_INOTIFY,
 	CPT_SECT_SYSV_MSG,
 	CPT_SECT_SNMP_STATS,
+	CPT_SECT_CGROUPS,
 	CPT_SECT_MAX
 };
 
@@ -306,6 +310,20 @@ struct cpt_obj_ref
 	__u64	cpt_pos;
 } __attribute__ ((aligned (8)));
 
+struct cpt_timerfd_image
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u64	cpt_it_value;
+	__u64	cpt_it_interval;
+	__u64	cpt_ticks;
+	__u32	cpt_expired;
+	__u32	cpt_clockid;
+} __attribute__ ((aligned (8)));
+
 /* CPT_OBJ_VEINFO: various ve specific data */
 struct cpt_veinfo_image
 {
@@ -335,6 +353,20 @@ struct cpt_veinfo_image
 	__u64	reserved[7];
 } __attribute__ ((aligned (8)));
 
+struct cpt_cgroup_image
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u32	cpt_index;
+	__s32	cpt_parent;
+	__u32	cpt_flags;
+#define CPT_CGRP_NOTIFY_ON_RELEASE	0x1
+#define CPT_CGRP_SELF_DESTRUCTION	0x2
+};
+
 /* CPT_OBJ_FILE: one struct file */ 
 struct cpt_file_image
 {
@@ -363,6 +395,7 @@ struct cpt_file_image
 #define CPT_DENTRY_PROCPID_DEAD 0x200
 #define CPT_DENTRY_HARDLINKED	0x400
 #define CPT_DENTRY_SIGNALFD	0x800
+#define CPT_DENTRY_TIMERFD	0x1000
 #define CPT_DENTRY_SILLYRENAME	0x20000
 	__u64	cpt_inode;
 	__u64	cpt_priv;

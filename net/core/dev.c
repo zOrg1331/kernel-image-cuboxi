@@ -5483,6 +5483,65 @@ out:
 EXPORT_SYMBOL(register_netdev);
 
 /*
+ * We do horrible things -- we left a netdevice
+ * in "leaked" state, which means we release as much
+ * resources as possible but the device will remain
+ * present in namespace because someone holds a reference.
+ *
+ * The idea is to be able to force stop VE.
+ */
+static void ve_netdev_leak(struct net_device *dev)
+{
+	struct napi_struct *p, *n;
+
+	dev->is_leaked = 1;
+	barrier();
+
+	/*
+	 * Make sure we're unable to tx/rx
+	 * network packets to outside.
+	 */
+	WARN_ON_ONCE(dev->flags & IFF_UP);
+	WARN_ON_ONCE(dev->qdisc != &noop_qdisc);
+
+	rtnl_lock();
+
+	/*
+	 * No address and napi after that.
+	 */
+	dev_addr_flush(dev);
+	list_for_each_entry_safe(p, n, &dev->napi_list, dev_list)
+		netif_napi_del(p);
+
+	/*
+	 * No release_net() here since the device remains
+	 * present in the namespace.
+	 */
+
+	__rtnl_unlock();
+
+	put_beancounter(netdev_bc(dev)->exec_ub);
+	put_beancounter(netdev_bc(dev)->owner_ub);
+
+	netdev_bc(dev)->exec_ub		= get_beancounter(get_ub0());
+	netdev_bc(dev)->owner_ub	= get_beancounter(get_ub0());
+
+	/*
+	 * Since we've already screwed the device and releasing
+	 * it in a normal way is not possible anymore, we're
+	 * to be sure the device will remain here forever.
+	 */
+	dev_hold(dev);
+
+	synchronize_net();
+
+	pr_emerg("Device (%s:%d:%u:%p) marked as leaked\n",
+		 dev->name, atomic_read(&dev->refcnt) - 1,
+		 VEID(dev->owner_env), dev);
+	dst_cache_dump();
+}
+
+/*
  * netdev_wait_allrefs - wait until all references are gone.
  *
  * This is called when unregistering network devices.
@@ -5493,9 +5552,10 @@ EXPORT_SYMBOL(register_netdev);
  * We can get stuck here if buggy protocols don't correctly
  * call dev_put.
  */
-static void netdev_wait_allrefs(struct net_device *dev)
+static int netdev_wait_allrefs(struct net_device *dev)
 {
 	unsigned long rebroadcast_time, warning_time;
+	int i = 0;
 
 	rebroadcast_time = warning_time = jiffies;
 	while (atomic_read(&dev->refcnt) != 0) {
@@ -5525,12 +5585,25 @@ static void netdev_wait_allrefs(struct net_device *dev)
 
 		if (time_after(jiffies, warning_time + 10 * HZ)) {
 			printk(KERN_EMERG "unregister_netdevice: "
-			       "waiting for %s to become free. Usage "
-			       "count = %d\n",
-			       dev->name, atomic_read(&dev->refcnt));
+			       "waiting for %s=%p to become free. Usage "
+			       "count = %d\n ve=%u",
+			       dev->name, dev, atomic_read(&dev->refcnt),
+			       VEID(get_exec_env()));
 			warning_time = jiffies;
 		}
+
+		/*
+		 * If device has lost the reference we might stuck
+		 * in this loop forever not having a chance the VE
+		 * to stop.
+		 */
+		if (++i > 200) { /* give 50 seconds to try */
+			ve_netdev_leak(dev);
+			return -EBUSY;
+		}
 	}
+
+	return 0;
 }
 
 /* The sequence is:
@@ -5585,7 +5658,12 @@ void netdev_run_todo(void)
 
 		on_each_cpu(flush_backlog, dev, 1);
 
-		netdev_wait_allrefs(dev);
+		/*
+		 * Even if device get stuck here we are
+		 * to proceed the rest of the list.
+		 */
+		if (netdev_wait_allrefs(dev))
+			continue;
 
 		/* paranoia */
 		BUG_ON(atomic_read(&dev->refcnt));
@@ -5767,6 +5845,13 @@ EXPORT_SYMBOL(alloc_netdev_mq);
 void free_netdev(struct net_device *dev)
 {
 	struct napi_struct *p, *n;
+
+	if (dev->is_leaked) {
+		pr_emerg("%s: device %s=%p is leaked\n",
+			 __func__, dev->name, dev);
+		dump_stack();
+		return;
+	}
 
 	release_net(dev_net(dev));
 

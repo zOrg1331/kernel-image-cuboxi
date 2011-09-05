@@ -888,8 +888,9 @@ static int show_mountinfo(struct seq_file *m, void *v)
 		   MAJOR(sb->s_dev), MINOR(sb->s_dev));
 	seq_dentry(m, mnt->mnt_root, " \t\n\\");
 	seq_putc(m, ' ');
-	seq_path_root(m, &mnt_path, &root, " \t\n\\");
-	if (root.mnt != p->root.mnt || root.dentry != p->root.dentry) {
+	err = seq_path_root(m, &mnt_path, &root, " \t\n\\");
+	if (root.mnt != p->root.mnt || root.dentry != p->root.dentry ||
+							err == -EINVAL) {
 		/*
 		 * Mountpoint is outside root, discard that one.  Ugly,
 		 * but less so than trying to do that in iterator in a
@@ -1235,7 +1236,7 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 		goto dput_and_out;
 
 	retval = -EPERM;
-	if (!capable(CAP_VE_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		goto dput_and_out;
 
 	retval = do_umount(path.mnt, flags);
@@ -1261,7 +1262,7 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
 
 static int mount_is_safe(struct path *path)
 {
-	if (capable(CAP_VE_SYS_ADMIN))
+	if (capable(CAP_VE_SYS_ADMIN) || capable(CAP_SYS_ADMIN))
 		return 0;
 	return -EPERM;
 #ifdef notyet
@@ -1659,7 +1660,7 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 	int err;
 	struct super_block *sb = path->mnt->mnt_sb;
 
-	if (!capable(CAP_VE_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (!check_mnt(path->mnt))
@@ -1704,7 +1705,7 @@ static int do_move_mount(struct path *path, char *old_name)
 	struct path old_path, parent_path;
 	struct vfsmount *p;
 	int err = 0;
-	if (!capable(CAP_VE_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!old_name || !*old_name)
 		return -EINVAL;
@@ -1792,7 +1793,7 @@ static int do_new_mount(struct path *path, char *type, int flags,
 		return -EINVAL;
 
 	/* we need capabilities... */
-	if (!capable(CAP_VE_SYS_ADMIN))
+	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	lock_kernel();

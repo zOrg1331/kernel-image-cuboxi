@@ -40,6 +40,8 @@
 #include <linux/proc_fs.h>
 #include <linux/init_task.h>
 #include <linux/anon_inodes.h>
+#include <linux/timerfd.h>
+#include <linux/cgroup.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -237,6 +239,37 @@ static int make_flags(struct cpt_file_image *fi)
 	return flags;
 }
 
+static struct file *rst_open_file(cpt_object_t *mntobj, char *name,
+			      struct cpt_file_image *fi,
+			      unsigned flags,
+			      struct cpt_context *ctx)
+{
+	struct nameidata nd;
+	int err;
+
+	if (mntobj && (mntobj->o_flags & CPT_VFSMOUNT_DELAYFS)) {
+		struct vfsmount *mnt = mntobj->o_obj;
+
+		if (fi->cpt_lflags & CPT_DENTRY_ROOT)
+			name = "";
+		else if (strlen(name) > mntobj->o_lock)
+			name = name + mntobj->o_lock + 1;
+		else {
+			eprintk_ctx("name %s to short for mnt %d\n", name, mntobj->o_lock);
+			return ERR_PTR(-EINVAL);
+		}
+		return rst_delayfs_screw(mnt, name, flags, fi->cpt_pos, fi->cpt_i_mode);
+	}
+
+	err = rst_path_lookup(mntobj, name, LOOKUP_FOLLOW, &nd);
+	if (err) {
+		eprintk_ctx("%s: failed to lookup path '%s': %d\n", __func__, name, err);
+		return ERR_PTR(err);
+	}
+
+	return dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
+}
+
 static struct file *open_pipe(cpt_object_t *mntobj, char *name,
 			      struct cpt_file_image *fi,
 			      unsigned flags,
@@ -269,14 +302,8 @@ static struct file *open_pipe(cpt_object_t *mntobj, char *name,
 			tf = wf; wf = rf; rf = tf;
 		}
 	} else {
-		struct nameidata nd;
-
-		err = rst_path_lookup(mntobj, name, LOOKUP_FOLLOW, &nd);
-		if (err)
-			return ERR_PTR(err);
-
 		if (fi->cpt_mode&FMODE_READ) {
-			rf = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
+			rf = rst_open_file(mntobj, name, fi, flags, ctx);
 			if (IS_ERR(rf)) {
 				dprintk_ctx("filp_open\n");
 				return rf;
@@ -288,7 +315,7 @@ static struct file *open_pipe(cpt_object_t *mntobj, char *name,
 
 		dprintk_ctx(CPT_FID "open WRONLY fifo ino %Ld\n", CPT_TID(current), (long long)fi->cpt_inode);
 
-		rf = dentry_open(nd.path.dentry, nd.path.mnt, O_RDWR|O_NONBLOCK, current_cred());
+		rf = rst_open_file(mntobj, name, fi, O_RDWR|O_NONBLOCK, ctx);
 		if (IS_ERR(rf))
 			return rf;
 		wf = dentry_open(dget(rf->f_dentry),
@@ -881,6 +908,55 @@ static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct c
 }
 #endif
 
+static struct file * open_timerfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx, loff_t *pos)
+{
+	mm_segment_t old_fs;
+	int fd;
+	struct file *file;
+	struct cpt_timerfd_image o;
+	struct itimerspec utmr;
+	struct itimerspec otmr;
+	struct timerfd_ctx *timerfd_ctx;
+	int err;
+
+	err = rst_get_object(CPT_OBJ_TIMERFD, *pos, &o, ctx);
+	if (err)
+		return ERR_PTR(err);
+	*pos += o.cpt_next;
+
+	cpt_timespec_import(&utmr.it_value, o.cpt_it_value);
+	cpt_timespec_import(&utmr.it_interval, o.cpt_it_interval);
+
+	old_fs = get_fs(); set_fs(KERNEL_DS);
+
+	fd = sys_timerfd_create(o.cpt_clockid,
+					flags & (O_CLOEXEC | O_NONBLOCK));
+	if (fd < 0) {
+		set_fs(old_fs);
+		return ERR_PTR(fd);
+	}
+	err = sys_timerfd_settime(fd, 0, &utmr, &otmr);
+
+	set_fs(old_fs);
+
+	if (err) {
+		file = ERR_PTR(err);
+		goto out;
+	} else
+		file = fget(fd);
+	sys_close(fd);
+
+	timerfd_ctx = file->private_data;
+
+	spin_lock(&timerfd_ctx->wqh.lock);
+	if (o.cpt_expired)
+		timerfd_ctx->expired = 1;
+	timerfd_ctx->ticks += o.cpt_ticks;
+	spin_unlock(&timerfd_ctx->wqh.lock);
+out:
+	return file;
+}
+
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -894,7 +970,6 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	int flags;
 	loff_t pos2;
 	cpt_object_t *mntobj = NULL;
-	struct nameidata nd;
 	const struct cred *cred_origin;
 
 	/*
@@ -1079,6 +1154,9 @@ open_file:
 		if ((fi.cpt_lflags & CPT_DENTRY_SIGNALFD) &&
 			(file = open_signalfd(&fi, flags, ctx)) != NULL)
 			goto map_file;
+		if ((fi.cpt_lflags & CPT_DENTRY_TIMERFD) &&
+			(file = open_timerfd(&fi, flags, ctx, &pos2)) != NULL)
+			goto map_file;
 		if (S_ISFIFO(fi.cpt_i_mode) &&
 		    (file = open_pipe(mntobj, name, &fi, flags, ctx)) != NULL)
 			goto map_file;
@@ -1106,30 +1184,7 @@ open_file:
 #endif
 	}
 
-	if (mntobj && (mntobj->o_flags & CPT_VFSMOUNT_DELAYFS)) {
-		struct vfsmount *mnt = mntobj->o_obj;
-		char *rel_name;
-
-		if (fi.cpt_lflags & CPT_DENTRY_ROOT)
-			rel_name = "";
-		else if (strlen(name) > mntobj->o_lock)
-			rel_name = name + mntobj->o_lock + 1;
-		else {
-			eprintk_ctx("name %s to short for mnt %d\n", name, mntobj->o_lock);
-			err = -EINVAL;
-			goto err_out;
-		}
-
-		file = rst_delayfs_screw(mnt, rel_name, flags, fi.cpt_pos, fi.cpt_i_mode);
-		goto map_file;
-	}
-
-	err = rst_path_lookup(mntobj, name, LOOKUP_FOLLOW, &nd);
-	if (err) {
-		eprintk_ctx("%s: failed to lookup path '%s': %d\n", __func__, name, err);
-		goto err_out;
-	}
-	file = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
+	file = rst_open_file(mntobj, name, &fi, flags, ctx);
 
 	if (proc_dead_file) {
 		remove_proc_entry(proc_dead_file->name, NULL);
@@ -1823,14 +1878,20 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 		char *mntdev;
 		char *mntpnt;
 		char *mnttype;
-		char *mntbind;
-		char *mntdata;
+		char *mntbind = NULL;
+		char *mntdata = NULL;
+		int is_cgroup;
 
 		mntdev = __rst_get_name(&pos, ctx);
 		mntpnt = __rst_get_name(&pos, ctx);
 		mnttype = __rst_get_name(&pos, ctx);
 
-		mntbind = NULL;
+		err = -EINVAL;
+		if (!mntdev || !mntpnt || !mnttype)
+			goto out_err;
+
+		is_cgroup = strcmp(mnttype, "cgroup") == 0;
+
 		if (mi->cpt_mntflags & CPT_MNT_BIND)
 			mntbind = __rst_get_name(&pos, ctx);
 		if (mntbind && (strcmp(mntbind, "/") == 0 || strcmp(mntbind, "") == 0)) {
@@ -1840,14 +1901,17 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 		if (mntbind)
 			mi->cpt_flags |= MS_BIND;
 
-		mntdata = NULL;
 		if (mi->cpt_mntflags & CPT_MNT_DELAYFS)
 			mntdata = __rst_get_name(&pos, ctx);
 
 		bindobj = NULL;
 		if (cpt_object_has(mi, cpt_mnt_bind) &&
 				mi->cpt_mnt_bind != CPT_NULL) {
-			bindobj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
+			if (is_cgroup)
+				bindobj = lookup_cpt_obj_byindex(CPT_OBJ_CGROUP,
+					mi->cpt_mnt_bind, ctx);
+			else
+				bindobj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
 					mi->cpt_mnt_bind, ctx);
 			if (!bindobj) {
 				eprintk_ctx("bind mount source not found: %s\n",
@@ -1857,64 +1921,84 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 			}
 		}
 
-		err = -EINVAL;
-		if (mnttype && mntpnt) {
-			err = 0;
-			if (mi->cpt_mntflags & CPT_MNT_DELAYFS) {
-				mnt = rst_mount_delayfs(mnttype, mi->cpt_flags,
-						mntdev, mntdata, ctx);
+		err = 0;
+		if (mi->cpt_mntflags & CPT_MNT_DELAYFS) {
+			mnt = rst_mount_delayfs(mnttype, mi->cpt_flags,
+					mntdev, mntdata, ctx);
+			err = PTR_ERR(mnt);
+			if (IS_ERR(mnt))
+				goto out_err;
+
+			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
+					mi->cpt_mntflags,
+					CPT_VFSMOUNT_DELAYFS, ctx);
+		} else if (mi->cpt_mntflags & CPT_MNT_EXT) {
+			mnt = rst_lookup_ext_mount(mntpnt, mnttype, ctx);
+			if (IS_ERR(mnt)) {
 				err = PTR_ERR(mnt);
-				if (IS_ERR(mnt))
-					goto out_err;
-
-				err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-						mi->cpt_mntflags,
-						CPT_VFSMOUNT_DELAYFS, ctx);
-			} else if (mi->cpt_mntflags & CPT_MNT_EXT) {
-				mnt = rst_lookup_ext_mount(mntpnt, mnttype, ctx);
-				if (IS_ERR(mnt)) {
-					err = PTR_ERR(mnt);
-					eprintk_ctx("mount point is missing: %s\n", mntpnt);
-					goto out_err;
-				}
-
-				mntobj = rst_add_vfsmount(mnt, mntpnt,
-						mntpos, 0, ctx);
-				if (IS_ERR(mntobj))
-					err = PTR_ERR(mntobj);
-			} else if (!strcmp(mntpnt, "/")) {
-				/* non-external root-mount. skip it. */
-			} else if (mi->cpt_mntflags & CPT_MNT_BIND) {
-				struct nameidata nd;
-
-				err = rst_path_lookup(bindobj, mntbind,
-						LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
-				if (err)
-					goto out_err;
-
-				mnt = vfs_bind_mount(nd.path.mnt, nd.path.dentry);
-				path_put(&nd.path);
-				err = PTR_ERR(mnt);
-				if (IS_ERR(mnt))
-					goto out_err;
-
-				err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-						mi->cpt_mntflags, 0, ctx);
-			} else {
-				mnt = rst_kern_mount(mnttype, mi->cpt_flags,
-						mntdev, NULL);
-				err = PTR_ERR(mnt);
-				if (IS_ERR(mnt))
-					goto out_err;
-
-				err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-						mi->cpt_mntflags, 0, ctx);
-				if (err)
-					goto out_err;
-
-				if (!strcmp(mnttype, "tmpfs"))
-					err = rst_restore_tmpfs(&pos, ctx);
+				eprintk_ctx("mount point is missing: %s\n", mntpnt);
+				goto out_err;
 			}
+
+			mntobj = rst_add_vfsmount(mnt, mntpnt,
+					mntpos, 0, ctx);
+			if (IS_ERR(mntobj))
+				err = PTR_ERR(mntobj);
+		} else if (!strcmp(mntpnt, "/")) {
+			/* non-external root-mount. skip it. */
+		} else if (mi->cpt_mntflags & CPT_MNT_BIND) {
+			struct nameidata nd;
+
+			err = rst_path_lookup(bindobj, mntbind,
+					LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
+			if (err)
+				goto out_err;
+
+			mnt = vfs_bind_mount(nd.path.mnt, nd.path.dentry);
+			path_put(&nd.path);
+			err = PTR_ERR(mnt);
+			if (IS_ERR(mnt))
+				goto out_err;
+
+			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
+					mi->cpt_mntflags, 0, ctx);
+		} else if (is_cgroup) {
+			struct cgroup *cgrp;
+
+			if (bindobj == NULL) {
+				err = -EINVAL;
+				goto out_err;
+			}
+
+			cgrp = bindobj->o_obj;
+
+			mntobj = lookup_cpt_object(CPT_OBJ_CGROUPS, cgrp->dentry->d_sb, ctx);
+			if (!mntobj) {
+				err = -ENODEV;
+				goto out_err;
+			}
+
+			mnt = vfs_bind_mount(mntobj->o_parent, cgrp->dentry);
+			err = PTR_ERR(mnt);
+			if (IS_ERR(mnt))
+				goto out_err;
+
+			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
+					mi->cpt_mntflags, 0, ctx);
+		} else {
+			mnt = rst_kern_mount(mnttype, mi->cpt_flags,
+					mntdev, NULL);
+			err = PTR_ERR(mnt);
+			if (IS_ERR(mnt))
+				goto out_err;
+
+			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
+					mi->cpt_mntflags, 0, ctx);
+			if (err)
+				goto out_err;
+
+			if (!strcmp(mnttype, "tmpfs"))
+				err = rst_restore_tmpfs(&pos, ctx);
 		}
 out_err:
 		if (mntdev)

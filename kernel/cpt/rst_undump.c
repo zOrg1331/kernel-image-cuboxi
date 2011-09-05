@@ -300,6 +300,12 @@ static int hook(void *arg)
 			goto out;
 		}
 
+		err = rst_cgroups(ctx);
+		if (err) {
+			eprintk_ctx("rst_cgroups: %d\n", err);
+			goto out;
+		}
+
 		err = rst_root_namespace(ctx);
 		if (err) {
 			eprintk_ctx("rst_namespace: %d\n", err);
@@ -323,6 +329,8 @@ static int hook(void *arg)
 		}
 #ifdef CONFIG_BEANCOUNTERS
 		bc = get_exec_ub();
+		set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
+		set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
 		set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
 		set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
 		set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
@@ -516,6 +524,10 @@ static int hook(void *arg)
 			eprintk_ctx("rst_init_delayfs_daemon: %d\n", err);
 			goto out_sock;
 		}
+		if ((err = rst_cgroup_task(ctx)) != 0) {
+			eprintk_ctx("rst_cgroup_task: %d\n", err);
+			goto out_sock;
+		}
 		if (ctx->last_vpid)
 			get_exec_env()->ve_ns->pid_ns->last_pid =
 				ctx->last_vpid;
@@ -530,6 +542,9 @@ out_sock:
 
 	thr_ctx->error = err;
 	complete(&thr_ctx->task_done);
+
+	if (ti->cpt_pid == 1)
+		rst_cgroup_close(ctx);
 
 	if (!err && (ti->cpt_state & (EXIT_ZOMBIE|EXIT_DEAD))) {
 		current->flags |= PF_EXIT_RESTART;
@@ -908,6 +923,8 @@ int rst_resume(struct cpt_context *ctx)
 #ifdef CONFIG_BEANCOUNTERS
 	bc = get_beancounter_byuid(ctx->ve_id, 0);
 	BUG_ON(!bc);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_PHYSPAGES);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_SWAPPAGES);
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_KMEMSIZE);
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMPROC);
 	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMFILE);

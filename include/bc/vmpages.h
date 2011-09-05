@@ -94,6 +94,10 @@ SWP_DECLARE_VOID_FUNC(ub_swapentry_inc(struct swap_info_struct *si, pgoff_t n,
 SWP_DECLARE_VOID_FUNC(ub_swapentry_dec(struct swap_info_struct *si, pgoff_t n))
 SWP_DECLARE_VOID_FUNC(ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t n))
 
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+
+int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask);
+
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size);
 
 static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
@@ -119,6 +123,18 @@ static inline int ub_precharge_hpage(struct mm_struct *mm)
 }
 
 #endif
+
+#else /* CONFIG_BC_RSS_ACCOUNTING */
+static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
+{
+	return 0;
+}
+
+static inline int ub_precharge_hpage(struct mm_struct *mm)
+{
+	return 0;
+}
+#endif /* CONFIG_BC_RSS_ACCOUNTING */
 
 void show_ub_mem(struct user_beancounter *ub);
 

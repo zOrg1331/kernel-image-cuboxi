@@ -278,7 +278,7 @@ static struct page *dontread_swap_cache(swp_entry_t entry, struct file *file,
 		SetPageSwapBacked(new_page);
 		err = add_to_swap_cache(new_page, entry, GFP_KERNEL);
 		if (!err) {
-			gang_add_user_page(new_page, &ub->gang_set);
+			gang_add_user_page(new_page, get_ub_gs(ub));
 			lru_cache_add_anon(new_page);
 			goto dirty_page;
 		}
@@ -410,7 +410,7 @@ int rst_iteration(cpt_context_t *ctx)
 		SetPageUptodate(page);
 		SetPageSwapBacked(page);
 		if (add_to_swap(page, ub)) {
-			gang_add_user_page(page, &ub->gang_set);
+			gang_add_user_page(page, get_ub_gs(ub));
 			lru_cache_add_anon(page);
 			ent.val = page->private;
 		}

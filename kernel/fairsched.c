@@ -33,6 +33,18 @@ static void fairsched_name(char *buf, int len, int id)
 	snprintf(buf, len, "%d", id);
 }
 
+static struct cgroup *fairsched_open(unsigned int id)
+{
+	struct cgroup *cgrp;
+	char name[16];
+
+	fairsched_name(name, sizeof(name), id);
+	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	if (cgrp == NULL)
+		return ERR_PTR(-ENOENT);
+	return cgrp;
+}
+
 static int fairsched_node_id(const char *name)
 {
 	unsigned long id;
@@ -85,7 +97,6 @@ SYSCALL_DEFINE1(fairsched_rmnod, unsigned int, id)
 SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 {
 	struct cgroup *cgrp;
-	char name[16];
 	int retval;
 
 	if (!capable_setveid())
@@ -96,12 +107,9 @@ SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 	if (weight < 1 || weight > FSCHWEIGHT_MAX)
 		return -EINVAL;
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	retval = sched_cgroup_set_shares(cgrp, FSCHWEIGHT_BASE / weight);
 	cgroup_kernel_close(cgrp);
@@ -112,7 +120,6 @@ SYSCALL_DEFINE2(fairsched_chwt, unsigned int, id, unsigned, weight)
 SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 {
 	struct cgroup *cgrp;
-	char name[16];
 	int retval = 0;
 
 	if (!capable_setveid())
@@ -121,12 +128,9 @@ SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 	if (id == 0)
 		return -EINVAL;
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	retval = sched_cgroup_set_nr_cpus(cgrp, vcpus);
 	cgroup_kernel_close(cgrp);
@@ -137,7 +141,6 @@ SYSCALL_DEFINE2(fairsched_vcpus, unsigned int, id, unsigned int, vcpus)
 SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 {
 	struct cgroup *cgrp;
-	char name[16];
 	long ret;
 
 	if (!capable_setveid())
@@ -149,12 +152,9 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 		return -EINVAL;
 
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	switch (op) {
 		case FAIRSCHED_SET_RATE:
@@ -183,18 +183,14 @@ SYSCALL_DEFINE2(fairsched_mvpr, pid_t, pid, unsigned int, id)
 {
 	struct cgroup *cgrp;
 	struct task_struct *tsk;
-	char name[16];
 	int retval;
 
 	if (!capable_setveid())
 		return -EPERM;
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	write_lock_irq(&tasklist_lock);
 	tsk = find_task_by_vpid(pid);
@@ -229,7 +225,6 @@ SYSCALL_DEFINE3(fairsched_cpumask, unsigned int, id, unsigned int, len,
 		unsigned long __user *, user_mask_ptr)
 {
 	struct cgroup *cgrp;
-	char name[16];
 	int retval;
 	cpumask_var_t new_mask, in_mask;
 
@@ -239,12 +234,9 @@ SYSCALL_DEFINE3(fairsched_cpumask, unsigned int, id, unsigned int, len,
 	if (id == 0)
 		return -EINVAL;
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	if (!alloc_cpumask_var(&in_mask, GFP_KERNEL)) {
 		retval = -ENOMEM;
@@ -391,15 +383,11 @@ EXPORT_SYMBOL(fairsched_drop_node);
 int fairsched_move_task(int id, struct task_struct *tsk)
 {
 	struct cgroup *cgrp;
-	char name[16];
 	int err;
 
-	fairsched_name(name, sizeof(name), id);
-	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	if (cgrp == NULL)
-		return -ENOENT;
 
 	err = cgroup_kernel_attach(cgrp, tsk);
 	cgroup_kernel_close(cgrp);
@@ -726,6 +714,7 @@ int __init fairsched_init(void)
 		.name		= "fairsched",
 		.subsys_bits	=
 			(1ul << cpu_cgroup_subsys_id) |
+			(1ul << cpuacct_subsys_id) |
 			(1ul << cpuset_subsys_id),
 	};
 

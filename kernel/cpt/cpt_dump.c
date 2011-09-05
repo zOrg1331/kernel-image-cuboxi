@@ -73,6 +73,10 @@ static inline int freezable(struct task_struct * p)
 	if (p->exit_state)
 		return 0;
 
+	/* skip kernel threads */
+	if (p->flags & PF_KTHREAD)
+		return 0;
+
 	switch (p->state) {
 	case EXIT_ZOMBIE:
 	case EXIT_DEAD:
@@ -201,6 +205,10 @@ static int vps_stop_tasks(struct cpt_context *ctx)
 					todo = OBSTACLE_NOGO;
 					goto out;
 				}
+
+				if (!freezable(p))
+					continue;
+
 				if (p->vfork_done) {
 					/* Task between vfork()...exec()
 					 * cannot be frozen, because parent
@@ -240,9 +248,6 @@ static int vps_stop_tasks(struct cpt_context *ctx)
 					todo = OBSTACLE_NOGO;
 					goto out;
 				}
-
-				if (!freezable(p))
-					continue;
 
 				spin_lock_irq(&p->sighand->siglock);
 				if (!(p->flags & PF_FROZEN)) {
@@ -625,6 +630,10 @@ static int vps_collect_tasks(struct cpt_context *ctx)
 				continue;
 			if (child->pid != child->tgid)
 				continue;
+			/* skip kernel threads */
+			if (child->flags & PF_KTHREAD)
+				continue;
+
 			get_task_struct(child);
 			read_unlock(&tasklist_lock);
 
@@ -833,6 +842,7 @@ static int cpt_dump_vsyscall(cpt_context_t *ctx)
 
 int cpt_dump(struct cpt_context *ctx)
 {
+	struct user_beancounter *bc = get_exec_ub();
 	struct ve_struct *oldenv, *env;
 	struct nsproxy *old_ns;
 	int err, err2 = 0;
@@ -872,8 +882,31 @@ int cpt_dump(struct cpt_context *ctx)
 		err = cpt_dump_veinfo(ctx);
 	if (!err)
 		err = cpt_dump_ubc(ctx);
+
+	/*
+	 * Backup old limits and set them temporary unlimited to avoid
+	 * internal reclaimer, oomkiller and other unpleasantnesses
+	 * Correct value already dumpled into image at this point
+	 */
+	spin_lock_irq(&bc->ub_lock);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_PHYSPAGES);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_SWAPPAGES);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_KMEMSIZE);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_NUMPROC);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_NUMFILE);
+	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_DCACHESIZE);
+	set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
+	set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
+	set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
+	set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
+	set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
+	set_one_ubparm_to_max(bc->ub_parms, UB_DCACHESIZE);
+	spin_unlock_irq(&bc->ub_lock);
+
 	if (!err)
 		err = cpt_dump_namespace(ctx);
+	if (!err)
+		err = cpt_dump_cgroups(ctx);
 	if (!err)
 		err = cpt_dump_files(ctx);
 	if (!err)
@@ -913,6 +946,18 @@ int cpt_dump(struct cpt_context *ctx)
 		err = cpt_dump_tail(ctx);
 
 	err2 = cpt_close_dumpfile(ctx);
+
+	/*
+	 * Restore limits back
+	 */
+	spin_lock_irq(&bc->ub_lock);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_PHYSPAGES);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_SWAPPAGES);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_KMEMSIZE);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMPROC);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMFILE);
+	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_DCACHESIZE);
+	spin_unlock_irq(&bc->ub_lock);
 
 out:
 	current->nsproxy = old_ns;

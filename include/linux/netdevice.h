@@ -991,6 +991,7 @@ struct net_device
 						      hw addresses */
 
 	unsigned char		broadcast[MAX_ADDR_LEN];	/* hw bcast add	*/
+	unsigned char		is_leaked;
 
 	struct netdev_queue	rx_queue;
 

@@ -296,14 +296,16 @@ static void page_get_desc(cpt_object_t *mmobj,
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
 		goto out_absent;
 	pmd = pmd_offset(pud, addr);
-	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
+	if (pmd_none(*pmd))
 		goto out_absent;
 #ifdef CONFIG_X86
-	if (pmd_huge(*pmd)) {
-		eprintk_ctx("page_huge\n");
-		goto out_unsupported;
-	}
+	if (pmd_trans_huge(*pmd))
+		split_huge_page_pmd(mm, pmd);
 #endif
+
+	if (unlikely(pmd_bad(*pmd)))
+		goto out_absent;
+
 #ifdef CONFIG_VZ_CHECKPOINT_ITER
 retry:
 #endif
@@ -590,14 +592,6 @@ static int can_expand(struct page_area *pa, struct page_desc *pd)
 	return 1;
 }
 
-static struct anon_vma *find_first_anon_vma(struct vm_area_struct *vma)
-{
-	struct anon_vma_chain *avc;
-
-     	avc = list_entry(vma->anon_vma_chain.prev, struct anon_vma_chain, same_vma);
-	return avc->anon_vma;
-}
-
 #ifdef CONFIG_X86_64
 extern int vdso_is_rhel5(struct page *page);
 static int vdso_is_old(struct vm_area_struct *vma)
@@ -668,14 +662,16 @@ static int dump_one_vma(cpt_object_t *mmobj,
 	v->cpt_anonvma = 0;
 
 	/*
-	 * We can use anon_vma_chain list to locate the first anon_vma instead
-	 * of using current VMA's pointer.
+	 * Dump anon_vma->root instead of current anon_vma.
 	 * This allows us to make restore process easier and share one vma
 	 * structure between all processes after restore.
 	 * It is handy to use absolute address of anon_vma as this identifier.
 	 * FIXME: Implement dumping the whole anon_vma tree
 	 */
-	v->cpt_anonvmaid = (unsigned long)find_first_anon_vma(vma);
+	if (vma->anon_vma)
+		v->cpt_anonvmaid = (unsigned long)vma->anon_vma->root;
+	else
+		v->cpt_anonvmaid = 0;
 
 	if (vma->vm_file) {
 		struct file *filp;
@@ -810,6 +806,9 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 	struct cpt_mm_image *v = cpt_get_buf(ctx);
 	struct kioctx *aio_ctx;
 	struct hlist_node *n;
+	int err;
+
+	down_write(&mm->mmap_sem);
 
 	cpt_open_object(obj, ctx);
 
@@ -886,22 +885,25 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 #endif
 
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
-		int err;
-
 		if ((err = dump_one_vma(obj, vma, ctx)) != 0)
-			return err;
+			goto out;
 	}
 
 	hlist_for_each_entry(aio_ctx, n, &mm->ioctx_list, list) {
-		int err;
-
 		if ((err = dump_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
-			return err;
+			goto out;
 	}
 
 	cpt_close_object(ctx);
 
+	up_write(&mm->mmap_sem);
+
 	return 0;
+
+out:
+	up_write(&mm->mmap_sem);
+
+	return err;
 }
 
 int cpt_dump_vm(struct cpt_context *ctx)
