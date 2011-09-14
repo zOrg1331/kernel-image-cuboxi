@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt32
+Release: alt33
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Wed Sep 14 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt33
+- Build ocfs2 filesystem
+
 * Mon Sep 05 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt32
 - Update to stable 042stab036.1 kernel
 - Remove ipset
