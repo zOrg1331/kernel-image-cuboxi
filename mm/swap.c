@@ -32,6 +32,7 @@
 #include <linux/notifier.h>
 #include <linux/backing-dev.h>
 #include <linux/memcontrol.h>
+#include <linux/rmap.h>
 
 #include "internal.h"
 
@@ -296,6 +297,26 @@ void activate_page(struct page *page)
 	}
 	spin_unlock_irq(&gang->lru_lock);
 }
+
+void deactivate_page(struct page *page)
+{
+	struct gang *gang;
+
+	if (!PageLRU(page) || !PageActive(page) || PageUnevictable(page))
+		return;
+
+	local_irq_disable();
+	gang = lock_page_lru(page);
+	if (PageLRU(page) && PageActive(page) && !PageUnevictable(page)) {
+		int lru = page_lru_base_type(page);
+		del_page_from_lru_list(gang, page, lru + LRU_ACTIVE);
+		ClearPageActive(page);
+		add_page_to_lru_list(gang, page, lru);
+		__count_vm_event(PGDEACTIVATE);
+	}
+	spin_unlock_irq(&gang->lru_lock);
+}
+EXPORT_SYMBOL(deactivate_page);
 
 /*
  * Mark a page as having seen activity.

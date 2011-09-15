@@ -99,6 +99,7 @@ void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
 		}
 	}
 }
+EXPORT_SYMBOL(mlock_vma_page);
 
 /*
  * called from munlock()/munmap() path with page supposedly on the LRU.
@@ -149,6 +150,7 @@ void munlock_vma_page(struct page *page)
 		}
 	}
 }
+EXPORT_SYMBOL(munlock_vma_page);
 
 static inline int stack_guard_page(struct vm_area_struct *vma, unsigned long addr)
 {

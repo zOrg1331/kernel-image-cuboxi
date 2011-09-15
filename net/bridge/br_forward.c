@@ -89,7 +89,7 @@ static void __br_forward(const struct net_bridge_port *to, struct sk_buff *skb)
 }
 
 /* called with rcu_read_lock */
-void br_deliver(const struct net_bridge_port *to, struct sk_buff *skb, int free)
+int br_deliver(const struct net_bridge_port *to, struct sk_buff *skb, int free)
 {
 	if (should_deliver(to, skb)) {
 		if (!free) {
@@ -97,16 +97,18 @@ void br_deliver(const struct net_bridge_port *to, struct sk_buff *skb, int free)
 
 			if ((skb2 = skb_clone(skb, GFP_ATOMIC)) == NULL) {
 				to->dev->stats.tx_dropped++;
-				return;
+				return 1;
 			}
 			skb = skb2;
 		}
 		__br_deliver(to, skb);
-		return;
+		return 1;
 	}
 
 	if (free)
 		kfree_skb(skb);
+
+	return 0;
 }
 
 /* called with rcu_read_lock */

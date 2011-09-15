@@ -114,12 +114,18 @@ unsigned int test_cpu_caps_and_features(void)
 	if (cpu_has_xmm2)
 #endif
 		flags |= 1 << CPT_CPU_X86_SSE2;
+	if (cpu_has_xmm4_1)
+		flags |= 1 << CPT_CPU_X86_SSE4_1;
+	if (cpu_has_xmm4_2)
+		flags |= 1 << CPT_CPU_X86_SSE4_2;
 	if (cpu_has_mmx)
 		flags |= 1 << CPT_CPU_X86_MMX;
 	if (boot_cpu_has(X86_FEATURE_3DNOW))
 		flags |= 1 << CPT_CPU_X86_3DNOW;
 	if (boot_cpu_has(X86_FEATURE_3DNOWEXT))
 		flags |= 1 << CPT_CPU_X86_3DNOW2;
+	if (boot_cpu_has(X86_FEATURE_SSE4A))
+		flags |= 1 << CPT_CPU_X86_SSE4A;
 	if (boot_cpu_has(X86_FEATURE_SYSCALL))
 		flags |= 1 << CPT_CPU_X86_SYSCALL;
 #ifdef CONFIG_X86_64

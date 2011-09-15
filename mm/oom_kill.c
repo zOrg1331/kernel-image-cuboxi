@@ -635,7 +635,7 @@ retry:
 		panic("Out of memory and no killable processes...\n");
 	}
 
-	if (oom_kill_process(p, gfp_mask, order, NULL, ub, "Out of memory"))
+	if (oom_kill_process(p, gfp_mask, order, NULL, NULL, "Out of memory"))
 		goto retry;
 
 	put_beancounter(ub);

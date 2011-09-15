@@ -43,6 +43,8 @@
 #define MADV_HUGEPAGE	14		/* Worth backing with hugepages */
 #define MADV_NOHUGEPAGE	15		/* Not worth backing with hugepages */
 
+#define MADV_DEACTIVATE	32		/* deactivate page */
+
 /* compatibility flags */
 #define MAP_FILE	0
 
