@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt33
+Release: alt34
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Sep 15 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt34
+- Update to 042stab036.6
+- Enable several ide chipsets (ALT 26229)
+
 * Wed Sep 14 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt33
 - Build ocfs2 filesystem
 
