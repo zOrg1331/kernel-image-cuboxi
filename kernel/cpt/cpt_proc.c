@@ -200,9 +200,12 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_FXSR, "fxsr", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE, "sse", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE2, "sse2", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_1", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_2", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_MMX, "mmx", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_3DNOW, "3dnow", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_3DNOW2, "3dnowext", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE4A, "sse4a", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SEP, "sysenter", err);
 		goto out_lock;
 	}
@@ -474,9 +477,12 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_FXSR, "fxsr", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE, "sse", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE2, "sse2", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_1", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_2", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_MMX, "mmx", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW, "3dnow", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW2, "3dnowext", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4A, "sse4a", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SEP, "sysenter", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_EMT64, "emt64", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_IA64, "ia64", err);

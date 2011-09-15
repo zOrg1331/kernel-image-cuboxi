@@ -1082,9 +1082,12 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 		*caps |= flags & ((1<<CPT_CPU_X86_FXSR) |
 				(1<<CPT_CPU_X86_SSE) |
 				(1<<CPT_CPU_X86_SSE2) |
+				(1<<CPT_CPU_X86_SSE4_1) |
+				(1<<CPT_CPU_X86_SSE4_2) |
 				(1<<CPT_CPU_X86_MMX) |
 				(1<<CPT_CPU_X86_3DNOW) |
-				(1<<CPT_CPU_X86_3DNOW2));
+				(1<<CPT_CPU_X86_3DNOW2) |
+				(1<<CPT_CPU_X86_SSE4A));
 	}
 	/* This is not 100% true. VE could migrate with vdso using int80.
 	 * In this case we do not need SEP/SYSCALL32 caps. It is not so easy

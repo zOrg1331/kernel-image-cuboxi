@@ -1840,10 +1840,14 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 			skb_dst_drop(skb);
 
-		bridge_hard_start_xmit(skb, dev);
+		if (bridge_hard_start_xmit(skb, dev) > 0) {
+			rc = NETDEV_TX_OK;
+			kfree_skb(skb);
+		} else {
+			rc = ops->ndo_start_xmit(skb, dev);
+			trace_net_dev_xmit(skb, rc);
+		}
 
-		rc = ops->ndo_start_xmit(skb, dev);
-		trace_net_dev_xmit(skb, rc);
 		if (rc == NETDEV_TX_OK)
 			txq_trans_update(txq);
 		/*
@@ -1877,10 +1881,14 @@ gso:
 		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 			skb_dst_drop(nskb);
 
-		bridge_hard_start_xmit(nskb, dev);
+		if (bridge_hard_start_xmit(nskb, dev) > 0) {
+			rc = NETDEV_TX_OK;
+			kfree_skb(nskb);
+		} else {
+			rc = ops->ndo_start_xmit(nskb, dev);
+			trace_net_dev_xmit(nskb, rc);
+		}
 
-		rc = ops->ndo_start_xmit(nskb, dev);
-		trace_net_dev_xmit(nskb, rc);
 		if (unlikely(rc != NETDEV_TX_OK)) {
 			nskb->next = skb->next;
 			skb->next = nskb;

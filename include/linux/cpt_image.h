@@ -178,6 +178,9 @@ struct cpt_major_hdr
 #define CPT_CPU_X86_SYSCALL	10
 #define CPT_CPU_X86_SYSCALL32	11
 #define CPT_CPU_X86_SEP32	12
+#define CPT_CPU_X86_SSE4_1	13
+#define CPT_CPU_X86_SSE4_2	14
+#define CPT_CPU_X86_SSE4A	15
 
 /* Unsupported features */
 #define CPT_EXTERNAL_PROCESS	16

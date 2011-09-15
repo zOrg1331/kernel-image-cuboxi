@@ -137,7 +137,8 @@ int nfsd_vers(int vers, enum vers_op change)
 	case NFSD_TEST:
 		return nfsd_versions[vers] != NULL;
 	case NFSD_AVAIL:
-		return nfsd_version[vers] != NULL;
+		if ((vers != 4) || ve_is_super(get_exec_env()))
+			return (nfsd_version[vers] != NULL);
 	}
 	return 0;
 }

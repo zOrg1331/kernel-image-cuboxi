@@ -2178,17 +2178,22 @@ static void update_tg_cpu_params(struct task_group *tg, int cpu,
 
 	rq_weight = usd_rq_weight[cpu];
 	if (!rq_weight) {
+		/*
+		 * If there are currently no tasks on the cpu boost the group
+		 * by increasing its shares so that when a new task gets to
+		 * run here it will not get delayed by group starvation.
+		 */
 		boost = 1;
-		rq_weight = NICE_0_LOAD;
+		shares = tg->shares;
+	} else {
+		/*
+		 *             \Sum_j shares_j * rq_weight_i
+		 * shares_i =  -----------------------------
+		 *                  \Sum_j rq_weight_j
+		 */
+		shares = (sd_shares * rq_weight) / sd_rq_weight;
+		shares = clamp_t(unsigned long, shares, MIN_SHARES, MAX_SHARES);
 	}
-
-	/*
-	 *             \Sum_j shares_j * rq_weight_i
-	 * shares_i =  -----------------------------
-	 *                  \Sum_j rq_weight_j
-	 */
-	shares = (sd_shares * rq_weight) / sd_rq_weight;
-	shares = clamp_t(unsigned long, shares, MIN_SHARES, MAX_SHARES);
 
 	if (tg_cpu_rate_need_update(tg, cpu, rate) ||
 	    abs(shares - tg->se[cpu]->load.weight) >
@@ -2197,7 +2202,7 @@ static void update_tg_cpu_params(struct task_group *tg, int cpu,
 		unsigned long flags;
 
 		spin_lock_irqsave(&rq->lock, flags);
-		tg->cfs_rq[cpu]->rq_weight = boost ? 0 : rq_weight;
+		tg->cfs_rq[cpu]->rq_weight = rq_weight;
 		tg->cfs_rq[cpu]->shares = boost ? 0 : shares;
 		__set_tg_cpu_params(tg, cpu, shares, rate);
 		spin_unlock_irqrestore(&rq->lock, flags);
@@ -2213,7 +2218,7 @@ static inline unsigned long tg_cpu_rate(struct task_group *tg, int cpu);
  */
 static int tg_shares_up(struct task_group *tg, void *data)
 {
-	unsigned long weight, rq_weight = 0, sum_weight = 0, shares = 0;
+	unsigned long weight, rq_weight = 0, shares = 0;
 	unsigned long max_rate, rate = 0;
 	unsigned int nr_cpus;
 	unsigned long *usd_rq_weight;
@@ -2239,15 +2244,7 @@ static int tg_shares_up(struct task_group *tg, void *data)
 		usd_rq_weight[i] = weight;
 
 		rq_weight += weight;
-		/*
-		 * If there are currently no tasks on the cpu pretend there
-		 * is one of average load so that when a new task gets to
-		 * run here it will not get delayed by group starvation.
-		 */
-		if (!weight)
-			weight = NICE_0_LOAD;
 
-		sum_weight += weight;
 		shares += tg->cfs_rq[i]->shares;
 		rate += tg_cpu_rate(tg, i);
 	}
@@ -2268,9 +2265,6 @@ static int tg_shares_up(struct task_group *tg, void *data)
 		spread_sd_rate(sched_domain_span(sd), rate, rq_weight,
 			       usd_rq_weight, usd_rq_rate);
 	}
-
-	if (!rq_weight)
-		rq_weight = sum_weight;
 
 	for_each_cpu(i, sched_domain_span(sd))
 		update_tg_cpu_params(tg, i, shares, rq_weight, usd_rq_weight,

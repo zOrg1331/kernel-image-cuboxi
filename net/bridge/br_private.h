@@ -256,7 +256,7 @@ extern void br_fdb_update(struct net_bridge *br,
 			  const unsigned char *addr);
 
 /* br_forward.c */
-extern void br_deliver(const struct net_bridge_port *to,
+extern int br_deliver(const struct net_bridge_port *to,
 		struct sk_buff *skb, int free);
 extern int br_dev_queue_push_xmit(struct sk_buff *skb);
 extern void br_forward(const struct net_bridge_port *to,

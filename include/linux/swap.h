@@ -232,6 +232,7 @@ extern void lru_cache_add_lru(struct page *, enum lru_list lru);
 extern void lru_add_page_tail(struct gang* gang,
 			      struct page *page, struct page *page_tail);
 extern void activate_page(struct page *);
+extern void deactivate_page(struct page *);
 extern void mark_page_accessed(struct page *);
 extern void lru_add_drain(void);
 extern int lru_add_drain_all(void);
@@ -301,6 +302,13 @@ static inline int zone_reclaim(struct zone *z, gfp_t mask, unsigned int order)
 	return 0;
 }
 #endif
+
+/*
+ * must be called with vma's mmap_sem held for read or write, and page locked.
+ */
+extern void mlock_vma_page(struct vm_area_struct *vma, struct page *page);
+extern void munlock_vma_page(struct page *page);
+#define MM_HAS_MLOCK_VMA_PAGE
 
 extern int page_evictable(struct page *page, struct vm_area_struct *vma);
 extern void scan_mapping_unevictable_pages(struct address_space *);
