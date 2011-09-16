@@ -47,6 +47,10 @@
 				 RFKILL_BLOCK_SW_PREV)
 #define RFKILL_BLOCK_SW_SETCALL	BIT(31)
 
+int rfkill_unblocked;
+module_param_named(unblocked, rfkill_unblocked, int, 0);
+MODULE_PARM_DESC(unblocked, "Ignore set state. rfkill instances keeps unblocked.");
+
 struct rfkill {
 	spinlock_t		lock;
 
@@ -455,6 +459,10 @@ bool rfkill_set_hw_state(struct rfkill *rfkill, bool blocked)
 {
 	bool ret, change;
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return blocked;
+    }
+
 	ret = __rfkill_set_hw_state(rfkill, blocked, &change);
 
 	if (!rfkill->registered)
@@ -486,6 +494,10 @@ bool rfkill_set_sw_state(struct rfkill *rfkill, bool blocked)
 	unsigned long flags;
 	bool prev, hwblock;
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return blocked;
+    }
+
 	BUG_ON(!rfkill);
 
 	spin_lock_irqsave(&rfkill->lock, flags);
@@ -511,6 +523,10 @@ void rfkill_init_sw_state(struct rfkill *rfkill, bool blocked)
 {
 	unsigned long flags;
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
+
 	BUG_ON(!rfkill);
 	BUG_ON(rfkill->registered);
 
@@ -525,6 +541,10 @@ void rfkill_set_states(struct rfkill *rfkill, bool sw, bool hw)
 {
 	unsigned long flags;
 	bool swprev, hwprev;
+
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
 
 	BUG_ON(!rfkill);
 
@@ -762,6 +782,10 @@ void rfkill_pause_polling(struct rfkill *rfkill)
 {
 	BUG_ON(!rfkill);
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
+
 	if (!rfkill->ops->poll)
 		return;
 
@@ -771,6 +795,10 @@ EXPORT_SYMBOL(rfkill_pause_polling);
 
 void rfkill_resume_polling(struct rfkill *rfkill)
 {
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
+
 	BUG_ON(!rfkill);
 
 	if (!rfkill->ops->poll)
@@ -818,6 +846,10 @@ bool rfkill_blocked(struct rfkill *rfkill)
 	unsigned long flags;
 	u32 state;
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return false;
+    }
+
 	spin_lock_irqsave(&rfkill->lock, flags);
 	state = rfkill->state;
 	spin_unlock_irqrestore(&rfkill->lock, flags);
@@ -835,6 +867,11 @@ struct rfkill * __must_check rfkill_alloc(const char *name,
 {
 	struct rfkill *rfkill;
 	struct device *dev;
+
+    if ( rfkill_unblocked ) {
+        printk(KERN_DEBUG "rfkill: ignore rfkill object allocation. State change in favor of UNBLOCKED.\n");
+        return ERR_PTR(-ENODEV);
+    }
 
 	if (WARN_ON(!ops))
 		return NULL;
@@ -917,6 +954,10 @@ int __must_check rfkill_register(struct rfkill *rfkill)
 
 	BUG_ON(!rfkill);
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return 0;
+    }
+
 	mutex_lock(&rfkill_global_mutex);
 
 	if (rfkill->registered) {
@@ -978,6 +1019,10 @@ void rfkill_unregister(struct rfkill *rfkill)
 {
 	BUG_ON(!rfkill);
 
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
+
 	if (rfkill->ops->poll)
 		cancel_delayed_work_sync(&rfkill->poll_work);
 
@@ -999,6 +1044,11 @@ EXPORT_SYMBOL(rfkill_unregister);
 
 void rfkill_destroy(struct rfkill *rfkill)
 {
+
+    if ( rfkill_unblocked && rfkill == ERR_PTR(-ENODEV) ) {
+        return;
+    }
+
 	if (rfkill)
 		put_device(&rfkill->dev);
 }
