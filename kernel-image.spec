@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt34
+Release: alt35
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Mon Sep 19 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt35
+- Update to 042stab037.1
+- Add support to ipset version 6
+
 * Thu Sep 15 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt34
 - Update to 042stab036.6
 - Enable several ide chipsets (ALT 26229)
