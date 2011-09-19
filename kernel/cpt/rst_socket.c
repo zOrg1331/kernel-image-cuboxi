@@ -530,7 +530,8 @@ static int open_listening_socket(loff_t pos, struct cpt_sock_image *si,
 	err = sock_create(si->cpt_family, si->cpt_type, si->cpt_protocol,
 			       &sock);
 	if (err) {
-		eprintk_ctx("open_listening_socket: sock_create: %d\n", err);
+		eprintk_ctx("open_listening_socket: sock_create: %d (family: %d, type: %d, protocol: %d)\n",
+				err, (int)si->cpt_family, (int)si->cpt_type, (int)si->cpt_protocol);
 		return err;
 	}
 

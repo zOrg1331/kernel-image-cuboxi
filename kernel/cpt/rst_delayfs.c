@@ -915,10 +915,12 @@ struct vfsmount *rst_mount_delayfs(char *type, int flags,
 		goto out_put;
 	copy_page(si->data, data);
 
-	err = -ENOMEM;
+	err = -EINVAL;
 	si->hidden_type = get_fs_type(type);
-	if (!si->hidden_type)
+	if (!si->hidden_type) {
+		eprintk("DelayFS: unknown file system type '%s'\n", type);
 		goto out_put;
+	}
 
 	delayfs_prepare_for_remount_loop(si);
 

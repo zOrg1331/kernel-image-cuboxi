@@ -12118,14 +12118,12 @@ unsigned long sched_cgroup_get_rate(struct cgroup *cgrp)
 {
 	return sched_group_rate(cgroup_tg(cgrp));
 }
-#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
-#ifdef CONFIG_VZ_FAIRSCHED
 unsigned long *sched_cgroup_cpu_rate_ptr(struct cgroup *cgrp, int cpu)
 {
 	return &cgroup_tg(cgrp)->cfs_rq[cpu]->rate;
 }
-#endif
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 #ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
 int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus)
