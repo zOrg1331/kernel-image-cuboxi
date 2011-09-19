@@ -1,5 +1,5 @@
 Name:    kernel-image-std-pae
-Release: alt1
+Release: alt2
 Epoch:   1 
 %define kernel_base_version	3.0
 %define kernel_sublevel	.4
@@ -618,6 +618,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Sep 19 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.4-alt2
+- Build PAE version
+
 * Tue Aug 30 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.4-alt1
 - 3.0.4
 
