@@ -322,8 +322,12 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 		 * signal
 		 */
 		task = pid_task(find_vpid(nr), PIDTYPE_PID);
-		if (task)
-			force_sig(SIGKILL, task);
+		if (task) {
+			if ((task->flags & PF_KTHREAD))
+				send_sig(SIGKILL, task, 1);
+			else
+				force_sig(SIGKILL, task);
+		}
 
 		rcu_read_unlock();
 

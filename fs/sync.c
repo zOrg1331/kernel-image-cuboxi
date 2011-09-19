@@ -135,28 +135,30 @@ restart:
  */
 SYSCALL_DEFINE0(sync)
 {
-	struct user_beancounter *ub, *sync_ub;
+	struct user_beancounter *ub, *sync_ub = NULL;
 	struct ve_struct *ve;
 
 	ub = get_exec_ub();
 	ve = get_exec_env();
 	ub_percpu_inc(ub, sync);
 
-	/* init can't sync during VE stop. Rationale:
-	 *  - NFS with -o hard will block forever as network is down
-	 *  - no useful job is performed as VE0 will call umount/sync
-	 *    by his own later
-	 *  Den
-	 */
-	if (!ve_is_super(ve) &&
-			(!sysctl_fsync_enable ||
-			current == get_env_init(ve)))
-		goto skip;
+	if (!ve_is_super(ve)) {
+		/*
+		 * init can't sync during VE stop. Rationale:
+		 *  - NFS with -o hard will block forever as network is down
+		 *  - no useful job is performed as VE0 will call umount/sync
+		 *    by his own later
+		 *  Den
+		 */
+		if (current == get_env_init(ve))
+			goto skip;
 
-	if (!ve_is_super(ve) && sysctl_fsync_enable == 2)
-		sync_ub = get_io_ub();
-	else
-		sync_ub = NULL;
+		if (!sysctl_fsync_enable)
+			goto skip;
+
+		if (sysctl_fsync_enable == 2)
+			sync_ub = get_io_ub();
+	}
 
 	wakeup_flusher_threads(sync_ub, 0);
 	sync_filesystems(sync_ub, 0);
