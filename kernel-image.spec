@@ -1,5 +1,5 @@
 Name:    kernel-image-std-pae
-Release: alt2
+Release: alt3
 Epoch:   1 
 %define kernel_base_version	3.0
 %define kernel_sublevel	.4
@@ -618,6 +618,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue Sep 20 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.4-alt3
+- Merge with gears
+
 * Mon Sep 19 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.4-alt2
 - Build PAE version
 
