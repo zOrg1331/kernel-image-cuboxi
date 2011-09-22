@@ -624,6 +624,8 @@
 [rhel5_drivers_md_u4]
 	dm_dirty_log_type_register
 	dm_dirty_log_type_unregister
+[rhel5_drivers_md_u7]
+	dm_put
 [rhel5_drivers_media_common_ga]
 	ir_codes_apac_viewcomp
 	ir_codes_avermedia
@@ -979,6 +981,9 @@
 	pci_release_selected_regions
 	pci_request_selected_regions
 	pci_select_bars
+[rhel5_drivers_pci_u7]
+	pci_ioremap_bar
+	pci_reset_function
 [rhel5_drivers_pci_hotplug_ga]
 	acpiphp_register_attention
 	acpiphp_unregister_attention
@@ -2130,6 +2135,9 @@
 	relay_flush
 	relay_open
 	relay_switch_subbuf
+[rhel5_kernel_u7]
+	cancel_work_sync
+	compat_alloc_user_space
 [rhel5_kernel_irq_ga]
 	disable_irq
 	disable_irq_nosync
@@ -2293,6 +2301,9 @@
 	vscnprintf
 [rhel5_lib_u6]
 	__bitmap_shift_left
+[rhel5_lib_u7]
+	random32
+	srandom32
 [rhel5_lib_reed_solomon_ga]
 	decode_rs16
 	free_rs

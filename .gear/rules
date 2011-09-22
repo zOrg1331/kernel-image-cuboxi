@@ -1,6 +1,5 @@
 copy: *.10
 copy: *.2
-bzip2: *.4
 copy: *.diff
 copy: *.el5
 copy: *.kabi_i686
@@ -23,7 +22,9 @@ copy: diff-backport-dm-delay-20070716
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-compilation-a
+copy: diff-drbd-compilation-b
 copy: diff-drbd-dont-use-connector
+copy: diff-drv-aacraid-PMC-Sierra-support-20110912
 copy: diff-drv-e1000-depends-e1000e-20080718
 copy: diff-drv-e1000-select-e1000e
 copy: diff-gfs-aio-pops
@@ -58,9 +59,9 @@ copy: diff-ms-ext4-nodelalloc-by-default
 copy: diff-ms-mmap-min-addr
 copy: diff-ms-reboot-via-pci-port-cf9-20090922
 copy: diff-ms-splice-access-20080211
-copy: diff-nbd-compile-fixes
+copy: diff-nbd-compile-fixes-1
 copy: diff-nbd-forbid-socket-clear-without-disconnect-20090529
-copy: diff-nbd-from-current
+copy: diff-nbd-from-current-1
 copy: diff-nbd-pid_show-args-number-20090916
 copy: diff-nbd-remove-truncate-at-disconnect-20090529
 copy: diff-nbd-spinlock-usage-fix
@@ -96,6 +97,6 @@ copy: kabi_whitelist_s390x
 copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
-tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab092-core
+tar.bz2: linux name=linux-2.6.18.4
+copy: patch-028stab094-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

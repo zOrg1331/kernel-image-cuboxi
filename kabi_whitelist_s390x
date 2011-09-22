@@ -334,6 +334,8 @@
 [rhel5_drivers_md_u4]
 	dm_dirty_log_type_register
 	dm_dirty_log_type_unregister
+[rhel5_drivers_md_u7]
+	dm_put
 [rhel5_drivers_net_ga]
 	loopback_dev
 [rhel5_drivers_net_u6]
@@ -1288,6 +1290,9 @@
 	relay_flush
 	relay_open
 	relay_switch_subbuf
+[rhel5_kernel_u7]
+	cancel_work_sync
+	compat_alloc_user_space
 [rhel5_kernel_module_ga]
 	printk
 	struct_module
@@ -1424,6 +1429,9 @@
 	vscnprintf
 [rhel5_lib_u6]
 	__bitmap_shift_left
+[rhel5_lib_u7]
+	random32
+	srandom32
 [rhel5_lib_zlib_deflate_ga]
 	zlib_deflate
 	zlib_deflateEnd
