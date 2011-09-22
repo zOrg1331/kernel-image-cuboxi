@@ -127,6 +127,10 @@ nv50_vm_map_sg(struct nouveau_vma *vma, struct nouveau_gpuobj *pgt,
 {
 	pte <<= 3;
 	while (cnt--) {
+		if (unlikely( list == NULL )) {
+			printk("nv50_vm: NULL list\n");
+			return;
+		}
 		u64 phys = nv50_vm_addr(vma, (u64)*list++, mem->memtype, 2);
 		nv_wo32(pgt, pte + 0, lower_32_bits(phys));
 		nv_wo32(pgt, pte + 4, upper_32_bits(phys));
