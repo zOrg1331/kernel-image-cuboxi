@@ -22,10 +22,10 @@ struct ve_task_info {
 	struct list_head vetask_list; /* ve->vetask_lh */
 	struct list_head aux_list;
 /* statistics: scheduling latency */
-	cycles_t sleep_time;
-	cycles_t sched_time;
-	cycles_t sleep_stamp;
-	cycles_t wakeup_stamp;
+	u64 sleep_time;
+	u64 sched_time;
+	u64 sleep_stamp;
+	u64 wakeup_stamp;
 	seqcount_t wakeup_lock;
 };
 

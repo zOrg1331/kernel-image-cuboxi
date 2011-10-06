@@ -392,6 +392,10 @@ static struct shrinker acl_shrinker = {
 static int ve_nfs_init(void *data)
 {
 	int err;
+	struct ve_struct *ve = (struct ve_struct *) data;
+
+	if (!(ve->features & VE_FEATURE_NFS))
+		return 0;
 
 	ve_nlm_init(data);
 	err = nfsiod_start();

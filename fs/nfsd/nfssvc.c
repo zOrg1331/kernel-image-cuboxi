@@ -113,11 +113,26 @@ struct svc_program		nfsd_program = {
 
 };
 
+struct svc_program		ve_nfsd_program = {
+#if defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL)
+	.pg_next		= &nfsd_acl_program,
+#endif
+	.pg_prog		= NFS_PROGRAM,
+	.pg_nvers		= NFSD_NRVERS - 1,	/* no nfsdv4 for ct */
+	.pg_vers		= nfsd_versions,
+	.pg_name		= "nfsd",
+	.pg_class		= "nfsd",
+	.pg_authenticate	= &svc_set_client,
+
+};
+
 u32 nfsd_supported_minorversion;
 
 int nfsd_vers(int vers, enum vers_op change)
 {
 	if (vers < NFSD_MINVERS || vers >= NFSD_NRVERS)
+		return 0;
+	if ((vers == 4) && !ve_is_super(get_exec_env()))
 		return 0;
 	switch(change) {
 	case NFSD_SET:
@@ -329,7 +344,9 @@ int nfsd_create_serv(void)
 	}
 	nfsd_reset_versions();
 
-	nfsd_serv = svc_create_pooled(&nfsd_program, nfsd_max_blksize,
+	nfsd_serv = svc_create_pooled(ve_is_super(get_exec_env()) ?
+					&nfsd_program : &ve_nfsd_program,
+				      nfsd_max_blksize,
 				      nfsd_last_thread, nfsd, THIS_MODULE,
 				      get_exec_env()->nfsd_data->svc_stat);
 	if (nfsd_serv == NULL)

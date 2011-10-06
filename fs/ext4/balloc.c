@@ -229,6 +229,7 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 		*bh = sbi->s_group_desc[group_desc];
 	return desc;
 }
+EXPORT_SYMBOL(ext4_get_group_desc);
 
 static int ext4_valid_block_bitmap(struct super_block *sb,
 					struct ext4_group_desc *desc,

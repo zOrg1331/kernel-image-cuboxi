@@ -355,7 +355,7 @@ static int verify_res(struct user_beancounter *ub, const char *name,
 	return 0;
 }
 
-static inline void bc_verify_held(struct user_beancounter *ub)
+static inline int bc_verify_held(struct user_beancounter *ub)
 {
 	int i, clean;
 
@@ -373,7 +373,11 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 
 	clean &= verify_res(ub, "pincount", __ub_percpu_sum(ub, pincount));
 
+	clean &= verify_res(ub, "dcache", !list_empty(&ub->ub_dentry_lru));
+
 	ub_debug_trace(!clean, 5, 60*HZ);
+
+	return clean;
 }
 
 static void bc_free_rcu(struct rcu_head *rcu)
@@ -415,18 +419,17 @@ static void delayed_release_beancounter(struct work_struct *w)
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
-	refcount = __ub_percpu_sum(ub, pincount);
-	if (WARN_ON(refcount != 0)) {
-		printk(KERN_ERR "UB: Bad percpu pincount (%d) on put of %u (%p)\n",
-				refcount, ub->ub_uid, ub);
+	splice_mem_gangs(get_ub_gs(ub), &init_gang_set);
+	ub_unuse_swap(ub);
+
+	if (!bc_verify_held(ub)) {
+		printk(KERN_ERR "UB: leaked beancounter %u (%p)\n",
+				ub->ub_uid, ub);
+		add_taint(TAINT_CRAP);
 		return;
 	}
 
-	BUG_ON(!list_empty(&ub->ub_dentry_lru));
-
 	del_mem_gangs(get_ub_gs(ub));
-	ub_unuse_swap(ub);
-	bc_verify_held(ub);
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);
 	if (ub->ub_cgroup) {

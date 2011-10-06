@@ -262,7 +262,7 @@ ktime_t ktime_get(void)
 	 */
 	return ktime_add_ns(ktime_set(secs, 0), nsecs);
 }
-EXPORT_SYMBOL_GPL(ktime_get);
+EXPORT_SYMBOL(ktime_get);
 
 /**
  * ktime_get_ts - get the monotonic clock in timespec format

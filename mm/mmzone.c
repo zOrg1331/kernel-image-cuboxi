@@ -282,18 +282,23 @@ again:
 		goto again;
 }
 
-void del_mem_gangs(struct gang_set *gs)
+void splice_mem_gangs(struct gang_set *gs, struct gang_set *target)
 {
 	struct zone *zone;
-	struct gang *gang;
 
 	lru_add_drain_all();
 
-	for_each_populated_zone(zone) {
-		gang = mem_zone_gang(gs, zone);
-		move_gang_pages(gang, zone_init_gang(zone));
-		del_zone_gang(zone, gang);
-	}
+	for_each_populated_zone(zone)
+		move_gang_pages(mem_zone_gang(gs, zone),
+				mem_zone_gang(target, zone));
+}
+
+void del_mem_gangs(struct gang_set *gs)
+{
+	struct zone *zone;
+
+	for_each_populated_zone(zone)
+		del_zone_gang(zone, mem_zone_gang(gs, zone));
 }
 
 void gang_page_stat(struct gang_set *gs, unsigned long *stat)

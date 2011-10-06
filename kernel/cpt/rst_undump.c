@@ -247,10 +247,6 @@ static int hook(void *arg)
 	current->fs->umask = 0;
 
 	if (ti->cpt_pid == 1) {
-#ifdef CONFIG_BEANCOUNTERS
-		struct user_beancounter *bc;
-#endif
-
 		err = vps_rst_reparent_root(tobj, ctx);
 
 		if (err) {
@@ -327,15 +323,6 @@ static int hook(void *arg)
 			eprintk_ctx("rst_sysv_ipc: %d\n", err);
 			goto out;
 		}
-#ifdef CONFIG_BEANCOUNTERS
-		bc = get_exec_ub();
-		set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
-		set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
-		set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
-		set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
-		set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
-		set_one_ubparm_to_max(bc->ub_parms, UB_DCACHESIZE);
-#endif
 	}
 
 	if ((err = rst_creds(ti, ctx)) != 0) {

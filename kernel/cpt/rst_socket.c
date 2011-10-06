@@ -196,6 +196,15 @@ static int unix_bind_to_mntref(struct sock *sk, char *name,
 	int err;
 	cpt_object_t *mntobj;
 
+	if (!name[0]) {
+		if (addrlen <= sizeof(short)) {
+			eprintk_ctx("%s: unsupported hidden name len: %d\n",
+					__func__, addrlen);
+			return -EINVAL;
+		}
+		return sk->sk_socket->ops->bind(sk->sk_socket,  addr, addrlen);
+	}
+
 	err = unix_attach_addr(sk, (struct sockaddr_un *)addr,
 				addrlen);
 	if (err) {
@@ -203,9 +212,6 @@ static int unix_bind_to_mntref(struct sock *sk, char *name,
 						__func__, err, name);
 		return err;
 	}
-
-	if (!name[0])
-		return 0;
 
 	mntobj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
 			si->cpt_vfsmount_ref, ctx);
@@ -467,14 +473,19 @@ static int open_socket(cpt_object_t *obj, struct cpt_sock_image *si,
 		}
 		generic_restore_queues(sock->sk, si, obj->o_pos, ctx);
 	}
-	fixup_unix_address(sock, si, ctx);
+
+	err = fixup_unix_address(sock, si, ctx);
+	if (err)
+		goto err_out;
 
 	if (sock2) {
 		err = rst_get_object(CPT_OBJ_SOCKET, pobj->o_pos, si, ctx);
 		if (err)
 			goto err_out;
 		setup_sock_common(sock2->sk, si, pobj->o_pos, ctx);
-		fixup_unix_address(sock2, si, ctx);
+		err = fixup_unix_address(sock2, si, ctx);
+		if (err)
+			goto err_out;
 	}
 
 	if ((sock->sk->sk_family == AF_INET || sock->sk->sk_family == AF_INET6)

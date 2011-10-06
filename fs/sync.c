@@ -22,8 +22,6 @@
 #define VALID_FLAGS (SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE| \
 			SYNC_FILE_RANGE_WAIT_AFTER)
 
-int sysctl_fsync_enable = 2;
-
 /*
  * Do the filesystem syncing work. For simple filesystems
  * writeback_inodes_sb(sb) just dirties buffers with inodes so we have to
@@ -129,6 +127,24 @@ restart:
 	mutex_unlock(&mutex);
 }
 
+static int __ve_fsync_behavior(struct ve_struct *ve)
+{
+	if (ve->fsync_enable == 2)
+		return get_ve0()->fsync_enable;
+	else if (ve->fsync_enable)
+		return FSYNC_FILTERED; /* sync forced by ve is always filtered */
+	else
+		return 0;
+}
+
+int ve_fsync_behavior(struct ve_struct *ve)
+{
+	if (ve_is_super(ve))
+		return FSYNC_ALWAYS;
+	else
+		return __ve_fsync_behavior(ve);
+}
+
 /*
  * sync everything.  Start out by waking pdflush, because that writes back
  * all queues in parallel.
@@ -143,6 +159,8 @@ SYSCALL_DEFINE0(sync)
 	ub_percpu_inc(ub, sync);
 
 	if (!ve_is_super(ve)) {
+		int fsb;
+
 		/*
 		 * init can't sync during VE stop. Rationale:
 		 *  - NFS with -o hard will block forever as network is down
@@ -153,10 +171,11 @@ SYSCALL_DEFINE0(sync)
 		if (current == get_env_init(ve))
 			goto skip;
 
-		if (!sysctl_fsync_enable)
+		fsb = __ve_fsync_behavior(ve);
+		if (fsb == FSYNC_NEVER)
 			goto skip;
 
-		if (sysctl_fsync_enable == 2)
+		if (fsb == FSYNC_FILTERED)
 			sync_ub = get_io_ub();
 	}
 
@@ -313,7 +332,7 @@ static int do_fsync(unsigned int fd, int datasync)
 	struct file *file;
 	int ret = -EBADF;
 
-	if (!ve_is_super(get_exec_env()) && !sysctl_fsync_enable) 
+	if (ve_fsync_behavior(get_exec_env()) == FSYNC_NEVER)
 		return 0;
 
 	file = fget(fd);
@@ -407,7 +426,7 @@ SYSCALL_DEFINE(sync_file_range)(int fd, loff_t offset, loff_t nbytes,
 	int fput_needed;
 	umode_t i_mode;
 
-	if (!ve_is_super(get_exec_env()) && !sysctl_fsync_enable)
+	if (ve_fsync_behavior(get_exec_env()) == FSYNC_NEVER)
 		return 0;
 
 	ret = -EINVAL;

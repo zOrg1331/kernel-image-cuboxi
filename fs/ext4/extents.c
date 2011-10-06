@@ -515,6 +515,7 @@ void ext4_ext_drop_refs(struct ext4_ext_path *path)
 			path->p_bh = NULL;
 		}
 }
+EXPORT_SYMBOL(ext4_ext_drop_refs);
 
 /*
  * ext4_ext_binsearch_idx:
