@@ -21,29 +21,29 @@ struct swap_cache_info_struct {
 };
 
 struct kstat_lat_snap_struct {
-	cycles_t maxlat, totlat;
+	u64 maxlat, totlat;
 	unsigned long count;
 };
 struct kstat_lat_pcpu_snap_struct {
-	cycles_t maxlat, totlat;
+	u64 maxlat, totlat;
 	unsigned long count;
 	seqcount_t lock;
 } ____cacheline_aligned_in_smp;
 
 struct kstat_lat_struct {
 	struct kstat_lat_snap_struct cur, last;
-	cycles_t avg[3];
+	u64 avg[3];
 };
 struct kstat_lat_pcpu_struct {
 	struct kstat_lat_pcpu_snap_struct *cur;
-	cycles_t max_snap;
+	u64 max_snap;
 	struct kstat_lat_snap_struct last;
-	cycles_t avg[3];
+	u64 avg[3];
 };
 
 struct kstat_perf_snap_struct {
-	cycles_t wall_tottime, cpu_tottime;
-	cycles_t wall_maxdur, cpu_maxdur;
+	u64 wall_tottime, cpu_tottime;
+	u64 wall_maxdur, cpu_maxdur;
 	unsigned long count;
 };
 struct kstat_perf_struct {
@@ -88,15 +88,15 @@ extern void kstat_init(void);
 #ifdef CONFIG_VE
 #define KSTAT_PERF_ENTER(name)				\
 	unsigned long flags;				\
-	cycles_t start, sleep_time;			\
+	u64  start, sleep_time;				\
 							\
-	start = get_cycles();				\
+	start = ktime_to_ns(ktime_get());		\
 	sleep_time = VE_TASK_INFO(current)->sleep_time;	\
 
 #define KSTAT_PERF_LEAVE(name)				\
 	spin_lock_irqsave(&kstat_glb_lock, flags);	\
 	kstat_glob.name.cur.count++;			\
-	start = get_cycles() - start;			\
+	start = ktime_to_ns(ktime_get()) - start;	\
 	if (kstat_glob.name.cur.wall_maxdur < start)	\
 		kstat_glob.name.cur.wall_maxdur = start;\
 	kstat_glob.name.cur.wall_tottime += start;	\
@@ -117,7 +117,7 @@ extern void kstat_init(void);
  * Serialization is the caller's due.
  */
 static inline void KSTAT_LAT_ADD(struct kstat_lat_struct *p,
-		cycles_t dur)
+		u64 dur)
 {
 	p->cur.count++;
 	if (p->cur.maxlat < dur)
@@ -126,7 +126,7 @@ static inline void KSTAT_LAT_ADD(struct kstat_lat_struct *p,
 }
 
 static inline void KSTAT_LAT_PCPU_ADD(struct kstat_lat_pcpu_struct *p, int cpu,
-		cycles_t dur)
+		u64 dur)
 {
 	struct kstat_lat_pcpu_snap_struct *cur;
 
@@ -145,7 +145,7 @@ static inline void KSTAT_LAT_PCPU_ADD(struct kstat_lat_pcpu_struct *p, int cpu,
  */
 static inline void KSTAT_LAT_UPDATE(struct kstat_lat_struct *p)
 {
-	cycles_t m;
+	u64 m;
 	memcpy(&p->last, &p->cur, sizeof(p->last));
 	p->cur.maxlat = 0;
 	m = p->last.maxlat;
@@ -158,7 +158,7 @@ static inline void KSTAT_LAT_PCPU_UPDATE(struct kstat_lat_pcpu_struct *p)
 {
 	unsigned i, cpu;
 	struct kstat_lat_pcpu_snap_struct snap, *cur;
-	cycles_t m;
+	u64 m;
 
 	memset(&p->last, 0, sizeof(p->last));
 	for_each_online_cpu(cpu) {

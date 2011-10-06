@@ -101,6 +101,7 @@ int rst_undump_ubc(struct cpt_context *ctx)
 	struct cpt_beancounter_image *v;
 	cpt_object_t *obj;
 	int err;
+	struct user_beancounter *bc;
 
 	err = rst_get_section(CPT_SECT_UBC, ctx, &start, &end);
 	if (err)
@@ -126,6 +127,15 @@ int rst_undump_ubc(struct cpt_context *ctx)
 
 		start += v->cpt_next;
 	}
+
+	bc = get_exec_ub();
+	set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
+	set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
+	set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
+	set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
+	set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
+	set_one_ubparm_to_max(bc->ub_parms, UB_DCACHESIZE);
+
 	return 0;
 }
 

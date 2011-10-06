@@ -95,6 +95,7 @@ int alloc_mem_gangs(struct gang_set *gs);
 void free_mem_gangs(struct gang_set *gs);
 void add_mem_gangs(struct gang_set *gs);
 void del_mem_gangs(struct gang_set *gs);
+void splice_mem_gangs(struct gang_set *gs, struct gang_set *target);
 #define for_each_gang(gang, zone)			\
 	list_for_each_entry_rcu(gang, &zone->gangs, list)
 static inline int pin_mem_gang(struct gang *gang)
@@ -212,6 +213,7 @@ static inline void free_mem_gangs(struct gang_set *gs) { }
 static inline int alloc_mem_gangs(struct gang_set *gs) { return 0; }
 static inline void add_mem_gangs(struct gang_set *gs) { }
 static inline void del_mem_gangs(struct gang_set *gs) { }
+static inline void splice_mem_gangs(struct gang_set *gs, struct gang_set *target)  { }
 #define for_each_gang(gang, zone)			\
 	for ( gang = &(zone)->init_gang ; gang ; gang = NULL )
 static inline int pin_mem_gang(struct gang *gang) { return 0; }

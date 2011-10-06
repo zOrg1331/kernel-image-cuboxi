@@ -124,10 +124,10 @@ struct ve_nf_conntrack {
 #endif
 
 struct ve_cpu_stats {
-	cycles_t	idle_time;
-	cycles_t	iowait_time;
-	cycles_t	strt_idle_time;
-	cycles_t	used_time;
+	u64		idle_time;
+	u64		iowait_time;
+	u64		strt_idle_time;
+	u64		used_time;
 	seqcount_t	stat_lock;
 	unsigned long	nr_running;
 	unsigned long	nr_unint;
@@ -229,7 +229,6 @@ struct ve_struct {
 /* per VE CPU stats*/
 	struct timespec		start_timespec;
 	u64			start_jiffies;	/* Deprecated */
-	cycles_t 		start_cycles;
 	unsigned long		avenrun[3];	/* loadavg data */
 
 	struct kstat_lat_pcpu_struct	sched_lat_ve;
@@ -267,6 +266,9 @@ struct ve_struct {
 	struct proc_dir_entry	*monitor_proc;
 	unsigned long		meminfo_val;
 	int _randomize_va_space;
+
+	int 			odirect_enable;
+	int			fsync_enable;
 
 #if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
 	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)

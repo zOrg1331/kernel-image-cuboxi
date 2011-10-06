@@ -537,11 +537,9 @@ static struct net_device_stats *get_stats(struct net_device *dev)
 
 	stats = (struct venet_stats *)dev->ml_priv;
 	memset(&stats->stats, 0, sizeof(struct net_device_stats));
-	for (i=0; i < NR_CPUS; i++) {
+	for_each_possible_cpu(i) {
 		struct net_device_stats *dev_stats;
 
-		if (!cpu_possible(i)) 
-			continue;
 		dev_stats = venet_stats(dev, i);
 		stats->stats.rx_bytes   += dev_stats->rx_bytes;
 		stats->stats.tx_bytes   += dev_stats->tx_bytes;

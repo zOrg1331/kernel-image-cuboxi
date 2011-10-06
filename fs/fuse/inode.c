@@ -1220,7 +1220,6 @@ static void fuse_stop(void *data)
 
 	unregister_ve_fs_type(ve->fuse_fs_type, NULL);
 	/* fuse_fs_type is freed in real_put_ve -> free_ve_filesystems */
-	BUG_ON(!list_empty(&ve->_fuse_conn_list));
 }
 
 static struct ve_hook fuse_ve_hook = {

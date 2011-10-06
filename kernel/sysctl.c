@@ -1916,9 +1916,9 @@ static struct ctl_table fs_table[] = {
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "odirect_enable",
-		.data		= &odirect_enable,
+		.extra1		= (void *)offsetof(struct ve_struct, odirect_enable),
 		.maxlen		= sizeof(int),
-		.mode           = 0644,
+		.mode           = 0644 | S_ISVTX,
 		.proc_handler   = proc_dointvec,
 	},
 /*

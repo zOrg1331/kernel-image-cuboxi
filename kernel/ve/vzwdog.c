@@ -93,7 +93,7 @@ static void show_alloc_latency(void)
 	printk("lat: ");
 	for (i = 0; i < KSTAT_ALLOCSTAT_NR; i++) {
 		struct kstat_lat_pcpu_struct *p;
-		cycles_t maxlat, avg0, avg1, avg2;
+		u64 maxlat, avg0, avg1, avg2;
 
 		p = &kstat_glob.alloc_lat[i];
 		spin_lock_irq(&kstat_glb_lock);

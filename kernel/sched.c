@@ -1275,23 +1275,24 @@ static inline void ve_nr_unint_dec(struct ve_struct *ve, int cpu)
 	VE_CPU_STATS(ve, cpu)->nr_unint--;
 }
 
-static inline cycles_t ve_scale_idle_time(struct ve_cpu_stats *ve_stat,
-					  cycles_t cycles)
+static inline u64 ve_scale_idle_time(struct ve_cpu_stats *ve_stat,
+					  cycles_t now)
 {
 #ifdef CONFIG_VZ_FAIRSCHED
 	if (likely(ve_stat->idle_scale))
-		cycles = cycles * *ve_stat->idle_scale / MAX_RATE;
+		now = now * *ve_stat->idle_scale / MAX_RATE;
 #endif
-	return cycles;
+	return now;
 }
 
 #define clock_after(a, b)	((long long)(b) - (long long)(a) < 0)
 
-cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
+u64 ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 {
 	struct ve_cpu_stats *ve_stat;
 	unsigned v;
-	cycles_t strt, ret, cycles;
+	u64 strt, ret, now;
+	now = local_clock();
 
 	ve_stat = VE_CPU_STATS(ve, cpu);
 	do {
@@ -1299,21 +1300,21 @@ cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu)
 		ret = ve_stat->idle_time;
 		strt = ve_stat->strt_idle_time;
 		if (strt && nr_iowait_ve(ve) == 0) {
-			cycles = get_cycles();
-			if (clock_after(cycles, strt))
+			if (clock_after(now, strt))
 				ret += ve_scale_idle_time(ve_stat,
-							  cycles - strt);
+							  now - strt);
 		}
 	} while (read_seqcount_retry(&ve_stat->stat_lock, v));
 	return ret;
 }
 EXPORT_SYMBOL(ve_sched_get_idle_time);
 
-cycles_t ve_sched_get_iowait_time(struct ve_struct *ve, int cpu)
+u64 ve_sched_get_iowait_time(struct ve_struct *ve, int cpu)
 {
 	struct ve_cpu_stats *ve_stat;
 	unsigned v;
-	cycles_t strt, ret, cycles;
+	u64 strt, ret, now;
+	now = local_clock();
 
 	ve_stat = VE_CPU_STATS(ve, cpu);
 	do {
@@ -1321,17 +1322,16 @@ cycles_t ve_sched_get_iowait_time(struct ve_struct *ve, int cpu)
 		ret = ve_stat->iowait_time;
 		strt = ve_stat->strt_idle_time;
 		if (strt && nr_iowait_ve(ve) > 0) {
-			cycles = get_cycles();
-			if (clock_after(cycles, strt))
+			if (clock_after(now, strt))
 				ret += ve_scale_idle_time(ve_stat,
-							  cycles - strt);
+							  now - strt);
 		}
 	} while (read_seqcount_retry(&ve_stat->stat_lock, v));
 	return ret;
 }
 EXPORT_SYMBOL(ve_sched_get_iowait_time);
 
-static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles)
+static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, u64 now)
 {
 	struct ve_cpu_stats *ve_stat;
 
@@ -1339,9 +1339,9 @@ static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles
 
 	write_seqcount_begin(&ve_stat->stat_lock);
 	if (ve_stat->strt_idle_time) {
-		if (clock_after(cycles, ve_stat->strt_idle_time)) {
+		if (clock_after(now, ve_stat->strt_idle_time)) {
 			cycles_t idle_time = ve_scale_idle_time(ve_stat,
-					cycles - ve_stat->strt_idle_time);
+					now - ve_stat->strt_idle_time);
 			if (nr_iowait_ve(ve) == 0)
 				ve_stat->idle_time += idle_time;
 			else
@@ -1352,88 +1352,88 @@ static void ve_stop_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles
 	write_seqcount_end(&ve_stat->stat_lock);
 }
 
-static void ve_strt_idle(struct ve_struct *ve, unsigned int cpu, cycles_t cycles)
+static void ve_strt_idle(struct ve_struct *ve, unsigned int cpu, u64 now)
 {
 	struct ve_cpu_stats *ve_stat;
 
 	ve_stat = VE_CPU_STATS(ve, cpu);
 
 	write_seqcount_begin(&ve_stat->stat_lock);
-	ve_stat->strt_idle_time = cycles;
+	ve_stat->strt_idle_time = now;
 	write_seqcount_end(&ve_stat->stat_lock);
 }
 
-static inline void ve_nr_running_inc(struct ve_struct *ve, int cpu, cycles_t cycles)
+static inline void ve_nr_running_inc(struct ve_struct *ve, int cpu, u64 now)
 {
 	if (++VE_CPU_STATS(ve, cpu)->nr_running == 1)
-		ve_stop_idle(ve, cpu, cycles);
+		ve_stop_idle(ve, cpu, now);
 }
 
-static inline void ve_nr_running_dec(struct ve_struct *ve, int cpu, cycles_t cycles)
+static inline void ve_nr_running_dec(struct ve_struct *ve, int cpu, u64 now)
 {
 	if (--VE_CPU_STATS(ve, cpu)->nr_running == 0)
-		ve_strt_idle(ve, cpu, cycles);
+		ve_strt_idle(ve, cpu, now);
 }
 
 void ve_sched_attach(struct ve_struct *target_ve)
 {
 	struct task_struct *tsk;
 	unsigned int cpu;
-	cycles_t cycles;
+	u64 now;
 
 	tsk = current;
 	preempt_disable();
-	cycles = get_cycles();
+	now = local_clock();
 	cpu = task_cpu(tsk);
-	ve_nr_running_dec(VE_TASK_INFO(tsk)->owner_env, cpu, cycles);
-	ve_nr_running_inc(target_ve, cpu, cycles);
+	ve_nr_running_dec(VE_TASK_INFO(tsk)->owner_env, cpu, now);
+	ve_nr_running_inc(target_ve, cpu, now);
 	preempt_enable();
 }
 EXPORT_SYMBOL(ve_sched_attach);
 
-static inline void write_wakeup_stamp(struct task_struct *p, cycles_t cyc)
+static inline void write_wakeup_stamp(struct task_struct *p, u64 now)
 {
 	struct ve_task_info *ti;
 
 	ti = VE_TASK_INFO(p);
 	write_seqcount_begin(&ti->wakeup_lock);
-	ti->wakeup_stamp = cyc;
+	ti->wakeup_stamp = now;
 	write_seqcount_end(&ti->wakeup_lock);
 }
 
-static inline void update_sched_lat(struct task_struct *t, cycles_t cycles)
+static inline void update_sched_lat(struct task_struct *t, u64 now)
 {
 	int cpu;
-	cycles_t ve_wstamp;
+	u64 ve_wstamp;
 
 	/* safe due to runqueue lock */
 	cpu = smp_processor_id();
 	ve_wstamp = t->ve_task_info.wakeup_stamp;
 
-	if (ve_wstamp && cycles > ve_wstamp) {
+	if (ve_wstamp && now > ve_wstamp) {
 		KSTAT_LAT_PCPU_ADD(&kstat_glob.sched_lat,
-				cpu, cycles - ve_wstamp);
+				cpu, now - ve_wstamp);
 		KSTAT_LAT_PCPU_ADD(&t->ve_task_info.exec_env->sched_lat_ve,
-				cpu, cycles - ve_wstamp);
+				cpu, now - ve_wstamp);
 	}
 }
 
-static inline void update_ve_task_info(struct task_struct *prev, cycles_t cycles)
+static inline void update_ve_task_info(struct task_struct *prev, u64 now)
 {
 	if (prev != this_rq()->idle) {
 		VE_CPU_STATS(prev->ve_task_info.owner_env,
 				smp_processor_id())->used_time +=
-			cycles - prev->ve_task_info.sched_time;
+			now - prev->ve_task_info.sched_time;
 
-		prev->ve_task_info.sched_time = cycles;
+		prev->ve_task_info.sched_time = now;
 	}
 }
 #else
-static inline void ve_nr_running_inc(struct ve_struct, int cpu, cycles_t cycles)
+static inline void ve_nr_running_inc(struct ve_struct, int cpu, u64 now)
 {
 }
 
-static inline void ve_nr_running_dec(struct ve_struct, int cpu, cycles_t cycles)
+static inline void ve_nr_running_dec(struct ve_struct, int cpu, u64 now)
 {
 }
 
@@ -1453,7 +1453,7 @@ static inline void ve_nr_unint_dec(struct ve_struct *ve, int cpu)
 {
 }
 
-static inline void update_ve_task_info(struct task_struct *prev, cycles_t cycles)
+static inline void update_ve_task_info(struct task_struct *prev, u64 now)
 {
 }
 #endif
@@ -2594,21 +2594,22 @@ static int effective_prio(struct task_struct *p)
  */
 static void activate_task(struct rq *rq, struct task_struct *p, int flags)
 {
-	cycles_t cycles;
-
-#ifdef CONFIG_VE
-	cycles = get_cycles();
-	write_wakeup_stamp(p, cycles);
-	p->ve_task_info.sleep_time += cycles;
-#endif
+	u64 now;
 	if (task_contributes_to_load(p)) {
 		rq->nr_uninterruptible--;
 		ve_nr_unint_dec(VE_TASK_INFO(p)->owner_env, task_cpu(p));
 	}
 
 	enqueue_task(rq, p, flags);
+
+	/* rq->clock is updated in enqueue_task() */
+	now = rq->clock;
+#ifdef CONFIG_VE
+	write_wakeup_stamp(p, now);
+	p->ve_task_info.sleep_time += now;
+#endif
 	inc_nr_running(rq);
-	ve_nr_running_inc(VE_TASK_INFO(p)->owner_env, task_cpu(p), cycles);
+	ve_nr_running_inc(VE_TASK_INFO(p)->owner_env, task_cpu(p), now);
 }
 
 /*
@@ -2616,13 +2617,10 @@ static void activate_task(struct rq *rq, struct task_struct *p, int flags)
  */
 static void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
 {
-	cycles_t cycles;
 	unsigned int cpu;
+	u64 now;
 
-	cycles = get_cycles();
 	cpu = task_cpu(p);
-
-	p->ve_task_info.sleep_time -= cycles;
 
 #if 0 /* this is broken */
 	if (p->state == TASK_INTERRUPTIBLE) {
@@ -2639,8 +2637,13 @@ static void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
 	}
 
 	dequeue_task(rq, p, flags);
+
+	/* rq->clock is updated in denqueue_task() */
+	now = rq->clock;
+	p->ve_task_info.sleep_time -= now;
+
 	dec_nr_running(rq);
-	ve_nr_running_dec(VE_TASK_INFO(p)->owner_env, cpu, cycles);
+	ve_nr_running_dec(VE_TASK_INFO(p)->owner_env, cpu, now);
 }
 
 /**
@@ -3275,7 +3278,7 @@ void sched_fork(struct task_struct *p, int clone_flags)
 #endif
 #ifdef CONFIG_VE
 	/* cosmetic: sleep till wakeup below */
-	p->ve_task_info.sleep_time -= get_cycles();
+	p->ve_task_info.sleep_time -= task_rq(p)->clock;
 #endif
 	plist_node_init(&p->pushable_tasks, MAX_PRIO);
 
@@ -6745,7 +6748,6 @@ need_resched_nonpreemptible:
 	next = pick_next_task(rq);
 
 	if (likely(prev != next)) {
-		cycles_t cycles = get_cycles();
 
 		sched_info_switch(prev, next);
 		perf_event_task_sched_out(prev, next);
@@ -6755,18 +6757,18 @@ need_resched_nonpreemptible:
 		++*switch_count;
 
 #ifdef CONFIG_VE
-		prev->ve_task_info.sleep_stamp = cycles;
+		prev->ve_task_info.sleep_stamp = rq->clock;
 		if (prev->state == TASK_RUNNING && prev != this_rq()->idle)
-			write_wakeup_stamp(prev, cycles);
-		update_sched_lat(next, cycles);
+			write_wakeup_stamp(prev, rq->clock);
+		update_sched_lat(next, rq->clock);
 
 		/* because next & prev are protected with
 		 * runqueue lock we may not worry about
 		 * wakeup_stamp and sched_time protection
 		 * (same thing in 'else' branch below)
 		 */
-		update_ve_task_info(prev, cycles);
-		next->ve_task_info.sched_time = cycles;
+		update_ve_task_info(prev, rq->clock);
+		next->ve_task_info.sched_time = rq->clock;
 		write_wakeup_stamp(next, 0);
 #endif
 
@@ -6778,7 +6780,7 @@ need_resched_nonpreemptible:
 		cpu = smp_processor_id();
 		rq = cpu_rq(cpu);
 	} else {
-		update_ve_task_info(prev, get_cycles());
+		update_ve_task_info(prev, rq->clock);
 		spin_unlock_irq(&rq->lock);
 	}
 

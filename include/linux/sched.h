@@ -161,8 +161,8 @@ struct ve_struct;
 extern unsigned long nr_running_ve(struct ve_struct *);
 extern unsigned long nr_iowait_ve(struct ve_struct *);
 extern unsigned long nr_uninterruptible_ve(struct ve_struct *);
-extern cycles_t ve_sched_get_idle_time(struct ve_struct *ve, int cpu);
-extern cycles_t ve_sched_get_iowait_time(struct ve_struct *ve, int cpu);
+extern u64 ve_sched_get_idle_time(struct ve_struct *ve, int cpu);
+extern u64 ve_sched_get_iowait_time(struct ve_struct *ve, int cpu);
 void ve_sched_attach(struct ve_struct *envid);
 #else
 #define nr_running_ve(ve)			0
@@ -2038,21 +2038,6 @@ extern void sched_clock_idle_wakeup_event(u64 delta_ns);
 extern unsigned long long
 task_sched_runtime(struct task_struct *task);
 extern unsigned long long thread_group_sched_runtime(struct task_struct *task);
-
-static inline unsigned long cycles_to_clocks(cycles_t cycles)
-{
-	extern unsigned long cycles_per_clock;
-	do_div(cycles, cycles_per_clock);
-	return cycles;
-}
-
-static inline u64 cycles_to_jiffies(cycles_t cycles)
-{
-	extern unsigned long cycles_per_jiffy;
-	do_div(cycles, cycles_per_jiffy);
-	return cycles;
-}
-
 
 /* sched_exec is called by processes performing an exec */
 #ifdef CONFIG_SMP

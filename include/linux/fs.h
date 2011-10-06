@@ -436,11 +436,15 @@ extern int get_max_files(void);
 extern int sysctl_nr_open;
 extern struct inodes_stat_t inodes_stat;
 extern int leases_enable, lease_break_time;
-extern int odirect_enable;
 #ifdef CONFIG_DNOTIFY
 extern int dir_notify_enable;
 #endif
-extern int sysctl_fsync_enable;
+
+int ve_fsync_behavior(struct ve_struct *);
+
+#define FSYNC_NEVER	0	/* ve syncs are ignored    */
+#define FSYNC_ALWAYS	1	/* ve syncs work as ususal */
+#define FSYNC_FILTERED	2	/* ve syncs only its files */
 
 struct buffer_head;
 typedef int (get_block_t)(struct inode *inode, sector_t iblock,
@@ -448,6 +452,8 @@ typedef int (get_block_t)(struct inode *inode, sector_t iblock,
 typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 			ssize_t bytes, void *private, int ret,
 			bool is_async);
+
+int may_use_odirect(void);
 
 /*
  * Attribute flags.  These should be or-ed together to figure out what

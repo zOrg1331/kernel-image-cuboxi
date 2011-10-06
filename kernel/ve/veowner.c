@@ -121,9 +121,9 @@ static struct ctl_table vz_fs_table[] = {
 	{
 		.ctl_name	= 227,
 		.procname	= "fsync-enable",
-		.data		= &sysctl_fsync_enable,
+		.extra1		= (void *)offsetof(struct ve_struct, fsync_enable),
 		.maxlen		= sizeof(int),
-		.mode		= 0644,
+		.mode		= 0644 | S_ISVTX,
 		.proc_handler	= &proc_dointvec,
 	},
 	{ 0 }

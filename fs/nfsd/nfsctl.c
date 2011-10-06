@@ -809,7 +809,7 @@ static ssize_t __write_versions(struct file *file, char *buf, size_t size)
 	ssize_t tlen = 0;
 	char *sep;
 
-	if (size>0) {
+	if (size>0 && ve_is_super(get_exec_env())) {
 		if (nfsd_serv)
 			/* Cannot change versions without updating
 			 * nfsd_serv->sv_xdrsize, and reallocing
@@ -1373,30 +1373,41 @@ static ssize_t write_recoverydir(struct file *file, char *buf, size_t size)
 
 static int nfsd_fill_super(struct super_block * sb, void * data, int silent)
 {
+#define NFSD_DEPR_FILES							\
+	[NFSD_Svc] = {".svc", &transaction_ops, S_IWUSR},		\
+	[NFSD_Add] = {".add", &transaction_ops, S_IWUSR},		\
+	[NFSD_Del] = {".del", &transaction_ops, S_IWUSR},		\
+	[NFSD_Export] = {".export", &transaction_ops, S_IWUSR},		\
+	[NFSD_Unexport] = {".unexport", &transaction_ops, S_IWUSR},	\
+	[NFSD_Getfd] = {".getfd", &transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_Getfs] = {".getfs", &transaction_ops, S_IWUSR|S_IRUSR}
+
+#define NFSD_V3_FILES							\
+	[NFSD_List] = {"exports", &exports_operations, S_IRUGO},	\
+	[NFSD_Export_features] = {"export_features",			\
+				&export_features_operations, S_IRUGO},	\
+	[NFSD_FO_UnlockIP] = {"unlock_ip",				\
+				&transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_FO_UnlockFS] = {"unlock_filesystem",			\
+				&transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_Fh] = {"filehandle", &transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_Threads] = {"threads", &transaction_ops, S_IWUSR|S_IRUSR},\
+	[NFSD_Pool_Threads] = {"pool_threads",				\
+				&transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_Pool_Stats] = {"pool_stats",				\
+				&pool_stats_operations, S_IRUGO},	\
+	[NFSD_Versions] = {"versions",					\
+				&transaction_ops, S_IWUSR|S_IRUSR},	\
+	[NFSD_Ports] = {"portlist",					\
+				&transaction_ops, S_IWUSR|S_IRUGO},	\
+	[NFSD_MaxBlkSize] = {"max_block_size",				\
+				&transaction_ops, S_IWUSR|S_IRUGO}	
+
 	static struct tree_descr nfsd_files[] = {
 #ifdef CONFIG_NFSD_DEPRECATED
-		[NFSD_Svc] = {".svc", &transaction_ops, S_IWUSR},
-		[NFSD_Add] = {".add", &transaction_ops, S_IWUSR},
-		[NFSD_Del] = {".del", &transaction_ops, S_IWUSR},
-		[NFSD_Export] = {".export", &transaction_ops, S_IWUSR},
-		[NFSD_Unexport] = {".unexport", &transaction_ops, S_IWUSR},
-		[NFSD_Getfd] = {".getfd", &transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Getfs] = {".getfs", &transaction_ops, S_IWUSR|S_IRUSR},
+		NFSD_DEPR_FILES,
 #endif
-		[NFSD_List] = {"exports", &exports_operations, S_IRUGO},
-		[NFSD_Export_features] = {"export_features",
-					&export_features_operations, S_IRUGO},
-		[NFSD_FO_UnlockIP] = {"unlock_ip",
-					&transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_FO_UnlockFS] = {"unlock_filesystem",
-					&transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Fh] = {"filehandle", &transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Threads] = {"threads", &transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Pool_Threads] = {"pool_threads", &transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Pool_Stats] = {"pool_stats", &pool_stats_operations, S_IRUGO},
-		[NFSD_Versions] = {"versions", &transaction_ops, S_IWUSR|S_IRUSR},
-		[NFSD_Ports] = {"portlist", &transaction_ops, S_IWUSR|S_IRUGO},
-		[NFSD_MaxBlkSize] = {"max_block_size", &transaction_ops, S_IWUSR|S_IRUGO},
+		NFSD_V3_FILES,
 #ifdef CONFIG_NFSD_V4
 		[NFSD_Leasetime] = {"nfsv4leasetime", &transaction_ops, S_IWUSR|S_IRUSR},
 		[NFSD_Gracetime] = {"nfsv4gracetime", &transaction_ops, S_IWUSR|S_IRUSR},
@@ -1404,7 +1415,16 @@ static int nfsd_fill_super(struct super_block * sb, void * data, int silent)
 #endif
 		/* last one */ {""}
 	};
-	return simple_fill_super(sb, 0x6e667364, nfsd_files);
+	static struct tree_descr ve_nfsd_files[] = {
+#ifdef CONFIG_NFSD_DEPRECATED
+		NFSD_DEPR_FILES,
+#endif
+		NFSD_V3_FILES,
+		/* last one */ {""}
+	};
+
+	return simple_fill_super(sb, 0x6e667364,
+		ve_is_super(get_exec_env()) ? nfsd_files : ve_nfsd_files);
 }
 
 static int nfsd_get_sb(struct file_system_type *fs_type,

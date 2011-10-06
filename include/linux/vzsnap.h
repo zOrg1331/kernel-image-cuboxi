@@ -77,6 +77,7 @@ enum
 #ifdef __KERNEL__
 
 struct vzsnap_struct;
+struct vzsnap_iterate_ops;
 struct vzsnap_map
 {
 	struct page		**inode_map;
@@ -84,6 +85,7 @@ struct vzsnap_map
 	ino_t			inode_max;
 	sector_t		block_max;
 	struct super_block	*sb;
+	const struct vzsnap_iterate_ops *ops;
 	struct vzsnap_struct	*vzs;
 };
 

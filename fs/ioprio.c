@@ -82,8 +82,24 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 	struct pid *pgrp;
 	int ret;
 
-	if (!ve_is_super(get_exec_env()))
-		return -EPERM;
+	if (!ve_is_super(get_exec_env())) {
+		if (which == IOPRIO_WHO_UBC)
+			return -EPERM;
+
+		switch (class) {
+			case IOPRIO_CLASS_RT:
+				if (!capable(CAP_VE_ADMIN))
+					return -EPERM;
+				class = IOPRIO_CLASS_BE;
+				data = 0;
+				break;
+			case IOPRIO_CLASS_IDLE:
+				class = IOPRIO_CLASS_BE;
+				data = IOPRIO_BE_NR - 1;
+				break;
+		}
+		ioprio = IOPRIO_PRIO_VALUE(class, data);
+	}
 
 	switch (class) {
 		case IOPRIO_CLASS_RT:

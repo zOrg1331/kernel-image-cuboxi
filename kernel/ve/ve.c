@@ -93,6 +93,7 @@ struct ve_struct ve0 = {
 #endif
 	.devices		= LIST_HEAD_INIT(ve0.devices),
 	.init_cred		= &init_cred,
+	.fsync_enable		= FSYNC_FILTERED,
 };
 
 EXPORT_SYMBOL(ve0);

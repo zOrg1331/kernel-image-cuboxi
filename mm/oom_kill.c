@@ -392,7 +392,7 @@ static void __oom_kill_task(struct task_struct *tsk,
 static int oom_kill_task(struct task_struct *p,
 		struct oom_control *oom_ctrl, int verbose)
 {
-	unsigned long total_vm, anon_rss, file_rss;
+	unsigned long total_vm, total_rss, total_swap;
 	struct mm_struct *mm;
 
 	if (is_global_init(p)) {
@@ -430,8 +430,9 @@ static int oom_kill_task(struct task_struct *p,
 	}
 
 	total_vm = mm->total_vm;
-	anon_rss = get_mm_counter(mm, anon_rss);
-	file_rss = get_mm_counter(mm, file_rss);
+	total_rss = get_mm_rss(mm);
+	total_swap = get_mm_counter(mm, swap_usage);
+
 	ub_oom_mark_mm(mm, oom_ctrl);
 	task_unlock(p);
 
@@ -440,18 +441,22 @@ static int oom_kill_task(struct task_struct *p,
 	if (verbose) {
 		struct ve_struct *ve;
 
-		printk(KERN_ERR "Killed process %d (%s) "
-				"vsz:%lukB, anon-rss:%lukB, file-rss:%lukB\n",
+		printk(KERN_ERR "OOM killed process %d (%s) "
+				"vm:%lukB, rss:%lukB, swap:%lukB\n",
 				task_pid_nr(p), p->comm,
 				K(total_vm),
-				K(anon_rss),
-				K(file_rss));
+				K(total_rss),
+				K(total_swap));
 #ifdef CONFIG_VE
 		ve = VE_TASK_INFO(p)->owner_env;
 		if (!ve_is_super(ve)) {
 			ve = set_exec_env(ve);
-			ve_printk(VE_LOG, KERN_ERR "Killed process %d (%s)\n",
-					task_pid_vnr(p), p->comm);
+			ve_printk(VE_LOG, KERN_ERR "OOM killed process %d (%s) "
+					"vm:%lukB, rss:%lukB, swap:%lukB\n",
+					task_pid_vnr(p), p->comm,
+					K(total_vm),
+					K(total_rss),
+					K(total_swap));
 			set_exec_env(ve);
 		}
 #endif

@@ -1694,6 +1694,9 @@ static void cfq_bio_merged(struct request_queue *q, struct request *req,
 {
 	cfq_blkiocg_update_io_merged_stats(&(RQ_CFQG(req))->blkg,
 					bio_data_dir(bio), cfq_bio_sync(bio));
+
+	if (get_exec_ub() != (RQ_CFQG(req))->blkg.blk_ub)
+		ub_writeback_io(0, bio_sectors(bio));
 }
 
 static void
@@ -2159,11 +2162,6 @@ static void cfq_dispatch_insert(struct request_queue *q, struct request *rq)
 	cfqq->nr_sectors += blk_rq_sectors(rq);
 	cfq_blkiocg_update_dispatch_stats(&cfqq->cfqg->blkg, blk_rq_bytes(rq),
 					rq_data_dir(rq), rq_is_sync(rq));
-
-	if (get_exec_ub() != (RQ_CFQG(rq))->blkg.blk_ub)
-		ub_writeback_io(1, blk_rq_sectors(rq));
-
-	virtinfo_notifier_call_irq(VITYPE_IO, VIRTINFO_IO_OP_ACCOUNT, NULL);
 }
 
 /*
@@ -3573,6 +3571,12 @@ static void cfq_insert_request(struct request_queue *q, struct request *rq)
 	cfq_blkiocg_update_io_add_stats(&(RQ_CFQG(rq))->blkg,
 			&cfqd->serving_group->blkg, rq_data_dir(rq),
 			rq_is_sync(rq));
+
+	if (get_exec_ub() != (RQ_CFQG(rq))->blkg.blk_ub)
+		ub_writeback_io(1, blk_rq_sectors(rq));
+
+	virtinfo_notifier_call_irq(VITYPE_IO, VIRTINFO_IO_OP_ACCOUNT, NULL);
+
 	cfq_rq_enqueued(cfqd, cfqq, rq);
 }
 

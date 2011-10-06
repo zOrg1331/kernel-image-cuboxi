@@ -107,6 +107,13 @@ static inline void real_put_ve(struct ve_struct *ve)
 		real_do_env_free(ve);
 	}
 }
+static s64 ve_get_uptime(struct ve_struct *ve)
+{
+	struct timespec uptime;
+	do_posix_clock_monotonic_gettime(&uptime);
+	uptime = timespec_sub(uptime, ve->start_timespec);
+	return timespec_to_ns(&uptime);
+}
 
 static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 {
@@ -139,7 +146,8 @@ static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 		vstat->system_jif += (unsigned long)cputime64_to_clock_t(st->system);
 		vstat->idle_clk += ve_sched_get_idle_time(ve, cpu);
 	}
-	vstat->uptime_clk = get_cycles() - ve->start_cycles;
+	vstat->uptime_clk = ve_get_uptime(ve);
+
 	vstat->uptime_jif = (unsigned long)cputime64_to_clock_t(
 				get_jiffies_64() - ve->start_jiffies);
 	for (i = 0; i < 3; i++) {
@@ -555,6 +563,7 @@ static void free_ve_filesystems(struct ve_struct *ve)
 	ve->devpts_fstype = NULL;
 
 #if defined(CONFIG_FUSE_FS) || defined(CONFIG_FUSE_FS_MODULE)
+	BUG_ON(!list_empty(&ve->_fuse_conn_list));
 	kfree(ve->fuse_fs_type);
 	ve->fuse_fs_type = NULL;
 
@@ -756,11 +765,13 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 	/* The value is wrong, but it is never compared to process
 	 * start times */
 	ve->start_jiffies = get_jiffies_64();
-	ve->start_cycles = get_cycles();
 
 	ve->_randomize_va_space = ve0._randomize_va_space;
 	INIT_LIST_HEAD(&ve->vetask_auxlist);
 	INIT_LIST_HEAD(&ve->devices);
+ 
+	ve->odirect_enable = 2;
+	ve->fsync_enable = 2;
  
 	return 0;
 }
@@ -1212,7 +1223,7 @@ err_kthreadd:
 	ve_move_task(old);
 	/* creds will put user and user ns */
 err_uns:
-	abort_creds(new_creds);
+	put_cred(new_creds);
 err_creds:
 	mntget(ve->proc_mnt);
 err_vpid:
@@ -1875,7 +1886,7 @@ static int vestat_seq_show(struct seq_file *m, void *v)
 	int cpu;
 	unsigned long user_ve, nice_ve, system_ve;
 	unsigned long long uptime;
-	cycles_t uptime_cycles, idle_time, strv_time, used;
+	u64 uptime_cycles, idle_time, strv_time, used;
 
 	entry = (struct list_head *)v;
 	ve = list_entry(entry, struct ve_struct, ve_list);
@@ -1910,7 +1921,7 @@ static int vestat_seq_show(struct seq_file *m, void *v)
 		used += st->used_time;
 		idle_time += ve_sched_get_idle_time(ve, cpu);
 	}
-	uptime_cycles = get_cycles() - ve->start_cycles;
+	uptime_cycles = ve_get_uptime(ve);
 	uptime = get_jiffies_64() - ve->start_jiffies;
 
 	seq_printf(m, VESTAT_LINE_FMT, ve->veid,

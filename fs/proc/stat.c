@@ -44,8 +44,8 @@ static int show_stat_ve(struct seq_file *p, struct ve_struct *ve, unsigned long 
 		(unsigned long long)cputime64_to_clock_t(user),
 		(unsigned long long)cputime64_to_clock_t(nice),
 		(unsigned long long)cputime64_to_clock_t(system),
-		(unsigned long long)cycles_to_clocks(idle),
-		(unsigned long long)cycles_to_clocks(iowait));
+		(unsigned long long)nsec_to_clock_t(idle),
+		(unsigned long long)nsec_to_clock_t(iowait));
 
 	for (i = 0; i < nr_ve_vcpus; i++) {
 		user = nice = system = idle = iowait = 0;
@@ -63,8 +63,8 @@ static int show_stat_ve(struct seq_file *p, struct ve_struct *ve, unsigned long 
 			(unsigned long long)cputime64_to_clock_t(user),
 			(unsigned long long)cputime64_to_clock_t(nice),
 			(unsigned long long)cputime64_to_clock_t(system),
-			(unsigned long long)cycles_to_clocks(idle),
-			(unsigned long long)cycles_to_clocks(iowait));
+			(unsigned long long)nsec_to_clock_t(idle),
+			(unsigned long long)nsec_to_clock_t(iowait));
 	}
 	seq_printf(p, "intr 0\nswap 0 0\n");
 

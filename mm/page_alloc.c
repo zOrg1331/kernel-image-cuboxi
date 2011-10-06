@@ -2098,14 +2098,13 @@ got_pg:
 
 }
 
-extern unsigned long cycles_per_jiffy;
 static void __alloc_collect_stats(gfp_t gfp_mask, unsigned int order,
-		struct page *page, cycles_t time)
+		struct page *page, u64 time)
 {
 #ifdef CONFIG_VE
 	int ind, cpu;
 
-	time = (jiffies - time) * cycles_per_jiffy;
+	time = jiffies_to_usecs(jiffies - time) * 1000;
 	if (!(gfp_mask & __GFP_WAIT))
 		ind = KSTAT_ALLOCSTAT_ATOMIC;
 	else if (!(gfp_mask & __GFP_HIGHMEM))

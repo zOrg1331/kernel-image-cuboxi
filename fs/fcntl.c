@@ -161,12 +161,26 @@ int generic_set_file_flags(struct file *filp, unsigned int arg)
 }
 EXPORT_SYMBOL(generic_set_file_flags);
 
+int may_use_odirect(void)
+{
+	int may;
+
+	may = capable(CAP_SYS_RAWIO);
+	if (!may) {
+		may = get_exec_env()->odirect_enable;
+		if (may == 2)
+			may = get_ve0()->odirect_enable;
+	}
+
+	return may;
+}
+
 static int setfl(int fd, struct file * filp, unsigned long arg)
 {
 	struct inode * inode = filp->f_path.dentry->d_inode;
 	int error = 0;
 
-	if (!capable(CAP_SYS_RAWIO) && !odirect_enable)
+	if (!may_use_odirect())
 		arg &= ~O_DIRECT;
 
 	/*

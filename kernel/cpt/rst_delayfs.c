@@ -1036,13 +1036,12 @@ int rebind_unix_socket(struct vfsmount *rmnt, struct unix_bind_info *bi,
 	char *name = ((char *)bi->path) + bi->path_off;
 
 	if (rst_path_lookup_at(rmnt,  rmnt->mnt_root, name, flags, &nd) < 0) {
-		err = mknod_by_mntref(name, S_IFSOCK, 0, rmnt);
+		err = mknod_by_mntref(name, S_IFSOCK | (bi->i_mode & S_IALLUGO),
+			       		0, rmnt);
 		if (err) {
 			printk("%s: mknod [%s] err %d\n", __func__, name, err);
 			return err;
 		}
-
-		sc_chmod(name, (bi->i_mode & S_IALLUGO));
 
 		err = rst_path_lookup_at(rmnt,  rmnt->mnt_root, name, flags, &nd);
 		if (err < 0) {

@@ -635,13 +635,14 @@ static void prune_dcache(int count, gfp_t gfp_mask)
 
 			delta = ub->ub_dentry_unused - ub_dcache_threshold;
 			if (delta <= 0)
-				continue;
+				goto skip;
 			if (w_count > delta)
 				w_count = delta;
 		}
 
 		__shrink_dcache_ub(ub, w_count);
 
+skip:
 		rcu_read_lock();
 		put_beancounter(ub);
 	}
