@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt35
+Release: alt36
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Oct 06 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt36
+- Update to 042stab039.1
+
 * Mon Sep 19 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt35
 - Update to 042stab037.1
 - Add support to ipset version 6
