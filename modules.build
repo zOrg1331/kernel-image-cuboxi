@@ -22,7 +22,7 @@ virtualbox
 virtualbox-addition
 
 #other drivers
-lirc
+#lirc
 #subfs
 #svgalib_helper
 #etercifs
