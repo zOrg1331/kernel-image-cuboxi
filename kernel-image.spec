@@ -615,6 +615,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Fri Oct 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.6-alt0.M60P.1
+- 3.0.6
+
 * Tue Sep 20 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.4-alt0.M60P.2
 - rfkill: add module option to become inactive.
 
