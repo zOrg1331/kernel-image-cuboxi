@@ -563,7 +563,7 @@ static void free_ve_filesystems(struct ve_struct *ve)
 	ve->devpts_fstype = NULL;
 
 #if defined(CONFIG_FUSE_FS) || defined(CONFIG_FUSE_FS_MODULE)
-	BUG_ON(!list_empty(&ve->_fuse_conn_list));
+	BUG_ON(ve->fuse_fs_type && !list_empty(&ve->_fuse_conn_list));
 	kfree(ve->fuse_fs_type);
 	ve->fuse_fs_type = NULL;
 
