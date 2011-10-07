@@ -1,8 +1,8 @@
 Name:    kernel-image-std-pae
-Release: alt3
-Epoch:   1 
+Release: alt1
+Epoch:   1
 %define kernel_base_version	3.0
-%define kernel_sublevel	.4
+%define kernel_sublevel	.6
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -618,6 +618,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue Oct 04 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.6-alt1
+- 3.0.6
+
 * Tue Sep 20 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.4-alt3
 - Merge with gears
 
