@@ -2,7 +2,7 @@ Name: kernel-image-un-def
 Release: alt1
 epoch:1 
 %define kernel_base_version	3.0
-%define kernel_sublevel	.6
+%define kernel_sublevel	.7
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -54,7 +54,7 @@ BuildRequires: dev86 flex
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
-BuildRequires: module-init-tools >= 3.1
+BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
@@ -568,6 +568,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Wed Oct 19 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.7-alt1
+- 3.0.7
+- dependence on module-init-tools updated
+
+* Fri Oct 07 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.6-alt2
+- NULL dereference in nouveau fixed (cherry-pick from 3.1-rc4)
+
 * Tue Oct 04 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.6-alt1
 - 3.0.6
 
