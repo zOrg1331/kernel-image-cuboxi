@@ -451,6 +451,9 @@ ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
 popd
 
+# remove *.bin files
+rm -f %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
+
 # install documentation
 %if_enabled docs
 install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
@@ -520,6 +523,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 /lib/firmware/*
+
+%ghost %modules_dir/modules.alias.bin
+%ghost %modules_dir/modules.dep.bin
+%ghost %modules_dir/modules.symbols.bin
+%ghost %modules_dir/modules.builtin.bin
 
 %files -n kernel-image-domU-%flavour
 /boot/vmlinux-%kversion-%flavour-%krelease
