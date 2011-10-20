@@ -94,9 +94,9 @@ extern void kstat_init(void);
 	sleep_time = VE_TASK_INFO(current)->sleep_time;	\
 
 #define KSTAT_PERF_LEAVE(name)				\
+	start = ktime_to_ns(ktime_get()) - start;	\
 	spin_lock_irqsave(&kstat_glb_lock, flags);	\
 	kstat_glob.name.cur.count++;			\
-	start = ktime_to_ns(ktime_get()) - start;	\
 	if (kstat_glob.name.cur.wall_maxdur < start)	\
 		kstat_glob.name.cur.wall_maxdur = start;\
 	kstat_glob.name.cur.wall_tottime += start;	\
