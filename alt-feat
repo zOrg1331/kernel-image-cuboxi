@@ -1,3 +1,4 @@
 feat-kvm-kms
 feat-network-ipt_netflow
 feat-fs-aufs
+feat-platform-pegatron
