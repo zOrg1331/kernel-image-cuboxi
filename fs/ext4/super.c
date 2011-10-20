@@ -4053,7 +4053,7 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 static int ext4_quota_off(struct super_block *sb, int type, int remount)
 {
 	/* Force all delayed allocation blocks to be allocated */
-	if (test_opt(sb, DELALLOC))
+	if (EXT4_SB(sb) && test_opt(sb, DELALLOC))
 		sync_filesystem(sb);
 
 	return vfs_quota_off(sb, type, remount);
