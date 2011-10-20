@@ -54,7 +54,7 @@ BuildRequires: dev86 flex
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
-BuildRequires: module-init-tools >= 3.1
+BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-ipset-%flavour = %version-%release
@@ -76,10 +76,10 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.4.13-alt1
-Requires: module-init-tools >= 3.1
-Requires: mkinitrd >= 1:2.9.9-alt1
-Requires: startup >= 0.8.3-alt1
+Requires: bootloader-utils >= 0.4.14-alt1
+Requires: module-init-tools >= 3.16-alt2
+Requires: make-initrd >= 0.6.1-alt1.1
+Requires: startup >= 0.9.8.30-alt1
 
 Provides: kernel = %kversion
 
@@ -482,9 +482,6 @@ pushd %buildroot%old_kbuild_dir/include/linux
 ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
 popd
-
-# remove *.bin files
-rm -f %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
 
 # install documentation
 %if_enabled docs
