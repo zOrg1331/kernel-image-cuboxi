@@ -2,7 +2,7 @@ Name:    kernel-image-std-def
 Release: alt0.M60P.1
 Epoch:   1
 %define kernel_base_version	3.0
-%define kernel_sublevel	.6
+%define kernel_sublevel	.7
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -54,7 +54,7 @@ BuildRequires: dev86 flex
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
-BuildRequires: module-init-tools >= 3.1
+BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-igb-%flavour = %version-%release
@@ -76,10 +76,10 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.4.13-alt1
-Requires: module-init-tools >= 3.1
-Requires: mkinitrd >= 1:2.9.9-alt1
-Requires: startup >= 0.8.3-alt1
+Requires: bootloader-utils >= 0.4.14-alt1
+Requires: module-init-tools >= 3.16-alt2
+Requires: make-initrd >= 0.6.1-alt1.1
+Requires: startup >= 0.9.8.30-alt1
 
 Provides: kernel = %kversion
 
@@ -483,8 +483,6 @@ ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
 popd
 
-
-
 # install documentation
 %if_enabled docs
 install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
@@ -563,6 +561,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 /lib/firmware/*
 
+%ghost %modules_dir/modules.alias.bin
+%ghost %modules_dir/modules.dep.bin
+%ghost %modules_dir/modules.symbols.bin
+%ghost %modules_dir/modules.builtin.bin
+
 %if_enabled oss
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
@@ -615,6 +618,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue Oct 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.7-alt1
+- 3.0.7
+- feat platform-pegatron
+
 * Fri Oct 07 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.6-alt0.M60P.1
 - 3.0.6
 
