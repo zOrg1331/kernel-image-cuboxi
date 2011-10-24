@@ -11,8 +11,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab094
-%define ovzrel 3
+%define ovzver 028stab095
+%define ovzrel 1
 
 %if !%{buildup}
 %define _without_up 1
@@ -134,10 +134,10 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 #
 %define sublevel 18
 %define stablerev 4
-%define revision 274.3.1
+%define revision 274.7.1
 %define kversion 2.6.%{sublevel}.%{stablerev}
 %define rpmversion 2.6.%{sublevel}
-%define release 274.3.1%{?dist}%{?buildid}
+%define release %{revision}%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -591,7 +591,7 @@ Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
 
 Patch100038: linux-2.6-fs-fix-wrongly-kfree-ing-a-vmalloc-ed-area.patch
-Patch100039: linux-2.6-net-bridge-support-netpoll-over-bridge-disable.patch
+Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811

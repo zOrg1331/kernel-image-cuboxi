@@ -8856,7 +8856,61 @@ diff -Naurp xen/arch/x86/hvm/Makefile xen-redhat/arch/x86/hvm/Makefile
 diff -Naurp xen/arch/x86/hvm/platform.c xen-redhat/arch/x86/hvm/platform.c
 --- xen/arch/x86/hvm/platform.c
 +++ xen-redhat/arch/x86/hvm/platform.c
-@@ -1057,7 +1057,9 @@ void handle_mmio(unsigned long gpa)
+@@ -423,6 +423,17 @@ static int mmio_decode(int address_bytes
+         GET_OP_SIZE_FOR_BYTE(size_reg);
+         return reg_mem(size_reg, opcode, mmio_op, rex);
+ 
++    case 0x01: /* add r32/16, m32/16 */
++        mmio_op->instr = INSTR_ADD;
++        GET_OP_SIZE_FOR_NONEBYTE(*op_size);
++        return reg_mem(*op_size, opcode, mmio_op, rex);
++
++    case 0x02: /* add m8, r8 */
++        mmio_op->instr = INSTR_ADD;
++        *op_size = BYTE;
++        GET_OP_SIZE_FOR_BYTE(size_reg);
++        return mem_reg(size_reg, opcode, mmio_op, rex);
++
+     case 0x03: /* add m32/16, r32/16 */
+         mmio_op->instr = INSTR_ADD;
+         GET_OP_SIZE_FOR_NONEBYTE(*op_size);
+@@ -472,6 +483,23 @@ static int mmio_decode(int address_bytes
+         GET_OP_SIZE_FOR_NONEBYTE(*op_size);
+         return mem_reg(*op_size, opcode, mmio_op, rex);
+ 
++    case 0x28: /* sub r8, m8 */
++        mmio_op->instr = INSTR_SUB;
++        *op_size = BYTE;
++        GET_OP_SIZE_FOR_BYTE(size_reg);
++        return reg_mem(size_reg, opcode, mmio_op, rex);
++
++    case 0x29: /* sub r32/16, m32/16 */
++        mmio_op->instr = INSTR_SUB;
++        GET_OP_SIZE_FOR_NONEBYTE(*op_size);
++        return reg_mem(*op_size, opcode, mmio_op, rex);
++
++    case 0x2A: /* sub m8, r8 */
++        mmio_op->instr = INSTR_SUB;
++        *op_size = BYTE;
++        GET_OP_SIZE_FOR_BYTE(size_reg);
++        return mem_reg(size_reg, opcode, mmio_op, rex);
++
+     case 0x2B: /* sub m32/16, r32/16 */
+         mmio_op->instr = INSTR_SUB;
+         GET_OP_SIZE_FOR_NONEBYTE(*op_size);
+@@ -494,6 +522,11 @@ static int mmio_decode(int address_bytes
+         GET_OP_SIZE_FOR_BYTE(size_reg);
+         return mem_reg(size_reg, opcode, mmio_op, rex);
+ 
++    case 0x33: /* xor m16/32, r16/32 */
++        mmio_op->instr = INSTR_XOR;
++        GET_OP_SIZE_FOR_NONEBYTE(*op_size);
++        return mem_reg(*op_size, opcode, mmio_op, rex);
++
+     case 0x38: /* cmp r8, m8 */
+         mmio_op->instr = INSTR_CMP;
+         *op_size = BYTE;
+@@ -1057,7 +1090,9 @@ void handle_mmio(unsigned long gpa)
          for ( i = 0; i < inst_len; i++ )
              printk(" %02x", inst[i] & 0xFF);
          printk("\n");
@@ -15831,7 +15885,7 @@ diff -Naurp xen/arch/x86/mm/p2m.c xen-redhat/arch/x86/mm/p2m.c
 diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 --- xen/arch/x86/mm/p2m-ept.c
 +++ xen-redhat/arch/x86/mm/p2m-ept.c
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,570 @@
 +/*
 + * p2m-ept.c: use the EPT page table as p2m
 + * Copyright (c) 2007, Intel Corporation.
@@ -15965,55 +16019,61 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +#define GUEST_TABLE_SUPER_PAGE  2
 +#define GUEST_TABLE_SPLIT_PAGE  3
 +
-+static int ept_set_middle_entry(struct domain *d, ept_entry_t *ept_entry)
++static struct page_info *ept_alloc_middle_page(struct domain *d)
 +{
 +    struct page_info *pg;
 +
 +    pg = d->arch.p2m.alloc_page(d);
 +    if ( pg == NULL )
-+        return 0;
++        return NULL;
 +
 +    pg->count_info = 1;
 +    pg->u.inuse.type_info = 1 | PGT_validated;
 +    list_add_tail(&pg->list, &d->arch.p2m.pages);
 +
-+    ept_entry->emt = 0;
-+    ept_entry->igmt = 0;
-+    ept_entry->sp_avail = 0;
-+    ept_entry->avail1 = 0;
-+    ept_entry->mfn = page_to_mfn(pg);
-+    ept_entry->rsvd = 0;
-+    ept_entry->avail2 = 0;
-+    /* last step */
-+    ept_entry->r = ept_entry->w = ept_entry->x = 1;
++    return pg;
++}
 +
-+    return 1;
++static ept_entry_t ept_set_middle_entry(ept_entry_t *ept_entry,
++                                        struct page_info *pg)
++{
++    ept_entry_t e;
++
++    e.epte = 0;
++    e.mfn = page_to_mfn(pg);
++    /* last step */
++    e.r = e.w = e.x = 1;
++    *ept_entry = e;
++    return e;
 +}
 +
 +static int ept_next_level(struct domain *d, bool_t read_only,
 +                          ept_entry_t **table, unsigned long *gfn_remainder,
 +                          u32 shift, int order)
 +{
-+    ept_entry_t *ept_entry, *next;
++    ept_entry_t ept_entry, *next;
++    struct page_info *pg;
 +    u32 index;
 +
 +    index = *gfn_remainder >> shift;
 +
-+    ept_entry = (*table) + index;
++    ept_entry = (*table)[index];
 +
-+    if ( !(ept_entry->epte & 0x7) )
++    if ( !(ept_entry.epte & 0x7) )
 +    {
 +        if ( read_only )
 +            return 0;
 +
-+        if ( !ept_set_middle_entry(d, ept_entry) )
++        pg = ept_alloc_middle_page(d);
++        if ( pg == NULL )
 +            return 0;
++        ept_entry = ept_set_middle_entry((*table) + index, pg);
 +    }
 +
-+    if ( !ept_entry->sp_avail )
++    if ( !ept_entry.sp_avail )
 +    {
 +        *gfn_remainder &= (1UL << shift) - 1;
-+        next = map_domain_page(ept_entry->mfn);
++        next = map_domain_page(ept_entry.mfn);
 +        unmap_domain_page(*table);
 +        *table = next;
 +        return GUEST_TABLE_NORMAL_PAGE;
@@ -16033,7 +16093,7 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +{
 +    ept_entry_t *table = NULL;
 +    unsigned long gfn_remainder = gfn, offset=0;
-+    ept_entry_t *ept_entry;
++    ept_entry_t ept_entry;
 +    u32 index;
 +    int i, rv = 0, ret = 0;
 +    int walk_level = order / EPT_TABLE_ORDER;
@@ -16067,47 +16127,49 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +    walk_level = ( i ? ( i * EPT_TABLE_ORDER) : order) / EPT_TABLE_ORDER;
 +    offset = (gfn_remainder & ( ((1 << (i*EPT_TABLE_ORDER)) - 1)));
 +
-+    ept_entry = table + index;
++    ept_entry = table[index];
 +
 +    if ( ret != GUEST_TABLE_SPLIT_PAGE )
 +    {
 +        if ( mfn_valid(mfn_x(mfn)) || (p2mt == p2m_mmio_direct) )
 +        {
-+            ept_entry->emt = epte_get_entry_emt(d, gfn, mfn_x(mfn),
++            ept_entry.emt = epte_get_entry_emt(d, gfn, mfn_x(mfn),
 +                                &igmt, direct_mmio);
-+            ept_entry->igmt = igmt;
-+            ept_entry->sp_avail = walk_level ? 1 : 0;
++            ept_entry.igmt = igmt;
++            ept_entry.sp_avail = walk_level ? 1 : 0;
 +
 +            if ( ret == GUEST_TABLE_SUPER_PAGE )
 +            {
-+                if ( ept_entry->mfn == (mfn_x(mfn) - offset) )
++                if ( ept_entry.mfn == (mfn_x(mfn) - offset) )
 +                    need_modify_vtd_table = 0;
 +                else
-+                    ept_entry->mfn = mfn_x(mfn) - offset;
++                    ept_entry.mfn = mfn_x(mfn) - offset;
 +
-+                if ( ept_entry->avail1 == p2m_ram_logdirty &&
++                if ( ept_entry.avail1 == p2m_ram_logdirty &&
 +                  p2mt == p2m_ram_rw )
 +                    for ( i = 0; i < (1UL << order); i++ )
 +                        paging_mark_dirty(d, mfn_x(mfn)-offset+i);
 +            }
 +            else
 +            {
-+                if ( ept_entry->mfn == mfn_x(mfn) )
++                if ( ept_entry.mfn == mfn_x(mfn) )
 +                    need_modify_vtd_table = 0;
 +                else
-+                    ept_entry->mfn = mfn_x(mfn);
++                    ept_entry.mfn = mfn_x(mfn);
 +            }
 +
 +
-+            ept_entry->avail1 = p2mt;
-+            ept_entry->rsvd = 0;
-+            ept_entry->avail2 = 0;
++            ept_entry.avail1 = p2mt;
++            ept_entry.rsvd = 0;
++            ept_entry.avail2 = 0;
 +            /* last step */
-+            ept_entry->r = ept_entry->w = ept_entry->x = 1;
-+            ept_p2m_type_to_flags(ept_entry, p2mt);
-+    }
-+    else
-+        ept_entry->epte = 0;
++            ept_entry.r = ept_entry.w = ept_entry.x = 1;
++            ept_p2m_type_to_flags(&ept_entry, p2mt);
++        }
++        else
++            ept_entry.epte = 0;
++
++        table[index] = ept_entry;
 +    }
 +    else
 +    {
@@ -16116,56 +16178,62 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +         */
 +
 +        ept_entry_t *split_table = NULL;
-+        ept_entry_t *split_ept_entry = NULL;
-+        unsigned long split_mfn = ept_entry->mfn;
-+        p2m_type_t split_p2mt = ept_entry->avail1;
++        ept_entry_t split_ept_entry;
++        unsigned long split_mfn = ept_entry.mfn;
++        p2m_type_t split_p2mt = ept_entry.avail1;
++        struct page_info *pg;
 +
 +        /* alloc new page for new ept middle level entry which is
 +         * before a leaf super entry
 +         */
 +
-+        if ( !ept_set_middle_entry(d, ept_entry) )
++        pg = ept_alloc_middle_page(d);
++        if ( pg == NULL )
 +            goto out;
 +
 +        /* split the super page before to 4k pages */
 +
-+        split_table = map_domain_page(ept_entry->mfn);
++        split_table = map_domain_page(page_to_mfn(pg));
 +        offset = gfn & ((1 << EPT_TABLE_ORDER) - 1);
 +
 +        for ( i = 0; i < 512; i++ )
 +        {
-+            split_ept_entry = split_table + i;
-+            split_ept_entry->emt = epte_get_entry_emt(d,
++            split_ept_entry = split_table[i];
++            split_ept_entry.emt = epte_get_entry_emt(d,
 +                                        gfn-offset+i, split_mfn+i,
 +                                        &igmt, direct_mmio);
-+            split_ept_entry->igmt = igmt;
++            split_ept_entry.igmt = igmt;
 +
-+            split_ept_entry->sp_avail =  0;
++            split_ept_entry.sp_avail =  0;
 +
-+            split_ept_entry->mfn = split_mfn+i;
++            split_ept_entry.mfn = split_mfn+i;
 +
-+            split_ept_entry->avail1 = split_p2mt;
-+            split_ept_entry->rsvd = 0;
-+            split_ept_entry->avail2 = 0;
++            split_ept_entry.avail1 = split_p2mt;
++            split_ept_entry.rsvd = 0;
++            split_ept_entry.avail2 = 0;
 +            /* last step */
-+            split_ept_entry->r = split_ept_entry->w = split_ept_entry->x = 1;
-+            ept_p2m_type_to_flags(split_ept_entry, split_p2mt);
++            split_ept_entry.r = split_ept_entry.w = split_ept_entry.x = 1;
++            ept_p2m_type_to_flags(&split_ept_entry, split_p2mt);
++            split_table[i] = split_ept_entry;
 +        }
 +
 +        /* Set the destinated 4k page as normal */
-+        split_ept_entry = split_table + offset;
-+        split_ept_entry->emt = epte_get_entry_emt(d, gfn, mfn_x(mfn),
++        split_ept_entry = split_table[offset];
++        split_ept_entry.emt = epte_get_entry_emt(d, gfn, mfn_x(mfn),
 +                                                &igmt, direct_mmio);
-+        split_ept_entry->igmt = igmt;
-+        if ( split_ept_entry->mfn == mfn_x(mfn) )
++        split_ept_entry.igmt = igmt;
++        if ( split_ept_entry.mfn == mfn_x(mfn) )
 +            need_modify_vtd_table = 0;
 +        else
-+            split_ept_entry->mfn = mfn_x(mfn);
++            split_ept_entry.mfn = mfn_x(mfn);
 +
-+        split_ept_entry->avail1 = p2mt;
-+        ept_p2m_type_to_flags(split_ept_entry, p2mt);
++        split_ept_entry.avail1 = p2mt;
++        ept_p2m_type_to_flags(&split_ept_entry, p2mt);
++        split_table[offset] = split_ept_entry;
 +
 +        unmap_domain_page(split_table);
++
++        ept_set_middle_entry(table + index, pg);
 +    }
 +
 +    /* Track the highest gfn for which we have ever had a valid mapping */
@@ -16215,7 +16283,7 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +    ept_entry_t *table =
 +        map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
 +    unsigned long gfn_remainder = gfn;
-+    ept_entry_t *ept_entry;
++    ept_entry_t ept_entry;
 +    u32 index;
 +    int i, ret=0;
 +    mfn_t mfn = _mfn(INVALID_MFN);
@@ -16239,12 +16307,12 @@ diff -Naurp xen/arch/x86/mm/p2m-ept.c xen-redhat/arch/x86/mm/p2m-ept.c
 +    }
 +
 +    index = gfn_remainder >> ( i * EPT_TABLE_ORDER);
-+    ept_entry = table + index;
++    ept_entry = table[index];
 +
-+    if ( ept_entry->avail1 != p2m_invalid )
++    if ( ept_entry.avail1 != p2m_invalid )
 +    {
-+        *t = ept_entry->avail1;
-+        mfn = _mfn(ept_entry->mfn);
++        *t = ept_entry.avail1;
++        mfn = _mfn(ept_entry.mfn);
 +        if ( i )
 +        {
 +            /* we may meet super pages, and to split into 4k pages
@@ -29187,7 +29255,7 @@ diff -Naurp xen/drivers/passthrough/amd/iommu_detect.c xen-redhat/drivers/passth
 diff -Naurp xen/drivers/passthrough/amd/iommu_init.c xen-redhat/drivers/passthrough/amd/iommu_init.c
 --- xen/drivers/passthrough/amd/iommu_init.c
 +++ xen-redhat/drivers/passthrough/amd/iommu_init.c
-@@ -0,0 +1,827 @@
+@@ -0,0 +1,839 @@
 +/*
 + * Copyright (C) 2007 Advanced Micro Devices, Inc.
 + * Author: Leo Duran <leo.duran@amd.com>
@@ -29640,7 +29708,7 @@ diff -Naurp xen/drivers/passthrough/amd/iommu_init.c xen-redhat/drivers/passthro
 +
 +static void parse_event_log_entry(u32 entry[])
 +{
-+    u16 domain_id, device_id;
++    u16 domain_id, device_id, bdf, cword;
 +    u32 code;
 +    u64 *addr;
 +    char * event_str[] = {"ILLEGAL_DEV_TABLE_ENTRY",
@@ -29674,6 +29742,18 @@ diff -Naurp xen/drivers/passthrough/amd/iommu_init.c xen-redhat/drivers/passthro
 +        printk(XENLOG_ERR "AMD-Vi: "
 +            "%s: domain:%d, device id:0x%x, fault address:0x%"PRIx64"\n",
 +            event_str[code-1], domain_id, device_id, *addr);
++
++        /* Tell the device to stop DMAing; we can't rely on the guest to
++         * control it for us. */
++        for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ )
++            if ( get_dma_requestor_id(bdf) == device_id )
++            {
++                cword = pci_conf_read16(PCI_BUS(bdf), PCI_SLOT(bdf),
++                                PCI_FUNC(bdf), PCI_COMMAND);
++                pci_conf_write16(PCI_BUS(bdf), PCI_SLOT(bdf),
++                                 PCI_FUNC(bdf), PCI_COMMAND,
++                                 cword & ~PCI_COMMAND_MASTER);
++            }
 +    }
 +}
 +
@@ -33901,7 +33981,7 @@ diff -Naurp xen/drivers/passthrough/vtd/intremap.c xen-redhat/drivers/passthroug
 diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/vtd/iommu.c
 --- xen/drivers/passthrough/vtd/iommu.c
 +++ xen-redhat/drivers/passthrough/vtd/iommu.c
-@@ -0,0 +1,1958 @@
+@@ -0,0 +1,1966 @@
 +/*
 + * Copyright (c) 2006, Intel Corporation.
 + *
@@ -34638,7 +34718,7 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +    while (1)
 +    {
 +        u8 fault_reason;
-+        u16 source_id;
++        u16 source_id, cword;
 +        u32 data;
 +        u64 guest_addr;
 +        int type;
@@ -34670,6 +34750,14 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +
 +        iommu_page_fault_do_one(iommu, type, fault_reason,
 +                                source_id, guest_addr);
++
++        /* Tell the device to stop DMAing; we can't rely on the guest to
++         * control it for us. */
++        cword = pci_conf_read16(PCI_BUS(source_id), PCI_SLOT(source_id),
++                                PCI_FUNC(source_id), PCI_COMMAND);
++        pci_conf_write16(PCI_BUS(source_id), PCI_SLOT(source_id),
++                         PCI_FUNC(source_id), PCI_COMMAND,
++                         cword & ~PCI_COMMAND_MASTER);
 +
 +        fault_index++;
 +        if ( fault_index > cap_num_fault_regs(iommu->cap) )
