@@ -618,6 +618,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Oct 24 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.7-alt0.M60P.1
+- 3.0.7
+- feat platform-pegatron
+
 * Tue Oct 18 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.0.7-alt1
 - 3.0.7
 - feat platform-pegatron
