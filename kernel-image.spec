@@ -2,7 +2,7 @@ Name: kernel-image-un-def
 Release: alt1
 epoch:1 
 %define kernel_base_version	3.0
-%define kernel_sublevel	.7
+%define kernel_sublevel	.8
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -453,6 +453,7 @@ popd
 
 # remove *.bin files
 rm -f %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
+touch %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
 
 # install documentation
 %if_enabled docs
@@ -523,7 +524,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 /lib/firmware/*
-
 %ghost %modules_dir/modules.alias.bin
 %ghost %modules_dir/modules.dep.bin
 %ghost %modules_dir/modules.symbols.bin
@@ -576,6 +576,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Wed Oct 26 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.8-alt1
+- 3.0.8
+- *bin files are %ghost now (aspsk@)
+- feat-pegatron (silicium@)
+
 * Wed Oct 19 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.0.7-alt1
 - 3.0.7
 - dependence on module-init-tools updated
