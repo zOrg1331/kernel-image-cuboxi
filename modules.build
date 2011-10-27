@@ -54,6 +54,6 @@ fglrx
 
 dahdi
 
-compat-wireless
+# compat-wireless
 emlog
 rt3070
