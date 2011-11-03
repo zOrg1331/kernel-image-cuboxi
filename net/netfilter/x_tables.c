@@ -85,21 +85,29 @@ static void uncharge_xtables(struct xt_table_info *info, unsigned long size)
 	uncharge_beancounter(ub, UB_NUMXTENT, size);
 }
 
-static int recharge_xtables(int check_ub,
-		struct xt_table_info *new, struct xt_table_info *old)
+static int recharge_xtables(struct xt_table_info *new, struct xt_table_info *old)
 {
-	struct user_beancounter *ub;
+	struct user_beancounter *ub, *old_ub;
 	long change;
 
 	ub = xt_table_ub(new);
-	BUG_ON(check_ub && ub != xt_table_ub(old));
-
+	old_ub = old->number ? xt_table_ub(old) : ub;
 	change = (long)new->number - (long)old->number;
+	if (old_ub != ub) {
+		printk(KERN_WARNING "iptables resources are charged"
+				" from different UB (%d -> %d)\n",
+				old_ub->ub_uid, ub->ub_uid);
+		change = new->number;
+	}
+
 	if (change > 0) {
 		if (charge_beancounter(ub, UB_NUMXTENT, change, UB_SOFT))
 			return -ENOMEM;
 	} else if (change < 0)
 		uncharge_beancounter(ub, UB_NUMXTENT, -change);
+
+	if (old_ub != ub)
+		uncharge_beancounter(old_ub, UB_NUMXTENT, old->number);
 
 	return 0;
 }
@@ -763,7 +771,7 @@ xt_replace_table(struct xt_table *table,
 		return NULL;
 	}
 
-	if (recharge_xtables(num_counters != 0, newinfo, private)) {
+	if (recharge_xtables(newinfo, private)) {
 		local_bh_enable();
 		*error = -ENOMEM;
 		return NULL;

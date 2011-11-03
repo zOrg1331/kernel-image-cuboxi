@@ -34,7 +34,7 @@ struct kobject *block_depr;
 static DEFINE_MUTEX(ext_devt_mutex);
 static DEFINE_IDR(ext_devt_idr);
 
-static struct device_type disk_type;
+struct device_type disk_type;
 
 /**
  * disk_get_part - get partition
@@ -1056,12 +1056,13 @@ static char *block_devnode(struct device *dev, mode_t *mode)
 	return NULL;
 }
 
-static struct device_type disk_type = {
+struct device_type disk_type = {
 	.name		= "disk",
 	.groups		= disk_attr_groups,
 	.release	= disk_release,
 	.devnode	= block_devnode,
 };
+EXPORT_SYMBOL(disk_type);
 
 #ifdef CONFIG_PROC_FS
 /*
