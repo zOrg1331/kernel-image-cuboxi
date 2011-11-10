@@ -1380,14 +1380,16 @@ void ve_sched_attach(struct ve_struct *target_ve)
 	struct task_struct *tsk;
 	unsigned int cpu;
 	u64 now;
+	unsigned long flags;
+	struct rq *rq;
 
 	tsk = current;
-	preempt_disable();
+	rq = task_rq_lock(tsk, &flags);
 	now = local_clock();
 	cpu = task_cpu(tsk);
 	ve_nr_running_dec(VE_TASK_INFO(tsk)->owner_env, cpu, now);
 	ve_nr_running_inc(target_ve, cpu, now);
-	preempt_enable();
+	task_rq_unlock(rq, &flags);
 }
 EXPORT_SYMBOL(ve_sched_attach);
 

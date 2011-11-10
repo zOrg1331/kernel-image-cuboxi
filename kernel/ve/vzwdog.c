@@ -217,7 +217,10 @@ static int show_one_disk_io(struct device *dev, void *x)
 	char *name;
 	char buf[BDEVNAME_SIZE];
 	struct gendisk *gd;
-	
+
+	if (dev->type != &disk_type)
+		return 0;
+
 	gd = dev_to_disk(dev);
 
 	name = disk_name(gd, 0, buf);

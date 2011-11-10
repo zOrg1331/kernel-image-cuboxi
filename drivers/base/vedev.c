@@ -27,11 +27,10 @@ extern struct sysfs_dirent *sysfs_get_active(struct sysfs_dirent *sd);
 extern void sysfs_put_active(struct sysfs_dirent *sd);
 static struct kobject *ve_kobj_path_create(char *path)
 {
-	char *e, *p;
+	char *e, *p = path;
 	struct sysfs_dirent *sd, *parent_sd = get_exec_env()->_sysfs_root;
 	struct kobject *k, *pk = NULL;
-	
-	p = path;
+
 	if (*p == '/')
 		p++;
 
@@ -43,41 +42,46 @@ static struct kobject *ve_kobj_path_create(char *path)
 		if (sd == NULL) {
 new:			k = kobject_create_and_add(p, pk);
 			kobject_put(pk);
-			if (!k) {
-				k = ERR_PTR(-ENOMEM);
-				goto out;
-			}
+			if (!k)
+				return ERR_PTR(-ENOMEM);
 		} else {
-			if (sd->s_flags & SYSFS_DIR) {
-				k = sd->s_dir.kobj;
-				/*a directory may be deleted*/
-				if (!sysfs_get_active(sd)) {
-					sysfs_put(sd);
-					goto new;
-				}
-			} else if (sd->s_flags & SYSFS_DIR_LINK)
-				k = ERR_PTR(-EEXIST);
-			else
-				k = ERR_PTR(-EINVAL);
-
-			if (IS_ERR(k)) {
+			if (!(sd->s_flags & SYSFS_DIR)) {
 				sysfs_put(sd);
-				goto out;
+
+				return (sd->s_flags & SYSFS_DIR_LINK) ?
+					ERR_PTR(-EEXIST) : ERR_PTR(-EINVAL);
 			}
+
+			k = sd->s_dir.kobj;
+			/*a directory may be deleted*/
+			if (!sysfs_get_active(sd)) {
+				sysfs_put(sd);
+				goto new;
+			}
+
 			kobject_get(k);
 			kobject_put(pk);
 			sysfs_put_active(sd);
 			sysfs_put(sd);
 		}
 		pk = k;
-		parent_sd = k->sd; 
+		parent_sd = k->sd;
 		if (!e)
 			break;
-		else
-			p = e + 1;
+
+		p = e + 1;
 	}
-out:
+
 	return k;
+}
+
+static inline struct kobject *vedev_kobj_path_create(char *path, struct ve_device *ve_dev)
+{
+	struct kobject *obj;
+	struct ve_struct *old_ve = set_exec_env(ve_dev->ve);
+	obj = ve_kobj_path_create(path);
+	set_exec_env(old_ve);
+	return obj;
 }
 
 static int ve_device_add_symlink(struct kobject *kobj, const char *name, \
@@ -87,15 +91,12 @@ static int ve_device_add_symlink(struct kobject *kobj, const char *name, \
 	int ret = -ENOMEM;
 	struct kobject *dev_kobj, *ve_kobj = NULL;
 	struct ve_device_link *ve_link;
-	struct ve_struct *old_ve;
 
 	path = kobject_get_path(kobj, GFP_KERNEL);
 	if (!path)
 		goto out;
 
-	old_ve = set_exec_env(ve_dev->ve);
-	ve_kobj = ve_kobj_path_create(path);
-	set_exec_env(old_ve);
+	ve_kobj = vedev_kobj_path_create(path, ve_dev);
 	kfree(path);
 	if (IS_ERR(ve_kobj)) {
 		ret = PTR_ERR(ve_kobj);
@@ -188,8 +189,7 @@ static int ve_device_link_kobj(struct ve_device *ve_dev)
 	int ret = 0;
 	struct sysfs_dirent *sd;
 	struct kobject *k = NULL, *pk = NULL;
-	struct ve_struct *old_ve;
-	
+
 	path = kobject_get_path(&ve_dev->dev->kobj, GFP_KERNEL);
 	if (!path) {
 		return -ENOMEM;
@@ -198,9 +198,7 @@ static int ve_device_link_kobj(struct ve_device *ve_dev)
 	if (p && p != path) {
 		*p = '\0';
 		p++;
-		old_ve = set_exec_env(ve_dev->ve);
-		pk = ve_kobj_path_create(path);
-		set_exec_env(old_ve);
+		pk = vedev_kobj_path_create(path, ve_dev);
 		if (IS_ERR(pk)) {
 			ret = PTR_ERR(pk);
 			pk = NULL;
@@ -285,11 +283,11 @@ static int ve_device_create_link(struct ve_device *ve_dev)
 	ret = ve_device_link_bus(ve_dev);
 	if (ret)
 		goto err;
-out:	
+out:
 	return 0;
 err:
 	ve_device_del_link(ve_dev);
-	return ret;	
+	return ret;
 }
 
 
@@ -314,7 +312,7 @@ static struct ve_device *ve_device_subscribe(struct device *dev, struct ve_struc
 	ve_dev->dev = dev;
 	get_device(dev);
 	INIT_LIST_HEAD(&ve_dev->links);
-	
+
 	list_add(&ve_dev->kobj_list, &dev->kobj.env_head);
 	list_add(&ve_dev->ve_list, &ve->devices);
 out:
@@ -387,12 +385,14 @@ static int ve_device_add(struct device *dev, struct ve_struct *ve)
 	set_exec_env(old_ve);
 	return ret;
 err:
+	down(&vedev_lock);
 	ve_device_del_one(ve_dev, 0);
+	up(&vedev_lock);
 	return ret;
 }
 
 ssize_t ve_device_handler(struct device *dev, struct device_attribute *attr,
-			    const char *buf, size_t count)
+			  const char *buf, size_t count)
 {
 	int ret;
 	struct ve_struct *ve;

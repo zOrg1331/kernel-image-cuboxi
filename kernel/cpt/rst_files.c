@@ -1011,6 +1011,16 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 
 	flags = make_flags(&fi);
 
+	if (cpt_object_has(&fi, cpt_vfsmount) && fi.cpt_vfsmount != CPT_NULL) {
+		mntobj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
+				fi.cpt_vfsmount, ctx);
+		if (!mntobj) {
+			eprintk_ctx("no vfsmount found for file: %s\n", name);
+			err = -ENODEV;
+			goto err_out;
+		}
+	}
+
 	/* Easy way, inode has been already open. */
 	if (fi.cpt_inode != CPT_NULL &&
 	    !(fi.cpt_lflags & CPT_DENTRY_CLONING) &&
@@ -1032,16 +1042,6 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 		eprintk_ctx("no name for file?\n");
 		err = -EINVAL;
 		goto err_out;
-	}
-
-	if (cpt_object_has(&fi, cpt_vfsmount) && fi.cpt_vfsmount != CPT_NULL) {
-		mntobj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
-				fi.cpt_vfsmount, ctx);
-		if (!mntobj) {
-			eprintk_ctx("no vfsmount found for file: %s\n", name);
-			err = -ENODEV;
-			goto err_out;
-		}
 	}
 
 	if (fi.cpt_lflags & CPT_DENTRY_DELETED) {

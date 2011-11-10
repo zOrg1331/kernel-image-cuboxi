@@ -143,6 +143,7 @@ void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge)
 		for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
 			precharge[resource] += pcpu->precharge[resource];
 	}
+	precharge[UB_PHYSPAGES] += precharge[UB_KMEMSIZE] >> PAGE_SHIFT;
 	precharge[UB_OOMGUARPAGES] = precharge[UB_SWAPPAGES];
 }
 
@@ -156,8 +157,6 @@ static void uncharge_beancounter_precharge(struct user_beancounter *ub)
 		ub->ub_parms[resource].max_precharge = -1;
 		ub->ub_parms[resource].held -= precharge[resource];
 	}
-
-	ub->ub_parms[UB_PHYSPAGES].held -= precharge[UB_KMEMSIZE] >> PAGE_SHIFT;
 }
 
 static void init_beancounter_struct(struct user_beancounter *ub);

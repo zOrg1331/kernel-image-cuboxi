@@ -1594,6 +1594,12 @@ struct page *ksm_does_need_to_copy(struct page *page,
 	struct page *new_page;
 
 	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+
+	if (gang_add_user_page(new_page, get_mm_gang(vma->vm_mm), GFP_KERNEL)) {
+		put_page(new_page);
+		new_page = NULL;
+	}
+
 	if (new_page) {
 		copy_user_highpage(new_page, page, address, vma);
 
@@ -1602,7 +1608,6 @@ struct page *ksm_does_need_to_copy(struct page *page,
 		SetPageSwapBacked(new_page);
 		__set_page_locked(new_page);
 
-		gang_add_user_page(new_page, get_mm_gang(vma->vm_mm));
 		if (page_evictable(new_page, vma))
 			lru_cache_add_lru(new_page, LRU_ACTIVE_ANON);
 		else

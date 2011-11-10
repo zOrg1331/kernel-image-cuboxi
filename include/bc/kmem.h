@@ -48,26 +48,25 @@ static inline enum ub_severity ub_gfp_sev(gfp_t gfp_mask)
 }
 
 extern int __ub_kmem_charge(struct user_beancounter *ub,
-		struct ub_percpu_struct *ub_pcpu,
-		unsigned long size, enum ub_severity strict);
+		unsigned long size, gfp_t gfp_mask);
 extern void __ub_kmem_uncharge(struct user_beancounter *ub,
 		struct ub_percpu_struct *ub_pcpu,
 		unsigned long size);
 
 static inline int ub_kmem_charge(struct user_beancounter *ub,
-		unsigned long size, enum ub_severity strict)
+		unsigned long size, gfp_t gfp_mask)
 {
 	struct ub_percpu_struct *ub_pcpu;
 	unsigned long flags;
-	int retval = 0;
 
 	local_irq_save(flags);
 	ub_pcpu = ub_percpu(ub, smp_processor_id());
-	if (__try_charge_beancounter_percpu(ub, ub_pcpu, UB_KMEMSIZE, size))
-		retval = __ub_kmem_charge(ub, ub_pcpu, size, strict);
+	if (__try_charge_beancounter_percpu(ub, ub_pcpu, UB_KMEMSIZE, size)) {
+		local_irq_restore(flags);
+		return __ub_kmem_charge(ub, size, gfp_mask);
+	}
 	local_irq_restore(flags);
-
-	return retval;
+	return 0;
 }
 
 static inline void ub_kmem_uncharge(struct user_beancounter *ub,
@@ -84,9 +83,9 @@ static inline void ub_kmem_uncharge(struct user_beancounter *ub,
 }
 
 static inline int ub_page_charge(struct page *page, int order,
-		struct user_beancounter *ub, enum ub_severity strict)
+		struct user_beancounter *ub, gfp_t gfp_mask)
 {
-	if (ub_kmem_charge(ub, CHARGE_ORDER(order), strict))
+	if (ub_kmem_charge(ub, CHARGE_ORDER(order), gfp_mask))
 		return -ENOMEM;
 
 	BUG_ON(page->kmem_ub != NULL);
@@ -107,10 +106,29 @@ static inline void ub_page_uncharge(struct page *page, int order)
 	put_beancounter(ub);
 }
 
-static inline int ub_page_table_charge(struct mm_struct *mm)
+static inline int ub_page_table_get_one(struct mm_struct *mm)
 {
+	if (mm->page_table_precharge)
+		return 0;
+	if (ub_kmem_charge(mm->mm_ub, PAGE_SIZE,
+				GFP_KERNEL | __GFP_SOFT_UBC))
+		return -ENOMEM;
+	return 1;
+}
+
+static inline void ub_page_table_put_one(struct mm_struct *mm, int one)
+{
+	if (one)
+		ub_kmem_uncharge(mm->mm_ub, PAGE_SIZE);
+}
+
+static inline int ub_page_table_charge(struct mm_struct *mm, int one)
+{
+	if (one)
+		return 0;
 	if (unlikely(mm->page_table_precharge == 0))
-		return ub_kmem_charge(mm->mm_ub, PAGE_SIZE, UB_SOFT);
+		return ub_kmem_charge(mm->mm_ub, PAGE_SIZE,
+				GFP_ATOMIC | __GFP_SOFT_UBC);
 	mm->page_table_precharge--;
 	return 0;
 }
@@ -122,7 +140,8 @@ static inline void ub_page_table_uncharge(struct mm_struct *mm)
 
 static inline int ub_page_table_precharge(struct mm_struct *mm, long precharge)
 {
-	if (ub_kmem_charge(mm->mm_ub, precharge << PAGE_SHIFT, UB_SOFT))
+	if (ub_kmem_charge(mm->mm_ub, precharge << PAGE_SHIFT,
+				GFP_KERNEL | __GFP_SOFT_UBC))
 		return -ENOMEM;
 	mm->page_table_precharge += precharge;
 	return 0;
@@ -142,8 +161,7 @@ static inline void *ub_kmem_alloc(struct user_beancounter *ub,
 {
 	void *objp;
 
-	if (ub_kmem_charge(ub, cachep->objuse,
-				(gfp_flags & __GFP_SOFT_UBC)?UB_SOFT:UB_HARD))
+	if (ub_kmem_charge(ub, cachep->objuse, gfp_flags))
 		return NULL;
 
 	objp = kmem_cache_alloc(cachep, gfp_flags);

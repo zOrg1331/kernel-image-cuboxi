@@ -37,7 +37,7 @@ void __ub_update_oomguarpages(struct user_beancounter *ub)
 {
 	unsigned long pages[NR_LRU_LISTS];
 
-	gang_page_stat(get_ub_gs(ub), pages);
+	gang_page_stat(get_ub_gs(ub), NULL, pages);
 
 	ub->ub_parms[UB_OOMGUARPAGES].held =
 		pages[LRU_ACTIVE_ANON] +
@@ -300,6 +300,26 @@ nowarn:
 	return 0;
 }
 
+int __ub_phys_charge(struct user_beancounter *ub,
+		unsigned long pages, gfp_t gfp_mask)
+{
+	int strict = UB_SOFT | UB_TEST;
+
+	if ((gfp_mask & __GFP_NOFAIL) || get_exec_ub() != ub)
+		strict = UB_FORCE;
+
+	ub_oom_start(&ub->oom_ctrl);
+
+	while (charge_beancounter_fast(ub, UB_PHYSPAGES, pages, strict)) {
+		if (!(gfp_mask & __GFP_WAIT) ||
+				ub_try_to_free_pages(ub, gfp_mask))
+			return -ENOMEM;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(__ub_phys_charge);
+
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 {
 	if (get_exec_ub() != ub)
@@ -431,7 +451,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub,
 	if (ret & NOTIFY_STOP_MASK)
 		goto out;
 
-	gang_page_stat(get_ub_gs(ub), mi->pages);
+	gang_page_stat(get_ub_gs(ub), NULL, mi->pages);
 
 	mi->cached = min(mi->si->totalram - mi->si->freeram,
 			mi->pages[LRU_INACTIVE_FILE] +

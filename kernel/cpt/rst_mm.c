@@ -57,6 +57,8 @@
 
 #ifdef CONFIG_IA32_EMULATION
 extern struct linux_binfmt compat_elf_format;
+#else
+extern struct linux_binfmt elf_format;
 #endif
 
 static unsigned long make_prot(struct cpt_vma_image *vmai)
@@ -968,15 +970,25 @@ static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 #ifdef CONFIG_X86_64
 	if (!ti->cpt_64bit) {
 		set_thread_flag(TIF_IA32);
-		mm->free_area_cache = TASK_UNMAPPED_BASE;
-		arch_pick_mmap_layout(mm);
 		/*
 		 * Task forked from 64bit app and thus has wrong binfmt pointer
 		 */
 #ifdef CONFIG_IA32_EMULATION
 		set_binfmt(&compat_elf_format);
 #endif
+	} else if (test_thread_flag(TIF_IA32)) {
+		clear_thread_flag(TIF_IA32);
+		/*
+		 * Task forked from 32bit app and thus has wrong binfmt pointer
+		 */
+#ifdef CONFIG_IA32_EMULATION
+		set_binfmt(&compat_elf_format);
+#else
+		set_binfmt(&elf_format);
+#endif
 	}
+	mm->free_area_cache = TASK_UNMAPPED_BASE;
+	arch_pick_mmap_layout(mm);
 #endif
 
 	if (cpt_object_has(vmi, cpt_mm_flags))

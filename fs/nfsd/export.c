@@ -1712,7 +1712,6 @@ nfsd_export_init(void)
 
 	get_exec_env()->nfsd_data->exp_cache = exp;
 	get_exec_env()->nfsd_data->key_cache = key;
-	init_completion(&get_exec_env()->nfsd_data->exited);
 
 	return 0;
 

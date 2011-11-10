@@ -1530,7 +1530,8 @@ static void ve_exit_nfsctl(void *data)
 	if (d == NULL)
 		return;
 
-	wait_for_completion(&nfsd_exited);
+	if (nfsd_up)
+		wait_for_completion(&nfsd_exited);
 
 	nfsd_stat_shutdown();
 

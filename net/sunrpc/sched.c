@@ -380,8 +380,12 @@ static void __rpc_do_wake_up_task(struct rpc_wait_queue *queue, struct rpc_task 
  */
 static void rpc_wake_up_task_queue_locked(struct rpc_wait_queue *queue, struct rpc_task *task)
 {
+	struct ve_struct *ve;
+
+	ve = set_exec_env(rpc_task_ve(task));
 	if (RPC_IS_QUEUED(task) && task->tk_waitqueue == queue)
 		__rpc_do_wake_up_task(queue, task);
+	(void)set_exec_env(ve);
 }
 
 /*

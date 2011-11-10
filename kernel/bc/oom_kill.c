@@ -17,6 +17,22 @@ void ub_oom_start(struct oom_control *oom_ctrl)
 	current->task_bc.oom_generation = oom_ctrl->generation;
 }
 
+static void __ub_release_oom_control(struct oom_control *oom_ctrl)
+{
+	oom_ctrl->kill_counter = 0;
+	oom_ctrl->generation++;
+
+	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
+	wake_up_all(&oom_ctrl->wq);
+}
+
+static void ub_release_oom_control(struct oom_control *oom_ctrl)
+{
+	spin_lock(&oom_ctrl->lock);
+	__ub_release_oom_control(oom_ctrl);
+	spin_unlock(&oom_ctrl->lock);
+}
+
 /*
  * Must be called under task_lock() held
  */
@@ -26,16 +42,18 @@ void ub_oom_mark_mm(struct mm_struct *mm, struct oom_control *oom_ctrl)
 
 	if (oom_ctrl == &global_oom_ctrl)
 		mm->global_oom = 1;
+	else if (oom_ctrl == &mm->mm_ub->oom_ctrl)
+		mm->ub_oom = 1;
 	else {
 		/*
 		 * Task can be killed when using either global oom ctl
-		 * or by task's beancounter one.
+		 * or by mm->mm_ub one. In other case we must release ctl now.
 		 * When this task will die it'll have to decide with ctl
 		 * to use lokking at this flag and we have to sure it
 		 * will use the proper one.
 		 */
-		BUG_ON(mm->mm_ub != get_exec_ub());
-		mm->ub_oom = 1;
+		__ub_release_oom_control(oom_ctrl);
+		WARN_ON(1);
 	}
 }
 
@@ -171,17 +189,6 @@ struct user_beancounter *ub_oom_select_worst(void)
 
 void ub_oom_unlock(struct oom_control *oom_ctrl)
 {
-	spin_unlock(&oom_ctrl->lock);
-}
-
-static void ub_release_oom_control(struct oom_control *oom_ctrl)
-{
-	spin_lock(&oom_ctrl->lock);
-	oom_ctrl->kill_counter = 0;
-	oom_ctrl->generation++;
-
-	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
-	wake_up_all(&oom_ctrl->wq);
 	spin_unlock(&oom_ctrl->lock);
 }
 

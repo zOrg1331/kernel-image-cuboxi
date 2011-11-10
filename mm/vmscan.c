@@ -783,7 +783,8 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 			/* FIXME: remove this crap, add separate lru */
 			unpin_mem_gang(page_gang(page));
-			gang_mod_user_page(page, &init_gang_set);
+			gang_mod_user_page(page, &init_gang_set,
+					GFP_ATOMIC|__GFP_NOFAIL);
 			pin_mem_gang(page_gang(page));
 			nr_reclaimed++;
 			if (PageSwapCache(page))
@@ -3134,12 +3135,14 @@ retry:
 	if (page_evictable(page, NULL)) {
 		enum lru_list l = page_lru_base_type(page);
 		struct zone *zone = gang_zone(gang);
+		int numpages = hpage_nr_pages(page);
 
-		__dec_zone_state(zone, NR_UNEVICTABLE);
+		__mod_zone_page_state(zone, NR_UNEVICTABLE, -numpages);
+		gang->lru[LRU_UNEVICTABLE].nr_pages -= numpages;
 		list_move(&page->lru, &gang->lru[l].list);
-		gang->lru[l].nr_pages++;
+		gang->lru[l].nr_pages += numpages;
 		mem_cgroup_move_lists(page, LRU_UNEVICTABLE, l);
-		__inc_zone_state(zone, NR_INACTIVE_ANON + l);
+		__mod_zone_page_state(zone, NR_LRU_BASE + l, numpages);
 		__count_vm_event(UNEVICTABLE_PGRESCUED);
 	} else {
 		/*

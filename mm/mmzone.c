@@ -301,14 +301,18 @@ void del_mem_gangs(struct gang_set *gs)
 		del_zone_gang(zone, mem_zone_gang(gs, zone));
 }
 
-void gang_page_stat(struct gang_set *gs, unsigned long *stat)
+void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,
+		    unsigned long *stat)
 {
+	struct zoneref *z;
 	struct zone *zone;
 	struct gang *gang;
 	enum lru_list lru;
 
 	memset(stat, 0, sizeof(unsigned long) * NR_LRU_LISTS);
-	for_each_populated_zone(zone) {
+	for_each_zone_zonelist_nodemask(zone, z,
+			node_zonelist(numa_node_id(), GFP_KERNEL),
+			MAX_NR_ZONES - 1, nodemask) {
 		gang = mem_zone_gang(gs, zone);
 		for_each_lru(lru)
 			stat[lru] += gang->lru[lru].nr_pages;
@@ -335,7 +339,7 @@ void gang_show_state(struct gang_set *gs)
 			gang->lru[LRU_UNEVICTABLE].nr_pages);
 	}
 
-	gang_page_stat(gs, stat);
+	gang_page_stat(gs, NULL, stat);
 
 	printk("Total %lu anon:%lu file:%lu"
 			" a_anon:%lu i_anon:%lu"
@@ -378,7 +382,8 @@ void gang_rate_limit(struct gang_set *gs, int wait, unsigned count)
 
 #else /* CONFIG_MEMORY_GANGS */
 
-void gang_page_stat(struct gang_set *gs, unsigned long *stat)
+void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,
+		    unsigned long *stat)
 {
 	enum lru_list lru;
 
