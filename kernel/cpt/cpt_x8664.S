@@ -17,7 +17,7 @@
 	.macro FAKE_STACK_FRAME child_rip
 	/* push in order ss, rsp, eflags, cs, rip */
 	xorq %rax, %rax
-	pushq %rax /* ss */
+	pushq $__KERNEL_DS /* ss */
 	pushq %rax /* rsp */
 	pushq $(1<<9) /* eflags - interrupts on */
 	pushq $__KERNEL_CS /* cs */

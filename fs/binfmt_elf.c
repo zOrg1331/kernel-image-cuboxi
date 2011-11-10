@@ -73,6 +73,9 @@ struct linux_binfmt elf_format = {
 		.min_coredump	= ELF_EXEC_PAGESIZE,
 		.hasvdso	= 1
 };
+#ifndef CONFIG_COMPAT_BINFMT_ELF
+EXPORT_SYMBOL(elf_format);
+#endif
 
 #define BAD_ADDR(x) IS_ERR_VALUE(x)
 

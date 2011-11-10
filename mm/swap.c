@@ -282,7 +282,7 @@ void activate_page(struct page *page)
 			if (unlikely(gang->set != gs)) {
 				ClearPageLRU(page);
 				spin_unlock(&gang->lru_lock);
-				gang_mod_user_page(page, gs);
+				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				gang = lock_page_lru(page);
 				SetPageLRU(page);
 			}

@@ -4,6 +4,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <bc/beancounter.h>
+#include <bc/vmpages.h>
 
 void setup_zone_gang(struct gang_set *gs, struct zone *zone, struct gang *gang);
 
@@ -117,31 +118,29 @@ static inline void gang_add_free_page(struct page *page)
 {
 	set_page_gang(page, NULL);
 }
-static inline void gang_add_user_page(struct page *page, struct gang_set *gs)
+static inline int gang_add_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask)
 {
-	int numpages = hpage_nr_pages(page);
-
 	VM_BUG_ON(page->gang);
+	if (ub_phys_charge(get_gangs_ub(gs), hpage_nr_pages(page), gfp_mask))
+		return -ENOMEM;
 	set_page_gang(page, mem_page_gang(gs, page));
-	charge_beancounter_fast(get_gangs_ub(gs),
-			UB_PHYSPAGES, numpages, UB_FORCE);
+	return 0;
 }
-static inline void gang_mod_user_page(struct page *page, struct gang_set *gs)
+static inline void gang_mod_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask)
 {
 	int numpages = hpage_nr_pages(page);
 
-	uncharge_beancounter_fast(get_gang_ub(page_gang(page)),
-			UB_PHYSPAGES, numpages);
-	charge_beancounter_fast(get_gangs_ub(gs),
-			UB_PHYSPAGES, numpages, UB_FORCE);
+	if (ub_phys_charge(get_gangs_ub(gs), numpages,
+				gfp_mask|__GFP_NORETRY|__GFP_NOWARN))
+		return;
+	ub_phys_uncharge(get_gang_ub(page_gang(page)), numpages);
 	set_page_gang(page, mem_page_gang(gs, page));
 }
 static inline void gang_del_user_page(struct page *page)
 {
-	int numpages = hpage_nr_pages(page);
-
-	uncharge_beancounter_fast(get_gang_ub(page_gang(page)),
-			UB_PHYSPAGES, numpages);
+	ub_phys_uncharge(get_gang_ub(page_gang(page)), hpage_nr_pages(page));
 	set_page_gang(page, NULL);
 }
 
@@ -220,8 +219,10 @@ static inline int pin_mem_gang(struct gang *gang) { return 0; }
 static inline void unpin_mem_gang(struct gang *gang) { }
 
 static inline void gang_add_free_page(struct page *page) { }
-static inline void gang_add_user_page(struct page *page, struct gang_set *gs) { }
-static inline void gang_mod_user_page(struct page *page, struct gang_set *gs) { }
+static inline int gang_add_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask) { return 0; }
+static inline void gang_mod_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask) { }
 static inline void gang_del_user_page(struct page *page) { }
 
 static inline struct gang *lock_page_lru(struct page *page)
@@ -265,7 +266,8 @@ static inline struct user_beancounter *get_page_ub(struct page *page)
 	return ub;
 }
 
-void gang_page_stat(struct gang_set *gs, unsigned long *stat);
+void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,
+		    unsigned long *stat);
 void gang_show_state(struct gang_set *gs);
 
 #endif /* _LINIX_MMGANG_H */

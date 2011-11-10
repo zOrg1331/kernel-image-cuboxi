@@ -927,7 +927,7 @@ void do_page_add_anon_rmap(struct page *page,
 		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
 				unpin_mem_gang(page_gang(page));
-				gang_mod_user_page(page, gs);
+				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
 				putback_lru_page(page);
 			} else
@@ -968,7 +968,6 @@ void page_add_new_anon_rmap(struct page *page,
 	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	SetPageSwapBacked(page);
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
-	gang_add_user_page(page, get_mm_gang(vma->vm_mm));
 	if (!PageTransHuge(page))
 		__inc_zone_page_state(page, NR_ANON_PAGES);
 	else
@@ -995,7 +994,7 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
 		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
 				unpin_mem_gang(page_gang(page));
-				gang_mod_user_page(page, gs);
+				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
 				putback_lru_page(page);
 			}

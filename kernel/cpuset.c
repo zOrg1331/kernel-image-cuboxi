@@ -1021,9 +1021,9 @@ static void cpuset_change_nodemask(struct task_struct *p,
 
 	migrate = is_memory_migrate(cs);
 
-	mpol_rebind_mm(mm, &cs->mems_allowed);
+	mpol_rebind_mm(mm, &newmems);
 	if (migrate)
-		cpuset_migrate_mm(mm, oldmem, &cs->mems_allowed);
+		cpuset_migrate_mm(mm, oldmem, &newmems);
 	mmput(mm);
 }
 
@@ -1104,7 +1104,7 @@ static int update_nodemask(struct cpuset *cs, const nodemask_t *mems_allowed)
 
 	trialcs->mems_allowed = *mems_allowed;
 
-	oldmem = cs->mems_allowed;
+	guarantee_online_mems(cs, &oldmem);
 	if (nodes_equal(oldmem, trialcs->mems_allowed)) {
 		retval = 0;		/* Too easy - nothing to do */
 		goto done;

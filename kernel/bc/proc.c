@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include <linux/ve_proto.h>
 #include <linux/virtinfo.h>
+#include <linux/mmgang.h>
 
 #include <bc/beancounter.h>
 #include <bc/proc.h>
@@ -166,6 +167,47 @@ static struct bc_proc_entry bc_meminfo_entry = {
 	.name = "meminfo",
 	.u.show = bc_proc_meminfo_show,
 };
+
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+static int bc_proc_nodeinfo_show(struct seq_file *f, void *v)
+{
+	int nid;
+	nodemask_t nodemask;
+	struct user_beancounter *ub;
+	unsigned long pages[NR_LRU_LISTS];
+
+	ub = seq_beancounter(f);
+	for_each_node_state(nid, N_HIGH_MEMORY) {
+		nodemask = nodemask_of_node(nid);
+		gang_page_stat(&ub->gang_set, &nodemask, pages);
+		seq_printf(f,
+			"Node %d Active:         %8lu kB\n"
+			"Node %d Inactive:       %8lu kB\n"
+			"Node %d Active(anon):   %8lu kB\n"
+			"Node %d Inactive(anon): %8lu kB\n"
+			"Node %d Active(file):   %8lu kB\n"
+			"Node %d Inactive(file): %8lu kB\n"
+			"Node %d Unevictable:    %8lu kB\n",
+			nid, K(pages[LRU_ACTIVE_ANON] +
+			       pages[LRU_ACTIVE_FILE]),
+			nid, K(pages[LRU_INACTIVE_ANON] +
+			       pages[LRU_INACTIVE_FILE]),
+			nid, K(pages[LRU_ACTIVE_ANON]),
+			nid, K(pages[LRU_INACTIVE_ANON]),
+			nid, K(pages[LRU_ACTIVE_FILE]),
+			nid, K(pages[LRU_INACTIVE_FILE]),
+			nid, K(pages[LRU_UNEVICTABLE]));
+	}
+	return 0;
+}
+#undef K
+
+static struct bc_proc_entry bc_nodeinfo_entry = {
+	.name = "nodeinfo",
+	.u.show = bc_proc_nodeinfo_show,
+};
+#endif
 
 static int ub_show(struct seq_file *f, void *v)
 {
@@ -747,6 +789,9 @@ static int __init ub_init_proc(void)
 	bc_register_proc_entry(&bc_count_slab_entry);
 	bc_register_proc_root_entry(&bc_all_resources_entry);
 	bc_register_proc_entry(&bc_meminfo_entry);
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+	bc_register_proc_entry(&bc_nodeinfo_entry);
+#endif
 
 	entry = proc_create("user_beancounters",
 			S_IRUSR, &glob_proc_root, &ub_file_operations);

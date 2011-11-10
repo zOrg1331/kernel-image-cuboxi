@@ -29,6 +29,7 @@
 #include <asm/unistd.h>
 #include <bc/kmem.h>
 #include <linux/cpt_image.h>
+#include <linux/init_task.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -172,6 +173,7 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 		struct cpt_sysvshm_image	shmi;
 		struct cpt_inode_image 		ii;
 	} u;
+	const struct cred *curr_cred;
 
 	err = rst_get_object(CPT_OBJ_FILE, pos, &u.fi, ctx);
 	if (err < 0)
@@ -187,8 +189,10 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 		goto err_out;
 	dpos += u.shmi.cpt_next;
 
+	curr_cred = override_creds(&init_cred);
 	file = sysvipc_setup_shm(u.shmi.cpt_key, u.shmi.cpt_id,
 				 u.shmi.cpt_segsz, u.shmi.cpt_mode);
+	revert_creds(curr_cred);
 	if (!IS_ERR(file)) {
 		err = fixup_shm(file, &u.shmi);
 		if (err != -EEXIST && dpos < epos) {

@@ -257,7 +257,7 @@ static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 			       sizeof(pmd_t) * PTRS_PER_PMD);
 
 		pud_populate(mm, pud, pmd);
-		ub_page_table_charge(mm);
+		ub_page_table_charge(mm, 0);
 		mm->nr_ptds++;
 	}
 }
@@ -296,7 +296,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 
 	spin_unlock_irqrestore(&pgd_lock, flags);
 
-	ub_page_table_charge(mm);
+	ub_page_table_charge(mm, 0);
 	mm->nr_ptds++;
 
 	return pgd;

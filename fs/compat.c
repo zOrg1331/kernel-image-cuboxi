@@ -50,6 +50,7 @@
 #include <linux/mm.h>
 #include <linux/eventpoll.h>
 #include <linux/fs_struct.h>
+#include <linux/ve_proto.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -397,12 +398,18 @@ out:
  */
 asmlinkage long compat_sys_ustat(unsigned dev, struct compat_ustat __user *u)
 {
+	dev_t kdev;
 	struct super_block *sb;
 	struct compat_ustat tmp;
 	struct kstatfs sbuf;
 	int err;
 
-	sb = user_get_super(new_decode_dev(dev));
+	kdev = new_decode_dev(dev);
+	err = get_device_perms_ve(S_IFBLK, kdev, FMODE_READ);
+	if (err)
+		return err;
+
+	sb = user_get_super(kdev);
 	if (!sb)
 		return -EINVAL;
 

@@ -192,7 +192,7 @@ static int restore_sigqueue(struct task_struct *tsk,
 				free_uid(up);
 				return -ENOMEM;
 			}
-			if (ub_siginfo_charge(q, get_exec_ub())) {
+			if (ub_siginfo_charge(q, get_exec_ub(), GFP_ATOMIC)) {
 				kmem_cache_free(sigqueue_cachep, q);
 				free_uid(up);
 				return -ENOMEM;

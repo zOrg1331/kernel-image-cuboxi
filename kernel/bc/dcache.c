@@ -16,11 +16,11 @@ static unsigned int dcache_charge_size(int name_len)
 }
 
 static int __ub_dcache_charge(struct user_beancounter *ub,
-		unsigned long size, int strict)
+		unsigned long size, gfp_t gfp_mask, int strict)
 {
 	int ret;
 
-	ret = ub_kmem_charge(ub, size, strict);
+	ret = ub_kmem_charge(ub, size, gfp_mask);
 	if (unlikely(ret))
 		goto no_kmem;
 
@@ -52,7 +52,9 @@ int ub_dcache_charge(struct user_beancounter *ub, int name_len)
 
 	size = dcache_charge_size(name_len);
 	do {
-		if (!__ub_dcache_charge(ub, size, UB_SOFT | UB_TEST))
+		if (!__ub_dcache_charge(ub, size,
+					GFP_KERNEL|__GFP_NOWARN|__GFP_SOFT_UBC,
+					UB_SOFT | UB_TEST))
 			return 0;
 
 		shrink = max(size, ub->ub_parms[UB_DCACHESIZE].max_precharge);
@@ -128,7 +130,7 @@ void ub_dcache_set_owner(struct dentry *root, struct user_beancounter *ub)
 	if (ub != cub) {
 		size = recharge_subtree(root, ub, cub);
 		__ub_dcache_uncharge(cub, size);
-		__ub_dcache_charge(ub, size, UB_FORCE);
+		__ub_dcache_charge(ub, size, GFP_ATOMIC | __GFP_NOFAIL, UB_FORCE);
 	}
 
 	get_beancounter(ub);
@@ -151,7 +153,7 @@ void ub_dcache_change_owner(struct dentry *dentry, struct user_beancounter *ub)
 
 	size = recharge_subtree(dentry, ub, cub);
 	__ub_dcache_uncharge(cub, size);
-	__ub_dcache_charge(ub, size, UB_FORCE);
+	__ub_dcache_charge(ub, size, GFP_ATOMIC | __GFP_NOFAIL, UB_FORCE);
 }
 
 #define UB_DCACHE_BATCH 32

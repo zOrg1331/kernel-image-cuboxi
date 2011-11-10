@@ -57,6 +57,13 @@ static int has_intersects_mems_allowed(struct task_struct *tsk)
 	return 0;
 }
 
+static unsigned long mm_badness(struct mm_struct *mm)
+{
+	return get_mm_counter(mm, file_rss) + get_mm_counter(mm, anon_rss) +
+		get_mm_counter(mm, swap_usage) +
+		mm->nr_ptes + mm->nr_ptds + mm->locked_vm;
+}
+
 /**
  * badness - calculate a numeric value for how bad this task has been
  * @p: task struct of which task we should calculate
@@ -81,8 +88,6 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 {
 	unsigned long points, cpu_time, run_time;
 	struct mm_struct *mm;
-	struct task_struct *child;
-	int child_oom_group;
 	int oom_adj = p->signal->oom_adj;
 	struct task_cputime task_time;
 	unsigned long utime;
@@ -101,7 +106,7 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 	/*
 	 * The memory size of the process is the basis for the badness.
 	 */
-	points = mm->total_vm;
+	points = mm_badness(mm);
 
 	/*
 	 * After this unlock we can no longer dereference local variable `mm'
@@ -113,24 +118,6 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 	 */
 	if (p->flags & PF_OOM_ORIGIN)
 		return ULONG_MAX;
-
-	/*
-	 * Processes which fork a lot of child processes are likely
-	 * a good choice. We add half the vmsize of the children if they
-	 * have an own mm. This prevents forking servers to flood the
-	 * machine with an endless amount of children. In case a single
-	 * child is eating the vast majority of memory, adding only half
-	 * to the parents will make the child our kill candidate of choice.
-	 */
-	list_for_each_entry(child, &p->children, sibling) {
-		child_oom_group = get_oom_group(p);
-		if (child_oom_group > oom_group)
-			continue;
-		task_lock(child);
-		if (child->mm != mm && child->mm)
-			points += child->mm->total_vm/2 + 1;
-		task_unlock(child);
-	}
 
 	/*
 	 * CPU time is in tens of seconds and run time is in thousands
@@ -238,21 +225,17 @@ static inline enum oom_constraint constrained_alloc(struct zonelist *zonelist,
 struct task_struct *select_bad_process(struct user_beancounter *ub,
 						struct mem_cgroup *mem)
 {
-	struct task_struct *p;
+	struct task_struct *g, *p;
 	struct task_struct *chosen = NULL;
 	struct timespec uptime;
 	unsigned long chosen_points = 0;
 	int group, chosen_group = 0;
 
 	do_posix_clock_monotonic_gettime(&uptime);
-	for_each_process_all(p) {
+	do_each_thread_all(g, p) {
 		unsigned long points;
 
-		/*
-		 * skip kernel threads and tasks which have already released
-		 * their mm.
-		 */
-		if (!p->mm)
+		if (p->exit_state)
 			continue;
 		/* skip the init task */
 		if (is_global_init(p))
@@ -275,6 +258,12 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		 */
 		if (test_tsk_thread_flag(p, TIF_MEMDIE))
 			return ERR_PTR(-1UL);
+		/*
+		 * skip kernel threads and tasks which have already released
+		 * their mm.
+		 */
+		if (!p->mm)
+			continue;
 
 		/*
 		 * This is in the process of releasing memory so wait for it
@@ -308,7 +297,7 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 			chosen_points = points;
 			chosen_group = group;
 		}
-	}
+	} while_each_thread_all(g, p);
 
 	return chosen;
 }
@@ -373,7 +362,8 @@ static void __oom_kill_thread(struct task_struct *p,
 	force_sig(SIGKILL, p);
 	wake_up_process(p);
 
-	oom_ctrl->kill_counter++;
+	if (current->task_bc.oom_generation == oom_ctrl->generation)
+		oom_ctrl->kill_counter++;
 }
 
 static void __oom_kill_task(struct task_struct *tsk,

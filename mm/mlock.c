@@ -90,7 +90,7 @@ void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
 			rcu_read_lock();
 			if (page_gang(page)->set != gs) {
 				unpin_mem_gang(page_gang(page));
-				gang_mod_user_page(page, gs);
+				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
 			}
 			rcu_read_unlock();
