@@ -161,6 +161,8 @@ Source205: kernel-%kversion-ppc64.config.ovz
 Source206: kernel-%kversion-i686-xen.config.ovz
 Source207: kernel-%kversion-x86_64-xen.config.ovz
 
+Patch0: patch-2.6.18.4
+
 Patch1: kernel-2.6.18-redhat.patch
 Patch2: xen-config-2.6.18-redhat.patch
 Patch3: xen-2.6.18-redhat.patch
@@ -381,6 +383,8 @@ cd linux-%kversion.%_target_cpu
 # this file should be usable both with make and sh (for broken modules
 # which do not use the kernel makefile system)
 echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
+
+%patch0 -p1
 
 %patch1 -p1 -E
 
