@@ -486,7 +486,6 @@ echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
 
 # correction of SUBLEVEL/EXTRAVERSION in top-level source tree Makefile
 # patch the Makefile to include rhel version info
-%patch99990 -p1
 perl -p -i -e "s/^SUBLEVEL.*/SUBLEVEL = %sublevel/" Makefile
 perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -prep/" Makefile
 perl -p -i -e "s/^VZVERSION.*/VZVERSION = %ovzver.%ovzrel/" Makefile
