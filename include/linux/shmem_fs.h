@@ -19,10 +19,10 @@ struct shmem_inode_info {
 	struct page		*i_indirect;	/* top indirect blocks page */
 	swp_entry_t		i_direct[SHMEM_NR_DIRECT]; /* first blocks */
 	struct list_head	swaplist;	/* chain of maybes on swap */
+	struct inode		vfs_inode;
 #ifdef CONFIG_BEANCOUNTERS
 	struct user_beancounter	*shmi_ub;
 #endif
-	struct inode		vfs_inode;
 };
 
 struct shmem_sb_info {
