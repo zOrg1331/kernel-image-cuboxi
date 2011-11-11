@@ -294,9 +294,10 @@ static struct user_beancounter *get_swapin_ub(struct page *page,
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 	rcu_read_lock();
 	ub = get_swap_ub(entry);
-	if (!get_beancounter_rcu(ub)) {
+	if (!ub || !get_beancounter_rcu(ub)) {
 		/* speedup unuse pass */
-		ub_unuse_swap_page(page);
+		if (ub)
+			ub_unuse_swap_page(page);
 		ub = get_beancounter(get_exec_ub());
 	}
 	rcu_read_unlock();

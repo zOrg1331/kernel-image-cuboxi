@@ -926,9 +926,11 @@ void do_page_add_anon_rmap(struct page *page,
 		rcu_read_lock();
 		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
-				unpin_mem_gang(page_gang(page));
+				struct gang *gang = page_gang(page);
+
 				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
+				unpin_mem_gang(gang);
 				putback_lru_page(page);
 			} else
 				gs = page_gang(page)->set;
@@ -993,9 +995,11 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
 		rcu_read_lock();
 		if (PageLRU(page) && page_gang(page)->set != gs) {
 			if (!isolate_lru_page(page)) {
-				unpin_mem_gang(page_gang(page));
+				struct gang *gang = page_gang(page);
+
 				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
+				unpin_mem_gang(gang);
 				putback_lru_page(page);
 			}
 		}

@@ -797,7 +797,7 @@ out:
 static ctl_table ub_sysctl_table[] = {
 	{
 		.procname	= "resource_precharge",
-		.ctl_name	= -2,
+		.ctl_name	= CTL_UNNUMBERED,
 		.data		= &ub_resource_precharge,
 		.extra1		= &resource_precharge_min,
 		.extra2		= &resource_precharge_max,
@@ -836,7 +836,7 @@ static ctl_table ub_sysctl_table[] = {
 
 static ctl_table ub_sysctl_root[] = {
        {
-	       .ctl_name	= -2,
+	       .ctl_name	= CTL_UNNUMBERED,
 	       .procname	= "ubc",
 	       .mode		= 0555,
 	       .child		= ub_sysctl_table,

@@ -777,15 +777,17 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		}
 
 		if (sc->gs) {
+			struct gang *gang = page_gang(page);
+
 			/* forbid tmpfs internal reclaim */
 			if (!PageAnon(page) && PageSwapBacked(page))
 				goto activate_locked;
 
 			/* FIXME: remove this crap, add separate lru */
-			unpin_mem_gang(page_gang(page));
 			gang_mod_user_page(page, &init_gang_set,
 					GFP_ATOMIC|__GFP_NOFAIL);
 			pin_mem_gang(page_gang(page));
+			unpin_mem_gang(gang);
 			nr_reclaimed++;
 			if (PageSwapCache(page))
 				sc->nr_reclaim_swapout++;

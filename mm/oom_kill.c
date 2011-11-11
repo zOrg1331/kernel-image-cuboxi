@@ -459,8 +459,10 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			    const char *message)
 {
 	struct oom_control *oom_ctrl = ub ? &ub->oom_ctrl : &global_oom_ctrl;
-	struct task_struct *c;
+	struct task_struct *c, *child;
 	int group, child_group;
+	struct timespec uptime;
+	unsigned long points, child_points;
 
 	if (printk_ratelimit()) {
 		printk(KERN_WARNING "%s invoked oom-killer: "
@@ -491,7 +493,10 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 					message, task_pid_nr(p), p->comm);
 
 	group = get_oom_group(p);
-	/* Try to kill a child first */
+	points = 0;
+	child = NULL;
+	do_posix_clock_monotonic_gettime(&uptime);
+	/* Try to kill a worst child first */
 	list_for_each_entry(c, &p->children, sibling) {
 		child_group = get_oom_group(c);
 		if (child_group > group)
@@ -502,9 +507,15 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
 			continue;
-		if (!oom_kill_task(c, oom_ctrl, 1))
-			return 0;
+		child_points = badness(c, uptime.tv_sec, child_group);
+		if (child_group == group && child_points < points)
+			continue;
+		child = c;
+		group = child_group;
+		points = child_points;
 	}
+	if (child && !oom_kill_task(child, oom_ctrl, 1))
+		return 0;
 	return oom_kill_task(p, oom_ctrl, 1);
 }
 

@@ -131,12 +131,17 @@ static inline void gang_mod_user_page(struct page *page,
 		struct gang_set *gs, gfp_t gfp_mask)
 {
 	int numpages = hpage_nr_pages(page);
+	struct gang *gang = page_gang(page);
 
 	if (ub_phys_charge(get_gangs_ub(gs), numpages,
 				gfp_mask|__GFP_NORETRY|__GFP_NOWARN))
 		return;
-	ub_phys_uncharge(get_gang_ub(page_gang(page)), numpages);
+	ub_phys_uncharge(get_gang_ub(gang), numpages);
+
+	VM_BUG_ON(PageLRU(page));
+	spin_lock_irq(&gang->lru_lock);
 	set_page_gang(page, mem_page_gang(gs, page));
+	spin_unlock_irq(&gang->lru_lock);
 }
 static inline void gang_del_user_page(struct page *page)
 {
