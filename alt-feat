@@ -2,3 +2,4 @@ feat-kvm-kms
 feat-network-ipt_netflow
 feat-platform-pegatron
 feat-fs-aufs
+feat-input-elantech			3.2
