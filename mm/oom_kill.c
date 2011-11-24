@@ -255,9 +255,11 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		 * Note: this may have a chance of deadlock if it gets
 		 * blocked waiting for another task which itself is waiting
 		 * for memory. Is there a better alternative?
+		 *
+		 * Deadlock fixed: we wait in ub_oom_lock() UB_OOM_TIMEOUT.
 		 */
 		if (test_tsk_thread_flag(p, TIF_MEMDIE))
-			return ERR_PTR(-1UL);
+			continue;
 		/*
 		 * skip kernel threads and tasks which have already released
 		 * their mm.

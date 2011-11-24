@@ -419,7 +419,7 @@ static ssize_t write_getfs(struct file *file, char *buf, size_t size)
 
 	ipv6_addr_set_v4mapped(sin->sin_addr.s_addr, &in6);
 
-	clp = auth_unix_lookup(&init_net, &in6);
+	clp = auth_unix_lookup(current->nsproxy->net_ns, &in6);
 	if (!clp)
 		err = -EPERM;
 	else {
@@ -482,7 +482,7 @@ static ssize_t write_getfd(struct file *file, char *buf, size_t size)
 
 	ipv6_addr_set_v4mapped(sin->sin_addr.s_addr, &in6);
 
-	clp = auth_unix_lookup(&init_net, &in6);
+	clp = auth_unix_lookup(current->nsproxy->net_ns, &in6);
 	if (!clp)
 		err = -EPERM;
 	else {
@@ -1018,12 +1018,12 @@ static ssize_t __write_ports_addxprt(char *buf)
 	if (err != 0)
 		return err;
 
-	err = svc_create_xprt(nfsd_serv, transport, &init_net,
+	err = svc_create_xprt(nfsd_serv, transport, current->nsproxy->net_ns,
 				PF_INET, port, SVC_SOCK_ANONYMOUS);
 	if (err < 0)
 		goto out_err;
 
-	err = svc_create_xprt(nfsd_serv, transport, &init_net,
+	err = svc_create_xprt(nfsd_serv, transport, current->nsproxy->net_ns,
 				PF_INET6, port, SVC_SOCK_ANONYMOUS);
 	if (err < 0 && err != -EAFNOSUPPORT)
 		goto out_close;

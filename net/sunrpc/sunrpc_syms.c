@@ -40,6 +40,8 @@ init_sunrpc(void)
 	int err;
 
 	get_ve0()->rpc_data = &ve0_rpcd;
+	ve_rpc_data_init();
+
 	err = register_rpc_pipefs();
 	if (err)
 		goto out;

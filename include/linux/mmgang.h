@@ -247,6 +247,38 @@ static inline void gang_rate_limit(struct gang_set *gs, int wait, unsigned count
 
 #endif /* CONFIG_MEMORY_GANGS */
 
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+extern unsigned int gangs_migration_max_isolate;
+extern unsigned int gangs_migration_min_batch;
+extern unsigned int gangs_migration_max_batch;
+extern unsigned int gangs_migration_interval;
+
+extern int schedule_gangs_migration(struct gang_set *gs,
+		const nodemask_t *src_nodes, const nodemask_t *dest_nodes);
+extern int cancel_gangs_migration(struct gang_set *gs);
+extern int gangs_migration_pending(struct gang_set *gs, nodemask_t *pending);
+
+extern int gangs_migration_batch_sysctl_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *lenp, loff_t *ppos);
+#else
+static inline int schedule_gangs_migration(struct gang_set *gs,
+		const nodemask_t *src_nodes, const nodemask_t *dest_nodes)
+{
+	return 1;
+}
+static inline int cancel_gangs_migration(struct gang_set *gs)
+{
+	return 0;
+}
+static inline int gangs_migration_pending(struct gang_set *gs,
+					  nodemask_t *pending)
+{
+	if (pending)
+		nodes_clear(*pending);
+	return 0;
+}
+#endif
+
 static inline struct gang *relock_page_lru(struct gang *locked_gang,
 					   struct gang *gang)
 {

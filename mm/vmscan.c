@@ -85,6 +85,8 @@ struct scan_control {
 
 	int all_unreclaimable;
 
+	int near_oom;
+
 	int order;
 
 	/* Reclaim this gang-set */
@@ -631,6 +633,9 @@ static enum page_references page_check_references(struct page *page,
 		return PAGEREF_RECLAIM;
 
 	if (referenced_ptes) {
+		if (sc->near_oom)
+			return PAGEREF_KEEP;
+
 		if (PageAnon(page))
 			return PAGEREF_ACTIVATE;
 		/*
@@ -1052,7 +1057,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 		VM_BUG_ON(!PageLRU(page));
 
 		if (pin_mem_gang(gang))
-			return nr_taken;
+			break;
 
 		switch (__isolate_lru_page(page, mode, file, NULL)) {
 		case 0:
@@ -1950,6 +1955,13 @@ static void shrink_zone(int priority, struct zone *zone,
 			gang->pages_scanned = 0;
 			spin_unlock_irq(&zone->stat_lock);
 		}
+		/* Bump scan progress even if we stuck */
+		if (sc->gs && gangs_rotated) {
+			spin_lock_irq(&zone->stat_lock);
+			gang->pages_scanned++;
+			spin_unlock_irq(&zone->stat_lock);
+			break;
+		}
 		/*
 		 * On large memory systems, scan >> priority can become
 		 * really large. This is fine for the starting priority;
@@ -1960,8 +1972,7 @@ static void shrink_zone(int priority, struct zone *zone,
 		 */
 		if (nr_reclaimed >= nr_to_reclaim && priority < DEF_PRIORITY)
 			break;
-		if ((sc->gs && gangs_rotated) ||
-				gangs_rotated > get_zone_nr_gangs(zone))
+		if (gangs_rotated > get_zone_nr_gangs(zone))
 			break;
 	}
 
@@ -2034,6 +2045,9 @@ static void shrink_zones(int priority, struct zonelist *zonelist,
 
 			if (gang->pages_scanned < 6 * reclaimable)
 				sc->all_unreclaimable = 0;
+
+			if (gang->pages_scanned < 3 * reclaimable)
+				sc->near_oom = 0;
 		} else {
 			/*
 			 * Ignore cpuset limitation here. We just want to reduce
@@ -2098,9 +2112,16 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 			lru_pages += zone_reclaimable_pages(zone);
 		}
 	} else if (sc->gs) {
-		for_each_zone_zonelist(zone, z, zonelist, high_zoneidx)
-			lru_pages += gang_reclaimable_pages(
-					mem_zone_gang(sc->gs, zone), sc);
+		sc->near_oom = 1;
+		for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
+			struct gang *gang = mem_zone_gang(sc->gs, zone);
+			unsigned long reclaimable = gang_reclaimable_pages(gang, sc);
+
+			lru_pages += reclaimable;
+
+			if (gang->pages_scanned < 3 * reclaimable)
+				sc->near_oom = 0;
+		}
 	}
 
 	for (priority = DEF_PRIORITY; priority >= 0; priority--) {

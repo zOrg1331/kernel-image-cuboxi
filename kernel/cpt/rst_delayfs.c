@@ -24,6 +24,7 @@
 #include <linux/ve_nfs.h>
 #include <linux/fs_struct.h>
 #include <linux/fdtable.h>
+#include <linux/pipe_fs_i.h>
 #include <net/af_unix.h>
 
 #include "cpt_obj.h"
@@ -478,8 +479,14 @@ static int delayfs_wait_file(struct file *fake)
 	if (debug_level > 3)
 		dump_stack();
 
-	res = wait_event_interruptible_timeout(si->blocked_tasks,
-				si->real, si->delay_tmo);
+	if (S_ISFIFO(fake->f_dentry->d_inode->i_mode) &&
+		((fake->f_mode & (FMODE_READ|FMODE_WRITE)) !=
+				 (FMODE_READ|FMODE_WRITE)))
+		res = wait_event_interruptible_timeout(si->blocked_tasks,
+						*real, si->delay_tmo);
+	else
+		res = wait_event_interruptible_timeout(si->blocked_tasks,
+					si->real, si->delay_tmo);
 	if (!res)
 		return -EIO;
 	if (res < 0)
@@ -733,6 +740,9 @@ static int delay_release(struct inode *ino, struct file *f)
 	if (!IS_ERR_OR_NULL(priv->real_fs_file))
 		fput(priv->real_fs_file);
 
+	if (S_ISFIFO(ino->i_mode))
+		pipe_release(ino, (f->f_mode & FMODE_READ) != 0,
+				  (f->f_mode & FMODE_WRITE)!= 0);
 	kfree(f->private_data);
 
 	return 0;
@@ -744,6 +754,22 @@ static int delay_open(struct inode *inode, struct file *file)
 	if (!file->private_data)
 		return -ENOMEM;
 
+	if (S_ISFIFO(inode->i_mode)) {
+		mutex_lock(&inode->i_mutex);
+		if (!inode->i_pipe) {
+			inode->i_pipe = alloc_pipe_info(inode);
+			if (!inode->i_pipe) {
+				mutex_unlock(&inode->i_mutex);
+				kfree(file->private_data);
+				eprintk("%s: failed to allocate pipe buffer\n", __func__);
+				return -ENOMEM;
+			}
+			inode->i_private = (void *)1; /* need pipe data swap */
+		}
+		inode->i_pipe->readers += ((file->f_mode & FMODE_READ) != 0);
+		inode->i_pipe->writers += ((file->f_mode & FMODE_WRITE) != 0);
+		mutex_unlock(&inode->i_mutex);
+	}
 	return 0;
 }
 
@@ -1178,6 +1204,39 @@ static int make_flags(struct file *filp)
 	return flags;
 }
 
+static struct file *delayfs_preopen_pipe(struct file *fake, struct nameidata *nd, int flags)
+{
+	struct file *real;
+
+	if (fake->f_mode & FMODE_READ)
+		real = dentry_open(nd->path.dentry, nd->path.mnt, flags, current_cred());
+	else {
+		struct file *tmp;
+
+		tmp = dentry_open(nd->path.dentry, nd->path.mnt, O_RDWR|O_NONBLOCK, current_cred());
+		if (IS_ERR(tmp))
+			return tmp;
+		real = dentry_open(dget(tmp->f_dentry), mntget(tmp->f_vfsmnt), flags, current_cred());
+		fput(tmp);
+	}
+
+	if (!IS_ERR(real)) {
+		int need_pipe_swap;
+		struct inode *inode = fake->f_dentry->d_inode;
+
+		mutex_lock(&inode->i_mutex);
+		need_pipe_swap = (int)inode->i_private;
+		inode->i_private = (void *)0;
+		mutex_unlock(&inode->i_mutex);
+
+		if (need_pipe_swap)
+			swap_pipe_info(real->f_dentry->d_inode,
+					fake->f_dentry->d_inode);
+	}
+
+	return real;
+}
+
 static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 {
 	struct nameidata nd;
@@ -1196,7 +1255,10 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 	if (err)
 		goto out;
 
-	real = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
+	if (S_ISFIFO(fake->f_dentry->d_inode->i_mode))
+		real = delayfs_preopen_pipe(fake, &nd, flags);
+	else
+		real = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
 	err = PTR_ERR(real);
 	if (IS_ERR(real))
 		goto out;
@@ -1204,6 +1266,7 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 	D("real:%p mnt:%p de:%p ino:%p", real, real->f_vfsmnt, real->f_dentry,
 			real->f_dentry->d_inode);
 
+	real->f_flags = fake->f_flags;
 	if (fake->f_pos != real->f_pos) {
 		loff_t off;
 

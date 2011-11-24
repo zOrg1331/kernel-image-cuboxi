@@ -54,6 +54,7 @@
 #include <linux/kprobes.h>
 #include <linux/kmod.h>
 #include <linux/ve_task.h>
+#include <linux/mmgang.h>
 
 #include <asm/uaccess.h>
 #include <asm/processor.h>
@@ -1735,6 +1736,44 @@ static struct ctl_table vm_table[] = {
 		.strategy	= &sysctl_intvec,
 		.extra1		= &zero,
 		.extra2		= &one,
+	},
+#endif
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+	{
+		.procname	= "gangs_migration_max_isolate",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &gangs_migration_max_isolate,
+		.maxlen		= sizeof(gangs_migration_max_isolate),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &one,
+	},
+	{
+		.procname	= "gangs_migration_min_batch",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &gangs_migration_min_batch,
+		.maxlen		= sizeof(gangs_migration_min_batch),
+		.mode		= 0644,
+		.proc_handler	= &gangs_migration_batch_sysctl_handler,
+	},
+	{
+		.procname	= "gangs_migration_max_batch",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &gangs_migration_max_batch,
+		.maxlen		= sizeof(gangs_migration_max_batch),
+		.mode		= 0644,
+		.proc_handler	= &gangs_migration_batch_sysctl_handler,
+	},
+	{
+		.procname	= "gangs_migration_interval",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &gangs_migration_interval,
+		.maxlen		= sizeof(gangs_migration_interval),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
 	},
 #endif
 

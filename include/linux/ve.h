@@ -146,8 +146,6 @@ struct svc_rqst;
 
 struct cgroup;
 struct css_set;
-struct ve_nfsd_data;
-struct ve_rpc_data;
 
 struct ve_struct {
 	struct list_head	ve_list;
@@ -193,10 +191,12 @@ struct ve_struct {
 	struct devpts_config	*devpts_config;
 #endif
 
-	struct ve_nfs_context	*nfs_context;
-
 	struct file_system_type *shmem_fstype;
 	struct vfsmount		*shmem_mnt;
+#ifdef CONFIG_DEVTMPFS
+	struct file_system_type	*devtmpfs_fstype;
+	struct vfsmount		*devtmpfs_mnt;
+#endif
 #ifdef CONFIG_SYSFS
 	struct file_system_type *sysfs_fstype;
 	struct vfsmount		*sysfs_mnt;
@@ -270,24 +270,18 @@ struct ve_struct {
 	int 			odirect_enable;
 	int			fsync_enable;
 
-#if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
-	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
-	unsigned int		_nlmsvc_users;
-	struct task_struct*	_nlmsvc_task;
-	unsigned long		_nlmsvc_grace_period;
-	unsigned long		_nlmsvc_timeout;
-	struct svc_rqst*	_nlmsvc_rqst;
-	struct workqueue_struct *_nfsiod_workqueue;
-
+#if defined(CONFIG_LOCKD) || defined(CONFIG_LOCKD_MODULE)
+	struct ve_nlm_data	*nlm_data;
+#endif
+#if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE)
+	struct ve_nfs_data	*nfs_data;
+#endif
+#if defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
 	struct ve_nfsd_data	*nfsd_data;
-#ifdef CONFIG_NFS_V4
-	struct ve_nfs4_cb_data	*nfs4_cb_data;
 #endif
-#endif
-	atomic_t		locks_in_grace;
-
+#if defined(CONFIG_SUNRPC) || defined(CONFIG_SUNRPC_MODULE)
 	struct ve_rpc_data	*rpc_data;
-
+#endif
 #if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
 	struct file_system_type	*bm_fs_type;
 	struct vfsmount		*bm_mnt;
@@ -295,9 +289,6 @@ struct ve_struct {
 	int			bm_entry_count;
 	struct list_head	bm_entries;
 #endif
-
-	struct hlist_head	nlm_reserved_pids;
-	spinlock_t		nlm_reserved_lock;
 
 	struct nsproxy		*ve_ns;
 	struct user_namespace	*user_ns;

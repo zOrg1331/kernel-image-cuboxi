@@ -50,6 +50,7 @@
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/metrics.h>
 #include <linux/sunrpc/bc_xprt.h>
+#include <linux/ve_nfs.h>
 
 #include "sunrpc.h"
 
@@ -985,6 +986,8 @@ struct rpc_xprt *xprt_alloc(struct net *net, int size, int max_req)
 		goto out_free;
 
 	xprt->xprt_net = get_net(net);
+	xprt->owner_env = get_exec_env();
+	ve_rpc_data_get();
 	return xprt;
 
 out_free:
@@ -996,6 +999,7 @@ EXPORT_SYMBOL_GPL(xprt_alloc);
 
 void xprt_free(struct rpc_xprt *xprt)
 {
+	ve_rpc_data_put(xprt->owner_env);
 	put_net(xprt->xprt_net);
 	kfree(xprt->slot);
 	kfree(xprt);
@@ -1135,7 +1139,6 @@ found:
 	xprt->last_used = jiffies;
 	xprt->cwnd = RPC_INITCWND;
 	xprt->bind_index = 0;
-	xprt->owner_env = get_ve(get_exec_env());
 
 	rpc_init_wait_queue(&xprt->binding, "xprt_binding");
 	rpc_init_wait_queue(&xprt->pending, "xprt_pending");
@@ -1188,7 +1191,6 @@ void xprt_put(struct rpc_xprt *xprt)
 {
 	kref_put(&xprt->kref, xprt_destroy);
 }
-EXPORT_SYMBOL(xprt_put);
 
 /**
  * xprt_get - return a reference to an RPC transport.
@@ -1200,4 +1202,3 @@ struct rpc_xprt *xprt_get(struct rpc_xprt *xprt)
 	kref_get(&xprt->kref);
 	return xprt;
 }
-EXPORT_SYMBOL(xprt_get);

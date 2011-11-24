@@ -1997,7 +1997,8 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 			if (err)
 				goto out_err;
 
-			if (!strcmp(mnttype, "tmpfs"))
+			if (!strcmp(mnttype, "tmpfs") ||
+			    !strcmp(mnttype, "devtmpfs"))
 				err = rst_restore_tmpfs(&pos, ctx);
 		}
 out_err:

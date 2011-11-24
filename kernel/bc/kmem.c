@@ -72,7 +72,6 @@ try_again:
 no_precharge:
 	if (kmem_strict & UB_TEST) {
 		kmem_strict &= ~UB_TEST;
-		phys_strict &= ~UB_TEST;
 		pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
 		goto try_again;
 	}

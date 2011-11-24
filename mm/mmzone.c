@@ -13,6 +13,7 @@
 #include <linux/swap.h>
 #include <linux/module.h>
 #include <linux/mm_inline.h>
+#include <linux/migrate.h>
 
 #include "internal.h"
 
@@ -143,6 +144,12 @@ static void del_zone_gang(struct zone *zone, struct gang *gang)
 	spin_unlock_irqrestore(&zone->gangs_lock, flags);
 }
 
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+static void init_gangs_migration_work(struct gang_set *gs);
+#else
+static inline void init_gangs_migration_work(struct gang_set *gs) { }
+#endif
+
 int alloc_mem_gangs(struct gang_set *gs)
 {
 	struct zone *zone;
@@ -166,6 +173,8 @@ int alloc_mem_gangs(struct gang_set *gs)
 		gang = mem_zone_gang(gs, zone);
 		setup_zone_gang(gs, zone, gang);
 	}
+
+	init_gangs_migration_work(gs);
 
 	return 0;
 
@@ -286,6 +295,8 @@ void splice_mem_gangs(struct gang_set *gs, struct gang_set *target)
 {
 	struct zone *zone;
 
+	cancel_gangs_migration(gs);
+
 	lru_add_drain_all();
 
 	for_each_populated_zone(zone)
@@ -394,6 +405,327 @@ void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,
 void gang_show_state(struct gang_set *gs) { }
 
 #endif /* CONFIG_MEMORY_GANGS */
+
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+static struct workqueue_struct **gangs_migration_wq;
+
+unsigned int gangs_migration_max_isolate = 50;
+unsigned int gangs_migration_min_batch = 100;
+unsigned int gangs_migration_max_batch = 12800;
+unsigned int gangs_migration_interval = 500;
+
+static unsigned long isolate_gang_pages(struct gang *gang, enum lru_list lru,
+		unsigned long nr_to_scan, struct list_head *pagelist)
+{
+	struct list_head *lru_list = &gang->lru[lru].list;
+	unsigned long nr_isolated = 0;
+	struct page *page, *next;
+	int restart;
+	LIST_HEAD(busy_pages);
+
+again:
+	restart = 0;
+	spin_lock_irq(&gang->lru_lock);
+	list_for_each_entry_safe_reverse(page, next, lru_list, lru) {
+		if (nr_to_scan-- == 0)
+			break;
+
+		if (pin_mem_gang(gang))
+			break;
+
+		if (!get_page_unless_zero(page)) {
+			list_move(&page->lru, &busy_pages);
+			unpin_mem_gang(gang);
+			continue;
+		}
+
+		if (unlikely(PageTransHuge(page))) {
+			spin_unlock_irq(&gang->lru_lock);
+			split_huge_page(page);
+			put_page(page);
+			restart = 1;
+			spin_lock_irq(&gang->lru_lock);
+			unpin_mem_gang(gang);
+			break;
+		}
+
+		ClearPageLRU(page);
+		del_page_from_lru_list(gang, page, lru);
+		inc_zone_page_state(page, NR_ISOLATED_ANON +
+				    page_is_file_cache(page));
+
+		nr_isolated++;
+		list_add(&page->lru, pagelist);
+	}
+	list_splice_init(&busy_pages, lru_list);
+	spin_unlock_irq(&gang->lru_lock);
+
+	if (restart)
+		goto again;
+
+	return nr_isolated;
+}
+
+static struct page *gangs_migration_new_page(struct page *page,
+					     unsigned long private, int **x)
+{
+	struct gangs_migration_work *w = (void *)private;
+	gfp_t gfp_mask = GFP_HIGHUSER_MOVABLE | __GFP_NORETRY;
+
+	return __alloc_pages_nodemask(gfp_mask, 0,
+			node_zonelist(w->preferred_node, gfp_mask),
+			&w->dest_nodes);
+}
+
+static int __migrate_gangs(struct gang_set *gs, struct gangs_migration_work *w)
+{
+	struct zoneref *z;
+	struct zone *zone;
+	enum lru_list lru;
+	nodemask_t cur_nodemask;
+	LIST_HEAD(pagelist);
+	unsigned long nr_to_scan, nr_isolated, nr_moved;
+	int rc;
+
+	nr_moved = 0;
+	cur_nodemask = nodemask_of_node(w->cur_node);
+	for_each_zone_zonelist_nodemask(zone, z,
+			node_zonelist(w->cur_node, GFP_KERNEL),
+			MAX_NR_ZONES - 1, &cur_nodemask) {
+		struct gang *gang = mem_zone_gang(gs, zone);
+		unsigned long left = gang->nr_migratepages;
+
+		if (!left)
+			continue;
+		while (nr_moved < w->batch && left) {
+			int empty = 1;
+
+			for_each_lru(lru) {
+				if (!gang->lru[lru].nr_pages)
+					continue;
+				empty = 0;
+
+				nr_to_scan = min_t(unsigned long,
+					left, gangs_migration_max_isolate);
+				left -= nr_to_scan;
+
+				nr_isolated = isolate_gang_pages(gang, lru,
+						nr_to_scan, &pagelist);
+				if (!nr_isolated)
+					continue;
+				rc = migrate_pages(&pagelist,
+						gangs_migration_new_page,
+						(unsigned long)w, false, true);
+				if (rc < 0)
+					return -1;
+				nr_moved += nr_isolated - rc;
+			}
+			if (empty)
+				left = 0;
+		}
+		gang->nr_migratepages = left;
+		if (nr_moved >= w->batch)
+			return 1;
+	}
+	return 0;
+}
+
+static void migrate_gangs(struct work_struct *work)
+{
+	struct delayed_work *dwork;
+	struct gangs_migration_work *w;
+	struct gang_set *gs;
+	const struct cpumask *cpumask;
+	int cpu, rc;
+	unsigned long delay = 0;
+
+	dwork = to_delayed_work(work);
+	w = container_of(dwork, struct gangs_migration_work, dwork);
+	gs = container_of(w, struct gang_set, migration_work);
+
+	if (!node_online(w->cur_node)) {
+		node_clear(w->cur_node, w->src_nodes);
+		goto next;
+	}
+
+	cpu = task_cpu(current);
+	cpumask = cpumask_of_node(w->cur_node);
+	if (!cpumask_test_cpu(cpu, cpumask))
+		set_cpus_allowed_ptr(current, cpumask);
+
+	rc = __migrate_gangs(gs, w);
+	if (rc < 0) {
+		nodes_clear(w->src_nodes);
+		return;
+	}
+	if (!rc)
+		node_clear(w->cur_node, w->src_nodes);
+next:
+	if (!nodes_empty(w->src_nodes)) {
+		w->cur_node = next_node(w->cur_node, w->src_nodes);
+		if (w->cur_node >= MAX_NUMNODES) {
+			w->cur_node = first_node(w->src_nodes);
+			w->batch *= 2;
+			if (w->batch > gangs_migration_max_batch)
+				w->batch = gangs_migration_max_batch;
+			delay = msecs_to_jiffies(gangs_migration_interval);
+		}
+		w->preferred_node = next_node(w->preferred_node, w->dest_nodes);
+		if (w->preferred_node >= MAX_NUMNODES)
+			w->preferred_node = first_node(w->dest_nodes);
+		queue_delayed_work(gangs_migration_wq[w->cur_node],
+				   dwork, delay);
+	}
+}
+
+static void __schedule_gangs_migration(struct gang_set *gs,
+				       struct gangs_migration_work *w)
+{
+	struct zoneref *z;
+	struct zone *zone;
+	enum lru_list lru;
+
+	for_each_zone_zonelist_nodemask(zone, z,
+			node_zonelist(numa_node_id(), GFP_KERNEL),
+			MAX_NR_ZONES - 1, &w->src_nodes) {
+		struct gang *gang = mem_zone_gang(gs, zone);
+
+		gang->nr_migratepages = 0;
+		for_each_lru(lru) {
+			gang->nr_migratepages +=
+				gang->lru[lru].nr_pages;
+		}
+		gang->nr_migratepages *= NR_LRU_LISTS;
+	}
+	w->cur_node = first_node(w->src_nodes);
+	w->preferred_node = first_node(w->dest_nodes);
+	w->batch = gangs_migration_min_batch;
+	queue_delayed_work(gangs_migration_wq[w->cur_node], &w->dwork, 0);
+}
+
+/* Returns 0 if migration was already scheduled, non-zero otherwise */
+int schedule_gangs_migration(struct gang_set *gs,
+		const nodemask_t *src_nodes, const nodemask_t *dest_nodes)
+{
+	struct gangs_migration_work *w = &gs->migration_work;
+	nodemask_t tmp;
+	int ret = 0;
+
+	mutex_lock(&w->lock);
+	if (!nodes_empty(w->src_nodes))
+		goto out;
+	cancel_delayed_work_sync(&w->dwork);
+	nodes_and(w->dest_nodes, *dest_nodes, node_online_map);
+	if (!nodes_empty(w->dest_nodes)) {
+		nodes_andnot(tmp, *src_nodes, *dest_nodes);
+		nodes_and(w->src_nodes, tmp, node_online_map);
+		if (!nodes_empty(w->src_nodes))
+			__schedule_gangs_migration(gs, w);
+	}
+	ret = 1;
+out:
+	mutex_unlock(&w->lock);
+	return ret;
+}
+
+/* Returns 0 if migration was not pending, non-zero otherwise. */
+int cancel_gangs_migration(struct gang_set *gs)
+{
+	struct gangs_migration_work *w = &gs->migration_work;
+	int ret = 0;
+
+	mutex_lock(&w->lock);
+	if (nodes_empty(w->src_nodes))
+		goto out;
+	cancel_delayed_work_sync(&w->dwork);
+	nodes_clear(w->src_nodes);
+	ret = 1;
+out:
+	mutex_unlock(&w->lock);
+	return ret;
+}
+
+int gangs_migration_pending(struct gang_set *gs, nodemask_t *pending)
+{
+	struct gangs_migration_work *w = &gs->migration_work;
+	int ret;
+
+	mutex_lock(&w->lock);
+	if (pending)
+		*pending = w->src_nodes;
+	ret = !nodes_empty(w->src_nodes);
+	mutex_unlock(&w->lock);
+	return ret;
+}
+
+static void init_gangs_migration_work(struct gang_set *gs)
+{
+	struct gangs_migration_work *w = &gs->migration_work;
+
+	INIT_DELAYED_WORK(&w->dwork, migrate_gangs);
+	nodes_clear(w->src_nodes);
+	mutex_init(&w->lock);
+}
+
+static __init int init_gangs_migration_wq(void)
+{
+	int node;
+	char name[32];
+
+	init_gangs_migration_work(&init_gang_set);
+
+	if (nr_node_ids == 1)
+		return 0;
+
+	gangs_migration_wq = kcalloc(nr_node_ids,
+			sizeof(struct workqueue_struct *), GFP_KERNEL);
+	BUG_ON(!gangs_migration_wq);
+
+	for_each_node(node) {
+		snprintf(name, sizeof(name), "gsmigration/%d", node);
+		gangs_migration_wq[node] = create_singlethread_workqueue(name);
+		BUG_ON(!gangs_migration_wq[node]);
+	}
+
+	return 0;
+}
+late_initcall(init_gangs_migration_wq);
+
+static int gangs_migration_batch_constraints(void)
+{
+	if (gangs_migration_min_batch <= 0 ||
+	    gangs_migration_min_batch > gangs_migration_max_batch)
+		return -EINVAL;
+	return 0;
+}
+
+int gangs_migration_batch_sysctl_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	static DEFINE_MUTEX(lock);
+	unsigned int old_min, old_max;
+	int err;
+
+	mutex_lock(&lock);
+
+	old_min = gangs_migration_min_batch;
+	old_max = gangs_migration_max_batch;
+
+	err = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (err || !write)
+		goto out;
+
+	err = gangs_migration_batch_constraints();
+	if (err) {
+		gangs_migration_min_batch = old_min;
+		gangs_migration_max_batch = old_max;
+	}
+
+out:
+	mutex_unlock(&lock);
+	return err;
+}
+#endif /* CONFIG_MEMORY_GANGS_MIGRATION */
 
 struct gang *init_gang_array[MAX_NUMNODES];
 
