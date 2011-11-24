@@ -37,6 +37,7 @@
 #include <net/ip.h>
 #include <linux/lockd/lockd.h>
 #include <linux/nfs.h>
+#include <linux/ve_nfs.h>
 
 #define NLMDBG_FACILITY		NLMDBG_SVC
 #define LOCKD_BUFSIZE		(1024 + NLMSVC_XDRSIZE)
@@ -217,8 +218,8 @@ static int create_lockd_listener(struct svc_serv *serv, const char *name,
 
 	xprt = svc_find_xprt(serv, name, family, 0);
 	if (xprt == NULL)
-		return svc_create_xprt(serv, name, &init_net, family, port,
-						SVC_SOCK_DEFAULTS);
+		return svc_create_xprt(serv, name, current->nsproxy->net_ns,
+					family, port, SVC_SOCK_DEFAULTS);
 	svc_xprt_put(xprt);
 	return 0;
 }
@@ -533,6 +534,56 @@ module_param(nlm_max_connections, uint, 0644);
 /*
  * Initialising and terminating the module.
  */
+#ifdef CONFIG_VE
+static void ve_nlm_init(struct ve_nlm_data *nlm_data)
+{
+	spin_lock_init(&nlm_data->_nlm_reserved_lock);
+	INIT_HLIST_HEAD(&nlm_data->_nlm_reserved_pids);
+	get_exec_env()->nlm_data = nlm_data;
+}
+
+static int ve_lockd_init(void *data)
+{
+	struct ve_nlm_data *nlm_data;
+
+	nlm_data = kzalloc(sizeof(struct ve_nlm_data), GFP_KERNEL);
+	if (nlm_data == NULL)
+		return -ENOMEM;
+	ve_nlm_init(nlm_data);
+	return 0;
+}
+
+static void ve_lockd_stop(void *data)
+{
+	struct ve_struct *ve = data;
+
+	if (!ve->nlm_data)
+		return;
+
+	while (!hlist_empty(&ve->nlm_data->_nlm_reserved_pids)) {
+		struct nlm_reserved_pid *p;
+
+		p = hlist_entry(ve->nlm_data->_nlm_reserved_pids.first,
+				struct nlm_reserved_pid, list);
+		hlist_del(&p->list);
+		kfree(p);
+	}
+}
+
+static struct ve_hook lockd_ss_hook = {
+	.init	  = ve_lockd_init,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_NET_POST,
+};
+
+static struct ve_hook lockd_ie_hook = {
+	.fini	  = ve_lockd_stop,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_NET_POST,
+};
+
+static struct ve_nlm_data ve0_nlm_data;
+#endif
 
 static int __init init_nlm(void)
 {
@@ -541,11 +592,21 @@ static int __init init_nlm(void)
 	if (nlm_sysctl_table == NULL)
 		return -ENOMEM;
 #endif
+#ifdef CONFIG_VE
+	ve_nlm_init(&ve0_nlm_data);
+
+	ve_hook_register(VE_SS_CHAIN, &lockd_ss_hook);
+	ve_hook_register(VE_INIT_EXIT_CHAIN, &lockd_ie_hook);
+#endif
 	return 0;
 }
 
 static void __exit exit_nlm(void)
 {
+#ifdef CONFIG_VE
+	ve_hook_unregister(&lockd_ie_hook);
+	ve_hook_unregister(&lockd_ss_hook);
+#endif
 	/* FIXME: delete all NLM clients */
 	nlm_shutdown_hosts();
 #ifdef CONFIG_SYSCTL
@@ -600,27 +661,3 @@ static struct svc_program	nlmsvc_program = {
 	.pg_authenticate = &lockd_authenticate	/* export authentication */
 };
 
-#ifdef CONFIG_VE
-void ve_nlm_init(struct ve_struct *ve)
-{
-	spin_lock_init(&ve->nlm_reserved_lock);
-	INIT_HLIST_HEAD(&ve->nlm_reserved_pids);
-}
-EXPORT_SYMBOL_GPL(ve_nlm_init);
-
-void ve_nlm_prepare_to_shutdown(struct ve_struct *ve)
-{
-	if (!ve->_nlmsvc_rqst)
-		return;
-
-	while (!hlist_empty(&ve->nlm_reserved_pids)) {
-		struct nlm_reserved_pid *p;
-
-		p = hlist_entry(ve->nlm_reserved_pids.first,
-				struct nlm_reserved_pid, list);
-		hlist_del(&p->list);
-		kfree(p);
-	}
-}
-EXPORT_SYMBOL_GPL(ve_nlm_prepare_to_shutdown);
-#endif

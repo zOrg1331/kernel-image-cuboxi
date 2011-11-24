@@ -313,3 +313,8 @@ config TRANSPARENT_HUGEPAGE
 
 config MEMORY_GANGS
 	bool
+
+config MEMORY_GANGS_MIGRATION
+	bool
+	depends on MEMORY_GANGS && MIGRATION
+	default MEMORY_GANGS

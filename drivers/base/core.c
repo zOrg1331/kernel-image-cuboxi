@@ -976,9 +976,17 @@ int device_add(struct device *dev)
 	if (platform_notify)
 		platform_notify(dev);
 
-	error = device_create_file(dev, &ve_device_attr);
-	if (error)
-		goto veError;
+	if (!is_dev_netdev(dev)) {
+		/*
+		 * Net devices must be added with the namespace switching means
+		 * instead of moving them through standard ve_device attributes,
+		 * so ve_device_attr should not be provided.
+		 */
+		error = device_create_file(dev, &ve_device_attr);
+		if (error)
+			goto veError;
+	}
+
 	error = device_create_file(dev, &uevent_attr);
 	if (error)
 		goto attrError;

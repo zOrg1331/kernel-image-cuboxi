@@ -40,6 +40,7 @@
 #include <bc/beancounter.h>
 #include <bc/io_acct.h>
 #include <bc/vmpages.h>
+#include <bc/dcache.h>
 #include <bc/proc.h>
 
 static struct kmem_cache *ub_cachep;
@@ -420,6 +421,7 @@ static void delayed_release_beancounter(struct work_struct *w)
 
 	splice_mem_gangs(get_ub_gs(ub), &init_gang_set);
 	ub_unuse_swap(ub);
+	ub_dcache_unuse(ub);
 
 	if (!bc_verify_held(ub)) {
 		printk(KERN_ERR "UB: leaked beancounter %u (%p)\n",
@@ -681,6 +683,7 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 #ifndef CONFIG_BC_KEEP_UNUSED
 	INIT_WORK(&ub->work, delayed_release_beancounter);
 #endif
+	INIT_LIST_HEAD(&ub->ub_dentry_top);
 	init_oom_control(&ub->oom_ctrl);
 	spin_lock_init(&ub->rl_lock);
 	ub->rl_wall.tv64 = LLONG_MIN;

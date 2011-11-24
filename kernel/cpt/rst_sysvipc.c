@@ -300,8 +300,11 @@ static int attach_one_undo(int semid, struct sem_array *sma, void *arg)
 	if (semid != su->semid)
 		return 0;
 
+	spin_lock(&undo_list->lock);
+	su->ulp = undo_list;
 	list_add(&su->list_proc, &undo_list->list_proc);
 	list_add(&su->list_id, &sma->list_id);
+	spin_unlock(&undo_list->lock);
 
 	return 1;
 }

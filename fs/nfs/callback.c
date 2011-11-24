@@ -18,6 +18,8 @@
 #include <linux/kthread.h>
 #include <linux/sunrpc/svcauth_gss.h>
 #include <linux/sunrpc/bc_xprt.h>
+#include <linux/nsproxy.h>
+#include <linux/ve_nfs.h>
 
 #include <net/inet_sock.h>
 
@@ -28,38 +30,11 @@
 #define NFSDBG_FACILITY NFSDBG_CALLBACK
 
 #ifdef CONFIG_VE
-#include <linux/ve_nfs.h>
-
-#define nfs_callback_info		NFS4_CTX_FIELD(nfs_callback_info)
-#define nfs_callback_mutex 		NFS4_CTX_FIELD(nfs_callback_mutex)
-
-struct ve_nfs4_cb_data ve0_nfs4_cb_data;
-
-int ve_nfs4_cb_init(struct ve_struct *ve)
-{
-	ve->nfs4_cb_data = kzalloc(sizeof(struct ve_nfs4_cb_data), GFP_KERNEL);
-	if (ve->nfs4_cb_data == NULL)
-		return -ENOMEM;
-	mutex_init(&nfs_callback_mutex);
-	return 0;
-}
-
-void ve_nfs4_cb_fini(struct ve_struct *ve)
-{
-	kfree(ve->nfs4_cb_data);
-}
+#define nfs_callback_info		NFS_CTX_FIELD(nfs_callback_info)
+#define nfs_callback_mutex		NFS_CTX_FIELD(nfs_callback_mutex)
 #else
-struct nfs_callback_data {
-	unsigned int users;
-	struct svc_serv *serv;
-	struct svc_rqst *rqst;
-	struct task_struct *task;
-};
-
 static struct nfs_callback_data nfs_callback_info[NFS4_MAX_MINOR_VERSION + 1];
 static DEFINE_MUTEX(nfs_callback_mutex);
-unsigned short nfs_callback_tcpport;
-unsigned short nfs_callback_tcpport6;
 #endif
 
 static struct svc_program nfs4_callback_program;
@@ -132,7 +107,7 @@ nfs4_callback_up(struct svc_serv *serv)
 {
 	int ret;
 
-	ret = svc_create_xprt(serv, "tcp", &init_net, PF_INET,
+	ret = svc_create_xprt(serv, "tcp", current->nsproxy->net_ns, PF_INET,
 				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS);
 	if (ret <= 0)
 		goto out_err;
@@ -140,7 +115,7 @@ nfs4_callback_up(struct svc_serv *serv)
 	dprintk("NFS: Callback listener port = %u (af %u)\n",
 			nfs_callback_tcpport, PF_INET);
 
-	ret = svc_create_xprt(serv, "tcp", &init_net, PF_INET6,
+	ret = svc_create_xprt(serv, "tcp", current->nsproxy->net_ns, PF_INET6,
 				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS);
 	if (ret > 0) {
 		nfs_callback_tcpport6 = ret;
@@ -209,7 +184,7 @@ nfs41_callback_up(struct svc_serv *serv, struct rpc_xprt *xprt)
 	 * fore channel connection.
 	 * Returns the input port (0) and sets the svc_serv bc_xprt on success
 	 */
-	ret = svc_create_xprt(serv, "tcp-bc", &init_net, PF_INET, 0,
+	ret = svc_create_xprt(serv, "tcp-bc", current->nsproxy->net_ns, PF_INET, 0,
 			      SVC_SOCK_ANONYMOUS);
 	if (ret < 0) {
 		rqstp = ERR_PTR(ret);

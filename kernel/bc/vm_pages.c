@@ -269,11 +269,15 @@ int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask)
 	if (test_thread_flag(TIF_MEMDIE))
 		return -ENOMEM;
 
+	if (!(gfp_mask & __GFP_WAIT))
+		goto nowait;
+
 	progress = try_to_free_gang_pages(get_ub_gs(ub),
 			gfp_mask | __GFP_HIGHMEM);
 	if (progress)
 		return 0;
 
+nowait:
 	if (gfp_mask & __GFP_NOWARN)
 		goto nowarn;
 
@@ -311,8 +315,7 @@ int __ub_phys_charge(struct user_beancounter *ub,
 	ub_oom_start(&ub->oom_ctrl);
 
 	while (charge_beancounter_fast(ub, UB_PHYSPAGES, pages, strict)) {
-		if (!(gfp_mask & __GFP_WAIT) ||
-				ub_try_to_free_pages(ub, gfp_mask))
+		if (ub_try_to_free_pages(ub, gfp_mask))
 			return -ENOMEM;
 	}
 

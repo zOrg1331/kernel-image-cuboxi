@@ -8234,8 +8234,8 @@ void sched_show_task(struct task_struct *p)
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
 #endif
-	printk(KERN_CONT "%5lu %5d %6d 0x%08lx\n", free,
-		task_pid_nr(p), task_pid_nr(p->real_parent),
+	printk(KERN_CONT "%5lu %5d %6d %4u 0x%08lx\n", free,
+		task_pid_nr(p), task_pid_nr(p->real_parent), task_veid(p),
 		(unsigned long)task_thread_info(p)->flags);
 
 	show_stack(p, NULL);
@@ -8247,10 +8247,10 @@ void show_state_filter(unsigned long state_filter)
 
 #if BITS_PER_LONG == 32
 	printk(KERN_INFO
-		"  task          taskaddr stack   pid father\n");
+		"  task          taskaddr stack   pid father veid\n");
 #else
 	printk(KERN_INFO
-		"  task                  taskaddr stack   pid father\n");
+		"  task                  taskaddr stack   pid father veid\n");
 #endif
 	read_lock(&tasklist_lock);
 	do_each_thread_all(g, p) {

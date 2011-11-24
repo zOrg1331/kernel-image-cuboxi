@@ -121,13 +121,20 @@ static unsigned long tmpfs_ram_pages(void)
 	unsigned long ub_rampages = ULONG_MAX;
 	struct user_beancounter *ub;
 
+	/*
+	 * tmpfs can be mounted by a kthread
+	 * (e.g. by init during devtmpfs intialization)
+	 */
+	if (unlikely(!current->mm))
+		goto out;
+
 	ub = current->mm->mm_ub;
 	if (ub != get_ub0()) {
 		ub_rampages = ub->ub_parms[UB_PHYSPAGES].limit;
 		if (ub_rampages == UB_MAXVALUE)
 			ub_rampages = ub->ub_parms[UB_PRIVVMPAGES].limit;
 	}
-
+out:
 	return min(totalram_pages, ub_rampages);
 }
 

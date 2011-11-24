@@ -392,29 +392,41 @@ static struct shrinker acl_shrinker = {
 static int ve_nfs_init(void *data)
 {
 	int err;
+	struct ve_nfs_data *nfs_data;
 	struct ve_struct *ve = (struct ve_struct *) data;
 
 	if (!(ve->features & VE_FEATURE_NFS))
 		return 0;
 
-	ve_nlm_init(data);
+	nfs_data = kzalloc(sizeof(struct ve_nfs_data), GFP_KERNEL);
+	if (nfs_data == NULL)
+		return -ENOMEM;
+	ve_nfs_data_init(nfs_data);
 	err = nfsiod_start();
-#ifdef CONFIG_NFS_V4
-	if (!err) {
-		err = ve_nfs4_cb_init(data);
-		if (err)
-			nfsiod_stop();
-	}
-#endif
+	if (err)
+		goto err_nfsiod;
+	return 0;
+
+err_nfsiod:
+	kfree(ve->nfs_data);
 	return err;
 }
 
 static void ve_nfs_fini(void *data)
 {
-	nfsiod_stop();
-#ifdef CONFIG_NFS_V4
-	ve_nfs4_cb_fini(data);
-#endif
+	struct ve_struct *ve = data;
+
+	if (ve->nfs_data == NULL)
+		return;
+
+	umount_ve_fs_type(&nfs_fs_type, ve->veid);
+	umount_ve_fs_type(&nfs4_fs_type, ve->veid);
+
+	ve_nfs_data_put(ve);
+	if (ve->nfs_data)
+		printk(KERN_WARNING "CT%d: NFS mounts used outside CT. Release "
+				"all external references to CT's NFS mounts to "
+				"continue shutdown.\n", ve->veid);
 }
 
 inline int is_nfs_automount(struct vfsmount *mnt)
@@ -485,24 +497,20 @@ static void ve_nfs_umount_begin(struct ve_struct *ve, struct file_system_type *n
 
 static void ve_nfs_stop(void *data)
 {
-	struct ve_struct *ve;
+	struct ve_struct *ve = data;
 
-	ve = (struct ve_struct *)data;
+	if (ve->nfs_data == NULL)
+		return;
 
 	ve_nfs_umount_begin(ve, &nfs_fs_type);
 	ve_nfs_umount_begin(ve, &nfs4_fs_type);
-
-	ve_nlm_prepare_to_shutdown(ve);
-
-	umount_ve_fs_type(&nfs_fs_type, ve->veid);
-	umount_ve_fs_type(&nfs4_fs_type, ve->veid);
 }
 
 static struct ve_hook nfs_ss_hook = {
 	.init	  = ve_nfs_init,
 	.fini	  = ve_nfs_fini,
 	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_FS,
+	.priority = HOOK_PRIO_NET_POST,
 };
 
 static struct ve_hook nfs_hook = {
@@ -530,9 +538,6 @@ int __init register_nfs_fs(void)
 	ret = register_filesystem(&nfs4_fs_type);
 	if (ret < 0)
 		goto error_2;
-
-	get_ve0()->nfs4_cb_data = &ve0_nfs4_cb_data;
-	mutex_init(&get_ve0()->nfs4_cb_data->_nfs_callback_mutex);
 #endif
 	register_shrinker(&acl_shrinker);
 	ve_hook_register(VE_SS_CHAIN, &nfs_ss_hook);

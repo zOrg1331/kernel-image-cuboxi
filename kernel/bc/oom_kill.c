@@ -110,8 +110,15 @@ int ub_oom_lock(struct oom_control *oom_ctrl)
 			return -EAGAIN;
 		}
 
-		if (timeout == 0)
+		if (timeout == 0) {
+			/*
+			 * Time is up, let's kill somebody else but
+			 * release the oom ctl since the stuck task
+			 * wasn't able to do it.
+			 */
+			__ub_release_oom_control(oom_ctrl);
 			break;
+		}
 
 		__set_current_state(TASK_UNINTERRUPTIBLE);
 		add_wait_queue(&oom_ctrl->wq, &oom_w);

@@ -573,6 +573,7 @@ extern void put_device(struct device *dev);
 extern void wait_for_device_probe(void);
 
 #ifdef CONFIG_DEVTMPFS
+extern struct file_system_type dev_fs_type;
 extern int devtmpfs_create_node(struct device *dev);
 extern int devtmpfs_delete_node(struct device *dev);
 extern int devtmpfs_mount(const char *mountpoint);
@@ -588,6 +589,8 @@ extern void device_shutdown(void);
 /* drivers/base/sys.c */
 extern void sysdev_shutdown(void);
 
+/* net/core/net-sysfs.c */
+int is_dev_netdev(struct device *dev);
 /* debugging and troubleshooting/diagnostic helpers. */
 extern const char *dev_driver_string(const struct device *dev);
 #define dev_printk(level, dev, format, arg...)	\

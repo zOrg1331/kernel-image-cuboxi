@@ -2109,7 +2109,8 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 			eprintk_ctx("Checkpoint supports only nodev fs: %s\n",
 				    mnt->mnt_sb->s_type->name);
 			err = -EXDEV;
-		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs")) {
+		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs") ||
+			   !strcmp(mnt->mnt_sb->s_type->name, "devtmpfs")) {
 			mntget(mnt);
 			up_read(&namespace_sem);
 			err = cpt_dump_tmpfs(path, ctx);

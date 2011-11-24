@@ -1538,7 +1538,11 @@ void nfsiod_stop(void)
 static int __init init_nfs_fs(void)
 {
 	int err;
+#ifdef CONFIG_VE
+	static struct ve_nfs_data ve0_nfs_data;
 
+	ve_nfs_data_init(&ve0_nfs_data);
+#endif
 	err = nfs_idmap_init();
 	if (err < 0)
 		goto out9;

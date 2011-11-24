@@ -1615,7 +1615,7 @@ check_compat_entry_size_and_hooks(struct compat_ipt_entry *e,
 out:
 	module_put(t->u.kernel.target->me);
 release_matches:
-	IPT_MATCH_ITERATE(e, compat_release_match, &j);
+	COMPAT_IPT_MATCH_ITERATE(e, compat_release_match, &j);
 	return ret;
 }
 

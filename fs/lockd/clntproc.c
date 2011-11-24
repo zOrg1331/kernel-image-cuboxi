@@ -65,16 +65,14 @@ static void nlm_put_lockowner(struct nlm_lockowner *lockowner)
 
 static int nlm_walk_reserved(uint32_t pid, int del)
 {
-	struct ve_struct *ve;
 	struct hlist_head *rsv_list;
 
-	ve = get_exec_env();
-	rsv_list = &ve->nlm_reserved_pids;
+	rsv_list = &nlm_reserved_pids;
 	if (!hlist_empty(rsv_list)) {
 		struct nlm_reserved_pid *rp;
 		struct hlist_node *n;
 
-		spin_lock(&ve->nlm_reserved_lock);
+		spin_lock(&nlm_reserved_lock);
 		hlist_for_each_entry(rp, n, rsv_list, list)
 			if (rp->pid == pid)
 				break;
@@ -84,7 +82,7 @@ static int nlm_walk_reserved(uint32_t pid, int del)
 			kfree(rp);
 		}
 
-		spin_unlock(&ve->nlm_reserved_lock);
+		spin_unlock(&nlm_reserved_lock);
 
 		if (n != NULL)
 			return -EBUSY;
@@ -107,19 +105,16 @@ static inline void nlm_release_reserved(int pid)
 
 int nlmclnt_reserve_pid(int pid)
 {
-	struct ve_struct *ve;
 	struct nlm_reserved_pid *n;
 
 	n = kmalloc(sizeof(*n), GFP_KERNEL);
 	if (n == NULL)
 		return -ENOMEM;
 
-	ve = get_exec_env();
-
 	n->pid = pid;
-	spin_lock(&ve->nlm_reserved_lock);
-	hlist_add_head(&n->list, &ve->nlm_reserved_pids);
-	spin_unlock(&ve->nlm_reserved_lock);
+	spin_lock(&nlm_reserved_lock);
+	hlist_add_head(&n->list, &nlm_reserved_pids);
+	spin_unlock(&nlm_reserved_lock);
 
 	return 0;
 }

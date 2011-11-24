@@ -227,6 +227,7 @@ struct user_beancounter
 	void			*private_data2;
 
 	struct list_head	ub_dentry_lru;
+	struct list_head	ub_dentry_top;
 	int			ub_dentry_unused;
 	int			ub_dentry_batch;
 

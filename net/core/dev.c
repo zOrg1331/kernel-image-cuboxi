@@ -5942,6 +5942,45 @@ void unregister_netdev(struct net_device *dev)
 }
 EXPORT_SYMBOL(unregister_netdev);
 
+#if defined(CONFIG_SYSFS) && defined(CONFIG_VE)
+extern int ve_netdev_add(struct device *dev, struct ve_struct *ve);
+extern int ve_netdev_delete(struct device *dev, struct ve_struct *ve);
+
+/*
+ *     netdev_fixup_sysfs - create/remove dirlinks to the net device directory
+ *     @dev: net device
+ *     @op: operation type registration/deregistration
+ */
+static void netdev_fixup_sysfs(struct net_device *dev,
+				unsigned long op)
+{
+	struct ve_struct *ve = get_exec_env();
+	int err;
+
+	/* Super VE do not need to patch sysfs entries */
+	if (ve_is_super(ve))
+		return;
+
+	if (op == NETDEV_REGISTER)
+		err = ve_netdev_add(&dev->dev, ve);
+	else
+		err = ve_netdev_delete(&dev->dev, ve);
+
+	/*
+	 * Just tell about error in case the state can't
+	 * be properly reverted at net device namespace
+	 * changing
+	 */
+	WARN_ON(err);
+}
+#else
+static inline void netdev_fixup_sysfs(struct net_device *dev,
+					unsigned long op)
+{
+	return 0;
+}
+#endif
+
 /**
  *	dev_change_net_namespace - move device to different nethost namespace
  *	@dev: device
@@ -6042,6 +6081,7 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	dev_addr_discard(dev);
 
 	set_exec_env(src_ve);
+	netdev_fixup_sysfs(dev, NETDEV_UNREGISTER);
 	netdev_unregister_kobject(dev);
 	set_exec_env(cur_ve);
 
@@ -6063,6 +6103,7 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	/* Fixup kobjects */
 	set_exec_env(dst_ve);
 	err = netdev_register_kobject(dev);
+	netdev_fixup_sysfs(dev, NETDEV_REGISTER);
 	set_exec_env(cur_ve);
 	WARN_ON(err);
 
