@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt42
+Release: alt43
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Nov 24 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt43
+- Update to 042stab044.1
+
 * Fri Nov 11 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt42
 - Update to 042stab042.1
 - Triple Answer to the Ultimate Question of Life, the Universe,
