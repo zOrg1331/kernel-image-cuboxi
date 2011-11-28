@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab094
-%define ovzrel 3
+%define ovzver 028stab095
+%define ovzrel 1
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -270,7 +270,7 @@ Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
 
 Patch100038: linux-2.6-fs-fix-wrongly-kfree-ing-a-vmalloc-ed-area.patch
-Patch100039: linux-2.6-net-bridge-support-netpoll-over-bridge-disable.patch
+Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811

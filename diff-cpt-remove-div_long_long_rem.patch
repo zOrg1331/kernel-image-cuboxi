@@ -1,0 +1,130 @@
+--- ./include/linux/time.h.cpt_div	2011-10-24 14:06:15.000000000 +0400
++++ ./include/linux/time.h	2011-10-24 19:16:35.000000000 +0400
+@@ -71,6 +71,7 @@ extern unsigned long mktime(const unsign
+ 			    const unsigned int min, const unsigned int sec);
+ 
+ extern void set_normalized_timespec(struct timespec *ts, time_t sec, long nsec);
++extern struct timespec ns_to_timespec(const s64 nsec);
+ extern struct timespec timespec_add_safe(const struct timespec lhs,
+ 					 const struct timespec rhs);
+ 
+--- ./kernel/cpt/cpt_dump.c.cpt_div	2011-10-24 14:06:35.000000000 +0400
++++ ./kernel/cpt/cpt_dump.c	2011-10-24 19:18:19.000000000 +0400
+@@ -973,7 +973,7 @@ static int cpt_dump_veinfo(cpt_context_t
+ 	i->sem_ctl_arr[3] = ns->sem_ctls[3];
+ 
+ 	do_posix_clock_monotonic_gettime(&delta);
+-	_set_normalized_timespec(&delta,
++	set_normalized_timespec(&delta,
+ 			delta.tv_sec - ve->start_timespec.tv_sec,
+ 			delta.tv_nsec - ve->start_timespec.tv_nsec);
+ 	i->start_timespec_delta = cpt_timespec_export(&delta);
+--- ./kernel/cpt/cpt_kernel.h.cpt_div	2011-10-24 14:06:33.000000000 +0400
++++ ./kernel/cpt/cpt_kernel.h	2011-10-24 19:23:54.000000000 +0400
+@@ -67,33 +67,3 @@ if (src & (1 << flag)) \
+ 		eprintk_ctx("Destination cpu does not have " message "\n"); \
+ 		ret = 1; \
+ 	}
+-
+-static inline void
+-_set_normalized_timespec(struct timespec *ts, time_t sec, long nsec)
+-{
+-	while (nsec >= NSEC_PER_SEC) {
+-		nsec -= NSEC_PER_SEC;
+-		++sec;
+-	}
+-	while (nsec < 0) {
+-		nsec += NSEC_PER_SEC;
+-		--sec;
+-	}
+-	ts->tv_sec = sec;
+-	ts->tv_nsec = nsec;
+-}
+-
+-static inline struct timespec
+-_ns_to_timespec(const s64 nsec)
+-{
+-	struct timespec ts;
+-
+-	if (!nsec)
+-		return (struct timespec) {0, 0};
+-
+-	ts.tv_sec = div_long_long_rem_signed(nsec, NSEC_PER_SEC, &ts.tv_nsec);
+-	if (unlikely(nsec < 0))
+-		_set_normalized_timespec(&ts, ts.tv_sec, ts.tv_nsec);
+-
+-	return ts;
+-}
+--- ./kernel/cpt/cpt_process.c.cpt_div	2011-10-24 14:06:35.000000000 +0400
++++ ./kernel/cpt/cpt_process.c	2011-10-24 19:18:31.000000000 +0400
+@@ -1215,7 +1215,7 @@ static int dump_one_process(cpt_object_t
+ 	v->cpt_utime = tsk->utime;
+ 	v->cpt_stime = tsk->stime;
+ 	delta = tsk->start_time;
+-	_set_normalized_timespec(&delta,
++	set_normalized_timespec(&delta,
+ 			delta.tv_sec - get_exec_env()->start_timespec.tv_sec,
+ 			delta.tv_nsec - get_exec_env()->start_timespec.tv_nsec);
+ 	v->cpt_starttime = cpt_timespec_export(&delta);
+--- ./kernel/cpt/rst_process.c.cpt_div	2011-10-24 19:40:29.000000000 +0400
++++ ./kernel/cpt/rst_process.c	2011-10-24 19:21:47.000000000 +0400
+@@ -1580,10 +1580,10 @@ int rst_restore_process(struct cpt_conte
+ 		tsk->utime = ti->cpt_utime;
+ 		tsk->stime = ti->cpt_stime;
+ 		if (ctx->image_version == CPT_VERSION_8)
+-			tsk->start_time = _ns_to_timespec(ti->cpt_starttime*TICK_NSEC);
++			tsk->start_time = ns_to_timespec(ti->cpt_starttime*TICK_NSEC);
+ 		else
+ 			cpt_timespec_import(&tsk->start_time, ti->cpt_starttime);
+-		_set_normalized_timespec(&tsk->start_time,
++		set_normalized_timespec(&tsk->start_time,
+ 					tsk->start_time.tv_sec +
+ 					VE_TASK_INFO(tsk)->owner_env->start_timespec.tv_sec,
+ 					tsk->start_time.tv_nsec +
+--- ./kernel/cpt/rst_undump.c.cpt_div	2011-10-24 14:06:37.000000000 +0400
++++ ./kernel/cpt/rst_undump.c	2011-10-24 19:19:19.000000000 +0400
+@@ -102,7 +102,7 @@ static int vps_rst_veinfo(struct cpt_con
+ 	ns->sem_ctls[3] = i->sem_ctl_arr[3];
+ 
+ 	cpt_timespec_import(&delta, i->start_timespec_delta);
+-	_set_normalized_timespec(&ve->start_timespec,
++	set_normalized_timespec(&ve->start_timespec,
+ 			ve->start_timespec.tv_sec - delta.tv_sec,
+ 			ve->start_timespec.tv_nsec - delta.tv_nsec);
+ 	ve->start_jiffies -= i->start_jiffies_delta;
+@@ -130,7 +130,7 @@ static int vps_rst_reparent_root(cpt_obj
+ 	do_posix_clock_monotonic_gettime(&ctx->cpt_monotonic_time);
+ 	do_gettimespec(&ctx->delta_time);
+ 
+-	_set_normalized_timespec(&ctx->delta_time,
++	set_normalized_timespec(&ctx->delta_time,
+ 				 ctx->delta_time.tv_sec - ctx->start_time.tv_sec,
+ 				 ctx->delta_time.tv_nsec - ctx->start_time.tv_nsec);
+ 	ctx->delta_nsec = (s64)ctx->delta_time.tv_sec*NSEC_PER_SEC + ctx->delta_time.tv_nsec;
+@@ -139,7 +139,7 @@ static int vps_rst_reparent_root(cpt_obj
+ 			    "time sensitive applications can misbehave\n", (long long)-ctx->delta_nsec);
+ 	}
+ 
+-        _set_normalized_timespec(&ctx->cpt_monotonic_time,
++        set_normalized_timespec(&ctx->cpt_monotonic_time,
+                                  ctx->cpt_monotonic_time.tv_sec - ctx->delta_time.tv_sec,
+                                  ctx->cpt_monotonic_time.tv_nsec - ctx->delta_time.tv_nsec);
+ 
+--- ./kernel/time.c.cpt_div	2011-10-24 19:07:25.000000000 +0400
++++ ./kernel/time.c	2011-10-24 19:12:15.000000000 +0400
+@@ -606,6 +606,7 @@ void set_normalized_timespec(struct time
+ 	ts->tv_sec = sec;
+ 	ts->tv_nsec = nsec;
+ }
++EXPORT_SYMBOL(set_normalized_timespec);
+ 
+ /**
+  * ns_to_timespec - Convert nanoseconds to timespec
+@@ -630,6 +631,7 @@ struct timespec ns_to_timespec(const s64
+ 
+ 	return ts;
+ }
++EXPORT_SYMBOL(ns_to_timespec);
+ 
+ /**
+  * ns_to_timeval - Convert nanoseconds to timeval
