@@ -129,12 +129,17 @@ static inline void gang_add_user_page(struct page *page, struct gang_set *gs)
 static inline void gang_mod_user_page(struct page *page, struct gang_set *gs)
 {
 	int numpages = hpage_nr_pages(page);
+	struct gang *gang = page_gang(page);
 
-	uncharge_beancounter_fast(get_gang_ub(page_gang(page)),
+	uncharge_beancounter_fast(get_gang_ub(gang),
 			UB_PHYSPAGES, numpages);
 	charge_beancounter_fast(get_gangs_ub(gs),
 			UB_PHYSPAGES, numpages, UB_FORCE);
+
+	VM_BUG_ON(PageLRU(page));
+	spin_lock_irq(&gang->lru_lock);
 	set_page_gang(page, mem_page_gang(gs, page));
+	spin_unlock_irq(&gang->lru_lock);
 }
 static inline void gang_del_user_page(struct page *page)
 {

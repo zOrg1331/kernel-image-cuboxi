@@ -1200,10 +1200,11 @@ struct request_sock_ops tcp_request_sock_ops __read_mostly = {
 EXPORT_SYMBOL(tcp_request_sock_ops);
 
 #ifdef CONFIG_TCP_MD5SIG
-static const struct tcp_request_sock_ops tcp_request_sock_ipv4_ops = {
+const struct tcp_request_sock_ops tcp_request_sock_ipv4_ops = {
 	.md5_lookup	=	tcp_v4_reqsk_md5_lookup,
 	.calc_md5_hash	=	tcp_v4_md5_hash_skb,
 };
+EXPORT_SYMBOL(tcp_request_sock_ipv4_ops);
 #endif
 
 static struct timewait_sock_ops tcp_timewait_sock_ops = {

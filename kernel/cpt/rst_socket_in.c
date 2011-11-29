@@ -444,14 +444,38 @@ int rst_socket_in(struct cpt_sock_image *si, loff_t pos, struct sock *sk,
 	return ret_err;
 }
 
+static struct request_sock *rst_reqsk_alloc(unsigned short family)
+{
+	struct request_sock *req;
+
+	if (family == AF_INET)
+		req = reqsk_alloc(&tcp_request_sock_ops);
+	else
+#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+		req = reqsk_alloc(&tcp6_request_sock_ops);
+#else
+		return ERR_PTR(-EINVAL);
+#endif
+#ifdef CONFIG_TCP_MD5SIG
+	if (req) {
+		if (family == AF_INET)
+			tcp_rsk(req)->af_specific = &tcp_request_sock_ipv4_ops;
+		else
+			tcp_rsk(req)->af_specific = &tcp_request_sock_ipv6_ops;
+	}
+#endif
+	return req;
+}
+
 int cpt_attach_accept(struct sock *lsk, struct sock *sk, cpt_context_t *ctx)
 {
 	struct request_sock *req;
 
 	if (lsk->sk_state != TCP_LISTEN)
 		return -EINVAL;
-
-	req = reqsk_alloc(&tcp_request_sock_ops);
+	req = rst_reqsk_alloc(sk->sk_family);
+	if (IS_ERR(req))
+		return PTR_ERR(req);
 	if (!req)
 		return -ENOMEM;
 
@@ -491,16 +515,10 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			    sk->sk_family != AF_INET6)
 				/* related to non initialized cpt_family bug */
 				goto next;
-
-			if (oi.cpt_family == AF_INET6) {
-#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
-				req = reqsk_alloc(&tcp6_request_sock_ops);
-#else
+			req = rst_reqsk_alloc(oi.cpt_family);
+			if (IS_ERR(req)) {
 				release_sock(sk);
-				return -EINVAL;
-#endif
-			} else {
-				req = reqsk_alloc(&tcp_request_sock_ops);
+				return PTR_ERR(req);
 			}
 
 			if (req == NULL) {

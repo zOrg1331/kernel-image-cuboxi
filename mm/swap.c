@@ -279,10 +279,12 @@ void activate_page(struct page *page)
 		if (page->mapping && !PageAnon(page) && !page_mapped(page)) {
 			struct gang_set *gs = get_mapping_gang(page->mapping);
 
-			if (unlikely(gang->set != gs)) {
+			if (unlikely(gang->set != gs) && !pin_mem_gang(gang)) {
 				ClearPageLRU(page);
-				spin_unlock(&gang->lru_lock);
+				spin_unlock_irq(&gang->lru_lock);
 				gang_mod_user_page(page, gs);
+				unpin_mem_gang(gang);
+				local_irq_disable();
 				gang = lock_page_lru(page);
 				SetPageLRU(page);
 			}
