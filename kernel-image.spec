@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt40
+Release: alt40.M60P.1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Tue Nov 29 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt40.M60P.1
+- Update to 042stab039.11
+- Build in branch p6
+
 * Thu Nov 03 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt40
 - Update to 042stab039.10
 
