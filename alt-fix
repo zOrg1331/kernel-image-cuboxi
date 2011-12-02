@@ -3,3 +3,4 @@ fix-core--mactel
 fix-drivers-usb--storage
 fix-drivers-rtc
 fix-drivers-acerhdf
+fix-mm-pfn_valid
