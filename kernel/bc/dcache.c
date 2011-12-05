@@ -232,6 +232,10 @@ void ub_dcache_unuse(struct user_beancounter *cub)
 
 	spin_lock(&dcache_lock);
 	list_for_each_entry_safe(dentry, tmp, &cub->ub_dentry_top, d_bclru) {
+		/* umount in progress */
+		if (!atomic_read(&dentry->d_sb->s_active))
+			continue;
+
 		BUG_ON(dentry->d_ub != cub);
 		ub = IS_ROOT(dentry) ? get_ub0() : dentry->d_parent->d_ub;
 
@@ -247,6 +251,10 @@ void ub_dcache_unuse(struct user_beancounter *cub)
 		list_del(&dentry->d_bclru);
 	}
 	spin_unlock(&dcache_lock);
+
+	/* wait for concurrent umounts */
+	while (!list_empty(&cub->ub_dentry_top))
+		schedule_timeout_uninterruptible(1);
 
 	BUG_ON(!list_empty(&cub->ub_dentry_lru));
 }

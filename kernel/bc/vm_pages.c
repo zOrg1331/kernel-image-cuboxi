@@ -535,17 +535,14 @@ static void __exit fini_vmguar_notifier(void)
 module_init(init_vmguar_notifier);
 module_exit(fini_vmguar_notifier);
 
-void show_ub_mem(struct user_beancounter *ub)
+void __show_ub_mem(struct user_beancounter *ub)
 {
-	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
-
-	gang_show_state(get_ub_gs(ub));
-
-	printk(KERN_INFO "UB: %d RAM: %lu / %lu [%lu]"
+	printk(KERN_INFO "Resources: "
+			" RAM: %lu / %lu [%lu]"
 			" SWAP: %lu / %lu [%lu]"
 			" KMEM: %lu / %lu [%lu]"
+			" OOMG: %lu / %lu"
 			" Dirty %lu\n",
-			ub->ub_uid,
 			ub->ub_parms[UB_PHYSPAGES].held,
 			ub->ub_parms[UB_PHYSPAGES].limit,
 			ub->ub_parms[UB_PHYSPAGES].failcnt,
@@ -555,7 +552,16 @@ void show_ub_mem(struct user_beancounter *ub)
 			ub->ub_parms[UB_KMEMSIZE].held,
 			ub->ub_parms[UB_KMEMSIZE].limit,
 			ub->ub_parms[UB_KMEMSIZE].failcnt,
+			ub->ub_parms[UB_OOMGUARPAGES].held,
+			ub->ub_parms[UB_OOMGUARPAGES].barrier,
 			ub_stat_get(ub, dirty_pages));
+}
+
+void show_ub_mem(struct user_beancounter *ub)
+{
+	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
+	gang_show_state(get_ub_gs(ub));
+	__show_ub_mem(ub);
 }
 
 #ifdef CONFIG_PROC_FS

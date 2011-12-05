@@ -170,6 +170,7 @@ static inline int ub_precharge_hpage(struct mm_struct *mm)
 }
 #endif /* CONFIG_BC_RSS_ACCOUNTING */
 
+void __show_ub_mem(struct user_beancounter *ub);
 void show_ub_mem(struct user_beancounter *ub);
 
 #endif /* __UB_PAGES_H_ */

@@ -161,9 +161,10 @@ static void cleanup_net(struct work_struct *work)
 {
 	struct pernet_operations *ops;
 	struct net *net;
-	struct ve_struct *old_ve;
+	struct ve_struct *ve, *old_ve;
 
 	net = container_of(work, struct net, work);
+	ve = net->owner_ve;
 
 	mutex_lock(&net_mutex);
 
@@ -179,12 +180,13 @@ static void cleanup_net(struct work_struct *work)
 	 */
 	synchronize_rcu();
 
-	old_ve = set_exec_env(net->owner_ve);
+	old_ve = set_exec_env(ve);
 	/* Run all of the network namespace exit methods */
 	list_for_each_entry_reverse(ops, &pernet_list, list) {
 		if (ops->exit)
 			ops->exit(net);
 	}
+	ve->ve_netns = NULL;
 	(void)set_exec_env(old_ve);
 
 	mutex_unlock(&net_mutex);

@@ -456,21 +456,21 @@ ssize_t ve_device_handler(struct device *dev, struct device_attribute *attr,
 
 	ve = get_ve_by_id(veid);
 
-	if (!ve || !ve->is_running) {
-		count = -ENOENT;
+	ret = -ENOENT;
+	if (!ve || !ve->is_running)
 		goto out;
-	}
 
-	if (cmd == '+') {
+	if (cmd == '+')
 		ret = ve_device_add(dev, ve);
-		if (!ret) {
-			count = ret;
-			goto out;
-		}
-	} else
+	else {
 		ve_device_del(dev, ve);
+		ret = 0;
+	}
 out:
 	put_ve(ve);
+	if (unlikely(ret))
+		return ret;
+
 	return count;
 }
 

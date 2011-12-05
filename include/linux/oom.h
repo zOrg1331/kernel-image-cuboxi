@@ -67,5 +67,8 @@ extern struct oom_control global_oom_ctrl;
 
 extern void init_oom_control(struct oom_control *oom_ctrl);
 
+void oom_report_invocation(char *type, struct user_beancounter *ub,
+		gfp_t gfp_mask, int order);
+
 #endif /* __KERNEL__*/
 #endif /* _INCLUDE_LINUX_OOM_H */
