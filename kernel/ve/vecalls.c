@@ -727,7 +727,6 @@ static void fini_ve_netns(struct ve_struct *ve)
 	DECLARE_COMPLETION_ONSTACK(sysfs_completion);
 
 	net = ve->ve_netns;
-	ve->ve_netns = NULL;
 	net->sysfs_completion = &sysfs_completion;
 	put_net(net);
 	wait_for_completion(&sysfs_completion);

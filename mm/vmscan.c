@@ -2269,7 +2269,9 @@ unsigned long try_to_free_gang_pages(struct gang_set *gs, gfp_t gfp_mask)
 
 	if (sc.nr_reclaim_swapout) {
 		ub_percpu_add(get_gangs_ub(gs), vswapout, sc.nr_reclaim_swapout);
-		gang_rate_limit(gs, gfp_mask&__GFP_WAIT, sc.nr_reclaim_swapout);
+		gang_rate_limit(gs, (gfp_mask & __GFP_WAIT) &&
+				get_exec_ub() == get_gangs_ub(gs),
+				sc.nr_reclaim_swapout);
 	}
 
 	return progress;

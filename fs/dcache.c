@@ -747,8 +747,11 @@ static void shrink_dcache_for_umount_subtree(struct dentry *dentry)
 			}
 
 			ub_dcache_uncharge(dentry->d_ub, dentry->d_name.len);
-			if (dentry->d_flags & DCACHE_BCTOP)
+			if (dentry->d_flags & DCACHE_BCTOP) {
+				spin_lock(&dcache_lock);
 				list_del(&dentry->d_bclru);
+				spin_unlock(&dcache_lock);
+			}
 
 			d_free(dentry);
 

@@ -456,6 +456,24 @@ static int oom_kill_task(struct task_struct *p,
 	return 0;
 }
 
+void oom_report_invocation(char *type, struct user_beancounter *ub,
+		gfp_t gfp_mask, int order)
+{
+	if (printk_ratelimit()) {
+		printk(KERN_WARNING "%d (%s) invoked %s oom-killer: "
+				"gfp 0x%x order %d oomkilladj=%d\n",
+				current->pid, current->comm, type,
+				gfp_mask, order, current->signal->oom_adj);
+
+		if (!ub) {
+			dump_stack();
+			show_mem();
+			show_slab_info();
+		} else if (__ratelimit(&ub->ub_ratelimit))
+			show_ub_mem(ub);
+	}
+}
+
 int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			    struct mem_cgroup *mem, struct user_beancounter *ub,
 			    const char *message)
@@ -465,24 +483,6 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	int group, child_group;
 	struct timespec uptime;
 	unsigned long points, child_points;
-
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked oom-killer: "
-			"gfp_mask=0x%x, order=%d, oom_adj=%d\n",
-			current->comm, gfp_mask, order,
-			current->signal->oom_adj);
-		task_lock(current);
-		cpuset_print_task_mems_allowed(current);
-		task_unlock(current);
-		mem_cgroup_print_oom_info(mem, p);
-		if (!ub) {
-			dump_stack();
-			show_mem();
-		} else if (__ratelimit(&ub->ub_ratelimit))
-			show_ub_mem(ub);
-		if (sysctl_oom_dump_tasks)
-			dump_tasks(mem);
-	}
 
 	/*
 	 * If the task is already exiting, don't alarm the sysadmin or kill
@@ -503,11 +503,17 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		child_group = get_oom_group(c);
 		if (child_group > group)
 			continue;
-		if (c->mm == p->mm)
+		if (!c->mm || c->mm == p->mm)
 			continue;
 		if (ub_oom_task_skip(ub, c))
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
+			continue;
+		if (c->flags & PF_FROZEN)
+			continue;
+		if (test_tsk_thread_flag(c, TIF_MEMDIE))
+			continue;
+		if (c->signal->oom_adj == OOM_DISABLE)
 			continue;
 		child_points = badness(c, uptime.tv_sec, child_group);
 		if (child_group == group && child_points < points)
@@ -668,13 +674,7 @@ void pagefault_out_of_memory(void)
 	if (ub_oom_lock(&global_oom_ctrl))
 		goto rest_and_return;
 
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked PF oom-killer: oomkilladj=%d\n",
-				current->comm, current->signal->oom_adj);
-		dump_stack();
-		show_mem();
-		show_slab_info();
-	}
+	oom_report_invocation("PF", NULL, 0, 0);
 
 	read_lock(&tasklist_lock);
 	__out_of_memory(0, 0); /* unknown gfp_mask and order */
@@ -718,15 +718,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 	if (ub_oom_lock(&global_oom_ctrl))
 		goto out_oom_lock;
 
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked oom-killer: "
-			"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
-			current->comm, gfp_mask, order,
-			current->signal->oom_adj);
-		dump_stack();
-		show_mem();
-		show_slab_info();
-	}
+	oom_report_invocation("glob", NULL, gfp_mask, order);
 
 	/*
 	 * Check if there were limitations on the allocation (only relevant for
