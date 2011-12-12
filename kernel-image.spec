@@ -1,8 +1,8 @@
 Name:    kernel-image-std-pae
-Release: alt2
+Release: alt1
 Epoch:   1
 %define kernel_base_version	3.1
-%define kernel_sublevel	.4
+%define kernel_sublevel	.5
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -621,6 +621,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon Dec 12 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.1.5-alt1
+- Update to 3.1.5
+
 * Fri Dec 02 2011 Anton Protopopov <aspsk@altlinux.org> 1:3.1.4-alt2
 - mm: Ensure that pfn_valid is called once per pageblock when
       reserving pageblocks (ALT 26385)
