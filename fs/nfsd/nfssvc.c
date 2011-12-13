@@ -242,7 +242,6 @@ static int nfsd_startup(unsigned short port, int nrservs)
 		if (ret)
 			goto out_lockd;
 	}
-	init_completion(&nfsd_exited);
 	nfsd_up = true;
 	return 0;
 out_lockd:
@@ -360,6 +359,7 @@ int nfsd_create_serv(void)
 
 	set_max_drc();
 	do_gettimeofday(&nfssvc_boot);		/* record boot time */
+	init_completion(&nfsd_exited);
 	return err;
 }
 
