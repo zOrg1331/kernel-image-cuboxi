@@ -279,7 +279,7 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		 */
 		if (p->flags & PF_EXITING) {
 			if (p != current)
-				return ERR_PTR(-1UL);
+				return p;
 
 			chosen = p;
 			chosen_points = ULONG_MAX;
@@ -400,15 +400,23 @@ static int oom_kill_task(struct task_struct *p,
 	}
 
 	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, p)
-			& NOTIFY_FAIL)
+			& NOTIFY_FAIL) {
+		printk(KERN_WARNING "OOM: disabled for process %d (%s) by virtinfo.\n",
+				task_pid_nr(p), p->comm);
 		return -EAGAIN;
+	}
 
-	if (p->signal->oom_adj == OOM_DISABLE)
+	if (p->signal->oom_adj == OOM_DISABLE) {
+		printk(KERN_WARNING "OOM: disabled for process %d (%s) by oom_adj.\n",
+				task_pid_nr(p), p->comm);
 		return -EAGAIN;
+	}
 
 	task_lock(p);
 	mm = p->mm;
 	if (mm == NULL) {
+		printk(KERN_WARNING "OOM: no mm for process %d (%s).\n",
+				task_pid_nr(p), p->comm);
 		/*
 		 * FIXME: this is not really good. If we selected this task
 		 * then it had valid mm. If we can't find mm here, then the

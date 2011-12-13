@@ -553,11 +553,21 @@ static unsigned long fold_field(void *mib[], int offt)
 	return res;
 }
 
+static void __maybe_unused cpt_dump_snmp_stub(struct cpt_context *ctx);
+
 static void cpt_dump_snmp_stat(struct cpt_context *ctx, void *mib[], int n)
 {
 	int i;
 	struct cpt_object_hdr o;
 	__u32 *stats;
+
+	/*
+	 * IPv6 can be not loaded or disabled.
+	 */
+	if (mib[0] == NULL) {
+		cpt_dump_snmp_stub(ctx);
+		return;
+	}
 
 	stats = cpt_get_buf(ctx);
 
