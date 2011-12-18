@@ -123,23 +123,6 @@ struct ve_nf_conntrack {
 #endif
 #endif
 
-struct ve_cpu_stats {
-	u64		idle_time;
-	u64		iowait_time;
-	u64		strt_idle_time;
-	u64		used_time;
-	seqcount_t	stat_lock;
-	unsigned long	nr_running;
-	unsigned long	nr_unint;
-	unsigned long	nr_iowait;
-	cputime64_t	user;
-	cputime64_t	nice;
-	cputime64_t	system;
-#ifdef CONFIG_VZ_FAIRSCHED
-	unsigned long	*idle_scale;
-#endif
-} ____cacheline_aligned;
-
 struct ve_ipt_recent;
 struct ve_xt_hashlimit;
 struct svc_rqst;
@@ -184,11 +167,8 @@ struct ve_struct {
 #ifdef CONFIG_UNIX98_PTYS
 	struct tty_driver	*ptm_driver;
 	struct tty_driver	*pts_driver;
-	struct ida		*allocated_ptys;
 	struct file_system_type *devpts_fstype;
 	struct vfsmount		*devpts_mnt;
-	struct dentry		*devpts_root;
-	struct devpts_config	*devpts_config;
 #endif
 
 	struct file_system_type *shmem_fstype;
@@ -229,7 +209,6 @@ struct ve_struct {
 /* per VE CPU stats*/
 	struct timespec		start_timespec;
 	u64			start_jiffies;	/* Deprecated */
-	unsigned long		avenrun[3];	/* loadavg data */
 
 	struct kstat_lat_pcpu_struct	sched_lat_ve;
 
@@ -250,7 +229,6 @@ struct ve_struct {
 	char			*log_buf;
 #define VE_DEFAULT_LOG_BUF_LEN	4096
 
-	struct ve_cpu_stats	*cpu_stats;
 	unsigned long		down_at;
 	struct list_head	cleanup_list;
 #if defined(CONFIG_FUSE_FS) || defined(CONFIG_FUSE_FS_MODULE)
@@ -310,12 +288,6 @@ struct ve_struct {
 enum {
 	VE_REBOOT,
 };
-
-extern struct ve_cpu_stats static_ve_cpu_stats;
-static inline struct ve_cpu_stats *VE_CPU_STATS(struct ve_struct *ve, int cpu)
-{
-	return per_cpu_ptr(ve->cpu_stats, cpu);
-}
 
 extern int nr_ve;
 extern struct proc_dir_entry *proc_vz_dir;

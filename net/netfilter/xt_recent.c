@@ -682,29 +682,27 @@ static int init_ipt_recent(struct ve_struct *ve)
 	INIT_LIST_HEAD(&tables);
 #endif
 #ifdef CONFIG_PROC_FS
-	if (err)
-		return err;
 	recent_proc_dir = proc_mkdir("xt_recent", ve->ve_netns->proc_net);
 	if (recent_proc_dir == NULL) {
-		xt_unregister_matches(recent_mt_reg, ARRAY_SIZE(recent_mt_reg));
 		err = -ENOMEM;
+		goto out_mem;
 	}
 #ifdef CONFIG_NETFILTER_XT_MATCH_RECENT_PROC_COMPAT
-	if (err < 0)
-		return err;
 	proc_old_dir = proc_mkdir("ipt_recent", ve->ve_netns->proc_net);
 	if (proc_old_dir == NULL) {
-		remove_proc_entry("xt_recent", init_net.proc_net);
-		xt_unregister_matches(recent_mt_reg, ARRAY_SIZE(recent_mt_reg));
 		err = -ENOMEM;
+		remove_proc_entry("xt_recent", ve->ve_netns->proc_net);
+		goto out_mem;
 	}
 #endif
 #endif
 out:
 	return err;
+
 out_mem:
 #ifdef CONFIG_VE_IPTABLES
 	kfree(ve->_ipt_recent);
+	ve->_ipt_recent = NULL;
 #endif
 	goto out;
 }

@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/irqnr.h>
+#include <linux/fairsched.h>
 #include <asm/cputime.h>
 
 #ifndef arch_irq_stat_cpu
@@ -21,67 +22,6 @@
 #ifndef arch_idle_time
 #define arch_idle_time(cpu) 0
 #endif
-
-static int show_stat_ve(struct seq_file *p, struct ve_struct *ve, unsigned long jif)
-{
-	int i, j;
-	unsigned int nr_ve_vcpus;
-	u64 user, nice, system;
-	cycles_t idle, iowait;
-
-	nr_ve_vcpus = num_online_vcpus();
-
-	user = nice = system = idle = iowait = 0;
-	for_each_possible_cpu(i) {
-		user += VE_CPU_STATS(ve, i)->user;
-		nice += VE_CPU_STATS(ve, i)->nice;
-		system += VE_CPU_STATS(ve, i)->system;
-		idle += ve_sched_get_idle_time(ve, i);
-		iowait += ve_sched_get_iowait_time(ve, i);
-	}
-
-	seq_printf(p, "cpu  %llu %llu %llu %llu %llu 0 0 0\n",
-		(unsigned long long)cputime64_to_clock_t(user),
-		(unsigned long long)cputime64_to_clock_t(nice),
-		(unsigned long long)cputime64_to_clock_t(system),
-		(unsigned long long)nsec_to_clock_t(idle),
-		(unsigned long long)nsec_to_clock_t(iowait));
-
-	for (i = 0; i < nr_ve_vcpus; i++) {
-		user = nice = system = idle = iowait = 0;
-		for_each_online_cpu(j) {
-			if (j % nr_ve_vcpus == i) {
-				user += VE_CPU_STATS(ve, j)->user;
-				nice += VE_CPU_STATS(ve, j)->nice;
-				system += VE_CPU_STATS(ve, j)->system;
-				idle += ve_sched_get_idle_time(ve, j);
-				iowait += ve_sched_get_iowait_time(ve, j);
-			}
-		}
-		seq_printf(p, "cpu%d %llu %llu %llu %llu %llu 0 0 0\n",
-			i,
-			(unsigned long long)cputime64_to_clock_t(user),
-			(unsigned long long)cputime64_to_clock_t(nice),
-			(unsigned long long)cputime64_to_clock_t(system),
-			(unsigned long long)nsec_to_clock_t(idle),
-			(unsigned long long)nsec_to_clock_t(iowait));
-	}
-	seq_printf(p, "intr 0\nswap 0 0\n");
-
-	seq_printf(p,
-		"\nctxt %llu\n"
-		"btime %lu\n"
-		"processes %lu\n"
-		"procs_running %lu\n"
-		"procs_blocked %lu\n",
-		nr_context_switches(),
-		(unsigned long)jif + ve->start_timespec.tv_sec,
-		total_forks,
-		nr_running_ve(ve),
-		nr_iowait_ve(ve));
-
-	return 0;
-}
 
 static int show_stat(struct seq_file *p, void *v)
 {
@@ -100,8 +40,12 @@ static int show_stat(struct seq_file *p, void *v)
 	jif = boottime.tv_sec;
 
 	ve = get_exec_env();
-	if (!ve_is_super(ve))
-		return show_stat_ve(p, ve, jif);
+	if (!ve_is_super(ve)) {
+		int ret;
+		ret = fairsched_show_stat(p, ve->veid);
+		if (ret != -ENOSYS)
+			return ret;
+	}
 
 	user = nice = system = idle = iowait =
 		irq = softirq = steal = cputime64_zero;

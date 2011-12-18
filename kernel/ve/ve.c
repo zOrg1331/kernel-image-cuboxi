@@ -134,7 +134,6 @@ EXPORT_SYMBOL(ve_cleanup_lock);
 EXPORT_SYMBOL(ve_cleanup_list);
 EXPORT_SYMBOL(ve_cleanup_thread);
 
-static DEFINE_PER_CPU(struct ve_cpu_stats, ve0_cpustats);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, ve0_lat_stats);
 
 void init_ve0(void)
@@ -142,7 +141,6 @@ void init_ve0(void)
 	struct ve_struct *ve;
 
 	ve = get_ve0();
-	ve->cpu_stats = &per_cpu_var(ve0_cpustats);
 	ve->sched_lat_ve.cur = &per_cpu_var(ve0_lat_stats);
 	list_add(&ve->ve_list, &ve_list_head);
 	INIT_LIST_HEAD(&ve->_kthread_create_list);

@@ -108,7 +108,8 @@ static int restore_shm_chunk(struct file *file, loff_t pos,
 		set_fs(oldfs);
 		__cpt_release_buf(ctx);
 		if (err != copy) {
-			eprintk_ctx("write() failure\n");
+			eprintk_ctx("%s: write() failure - copy: %d, opos: %Ld\n",
+					__func__, copy, opos);
 			if (err >= 0)
 				err = -EIO;
 			return err;
@@ -140,8 +141,10 @@ static int fixup_shm_data(struct file *file, loff_t pos, loff_t end,
 		switch (pgb.cpt_object) {
 			case CPT_OBJ_PAGES:
 				err = restore_shm_chunk(file, pos, &pgb, ctx);
-				if (err)
+				if (err) {
+					eprintk_ctx("%s: restore_shm_chunk failed\n", __func__);
 					return err;
+				}
 				break;
 #ifdef CONFIG_VZ_CHECKPOINT_ITER
 			case CPT_OBJ_ITERPAGES:
@@ -197,8 +200,11 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 		err = fixup_shm(file, &u.shmi);
 		if (err != -EEXIST && dpos < epos) {
 			err = fixup_shm_data(file, dpos, epos, ctx);
-			if (err)
+			if (err) {
+				eprintk_ctx("%s: fixup_shm_data failed: %d\n",
+						__func__, err);
 				goto err_put;
+			}
 		}
 	} else if (IS_ERR(file) && PTR_ERR(file) == -EEXIST) {
 		struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
@@ -209,7 +215,9 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 		get_file(shp->shm_file);
 		file = shp->shm_file;
 		shm_unlock(shp);
-	}
+	} else
+		eprintk_ctx("%s: sysvipc setup failed: %ld (key: %Ld)\n",
+				__func__, PTR_ERR(file), u.shmi.cpt_key);
 	return file;
 
 err_put:
@@ -236,8 +244,11 @@ struct file * rst_sysv_shm_vma(struct cpt_vma_image *vmai, struct cpt_context *c
 
 	pos = vmai->cpt_file;
 	file = rst_sysv_shm_itself(pos, ctx);
-	if (IS_ERR(file) && PTR_ERR(file) != -EEXIST)
+	if (IS_ERR(file) && PTR_ERR(file) != -EEXIST) {
+		eprintk_ctx("%s: rst_sysv_shm_itself failed: %ld\n",
+				__func__, PTR_ERR(file));
 		return file;
+	}
 	fput(file);
 
 	err = rst_get_object(CPT_OBJ_FILE, pos, &u.fi, ctx);

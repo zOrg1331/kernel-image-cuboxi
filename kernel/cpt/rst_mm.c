@@ -539,13 +539,17 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 		if (vmai->cpt_type == CPT_VMA_TYPE_0) {
 			file = rst_file(vmai->cpt_file, -1, ctx);
 			if (IS_ERR(file)) {
-				eprintk_ctx("do_rst_vma: rst_file: %Ld\n", (unsigned long long)vmai->cpt_file);
+				eprintk_ctx("do_rst_vma: rst_file: %Ld\n",
+						(unsigned long long)vmai->cpt_file);
 				return PTR_ERR(file);
 			}
 		} else if (vmai->cpt_type == CPT_VMA_TYPE_SHM) {
 			file = rst_sysv_shm_vma(vmai, ctx);
-			if (IS_ERR(file))
+			if (IS_ERR(file)) {
+				eprintk_ctx("%s: rst_sysv_shm_vma failed: %ld\n",
+						__func__, PTR_ERR(file));
 				return PTR_ERR(file);
+			}
 		}
 	}
 
@@ -802,6 +806,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 						err = ctx->pread(maddr, PAGE_SIZE,
 								 ctx, pos + i*PAGE_SIZE);
 						if (err) {
+							eprintk_ctx("%s: ctx->pread failed\n", __func__);
 							kunmap(page);
 							goto out;
 						}
@@ -874,8 +879,10 @@ check:
 				 * so that this error can be ignored. */
 				if (err == -EFAULT)
 					err = 0;
-				if (err)
+				if (err) {
+					eprintk_ctx("%s: sc_m(un)lock failed\n", __func__);
 					goto out;
+				}
 				goto check;
 			}
 			if ((vma->vm_page_prot.pgprot^vmai->cpt_pgprot)&~__PAGE_NX)
@@ -1028,21 +1035,31 @@ static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 				if (u.vmai.cpt_start)
 #endif			
 				err = do_rst_vma(&u.vmai, offset, ti->cpt_mm, ctx);
-				if (err)
+				if (err) {
+					eprintk_ctx("%s: failed to restore vma: %d\n",
+							__func__, err);
 					goto out;
+				}
 #ifdef CONFIG_X86
 			} else if (u.bits.cpt_object == CPT_OBJ_BITS &&
 				   u.bits.cpt_content == CPT_CONTENT_MM_CONTEXT) {
 				err = do_rst_ldt(&u.bits, offset, ctx);
-				if (err)
+				if (err) {
+					eprintk_ctx("%s: failed to restore ldt: %d\n",
+							__func__, err);
 					goto out;
+				}
 #endif
 			} else if (u.aioi.cpt_object == CPT_OBJ_AIO_CONTEXT) {
 				err = do_rst_aio(&u.aioi, offset, ctx);
-				if (err)
+				if (err) {
+					eprintk_ctx("%s: failed to restore aio: %d\n",
+							__func__, err);
 					goto out;
+				}
 			} else {
-				eprintk_ctx("unknown object %u in mm image\n", u.vmai.cpt_object);
+				eprintk_ctx("unknown object %u in mm image\n",
+						u.vmai.cpt_object);
 				err = -EINVAL;
 				goto out;
 			}

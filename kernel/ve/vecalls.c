@@ -120,8 +120,10 @@ static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 	struct ve_struct *ve;
 	struct vz_cpu_stat *vstat;
 	int retval;
-	int i, cpu;
+	int i;
 	unsigned long tmp;
+	unsigned long avenrun[3];
+	struct kernel_cpustat kstat;
 
 	if (!ve_is_super(get_exec_env()) && (veid != get_exec_env()->veid))
 		return -EPERM;
@@ -131,27 +133,32 @@ static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 	vstat = kzalloc(sizeof(*vstat), GFP_KERNEL);
 	if (!vstat)
 		return -ENOMEM;
-	
+
+	retval = fairsched_get_cpu_stat(veid, &kstat);
+	if (retval)
+		goto out_free;
+
+	retval = fairsched_get_cpu_avenrun(veid, avenrun);
+	if (retval)
+		goto out_free;
+
 	retval = -ESRCH;
 	read_lock(&ve_list_lock);
 	ve = __find_ve_by_id(veid);
 	if (ve == NULL)
 		goto out_unlock;
-	for_each_online_cpu(cpu) {
-		struct ve_cpu_stats *st;
 
-		st = VE_CPU_STATS(ve, cpu);
-		vstat->user_jif += (unsigned long)cputime64_to_clock_t(st->user);
-		vstat->nice_jif += (unsigned long)cputime64_to_clock_t(st->nice);
-		vstat->system_jif += (unsigned long)cputime64_to_clock_t(st->system);
-		vstat->idle_clk += ve_sched_get_idle_time(ve, cpu);
-	}
+	vstat->user_jif += (unsigned long)cputime64_to_clock_t(kstat.cpustat[USER]);
+	vstat->nice_jif += (unsigned long)cputime64_to_clock_t(kstat.cpustat[NICE]);
+	vstat->system_jif += (unsigned long)cputime64_to_clock_t(kstat.cpustat[SYSTEM]);
+	vstat->idle_clk += kstat.cpustat[IDLE];
+
 	vstat->uptime_clk = ve_get_uptime(ve);
 
 	vstat->uptime_jif = (unsigned long)cputime64_to_clock_t(
 				get_jiffies_64() - ve->start_jiffies);
 	for (i = 0; i < 3; i++) {
-		tmp = ve->avenrun[i] + (FIXED_1/200);
+		tmp = avenrun[i] + (FIXED_1/200);
 		vstat->avenrun[i].val_int = LOAD_INT(tmp);
 		vstat->avenrun[i].val_frac = LOAD_FRAC(tmp);
 	}
@@ -242,9 +249,14 @@ static int init_ve_proc(struct ve_struct *ve)
 	if (proc_mkdir("fs", ve->proc_root) == NULL)
 		goto out_fs;
 
+	if (proc_create("partitions", 0, ve->proc_root, NULL) == NULL)
+		goto out_parts;
+
 	ve->ve_ns->pid_ns->proc_mnt = mntget(ve->proc_mnt);
 	return 0;
 
+out_parts:
+	remove_proc_entry("fs", ve->proc_root);
 out_fs:
 	remove_proc_entry("vz", ve->proc_root);
 out_vz:
@@ -288,6 +300,7 @@ static void fini_ve_proc_entries(struct ve_struct *ve)
 
 static void fini_ve_proc(struct ve_struct *ve)
 {
+	remove_proc_entry("partitions", ve->proc_root);
 	remove_proc_entry("fs", ve->proc_root);
 	remove_proc_entry("vz", ve->proc_root);
 	remove_proc_entry("kmsg", ve->proc_root);
@@ -640,8 +653,6 @@ static int init_ve_sched(struct ve_struct *ve, unsigned int vcpus)
 	int err;
 
 	err = fairsched_new_node(ve->veid, vcpus);
-	if (err == 0)
-		ve_sched_attach(ve);
 
 	return err;
 }
@@ -957,23 +968,14 @@ static __u64 setup_iptables_mask(__u64 init_mask)
 
 static inline int init_ve_cpustats(struct ve_struct *ve)
 {
-	ve->cpu_stats = alloc_percpu(struct ve_cpu_stats);
-	if (ve->cpu_stats == NULL)
-		return -ENOMEM;
 	ve->sched_lat_ve.cur = alloc_percpu(struct kstat_lat_pcpu_snap_struct);
-	if (ve == NULL)
-		goto fail;
+	if (ve->sched_lat_ve.cur == NULL)
+		return -ENOMEM;
 	return 0;
-
-fail:
-	free_percpu(ve->cpu_stats);
-	return -ENOMEM;
 }
 
 static inline void free_ve_cpustats(struct ve_struct *ve)
 {
-	free_percpu(ve->cpu_stats);
-	ve->cpu_stats = NULL;
 	free_percpu(ve->sched_lat_ve.cur);
 	ve->sched_lat_ve.cur = NULL;
 }
@@ -1412,7 +1414,6 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 		goto out_up;
 	}
 #endif
-	ve_sched_attach(ve);
 	switch_ve_namespaces(ve, tsk);
 	set_exec_env(ve);
 	ve_move_task(ve);
@@ -1657,12 +1658,6 @@ static int alloc_ve_tty_drivers(struct ve_struct* ve)
 
 	ve->ptm_driver->other = ve->pts_driver;
 	ve->pts_driver->other = ve->ptm_driver;
-
-	ve->allocated_ptys = kmalloc(sizeof(*ve->allocated_ptys),
-			GFP_KERNEL_UBC);
-	if (!ve->allocated_ptys)
-		goto out_mem;
-	ida_init(ve->allocated_ptys);
 #endif
 	return 0;
 
@@ -1681,11 +1676,7 @@ static void free_ve_tty_drivers(struct ve_struct* ve)
 #ifdef CONFIG_UNIX98_PTYS
 	free_ve_tty_driver(ve->ptm_driver);
 	free_ve_tty_driver(ve->pts_driver);
-	if (ve->allocated_ptys)
-		ida_destroy(ve->allocated_ptys);
-	kfree(ve->allocated_ptys);
 	ve->ptm_driver = ve->pts_driver = NULL;
-	ve->allocated_ptys = NULL;
 #endif
 }
 
@@ -1902,10 +1893,11 @@ static int vestat_seq_show(struct seq_file *m, void *v)
 	struct list_head *entry;
 	struct ve_struct *ve;
 	struct ve_struct *curve;
-	int cpu;
+	int ret;
 	unsigned long user_ve, nice_ve, system_ve;
 	unsigned long long uptime;
 	u64 uptime_cycles, idle_time, strv_time, used;
+	struct kernel_cpustat kstat;
 
 	entry = (struct list_head *)v;
 	ve = list_entry(entry, struct ve_struct, ve_list);
@@ -1927,19 +1919,17 @@ static int vestat_seq_show(struct seq_file *m, void *v)
 	if (ve == get_ve0())
 		return 0;
 
-	user_ve = nice_ve = system_ve = 0;
-	idle_time = strv_time = used = 0;
+	ret = fairsched_get_cpu_stat(ve->veid, &kstat);
+	if (ret)
+		return ret;
 
-	for_each_online_cpu(cpu) {
-		struct ve_cpu_stats *st;
+	strv_time = 0;
+	user_ve = kstat.cpustat[USER];
+	nice_ve = kstat.cpustat[NICE];
+	system_ve = kstat.cpustat[SYSTEM];
+	used = kstat.cpustat[USED];
+	idle_time = kstat.cpustat[IDLE];
 
-		st = VE_CPU_STATS(ve, cpu);
-		user_ve += st->user;
-		nice_ve += st->nice;
-		system_ve += st->system;
-		used += st->used_time;
-		idle_time += ve_sched_get_idle_time(ve, cpu);
-	}
 	uptime_cycles = ve_get_uptime(ve);
 	uptime = get_jiffies_64() - ve->start_jiffies;
 

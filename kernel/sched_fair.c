@@ -841,6 +841,12 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	se->on_rq = 0;
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+#define SCALE_IDLE_TIME(delta, se) ((delta) * group_cfs_rq(se)->rate / MAX_RATE)
+#else
+#define SCALE_IDLE_TIME(delta, se) (delta)
+#endif
+
 #ifdef CONFIG_SCHEDSTATS
 static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -859,12 +865,14 @@ static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			se->sleep_max = delta;
 
 		se->sleep_start = 0;
-		se->sum_sleep_runtime += delta;
 
 		if (tsk) {
 			account_scheduler_latency(tsk, delta >> 10, 1);
 			trace_sched_stat_sleep(tsk, delta);
-		}
+		} else
+			delta = SCALE_IDLE_TIME(delta, se);
+
+		se->sum_sleep_runtime += delta;
 	}
 	if (se->block_start) {
 		u64 delta = rq_of(cfs_rq)->clock - se->block_start;
@@ -876,7 +884,6 @@ static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			se->block_max = delta;
 
 		se->block_start = 0;
-		se->sum_sleep_runtime += delta;
 
 		if (tsk) {
 			if (tsk->in_iowait) {
@@ -896,7 +903,12 @@ static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 						delta >> 20);
 			}
 			account_scheduler_latency(tsk, delta >> 10, 0);
+		} else {
+			delta = SCALE_IDLE_TIME(delta, se);
+			se->iowait_sum += delta;
 		}
+
+		se->sum_sleep_runtime += delta;
 	}
 }
 
@@ -909,6 +921,13 @@ static void dequeue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			se->sleep_start = rq_of(cfs_rq)->clock;
 		if (tsk->state & TASK_UNINTERRUPTIBLE)
 			se->block_start = rq_of(cfs_rq)->clock;
+		if (tsk->in_iowait)
+			cfs_rq->nr_iowait++;
+	} else if (!cfs_rq_throttled(group_cfs_rq(se))) {
+		if (group_cfs_rq(se)->nr_iowait)
+			se->block_start = rq_of(cfs_rq)->clock;
+		else
+			se->sleep_start = rq_of(cfs_rq)->clock;
 	}
 }
 #else
@@ -1109,7 +1128,9 @@ static void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 		enqueue_entity(se, ENQUEUE_WAKEUP | ENQUEUE_UNTHROTTLE);
 		if (unlikely(curr->policy == SCHED_IDLE) || curr == rq->idle)
 			resched_task(curr);
-	}
+	} else
+		/* start idle time */
+		dequeue_sleeper(cfs_rq_of(se), se);
 }
 
 static void check_throttle_cfs_rq(struct cfs_rq *cfs_rq)
@@ -1158,10 +1179,13 @@ static void do_sched_cpulimit_delay_timer(struct cfs_rq *cfs_rq)
 	spin_unlock_irqrestore(&rq->lock, flags);
 }
 
+static void dequeue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se);
+static void enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se);
 static void set_tg_cpu_rate(struct task_group *tg, int cpu, unsigned long rate)
 {
 	struct sched_entity *se = tg->se[cpu];
 	struct cfs_rq *cfs_rq = tg->cfs_rq[cpu];
+	int sleep = !cfs_rq->nr_running;
 
 	if (rate == cfs_rq->rate)
 		return;
@@ -1169,9 +1193,16 @@ static void set_tg_cpu_rate(struct task_group *tg, int cpu, unsigned long rate)
 	if (se != cfs_rq_of(se)->curr)
 		cfs_rq_update_credit_charge_restart(cfs_rq);
 
+	/* update idle time accoding to rate */
+	if (sleep)
+		enqueue_sleeper(cfs_rq_of(se), se);
+
 	cfs_rq->rate = rate;
 	if (rate >= MAX_RATE)
 		cfs_rq->credit = sched_cpulimit_credit_charge();
+
+	if (sleep)
+		dequeue_sleeper(cfs_rq_of(se), se);
 
 	if (sched_cpulimit_delay_cfs_rq_done(cfs_rq) >= 0 &&
 	    cfs_rq->throttled) {
@@ -2454,6 +2485,71 @@ unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task)
 	return rr_interval;
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+static void nr_iowait_dec_fair(struct task_struct *p)
+{
+	struct cfs_rq *cfs_rq = task_cfs_rq(p);
+	struct sched_entity *se = p->se.parent;
+
+	cfs_rq->nr_iowait--;
+
+#ifdef CONFIG_SCHEDSTATS
+	if (!cfs_rq->nr_iowait && se && se->block_start) {
+		u64 delta;
+		struct rq *rq = rq_of(cfs_rq);
+
+		update_rq_clock(rq);
+
+		delta = rq->clock - se->block_start;
+
+		if ((s64)delta < 0)
+			delta = 0;
+
+		if (unlikely(delta > se->block_max))
+			se->block_max = delta;
+
+		se->block_start = 0;
+		se->sleep_start = rq->clock;
+
+		delta = SCALE_IDLE_TIME(delta, se);
+		se->iowait_sum += delta;
+		se->sum_sleep_runtime += delta;
+	}
+#endif
+}
+
+static void nr_iowait_inc_fair(struct task_struct *p)
+{
+	struct cfs_rq *cfs_rq = task_cfs_rq(p);
+	struct sched_entity *se = p->se.parent;
+
+	cfs_rq->nr_iowait++;
+
+#ifdef CONFIG_SCHEDSTATS
+	if (cfs_rq->nr_iowait && se && se->sleep_start) {
+		u64 delta;
+		struct rq *rq = rq_of(cfs_rq);
+
+		update_rq_clock(rq);
+
+		delta = rq->clock - se->sleep_start;
+
+		if ((s64)delta < 0)
+			delta = 0;
+
+		if (unlikely(delta > se->sleep_max))
+			se->sleep_max = delta;
+
+		se->sleep_start = 0;
+		se->block_start = rq->clock;
+
+		delta = SCALE_IDLE_TIME(delta, se);
+		se->sum_sleep_runtime += delta;
+	}
+#endif
+}
+#endif
+
 /*
  * All the scheduling class methods:
  */
@@ -2490,6 +2586,8 @@ static const struct sched_class fair_sched_class = {
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	.moved_group		= moved_group_fair,
+	.nr_iowait_inc		= nr_iowait_inc_fair,
+	.nr_iowait_dec		= nr_iowait_dec_fair,
 #endif
 };
 
