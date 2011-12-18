@@ -267,6 +267,9 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		if (!p->mm)
 			continue;
 
+		if (p->signal->oom_adj == OOM_DISABLE)
+			continue;
+
 		/*
 		 * This is in the process of releasing memory so wait for it
 		 * to finish before killing some other task by mistake.
@@ -284,9 +287,6 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 			chosen = p;
 			chosen_points = ULONG_MAX;
 		}
-
-		if (p->signal->oom_adj == OOM_DISABLE)
-			continue;
 
 		group = get_oom_group(p);
 		if (chosen && group > chosen_group)
@@ -645,7 +645,7 @@ retry:
 	p = select_bad_process(ub, NULL);
 
 	if (PTR_ERR(p) == -1UL)
-		return;
+		goto exit;
 
 	/* Found nothing?!?! Either we hang forever, or we panic. */
 	if (!p) {
@@ -660,6 +660,7 @@ retry:
 	if (oom_kill_process(p, gfp_mask, order, NULL, NULL, "Out of memory"))
 		goto retry;
 
+exit:
 	put_beancounter(ub);
 }
 

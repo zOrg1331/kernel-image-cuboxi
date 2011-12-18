@@ -531,11 +531,13 @@ static int bc_readdir(struct file *file, filldir_t filler, void *data,
 		if (&ub->ub_list == &ub_list_head)
 			break;
 
-		if (filled++ < pos)
-			continue;
-
 		if (!get_beancounter_rcu(ub))
 			continue;
+
+		if (filled++ < pos) {
+			put_beancounter(ub);
+			continue;
+		}
 
 		rcu_read_unlock();
 		put_beancounter(prev);

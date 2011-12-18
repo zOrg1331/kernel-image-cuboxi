@@ -156,6 +156,12 @@ int net_eq(const struct net *net1, const struct net *net2)
 {
 	return net1 == net2;
 }
+
+/* Returns whether curr can mess with net's objects */
+static inline int net_access_allowed(const struct net *net, const struct net *curr)
+{
+	return net_eq(curr, &init_net) || net_eq(curr, net);
+}
 #else
 
 static inline struct net *get_net(struct net *net)
@@ -174,6 +180,11 @@ static inline struct net *maybe_get_net(struct net *net)
 
 static inline
 int net_eq(const struct net *net1, const struct net *net2)
+{
+	return 1;
+}
+
+static inline int net_access_allowed(const struct net *net, const struct net *curr)
 {
 	return 1;
 }

@@ -385,8 +385,8 @@ static int bdi_forker_task(void *ptr)
 	bdi_task_init(me->bdi, me);
 
 	for (;;) {
+		struct task_struct *task;
 		struct backing_dev_info *bdi, *tmp;
-		struct bdi_writeback *wb;
 
 		/*
 		 * Temporary measure, we want to make sure we don't see
@@ -437,28 +437,28 @@ static int bdi_forker_task(void *ptr)
 		list_del_init(&bdi->bdi_list);
 		spin_unlock_bh(&bdi_lock);
 
-		wb = &bdi->wb;
-		wb->task = kthread_run(bdi_start_fn, wb, "flush-%s",
-					dev_name(bdi->dev));
-		/*
-		 * If task creation fails, then readd the bdi to
-		 * the pending list and force writeout of the bdi
-		 * from this forker thread. That will free some memory
-		 * and we can try again.
-		 */
-		if (IS_ERR(wb->task)) {
-			wb->task = NULL;
-
+		task = kthread_create(bdi_start_fn, &bdi->wb, "flush-%s",
+				dev_name(bdi->dev));
+		if (IS_ERR(task)) {
 			/*
-			 * Add this 'bdi' to the back, so we get
-			 * a chance to flush other bdi's to free
-			 * memory.
+			 * If thread creation fails, then readd the bdi back to
+			 * the list and force writeout of the bdi from this
+			 * forker thread. That will free some memory and we can
+			 * try again. Add it to the tail so we get a chance to
+			 * flush other bdi's to free memory.
 			 */
 			spin_lock_bh(&bdi_lock);
 			list_add_tail(&bdi->bdi_list, &bdi_pending_list);
 			spin_unlock_bh(&bdi_lock);
 
 			bdi_flush_io(bdi);
+		} else {
+			bdi->wb.task = task;
+			/*
+			 * And as soon as the bdi thread is visible,
+			 * we can start it.
+			 */
+			wake_up_process(task);
 		}
 	}
 

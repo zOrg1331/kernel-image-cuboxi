@@ -1483,7 +1483,7 @@ int do_sysinfo(struct sysinfo *info)
 
 		info->procs = ve->pcounter;
 
-		get_avenrun_ve(ve, info->loads, 0, SI_LOAD_SHIFT - FSHIFT);
+		get_avenrun_ve(info->loads, 0, SI_LOAD_SHIFT - FSHIFT);
 	}
 
 	si_meminfo(info);

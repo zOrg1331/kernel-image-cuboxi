@@ -124,7 +124,7 @@ extern int print_fatal_signals;
  */
 extern unsigned long avenrun[];		/* Load averages */
 extern void get_avenrun(unsigned long *loads, unsigned long offset, int shift);
-extern void get_avenrun_ve(struct ve_struct *ve, unsigned long *loads,
+extern void get_avenrun_ve(unsigned long *loads,
 			unsigned long offset, int shift);
 
 #define FSHIFT		11		/* nr of bits of precision */
@@ -157,19 +157,9 @@ extern atomic_t nr_dead;
 extern unsigned long nr_zombie;
 
 #ifdef CONFIG_VE
-struct ve_struct;
-extern unsigned long nr_running_ve(struct ve_struct *);
-extern unsigned long nr_iowait_ve(struct ve_struct *);
-extern unsigned long nr_uninterruptible_ve(struct ve_struct *);
-extern u64 ve_sched_get_idle_time(struct ve_struct *ve, int cpu);
-extern u64 ve_sched_get_iowait_time(struct ve_struct *ve, int cpu);
-void ve_sched_attach(struct ve_struct *envid);
+extern unsigned long nr_running_ve(void);
 #else
-#define nr_running_ve(ve)			0
-#define nr_iowait_ve(ve)			0
-#define nr_uninterruptible_ve(ve)		0
-#define ve_sched_get_idle_time(ve, cpu)		0
-#define ve_sched_get_iowait_time(ve, cpu)	0
+#define nr_running_ve()				0
 #endif
 
 
@@ -1199,6 +1189,8 @@ struct sched_class {
 	void (*moved_group) (struct task_struct *p);
 #endif
 #endif
+	void (*nr_iowait_inc) (struct task_struct *p);
+	void (*nr_iowait_dec) (struct task_struct *p);
 };
 
 struct load_weight {

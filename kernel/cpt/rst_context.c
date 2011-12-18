@@ -51,8 +51,11 @@ static ssize_t file_pread(void *addr, size_t count, struct cpt_context *ctx, lof
 	if (file)
 		err = file->f_op->read(file, addr, count, &pos);
 	set_fs(oldfs);
-	if (err != count)
+	if (err != count) {
+		eprintk_ctx("%s: read failed - addr: 0x%p, count: %ld, pos: %Ld, read: %ld\n",
+				__func__, addr, count, pos, err);
 		return err >= 0 ? -EIO : err;
+	}
 	return 0;
 }
 
@@ -255,16 +258,30 @@ int _rst_get_object(int type, loff_t pos, void *tmp, int size, struct cpt_contex
 	int err;
 	struct cpt_object_hdr *hdr = tmp;
 	err = ctx->pread(hdr, sizeof(struct cpt_object_hdr), ctx, pos);
-	if (err)
+	if (err) {
+		eprintk_ctx("%s: dump file read failed: %d\n", __func__, err);
 		return err;
-	if (type > 0 && type != hdr->cpt_object)
+	}
+	if (type > 0 && type != hdr->cpt_object) {
+		eprintk_ctx("%s: wrong object type: %d (expected: %d)\n",
+				__func__, type, hdr->cpt_object);
 		return -EINVAL;
-	if (hdr->cpt_hdrlen > hdr->cpt_next)
+	}
+	if (hdr->cpt_hdrlen > hdr->cpt_next) {
+		eprintk_ctx("%s: bad image object size: %d (next object in %Ld)\n",
+				__func__, hdr->cpt_hdrlen, hdr->cpt_next);
 		return -EINVAL;
-	if (hdr->cpt_hdrlen < sizeof(struct cpt_object_hdr))
+	}
+	if (hdr->cpt_hdrlen < sizeof(struct cpt_object_hdr)) {
+		eprintk_ctx("%s: bad image header length: %d (object size: %Ld)\n",
+			__func__, hdr->cpt_hdrlen, hdr->cpt_next);
 		return -EINVAL;
-	if (size < sizeof(*hdr))
+	}
+	if (size < sizeof(*hdr)) {
+		eprintk_ctx("%s: buffer is too small: %d (required: %ld)\n",
+				__func__, size, sizeof(*hdr));
 		return -EINVAL;
+	}
 	if (size > hdr->cpt_hdrlen) {
 		memset((char *)tmp + hdr->cpt_hdrlen, 0, size - hdr->cpt_hdrlen);
 		size = hdr->cpt_hdrlen;

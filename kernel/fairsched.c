@@ -310,18 +310,6 @@ SYSCALL_DEFINE3(fairsched_nodemask, unsigned int, id, unsigned int, len,
 	return retval;
 }
 
-static inline void fairsched_init_ve_idle_scale(struct ve_struct *ve,
-						  struct cgroup *cgrp)
-{
-#ifdef CONFIG_VE
-	int i;
-
-	for_each_possible_cpu(i)
-		VE_CPU_STATS(ve, i)->idle_scale =
-			sched_cgroup_cpu_rate_ptr(cgrp, i);
-#endif
-}
-
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
@@ -347,8 +335,6 @@ int fairsched_new_node(int id, unsigned int vcpus)
 		printk(KERN_ERR "Can't switch to fairsched node %d err=%d\n", id, err);
 		goto cleanup;
 	}
-
-	fairsched_init_ve_idle_scale(get_exec_env(), cgrp);
 
 	cgroup_kernel_close(cgrp);
 	return 0;
@@ -708,6 +694,53 @@ static struct file_operations proc_fairsched_operations = {
 	.release	= fairsched_seq_release
 };
 
+int fairsched_show_stat(struct seq_file *p, int id)
+{
+	struct cgroup *cgrp;
+	int err;
+
+	cgrp = fairsched_open(id);
+	if (IS_ERR(cgrp))
+		return PTR_ERR(cgrp);
+
+	err = cpu_cgroup_proc_stat(cgrp, NULL, p);
+	cgroup_kernel_close(cgrp);
+
+	return err;
+}
+
+int fairsched_get_cpu_avenrun(int id, unsigned long *avenrun)
+{
+	struct cgroup *cgrp;
+	int err;
+
+	cgrp = fairsched_open(id);
+	if (IS_ERR(cgrp))
+		return PTR_ERR(cgrp);
+
+	err = cpu_cgroup_get_avenrun(cgrp, avenrun);
+	cgroup_kernel_close(cgrp);
+
+	return 0;
+}
+EXPORT_SYMBOL(fairsched_get_cpu_avenrun);
+
+int fairsched_get_cpu_stat(int id, struct kernel_cpustat *kstat)
+{
+	struct cgroup *cgrp;
+	int err;
+
+	cgrp = fairsched_open(id);
+	if (IS_ERR(cgrp))
+		return PTR_ERR(cgrp);
+
+	err = cpu_cgroup_get_stat(cgrp, kstat);
+	cgroup_kernel_close(cgrp);
+
+	return 0;
+}
+EXPORT_SYMBOL(fairsched_get_cpu_stat);
+
 #endif /* CONFIG_PROC_FS */
 
 int __init fairsched_init(void)
@@ -730,8 +763,6 @@ int __init fairsched_init(void)
 	fairsched_host = cgroup_kernel_open(fairsched_root, CGRP_CREAT, "0");
 	if (IS_ERR(fairsched_host))
 		return PTR_ERR(fairsched_host);
-
-	fairsched_init_ve_idle_scale(get_ve0(), fairsched_host);
 
 	ret = cgroup_kernel_attach(fairsched_host, init_pid_ns.child_reaper);
 	if (ret)

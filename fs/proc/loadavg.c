@@ -22,8 +22,8 @@ static int loadavg_proc_show(struct seq_file *m, void *v)
 		running = nr_running();
 		threads = nr_threads;
 	} else {
-		get_avenrun_ve(ve, avnrun, FIXED_1/200, 0);
-		running = nr_running_ve(ve);
+		get_avenrun_ve(avnrun, FIXED_1/200, 0);
+		running = nr_running_ve();
 		threads = ve->pcounter;
 	}
 
