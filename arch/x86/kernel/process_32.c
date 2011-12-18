@@ -148,8 +148,9 @@ void __show_regs(struct pt_regs *regs, int all)
 	board = dmi_get_system_info(DMI_PRODUCT_NAME);
 	if (!board)
 		board = "";
-	printk("Pid: %d, comm: %s %s (%s %.*s) %s %s)\n",
+	printk("Pid: %d, comm: %s veid: %u %s (%s %.*s) %s %s)\n",
 			task_pid_nr(current), current->comm,
+			task_veid(current),
 			print_tainted(), init_utsname()->release,
 			(int)strcspn(init_utsname()->version, " "),
 			init_utsname()->version, VZVERSION, board);

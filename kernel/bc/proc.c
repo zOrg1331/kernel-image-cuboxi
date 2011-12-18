@@ -13,9 +13,14 @@
 #include <linux/module.h>
 #include <linux/ve_proto.h>
 #include <linux/virtinfo.h>
+#include <linux/mmgang.h>
+#include <linux/mount.h>
+#include <linux/nsproxy.h>
+#include <linux/mnt_namespace.h>
 
 #include <bc/beancounter.h>
 #include <bc/proc.h>
+#include <bc/dcache.h>
 
 /* Generic output formats */
 #if BITS_PER_LONG == 32
@@ -165,6 +170,104 @@ static int bc_proc_meminfo_show(struct seq_file *f, void *v)
 static struct bc_proc_entry bc_meminfo_entry = {
 	.name = "meminfo",
 	.u.show = bc_proc_meminfo_show,
+};
+
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+static int bc_proc_nodeinfo_show(struct seq_file *f, void *v)
+{
+	int nid;
+	nodemask_t nodemask;
+	struct user_beancounter *ub;
+	unsigned long pages[NR_LRU_LISTS];
+
+	ub = seq_beancounter(f);
+	for_each_node_state(nid, N_HIGH_MEMORY) {
+		nodemask = nodemask_of_node(nid);
+		gang_page_stat(&ub->gang_set, &nodemask, pages);
+		seq_printf(f,
+			"Node %d Active:         %8lu kB\n"
+			"Node %d Inactive:       %8lu kB\n"
+			"Node %d Active(anon):   %8lu kB\n"
+			"Node %d Inactive(anon): %8lu kB\n"
+			"Node %d Active(file):   %8lu kB\n"
+			"Node %d Inactive(file): %8lu kB\n"
+			"Node %d Unevictable:    %8lu kB\n",
+			nid, K(pages[LRU_ACTIVE_ANON] +
+			       pages[LRU_ACTIVE_FILE]),
+			nid, K(pages[LRU_INACTIVE_ANON] +
+			       pages[LRU_INACTIVE_FILE]),
+			nid, K(pages[LRU_ACTIVE_ANON]),
+			nid, K(pages[LRU_INACTIVE_ANON]),
+			nid, K(pages[LRU_ACTIVE_FILE]),
+			nid, K(pages[LRU_INACTIVE_FILE]),
+			nid, K(pages[LRU_UNEVICTABLE]));
+	}
+	return 0;
+}
+#undef K
+
+static struct bc_proc_entry bc_nodeinfo_entry = {
+	.name = "nodeinfo",
+	.u.show = bc_proc_nodeinfo_show,
+};
+#endif
+
+static int bc_dcache_show(struct seq_file *f, void *v)
+{
+	struct user_beancounter *ub = seq_beancounter(f);
+	struct dentry *dentry, *prev = NULL;
+	struct vfsmount *mnt;
+	struct path root;
+
+	seq_printf(f, "       usage device\tfstype\tmount\tdentry\n");
+
+	spin_lock(&dcache_lock);
+	list_for_each_entry(dentry, &ub->ub_dentry_top, d_bclru) {
+		dget(dentry);
+		spin_unlock(&dcache_lock);
+		dput(prev);
+		prev = dentry;
+
+		root.mnt = NULL;
+		root.dentry = NULL;
+		spin_lock(&vfsmount_lock);
+		list_for_each_entry(mnt, &current->nsproxy->mnt_ns->list, mnt_list) {
+			if (mnt->mnt_sb == dentry->d_sb) {
+				root.mnt = mnt;
+				root.dentry = mnt->mnt_root;
+				path_get(&root);
+				break;
+			}
+		}
+		spin_unlock(&vfsmount_lock);
+
+		seq_printf(f, "%12lu %s\t%s\t",
+				ub_dcache_get_size(dentry),
+				dentry->d_sb->s_id,
+				dentry->d_sb->s_type->name);
+		if (root.mnt)
+			seq_path(f, &root, " \t\n\\");
+		else
+			seq_puts(f, "none");
+		seq_putc(f, '\t');
+		seq_dentry(f, dentry, " \t\n\\");
+		seq_putc(f, '\n');
+
+		path_put(&root);
+		spin_lock(&dcache_lock);
+		if (dentry->d_ub != ub)
+			break;
+	}
+	spin_unlock(&dcache_lock);
+	dput(prev);
+
+	return 0;
+}
+
+static struct bc_proc_entry bc_dcacheinfo_entry = {
+	.name = "dcacheinfo",
+	.u.show = bc_dcache_show,
 };
 
 static int ub_show(struct seq_file *f, void *v)
@@ -745,8 +848,12 @@ static int __init ub_init_proc(void)
 #endif
 	bc_register_proc_entry(&bc_precharge_entry);
 	bc_register_proc_entry(&bc_count_slab_entry);
+	bc_register_proc_entry(&bc_dcacheinfo_entry);
 	bc_register_proc_root_entry(&bc_all_resources_entry);
 	bc_register_proc_entry(&bc_meminfo_entry);
+#ifdef CONFIG_BC_RSS_ACCOUNTING
+	bc_register_proc_entry(&bc_nodeinfo_entry);
+#endif
 
 	entry = proc_create("user_beancounters",
 			S_IRUSR, &glob_proc_root, &ub_file_operations);

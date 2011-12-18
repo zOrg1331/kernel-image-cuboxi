@@ -54,6 +54,7 @@
 #include <linux/pid_namespace.h>
 #include <linux/idr.h>
 #include <linux/vmalloc.h> /* TODO: replace with more sophisticated array */
+#include <bc/dcache.h>
 
 #include <asm/atomic.h>
 
@@ -1374,6 +1375,7 @@ static int cgroup_get_rootdir(struct super_block *sb)
 		return -ENOMEM;
 	}
 	sb->s_root = dentry;
+	ub_dcache_set_owner(dentry, get_ub0());
 	return 0;
 }
 
@@ -1563,6 +1565,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 		mnt->mnt_sb = sb;
 		mnt->mnt_root = dget(top_cgrp->dentry);
 		cgroup_kernel_close(top_cgrp);
+		ub_dcache_set_owner(mnt->mnt_root, get_exec_ub());
 	} else
 #endif /* CONFIG_VE */
 		simple_set_mnt(mnt, sb);

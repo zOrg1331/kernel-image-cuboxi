@@ -204,7 +204,10 @@ static void __net_exit nf_nat_rule_net_exit(struct net *net)
 	if (!net_is_ipt_module_set(net, VE_IP_IPTABLE_NAT))
 		return;
 
-	ipt_unregister_table(net->ipv4.nat_table);
+	if (net->ipv4.nat_table) {
+		ipt_unregister_table(net->ipv4.nat_table);
+		net->ipv4.nat_table = NULL;
+	}
 }
 
 static struct pernet_operations nf_nat_rule_net_ops = {

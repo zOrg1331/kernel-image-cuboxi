@@ -617,7 +617,9 @@ static struct dentry *vzdq_aquotq_lookup(struct inode *dir,
 			vzdq_aquotq_looktest, vzdq_aquotq_lookset, &d);
 	if (inode == NULL)
 		goto out;
-	unlock_new_inode(inode);
+
+	if (inode->i_state & I_NEW)
+		unlock_new_inode(inode);
 	dentry->d_op = &vzdq_aquotq_dentry_operations;
 	d_add(dentry, inode);
 	return NULL;
@@ -860,7 +862,9 @@ static struct dentry *vzdq_aquotd_lookup(struct inode *dir,
 			(void *)(unsigned long)dev);
 	if (inode == NULL)
 		goto out;
-	unlock_new_inode(inode);
+
+	if (inode->i_state & I_NEW)
+		unlock_new_inode(inode);
 
 	d_add(dentry, inode);
 	(void)set_exec_env(old_ve);

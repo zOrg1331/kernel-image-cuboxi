@@ -57,6 +57,13 @@ static int has_intersects_mems_allowed(struct task_struct *tsk)
 	return 0;
 }
 
+static unsigned long mm_badness(struct mm_struct *mm)
+{
+	return get_mm_counter(mm, file_rss) + get_mm_counter(mm, anon_rss) +
+		get_mm_counter(mm, swap_usage) +
+		mm->nr_ptes + mm->nr_ptds + mm->locked_vm;
+}
+
 /**
  * badness - calculate a numeric value for how bad this task has been
  * @p: task struct of which task we should calculate
@@ -81,8 +88,6 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 {
 	unsigned long points, cpu_time, run_time;
 	struct mm_struct *mm;
-	struct task_struct *child;
-	int child_oom_group;
 	int oom_adj = p->signal->oom_adj;
 	struct task_cputime task_time;
 	unsigned long utime;
@@ -101,7 +106,7 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 	/*
 	 * The memory size of the process is the basis for the badness.
 	 */
-	points = mm->total_vm;
+	points = mm_badness(mm);
 
 	/*
 	 * After this unlock we can no longer dereference local variable `mm'
@@ -113,24 +118,6 @@ unsigned long badness(struct task_struct *p, unsigned long uptime,
 	 */
 	if (p->flags & PF_OOM_ORIGIN)
 		return ULONG_MAX;
-
-	/*
-	 * Processes which fork a lot of child processes are likely
-	 * a good choice. We add half the vmsize of the children if they
-	 * have an own mm. This prevents forking servers to flood the
-	 * machine with an endless amount of children. In case a single
-	 * child is eating the vast majority of memory, adding only half
-	 * to the parents will make the child our kill candidate of choice.
-	 */
-	list_for_each_entry(child, &p->children, sibling) {
-		child_oom_group = get_oom_group(p);
-		if (child_oom_group > oom_group)
-			continue;
-		task_lock(child);
-		if (child->mm != mm && child->mm)
-			points += child->mm->total_vm/2 + 1;
-		task_unlock(child);
-	}
 
 	/*
 	 * CPU time is in tens of seconds and run time is in thousands
@@ -238,21 +225,17 @@ static inline enum oom_constraint constrained_alloc(struct zonelist *zonelist,
 struct task_struct *select_bad_process(struct user_beancounter *ub,
 						struct mem_cgroup *mem)
 {
-	struct task_struct *p;
+	struct task_struct *g, *p;
 	struct task_struct *chosen = NULL;
 	struct timespec uptime;
 	unsigned long chosen_points = 0;
 	int group, chosen_group = 0;
 
 	do_posix_clock_monotonic_gettime(&uptime);
-	for_each_process_all(p) {
+	do_each_thread_all(g, p) {
 		unsigned long points;
 
-		/*
-		 * skip kernel threads and tasks which have already released
-		 * their mm.
-		 */
-		if (!p->mm)
+		if (p->exit_state)
 			continue;
 		/* skip the init task */
 		if (is_global_init(p))
@@ -272,9 +255,17 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		 * Note: this may have a chance of deadlock if it gets
 		 * blocked waiting for another task which itself is waiting
 		 * for memory. Is there a better alternative?
+		 *
+		 * Deadlock fixed: we wait in ub_oom_lock() UB_OOM_TIMEOUT.
 		 */
 		if (test_tsk_thread_flag(p, TIF_MEMDIE))
-			return ERR_PTR(-1UL);
+			continue;
+		/*
+		 * skip kernel threads and tasks which have already released
+		 * their mm.
+		 */
+		if (!p->mm)
+			continue;
 
 		/*
 		 * This is in the process of releasing memory so wait for it
@@ -288,7 +279,7 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 		 */
 		if (p->flags & PF_EXITING) {
 			if (p != current)
-				return ERR_PTR(-1UL);
+				return p;
 
 			chosen = p;
 			chosen_points = ULONG_MAX;
@@ -308,7 +299,7 @@ struct task_struct *select_bad_process(struct user_beancounter *ub,
 			chosen_points = points;
 			chosen_group = group;
 		}
-	}
+	} while_each_thread_all(g, p);
 
 	return chosen;
 }
@@ -373,7 +364,8 @@ static void __oom_kill_thread(struct task_struct *p,
 	force_sig(SIGKILL, p);
 	wake_up_process(p);
 
-	oom_ctrl->kill_counter++;
+	if (current->task_bc.oom_generation == oom_ctrl->generation)
+		oom_ctrl->kill_counter++;
 }
 
 static void __oom_kill_task(struct task_struct *tsk,
@@ -408,15 +400,23 @@ static int oom_kill_task(struct task_struct *p,
 	}
 
 	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, p)
-			& NOTIFY_FAIL)
+			& NOTIFY_FAIL) {
+		printk(KERN_WARNING "OOM: disabled for process %d (%s) by virtinfo.\n",
+				task_pid_nr(p), p->comm);
 		return -EAGAIN;
+	}
 
-	if (p->signal->oom_adj == OOM_DISABLE)
+	if (p->signal->oom_adj == OOM_DISABLE) {
+		printk(KERN_WARNING "OOM: disabled for process %d (%s) by oom_adj.\n",
+				task_pid_nr(p), p->comm);
 		return -EAGAIN;
+	}
 
 	task_lock(p);
 	mm = p->mm;
 	if (mm == NULL) {
+		printk(KERN_WARNING "OOM: no mm for process %d (%s).\n",
+				task_pid_nr(p), p->comm);
 		/*
 		 * FIXME: this is not really good. If we selected this task
 		 * then it had valid mm. If we can't find mm here, then the
@@ -464,31 +464,33 @@ static int oom_kill_task(struct task_struct *p,
 	return 0;
 }
 
+void oom_report_invocation(char *type, struct user_beancounter *ub,
+		gfp_t gfp_mask, int order)
+{
+	if (printk_ratelimit()) {
+		printk(KERN_WARNING "%d (%s) invoked %s oom-killer: "
+				"gfp 0x%x order %d oomkilladj=%d\n",
+				current->pid, current->comm, type,
+				gfp_mask, order, current->signal->oom_adj);
+
+		if (!ub) {
+			dump_stack();
+			show_mem();
+			show_slab_info();
+		} else if (__ratelimit(&ub->ub_ratelimit))
+			show_ub_mem(ub);
+	}
+}
+
 int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			    struct mem_cgroup *mem, struct user_beancounter *ub,
 			    const char *message)
 {
 	struct oom_control *oom_ctrl = ub ? &ub->oom_ctrl : &global_oom_ctrl;
-	struct task_struct *c;
+	struct task_struct *c, *child;
 	int group, child_group;
-
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked oom-killer: "
-			"gfp_mask=0x%x, order=%d, oom_adj=%d\n",
-			current->comm, gfp_mask, order,
-			current->signal->oom_adj);
-		task_lock(current);
-		cpuset_print_task_mems_allowed(current);
-		task_unlock(current);
-		mem_cgroup_print_oom_info(mem, p);
-		if (!ub) {
-			dump_stack();
-			show_mem();
-		} else if (__ratelimit(&ub->ub_ratelimit))
-			show_ub_mem(ub);
-		if (sysctl_oom_dump_tasks)
-			dump_tasks(mem);
-	}
+	struct timespec uptime;
+	unsigned long points, child_points;
 
 	/*
 	 * If the task is already exiting, don't alarm the sysadmin or kill
@@ -501,20 +503,35 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 					message, task_pid_nr(p), p->comm);
 
 	group = get_oom_group(p);
-	/* Try to kill a child first */
+	points = 0;
+	child = NULL;
+	do_posix_clock_monotonic_gettime(&uptime);
+	/* Try to kill a worst child first */
 	list_for_each_entry(c, &p->children, sibling) {
 		child_group = get_oom_group(c);
 		if (child_group > group)
 			continue;
-		if (c->mm == p->mm)
+		if (!c->mm || c->mm == p->mm)
 			continue;
 		if (ub_oom_task_skip(ub, c))
 			continue;
 		if (mem && !task_in_mem_cgroup(c, mem))
 			continue;
-		if (!oom_kill_task(c, oom_ctrl, 1))
-			return 0;
+		if (c->flags & PF_FROZEN)
+			continue;
+		if (test_tsk_thread_flag(c, TIF_MEMDIE))
+			continue;
+		if (c->signal->oom_adj == OOM_DISABLE)
+			continue;
+		child_points = badness(c, uptime.tv_sec, child_group);
+		if (child_group == group && child_points < points)
+			continue;
+		child = c;
+		group = child_group;
+		points = child_points;
 	}
+	if (child && !oom_kill_task(child, oom_ctrl, 1))
+		return 0;
 	return oom_kill_task(p, oom_ctrl, 1);
 }
 
@@ -665,13 +682,7 @@ void pagefault_out_of_memory(void)
 	if (ub_oom_lock(&global_oom_ctrl))
 		goto rest_and_return;
 
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked PF oom-killer: oomkilladj=%d\n",
-				current->comm, current->signal->oom_adj);
-		dump_stack();
-		show_mem();
-		show_slab_info();
-	}
+	oom_report_invocation("PF", NULL, 0, 0);
 
 	read_lock(&tasklist_lock);
 	__out_of_memory(0, 0); /* unknown gfp_mask and order */
@@ -715,15 +726,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 	if (ub_oom_lock(&global_oom_ctrl))
 		goto out_oom_lock;
 
-	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked oom-killer: "
-			"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
-			current->comm, gfp_mask, order,
-			current->signal->oom_adj);
-		dump_stack();
-		show_mem();
-		show_slab_info();
-	}
+	oom_report_invocation("glob", NULL, gfp_mask, order);
 
 	/*
 	 * Check if there were limitations on the allocation (only relevant for

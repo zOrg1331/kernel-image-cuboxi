@@ -4,6 +4,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <bc/beancounter.h>
+#include <bc/vmpages.h>
 
 void setup_zone_gang(struct gang_set *gs, struct zone *zone, struct gang *gang);
 
@@ -117,24 +118,25 @@ static inline void gang_add_free_page(struct page *page)
 {
 	set_page_gang(page, NULL);
 }
-static inline void gang_add_user_page(struct page *page, struct gang_set *gs)
+static inline int gang_add_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask)
 {
-	int numpages = hpage_nr_pages(page);
-
 	VM_BUG_ON(page->gang);
+	if (ub_phys_charge(get_gangs_ub(gs), hpage_nr_pages(page), gfp_mask))
+		return -ENOMEM;
 	set_page_gang(page, mem_page_gang(gs, page));
-	charge_beancounter_fast(get_gangs_ub(gs),
-			UB_PHYSPAGES, numpages, UB_FORCE);
+	return 0;
 }
-static inline void gang_mod_user_page(struct page *page, struct gang_set *gs)
+static inline void gang_mod_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask)
 {
 	int numpages = hpage_nr_pages(page);
 	struct gang *gang = page_gang(page);
 
-	uncharge_beancounter_fast(get_gang_ub(gang),
-			UB_PHYSPAGES, numpages);
-	charge_beancounter_fast(get_gangs_ub(gs),
-			UB_PHYSPAGES, numpages, UB_FORCE);
+	if (ub_phys_charge(get_gangs_ub(gs), numpages,
+				gfp_mask|__GFP_NORETRY|__GFP_NOWARN))
+		return;
+	ub_phys_uncharge(get_gang_ub(gang), numpages);
 
 	VM_BUG_ON(PageLRU(page));
 	spin_lock_irq(&gang->lru_lock);
@@ -143,10 +145,7 @@ static inline void gang_mod_user_page(struct page *page, struct gang_set *gs)
 }
 static inline void gang_del_user_page(struct page *page)
 {
-	int numpages = hpage_nr_pages(page);
-
-	uncharge_beancounter_fast(get_gang_ub(page_gang(page)),
-			UB_PHYSPAGES, numpages);
+	ub_phys_uncharge(get_gang_ub(page_gang(page)), hpage_nr_pages(page));
 	set_page_gang(page, NULL);
 }
 
@@ -225,8 +224,10 @@ static inline int pin_mem_gang(struct gang *gang) { return 0; }
 static inline void unpin_mem_gang(struct gang *gang) { }
 
 static inline void gang_add_free_page(struct page *page) { }
-static inline void gang_add_user_page(struct page *page, struct gang_set *gs) { }
-static inline void gang_mod_user_page(struct page *page, struct gang_set *gs) { }
+static inline int gang_add_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask) { return 0; }
+static inline void gang_mod_user_page(struct page *page,
+		struct gang_set *gs, gfp_t gfp_mask) { }
 static inline void gang_del_user_page(struct page *page) { }
 
 static inline struct gang *lock_page_lru(struct page *page)
@@ -245,6 +246,38 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 static inline void gang_rate_limit(struct gang_set *gs, int wait, unsigned count) { }
 
 #endif /* CONFIG_MEMORY_GANGS */
+
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+extern unsigned int gangs_migration_max_isolate;
+extern unsigned int gangs_migration_min_batch;
+extern unsigned int gangs_migration_max_batch;
+extern unsigned int gangs_migration_interval;
+
+extern int schedule_gangs_migration(struct gang_set *gs,
+		const nodemask_t *src_nodes, const nodemask_t *dest_nodes);
+extern int cancel_gangs_migration(struct gang_set *gs);
+extern int gangs_migration_pending(struct gang_set *gs, nodemask_t *pending);
+
+extern int gangs_migration_batch_sysctl_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *lenp, loff_t *ppos);
+#else
+static inline int schedule_gangs_migration(struct gang_set *gs,
+		const nodemask_t *src_nodes, const nodemask_t *dest_nodes)
+{
+	return 1;
+}
+static inline int cancel_gangs_migration(struct gang_set *gs)
+{
+	return 0;
+}
+static inline int gangs_migration_pending(struct gang_set *gs,
+					  nodemask_t *pending)
+{
+	if (pending)
+		nodes_clear(*pending);
+	return 0;
+}
+#endif
 
 static inline struct gang *relock_page_lru(struct gang *locked_gang,
 					   struct gang *gang)
@@ -270,7 +303,8 @@ static inline struct user_beancounter *get_page_ub(struct page *page)
 	return ub;
 }
 
-void gang_page_stat(struct gang_set *gs, unsigned long *stat);
+void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,
+		    unsigned long *stat);
 void gang_show_state(struct gang_set *gs);
 
 #endif /* _LINIX_MMGANG_H */

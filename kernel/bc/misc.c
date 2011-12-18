@@ -29,7 +29,7 @@
 
 int ub_task_charge(struct user_beancounter *ub)
 {
-	if (ub_kmem_charge(ub, TASK_KMEM_SIZE, UB_HARD))
+	if (ub_kmem_charge(ub, TASK_KMEM_SIZE, GFP_KERNEL))
 		goto no_mem;
 
 	if (charge_beancounter_fast(ub, UB_NUMPROC, 1, UB_HARD))
@@ -80,7 +80,8 @@ int ub_file_charge(struct file *f)
 		goto no_file;
 
 	err = ub_kmem_charge(ub,
-			CHARGE_SIZE(kmem_cache_objuse(filp_cachep)), UB_HARD);
+			CHARGE_SIZE(kmem_cache_objuse(filp_cachep)),
+			GFP_KERNEL);
 	if (unlikely(err))
 		goto no_kmem;
 
@@ -137,12 +138,13 @@ void ub_flock_uncharge(struct file_lock *fl)
  * Signal handling
  */
 
-int ub_siginfo_charge(struct sigqueue *sq, struct user_beancounter *ub)
+int ub_siginfo_charge(struct sigqueue *sq, struct user_beancounter *ub,
+			gfp_t gfp_mask)
 {
 	unsigned long size;
 
 	size = CHARGE_SIZE(kmem_obj_objuse(sq));
-	if (ub_kmem_charge(ub, size, UB_HARD))
+	if (ub_kmem_charge(ub, size, gfp_mask))
 		goto out_kmem;
 
 	if (charge_beancounter_fast(ub, UB_NUMSIGINFO, 1, UB_HARD))

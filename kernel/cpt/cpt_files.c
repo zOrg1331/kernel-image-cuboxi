@@ -898,14 +898,24 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 	if (file->f_op == NULL)
 		return -EINVAL;
 
-	if (file->f_op == &shm_file_operations) {
-		struct shm_file_data *sfd = file->private_data;
+	if (file->f_op == &shm_file_operations)
+		file = ((struct shm_file_data *)file->private_data)->file;
 
-		file = sfd->file;
-		retval = cpt_dump_content_sysvshm(file, ctx);
-		if (retval < 0) {
-			eprintk_ctx("cannot dump SysV IPC Shared Memory %ld\n", retval);
-			return retval;
+	if (file->f_op == &shmem_file_operations) {
+		cpt_object_t *obj;
+
+		obj = lookup_cpt_object(CPT_OBJ_FILE, file, ctx);
+		if (!obj) {
+			eprintk_ctx("failed to find tmpfs file %p\n", file);
+			return -ENOENT;
+		}
+
+		if (obj->o_flags & CPT_FILE_SYSVIPC) {
+			retval = cpt_dump_content_sysvshm(file, ctx);
+			if (retval < 0) {
+				eprintk_ctx("cannot dump SysV IPC Shared Memory %ld\n", retval);
+				return retval;
+			}
 		}
 	}
 
@@ -2099,7 +2109,8 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 			eprintk_ctx("Checkpoint supports only nodev fs: %s\n",
 				    mnt->mnt_sb->s_type->name);
 			err = -EXDEV;
-		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs")) {
+		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs") ||
+			   !strcmp(mnt->mnt_sb->s_type->name, "devtmpfs")) {
 			mntget(mnt);
 			up_read(&namespace_sem);
 			err = cpt_dump_tmpfs(path, ctx);

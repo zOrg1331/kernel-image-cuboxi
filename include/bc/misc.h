@@ -23,7 +23,7 @@ UB_DECLARE_VOID_FUNC(ub_file_uncharge(struct file *f))
 UB_DECLARE_FUNC(int, ub_flock_charge(struct file_lock *fl, int hard))
 UB_DECLARE_VOID_FUNC(ub_flock_uncharge(struct file_lock *fl))
 UB_DECLARE_FUNC(int, ub_siginfo_charge(struct sigqueue *q,
-			struct user_beancounter *ub))
+			struct user_beancounter *ub, gfp_t gfp_mask))
 UB_DECLARE_VOID_FUNC(ub_siginfo_uncharge(struct sigqueue *q))
 UB_DECLARE_FUNC(int, ub_task_charge(struct user_beancounter *ub))
 UB_DECLARE_VOID_FUNC(ub_task_uncharge(struct user_beancounter *ub))

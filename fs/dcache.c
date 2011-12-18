@@ -87,10 +87,6 @@ static void d_callback(struct rcu_head *head)
  */
 static void d_free(struct dentry *dentry)
 {
-	ub_dcache_uncharge(dentry->d_ub, dentry->d_name.len);
-	if (dentry->d_flags & DCACHE_BCTOP)
-		put_beancounter(dentry->d_ub);
-
 	if (dentry->d_op && dentry->d_op->d_release)
 		dentry->d_op->d_release(dentry);
 	/* if dentry was never inserted into hash, immediate free is OK */
@@ -185,6 +181,11 @@ static struct dentry *d_kill(struct dentry *dentry)
 
 	list_del(&dentry->d_u.d_child);
 	dentry_stat.nr_dentry--;	/* For d_free, below */
+
+	ub_dcache_uncharge(dentry->d_ub, dentry->d_name.len);
+	if (dentry->d_flags & DCACHE_BCTOP)
+		list_del(&dentry->d_bclru);
+
 	/*drops the locks, at that point nobody can reach this dentry */
 	dentry_iput(dentry);
 	if (IS_ROOT(dentry))
@@ -254,6 +255,8 @@ repeat:
 		goto kill_it;
   	if (list_empty(&dentry->d_lru)) {
   		dentry->d_flags |= DCACHE_REFERENCED;
+		if (dentry->d_flags & DCACHE_BCTOP)
+			ub_dcache_clear_owner(dentry);
 		dentry_lru_add(dentry);
   	}
  	spin_unlock(&dentry->d_lock);
@@ -743,6 +746,13 @@ static void shrink_dcache_for_umount_subtree(struct dentry *dentry)
 					iput(inode);
 			}
 
+			ub_dcache_uncharge(dentry->d_ub, dentry->d_name.len);
+			if (dentry->d_flags & DCACHE_BCTOP) {
+				spin_lock(&dcache_lock);
+				list_del(&dentry->d_bclru);
+				spin_unlock(&dcache_lock);
+			}
+
 			d_free(dentry);
 
 			/* finished when we fall off the top of the tree,
@@ -1030,7 +1040,6 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 		dentry->d_parent = dget(parent);
 		dentry->d_sb = parent->d_sb;
 	} else {
-		get_beancounter(ub);
 		dentry->d_flags |= DCACHE_BCTOP;
 		INIT_LIST_HEAD(&dentry->d_u.d_child);
 	}
@@ -1038,6 +1047,8 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	spin_lock(&dcache_lock);
 	if (parent)
 		list_add(&dentry->d_u.d_child, &parent->d_subdirs);
+	else
+		list_add_tail(&dentry->d_bclru, &ub->ub_dentry_top);
 	dentry_stat.nr_dentry++;
 	spin_unlock(&dcache_lock);
 

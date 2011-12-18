@@ -213,7 +213,9 @@ static int nfsd_init_socks(int port)
 	return 0;
 }
 
+#ifndef CONFIG_VE
 static bool nfsd_up = false;
+#endif
 
 static int nfsd_startup(unsigned short port, int nrservs)
 {
@@ -235,9 +237,11 @@ static int nfsd_startup(unsigned short port, int nrservs)
 	ret = lockd_up();
 	if (ret)
 		goto out_racache;
-	ret = nfs4_state_start();
-	if (ret)
-		goto out_lockd;
+	if (ve_is_super(get_exec_env())) {
+		ret = nfs4_state_start();
+		if (ret)
+			goto out_lockd;
+	}
 	nfsd_up = true;
 	return 0;
 out_lockd:
@@ -257,10 +261,10 @@ static void nfsd_shutdown(void)
 	 */
 	if (!nfsd_up)
 		return;
-	nfs4_state_shutdown();
+	if (ve_is_super(get_exec_env()))
+		nfs4_state_shutdown();
 	lockd_down();
 	nfsd_racache_shutdown();
-	nfsd_up = false;
 }
 
 static void nfsd_last_thread(struct svc_serv *serv)
@@ -271,6 +275,7 @@ static void nfsd_last_thread(struct svc_serv *serv)
 
 	nfsd_export_flush();
 
+	nfsd_up = false;
 	complete(&nfsd_exited);
 }
 
@@ -354,6 +359,7 @@ int nfsd_create_serv(void)
 
 	set_max_drc();
 	do_gettimeofday(&nfssvc_boot);		/* record boot time */
+	init_completion(&nfsd_exited);
 	return err;
 }
 
@@ -470,8 +476,11 @@ nfsd_svc(unsigned short port, int nrservs)
 	 */
 	error = nfsd_serv->sv_nrthreads - 1;
 out_shutdown:
-	if (error < 0 && !nfsd_up_before)
+	if (error < 0 && !nfsd_up_before) {
 		nfsd_shutdown();
+		nfsd_up = false;
+		complete(&nfsd_exited);
+	}
 out_destroy:
 	svc_destroy(nfsd_serv);		/* Release server */
 out:

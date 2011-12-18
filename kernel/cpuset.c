@@ -53,12 +53,15 @@
 #include <linux/time.h>
 #include <linux/backing-dev.h>
 #include <linux/sort.h>
+#include <linux/mmgang.h>
 
 #include <asm/uaccess.h>
 #include <asm/atomic.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
 #include <linux/cgroup.h>
+
+#include <bc/beancounter.h>
 
 /*
  * Workqueue for cpuset related tasks.
@@ -95,6 +98,9 @@ struct cpuset {
 	cpumask_var_t cpus_allowed;	/* CPUs allowed to tasks in cpuset */
 	nodemask_t mems_allowed;	/* Memory Nodes allowed to tasks */
 
+	cpumask_var_t cpuset_cpus_allowed;
+	nodemask_t cpuset_mems_allowed;
+
 	struct cpuset *parent;		/* my parent */
 
 	struct fmeter fmeter;		/* memory_pressure filter */
@@ -121,6 +127,22 @@ static inline struct cpuset *task_cs(struct task_struct *task)
 {
 	return container_of(task_subsys_state(task, cpuset_subsys_id),
 			    struct cpuset, css);
+}
+
+static struct user_beancounter *get_cpuset_beancounter(struct cpuset *cs)
+{
+	struct user_beancounter *ub = NULL;
+	struct dentry *dentry;
+	unsigned long id;
+	char *endp;
+
+	dentry = cs->css.cgroup->dentry;
+	if (dentry) {
+		id = simple_strtoul(dentry->d_name.name, &endp, 10);
+		if (!*endp && id <= INT_MAX)
+			ub = get_beancounter_byuid(id, 0);
+	}
+	return ub;
 }
 
 /* bits in struct cpuset flags field */
@@ -360,6 +382,13 @@ static struct cpuset *alloc_trial_cpuset(const struct cpuset *cs)
 	}
 	cpumask_copy(trial->cpus_allowed, cs->cpus_allowed);
 
+	if (!alloc_cpumask_var(&trial->cpuset_cpus_allowed, GFP_KERNEL)) {
+		free_cpumask_var(trial->cpus_allowed);
+		kfree(trial);
+		return NULL;
+	}
+	cpumask_copy(trial->cpuset_cpus_allowed, cs->cpuset_cpus_allowed);
+
 	return trial;
 }
 
@@ -369,6 +398,7 @@ static struct cpuset *alloc_trial_cpuset(const struct cpuset *cs)
  */
 static void free_trial_cpuset(struct cpuset *trial)
 {
+	free_cpumask_var(trial->cpuset_cpus_allowed);
 	free_cpumask_var(trial->cpus_allowed);
 	kfree(trial);
 }
@@ -1021,9 +1051,9 @@ static void cpuset_change_nodemask(struct task_struct *p,
 
 	migrate = is_memory_migrate(cs);
 
-	mpol_rebind_mm(mm, &cs->mems_allowed);
+	mpol_rebind_mm(mm, &newmems);
 	if (migrate)
-		cpuset_migrate_mm(mm, oldmem, &cs->mems_allowed);
+		cpuset_migrate_mm(mm, oldmem, &newmems);
 	mmput(mm);
 }
 
@@ -1104,7 +1134,7 @@ static int update_nodemask(struct cpuset *cs, const nodemask_t *mems_allowed)
 
 	trialcs->mems_allowed = *mems_allowed;
 
-	oldmem = cs->mems_allowed;
+	guarantee_online_mems(cs, &oldmem);
 	if (nodes_equal(oldmem, trialcs->mems_allowed)) {
 		retval = 0;		/* Too easy - nothing to do */
 		goto done;
@@ -1444,12 +1474,32 @@ static void cpuset_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 
 int cgroup_set_cpumask(struct cgroup *cgrp, const struct cpumask *cpus_allowed)
 {
-	return update_cpumask(cgroup_cs(cgrp), cpus_allowed);
+	int ret;
+	struct cpuset *cs = cgroup_cs(cgrp);
+	static DEFINE_MUTEX(lock);
+
+	mutex_lock(&lock);
+	ret = update_cpumask(cs, cpus_allowed);
+	if (!ret)
+		cpumask_copy(cs->cpuset_cpus_allowed, cpus_allowed);
+	mutex_unlock(&lock);
+
+	return ret;
 }
 
 int cgroup_set_nodemask(struct cgroup *cgrp, const nodemask_t *nodes_allowed)
 {
-	return update_nodemask(cgroup_cs(cgrp), nodes_allowed);
+	int ret;
+	struct cpuset *cs = cgroup_cs(cgrp);
+	static DEFINE_MUTEX(lock);
+
+	mutex_lock(&lock);
+	ret = update_nodemask(cs, nodes_allowed);
+	if (!ret)
+		cs->cpuset_mems_allowed = *nodes_allowed;
+	mutex_unlock(&lock);
+
+	return ret;
 }
 
 /* The various types of files and directories in a cpuset file system */
@@ -1458,6 +1508,9 @@ typedef enum {
 	FILE_MEMORY_MIGRATE,
 	FILE_CPULIST,
 	FILE_MEMLIST,
+	FILE_MEM_MIGRATION_PENDING,
+	FILE_CPUS_ALLOWED,
+	FILE_MEMS_ALLOWED,
 	FILE_CPU_EXCLUSIVE,
 	FILE_MEM_EXCLUSIVE,
 	FILE_MEM_HARDWALL,
@@ -1601,6 +1654,43 @@ done:
 	return retval;
 }
 
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+static int cpuset_write_mem_migration_pending(struct cgroup *cgrp,
+		struct cftype *cft, const char *buf)
+{
+	int retval;
+	nodemask_t pending;
+	struct cpuset *cs;
+	struct user_beancounter *ub;
+
+	if (!*buf) {
+		nodes_clear(pending);
+	} else {
+		retval = nodelist_parse(buf, pending);
+		if (retval < 0)
+			goto done;
+	}
+
+	if (cgroup_lock_live_group(cgrp)) {
+		cs = cgroup_cs(cgrp);
+		ub = get_cpuset_beancounter(cs);
+		if (ub) {
+			cancel_gangs_migration(get_ub_gs(ub));
+			schedule_gangs_migration(get_ub_gs(ub),
+					&pending, &cs->mems_allowed);
+			put_beancounter(ub);
+		}
+		cgroup_unlock();
+		retval = 0;
+	} else {
+		retval = -ENODEV;
+	}
+
+done:
+	return retval;
+}
+#endif
+
 /*
  * These ascii lists should be read in a single call, by using a user
  * buffer large enough to hold the entire map.  If read in smaller
@@ -1635,6 +1725,22 @@ static int cpuset_sprintf_memlist(char *page, struct cpuset *cs)
 	return nodelist_scnprintf(page, PAGE_SIZE, mask);
 }
 
+static int cpuset_sprintf_mem_migration_pending(char *page, struct cpuset *cs)
+{
+	nodemask_t mask;
+	struct user_beancounter *ub;
+
+	ub = get_cpuset_beancounter(cs);
+	if (ub) {
+		gangs_migration_pending(get_ub_gs(ub), &mask);
+		put_beancounter(ub);
+	} else {
+		nodes_clear(mask);
+	}
+
+	return nodelist_scnprintf(page, PAGE_SIZE, mask);
+}
+
 static ssize_t cpuset_common_file_read(struct cgroup *cont,
 				       struct cftype *cft,
 				       struct file *file,
@@ -1658,6 +1764,15 @@ static ssize_t cpuset_common_file_read(struct cgroup *cont,
 		break;
 	case FILE_MEMLIST:
 		s += cpuset_sprintf_memlist(s, cs);
+		break;
+	case FILE_MEM_MIGRATION_PENDING:
+		s += cpuset_sprintf_mem_migration_pending(s, cs);
+		break;
+	case FILE_CPUS_ALLOWED:
+		s += cpulist_scnprintf(s, PAGE_SIZE, cs->cpuset_cpus_allowed);
+		break;
+	case FILE_MEMS_ALLOWED:
+		s += nodelist_scnprintf(s, PAGE_SIZE, cs->cpuset_mems_allowed);
 		break;
 	default:
 		retval = -EINVAL;
@@ -1737,6 +1852,28 @@ static struct cftype files[] = {
 		.write_string = cpuset_write_nodemask,
 		.max_write_len = (100U + 6 * MAX_NUMNODES),
 		.private = FILE_MEMLIST,
+	},
+
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+	{
+		.name = "mem_migration_pending",
+		.read = cpuset_common_file_read,
+		.write_string = cpuset_write_mem_migration_pending,
+		.max_write_len = (100U + 6 * MAX_NUMNODES),
+		.private = FILE_MEM_MIGRATION_PENDING,
+	},
+#endif
+
+	{
+		.name = "cpus_allowed",
+		.read = cpuset_common_file_read,
+		.private = FILE_CPUS_ALLOWED,
+	},
+
+	{
+		.name = "mems_allowed",
+		.read = cpuset_common_file_read,
+		.private = FILE_MEMS_ALLOWED,
 	},
 
 	{
@@ -1886,6 +2023,11 @@ static struct cgroup_subsys_state *cpuset_create(
 		kfree(cs);
 		return ERR_PTR(-ENOMEM);
 	}
+	if (!alloc_cpumask_var(&cs->cpuset_cpus_allowed, GFP_KERNEL)) {
+		free_cpumask_var(cs->cpus_allowed);
+		kfree(cs);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	cs->flags = 0;
 	if (is_spread_page(parent))
@@ -1895,6 +2037,8 @@ static struct cgroup_subsys_state *cpuset_create(
 	set_bit(CS_SCHED_LOAD_BALANCE, &cs->flags);
 	cpumask_clear(cs->cpus_allowed);
 	nodes_clear(cs->mems_allowed);
+	cpumask_clear(cs->cpuset_cpus_allowed);
+	nodes_clear(cs->cpuset_mems_allowed);
 	fmeter_init(&cs->fmeter);
 	cs->relax_domain_level = -1;
 
@@ -1917,6 +2061,7 @@ static void cpuset_destroy(struct cgroup_subsys *ss, struct cgroup *cont)
 		update_flag(CS_SCHED_LOAD_BALANCE, cs, 0);
 
 	number_of_cpusets--;
+	free_cpumask_var(cs->cpuset_cpus_allowed);
 	free_cpumask_var(cs->cpus_allowed);
 	kfree(cs);
 }
@@ -1945,9 +2090,13 @@ int __init cpuset_init(void)
 
 	if (!alloc_cpumask_var(&top_cpuset.cpus_allowed, GFP_KERNEL))
 		BUG();
+	if (!alloc_cpumask_var(&top_cpuset.cpuset_cpus_allowed, GFP_KERNEL))
+		BUG();
 
 	cpumask_setall(top_cpuset.cpus_allowed);
 	nodes_setall(top_cpuset.mems_allowed);
+	cpumask_clear(top_cpuset.cpuset_cpus_allowed);
+	nodes_clear(top_cpuset.cpuset_mems_allowed);
 
 	fmeter_init(&top_cpuset.fmeter);
 	set_bit(CS_SCHED_LOAD_BALANCE, &top_cpuset.flags);

@@ -591,11 +591,23 @@ static int __do_huge_pmd_anonymous_page(struct mm_struct *mm,
 {
 	int ret = 0;
 	pgtable_t pgtable;
+	int one;
 
 	VM_BUG_ON(!PageCompound(page));
+
+	one = ub_page_table_get_one(mm);
+	if (unlikely(one < 0)) {
+		mem_cgroup_uncharge_page(page);
+		gang_del_user_page(page);
+		put_page(page);
+		return VM_FAULT_OOM;
+	}
+
 	pgtable = pte_alloc_one(mm, haddr);
 	if (unlikely(!pgtable)) {
+		ub_page_table_put_one(mm, one);
 		mem_cgroup_uncharge_page(page);
+		gang_del_user_page(page);
 		put_page(page);
 		return VM_FAULT_OOM;
 	}
@@ -605,13 +617,16 @@ static int __do_huge_pmd_anonymous_page(struct mm_struct *mm,
 
 	spin_lock(&mm->page_table_lock);
 	if (unlikely(!pmd_none(*pmd))) {
+		ub_page_table_put_one(mm, one);
 		spin_unlock(&mm->page_table_lock);
 		mem_cgroup_uncharge_page(page);
+		gang_del_user_page(page);
 		put_page(page);
 		pte_free(mm, pgtable);
-	} else if (ub_page_table_charge(mm)) {
+	} else if (ub_page_table_charge(mm, one)) {
 		spin_unlock(&mm->page_table_lock);
 		mem_cgroup_uncharge_page(page);
+		gang_del_user_page(page);
 		put_page(page);
 		pte_free(mm, pgtable);
 		ret = VM_FAULT_OOM;
@@ -680,7 +695,12 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			goto out;
 		}
 		count_vm_event(THP_FAULT_ALLOC);
+		if (gang_add_user_page(page, get_mm_gang(mm), GFP_KERNEL)) {
+			put_page(page);
+			goto out;
+		}
 		if (unlikely(mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))) {
+			gang_del_user_page(page);
 			put_page(page);
 			goto out;
 		}
@@ -716,11 +736,18 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	pmd_t pmd;
 	pgtable_t pgtable;
 	int ret;
+	int one;
 
 	ret = -ENOMEM;
-	pgtable = pte_alloc_one(dst_mm, addr);
-	if (unlikely(!pgtable))
+	one = ub_page_table_get_one(dst_mm);
+	if (one < 0)
 		goto out;
+
+	pgtable = pte_alloc_one(dst_mm, addr);
+	if (unlikely(!pgtable)) {
+		ub_page_table_put_one(dst_mm, one);
+		goto out;
+	}
 
 	spin_lock(&dst_mm->page_table_lock);
 	spin_lock_nested(&src_mm->page_table_lock, SINGLE_DEPTH_NESTING);
@@ -728,10 +755,12 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	ret = -EAGAIN;
 	pmd = *src_pmd;
 	if (unlikely(!pmd_trans_huge(pmd))) {
+		ub_page_table_put_one(dst_mm, one);
 		pte_free(dst_mm, pgtable);
 		goto out_unlock;
 	}
 	if (unlikely(pmd_trans_splitting(pmd))) {
+		ub_page_table_put_one(dst_mm, one);
 		/* split huge page running from under us */
 		spin_unlock(&src_mm->page_table_lock);
 		spin_unlock(&dst_mm->page_table_lock);
@@ -741,7 +770,7 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		goto out;
 	}
 	ret = -ENOMEM;
-	if (ub_page_table_charge(dst_mm)) {
+	if (ub_page_table_charge(dst_mm, one)) {
 		pte_free(dst_mm, pgtable);
 		goto out_unlock;
 	}
@@ -807,12 +836,17 @@ static int do_huge_pmd_wp_page_fallback(struct mm_struct *mm,
 					       __GFP_OTHER_NODE,
 					       vma, address, page_to_nid(page));
 		if (unlikely(!pages[i] ||
+			     gang_add_user_page(pages[i], get_mm_gang(mm),
+							GFP_KERNEL) ||
 			     mem_cgroup_newpage_charge(pages[i], mm,
 						       GFP_KERNEL))) {
+			if (pages[i] && page_gang(pages[i]))
+				gang_del_user_page(pages[i]);
 			if (pages[i])
 				put_page(pages[i]);
 			while (--i >= 0) {
 				mem_cgroup_uncharge_page(pages[i]);
+				gang_del_user_page(pages[i]);
 				put_page(pages[i]);
 			}
 			kfree(pages);
@@ -867,6 +901,7 @@ out_free_pages:
 	spin_unlock(&mm->page_table_lock);
 	for (i = 0; i < HPAGE_PMD_NR; i++) {
 		mem_cgroup_uncharge_page(pages[i]);
+		gang_del_user_page(pages[i]);
 		put_page(pages[i]);
 	}
 	kfree(pages);
@@ -921,7 +956,15 @@ int do_huge_pmd_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 	count_vm_event(THP_FAULT_ALLOC);
 
+	if (gang_add_user_page(new_page, get_mm_gang(mm), GFP_KERNEL)) {
+		put_page(new_page);
+		put_page(page);
+		ret |= VM_FAULT_OOM;
+		goto out;
+	}
+
 	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))) {
+		gang_del_user_page(new_page);
 		put_page(new_page);
 		put_page(page);
 		ret |= VM_FAULT_OOM;
@@ -935,6 +978,7 @@ int do_huge_pmd_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	put_page(page);
 	if (unlikely(!pmd_same(*pmd, orig_pmd))) {
 		mem_cgroup_uncharge_page(new_page);
+		gang_del_user_page(new_page);
 		put_page(new_page);
 	} else {
 		pmd_t entry;
@@ -1758,7 +1802,17 @@ static void collapse_huge_page(struct mm_struct *mm,
 	}
 	count_vm_event(THP_COLLAPSE_ALLOC);
 #endif
+
+	if (gang_add_user_page(new_page, get_mm_gang(mm), GFP_KERNEL)) {
+		up_read(&mm->mmap_sem);
+#ifdef CONFIG_NUMA
+		put_page(new_page);
+#endif
+		return;
+	}
+
 	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))) {
+		gang_del_user_page(new_page);
 		up_read(&mm->mmap_sem);
 #ifdef CONFIG_NUMA
 		put_page(new_page);
@@ -1879,6 +1933,7 @@ out_up_write:
 
 out:
 	mem_cgroup_uncharge_page(new_page);
+	gang_del_user_page(new_page);
 #ifdef CONFIG_NUMA
 	put_page(new_page);
 #endif

@@ -739,9 +739,6 @@ void ub_unuse_swap(struct user_beancounter *ub)
 		si->flags -= SWP_SCANNING;
 	}
 
-	usage = __get_beancounter_usage_percpu(ub, UB_SWAPPAGES);
-	BUG_ON(usage);
-
 	spin_unlock(&swap_lock);
 }
 

@@ -20,46 +20,63 @@
 #include <linux/init.h>
 
 #include <bc/beancounter.h>
+#include <bc/oom_kill.h>
 #include <bc/vmpages.h>
 #include <bc/kmem.h>
 #include <bc/proc.h>
 
 int __ub_kmem_charge(struct user_beancounter *ub,
-		struct ub_percpu_struct *ub_pcpu,
-		unsigned long size, enum ub_severity strict)
+		unsigned long size, gfp_t gfp_mask)
 {
-	unsigned long charge;
-	int retval;
+	unsigned long pages, charge, flags;
+	int kmem_strict, phys_strict;
 
-	if (((ub->ub_parms[UB_KMEMSIZE].held + size) >> PAGE_SHIFT) >
-			ub->ub_parms[UB_PHYSPAGES].limit)
-		return -ENOMEM;
+	charge = size + (ub->ub_parms[UB_KMEMSIZE].max_precharge >> 1);
+	pages = PAGE_ALIGN(charge) >> PAGE_SHIFT;
 
-	charge = (size - ub_pcpu->precharge[UB_KMEMSIZE]
-			+ (ub->ub_parms[UB_KMEMSIZE].max_precharge >> 1)
-			+ PAGE_SIZE - 1) & PAGE_MASK;
+	phys_strict = UB_SOFT | UB_TEST;
+	kmem_strict = ub_gfp_sev(gfp_mask) | UB_TEST;
 
-	spin_lock(&ub->ub_lock);
-
-	retval = __charge_beancounter_locked(ub, UB_KMEMSIZE,
-			charge, strict | UB_TEST);
-	if (retval) {
-		init_beancounter_precharge(ub, UB_KMEMSIZE);
-		charge = (size - ub_pcpu->precharge[UB_KMEMSIZE]
-				+ PAGE_SIZE - 1) & PAGE_MASK;
-		retval = __charge_beancounter_locked(ub, UB_KMEMSIZE,
-				charge, strict);
-		if (retval)
-			goto out;
+	if (unlikely(gfp_mask & __GFP_NOFAIL)) {
+		kmem_strict = phys_strict = UB_FORCE | UB_TEST;
+		goto no_precharge;
 	}
-	ub_pcpu->precharge[UB_KMEMSIZE] += charge - size;
 
-	__charge_beancounter_locked(ub, UB_PHYSPAGES,
-			charge >> PAGE_SHIFT, UB_FORCE);
+	if (unlikely(irqs_disabled() || !(gfp_mask & __GFP_WAIT))) {
+		phys_strict = UB_FORCE | UB_TEST;
+		goto no_precharge;
+	}
 
-out:
-	spin_unlock(&ub->ub_lock);
-	return retval;
+	ub_oom_start(&ub->oom_ctrl);
+
+try_again:
+	while (charge_beancounter_fast(ub, UB_PHYSPAGES, pages, phys_strict)) {
+		if (ub_try_to_free_pages(ub, gfp_mask))
+			goto no_precharge;
+	}
+
+	charge = pages << PAGE_SHIFT;
+	spin_lock_irqsave(&ub->ub_lock, flags);
+	if (__charge_beancounter_locked(ub, UB_KMEMSIZE, charge, kmem_strict)) {
+		init_beancounter_precharge(ub, UB_KMEMSIZE);
+		__uncharge_beancounter_locked(ub, UB_PHYSPAGES, pages);
+		spin_unlock_irqrestore(&ub->ub_lock, flags);
+		goto no_precharge;
+	}
+	ub_percpu(ub, smp_processor_id())->
+		precharge[UB_KMEMSIZE] += charge - size;
+	spin_unlock_irqrestore(&ub->ub_lock, flags);
+
+	return 0;
+
+no_precharge:
+	if (kmem_strict & UB_TEST) {
+		kmem_strict &= ~UB_TEST;
+		pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
+		goto try_again;
+	}
+
+	return -ENOMEM;
 }
 EXPORT_SYMBOL(__ub_kmem_charge);
 
@@ -100,8 +117,7 @@ int ub_slab_charge(struct kmem_cache *cachep, void *objp, gfp_t flags)
 		return 0;
 
 	size = CHARGE_SIZE(kmem_cache_objuse(cachep));
-	if (ub_kmem_charge(ub, size,
-				(flags & __GFP_SOFT_UBC ? UB_SOFT : UB_HARD)))
+	if (ub_kmem_charge(ub, size, flags))
 		goto out_err;
 
 	*ub_slab_ptr(cachep, objp) = ub;

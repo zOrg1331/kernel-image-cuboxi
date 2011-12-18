@@ -241,7 +241,6 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 		/* Anonymous page without mapping */
 		if (page_count(page) != 1)
 			return -EAGAIN;
-		gang_add_user_page(newpage, page_gang(page)->set);
 		return 0;
 	}
 
@@ -290,7 +289,6 @@ static int migrate_page_move_mapping(struct address_space *mapping,
 	 * via NR_FILE_PAGES and NR_ANON_PAGES if they
 	 * are mapped to swap space.
 	 */
-	gang_add_user_page(newpage, get_mapping_gang(mapping));
 	__dec_zone_page_state(page, NR_FILE_PAGES);
 	__inc_zone_page_state(newpage, NR_FILE_PAGES);
 	if (PageSwapBacked(page)) {
@@ -695,6 +693,11 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	}
 	BUG_ON(charge);
 
+	if (gang_add_user_page(newpage, page_gang(page)->set, GFP_KERNEL)) {
+		rc = -ENOMEM;
+		goto uncharge;
+	}
+
 	if (PageWriteback(page)) {
 		if (!force || !sync)
 			goto uncharge;
@@ -799,7 +802,8 @@ unlock:
 move_newpage:
 
 	if (unlikely(!page_gang(newpage)))
-		gang_add_user_page(newpage, &init_gang_set);
+		gang_add_user_page(newpage, &init_gang_set,
+				GFP_KERNEL|__GFP_NOFAIL);
 	pin_mem_gang(page_gang(newpage));
 
 	/*

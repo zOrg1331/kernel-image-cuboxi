@@ -796,7 +796,6 @@ static void xs_destroy(struct rpc_xprt *xprt)
 
 	xs_close(xprt);
 	xs_free_peer_addresses(xprt);
-	put_ve(xprt->owner_env);
 	xprt_free(xprt);
 	module_put(THIS_MODULE);
 }
@@ -1705,9 +1704,6 @@ static void xs_udp_setup_socket(struct work_struct *work)
 	struct socket *sock = transport->sock;
 	int status = -EIO;
 
-	down_read(&xprt->owner_env->op_sem);
-	if (!xprt->owner_env->is_running)
-		goto out;
 	if (xprt->shutdown)
 		goto out;
 
@@ -1729,7 +1725,6 @@ static void xs_udp_setup_socket(struct work_struct *work)
 out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
-	up_read(&xprt->owner_env->op_sem);
 }
 
 /*
@@ -1841,9 +1836,6 @@ static void xs_tcp_setup_socket(struct work_struct *work)
 	struct rpc_xprt *xprt = &transport->xprt;
 	int status = -EIO;
 
-	down_read(&xprt->owner_env->op_sem);
-	if (!xprt->owner_env->is_running)
-		goto out;
 	if (xprt->shutdown)
 		goto out;
 
@@ -1896,7 +1888,6 @@ static void xs_tcp_setup_socket(struct work_struct *work)
 	case -EINPROGRESS:
 	case -EALREADY:
 		xprt_clear_connecting(xprt);
-		up_read(&xprt->owner_env->op_sem);
 		return;
 	case -EINVAL:
 		/* Happens, for instance, if the user specified a link
@@ -1909,7 +1900,6 @@ out_eagain:
 out:
 	xprt_clear_connecting(xprt);
 	xprt_wake_pending_tasks(xprt, status);
-	up_read(&xprt->owner_env->op_sem);
 }
 
 /**
@@ -2225,8 +2215,10 @@ static struct rpc_xprt *xs_setup_xprt(struct xprt_create *args,
 		int err;
 		err = xs_init_anyaddr(args->dstaddr->sa_family,
 					(struct sockaddr *)&new->srcaddr);
-		if (err != 0)
+		if (err != 0) {
+			xprt_free(xprt);
 			return ERR_PTR(err);
+		}
 	}
 
 	return xprt;

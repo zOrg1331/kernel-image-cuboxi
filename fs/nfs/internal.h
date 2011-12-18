@@ -219,10 +219,10 @@ extern int nfs_access_cache_shrinker(struct shrinker *shrink,
 
 /* inode.c */
 #ifdef CONFIG_VE
-#define nfsiod_workqueue	(get_exec_env()->_nfsiod_workqueue)
+#include <linux/ve_nfs.h>
 static inline struct workqueue_struct *inode_nfsiod_wq(struct inode *inode)
 {
-	return NFS_SERVER(inode)->nfs_client->owner_env->_nfsiod_workqueue;
+	return NFS_SERVER(inode)->nfs_client->owner_env->nfs_data->_nfsiod_workqueue;
 }
 #else
 extern struct workqueue_struct *nfsiod_workqueue;

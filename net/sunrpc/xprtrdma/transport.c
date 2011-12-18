@@ -267,7 +267,6 @@ xprt_rdma_destroy(struct rpc_xprt *xprt)
 
 	xprt_rdma_free_addresses(xprt);
 
-	put_ve(xprt->owner_env);
 	xprt_free(xprt);
 
 	dprintk("RPC:       %s: returning\n", __func__);

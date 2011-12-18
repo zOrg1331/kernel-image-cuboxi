@@ -342,10 +342,8 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 		xprt->resvport = 0;
 
 	clnt = rpc_new_client(args, xprt);
-	if (IS_ERR(clnt)) {
-		put_ve(xprt->owner_env);
+	if (IS_ERR(clnt))
 		return clnt;
-	}
 
 	if (!(args->flags & RPC_CLNT_CREATE_NOPING)) {
 		int err = rpc_ping(clnt);
@@ -1903,6 +1901,7 @@ static int ve_sunrpc_start(void *data)
 	ve->rpc_data = kzalloc(sizeof(struct ve_rpc_data), GFP_KERNEL);
 	if (ve->rpc_data == NULL)
 		goto err_rd;
+	ve_rpc_data_init();
 
 	rpc_proc_init();
 	if (proc_net_rpc == NULL)
@@ -1934,7 +1933,6 @@ err_rd:
 	return err;
 }
 
-extern void cleanup_rpcb_clnt(void);
 void ve_sunrpc_stop(void *data)
 {
 	struct ve_struct *ve = (struct ve_struct *)data;
@@ -1954,13 +1952,14 @@ void ve_sunrpc_stop(void *data)
 	}
 	spin_unlock(&rpc_client_lock);
 
-	cleanup_rpcb_clnt();
-	rpciod_stop();
 	unregister_rpc_pipefs();
 	ve_ip_map_exit();
 	rpc_proc_exit();
-	kfree(ve->rpc_data);
-	ve->rpc_data = NULL;
+	ve_rpc_data_put(ve);
+	if (ve->rpc_data)
+		printk(KERN_WARNING "CT%d: SUNRPC transports used outside CT. "
+				"Release all external references to CT's SUNRPC "
+				"data to continue shutdown.\n", ve->veid);
 }
 
 static struct ve_hook sunrpc_hook = {

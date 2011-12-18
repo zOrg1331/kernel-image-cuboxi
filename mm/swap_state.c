@@ -294,9 +294,10 @@ static struct user_beancounter *get_swapin_ub(struct page *page,
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 	rcu_read_lock();
 	ub = get_swap_ub(entry);
-	if (!get_beancounter_rcu(ub)) {
+	if (!ub || !get_beancounter_rcu(ub)) {
 		/* speedup unuse pass */
-		ub_unuse_swap_page(page);
+		if (ub)
+			ub_unuse_swap_page(page);
 		ub = get_beancounter(get_exec_ub());
 	}
 	rcu_read_unlock();
@@ -323,6 +324,7 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 {
 	struct page *found_page, *new_page = NULL;
 	int err;
+	struct user_beancounter *ub;
 
 	do {
 		/*
@@ -342,6 +344,12 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			if (!new_page)
 				break;		/* Out of memory */
 		}
+
+		ub = get_swapin_ub(new_page, entry, vma);
+		err = gang_add_user_page(new_page, get_ub_gs(ub), gfp_mask);
+		put_beancounter(ub);
+		if (err)
+			break;
 
 		/*
 		 * call radix_tree_preload() while we can wait.
@@ -368,16 +376,11 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		SetPageSwapBacked(new_page);
 		err = __add_to_swap_cache(new_page, entry);
 		if (likely(!err)) {
-			struct user_beancounter *ub;
-
 			radix_tree_preload_end();
 			/*
 			 * Initiate read into locked page and return.
 			 */
 
-			ub = get_swapin_ub(new_page, entry, vma);
-			gang_add_user_page(new_page, get_ub_gs(ub));
-			put_beancounter(ub);
 			lru_cache_add_anon(new_page);
 			swap_readpage(new_page);
 			return new_page;
@@ -392,8 +395,11 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		swapcache_free(entry, NULL);
 	} while (err != -ENOMEM);
 
-	if (new_page)
+	if (new_page) {
+		if (page_gang(new_page))
+			gang_del_user_page(new_page);
 		page_cache_release(new_page);
+	}
 	return found_page;
 }
 EXPORT_SYMBOL(read_swap_cache_async);

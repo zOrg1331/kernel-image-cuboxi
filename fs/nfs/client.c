@@ -39,6 +39,7 @@
 #include <linux/nfs_xdr.h>
 #include <linux/sunrpc/bc_xprt.h>
 #include <linux/idr.h>
+#include <linux/ve_nfs.h>
 
 #include <asm/system.h>
 
@@ -189,6 +190,7 @@ static struct nfs_client *nfs_alloc_client(const struct nfs_client_initdata *cl_
 	INIT_LIST_HEAD(&clp->cl_layouts);
 #endif
 	nfs_fscache_get_client_cookie(clp);
+	ve_nfs_data_get();
 
 	return clp;
 
@@ -287,6 +289,7 @@ static void nfs_free_client(struct nfs_client *clp)
 	if (clp->cl_machine_cred != NULL)
 		put_rpccred(clp->cl_machine_cred);
 
+	ve_nfs_data_put(clp->owner_env);
 	kfree(clp->cl_hostname);
 	kfree(clp);
 

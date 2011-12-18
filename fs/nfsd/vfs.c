@@ -72,7 +72,7 @@ struct raparm_hbucket {
 #define RAPARM_HASH_SIZE	(1<<RAPARM_HASH_BITS)
 #define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
 
-#ifndef CONFIG_VE
+#ifdef CONFIG_VE
 #define raparm_hash	((struct raparm_hbucket *)&get_exec_env()->nfsd_data->raparm_mem)
 #else
 static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];

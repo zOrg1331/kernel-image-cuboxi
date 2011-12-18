@@ -37,7 +37,7 @@ void __ub_update_oomguarpages(struct user_beancounter *ub)
 {
 	unsigned long pages[NR_LRU_LISTS];
 
-	gang_page_stat(get_ub_gs(ub), pages);
+	gang_page_stat(get_ub_gs(ub), NULL, pages);
 
 	ub->ub_parms[UB_OOMGUARPAGES].held =
 		pages[LRU_ACTIVE_ANON] +
@@ -269,11 +269,15 @@ int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask)
 	if (test_thread_flag(TIF_MEMDIE))
 		return -ENOMEM;
 
+	if (!(gfp_mask & __GFP_WAIT))
+		goto nowait;
+
 	progress = try_to_free_gang_pages(get_ub_gs(ub),
 			gfp_mask | __GFP_HIGHMEM);
 	if (progress)
 		return 0;
 
+nowait:
 	if (gfp_mask & __GFP_NOWARN)
 		goto nowarn;
 
@@ -299,6 +303,25 @@ nowarn:
 
 	return 0;
 }
+
+int __ub_phys_charge(struct user_beancounter *ub,
+		unsigned long pages, gfp_t gfp_mask)
+{
+	int strict = UB_SOFT | UB_TEST;
+
+	if ((gfp_mask & __GFP_NOFAIL) || get_exec_ub() != ub)
+		strict = UB_FORCE;
+
+	ub_oom_start(&ub->oom_ctrl);
+
+	while (charge_beancounter_fast(ub, UB_PHYSPAGES, pages, strict)) {
+		if (ub_try_to_free_pages(ub, gfp_mask))
+			return -ENOMEM;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(__ub_phys_charge);
 
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 {
@@ -431,7 +454,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub,
 	if (ret & NOTIFY_STOP_MASK)
 		goto out;
 
-	gang_page_stat(get_ub_gs(ub), mi->pages);
+	gang_page_stat(get_ub_gs(ub), NULL, mi->pages);
 
 	mi->cached = min(mi->si->totalram - mi->si->freeram,
 			mi->pages[LRU_INACTIVE_FILE] +
@@ -512,17 +535,14 @@ static void __exit fini_vmguar_notifier(void)
 module_init(init_vmguar_notifier);
 module_exit(fini_vmguar_notifier);
 
-void show_ub_mem(struct user_beancounter *ub)
+void __show_ub_mem(struct user_beancounter *ub)
 {
-	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
-
-	gang_show_state(get_ub_gs(ub));
-
-	printk(KERN_INFO "UB: %d RAM: %lu / %lu [%lu]"
+	printk(KERN_INFO "Resources: "
+			" RAM: %lu / %lu [%lu]"
 			" SWAP: %lu / %lu [%lu]"
 			" KMEM: %lu / %lu [%lu]"
+			" OOMG: %lu / %lu"
 			" Dirty %lu\n",
-			ub->ub_uid,
 			ub->ub_parms[UB_PHYSPAGES].held,
 			ub->ub_parms[UB_PHYSPAGES].limit,
 			ub->ub_parms[UB_PHYSPAGES].failcnt,
@@ -532,7 +552,16 @@ void show_ub_mem(struct user_beancounter *ub)
 			ub->ub_parms[UB_KMEMSIZE].held,
 			ub->ub_parms[UB_KMEMSIZE].limit,
 			ub->ub_parms[UB_KMEMSIZE].failcnt,
+			ub->ub_parms[UB_OOMGUARPAGES].held,
+			ub->ub_parms[UB_OOMGUARPAGES].barrier,
 			ub_stat_get(ub, dirty_pages));
+}
+
+void show_ub_mem(struct user_beancounter *ub)
+{
+	printk(KERN_INFO "UB-%d-Mem-Info:\n", ub->ub_uid);
+	gang_show_state(get_ub_gs(ub));
+	__show_ub_mem(ub);
 }
 
 #ifdef CONFIG_PROC_FS

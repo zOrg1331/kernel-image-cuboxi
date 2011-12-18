@@ -35,7 +35,6 @@
 #undef task_pt_regs
 #define task_pt_regs(t) ((struct pt_regs *)((t)->thread.sp0) - 1)
 #endif
-#include <linux/ve_nfs.h>
 
 int check_task_state(struct task_struct *tsk, struct cpt_context *ctx)
 {
@@ -759,12 +758,6 @@ int cpt_skip_task(struct task_struct *tsk)
 
 	if (tsk == current)
 		return 1;
-
-#if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
-	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
-	if (tsk->ve_task_info.owner_env->_nlmsvc_task == tsk)
-		return 1;
-#endif
 
 	return 0;
 }

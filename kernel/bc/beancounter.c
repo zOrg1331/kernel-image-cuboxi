@@ -40,6 +40,7 @@
 #include <bc/beancounter.h>
 #include <bc/io_acct.h>
 #include <bc/vmpages.h>
+#include <bc/dcache.h>
 #include <bc/proc.h>
 
 static struct kmem_cache *ub_cachep;
@@ -143,6 +144,7 @@ void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge)
 		for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
 			precharge[resource] += pcpu->precharge[resource];
 	}
+	precharge[UB_PHYSPAGES] += precharge[UB_KMEMSIZE] >> PAGE_SHIFT;
 	precharge[UB_OOMGUARPAGES] = precharge[UB_SWAPPAGES];
 }
 
@@ -151,13 +153,17 @@ static void uncharge_beancounter_precharge(struct user_beancounter *ub)
 	int resource, precharge[UB_RESOURCES];
 
 	ub_precharge_snapshot(ub, precharge);
-	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ ) {
+	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
+		ub->ub_parms[resource].held -= precharge[resource];
+}
+
+static void forbid_beancounter_precharge(struct user_beancounter *ub)
+{
+	int resource;
+
+	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
 		/* DEBUG: to trigger BUG_ON in precharge/charge/uncharge */
 		ub->ub_parms[resource].max_precharge = -1;
-		ub->ub_parms[resource].held -= precharge[resource];
-	}
-
-	ub->ub_parms[UB_PHYSPAGES].held -= precharge[UB_KMEMSIZE] >> PAGE_SHIFT;
 }
 
 static void init_beancounter_struct(struct user_beancounter *ub);
@@ -371,6 +377,8 @@ static inline int bc_verify_held(struct user_beancounter *ub)
 			__ub_stat_get(ub, dirty_pages));
 	clean &= verify_res(ub, "tmpfs_respages", ub->ub_tmpfs_respages);
 
+	clean &= verify_res(ub, "refcount", atomic_read(&ub->ub_refcount));
+
 	clean &= verify_res(ub, "pincount", __ub_percpu_sum(ub, pincount));
 
 	clean &= verify_res(ub, "dcache", !list_empty(&ub->ub_dentry_lru));
@@ -403,14 +411,14 @@ static void delayed_release_beancounter(struct work_struct *w)
 		/* raced with get_beancounter_byuid */
 		goto out;
 
-	if (WARN_ON(refcount < 0)) {
-		printk(KERN_ERR "UB: Bad refcount (%d) on put of %u (%p)\n",
-				refcount, ub->ub_uid, ub);
+	if (WARN_ON((ub == get_ub0()))) {
+		printk(KERN_ERR "UB: Trying to put ub0\n");
 		goto out;
 	}
 
-	if (WARN_ON((ub == get_ub0()))) {
-		printk(KERN_ERR "Trying to put ub0\n");
+	if (hlist_unhashed(&ub->ub_hash)) {
+		printk(KERN_ERR "UB: Trying to put unhashed ub %u (%p)\n",
+				ub->ub_uid, ub);
 		goto out;
 	}
 
@@ -419,16 +427,23 @@ static void delayed_release_beancounter(struct work_struct *w)
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
+	if (WARN_ON(refcount < 0))
+		printk(KERN_ERR "UB: Bad refcount (%d) on put of %u (%p)\n",
+				refcount, ub->ub_uid, ub);
+
 	splice_mem_gangs(get_ub_gs(ub), &init_gang_set);
 	ub_unuse_swap(ub);
+	ub_dcache_unuse(ub);
 
-	if (!bc_verify_held(ub)) {
+	if (!bc_verify_held(ub) || refcount) {
+		atomic_add(INT_MIN/2, &ub->ub_refcount);
 		printk(KERN_ERR "UB: leaked beancounter %u (%p)\n",
 				ub->ub_uid, ub);
 		add_taint(TAINT_CRAP);
 		return;
 	}
 
+	forbid_beancounter_precharge(ub);
 	del_mem_gangs(get_ub_gs(ub));
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);
@@ -682,6 +697,7 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 #ifndef CONFIG_BC_KEEP_UNUSED
 	INIT_WORK(&ub->work, delayed_release_beancounter);
 #endif
+	INIT_LIST_HEAD(&ub->ub_dentry_top);
 	init_oom_control(&ub->oom_ctrl);
 	spin_lock_init(&ub->rl_lock);
 	ub->rl_wall.tv64 = LLONG_MIN;
@@ -798,7 +814,7 @@ out:
 static ctl_table ub_sysctl_table[] = {
 	{
 		.procname	= "resource_precharge",
-		.ctl_name	= -2,
+		.ctl_name	= CTL_UNNUMBERED,
 		.data		= &ub_resource_precharge,
 		.extra1		= &resource_precharge_min,
 		.extra2		= &resource_precharge_max,
@@ -837,7 +853,7 @@ static ctl_table ub_sysctl_table[] = {
 
 static ctl_table ub_sysctl_root[] = {
        {
-	       .ctl_name	= -2,
+	       .ctl_name	= CTL_UNNUMBERED,
 	       .procname	= "ubc",
 	       .mode		= 0555,
 	       .child		= ub_sysctl_table,

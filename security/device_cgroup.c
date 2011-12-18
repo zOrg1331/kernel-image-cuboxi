@@ -98,7 +98,8 @@ static struct dev_whitelist_item default_whitelist_items[] = {
 	{ TTYAUX_MAJOR,  /* tty */ 0, DEV_CHAR, ACC_READ | ACC_WRITE },
 	{ TTYAUX_MAJOR, /* ptmx */ 2, DEV_CHAR, ACC_READ | ACC_WRITE },
 	{ MEM_MAJOR,  /* random */ 8, DEV_CHAR, ACC_READ },
-	{ MEM_MAJOR, /* urandom */ 9, DEV_CHAR, ACC_READ },
+	{ MEM_MAJOR, /* urandom */ 9, DEV_CHAR, ACC_READ | ACC_WRITE },
+	{ MEM_MAJOR, /* kmsg */ 11, DEV_CHAR, ACC_WRITE },
 };
 
 static LIST_HEAD(default_perms);
