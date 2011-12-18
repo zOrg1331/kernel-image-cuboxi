@@ -56,11 +56,6 @@ extern int	nlmclnt_proc(struct nlm_host *host, int cmd,
 extern int	lockd_up(void);
 extern void	lockd_down(void);
 
-#ifdef CONFIG_VE
-extern void	ve_nlm_init(struct ve_struct *ve);
-extern void	ve_nlm_prepare_to_shutdown(struct ve_struct *ve);
-#endif
-
 extern int	nlmclnt_set_lockowner(struct inode *,
 		struct file_lock *, fl_owner_t, int);
 extern int	nlmclnt_reserve_pid(int pid);

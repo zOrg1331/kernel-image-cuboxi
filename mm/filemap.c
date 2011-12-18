@@ -435,9 +435,13 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 {
 	int error;
 
+	error = gang_add_user_page(page, get_mapping_gang(mapping), gfp_mask);
+	if (error)
+		return error;
+
 	error = add_to_page_cache_nogang(page, mapping, offset, gfp_mask);
-	if (likely(!error))
-		gang_add_user_page(page, get_mapping_gang(mapping));
+	if (error)
+		gang_del_user_page(page);
 
 	return error;
 }

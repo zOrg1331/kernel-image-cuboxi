@@ -1380,14 +1380,16 @@ void ve_sched_attach(struct ve_struct *target_ve)
 	struct task_struct *tsk;
 	unsigned int cpu;
 	u64 now;
+	unsigned long flags;
+	struct rq *rq;
 
 	tsk = current;
-	preempt_disable();
+	rq = task_rq_lock(tsk, &flags);
 	now = local_clock();
 	cpu = task_cpu(tsk);
 	ve_nr_running_dec(VE_TASK_INFO(tsk)->owner_env, cpu, now);
 	ve_nr_running_inc(target_ve, cpu, now);
-	preempt_enable();
+	task_rq_unlock(rq, &flags);
 }
 EXPORT_SYMBOL(ve_sched_attach);
 
@@ -8232,8 +8234,8 @@ void sched_show_task(struct task_struct *p)
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
 #endif
-	printk(KERN_CONT "%5lu %5d %6d 0x%08lx\n", free,
-		task_pid_nr(p), task_pid_nr(p->real_parent),
+	printk(KERN_CONT "%5lu %5d %6d %4u 0x%08lx\n", free,
+		task_pid_nr(p), task_pid_nr(p->real_parent), task_veid(p),
 		(unsigned long)task_thread_info(p)->flags);
 
 	show_stack(p, NULL);
@@ -8245,10 +8247,10 @@ void show_state_filter(unsigned long state_filter)
 
 #if BITS_PER_LONG == 32
 	printk(KERN_INFO
-		"  task          taskaddr stack   pid father\n");
+		"  task          taskaddr stack   pid father veid\n");
 #else
 	printk(KERN_INFO
-		"  task                  taskaddr stack   pid father\n");
+		"  task                  taskaddr stack   pid father veid\n");
 #endif
 	read_lock(&tasklist_lock);
 	do_each_thread_all(g, p) {

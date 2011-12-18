@@ -164,7 +164,16 @@ int rst_iter(struct vm_area_struct *vma, u64 pfn,
 	if (unlikely(!pmd))
 		return -ENOMEM;
 
+	split_huge_page_pmd(mm, pmd);
+
 	pte = pte_alloc_map_lock(mm, pmd, addr, &ptl);
+
+	if (pte && !pte_none(*pte)) {
+		pte_unmap_unlock(pte, ptl);
+		zap_vma_ptes(vma, addr, PAGE_SIZE);
+		pte = pte_alloc_map_lock(mm, pmd, addr, &ptl);
+	}
+
 	if (unlikely(!pte))
 		return -ENOMEM;
 
@@ -272,21 +281,25 @@ static struct page *dontread_swap_cache(swp_entry_t entry, struct file *file,
 			new_page = alloc_page(GFP_HIGHUSER);
 			if (!new_page)
 				break;		/* Out of memory */
+			if (gang_add_user_page(new_page, get_ub_gs(ub), GFP_KERNEL))
+				break;
 		}
 
 		lock_page(new_page);
 		SetPageSwapBacked(new_page);
 		err = add_to_swap_cache(new_page, entry, GFP_KERNEL);
 		if (!err) {
-			gang_add_user_page(new_page, get_ub_gs(ub));
 			lru_cache_add_anon(new_page);
 			goto dirty_page;
 		}
 		unlock_page(new_page);
 	} while (err != -ENOENT && err != -ENOMEM);
 
-	if (new_page)
+	if (new_page) {
+		if (page_gang(new_page))
+			gang_del_user_page(new_page);
 		page_cache_release(new_page);
+	}
 	if (found_page) {
 		lock_page(found_page);
 		new_page = found_page;
@@ -396,11 +409,18 @@ int rst_iteration(cpt_context_t *ctx)
 		if (page == NULL)
 			break;
 
+		err = gang_add_user_page(page, get_ub_gs(ub), GFP_KERNEL);
+		if (err) {
+			page_cache_release(page);
+			break;
+		}
+
 		dst = kmap(page);
 		err = nread(file, dst, PAGE_SIZE);
 		kunmap(page);
 
 		if (err) {
+			gang_del_user_page(page);
 			page_cache_release(page);
 			break;
 		}
@@ -410,15 +430,16 @@ int rst_iteration(cpt_context_t *ctx)
 		SetPageUptodate(page);
 		SetPageSwapBacked(page);
 		if (add_to_swap(page, ub)) {
-			gang_add_user_page(page, get_ub_gs(ub));
 			lru_cache_add_anon(page);
 			ent.val = page->private;
 		}
 		unlock_page(page);
 		page_cache_release(page);
 		err = -ENOMEM;
-		if (ent.val == 0)
+		if (ent.val == 0) {
+			gang_del_user_page(page);
 			break;
+		}
 
 		err = rb_insert_pfn(rep.handle, ent, ctx);
 		if (err)

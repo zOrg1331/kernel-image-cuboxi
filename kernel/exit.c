@@ -1203,7 +1203,7 @@ static int __entered_pid(struct wait_opts *wo, struct task_struct *p)
 	struct pid *pid, *wo_pid;
 
 	wo_pid = wo->wo_pid;
-	if (wo_pid->level != 0)
+	if ((wo_pid == NULL) || (wo_pid->level != 0))
 		return 0;
 
 	pid = task_pid_type(p, wo->wo_type);

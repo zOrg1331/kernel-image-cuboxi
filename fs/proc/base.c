@@ -1141,8 +1141,8 @@ static ssize_t oom_adjust_write(struct file *file, const char __user *buf,
 	if ((oom_adjust < OOM_ADJUST_MIN || oom_adjust > OOM_ADJUST_MAX) &&
 	     oom_adjust != OOM_DISABLE)
 		return -EINVAL;
-	if (oom_adjust == OOM_DISABLE && !ve_is_super(get_exec_env()))
-		return -EPERM;
+	if (!ve_is_super(get_exec_env()))
+		return count;
 
 	task = get_proc_task(file->f_path.dentry->d_inode);
 	if (!task)

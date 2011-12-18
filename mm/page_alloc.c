@@ -2177,8 +2177,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 
 	__alloc_collect_stats(gfp_mask, order, page, start);
 	if (page && (gfp_mask & __GFP_UBC) &&
-			ub_page_charge(page, order, get_exec_ub(),
-				(gfp_mask & __GFP_SOFT_UBC) ? UB_SOFT : UB_HARD)) {
+		ub_page_charge(page, order, get_exec_ub(), gfp_mask)) {
 		__free_pages(page, order);
 		page = NULL;
 	}

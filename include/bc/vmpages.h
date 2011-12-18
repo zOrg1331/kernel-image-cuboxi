@@ -98,6 +98,27 @@ SWP_DECLARE_VOID_FUNC(ub_swapentry_unuse(struct swap_info_struct *si, pgoff_t n)
 
 int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask);
 
+extern int __ub_phys_charge(struct user_beancounter *ub,
+		unsigned long pages, gfp_t gfp_mask);
+
+static inline int ub_phys_charge(struct user_beancounter *ub,
+		unsigned long pages, gfp_t gfp_mask)
+{
+	if (__try_charge_beancounter_percpu(ub, ub_percpu(ub, get_cpu()),
+				UB_PHYSPAGES, pages)) {
+		put_cpu();
+		return __ub_phys_charge(ub, pages, gfp_mask);
+	}
+	put_cpu();
+	return 0;
+}
+
+static inline void ub_phys_uncharge(struct user_beancounter *ub,
+		unsigned long pages)
+{
+	uncharge_beancounter_fast(ub, UB_PHYSPAGES, pages);
+}
+
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size);
 
 static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
@@ -125,6 +146,19 @@ static inline int ub_precharge_hpage(struct mm_struct *mm)
 #endif
 
 #else /* CONFIG_BC_RSS_ACCOUNTING */
+
+static inline int ub_phys_charge(struct user_beancounter *ub,
+		unsigned long pages, gfp_t gfp_mask)
+{
+	return charge_beancounter_fast(ub, UB_PHYSPAGES, pages, UB_FORCE);
+}
+
+static inline void ub_phys_uncharge(struct user_beancounter *ub,
+		unsigned long pages)
+{
+	uncharge_beancounter_fast(ub, UB_PHYSPAGES, pages);
+}
+
 static inline int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 {
 	return 0;
@@ -136,6 +170,7 @@ static inline int ub_precharge_hpage(struct mm_struct *mm)
 }
 #endif /* CONFIG_BC_RSS_ACCOUNTING */
 
+void __show_ub_mem(struct user_beancounter *ub);
 void show_ub_mem(struct user_beancounter *ub);
 
 #endif /* __UB_PAGES_H_ */

@@ -24,6 +24,7 @@
 #include <linux/ve_nfs.h>
 #include <linux/fs_struct.h>
 #include <linux/fdtable.h>
+#include <linux/pipe_fs_i.h>
 #include <net/af_unix.h>
 
 #include "cpt_obj.h"
@@ -45,6 +46,11 @@ enum {
 	SB_LOCKED,
 	SB_FINISHED,
 	SB_BROKEN
+};
+
+struct delayfs_file_private {
+	struct delayed_flock_info *dfi;
+	struct file *real_fs_file;
 };
 
 struct delay_sb_info {
@@ -118,6 +124,7 @@ static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	static DEFINE_MUTEX(lock); /* protect cross-thread remmap */
 	int ret = 0;
 	pgoff_t offset = vmf->pgoff;
+	struct delayfs_file_private *priv;
 
 	mutex_lock(&lock);
 	if (vma->vm_ops->fault != delay_fault) {
@@ -130,13 +137,19 @@ static int delay_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	mutex_unlock(&lock);
 
 	si = fake->f_dentry->d_sb->s_fs_info;
-	real = (struct file **)&fake->f_dentry->d_fsdata;
+	priv = fake->private_data;
+	real = &priv->real_fs_file;
 
 	D("addr:%p mnt:%p file:%p(%s)", (void *)offset, fake->f_vfsmnt, fake, FNAME(fake));
 	if (debug_level > 3)
 		dump_stack();
 
 	if (si->state == SB_INITIAL) {
+		if (vma->vm_flags & VM_SHARED) {
+			ret = VM_FAULT_SIGBUS;
+			goto out_put;
+		}
+		/* special case for restoring private mappings */
 		vmf->page = ZERO_PAGE(address);
 		get_page(vmf->page);
 		goto out_put;
@@ -178,19 +191,22 @@ static void delay_switch_mm(struct mm_struct *mm, struct super_block *sb)
 {
 	struct vm_area_struct *vma;
 	struct file *fake, *real, *exe;
+	struct delayfs_file_private *priv;
 
 	down_write(&mm->mmap_sem);
 	for ( vma = mm->mmap ; vma ; vma = vma->vm_next ) {
 		fake = vma->vm_file;
 		if (!fake || fake->f_vfsmnt->mnt_sb != sb)
 			continue;
-		real = vma->vm_file->f_dentry->d_fsdata;
+		priv = vma->vm_file->private_data;
+		real = priv->real_fs_file;
 		if (real)
 			delay_remmap(vma, fake, real);
 	}
 	exe = mm->exe_file;
 	if (exe && exe->f_vfsmnt->mnt_sb == sb) {
-		real = exe->f_dentry->d_fsdata;
+		priv = exe->private_data;
+		real = priv->real_fs_file;
 		if (real && !IS_ERR(real)) {
 			get_file(real);
 			fput(exe);
@@ -238,10 +254,13 @@ out:
 static void apply_delayed_locks(struct file *fake, struct file *real)
 {
 	struct delayed_flock_info *dfi;
+	struct delayfs_file_private *priv;
 
-	while (fake->private_data != NULL) {
-		dfi = fake->private_data;
-		fake->private_data = dfi->next;
+	priv = fake->private_data;
+ 
+	while (priv->dfi != NULL) {
+		dfi = priv->dfi;
+		priv->dfi = dfi->next;
 		delayed_flock(dfi, real);
 	}
 }
@@ -251,6 +270,7 @@ static void delay_switch_fd(struct files_struct *files, struct super_block *sb)
 	struct fdtable *fdt;
 	int i;
 	struct file *fake, *real, *rel = NULL;
+	struct delayfs_file_private *priv;
 
 	i = 0;
 restart:
@@ -261,7 +281,8 @@ restart:
 		if (!fake || fake->f_vfsmnt->mnt_sb != sb)
 			continue;
 
-		real = fake->f_dentry->d_fsdata;
+		priv = fake->private_data;
+		real = priv->real_fs_file;
 		if (!real || IS_ERR(real))
 			continue;
 
@@ -271,7 +292,7 @@ restart:
 
 		apply_delayed_locks(fake, real);
 
-		fake->private_data = rel;
+		priv->dfi = (void *)rel;
 		rel = fake;
 		goto restart;
 	}
@@ -281,8 +302,9 @@ restart:
 
 	while (rel != NULL) {
 		fake = rel;
-		rel = fake->private_data;
-		fake->private_data = NULL;
+		priv = fake->private_data;
+		rel = (struct file *)priv->dfi;
+		priv->dfi = NULL;
 		fput(fake);
 	}
 }
@@ -290,18 +312,33 @@ restart:
 static void delay_switch_fs(struct fs_struct *fs, struct super_block *sb)
 {
 	struct file *filp;
+	struct path old_root = { .dentry = NULL, .mnt = NULL };
+	struct path old_pwd  = { .dentry = NULL, .mnt = NULL };
+
+	spin_lock(&fs->lock);
 
 	if (fs->root.mnt->mnt_sb == sb) {
 		filp = fs->root.dentry->d_fsdata;
-		if (filp && !IS_ERR(filp))
-			set_fs_root(fs, &filp->f_path);
+		if (!IS_ERR_OR_NULL(filp)) {
+			old_root = fs->root;
+			fs->root = filp->f_path;
+			path_get(&fs->root);
+		}
 	}
 
 	if (fs->pwd.mnt->mnt_sb == sb) {
 		filp = fs->pwd.dentry->d_fsdata;
-		if (filp && !IS_ERR(filp))
-			set_fs_pwd(fs, &filp->f_path);
+		if (!IS_ERR_OR_NULL(filp)) {
+			old_pwd = fs->pwd;
+			fs->pwd = filp->f_path;
+			path_get(&fs->pwd);
+		}
 	}
+
+	spin_unlock(&fs->lock);
+
+	path_put(&old_root);
+	path_put(&old_pwd);
 }
 
 static void delay_switch_current(struct super_block *sb)
@@ -428,7 +465,8 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si);
 static int delayfs_wait_file(struct file *fake)
 {
 	struct delay_sb_info *si = fake->f_dentry->d_sb->s_fs_info;
-	struct file **real = (struct file **)&fake->f_dentry->d_fsdata;
+	struct delayfs_file_private *priv = fake->private_data;
+	struct file **real = &priv->real_fs_file;
 	long res;
 
 	if (si->state == SB_INITIAL) {
@@ -441,8 +479,14 @@ static int delayfs_wait_file(struct file *fake)
 	if (debug_level > 3)
 		dump_stack();
 
-	res = wait_event_interruptible_timeout(si->blocked_tasks,
-				si->real, si->delay_tmo);
+	if (S_ISFIFO(fake->f_dentry->d_inode->i_mode) &&
+		((fake->f_mode & (FMODE_READ|FMODE_WRITE)) !=
+				 (FMODE_READ|FMODE_WRITE)))
+		res = wait_event_interruptible_timeout(si->blocked_tasks,
+						*real, si->delay_tmo);
+	else
+		res = wait_event_interruptible_timeout(si->blocked_tasks,
+					si->real, si->delay_tmo);
 	if (!res)
 		return -EIO;
 	if (res < 0)
@@ -680,14 +724,51 @@ static ssize_t delay_splice_read(struct file *filp, loff_t *ppos,
 static int delay_release(struct inode *ino, struct file *f)
 {
 	struct delayed_flock_info *dfi;
+	struct delayfs_file_private *priv;
 
-	while (f->private_data) {
-		dfi = f->private_data;
-		f->private_data = dfi->next;
+	priv = f->private_data;
+
+	while (priv->dfi) {
+		dfi = priv->dfi;
+		priv->dfi = dfi->next;
 
 		if (dfi->fl)
 			locks_free_lock(dfi->fl);
 		kfree(dfi);
+	}
+
+	if (!IS_ERR_OR_NULL(priv->real_fs_file))
+		fput(priv->real_fs_file);
+
+	if (S_ISFIFO(ino->i_mode))
+		pipe_release(ino, (f->f_mode & FMODE_READ) != 0,
+				  (f->f_mode & FMODE_WRITE)!= 0);
+	kfree(f->private_data);
+
+	return 0;
+}
+
+static int delay_open(struct inode *inode, struct file *file)
+{
+	file->private_data = kzalloc(sizeof(struct delayfs_file_private), GFP_KERNEL);
+	if (!file->private_data)
+		return -ENOMEM;
+
+	if (S_ISFIFO(inode->i_mode)) {
+		mutex_lock(&inode->i_mutex);
+		if (!inode->i_pipe) {
+			inode->i_pipe = alloc_pipe_info(inode);
+			if (!inode->i_pipe) {
+				mutex_unlock(&inode->i_mutex);
+				kfree(file->private_data);
+				eprintk("%s: failed to allocate pipe buffer\n", __func__);
+				return -ENOMEM;
+			}
+			inode->i_private = (void *)1; /* need pipe data swap */
+		}
+		inode->i_pipe->readers += ((file->f_mode & FMODE_READ) != 0);
+		inode->i_pipe->writers += ((file->f_mode & FMODE_WRITE) != 0);
+		mutex_unlock(&inode->i_mutex);
 	}
 	return 0;
 }
@@ -697,7 +778,7 @@ static struct file_operations delay_dir_fops = {
 	.unlocked_ioctl = delay_ioctl,
 	.compat_ioctl	= delay_ioctl,
 	.mmap = delay_mmap,
-	/* .open	= not required */
+	.open		= delay_open,
 	.release	= delay_release,
 	.llseek		= delay_llseek,
 	.read		= delay_read,
@@ -1123,11 +1204,45 @@ static int make_flags(struct file *filp)
 	return flags;
 }
 
+static struct file *delayfs_preopen_pipe(struct file *fake, struct nameidata *nd, int flags)
+{
+	struct file *real;
+
+	if (fake->f_mode & FMODE_READ)
+		real = dentry_open(nd->path.dentry, nd->path.mnt, flags, current_cred());
+	else {
+		struct file *tmp;
+
+		tmp = dentry_open(nd->path.dentry, nd->path.mnt, O_RDWR|O_NONBLOCK, current_cred());
+		if (IS_ERR(tmp))
+			return tmp;
+		real = dentry_open(dget(tmp->f_dentry), mntget(tmp->f_vfsmnt), flags, current_cred());
+		fput(tmp);
+	}
+
+	if (!IS_ERR(real)) {
+		int need_pipe_swap;
+		struct inode *inode = fake->f_dentry->d_inode;
+
+		mutex_lock(&inode->i_mutex);
+		need_pipe_swap = (int)inode->i_private;
+		inode->i_private = (void *)0;
+		mutex_unlock(&inode->i_mutex);
+
+		if (need_pipe_swap)
+			swap_pipe_info(real->f_dentry->d_inode,
+					fake->f_dentry->d_inode);
+	}
+
+	return real;
+}
+
 static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 {
 	struct nameidata nd;
 	struct file *real;
 	int err, flags;
+	struct delayfs_file_private *priv = fake->private_data;
 
 	flags = make_flags(fake);
 
@@ -1140,7 +1255,10 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 	if (err)
 		goto out;
 
-	real = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
+	if (S_ISFIFO(fake->f_dentry->d_inode->i_mode))
+		real = delayfs_preopen_pipe(fake, &nd, flags);
+	else
+		real = dentry_open(nd.path.dentry, nd.path.mnt, flags, current_cred());
 	err = PTR_ERR(real);
 	if (IS_ERR(real))
 		goto out;
@@ -1148,6 +1266,7 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 	D("real:%p mnt:%p de:%p ino:%p", real, real->f_vfsmnt, real->f_dentry,
 			real->f_dentry->d_inode);
 
+	real->f_flags = fake->f_flags;
 	if (fake->f_pos != real->f_pos) {
 		loff_t off;
 
@@ -1159,8 +1278,15 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 	}
 
 	spin_lock(&si->file_lock);
-	if (!fake->f_dentry->d_fsdata) {
-		fake->f_dentry->d_fsdata = real;
+	if (!priv->real_fs_file) {
+		priv->real_fs_file = real;
+		/* We need this assigment for restoring fs root and pwd */
+		if (fake->f_dentry->d_fsdata == NULL) {
+			fake->f_dentry->d_fsdata = real;
+			get_file(real);
+		} else
+			WARN_ON(real->f_dentry !=
+				((struct file *)fake->f_dentry->d_fsdata)->f_dentry);
 		real = NULL;
 	}
 	spin_unlock(&si->file_lock);
@@ -1177,6 +1303,9 @@ out:
 
 static void delayfs_break(struct file *fake)
 {
+	struct delayfs_file_private *priv = fake->private_data;
+
+	priv->real_fs_file = ERR_PTR(-EIO);
 	fake->f_dentry->d_fsdata = ERR_PTR(-EIO);
 }
 
@@ -1186,10 +1315,12 @@ static void delay_break_all(struct cpt_delayed_context *ctx)
 	struct file *file;
 	struct vfsmount *mnt;
 	struct delay_sb_info *si;
+	struct delayfs_file_private *priv;
 
 	for_each_object(obj, CPT_DOBJ_FILE) {
 		file = obj->o_obj;
-		if (file->f_dentry->d_fsdata == NULL)
+		priv = file->private_data;
+		if (priv->real_fs_file == NULL)
 			delayfs_break(file);
 	}
 
@@ -1230,7 +1361,8 @@ void destroy_delayed_context(struct cpt_delayed_context *dctx)
 
 static int delayfs_sillyrename(struct file *fake)
 {
-	struct file *real = fake->f_dentry->d_fsdata;
+	struct delayfs_file_private *priv = fake->private_data;
+	struct file *real = priv->real_fs_file;
 	int err;
 
 	if (!real || IS_ERR(real))
@@ -1285,6 +1417,7 @@ static void delayfs_resume(struct cpt_delayed_context *ctx,
 	cpt_object_t *obj, *nobj;
 	struct vfsmount *mnt;
 	struct file *file;
+	struct delayfs_file_private *priv;
 
 	/* mount */
 	for_each_object_safe(obj, nobj, CPT_DOBJ_VFSMOUNT_REF) {
@@ -1308,7 +1441,8 @@ static void delayfs_resume(struct cpt_delayed_context *ctx,
 		file = obj->o_obj;
 		si = file->f_vfsmnt->mnt_sb->s_fs_info;
 		/* mount is broken or already reopened */
-		if (!si->real || file->f_dentry->d_fsdata != NULL)
+		priv = file->private_data;
+		if (!si->real || priv->real_fs_file != NULL)
 			continue;
 
 		ret = delayfs_preopen(file, si);
@@ -1462,6 +1596,7 @@ int rst_delay_flock(struct file *f, struct cpt_flock_image *fli,
 	int err;
 	struct delayed_flock_info *dfi;
 	struct file_lock *fl;
+	struct delayfs_file_private *priv;
 
 	err = -EINVAL;
 	if (!cpt_object_has(fli, cpt_svid) ||
@@ -1517,11 +1652,13 @@ int rst_delay_flock(struct file *f, struct cpt_flock_image *fli,
 		}
 	}
 
-	dfi->fl = fl;
-	dfi->svid = fli->cpt_svid;
-	dfi->next = f->private_data;
+	priv = f->private_data;
 
-	f->private_data = dfi;
+ 	dfi->fl = fl;
+ 	dfi->svid = fli->cpt_svid;
+	dfi->next = priv->dfi;
+ 
+	priv->dfi = dfi;
 	return 0;
 
 out2:

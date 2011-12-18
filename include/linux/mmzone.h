@@ -16,6 +16,8 @@
 #include <linux/nodemask.h>
 #include <linux/pageblock-flags.h>
 #include <linux/bounds.h>
+#include <linux/workqueue.h>
+#include <linux/mutex.h>
 #include <asm/atomic.h>
 #include <asm/page.h>
 
@@ -287,9 +289,23 @@ struct zone_reclaim_stat {
 
 struct gang;
 
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+struct gangs_migration_work {
+	struct delayed_work dwork;
+	nodemask_t src_nodes;
+	nodemask_t dest_nodes;
+	int cur_node, preferred_node;
+	unsigned long batch;
+	struct mutex lock;
+};
+#endif
+
 struct gang_set {
 #ifdef CONFIG_MEMORY_GANGS
 	struct gang		**gangs;
+#endif
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+	struct gangs_migration_work migration_work;
 #endif
 	struct zone_reclaim_stat reclaim_stat;
 };
@@ -307,6 +323,9 @@ struct gang {
 		unsigned long nr_pages;
 	} lru[NR_LRU_LISTS];
 	unsigned long		pages_scanned;
+#ifdef CONFIG_MEMORY_GANGS_MIGRATION
+	unsigned long nr_migratepages; /* number of pages to migrate */
+#endif
 };
 
 struct zone {

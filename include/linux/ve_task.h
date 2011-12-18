@@ -56,6 +56,7 @@ extern struct ve_struct ve0;
 	})
 #define get_env_init(ve)	(ve->ve_ns->pid_ns->child_reaper)
 #define get_exec_env_init()	get_env_init(get_exec_env())
+#define task_veid(t)		((t)->ve_task_info.owner_env->veid)
 #else
 #define get_ve0()		(NULL)
 #define get_exec_env()		(NULL)
@@ -64,6 +65,7 @@ extern struct ve_struct ve0;
 #define ve_restore_context(t)	do { } while (0)
 #define get_env_init(ve)	(&init_task)
 #define get_exec_env_init()	(&init_task)
+#define task_veid(t)		(0)
 #endif
 
 #endif /* __VE_TASK_H__ */

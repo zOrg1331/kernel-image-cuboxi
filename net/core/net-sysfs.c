@@ -929,3 +929,20 @@ int netdev_kobject_init(void)
 	prepare_sysfs_netdev();
 	return class_register(&net_class);
 }
+
+/*
+ * device_add helper to detect net class provider devices and
+ * do not add to them ve_device property
+ */
+int is_dev_netdev(struct device *dev)
+{
+	/*
+	 * At early stages the class is NULL and the visible_net_class of VE is
+	 * NULL too, which cause all devices became netdevs, of course
+	 * this situation must be avoided.
+	 */
+	if (!dev->class)
+		return 0;
+
+	return (dev->class == &visible_net_class);
+}

@@ -344,7 +344,7 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t vpid)
 
 #ifdef CONFIG_BEANCOUNTERS
 	ub = get_exec_ub();
-	if (ub_kmem_charge(ub, kmem_cache_objuse(ns->pid_cachep), UB_HARD))
+	if (ub_kmem_charge(ub, kmem_cache_objuse(ns->pid_cachep), GFP_KERNEL))
 		goto out_free;
 	pid->ub = get_beancounter(ub);
 #endif

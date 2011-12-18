@@ -414,15 +414,8 @@ struct rpc_filelist {
 struct vfsmount *rpc_get_mount(void)
 {
 	int err;
-	struct ve_struct *ve;
-	struct user_beancounter *ub;
 
-	ve = set_exec_env(get_ve0());
-	ub = set_exec_ub(get_ub0());
 	err = simple_pin_fs(&rpc_pipe_fs_type, &rpc_mount, &rpc_mount_count);
-	set_exec_ub(ub);
-	set_exec_env(ve);
-
 	if (err != 0)
 		return ERR_PTR(err);
 	return rpc_mount;

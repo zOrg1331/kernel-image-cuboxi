@@ -17,6 +17,31 @@ void ub_oom_start(struct oom_control *oom_ctrl)
 	current->task_bc.oom_generation = oom_ctrl->generation;
 }
 
+static inline int oom_ctrl_id(struct oom_control *ctrl)
+{
+	return (ctrl == &global_oom_ctrl ? -1 :
+			container_of(ctrl, struct user_beancounter,
+				oom_ctrl)->ub_uid);
+}
+
+static void __ub_release_oom_control(struct oom_control *oom_ctrl, char *why)
+{
+	printk("<<< %d oom generation %d ends (%s)\n",
+			oom_ctrl_id(oom_ctrl), oom_ctrl->generation, why);
+	oom_ctrl->kill_counter = 0;
+	oom_ctrl->generation++;
+
+	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
+	wake_up_all(&oom_ctrl->wq);
+}
+
+static void ub_release_oom_control(struct oom_control *oom_ctrl)
+{
+	spin_lock(&oom_ctrl->lock);
+	__ub_release_oom_control(oom_ctrl, "task died");
+	spin_unlock(&oom_ctrl->lock);
+}
+
 /*
  * Must be called under task_lock() held
  */
@@ -26,16 +51,18 @@ void ub_oom_mark_mm(struct mm_struct *mm, struct oom_control *oom_ctrl)
 
 	if (oom_ctrl == &global_oom_ctrl)
 		mm->global_oom = 1;
+	else if (oom_ctrl == &mm->mm_ub->oom_ctrl)
+		mm->ub_oom = 1;
 	else {
 		/*
 		 * Task can be killed when using either global oom ctl
-		 * or by task's beancounter one.
+		 * or by mm->mm_ub one. In other case we must release ctl now.
 		 * When this task will die it'll have to decide with ctl
 		 * to use lokking at this flag and we have to sure it
 		 * will use the proper one.
 		 */
-		BUG_ON(mm->mm_ub != get_exec_ub());
-		mm->ub_oom = 1;
+		__ub_release_oom_control(oom_ctrl, "mark bug");
+		WARN_ON(1);
 	}
 }
 
@@ -92,8 +119,15 @@ int ub_oom_lock(struct oom_control *oom_ctrl)
 			return -EAGAIN;
 		}
 
-		if (timeout == 0)
+		if (timeout == 0) {
+			/*
+			 * Time is up, let's kill somebody else but
+			 * release the oom ctl since the stuck task
+			 * wasn't able to do it.
+			 */
+			__ub_release_oom_control(oom_ctrl, "oom tmo");
 			break;
+		}
 
 		__set_current_state(TASK_UNINTERRUPTIBLE);
 		add_wait_queue(&oom_ctrl->wq, &oom_w);
@@ -108,6 +142,8 @@ int ub_oom_lock(struct oom_control *oom_ctrl)
 
 out_do_oom:
 	ub_clear_oom();
+	printk(">>> %d oom generation %d starts\n",
+			oom_ctrl_id(oom_ctrl), oom_ctrl->generation);
 	return 0;
 }
 
@@ -162,8 +198,12 @@ struct user_beancounter *ub_oom_select_worst(void)
 		}
 	}
 
-	if (ub)
+	if (ub) {
 		ub->ub_oom_noproc = 1;
+		printk(KERN_INFO "OOM selected worst BC %d (overdraft %lu):\n",
+				ub->ub_uid, ub_maxover);
+		__show_ub_mem(ub);
+	}
 	rcu_read_unlock();
 
 	return ub;
@@ -171,17 +211,6 @@ struct user_beancounter *ub_oom_select_worst(void)
 
 void ub_oom_unlock(struct oom_control *oom_ctrl)
 {
-	spin_unlock(&oom_ctrl->lock);
-}
-
-static void ub_release_oom_control(struct oom_control *oom_ctrl)
-{
-	spin_lock(&oom_ctrl->lock);
-	oom_ctrl->kill_counter = 0;
-	oom_ctrl->generation++;
-
-	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
-	wake_up_all(&oom_ctrl->wq);
 	spin_unlock(&oom_ctrl->lock);
 }
 
@@ -194,17 +223,17 @@ void ub_oom_mm_dead(struct mm_struct *mm)
 			nr_free_pages());
 
 	if (mm->global_oom) {
-		ub_release_oom_control(&global_oom_ctrl);
 		if (printk_ratelimit())
 			show_mem();
+		ub_release_oom_control(&global_oom_ctrl);
 	}
 
 	if (mm->ub_oom) {
 		struct user_beancounter *ub = mm_ub(mm);
 
-		ub_release_oom_control(&ub->oom_ctrl);
 		if (__ratelimit(&ub->ub_ratelimit))
 			show_ub_mem(ub);
+		ub_release_oom_control(&ub->oom_ctrl);
 	}
 }
 
@@ -215,6 +244,8 @@ int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 
 	if (ub_oom_lock(&ub->oom_ctrl))
 		goto out;
+
+	oom_report_invocation("loc", ub, gfp_mask, 0);
 
 	read_lock(&tasklist_lock);
 

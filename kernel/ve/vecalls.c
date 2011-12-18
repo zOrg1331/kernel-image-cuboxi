@@ -466,6 +466,22 @@ err:
 	return -ENOMEM;
 }
 
+static int init_ve_devtmpfs(struct ve_struct *ve)
+{
+#ifdef CONFIG_DEVTMPFS
+	return register_ve_fs_type(ve, &dev_fs_type,
+			&ve->devtmpfs_fstype, &ve->devtmpfs_mnt);
+#endif
+}
+
+static void fini_ve_devtmpfs(struct ve_struct *ve)
+{
+#ifdef CONFIG_DEVTMPFS
+	unregister_ve_fs_type(ve->devtmpfs_fstype, ve->devtmpfs_mnt);
+	ve->devtmpfs_mnt = NULL;
+#endif
+}
+
 static int init_ve_sysfs(struct ve_struct *ve)
 {
 	int err;
@@ -711,7 +727,6 @@ static void fini_ve_netns(struct ve_struct *ve)
 	DECLARE_COMPLETION_ONSTACK(sysfs_completion);
 
 	net = ve->ve_netns;
-	ve->ve_netns = NULL;
 	net->sysfs_completion = &sysfs_completion;
 	put_net(net);
 	wait_for_completion(&sysfs_completion);
@@ -824,8 +839,6 @@ static void set_ve_root(struct ve_struct *ve, struct task_struct *tsk)
 
 static void put_ve_root(struct ve_struct *ve)
 {
-	if (!IS_ROOT(ve->root_path.dentry))
-		ub_dcache_set_owner(ve->root_path.dentry, get_ub0());
 	path_put(&ve->root_path);
 }
 
@@ -1147,6 +1160,9 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 
 	set_ve_root(ve, tsk);
 
+	if ((err = init_ve_devtmpfs(ve)))
+		goto err_devtmpfs;
+
 	if ((err = init_ve_sysfs(ve)))
 		goto err_sysfs;
 
@@ -1262,6 +1278,8 @@ err_proc:
 err_ns:
 	fini_ve_sysfs(ve);
 err_sysfs:
+	fini_ve_devtmpfs(ve);
+err_devtmpfs:
 	put_ve_root(ve);
 
 	/* It is safe to restore current->envid here because
@@ -1444,6 +1462,7 @@ static void env_cleanup(struct ve_struct *ve)
 	fini_ve_netns(ve);
 	fini_ve_proc(ve);
 	fini_ve_sysfs(ve);
+	fini_ve_devtmpfs(ve);
 	put_ve_root(ve);
 
 	(void)set_exec_env(old_ve);
@@ -2552,20 +2571,6 @@ static int init_vecalls_sysctl(void) { return 0; }
 static void fini_vecalls_sysctl(void) { ; }
 #endif
 
-static int devtmpfs_get_sb(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
-{
-	/* This fs is only required to be visible in there */
-	return -EOPNOTSUPP;
-}
-
-static struct file_system_type devtmpfs_fs_type = {
-	.owner = THIS_MODULE,
-	.name = "devtmpfs",
-	.get_sb = devtmpfs_get_sb,
-	.fs_flags = FS_VIRTUALIZED,
-};
-
 static int __init vecalls_init(void)
 {
 	int err;
@@ -2590,10 +2595,6 @@ static int __init vecalls_init(void)
 	if (err < 0)
 		goto out_ioctls;
 
-	err = register_filesystem(&devtmpfs_fs_type);
-	if (err < 0)
-		goto out_devtmpfs;
-
 	/* We can easy dereference this hook if VE is running
 	 * because in this case vzmon refcount > 0
 	 */
@@ -2606,8 +2607,6 @@ static int __init vecalls_init(void)
 
 	return 0;
 
-out_devtmpfs:
-	fini_vecalls_ioctls();
 out_ioctls:
 	fini_vecalls_proc();
 out_proc:
@@ -2624,7 +2623,6 @@ static void __exit vecalls_exit(void)
 {
 	do_env_free_hook = NULL;
 	do_ve_enter_hook = NULL;
-	unregister_filesystem(&devtmpfs_fs_type);
 	fini_vecalls_ioctls();
 	fini_vecalls_proc();
 	fini_vzmond();

@@ -1659,6 +1659,7 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 {
 	int err;
 	struct super_block *sb = path->mnt->mnt_sb;
+	struct ve_struct *ve = get_exec_env();
 
 	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -1669,7 +1670,8 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 	if (path->dentry != path->mnt->mnt_root)
 		return -EINVAL;
 
-	if (!ve_accessible_veid(path->mnt->owner, get_exec_env()->veid))
+	if (!ve_accessible_veid(path->mnt->owner, ve->veid) &&
+			path->mnt != ve->root_path.mnt)
 		return -EPERM;
 
 	down_write(&sb->s_umount);

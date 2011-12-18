@@ -421,7 +421,7 @@ nfs_async_rename(struct inode *old_dir, struct inode *new_dir,
 	struct rpc_task_setup task_setup_data = {
 		.rpc_message = &msg,
 		.callback_ops = &nfs_rename_ops,
-		.workqueue = nfsiod_workqueue,
+		.workqueue = inode_nfsiod_wq(old_dir),
 		.rpc_client = NFS_CLIENT(old_dir),
 		.flags = RPC_TASK_ASYNC,
 	};

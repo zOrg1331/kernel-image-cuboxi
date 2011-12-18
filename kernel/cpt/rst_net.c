@@ -641,6 +641,11 @@ static int rst_restore_snmp_stat(struct cpt_context *ctx, void *mib[], int n,
 	err = ctx->pread(stats, in, ctx, (*ppos) + o.cpt_hdrlen);
 	if (err)
 		goto out;
+	/*
+	 * IPv6 can be not loaded or disabled.
+	 */
+	if (mib[0] == NULL)
+		goto out;
 
 	in /= sizeof(*stats);
 	if (in > n)

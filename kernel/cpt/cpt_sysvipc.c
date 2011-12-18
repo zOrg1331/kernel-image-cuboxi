@@ -373,9 +373,12 @@ static int cpt_collect_sysvsem_undo(cpt_context_t *ctx)
 static int collect_one_shm(struct shmid_kernel *shp, void *arg)
 {
 	cpt_context_t *ctx = arg;
+	cpt_object_t *obj;
 
-	if (__cpt_object_add(CPT_OBJ_FILE, shp->shm_file, GFP_ATOMIC, ctx) == NULL)
+	obj = __cpt_object_add(CPT_OBJ_FILE, shp->shm_file, GFP_ATOMIC, ctx);
+	if (!obj)
 		return -ENOMEM;
+	obj->o_flags |= CPT_FILE_SYSVIPC;
 	return 0;
 }
 

@@ -245,7 +245,7 @@ void		rpc_destroy_mempool(void);
 #ifdef CONFIG_VE
 #define rpciod_workqueue	(get_exec_env()->rpc_data->_rpciod_workqueue)
 #else
-extern struct proc_dir_entry	*rpciod_workqueue;
+extern struct workqueue_struct	*rpciod_workqueue;
 #endif
 void		rpc_prepare_task(struct rpc_task *task);
 

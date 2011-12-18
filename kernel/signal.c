@@ -233,7 +233,7 @@ static struct sigqueue *__sigqueue_alloc(struct task_struct *t, gfp_t flags,
 	    atomic_read(&user->sigpending) <=
 			t->signal->rlim[RLIMIT_SIGPENDING].rlim_cur) {
 		q = kmem_cache_alloc(sigqueue_cachep, flags);
-		if (q && ub_siginfo_charge(q, get_task_ub(t))) {
+		if (q && ub_siginfo_charge(q, get_task_ub(t), flags)) {
 			kmem_cache_free(sigqueue_cachep, q);
 			q = NULL;
 		}

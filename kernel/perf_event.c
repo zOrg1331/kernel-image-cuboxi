@@ -5001,17 +5001,13 @@ static int perf_tp_event_match(struct perf_event *event,
 }
 
 void perf_tp_event(int event_id, u64 addr, u64 count,
-		   void *record, int entry_size)
+		   void *record, int entry_size, struct pt_regs *regs)
 {
-	struct pt_regs *regs = get_irq_regs();
 	struct perf_sample_data data;
 	struct perf_raw_record raw = {
 		.size = entry_size,
 		.data = record,
 	};
-
-	if (!regs)
-		regs = task_pt_regs(current);
 
 	perf_sample_data_init(&data, addr);
 	data.raw = &raw;

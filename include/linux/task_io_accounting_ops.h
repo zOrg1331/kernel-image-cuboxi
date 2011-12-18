@@ -5,9 +5,9 @@
 #define __TASK_IO_ACCOUNTING_OPS_INCLUDED
 
 #include <linux/sched.h>
+#include <bc/io_acct.h>
 
 #ifdef CONFIG_TASK_IO_ACCOUNTING
-#include <bc/io_acct.h>
 
 static inline void task_io_account_read(size_t bytes)
 {

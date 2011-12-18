@@ -86,12 +86,14 @@ void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
 		if (!isolate_lru_page(page)) {
 			struct gang_set *gs = get_mm_gang(vma->vm_mm);
+			struct gang *gang;
 
 			rcu_read_lock();
-			if (page_gang(page)->set != gs) {
-				unpin_mem_gang(page_gang(page));
-				gang_mod_user_page(page, gs);
+			gang = page_gang(page);
+			if (gang->set != gs) {
+				gang_mod_user_page(page, gs, GFP_ATOMIC);
 				pin_mem_gang(page_gang(page));
+				unpin_mem_gang(gang);
 			}
 			rcu_read_unlock();
 

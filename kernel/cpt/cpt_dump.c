@@ -1078,6 +1078,9 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 {
 	struct mnt_namespace *ns;
 
+	if (p->flags & PF_KTHREAD)
+		return;
+
 	if (tsk_used_math(p)) {
 		*caps |= flags & ((1<<CPT_CPU_X86_FXSR) |
 				(1<<CPT_CPU_X86_SSE) |
@@ -1094,7 +1097,7 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 	 * to test, so that we do not. */
 #ifdef CONFIG_X86_64
 	if (!(task_thread_info(p)->flags & _TIF_IA32))
-		*caps |= flags & ((1<<CPT_CPU_X86_EMT64)|(1<<CPT_CPU_X86_SYSCALL));
+		*caps |= flags & (1<<CPT_CPU_X86_EMT64);
 	else if (p->mm && p->mm->context.vdso) {
 		if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
 			*caps |= flags & (1<<CPT_CPU_X86_SEP);
@@ -1221,7 +1224,9 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	}
 
 	*caps = flags & (1<<CPT_CPU_X86_CMOV);
-
+#ifdef CONFIG_X86_64
+	*caps |= flags & (1<<CPT_CPU_X86_SYSCALL);
+#endif
 	if (flags & (1 << CPT_SLM_DMPRST)) {
 		eprintk_ctx("SLM is enabled, but slm_dmprst module is not loaded\n");
 		*caps |= (1 << CPT_SLM_DMPRST);

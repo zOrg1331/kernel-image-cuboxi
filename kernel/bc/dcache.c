@@ -16,11 +16,11 @@ static unsigned int dcache_charge_size(int name_len)
 }
 
 static int __ub_dcache_charge(struct user_beancounter *ub,
-		unsigned long size, int strict)
+		unsigned long size, gfp_t gfp_mask, int strict)
 {
 	int ret;
 
-	ret = ub_kmem_charge(ub, size, strict);
+	ret = ub_kmem_charge(ub, size, gfp_mask);
 	if (unlikely(ret))
 		goto no_kmem;
 
@@ -52,7 +52,9 @@ int ub_dcache_charge(struct user_beancounter *ub, int name_len)
 
 	size = dcache_charge_size(name_len);
 	do {
-		if (!__ub_dcache_charge(ub, size, UB_SOFT | UB_TEST))
+		if (!__ub_dcache_charge(ub, size,
+					GFP_KERNEL|__GFP_NOWARN|__GFP_SOFT_UBC,
+					UB_SOFT | UB_TEST))
 			return 0;
 
 		shrink = max(size, ub->ub_parms[UB_DCACHESIZE].max_precharge);
@@ -86,7 +88,9 @@ static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter 
 		if (d->d_ub != cub) {
 			BUG_ON(!(d->d_flags & DCACHE_BCTOP));
 			goto skip_subtree;
-		}
+		} else if (d->d_ub == ub)
+			goto skip_recharge;
+
 		if (!list_empty(&d->d_lru)) {
 			list_move(&d->d_bclru, &ub->ub_dentry_lru);
 			cub->ub_dentry_unused--;
@@ -94,6 +98,7 @@ static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter 
 		}
 
 		d->d_ub = ub;
+skip_recharge:
 		size += dcache_charge_size(d->d_name.len);
 
 		if (!list_empty(&d->d_subdirs)) {
@@ -117,6 +122,17 @@ out:
 	return size;
 }
 
+unsigned long ub_dcache_get_size(struct dentry *dentry)
+{
+	unsigned long size;
+
+	spin_lock(&dcache_lock);
+	size = recharge_subtree(dentry, dentry->d_ub, dentry->d_ub);
+	spin_unlock(&dcache_lock);
+
+	return size;
+}
+
 void ub_dcache_set_owner(struct dentry *root, struct user_beancounter *ub)
 {
 	struct user_beancounter *cub;
@@ -128,17 +144,26 @@ void ub_dcache_set_owner(struct dentry *root, struct user_beancounter *ub)
 	if (ub != cub) {
 		size = recharge_subtree(root, ub, cub);
 		__ub_dcache_uncharge(cub, size);
-		__ub_dcache_charge(ub, size, UB_FORCE);
+		__ub_dcache_charge(ub, size, GFP_ATOMIC | __GFP_NOFAIL, UB_FORCE);
 	}
 
-	get_beancounter(ub);
 	if (root->d_flags & DCACHE_BCTOP) {
-		put_beancounter(cub);
+		list_del(&root->d_bclru);
 	} else {
 		spin_lock(&root->d_lock);
 		root->d_flags |= DCACHE_BCTOP;
 		spin_unlock(&root->d_lock);
 	}
+
+	if (!list_empty(&root->d_lru)) {
+		list_del_init(&root->d_lru);
+		list_del(&root->d_bclru);
+		root->d_sb->s_nr_dentry_unused--;
+		cub->ub_dentry_unused--;
+		dentry_stat.nr_unused--;
+	}
+
+	list_add_tail(&root->d_bclru, &ub->ub_dentry_top);
 
 	spin_unlock(&dcache_lock);
 }
@@ -151,7 +176,7 @@ void ub_dcache_change_owner(struct dentry *dentry, struct user_beancounter *ub)
 
 	size = recharge_subtree(dentry, ub, cub);
 	__ub_dcache_uncharge(cub, size);
-	__ub_dcache_charge(ub, size, UB_FORCE);
+	__ub_dcache_charge(ub, size, GFP_ATOMIC | __GFP_NOFAIL, UB_FORCE);
 }
 
 #define UB_DCACHE_BATCH 32
@@ -175,4 +200,61 @@ void ub_dcache_reclaim(struct user_beancounter *ub,
 
 	if (batch)
 		shrink_dcache_ub(ub, batch);
+}
+
+/* under dcache_lock and dentry->d_lock */
+void ub_dcache_clear_owner(struct dentry *dentry)
+{
+	struct user_beancounter *ub, *cub;
+	long size;
+
+	BUG_ON(!list_empty(&dentry->d_subdirs));
+	BUG_ON(!(dentry->d_flags & DCACHE_BCTOP));
+
+	cub = dentry->d_ub;
+	ub = IS_ROOT(dentry) ? get_ub0() : dentry->d_parent->d_ub;
+	dentry->d_ub = ub;
+
+	size = dcache_charge_size(dentry->d_name.len);
+	__ub_dcache_uncharge(cub, size);
+	__ub_dcache_charge(ub, size, GFP_ATOMIC|__GFP_NOFAIL, UB_FORCE);
+
+	dentry->d_flags &= ~DCACHE_BCTOP;
+
+	list_del(&dentry->d_bclru);
+}
+
+void ub_dcache_unuse(struct user_beancounter *cub)
+{
+	struct dentry *dentry, *tmp;
+	struct user_beancounter *ub;
+	long size;
+
+	spin_lock(&dcache_lock);
+	list_for_each_entry_safe(dentry, tmp, &cub->ub_dentry_top, d_bclru) {
+		/* umount in progress */
+		if (!atomic_read(&dentry->d_sb->s_active))
+			continue;
+
+		BUG_ON(dentry->d_ub != cub);
+		ub = IS_ROOT(dentry) ? get_ub0() : dentry->d_parent->d_ub;
+
+		size = recharge_subtree(dentry, ub, cub);
+		__ub_dcache_uncharge(cub, size);
+		__ub_dcache_charge(ub, size, GFP_ATOMIC|__GFP_NOFAIL, UB_FORCE);
+
+		spin_lock(&dentry->d_lock);
+		BUG_ON(!(dentry->d_flags & DCACHE_BCTOP));
+		dentry->d_flags &= ~DCACHE_BCTOP;
+		spin_unlock(&dentry->d_lock);
+
+		list_del(&dentry->d_bclru);
+	}
+	spin_unlock(&dcache_lock);
+
+	/* wait for concurrent umounts */
+	while (!list_empty(&cub->ub_dentry_top))
+		schedule_timeout_uninterruptible(1);
+
+	BUG_ON(!list_empty(&cub->ub_dentry_lru));
 }
