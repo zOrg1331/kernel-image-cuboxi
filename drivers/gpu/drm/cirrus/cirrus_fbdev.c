@@ -14,6 +14,9 @@
 #include "drm_fb_helper.h"
 
 #include <linux/fb.h>
+#include "linux/export.h"
+#include "linux/module.h"
+
 
 #include "cirrus.h"
 #include "cirrus_drv.h"
