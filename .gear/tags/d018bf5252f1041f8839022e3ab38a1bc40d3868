@@ -1,0 +1,17 @@
+object 805a6af8dba5dfdd35ec35dc52ec0122400b2610
+type commit
+tag v3.2
+tagger Linus Torvalds <torvalds@linux-foundation.org> 1325721350 -0800
+
+Linux 3.2
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v2.0.18 (GNU/Linux)
+
+iQEcBAABAgAGBQJPBOcQAAoJEHm+PkMAQRiG55UH/ibkoyesorxV998bDzyb8eX3
+Y5+v/q8gdC27fGBmTOdROeGelxNafn/Ryr74aHY62VkuIWXfoL9vWD3ehCOKBcgV
+7krvEAvtUu6W1oxdGNLemTCAy4G9pjlnipW1I6yVz+MQe/3oGdNIjPgeUhcq87EM
+oEHnhWxuvLMere98m8qG4uUnzpPWIN2fIR00eRW9wx/DuquN/351AvcdAqV8UZFl
+UtlO+geZgB4xl5nqo3AmEsZK2kVZ7/Hlqb8feXqOWg81cJiZEgeW1ZfyIObPc4z+
+diUBSGY8LSnkM9ZH4I2aGj+ycamlzTNJd6GVQ4gI+TVsjf9j6p/0UsyqiE076K8=
+=T+90
+-----END PGP SIGNATURE-----
