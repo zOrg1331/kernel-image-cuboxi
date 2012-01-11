@@ -11,6 +11,8 @@
  */
 #include "drmP.h"
 #include "drm.h"
+#include "linux/export.h"
+#include "linux/module.h"
 
 #include "cirrus_drv.h"
 
