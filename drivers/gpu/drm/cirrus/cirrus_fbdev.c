@@ -13,6 +13,7 @@
 #include "drm.h"
 #include "drm_fb_helper.h"
 
+#include <linux/module.h>
 #include <linux/fb.h>
 
 #include "cirrus.h"
