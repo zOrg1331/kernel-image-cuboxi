@@ -153,10 +153,12 @@ static int fixup_pipe_data(struct file *file, struct cpt_file_image *fi,
 {
 	struct inode *ino = file->f_dentry->d_inode;
 	struct cpt_inode_image ii;
+	struct cpt_object_hdr hdr;
 	struct cpt_obj_bits b;
 	struct pipe_inode_info *info;
 	int err;
 	int count;
+	__u64 pos;
 
 	if (!S_ISFIFO(ino->i_mode)) {
 		eprintk_ctx("fixup_pipe_data: not a pipe %Ld\n", (long long)fi->cpt_inode);
@@ -172,7 +174,31 @@ static int fixup_pipe_data(struct file *file, struct cpt_file_image *fi,
 	if (ii.cpt_next <= ii.cpt_hdrlen)
 		return 0;
 
-	err = rst_get_object(CPT_OBJ_BITS, fi->cpt_inode + ii.cpt_hdrlen, &b, ctx);
+	pos = fi->cpt_inode + ii.cpt_hdrlen;
+
+	/*
+	 * Inode object can be followed by either CPT_OBJ_NAME object or
+	 * CPT_OBJ_BITS object. So here we read header and check it's object
+	 * type.
+	 */
+	err = rst_get_object(0, pos, &hdr, ctx);
+	if (err)
+		return err;
+	if (hdr.cpt_object == CPT_OBJ_NAME) {
+		/*
+		 * Inode object is followed by CPT_OBJ_NAME. I.e. original
+		 * inode dentry was unlinked on source node and here is it's
+		 * alias name.
+		 * Name object can be followed by CPT_OBJ_BITS (with pipe
+		 * buffers content).
+		 */
+		if (ii.cpt_next <= ii.cpt_hdrlen + hdr.cpt_next)
+			return 0;
+
+		pos += hdr.cpt_hdrlen;
+	}
+
+	err = rst_get_object(CPT_OBJ_BITS, pos, &b, ctx);
 	if (err)
 		return err;
 
@@ -212,7 +238,7 @@ static int fixup_pipe_data(struct file *file, struct cpt_file_image *fi,
 		info->nrbufs++;
 		addr = kmap(buf->page);
 		err = ctx->pread(addr, chars, ctx,
-				 fi->cpt_inode + ii.cpt_hdrlen + b.cpt_hdrlen + count);
+				 pos + b.cpt_hdrlen + count);
 		if (err)
 			break;
 		count += chars;

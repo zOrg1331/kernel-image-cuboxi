@@ -84,15 +84,15 @@ static int bc_iostat(struct seq_file *f, struct user_beancounter *bc)
 		stats = &blkg->stats;
 		queued    = stats->stat_arr[BLKIO_STAT_QUEUED][BLKIO_STAT_READ] +
 			    stats->stat_arr[BLKIO_STAT_QUEUED][BLKIO_STAT_WRITE];
-		serviced  = stats->stat_arr[BLKIO_STAT_SERVICED][BLKIO_STAT_READ] +
-			    stats->stat_arr[BLKIO_STAT_SERVICED][BLKIO_STAT_WRITE];
+		serviced  = blkio_read_stat_cpu(blkg, BLKIO_STAT_CPU_SERVICED, BLKIO_STAT_READ);
+		serviced += blkio_read_stat_cpu(blkg, BLKIO_STAT_CPU_SERVICED, BLKIO_STAT_WRITE);
 		tmp	  = stats->stat_arr[BLKIO_STAT_WAIT_TIME][BLKIO_STAT_READ] +
 			    stats->stat_arr[BLKIO_STAT_WAIT_TIME][BLKIO_STAT_WRITE];
 		do_div(tmp, NSEC_PER_MSEC);
 		wait_time = tmp;
 
 		used_time = jiffies_to_msecs(stats->time);
-		sectors   = stats->sectors;
+		sectors   = blkio_read_stat_cpu(blkg, BLKIO_STAT_CPU_SECTORS, 0);
 		spin_unlock_irq(&blkg->stats_lock);
 
 		seq_printf(f, "%s %u %c %lu %lu %lu %u %u %lu %lu\n",

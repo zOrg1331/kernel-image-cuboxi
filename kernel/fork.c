@@ -64,9 +64,9 @@
 #include <linux/magic.h>
 #include <linux/perf_event.h>
 #include <linux/posix-timers.h>
-#include <linux/virtinfo.h>
 #include <linux/user-return-notifier.h>
 #include <linux/khugepaged.h>
+#include <linux/oom.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -77,8 +77,8 @@
 
 #include <bc/vmpages.h>
 #include <bc/misc.h>
-#include <bc/oom_kill.h>
 #include <bc/kmem.h>
+#include <bc/oom_kill.h>
 
 #include <trace/events/sched.h>
 
@@ -182,7 +182,7 @@ void __put_task_struct(struct task_struct *tsk)
 	if (!profile_handoff_task(tsk))
 		free_task(tsk);
 }
-EXPORT_SYMBOL(__put_task_struct);
+EXPORT_SYMBOL_GPL(__put_task_struct);
 
 /*
  * macro override instead of weak attribute alias, to workaround
@@ -528,6 +528,7 @@ static struct mm_struct * mm_init(struct mm_struct * mm, struct task_struct *p)
 	mm->cached_hole_size = ~0UL;
 	mm_init_aio(mm);
 	mm_init_owner(mm, p);
+	atomic_set(&mm->oom_disable_count, 0);
 
 	if (likely(!mm_alloc_pgd(mm))) {
 		mm->def_flags = 0;
@@ -804,6 +805,8 @@ good_mm:
 	/* Initializing for Swap token stuff */
 	mm->token_priority = 0;
 	mm->last_interval = 0;
+	if (tsk->signal->oom_score_adj == OOM_SCORE_ADJ_MIN)
+		atomic_inc(&mm->oom_disable_count);
 
 	tsk->mm = mm;
 	tsk->active_mm = mm;
@@ -996,6 +999,8 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sched_autogroup_fork(sig);
 
 	sig->oom_adj = current->signal->oom_adj;
+	sig->oom_score_adj = current->signal->oom_score_adj;
+	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
 
 	return 0;
 }
@@ -1411,8 +1416,13 @@ bad_fork_cleanup_io:
 bad_fork_cleanup_namespaces:
 	exit_task_namespaces(p);
 bad_fork_cleanup_mm:
-	if (p->mm)
+	if (p->mm) {
+		task_lock(p);
+		if (p->signal->oom_score_adj == OOM_SCORE_ADJ_MIN)
+			atomic_dec(&p->mm->oom_disable_count);
+		task_unlock(p);
 		mmput(p->mm);
+	}
 bad_fork_cleanup_signal:
 	if (!(clone_flags & CLONE_THREAD))
 		__cleanup_signal(p->signal);
@@ -1577,7 +1587,6 @@ long do_fork_pid(unsigned long clone_flags,
 	} else {
 		nr = PTR_ERR(p);
 	}
-
 	return nr;
 }
 
@@ -1819,6 +1828,10 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 			active_mm = current->active_mm;
 			current->mm = new_mm;
 			current->active_mm = new_mm;
+			if (current->signal->oom_score_adj == OOM_SCORE_ADJ_MIN) {
+				atomic_dec(&mm->oom_disable_count);
+				atomic_inc(&new_mm->oom_disable_count);
+			}
 			activate_mm(active_mm, new_mm);
 			new_mm = mm;
 		}

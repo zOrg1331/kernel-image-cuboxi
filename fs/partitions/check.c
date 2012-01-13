@@ -218,7 +218,7 @@ ssize_t part_size_show(struct device *dev,
 		       struct device_attribute *attr, char *buf)
 {
 	struct hd_struct *p = dev_to_part(dev);
-	return sprintf(buf, "%llu\n",(unsigned long long)p->nr_sects);
+	return sprintf(buf, "%llu\n",(unsigned long long)part_nr_sects_read(p));
 }
 
 ssize_t part_alignment_offset_show(struct device *dev,
@@ -376,6 +376,43 @@ void delete_partition(struct gendisk *disk, int partno)
 	call_rcu(&part->rcu_head, delete_partition_rcu_cb);
 }
 
+#if BITS_PER_LONG == 32 && defined(CONFIG_LBDAF)
+void part_nr_sects_write(struct hd_struct *part, sector_t val)
+{
+	write_seqcount_begin(&part->seq);
+	part->nr_sects = val;
+	write_seqcount_end(&part->seq);
+}
+
+/*
+ * Any access of part->nr_sects which is not protected by partition
+ * bd_mutex or gendisk bdev bd_mutex, hould be done using this accessor
+ * function.
+ */
+sector_t part_nr_sects_read(struct hd_struct *part)
+{
+	sector_t nr_sects;
+	unsigned seq;
+
+	do {
+		seq = read_seqcount_begin(&part->seq);
+		nr_sects = part->nr_sects;
+	} while (read_seqcount_retry(&part->seq, seq));
+
+	return nr_sects;
+}
+#else
+void part_nr_sects_write(struct hd_struct *part, sector_t val)
+{
+	part->nr_sects = val;
+}
+
+sector_t part_nr_sects_read(struct hd_struct *part)
+{
+	return part->nr_sects;
+}
+#endif
+
 static ssize_t whole_disk_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
@@ -418,6 +455,7 @@ struct hd_struct *add_partition(struct gendisk *disk, int partno,
 		queue_limit_alignment_offset(&disk->queue->limits, start);
 	p->discard_alignment =
 		queue_limit_discard_alignment(&disk->queue->limits, start);
+	seqcount_init(&p->seq);
 	p->nr_sects = len;
 	p->partno = partno;
 	p->policy = get_disk_ro(disk);

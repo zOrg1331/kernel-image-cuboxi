@@ -41,6 +41,7 @@ void set_fs_pwd(struct fs_struct *fs, struct path *path)
 	if (old_pwd.dentry)
 		path_put(&old_pwd);
 }
+EXPORT_SYMBOL_GPL(set_fs_pwd);
 
 void chroot_fs_refs(struct path *old_root, struct path *new_root)
 {

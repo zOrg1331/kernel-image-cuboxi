@@ -495,8 +495,10 @@ extern int get_dumpable(struct mm_struct *mm);
 					/* leave room for more dump flags */
 #define MMF_VM_MERGEABLE	16	/* KSM may merge identical pages */
 #define MMF_VM_HUGEPAGE		17	/* set when VM_HUGEPAGE is set on vma */
+#define MMF_COMPAT		18	/* this task runs in compat mode. */
 
-#define MMF_INIT_MASK		(MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK)
+#define MMF_INIT_MASK		\
+	((1 << MMF_COMPAT) | MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK)
 
 struct sighand_struct {
 	atomic_t		count;
@@ -689,7 +691,7 @@ struct signal_struct {
 	struct tty_audit_buf *tty_audit_buf;
 #endif
 
-	int oom_adj;	/* OOM kill score adjustment (bit shift) */
+	int oom_adj;		/* OOM kill score adjustment (bit shift) */
 	/* reserved for Red Hat */
 	unsigned long rh_reserved;
 
@@ -697,6 +699,12 @@ struct signal_struct {
 #ifndef __GENKSYMS__
 	struct autogroup *autogroup;
 #endif
+#endif
+
+#ifndef __GENKSYMS__
+	int oom_score_adj;	/* OOM kill score adjustment */
+	int oom_score_adj_min;	/* OOM kill score adjustment minimum value.
+				 * Only settable by CAP_SYS_RESOURCE. */
 #endif
 };
 
@@ -1110,10 +1118,8 @@ struct sched_domain;
 #define ENQUEUE_WAKEUP		1
 #define ENQUEUE_WAKING		2
 #define ENQUEUE_HEAD		4
-#define ENQUEUE_UNTHROTTLE	8
 
 #define DEQUEUE_SLEEP		1
-#define DEQUEUE_THROTTLE	2
 
 struct sched_class {
 	const struct sched_class *next;
@@ -1143,7 +1149,7 @@ struct sched_class {
 	unsigned long (*load_balance) (struct rq *this_rq, int this_cpu,
 			struct rq *busiest, unsigned long max_load_move,
 			struct sched_domain *sd, enum cpu_idle_type idle,
-			int *all_pinned, unsigned int *loops_left);
+			int *all_pinned);
 
 	int (*move_one_task) (struct rq *this_rq, int this_cpu,
 			      struct rq *busiest, struct sched_domain *sd,
@@ -1191,6 +1197,10 @@ struct sched_class {
 #endif
 	void (*nr_iowait_inc) (struct task_struct *p);
 	void (*nr_iowait_dec) (struct task_struct *p);
+
+#ifndef __GENKSYMS__
+	bool (*yield_to_task) (struct rq *rq, struct task_struct *p, bool preempt);
+#endif
 };
 
 struct load_weight {
@@ -1208,15 +1218,7 @@ struct load_weight {
  *     6 se->load.weight
  */
 struct sched_entity {
-	struct load_weight	load;
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-	/*
-	 * lb_weight is the contribution to the entity's parent load (and thus
-	 * to the corresponding cpu load). For tasks, it equals the load. For
-	 * group entities, it is also multiplied by the normed rate limit.
-	 */
-	unsigned long		lb_weight;
-#endif
+	struct load_weight	load;		/* for load-balancing */
 	struct rb_node		run_node;
 	struct list_head	group_node;
 	unsigned int		on_rq;
@@ -1252,13 +1254,6 @@ struct sched_entity {
 	u64			block_max;
 	u64			exec_max;
 	u64			slice_max;
-
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-	u64			throttle_start;
-	u64			throttle_max;
-	u64			throttle_count;
-	u64			throttle_sum;
-#endif
 
 	u64			nr_migrations_cold;
 	u64			nr_failed_migrations_affine;
@@ -1910,7 +1905,6 @@ static inline void clear_stop_state(struct task_struct *tsk)
 #define PF_FROZEN	0x00010000	/* frozen for system suspend */
 #define PF_FSTRANS	0x00020000	/* inside a filesystem transaction */
 #define PF_KSWAPD	0x00040000	/* I am kswapd */
-#define PF_OOM_ORIGIN	0x00080000	/* Allocating much memory to others */
 #define PF_LESS_THROTTLE 0x00100000	/* Throttle me less: I clean memory */
 #define PF_KTHREAD	0x00200000	/* I am a kernel thread */
 #define PF_RANDOMIZE	0x00400000	/* randomize virtual address space */
@@ -2059,8 +2053,6 @@ static inline void wake_up_idle_cpu(int cpu) { }
 extern unsigned int sysctl_sched_latency;
 extern unsigned int sysctl_sched_min_granularity;
 extern unsigned int sysctl_sched_wakeup_granularity;
-extern unsigned int sysctl_sched_shares_ratelimit;
-extern unsigned int sysctl_sched_shares_thresh;
 extern unsigned int sysctl_sched_child_runs_first;
 
 enum sched_tunable_scaling {
@@ -2077,17 +2069,7 @@ extern unsigned int sysctl_sched_migration_cost;
 extern unsigned int sysctl_sched_nr_migrate;
 extern unsigned int sysctl_sched_time_avg;
 extern unsigned int sysctl_timer_migration;
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-extern int sysctl_sched_cpulimit_scale_cpufreq;
-extern int sysctl_sched_cpulimit_thresh;
-extern int sysctl_sched_cpulimit_update_iter;
-extern int sysctl_sched_cpulimit_nr_balance;
-extern int sysctl_sched_cpulimit_credit_charge;
-extern int sysctl_sched_cpulimit_credit_max;
-
-int sched_cpulimit_credit_handler(struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp, loff_t *ppos);
-#endif
+extern unsigned int sysctl_sched_shares_window;
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length,
@@ -2131,6 +2113,17 @@ static inline void sched_autogroup_fork(struct signal_struct *sig) { }
 static inline void sched_autogroup_exit(struct signal_struct *sig) { }
 #endif
 
+#ifdef CONFIG_CFS_BANDWIDTH
+extern unsigned int sysctl_sched_cfs_bandwidth_slice;
+#endif
+
+#ifdef CONFIG_CFS_CPULIMIT
+extern int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate);
+extern unsigned long sched_cgroup_get_rate(struct cgroup *cgrp);
+extern int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus);
+extern unsigned int sched_cgroup_get_nr_cpus(struct cgroup *cgrp);
+#endif
+
 #ifdef CONFIG_RT_MUTEXES
 extern int rt_mutex_getprio(struct task_struct *p);
 extern void rt_mutex_setprio(struct task_struct *p, int prio);
@@ -2143,6 +2136,7 @@ static inline int rt_mutex_getprio(struct task_struct *p)
 # define rt_mutex_adjust_pi(p)		do { } while (0)
 #endif
 
+extern bool yield_to(struct task_struct *p, bool preempt);
 extern void set_user_nice(struct task_struct *p, long nice);
 extern int task_prio(const struct task_struct *p);
 extern int task_nice(const struct task_struct *p);
@@ -2778,9 +2772,11 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 #endif /* CONFIG_SMP */
 
-#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
+#ifdef CONFIG_CFS_CPULIMIT
 extern unsigned int task_nr_cpus(struct task_struct *p);
 extern unsigned int task_vcpu_id(struct task_struct *p);
+extern unsigned int sysctl_sched_cpulimit_scale_cpufreq;
+extern unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq);
 #else
 static inline unsigned int task_nr_cpus(struct task_struct *p)
 {
@@ -2791,18 +2787,14 @@ static inline unsigned int task_vcpu_id(struct task_struct *p)
 {
 	return task_cpu(p);
 }
-#endif
 
-#define num_online_vcpus() task_nr_cpus(current)
-
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-extern unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq);
-#else
 static inline unsigned int sched_cpulimit_scale_cpufreq(unsigned int freq)
 {
 	return freq;
 }
 #endif
+
+#define num_online_vcpus() task_nr_cpus(current)
 
 extern void arch_pick_mmap_layout(struct mm_struct *mm);
 
@@ -2841,17 +2833,6 @@ extern unsigned long sched_group_shares(struct task_group *tg);
 extern int sched_cgroup_set_shares(struct cgroup *cgrp, unsigned long shares);
 unsigned long sched_cgroup_get_shares(struct cgroup *cgrp);
 extern unsigned long sched_cgroup_get_nr_running(struct cgroup *cgrp);
-#endif
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-extern int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate);
-extern int sched_cgroup_drop_rate(struct cgroup *cgrp);
-extern unsigned long sched_cgroup_get_rate(struct cgroup *cgrp);
-#endif
-#ifdef CONFIG_VZ_FAIRSCHED
-extern unsigned long *sched_cgroup_cpu_rate_ptr(struct cgroup *cgrp, int cpu);
-#endif
-#ifdef CONFIG_FAIR_GROUP_SCHED_NRCPU_LIMITS
-extern int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus);
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED
 extern int sched_group_set_rt_runtime(struct task_group *tg,

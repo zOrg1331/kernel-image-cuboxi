@@ -1756,8 +1756,8 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 	struct nfsd4_compoundres *resp = rqstp->rq_resp;
 	u32 minorversion = resp->cstate.minorversion;
 	struct path path = {
-		.dentry = dentry,
-		.mnt = exp->ex_path.mnt,
+		.mnt	= exp->ex_path.mnt,
+		.dentry	= dentry,
 	};
 
 	BUG_ON(bmval1 & NFSD_WRITEONLY_ATTRS_WORD1);

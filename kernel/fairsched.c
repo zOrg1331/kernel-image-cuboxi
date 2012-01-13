@@ -157,21 +157,19 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 		return PTR_ERR(cgrp);
 
 	switch (op) {
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 		case FAIRSCHED_SET_RATE:
 			ret = sched_cgroup_set_rate(cgrp, rate);
 			if (!ret)
 				ret = sched_cgroup_get_rate(cgrp);
 			break;
 		case FAIRSCHED_DROP_RATE:
-			ret = sched_cgroup_drop_rate(cgrp);
+			ret = sched_cgroup_set_rate(cgrp, 0);
 			break;
 		case FAIRSCHED_GET_RATE:
 			ret = sched_cgroup_get_rate(cgrp);
 			if (!ret)
 				ret = -ENODATA;
 			break;
-#endif
 		default:
 			ret = -EINVAL;
 			break;
@@ -455,9 +453,7 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 		p->nr_runtasks = sched_cgroup_get_nr_running(cgrp);
 		p->weight = FSCHWEIGHT_BASE / sched_cgroup_get_shares(cgrp);
 		p->nr_pcpu = num_online_cpus();
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
 		p->rate = sched_cgroup_get_rate(cgrp);
-#endif
 		p++;
 		if (!--nr_nodes)
 			break;

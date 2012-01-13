@@ -529,6 +529,30 @@ struct rps_map {
 };
 #define RPS_MAP_SIZE(_num) (sizeof(struct rps_map) + (_num * sizeof(u16)))
 
+/*
+ * This structure holds an XPS map which can be of variable length.  The
+ * map is an array of queues.
+ */
+struct xps_map {
+	unsigned int len;
+	unsigned int alloc_len;
+	struct rcu_head rcu;
+	u16 queues[0];
+};
+#define XPS_MAP_SIZE(_num) (sizeof(struct xps_map) + (_num * sizeof(u16)))
+#define XPS_MIN_MAP_ALLOC ((L1_CACHE_BYTES - sizeof(struct xps_map))	\
+    / sizeof(u16))
+
+/*
+ * This structure holds all XPS maps for device.  Maps are indexed by CPU.
+ */
+struct xps_dev_maps {
+	struct rcu_head rcu;
+	struct xps_map *cpu_map[0];
+};
+#define XPS_DEV_MAPS_SIZE (sizeof(struct xps_dev_maps) +		\
+    (nr_cpu_ids * sizeof(struct xps_map *)))
+
  /*
   * The rps_dev_flow structure contains the mapping of a flow to a CPU and the
   * tail pointer for that CPU's input queue at the time of last enqueue.
@@ -875,8 +899,11 @@ struct net_device
 #define NETIF_F_FCOE_CRC	(1 << 24) /* FCoE CRC32 */
 #define NETIF_F_SCTP_CSUM	(1 << 25) /* SCTP checksum offload */
 #define NETIF_F_FCOE_MTU	(1 << 26) /* Supports max FCoE MTU, 2158 bytes*/
-#define NETIF_F_VENET		(1 << 27) /* device is venet device */
-#define NETIF_F_VIRTUAL		(1 << 28) /* can be registered inside VE */
+#define NETIF_F_NTUPLE		(1 << 27) /* N-tuple filters supported */
+#define NETIF_F_RXHASH		(1 << 28) /* Receive hashing offload */
+#define NETIF_F_RXCSUM		(1 << 29) /* Receive checksumming offload */
+#define NETIF_F_VENET		(1 << 30) /* device is venet device */
+#define NETIF_F_VIRTUAL		(1 << 31) /* can be registered inside VE */
 
 	/* Segmentation offload features */
 #define NETIF_F_GSO_SHIFT	16
@@ -1090,18 +1117,6 @@ struct net_device
 	/* max exchange id for FCoE LRO by ddp */
 	unsigned int		fcoe_ddp_xid;
 #endif
-#ifndef __GENKSYMS__
-	struct kset             *queues_kset;
-
-	struct netdev_rx_queue  *_rx;
-
-	/* Number of RX queues allocated at alloc_netdev_mq() time  */
-	unsigned int            num_rx_queues;
-
-	u8 num_tc;
-	struct netdev_tc_txq tc_to_txq[TC_MAX_QUEUE];
-	u8 prio_tc_map[TC_BITMASK + 1];
-#endif
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
 
@@ -1120,39 +1135,120 @@ static inline struct hlist_head *dev_index_hash(struct net *net, int ifindex)
 }
 
 #define	NETDEV_ALIGN		32
+#define NET_DEVICE_SIZE \
+	ALIGN(sizeof(struct net_device), NETDEV_ALIGN)
+
+/*
+ * To prevent KABI-breakage, few structs are added to extend the original
+ * struct net_device. Also few helpers are added:
+ * netdev_extended_frozen_get_dev
+ *     - used to get pointer to net_device from frozen extend pointer
+ * netdev_extended_frozen-
+ *     - should be used to access items in struct net_device_extended_frozen
+ * netdev_extended
+ *     - should be used to access items in struct net_device_extended
+ *
+ * Structures are supposed to be located in memory in following way:
+ * struct net_device_extended_frozen - for storing pointer to extension
+ * struct net_device - original struct
+ * driver priv
+ * struct net_device_extended - extend to store additional values.
+ */
+
+struct netdev_tx_queue_extended {
+	struct netdev_queue	*q;
+	struct kobject		kobj;
+};
+
+struct netdev_rps_info {
+	struct kset	*queues_kset;
+	struct netdev_rx_queue	*_rx;
+	/* Number of RX queues allocated at alloc_netdev_mq() time  */
+	unsigned int	num_rx_queues;
+};
+
+struct netdev_qos_info {
+	u8 num_tc;
+	struct netdev_tc_txq tc_to_txq[TC_MAX_QUEUE];
+	u8 prio_tc_map[TC_BITMASK + 1];
+};
+
+/* Only append, do not change existing! */
+struct net_device_extended {
+	struct xps_dev_maps			*xps_maps;
+	struct netdev_tx_queue_extended		*_tx_ext;
+	struct netdev_rps_info			rps_data;
+	struct netdev_qos_info			qos_data;
+	unsigned long				ext_priv_flags;
+};
+
+#define NET_DEVICE_EXTENDED_SIZE \
+	ALIGN(sizeof(struct net_device_extended), NETDEV_ALIGN)
+
+/* Do not add anything here! */
+struct net_device_extended_frozen {
+	struct net_device_extended *dev_ext; /* Pointer to net_device extension */
+};
+
+#define NET_DEVICE_EXTENDED_FROZEN_SIZE \
+	ALIGN(sizeof(struct net_device_extended_frozen), NETDEV_ALIGN)
+
+static inline struct net_device *
+netdev_extended_frozen_get_dev(const struct net_device_extended_frozen *dev_ext_frozen)
+{
+	return (struct net_device *)
+			(((char *) dev_ext_frozen) +
+			 NET_DEVICE_EXTENDED_FROZEN_SIZE);
+}
+
+static inline struct net_device_extended_frozen *
+netdev_extended_frozen(const struct net_device *dev)
+{
+	return (struct net_device_extended_frozen *)
+			(((char *) dev) - NET_DEVICE_EXTENDED_FROZEN_SIZE);
+}
+
+static inline struct net_device_extended *
+netdev_extended(const struct net_device *dev)
+{
+	return netdev_extended_frozen(dev)->dev_ext;
+}
 
 static inline
 int netdev_get_prio_tc_map(const struct net_device *dev, u32 prio)
 {
-	return dev->prio_tc_map[prio & TC_BITMASK];
+	return netdev_extended(dev)->qos_data.prio_tc_map[prio & TC_BITMASK];
 }
 
 static inline
 int netdev_set_prio_tc_map(struct net_device *dev, u8 prio, u8 tc)
 {
-	if (tc >= dev->num_tc)
+	struct netdev_qos_info *qos = &netdev_extended(dev)->qos_data;
+	if (tc >= qos->num_tc)
 		return -EINVAL;
 
-	dev->prio_tc_map[prio & TC_BITMASK] = tc & TC_BITMASK;
+	qos->prio_tc_map[prio & TC_BITMASK] = tc & TC_BITMASK;
 	return 0;
 }
 
 static inline
 void netdev_reset_tc(struct net_device *dev)
 {
-	dev->num_tc = 0;
-	memset(dev->tc_to_txq, 0, sizeof(dev->tc_to_txq));
-	memset(dev->prio_tc_map, 0, sizeof(dev->prio_tc_map));
+	struct netdev_qos_info *qos = &netdev_extended(dev)->qos_data;
+	qos->num_tc = 0;
+	memset(qos->tc_to_txq, 0, sizeof(qos->tc_to_txq));
+	memset(qos->prio_tc_map, 0, sizeof(qos->prio_tc_map));
 }
 
 static inline
 int netdev_set_tc_queue(struct net_device *dev, u8 tc, u16 count, u16 offset)
 {
-	if (tc >= dev->num_tc)
+	struct netdev_qos_info *qos = &netdev_extended(dev)->qos_data;
+	if (tc >= qos->num_tc)
 		return -EINVAL;
 
-	dev->tc_to_txq[tc].count = count;
-	dev->tc_to_txq[tc].offset = offset;
+	qos->tc_to_txq[tc].count = count;
+	qos->tc_to_txq[tc].offset = offset;
 	return 0;
 }
 
@@ -1162,14 +1258,14 @@ int netdev_set_num_tc(struct net_device *dev, u8 num_tc)
 	if (num_tc > TC_MAX_QUEUE)
 		return -EINVAL;
 
-	dev->num_tc = num_tc;
+	netdev_extended(dev)->qos_data.num_tc = num_tc;
 	return 0;
 }
 
 static inline
 int netdev_get_num_tc(struct net_device *dev)
 {
-	return dev->num_tc;
+	return netdev_extended(dev)->qos_data.num_tc;
 }
 
 static inline
@@ -2114,6 +2210,9 @@ extern void		ether_setup(struct net_device *dev);
 extern struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 				       void (*setup)(struct net_device *),
 				       unsigned int queue_count);
+extern struct net_device *alloc_netdev_mqs(int sizeof_priv, const char *name,
+				       void (*setup)(struct net_device *),
+				       unsigned int txqs, unsigned int rxqs);
 #define alloc_netdev(sizeof_priv, name, setup) \
 	alloc_netdev_mq(sizeof_priv, name, setup, 1)
 extern int		register_netdev(struct net_device *dev);

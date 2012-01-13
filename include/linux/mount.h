@@ -131,6 +131,7 @@ struct path;
 extern int do_add_mount(struct vfsmount *newmnt, struct path *path,
 			int mnt_flags, struct list_head *fslist);
 
+extern void mnt_set_expiry(struct vfsmount *mnt, struct list_head *expiry_list);
 extern void mark_mounts_for_expiry(struct list_head *mounts);
 extern void replace_mount(struct vfsmount *src_mnt, struct vfsmount *dst_mnt);
 

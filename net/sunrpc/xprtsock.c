@@ -728,6 +728,7 @@ static void xs_reset_transport(struct sock_xprt *transport)
 	if (transport->sock == NULL) {
 		spin_unlock_bh(&xprt->transport_lock);
 		return;
+	transport->srcport = 0;
 	}
 	sock = transport->sock;
 	sk = transport->inet;
@@ -1284,6 +1285,7 @@ static void xs_tcp_schedule_linger_timeout(struct rpc_xprt *xprt,
 {
 	struct sock_xprt *transport;
 
+	BUG_ON(xprt->owner_env != get_exec_env());
 	if (xprt_test_and_set_connecting(xprt))
 		return;
 	set_bit(XPRT_CONNECTION_ABORT, &xprt->state);
@@ -1366,7 +1368,6 @@ static void xs_tcp_state_change(struct sock *sk)
 	case TCP_CLOSE_WAIT:
 		/* The server initiated a shutdown of the socket */
 		xprt_force_disconnect(xprt);
-	case TCP_SYN_SENT:
 		xprt->connect_cookie++;
 	case TCP_CLOSING:
 		/*
@@ -1781,6 +1782,7 @@ static void xs_tcp_reuse_connection(struct sock_xprt *transport)
 static int xs_tcp_finish_connecting(struct rpc_xprt *xprt, struct socket *sock)
 {
 	struct sock_xprt *transport = container_of(xprt, struct sock_xprt, xprt);
+	int ret = -ENOTCONN;
 
 	if (!transport->inet) {
 		struct sock *sk = sock->sk;
@@ -1812,12 +1814,22 @@ static int xs_tcp_finish_connecting(struct rpc_xprt *xprt, struct socket *sock)
 	}
 
 	if (!xprt_bound(xprt))
-		return -ENOTCONN;
+		goto out;
 
 	/* Tell the socket layer to start connecting... */
 	xprt->stat.connect_count++;
 	xprt->stat.connect_start = jiffies;
-	return kernel_connect(sock, xs_addr(xprt), xprt->addrlen, O_NONBLOCK);
+	ret = kernel_connect(sock, xs_addr(xprt), xprt->addrlen, O_NONBLOCK);
+	switch (ret) {
+	case 0:
+	case -EINPROGRESS:
+		/* SYN_SENT! */
+		xprt->connect_cookie++;
+		if (xprt->reestablish_timeout < XS_TCP_INIT_REEST_TO)
+			xprt->reestablish_timeout = XS_TCP_INIT_REEST_TO;
+	}
+out:
+	return ret;
 }
 
 /**
@@ -1920,6 +1932,7 @@ static void xs_connect(struct rpc_task *task)
 	struct rpc_xprt *xprt = task->tk_xprt;
 	struct sock_xprt *transport = container_of(xprt, struct sock_xprt, xprt);
 
+	BUG_ON(xprt->owner_env != get_exec_env());
 	if (transport->sock != NULL && !RPC_IS_SOFTCONN(task)) {
 		dprintk("RPC:       xs_connect delayed xprt %p for %lu "
 				"seconds\n",

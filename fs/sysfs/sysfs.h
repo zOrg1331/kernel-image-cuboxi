@@ -9,6 +9,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/rbtree.h>
 
 #ifndef CONFIG_VE
 extern struct vfsmount *sysfs_mount;

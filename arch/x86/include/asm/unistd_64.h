@@ -663,6 +663,22 @@ __SYSCALL(__NR_rt_tgsigqueueinfo, sys_rt_tgsigqueueinfo)
 __SYSCALL(__NR_perf_event_open, sys_perf_event_open)
 #define __NR_recvmmsg				299
 __SYSCALL(__NR_recvmmsg, sys_recvmmsg)
+#define __NR_fanotify_init			300
+__SYSCALL(__NR_fanotify_init, sys_ni_syscall)
+#define __NR_fanotify_mark			301
+__SYSCALL(__NR_fanotify_mark, sys_ni_syscall)
+#define __NR_prlimit64				302
+__SYSCALL(__NR_prlimit64, sys_ni_syscall)
+#define __NR_name_to_handle_at			303
+__SYSCALL(__NR_name_to_handle_at, sys_ni_syscall)
+#define __NR_open_by_handle_at			304
+__SYSCALL(__NR_open_by_handle_at, sys_ni_syscall)
+#define __NR_clock_adjtime			305
+__SYSCALL(__NR_clock_adjtime, sys_ni_syscall)
+#define __NR_syncfs                             306
+__SYSCALL(__NR_syncfs, sys_syncfs)
+#define __NR_sendmmsg				307
+__SYSCALL(__NR_sendmmsg, sys_sendmmsg)
 #define __NR_fairsched_nodemask			497
 __SYSCALL(__NR_fairsched_nodemask, sys_fairsched_nodemask)
 #define __NR_fairsched_cpumask			498
@@ -691,6 +707,7 @@ __SYSCALL(__NR_fairsched_rate, sys_fairsched_rate)
 __SYSCALL(__NR_lchmod, sys_lchmod)
 #define __NR_lutime				510
 __SYSCALL(__NR_lutime, sys_lutime)
+
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

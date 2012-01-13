@@ -234,7 +234,7 @@ linux_to_osf_statfs(struct kstatfs *linux_stat, struct osf_statfs __user *osf_st
 }
 
 static int
-do_osf_statfs(struct path * path, struct osf_statfs __user *buffer,
+do_osf_statfs(struct path *path, struct osf_statfs __user *buffer,
 	      unsigned long bufsiz)
 {
 	struct kstatfs linux_stat;

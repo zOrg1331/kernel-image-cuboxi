@@ -81,15 +81,6 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 	PN(se->wait_max);
 	PN(se->wait_sum);
 	P(se->wait_count);
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-	PN(se->throttle_start);
-	PN(se->throttle_max);
-	PN(se->throttle_sum);
-	P(se->throttle_count);
-#endif
-#endif
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-	P(se->lb_weight);
 #endif
 	P(se->load.weight);
 #undef PN
@@ -179,7 +170,9 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 	unsigned long flags;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	SEQ_printf(m, "\ncfs_rq[%d]:%s\n", cpu, task_group_path(cfs_rq->tg));
+	struct task_group *tg = cfs_rq->tg;
+
+	SEQ_printf(m, "\ncfs_rq[%d]:%s\n", cpu, task_group_path(tg));
 #else
 	SEQ_printf(m, "\ncfs_rq[%d]:\n", cpu);
 #endif
@@ -188,7 +181,7 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 
 	spin_lock_irqsave(&rq->lock, flags);
 	if (cfs_rq->rb_leftmost)
-		MIN_vruntime = (__pick_next_entity(cfs_rq))->vruntime;
+		MIN_vruntime = (__pick_first_entity(cfs_rq))->vruntime;
 	last = __pick_last_entity(cfs_rq);
 	if (last)
 		max_vruntime = last->vruntime;
@@ -207,24 +200,22 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 	spread0 = min_vruntime - rq0_min_vruntime;
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "spread0",
 			SPLIT_NS(spread0));
-	SEQ_printf(m, "  .%-30s: %ld\n", "nr_running", cfs_rq->nr_running);
-	SEQ_printf(m, "  .%-30s: %ld\n", "nr_tasks_running",
-			cfs_rq->nr_tasks_running);
-	SEQ_printf(m, "  .%-30s: %ld\n", "load", cfs_rq->load.weight);
-
 	SEQ_printf(m, "  .%-30s: %d\n", "nr_spread_over",
 			cfs_rq->nr_spread_over);
+	SEQ_printf(m, "  .%-30s: %ld\n", "nr_running", cfs_rq->nr_running);
+	SEQ_printf(m, "  .%-30s: %ld\n", "load", cfs_rq->load.weight);
 #ifdef CONFIG_FAIR_GROUP_SCHED
 #ifdef CONFIG_SMP
-	SEQ_printf(m, "  .%-30s: %lu\n", "shares", cfs_rq->shares);
+	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "load_avg",
+		   SPLIT_NS(cfs_rq->load_avg));
+	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "load_period",
+		   SPLIT_NS(cfs_rq->load_period));
+	SEQ_printf(m, "  .%-30s: %ld\n", "load_contrib",
+		   cfs_rq->load_contribution);
+	SEQ_printf(m, "  .%-30s: %d\n", "load_tg",
+		   atomic_read(&tg->load_weight));
 #endif
-#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
-	SEQ_printf(m, "  .%-30s: %lu\n", "rate", cfs_rq->rate);
-	SEQ_printf(m, "  .%-30s: %lld.%06ld\n", "credit",
-			SPLIT_NS(cfs_rq->credit));
-	SEQ_printf(m, "  .%-30s: %lld.%06ld\n", "credit_charge_start",
-			SPLIT_NS(cfs_rq->credit_charge_start));
-#endif
+
 	print_cfs_group_stats(m, cpu, cfs_rq->tg);
 #endif
 }
@@ -273,7 +264,6 @@ static void print_cpu(struct seq_file *m, int cpu)
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", #x, SPLIT_NS(rq->x))
 
 	P(nr_running);
-	P(nr_running_cfs);
 	SEQ_printf(m, "  .%-30s: %lu\n", "load",
 		   rq->load.weight);
 	P(nr_switches);

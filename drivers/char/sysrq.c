@@ -315,7 +315,7 @@ static void sysrq_handle_showmem(int key, struct tty_struct *tty)
 		show_ub_mem(ub);
 	rcu_read_unlock();
 
-	show_mem();
+	show_mem(0);
 	show_slab_info();
 }
 static struct sysrq_key_op sysrq_showmem_op = {
@@ -355,7 +355,7 @@ static void moom_callback(struct work_struct *ignored)
 {
 	ub_oom_start(&global_oom_ctrl);
 	global_oom_ctrl.kill_counter = 0;
-	out_of_memory(node_zonelist(0, GFP_KERNEL), GFP_KERNEL, 0);
+	out_of_memory(node_zonelist(0, GFP_KERNEL), GFP_KERNEL, 0, NULL);
 }
 
 static DECLARE_WORK(moom_work, moom_callback);
