@@ -607,7 +607,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
-%modules_dir/kernel/drivers/staging/lirc/
+%modules_dir/kernel/drivers/staging/media/lirc/
 %exclude %modules_dir/kernel/drivers/media/dvb/ngene/
 %exclude %modules_dir/kernel/drivers/media/video/cx23885/
 
@@ -615,7 +615,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 %modules_dir/kernel/drivers/media/dvb/ngene/
 %modules_dir/kernel/drivers/media/video/cx23885/
-%exclude %modules_dir/kernel/drivers/staging/lirc/
+%exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
 * Thu Jan 12 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.2.0-alt1
