@@ -561,6 +561,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 /lib/firmware/*
 
+%exclude %modules_dir/modules.alias.bin
+%exclude %modules_dir/modules.dep.bin
+%exclude %modules_dir/modules.symbols.bin
+%exclude %modules_dir/modules.builtin.bin
 %ghost %modules_dir/modules.alias.bin
 %ghost %modules_dir/modules.dep.bin
 %ghost %modules_dir/modules.symbols.bin
