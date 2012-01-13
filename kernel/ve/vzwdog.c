@@ -31,8 +31,6 @@
 static int sleep_timeout = 60;
 static struct task_struct *wdog_thread_tsk;
 
-extern void show_mem(void);
-
 static struct file *intr_file;
 static char page[PAGE_SIZE];
 
@@ -267,7 +265,7 @@ static void wdog_print(void)
 	show_header();
 	show_irq_list();
 	show_pgdatinfo();
-	show_mem();
+	show_mem(SHOW_MEM_FILTER_NODES);
 	show_diskio();
 	show_schedule_latency();
 	show_alloc_latency();

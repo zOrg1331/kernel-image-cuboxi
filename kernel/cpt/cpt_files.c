@@ -216,6 +216,12 @@ static int cpt_dump_path(struct dentry *d, struct vfsmount *mnt,
 	char *pg = cpt_get_buf(ctx);
 	loff_t saved;
 	struct path p;
+	struct nfs_unlinkdata *ud = NULL;
+
+	if (d->d_flags & DCACHE_NFSFS_RENAMED) {
+		ud = d->d_fsdata;
+		d = d->d_parent;
+	}
 
 	p.dentry = d;
 	p.mnt = mnt;
@@ -262,6 +268,20 @@ static int cpt_dump_path(struct dentry *d, struct vfsmount *mnt,
 	} else {
 		struct cpt_object_hdr o;
 
+		if (ud) {
+			char *old_path = path;
+			int appendix_len = ud->args.name.len + 1;
+
+			if (path - pg < appendix_len) {
+				eprintk_ctx("d_path err=%d\n", len);
+				__cpt_release_buf(ctx);
+				return -ENOMEM;
+			}
+			path = old_path - appendix_len;
+			strcpy(path, old_path);
+			strcat(path, "/");
+			strncat(path, ud->args.name.name, ud->args.name.len);
+		}
 		len = pg + PAGE_SIZE - 1 - path;
 		if (replaced &&
 		    len >= sizeof("(deleted) ") - 1 &&
@@ -1012,7 +1032,7 @@ static int dump_content_fifo(struct file *file, struct cpt_context *ctx)
 			if (file1->f_mode & FMODE_WRITE)
 				writers--;
 		}
-	}	
+	}
 	mutex_unlock(&ino->i_mutex);
 	if (readers || writers) {
 		struct dentry *dr = file->f_dentry->d_sb->s_root;
@@ -1133,7 +1153,8 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 	/* 1. Try to find not deleted dentry in ino->i_dentry list */
 	spin_lock(&dcache_lock);
 	list_for_each_entry(de, &ino->i_dentry, d_alias) {
-		if (!IS_ROOT(de) && d_unhashed(de))
+		if (!IS_ROOT(de) && d_unhashed(de) &&
+		    !(de->d_flags & DCACHE_NFSFS_RENAMED))
 			continue;
 		found = de;
 		dget_locked(found);

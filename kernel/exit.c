@@ -22,7 +22,6 @@
 #include <linux/fdtable.h>
 #include <linux/binfmts.h>
 #include <linux/nsproxy.h>
-#include <linux/virtinfo.h>
 #include <linux/pid_namespace.h>
 #include <linux/ptrace.h>
 #include <linux/profile.h>
@@ -51,6 +50,7 @@
 #include <linux/perf_event.h>
 #include <linux/ve_proto.h>
 #include <trace/events/sched.h>
+#include <linux/oom.h>
 
 #include <bc/misc.h>
 #include <bc/oom_kill.h>
@@ -726,6 +726,8 @@ void exit_mm(struct task_struct * tsk)
 	enter_lazy_tlb(mm, current);
 	/* We don't want this task to be frozen prematurely */
 	clear_freeze_flag(tsk);
+	if (tsk->signal->oom_score_adj == OOM_SCORE_ADJ_MIN)
+		atomic_dec(&mm->oom_disable_count);
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
 	mmput(mm);

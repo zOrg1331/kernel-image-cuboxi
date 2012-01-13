@@ -94,7 +94,7 @@ static int sim_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	int err;
 
-	err = vfs_statfs_by_dentry(dentry, buf);
+	err = statfs_by_dentry(dentry, buf);
 	if (err)
 		return err;
 

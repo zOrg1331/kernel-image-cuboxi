@@ -56,6 +56,7 @@
 #include <linux/fsnotify.h>
 #include <linux/fs_struct.h>
 #include <linux/pipe_fs_i.h>
+#include <linux/oom.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -178,9 +179,13 @@ void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
 
 	bprm->vma_pages = pages;
 
-	down_write(&mm->mmap_sem);
-	mm->total_vm += diff;
-	up_write(&mm->mmap_sem);
+#ifdef USE_SPLIT_PTLOCKS
+	add_mm_counter(mm, anon_rss, diff);
+#else
+	spin_lock(&mm->page_table_lock);
+	add_mm_counter(mm, anon_rss, diff);
+	spin_unlock(&mm->page_table_lock);
+#endif
 }
 
 struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
@@ -811,7 +816,6 @@ static int exec_mmap(struct linux_binprm *bprm)
 {
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm, *mm;
-	int ret;
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
@@ -832,7 +836,6 @@ static int exec_mmap(struct linux_binprm *bprm)
 		}
 	}
 
-	ret = 0;
 	mm = bprm->mm;
 	mm->vps_dumpable = 1;
 	task_lock(tsk);
@@ -840,6 +843,10 @@ static int exec_mmap(struct linux_binprm *bprm)
 	tsk->mm = mm;
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
+	if (old_mm && tsk->signal->oom_score_adj == OOM_SCORE_ADJ_MIN) {
+		atomic_dec(&old_mm->oom_disable_count);
+		atomic_inc(&tsk->mm->oom_disable_count);
+	}
 	task_unlock(tsk);
 	arch_pick_mmap_layout(mm);
 	bprm->mm = NULL;		/* We're using it now */
@@ -849,10 +856,10 @@ static int exec_mmap(struct linux_binprm *bprm)
 		BUG_ON(active_mm != old_mm);
 		mm_update_next_owner(old_mm);
 		mmput(old_mm);
-		return ret;
+		return 0;
 	}
 	mmdrop(active_mm);
-	return ret;
+	return 0;
 }
 
 /*

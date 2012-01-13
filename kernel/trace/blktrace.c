@@ -660,8 +660,17 @@ static void blk_add_trace_rq(struct request_queue *q, struct request *rq,
 	if (likely(!bt))
 		return;
 
+	if (rq->cmd_flags & REQ_SYNC)
+		rw |= (1 << BIO_RW_SYNCIO);
+	if (rq->cmd_flags & REQ_META)
+		rw |= (1 << BIO_RW_META);
+
 	if (rq->cmd_flags & REQ_DISCARD)
-		rw |= REQ_DISCARD;
+		rw |= BIO_DISCARD;
+	if (rq->cmd_flags & REQ_FLUSH)
+		rw |= BIO_FLUSH;
+	if (rq->cmd_flags & REQ_FUA)
+		rw |= BIO_FUA;
 
 	if (rq->cmd_type == REQ_TYPE_BLOCK_PC) {
 		what |= BLK_TC_ACT(BLK_TC_PC);
@@ -1077,7 +1086,7 @@ typedef int (blk_log_action_t) (struct trace_iterator *iter, const char *act);
 
 static int blk_log_action_classic(struct trace_iterator *iter, const char *act)
 {
-	char rwbs[8];
+	char rwbs[RWBS_LEN];
 	unsigned long long ts  = iter->ts;
 	unsigned long nsec_rem = do_div(ts, NSEC_PER_SEC);
 	unsigned secs	       = (unsigned long)ts;
@@ -1093,7 +1102,7 @@ static int blk_log_action_classic(struct trace_iterator *iter, const char *act)
 
 static int blk_log_action(struct trace_iterator *iter, const char *act)
 {
-	char rwbs[8];
+	char rwbs[RWBS_LEN];
 	const struct blk_io_trace *t = te_blk_io_trace(iter->ent);
 
 	fill_rwbs(rwbs, t);
@@ -1501,7 +1510,7 @@ static const struct {
 } mask_maps[] = {
 	{ BLK_TC_READ,		"read"		},
 	{ BLK_TC_WRITE,		"write"		},
-	{ BLK_TC_FUA,		"fua"		},
+	{ BLK_TC_FLUSH,		"flush"		},
 	{ BLK_TC_SYNC,		"sync"		},
 	{ BLK_TC_QUEUE,		"queue"		},
 	{ BLK_TC_REQUEUE,	"requeue"	},
@@ -1513,7 +1522,7 @@ static const struct {
 	{ BLK_TC_META,		"meta"		},
 	{ BLK_TC_DISCARD,	"discard"	},
 	{ BLK_TC_DRV_DATA,	"drv_data"	},
-	{ BLK_TC_FLUSH,		"flush"		},
+	{ BLK_TC_FUA,		"fua"		},
 };
 
 static int blk_trace_str2mask(const char *str)
@@ -1734,19 +1743,19 @@ void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
 {
 	int i = 0;
 
-	if (rw & REQ_FLUSH)
+	if (rw & BIO_FLUSH)
 		rwbs[i++] = 'F';
 
 	if (rw & WRITE)
 		rwbs[i++] = 'W';
-	else if (rw & 1 << BIO_RW_DISCARD)
+	else if (rw & BIO_DISCARD)
 		rwbs[i++] = 'D';
 	else if (bytes)
 		rwbs[i++] = 'R';
 	else
 		rwbs[i++] = 'N';
 
-	if (rw & REQ_FUA)
+	if (rw & BIO_FUA)
 		rwbs[i++] = 'F';
 	if (rw & 1 << BIO_RW_AHEAD)
 		rwbs[i++] = 'A';
@@ -1763,8 +1772,17 @@ void blk_fill_rwbs_rq(char *rwbs, struct request *rq)
 	int rw = rq->cmd_flags & 0x03;
 	int bytes;
 
+	if (rq->cmd_flags & REQ_SYNC)
+		rw |= (1 << BIO_RW_SYNCIO);
+	if (rq->cmd_flags & REQ_META)
+		rw |= (1 << BIO_RW_META);
+
 	if (rq->cmd_flags & REQ_DISCARD)
-		rw |= (1 << BIO_RW_DISCARD);
+		rw |= BIO_DISCARD;
+	if (rq->cmd_flags & REQ_FLUSH)
+		rw |= BIO_FLUSH;
+	if (rq->cmd_flags & REQ_FUA)
+		rw |= BIO_FUA;
 
 	bytes = blk_rq_bytes(rq);
 

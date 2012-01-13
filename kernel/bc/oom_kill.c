@@ -224,7 +224,7 @@ void ub_oom_mm_dead(struct mm_struct *mm)
 
 	if (mm->global_oom) {
 		if (printk_ratelimit())
-			show_mem();
+			show_mem(SHOW_MEM_FILTER_NODES);
 		ub_release_oom_control(&global_oom_ctrl);
 	}
 
@@ -241,19 +241,22 @@ int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 {
 	struct task_struct *p;
 	int res = 0;
+	unsigned long ub_mem_pages;
+	unsigned int points;
 
 	if (ub_oom_lock(&ub->oom_ctrl))
 		goto out;
 
 	oom_report_invocation("loc", ub, gfp_mask, 0);
-
+	ub_mem_pages = ub->ub_parms[UB_PHYSPAGES].limit;
 	read_lock(&tasklist_lock);
 
 	do {
-		p = select_bad_process(ub, NULL);
+		p = select_bad_process(&points, ub_mem_pages, ub, NULL, NULL);
 		if (PTR_ERR(p) == -1UL || !p)
 			break;
-	} while (oom_kill_process(p, gfp_mask, 0, NULL, ub, "Out of memory in UB"));
+	} while (oom_kill_process(p, gfp_mask, 0, points, ub_mem_pages,
+				ub, NULL, NULL, "Out of memory in UB"));
 
 	read_unlock(&tasklist_lock);
 	ub_oom_unlock(&ub->oom_ctrl);

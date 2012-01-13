@@ -1309,6 +1309,8 @@ static void delayfs_break(struct file *fake)
 	fake->f_dentry->d_fsdata = ERR_PTR(-EIO);
 }
 
+static int delayfs_sillyrename(struct file *fake);
+
 static void delay_break_all(struct cpt_delayed_context *ctx)
 {
 	cpt_object_t *obj;
@@ -1322,6 +1324,8 @@ static void delay_break_all(struct cpt_delayed_context *ctx)
 		priv = file->private_data;
 		if (priv->real_fs_file == NULL)
 			delayfs_break(file);
+		else if (obj->o_flags & CPT_FILE_SILLYRENAME)
+			delayfs_sillyrename(file);
 	}
 
 	for_each_object(obj, CPT_DOBJ_VFSMOUNT_REF) {
@@ -1450,9 +1454,6 @@ static void delayfs_resume(struct cpt_delayed_context *ctx,
 			printk("%s: preopen %s err %d\n", __func__,
 					FNAME(file), ret);
 			delayfs_break(file);
-		} else {
-			if (obj->o_flags & CPT_FILE_SILLYRENAME)
-				delayfs_sillyrename(file);
 		}
 	}
 

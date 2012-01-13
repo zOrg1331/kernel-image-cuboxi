@@ -59,6 +59,7 @@ struct attribute_group {
 };
 
 #include <linux/fs.h>
+#include <linux/rbtree.h>
 
 /**
  * Use these macros to make defining attributes easier. See include/linux/device.h
@@ -105,8 +106,16 @@ struct sysfs_dirent;
 /* type-specific structures for sysfs_dirent->s_* union members */
 struct sysfs_elem_dir {
 	struct kobject		*kobj;
-	/* children list starts here and goes through sd->s_sibling */
+#ifdef __GENKSYMS__
 	struct sysfs_dirent	*children;
+#endif
+
+#ifndef __GENKSYMS__
+	unsigned long           subdirs;
+
+	struct rb_root          inode_tree;
+	struct rb_root          name_tree;
+#endif
 };
 
 struct sysfs_elem_symlink {
@@ -145,8 +154,20 @@ struct sysfs_dirent {
 	atomic_t		s_count;
 	atomic_t		s_active;
 	struct sysfs_dirent	*s_parent;
+#ifdef __GENKSYMS__
 	struct sysfs_dirent	*s_sibling;
+#endif
 	const char		*s_name;
+
+#ifndef __GENKSYMS__
+	struct rb_node          inode_node;
+	struct rb_node          name_node;
+
+	union {
+		struct completion       *completion;
+		struct sysfs_dirent     *removed_list;
+	} u;
+#endif
 
 	union {
 		struct sysfs_elem_dir		s_dir;

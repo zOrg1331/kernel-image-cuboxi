@@ -563,38 +563,6 @@ rescan:
 }
 EXPORT_SYMBOL(user_get_super);
 
-SYSCALL_DEFINE2(ustat, unsigned, dev, struct ustat __user *, ubuf)
-{
-	dev_t kdev;
-        struct super_block *s;
-        struct ustat tmp;
-        struct kstatfs sbuf;
-	int err;
-
-	kdev = new_decode_dev(dev);
-	err = get_device_perms_ve(S_IFBLK, kdev, FMODE_READ);
-	if (err)
-		goto out;
-
-	err = -EINVAL;
-	s = user_get_super(kdev);
-	if (s == NULL)
-		goto out;
-
-	err = vfs_statfs_by_sb(s, s->s_root, &sbuf);
-	drop_super(s);
-	if (err)
-		goto out;
-
-        memset(&tmp,0,sizeof(struct ustat));
-        tmp.f_tfree = sbuf.f_bfree;
-        tmp.f_tinode = sbuf.f_ffree;
-
-        err = copy_to_user(ubuf,&tmp,sizeof(struct ustat)) ? -EFAULT : 0;
-out:
-	return err;
-}
-
 /**
  *	do_remount_sb - asks filesystem to change mount options.
  *	@sb:	superblock in question

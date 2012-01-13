@@ -13,7 +13,7 @@
 enum blktrace_cat {
 	BLK_TC_READ	= 1 << 0,	/* reads */
 	BLK_TC_WRITE	= 1 << 1,	/* writes */
-	BLK_TC_FUA	= 1 << 2,	/* fua requests */
+	BLK_TC_FLUSH	= 1 << 2,	/* flush */
 	BLK_TC_SYNC	= 1 << 3,	/* sync IO */
 	BLK_TC_SYNCIO	= BLK_TC_SYNC,
 	BLK_TC_QUEUE	= 1 << 4,	/* queueing/merging */
@@ -27,7 +27,7 @@ enum blktrace_cat {
 	BLK_TC_META	= 1 << 12,	/* metadata */
 	BLK_TC_DISCARD	= 1 << 13,	/* discard requests */
 	BLK_TC_DRV_DATA	= 1 << 14,	/* binary per-driver data */
-	BLK_TC_FLUSH	= 1 << 15,	/* flush requests */
+	BLK_TC_FUA	= 1 << 15,	/* fua requests */
 
 	BLK_TC_END	= 1 << 15,	/* we've run out of bits! */
 };

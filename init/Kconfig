@@ -450,6 +450,23 @@ config FAIR_GROUP_SCHED
 	depends on GROUP_SCHED
 	default GROUP_SCHED
 
+config CFS_BANDWIDTH
+	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
+	depends on EXPERIMENTAL
+	depends on FAIR_GROUP_SCHED
+	depends on SMP
+	default n
+	help
+	  This option allows users to define CPU bandwidth rates (limits) for
+	  tasks running within the fair group scheduler.  Groups with no limit
+	  set are considered to be unconstrained and will run with no
+	  restriction.
+	  See tip/Documentation/scheduler/sched-bwc.txt for more information.
+
+config CFS_CPULIMIT
+	bool
+	depends on CFS_BANDWIDTH
+
 config RT_GROUP_SCHED
 	bool "Group scheduling for SCHED_RR/FIFO"
 	depends on EXPERIMENTAL
@@ -492,32 +509,12 @@ config VZ_FAIRSCHED
 	select CGROUP_CPUACCT
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED
-	select FAIR_GROUP_SCHED_CPU_LIMITS
-	select FAIR_GROUP_SCHED_NRCPU_LIMITS
+	select CFS_BANDWIDTH
+	select CFS_CPULIMIT
 	default y
 	help
 	  This option add task cpu cgroup control with OpenVZ compatible
 	  syscall and procfs interface.
-
-config FAIR_GROUP_SCHED_CPU_LIMITS
-	bool "CPU limits for fair group scheduler"
-	depends on FAIR_GROUP_SCHED && CGROUP_SCHED
-	default n
-	help
-	  This option allows you to explicitly limit CPU usage of
-	  a fair task group.
-
-	  Say N if unsure
-
-config FAIR_GROUP_SCHED_NRCPU_LIMITS
-	bool "Number CPU limits for fair group scheduler"
-	depends on FAIR_GROUP_SCHED && FAIR_GROUP_SCHED_CPU_LIMITS && CGROUP_SCHED
-	default n
-	help
-	  This option adds support for limiting the number of CPUs available
-	  to a fair task group.
-
-	  Say N if unsure
 
 menuconfig CGROUPS
 	boolean "Control Group support"
@@ -669,6 +666,16 @@ config DEBUG_BLK_CGROUP
 	---help---
 	Enable some debugging help. Currently it exports additional stat
 	files in a cgroup which can be useful for debugging.
+
+config CGROUP_PERF
+	bool "Enable perf_event per-cpu per-container group (cgroup) monitoring"
+	depends on PERF_EVENTS && CGROUPS
+	help
+	  This option extends the per-cpu mode to restrict monitoring to
+	  threads which belong to the cgroup specified and run on the
+	  designated cpu.
+
+	  Say N if unsure.
 
 endif # CGROUPS
 

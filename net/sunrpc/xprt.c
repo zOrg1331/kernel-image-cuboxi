@@ -229,6 +229,7 @@ EXPORT_SYMBOL_GPL(xprt_reserve_xprt);
 
 static void xprt_clear_locked(struct rpc_xprt *xprt)
 {
+	BUG_ON(xprt->owner_env != get_exec_env());
 	xprt->snd_task = NULL;
 	if (!test_bit(XPRT_CLOSE_WAIT, &xprt->state) || xprt->shutdown) {
 		smp_mb__before_clear_bit();
@@ -628,6 +629,7 @@ EXPORT_SYMBOL_GPL(xprt_disconnect_done);
  */
 void xprt_force_disconnect(struct rpc_xprt *xprt)
 {
+	BUG_ON(xprt->owner_env != get_exec_env());
 	/* Don't race with the test_bit() in xprt_clear_locked() */
 	spin_lock_bh(&xprt->transport_lock);
 	set_bit(XPRT_CLOSE_WAIT, &xprt->state);
@@ -651,6 +653,7 @@ void xprt_force_disconnect(struct rpc_xprt *xprt)
  */
 void xprt_conditional_disconnect(struct rpc_xprt *xprt, unsigned int cookie)
 {
+	BUG_ON(xprt->owner_env != get_exec_env());
 	/* Don't race with the test_bit() in xprt_clear_locked() */
 	spin_lock_bh(&xprt->transport_lock);
 	if (cookie != xprt->connect_cookie)
@@ -921,6 +924,7 @@ void xprt_transmit(struct rpc_task *task)
 	}
 
 	dprintk("RPC: %5u xmit complete\n", task->tk_pid);
+	task->tk_flags |= RPC_TASK_SENT;
 	spin_lock_bh(&xprt->transport_lock);
 
 	xprt->ops->set_retrans_timeout(task);

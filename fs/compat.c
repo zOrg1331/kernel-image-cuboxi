@@ -26,7 +26,6 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/vfs.h>
-#include <linux/virtinfo.h>
 #include <linux/ioctl.h>
 #include <linux/init.h>
 #include <linux/smb.h>
@@ -412,8 +411,7 @@ asmlinkage long compat_sys_ustat(unsigned dev, struct compat_ustat __user *u)
 	sb = user_get_super(kdev);
 	if (!sb)
 		return -EINVAL;
-
-	err = vfs_statfs_by_sb(sb, sb->s_root, &sbuf);
+	err = statfs_by_dentry(sb->s_root, &sbuf);
 	drop_super(sb);
 	if (err)
 		return err;

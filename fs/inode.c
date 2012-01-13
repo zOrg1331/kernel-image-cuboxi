@@ -306,6 +306,15 @@ void __iget(struct inode *inode)
 }
 EXPORT_SYMBOL(__iget);
 
+/*
+ * get additional reference to inode; caller must already hold one.
+ */
+void ihold(struct inode *inode)
+{
+	WARN_ON(atomic_inc_return(&inode->i_count) < 2);
+}
+EXPORT_SYMBOL(ihold);
+
 /**
  * clear_inode - clear an inode
  * @inode: inode to clear
