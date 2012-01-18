@@ -10,7 +10,7 @@ ndiswrapper
 #rtl8187se
 bcmwl
 #madwifi-hal
-rtl8192
+#rtl8192
 rtl8168
 
 #vendor specific  hardware features drives
@@ -42,7 +42,7 @@ xtables-addons
 lsadrv
 
 # Deep Packet Inspection
-opendpi
+# opendpi
 
 acpi_call
 
