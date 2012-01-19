@@ -3214,9 +3214,14 @@ int init_ve_tty_class(void)
 		return -ENOMEM;
 
 	res = device_create(ve_tty_class, NULL,
-				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+				MKDEV(TTYAUX_MAJOR, 0), NULL, "tty");
 	if (IS_ERR(res))
 		goto err_class;
+
+	res = device_create(ve_tty_class, NULL,
+				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+	if (IS_ERR(res))
+		goto err_tty;
 
 	res = device_create(ve_tty_class, NULL,
 				MKDEV(TTYAUX_MAJOR, 2), NULL, "ptmx");
@@ -3228,6 +3233,8 @@ int init_ve_tty_class(void)
 
 err_console:
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
+err_tty:
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 0));
 err_class:
 	class_destroy(ve_tty_class);
 	return PTR_ERR(res);
@@ -3237,6 +3244,7 @@ void fini_ve_tty_class(void)
 {
 	struct class *ve_tty_class = get_exec_env()->tty_class;
 
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 0));
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 2));
 	class_destroy(ve_tty_class);
