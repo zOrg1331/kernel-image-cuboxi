@@ -4,3 +4,4 @@ fix-drivers-usb--storage
 fix-drivers-rtc
 fix-drivers-acerhdf
 fix-mm-pfn_valid
+alt-fix-core-proc-pid-mem               3.3
