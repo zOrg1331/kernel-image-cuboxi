@@ -1,5 +1,5 @@
 Name:    kernel-image-std-pae
-Release: alt1
+Release: alt2
 Epoch:   1
 %define kernel_base_version	3.2
 %define kernel_sublevel	.1
@@ -625,6 +625,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Jan 20 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.2.1-alt2
+- proc: clean up and fix /proc/<pid>/mem handling (CVE-2012-0056)
+
 * Fri Jan 13 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.2.1-alt1
 - Update to 3.2.1
 
