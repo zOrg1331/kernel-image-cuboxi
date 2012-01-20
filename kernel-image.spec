@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt47
+Release: alt48
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -662,6 +662,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Jan 20 2012 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt48
+- proc: clean up and fix /proc/<pid>/mem handling (CVE-2012-0056)
+
 * Fri Jan 13 2012 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt47
 - Update to 042stab046.1
 
