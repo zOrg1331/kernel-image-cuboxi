@@ -9,8 +9,6 @@
 #include <linux/cpu.h>
 #include <linux/pm.h>
 #include <linux/io.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 
 #include <asm/fixmap.h>
 #include <asm/i8253.h>
@@ -40,7 +38,6 @@
 unsigned long				hpet_address;
 u8					hpet_blockid; /* OS timer block num */
 u8					hpet_msi_disable;
-u8					hpet_readback_cmp;
 
 #ifdef CONFIG_PCI_MSI
 static unsigned long			hpet_num_timers;
@@ -308,7 +305,6 @@ static void hpet_legacy_clockevent_register(void)
 	/* Setup minimum reprogramming delta. */
 	hpet_clockevent.min_delta_ns = clockevent_delta2ns(HPET_MIN_PROG_DELTA,
 							   &hpet_clockevent);
-
 	/*
 	 * Start hpet with the boot cpu mask and make it
 	 * global after the IO_APIC has been initialized.
@@ -415,7 +411,7 @@ static int hpet_next_event(unsigned long delta,
 	 * the event. The minimum programming delta for the generic
 	 * clockevents code is set to 1.5 * HPET_MIN_CYCLES.
 	 */
-	res = (s32)(cnt - hpet_readl(HPET_COUNTER));
+	res = (s32)(cnt - (u32)hpet_readl(HPET_COUNTER));
 
 	return res < HPET_MIN_CYCLES ? -ETIME : 0;
 }
@@ -591,8 +587,8 @@ static void init_one_hpet_msi_clockevent(struct hpet_dev *hdev, int cpu)
 				      NSEC_PER_SEC, evt->shift);
 	/* Calculate the max delta */
 	evt->max_delta_ns = clockevent_delta2ns(0x7FFFFFFF, evt);
-	/* 5 usec minimum reprogramming delta. */
-	evt->min_delta_ns = 5000;
+	/* Setup minimum reprogramming delta. */
+	evt->min_delta_ns = clockevent_delta2ns(HPET_MIN_PROG_DELTA, evt);
 
 	evt->cpumask = cpumask_of(hdev->cpu);
 	clockevents_register_device(evt);
@@ -915,32 +911,6 @@ out_nohpet:
 	return 0;
 }
 
-static int hpet_show(struct seq_file *m, void *v)
-{
-	u32 cnt, cmp, cfg;
-
-	cnt = hpet_readl(HPET_COUNTER);
-	cmp = hpet_readl(HPET_Tn_CMP(0));
-	cfg = hpet_readl(HPET_Tn_CFG(0));
-
-	seq_printf(m, "cfg: %08x\n", (unsigned int)cfg);
-	seq_printf(m, "cmp: %08x\n", (unsigned int)cmp);
-	seq_printf(m, "cnt: %08x\n", (unsigned int)cnt);
-
-	return 0;
-}
-
-static int hpet_open(struct inode *inode, struct file *filp)
-{
-	return single_open(filp, hpet_show, NULL);
-}
-
-static const struct file_operations hpet_proc_fops = {
-	.open		= hpet_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 /*
  * Needs to be late, as the reserve_timer code calls kalloc !
  *
@@ -977,8 +947,6 @@ static __init int hpet_late_init(void)
 
 	/* This notifier should be called after workqueue is ready */
 	hotcpu_notifier(hpet_cpuhp_notify, -20);
-
-	proc_create("hpet_legacy", 0600, NULL, &hpet_proc_fops);
 
 	return 0;
 }

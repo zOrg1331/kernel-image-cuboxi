@@ -265,7 +265,7 @@ static int make_flags(struct cpt_file_image *fi)
 	return flags;
 }
 
-static struct file *rst_open_file(cpt_object_t *mntobj, char *name,
+struct file *rst_open_file(cpt_object_t *mntobj, char *name,
 			      struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx)
@@ -372,7 +372,8 @@ static struct file *open_pipe(cpt_object_t *mntobj, char *name,
 	return wf;
 }
 
-static struct file *open_special(struct cpt_file_image *fi,
+static struct file *open_special(cpt_object_t *mntobj, char *name,
+				 struct cpt_file_image *fi,
 				 unsigned flags,
 				 int deleted,
 				 struct cpt_context *ctx)
@@ -415,7 +416,7 @@ static struct file *open_special(struct cpt_file_image *fi,
 		return NULL;
 	}	
 
-	file = rst_open_tty(fi, ii, flags, ctx);
+	file = rst_open_tty(mntobj, name, fi, ii, flags, ctx);
 	kfree(ii);
 	return file;
 }
@@ -983,6 +984,28 @@ out:
 	return file;
 }
 
+static struct file * open_eventfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx, loff_t *pos)
+{
+	mm_segment_t old_fs;
+	int fd;
+	struct file *file;
+	struct cpt_eventfd_image o;
+	int err;
+
+	err = rst_get_object(CPT_OBJ_EVENTFD, *pos, &o, ctx);
+	if (err)
+		return ERR_PTR(err);
+
+	old_fs = get_fs(); set_fs(KERNEL_DS);
+	fd = sys_eventfd2(o.cpt_count, o.cpt_flags);
+	set_fs(old_fs);
+	if (fd < 0)
+		return ERR_PTR(fd);
+	file = fget(fd);
+	sys_close(fd);
+	return file;
+}
+
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -1136,7 +1159,7 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 			   S_ISFIFO(fi.cpt_i_mode) ||
 			   S_ISDIR(fi.cpt_i_mode)) {
 			if (S_ISCHR(fi.cpt_i_mode)) {
-				file = open_special(&fi, flags, 1, ctx);
+				file = open_special(mntobj, name, &fi, flags, 1, ctx);
 				if (file != NULL)
 					goto map_file;
 			}
@@ -1183,11 +1206,14 @@ open_file:
 		if ((fi.cpt_lflags & CPT_DENTRY_TIMERFD) &&
 			(file = open_timerfd(&fi, flags, ctx, &pos2)) != NULL)
 			goto map_file;
+		if ((fi.cpt_lflags & CPT_DENTRY_EVENTFD) &&
+			(file = open_eventfd(&fi, flags, ctx, &pos2)) != NULL)
+			goto map_file;
 		if (S_ISFIFO(fi.cpt_i_mode) &&
 		    (file = open_pipe(mntobj, name, &fi, flags, ctx)) != NULL)
 			goto map_file;
 		if (!S_ISREG(fi.cpt_i_mode) &&
-		    (file = open_special(&fi, flags, 0, ctx)) != NULL)
+		    (file = open_special(mntobj, name, &fi, flags, 0, ctx)) != NULL)
 			goto map_file;
 	}
 

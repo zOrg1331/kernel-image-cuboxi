@@ -56,13 +56,15 @@ int cpt_dump_content_tty(struct file *file, struct cpt_context *ctx)
 int cpt_collect_tty(struct file *file, cpt_context_t * ctx)
 {
 	struct tty_struct *tty = file_tty(file);
+	cpt_object_t *obj;
 
 	if (tty) {
-		if (cpt_object_add(CPT_OBJ_TTY, tty, ctx) == NULL)
+		obj = cpt_object_add(CPT_OBJ_TTY, tty, ctx);
+		if (obj == NULL)
 			return -ENOMEM;
-		if (tty->link) {
-			cpt_object_t *obj;
-
+		if (MAJOR(file->f_dentry->d_inode->i_rdev) == TTY_MAJOR) {
+			obj->o_flags |= CPT_TTY_NOPAIR;
+		} else if (tty->link) {
 			obj = cpt_object_add(CPT_OBJ_TTY, tty->link, ctx);
 			if (obj == NULL)
 				return -ENOMEM;
@@ -79,7 +81,8 @@ int cpt_dump_tty(cpt_object_t *obj, struct cpt_context *ctx)
 	struct cpt_tty_image *v;
 
 	if (tty->link) {
-		if (lookup_cpt_object(CPT_OBJ_TTY, tty->link, ctx) == NULL) {
+		if (!(obj->o_flags & CPT_TTY_NOPAIR) &&
+		    lookup_cpt_object(CPT_OBJ_TTY, tty->link, ctx) == NULL) {
 			eprintk_ctx("orphan pty %s %d\n", tty->name, tty->driver->subtype == PTY_TYPE_SLAVE);
 			return -EINVAL;
 		}
@@ -90,6 +93,8 @@ int cpt_dump_tty(cpt_object_t *obj, struct cpt_context *ctx)
 		if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
 		    tty->driver->subtype == PTY_TYPE_SLAVE &&
 		    tty->link->count)
+			obj->o_count++;
+		if (test_bit(TTY_EXTRA_REFERENCE, &tty->flags))
 			obj->o_count++;
 	}
 	if (obj->o_count != tty->count) {

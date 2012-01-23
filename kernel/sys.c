@@ -1770,6 +1770,17 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			else
 				error = PR_MCE_KILL_DEFAULT;
 			break;
+		case PR_SET_DATA_CSUM:
+			switch (arg2) {
+			case PR_DATA_CSUM_OFF:
+			case PR_DATA_CSUM_ON:
+				current->data_csum_enabled = arg2;
+				break;
+			default:
+				error = -EINVAL;
+				break;
+			}
+			break;
 		default:
 			error = -EINVAL;
 			break;

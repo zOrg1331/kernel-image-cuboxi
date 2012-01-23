@@ -1672,6 +1672,24 @@ static int change_mount_flags(struct vfsmount *mnt, int ms_flags)
 	return error;
 }
 
+static inline ve_remount_allowed(struct vfsmount *mnt, int flags, int mnt_flags)
+{
+	struct ve_struct *ve = get_exec_env();
+	struct super_block *sb = mnt->mnt_sb;
+
+	if (ve_accessible_veid(mnt->owner, ve->veid))
+		return 0;
+
+	if (mnt != ve->root_path.mnt)
+		return -EPERM;
+	if ((sb->s_flags ^ flags) & MS_RMT_MASK & ~MS_VE_RMT_MASK)
+		return -EPERM;
+	if ((mnt->mnt_flags ^ mnt_flags) & ~MNT_VE_RMT_MASK)
+		return -EPERM;
+
+	return 0;
+}
+
 /*
  * change filesystem flags. dir should be a physical root of filesystem.
  * If you've mounted a non-root directory somewhere and want to do remount
@@ -1682,7 +1700,6 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 {
 	int err;
 	struct super_block *sb = path->mnt->mnt_sb;
-	struct ve_struct *ve = get_exec_env();
 
 	if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -1693,9 +1710,9 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 	if (path->dentry != path->mnt->mnt_root)
 		return -EINVAL;
 
-	if (!ve_accessible_veid(path->mnt->owner, ve->veid) &&
-			path->mnt != ve->root_path.mnt)
-		return -EPERM;
+	err = ve_remount_allowed(path->mnt, flags, mnt_flags);
+	if (err)
+		return err;
 
 	err = security_sb_remount(sb, data);
 	if (err)

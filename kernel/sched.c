@@ -307,6 +307,7 @@ struct task_group {
 #endif
 #endif
 	struct kernel_cpustat __percpu *cpustat;
+	struct taskstats __percpu *taskstats;
 	unsigned long		avenrun[3];	/* loadavg data */
 	struct timespec start_time;
 #ifndef __GENKSYMS__
@@ -384,6 +385,9 @@ struct task_group init_task_group;
 static inline struct task_group *task_group(struct task_struct *p)
 {
 	struct task_group *tg;
+
+	if (p->flags & PF_EXITING)
+		return &root_task_group;
 
 #ifdef CONFIG_USER_SCHED
 	rcu_read_lock();
@@ -864,18 +868,7 @@ struct rq {
 
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
-static inline
-void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
-{
-	rq->curr->sched_class->check_preempt_curr(rq, p, flags);
-
-	/*
-	 * A queue event has occurred, and we're going to schedule.  In
-	 * this case, we can save a useless back to back clock update.
-	 */
-	if (test_tsk_need_resched(p))
-		rq->skip_clock_update = 1;
-}
+static void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags);
 
 static inline int cpu_of(struct rq *rq)
 {
@@ -920,10 +913,15 @@ void __init kstat_init(void)
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define raw_rq()		(&__raw_get_cpu_var(runqueues))
 
-inline void update_rq_clock(struct rq *rq)
+static void update_rq_clock(struct rq *rq)
 {
-	if (!rq->skip_clock_update)
-		rq->clock = sched_clock_cpu(cpu_of(rq));
+	s64 delta;
+
+	if (rq->skip_clock_update > 0)
+		return;
+
+	delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
+	rq->clock += delta;
 }
 
 /*
@@ -1572,6 +1570,19 @@ void wake_up_idle_cpu(int cpu)
 	if (!tsk_is_polling(rq->idle))
 		smp_send_reschedule(cpu);
 }
+
+static inline bool got_nohz_idle_kick(void)
+{
+	return idle_cpu(smp_processor_id()) && this_rq()->nohz_balance_kick;
+}
+
+#else /* CONFIG_NO_HZ */
+
+static inline bool got_nohz_idle_kick(void)
+{
+	return false;
+}
+
 #endif /* CONFIG_NO_HZ */
 
 static u64 sched_avg_period(void)
@@ -2230,6 +2241,31 @@ static inline void check_class_changed(struct rq *rq, struct task_struct *p,
 		p->sched_class->prio_changed(rq, p, oldprio, running);
 }
 
+static void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags)
+{
+	const struct sched_class *class;
+
+	if (p->sched_class == rq->curr->sched_class) {
+		rq->curr->sched_class->check_preempt_curr(rq, p, flags);
+	} else {
+		for_each_class(class) {
+			if (class == rq->curr->sched_class)
+				break;
+			if (class == p->sched_class) {
+				resched_task(rq->curr);
+				break;
+			}
+		}
+	}
+
+	/*
+ 	* A queue event has occurred, and we're going to schedule.  In
+ 	* this case, we can save a useless back to back clock update.
+ 	*/
+	if (test_tsk_need_resched(rq->curr))
+		rq->skip_clock_update = 1;
+}
+
 /**
  * kthread_bind - bind a just-created kthread to a cpu.
  * @p: thread created by kthread_create().
@@ -2559,6 +2595,17 @@ int select_task_rq(struct rq *rq, struct task_struct *p, int sd_flags, int wake_
 	return cpu;
 }
 #endif
+
+void scheduler_ipi(void)
+{
+	if (!got_nohz_idle_kick())
+		return;
+	/*
+	 * Check if someone kicked us for doing the nohz idle load balance.
+	 */
+	if (unlikely(got_nohz_idle_kick() && !need_resched()))
+		raise_softirq_irqoff(SCHED_SOFTIRQ);
+}
 
 /***
  * try_to_wake_up - wake up a thread
@@ -5085,21 +5132,6 @@ static void active_load_balance(struct rq *busiest_rq, int busiest_cpu)
 
 #ifdef CONFIG_NO_HZ
 
-static DEFINE_PER_CPU(struct call_single_data, remote_sched_softirq_cb);
-
-static void trigger_sched_softirq(void *data)
-{
-	raise_softirq_irqoff(SCHED_SOFTIRQ);
-}
-
-static inline void init_sched_softirq_csd(struct call_single_data *csd)
-{
-	csd->func = trigger_sched_softirq;
-	csd->info = NULL;
-	csd->flags = 0;
-	csd->priv = 0;
-}
-
 /*
  * idle load balancing details
  * - One of the idle CPUs nominates itself as idle load_balancer, while
@@ -5259,11 +5291,16 @@ static void nohz_balancer_kick(int cpu)
 	}
 
 	if (!cpu_rq(ilb_cpu)->nohz_balance_kick) {
-		struct call_single_data *cp;
-
 		cpu_rq(ilb_cpu)->nohz_balance_kick = 1;
-		cp = &per_cpu(remote_sched_softirq_cb, cpu);
-		__smp_call_function_single(ilb_cpu, cp, 0);
+
+		smp_mb();
+		/*
+		 * Use smp_send_reschedule() instead of resched_cpu().
+		 * This way we generate a sched IPI on the target cpu which
+		 * is idle. And the softirq performing nohz idle load balance
+		 * will be run before returning from the IPI.
+		 */
+		smp_send_reschedule(ilb_cpu);
 	}
 	return;
 }
@@ -6064,7 +6101,6 @@ static void put_prev_task(struct rq *rq, struct task_struct *prev)
 {
 	if (prev->se.on_rq)
 		update_rq_clock(rq);
-	rq->skip_clock_update = 0;
 	prev->sched_class->put_prev_task(rq, prev);
 }
 
@@ -6127,7 +6163,6 @@ need_resched_nonpreemptible:
 		hrtick_clear(rq);
 
 	spin_lock_irq(&rq->lock);
-	clear_tsk_need_resched(prev);
 
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
 		if (unlikely(signal_pending_state(prev->state, prev)))
@@ -6144,15 +6179,17 @@ need_resched_nonpreemptible:
 
 	put_prev_task(rq, prev);
 	next = pick_next_task(rq);
+	clear_tsk_need_resched(prev);
+	rq->skip_clock_update = 0;
 
 	if (likely(prev != next)) {
-
 		sched_info_switch(prev, next);
 		perf_event_task_sched_out(prev, next);
 
 		rq->nr_switches++;
 		rq->curr = next;
 		++*switch_count;
+		WARN_ON_ONCE(test_tsk_need_resched(next));
 
 #ifdef CONFIG_VE
 		prev->ve_task_info.sleep_stamp = rq->clock;
@@ -10312,6 +10349,7 @@ void __init sched_init(void)
 	}
 
 	root_task_group.cpustat = alloc_percpu(struct kernel_cpustat);
+	root_task_group.taskstats = alloc_percpu(struct taskstats);
 
 #ifdef CONFIG_SMP
 	init_defrootdomain();
@@ -10435,7 +10473,6 @@ void __init sched_init(void)
 		rq_attach_root(rq, &def_root_domain);
 #ifdef CONFIG_NO_HZ
 		rq->nohz_balance_kick = 0;
-		init_sched_softirq_csd(&per_cpu(remote_sched_softirq_cb, i));
 #endif
 #endif
 		init_rq_hrtick(rq);
@@ -10803,6 +10840,7 @@ static void free_sched_group(struct task_group *tg)
 	free_rt_sched_group(tg);
 	autogroup_free(tg);
 	free_percpu(tg->cpustat);
+	free_percpu(tg->taskstats);
 	kfree(tg);
 }
 
@@ -10824,6 +10862,10 @@ struct task_group *sched_create_group(struct task_group *parent)
 
 	tg->cpustat = alloc_percpu(struct kernel_cpustat);
 	if (!tg->cpustat)
+		goto err;
+
+	tg->taskstats = alloc_percpu(struct taskstats);
+	if (!tg->taskstats)
 		goto err;
 
 	/* start_timespec is saved CT0 uptime */
@@ -11349,6 +11391,34 @@ cpu_cgroup_attach(struct cgroup_subsys *ss, struct cgroup *cgrp,
 			sched_move_task(c);
 		}
 		rcu_read_unlock();
+	}
+}
+
+static void
+cpu_cgroup_exit(struct cgroup_subsys *ss, struct cgroup *cgrp,
+		struct cgroup *old_cgrp, struct task_struct *task)
+{
+	/*
+	 * cgroup_exit() is called in the copy_process() failure path.
+	 * Ignore this case since the task hasn't ran yet, this avoids
+	 * trying to poke a half freed task state from generic code.
+	 */
+	if (!(task->flags & PF_EXITING))
+		return;
+
+	sched_move_task(task);
+
+	if (thread_group_leader(task)) {
+		struct task_group *tg = cgroup_tg(old_cgrp);
+		struct taskstats *stats = get_cpu_ptr(tg->taskstats);
+		struct signal_struct *sig = task->signal;
+
+		if (sig->stats)
+			delayacct_add_stats(stats, sig->stats);
+		else
+			delayacct_add_tsk(stats, task);
+
+		put_cpu_ptr(stats);
 	}
 }
 
@@ -11966,6 +12036,43 @@ static int cpu_cgroup_percpu_seq_read(struct cgroup *cgroup, struct cftype *cft,
 	return 0;
 }
 
+static int cpu_cgroup_delay_show(struct cgroup *cgrp, struct cftype *cft,
+				 struct cgroup_map_cb *cb)
+{
+	struct task_group *tg = cgroup_tg(cgrp);
+	struct taskstats stats;
+	struct cgroup_iter it;
+	struct task_struct *p;
+	int cpu;
+
+	memset(&stats, 0, sizeof stats);
+
+	for_each_present_cpu(cpu)
+		delayacct_add_stats(&stats, per_cpu_ptr(tg->taskstats, cpu));
+
+	cgroup_iter_start(cgrp, &it);
+	while ((p = cgroup_iter_next(cgrp, &it))) {
+		if (thread_group_leader(p) && p->signal->stats)
+			delayacct_add_stats(&stats, p->signal->stats);
+		delayacct_add_tsk(&stats, p);
+	}
+	cgroup_iter_end(cgrp, &it);
+
+	cb->fill(cb, "cpu_count", stats.cpu_count);
+	cb->fill(cb, "cpu_delay", stats.cpu_delay_total);
+	cb->fill(cb, "cpu_run_real", stats.cpu_run_real_total);
+	cb->fill(cb, "cpu_run_virtual", stats.cpu_run_virtual_total);
+	cb->fill(cb, "cpu_scaled_run_real", stats.cpu_scaled_run_real_total);
+	cb->fill(cb, "blkio_count", stats.blkio_count);
+	cb->fill(cb, "blkio_delay", stats.blkio_delay_total);
+	cb->fill(cb, "swapin_count", stats.swapin_count);
+	cb->fill(cb, "swapin_delay", stats.swapin_delay_total);
+	cb->fill(cb, "freepages_count", stats.freepages_count);
+	cb->fill(cb, "freepages_delay", stats.freepages_delay_total);
+
+	return 0;
+}
+
 static struct cftype cpu_files[] = {
 	{
 		.name = "proc.stat",
@@ -12019,7 +12126,7 @@ static struct cftype cpu_files[] = {
 	},
 #endif
 	{
-		.name = "stat",
+		.name = "acct.stat",
 		.read_map = cpu_cgroup_stats_show,
 	},
 	{
@@ -12029,6 +12136,10 @@ static struct cftype cpu_files[] = {
 	{
 		.name = "usage_percpu",
 		.read_seq_string = cpu_cgroup_percpu_seq_read,
+	},
+	{
+		.name = "delayacct.total",
+		.read_map = cpu_cgroup_delay_show,
 	},
 };
 
@@ -12043,6 +12154,7 @@ struct cgroup_subsys cpu_cgroup_subsys = {
 	.destroy	= cpu_cgroup_destroy,
 	.can_attach	= cpu_cgroup_can_attach,
 	.attach		= cpu_cgroup_attach,
+	.exit		= cpu_cgroup_exit,
 	.populate	= cpu_cgroup_populate,
 	.subsys_id	= cpu_cgroup_subsys_id,
 	.early_init	= 1,

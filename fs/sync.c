@@ -138,8 +138,11 @@ static int __ve_fsync_behavior(struct ve_struct *ve)
 		return 0;
 }
 
-int ve_fsync_behavior(struct ve_struct *ve)
+int ve_fsync_behavior(void)
 {
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
 	if (ve_is_super(ve))
 		return FSYNC_ALWAYS;
 	else
@@ -356,7 +359,7 @@ static int do_fsync(unsigned int fd, int datasync)
 	struct file *file;
 	int ret = -EBADF;
 
-	if (ve_fsync_behavior(get_exec_env()) == FSYNC_NEVER)
+	if (ve_fsync_behavior() == FSYNC_NEVER)
 		return 0;
 
 	file = fget(fd);
@@ -449,9 +452,6 @@ SYSCALL_DEFINE(sync_file_range)(int fd, loff_t offset, loff_t nbytes,
 	loff_t endbyte;			/* inclusive */
 	int fput_needed;
 	umode_t i_mode;
-
-	if (ve_fsync_behavior(get_exec_env()) == FSYNC_NEVER)
-		return 0;
 
 	ret = -EINVAL;
 	if (flags & ~VALID_FLAGS)

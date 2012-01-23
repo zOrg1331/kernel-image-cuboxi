@@ -242,6 +242,12 @@ struct inodes_stat_t {
 #define MS_RMT_MASK	(MS_RDONLY|MS_SYNCHRONOUS|MS_MANDLOCK|MS_I_VERSION)
 
 /*
+ * Remounts, which change any flags except for following ones,
+ * are forbidden inside containers.
+ */
+#define MS_VE_RMT_MASK	MS_RDONLY
+
+/*
  * Old magic mount flag and mask
  */
 #define MS_MGC_VAL 0xC0ED0000
@@ -442,7 +448,7 @@ extern int leases_enable, lease_break_time;
 extern int dir_notify_enable;
 #endif
 
-int ve_fsync_behavior(struct ve_struct *);
+int ve_fsync_behavior(void);
 
 #define FSYNC_NEVER	0	/* ve syncs are ignored    */
 #define FSYNC_ALWAYS	1	/* ve syncs work as ususal */
@@ -1472,6 +1478,13 @@ struct super_block {
 	 * generic_show_options()
 	 */
 	char *s_options;
+
+#ifndef __GENKSYMS__
+	/*
+	 * Saved pool identifier for cleancache (-1 means none)
+	 */
+	int cleancache_poolid;
+#endif
 };
 
 extern struct timespec current_fs_time(struct super_block *sb);

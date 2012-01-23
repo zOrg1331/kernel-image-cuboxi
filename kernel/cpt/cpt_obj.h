@@ -24,6 +24,7 @@ typedef struct _cpt_object
 #define CPT_FILE_DELAYFS	0x1
 #define CPT_FILE_SILLYRENAME	0x2
 #define CPT_FILE_SYSVIPC	0x4
+#define CPT_TTY_NOPAIR		0x1
 } cpt_object_t;
 
 struct cpt_context;

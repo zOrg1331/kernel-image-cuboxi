@@ -4164,6 +4164,8 @@ static void cfq_exit_queue(struct elevator_queue *e)
 	if (wait)
 		synchronize_rcu();
 
+	BUG_ON(cfqd->nr_blkcg_linked_grps);
+
 #ifdef CONFIG_CFQ_GROUP_IOSCHED
 	/* Free up per cpu stats for root group */
 	free_percpu(cfqd->root_group.blkg.stats_cpu);

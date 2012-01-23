@@ -165,11 +165,11 @@ struct ve_struct {
 	struct tty_driver       *pty_slave_driver;
 #endif
 #ifdef CONFIG_UNIX98_PTYS
-	struct tty_driver	*ptm_driver;
-	struct tty_driver	*pts_driver;
-	struct file_system_type *devpts_fstype;
 	struct vfsmount		*devpts_mnt;
 #endif
+
+#define	MAX_NR_VTTY		12
+	struct tty_struct	*vtty[MAX_NR_VTTY];
 
 	struct file_system_type *shmem_fstype;
 	struct vfsmount		*shmem_mnt;
@@ -321,6 +321,13 @@ extern int (*do_ve_enter_hook)(struct ve_struct *ve, unsigned int flags);
 extern void (*do_env_free_hook)(struct ve_struct *ve);
 
 extern unsigned long long ve_relative_clock(struct timespec * ts);
+
+#ifdef CONFIG_VTTYS
+extern int vtty_open_master(int veid, int idx);
+extern struct tty_driver *vtty_driver;
+#else
+static inline int vtty_open_master(int veid, int idx) { return -ENODEV; }
+#endif
 
 #else	/* CONFIG_VE */
 #define ve_utsname	system_utsname

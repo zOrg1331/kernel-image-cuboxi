@@ -39,6 +39,7 @@
 #include <linux/ctype.h>
 #include <linux/log2.h>
 #include <linux/crc16.h>
+#include <linux/cleancache.h>
 #include <linux/vzquota.h>
 #include <linux/virtinfo.h>
 #include <asm/uaccess.h>
@@ -690,6 +691,8 @@ static void ext4_put_super(struct super_block *sb)
 	percpu_counter_destroy(&sbi->s_freeinodes_counter);
 	percpu_counter_destroy(&sbi->s_dirs_counter);
 	percpu_counter_destroy(&sbi->s_dirtyblocks_counter);
+	percpu_counter_destroy(&sbi->s_csum_partial);
+	percpu_counter_destroy(&sbi->s_csum_complete);
 	brelse(sbi->s_sbh);
 #ifdef CONFIG_QUOTA
 	for (i = 0; i < MAXQUOTAS; i++)
@@ -821,6 +824,8 @@ static void ext4_clear_inode(struct inode *inode)
 	if (EXT4_JOURNAL(inode))
 		jbd2_journal_release_jbd_inode(EXT4_SB(inode->i_sb)->s_journal,
 				       &EXT4_I(inode)->jinode);
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_clear_data_csum(inode);
 }
 
 static inline void ext4_show_quota_options(struct seq_file *seq,
@@ -983,6 +988,8 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 		seq_puts(seq, ",norecovery");
 	if (sbi->s_balloon_ino)
 		seq_printf(seq, ",balloon_ino=%ld", sbi->s_balloon_ino->i_ino);
+	if (test_opt2(sb, CSUM))
+		seq_puts(seq, ",csum");
 
 	if (test_opt(sb, BLOCK_VALIDITY) &&
 	    !(def_mount_opts & EXT4_DEFM_BLOCK_VALIDITY))
@@ -1027,6 +1034,55 @@ static struct inode *ext4_nfs_get_inode(struct super_block *sb,
 
 	return inode;
 }
+
+/**
+ * @dentry:  the dentry to encode
+ * @fh:      where to store the file handle fragment
+ * @max_len: maximum length to store there
+ * @connectable: whether to store parent information
+ *
+ */
+static int ext4_encode_fh(struct dentry *dentry, __u32 *fh,
+			  int *max_len, int connectable)
+{
+	struct inode * inode = dentry->d_inode;
+	struct fid *fid = (struct fid*)fh;
+	int len = *max_len;
+	int type = FILEID_INO32_GEN;
+
+	if (len < 2 || (connectable && len < 4))
+		return 255;
+
+	if (!connectable && len >= 7) {
+		fid->i32_csum.ino = inode->i_ino;
+		fid->i32_csum.gen = inode->i_generation;
+		if (!ext4_get_data_csum(inode, fid->i32_csum.check_sum,
+					sizeof(fid->i32_csum.check_sum))) {
+			type = FILEID_INO32_GEN_SHA1;
+			len = 7;
+			goto out;
+		}
+	}
+
+	len = 2;
+	fid->i32.ino = inode->i_ino;
+	fid->i32.gen = inode->i_generation;
+	if (connectable && !S_ISDIR(inode->i_mode)) {
+		struct inode *parent;
+
+		spin_lock(&dentry->d_lock);
+		parent = dentry->d_parent->d_inode;
+		fid->i32.parent_ino = parent->i_ino;
+		fid->i32.parent_gen = parent->i_generation;
+		spin_unlock(&dentry->d_lock);
+		len = 4;
+		type = FILEID_INO32_GEN_PARENT;
+	}
+out:
+	*max_len = len;
+	return type;
+}
+
 
 static struct dentry *ext4_fh_to_dentry(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
@@ -1161,6 +1217,7 @@ static const struct super_operations ext4_nojournal_sops = {
 };
 
 static const struct export_operations ext4_export_ops = {
+	.encode_fh = ext4_encode_fh,
 	.fh_to_dentry = ext4_fh_to_dentry,
 	.fh_to_parent = ext4_fh_to_parent,
 	.get_parent = ext4_get_parent,
@@ -1186,6 +1243,7 @@ enum {
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
 	Opt_discard, Opt_nodiscard, Opt_balloon_ino,
 	Opt_init_inode_table, Opt_noinit_inode_table,
+	Opt_csum, Opt_nocsum,
 };
 
 static const match_table_t tokens = {
@@ -1258,6 +1316,8 @@ static const match_table_t tokens = {
 	{Opt_init_inode_table, "init_itable=%u"},
 	{Opt_init_inode_table, "init_itable"},
 	{Opt_noinit_inode_table, "noinit_itable"},
+	{Opt_csum, "csum"},
+	{Opt_nocsum, "nocsum"},
 	{Opt_err, NULL},
 };
 
@@ -1715,6 +1775,11 @@ set_qf_format:
 			break;
 		case Opt_noinit_inode_table:
 			clear_opt(sbi->s_mount_opt, INIT_INODE_TABLE);
+		case Opt_csum:
+			set_opt2(sb, CSUM);
+			break;
+		case Opt_nocsum:
+			clear_opt2(sb, CSUM);
 			break;
 		default:
 			ext4_msg(sb, KERN_ERR,
@@ -1804,13 +1869,14 @@ static int ext4_setup_super(struct super_block *sb, struct ext4_super_block *es,
 	ext4_commit_super(sb, 1);
 	if (test_opt(sb, DEBUG))
 		printk(KERN_INFO "[EXT4 FS bs=%lu, gc=%u, "
-				"bpg=%lu, ipg=%lu, mo=%04x]\n",
+				"bpg=%lu, ipg=%lu, mo=%04x, mo2=%04x]\n",
 			sb->s_blocksize,
 			sbi->s_groups_count,
 			EXT4_BLOCKS_PER_GROUP(sb),
 			EXT4_INODES_PER_GROUP(sb),
-			sbi->s_mount_opt);
+			sbi->s_mount_opt, sbi->s_mount_opt2);
 
+	cleancache_init_fs(sb);
 	return res;
 }
 
@@ -2296,6 +2362,23 @@ static ssize_t delayed_allocation_blocks_show(struct ext4_attr *a,
 			(s64) percpu_counter_sum(&sbi->s_dirtyblocks_counter));
 }
 
+
+static ssize_t csum_partial_show(struct ext4_attr *a,
+					      struct ext4_sb_info *sbi,
+					      char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n",
+			(s64) percpu_counter_sum(&sbi->s_csum_partial));
+}
+
+static ssize_t csum_complete_show(struct ext4_attr *a,
+					      struct ext4_sb_info *sbi,
+					      char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n",
+			(s64) percpu_counter_sum(&sbi->s_csum_complete));
+}
+
 static ssize_t session_write_kbytes_show(struct ext4_attr *a,
 					 struct ext4_sb_info *sbi, char *buf)
 {
@@ -2374,6 +2457,8 @@ static struct ext4_attr ext4_attr_##name = __ATTR(name, mode, show, store)
 EXT4_RO_ATTR(delayed_allocation_blocks);
 EXT4_RO_ATTR(session_write_kbytes);
 EXT4_RO_ATTR(lifetime_write_kbytes);
+EXT4_RO_ATTR(csum_partial);
+EXT4_RO_ATTR(csum_complete);
 EXT4_ATTR_OFFSET(inode_readahead_blks, 0644, sbi_ui_show,
 		 inode_readahead_blks_store, s_inode_readahead_blks);
 EXT4_RW_ATTR_SBI_UI(inode_goal, s_inode_goal);
@@ -2400,6 +2485,8 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(mb_group_prealloc),
 	ATTR_LIST(max_writeback_mb_bump),
 	ATTR_LIST(bd_full_ratelimit),
+	ATTR_LIST(csum_partial),
+	ATTR_LIST(csum_complete),
 	NULL,
 };
 
@@ -3288,6 +3375,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (!err) {
 		err = percpu_counter_init(&sbi->s_dirtyblocks_counter, 0);
 	}
+	if (!err) {
+		err = percpu_counter_init(&sbi->s_csum_partial, 0);
+	}
+	if (!err) {
+		err = percpu_counter_init(&sbi->s_csum_complete, 0);
+	}
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "insufficient memory");
 		goto failed_mount3;
@@ -3565,6 +3658,8 @@ failed_mount3:
 	percpu_counter_destroy(&sbi->s_freeinodes_counter);
 	percpu_counter_destroy(&sbi->s_dirs_counter);
 	percpu_counter_destroy(&sbi->s_dirtyblocks_counter);
+	percpu_counter_destroy(&sbi->s_csum_partial);
+	percpu_counter_destroy(&sbi->s_csum_complete);
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);
@@ -4083,6 +4178,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	lock_super(sb);
 	old_sb_flags = sb->s_flags;
 	old_opts.s_mount_opt = sbi->s_mount_opt;
+	old_opts.s_mount_opt2 = sbi->s_mount_opt2;
 	old_opts.s_resuid = sbi->s_resuid;
 	old_opts.s_resgid = sbi->s_resgid;
 	old_opts.s_commit_interval = sbi->s_commit_interval;
@@ -4230,6 +4326,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 restore_opts:
 	sb->s_flags = old_sb_flags;
 	sbi->s_mount_opt = old_opts.s_mount_opt;
+	sbi->s_mount_opt2 = old_opts.s_mount_opt2;
 	sbi->s_resuid = old_opts.s_resuid;
 	sbi->s_resgid = old_opts.s_resgid;
 	sbi->s_commit_interval = old_opts.s_commit_interval;

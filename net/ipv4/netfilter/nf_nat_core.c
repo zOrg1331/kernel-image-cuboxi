@@ -712,6 +712,8 @@ static void __net_exit nf_nat_net_exit(struct net *net)
 	synchronize_rcu();
 	nf_ct_free_hashtable(net->ipv4.nat_bysource, net->ipv4.nat_vmalloced,
 			     net->ipv4.nat_htable_size);
+
+	net_ipt_module_clear(net, VE_IP_NAT);
 }
 
 static struct pernet_operations nf_nat_net_ops = {

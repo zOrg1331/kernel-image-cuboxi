@@ -513,9 +513,8 @@ int shrink_dcache_ub(struct user_beancounter *ub, long count)
 	int ret;
 
 	spin_lock(&dcache_lock);
-	do {
-		ret = __shrink_dcache_ub(ub, count);
-	} while (!ret && !list_empty(&ub->ub_dentry_lru));
+	ret = __shrink_dcache_ub(ub, count) ||
+		!list_empty(&ub->ub_dentry_lru);
 	spin_unlock(&dcache_lock);
 
 	return ret;

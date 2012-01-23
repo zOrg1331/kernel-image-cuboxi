@@ -191,6 +191,8 @@ static void __net_exit ip6table_mangle_net_exit(struct net *net)
 		return;
 
 	ip6t_unregister_table(net->ipv6.ip6table_mangle);
+
+	net_ipt_module_clear(net, VE_IP_MANGLE6);
 }
 
 static struct pernet_operations ip6table_mangle_net_ops = {

@@ -11,7 +11,11 @@ int cpt_dump_content_tty(struct file *file, struct cpt_context *ctx);
 int cpt_dump_tty(cpt_object_t *, struct cpt_context *ctx);
 struct file * rst_sysv_shm_vma(struct cpt_vma_image *vmai, struct cpt_context *ctx);
 struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx);
-struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii, unsigned flags, struct cpt_context *ctx);
+struct file * rst_open_file(cpt_object_t *mntobj, char *name,
+		struct cpt_file_image *fi, unsigned flags, struct cpt_context *ctx);
+struct file * rst_open_tty(cpt_object_t *mntobj, char *name,
+		struct cpt_file_image *fi, struct cpt_inode_image *ii,
+		unsigned flags, struct cpt_context *ctx);
 __u32 cpt_tty_fasync(struct file *file, struct cpt_context *ctx);
 
 int rst_posix_locks(struct cpt_context *ctx);

@@ -80,8 +80,8 @@ struct ve_struct ve0 = {
 	.is_running		= 1,
 	.op_sem			= __RWSEM_INITIALIZER(ve0.op_sem),
 #ifdef CONFIG_VE_IPTABLES
-	.ipt_mask 		= VE_IP_ALL,
-	._iptables_modules	= VE_IP_ALL,
+	.ipt_mask		= VE_IP_ALL,	/* everything is allowed */
+	._iptables_modules	= VE_IP_NONE,	/* but nothing yet loaded */
 #endif
 	.features		= -1,
 	.meminfo_val		= VE_MEMINFO_SYSTEM,

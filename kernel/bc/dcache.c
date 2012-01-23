@@ -15,6 +15,16 @@ static unsigned int dcache_charge_size(int name_len)
 		(name_len > DNAME_INLINE_LEN ? name_len : 0);
 }
 
+int ub_dcache_shrink(struct user_beancounter *ub,
+		unsigned long size, gfp_t gfp_mask)
+{
+	if (!(gfp_mask & __GFP_FS))
+		return -EBUSY;
+	if (shrink_dcache_ub(ub, DIV_ROUND_UP(size, dcache_charge_size(0))))
+		return 0;
+	return -ENOMEM;
+}
+
 static int __ub_dcache_charge(struct user_beancounter *ub,
 		unsigned long size, gfp_t gfp_mask, int strict)
 {
@@ -58,8 +68,7 @@ int ub_dcache_charge(struct user_beancounter *ub, int name_len)
 			return 0;
 
 		shrink = max(size, ub->ub_parms[UB_DCACHESIZE].max_precharge);
-		shrink = DIV_ROUND_UP(shrink, dcache_charge_size(0));
-	} while (shrink_dcache_ub(ub, shrink));
+	} while (!ub_dcache_shrink(ub, shrink, GFP_KERNEL));
 
 	spin_lock_irq(&ub->ub_lock);
 	ub->ub_parms[UB_DCACHESIZE].failcnt++;
@@ -86,7 +95,15 @@ static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter 
 
 	while (1) {
 		if (d->d_ub != cub) {
-			BUG_ON(!(d->d_flags & DCACHE_BCTOP));
+			if (!(d->d_flags & DCACHE_BCTOP)) {
+				printk("%s %s %d %d %d %p %p %p %p\n", __func__,
+						d->d_name.name,
+						d->d_ub->ub_uid,
+						ub->ub_uid,
+						cub->ub_uid,
+						d, d->d_ub, ub, cub);
+				WARN_ON(1);
+			}
 			goto skip_subtree;
 		} else if (d->d_ub == ub)
 			goto skip_recharge;
@@ -106,9 +123,9 @@ skip_recharge:
 					struct dentry, d_u.d_child);
 			continue;
 		}
+skip_subtree:
 		if (d == orig_root)
 			break;
-skip_subtree:
 		while (d == list_entry(d->d_parent->d_subdirs.prev,
 					struct dentry, d_u.d_child)) {
 			d = d->d_parent;

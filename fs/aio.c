@@ -1332,27 +1332,30 @@ static void aio_advance_iovec(struct kiocb *iocb, ssize_t ret)
 static ssize_t aio_rw_vect_retry(struct kiocb *iocb)
 {
 	struct file *file = iocb->ki_filp;
-	struct address_space *mapping = file->f_mapping;
-	struct inode *inode = mapping->host;
+	int may_seek = (!S_ISFIFO(file->f_mapping->host->i_mode) &&
+			!S_ISSOCK(file->f_mapping->host->i_mode));
 	ssize_t (*rw_op)(struct kiocb *, const struct iovec *,
 			 unsigned long, loff_t);
 	ssize_t ret = 0;
 	unsigned short opcode;
 
 	if ((iocb->ki_opcode == IOCB_CMD_PREADV) ||
-		(iocb->ki_opcode == IOCB_CMD_PREAD)) {
-		rw_op = file->f_op->aio_read;
+		(iocb->ki_opcode == IOCB_CMD_PREAD))
 		opcode = IOCB_CMD_PREADV;
-	} else {
-		rw_op = file->f_op->aio_write;
+	else
 		opcode = IOCB_CMD_PWRITEV;
-	}
 
 	/* This matches the pread()/pwrite() logic */
 	if (iocb->ki_pos < 0)
 		return -EINVAL;
 
 	do {
+		/* Stack fs may change ->ki_filp, so we have to update rw_op */
+		if (opcode == IOCB_CMD_PREADV)
+			rw_op = iocb->ki_filp->f_op->aio_read;
+		else
+			rw_op = iocb->ki_filp->f_op->aio_write;
+
 		ret = rw_op(iocb, &iocb->ki_iovec[iocb->ki_cur_seg],
 			    iocb->ki_nr_segs - iocb->ki_cur_seg,
 			    iocb->ki_pos);
@@ -1362,8 +1365,7 @@ static ssize_t aio_rw_vect_retry(struct kiocb *iocb)
 	/* retry all partial writes.  retry partial reads as long as its a
 	 * regular file. */
 	} while (ret > 0 && iocb->ki_left > 0 &&
-		 (opcode == IOCB_CMD_PWRITEV ||
-		  (!S_ISFIFO(inode->i_mode) && !S_ISSOCK(inode->i_mode))));
+		 (opcode == IOCB_CMD_PWRITEV || may_seek));
 
 	/* This means we must have transferred all that we could */
 	/* No need to retry anymore */

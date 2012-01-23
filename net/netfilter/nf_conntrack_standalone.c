@@ -416,6 +416,8 @@ static struct ctl_path nf_ct_path[] = {
 	{ }
 };
 
+static int zero;
+
 static int nf_conntrack_standalone_init_sysctl(struct net *net)
 {
 	struct ctl_table *table;
@@ -438,6 +440,12 @@ static int nf_conntrack_standalone_init_sysctl(struct net *net)
 	table[3].data = &net->ct.sysctl_checksum;
 	table[4].data = &net->ct.sysctl_log_invalid;
 	table[5].data = &net->ct.expect_max;
+
+	if (!net_eq(net, &init_net)) {
+		table[0].proc_handler = proc_dointvec_minmax;
+		table[0].extra1 = &zero;
+		table[0].extra2 = &init_net.ct.max;
+	}
 
 	net->ct.sysctl_header = register_net_sysctl_table(net,
 					nf_net_netfilter_sysctl_path, table);

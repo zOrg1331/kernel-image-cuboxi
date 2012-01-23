@@ -648,6 +648,17 @@ unsigned long __get_beancounter_usage_percpu(struct user_beancounter *ub,
 	smp_rmb();
 	precharge = __ub_percpu_sum(ub, precharge[resource]);
 
+	switch (resource) {
+	case UB_PHYSPAGES:
+		/* kmemsize precharge already charged into physpages  */
+		precharge += __ub_percpu_sum(ub, precharge[UB_KMEMSIZE]) >> PAGE_SHIFT;
+		break;
+	case UB_OOMGUARPAGES:
+		/* oomguarpages contains swappages and its precharge too */
+		precharge = __ub_percpu_sum(ub, precharge[UB_SWAPPAGES]);
+		break;
+	}
+
 	return max(0l, held - precharge);
 }
 

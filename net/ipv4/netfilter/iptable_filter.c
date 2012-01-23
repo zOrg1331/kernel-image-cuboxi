@@ -147,6 +147,8 @@ static void __net_exit iptable_filter_net_exit(struct net *net)
 		return;
 
 	ipt_unregister_table(net->ipv4.iptable_filter);
+
+	net_ipt_module_clear(net, VE_IP_FILTER);
 }
 
 static struct pernet_operations iptable_filter_net_ops = {

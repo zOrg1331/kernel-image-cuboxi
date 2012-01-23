@@ -91,6 +91,9 @@ static int delay_remmap(struct vm_area_struct *vma,
 	if (IS_ERR(real))
 		return VM_FAULT_OOM;
 
+	if ((vma->vm_flags & VM_DENYWRITE) && deny_write_access(real))
+		return VM_FAULT_SIGBUS;
+
 	unlink_file_vma(vma);
 	vma->vm_file = real;
 	if (real->f_op->mmap(real, vma)) {
@@ -99,6 +102,9 @@ static int delay_remmap(struct vm_area_struct *vma,
 		spin_lock(&mapping->i_mmap_lock);
 		__vma_link_file(vma);
 		spin_unlock(&mapping->i_mmap_lock);
+		if (vma->vm_flags & VM_DENYWRITE)
+			allow_write_access(real);
+
 		return VM_FAULT_SIGBUS;
 	}
 
@@ -110,6 +116,8 @@ static int delay_remmap(struct vm_area_struct *vma,
 	get_file(real);
 	vma->vm_flags &= ~VM_DONTEXPAND;
 	fput(fake);
+	if (vma->vm_flags & VM_DENYWRITE)
+		allow_write_access(real);
 
 	return VM_FAULT_RETRY;
 }
@@ -1225,7 +1233,7 @@ static struct file *delayfs_preopen_pipe(struct file *fake, struct nameidata *nd
 		struct inode *inode = fake->f_dentry->d_inode;
 
 		mutex_lock(&inode->i_mutex);
-		need_pipe_swap = (int)inode->i_private;
+		need_pipe_swap = (long)inode->i_private;
 		inode->i_private = (void *)0;
 		mutex_unlock(&inode->i_mutex);
 

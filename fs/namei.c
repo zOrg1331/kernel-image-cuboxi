@@ -354,6 +354,7 @@ int deny_write_access(struct file * file)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(deny_write_access);
 
 /**
  * path_get - get a reference to a path

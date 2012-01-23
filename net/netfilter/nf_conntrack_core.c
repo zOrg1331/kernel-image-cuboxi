@@ -561,6 +561,7 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 {
 	struct nf_conn *ct;
 	struct user_beancounter *old_ub;
+	unsigned int ct_max = net->ct.max ? net->ct.max : init_net.ct.max;
 
 	if (unlikely(!nf_conntrack_hash_rnd_initted)) {
 		get_random_bytes(&nf_conntrack_hash_rnd,
@@ -571,8 +572,8 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 	/* We don't want any race condition at early drop stage */
 	atomic_inc(&net->ct.count);
 
-	if (init_net.ct.max &&
-	    unlikely(atomic_read(&net->ct.count) > init_net.ct.max)) {
+	if (ct_max &&
+	    unlikely(atomic_read(&net->ct.count) > ct_max)) {
 		unsigned int hash = hash_conntrack(net, orig);
 		if (!early_drop(net, hash)) {
 			atomic_dec(&net->ct.count);

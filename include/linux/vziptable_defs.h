@@ -12,7 +12,7 @@
  * the bits were ever used in a sake of ABI compatibility
  * (ie compatibility with vzctl user-space utility)
  *
- * DON'T EVER DELETE/MODIFY THESE BITS
+ * DON'T EVER DELETE/MODIFY THIS BITS
  */
 #define VE_IPT_GENERATE(name, shift)	name = (1U << shift)
 
@@ -68,14 +68,12 @@ enum ve_ipt_mods {
 /* safe iptables mask to be used by default */
 #define VE_IP_DEFAULT		(VE_IP_IPTABLES | VE_IP_FILTER | VE_IP_MANGLE)
 
-/* allowed all */
 #define VE_IP_ALL		(~0ULL)
-
-#define VE_IPT_CMP(x, y)	(((x) & (y)) == (y))
+#define VE_IP_NONE		(0ULL)
 
 static inline bool mask_ipt_allow(__u64 permitted, __u64 mask)
 {
-	return VE_IPT_CMP(permitted, mask);
+	return (permitted & mask) == mask;
 }
 
 #endif /* _LINUX_VZIPTABLE_DEFS_H */

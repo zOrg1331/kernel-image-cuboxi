@@ -45,6 +45,7 @@
 #include <linux/tty.h>
 #include <linux/timerfd.h>
 #include <linux/cgroup.h>
+#include <linux/eventfd.h>
 
 #include <linux/nfs_mount.h>
 #include <linux/nfs_fs.h>
@@ -79,6 +80,24 @@ static inline int is_timerfd_file(struct file *file)
 {
 	/* no other users of it yet */
 	return file->f_op == &timerfd_fops;
+}
+
+static inline int is_eventfd_file(struct file *file)
+{
+	/* no other users of it yet */
+	return file->f_op == &eventfd_fops;
+}
+
+static int chrdev_is_tty(dev_t dev)
+{
+	int major = MAJOR(dev);
+
+	return (major == PTY_MASTER_MAJOR ||
+	    (major >= UNIX98_PTY_MASTER_MAJOR &&
+	     major < UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT) ||
+	    major == PTY_SLAVE_MAJOR ||
+	    major == UNIX98_PTY_SLAVE_MAJOR ||
+	    major == TTYAUX_MAJOR || major == TTY_MAJOR);
 }
 
 void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
@@ -462,13 +481,7 @@ int cpt_collect_files(cpt_context_t * ctx)
 			ino_obj->o_parent = file;
 
 		if (S_ISCHR(file->f_dentry->d_inode->i_mode)) {
-			int maj = imajor(file->f_dentry->d_inode);
-			if (maj == PTY_MASTER_MAJOR ||
-			    (maj >= UNIX98_PTY_MASTER_MAJOR &&
-			     maj < UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT) ||
-			    maj == PTY_SLAVE_MAJOR ||
-			    maj == UNIX98_PTY_SLAVE_MAJOR ||
-			    maj == TTYAUX_MAJOR) {
+			if (chrdev_is_tty(file->f_dentry->d_inode->i_rdev)) {
 				err = cpt_collect_tty(file, ctx);
 				if (err)
 					return err;
@@ -582,16 +595,6 @@ int cpt_dump_flock(struct file *file, struct cpt_context *ctx)
 	return err;
 }
 
-static int chrdev_is_tty(int major)
-{
-	return (major == PTY_MASTER_MAJOR ||
-	    (major >= UNIX98_PTY_MASTER_MAJOR &&
-	     major < UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT) ||
-	    major == PTY_SLAVE_MAJOR ||
-	    major == UNIX98_PTY_SLAVE_MAJOR ||
-	    major == TTYAUX_MAJOR);
-}
-
 static int dump_content_timerfd(struct file *file, struct cpt_context *ctx)
 {
 	struct cpt_timerfd_image o;
@@ -614,6 +617,29 @@ static int dump_content_timerfd(struct file *file, struct cpt_context *ctx)
 	o.cpt_it_value = cpt_timespec_export(&tv);
 	tv = ktime_to_timespec(timerfd_ctx->tintv);
 	o.cpt_it_interval = cpt_timespec_export(&tv);
+
+	ctx->write(&o, sizeof(o), ctx);
+
+	cpt_pop_object(&saved_pos, ctx);
+
+	return 0;
+}
+
+static int dump_content_eventfd(struct file *file, struct cpt_context *ctx)
+{
+	struct cpt_eventfd_image o;
+	loff_t saved_pos;
+	struct eventfd_ctx *eventfd_ctx = file->private_data;
+
+	cpt_push_object(&saved_pos, ctx);
+
+	o.cpt_next = sizeof(o);
+	o.cpt_object = CPT_OBJ_EVENTFD;
+	o.cpt_hdrlen = sizeof(o);
+	o.cpt_content = CPT_CONTENT_VOID;
+
+	o.cpt_count = eventfd_ctx->count;
+	o.cpt_flags = eventfd_ctx->flags;
 
 	ctx->write(&o, sizeof(o), ctx);
 
@@ -699,18 +725,16 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 	v->cpt_priv = CPT_NULL;
 	v->cpt_fown_fd = -1;
 	if (S_ISCHR(v->cpt_i_mode)) {
-		int major;
+		dev_t dev = file->f_dentry->d_inode->i_rdev;
 
-		major = imajor(file->f_dentry->d_inode);
-		if (chrdev_is_tty(major)) {
+		if (chrdev_is_tty(dev)) {
 			iobj = lookup_cpt_object(CPT_OBJ_TTY, file_tty(file), ctx);
 			if (iobj) {
 				v->cpt_priv = iobj->o_pos;
 				if (file->f_flags&FASYNC)
 					v->cpt_fown_fd = cpt_tty_fasync(file, ctx);
 			}
-		} else if (major == MISC_MAJOR &&
-				iminor(file->f_dentry->d_inode) == TUN_MINOR)
+		} else if (dev == MKDEV(MISC_MAJOR, TUN_MINOR))
 			v->cpt_lflags |= CPT_DENTRY_TUNTAP;
 	}
 	if (S_ISSOCK(v->cpt_i_mode)) {
@@ -744,6 +768,8 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 		v->cpt_priv = cpt_sigset_export(&ctx->sigmask);
 	} else if (is_timerfd_file(file))
 		v->cpt_lflags |= CPT_DENTRY_TIMERFD;
+	else if (is_eventfd_file(file))
+		v->cpt_lflags |= CPT_DENTRY_EVENTFD;
 
 	v->cpt_vfsmount = mntobj ? mntobj->o_pos : CPT_NULL;
 
@@ -762,6 +788,9 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 
 	if (is_timerfd_file(file))
 		dump_content_timerfd(file, ctx);
+
+	if (is_eventfd_file(file))
+		dump_content_eventfd(file, ctx);
 
 	if (file->f_dentry->d_inode->i_flock)
 		err = cpt_dump_flock(file, ctx);
@@ -985,21 +1014,14 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 
 static int dump_content_chrdev(struct file *file, struct cpt_context *ctx)
 {
-	struct inode *ino = file->f_dentry->d_inode;
-	int maj;
+	dev_t dev = file->f_dentry->d_inode->i_rdev;
 
-	maj = imajor(ino);
-	if (maj == MEM_MAJOR) {
-		/* Well, OK. */
+	if (MAJOR(dev) == MEM_MAJOR || dev == MKDEV(MISC_MAJOR, TUN_MINOR))
 		return 0;
-	}
-	if (chrdev_is_tty(maj)) {
+	if (chrdev_is_tty(dev))
 		return cpt_dump_content_tty(file, ctx);
-	}
-	if (maj == MISC_MAJOR && iminor(ino) == TUN_MINOR)
-		return 0;
 
-	eprintk_ctx("unsupported chrdev %d/%d\n", maj, iminor(ino));
+	eprintk_ctx("unsupported chrdev %d/%d\n", MAJOR(dev), MINOR(dev));
 	return -EINVAL;
 }
 
