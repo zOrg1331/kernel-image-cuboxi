@@ -42,6 +42,12 @@ struct mnt_namespace;
 				MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME |	\
 				MNT_READONLY | MNT_STRICTATIME | MNT_SHRINKABLE)
 
+/*
+ * Remounts, which change any flags except for following ones,
+ * are forbidden inside containers.
+ */
+#define MNT_VE_RMT_MASK	MNT_READONLY
+
 struct vfsmount {
 	struct list_head mnt_hash;
 	struct vfsmount *mnt_parent;	/* fs we are mounted on */

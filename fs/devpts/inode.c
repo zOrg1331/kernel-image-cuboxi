@@ -40,6 +40,8 @@ static DEFINE_MUTEX(allocated_ptys_lock);
 
 #ifndef CONFIG_VE
 static struct vfsmount *devpts_mnt;
+#else
+# define devpts_mnt	(get_exec_env()->devpts_mnt)
 #endif
 
 struct pts_mount_opts {
@@ -85,7 +87,7 @@ static inline struct super_block *pts_sb_from_inode(struct inode *inode)
 	if (inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC)
 		return inode->i_sb;
 #endif
-	return get_exec_env()->devpts_mnt->mnt_sb;
+	return devpts_mnt->mnt_sb;
 }
 
 #define PARSE_MOUNT	0
@@ -427,6 +429,7 @@ struct file_system_type devpts_fs_type = {
 	.name		= "devpts",
 	.get_sb		= devpts_get_sb,
 	.kill_sb	= devpts_kill_sb,
+	.fs_flags	= FS_VIRTUALIZED,
 };
 EXPORT_SYMBOL(devpts_fs_type);
 
@@ -569,9 +572,9 @@ static int __init init_devpts_fs(void)
 {
 	int err = register_filesystem(&devpts_fs_type);
 	if (!err) {
-		get_ve0()->devpts_mnt = kern_mount(&devpts_fs_type);
-		if (IS_ERR(get_ve0()->devpts_mnt)) {
-			err = PTR_ERR(get_ve0()->devpts_mnt);
+		devpts_mnt = kern_mount(&devpts_fs_type);
+		if (IS_ERR(devpts_mnt)) {
+			err = PTR_ERR(devpts_mnt);
 			unregister_filesystem(&devpts_fs_type);
 		}
 	}

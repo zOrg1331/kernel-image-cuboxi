@@ -22,6 +22,7 @@
 #include <bc/beancounter.h>
 #include <bc/oom_kill.h>
 #include <bc/vmpages.h>
+#include <bc/dcache.h>
 #include <bc/kmem.h>
 #include <bc/proc.h>
 
@@ -30,6 +31,7 @@ int __ub_kmem_charge(struct user_beancounter *ub,
 {
 	unsigned long pages, charge, flags;
 	int kmem_strict, phys_strict;
+	int do_precharge = 1;
 
 	charge = size + (ub->ub_parms[UB_KMEMSIZE].max_precharge >> 1);
 	pages = PAGE_ALIGN(charge) >> PAGE_SHIFT;
@@ -57,11 +59,14 @@ try_again:
 
 	charge = pages << PAGE_SHIFT;
 	spin_lock_irqsave(&ub->ub_lock, flags);
-	if (__charge_beancounter_locked(ub, UB_KMEMSIZE, charge, kmem_strict)) {
+	while (__charge_beancounter_locked(ub, UB_KMEMSIZE, charge, kmem_strict)) {
 		init_beancounter_precharge(ub, UB_KMEMSIZE);
-		__uncharge_beancounter_locked(ub, UB_PHYSPAGES, pages);
 		spin_unlock_irqrestore(&ub->ub_lock, flags);
-		goto no_precharge;
+		if (ub_dcache_shrink(ub, charge, gfp_mask)) {
+			uncharge_beancounter(ub, UB_PHYSPAGES, pages);
+			goto no_precharge;
+		}
+		spin_lock_irqsave(&ub->ub_lock, flags);
 	}
 	ub_percpu(ub, smp_processor_id())->
 		precharge[UB_KMEMSIZE] += charge - size;
@@ -70,11 +75,19 @@ try_again:
 	return 0;
 
 no_precharge:
-	if (kmem_strict & UB_TEST) {
-		kmem_strict &= ~UB_TEST;
+	if (do_precharge) {
+		do_precharge = 0;
 		pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
 		goto try_again;
 	}
+
+	spin_lock_irqsave(&ub->ub_lock, flags);
+	ub->ub_parms[UB_KMEMSIZE].failcnt++;
+	spin_unlock_irqrestore(&ub->ub_lock, flags);
+
+	if (__ratelimit(&ub->ub_ratelimit))
+		printk(KERN_INFO "Fatal resource shortage: %s, UB %d.\n",
+				ub_rnames[UB_KMEMSIZE], ub->ub_uid);
 
 	return -ENOMEM;
 }

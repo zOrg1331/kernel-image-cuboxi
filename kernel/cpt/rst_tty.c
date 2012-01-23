@@ -197,7 +197,8 @@ struct file *ptmx_open(int index, unsigned int flags)
 }
 
 
-struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii,
+struct file * rst_open_tty(cpt_object_t *mntobj, char *name,
+			   struct cpt_file_image *fi, struct cpt_inode_image *ii,
 			   unsigned flags, struct cpt_context *ctx)
 {
 	int err;
@@ -242,6 +243,32 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 	if (err) {
 		cpt_release_buf(ctx);
 		return ERR_PTR(err);
+	}
+
+	if (MAJOR(ii->cpt_rdev) == TTY_MAJOR) {
+		if (mntobj && (mntobj->o_flags & CPT_VFSMOUNT_DELAYFS))
+		       return ERR_PTR(-ENOTSUPP);
+		master = rst_open_file(mntobj, name, fi,
+				flags|O_NONBLOCK|O_NOCTTY|O_RDWR, ctx);
+		if (IS_ERR(master)) {
+			eprintk_ctx("rst_open_tty: %s %Ld %ld\n",
+					name, (long long)fi->cpt_priv,
+					PTR_ERR(master));
+			return master;
+		}
+
+		stty = file_tty(master);
+		obj = cpt_object_add(CPT_OBJ_TTY, stty, ctx);
+		obj->o_parent = master;
+		cpt_obj_setpos(obj, fi->cpt_priv, ctx);
+
+		obj = cpt_object_add(CPT_OBJ_FILE, master, ctx);
+		cpt_obj_setpos(obj, CPT_NULL, ctx);
+		get_file(master);
+
+		/* Do not restore /dev/ttyX state */
+		cpt_release_buf(ctx);
+		return master;
 	}
 
 	master_flags = slave_flags = 0;

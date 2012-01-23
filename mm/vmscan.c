@@ -346,6 +346,7 @@ static void handle_write_error(struct address_space *mapping,
 enum pageout_io {
 	PAGEOUT_IO_ASYNC,
 	PAGEOUT_IO_SYNC,
+	PAGEOUT_IO_NONE,
 };
 
 /* possible outcome of pageout() */
@@ -740,7 +741,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			 */
 			if (sync_writeback == PAGEOUT_IO_SYNC && may_enter_fs)
 				wait_on_page_writeback(page);
-			else
+			else if (sync_writeback == PAGEOUT_IO_ASYNC)
 				goto keep_locked;
 		}
 
@@ -1390,7 +1391,9 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		spin_unlock_irq(&zone->stat_lock);
 
 		nr_scanned += nr_scan;
-		nr_freed = shrink_page_list(&page_list, gang, sc, zone, PAGEOUT_IO_ASYNC);
+		nr_freed = shrink_page_list(&page_list, gang, sc, zone,
+				scanning_global_lru(sc) ? PAGEOUT_IO_ASYNC
+							: PAGEOUT_IO_NONE);
 
 		nr_reclaimed += nr_freed;
 

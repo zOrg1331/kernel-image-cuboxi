@@ -383,8 +383,11 @@ static int nf_conntrack_l3proto_ipv4_init_net(struct net *net)
 
 static void nf_conntrack_l3proto_ipv4_fini_net(struct net *net)
 {
-	if (!net_is_ipt_module_set(net, VE_IP_CONNTRACK))
-		return;
+	/* A dummy call in a sake of consistency */
+	if (net_is_ipt_module_set(net, VE_IP_CONNTRACK))
+		net_ipt_module_clear(net, VE_IP_CONNTRACK);
+
+	return;
 }
 
 static struct pernet_operations nf_conntrack_ipv4_net_ops = {

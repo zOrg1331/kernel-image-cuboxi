@@ -975,8 +975,9 @@ error:
  */
 int cap_syslog(int type)
 {
-	if (dmesg_restrict && !capable(CAP_SYS_ADMIN))
-		return -EPERM;
+	if (dmesg_restrict && !capable(CAP_SYS_ADMIN) &&
+		 ve_is_super(get_exec_env()))
+			return -EPERM;
 
 	if ((type != 3 && type != 10) &&
 		!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))

@@ -320,12 +320,6 @@ struct mm_struct {
 #ifdef __GENKSYMS__
 	unsigned long rh_reserved[2];
 #else
-	/* How many tasks sharing this mm are OOM_DISABLE */
-	union {
-		unsigned long rh_reserved_aux;
-		atomic_t oom_disable_count;
-	};
-
 	unsigned long rh_reserved;
 #endif
 };

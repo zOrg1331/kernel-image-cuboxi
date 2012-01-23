@@ -1747,6 +1747,10 @@ static int ext4_generic_write_end(struct file *file,
 		ext4_update_i_disksize(inode, (pos + copied));
 		i_size_changed = 1;
 	}
+
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_update_data_csum(inode, pos, copied, page);
+
 	unlock_page(page);
 	page_cache_release(page);
 
@@ -1890,6 +1894,9 @@ static int ext4_journalled_write_end(struct file *file,
 		if (!ret)
 			ret = ret2;
 	}
+
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_update_data_csum(inode, pos, copied, page);
 
 	unlock_page(page);
 	page_cache_release(page);
@@ -3411,6 +3418,10 @@ static int ext4_da_write_end(struct file *file,
 			ext4_mark_inode_dirty(handle, inode);
 		}
 	}
+
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_update_data_csum(inode, pos, copied, page);
+
 	ret2 = generic_write_end(file, mapping, pos, len, copied,
 							page, fsdata);
 	copied = ret2;
@@ -4076,6 +4087,9 @@ static ssize_t ext4_direct_IO(int rw, struct kiocb *iocb,
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_mapping->host;
 
+	if (rw == WRITE && ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_truncate_data_csum(inode, -1);
+
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
 		return ext4_ext_direct_IO(rw, iocb, iov, offset, nr_segs);
 
@@ -4714,6 +4728,9 @@ void ext4_truncate(struct inode *inode)
 	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
 		ext4_set_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
 
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+		ext4_truncate_data_csum(inode, inode->i_size);
+
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)) {
 		ext4_ext_truncate(inode);
 		return;
@@ -5234,9 +5251,13 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 		inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
 		ext4_set_aops(inode);
+		if (test_opt2(sb, CSUM))
+			ext4_load_data_csum(inode);
 	} else if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &ext4_dir_inode_operations;
 		inode->i_fop = &ext4_dir_operations;
+		if (test_opt2(sb, CSUM))
+			ext4_load_dir_csum(inode);
 	} else if (S_ISLNK(inode->i_mode)) {
 		if (ext4_inode_is_fast_symlink(inode)) {
 			inode->i_op = &ext4_fast_symlink_inode_operations;

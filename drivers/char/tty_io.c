@@ -281,6 +281,8 @@ static int check_tty_count(struct tty_struct *tty, const char *routine)
 	    tty->driver->subtype == PTY_TYPE_SLAVE &&
 	    tty->link && tty->link->count)
 		count++;
+	if (test_bit(TTY_EXTRA_REFERENCE, &tty->flags))
+		count++;
 	if (tty->count != count) {
 		printk(KERN_WARNING "Warning: dev (%s) tty->count(%d) "
 				    "!= #fd's(%d) in %s\n",
@@ -314,14 +316,7 @@ static struct tty_driver *get_tty_driver(dev_t device, int *index)
 #ifdef CONFIG_VE
 		if (in_interrupt())
 			goto found;
-		if (p->major!=PTY_MASTER_MAJOR && p->major!=PTY_SLAVE_MAJOR
-#ifdef CONFIG_UNIX98_PTYS
-		    && (p->major<UNIX98_PTY_MASTER_MAJOR ||
-		    	p->major>UNIX98_PTY_MASTER_MAJOR+UNIX98_PTY_MAJOR_COUNT-1) &&
-		       (p->major<UNIX98_PTY_SLAVE_MAJOR ||
-		        p->major>UNIX98_PTY_SLAVE_MAJOR+UNIX98_PTY_MAJOR_COUNT-1)
-#endif
-		)
+		if (p->major!=PTY_MASTER_MAJOR && p->major!=PTY_SLAVE_MAJOR)
 			goto found;
 		if (ve_is_super(p->owner_env) && ve_is_super(get_exec_env()))
 			goto found;
@@ -1551,7 +1546,8 @@ void tty_release_dev(struct file *filp)
 	idx = tty->index;
 	pty_master = (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
 		      tty->driver->subtype == PTY_TYPE_MASTER);
-	devpts = (tty->driver->flags & TTY_DRIVER_DEVPTS_MEM) != 0;
+	devpts = tty->driver->major == UNIX98_PTY_SLAVE_MAJOR ||
+		 tty->driver->major == UNIX98_PTY_MASTER_MAJOR;
 	o_tty = tty->link;
 
 #ifdef TTY_PARANOIA_CHECK
@@ -1560,7 +1556,7 @@ void tty_release_dev(struct file *filp)
 				  "free (%s)\n", tty->name);
 		return;
 	}
-	if (!devpts) {
+	if ((tty->driver->flags & TTY_DRIVER_DEVPTS_MEM) == 0) {
 		if (tty != tty->driver->ttys[idx]) {
 			printk(KERN_DEBUG "tty_release_dev: driver.table[%d] not tty "
 			       "for (%s)\n", idx, tty->name);
@@ -1793,6 +1789,20 @@ retry_open:
 		tty_kref_put(tty);
 		goto got_driver;
 	}
+#ifdef CONFIG_VTTYS
+	if (!ve_is_super(get_exec_env()) &&
+		MAJOR(device) == TTY_MAJOR &&
+		MINOR(device) <= MAX_NR_VTTY) {
+		driver = tty_driver_kref_get(vtty_driver);
+		if (MINOR(device)) {
+			index = MINOR(device) - 1;
+		} else {
+			index = 0;
+			noctty = 1;
+		}
+		goto got_driver;
+	}
+#endif
 #ifdef CONFIG_VT
 	if (device == MKDEV(TTY_MAJOR, 0)) {
 		extern struct tty_driver *console_driver;
@@ -1809,13 +1819,17 @@ retry_open:
 	}
 #endif
 	if (device == MKDEV(TTYAUX_MAJOR, 1)) {
-		struct tty_driver *console_driver = console_device(&index);
+		struct tty_driver *console_driver = NULL;
 #ifdef CONFIG_VE
 		if (!ve_is_super(get_exec_env())) {
-			mutex_unlock(&tty_mutex);
-			return -ENODEV;
-		}
+# ifdef CONFIG_VTTYS
+			console_driver = vtty_driver;
+			index = 0;
+# endif
+		} else
 #endif
+			console_driver = console_device(&index);
+
 		if (console_driver) {
 			driver = tty_driver_kref_get(console_driver);
 			if (driver) {
@@ -3214,9 +3228,14 @@ int init_ve_tty_class(void)
 		return -ENOMEM;
 
 	res = device_create(ve_tty_class, NULL,
-				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+				MKDEV(TTYAUX_MAJOR, 0), NULL, "tty");
 	if (IS_ERR(res))
 		goto err_class;
+
+	res = device_create(ve_tty_class, NULL,
+				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+	if (IS_ERR(res))
+		goto err_tty;
 
 	res = device_create(ve_tty_class, NULL,
 				MKDEV(TTYAUX_MAJOR, 2), NULL, "ptmx");
@@ -3228,6 +3247,8 @@ int init_ve_tty_class(void)
 
 err_console:
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
+err_tty:
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 0));
 err_class:
 	class_destroy(ve_tty_class);
 	return PTR_ERR(res);
@@ -3237,6 +3258,7 @@ void fini_ve_tty_class(void)
 {
 	struct class *ve_tty_class = get_exec_env()->tty_class;
 
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 0));
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 2));
 	class_destroy(ve_tty_class);

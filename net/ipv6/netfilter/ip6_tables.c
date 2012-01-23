@@ -2275,6 +2275,8 @@ static void __net_exit ip6_tables_net_exit(struct net *net)
 		return;
 
 	xt_proto_fini(net, NFPROTO_IPV6);
+
+	net_ipt_module_clear(net, VE_IP_IPTABLES6);
 }
 
 static struct pernet_operations ip6_tables_net_ops = {

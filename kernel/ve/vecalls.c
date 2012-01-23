@@ -89,6 +89,8 @@ static int	register_ve_tty_drivers(struct ve_struct* ve);
 static void	unregister_ve_tty_drivers(struct ve_struct* ve);
 static int	init_ve_tty_drivers(struct ve_struct *);
 static void	fini_ve_tty_drivers(struct ve_struct *);
+static int	init_ve_vtty(struct ve_struct *ve);
+static void	fini_ve_vtty(struct ve_struct *ve);
 static void	clear_termios(struct tty_driver* driver );
 
 static void vecalls_exit(void);
@@ -351,13 +353,15 @@ static void free_ve_proc(struct ve_struct *ve)
 
 static int init_ve_devpts(struct ve_struct *ve)
 {
-	return register_ve_fs_type(ve, &devpts_fs_type,
-			&ve->devpts_fstype, &ve->devpts_mnt);
+	ve->devpts_mnt = kern_mount(&devpts_fs_type);
+	if (IS_ERR(ve->devpts_mnt))
+		return PTR_ERR(ve->devpts_mnt);
+	return 0;
 }
 
 static void fini_ve_devpts(struct ve_struct *ve)
 {
-	unregister_ve_fs_type(ve->devpts_fstype, ve->devpts_mnt);
+	kern_umount(ve->devpts_mnt);
 }
 #else
 #define init_ve_devpts(ve)	(0)
@@ -484,6 +488,8 @@ static int init_ve_devtmpfs(struct ve_struct *ve)
 #ifdef CONFIG_DEVTMPFS
 	return register_ve_fs_type(ve, &dev_fs_type,
 			&ve->devtmpfs_fstype, &ve->devtmpfs_mnt);
+#else
+	return 0;
 #endif
 }
 
@@ -587,9 +593,6 @@ static void free_ve_filesystems(struct ve_struct *ve)
 #endif
 	kfree(ve->shmem_fstype);
 	ve->shmem_fstype = NULL;
-
-	kfree(ve->devpts_fstype);
-	ve->devpts_fstype = NULL;
 
 #if defined(CONFIG_FUSE_FS) || defined(CONFIG_FUSE_FS_MODULE)
 	BUG_ON(ve->fuse_fs_type && !list_empty(&ve->_fuse_conn_list));
@@ -1194,6 +1197,9 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = init_ve_tty_drivers(ve)) < 0)
 		goto err_tty;
 
+	if ((err = init_ve_vtty(ve)))
+		goto err_vtty;
+
 	if ((err = init_ve_shmem(ve)))
 		goto err_shmem;
 
@@ -1252,6 +1258,8 @@ err_meminf:
 err_devpts:
 	fini_ve_shmem(ve);
 err_shmem:
+	fini_ve_vtty(ve);
+err_vtty:
 	fini_ve_tty_drivers(ve);
 err_tty:
 	fini_ve_cgroups(ve);
@@ -1453,6 +1461,7 @@ static void env_cleanup(struct ve_struct *ve)
 
 	fini_ve_devpts(ve);
 	fini_ve_shmem(ve);
+	fini_ve_vtty(ve);
 	unregister_ve_tty_drivers(ve);
 	fini_ve_meminfo(ve);
 
@@ -1646,19 +1655,6 @@ static int alloc_ve_tty_drivers(struct ve_struct* ve)
 	ve->pty_driver->other       = ve->pty_slave_driver;
 	ve->pty_slave_driver->other = ve->pty_driver;
 #endif	
-
-#ifdef CONFIG_UNIX98_PTYS
-	ve->ptm_driver = alloc_ve_tty_driver(ptm_driver, ve);
-	if (!ve->ptm_driver)
-		goto out_mem;
-
-	ve->pts_driver = alloc_ve_tty_driver(pts_driver, ve);
-	if (!ve->pts_driver)
-		goto out_mem;
-
-	ve->ptm_driver->other = ve->pts_driver;
-	ve->pts_driver->other = ve->ptm_driver;
-#endif
 	return 0;
 
 out_mem:
@@ -1673,11 +1669,6 @@ static void free_ve_tty_drivers(struct ve_struct* ve)
 	free_ve_tty_driver(ve->pty_slave_driver);
 	ve->pty_driver = ve->pty_slave_driver = NULL;
 #endif	
-#ifdef CONFIG_UNIX98_PTYS
-	free_ve_tty_driver(ve->ptm_driver);
-	free_ve_tty_driver(ve->pts_driver);
-	ve->ptm_driver = ve->pts_driver = NULL;
-#endif
 }
 
 static inline void __register_tty_driver(struct tty_driver *driver)
@@ -1695,10 +1686,6 @@ static inline void __unregister_tty_driver(struct tty_driver *driver)
 static int register_ve_tty_drivers(struct ve_struct* ve)
 {
 	mutex_lock(&tty_mutex);
-#ifdef CONFIG_UNIX98_PTYS
-	__register_tty_driver(ve->ptm_driver);
-	__register_tty_driver(ve->pts_driver);
-#endif
 #ifdef CONFIG_LEGACY_PTYS
 	__register_tty_driver(ve->pty_driver);
 	__register_tty_driver(ve->pty_slave_driver);
@@ -1716,10 +1703,6 @@ static void unregister_ve_tty_drivers(struct ve_struct* ve)
 #ifdef CONFIG_LEGACY_PTYS
 	__unregister_tty_driver(ve->pty_driver);
 	__unregister_tty_driver(ve->pty_slave_driver);
-#endif
-#ifdef CONFIG_UNIX98_PTYS
-	__unregister_tty_driver(ve->ptm_driver);
-	__unregister_tty_driver(ve->pts_driver);
 #endif
 	mutex_unlock(&tty_mutex);
 }
@@ -1744,6 +1727,38 @@ static void fini_ve_tty_drivers(struct ve_struct *ve)
 {
 	unregister_ve_tty_drivers(ve);
 	free_ve_tty_drivers(ve);
+}
+
+static void fini_ve_vtty(struct ve_struct *ve)
+{
+	int minor;
+
+	for (minor = 0 ; minor <= MAX_NR_VTTY ; minor++)
+		device_destroy(ve->tty_class, MKDEV(TTY_MAJOR, minor));
+}
+
+static int init_ve_vtty(struct ve_struct *ve)
+{
+	int err, minor;
+	struct device *dev;
+
+	for (minor = 0 ; minor <= MAX_NR_VTTY ; minor++) {
+		err = set_device_perms_ve(ve, S_IFCHR,
+				MKDEV(TTY_MAJOR, minor), 06);
+		if (err)
+			goto out;
+		dev = device_create(ve->tty_class, NULL,
+				MKDEV(TTY_MAJOR, minor), NULL, "tty%d", minor);
+		err = PTR_ERR(dev);
+		if (IS_ERR(dev))
+			goto out;
+	}
+
+	return 0;
+
+out:
+	fini_ve_vtty(ve);
+	return err;
 }
 
 /*
@@ -2279,6 +2294,11 @@ static int ve_configure(envid_t veid, unsigned int key,
 {
 	struct ve_struct *ve;
 	int err = -ENOKEY;
+
+	switch(key) {
+	case VE_CONFIGURE_OPEN_TTY:
+		return vtty_open_master(veid, val);
+	}
 
 	ve = get_ve_by_id(veid);
 	if (!ve)

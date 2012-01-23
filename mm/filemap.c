@@ -35,6 +35,7 @@
 #include <linux/memcontrol.h>
 #include <linux/mm_inline.h> /* for page_is_file_cache() */
 #include <linux/mmgang.h>
+#include <linux/cleancache.h>
 #include <trace/events/kmem.h>
 #include "internal.h"
 
@@ -122,6 +123,16 @@
 void __remove_from_page_cache(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
+
+	/*
+	 * if we're uptodate, flush out into the cleancache, otherwise
+	 * invalidate any existing cleancache entries.  We can't leave
+	 * stale data around in the cleancache once our page is gone
+	 */
+	if (PageUptodate(page))
+		cleancache_put_page(page);
+	else
+		cleancache_flush_page(mapping, page);
 
 	radix_tree_delete(&mapping->page_tree, page->index);
 	if (mapping_cap_account_dirty(mapping) &&

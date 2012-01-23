@@ -2242,6 +2242,8 @@ static void __net_exit ip_tables_net_exit(struct net *net)
 		return;
 
 	xt_proto_fini(net, NFPROTO_IPV4);
+
+	net_ipt_module_clear(net, VE_IP_IPTABLES);
 }
 
 static struct pernet_operations ip_tables_net_ops = {

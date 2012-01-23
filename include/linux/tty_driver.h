@@ -312,11 +312,6 @@ struct tty_driver {
 	struct ve_struct *owner_env;
 };
 
-#ifdef CONFIG_UNIX98_PTYS
-extern struct tty_driver *ptm_driver;	/* Unix98 pty masters; for /dev/ptmx */
-extern struct tty_driver *pts_driver;	/* Unix98 pty slaves;  for /dev/ptmx */
-#endif
-
 #ifdef CONFIG_LEGACY_PTYS
 extern struct tty_driver *pty_driver;
 extern struct tty_driver *pty_slave_driver;

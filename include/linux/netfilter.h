@@ -361,22 +361,27 @@ static inline void nf_ct_attach(struct sk_buff *new, struct sk_buff *skb) {}
 #define net_ipt_permitted(netns, ipt)					\
 	(mask_ipt_allow((netns)->owner_ve->ipt_mask, ipt))
 
-#define net_ipt_module_permitted(netns, ipt)				\
-	(mask_ipt_allow((netns)->owner_ve->ipt_mask, ipt) &&		\
-	 mask_ipt_allow((netns)->owner_ve->_iptables_modules,		\
-		(ipt) & ~(ipt##_MOD)))
-
 #define net_ipt_module_set(netns, ipt)					\
 	({								\
 		(netns)->owner_ve->_iptables_modules |= ipt##_MOD;	\
 	})
+
+#define net_ipt_module_clear(netns, ipt)				\
+	({								\
+		(netns)->owner_ve->_iptables_modules &= ~ipt##_MOD;	\
+	})
+
 #define net_is_ipt_module_set(netns, ipt)				\
 	((netns)->owner_ve->_iptables_modules & (ipt##_MOD))
-#else
-#define net_ipt_module_permitted(netns, ipt)  (1)
+
+#else /* CONFIG_VE_IPTABLES */
+
+#define net_ipt_permitted(netns, ipt)		(1)
+#define net_is_ipt_module_set(netns, ipt)	(1)
 #define net_ipt_module_set(netns, ipt)
-#define net_is_ipt_module_set(netns, ipt)     (1)
-#endif
+#define net_ipt_module_clear(netns, ipt)
+
+#endif /* CONFIG_VE_IPTABLES */
 
 #endif /*__KERNEL__*/
 #endif /*__LINUX_NETFILTER_H*/

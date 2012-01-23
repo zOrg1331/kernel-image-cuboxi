@@ -517,6 +517,7 @@ struct ext4_new_group_data {
  */
 struct ext4_mount_options {
 	unsigned long s_mount_opt;
+	unsigned long s_mount_opt2;
 	uid_t s_resuid;
 	gid_t s_resgid;
 	unsigned long s_commit_interval;
@@ -604,6 +605,12 @@ struct move_extent {
 #define EXT4_EPOCH_BITS 2
 #define EXT4_EPOCH_MASK ((1 << EXT4_EPOCH_BITS) - 1)
 #define EXT4_NSEC_MASK  (~0UL << EXT4_EPOCH_BITS)
+
+#define EXT4_DATA_CSUM_SIZE	20
+#define EXT4_DATA_CSUM_NAME	"sha1"
+
+#define EXT4_DIR_CSUM_VALUE	"auto"
+#define EXT4_DIR_CSUM_VALUE_LEN	4
 
 /*
  * Extended fields will fit into an inode if the filesystem was formatted
@@ -818,6 +825,11 @@ struct ext4_inode_info {
 	 */
 	tid_t i_sync_tid;
 	tid_t i_datasync_tid;
+
+	/* SHA-1 rolling data checksum state */
+	loff_t i_data_csum_end;
+	/* FIPS 180-1 digest if i_data_csum_end == -1, partial SHA-1 otherwise */
+	u8 i_data_csum[EXT4_DATA_CSUM_SIZE];
 };
 
 /*
@@ -868,10 +880,19 @@ struct ext4_inode_info {
 #define EXT4_MOUNT_DISCARD		0x40000000 /* Issue DISCARD requests */
 #define EXT4_MOUNT_INIT_INODE_TABLE	0x80000000 /* Initialize uninitialized itables */
 
+#define EXT4_MOUNT2_CSUM		0x10000 /* Data-checksumming enabled */
+
 #define clear_opt(o, opt)		o &= ~EXT4_MOUNT_##opt
 #define set_opt(o, opt)			o |= EXT4_MOUNT_##opt
 #define test_opt(sb, opt)		(EXT4_SB(sb)->s_mount_opt & \
 					 EXT4_MOUNT_##opt)
+
+#define clear_opt2(sb, opt)		EXT4_SB(sb)->s_mount_opt2 &= \
+						~EXT4_MOUNT2_##opt
+#define set_opt2(sb, opt)		EXT4_SB(sb)->s_mount_opt2 |= \
+						EXT4_MOUNT2_##opt
+#define test_opt2(sb, opt)		(EXT4_SB(sb)->s_mount_opt2 & \
+					 EXT4_MOUNT2_##opt)
 
 #define ext4_set_bit			ext2_set_bit
 #define ext4_set_bit_atomic		ext2_set_bit_atomic
@@ -1036,6 +1057,7 @@ struct ext4_sb_info {
 	struct ext4_super_block *s_es;	/* Pointer to the super block in the buffer */
 	struct buffer_head **s_group_desc;
 	unsigned int s_mount_opt;
+	unsigned int s_mount_opt2;
 	unsigned int s_mount_flags;
 	ext4_fsblk_t s_sb_block;
 	uid_t s_resuid;
@@ -1153,6 +1175,10 @@ struct ext4_sb_info {
 	struct ext4_li_request *s_li_request;
 	/* Wait multiplier for lazy initialization thread */
 	unsigned int s_li_wait_mult;
+
+	/* data checksumming */
+	struct percpu_counter s_csum_partial;
+	struct percpu_counter s_csum_complete;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
@@ -1190,6 +1216,7 @@ enum {
 	EXT4_STATE_DA_ALLOC_CLOSE,	/* Alloc DA blks on close */
 	EXT4_STATE_EXT_MIGRATE,		/* Inode is migrating */
 	EXT4_STATE_DIO_UNWRITTEN,	/* need convert on dio done*/
+	EXT4_STATE_CSUM,		/* Data-checksumming enabled */
 };
 
 #define EXT4_INODE_BIT_FNS(name, field)					\
@@ -1691,6 +1718,25 @@ extern int ext4_group_add(struct super_block *sb,
 extern int ext4_group_extend(struct super_block *sb,
 				struct ext4_super_block *es,
 				ext4_fsblk_t n_blocks_count);
+
+/* csum.c */
+extern int ext4_load_data_csum(struct inode *inode);
+extern void ext4_start_data_csum(struct inode *inode);
+extern void ext4_update_data_csum(struct inode *inode, loff_t pos,
+				  unsigned len, struct page* page);
+extern void ext4_commit_data_csum(struct inode *inode);
+extern void ext4_clear_data_csum(struct inode *inode);
+extern int ext4_truncate_data_csum(struct inode *inode, loff_t end);
+extern void ext4_load_dir_csum(struct inode *inode);
+extern void ext4_save_dir_csum(struct inode *inode);
+static inline int ext4_want_data_csum(struct inode *dir)
+{
+	return test_opt2(dir->i_sb, CSUM) &&
+		(ext4_test_inode_state(dir, EXT4_STATE_CSUM) ||
+		 current->data_csum_enabled);
+}
+extern int ext4_get_data_csum(struct inode *inode, u8 *csum, size_t size);
+extern struct xattr_handler ext4_xattr_trusted_csum_handler;
 
 /* super.c */
 extern void __ext4_error(struct super_block *, const char *, const char *, ...)

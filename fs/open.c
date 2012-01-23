@@ -829,6 +829,8 @@ struct file *dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags,
 
 	if (!may_use_odirect())
 		flags &= ~O_DIRECT;
+	if (ve_fsync_behavior() == FSYNC_NEVER)
+		flags &= ~O_SYNC;
 
 	error = -ENFILE;
 	f = get_empty_filp();

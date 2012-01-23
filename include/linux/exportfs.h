@@ -67,6 +67,12 @@ enum fid_type {
 	 * 32 bit parent block number, 32 bit parent generation number
 	 */
 	FILEID_UDF_WITH_PARENT = 0x52,
+
+	/*
+	 * 32bit inode number, 32 bit generation number,
+	 * 160bit SHA1 checksum.
+	 */
+	FILEID_INO32_GEN_SHA1 = 0x61,
 };
 
 struct fid {
@@ -85,6 +91,12 @@ struct fid {
  			u32 parent_block;
  			u32 parent_generation;
  		} udf;
+		struct {
+			u32 ino;
+			u32 gen;
+			u8 check_sum[20];
+		} i32_csum;
+
 		__u32 raw[0];
 	};
 };

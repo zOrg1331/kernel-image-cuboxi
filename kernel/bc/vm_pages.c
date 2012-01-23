@@ -408,14 +408,14 @@ static int bc_fill_sysinfo(struct user_beancounter *ub,
 	memset(si, 0, sizeof(*si));
 
 	total = ub->ub_parms[UB_PHYSPAGES].limit;
-	used = ub->ub_parms[UB_PHYSPAGES].held;
+	used = __get_beancounter_usage_percpu(ub, UB_PHYSPAGES);
 
 	if (total == UB_MAXVALUE) {
 		if (meminfo_val == VE_MEMINFO_DEFAULT)
 			total = totalram;
 		else {
 			total = min(meminfo_val, totalram);
-			used = ub->ub_parms[UB_PRIVVMPAGES].held;
+			used = __get_beancounter_usage_percpu(ub, UB_PRIVVMPAGES);
 			if (glob_ve_meminfo) {
 				ub_update_resources(ub);
 				used = ub->ub_parms[UB_OOMGUARPAGES].held;
@@ -427,7 +427,7 @@ static int bc_fill_sysinfo(struct user_beancounter *ub,
 	si->freeram = (total > used ? total - used : 0);
 
 	total = ub->ub_parms[UB_SWAPPAGES].limit;
-	used = ub->ub_parms[UB_SWAPPAGES].held;
+	used = __get_beancounter_usage_percpu(ub, UB_SWAPPAGES);
 
 	if (total == UB_MAXVALUE) {
 		if (meminfo_val == VE_MEMINFO_DEFAULT)

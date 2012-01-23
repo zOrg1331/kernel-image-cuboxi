@@ -111,6 +111,7 @@ enum _cpt_object_type
 	CPT_OBJ_NET_STATS,
 	CPT_OBJ_NET_IPIP_TUNNEL,
 	CPT_OBJ_TIMERFD,
+	CPT_OBJ_EVENTFD,
 
 	/* 2.6.27-specific */
 	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
@@ -327,6 +328,17 @@ struct cpt_timerfd_image
 	__u32	cpt_clockid;
 } __attribute__ ((aligned (8)));
 
+struct cpt_eventfd_image
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u64	cpt_count;
+	__u32	cpt_flags;
+} __attribute__ ((aligned (8)));
+
 /* CPT_OBJ_VEINFO: various ve specific data */
 struct cpt_veinfo_image
 {
@@ -399,6 +411,7 @@ struct cpt_file_image
 #define CPT_DENTRY_HARDLINKED	0x400
 #define CPT_DENTRY_SIGNALFD	0x800
 #define CPT_DENTRY_TIMERFD	0x1000
+#define CPT_DENTRY_EVENTFD	0x2000
 #define CPT_DENTRY_SILLYRENAME	0x20000
 	__u64	cpt_inode;
 	__u64	cpt_priv;

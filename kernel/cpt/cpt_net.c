@@ -32,6 +32,7 @@
 #include <linux/if_tun.h>
 #include <linux/veth.h>
 #include <linux/fdtable.h>
+#include <net/ip.h>
 
 #include <linux/cpt_export.h>
 
@@ -541,18 +542,6 @@ out:
 	return err;
 }
 
-static unsigned long fold_field(void *mib[], int offt)
-{
-	unsigned long res = 0;
-	int i;
-
-	for_each_possible_cpu(i) {
-		res += *(((unsigned long *) per_cpu_ptr(mib[0], i)) + offt);
-		res += *(((unsigned long *) per_cpu_ptr(mib[1], i)) + offt);
-	}
-	return res;
-}
-
 static void __maybe_unused cpt_dump_snmp_stub(struct cpt_context *ctx);
 
 static void cpt_dump_snmp_stat(struct cpt_context *ctx, void *mib[], int n)
@@ -574,7 +563,7 @@ static void cpt_dump_snmp_stat(struct cpt_context *ctx, void *mib[], int n)
 	cpt_open_object(NULL, ctx);
 
 	for (i = 0; i < n; i++)
-		stats[i] = fold_field(mib, i);
+		stats[i] = snmp_fold_field(mib, i);
 
  	o.cpt_next = CPT_NULL;
 	o.cpt_object = CPT_OBJ_BITS;

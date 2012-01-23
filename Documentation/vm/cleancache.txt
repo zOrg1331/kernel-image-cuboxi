@@ -1,0 +1,74 @@
+Cleancache can be thought of as a page-granularity victim cache for clean
+pages that the kernel's pageframe replacement algorithm (PFRA) would like
+to keep around, but can't since there isn't enough memory.  So when the
+PFRA "evicts" a page, it first attempts to put it into a synchronous
+concurrency-safe page-oriented "pseudo-RAM" device (such as Xen's Transcendent
+Memory, aka "tmem", or in-kernel compressed memory, aka "zmem", or other
+RAM-like devices) which is not directly accessible or addressable by the
+kernel and is of unknown and possibly time-varying size.  And when a
+cleancache-enabled filesystem wishes to access a page in a file on disk,
+it first checks cleancache to see if it already contains it; if it does,
+the page is copied into the kernel and a disk access is avoided.
+A cleancache "backend" that interfaces to this pseudo-RAM links itself
+to the kernel's cleancache "frontend" by setting the cleancache_ops funcs
+appropriately and the functions it provides must conform to certain
+semantics as follows:
+
+Most important, cleancache is "ephemeral".  Pages which are copied into
+cleancache have an indefinite lifetime which is completely unknowable
+by the kernel and so may or may not still be in cleancache at any later time.
+Thus, as its name implies, cleancache is not suitable for dirty pages.
+Cleancache has complete discretion over what pages to preserve and what
+pages to discard and when.
+
+Mounting a cleancache-enabled filesystem should call "init_fs" to obtain a
+pool id which, if positive, must be saved in the filesystem's superblock;
+a negative return value indicates failure.  A "put_page" will copy a
+(presumably about-to-be-evicted) page into cleancache and associate it with
+the pool id, the file inode, and a page index into the file.  (The combination
+of a pool id, an inode, and an index is sometimes called a "handle".)
+A "get_page" will copy the page, if found, from cleancache into kernel memory.
+A "flush_page" will ensure the page no longer is present in cleancache;
+a "flush_inode" will flush all pages associated with the specified inode;
+and, when a filesystem is unmounted, a "flush_fs" will flush all pages in
+all inodes specified by the given pool id and also surrender the pool id.
+
+A "init_shared_fs", like init, obtains a pool id but tells cleancache
+to treat the pool as shared using a 128-bit UUID as a key.  On systems
+that may run multiple kernels (such as hard partitioned or virtualized
+systems) that may share a clustered filesystem, and where cleancache
+may be shared among those kernels, calls to init_shared_fs that specify the
+same UUID will receive the same pool id, thus allowing the pages to
+be shared.  Note that any security requirements must be imposed outside
+of the kernel (e.g. by "tools" that control cleancache).  Or a
+cleancache implementation can simply disable shared_init by always
+returning a negative value.
+
+If a get_page is successful on a non-shared pool, the page is flushed (thus
+making cleancache an "exclusive" cache).  On a shared pool, the page
+is NOT flushed on a successful get_page so that it remains accessible to
+other sharers.  The kernel is responsible for ensuring coherency between
+cleancache (shared or not), the page cache, and the filesystem, using
+cleancache flush operations as required.
+
+Note that cleancache must enforce put-put-get coherency and get-get
+coherency.  For the former, if two puts are made to the same handle but
+with different data, say AAA by the first put and BBB by the second, a
+subsequent get can never return the stale data (AAA).  For get-get coherency,
+if a get for a given handle fails, subsequent gets for that handle will
+never succeed unless preceded by a successful put with that handle.
+
+Last, cleancache provides no SMP serialization guarantees; if two
+different Linux threads are simultaneously putting and flushing a page
+with the same handle, the results are indeterminate.
+
+Cleancache monitoring is done by sysfs files in the
+/sys/kernel/mm/cleancache directory.  The effectiveness of cleancache
+can be measured (across all filesystems) with:
+
+succ_gets	- number of gets that were successful
+failed_gets	- number of gets that failed
+puts		- number of puts attempted (all "succeed")
+flushes		- number of flushes attempted
+
+Dan Magenheimer, June 04 2010
