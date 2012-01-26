@@ -165,6 +165,9 @@ int may_use_odirect(void)
 {
 	int may;
 
+	if (ve_is_super(get_exec_env()))
+		return 1;
+
 	may = capable(CAP_SYS_RAWIO);
 	if (!may) {
 		may = get_exec_env()->odirect_enable;

@@ -574,13 +574,14 @@ int cpt_walk_shm(int (*doit)(struct inode * inode,
 		spin_unlock(&inode_lock);
 
 		err = doit(inode, data, ctx);
-		if (err)
-			break;
 
 		if (old != NULL)
 			iput(old);
 		old = inode;
 		spin_lock(&inode_lock);
+
+		if (err)
+			break;
 	}
 	spin_unlock(&inode_lock);
 	if (old != NULL)

@@ -230,7 +230,6 @@ int rst_process_linkage(cpt_context_t *ctx)
 		if (task_pgrp_vnr(tsk) != ti->cpt_pgrp) {
 			struct pid *pid;
 
-			rcu_read_lock();
 			pid = alloc_vpid_safe(ti->cpt_pgrp);
 			if (!pid) {
 				eprintk_ctx("illegal PGRP " CPT_FID "\n", CPT_TID(tsk));
@@ -241,18 +240,18 @@ int rst_process_linkage(cpt_context_t *ctx)
 			detach_pid(tsk, PIDTYPE_PGID);
 			if (thread_group_leader(tsk))
 				attach_pid(tsk, PIDTYPE_PGID, pid);
+			else
+				put_pid(pid);
 			write_unlock_irq(&tasklist_lock);
 
 			if (task_pgrp_vnr(tsk) != pid_vnr(pid)) {
 				eprintk_ctx("cannot set PGRP " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
-			rcu_read_unlock();
 		}
 		if (task_session_vnr(tsk) != ti->cpt_session) {
 			struct pid *pid;
 
-			rcu_read_lock();
 			pid = alloc_vpid_safe(ti->cpt_session);
 			if (!pid) {
 				eprintk_ctx("illegal SID " CPT_FID "\n", CPT_TID(tsk));
@@ -263,25 +262,24 @@ int rst_process_linkage(cpt_context_t *ctx)
 			detach_pid(tsk, PIDTYPE_SID);
 			if (thread_group_leader(tsk))
 				attach_pid(tsk, PIDTYPE_SID, pid);
+			else
+				put_pid(pid);
 			write_unlock_irq(&tasklist_lock);
 
 			if (task_session_vnr(tsk) != pid_vnr(pid)) {
 				eprintk_ctx("cannot set SID " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
-			rcu_read_unlock();
 		}
 		if (ti->cpt_old_pgrp > 0 && !tsk->signal->tty_old_pgrp) {
 			struct pid *pid;
 
-			rcu_read_lock();
-			pid = get_pid(find_vpid(ti->cpt_old_pgrp));
+			pid = find_get_pid(ti->cpt_old_pgrp);
 			if (!pid) {
 				eprintk_ctx("illegal OLD_PGRP " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
 			tsk->signal->tty_old_pgrp = pid;
-			rcu_read_unlock();
 		}
 	}
 
@@ -294,7 +292,7 @@ struct pid *alloc_vpid_safe(pid_t vnr)
 
 	pid = alloc_pid(current->nsproxy->pid_ns, vnr);
 	if (!pid)
-		pid = find_vpid(vnr);
+		pid = find_get_pid(vnr);
 	return pid;
 }
 
@@ -345,6 +343,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 	}
 #endif
 
+	put_pid(current->signal->tty_old_pgrp);
 	current->signal->tty_old_pgrp = NULL;
 	if ((int)si->cpt_old_pgrp > 0) {
 		if (si->cpt_old_pgrp_type == CPT_PGRP_STRAY) {
@@ -356,14 +355,12 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 				return -EINVAL;
 			}
 		} else {
-			rcu_read_lock();
-			current->signal->tty_old_pgrp =
-				get_pid(alloc_vpid_safe(si->cpt_old_pgrp));
-			rcu_read_unlock();
-			if (!current->signal->tty_old_pgrp) {
+			struct pid *pid;
+
+			pid = alloc_vpid_safe(si->cpt_old_pgrp);
+			if (!pid)
 				dprintk_ctx("forward old tty PGID\n");
-				current->signal->tty_old_pgrp = NULL;
-			}
+			current->signal->tty_old_pgrp = pid;
 		}
 	}
 

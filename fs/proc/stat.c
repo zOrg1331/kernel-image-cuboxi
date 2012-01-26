@@ -12,6 +12,8 @@
 #include <linux/irqnr.h>
 #include <linux/fairsched.h>
 #include <asm/cputime.h>
+#include <linux/mm.h>
+#include <linux/vmstat.h>
 
 #ifndef arch_irq_stat_cpu
 #define arch_irq_stat_cpu(cpu) 0
@@ -114,6 +116,12 @@ static int show_stat(struct seq_file *p, void *v)
 	/* sum again ? it could be updated? */
 	for_each_irq_nr(j)
 		seq_printf(p, " %u", kstat_irqs(j));
+
+#ifdef CONFIG_VM_EVENT_COUNTERS
+	seq_printf(p, "\nswap %lu %lu", vm_events(PSWPIN), vm_events(PSWPOUT));
+#else
+	seq_printf(p, "\nswap 0 0");
+#endif
 
 	seq_printf(p,
 		"\nctxt %llu\n"

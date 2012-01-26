@@ -245,11 +245,12 @@ struct file * rst_open_tty(cpt_object_t *mntobj, char *name,
 		return ERR_PTR(err);
 	}
 
-	if (MAJOR(ii->cpt_rdev) == TTY_MAJOR) {
+	if (MAJOR(ii->cpt_rdev) == TTY_MAJOR ||
+	    ii->cpt_rdev == MKDEV(TTYAUX_MAJOR, 1)) {
 		if (mntobj && (mntobj->o_flags & CPT_VFSMOUNT_DELAYFS))
 		       return ERR_PTR(-ENOTSUPP);
 		master = rst_open_file(mntobj, name, fi,
-				flags|O_NONBLOCK|O_NOCTTY|O_RDWR, ctx);
+				flags|O_NONBLOCK|O_NOCTTY, ctx);
 		if (IS_ERR(master)) {
 			eprintk_ctx("rst_open_tty: %s %Ld %ld\n",
 					name, (long long)fi->cpt_priv,
@@ -377,9 +378,7 @@ int rst_tty_jobcontrol(struct cpt_context *ctx)
 		if (obj) {
 			struct tty_struct *stty = obj->o_obj;
 			if ((int)pibuf->cpt_pgrp > 0) {
-				rcu_read_lock();
-				stty->pgrp = get_pid(alloc_vpid_safe(pibuf->cpt_pgrp));
-				rcu_read_unlock();
+				stty->pgrp = alloc_vpid_safe(pibuf->cpt_pgrp);
 				if (!stty->pgrp)
 					dprintk_ctx("unknown tty pgrp %d\n", pibuf->cpt_pgrp);
 			} else if (pibuf->cpt_pgrp) {
@@ -392,9 +391,7 @@ int rst_tty_jobcontrol(struct cpt_context *ctx)
 				}
 			}
 			if ((int)pibuf->cpt_session > 0) {
-				rcu_read_lock();
-				stty->session = get_pid(alloc_vpid_safe(pibuf->cpt_session));
-				rcu_read_unlock();
+				stty->session = alloc_vpid_safe(pibuf->cpt_session);
 				if (!stty->session)
 					dprintk_ctx("unknown tty session %d\n", pibuf->cpt_session);
 			}

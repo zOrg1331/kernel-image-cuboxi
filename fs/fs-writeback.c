@@ -518,7 +518,7 @@ static int writeback_sb_inodes(struct super_block *sb, struct bdi_writeback *wb,
 		if (wbc->wb_ub &&
 		    (inode->i_mapping->dirtied_ub != wbc->wb_ub) &&
 		    (inode->i_state & I_DIRTY) == I_DIRTY_PAGES) {
-			redirty_tail(inode);
+			requeue_io(inode);
 			continue;
 		}
 

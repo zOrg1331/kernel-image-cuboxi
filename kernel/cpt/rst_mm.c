@@ -741,16 +741,16 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					goto out;
 				}
 
-				down_read(&mm->mmap_sem);
+				down_write(&mm->mmap_sem);
 				if ((vma = find_vma(mm, u.lpb.cpt_start)) == NULL) {
-					up_read(&mm->mmap_sem);
+					up_write(&mm->mmap_sem);
 					eprintk_ctx("lost vm_area_struct\n");
 					err = -ESRCH;
 					goto out;
 				}
 				err = anon_vma_prepare(vma);
 				if (err) {
-					up_read(&mm->mmap_sem);
+					up_write(&mm->mmap_sem);
 					goto out;
 				}
 				while (ptr < u.lpb.cpt_end) {
@@ -766,7 +766,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					make_pages_present((unsigned long)u.lpb.cpt_start,
 							   (unsigned long)u.lpb.cpt_end);
 				}
-				up_read(&mm->mmap_sem);
+				up_write(&mm->mmap_sem);
 #else
 				err = -EINVAL;
 #endif
