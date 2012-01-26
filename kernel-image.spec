@@ -1,8 +1,8 @@
 Name:    kernel-image-std-def
-Release: alt2
+Release: alt1
 Epoch:   1
 %define kernel_base_version	3.2
-%define kernel_sublevel	.1
+%define kernel_sublevel	.2
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -622,6 +622,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Jan 26 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.2.2-alt1
+- Update to 3.2.2
+
 * Fri Jan 20 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.2.1-alt2
 - proc: clean up and fix /proc/<pid>/mem handling (CVE-2012-0056)
 
