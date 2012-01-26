@@ -57,12 +57,13 @@ int cpt_collect_tty(struct file *file, cpt_context_t * ctx)
 {
 	struct tty_struct *tty = file_tty(file);
 	cpt_object_t *obj;
+	dev_t dev = file->f_dentry->d_inode->i_rdev;
 
 	if (tty) {
 		obj = cpt_object_add(CPT_OBJ_TTY, tty, ctx);
 		if (obj == NULL)
 			return -ENOMEM;
-		if (MAJOR(file->f_dentry->d_inode->i_rdev) == TTY_MAJOR) {
+		if (MAJOR(dev) == TTY_MAJOR || dev == MKDEV(TTYAUX_MAJOR, 1)) {
 			obj->o_flags |= CPT_TTY_NOPAIR;
 		} else if (tty->link) {
 			obj = cpt_object_add(CPT_OBJ_TTY, tty->link, ctx);

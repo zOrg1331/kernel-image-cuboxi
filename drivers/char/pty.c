@@ -770,6 +770,7 @@ struct tty_driver *vtty_driver;
 #include <linux/anon_inodes.h>
 
 static struct tty_struct *vtty_masters;
+static DEFINE_SPINLOCK(vtty_lock);
 
 static void vtty_line_name(int veid, int idx, char *p)
 {
@@ -780,18 +781,22 @@ static void vtty_install_master(int veid, struct tty_struct *vtty)
 {
 	pr_debug("%s %d %d %p\n", __func__, veid, vtty->index, vtty);
 	vtty_line_name(veid, vtty->index, vtty->name);
+	spin_lock(&vtty_lock);
 	vtty->driver_data = vtty_masters;
 	vtty_masters = vtty;
+	spin_unlock(&vtty_lock);
 }
 
 static struct tty_struct *vtty_lookup_master(const char *name)
 {
 	struct tty_struct *tty;
 
+	spin_lock(&vtty_lock);
 	for ( tty = vtty_masters ; tty ; tty = tty->driver_data ) {
 		if (!strcmp(tty->name, name))
 			break;
 	}
+	spin_unlock(&vtty_lock);
 	pr_debug("%s %s %p\n", __func__, name, tty);
 	return tty;
 }
@@ -801,6 +806,7 @@ static void vtty_remove_master(struct tty_struct *vtty)
 	struct tty_struct **ptty;
 
 	pr_debug("%s %s %d %p\n", __func__, vtty->name, vtty->index, vtty);
+	spin_lock(&vtty_lock);
 	for ( ptty = &vtty_masters ; *ptty ;
 			ptty = (struct tty_struct **)&(*ptty)->driver_data ) {
 		if (*ptty == vtty) {
@@ -808,13 +814,16 @@ static void vtty_remove_master(struct tty_struct *vtty)
 			break;
 		}
 	}
+	spin_unlock(&vtty_lock);
 }
 
 static void vtty_install_slave(struct ve_struct *ve, struct tty_struct *vtty)
 {
 	pr_debug("%s %d %d %p\n", __func__, ve->veid, vtty->index, vtty);
+	spin_lock(&vtty_lock);
 	vtty->owner_env = ve;
 	ve->vtty[vtty->index] = vtty;
+	spin_unlock(&vtty_lock);
 }
 
 static struct tty_struct *vtty_lookup_slave(struct ve_struct *ve, int idx)
@@ -827,8 +836,12 @@ static void vtty_remove_slave(struct tty_struct *vtty)
 {
 	pr_debug("%s %d %d %p\n", __func__,
 			vtty->owner_env->veid, vtty->index, vtty);
-	vtty->owner_env->vtty[vtty->index] = NULL;
-	vtty->owner_env = get_ve0();
+	spin_lock(&vtty_lock);
+	if (vtty->owner_env->vtty[vtty->index] == vtty) {
+		vtty->owner_env->vtty[vtty->index] = NULL;
+		vtty->owner_env = get_ve0();
+	}
+	spin_unlock(&vtty_lock);
 }
 
 static struct tty_struct *vtty_lookup(struct tty_driver *driver,
@@ -852,8 +865,14 @@ static struct tty_struct *vtty_lookup(struct tty_driver *driver,
 			vtty_install_slave(ve, tty);
 		}
 	}
-	if (tty)
-		clear_bit(TTY_CLOSING, &tty->flags);
+	if (tty && test_bit(TTY_CLOSING, &tty->flags)) {
+		if (test_bit(TTY_CLOSING, &tty->link->flags)) {
+			pr_debug("%s %d %d %p close-race\n", __func__,
+					ve->veid, idx, tty);
+			tty = NULL;
+		} else
+			clear_bit(TTY_CLOSING, &tty->flags);
+	}
 	pr_debug("%s %s %d %p %d\n", __func__,
 			driver->name, idx, tty, tty ? tty->count : -1);
 	return tty;
@@ -1076,7 +1095,8 @@ int vtty_open_master(int veid, int idx)
 	lock_kernel();
 	mutex_lock(&tty_mutex);
 	tty = vtty_lookup_master(name);
-	if (!tty) {
+	if (!tty || (test_bit(TTY_CLOSING, &tty->flags) &&
+		     test_bit(TTY_CLOSING, &tty->link->flags))) {
 		tty = tty_init_dev(vtty_driver, idx, tty, 1);
 		err = PTR_ERR(tty);
 		if (IS_ERR(tty))
