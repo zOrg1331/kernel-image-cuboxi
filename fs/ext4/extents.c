@@ -402,7 +402,7 @@ static int ext4_valid_extent_entries(struct inode *inode,
 	return 1;
 }
 
-static int __ext4_ext_check(const char *function, struct inode *inode,
+int __ext4_ext_check(const char *function, struct inode *inode,
 					struct ext4_extent_header *eh,
 					int depth)
 {
@@ -446,9 +446,7 @@ corrupted:
 
 	return -EIO;
 }
-
-#define ext4_ext_check(inode, eh, depth)	\
-	__ext4_ext_check(__func__, inode, eh, depth)
+EXPORT_SYMBOL (__ext4_ext_check);
 
 int ext4_ext_check_inode(struct inode *inode)
 {
