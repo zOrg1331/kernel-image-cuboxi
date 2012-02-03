@@ -871,9 +871,11 @@ void wakeup_flusher_threads(struct user_beancounter *ub, long nr_pages)
 	struct backing_dev_info *bdi;
 
 	if (!nr_pages) {
+/* FIXME
 		if (ub)
 			nr_pages = ub_dirty_pages(ub);
 		else
+*/
 			nr_pages = global_page_state(NR_FILE_DIRTY) +
 				global_page_state(NR_UNSTABLE_NFS);
 	}

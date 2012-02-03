@@ -11748,6 +11748,9 @@ static int tg_set_cpu_limit(struct task_group *tg,
 int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate)
 {
 	struct task_group *tg = cgroup_tg(cgrp);
+
+	if (rate > num_online_cpus() * MAX_CPU_RATE)
+		rate = num_online_cpus() * MAX_CPU_RATE;
 	return tg_set_cpu_limit(tg, rate, tg->nr_cpus);
 }
 
@@ -11759,6 +11762,9 @@ unsigned long sched_cgroup_get_rate(struct cgroup *cgrp)
 int sched_cgroup_set_nr_cpus(struct cgroup *cgrp, unsigned int nr_cpus)
 {
 	struct task_group *tg = cgroup_tg(cgrp);
+
+	if (nr_cpus > num_online_cpus())
+		nr_cpus = num_online_cpus();
 	return tg_set_cpu_limit(tg, tg->cpu_rate, nr_cpus);
 }
 
@@ -11839,6 +11845,7 @@ static void cpu_cgroup_update_stat(struct task_group *tg, int i)
 	struct sched_entity *se = tg->se[i];
 	struct kernel_cpustat *kcpustat = per_cpu_ptr(tg->cpustat, i);
 	u64 now = cpu_clock(i);
+	u64 delta;
 
 	/* root_task_group has not sched entities */
 	if (tg == &root_task_group)
@@ -11848,12 +11855,19 @@ static void cpu_cgroup_update_stat(struct task_group *tg, int i)
 	kcpustat->cpustat[IDLE] = se->sum_sleep_runtime;
 	kcpustat->cpustat[STEAL] = se->wait_sum;
 
-	if (se->sleep_start)
-		kcpustat->cpustat[IDLE] += SCALE_IDLE_TIME(now - se->sleep_start, se);
-	else if (se->block_start)
-		kcpustat->cpustat[IOWAIT] += SCALE_IDLE_TIME(now - se->block_start, se);
-	else if (se->wait_start)
-		kcpustat->cpustat[STEAL] += now - se->wait_start;
+	if (se->sleep_start) {
+		delta = now - se->sleep_start;
+		if ((s64)delta > 0)
+			kcpustat->cpustat[IDLE] += SCALE_IDLE_TIME(delta, se);
+	} else if (se->block_start) {
+		delta = now - se->block_start;
+		if ((s64)delta > 0)
+			kcpustat->cpustat[IOWAIT] += SCALE_IDLE_TIME(delta, se);
+	} else if (se->wait_start) {
+		delta = now - se->wait_start;
+		if ((s64)delta > 0)
+			kcpustat->cpustat[STEAL] += delta;
+	}
 
 	kcpustat->cpustat[IDLE] -= kcpustat->cpustat[IOWAIT];
 

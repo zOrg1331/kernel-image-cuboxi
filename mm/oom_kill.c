@@ -441,30 +441,30 @@ static void __oom_kill_task(struct task_struct *tsk, struct oom_control *oom_ctr
 }
 
 #define K(x) ((x) << (PAGE_SHIFT-10))
-static int oom_kill_task(struct task_struct *p, struct mem_cgroup *mem,
+static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
 		struct oom_control *oom_ctrl)
 {
 	unsigned long total_vm, total_rss, total_swap;
-	struct task_struct *q;
+	struct task_struct *p, *q;
 	struct mm_struct *mm;
 	struct ve_struct *ve;
 
 	if (sysctl_would_have_oomkilled == 1) {
 		printk(KERN_ERR "Would have killed process %d (%s). But continuing instead.\n",
-				task_pid_nr(p), p->comm);
+				task_pid_nr(tsk), tsk->comm);
 		return -EAGAIN;
 	}
 
-	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, p) & NOTIFY_FAIL) {
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, tsk) & NOTIFY_FAIL) {
 		printk(KERN_WARNING "OOM: disabled for process %d (%s) by virtinfo.\n",
-				task_pid_nr(p), p->comm);
+				task_pid_nr(tsk), tsk->comm);
 		return -EAGAIN;
 	}
 
-	p = find_lock_task_mm(p);
+	p = find_lock_task_mm(tsk);
 	if (!p) {
 		printk(KERN_WARNING "OOM: no mm for process %d (%s).\n",
-				task_pid_nr(p), p->comm);
+				task_pid_nr(tsk), tsk->comm);
 		return -EAGAIN;
 	}
 
