@@ -2,3 +2,4 @@ feat-kvm-kms
 feat-network-ipt_netflow
 feat-fs-aufs
 feat-platform-pegatron
+alt-feat-staging-rts5139 3.2
