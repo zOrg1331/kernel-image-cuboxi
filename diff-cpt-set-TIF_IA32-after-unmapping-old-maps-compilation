@@ -1,0 +1,27 @@
+--- ./kernel/cpt/rst_process.c.tif	2011-12-02 12:45:27.000000000 +0300
++++ ./kernel/cpt/rst_process.c	2011-12-05 18:11:08.000000000 +0300
+@@ -1787,10 +1787,13 @@ int rst_restore_process(struct cpt_conte
+ 
+ 		tsk->stopped_state = ti->cpt_stopped_state;
+ 
++#ifdef CONFIG_X86_64
+                 /*
+ 		 * TIF_IA32 thread flag was restored early
+ 		 */
+ 		tsk->thread_info->flags &= _TIF_IA32;
++		tsk->thread_info->flags |= _TIF_FORK | _TIF_RESUME;
++#endif
+ 		tsk->thread_info->flags |= ti->cpt_thrflags;
+ 
+ 		/* The image was created with kernel < 2.6.16, while
+@@ -1802,10 +1805,6 @@ int rst_restore_process(struct cpt_conte
+ 			tsk->thread_info->flags |= _TIF_RESTORE_SIGMASK;
+ 		}
+ 
+-#ifdef CONFIG_X86_64
+-		tsk->thread_info->flags |= _TIF_FORK | _TIF_RESUME;
+-#endif
+-
+ #ifdef CONFIG_X86_32
+ 		do {
+ 			if (regs->orig_eax == __NR__newselect && regs->edi) {

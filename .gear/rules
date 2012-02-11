@@ -11,7 +11,6 @@ copy: *.kabi_ppc64kdump
 copy: *.kabi_s390x
 copy: *.kabi_x86_64
 copy: *.kabi_x86_64xen
-copy: *.mk
 copy: *.modules
 copy: *.ovz
 copy: *.patch
@@ -19,6 +18,7 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
+copy: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-compilation-a
@@ -98,5 +98,4 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18.4
-copy: patch-028stab095-core
-tar.gz: xen name=xen-15502 base= suffix=.tar.bz2
+copy: patch-028stab098-core

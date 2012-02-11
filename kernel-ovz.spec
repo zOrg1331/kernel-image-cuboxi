@@ -2,7 +2,7 @@
 %define buildup 1
 %define buildpae 1
 %define buildenterprise 1
-%define buildxen 1
+%define buildxen 0
 %define buildopenafs 0
 
 %define builddebug 1
@@ -11,7 +11,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab095
+%define ovzver 028stab098
 %define ovzrel 1
 
 %if !%{buildup}
@@ -134,7 +134,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 #
 %define sublevel 18
 %define stablerev 4
-%define revision 274.7.1
+%define revision 274.18.1
 %define kversion 2.6.%{sublevel}.%{stablerev}
 %define rpmversion 2.6.%{sublevel}
 %define release %{revision}%{?dist}%{?buildid}
@@ -593,6 +593,8 @@ Patch100036: diff-ubc-debug-sock-orphan-acct
 Patch100038: linux-2.6-fs-fix-wrongly-kfree-ing-a-vmalloc-ed-area.patch
 Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
+Patch100041: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
+
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
 Patch101001: diff-mac-cpufreq-bug-on-apple-xserve-20090811
@@ -1006,6 +1008,8 @@ cd linux-%{KVERREL}.%{_target_cpu}
 
 %patch100038 -p1
 %patch100039 -p1
+
+%patch100041 -p1
 
 %patch101000 -p1
 %patch101001 -p1
