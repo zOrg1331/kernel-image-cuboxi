@@ -35,7 +35,6 @@
 #include <linux/memcontrol.h>
 #include <linux/mm_inline.h> /* for page_is_file_cache() */
 #include <linux/mmgang.h>
-#include <linux/cleancache.h>
 #include <trace/events/kmem.h>
 #include "internal.h"
 
@@ -123,16 +122,6 @@
 void __remove_from_page_cache(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
-
-	/*
-	 * if we're uptodate, flush out into the cleancache, otherwise
-	 * invalidate any existing cleancache entries.  We can't leave
-	 * stale data around in the cleancache once our page is gone
-	 */
-	if (PageUptodate(page))
-		cleancache_put_page(page);
-	else
-		cleancache_flush_page(mapping, page);
 
 	radix_tree_delete(&mapping->page_tree, page->index);
 	if (mapping_cap_account_dirty(mapping) &&
@@ -1079,6 +1068,12 @@ static void do_generic_file_read(struct file *filp, loff_t *ppos,
 find_page:
 		check_pagecache_limits(mapping, mapping_gfp_mask(mapping));
 		page = find_get_page(mapping, index);
+		if (!page && inode->i_peer_file) {
+			page = pick_peer_page(inode, ra, index,
+					      last_index - index);
+			if (page)
+				goto page_ok;
+		}
 		if (!page) {
 			page_cache_sync_readahead(mapping,
 					ra, filp,
@@ -1592,6 +1587,46 @@ static void do_async_mmap_readahead(struct vm_area_struct *vma,
 					   page, offset, ra->ra_pages);
 }
 
+struct page *pick_peer_page(struct inode *inode, struct file_ra_state *ra,
+			    pgoff_t index, unsigned ra_size)
+{
+	struct address_space *mapping;
+	struct page *page = NULL;
+	struct file *file;
+
+	rcu_read_lock();
+	file = rcu_dereference(inode->i_peer_file);
+	if (!file || !atomic_long_inc_not_zero(&file->f_count)) {
+		rcu_read_unlock();
+		return NULL;
+	}
+	rcu_read_unlock();
+
+	mapping = file->f_mapping;
+	page = find_get_page(mapping, index);
+	if (!page) {
+		page_cache_sync_readahead(mapping, ra, file, index, ra_size);
+		page = find_get_page(mapping, index);
+		if (!page)
+			goto out;
+	}
+	if (PageReadahead(page))
+		page_cache_async_readahead(mapping, ra, file,
+				page, index, ra->ra_pages);
+	if (!PageUptodate(page)) {
+		if (!lock_page_killable(page)) {
+			unlock_page(page);
+			if (PageUptodate(page))
+				goto out;;
+		}
+		put_page(page);
+		page = NULL;
+	}
+out:
+	fput(file);
+	return page;
+}
+
 /**
  * filemap_fault - read in file data for page fault handling
  * @vma:	vma in which the fault was taken
@@ -1624,6 +1659,13 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 * Do we have something in the page cache already?
 	 */
 	page = find_get_page(mapping, offset);
+	if (!page && inode->i_peer_file) {
+		page = pick_peer_page(inode, ra, offset, ra->ra_pages);
+		if (page) {
+			vmf->page = page;
+			return 0; /* unlocked page */
+		}
+	}
 	if (likely(page)) {
 		/*
 		 * We found the page, so try async readahead before

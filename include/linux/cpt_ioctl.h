@@ -45,4 +45,6 @@
 #define CPT_TEST_VERSION _IOW(CPTCTLTYPE, 26, int)
 #define CPT_SET_LOCKFD2 _IOW(CPTCTLTYPE, 27, int)
 
+#define CPT_SET_PRAM	_IOW(CPTCTLTYPE, 28, int)
+
 #endif

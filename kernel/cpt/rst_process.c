@@ -26,6 +26,7 @@
 #include <linux/securebits.h>
 #ifdef CONFIG_X86
 #include <asm/desc.h>
+#include <asm/i387.h>
 #endif
 #include <asm/unistd.h>
 
@@ -1166,6 +1167,57 @@ do {									\
 } while (0)
 #endif
 
+#ifdef CONFIG_X86
+/* Restore task FPU context if needed */
+static int restore_task_fpu(struct task_struct *tsk,
+				const struct cpt_obj_bits *b,
+				const struct cpt_task_image *ti)
+{
+	size_t size;
+
+	switch(b->cpt_content)
+	{
+	case CPT_CONTENT_X86_XSAVE:
+		if (b->cpt_size != xstate_size)
+			return -EFAULT;
+
+		size = xstate_size;
+		break;
+	case CPT_CONTENT_X86_FPUSTATE:
+		if (!cpu_has_fxsr)
+			return -EFAULT;
+
+		size = sizeof(struct i387_fxsave_struct);
+		break;
+#ifndef CONFIG_X86_64
+	case CPT_CONTENT_X86_FPUSTATE_OLD:
+		if (cpu_has_fxsr)
+			return -EFAULT;
+
+		size = sizeof(struct i387_fsave_struct);
+		break;
+#endif
+	default:
+		/* Looks like it is not our data */
+		return 0;
+	}
+
+	if (init_fpu(tsk))
+		return -ENOMEM;
+
+	memcpy(tsk->thread.xstate,
+		(void*)b + b->cpt_hdrlen, size);
+
+	if (b->cpt_content == CPT_CONTENT_X86_FPUSTATE)
+		rst_apply_mxcsr_mask(tsk);
+
+	if (ti->cpt_used_math)
+		set_stopped_child_used_math(tsk);
+
+	return 0;
+}
+#endif
+
 int rst_restore_process(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
@@ -1316,30 +1368,11 @@ int rst_restore_process(struct cpt_context *ctx)
 
 			switch (b->cpt_object) {
 #ifdef CONFIG_X86
-			case CPT_OBJ_BITS:
-				if (b->cpt_content == CPT_CONTENT_X86_FPUSTATE &&
-				    cpu_has_fxsr) {
-					if (init_fpu(tsk))
-						return -ENOMEM;
-					memcpy(tsk->thread.xstate,
-					       (void*)b + b->cpt_hdrlen,
-					       sizeof(struct i387_fxsave_struct));
-					rst_apply_mxcsr_mask(tsk);
-					if (ti->cpt_used_math)
-						set_stopped_child_used_math(tsk);
+			case CPT_OBJ_BITS: {
+				int err = restore_task_fpu(tsk, (struct cpt_obj_bits *)b, ti);
+				if (err)
+					return err;
 				}
-#ifndef CONFIG_X86_64
-				else if (b->cpt_content == CPT_CONTENT_X86_FPUSTATE_OLD &&
-					 !cpu_has_fxsr) {		
-					if (init_fpu(tsk))
-						return -ENOMEM;
-					memcpy(tsk->thread.xstate,
-					       (void*)b + b->cpt_hdrlen,
-					       sizeof(struct i387_fsave_struct));
-					if (ti->cpt_used_math)
-						set_stopped_child_used_math(tsk);
-				}
-#endif
 				break;
 #endif
 			case CPT_OBJ_LASTSIGINFO:

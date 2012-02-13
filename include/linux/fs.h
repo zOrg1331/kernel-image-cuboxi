@@ -565,6 +565,7 @@ enum positive_aop_returns {
 struct page;
 struct address_space;
 struct writeback_control;
+struct file_ra_state;
 
 struct iov_iter {
 	const struct iovec *iov;
@@ -702,6 +703,7 @@ struct address_space {
 	struct list_head	private_list;	/* ditto */
 	struct address_space	*assoc_mapping;	/* ditto */
 	struct user_beancounter *dirtied_ub;
+	struct list_head	i_peer_list;
 } __attribute__((aligned(sizeof(long))));
 	/*
 	 * On most architectures that alignment is already the case; but
@@ -856,6 +858,7 @@ struct inode {
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
 #endif
+	struct file		*i_peer_file;
 	void			*i_private; /* fs or device private pointer */
 };
 
@@ -1028,6 +1031,15 @@ struct file {
 	unsigned long f_mnt_write_state;
 #endif
 };
+
+struct file_handle {
+	__u32 handle_bytes;
+	int handle_type;
+	/* file identifier */
+	unsigned char f_handle[0];
+};
+
+extern int vfs_inode_fhandle(struct inode *, struct file_handle *, int size);
 
 #define get_file(x)	atomic_long_inc(&(x)->f_count)
 #define file_count(x)	atomic_long_read(&(x)->f_count)
@@ -1405,6 +1417,8 @@ extern int send_sigurg(struct fown_struct *fown);
 extern struct list_head super_blocks;
 extern spinlock_t sb_lock;
 
+struct pramcache_struct;
+
 #define sb_entry(list)  list_entry((list), struct super_block, s_list)
 #define S_BIAS (1<<30)
 struct super_block {
@@ -1453,6 +1467,7 @@ struct super_block {
 	wait_queue_head_t	s_wait_unfrozen;
 
 	char s_id[32];				/* Informational name */
+	u8 s_uuid[16];				/* UUID */
 
 	void 			*s_fs_info;	/* Filesystem private info */
 	fmode_t			s_mode;
@@ -1479,11 +1494,8 @@ struct super_block {
 	 */
 	char *s_options;
 
-#ifndef __GENKSYMS__
-	/*
-	 * Saved pool identifier for cleancache (-1 means none)
-	 */
-	int cleancache_poolid;
+#ifdef CONFIG_PRAMCACHE
+	struct pramcache_struct *s_pramcache;
 #endif
 };
 
@@ -2045,6 +2057,9 @@ extern struct file * dentry_open(struct dentry *, struct vfsmount *, int,
 				 const struct cred *);
 extern int filp_close(struct file *, fl_owner_t id);
 extern char * getname(const char __user *);
+
+extern int open_inode_peer(struct inode *, struct path *, const struct cred *);
+extern void close_inode_peer(struct inode *);
 
 /* fs/ioctl.c */
 

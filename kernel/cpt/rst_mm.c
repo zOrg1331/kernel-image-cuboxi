@@ -580,6 +580,8 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 		goto out;
 	}
 
+	vma->vm_flags |= VM_NOHUGEPAGE;
+
 	/* do_mmap_pgoff() can merge new area to previous one (not to the next,
 	 * we mmap in order, the rest of mm is still unmapped). This can happen
 	 * f.e. if flags are to be adjusted later, or if we had different
@@ -607,9 +609,11 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 		struct page *page;
 		void *maddr;
 
+		down_read(&mm->mmap_sem);
 		err = get_user_pages(current, current->mm,
 				(unsigned long)vmai->cpt_start,
 				1, 1, 1, &page, NULL);
+		up_read(&mm->mmap_sem);
 		if (err == 0)
 			err = -EFAULT;
 		if (err < 0) {
@@ -741,16 +745,16 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					goto out;
 				}
 
-				down_write(&mm->mmap_sem);
+				down_read(&mm->mmap_sem);
 				if ((vma = find_vma(mm, u.lpb.cpt_start)) == NULL) {
-					up_write(&mm->mmap_sem);
+					up_read(&mm->mmap_sem);
 					eprintk_ctx("lost vm_area_struct\n");
 					err = -ESRCH;
 					goto out;
 				}
 				err = anon_vma_prepare(vma);
 				if (err) {
-					up_write(&mm->mmap_sem);
+					up_read(&mm->mmap_sem);
 					goto out;
 				}
 				while (ptr < u.lpb.cpt_end) {
@@ -766,7 +770,7 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					make_pages_present((unsigned long)u.lpb.cpt_start,
 							   (unsigned long)u.lpb.cpt_end);
 				}
-				up_write(&mm->mmap_sem);
+				up_read(&mm->mmap_sem);
 #else
 				err = -EINVAL;
 #endif
@@ -781,7 +785,8 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 				goto out;
 			}
 			pos = offset + sizeof(u.pb);
-			if (!(vmai->cpt_flags&VM_ACCOUNT) && !(prot&PROT_WRITE)) {
+			if (!(vmai->cpt_flags&VM_ACCOUNT) && !(prot&PROT_WRITE) &&
+			    u.pb.cpt_content != CPT_CONTENT_PRAM) {
 				/* I guess this is get_user_pages() messed things,
 				 * this happens f.e. when gdb inserts breakpoints.
 				 */
@@ -805,19 +810,17 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					} else if (u.pb.cpt_content == CPT_CONTENT_DATA) {
 						err = ctx->pread(maddr, PAGE_SIZE,
 								 ctx, pos + i*PAGE_SIZE);
-						if (err) {
+						if (err)
 							eprintk_ctx("%s: ctx->pread failed\n", __func__);
-							kunmap(page);
-							goto out;
-						}
 					} else {
 						err = -EINVAL;
-						kunmap(page);
-						goto out;
 					}
-					set_page_dirty_lock(page);
+					if (!err)
+						set_page_dirty_lock(page);
 					kunmap(page);
 					page_cache_release(page);
+					if (err)
+						goto out;
 				}
 			} else {
 				if (!(prot&PROT_WRITE))
@@ -835,6 +838,37 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					loff_t tpos = pos;
 					ssize_t res;
 
+					if (vma->vm_file) {
+						struct vm_area_struct *vma;
+						struct page *page;
+						unsigned long addr;
+
+						/* Fill the area with zero pages in order to avoid IO
+						 * caused by page faults.
+						 */
+						down_read(&mm->mmap_sem);
+						if ((vma = find_vma(mm, u.pb.cpt_start)) == NULL) {
+							up_read(&mm->mmap_sem);
+							eprintk_ctx("lost vm_area_struct\n");
+							err = -ESRCH;
+							goto out;
+						}
+						for (addr=u.pb.cpt_start; addr<u.pb.cpt_end; addr+=PAGE_SIZE) {
+							err = -ENOMEM;
+							page = alloc_zeroed_user_highpage_movable(vma, addr);
+							if (!page)
+								break;
+							err = install_anon_page(mm, vma, addr, page);
+							if (err) {
+								eprintk_ctx("install_anon_page: %d\n", err);
+								put_page(page);
+								break;
+							}
+						}
+						up_read(&mm->mmap_sem);
+						if (err)
+							goto out;
+					}
 					res = ctx->file->f_op->read(ctx->file,
 							cpt_ptr_import(u.pb.cpt_start),
 							u.pb.cpt_end-u.pb.cpt_start,
@@ -843,6 +877,47 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 						err = res < 0 ? res : -EIO;
 						goto out;
 					}
+#ifdef CONFIG_PRAM
+				} else if (u.pb.cpt_content == CPT_CONTENT_PRAM) {
+					struct vm_area_struct *vma;
+					struct page *page;
+					unsigned long pfn;
+					__u64 __pfn;
+					int i;
+
+					down_read(&mm->mmap_sem);
+					if ((vma = find_vma(mm, u.pb.cpt_start)) == NULL) {
+						up_read(&mm->mmap_sem);
+						eprintk_ctx("lost vm_area_struct\n");
+						err = -ESRCH;
+						goto out;
+					}
+					for (i = 0; i < (u.pb.cpt_end - u.pb.cpt_start) / PAGE_SIZE; i++) {
+						err = ctx->pread(&__pfn, 8, ctx, pos + i * 8);
+						if (err)
+							break;
+						err = -EINVAL;
+						pfn = (unsigned long)__pfn;
+						if (!pfn_present(pfn))
+							break;
+						page = pfn_to_page(pfn);
+						if (page->mapping != (struct address_space *)ctx)
+							break;
+						page->mapping = NULL;
+						list_del_init(&page->lru);
+						err = install_anon_page(mm, vma,
+								(unsigned long)u.pb.cpt_start + i * PAGE_SIZE,
+								page);
+						if (err) {
+							eprintk_ctx("install_anon_page: %d\n", err);
+							put_page(page);
+							break;
+						}
+					}
+					up_read(&mm->mmap_sem);
+					if (err)
+						goto out;
+#endif
 				} else {
 					err = -EINVAL;
 					goto out;
@@ -861,6 +936,10 @@ check:
 		down_read(&mm->mmap_sem);
 		vma = find_vma(mm, addr);
 		if (vma) {
+
+			if (!(vmai->cpt_flags & VM_NOHUGEPAGE))
+				vma->vm_flags &= ~VM_NOHUGEPAGE;
+
 			if ((vma->vm_flags^vmai->cpt_flags)&VM_READHINTMASK) {
 				VM_ClearReadHint(vma);
 				vma->vm_flags |= vmai->cpt_flags&VM_READHINTMASK;

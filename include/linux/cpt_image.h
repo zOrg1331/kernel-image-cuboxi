@@ -194,9 +194,14 @@ struct cpt_major_hdr
 #define CPT_UNSUPPORTED_MISC	23
 #define CPT_SLM_DMPRST		24
 
+/* CPU capabilities (cont) */
+#define CPT_CPU_X86_XSAVE	25
+#define CPT_CPU_X86_AVX		26
+#define CPT_CPU_X86_AESNI	27
+
 /* This mask is used to determine whether VE
    has some unsupported features or not */
-#define CPT_UNSUPPORTED_MASK	0xffff0000UL
+#define CPT_UNSUPPORTED_MASK	0xf1ff0000UL
 
 #define CPT_KERNEL_CONFIG_PAE	0
 
@@ -288,6 +293,8 @@ enum _cpt_content_type {
 	CPT_CONTENT_SEMARRAY,
 	CPT_CONTENT_SEMUNDO,
 	CPT_CONTENT_NLMARRAY,
+	CPT_CONTENT_X86_XSAVE,
+	CPT_CONTENT_PRAM,
 	CPT_CONTENT_MAX
 };
 

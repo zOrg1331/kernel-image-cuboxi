@@ -378,6 +378,13 @@ int cpt_resume(struct cpt_context *ctx)
 	for_each_object(obj, CPT_OBJ_TASK) {
 		struct task_struct *tsk = obj->o_obj;
 
+		if (tsk->sighand == NULL) {
+			printk(KERN_ERR "%s: tsk->sighand is NULL\n", __func__);
+			printk(KERN_ERR "%s: tsk->flags & PF_FROZEN: %d\n", __func__, tsk->flags & PF_FROZEN);
+			printk(KERN_ERR "%s: tsk->state: 0x%lx\n", __func__, tsk->state);
+			printk(KERN_ERR "%s: tsk->exit_state: 0x%x\n", __func__, tsk->exit_state);
+			BUG();
+		}
 		spin_lock_irq(&tsk->sighand->siglock);
 		if (tsk->flags & PF_FROZEN) {
 			tsk->flags &= ~PF_FROZEN;
@@ -530,6 +537,15 @@ static cpt_object_t * remember_task(struct task_struct * child,
 		eprintk_ctx("process " CPT_FID " is not frozen\n", CPT_TID(child));
 		put_task_struct(child);
 		return NULL;
+	}
+
+	if (child->sighand == NULL) {
+		printk(KERN_ERR "%s: child->sighand is NULL\n", __func__);
+		printk(KERN_ERR "%s: freezable(child): %d\n", __func__, freezable(child));
+		printk(KERN_ERR "%s: child->flags & PF_FROZEN: %d\n", __func__, child->flags & PF_FROZEN);
+		printk(KERN_ERR "%s: child->state: 0x%lx\n", __func__, child->state);
+		printk(KERN_ERR "%s: child->exit_state: 0x%x\n", __func__, child->exit_state);
+		BUG();
 	}
 
 	if (lookup_cpt_object(CPT_OBJ_TASK, child, ctx)) BUG();
@@ -947,6 +963,8 @@ int cpt_dump(struct cpt_context *ctx)
 
 	err2 = cpt_close_dumpfile(ctx);
 
+	cpt_close_pram(ctx, err ? : err2);
+
 	/*
 	 * Restore limits back
 	 */
@@ -1064,10 +1082,12 @@ static void check_unsupported_netdevices(struct cpt_context *ctx, __u32 *caps)
 
 	read_lock(&dev_base_lock);
 	for_each_netdev(net, dev) {
-		if (dev->netdev_ops->ndo_cpt == NULL) {
-			eprintk_ctx("unsupported netdevice %s\n", dev->name);
-			*caps |= (1<<CPT_UNSUPPORTED_NETDEV);
-		}
+		if (dev->netdev_ops->ndo_cpt)
+			continue;
+
+		eprintk_ctx("unsupported netdevice %s\n", dev->name);
+		*caps |= (1<<CPT_UNSUPPORTED_NETDEV);
+		break;
 	}
 	read_unlock(&dev_base_lock);
 }
@@ -1090,7 +1110,10 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 				(1<<CPT_CPU_X86_MMX) |
 				(1<<CPT_CPU_X86_3DNOW) |
 				(1<<CPT_CPU_X86_3DNOW2) |
-				(1<<CPT_CPU_X86_SSE4A));
+				(1<<CPT_CPU_X86_SSE4A) |
+				(1<<CPT_CPU_X86_XSAVE) |
+				(1<<CPT_CPU_X86_AVX) |
+				(1<<CPT_CPU_X86_AESNI));
 	}
 	/* This is not 100% true. VE could migrate with vdso using int80.
 	 * In this case we do not need SEP/SYSCALL32 caps. It is not so easy

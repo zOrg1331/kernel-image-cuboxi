@@ -24,6 +24,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/mmzone.h>
+#include <linux/pram.h>
 #include <linux/screen_info.h>
 #include <linux/ioport.h>
 #include <linux/acpi.h>
@@ -1007,6 +1008,8 @@ void __init setup_arch(char **cmdline_p)
 #endif
 
 	initmem_init(0, max_pfn);
+
+	pram_reserve();
 
 #ifdef CONFIG_ACPI_SLEEP
 	/*

@@ -833,7 +833,6 @@ enum
 	FS_AIO_MAX_NR=19,	/* system-wide maximum number of aio requests */
 	FS_INOTIFY=20,	/* inotify submenu */
 	FS_OCFS2=988,	/* ocfs2 */
-	FS_PFCACHE=990,	/* pfcache */
 };
 
 /* /proc/sys/fs/quota/ */

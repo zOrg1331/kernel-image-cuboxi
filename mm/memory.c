@@ -2531,6 +2531,44 @@ static void reset_vma_truncate_counts(struct address_space *mapping)
 		vma->vm_truncate_count = 0;
 }
 
+static int synchronize_mapping_faults_vma(struct address_space *mapping,
+					  struct vm_area_struct *vma)
+{
+	struct mm_struct *mm = vma->vm_mm;
+
+	if (vma->vm_truncate_count)
+		return 0;
+
+	vma->vm_truncate_count = 1;
+	atomic_inc(&mm->mm_count);
+	spin_unlock(&mapping->i_mmap_lock);
+	down_write(&mm->mmap_sem);
+	up_write(&mm->mmap_sem);
+	mmdrop(mm);
+	spin_lock(&mapping->i_mmap_lock);
+
+	return 1;
+}
+
+/* under mapping->host->i_mutex */
+void synchronize_mapping_faults(struct address_space *mapping)
+{
+	struct vm_area_struct *vma;
+	struct prio_tree_iter iter;
+
+	spin_lock(&mapping->i_mmap_lock);
+	mapping->truncate_count = 1;
+	reset_vma_truncate_counts(mapping);
+restart:
+	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, 0, ULONG_MAX)
+		if (synchronize_mapping_faults_vma(mapping, vma))
+			goto restart;
+	list_for_each_entry(vma, &mapping->i_mmap_nonlinear, shared.vm_set.list)
+		if (synchronize_mapping_faults_vma(mapping, vma))
+			goto restart;
+	spin_unlock(&mapping->i_mmap_lock);
+}
+
 static int unmap_mapping_range_vma(struct vm_area_struct *vma,
 		unsigned long start_addr, unsigned long end_addr,
 		struct zap_details *details)
@@ -2668,7 +2706,15 @@ void unmap_mapping_range(struct address_space *mapping,
 	details.last_index = hba + hlen - 1;
 	if (details.last_index < details.first_index)
 		details.last_index = ULONG_MAX;
-	details.i_mmap_lock = &mapping->i_mmap_lock;
+
+	zap_mapping_range(mapping, &details);
+}
+EXPORT_SYMBOL(unmap_mapping_range);
+
+void zap_mapping_range(struct address_space *mapping,
+		       struct zap_details *details)
+{
+	details->i_mmap_lock = &mapping->i_mmap_lock;
 
 	spin_lock(&mapping->i_mmap_lock);
 
@@ -2679,15 +2725,14 @@ void unmap_mapping_range(struct address_space *mapping,
 			reset_vma_truncate_counts(mapping);
 		mapping->truncate_count++;
 	}
-	details.truncate_count = mapping->truncate_count;
+	details->truncate_count = mapping->truncate_count;
 
 	if (unlikely(!prio_tree_empty(&mapping->i_mmap)))
-		unmap_mapping_range_tree(&mapping->i_mmap, &details);
+		unmap_mapping_range_tree(&mapping->i_mmap, details);
 	if (unlikely(!list_empty(&mapping->i_mmap_nonlinear)))
-		unmap_mapping_range_list(&mapping->i_mmap_nonlinear, &details);
+		unmap_mapping_range_list(&mapping->i_mmap_nonlinear, details);
 	spin_unlock(&mapping->i_mmap_lock);
 }
-EXPORT_SYMBOL(unmap_mapping_range);
 
 int vmtruncate_range(struct inode *inode, loff_t offset, loff_t end)
 {
@@ -3414,6 +3459,103 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	return handle_pte_fault(mm, vma, address, pte, pmd, flags);
 }
 EXPORT_SYMBOL(handle_mm_fault);
+
+static int __install_anon_page(struct mm_struct *mm, struct vm_area_struct *vma,
+			unsigned long addr, pmd_t *pmd, struct page *page)
+{
+	spinlock_t *ptl;
+	pte_t *pte;
+	pte_t entry;
+	int err = -ENOMEM;
+
+	__SetPageUptodate(page);
+
+	if (unlikely(check_memory_limits(mm)))
+		goto out;
+
+	if (unlikely(anon_vma_prepare(vma)))
+		goto out;
+
+	if (gang_add_user_page(page, get_mm_gang(mm), GFP_KERNEL))
+		goto out;
+
+	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
+		goto out_gang_del;
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty((entry)));
+
+	err = -EBUSY;
+	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+	if (!pte_none(*pte)) {
+		pte_unmap_unlock(pte, ptl);
+		goto out_uncharge;
+	}
+
+	inc_mm_counter(mm, anon_rss);
+	page_add_new_anon_rmap(page, vma, addr);
+	set_pte_at(mm, addr, pte, entry);
+	update_mmu_cache(vma, addr, entry);
+	pte_unmap_unlock(pte, ptl);
+
+	return 0;
+
+out_uncharge:
+	mem_cgroup_uncharge_page(page);
+out_gang_del:
+	gang_del_user_page(page);
+out:
+	return err;
+}
+
+/*
+ * Called with mm->mmap_sem held for reading.
+ */
+int install_anon_page(struct mm_struct *mm, struct vm_area_struct *vma,
+		      unsigned long addr, struct page *page)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	if (unlikely(is_vm_hugetlb_page(vma)))
+		return -EFAULT;
+
+	if (addr < vma->vm_start || addr >= vma->vm_end)
+		return -EFAULT;
+
+	if (PageCompound(page))
+		return -EFAULT;
+
+	pgd = pgd_offset(mm, addr);
+	pud = pud_alloc(mm, pgd, addr);
+	if (!pud)
+		return -ENOMEM;
+	pmd = pmd_alloc(mm, pud, addr);
+	if (!pmd)
+		return -ENOMEM;
+
+	/* See comments in handle_mm_fault */
+	if (unlikely(pmd_none(*pmd)) &&
+	    unlikely(__pte_alloc(mm, vma, pmd, addr)))
+		return -ENOMEM;
+	if (unlikely(pmd_trans_huge(*pmd)))
+		return -EFAULT;
+
+	pte = pte_offset_map(pmd, addr);
+	if (!pte)
+		return -ENOMEM;
+	if (!pte_none(*pte)) {
+		pte_unmap(pte);
+		return -EBUSY;
+	}
+
+	pte_unmap(pte);
+	return __install_anon_page(mm, vma, addr, pmd, page);
+}
+EXPORT_SYMBOL(install_anon_page);
 
 #ifndef __PAGETABLE_PUD_FOLDED
 /*

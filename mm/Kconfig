@@ -311,28 +311,6 @@ config TRANSPARENT_HUGEPAGE
 
 	  If memory constrained on embedded, you may want to say N.
 
-config CLEANCACHE
-	bool "Enable cleancache pseudo-RAM driver to cache clean pages"
-	default y
-	help
- 	  Cleancache can be thought of as a page-granularity victim cache
-	  for clean pages that the kernel's pageframe replacement algorithm
-	  (PFRA) would like to keep around, but can't since there isn't enough
-	  memory.  So when the PFRA "evicts" a page, it first attempts to put
-	  it into a synchronous concurrency-safe page-oriented pseudo-RAM
-	  device (such as Xen's Transcendent Memory, aka "tmem") which is not
-	  directly accessible or addressable by the kernel and is of unknown
-	  (and possibly time-varying) size.  And when a cleancache-enabled
-	  filesystem wishes to access a page in a file on disk, it first
-	  checks cleancache to see if it already contains it; if it does,
- 	  the page is copied into the kernel and a disk access is avoided.
-	  When a pseudo-RAM device is available, a significant I/O reduction
-	  may be achieved.  When none is available, all cleancache calls
-	  are reduced to a single pointer-compare-against-NULL resulting
-	  in a negligible performance hit.
-
-	  If unsure, say Y to enable cleancache
-
 config MEMORY_GANGS
 	bool
 
@@ -340,3 +318,11 @@ config MEMORY_GANGS_MIGRATION
 	bool
 	depends on MEMORY_GANGS && MIGRATION
 	default MEMORY_GANGS
+
+config PRAM
+	bool "Persistent over-kexec memory storage"
+	depends on X86_64
+	select CRYPTO_CRC32C
+	select CRYPTO_CRC32C_INTEL
+	select CRC32
+	select LIBCRC32C

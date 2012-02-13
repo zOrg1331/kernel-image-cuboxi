@@ -95,8 +95,18 @@ static void fuse_file_put(struct fuse_file *ff)
 	if (atomic_dec_and_test(&ff->count)) {
 		struct fuse_req *req = ff->reserved_req;
 
-		req->end = fuse_release_end;
-		fuse_request_send_background(ff->fc, req);
+		if (ff->fc->close_wait) {
+			/* Must force. Otherwise request could be interrupted and
+			 * file asspcitaion in user space remains.
+			 */
+			ff->reserved_req->force = 1;
+			fuse_request_send(ff->fc, req);
+			path_put(&req->misc.release.path);
+			fuse_put_request(ff->fc, req);
+		} else {
+			req->end = fuse_release_end;
+			fuse_request_send_background(ff->fc, req);
+		}
 		kfree(ff);
 	}
 }
@@ -1223,7 +1233,9 @@ static int fuse_writepage_locked(struct page *page)
 		goto err_free;
 
 	spin_lock(&fc->lock);
-	BUG_ON(list_empty(&fi->write_files));
+	if (list_empty(&fi->write_files))
+		goto err_nofile;
+
 	ff = list_entry(fi->write_files.next, struct fuse_file, write_entry);
 	req->ff = fuse_file_get(ff);
 	spin_unlock(&fc->lock);
@@ -1251,6 +1263,10 @@ static int fuse_writepage_locked(struct page *page)
 
 	return 0;
 
+err_nofile:
+	spin_unlock(&fc->lock);
+	printk("FUSE: page dirtied on dead file\n");
+	__free_page(tmp_page);
 err_free:
 	fuse_request_free(req);
 err:

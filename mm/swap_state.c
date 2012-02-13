@@ -343,13 +343,13 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			new_page = alloc_page_vma(gfp_mask, vma, addr);
 			if (!new_page)
 				break;		/* Out of memory */
-		}
 
-		ub = get_swapin_ub(new_page, entry, vma);
-		err = gang_add_user_page(new_page, get_ub_gs(ub), gfp_mask);
-		put_beancounter(ub);
-		if (err)
-			break;
+			ub = get_swapin_ub(new_page, entry, vma);
+			err = gang_add_user_page(new_page, get_ub_gs(ub), gfp_mask);
+			put_beancounter(ub);
+			if (err)
+				break;
+		}
 
 		/*
 		 * call radix_tree_preload() while we can wait.

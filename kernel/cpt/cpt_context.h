@@ -28,6 +28,8 @@ struct cpt_delayed_context {
 
 void destroy_delayed_context(struct cpt_delayed_context *);
 
+struct pram_stream;
+
 typedef struct cpt_context
 {
 	struct list_head ctx_list;
@@ -115,6 +117,14 @@ typedef struct cpt_context
 	int		linkdirs_num;
 	unsigned int	linkcnt; /* for create hardlinked files */
 	int	hardlinked_on;
+
+#ifdef CONFIG_PRAM
+	struct pram_stream *pram_stream;
+	struct list_head pram_pages;
+#endif
+
+	loff_t dumpsize;
+	loff_t maxdumpsize;
 } cpt_context_t;
 
 typedef struct {
@@ -124,6 +134,18 @@ typedef struct {
 } pagein_info_t;
 
 int pagein_info_printf(char *buf, cpt_context_t *ctx);
+
+#ifdef CONFIG_PRAM
+int cpt_open_pram(cpt_context_t *ctx);
+void cpt_close_pram(cpt_context_t *ctx, int err);
+void rst_load_pram_pages(cpt_context_t *ctx);
+void rst_release_pram_pages(cpt_context_t *ctx);
+#else
+static inline int cpt_open_pram(cpt_context_t *ctx) { return -ENOSYS; }
+static inline void cpt_close_pram(cpt_context_t *ctx, int err) { }
+static inline void rst_load_pram_pages(cpt_context_t *ctx) { }
+static inline void rst_release_pram_pages(cpt_context_t *ctx) { }
+#endif
 
 int cpt_open_dumpfile(struct cpt_context *);
 int cpt_close_dumpfile(struct cpt_context *);

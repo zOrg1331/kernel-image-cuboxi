@@ -457,6 +457,9 @@ struct fuse_conn {
 	/** Don't apply umask to creation modes */
 	unsigned dont_mask:1;
 
+	/** Wait for response from daemon on close */
+	unsigned close_wait:1;
+
 	/** The number of requests waiting for completion */
 	atomic_t num_waiting;
 

@@ -38,6 +38,7 @@
 #include <linux/uio.h>
 #include <linux/bio.h>
 #include <linux/workqueue.h>
+#include <linux/pramcache.h>
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -5285,6 +5286,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	brelse(iloc.bh);
 	ext4_set_inode_flags(inode);
 	unlock_new_inode(inode);
+	pramcache_populate_inode(inode);
 	return inode;
 
 bad_inode:

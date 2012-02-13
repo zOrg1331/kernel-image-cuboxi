@@ -89,14 +89,6 @@ menu "Caches"
 
 source "fs/fscache/Kconfig"
 source "fs/cachefiles/Kconfig"
-config PFCACHE
-	tristate "Permanent filesystem caching manager"
-	select CLEANCACHE
-	help
-	  This option enables a permanent file cache manager that can be
-	  used by various filesystems to cache data locally.
-	  Different sorts of caches can be plugged in, depending on the
-	  resources available.
 
 endmenu
 
@@ -105,6 +97,10 @@ menu "CD-ROM/DVD Filesystems"
 
 source "fs/isofs/Kconfig"
 source "fs/udf/Kconfig"
+
+config PRAMCACHE
+	bool "Persistent FS cache"
+	depends on PRAM
 
 endmenu
 endif # BLOCK
@@ -135,6 +131,10 @@ config TMPFS
 	  lost.
 
 	  See <file:Documentation/filesystems/tmpfs.txt> for details.
+
+config PRAMFS
+	bool "Persistent in-memory file system"
+	depends on PRAM
 
 config TMPFS_POSIX_ACL
 	bool "Tmpfs POSIX Access Control Lists"
@@ -238,7 +238,7 @@ config LOCKD_V4
 	default y
 
 config EXPORTFS
-	tristate
+	bool
 
 config NFS_ACL_SUPPORT
 	tristate

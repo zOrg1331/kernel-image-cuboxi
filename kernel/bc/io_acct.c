@@ -61,7 +61,8 @@ void ub_io_account_clean(struct address_space *mapping)
 	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_ACCOUNT, &bytes);
 	ub = set_exec_ub(ub);
 
-	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY)) {
+	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
+	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}
@@ -80,7 +81,39 @@ void ub_io_account_cancel(struct address_space *mapping)
 
 	ub_percpu_inc(ub, async_write_canceled);
 
-	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY)) {
+	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
+	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
+		mapping->dirtied_ub = NULL;
+		__put_beancounter(ub);
+	}
+}
+
+void ub_io_writeback_inc(struct address_space *mapping)
+{
+	struct user_beancounter *ub = mapping->dirtied_ub;
+
+	WARN_ON_ONCE(!radix_tree_tagged(&mapping->page_tree,
+				PAGECACHE_TAG_WRITEBACK));
+
+	if (!ub)
+		ub = mapping->dirtied_ub = get_beancounter(get_io_ub());
+
+	ub_stat_inc(ub, writeback_pages);
+}
+
+void ub_io_writeback_dec(struct address_space *mapping)
+{
+	struct user_beancounter *ub = mapping->dirtied_ub;
+
+	if (unlikely(!ub)) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+
+	ub_stat_dec(ub, writeback_pages);
+
+	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
+	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}

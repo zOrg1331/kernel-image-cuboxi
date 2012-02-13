@@ -850,7 +850,6 @@ struct dentry *generic_fh_to_dentry(struct super_block *sb, struct fid *fid,
 
 	switch (fh_type) {
 	case FILEID_INO32_GEN:
-	case FILEID_INO32_GEN_SHA1:
 	case FILEID_INO32_GEN_PARENT:
 		inode = get_inode(sb, fid->i32.ino, fid->i32.gen);
 		break;

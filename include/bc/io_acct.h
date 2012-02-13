@@ -68,6 +68,8 @@ static inline void ub_io_account_write(size_t bytes)
 extern void ub_io_account_dirty(struct address_space *mapping);
 extern void ub_io_account_clean(struct address_space *mapping);
 extern void ub_io_account_cancel(struct address_space *mapping);
+extern void ub_io_writeback_inc(struct address_space *mapping);
+extern void ub_io_writeback_dec(struct address_space *mapping);
 
 #define ub_dirty_pages(ub)	ub_stat_get(ub, dirty_pages)
 
@@ -99,6 +101,14 @@ static inline void ub_io_account_clean(struct address_space *mapping)
 }
 
 static inline void ub_io_account_cancel(struct address_space *mapping)
+{
+}
+
+static inline void ub_io_writeback_inc(struct address_space *mapping)
+{
+}
+
+static inline void ub_io_writeback_dec(struct address_space *mapping)
 {
 }
 

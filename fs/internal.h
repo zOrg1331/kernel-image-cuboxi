@@ -89,6 +89,9 @@ extern struct file *get_empty_filp(void);
  */
 extern int do_remount_sb(struct super_block *, int, void *, int);
 
+extern long do_handle_open(int mountdirfd,
+			   struct file_handle __user *ufh, int open_flag);
+
 /*
  * open.c
  */

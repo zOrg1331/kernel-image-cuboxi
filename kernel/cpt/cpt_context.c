@@ -19,6 +19,7 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/pagemap.h>
+#include <linux/pram.h>
 
 #include <linux/cpt_image.h>
 #include <linux/cpt_export.h>
@@ -26,12 +27,25 @@
 #include "cpt_obj.h"
 #include "cpt_context.h"
 
+static int check_dumpsize(struct cpt_context *ctx, size_t count, loff_t pos)
+{
+	if (pos + count > ctx->dumpsize)
+		ctx->dumpsize = pos + count;
+	if (ctx->maxdumpsize && ctx->dumpsize > ctx->maxdumpsize) {
+		ctx->write_error = -ENOSPC;
+		return 0;
+	}
+	return 1;
+}
 
 static void file_write(const void *addr, size_t count, struct cpt_context *ctx)
 {
 	mm_segment_t oldfs;
 	ssize_t err = -EBADF;
 	struct file *file = ctx->file;
+
+	if (file && !check_dumpsize(ctx, count, file->f_pos))
+		return;
 
 	oldfs = get_fs(); set_fs(KERNEL_DS);
 	if (file)
@@ -46,6 +60,9 @@ static void file_pwrite(void *addr, size_t count, struct cpt_context *ctx, loff_
 	mm_segment_t oldfs;
 	ssize_t err = -EBADF;
 	struct file *file = ctx->file;
+
+	if (file && !check_dumpsize(ctx, count, pos))
+		return;
 
 	oldfs = get_fs(); set_fs(KERNEL_DS);
 	if (file)
@@ -110,8 +127,51 @@ void cpt_context_init(struct cpt_context *ctx)
 	cpt_object_init(ctx);
 }
 
+#ifdef CONFIG_PRAM
+int cpt_open_pram(cpt_context_t *ctx)
+{
+	int err;
+	char name[32];
+
+	if (ctx->pram_stream)
+		return 0;
+
+	err = -ENOMEM;
+	ctx->pram_stream = kmalloc(sizeof(struct pram_stream), GFP_KERNEL);
+	if (!ctx->pram_stream)
+		goto out;
+
+	sprintf(name, "cpt.%d", ctx->ve_id);
+	err = pram_open(name, PRAM_WRITE, ctx->pram_stream);
+	if (err) {
+		eprintk_ctx("failed to create PRAM: %d\n", err);
+		goto out_free_stream;
+	}
+
+	return 0;
+
+out_free_stream:
+	kfree(ctx->pram_stream);
+	ctx->pram_stream = NULL;
+out:
+	return err;
+}
+
+void cpt_close_pram(cpt_context_t *ctx, int err)
+{
+	if (!ctx->pram_stream)
+		return;
+
+	pram_close(ctx->pram_stream, err);
+	kfree(ctx->pram_stream);
+	ctx->pram_stream = NULL;
+}
+#endif
+
 int cpt_open_dumpfile(struct cpt_context *ctx)
 {
+	if (ctx->file)
+		ctx->maxdumpsize = i_size_read(ctx->file->f_mapping->host);
 	ctx->tmpbuf = (char*)__get_free_page(GFP_KERNEL);
 	if (ctx->tmpbuf == NULL)
 		return -ENOMEM;
@@ -122,6 +182,8 @@ int cpt_open_dumpfile(struct cpt_context *ctx)
 int cpt_close_dumpfile(struct cpt_context *ctx)
 {
 	if (ctx->file) {
+		if (!ctx->write_error)
+			vmtruncate(ctx->file->f_mapping->host, ctx->dumpsize);
 		fput(ctx->file);
 		ctx->file = NULL;
 	}

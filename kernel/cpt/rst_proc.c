@@ -91,6 +91,8 @@ void rst_context_release(cpt_context_t *ctx)
 
 	rst_close_dumpfile(ctx);
 
+	rst_release_pram_pages(ctx);
+
 	if (ctx->anonvmas) {
 		int h;
 		for (h = 0; h < CPT_ANONVMA_HSIZE; h++) {
