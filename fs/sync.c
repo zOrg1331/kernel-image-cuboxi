@@ -59,7 +59,7 @@ EXPORT_SYMBOL(__sync_filesystem);
  * superblock.  Filesystem data as well as the underlying block
  * device.  Takes the superblock lock.
  */
-int sync_filesystem(struct super_block *sb)
+static int sync_filesystem_ub(struct super_block *sb, struct user_beancounter *ub)
 {
 	int ret;
 
@@ -75,10 +75,15 @@ int sync_filesystem(struct super_block *sb)
 	if (sb->s_flags & MS_RDONLY)
 		return 0;
 
-	ret = __sync_filesystem(sb, NULL, 0);
+	ret = __sync_filesystem(sb, ub, 0);
 	if (ret < 0)
 		return ret;
-	return __sync_filesystem(sb, NULL, 1);
+	return __sync_filesystem(sb, ub, 1);
+}
+
+int sync_filesystem(struct super_block *sb)
+{
+	return sync_filesystem_ub(sb, NULL);
 }
 EXPORT_SYMBOL_GPL(sync_filesystem);
 
@@ -250,19 +255,52 @@ SYSCALL_DEFINE1(syncfs, int, fd)
 {
 	struct file *file;
 	struct super_block *sb;
-	int ret;
+	int ret = 0;
 	int fput_needed;
+	struct user_beancounter *ub, *sync_ub = NULL;
+	struct ve_struct *ve;
+
+	ub = get_exec_ub();
+	ve = get_exec_env();
+	ub_percpu_inc(ub, sync);
+
+	if (!ve_is_super(ve)) {
+		int fsb;
+
+		/*
+		 * init can't sync during VE stop. Rationale:
+		 *  - NFS with -o hard will block forever as network is down
+		 *  - no useful job is performed as VE0 will call umount/sync
+		 *    by his own later
+		 *  Den
+		 */
+		if (current == get_env_init(ve))
+			goto skip;
+
+		fsb = __ve_fsync_behavior(ve);
+		if (fsb == FSYNC_NEVER)
+			goto skip;
+
+		if (fsb == FSYNC_FILTERED)
+			sync_ub = get_io_ub();
+	}
 
 	file = fget_light(fd, &fput_needed);
-	if (!file)
-		return -EBADF;
+	if (!file) {
+		ret = -EBADF;
+		goto skip;
+	}
+
 	sb = file->f_dentry->d_sb;
 
 	down_read(&sb->s_umount);
-	ret = sync_filesystem(sb);
+	if (sb->s_root)
+		ret = sync_filesystem_ub(sb, sync_ub);
 	up_read(&sb->s_umount);
 
 	fput_light(file, fput_needed);
+skip:
+	ub_percpu_inc(ub, sync_done);
 	return ret;
 }
 

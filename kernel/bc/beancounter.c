@@ -366,6 +366,7 @@ static inline int bc_verify_held(struct user_beancounter *ub)
 	int i, clean;
 
 	ub_stat_mod(ub, dirty_pages, __ub_percpu_sum(ub, dirty_pages));
+	ub_stat_mod(ub, writeback_pages, __ub_percpu_sum(ub, writeback_pages));
 	uncharge_beancounter_precharge(ub);
 	ub_update_resources_locked(ub);
 
@@ -375,6 +376,8 @@ static inline int bc_verify_held(struct user_beancounter *ub)
 
 	clean &= verify_res(ub, "dirty_pages",
 			__ub_stat_get(ub, dirty_pages));
+	clean &= verify_res(ub, "writeback_pages",
+			__ub_stat_get(ub, writeback_pages));
 	clean &= verify_res(ub, "tmpfs_respages", ub->ub_tmpfs_respages);
 
 	clean &= verify_res(ub, "refcount", atomic_read(&ub->ub_refcount));
@@ -726,8 +729,6 @@ static void init_beancounter_nolimits(struct user_beancounter *ub)
 
 	ub->ub_parms[UB_VMGUARPAGES].limit = 0;
 	ub->ub_parms[UB_VMGUARPAGES].barrier = 0;
-	ub->ub_parms[UB_OOMGUARPAGES].limit = 0;
-	ub->ub_parms[UB_OOMGUARPAGES].barrier = 0;
 
 	/* FIXME: set unlimited rate? */
 	ub->ub_ratelimit.burst = 4;

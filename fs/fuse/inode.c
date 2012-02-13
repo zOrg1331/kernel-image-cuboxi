@@ -641,8 +641,10 @@ static int fuse_encode_fh(struct dentry *dentry, u32 *fh, int *max_len,
 	u64 nodeid;
 	u32 generation;
 
-	if (*max_len < len)
+	if (*max_len < len) {
+		*max_len = len;
 		return  255;
+	}
 
 	nodeid = get_fuse_inode(inode)->nodeid;
 	generation = inode->i_generation;
@@ -1046,7 +1048,20 @@ static int fuse_get_sb(struct file_system_type *fs_type,
 		       int flags, const char *dev_name,
 		       void *raw_data, struct vfsmount *mnt)
 {
-	return get_sb_nodev(fs_type, flags, raw_data, fuse_fill_super, mnt);
+	int error;
+
+	error = get_sb_nodev(fs_type, flags, raw_data, fuse_fill_super, mnt);
+
+	/* Hack to distinguish pcs fuse service and to force synchronous close for it.
+	 * Seems, this is the only place where we have some variable (dev_name), which
+	 * is not confined by fuse API and already defined.
+	 */
+	if (!error && mnt->mnt_devname && strncmp(mnt->mnt_devname, "pcs://", 6) == 0) {
+		struct fuse_conn *fc = mnt->mnt_sb->s_fs_info;
+
+		fc->close_wait = 1;
+	}
+	return error;
 }
 
 static void fuse_kill_sb_anon(struct super_block *sb)

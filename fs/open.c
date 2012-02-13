@@ -1055,3 +1055,149 @@ int nonseekable_open(struct inode *inode, struct file *filp)
 }
 
 EXPORT_SYMBOL(nonseekable_open);
+
+/*
+ * require inode->i_mutex or unreachable inode
+ */
+int open_inode_peer(struct inode *inode, struct path *path,
+		    const struct cred *cred)
+{
+	struct inode *peer = path->dentry->d_inode;
+	struct address_space *mapping;
+	struct file *file;
+
+	if (inode->i_peer_file) {
+		path_put(path);
+		return -EBUSY;
+	}
+
+	if (!S_ISREG(inode->i_mode) || !S_ISREG(peer->i_mode) ||
+	    peer == inode || i_size_read(peer) != i_size_read(inode)) {
+		path_put(path);
+		return -EINVAL;
+	}
+
+restart:
+	rcu_read_lock();
+	file = rcu_dereference(peer->i_peer_file);
+	if (file && file->f_mapping != peer->i_mapping) {
+		rcu_read_unlock();
+		return -EMLINK;
+	}
+	if (file && atomic_long_inc_not_zero(&file->f_count)) {
+		rcu_read_unlock();
+		goto install;
+	}
+	rcu_read_unlock();
+
+	file = dentry_open(path->dentry, path->mnt,
+			   O_RDONLY|O_LARGEFILE, cred);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	spin_lock(&peer->i_lock);
+	if (atomic_read(&peer->i_writecount) > 0) {
+		spin_unlock(&inode->i_lock);
+		fput(file);
+		return -ETXTBSY;
+	}
+	if (peer->i_size != inode->i_size) {
+		spin_unlock(&inode->i_lock);
+		fput(file);
+		return -EINVAL;
+	}
+	if (peer->i_peer_file && file_count(peer->i_peer_file)) {
+		spin_unlock(&peer->i_lock);
+		*path = file->f_path;
+		path_get(path);
+		fput(file);
+		goto restart;
+	}
+	atomic_dec(&peer->i_writecount);
+	rcu_assign_pointer(peer->i_peer_file, file);
+	spin_unlock(&peer->i_lock);
+
+install:
+	spin_lock(&inode->i_lock);
+	if (inode->i_peer_file)
+		goto undo;
+	rcu_assign_pointer(inode->i_peer_file, file);
+	spin_unlock(&inode->i_lock);
+
+	mapping = file->f_mapping;
+	spin_lock(&mapping->i_mmap_lock);
+	list_add(&inode->i_mapping->i_peer_list, &mapping->i_peer_list);
+	spin_unlock(&mapping->i_mmap_lock);
+
+	/* update peer atime */
+	file_accessed(file);
+
+	/* prune unused pages */
+	invalidate_mapping_pages(inode->i_mapping, 0, -1);
+
+	return 0;
+
+undo:
+	spin_unlock(&inode->i_lock);
+	if (atomic_long_dec_and_test(&file->f_count)) {
+		spin_lock(&peer->i_lock);
+		BUG_ON(peer->i_peer_file != file);
+		rcu_assign_pointer(peer->i_peer_file, NULL);
+		atomic_inc(&peer->i_writecount);
+		spin_unlock(&peer->i_lock);
+		__fput(file);
+	}
+
+	return -EBUSY;
+}
+EXPORT_SYMBOL(open_inode_peer);
+
+/*
+ * require inode->i_mutex or unreachable inode
+ */
+void close_inode_peer(struct inode *inode)
+{
+	struct address_space *mapping = inode->i_mapping;
+	struct file *file = inode->i_peer_file;
+
+	if (!file)
+		return;
+
+	spin_lock(&inode->i_lock);
+	BUG_ON(inode->i_peer_file != file);
+	BUG_ON(file->f_mapping == mapping);
+	rcu_assign_pointer(inode->i_peer_file, NULL);
+	spin_unlock(&inode->i_lock);
+
+	if (mapping_mapped(mapping)) {
+		struct zap_details details = {
+			.check_mapping = file->f_mapping,
+			.first_index = 0,
+			.last_index = ULONG_MAX,
+		};
+
+		synchronize_mapping_faults(mapping);
+		zap_mapping_range(mapping, &details);
+	}
+
+	mapping = file->f_mapping;
+	spin_lock(&mapping->i_mmap_lock);
+	list_del_init(&inode->i_mapping->i_peer_list);
+	spin_unlock(&mapping->i_mmap_lock);
+
+	if (atomic_long_dec_and_test(&file->f_count)) {
+		struct inode *peer = mapping->host;
+
+		spin_lock(&peer->i_lock);
+		if (peer->i_peer_file == file)
+			rcu_assign_pointer(peer->i_peer_file, NULL);
+		atomic_inc(&peer->i_writecount);
+		spin_unlock(&peer->i_lock);
+
+		/* update peer atime */
+		file_accessed(file);
+
+		__fput(file);
+	}
+}
+EXPORT_SYMBOL(close_inode_peer);

@@ -904,6 +904,9 @@ int __copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *vma
 		      unsigned long addr, size_t size);
 void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows);
+void zap_mapping_range(struct address_space *mapping,
+		struct zap_details *details);
+void synchronize_mapping_faults(struct address_space *mapping);
 int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	unsigned long *pfn);
 int follow_phys(struct vm_area_struct *vma, unsigned long address,
@@ -940,6 +943,9 @@ static inline int handle_mm_fault(struct mm_struct *mm,
 	return VM_FAULT_SIGBUS;
 }
 #endif
+
+extern int install_anon_page(struct mm_struct *mm, struct vm_area_struct *vma,
+			     unsigned long addr, struct page *page);
 
 extern unsigned long vma_address(struct page *page, struct vm_area_struct *vma);
 extern int make_pages_present(unsigned long addr, unsigned long end);
@@ -1315,6 +1321,8 @@ extern void truncate_inode_pages_range(struct address_space *,
 
 /* generic vm_area_ops exported for stackable file systems */
 extern int filemap_fault(struct vm_area_struct *, struct vm_fault *);
+struct page *pick_peer_page(struct inode *inode, struct file_ra_state *ra,
+			    pgoff_t index, unsigned ra_size);
 
 /* mm/page-writeback.c */
 int write_one_page(struct page *page, int wait);

@@ -1370,9 +1370,10 @@ static int try_to_unmap_anon(struct page *page, enum ttu_flags flags)
  * vm_flags for that VMA.  That should be OK, because that vma shouldn't be
  * 'LOCKED.
  */
-static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
+static int try_to_unmap_mapping(struct page *page,
+				struct address_space *mapping,
+				enum ttu_flags flags)
 {
-	struct address_space *mapping = page->mapping;
 	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
 	struct vm_area_struct *vma;
 	struct prio_tree_iter iter;
@@ -1464,6 +1465,35 @@ static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
 		vma->vm_private_data = NULL;
 out:
 	spin_unlock(&mapping->i_mmap_lock);
+	return ret;
+}
+
+static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
+{
+	struct address_space *mapping = page->mapping, *peer;
+	int ret;
+
+	ret = try_to_unmap_mapping(page, mapping, flags);
+
+	if (ret != SWAP_AGAIN || !page_mapped(page) ||
+	    list_empty(&mapping->i_peer_list) ||
+	    TTU_ACTION(flags) == TTU_MUNLOCK)
+		return ret;
+
+	/*
+	 * Ignore TTU_MUNLOCK, reclaimer can handle it.
+	 * Handle TTU_MIGRATION like TTU_UNMAP, without migration ptes.
+	 */
+	flags = TTU_UNMAP | (flags & ~TTU_ACTION_MASK);
+
+	spin_lock_nested(&mapping->i_mmap_lock, SINGLE_DEPTH_NESTING);
+	list_for_each_entry(peer, &mapping->i_peer_list, i_peer_list) {
+		ret = try_to_unmap_mapping(page, peer, flags);
+		if (ret != SWAP_AGAIN || !page_mapped(page))
+			break;
+	}
+	spin_unlock(&mapping->i_mmap_lock);
+
 	return ret;
 }
 

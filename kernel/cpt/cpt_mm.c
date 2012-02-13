@@ -28,6 +28,7 @@
 #include <asm/mmu.h>
 #include <linux/cpt_image.h>
 #include <linux/shm.h>
+#include <linux/pram.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -445,6 +446,30 @@ out_unsupported:
 	goto out_put;
 }
 
+static inline void dump_page(struct page *page, struct cpt_context *ctx)
+{
+	char *maddr;
+
+#ifdef CONFIG_PRAM
+	if (ctx->pram_stream) {
+		int err;
+		unsigned long pfn;
+		__u64 __pfn;
+
+		err = pram_push_page(ctx->pram_stream, page, &pfn);
+		if (err && !ctx->write_error)
+			ctx->write_error = err;
+
+		__pfn = pfn;
+		ctx->write(&__pfn, 8, ctx);
+		return;
+	}
+#endif
+	maddr = kmap(page);
+	ctx->write(maddr, PAGE_SIZE, ctx);
+	kunmap(page);
+}
+
 /* ATTN: We give "current" to get_user_pages(). This is wrong, but get_user_pages()
  * does not really need this thing. It just stores some page fault stats there.
  *
@@ -469,11 +494,8 @@ void dump_pages(struct vm_area_struct *vma, unsigned long start,
 				   0, 1, pg, NULL);
 		if (n == copy) {
 			int i;
-			for (i=0; i<n; i++) {
-				char *maddr = kmap(pg[i]);
-				ctx->write(maddr, PAGE_SIZE, ctx);
-				kunmap(pg[i]);
-			}
+			for (i=0; i<n; i++)
+				dump_page(pg[i], ctx);
 		} else {
 			eprintk_ctx("get_user_pages fault");
 			for ( ; n > 0; n--)
@@ -499,6 +521,10 @@ int dump_page_block(struct vm_area_struct *vma, struct cpt_page_block *pgb,
 	pgb->cpt_object = CPT_OBJ_PAGES;
 	pgb->cpt_hdrlen = sizeof(*pgb);
 	pgb->cpt_content = (copy == PD_COPY) ? CPT_CONTENT_DATA : CPT_CONTENT_VOID;
+#ifdef CONFIG_PRAM
+	if (copy == PD_COPY && ctx->pram_stream)
+		pgb->cpt_content = CPT_CONTENT_PRAM;
+#endif
 
 	ctx->write(pgb, sizeof(*pgb), ctx);
 	if (copy == PD_COPY)
@@ -808,7 +834,7 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 	struct hlist_node *n;
 	int err;
 
-	down_write(&mm->mmap_sem);
+	down_write_nested(&mm->mmap_sem, SINGLE_DEPTH_NESTING);
 
 	cpt_open_object(obj, ctx);
 

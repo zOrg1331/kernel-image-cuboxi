@@ -52,7 +52,7 @@ struct meminfo {
 	struct user_beancounter *ub;
 	unsigned long meminfo_val;
 	unsigned long pages[NR_LRU_LISTS];
-	unsigned long cached, dirty_pages, locked, shmem;
+	unsigned long cached, dirty_pages, writeback_pages, locked, shmem;
 	unsigned long slab_reclaimable, slab_unreclaimable;
 };
 

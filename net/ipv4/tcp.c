@@ -704,7 +704,7 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp)
 
 	skb = alloc_skb_fclone(size + sk->sk_prot->max_header, gfp);
 	if (skb) {
-		if (sk_wmem_schedule(sk, skb->truesize, skb)) {
+		if (sk_wmem_schedule(sk, skb->truesize)) {
 			/*
 			 * Make sure that we have exactly size bytes
 			 * available to the caller, no more, no less.
@@ -821,7 +821,7 @@ new_segment:
 			tcp_mark_push(tp, skb);
 			goto new_segment;
 		}
-		if (!sk_wmem_schedule(sk, copy, skb))
+		if (!sk_wmem_schedule(sk, copy))
 			goto wait_for_memory;
 
 		if (can_coalesce) {
@@ -1058,7 +1058,7 @@ new_segment:
 				if (copy > PAGE_SIZE - off)
 					copy = PAGE_SIZE - off;
 
-				if (!sk_wmem_schedule(sk, copy, skb))
+				if (!sk_wmem_schedule(sk, copy))
 					goto wait_for_memory;
 
 				if (!page) {

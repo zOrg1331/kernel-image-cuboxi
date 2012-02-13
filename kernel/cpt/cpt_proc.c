@@ -24,6 +24,8 @@
 #include <asm/uaccess.h>
 #include <linux/cpt_ioctl.h>
 #include <linux/delay.h>
+#include <linux/pram.h>
+#include <linux/ve_proto.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -87,6 +89,8 @@ void cpt_context_release(cpt_context_t *ctx)
 
 	list_del(&ctx->ctx_list);
 	spin_unlock(&cpt_context_lock);
+
+	cpt_close_pram(ctx, -1);
 
 	if (ctx->ctx_state > 0)
 		cpt_resume(ctx);
@@ -207,6 +211,9 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_3DNOW2, "3dnowext", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE4A, "sse4a", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SEP, "sysenter", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_XSAVE, "xsave", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_AVX, "avx", err);
+		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_AESNI, "aesni", err);
 		goto out_lock;
 	}
 
@@ -408,6 +415,12 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		ctx->dst_cpu_flags = arg;
 		ctx->src_cpu_flags = test_cpu_caps_and_features();
 		break;
+	case CPT_SET_PRAM:
+		if (arg)
+			err = cpt_open_pram(ctx);
+		else
+			cpt_close_pram(ctx, -1);
+		break;
 	case CPT_SUSPEND:
 		if (cpt_context_lookup_veid(ctx->ve_id) ||
 		    ctx->ctx_state > 0) {
@@ -488,6 +501,9 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_IA64, "ia64", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL, "syscall", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL32, "syscall32", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_XSAVE, "xsave", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AVX, "avx", err);
+		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AESNI, "aesni", err);
 		if (dst_flags & (1 << CPT_SLM_DMPRST)) {
 			eprintk_ctx("SLM is enabled on destination node, but slm_dmprst module is not loaded\n");
 			err = 1;
@@ -571,6 +587,29 @@ static ctl_table root_table[] = {
 	{ .ctl_name = 0 }
 };
 
+static inline void cpt_destroy_ve_pram(struct ve_struct *ve)
+{
+#ifdef CONFIG_PRAM
+	char name[32];
+
+	sprintf(name, "cpt.%d", ve->veid);
+	if (pram_destroy(name) == 0)
+		wprintk("veid=%d: PRAM destroyed\n", ve->veid);
+#endif
+}
+
+static int cpt_ve_init(void *data) {
+	struct ve_struct *ve = data;
+
+	cpt_destroy_ve_pram(ve);
+	return 0;
+}
+
+static struct ve_hook cpt_ve_hook = {
+	.init		= cpt_ve_init,
+	.owner		= THIS_MODULE,
+};
+
 static int __init init_cpt(void)
 {
 	int err;
@@ -595,6 +634,8 @@ static int __init init_cpt(void)
 
 	proc_ent->read_proc = proc_read;
 	proc_ent->data = NULL;
+
+	ve_hook_register(VE_SS_CHAIN, &cpt_ve_hook);
 	return 0;
 
 err_out:
@@ -606,6 +647,7 @@ module_init(init_cpt);
 
 static void __exit exit_cpt(void)
 {
+	ve_hook_unregister(&cpt_ve_hook);
 	remove_proc_entry("cpt", NULL);
 	unregister_sysctl_table(ctl_header);
 

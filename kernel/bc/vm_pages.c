@@ -465,15 +465,18 @@ static int bc_fill_meminfo(struct user_beancounter *ub,
 	kmem = ub->ub_parms[UB_KMEMSIZE].held;
 
 	mi->dirty_pages = __ub_stat_get(ub, dirty_pages);
+	mi->writeback_pages = __ub_stat_get(ub, writeback_pages);
 	for_each_possible_cpu(cpu) {
 		struct ub_percpu_struct *pcpu = ub_percpu(ub, cpu);
 
 		mi->dirty_pages	+= pcpu->dirty_pages;
+		mi->writeback_pages	+= pcpu->writeback_pages;
 		dcache		-= pcpu->precharge[UB_DCACHESIZE];
 		kmem		-= pcpu->precharge[UB_KMEMSIZE];
 	}
 
 	mi->dirty_pages = max_t(long, 0, mi->dirty_pages);
+	mi->writeback_pages = max_t(long, 0, mi->writeback_pages);
 
 	mi->slab_reclaimable = DIV_ROUND_UP(max(0L, dcache), PAGE_SIZE);
 	mi->slab_unreclaimable =

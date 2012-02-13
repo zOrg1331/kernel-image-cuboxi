@@ -39,7 +39,7 @@
 #include <linux/ctype.h>
 #include <linux/log2.h>
 #include <linux/crc16.h>
-#include <linux/cleancache.h>
+#include <linux/pramcache.h>
 #include <linux/vzquota.h>
 #include <linux/virtinfo.h>
 #include <asm/uaccess.h>
@@ -693,6 +693,7 @@ static void ext4_put_super(struct super_block *sb)
 	percpu_counter_destroy(&sbi->s_dirtyblocks_counter);
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
+	percpu_counter_destroy(&sbi->s_pfcache_peers);
 	brelse(sbi->s_sbh);
 #ifdef CONFIG_QUOTA
 	for (i = 0; i < MAXQUOTAS; i++)
@@ -706,6 +707,8 @@ static void ext4_put_super(struct super_block *sb)
 	if (!list_empty(&sbi->s_orphan))
 		dump_orphan_list(sb, sbi);
 	J_ASSERT(list_empty(&sbi->s_orphan));
+
+	pramcache_save_bdev_cache(sb);
 
 	invalidate_bdev(sb->s_bdev);
 	if (sbi->journal_bdev && sbi->journal_bdev != sb->s_bdev) {
@@ -824,8 +827,10 @@ static void ext4_clear_inode(struct inode *inode)
 	if (EXT4_JOURNAL(inode))
 		jbd2_journal_release_jbd_inode(EXT4_SB(inode->i_sb)->s_journal,
 				       &EXT4_I(inode)->jinode);
-	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM))
+	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM)) {
+		ext4_close_pfcache(inode);
 		ext4_clear_data_csum(inode);
+	}
 }
 
 static inline void ext4_show_quota_options(struct seq_file *seq,
@@ -990,6 +995,14 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 		seq_printf(seq, ",balloon_ino=%ld", sbi->s_balloon_ino->i_ino);
 	if (test_opt2(sb, CSUM))
 		seq_puts(seq, ",csum");
+	if (sbi->s_pfcache_root.mnt) {
+		down_read(&sb->s_umount);
+		if (sbi->s_pfcache_root.mnt) {
+			seq_puts(seq, ",pfcache=");
+			seq_path(seq, &sbi->s_pfcache_root, "\\ \t\n");
+		}
+		up_read(&sb->s_umount);
+	}
 
 	if (test_opt(sb, BLOCK_VALIDITY) &&
 	    !(def_mount_opts & EXT4_DEFM_BLOCK_VALIDITY))
@@ -1034,55 +1047,6 @@ static struct inode *ext4_nfs_get_inode(struct super_block *sb,
 
 	return inode;
 }
-
-/**
- * @dentry:  the dentry to encode
- * @fh:      where to store the file handle fragment
- * @max_len: maximum length to store there
- * @connectable: whether to store parent information
- *
- */
-static int ext4_encode_fh(struct dentry *dentry, __u32 *fh,
-			  int *max_len, int connectable)
-{
-	struct inode * inode = dentry->d_inode;
-	struct fid *fid = (struct fid*)fh;
-	int len = *max_len;
-	int type = FILEID_INO32_GEN;
-
-	if (len < 2 || (connectable && len < 4))
-		return 255;
-
-	if (!connectable && len >= 7) {
-		fid->i32_csum.ino = inode->i_ino;
-		fid->i32_csum.gen = inode->i_generation;
-		if (!ext4_get_data_csum(inode, fid->i32_csum.check_sum,
-					sizeof(fid->i32_csum.check_sum))) {
-			type = FILEID_INO32_GEN_SHA1;
-			len = 7;
-			goto out;
-		}
-	}
-
-	len = 2;
-	fid->i32.ino = inode->i_ino;
-	fid->i32.gen = inode->i_generation;
-	if (connectable && !S_ISDIR(inode->i_mode)) {
-		struct inode *parent;
-
-		spin_lock(&dentry->d_lock);
-		parent = dentry->d_parent->d_inode;
-		fid->i32.parent_ino = parent->i_ino;
-		fid->i32.parent_gen = parent->i_generation;
-		spin_unlock(&dentry->d_lock);
-		len = 4;
-		type = FILEID_INO32_GEN_PARENT;
-	}
-out:
-	*max_len = len;
-	return type;
-}
-
 
 static struct dentry *ext4_fh_to_dentry(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
@@ -1217,7 +1181,6 @@ static const struct super_operations ext4_nojournal_sops = {
 };
 
 static const struct export_operations ext4_export_ops = {
-	.encode_fh = ext4_encode_fh,
 	.fh_to_dentry = ext4_fh_to_dentry,
 	.fh_to_parent = ext4_fh_to_parent,
 	.get_parent = ext4_get_parent,
@@ -1244,6 +1207,7 @@ enum {
 	Opt_discard, Opt_nodiscard, Opt_balloon_ino,
 	Opt_init_inode_table, Opt_noinit_inode_table,
 	Opt_csum, Opt_nocsum,
+	Opt_pfcache, Opt_nopfcache,
 };
 
 static const match_table_t tokens = {
@@ -1318,6 +1282,8 @@ static const match_table_t tokens = {
 	{Opt_noinit_inode_table, "noinit_itable"},
 	{Opt_csum, "csum"},
 	{Opt_nocsum, "nocsum"},
+	{Opt_pfcache, "pfcache=%s"},
+	{Opt_nopfcache, "nopfcache"},
 	{Opt_err, NULL},
 };
 
@@ -1361,6 +1327,7 @@ static int parse_options(char *options, struct super_block *sb,
 	int qtype, qfmt;
 	char *qname;
 #endif
+	char *pfcache;
 
 	if (!options)
 		return 1;
@@ -1776,10 +1743,29 @@ set_qf_format:
 		case Opt_noinit_inode_table:
 			clear_opt(sbi->s_mount_opt, INIT_INODE_TABLE);
 		case Opt_csum:
-			set_opt2(sb, CSUM);
+			if (capable(CAP_SYS_ADMIN))
+				set_opt2(sb, CSUM);
 			break;
 		case Opt_nocsum:
-			clear_opt2(sb, CSUM);
+			if (capable(CAP_SYS_ADMIN))
+				clear_opt2(sb, CSUM);
+			break;
+		case Opt_pfcache:
+			if (!capable(CAP_SYS_ADMIN))
+				break;
+			set_opt2(sb, CSUM);
+			pfcache = match_strdup(&args[0]);
+			if (ext4_relink_pfcache(sb, pfcache)) {
+				kfree(pfcache);
+				return 0;
+			}
+			kfree(pfcache);
+			break;
+		case Opt_nopfcache:
+			if (!capable(CAP_SYS_ADMIN))
+				break;
+			if (ext4_relink_pfcache(sb, NULL))
+				return 0;
 			break;
 		default:
 			ext4_msg(sb, KERN_ERR,
@@ -1876,7 +1862,6 @@ static int ext4_setup_super(struct super_block *sb, struct ext4_super_block *es,
 			EXT4_INODES_PER_GROUP(sb),
 			sbi->s_mount_opt, sbi->s_mount_opt2);
 
-	cleancache_init_fs(sb);
 	return res;
 }
 
@@ -2379,6 +2364,14 @@ static ssize_t csum_complete_show(struct ext4_attr *a,
 			(s64) percpu_counter_sum(&sbi->s_csum_complete));
 }
 
+static ssize_t pfcache_peers_show(struct ext4_attr *a,
+					      struct ext4_sb_info *sbi,
+					      char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n",
+			(s64) percpu_counter_sum(&sbi->s_pfcache_peers));
+}
+
 static ssize_t session_write_kbytes_show(struct ext4_attr *a,
 					 struct ext4_sb_info *sbi, char *buf)
 {
@@ -2459,6 +2452,7 @@ EXT4_RO_ATTR(session_write_kbytes);
 EXT4_RO_ATTR(lifetime_write_kbytes);
 EXT4_RO_ATTR(csum_partial);
 EXT4_RO_ATTR(csum_complete);
+EXT4_RO_ATTR(pfcache_peers);
 EXT4_ATTR_OFFSET(inode_readahead_blks, 0644, sbi_ui_show,
 		 inode_readahead_blks_store, s_inode_readahead_blks);
 EXT4_RW_ATTR_SBI_UI(inode_goal, s_inode_goal);
@@ -2487,6 +2481,7 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(bd_full_ratelimit),
 	ATTR_LIST(csum_partial),
 	ATTR_LIST(csum_complete),
+	ATTR_LIST(pfcache_peers),
 	NULL,
 };
 
@@ -3381,6 +3376,9 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (!err) {
 		err = percpu_counter_init(&sbi->s_csum_complete, 0);
 	}
+	if (!err) {
+		err = percpu_counter_init(&sbi->s_pfcache_peers, 0);
+	}
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "insufficient memory");
 		goto failed_mount3;
@@ -3404,6 +3402,8 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_qcop = &ext4_qctl_operations;
 	sb->dq_op = &ext4_quota_operations;
 #endif
+	memcpy(sb->s_uuid, es->s_uuid, sizeof(es->s_uuid));
+
 	INIT_LIST_HEAD(&sbi->s_orphan); /* unlinked but open files */
 	mutex_init(&sbi->s_orphan_lock);
 	mutex_init(&sbi->s_resize_lock);
@@ -3630,6 +3630,8 @@ no_journal:
 		 "Opts: %s%s", descr, sbi->s_es->s_mount_opts,
 		 *sbi->s_es->s_mount_opts ? "; " : "");
 
+	pramcache_load(sb);
+
 	lock_kernel();
 	return 0;
 
@@ -3660,6 +3662,7 @@ failed_mount3:
 	percpu_counter_destroy(&sbi->s_dirtyblocks_counter);
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
+	percpu_counter_destroy(&sbi->s_pfcache_peers);
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);
@@ -4746,6 +4749,11 @@ static void ext4_kill_sb(struct super_block *sb)
 	sbi = EXT4_SB(sb);
 	if (sbi && sbi->s_balloon_ino)
 		iput(sbi->s_balloon_ino);
+
+	if (sbi->s_pfcache_root.mnt)
+		ext4_relink_pfcache(sb, NULL);
+
+	pramcache_save_page_cache(sb);
 
 	kill_block_super(sb);
 }

@@ -25,6 +25,10 @@
 #include <linux/futex.h>
 #include <linux/posix-timers.h>
 
+#ifdef CONFIG_X86
+#include <asm/i387.h>
+#endif
+
 #include "cpt_obj.h"
 #include "cpt_context.h"
 #include "cpt_ubc.h"
@@ -471,37 +475,50 @@ static int dump_kstack(struct task_struct *tsk, struct cpt_context *ctx)
 }
 
 #ifdef CONFIG_X86
+/* Determine size and type of FPU struct to store */
+static void init_fpu_hdr(struct cpt_obj_bits *hdr)
+{
+	unsigned long size;
+	int type;
+
+	if (likely(cpu_has_xsave)) {
+		type = CPT_CONTENT_X86_XSAVE;
+		size = xstate_size;
+	} else
+#ifndef CONFIG_X86_64
+	if (!cpu_has_fxsr) {
+		size = sizeof(struct i387_fsave_struct);
+		type = CPT_CONTENT_X86_FPUSTATE_OLD;
+	} else
+#endif
+	{
+		type = CPT_CONTENT_X86_FPUSTATE;
+		size = sizeof(struct i387_fxsave_struct);
+	}
+
+	hdr->cpt_next = sizeof(struct cpt_obj_bits) + CPT_ALIGN(size);
+	hdr->cpt_object = CPT_OBJ_BITS;
+	hdr->cpt_hdrlen = sizeof(struct cpt_obj_bits);
+	hdr->cpt_content = type;
+	hdr->cpt_size = size;
+}
+
 /* Formats of i387_fxsave_struct are the same for x86_64
  * and i386. Plain luck. */
 
 static int dump_fpustate(struct task_struct *tsk, struct cpt_context *ctx)
 {
 	struct cpt_obj_bits hdr;
-	unsigned long size;
-	int type;
 
 	if (!tsk->thread.xstate)
 		return 0;
 
 	cpt_open_object(NULL, ctx);
 
-	type = CPT_CONTENT_X86_FPUSTATE;
-	size = sizeof(struct i387_fxsave_struct);
-#ifndef CONFIG_X86_64
-	if (!cpu_has_fxsr) {
-		size = sizeof(struct i387_fsave_struct);
-		type = CPT_CONTENT_X86_FPUSTATE_OLD;
-	}
-#endif
-
-	hdr.cpt_next = sizeof(hdr) + CPT_ALIGN(size);
-	hdr.cpt_object = CPT_OBJ_BITS;
-	hdr.cpt_hdrlen = sizeof(hdr);
-	hdr.cpt_content = type;
-	hdr.cpt_size = size;
+	init_fpu_hdr(&hdr);
 
 	ctx->write(&hdr, sizeof(hdr), ctx);
-	ctx->write(tsk->thread.xstate, size, ctx);
+	ctx->write(tsk->thread.xstate, hdr.cpt_size, ctx);
 	ctx->align(ctx);
 	cpt_close_object(ctx);
 	return 0;

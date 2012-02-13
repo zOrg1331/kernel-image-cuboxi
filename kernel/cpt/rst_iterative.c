@@ -164,16 +164,7 @@ int rst_iter(struct vm_area_struct *vma, u64 pfn,
 	if (unlikely(!pmd))
 		return -ENOMEM;
 
-	split_huge_page_pmd(mm, pmd);
-
 	pte = pte_alloc_map_lock(mm, pmd, addr, &ptl);
-
-	if (pte && !pte_none(*pte)) {
-		pte_unmap_unlock(pte, ptl);
-		zap_vma_ptes(vma, addr, PAGE_SIZE);
-		pte = pte_alloc_map_lock(mm, pmd, addr, &ptl);
-	}
-
 	if (unlikely(!pte))
 		return -ENOMEM;
 

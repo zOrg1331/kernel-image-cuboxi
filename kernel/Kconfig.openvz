@@ -82,6 +82,7 @@ config VZ_CHECKPOINT
 	select TUN
 	select VE_ETHDEV
 	select VE_NETDEV
+	select PRAM
  	default m
  	help
  	  This option adds two modules, "cpt" and "rst", which allow

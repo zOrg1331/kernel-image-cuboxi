@@ -844,6 +844,8 @@ int vps_rst_undump(struct cpt_context *ctx)
 	if (err)
 		return err;
 
+	rst_load_pram_pages(ctx);
+
 	if (ctx->tasks64) {
 #if defined(CONFIG_IA64)
 		if (ctx->image_arch != CPT_OS_ARCH_IA64)
@@ -967,7 +969,22 @@ int rst_resume(struct cpt_context *ctx)
 int rst_kill(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
+	struct ve_struct *env;
 	int err = 0;
+	long delay;
+
+	if (!ctx->ve_id)
+		return -EINVAL;
+
+	env = get_ve_by_id(ctx->ve_id);
+	if (!env)
+		return -ESRCH;
+
+	if (current->ve_task_info.owner_env == env) {
+		wprintk_ctx("attempt to kill ve from inside, escaping...\n");
+		err = -EPERM;
+		goto out;
+	}
 
 	for_each_object(obj, CPT_OBJ_FILE) {
 		struct file *file = obj->o_obj;
@@ -1008,6 +1025,17 @@ int rst_kill(struct cpt_context *ctx)
 	rst_finish_vfsmount_ref(ctx);
 	cpt_object_destroy(ctx);
 
+	delay = 1;
+	while (atomic_read(&env->counter) != 1) {
+		if (signal_pending(current))
+			break;
+		current->state = TASK_INTERRUPTIBLE;
+		delay = (delay < HZ) ? (delay << 1) : HZ;
+		schedule_timeout(delay);
+	}
+
+out:
+	put_ve(env);
         return err;
 }
 

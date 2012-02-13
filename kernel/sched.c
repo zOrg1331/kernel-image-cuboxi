@@ -11855,6 +11855,11 @@ static void cpu_cgroup_update_stat(struct task_group *tg, int i)
 	kcpustat->cpustat[IDLE] = se->sum_sleep_runtime;
 	kcpustat->cpustat[STEAL] = se->wait_sum;
 
+	if (kcpustat->cpustat[IDLE] > kcpustat->cpustat[IOWAIT])
+		kcpustat->cpustat[IDLE] -= kcpustat->cpustat[IOWAIT];
+	else
+		kcpustat->cpustat[IDLE] = 0;
+
 	if (se->sleep_start) {
 		delta = now - se->sleep_start;
 		if ((s64)delta > 0)
@@ -11868,8 +11873,6 @@ static void cpu_cgroup_update_stat(struct task_group *tg, int i)
 		if ((s64)delta > 0)
 			kcpustat->cpustat[STEAL] += delta;
 	}
-
-	kcpustat->cpustat[IDLE] -= kcpustat->cpustat[IOWAIT];
 
 	kcpustat->cpustat[USED] = cpu_cgroup_usage_cpu(tg, i);
 #endif

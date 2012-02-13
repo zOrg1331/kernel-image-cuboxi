@@ -48,6 +48,8 @@ obj-$(CONFIG_FS_POSIX_ACL)	+= posix_acl.o xattr_acl.o
 obj-$(CONFIG_NFS_COMMON)	+= nfs_common/
 obj-$(CONFIG_GENERIC_ACL)	+= generic_acl.o
 
+obj-$(CONFIG_FHANDLE)		+= fhandle.o
+
 obj-y				+= quota/
 
 obj-$(CONFIG_SIM_FS)		+= simfs.o
@@ -123,5 +125,5 @@ obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
 obj-$(CONFIG_BTRFS_FS)		+= btrfs/
 obj-$(CONFIG_GFS2_FS)           += gfs2/
 obj-$(CONFIG_EXOFS_FS)          += exofs/
-obj-$(CONFIG_PFCACHE)		+= pfcache.o
 obj-$(CONFIG_PSTORE)		+= pstore/
+obj-$(CONFIG_PRAMCACHE)		+= pramcache.o

@@ -931,8 +931,7 @@ static inline int sk_has_account(struct sock *sk)
 	return !!sk->sk_prot->memory_allocated;
 }
 
-static inline int sk_wmem_schedule(struct sock *sk, int size,
-		struct sk_buff *skb)
+static inline int sk_wmem_schedule(struct sock *sk, int size)
 {
 	if (!sk_has_account(sk))
 		return 1;

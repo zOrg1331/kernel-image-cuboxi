@@ -29,6 +29,7 @@
 #include <linux/wait.h>
 #include <linux/blockgroup_lock.h>
 #include <linux/percpu_counter.h>
+#include <linux/pfcache.h>
 #ifdef __KERNEL__
 #include <linux/compat.h>
 #endif
@@ -607,7 +608,7 @@ struct move_extent {
 #define EXT4_NSEC_MASK  (~0UL << EXT4_EPOCH_BITS)
 
 #define EXT4_DATA_CSUM_SIZE	20
-#define EXT4_DATA_CSUM_NAME	"sha1"
+#define EXT4_DATA_CSUM_NAME	"pfcache"
 
 #define EXT4_DIR_CSUM_VALUE	"auto"
 #define EXT4_DIR_CSUM_VALUE_LEN	4
@@ -1179,6 +1180,9 @@ struct ext4_sb_info {
 	/* data checksumming */
 	struct percpu_counter s_csum_partial;
 	struct percpu_counter s_csum_complete;
+
+	struct path s_pfcache_root;
+	struct percpu_counter s_pfcache_peers;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
@@ -1720,6 +1724,11 @@ extern int ext4_group_extend(struct super_block *sb,
 				ext4_fsblk_t n_blocks_count);
 
 /* csum.c */
+extern int ext4_open_pfcache(struct inode *inode);
+extern int ext4_close_pfcache(struct inode *inode);
+extern int ext4_relink_pfcache(struct super_block *sb, char *new_root);
+extern long ext4_dump_pfcache(struct super_block *sb,
+					struct pfcache_dump_request __user *dump);
 extern int ext4_load_data_csum(struct inode *inode);
 extern void ext4_start_data_csum(struct inode *inode);
 extern void ext4_update_data_csum(struct inode *inode, loff_t pos,
@@ -1735,7 +1744,6 @@ static inline int ext4_want_data_csum(struct inode *dir)
 		(ext4_test_inode_state(dir, EXT4_STATE_CSUM) ||
 		 current->data_csum_enabled);
 }
-extern int ext4_get_data_csum(struct inode *inode, u8 *csum, size_t size);
 extern struct xattr_handler ext4_xattr_trusted_csum_handler;
 
 /* super.c */

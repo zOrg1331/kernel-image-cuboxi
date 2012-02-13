@@ -139,6 +139,16 @@ unsigned int test_cpu_caps_and_features(void)
 #endif
 	   )
 		flags |= ((1 << CPT_CPU_X86_SEP) | (1 << CPT_CPU_X86_SEP32));
+
+	if (boot_cpu_has(X86_FEATURE_XSAVE))
+		flags |= 1 << CPT_CPU_X86_XSAVE;
+
+	if (boot_cpu_has(X86_FEATURE_AVX))
+		flags |= 1 << CPT_CPU_X86_AVX;
+
+	if (boot_cpu_has(X86_FEATURE_AES))
+		flags |= 1 << CPT_CPU_X86_AESNI;
+
 #ifdef CONFIG_X86_64
 	flags |= 1 << CPT_CPU_X86_EMT64;
 #endif

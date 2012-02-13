@@ -469,7 +469,7 @@ static bool pin_sb_for_writeback(struct super_block *sb)
 	spin_unlock(&sb_lock);
 
 	if (down_read_trylock(&sb->s_umount)) {
-		if (sb->s_root)
+		if (sb->s_root && sb->s_frozen <= SB_FREEZE_WRITE)
 			return true;
 		up_read(&sb->s_umount);
 	}
@@ -871,12 +871,7 @@ void wakeup_flusher_threads(struct user_beancounter *ub, long nr_pages)
 	struct backing_dev_info *bdi;
 
 	if (!nr_pages) {
-/* FIXME
-		if (ub)
-			nr_pages = ub_dirty_pages(ub);
-		else
-*/
-			nr_pages = global_page_state(NR_FILE_DIRTY) +
+		nr_pages = global_page_state(NR_FILE_DIRTY) +
 				global_page_state(NR_UNSTABLE_NFS);
 	}
 
@@ -1110,10 +1105,9 @@ void writeback_inodes_sb_nr_ub(struct super_block *sb, unsigned long nr, struct 
 
 void writeback_inodes_sb_ub(struct super_block *sb, struct user_beancounter *ub)
 {
-	if (ub == NULL)
-		writeback_inodes_sb(sb);
-	else
-		writeback_inodes_sb_nr_ub(sb, ub_dirty_pages(ub), ub);
+	writeback_inodes_sb_nr_ub(sb, global_page_state(NR_FILE_DIRTY) +
+			      global_page_state(NR_UNSTABLE_NFS) +
+			      (inodes_stat.nr_inodes - inodes_stat.nr_unused), ub);
 }
 
 void writeback_inodes_sb_nr(struct super_block *sb, unsigned long nr)
@@ -1132,9 +1126,7 @@ EXPORT_SYMBOL(writeback_inodes_sb_nr);
  */
 void writeback_inodes_sb(struct super_block *sb)
 {
-	return writeback_inodes_sb_nr(sb, global_page_state(NR_FILE_DIRTY) +
-			      global_page_state(NR_UNSTABLE_NFS) +
-			      (inodes_stat.nr_inodes - inodes_stat.nr_unused));
+	writeback_inodes_sb_ub(sb, NULL);
 }
 EXPORT_SYMBOL(writeback_inodes_sb);
 

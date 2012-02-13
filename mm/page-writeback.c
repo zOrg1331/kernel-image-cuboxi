@@ -508,10 +508,13 @@ static void balance_dirty_pages(struct address_space *mapping,
 			bdi_nr_reclaimable = bdi_nr_writeback = 0;
 			bdi_thresh = background_thresh = ULONG_MAX;
 			nr_reclaimable = ub_dirty_pages(ub);
-			if (nr_reclaimable > dirty_thresh) {
+			nr_writeback = ub_stat_get(ub, writeback_pages);
+			if (nr_reclaimable + nr_writeback > dirty_thresh) {
 				nr_reclaimable = ub_stat_get_exact(ub, dirty_pages);
-				if (nr_reclaimable <= dirty_thresh) {
+				nr_writeback = ub_stat_get_exact(ub, writeback_pages);
+				if (nr_reclaimable + nr_writeback <= dirty_thresh) {
 					ub_stat_flush_pcpu(ub, dirty_pages);
+					ub_stat_flush_pcpu(ub, writeback_pages);
 					goto no_ub_balance;
 				}
 				if (!ub->dirty_exceeded)
@@ -1372,6 +1375,9 @@ int test_clear_page_writeback(struct page *page)
 						page_index(page),
 						PAGECACHE_TAG_WRITEBACK);
 			if (bdi_cap_account_writeback(bdi)) {
+				if (radix_tree_prev_tag_get(&mapping->page_tree,
+							PAGECACHE_TAG_WRITEBACK))
+					ub_io_writeback_dec(mapping);
 				__dec_bdi_stat(bdi, BDI_WRITEBACK);
 				__bdi_writeout_inc(bdi);
 			}
@@ -1400,8 +1406,12 @@ int test_set_page_writeback(struct page *page)
 			radix_tree_tag_set(&mapping->page_tree,
 						page_index(page),
 						PAGECACHE_TAG_WRITEBACK);
-			if (bdi_cap_account_writeback(bdi))
+			if (bdi_cap_account_writeback(bdi)) {
+				if (!radix_tree_prev_tag_get(&mapping->page_tree,
+							PAGECACHE_TAG_WRITEBACK))
+					ub_io_writeback_inc(mapping);
 				__inc_bdi_stat(bdi, BDI_WRITEBACK);
+			}
 		}
 		if (!PageDirty(page)) {
 			radix_tree_tag_clear(&mapping->page_tree,

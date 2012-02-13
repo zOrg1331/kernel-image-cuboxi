@@ -141,6 +141,7 @@ struct sock_private {
 
 struct ub_percpu_struct {
 	int dirty_pages;
+	int writeback_pages;
 	int wb_requests;
 	int wb_sectors;
 
@@ -209,6 +210,7 @@ struct user_beancounter
 #define ub_tw_count		spriv.ubp_tw_count
 
 	atomic_long_t		dirty_pages;
+	atomic_long_t		writeback_pages;
 	atomic_long_t		wb_requests;
 	atomic_long_t		wb_sectors;
 

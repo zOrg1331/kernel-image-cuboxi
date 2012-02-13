@@ -13,6 +13,7 @@
 #include <linux/bootmem.h>
 #include <linux/module.h>
 #include <linux/kmemleak.h>
+#include <linux/pram.h>
 
 #include <asm/bug.h>
 #include <asm/io.h>
@@ -310,9 +311,14 @@ static int __init mark_bootmem_node(bootmem_data_t *bdata,
 	sidx = start - bdata->node_min_pfn;
 	eidx = end - bdata->node_min_pfn;
 
-	if (reserve)
-		return __reserve(bdata, sidx, eidx, flags);
-	else
+	if (reserve) {
+		int ret;
+		
+		ret = __reserve(bdata, sidx, eidx, flags);
+		if (!ret)
+			pram_ban_region(start, end);
+		return ret;
+	} else
 		__free(bdata, sidx, eidx);
 	return 0;
 }

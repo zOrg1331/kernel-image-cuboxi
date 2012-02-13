@@ -39,6 +39,7 @@ static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 		"SwapTotal:      %8lu kB\n"
 		"SwapFree:       %8lu kB\n"
 		"Dirty:          %8lu kB\n"
+		"Writeback:      %8lu kB\n"
 		"AnonPages:      %8lu kB\n"
 		"Shmem:          %8lu kB\n"
 		"Slab:           %8lu kB\n"
@@ -59,6 +60,7 @@ static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 		K(mi->si->totalswap),
 		K(mi->si->freeswap),
 		K(mi->dirty_pages),
+		K(mi->writeback_pages),
 		K(mi->pages[LRU_ACTIVE_ANON] + mi->pages[LRU_INACTIVE_ANON]),
 		K(mi->shmem),
 		K(mi->slab_reclaimable + mi->slab_unreclaimable),
