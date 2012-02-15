@@ -52,8 +52,11 @@ u200
 
 fglrx
 
-dahdi
+# dahdi
 
 # compat-wireless
 emlog
 rt3070
+
+bbswitch
+r8168
