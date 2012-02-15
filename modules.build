@@ -28,7 +28,7 @@ virtualbox-addition
 #etercifs
 
 #telephony drivers
-dahdi
+# dahdi
 #wanpipe
 #cronyx
 
