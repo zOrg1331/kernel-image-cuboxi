@@ -2360,7 +2360,7 @@ static struct dentry *nfs_fs_mount(struct file_system_type *fs_type,
 	if (IS_ERR(mntroot))
 		goto error_splat_super;
 
-	error = security_sb_set_mnt_opts(s, &data->lsm_opts);
+	error = security_sb_set_mnt_opts(s, &data->lsm_opts, 0, NULL);
 	if (error)
 		goto error_splat_root;
 
@@ -2735,7 +2735,7 @@ nfs4_remote_mount(struct file_system_type *fs_type, int flags,
 		goto error_splat_super;
 	}
 
-	error = security_sb_set_mnt_opts(s, &data->lsm_opts);
+	error = security_sb_set_mnt_opts(s, &data->lsm_opts, 0, NULL);
 	if (error)
 		goto error_splat_root;
 
