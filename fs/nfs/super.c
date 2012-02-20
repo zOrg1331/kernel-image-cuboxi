@@ -2684,6 +2684,7 @@ nfs4_remote_mount(struct file_system_type *fs_type, int flags,
 	struct nfs_fh *mntfh;
 	struct dentry *mntroot;
 	int (*compare_super)(struct super_block *, void *) = nfs_compare_super;
+	unsigned long kflags = 0, kflags_out = 0;
 	struct nfs_sb_mountdata sb_mntdata = {
 		.mntflags = flags,
 	};
@@ -2736,9 +2737,19 @@ nfs4_remote_mount(struct file_system_type *fs_type, int flags,
 		goto error_splat_super;
 	}
 
-	error = security_sb_set_mnt_opts(s, &data->lsm_opts, 0, NULL);
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (server->caps & NFS_CAP_SECURITY_LABEL)
+		kflags |= SECURITY_LSM_NATIVE_LABELS;
+#endif
+
+	error = security_sb_set_mnt_opts(s, &data->lsm_opts, kflags, &kflags_out);
 	if (error)
 		goto error_splat_root;
+
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (server->caps & NFS_CAP_SECURITY_LABEL && !(kflags_out & SECURITY_LSM_NATIVE_LABELS))
+		server->caps &= ~NFS_CAP_SECURITY_LABEL;
+#endif
 
 	s->s_flags |= MS_ACTIVE;
 

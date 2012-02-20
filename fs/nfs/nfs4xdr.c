@@ -99,9 +99,15 @@ static int nfs4_stat_to_errno(int);
 #define nfs4_path_maxsz		(1 + ((3 + NFS4_MAXPATHLEN) >> 2))
 #define nfs4_owner_maxsz	(1 + XDR_QUADLEN(IDMAP_NAMESZ))
 #define nfs4_group_maxsz	(1 + XDR_QUADLEN(IDMAP_NAMESZ))
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+/* PI(4 bytes) + LFS(4 bytes) + 1(for null terminator?) + MAXLABELLEN */
+#define	nfs4_label_maxsz	(4 + 4 + 1 + XDR_QUADLEN(NFS4_MAXLABELLEN))
+#else
+#define	nfs4_label_maxsz	0
+#endif
 /* This is based on getfattr, which uses the most attributes: */
 #define nfs4_fattr_value_maxsz	(1 + (1 + 2 + 2 + 4 + 2 + 1 + 1 + 2 + 2 + \
-				3 + 3 + 3 + nfs4_owner_maxsz + nfs4_group_maxsz))
+				3 + 3 + 3 + nfs4_owner_maxsz + nfs4_group_maxsz + nfs4_label_maxsz))
 #define nfs4_fattr_maxsz	(nfs4_fattr_bitmap_maxsz + \
 				nfs4_fattr_value_maxsz)
 #define decode_getattr_maxsz    (op_decode_hdr_maxsz + nfs4_fattr_maxsz)
@@ -109,6 +115,7 @@ static int nfs4_stat_to_errno(int);
 				 1 + 2 + 1 + \
 				nfs4_owner_maxsz + \
 				nfs4_group_maxsz + \
+				nfs4_label_maxsz + \
 				4 + 4)
 #define encode_savefh_maxsz     (op_encode_hdr_maxsz)
 #define decode_savefh_maxsz     (op_decode_hdr_maxsz)
@@ -968,7 +975,7 @@ static void encode_nfs4_verifier(struct xdr_stream *xdr, const nfs4_verifier *ve
 	encode_opaque_fixed(xdr, verf->data, NFS4_VERIFIER_SIZE);
 }
 
-static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap, const struct nfs_server *server)
+static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap, const struct nfs4_label *label, const struct nfs_server *server)
 {
 	char owner_name[IDMAP_NAMESZ];
 	char owner_group[IDMAP_NAMESZ];
@@ -1018,6 +1025,10 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap, const 
 		}
 		len += 4 + (XDR_QUADLEN(owner_grouplen) << 2);
 	}
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (label)
+		len += 4 + 4 + 4 + (XDR_QUADLEN(label->len) << 2);
+#endif
 	if (iap->ia_valid & ATTR_ATIME_SET)
 		len += 16;
 	else if (iap->ia_valid & ATTR_ATIME)
@@ -1074,6 +1085,15 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap, const 
 		bmval1 |= FATTR4_WORD1_TIME_MODIFY_SET;
 		*p++ = cpu_to_be32(NFS4_SET_TO_SERVER_TIME);
 	}
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (label) {
+		bmval2 |= FATTR4_WORD2_SECURITY_LABEL;
+		*p++ = cpu_to_be32(label->lfs);
+		*p++ = cpu_to_be32(label->pi);
+		*p++ = cpu_to_be32(label->len);
+		p = xdr_encode_opaque_fixed(p, label->label, label->len);
+	}
+#endif
 
 	/*
 	 * Now we backfill the bitmap and the attribute buffer length.
@@ -1140,7 +1160,7 @@ static void encode_create(struct xdr_stream *xdr, const struct nfs4_create_arg *
 	}
 
 	encode_string(xdr, create->name->len, create->name->name);
-	encode_attrs(xdr, create->attrs, create->server);
+	encode_attrs(xdr, create->attrs, create->label, create->server);
 }
 
 static void encode_getattr_one(struct xdr_stream *xdr, uint32_t bitmap, struct compound_hdr *hdr)
@@ -1362,21 +1382,21 @@ static inline void encode_createmode(struct xdr_stream *xdr, const struct nfs_op
 	switch(arg->open_flags & O_EXCL) {
 	case 0:
 		*p = cpu_to_be32(NFS4_CREATE_UNCHECKED);
-		encode_attrs(xdr, arg->u.attrs, arg->server);
+		encode_attrs(xdr, arg->u.attrs, arg->label, arg->server);
 		break;
 	default:
 		clp = arg->server->nfs_client;
 		if (clp->cl_mvops->minor_version > 0) {
 			if (nfs4_has_persistent_session(clp)) {
 				*p = cpu_to_be32(NFS4_CREATE_GUARDED);
-				encode_attrs(xdr, arg->u.attrs, arg->server);
+				encode_attrs(xdr, arg->u.attrs, arg->label, arg->server);
 			} else {
 				struct iattr dummy;
 
 				*p = cpu_to_be32(NFS4_CREATE_EXCLUSIVE4_1);
 				encode_nfs4_verifier(xdr, &arg->u.verifier);
 				dummy.ia_valid = 0;
-				encode_attrs(xdr, &dummy, arg->server);
+				encode_attrs(xdr, &dummy, arg->label, arg->server);
 			}
 		} else {
 			*p = cpu_to_be32(NFS4_CREATE_EXCLUSIVE);
@@ -1625,7 +1645,7 @@ static void encode_setattr(struct xdr_stream *xdr, const struct nfs_setattrargs 
 {
 	encode_op_hdr(xdr, OP_SETATTR, decode_setattr_maxsz, hdr);
 	encode_nfs4_stateid(xdr, &arg->stateid);
-	encode_attrs(xdr, arg->iap, server);
+	encode_attrs(xdr, arg->iap, arg->label, server);
 }
 
 static void encode_setclientid(struct xdr_stream *xdr, const struct nfs4_setclientid *setclientid, struct compound_hdr *hdr)
@@ -3998,6 +4018,64 @@ static int decode_attr_time_delta(struct xdr_stream *xdr, uint32_t *bitmap,
 	return status;
 }
 
+static int decode_attr_security_label(struct xdr_stream *xdr, uint32_t *bitmap, struct nfs4_label *label)
+{
+	uint32_t pi = 0;
+	uint32_t lfs = 0;
+	__u32 len;
+	__be32 *p;
+	int status = 0;
+
+	if (unlikely(bitmap[2] & (FATTR4_WORD2_SECURITY_LABEL - 1U)))
+		return -EIO;
+	if (likely(bitmap[2] & FATTR4_WORD2_SECURITY_LABEL)) {
+		p = xdr_inline_decode(xdr, 4);
+		if (unlikely(!p))
+			goto out_overflow;
+		lfs = be32_to_cpup(p++);
+		p = xdr_inline_decode(xdr, 4);
+		if (unlikely(!p))
+			goto out_overflow;
+		pi = be32_to_cpup(p++);
+		p = xdr_inline_decode(xdr, 4);
+		if (unlikely(!p))
+			goto out_overflow;
+		len = be32_to_cpup(p++);
+		p = xdr_inline_decode(xdr, len);
+		if (unlikely(!p))
+			goto out_overflow;
+		if (len < XDR_MAX_NETOBJ) {
+			if (label) {
+				if (label->len < len) {
+					printk(KERN_ERR
+						"%s(): label->len %d < len %d\n",
+						__func__, label->len, len);
+				} else {
+					memcpy(label->label, p, len);
+					label->len = len;
+					label->pi = pi;
+					label->lfs = lfs;
+					status = NFS_ATTR_FATTR_V4_SECURITY_LABEL;
+				}
+			} else {
+				printk("%s(): NULL label.\n", __func__);
+				dump_stack();
+			}
+			bitmap[2] &= ~FATTR4_WORD2_SECURITY_LABEL;
+		} else
+			printk(KERN_WARNING "%s: label too long (%u)!\n",
+					__FUNCTION__, len);
+	}
+	if(label && label->label)
+		dprintk("%s: label=%s, len=%d, PI=%d, LFS=%d\n", __func__,
+				 label->label, label->len, label->pi, label->lfs);
+	return status;
+
+out_overflow:
+	print_overflow_msg(__func__, xdr);
+	return -EIO;
+}
+
 static int decode_attr_time_modify(struct xdr_stream *xdr, uint32_t *bitmap, struct timespec *time)
 {
 	int status = 0;
@@ -4227,7 +4305,7 @@ xdr_error:
 static int decode_getfattr_attrs(struct xdr_stream *xdr, uint32_t *bitmap,
 		struct nfs_fattr *fattr, struct nfs_fh *fh,
 		struct nfs4_fs_locations *fs_loc,
-		const struct nfs_server *server)
+		struct nfs4_label *label, const struct nfs_server *server)
 {
 	int status;
 	umode_t fmode = 0;
@@ -4329,6 +4407,10 @@ static int decode_getfattr_attrs(struct xdr_stream *xdr, uint32_t *bitmap,
 	if (status < 0)
 		goto xdr_error;
 	fattr->valid |= status;
+	status = decode_attr_security_label(xdr, bitmap, label);
+	if (status < 0)
+		goto xdr_error;
+	fattr->valid |= status;
 
 xdr_error:
 	dprintk("%s: xdr returned %d\n", __func__, -status);
@@ -4337,7 +4419,7 @@ xdr_error:
 
 static int decode_getfattr_generic(struct xdr_stream *xdr, struct nfs_fattr *fattr,
 		struct nfs_fh *fh, struct nfs4_fs_locations *fs_loc,
-		const struct nfs_server *server)
+		struct nfs4_label *label, const struct nfs_server *server)
 {
 	__be32 *savep;
 	uint32_t attrlen,
@@ -4356,7 +4438,7 @@ static int decode_getfattr_generic(struct xdr_stream *xdr, struct nfs_fattr *fat
 	if (status < 0)
 		goto xdr_error;
 
-	status = decode_getfattr_attrs(xdr, bitmap, fattr, fh, fs_loc, server);
+	status = decode_getfattr_attrs(xdr, bitmap, fattr, fh, fs_loc, label, server);
 	if (status < 0)
 		goto xdr_error;
 
@@ -4367,9 +4449,9 @@ xdr_error:
 }
 
 static int decode_getfattr(struct xdr_stream *xdr, struct nfs_fattr *fattr,
-		const struct nfs_server *server)
+		struct nfs4_label *label, const struct nfs_server *server)
 {
-	return decode_getfattr_generic(xdr, fattr, NULL, NULL, server);
+	return decode_getfattr_generic(xdr, fattr, NULL, NULL, label, server);
 }
 
 /*
@@ -5699,7 +5781,7 @@ static int nfs4_xdr_dec_open_downgrade(struct rpc_rqst *rqstp,
 	status = decode_open_downgrade(xdr, res);
 	if (status != 0)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -5725,7 +5807,7 @@ static int nfs4_xdr_dec_access(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_access(xdr, res);
 	if (status != 0)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -5754,7 +5836,7 @@ static int nfs4_xdr_dec_lookup(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_getfh(xdr, res->fh);
 	if (status)
 		goto out;
-	status = decode_getfattr(xdr, res->fattr, res->server);
+	status = decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -5780,7 +5862,7 @@ static int nfs4_xdr_dec_lookup_root(struct rpc_rqst *rqstp,
 		goto out;
 	status = decode_getfh(xdr, res->fh);
 	if (status == 0)
-		status = decode_getfattr(xdr, res->fattr, res->server);
+		status = decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -5806,7 +5888,7 @@ static int nfs4_xdr_dec_remove(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_remove(xdr, &res->cinfo);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->dir_attr, res->server);
+	decode_getfattr(xdr, res->dir_attr, res->dir_label, res->server);
 out:
 	return status;
 }
@@ -5839,12 +5921,12 @@ static int nfs4_xdr_dec_rename(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	if (status)
 		goto out;
 	/* Current FH is target directory */
-	if (decode_getfattr(xdr, res->new_fattr, res->server))
+	if (decode_getfattr(xdr, res->new_fattr, res->new_label, res->server))
 		goto out;
 	status = decode_restorefh(xdr);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->old_fattr, res->server);
+	decode_getfattr(xdr, res->old_fattr, res->old_label, res->server);
 out:
 	return status;
 }
@@ -5880,12 +5962,12 @@ static int nfs4_xdr_dec_link(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	 * Note order: OP_LINK leaves the directory as the current
 	 *             filehandle.
 	 */
-	if (decode_getfattr(xdr, res->dir_attr, res->server))
+	if (decode_getfattr(xdr, res->dir_attr, res->dir_label, res->server))
 		goto out;
 	status = decode_restorefh(xdr);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -5917,12 +5999,12 @@ static int nfs4_xdr_dec_create(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_getfh(xdr, res->fh);
 	if (status)
 		goto out;
-	if (decode_getfattr(xdr, res->fattr, res->server))
+	if (decode_getfattr(xdr, res->fattr, res->label, res->server))
 		goto out;
 	status = decode_restorefh(xdr);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->dir_fattr, res->server);
+	decode_getfattr(xdr, res->dir_fattr, res->dir_label, res->server);
 out:
 	return status;
 }
@@ -5954,7 +6036,7 @@ static int nfs4_xdr_dec_getattr(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_putfh(xdr);
 	if (status)
 		goto out;
-	status = decode_getfattr(xdr, res->fattr, res->server);
+	status = decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -6056,7 +6138,7 @@ static int nfs4_xdr_dec_close(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	 * 	an ESTALE error. Shouldn't be a problem,
 	 * 	though, since fattr->valid will remain unset.
 	 */
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -6088,11 +6170,11 @@ static int nfs4_xdr_dec_open(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	status = decode_getfh(xdr, &res->fh);
 	if (status)
 		goto out;
-	if (decode_getfattr(xdr, res->f_attr, res->server) != 0)
+	if (decode_getfattr(xdr, res->f_attr, res->f_label, res->server) != 0)
 		goto out;
 	if (decode_restorefh(xdr) != 0)
 		goto out;
-	decode_getfattr(xdr, res->dir_attr, res->server);
+	decode_getfattr(xdr, res->dir_attr, res->dir_label, res->server);
 out:
 	return status;
 }
@@ -6140,7 +6222,7 @@ static int nfs4_xdr_dec_open_noattr(struct rpc_rqst *rqstp,
 	status = decode_open(xdr, res);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->f_attr, res->server);
+	decode_getfattr(xdr, res->f_attr, NULL, res->server);
 out:
 	return status;
 }
@@ -6167,7 +6249,7 @@ static int nfs4_xdr_dec_setattr(struct rpc_rqst *rqstp,
 	status = decode_setattr(xdr);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -6347,7 +6429,7 @@ static int nfs4_xdr_dec_write(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	if (status)
 		goto out;
 	if (res->fattr)
-		decode_getfattr(xdr, res->fattr, res->server);
+		decode_getfattr(xdr, res->fattr, NULL, res->server);
 	if (!status)
 		status = res->count;
 out:
@@ -6376,7 +6458,7 @@ static int nfs4_xdr_dec_commit(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	if (status)
 		goto out;
 	if (res->fattr)
-		decode_getfattr(xdr, res->fattr, res->server);
+		decode_getfattr(xdr, res->fattr, NULL, res->server);
 out:
 	return status;
 }
@@ -6535,7 +6617,7 @@ static int nfs4_xdr_dec_delegreturn(struct rpc_rqst *rqstp,
 	status = decode_delegreturn(xdr);
 	if (status != 0)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, res->label, res->server);
 out:
 	return status;
 }
@@ -6564,7 +6646,7 @@ static int nfs4_xdr_dec_fs_locations(struct rpc_rqst *req,
 		goto out;
 	xdr_enter_page(xdr, PAGE_SIZE);
 	status = decode_getfattr_generic(xdr, &res->fs_locations->fattr,
-					 NULL, res->fs_locations,
+					 NULL, res->fs_locations, NULL,
 					 res->fs_locations->server);
 out:
 	return status;
@@ -6814,7 +6896,7 @@ static int nfs4_xdr_dec_layoutcommit(struct rpc_rqst *rqstp,
 	status = decode_layoutcommit(xdr, rqstp, res);
 	if (status)
 		goto out;
-	decode_getfattr(xdr, res->fattr, res->server);
+	decode_getfattr(xdr, res->fattr, NULL, res->server);
 out:
 	return status;
 }
@@ -6945,7 +7027,7 @@ int nfs4_decode_dirent(struct xdr_stream *xdr, struct nfs_entry *entry,
 		goto out_overflow;
 
 	if (decode_getfattr_attrs(xdr, bitmap, entry->fattr, entry->fh,
-				  NULL, entry->server) < 0)
+				  NULL, NULL, entry->server) < 0)
 		goto out_overflow;
 	if (entry->fattr->valid & NFS_ATTR_FATTR_MOUNTED_ON_FILEID)
 		entry->ino = entry->fattr->mounted_on_fileid;
