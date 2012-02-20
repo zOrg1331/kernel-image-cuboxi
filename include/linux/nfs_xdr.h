@@ -94,6 +94,7 @@ struct nfs_fattr {
 #define NFS_ATTR_FATTR_MOUNTED_ON_FILEID (1U << 22)
 #define NFS_ATTR_FATTR_OWNER_NAME	(1U << 23)
 #define NFS_ATTR_FATTR_GROUP_NAME	(1U << 24)
+#define NFS_ATTR_FATTR_V4_SECURITY_LABEL (1U << 25)	/* NFSv4 Security Labels */
 
 #define NFS_ATTR_FATTR (NFS_ATTR_FATTR_TYPE \
 		| NFS_ATTR_FATTR_MODE \
@@ -113,7 +114,8 @@ struct nfs_fattr {
 		| NFS_ATTR_FATTR_SPACE_USED)
 #define NFS_ATTR_FATTR_V4 (NFS_ATTR_FATTR \
 		| NFS_ATTR_FATTR_SPACE_USED \
-		| NFS_ATTR_FATTR_CHANGE)
+		| NFS_ATTR_FATTR_CHANGE \
+		| NFS_ATTR_FATTR_V4_SECURITY_LABEL)
 
 /*
  * Info on the file system
