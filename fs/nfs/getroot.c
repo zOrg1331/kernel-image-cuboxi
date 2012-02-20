@@ -212,6 +212,18 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 		return ERR_PTR(-ENOMEM);
 	}
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (server->caps & NFS_CAP_SECURITY_LABEL) {
+		label = nfs4_label_alloc(GFP_KERNEL);
+		if (label == NULL) {
+			dprintk("nfs_get_root: nfs4_label_alloc error = %d\n",
+					error);
+			ret = ERR_PTR(-ENOMEM);
+			goto out;
+		}
+	}
+#endif
+
 	/* get the actual root for this mount */
 	error = server->nfs_client->rpc_ops->getattr(server, mntfh, fattr, label);
 	if (error < 0) {
@@ -257,6 +269,10 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 out:
 	if (name)
 		kfree(name);
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (server->caps & NFS_CAP_SECURITY_LABEL)
+		nfs4_label_free(label);
+#endif
 	nfs_free_fattr(fattr);
 	dprintk("<-- nfs4_get_root()\n");
 	return ret;

@@ -1144,6 +1144,14 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	if (fhandle == NULL || fattr == NULL)
 		goto out_error;
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
+		label = nfs4_label_alloc(GFP_NOWAIT);
+		if (label == NULL)
+			goto out_error;
+	}
+#endif
+
 	error = NFS_PROTO(dir)->lookup(NFS_SERVER(dir)->client, dir, &dentry->d_name, fhandle, fattr, label);
 	if (error)
 		goto out_bad;
@@ -1154,6 +1162,12 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
+
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL))
+		nfs4_label_free(label);
+#endif
+
 out_set_verifier:
 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
  out_valid:
@@ -1187,6 +1201,7 @@ out_zap_parent:
 out_error:
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
+	nfs4_label_free(label);
 	dput(parent);
 	dfprintk(LOOKUPCACHE, "NFS: %s(%s/%s) lookup returned error %d\n",
 			__func__, dentry->d_parent->d_name.name,
@@ -1301,6 +1316,13 @@ static struct dentry *nfs_lookup(struct inode *dir, struct dentry * dentry, stru
 	if (fhandle == NULL || fattr == NULL)
 		goto out;
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
+		label = nfs4_label_alloc(GFP_NOWAIT);
+		if (label == NULL)
+			goto out;
+	}
+#endif
 	parent = dentry->d_parent;
 	/* Protect against concurrent sillydeletes */
 	nfs_block_sillyrename(parent);
@@ -1327,6 +1349,10 @@ no_entry:
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL))
+		nfs4_label_free(label);
+#endif
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
 	return res;
