@@ -61,7 +61,7 @@
 static bool enable_ino64 = NFS_64_BIT_INODE_NUMBERS_ENABLED;
 
 static void nfs_invalidate_inode(struct inode *);
-static int nfs_update_inode(struct inode *, struct nfs_fattr *);
+static int nfs_update_inode(struct inode *, struct nfs_fattr *, struct nfs4_label *);
 
 static struct kmem_cache * nfs_inode_cachep;
 
@@ -247,7 +247,7 @@ nfs_init_locked(struct inode *inode, void *opaque)
  * instead of inode number.
  */
 struct inode *
-nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr)
+nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	struct nfs_find_desc desc = {
 		.fh	= fh,
@@ -388,7 +388,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr)
 
 		unlock_new_inode(inode);
 	} else
-		nfs_refresh_inode(inode, fattr);
+		nfs_refresh_inode(inode, fattr, label);
 	dprintk("NFS: nfs_fhget(%s/%Ld fh_crc=0x%08x ct=%d)\n",
 		inode->i_sb->s_id,
 		(long long)NFS_FILEID(inode),
@@ -442,7 +442,7 @@ nfs_setattr(struct dentry *dentry, struct iattr *attr)
 		nfs_inode_return_delegation(inode);
 	error = NFS_PROTO(inode)->setattr(dentry, fattr, attr);
 	if (error == 0)
-		nfs_refresh_inode(inode, fattr);
+		nfs_refresh_inode(inode, fattr, NULL);
 	nfs_free_fattr(fattr);
 out:
 	return error;
@@ -770,6 +770,7 @@ int
 __nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
 {
 	int		 status = -ESTALE;
+	struct nfs4_label *label = NULL;
 	struct nfs_fattr *fattr = NULL;
 	struct nfs_inode *nfsi = NFS_I(inode);
 
@@ -787,7 +788,7 @@ __nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
 		goto out;
 
 	nfs_inc_stats(inode, NFSIOS_INODEREVALIDATE);
-	status = NFS_PROTO(inode)->getattr(server, NFS_FH(inode), fattr);
+	status = NFS_PROTO(inode)->getattr(server, NFS_FH(inode), fattr, label);
 	if (status != 0) {
 		dfprintk(PAGECACHE, "nfs_revalidate_inode: (%s/%Ld) getattr failed, error=%d\n",
 			 inode->i_sb->s_id,
@@ -800,7 +801,7 @@ __nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
 		goto out;
 	}
 
-	status = nfs_refresh_inode(inode, fattr);
+	status = nfs_refresh_inode(inode, fattr, label);
 	if (status) {
 		dfprintk(PAGECACHE, "nfs_revalidate_inode: (%s/%Ld) refresh failed, error=%d\n",
 			 inode->i_sb->s_id,
@@ -1136,10 +1137,10 @@ static int nfs_inode_attrs_need_update(const struct inode *inode, const struct n
 		((long)nfsi->attr_gencount - (long)nfs_read_attr_generation_counter() > 0);
 }
 
-static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr)
+static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	if (nfs_inode_attrs_need_update(inode, fattr))
-		return nfs_update_inode(inode, fattr);
+		return nfs_update_inode(inode, fattr, label);
 	return nfs_check_inode_attributes(inode, fattr);
 }
 
@@ -1153,20 +1154,20 @@ static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr
  * safe to do a full update of the inode attributes, or whether just to
  * call nfs_check_inode_attributes.
  */
-int nfs_refresh_inode(struct inode *inode, struct nfs_fattr *fattr)
+int nfs_refresh_inode(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	int status;
 
 	if ((fattr->valid & NFS_ATTR_FATTR) == 0)
 		return 0;
 	spin_lock(&inode->i_lock);
-	status = nfs_refresh_inode_locked(inode, fattr);
+	status = nfs_refresh_inode_locked(inode, fattr, label);
 	spin_unlock(&inode->i_lock);
 
 	return status;
 }
 
-static int nfs_post_op_update_inode_locked(struct inode *inode, struct nfs_fattr *fattr)
+static int nfs_post_op_update_inode_locked(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
 
@@ -1175,7 +1176,7 @@ static int nfs_post_op_update_inode_locked(struct inode *inode, struct nfs_fattr
 		nfsi->cache_validity |= NFS_INO_INVALID_DATA;
 	if ((fattr->valid & NFS_ATTR_FATTR) == 0)
 		return 0;
-	return nfs_refresh_inode_locked(inode, fattr);
+	return nfs_refresh_inode_locked(inode, fattr, label);
 }
 
 /**
@@ -1192,12 +1193,12 @@ static int nfs_post_op_update_inode_locked(struct inode *inode, struct nfs_fattr
  * are expected to change one or more attributes, to avoid
  * unnecessary NFS requests and trips through nfs_update_inode().
  */
-int nfs_post_op_update_inode(struct inode *inode, struct nfs_fattr *fattr)
+int nfs_post_op_update_inode(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	int status;
 
 	spin_lock(&inode->i_lock);
-	status = nfs_post_op_update_inode_locked(inode, fattr);
+	status = nfs_post_op_update_inode_locked(inode, fattr, label);
 	spin_unlock(&inode->i_lock);
 	return status;
 }
@@ -1248,7 +1249,7 @@ int nfs_post_op_update_inode_force_wcc(struct inode *inode, struct nfs_fattr *fa
 		fattr->valid |= NFS_ATTR_FATTR_PRESIZE;
 	}
 out_noforce:
-	status = nfs_post_op_update_inode_locked(inode, fattr);
+	status = nfs_post_op_update_inode_locked(inode, fattr, NULL);
 	spin_unlock(&inode->i_lock);
 	return status;
 }
@@ -1265,7 +1266,7 @@ out_noforce:
  *
  * A very similar scenario holds for the dir cache.
  */
-static int nfs_update_inode(struct inode *inode, struct nfs_fattr *fattr)
+static int nfs_update_inode(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	struct nfs_server *server;
 	struct nfs_inode *nfsi = NFS_I(inode);

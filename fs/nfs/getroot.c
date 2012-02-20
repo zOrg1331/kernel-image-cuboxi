@@ -99,7 +99,7 @@ struct dentry *nfs_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 		goto out;
 	}
 
-	inode = nfs_fhget(sb, mntfh, fsinfo.fattr);
+	inode = nfs_fhget(sb, mntfh, fsinfo.fattr, NULL);
 	if (IS_ERR(inode)) {
 		dprintk("nfs_get_root: get root inode failed\n");
 		ret = ERR_CAST(inode);
@@ -188,6 +188,7 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 	struct nfs_fattr *fattr = NULL;
 	struct dentry *ret;
 	struct inode *inode;
+	struct nfs4_label *label = NULL;
 	void *name = kstrdup(devname, GFP_KERNEL);
 	int error;
 
@@ -212,7 +213,7 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 	}
 
 	/* get the actual root for this mount */
-	error = server->nfs_client->rpc_ops->getattr(server, mntfh, fattr);
+	error = server->nfs_client->rpc_ops->getattr(server, mntfh, fattr, label);
 	if (error < 0) {
 		dprintk("nfs_get_root: getattr error = %d\n", -error);
 		ret = ERR_PTR(error);
@@ -223,7 +224,7 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 	    !nfs_fsid_equal(&server->fsid, &fattr->fsid))
 		memcpy(&server->fsid, &fattr->fsid, sizeof(server->fsid));
 
-	inode = nfs_fhget(sb, mntfh, fattr);
+	inode = nfs_fhget(sb, mntfh, fattr, label);
 	if (IS_ERR(inode)) {
 		dprintk("nfs_get_root: get root inode failed\n");
 		ret = ERR_CAST(inode);

@@ -165,9 +165,9 @@ static struct rpc_clnt *nfs_lookup_mountpoint(struct inode *dir,
 	int err;
 
 	if (NFS_PROTO(dir)->version == 4)
-		return nfs4_proc_lookup_mountpoint(dir, name, fh, fattr);
+		return nfs4_proc_lookup_mountpoint(dir, name, fh, fattr, NULL);
 
-	err = NFS_PROTO(dir)->lookup(NFS_SERVER(dir)->client, dir, name, fh, fattr);
+	err = NFS_PROTO(dir)->lookup(NFS_SERVER(dir)->client, dir, name, fh, fattr, NULL);
 	if (err)
 		return ERR_PTR(err);
 	return rpc_clone_client(NFS_SERVER(dir)->client);
@@ -178,7 +178,7 @@ static inline struct rpc_clnt *nfs_lookup_mountpoint(struct inode *dir,
 						     struct nfs_fh *fh,
 						     struct nfs_fattr *fattr)
 {
-	int err = NFS_PROTO(dir)->lookup(NFS_SERVER(dir)->client, dir, name, fh, fattr);
+	int err = NFS_PROTO(dir)->lookup(NFS_SERVER(dir)->client, dir, name, fh, fattr, NULL);
 	if (err)
 		return ERR_PTR(err);
 	return rpc_clone_client(NFS_SERVER(dir)->client);
