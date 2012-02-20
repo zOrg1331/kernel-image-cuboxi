@@ -34,6 +34,9 @@
  */
 #include <linux/file.h>
 #include <linux/slab.h>
+#ifdef CONFIG_NFSD_V4_SECURITY_LABEL
+#include <linux/security.h>
+#endif
 
 #include "idmap.h"
 #include "cache.h"
@@ -228,6 +231,18 @@ do_open_lookup(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_o
 					resfh, open->op_createmode,
 					(u32 *)open->op_verf.data,
 					&open->op_truncate, &open->op_created);
+
+#ifdef CONFIG_NFSD_V4_SECURITY_LABEL
+		if (!status && open->op_label != NULL) {
+			struct inode *inode = resfh->fh_dentry->d_inode;
+
+			mutex_lock(&inode->i_mutex);
+			/* Is it appropriate to just kick back an error? */
+			status = security_inode_setsecctx(resfh->fh_dentry,
+					open->op_label->label, open->op_label->len);
+			mutex_unlock(&inode->i_mutex);
+		}
+#endif
 
 		/*
 		 * Following rfc 3530 14.2.16, use the returned bitmask
@@ -590,6 +605,18 @@ nfsd4_create(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		status = nfserr_badtype;
 	}
 
+#ifdef CONFIG_NFSD_V4_SECURITY_LABEL
+	if (!status && create->cr_label != NULL) {
+		struct inode *inode = resfh.fh_dentry->d_inode;
+
+		mutex_lock(&inode->i_mutex);
+		/* Is it appropriate to just kick back an error? */
+		status = security_inode_setsecctx(resfh.fh_dentry,
+				create->cr_label->label, create->cr_label->len);
+		mutex_unlock(&inode->i_mutex);
+	}
+#endif
+
 	if (status)
 		goto out;
 
@@ -868,6 +895,11 @@ nfsd4_setattr(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	if (setattr->sa_acl != NULL)
 		status = nfsd4_set_nfs4_acl(rqstp, &cstate->current_fh,
 					    setattr->sa_acl);
+	if (status)
+		goto out;
+	if (setattr->sa_label != NULL)
+		status = nfsd4_set_nfs4_label(rqstp, &cstate->current_fh,
+				setattr->sa_label);
 	if (status)
 		goto out;
 	status = nfsd_setattr(rqstp, &cstate->current_fh, &setattr->sa_iattr,
