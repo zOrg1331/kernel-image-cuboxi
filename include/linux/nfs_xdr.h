@@ -342,6 +342,7 @@ struct nfs_openargs {
 	const u32 *		bitmask;
 	const u32 *		dir_bitmask;
 	__u32			claim;
+	const struct nfs4_label *label;
 	struct nfs4_sequence_args	seq_args;
 };
 
@@ -351,7 +352,9 @@ struct nfs_openres {
 	struct nfs4_change_info	cinfo;
 	__u32                   rflags;
 	struct nfs_fattr *      f_attr;
+	struct nfs4_label *	f_label;
 	struct nfs_fattr *      dir_attr;
+	struct nfs4_label *	dir_label;
 	struct nfs_seqid *	seqid;
 	const struct nfs_server *server;
 	fmode_t			delegation_type;
@@ -393,6 +396,7 @@ struct nfs_closeargs {
 struct nfs_closeres {
 	nfs4_stateid            stateid;
 	struct nfs_fattr *	fattr;
+	struct nfs4_label *	label;
 	struct nfs_seqid *	seqid;
 	const struct nfs_server *server;
 	struct nfs4_sequence_res	seq_res;
@@ -466,6 +470,7 @@ struct nfs4_delegreturnargs {
 
 struct nfs4_delegreturnres {
 	struct nfs_fattr * fattr;
+	struct nfs4_label * label;
 	const struct nfs_server *server;
 	struct nfs4_sequence_res	seq_res;
 };
@@ -486,6 +491,7 @@ struct nfs_readargs {
 
 struct nfs_readres {
 	struct nfs_fattr *	fattr;
+	struct nfs4_label *	label;
 	__u32			count;
 	int                     eof;
 	struct nfs4_sequence_res	seq_res;
@@ -533,6 +539,7 @@ struct nfs_removeargs {
 struct nfs_removeres {
 	const struct nfs_server *server;
 	struct nfs_fattr	*dir_attr;
+	struct nfs4_label	*dir_label;
 	struct nfs4_change_info	cinfo;
 	struct nfs4_sequence_res 	seq_res;
 };
@@ -545,6 +552,8 @@ struct nfs_renameargs {
 	const struct nfs_fh		*new_dir;
 	const struct qstr		*old_name;
 	const struct qstr		*new_name;
+	const struct nfs4_label 	*old_label;
+	const struct nfs4_label 	*new_label;
 	const u32			*bitmask;
 	struct nfs4_sequence_args	seq_args;
 };
@@ -553,8 +562,10 @@ struct nfs_renameres {
 	const struct nfs_server		*server;
 	struct nfs4_change_info		old_cinfo;
 	struct nfs_fattr		*old_fattr;
+	struct nfs4_label 		*old_label;
 	struct nfs4_change_info		new_cinfo;
 	struct nfs_fattr		*new_fattr;
+	struct nfs4_label 		*new_label;
 	struct nfs4_sequence_res	seq_res;
 };
 
@@ -601,6 +612,7 @@ struct nfs_setattrargs {
 	struct iattr *                  iap;
 	const struct nfs_server *	server; /* Needed for name mapping */
 	const u32 *			bitmask;
+	const struct nfs4_label *	label;
 	struct nfs4_sequence_args 	seq_args;
 };
 
@@ -636,6 +648,7 @@ struct nfs_getaclres {
 
 struct nfs_setattrres {
 	struct nfs_fattr *              fattr;
+	struct nfs4_label *		label;
 	const struct nfs_server *	server;
 	struct nfs4_sequence_res	seq_res;
 };
@@ -682,6 +695,7 @@ struct nfs3_setaclargs {
 struct nfs_diropok {
 	struct nfs_fh *		fh;
 	struct nfs_fattr *	fattr;
+	struct nfs4_label *	label;
 };
 
 struct nfs_readlinkargs {
@@ -811,6 +825,7 @@ struct nfs4_accessargs {
 struct nfs4_accessres {
 	const struct nfs_server *	server;
 	struct nfs_fattr *		fattr;
+	struct nfs4_label *		label;
 	u32				supported;
 	u32				access;
 	struct nfs4_sequence_res	seq_res;
@@ -833,6 +848,7 @@ struct nfs4_create_arg {
 	const struct iattr *		attrs;
 	const struct nfs_fh *		dir_fh;
 	const u32 *			bitmask;
+	const struct nfs4_label *	label;
 	struct nfs4_sequence_args 	seq_args;
 };
 
@@ -840,8 +856,10 @@ struct nfs4_create_res {
 	const struct nfs_server *	server;
 	struct nfs_fh *			fh;
 	struct nfs_fattr *		fattr;
+	struct nfs4_label *		label;
 	struct nfs4_change_info		dir_cinfo;
 	struct nfs_fattr *		dir_fattr;
+	struct nfs4_label *		dir_label;
 	struct nfs4_sequence_res	seq_res;
 };
 
@@ -866,6 +884,7 @@ struct nfs4_getattr_res {
 	const struct nfs_server *	server;
 	struct nfs_fattr *		fattr;
 	struct nfs4_sequence_res	seq_res;
+	struct nfs4_label *		label;
 };
 
 struct nfs4_link_arg {
@@ -879,8 +898,10 @@ struct nfs4_link_arg {
 struct nfs4_link_res {
 	const struct nfs_server *	server;
 	struct nfs_fattr *		fattr;
+	struct nfs4_label *		label;
 	struct nfs4_change_info		cinfo;
 	struct nfs_fattr *		dir_attr;
+	struct nfs4_label *		dir_label;
 	struct nfs4_sequence_res	seq_res;
 };
 
@@ -896,6 +917,7 @@ struct nfs4_lookup_res {
 	const struct nfs_server *	server;
 	struct nfs_fattr *		fattr;
 	struct nfs_fh *			fh;
+	struct nfs4_label *		label;
 	struct nfs4_sequence_res	seq_res;
 };
 

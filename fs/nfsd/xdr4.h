@@ -118,6 +118,7 @@ struct nfsd4_create {
 	struct iattr	cr_iattr;           /* request */
 	struct nfsd4_change_info  cr_cinfo; /* response */
 	struct nfs4_acl *cr_acl;
+	struct nfs4_label *cr_label;
 };
 #define cr_linklen	u.link.namelen
 #define cr_linkname	u.link.name
@@ -246,6 +247,7 @@ struct nfsd4_open {
 	struct nfs4_file *op_file;          /* used during processing */
 	struct nfs4_ol_stateid *op_stp;	    /* used during processing */
 	struct nfs4_acl *op_acl;
+	struct nfs4_label *op_label;
 };
 #define op_iattr	iattr
 
@@ -330,6 +332,7 @@ struct nfsd4_setattr {
 	u32		sa_bmval[3];        /* request */
 	struct iattr	sa_iattr;           /* request */
 	struct nfs4_acl *sa_acl;
+	struct nfs4_label *sa_label;
 };
 
 struct nfsd4_setclientid {

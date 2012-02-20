@@ -521,6 +521,18 @@ extern int nfs_mountpoint_expiry_timeout;
 extern void nfs_release_automount_timer(void);
 
 /*
+ * linux/fs/nfs/nfs4proc.c
+ */
+
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+extern struct nfs4_label *nfs4_label_alloc (gfp_t flags);
+extern void nfs4_label_free (struct nfs4_label *);
+#else
+static inline struct nfs4_label *nfs4_label_alloc (gfp_t flags) { return NULL; }
+static inline void nfs4_label_free (struct nfs4_label *label) {}
+#endif
+
+/*
  * linux/fs/nfs/unlink.c
  */
 extern void nfs_complete_unlink(struct dentry *dentry, struct inode *);

@@ -174,6 +174,33 @@ const u32 nfs4_fs_locations_bitmap[2] = {
 	| FATTR4_WORD1_MOUNTED_ON_FILEID
 };
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+
+struct nfs4_label *nfs4_label_alloc (gfp_t flags)
+{
+	struct nfs4_label *label = NULL;
+
+	label = kzalloc(sizeof(struct nfs4_label) + NFS4_MAXLABELLEN, flags);
+	if (label == NULL)
+		return NULL;
+
+	label->label = (void *)(label + 1);
+	label->len = NFS4_MAXLABELLEN;
+	/* 0 is the null format meaning that the data is not to be translated */
+	label->lfs = 0;
+	label->pi = 0;
+	return label;
+}
+
+void nfs4_label_free (struct nfs4_label *label)
+{
+	if (label)
+		kfree(label);
+	return;
+}
+
+#endif
+
 static void nfs4_setup_readdir(u64 cookie, __be32 *verifier, struct dentry *dentry,
 		struct nfs4_readdir_arg *readdir)
 {
