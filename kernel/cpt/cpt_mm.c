@@ -17,6 +17,8 @@
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/mm.h>
+#include <linux/swap.h>
+#include <linux/swapops.h>
 #include <linux/hugetlb.h>
 #include <linux/errno.h>
 #include <linux/ve.h>
@@ -330,6 +332,12 @@ retry:
 			eprintk_ctx("shared mapping is not present: %08lx@%Ld\n", addr, mmobj->o_pos);
 			goto out_unsupported_unlock;
 		}
+#ifdef CONFIG_PSWAP
+		if (ctx->pram_stream) {
+			pdesc->type = PD_COPY;
+			goto out_unlock;
+		}
+#endif
 #ifdef CONFIG_VZ_CHECKPOINT_ITER
 		/* 
 		 * raise it from swap now, so that we save at least when the
@@ -446,25 +454,120 @@ out_unsupported:
 	goto out_put;
 }
 
+#ifdef CONFIG_PRAM
+static void dump_page_pram(struct page *page, pte_t entry,
+			   struct cpt_context *ctx)
+{
+	int err;
+	unsigned long pfn;
+	__u64 __entry;
+
+	err = pram_push_page(ctx->pram_stream, page, &pfn);
+	if (err) {
+		if (!ctx->write_error)
+			ctx->write_error = err;
+		return;
+	}
+
+	entry = pfn_pte(pfn, pte_pgprot(entry));
+	__entry = entry.pte;
+
+	ctx->write(&__entry, 8, ctx);
+}
+
+static void dump_swap_pram(swp_entry_t swp, struct cpt_context *ctx)
+{
+	pte_t entry;
+	__u64 __entry;
+
+	entry = swp_entry_to_pte(swp);
+	__entry = entry.pte;
+
+	ctx->write(&__entry, 8, ctx);
+}
+
+static void dump_pages_pram(struct vm_area_struct *vma,
+		unsigned long start, unsigned long end, struct cpt_context *ctx)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	pte_t entry;
+	spinlock_t *ptl;
+	swp_entry_t swp;
+	struct page *page;
+	struct mm_struct *mm;
+	unsigned long addr;
+	int err = 0;
+
+	mm = vma->vm_mm;
+
+	for (addr = start; addr < end; addr += PAGE_SIZE) {
+		pgd = pgd_offset(mm, addr);
+
+		err = -EFAULT;
+		pud = pud_offset(pgd, addr);
+		if (!pud)
+			break;
+
+		pmd = pmd_offset(pud, addr);
+		if (!pmd)
+			break;
+		split_huge_page_pmd(mm, pmd);
+
+retry:
+		err = -EFAULT;
+		pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+		if (!pte)
+			break;
+		entry = *pte;
+
+		if (pte_present(entry)) {
+			page = pte_page(entry);
+			get_page(page);
+		} else if (is_swap_pte(entry)) {
+			swp = pswap_reserve(pte_to_swp_entry(entry));
+			page = NULL;
+		} else
+			break;
+
+		pte_unmap_unlock(pte, ptl);
+
+		if (!page && !swp.val) {
+			err = handle_mm_fault(mm, vma, addr, 0);
+			if (err & VM_FAULT_ERROR) {
+				err = -EFAULT;
+				break;
+			}
+			goto retry;
+		}
+
+		if (page) {
+			dump_page_pram(page, entry, ctx);
+			put_page(page);
+		} else {
+			dump_swap_pram(swp, ctx);
+		}
+
+		err = 0;
+ 	}
+
+	if (err && !ctx->write_error)
+		ctx->write_error = err;
+}
+#else
+static inline void dump_pages_pram(struct vm_area_struct *vma,
+		unsigned long start, unsigned long end, struct cpt_context *ctx)
+{
+	BUG();
+}
+#endif /* CONFIG_PRAM */
+
 static inline void dump_page(struct page *page, struct cpt_context *ctx)
 {
 	char *maddr;
 
-#ifdef CONFIG_PRAM
-	if (ctx->pram_stream) {
-		int err;
-		unsigned long pfn;
-		__u64 __pfn;
-
-		err = pram_push_page(ctx->pram_stream, page, &pfn);
-		if (err && !ctx->write_error)
-			ctx->write_error = err;
-
-		__pfn = pfn;
-		ctx->write(&__pfn, 8, ctx);
-		return;
-	}
-#endif
 	maddr = kmap(page);
 	ctx->write(maddr, PAGE_SIZE, ctx);
 	kunmap(page);
@@ -527,8 +630,12 @@ int dump_page_block(struct vm_area_struct *vma, struct cpt_page_block *pgb,
 #endif
 
 	ctx->write(pgb, sizeof(*pgb), ctx);
-	if (copy == PD_COPY)
-		dump_pages(vma, pgb->cpt_start, pgb->cpt_end, ctx);
+	if (copy == PD_COPY) {
+		if (pgb->cpt_content == CPT_CONTENT_PRAM)
+			dump_pages_pram(vma, pgb->cpt_start, pgb->cpt_end, ctx);
+		else
+			dump_pages(vma, pgb->cpt_start, pgb->cpt_end, ctx);
+	}
 	cpt_close_object(ctx);
 	cpt_pop_object(&saved_object, ctx);
 	return 0;

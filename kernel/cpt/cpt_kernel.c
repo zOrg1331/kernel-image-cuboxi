@@ -157,6 +157,9 @@ unsigned int test_cpu_caps_and_features(void)
 	flags |= 1 << CPT_CPU_X86_IA64;
 	flags |= 1 << CPT_CPU_X86_FXSR;
 #endif
+	if (!is_sock_registered(PF_INET6))
+		flags |= 1 << CPT_NO_IPV6;
+
 	return flags;
 }
 

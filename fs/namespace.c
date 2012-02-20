@@ -1672,7 +1672,7 @@ static int change_mount_flags(struct vfsmount *mnt, int ms_flags)
 	return error;
 }
 
-static inline ve_remount_allowed(struct vfsmount *mnt, int flags, int mnt_flags)
+static inline int ve_remount_allowed(struct vfsmount *mnt, int flags, int mnt_flags)
 {
 	struct ve_struct *ve = get_exec_env();
 	struct super_block *sb = mnt->mnt_sb;

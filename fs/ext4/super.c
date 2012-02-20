@@ -3671,6 +3671,8 @@ failed_mount:
 	if (sbi->s_proc) {
 		remove_proc_entry(sb->s_id, ext4_proc_root);
 	}
+	if (sbi->s_pfcache_root.mnt)
+		ext4_relink_pfcache(sb, NULL);
 #ifdef CONFIG_QUOTA
 	for (i = 0; i < MAXQUOTAS; i++)
 		kfree(sbi->s_qf_names[i]);
@@ -4750,7 +4752,7 @@ static void ext4_kill_sb(struct super_block *sb)
 	if (sbi && sbi->s_balloon_ino)
 		iput(sbi->s_balloon_ino);
 
-	if (sbi->s_pfcache_root.mnt)
+	if (sbi && sbi->s_pfcache_root.mnt)
 		ext4_relink_pfcache(sb, NULL);
 
 	pramcache_save_page_cache(sb);

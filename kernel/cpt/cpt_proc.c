@@ -511,6 +511,12 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 
 		if (src_flags & CPT_UNSUPPORTED_MASK)
 			err = 2;
+
+		if ((dst_flags & (1 << CPT_NO_IPV6)) &&
+		     !(src_flags & (1 << CPT_NO_IPV6))) {
+			eprintk_ctx("IPv6 not loaded on destination node\n");
+			err = 1;
+		}
 		break;
 	}
 	default:

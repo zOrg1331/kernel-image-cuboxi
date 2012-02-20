@@ -29,7 +29,7 @@ MODULE_DESCRIPTION("Virtuozzo Interface");
 MODULE_LICENSE("GPL v2");
 
 static LIST_HEAD(ioctls);
-static spinlock_t ioctl_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_SPINLOCK(ioctl_lock);
 
 static struct vzioctlinfo *vzctl_get_handler(unsigned int cmd)
 {

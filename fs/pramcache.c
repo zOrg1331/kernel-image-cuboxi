@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/types.h>
+#include <linux/vmstat.h>
 #include <linux/writeback.h>
 
 static int pramcache_enabled;	/* if set, page & bdev caches
@@ -108,7 +109,20 @@ static void pramcache_drain(struct pramcache_struct *cache)
 
 static void pramcache_destroy(struct pramcache_struct *cache)
 {
+	struct inode_cache *icache;
+	unsigned long flags;
+
 	unregister_shrinker(&cache->shrinker);
+
+	local_irq_save(flags);
+	list_for_each_entry(icache, &cache->inode_list, list_node) {
+		struct page *page;
+
+		list_for_each_entry(page, &icache->pages, lru)
+			__dec_zone_page_state(page, NR_FILE_PAGES);
+	}
+	local_irq_restore(flags);
+
 	pramcache_drain(cache);
 	kfree(cache);
 }
@@ -535,6 +549,7 @@ static void load_page_cache(struct super_block *sb)
 	struct pram_stream meta_stream, data_stream;
 	struct pramcache_struct *cache;
 	struct inode_cache *icache;
+	unsigned long flags;
 	int err;
 
 	err = open_streams(sb, "page_cache", PRAM_READ,
@@ -572,6 +587,17 @@ next:
 
 done:
 	close_streams(&meta_stream, &data_stream, 0);
+
+	local_irq_save(flags);
+	list_for_each_entry(icache, &cache->inode_list, list_node) {
+		struct page *page;
+
+		/* account pram cache as file cache */
+		list_for_each_entry(page, &icache->pages, lru)
+			__inc_zone_page_state(page, NR_FILE_PAGES);
+	}
+	local_irq_restore(flags);
+
 	register_shrinker(&cache->shrinker);
 	sb->s_pramcache = cache;
 	return;
@@ -667,6 +693,7 @@ again:
 			kfree(icache);
 		}
 
+		dec_zone_page_state(page, NR_FILE_PAGES);
 		put_page(page);
 		nr_to_scan--;
 
@@ -695,6 +722,8 @@ void pramcache_populate_inode(struct inode *inode)
 	struct super_block *sb = inode->i_sb;
 	struct pramcache_struct *cache = sb->s_pramcache;
 	struct inode_cache *icache;
+	struct page *page;
+	unsigned long flags;
 	int err;
 
 	if (!cache || !cache->nr_pages)
@@ -708,6 +737,11 @@ void pramcache_populate_inode(struct inode *inode)
 
 	if (!icache)
 		return;
+
+	local_irq_save(flags);
+	list_for_each_entry(page, &icache->pages, lru)
+		__dec_zone_page_state(page, NR_FILE_PAGES);
+	local_irq_restore(flags);
 
 	err = populate_mapping(sb, &inode->i_data, &icache->pages);
 	if (err)

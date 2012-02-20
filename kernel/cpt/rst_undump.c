@@ -50,6 +50,7 @@
 #include "cpt_net.h"
 #include "cpt_ubc.h"
 #include "cpt_kernel.h"
+#include "cpt_syscalls.h"
 
 static int rst_utsname(cpt_context_t *ctx);
 
@@ -971,7 +972,6 @@ int rst_kill(struct cpt_context *ctx)
 	cpt_object_t *obj;
 	struct ve_struct *env;
 	int err = 0;
-	long delay;
 
 	if (!ctx->ve_id)
 		return -EINVAL;
@@ -1025,14 +1025,16 @@ int rst_kill(struct cpt_context *ctx)
 	rst_finish_vfsmount_ref(ctx);
 	cpt_object_destroy(ctx);
 
-	delay = 1;
-	while (atomic_read(&env->counter) != 1) {
-		if (signal_pending(current))
-			break;
-		current->state = TASK_INTERRUPTIBLE;
-		delay = (delay < HZ) ? (delay << 1) : HZ;
-		schedule_timeout(delay);
+	if (ctx->ctx_state == CPT_CTX_UNDUMPING) {
+		int ret;
+		pid_t init_pid = task_pid_nr(get_env_init(env));
+		
+		ret = sc_waitx(init_pid, __WALL, NULL);
+		if (ret < 0)
+			wprintk_ctx("wait init failed: %d\n", ret);
 	}
+
+	wait_event_interruptible(env->ve_list_wait, list_empty(&env->ve_list));
 
 out:
 	put_ve(env);

@@ -88,6 +88,8 @@ struct backing_dev_info {
 
 	struct device *dev;
 
+        wait_queue_head_t cong_waitq; /* to wait on congestion */
+
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debug_dir;
 	struct dentry *debug_stats;

@@ -412,7 +412,6 @@ int cpt_kill(struct cpt_context *ctx)
 	struct ve_struct *env;
 	cpt_object_t *obj;
 	struct task_struct *root_task = NULL;
-	long delay;
 
 	if (!ctx->ve_id)
 		return -EINVAL;
@@ -499,14 +498,7 @@ int cpt_kill(struct cpt_context *ctx)
 	cpt_finish_vfsmount_ref(ctx);
 	cpt_object_destroy(ctx);
 
-	delay = 1;
-	while (atomic_read(&env->counter) != 1) {
-		if (signal_pending(current))
-			break;
-		current->state = TASK_INTERRUPTIBLE;
-		delay = (delay < HZ) ? (delay << 1) : HZ;
-		schedule_timeout(delay);
-	}
+	wait_event_interruptible(env->ve_list_wait, list_empty(&env->ve_list));
 
 out:
 	put_ve(env);

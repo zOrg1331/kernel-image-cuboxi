@@ -456,7 +456,6 @@ void ext4_update_data_csum(struct inode *inode, loff_t pos,
 			   unsigned len, struct page* page)
 {
 	__u32 *digest = (__u32 *)EXT4_I(inode)->i_data_csum;
-	__u32 work[SHA_WORKSPACE_WORDS];
 	const u8 *kaddr, *data;
 
 	len += pos & (SHA_MESSAGE_BYTES-1);
@@ -471,8 +470,7 @@ void ext4_update_data_csum(struct inode *inode, loff_t pos,
 
 	kaddr = kmap_atomic(page, KM_USER0);
 	data = kaddr + (pos & (PAGE_CACHE_SIZE - 1));
-	for ( ; len ; len -= SHA_MESSAGE_BYTES, data += SHA_MESSAGE_BYTES )
-		sha_transform(digest, data, work);
+	sha_batch_transform(digest, data, len / SHA_MESSAGE_BYTES);
 	kunmap_atomic(kaddr, KM_USER0);
 
 	trace_ext4_update_data_csum(inode, pos);
@@ -482,7 +480,6 @@ static int ext4_finish_data_csum(struct inode *inode, u8 *csum)
 {
 	__u32 *digest = (__u32 *)csum;
 	__u8 data[SHA_MESSAGE_BYTES * 2];
-	__u32 work[SHA_WORKSPACE_WORDS];
 	loff_t end;
 	unsigned tail;
 	__be64 bits;
@@ -522,12 +519,11 @@ static int ext4_finish_data_csum(struct inode *inode, u8 *csum)
 	if (tail >= SHA_MESSAGE_BYTES - sizeof(bits)) {
 		memcpy(data + SHA_MESSAGE_BYTES * 2 - sizeof(bits),
 				&bits, sizeof(bits));
-		sha_transform(digest, data, work);
-		sha_transform(digest, data + SHA_MESSAGE_BYTES, work);
+		sha_batch_transform(digest, data, 2);
 	} else {
 		memcpy(data + SHA_MESSAGE_BYTES - sizeof(bits),
 				&bits, sizeof(bits));
-		sha_transform(digest, data, work);
+		sha_batch_transform(digest, data, 1);
 	}
 
 	for (tail = 0; tail < SHA_DIGEST_WORDS ; tail++)

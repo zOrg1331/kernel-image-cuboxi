@@ -132,6 +132,7 @@ struct css_set;
 
 struct ve_struct {
 	struct list_head	ve_list;
+	wait_queue_head_t	ve_list_wait;
 
 	envid_t			veid;
 	/*

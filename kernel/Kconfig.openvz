@@ -83,6 +83,7 @@ config VZ_CHECKPOINT
 	select VE_ETHDEV
 	select VE_NETDEV
 	select PRAM
+	select PSWAP
  	default m
  	help
  	  This option adds two modules, "cpt" and "rst", which allow
