@@ -594,7 +594,7 @@ venet_set_op(struct net_device *dev, u32 data,
 	struct ve_struct *ve;
 	int ret = 0;
 
-	read_lock(&ve_list_lock);
+	mutex_lock(&ve_list_lock);
 	for_each_ve(ve) {
 		struct ve_struct *ve_old;
 
@@ -610,7 +610,7 @@ venet_set_op(struct net_device *dev, u32 data,
 		if (ret < 0)
 			break;
 	}
-	read_unlock(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 	return ret;
 }
 

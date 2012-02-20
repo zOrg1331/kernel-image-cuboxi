@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/mm.h>
+#include <linux/mmgang.h>
 #include <linux/hugetlb.h>
 #include <linux/errno.h>
 #include <linux/pagemap.h>
@@ -36,6 +37,7 @@
 #endif
 #include <asm/mmu_context.h>
 #include <asm/vsyscall.h>
+#include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/cpt_image.h>
 
@@ -510,6 +512,125 @@ static int cpt_setup_vdso(unsigned long addr, int is_rhel5)
 #define cpt_setup_vdso(addr)	(0)
 #endif
 
+#ifdef CONFIG_PRAM
+static int rst_page_pram(struct mm_struct *mm, struct vm_area_struct *vma,
+			 unsigned long addr, pte_t *pte, pte_t entry,
+			 struct cpt_context *ctx)
+{
+	struct page *page;
+	unsigned long pfn;
+	int err;
+
+	err = -EINVAL;
+	pfn = pte_pfn(entry);
+	if (!pfn_present(pfn))
+		goto out;
+
+	page = pfn_to_page(pfn);
+	if (page->mapping != (struct address_space *)ctx)
+		goto out;
+
+	page->mapping = NULL;
+	list_del_init(&page->lru);
+
+	err = gang_add_user_page(page, get_mm_gang(mm), GFP_KERNEL);
+	if (err)
+		goto out_put_page;
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
+
+	page_add_new_anon_rmap(page, vma, addr);
+	inc_mm_counter(mm, anon_rss);
+	set_pte_at(mm, addr, pte, entry);
+out:
+	return err;
+out_put_page:
+	put_page(page);
+	goto out;
+}
+
+static int rst_swap_pram(struct mm_struct *mm, struct vm_area_struct *vma,
+			 unsigned long addr, pte_t *pte, pte_t entry,
+			 struct cpt_context *ctx)
+{
+	swp_entry_t swp;
+
+	swp = pswap_restore(pte_to_swp_entry(entry), mm_ub(mm));
+	if (!swp.val)
+		return -EINVAL;
+
+	entry = swp_entry_to_pte(swp);
+
+	if (list_empty(&mm->mmlist)) {
+		spin_lock(&mmlist_lock);
+		if (list_empty(&mm->mmlist))
+			list_add(&mm->mmlist, &init_mm.mmlist);
+		spin_unlock(&mmlist_lock);
+	}
+
+	inc_mm_counter(mm, swap_usage);
+	set_pte_at(mm, addr, pte, entry);
+
+	return 0;
+}
+
+static int rst_anon_page_pram(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long addr, loff_t *pos, struct cpt_context *ctx)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	pte_t entry;
+	spinlock_t *ptl;
+	__le64 __entry;
+	int err;
+
+	err = ctx->pread(&__entry, 8, ctx, *pos);
+	*pos += 8;
+	if (err)
+		goto out;
+	entry.pte = __entry;
+
+	err = -EFAULT;
+	if (addr < vma->vm_start || addr >= vma->vm_end)
+		goto out;
+
+	pgd = pgd_offset(mm, addr);
+
+	err = -ENOMEM;
+	pud = pud_alloc(mm, pgd, addr);
+	if (!pud)
+		goto out;
+
+	pmd = pmd_alloc(mm, pud, addr);
+	if (!pmd)
+		goto out;
+
+	pte = pte_alloc_map_lock(mm, pmd, addr, &ptl);
+	if (!pte)
+		goto out;
+
+	err = -EBUSY;
+	if (!pte_none(*pte))
+		goto out_unlock;
+
+	if (pte_present(entry))
+		err = rst_page_pram(mm, vma, addr, pte, entry, ctx);
+	else if (is_swap_pte(entry))
+		err = rst_swap_pram(mm, vma, addr, pte, entry, ctx);
+	else
+		err = -EINVAL;
+
+out_unlock:
+	pte_unmap_unlock(pte, ptl);
+out:
+	return err;
+}
+#endif /* CONFIG_PRAM */
+
 static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 		struct cpt_context *ctx)
 {
@@ -880,10 +1001,8 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 #ifdef CONFIG_PRAM
 				} else if (u.pb.cpt_content == CPT_CONTENT_PRAM) {
 					struct vm_area_struct *vma;
-					struct page *page;
-					unsigned long pfn;
-					__u64 __pfn;
-					int i;
+					unsigned long addr;
+					loff_t tpos = pos;
 
 					down_read(&mm->mmap_sem);
 					if ((vma = find_vma(mm, u.pb.cpt_start)) == NULL) {
@@ -892,27 +1011,14 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 						err = -ESRCH;
 						goto out;
 					}
-					for (i = 0; i < (u.pb.cpt_end - u.pb.cpt_start) / PAGE_SIZE; i++) {
-						err = ctx->pread(&__pfn, 8, ctx, pos + i * 8);
+					if (anon_vma_prepare(vma)) {
+						err = -ENOMEM;
+						goto out;
+					}
+					for (addr = u.pb.cpt_start; addr < u.pb.cpt_end; addr += PAGE_SIZE) {
+						err = rst_anon_page_pram(mm, vma, addr, &tpos, ctx);
 						if (err)
 							break;
-						err = -EINVAL;
-						pfn = (unsigned long)__pfn;
-						if (!pfn_present(pfn))
-							break;
-						page = pfn_to_page(pfn);
-						if (page->mapping != (struct address_space *)ctx)
-							break;
-						page->mapping = NULL;
-						list_del_init(&page->lru);
-						err = install_anon_page(mm, vma,
-								(unsigned long)u.pb.cpt_start + i * PAGE_SIZE,
-								page);
-						if (err) {
-							eprintk_ctx("install_anon_page: %d\n", err);
-							put_page(page);
-							break;
-						}
 					}
 					up_read(&mm->mmap_sem);
 					if (err)

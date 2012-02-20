@@ -1744,6 +1744,17 @@ static struct ctl_table vm_table[] = {
 		.extra1		= &zero,
 	},
 #endif
+#ifdef CONFIG_PSWAP
+	{
+		.procname	= "prune_pswap",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &sysctl_prune_pswap,
+		.maxlen		= sizeof(sysctl_prune_pswap),
+		.mode		= 0644,
+		.proc_handler	= prune_pswap_sysctl_handler,
+		.strategy	= &sysctl_intvec,
+	},
+#endif
 
 /*
  * NOTE: do not add new entries to this table unless you have read

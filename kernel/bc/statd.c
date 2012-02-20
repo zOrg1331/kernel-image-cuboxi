@@ -23,7 +23,7 @@
 #include <bc/beancounter.h>
 #include <bc/statd.h>
 
-static spinlock_t ubs_notify_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_SPINLOCK(ubs_notify_lock);
 static LIST_HEAD(ubs_notify_list);
 static long ubs_min_interval;
 static ubstattime_t ubs_start_time, ubs_end_time;

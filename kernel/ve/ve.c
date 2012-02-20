@@ -37,6 +37,7 @@
 #include <linux/devpts_fs.h>
 #include <linux/user_namespace.h>
 #include <linux/init_task.h>
+#include <linux/mutex.h>
 
 #include <linux/vzcalluser.h>
 
@@ -99,7 +100,7 @@ struct ve_struct ve0 = {
 EXPORT_SYMBOL(ve0);
 
 LIST_HEAD(ve_list_head);
-rwlock_t ve_list_lock = RW_LOCK_UNLOCKED;
+DEFINE_MUTEX(ve_list_lock);
 
 struct ve_struct *__find_ve_by_id(envid_t veid)
 {
@@ -116,10 +117,10 @@ EXPORT_SYMBOL(__find_ve_by_id);
 struct ve_struct *get_ve_by_id(envid_t veid)
 {
 	struct ve_struct *ve;
-	read_lock(&ve_list_lock);
+	mutex_lock(&ve_list_lock);
 	ve = __find_ve_by_id(veid);
 	get_ve(ve);
-	read_unlock(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 	return ve;
 }
 EXPORT_SYMBOL(get_ve_by_id);

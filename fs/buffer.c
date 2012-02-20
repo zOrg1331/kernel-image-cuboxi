@@ -1605,6 +1605,27 @@ void unmap_underlying_metadata(struct block_device *bdev, sector_t block)
 }
 EXPORT_SYMBOL(unmap_underlying_metadata);
 
+static void bdi_congestion_wait(struct backing_dev_info *bdi)
+{
+	DEFINE_WAIT(_wait);
+
+	spin_lock_bh(&bdi->wb_lock);
+
+	for (;;) {
+		prepare_to_wait(&bdi->cong_waitq, &_wait,
+				TASK_UNINTERRUPTIBLE);
+		if (!bdi_write_congested(bdi))
+			break;
+
+		spin_unlock_bh(&bdi->wb_lock);
+		io_schedule();
+		spin_lock_bh(&bdi->wb_lock);
+	}
+	finish_wait(&bdi->cong_waitq, &_wait);
+
+	spin_unlock_bh(&bdi->wb_lock);
+}
+
 /*
  * NOTE! All mapped/uptodate combinations are valid:
  *
@@ -1739,6 +1760,10 @@ static int __block_write_full_page(struct inode *inode, struct page *page,
 	 */
 	BUG_ON(PageWriteback(page));
 	set_page_writeback(page);
+
+	if (page->mapping->backing_dev_info->bd_full_fn && !wbc->for_reclaim &&
+	    bdi_write_congested(page->mapping->backing_dev_info))
+		bdi_congestion_wait(page->mapping->backing_dev_info);
 
 	do {
 		struct buffer_head *next = bh->b_this_page;

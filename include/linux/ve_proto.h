@@ -31,7 +31,7 @@ int venet_init(void);
 
 extern struct list_head ve_list_head;
 #define for_each_ve(ve)	list_for_each_entry((ve), &ve_list_head, ve_list)
-extern rwlock_t ve_list_lock;
+extern struct mutex ve_list_lock;
 extern struct ve_struct *get_ve_by_id(envid_t);
 extern struct ve_struct *__find_ve_by_id(envid_t);
 

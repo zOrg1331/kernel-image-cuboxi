@@ -145,7 +145,7 @@ static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 		goto out_free;
 
 	retval = -ESRCH;
-	read_lock(&ve_list_lock);
+	mutex_lock(&ve_list_lock);
 	ve = __find_ve_by_id(veid);
 	if (ve == NULL)
 		goto out_unlock;
@@ -164,7 +164,7 @@ static int ve_get_cpu_stat(envid_t veid, struct vz_cpu_stat __user *buf)
 		vstat->avenrun[i].val_int = LOAD_INT(tmp);
 		vstat->avenrun[i].val_frac = LOAD_FRAC(tmp);
 	}
-	read_unlock(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 
 	retval = 0;
 	if (copy_to_user(buf, vstat, sizeof(*vstat)))
@@ -174,7 +174,7 @@ out_free:
 	return retval;
 
 out_unlock:
-	read_unlock(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 	goto out_free;
 }
 
@@ -801,6 +801,9 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
  
 	ve->odirect_enable = 2;
 	ve->fsync_enable = 2;
+
+	INIT_LIST_HEAD(&ve->ve_list);
+	init_waitqueue_head(&ve->ve_list_wait);
  
 	return 0;
 }
@@ -864,26 +867,27 @@ static void set_ve_caps(struct ve_struct *ve, struct task_struct *tsk)
 
 static int ve_list_add(struct ve_struct *ve)
 {
-	write_lock_irq(&ve_list_lock);
+	mutex_lock(&ve_list_lock);
 	if (__find_ve_by_id(ve->veid) != NULL)
 		goto err_exists;
 
 	list_add(&ve->ve_list, &ve_list_head);
 	nr_ve++;
-	write_unlock_irq(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 	return 0;
 
 err_exists:
-	write_unlock_irq(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 	return -EEXIST;
 }
 
 static void ve_list_del(struct ve_struct *ve)
 {
-	write_lock_irq(&ve_list_lock);
-	list_del(&ve->ve_list);
+	mutex_lock(&ve_list_lock);
+	list_del_init(&ve->ve_list);
 	nr_ve--;
-	write_unlock_irq(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
+	wake_up_all(&ve->ve_list_wait);
 }
 
 static void init_ve_cred(struct ve_struct *ve, struct cred *new)
@@ -1966,7 +1970,7 @@ void *ve_seq_start(struct seq_file *m, loff_t *pos)
 	struct ve_struct *curve;
 
 	curve = get_exec_env();
-	read_lock(&ve_list_lock);
+	mutex_lock(&ve_list_lock);
 	if (!ve_is_super(curve)) {
 		if (*pos != 0)
 			return NULL;
@@ -1988,7 +1992,7 @@ EXPORT_SYMBOL(ve_seq_next);
 
 void ve_seq_stop(struct seq_file *m, void *v)
 {
-	read_unlock(&ve_list_lock);
+	mutex_unlock(&ve_list_lock);
 }
 EXPORT_SYMBOL(ve_seq_stop);
 

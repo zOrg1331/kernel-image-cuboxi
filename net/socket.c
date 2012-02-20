@@ -2536,6 +2536,19 @@ int sock_register(const struct net_proto_family *ops)
 	return err;
 }
 
+int is_sock_registered(int family)
+{
+	const struct net_proto_family *ops;
+
+	BUG_ON(family < 0 || family >= NPROTO);
+
+	spin_lock(&net_family_lock);
+	ops = net_families[family];
+	spin_unlock(&net_family_lock);
+
+	return ops ? 1 : 0;
+}
+
 /**
  *	sock_unregister - remove a protocol handler
  *	@family: protocol family to remove
@@ -2757,6 +2770,7 @@ EXPORT_SYMBOL(sock_map_fd);
 EXPORT_SYMBOL(sock_recvmsg);
 EXPORT_SYMBOL(sock_register);
 EXPORT_SYMBOL(sock_release);
+EXPORT_SYMBOL(is_sock_registered);
 EXPORT_SYMBOL(sock_sendmsg);
 EXPORT_SYMBOL(sock_unregister);
 EXPORT_SYMBOL(sock_wake_async);

@@ -90,6 +90,10 @@ menu "Caches"
 source "fs/fscache/Kconfig"
 source "fs/cachefiles/Kconfig"
 
+config PRAMCACHE
+	bool "Persistent FS cache"
+	depends on PRAM
+
 endmenu
 
 if BLOCK
@@ -97,10 +101,6 @@ menu "CD-ROM/DVD Filesystems"
 
 source "fs/isofs/Kconfig"
 source "fs/udf/Kconfig"
-
-config PRAMCACHE
-	bool "Persistent FS cache"
-	depends on PRAM
 
 endmenu
 endif # BLOCK

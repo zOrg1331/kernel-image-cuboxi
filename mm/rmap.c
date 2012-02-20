@@ -981,6 +981,7 @@ void page_add_new_anon_rmap(struct page *page,
 	else
 		add_page_to_unevictable_list(page);
 }
+EXPORT_SYMBOL(page_add_new_anon_rmap);
 
 /**
  * page_add_file_rmap - add pte mapping to a file page

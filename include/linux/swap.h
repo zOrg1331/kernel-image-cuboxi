@@ -194,9 +194,14 @@ struct swap_info_struct {
 	unsigned int max;
 	unsigned int inuse_pages;
 	unsigned int old_block_size;
+#ifdef CONFIG_PSWAP
+	signed char pswap_type;
+	unsigned long *pswap_reserved;
+#endif
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 	struct user_beancounter **swap_ubs;
 #endif
+	unsigned char uuid[16];
 };
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
@@ -334,6 +339,25 @@ extern void mem_cgroup_get_shmem_target(struct inode *inode, pgoff_t pgoff,
 #endif
 
 extern void swap_unplug_io_fn(struct backing_dev_info *, struct page *);
+
+#ifdef CONFIG_PSWAP
+extern int sysctl_prune_pswap;
+extern int prune_pswap_sysctl_handler(ctl_table *table, int write,
+		void __user *buffer, size_t *length, loff_t *ppos);
+extern swp_entry_t pswap_reserve(swp_entry_t);
+extern swp_entry_t pswap_restore(swp_entry_t, struct user_beancounter *);
+#else
+static inline swp_entry_t pswap_reserve(swp_entry_t swp)
+{
+	return (swp_entry_t) {0};
+}
+
+static inline swp_entry_t pswap_restore(swp_entry_t swp,
+					struct user_beancounter *ub)
+{
+	return (swp_entry_t) {0};
+}
+#endif
 
 #ifdef CONFIG_SWAP
 /* linux/mm/page_io.c */

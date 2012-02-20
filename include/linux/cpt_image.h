@@ -198,10 +198,11 @@ struct cpt_major_hdr
 #define CPT_CPU_X86_XSAVE	25
 #define CPT_CPU_X86_AVX		26
 #define CPT_CPU_X86_AESNI	27
+#define CPT_NO_IPV6		28
 
 /* This mask is used to determine whether VE
    has some unsupported features or not */
-#define CPT_UNSUPPORTED_MASK	0xf1ff0000UL
+#define CPT_UNSUPPORTED_MASK	0xe1ff0000UL
 
 #define CPT_KERNEL_CONFIG_PAE	0
 

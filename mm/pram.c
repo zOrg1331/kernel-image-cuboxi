@@ -119,11 +119,19 @@ static inline __u32 pram_meta_csum(const void *p)
 
 static void pram_list_add(struct pram_chain *chain)
 {
-	struct page *page;
+	struct page *page, *head_page;
+	struct pram_chain *head;
+
+	BUG_ON(!pram_pfn);
+	head_page = pfn_to_page(pram_pfn);
+	head = page_address(head_page);
 
 	page = virt_to_page(chain);
-	chain->chain_pfn = pram_pfn;
-	pram_pfn = page_to_pfn(page);
+	BUG_ON(page == head_page);
+
+	chain->chain_pfn = head->chain_pfn;
+	head->chain_pfn = page_to_pfn(page);
+	head->csum = pram_meta_csum(head);
 	list_add(&page->lru, &pram_list);
 }
 
@@ -132,32 +140,63 @@ static void pram_list_del(struct pram_chain *chain)
 	struct page *page, *prev_page;
 	struct pram_chain *prev;
 
+	BUG_ON(!pram_pfn);
+
 	page = virt_to_page(chain);
-	if (page->lru.prev != &pram_list) {
-		prev_page = list_entry(page->lru.prev, struct page, lru);
-		prev = page_address(prev_page);
-		BUG_ON(prev->chain_pfn != page_to_pfn(page));
-		prev->chain_pfn = chain->chain_pfn;
-		if (PRAM_CHAIN_STATE(chain) != PRAM_STATE_SAVE)
-			prev->csum = pram_meta_csum(prev);
-	} else {
-		BUG_ON(pram_pfn != page_to_pfn(page));
-		pram_pfn = chain->chain_pfn;
-	}
+	BUG_ON(pram_pfn == page_to_pfn(page));
+
+	prev_page = page->lru.prev == &pram_list ?
+		pfn_to_page(pram_pfn) :
+		list_entry(page->lru.prev, struct page, lru);
+	prev = page_address(prev_page);
+
+	BUG_ON(prev->chain_pfn != page_to_pfn(page));
+	prev->chain_pfn = chain->chain_pfn;
+	if (PRAM_CHAIN_STATE(chain) != PRAM_STATE_SAVE)
+		prev->csum = pram_meta_csum(prev);
 	list_del_init(&page->lru);
 }
 
-static __init void pram_build_list(void)
+static void pram_init_list_head(void)
+{
+	struct pram_chain *head;
+
+	BUG_ON(!pram_pfn);
+	head = pfn_to_kaddr(pram_pfn);
+
+	memset(head, 0, PAGE_SIZE);
+	head->magic = PRAM_MAGIC;
+	head->csum = pram_meta_csum(head);
+}
+
+static struct page *pram_alloc_page(gfp_t gfpmask);
+static void __banned_pages_shrink(int nr_to_scan);
+
+static __init int pram_build_list(void)
 {
 	unsigned long pfn;
 	struct page *page;
 	struct pram_chain *chain;
 
+	if (!pram_pfn) {
+		/* allocate pram list head */
+		page = pram_alloc_page(GFP_KERNEL);
+		if (!page) {
+			__banned_pages_shrink(INT_MAX);
+			return -ENOMEM;
+		}
+		pram_pfn = page_to_pfn(page);
+		pram_init_list_head();
+	}
+
 	for (pfn = pram_pfn; pfn; pfn = chain->chain_pfn) {
 		page = pfn_to_page(pfn);
 		chain = page_address(page);
-		list_add_tail(&page->lru, &pram_list);
+		if (pfn != pram_pfn)
+			list_add_tail(&page->lru, &pram_list);
 	}
+
+	return 0;
 }
 
 static struct pram_chain *pram_find_chain(const char *name)
@@ -560,7 +599,7 @@ static void pram_destroy_all(void)
 		__pram_destroy(chain);
 	}
 	INIT_LIST_HEAD(&pram_list);
-	pram_pfn = 0;
+	pram_init_list_head();
 	mutex_unlock(&pram_mutex);
 }
 
@@ -1027,6 +1066,9 @@ int __pram_open(const char *name, int mode, gfp_t gfp_mask,
 {
 	int ret;
 
+	if (!pram_pfn)
+		return -ENODEV;
+
 	switch (mode) {
 	case PRAM_WRITE:
 		ret = pram_create(name, gfp_mask, stream);
@@ -1069,25 +1111,35 @@ void pram_close(struct pram_stream *stream, int how)
 }
 EXPORT_SYMBOL(pram_close);
 
+static void __banned_pages_shrink(int nr_to_scan)
+{
+	struct page *page;
+
+	if (nr_to_scan <= 0)
+		return;
+
+	while (!list_empty(&banned_pages)) {
+		page = list_entry(banned_pages.next, struct page, lru);
+		list_del_init(&page->lru);
+		__free_page(page);
+		BUG_ON(!nr_banned_pages);
+		nr_banned_pages--;
+		nr_to_scan--;
+		if (!nr_to_scan)
+			break;
+	}
+}
+
 static int banned_pages_shrink(struct shrinker *shrink,
 			       int nr_to_scan, gfp_t gfp_mask)
 {
-	struct page *page, *tmp;
 	int nr_left = nr_banned_pages;
 
 	if (!nr_to_scan || !nr_left)
 		return nr_left;
 
 	spin_lock(&banned_pages_lock);
-	list_for_each_entry_safe(page, tmp, &banned_pages, lru) {
-		BUG_ON(!nr_banned_pages);
-		nr_banned_pages--;
-		list_del_init(&page->lru);
-		__free_page(page);
-		nr_to_scan--;
-		if (!nr_to_scan)
-			break;
-	}
+	__banned_pages_shrink(nr_to_scan);
 	nr_left = nr_banned_pages;
 	spin_unlock(&banned_pages_lock);
 
@@ -1150,8 +1202,15 @@ static struct attribute_group pram_attr_group = {
 
 static int __init pram_init(void)
 {
-	pram_build_list();
+	int ret;
+
 	pram_init_preallocs();
+	ret = pram_build_list();
+	if (ret) {
+		printk(KERN_ERR "PRAM: failed to build list: %d\n", ret);
+		return ret;
+	}
+
 	hotcpu_notifier(pram_callback, 0);
 	register_shrinker(&banned_pages_shrinker);
 	sysfs_update_group(kernel_kobj, &pram_attr_group);

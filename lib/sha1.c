@@ -8,6 +8,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/bitops.h>
+#include <linux/cryptohash.h>
 #include <asm/unaligned.h>
 
 /*
@@ -198,3 +199,17 @@ void sha_init(__u32 *buf)
 	buf[4] = 0xc3d2e1f0;
 }
 EXPORT_SYMBOL(sha_init);
+
+static void sha_batch_generic(__u32 *digest, const char *data, unsigned rounds)
+{
+	__u32 temp[SHA_WORKSPACE_WORDS];
+
+	while (rounds--) {
+		sha_transform(digest, data, temp);
+		data += SHA_MESSAGE_BYTES;
+	}
+}
+
+void __read_mostly (*sha_batch_transform)(__u32 *digest,
+		const char *data, unsigned rounds) = sha_batch_generic;
+EXPORT_SYMBOL(sha_batch_transform);
