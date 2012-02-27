@@ -1753,7 +1753,6 @@ set_qf_format:
 		case Opt_pfcache:
 			if (!capable(CAP_SYS_ADMIN))
 				break;
-			set_opt2(sb, CSUM);
 			pfcache = match_strdup(&args[0]);
 			if (ext4_relink_pfcache(sb, pfcache)) {
 				kfree(pfcache);

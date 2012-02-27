@@ -416,27 +416,31 @@ int rst_iteration(cpt_context_t *ctx)
 			break;
 		}
 
-		ent.val = 0;
 		lock_page(page);
 		SetPageUptodate(page);
 		SetPageSwapBacked(page);
 		if (add_to_swap(page, ub)) {
 			lru_cache_add_anon(page);
 			ent.val = page->private;
+		} else {
+			unlock_page(page);
+			gang_del_user_page(page);
+			page_cache_release(page);
+			err = -ENOMEM;
+			break;
 		}
 		unlock_page(page);
 		page_cache_release(page);
-		err = -ENOMEM;
-		if (ent.val == 0) {
-			gang_del_user_page(page);
-			break;
-		}
 
-		err = rb_insert_pfn(rep.handle, ent, ctx);
+		err = swap_duplicate(ent);
 		if (err)
 			break;
 
-		swap_duplicate(ent);
+		err = rb_insert_pfn(rep.handle, ent, ctx);
+		if (err) {
+			free_swap_and_cache(ent);
+			break;
+		}
 	}
 	put_beancounter(ub);
 
