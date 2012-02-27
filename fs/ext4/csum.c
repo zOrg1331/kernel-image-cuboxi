@@ -90,6 +90,7 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 	struct nameidata nd;
 	struct file *file;
 	long nr_opened = 0, nr_closed = 0, nr_total;
+	bool reload_csum = false;
 
 	if (new_root) {
 		int err = path_lookup(new_root, LOOKUP_FOLLOW |
@@ -98,6 +99,10 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 			printk(KERN_ERR"PFCache: lookup \"%s\" failed %d\n",
 					new_root, err);
 			return err;
+		}
+		if (!test_opt2(sb, CSUM)) {
+			set_opt2(sb, CSUM);
+			reload_csum = true;
 		}
 	} else {
 		nd.path.mnt = NULL;
@@ -112,15 +117,35 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
 		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE|I_NEW))
 			continue;
-		if (!S_ISREG(inode->i_mode))
+		if (!S_ISREG(inode->i_mode) && !S_ISDIR(inode->i_mode))
 			continue;
-		if (!(ext4_test_inode_state(inode, EXT4_STATE_CSUM) &&
-		      EXT4_I(inode)->i_data_csum_end < 0))
+		if (!ext4_test_inode_state(inode, EXT4_STATE_CSUM)) {
+			if (!reload_csum)
+				continue;
+		} else if (!(EXT4_I(inode)->i_data_csum_end < 0))
 			continue;
 		__iget(inode);
 		spin_unlock(&inode_lock);
 		iput(old_inode);
 		old_inode = inode;
+
+		nd.path.mnt = NULL;
+		nd.path.dentry = NULL;
+
+		mutex_lock(&inode->i_mutex);
+
+		if (!ext4_test_inode_state(inode, EXT4_STATE_CSUM)) {
+			if (!reload_csum)
+				goto next;
+			if (S_ISDIR(inode->i_mode)) {
+				ext4_load_dir_csum(inode);
+				goto next;
+			}
+			if (ext4_load_data_csum(inode))
+				goto next;
+		} else if (!(EXT4_I(inode)->i_data_csum_end < 0) ||
+				S_ISDIR(inode->i_mode))
+			goto next;
 
 		if (new_root) {
 			nd.flags = LOOKUP_STRICT;
@@ -136,7 +161,6 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 			}
 		}
 
-		mutex_lock(&inode->i_mutex);
 		file = inode->i_peer_file;
 		if ((!nd.path.mnt && !file) || (nd.path.mnt && file &&
 		     file->f_mapping == nd.path.dentry->d_inode->i_mapping))
@@ -147,9 +171,7 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 			nr_closed++;
 		}
 
-		if (nd.path.mnt &&
-		    ext4_test_inode_state(inode, EXT4_STATE_CSUM) &&
-		    EXT4_I(inode)->i_data_csum_end < 0) {
+		if (nd.path.mnt) {
 			path_get(&nd.path);
 			if (!open_inode_peer(inode, &nd.path, &init_cred))
 				nr_opened++;
@@ -368,7 +390,6 @@ int ext4_load_data_csum(struct inode *inode)
 	EXT4_I(inode)->i_data_csum_end = -1;
 	ext4_set_inode_state(inode, EXT4_STATE_CSUM);
 	percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_csum_complete);
-	ext4_open_pfcache(inode);
 	return 0;
 }
 

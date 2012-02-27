@@ -1825,6 +1825,9 @@ retry_open:
 # ifdef CONFIG_VTTYS
 			console_driver = vtty_driver;
 			index = 0;
+			/* reset fops, sometimes there might be console_fops
+			 * picked from inode->i_cdev in chrdev_open() */
+			filp->f_op = &tty_fops;
 # endif
 		} else
 #endif

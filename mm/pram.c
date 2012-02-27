@@ -105,6 +105,22 @@ static int __init parse_pram(char *arg)
 }
 early_param("pram", parse_pram);
 
+static int __init parse_pram_low(char *arg)
+{
+	char *endptr;
+	unsigned long long pram_low;
+
+	if (!arg)
+		return 0;
+	pram_low = memparse(arg, &endptr);
+	if (*endptr != '\0')
+		return -EINVAL;
+	if (pram_low > 0)
+		banned[0].end = PFN_UP(pram_low) - 1;
+	return 0;
+}
+early_param("pram_low", parse_pram_low);
+
 /* SSE-4.2 crc32c faster than crc32, but not avaliable at early boot */
 static inline __u32 pram_data_csum(const void *p)
 {

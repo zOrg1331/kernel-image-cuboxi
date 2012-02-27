@@ -1235,7 +1235,8 @@ module_init(crash_notes_memory_init)
 static int __init parse_crashkernel_mem(char 			*cmdline,
 					unsigned long long	system_ram,
 					unsigned long long	*crash_size,
-					unsigned long long	*crash_base)
+					unsigned long long	*crash_base,
+					int			*strict)
 {
 	char *cur = cmdline, *tmp;
 
@@ -1306,6 +1307,8 @@ static int __init parse_crashkernel_mem(char 			*cmdline,
 						"after '@'\n");
 				return -EINVAL;
 			}
+			if (strict && *crash_base > 0 && *tmp != '+')
+				*strict = 1;
 		}
 	}
 
@@ -1321,7 +1324,8 @@ static int __init parse_crashkernel_mem(char 			*cmdline,
  */
 static int __init parse_crashkernel_simple(char 		*cmdline,
 					   unsigned long long 	*crash_size,
-					   unsigned long long 	*crash_base)
+					   unsigned long long 	*crash_base,
+					   int			*strict)
 {
 	char *cur = cmdline;
 
@@ -1331,8 +1335,11 @@ static int __init parse_crashkernel_simple(char 		*cmdline,
 		return -EINVAL;
 	}
 
-	if (*cur == '@')
+	if (*cur == '@') {
 		*crash_base = memparse(cur+1, &cur);
+		if (strict && *crash_base > 0 && *cur != '+')
+			*strict = 1;
+	}
 
 	return 0;
 }
@@ -1375,7 +1382,8 @@ unsigned long long __init arch_default_crash_base(void)
 int __init parse_crashkernel(char 		 *cmdline,
 			     unsigned long long system_ram,
 			     unsigned long long *crash_size,
-			     unsigned long long *crash_base)
+			     unsigned long long *crash_base,
+			     int		*strict)
 {
 	char 	*p = cmdline, *ck_cmdline = NULL;
 	char	*first_colon, *first_space;
@@ -1383,6 +1391,8 @@ int __init parse_crashkernel(char 		 *cmdline,
 	BUG_ON(!crash_size || !crash_base);
 	*crash_size = 0;
 	*crash_base = 0;
+	if (strict)
+		*strict = 0;
 
 	/* find crashkernel and use the last one if there are more */
 	p = strstr(p, "crashkernel=");
@@ -1437,10 +1447,10 @@ int __init parse_crashkernel(char 		 *cmdline,
 	first_space = strchr(ck_cmdline, ' ');
 	if (first_colon && (!first_space || first_colon < first_space))
 		return parse_crashkernel_mem(ck_cmdline, system_ram,
-				crash_size, crash_base);
+				crash_size, crash_base, strict);
 	else
 		return parse_crashkernel_simple(ck_cmdline, crash_size,
-				crash_base);
+				crash_base, strict);
 
 	return 0;
 }

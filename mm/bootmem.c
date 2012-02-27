@@ -316,7 +316,7 @@ static int __init mark_bootmem_node(bootmem_data_t *bdata,
 		
 		ret = __reserve(bdata, sidx, eidx, flags);
 		if (!ret)
-			pram_ban_region(start, end);
+			pram_ban_region(start, end - 1);
 		return ret;
 	} else
 		__free(bdata, sidx, eidx);
