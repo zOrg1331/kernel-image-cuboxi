@@ -4,7 +4,7 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab095
+%define ovzver 028stab098
 %define ovzrel 1
 
 # Whether to apply the Xen patches -- leave this enabled.
@@ -272,6 +272,8 @@ Patch100036: diff-ubc-debug-sock-orphan-acct
 Patch100038: linux-2.6-fs-fix-wrongly-kfree-ing-a-vmalloc-ed-area.patch
 Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
+Patch100041: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
+
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
 Patch101001: diff-mac-cpufreq-bug-on-apple-xserve-20090811
@@ -471,6 +473,8 @@ echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
 
 %patch100038 -p1
 %patch100039 -p1
+
+%patch100041 -p1
 
 %patch101000 -p1
 %patch101001 -p1

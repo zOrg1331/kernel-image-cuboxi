@@ -6742,7 +6742,7 @@ diff -Naurp xen/arch/x86/domain.c xen-redhat/arch/x86/domain.c
 diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 --- xen/arch/x86/domctl.c
 +++ xen-redhat/arch/x86/domctl.c
-@@ -24,6 +24,21 @@
+@@ -24,6 +24,44 @@
  #include <asm/hvm/hvm.h>
  #include <asm/hvm/support.h>
  #include <asm/processor.h>
@@ -6761,10 +6761,33 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +        iop->gwr, iop->pgd3val);
 +    return (iop->remain ? -EFAULT : 0);
 +}
++
++/* On success, this will have added a reference to the domain. */
++static int prep_assign_device(struct domain **d, u8 *bus, u8 *devfn,
++    const struct xen_domctl *domctl, const char *domctl_name)
++{
++    struct domain *tmp;
++
++    if ( !iommu_enabled )
++        return -ENOSYS;
++
++    tmp = get_domain_by_id(domctl->domain);
++
++    if ( unlikely(tmp == NULL) )
++    {
++        gdprintk(XENLOG_ERR, "%s: get_domain_by_id() failed\n", domctl_name);
++        return -EINVAL;
++    }
++
++    *d = tmp;
++    *bus = (domctl->u.assign_device.machine_bdf >> 16) & 0xff;
++    *devfn = (domctl->u.assign_device.machine_bdf >> 8) & 0xff;
++    return 0;
++}
  
  long arch_do_domctl(
      struct xen_domctl *domctl,
-@@ -230,10 +245,14 @@ long arch_do_domctl(
+@@ -230,10 +268,14 @@ long arch_do_domctl(
          ret = -EINVAL;
          if ( d != NULL )
          {
@@ -6781,7 +6804,7 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
              list_ent = d->page_list.next;
              for ( i = 0; (i < max_pfns) && (list_ent != &d->page_list); i++ )
              {
-@@ -253,6 +272,7 @@ long arch_do_domctl(
+@@ -253,6 +295,7 @@ long arch_do_domctl(
              domctl->u.getmemlist.num_pfns = i;
              copy_to_guest(u_domctl, domctl, 1);
  
@@ -6789,7 +6812,7 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
              rcu_unlock_domain(d);
          }
      }
-@@ -382,6 +402,29 @@ long arch_do_domctl(
+@@ -382,6 +425,29 @@ long arch_do_domctl(
      }
      break;
  
@@ -6819,20 +6842,22 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
      case XEN_DOMCTL_set_address_size:
      {
          struct domain *d;
-@@ -417,7 +460,8 @@ long arch_do_domctl(
+@@ -417,13 +483,427 @@ long arch_do_domctl(
          if ( (d = rcu_lock_domain_by_id(domctl->domain)) == NULL )
              break;
  
 -        domctl->u.address_size.size = BITS_PER_GUEST_LONG(d);
 +        domctl->u.address_size.size =
 +            is_pv_32on64_domain(d) ? 32 : BITS_PER_LONG;
- 
-         ret = 0;
-         rcu_unlock_domain(d);
-@@ -427,6 +471,432 @@ long arch_do_domctl(
-     }
-     break;
- 
++
++        ret = 0;
++        rcu_unlock_domain(d);
++
++        if ( copy_to_guest(u_domctl, domctl, 1) )
++            ret = -EFAULT;
++    }
++    break;
++
 +    case XEN_DOMCTL_get_device_group:
 +    {
 +        struct domain *d;
@@ -6874,24 +6899,21 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +
 +    case XEN_DOMCTL_test_assign_device:
 +    {
++        struct domain *d;
 +        u8 bus, devfn;
 +
-+        ret = -ENOSYS;
-+        if ( !iommu_enabled )
++        ret = prep_assign_device(&d, &bus, &devfn, domctl,
++                                 "XEN_DOMCTL_test_assign_device");
++        if ( ret )
 +            break;
 +
-+        ret = -EINVAL;
-+        bus = (domctl->u.assign_device.machine_bdf >> 16) & 0xff;
-+        devfn = (domctl->u.assign_device.machine_bdf >> 8) & 0xff;
-+
-+        if ( device_assigned(bus, devfn) )
-+        {
++        ret = device_assignable(d, bus, devfn);
++        if ( ret )
 +            gdprintk(XENLOG_ERR, "XEN_DOMCTL_test_assign_device: "
-+                     "%x:%x:%x already assigned, or non-existent\n",
++                     "%x:%x:%x already assigned, or non-existent, or denied\n",
 +                     bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
-+            break;
-+        }
-+        ret = 0;
++
++        put_domain(d);
 +    }
 +    break;
 +
@@ -6900,20 +6922,10 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +        struct domain *d;
 +        u8 bus, devfn;
 +
-+        ret = -ENOSYS;
-+        if ( !iommu_enabled )
++        ret = prep_assign_device(&d, &bus, &devfn, domctl,
++                                 "XEN_DOMCTL_assign_device");
++        if ( ret )
 +            break;
-+
-+        ret = -EINVAL;
-+        if ( unlikely((d = get_domain_by_id(domctl->domain)) == NULL) )
-+        {
-+            gdprintk(XENLOG_ERR,
-+                "XEN_DOMCTL_assign_device: get_domain_by_id() failed\n");
-+            break;
-+        }
-+
-+        bus = (domctl->u.assign_device.machine_bdf >> 16) & 0xff;
-+        devfn = (domctl->u.assign_device.machine_bdf >> 8) & 0xff;
 +
 +        ret = assign_device(d, bus, devfn);
 +        if ( ret )
@@ -7201,7 +7213,7 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +    {
 +        struct domain *d;
 +        struct vcpu *v;
-+
+ 
 +        ret = -ESRCH;
 +        if ( (d = rcu_lock_domain_by_id(domctl->domain)) == NULL )
 +            break;
@@ -7222,11 +7234,11 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +        if ( !atomic_read(&v->pause_count) )
 +            printk("WARN: Unpausing vcpu:%d which is not paused\n", v->vcpu_id);
 +        vcpu_unpause(v);
-+        ret = 0;
-+        rcu_unlock_domain(d);
+         ret = 0;
+         rcu_unlock_domain(d);
 +    }
 +    break;
-+
+ 
 +    case XEN_DOMCTL_gdbsx_domstatus:
 +    {
 +        struct domain *d;
@@ -7253,16 +7265,13 @@ diff -Naurp xen/arch/x86/domctl.c xen-redhat/arch/x86/domctl.c
 +            }
 +        }
 +        ret = 0;
-+        if ( copy_to_guest(u_domctl, domctl, 1) )
-+            ret = -EFAULT;
+         if ( copy_to_guest(u_domctl, domctl, 1) )
+             ret = -EFAULT;
 +        rcu_unlock_domain(d);
-+    }
-+    break;
-+
-     default:
-         ret = -ENOSYS;
-         break;
-@@ -485,9 +955,9 @@ void arch_get_info_guest(struct vcpu *v,
+     }
+     break;
+ 
+@@ -485,9 +965,9 @@ void arch_get_info_guest(struct vcpu *v,
              c.nat->ctrlreg[3] = xen_pfn_to_cr3(
                  pagetable_get_pfn(v->arch.guest_table));
  #ifdef __x86_64__
@@ -32047,7 +32056,7 @@ diff -Naurp xen/drivers/passthrough/io.c xen-redhat/drivers/passthrough/io.c
 diff -Naurp xen/drivers/passthrough/iommu.c xen-redhat/drivers/passthrough/iommu.c
 --- xen/drivers/passthrough/iommu.c
 +++ xen-redhat/drivers/passthrough/iommu.c
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,310 @@
 +/*
 + * This program is free software; you can redistribute it and/or modify it
 + * under the terms and conditions of the GNU General Public License,
@@ -32089,6 +32098,7 @@ diff -Naurp xen/drivers/passthrough/iommu.c xen-redhat/drivers/passthrough/iommu
 +int iommu_passthrough = 0;
 +int iommu_snoop = 0;
 +int iommu_intremap = 0;
++int iommu_intremap_cmdline = 0;
 +int amd_iommu_debug=0;
 +int amd_iommu_perdev_intremap = 0;
 +
@@ -32098,6 +32108,7 @@ diff -Naurp xen/drivers/passthrough/iommu.c xen-redhat/drivers/passthrough/iommu
 +    iommu_enabled = 1;
 +    iommu_snoop = 1;
 +    iommu_intremap = 1;
++    iommu_intremap_cmdline = 1;
 +    amd_iommu_debug = 0;
 +    amd_iommu_perdev_intremap = 0;
 +
@@ -32118,7 +32129,7 @@ diff -Naurp xen/drivers/passthrough/iommu.c xen-redhat/drivers/passthrough/iommu
 +        else if ( !strcmp(s, "no-snoop") )
 +            iommu_snoop = 0;
 +        else if ( !strcmp(s, "no-intremap") )
-+            iommu_intremap = 0;
++            iommu_intremap = iommu_intremap_cmdline = 0;
 +        else if ( !strcmp(s, "amd-iommu-debug") )
 +            amd_iommu_debug = 1;
 +        else if ( !strcmp(s, "amd-iommu-perdev-intremap") )
@@ -32169,6 +32180,32 @@ diff -Naurp xen/drivers/passthrough/iommu.c xen-redhat/drivers/passthrough/iommu
 +        return 0;
 +
 +    return hd->platform_ops->remove_device(pdev);
++}
++
++/*
++ * If the device isn't owned by dom0, it means it already
++ * has been assigned to another domain, or it doesn't exist.
++ */
++int device_assignable(struct domain *d, u8 bus, u8 devfn)
++{
++    struct pci_dev *pdev;
++    struct hvm_iommu *hd;
++
++    spin_lock(&pcidevs_lock);
++    pdev = pci_get_pdev_by_domain(dom0, bus, devfn);
++    if (!pdev)
++    {
++        spin_unlock(&pcidevs_lock);
++        return -EINVAL;
++    }
++    spin_unlock(&pcidevs_lock);
++
++    hd = domain_hvm_iommu(d);
++    if ( hd->platform_ops && hd->platform_ops->assignable &&
++         !hd->platform_ops->assignable(d) )
++        return -EINVAL;
++
++    return 0;
 +}
 +
 +int assign_device(struct domain *d, u8 bus, u8 devfn)
@@ -33981,7 +34018,7 @@ diff -Naurp xen/drivers/passthrough/vtd/intremap.c xen-redhat/drivers/passthroug
 diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/vtd/iommu.c
 --- xen/drivers/passthrough/vtd/iommu.c
 +++ xen-redhat/drivers/passthrough/vtd/iommu.c
-@@ -0,0 +1,1966 @@
+@@ -0,0 +1,1964 @@
 +/*
 + * Copyright (c) 2006, Intel Corporation.
 + *
@@ -35372,6 +35409,17 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +    return ret;
 +}
 +
++static int intel_iommu_assignable(const struct domain *d)
++{
++    if (d != dom0 && !iommu_intremap && iommu_intremap_cmdline) {
++        printk("Interrupt Remapping hardware not found, passing devices\n");
++        printk("to unprivileged domains is insecure.  If you really want\n");
++        printk("to do this, please boot with \"iommu=no-intremap\".\n");
++        return 0;
++    }
++    return 1;
++}
++
 +static int reassign_device_ownership(
 +    struct domain *source,
 +    struct domain *target,
@@ -35386,7 +35434,7 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +    ASSERT(spin_is_locked(&pcidevs_lock));
 +    pdev = pci_get_pdev_by_domain(source, bus, devfn);
 +
-+    if (!pdev)
++    if (!pdev || !intel_iommu_assignable(target))
 +        return -ENODEV;
 +
 +    drhd = acpi_find_matched_drhd_unit(bus, devfn);
@@ -35687,9 +35735,15 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +        for_each_drhd_unit ( drhd )
 +        {
 +            iommu = drhd->iommu;
-+            if ( intremap_setup(iommu) != 0 )
++            if ( intremap_setup(iommu) != 0 ) {
++                iommu_intremap = 0;
 +                dprintk(XENLOG_INFO VTDPREFIX,
 +                        "Interrupt Remapping hardware not found\n");
++                dprintk(XENLOG_INFO VTDPREFIX,
++                        "Device assignment will be disabled for security reasons (CVE-2011-1898).\n");
++                dprintk(XENLOG_INFO VTDPREFIX,
++                        "Use iommu=no-intremap to override.\n");
++            }
 +        }
 +    }
 +
@@ -35783,26 +35837,6 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +    vtd_enabled = 0;
 +    iommu_snoop = 0;
 +    return -ENOMEM;
-+}
-+
-+/*
-+ * If the device isn't owned by dom0, it means it already
-+ * has been assigned to other domain, or it's not exist.
-+ */
-+int device_assigned(u8 bus, u8 devfn)
-+{
-+    struct pci_dev *pdev;
-+
-+    spin_lock(&pcidevs_lock);
-+    pdev = pci_get_pdev_by_domain(dom0, bus, devfn);
-+    if (!pdev)
-+    {
-+        spin_unlock(&pcidevs_lock);
-+        return -1;
-+    }
-+
-+    spin_unlock(&pcidevs_lock);
-+    return 0;
 +}
 +
 +int intel_iommu_assign_device(struct domain *d, u8 bus, u8 devfn)
@@ -35929,6 +35963,7 @@ diff -Naurp xen/drivers/passthrough/vtd/iommu.c xen-redhat/drivers/passthrough/v
 +    .init = intel_iommu_domain_init,
 +    .add_device = intel_iommu_add_device,
 +    .remove_device = intel_iommu_remove_device,
++    .assignable = intel_iommu_assignable,
 +    .assign_device  = intel_iommu_assign_device,
 +    .teardown = iommu_domain_teardown,
 +    .map_page = intel_iommu_map_page,
@@ -44872,7 +44907,7 @@ diff -Naurp xen/include/xen/hvm/irq.h xen-redhat/include/xen/hvm/irq.h
 diff -Naurp xen/include/xen/iommu.h xen-redhat/include/xen/iommu.h
 --- xen/include/xen/iommu.h
 +++ xen-redhat/include/xen/iommu.h
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,122 @@
 +/*
 + * Copyright (c) 2006, Intel Corporation.
 + *
@@ -44908,6 +44943,7 @@ diff -Naurp xen/include/xen/iommu.h xen-redhat/include/xen/iommu.h
 +extern int iommu_passthrough;
 +extern int iommu_snoop;
 +extern int iommu_intremap;
++extern int iommu_intremap_cmdline;
 +
 +#define domain_hvm_iommu(d)     (&d->arch.hvm_domain.hvm_iommu)
 +
@@ -44939,7 +44975,7 @@ diff -Naurp xen/include/xen/iommu.h xen-redhat/include/xen/iommu.h
 +int iommu_remove_device(struct pci_dev *pdev);
 +int iommu_domain_init(struct domain *d);
 +void iommu_domain_destroy(struct domain *d);
-+int device_assigned(u8 bus, u8 devfn);
++int device_assignable(struct domain *d, u8 bus, u8 devfn);
 +int assign_device(struct domain *d, u8 bus, u8 devfn);
 +int deassign_device(struct domain *d, u8 bus, u8 devfn);
 +int iommu_get_device_group(struct domain *d, u8 bus, u8 devfn,
@@ -44975,6 +45011,7 @@ diff -Naurp xen/include/xen/iommu.h xen-redhat/include/xen/iommu.h
 +    int (*init)(struct domain *d);
 +    int (*add_device)(struct pci_dev *pdev);
 +    int (*remove_device)(struct pci_dev *pdev);
++    int (*assignable)(const struct domain *d);
 +    int (*assign_device)(struct domain *d, u8 bus, u8 devfn);
 +    void (*teardown)(struct domain *d);
 +    int (*map_page)(struct domain *d, unsigned long gfn, unsigned long mfn);
