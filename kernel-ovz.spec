@@ -7,8 +7,6 @@
 %define ovzver 028stab098
 %define ovzrel 1
 
-# Whether to apply the Xen patches -- leave this enabled.
-%define includexen 1
 %define includeovz 1
 
 %define openafs_version 1.4.6
@@ -110,9 +108,7 @@ BuildRequires: unifdef
 BuildConflicts: rhbuildsys(DiskFree) < 500Mb
 BuildPreReq: python-modules
 
-Source1: xen-%xen_hv_cset.tar
 
-Source2: Config.mk
 %if %with_openafs
 Source3: openafs-%openafs_version-src.tar.bz2
 %endif

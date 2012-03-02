@@ -1,6 +1,6 @@
 copy: *.diff
 copy: Module.kabi_*
-copy: *.mk
+copy?: *.mk
 copy: *.modules
 copy: *.ovz
 copy: *.patch
@@ -13,4 +13,4 @@ copy: genkey
 copy: kabi_whitelist_*
 copy: kabitool
 copy: patch-*
-tar: xen name=xen-15502 base=
+tar?: xen name=xen-15502 base=
