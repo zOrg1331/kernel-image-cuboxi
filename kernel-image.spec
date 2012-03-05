@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt0.M60P.1
+Release: alt0.M60P.2
 epoch:1 
 %define kernel_base_version	3.2
 %define kernel_sublevel	.9
@@ -576,6 +576,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Mar 05 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.2.9-alt0.M60P.2
+- HID_MOLTITOUCH enabled for i586
+
 * Thu Mar 01 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.2.9-alt0.M60P.1
 - 3.2.9
 
