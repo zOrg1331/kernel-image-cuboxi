@@ -1,5 +1,6 @@
---- ./drivers/block/nbd.c.orig	2011-08-10 18:18:41.000000000 +0400
-+++ ./drivers/block/nbd.c	2011-08-10 18:30:44.000000000 +0400
+diff -up ./drivers/block/nbd.c.nbd2 ./drivers/block/nbd.c
+--- ./drivers/block/nbd.c.nbd2	2012-02-28 04:06:56.000000000 -0500
++++ ./drivers/block/nbd.c	2012-02-28 04:11:06.000000000 -0500
 @@ -102,15 +102,18 @@ static const char *nbdcmd_to_ascii(int c
  
  static void nbd_end_request(struct request *req)
@@ -22,25 +23,7 @@
  	spin_unlock_irqrestore(q->queue_lock, flags);
  }
  
-@@ -127,7 +130,7 @@ static void sock_shutdown(struct nbd_dev
- 	if (lo->sock) {
- 		printk(KERN_WARNING "%s: shutting down socket\n",
- 			lo->disk->disk_name);
--		kernel_sock_shutdown(lo->sock, SHUT_RDWR);
-+		lo->sock->ops->shutdown(lo->sock, SEND_SHUTDOWN|RCV_SHUTDOWN);
- 		lo->sock = NULL;
- 	}
- 	if (lock)
-@@ -195,7 +198,7 @@ static int sock_xmit(struct nbd_device *
- 		if (signal_pending(current)) {
- 			siginfo_t info;
- 			printk(KERN_WARNING "nbd (pid %d: %s) got signal %d\n",
--				task_pid_nr(current), current->comm,
-+				current->pid, current->comm,
- 				dequeue_signal_lock(current, &current->blocked, &info));
- 			result = -EINTR;
- 			sock_shutdown(lo, !send);
-@@ -253,26 +256,31 @@ static int nbd_send_req(struct nbd_devic
+@@ -254,26 +257,31 @@ static int nbd_send_req(struct nbd_devic
  	}
  
  	if (nbd_cmd(req) == NBD_CMD_WRITE) {
@@ -82,7 +65,7 @@
  		}
  	}
  	return 0;
-@@ -362,20 +370,24 @@ static struct request *nbd_read_stat(str
+@@ -363,20 +371,24 @@ static struct request *nbd_read_stat(str
  	dprintk(DBG_RX, "%s: request %p: got reply\n",
  			lo->disk->disk_name, req);
  	if (nbd_cmd(req) == NBD_CMD_READ) {
@@ -115,7 +98,7 @@
  		}
  	}
  	return req;
-@@ -387,7 +399,7 @@ harderror:
+@@ -388,7 +400,7 @@ harderror:
  static ssize_t pid_show(struct device *dev,
  			struct device_attribute *attr, char *buf)
  {
@@ -124,7 +107,7 @@
  
  	return sprintf(buf, "%ld\n",
  		(long) ((struct nbd_device *)disk->private_data)->pid);
-@@ -406,7 +418,7 @@ static int nbd_do_it(struct nbd_device *
+@@ -407,7 +419,7 @@ static int nbd_do_it(struct nbd_device *
  	BUG_ON(lo->magic != LO_MAGIC);
  
  	lo->pid = current->pid;
@@ -133,7 +116,7 @@
  	if (ret) {
  		printk(KERN_ERR "nbd: sysfs_create_file failed!");
  		return ret;
-@@ -415,7 +427,7 @@ static int nbd_do_it(struct nbd_device *
+@@ -416,7 +428,7 @@ static int nbd_do_it(struct nbd_device *
  	while ((req = nbd_read_stat(lo)) != NULL)
  		nbd_end_request(req);
  
@@ -142,7 +125,7 @@
  	return 0;
  }
  
-@@ -543,8 +555,8 @@ static void do_nbd_request(struct reques
+@@ -545,8 +557,8 @@ static void do_nbd_request(struct reques
  
  		spin_unlock_irq(q->queue_lock);
  
@@ -153,7 +136,7 @@
  
  		lo = req->rq_disk->private_data;
  
-@@ -560,11 +572,11 @@ static void do_nbd_request(struct reques
+@@ -562,11 +574,11 @@ static void do_nbd_request(struct reques
  	}
  }
  
@@ -167,7 +150,7 @@
  	int error;
  	struct request sreq ;
  	struct task_struct *thread;
-@@ -581,8 +593,10 @@ static int nbd_ioctl(struct block_device
+@@ -583,8 +595,10 @@ static int nbd_ioctl(struct block_device
  	switch (cmd) {
  	case NBD_DISCONNECT:
  	        printk(KERN_INFO "%s: NBD_DISCONNECT\n", lo->disk->disk_name);
@@ -180,7 +163,7 @@
  		nbd_cmd(&sreq) = NBD_CMD_DISC;
  		/*
  		 * Set these to sane values in case server implementation
-@@ -616,7 +630,7 @@ static int nbd_ioctl(struct block_device
+@@ -618,7 +632,7 @@ static int nbd_ioctl(struct block_device
  		error = -EINVAL;
  		file = fget(arg);
  		if (file) {
@@ -189,7 +172,7 @@
  			if (S_ISSOCK(inode->i_mode)) {
  				lo->file = file;
  				lo->sock = SOCKET_I(inode);
-@@ -694,7 +708,7 @@ static int nbd_ioctl(struct block_device
+@@ -696,7 +710,7 @@ static int nbd_ioctl(struct block_device
  static struct block_device_operations nbd_fops =
  {
  	.owner =	THIS_MODULE,
