@@ -1,8 +1,6 @@
-Signed-off-by: Konstantin Ozerkov <kozerkov@parallels.com>
-diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
-index a071d8e..bb01f3a 100644
---- a/drivers/block/nbd.c
-+++ b/drivers/block/nbd.c
+diff -up ./drivers/block/nbd.c.nbd5 ./drivers/block/nbd.c
+--- ./drivers/block/nbd.c.nbd5	2012-02-28 04:42:56.000000000 -0500
++++ ./drivers/block/nbd.c	2012-02-28 04:44:32.000000000 -0500
 @@ -51,6 +51,7 @@
  #define DBG_BLKDEV      0x0100
  #define DBG_RX          0x0200
@@ -11,7 +9,7 @@ index a071d8e..bb01f3a 100644
  static unsigned int debugflags;
  #endif /* NDEBUG */
  
-@@ -141,9 +142,7 @@ static void nbd_xmit_timeout(unsigned long arg)
+@@ -141,9 +142,7 @@ static void nbd_xmit_timeout(unsigned lo
  {
  	struct task_struct *task = (struct task_struct *)arg;
  
@@ -22,15 +20,15 @@ index a071d8e..bb01f3a 100644
  }
  
  /*
-@@ -157,6 +156,7 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
- 	struct msghdr msg;
+@@ -158,6 +157,7 @@ static int sock_xmit(struct nbd_device *
  	struct kvec iov;
+ 	unsigned long flags;
  	sigset_t blocked, oldset;
 +	struct timer_list ti;
  
  	if (unlikely(!sock)) {
  		printk(KERN_ERR "%s: Attempted %s on closed socket in sock_xmit\n",
-@@ -164,9 +164,9 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
+@@ -165,9 +165,9 @@ static int sock_xmit(struct nbd_device *
  		return -EINVAL;
  	}
  
@@ -42,7 +40,7 @@ index a071d8e..bb01f3a 100644
  	sigprocmask(SIG_SETMASK, &blocked, &oldset);
  
  	do {
-@@ -179,30 +179,38 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
+@@ -180,30 +180,38 @@ static int sock_xmit(struct nbd_device *
  		msg.msg_controllen = 0;
  		msg.msg_flags = msg_flags | MSG_NOSIGNAL;
  
@@ -77,8 +75,8 @@ index a071d8e..bb01f3a 100644
  		if (signal_pending(current)) {
  			siginfo_t info;
 -			printk(KERN_WARNING "nbd (pid %d: %s) got signal %d\n",
--				current->pid, current->comm,
--				dequeue_signal_lock(current, &current->blocked, &info));
+-				current->pid, current->comm, 
+-				dequeue_signal(current, &current->blocked, &info));
 -			result = -EINTR;
 -			sock_shutdown(lo, !send);
 -			break;
@@ -99,7 +97,7 @@ index a071d8e..bb01f3a 100644
  		}
  
  		if (result <= 0) {
-@@ -286,6 +294,7 @@ static int nbd_send_req(struct nbd_device *lo, struct request *req)
+@@ -287,6 +295,7 @@ static int nbd_send_req(struct nbd_devic
  	return 0;
  
  error_out:
@@ -107,7 +105,7 @@ index a071d8e..bb01f3a 100644
  	return 1;
  }
  
-@@ -332,9 +341,22 @@ static struct request *nbd_read_stat(struct nbd_device *lo)
+@@ -333,9 +342,22 @@ static struct request *nbd_read_stat(str
  	struct nbd_reply reply;
  	struct request *req;
  
@@ -130,7 +128,7 @@ index a071d8e..bb01f3a 100644
  		printk(KERN_ERR "%s: Receive control failed (result %d)\n",
  				lo->disk->disk_name, result);
  		goto harderror;
-@@ -521,6 +543,8 @@ static int nbd_thread(void *data)
+@@ -516,6 +538,8 @@ static int nbd_thread(void *data)
  	struct nbd_device *lo = data;
  	struct request *req;
  

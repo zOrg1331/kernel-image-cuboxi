@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab098
-%define ovzrel 1
+%define ovzver 028stab099
+%define ovzrel 3
 
 %define includeovz 1
 
@@ -21,7 +21,7 @@
 
 # Values used for RHEL version info in version.h
 %define rh_release_major %rhel
-%define rh_release_minor 7
+%define rh_release_minor 8
 
 # Build options
 # You can change compiler version by editing this line:
@@ -265,7 +265,6 @@ Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
 
-Patch100038: linux-2.6-fs-fix-wrongly-kfree-ing-a-vmalloc-ed-area.patch
 Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
 Patch100041: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
@@ -467,7 +466,6 @@ echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
 %patch100029 -p1
 %patch100036 -p1
 
-%patch100038 -p1
 %patch100039 -p1
 
 %patch100041 -p1
