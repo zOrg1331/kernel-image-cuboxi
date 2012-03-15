@@ -1,5 +1,5 @@
 Name:    kernel-image-std-def
-Release: alt0.M60P.1
+Release: alt0.M60P.2
 Epoch:   1
 %define kernel_base_version	3.0
 %define kernel_sublevel	.24
@@ -618,6 +618,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Mar 15 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.0.24-alt0.M60P.2
+- Add patch for cedar trail
+
 * Tue Mar 13 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.0.24-alt0.M60P.1
 - 3.0.24
 
