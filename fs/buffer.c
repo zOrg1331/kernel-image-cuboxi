@@ -1609,21 +1609,16 @@ static void bdi_congestion_wait(struct backing_dev_info *bdi)
 {
 	DEFINE_WAIT(_wait);
 
-	spin_lock_bh(&bdi->wb_lock);
-
 	for (;;) {
 		prepare_to_wait(&bdi->cong_waitq, &_wait,
 				TASK_UNINTERRUPTIBLE);
 		if (!bdi_write_congested2(bdi))
 			break;
 
-		spin_unlock_bh(&bdi->wb_lock);
 		io_schedule();
-		spin_lock_bh(&bdi->wb_lock);
 	}
-	finish_wait(&bdi->cong_waitq, &_wait);
 
-	spin_unlock_bh(&bdi->wb_lock);
+	finish_wait(&bdi->cong_waitq, &_wait);
 }
 
 /*

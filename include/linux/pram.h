@@ -65,11 +65,13 @@ extern int __pram_prealloc(gfp_t gfp_mask, int n, ...);
 extern void pram_prealloc_end(void);
 
 #ifdef CONFIG_PRAM
+extern unsigned long long pram_low;
 extern unsigned long pram_reserved_pages;
 extern void pram_reserve(void);
 extern void pram_ban_region(unsigned long start, unsigned long end);
 extern void pram_show_banned(void);
 #else
+#define pram_low 0ULL
 #define pram_reserved_pages 0UL
 static inline void pram_reserve(void) { }
 static inline void pram_ban_region(unsigned long start, unsigned long end) { }

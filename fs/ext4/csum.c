@@ -51,10 +51,10 @@ int ext4_open_pfcache(struct inode *inode)
 	if (!EXT4_SB(sb)->s_pfcache_root.mnt)
 		return -ENODEV;
 
-	down_read(&sb->s_umount);
+	spin_lock(&EXT4_SB(sb)->s_pfcache_lock);
 	nd.path = EXT4_SB(sb)->s_pfcache_root;
 	path_get(&nd.path);
-	up_read(&sb->s_umount);
+	spin_unlock(&EXT4_SB(sb)->s_pfcache_lock);
 
 	if (!nd.path.mnt)
 		return -ENODEV;
@@ -109,8 +109,10 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 		nd.path.dentry = NULL;
 	}
 
+	spin_lock(&EXT4_SB(sb)->s_pfcache_lock);
 	path_put(&EXT4_SB(sb)->s_pfcache_root);
 	EXT4_SB(sb)->s_pfcache_root = nd.path;
+	spin_unlock(&EXT4_SB(sb)->s_pfcache_lock);
 
 	spin_lock(&inode_lock);
 
@@ -572,8 +574,8 @@ void ext4_commit_data_csum(struct inode *inode)
 static int ext4_xattr_trusted_csum_get(struct inode *inode, const char *name,
 				       void *buffer, size_t size)
 {
-	int i, ret = EXT4_DATA_CSUM_SIZE * 2;
 	u8 csum[EXT4_DATA_CSUM_SIZE];
+	int i;
 
 	if (strcmp(name, ""))
 		return -ENODATA;
@@ -589,23 +591,30 @@ static int ext4_xattr_trusted_csum_get(struct inode *inode, const char *name,
 		return -ENODATA;
 
 	if (!buffer)
-		return ret;
-
-	if (size < ret)
-		return -ERANGE;
+		return EXT4_DATA_CSUM_SIZE * 2;
 
 	spin_lock(&inode->i_lock);
 	if (ext4_test_inode_state(inode, EXT4_STATE_CSUM) &&
 	    EXT4_I(inode)->i_data_csum_end < 0) {
 		memcpy(csum, EXT4_I(inode)->i_data_csum, EXT4_DATA_CSUM_SIZE);
-	} else
-		ret = -ENODATA;
+	} else {
+		spin_unlock(&inode->i_lock);
+		return -ENODATA;
+	}
 	spin_unlock(&inode->i_lock);
 
-	for ( i = 0 ; ret > 0 && i < EXT4_DATA_CSUM_SIZE ; i++ )
-		buffer = pack_hex_byte(buffer, csum[i]);
+	if (size == EXT4_DATA_CSUM_SIZE) {
+		memcpy(buffer, csum, EXT4_DATA_CSUM_SIZE);
+		return EXT4_DATA_CSUM_SIZE;
+	}
 
-	return ret;
+	if (size >= EXT4_DATA_CSUM_SIZE * 2) {
+		for ( i = 0 ; i < EXT4_DATA_CSUM_SIZE ; i++ )
+			buffer = pack_hex_byte(buffer, csum[i]);
+		return EXT4_DATA_CSUM_SIZE * 2;
+	}
+
+	return -ERANGE;
 }
 
 static int ext4_xattr_trusted_csum_set(struct inode *inode, const char *name,
@@ -650,16 +659,18 @@ static int ext4_xattr_trusted_csum_set(struct inode *inode, const char *name,
 		return 0;
 	}
 
-	if (size != EXT4_DATA_CSUM_SIZE * 2)
+	if (size == EXT4_DATA_CSUM_SIZE) {
+		memcpy(csum, value, EXT4_DATA_CSUM_SIZE);
+	} else if (size == EXT4_DATA_CSUM_SIZE * 2) {
+		for ( i = 0 ; i < EXT4_DATA_CSUM_SIZE ; i++ ) {
+			int hi = hex_to_bin(text[i*2]);
+			int lo = hex_to_bin(text[i*2+1]);
+			if ((hi < 0) || (lo < 0))
+				return -EINVAL;
+			csum[i] = (hi << 4) | lo;
+		}
+	} else
 		return -EINVAL;
-
-	for ( i = 0 ; i < EXT4_DATA_CSUM_SIZE ; i++ ) {
-		int hi = hex_to_bin(text[i*2]);
-		int lo = hex_to_bin(text[i*2+1]);
-		if ((hi < 0) || (lo < 0))
-			return -EINVAL;
-		csum[i] = (hi << 4) | lo;
-	}
 
 	if (mapping_writably_mapped(inode->i_mapping))
 		return -EBUSY;

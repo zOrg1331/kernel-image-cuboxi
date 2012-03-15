@@ -189,7 +189,7 @@ static void del_br(struct net_bridge *br)
 	unregister_netdevice(br->dev);
 }
 
-static struct net_device *new_bridge_dev(struct net *net, const char *name)
+struct net_device *new_bridge_dev(struct net *net, const char *name)
 {
 	struct net_bridge *br;
 	struct net_device *dev;
@@ -287,7 +287,7 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
 	return p;
 }
 
-static struct device_type br_type = {
+struct device_type br_type = {
 	.name	= "bridge",
 };
 

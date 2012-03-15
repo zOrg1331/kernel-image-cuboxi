@@ -33,6 +33,7 @@
 #include <linux/vmalloc.h>
 #include <linux/swap.h>
 #include <linux/kmsg_dump.h>
+#include <linux/pram.h>
 
 #include <asm/page.h>
 #include <asm/uaccess.h>
@@ -1387,6 +1388,7 @@ int __init parse_crashkernel(char 		 *cmdline,
 {
 	char 	*p = cmdline, *ck_cmdline = NULL;
 	char	*first_colon, *first_space;
+	int	ret = 0;
 
 	BUG_ON(!crash_size || !crash_base);
 	*crash_size = 0;
@@ -1426,7 +1428,6 @@ int __init parse_crashkernel(char 		 *cmdline,
 					strlen(cmdline) - (ck_cmdline + 4 - cmdline) + 1);
 				memcpy(ck_cmdline, tmp, len);
 			}
-			return 0;
 		} else {
 			/*
 			 * We can't reserve memory auotmatcally,
@@ -1435,8 +1436,9 @@ int __init parse_crashkernel(char 		 *cmdline,
 			ck_cmdline += 4; /* strlen("auto") */
 			memmove(ck_cmdline - 16, ck_cmdline,
 				strlen(cmdline) - (ck_cmdline - cmdline) + 1);
-			return -ENOMEM;
+			ret = -ENOMEM;
 		}
+		goto out;
 	}
 #endif
 	/*
@@ -1446,13 +1448,18 @@ int __init parse_crashkernel(char 		 *cmdline,
 	first_colon = strchr(ck_cmdline, ':');
 	first_space = strchr(ck_cmdline, ' ');
 	if (first_colon && (!first_space || first_colon < first_space))
-		return parse_crashkernel_mem(ck_cmdline, system_ram,
+		ret = parse_crashkernel_mem(ck_cmdline, system_ram,
 				crash_size, crash_base, strict);
 	else
-		return parse_crashkernel_simple(ck_cmdline, crash_size,
+		ret = parse_crashkernel_simple(ck_cmdline, crash_size,
 				crash_base, strict);
-
-	return 0;
+out:
+	if (ret == 0 && *crash_base < pram_low) {
+		*crash_base = pram_low;
+		if (strict)
+			*strict = 0;
+	}
+	return ret;
 }
 
 

@@ -112,6 +112,8 @@ enum _cpt_object_type
 	CPT_OBJ_NET_IPIP_TUNNEL,
 	CPT_OBJ_TIMERFD,
 	CPT_OBJ_EVENTFD,
+	CPT_OBJ_NET_BR,
+	CPT_OBJ_NET_BR_DEV,
 
 	/* 2.6.27-specific */
 	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
@@ -1653,6 +1655,37 @@ struct cpt_tunnel_image {
 	__u32   cpt_iphdr[5];
 	__u32   cpt_i_seqno;
 	__u32   cpt_o_seqno;
+} __attribute__ ((aligned (8)));
+
+struct cpt_br_nested_dev {
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u8 name[16];
+};
+
+struct cpt_br_image {
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u64 designated_root;
+	__u64 bridge_id;
+	__u32 root_path_cost;
+	__u32 max_age;
+	__u32 hello_time;
+	__u32 forward_delay;
+	__u32 bridge_max_age;
+	__u32 bridge_hello_time;
+	__u32 bridge_forward_delay;
+	__u32 ageing_time;
+	__u8 root_port;
+	__u8 stp_enabled;
+	__u8 via_phys_dev;
+	__u8 pad[5];
 } __attribute__ ((aligned (8)));
 
 struct cpt_hwaddr_image {

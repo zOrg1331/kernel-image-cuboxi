@@ -256,7 +256,7 @@ error:
 	kfree(cls);
 	return ERR_PTR(retval);
 }
-EXPORT_SYMBOL_GPL(__class_create);
+EXPORT_SYMBOL(__class_create);
 
 /**
  * class_destroy - destroys a struct class structure
@@ -601,7 +601,7 @@ EXPORT_SYMBOL_GPL(classes_fini);
 EXPORT_SYMBOL_GPL(class_create_file);
 EXPORT_SYMBOL_GPL(class_remove_file);
 EXPORT_SYMBOL_GPL(class_unregister);
-EXPORT_SYMBOL_GPL(class_destroy);
+EXPORT_SYMBOL(class_destroy);
 
 EXPORT_SYMBOL_GPL(class_interface_register);
 EXPORT_SYMBOL_GPL(class_interface_unregister);

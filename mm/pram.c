@@ -69,6 +69,9 @@ struct pram_link {
 static int pram_reservation;
 unsigned long pram_reserved_pages;
 
+#define DEFAULT_PRAM_LOW	(16UL << 20) /* 16Mb */
+unsigned long long pram_low = DEFAULT_PRAM_LOW;
+
 struct banned_region {
 	unsigned long start, end;
 };
@@ -77,7 +80,7 @@ struct banned_region {
 
 static int nr_banned = 1;
 static struct banned_region banned[MAX_NR_BANNED] = {
-	{ .start = 0, .end = (16UL << (20 - PAGE_SHIFT)) - 1 }, /* first 16Mb */
+	{ .start = 0, .end = PFN_UP(DEFAULT_PRAM_LOW) - 1 },
 };
 
 static int nr_banned_pages;
@@ -108,15 +111,17 @@ early_param("pram", parse_pram);
 static int __init parse_pram_low(char *arg)
 {
 	char *endptr;
-	unsigned long long pram_low;
+	unsigned long long val;
 
 	if (!arg)
 		return 0;
-	pram_low = memparse(arg, &endptr);
+	val = memparse(arg, &endptr);
 	if (*endptr != '\0')
 		return -EINVAL;
-	if (pram_low > 0)
-		banned[0].end = PFN_UP(pram_low) - 1;
+	if (val > 0) {
+		pram_low = val;
+		banned[0].end = PFN_UP(val) - 1;
+	}
 	return 0;
 }
 early_param("pram_low", parse_pram_low);
@@ -168,7 +173,7 @@ static void pram_list_del(struct pram_chain *chain)
 
 	BUG_ON(prev->chain_pfn != page_to_pfn(page));
 	prev->chain_pfn = chain->chain_pfn;
-	if (PRAM_CHAIN_STATE(chain) != PRAM_STATE_SAVE)
+	if (PRAM_CHAIN_STATE(prev) != PRAM_STATE_SAVE)
 		prev->csum = pram_meta_csum(prev);
 	list_del_init(&page->lru);
 }
@@ -1207,8 +1212,17 @@ static ssize_t pram_store(struct kobject *kobj, struct kobj_attribute *attr,
 static struct kobj_attribute pram_attr =
 	__ATTR(pram, 0644, pram_show, pram_store);
 
+static ssize_t pram_low_show(struct kobject *kboj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%llu\n", pram_low);
+}
+
+static struct kobj_attribute pram_low_attr = __ATTR_RO(pram_low);
+
 static struct attribute *pram_attrs[] = {
 	&pram_attr.attr,
+	&pram_low_attr.attr,
 	NULL,
 };
 

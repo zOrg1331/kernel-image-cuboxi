@@ -160,7 +160,7 @@ static struct zone_reclaim_stat *get_reclaim_stat(struct zone *zone,
 						  struct scan_control *sc)
 {
 	if (sc->gs)
-		return &sc->gs->reclaim_stat;
+		return &mem_zone_gang(sc->gs, zone)->reclaim_stat;
 
 	if (!scanning_global_lru(sc))
 		return mem_cgroup_get_reclaim_stat(sc->mem_cgroup, zone);
@@ -1299,6 +1299,10 @@ static int too_many_isolated(struct zone *zone, int file,
 		isolated = zone_page_state(zone, NR_ISOLATED_ANON);
 	}
 
+	if (isolated > inactive)
+		isolated = zone_page_state_snapshot(zone, file ?
+				NR_ISOLATED_FILE : NR_ISOLATED_ANON);
+
 	return isolated > inactive;
 }
 
@@ -2065,7 +2069,7 @@ static void shrink_zones(int priority, struct zonelist *zonelist,
 			struct gang *gang = mem_zone_gang(sc->gs, zone);
 			unsigned long reclaimable = gang_reclaimable_pages(gang, sc);
 
-			if (reclaimable == 0)
+			if (reclaimable < SWAP_CLUSTER_MAX)
 				continue;
 
 			if (gang->pages_scanned < 6 * reclaimable)
@@ -2284,7 +2288,7 @@ unsigned long try_to_free_gang_pages(struct gang_set *gs, gfp_t gfp_mask)
 		.nr_to_reclaim = SWAP_CLUSTER_MAX,
 		.may_unmap = 1,
 		.may_swap = 1,
-		.swappiness = vm_swappiness,
+		.swappiness = 100,
 		.isolate_pages = isolate_pages_global,
 		.gs = gs,
 	};

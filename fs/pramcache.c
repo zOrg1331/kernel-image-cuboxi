@@ -238,7 +238,7 @@ static int save_page(struct page *page,
 		     struct pram_stream *data_stream)
 {
 	unsigned long uptodate;
-	__le64 __index, __uptodate;
+	__u64 __index, __uptodate;
 	int err = 0;
 
 	/* ignore outdated pages */
@@ -248,8 +248,8 @@ static int save_page(struct page *page,
 
 	/* if prealloc fails, silently skip the page */
 	if (pram_prealloc2(GFP_NOWAIT | __GFP_HIGHMEM, 16, PAGE_SIZE) == 0) {
-		__uptodate = cpu_to_le64(uptodate);
-		__index = cpu_to_le64(page->index);
+		__uptodate = uptodate;
+		__index = page->index;
 
 		if (pram_write(meta_stream, &__uptodate, 8) != 8 ||
 		    pram_write(meta_stream, &__index, 8) != 8 ||
@@ -265,7 +265,7 @@ static struct page *load_page(struct pram_stream *meta_stream,
 			      struct pram_stream *data_stream)
 {
 	struct page *page;
-	__le64 __index, __uptodate;
+	__u64 __index, __uptodate;
 	ssize_t ret;
 
 	/* since we do not save outdated pages, empty uptodate mask
@@ -291,8 +291,8 @@ static struct page *load_page(struct pram_stream *meta_stream,
 
 	/* temporarily save uptodate mask to page's private field
 	 * to be used later */
-	set_page_private(page, le64_to_cpu(__uptodate));
-	page->index = le64_to_cpu(__index);
+	set_page_private(page, __uptodate);
+	page->index = __index;
 	return page;
 }
 
@@ -367,8 +367,8 @@ static int save_invalidate_inode(struct inode *inode, int *first,
 				 struct pram_stream *meta_stream,
 				 struct pram_stream *data_stream)
 {
-	const __le64 __zero = 0;
-	__le64 __ino;
+	const __u64 __zero = 0;
+	__u64 __ino;
 	int err = 0;
 
 	if (!inode->i_data.nrpages)
@@ -376,7 +376,7 @@ static int save_invalidate_inode(struct inode *inode, int *first,
 
 	/* if prealloc fails, silently skip the inode ... */
 	if (pram_prealloc(GFP_NOWAIT | __GFP_HIGHMEM, 16) == 0) {
-		__ino = cpu_to_le64(inode->i_ino);
+		__ino = inode->i_ino;
 
 		/* if we have already saved inodes, write the 'end of mapping'
 		 * mark (see load_page()) */
@@ -403,7 +403,7 @@ static struct inode_cache *load_inode(struct pram_stream *meta_stream,
 				      struct pram_stream *data_stream)
 {
 	struct inode_cache *icache;
-	__le64 __ino;
+	__u64 __ino;
 	ssize_t ret;
 	long nr_pages;
 
@@ -417,7 +417,7 @@ static struct inode_cache *load_inode(struct pram_stream *meta_stream,
 	if (!icache)
 		return ERR_PTR(-ENOMEM);
 
-	init_inode_cache(icache, le64_to_cpu(__ino));
+	init_inode_cache(icache, __ino);
 
 	nr_pages = load_mapping_pages(meta_stream, data_stream, &icache->pages);
 	if (nr_pages < 0) {
@@ -516,6 +516,52 @@ static int populate_mapping(struct super_block *sb,
 	return err;
 }
 
+static int save_mnt_count(struct super_block *sb,
+			  struct pram_stream *stream)
+{
+	__u32 __mnt_count;
+	int err;
+
+	__mnt_count = sb->s_mnt_count;
+
+	err = pram_prealloc(GFP_KERNEL | __GFP_HIGHMEM, 4);
+	if (err)
+		goto out;
+
+	if (pram_write(stream, &__mnt_count, 4) != 4)
+		err = -EIO;
+
+	pram_prealloc_end();
+out:
+	return err;
+}
+
+static int load_check_mnt_count(struct pram_stream *stream,
+				struct super_block *sb)
+{
+	__u32 __mnt_count;
+	unsigned int mnt_count;
+	int err = 0;
+
+	if (pram_read(stream, &__mnt_count, 4) != 4) {
+		err = -EIO;
+		goto out;
+	}
+
+	mnt_count = __mnt_count;
+	if (!(sb->s_flags & MS_RDONLY))
+		mnt_count++;
+
+	if (sb->s_mnt_count != mnt_count) {
+		pramcache_msg(sb, KERN_ERR,
+			      "mnt count should be %d, but was %d",
+			      mnt_count, sb->s_mnt_count);
+		err = -EINVAL;
+	}
+out:
+	return err;
+}
+
 static void save_invalidate_page_cache(struct super_block *sb)
 {
 	struct pram_stream meta_stream, data_stream;
@@ -528,6 +574,10 @@ static void save_invalidate_page_cache(struct super_block *sb)
 	if (err)
 		goto out;
 
+	err = save_mnt_count(sb, &meta_stream);
+	if (err)
+		goto out_close_streams;
+
 	spin_lock(&inode_lock);
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
 		err = save_invalidate_inode(inode, &first,
@@ -536,7 +586,7 @@ static void save_invalidate_page_cache(struct super_block *sb)
 			break;
 	}
 	spin_unlock(&inode_lock);
-
+out_close_streams:
 	close_streams(&meta_stream, &data_stream, err);
 out:
 	if (err)
@@ -559,6 +609,10 @@ static void load_page_cache(struct super_block *sb)
 			err = 0;
 		goto out;
 	}
+
+	err = load_check_mnt_count(&meta_stream, sb);
+	if (err)
+		goto out_close_streams;
 
 	cache = kmalloc(sizeof(struct pramcache_struct), GFP_KERNEL);
 	if (!cache) {
@@ -623,8 +677,13 @@ static void save_invalidate_bdev_cache(struct super_block *sb)
 	if (err)
 		goto out;
 
+	err = save_mnt_count(sb, &meta_stream);
+	if (err)
+		goto out_close_streams;
+
 	err = save_invalidate_mapping_pages(sb->s_bdev->bd_inode->i_mapping,
 					    &meta_stream, &data_stream);
+out_close_streams:
 	close_streams(&meta_stream, &data_stream, err);
 out:
 	if (err)
@@ -646,6 +705,10 @@ static void load_bdev_cache(struct super_block *sb)
 			err = 0;
 		goto out;
 	}
+
+	err = load_check_mnt_count(&meta_stream, sb);
+	if (err)
+		goto out_close_streams;
 
 	nr_pages = load_mapping_pages(&meta_stream, &data_stream, &pages);
 	if (nr_pages < 0) {

@@ -246,6 +246,11 @@ extern netdev_tx_t br_dev_xmit(struct sk_buff *skb,
 extern netdev_tx_t br_xmit(struct sk_buff *skb, struct net_bridge_port *port);
 extern bool br_devices_support_netpoll(struct net_bridge *br);
 extern void br_netpoll_cleanup(struct net_device *br_dev);
+struct cpt_context;
+struct rst_ops;
+struct cpt_netdev_image;
+extern int br_rst(loff_t start, struct cpt_netdev_image *di,
+		struct rst_ops *ops, struct cpt_context *ctx);
 
 /* br_fdb.c */
 extern int br_fdb_init(void);
@@ -281,6 +286,8 @@ extern void br_flood_forward(struct net_bridge *br, struct sk_buff *skb,
 			     struct sk_buff *skb2);
 
 /* br_if.c */
+extern struct device_type br_type;
+extern struct net_device *new_bridge_dev(struct net *net, const char *name);
 extern void br_port_carrier_check(struct net_bridge_port *p);
 extern int br_add_bridge(struct net *net, const char *name);
 extern int br_del_bridge(struct net *net, const char *name);

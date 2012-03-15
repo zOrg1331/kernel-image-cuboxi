@@ -338,6 +338,9 @@ static inline int copy_regset_to_user(struct task_struct *target,
 	if (!access_ok(VERIFY_WRITE, data, size))
 		return -EIO;
 
+	if (!regset->get)
+		return -EPERM;
+
 	return regset->get(target, regset, offset, size, NULL, data);
 }
 
@@ -360,6 +363,9 @@ static inline int copy_regset_from_user(struct task_struct *target,
 
 	if (!access_ok(VERIFY_READ, data, size))
 		return -EIO;
+
+	if (!regset->set)
+		return -EPERM;
 
 	return regset->set(target, regset, offset, size, NULL, data);
 }
