@@ -307,7 +307,6 @@ struct gang_set {
 #ifdef CONFIG_MEMORY_GANGS_MIGRATION
 	struct gangs_migration_work migration_work;
 #endif
-	struct zone_reclaim_stat reclaim_stat;
 };
 
 struct gang {
@@ -323,6 +322,7 @@ struct gang {
 		unsigned long nr_pages;
 	} lru[NR_LRU_LISTS];
 	unsigned long		pages_scanned;
+	struct zone_reclaim_stat reclaim_stat;
 #ifdef CONFIG_MEMORY_GANGS_MIGRATION
 	unsigned long nr_migratepages; /* number of pages to migrate */
 #endif

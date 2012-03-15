@@ -1181,6 +1181,7 @@ struct ext4_sb_info {
 	struct percpu_counter s_csum_partial;
 	struct percpu_counter s_csum_complete;
 
+	spinlock_t  s_pfcache_lock;
 	struct path s_pfcache_root;
 	struct percpu_counter s_pfcache_peers;
 };

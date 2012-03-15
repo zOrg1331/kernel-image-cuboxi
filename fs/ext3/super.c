@@ -1311,7 +1311,7 @@ static int ext3_setup_super(struct super_block *sb, struct ext3_super_block *es,
 		res = MS_RDONLY;
 	}
 	if (read_only)
-		return res;
+		goto out;
 	if (!(sbi->s_mount_state & EXT3_VALID_FS))
 		ext3_msg(sb, KERN_WARNING,
 			"warning: mounting unchecked fs, "
@@ -1363,6 +1363,8 @@ static int ext3_setup_super(struct super_block *sb, struct ext3_super_block *es,
 	} else {
 		ext3_msg(sb, KERN_INFO, "using internal journal");
 	}
+out:
+	sb->s_mnt_count = le16_to_cpu(es->s_mnt_count);
 	return res;
 }
 

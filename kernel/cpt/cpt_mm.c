@@ -362,25 +362,36 @@ retry:
 	}
 
 	get_page(pg);
-	spin_unlock(ptl);
 
 	if (pg->mapping && !PageAnon(pg)) {
 		if (vma->vm_file == NULL) {
 			eprintk_ctx("pg->mapping!=NULL for fileless vma: %08lx\n", addr);
-			goto out_unsupported;
+			goto out_unsupported_unlock;
 		}
-		if (vma->vm_file->f_mapping != pg->mapping) {
+		/*
+		 * vma and page mappings can differ if inode has peers.
+		 * actually vma-mapping must be in page-mapping peer list,
+		 * but checking this here is overkill.
+		 *
+		 * list checks are protected with ptl: close_inode_peer() will
+		 * lock it to unmap this page and remove inode from peers list.
+		 */
+		if (vma->vm_file->f_mapping != pg->mapping &&
+		    (list_empty(&vma->vm_file->f_mapping->i_peer_list) ||
+		     list_empty(&pg->mapping->i_peer_list))) {
 			eprintk_ctx("pg->mapping!=f_mapping: %08lx %p %p %Ld\n",
 				    addr, vma->vm_file->f_mapping, pg->mapping,
 				    mmobj->o_pos);
-			goto out_unsupported;
+			goto out_unsupported_unlock;
 		}
 		pdesc->index = (pg->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT));
 		/* Page is in backstore. For us it is like
 		 * it is not present.
 		 */
-		goto out_absent;
+		goto out_absent_unlock;
 	}
+
+	spin_unlock(ptl);
 
 	if (PageReserved(pg)) {
 		/* Special case: ZERO_PAGE is used, when an

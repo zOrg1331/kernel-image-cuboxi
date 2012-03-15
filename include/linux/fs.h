@@ -1469,6 +1469,8 @@ struct super_block {
 	char s_id[32];				/* Informational name */
 	u8 s_uuid[16];				/* UUID */
 
+	unsigned int		s_mnt_count;
+
 	void 			*s_fs_info;	/* Filesystem private info */
 	fmode_t			s_mode;
 

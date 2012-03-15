@@ -92,8 +92,10 @@ int cpt_dump_link(struct cpt_context * ctx)
 {
 	struct net *net = get_exec_env()->ve_netns;
 	struct net_device *dev;
+	int dump_bridges = 0;
 
 	cpt_open_section(ctx, CPT_SECT_NET_DEVICE);
+dump:
 	for_each_netdev(net, dev) {
 		struct cpt_netdev_image v;
 		struct cpt_hwaddr_image hw;
@@ -104,6 +106,18 @@ int cpt_dump_link(struct cpt_context * ctx)
 			cpt_close_section(ctx);
 			return -EBUSY;
 		}
+
+		/*
+		 * First dump all net devices except bridges.
+		 * Then dump bridges on next iteration.
+		 * This is done to make sure, that any othe than bridge network
+		 * devices will be restored prior to bridges, to make it able
+		 * to add them into a bridge.
+		 */
+		if (!dump_bridges && (dev->priv_flags & IFF_EBRIDGE))
+			continue;
+		if (dump_bridges && (!(dev->priv_flags & IFF_EBRIDGE)))
+			continue;
 
 		cpt_open_object(NULL, ctx);
 
@@ -145,6 +159,12 @@ int cpt_dump_link(struct cpt_context * ctx)
 
 		cpt_close_object(ctx);
 	}
+
+	if (!dump_bridges) {
+		dump_bridges = 1;
+		goto dump;
+	}
+
 	cpt_close_section(ctx);
 	return 0;
 }

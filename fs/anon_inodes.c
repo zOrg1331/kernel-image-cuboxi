@@ -199,7 +199,7 @@ int anon_inode_getfd(const char *name, const struct file_operations *fops,
 	return __anon_inode_getfd(name, fops, priv, flags,
 				  &anon_inodefs_dentry_operations);
 }
-EXPORT_SYMBOL_GPL(__anon_inode_getfd);
+EXPORT_SYMBOL(__anon_inode_getfd);
 EXPORT_SYMBOL_GPL(anon_inode_getfd);
 
 /*

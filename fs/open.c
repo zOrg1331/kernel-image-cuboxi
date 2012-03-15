@@ -1065,6 +1065,8 @@ int open_inode_peer(struct inode *inode, struct path *path,
 	struct inode *peer = path->dentry->d_inode;
 	struct address_space *mapping;
 	struct file *file;
+	struct user_beancounter *cur_ub;
+	struct cred *cur_cred;
 
 	if (inode->i_peer_file) {
 		path_put(path);
@@ -1090,8 +1092,12 @@ restart:
 	}
 	rcu_read_unlock();
 
+	cur_ub = set_exec_ub(&ub0);
+	cur_cred = override_creds(cred);
 	file = dentry_open(path->dentry, path->mnt,
 			   O_RDONLY|O_LARGEFILE, cred);
+	revert_creds(cur_cred);
+	set_exec_ub(cur_ub);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 

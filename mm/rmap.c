@@ -646,7 +646,7 @@ static int page_referenced_file(struct page *page,
 				unsigned long *vm_flags)
 {
 	unsigned int mapcount;
-	struct address_space *mapping = page->mapping;
+	struct address_space *mapping = page->mapping, *peer;
 	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
 	struct vm_area_struct *vma;
 	struct prio_tree_iter iter;
@@ -667,13 +667,16 @@ static int page_referenced_file(struct page *page,
 	 */
 	BUG_ON(!PageLocked(page));
 
-	spin_lock(&mapping->i_mmap_lock);
+	spin_lock_nested(&mapping->i_mmap_lock, SINGLE_DEPTH_NESTING);
 
 	/*
 	 * i_mmap_lock does not stabilize mapcount at all, but mapcount
 	 * is more likely to be accurate if we note it after spinning.
 	 */
 	mapcount = page_mapcount(page);
+
+	if (!mapcount)
+		goto out;
 
 	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long address = vma_address(page, vma);
@@ -689,9 +692,33 @@ static int page_referenced_file(struct page *page,
 		referenced += page_referenced_one(page, vma, address,
 						  &mapcount, vm_flags);
 		if (!mapcount)
-			break;
+			goto out;
 	}
 
+	list_for_each_entry(peer, &mapping->i_peer_list, i_peer_list) {
+		if (!mapping_mapped(peer))
+			continue;
+
+		spin_lock(&peer->i_mmap_lock);
+
+		vma_prio_tree_foreach(vma, &iter, &peer->i_mmap, pgoff, pgoff) {
+			unsigned long address = vma_address(page, vma);
+			if (address == -EFAULT)
+				continue;
+			if (mem_cont && !mm_match_cgroup(vma->vm_mm, mem_cont))
+				continue;
+			referenced += page_referenced_one(page, vma, address,
+							&mapcount, vm_flags);
+			if (!mapcount)
+				break;
+		}
+
+		spin_unlock(&peer->i_mmap_lock);
+
+		if (!mapcount)
+			break;
+	}
+out:
 	spin_unlock(&mapping->i_mmap_lock);
 	return referenced;
 }

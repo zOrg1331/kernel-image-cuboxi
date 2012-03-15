@@ -1573,7 +1573,7 @@ struct device *device_create(struct class *class, struct device *parent,
 	va_end(vargs);
 	return dev;
 }
-EXPORT_SYMBOL_GPL(device_create);
+EXPORT_SYMBOL(device_create);
 
 static int __match_devt(struct device *dev, void *data)
 {
@@ -1600,7 +1600,7 @@ void device_destroy(struct class *class, dev_t devt)
 		device_unregister(dev);
 	}
 }
-EXPORT_SYMBOL_GPL(device_destroy);
+EXPORT_SYMBOL(device_destroy);
 
 /**
  * device_rename - renames a device

@@ -994,14 +994,14 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 	if (sbi->s_balloon_ino)
 		seq_printf(seq, ",balloon_ino=%ld", sbi->s_balloon_ino->i_ino);
 	if (test_opt2(sb, CSUM))
-		seq_puts(seq, ",csum");
+		seq_puts(seq, ",pfcache_csum");
 	if (sbi->s_pfcache_root.mnt) {
-		down_read(&sb->s_umount);
+		spin_lock(&sbi->s_pfcache_lock);
 		if (sbi->s_pfcache_root.mnt) {
 			seq_puts(seq, ",pfcache=");
 			seq_path(seq, &sbi->s_pfcache_root, "\\ \t\n");
 		}
-		up_read(&sb->s_umount);
+		spin_unlock(&sbi->s_pfcache_lock);
 	}
 
 	if (test_opt(sb, BLOCK_VALIDITY) &&
@@ -1280,8 +1280,8 @@ static const match_table_t tokens = {
 	{Opt_init_inode_table, "init_itable=%u"},
 	{Opt_init_inode_table, "init_itable"},
 	{Opt_noinit_inode_table, "noinit_itable"},
-	{Opt_csum, "csum"},
-	{Opt_nocsum, "nocsum"},
+	{Opt_csum, "pfcache_csum"},
+	{Opt_nocsum, "nopfcache_csum"},
 	{Opt_pfcache, "pfcache=%s"},
 	{Opt_nopfcache, "nopfcache"},
 	{Opt_err, NULL},
@@ -1821,7 +1821,7 @@ static int ext4_setup_super(struct super_block *sb, struct ext4_super_block *es,
 		res = MS_RDONLY;
 	}
 	if (read_only)
-		return res;
+		goto out;
 	if (!(sbi->s_mount_state & EXT4_VALID_FS))
 		ext4_msg(sb, KERN_WARNING, "warning: mounting unchecked fs, "
 			 "running e2fsck is recommended");
@@ -1861,6 +1861,8 @@ static int ext4_setup_super(struct super_block *sb, struct ext4_super_block *es,
 			EXT4_INODES_PER_GROUP(sb),
 			sbi->s_mount_opt, sbi->s_mount_opt2);
 
+out:
+	sb->s_mnt_count = le16_to_cpu(es->s_mnt_count);
 	return res;
 }
 
@@ -3355,6 +3357,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_gdb_count = db_count;
 	get_random_bytes(&sbi->s_next_generation, sizeof(u32));
 	spin_lock_init(&sbi->s_next_gen_lock);
+	spin_lock_init(&sbi->s_pfcache_lock);
 
 	err = percpu_counter_init(&sbi->s_freeblocks_counter,
 			ext4_count_free_blocks(sb));

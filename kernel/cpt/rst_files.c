@@ -1905,7 +1905,7 @@ static int rst_restore_vfsmount(struct vfsmount *mnt, char *path,
 	if (IS_ERR(mntobj))
 		return PTR_ERR(mntobj);
 
-	ret = path_lookup(path, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
+	ret = path_lookup(path, LOOKUP_FOLLOW, &nd);
 	if (ret) {
 		eprintk_ctx("Failed ot lookup path '%s'\n", path);
 		return ret;
@@ -2002,7 +2002,7 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 			struct nameidata nd;
 
 			err = rst_path_lookup(bindobj, mntbind,
-					LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
+					LOOKUP_FOLLOW, &nd);
 			if (err)
 				goto out_err;
 

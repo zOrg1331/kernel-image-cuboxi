@@ -23,17 +23,25 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
-#define PRAM_FS_META	"pram.meta"
-#define PRAM_FS_DATA	"pram.data"
+static void pram_fs_msg(struct super_block *sb, const char *prefix,
+			const char *fmt, ...)
+{
+	va_list ap;
+	struct ramfs_fs_info *fsi = sb->s_fs_info;
 
-#define eprintk(fmt, args...)				\
-do {							\
-	printk(KERN_ERR "PRAMFS: " fmt "\n", ##args);	\
-} while (0)
+	va_start(ap, fmt);
+	if (fsi && fsi->pram_name[0])
+		printk("%sPRAMFS (node=%s): ", prefix, fsi->pram_name);
+	else
+		printk("%sPRAMFS: ", prefix);
+	vprintk(fmt, ap);
+	printk("\n");
+	va_end(ap);
+}
 
 static int save_str(const char *str, int len, struct pram_stream *stream)
 {
-	__le32 __len = cpu_to_le32(len);
+	__u32 __len = len;
 
 	if (pram_write(stream, &__len, 4) != 4 ||
 	    pram_write(stream, str, len) != len)
@@ -43,12 +51,12 @@ static int save_str(const char *str, int len, struct pram_stream *stream)
 
 static int load_str(char *buf, int buflen, struct pram_stream *stream)
 {
-	__le32 __len;
+	__u32 __len;
 	int len;
 
 	if (pram_read(stream, &__len, 4) != 4)
 		return -EIO;
-	len = le32_to_cpu(__len);
+	len = __len;
 	if (len > buflen)
 		return -ENAMETOOLONG;
 	if (pram_read(stream, buf, len) != len)
@@ -62,7 +70,7 @@ static int save_mapping_pages(struct address_space *mapping,
 {
 	struct pagevec pvec;
 	pgoff_t next = 0;
-	__le64 __offset;
+	__u64 __offset;
 	int err = 0;
 
 	pagevec_init(&pvec, 0);
@@ -84,7 +92,7 @@ static int save_mapping_pages(struct address_space *mapping,
 				next = offset;
 			next++;
 
-			__offset = cpu_to_le64(offset);
+			__offset = offset;
 			if (pram_write(meta_stream, &__offset, 8) != 8 ||
 			    pram_push_page(data_stream, page, NULL) != 0) {
 				unlock_page(page);
@@ -99,7 +107,7 @@ static int save_mapping_pages(struct address_space *mapping,
 		pagevec_release(&pvec);
 	}
 
-#define OFFSET_END_MARK ((__le64)~0ULL)
+#define OFFSET_END_MARK ((__u64)~0ULL)
 	__offset = OFFSET_END_MARK;
 	if (pram_write(meta_stream, &__offset, 8) != 8)
 		err = -EIO;
@@ -115,7 +123,7 @@ static int load_mapping_pages(struct address_space *mapping,
 
 	for ( ; ; ) {
 		struct page *page;
-		__le64 __offset;
+		__u64 __offset;
 		pgoff_t offset;
 
 		if (pram_read(meta_stream, &__offset, 8) != 8) {
@@ -131,7 +139,7 @@ static int load_mapping_pages(struct address_space *mapping,
 			break;
 		}
 
-		offset = le64_to_cpu(__offset);
+		offset = __offset;
 		if (!page_gang(page)) {
 			err = add_to_page_cache_lru(page, mapping, offset,
 						    GFP_KERNEL);
@@ -206,14 +214,14 @@ static inline int load_make_symlink(struct dentry *parent,
 }
 
 struct file_header {
-	__le32	mode;
-	__le32	uid;
-	__le32	gid;
-	__le32	dev;
-	__le32	atime;
-	__le32	mtime;
-	__le32	ctime;
-	__le64	size;
+	__u32	mode;
+	__u32	uid;
+	__u32	gid;
+	__u32	dev;
+	__u32	atime;
+	__u32	mtime;
+	__u32	ctime;
+	__u64	size;
 };
 
 static int save_file(struct dentry *dentry,
@@ -226,14 +234,14 @@ static int save_file(struct dentry *dentry,
 	int err;
 
 	mode = inode->i_mode;
-	hdr.mode = cpu_to_le32(mode);
-	hdr.uid = cpu_to_le32(inode->i_uid);
-	hdr.gid = cpu_to_le32(inode->i_gid);
-	hdr.dev = cpu_to_le32(inode->i_rdev);
-	hdr.atime = cpu_to_le32(inode->i_atime.tv_sec);
-	hdr.mtime = cpu_to_le32(inode->i_mtime.tv_sec);
-	hdr.ctime = cpu_to_le32(inode->i_ctime.tv_sec);
-	hdr.size = cpu_to_le64(i_size_read(inode));
+	hdr.mode = mode;
+	hdr.uid = inode->i_uid;
+	hdr.gid = inode->i_gid;
+	hdr.dev = inode->i_rdev;
+	hdr.atime = inode->i_atime.tv_sec;
+	hdr.mtime = inode->i_mtime.tv_sec;
+	hdr.ctime = inode->i_ctime.tv_sec;
+	hdr.size = i_size_read(inode);
 
 	if (pram_write(meta_stream, &hdr, sizeof(hdr)) != sizeof(hdr))
 		return -EIO;
@@ -285,7 +293,7 @@ static struct dentry *load_file(struct dentry *parent,
 	free_page((unsigned long)buf);
 	buf = NULL;
 
-	mode = le32_to_cpu(hdr.mode);
+	mode = hdr.mode;
 	if (S_ISLNK(mode))
 		err = load_make_symlink(parent, dentry, meta_stream);
 	else if (S_ISREG(mode))
@@ -294,8 +302,7 @@ static struct dentry *load_file(struct dentry *parent,
 		err = vfs_mkdir(parent->d_inode, dentry, mode);
 	else if (S_ISCHR(mode) || S_ISBLK(mode) ||
 		 S_ISFIFO(mode) || S_ISSOCK(mode))
-		err = vfs_mknod(parent->d_inode, dentry, mode,
-				le32_to_cpu(hdr.dev));
+		err = vfs_mknod(parent->d_inode, dentry, mode, (dev_t)hdr.dev);
 	else
 		err = -EINVAL;
 	if (err)
@@ -304,17 +311,17 @@ static struct dentry *load_file(struct dentry *parent,
 	inode = dentry->d_inode;
 
 	inode->i_mode = mode;
-	inode->i_uid = le32_to_cpu(hdr.uid);
-	inode->i_gid = le32_to_cpu(hdr.gid);
-	inode->i_atime.tv_sec = le32_to_cpu(hdr.atime);
+	inode->i_uid = hdr.uid;
+	inode->i_gid = hdr.gid;
+	inode->i_atime.tv_sec = hdr.atime;
 	inode->i_atime.tv_nsec = 0;
-	inode->i_mtime.tv_sec = le32_to_cpu(hdr.mtime);
+	inode->i_mtime.tv_sec = hdr.mtime;
 	inode->i_mtime.tv_nsec = 0;
-	inode->i_ctime.tv_sec = le32_to_cpu(hdr.ctime);
+	inode->i_ctime.tv_sec = hdr.ctime;
 	inode->i_ctime.tv_nsec = 0;
 
 	if (S_ISREG(mode)) {
-		i_size_write(inode, le64_to_cpu(hdr.size));
+		i_size_write(inode, hdr.size);
 		err = load_mapping_pages(inode->i_mapping,
 					 meta_stream, data_stream);
 		if (err)
@@ -419,7 +426,7 @@ static int save_tree(struct dentry *root,
 {
 	struct dentry *dget_list = NULL;
 	struct dentry *dir, *dentry;
-	__le16 __content;
+	__u16 __content;
 	int err = 0;
 
 	dir = root;
@@ -450,7 +457,7 @@ next_dir:
 			content = CONTENT_FILE;
 		}
 
-		__content = cpu_to_le16(content);
+		__content = content;
 		if (pram_write(meta_stream, &__content, 2) != 2) {
 			err = -EIO;
 			goto out;
@@ -477,7 +484,7 @@ next_dir:
 	spin_unlock(&dcache_lock);
 out:
 	if (!err && dir != root) {
-		__content = cpu_to_le32(ENDOFDIR_MARK);
+		__content = ENDOFDIR_MARK;
 		if (pram_write(meta_stream, &__content, 2) != 2) {
 			err = -EIO;
 		} else {
@@ -502,7 +509,7 @@ static int load_tree(struct vfsmount *mnt,
 {
 	struct dentry *root = mnt->mnt_root;
 	struct dentry *dir, *dentry;
-	__le16 __content;
+	__u16 __content;
 	int content;
 	ssize_t ret;
 	int err = 0;
@@ -517,7 +524,7 @@ next:
 		goto out;
 	}
 
-	content = le16_to_cpu(__content);
+	content = __content;
 	switch (content) {
 	case CONTENT_FILE:
 		dentry = load_file(dir, meta_stream, data_stream);
@@ -555,86 +562,135 @@ out:
 	return err;
 }
 
+static inline const char *pram_fs_node_basename(struct super_block *sb,
+						char *buf, size_t size)
+{
+	struct ramfs_fs_info *fsi = sb->s_fs_info;
+
+	if (fsi && fsi->pram_name[0])
+		snprintf(buf, size, "pram.%s.", fsi->pram_name);
+	else
+		snprintf(buf, size, "pram.");
+	return buf;
+}
+
+static int open_streams(struct super_block *sb, int mode,
+			struct pram_stream *meta_stream,
+			struct pram_stream *data_stream)
+{
+	char *buf;
+	size_t basename_len;
+	int err = -ENOMEM;
+
+	buf = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!buf)
+		goto out;
+
+	pram_fs_node_basename(sb, buf, PAGE_SIZE);
+	basename_len = strlen(buf);
+
+	strlcat(buf, "meta", PAGE_SIZE);
+	err = pram_open(buf, mode, meta_stream);
+	if (err)
+		goto out_free_buf;
+
+	buf[basename_len] = '\0';
+	strlcat(buf, "data", PAGE_SIZE);
+	err = pram_open(buf, mode, data_stream);
+	if (err)
+		goto out_close_meta;
+
+	free_page((unsigned long)buf);
+	return 0;
+
+out_close_meta:
+	pram_close(meta_stream, -1);
+out_free_buf:
+	free_page((unsigned long)buf);
+out:
+	return err;
+}
+
+static inline void close_streams(struct pram_stream *meta_stream,
+				 struct pram_stream *data_stream, int err)
+{
+	pram_close(meta_stream, err);
+	pram_close(data_stream, err);
+}
+
 static void save_pram_fs(struct super_block *sb)
 {
 	struct pram_stream meta_stream, data_stream;
 	int err;
 
-	err = pram_open(PRAM_FS_META, PRAM_WRITE, &meta_stream);
-	if (err) {
-		eprintk("failed to create metadata stream: %d", err);
-		return;
-	}
-
-	err = pram_open(PRAM_FS_DATA, PRAM_WRITE, &data_stream);
-	if (err) {
-		eprintk("failed to create data stream: %d", err);
-		goto out_close_meta;
-	}
+	err = open_streams(sb, PRAM_WRITE, &meta_stream, &data_stream);
+	if (err)
+		goto out;
 
 	err = save_tree(sb->s_root, &meta_stream, &data_stream);
+	close_streams(&meta_stream, &data_stream, err);
+out:
 	if (err)
-		eprintk("failed to save fs tree: %d", err);
-
-	pram_close(&data_stream, err);
-out_close_meta:
-	pram_close(&meta_stream, err);
+		pram_fs_msg(sb, KERN_ERR, "Failed to save FS tree: %d", err);
 }
 
-static int load_pram_fs(struct vfsmount *mnt)
+static int load_pram_fs(struct super_block *sb, struct vfsmount *mnt)
 {
 	struct pram_stream meta_stream, data_stream;
 	int err;
 
-	err = pram_open(PRAM_FS_META, PRAM_READ, &meta_stream);
-	if (err) {
-		eprintk("failed to load metadata: %d", err);
+	err = open_streams(sb, PRAM_READ, &meta_stream, &data_stream);
+	if (err)
 		goto out;
-	}
-
-	err = pram_open(PRAM_FS_DATA, PRAM_READ, &data_stream);
-	if (err) {
-		eprintk("failed to load data: %d", err);
-		goto out_close_meta;
-	}
 
 	err = load_tree(mnt, &meta_stream, &data_stream);
-	if (err)
-		eprintk("failed to load fs tree: %d", err);
-
-	pram_close(&data_stream, 0);
-out_close_meta:
-	pram_close(&meta_stream, 0);
+	close_streams(&meta_stream, &data_stream, 0);
 out:
+	if (err)
+		pram_fs_msg(sb, KERN_ERR, "Failed to load FS tree: %d", err);
 	return err;
 }
 
-static void destroy_pram_fs(void)
+static int destroy_pram_fs(struct super_block *sb)
 {
-	pram_destroy(PRAM_FS_META);
-	pram_destroy(PRAM_FS_DATA);
+	struct pram_stream meta_stream, data_stream;
+	int err;
+
+	err = open_streams(sb, PRAM_READ, &meta_stream, &data_stream);
+	if (!err)
+		close_streams(&meta_stream, &data_stream, 0);
+	if (err == -ENOENT)
+		err = 0;
+	if (err)
+		pram_fs_msg(sb, KERN_ERR,
+			    "Failed to destroy PRAM node: %d", err);
+	return err;
 }
 
-enum { Opt_noload, Opt_err, };
+enum {
+	Opt_noload,
+	Opt_pram_name,
+	Opt_err,
+};
 
 static const match_table_t tokens = {
 	{Opt_noload, "noload"},
+	{Opt_pram_name, "pram_name=%s"},
 	{Opt_err, NULL}
 };
 
-static int pram_fs_load;
-static int pram_fs_save;
-
-static int parse_options(char *options)
+static int parse_options(char *options, int *load,
+			 char *name, size_t name_size)
 {
 	substring_t args[MAX_OPT_ARGS];
 	int token;
 	char *p;
 
-	pram_fs_load = 1;
+	*load = 1;
+	memset(name, 0, name_size);
 
 	if (!options)
-		goto out;
+		return 0;
 
 	while ((p = strsep(&options, ",")) != NULL) {
 		if (!*p)
@@ -643,15 +699,17 @@ static int parse_options(char *options)
 		token = match_token(p, tokens, args);
 		switch (token) {
 		case Opt_noload:
-			pram_fs_load = 0;
+			*load = 0;
 			break;
-		/*
-		 * Ignore unrecognized options
-		 * since they can be intended ramfs
-		 */
+		case Opt_pram_name:
+			if (match_strlcpy(name, &args[0],
+					  name_size) >= name_size)
+				return -EINVAL;
+			break;
+		default:
+			return -EINVAL;
 		}
 	}
-out:
 	return 0;
 }
 
@@ -659,18 +717,26 @@ static int pram_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int err;
 	char *options;
+	struct ramfs_fs_info *fsi;
 
+	err = -ENOMEM;
 	options = kstrdup(data, GFP_KERNEL);
 	if (!options && data)
-		return -ENOMEM;
-
-	err = parse_options(options);
-	if (err)
 		goto out;
 
 	err = ramfs_fill_super(sb, data, silent);
-out:
+	if (err)
+		goto out_free_opts;
+
+	fsi = sb->s_fs_info;
+	BUG_ON(!fsi);
+
+	fsi->pram_save = 0;
+	err = parse_options(options, &fsi->pram_load,
+			    fsi->pram_name, PRAM_FS_NAME_MAX);
+out_free_opts:
 	kfree(options);
+out:
 	return err;
 }
 
@@ -678,31 +744,33 @@ static int pram_get_sb(struct file_system_type *fs_type, int flags,
 		       const char *dev_name, void *data, struct vfsmount *mnt)
 {
 	int err;
+	struct super_block *sb;
+	struct ramfs_fs_info *fsi;
 
-	pram_fs_load = pram_fs_save = 0;
-
-	err = get_sb_single(fs_type, flags, data, pram_fill_super, mnt);
+	err = get_sb_nodev(fs_type, flags, data, pram_fill_super, mnt);
 	if (err)
 		return err;
 
-	if (pram_fs_load)
-		err = load_pram_fs(mnt);
-	else
-		destroy_pram_fs();
+	sb = mnt->mnt_sb;
+	fsi = sb->s_fs_info;
+	BUG_ON(!fsi);
 
+	err = fsi->pram_load ? load_pram_fs(sb, mnt) : destroy_pram_fs(sb);
 	if (err) {
-		dput(mnt->mnt_sb->s_root);
-		deactivate_locked_super(mnt->mnt_sb);
+		dput(sb->s_root);
+		deactivate_locked_super(sb);
 		return err;
 	}
 
-	pram_fs_save = 1;
+	fsi->pram_save = 1;
 	return 0;
 }
 
 static void pram_kill_sb(struct super_block *sb)
 {
-	if (pram_fs_save)
+	struct ramfs_fs_info *fsi = sb->s_fs_info;
+
+	if (fsi && fsi->pram_save)
 		save_pram_fs(sb);
 	kfree(sb->s_fs_info);
 	kill_litter_super(sb);

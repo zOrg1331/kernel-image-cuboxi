@@ -338,8 +338,9 @@ static void tun_net_uninit(struct net_device *dev)
 static void tun_free_netdev(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
+	struct sock *sk = tun->socket.sk;
 
-	sock_put(tun->socket.sk);
+	sk_release_kernel(tun->socket.sk);
 }
 
 /* Net device open. */
@@ -927,10 +928,18 @@ static int tun_recvmsg(struct kiocb *iocb, struct socket *sock,
 	return ret;
 }
 
+static int tun_release(struct socket *sock)
+{
+	if (sock->sk)
+		sock_put(sock->sk);
+	return 0;
+}
+
 /* Ops structure to mimic raw sockets with tun */
 static const struct proto_ops tun_socket_ops = {
 	.sendmsg = tun_sendmsg,
 	.recvmsg = tun_recvmsg,
+	.release = tun_release,
 };
 
 static struct proto tun_proto = {
@@ -944,9 +953,11 @@ static int tun_sk_alloc_init(struct net *net, struct tun_struct *tun,
 {
 	struct sock *sk;
 
-	sk = sk_alloc(net, AF_UNSPEC, GFP_KERNEL, &tun_proto);
+	sk = sk_alloc(&init_net, AF_UNSPEC, GFP_KERNEL, &tun_proto);
 	if (!sk)
 		return -ENOMEM;
+
+	sk_change_net(sk, net);
 
 	init_waitqueue_head(&tun->socket.wait);
 	tun->socket.ops = &tun_socket_ops;
@@ -1136,7 +1147,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 	return 0;
 
  err_free_sk:
-	sock_put(sk);
+	tun_free_netdev(dev);
  err_free_dev:
 	free_netdev(dev);
  failed:
@@ -1735,11 +1746,12 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 	tun->dev = dev;
 	tun->owner = ti.cpt_owner;
 	tun->flags = ti.cpt_flags;
-	tun_net_init(dev);
 
 	err = tun_sk_alloc_init(net, tun, &sk);
 	if (err)
 		goto out_netdev;
+
+	tun_net_init(dev);
 
 	err = rst_restore_tap_filter(pos, &ti, &tun->txflt, ops, ctx);
 	if (err < 0)
@@ -1776,7 +1788,7 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 out_unreg:
 	unregister_netdevice(dev);
 out_sk:
-	sock_put(sk);
+	tun_free_netdev(dev);
 out_netdev:
 	free_netdev(dev);
 out_tf:
