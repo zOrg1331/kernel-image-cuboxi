@@ -1,5 +1,4 @@
 Name:    kernel-image-std-pae
-Release: alt0.M60P.1
 Release: alt0.M60P.2
 Epoch:   1
 %define kernel_base_version	3.0
