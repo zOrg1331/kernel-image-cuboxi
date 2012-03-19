@@ -1,5 +1,5 @@
 #video drivers
-#fglrx
+fglrx
 nvidia
 
 #network card drivers
@@ -40,7 +40,7 @@ drbd83
 e1000e
 
 # Deep Packet Inspection
-opendpi
+# opendpi
 
 xtables-addons
 
