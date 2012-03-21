@@ -71,12 +71,12 @@ static void cirrus_encoder_mode_set(struct drm_encoder *encoder,
 	WREG_SEQ(0x7, tmp);
 
 	/* Program the pitch */
-	tmp = encoder->crtc->fb->pitch / 8;
+	tmp = encoder->crtc->fb->pitches[0] / 8;
 	WREG_CRT(VGA_CRTC_OFFSET, tmp);
 
 	/* Enable extended blanking and pitch bits, and enable full memory */
 	tmp = 0x22;
-	if (encoder->crtc->fb->pitch >= 2048)
+	if (encoder->crtc->fb->pitches[0] >= 2048)
 		tmp |= 0x10;
 	WREG_CRT(0x1b, tmp);
 
