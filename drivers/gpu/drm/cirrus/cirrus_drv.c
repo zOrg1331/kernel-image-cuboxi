@@ -45,12 +45,7 @@ static void cirrus_pci_remove(struct pci_dev *pdev)
 	drm_put_dev(dev);
 }
 
-static struct drm_driver driver = {
-	.driver_features = DRIVER_MODESET,
-	.load = cirrus_driver_load,
-	.unload = cirrus_driver_unload,
-	.reclaim_buffers = drm_core_reclaim_buffers,
-	.fops = {
+static const struct file_operations cirrus_driver_fops = {
 		 .owner = THIS_MODULE,
 		 .open = drm_open,
 		 .release = drm_release,
@@ -58,7 +53,14 @@ static struct drm_driver driver = {
 		 .mmap = drm_mmap,
 		 .poll = drm_poll,
 		 .fasync = drm_fasync,
-		 },
+};
+
+static struct drm_driver driver = {
+	.driver_features = DRIVER_MODESET,
+	.load = cirrus_driver_load,
+	.unload = cirrus_driver_unload,
+	.reclaim_buffers = drm_core_reclaim_buffers,
+	.fops = &cirrus_driver_fops,
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
