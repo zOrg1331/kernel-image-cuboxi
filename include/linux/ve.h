@@ -185,6 +185,9 @@ struct ve_struct {
 	struct sysfs_dirent	*_sysfs_root;
 	struct kobject		*fs_kobj;
 	struct kobject		*cgroup_kobj;
+#if defined(CONFIG_HOTPLUG)
+	struct kobject		*kernel_kobj;
+#endif
 #endif
 	struct kobject		*_virtual_dir;
 	struct kset		*class_kset;

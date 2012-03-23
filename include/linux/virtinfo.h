@@ -70,6 +70,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v,
 #define VIRTINFO_IO_READAHEAD	3
 #define VIRTINFO_IO_CONGESTION	4
 #define VIRTINFO_IO_OP_ACCOUNT	5
+#define VIRTINFO_IO_BALANCE_DIRTY	6
 
 enum virt_info_types {
 	VITYPE_GENERAL,

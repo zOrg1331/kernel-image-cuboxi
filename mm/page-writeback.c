@@ -487,6 +487,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 {
 	long nr_reclaimable, bdi_nr_reclaimable;
 	long nr_writeback, bdi_nr_writeback;
+	long ub_dirty, ub_writeback;
+	long ub_thresh, ub_background_thresh;
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	unsigned long bdi_thresh;
@@ -504,34 +506,16 @@ static void balance_dirty_pages(struct address_space *mapping,
 			.range_cyclic	= 1,
 		};
 
-		if (ub_dirty_limits(&dirty_thresh, ub)) {
-			bdi_nr_reclaimable = bdi_nr_writeback = 0;
-			bdi_thresh = background_thresh = ULONG_MAX;
-			nr_reclaimable = ub_dirty_pages(ub);
-			nr_writeback = ub_stat_get(ub, writeback_pages);
-			if (nr_reclaimable + nr_writeback > dirty_thresh) {
-				nr_reclaimable = ub_stat_get_exact(ub, dirty_pages);
-				nr_writeback = ub_stat_get_exact(ub, writeback_pages);
-				if (nr_reclaimable + nr_writeback <= dirty_thresh) {
-					ub_stat_flush_pcpu(ub, dirty_pages);
-					ub_stat_flush_pcpu(ub, writeback_pages);
-					goto no_ub_balance;
-				}
-				if (!ub->dirty_exceeded)
-					ub->dirty_exceeded = 1;
-				wbc.wb_ub = ub;
-				writeback_inodes_wb(&bdi->wb, &wbc);
-				pages_written += write_chunk - wbc.nr_to_write;
-				goto done;
-			}
-		}
-no_ub_balance:
-
-		if (ub->dirty_exceeded)
-			ub->dirty_exceeded = 0;
-
 		get_dirty_limits(&background_thresh, &dirty_thresh,
 				&bdi_thresh, bdi);
+
+		if (ub_dirty_limits(&ub_background_thresh, &ub_thresh, ub)) {
+			ub_dirty = ub_stat_get(ub, dirty_pages);
+			ub_writeback = ub_stat_get(ub, writeback_pages);
+		} else {
+			ub_dirty = ub_writeback = 0;
+			ub_thresh = ub_background_thresh = LONG_MAX;
+		}
 
 		nr_reclaimable = global_page_state(NR_FILE_DIRTY) +
 					global_page_state(NR_UNSTABLE_NFS);
@@ -540,7 +524,21 @@ no_ub_balance:
 		bdi_nr_reclaimable = bdi_stat(bdi, BDI_RECLAIMABLE);
 		bdi_nr_writeback = bdi_stat(bdi, BDI_WRITEBACK);
 
-		if (bdi_nr_reclaimable + bdi_nr_writeback <= bdi_thresh)
+		/*
+		 * Check thresholds, set dirty_exceeded flags and
+		 * start background writeback before throttling.
+		 */
+		if (bdi_nr_reclaimable + bdi_nr_writeback > bdi_thresh) {
+			if (!bdi->dirty_exceeded)
+				bdi->dirty_exceeded = 1;
+			if (!writeback_in_progress(bdi))
+				bdi_start_background_writeback(bdi, NULL);
+		} else if (ub_dirty + ub_writeback > ub_thresh) {
+			if (!ub->dirty_exceeded)
+				ub->dirty_exceeded = 1;
+			if (!writeback_in_progress(bdi))
+				bdi_start_background_writeback(bdi, ub);
+		} else
 			break;
 
 		/*
@@ -549,11 +547,10 @@ no_ub_balance:
 		 * when the bdi limits are ramping up.
 		 */
 		if (nr_reclaimable + nr_writeback <
-				(background_thresh + dirty_thresh) / 2)
+				(background_thresh + dirty_thresh) / 2 &&
+		    ub_dirty + ub_writeback <
+				(ub_background_thresh + ub_thresh) / 2)
 			break;
-
-		if (!bdi->dirty_exceeded)
-			bdi->dirty_exceeded = 1;
 
 		/* Note: nr_reclaimable denotes nr_dirty + nr_unstable.
 		 * Unstable writes are a feature of certain networked
@@ -571,6 +568,14 @@ no_ub_balance:
 			trace_wbc_balance_dirty_written(&wbc, bdi);
 			get_dirty_limits(&background_thresh, &dirty_thresh,
 				       &bdi_thresh, bdi);
+		} else if (ub_dirty > ub_thresh) {
+			wbc.wb_ub = ub;
+			writeback_inodes_wb(&bdi->wb, &wbc);
+			pages_written += write_chunk - wbc.nr_to_write;
+			trace_wbc_balance_dirty_written(&wbc, bdi);
+			ub_dirty = ub_stat_get(ub, dirty_pages);
+			ub_writeback = ub_stat_get(ub, writeback_pages);
+			wbc.wb_ub = NULL;
 		}
 
 		/*
@@ -591,10 +596,18 @@ no_ub_balance:
 			bdi_nr_writeback = bdi_stat(bdi, BDI_WRITEBACK);
 		}
 
-		if (bdi_nr_reclaimable + bdi_nr_writeback <= bdi_thresh)
+		/* fixup ub-stat per-cpu drift to avoid false-positive */
+		if (ub_dirty + ub_writeback > ub_thresh &&
+		    ub_dirty + ub_writeback - ub_thresh <
+				    UB_STAT_BATCH * num_possible_cpus()) {
+			ub_dirty = ub_stat_get_exact(ub, dirty_pages);
+			ub_writeback = ub_stat_get_exact(ub, writeback_pages);
+		}
+
+		if (bdi_nr_reclaimable + bdi_nr_writeback <= bdi_thresh &&
+		    ub_dirty + ub_writeback <= ub_thresh)
 			break;
 
-done:
 		if (pages_written >= write_chunk)
 			break;		/* We've done our duty */
 
@@ -616,6 +629,16 @@ done:
 			bdi->dirty_exceeded)
 		bdi->dirty_exceeded = 0;
 
+	if (ub_dirty + ub_writeback < ub_thresh && ub->dirty_exceeded)
+		ub->dirty_exceeded = 0;
+
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_BALANCE_DIRTY,
+			       (void*)write_chunk);
+
+	/*
+	 * Even if this is filtered writeback for other ub it will write
+	 * inodes for this ub, because ub->dirty_exceeded is set.
+	 */
 	if (writeback_in_progress(bdi))
 		return;
 
@@ -631,8 +654,10 @@ done:
 	    (!laptop_mode && ((global_page_state(NR_FILE_DIRTY)
 			       + global_page_state(NR_UNSTABLE_NFS))
 					  > background_thresh)))
-		/* XXX - pass the proper beancounter here? */
 		bdi_start_background_writeback(bdi, NULL);
+	else if ((laptop_mode && pages_written) ||
+		 (!laptop_mode && ub_dirty > ub_background_thresh))
+		bdi_start_background_writeback(bdi, ub);
 }
 
 void set_page_dirty_balance(struct page *page, int page_mkwrite)

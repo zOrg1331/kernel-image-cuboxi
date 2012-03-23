@@ -1066,28 +1066,37 @@ int open_inode_peer(struct inode *inode, struct path *path,
 	struct address_space *mapping;
 	struct file *file;
 	struct user_beancounter *cur_ub;
-	struct cred *cur_cred;
+	const struct cred *cur_cred;
+	int err;
 
-	if (inode->i_peer_file) {
-		path_put(path);
-		return -EBUSY;
-	}
+	/*
+	 * We cannot open peers in the middle of transaction,
+	 * this shouldn't happens at all.
+	 */
+	err = -EDEADLK;
+	if (WARN_ON_ONCE(current->journal_info))
+		goto out_err;
 
+	err = -EBUSY;
+	if (inode->i_peer_file)
+		goto out_err;
+
+	err = -EINVAL;
 	if (!S_ISREG(inode->i_mode) || !S_ISREG(peer->i_mode) ||
-	    peer == inode || i_size_read(peer) != i_size_read(inode)) {
-		path_put(path);
-		return -EINVAL;
-	}
+	    peer == inode || i_size_read(peer) != i_size_read(inode))
+		goto out_err;
 
 restart:
 	rcu_read_lock();
 	file = rcu_dereference(peer->i_peer_file);
 	if (file && file->f_mapping != peer->i_mapping) {
 		rcu_read_unlock();
-		return -EMLINK;
+		err = -EMLINK;
+		goto out_err;
 	}
 	if (file && atomic_long_inc_not_zero(&file->f_count)) {
 		rcu_read_unlock();
+		path_put(path);
 		goto install;
 	}
 	rcu_read_unlock();
@@ -1147,16 +1156,30 @@ undo:
 	spin_unlock(&inode->i_lock);
 	if (atomic_long_dec_and_test(&file->f_count)) {
 		spin_lock(&peer->i_lock);
-		BUG_ON(peer->i_peer_file != file);
-		rcu_assign_pointer(peer->i_peer_file, NULL);
+		if (peer->i_peer_file == file)
+			rcu_assign_pointer(peer->i_peer_file, NULL);
 		atomic_inc(&peer->i_writecount);
 		spin_unlock(&peer->i_lock);
 		__fput(file);
 	}
 
 	return -EBUSY;
+
+out_err:
+	path_put(path);
+	return err;
 }
 EXPORT_SYMBOL(open_inode_peer);
+
+static void peer_fput(struct work_struct *work)
+{
+	struct file *file = container_of(work, struct file, f_work);
+
+	/* update peer atime */
+	file_accessed(file);
+
+	__fput(file);
+}
 
 /*
  * require inode->i_mutex or unreachable inode
@@ -1200,10 +1223,15 @@ void close_inode_peer(struct inode *inode)
 		atomic_inc(&peer->i_writecount);
 		spin_unlock(&peer->i_lock);
 
-		/* update peer atime */
-		file_accessed(file);
-
-		__fput(file);
+		/*
+		 * We cannot fput file if we are in the middle of
+		 * fs-transaction, so schedule this fput to keventd.
+		 */
+		if (current->journal_info) {
+			INIT_WORK(&file->f_work, peer_fput);
+			schedule_work(&file->f_work);
+		} else
+			peer_fput(&file->f_work);
 	}
 }
 EXPORT_SYMBOL(close_inode_peer);
