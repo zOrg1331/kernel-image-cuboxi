@@ -515,9 +515,10 @@ static int writeback_sb_inodes(struct super_block *sb, struct bdi_writeback *wb,
 			return 0;
 		}
 
-		if (wbc->wb_ub &&
-		    (inode->i_mapping->dirtied_ub != wbc->wb_ub) &&
-		    (inode->i_state & I_DIRTY) == I_DIRTY_PAGES) {
+		/* Filter ub inodes if bdi dirty limit isn't exceeded */
+		if (wbc->wb_ub && !wb->bdi->dirty_exceeded &&
+		    (inode->i_state & I_DIRTY) == I_DIRTY_PAGES &&
+		    ub_should_skip_writeback(wbc->wb_ub, inode)) {
 			requeue_io(inode);
 			continue;
 		}
@@ -670,9 +671,11 @@ static long wb_writeback(struct bdi_writeback *wb,
 
 		/*
 		 * For background writeout, stop when we are below the
-		 * background dirty threshold
+		 * background dirty threshold. For filtered background
+		 * writeback we write all inodes dirtied before us,
+		 * because we cannot dereference this ub pointer.
 		 */
-		if (work->for_background && !over_bground_thresh())
+		if (work->for_background && !work->ub && !over_bground_thresh())
 			break;
 
 		wbc.more_io = 0;

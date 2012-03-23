@@ -2775,7 +2775,6 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct mem_cgroup *ptr = NULL;
 	int exclusive = 0;
 	int ret = 0;
-	int gang_swap = 0;
 	cycles_t start;
 
 	start = get_cycles();
@@ -2828,8 +2827,21 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		ret = VM_FAULT_HWPOISON;
 		delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 		goto out_release;
-	} else
-		gang_swap = 1;
+	} else if (!page_mapped(page) &&
+		   page_gang(page)->set != get_mm_gang(mm)) {
+		ub_percpu_inc(mm_ub(mm), vswapin);
+		gang_rate_limit(get_mm_gang(mm), get_exec_ub() == mm_ub(mm), 1);
+		/*
+		 * move page into container after vswapin throttling
+		 * to protect against endless bouncing in vswap.
+		 */
+		if (!isolate_lru_page(page)) {
+			unpin_mem_gang(page_gang(page));
+			gang_mod_user_page(page, get_mm_gang(mm), GFP_ATOMIC);
+			pin_mem_gang(page_gang(page));
+			putback_lru_page(page);
+		}
+	}
 
 	locked = lock_page_or_retry(page, mm, flags);
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
@@ -2900,9 +2912,6 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 	flush_icache_page(vma, page);
 	set_pte_at(mm, address, page_table, pte);
-	if (gang_swap)
-		gang_swap = !page_mapped(page) &&
-			page_gang(page)->set != get_mm_gang(mm);
 	do_page_add_anon_rmap(page, vma, address, exclusive);
 	/* It's better to call commit-charge after rmap is established */
 	mem_cgroup_commit_charge_swapin(page, ptr);
@@ -2941,11 +2950,6 @@ out:
 	KSTAT_LAT_ADD(&kstat_glob.swap_in, get_cycles() - start);
 	spin_unlock_irq(&kstat_glb_lock);
 	trace_mm_anon_pgin(mm, address);
-
-	if (gang_swap) {
-		ub_percpu_inc(mm->mm_ub, vswapin);
-		gang_rate_limit(get_mm_gang(mm), get_exec_ub() == mm_ub(mm), 1);
-	}
 
 	return ret;
 out_nomap:

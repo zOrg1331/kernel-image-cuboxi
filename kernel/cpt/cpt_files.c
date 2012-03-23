@@ -2184,13 +2184,70 @@ out_err:
 	return err;
 }
 
+struct vfsdump {
+	struct list_head lst;
+	struct vfsmount *mnt;
+};
+
+/*
+ * Called under namespace_sem held for read
+ */
+static int gather_mounts(struct vfsmount *mnt, struct list_head *out)
+{
+	struct vfsmount *p;
+
+	INIT_LIST_HEAD(out);
+
+	for (p = mnt; p; p = next_mnt(p, mnt)) {
+		struct vfsdump *el = kmalloc(sizeof(struct vfsdump),
+					     GFP_KERNEL);
+
+		if (!el)
+			return -ENOMEM;
+
+		el->mnt = mntget(p);
+		list_add_tail(&el->lst, out);
+	}
+
+	return 0;
+}
+
+static void put_gathered_mounts(struct list_head *list)
+{
+	struct list_head *p, *tmp;
+
+	list_for_each_safe(p, tmp, list) {
+		struct vfsdump *dmp = list_entry(p, struct vfsdump, lst);
+		mntput(dmp->mnt);
+		kfree(dmp);
+	}
+}
+
+static int dump_gathered_mounts(struct list_head *list, struct cpt_context *ctx)
+{
+	struct list_head *p;
+	int err = 0;
+
+	list_for_each(p, list) {
+		struct vfsdump *dmp = list_entry(p, struct vfsdump, lst);
+
+		err = dump_vfsmount(dmp->mnt, ctx);
+
+		if (err)
+			break;
+	}
+
+	return err;
+}
+
 static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 {
-	struct mnt_namespace *n = obj->o_obj;
 	struct cpt_object_hdr v;
-	struct vfsmount *rootmnt, *p;
+	struct vfsmount *ve_mnt;
 	loff_t saved_obj;
 	int err = 0;
+	struct ve_struct *ve;
+	struct list_head mnt_list;
 
 	cpt_open_object(obj, ctx);
 
@@ -2204,12 +2261,22 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 	cpt_push_object(&saved_obj, ctx);
 
 	down_read(&namespace_sem);
-	rootmnt = n->root;
-	for (p = rootmnt; p; p = next_mnt(p, rootmnt)) {
-		err = dump_vfsmount(p, ctx);
-		if (err)
-			break;
-	}
+
+	/*
+	 * root mountpoint of VE belongs to ve0, so
+	 * need to extract it from VE struct itself
+	 */
+	ve = get_ve_by_id(ctx->ve_id);
+	ve_mnt = mntget(ve->root_path.mnt);
+
+	err = gather_mounts(ve_mnt, &mnt_list);
+
+	if (!err)
+		err = dump_gathered_mounts(&mnt_list, ctx);
+
+	put_gathered_mounts(&mnt_list);
+	mntput(ve_mnt);
+	put_ve(ve);
 	up_read(&namespace_sem);
 
 	cpt_pop_object(&saved_obj, ctx);

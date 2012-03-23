@@ -501,6 +501,22 @@ static void fini_ve_devtmpfs(struct ve_struct *ve)
 #endif
 }
 
+static int init_ve_ksysfs(struct ve_struct *ve)
+{
+#if defined(CONFIG_HOTPLUG)
+	return ksysfs_init_ve(ve, &ve->kernel_kobj);
+#else
+	return 0;
+#endif
+}
+
+static void fini_ve_ksysfs(struct ve_struct *ve)
+{
+#if defined(CONFIG_HOTPLUG)
+	ksysfs_fini_ve(ve, &ve->kernel_kobj);
+#endif
+}
+
 static int init_ve_sysfs(struct ve_struct *ve)
 {
 	int err;
@@ -544,8 +560,14 @@ static int init_ve_sysfs(struct ve_struct *ve)
 	if (err != 0)
 		goto err_fs;
 
+	err = init_ve_ksysfs(ve);
+	if (err !=0)
+		goto err_ksys;
+
 	return 0;
 
+err_ksys:
+	fini_ve_sysfs_fs(ve);
 err_fs:
 	fini_ve_mem_class();
 err_mem:
@@ -570,6 +592,7 @@ out:
 
 static void fini_ve_sysfs(struct ve_struct *ve)
 {
+	fini_ve_ksysfs(ve);
 	fini_ve_sysfs_fs(ve);
 	fini_ve_mem_class();
 	fini_ve_tty_class();

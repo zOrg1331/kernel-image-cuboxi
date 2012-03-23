@@ -18,6 +18,7 @@
 #include <linux/virtinfo.h>
 
 extern int ub_dirty_radio;
+extern int ub_dirty_background_ratio;
 
 /*
  * IO ub is required in task context only, so if exec_ub is set
@@ -73,7 +74,11 @@ extern void ub_io_writeback_dec(struct address_space *mapping);
 
 #define ub_dirty_pages(ub)	ub_stat_get(ub, dirty_pages)
 
-extern int ub_dirty_limits(long *pdirty, struct user_beancounter *ub);
+extern int ub_dirty_limits(unsigned long *pbackground,
+			   long *pdirty, struct user_beancounter *ub);
+
+extern bool ub_should_skip_writeback(struct user_beancounter *ub,
+				     struct inode *inode);
 
 static inline void ub_writeback_io(unsigned long requests, unsigned long sectors)
 {
@@ -117,9 +122,16 @@ static inline unsigned long ub_dirty_pages(struct user_beancounter *ub)
 	return 0;
 }
 
-static inline int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
+static inline int ub_dirty_limits(unsigned long *pbackground,
+				  long *pdirty, struct user_beancounter *ub)
 {
 	return 0;
+}
+
+static inline bool ub_should_skip_writeback(struct user_beancounter *ub,
+				     struct inode *inode)
+{
+	return false;
 }
 
 #endif /* UBC_IO_ACCT */

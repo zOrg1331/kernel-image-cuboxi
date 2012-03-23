@@ -859,6 +859,14 @@ static ctl_table ub_sysctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+	{
+		.procname	= "dirty_background_ratio",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &ub_dirty_background_ratio,
+		.maxlen		= sizeof ub_dirty_background_ratio,
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 #endif /* CONFIG_BC_IO_ACCOUNTING */
 	{ .ctl_name = 0 }
 };

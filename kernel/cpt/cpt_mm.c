@@ -515,22 +515,24 @@ static void dump_pages_pram(struct vm_area_struct *vma,
 	mm = vma->vm_mm;
 
 	for (addr = start; addr < end; addr += PAGE_SIZE) {
-		pgd = pgd_offset(mm, addr);
-
 		err = -EFAULT;
+		pgd = pgd_offset(mm, addr);
+		if (pgd_none(*pgd))
+			break;
+
 		pud = pud_offset(pgd, addr);
-		if (!pud)
+		if (pud_none(*pud))
 			break;
 
 		pmd = pmd_offset(pud, addr);
-		if (!pmd)
+		if (pmd_none(*pmd))
 			break;
 		split_huge_page_pmd(mm, pmd);
 
 retry:
 		err = -EFAULT;
 		pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
-		if (!pte)
+		if (pte_none(*pte))
 			break;
 		entry = *pte;
 

@@ -537,11 +537,10 @@ out_sock:
 	if (!err && (ti->cpt_state & (EXIT_ZOMBIE|EXIT_DEAD))) {
 		current->flags |= PF_EXIT_RESTART;
 		do_exit(ti->cpt_exit_code);
-	} else {
+	} else if (!err) {
 		__set_current_state(TASK_UNINTERRUPTIBLE);
+		schedule();
 	}
-
-	schedule();
 
 	dprintk_ctx("leaked through %d/%d %p\n", task_pid_nr(current), task_pid_vnr(current), current->mm);
 

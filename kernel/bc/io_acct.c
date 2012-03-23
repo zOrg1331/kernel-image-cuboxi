@@ -27,6 +27,7 @@
  * starts writeback at this dirty memory percentage from physpages limit
  */
 int ub_dirty_radio = 50;
+int ub_dirty_background_ratio = 30;
 
 /* under write lock mapping->tree_lock */
 
@@ -119,7 +120,8 @@ void ub_io_writeback_dec(struct address_space *mapping)
 	}
 }
 
-int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
+int ub_dirty_limits(unsigned long *pbackground,
+		    long *pdirty, struct user_beancounter *ub)
 {
 	int dirty_ratio;
 	unsigned long available_memory;
@@ -134,7 +136,25 @@ int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
 
 	*pdirty = (dirty_ratio * available_memory) / 100;
 
+	dirty_ratio = ub_dirty_background_ratio;
+	*pbackground = (dirty_ratio * available_memory) / 100;
+	if (!dirty_ratio || *pbackground >= *pdirty)
+		*pbackground = *pdirty / 2;
+
 	return 1;
+}
+
+bool ub_should_skip_writeback(struct user_beancounter *ub, struct inode *inode)
+{
+	struct user_beancounter *dirtied_ub;
+	bool ret;
+
+	rcu_read_lock();
+	dirtied_ub = rcu_dereference(inode->i_mapping->dirtied_ub);
+	ret = !dirtied_ub || (dirtied_ub != ub && !dirtied_ub->dirty_exceeded);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 #ifdef CONFIG_PROC_FS
