@@ -63,7 +63,7 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 
 	if (ctx->image_version < CPT_VERSION_18 &&
 			CPT_VERSION_MINOR(ctx->image_version) < 1)
-		goto out;
+		return 0;
 
 	if (v->cpt_content == CPT_CONTENT_ARRAY)
 		resources = v->cpt_ub_resources;
@@ -88,10 +88,6 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 						bc->ub_store + i, 1);
 	}
 
-out:
-	for (i = 0; i < UB_RESOURCES; i++)
-		copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, i);
-
 	return 0;
 }
 
@@ -101,7 +97,6 @@ int rst_undump_ubc(struct cpt_context *ctx)
 	struct cpt_beancounter_image *v;
 	cpt_object_t *obj;
 	int err;
-	struct user_beancounter *bc;
 
 	err = rst_get_section(CPT_SECT_UBC, ctx, &start, &end);
 	if (err)
@@ -127,14 +122,6 @@ int rst_undump_ubc(struct cpt_context *ctx)
 
 		start += v->cpt_next;
 	}
-
-	bc = get_exec_ub();
-	set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
-	set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
-	set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
-	set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
-	set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
-	set_one_ubparm_to_max(bc->ub_parms, UB_DCACHESIZE);
 
 	return 0;
 }

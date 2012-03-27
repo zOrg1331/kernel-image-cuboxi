@@ -1425,7 +1425,6 @@ dio_fastmap(struct ploop_io * io, struct bio * orig_bio,
 	struct bvec_merge_data bm_data;
 
 	if (orig_bio->bi_size == 0) {
-		bio->bi_io_vec = NULL;
 		bio->bi_vcnt   = 0;
 		bio->bi_sector = 0;
 		bio->bi_size   = 0;
