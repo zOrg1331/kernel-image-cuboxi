@@ -765,10 +765,6 @@ static int vps_rst_restore_tree(struct cpt_context *ctx)
 	if (err)
 		return err;
 
-	err = rst_undump_ubc(ctx);
-	if (err)
-		return err;
-
 	for_each_object(obj, CPT_OBJ_TASK) {
 		err = create_root_task(obj, ctx, &thr_ctx_root);
 		if (err)
@@ -866,6 +862,12 @@ int vps_rst_undump(struct cpt_context *ctx)
 #ifndef CONFIG_IA64
 	err = rst_read_vdso(ctx);
 #endif
+
+	if (err == 0)
+		err = rst_undump_ubc(ctx);
+
+	set_ubc_unlimited(ctx, get_exec_ub());
+
 	if (err == 0)
 		err = vps_rst_restore_tree(ctx);
 
@@ -912,12 +914,7 @@ int rst_resume(struct cpt_context *ctx)
 #ifdef CONFIG_BEANCOUNTERS
 	bc = get_beancounter_byuid(ctx->ve_id, 0);
 	BUG_ON(!bc);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_PHYSPAGES);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_SWAPPAGES);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_KMEMSIZE);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMPROC);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMFILE);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_DCACHESIZE);
+	restore_ubc_limits(ctx, bc);
 	put_beancounter_longterm(bc);
 #endif
 

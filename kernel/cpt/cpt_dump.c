@@ -896,20 +896,7 @@ int cpt_dump(struct cpt_context *ctx)
 	 * internal reclaimer, oomkiller and other unpleasantnesses
 	 * Correct value already dumpled into image at this point
 	 */
-	spin_lock_irq(&bc->ub_lock);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_PHYSPAGES);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_SWAPPAGES);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_KMEMSIZE);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_NUMPROC);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_NUMFILE);
-	copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, UB_DCACHESIZE);
-	set_one_ubparm_to_max(bc->ub_parms, UB_PHYSPAGES);
-	set_one_ubparm_to_max(bc->ub_parms, UB_SWAPPAGES);
-	set_one_ubparm_to_max(bc->ub_parms, UB_KMEMSIZE);
-	set_one_ubparm_to_max(bc->ub_parms, UB_NUMPROC);
-	set_one_ubparm_to_max(bc->ub_parms, UB_NUMFILE);
-	set_one_ubparm_to_max(bc->ub_parms, UB_DCACHESIZE);
-	spin_unlock_irq(&bc->ub_lock);
+	set_ubc_unlimited(ctx, bc);
 
 	if (!err)
 		err = cpt_dump_namespace(ctx);
@@ -960,14 +947,7 @@ int cpt_dump(struct cpt_context *ctx)
 	/*
 	 * Restore limits back
 	 */
-	spin_lock_irq(&bc->ub_lock);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_PHYSPAGES);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_SWAPPAGES);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_KMEMSIZE);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMPROC);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_NUMFILE);
-	copy_one_ubparm(ctx->saved_ubc, bc->ub_parms, UB_DCACHESIZE);
-	spin_unlock_irq(&bc->ub_lock);
+	restore_ubc_limits(ctx, bc);
 
 out:
 	current->nsproxy = old_ns;

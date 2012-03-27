@@ -8,18 +8,34 @@ int rst_undump_ubc(struct cpt_context *ctx);
 
 void cpt_finish_ubc(struct cpt_context *ctx);
 void rst_finish_ubc(struct cpt_context *ctx);
-static inline void copy_one_ubparm(struct ubparm *from,
-				   struct ubparm *to,
-				   int bc_parm_id)
+
+static inline void set_ubc_unlimited(struct cpt_context *ctx,
+				     struct user_beancounter *bc)
 {
-	to[bc_parm_id].barrier = from[bc_parm_id].barrier;
-	to[bc_parm_id].limit = from[bc_parm_id].limit;
+	int i;
+
+	spin_lock_irq(&bc->ub_lock);
+	for ( i = 0 ; i < UB_RESOURCES ; i++ ) {
+		ctx->saved_ubc[i].barrier = bc->ub_parms[i].barrier;
+		ctx->saved_ubc[i].limit	  = bc->ub_parms[i].limit;
+		bc->ub_parms[i].barrier = bc->ub_parms[i].limit = UB_MAXVALUE;
+	}
+	spin_unlock_irq(&bc->ub_lock);
 }
-static inline void set_one_ubparm_to_max(struct ubparm *ubprm, int bc_parm_id)
+
+static inline void restore_ubc_limits(struct cpt_context *ctx,
+				      struct user_beancounter *bc)
 {
-	ubprm[bc_parm_id].barrier = UB_MAXVALUE;
-	ubprm[bc_parm_id].limit = UB_MAXVALUE;
+	int i;
+
+	spin_lock_irq(&bc->ub_lock);
+	for ( i = 0 ; i < UB_RESOURCES ; i++ ) {
+		bc->ub_parms[i].barrier = ctx->saved_ubc[i].barrier;
+		bc->ub_parms[i].limit   = ctx->saved_ubc[i].limit;
+	}
+	spin_unlock_irq(&bc->ub_lock);
 }
+
 #else
 static int inline cpt_dump_ubc(struct cpt_context *ctx)
 { return 0; }

@@ -128,6 +128,12 @@ void __remove_from_page_cache(struct page *page)
 			radix_tree_prev_tag_get(&mapping->page_tree,
 				PAGECACHE_TAG_DIRTY))
 		ub_io_account_cancel(mapping);
+
+	if (mapping_cap_account_writeback(mapping) &&
+			radix_tree_prev_tag_get(&mapping->page_tree,
+				PAGECACHE_TAG_WRITEBACK))
+		ub_io_writeback_dec(mapping);
+
 	page->mapping = NULL;
 	mapping->nrpages--;
 	__dec_zone_page_state(page, NR_FILE_PAGES);

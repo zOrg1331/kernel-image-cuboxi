@@ -17,6 +17,7 @@
 #include <linux/pagemap.h>
 #include <linux/module.h>
 #include <linux/writeback.h>
+#include <linux/backing-dev.h>
 
 #include <bc/beancounter.h>
 #include <bc/io_acct.h>
@@ -63,7 +64,8 @@ void ub_io_account_clean(struct address_space *mapping)
 	ub = set_exec_ub(ub);
 
 	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
-	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
+	    (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK) ||
+	     !mapping_cap_account_writeback(mapping))) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}
@@ -83,7 +85,8 @@ void ub_io_account_cancel(struct address_space *mapping)
 	ub_percpu_inc(ub, async_write_canceled);
 
 	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
-	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
+	    (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK) ||
+	     !mapping_cap_account_writeback(mapping))) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}
@@ -113,8 +116,9 @@ void ub_io_writeback_dec(struct address_space *mapping)
 
 	ub_stat_dec(ub, writeback_pages);
 
-	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) &&
-	    !radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK)) {
+	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_WRITEBACK) &&
+	    (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY) ||
+	     !mapping_cap_account_dirty(mapping))) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}
