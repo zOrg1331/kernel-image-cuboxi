@@ -12,7 +12,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab099
-%define ovzrel 3
+%define ovzrel 4
 
 %if !%{buildup}
 %define _without_up 1
