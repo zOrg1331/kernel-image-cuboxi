@@ -776,6 +776,10 @@ static int mounts_open_common(struct inode *inode, struct file *file,
 	p->ns = ns;
 	p->root = root;
 	p->event = ns->event;
+	p->iter = NULL;
+	p->iter_pos = 0;
+	p->iter_advanced = 0;
+	register_mounts_reader(p);
 
 	return 0;
 
@@ -792,6 +796,7 @@ static int mounts_open_common(struct inode *inode, struct file *file,
 static int mounts_release(struct inode *inode, struct file *file)
 {
 	struct proc_mounts *p = file->private_data;
+	unregister_mounts_reader(p);
 	path_put(&p->root);
 	put_mnt_ns(p->ns);
 	return seq_release(inode, file);

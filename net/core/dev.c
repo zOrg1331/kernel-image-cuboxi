@@ -1832,7 +1832,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			struct netdev_queue *txq)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
-	int rc;
+	int rc, brc;
 	unsigned int skb_len;
 
 	if (likely(!skb->next)) {
@@ -1847,13 +1847,19 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		}
 
 		/*
+		 * Bridge must handle packet with dst information set.
+		 * If there is no dst set in skb - it can cause oops in NAT.
+		 */
+		brc = bridge_hard_start_xmit(skb, dev);
+
+		/*
 		 * If device doesnt need skb->dst, release it right now while
 		 * its hot in this cpu cache
 		 */
 		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 			skb_dst_drop(skb);
 
-		if (bridge_hard_start_xmit(skb, dev) > 0) {
+		if (brc > 0) {
 			rc = NETDEV_TX_OK;
 			kfree_skb(skb);
 		} else {
@@ -1890,13 +1896,19 @@ gso:
 		skb_len = nskb->len;
 
 		/*
+		 * Bridge must handle packet with dst information set.
+		 * If there is no dst set in skb - it can cause oops in NAT.
+		 */
+		brc = bridge_hard_start_xmit(nskb, dev);
+
+		/*
 		 * If device doesnt need nskb->dst, release it right now while
 		 * its hot in this cpu cache
 		 */
 		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 			skb_dst_drop(nskb);
 
-		if (bridge_hard_start_xmit(nskb, dev) > 0) {
+		if (brc > 0) {
 			rc = NETDEV_TX_OK;
 			kfree_skb(nskb);
 		} else {

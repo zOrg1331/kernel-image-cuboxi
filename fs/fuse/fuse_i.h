@@ -198,6 +198,15 @@ enum fuse_req_state {
 	FUSE_REQ_FINISHED
 };
 
+struct fuse_io_priv {
+	spinlock_t lock;
+	unsigned reqs;
+	size_t bytes;
+	size_t size;
+	unsigned err;
+	struct kiocb *iocb;
+};
+
 /**
  * A request to the client
  */
@@ -290,6 +299,9 @@ struct fuse_req {
 
 	/** Inode used in the request or NULL */
 	struct inode *inode;
+
+	/** AIO control block */
+	struct fuse_io_priv *io;
 
 	/** Link on fi->writepages */
 	struct list_head writepages_entry;
@@ -386,6 +398,13 @@ struct fuse_conn {
 	/** Connection established, cleared on umount, connection
 	    abort and device release */
 	unsigned connected;
+
+	/** Extended caps (under development) */
+	unsigned ext_caps;
+
+#define FUSE_WBCACHE	0x1
+#define FUSE_WRITEPAGES	0x2
+#define FUSE_ODIRECT	0x4
 
 	/** Connection failed (version mismatch).  Cannot race with
 	    setting other bitfields since it is only set once in INIT

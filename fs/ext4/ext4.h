@@ -493,6 +493,7 @@ struct ext4_new_group_data {
  /* note ioctl 11 reserved for filesystem-independent FIEMAP ioctl */
 #define EXT4_IOC_ALLOC_DA_BLKS		_IO('f', 12)
 #define EXT4_IOC_MOVE_EXT		_IOWR('f', 15, struct move_extent)
+#define EXT4_IOC_RESIZE_FS		_IOW('f', 16, __u64)
 #define EXT4_IOC_OPEN_BALLOON		_IO('f', 42)
 
 /*
@@ -512,6 +513,14 @@ struct ext4_new_group_data {
 #define EXT4_IOC32_GETVERSION_OLD	FS_IOC32_GETVERSION
 #define EXT4_IOC32_SETVERSION_OLD	FS_IOC32_SETVERSION
 
+
+/* Indexes used to index group tables in ext4_new_group_data */
+enum {
+	BLOCK_BITMAP = 0,	/* block bitmap */
+	INODE_BITMAP,		/* inode bitmap */
+	INODE_TABLE,		/* inode tables */
+	GROUP_TABLE_COUNT,
+};
 
 /*
  *  Mount options
@@ -1090,7 +1099,8 @@ struct ext4_sb_info {
 	struct journal_s *s_journal;
 	struct list_head s_orphan;
 	struct mutex s_orphan_lock;
-	struct mutex s_resize_lock;
+	unsigned long s_resize_flags;		/* Flags indicating if there
+						   is a resizer */
 	unsigned long s_commit_interval;
 	u32 s_max_batch_time;
 	u32 s_min_batch_time;
@@ -1666,6 +1676,7 @@ extern int ext4_mb_add_groupinfo(struct super_block *sb,
 extern void ext4_add_groupblocks(handle_t *handle, struct super_block *sb,
 				ext4_fsblk_t block, unsigned long count);
 extern int ext4_trim_fs(struct super_block *, struct fstrim_range *);
+extern void mb_set_bits(void *bm, int cur, int len);
 
 /* inode.c */
 int ext4_forget(handle_t *handle, int is_metadata, struct inode *inode,
@@ -1723,6 +1734,7 @@ extern int ext4_group_add(struct super_block *sb,
 extern int ext4_group_extend(struct super_block *sb,
 				struct ext4_super_block *es,
 				ext4_fsblk_t n_blocks_count);
+extern int ext4_resize_fs(struct super_block *sb, ext4_fsblk_t n_blocks_count);
 
 /* csum.c */
 extern int ext4_open_pfcache(struct inode *inode);
@@ -2071,6 +2083,9 @@ static inline void set_bitmap_uptodate(struct buffer_head *bh)
 extern wait_queue_head_t aio_wq[];
 #define to_aio_wq(v) (&aio_wq[((unsigned long)v) % WQ_HASH_SZ])
 extern void ext4_aio_wait(struct inode *inode);
+#define EXT4_RESIZING	0
+extern int ext4_resize_begin(struct super_block *sb);
+extern void ext4_resize_end(struct super_block *sb);
 
 /*
  * Ploop support

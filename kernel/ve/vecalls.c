@@ -1423,7 +1423,6 @@ EXPORT_SYMBOL(real_env_create);
 static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 {
 	struct task_struct *tsk = current;
-	struct cred *new_creds;
 	int err;
 
 	VZTRACE("%s: veid=%d\n", __FUNCTION__, ve->veid);
@@ -1438,16 +1437,10 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 	if (!thread_group_leader(tsk) || !thread_group_empty(tsk))
 		goto out_up;
 
-	new_creds = prepare_creds();
-	if (new_creds == NULL)
-		goto out_up;
-
 #ifdef CONFIG_VZ_FAIRSCHED
 	err = fairsched_move_task(ve->veid, current);
-	if (err) {
-		abort_creds(new_creds);
+	if (err)
 		goto out_up;
-	}
 #endif
 	switch_ve_namespaces(ve, tsk);
 	set_exec_env(ve);

@@ -683,6 +683,11 @@ static int make_baby(cpt_object_t *cobj,
 	wait_for_completion(&thr_ctx.task_done);
 	wait_task_inactive(tsk, 0);
 
+	if (thr_ctx.error) {
+		put_task_struct(tsk);
+		cpt_obj_setobj(cobj, NULL, ctx);
+	}
+
 	return thr_ctx.error;
 }
 
@@ -778,8 +783,11 @@ static int vps_rst_restore_tree(struct cpt_context *ctx)
 		wait_for_completion(&thr_ctx_root.task_done);
 		wait_task_inactive(obj->o_obj, 0);
 		err = thr_ctx_root.error;
-		if (err)
+		if (err) {
+			put_task_struct(obj->o_obj);
+			cpt_obj_setobj(obj, NULL, ctx);
 			return err;
+		}
 		break;
 	}
 

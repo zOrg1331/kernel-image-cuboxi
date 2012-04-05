@@ -21,7 +21,6 @@
 #include <linux/sysfs.h>
 #include <linux/types.h>
 #include <linux/vmstat.h>
-#include <linux/writeback.h>
 
 static int pramcache_enabled;	/* if set, page & bdev caches
 				   will be saved to pram on umount */
@@ -337,6 +336,7 @@ static int save_invalidate_mapping_pages(struct address_space *mapping,
 			unlock_page(page);
 		}
 		pagevec_release(&pvec);
+		cond_resched();
 	}
 	return err;
 }
@@ -578,14 +578,19 @@ static void save_invalidate_page_cache(struct super_block *sb)
 	if (err)
 		goto out_close_streams;
 
-	spin_lock(&inode_lock);
+	down_write(&iprune_sem);
+	/*
+	 * We can safely iterate through the per-sb inode list here without
+	 * acquiring inode_lock because the list must not change during umount,
+	 * and because iprune_sem keeps shrink_icache_memory() away.
+	 */
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
 		err = save_invalidate_inode(inode, &first,
 					    &meta_stream, &data_stream);
 		if (err)
 			break;
 	}
-	spin_unlock(&inode_lock);
+	up_write(&iprune_sem);
 out_close_streams:
 	close_streams(&meta_stream, &data_stream, err);
 out:

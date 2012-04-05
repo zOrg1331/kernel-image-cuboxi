@@ -1946,7 +1946,7 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	int pid;
 	int pfd[2];
 	struct file *f;
-	struct cpt_object_hdr v;
+	struct cpt_obj_tar v;
 	char buf[16];
 	int n;
 	loff_t saved_obj;
@@ -1955,7 +1955,8 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	mm_segment_t oldfs;
 	sigset_t ignore, blocked;
 	struct ve_struct *oldenv;
-	
+	u32 len = 0;
+
 	err = sc_pipe(pfd);
 	if (err < 0)
 		return err;
@@ -1981,7 +1982,8 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	v.cpt_next = CPT_NULL;
 	v.cpt_object = CPT_OBJ_NAME;
 	v.cpt_hdrlen = sizeof(v);
-	v.cpt_content = CPT_CONTENT_NAME;
+	v.cpt_content = CPT_CONTENT_DATA;
+	v.cpt_len = 0;
 
 	ctx->write(&v, sizeof(v), ctx);
 
@@ -1991,9 +1993,14 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 		set_fs(oldfs);
 		if (n > 0)
 			ctx->write(buf, n, ctx);
+		len += n;
 	} while (n > 0);
 
 	fput(f);
+
+	/* Write real tar'ed lenght */
+	ctx->pwrite(&len, sizeof(len), ctx,
+		    ctx->current_object + offsetof(struct cpt_obj_tar, cpt_len));
 
 	oldfs = get_fs(); set_fs(KERNEL_DS);
 	if ((err = sc_waitx(pid, 0, &status)) < 0)

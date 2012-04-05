@@ -440,6 +440,66 @@ static void __oom_kill_task(struct task_struct *tsk, struct oom_control *oom_ctr
 	} while (p != tsk);
 }
 
+int sysctl_oom_relaxation = HZ;
+
+#define OOM_BASE_RAGE	-10
+
+#define OOM_MAX_RAGE	20
+
+static void oom_berserker(struct task_struct *victim, unsigned victim_group,
+		struct oom_control *oom_ctrl, struct user_beancounter *ub,
+		struct mem_cgroup *mem, nodemask_t *nodemask)
+{
+	unsigned long now = jiffies;
+	unsigned killed = 0;
+	struct task_struct *tsk;
+
+	/* Update oom rage on each oom-killer invocation. */
+	if (time_after_eq(now, oom_ctrl->last_kill + sysctl_oom_relaxation) ||
+			time_before(now, oom_ctrl->last_kill))
+		oom_ctrl->oom_rage = OOM_BASE_RAGE;
+	else if (oom_ctrl->oom_rage < OOM_MAX_RAGE)
+		oom_ctrl->oom_rage++;
+	oom_ctrl->last_kill = now;
+
+	if (oom_ctrl->oom_rage < 0)
+		return;
+
+	/* Kill some youngest tasks. New task at the end of this list. */
+	list_for_each_entry_reverse(tsk, &init_task.tasks, tasks) {
+		if (oom_unkillable_task(tsk, ub, mem, nodemask) ||
+		    get_oom_group(tsk) > victim_group)
+			continue;
+
+		__oom_kill_task(tsk, oom_ctrl, mem);
+
+		if (printk_ratelimit()) {
+			task_lock(tsk);
+			pr_warning("OOM kill task %d (%s) in ub %d\n",
+				   task_pid_nr(tsk), tsk->comm,
+				   ub ? ub->ub_uid : -1);
+			task_unlock(tsk);
+		}
+
+		if (++killed >= (1 << oom_ctrl->oom_rage))
+			break;
+	}
+
+	pr_err("OOM killer in rage, %u tasks killed in ub %d\n",
+			killed, ub ? ub->ub_uid : -1);
+
+#ifdef CONFIG_VE
+	if (ub) {
+		struct ve_struct *ve;
+
+		ve = set_exec_env(VE_TASK_INFO(victim)->owner_env);
+		ve_printk(VE_LOG, KERN_ERR "OOM killer in rage, "
+				"%u tasks killed\n", killed);
+		set_exec_env(ve);
+	}
+#endif
+}
+
 #define K(x) ((x) << (PAGE_SHIFT-10))
 static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
 		struct oom_control *oom_ctrl)
@@ -596,6 +656,8 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			}
 		}
 	} while_each_thread_ve(p, t);
+
+	oom_berserker(victim, victim_group, oom_ctrl, ub, mem, nodemask);
 
 	return oom_kill_task(victim, mem, oom_ctrl);
 }

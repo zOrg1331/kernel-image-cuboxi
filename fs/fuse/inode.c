@@ -21,6 +21,7 @@
 #include <linux/sched.h>
 #include <linux/exportfs.h>
 #include <linux/ve_proto.h>
+#include <linux/sysctl.h>
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Filesystem in Userspace");
@@ -31,6 +32,7 @@ static struct kmem_cache *fuse_inode_cachep;
 struct list_head fuse_conn_list;
 #endif
 DEFINE_MUTEX(fuse_mutex);
+static int fuse_ext_caps = 0;
 
 static int set_global_limit(const char *val, struct kernel_param *kp);
 
@@ -979,6 +981,7 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	fc->user_id = d.user_id;
 	fc->group_id = d.group_id;
 	fc->max_read = max_t(unsigned, 4096, d.max_read);
+	fc->ext_caps = fuse_ext_caps;
 
 	/* Used by get_root_inode() */
 	sb->s_fs_info = fc;
@@ -1179,6 +1182,35 @@ static void fuse_fs_cleanup(void)
 	kmem_cache_destroy(fuse_inode_cachep);
 }
 
+static struct ctl_table fuse_table[] = {
+	{
+		.ctl_name = CTL_UNNUMBERED,
+		.procname = "fuse_ext_caps",
+		.data = &fuse_ext_caps,
+		.proc_handler = proc_dointvec,
+		.maxlen = sizeof(fuse_ext_caps),
+		.mode = 0600,
+	},
+	{ },
+};
+
+static const struct ctl_path fs_path[] = {
+	{ .procname = "fs", .ctl_name = CTL_FS, }, { },
+};
+
+static struct ctl_table_header *fuse_hdr;
+
+static int fuse_sysctl_init(void)
+{
+	fuse_hdr = register_sysctl_paths(fs_path, fuse_table);
+	return fuse_hdr ? 0 : -ENOMEM;
+}
+
+static void fuse_sysctl_cleanup(void)
+{
+	unregister_sysctl_table(fuse_hdr);
+}
+
 static struct kobject *fuse_kobj;
 static struct kobject *connections_kobj;
 
@@ -1269,12 +1301,18 @@ static int __init fuse_init(void)
 	if (res)
 		goto err_sysfs_cleanup;
 
+	res = fuse_sysctl_init();
+	if (res)
+		goto err_ctl_cleanup;
+
 	ve_hook_register(VE_SS_CHAIN, &fuse_ve_hook);
 	sanitize_global_limit(&max_user_bgreq);
 	sanitize_global_limit(&max_user_congthresh);
 
 	return 0;
 
+err_ctl_cleanup:
+	fuse_ctl_cleanup();
  err_sysfs_cleanup:
 	fuse_sysfs_cleanup();
  err_dev_cleanup:
@@ -1290,6 +1328,7 @@ static void __exit fuse_exit(void)
 	printk(KERN_DEBUG "fuse exit\n");
 
 	ve_hook_unregister(&fuse_ve_hook);
+	fuse_sysctl_cleanup();
 	fuse_ctl_cleanup();
 	fuse_sysfs_cleanup();
 	fuse_fs_cleanup();

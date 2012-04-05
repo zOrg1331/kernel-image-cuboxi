@@ -514,7 +514,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 			ub_writeback = ub_stat_get(ub, writeback_pages);
 		} else {
 			ub_dirty = ub_writeback = 0;
-			ub_thresh = ub_background_thresh = LONG_MAX;
+			ub_thresh = ub_background_thresh = LONG_MAX / 2;
 		}
 
 		nr_reclaimable = global_page_state(NR_FILE_DIRTY) +

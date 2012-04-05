@@ -1258,7 +1258,7 @@ static void mb_clear_bits(void *bm, int cur, int len)
 	}
 }
 
-static void mb_set_bits(void *bm, int cur, int len)
+void mb_set_bits(void *bm, int cur, int len)
 {
 	__u32 *addr;
 

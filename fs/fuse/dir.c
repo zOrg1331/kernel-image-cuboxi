@@ -160,7 +160,7 @@ static int fuse_dentry_revalidate(struct dentry *entry, struct nameidata *nd)
 
 	if (inode && is_bad_inode(inode))
 		return 0;
-	else if (fuse_dentry_time(entry) < get_jiffies_64()) {
+	else if (1) {
 		int err;
 		struct fuse_entry_out outarg;
 		struct fuse_conn *fc;
@@ -385,7 +385,7 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry, int mode,
 	if (fc->no_create)
 		return -ENOSYS;
 
-	if (flags & O_DIRECT)
+	if ((flags & O_DIRECT) && !(fc->ext_caps & FUSE_ODIRECT))
 		return -EINVAL;
 
 	forget_req = fuse_get_req(fc);
@@ -405,7 +405,7 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry, int mode,
 	if (!fc->dont_mask)
 		mode &= ~current_umask();
 
-	flags &= ~O_NOCTTY;
+	flags &= ~(O_NOCTTY|O_DIRECT);
 	memset(&inarg, 0, sizeof(inarg));
 	memset(&outentry, 0, sizeof(outentry));
 	inarg.flags = flags;
