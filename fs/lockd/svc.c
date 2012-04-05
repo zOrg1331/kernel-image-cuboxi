@@ -568,6 +568,7 @@ static void ve_lockd_stop(void *data)
 		hlist_del(&p->list);
 		kfree(p);
 	}
+	kfree(ve->nlm_data);
 }
 
 static struct ve_hook lockd_ss_hook = {

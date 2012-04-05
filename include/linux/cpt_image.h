@@ -283,6 +283,17 @@ struct cpt_object_hdr
 	__u16	cpt_content;
 } __attribute__ ((aligned (8)));
 
+struct cpt_obj_tar
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u32	cpt_len;
+	__u32	cpt_pad;
+} __attribute__ ((aligned (8)));
+
 enum _cpt_content_type {
 	CPT_CONTENT_VOID,
 	CPT_CONTENT_ARRAY,

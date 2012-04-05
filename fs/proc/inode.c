@@ -60,6 +60,10 @@ static void proc_delete_inode(struct inode *inode)
 	de = PROC_I(inode)->pde;
 	if (de)
 		de_put(de);
+	de = PROC_I(inode)->lpde;
+	if (de)
+		de_put(de);
+
 	if (PROC_I(inode)->sysctl)
 		sysctl_head_put(PROC_I(inode)->sysctl);
 	clear_inode(inode);
@@ -81,6 +85,7 @@ static struct inode *proc_alloc_inode(struct super_block *sb)
 	ei->fd = 0;
 	ei->op.proc_get_link = NULL;
 	ei->pde = NULL;
+	ei->lpde = NULL;
 	ei->sysctl = NULL;
 	ei->sysctl_entry = NULL;
 	inode = &ei->vfs_inode;
@@ -453,6 +458,8 @@ struct inode *proc_get_inode(struct super_block *sb, unsigned int ino,
 	if (inode->i_state & I_NEW) {
 		if (PROC_IS_HARDLINK(de_lnk))
 			de = de_lnk->data;
+		if (lde)
+			WARN_ON(PROC_IS_HARDLINK(de_lnk));
 
 		inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
 		PROC_I(inode)->fd = 0;
@@ -490,8 +497,10 @@ struct inode *proc_get_inode(struct super_block *sb, unsigned int ino,
 			de_get(de);
 			de_put(de_lnk);;
 		}
-	} else
+	} else {
 	       de_put(de_lnk);
+	       de_put(lde);
+	}
 	return inode;
 }			
 

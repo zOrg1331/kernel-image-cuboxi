@@ -666,35 +666,29 @@ int set_device_perms_ve(struct ve_struct *ve,
 		unsigned type, dev_t dev, unsigned mask)
 {
 	int err = -EINVAL;
-	struct dev_whitelist_item *new;
-
-	new = kzalloc(sizeof(*new), GFP_KERNEL);
-	if (new == NULL)
-		return -ENOMEM;
+	struct dev_whitelist_item new;
 
 	if ((type & S_IFMT) == S_IFBLK)
-		new->type = DEV_BLOCK;
+		new.type = DEV_BLOCK;
 	else if ((type & S_IFMT) == S_IFCHR)
-		new->type = DEV_CHAR;
+		new.type = DEV_CHAR;
 	else
-		goto out;
+		return -EINVAL;
 
-	new->access = convert_bits(mask);
-	new->major = new->minor = ~0;
+	new.access = convert_bits(mask);
+	new.major = new.minor = ~0;
 
 	switch (type & VE_USE_MASK) {
 	default:
-		new->minor = MINOR(dev);
+		new.minor = MINOR(dev);
 	case VE_USE_MAJOR:
-		new->major = MAJOR(dev);
+		new.major = MAJOR(dev);
 	case 0:
 		;
 	}
 
-	err = dev_whitelist_add(cgroup_to_devcgroup(ve->ve_cgroup), new);
-out:
-	if (err < 0)
-		kfree(new);
+	err = dev_whitelist_add(cgroup_to_devcgroup(ve->ve_cgroup), &new);
+
 	return err;
 }
 EXPORT_SYMBOL(set_device_perms_ve);

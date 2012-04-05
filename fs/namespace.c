@@ -57,6 +57,37 @@ EXPORT_SYMBOL(namespace_sem);
 struct kobject *fs_kobj;
 EXPORT_SYMBOL_GPL(fs_kobj);
 
+static LIST_HEAD(mounts_readers);
+static DEFINE_SPINLOCK(mounts_lock);
+
+void register_mounts_reader(struct proc_mounts *p)
+{
+	spin_lock(&mounts_lock);
+	list_add(&p->reader, &mounts_readers);
+	spin_unlock(&mounts_lock);
+}
+
+void unregister_mounts_reader(struct proc_mounts *p)
+{
+	spin_lock(&mounts_lock);
+	list_del(&p->reader);
+	spin_unlock(&mounts_lock);
+}
+
+static void advance_mounts_readers(struct list_head *iter)
+{
+	struct proc_mounts *p;
+
+	spin_lock(&mounts_lock);
+	list_for_each_entry(p, &mounts_readers, reader) {
+		if (p->iter == iter) {
+			p->iter = p->iter->next;
+			p->iter_advanced = 1;
+		}
+	}
+	spin_unlock(&mounts_lock);
+}
+
 static inline unsigned long hash(struct vfsmount *mnt, struct dentry *dentry)
 {
 	unsigned long tmp = ((unsigned long)mnt / L1_CACHE_BYTES);
@@ -763,14 +794,39 @@ static void *m_start(struct seq_file *m, loff_t *pos)
 	struct proc_mounts *p = m->private;
 
 	down_read(&namespace_sem);
-	return seq_list_start(&p->ns->list, *pos);
+	if (p->iter_advanced) {
+		p->iter_advanced = 0;
+		if (p->iter_pos < *pos)
+			p->iter_pos++;
+	}
+
+	if (!p->iter || (p->iter_pos > *pos && p->iter == &p->ns->list)) {
+		p->iter = p->ns->list.next;
+		p->iter_pos = 0;
+	}
+
+	while (p->iter_pos < *pos && p->iter != &p->ns->list) {
+		p->iter = p->iter->next;
+		p->iter_pos++;
+	}
+
+	while (p->iter_pos > *pos && p->iter != p->ns->list.next) {
+		p->iter = p->iter->prev;
+		p->iter_pos--;
+	}
+
+	p->iter_pos = *pos;
+	return p->iter != &p->ns->list ? p->iter : NULL;
 }
 
 static void *m_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	struct proc_mounts *p = m->private;
 
-	return seq_list_next(v, &p->ns->list, pos);
+	p->iter = p->iter->next;
+	p->iter_pos++;
+	*pos = p->iter_pos;
+	return p->iter != &p->ns->list ? p->iter : NULL;
 }
 
 static void m_stop(struct seq_file *m, void *v)
@@ -1098,6 +1154,7 @@ void umount_tree(struct vfsmount *mnt, int propagate, struct list_head *kill)
 
 	list_for_each_entry(p, kill, mnt_hash) {
 		list_del_init(&p->mnt_expire);
+		advance_mounts_readers(&p->mnt_list);
 		list_del_init(&p->mnt_list);
 		__touch_mnt_namespace(p->mnt_ns);
 		p->mnt_ns = NULL;

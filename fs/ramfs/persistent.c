@@ -105,6 +105,7 @@ static int save_mapping_pages(struct address_space *mapping,
 			unlock_page(page);
 		}
 		pagevec_release(&pvec);
+		cond_resched();
 	}
 
 #define OFFSET_END_MARK ((__u64)~0ULL)

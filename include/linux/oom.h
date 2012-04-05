@@ -82,6 +82,8 @@ extern struct task_struct *find_lock_task_mm(struct task_struct *p);
 struct oom_control {
 	int			generation;
 	int			kill_counter;
+	unsigned long		last_kill;
+	int			oom_rage;
 	spinlock_t		lock;
 	wait_queue_head_t 	wq;
 };

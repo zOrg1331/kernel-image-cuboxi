@@ -129,7 +129,7 @@ static void flush_lru_buffer(struct ploop_map * map)
 {
 	int i;
 
-	spin_lock(&map_lru_lock);
+	spin_lock_irq(&map_lru_lock);
 	for (i = 0; i < map->lru_buffer_ptr; i++) {
 		struct map_node * m = map->lru_buffer[i];
 		if (atomic_dec_and_test(&m->refcnt))
@@ -137,7 +137,7 @@ static void flush_lru_buffer(struct ploop_map * map)
 		else
 			list_del_init(&m->lru);
 	}
-	spin_unlock(&map_lru_lock);
+	spin_unlock_irq(&map_lru_lock);
 
 	map->lru_buffer_ptr = 0;
 }
@@ -253,12 +253,12 @@ static void map_lru_scan(void)
 		struct ploop_map * map;
 		struct map_node * candidate = NULL;
 
-		spin_lock_bh(&map_lru_lock);
+		spin_lock_irq(&map_lru_lock);
 		if (!list_empty(&map_lru)) {
 			candidate = list_first_entry(&map_lru, struct map_node, lru);
 			atomic_inc(&candidate->refcnt);
 		}
-		spin_unlock_bh(&map_lru_lock);
+		spin_unlock_irq(&map_lru_lock);
 
 		if (!candidate)
 			break;
@@ -266,7 +266,7 @@ static void map_lru_scan(void)
 		map = candidate->parent;
 
 		spin_lock_irq(&map->plo->lock);
-		spin_lock(&map_lru_lock);
+		spin_lock_irq(&map_lru_lock);
 		list_del_init(&candidate->lru);
 
 		if (atomic_dec_and_test(&candidate->refcnt)) {
@@ -282,7 +282,7 @@ static void map_lru_scan(void)
 				map_node_destroy(candidate);
 			}
 		}
-		spin_unlock(&map_lru_lock);
+		spin_unlock_irq(&map_lru_lock);
 		spin_unlock_irq(&map->plo->lock);
 
 		if (!(max_loops & 16))
@@ -1201,7 +1201,7 @@ void ploop_map_destroy(struct ploop_map * map)
 
 	map->lru_buffer_ptr = 0;
 
-	spin_lock(&map_lru_lock);
+	spin_lock_irq(&map_lru_lock);
 	while ((node = map->rb_root.rb_node) != NULL) {
 		struct map_node * m = rb_entry(node, struct map_node, rb_link);
 		/* refcnt can be not zero if and only if this node is grabbed
@@ -1213,7 +1213,7 @@ void ploop_map_destroy(struct ploop_map * map)
 		if (atomic_read(&m->refcnt) == 0)
 			map_node_destroy(m);
 	}
-	spin_unlock(&map_lru_lock);
+	spin_unlock_irq(&map_lru_lock);
 	spin_unlock_irq(&map->plo->lock);
 	BUG_ON(map->pages);
 }

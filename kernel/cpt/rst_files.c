@@ -1770,7 +1770,7 @@ static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
 	int err;
 	int pfd[2];
 	struct file *f;
-	struct cpt_object_hdr v;
+	struct cpt_obj_tar v;
 	int n;
 	loff_t end;
 	int pid;
@@ -1796,8 +1796,10 @@ static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
 	sc_close(pfd[1]);
 	sc_close(pfd[0]);
 
-	ctx->file->f_pos = *pos + v.cpt_hdrlen;
-	end = *pos + v.cpt_next;
+	ctx->file->f_pos = *pos + sizeof(v);
+	end = ctx->file->f_pos + v.cpt_len;
+	if (v.cpt_content != CPT_CONTENT_DATA)
+		end = *pos + v.cpt_next;
 	*pos += v.cpt_next;
 	do {
 		char buf[16];

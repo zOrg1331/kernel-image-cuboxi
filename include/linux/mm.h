@@ -35,6 +35,8 @@ extern int sysctl_legacy_va_layout;
 #define sysctl_legacy_va_layout 0
 #endif
 
+extern struct rw_semaphore iprune_sem;
+
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/processor.h>

@@ -1362,6 +1362,7 @@ void devices_fini(void)
 	kobject_put(ve_sysfs_dev_block_kobj);
 	kobject_put(ve_dev_kobj);
 	kset_unregister(ve_devices_kset);
+	kobject_put(virtual_dir);
 }
 EXPORT_SYMBOL_GPL(devices_fini);
 

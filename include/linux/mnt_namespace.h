@@ -19,7 +19,14 @@ struct proc_mounts {
 	struct mnt_namespace *ns;
 	struct path root;
 	int event;
+	struct list_head *iter;
+	loff_t iter_pos;
+	int iter_advanced;
+	struct list_head reader;
 };
+
+extern void register_mounts_reader(struct proc_mounts *p);
+extern void unregister_mounts_reader(struct proc_mounts *p);
 
 struct fs_struct;
 
