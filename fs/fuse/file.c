@@ -1913,8 +1913,9 @@ static int fuse_ioctl_copy_user(struct page **pages, struct iovec *iov,
 		kaddr = map = kmap(page);
 
 		while (todo) {
-			char __user *uaddr = ii.iov->iov_base + ii.iov_offset;
-			size_t iov_len = ii.iov->iov_len - ii.iov_offset;
+			struct iovec *iiov = (struct iovec *)ii.data;
+			char __user *uaddr = iiov->iov_base + ii.iov_offset;
+			size_t iov_len = iiov->iov_len - ii.iov_offset;
 			size_t copy = min(todo, iov_len);
 			size_t left;
 

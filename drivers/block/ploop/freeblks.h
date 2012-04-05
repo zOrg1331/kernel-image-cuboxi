@@ -5,11 +5,13 @@
 
 /* init/fini stuff */
 struct ploop_freeblks_desc *ploop_fb_init(struct ploop_device *plo);
-void ploop_fb_fini(struct ploop_freeblks_desc *fbd);
+void ploop_fb_fini(struct ploop_freeblks_desc *fbd, int err);
+void ploop_fb_reinit(struct ploop_freeblks_desc *fbd, int err);
 int ploop_fb_add_free_extent(struct ploop_freeblks_desc *fbd, cluster_t clu, iblock_t iblk, u32 len);
 int ploop_fb_add_reloc_extent(struct ploop_freeblks_desc *fbd, cluster_t clu, iblock_t iblk, u32 len, u32 free);
 void ploop_fb_lost_range_init(struct ploop_freeblks_desc *fbd, iblock_t first_lost_iblk);
 void ploop_fb_relocation_start(struct ploop_freeblks_desc *fbd, __u32 n_scanned);
+int ploop_discard_add_bio(struct ploop_freeblks_desc *fbd, struct bio *bio);
 
 /* avoid direct access to freeblks internals */
 int ploop_fb_get_n_relocated(struct ploop_freeblks_desc *fbd);

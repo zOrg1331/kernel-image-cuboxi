@@ -498,8 +498,9 @@ struct inode *proc_get_inode(struct super_block *sb, unsigned int ino,
 			de_put(de_lnk);;
 		}
 	} else {
-	       de_put(de_lnk);
-	       de_put(lde);
+		de_put(de_lnk);
+		if (lde)
+			de_put(lde);
 	}
 	return inode;
 }			

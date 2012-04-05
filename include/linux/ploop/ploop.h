@@ -47,6 +47,9 @@ enum {
 	PLOOP_S_ENOSPC_EVENT,	/* ENOSPC event happened but but was not
 				 * consumed by userspace yet */
 	PLOOP_S_CONGESTED,	/* Too many bios submitted to us */
+	PLOOP_S_DISCARD,	/* ploop is ready to handle discard request */
+	PLOOP_S_DISCARD_LOADED,	/* A discard request was handled and
+				   free blocks loaded */
 };
 
 struct ploop_snapdata
@@ -430,6 +433,7 @@ enum
 	PLOOP_REQ_RELOC_A,	/* 'A' stands for allocate() */
 	PLOOP_REQ_RELOC_S,	/* 'S' stands for submit() */
 	PLOOP_REQ_ZERO,
+	PLOOP_REQ_DISCARD,
 };
 
 enum
@@ -547,6 +551,8 @@ static inline struct ploop_delta * map_top_delta(struct ploop_map * map)
 
 void ploop_complete_io_state(struct ploop_request * preq);
 void ploop_fail_request(struct ploop_request * preq, int err);
+void ploop_preq_drop(struct ploop_device * plo, struct list_head *drop_list,
+		      int keep_locked);
 
 static inline void ploop_set_error(struct ploop_request * preq, int err)
 {
@@ -693,6 +699,8 @@ void ploop_sysfs_init(struct ploop_device * plo);
 void ploop_sysfs_uninit(struct ploop_device * plo);
 
 void ploop_queue_zero_request(struct ploop_device *plo, struct ploop_request *orig_preq, cluster_t clu);
+
+int ploop_maintainance_wait(struct ploop_device * plo);
 
 extern int max_map_pages;
 

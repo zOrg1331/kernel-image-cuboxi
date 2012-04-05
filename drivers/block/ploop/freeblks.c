@@ -94,6 +94,8 @@ struct ploop_freeblks_desc {
 
 	int	 fbd_freezed_level; /* for sanity - level on
 				     * PLOOP_IOC_FREEBLKS stage */
+
+	struct bio_list	fbd_dbl; /* dbl stands for 'discard bio list' */
 };
 
 int ploop_fb_get_n_relocated(struct ploop_freeblks_desc *fbd)
@@ -668,16 +670,80 @@ int ploop_fb_get_free_block(struct ploop_freeblks_desc *fbd,
 	return 1;
 }
 
+static void fbd_complete_bio(struct ploop_freeblks_desc *fbd, int err)
+{
+	unsigned int nr_completed = 0;
+
+	while (fbd->fbd_dbl.head) {
+		struct bio * bio = fbd->fbd_dbl.head;
+		fbd->fbd_dbl.head = bio->bi_next;
+		bio->bi_next = NULL;
+		BIO_ENDIO(bio, err);
+		nr_completed++;
+	}
+	fbd->fbd_dbl.tail = NULL;
+
+	spin_lock_irq(&fbd->plo->lock);
+	fbd->plo->bio_total -= nr_completed;
+	spin_unlock_irq(&fbd->plo->lock);
+}
+
+void ploop_fb_reinit(struct ploop_freeblks_desc *fbd, int err)
+{
+	fbd_complete_bio(fbd, err);
+
+	while (!list_empty(&fbd->fbd_free_list)) {
+		struct ploop_freeblks_extent *fblk_extent;
+
+		fblk_extent = list_first_entry(&fbd->fbd_free_list,
+					       struct ploop_freeblks_extent,
+					       list);
+		list_del(&fblk_extent->list);
+		kfree(fblk_extent);
+	}
+
+	while (!list_empty(&fbd->fbd_reloc_list)) {
+		struct ploop_relocblks_extent *rblk_extent;
+
+		rblk_extent = list_first_entry(&fbd->fbd_reloc_list,
+					       struct ploop_relocblks_extent,
+					       list);
+		list_del(&rblk_extent->list);
+		kfree(rblk_extent);
+	}
+
+	fbd->fbd_n_free = 0;
+	fbd->fbd_ffb.ext = NULL;
+	fbd->fbd_lfb.ext = NULL;
+	fbd->fbd_lrb.ext = NULL;
+	fbd->fbd_ffb.off = 0;
+	fbd->fbd_lfb.off = 0;
+	fbd->fbd_lrb.off = 0;
+	fbd->fbd_n_relocated = fbd->fbd_n_relocating = 0;
+	fbd->fbd_lost_range_len = 0;
+	fbd->fbd_lost_range_addon = 0;
+	fbd->fbd_freezed_level = 0;
+
+	BUG_ON(!RB_EMPTY_ROOT(&fbd->reloc_tree));
+}
+
 struct ploop_freeblks_desc *ploop_fb_init(struct ploop_device *plo)
 {
 	struct ploop_freeblks_desc *fbd;
 	int i;
 
-	fbd = kzalloc(sizeof(struct ploop_freeblks_desc), GFP_KERNEL);
+	fbd = kmalloc(sizeof(struct ploop_freeblks_desc), GFP_KERNEL);
 	if (fbd == NULL)
 		return NULL;
 
+	fbd->fbd_dbl.tail = fbd->fbd_dbl.head = NULL;
+	INIT_LIST_HEAD(&fbd->fbd_free_list);
+	INIT_LIST_HEAD(&fbd->fbd_reloc_list);
+	fbd->reloc_tree = RB_ROOT;
+
 	fbd->plo = plo;
+
+	ploop_fb_reinit(fbd, 0);
 
 	INIT_LIST_HEAD(&fbd->free_zero_list);
 	for (i = 0; i < plo->tune.max_requests; i++) {
@@ -691,18 +757,14 @@ struct ploop_freeblks_desc *ploop_fb_init(struct ploop_device *plo)
 		list_add(&preq->list, &fbd->free_zero_list);
 	}
 
-	INIT_LIST_HEAD(&fbd->fbd_free_list);
-	INIT_LIST_HEAD(&fbd->fbd_reloc_list);
-	fbd->reloc_tree = RB_ROOT;
-
 	return fbd;
 
 fb_init_failed:
-	ploop_fb_fini(fbd);
+	ploop_fb_fini(fbd, -ENOMEM);
 	return NULL;
 }
 
-void ploop_fb_fini(struct ploop_freeblks_desc *fbd)
+void ploop_fb_fini(struct ploop_freeblks_desc *fbd, int err)
 {
 	struct ploop_device *plo;
 
@@ -711,6 +773,8 @@ void ploop_fb_fini(struct ploop_freeblks_desc *fbd)
 
 	plo = fbd->plo;
 	BUG_ON (plo == NULL);
+
+	fbd_complete_bio(fbd, err);
 
 	while (!list_empty(&fbd->fbd_free_list)) {
 		struct ploop_freeblks_extent *fblk_extent;
@@ -970,4 +1034,26 @@ void ploop_fb_relocation_start(struct ploop_freeblks_desc *fbd,
 	if (fextent != NULL)
 		fbd->fbd_lfb.off = MIN(new_a_h - fextent->iblk,
 				       fextent->len) - 1;
+}
+
+int ploop_discard_add_bio(struct ploop_freeblks_desc *fbd, struct bio *bio)
+{
+	struct ploop_device *plo;
+
+	if (!fbd)
+		return -EOPNOTSUPP;
+
+	plo = fbd->plo;
+
+	if (!test_bit(PLOOP_S_DISCARD, &plo->state))
+		return -EOPNOTSUPP;
+	if (fbd->plo->maintainance_type != PLOOP_MNTN_DISCARD)
+		return -EBUSY;
+	/* only one request can be processed simultaneously */
+	if (fbd->fbd_dbl.head)
+		return -EBUSY;
+
+	fbd->fbd_dbl.head = fbd->fbd_dbl.tail = bio;
+
+	return 0;
 }
