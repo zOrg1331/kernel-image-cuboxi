@@ -338,7 +338,6 @@ static void tun_net_uninit(struct net_device *dev)
 static void tun_free_netdev(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
-	struct sock *sk = tun->socket.sk;
 
 	sk_release_kernel(tun->socket.sk);
 }

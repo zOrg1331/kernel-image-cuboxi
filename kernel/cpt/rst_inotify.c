@@ -42,16 +42,7 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx)
 {
-	struct file *file;
-	int fd;
-
-	fd = sys_inotify_init();
-	if (fd < 0)
-		return ERR_PTR(fd);
-
-	file = fget(fd);
-	sys_close(fd);
-	return file;
+	return inotify_create(O_DIRECT);
 }
 
 static int restore_one_inotify(cpt_object_t *obj,

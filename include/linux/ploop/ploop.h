@@ -559,9 +559,14 @@ static inline void ploop_set_error(struct ploop_request * preq, int err)
 	if (!preq->error) {
 		preq->error = err;
 		if (!test_bit(PLOOP_S_ABORT, &preq->plo->state)) {
-			printk("ploop_set_error=%d\n", err);
-			if (err != -ENOSPC)
+			if (err != -ENOSPC) {
+				printk("ploop_set_error=%d\n", err);
 				WARN_ON(1);
+				return;
+			}
+			printk("No space left on device! Either free some "
+			       "space on disk or abort ploop%d manually.\n",
+				preq->plo->index);
 		}
 	}
 }

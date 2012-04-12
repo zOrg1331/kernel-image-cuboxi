@@ -12,12 +12,13 @@ static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user 
 {
 	struct block_device *bdevp;
 	struct gendisk *disk;
-	struct hd_struct *part;
+	struct hd_struct *part, *lpart;
 	struct blkpg_ioctl_arg a;
 	struct blkpg_partition p;
 	struct disk_part_iter piter;
 	long long start, length;
 	int partno;
+	int err;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
@@ -103,41 +104,44 @@ static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user 
 					return -EINVAL;
 			}
 
-			mutex_lock(&bdev->bd_mutex);
+			part = disk_get_part(disk, partno);
+			if (!part)
+				return -ENXIO;
+			bdevp = bdget(part_devt(part));
+			if (!bdevp) {
+				disk_put_part(part);
+				return -ENOMEM;
+			}
 
+			err = 0;
+			mutex_lock(&bdevp->bd_mutex);
+			mutex_lock_nested(&bdev->bd_mutex, 1);
+
+			if (start != part->start_sect) {
+				err = -EINVAL;
+				goto resize_done;
+			}
 			/* overlap? */
 			disk_part_iter_init(&piter, disk,
 					    DISK_PITER_INCL_EMPTY);
-			while ((part = disk_part_iter_next(&piter))) {
-				if (part->partno != partno && !(start + length <= part->start_sect ||
-				      start >= part->start_sect + part->nr_sects)) {
+			while ((lpart = disk_part_iter_next(&piter))) {
+				if (lpart->partno != partno &&
+				    !(start + length <= lpart->start_sect ||
+				      start >= lpart->start_sect + lpart->nr_sects)) {
 					disk_part_iter_exit(&piter);
-					mutex_unlock(&bdev->bd_mutex);
-					return -EBUSY;
+					err = -EBUSY;
+					goto resize_done;
 				}
 			}
 			disk_part_iter_exit(&piter);
-			part = disk_get_part(disk, partno);
-			if (!part)
-			{
-				mutex_unlock(&bdev->bd_mutex);
-				return -ENXIO;
-			}
-			if (start != part->start_sect)
-			{
-				mutex_unlock(&bdev->bd_mutex);
-				disk_put_part(part);
-				return -EINVAL;
-			}
 			part_nr_sects_write(part, length);
-			bdevp = bdget(part_devt(part));
-			mutex_lock(&bdevp->bd_mutex);
 			i_size_write(bdevp->bd_inode, p.length);
+	resize_done:
 			mutex_unlock(&bdevp->bd_mutex);
+			mutex_unlock(&bdev->bd_mutex);
 			bdput(bdevp);
 			disk_put_part(part);
-			mutex_unlock(&bdev->bd_mutex);
-			return 0;
+			return err;
 		case BLKPG_GET_PARTITION:
 			mutex_lock(&bdev->bd_mutex);
 			part = disk_get_part(disk, partno);

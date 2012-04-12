@@ -657,7 +657,8 @@ retry:
 	return ret;
 }
 
-static struct fsnotify_group *inotify_new_group(unsigned int max_events)
+static struct fsnotify_group *
+inotify_new_group(unsigned int max_events, int flags)
 {
 	struct fsnotify_group *group;
 	unsigned int grp_num;
@@ -677,7 +678,7 @@ static struct fsnotify_group *inotify_new_group(unsigned int max_events)
 	group->inotify_data.user = get_current_user();
 
 	if (atomic_inc_return(&group->inotify_data.user->inotify_devs) >
-	    inotify_max_user_instances) {
+	    inotify_max_user_instances && !(flags & O_DIRECT)) {
 		fsnotify_put_group(group);
 		return ERR_PTR(-EMFILE);
 	}
@@ -685,14 +686,44 @@ static struct fsnotify_group *inotify_new_group(unsigned int max_events)
 	return group;
 }
 
-
-/* inotify syscalls */
-SYSCALL_DEFINE1(inotify_init1, int, flags)
+struct file *inotify_create(int flags)
 {
 	struct fsnotify_group *group;
 	struct file *filp;
 	struct path path;
-	int fd, ret;
+
+	/*
+	 * fsnotify_obtain_group took a reference to group,
+	 * we put this when we kill the file in the end
+	 */
+	group = inotify_new_group(inotify_max_queued_events, flags);
+	if (IS_ERR(group))
+		return ERR_CAST(group);
+
+	path.mnt = inotify_mnt;
+	path.dentry = inotify_mnt->mnt_root;
+	path_get(&path);
+
+	filp = alloc_file(&path, FMODE_READ, &inotify_fops);
+	if (!filp)
+		goto out_file;
+
+	filp->f_flags = O_RDONLY | (flags & O_NONBLOCK);
+	filp->private_data = group;
+	return filp;
+
+out_file:
+	path_put(&path);
+	fsnotify_put_group(group);
+	return ERR_PTR(-ENFILE);
+}
+EXPORT_SYMBOL_GPL(inotify_create);
+
+/* inotify syscalls */
+SYSCALL_DEFINE1(inotify_init1, int, flags)
+{
+	struct file *filp;
+	int fd;
 
 	/* Check the IN_* constants for consistency.  */
 	BUILD_BUG_ON(IN_CLOEXEC != O_CLOEXEC);
@@ -701,38 +732,17 @@ SYSCALL_DEFINE1(inotify_init1, int, flags)
 	if (flags & ~(IN_CLOEXEC | IN_NONBLOCK))
 		return -EINVAL;
 
-	/* fsnotify_obtain_group took a reference to group, we put this when we kill the file in the end */
-	group = inotify_new_group(inotify_max_queued_events);
-	if (IS_ERR(group))
-		return PTR_ERR(group);
+	filp = inotify_create(flags);
+	if (IS_ERR(filp))
+		return PTR_ERR(filp);
 
-	ret = get_unused_fd_flags(flags & O_CLOEXEC);
-	if (ret < 0)
-		goto out_group;
-	fd = ret;
-
-	path.mnt = inotify_mnt;
-	path.dentry = inotify_mnt->mnt_root;
-	path_get(&path);
-
-	ret = -ENFILE;
-	filp = alloc_file(&path, FMODE_READ, &inotify_fops);
-	if (!filp)
-		goto out_fd;
-
-	filp->f_flags = O_RDONLY | (flags & O_NONBLOCK);
-	filp->private_data = group;
-
-	fd_install(fd, filp);
+	fd = get_unused_fd_flags(flags & O_CLOEXEC);
+	if (fd < 0)
+		fput(filp);
+	else
+		fd_install(fd, filp);
 
 	return fd;
-
-out_fd:
-	path_put(&path);
-	put_unused_fd(fd);
-out_group:
-	fsnotify_put_group(group);
-	return ret;
 }
 
 SYSCALL_DEFINE0(inotify_init)

@@ -4177,7 +4177,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 #ifdef CONFIG_QUOTA
 	int i;
 #endif
-	unsigned long balloon_ino = 0;
+	unsigned long balloon_ino = -1;
 
 	lock_kernel();
 
@@ -4325,7 +4325,8 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 #endif
 	unlock_super(sb);
 
-	ext4_load_balloon(sb, balloon_ino);
+	if (balloon_ino != -1)
+		ext4_load_balloon(sb, balloon_ino);
 
 	unlock_kernel();
 	return 0;

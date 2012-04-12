@@ -142,6 +142,8 @@ extern void put_inotify_watch(struct inotify_watch *);
 extern int pin_inotify_watch(struct inotify_watch *);
 extern void unpin_inotify_watch(struct inotify_watch *);
 
+extern struct file *inotify_create(int flags);
+
 #else
 
 static inline void inotify_d_instantiate(struct dentry *dentry,
@@ -242,6 +244,11 @@ extern inline int pin_inotify_watch(struct inotify_watch *watch)
 
 extern inline void unpin_inotify_watch(struct inotify_watch *watch)
 {
+}
+
+static inline struct file *inotify_create(int flags)
+{
+	return ERR_PTR(-EOPNOTSUPP);
 }
 
 #endif	/* CONFIG_INOTIFY */
