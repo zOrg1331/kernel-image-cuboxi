@@ -2002,6 +2002,7 @@ static inline void nf_bridge_get(struct nf_bridge_info *nf_bridge)
 		atomic_inc(&nf_bridge->use);
 }
 #endif /* CONFIG_BRIDGE_NETFILTER */
+static inline void skb_init_brmark(struct sk_buff *skb);
 static inline void nf_reset(struct sk_buff *skb)
 {
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
@@ -2013,6 +2014,7 @@ static inline void nf_reset(struct sk_buff *skb)
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);
 	skb->nf_bridge = NULL;
+	skb_init_brmark(skb);
 #endif
 }
 

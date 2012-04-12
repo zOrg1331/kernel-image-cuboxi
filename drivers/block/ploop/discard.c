@@ -43,10 +43,7 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 	LIST_HEAD(drop_list);
 
 	if (!test_and_clear_bit(PLOOP_S_DISCARD, &plo->state))
-		return -EINVAL;
-
-	if (plo->maintainance_type != PLOOP_MNTN_DISCARD)
-		return -EBUSY;
+		return 0;
 
 	ploop_quiesce(plo);
 
@@ -61,6 +58,11 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 	if (!list_empty(&drop_list))
 		ploop_preq_drop(plo, &drop_list, 0);
 
+	if (plo->maintainance_type != PLOOP_MNTN_DISCARD) {
+		ret = -EBUSY;
+		goto out;
+	}
+
 	ploop_fb_fini(plo->fbd, -EOPNOTSUPP);
 
 	clear_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
@@ -68,6 +70,7 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 	plo->maintainance_type = PLOOP_MNTN_OFF;
 	complete(&plo->maintainance_comp);
 
+out:
 	ploop_relax(plo);
 
 	return ret;
@@ -76,6 +79,9 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 int ploop_discard_wait_ioc(struct ploop_device *plo)
 {
 	int err;
+
+	if (!test_bit(PLOOP_S_DISCARD, &plo->state))
+		return 0;
 
 	if (plo->maintainance_type == PLOOP_MNTN_FBLOADED)
 		return 0;

@@ -687,7 +687,9 @@ int set_device_perms_ve(struct ve_struct *ve,
 		;
 	}
 
+	mutex_lock(&devcgroup_mutex);
 	err = dev_whitelist_add(cgroup_to_devcgroup(ve->ve_cgroup), &new);
+	mutex_unlock(&devcgroup_mutex);
 
 	return err;
 }

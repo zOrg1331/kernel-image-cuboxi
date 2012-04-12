@@ -128,8 +128,9 @@ void map_init(struct ploop_device * plo, struct ploop_map * map)
 static void flush_lru_buffer(struct ploop_map * map)
 {
 	int i;
+	unsigned long flags;
 
-	spin_lock_irq(&map_lru_lock);
+	spin_lock_irqsave(&map_lru_lock, flags);
 	for (i = 0; i < map->lru_buffer_ptr; i++) {
 		struct map_node * m = map->lru_buffer[i];
 		if (atomic_dec_and_test(&m->refcnt))
@@ -137,7 +138,7 @@ static void flush_lru_buffer(struct ploop_map * map)
 		else
 			list_del_init(&m->lru);
 	}
-	spin_unlock_irq(&map_lru_lock);
+	spin_unlock_irqrestore(&map_lru_lock, flags);
 
 	map->lru_buffer_ptr = 0;
 }
@@ -266,7 +267,7 @@ static void map_lru_scan(void)
 		map = candidate->parent;
 
 		spin_lock_irq(&map->plo->lock);
-		spin_lock_irq(&map_lru_lock);
+		spin_lock(&map_lru_lock);
 		list_del_init(&candidate->lru);
 
 		if (atomic_dec_and_test(&candidate->refcnt)) {
@@ -282,7 +283,7 @@ static void map_lru_scan(void)
 				map_node_destroy(candidate);
 			}
 		}
-		spin_unlock_irq(&map_lru_lock);
+		spin_unlock(&map_lru_lock);
 		spin_unlock_irq(&map->plo->lock);
 
 		if (!(max_loops & 16))
@@ -1201,7 +1202,7 @@ void ploop_map_destroy(struct ploop_map * map)
 
 	map->lru_buffer_ptr = 0;
 
-	spin_lock_irq(&map_lru_lock);
+	spin_lock(&map_lru_lock);
 	while ((node = map->rb_root.rb_node) != NULL) {
 		struct map_node * m = rb_entry(node, struct map_node, rb_link);
 		/* refcnt can be not zero if and only if this node is grabbed
@@ -1213,7 +1214,7 @@ void ploop_map_destroy(struct ploop_map * map)
 		if (atomic_read(&m->refcnt) == 0)
 			map_node_destroy(m);
 	}
-	spin_unlock_irq(&map_lru_lock);
+	spin_unlock(&map_lru_lock);
 	spin_unlock_irq(&map->plo->lock);
 	BUG_ON(map->pages);
 }

@@ -440,7 +440,7 @@ ploop1_prepare_grow(struct ploop_delta * delta, sector_t *new_size, int *reloc)
 	int	 log = delta->io.plo->cluster_log;
 
 	vh = (struct ploop_pvd_header *)page_address(ph->dyn_page);
-	n_present  = le32_to_cpu(vh->m_FirstBlockOffset) >> 9;
+	n_present  = le32_to_cpu(vh->m_FirstBlockOffset) >> log;
 	BUG_ON (!n_present);
 
 	bdsize = (*new_size + (1 << log) - 1) >> log;
@@ -517,6 +517,8 @@ static int ploop1_complete_grow(struct ploop_delta * delta, sector_t new_size)
 		return err;
 
 	ph->bd_size = new_size;
+	ph->l1_off = le32_to_cpu(vh->m_FirstBlockOffset);
+
 	return 0;
 }
 
