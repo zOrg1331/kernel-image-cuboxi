@@ -19,7 +19,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.4
+%define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
 %def_enable docs
