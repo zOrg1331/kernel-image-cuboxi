@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	3.3
 %define kernel_sublevel	.1
@@ -576,6 +576,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Apr 13 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.3.1-alt2
+- kgcc set to 4.5
+- AUDIT_LOGINUID_IMMUTABLE disabled
+
 * Tue Apr 03 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.3.1-alt1
 - 3.3.1
 
