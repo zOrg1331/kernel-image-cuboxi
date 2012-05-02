@@ -22,6 +22,9 @@
 #include <linux/types.h>
 #include <linux/vmstat.h>
 
+#define PRAMCACHE_PAGE_CACHE	"page_cache"
+#define PRAMCACHE_BDEV_CACHE	"bdev_cache"
+
 static int pramcache_enabled;	/* if set, page & bdev caches
 				   will be saved to pram on umount */
 
@@ -562,6 +565,38 @@ out:
 	return err;
 }
 
+static void pramcache_prune(struct super_block *sb, const char *name)
+{
+	struct pram_stream meta_stream, data_stream;
+	int err;
+
+retry:
+	/* first, destroy the cache */
+	err = open_streams(sb, name, PRAM_READ, &meta_stream, &data_stream);
+	if (!err)
+		close_streams(&meta_stream, &data_stream, 0);
+	if (err == -ENOENT)
+		err = 0;
+	if (err)
+		goto out;
+
+	/* then, create an empty one */
+	err = open_streams(sb, name, PRAM_WRITE, &meta_stream, &data_stream);
+	if (!err)
+		close_streams(&meta_stream, &data_stream, 0);
+out:
+	if (err == -EBUSY || err == -EEXIST) {
+		/* someone is writing to the cache, let them finish */
+		schedule_timeout_uninterruptible(1);
+		goto retry;
+	}
+	if (err) {
+		pramcache_msg(sb, KERN_ERR,
+			      "prune failed (%d), "
+			      "data corruption possible!", err);
+	}
+}
+
 static void save_invalidate_page_cache(struct super_block *sb)
 {
 	struct pram_stream meta_stream, data_stream;
@@ -569,7 +604,7 @@ static void save_invalidate_page_cache(struct super_block *sb)
 	int first = 1;
 	int err;
 
-	err = open_streams(sb, "page_cache", PRAM_WRITE,
+	err = open_streams(sb, PRAMCACHE_PAGE_CACHE, PRAM_WRITE,
 			   &meta_stream, &data_stream);
 	if (err)
 		goto out;
@@ -597,6 +632,12 @@ out:
 	if (err)
 		pramcache_msg(sb, KERN_ERR,
 			      "Failed to save page cache: %d", err);
+	if (err == -EEXIST) {
+		pramcache_msg(sb, KERN_ERR,
+			      "Filesystem UUID collision detected, "
+			      "run `tune2fs -U' to update UUID");
+		pramcache_prune(sb, PRAMCACHE_PAGE_CACHE);
+	}
 }
 
 static void load_page_cache(struct super_block *sb)
@@ -607,7 +648,7 @@ static void load_page_cache(struct super_block *sb)
 	unsigned long flags;
 	int err;
 
-	err = open_streams(sb, "page_cache", PRAM_READ,
+	err = open_streams(sb, PRAMCACHE_PAGE_CACHE, PRAM_READ,
 			   &meta_stream, &data_stream);
 	if (err) {
 		if (err == -ENOENT)
@@ -677,7 +718,7 @@ static void save_invalidate_bdev_cache(struct super_block *sb)
 	struct pram_stream meta_stream, data_stream;
 	int err;
 
-	err = open_streams(sb, "bdev_cache", PRAM_WRITE,
+	err = open_streams(sb, PRAMCACHE_BDEV_CACHE, PRAM_WRITE,
 			   &meta_stream, &data_stream);
 	if (err)
 		goto out;
@@ -694,6 +735,12 @@ out:
 	if (err)
 		pramcache_msg(sb, KERN_ERR,
 			      "Failed to save bdev cache: %d", err);
+	if (err == -EEXIST) {
+		pramcache_msg(sb, KERN_ERR,
+			      "Filesystem UUID collision detected, "
+			      "run `tune2fs -U' to update UUID");
+		pramcache_prune(sb, PRAMCACHE_BDEV_CACHE);
+	}
 }
 
 static void load_bdev_cache(struct super_block *sb)
@@ -703,7 +750,7 @@ static void load_bdev_cache(struct super_block *sb)
 	long nr_pages;
 	int err;
 
-	err = open_streams(sb, "bdev_cache", PRAM_READ,
+	err = open_streams(sb, PRAMCACHE_BDEV_CACHE, PRAM_READ,
 			   &meta_stream, &data_stream);
 	if (err) {
 		if (err == -ENOENT)

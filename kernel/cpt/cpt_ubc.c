@@ -13,8 +13,8 @@
 #include <bc/beancounter.h>
 #include <asm/signal.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 cpt_object_t *cpt_add_ubc(struct user_beancounter *bc, struct cpt_context *ctx)
 {

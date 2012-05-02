@@ -24,11 +24,11 @@
 #include <asm/uaccess.h>
 #include <linux/cpt_ioctl.h>
 #include <linux/delay.h>
-#include <linux/pram.h>
 #include <linux/ve_proto.h>
+#include <linux/kmod.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_dump.h"
 #include "cpt_mm.h"
 #include "cpt_kernel.h"
@@ -194,6 +194,8 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 	int try;
 
 	unlock_kernel();
+
+	request_module("vzcptpram");
 
 	if (cmd == CPT_TEST_CAPS) {
 		unsigned int src_flags, dst_flags = arg;
@@ -593,29 +595,6 @@ static ctl_table root_table[] = {
 	{ .ctl_name = 0 }
 };
 
-static inline void cpt_destroy_ve_pram(struct ve_struct *ve)
-{
-#ifdef CONFIG_PRAM
-	char name[32];
-
-	sprintf(name, "cpt.%d", ve->veid);
-	if (pram_destroy(name) == 0)
-		wprintk("veid=%d: PRAM destroyed\n", ve->veid);
-#endif
-}
-
-static int cpt_ve_init(void *data) {
-	struct ve_struct *ve = data;
-
-	cpt_destroy_ve_pram(ve);
-	return 0;
-}
-
-static struct ve_hook cpt_ve_hook = {
-	.init		= cpt_ve_init,
-	.owner		= THIS_MODULE,
-};
-
 static int __init init_cpt(void)
 {
 	int err;
@@ -641,7 +620,6 @@ static int __init init_cpt(void)
 	proc_ent->read_proc = proc_read;
 	proc_ent->data = NULL;
 
-	ve_hook_register(VE_SS_CHAIN, &cpt_ve_hook);
 	return 0;
 
 err_out:
@@ -653,7 +631,6 @@ module_init(init_cpt);
 
 static void __exit exit_cpt(void)
 {
-	ve_hook_unregister(&cpt_ve_hook);
 	remove_proc_entry("cpt", NULL);
 	unregister_sysctl_table(ctl_header);
 

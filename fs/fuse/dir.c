@@ -385,9 +385,6 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry, int mode,
 	if (fc->no_create)
 		return -ENOSYS;
 
-	if ((flags & O_DIRECT) && !(fc->ext_caps & FUSE_ODIRECT))
-		return -EINVAL;
-
 	forget_req = fuse_get_req(fc);
 	if (IS_ERR(forget_req))
 		return PTR_ERR(forget_req);
@@ -405,7 +402,7 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry, int mode,
 	if (!fc->dont_mask)
 		mode &= ~current_umask();
 
-	flags &= ~(O_NOCTTY|O_DIRECT);
+	flags &= ~O_NOCTTY;
 	memset(&inarg, 0, sizeof(inarg));
 	memset(&outentry, 0, sizeof(outentry));
 	inarg.flags = flags;

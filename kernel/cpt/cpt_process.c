@@ -29,8 +29,8 @@
 #include <asm/i387.h>
 #endif
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_ubc.h"
 #include "cpt_process.h"
 #include "cpt_kernel.h"

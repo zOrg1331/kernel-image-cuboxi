@@ -1178,6 +1178,9 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = init_ve_cpustats(ve)) < 0)
 		goto err_cpu_stats;
 
+	if ((err = init_ve_cgroups(ve)))
+		goto err_cgroup;
+
 	if ((err = ve_list_add(ve)) < 0)
 		goto err_exist;
 
@@ -1217,9 +1220,6 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 
 	if ((err = init_ve_netns(ve, &old_ns_net)))
 		goto err_netns;
-
-	if ((err = init_ve_cgroups(ve)))
-		goto err_cgroup;
 
 	if ((err = init_ve_tty_drivers(ve)) < 0)
 		goto err_tty;
@@ -1289,8 +1289,6 @@ err_shmem:
 err_vtty:
 	fini_ve_tty_drivers(ve);
 err_tty:
-	fini_ve_cgroups(ve);
-err_cgroup:
 	fini_ve_namespaces(ve, old_ns_net);
 	put_nsproxy(old_ns_net);
 	fini_ve_netns(ve);
@@ -1348,6 +1346,8 @@ err_struct:
 	return err;
 
 err_exist:
+	fini_ve_cgroups(ve);
+err_cgroup:
 	free_ve_cpustats(ve);
 err_cpu_stats:
 	kfree(ve);
@@ -1486,7 +1486,6 @@ static void env_cleanup(struct ve_struct *ve)
 	fini_ve_meminfo(ve);
 
 	fini_ve_devices(ve);
-	fini_ve_cgroups(ve);
 
 	fini_ve_namespaces(ve, NULL);
 	fini_ve_netns(ve);
@@ -1588,6 +1587,7 @@ static void real_do_env_free(struct ve_struct *ve)
 {
 	VZTRACE("real_do_env_free\n");
 
+	fini_ve_cgroups(ve);
 	free_ve_tty_drivers(ve);
 	free_ve_filesystems(ve);
 	free_ve_cpustats(ve);

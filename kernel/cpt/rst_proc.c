@@ -22,9 +22,10 @@
 #include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <linux/cpt_ioctl.h>
+#include <linux/kmod.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_dump.h"
 #include "cpt_files.h"
 #include "cpt_mm.h"
@@ -86,7 +87,7 @@ void rst_context_release(cpt_context_t *ctx)
 	spin_unlock(&cpt_context_lock);
 
 	if (ctx->ctx_state > 0)
-		rst_resume(ctx);
+		rst_kill(ctx);
 	ctx->ctx_state = CPT_CTX_ERROR;
 
 	rst_close_dumpfile(ctx);
@@ -199,6 +200,8 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 	struct file *dfile = NULL;
 
 	unlock_kernel();
+
+	request_module("vzcptpram");
 
 	if (cmd == CPT_TEST_CAPS) {
 		err = test_cpu_caps_and_features();
@@ -424,15 +427,21 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 #endif
 		err = vps_rst_undump(ctx);
 		if (err) {
+			int ret;
+
 			rst_report_error(err, ctx);
-			if (rst_kill(ctx) == 0)
+
+			ret = rst_kill(ctx);
+			if (ret == 0 || ret == -ESRCH)
 				ctx->ctx_state = CPT_CTX_IDLE;
+			else
+				ctx->ctx_state = CPT_CTX_ERROR;
 		} else {
 			ctx->ctx_state = CPT_CTX_UNDUMPED;
 		}
 		break;
 	case CPT_RESUME:
-		if (!ctx->ctx_state) {
+		if (ctx->ctx_state != CPT_CTX_UNDUMPED) {
 			err = -ENOENT;
 			break;
 		}

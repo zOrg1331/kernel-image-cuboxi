@@ -237,18 +237,24 @@ void ub_oom_mm_dead(struct mm_struct *mm)
 	}
 }
 
+unsigned long ub_oom_total_pages(struct user_beancounter *ub)
+{
+	return min(totalram_pages, ub->ub_parms[UB_PHYSPAGES].limit) +
+	       min(total_swap_pages, ub->ub_parms[UB_SWAPPAGES].limit);
+}
+
 int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 {
 	struct task_struct *p;
 	int res = 0;
 	unsigned long ub_mem_pages;
-	unsigned int points;
+	int points;
 
 	if (ub_oom_lock(&ub->oom_ctrl))
 		goto out;
 
 	oom_report_invocation("loc", ub, gfp_mask, 0);
-	ub_mem_pages = ub->ub_parms[UB_PHYSPAGES].limit;
+	ub_mem_pages = ub_oom_total_pages(ub);
 	read_lock(&tasklist_lock);
 
 	do {

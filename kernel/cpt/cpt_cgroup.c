@@ -2,8 +2,8 @@
 #include <linux/mount.h>
 #include <linux/seq_file.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_files.h"
 
 static int cgroup_index = 0;

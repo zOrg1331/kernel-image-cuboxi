@@ -102,7 +102,21 @@ int ext4_sync_file(struct file *file, struct dentry *dentry, int datasync)
 		    (journal->j_flags & JBD2_BARRIER))
 			blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
 		ret = jbd2_log_wait_commit(journal, commit_tid);
-	} else if (journal->j_flags & JBD2_BARRIER)
-		blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
+	} else if (journal->j_flags & JBD2_BARRIER) {
+		/* Data ordering optimization:
+		 * In case of fsync we may skip explicit barier
+		 * 1) If there are no any io-requests in flight
+		 * 2) Last io-requst for given inode was completed before
+		 * new flush request was QUEUED and COMPLETED for blkdev.
+		 */
+		struct request_queue *q = bdev_get_queue(inode->i_sb->s_bdev);
+		if (test_opt(inode->i_sb, NOBH) || !q ||
+		    atomic_read(&ei->i_ioend_count) ||
+		    ((unsigned int)atomic_read(&q->flush_tag) & ~1U)
+		    <= (((unsigned int)atomic_read(&ei->i_flush_tag) + 1U) & (~1U)))
+			blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
+		else
+			percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_optimized_flushes_counter);
+	}
 	return ret;
 }

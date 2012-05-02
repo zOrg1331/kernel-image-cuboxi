@@ -19,8 +19,8 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 cpt_object_t *alloc_cpt_object(int gfp, struct cpt_context *ctx)
 {

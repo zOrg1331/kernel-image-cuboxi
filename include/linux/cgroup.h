@@ -27,6 +27,8 @@ struct css_id;
 
 extern int cgroup_init_early(void);
 extern int cgroup_init(void);
+extern void cgroup_wq_init(void);
+extern void cgroup_queue_work(struct work_struct *work);
 extern void cgroup_lock(void);
 extern bool cgroup_lock_live_group(struct cgroup *cgrp);
 extern void cgroup_unlock(void);
@@ -621,6 +623,7 @@ static inline void __cgroup_kernel_open(struct cgroup *cgrp)
 
 static inline int cgroup_init_early(void) { return 0; }
 static inline int cgroup_init(void) { return 0; }
+static inline void cgroup_wq_init(void) {}
 static inline void cgroup_fork(struct task_struct *p) {}
 static inline void cgroup_fork_callbacks(struct task_struct *p) {}
 static inline void cgroup_post_fork(struct task_struct *p) {}

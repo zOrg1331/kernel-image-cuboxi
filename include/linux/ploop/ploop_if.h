@@ -26,6 +26,7 @@
 #define PLOOP_IO_DIRECT		1
 #define PLOOP_IO_NFS		2
 #define PLOOP_IO_RESERVED	3	/* reserved, do not use */
+#define PLOOP_IO_KAIO		4
 
 /*
  * # slots to skip in the very first page of L2 table

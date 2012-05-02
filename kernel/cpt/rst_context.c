@@ -22,11 +22,34 @@
 #include <linux/pagemap.h>
 #include <linux/cpt_image.h>
 #include <linux/cpt_export.h>
-#include <linux/pram.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_files.h"
+
+#ifdef CONFIG_PRAM
+int rst_load_pram_pages(cpt_context_t *ctx)
+{
+	if (cpt_pram_ops)
+		return cpt_pram_ops->load_pages(ctx);
+	return 0;
+}
+
+void rst_release_pram_pages(cpt_context_t *ctx)
+{
+	if (cpt_pram_ops)
+		cpt_pram_ops->release_pages(ctx);
+}
+
+int rst_restore_pages_pram(struct mm_struct *mm,
+		unsigned long start, unsigned long end,
+		loff_t pos, struct cpt_context *ctx)
+{
+	if (cpt_pram_ops)
+		return cpt_pram_ops->restore_pages(mm, start, end, pos, ctx);
+	return -ENOSYS;
+}
+#endif
 
 static ssize_t file_read(void *addr, size_t count, struct cpt_context *ctx)
 {
@@ -154,61 +177,6 @@ int rst_image_acceptable(unsigned long version)
 
 	return 0;
 }
-
-#ifdef CONFIG_PRAM
-void rst_load_pram_pages(cpt_context_t *ctx)
-{
-	int err;
-	char name[32];
-	struct pram_stream pram_stream;
-	struct page *page;
-
-	sprintf(name, "cpt.%d", ctx->ve_id);
-	err = pram_open(name, PRAM_READ, &pram_stream);
-	if (err)
-		goto out;
-
-next_page:
-	page = pram_pop_page(&pram_stream);
-	if (IS_ERR_OR_NULL(page)) {
-		if (page != NULL)
-			err = PTR_ERR(page);
-		goto out_close_stream;
-	}
-
-	if (page_gang(page) != NULL) {
-		put_page(page);
-		err = -EBUSY;
-		goto out_close_stream;
-	}
-
-	page->mapping = (struct address_space *)ctx;
-	list_add(&page->lru, &ctx->pram_pages);
-
-	goto next_page;
-
-out_close_stream:
-	pram_close(&pram_stream, 0);
-out:
-	if (err && err != -ENOENT)
-		wprintk_ctx("failed to load PRAM: %d\n", err);
-}
-
-void rst_release_pram_pages(cpt_context_t *ctx)
-{
-	struct page *page, *tmp;
-	unsigned long nr_lost = 0;
-
-	list_for_each_entry_safe(page, tmp, &ctx->pram_pages, lru) {
-		page->mapping = NULL;
-		list_del_init(&page->lru);
-		put_page(page);
-		nr_lost++;
-	}
-	if (nr_lost)
-		wprintk_ctx("%lu PRAM pages lost\n", nr_lost);
-}
-#endif
 
 int rst_open_dumpfile(struct cpt_context *ctx)
 {

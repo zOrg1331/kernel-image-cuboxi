@@ -66,6 +66,13 @@ void ext4_aiodio_wait(struct inode *inode)
 	wait_event(*wq, (atomic_read(&EXT4_I(inode)->i_aiodio_unwritten) == 0));
 }
 
+void ext4_ioend_wait(struct inode *inode)
+{
+	wait_queue_head_t *wq = to_ioend_wq(inode);
+
+	wait_event(*wq, (atomic_read(&EXT4_I(inode)->i_ioend_count) == 0));
+}
+
 /*
  * This tests whether the IO in question is block-aligned or not.
  * Ext4 utilizes unwritten extents when hole-filling during direct IO, and they

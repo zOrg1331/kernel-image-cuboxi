@@ -724,13 +724,12 @@ EXPORT_SYMBOL(fairsched_get_cpu_avenrun);
 int fairsched_get_cpu_stat(int id, struct kernel_cpustat *kstat)
 {
 	struct cgroup *cgrp;
-	int err;
 
 	cgrp = fairsched_open(id);
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
 
-	err = cpu_cgroup_get_stat(cgrp, kstat);
+	cpu_cgroup_get_stat(cgrp, kstat);
 	cgroup_kernel_close(cgrp);
 
 	return 0;

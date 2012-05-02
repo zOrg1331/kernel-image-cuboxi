@@ -4,222 +4,160 @@
 #include <asm/uaccess.h>
 #include <linux/seq_file.h>
 #include <linux/ctype.h>
+#include <linux/oom.h>
+
+#include <bc/beancounter.h>
 
 static LIST_HEAD(oom_group_list_head);
 static DEFINE_RWLOCK(oom_group_lock);
 
 struct oom_group_pattern {
 	char comm[TASK_COMM_LEN], pcomm[TASK_COMM_LEN];
-	uid_t uid;
-	int oom_group;
+	int oom_uid;
+	int oom_score_adj;
 	struct list_head group_list;
 };
 
-int get_oom_group(struct task_struct *t)
+static void oom_groups_append(struct list_head *list)
+{
+	write_lock_irq(&oom_group_lock);
+	list_splice_tail(list, &oom_group_list_head);
+	write_unlock_irq(&oom_group_lock);
+}
+
+static void oom_groups_reset(void)
+{
+	struct list_head list;
+	struct oom_group_pattern *gp, *tmp;
+
+	write_lock_irq(&oom_group_lock);
+	list_replace_init(&oom_group_list_head, &list);
+	write_unlock_irq(&oom_group_lock);
+
+	list_for_each_entry_safe(gp, tmp, &list, group_list)
+		kfree(gp);
+}
+
+/*
+ * If mask ends with asterisk it matches any comm suffix:
+ * "foo" matches only "foo", "foo*" matches "foo" and "foobar"
+ * "*" matches any string.
+ */
+static bool oom_match_comm(const char *comm, const char *mask)
+{
+	while (*comm && *mask != '*' && *comm == *mask) {
+		comm++;
+		mask++;
+	}
+	return (!*mask && !*comm) || (*mask == '*');
+}
+
+int get_task_oom_score_adj(struct task_struct *t)
 {
 	struct oom_group_pattern *gp;
+	unsigned long flags;
+	int adj = 0;
 
-	read_lock(&oom_group_lock);
+	if (get_task_ub(t)->ub_manual_oom_score_adj)
+		return t->signal->oom_score_adj;
+
+	read_lock_irqsave(&oom_group_lock, flags);
 	list_for_each_entry(gp, &oom_group_list_head, group_list) {
-		if (strncmp(gp->comm, t->comm, strlen(gp->comm)))
+		if (gp->oom_uid >= 0 && task_uid(t) != gp->oom_uid)
 			continue;
-		if (strncmp(gp->pcomm, t->parent->comm, strlen(gp->pcomm)))
+		if (gp->oom_uid < -1 && task_uid(t) >= -gp->oom_uid)
 			continue;
-		if (gp->uid != (uid_t)-1LL && gp->uid != task_uid(t))
+		if (!oom_match_comm(t->comm, gp->comm))
 			continue;
-		read_unlock(&oom_group_lock);
-		return gp->oom_group;
+		if (!oom_match_comm(t->parent->comm, gp->pcomm))
+			continue;
+		adj = gp->oom_score_adj;
+		break;
 	}
-	read_unlock(&oom_group_lock);
-	return 0;
+	read_unlock_irqrestore(&oom_group_lock, flags);
+	return adj;
 }
 
-static int __oom_group_del_entry(struct oom_group_pattern *g)
+static int oom_group_parse_line(struct list_head *list, char *line)
 {
-	struct oom_group_pattern *tmp;
-
-	list_for_each_entry(tmp, &oom_group_list_head, group_list) {
-		if (strcmp(tmp->comm, g->comm))
-			continue;
-		if (strcmp(tmp->pcomm, g->pcomm))
-			continue;
-		if (tmp->uid != g->uid)
-			continue;
-
-		list_del(&tmp->group_list);
-		kfree(tmp);
-		return 0;
-	}
-	return -ENOENT;
-}
-
-static int oom_group_del_entry(struct oom_group_pattern *g)
-{
+	struct oom_group_pattern *gp;
+	char dummy;
 	int ret;
 
-	write_lock(&oom_group_lock);
-	ret = __oom_group_del_entry(g);
-	write_unlock(&oom_group_lock);
-	return ret;
-}
-
-static void oom_group_add_entry(struct oom_group_pattern *g)
-{
-	write_lock(&oom_group_lock);
-	__oom_group_del_entry(g);
-	list_add(&g->group_list, &oom_group_list_head);
-	write_unlock(&oom_group_lock);
-}
-
-static char *nextline(char *s)
-{
-	while(*s && *s != '\n') s++;
-	while(*s && *s == '\n') s++;
-	return s;
-}
-
-static int commcpy(char *comm, char **str)
-{
-	char *s = *str;
-	int width = TASK_COMM_LEN - 1;
-
-	while (*s && isspace(*s) && *s != '\n')
-		s++;
-	if (!*s || *s == '\n')
-		return -EINVAL;
-
-	*str = s;
-	while (*s && !isspace(*s) && *s != '\n' && width--)
-		*comm++ = *s++;
-
-	if (s - *str == 1 && *(comm - 1) == '*')
-		comm--;
-	*comm = '\0';
-	*str = s;
-	if (width < 0)
-		return -EINVAL;
-	return 0;
-}
-
-static int str_to_pattern(struct oom_group_pattern *g, char *str, int add)
-{
-	int err;
-	char *end;
-
-	err = commcpy(g->comm, &str);
-	if (err)
-		return err;
-	err = commcpy(g->pcomm, &str);
-	if (err)
-		return err;
-
-	while (isspace(*str))
-		str++;
-
-	g->uid = simple_strtoll(str, &end, 0);
-	if (end == str)
-		return -EINVAL;
-	str = end;
-	while (isspace(*str))
-		str++;
-
-	g->oom_group = simple_strtol(str, &end, 0);
-	if (add && end == str)
-		return -EINVAL;
-
-	while (isspace(*end))
-		end++;
-	if (*end != '\0' && *end != '\n')
-		return -EINVAL;
-	return 0;
-}
-
-static int oom_group_parse_line(char *line)
-{
-	int err, add;
-	struct oom_group_pattern *g;
-
-	if (*line == '+')
-		add = 1;
-	else if (*line == '-')
-		add = 0;
-	else
-		return -EINVAL;
-
-	g = kmalloc(sizeof(struct oom_group_pattern), GFP_KERNEL);
-	if (g == NULL)
+	gp = kmalloc(sizeof(struct oom_group_pattern), GFP_KERNEL);
+	if (gp == NULL)
 		return -ENOMEM;
 
-	err = str_to_pattern(g, line + 1, add);
-	if (err)
-		goto free;
+	BUILD_BUG_ON(TASK_COMM_LEN != 16);
+	ret = sscanf(line, "%15s %15s %d %d %c",
+			gp->comm, gp->pcomm, &gp->oom_uid,
+			&gp->oom_score_adj, &dummy);
 
-	if (add) {
-		oom_group_add_entry(g);
-		g = NULL;
-	} else
-		err = oom_group_del_entry(g);
+	if (ret != 4 || gp->oom_score_adj < OOM_SCORE_ADJ_MIN ||
+			gp->oom_score_adj > OOM_SCORE_ADJ_MAX) {
+		kfree(gp);
+		return -EINVAL;
+	}
 
-free:
-	kfree(g);
-	return err;
+	list_add_tail(&gp->group_list, list);
+
+	return 0;
 }
 
 static ssize_t oom_group_write(struct file * file, const char __user *buf,
 				size_t count, loff_t *ppos)
 {
-	char *s, *page;
-	int err;
-	int offset;
+	char *line, *next, *page;
+	int ret, len;
+	LIST_HEAD(groups);
 
 	page = (unsigned char *)__get_free_page(GFP_KERNEL);
 	if (!page)
 		return -ENOMEM;
-
-	if (count > (PAGE_SIZE - 1))
-		count = (PAGE_SIZE - 1);
-
-	err = copy_from_user(page, buf, count);
-	if (err)
+	len = min(count, PAGE_SIZE - 1);
+	ret = copy_from_user(page, buf, len);
+	if (ret)
 		goto err;
 
-	s = page;
-	s[count] = '\0';
+	page[len] = '\0';
 
-	while (*s) {
-		err = oom_group_parse_line(s);
-		if (err)
+	next = page;
+	while (1) {
+		line = skip_spaces(next);
+		next = strchr(line, '\n');
+		if (next) {
+			*next++ = '\0';
+		} else if (len < count) {
+			ret = line != page ? line - page : -EINVAL;
 			break;
-
-		s = nextline(s);
+		}
+		if (*line && *line != '#') {
+			ret = oom_group_parse_line(&groups, line);
+			if (ret)
+				break;
+		}
+		if (!next) {
+			ret = len;
+			break;
+		}
 	}
 
-	offset = s - page;
-	if (offset > 0)
-		err = offset;
+	oom_groups_append(&groups);
 err:
 	free_page((unsigned long)page);
-	return err;
+	return ret;
 }
 
 static void *oom_group_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	unsigned int n = *pos;
-	struct list_head *entry;
-
-	n = *pos;
-	read_lock(&oom_group_lock);
-	list_for_each(entry, &oom_group_list_head)
-		if (n-- == 0)
-			return entry;
-	return NULL;
+	read_lock_irq(&oom_group_lock);
+	return seq_list_start(&oom_group_list_head, *pos);
 }
+
 static void oom_group_seq_stop(struct seq_file *s, void *v)
 {
-	read_unlock(&oom_group_lock);
+	read_unlock_irq(&oom_group_lock);
 }
-
-#define COMM_TO_STR(s) (*s == '\0' ? "*" : s)
 
 static int oom_group_seq_show(struct seq_file *s, void *v)
 {
@@ -227,19 +165,14 @@ static int oom_group_seq_show(struct seq_file *s, void *v)
 	struct oom_group_pattern *p;
 
 	p = list_entry(entry, struct oom_group_pattern, group_list);
-	seq_printf(s, "%s %s %d %d\n",
-		COMM_TO_STR(p->comm), COMM_TO_STR(p->pcomm),
-		(int)p->uid, p->oom_group);
+	seq_printf(s, "%s %s %d %d\n", p->comm, p->pcomm,
+			p->oom_uid, p->oom_score_adj);
 	return 0;
 }
 
 static void *oom_group_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	struct list_head *entry;
-
-	entry = (struct list_head *)v;
-	(*pos)++;
-	return entry->next == &oom_group_list_head ? NULL : entry->next;
+	return seq_list_next(v, &oom_group_list_head, pos);
 }
 
 static struct seq_operations oom_group_seq_ops = {
@@ -251,6 +184,8 @@ static struct seq_operations oom_group_seq_ops = {
 
 static int oom_group_seq_open(struct inode *inode, struct file *file)
 {
+	if (file->f_flags & O_TRUNC)
+		oom_groups_reset();
 	return seq_open(file, &oom_group_seq_ops);
 }
 
@@ -266,7 +201,8 @@ static struct file_operations proc_oom_group_ops = {
 static int __init oom_group_init(void) {
 	struct proc_dir_entry *proc;
 
-	proc = proc_create("oom_groups", 0660, NULL, &proc_oom_group_ops);
+	proc = proc_create("oom_score_adj", 0660,
+			   proc_vz_dir, &proc_oom_group_ops);
 	if (!proc)
 		return -ENOMEM;
 	return 0;

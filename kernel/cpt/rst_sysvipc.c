@@ -31,8 +31,8 @@
 #include <linux/cpt_image.h>
 #include <linux/init_task.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_kernel.h"
 #include "cpt_mm.h"
 
@@ -192,7 +192,7 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 		goto err_out;
 	dpos += u.shmi.cpt_next;
 
-	curr_cred = override_creds(&init_cred);
+	curr_cred = override_creds(get_exec_env()->init_cred);
 	file = sysvipc_setup_shm(u.shmi.cpt_key, u.shmi.cpt_id,
 				 u.shmi.cpt_segsz, u.shmi.cpt_mode);
 	revert_creds(curr_cred);

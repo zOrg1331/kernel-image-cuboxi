@@ -192,8 +192,11 @@ raw_start_merge(struct ploop_delta * delta, struct ploop_snapdata * sd)
 	if (err)
 		return err;
 
-	if (test_bit(PLOOP_S_ABORT, &delta->plo->state))
+	if (test_bit(PLOOP_S_ABORT, &delta->plo->state)) {
+		printk(KERN_WARNING "raw_start_merge for ploop%d failed "
+		       "(state ABORT)\n", delta->plo->index);
 		return -EIO;
+	}
 
 	err = raw_refresh(delta);
 	if (err)

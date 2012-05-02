@@ -43,8 +43,8 @@
 #include <linux/timerfd.h>
 #include <linux/cgroup.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_mm.h"
 #include "cpt_files.h"
 #include "cpt_kernel.h"
@@ -1035,7 +1035,7 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	 * use cred_origin for that
 	 */
 
-	cred_origin = override_creds(&init_cred);
+	cred_origin = override_creds(get_exec_env()->init_cred);
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILE, pos, ctx);
 	if (obj) {

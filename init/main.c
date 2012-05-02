@@ -846,6 +846,7 @@ static void __init do_basic_setup(void)
 {
 	init_ve_system();
 	init_workqueues();
+	cgroup_wq_init();
 	cpuset_init_smp();
 	usermodehelper_init();
 	init_tmpfs();
