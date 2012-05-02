@@ -41,8 +41,8 @@
 #include <linux/futex.h>
 #include <linux/shm.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_files.h"
 #include "cpt_mm.h"
 #include "cpt_process.h"
@@ -848,8 +848,6 @@ int vps_rst_undump(struct cpt_context *ctx)
 	if (err)
 		return err;
 
-	rst_load_pram_pages(ctx);
-
 	if (ctx->tasks64) {
 #if defined(CONFIG_IA64)
 		if (ctx->image_arch != CPT_OS_ARCH_IA64)
@@ -870,6 +868,9 @@ int vps_rst_undump(struct cpt_context *ctx)
 #ifndef CONFIG_IA64
 	err = rst_read_vdso(ctx);
 #endif
+
+	if (err == 0)
+		err = rst_load_pram_pages(ctx);
 
 	if (err == 0)
 		err = rst_undump_ubc(ctx);

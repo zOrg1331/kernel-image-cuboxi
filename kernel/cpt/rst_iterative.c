@@ -25,8 +25,8 @@
 #include <linux/rbtree.h>
 #include <linux/mmgang.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_mm.h"
 #include "cpt_pagein.h"
 

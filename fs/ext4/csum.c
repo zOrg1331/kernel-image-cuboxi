@@ -234,6 +234,8 @@ long ext4_dump_pfcache(struct super_block *sb,
 			continue;
 		if (!S_ISREG(inode->i_mode))
 			continue;
+		if (inode == EXT4_SB(sb)->s_balloon_ino)
+			continue;
 		__iget(inode);
 		spin_unlock(&inode_lock);
 		iput(old_inode);

@@ -325,7 +325,7 @@ EXPORT_SYMBOL(__ub_phys_charge);
 
 int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 {
-	if (get_exec_ub() != ub)
+	if ((gfp_mask & __GFP_NOFAIL) || get_exec_ub() != ub)
 		return 0;
 
 	ub_oom_start(&ub->oom_ctrl);

@@ -827,6 +827,8 @@ struct ext4_inode_info {
 	/* current io_end structure for async DIO write*/
 	ext4_io_end_t *cur_aio_dio;
 	atomic_t i_aiodio_unwritten; /* Number of inflight conversions pending */
+	atomic_t i_ioend_count;	/* Number of outstanding io_end structs */
+	atomic_t i_flush_tag;
 	struct mutex i_aio_mutex; /* big hammer for unaligned AIO */
 
 	/*
@@ -1089,6 +1091,8 @@ struct ext4_sb_info {
 	struct percpu_counter s_freeinodes_counter;
 	struct percpu_counter s_dirs_counter;
 	struct percpu_counter s_dirtyblocks_counter;
+	struct percpu_counter s_inflight_req_counter;
+	struct percpu_counter s_optimized_flushes_counter;
 	struct blockgroup_lock *s_blockgroup_lock;
 	struct proc_dir_entry *s_proc;
 	struct kobject s_kobj;
@@ -1715,6 +1719,7 @@ extern qsize_t *ext4_get_reserved_space(struct inode *inode);
 extern int flush_aio_dio_completed_IO(struct inode *inode);
 extern void ext4_da_update_reserve_space(struct inode *inode,
 					int used, int quota_claim);
+
 /* ioctl.c */
 extern long ext4_ioctl(struct file *, unsigned int, unsigned long);
 extern long ext4_compat_ioctl(struct file *, unsigned int, unsigned long);
@@ -2083,6 +2088,10 @@ static inline void set_bitmap_uptodate(struct buffer_head *bh)
 extern wait_queue_head_t aio_wq[];
 #define to_aio_wq(v) (&aio_wq[((unsigned long)v) % WQ_HASH_SZ])
 extern void ext4_aio_wait(struct inode *inode);
+extern wait_queue_head_t ioend_wq[WQ_HASH_SZ];
+#define to_ioend_wq(v)	(&ioend_wq[((unsigned long)v) % WQ_HASH_SZ])
+extern void ext4_ioend_wait(struct inode *inode);
+
 #define EXT4_RESIZING	0
 extern int ext4_resize_begin(struct super_block *sb);
 extern void ext4_resize_end(struct super_block *sb);

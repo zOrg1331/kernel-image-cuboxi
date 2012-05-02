@@ -269,6 +269,11 @@ static u32 show_active_reqs(struct ploop_device * plo)
 	return plo->active_reqs;
 }
 
+static u32 show_entry_read_sync_reqs(struct ploop_device * plo)
+{
+	return plo->read_sync_reqs;
+}
+
 static u32 show_entry_reqs(struct ploop_device * plo)
 {
 	return plo->entry_qlen;
@@ -409,6 +414,7 @@ _TUNE_BOOL(disable_root_threshold);
 _TUNE_BOOL(disable_user_threshold);
 _TUNE_U32(congestion_high_watermark);
 _TUNE_U32(congestion_low_watermark);
+_TUNE_U32(max_active_requests);
 
 
 struct pattr_sysfs_entry {
@@ -431,6 +437,7 @@ static struct attribute *state_attributes[] = {
 	_A(queued_bios),
 	_A(active_reqs),
 	_A(entry_reqs),
+	_A(entry_read_sync_reqs),
 	_A(barrier_reqs),
 	_A(fastpath_reqs),
 	_A(fsync_reqs),
@@ -458,6 +465,7 @@ static struct attribute *tune_attributes[] = {
 	_A2(disable_user_threshold),
 	_A2(congestion_high_watermark),
 	_A2(congestion_low_watermark),
+	_A2(max_active_requests),
 	NULL
 };
 

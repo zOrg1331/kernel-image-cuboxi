@@ -29,8 +29,8 @@
 #include <asm/uaccess.h>
 #include <linux/cpt_image.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_mm.h"
 #include "cpt_process.h"
 #include "cpt_files.h"
@@ -122,7 +122,7 @@ static loff_t find_pty_pair(struct tty_struct *stty, loff_t pos, struct cpt_tty_
 			return CPT_NULL;
 		if (pibuf->cpt_index == pi->cpt_index &&
 		    !((pi->cpt_drv_flags^pibuf->cpt_drv_flags)&TTY_DRIVER_DEVPTS_MEM) &&
-		    pos != sec) {
+		    pos != sec && strncmp("vtty", pibuf->cpt_name, 4)) {
 			pty_setup(stty, sec, pibuf, ctx);
 			return sec;
 		}

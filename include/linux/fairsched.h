@@ -53,7 +53,7 @@ int fairsched_move_task(int id, struct task_struct *tsk);
 void fairsched_drop_node(int id, int leave);
 
 struct kernel_cpustat;
-int cpu_cgroup_get_stat(struct cgroup *cgrp, struct kernel_cpustat *kstat);
+void cpu_cgroup_get_stat(struct cgroup *cgrp, struct kernel_cpustat *kstat);
 int fairsched_get_cpu_stat(int id, struct kernel_cpustat *kstat);
 
 int cpu_cgroup_get_avenrun(struct cgroup *cgrp, unsigned long *avenrun);

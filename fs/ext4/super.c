@@ -82,6 +82,7 @@ static void ext4_unregister_li_request(struct super_block *sb);
 static void ext4_clear_request_list(void);
 
 wait_queue_head_t aio_wq[WQ_HASH_SZ];
+wait_queue_head_t ioend_wq[WQ_HASH_SZ];
 
 ext4_fsblk_t ext4_block_bitmap(struct super_block *sb,
 			       struct ext4_group_desc *bg)
@@ -694,6 +695,9 @@ static void ext4_put_super(struct super_block *sb)
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
 	percpu_counter_destroy(&sbi->s_pfcache_peers);
+	percpu_counter_destroy(&sbi->s_inflight_req_counter);
+	percpu_counter_destroy(&sbi->s_optimized_flushes_counter);
+
 	brelse(sbi->s_sbh);
 #ifdef CONFIG_QUOTA
 	for (i = 0; i < MAXQUOTAS; i++)
@@ -773,6 +777,8 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 	ei->i_sync_tid = 0;
 	ei->i_datasync_tid = 0;
 	atomic_set(&ei->i_aiodio_unwritten, 0);
+	atomic_set(&ei->i_ioend_count, 0);
+	atomic_set(&ei->i_flush_tag, 0);
 
 	return &ei->vfs_inode;
 }
@@ -2348,6 +2354,22 @@ static ssize_t delayed_allocation_blocks_show(struct ext4_attr *a,
 			(s64) percpu_counter_sum(&sbi->s_dirtyblocks_counter));
 }
 
+static ssize_t inflight_requests_show(struct ext4_attr *a,
+					      struct ext4_sb_info *sbi,
+					      char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n",
+			(s64) percpu_counter_sum(&sbi->s_inflight_req_counter));
+}
+
+static ssize_t optimized_flushes_show(struct ext4_attr *a,
+					      struct ext4_sb_info *sbi,
+					      char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n",
+		(s64) percpu_counter_sum(&sbi->s_optimized_flushes_counter));
+}
+
 
 static ssize_t csum_partial_show(struct ext4_attr *a,
 					      struct ext4_sb_info *sbi,
@@ -2454,6 +2476,9 @@ EXT4_RO_ATTR(lifetime_write_kbytes);
 EXT4_RO_ATTR(csum_partial);
 EXT4_RO_ATTR(csum_complete);
 EXT4_RO_ATTR(pfcache_peers);
+EXT4_RO_ATTR(inflight_requests);
+EXT4_RO_ATTR(optimized_flushes);
+
 EXT4_ATTR_OFFSET(inode_readahead_blks, 0644, sbi_ui_show,
 		 inode_readahead_blks_store, s_inode_readahead_blks);
 EXT4_RW_ATTR_SBI_UI(inode_goal, s_inode_goal);
@@ -2483,6 +2508,8 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(csum_partial),
 	ATTR_LIST(csum_complete),
 	ATTR_LIST(pfcache_peers),
+	ATTR_LIST(inflight_requests),
+	ATTR_LIST(optimized_flushes),
 	NULL,
 };
 
@@ -3381,6 +3408,13 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (!err) {
 		err = percpu_counter_init(&sbi->s_pfcache_peers, 0);
 	}
+	if (!err) {
+		err = percpu_counter_init(&sbi->s_inflight_req_counter, 0);
+	}
+	if (!err) {
+		err = percpu_counter_init(&sbi->s_optimized_flushes_counter, 0);
+	}
+
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "insufficient memory");
 		goto failed_mount3;
@@ -3665,6 +3699,9 @@ failed_mount3:
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
 	percpu_counter_destroy(&sbi->s_pfcache_peers);
+	percpu_counter_destroy(&sbi->s_inflight_req_counter);
+	percpu_counter_destroy(&sbi->s_optimized_flushes_counter);
+
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);
@@ -4810,6 +4847,9 @@ static int __init init_ext4_fs(void)
 	ext4_check_flag_values();
 	for (i = 0; i < WQ_HASH_SZ; i++)
 		init_waitqueue_head(&aio_wq[i]);
+
+	for (i = 0; i < WQ_HASH_SZ; i++)
+		init_waitqueue_head(&ioend_wq[i]);
 
 	err = init_ext4_system_zone();
 	if (err)

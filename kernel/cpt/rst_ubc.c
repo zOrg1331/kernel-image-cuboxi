@@ -14,8 +14,8 @@
 #include <bc/beancounter.h>
 #include <asm/signal.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_ubc.h"
 
 struct user_beancounter *rst_lookup_ubc(__u64 pos, struct cpt_context *ctx)

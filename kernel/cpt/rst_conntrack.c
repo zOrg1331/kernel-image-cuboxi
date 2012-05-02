@@ -44,8 +44,8 @@
 #define ASSERT_WRITE_LOCK(x) do { } while (0)
 
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 struct ct_holder
 {
@@ -439,8 +439,8 @@ int rst_restore_ip_conntrack(struct cpt_context * ctx)
 
 #else
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 int rst_restore_ip_conntrack(struct cpt_context * ctx)
 {

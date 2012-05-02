@@ -104,6 +104,9 @@ static int bc_debug_show(struct seq_file *f, void *v)
 	seq_printf(f, "sizeof: %lu\n", sizeof(struct user_beancounter));
 	seq_printf(f, "pincount: %d\n", __ub_percpu_sum(ub, pincount));
 
+	seq_printf(f, "manual_oom_score_adj: %d\n",
+			ub->ub_manual_oom_score_adj);
+
 	return 0;
 }
 

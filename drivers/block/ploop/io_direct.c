@@ -20,7 +20,7 @@
 
 #define MIN(a, b) (a < b ? a : b)
 
-#define PLOOP_MAX_PREALLOC(plo) (1 << (plo->cluster_log + 19))
+#define PLOOP_MAX_PREALLOC(plo) (128 * 1024 * 1024) /* 128MB */
 
 /* Direct IO from/to file.
  *

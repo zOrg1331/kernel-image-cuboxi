@@ -33,8 +33,8 @@
 
 #include "../../fs/notify/inotify/inotify.h"
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_mm.h"
 #include "cpt_files.h"
 #include "cpt_kernel.h"

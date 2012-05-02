@@ -2161,6 +2161,18 @@ static int effective_prio(struct task_struct *p)
 	return p->prio;
 }
 
+static inline void check_inc_sleeping(struct rq *rq, struct task_struct *t)
+{
+	if (t->state == TASK_INTERRUPTIBLE)
+		rq->nr_sleeping++;
+}
+
+static inline void check_dec_sleeping(struct rq *rq, struct task_struct *t)
+{
+	if (t->state == TASK_INTERRUPTIBLE)
+		rq->nr_sleeping--;
+}
+
 /*
  * activate_task - move a task to the runqueue.
  */
@@ -2171,6 +2183,8 @@ static void activate_task(struct rq *rq, struct task_struct *p, int flags)
 		rq->nr_uninterruptible--;
 		task_cfs_rq(p)->nr_unint--;
 	}
+
+	check_dec_sleeping(rq, p);
 
 	enqueue_task(rq, p, flags);
 
@@ -2192,10 +2206,9 @@ static void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
 
 	cpu = task_cpu(p);
 
+	check_inc_sleeping(rq, p);
+
 #if 0 /* this is broken */
-	if (p->state == TASK_INTERRUPTIBLE) {
-		rq->nr_sleeping++;
-	}
 	if (p->state == TASK_STOPPED) {
 		rq->nr_stopped++;
 	}
@@ -2669,6 +2682,14 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 #endif
 		}
 	}
+
+	if (p->state == TASK_INTERRUPTIBLE) {
+		if (likely(cpu_online(orig_cpu)))
+			rq->nr_sleeping--;
+		else
+			this_rq()->nr_sleeping--;
+	}
+
 	p->state = TASK_WAKING;
 
 	if (p->sched_class->task_waking) {
@@ -3187,6 +3208,18 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	finish_task_switch(this_rq(), prev);
 }
 
+#define DECLARE_NR_ONLINE(varname)			\
+	unsigned long varname(void)			\
+	{						\
+		unsigned long i, sum = 0;		\
+		for_each_online_cpu(i)			\
+			sum += cpu_rq(i)->varname;	\
+		if (unlikely((long)sum < 0))		\
+			return 0;			\
+		return sum;				\
+	}						\
+	EXPORT_SYMBOL(varname);				\
+
 /*
  * nr_running, nr_uninterruptible and nr_context_switches:
  *
@@ -3194,16 +3227,9 @@ context_switch(struct rq *rq, struct task_struct *prev,
  * threads, current number of uninterruptible-sleeping threads, total
  * number of context switches performed since bootup.
  */
-unsigned long nr_running(void)
-{
-	unsigned long i, sum = 0;
-
-	for_each_online_cpu(i)
-		sum += cpu_rq(i)->nr_running;
-
-	return sum;
-}
-EXPORT_SYMBOL(nr_running);
+DECLARE_NR_ONLINE(nr_running);
+DECLARE_NR_ONLINE(nr_sleeping);
+DECLARE_NR_ONLINE(nr_stopped);
 
 unsigned long nr_uninterruptible(void)
 {
@@ -3255,31 +3281,6 @@ unsigned long this_cpu_load(void)
 	struct rq *this = this_rq();
 	return this->cpu_load[0];
 }
-
-
-unsigned long nr_stopped(void)
-{
-	unsigned long i, sum = 0;
-
-	for_each_online_cpu(i)
-		sum += cpu_rq(i)->nr_stopped;
-	if (unlikely((long)sum < 0))
-		sum = 0;
-	return sum;
-}
-EXPORT_SYMBOL(nr_stopped);
-
-unsigned long nr_sleeping(void)
-{
-	unsigned long i, sum = 0;
-
-	for_each_online_cpu(i)
-		sum += cpu_rq(i)->nr_sleeping;
-	if (unlikely((long)sum < 0))
-		sum = 0;
-	return sum;
-}
-EXPORT_SYMBOL(nr_sleeping);
 
 #ifdef CONFIG_VE
 unsigned long nr_running_ve(void)
@@ -5906,64 +5907,86 @@ void account_idle_ticks(unsigned long ticks)
  * Use precise platform statistics if available:
  */
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING
-cputime_t task_utime(struct task_struct *p)
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	return p->utime;
+	*ut = p->utime;
+	*st = p->stime;
 }
 
-cputime_t task_stime(struct task_struct *p)
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	return p->stime;
+	struct task_cputime cputime;
+
+	thread_group_cputime(p, &cputime);
+
+	*ut = cputime.utime;
+	*st = cputime.stime;
 }
 #else
 
 #ifndef nsecs_to_cputime
-# define nsecs_to_cputime(__nsecs) \
-	msecs_to_cputime(div_u64((__nsecs), NSEC_PER_MSEC))
+# define nsecs_to_cputime(__nsecs)	nsecs_to_jiffies(__nsecs)
 #endif
 
-cputime_t task_utime(struct task_struct *p)
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	cputime_t utime = p->utime, total = utime + p->stime;
-	u64 temp;
+	cputime_t rtime, utime = p->utime, total = cputime_add(utime, p->stime);
 
 	/*
 	 * Use CFS's precise accounting:
 	 */
-	temp = (u64)nsecs_to_cputime(p->se.sum_exec_runtime);
+	rtime = nsecs_to_cputime(p->se.sum_exec_runtime);
 
 	if (total) {
+		u64 temp = rtime;
+
 		temp *= utime;
 		do_div(temp, total);
-	}
-	utime = (cputime_t)temp;
-
-	p->prev_utime = max(p->prev_utime, utime);
-	return p->prev_utime;
-}
-
-cputime_t task_stime(struct task_struct *p)
-{
-	cputime_t stime;
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
 
 	/*
-	 * Use CFS's precise accounting. (we subtract utime from
-	 * the total, to make sure the total observed by userspace
-	 * grows monotonically - apps rely on that):
+	 * Compare with previous values, to keep monotonicity:
 	 */
-	stime = nsecs_to_cputime(p->se.sum_exec_runtime) - task_utime(p);
+	p->prev_utime = max(p->prev_utime, utime);
+	p->prev_stime = max(p->prev_stime, cputime_sub(rtime, p->prev_utime));
 
-	if (stime >= 0)
-		p->prev_stime = max(p->prev_stime, stime);
+	*ut = p->prev_utime;
+	*st = p->prev_stime;
+}
 
-	return p->prev_stime;
+/*
+ * Must be called with siglock held.
+ */
+void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+	struct signal_struct *sig = p->signal;
+	struct task_cputime cputime;
+	cputime_t rtime, utime, total;
+
+	thread_group_cputime(p, &cputime);
+
+	total = cputime_add(cputime.utime, cputime.stime);
+	rtime = nsecs_to_cputime(cputime.sum_exec_runtime);
+
+	if (total) {
+		u64 temp = rtime;
+
+		temp *= cputime.utime;
+		do_div(temp, total);
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
+
+	sig->prev_utime = max(sig->prev_utime, utime);
+	sig->prev_stime = max(sig->prev_stime,
+			      cputime_sub(rtime, sig->prev_utime));
+
+	*ut = sig->prev_utime;
+	*st = sig->prev_stime;
 }
 #endif
-
-inline cputime_t task_gtime(struct task_struct *p)
-{
-	return p->gtime;
-}
 
 /*
  * This function gets called by the timer code, with HZ frequency.
@@ -8884,9 +8907,6 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	struct sched_domain *tmp;
 
-	for (tmp = sd; tmp; tmp = tmp->parent)
-		tmp->span_weight = cpumask_weight(sched_domain_span(tmp));
-
 	/* Remove the sched domains which do not contribute to scheduling. */
 	for (tmp = sd; tmp; ) {
 		struct sched_domain *parent = tmp->parent;
@@ -9364,46 +9384,12 @@ static void free_sched_groups(const struct cpumask *cpu_map,
  */
 static void init_sched_groups_power(int cpu, struct sched_domain *sd)
 {
-	struct sched_domain *child;
-	struct sched_group *group;
-	long power;
-	int weight;
-
 	WARN_ON(!sd || !sd->groups);
 
 	if (cpu != group_first_cpu(sd->groups))
 		return;
 
-	child = sd->child;
-
-	sd->groups->cpu_power = 0;
-
-	if (!child) {
-		power = SCHED_LOAD_SCALE;
-		weight = cpumask_weight(sched_domain_span(sd));
-		/*
-		 * SMT siblings share the power of a single core.
-		 * Usually multiple threads get a better yield out of
-		 * that one core than a single thread would have,
-		 * reflect that in sd->smt_gain.
-		 */
-		if ((sd->flags & SD_SHARE_CPUPOWER) && weight > 1) {
-			power *= sd->smt_gain;
-			power /= weight;
-			power >>= SCHED_LOAD_SHIFT;
-		}
-		sd->groups->cpu_power += power;
-		return;
-	}
-
-	/*
-	 * Add cpu_power of each child group to this groups cpu_power.
-	 */
-	group = child->groups;
-	do {
-		sd->groups->cpu_power += group->cpu_power;
-		group = group->next;
-	} while (group != child->groups);
+	update_group_power(sd, cpu);
 }
 
 /*
@@ -9710,7 +9696,7 @@ static int __build_sched_domains(const struct cpumask *cpu_map,
 {
 	enum s_alloc alloc_state = sa_none;
 	struct s_data d;
-	struct sched_domain *sd;
+	struct sched_domain *sd, *tmp;
 	int i;
 #ifdef CONFIG_NUMA
 	d.sd_allnodes = 0;
@@ -9733,6 +9719,9 @@ static int __build_sched_domains(const struct cpumask *cpu_map,
 		sd = __build_book_sched_domain(&d, cpu_map, attr, sd, i);
 		sd = __build_mc_sched_domain(&d, cpu_map, attr, sd, i);
 		sd = __build_smt_sched_domain(&d, cpu_map, attr, sd, i);
+
+		for (tmp = sd; tmp; tmp = tmp->parent)
+			tmp->span_weight = cpumask_weight(sched_domain_span(tmp));
 	}
 
 	for_each_cpu(i, cpu_map) {
@@ -10938,17 +10927,19 @@ void __sched_move_task(struct task_struct *tsk)
 
 		if (task_contributes_to_load(tsk))
 			task_cfs_rq(tsk)->nr_unint--;
+
+		check_dec_sleeping(rq, tsk);
 	}
 
 	if (unlikely(running))
 		tsk->sched_class->put_prev_task(rq, tsk);
 
-	set_task_rq(tsk, task_cpu(tsk));
-
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	if (tsk->sched_class->moved_group)
 		tsk->sched_class->moved_group(tsk, on_rq);
+	else
 #endif
+		set_task_rq(tsk, task_cpu(tsk));
 
 	if (unlikely(running))
 		tsk->sched_class->set_curr_task(rq);
@@ -10961,6 +10952,8 @@ void __sched_move_task(struct task_struct *tsk)
 
 		if (task_contributes_to_load(tsk))
 			task_cfs_rq(tsk)->nr_unint++;
+
+		check_inc_sleeping(rq, tsk);
 	}
 }
 
@@ -11967,7 +11960,7 @@ int cpu_cgroup_proc_stat(struct cgroup *cgrp, struct cftype *cft,
 	return 0;
 }
 
-int cpu_cgroup_get_stat(struct cgroup *cgrp, struct kernel_cpustat *kstat)
+void cpu_cgroup_get_stat(struct cgroup *cgrp, struct kernel_cpustat *kstat)
 {
 	int i, j;
 	struct task_group *tg = cgroup_tg(cgrp);
@@ -11982,8 +11975,6 @@ int cpu_cgroup_get_stat(struct cgroup *cgrp, struct kernel_cpustat *kstat)
 		for (j = 0; j < NR_STATS; j++)
 			kstat->cpustat[j] += st->cpustat[j];
 	}
-
-	return 0;
 }
 
 int cpu_cgroup_get_avenrun(struct cgroup *cgrp, unsigned long *avenrun)

@@ -1,7 +1,7 @@
 #include <linux/module.h>
 #include <asm/signal.h>
 
-#include "cpt_obj.h"
+#include <linux/cpt_obj.h>
 
 EXPORT_SYMBOL(alloc_cpt_object);
 EXPORT_SYMBOL(intern_cpt_object);

@@ -27,8 +27,8 @@
 #include <asm/uaccess.h>
 #include <linux/cpt_image.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_kernel.h"
 
 struct _warg {

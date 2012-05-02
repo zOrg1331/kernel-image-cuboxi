@@ -51,7 +51,7 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 	list_for_each_entry_safe(preq, tmp, &plo->entry_queue, list)
 		if (test_bit(PLOOP_REQ_DISCARD, &preq->state)) {
 			list_move(&preq->list, &drop_list);
-			plo->entry_qlen--;
+			ploop_entry_qlen_dec(preq);
 		}
 	spin_unlock_irq(&plo->lock);
 

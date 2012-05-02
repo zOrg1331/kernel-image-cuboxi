@@ -203,7 +203,7 @@ static void flush_end_io(struct request *flush_rq, int error)
 	/* account completion of the flush request */
 	q->flush_running_idx ^= 1;
 	elv_completed_request(q, flush_rq);
-
+	atomic_inc(&q->flush_tag);
 	/* and push the waiting requests to the next stage */
 	list_for_each_entry_safe(rq, n, running, flush.list) {
 		unsigned int seq = blk_flush_cur_seq(rq);
@@ -278,6 +278,7 @@ static bool blk_kick_flush(struct request_queue *q)
 	q->flush_rq.end_io = flush_end_io;
 
 	q->flush_pending_idx ^= 1;
+	atomic_inc(&q->flush_tag);
 	list_add_tail(&q->flush_rq.queuelist, &q->queue_head);
 	return true;
 }

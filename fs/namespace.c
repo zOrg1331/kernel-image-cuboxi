@@ -1257,25 +1257,22 @@ static int do_umount(struct vfsmount *mnt, int flags)
 void umount_ve_fs_type(struct file_system_type *local_fs_type, int veid)
 {
 	struct vfsmount *mnt;
-	struct list_head *p, *q;
 	LIST_HEAD(kill);
 	LIST_HEAD(umount_list);
 
 	down_write(&namespace_sem);
 	spin_lock(&vfsmount_lock);
-	list_for_each_safe(p, q, &current->nsproxy->mnt_ns->list) {
-		mnt = list_entry(p, struct vfsmount, mnt_list);
+	list_for_each_entry(mnt, &current->nsproxy->mnt_ns->list, mnt_list) {
 		if (mnt->mnt_sb->s_type != local_fs_type)
 			continue;
 		if (veid >= 0 && mnt->owner != veid)
 			continue;
-		list_del(p);
-		list_add(p, &kill);
+		list_move(&mnt->mnt_hash, &kill);
 	}
 
 	while (!list_empty(&kill)) {
 		LIST_HEAD(kill2);
-		mnt = list_entry(kill.next, struct vfsmount, mnt_list);
+		mnt = list_entry(kill.next, struct vfsmount, mnt_hash);
 		umount_tree(mnt, 1, &kill2);
 		list_splice(&kill2, &umount_list);
 	}

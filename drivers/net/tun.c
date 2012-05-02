@@ -1727,9 +1727,11 @@ static int tun_rst(loff_t start, struct cpt_netdev_image *di,
 		if (IS_ERR(bind_file))
 			return PTR_ERR(bind_file);
 
-		err = tun_chr_open(NULL, bind_file);
-		if (err)
-			goto out_tf;
+		if (bind_file->private_data == NULL) {
+			err = tun_chr_open(NULL, bind_file);
+			if (err)
+				goto out_tf;
+		}
 	}
 
 	err = -ENOMEM;

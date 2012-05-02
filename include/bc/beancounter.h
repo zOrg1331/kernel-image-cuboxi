@@ -196,6 +196,7 @@ struct user_beancounter
 
 	struct ratelimit_state	ub_ratelimit;
 	int			ub_oom_noproc;
+	int			ub_manual_oom_score_adj;
 
 	struct page_private	ppriv;
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages

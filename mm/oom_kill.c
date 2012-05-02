@@ -176,13 +176,9 @@ static bool oom_unkillable_task(struct task_struct *p, struct user_beancounter *
  * predictable as possible.  The goal is to return the highest value for the
  * task consuming the most memory to avoid subsequent oom failures.
  */
-unsigned int oom_badness(struct task_struct *p, struct user_beancounter *ub,
-		struct mem_cgroup *mem, const nodemask_t *nodemask, unsigned long totalpages)
+int oom_badness(struct task_struct *p, unsigned long totalpages)
 {
 	long points;
-
-	if (oom_unkillable_task(p, ub, mem, nodemask))
-		return 0;
 
 	p = find_lock_task_mm(p);
 	if (!p)
@@ -218,16 +214,9 @@ unsigned int oom_badness(struct task_struct *p, struct user_beancounter *ub,
 	 * either completely disable oom killing or always prefer a certain
 	 * task.
 	 */
-	points += p->signal->oom_score_adj;
+	points += get_task_oom_score_adj(p);
 
-	/*
-	 * Never return 0 for an eligible task that may be killed since it's
-	 * possible that no single user task uses more than 0.1% of memory and
-	 * no single admin tasks uses more than 3.0%.
-	 */
-	if (points <= 0)
-		return 1;
-	return (points < 1000) ? points : 1000;
+	return clamp(points, -1000l, 1000l);
 }
 
 /*
@@ -299,17 +288,16 @@ static enum oom_constraint constrained_alloc(struct zonelist *zonelist,
  *
  * (not docbooked, we don't want this one cluttering up the manual)
  */
-struct task_struct *select_bad_process(unsigned int *ppoints,
+struct task_struct *select_bad_process(int *ppoints,
 		unsigned long totalpages, struct user_beancounter *ub,
 		struct mem_cgroup *mem, const nodemask_t *nodemask)
 {
 	struct task_struct *g, *p;
 	struct task_struct *chosen = NULL;
-	int group, chosen_group = 0;
 	*ppoints = 0;
 
 	do_each_thread_all(g, p) {
-		unsigned int points;
+		int points;
 
 		if (p->exit_state)
 			continue;
@@ -337,16 +325,10 @@ struct task_struct *select_bad_process(unsigned int *ppoints,
 			}
 		}
 
-		group = get_oom_group(p);
-		if (chosen && group > chosen_group)
-			continue;
-
-		points = oom_badness(p, ub, mem, nodemask, totalpages);
-		if (!chosen || group < chosen_group || \
-		   (points > *ppoints && group == chosen_group)) {
+		points = oom_badness(p, totalpages);
+		if (!chosen || points > *ppoints) {
 			chosen = p;
 			*ppoints = points;
-			chosen_group = group;
 		}
 	} while_each_thread_all(g, p);
 
@@ -446,7 +428,8 @@ int sysctl_oom_relaxation = HZ;
 
 #define OOM_MAX_RAGE	20
 
-static void oom_berserker(struct task_struct *victim, unsigned victim_group,
+static void oom_berserker(struct task_struct *victim,
+		int points, unsigned long totalpages,
 		struct oom_control *oom_ctrl, struct user_beancounter *ub,
 		struct mem_cgroup *mem, nodemask_t *nodemask)
 {
@@ -465,10 +448,13 @@ static void oom_berserker(struct task_struct *victim, unsigned victim_group,
 	if (oom_ctrl->oom_rage < 0)
 		return;
 
-	/* Kill some youngest tasks. New task at the end of this list. */
+	/*
+	 * Kill some youngest tasks. New task at the end of this list.
+	 * We skip unkillable tasks and tasks with score lower than maximum.
+	 */
 	list_for_each_entry_reverse(tsk, &init_task.tasks, tasks) {
 		if (oom_unkillable_task(tsk, ub, mem, nodemask) ||
-		    get_oom_group(tsk) > victim_group)
+		    oom_badness(tsk, totalpages) < points)
 			continue;
 
 		__oom_kill_task(tsk, oom_ctrl, mem);
@@ -605,14 +591,14 @@ void oom_report_invocation(char *type, struct user_beancounter *ub,
 }
 
 int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
-			    unsigned int points, unsigned long totalpages,
+			    int points, unsigned long totalpages,
 			    struct user_beancounter *ub, struct mem_cgroup *mem,
 			    nodemask_t *nodemask, const char *message)
 {
 	struct task_struct *victim = p;
 	struct task_struct *child;
 	struct task_struct *t = p;
-	unsigned int victim_points = 0, victim_group;
+	int victim_points = 0;
 	struct oom_control *oom_ctrl = ub ? &ub->oom_ctrl : &global_oom_ctrl;
 
 	/*
@@ -635,21 +621,15 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	 * parent.  This attempts to lose the minimal amount of work done while
 	 * still freeing memory.
 	 */
-	victim_group = get_oom_group(p);
 	do {
 		list_for_each_entry(child, &t->children, sibling) {
-			unsigned int child_points, child_group;
+			int child_points;
 
-			child_group = get_oom_group(child);
-			if (child_group > victim_group)
-				continue;
 			if (child->mm == p->mm)
 				continue;
-			/*
-			 * oom_badness() returns 0 if the thread is unkillable
-			 */
-			child_points = oom_badness(child, ub, mem, nodemask,
-								totalpages);
+			if (oom_unkillable_task(child, ub, mem, nodemask))
+				continue;
+			child_points = oom_badness(child, totalpages);
 			if (child_points > victim_points) {
 				victim = child;
 				victim_points = child_points;
@@ -657,7 +637,7 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		}
 	} while_each_thread_ve(p, t);
 
-	oom_berserker(victim, victim_group, oom_ctrl, ub, mem, nodemask);
+	oom_berserker(victim, points, totalpages, oom_ctrl, ub, mem, nodemask);
 
 	return oom_kill_task(victim, mem, oom_ctrl);
 }
@@ -690,7 +670,7 @@ static void check_panic_on_oom(enum oom_constraint constraint, gfp_t gfp_mask,
 void mem_cgroup_out_of_memory(struct mem_cgroup *mem, gfp_t gfp_mask)
 {
 	unsigned long limit;
-	unsigned int points = 0;
+	int points = 0;
 	struct task_struct *p;
 
 	check_panic_on_oom(CONSTRAINT_MEMCG, gfp_mask, 0, NULL);
@@ -829,7 +809,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask,
 	struct task_struct *p;
 	unsigned long totalpages;
 	unsigned long freed = 0;
-	unsigned int points;
+	int points;
 	enum oom_constraint constraint = CONSTRAINT_NONE;
 	int killed = 0;
 	struct user_beancounter *ub = NULL;

@@ -39,8 +39,8 @@
 #include <linux/ve_nfs.h>
 #include <linux/freezer.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_dump.h"
 #include "cpt_files.h"
 #include "cpt_mm.h"

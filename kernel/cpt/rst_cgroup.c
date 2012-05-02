@@ -1,8 +1,8 @@
 #include <linux/cgroup.h>
 #include <linux/mount.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_files.h"
 
 static int rst_restore_one_cgroup_mnt(loff_t *pos, struct cpt_context * ctx)

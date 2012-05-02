@@ -41,8 +41,8 @@ static int ploop_max __read_mostly = PLOOP_DEVICE_RANGE;
 static int ploop_major __read_mostly = PLOOP_DEVICE_MAJOR;
 int max_map_pages __read_mostly;
 
-static long root_threshold __read_mostly;
-static long user_threshold __read_mostly;
+static long root_threshold __read_mostly = 2L * 1024 * 1024 * 1024; /* 2GB */
+static long user_threshold __read_mostly = 4L * 1024 * 1024 * 1024; /* 4GB */
 
 static struct rb_root ploop_devices_tree = RB_ROOT;
 static DEFINE_MUTEX(ploop_devices_mutex);
@@ -214,7 +214,7 @@ static inline void preq_unlink(struct ploop_request * preq,
 			       struct list_head *drop_list)
 {
 	list_del(&preq->list);
-	preq->plo->entry_qlen--;
+	ploop_entry_qlen_dec(preq);
 	list_add(&preq->list, drop_list);
 }
 
@@ -528,9 +528,8 @@ ploop_bio_queue(struct ploop_device * plo, struct bio * bio,
 
 	__TRACE("A %p %u\n", preq, preq->req_cluster);
 
-	list_add_tail(&preq->list, &plo->entry_queue);
 	plo->bio_qlen--;
-	plo->entry_qlen++;
+	ploop_entry_add(plo, preq);
 
 	if (bio->bi_size && !bio_rw_flagged(bio, BIO_RW_DISCARD))
 		insert_entry_tree(plo, preq, drop_list);
@@ -696,6 +695,19 @@ preallocate_bio(struct bio * orig_bio, struct ploop_device * plo)
 	return nbio;
 }
 
+static void process_bio_queue(struct ploop_device * plo, struct list_head *drop_list)
+{
+	while (plo->bio_head && !list_empty(&plo->free_list)) {
+		struct bio *tmp = plo->bio_head;
+
+		BUG_ON (!plo->bio_tail);
+		plo->bio_head = plo->bio_head->bi_next;
+		if (!plo->bio_head)
+			plo->bio_tail = NULL;
+
+		ploop_bio_queue(plo, tmp, drop_list);
+	}
+}
 
 static int ploop_make_request(struct request_queue *q, struct bio *bio)
 {
@@ -879,15 +891,17 @@ queue:
 	plo->bio_qlen++;
 	ploop_congest(plo);
 
+	/* second chance to merge requests */
+	process_bio_queue(plo, &drop_list);
+
 	/* If main thread is waiting for requests, wake it up.
 	 * But try to mitigate wakeups, delaying wakeup for some short
 	 * time.
 	 */
-	if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state) &&
-	    !list_empty(&plo->free_list)) {
+	if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state)) {
 		/* Synchronous requests are not batched. */
-		if (plo->bio_qlen > plo->tune.batch_entry_qlen ||
-		    bio_rw_flagged(bio, BIO_RW_SYNCIO)) {
+		if (plo->entry_qlen > plo->tune.batch_entry_qlen ||
+			bio_rw_flagged(bio, BIO_RW_SYNCIO)) {
 			wake_up_interruptible(&plo->waitq);
 		} else if (!timer_pending(&plo->mitigation_timer)) {
 			mod_timer(&plo->mitigation_timer,
@@ -996,7 +1010,11 @@ static void ploop_unplug(struct request_queue *q)
 		plo->bio_sync = plo->bio_tail;
 	} else if (!list_empty(&plo->entry_queue)) {
 		struct ploop_request * preq = list_entry(plo->entry_queue.prev, struct ploop_request, list);
-		set_bit(PLOOP_REQ_SYNC, &preq->state);
+		if (!test_bit(PLOOP_REQ_SYNC, &preq->state)) {
+			if (!(preq->req_rw & WRITE))
+				plo->read_sync_reqs++;
+			set_bit(PLOOP_REQ_SYNC, &preq->state);
+		}
 	}
 
 	if ((!list_empty(&plo->entry_queue) ||
@@ -1185,8 +1203,7 @@ static void ploop_complete_request(struct ploop_request * preq)
 				plo->active_reqs--;
 
 				preq->eng_state = PLOOP_E_ENTRY;
-				list_add_tail(&preq->list, &plo->entry_queue);
-				plo->entry_qlen++;
+				ploop_entry_add(plo, preq);
 				spin_unlock_irq(&plo->lock);
 				return;
 			}
@@ -2550,17 +2567,7 @@ static int ploop_thread(void * data)
 	again:
 		BUG_ON (!list_empty(&drop_list));
 
-		while (plo->bio_head &&
-		       !list_empty(&plo->free_list)) {
-			struct bio *bio = plo->bio_head;
-
-			BUG_ON (!plo->bio_tail);
-			plo->bio_head = plo->bio_head->bi_next;
-			if (!plo->bio_head)
-				plo->bio_tail = NULL;
-
-			ploop_bio_queue(plo, bio, &drop_list);
-		}
+		process_bio_queue(plo, &drop_list);
 
 		if (!list_empty(&drop_list)) {
 			spin_unlock_irq(&plo->lock);
@@ -2600,11 +2607,9 @@ static int ploop_thread(void * data)
 				}
 				plo->barrier_reqs--;
 			} else {
-				if (list_empty(&plo->entry_queue) &&
-				    !(test_bit(PLOOP_REQ_SYNC, &preq->state) &&
-				      (!plo->active_reqs || !(preq->req_rw & (1<<BIO_RW)))) &&
+				if (!plo->read_sync_reqs &&
+				    plo->active_reqs > plo->tune.max_active_requests &&
 				    time_before(jiffies, preq->tstamp + plo->tune.batch_entry_delay) &&
-				    !whole_block(plo, preq) &&
 				    !kthread_should_stop()) {
 					list_add(&preq->list, &plo->entry_queue);
 					once = 1;
@@ -2614,7 +2619,7 @@ static int ploop_thread(void * data)
 			}
 
 			plo->active_reqs++;
-			plo->entry_qlen--;
+			ploop_entry_qlen_dec(preq);
 
 			if (test_bit(PLOOP_REQ_DISCARD, &preq->state)) {
 				BUG_ON(plo->maintainance_type != PLOOP_MNTN_DISCARD);
@@ -2895,8 +2900,7 @@ void ploop_quiesce(struct ploop_device * plo)
 	init_completion(&plo->relaxed_comp);
 	plo->quiesce_comp = &qcomp;
 
-	list_add_tail(&preq->list, &plo->entry_queue);
-	plo->entry_qlen++;
+	ploop_entry_add(plo, preq);
 	plo->barrier_reqs++;
 
 	if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state))
@@ -3158,8 +3162,7 @@ static void ploop_merge_process(struct ploop_device * plo)
 
 		atomic_inc(&plo->maintainance_cnt);
 
-		list_add_tail(&preq->list, &plo->entry_queue);
-		plo->entry_qlen++;
+		ploop_entry_add(plo, preq);
 
 		if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state))
 			wake_up_interruptible(&plo->waitq);
@@ -3216,8 +3219,11 @@ static int ploop_merge(struct ploop_device * plo)
 	next = list_entry(delta->list.next, struct ploop_delta, list);
 
 	err = next->ops->prepare_merge(next, &sd);
-	if (err)
+	if (err) {
+		printk(KERN_WARNING "prepare_merge for ploop%d failed (%d)\n",
+		       plo->index, err);
 		goto out;
+	}
 
 	ploop_quiesce(plo);
 
@@ -3239,6 +3245,8 @@ static int ploop_merge(struct ploop_device * plo)
 		 * in prepare_merge. Failed start_merge means
 		 * abort of the device.
 		 */
+		printk(KERN_WARNING "start_merge for ploop%d failed (%d)\n",
+		       plo->index, err);
 		set_bit(PLOOP_S_ABORT, &plo->state);
 	}
 
@@ -3265,6 +3273,8 @@ already:
 	delta = map_top_delta(plo->trans_map);
 
 	if (test_bit(PLOOP_S_ABORT, &plo->state)) {
+		printk(KERN_WARNING "merge for ploop%d failed (state ABORT)\n",
+		       plo->index);
 		plo->trans_map = NULL;
 		plo->maintainance_type = PLOOP_MNTN_OFF;
 		err = -EIO;
@@ -3520,6 +3530,7 @@ static int ploop_stop(struct ploop_device * plo, struct block_device *bdev)
 	BUG_ON(plo->active_reqs);
 	BUG_ON(plo->barrier_reqs);
 	BUG_ON(plo->fastpath_reqs);
+	BUG_ON(plo->read_sync_reqs);
 
 	list_for_each_entry(delta, &plo->map.delta_list, list) {
 		delta->ops->stop(delta);
@@ -3676,8 +3687,7 @@ static void ploop_relocate(struct ploop_device * plo)
 
 	atomic_inc(&plo->maintainance_cnt);
 
-	list_add_tail(&preq->list, &plo->entry_queue);
-	plo->entry_qlen++;
+	ploop_entry_add(plo, preq);
 
 	if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state))
 		wake_up_interruptible(&plo->waitq);
@@ -3955,8 +3965,7 @@ static void ploop_relocblks_process(struct ploop_device *plo)
 
 		atomic_inc(&plo->maintainance_cnt);
 
-		list_add_tail(&preq->list, &plo->entry_queue);
-		plo->entry_qlen++;
+		ploop_entry_add(plo, preq);
 
 		if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state))
 			wake_up_interruptible(&plo->waitq);

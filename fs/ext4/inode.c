@@ -227,6 +227,8 @@ void ext4_delete_inode(struct inode *inode)
 
 	if (ext4_should_order_data(inode))
 		ext4_begin_ordered_truncate(inode, 0);
+
+	ext4_ioend_wait(inode);
 	truncate_inode_pages(&inode->i_data, 0);
 
 	if (is_bad_inode(inode))
@@ -2740,6 +2742,33 @@ out:
 	return ret;
 }
 
+/* Per inode io requests tracker helpers */
+static int ext4_submit_bh(int rw, struct buffer_head *bh, struct inode *inode)
+{
+	/* For now, we track only write requests */
+	if (rw) {
+		BUG_ON(bh->b_page->mapping->host != inode);
+		atomic_inc(&EXT4_I(inode)->i_ioend_count);
+		percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
+	}
+	return submit_bh(rw, bh);
+}
+
+/* Page is under writeback so no one can truncate it */
+void ext4_end_buffer_async_write(struct buffer_head *bh, int uptodate)
+{
+	struct inode *inode = bh->b_private;
+	wait_queue_head_t *wq = to_ioend_wq(inode);
+	BUG_ON(!PageWriteback(bh->b_page));
+	inode = bh->b_page->mapping->host;
+	ext4_update_inode_fsync_trans(NULL, inode, 1);
+	percpu_counter_dec(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
+	if (atomic_dec_and_test(&EXT4_I(inode)->i_ioend_count) &&
+	    waitqueue_active(wq))
+		wake_up_all(wq);
+	end_buffer_async_write(bh, uptodate);
+}
+
 /*
  * Note that we don't need to start a transaction unless we're journaling data
  * because we should have holes filled from ext4_page_mkwrite(). We even don't
@@ -2864,8 +2893,10 @@ static int ext4_writepage(struct page *page,
 	if (test_opt(inode->i_sb, NOBH) && ext4_should_writeback_data(inode))
 		ret = nobh_writepage(page, noalloc_get_block_write, wbc);
 	else
-		ret = block_write_full_page(page, noalloc_get_block_write,
-					    wbc);
+		ret = generic_block_write_full_page(page, noalloc_get_block_write,
+						    wbc,
+						    ext4_submit_bh,
+						    ext4_end_buffer_async_write);
 
 	return ret;
 }
@@ -3746,6 +3777,11 @@ out:
 static void ext4_free_io_end(ext4_io_end_t *io)
 {
 	BUG_ON(!io);
+	/* The only waiter of i_endio_count is ext4_delete_inode, since
+	 * we hold inode ref, it is safe to skip explicit wakeup */
+	atomic_dec(&EXT4_I(io->inode)->i_ioend_count);
+	ext4_update_inode_fsync_trans(NULL, io->inode, 1);
+	percpu_counter_dec(&EXT4_SB(io->inode->i_sb)->s_inflight_req_counter);
 	iput(io->inode);
 	kfree(io);
 }
@@ -3918,6 +3954,8 @@ static ext4_io_end_t *ext4_init_io_end (struct inode *inode)
 		io->result = 0;
 		INIT_WORK(&io->work, ext4_end_aio_dio_work);
 		INIT_LIST_HEAD(&io->list);
+		atomic_inc(&EXT4_I(inode)->i_ioend_count);
+		percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
 	}
 
 	return io;

@@ -41,8 +41,8 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_core.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 
 /* How does it work?
@@ -143,8 +143,8 @@ static int dump_expect_list(struct nf_conn *ct, struct ct_holder *list,
 		return -ENOMEM;
 	v = (struct cpt_ip_connexpect_image *)pg;
 
-	rcu_read_lock_bh();
-	hlist_for_each_entry_rcu(exp, next, &help->expectations, lnode) {
+	spin_lock_bh(&nf_conntrack_lock);
+	hlist_for_each_entry(exp, next, &help->expectations, lnode) {
 		int sibling;
 
 		if (exp->master != ct)
@@ -194,7 +194,7 @@ static int dump_expect_list(struct nf_conn *ct, struct ct_holder *list,
 
 		v++;
 	}
-	rcu_read_unlock_bh();
+	spin_unlock_bh(&nf_conntrack_lock);
 
 	if (err == 0 && (unsigned long)v != pg)
 		ctx->write((void*)pg, (unsigned long)v - pg, ctx);

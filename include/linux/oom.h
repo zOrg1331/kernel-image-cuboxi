@@ -41,18 +41,17 @@ enum oom_constraint {
 
 extern int test_set_oom_score_adj(int new_val);
 
-struct task_struct *select_bad_process(unsigned int *ppoints,
+struct task_struct *select_bad_process(int *ppoints,
 		unsigned long totalpages, struct user_beancounter *ub,
 		struct mem_cgroup *mem, const nodemask_t *nodemask);
 int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
-			    unsigned int points, unsigned long totalpages,
+			    int points, unsigned long totalpages,
 			    struct user_beancounter *ub, struct mem_cgroup *mem,
 			    nodemask_t *nodemask, const char *message);
 /* linux/mm/oom_group.c */
-extern int get_oom_group(struct task_struct *t);
+extern int get_task_oom_score_adj(struct task_struct *t);
 
-extern unsigned int oom_badness(struct task_struct *p, struct user_beancounter *ub,
-		struct mem_cgroup *mem, const nodemask_t *nodemask, unsigned long totalpages);
+extern int oom_badness(struct task_struct *p, unsigned long totalpages);
 extern int try_set_zonelist_oom(struct zonelist *zonelist, gfp_t gfp_flags);
 extern void clear_zonelist_oom(struct zonelist *zonelist, gfp_t gfp_flags);
 

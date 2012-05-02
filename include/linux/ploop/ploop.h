@@ -291,6 +291,7 @@ struct ploop_tunable
 	int	max_map_inactivity;
 	int	congestion_high_watermark;
 	int	congestion_low_watermark;
+	int	max_active_requests;
 	unsigned int pass_flushes : 1, pass_fuas : 1,
 	        congestion_detection : 1,
 	        check_zeros : 1,
@@ -299,20 +300,22 @@ struct ploop_tunable
 };
 
 #define DEFAULT_PLOOP_MAXRQ 128
+#define DEFAULT_PLOOP_BATCH_ENTRY_QLEN 32
 
 #define DEFAULT_PLOOP_TUNE \
 (struct ploop_tunable) { \
 .max_requests = DEFAULT_PLOOP_MAXRQ, \
 .batch_entry_qlen = 32, \
 .batch_entry_delay = HZ/20, \
-.fsync_max = 32, \
+.fsync_max = DEFAULT_PLOOP_BATCH_ENTRY_QLEN, \
 .fsync_delay = HZ/10, \
 .min_map_pages = 32, \
 .max_map_inactivity = 10*HZ, \
 .congestion_high_watermark = 3*DEFAULT_PLOOP_MAXRQ/4, \
 .congestion_low_watermark = DEFAULT_PLOOP_MAXRQ/2, \
 .pass_flushes = 1, \
-.pass_fuas = 1, }
+.pass_fuas = 1, \
+.max_active_requests = DEFAULT_PLOOP_BATCH_ENTRY_QLEN / 2, }
 
 struct ploop_stats
 {
@@ -331,6 +334,7 @@ struct ploop_device
 	struct list_head	free_list;
 	struct list_head	entry_queue;
 	int			entry_qlen;
+	int			read_sync_reqs;
 
 	struct bio		*bio_head;
 	struct bio		*bio_tail;
@@ -647,6 +651,21 @@ static inline void ploop_acc_flush_skip_locked(struct ploop_device *plo,
 {
 	if (unlikely(rw & BIO_FLUSH))
 		plo->st.bio_flush_skip++;
+}
+
+static inline void ploop_entry_add(struct ploop_device * plo, struct ploop_request * preq)
+{
+	list_add_tail(&preq->list, &plo->entry_queue);
+	plo->entry_qlen++;
+	if (test_bit(PLOOP_REQ_SYNC, &preq->state) && !(preq->req_rw & WRITE))
+		plo->read_sync_reqs++;
+}
+
+static inline void ploop_entry_qlen_dec(struct ploop_request * preq)
+{
+	preq->plo->entry_qlen--;
+	if (test_bit(PLOOP_REQ_SYNC, &preq->state) && !(preq->req_rw & WRITE))
+		preq->plo->read_sync_reqs--;
 }
 
 struct map_node;

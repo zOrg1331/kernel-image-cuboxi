@@ -23,8 +23,8 @@
 #include <asm/uaccess.h>
 #include <linux/cpt_image.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 
 /* We must support at least N_TTY. */
 

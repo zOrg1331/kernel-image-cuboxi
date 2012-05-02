@@ -36,8 +36,8 @@
 
 #include <linux/cpt_export.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
 #include "cpt_kernel.h"
 #include "cpt_syscalls.h"
 

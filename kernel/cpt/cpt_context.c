@@ -19,13 +19,38 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/pagemap.h>
-#include <linux/pram.h>
 
 #include <linux/cpt_image.h>
 #include <linux/cpt_export.h>
 
-#include "cpt_obj.h"
-#include "cpt_context.h"
+#include <linux/cpt_obj.h>
+#include <linux/cpt_context.h>
+
+#ifdef CONFIG_PRAM
+struct cpt_pram_ops *cpt_pram_ops;
+EXPORT_SYMBOL(cpt_pram_ops);
+
+int cpt_open_pram(cpt_context_t *ctx)
+{
+	if (cpt_pram_ops)
+		return cpt_pram_ops->open(ctx);
+	return -ENOSYS;
+}
+
+void cpt_close_pram(cpt_context_t *ctx, int err)
+{
+	if (cpt_pram_ops)
+		cpt_pram_ops->close(ctx, err);
+}
+
+void cpt_dump_pages_pram(struct vm_area_struct *vma,
+		unsigned long start, unsigned long end,
+		struct cpt_context *ctx)
+{
+	if (cpt_pram_ops)
+		cpt_pram_ops->dump_pages(vma, start, end, ctx);
+}
+#endif
 
 static int check_dumpsize(struct cpt_context *ctx, size_t count, loff_t pos)
 {
@@ -126,47 +151,6 @@ void cpt_context_init(struct cpt_context *ctx)
 		ctx->sections[i] = CPT_NULL;
 	cpt_object_init(ctx);
 }
-
-#ifdef CONFIG_PRAM
-int cpt_open_pram(cpt_context_t *ctx)
-{
-	int err;
-	char name[32];
-
-	if (ctx->pram_stream)
-		return 0;
-
-	err = -ENOMEM;
-	ctx->pram_stream = kmalloc(sizeof(struct pram_stream), GFP_KERNEL);
-	if (!ctx->pram_stream)
-		goto out;
-
-	sprintf(name, "cpt.%d", ctx->ve_id);
-	err = pram_open(name, PRAM_WRITE, ctx->pram_stream);
-	if (err) {
-		eprintk_ctx("failed to create PRAM: %d\n", err);
-		goto out_free_stream;
-	}
-
-	return 0;
-
-out_free_stream:
-	kfree(ctx->pram_stream);
-	ctx->pram_stream = NULL;
-out:
-	return err;
-}
-
-void cpt_close_pram(cpt_context_t *ctx, int err)
-{
-	if (!ctx->pram_stream)
-		return;
-
-	pram_close(ctx->pram_stream, err);
-	kfree(ctx->pram_stream);
-	ctx->pram_stream = NULL;
-}
-#endif
 
 int cpt_open_dumpfile(struct cpt_context *ctx)
 {
