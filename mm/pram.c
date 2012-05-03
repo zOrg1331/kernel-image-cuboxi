@@ -474,7 +474,7 @@ static struct page *pram_alloc_page(gfp_t gfpmask)
 	return page;
 }
 
-static void pram_init_preallocs(void)
+static void __init pram_init_preallocs(void)
 {
 	int cpu;
 	struct pram_prealloc_struct *p;

@@ -215,9 +215,11 @@ reclaimer(void *ptr)
 	struct nlm_wait	  *block;
 	struct file_lock *fl, *next;
 	u32 nsmstate;
+	struct ve_struct *old_ve;
 
 	allow_signal(SIGKILL);
 
+	old_ve = set_exec_env(host->owner_env);
 	down_write(&host->h_rwsem);
 
 	/* This one ensures that our parent doesn't terminate while the
@@ -274,5 +276,6 @@ restart:
 	nlm_release_host(host);
 	lockd_down();
 	unlock_kernel();
+	set_exec_env(old_ve);
 	return 0;
 }
