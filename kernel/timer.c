@@ -1462,6 +1462,14 @@ int do_sysinfo(struct sysinfo *info)
 	struct ve_struct *ve;
 
 	memset(info, 0, sizeof(struct sysinfo));
+	si_meminfo(info);
+	si_swapinfo(info);
+
+#ifdef CONFIG_BEANCOUNTERS
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_SYSINFO, info)
+			& NOTIFY_FAIL)
+		return -ENOMSG;
+#endif
 	ve = get_exec_env();
 
 	ktime_get_ts(&tp);
@@ -1480,14 +1488,6 @@ int do_sysinfo(struct sysinfo *info)
 		get_avenrun_ve(info->loads, 0, SI_LOAD_SHIFT - FSHIFT);
 	}
 
-	si_meminfo(info);
-	si_swapinfo(info);
-
-#ifdef CONFIG_BEANCOUNTERS
-	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_SYSINFO, info)
-			& NOTIFY_FAIL)
-		return -ENOMSG;
-#endif
 	/*
 	 * If the sum of all the available memory (i.e. ram + swap)
 	 * is less than can be stored in a 32 bit unsigned long then

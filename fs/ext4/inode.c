@@ -2757,14 +2757,12 @@ static int ext4_submit_bh(int rw, struct buffer_head *bh, struct inode *inode)
 /* Page is under writeback so no one can truncate it */
 void ext4_end_buffer_async_write(struct buffer_head *bh, int uptodate)
 {
-	struct inode *inode = bh->b_private;
+	struct inode *inode = bh->b_page->mapping->host;
 	wait_queue_head_t *wq = to_ioend_wq(inode);
 	BUG_ON(!PageWriteback(bh->b_page));
-	inode = bh->b_page->mapping->host;
 	ext4_update_inode_fsync_trans(NULL, inode, 1);
 	percpu_counter_dec(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
-	if (atomic_dec_and_test(&EXT4_I(inode)->i_ioend_count) &&
-	    waitqueue_active(wq))
+	if (atomic_dec_and_test(&EXT4_I(inode)->i_ioend_count))
 		wake_up_all(wq);
 	end_buffer_async_write(bh, uptodate);
 }
