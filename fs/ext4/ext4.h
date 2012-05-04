@@ -1091,8 +1091,8 @@ struct ext4_sb_info {
 	struct percpu_counter s_freeinodes_counter;
 	struct percpu_counter s_dirs_counter;
 	struct percpu_counter s_dirtyblocks_counter;
-	struct percpu_counter s_inflight_req_counter;
-	struct percpu_counter s_optimized_flushes_counter;
+	struct percpu_counter s_fsync_counter;
+	struct percpu_counter s_optimized_fsync_counter;
 	struct blockgroup_lock *s_blockgroup_lock;
 	struct proc_dir_entry *s_proc;
 	struct kobject s_kobj;
