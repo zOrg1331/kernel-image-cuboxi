@@ -695,9 +695,8 @@ static void ext4_put_super(struct super_block *sb)
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
 	percpu_counter_destroy(&sbi->s_pfcache_peers);
-	percpu_counter_destroy(&sbi->s_inflight_req_counter);
-	percpu_counter_destroy(&sbi->s_optimized_flushes_counter);
-
+	percpu_counter_destroy(&sbi->s_fsync_counter);
+	percpu_counter_destroy(&sbi->s_optimized_fsync_counter);
 	brelse(sbi->s_sbh);
 #ifdef CONFIG_QUOTA
 	for (i = 0; i < MAXQUOTAS; i++)
@@ -2354,20 +2353,20 @@ static ssize_t delayed_allocation_blocks_show(struct ext4_attr *a,
 			(s64) percpu_counter_sum(&sbi->s_dirtyblocks_counter));
 }
 
-static ssize_t inflight_requests_show(struct ext4_attr *a,
+static ssize_t fsync_show(struct ext4_attr *a,
 					      struct ext4_sb_info *sbi,
 					      char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%llu\n",
-			(s64) percpu_counter_sum(&sbi->s_inflight_req_counter));
+		(s64) percpu_counter_sum(&sbi->s_fsync_counter));
 }
-
-static ssize_t optimized_flushes_show(struct ext4_attr *a,
+ 
+static ssize_t optimized_fsync_show(struct ext4_attr *a,
 					      struct ext4_sb_info *sbi,
 					      char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%llu\n",
-		(s64) percpu_counter_sum(&sbi->s_optimized_flushes_counter));
+		(s64) percpu_counter_sum(&sbi->s_optimized_fsync_counter));
 }
 
 
@@ -2476,9 +2475,8 @@ EXT4_RO_ATTR(lifetime_write_kbytes);
 EXT4_RO_ATTR(csum_partial);
 EXT4_RO_ATTR(csum_complete);
 EXT4_RO_ATTR(pfcache_peers);
-EXT4_RO_ATTR(inflight_requests);
-EXT4_RO_ATTR(optimized_flushes);
-
+EXT4_RO_ATTR(fsync);
+EXT4_RO_ATTR(optimized_fsync);
 EXT4_ATTR_OFFSET(inode_readahead_blks, 0644, sbi_ui_show,
 		 inode_readahead_blks_store, s_inode_readahead_blks);
 EXT4_RW_ATTR_SBI_UI(inode_goal, s_inode_goal);
@@ -2508,8 +2506,8 @@ static struct attribute *ext4_attrs[] = {
 	ATTR_LIST(csum_partial),
 	ATTR_LIST(csum_complete),
 	ATTR_LIST(pfcache_peers),
-	ATTR_LIST(inflight_requests),
-	ATTR_LIST(optimized_flushes),
+	ATTR_LIST(fsync),
+	ATTR_LIST(optimized_fsync),
 	NULL,
 };
 
@@ -3409,10 +3407,11 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		err = percpu_counter_init(&sbi->s_pfcache_peers, 0);
 	}
 	if (!err) {
-		err = percpu_counter_init(&sbi->s_inflight_req_counter, 0);
+		err = percpu_counter_init(&sbi->s_fsync_counter, 0);
 	}
+
 	if (!err) {
-		err = percpu_counter_init(&sbi->s_optimized_flushes_counter, 0);
+		err = percpu_counter_init(&sbi->s_optimized_fsync_counter, 0);
 	}
 
 	if (err) {
@@ -3699,9 +3698,8 @@ failed_mount3:
 	percpu_counter_destroy(&sbi->s_csum_partial);
 	percpu_counter_destroy(&sbi->s_csum_complete);
 	percpu_counter_destroy(&sbi->s_pfcache_peers);
-	percpu_counter_destroy(&sbi->s_inflight_req_counter);
-	percpu_counter_destroy(&sbi->s_optimized_flushes_counter);
-
+	percpu_counter_destroy(&sbi->s_fsync_counter);
+	percpu_counter_destroy(&sbi->s_optimized_fsync_counter);
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);

@@ -59,6 +59,7 @@ int ext4_sync_file(struct file *file, struct dentry *dentry, int datasync)
 	J_ASSERT(ext4_journal_current_handle() == NULL);
 
 	trace_ext4_sync_file(file, dentry, datasync);
+	percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_fsync_counter);
 
 	if (inode->i_sb->s_flags & MS_RDONLY)
 		return 0;
@@ -116,7 +117,7 @@ int ext4_sync_file(struct file *file, struct dentry *dentry, int datasync)
 		    <= (((unsigned int)atomic_read(&ei->i_flush_tag) + 1U) & (~1U)))
 			blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
 		else
-			percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_optimized_flushes_counter);
+			percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_optimized_fsync_counter);
 	}
 	return ret;
 }

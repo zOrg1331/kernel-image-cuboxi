@@ -2749,7 +2749,6 @@ static int ext4_submit_bh(int rw, struct buffer_head *bh, struct inode *inode)
 	if (rw) {
 		BUG_ON(bh->b_page->mapping->host != inode);
 		atomic_inc(&EXT4_I(inode)->i_ioend_count);
-		percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
 	}
 	return submit_bh(rw, bh);
 }
@@ -2761,7 +2760,6 @@ void ext4_end_buffer_async_write(struct buffer_head *bh, int uptodate)
 	wait_queue_head_t *wq = to_ioend_wq(inode);
 	BUG_ON(!PageWriteback(bh->b_page));
 	ext4_update_inode_fsync_trans(NULL, inode, 1);
-	percpu_counter_dec(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
 	if (atomic_dec_and_test(&EXT4_I(inode)->i_ioend_count))
 		wake_up_all(wq);
 	end_buffer_async_write(bh, uptodate);
@@ -3779,7 +3777,6 @@ static void ext4_free_io_end(ext4_io_end_t *io)
 	 * we hold inode ref, it is safe to skip explicit wakeup */
 	atomic_dec(&EXT4_I(io->inode)->i_ioend_count);
 	ext4_update_inode_fsync_trans(NULL, io->inode, 1);
-	percpu_counter_dec(&EXT4_SB(io->inode->i_sb)->s_inflight_req_counter);
 	iput(io->inode);
 	kfree(io);
 }
@@ -3953,7 +3950,6 @@ static ext4_io_end_t *ext4_init_io_end (struct inode *inode)
 		INIT_WORK(&io->work, ext4_end_aio_dio_work);
 		INIT_LIST_HEAD(&io->list);
 		atomic_inc(&EXT4_I(inode)->i_ioend_count);
-		percpu_counter_inc(&EXT4_SB(inode->i_sb)->s_inflight_req_counter);
 	}
 
 	return io;
