@@ -25,6 +25,9 @@
 #ifndef _HYPERV_NET_H
 #define _HYPERV_NET_H
 
+/* from include/linux/rndis.h via 8cdddc3f9d6692f5690841468a9f63c19fb734ed */
+#define RNDIS_OID_GEN_RNDIS_CONFIG_PARAMETER   0x0001021B
+
 #include <linux/list.h>
 #include <linux/hyperv.h>
 
