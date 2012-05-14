@@ -1798,8 +1798,13 @@ static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
 
 	ctx->file->f_pos = *pos + sizeof(v);
 	end = ctx->file->f_pos + v.cpt_len;
-	if (v.cpt_content != CPT_CONTENT_DATA)
+	if (v.cpt_content != CPT_CONTENT_DATA) {
+		/*
+		 * Old kernels: before 042stab054.
+		 */
+		ctx->file->f_pos = *pos + sizeof(struct cpt_object_hdr);
 		end = *pos + v.cpt_next;
+	}
 	*pos += v.cpt_next;
 	do {
 		char buf[16];

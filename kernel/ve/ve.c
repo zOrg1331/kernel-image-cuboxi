@@ -95,6 +95,7 @@ struct ve_struct ve0 = {
 	.devices		= LIST_HEAD_INIT(ve0.devices),
 	.init_cred		= &init_cred,
 	.fsync_enable		= FSYNC_FILTERED,
+	.sync_mutex		= __MUTEX_INITIALIZER(ve0.sync_mutex),
 };
 
 EXPORT_SYMBOL(ve0);

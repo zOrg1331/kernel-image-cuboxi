@@ -827,7 +827,8 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 
 	INIT_LIST_HEAD(&ve->ve_list);
 	init_waitqueue_head(&ve->ve_list_wait);
- 
+	mutex_init(&ve->sync_mutex);
+
 	return 0;
 }
 
