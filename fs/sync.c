@@ -15,6 +15,8 @@
 #include <linux/pagemap.h>
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
+#include <linux/mnt_namespace.h>
+#include <linux/mount.h>
 #include "internal.h"
 
 #include <bc/beancounter.h>
@@ -87,6 +89,61 @@ int sync_filesystem(struct super_block *sb)
 }
 EXPORT_SYMBOL_GPL(sync_filesystem);
 
+struct sync_sb {
+	struct list_head list;
+	struct super_block *sb;
+};
+
+static void sync_release_filesystems(struct list_head *sync_list)
+{
+	struct sync_sb *ss, *tmp;
+
+	list_for_each_entry_safe(ss, tmp, sync_list, list) {
+		list_del(&ss->list);
+		put_super(ss->sb);
+		kfree(ss);
+	}
+}
+
+static int __sync_collect_filesystems(struct ve_struct *ve, struct list_head *sync_list)
+{
+	struct vfsmount *root = ve->root_path.mnt;
+	struct vfsmount *mnt;
+	struct sync_sb *ss;
+	int ret = 0;
+
+	BUG_ON(!list_empty(sync_list));
+
+	down_read(&namespace_sem);
+	for (mnt = root; mnt; mnt = next_mnt(mnt, root)) {
+		ss = kmalloc(sizeof(*ss), GFP_KERNEL);
+		if (ss == NULL) {
+			ret = -ENOMEM;
+			break;
+		}
+		ss->sb = mnt->mnt_sb;
+		/*
+		 * We hold mount point and thus can be sure, that superblock is
+		 * alive. And it means, that we can safely increase it's usage
+		 * counter.
+		 */
+		spin_lock(&sb_lock);
+		ss->sb->s_count++;
+		spin_unlock(&sb_lock);
+		list_add_tail(&ss->list, sync_list);
+	}
+	up_read(&namespace_sem);
+	return ret;
+}
+
+static void sync_collect_filesystems(struct ve_struct *ve, struct list_head *sync_list)
+{
+	while(__sync_collect_filesystems(ve, sync_list) == -ENOMEM) {
+		sync_release_filesystems(sync_list);
+		schedule_timeout(1 * HZ);
+	}
+}
+
 /*
  * Sync all the data for all the filesystems (called by sys_sync() and
  * emergency sync)
@@ -101,36 +158,27 @@ EXPORT_SYMBOL_GPL(sync_filesystem);
  * flags again, which will cause process A to resync everything.  Fix that with
  * a local mutex.
  */
-static void sync_filesystems(struct user_beancounter *ub, int wait)
+static void sync_filesystems_ve(struct ve_struct *ve, struct user_beancounter *ub, int wait)
 {
 	struct super_block *sb;
-	static DEFINE_MUTEX(mutex);
+	LIST_HEAD(sync_list);
+	struct sync_sb *ss;
 
-	mutex_lock(&mutex);		/* Could be down_interruptible */
-	spin_lock(&sb_lock);
-	list_for_each_entry(sb, &super_blocks, s_list)
-		sb->s_need_sync = 1;
+	mutex_lock(&ve->sync_mutex);		/* Could be down_interruptible */
 
-restart:
-	list_for_each_entry(sb, &super_blocks, s_list) {
-		if (!sb->s_need_sync)
-			continue;
-		sb->s_need_sync = 0;
-		sb->s_count++;
-		spin_unlock(&sb_lock);
+	sync_collect_filesystems(ve, &sync_list);
 
+	list_for_each_entry(ss, &sync_list, list) {
+		sb = ss->sb;
 		down_read(&sb->s_umount);
 		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
 			__sync_filesystem(sb, ub, wait);
 		up_read(&sb->s_umount);
-
-		/* restart only when sb is no longer on the list */
-		spin_lock(&sb_lock);
-		if (__put_super_and_need_restart(sb))
-			goto restart;
 	}
-	spin_unlock(&sb_lock);
-	mutex_unlock(&mutex);
+
+	sync_release_filesystems(&sync_list);
+
+	mutex_unlock(&ve->sync_mutex);
 }
 
 static int __ve_fsync_behavior(struct ve_struct *ve)
@@ -189,8 +237,8 @@ SYSCALL_DEFINE0(sync)
 	}
 
 	wakeup_flusher_threads(sync_ub, 0);
-	sync_filesystems(sync_ub, 0);
-	sync_filesystems(sync_ub, 1);
+	sync_filesystems_ve(ve, sync_ub, 0);
+	sync_filesystems_ve(ve, sync_ub, 1);
 	if (unlikely(laptop_mode) && !sync_ub)
 		laptop_sync_completion();
 skip:
@@ -204,8 +252,8 @@ static void do_sync_work(struct work_struct *work)
 	 * Sync twice to reduce the possibility we skipped some inodes / pages
 	 * because they were temporarily locked
 	 */
-	sync_filesystems(NULL, 0);
-	sync_filesystems(NULL, 0);
+	sync_filesystems_ve(get_ve0(), NULL, 0);
+	sync_filesystems_ve(get_ve0(), NULL, 0);
 	printk("Emergency Sync complete\n");
 	kfree(work);
 }

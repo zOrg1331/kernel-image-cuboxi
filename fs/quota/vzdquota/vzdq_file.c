@@ -526,8 +526,6 @@ static int vzdq_aquotq_looktest(struct inode *inode, void *data)
 static int vzdq_aquotq_lookset(struct inode *inode, void *data)
 {
 	struct vzdq_aquotq_lookdata *d;
-	struct super_block *sb;
-	struct quotatree_data qtd;
 	struct quotatree_tree *tree;
 
 	d = data;
@@ -543,19 +541,7 @@ static int vzdq_aquotq_lookset(struct inode *inode, void *data)
 	vzdq_aquot_setidev(inode, d->dev);
 
 	/* Setting size */
-	sb = user_get_super(d->dev);
-	if (sb == NULL)
-		return -ENODEV;
-	qtd.qmblk = vzquota_find_qmblk(sb);
-	drop_super(sb);
-
-	if (qtd.qmblk == NULL)
-		return -ESRCH;
-	if (qtd.qmblk == VZ_QUOTA_BAD)
-		return -EIO;
-
-	qtd.type = PROC_I(inode)->fd - 1;
-	tree = QUGID_TREE(qtd.qmblk, qtd.type);
+	tree = QUGID_TREE(d->qmblk, d->type);
 	inode->i_size = get_block_num(tree) * 1024;
 	return 0;
 }
@@ -615,6 +601,9 @@ static struct dentry *vzdq_aquotq_lookup(struct inode *dir,
 
 	inode = iget5_locked(dir->i_sb, dir->i_ino + k + 1,
 			vzdq_aquotq_looktest, vzdq_aquotq_lookset, &d);
+
+	/* qmlbk ref is not needed, we used it for i_size calculation only */
+	qmblk_put(d.qmblk);
 	if (inode == NULL)
 		goto out;
 

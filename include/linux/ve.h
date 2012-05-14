@@ -284,6 +284,7 @@ struct ve_struct {
 	struct list_head	_kthread_create_list;
 	struct task_struct	*_kthreadd_task;
 	struct workqueue_struct	*khelper_wq;
+	struct mutex		sync_mutex;
 };
 
 #define VE_MEMINFO_DEFAULT      1       /* default behaviour */

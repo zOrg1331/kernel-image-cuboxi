@@ -549,7 +549,7 @@ static int ve_lockd_init(void *data)
 	return 0;
 }
 
-static void ve_lockd_stop(void *data)
+static void ve_lockd_fini(void *data)
 {
 	struct ve_struct *ve = data;
 
@@ -569,12 +569,7 @@ static void ve_lockd_stop(void *data)
 
 static struct ve_hook lockd_ss_hook = {
 	.init	  = ve_lockd_init,
-	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_NET_POST,
-};
-
-static struct ve_hook lockd_ie_hook = {
-	.fini	  = ve_lockd_stop,
+	.fini     = ve_lockd_fini,
 	.owner	  = THIS_MODULE,
 	.priority = HOOK_PRIO_NET_POST,
 };
@@ -593,7 +588,6 @@ static int __init init_nlm(void)
 	ve_nlm_init(&ve0_nlm_data);
 
 	ve_hook_register(VE_SS_CHAIN, &lockd_ss_hook);
-	ve_hook_register(VE_INIT_EXIT_CHAIN, &lockd_ie_hook);
 #endif
 	return 0;
 }
@@ -601,7 +595,6 @@ static int __init init_nlm(void)
 static void __exit exit_nlm(void)
 {
 #ifdef CONFIG_VE
-	ve_hook_unregister(&lockd_ie_hook);
 	ve_hook_unregister(&lockd_ss_hook);
 #endif
 	/* FIXME: delete all NLM clients */
