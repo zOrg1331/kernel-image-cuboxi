@@ -204,9 +204,9 @@ static void ploop_release_iocontext(struct io_context *ioc)
 			cic->exit(ioc);
 		}
 		rcu_read_unlock();
-
-		put_io_context(ioc);
 	}
+
+	put_io_context(ioc);
 }
 
 /* always called with plo->lock held */
@@ -257,6 +257,15 @@ static void merge_rw_flags_to_req(unsigned long rw,
 			preq->req_rw |= BIO_FUA;
 }
 
+static void preq_set_sync_bit(struct ploop_request * preq)
+{
+	if (!test_bit(PLOOP_REQ_SYNC, &preq->state)) {
+		if (!(preq->req_rw & WRITE))
+			preq->plo->read_sync_reqs++;
+		__set_bit(PLOOP_REQ_SYNC, &preq->state);
+	}
+}
+
 static void overlap_forward(struct ploop_device * plo,
 			    struct ploop_request * preq,
 			    struct ploop_request * preq1,
@@ -270,7 +279,7 @@ static void overlap_forward(struct ploop_device * plo,
 		preq1->bl.head = preq1->bl.tail = NULL;
 		preq->req_size += preq1->req_size;
 		if (test_bit(PLOOP_REQ_SYNC, &preq1->state))
-			__set_bit(PLOOP_REQ_SYNC, &preq->state);
+			preq_set_sync_bit(preq);
 		merge_rw_flags_to_req(preq1->req_rw, preq);
 		rb_erase(&preq1->lockout_link, &plo->entry_tree[preq1->req_rw & WRITE]);
 		preq_unlink(preq1, drop_list);
@@ -301,7 +310,7 @@ static void overlap_backward(struct ploop_device * plo,
 		preq->req_size += preq1->req_size;
 		preq->req_sector = preq1->req_sector;
 		if (test_bit(PLOOP_REQ_SYNC, &preq1->state))
-			__set_bit(PLOOP_REQ_SYNC, &preq->state);
+			preq_set_sync_bit(preq);
 		merge_rw_flags_to_req(preq1->req_rw, preq);
 		rb_erase(&preq1->lockout_link, &plo->entry_tree[preq->req_rw & WRITE]);
 		preq_unlink(preq1, drop_list);
@@ -330,7 +339,7 @@ static int try_merge(struct ploop_device *plo, struct ploop_request * preq,
 		preq->req_size += (bio->bi_size >> 9);
 		preq->tstamp = jiffies;
 		if (bio_rw_flagged(bio, BIO_RW_SYNCIO))
-			__set_bit(PLOOP_REQ_SYNC, &preq->state);
+			preq_set_sync_bit(preq);
 		merge_rw_flags_to_req(bio->bi_rw, preq);
 		plo->st.coal_forw++;
 		n = rb_next(&preq->lockout_link);
@@ -353,7 +362,7 @@ static int try_merge(struct ploop_device *plo, struct ploop_request * preq,
 		preq->tstamp = jiffies;
 		plo->st.coal_back++;
 		if (bio_rw_flagged(bio, BIO_RW_SYNCIO))
-			__set_bit(PLOOP_REQ_SYNC, &preq->state);
+			preq_set_sync_bit(preq);
 		merge_rw_flags_to_req(bio->bi_rw, preq);
 		n = rb_prev(&preq->lockout_link);
 		if (n) {
@@ -416,7 +425,7 @@ insert_entry_tree(struct ploop_device * plo, struct ploop_request * preq0,
 		clash->req_size += preq0->req_size;
 		clash->tstamp = jiffies;
 		if (test_bit(PLOOP_REQ_SYNC, &preq0->state))
-			__set_bit(PLOOP_REQ_SYNC, &clash->state);
+			preq_set_sync_bit(clash);
 		merge_rw_flags_to_req(preq0->req_rw, clash);
 		preq_unlink(preq0, drop_list);
 		plo->st.coal_forw2++;
@@ -441,7 +450,7 @@ insert_entry_tree(struct ploop_device * plo, struct ploop_request * preq0,
 		clash->tstamp = jiffies;
 		plo->st.coal_back2++;
 		if (test_bit(PLOOP_REQ_SYNC, &preq0->state))
-			__set_bit(PLOOP_REQ_SYNC, &clash->state);
+			preq_set_sync_bit(clash);
 		merge_rw_flags_to_req(preq0->req_rw, clash);
 		preq_unlink(preq0, drop_list);
 
@@ -1010,11 +1019,7 @@ static void ploop_unplug(struct request_queue *q)
 		plo->bio_sync = plo->bio_tail;
 	} else if (!list_empty(&plo->entry_queue)) {
 		struct ploop_request * preq = list_entry(plo->entry_queue.prev, struct ploop_request, list);
-		if (!test_bit(PLOOP_REQ_SYNC, &preq->state)) {
-			if (!(preq->req_rw & WRITE))
-				plo->read_sync_reqs++;
-			set_bit(PLOOP_REQ_SYNC, &preq->state);
-		}
+		preq_set_sync_bit(preq);
 	}
 
 	if ((!list_empty(&plo->entry_queue) ||
