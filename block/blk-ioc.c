@@ -75,6 +75,11 @@ void exit_io_context(struct task_struct *task)
 	task->io_context = NULL;
 	task_unlock(task);
 
+	ioc_task_unlink(ioc);
+}
+
+void ioc_task_unlink(struct io_context *ioc)
+{
 	if (atomic_dec_and_test(&ioc->nr_tasks)) {
 		if (ioc->aic && ioc->aic->exit)
 			ioc->aic->exit(ioc->aic);
@@ -83,6 +88,7 @@ void exit_io_context(struct task_struct *task)
 	}
 	put_io_context(ioc);
 }
+EXPORT_SYMBOL(ioc_task_unlink);
 
 struct io_context *alloc_io_context(gfp_t gfp_flags, int node)
 {

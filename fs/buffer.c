@@ -1765,7 +1765,7 @@ static int __block_write_full_page(struct inode *inode, struct page *page,
 	do {
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
-			submit_handler(write_op, bh, inode);
+			submit_handler(write_op, bh, wbc->fsdata);
 			nr_underway++;
 		}
 		bh = next;
@@ -1819,7 +1819,7 @@ recover:
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
 			clear_buffer_dirty(bh);
-			submit_handler(write_op, bh, inode);
+			submit_handler(write_op, bh, wbc->fsdata);
 			nr_underway++;
 		}
 		bh = next;
@@ -3136,8 +3136,7 @@ int submit_bh(int rw, struct buffer_head * bh)
 }
 EXPORT_SYMBOL(submit_bh);
 
-int generic_submit_bh_handler(int rw, struct buffer_head * bh,
-			      struct inode* inode)
+int generic_submit_bh_handler(int rw, struct buffer_head * bh, void *fsdata)
 {
 	return submit_bh(rw, bh);
 }

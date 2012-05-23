@@ -401,6 +401,8 @@ static int hook(void *arg)
 			if (e.tv64 < 0)
 				e.tv64 = TICK_NSEC;
 			e = ktime_add(e, timespec_to_ktime(ctx->cpt_monotonic_time));
+			if (e.tv64 < 0)
+				e.tv64 = 0;
 			rb->nanosleep.expires = e.tv64;
 		} else if (ti->cpt_restart.fn == CPT_RBL_POLL) {
 			struct restart_block *rb;
@@ -426,6 +428,8 @@ static int hook(void *arg)
 			e.tv64 = 0;
 			e = ktime_add_ns(e, ti->cpt_restart.arg2);
 			e = ktime_add(e, timespec_to_ktime(ctx->cpt_monotonic_time));
+			if (e.tv64 < 0)
+				e.tv64 = 0;
 
 			rb = &task_thread_info(current)->restart_block;
 			rb->fn = futex_wait_restart;

@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/module.h>
+#include <linux/bio.h>
 
 static const struct file_operations fuse_direct_io_file_operations;
 
@@ -68,13 +69,23 @@ struct fuse_file *fuse_file_alloc(struct fuse_conn *fc)
 
 	spin_lock(&fc->lock);
 	ff->kh = ++fc->khctr;
+	ff->ff_dentry = NULL;
+	list_add_tail(&ff->fl, &fc->conn_files);
 	spin_unlock(&fc->lock);
 
 	return ff;
 }
 
+static void fuse_file_list_del(struct fuse_file *ff)
+{
+	spin_lock(&ff->fc->lock);
+	list_del_init(&ff->fl);
+	spin_unlock(&ff->fc->lock);
+}
+
 void fuse_file_free(struct fuse_file *ff)
 {
+	fuse_file_list_del(ff);
 	fuse_request_free(ff->reserved_req);
 	kfree(ff);
 }
@@ -101,12 +112,15 @@ static void fuse_file_put(struct fuse_file *ff)
 			 */
 			ff->reserved_req->force = 1;
 			fuse_request_send(ff->fc, req);
+			fuse_file_list_del(ff);
 			path_put(&req->misc.release.path);
 			fuse_put_request(ff->fc, req);
 		} else {
+			fuse_file_list_del(ff);
 			req->end = fuse_release_end;
 			fuse_request_send_background(ff->fc, req);
 		}
+
 		kfree(ff);
 	}
 }
@@ -157,6 +171,8 @@ static void fuse_link_write_file(struct file *file)
 void fuse_finish_open(struct inode *inode, struct file *file)
 {
 	struct fuse_file *ff = file->private_data;
+
+	ff->ff_dentry = file->f_dentry;
 
 	if (ff->open_flags & FOPEN_DIRECT_IO)
 		file->f_op = &fuse_direct_io_file_operations;
@@ -250,6 +266,7 @@ static int fuse_release(struct inode *inode, struct file *file)
 void fuse_sync_release(struct fuse_file *ff, int flags)
 {
 	WARN_ON(atomic_read(&ff->count) > 1);
+	fuse_file_list_del(ff);
 	fuse_prepare_release(ff, flags, FUSE_RELEASE);
 	ff->reserved_req->force = 1;
 	fuse_request_send(ff->fc, ff->reserved_req);
@@ -459,7 +476,7 @@ static void fuse_aio_complete(struct fuse_io_priv *io, int err,
 
 	spin_lock(&io->lock);
 	if (err)
-		io->err = err;
+		io->err = io->err ? : err;
 	else
 		io->bytes += num_bytes;
 
@@ -805,8 +822,12 @@ static int fuse_prepare_write(struct fuse_conn *fc, struct file *file,
 	fuse_send_read(req, file, page_offset(page), PAGE_CACHE_SIZE, NULL, NULL);
 	err = req->out.h.error;
 	fuse_put_request(fc, req);
-
 out:
+	if (err) {
+		unlock_page(page);
+		page_cache_release(page);
+	}
+
 	return err;
 }
 
@@ -2396,6 +2417,83 @@ static ssize_t fuse_loop_dio(struct file *filp, const struct iovec *iov,
 }
 
 
+static ssize_t fuse_direct_IO_bvec(int rw, struct kiocb *iocb,
+	struct bio_vec *bvec, loff_t offset, unsigned long bvec_len)
+{
+	struct fuse_io_priv *io;
+	struct fuse_req *req;
+	struct file *file = iocb->ki_filp;
+	struct fuse_file *ff = file->private_data;
+	struct fuse_conn *fc = ff->fc;
+	size_t nmax = (rw == WRITE ? fc->max_write : fc->max_read);
+	size_t filled, nres;
+	loff_t pos = iocb->ki_pos;
+	int i;
+
+	io = kmalloc(sizeof(struct fuse_io_priv), GFP_KERNEL);
+	if (!io)
+		return -ENOMEM;
+
+	spin_lock_init(&io->lock);
+	io->reqs = 1;
+	io->bytes = 0;
+	io->size = 0;
+	io->err = 0;
+	io->iocb = iocb;
+	iocb->private = io;
+
+	req = NULL;
+	filled = 0;
+	i = 0;
+
+	while (1) {
+		if (!req) {
+			req = fuse_get_req(fc);
+			if (IS_ERR(req))
+				break;
+
+			if (rw == WRITE)
+				req->in.argbvec = 1;
+			else
+				req->out.argbvec = 1;
+
+			filled = 0;
+			req->bvec = bvec;
+		}
+
+		if (filled + bvec->bv_len <= nmax) {
+			filled += bvec->bv_len;
+			req->num_bvecs++;
+			bvec++;
+			i++;
+
+			if (i < bvec_len)
+				continue;
+		}
+
+		BUG_ON(!filled);
+
+		if (rw == WRITE)
+			nres = fuse_send_write(req, file, pos,
+					filled, NULL, iocb);
+		else
+			nres = fuse_send_read(req, file, pos,
+					filled, NULL, iocb);
+
+		BUG_ON(nres != filled);
+
+		if (i == bvec_len)
+			break;
+
+		pos += filled;
+		req = NULL;
+		filled = 0;
+	}
+
+	fuse_aio_complete(io, !IS_ERR(req) ? 0 : PTR_ERR(req), 0);
+	return -EIOCBQUEUED;
+}
+
 static ssize_t
 fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 			loff_t offset, unsigned long nr_segs)
@@ -2451,6 +2549,8 @@ static const struct file_operations fuse_file_operations = {
 	.unlocked_ioctl	= fuse_file_ioctl,
 	.compat_ioctl	= fuse_file_compat_ioctl,
 	.poll		= fuse_file_poll,
+	.read_iter	= generic_file_read_iter,
+	.write_iter	= generic_file_write_iter,
 };
 
 static const struct file_operations fuse_direct_io_file_operations = {
@@ -2481,6 +2581,7 @@ static const struct address_space_operations fuse_file_aops  = {
 	.set_page_dirty	= __set_page_dirty_nobuffers,
 	.bmap		= fuse_bmap,
 	.direct_IO	= fuse_direct_IO,
+	.direct_IO_bvec	= fuse_direct_IO_bvec,
 };
 
 void fuse_init_file_inode(struct inode *inode)

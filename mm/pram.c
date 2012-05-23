@@ -10,7 +10,10 @@
 #include <linux/kernel.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
+#include <linux/memcontrol.h>
 #include <linux/mm.h>
+#include <linux/mm_inline.h>
+#include <linux/mmgang.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/page-flags.h>
@@ -606,6 +609,7 @@ static void __pram_destroy(struct pram_chain *chain)
 	pram_drain(chain);
 	page = virt_to_page(chain);
 	ClearPageReserved(page);
+	ClearPageDirty(page);
 	put_page(page);
 }
 
@@ -700,6 +704,7 @@ static int __pram_push_page(struct pram_stream *stream, struct page *page)
 	offset++;
 
 	stream->offset = offset;
+	SetPageDirty(virt_to_page(stream->chain));
 	return 0;
 }
 
@@ -1131,6 +1136,116 @@ void pram_close(struct pram_stream *stream, int how)
 	}
 }
 EXPORT_SYMBOL(pram_close);
+
+int pram_for_each_page(struct pram_stream *stream,
+		int (*fn)(struct page *page, void *data), void *data)
+{
+	struct pram_chain *chain;
+	struct pram_link *link;
+	unsigned long link_pfn, pfn;
+	int i, err = 0;
+
+	chain = stream->chain;
+	for (link_pfn = chain->link_pfn; link_pfn; link_pfn = link->link_pfn) {
+		link = pfn_to_kaddr(link_pfn);
+		for (i = 0; i < PRAM_LINK_CAPACITY; i++) {
+			pfn = link->page[i].pfn;
+			if (!pfn)
+				continue;
+			err = fn(pfn_to_page(pfn), data);
+			if (err)
+				goto out;
+		}
+	}
+out:
+	return err;
+}
+EXPORT_SYMBOL(pram_for_each_page);
+
+#define LRU_DEL_ATTEMPTS	3000
+
+struct lru_del_state {
+	int attempt;
+	unsigned long nr_busy;
+	struct gang *locked_gang;
+};
+
+static int __pram_del_from_lru(struct page *page, void *data)
+{
+	struct lru_del_state *st = data;
+
+	if (!page_gang(page))
+		/* page does not belong to any gang
+		 * so it is definitely not on lru */
+		goto out;
+
+	if (page_count(page) != 1)
+		/* we are not the only page owner
+		 * so it is unsafe to del it from lru now */
+		goto out_busy;
+
+	st->locked_gang = relock_page_lru(st->locked_gang, page_gang(page));
+	if (unlikely(st->locked_gang != page_gang(page) ||
+		     page_count(page) != 1))
+		goto out_busy;
+	if (PageLRU(page)) {
+		ClearPageLRU(page);
+		del_page_from_lru(st->locked_gang, page);
+		gang_del_user_page(page);
+	}
+	goto out;
+
+out_busy:
+	st->nr_busy++;
+	if (st->attempt >= LRU_DEL_ATTEMPTS && printk_ratelimit()) {
+		printk(KERN_WARNING "PRAM: failed to del page from lru: "
+		       "page:%p flags:%p count:%d "
+		       "mapcount:%d mapping:%p index:%lx\n",
+		       page, (void *)page->flags, page_count(page),
+		       page_mapcount(page), page->mapping, page->index);
+	}
+out:
+	return 0;
+}
+
+int pram_del_from_lru(struct pram_stream *stream, int wait)
+{
+	unsigned long flags;
+	struct lru_del_state st;
+
+	memset(&st, 0, sizeof(st));
+again:
+	st.attempt++;
+	st.nr_busy = 0;
+	st.locked_gang = NULL;
+
+	local_irq_save(flags);
+	pram_for_each_page(stream, __pram_del_from_lru, &st);
+	if (st.locked_gang)
+		spin_unlock(&st.locked_gang->lru_lock);
+	local_irq_restore(flags);
+
+	if (st.nr_busy && st.attempt < LRU_DEL_ATTEMPTS && wait) {
+		schedule_timeout_uninterruptible(1);
+		goto again;
+	}
+
+	if (st.nr_busy && !wait)
+		return -EAGAIN;
+	if (st.nr_busy) {
+		printk(KERN_WARNING "PRAM: %s failed: %lu pages busy\n",
+		       __func__, st.nr_busy);
+		return -EBUSY;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(pram_del_from_lru);
+
+int pram_dirty(struct pram_stream *stream)
+{
+	return PageDirty(virt_to_page(stream->chain));
+}
+EXPORT_SYMBOL(pram_dirty);
 
 static void __banned_pages_shrink(int nr_to_scan)
 {

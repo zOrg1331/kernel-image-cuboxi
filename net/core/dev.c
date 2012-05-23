@@ -1828,12 +1828,40 @@ static __inline__ int bridge_hard_start_xmit(struct sk_buff *skb,
 #define bridge_hard_start_xmit(skb, dev)	(0)
 #endif
 
+static inline int dev_hard_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+	const struct net_device_ops *ops = dev->netdev_ops;
+	int rc;
+	unsigned int skb_len;
+
+	/*
+	 * Bridge must handle packet with dst information set.
+	 * If there is no dst set in skb - it can cause oops in NAT.
+	 */
+	rc = bridge_hard_start_xmit(skb, dev);
+
+	/*
+	 * If device doesnt need skb->dst, release it right now while
+	 * its hot in this cpu cache
+	 */
+	if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
+		skb_dst_drop(skb);
+
+	if (rc > 0) {
+		kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
+
+	skb_len = skb->len;
+	rc = ops->ndo_start_xmit(skb, dev);
+	trace_net_dev_xmit(skb, rc, dev, skb_len);
+	return rc;
+}
+
 int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			struct netdev_queue *txq)
 {
-	const struct net_device_ops *ops = dev->netdev_ops;
-	int rc, brc;
-	unsigned int skb_len;
+	int rc;
 
 	if (likely(!skb->next)) {
 		if (!list_empty(&ptype_all))
@@ -1846,27 +1874,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 				goto gso;
 		}
 
-		/*
-		 * Bridge must handle packet with dst information set.
-		 * If there is no dst set in skb - it can cause oops in NAT.
-		 */
-		brc = bridge_hard_start_xmit(skb, dev);
-
-		/*
-		 * If device doesnt need skb->dst, release it right now while
-		 * its hot in this cpu cache
-		 */
-		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
-			skb_dst_drop(skb);
-
-		if (brc > 0) {
-			rc = NETDEV_TX_OK;
-			kfree_skb(skb);
-		} else {
-			skb_len = skb->len;
-			rc = ops->ndo_start_xmit(skb, dev);
-			trace_net_dev_xmit(skb, rc, dev, skb_len);
-		}
+		rc = dev_hard_xmit(skb, dev);
 
 		if (rc == NETDEV_TX_OK)
 			txq_trans_update(txq);
@@ -1893,28 +1901,8 @@ gso:
 
 		skb->next = nskb->next;
 		nskb->next = NULL;
-		skb_len = nskb->len;
 
-		/*
-		 * Bridge must handle packet with dst information set.
-		 * If there is no dst set in skb - it can cause oops in NAT.
-		 */
-		brc = bridge_hard_start_xmit(nskb, dev);
-
-		/*
-		 * If device doesnt need nskb->dst, release it right now while
-		 * its hot in this cpu cache
-		 */
-		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
-			skb_dst_drop(nskb);
-
-		if (brc > 0) {
-			rc = NETDEV_TX_OK;
-			kfree_skb(nskb);
-		} else {
-			rc = ops->ndo_start_xmit(nskb, dev);
-			trace_net_dev_xmit(nskb, rc, dev, skb_len);
-		}
+		rc = dev_hard_xmit(nskb, dev);
 
 		if (unlikely(rc != NETDEV_TX_OK)) {
 			nskb->next = skb->next;
@@ -2817,6 +2805,7 @@ int __netif_receive_skb(struct sk_buff *skb)
 	}
 #endif
 
+#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
 	if (skb->brmark != BR_ALREADY_SEEN) {
 		list_for_each_entry_rcu(ptype, &ptype_all, list) {
 			if (ptype->dev == null_or_orig || ptype->dev == skb->dev ||
@@ -2827,6 +2816,7 @@ int __netif_receive_skb(struct sk_buff *skb)
 			}
 		}
 	}
+#endif
 
 #ifdef CONFIG_NET_CLS_ACT
 	skb = handle_ing(skb, &pt_prev, &ret, orig_dev);

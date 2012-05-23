@@ -32,7 +32,7 @@ static struct kmem_cache *fuse_inode_cachep;
 struct list_head fuse_conn_list;
 #endif
 DEFINE_MUTEX(fuse_mutex);
-static int fuse_ext_caps = 0;
+static int fuse_ext_caps = -1;
 
 static int set_global_limit(const char *val, struct kernel_param *kp);
 
@@ -537,6 +537,7 @@ void fuse_conn_init(struct fuse_conn *fc)
 	INIT_LIST_HEAD(&fc->interrupts);
 	INIT_LIST_HEAD(&fc->bg_queue);
 	INIT_LIST_HEAD(&fc->entry);
+	INIT_LIST_HEAD(&fc->conn_files);
 	atomic_set(&fc->num_waiting, 0);
 	fc->max_background = FUSE_DEFAULT_MAX_BACKGROUND;
 	fc->congestion_threshold = FUSE_DEFAULT_CONGESTION_THRESHOLD;

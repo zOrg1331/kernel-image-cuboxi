@@ -64,6 +64,12 @@ extern int __pram_prealloc(gfp_t gfp_mask, int n, ...);
 	__pram_prealloc(gfp, 2, (size_t)(sz1), (size_t)(sz2))
 extern void pram_prealloc_end(void);
 
+extern int pram_for_each_page(struct pram_stream *stream,
+		int (*fn)(struct page *page, void *data), void *data);
+extern int pram_del_from_lru(struct pram_stream *stream, int wait);
+
+extern int pram_dirty(struct pram_stream *stream);
+
 #ifdef CONFIG_PRAM
 extern unsigned long long pram_low;
 extern unsigned long pram_reserved_pages;

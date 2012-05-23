@@ -48,8 +48,7 @@ struct page;
 struct buffer_head;
 struct address_space;
 typedef void (bh_end_io_t)(struct buffer_head *bh, int uptodate);
-typedef int (bh_submit_io_t)(int rw, struct buffer_head *bh,
-			     struct inode *inode);
+typedef int (bh_submit_io_t)(int rw, struct buffer_head *bh, void *fsdata);
 
 /*
  * Historically, a buffer_head was used to map a single block
@@ -188,8 +187,7 @@ int sync_dirty_buffer(struct buffer_head *bh);
 int __sync_dirty_buffer(struct buffer_head *bh, int rw);
 void write_dirty_buffer(struct buffer_head *bh, int rw);
 int submit_bh(int, struct buffer_head *);
-int generic_submit_bh_handler(int rw, struct buffer_head * bh,
-			      struct inode* inode);
+int generic_submit_bh_handler(int rw, struct buffer_head * bh, void *fsdata);
 void write_boundary_block(struct block_device *bdev,
 			sector_t bblock, unsigned blocksize);
 int bh_uptodate_or_lock(struct buffer_head *bh);

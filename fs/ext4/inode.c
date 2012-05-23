@@ -2047,6 +2047,24 @@ static void ext4_da_page_release_reservation(struct page *page,
 	ext4_da_release_space(page->mapping->host, to_release);
 }
 
+static void ext4_io_submit(struct ext4_io_submit *io)
+{
+        if (io->bio) {
+		/* Backup original bio because issued one will change.*/
+		struct bio* orig_bio;
+		do {
+			orig_bio = bio_clone(io->bio, GFP_NOIO);
+		} while(!orig_bio);
+		orig_bio->bi_private = io->inode;
+		io->bio->bi_private = orig_bio;
+		bio_get(io->bio);
+		submit_bio(io->rw, io->bio);
+                BUG_ON(bio_flagged(io->bio, BIO_EOPNOTSUPP));
+                bio_put(io->bio);
+	}
+        io->bio = NULL;
+}
+
 /*
  * Delayed allocation stuff
  */
@@ -2117,6 +2135,7 @@ static int mpage_da_submit_io(struct mpage_da_data *mpd)
 		}
 		pagevec_release(&pvec);
 	}
+	ext4_io_submit((struct ext4_io_submit*)mpd->wbc->fsdata);
 	return ret;
 }
 
@@ -2742,15 +2761,111 @@ out:
 	return ret;
 }
 
+
+static void ext4_end_bio(struct bio *bio, int error)
+{
+	ext4_fsblk_t err_block;
+	unsigned int idx, blocks;
+	struct bio *orig_bio = (struct bio*)bio->bi_private;
+	struct inode *inode = (struct inode *)orig_bio->bi_private;
+
+        if (test_bit(BIO_UPTODATE, &bio->bi_flags))
+                error = 0;
+
+	err_block = bio->bi_sector >> (inode->i_blkbits - 9);
+
+	if (error) {
+		ext4_warning(inode->i_sb, "I/O error writing to inode %lu "
+			     "(size %ld starting block %llu)",
+			     inode->i_ino, (long) bio->bi_size,
+			     (unsigned long long) err_block);
+        }
+	idx = 0;
+	blocks = orig_bio->bi_size >> inode->i_blkbits;
+	do {
+		struct buffer_head *bh, *head;
+		struct page *page = bio_iovec_idx(orig_bio, idx)->bv_page;
+		unsigned int pg_off = bio_iovec_idx(orig_bio, idx)->bv_offset;
+		unsigned int pg_end = bio_iovec_idx(orig_bio, idx)->bv_len +
+			pg_off;
+		unsigned int offset = 0;
+
+                head = page_buffers(page);
+                BUG_ON(!head);
+		bh = head;
+
+		if (error)
+                        SetPageError(page);
+		do {
+			if (offset < pg_off)
+				goto next_bh;
+			if (offset >= pg_end)
+				break;
+			if (unlikely (test_bit(BIO_QUIET,&bio->bi_flags)))
+				set_bit(BH_Quiet, &bh->b_state);
+			bh->b_end_io(bh, test_bit(BIO_UPTODATE, &bio->bi_flags));
+			blocks--;
+next_bh:
+			offset += bh->b_size;
+			bh = bh->b_this_page;
+		} while (bh != head && blocks);
+		idx++;
+	} while (blocks);
+	bio_put(orig_bio);
+}
+
+/* Try to merge adjacent bh's in to one bio */
+static int ext4_bh_add_or_submit(struct ext4_io_submit *io, struct buffer_head *bh,
+	int rw)
+{
+	int ret;
+retry:
+	if (!io->bio) {
+		struct bio *bio;
+		int nvecs = bio_get_nr_vecs(bh->b_bdev);
+		do {
+			bio = bio_alloc(GFP_NOIO, nvecs);
+			nvecs >>= 1;
+		} while (bio == NULL);
+
+		bio->bi_sector = bh->b_blocknr * (bh->b_size >> 9);
+		bio->bi_bdev = bh->b_bdev;
+		bio->bi_end_io = ext4_end_bio;
+		io->bio = bio;
+		io->rw = rw;
+	}
+	/* Merge bh in to one bio only if it is adjacent and has same rw flags */
+	if (rw != io->rw || io->bio->bi_sector + bio_sectors(io->bio) !=
+		bh->b_blocknr * (bh->b_size >> 9))
+		goto submit_and_retry;
+
+        ret = bio_add_page(io->bio, bh->b_page, bh->b_size, bh_offset(bh));
+        if (ret != bh->b_size)
+                goto submit_and_retry;
+	return 0;
+submit_and_retry:
+	ext4_io_submit(io);
+	goto retry;
+}
+
 /* Per inode io requests tracker helpers */
-static int ext4_submit_bh(int rw, struct buffer_head *bh, struct inode *inode)
+static int ext4_submit_bh(int rw, struct buffer_head *bh, void *fsdata)
 {
 	/* For now, we track only write requests */
 	if (rw) {
-		BUG_ON(bh->b_page->mapping->host != inode);
+		struct inode *inode = bh->b_page->mapping->host;
+		struct ext4_io_submit *io = (struct ext4_io_submit*)fsdata;
 		atomic_inc(&EXT4_I(inode)->i_ioend_count);
+		/*
+		 * If we have writepages context we can perform huge io
+		 * optimization, sice caller guarantie that pended bio
+		 * will be issued at the end.
+		 */
+		if (io && attr_batched_writeback)
+			return ext4_bh_add_or_submit(io, bh, rw);
 	}
 	return submit_bh(rw, bh);
+
 }
 
 /* Page is under writeback so no one can truncate it */
@@ -2814,7 +2929,6 @@ static int ext4_writepage(struct page *page,
 	unsigned int len;
 	struct buffer_head *page_bufs;
 	struct inode *inode = page->mapping->host;
-
 	trace_ext4_writepage(inode, page);
 	size = i_size_read(inode);
 	if (page->index == size >> PAGE_CACHE_SHIFT)
@@ -2897,6 +3011,35 @@ static int ext4_writepage(struct page *page,
 	return ret;
 }
 
+static void init_io_submit(struct ext4_io_submit *io, struct inode *inode)
+{
+	io->inode = inode;
+	io->bio = NULL;
+}
+
+static int do_writepage(struct page *page, struct writeback_control *wbc,
+		       void *data)
+{
+	struct address_space *mapping = data;
+	int ret = mapping->a_ops->writepage(page, wbc);
+	mapping_set_error(mapping, ret);
+	return ret;
+}
+
+int ext4_writepages(struct address_space *mapping,
+		       struct writeback_control *wbc)
+{
+	int ret;
+	struct ext4_io_submit io;
+	init_io_submit(&io, mapping->host);
+	wbc->fsdata = &io;
+	ret =  write_cache_pages(mapping, wbc, do_writepage, mapping);
+	/* io may be pended after ext4_writepage(), issue it now */
+	ext4_io_submit(&io);
+	wbc->fsdata = NULL;
+	return ret;
+}
+
 /*
  * This is called via ext4_da_writepages() to
  * calulate the total number of credits to reserve to fit
@@ -2904,7 +3047,6 @@ static int ext4_writepage(struct page *page,
  * ext4_da_writpeages() will loop calling this before
  * the block allocation.
  */
-
 static int ext4_da_writepages_trans_blocks(struct inode *inode)
 {
 	int max_blocks = EXT4_I(inode)->i_reserved_data_blocks;
@@ -3065,6 +3207,7 @@ static int ext4_da_writepages(struct address_space *mapping,
 	long desired_nr_to_write, nr_to_writebump = 0;
 	loff_t range_start = wbc->range_start;
 	struct ext4_sb_info *sbi = EXT4_SB(mapping->host->i_sb);
+	struct ext4_io_submit io;
 	pgoff_t done_index = 0;
 	pgoff_t end;
 
@@ -3140,9 +3283,10 @@ static int ext4_da_writepages(struct address_space *mapping,
 		nr_to_writebump = desired_nr_to_write - wbc->nr_to_write;
 		wbc->nr_to_write = desired_nr_to_write;
 	}
-
 	mpd.wbc = wbc;
 	mpd.inode = mapping->host;
+	init_io_submit(&io, mpd.inode);
+	mpd.wbc->fsdata = &io;
 
 	pages_skipped = wbc->pages_skipped;
 
@@ -3255,6 +3399,9 @@ retry:
 out_writepages:
 	wbc->nr_to_write -= nr_to_writebump;
 	wbc->range_start = range_start;
+	/* io may be pended after ext4_writepage(), issue it now */
+	ext4_io_submit(&io);
+	wbc->fsdata = NULL;
 	trace_ext4_da_writepages_result(inode, wbc, ret, pages_written);
 	return ret;
 }
@@ -4152,6 +4299,7 @@ static const struct address_space_operations ext4_ordered_aops = {
 	.readpage		= ext4_readpage,
 	.readpages		= ext4_readpages,
 	.writepage		= ext4_writepage,
+	.writepages		= ext4_writepages,
 	.sync_page		= block_sync_page,
 	.write_begin		= ext4_write_begin,
 	.write_end		= ext4_ordered_write_end,
@@ -4168,6 +4316,7 @@ static const struct address_space_operations ext4_writeback_aops = {
 	.readpage		= ext4_readpage,
 	.readpages		= ext4_readpages,
 	.writepage		= ext4_writepage,
+	.writepages		= ext4_writepages,
 	.sync_page		= block_sync_page,
 	.write_begin		= ext4_write_begin,
 	.write_end		= ext4_writeback_write_end,
@@ -4184,6 +4333,7 @@ static const struct address_space_operations ext4_journalled_aops = {
 	.readpage		= ext4_readpage,
 	.readpages		= ext4_readpages,
 	.writepage		= ext4_writepage,
+	.writepages		= ext4_writepages,
 	.sync_page		= block_sync_page,
 	.write_begin		= ext4_write_begin,
 	.write_end		= ext4_journalled_write_end,

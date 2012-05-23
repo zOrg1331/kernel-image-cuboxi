@@ -1759,6 +1759,9 @@ static int check_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 			break;
 		}
 
+		if (is_sunrpc_pipefs(mnt))
+			continue;
+
 		if (is_autofs_mount(mnt->mnt_parent))
 			continue;
 

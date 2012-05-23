@@ -111,7 +111,8 @@ int ext4_sync_file(struct file *file, struct dentry *dentry, int datasync)
 		 * new flush request was QUEUED and COMPLETED for blkdev.
 		 */
 		struct request_queue *q = bdev_get_queue(inode->i_sb->s_bdev);
-		if (test_opt(inode->i_sb, NOBH) || !q ||
+		if (!attr_optimize_fsync ||
+		    test_opt(inode->i_sb, NOBH) || !q ||
 		    atomic_read(&ei->i_ioend_count) ||
 		    ((unsigned int)atomic_read(&q->flush_tag) & ~1U)
 		    <= (((unsigned int)atomic_read(&ei->i_flush_tag) + 1U) & (~1U)))

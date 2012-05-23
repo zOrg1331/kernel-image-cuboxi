@@ -57,6 +57,8 @@ struct writeback_control {
 
 	/* reserved for Red Hat */
 	unsigned long rh_reserved[5];
+
+	void *fsdata; /* Private fs data */
 };
 
 /*

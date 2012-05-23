@@ -1257,7 +1257,7 @@ int rst_restore_process(struct cpt_context *ctx)
 
 		if (!tsk->exit_state) {
 			tsk->lock_depth = -1;
-#ifdef CONFIG_PREEMPT
+#ifdef CONFIG_PREEMPT_COUNT
 			task_thread_info(tsk)->preempt_count--;
 #endif
 		}

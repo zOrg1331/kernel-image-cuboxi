@@ -37,6 +37,8 @@ unsigned long __read_mostly sysctl_hung_task_timeout_secs = 120;
 
 unsigned long __read_mostly sysctl_hung_task_warnings = 10;
 
+int __read_mostly sysctl_hung_task_verbosity = 0;
+
 static int __read_mostly did_panic;
 
 static struct task_struct *watchdog_task;
@@ -88,6 +90,15 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 	if (!sysctl_hung_task_warnings)
 		return;
 	sysctl_hung_task_warnings--;
+
+	if (sysctl_hung_task_verbosity & 1)
+		nmi_show_regs(NULL, 0);
+	if (sysctl_hung_task_verbosity & 2)
+		show_state_filter(0);
+	if (sysctl_hung_task_verbosity & 4)
+		show_mem(0);
+	if (sysctl_hung_task_verbosity & 8)
+		show_sched_debug();
 
 	/*
 	 * Ok, the task did not get scheduled for more than 2 minutes,

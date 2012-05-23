@@ -41,8 +41,8 @@ static int ploop_max __read_mostly = PLOOP_DEVICE_RANGE;
 static int ploop_major __read_mostly = PLOOP_DEVICE_MAJOR;
 int max_map_pages __read_mostly;
 
-static long root_threshold __read_mostly = 2L * 1024 * 1024 * 1024; /* 2GB */
-static long user_threshold __read_mostly = 4L * 1024 * 1024 * 1024; /* 4GB */
+static long root_threshold __read_mostly = 2L * 1024 * 1024; /* 2GB in KB */
+static long user_threshold __read_mostly = 4L * 1024 * 1024; /* 4GB in KB */
 
 static struct rb_root ploop_devices_tree = RB_ROOT;
 static DEFINE_MUTEX(ploop_devices_mutex);
@@ -187,28 +187,6 @@ static void ploop_grab_iocontext(struct bio *bio)
 #endif
 }
 
-static void ploop_release_iocontext(struct io_context *ioc)
-{
-	if (atomic_dec_and_test(&ioc->nr_tasks)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		if (ioc->aic && ioc->aic->exit)
-			ioc->aic->exit(ioc->aic);
-#endif
-
-		rcu_read_lock();
-		if (!hlist_empty(&ioc->cic_list)) {
-			struct cfq_io_context *cic;
-
-			cic = list_entry(ioc->cic_list.first, struct cfq_io_context,
-					 cic_list);
-			cic->exit(ioc);
-		}
-		rcu_read_unlock();
-	}
-
-	put_io_context(ioc);
-}
-
 /* always called with plo->lock held */
 static inline void preq_unlink(struct ploop_request * preq,
 			       struct list_head *drop_list)
@@ -226,7 +204,7 @@ void ploop_preq_drop(struct ploop_device * plo, struct list_head *drop_list,
 
 	list_for_each_entry(preq, drop_list, list) {
 		if (preq->ioc) {
-			ploop_release_iocontext(preq->ioc);
+			ioc_task_unlink(preq->ioc);
 			preq->ioc = NULL;
 		}
 
@@ -507,6 +485,11 @@ ploop_bio_queue(struct ploop_device * plo, struct bio * bio,
 
 		if (preq->req_size < clu_size ||
 		    (err = ploop_discard_add_bio(plo->fbd, bio))) {
+			if (test_bit(BIO_BDEV_REUSED, &bio->bi_flags)) {
+				ioc_task_unlink((struct io_context *)(bio->bi_bdev));
+				bio->bi_bdev = plo->bdev;
+				clear_bit(BIO_BDEV_REUSED, &bio->bi_flags);
+			}
 			BIO_ENDIO(bio, err);
 			list_add(&preq->list, &plo->free_list);
 			plo->bio_qlen--;
@@ -1280,7 +1263,7 @@ static void ploop_complete_request(struct ploop_request * preq)
 	spin_unlock_irq(&plo->lock);
 
 	if (ioc)
-		ploop_release_iocontext(ioc);
+		ioc_task_unlink(ioc);
 }
 
 void ploop_fail_request(struct ploop_request * preq, int err)
@@ -3345,6 +3328,8 @@ static int ploop_truncate(struct ploop_device * plo, unsigned long arg)
 	ploop_map_destroy(&plo->map);
 
 	err = delta->ops->truncate(delta, file, ctl.alloc_head);
+	if (!err)
+		delta->io.prealloced_size = 0;
 
 	ploop_relax(plo);
 
@@ -3367,15 +3352,15 @@ static int ploop_issue_flush_fn(request_queue_t *q, struct gendisk *disk,
 static int ploop_bd_full(struct backing_dev_info *bdi, long long nr, int root)
 {
 	struct ploop_device *plo      = bdi->congested_data;
-	long		     reserved = 0;
+	u64		     reserved = 0;
 	int		     rc	      = 0;
 
 	if (root) {
 		if (!plo->tune.disable_root_threshold)
-			reserved = root_threshold;
+			reserved = (u64)root_threshold * 1024;
 	} else {
 		if (!plo->tune.disable_user_threshold)
-			reserved = user_threshold;
+			reserved = (u64)user_threshold * 1024;
 	}
 
 	if (reserved) {
@@ -4108,6 +4093,7 @@ truncate:
 		err = delta->ops->truncate(delta, NULL,
 					   ploop_fb_get_first_lost_iblk(plo->fbd));
 		if (!err) {
+			delta->io.prealloced_size = 0;
 			ctl.alloc_head = ploop_fb_get_lost_range_len(plo->fbd);
 			err = copy_to_user((void*)arg, &ctl, sizeof(ctl));
 		}
@@ -4453,9 +4439,9 @@ MODULE_PARM_DESC(ploop_major, "Major number of ploop device");
 module_param(max_map_pages, int, 0644);
 MODULE_PARM_DESC(ploop_max_map_pages, "Maximal amount of pages taken by map cache");
 module_param(root_threshold, long, 0644);
-MODULE_PARM_DESC(root_threshold, "Disk space reserved for root (in bytes)");
+MODULE_PARM_DESC(root_threshold, "Disk space reserved for root (in kilobytes)");
 module_param(user_threshold, long, 0644);
-MODULE_PARM_DESC(user_threshold, "Disk space reserved for user (in bytes)");
+MODULE_PARM_DESC(user_threshold, "Disk space reserved for user (in kilobytes)");
 
 
 static int __init ploop_mod_init(void)
