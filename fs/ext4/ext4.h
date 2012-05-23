@@ -156,6 +156,12 @@ typedef struct ext4_io_end {
 	int			result;		/* error value for AIO */
 } ext4_io_end_t;
 
+struct ext4_io_submit {
+	int			rw;
+	struct inode		*inode;		/* file being written to */
+	struct bio		*bio;		/* current bio */
+};
+
 /*
  * Special inodes numbers
  */
@@ -1765,6 +1771,8 @@ static inline int ext4_want_data_csum(struct inode *dir)
 extern struct xattr_handler ext4_xattr_trusted_csum_handler;
 
 /* super.c */
+extern unsigned int attr_batched_writeback;
+extern unsigned int attr_optimize_fsync;
 extern void __ext4_error(struct super_block *, const char *, const char *, ...)
 	__attribute__ ((format (printf, 3, 4)));
 #define ext4_error(sb, message...)	__ext4_error(sb, __func__, ## message)

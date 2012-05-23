@@ -1171,6 +1171,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_doulongvec_minmax,
 		.strategy	= &sysctl_intvec,
 	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "hung_task_verbosity",
+		.data		= &sysctl_hung_task_verbosity,
+		.maxlen		= sizeof(sysctl_hung_task_verbosity),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+		.strategy	= &sysctl_intvec,
+	},
 #endif
 #ifdef CONFIG_COMPAT
 	{

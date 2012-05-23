@@ -105,7 +105,17 @@ static void sync_release_filesystems(struct list_head *sync_list)
 	}
 }
 
-static int __sync_collect_filesystems(struct ve_struct *ve, struct list_head *sync_list)
+static int sync_filesystem_collected(struct list_head *sync_list, struct super_block *sb)
+{
+	struct sync_sb *ss;
+
+	list_for_each_entry(ss, sync_list, list)
+		if (ss->sb == sb)
+			return 1;
+	return 0;
+}
+
+static int sync_collect_filesystems(struct ve_struct *ve, struct list_head *sync_list)
 {
 	struct vfsmount *root = ve->root_path.mnt;
 	struct vfsmount *mnt;
@@ -116,6 +126,9 @@ static int __sync_collect_filesystems(struct ve_struct *ve, struct list_head *sy
 
 	down_read(&namespace_sem);
 	for (mnt = root; mnt; mnt = next_mnt(mnt, root)) {
+		if (sync_filesystem_collected(sync_list, mnt->mnt_sb))
+			continue;
+
 		ss = kmalloc(sizeof(*ss), GFP_KERNEL);
 		if (ss == NULL) {
 			ret = -ENOMEM;
@@ -136,12 +149,32 @@ static int __sync_collect_filesystems(struct ve_struct *ve, struct list_head *sy
 	return ret;
 }
 
-static void sync_collect_filesystems(struct ve_struct *ve, struct list_head *sync_list)
+static void sync_filesystems_ve(struct ve_struct *ve, struct user_beancounter *ub, int wait)
 {
-	while(__sync_collect_filesystems(ve, sync_list) == -ENOMEM) {
-		sync_release_filesystems(sync_list);
-		schedule_timeout(1 * HZ);
+	struct super_block *sb;
+	LIST_HEAD(sync_list);
+	struct sync_sb *ss;
+
+	mutex_lock(&ve->sync_mutex);		/* Could be down_interruptible */
+
+	/*
+	 * We don't need to care about allocating failure here. At least we
+	 * don't need to skip sync on such error.
+	 * Let's sync what we collected already instead.
+	 */
+	sync_collect_filesystems(ve, &sync_list);
+
+	list_for_each_entry(ss, &sync_list, list) {
+		sb = ss->sb;
+		down_read(&sb->s_umount);
+		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
+			__sync_filesystem(sb, ub, wait);
+		up_read(&sb->s_umount);
 	}
+
+	sync_release_filesystems(&sync_list);
+
+	mutex_unlock(&ve->sync_mutex);
 }
 
 /*
@@ -158,27 +191,44 @@ static void sync_collect_filesystems(struct ve_struct *ve, struct list_head *syn
  * flags again, which will cause process A to resync everything.  Fix that with
  * a local mutex.
  */
-static void sync_filesystems_ve(struct ve_struct *ve, struct user_beancounter *ub, int wait)
+static void sync_filesystems_ve0(struct user_beancounter *ub, int wait)
 {
 	struct super_block *sb;
-	LIST_HEAD(sync_list);
-	struct sync_sb *ss;
+	static DEFINE_MUTEX(mutex);
 
-	mutex_lock(&ve->sync_mutex);		/* Could be down_interruptible */
+	mutex_lock(&mutex);		/* Could be down_interruptible */
+	spin_lock(&sb_lock);
+	list_for_each_entry(sb, &super_blocks, s_list)
+		sb->s_need_sync = 1;
 
-	sync_collect_filesystems(ve, &sync_list);
+restart:
+	list_for_each_entry(sb, &super_blocks, s_list) {
+		if (!sb->s_need_sync)
+			continue;
+		sb->s_need_sync = 0;
+		sb->s_count++;
+		spin_unlock(&sb_lock);
 
-	list_for_each_entry(ss, &sync_list, list) {
-		sb = ss->sb;
 		down_read(&sb->s_umount);
 		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
 			__sync_filesystem(sb, ub, wait);
 		up_read(&sb->s_umount);
+
+		/* restart only when sb is no longer on the list */
+		spin_lock(&sb_lock);
+		if (__put_super_and_need_restart(sb))
+			goto restart;
 	}
+	spin_unlock(&sb_lock);
+	mutex_unlock(&mutex);
+}
 
-	sync_release_filesystems(&sync_list);
-
-	mutex_unlock(&ve->sync_mutex);
+static void sync_filesystems(struct user_beancounter *ub, int wait)
+{
+	if (!ub || (ub == get_ub0()))
+		sync_filesystems_ve0(ub, wait);
+	else
+		sync_filesystems_ve(get_exec_env(), ub, wait);
 }
 
 static int __ve_fsync_behavior(struct ve_struct *ve)
@@ -237,8 +287,8 @@ SYSCALL_DEFINE0(sync)
 	}
 
 	wakeup_flusher_threads(sync_ub, 0);
-	sync_filesystems_ve(ve, sync_ub, 0);
-	sync_filesystems_ve(ve, sync_ub, 1);
+	sync_filesystems(sync_ub, 0);
+	sync_filesystems(sync_ub, 1);
 	if (unlikely(laptop_mode) && !sync_ub)
 		laptop_sync_completion();
 skip:
@@ -252,8 +302,8 @@ static void do_sync_work(struct work_struct *work)
 	 * Sync twice to reduce the possibility we skipped some inodes / pages
 	 * because they were temporarily locked
 	 */
-	sync_filesystems_ve(get_ve0(), NULL, 0);
-	sync_filesystems_ve(get_ve0(), NULL, 0);
+	sync_filesystems(NULL, 0);
+	sync_filesystems(NULL, 0);
 	printk("Emergency Sync complete\n");
 	kfree(work);
 }

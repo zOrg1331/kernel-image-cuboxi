@@ -16,6 +16,7 @@
 #include <linux/pagemap.h>
 #include <linux/file.h>
 #include <linux/slab.h>
+#include <linux/bio.h>
 
 MODULE_ALIAS_MISCDEV(FUSE_MINOR);
 
@@ -90,7 +91,7 @@ static void fuse_req_init_context(struct fuse_req *req)
 {
 	req->in.h.uid = current_fsuid();
 	req->in.h.gid = current_fsgid();
-	req->in.h.pid = current->pid;
+	req->in.h.pid = task_pid_vnr(current);
 }
 
 struct fuse_req *fuse_get_req(struct fuse_conn *fc)
@@ -638,6 +639,24 @@ static int fuse_copy_pages(struct fuse_copy_state *cs, unsigned nbytes,
 	return 0;
 }
 
+static int fuse_copy_bvec(struct fuse_copy_state *cs, unsigned nbytes,
+			   int zeroing)
+{
+	unsigned i;
+	struct fuse_req *req = cs->req;
+
+	for (i = 0; i < req->num_bvecs && (nbytes || zeroing); i++) {
+		struct bio_vec *bvec = &req->bvec[i];
+
+		int err = fuse_copy_page(cs, bvec->bv_page,
+				bvec->bv_offset, bvec->bv_len, zeroing);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 /* Copy a single argument in the request to/from userspace buffer */
 static int fuse_copy_one(struct fuse_copy_state *cs, void *val, unsigned size)
 {
@@ -654,7 +673,7 @@ static int fuse_copy_one(struct fuse_copy_state *cs, void *val, unsigned size)
 
 /* Copy request arguments to/from userspace buffer */
 static int fuse_copy_args(struct fuse_copy_state *cs, unsigned numargs,
-			  unsigned argpages, struct fuse_arg *args,
+			  unsigned argpages, unsigned argbvec, struct fuse_arg *args,
 			  int zeroing)
 {
 	int err = 0;
@@ -664,6 +683,8 @@ static int fuse_copy_args(struct fuse_copy_state *cs, unsigned numargs,
 		struct fuse_arg *arg = &args[i];
 		if (i == numargs - 1 && argpages)
 			err = fuse_copy_pages(cs, arg->size, zeroing);
+		else if (i == numargs - 1 && argbvec)
+			err = fuse_copy_bvec(cs, arg->size, zeroing);
 		else
 			err = fuse_copy_one(cs, arg->value, arg->size);
 	}
@@ -798,7 +819,7 @@ static ssize_t fuse_dev_read(struct kiocb *iocb, const struct iovec *iov,
 	fuse_copy_init(&cs, fc, 1, req, iov, nr_segs);
 	err = fuse_copy_one(&cs, &in->h, sizeof(in->h));
 	if (!err)
-		err = fuse_copy_args(&cs, in->numargs, in->argpages,
+		err = fuse_copy_args(&cs, in->numargs, in->argpages, in->argbvec,
 				     (struct fuse_arg *) in->args, 0);
 	fuse_copy_finish(&cs);
 	spin_lock(&fc->lock);
@@ -987,8 +1008,8 @@ static int copy_out_args(struct fuse_copy_state *cs, struct fuse_out *out,
 			return -EINVAL;
 		lastarg->size -= diffsize;
 	}
-	return fuse_copy_args(cs, out->numargs, out->argpages, out->args,
-			      out->page_zeroing);
+	return fuse_copy_args(cs, out->numargs, out->argpages, out->argbvec,
+			out->args, out->page_zeroing);
 }
 
 /*

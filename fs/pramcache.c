@@ -168,9 +168,17 @@ static int open_streams(struct super_block *sb, const char *name, int mode,
 	if (err)
 		goto out_close_meta;
 
+	if (mode == PRAM_READ && pram_dirty(data_stream)) {
+		err = pram_del_from_lru(data_stream, 0);
+		if (err && err != -EAGAIN)
+			goto out_close_data;
+	}
+
 	free_page((unsigned long)buf);
 	return 0;
 
+out_close_data:
+	pram_close(data_stream, -1);
 out_close_meta:
 	pram_close(meta_stream, -1);
 out_free_buf:
@@ -235,18 +243,12 @@ static void create_uptodate_buffers(struct page *page,
 		SetPageUptodate(page);
 }
 
-static int save_page(struct page *page,
+static int save_page(struct page *page, unsigned long uptodate,
 		     struct pram_stream *meta_stream,
 		     struct pram_stream *data_stream)
 {
-	unsigned long uptodate;
 	__u64 __index, __uptodate;
 	int err = 0;
-
-	/* ignore outdated pages */
-	uptodate = page_buffers_uptodate(page);
-	if (!uptodate)
-		return 0;
 
 	/* if prealloc fails, silently skip the page */
 	if (pram_prealloc2(GFP_NOWAIT | __GFP_HIGHMEM, 16, PAGE_SIZE) == 0) {
@@ -264,7 +266,8 @@ static int save_page(struct page *page,
 }
 
 static struct page *load_page(struct pram_stream *meta_stream,
-			      struct pram_stream *data_stream)
+			      struct pram_stream *data_stream,
+			      struct gang **locked_gang)
 {
 	struct page *page;
 	__u64 __index, __uptodate;
@@ -286,11 +289,20 @@ static struct page *load_page(struct pram_stream *meta_stream,
 	if (IS_ERR_OR_NULL(page))
 		return ERR_PTR(-EIO);
 
-	if (page_gang(page) != NULL) {
+	if (!page_gang(page))
+		goto success;
+	*locked_gang = relock_page_lru(*locked_gang, page_gang(page));
+	if (unlikely(page_gang(page) != *locked_gang) ||
+	    page_count(page) != 1 || PageLRU(page)) {
 		put_page(page);
-		return ERR_PTR(-EBUSY);
+		return ERR_PTR(-EAGAIN);
 	}
 
+success:
+	if (WARN_ON(PagePrivate(page))) {
+		put_page(page);
+		return ERR_PTR(-EAGAIN);
+	}
 	/* temporarily save uptodate mask to page's private field
 	 * to be used later */
 	set_page_private(page, __uptodate);
@@ -311,6 +323,7 @@ static int save_invalidate_mapping_pages(struct address_space *mapping,
 	while (!err && pagevec_lookup(&pvec, mapping, next, PAGEVEC_SIZE)) {
 		for (i = 0; !err && i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
+			unsigned long uptodate;
 			pgoff_t index;
 
 			lock_page(page);
@@ -330,12 +343,18 @@ static int save_invalidate_mapping_pages(struct address_space *mapping,
 				continue;
 			}
 
-			err = save_page(page, meta_stream, data_stream);
+			uptodate = page_buffers_uptodate(page);
 
-			/* we prefer truncate_inode_page() here rather than
-			 * invalidate_inode_page() because the latter does
-			 * some bad tricks with page's refcount */
-			truncate_inode_page(mapping, page);
+			/* on success, invalidate_inode_page explicitly sets
+			 * page's refcount to 1 so it must be called strictly
+			 * before save_page which increments the refcount */
+			invalidate_inode_page(page);
+
+			/* ignore outdated pages */
+			if (uptodate)
+				err = save_page(page, uptodate,
+						meta_stream, data_stream);
+
 			unlock_page(page);
 		}
 		pagevec_release(&pvec);
@@ -350,20 +369,36 @@ static long load_mapping_pages(struct pram_stream *meta_stream,
 {
 	struct page *page;
 	long nr_pages = 0;
+	struct gang *locked_gang = NULL;
+	unsigned long flags;
+	int err, result;
 
 	BUG_ON(!list_empty(list));
+	local_irq_save(flags);
 next:
-	page = load_page(meta_stream, data_stream);
+	page = load_page(meta_stream, data_stream, &locked_gang);
 	if (IS_ERR(page)) {
-		drain_page_list(list);
-		return PTR_ERR(page);
+		err = PTR_ERR(page);
+		if (err == -EAGAIN)
+			goto next;
+		result = err;
+		goto out;
 	}
-	if (!page)
-		return nr_pages;
+	if (!page) {
+		result = nr_pages;
+		goto out;
+	}
 
 	list_add(&page->lru, list);
 	nr_pages++;
 	goto next;
+out:
+	if (locked_gang)
+		spin_unlock(&locked_gang->lru_lock);
+	local_irq_restore(flags);
+	if (result < 0)
+		drain_page_list(list);
+	return result;
 }
 
 static int save_invalidate_inode(struct inode *inode, int *first,

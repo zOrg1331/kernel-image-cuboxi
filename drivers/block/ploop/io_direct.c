@@ -831,6 +831,8 @@ static void dio_destroy(struct ploop_io * io)
 		mutex_lock(&delta->plo->sysfs_mutex);
 		io->files.file = NULL;
 		mutex_unlock(&delta->plo->sysfs_mutex);
+		if (!(delta->flags & PLOOP_FMT_RDONLY))
+			file_update_time(file);
 		fput(file);
 	}
 }

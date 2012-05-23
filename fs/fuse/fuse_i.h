@@ -32,7 +32,7 @@
 #define FUSE_NAME_MAX 1024
 
 /** Number of dentries for each connection in the control filesystem */
-#define FUSE_CTL_NUM_DENTRIES 5
+#define FUSE_CTL_NUM_DENTRIES 10
 
 /** If the FUSE_DEFAULT_PERMISSIONS flag is given, the filesystem
     module will check permissions based on the file mode.  Otherwise no
@@ -132,6 +132,9 @@ struct fuse_file {
 
 	/** Wait queue head for poll */
 	wait_queue_head_t poll_wait;
+
+	struct list_head fl;
+	struct dentry *ff_dentry;
 };
 
 /** One input argument of a request */
@@ -147,6 +150,8 @@ struct fuse_in {
 
 	/** True if the data for the last argument is in req->pages */
 	unsigned argpages:1;
+	/** True is the data for the last argument is in req->bvecs */
+	unsigned argbvec:1;
 
 	/** Number of arguments */
 	unsigned numargs;
@@ -177,6 +182,8 @@ struct fuse_out {
 
 	/** Last argument is a list of pages to copy data to */
 	unsigned argpages:1;
+	/** Last argument is a list of bvecs to copy data to */
+	unsigned argbvec:1;
 
 	/** Zero partially or not copied pages */
 	unsigned page_zeroing:1;
@@ -203,7 +210,7 @@ struct fuse_io_priv {
 	unsigned reqs;
 	size_t bytes;
 	size_t size;
-	unsigned err;
+	int err;
 	struct kiocb *iocb;
 };
 
@@ -285,11 +292,17 @@ struct fuse_req {
 		struct fuse_lk_in lk_in;
 	} misc;
 
-	/** page vector */
-	struct page *pages[FUSE_MAX_PAGES_PER_REQ];
+	/** page vector / bvecs */
+	union {
+		struct page *pages[FUSE_MAX_PAGES_PER_REQ];
+		struct bio_vec *bvec;
+	};
 
-	/** number of pages in vector */
-	unsigned num_pages;
+	/** number of pages/bvecs in vector */
+	union {
+		unsigned num_pages;
+		unsigned num_bvecs;
+	};
 
 	/** offset of data on first page */
 	unsigned page_offset;
@@ -405,6 +418,7 @@ struct fuse_conn {
 #define FUSE_WBCACHE	0x1
 #define FUSE_WRITEPAGES	0x2
 #define FUSE_ODIRECT	0x4
+#define FUSE_KAIO	0x8
 
 	/** Connection failed (version mismatch).  Cannot race with
 	    setting other bitfields since it is only set once in INIT
@@ -520,6 +534,8 @@ struct fuse_conn {
 
 	/** Read/write semaphore to hold when accessing sb. */
 	struct rw_semaphore killsb;
+
+	struct list_head conn_files;
 };
 
 static inline struct fuse_conn *get_fuse_conn_super(struct super_block *sb)

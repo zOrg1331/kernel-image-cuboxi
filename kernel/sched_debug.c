@@ -353,9 +353,11 @@ static int sched_debug_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static void sysrq_sched_debug_show(void)
+void show_sched_debug(void)
 {
+	read_lock(&tasklist_lock);
 	sched_debug_show(NULL, NULL);
+	read_unlock(&tasklist_lock);
 }
 
 static int sched_debug_open(struct inode *inode, struct file *filp)

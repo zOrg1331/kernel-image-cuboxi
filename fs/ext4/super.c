@@ -83,6 +83,8 @@ static void ext4_clear_request_list(void);
 
 wait_queue_head_t aio_wq[WQ_HASH_SZ];
 wait_queue_head_t ioend_wq[WQ_HASH_SZ];
+unsigned int attr_batched_writeback = 1;
+unsigned int attr_optimize_fsync = 1;
 
 ext4_fsblk_t ext4_block_bitmap(struct super_block *sb,
 			       struct ext4_group_desc *bg)
@@ -2330,6 +2332,7 @@ struct ext4_attr {
 	ssize_t (*store)(struct ext4_attr *, struct ext4_sb_info *, 
 			 const char *, size_t);
 	int offset;
+	void *private;
 };
 
 static int parse_strtoul(const char *buf,
@@ -2452,6 +2455,27 @@ static ssize_t sbi_ui_store(struct ext4_attr *a,
 	return count;
 }
 
+static ssize_t global_ui_show(struct ext4_attr *a,
+			   struct ext4_sb_info *sbi, char *buf)
+{
+	unsigned int *ui = (unsigned int *) a->private;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", *ui);
+}
+
+static ssize_t global_ui_store(struct ext4_attr *a,
+			    struct ext4_sb_info *sbi,
+			    const char *buf, size_t count)
+{
+	unsigned int *ui = (unsigned int *) a->private;
+	unsigned long t;
+
+	if (parse_strtoul(buf, 0xffffffff, &t))
+		return -EINVAL;
+	*ui = t;
+	return count;
+}
+
 #define EXT4_ATTR_OFFSET(_name,_mode,_show,_store,_elname) \
 static struct ext4_attr ext4_attr_##_name = {			\
 	.attr = {.name = __stringify(_name), .mode = _mode },	\
@@ -2459,6 +2483,15 @@ static struct ext4_attr ext4_attr_##_name = {			\
 	.store	= _store,					\
 	.offset = offsetof(struct ext4_sb_info, _elname),	\
 }
+
+#define EXT4_ATTR_GLOBAL(_name,_mode,_show,_store,_data) \
+static struct ext4_attr ext4_attr_##_name = {			\
+	.attr = {.name = __stringify(_name), .mode = _mode },	\
+	.show	= _show,					\
+	.store	= _store,					\
+	.private = &(_data),					\
+}
+
 #define EXT4_ATTR(name, mode, show, store) \
 static struct ext4_attr ext4_attr_##name = __ATTR(name, mode, show, store)
 
@@ -2467,6 +2500,8 @@ static struct ext4_attr ext4_attr_##name = __ATTR(name, mode, show, store)
 #define EXT4_RW_ATTR(name) EXT4_ATTR(name, 0644, name##_show, name##_store)
 #define EXT4_RW_ATTR_SBI_UI(name, elname)	\
 	EXT4_ATTR_OFFSET(name, 0644, sbi_ui_show, sbi_ui_store, elname)
+#define EXT4_RW_ATTR_GLOBAL_UI(name)	\
+	EXT4_ATTR_GLOBAL(name, 0644, global_ui_show, global_ui_store, attr_##name)
 #define ATTR_LIST(name) &ext4_attr_##name.attr
 
 EXT4_RO_ATTR(delayed_allocation_blocks);
@@ -2514,10 +2549,14 @@ static struct attribute *ext4_attrs[] = {
 /* Features this copy of ext4 supports */
 EXT4_INFO_ATTR(lazy_itable_init);
 EXT4_INFO_ATTR(batched_discard);
+EXT4_RW_ATTR_GLOBAL_UI(batched_writeback);
+EXT4_RW_ATTR_GLOBAL_UI(optimize_fsync);
 
 static struct attribute *ext4_feat_attrs[] = {
 	ATTR_LIST(lazy_itable_init),
 	ATTR_LIST(batched_discard),
+	ATTR_LIST(batched_writeback),
+	ATTR_LIST(optimize_fsync),
 	NULL,
 };
 

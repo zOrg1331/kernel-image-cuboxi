@@ -79,6 +79,7 @@ static int save_mapping_pages(struct address_space *mapping,
 
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
+			unsigned long pfn;
 			pgoff_t offset;
 
 			lock_page(page);
@@ -94,7 +95,7 @@ static int save_mapping_pages(struct address_space *mapping,
 
 			__offset = offset;
 			if (pram_write(meta_stream, &__offset, 8) != 8 ||
-			    pram_push_page(data_stream, page, NULL) != 0) {
+			    pram_push_page(data_stream, page, &pfn) != 0) {
 				unlock_page(page);
 				err = -EIO;
 				break;
@@ -103,6 +104,13 @@ static int save_mapping_pages(struct address_space *mapping,
 			remove_from_page_cache(page);
 			page_cache_release(page);
 			unlock_page(page);
+
+			/* use private field as an indicator
+			 * that the page has been used */
+			if (page_to_pfn(page) == pfn) {
+				BUG_ON(page_private(page));
+				set_page_private(page, 1);
+			}
 		}
 		pagevec_release(&pvec);
 		cond_resched();
@@ -141,11 +149,13 @@ static int load_mapping_pages(struct address_space *mapping,
 		}
 
 		offset = __offset;
-		if (!page_gang(page)) {
+		if (!page_private(page)) {
 			err = add_to_page_cache_lru(page, mapping, offset,
 						    GFP_KERNEL);
 		} else {
 			struct user_beancounter *ub;
+
+			set_page_private(page, 0);
 
 			/* page already accounted and in lru */
 			ub = get_gang_ub(page_gang(page));

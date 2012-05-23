@@ -203,6 +203,19 @@ static struct sysrq_key_op sysrq_showlocks_op = {
 #define sysrq_showlocks_op (*(struct sysrq_key_op *)0)
 #endif
 
+#ifdef CONFIG_SCHED_DEBUG
+static void sysrq_handle_sched_debug(int key, struct tty_struct *tty)
+{
+	show_sched_debug();
+}
+
+static struct sysrq_key_op sysrq_sched_debug_op = {
+	.handler	= sysrq_handle_sched_debug,
+	.help_msg	= "show-sched-state(A)",
+	.action_msg	= "CPU Scheduler State",
+};
+#endif
+
 #ifdef CONFIG_SMP
 static DEFINE_SPINLOCK(show_lock);
 
@@ -698,7 +711,11 @@ static struct sysrq_key_op *sysrq_default_key_table[SYSRQ_KEY_TABLE_LENGTH] = {
 	 * a: Don't use for system provided sysrqs, it is handled specially on
 	 * sparc and will never arrive.
 	 */
+#ifdef CONFIG_SCHED_DEBUG
+	&sysrq_sched_debug_op,		/* a */
+#else
 	NULL,				/* a */
+#endif
 	&sysrq_reboot_op,		/* b */
 	&sysrq_crash_op,		/* c & ibm_emac driver debug */
 	&sysrq_showlocks_op,		/* d */

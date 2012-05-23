@@ -86,9 +86,11 @@ int rst_path_lookup(cpt_object_t *mntobj, const char *path,
 	 strcmp(mnt->mnt_sb->s_type->name, "binfmt_misc") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "ext4") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "vzfs") != 0 && \
+	 strcmp(mnt->mnt_sb->s_type->name, "rpc_pipefs") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "cgroup") != 0)
 
 #define is_autofs_mount(mnt) ((mnt)->mnt_sb->s_magic == FSMAGIC_AUTOFS)
+#define is_sunrpc_pipefs(mnt) ((mnt)->mnt_sb->s_magic == FSMAGIC_RPCAUTH)
 
 int cpt_page_is_zero(struct page * page);
 void cpt_finish_vfsmount_ref(struct cpt_context *ctx);

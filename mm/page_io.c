@@ -117,6 +117,7 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 out:
 	return ret;
 }
+EXPORT_SYMBOL(swap_writepage);
 
 int swap_readpage(struct page *page)
 {

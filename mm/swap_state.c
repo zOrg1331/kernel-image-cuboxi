@@ -218,6 +218,7 @@ void delete_from_swap_cache(struct page *page)
 	swapcache_free(entry, page);
 	page_cache_release(page);
 }
+EXPORT_SYMBOL(delete_from_swap_cache);
 
 /* 
  * If we are the only user, then try to free up the swap cache. 

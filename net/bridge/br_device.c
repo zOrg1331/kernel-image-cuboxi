@@ -349,8 +349,6 @@ static void br_cpt_nested_dev(struct net_bridge *br, struct cpt_ops *ops,
 
 		ops->push_object(&saved_obj, ctx);
 
-		printk(KERN_ERR "%s: dump '%s' nested dev\n", __func__, p->dev->name);
-
 		o.cpt_next = CPT_NULL;
 		o.cpt_object = CPT_OBJ_NET_BR_DEV;
 		o.cpt_hdrlen = sizeof(o);
