@@ -428,6 +428,9 @@ static struct page *__pram_alloc_page(gfp_t gfpmask)
 	int page_list_len = 0;
 	LIST_HEAD(page_list);
 
+	/* do not trigger OOM killer */
+	gfpmask |= __GFP_NORETRY;
+
 	/*
 	 * For the subsequent boot to be successful, we should not use pages
 	 * that have ever been reserved. So just put them to the banned list to
@@ -617,15 +620,24 @@ static void pram_destroy_all(void)
 {
 	struct page *page, *tmp;
 	struct pram_chain *chain;
+	LIST_HEAD(dispose);
 
 	mutex_lock(&pram_mutex);
 	list_for_each_entry_safe(page, tmp, &pram_list, lru) {
 		chain = page_address(page);
+		if (PRAM_CHAIN_BUSY(chain))
+			continue;
+		pram_list_del(chain);
+		list_add(&page->lru, &dispose);
+	}
+	mutex_unlock(&pram_mutex);
+
+	while (!list_empty(&dispose)) {
+		page = list_entry(dispose.next, struct page, lru);
+		list_del_init(&page->lru);
+		chain = page_address(page);
 		__pram_destroy(chain);
 	}
-	INIT_LIST_HEAD(&pram_list);
-	pram_init_list_head();
-	mutex_unlock(&pram_mutex);
 }
 
 static void pram_stream_init(struct pram_stream *stream,

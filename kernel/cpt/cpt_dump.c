@@ -81,9 +81,6 @@ static inline int freezable(struct task_struct * p)
 	case EXIT_ZOMBIE:
 	case EXIT_DEAD:
 	case TASK_STOPPED:
-#if TASK_TRACED != TASK_STOPPED
-	case TASK_TRACED:
-#endif
 		return 0;
 	default:
 		return 1;

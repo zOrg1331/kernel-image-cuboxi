@@ -18,11 +18,19 @@ static unsigned int dcache_charge_size(int name_len)
 int ub_dcache_shrink(struct user_beancounter *ub,
 		unsigned long size, gfp_t gfp_mask)
 {
+	int count, pruned;
+
 	if (!(gfp_mask & __GFP_FS))
 		return -EBUSY;
-	if (shrink_dcache_ub(ub, DIV_ROUND_UP(size, dcache_charge_size(0))))
-		return 0;
-	return -ENOMEM;
+
+	count = DIV_ROUND_UP(size, dcache_charge_size(0));
+	spin_lock(&dcache_lock);
+	pruned = __shrink_dcache_ub(ub, count);
+	spin_unlock(&dcache_lock);
+	if (!pruned)
+		return -ENOMEM;
+
+	return 0;
 }
 
 static int __ub_dcache_charge(struct user_beancounter *ub,
@@ -215,8 +223,11 @@ void ub_dcache_reclaim(struct user_beancounter *ub,
 		ub->ub_dentry_batch = 0;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	if (batch)
-		shrink_dcache_ub(ub, batch);
+	if (batch) {
+		spin_lock(&dcache_lock);
+		__shrink_dcache_ub(ub, batch);
+		spin_unlock(&dcache_lock);
+	}
 }
 
 /* under dcache_lock and dentry->d_lock */

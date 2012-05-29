@@ -3908,7 +3908,10 @@ static int ploop_fbget_ioc(struct ploop_device *plo, unsigned long arg)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (plo->maintainance_type != PLOOP_MNTN_FBLOADED)
+	if (plo->maintainance_type == PLOOP_MNTN_DISCARD) {
+		if (!test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
+			return -EINVAL;
+	} else if (plo->maintainance_type != PLOOP_MNTN_FBLOADED)
 		return -EINVAL;
 	BUG_ON (!plo->fbd);
 
@@ -3917,6 +3920,23 @@ static int ploop_fbget_ioc(struct ploop_device *plo, unsigned long arg)
 
 	ploop_quiesce(plo);
 	rc = ploop_fb_copy_freeblks_to_user(plo->fbd, (void*)arg, &ctl);
+	ploop_relax(plo);
+
+	return rc;
+}
+
+static int ploop_fbfilter_ioc(struct ploop_device *plo, unsigned long arg)
+{
+	int rc = 0;
+
+	if (plo->maintainance_type != PLOOP_MNTN_DISCARD ||
+	    !test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
+		return -EINVAL;
+
+	BUG_ON (!plo->fbd);
+
+	ploop_quiesce(plo);
+	rc = ploop_fb_filter_freeblks(plo->fbd, arg);
 	ploop_relax(plo);
 
 	return rc;
@@ -3982,6 +4002,39 @@ static int release_fbd(struct ploop_device *plo,
 	ploop_relax(plo);
 
 	return err;
+}
+
+static void ploop_discard_restart(struct ploop_device *plo, int err)
+{
+	if (!err && test_bit(PLOOP_S_DISCARD, &plo->state)) {
+		ploop_fb_reinit(plo->fbd, 0);
+		atomic_set(&plo->maintainance_cnt, 0);
+		init_completion(&plo->maintainance_comp);
+		plo->maintainance_type = PLOOP_MNTN_DISCARD;
+	} else {
+		clear_bit(PLOOP_S_DISCARD, &plo->state);
+		ploop_fb_fini(plo->fbd, err);
+		plo->maintainance_type = PLOOP_MNTN_OFF;
+	}
+}
+
+static int ploop_fbdrop_ioc(struct ploop_device *plo)
+{
+	if (list_empty(&plo->map.delta_list))
+		return -ENOENT;
+
+	if (plo->maintainance_type == PLOOP_MNTN_DISCARD) {
+		if (!test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
+			return -EINVAL;
+	} else if (plo->maintainance_type != PLOOP_MNTN_FBLOADED)
+		return -EINVAL;
+	BUG_ON (!plo->fbd);
+
+	ploop_quiesce(plo);
+	ploop_discard_restart(plo, 0);
+	ploop_relax(plo);
+
+	return 0;
 }
 
 static int ploop_relocblks_ioc(struct ploop_device *plo, unsigned long arg)
@@ -4102,16 +4155,7 @@ truncate:
 		err = copy_to_user((void*)arg, &ctl, sizeof(ctl));
 	}
 
-	if (!err && test_bit(PLOOP_S_DISCARD, &plo->state)) {
-		ploop_fb_reinit(plo->fbd, 0);
-		atomic_set(&plo->maintainance_cnt, 0);
-		init_completion(&plo->maintainance_comp);
-		plo->maintainance_type = PLOOP_MNTN_DISCARD;
-	} else {
-		clear_bit(PLOOP_S_DISCARD, &plo->state);
-		ploop_fb_fini(plo->fbd, err);
-		plo->maintainance_type = PLOOP_MNTN_OFF;
-	}
+	ploop_discard_restart(plo, err);
 
 	ploop_relax(plo);
 	return err;
@@ -4215,6 +4259,12 @@ static int ploop_ioctl(struct block_device *bdev, fmode_t fmode, unsigned int cm
 		break;
 	case PLOOP_IOC_FBGET:
 		err = ploop_fbget_ioc(plo, arg);
+		break;
+	case PLOOP_IOC_FBFILTER:
+		err = ploop_fbfilter_ioc(plo, arg);
+		break;
+	case PLOOP_IOC_FBDROP:
+		err = ploop_fbdrop_ioc(plo);
 		break;
 	case PLOOP_IOC_RELOCBLKS:
 		err = ploop_relocblks_ioc(plo, arg);

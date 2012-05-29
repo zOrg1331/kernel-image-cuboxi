@@ -63,6 +63,7 @@ static bool			inherit_stat			=  false;
 static bool			no_samples			=  false;
 static bool			sample_address			=  false;
 static bool			sample_time			=  false;
+static bool			period				=  false;
 static bool			no_buildid			=  false;
 static bool			no_buildid_cache		=  false;
 static struct perf_evlist	*evsel_list;
@@ -204,6 +205,9 @@ static void config_attr(struct perf_evsel *evsel, struct perf_evlist *evlist)
 
 	if (system_wide)
 		attr->sample_type	|= PERF_SAMPLE_CPU;
+
+	if (period)
+		attr->sample_type	|= PERF_SAMPLE_PERIOD;
 
 	if (sample_id_all_avail &&
 	    (sample_time || system_wide || !no_inherit || cpu_list))
@@ -778,6 +782,7 @@ const struct option record_options[] = {
 	OPT_BOOLEAN('d', "data", &sample_address,
 		    "Sample addresses"),
 	OPT_BOOLEAN('T', "timestamp", &sample_time, "Sample timestamps"),
+	OPT_BOOLEAN('P', "period", &period, "Sample period"),
 	OPT_BOOLEAN('n', "no-samples", &no_samples,
 		    "don't sample"),
 	OPT_BOOLEAN('N', "no-buildid-cache", &no_buildid_cache,

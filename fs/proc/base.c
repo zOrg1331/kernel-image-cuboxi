@@ -1317,7 +1317,7 @@ static ssize_t oom_score_adj_write(struct file *file, const char __user *buf,
 	 * Container uses modern interface, seems like it know what to do.
 	 * So, we can disable automaic oom-score adjustments.
 	 */
-	get_exec_ub()->ub_manual_oom_score_adj = 1;
+	set_bit(UB_OOM_MANUAL_SCORE_ADJ, &get_exec_ub()->ub_flags);
 
 	/*
 	 * Scale /proc/pid/oom_adj appropriately ensuring that OOM_DISABLE is

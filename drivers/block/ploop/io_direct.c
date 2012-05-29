@@ -8,6 +8,7 @@
 #include <linux/mount.h>
 #include <linux/buffer_head.h>
 #include <linux/falloc.h>
+#include <linux/magic.h>
 
 #include <linux/ploop/ploop.h>
 #include <linux/ploop/ploop_if.h>
@@ -873,6 +874,15 @@ static int dio_open(struct ploop_io * io)
 	if (io->files.bdev == NULL) {
 		printk("File on FS without backing device\n");
 		return -EINVAL;
+	}
+
+	if (io->files.inode->i_sb->s_magic != EXT4_SUPER_MAGIC ||
+	    !io->files.inode->i_op->fallocate) {		
+		printk("Unsupported fs: magic=%lx fallocate=%p (%s)\n",
+		       io->files.inode->i_sb->s_magic,
+		       io->files.inode->i_op->fallocate,
+		       io->files.inode->i_sb->s_id);
+		return -EBADF;
 	}
 
 	dio_fsync(file);

@@ -141,7 +141,7 @@ struct cpt_pram_ops {
 	void (*close)(cpt_context_t *ctx, int err);
 	int (*load_pages)(cpt_context_t *ctx);
 	void (*release_pages)(cpt_context_t *ctx);
-	void (*dump_pages)(struct vm_area_struct *vma,
+	int (*dump_pages)(struct vm_area_struct *vma,
 			unsigned long start, unsigned long end,
 			struct cpt_context *ctx);
 	int (*restore_pages)(struct mm_struct *mm,

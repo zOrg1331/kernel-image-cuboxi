@@ -58,7 +58,7 @@ int get_task_oom_score_adj(struct task_struct *t)
 	unsigned long flags;
 	int adj = 0;
 
-	if (get_task_ub(t)->ub_manual_oom_score_adj)
+	if (test_bit(UB_OOM_MANUAL_SCORE_ADJ, &get_task_ub(t)->ub_flags))
 		return t->signal->oom_score_adj;
 
 	read_lock_irqsave(&oom_group_lock, flags);

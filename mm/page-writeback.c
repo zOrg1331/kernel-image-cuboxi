@@ -534,8 +534,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 			if (!writeback_in_progress(bdi))
 				bdi_start_background_writeback(bdi, NULL);
 		} else if (ub_dirty + ub_writeback > ub_thresh) {
-			if (!ub->dirty_exceeded)
-				ub->dirty_exceeded = 1;
+			if (!test_bit(UB_DIRTY_EXCEEDED, &ub->ub_flags))
+				set_bit(UB_DIRTY_EXCEEDED, &ub->ub_flags);
 			if (!writeback_in_progress(bdi))
 				bdi_start_background_writeback(bdi, ub);
 		} else
@@ -629,8 +629,9 @@ static void balance_dirty_pages(struct address_space *mapping,
 			bdi->dirty_exceeded)
 		bdi->dirty_exceeded = 0;
 
-	if (ub_dirty + ub_writeback < ub_thresh && ub->dirty_exceeded)
-		ub->dirty_exceeded = 0;
+	if (ub_dirty + ub_writeback < ub_thresh &&
+	    test_bit(UB_DIRTY_EXCEEDED, &ub->ub_flags))
+		clear_bit(UB_DIRTY_EXCEEDED, &ub->ub_flags);
 
 	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_BALANCE_DIRTY,
 			       (void*)write_chunk);
@@ -694,7 +695,7 @@ void balance_dirty_pages_ratelimited_nr(struct address_space *mapping,
 
 	ratelimit = ratelimit_pages;
 	if (mapping->backing_dev_info->dirty_exceeded ||
-			get_io_ub()->dirty_exceeded)
+	    test_bit(UB_DIRTY_EXCEEDED, &get_io_ub()->ub_flags))
 		ratelimit = 8;
 
 	/*

@@ -194,9 +194,9 @@ struct user_beancounter
 	spinlock_t		ub_lock;
 	uid_t			ub_uid;
 
+	unsigned long		ub_flags;
+
 	struct ratelimit_state	ub_ratelimit;
-	int			ub_oom_noproc;
-	int			ub_manual_oom_score_adj;
 
 	struct page_private	ppriv;
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages
@@ -226,13 +226,13 @@ struct user_beancounter
 
 	struct cgroup		*ub_cgroup;
 
-	int			dirty_exceeded;
 	void			*private_data2;
 
 	struct list_head	ub_dentry_lru;
 	struct list_head	ub_dentry_top;
 	int			ub_dentry_unused;
 	int			ub_dentry_batch;
+	unsigned long		ub_dentry_pruned;
 
 	/* resources statistic and settings */
 	struct ubparm		ub_parms[UB_RESOURCES];
@@ -241,6 +241,12 @@ struct user_beancounter
 
 	struct ub_percpu_struct	*ub_percpu;
 	struct oom_control	oom_ctrl;
+};
+
+enum ub_flags {
+	UB_DIRTY_EXCEEDED,
+	UB_OOM_NOPROC,
+	UB_OOM_MANUAL_SCORE_ADJ,
 };
 
 extern int ub_count;
@@ -332,6 +338,9 @@ static inline int charge_beancounter(struct user_beancounter *ub,
 			enum ub_severity strict) { return 0; }
 static inline void uncharge_beancounter(struct user_beancounter *ub,
 			int resource, unsigned long val) { }
+
+static inline void ub_reclaim_rate_limit(struct user_beancounter *ub,
+					 int wait, unsigned count) { }
 
 #else /* CONFIG_BEANCOUNTERS */
 
@@ -599,6 +608,8 @@ unsigned long __get_beancounter_usage_percpu(struct user_beancounter *ub,
 int precharge_beancounter(struct user_beancounter *ub,
 		int resource, unsigned long val);
 void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge);
+
+void ub_reclaim_rate_limit(struct user_beancounter *ub, int wait, unsigned count);
 
 #define UB_IOPRIO_MIN 0
 #define UB_IOPRIO_MAX 8

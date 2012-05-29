@@ -759,6 +759,12 @@ int __init fairsched_init(void)
 	if (IS_ERR(fairsched_host))
 		return PTR_ERR(fairsched_host);
 
+	ret = sched_cgroup_set_rt_runtime(fairsched_host,
+					  3 * sysctl_sched_rt_runtime / 4);
+	if (ret)
+		printk(KERN_WARNING
+		       "Can't set rt runtime for fairsched host: %d\n", ret);
+
 	ret = cgroup_kernel_attach(fairsched_host, init_pid_ns.child_reaper);
 	if (ret)
 		return ret;

@@ -83,7 +83,7 @@ static void ub_clear_oom(void)
 
 	rcu_read_lock();
 	for_each_beancounter(ub)
-		ub->ub_oom_noproc = 0;
+		clear_bit(UB_OOM_NOPROC, &ub->ub_flags);
 	rcu_read_unlock();
 }
 
@@ -187,7 +187,7 @@ struct user_beancounter *ub_oom_select_worst(void)
 	for_each_beancounter (walkp) {
 		long ub_overdraft;
 
-		if (walkp->ub_oom_noproc)
+		if (test_bit(UB_OOM_NOPROC, &walkp->ub_flags))
 			continue;
 
 		ub_overdraft = ub_current_overdraft(walkp);
@@ -199,7 +199,7 @@ struct user_beancounter *ub_oom_select_worst(void)
 	}
 
 	if (ub) {
-		ub->ub_oom_noproc = 1;
+		set_bit(UB_OOM_NOPROC, &ub->ub_flags);
 		printk(KERN_INFO "OOM selected worst BC %d (overdraft %lu):\n",
 				ub->ub_uid, ub_maxover);
 		__show_ub_mem(ub);

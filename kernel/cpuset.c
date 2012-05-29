@@ -1670,7 +1670,7 @@ static int cpuset_write_mem_migration_pending(struct cgroup *cgrp,
 			cancel_gangs_migration(get_ub_gs(ub));
 			schedule_gangs_migration(get_ub_gs(ub),
 					&pending, &cs->mems_allowed);
-			put_beancounter(ub);
+			put_beancounter_longterm(ub);
 		}
 		cgroup_unlock();
 		retval = 0;
@@ -1725,7 +1725,7 @@ static int cpuset_sprintf_mem_migration_pending(char *page, struct cpuset *cs)
 	ub = get_cpuset_beancounter(cs);
 	if (ub) {
 		gangs_migration_pending(get_ub_gs(ub), &mask);
-		put_beancounter(ub);
+		put_beancounter_longterm(ub);
 	} else {
 		nodes_clear(mask);
 	}

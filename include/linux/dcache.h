@@ -278,7 +278,7 @@ extern struct dentry * d_obtain_alias(struct inode *);
 extern void shrink_dcache_sb(struct super_block *);
 extern void shrink_dcache_parent(struct dentry *);
 extern void shrink_dcache_for_umount(struct super_block *);
-extern int shrink_dcache_ub(struct user_beancounter *, long nr);
+extern int __shrink_dcache_ub(struct user_beancounter *ub, int count);
 extern int d_invalidate(struct dentry *);
 
 /* only used at mount-time */

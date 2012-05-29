@@ -164,6 +164,13 @@ static inline int perf_session__parse_sample(struct perf_session *session,
 					session->sample_id_all, sample);
 }
 
+static inline int perf_session__synthesize_sample(struct perf_session *session,
+						  union perf_event *event,
+						  const struct perf_sample *sample)
+{
+	return perf_event__synthesize_sample(event, session->sample_type, sample);
+}
+
 struct perf_evsel *perf_session__find_first_evtype(struct perf_session *session,
 					    unsigned int type);
 

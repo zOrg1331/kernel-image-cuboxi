@@ -235,6 +235,28 @@ int ploop_fb_copy_freeblks_to_user(struct ploop_freeblks_desc *fbd, void *arg,
 	return rc;
 }
 
+int ploop_fb_filter_freeblks(struct ploop_freeblks_desc *fbd, unsigned long minlen)
+{
+	struct ploop_freeblks_extent *fextent, *n;
+
+	list_for_each_entry_safe(fextent, n, &fbd->fbd_free_list, list)
+		if (fextent->len < minlen) {
+			list_del(&fextent->list);
+			fbd->fbd_n_free -= fextent->len;
+			kfree(fextent);
+		}
+
+	if (list_empty(&fbd->fbd_free_list))
+		fbd->fbd_ffb.ext = NULL;
+	else
+		fbd->fbd_ffb.ext = list_entry(fbd->fbd_free_list.next,
+						struct ploop_freeblks_extent,
+						list);
+	fbd->fbd_ffb.off = 0;
+
+	return fbd->fbd_n_free;
+}
+
 struct ploop_request *
 ploop_fb_get_zero_request(struct ploop_freeblks_desc *fbd)
 {

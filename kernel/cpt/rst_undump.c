@@ -980,6 +980,7 @@ int rst_kill(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
 	struct ve_struct *env;
+	pid_t init_pid = 0;
 	int err = 0;
 
 	if (!ctx->ve_id)
@@ -1006,6 +1007,9 @@ int rst_kill(struct cpt_context *ctx)
 
 		if (tsk == NULL)
 			continue;
+
+		if (!init_pid)
+			init_pid = task_pid_vnr(tsk);
 
 		if (tsk->exit_state == 0) {
 			send_sig(SIGKILL, tsk, 1);
@@ -1034,13 +1038,12 @@ int rst_kill(struct cpt_context *ctx)
 	rst_finish_vfsmount_ref(ctx);
 	cpt_object_destroy(ctx);
 
-	if (ctx->ctx_state == CPT_CTX_UNDUMPING) {
+	if (ctx->ctx_state == CPT_CTX_UNDUMPING && init_pid) {
 		int ret;
-		pid_t init_pid = task_pid_nr(get_env_init(env));
-		
+
 		ret = sc_waitx(init_pid, __WALL, NULL);
 		if (ret < 0)
-			wprintk_ctx("wait init failed: %d\n", ret);
+			eprintk_ctx("wait init (%d) failed: %d\n", init_pid, ret);
 	}
 
 	wait_event_interruptible(env->ve_list_wait, list_empty(&env->ve_list));

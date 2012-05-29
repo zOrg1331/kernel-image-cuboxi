@@ -684,6 +684,28 @@ out:
 }
 EXPORT_SYMBOL(precharge_beancounter);
 
+void ub_reclaim_rate_limit(struct user_beancounter *ub, int wait, unsigned count)
+{
+	ktime_t wall;
+	u64 step;
+
+	if (!ub->rl_step)
+		return;
+
+	spin_lock(&ub->rl_lock);
+	step = (u64)ub->rl_step * count;
+	wall = ktime_add_ns(ktime_get(), step);
+	if (wall.tv64 < ub->rl_wall.tv64)
+		wall = ktime_add_ns(ub->rl_wall, step);
+	ub->rl_wall = wall;
+	spin_unlock(&ub->rl_lock);
+
+	if (wait && get_exec_ub() == ub && !test_thread_flag(TIF_MEMDIE)) {
+		set_current_state(TASK_KILLABLE);
+		schedule_hrtimeout(&wall, HRTIMER_MODE_ABS);
+	}
+}
+
 /*
  *	Initialization
  *

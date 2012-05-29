@@ -33,6 +33,7 @@ int ploop_fb_check_reloc_req(struct ploop_freeblks_desc *fbd, struct ploop_reque
 /* helper for ioctl(PLOOP_IOC_FBGET) */
 int ploop_fb_copy_freeblks_to_user(struct ploop_freeblks_desc *fbd, void *arg,
 				   struct ploop_freeblks_ctl *ctl);
+int ploop_fb_filter_freeblks(struct ploop_freeblks_desc *fbd, unsigned long minlen);
 
 /* get/put "zero index" request */
 struct ploop_request *ploop_fb_get_zero_request(struct ploop_freeblks_desc *fbd);

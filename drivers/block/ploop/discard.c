@@ -84,7 +84,7 @@ int ploop_discard_wait_ioc(struct ploop_device *plo)
 		return 0;
 
 	if (plo->maintainance_type == PLOOP_MNTN_FBLOADED)
-		return 0;
+		return 1;
 
 	if (plo->maintainance_type != PLOOP_MNTN_DISCARD)
 		return -EINVAL;
@@ -96,7 +96,9 @@ int ploop_discard_wait_ioc(struct ploop_device *plo)
 	/* maintainance_cnt is zero without discard requests,
 	 * in this case ploop_maintainance_wait returns 0
 	 * instead of ERESTARTSYS */
-	if (signal_pending(current))
+	if (test_bit(PLOOP_S_DISCARD_LOADED, &plo->state)) {
+		err = 1;
+	} else if (signal_pending(current))
 		err = -ERESTARTSYS;
 out:
 	return err;

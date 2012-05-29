@@ -198,10 +198,11 @@ void fuse_change_attributes(struct inode *inode, struct fuse_attr *attr,
 	fuse_change_attributes_common(inode, attr, attr_valid);
 
 	oldsize = inode->i_size;
-	i_size_write(inode, attr->size);
+	if (!(inode->i_state & I_DIRTY))
+		i_size_write(inode, attr->size);
 	spin_unlock(&fc->lock);
 
-	if (S_ISREG(inode->i_mode) && oldsize != attr->size) {
+	if (S_ISREG(inode->i_mode) && oldsize != inode->i_size) {
 		truncate_pagecache(inode, oldsize, attr->size);
 		invalidate_inode_pages2(inode->i_mapping);
 	}
@@ -408,6 +409,7 @@ enum {
 	OPT_GROUP_ID,
 	OPT_DEFAULT_PERMISSIONS,
 	OPT_ALLOW_OTHER,
+	OPT_CAN_RECONNECT,
 	OPT_MAX_READ,
 	OPT_BLKSIZE,
 	OPT_ERR
@@ -420,6 +422,7 @@ static const match_table_t tokens = {
 	{OPT_GROUP_ID,			"group_id=%u"},
 	{OPT_DEFAULT_PERMISSIONS,	"default_permissions"},
 	{OPT_ALLOW_OTHER,		"allow_other"},
+	{OPT_CAN_RECONNECT,		"can_reconnect"},
 	{OPT_MAX_READ,			"max_read=%u"},
 	{OPT_BLKSIZE,			"blksize=%u"},
 	{OPT_ERR,			NULL}
@@ -479,6 +482,10 @@ static int parse_fuse_opt(char *opt, struct fuse_mount_data *d, int is_bdev)
 			d->flags |= FUSE_ALLOW_OTHER;
 			break;
 
+		case OPT_CAN_RECONNECT:
+			d->flags |= FUSE_CAN_RECONNECT;
+			break;
+
 		case OPT_MAX_READ:
 			if (match_int(&args[0], &value))
 				return 0;
@@ -513,6 +520,8 @@ static int fuse_show_options(struct seq_file *m, struct vfsmount *mnt)
 		seq_puts(m, ",default_permissions");
 	if (fc->flags & FUSE_ALLOW_OTHER)
 		seq_puts(m, ",allow_other");
+	if (fc->flags & FUSE_CAN_RECONNECT)
+		seq_puts(m, ",can_reconnect");
 	if (fc->max_read != ~0)
 		seq_printf(m, ",max_read=%u", fc->max_read);
 	if (mnt->mnt_sb->s_bdev &&

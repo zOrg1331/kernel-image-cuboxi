@@ -77,6 +77,37 @@ static void show_irq_list(void)
 		parse_irq_list(r);
 }
 
+static u64 max_sched_lat;
+static u64 max_alloc_lat[KSTAT_ALLOCSTAT_NR];
+
+static void update_max_alloc_latency(void)
+{
+	int i;
+
+	for (i = 0; i < KSTAT_ALLOCSTAT_NR; i++)
+		max_alloc_lat[i] = max(max_alloc_lat[i],
+				kstat_glob.alloc_lat[i].last.maxlat);
+}
+
+static void update_max_schedule_latency(void)
+{
+	max_sched_lat = max(max_sched_lat, kstat_glob.sched_lat.last.maxlat);
+}
+
+static void update_max_latencies(void)
+{
+	spin_lock_irq(&kstat_glb_lock);
+	update_max_alloc_latency();
+	update_max_schedule_latency();
+	spin_unlock_irq(&kstat_glb_lock);
+}
+
+static void reset_max_latencies(void)
+{
+	max_sched_lat = 0;
+	memset(max_alloc_lat, 0, sizeof(max_alloc_lat));
+}
+
 static void show_alloc_latency(void)
 {
 	static const char *alloc_descr[KSTAT_ALLOCSTAT_NR] = {
@@ -101,8 +132,9 @@ static void show_alloc_latency(void)
 		avg2 = p->avg[2];
 		spin_unlock_irq(&kstat_glb_lock);
 
-		printk("%s %Lu (%Lu %Lu %Lu)",
+		printk("%s %Lu %Lu (%Lu %Lu %Lu)",
 				alloc_descr[i],
+				(unsigned long long)max_alloc_lat[i],
 				(unsigned long long)maxlat,
 				(unsigned long long)avg0,
 				(unsigned long long)avg1,
@@ -127,7 +159,8 @@ static void show_schedule_latency(void)
 	avg2 = p->avg[2];
 	spin_unlock_irq(&kstat_glb_lock);
 
-	printk("sched lat: %Lu/%Lu/%lu (%Lu %Lu %Lu)\n",
+	printk("sched lat: %Lu/%Lu/%Lu/%lu (%Lu %Lu %Lu)\n",
+			(unsigned long long)max_sched_lat,
 			(unsigned long long)maxlat,
 			(unsigned long long)totlat,
 			count,
@@ -274,14 +307,24 @@ static void wdog_print(void)
 
 static int wdog_loop(void* data)
 {
+	unsigned long next_print;
+	long timeout;
+
+	next_print = jiffies;
 	while (1) {
-		wdog_print();
+		update_max_latencies();
+		if (time_is_before_eq_jiffies(next_print)) {
+			wdog_print();
+			reset_max_latencies();
+			next_print = jiffies + sleep_timeout * HZ;
+		}
 		try_to_freeze();
 
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		if (kthread_should_stop())
 			break;
-		schedule_timeout(sleep_timeout*HZ);
+		timeout = clamp_t(long, next_print - jiffies, 0, LOAD_FREQ);
+		schedule_timeout(timeout);
 	}
 	return 0;
 }

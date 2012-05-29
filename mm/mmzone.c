@@ -368,29 +368,6 @@ void gang_show_state(struct gang_set *gs)
 			stat[LRU_UNEVICTABLE]);
 }
 
-void gang_rate_limit(struct gang_set *gs, int wait, unsigned count)
-{
-	struct user_beancounter *ub = get_gangs_ub(gs);
-	ktime_t wall;
-	u64 step;
-
-	if (!ub->rl_step)
-		return;
-
-	spin_lock(&ub->rl_lock);
-	step = (u64)ub->rl_step * count;
-	wall = ktime_add_ns(ktime_get(), step);
-	if (wall.tv64 < ub->rl_wall.tv64)
-		wall = ktime_add_ns(ub->rl_wall, step);
-	ub->rl_wall = wall;
-	spin_unlock(&ub->rl_lock);
-
-	if (wait && !test_thread_flag(TIF_MEMDIE)) {
-		set_current_state(TASK_KILLABLE);
-		schedule_hrtimeout(&wall, HRTIMER_MODE_ABS);
-	}
-}
-
 #else /* CONFIG_MEMORY_GANGS */
 
 void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,

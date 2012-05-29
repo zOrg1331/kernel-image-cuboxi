@@ -155,7 +155,8 @@ bool ub_should_skip_writeback(struct user_beancounter *ub, struct inode *inode)
 
 	rcu_read_lock();
 	dirtied_ub = rcu_dereference(inode->i_mapping->dirtied_ub);
-	ret = !dirtied_ub || (dirtied_ub != ub && !dirtied_ub->dirty_exceeded);
+	ret = !dirtied_ub || (dirtied_ub != ub &&
+			!test_bit(UB_DIRTY_EXCEEDED, &dirtied_ub->ub_flags));
 	rcu_read_unlock();
 
 	return ret;

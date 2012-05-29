@@ -2843,11 +2843,16 @@ extern unsigned long sched_cgroup_get_nr_running(struct cgroup *cgrp);
 #ifdef CONFIG_RT_GROUP_SCHED
 extern int sched_group_set_rt_runtime(struct task_group *tg,
 				      long rt_runtime_us);
+extern int sched_cgroup_set_rt_runtime(struct cgroup *cgrp,
+				       long rt_runtime_us);
 extern long sched_group_rt_runtime(struct task_group *tg);
 extern int sched_group_set_rt_period(struct task_group *tg,
 				      long rt_period_us);
 extern long sched_group_rt_period(struct task_group *tg);
 extern int sched_rt_can_attach(struct task_group *tg, struct task_struct *tsk);
+#else
+static inline int sched_cgroup_set_rt_runtime(struct cgroup *cgrp,
+					      long rt_runtime_us) { return 0; }
 #endif
 #endif
 
