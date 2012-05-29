@@ -38,22 +38,6 @@ static inline struct user_beancounter *get_io_ub(void)
 	return ub;
 }
 
-static inline struct user_beancounter *get_mapping_ub(struct address_space *mapping)
-{
-	struct user_beancounter *ub;
-
-	if (!mapping)
-		return NULL;
-
-	rcu_read_lock();
-	ub = rcu_dereference(mapping->dirtied_ub);
-	if (ub)
-		ub = get_beancounter_rcu(ub);
-	rcu_read_unlock();
-
-	return ub;
-}
-
 static inline void ub_io_account_read(size_t bytes)
 {
 	ub_percpu_add(get_io_ub(), sync_read_bytes, bytes);

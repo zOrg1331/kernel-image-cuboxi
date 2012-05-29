@@ -48,19 +48,6 @@ UB_DECLARE_VOID_FUNC(ub_tmpfs_respages_sub(struct shmem_inode_info *shi,
 			unsigned long size))
 #define ub_tmpfs_respages_dec(shi)	ub_tmpfs_respages_sub(shi, 1)
 
-#ifdef CONFIG_BEANCOUNTERS
-#define shmi_ub_set(shi, ub)	do {			\
-		(shi)->shmi_ub = get_beancounter(ub);	\
-	} while (0)
-#define shmi_ub_put(shi)	do {			\
-		put_beancounter((shi)->shmi_ub);	\
-		(shi)->shmi_ub = NULL;			\
-	} while (0)
-#else
-#define shmi_ub_set(shi, ub)	do { } while (0)
-#define shmi_ub_put(shi)	do { } while (0)
-#endif
-
 UB_DECLARE_FUNC(int, ub_locked_charge(struct mm_struct *mm,
 			unsigned long size))
 UB_DECLARE_VOID_FUNC(ub_locked_uncharge(struct mm_struct *mm,

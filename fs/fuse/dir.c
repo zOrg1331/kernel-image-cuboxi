@@ -777,7 +777,7 @@ static void fuse_fillattr(struct inode *inode, struct fuse_attr *attr,
 	stat->mtime.tv_nsec = attr->mtimensec;
 	stat->ctime.tv_sec = attr->ctime;
 	stat->ctime.tv_nsec = attr->ctimensec;
-	stat->size = attr->size;
+	stat->size = inode->i_size;
 	stat->blocks = attr->blocks;
 	stat->blksize = (1 << inode->i_blkbits);
 }

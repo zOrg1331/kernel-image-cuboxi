@@ -2830,7 +2830,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	} else if (!page_mapped(page) &&
 		   page_gang(page)->set != get_mm_gang(mm)) {
 		ub_percpu_inc(mm_ub(mm), vswapin);
-		gang_rate_limit(get_mm_gang(mm), get_exec_ub() == mm_ub(mm), 1);
+		ub_reclaim_rate_limit(mm_ub(mm), 1, 1);
 		/*
 		 * move page into container after vswapin throttling
 		 * to protect against endless bouncing in vswap.

@@ -564,6 +564,36 @@ static void fuse_read_update_size(struct inode *inode, loff_t size,
 	spin_unlock(&fc->lock);
 }
 
+static void fuse_readpages_short(struct fuse_req *req)
+{
+	int i;
+	size_t num_read = req->out.args[0].size;
+	struct inode *inode = req->pages[0]->mapping->host;
+
+	if (inode->i_state & I_DIRTY) {
+		/*
+		 * A hole in a file. Some data after the hole are in page cache.
+		 */
+		size_t off = num_read & (PAGE_CACHE_SIZE - 1);
+
+		for (i = num_read >> PAGE_CACHE_SHIFT; i < req->num_pages; i++) {
+			struct page *page = req->pages[i];
+			void *mapaddr = kmap_atomic(page, KM_USER0);
+
+			memset(mapaddr + off, 0, PAGE_CACHE_SIZE - off);
+
+			kunmap_atomic(mapaddr, KM_USER0);
+			off = 0;
+		}
+	} else {
+		/*
+		 * Short read means EOF.  If file size is larger, truncate it
+		 */
+		loff_t pos = page_offset(req->pages[0]) + num_read;
+		fuse_read_update_size(inode, pos, req->misc.read.attr_ver);
+	}
+}
+
 static int fuse_readpage(struct file *file, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
@@ -599,17 +629,15 @@ static int fuse_readpage(struct file *file, struct page *page)
 	req->pages[0] = page;
 	num_read = fuse_send_read(req, file, pos, count, NULL, NULL);
 	err = req->out.h.error;
-	fuse_put_request(fc, req);
 
 	if (!err) {
-		/*
-		 * Short read means EOF.  If file size is larger, truncate it
-		 */
 		if (num_read < count)
-			fuse_read_update_size(inode, pos + num_read, attr_ver);
+			fuse_readpages_short(req);
 
 		SetPageUptodate(page);
 	}
+
+	fuse_put_request(fc, req);
 
 	fuse_invalidate_attr(inode); /* atime changed */
  out:
@@ -624,13 +652,8 @@ static void fuse_readpages_end(struct fuse_conn *fc, struct fuse_req *req)
 	size_t num_read = req->out.args[0].size;
 	struct inode *inode = req->pages[0]->mapping->host;
 
-	/*
-	 * Short read means EOF.  If file size is larger, truncate it
-	 */
-	if (!req->out.h.error && num_read < count) {
-		loff_t pos = page_offset(req->pages[0]) + num_read;
-		fuse_read_update_size(inode, pos, req->misc.read.attr_ver);
-	}
+	if (!req->out.h.error && num_read < count)
+		fuse_readpages_short(req);
 
 	fuse_invalidate_attr(inode); /* atime changed */
 

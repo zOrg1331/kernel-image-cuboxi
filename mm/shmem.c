@@ -65,6 +65,7 @@ static struct vfsmount *shm_mnt;
 #include <linux/magic.h>
 
 #include <bc/vmpages.h>
+#include <bc/kmem.h>
 
 #include <asm/uaccess.h>
 #include <asm/div64.h>
@@ -894,7 +895,6 @@ static void shmem_delete_inode(struct inode *inode)
 		}
 	}
 	BUG_ON(inode->i_blocks);
-	shmi_ub_put(info);
 	shmem_free_inode(inode->i_sb);
 	clear_inode(inode);
 }
@@ -1709,7 +1709,6 @@ static struct inode *shmem_get_inode(struct super_block *sb, int mode,
 		inode->i_generation = get_seconds();
 		info = SHMEM_I(inode);
 		memset(info, 0, (char *)inode - (char *)info);
-		shmi_ub_set(info, get_exec_ub());
 		spin_lock_init(&info->lock);
 		info->flags = flags & VM_NORESERVE;
 		INIT_LIST_HEAD(&info->swaplist);
@@ -2531,20 +2530,28 @@ static struct kmem_cache *shmem_inode_cachep;
 
 static struct inode *shmem_alloc_inode(struct super_block *sb)
 {
+	struct user_beancounter *ub = get_exec_ub();
 	struct shmem_inode_info *p;
-	p = (struct shmem_inode_info *)kmem_cache_alloc(shmem_inode_cachep, GFP_KERNEL);
+
+	p = ub_kmem_alloc(ub, shmem_inode_cachep, GFP_KERNEL);
 	if (!p)
 		return NULL;
+	p->shmi_ub = get_beancounter(ub);
 	return &p->vfs_inode;
 }
 
 static void shmem_destroy_inode(struct inode *inode)
 {
+	struct shmem_inode_info *p = SHMEM_I(inode);
+	struct user_beancounter *ub = p->shmi_ub;
+
 	if ((inode->i_mode & S_IFMT) == S_IFREG) {
 		/* only struct inode is valid if it's an inline symlink */
 		mpol_free_shared_policy(&SHMEM_I(inode)->policy);
 	}
-	kmem_cache_free(shmem_inode_cachep, SHMEM_I(inode));
+
+	ub_kmem_free(ub, shmem_inode_cachep, p);
+	put_beancounter(ub);
 }
 
 static void init_once(void *foo)

@@ -99,13 +99,13 @@ static int bc_debug_show(struct seq_file *f, void *v)
 	ub = seq_beancounter(f);
 	seq_printf(f, "uid: %u\n", ub->ub_uid);
 	seq_printf(f, "ref: %d\n", atomic_read(&ub->ub_refcount));
+	seq_printf(f, "flags: 0x%lx\n", ub->ub_flags);
 
 	seq_printf(f, "bc: %p\n", ub);
 	seq_printf(f, "sizeof: %lu\n", sizeof(struct user_beancounter));
 	seq_printf(f, "pincount: %d\n", __ub_percpu_sum(ub, pincount));
 
-	seq_printf(f, "manual_oom_score_adj: %d\n",
-			ub->ub_manual_oom_score_adj);
+	seq_printf(f, "dcache_pruned: %lu\n", ub->ub_dentry_pruned);
 
 	return 0;
 }

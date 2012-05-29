@@ -879,10 +879,8 @@ static int do_rst_vma(struct cpt_vma_image *vmai, loff_t vmapos, loff_t mmpos,
 					}
 				} else if (u.pb.cpt_content == CPT_CONTENT_PRAM) {
 					err = rst_restore_pages_pram(mm, u.pb.cpt_start, u.pb.cpt_end, pos, ctx);
-					if (err) {
-						eprintk_ctx("rst_restore_pages_pram: %d\n", err);
+					if (err)
 						goto out;
-					}
 				} else {
 					err = -EINVAL;
 					goto out;

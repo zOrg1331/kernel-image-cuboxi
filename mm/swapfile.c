@@ -858,22 +858,32 @@ static void pswap_unuse(struct swap_info_struct *si)
 
 	for_each_bit(i, si->pswap_reserved, si->max) {
 		swp_entry_t entry = swp_entry(si->type, i);
+		struct page *page = NULL;
+		struct writeback_control wbc = {
+			.sync_mode = WB_SYNC_NONE,
+		};
+		int err = 0;
 
-		if (si->swap_map[i] & SWAP_HAS_CACHE) {
-			struct page *page;
+		if (!(si->swap_map[i] & SWAP_HAS_CACHE))
+			goto next;
 
-			page = find_get_page(&swapper_space, entry.val);
-			if (page && PageDirty(page)) {
-				struct writeback_control wbc = {
-					.sync_mode = WB_SYNC_NONE,
-				};
+		page = find_get_page(&swapper_space, entry.val);
+		if (!page || !PageDirty(page) || PageWriteback(page))
+			goto next;
 
-				lock_page(page);
-				swap_writepage(page, &wbc);
-			}
-			if (page)
-				page_cache_release(page);
-		}
+		lock_page(page);
+		if (likely(PageDirty(page) && !PageWriteback(page)))
+			err = swap_writepage(page, &wbc);
+		else
+			unlock_page(page);
+
+		if (err)
+			printk(KERN_ERR "PSWAP: "
+			       "Failed to write entry %08lx: %d\n",
+			       entry.val, err);
+next:
+		if (page)
+			page_cache_release(page);
 		swap_free(entry);
 	}
 }

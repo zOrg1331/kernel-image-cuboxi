@@ -342,7 +342,7 @@ long do_ubstat(int func, unsigned long arg1, unsigned long arg2,
 
 	ub = get_exec_ub();
 	if (ub != NULL && ub->ub_uid == arg1)
-		get_beancounter(ub);
+		get_beancounter_longterm(ub);
 	else /* FIXME must be if (ve_is_super) */
 		ub = get_beancounter_byuid(arg1, 0);
 

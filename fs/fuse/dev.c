@@ -1153,6 +1153,22 @@ __acquires(&fc->lock)
 	}
 }
 
+static void requeue_requests(struct fuse_conn *fc)
+{
+	BUG_ON(!list_empty(&fc->io));
+	while (!list_empty(&fc->processing)) {
+		struct fuse_req *req;
+
+		/* take requests from the processing queue tail ... */
+		req = list_entry(fc->processing.prev, struct fuse_req, list);
+		BUG_ON(req->locked);
+		BUG_ON(req->state != FUSE_REQ_SENT);
+		/* ... and queue them back to the pending head */
+		req->state = FUSE_REQ_PENDING;
+		list_move(&req->list, &fc->pending);
+	}
+}
+
 /*
  * Abort requests under I/O
  *
@@ -1231,9 +1247,14 @@ int fuse_dev_release(struct inode *inode, struct file *file)
 	struct fuse_conn *fc = fuse_get_conn(file);
 	if (fc) {
 		spin_lock(&fc->lock);
-		fc->connected = 0;
-		end_requests(fc, &fc->pending);
-		end_requests(fc, &fc->processing);
+		if (!(fc->flags & FUSE_CAN_RECONNECT)) {
+			fc->connected = 0;
+			end_requests(fc, &fc->processing);
+			end_requests(fc, &fc->pending);
+		} else {
+			fc->connected = 2;
+			requeue_requests(fc);
+		}
 		spin_unlock(&fc->lock);
 		fuse_conn_put(fc);
 	}
@@ -1241,6 +1262,40 @@ int fuse_dev_release(struct inode *inode, struct file *file)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(fuse_dev_release);
+
+int fuse_reconnect_fd(int fd, struct fuse_conn *fc)
+{
+	int err;
+	struct file *f;
+
+	err = -EBADF;
+	f = fget(fd);
+	if (!f)
+		goto out;
+
+	err = -EINVAL;
+	if (f->f_op != &fuse_dev_operations)
+		goto out_fput;
+
+	mutex_lock(&fuse_mutex);
+	err = -EBUSY;
+	if (fc->connected != 2)
+		goto out_unlock;
+
+	if (f->private_data)
+		goto out_unlock;
+
+	f->private_data = fuse_conn_get(fc);
+	fc->connected = 1;
+	err = 0;
+
+out_unlock:
+	mutex_unlock(&fuse_mutex);
+out_fput:
+	fput(f);
+out:
+	return err;
+}
 
 static int fuse_dev_fasync(int fd, struct file *file, int on)
 {

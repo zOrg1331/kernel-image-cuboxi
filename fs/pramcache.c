@@ -735,6 +735,9 @@ done:
 
 	register_shrinker(&cache->shrinker);
 	sb->s_pramcache = cache;
+
+	pramcache_msg(sb, KERN_INFO,
+		      "loaded page cache (%ld pages)", cache->nr_pages);
 	return;
 
 out_free_cache:
@@ -804,6 +807,9 @@ static void load_bdev_cache(struct super_block *sb)
 	}
 
 	err = populate_mapping(sb, sb->s_bdev->bd_inode->i_mapping, &pages);
+	if (!err)
+		pramcache_msg(sb, KERN_INFO,
+			      "loaded bdev cache (%ld pages)", nr_pages);
 	drain_page_list(&pages);
 
 out_close_streams:

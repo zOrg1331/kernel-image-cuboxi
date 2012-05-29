@@ -293,6 +293,8 @@ static int __init __reserve(bootmem_data_t *bdata, unsigned long sidx,
 			bdebug("silent double reserve of PFN %lx\n",
 				idx + bdata->node_min_pfn);
 		}
+	pram_ban_region(sidx + bdata->node_min_pfn,
+			eidx + bdata->node_min_pfn - 1);
 	return 0;
 }
 
@@ -311,14 +313,9 @@ static int __init mark_bootmem_node(bootmem_data_t *bdata,
 	sidx = start - bdata->node_min_pfn;
 	eidx = end - bdata->node_min_pfn;
 
-	if (reserve) {
-		int ret;
-		
-		ret = __reserve(bdata, sidx, eidx, flags);
-		if (!ret)
-			pram_ban_region(start, end - 1);
-		return ret;
-	} else
+	if (reserve)
+		return __reserve(bdata, sidx, eidx, flags);
+	else
 		__free(bdata, sidx, eidx);
 	return 0;
 }

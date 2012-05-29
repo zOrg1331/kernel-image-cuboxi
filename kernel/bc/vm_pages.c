@@ -538,26 +538,27 @@ static void __exit fini_vmguar_notifier(void)
 module_init(init_vmguar_notifier);
 module_exit(fini_vmguar_notifier);
 
+static void __show_one_resource(const char *name, struct ubparm *parm)
+{
+	if (parm->limit == UB_MAXVALUE)
+		printk("%s: %lu / inf [%lu] ", name,
+				parm->held, parm->failcnt);
+	else
+		printk("%s: %lu / %lu [%lu] ", name,
+				parm->held, parm->limit, parm->failcnt);
+}
+
 void __show_ub_mem(struct user_beancounter *ub)
 {
-	printk(KERN_INFO "Resources: "
-			" RAM: %lu / %lu [%lu]"
-			" SWAP: %lu / %lu [%lu]"
-			" KMEM: %lu / %lu [%lu]"
-			" OOMG: %lu / %lu"
-			" Dirty %lu\n",
-			ub->ub_parms[UB_PHYSPAGES].held,
-			ub->ub_parms[UB_PHYSPAGES].limit,
-			ub->ub_parms[UB_PHYSPAGES].failcnt,
-			ub->ub_parms[UB_SWAPPAGES].held,
-			ub->ub_parms[UB_SWAPPAGES].limit,
-			ub->ub_parms[UB_SWAPPAGES].failcnt,
-			ub->ub_parms[UB_KMEMSIZE].held,
-			ub->ub_parms[UB_KMEMSIZE].limit,
-			ub->ub_parms[UB_KMEMSIZE].failcnt,
-			ub->ub_parms[UB_OOMGUARPAGES].held,
-			ub->ub_parms[UB_OOMGUARPAGES].barrier,
-			ub_stat_get(ub, dirty_pages));
+	__show_one_resource("RAM", ub->ub_parms + UB_PHYSPAGES);
+	__show_one_resource("SWAP", ub->ub_parms + UB_SWAPPAGES);
+	__show_one_resource("KMEM", ub->ub_parms + UB_KMEMSIZE);
+	__show_one_resource("DCSZ", ub->ub_parms + UB_DCACHESIZE);
+	__show_one_resource("OOMG", ub->ub_parms + UB_OOMGUARPAGES);
+
+	printk("Dirty %lu Wback %lu\n",
+			ub_stat_get(ub, dirty_pages),
+			ub_stat_get(ub, writeback_pages));
 }
 
 void show_ub_mem(struct user_beancounter *ub)

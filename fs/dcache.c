@@ -458,12 +458,12 @@ static void prune_one_dentry(struct dentry * dentry)
 	}
 }
 
-static int __shrink_dcache_ub(struct user_beancounter *ub, int count)
+int __shrink_dcache_ub(struct user_beancounter *ub, int count)
 {
 	LIST_HEAD(referenced);
 	LIST_HEAD(tmp);
 	struct dentry *dentry;
-	int did_progress = 0;
+	int pruned = 0;
 
 	while (!list_empty(&ub->ub_dentry_lru)) {
 		dentry = list_entry(ub->ub_dentry_lru.prev,
@@ -497,7 +497,7 @@ static int __shrink_dcache_ub(struct user_beancounter *ub, int count)
 			continue;
 		}
 
-		did_progress = 1;
+		pruned++;
 		prune_one_dentry(dentry);
 		/* dentry->d_lock was dropped in prune_one_dentry() */
 		cond_resched_lock(&dcache_lock);
@@ -505,19 +505,13 @@ static int __shrink_dcache_ub(struct user_beancounter *ub, int count)
 
 	list_splice(&referenced, &ub->ub_dentry_lru);
 
-	return did_progress;
-}
+	ub->ub_dentry_pruned += pruned;
 
-int shrink_dcache_ub(struct user_beancounter *ub, long count)
-{
-	int ret;
+	/* report fake progress if lru isn't empty */
+	if (!pruned && !list_empty(&ub->ub_dentry_lru))
+		pruned = 1;
 
-	spin_lock(&dcache_lock);
-	ret = __shrink_dcache_ub(ub, count) ||
-		!list_empty(&ub->ub_dentry_lru);
-	spin_unlock(&dcache_lock);
-
-	return ret;
+	return pruned;
 }
 
 /*

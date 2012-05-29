@@ -245,9 +245,12 @@ unsigned long shrink_slab(unsigned long scanned, gfp_t gfp_mask,
 	list_for_each_entry(shrinker, &shrinker_list, list) {
 		unsigned long long delta;
 		unsigned long total_scan;
-		unsigned long max_pass;
+		long max_pass;
 
 		max_pass = (*shrinker->shrink)(shrinker, 0, gfp_mask);
+		if (max_pass <= 0)
+			continue;
+
 		delta = (4 * scanned) / shrinker->seeks;
 		delta *= max_pass;
 		do_div(delta, lru_pages + 1);
@@ -1940,7 +1943,7 @@ out:
 		if (!scanning_global_lru(sc))
 			force_scan = 1;
 		/* kswapd does zone balancing and need to scan this zone */
-		else if (current_is_kswapd())
+		else if (current_is_kswapd() && zone_is_all_unreclaimable(zone))
 			force_scan = 1;
 	}
 
@@ -2010,6 +2013,7 @@ static void shrink_zone(int priority, struct zone *zone,
 
 	while (nr[LRU_INACTIVE_ANON] || nr[LRU_ACTIVE_FILE] ||
 					nr[LRU_INACTIVE_FILE]) {
+		cond_resched();
 
 		if (!sc->gs) {
 			if (gang)
@@ -2352,9 +2356,8 @@ unsigned long try_to_free_gang_pages(struct gang_set *gs, gfp_t gfp_mask)
 
 	if (sc.nr_reclaim_swapout) {
 		ub_percpu_add(get_gangs_ub(gs), vswapout, sc.nr_reclaim_swapout);
-		gang_rate_limit(gs, (gfp_mask & __GFP_WAIT) &&
-				get_exec_ub() == get_gangs_ub(gs),
-				sc.nr_reclaim_swapout);
+		ub_reclaim_rate_limit(get_gangs_ub(gs), gfp_mask & __GFP_WAIT,
+				      sc.nr_reclaim_swapout);
 	}
 
 	return progress;

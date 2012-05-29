@@ -30,9 +30,13 @@
 #ifdef CONFIG_PRAM
 int rst_load_pram_pages(cpt_context_t *ctx)
 {
+	int err = 0;
+
 	if (cpt_pram_ops)
-		return cpt_pram_ops->load_pages(ctx);
-	return 0;
+		err = cpt_pram_ops->load_pages(ctx);
+	if (err)
+		eprintk_ctx("rst_load_pram_pages: %d\n", err);
+	return err;
 }
 
 void rst_release_pram_pages(cpt_context_t *ctx)
@@ -45,9 +49,13 @@ int rst_restore_pages_pram(struct mm_struct *mm,
 		unsigned long start, unsigned long end,
 		loff_t pos, struct cpt_context *ctx)
 {
+	int err = -ENOSYS;
+
 	if (cpt_pram_ops)
-		return cpt_pram_ops->restore_pages(mm, start, end, pos, ctx);
-	return -ENOSYS;
+		err = cpt_pram_ops->restore_pages(mm, start, end, pos, ctx);
+	if (err)
+		eprintk_ctx("rst_restore_pages_pram: %d\n", err);
+	return err;
 }
 #endif
 

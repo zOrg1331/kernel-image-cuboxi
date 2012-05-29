@@ -188,8 +188,6 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 
 extern struct gang *init_gang_array[];
 
-void gang_rate_limit(struct gang_set *gs, int wait, unsigned count);
-
 #else /* CONFIG_MEMORY_GANGS */
 
 static inline struct gang *page_gang(struct page *page)
@@ -243,8 +241,6 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 	return lock_page_lru(page);
 }
 
-static inline void gang_rate_limit(struct gang_set *gs, int wait, unsigned count) { }
-
 #endif /* CONFIG_MEMORY_GANGS */
 
 #ifdef CONFIG_MEMORY_GANGS_MIGRATION
@@ -288,19 +284,6 @@ static inline struct gang *relock_page_lru(struct gang *locked_gang,
 		spin_unlock(&locked_gang->lru_lock);
 	spin_lock(&gang->lru_lock);
 	return gang;
-}
-
-static inline struct user_beancounter *get_page_ub(struct page *page)
-{
-	struct user_beancounter *ub;
-
-	rcu_read_lock();
-	ub = get_gang_ub(page_gang(page));
-	if (ub)
-		ub = get_beancounter_rcu(ub);
-	rcu_read_unlock();
-
-	return ub;
 }
 
 void gang_page_stat(struct gang_set *gs, nodemask_t *nodemask,

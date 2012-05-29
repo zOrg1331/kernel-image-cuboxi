@@ -11793,6 +11793,11 @@ static void tg_update_cpu_limit(struct task_group *tg)
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
 #ifdef CONFIG_RT_GROUP_SCHED
+int sched_cgroup_set_rt_runtime(struct cgroup *cgrp, long rt_runtime_us)
+{
+	return sched_group_set_rt_runtime(cgroup_tg(cgrp), rt_runtime_us);
+}
+
 static int cpu_rt_runtime_write(struct cgroup *cgrp, struct cftype *cft,
 				s64 val)
 {

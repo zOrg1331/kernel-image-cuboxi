@@ -2812,6 +2812,7 @@ next_bh:
 		idx++;
 	} while (blocks);
 	bio_put(orig_bio);
+	bio_put(bio);
 }
 
 /* Try to merge adjacent bh's in to one bio */
