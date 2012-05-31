@@ -41,7 +41,7 @@ Release: alt68
 Summary: The Linux kernel (the core of the Linux operating system)
 License: GPL
 Group: System/Kernel and hardware
-Url: http://www.kernel.org/
+Url: http://wiki.openvz.org/Download/kernel/
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
