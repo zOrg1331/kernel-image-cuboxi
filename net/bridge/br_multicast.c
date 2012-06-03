@@ -1467,7 +1467,7 @@ static int br_multicast_ipv6_rcv(struct net_bridge *br,
 		return -EINVAL;
 
 	nexthdr = ip6h->nexthdr;
-	offset = ipv6_skip_exthdr(skb, sizeof(*ip6h), &nexthdr, &frag_off);
+	offset = __ipv6_skip_exthdr(skb, sizeof(*ip6h), &nexthdr, &frag_off);
 
 	if (offset < 0 || nexthdr != IPPROTO_ICMPV6)
 		return 0;

@@ -2090,7 +2090,8 @@ global_root:
 	 * explicitly and hide the path information for other cases.
 	 * This approach is more safe, let's take it.  2001/04/22  SAW
 	 */
-	if (!(oldmnt->mnt_sb->s_flags & MS_NOUSER)) {
+	if (!(oldmnt->mnt_sb->s_flags & MS_NOUSER) &&
+	    !ve_accessible_veid(vfsmnt->owner, get_exec_env()->veid)) {
 		retval = ERR_PTR(-EINVAL);
 		goto out_err;
 	}

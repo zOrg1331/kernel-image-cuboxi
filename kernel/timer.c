@@ -1481,7 +1481,7 @@ int do_sysinfo(struct sysinfo *info)
 
 		info->procs = nr_threads;
 	} else {
-		info->uptime -= ve->start_timespec.tv_sec;
+		info->uptime -= ve->real_start_timespec.tv_sec;
 
 		info->procs = ve->pcounter;
 

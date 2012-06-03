@@ -342,7 +342,7 @@ static int ip6_forward_proxy_check(struct sk_buff *skb)
 	int offset;
 
 	if (ipv6_ext_hdr(nexthdr)) {
-		offset = ipv6_skip_exthdr(skb, sizeof(*hdr), &nexthdr, &frag_off);
+		offset = __ipv6_skip_exthdr(skb, sizeof(*hdr), &nexthdr, &frag_off);
 		if (offset < 0)
 			return 0;
 	} else

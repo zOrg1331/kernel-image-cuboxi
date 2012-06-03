@@ -70,6 +70,8 @@
 #include <linux/sfi.h>
 #include <linux/shmem_fs.h>
 #include <linux/perf_event.h>
+#include <linux/pram.h>
+#include <linux/kexec.h>
 #include <trace/boot.h>
 
 #include <bc/beancounter.h>
@@ -636,6 +638,8 @@ asmlinkage void __init start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
+	pram_init();
+	kexec_crash_init();
 	/*
 	 * Set up the scheduler prior starting any interrupts (such as the
 	 * timer interrupt). Full topology setup happens at smp_init()

@@ -62,7 +62,7 @@ ebt_ip6_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 		__be16 frag_off;
 		int offset_ph;
 
-		offset_ph = ipv6_skip_exthdr(skb, sizeof(_ip6h), &nexthdr, &frag_off);
+		offset_ph = __ipv6_skip_exthdr(skb, sizeof(_ip6h), &nexthdr, &frag_off);
 		if (offset_ph == -1)
 			return false;
 		if (FWINV(info->protocol != nexthdr, EBT_IP6_PROTO))

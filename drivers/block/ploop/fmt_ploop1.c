@@ -169,6 +169,11 @@ ploop1_open(struct ploop_delta * delta)
 	delta->io.alloc_head = ph->alloc_head;
 	delta->plo->bd_size = ph->bd_size;
 
+	/* If i_size >= max_size, no more allocations needed */
+	if ((u64)ph->alloc_head << (delta->cluster_log + 9) >=
+	    ((u64)ph->bd_size + ph->l1_off) << 9)
+		delta->flags |= PLOOP_FMT_PREALLOCATED;
+
 	return 0;
 
 out_err:

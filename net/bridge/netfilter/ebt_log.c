@@ -124,7 +124,7 @@ ebt_log_packet(u_int8_t pf, unsigned int hooknum,
 		printk(" IPv6 SRC=%pI6 IPv6 DST=%pI6, IPv6 priority=0x%01X, Next Header=%d",
 		       &ih->saddr, &ih->daddr, ih->priority, ih->nexthdr);
 		nexthdr = ih->nexthdr;
-		offset_ph = ipv6_skip_exthdr(skb, sizeof(_iph), &nexthdr, &frag_off);
+		offset_ph = __ipv6_skip_exthdr(skb, sizeof(_iph), &nexthdr, &frag_off);
 		if (offset_ph == -1)
 			goto out;
 		print_ports(skb, nexthdr, offset_ph);

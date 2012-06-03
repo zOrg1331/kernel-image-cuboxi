@@ -112,6 +112,8 @@ extern int sysctl_nr_open_min, sysctl_nr_open_max;
 extern int sysctl_nr_trim_pages;
 #endif
 extern int kexec_load_disabled;
+extern int kexec_preserve_uptime;
+extern int kexec_reuse_crash;
 
 int exec_shield = (1<<0);
 /* exec_shield is a bitmask:
@@ -760,6 +762,30 @@ static struct ctl_table kern_table[] = {
 		/* only handle a transition from default "0" to "1" */
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &one,
+		.extra2		= &one,
+	},
+#ifdef CONFIG_PRAM
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "kexec_preserve_uptime",
+		.data		= &kexec_preserve_uptime,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
+#endif
+#endif
+#ifdef CONFIG_KEXEC_REUSE_CRASH
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "kexec_reuse_crash",
+		.data		= &kexec_reuse_crash,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
 		.extra2		= &one,
 	},
 #endif

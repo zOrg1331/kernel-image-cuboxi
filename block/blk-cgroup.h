@@ -170,6 +170,8 @@ struct blkio_group {
 	struct blkio_group_stats stats;
 	/* Per cpu stats pointer */
 	struct blkio_group_stats_cpu __percpu *stats_cpu;
+
+	struct delayed_work stats_alloc_work;
 };
 
 struct blkio_policy_node {
@@ -308,6 +310,7 @@ extern void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 	struct blkio_group *blkg, void *key, dev_t dev,
 	enum blkio_policy_id plid);
 extern int blkio_alloc_blkg_stats(struct blkio_group *blkg);
+extern void blkio_free_blkg_stats(struct blkio_group *blkg);
 extern int blkiocg_del_blkio_group(struct blkio_group *blkg);
 extern struct blkio_group *blkiocg_lookup_group(struct blkio_cgroup *blkcg,
 						void *key);
@@ -337,6 +340,7 @@ static inline void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 		enum blkio_policy_id plid) {}
 
 static inline int blkio_alloc_blkg_stats(struct blkio_group *blkg) { return 0; }
+static inline void blkio_free_blkg_stats(struct blkio_group *blkg) { }
 
 static inline int
 blkiocg_del_blkio_group(struct blkio_group *blkg) { return 0; }

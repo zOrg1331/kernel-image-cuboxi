@@ -1357,20 +1357,21 @@ static struct attribute_group pram_attr_group = {
 	.attrs = pram_attrs,
 };
 
-static int __init pram_init(void)
+void __init pram_init(void)
 {
 	int ret;
 
 	pram_init_preallocs();
 	ret = pram_build_list();
-	if (ret) {
+	if (ret)
 		printk(KERN_ERR "PRAM: failed to build list: %d\n", ret);
-		return ret;
-	}
+}
 
+static int __init pram_init_late(void)
+{
 	hotcpu_notifier(pram_callback, 0);
 	register_shrinker(&banned_pages_shrinker);
 	sysfs_update_group(kernel_kobj, &pram_attr_group);
 	return 0;
 }
-module_init(pram_init);
+module_init(pram_init_late);

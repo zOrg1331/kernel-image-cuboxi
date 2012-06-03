@@ -153,7 +153,7 @@ static int parse_ipv6hdr(struct sk_buff *skb, struct sw_flow_key *key,
 	key->ipv6.addr.src = nh->saddr;
 	key->ipv6.addr.dst = nh->daddr;
 
-	payload_ofs = ipv6_skip_exthdr(skb, payload_ofs, &nexthdr, &frag_off);
+	payload_ofs = __ipv6_skip_exthdr(skb, payload_ofs, &nexthdr, &frag_off);
 	if (unlikely(payload_ofs < 0))
 		return -EINVAL;
 

@@ -74,12 +74,14 @@ extern int pram_dirty(struct pram_stream *stream);
 extern unsigned long long pram_low;
 extern unsigned long pram_reserved_pages;
 extern void pram_reserve(void);
+extern void pram_init(void);
 extern void pram_ban_region(unsigned long start, unsigned long end);
 extern void pram_show_banned(void);
 #else
 #define pram_low 0ULL
 #define pram_reserved_pages 0UL
 static inline void pram_reserve(void) { }
+static inline void pram_init(void) { }
 static inline void pram_ban_region(unsigned long start, unsigned long end) { }
 static inline void pram_show_banned(void) { }
 #endif

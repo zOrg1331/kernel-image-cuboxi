@@ -975,11 +975,11 @@ static struct file * open_timerfd(struct cpt_file_image *fi, int flags, struct c
 
 	timerfd_ctx = file->private_data;
 
-	spin_lock(&timerfd_ctx->wqh.lock);
+	spin_lock_irq(&timerfd_ctx->wqh.lock);
 	if (o.cpt_expired)
 		timerfd_ctx->expired = 1;
 	timerfd_ctx->ticks += o.cpt_ticks;
-	spin_unlock(&timerfd_ctx->wqh.lock);
+	spin_unlock_irq(&timerfd_ctx->wqh.lock);
 out:
 	return file;
 }

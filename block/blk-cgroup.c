@@ -439,19 +439,39 @@ void blkiocg_update_io_merged_stats(struct blkio_group *blkg, bool direction,
 }
 EXPORT_SYMBOL_GPL(blkiocg_update_io_merged_stats);
 
-/*
- * This function allocates the per cpu stats for blkio_group. Should be called
- * from sleepable context as alloc_per_cpu() requires that.
- */
+static void blkio_stats_alloc_fn(struct work_struct *work)
+{
+	struct blkio_group_stats_cpu __percpu *stats;
+	struct blkio_group *blkg = container_of(work, struct blkio_group,
+						stats_alloc_work.work);
+
+	stats = alloc_percpu(struct blkio_group_stats_cpu);
+	if (stats)
+		blkg->stats_cpu = stats;
+	else
+		schedule_delayed_work(&blkg->stats_alloc_work, HZ);
+}
+
+static DEFINE_PER_CPU(struct blkio_group_stats_cpu, stats_plug);
+
 int blkio_alloc_blkg_stats(struct blkio_group *blkg)
 {
-	/* Allocate memory for per cpu stats */
-	blkg->stats_cpu = alloc_percpu(struct blkio_group_stats_cpu);
-	if (!blkg->stats_cpu)
-		return -ENOMEM;
+	/* Set temporary plug */
+	blkg->stats_cpu = &per_cpu_var(stats_plug);
+	/* Queue per cpu stat allocation from worker thread. */
+	INIT_DELAYED_WORK(&blkg->stats_alloc_work, blkio_stats_alloc_fn);
+	schedule_delayed_work(&blkg->stats_alloc_work, 0);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(blkio_alloc_blkg_stats);
+
+void blkio_free_blkg_stats(struct blkio_group *blkg)
+{
+	cancel_delayed_work_sync(&blkg->stats_alloc_work);
+	if (blkg->stats_cpu != &per_cpu_var(stats_plug))
+		free_percpu(blkg->stats_cpu);
+}
+EXPORT_SYMBOL_GPL(blkio_free_blkg_stats);
 
 void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
 		struct blkio_group *blkg, void *key, dev_t dev,

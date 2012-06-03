@@ -1634,11 +1634,12 @@ static int do_change_type(struct path *path, int flag)
 	int type = flag & ~MS_REC;
 	int err = 0;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN) && !capable(CAP_VE_SYS_ADMIN))
 		return -EPERM;
 
 	if (path->dentry != path->mnt->mnt_root)
 		return -EINVAL;
+
 	if (!ve_accessible_veid(path->mnt->owner, get_exec_env()->veid))
 		return -EPERM;
 
@@ -2318,22 +2319,48 @@ static struct mnt_namespace *dup_mnt_ns(struct mnt_namespace *mnt_ns,
 {
 	struct mnt_namespace *new_ns;
 	struct vfsmount *rootmnt = NULL, *pwdmnt = NULL;
-	struct vfsmount *p, *q;
+	struct vfsmount *p, *q, *old_root, *new_root;
 
 	new_ns = alloc_mnt_ns();
 	if (IS_ERR(new_ns))
 		return new_ns;
 
 	down_write(&namespace_sem);
+
+	/* For VE clone only its vfsmount tree */
+	old_root = get_exec_env()->root_path.mnt;
+	if (old_root != mnt_ns->root && old_root->mnt_ns == mnt_ns) {
+		/* clone rootfs vfsmount */
+		new_ns->root = clone_mnt(mnt_ns->root,
+				mnt_ns->root->mnt_root, 0);
+		if (!new_ns->root) {
+			up_write(&namespace_sem);
+			kfree(new_ns);
+			return ERR_PTR(-ENOMEM);
+		}
+	} else
+		old_root = mnt_ns->root;
+
 	/* First pass: copy the tree topology */
-	new_ns->root = copy_tree(mnt_ns->root, mnt_ns->root->mnt_root,
+	new_root = copy_tree(old_root, old_root->mnt_root,
 					CL_COPY_ALL | CL_EXPIRE);
-	if (!new_ns->root) {
+	if (!new_root) {
 		up_write(&namespace_sem);
+		mntput(new_ns->root);
 		kfree(new_ns);
 		return ERR_PTR(-ENOMEM);
 	}
 	spin_lock(&vfsmount_lock);
+	if (new_ns->root) {
+		struct path root_path = {
+			.mnt = new_ns->root,
+			.dentry = new_ns->root->mnt_root,
+		};
+		new_ns->root->mnt_ns = new_ns;
+		list_add(&new_ns->root->mnt_list, &new_root->mnt_list);
+		attach_mnt(new_root, &root_path);
+	} else
+		new_ns->root = new_root;
 	list_add_tail(&new_ns->list, &new_ns->root->mnt_list);
 	spin_unlock(&vfsmount_lock);
 
@@ -2342,8 +2369,8 @@ static struct mnt_namespace *dup_mnt_ns(struct mnt_namespace *mnt_ns,
 	 * as belonging to new namespace.  We have already acquired a private
 	 * fs_struct, so tsk->fs->lock is not needed.
 	 */
-	p = mnt_ns->root;
-	q = new_ns->root;
+	p = old_root;
+	q = new_root;
 	while (p) {
 		q->mnt_ns = new_ns;
 		if (fs) {
@@ -2356,8 +2383,8 @@ static struct mnt_namespace *dup_mnt_ns(struct mnt_namespace *mnt_ns,
 				fs->pwd.mnt = mntget(q);
 			}
 		}
-		p = next_mnt(p, mnt_ns->root);
-		q = next_mnt(q, new_ns->root);
+		p = next_mnt(p, old_root);
+		q = next_mnt(q, new_root);
 	}
 	up_write(&namespace_sem);
 
@@ -2478,7 +2505,7 @@ SYSCALL_DEFINE2(pivot_root, const char __user *, new_root,
 	struct path new, old, parent_path, root_parent, root;
 	int error;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN) && !capable(CAP_VE_SYS_ADMIN))
 		return -EPERM;
 
 	error = user_path_dir(new_root, &new);
@@ -2493,10 +2520,13 @@ SYSCALL_DEFINE2(pivot_root, const char __user *, new_root,
 		goto out1;
 
 	error = security_sb_pivotroot(&old, &new);
-	if (error) {
-		path_put(&old);
-		goto out1;
-	}
+	if (error)
+		goto out1_5;
+
+	error = -EPERM;
+	if (!ve_accessible_veid(old.mnt->owner, get_exec_env()->veid)||
+	    !ve_accessible_veid(new.mnt->owner, get_exec_env()->veid))
+		goto out1_5;
 
 	get_fs_root(current->fs, &root);
 	down_write(&namespace_sem);
@@ -2560,6 +2590,7 @@ out2:
 	mutex_unlock(&old.dentry->d_inode->i_mutex);
 	up_write(&namespace_sem);
 	path_put(&root);
+out1_5:
 	path_put(&old);
 out1:
 	path_put(&new);

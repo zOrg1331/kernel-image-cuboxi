@@ -58,19 +58,17 @@ static int restore_queues(struct sock *sk, struct cpt_sock_image *si,
 	while (pos < endpos) {
 		struct sk_buff *skb;
 		__u32 type;
+		int err;
+
+		err = rst_sock_attr(&pos, sk, ctx);
+		if (!err)
+			continue;
+		if (err < 0)
+			return err;
 
 		skb = rst_skb(sk, &pos, NULL, &type, ctx);
-		if (IS_ERR(skb)) {
-			if (PTR_ERR(skb) == -EINVAL) {
-				int err;
-
-				err = rst_sock_attr(&pos, sk, ctx);
-				if (err)
-					return err;
-				continue;
-			}
+		if (IS_ERR(skb))
 			return PTR_ERR(skb);
-		}
 
 		if (sk->sk_type == SOCK_STREAM) {
 			if (type == CPT_SKB_RQ) {
@@ -497,16 +495,15 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 	while (pos < end) {
 		struct cpt_openreq_image oi;
 
-		err = rst_get_object(CPT_OBJ_OPENREQ, pos, &oi, ctx);
-		if (err) {
-			err = rst_sock_attr(&pos, sk, ctx);
-			if (err) {
-				release_sock(sk);
-				return err;
-			}
-
+		err = rst_sock_attr(&pos, sk, ctx);
+		if (!err)
 			continue;
-		}
+		if (err < 0)
+			goto out;
+
+		err = rst_get_object(CPT_OBJ_OPENREQ, pos, &oi, ctx);
+		if (err)
+			goto out;
 
 		if (oi.cpt_object == CPT_OBJ_OPENREQ) {
 			struct request_sock *req;
@@ -564,8 +561,10 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 next:
 		pos += oi.cpt_next;
 	}
+	err = 0;
+out:
 	release_sock(sk);
-	return 0;
+	return err;
 }
 
 int rst_sk_mcfilter_in(struct sock *sk, struct cpt_sockmc_image *v,

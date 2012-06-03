@@ -28,7 +28,7 @@
 static int show_stat(struct seq_file *p, void *v)
 {
 	int i, j;
-	unsigned long jif;
+	unsigned long jif, realjif;
 	cputime64_t user, nice, system, idle, iowait, irq, softirq, steal;
 	cputime64_t guest;
 	u64 sum = 0;
@@ -39,6 +39,9 @@ static int show_stat(struct seq_file *p, void *v)
 
 	getboottime(&boottime);
 	jif = boottime.tv_sec;
+
+	getrealboottime(&boottime);
+	realjif = boottime.tv_sec;
 
 	ve = get_exec_env();
 	if (!ve_is_super(ve)) {
@@ -126,11 +129,13 @@ static int show_stat(struct seq_file *p, void *v)
 	seq_printf(p,
 		"\nctxt %llu\n"
 		"btime %lu\n"
+		"realbtime %lu\n"
 		"processes %lu\n"
 		"procs_running %lu\n"
 		"procs_blocked %lu\n",
 		nr_context_switches(),
 		(unsigned long)jif,
+		(unsigned long)realjif,
 		total_forks,
 		nr_running(),
 		nr_iowait());

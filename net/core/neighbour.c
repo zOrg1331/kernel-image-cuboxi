@@ -326,6 +326,17 @@ static void neigh_hash_free(struct neighbour **hash, unsigned int entries)
 		free_pages((unsigned long)hash, get_order(size));
 }
 
+static void init_hash_rnd(struct neigh_table *tbl)
+{
+	int i;
+
+	for (i = 0; i < NEIGH_NUM_HASH_RND; i++) {
+		get_random_bytes(&tbl->hash_rnd[i],
+				 sizeof(tbl->hash_rnd[i]));
+		tbl->hash_rnd[i] |= 1;
+	}
+}
+
 static void neigh_hash_grow(struct neigh_table *tbl, unsigned long new_entries)
 {
 	struct neighbour **new_hash, **old_hash;
@@ -342,7 +353,7 @@ static void neigh_hash_grow(struct neigh_table *tbl, unsigned long new_entries)
 	new_hash_mask = new_entries - 1;
 	old_hash = tbl->hash_buckets;
 
-	get_random_bytes(&tbl->hash_rnd, sizeof(tbl->hash_rnd));
+	init_hash_rnd(tbl);
 	for (i = 0; i < old_entries; i++) {
 		struct neighbour *n, *next;
 
@@ -1478,7 +1489,7 @@ void neigh_table_init_no_netlink(struct neigh_table *tbl)
 	if (!tbl->hash_buckets || !tbl->phash_buckets)
 		panic("cannot allocate neighbour cache hashes");
 
-	get_random_bytes(&tbl->hash_rnd, sizeof(tbl->hash_rnd));
+	init_hash_rnd(tbl);
 
 	rwlock_init(&tbl->lock);
 	INIT_DELAYED_WORK_DEFERRABLE(&tbl->gc_work, neigh_periodic_work);
@@ -1788,7 +1799,7 @@ static int neightbl_fill_info(struct sk_buff *skb, struct neigh_table *tbl,
 			.ndtc_entries		= atomic_read(&tbl->entries),
 			.ndtc_last_flush	= jiffies_to_msecs(flush_delta),
 			.ndtc_last_rand		= jiffies_to_msecs(rand_delta),
-			.ndtc_hash_rnd		= tbl->hash_rnd,
+			.ndtc_hash_rnd		= tbl->hash_rnd[0],
 			.ndtc_hash_mask		= tbl->hash_mask,
 			.ndtc_proxy_qlen	= tbl->proxy_queue.qlen,
 		};

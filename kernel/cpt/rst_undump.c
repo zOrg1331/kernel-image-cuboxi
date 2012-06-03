@@ -110,6 +110,12 @@ static int vps_rst_veinfo(struct cpt_context *ctx)
 	// // FIXME: what???
 	// // ve->start_cycles -= (s64)i->start_jiffies_delta * cycles_per_jiffy;
 
+	if (i->real_start_timespec_delta)
+		cpt_timespec_import(&delta, i->real_start_timespec_delta);
+	_set_normalized_timespec(&ve->real_start_timespec,
+			ve->real_start_timespec.tv_sec - delta.tv_sec,
+			ve->real_start_timespec.tv_nsec - delta.tv_nsec);
+
 	ctx->last_vpid = i->last_pid;
 	if (i->rnd_va_space)
 		ve->_randomize_va_space = i->rnd_va_space - 1;

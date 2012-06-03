@@ -21,6 +21,8 @@
 
 #define PLOOP_FLAG_FS_SYNC	0x10000000
 
+#define PLOOP_FMT_PREALLOCATED	2
+
 /* IO types. */
 
 #define PLOOP_IO_DIRECT		1

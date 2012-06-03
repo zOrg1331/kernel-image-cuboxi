@@ -322,19 +322,17 @@ static int generic_restore_queues(struct sock *sk, struct cpt_sock_image *si,
 	while (pos < endpos) {
 		struct sk_buff *skb;
 		__u32 type;
+		int err;
+
+		err = rst_sock_attr(&pos, sk, ctx);
+		if (!err)
+			continue;
+		if (err < 0)
+			return err;
 
 		skb = rst_skb(sk, &pos, NULL, &type, ctx);
-		if (IS_ERR(skb)) {
-			if (PTR_ERR(skb) == -EINVAL) {
-				int err;
-
-				err = rst_sock_attr(&pos, sk, ctx);
-				if (err)
-					return err;
-				continue;
-			}
+		if (IS_ERR(skb))
 			return PTR_ERR(skb);
-		}
 
 		if (type == CPT_SKB_RQ) {
 			skb_set_owner_r(skb, sk);
@@ -668,14 +666,29 @@ rst_sock_attr_skfilter(loff_t *pos_p, struct sock *sk, cpt_context_t *ctx)
 }
 
 
+/*
+ * returns:
+ *   0 - success, pos_p updated
+ * > 0 - type of next object
+ * < 0 - error
+ */
 int rst_sock_attr(loff_t *pos_p, struct sock *sk, cpt_context_t *ctx)
 {
 	int err;
 	loff_t pos = *pos_p;
+	struct cpt_object_hdr hdr;
 
-	err = rst_sock_attr_skfilter(pos_p, sk, ctx);
-	if (err && pos == *pos_p)
+	err = rst_get_object(0, pos, &hdr, ctx);
+	if (err)
+		return err;
+
+	if (hdr.cpt_object == CPT_OBJ_SKFILTER)
+		err = rst_sock_attr_skfilter(pos_p, sk, ctx);
+	else if (hdr.cpt_object == CPT_OBJ_SOCK_MCADDR)
 		err = rst_sock_attr_mcfilter(pos_p, sk, ctx);
+	else
+		err = hdr.cpt_object;
+
 	return err;
 }
 
@@ -882,19 +895,17 @@ static int restore_unix_rqueue(struct sock *sk, struct cpt_sock_image *si,
 		struct sk_buff *skb;
 		struct sock *owner_sk;
 		__u32 owner;
+		int err;
+
+		err = rst_sock_attr(&pos, sk, ctx);
+		if (!err)
+			continue;
+		if (err < 0)
+			return err;
 
 		skb = rst_skb(sk, &pos, &owner, NULL, ctx);
-		if (IS_ERR(skb)) {
-			if (PTR_ERR(skb) == -EINVAL) {
-				int err;
-
-				err = rst_sock_attr(&pos, sk, ctx);
-				if (err)
-					return err;
-				continue;
-			}
+		if (IS_ERR(skb))
 			return PTR_ERR(skb);
-		}
 
 		owner_sk = unix_peer(sk);
 		if (owner != -1) {

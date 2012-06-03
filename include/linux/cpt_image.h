@@ -387,7 +387,8 @@ struct cpt_veinfo_image
 	__u32	rnd_va_space;
 	__u32	vpid_max;
 	__u32	__cpt_pad1;
-	__u64	reserved[7];
+	__u64	real_start_timespec_delta;
+	__u64	reserved[6];
 } __attribute__ ((aligned (8)));
 
 struct cpt_cgroup_image

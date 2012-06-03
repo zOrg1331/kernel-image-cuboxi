@@ -211,7 +211,8 @@ struct ve_struct {
 #endif
 
 /* per VE CPU stats*/
-	struct timespec		start_timespec;
+	struct timespec		start_timespec;		/* monotonic time */
+	struct timespec		real_start_timespec;	/* boot based time */
 	u64			start_jiffies;	/* Deprecated */
 
 	struct kstat_lat_pcpu_struct	sched_lat_ve;
