@@ -2573,6 +2573,7 @@ int cgroup_scan_tasks(struct cgroup_scanner *scan)
 		heap_free(&tmp_heap);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(cgroup_scan_tasks);
 
 /*
  * Stuff for reading the 'tasks'/'procs' files.

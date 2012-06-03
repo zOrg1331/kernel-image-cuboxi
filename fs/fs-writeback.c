@@ -611,9 +611,12 @@ static void __writeback_inodes_sb(struct super_block *sb,
  */
 #define MAX_WRITEBACK_PAGES     1024
 
-static inline bool over_bground_thresh(void)
+static inline bool over_bground_thresh(struct backing_dev_info *bdi)
 {
 	unsigned long background_thresh, dirty_thresh;
+
+	if (!bdi_cap_account_writeback(bdi) && bdi->dirty_exceeded)
+		return 1;
 
 	get_dirty_limits(&background_thresh, &dirty_thresh, NULL, NULL);
 
@@ -675,7 +678,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * writeback we write all inodes dirtied before us,
 		 * because we cannot dereference this ub pointer.
 		 */
-		if (work->for_background && !work->ub && !over_bground_thresh())
+		if (work->for_background && !work->ub && !over_bground_thresh(wb->bdi))
 			break;
 
 		wbc.more_io = 0;

@@ -1362,11 +1362,40 @@ static inline u64 sched_cfs_bandwidth_slice(void)
 	return (u64)sysctl_sched_cfs_bandwidth_slice * NSEC_PER_USEC;
 }
 
+static void restart_tg_idle_time_accounting(struct task_group *tg)
+{
+#ifdef CONFIG_SCHEDSTATS
+	int cpu;
+
+	if (tg == &root_task_group)
+		return;
+
+	/*
+	 * XXX: We call enqueue_sleeper/dequeue_sleeper without rq lock for
+	 * the sake of performance, because in the worst case this can only
+	 * lead to an idle/iowait period lost in stats.
+	 */
+	for_each_online_cpu(cpu) {
+		struct sched_entity *se = tg->se[cpu];
+		struct cfs_rq *cfs_rq = tg->cfs_rq[cpu];
+
+		if (!cfs_rq->load.weight) {
+			enqueue_sleeper(cfs_rq_of(se), se);
+			dequeue_sleeper(cfs_rq_of(se), se);
+		}
+	}
+#endif
+}
+
 static void update_cfs_bandwidth_idle_scale(struct cfs_bandwidth *cfs_b)
 {
 	u64 runtime = cfs_b->runtime;
 	u64 quota = cfs_b->quota;
 	u64 max_quota = ktime_to_ns(cfs_b->period) * num_online_cpus();
+	struct task_group *tg =
+		container_of(cfs_b, struct task_group, cfs_bandwidth);
+
+	restart_tg_idle_time_accounting(tg);
 
 	/*
 	 * idle_scale = quota_left / (period * nr_idle_cpus)

@@ -4,19 +4,49 @@
 #include <linux/file.h>
 #include <linux/pagemap.h>
 #include <linux/kthread.h>
+#include <linux/mount.h>
 
 #include <linux/ploop/ploop.h>
 
-static void kaio_queue_fsync_req(struct ploop_request * preq)
+#define KAIO_PREALLOC (128 * 1024 * 1024) /* 128 MB */
+
+/* This will be used as flag "ploop_kaio_open() succeeded" */
+static struct extent_map_tree
+{
+} dummy_em_tree;
+
+int ploop_kaio_open(struct file * file, int rdonly);
+int ploop_kaio_close(struct address_space * mapping, int rdonly);
+void ploop_kaio_downgrade(struct address_space * mapping);
+int ploop_kaio_upgrade(struct address_space * mapping);
+
+static int __kaio_truncate(struct ploop_io * io, struct file * file, u64 pos);
+static int kaio_truncate(struct ploop_io * io, struct file * file, __u32 a_h);
+
+static void __kaio_queue_fsync_req(struct ploop_request * preq, int prio)
 {
 	struct ploop_device * plo   = preq->plo;
 	struct ploop_delta  * delta = ploop_top_delta(plo);
 	struct ploop_io     * io    = &delta->io;
 
-	list_add_tail(&preq->list, &io->fsync_queue);
+	if (prio)
+		list_add(&preq->list, &io->fsync_queue);
+	else
+		list_add_tail(&preq->list, &io->fsync_queue);
+
 	io->fsync_qlen++;
 	if (waitqueue_active(&io->fsync_waitq))
 		wake_up_interruptible(&io->fsync_waitq);
+}
+
+static void kaio_queue_fsync_req(struct ploop_request * preq)
+{
+	__kaio_queue_fsync_req(preq, 0);
+}
+
+static void kaio_queue_trunc_req(struct ploop_request * preq)
+{
+	__kaio_queue_fsync_req(preq, 1);
 }
 
 static void kaio_complete_io_state(struct ploop_request * preq)
@@ -53,14 +83,19 @@ static void kaio_rw_aio_complete(u64 data, long res)
 	kaio_complete_io_request(preq);
 }
 
-static int kaio_kernel_submit(struct file *file, struct bio *bio, struct ploop_request * preq)
+static int kaio_kernel_submit(struct file *file, struct bio *bio,
+			      struct ploop_request * preq, iblock_t iblk)
 {
 	struct kiocb *iocb;
 	unsigned short op;
 	struct iov_iter iter;
 	struct bio_vec *bvec;
 	size_t nr_segs;
-	loff_t pos = (loff_t) bio->bi_sector << 9;
+	loff_t pos = (loff_t) bio->bi_sector;
+
+	pos = ((loff_t)iblk << preq->plo->cluster_log) |
+		(pos & ((1<<preq->plo->cluster_log) - 1));
+	pos <<= 9;
 
 	iocb = aio_kernel_alloc(GFP_NOIO);
 	if (!iocb)
@@ -98,11 +133,18 @@ kaio_submit(struct ploop_io *io, struct ploop_request * preq,
 
 	ploop_prepare_io_request(preq);
 
+	if (rw & (1<<BIO_RW)) {
+		loff_t off = sbl->head->bi_sector;
+		off = ((loff_t)iblk << preq->plo->cluster_log) |
+			(off & ((1<<preq->plo->cluster_log) - 1));
+		ploop_prepare_tracker(preq, off);
+	}
+
 	for (b = sbl->head; b != NULL; b = b->bi_next) {
 		int err;
 
 		atomic_inc(&preq->io_count);
-		err = kaio_kernel_submit(io->files.file, b, preq);
+		err = kaio_kernel_submit(io->files.file, b, preq, iblk);
 		if (err) {
 			ploop_set_error(preq, err);
 			ploop_complete_io_request(preq);
@@ -113,17 +155,14 @@ kaio_submit(struct ploop_io *io, struct ploop_request * preq,
 	kaio_complete_io_request(preq);
 }
 
-static void kaio_resubmit(struct ploop_request * preq)
+/* returns non-zero if and only if preq was resubmitted */
+static int kaio_resubmit(struct ploop_request * preq)
 {
 	struct ploop_delta * delta = ploop_top_delta(preq->plo);
 
 	switch (preq->eng_state) {
-	case PLOOP_E_INDEX_WB:
-	case PLOOP_E_DATA_WBI:
-		printk("Resubmit: state %lu is not supported yet!\n",
-		       preq->eng_state);
-		BUG();
-		break;
+	case PLOOP_E_ENTRY:
+		return 0;
 	case PLOOP_E_COMPLETE:
 	case PLOOP_E_RELOC_NULLIFY:
 		if (preq->aux_bio) {
@@ -140,6 +179,8 @@ static void kaio_resubmit(struct ploop_request * preq)
 		printk("Resubmit bad state %lu\n", preq->eng_state);
 		BUG();
 	}
+
+	return 1;
 }
 
 static int kaio_fsync_thread(void * data)
@@ -174,18 +215,28 @@ static int kaio_fsync_thread(void * data)
 		preq = list_entry(io->fsync_queue.next, struct ploop_request, list);
 		list_del(&preq->list);
 		io->fsync_qlen--;
-		plo->st.bio_fsync++;
+		if (!preq->prealloc_size)
+			plo->st.bio_fsync++;
 		spin_unlock_irq(&plo->lock);
 
-		err = vfs_fsync(file, file->f_path.dentry, 1);
-		if (err) {
-			ploop_set_error(preq, -EIO);
-		} else if (preq->req_rw & BIO_FLUSH) {
-			BUG_ON(!preq->req_size);
-			preq->req_rw &= ~BIO_FLUSH;
-			kaio_resubmit(preq);
-			spin_lock_irq(&plo->lock);
-			continue;
+		/* trick: preq->prealloc_size is actually new pos of eof */
+		if (preq->prealloc_size) {
+			err = kaio_truncate(io, io->files.file,
+					    preq->prealloc_size >> (plo->cluster_log + 9));
+			if (err)
+				ploop_set_error(preq, -EIO);
+		} else {
+			err = vfs_fsync(file, file->f_path.dentry, 1);
+			if (err) {
+				ploop_set_error(preq, -EIO);
+			} else if (preq->req_rw & BIO_FLUSH) {
+				BUG_ON(!preq->req_size);
+				preq->req_rw &= ~BIO_FLUSH;
+				if (kaio_resubmit(preq)) {
+					spin_lock_irq(&plo->lock);
+					continue;
+				}
+			}
 		}
 
 		spin_lock_irq(&plo->lock);
@@ -202,8 +253,104 @@ static void
 kaio_submit_alloc(struct ploop_io *io, struct ploop_request * preq,
 		 struct bio_list * sbl, unsigned int size)
 {
-	printk("kaio_submit_alloc: UNSUPPORTED !\n");
-	ploop_fail_request(preq, -EINVAL);
+	struct ploop_delta *delta = container_of(io, struct ploop_delta, io);
+	iblock_t iblk;
+	int log = preq->plo->cluster_log + 9;
+	loff_t clu_siz = 1 << log;
+	struct bio * b;
+	loff_t off;
+
+	if (delta->flags & PLOOP_FMT_RDONLY) {
+		ploop_fail_request(preq, -EBADF);
+		return;
+	}
+
+	iblk = io->alloc_head;
+
+	if (unlikely(preq->req_rw & BIO_FLUSH)) {
+		spin_lock_irq(&io->plo->lock);
+		kaio_queue_fsync_req(preq);
+		io->plo->st.bio_syncwait++;
+		spin_unlock_irq(&io->plo->lock);
+		return;
+	}
+
+	/* trick: preq->prealloc_size is actually new pos of eof */
+	if (unlikely(preq->prealloc_size)) {
+		BUG_ON(preq != io->prealloc_preq);
+		io->prealloc_preq = NULL;
+
+		io->prealloced_size = preq->prealloc_size - ((loff_t)iblk << log);
+		preq->prealloc_size = 0; /* only for sanity */
+	}
+
+	if (unlikely(io->prealloced_size < clu_siz)) {
+		if (!io->prealloc_preq) {
+			loff_t pos = (((loff_t)(iblk + 1)  << log) |
+				      (KAIO_PREALLOC - 1)) + 1;
+
+			BUG_ON(preq->prealloc_size);
+			preq->prealloc_size = pos;
+			io->prealloc_preq   = preq;
+
+			spin_lock_irq(&io->plo->lock);
+			kaio_queue_trunc_req(preq);
+			io->plo->st.bio_syncwait++;
+			spin_unlock_irq(&io->plo->lock);
+			return;
+		} else { /* we're not first */
+			list_add_tail(&preq->list,
+				      &io->prealloc_preq->delay_list);
+			return;
+		}
+	}
+
+	io->prealloced_size -= clu_siz;
+	io->alloc_head++;
+
+	preq->iblock = iblk;
+	preq->eng_state = PLOOP_E_DATA_WBI;
+
+	ploop_prepare_io_request(preq);
+
+	off = sbl->head->bi_sector;
+	off = ((loff_t)iblk << preq->plo->cluster_log) |
+		(off & ((1<<preq->plo->cluster_log) - 1));
+	ploop_prepare_tracker(preq, off);
+
+	for (b = sbl->head; b != NULL; b = b->bi_next) {
+		int err;
+
+		atomic_inc(&preq->io_count);
+		err = kaio_kernel_submit(io->files.file, b, preq, iblk);
+		if (err) {
+			ploop_set_error(preq, err);
+			ploop_complete_io_request(preq);
+			break;
+		}
+	}
+
+	kaio_complete_io_request(preq);
+}
+
+static int kaio_release_prealloced(struct ploop_io * io)
+{
+	int ret;
+
+	if (!io->prealloced_size)
+		return 0;
+
+	ret = kaio_truncate(io, io->files.file, io->alloc_head);
+	if (ret)
+		printk("Can't release %llu prealloced bytes: "
+		       "truncate to %llu failed (%d)\n",
+		       io->prealloced_size,
+		       (loff_t)io->alloc_head << (io->plo->cluster_log + 9),
+		       ret);
+	else
+		io->prealloced_size = 0;
+
+	return ret;
 }
 
 static void
@@ -216,6 +363,14 @@ kaio_destroy(struct ploop_io * io)
 		if (io->fsync_thread) {
 			kthread_stop(io->fsync_thread);
 			io->fsync_thread = NULL;
+		}
+
+		(void)kaio_release_prealloced(io);
+
+		if (io->files.em_tree) {
+			mutex_lock(&io->files.inode->i_mutex);
+			ploop_kaio_close(io->files.mapping, delta->flags & PLOOP_FMT_RDONLY);
+			mutex_unlock(&io->files.inode->i_mutex);
 		}
 
 		file = io->files.file;
@@ -250,19 +405,51 @@ kaio_init(struct ploop_io * io)
 }
 
 static void
+kaio_io_page(struct ploop_io * io, int op, struct ploop_request * preq,
+	     struct page * page, sector_t sec)
+{
+
+	struct kiocb *iocb;
+	struct iov_iter iter;
+	loff_t pos = (loff_t) sec << 9;
+	struct file *file = io->files.file;
+	int err;
+
+	ploop_prepare_io_request(preq);
+
+	iocb = aio_kernel_alloc(GFP_NOIO);
+	if (!iocb) {
+		ploop_set_error(preq, -ENOMEM);
+		goto out;
+	}
+
+	iov_iter_init_page(&iter, page, PAGE_SIZE, 0);
+	aio_kernel_init_iter(iocb, file, op, &iter, pos);
+	aio_kernel_init_callback(iocb, kaio_rw_aio_complete, (u64)preq);
+
+	atomic_inc(&preq->io_count);
+
+	err = aio_kernel_submit(iocb);
+	if (err)
+		ploop_set_error(preq, err);
+
+out:
+	ploop_complete_io_request(preq);
+}
+
+static void
 kaio_read_page(struct ploop_io * io, struct ploop_request * preq,
 		struct page * page, sector_t sec)
 {
-	printk("kaio_read_page: UNSUPPORTED !\n");
-	ploop_fail_request(preq, -EINVAL);
+	kaio_io_page(io, IOCB_CMD_READ_ITER, preq, page, sec);
 }
 
 static void
 kaio_write_page(struct ploop_io * io, struct ploop_request * preq,
 		 struct page * page, sector_t sec, int fua)
 {
-	printk("kaio_write_page: UNSUPPORTED !\n");
-	ploop_fail_request(preq, -EINVAL);
+	ploop_prepare_tracker(preq, sec);
+	kaio_io_page(io, IOCB_CMD_WRITE_ITER, preq, page, sec);
 }
 
 static int
@@ -279,32 +466,107 @@ kaio_sync_writevec(struct ploop_io * io, struct page ** pvec, unsigned int nr,
 	return -EINVAL;
 }
 
+struct kaio_comp {
+	struct completion comp;
+	atomic_t count;
+	int error;
+};
+
+static inline void kaio_comp_init(struct kaio_comp * c)
+{
+	init_completion(&c->comp);
+	atomic_set(&c->count, 1);
+	c->error = 0;
+}
+
+static void kaio_sync_io_complete(u64 data, long err)
+{
+
+	struct kaio_comp *comp = (struct kaio_comp *) data;
+
+	if (unlikely(err < 0)) {
+		if (!comp->error)
+			comp->error = err;
+	}
+
+	if (atomic_dec_and_test(&comp->count))
+		complete(&comp->comp);
+}
+
+static int
+kaio_sync_io(struct ploop_io * io, int op, struct page * page,
+	     unsigned int len, unsigned int off, sector_t sec)
+{
+	struct kiocb *iocb;
+	struct iov_iter iter;
+	struct bio_vec bvec;
+	loff_t pos = (loff_t) sec << 9;
+	struct file *file = io->files.file;
+	struct kaio_comp comp;
+	int err;
+
+	kaio_comp_init(&comp);
+
+	iocb = aio_kernel_alloc(GFP_NOIO);
+	if (!iocb)
+		return -ENOMEM;
+
+	bvec.bv_page = page;
+	bvec.bv_len = len;
+	bvec.bv_offset = off;
+
+	iov_iter_init_bvec(&iter, &bvec, 1, bvec_length(&bvec, 1), 0);
+	aio_kernel_init_iter(iocb, file, op, &iter, pos);
+	aio_kernel_init_callback(iocb, kaio_sync_io_complete, (u64)&comp);
+
+	atomic_inc(&comp.count);
+
+	err = aio_kernel_submit(iocb);
+	if (err) {
+		comp.error = err;
+		if (atomic_dec_and_test(&comp.count))
+			complete(&comp.comp);
+	}
+
+	if (atomic_dec_and_test(&comp.count))
+		complete(&comp.comp);
+
+	wait_for_completion(&comp.comp);
+
+	return comp.error;
+}
+
 static int
 kaio_sync_read(struct ploop_io * io, struct page * page, unsigned int len,
 		unsigned int off, sector_t sec)
 {
-	printk("kaio_sync_read: UNSUPPORTED !\n");
-	return -EINVAL;
+	return kaio_sync_io(io, IOCB_CMD_READ_ITER, page, len, off, sec);
 }
 
 static int
 kaio_sync_write(struct ploop_io * io, struct page * page, unsigned int len,
 		 unsigned int off, sector_t sec)
 {
-	printk("kaio_sync_write: UNSUPPORTED !\n");
-	return -EINVAL;
+	int ret;
+
+	ret = kaio_sync_io(io, IOCB_CMD_WRITE_ITER, page, len, off, sec);
+
+	if (sec < io->plo->track_end)
+		ploop_tracker_notify(io->plo, sec);
+
+	return ret;
 }
 
 static int kaio_alloc_sync(struct ploop_io * io, loff_t pos, loff_t len)
 {
-	printk("kaio_alloc_sync: UNSUPPORTED !\n");
-	return -EINVAL;
+	return __kaio_truncate(io, io->files.file, pos + len);
 }
 
 static int kaio_open(struct ploop_io * io)
 {
 	struct file * file = io->files.file;
 	struct ploop_delta * delta = container_of(io, struct ploop_delta, io);
+	int err;
 
 	if (file == NULL)
 		return -EBADF;
@@ -313,12 +575,23 @@ static int kaio_open(struct ploop_io * io)
 	io->files.inode = io->files.mapping->host;
 	io->files.bdev = io->files.inode->i_sb->s_bdev;
 
+	mutex_lock(&io->files.inode->i_mutex);
+	err = ploop_kaio_open(file, delta->flags & PLOOP_FMT_RDONLY);
+	mutex_unlock(&io->files.inode->i_mutex);
+
+	if (err)
+		return err;
+
+	io->files.em_tree = &dummy_em_tree;
+
 	if (!(delta->flags & PLOOP_FMT_RDONLY)) {
 		io->fsync_thread = kthread_create(kaio_fsync_thread,
 						  io, "ploop_fsync%d",
 						  delta->plo->index);
-		if (io->fsync_thread == NULL)
+		if (io->fsync_thread == NULL) {
+			ploop_kaio_close(io->files.mapping, 0);
 			return -ENOMEM;
+		}
 
 		wake_up_process(io->fsync_thread);
 	}
@@ -328,33 +601,138 @@ static int kaio_open(struct ploop_io * io)
 
 static int kaio_prepare_snapshot(struct ploop_io * io, struct ploop_snapdata *sd)
 {
-	printk("kaio_prepare_snapshot: UNSUPPORTED !\n");
-	return -EINVAL;
+	struct file * file = io->files.file;
+	int err;
+
+	file = dentry_open(dget(F_DENTRY(file)), mntget(F_MNT(file)), O_RDONLY|O_LARGEFILE, current_cred());
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	/* Sanity checks */
+	if (io->files.mapping != file->f_mapping ||
+	    io->files.inode != file->f_mapping->host) {
+		fput(file);
+		return -EINVAL;
+	}
+
+	err = vfs_fsync(file, file->f_path.dentry, 0);
+	if (err) {
+		fput(file);
+		return err;
+	}
+
+	sd->file = file;
+	return 0;
 }
 
 static int kaio_complete_snapshot(struct ploop_io * io, struct ploop_snapdata *sd)
 {
-	printk("kaio_complete_snapshot: UNSUPPORTED !\n");
-	return -EINVAL;
+	struct file * file = io->files.file;
+	int ret;
+
+	ret = kaio_release_prealloced(io);
+	if (ret)
+		return ret;
+
+	mutex_lock(&io->plo->sysfs_mutex);
+	io->files.file = sd->file;
+	sd->file = NULL;
+	mutex_unlock(&io->plo->sysfs_mutex);
+
+	ploop_kaio_downgrade(io->files.mapping);
+
+	if (io->fsync_thread) {
+		kthread_stop(io->fsync_thread);
+		io->fsync_thread = NULL;
+	}
+
+	fput(file);
+	return 0;
 }
 
 static int kaio_prepare_merge(struct ploop_io * io, struct ploop_snapdata *sd)
 {
-	printk("kaio_prepare_merge: UNSUPPORTED !\n");
-	return -EINVAL;
+	struct file * file = io->files.file;
+	int err;
+
+	file = dentry_open(dget(F_DENTRY(file)), mntget(F_MNT(file)), O_RDWR|O_LARGEFILE, current_cred());
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	/* Sanity checks */
+	if (io->files.mapping != file->f_mapping ||
+	    io->files.inode != file->f_mapping->host) {
+		err = -EINVAL;
+		goto prep_merge_done;
+	}
+
+	err = vfs_fsync(file, file->f_path.dentry, 0);
+	if (err)
+		goto prep_merge_done;
+
+	err = ploop_kaio_upgrade(io->files.mapping);
+	if (err)
+		goto prep_merge_done;
+
+	io->fsync_thread = kthread_create(kaio_fsync_thread,
+					  io, "ploop_fsync%d",
+					  io->plo->index);
+	if (io->fsync_thread == NULL) {
+		err = -ENOMEM;
+		goto prep_merge_done;
+	}
+
+	wake_up_process(io->fsync_thread);
+
+	sd->file = file;
+
+prep_merge_done:
+	if (err)
+		fput(file);
+	return err;
 }
 
 static int kaio_start_merge(struct ploop_io * io, struct ploop_snapdata *sd)
 {
-	printk("kaio_start_merge: UNSUPPORTED !\n");
-	return -EINVAL;
+	struct file * file = io->files.file;
+
+	mutex_lock(&io->plo->sysfs_mutex);
+	io->files.file = sd->file;
+	sd->file = NULL;
+	mutex_unlock(&io->plo->sysfs_mutex);
+
+	fput(file);
+	return 0;
+}
+
+static int __kaio_truncate(struct ploop_io * io, struct file * file, u64 pos)
+{
+	int err;
+	struct iattr newattrs;
+
+	if (file->f_mapping != io->files.mapping)
+		return -EINVAL;
+
+	newattrs.ia_size  = pos;
+	newattrs.ia_valid = ATTR_SIZE;
+
+	mutex_lock(&io->files.inode->i_mutex);
+	io->files.inode->i_flags &= ~S_SWAPFILE;
+	err = notify_change(F_DENTRY(file), &newattrs);
+	io->files.inode->i_flags |= S_SWAPFILE;
+	mutex_unlock(&io->files.inode->i_mutex);
+
+	if (!err)
+		err = vfs_fsync(file, file->f_path.dentry, 0);
+
+	return err;
 }
 
 static int kaio_truncate(struct ploop_io * io, struct file * file,
 			  __u32 alloc_head)
 {
-	printk("kaio_truncate: UNSUPPORTED !\n");
-	return -EINVAL;
+	return __kaio_truncate(io, file,
+			       (u64)alloc_head << (io->plo->cluster_log + 9));
 }
 
 static void kaio_unplug(struct ploop_io * io)

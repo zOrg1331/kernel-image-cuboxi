@@ -789,6 +789,9 @@ struct rq {
 	struct list_head leaf_rt_rq_list;
 #endif
 
+	/* nr_running last seen in update_cpu_load() */
+	unsigned long nr_active;
+
 	/*
 	 * This is part of a global counter where only the total sum
 	 * over all CPUs matters. A task can increase this counter on
@@ -3276,10 +3279,10 @@ unsigned long nr_iowait_cpu(void)
 	return atomic_read(&this->nr_iowait);
 }
 
-unsigned long this_cpu_load(void)
+unsigned long nr_active_cpu(void)
 {
 	struct rq *this = this_rq();
-	return this->cpu_load[0];
+	return this->nr_active;
 }
 
 #ifdef CONFIG_VE
@@ -3511,6 +3514,7 @@ static void update_cpu_load(struct rq *this_rq)
 	this_rq->last_load_update_tick = curr_jiffies;
 
 	/* Update our load: */
+	this_rq->nr_active = this_rq->nr_running;
 	this_rq->cpu_load[0] = this_load; /* Fasttrack for idx 0 */
 	for (i = 1, scale = 2; i < CPU_LOAD_IDX_MAX; i++, scale += scale) {
 		unsigned long old_load, new_load;

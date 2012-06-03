@@ -285,8 +285,8 @@ int ip6_mc_input(struct sk_buff *skb)
 					/* BUG */
 					goto out;
 				}
-				offset = ipv6_skip_exthdr(skb, sizeof(*hdr),
-							  &nexthdr, &frag_off);
+				offset = __ipv6_skip_exthdr(skb, sizeof(*hdr),
+							    &nexthdr, &frag_off);
 				if (offset < 0)
 					goto out;
 

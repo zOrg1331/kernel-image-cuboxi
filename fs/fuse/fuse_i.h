@@ -46,6 +46,12 @@
 /* This means, that the userspace can reconnect back to the mountpoint */
 #define FUSE_CAN_RECONNECT	(1 << 2)
 
+/* Enable write-back cache */
+#define FUSE_WBCACHE		(1 << 3)
+
+/* Enable direct access */
+#define FUSE_ODIRECT		(1 << 4)
+
 /** List of active connections */
 #ifdef CONFIG_VE
 #define fuse_conn_list	(get_exec_env()->_fuse_conn_list)
@@ -414,14 +420,6 @@ struct fuse_conn {
 	/** Connection established, cleared on umount, connection
 	    abort and device release */
 	unsigned connected;
-
-	/** Extended caps (under development) */
-	unsigned ext_caps;
-
-#define FUSE_WBCACHE	0x1
-#define FUSE_WRITEPAGES	0x2
-#define FUSE_ODIRECT	0x4
-#define FUSE_KAIO	0x8
 
 	/** Connection failed (version mismatch).  Cannot race with
 	    setting other bitfields since it is only set once in INIT

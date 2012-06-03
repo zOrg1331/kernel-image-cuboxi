@@ -546,7 +546,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * catch-up. This avoids (excessively) small writeouts
 		 * when the bdi limits are ramping up.
 		 */
-		if (nr_reclaimable + nr_writeback <
+		if (bdi_cap_account_writeback(bdi) &&
+		    nr_reclaimable + nr_writeback <
 				(background_thresh + dirty_thresh) / 2 &&
 		    ub_dirty + ub_writeback <
 				(ub_background_thresh + ub_thresh) / 2)

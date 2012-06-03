@@ -129,7 +129,13 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk,
 		return 0;
 
 	if (!force_admin) {
-		if (!capable(CAP_SYS_ADMIN)) {
+		if (!capable(CAP_SYS_ADMIN) && !capable(CAP_VE_SYS_ADMIN)) {
+			err = -EPERM;
+			goto out;
+		}
+
+		if (!capable(CAP_SYS_ADMIN) &&
+		    (flags & (CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET))) {
 			err = -EPERM;
 			goto out;
 		}
@@ -213,7 +219,11 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 			       CLONE_NEWNET)))
 		return 0;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN) && !capable(CAP_VE_SYS_ADMIN))
+		return -EPERM;
+
+	if (!capable(CAP_SYS_ADMIN) &&
+	    (unshare_flags & (CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET)))
 		return -EPERM;
 
 	if (unshare_flags & CLONE_NEWNET)

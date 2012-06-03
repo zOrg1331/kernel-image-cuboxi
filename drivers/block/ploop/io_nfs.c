@@ -695,7 +695,8 @@ static void nfsio_destroy(struct ploop_io * io)
 		struct file * file = io->files.file;
 		mutex_lock(&io->plo->sysfs_mutex);
 		io->files.file = NULL;
-		(void)invalidate_inode_pages2(io->files.mapping);
+		if (io->files.mapping)
+			(void)invalidate_inode_pages2(io->files.mapping);
 		mutex_unlock(&io->plo->sysfs_mutex);
 		fput(file);
 	}
@@ -1317,8 +1318,12 @@ static int nfsio_open(struct ploop_io * io)
 	if (file == NULL)
 		return -EBADF;
 
-	if (strcmp(file->f_mapping->host->i_sb->s_type->name, "nfs"))
+	if (strcmp(file->f_mapping->host->i_sb->s_type->name, "nfs")) {
+		printk("nfsio_open for ploop%d failed: %s is not supported; "
+		       "use '-o vers=3' mounting nfs\n", io->plo->index,
+		       file->f_mapping->host->i_sb->s_type->name);
 		return -EINVAL;
+	}
 
 	if (NFS_SERVER(file->f_mapping->host)->wsize < PAGE_SIZE ||
 	    NFS_SERVER(file->f_mapping->host)->rsize < PAGE_SIZE)

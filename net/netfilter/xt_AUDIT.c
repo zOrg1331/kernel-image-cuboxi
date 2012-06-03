@@ -108,8 +108,8 @@ static void audit_ip6(struct audit_buffer *ab, struct sk_buff *skb)
 	}
 
 	nexthdr = ih->nexthdr;
-	offset = ipv6_skip_exthdr(skb, skb_network_offset(skb) + sizeof(_ip6h),
-				  &nexthdr, &frag_off);
+	offset = __ipv6_skip_exthdr(skb, skb_network_offset(skb) + sizeof(_ip6h),
+				    &nexthdr, &frag_off);
 
 	audit_log_format(ab, " saddr=%pI6c daddr=%pI6c proto=%hhu",
 			 &ih->saddr, &ih->daddr, nexthdr);

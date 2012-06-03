@@ -371,18 +371,19 @@ const u16 EXP_ARR[3][EXP_ARR_SIZ] = {
 /*
  * Assumption:
  * cfqq->service_tree always points to cfqq->cfqg->service_tree[i][j]
- * for some 'i' and 'j'. The only exception is service_tree_idle.
+ * for some 'i' and 'j'. Exception are service_tree_idle and
+ * required according isolation logic in cfq_service_tree_add
  */
-static inline int cfq_get_idx_by_st(struct cfq_queue *cfqq)
+static inline int cfq_get_idx_by_st(struct cfq_queue *cfqq, struct cfq_group *cfqg)
 {
 	int max_idx = sizeof(((struct cfq_data *)NULL)->st_counts) /
 		sizeof(((struct cfq_data *)NULL)->st_counts[0]) - 1;
 	int idx;
 
-	if (unlikely(cfqq->service_tree == &cfqq->cfqg->service_tree_idle))
+	if (unlikely(cfqq->service_tree == &cfqg->service_tree_idle))
 		return max_idx;
 
-	idx = cfqq->service_tree - &cfqq->cfqg->service_trees[0][0];
+	idx = cfqq->service_tree - &cfqg->service_trees[0][0];
 	BUG_ON(idx < 0);
 	BUG_ON(idx >= max_idx);
 	return idx;
@@ -1286,7 +1287,7 @@ static void cfq_put_cfqg(struct cfq_group *cfqg)
 		return;
 	for_each_cfqg_st(cfqg, i, j, st)
 		BUG_ON(!RB_EMPTY_ROOT(&st->rb) || st->active != NULL);
-	free_percpu(cfqg->blkg.stats_cpu);
+	blkio_free_blkg_stats(&cfqg->blkg);
 	kfree(cfqg->blkg.dev_name);
 	kfree(cfqg);
 }
@@ -1384,6 +1385,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	int left;
 	int new_cfqq = 1;
 	int group_changed = 0;
+	struct cfq_group *orig_group = cfqq->cfqg;
 
 #ifdef CONFIG_CFQ_GROUP_IOSCHED
 	if (!cfqd->cfq_group_isolation
@@ -1446,7 +1448,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		    cfqq->service_tree == service_tree)
 			return;
 
-		cfqd->st_counts[cfq_get_idx_by_st(cfqq)]--;
+		cfqd->st_counts[cfq_get_idx_by_st(cfqq, orig_group)]--;
 		cfq_rb_erase(&cfqq->rb_node, cfqq->service_tree);
 		cfqq->service_tree = NULL;
 	}
@@ -1481,7 +1483,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	rb_link_node(&cfqq->rb_node, parent, p);
 	rb_insert_color(&cfqq->rb_node, &service_tree->rb);
 	service_tree->count++;
-	cfqd->st_counts[cfq_get_idx_by_st(cfqq)]++;
+	cfqd->st_counts[cfq_get_idx_by_st(cfqq, cfqq->cfqg)]++;
 	if ((add_front || !new_cfqq) && !group_changed)
 		return;
 	cfq_group_notify_queue_add(cfqd, cfqq->cfqg);
@@ -1587,7 +1589,7 @@ static void cfq_del_cfqq_rr(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	cfq_clear_cfqq_on_rr(cfqq);
 
 	if (!RB_EMPTY_NODE(&cfqq->rb_node)) {
-		cfqd->st_counts[cfq_get_idx_by_st(cfqq)]--;
+		cfqd->st_counts[cfq_get_idx_by_st(cfqq, cfqq->cfqg)]--;
 		cfq_rb_erase(&cfqq->rb_node, cfqq->service_tree);
 		cfqq->service_tree = NULL;
 	}
@@ -2116,7 +2118,7 @@ static bool cfq_should_idle(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	 * of service tree among all cfq-groups as well.
 	 */
 	if (CFQD_DISK_LOOKS_FAST(cfqd))
-		count = cfqd->st_counts[cfq_get_idx_by_st(cfqq)];
+		count = cfqd->st_counts[cfq_get_idx_by_st(cfqq, cfqq->cfqg)];
 	else
 		count = service_tree->count;
 
@@ -4159,7 +4161,7 @@ static void cfq_exit_queue(struct elevator_queue *e)
 
 #ifdef CONFIG_CFQ_GROUP_IOSCHED
 	/* Free up per cpu stats for root group */
-	free_percpu(cfqd->root_group.blkg.stats_cpu);
+	blkio_free_blkg_stats(&cfqd->root_group.blkg);
 #endif
 	kfree(cfqd);
 }

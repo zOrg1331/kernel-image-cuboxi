@@ -66,8 +66,8 @@ int ipv6_ext_hdr(u8 nexthdr)
  * --ANK (980726)
  */
 
-int ipv6_skip_exthdr(const struct sk_buff *skb, int start, u8 *nexthdrp,
-		     __be16 *frag_offp)
+int __ipv6_skip_exthdr(const struct sk_buff *skb, int start, u8 *nexthdrp,
+		       __be16 *frag_offp)
 {
 	u8 nexthdr = *nexthdrp;
 
@@ -109,5 +109,15 @@ int ipv6_skip_exthdr(const struct sk_buff *skb, int start, u8 *nexthdrp,
 	return start;
 }
 
+/*
+ * This is compatibility function, to support external modules
+ */
+int ipv6_skip_exthdr(const struct sk_buff *skb, int start, u8 *nexthdrp)
+{
+	__be16 frag_offp;
+	return __ipv6_skip_exthdr(skb, start, nexthdrp, &frag_offp);
+}
+
 EXPORT_SYMBOL(ipv6_ext_hdr);
+EXPORT_SYMBOL(__ipv6_skip_exthdr);
 EXPORT_SYMBOL(ipv6_skip_exthdr);

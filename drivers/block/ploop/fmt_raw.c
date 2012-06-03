@@ -47,6 +47,9 @@ raw_open(struct ploop_delta * delta)
 	pos += (1 << (cluster_log + 9)) - 1;
 	delta->io.alloc_head = pos >> (cluster_log + 9);
 
+	/* no more allocations at all */
+	delta->flags |= PLOOP_FMT_PREALLOCATED;
+
 	return 0;
 }
 

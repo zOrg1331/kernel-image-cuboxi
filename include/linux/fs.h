@@ -654,6 +654,30 @@ static inline struct bio_vec *iov_iter_bvec(struct iov_iter *i)
 	return (struct bio_vec *)i->data;
 }
 
+extern struct iov_iter_ops ii_page_ops;
+
+static inline void iov_iter_init_page(struct iov_iter *i,
+				      struct page *page,
+				      size_t count, size_t written)
+{
+	i->ops = &ii_page_ops;
+	i->data = (unsigned long)page;
+	i->nr_segs = 1;
+	i->iov_offset = 0;
+	i->count = count + written;
+
+	iov_iter_advance(i, written);
+}
+static inline int iov_iter_has_page(struct iov_iter *i)
+{
+	return i->ops == &ii_page_ops;
+}
+static inline struct page *iov_iter_page(struct iov_iter *i)
+{
+	BUG_ON(!iov_iter_has_page(i));
+	return (struct page *)i->data;
+}
+
 extern struct iov_iter_ops ii_iovec_ops;
 
 static inline void iov_iter_init(struct iov_iter *i,
@@ -734,6 +758,8 @@ struct address_space_operations {
 			loff_t offset, unsigned long nr_segs);
 	ssize_t (*direct_IO_bvec)(int, struct kiocb *, struct bio_vec *bvec,
 			loff_t offset, unsigned long bvec_len);
+	ssize_t (*direct_IO_page)(int, struct kiocb *, struct page *page,
+			loff_t offset);
 	int (*get_xip_mem)(struct address_space *, pgoff_t, int,
 						void **, unsigned long *);
 	/* migrate the contents of a page to the specified target */

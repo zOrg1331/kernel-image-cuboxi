@@ -756,6 +756,13 @@ static int cpt_dump_veinfo(cpt_context_t *ctx)
 	i->start_timespec_delta = cpt_timespec_export(&delta);
 	i->start_jiffies_delta = get_jiffies_64() - ve->start_jiffies;
 
+	do_posix_clock_monotonic_gettime(&delta);
+	monotonic_to_bootbased(&delta);
+	_set_normalized_timespec(&delta,
+			delta.tv_sec - ve->real_start_timespec.tv_sec,
+			delta.tv_nsec - ve->real_start_timespec.tv_nsec);
+	i->real_start_timespec_delta = cpt_timespec_export(&delta);
+
 	i->last_pid = ve->ve_ns->pid_ns->last_pid;
 	i->rnd_va_space	= ve->_randomize_va_space + 1;
 	i->vpid_max = ve->ve_ns->pid_ns->pid_max;

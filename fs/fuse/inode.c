@@ -21,7 +21,6 @@
 #include <linux/sched.h>
 #include <linux/exportfs.h>
 #include <linux/ve_proto.h>
-#include <linux/sysctl.h>
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Filesystem in Userspace");
@@ -32,7 +31,6 @@ static struct kmem_cache *fuse_inode_cachep;
 struct list_head fuse_conn_list;
 #endif
 DEFINE_MUTEX(fuse_mutex);
-static int fuse_ext_caps = -1;
 
 static int set_global_limit(const char *val, struct kernel_param *kp);
 
@@ -412,6 +410,8 @@ enum {
 	OPT_CAN_RECONNECT,
 	OPT_MAX_READ,
 	OPT_BLKSIZE,
+	OPT_WBCACHE,
+	OPT_ODIRECT,
 	OPT_ERR
 };
 
@@ -425,6 +425,8 @@ static const match_table_t tokens = {
 	{OPT_CAN_RECONNECT,		"can_reconnect"},
 	{OPT_MAX_READ,			"max_read=%u"},
 	{OPT_BLKSIZE,			"blksize=%u"},
+	{OPT_WBCACHE,			"writeback_enable"},
+	{OPT_ODIRECT,			"direct_enable"},
 	{OPT_ERR,			NULL}
 };
 
@@ -498,6 +500,18 @@ static int parse_fuse_opt(char *opt, struct fuse_mount_data *d, int is_bdev)
 			d->blksize = value;
 			break;
 
+		case OPT_WBCACHE:
+			if (!ve_is_super(get_exec_env()))
+				return -EPERM;
+			d->flags |= FUSE_WBCACHE;
+			break;
+
+		case OPT_ODIRECT:
+			if (!ve_is_super(get_exec_env()))
+				return -EPERM;
+			d->flags |= FUSE_ODIRECT;
+			break;
+
 		default:
 			return 0;
 		}
@@ -522,6 +536,10 @@ static int fuse_show_options(struct seq_file *m, struct vfsmount *mnt)
 		seq_puts(m, ",allow_other");
 	if (fc->flags & FUSE_CAN_RECONNECT)
 		seq_puts(m, ",can_reconnect");
+	if (fc->flags & FUSE_WBCACHE)
+		seq_puts(m, ",writeback_enable");
+	if (fc->flags & FUSE_ODIRECT)
+		seq_puts(m, ",direct_enable");
 	if (fc->max_read != ~0)
 		seq_printf(m, ",max_read=%u", fc->max_read);
 	if (mnt->mnt_sb->s_bdev &&
@@ -991,7 +1009,6 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	fc->user_id = d.user_id;
 	fc->group_id = d.group_id;
 	fc->max_read = max_t(unsigned, 4096, d.max_read);
-	fc->ext_caps = fuse_ext_caps;
 
 	/* Used by get_root_inode() */
 	sb->s_fs_info = fc;
@@ -1192,35 +1209,6 @@ static void fuse_fs_cleanup(void)
 	kmem_cache_destroy(fuse_inode_cachep);
 }
 
-static struct ctl_table fuse_table[] = {
-	{
-		.ctl_name = CTL_UNNUMBERED,
-		.procname = "fuse_ext_caps",
-		.data = &fuse_ext_caps,
-		.proc_handler = proc_dointvec,
-		.maxlen = sizeof(fuse_ext_caps),
-		.mode = 0600,
-	},
-	{ },
-};
-
-static const struct ctl_path fs_path[] = {
-	{ .procname = "fs", .ctl_name = CTL_FS, }, { },
-};
-
-static struct ctl_table_header *fuse_hdr;
-
-static int fuse_sysctl_init(void)
-{
-	fuse_hdr = register_sysctl_paths(fs_path, fuse_table);
-	return fuse_hdr ? 0 : -ENOMEM;
-}
-
-static void fuse_sysctl_cleanup(void)
-{
-	unregister_sysctl_table(fuse_hdr);
-}
-
 static struct kobject *fuse_kobj;
 static struct kobject *connections_kobj;
 
@@ -1311,18 +1299,12 @@ static int __init fuse_init(void)
 	if (res)
 		goto err_sysfs_cleanup;
 
-	res = fuse_sysctl_init();
-	if (res)
-		goto err_ctl_cleanup;
-
 	ve_hook_register(VE_SS_CHAIN, &fuse_ve_hook);
 	sanitize_global_limit(&max_user_bgreq);
 	sanitize_global_limit(&max_user_congthresh);
 
 	return 0;
 
-err_ctl_cleanup:
-	fuse_ctl_cleanup();
  err_sysfs_cleanup:
 	fuse_sysfs_cleanup();
  err_dev_cleanup:
@@ -1338,7 +1320,6 @@ static void __exit fuse_exit(void)
 	printk(KERN_DEBUG "fuse exit\n");
 
 	ve_hook_unregister(&fuse_ve_hook);
-	fuse_sysctl_cleanup();
 	fuse_ctl_cleanup();
 	fuse_sysfs_cleanup();
 	fuse_fs_cleanup();

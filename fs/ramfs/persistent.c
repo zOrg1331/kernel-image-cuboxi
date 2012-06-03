@@ -585,6 +585,13 @@ static inline const char *pram_fs_node_basename(struct super_block *sb,
 	return buf;
 }
 
+/*
+ * Meta and data streams must be opened and closed atomically, otherwise we can
+ * get a data storage without corresponding meta storage, which will lead to
+ * open_streams() failures.
+ */
+static DEFINE_MUTEX(streams_mutex);
+
 static int open_streams(struct super_block *sb, int mode,
 			struct pram_stream *meta_stream,
 			struct pram_stream *data_stream)
@@ -600,10 +607,12 @@ static int open_streams(struct super_block *sb, int mode,
 	pram_fs_node_basename(sb, buf, PAGE_SIZE);
 	basename_len = strlen(buf);
 
+	mutex_lock(&streams_mutex);
+
 	strlcat(buf, "meta", PAGE_SIZE);
 	err = pram_open(buf, mode, meta_stream);
 	if (err)
-		goto out_free_buf;
+		goto out_unlock;
 
 	buf[basename_len] = '\0';
 	strlcat(buf, "data", PAGE_SIZE);
@@ -611,12 +620,14 @@ static int open_streams(struct super_block *sb, int mode,
 	if (err)
 		goto out_close_meta;
 
+	mutex_unlock(&streams_mutex);
 	free_page((unsigned long)buf);
 	return 0;
 
 out_close_meta:
 	pram_close(meta_stream, -1);
-out_free_buf:
+out_unlock:
+	mutex_unlock(&streams_mutex);
 	free_page((unsigned long)buf);
 out:
 	return err;
@@ -625,8 +636,10 @@ out:
 static inline void close_streams(struct pram_stream *meta_stream,
 				 struct pram_stream *data_stream, int err)
 {
+	mutex_lock(&streams_mutex);
 	pram_close(meta_stream, err);
 	pram_close(data_stream, err);
+	mutex_unlock(&streams_mutex);
 }
 
 static void save_pram_fs(struct super_block *sb)

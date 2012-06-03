@@ -377,3 +377,98 @@ struct iov_iter_ops ii_bvec_ops = {
 };
 EXPORT_SYMBOL(ii_bvec_ops);
 
+/* Functions to get on with single page */
+
+static size_t page_copy_tofrom_page(struct iov_iter *iter, struct page *page,
+				    unsigned long page_offset, size_t bytes,
+				    int topage)
+{
+	struct page *ipage = (struct page *)iter->data;
+	size_t ipage_offset = iter->iov_offset;
+	void *ipage_map;
+	void *page_map;
+
+	BUG_ON(bytes > iter->count);
+	BUG_ON(bytes > PAGE_SIZE - ipage_offset);
+	BUG_ON(ipage_offset >= PAGE_SIZE);
+
+	page_map = kmap_atomic(page, KM_USER0);
+	ipage_map = kmap_atomic(ipage, KM_USER1);
+
+	if (topage)
+		memcpy(page_map + page_offset,
+		       ipage_map + ipage_offset,
+		       bytes);
+	else
+		memcpy(ipage_map + ipage_offset,
+		       page_map + page_offset,
+		       bytes);
+
+	kunmap_atomic(ipage_map, KM_USER1);
+	kunmap_atomic(page_map, KM_USER0);
+
+	return bytes;
+}
+
+size_t ii_page_copy_to_user_atomic(struct page *page, struct iov_iter *i,
+				   unsigned long offset, size_t bytes)
+{
+	return page_copy_tofrom_page(i, page, offset, bytes, 0);
+}
+size_t ii_page_copy_to_user(struct page *page, struct iov_iter *i,
+				   unsigned long offset, size_t bytes)
+{
+	return page_copy_tofrom_page(i, page, offset, bytes, 0);
+}
+size_t ii_page_copy_from_user_atomic(struct page *page, struct iov_iter *i,
+				     unsigned long offset, size_t bytes)
+{
+	return page_copy_tofrom_page(i, page, offset, bytes, 1);
+}
+size_t ii_page_copy_from_user(struct page *page, struct iov_iter *i,
+			      unsigned long offset, size_t bytes)
+{
+	return page_copy_tofrom_page(i, page, offset, bytes, 1);
+}
+
+void ii_page_advance(struct iov_iter *i, size_t bytes)
+{
+	BUG_ON(i->count < bytes);
+	BUG_ON(i->iov_offset >= PAGE_SIZE);
+	BUG_ON(bytes > PAGE_SIZE - i->iov_offset);
+
+	i->iov_offset += bytes;
+	i->count      -= bytes;
+}
+
+/*
+ * pages pointed to by bio_vecs are always pinned.
+ */
+int ii_page_fault_in_readable(struct iov_iter *i, size_t bytes)
+{
+	return 0;
+}
+
+size_t ii_page_single_seg_count(struct iov_iter *i)
+{
+	BUG_ON(i->nr_segs != 1);
+
+	return i->count;
+}
+
+static int ii_page_shorten(struct iov_iter *i, size_t count)
+{
+	return -EINVAL;
+}
+
+struct iov_iter_ops ii_page_ops = {
+	.ii_copy_to_user_atomic = ii_page_copy_to_user_atomic,
+	.ii_copy_to_user = ii_page_copy_to_user,
+	.ii_copy_from_user_atomic = ii_page_copy_from_user_atomic,
+	.ii_copy_from_user = ii_page_copy_from_user,
+	.ii_advance = ii_page_advance,
+	.ii_fault_in_readable = ii_page_fault_in_readable,
+	.ii_single_seg_count = ii_page_single_seg_count,
+	.ii_shorten = ii_page_shorten,
+};
+EXPORT_SYMBOL(ii_page_ops);

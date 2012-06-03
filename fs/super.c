@@ -607,8 +607,12 @@ int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
 
 	if (sb->s_op->remount_fs) {
 		retval = sb->s_op->remount_fs(sb, &flags, data);
-		if (retval)
+		if (retval) {
+			/* Remount failed, fallback quota to original state */
+			if (remount_ro)
+				vfs_dq_quota_on_remount(sb);
 			return retval;
+		}
 	}
 	sb->s_flags = (sb->s_flags & ~MS_RMT_MASK) | (flags & MS_RMT_MASK);
 	if (remount_rw)

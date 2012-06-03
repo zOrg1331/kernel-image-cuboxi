@@ -8,14 +8,23 @@
 
 static int cgroup_index = 0;
 
+static void cpt_dump_one_cgroup_pid(struct task_struct *task,
+				struct cgroup_scanner *scan)
+{
+	struct cpt_context *ctx = scan->data;
+	u32 pid;
+
+	pid = task_pid_vnr(task);
+	BUG_ON(!pid);
+	ctx->write(&pid, sizeof(pid), ctx);
+}
+
 static int cpt_dump_one_cgroup(struct cgroup *cgrp, void *args)
 {
 	int ret = 0;
 	cpt_object_t *obj;
 	struct cpt_context *ctx = (struct cpt_context *) args;
 	struct cpt_cgroup_image *v;
-	struct task_struct *task;
-	struct cgroup_iter it;
 	loff_t saved_obj;
 	u32 pid;
 
@@ -57,15 +66,15 @@ static int cpt_dump_one_cgroup(struct cgroup *cgrp, void *args)
 
 	cpt_push_object(&saved_obj, ctx);
 	if (v->cpt_parent != -1) {
+		struct cgroup_scanner scan = {
+			.cg = cgrp,
+			.process_task = cpt_dump_one_cgroup_pid,
+			.data = ctx,
+		};
+
 		cpt_dump_string(name, ctx);
 
-		cgroup_iter_start(cgrp, &it);
-		while ((task = cgroup_iter_next(cgrp, &it))) {
-			pid = task_pid_vnr(task);
-			BUG_ON(!pid);
-			ctx->write(&pid, sizeof(pid), ctx);
-		}
-		cgroup_iter_end(cgrp, &it);
+		ret = cgroup_scan_tasks(&scan);
 	}
 	cpt_pop_object(&saved_obj, ctx);
 

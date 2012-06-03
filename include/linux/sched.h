@@ -152,7 +152,7 @@ extern unsigned long nr_stopped(void);
 extern unsigned long nr_uninterruptible(void);
 extern unsigned long nr_iowait(void);
 extern unsigned long nr_iowait_cpu(void);
-extern unsigned long this_cpu_load(void);
+extern unsigned long nr_active_cpu(void);
 extern atomic_t nr_dead;
 extern unsigned long nr_zombie;
 

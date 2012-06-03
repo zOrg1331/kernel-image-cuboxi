@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/mmgang.h>
+#include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/pagevec.h>
 #include <linux/pram.h>
@@ -136,6 +137,13 @@ static inline const char *pramcache_pram_basename(struct super_block *sb,
 	return buf;
 }
 
+/*
+ * Meta and data streams must be opened and closed atomically, otherwise we can
+ * get a data storage without corresponding meta storage, which will lead to
+ * open_streams() failures.
+ */
+static DEFINE_MUTEX(streams_mutex);
+
 static int open_streams(struct super_block *sb, const char *name, int mode,
 			struct pram_stream *meta_stream,
 			struct pram_stream *data_stream)
@@ -152,6 +160,8 @@ static int open_streams(struct super_block *sb, const char *name, int mode,
 	strlcat(buf, name, PAGE_SIZE);
 	basename_len = strlen(buf);
 
+	mutex_lock(&streams_mutex);
+
 	/*
 	 * Since loss of several pages is not critical when saving
 	 * page cache, we will be using GFP_NOWAIT & pram_prealloc()
@@ -160,7 +170,7 @@ static int open_streams(struct super_block *sb, const char *name, int mode,
 	strlcat(buf, ".meta", PAGE_SIZE);
 	err = __pram_open(buf, mode, GFP_NOWAIT | __GFP_HIGHMEM, meta_stream);
 	if (err)
-		goto out_free_buf;
+		goto out_unlock;
 
 	buf[basename_len] = '\0';
 	strlcat(buf, ".data", PAGE_SIZE);
@@ -168,10 +178,14 @@ static int open_streams(struct super_block *sb, const char *name, int mode,
 	if (err)
 		goto out_close_meta;
 
+	mutex_unlock(&streams_mutex);
+
 	if (mode == PRAM_READ && pram_dirty(data_stream)) {
 		err = pram_del_from_lru(data_stream, 0);
-		if (err && err != -EAGAIN)
+		if (err && err != -EAGAIN) {
+			mutex_lock(&streams_mutex);
 			goto out_close_data;
+		}
 	}
 
 	free_page((unsigned long)buf);
@@ -181,7 +195,8 @@ out_close_data:
 	pram_close(data_stream, -1);
 out_close_meta:
 	pram_close(meta_stream, -1);
-out_free_buf:
+out_unlock:
+	mutex_unlock(&streams_mutex);
 	free_page((unsigned long)buf);
 out:
 	return err;
@@ -190,8 +205,10 @@ out:
 static inline void close_streams(struct pram_stream *meta_stream,
 				 struct pram_stream *data_stream, int err)
 {
+	mutex_lock(&streams_mutex);
 	pram_close(meta_stream, err);
 	pram_close(data_stream, err);
+	mutex_unlock(&streams_mutex);
 }
 
 static unsigned long page_buffers_uptodate(struct page *page)

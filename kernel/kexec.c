@@ -119,6 +119,32 @@ static struct page *kimage_alloc_page(struct kimage *image,
 				       gfp_t gfp_mask,
 				       unsigned long dest);
 
+static struct kimage *alloc_kimage(void)
+{
+	struct kimage *image;
+
+	image = kzalloc(sizeof(*image), GFP_KERNEL);
+	if (!image)
+		return NULL;
+
+	image->head = 0;
+	image->entry = &image->head;
+	image->last_entry = &image->head;
+	image->control_page = ~0; /* By default this does not apply */
+	image->type = KEXEC_TYPE_DEFAULT;
+
+	/* Initialize the list of control pages */
+	INIT_LIST_HEAD(&image->control_pages);
+
+	/* Initialize the list of destination pages */
+	INIT_LIST_HEAD(&image->dest_pages);
+
+	/* Initialize the list of unuseable pages */
+	INIT_LIST_HEAD(&image->unuseable_pages);
+
+	return image;
+}
+
 static int do_kimage_alloc(struct kimage **rimage, unsigned long entry,
 	                    unsigned long nr_segments,
                             struct kexec_segment __user *segments)
@@ -130,25 +156,12 @@ static int do_kimage_alloc(struct kimage **rimage, unsigned long entry,
 
 	/* Allocate a controlling structure */
 	result = -ENOMEM;
-	image = kzalloc(sizeof(*image), GFP_KERNEL);
+	image = alloc_kimage();
 	if (!image)
 		goto out;
 
-	image->head = 0;
-	image->entry = &image->head;
-	image->last_entry = &image->head;
-	image->control_page = ~0; /* By default this does not apply */
+	/* Set the entry point */
 	image->start = entry;
-	image->type = KEXEC_TYPE_DEFAULT;
-
-	/* Initialize the list of control pages */
-	INIT_LIST_HEAD(&image->control_pages);
-
-	/* Initialize the list of destination pages */
-	INIT_LIST_HEAD(&image->dest_pages);
-
-	/* Initialize the list of unuseable pages */
-	INIT_LIST_HEAD(&image->unuseable_pages);
 
 	/* Read in the segments */
 	image->nr_segments = nr_segments;
@@ -1216,7 +1229,6 @@ static int __init crash_notes_memory_init(void)
 	}
 	return 0;
 }
-module_init(crash_notes_memory_init)
 
 
 /*
@@ -1467,11 +1479,19 @@ out:
 void crash_save_vmcoreinfo(void)
 {
 	u32 *buf;
+	unsigned long time;
 
 	if (!vmcoreinfo_size)
 		return;
 
-	vmcoreinfo_append_str("CRASHTIME=%ld", get_seconds());
+	/*
+	 * If we panic early, timekeeping might have not been initialized yet
+	 * resulting in get_seconds() returning 0. Userspace utilities do not
+	 * like the zero-time so skip it then.
+	 */
+	time = get_seconds();
+	if (time > 0)
+		vmcoreinfo_append_str("CRASHTIME=%ld", time);
 
 	buf = (u32 *)vmcoreinfo_note;
 
@@ -1570,7 +1590,170 @@ static int __init crash_save_vmcoreinfo_init(void)
 	return 0;
 }
 
-module_init(crash_save_vmcoreinfo_init)
+static int __init crash_init(void)
+{
+	crash_notes_memory_init();
+	crash_save_vmcoreinfo_init();
+	return 0;
+}
+
+#ifdef CONFIG_KEXEC_REUSE_CRASH
+int kexec_reuse_crash = 1;
+
+struct kexec_pram_segment {
+	__u64	offset;
+	__u64	size;
+};
+
+struct kexec_pram_image {
+	__u64	start;
+	__u64	end;
+	__u64	entry_offset;
+	__u64	nr_segments;
+};
+
+#define KEXEC_CRASH_PRAM	"crash"
+
+static void kexec_crash_image_save(void)
+{
+	struct pram_stream stream;
+	struct kexec_pram_image pimage;
+	struct kexec_pram_segment psegment;
+	struct kimage *image;
+	unsigned long i;
+	int result;
+
+	if (!kexec_reuse_crash || !kexec_crash_image)
+		return;
+
+	image = kexec_crash_image;
+
+	result = pram_open(KEXEC_CRASH_PRAM, PRAM_WRITE, &stream);
+	if (result)
+		goto out;
+
+	pimage.start = __pa(crashk_res.start);
+	pimage.end = __pa(crashk_res.end);
+	pimage.entry_offset = image->start - crashk_res.start;
+	pimage.nr_segments = image->nr_segments;
+
+	result = -EIO;
+	if (pram_write(&stream, &pimage, sizeof(pimage)) != sizeof(pimage))
+		goto out_close_stream;
+
+	for (i = 0; i < image->nr_segments; i++) {
+		psegment.offset = image->segment[i].mem - crashk_res.start;
+		psegment.size = image->segment[i].memsz;
+		if (pram_write(&stream, &psegment, sizeof(psegment)) !=
+				sizeof(psegment))
+			goto out_close_stream;
+	}
+
+	printk(KERN_INFO "Crash image saved");
+	result = 0;
+
+out_close_stream:
+	pram_close(&stream, result);
+out:
+	if (result)
+		printk(KERN_ERR "Could not save crash image: %d\n", result);
+}
+
+static int __init __kexec_crash_image_reuse(struct kimage *image)
+{
+	int result;
+
+	image->control_page = crashk_res.start;
+	image->type = KEXEC_TYPE_CRASH;
+
+	result = -ENOMEM;
+	image->control_code_page = kimage_alloc_control_pages(image,
+					get_order(KEXEC_CONTROL_PAGE_SIZE));
+	if (!image->control_code_page)
+		goto out;
+
+	result = machine_kexec_prepare(image);
+	if (result)
+		goto out;
+
+	kimage_terminate(image);
+
+	kexec_crash_image = image;
+	result = 0;
+out:
+	return result;
+}
+
+static void __init kexec_crash_image_reuse(void)
+{
+	struct pram_stream stream;
+	struct kexec_pram_image pimage;
+	struct kexec_pram_segment psegment;
+	struct kimage *image;
+	unsigned long i;
+	int result;
+
+	if (WARN_ON(kexec_crash_image))
+		return;
+
+	result = pram_open(KEXEC_CRASH_PRAM, PRAM_READ, &stream);
+	if (result)
+		goto out;
+
+	result = -EIO;
+	if (pram_read(&stream, &pimage, sizeof(pimage)) != sizeof(pimage))
+		goto out_close_stream;
+
+	result = -EINVAL;
+	if (pimage.start != __pa(crashk_res.start) ||
+	    pimage.end != __pa(crashk_res.end) ||
+	    pimage.nr_segments > KEXEC_SEGMENT_MAX)
+		goto out_close_stream;
+
+	result = -ENOMEM;
+	image = alloc_kimage();
+	if (!image)
+		goto out_close_stream;
+
+	image->start = crashk_res.start + pimage.entry_offset;
+	image->nr_segments = pimage.nr_segments;
+
+	result = -EIO;
+	for (i = 0; i < pimage.nr_segments; i++) {
+		if (pram_read(&stream, &psegment, sizeof(psegment)) !=
+				sizeof(psegment))
+			goto out_free_image;
+		image->segment[i].mem = crashk_res.start + psegment.offset;
+		image->segment[i].memsz = psegment.size;
+	}
+
+	result = __kexec_crash_image_reuse(image);
+	if (result == 0) {
+		printk(KERN_INFO "Using crash image from previous kernel\n");
+		goto out_close_stream;
+	}
+
+out_free_image:
+	kfree(image);
+out_close_stream:
+	pram_close(&stream, 0);
+out:
+	if (result && result != -ENOENT)
+		printk(KERN_ERR "Could not load crash image: %d\n", result);
+}
+
+void __init kexec_crash_init(void)
+{
+	crash_init();
+	kexec_crash_image_reuse();
+}
+#else
+module_init(crash_init)
+
+static inline void kexec_crash_image_save(void)
+{
+}
+#endif /* CONFIG_KEXEC_REUSE_CRASH */
 
 /*
  * Move into place and start executing a preloaded standalone
@@ -1621,6 +1804,7 @@ int kernel_kexec(void)
 	} else
 #endif
 	{
+		kexec_crash_image_save();
 		kernel_restart_prepare(NULL);
 		printk(KERN_EMERG "Starting new kernel\n");
 		machine_shutdown();

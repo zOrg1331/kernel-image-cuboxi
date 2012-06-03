@@ -490,7 +490,12 @@ static int cpt_dump_unix_socket(struct sock *sk, struct cpt_sock_image *v, cpt_c
 		else
 			v->cpt_shutdown = SHUTDOWN_MASK;
 
-		if (unix_peer(unix_peer(sk)) == sk)
+		/*
+		 * There could be a situation, then socket is connected to
+		 * itself. Stupid, but valid.
+		 * Let's don't mix it with socket pairs...
+		 */
+		if (unix_peer(sk) != sk && unix_peer(unix_peer(sk)) == sk)
 			v->cpt_socketpair = 1;
 	}
 

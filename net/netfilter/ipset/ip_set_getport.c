@@ -118,8 +118,8 @@ ip_set_get_ip6_port(const struct sk_buff *skb, bool src,
 	__be16 frag_off;
 
 	nexthdr = ipv6_hdr(skb)->nexthdr;
-	protoff = ipv6_skip_exthdr(skb, sizeof(struct ipv6hdr), &nexthdr,
-				   &frag_off);
+	protoff = __ipv6_skip_exthdr(skb, sizeof(struct ipv6hdr), &nexthdr,
+				     &frag_off);
 	if (protoff < 0)
 		return false;
 

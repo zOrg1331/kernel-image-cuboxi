@@ -744,7 +744,6 @@ void ploop_fb_reinit(struct ploop_freeblks_desc *fbd, int err)
 	fbd->fbd_n_relocated = fbd->fbd_n_relocating = 0;
 	fbd->fbd_lost_range_len = 0;
 	fbd->fbd_lost_range_addon = 0;
-	fbd->fbd_freezed_level = 0;
 
 	BUG_ON(!RB_EMPTY_ROOT(&fbd->reloc_tree));
 }
@@ -762,6 +761,7 @@ struct ploop_freeblks_desc *ploop_fb_init(struct ploop_device *plo)
 	INIT_LIST_HEAD(&fbd->fbd_free_list);
 	INIT_LIST_HEAD(&fbd->fbd_reloc_list);
 	fbd->reloc_tree = RB_ROOT;
+	fbd->fbd_freezed_level = -1;
 
 	fbd->plo = plo;
 

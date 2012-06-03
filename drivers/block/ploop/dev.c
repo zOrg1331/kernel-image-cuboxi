@@ -3377,8 +3377,9 @@ static int ploop_bd_full(struct backing_dev_info *bdi, long long nr, int root)
 		file	  = top_delta->io.files.file;
 		sb	  = F_DENTRY(file)->d_inode->i_sb;
 
-		/* bd_full can be unsupported */
-		if (sb->s_op->statfs == simple_statfs) {
+		/* bd_full can be unsupported or not needed */
+		if (sb->s_op->statfs == simple_statfs ||
+		    top_delta->flags & PLOOP_FMT_PREALLOCATED) {
 			mutex_unlock(&plo->ctl_mutex);
 			return 0;
 		}

@@ -113,7 +113,8 @@ static s64 ve_get_uptime(struct ve_struct *ve)
 {
 	struct timespec uptime;
 	do_posix_clock_monotonic_gettime(&uptime);
-	uptime = timespec_sub(uptime, ve->start_timespec);
+	monotonic_to_bootbased(&uptime);
+	uptime = timespec_sub(uptime, ve->real_start_timespec);
 	return timespec_to_ns(&uptime);
 }
 
@@ -814,6 +815,7 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 	init_rwsem(&ve->op_sem);
 
 	ve->start_timespec = current->start_time;
+	ve->real_start_timespec = current->real_start_time;
 	/* The value is wrong, but it is never compared to process
 	 * start times */
 	ve->start_jiffies = get_jiffies_64();
