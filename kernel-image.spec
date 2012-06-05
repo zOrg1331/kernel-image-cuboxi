@@ -2,7 +2,7 @@ Name:    kernel-image-std-def
 Release: alt1
 Epoch:   1
 %define kernel_base_version	3.3
-%define kernel_sublevel	.7
+%define kernel_sublevel	.8
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -622,6 +622,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Jun 05 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.3.8-alt1
+- Update to 3.3.8
+- Disable RCU_FAST_NO_HZ (ALT 27405)
+
 * Tue May 22 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.3.7-alt1
 - Update to 3.3.7
 
