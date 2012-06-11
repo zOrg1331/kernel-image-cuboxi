@@ -27,7 +27,6 @@
 #include <linux/rcupdate.h>
 #include <linux/rtnetlink.h>
 #include <linux/compat.h>
-#include <linux/version.h>
 
 #include "vport.h"
 #include "vport-internal_dev.h"
@@ -127,8 +126,10 @@ struct vport *ovs_vport_alloc(int priv_size, const struct vport_ops *ops,
 	vport->ops = ops;
 
 	vport->percpu_stats = alloc_percpu(struct vport_percpu_stats);
-	if (!vport->percpu_stats)
+	if (!vport->percpu_stats) {
+		kfree(vport);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	spin_lock_init(&vport->stats_lock);
 

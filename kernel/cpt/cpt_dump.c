@@ -1145,7 +1145,6 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 	task_unlock(p);
 	if (ns) {
 		if (ns != current->nsproxy->mnt_ns) {
-			eprintk_ctx("namespaces are not supported: process %d/%d(%s)\n", task_pid_vnr(p), p->pid, p->comm);
 			*caps |= (1<<CPT_NAMESPACES);
 		}
 		put_mnt_ns(ns);

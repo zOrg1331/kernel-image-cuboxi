@@ -410,7 +410,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 		return -ELOOP;
 
 	/* Device is already being bridged */
-	if (dev->br_port != NULL)
+	if (dev->br_port || dev->ovs_port)
 		return -EBUSY;
 
 	p = new_nbp(br, dev);

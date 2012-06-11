@@ -877,13 +877,12 @@ static inline void update_entity_shares_tick(struct cfs_rq *cfs_rq)
 static inline u64 SCALE_IDLE_TIME(u64 delta, struct sched_entity *se)
 {
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(group_cfs_rq(se)->tg);
-	unsigned long mul, div;
+	unsigned long idle_scale_inv = cfs_b->idle_scale_inv;
 
-	mul = cfs_b->idle_scale_mul;
-	div = cfs_b->idle_scale_div;
-
-	if (mul != div && div)
-		delta = div_u64(delta * mul, div);
+	if (!idle_scale_inv)
+		delta = 0;
+	else if (idle_scale_inv != CFS_IDLE_SCALE)
+		delta = div64_u64(delta * CFS_IDLE_SCALE, idle_scale_inv);
 
 	return delta;
 }
@@ -1402,12 +1401,13 @@ static void update_cfs_bandwidth_idle_scale(struct cfs_bandwidth *cfs_b)
 	 * nr_idle_cpus = nr_cpus - nr_busy_cpus
 	 * nr_busy_cpus = (quota - quota_left) / period
 	 */
-	if (quota == RUNTIME_INF || quota >= max_quota) {
-		cfs_b->idle_scale_mul = cfs_b->idle_scale_div = 0;
-	} else {
-		cfs_b->idle_scale_mul = runtime;
-		cfs_b->idle_scale_div = max_quota - quota + runtime;
-	}
+	if (!runtime)
+		cfs_b->idle_scale_inv = 0;
+	else if (quota == RUNTIME_INF || quota >= max_quota)
+		cfs_b->idle_scale_inv = CFS_IDLE_SCALE;
+	else
+		cfs_b->idle_scale_inv = div64_u64(CFS_IDLE_SCALE *
+				(max_quota - quota + runtime), runtime);
 }
 
 /*

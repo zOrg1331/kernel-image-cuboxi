@@ -2570,7 +2570,8 @@ static inline int deliver_skb(struct sk_buff *skb,
 	return pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 }
 
-#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
+#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE) ||\
+    defined(CONFIG_OPENVSWITCH) || defined(CONFIG_OPENVSWITCH_MODULE)
 
 #if defined(CONFIG_ATM_LANE) || defined(CONFIG_ATM_LANE_MODULE)
 /* This hook is defined here for ATM LANE */
@@ -2586,15 +2587,26 @@ EXPORT_SYMBOL_GPL(br_fdb_test_addr_hook);
 struct sk_buff *(*br_handle_frame_hook)(struct net_bridge_port *p,
 					struct sk_buff *skb) __read_mostly;
 EXPORT_SYMBOL_GPL(br_handle_frame_hook);
+/* Open vSwitch hook */
+struct sk_buff *(*ovs_handle_frame_hook)(struct net_bridge_port *p,
+					struct sk_buff *skb) __read_mostly;
+EXPORT_SYMBOL_GPL(ovs_handle_frame_hook);
 
 static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
 					    struct packet_type **pt_prev, int *ret,
 					    struct net_device *orig_dev)
 {
 	struct net_bridge_port *port;
+	void *ovs_port;
 
-	if (skb->pkt_type == PACKET_LOOPBACK ||
-	    (port = rcu_dereference(skb->dev->br_port)) == NULL)
+	if (skb->pkt_type == PACKET_LOOPBACK)
+		return skb;
+
+	port = rcu_dereference(skb->dev->br_port);
+	ovs_port = rcu_dereference(skb->dev->ovs_port);
+
+	/* not our client */
+	if (!port && !ovs_port)
 		return skb;
 
 	/* RHEL only: skbs received on inactive slaves
@@ -2606,6 +2618,13 @@ static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
 		*ret = deliver_skb(skb, *pt_prev, orig_dev);
 		*pt_prev = NULL;
 	}
+
+	/*
+	 * The device can't be bound to both bridges, so
+	 * deliver to one and only one
+	 */
+	if (ovs_port)
+		return ovs_handle_frame_hook(ovs_port, skb);
 
 	return br_handle_frame_hook(port, skb);
 }
@@ -3168,13 +3187,29 @@ out:
 }
 EXPORT_SYMBOL(napi_get_frags);
 
+static __be16 __eth_type_trans_no_dev_change(struct sk_buff *skb,
+					     struct net_device *dev)
+{
+	struct net_device *tmp_dev = skb->dev;
+	__be16 ret;
+
+	ret = eth_type_trans(skb, dev);
+	skb->dev = tmp_dev;
+	return ret;
+}
+
 gro_result_t napi_frags_finish(struct napi_struct *napi, struct sk_buff *skb,
 			       gro_result_t ret)
 {
 	switch (ret) {
 	case GRO_NORMAL:
 	case GRO_HELD:
-		skb->protocol = eth_type_trans(skb, skb->dev);
+		/*
+		 * If this is vlan skb, vlan code previously changed skb->dev to
+		 * vlan dev. We need eth_type_trans() to be called with original
+		 * device though because otherwise it would change pkt_type.
+		 */
+		skb->protocol = __eth_type_trans_no_dev_change(skb, napi->dev);
 
 		if (ret == GRO_HELD)
 			skb_gro_pull(skb, -ETH_HLEN);

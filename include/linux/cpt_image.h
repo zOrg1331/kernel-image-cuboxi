@@ -596,6 +596,9 @@ struct cpt_vfsmount_image {
 #define CPT_MNT_DELAYFS	0x20000000
 	__u32	cpt_flags;
 	__u64	cpt_mnt_bind;
+	__u64	cpt_mnt_parent;
+	__u64	cpt_mnt_shared;
+	__u64	cpt_mnt_master;
 } __attribute__ ((aligned (8)));
 
 

@@ -1642,12 +1642,19 @@ static int fuse_writepages_fill(struct page *page,
 	struct fuse_req *req = data->req;
 	struct inode *inode = data->inode;
 	struct fuse_conn *fc = get_fuse_conn(inode);
+	int check_for_blocked = 0;
 
 	if (req->num_pages &&
 	    (req->num_pages == FUSE_MAX_PAGES_PER_REQ ||
 	     (req->num_pages + 1) * PAGE_CACHE_SIZE > fc->max_write ||
 	     req->pages[req->num_pages - 1]->index + 1 != page->index)) {
 		int err;
+
+		if (wbc->nonblocking && fc->blocked) {
+			redirty_page_for_writepage(wbc, page);
+			unlock_page(page);
+			return 0;
+		}
 
 		err = fuse_send_writepages(data);
 		if (err) {
@@ -1660,6 +1667,8 @@ static int fuse_writepages_fill(struct page *page,
 			unlock_page(page);
 			return PTR_ERR(req);
 		}
+
+		check_for_blocked = 1;
 	}
 
 	req->pages[req->num_pages] = page;
@@ -1667,6 +1676,9 @@ static int fuse_writepages_fill(struct page *page,
 
 	set_page_writeback(page);
 	unlock_page(page);
+
+	if (!wbc->nonblocking && check_for_blocked)
+		wait_event(fc->blocked_waitq, !fc->blocked);
 
 	return 0;
 }
@@ -1684,6 +1696,13 @@ static int fuse_writepages(struct address_space *mapping, struct writeback_contr
 	err = -EIO;
 	if (is_bad_inode(inode))
 		goto out;
+
+	if (wbc->nonblocking) {
+		if (fc->blocked)
+			return 0;
+	} else {
+		wait_event(fc->blocked_waitq, !fc->blocked);
+	}
 
 	/*
 	 * Can be NULL, but providing the dirty set is empty it's OK.

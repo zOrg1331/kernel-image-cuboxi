@@ -44,6 +44,22 @@ static inline struct nsproxy *create_nsproxy(void)
 	return nsproxy;
 }
 
+struct nsproxy *duplicate_nsproxy(struct nsproxy *nsproxy)
+{
+	struct nsproxy *ns = create_nsproxy();
+	if (ns) {
+		*ns = *nsproxy;
+		atomic_set(&ns->count, 1);
+		get_uts_ns(ns->uts_ns);
+		get_ipc_ns(ns->ipc_ns);
+		get_mnt_ns(ns->mnt_ns);
+		get_pid_ns(ns->pid_ns);
+		get_net(ns->net_ns);
+	}
+	return ns;
+}
+EXPORT_SYMBOL_GPL(duplicate_nsproxy);
+
 /*
  * Create new nsproxy and all of its the associated namespaces.
  * Return the newly created nsproxy.  Do not attach this to the task,
@@ -265,6 +281,7 @@ void switch_task_namespaces(struct task_struct *p, struct nsproxy *new)
 		free_nsproxy(ns);
 	}
 }
+EXPORT_SYMBOL_GPL(switch_task_namespaces);
 
 void exit_task_namespaces(struct task_struct *p)
 {

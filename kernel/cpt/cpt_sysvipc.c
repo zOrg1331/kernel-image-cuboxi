@@ -16,6 +16,8 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/file.h>
+#include <linux/mount.h>
+#include <linux/nsproxy.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/major.h>
@@ -391,10 +393,25 @@ int cpt_collect_sysvshm(cpt_context_t * ctx)
 	return err < 0 ? err : 0;
 }
 
+static int cpt_check_posix_mqueue(cpt_context_t * ctx)
+{
+	struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
+
+	if (!list_is_singular(&ipc_ns->mq_mnt->mnt_sb->s_inodes)) {
+		eprintk_ctx("posix message queues are not supported\n");
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
 int cpt_collect_sysv(cpt_context_t * ctx)
 {
 	int err;
 
+	err = cpt_check_posix_mqueue(ctx);
+	if (err)
+		return err;
 	err = cpt_collect_sysvsem_undo(ctx);
 	if (err)
 		return err;

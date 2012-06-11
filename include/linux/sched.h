@@ -294,6 +294,8 @@ static inline void select_nohz_load_balancer(int stop_tick) { }
  * Only dump TASK_* tasks. (0 for all tasks)
  */
 extern void show_state_filter(unsigned long state_filter);
+
+extern void wait_for_rqlock(void);
 void show_sched_debug(void);
 
 static inline void show_state(void)
