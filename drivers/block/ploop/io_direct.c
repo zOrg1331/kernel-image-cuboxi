@@ -882,7 +882,7 @@ static int dio_open(struct ploop_io * io)
 		       io->files.inode->i_sb->s_magic,
 		       io->files.inode->i_op->fallocate,
 		       io->files.inode->i_sb->s_id);
-		return -EBADF;
+		return -EOPNOTSUPP;
 	}
 
 	dio_fsync(file);

@@ -171,7 +171,7 @@ struct blkio_group {
 	/* Per cpu stats pointer */
 	struct blkio_group_stats_cpu __percpu *stats_cpu;
 
-	struct delayed_work stats_alloc_work;
+	struct list_head stats_alloc_list;
 };
 
 struct blkio_policy_node {

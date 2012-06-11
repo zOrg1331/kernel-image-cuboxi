@@ -152,6 +152,7 @@ struct css_id {
 
 static LIST_HEAD(roots);
 static int root_count;
+static DEFINE_MUTEX(cgroup_root_mutex);
 
 static DEFINE_IDA(hierarchy_ida);
 static int next_hierarchy_id;
@@ -1438,6 +1439,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 			goto drop_new_super;
 		inode = sb->s_root->d_inode;
 
+		mutex_lock(&cgroup_root_mutex);
 		mutex_lock(&inode->i_mutex);
 		mutex_lock(&cgroup_mutex);
 
@@ -1448,6 +1450,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 					ret = -EBUSY;
 					mutex_unlock(&cgroup_mutex);
 					mutex_unlock(&inode->i_mutex);
+					mutex_unlock(&cgroup_root_mutex);
 					goto drop_new_super;
 				}
 			}
@@ -1464,6 +1467,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 		if (ret) {
 			mutex_unlock(&cgroup_mutex);
 			mutex_unlock(&inode->i_mutex);
+			mutex_unlock(&cgroup_root_mutex);
 			goto drop_new_super;
 		}
 
@@ -1471,6 +1475,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 		if (ret == -EBUSY) {
 			mutex_unlock(&cgroup_mutex);
 			mutex_unlock(&inode->i_mutex);
+			mutex_unlock(&cgroup_root_mutex);
 			free_cg_links(&tmp_cg_links);
 			goto drop_new_super;
 		}
@@ -1516,6 +1521,7 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 		revert_creds(cred);
 		mutex_unlock(&cgroup_mutex);
 		mutex_unlock(&inode->i_mutex);
+		mutex_unlock(&cgroup_root_mutex);
 	} else {
 		/*
 		 * We re-used an existing hierarchy - the new root (if
@@ -1595,6 +1601,7 @@ static void cgroup_kill_sb(struct super_block *sb) {
 	BUG_ON(!list_empty(&cgrp->children));
 	BUG_ON(!list_empty(&cgrp->sibling));
 
+	mutex_lock(&cgroup_root_mutex);
 	mutex_lock(&cgroup_mutex);
 
 	/* Rebind all subsystems back to the default hierarchy */
@@ -1622,6 +1629,7 @@ static void cgroup_kill_sb(struct super_block *sb) {
 	}
 
 	mutex_unlock(&cgroup_mutex);
+	mutex_unlock(&cgroup_root_mutex);
 
 	kill_litter_super(sb);
 	cgroup_drop_root(root);
@@ -4675,7 +4683,7 @@ static void cgroup_ve_fini(void *data)
 
 	snprintf(name, sizeof name, "%d", ve->veid);
 
-	cgroup_lock();
+	mutex_lock(&cgroup_root_mutex);
 again:
 	for_each_active_root(root) {
 		if (root->subsys_bits)
@@ -4685,13 +4693,16 @@ again:
 			int ret;
 
 			atomic_inc(&root->sb->s_active);
+
+			cgroup_lock();
+
 			cgroup_kernel_close(cgrp);
 
 			ret = cgroup_genocide(cgrp);
 
 			cgroup_unlock();
+
 			deactivate_super(root->sb);
-			cgroup_lock();
 
 			if (ret) {
 				WARN_ON(1);
@@ -4700,7 +4711,7 @@ again:
 			goto again;
 		}
 	}
-	cgroup_unlock();
+	mutex_unlock(&cgroup_root_mutex);
 }
 
 void cgroup_ve_khelper_cleanup(void *data)
@@ -4712,7 +4723,7 @@ void cgroup_ve_khelper_cleanup(void *data)
 
 	snprintf(name, sizeof name, "%d", ve->veid);
 
-	cgroup_lock();
+	mutex_lock(&cgroup_root_mutex);
 	for_each_active_root(root) {
 		if (root->subsys_bits)
 			continue;
@@ -4722,7 +4733,7 @@ void cgroup_ve_khelper_cleanup(void *data)
 			cgroup_kernel_close(cgrp);
 		}
 	}
-	cgroup_unlock();
+	mutex_unlock(&cgroup_root_mutex);
 }
 EXPORT_SYMBOL(cgroup_ve_khelper_cleanup);
 

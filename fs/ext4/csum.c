@@ -37,6 +37,7 @@ static void pfcache_path(struct inode *inode, char *path)
 int ext4_open_pfcache(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
+	const struct cred *cur_cred;
 	char path[PFCACHE_MAX_PATH];
 	struct nameidata nd = {
 		.flags = LOOKUP_STRICT,
@@ -61,7 +62,9 @@ int ext4_open_pfcache(struct inode *inode)
 
 	pfcache_path(inode, path);
 
+	cur_cred = override_creds(&init_cred);
 	ret = path_walk(path, &nd);
+	revert_creds(cur_cred);
 	if (ret)
 		return ret;
 
@@ -150,6 +153,9 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 			goto next;
 
 		if (new_root) {
+			const struct cred *cur_cred;
+			int err;
+
 			nd.flags = LOOKUP_STRICT;
 			nd.last_type = LAST_ROOT;
 			nd.depth = 0;
@@ -157,7 +163,10 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 			path_get(&nd.path);
 
 			pfcache_path(inode, path);
-			if (path_walk(path, &nd)) {
+			cur_cred = override_creds(&init_cred);
+			err = path_walk(path, &nd);
+			revert_creds(cur_cred);
+			if (err) {
 				nd.path.mnt = NULL;
 				nd.path.dentry = NULL;
 			}

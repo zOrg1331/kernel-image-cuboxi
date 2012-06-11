@@ -61,6 +61,9 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
+static cpt_object_t *
+cpt_lookup_bind_source(struct vfsmount *mnt, cpt_context_t *ctx);
+
 void (*vefs_track_notify_hook)(struct dentry *vdentry, int track_cow);
 void (*vefs_track_force_stop_hook)(struct super_block *super);
 struct dentry * (*vefs_replaced_dentry_hook)(struct dentry *de);
@@ -116,32 +119,6 @@ void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 	if (!IS_ERR(path))
 		eprintk("<%s>", path);
 	free_page(pg);
-}
-
-int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 int verify, cpt_context_t *ctx)
-{
-	if (d->d_inode->i_sb->s_magic == FSMAGIC_PROC &&
-	    proc_dentry_of_dead_task(d))
-		return 0;
-
-	if (cpt_need_delayfs(mnt))
-		return 0;
-
-	if (path[0] == '/' && !(!IS_ROOT(d) && d_unhashed(d))) {
-		struct nameidata nd;
-		if (path_lookup(path, 0, &nd)) {
-			eprintk_ctx("d_path cannot be looked up %s\n", path);
-			return -EINVAL;
-		}
-		if (nd.path.dentry != d || (verify && nd.path.mnt != mnt)) {
-			eprintk_ctx("d_path is invisible %s\n", path);
-			path_put(&nd.path);
-			return -EINVAL;
-		}
-		path_put(&nd.path);
-	}
-	return 0;
 }
 
 int cpt_need_delayfs(struct vfsmount *mnt)
@@ -1731,21 +1708,21 @@ static int check_autofs(struct super_block *sb, struct cpt_context *ctx)
 	return cpt_object_add(CPT_OBJ_FILE, si->pipe, ctx) ? 0 : -ENOMEM;
 }
 
-static int check_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
+static int collect_vfsmount_tree(struct vfsmount *tree, cpt_object_t *ns_obj,
+				 cpt_context_t *ctx)
 {
 	int err = 0;
-	struct mnt_namespace *n = obj->o_obj;
-	struct list_head *p;
 	char *path_buf, *path;
+	struct vfsmount *mnt;
+	cpt_object_t *obj;
 
 	path_buf = (char *) __get_free_page(GFP_KERNEL);
 	if (!path_buf)
 		return -ENOMEM;
 
 	down_read(&namespace_sem);
-	list_for_each(p, &n->list) {
+	for (mnt = tree; mnt; mnt = next_mnt(mnt, tree)) {
 		struct path pt;
-		struct vfsmount *mnt = list_entry(p, struct vfsmount, mnt_list);
 
 		pt.dentry = mnt->mnt_root;
 		pt.mnt = mnt;
@@ -1785,6 +1762,36 @@ static int check_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 			if (err)
 				break;
 		}
+
+		if (!(ns_obj->o_flags & CPT_NAMESPACE_MAIN) &&
+		     (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs") ||
+		      !strcmp(mnt->mnt_sb->s_type->name, "devtmpfs"))) {
+			cpt_object_t *bind_obj;
+
+			bind_obj = cpt_lookup_bind_source(mnt, ctx);
+			if (IS_ERR_OR_NULL(bind_obj)) {
+				eprintk_ctx("non-bindmount tmpfs in nested "
+					    "namespace: %s\n", path);
+				err = -EINVAL;
+				break;
+			}
+		}
+
+		obj = cpt_object_add(CPT_OBJ_VFSMOUNT_REF, mnt, ctx);
+		if (!obj) {
+			err = -ENOMEM;
+			break;
+		}
+		mntget(mnt);
+
+		if (mnt != tree) {
+			obj->o_parent = lookup_cpt_object(CPT_OBJ_VFSMOUNT_REF,
+							mnt->mnt_parent, ctx);
+			if (!obj->o_parent) {
+				err = -ENOLINK;
+				break;
+			}
+		}
 	}
 	up_read(&namespace_sem);
 
@@ -1795,23 +1802,42 @@ static int check_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 
 int cpt_collect_namespace(cpt_context_t * ctx)
 {
-	cpt_object_t *obj;
+	struct vfsmount *root;
+	cpt_object_t *obj, *ns_obj;
+	int err;
+
+	/*
+	 * Main namespace shared between all containers,
+	 * here we want to collect only subtree for one ve.
+	 */
+	root = get_exec_env()->root_path.mnt;
+	ns_obj = cpt_object_add(CPT_OBJ_NAMESPACE, root->mnt_ns, ctx);
+	if (!ns_obj)
+		return -ENOMEM;
+	ns_obj->o_flags |= CPT_NAMESPACE_MAIN;
+
+	err = collect_vfsmount_tree(root, ns_obj, ctx);
+	if (err)
+		return err;
 
 	for_each_object(obj, CPT_OBJ_TASK) {
 		struct task_struct *tsk = obj->o_obj;
-		if (tsk->nsproxy && tsk->nsproxy->mnt_ns &&
-				cpt_object_add(CPT_OBJ_NAMESPACE,
-					tsk->nsproxy->mnt_ns, ctx) == NULL)
+
+		if (!tsk->nsproxy || !tsk->nsproxy->mnt_ns)
+			continue;
+
+		root = tsk->nsproxy->mnt_ns->root;
+		ns_obj = cpt_object_add(CPT_OBJ_NAMESPACE, root->mnt_ns, ctx);
+		if (!ns_obj)
 			return -ENOMEM;
+		if (ns_obj->o_count > 1)
+			continue;
+		err = collect_vfsmount_tree(root, ns_obj, ctx);
+		if (err)
+			 break;
 	}
 
-	for_each_object(obj, CPT_OBJ_NAMESPACE) {
-		int err;
-		if ((err = check_one_namespace(obj, ctx)) != 0)
-			return err;
-	}
-
-	return 0;
+	return err;
 }
 
 /* see nfs_show_options and nfs_get_sb */
@@ -2037,26 +2063,6 @@ out:
 	return err;
 }
 
-static int loopy_root(struct vfsmount *mnt)
-{
-	struct list_head *p;
-
-	list_for_each(p, &mnt->mnt_ns->list) {
-		struct vfsmount * m = list_entry(p, struct vfsmount, mnt_list);
-		if (m == mnt)
-			return 0;
-		if (m->mnt_sb == mnt->mnt_sb)
-			return 1;
-	}
-	/* Cannot happen */
-	return 0;
-}
-
-static int bindmount_root(struct vfsmount *mnt)
-{
-	return mnt->mnt_root != mnt->mnt_sb->s_root;
-}
-
 static cpt_object_t *cpt_lookup_bind_source(struct vfsmount *mnt,
 		cpt_context_t *ctx)
 {
@@ -2070,35 +2076,29 @@ static cpt_object_t *cpt_lookup_bind_source(struct vfsmount *mnt,
 		src = obj->o_obj;
 		p.mnt = src;
 
+		if (src == mnt)
+			break;
 		if (src->mnt_sb != mnt->mnt_sb)
 			continue;
 		if (IS_ERR(d_path(&p, NULL, 0)))
 			continue;
 		return obj;
 	}
+	if (mnt->mnt_root != mnt->mnt_sb->s_root)
+		return ERR_PTR(-ENODEV);
 	return NULL;
 }
 
-static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
+static int dump_vfsmount(cpt_object_t *obj, struct cpt_context *ctx)
 {
+	struct vfsmount *mnt = obj->o_obj;
 	int err = 0;
 	struct cpt_vfsmount_image v;
 	loff_t saved_obj;
 	char *path_buf, *path;
 	struct path p;
-	cpt_object_t *obj, *bind_obj = NULL;
+	cpt_object_t *parent_obj = obj->o_parent, *bind_obj = NULL;
 	int is_cgroup;
-
-	if (is_autofs_mount(mnt->mnt_parent))
-		return 0;
-
-	if (is_nfs_automount(mnt))
-		return 0;
-
-	obj = cpt_object_add(CPT_OBJ_VFSMOUNT_REF, mnt, ctx);
-	if (!obj)
-		return -ENOMEM;
-	mntget(mnt);
 
 	path_buf = (char *) __get_free_page(GFP_KERNEL);
 	if (!path_buf)
@@ -2121,6 +2121,44 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 
 	v.cpt_mntflags = mnt->mnt_flags;
 	v.cpt_mnt_bind = CPT_NULL;
+	v.cpt_mnt_parent = parent_obj ? parent_obj->o_pos : CPT_NULL;
+
+	v.cpt_mnt_shared = CPT_NULL;
+	if ((mnt->mnt_flags & MNT_SHARED) && !list_empty(&mnt->mnt_share)) {
+		struct vfsmount *m;
+		cpt_object_t *shared = NULL;
+		bool found = false;
+
+		list_for_each_entry(m, &mnt->mnt_share, mnt_share) {
+			shared = lookup_cpt_object(CPT_OBJ_VFSMOUNT_REF, m, ctx);
+			if (!shared)
+				continue;
+			found = true;
+			if (shared->o_pos == CPT_NULL)
+				continue;
+			v.cpt_mnt_shared = shared->o_pos;
+			break;
+		}
+		if (!found) {
+			eprintk_ctx("shared mount not found: %s\n", path);
+			err = -ENOENT;
+			goto out_err;
+		}
+	}
+
+	v.cpt_mnt_master = CPT_NULL;
+	if (mnt->mnt_master) {
+		cpt_object_t *master;
+
+		master = lookup_cpt_object(CPT_OBJ_VFSMOUNT_REF,
+				mnt->mnt_master, ctx);
+		if (!master || master->o_pos == CPT_NULL) {
+			eprintk_ctx("master mount not found: %s\n", path);
+			err = -ENOENT;
+			goto out_err;
+		}
+		v.cpt_mnt_master = master->o_pos;
+	}
 
 	is_cgroup = !strcmp(mnt->mnt_sb->s_type->name, "cgroup");
 
@@ -2135,15 +2173,16 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 			err = -ENOENT;
 			goto out_err;
 		}
-	} else if (loopy_root(mnt) || (bindmount_root(mnt))) {
-		v.cpt_mntflags |= CPT_MNT_BIND;
+	} else {
 		bind_obj = cpt_lookup_bind_source(mnt, ctx);
-		if (!bind_obj) {
-			err = -ENODEV;
+		if (IS_ERR(bind_obj)) {
+			err = PTR_ERR(bind_obj);
 			eprintk_ctx("bind mount source not found: %s\n", path);
 			goto out_err;
-		}
-		v.cpt_mnt_bind = bind_obj->o_pos;
+		} else if (bind_obj) {
+			v.cpt_mntflags |= CPT_MNT_BIND;
+			v.cpt_mnt_bind = bind_obj->o_pos;
+		} /* else non-bindmount */
 	}
 	v.cpt_flags = mnt->mnt_sb->s_flags;
 
@@ -2194,70 +2233,13 @@ out_err:
 	return err;
 }
 
-struct vfsdump {
-	struct list_head lst;
-	struct vfsmount *mnt;
-};
-
-/*
- * Called under namespace_sem held for read
- */
-static int gather_mounts(struct vfsmount *mnt, struct list_head *out)
-{
-	struct vfsmount *p;
-
-	INIT_LIST_HEAD(out);
-
-	for (p = mnt; p; p = next_mnt(p, mnt)) {
-		struct vfsdump *el = kmalloc(sizeof(struct vfsdump),
-					     GFP_KERNEL);
-
-		if (!el)
-			return -ENOMEM;
-
-		el->mnt = mntget(p);
-		list_add_tail(&el->lst, out);
-	}
-
-	return 0;
-}
-
-static void put_gathered_mounts(struct list_head *list)
-{
-	struct list_head *p, *tmp;
-
-	list_for_each_safe(p, tmp, list) {
-		struct vfsdump *dmp = list_entry(p, struct vfsdump, lst);
-		mntput(dmp->mnt);
-		kfree(dmp);
-	}
-}
-
-static int dump_gathered_mounts(struct list_head *list, struct cpt_context *ctx)
-{
-	struct list_head *p;
-	int err = 0;
-
-	list_for_each(p, list) {
-		struct vfsdump *dmp = list_entry(p, struct vfsdump, lst);
-
-		err = dump_vfsmount(dmp->mnt, ctx);
-
-		if (err)
-			break;
-	}
-
-	return err;
-}
-
 static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 {
+	struct mnt_namespace *ns = obj->o_obj;
 	struct cpt_object_hdr v;
-	struct vfsmount *ve_mnt;
+	cpt_object_t *mnt_obj;
 	loff_t saved_obj;
 	int err = 0;
-	struct ve_struct *ve;
-	struct list_head mnt_list;
 
 	cpt_open_object(obj, ctx);
 
@@ -2271,22 +2253,22 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 	cpt_push_object(&saved_obj, ctx);
 
 	down_read(&namespace_sem);
+	for_each_object(mnt_obj, CPT_OBJ_VFSMOUNT_REF) {
+		struct vfsmount *mnt = mnt_obj->o_obj;
 
-	/*
-	 * root mountpoint of VE belongs to ve0, so
-	 * need to extract it from VE struct itself
-	 */
-	ve = get_ve_by_id(ctx->ve_id);
-	ve_mnt = mntget(ve->root_path.mnt);
+		if (!mnt->mnt_ns) {
+			eprintk_ctx("detached vfsmount %s\n", mnt->mnt_devname);
+			err = -ENOLINK;
+			break;
+		}
 
-	err = gather_mounts(ve_mnt, &mnt_list);
+		if (mnt->mnt_ns != ns)
+			continue;
 
-	if (!err)
-		err = dump_gathered_mounts(&mnt_list, ctx);
-
-	put_gathered_mounts(&mnt_list);
-	mntput(ve_mnt);
-	put_ve(ve);
+		err = dump_vfsmount(mnt_obj, ctx);
+		if (err)
+			break;
+	}
 	up_read(&namespace_sem);
 
 	cpt_pop_object(&saved_obj, ctx);

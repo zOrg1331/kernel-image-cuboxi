@@ -36,16 +36,20 @@ static inline int netdev_rx_handler_register(struct net_device *dev,
 					     void *rx_handler,
 					     void *rx_handler_data)
 {
-	if (dev->br_port)
+	/*
+	 * Device should not be plugged into bridge and switch
+	 * simultaneously
+	 */
+	if (dev->br_port || dev->ovs_port)
 		return -EBUSY;
 
-	rcu_assign_pointer(dev->br_port, rx_handler_data);
+	rcu_assign_pointer(dev->ovs_port, rx_handler_data);
 	return 0;
 }
 
 static inline void netdev_rx_handler_unregister(struct net_device *dev)
 {
-	rcu_assign_pointer(dev->br_port, NULL);
+	rcu_assign_pointer(dev->ovs_port, NULL);
 }
 
 /* Must be called with rcu_read_lock. */
@@ -77,19 +81,16 @@ static struct sk_buff* netdev_frame_hook(struct net_bridge_port *p, struct sk_bu
 
 int ovs_install_br_hook(void)
 {
-	if (br_handle_frame_hook) {
-		printk(KERN_ERR "Can't init open vSwitch in case of bridge "
-				"hook is already installed\n");
+	if (ovs_handle_frame_hook)
 		return -EBUSY;
-	}
 
-	br_handle_frame_hook = netdev_frame_hook;
+	ovs_handle_frame_hook = netdev_frame_hook;
 	return 0;
 }
 
 void ovs_remove_br_hook(void)
 {
-	br_handle_frame_hook = NULL;
+	ovs_handle_frame_hook = NULL;
 }
 
 static struct vport *netdev_create(const struct vport_parms *parms)
@@ -164,9 +165,9 @@ int ovs_netdev_get_ifindex(const struct vport *vport)
 	return netdev_vport->dev->ifindex;
 }
 
-static unsigned packet_length(const struct sk_buff *skb)
+static unsigned int packet_length(const struct sk_buff *skb)
 {
-	unsigned length = skb->len - ETH_HLEN;
+	unsigned int length = skb->len - ETH_HLEN;
 
 	if (skb->protocol == htons(ETH_P_8021Q))
 		length -= VLAN_HLEN;
@@ -205,7 +206,7 @@ error:
 /* Returns null if this device is not attached to a datapath. */
 struct vport *ovs_netdev_get_vport(struct net_device *dev)
 {
-	return (struct vport *)rcu_dereference(dev->br_port);
+	return (struct vport *)rcu_dereference(dev->ovs_port);
 }
 
 const struct vport_ops ovs_netdev_vport_ops = {

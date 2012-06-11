@@ -439,35 +439,71 @@ void blkiocg_update_io_merged_stats(struct blkio_group *blkg, bool direction,
 }
 EXPORT_SYMBOL_GPL(blkiocg_update_io_merged_stats);
 
+static LIST_HEAD(stats_alloc_list);
+static DEFINE_SPINLOCK(stats_alloc_lock);
+
 static void blkio_stats_alloc_fn(struct work_struct *work)
 {
+	struct delayed_work *dw = container_of(work, struct delayed_work, work);
 	struct blkio_group_stats_cpu __percpu *stats;
-	struct blkio_group *blkg = container_of(work, struct blkio_group,
-						stats_alloc_work.work);
+	struct blkio_group *blkg;
 
-	stats = alloc_percpu(struct blkio_group_stats_cpu);
-	if (stats)
+	spin_lock_irq(&stats_alloc_lock);
+	while (!list_empty(&stats_alloc_list)) {
+		spin_unlock_irq(&stats_alloc_lock);
+
+		stats = alloc_percpu(struct blkio_group_stats_cpu);
+		if (!stats) {
+			/* Cannot fail, try again after timeout */
+			schedule_delayed_work(dw, HZ);
+			return;
+		}
+
+		spin_lock_irq(&stats_alloc_lock);
+		if (list_empty(&stats_alloc_list)) {
+			free_percpu(stats);
+			break;
+		}
+		blkg = list_first_entry(&stats_alloc_list,
+				struct blkio_group, stats_alloc_list);
+		list_del_init(&blkg->stats_alloc_list);
 		blkg->stats_cpu = stats;
-	else
-		schedule_delayed_work(&blkg->stats_alloc_work, HZ);
+	} while (!list_empty(&stats_alloc_list));
+	spin_unlock_irq(&stats_alloc_lock);
 }
 
+static DECLARE_DELAYED_WORK(stats_alloc_work, blkio_stats_alloc_fn);
 static DEFINE_PER_CPU(struct blkio_group_stats_cpu, stats_plug);
 
 int blkio_alloc_blkg_stats(struct blkio_group *blkg)
 {
+	unsigned long flags;
+
 	/* Set temporary plug */
 	blkg->stats_cpu = &per_cpu_var(stats_plug);
+
 	/* Queue per cpu stat allocation from worker thread. */
-	INIT_DELAYED_WORK(&blkg->stats_alloc_work, blkio_stats_alloc_fn);
-	schedule_delayed_work(&blkg->stats_alloc_work, 0);
+	spin_lock_irqsave(&stats_alloc_lock, flags);
+	list_add(&blkg->stats_alloc_list, &stats_alloc_list);
+	spin_unlock_irqrestore(&stats_alloc_lock, flags);
+
+	schedule_delayed_work(&stats_alloc_work, 0);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(blkio_alloc_blkg_stats);
 
 void blkio_free_blkg_stats(struct blkio_group *blkg)
 {
-	cancel_delayed_work_sync(&blkg->stats_alloc_work);
+	unsigned long flags;
+
+	if (!blkg->stats_cpu)
+		return;
+
+	/* Cancel pending stats allocation */
+	spin_lock_irqsave(&stats_alloc_lock, flags);
+	list_del_init(&blkg->stats_alloc_list);
+	spin_unlock_irqrestore(&stats_alloc_lock, flags);
+
 	if (blkg->stats_cpu != &per_cpu_var(stats_plug))
 		free_percpu(blkg->stats_cpu);
 }

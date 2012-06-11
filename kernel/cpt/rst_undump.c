@@ -342,6 +342,11 @@ static int hook(void *arg)
 		goto out;
 	}
 
+	if ((err = rst_task_namespace(ti, ctx)) != 0) {
+		eprintk_ctx("rst_task_namespace: %d\n", err);
+		goto out;
+	}
+
 	if ((err = rst_files(ti, ctx)) != 0) {
 		eprintk_ctx("rst_files: %d\n", err);
 		goto out;
@@ -793,11 +798,6 @@ static int vps_rst_restore_tree(struct cpt_context *ctx)
 		wait_for_completion(&thr_ctx_root.task_done);
 		wait_task_inactive(obj->o_obj, 0);
 		err = thr_ctx_root.error;
-		if (err) {
-			put_task_struct(obj->o_obj);
-			cpt_obj_setobj(obj, NULL, ctx);
-			return err;
-		}
 		break;
 	}
 
@@ -1010,12 +1010,13 @@ int rst_kill(struct cpt_context *ctx)
 
 	for_each_object(obj, CPT_OBJ_TASK) {
 		struct task_struct *tsk = obj->o_obj;
+		struct cpt_task_image *ti = obj->o_image;
 
 		if (tsk == NULL)
 			continue;
 
-		if (!init_pid)
-			init_pid = task_pid_vnr(tsk);
+		if (ti->cpt_pid == 1)
+			init_pid = task_pgrp_vnr(tsk);
 
 		if (tsk->exit_state == 0) {
 			send_sig(SIGKILL, tsk, 1);

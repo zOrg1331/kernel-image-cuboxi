@@ -21,6 +21,7 @@ __u32 cpt_tty_fasync(struct file *file, struct cpt_context *ctx);
 int rst_posix_locks(struct cpt_context *ctx);
 
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx);
+int rst_task_namespace(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_files(struct cpt_task_image *ti, struct cpt_context *ctx);
 __u32 rst_files_flag(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_fs_complete(struct cpt_task_image *ti, struct cpt_context *ctx);
@@ -63,8 +64,6 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
 		struct inode *ino, struct cpt_context *ctx);
 
-int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 int verify, cpt_context_t *ctx);
 int rst_path_lookup_at(struct vfsmount *mnt, struct dentry *dentry,
 		const char *name, unsigned int flags, struct nameidata *nd);
 int rst_path_lookup(cpt_object_t *mntobj, const char *path,
@@ -87,6 +86,7 @@ int rst_path_lookup(cpt_object_t *mntobj, const char *path,
 	 strcmp(mnt->mnt_sb->s_type->name, "ext4") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "vzfs") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "rpc_pipefs") != 0 && \
+	 strcmp(mnt->mnt_sb->s_type->name, "mqueue") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "cgroup") != 0)
 
 #define is_autofs_mount(mnt) ((mnt)->mnt_sb->s_magic == FSMAGIC_AUTOFS)

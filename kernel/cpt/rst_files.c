@@ -1146,7 +1146,9 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 
 		/* One very special case... */
 		if (S_ISREG(fi.cpt_i_mode) &&
-		    (!name[0] || strcmp(name, "/dev/zero (deleted)") == 0)) {
+		   (!name[0] || (strcmp(name, "/dev/zero (deleted)") == 0))
+			     || (strcmp(name, " (deleted)/dev/zero") == 0)) {
+
 			/* MAP_ANON|MAP_SHARED mapping.
 			 * kernel makes this damn ugly way, when file which
 			 * is passed to mmap by user does not match
@@ -1702,6 +1704,13 @@ void rst_finish_vfsmount_ref(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
 
+	for_each_object(obj, CPT_OBJ_NAMESPACE) {
+		if (obj->o_obj)
+			put_mnt_ns(obj->o_obj);
+		if (obj->o_parent)
+			put_nsproxy(obj->o_parent);
+	}
+
 	for_each_object(obj, CPT_OBJ_VFSMOUNT_REF)
 		mntput(obj->o_obj);
 }
@@ -1878,57 +1887,14 @@ struct vfsmount *rst_lookup_ext_mount(char *mntpnt, char *mnttype, struct cpt_co
 	return mnt;
 }
 
-static cpt_object_t *rst_add_vfsmount(struct vfsmount *mnt, char *path,
-		loff_t obj_pos, unsigned int obj_flags, cpt_context_t *ctx)
-{
-	cpt_object_t *obj;
-
-	obj = cpt_object_add(CPT_OBJ_VFSMOUNT_REF, mnt, ctx);
-	if (!obj) {
-		mntput(mnt);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	if (obj->o_count > 1) {
-		eprintk_ctx("duplicate vfsmount at %s\n", path);
-		mntput(mnt);
-	}
-
-	obj->o_lock = strlen(path);
-	cpt_obj_setpos(obj, obj_pos, ctx);
-	obj->o_flags = obj_flags;
-
-	return obj;
-}
-
-static int rst_restore_vfsmount(struct vfsmount *mnt, char *path,
-		loff_t mntpos, int mnt_flags, int add_flags, cpt_context_t *ctx)
-{
-	struct nameidata nd;
-	int ret;
-	cpt_object_t *mntobj;
-
-	mntobj = rst_add_vfsmount(mnt, path, mntpos, add_flags, ctx);
-	if (IS_ERR(mntobj))
-		return PTR_ERR(mntobj);
-
-	ret = path_lookup(path, LOOKUP_FOLLOW, &nd);
-	if (ret) {
-		eprintk_ctx("Failed ot lookup path '%s'\n", path);
-		return ret;
-	}
-	ret = do_add_mount(mntget(mnt), &nd.path, mnt_flags | MNT_CPT, NULL);
-	path_put(&nd.path);
-	return ret;
-}
-
-int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_context *ctx)
+int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos,
+			 cpt_object_t *ns_obj, struct cpt_context *ctx)
 {
 	int err;
 	loff_t endpos;
 	loff_t mntpos = pos;
-	struct vfsmount *mnt;
-	cpt_object_t *mntobj, *bindobj;
+	struct vfsmount *mnt, *shared, *master;
+	cpt_object_t *mntobj, *bindobj, *parent;
 
 	endpos = pos + mi->cpt_next;
 	pos += mi->cpt_hdrlen;
@@ -1940,6 +1906,7 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 		char *mntbind = NULL;
 		char *mntdata = NULL;
 		int is_cgroup;
+		int is_tmpfs = 0;
 
 		mntdev = __rst_get_name(&pos, ctx);
 		mntpnt = __rst_get_name(&pos, ctx);
@@ -1951,14 +1918,26 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 
 		is_cgroup = strcmp(mnttype, "cgroup") == 0;
 
-		if (mi->cpt_mntflags & CPT_MNT_BIND)
+		if (mi->cpt_mntflags & CPT_MNT_BIND) {
 			mntbind = __rst_get_name(&pos, ctx);
-		if (mntbind && (strcmp(mntbind, "/") == 0 || strcmp(mntbind, "") == 0)) {
-			rst_put_name(mntbind, ctx);
-			mntbind = NULL;
+			if (!mntbind)
+				goto out_err;
 		}
-		if (mntbind)
-			mi->cpt_flags |= MS_BIND;
+
+		/* legacy workarounds for images from ancient kernels */
+		if (!cpt_object_has(mi, cpt_mnt_parent)) {
+			/* erroneous root-bindmount */
+			if (mntbind && (!strcmp(mntbind, "/") ||
+					!strcmp(mntbind, "")))
+				mi->cpt_mntflags &= ~CPT_MNT_BIND;
+
+			/* non-external root-mount. skip it. */
+			if (!(mi->cpt_mntflags & CPT_MNT_EXT) &&
+					!strcmp(mntpnt, "/")) {
+				err = 0;
+				goto out_err;
+			}
+		}
 
 		if (mi->cpt_mntflags & CPT_MNT_DELAYFS)
 			mntdata = __rst_get_name(&pos, ctx);
@@ -1980,47 +1959,74 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 			}
 		}
 
-		err = 0;
+		parent = NULL;
+		if (cpt_object_has(mi, cpt_mnt_parent) &&
+				mi->cpt_mnt_parent != CPT_NULL) {
+			parent = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
+					mi->cpt_mnt_parent, ctx);
+			if (!parent) {
+				err = -ENOLINK;
+				goto out_err;
+			}
+		}
+
+		shared = NULL;
+		if (cpt_object_has(mi, cpt_mnt_shared) &&
+				mi->cpt_mnt_shared != CPT_NULL) {
+			cpt_object_t *shared_obj;
+
+			shared_obj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
+					mi->cpt_mnt_shared, ctx);
+			if (!shared_obj || !shared_obj->o_obj) {
+				err = -ENOLINK;
+				goto out_err;
+			}
+			shared = shared_obj->o_obj;
+		}
+
+		master = NULL;
+		if (cpt_object_has(mi, cpt_mnt_master) &&
+				mi->cpt_mnt_master != CPT_NULL) {
+			cpt_object_t *master_obj;
+
+			master_obj = lookup_cpt_obj_bypos(CPT_OBJ_VFSMOUNT_REF,
+					mi->cpt_mnt_master, ctx);
+			if (!master_obj || !master_obj->o_obj) {
+				err = -ENOLINK;
+				goto out_err;
+			}
+			master = master_obj->o_obj;
+		}
+
+		mntobj = alloc_cpt_object(GFP_KERNEL, ctx);
+		if (!mntobj) {
+			err = -ENOMEM;
+			goto out_err;
+		}
+		cpt_obj_setpos(mntobj, mntpos, ctx);
+		mntobj->o_lock = strlen(mntpnt);
+
 		if (mi->cpt_mntflags & CPT_MNT_DELAYFS) {
 			mnt = rst_mount_delayfs(mnttype, mi->cpt_flags,
 					mntdev, mntdata, ctx);
-			err = PTR_ERR(mnt);
-			if (IS_ERR(mnt))
-				goto out_err;
-
-			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-					mi->cpt_mntflags,
-					CPT_VFSMOUNT_DELAYFS, ctx);
+			mntobj->o_flags |= CPT_VFSMOUNT_DELAYFS;
 		} else if (mi->cpt_mntflags & CPT_MNT_EXT) {
 			mnt = rst_lookup_ext_mount(mntpnt, mnttype, ctx);
-			if (IS_ERR(mnt)) {
-				err = PTR_ERR(mnt);
+			if (IS_ERR(mnt))
 				eprintk_ctx("mount point is missing: %s\n", mntpnt);
-				goto out_err;
-			}
-
-			mntobj = rst_add_vfsmount(mnt, mntpnt,
-					mntpos, 0, ctx);
-			if (IS_ERR(mntobj))
-				err = PTR_ERR(mntobj);
-		} else if (!strcmp(mntpnt, "/")) {
-			/* non-external root-mount. skip it. */
 		} else if (mi->cpt_mntflags & CPT_MNT_BIND) {
 			struct nameidata nd;
 
 			err = rst_path_lookup(bindobj, mntbind,
 					LOOKUP_FOLLOW, &nd);
-			if (err)
+			if (err) {
+				eprintk_ctx("bindmount lookup failed: @%lld %s\n",
+						bindobj ? bindobj->o_pos : 0, mntpnt);
 				goto out_err;
+			}
 
 			mnt = vfs_bind_mount(nd.path.mnt, nd.path.dentry);
 			path_put(&nd.path);
-			err = PTR_ERR(mnt);
-			if (IS_ERR(mnt))
-				goto out_err;
-
-			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-					mi->cpt_mntflags, 0, ctx);
 		} else if (is_cgroup) {
 			struct cgroup *cgrp;
 
@@ -2031,33 +2037,76 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 
 			cgrp = bindobj->o_obj;
 
-			mntobj = lookup_cpt_object(CPT_OBJ_CGROUPS, cgrp->dentry->d_sb, ctx);
-			if (!mntobj) {
+			bindobj = lookup_cpt_object(CPT_OBJ_CGROUPS, cgrp->dentry->d_sb, ctx);
+			if (!bindobj) {
 				err = -ENODEV;
 				goto out_err;
 			}
 
-			mnt = vfs_bind_mount(mntobj->o_parent, cgrp->dentry);
-			err = PTR_ERR(mnt);
-			if (IS_ERR(mnt))
-				goto out_err;
-
-			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-					mi->cpt_mntflags, 0, ctx);
+			mnt = vfs_bind_mount(bindobj->o_parent, cgrp->dentry);
+		} else if (!strcmp(mnttype, "rootfs")) {
+			mnt = current->nsproxy->mnt_ns->root;
+			mnt = vfs_bind_mount(mnt, mnt->mnt_root);
 		} else {
-			mnt = rst_kern_mount(mnttype, mi->cpt_flags,
-					mntdev, NULL);
-			err = PTR_ERR(mnt);
-			if (IS_ERR(mnt))
-				goto out_err;
+			unsigned sb_flags = mi->cpt_flags & ~MS_KERNMOUNT;
 
-			err = rst_restore_vfsmount(mnt, mntpnt, mntpos,
-					mi->cpt_mntflags, 0, ctx);
-			if (err)
-				goto out_err;
+			mnt = rst_kern_mount(mnttype, sb_flags, mntdev, NULL);
 
 			if (!strcmp(mnttype, "tmpfs") ||
 			    !strcmp(mnttype, "devtmpfs"))
+				is_tmpfs = 1;
+		}
+
+		if (IS_ERR_OR_NULL(mnt)) {
+			err = PTR_ERR(mnt);
+			free_cpt_object(mntobj, ctx);
+			goto out_err;
+		}
+
+		err = 0;
+		cpt_obj_setobj(mntobj, mnt, ctx);
+		intern_cpt_object(CPT_OBJ_VFSMOUNT_REF, mntobj, ctx);
+
+		if (!ns_obj->o_obj) {
+			struct mnt_namespace *mnt_ns;
+
+			mnt_ns = create_mnt_ns(mntget(mnt));
+			if (IS_ERR(mnt_ns)) {
+				err = PTR_ERR(mnt_ns);
+				goto out_err;
+			}
+			cpt_obj_setobj(ns_obj, mnt_ns, ctx);
+		}
+
+		if (!mnt->mnt_ns) {
+			struct nameidata nd;
+			unsigned mntflags;
+
+			err = rst_path_lookup(parent, mntpnt, LOOKUP_FOLLOW, &nd);
+			if (err) {
+				eprintk_ctx("Failed ot lookup path '%s'\n", mntpnt);
+				goto out_err;
+			}
+			mntflags = MNT_CPT | (mi->cpt_mntflags & ~(CPT_MNT_BIND |
+						CPT_MNT_EXT | CPT_MNT_DELAYFS));
+			err = do_add_mount(mntget(mnt), &nd.path, mntflags, NULL);
+			path_put(&nd.path);
+			if (err)
+				goto out_err;
+
+			if (shared || master) {
+				down_write(&namespace_sem);
+				if (master)
+					mnt->mnt_master = master;
+					list_add(&mnt->mnt_slave,
+						 &master->mnt_slave_list);
+				if (shared)
+					list_add(&mnt->mnt_share,
+						 &shared->mnt_share);
+				up_write(&namespace_sem);
+			}
+
+			if (is_tmpfs)
 				err = rst_restore_tmpfs(&pos, ctx);
 		}
 out_err:
@@ -2072,16 +2121,17 @@ out_err:
 		if (mntdata)
 			rst_put_name(mntdata, ctx);
 		if (err) {
-			eprintk_ctx("Failed to restore mount point: dev '%s', "
-					"type '%s', path '%s'\n",
-					mntdev, mnttype, mntpnt);
+			eprintk_ctx("Failed to restore mount point @%lld"
+					" dev '%s', type '%s', path '%s'\n",
+					mntpos, mntdev, mnttype, mntpnt);
 			return err;
 		}
 	}
 	return 0;
 }
 
-int restore_one_namespace(loff_t pos, loff_t endpos, struct cpt_context *ctx)
+int restore_one_namespace(cpt_object_t *obj, loff_t pos, loff_t endpos,
+			  struct cpt_context *ctx)
 {
 	int err;
 	struct cpt_vfsmount_image mi;
@@ -2090,11 +2140,42 @@ int restore_one_namespace(loff_t pos, loff_t endpos, struct cpt_context *ctx)
 		err = rst_get_object(CPT_OBJ_VFSMOUNT, pos, &mi, ctx);
 		if (err)
 			return err;
-		err = restore_one_vfsmount(&mi, pos, ctx);
+		err = restore_one_vfsmount(&mi, pos, obj, ctx);
 		if (err)
 			return err;
 		pos += mi.cpt_next;
 	}
+	return 0;
+}
+
+int rst_task_namespace(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	cpt_object_t *obj;
+	struct nsproxy *ns;
+
+	if (ti->cpt_namespace == CPT_NULL)
+		return 0;
+
+	obj = lookup_cpt_obj_bypos(CPT_OBJ_NAMESPACE, ti->cpt_namespace, ctx);
+	if (!obj) {
+		eprintk_ctx("namespace not found @%lld\n", ti->cpt_namespace);
+		return -ENOLINK;
+	}
+
+	if (current->nsproxy->mnt_ns == obj->o_obj)
+		return 0;
+
+	ns = obj->o_parent;
+	if (!ns) {
+		ns = duplicate_nsproxy(current->nsproxy);
+		if (!ns)
+			return -ENOMEM;
+		put_mnt_ns(ns->mnt_ns);
+		ns->mnt_ns = obj->o_obj;
+		get_mnt_ns(ns->mnt_ns);
+		obj->o_parent = ns;
+	}
+	switch_task_namespaces(current, get_nsproxy(ns));
 	return 0;
 }
 
@@ -2105,7 +2186,8 @@ int rst_root_namespace(struct cpt_context *ctx)
 	loff_t endsec;
 	struct cpt_section_hdr h;
 	struct cpt_object_hdr sbuf;
-	int done = 0;
+	cpt_object_t *obj;
+	struct mnt_namespace *mnt_ns = current->nsproxy->mnt_ns;
 
 	if (sec == CPT_NULL)
 		return 0;
@@ -2122,14 +2204,22 @@ int rst_root_namespace(struct cpt_context *ctx)
 		err = rst_get_object(CPT_OBJ_NAMESPACE, sec, &sbuf, ctx);
 		if (err)
 			return err;
-		if (done) {
-			eprintk_ctx("multiple namespaces are not supported\n");
-			break;
+
+		obj = cpt_object_add(CPT_OBJ_NAMESPACE, mnt_ns, ctx);
+		if (!obj)
+			return -ENOMEM;
+		cpt_obj_setpos(obj, sec, ctx);
+		if (mnt_ns) {
+			get_mnt_ns(mnt_ns);
+			mnt_ns = NULL;
 		}
-		done++;
-		err = restore_one_namespace(sec+sbuf.cpt_hdrlen, sec+sbuf.cpt_next, ctx);
+
+		err = restore_one_namespace(obj, sec + sbuf.cpt_hdrlen,
+					    sec + sbuf.cpt_next, ctx);
 		if (err)
 			return err;
+		if (!obj->o_obj)
+			return -ENOLINK;
 		sec += sbuf.cpt_next;
 	}
 

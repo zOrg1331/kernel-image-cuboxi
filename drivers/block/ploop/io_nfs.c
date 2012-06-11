@@ -1322,7 +1322,7 @@ static int nfsio_open(struct ploop_io * io)
 		printk("nfsio_open for ploop%d failed: %s is not supported; "
 		       "use '-o vers=3' mounting nfs\n", io->plo->index,
 		       file->f_mapping->host->i_sb->s_type->name);
-		return -EINVAL;
+		return -EOPNOTSUPP;
 	}
 
 	if (NFS_SERVER(file->f_mapping->host)->wsize < PAGE_SIZE ||

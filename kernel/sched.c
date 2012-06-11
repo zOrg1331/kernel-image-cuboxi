@@ -259,7 +259,8 @@ struct cfs_bandwidth {
 	struct hrtimer period_timer, slack_timer;
 	struct list_head throttled_cfs_rq;
 
-	unsigned long idle_scale_mul, idle_scale_div;
+#define CFS_IDLE_SCALE 100
+	u64 idle_scale_inv;
 
 	/* statistics */
 	int nr_periods, nr_throttled;
@@ -616,6 +617,7 @@ static void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->runtime = 0;
 	cfs_b->quota = RUNTIME_INF;
 	cfs_b->period = ns_to_ktime(default_cfs_period());
+	cfs_b->idle_scale_inv = CFS_IDLE_SCALE;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -916,6 +918,26 @@ void __init kstat_init(void)
 #define task_rq(p)		cpu_rq(task_cpu(p))
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define raw_rq()		(&__raw_get_cpu_var(runqueues))
+
+void wait_for_rqlock(void)
+{
+	struct rq *rq = raw_rq();
+
+	/*
+	 * The setting of TASK_RUNNING by try_to_wake_up() may be delayed
+	 * when the following two conditions become true.
+	 *   - There is race condition of mmap_sem (It is acquired by
+	 *     exit_mm()), and
+	 *   - SMI occurs before setting TASK_RUNINNG.
+	 *     (or hypervisor of virtual machine switches to other guest)
+	 *  As a result, we may become TASK_RUNNING after becoming TASK_DEAD
+	 *
+	 * To avoid it, we have to wait for releasing rq lock which
+	 * is held by try_to_wake_up()
+	 */
+	smp_mb();
+	spin_unlock_wait(&rq->lock);
+}
 
 static void update_rq_clock(struct rq *rq)
 {
@@ -6085,8 +6107,6 @@ EXPORT_SYMBOL(sub_preempt_count);
  */
 static noinline void __schedule_bug(struct task_struct *prev)
 {
-	struct pt_regs *regs = get_irq_regs();
-
 	printk(KERN_ERR "BUG: scheduling while atomic: %s/%d/0x%08x\n",
 		prev->comm, prev->pid, preempt_count());
 
@@ -6094,11 +6114,7 @@ static noinline void __schedule_bug(struct task_struct *prev)
 	print_modules();
 	if (irqs_disabled())
 		print_irqtrace_events(prev);
-
-	if (regs)
-		show_regs(regs);
-	else
-		dump_stack();
+	dump_stack();
 }
 
 /*
@@ -10246,6 +10262,8 @@ static void init_tg_cfs_entry(struct task_group *tg, struct cfs_rq *cfs_rq,
 	se->my_q = cfs_rq;
 	update_load_set(&se->load, 0);
 	se->parent = parent;
+
+	se->sleep_start = cpu_clock(cpu);
 }
 #endif
 
@@ -11495,6 +11513,7 @@ static int __tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
 	cfs_b->quota = quota;
 
 	__refill_cfs_bandwidth_runtime(cfs_b);
+	update_cfs_bandwidth_idle_scale(cfs_b);
 	/* restart the period timer (if active) to handle new period expiry */
 	if (runtime_enabled && cfs_b->timer_active) {
 		/* force a reprogram */
@@ -11844,34 +11863,37 @@ static void cpu_cgroup_update_stat(struct task_group *tg, int i)
 	struct sched_entity *se = tg->se[i];
 	struct kernel_cpustat *kcpustat = per_cpu_ptr(tg->cpustat, i);
 	u64 now = cpu_clock(i);
-	u64 delta;
+	u64 delta, idle, iowait;
 
 	/* root_task_group has not sched entities */
 	if (tg == &root_task_group)
 		return;
 
-	kcpustat->cpustat[IOWAIT] = se->iowait_sum;
-	kcpustat->cpustat[IDLE] = se->sum_sleep_runtime;
+	iowait = se->iowait_sum;
+	idle = se->sum_sleep_runtime;
 	kcpustat->cpustat[STEAL] = se->wait_sum;
 
-	if (kcpustat->cpustat[IDLE] > kcpustat->cpustat[IOWAIT])
-		kcpustat->cpustat[IDLE] -= kcpustat->cpustat[IOWAIT];
+	if (idle > iowait)
+		idle -= iowait;
 	else
-		kcpustat->cpustat[IDLE] = 0;
+		idle = 0;
 
 	if (se->sleep_start) {
 		delta = now - se->sleep_start;
 		if ((s64)delta > 0)
-			kcpustat->cpustat[IDLE] += SCALE_IDLE_TIME(delta, se);
+			idle += SCALE_IDLE_TIME(delta, se);
 	} else if (se->block_start) {
 		delta = now - se->block_start;
 		if ((s64)delta > 0)
-			kcpustat->cpustat[IOWAIT] += SCALE_IDLE_TIME(delta, se);
+			iowait += SCALE_IDLE_TIME(delta, se);
 	} else if (se->wait_start) {
 		delta = now - se->wait_start;
 		if ((s64)delta > 0)
 			kcpustat->cpustat[STEAL] += delta;
 	}
+
+	kcpustat->cpustat[IDLE] = max(kcpustat->cpustat[IDLE], idle);
+	kcpustat->cpustat[IOWAIT] = max(kcpustat->cpustat[IOWAIT], iowait);
 
 	kcpustat->cpustat[USED] = cpu_cgroup_usage_cpu(tg, i);
 #endif

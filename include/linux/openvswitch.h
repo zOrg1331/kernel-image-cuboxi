@@ -449,4 +449,7 @@ enum ovs_action_attr {
 
 #define OVS_ACTION_ATTR_MAX (__OVS_ACTION_ATTR_MAX - 1)
 
+extern struct sk_buff *(*ovs_handle_frame_hook)(struct net_bridge_port *p,
+					       struct sk_buff *skb);
+
 #endif /* _LINUX_OPENVSWITCH_H */

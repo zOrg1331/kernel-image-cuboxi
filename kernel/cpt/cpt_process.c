@@ -904,10 +904,6 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 		tobj = lookup_cpt_object(CPT_OBJ_NAMESPACE, tsk_ns, ctx);
 		if (!tobj) BUG();
 		v->cpt_namespace = tobj->o_pos;
-
-		if (tsk_ns != current->nsproxy->mnt_ns)
-			eprintk_ctx("namespaces are not supported:"
-					"process " CPT_FID "\n", CPT_TID(tsk));
 	}
 	v->cpt_sysvsem_undo = CPT_NULL;
 	if (tsk->sysvsem.undo_list && !tsk->exit_state) {

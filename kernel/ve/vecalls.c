@@ -1766,7 +1766,7 @@ static int init_ve_vtty(struct ve_struct *ve)
 	struct device *dev;
 
 	for (minor = 0 ; minor <= MAX_NR_VTTY ; minor++) {
-		err = set_device_perms_ve(ve, S_IFCHR,
+		err = set_device_perms_ve(ve, S_IFCHR | VE_USE_MAJOR | VE_USE_MINOR,
 				MKDEV(TTY_MAJOR, minor), 06);
 		if (err)
 			goto out;
