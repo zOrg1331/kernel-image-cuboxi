@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt1
+Release: alt0.M60P.1
 epoch:1 
 %define kernel_base_version	3.4
 %define kernel_sublevel	.2
@@ -576,6 +576,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Sat Jun 16 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.2-alt0.M60P.1
+- backport to p6
+
 * Fri Jun 15 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.2-alt1
 - 3.4.2
 
