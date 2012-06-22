@@ -9,7 +9,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.3.0
 
 %define krelease	%release
 
