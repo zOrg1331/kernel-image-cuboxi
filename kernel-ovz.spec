@@ -11,8 +11,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab100
-%define ovzrel 2
+%define ovzver 028stab101
+%define ovzrel 1
 
 %if !%{buildup}
 %define _without_up 1
@@ -134,7 +134,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 #
 %define sublevel 18
 %define stablerev 4
-%define revision 308.4.1
+%define revision 308.8.2
 %define kversion 2.6.%{sublevel}.%{stablerev}
 %define rpmversion 2.6.%{sublevel}
 %define release %{revision}%{?dist}%{?buildid}
@@ -586,11 +586,8 @@ Patch100020: linux-2.6.18-128.1.1.el5.028stab062.3-build-fixes.diff
 Patch100024: diff-make-sysrq-mask-affect-proc-sysrq-trigger-20090826
 Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
-Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
-
-Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
 Patch100041: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
 
@@ -1001,11 +998,8 @@ cd linux-%{KVERREL}.%{_target_cpu}
 %patch100024 -p1
 %patch100025 -p1
 %patch100026 -p1
-%patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
-
-%patch100039 -p1
 
 %patch100041 -p1
 
