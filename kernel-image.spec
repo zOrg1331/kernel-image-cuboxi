@@ -1,6 +1,6 @@
 Name: kernel-image-un-test
 epoch: 0
-Release: alt0rc4
+Release: alt0rc4.1
 %define kernel_base_version	3.5
 %define kernel_sublevel	.0
 %define kernel_extra_version	%nil
@@ -576,6 +576,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4.1
+- aufs added
+
 * Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4
 - 3.5-rc4
 - un-test on base of on-def
