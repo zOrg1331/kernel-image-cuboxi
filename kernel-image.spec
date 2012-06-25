@@ -285,14 +285,14 @@ kernel package %name-%version-%release, install this package
 and specify %kbuild_dir as the kernel source
 directory.
 
-%package -n kernel-doc-%base_flavour
-Summary: Linux kernel %kversion-%base_flavour documentation
+%package -n kernel-doc-%flavour
+Summary: Linux kernel %kversion-%flavour documentation
 Group: System/Kernel and hardware
 
-%description -n kernel-doc-%base_flavour
+%description -n kernel-doc-%flavour
 This package contains documentation files for ALT Linux kernel packages:
- * kernel-image-%base_flavour-up-%kversion-%krelease
- * kernel-image-%base_flavour-smp-%kversion-%krelease
+ * kernel-image-%flavour-up-%kversion-%krelease
+ * kernel-image-%flavour-smp-%kversion-%krelease
 
 The documentation files contained in this package may be different
 from the similar files in upstream kernel distributions, because some
@@ -542,8 +542,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/build
 
 %if_enabled docs
-%files -n kernel-doc-%base_flavour
-%doc %_docdir/kernel-doc-%base_flavour-%version
+%files -n kernel-doc-%flavour
+%doc %_docdir/kernel-doc-%flavour-%version
 %endif
 
 %files -n kernel-modules-drm-%flavour
