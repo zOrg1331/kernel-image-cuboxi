@@ -1966,6 +1966,14 @@ static int alc_add_inv_dmic_mixer(struct hda_codec *codec, hda_nid_t nid)
 	return 0;
 }
 
+/* typically the digital mic is put at node 0x12 */
+static void alc_fixup_inv_dmic_0x12(struct hda_codec *codec,
+				    const struct alc_fixup *fix, int action)
+{
+	if (action == ALC_FIXUP_ACT_PROBE)
+		alc_add_inv_dmic_mixer(codec, 0x12);
+}
+
 /*
  * virtual master controls
  */
@@ -5192,6 +5200,7 @@ enum {
 	ALC889_FIXUP_DAC_ROUTE,
 	ALC889_FIXUP_MBP_VREF,
 	ALC889_FIXUP_IMAC91_VREF,
+	ALC882_FIXUP_INV_DMIC,
 	ALC882_FIXUP_NO_PRIMARY_HP,
 };
 
@@ -5513,6 +5522,10 @@ static const struct alc_fixup alc882_fixups[] = {
 		.type = ALC_FIXUP_FUNC,
 		.v.func = alc882_fixup_no_primary_hp,
 	},
+	[ALC882_FIXUP_INV_DMIC] = {
+		.type = ALC_FIXUP_FUNC,
+		.v.func = alc_fixup_inv_dmic_0x12,
+	},
 };
 
 static const struct snd_pci_quirk alc882_fixup_tbl[] = {
@@ -5589,6 +5602,7 @@ static const struct alc_model_fixup alc882_fixup_models[] = {
 	{.id = ALC882_FIXUP_ACER_ASPIRE_4930G, .name = "acer-aspire-4930g"},
 	{.id = ALC882_FIXUP_ACER_ASPIRE_8930G, .name = "acer-aspire-8930g"},
 	{.id = ALC883_FIXUP_ACER_EAPD, .name = "acer-aspire"},
+	{.id = ALC882_FIXUP_INV_DMIC, .name = "inv-dmic"},
 	{.id = ALC882_FIXUP_NO_PRIMARY_HP, .name = "no-primary-hp"},
 	{}
 };
@@ -5683,6 +5697,7 @@ enum {
 	ALC262_FIXUP_LENOVO_3000,
 	ALC262_FIXUP_BENQ,
 	ALC262_FIXUP_BENQ_T31,
+	ALC262_FIXUP_INV_DMIC,
 };
 
 static const struct alc_fixup alc262_fixups[] = {
@@ -5734,6 +5749,10 @@ static const struct alc_fixup alc262_fixups[] = {
 			{}
 		}
 	},
+	[ALC262_FIXUP_INV_DMIC] = {
+		.type = ALC_FIXUP_FUNC,
+		.v.func = alc_fixup_inv_dmic_0x12,
+	},
 };
 
 static const struct snd_pci_quirk alc262_fixup_tbl[] = {
@@ -5748,6 +5767,10 @@ static const struct snd_pci_quirk alc262_fixup_tbl[] = {
 	{}
 };
 
+static const struct alc_model_fixup alc262_fixup_models[] = {
+	{.id = ALC262_FIXUP_INV_DMIC, .name = "inv-dmic"},
+	{}
+};
 
 /*
  */
@@ -5778,7 +5801,8 @@ static int patch_alc262(struct hda_codec *codec)
 #endif
 	alc_fix_pll_init(codec, 0x20, 0x0a, 10);
 
-	alc_pick_fixup(codec, NULL, alc262_fixup_tbl, alc262_fixups);
+	alc_pick_fixup(codec, alc262_fixup_models, alc262_fixup_tbl,
+		       alc262_fixups);
 	alc_apply_fixup(codec, ALC_FIXUP_ACT_PRE_PROBE);
 
 	alc_auto_parse_customize_define(codec);
@@ -5834,6 +5858,22 @@ static const struct hda_verb alc268_beep_init_verbs[] = {
 	{ }
 };
 
+enum {
+	ALC268_FIXUP_INV_DMIC,
+};
+
+static const struct alc_fixup alc268_fixups[] = {
+	[ALC268_FIXUP_INV_DMIC] = {
+		.type = ALC_FIXUP_FUNC,
+		.v.func = alc_fixup_inv_dmic_0x12,
+	},
+};
+
+static const struct alc_model_fixup alc268_fixup_models[] = {
+	{.id = ALC268_FIXUP_INV_DMIC, .name = "inv-dmic"},
+	{}
+};
+
 /*
  * BIOS auto configuration
  */
@@ -5866,6 +5906,9 @@ static int patch_alc268(struct hda_codec *codec)
 
 	/* ALC268 has no aa-loopback mixer */
 
+	alc_pick_fixup(codec, alc268_fixup_models, NULL, alc268_fixups);
+	alc_apply_fixup(codec, ALC_FIXUP_ACT_PRE_PROBE);
+
 	/* automatic parse from the BIOS config */
 	err = alc268_parse_auto_config(codec);
 	if (err < 0)
@@ -5894,6 +5937,8 @@ static int patch_alc268(struct hda_codec *codec)
 
 	codec->patch_ops = alc_patch_ops;
 	spec->shutup = alc_eapd_shutup;
+
+	alc_apply_fixup(codec, ALC_FIXUP_ACT_PROBE);
 
 	return 0;
 
@@ -6110,13 +6155,6 @@ static void alc269_fixup_mic2_mute(struct hda_codec *codec,
 	}
 }
 
-static void alc269_fixup_inv_dmic(struct hda_codec *codec,
-				  const struct alc_fixup *fix, int action)
-{
-	if (action == ALC_FIXUP_ACT_PROBE)
-		alc_add_inv_dmic_mixer(codec, 0x12);
-}
-
 
 enum {
 	ALC269_FIXUP_SONY_VAIO,
@@ -6281,7 +6319,7 @@ static const struct alc_fixup alc269_fixups[] = {
 	},
 	[ALC269_FIXUP_INV_DMIC] = {
 		.type = ALC_FIXUP_FUNC,
-		.v.func = alc269_fixup_inv_dmic,
+		.v.func = alc_fixup_inv_dmic_0x12,
 	},
 };
 
@@ -6371,6 +6409,9 @@ static const struct snd_pci_quirk alc269_fixup_tbl[] = {
 static const struct alc_model_fixup alc269_fixup_models[] = {
 	{.id = ALC269_FIXUP_AMIC, .name = "laptop-amic"},
 	{.id = ALC269_FIXUP_DMIC, .name = "laptop-dmic"},
+	{.id = ALC269_FIXUP_STEREO_DMIC, .name = "alc269-dmic"},
+	{.id = ALC271_FIXUP_DMIC, .name = "alc271-dmic"},
+	{.id = ALC269_FIXUP_INV_DMIC, .name = "inv-dmic"},
 	{.id = ALC269_FIXUP_LENOVO_DOCK, .name = "lenovo-dock"},
 	{}
 };
@@ -6773,8 +6814,6 @@ static void alc272_fixup_mario(struct hda_codec *codec,
 		       "hda_codec: failed to override amp caps for NID 0x2\n");
 }
 
-#define alc662_fixup_inv_dmic alc269_fixup_inv_dmic
-
 enum {
 	ALC662_FIXUP_ASPIRE,
 	ALC662_FIXUP_IDEAPAD,
@@ -6951,7 +6990,7 @@ static const struct alc_fixup alc662_fixups[] = {
 	},
 	[ALC662_FIXUP_INV_DMIC] = {
 		.type = ALC_FIXUP_FUNC,
-		.v.func = alc662_fixup_inv_dmic,
+		.v.func = alc_fixup_inv_dmic_0x12,
 	},
 };
 
@@ -7040,6 +7079,7 @@ static const struct alc_model_fixup alc662_fixup_models[] = {
 	{.id = ALC662_FIXUP_ASUS_MODE6, .name = "asus-mode6"},
 	{.id = ALC662_FIXUP_ASUS_MODE7, .name = "asus-mode7"},
 	{.id = ALC662_FIXUP_ASUS_MODE8, .name = "asus-mode8"},
+	{.id = ALC662_FIXUP_INV_DMIC, .name = "inv-dmic"},
 	{}
 };
 
