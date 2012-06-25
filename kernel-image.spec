@@ -1,6 +1,6 @@
-Name: kernel-image-un-def
-Release: alt0rc3
-epoch:1 
+Name: kernel-image-un-test
+epoch: 0
+Release: alt0rc4
 %define kernel_base_version	3.5
 %define kernel_sublevel	.0
 %define kernel_extra_version	%nil
@@ -9,7 +9,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.3.0
+%define kernel_extra_version_numeric 0.4.0
 
 %define krelease	%release
 
@@ -576,6 +576,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4
+- 3.5-rc4
+- un-test on base of on-def
+
 * Fri Jun 22 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.0-alt0rc3
 - 3.5-rc3
 
