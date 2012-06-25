@@ -22,7 +22,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_disable oss
@@ -578,6 +578,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4.1
 - aufs added
+- docs disabled
 
 * Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4
 - 3.5-rc4
