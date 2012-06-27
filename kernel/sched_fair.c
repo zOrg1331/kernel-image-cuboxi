@@ -1401,13 +1401,13 @@ static void update_cfs_bandwidth_idle_scale(struct cfs_bandwidth *cfs_b)
 	 * nr_idle_cpus = nr_cpus - nr_busy_cpus
 	 * nr_busy_cpus = (quota - quota_left) / period
 	 */
-	if (!runtime)
-		cfs_b->idle_scale_inv = 0;
-	else if (quota == RUNTIME_INF || quota >= max_quota)
+	if (quota == RUNTIME_INF || quota >= max_quota)
 		cfs_b->idle_scale_inv = CFS_IDLE_SCALE;
-	else
+	else if (runtime)
 		cfs_b->idle_scale_inv = div64_u64(CFS_IDLE_SCALE *
 				(max_quota - quota + runtime), runtime);
+	else
+		cfs_b->idle_scale_inv = 0;
 }
 
 /*

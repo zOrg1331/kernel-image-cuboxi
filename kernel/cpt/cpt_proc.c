@@ -519,6 +519,14 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 			eprintk_ctx("IPv6 not loaded on destination node\n");
 			err = 1;
 		}
+
+		if ((src_flags & (1 << CPT_NAMESPACES)) &&
+		    !(dst_flags & (1 << CPT_NAMESPACES))) {
+			eprintk_ctx("Mount namespaces migration support is not"
+				    " present on destination node\n");
+			err = 2;
+		}
+
 		break;
 	}
 	default:

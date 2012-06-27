@@ -279,6 +279,8 @@ static void bdi_task_init(struct backing_dev_info *bdi,
 	set_user_nice(tsk, 0);
 }
 
+extern struct io_context *current_io_context(gfp_t gfp_flags, int node);
+
 static int bdi_start_fn(void *ptr)
 {
 	struct bdi_writeback *wb = ptr;
@@ -293,6 +295,8 @@ static int bdi_start_fn(void *ptr)
 	spin_unlock_bh(&bdi_lock);
 
 	bdi_task_init(bdi, wb);
+
+	(void)current_io_context(GFP_KERNEL, -1);
 
 	/*
 	 * Clear pending bit and wakeup anybody waiting to tear us down

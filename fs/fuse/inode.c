@@ -185,6 +185,7 @@ void fuse_change_attributes(struct inode *inode, struct fuse_attr *attr,
 {
 	struct fuse_conn *fc = get_fuse_conn(inode);
 	struct fuse_inode *fi = get_fuse_inode(inode);
+	int wb = fc->flags & FUSE_WBCACHE;
 	loff_t oldsize;
 
 	spin_lock(&fc->lock);
@@ -196,11 +197,11 @@ void fuse_change_attributes(struct inode *inode, struct fuse_attr *attr,
 	fuse_change_attributes_common(inode, attr, attr_valid);
 
 	oldsize = inode->i_size;
-	if (!(inode->i_state & I_DIRTY))
+	if (!wb || !S_ISREG(inode->i_mode))
 		i_size_write(inode, attr->size);
 	spin_unlock(&fc->lock);
 
-	if (S_ISREG(inode->i_mode) && oldsize != inode->i_size) {
+	if (!wb && S_ISREG(inode->i_mode) && oldsize != attr->size) {
 		truncate_pagecache(inode, oldsize, attr->size);
 		invalidate_inode_pages2(inode->i_mapping);
 	}
@@ -208,6 +209,9 @@ void fuse_change_attributes(struct inode *inode, struct fuse_attr *attr,
 
 static void fuse_init_inode(struct inode *inode, struct fuse_attr *attr)
 {
+	struct fuse_inode *fi = get_fuse_inode(inode);
+	atomic_set(&fi->num_openers, 0);
+
 	inode->i_mode = attr->mode & S_IFMT;
 	inode->i_size = attr->size;
 	if (S_ISREG(inode->i_mode)) {

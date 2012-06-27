@@ -2163,12 +2163,18 @@ static void ploop_req_state_process(struct ploop_request * preq)
 	struct ploop_delta * top_delta;
 	struct io_context * saved_ioc = NULL;
 	int release_ioc = 0;
+#ifdef CONFIG_BEANCOUNTERS
+	struct user_beancounter * uninitialized_var(saved_ub);
+#endif
 
 	trace_req_state_process(preq);
 
 	if (preq->ioc) {
 		saved_ioc = current->io_context;
 		current->io_context = preq->ioc;
+#ifdef CONFIG_BEANCOUNTERS
+		saved_ub = set_exec_ub(preq->ioc->ioc_ub);
+#endif
 		atomic_long_inc(&preq->ioc->refcount);
 		release_ioc = 1;
 	}
@@ -2430,6 +2436,9 @@ restart:
 	if (release_ioc) {
 		struct io_context * ioc = current->io_context;
 		current->io_context = saved_ioc;
+#ifdef CONFIG_BEANCOUNTERS
+		set_exec_ub(saved_ub);
+#endif
 		put_io_context(ioc);
 	}
 }

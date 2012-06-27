@@ -205,7 +205,7 @@ struct cpt_major_hdr
 
 /* This mask is used to determine whether VE
    has some unsupported features or not */
-#define CPT_UNSUPPORTED_MASK	0xe1ff0000UL
+#define CPT_UNSUPPORTED_MASK	0xe1fd0000UL
 
 #define CPT_KERNEL_CONFIG_PAE	0
 

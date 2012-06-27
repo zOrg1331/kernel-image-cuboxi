@@ -159,13 +159,10 @@ static inline unsigned long skb_charge_datalen(unsigned long chargesize)
 static inline unsigned long skb_charge_size_gen(unsigned long size)
 { 
 #ifdef CONFIG_BEANCOUNTERS
-	unsigned int slabsize;
+	unsigned long slabsize;
 
 	size = SKB_DATA_ALIGN(size) + sizeof(struct skb_shared_info);
-	slabsize = 32; /* min size is 64 because of skb_shared_info */
-	do { 
-		slabsize <<= 1; 
-	} while (slabsize < size);
+	slabsize = roundup_pow_of_two(size);
 
 	return slabsize + sizeof(struct sk_buff);
 #else

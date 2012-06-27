@@ -14,8 +14,20 @@
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/bio.h>
+#include <linux/task_io_accounting_ops.h>
+#include <linux/virtinfo.h>
 
 static const struct file_operations fuse_direct_io_file_operations;
+static void fuse_sync_writes(struct inode *inode);
+
+static void fuse_account_request(struct fuse_conn *fc, size_t count)
+{
+	struct user_beancounter *ub = get_exec_ub();
+
+	ub_percpu_inc(ub, fuse_requests);
+	ub_percpu_add(ub, fuse_bytes, count);
+	virtinfo_notifier_call_irq(VITYPE_IO, VIRTINFO_IO_FUSE_REQ, NULL);
+}
 
 static int fuse_send_open(struct fuse_conn *fc, u64 nodeid, struct file *file,
 			  int opcode, struct fuse_open_out *outargp)
@@ -207,6 +219,30 @@ int fuse_open_common(struct inode *inode, struct file *file, bool isdir)
 	if (err)
 		return err;
 
+	if (fc->flags & FUSE_WBCACHE) {
+		struct fuse_inode *fi = get_fuse_inode(inode);
+		u64 size;
+
+		mutex_lock(&inode->i_mutex);
+		atomic_inc(&fi->num_openers);
+
+		if (atomic_read(&fi->num_openers) == 1) {
+			err = fuse_getattr_size(inode, file, &size);
+			if (err) {
+				atomic_dec(&fi->num_openers);
+				mutex_unlock(&inode->i_mutex);
+				fuse_release_common(file, FUSE_RELEASE);
+				return err;
+			}
+
+			spin_lock(&fc->lock);
+			i_size_write(inode, size);
+			spin_unlock(&fc->lock);
+		}
+		
+		mutex_unlock(&inode->i_mutex);
+	}
+
 	fuse_finish_open(inode, file);
 
 	return 0;
@@ -255,7 +291,12 @@ void fuse_release_common(struct file *file, int opcode)
 	 * Normally this will send the RELEASE request, however if
 	 * some asynchronous READ or WRITE requests are outstanding,
 	 * the sending will be delayed.
+	 *
+	 * Now we wait for this, so:
 	 */
+	if (ff->fc->close_wait) {
+		BUG_ON(atomic_read(&ff->count) != 1);
+	}
 	fuse_file_put(ff);
 }
 
@@ -267,13 +308,42 @@ static int fuse_open(struct inode *inode, struct file *file)
 static int fuse_release(struct inode *inode, struct file *file)
 {
 	struct fuse_file *ff = file->private_data;
-	struct fuse_inode *fi;
+	struct fuse_inode *fi = get_fuse_inode(inode);
 
 	if (ff->fc->flags & FUSE_WBCACHE) {
 		filemap_write_and_wait(file->f_mapping);
-		fi = get_fuse_inode(inode);
-		wait_event(fi->page_waitq, list_empty_careful(&fi->writepages));
-	}
+
+		/* Must remove file from write list. Otherwise it is possible this
+		 * file will get more writeback from another files rerouted via write_files
+		 */
+		spin_lock(&ff->fc->lock);
+		list_del_init(&ff->write_entry);
+		spin_unlock(&ff->fc->lock);
+
+		/* This can livelock. Inode can be open via another file
+		 * and that file can generate continuous writeback.
+		 * I think i_mutex could be taken around this.
+		 * 
+		 * For now we replace this with waiting on ff->count,
+		 * it is safe, because we essentially wait only for writeback (and readahead)
+		 * enqueued on this file and it is not going to get new one: it is closing.
+		 */
+		if (!ff->fc->close_wait)
+			wait_event(fi->page_waitq, list_empty_careful(&fi->writepages));
+		else
+			wait_event(fi->page_waitq, atomic_read(&ff->count) == 1);
+
+		/* Wait for threads just released ff to leave their critical sections.
+		 * Taking spinlock is the first thing fuse_release_common does, so that
+		 * this is unneseccary, but it is still good to emphasize right here,
+		 * that we need this.
+		 */
+		spin_unlock_wait(&ff->fc->lock);
+
+		/* since now we can trust userspace attr.size */
+		atomic_dec(&fi->num_openers);
+	} else if (ff->fc->close_wait)
+		wait_event(fi->page_waitq, atomic_read(&ff->count) == 1);
 
 	fuse_release_common(file, FUSE_RELEASE);
 
@@ -334,7 +404,8 @@ static bool fuse_page_is_writeback(struct inode *inode, pgoff_t index)
 
 		BUG_ON(req->inode != inode);
 		curr_index = req->misc.write.in.offset >> PAGE_CACHE_SHIFT;
-		if (curr_index == index) {
+		if (curr_index <= index &&
+		    index < curr_index + req->num_pages) {
 			found = true;
 			break;
 		}
@@ -370,9 +441,17 @@ static int fuse_flush(struct file *file, fl_owner_t id)
 	if (is_bad_inode(inode))
 		return -EIO;
 
-	if (fc->flags & FUSE_WBCACHE)
-		filemap_write_and_wait(file->f_mapping);
-	else if (fc->no_flush)
+	if (fc->flags & FUSE_WBCACHE) {
+		err = filemap_write_and_wait(file->f_mapping);
+		if (err)
+			return err;
+
+		mutex_lock(&inode->i_mutex);
+		fuse_sync_writes(inode);
+		mutex_unlock(&inode->i_mutex);
+	}
+
+	if (fc->no_flush)
 		return 0;
 
 	req = fuse_get_req_nofail(fc, file);
@@ -554,6 +633,7 @@ static size_t fuse_send_read(struct fuse_req *req, struct file *file,
 	struct fuse_conn *fc = ff->fc;
 
 	fuse_read_fill(req, file, pos, count, FUSE_READ);
+	fuse_account_request(fc, count);
 	if (owner != NULL) {
 		struct fuse_read_in *inarg = &req->misc.read.in;
 
@@ -582,13 +662,14 @@ static void fuse_read_update_size(struct inode *inode, loff_t size,
 	spin_unlock(&fc->lock);
 }
 
-static void fuse_readpages_short(struct fuse_req *req)
+static void fuse_readpages_short(struct fuse_req *req, u64 attr_ver)
 {
 	int i;
 	size_t num_read = req->out.args[0].size;
 	struct inode *inode = req->pages[0]->mapping->host;
+	struct fuse_conn *fc = get_fuse_conn(inode);
 
-	if (inode->i_state & I_DIRTY) {
+	if (fc->flags & FUSE_WBCACHE) {
 		/*
 		 * A hole in a file. Some data after the hole are in page cache.
 		 */
@@ -608,7 +689,7 @@ static void fuse_readpages_short(struct fuse_req *req)
 		 * Short read means EOF.  If file size is larger, truncate it
 		 */
 		loff_t pos = page_offset(req->pages[0]) + num_read;
-		fuse_read_update_size(inode, pos, req->misc.read.attr_ver);
+		fuse_read_update_size(inode, pos, attr_ver);
 	}
 }
 
@@ -650,7 +731,7 @@ static int fuse_readpage(struct file *file, struct page *page)
 
 	if (!err) {
 		if (num_read < count)
-			fuse_readpages_short(req);
+			fuse_readpages_short(req, attr_ver);
 
 		SetPageUptodate(page);
 	}
@@ -671,7 +752,7 @@ static void fuse_readpages_end(struct fuse_conn *fc, struct fuse_req *req)
 	struct inode *inode = req->pages[0]->mapping->host;
 
 	if (!req->out.h.error && num_read < count)
-		fuse_readpages_short(req);
+		fuse_readpages_short(req, req->misc.read.attr_ver);
 
 	fuse_invalidate_attr(inode); /* atime changed */
 
@@ -683,8 +764,17 @@ static void fuse_readpages_end(struct fuse_conn *fc, struct fuse_req *req)
 			SetPageError(page);
 		unlock_page(page);
 	}
-	if (req->ff)
-		fuse_file_put(req->ff);
+
+	if (req->ff) {
+		struct fuse_conn *fc = req->ff->fc;
+		if (fc->close_wait) {
+			spin_lock(&fc->lock);
+			__fuse_file_put(req->ff);
+			wake_up(&get_fuse_inode(inode)->page_waitq);
+			spin_unlock(&fc->lock);
+		} else
+			fuse_file_put(req->ff);
+	}
 }
 
 static void fuse_send_readpages(struct fuse_req *req, struct file *file)
@@ -697,6 +787,7 @@ static void fuse_send_readpages(struct fuse_req *req, struct file *file)
 	req->out.argpages = 1;
 	req->out.page_zeroing = 1;
 	fuse_read_fill(req, file, pos, count, FUSE_READ);
+	fuse_account_request(fc, count);
 	req->misc.read.attr_ver = fuse_get_attr_version(fc);
 	if (fc->async_read) {
 		req->ff = fuse_file_get(ff);
@@ -823,6 +914,7 @@ static size_t fuse_send_write(struct fuse_req *req, struct file *file,
 	struct fuse_write_in *inarg = &req->misc.write.in;
 
 	fuse_write_fill(req, ff, pos, count);
+	fuse_account_request(fc, count);
 	inarg->flags = file->f_flags;
 	if (owner != NULL) {
 		inarg->write_flags |= FUSE_WRITE_LOCKOWNER;
@@ -1289,6 +1381,8 @@ static ssize_t __fuse_direct_io(struct file *file, const char __user *buf,
 	ssize_t res = 0;
 	struct fuse_req *req;
 
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
+
 	req = fuse_get_req(fc);
 	if (IS_ERR(req))
 		return PTR_ERR(req);
@@ -1303,12 +1397,15 @@ static ssize_t __fuse_direct_io(struct file *file, const char __user *buf,
 			break;
 		}
 
-		if (write)
+		if (write) {
 			nres = fuse_send_write(req, file, pos,
 					nbytes, owner, async);
-		else
+			task_io_account_write(nbytes);
+		} else {
 			nres = fuse_send_read(req, file, pos,
 					nbytes, owner, async);
+			task_io_account_read(nbytes);
+		}
 
 		fuse_release_user_pages(req, !write);
 		if (req->out.h.error) {
@@ -1421,8 +1518,8 @@ static void fuse_writepage_finish(struct fuse_conn *fc, struct fuse_req *req)
 	struct backing_dev_info *bdi = inode->i_mapping->backing_dev_info;
 	int i;
 
-	__fuse_file_put(req->ff);
 	list_del(&req->writepages_entry);
+	__fuse_file_put(req->ff);
 	for (i = 0; i < req->num_pages; i++) {
 		dec_bdi_stat(bdi, BDI_WRITEBACK);
 		dec_zone_page_state(req->pages[0], NR_WRITEBACK_TEMP);
@@ -1540,6 +1637,7 @@ static int fuse_writepage_locked(struct page *page)
 
 	req->ff = ff;
 	fuse_write_fill(req, ff, page_offset(page), 0);
+	fuse_account_request(fc, PAGE_CACHE_SIZE);
 
 	copy_highpage(tmp_page, page);
 	req->misc.write.in.write_flags |= FUSE_WRITE_CACHE;
@@ -1619,6 +1717,7 @@ static int fuse_send_writepages(struct fuse_fill_data *data)
 
 	req->ff = fuse_file_get(data->ff);
 	fuse_write_fill(req, data->ff, off, 0);
+	fuse_account_request(fc, req->num_pages << PAGE_CACHE_SHIFT);
 
 	req->misc.write.in.write_flags |= FUSE_WRITE_CACHE;
 	req->in.argpages = 1;
@@ -1724,8 +1823,14 @@ static int fuse_writepages(struct address_space *mapping, struct writeback_contr
 			fuse_put_request(fc, data.req);
 	}
 out_put:
-	if (data.ff)
-		fuse_file_put(data.ff);
+	if (data.ff) {
+		if (data.ff->fc->close_wait) {
+			__fuse_file_put(data.ff);
+			wake_up(&get_fuse_inode(inode)->page_waitq);
+		} else {
+			fuse_file_put(data.ff);
+		}
+	}
 out:
 	return err;
 }
@@ -2491,6 +2596,8 @@ static ssize_t fuse_direct_IO_bvec(int rw, struct kiocb *iocb,
 	loff_t pos = iocb->ki_pos;
 	int i;
 
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
+
 	io = kmalloc(sizeof(struct fuse_io_priv), GFP_KERNEL);
 	if (!io)
 		return -ENOMEM;
@@ -2534,12 +2641,15 @@ static ssize_t fuse_direct_IO_bvec(int rw, struct kiocb *iocb,
 
 		BUG_ON(!filled);
 
-		if (rw == WRITE)
+		if (rw == WRITE) {
 			nres = fuse_send_write(req, file, pos,
 					filled, NULL, iocb);
-		else
+			task_io_account_write(filled);
+		} else {
 			nres = fuse_send_read(req, file, pos,
 					filled, NULL, iocb);
+			task_io_account_read(filled);
+		}
 
 		BUG_ON(nres != filled);
 

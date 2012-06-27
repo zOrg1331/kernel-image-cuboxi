@@ -786,7 +786,7 @@ static void fuse_fillattr(struct inode *inode, struct fuse_attr *attr,
 }
 
 static int fuse_do_getattr(struct inode *inode, struct kstat *stat,
-			   struct file *file)
+			   struct file *file, int get_size_form_attr)
 {
 	int err;
 	struct fuse_getattr_in inarg;
@@ -832,11 +832,26 @@ static int fuse_do_getattr(struct inode *inode, struct kstat *stat,
 			fuse_change_attributes(inode, &outarg.attr,
 					       attr_timeout(&outarg),
 					       attr_version);
-			if (stat)
+			if (get_size_form_attr)
+				stat->size = outarg.attr.size;
+			else if (stat)
 				fuse_fillattr(inode, &outarg.attr, stat);
 		}
 	}
 	return err;
+}
+
+int fuse_getattr_size(struct inode *inode, struct file *file, u64 *size)
+{
+	struct kstat stat;
+	int err;
+
+	err = fuse_do_getattr(inode, &stat, file, 1);
+	if (err)
+		return err;
+
+	*size = stat.size;
+	return 0;
 }
 
 int fuse_update_attributes(struct inode *inode, struct kstat *stat,
@@ -848,7 +863,7 @@ int fuse_update_attributes(struct inode *inode, struct kstat *stat,
 
 	if (fi->i_time < get_jiffies_64()) {
 		r = true;
-		err = fuse_do_getattr(inode, stat, file);
+		err = fuse_do_getattr(inode, stat, file, 0);
 	} else {
 		r = false;
 		err = 0;
@@ -1007,7 +1022,7 @@ static int fuse_permission(struct inode *inode, int mask)
 		   attributes.  This is also needed, because the root
 		   node will at first have no permissions */
 		if (err == -EACCES && !refreshed) {
-			err = fuse_do_getattr(inode, NULL, NULL);
+			err = fuse_do_getattr(inode, NULL, NULL, 0);
 			if (!err)
 				err = generic_permission(inode, mask, NULL);
 		}
@@ -1023,7 +1038,7 @@ static int fuse_permission(struct inode *inode, int mask)
 			if (refreshed)
 				return -EACCES;
 
-			err = fuse_do_getattr(inode, NULL, NULL);
+			err = fuse_do_getattr(inode, NULL, NULL, 0);
 			if (!err && !(inode->i_mode & S_IXUGO))
 				return -EACCES;
 		}
@@ -1265,6 +1280,7 @@ static int fuse_do_setattr(struct dentry *entry, struct iattr *attr,
 	struct fuse_setattr_in inarg;
 	struct fuse_attr_out outarg;
 	bool is_truncate = false;
+	int wb = fc->flags & FUSE_WBCACHE;
 	loff_t oldsize;
 	int err;
 
@@ -1337,7 +1353,8 @@ static int fuse_do_setattr(struct dentry *entry, struct iattr *attr,
 	fuse_change_attributes_common(inode, &outarg.attr,
 				      attr_timeout(&outarg));
 	oldsize = inode->i_size;
-	i_size_write(inode, outarg.attr.size);
+	if (!wb || is_truncate || !S_ISREG(inode->i_mode))
+		i_size_write(inode, outarg.attr.size);
 
 	if (is_truncate) {
 		/* NOTE: this may release/reacquire fc->lock */
@@ -1349,7 +1366,8 @@ static int fuse_do_setattr(struct dentry *entry, struct iattr *attr,
 	 * Only call invalidate_inode_pages2() after removing
 	 * FUSE_NOWRITE, otherwise fuse_launder_page() would deadlock.
 	 */
-	if (S_ISREG(inode->i_mode) && oldsize != outarg.attr.size) {
+	if ((is_truncate || !wb) &&
+	    S_ISREG(inode->i_mode) && oldsize != outarg.attr.size) {
 		truncate_pagecache(inode, oldsize, outarg.attr.size);
 		invalidate_inode_pages2(inode->i_mapping);
 	}

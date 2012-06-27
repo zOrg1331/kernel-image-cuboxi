@@ -145,6 +145,9 @@ struct ub_percpu_struct {
 	int wb_requests;
 	int wb_sectors;
 
+	unsigned long fuse_requests;
+	unsigned long fuse_bytes;
+
 	unsigned long swapin;
 	unsigned long swapout;
 

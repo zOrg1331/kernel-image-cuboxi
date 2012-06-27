@@ -846,7 +846,7 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_static_prio = tsk->static_prio;
 	v->cpt_rt_priority = tsk->rt_priority;
 	v->cpt_policy = tsk->policy;
-	if (v->cpt_policy != SCHED_NORMAL) {
+	if (v->cpt_policy != SCHED_NORMAL && v->cpt_policy != SCHED_BATCH && v->cpt_policy != SCHED_IDLE) {
 		eprintk_ctx("scheduler policy is not supported %d/%d(%s)\n", task_pid_vnr(tsk), tsk->pid, tsk->comm);
 		cpt_release_buf(ctx);
 		return -EINVAL;

@@ -63,7 +63,15 @@ int ext4_open_pfcache(struct inode *inode)
 	pfcache_path(inode, path);
 
 	cur_cred = override_creds(&init_cred);
+	/*
+	 * Files in cache area must not have csum attributes or
+	 * pfcache must be disabled for underlain filesystem,
+	 * otherwise real lock-recursion can happens for i_mutex.
+	 * Here we disable lockdep to avoid false-positive reports.
+	 */
+	lockdep_off();
 	ret = path_walk(path, &nd);
+	lockdep_on();
 	revert_creds(cur_cred);
 	if (ret)
 		return ret;

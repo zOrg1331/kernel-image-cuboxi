@@ -7201,6 +7201,7 @@ int sched_setscheduler_nocheck(struct task_struct *p, int policy,
 {
 	return __sched_setscheduler(p, policy, param, false);
 }
+EXPORT_SYMBOL(sched_setscheduler_nocheck);
 
 static int
 do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
@@ -10263,7 +10264,10 @@ static void init_tg_cfs_entry(struct task_group *tg, struct cfs_rq *cfs_rq,
 	update_load_set(&se->load, 0);
 	se->parent = parent;
 
-	se->sleep_start = cpu_clock(cpu);
+#ifdef CONFIG_SCHEDSTATS
+	if (cpu_online(cpu))
+		se->sleep_start = cpu_clock(cpu);
+#endif
 }
 #endif
 

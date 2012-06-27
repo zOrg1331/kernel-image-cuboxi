@@ -1194,7 +1194,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 		locked_gang = relock_page_lru(locked_gang, gang);
 	}
 
-	*scanned = scan;
+	*scanned = max(scan, 1ul);
 
 	trace_mm_vmscan_lru_isolate(order,
 			nr_to_scan, scan,
@@ -2087,13 +2087,6 @@ static void shrink_zone(int priority, struct zone *zone,
 			spin_lock_irq(&zone->stat_lock);
 			gang->pages_scanned = 0;
 			spin_unlock_irq(&zone->stat_lock);
-		}
-		/* Bump scan progress even if we stuck */
-		if (sc->gs && gangs_rotated) {
-			spin_lock_irq(&zone->stat_lock);
-			gang->pages_scanned++;
-			spin_unlock_irq(&zone->stat_lock);
-			break;
 		}
 		/*
 		 * On large memory systems, scan >> priority can become

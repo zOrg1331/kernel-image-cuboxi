@@ -82,6 +82,9 @@ struct io_context {
 	struct radix_tree_root radix_root;
 	struct hlist_head cic_list;
 	void *ioc_data;
+#ifdef CONFIG_BEANCOUNTERS
+	struct user_beancounter *ioc_ub;
+#endif
 };
 
 static inline struct io_context *ioc_task_link(struct io_context *ioc)

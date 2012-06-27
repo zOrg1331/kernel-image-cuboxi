@@ -1265,6 +1265,11 @@ int rst_restore_process(struct cpt_context *ctx)
 		if (tsk->static_prio != ti->cpt_static_prio)
 			set_user_nice(tsk, PRIO_TO_NICE((s32)ti->cpt_static_prio));
 
+		if (tsk->policy != ti->cpt_policy) {
+			struct sched_param param = { 0 };
+			sched_setscheduler_nocheck(tsk, ti->cpt_policy, &param);
+		}
+
 		cpt_sigset_import(&tsk->blocked, ti->cpt_sigblocked);
 		cpt_sigset_import(&tsk->real_blocked, ti->cpt_sigrblocked);
 		cpt_sigset_import(&tsk->saved_sigmask, ti->cpt_sigsuspend_blocked);

@@ -160,6 +160,8 @@ unsigned int test_cpu_caps_and_features(void)
 	if (!is_sock_registered(PF_INET6))
 		flags |= 1 << CPT_NO_IPV6;
 
+	flags |= 1 << CPT_NAMESPACES;
+
 	return flags;
 }
 
