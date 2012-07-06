@@ -2349,7 +2349,7 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	bool aborted_reclaim;
 
 #ifdef CONFIG_FREEZER
-	if (unlikely(pm_freezing))
+	if (unlikely(pm_freezing && !sc->hibernation_mode))
 		return 0;
 #endif
 
