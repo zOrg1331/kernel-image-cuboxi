@@ -2024,8 +2024,8 @@ static inline bool should_continue_reclaim(struct mem_cgroup_zone *mz,
 	unsigned long pages_for_compaction;
 	unsigned long inactive_lru_pages;
 
-  if (sc->hibernation_mode && nr_reclaimed && nr_scanned && sc->nr_to_reclaim >= sc->nr_reclaimed)
-    return true;
+	if (sc->hibernation_mode && nr_reclaimed && nr_scanned && sc->nr_to_reclaim >= sc->nr_reclaimed)
+		return true;
 
 	/* If not in reclaim/compaction mode, stop */
 	if (!(sc->reclaim_mode & RECLAIM_MODE_COMPACTION))

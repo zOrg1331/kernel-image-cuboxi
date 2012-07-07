@@ -856,7 +856,7 @@ int gfs2_logd(void *data)
 	DEFINE_WAIT(wait);
 	unsigned preflush;
 
-  set_freezable();
+	set_freezable();
 
 	while (!kthread_should_stop()) {
 
