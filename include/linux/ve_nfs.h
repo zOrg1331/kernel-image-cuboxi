@@ -15,6 +15,8 @@ struct ve_rpc_data {
 	struct file_system_type	*rpc_pipefs_fstype;
 	struct rpc_clnt		*_rpcb_local;
 	struct rpc_clnt		*_rpcb_local4;
+	spinlock_t		_rpcb_clnt_lock;
+	int			_rpcb_users;
 	struct workqueue_struct *_rpciod_workqueue;
 	atomic_t		_users;
 };
@@ -67,6 +69,7 @@ struct ve_nlm_data {
 static inline void ve_rpc_data_init(void)
 {
 	atomic_set(&get_exec_env()->rpc_data->_users, 1);
+	spin_lock_init(&get_exec_env()->rpc_data->_rpcb_clnt_lock);
 }
 
 static inline void ve_rpc_data_get(void)
@@ -74,7 +77,7 @@ static inline void ve_rpc_data_get(void)
 	atomic_inc(&get_exec_env()->rpc_data->_users);
 }
 
-extern void cleanup_rpcb_clnt(void);
+extern void rpcb_put_local(void);
 extern void rpciod_stop(void);
 
 static inline void ve_rpc_data_put(struct ve_struct *ve)
@@ -83,7 +86,7 @@ static inline void ve_rpc_data_put(struct ve_struct *ve)
 
 	curr_ve = set_exec_env(ve);
 	if (atomic_dec_return(&ve->rpc_data->_users) == !!ve->rpc_data->_rpcb_local) {
-		cleanup_rpcb_clnt();
+		rpcb_put_local();
 		rpciod_stop();
 		kfree(ve->rpc_data);
 		ve->rpc_data = NULL;

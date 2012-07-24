@@ -2,11 +2,11 @@ VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 32
 EXTRAVERSION =
-VZVERSION = 042stab057
+VZVERSION = 042stab059_4
 NAME = Man-Eating Seals of Antiquity
 RHEL_MAJOR = 6
-RHEL_MINOR = 2
-RHEL_RELEASE = 219
+RHEL_MINOR = 3
+RHEL_RELEASE = 278
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

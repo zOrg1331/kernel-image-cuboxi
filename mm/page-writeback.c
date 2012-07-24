@@ -357,6 +357,41 @@ int bdi_set_max_ratio(struct backing_dev_info *bdi, unsigned max_ratio)
 }
 EXPORT_SYMBOL(bdi_set_max_ratio);
 
+int bdi_set_min_dirty(struct backing_dev_info *bdi, unsigned min_dirty)
+{
+	int ret = 0;
+
+	spin_lock_bh(&bdi_lock);
+	if (min_dirty > bdi->max_dirty_pages) {
+		ret = -EINVAL;
+	} else {
+		bdi->min_dirty_pages = min_dirty;
+	}
+	spin_unlock_bh(&bdi_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL(bdi_set_min_dirty);
+
+int bdi_set_max_dirty(struct backing_dev_info *bdi, unsigned max_dirty)
+{
+	int ret = 0;
+
+	if (max_dirty > num_physpages)
+		return -EINVAL;
+
+	spin_lock_bh(&bdi_lock);
+	if (bdi->min_dirty_pages > max_dirty) {
+		ret = -EINVAL;
+	} else {
+		bdi->max_dirty_pages = max_dirty;
+	}
+	spin_unlock_bh(&bdi_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL(bdi_set_max_dirty);
+
 /*
  * Work out the current dirty-memory clamping and background writeout
  * thresholds.
@@ -472,6 +507,15 @@ get_dirty_limits(unsigned long *pbackground, unsigned long *pdirty,
 		*pbdi_dirty = bdi_dirty;
 		clip_bdi_dirty_limit(bdi, dirty, pbdi_dirty);
 		task_dirty_limit(current, pbdi_dirty);
+
+		if (bdi->min_dirty_pages &&
+		    *pbdi_dirty < bdi->min_dirty_pages)
+			*pbdi_dirty = min((unsigned long)bdi->min_dirty_pages,
+					  dirty);
+
+		if (bdi->max_dirty_pages &&
+		    *pbdi_dirty > bdi->max_dirty_pages)
+			*pbdi_dirty = bdi->max_dirty_pages;
 	}
 }
 
@@ -616,9 +660,6 @@ static void balance_dirty_pages(struct address_space *mapping,
 		__set_current_state(TASK_KILLABLE);
 		io_schedule_timeout(pause);
 
-		if (fatal_signal_pending(current))
-			break;
-
 		/*
 		 * Increase the delay for each loop, up to our previous
 		 * default of taking a 100ms nap.
@@ -626,6 +667,9 @@ static void balance_dirty_pages(struct address_space *mapping,
 		pause <<= 1;
 		if (pause > HZ / 10)
 			pause = HZ / 10;
+
+		if (fatal_signal_pending(current))
+			break;
 	}
 
 	if(pages_written) trace_mm_balancedirty_writeout(pages_written);

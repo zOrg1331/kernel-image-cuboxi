@@ -13,7 +13,7 @@ int ploop_discard_init_ioc(struct ploop_device *plo)
 	if (delta == NULL)
 		return -EINVAL;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	fbd = ploop_fb_init(plo);
@@ -26,9 +26,9 @@ int ploop_discard_init_ioc(struct ploop_device *plo)
 
 	plo->fbd = fbd;
 
-	atomic_set(&plo->maintainance_cnt, 0);
-	init_completion(&plo->maintainance_comp);
-	plo->maintainance_type = PLOOP_MNTN_DISCARD;
+	atomic_set(&plo->maintenance_cnt, 0);
+	init_completion(&plo->maintenance_comp);
+	plo->maintenance_type = PLOOP_MNTN_DISCARD;
 	set_bit(PLOOP_S_DISCARD, &plo->state);
 
 	ploop_relax(plo);
@@ -58,7 +58,7 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 	if (!list_empty(&drop_list))
 		ploop_preq_drop(plo, &drop_list, 0);
 
-	if (plo->maintainance_type != PLOOP_MNTN_DISCARD) {
+	if (plo->maintenance_type != PLOOP_MNTN_DISCARD) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -67,8 +67,8 @@ int ploop_discard_fini_ioc(struct ploop_device *plo)
 
 	clear_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
 
-	plo->maintainance_type = PLOOP_MNTN_OFF;
-	complete(&plo->maintainance_comp);
+	plo->maintenance_type = PLOOP_MNTN_OFF;
+	complete(&plo->maintenance_comp);
 
 out:
 	ploop_relax(plo);
@@ -83,18 +83,18 @@ int ploop_discard_wait_ioc(struct ploop_device *plo)
 	if (!test_bit(PLOOP_S_DISCARD, &plo->state))
 		return 0;
 
-	if (plo->maintainance_type == PLOOP_MNTN_FBLOADED)
+	if (plo->maintenance_type == PLOOP_MNTN_FBLOADED)
 		return 1;
 
-	if (plo->maintainance_type != PLOOP_MNTN_DISCARD)
+	if (plo->maintenance_type != PLOOP_MNTN_DISCARD)
 		return -EINVAL;
 
-	err = ploop_maintainance_wait(plo);
+	err = ploop_maintenance_wait(plo);
 	if (err)
 		goto out;
 
-	/* maintainance_cnt is zero without discard requests,
-	 * in this case ploop_maintainance_wait returns 0
+	/* maintenance_cnt is zero without discard requests,
+	 * in this case ploop_maintenance_wait returns 0
 	 * instead of ERESTARTSYS */
 	if (test_bit(PLOOP_S_DISCARD_LOADED, &plo->state)) {
 		err = 1;

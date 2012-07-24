@@ -67,6 +67,7 @@ static inline void eventpoll_init_file(struct file *file)
 struct epoll_filefd {
 	struct file *file;
 	int fd;
+	int added;
 };
 
 /*
@@ -107,6 +108,12 @@ struct eventpoll {
 
 	/* The user that created the eventpoll descriptor */
 	struct user_struct *user;
+
+	struct file *file;
+
+	/* used to optimize loop detection check */
+	int visited;
+	struct list_head visited_list_link;
 };
 
 /*
@@ -153,6 +160,7 @@ extern const struct file_operations eventpoll_fops;
 extern struct epitem *ep_find(struct eventpoll *ep, struct file *file, int fd);
 extern int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 		     struct file *tfile, int fd);
+extern void clear_tfile_check_list(void);
 
 /* Used to release the epoll bits inside the "struct file" */
 void eventpoll_release_file(struct file *file);

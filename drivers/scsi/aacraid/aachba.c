@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -297,7 +297,6 @@ int aac_get_config_status(struct aac_dev *dev, int commit_flag)
 	/* Do not set XferState to zero unless receives a response from F/W */
 	if (status >= 0)
 		aac_fib_complete(fibptr);
-
 	/* Send a CT_COMMIT_CONFIG to enable discovery of devices */
 	if (status >= 0) {
 		if ((aac_commit == 1) || commit_flag) {
@@ -327,16 +326,6 @@ int aac_get_config_status(struct aac_dev *dev, int commit_flag)
 	if (status != -ERESTARTSYS)
 		aac_fib_free(fibptr);
 	return status;
-}
-
-static void aac_expose_phy_device(struct scsi_cmnd *scsicmd)
-{
-	char inq_data;
-	scsi_sg_copy_to_buffer(scsicmd,  &inq_data, sizeof(inq_data));
-	if ((inq_data & 0x20) && (inq_data & 0x1f) == TYPE_DISK) {
-		inq_data &= 0xdf;
-		scsi_sg_copy_from_buffer(scsicmd, &inq_data, sizeof(inq_data));
-	}
 }
 
 /**
@@ -747,8 +736,8 @@ char * get_container_type(unsigned tindex)
  * Arguments: [1] pointer to void [1] int
  *
  * Purpose: Sets SCSI inquiry data strings for vendor, product
- * and revision level. Allows strings to be set in platform dependent
- * files instead of in OS dependent driver source.
+ * and revision level. Allows strings to be set in platform dependant
+ * files instead of in OS dependant driver source.
  */
 
 static void setinqstr(struct aac_dev *dev, void *data, int tindex)
@@ -1300,7 +1289,6 @@ int aac_get_adapter_info(struct aac_dev* dev)
 			if (!fibptr)
 				return -ENOMEM;
 		}
-
 	}
 
 
@@ -1611,7 +1599,6 @@ static int aac_read(struct scsi_cmnd * scsicmd)
 	int status;
 	struct aac_dev *dev;
 	struct fib * cmd_fibcontext;
-	int cid;
 
 	dev = (struct aac_dev *)scsicmd->device->host->hostdata;
 	/*
@@ -1661,22 +1648,6 @@ static int aac_read(struct scsi_cmnd * scsicmd)
 		count = (scsicmd->cmnd[7] << 8) | scsicmd->cmnd[8];
 		break;
 	}
-
-	if ((lba + count) > (dev->fsa_dev[scmd_id(scsicmd)].size)) {
-		cid = scmd_id(scsicmd);
-		dprintk((KERN_DEBUG "aacraid: Illegal lba\n"));
-		scsicmd->result = DID_OK << 16 | COMMAND_COMPLETE << 8 |
-			SAM_STAT_CHECK_CONDITION;
-		set_sense(&dev->fsa_dev[cid].sense_data,
-			  HARDWARE_ERROR, SENCODE_INTERNAL_TARGET_FAILURE,
-			  ASENCODE_INTERNAL_TARGET_FAILURE, 0, 0);
-		memcpy(scsicmd->sense_buffer, &dev->fsa_dev[cid].sense_data,
-		       min_t(size_t, sizeof(dev->fsa_dev[cid].sense_data),
-			     SCSI_SENSE_BUFFERSIZE));
-		scsicmd->scsi_done(scsicmd);
-		return 1;
-	}
-
 	dprintk((KERN_DEBUG "aac_read[cpu %d]: lba = %llu, t = %ld.\n",
 	  smp_processor_id(), (unsigned long long)lba, jiffies));
 	if (aac_adapter_bounds(dev,scsicmd,lba))
@@ -1718,7 +1689,6 @@ static int aac_write(struct scsi_cmnd * scsicmd)
 	int status;
 	struct aac_dev *dev;
 	struct fib * cmd_fibcontext;
-	int cid;
 
 	dev = (struct aac_dev *)scsicmd->device->host->hostdata;
 	/*
@@ -1758,22 +1728,6 @@ static int aac_write(struct scsi_cmnd * scsicmd)
 		count = (scsicmd->cmnd[7] << 8) | scsicmd->cmnd[8];
 		fua = scsicmd->cmnd[1] & 0x8;
 	}
-
-	if ((lba + count) > (dev->fsa_dev[scmd_id(scsicmd)].size)) {
-		cid = scmd_id(scsicmd);
-		dprintk((KERN_DEBUG "aacraid: Illegal lba\n"));
-		scsicmd->result = DID_OK << 16 | COMMAND_COMPLETE << 8 |
-			SAM_STAT_CHECK_CONDITION;
-		set_sense(&dev->fsa_dev[cid].sense_data,
-			  HARDWARE_ERROR, SENCODE_INTERNAL_TARGET_FAILURE,
-			  ASENCODE_INTERNAL_TARGET_FAILURE, 0, 0);
-		memcpy(scsicmd->sense_buffer, &dev->fsa_dev[cid].sense_data,
-		       min_t(size_t, sizeof(dev->fsa_dev[cid].sense_data),
-			     SCSI_SENSE_BUFFERSIZE));
-		scsicmd->scsi_done(scsicmd);
-		return 1;
-	}
-
 	dprintk((KERN_DEBUG "aac_write[cpu %d]: lba = %llu, t = %ld.\n",
 	  smp_processor_id(), (unsigned long long)lba, jiffies));
 	if (aac_adapter_bounds(dev,scsicmd,lba))
@@ -2620,11 +2574,6 @@ static void aac_srb_callback(void *context, struct fib * fibptr)
 
 	scsi_dma_unmap(scsicmd);
 
-	/* expose physical device if expose_physicald flag is on */
-	if (scsicmd->cmnd[0] == INQUIRY && !(scsicmd->cmnd[1] & 0x01)
-	  && expose_physicals > 0)
-		aac_expose_phy_device(scsicmd);
-
 	/*
 	 * First check the fib status
 	 */
@@ -2730,22 +2679,8 @@ static void aac_srb_callback(void *context, struct fib * fibptr)
 			scsicmd->cmnd[0],
 			le32_to_cpu(srbreply->scsi_status));
 #endif
-		if ((scsicmd->cmnd[0] == ATA_12)
-		  || (scsicmd->cmnd[0] == ATA_16)) {
-			if (scsicmd->cmnd[2] & (0x01 << 5)) {
-				scsicmd->result = DID_OK << 16
-						| COMMAND_COMPLETE << 8;
-				break;
-			} else {
-				scsicmd->result = DID_ERROR << 16
-						| COMMAND_COMPLETE << 8;
-				break;
-			}
-		} else {
-			scsicmd->result = DID_ERROR << 16
-					| COMMAND_COMPLETE << 8;
-			break;
-		}
+		scsicmd->result = DID_ERROR << 16 | COMMAND_COMPLETE << 8;
+		break;
 	}
 	if (le32_to_cpu(srbreply->scsi_status) == SAM_STAT_CHECK_CONDITION) {
 		int len;

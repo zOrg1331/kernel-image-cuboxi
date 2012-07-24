@@ -102,6 +102,7 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 	struct file *file;
 	long nr_opened = 0, nr_closed = 0, nr_total;
 	bool reload_csum = false;
+	struct path old_path;
 
 	if (new_root) {
 		int err = path_lookup(new_root, LOOKUP_FOLLOW |
@@ -121,9 +122,10 @@ int ext4_relink_pfcache(struct super_block *sb, char *new_root)
 	}
 
 	spin_lock(&EXT4_SB(sb)->s_pfcache_lock);
-	path_put(&EXT4_SB(sb)->s_pfcache_root);
+	old_path = EXT4_SB(sb)->s_pfcache_root;
 	EXT4_SB(sb)->s_pfcache_root = nd.path;
 	spin_unlock(&EXT4_SB(sb)->s_pfcache_lock);
+	path_put(&old_path);
 
 	spin_lock(&inode_lock);
 

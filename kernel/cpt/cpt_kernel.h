@@ -49,7 +49,7 @@ if (src & (1 << flag)) \
 if (src & (1 << flag)) \
 	if (!(dst & (1 << flag))) { \
 		eprintk_ctx("Destination cpu does not have " message "\n"); \
-		ret = 1; \
+		ret = VECAPS_NO_CPU_FEATURE; \
 	}
 
 static inline void

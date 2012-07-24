@@ -8,7 +8,7 @@
  *
  * Right now it is not quite optimal because we simulate
  * raw image as ploop1-like image with dummy preallocated
- * index tables. It is optimized only when we have 
+ * index tables. It is optimized only when we have
  * just one raw image without any deltas on top.
  * Probably, this is all that we need.
  */

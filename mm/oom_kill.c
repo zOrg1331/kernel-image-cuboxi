@@ -394,8 +394,7 @@ static void dump_header(struct task_struct *p, gfp_t gfp_mask, int order,
 		dump_tasks(mem, nodemask);
 }
 
-static void __oom_kill_thread(struct task_struct *p, struct oom_control *oom_ctrl,
-			struct mem_cgroup *mem)
+static void __oom_kill_thread(struct task_struct *p, struct oom_control *oom_ctrl)
 {
 	/*
 	 * We give our sacrificial lamb high priority and access to
@@ -411,13 +410,12 @@ static void __oom_kill_thread(struct task_struct *p, struct oom_control *oom_ctr
 		oom_ctrl->kill_counter++;
 }
 
-static void __oom_kill_task(struct task_struct *tsk, struct oom_control *oom_ctrl,
-			struct mem_cgroup *mem)
+static void __oom_kill_task(struct task_struct *tsk, struct oom_control *oom_ctrl)
 {
 	struct task_struct *p = tsk;
 
 	do {
-		__oom_kill_thread(p, oom_ctrl, mem);
+		__oom_kill_thread(p, oom_ctrl);
 		p = next_thread(p);
 	} while (p != tsk);
 }
@@ -457,7 +455,7 @@ static void oom_berserker(struct task_struct *victim,
 		    oom_badness(tsk, totalpages) < points)
 			continue;
 
-		__oom_kill_task(tsk, oom_ctrl, mem);
+		__oom_kill_task(tsk, oom_ctrl);
 
 		if (printk_ratelimit()) {
 			task_lock(tsk);
@@ -487,8 +485,7 @@ static void oom_berserker(struct task_struct *victim,
 }
 
 #define K(x) ((x) << (PAGE_SHIFT-10))
-static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
-		struct oom_control *oom_ctrl)
+static int oom_kill_task(struct task_struct *tsk, struct oom_control *oom_ctrl)
 {
 	unsigned long total_vm, total_rss, total_swap;
 	struct task_struct *p, *q;
@@ -501,7 +498,8 @@ static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
 		return -EAGAIN;
 	}
 
-	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, tsk) & NOTIFY_FAIL) {
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_OOMKILL, tsk)
+			& NOTIFY_FAIL) {
 		printk(KERN_WARNING "OOM: disabled for process %d (%s) by virtinfo.\n",
 				task_pid_nr(tsk), tsk->comm);
 		return -EAGAIN;
@@ -516,14 +514,13 @@ static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
 
 	/* mm cannot be safely dereferenced after task_unlock(p) */
 	mm = p->mm;
-
 	total_vm = mm->total_vm;
 	total_rss = get_mm_rss(mm);
 	total_swap = get_mm_counter(mm, swap_usage);
 	ub_oom_mark_mm(mm, oom_ctrl);
 	task_unlock(p);
 
-	__oom_kill_task(p, oom_ctrl, mem);
+	__oom_kill_task(p, oom_ctrl);
 
 	printk(KERN_ERR "OOM killed process %d (%s) "
 			"vm:%lukB, rss:%lukB, swap:%lukB\n",
@@ -567,7 +564,7 @@ static int oom_kill_task(struct task_struct *tsk, struct mem_cgroup *mem,
 			task_unlock(q);
 			force_sig(SIGKILL, q);
 		}
- 
+
 	return 0;
 }
 #undef K
@@ -639,7 +636,7 @@ int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 
 	oom_berserker(victim, points, totalpages, oom_ctrl, ub, mem, nodemask);
 
-	return oom_kill_task(victim, mem, oom_ctrl);
+	return oom_kill_task(victim, oom_ctrl);
 }
 
 /*

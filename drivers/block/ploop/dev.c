@@ -8,6 +8,8 @@
 #include <linux/buffer_head.h>
 #include <linux/kthread.h>
 #include <linux/statfs.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <asm/uaccess.h>
 
 #include <linux/ploop/ploop.h>
@@ -736,7 +738,7 @@ static int ploop_make_request(struct request_queue *q, struct bio *bio)
 	 * not depending on any alignment constraints. So be it.
 	 */
 	if (!bio_rw_flagged(bio, BIO_RW_DISCARD) && bio->bi_size &&
-	    (bio->bi_sector >> plo->cluster_log) != 
+	    (bio->bi_sector >> plo->cluster_log) !=
 	    ((bio->bi_sector + (bio->bi_size >> 9) - 1) >> plo->cluster_log)) {
 		struct bio_pair *bp;
 		unsigned int first_sectors = (1<<plo->cluster_log)
@@ -764,6 +766,9 @@ static int ploop_make_request(struct request_queue *q, struct bio *bio)
 	/* Allocate new bio now. */
 	nbio = preallocate_bio(bio, plo);
 
+	if (!current->io_context)
+		(void)current_io_context(GFP_NOFS, -1);
+
 	spin_lock_irq(&plo->lock);
 	ploop_acc_ff_in_locked(plo, rw);
 	plo->bio_total++;
@@ -786,9 +791,9 @@ static int ploop_make_request(struct request_queue *q, struct bio *bio)
 		     (bio->bi_rw & WRITE)))
 		goto queue;
 
-	/* No fast path, when maintainance is in progress.
+	/* No fast path, when maintenance is in progress.
 	 * (PLOOP_S_TRACK was checked immediately above) */
-	if (FAST_PATH_DISABLED(plo->maintainance_type))
+	if (FAST_PATH_DISABLED(plo->maintenance_type))
 		goto queue;
 
 	/* Attention state, always queue */
@@ -1137,10 +1142,10 @@ static void ploop_discard_wakeup(struct ploop_request *preq, int err)
 	} else
 		set_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
 
-	if (atomic_dec_and_test(&plo->maintainance_cnt))
+	if (atomic_dec_and_test(&plo->maintenance_cnt))
 		if (test_bit(PLOOP_S_DISCARD_LOADED, &plo->state) ||
 		    !test_bit(PLOOP_S_DISCARD, &plo->state))
-			complete(&plo->maintainance_comp);
+			complete(&plo->maintenance_comp);
 }
 
 static void ploop_complete_request(struct ploop_request * preq)
@@ -1167,8 +1172,8 @@ static void ploop_complete_request(struct ploop_request * preq)
 		if (preq->error)
 			set_bit(PLOOP_S_ABORT, &plo->state);
 
-		if (atomic_dec_and_test(&plo->maintainance_cnt))
-			complete(&plo->maintainance_comp);
+		if (atomic_dec_and_test(&plo->maintenance_cnt))
+			complete(&plo->maintenance_comp);
 	} else if (test_bit(PLOOP_REQ_MERGE, &preq->state)) {
 		if (!preq->error) {
 			if (plo->merge_ptr < plo->trans_map->max_index) {
@@ -1198,8 +1203,8 @@ static void ploop_complete_request(struct ploop_request * preq)
 		} else
 			set_bit(PLOOP_S_ABORT, &plo->state);
 
-		if (atomic_dec_and_test(&plo->maintainance_cnt))
-			complete(&plo->maintainance_comp);
+		if (atomic_dec_and_test(&plo->maintenance_cnt))
+			complete(&plo->maintenance_comp);
 	} else if (test_bit(PLOOP_REQ_DISCARD, &preq->state))
 		ploop_discard_wakeup(preq, preq->error);
 
@@ -1333,7 +1338,7 @@ static int fill_bio(struct ploop_device *plo, struct bio * bio, cluster_t blk)
 }
 
 /* Not generic. We assume that dst is aligned properly, i.e. it is
- * array of the whole pages starting at cluster boundary.	
+ * array of the whole pages starting at cluster boundary.
  */
 static void bio_bcopy(struct bio *dst, struct bio *src, struct ploop_device *plo)
 {
@@ -1539,8 +1544,8 @@ ploop_reuse_free_block(struct ploop_request *preq)
 	int	  rc;
 	unsigned long pin_state;
 
-	if (plo->maintainance_type != PLOOP_MNTN_FBLOADED &&
-	    plo->maintainance_type != PLOOP_MNTN_RELOC)
+	if (plo->maintenance_type != PLOOP_MNTN_FBLOADED &&
+	    plo->maintenance_type != PLOOP_MNTN_RELOC)
 		return -1;
 
 	rc = ploop_fb_get_free_block(plo->fbd, &clu, &iblk);
@@ -1555,7 +1560,7 @@ ploop_reuse_free_block(struct ploop_request *preq)
 		return 0;
 	}
 
-	/* 'rc == 0' - use iblk as a lost block */ 
+	/* 'rc == 0' - use iblk as a lost block */
 	pin_state = preq->iblock ? PLOOP_E_DELTA_ZERO_INDEX :
 				   PLOOP_E_ZERO_INDEX;
 	preq->iblock = iblk;
@@ -1809,7 +1814,7 @@ static int ploop_entry_discard_req(struct ploop_request *preq)
 		goto err;
 	}
 
-	BUG_ON(plo->maintainance_type != PLOOP_MNTN_DISCARD);
+	BUG_ON(plo->maintenance_type != PLOOP_MNTN_DISCARD);
 
 	last_clu = (preq->req_sector + preq->req_size) >> plo->cluster_log;
 
@@ -2030,7 +2035,7 @@ delta_io:
 	}
 
 	if (!(preq->req_rw & (1<<BIO_RW))) {
-		/* Read direction. If we found existing block in some	
+		/* Read direction. If we found existing block in some
 		 * delta, we direct bio there. If we did not, this location
 		 * was never written before. We return zero fill and,
 		 * probably, should log an alert.
@@ -2061,8 +2066,8 @@ delta_io:
 		if (delta) {
 			if (delta == top_delta) {
 				/* Block exists in top delta. Good. */
-				if (plo->maintainance_type == PLOOP_MNTN_GROW ||
-				    plo->maintainance_type == PLOOP_MNTN_RELOC) {
+				if (plo->maintenance_type == PLOOP_MNTN_GROW ||
+				    plo->maintenance_type == PLOOP_MNTN_RELOC) {
 					spin_lock_irq(&plo->lock);
 					ploop_add_lockout(preq, 0);
 					spin_unlock_irq(&plo->lock);
@@ -2226,7 +2231,7 @@ restart:
 			preq->dst_cluster = ~0U; /* redundant */
 			preq->dst_iblock  = ~0U; /* redundant */
 			preq->eng_state = PLOOP_E_ENTRY;
-			goto restart;			
+			goto restart;
 		}
 		/* drop down to PLOOP_E_COMPLETE case ... */
 	case PLOOP_E_COMPLETE:
@@ -2619,8 +2624,8 @@ static int ploop_thread(void * data)
 			ploop_entry_qlen_dec(preq);
 
 			if (test_bit(PLOOP_REQ_DISCARD, &preq->state)) {
-				BUG_ON(plo->maintainance_type != PLOOP_MNTN_DISCARD);
-				atomic_inc(&plo->maintainance_cnt);
+				BUG_ON(plo->maintenance_type != PLOOP_MNTN_DISCARD);
+				atomic_inc(&plo->maintenance_cnt);
 			}
 
 			if (test_bit(PLOOP_REQ_SORTED, &preq->state)) {
@@ -2760,7 +2765,7 @@ static int ploop_add_delta(struct ploop_device * plo, unsigned long arg)
 
 	if (test_bit(PLOOP_S_RUNNING, &plo->state))
 		return -EBUSY;
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	delta = init_delta(plo, &ctl, -1);
@@ -2822,7 +2827,7 @@ static int ploop_replace_delta(struct ploop_device * plo, unsigned long arg)
 			   sizeof(struct ploop_ctl_chunk)))
 		return -EFAULT;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	old_delta = find_delta(plo, ctl.pctl_level);
@@ -2958,7 +2963,7 @@ static int ploop_snapshot(struct ploop_device * plo, unsigned long arg,
 
 	if (!test_bit(PLOOP_S_RUNNING, &plo->state))
 		return ploop_add_delta(plo, arg);
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	if (copy_from_user(&ctl, (void*)arg, sizeof(struct ploop_ctl)))
@@ -2996,11 +3001,11 @@ static int ploop_snapshot(struct ploop_device * plo, unsigned long arg,
 	sb = NULL;
 	if (ctl.pctl_flags & PLOOP_FLAG_FS_SYNC) {
 		/* freeze_bdev() may trigger ploop_bd_full() */
-		plo->maintainance_type = PLOOP_MNTN_SNAPSHOT;
+		plo->maintenance_type = PLOOP_MNTN_SNAPSHOT;
 		mutex_unlock(&plo->ctl_mutex);
 		sb = find_and_freeze_bdev(plo->disk, &bdev);
 		mutex_lock(&plo->ctl_mutex);
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 	}
 
 	ploop_quiesce(plo);
@@ -3096,7 +3101,7 @@ static int ploop_del_delta(struct ploop_device * plo, unsigned long arg)
 	if (copy_from_user(&level, (void*)arg, 4))
 		return -EFAULT;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	delta = find_delta(plo, level);
@@ -3130,10 +3135,10 @@ static void ploop_merge_process(struct ploop_device * plo)
 
 	spin_lock_irq(&plo->lock);
 
-	atomic_set(&plo->maintainance_cnt, 1);
+	atomic_set(&plo->maintenance_cnt, 1);
 	plo->merge_ptr = 0;
 
-	init_completion(&plo->maintainance_comp);
+	init_completion(&plo->maintenance_comp);
 
 	num_reqs = plo->tune.fsync_max;
 	if (num_reqs > plo->tune.max_requests/2)
@@ -3157,7 +3162,7 @@ static void ploop_merge_process(struct ploop_device * plo)
 		preq->iblock = 0;
 		preq->prealloc_size = 0;
 
-		atomic_inc(&plo->maintainance_cnt);
+		atomic_inc(&plo->maintenance_cnt);
 
 		ploop_entry_add(plo, preq);
 
@@ -3165,23 +3170,23 @@ static void ploop_merge_process(struct ploop_device * plo)
 			wake_up_interruptible(&plo->waitq);
 	}
 
-	if (atomic_dec_and_test(&plo->maintainance_cnt))
-		complete(&plo->maintainance_comp);
+	if (atomic_dec_and_test(&plo->maintenance_cnt))
+		complete(&plo->maintenance_comp);
 
 	spin_unlock_irq(&plo->lock);
 }
 
-int ploop_maintainance_wait(struct ploop_device * plo)
+int ploop_maintenance_wait(struct ploop_device * plo)
 {
 	int err;
 
 	mutex_unlock(&plo->ctl_mutex);
 
-	err = wait_for_completion_interruptible(&plo->maintainance_comp);
+	err = wait_for_completion_interruptible(&plo->maintenance_comp);
 
 	mutex_lock(&plo->ctl_mutex);
 
-	return atomic_read(&plo->maintainance_cnt) ? err : 0;
+	return atomic_read(&plo->maintenance_cnt) ? err : 0;
 }
 
 static int ploop_merge(struct ploop_device * plo)
@@ -3191,10 +3196,10 @@ static int ploop_merge(struct ploop_device * plo)
 	struct ploop_delta * delta, * next;
 	struct ploop_snapdata sd;
 
-	if (plo->maintainance_type == PLOOP_MNTN_MERGE)
+	if (plo->maintenance_type == PLOOP_MNTN_MERGE)
 		goto already;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	BUG_ON (plo->trans_map);
@@ -3235,7 +3240,7 @@ static int ploop_merge(struct ploop_device * plo)
 		list_add(&delta->list, &map->delta_list);
 		delta->level = 0;
 		plo->trans_map = map;
-		plo->maintainance_type = PLOOP_MNTN_MERGE;
+		plo->maintenance_type = PLOOP_MNTN_MERGE;
 		mutex_unlock(&plo->sysfs_mutex);
 	} else {
 		/* Yes. All transient obstacles must be resolved
@@ -3255,13 +3260,13 @@ static int ploop_merge(struct ploop_device * plo)
 	ploop_merge_process(plo);
 
 already:
-	err = ploop_maintainance_wait(plo);
+	err = ploop_maintenance_wait(plo);
 	if (err)
 		return err;
 
-	BUG_ON(atomic_read(&plo->maintainance_cnt));
+	BUG_ON(atomic_read(&plo->maintenance_cnt));
 
-	if (plo->maintainance_type != PLOOP_MNTN_MERGE)
+	if (plo->maintenance_type != PLOOP_MNTN_MERGE)
 		return -EALREADY;
 
 	map = plo->trans_map;
@@ -3273,7 +3278,7 @@ already:
 		printk(KERN_WARNING "merge for ploop%d failed (state ABORT)\n",
 		       plo->index);
 		plo->trans_map = NULL;
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 		err = -EIO;
 		goto out;
 	}
@@ -3281,7 +3286,7 @@ already:
 	ploop_quiesce(plo);
 	mutex_lock(&plo->sysfs_mutex);
 	plo->trans_map = NULL;
-	plo->maintainance_type = PLOOP_MNTN_OFF;
+	plo->maintenance_type = PLOOP_MNTN_OFF;
 	list_del(&delta->list);
 	mutex_unlock(&plo->sysfs_mutex);
 	ploop_map_destroy(map);
@@ -3503,8 +3508,8 @@ static int ploop_stop(struct ploop_device * plo, struct block_device *bdev)
 	if (atomic_read(&plo->open_count) > 1)
 		return -EBUSY;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF &&
-	    atomic_read(&plo->maintainance_cnt))
+	if (plo->maintenance_type != PLOOP_MNTN_OFF &&
+	    atomic_read(&plo->maintenance_cnt))
 		return -EBUSY;
 
 	for (p = plo->disk->minors - 1; p > 0; p--)
@@ -3596,10 +3601,10 @@ static int ploop_clear(struct ploop_device * plo, struct block_device * bdev)
 {
 	if (test_bit(PLOOP_S_RUNNING, &plo->state))
 		return -EBUSY;
-	if (plo->maintainance_type == PLOOP_MNTN_TRACK)
+	if (plo->maintenance_type == PLOOP_MNTN_TRACK)
 		return -EBUSY;
-	if (plo->maintainance_type != PLOOP_MNTN_OFF &&
-	    atomic_read(&plo->maintainance_cnt))
+	if (plo->maintenance_type != PLOOP_MNTN_OFF &&
+	    atomic_read(&plo->maintenance_cnt))
 		return -EBUSY;
 
 	clear_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
@@ -3617,7 +3622,7 @@ static int ploop_clear(struct ploop_device * plo, struct block_device * bdev)
 
 	ploop_fb_fini(plo->fbd, 0);
 
-	plo->maintainance_type = PLOOP_MNTN_OFF;
+	plo->maintenance_type = PLOOP_MNTN_OFF;
 	plo->bd_size = 0;
 	plo->state = (1 << PLOOP_S_CHANGED);
 	return 0;
@@ -3667,10 +3672,10 @@ static void ploop_relocate(struct ploop_device * plo)
 
 	spin_lock_irq(&plo->lock);
 
-	atomic_set(&plo->maintainance_cnt, 1);
+	atomic_set(&plo->maintenance_cnt, 1);
 	plo->grow_relocated = 0;
 
-	init_completion(&plo->maintainance_comp);
+	init_completion(&plo->maintenance_comp);
 
 	preq = ploop_alloc_request(plo);
 
@@ -3685,15 +3690,15 @@ static void ploop_relocate(struct ploop_device * plo)
 	preq->iblock = 0;
 	preq->prealloc_size = 0;
 
-	atomic_inc(&plo->maintainance_cnt);
+	atomic_inc(&plo->maintenance_cnt);
 
 	ploop_entry_add(plo, preq);
 
 	if (test_bit(PLOOP_S_WAIT_PROCESS, &plo->state))
 		wake_up_interruptible(&plo->waitq);
 
-	if (atomic_dec_and_test(&plo->maintainance_cnt))
-		complete(&plo->maintainance_comp);
+	if (atomic_dec_and_test(&plo->maintenance_cnt))
+		complete(&plo->maintenance_comp);
 
 	spin_unlock_irq(&plo->lock);
 }
@@ -3710,15 +3715,15 @@ static int ploop_grow(struct ploop_device *plo, struct block_device *bdev,
 	if (!delta)
 		return -ENOENT;
 
-	if (plo->maintainance_type == PLOOP_MNTN_GROW)
+	if (plo->maintenance_type == PLOOP_MNTN_GROW)
 		goto already;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 
 	if (copy_from_user(&ctl, (void*)arg, sizeof(struct ploop_ctl)))
 		return -EFAULT;
-	
+
 	if (ctl.pctl_cluster_log != plo->cluster_log)
 		return -EINVAL;
 
@@ -3742,27 +3747,27 @@ static int ploop_grow(struct ploop_device *plo, struct block_device *bdev,
 
 	/* prepare_grow() succeeded, but more actions needed */
 	if (reloc) {
-		plo->maintainance_type = PLOOP_MNTN_GROW;
+		plo->maintenance_type = PLOOP_MNTN_GROW;
 		ploop_relax(plo);
 		ploop_relocate(plo);
 already:
-		err = ploop_maintainance_wait(plo);
+		err = ploop_maintenance_wait(plo);
 		if (err)
 			return err;
 
-		BUG_ON(atomic_read(&plo->maintainance_cnt));
+		BUG_ON(atomic_read(&plo->maintenance_cnt));
 
-		if (plo->maintainance_type != PLOOP_MNTN_GROW)
+		if (plo->maintenance_type != PLOOP_MNTN_GROW)
 			return -EALREADY;
 
 		if (test_bit(PLOOP_S_ABORT, &plo->state)) {
-			plo->maintainance_type = PLOOP_MNTN_OFF;
+			plo->maintenance_type = PLOOP_MNTN_OFF;
 			return -EIO;
 		}
 
 		ploop_quiesce(plo);
 		new_size = plo->grow_new_size;
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 	}
 
 	/* Update bdev size and friends */
@@ -3800,14 +3805,14 @@ static int ploop_balloon_ioc(struct ploop_device *plo, unsigned long arg)
 	if (ctl.inflate && ctl.keep_intact)
 		return -EINVAL;
 
-	switch (plo->maintainance_type) {
+	switch (plo->maintenance_type) {
 	case PLOOP_MNTN_DISCARD:
 		if (!test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
 			break;
 
 		ploop_quiesce(plo);
 		clear_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
-		plo->maintainance_type = PLOOP_MNTN_FBLOADED;
+		plo->maintenance_type = PLOOP_MNTN_FBLOADED;
 		ploop_fb_lost_range_init(plo->fbd, delta->io.alloc_head);
 		ploop_relax(plo);
 		/* fall through */
@@ -3820,18 +3825,18 @@ static int ploop_balloon_ioc(struct ploop_device *plo, unsigned long arg)
 	case PLOOP_MNTN_OFF:
 		if (ctl.inflate) {
 			ploop_quiesce(plo);
-			plo->maintainance_type = PLOOP_MNTN_BALLOON;
+			plo->maintenance_type = PLOOP_MNTN_BALLOON;
 			ploop_relax(plo);
 		}
 		break;
 	case PLOOP_MNTN_BALLOON :
 		if (!ctl.inflate && !ctl.keep_intact) {
 			ploop_quiesce(plo);
-			plo->maintainance_type = PLOOP_MNTN_OFF;
+			plo->maintenance_type = PLOOP_MNTN_OFF;
 			ploop_relax(plo);
 		}
 	}
-	ctl.mntn_type = plo->maintainance_type;
+	ctl.mntn_type = plo->maintenance_type;
 
 	return copy_to_user((void*)arg, &ctl, sizeof(ctl));
 }
@@ -3848,9 +3853,9 @@ static int ploop_freeblks_ioc(struct ploop_device *plo, unsigned long arg)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (plo->maintainance_type == PLOOP_MNTN_OFF)
+	if (plo->maintenance_type == PLOOP_MNTN_OFF)
 		return -EINVAL;
-	if (plo->maintainance_type != PLOOP_MNTN_BALLOON)
+	if (plo->maintenance_type != PLOOP_MNTN_BALLOON)
 		return -EBUSY;
 	BUG_ON (plo->fbd);
 
@@ -3889,7 +3894,7 @@ static int ploop_freeblks_ioc(struct ploop_device *plo, unsigned long arg)
 	}
 
 	ploop_quiesce(plo);
-		
+
 	ctl.alloc_head = delta->io.alloc_head;
 	if (copy_to_user((void*)arg, &ctl, sizeof(ctl))) {
 		rc = -EFAULT;
@@ -3898,7 +3903,7 @@ static int ploop_freeblks_ioc(struct ploop_device *plo, unsigned long arg)
 		iblock_t a_h = delta->io.alloc_head;
 		/* make fbd visible to ploop engine */
 		plo->fbd = fbd;
-		plo->maintainance_type = PLOOP_MNTN_FBLOADED;
+		plo->maintenance_type = PLOOP_MNTN_FBLOADED;
 		BUG_ON (a_h != ctl.alloc_head); /* quiesce sanity */
 		ploop_fb_lost_range_init(fbd, a_h);
 		ploop_fb_set_freezed_level(fbd, delta->level);
@@ -3918,10 +3923,10 @@ static int ploop_fbget_ioc(struct ploop_device *plo, unsigned long arg)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (plo->maintainance_type == PLOOP_MNTN_DISCARD) {
+	if (plo->maintenance_type == PLOOP_MNTN_DISCARD) {
 		if (!test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
 			return -EINVAL;
-	} else if (plo->maintainance_type != PLOOP_MNTN_FBLOADED)
+	} else if (plo->maintenance_type != PLOOP_MNTN_FBLOADED)
 		return -EINVAL;
 	BUG_ON (!plo->fbd);
 
@@ -3939,7 +3944,7 @@ static int ploop_fbfilter_ioc(struct ploop_device *plo, unsigned long arg)
 {
 	int rc = 0;
 
-	if (plo->maintainance_type != PLOOP_MNTN_DISCARD ||
+	if (plo->maintenance_type != PLOOP_MNTN_DISCARD ||
 	    !test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
 		return -EINVAL;
 
@@ -3965,9 +3970,9 @@ static void ploop_relocblks_process(struct ploop_device *plo)
 
 	spin_lock_irq(&plo->lock);
 
-	atomic_set(&plo->maintainance_cnt, 1);
+	atomic_set(&plo->maintenance_cnt, 1);
 
-	init_completion(&plo->maintainance_comp);
+	init_completion(&plo->maintenance_comp);
 
 	for (; num_reqs; num_reqs--) {
 		preq = ploop_alloc_request(plo);
@@ -3983,7 +3988,7 @@ static void ploop_relocblks_process(struct ploop_device *plo)
 		preq->iblock = 0;
 		preq->prealloc_size = 0;
 
-		atomic_inc(&plo->maintainance_cnt);
+		atomic_inc(&plo->maintenance_cnt);
 
 		ploop_entry_add(plo, preq);
 
@@ -3991,8 +3996,8 @@ static void ploop_relocblks_process(struct ploop_device *plo)
 			wake_up_interruptible(&plo->waitq);
 	}
 
-	if (atomic_dec_and_test(&plo->maintainance_cnt))
-		complete(&plo->maintainance_comp);
+	if (atomic_dec_and_test(&plo->maintenance_cnt))
+		complete(&plo->maintenance_comp);
 
 	spin_unlock_irq(&plo->lock);
 }
@@ -4008,7 +4013,7 @@ static int release_fbd(struct ploop_device *plo,
 
 	ploop_quiesce(plo);
 	ploop_fb_fini(plo->fbd, err);
-	plo->maintainance_type = PLOOP_MNTN_OFF;
+	plo->maintenance_type = PLOOP_MNTN_OFF;
 	ploop_relax(plo);
 
 	return err;
@@ -4018,13 +4023,13 @@ static void ploop_discard_restart(struct ploop_device *plo, int err)
 {
 	if (!err && test_bit(PLOOP_S_DISCARD, &plo->state)) {
 		ploop_fb_reinit(plo->fbd, 0);
-		atomic_set(&plo->maintainance_cnt, 0);
-		init_completion(&plo->maintainance_comp);
-		plo->maintainance_type = PLOOP_MNTN_DISCARD;
+		atomic_set(&plo->maintenance_cnt, 0);
+		init_completion(&plo->maintenance_comp);
+		plo->maintenance_type = PLOOP_MNTN_DISCARD;
 	} else {
 		clear_bit(PLOOP_S_DISCARD, &plo->state);
 		ploop_fb_fini(plo->fbd, err);
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 	}
 }
 
@@ -4033,10 +4038,10 @@ static int ploop_fbdrop_ioc(struct ploop_device *plo)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (plo->maintainance_type == PLOOP_MNTN_DISCARD) {
+	if (plo->maintenance_type == PLOOP_MNTN_DISCARD) {
 		if (!test_bit(PLOOP_S_DISCARD_LOADED, &plo->state))
 			return -EINVAL;
-	} else if (plo->maintainance_type != PLOOP_MNTN_FBLOADED)
+	} else if (plo->maintenance_type != PLOOP_MNTN_FBLOADED)
 		return -EINVAL;
 	BUG_ON (!plo->fbd);
 
@@ -4060,8 +4065,8 @@ static int ploop_relocblks_ioc(struct ploop_device *plo, unsigned long arg)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (!fbd || (plo->maintainance_type != PLOOP_MNTN_FBLOADED &&
-		     plo->maintainance_type != PLOOP_MNTN_RELOC))
+	if (!fbd || (plo->maintenance_type != PLOOP_MNTN_FBLOADED &&
+		     plo->maintenance_type != PLOOP_MNTN_RELOC))
 		return -EINVAL;
 
 	BUG_ON(test_bit(PLOOP_S_DISCARD_LOADED, &plo->state));
@@ -4075,31 +4080,31 @@ static int ploop_relocblks_ioc(struct ploop_device *plo, unsigned long arg)
 		return -EINVAL;
 	}
 
-	if (plo->maintainance_type == PLOOP_MNTN_RELOC)
+	if (plo->maintenance_type == PLOOP_MNTN_RELOC)
 		goto already;
 
 	if (ctl.n_extents) {
-                extents = kzalloc(sizeof(*extents) * ctl.n_extents,
-				  GFP_KERNEL);
-                if (!extents)
-                        return release_fbd(plo, extents, -ENOMEM);
+		extents = kzalloc(sizeof(*extents) * ctl.n_extents,
+				GFP_KERNEL);
+		if (!extents)
+			return release_fbd(plo, extents, -ENOMEM);
 
-                if (copy_from_user(extents, (u8*)arg + sizeof(ctl),
-                                   sizeof(*extents) * ctl.n_extents))
-                        return release_fbd(plo, extents, -EINVAL);
+		if (copy_from_user(extents, (u8*)arg + sizeof(ctl),
+					sizeof(*extents) * ctl.n_extents))
+			return release_fbd(plo, extents, -EINVAL);
 
-                for (i = 0; i < ctl.n_extents; i++) {
-                        err = ploop_fb_add_reloc_extent(fbd, extents[i].clu,
-                                                        extents[i].iblk,
-                                                        extents[i].len,
-                                                        extents[i].free);
-                        if (err)
-                                return release_fbd(plo, extents, err);
-                }
+		for (i = 0; i < ctl.n_extents; i++) {
+			err = ploop_fb_add_reloc_extent(fbd, extents[i].clu,
+					extents[i].iblk,
+					extents[i].len,
+					extents[i].free);
+			if (err)
+				return release_fbd(plo, extents, err);
+		}
 
-                kfree(extents);
-                extents = NULL;
-        }
+		kfree(extents);
+		extents = NULL;
+	}
 
 	ploop_quiesce(plo);
 
@@ -4107,7 +4112,7 @@ static int ploop_relocblks_ioc(struct ploop_device *plo, unsigned long arg)
 	BUG_ON (delta->io.alloc_head < ploop_fb_get_alloc_head(plo->fbd));
 	n_free = ploop_fb_get_n_free(plo->fbd);
 
-        /*
+	/*
 	 * before relocation start, freeblks engine could provide only
 	 * free blocks
 	 */
@@ -4115,22 +4120,22 @@ static int ploop_relocblks_ioc(struct ploop_device *plo, unsigned long arg)
 		n_free);
 	ploop_fb_relocation_start(plo->fbd, ctl.n_scanned);
 
-        if (!n_free || !ctl.n_extents)
-                goto truncate;
+	if (!n_free || !ctl.n_extents)
+		goto truncate;
 
-        plo->maintainance_type = PLOOP_MNTN_RELOC;
+	plo->maintenance_type = PLOOP_MNTN_RELOC;
 
 	ploop_relax(plo);
 
 	ploop_relocblks_process(plo);
 already:
-	err = ploop_maintainance_wait(plo);
+	err = ploop_maintenance_wait(plo);
 	if (err)
 		return err;
 
-	BUG_ON(atomic_read(&plo->maintainance_cnt));
+	BUG_ON(atomic_read(&plo->maintenance_cnt));
 
-	if (plo->maintainance_type != PLOOP_MNTN_RELOC)
+	if (plo->maintenance_type != PLOOP_MNTN_RELOC)
 		return -EALREADY;
 
 	fbd = plo->fbd;
@@ -4140,7 +4145,7 @@ already:
 		clear_bit(PLOOP_S_DISCARD,&plo->state);
 
 		ploop_fb_fini(plo->fbd, -EIO);
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 		return -EIO;
 	}
 
@@ -4176,7 +4181,7 @@ static int ploop_getdevice_ioc(unsigned long arg)
 	int err;
 	int index = 0;
 	struct rb_node *n;
-	struct ploop_getdevice_ctl ctl;		
+	struct ploop_getdevice_ctl ctl;
 
 	mutex_lock(&ploop_devices_mutex);
 	for (n = rb_first(&ploop_devices_tree); n; n = rb_next(n), index++) {
@@ -4202,7 +4207,7 @@ static int ploop_ioctl(struct block_device *bdev, fmode_t fmode, unsigned int cm
 
 	mutex_lock(&plo->ctl_mutex);
 
-	if (plo->maintainance_type == PLOOP_MNTN_SNAPSHOT) {
+	if (plo->maintenance_type == PLOOP_MNTN_SNAPSHOT) {
 		mutex_unlock(&plo->ctl_mutex);
 		return -EBUSY;
 	}
@@ -4491,6 +4496,70 @@ static struct kobject *ploop_dev_probe(dev_t dev, int *part, void *data)
 	return kobj;
 }
 
+/* Functions to service /proc/vz/ploop_minor */
+
+static int ploop_minor_show(struct seq_file *m, void *v)
+{
+	struct ploop_device *plo = m->private;
+	seq_printf(m, "%d\n", plo->index << PLOOP_PART_SHIFT);
+	return 0;
+}
+
+static int ploop_minor_open(struct inode *inode, struct file *file)
+{
+	int index = 0;
+	struct rb_node *n;
+	struct ploop_device *plo = NULL;
+	int ret;
+
+	mutex_lock(&ploop_devices_mutex);
+	for (n = rb_first(&ploop_devices_tree); n; n = rb_next(n), index++) {
+		plo = rb_entry(n, struct ploop_device, link);
+		if (plo->index != index ||
+		    (list_empty(&plo->map.delta_list) &&
+		     !test_bit(PLOOP_S_LOCKED, &plo->state)))
+			break;
+	}
+
+	if (!plo || plo->index != index) {
+		if ((index << PLOOP_PART_SHIFT) & ~MINORMASK) {
+			mutex_unlock(&ploop_devices_mutex);
+			return -ERANGE;
+		}
+
+		plo = __ploop_dev_alloc(index);
+		if (!plo) {
+			mutex_unlock(&ploop_devices_mutex);
+			return -ENOMEM;
+		}
+
+		add_disk(plo->disk);
+		ploop_sysfs_init(plo);
+		ploop_dev_insert(plo);
+	}
+	set_bit(PLOOP_S_LOCKED, &plo->state);
+	mutex_unlock(&ploop_devices_mutex);
+
+	ret = single_open(file, ploop_minor_show, plo);
+	if (ret)
+		clear_bit(PLOOP_S_LOCKED, &plo->state);
+	return ret;
+}
+
+static int ploop_minor_release(struct inode *inode, struct file *filp)
+{
+	struct ploop_device *plo = ((struct seq_file *)filp->private_data)->private;
+	clear_bit(PLOOP_S_LOCKED, &plo->state);
+	return single_release(inode, filp);
+}
+
+static const struct file_operations proc_ploop_minor = {
+	.owner          = THIS_MODULE,
+	.open		= ploop_minor_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= ploop_minor_release,
+};
 
 module_param(ploop_max, int, 0);
 MODULE_PARM_DESC(ploop_max, "Maximum number of ploop devices");
@@ -4522,9 +4591,17 @@ static int __init ploop_mod_init(void)
 	blk_register_region(MKDEV(ploop_major, 0), ploop_max,
 			THIS_MODULE, ploop_dev_probe, NULL, NULL);
 
+	if (!proc_create("ploop_minor", 0440,
+			 proc_vz_dir, &proc_ploop_minor))
+		goto out_err2;
+
 	printk(KERN_INFO "ploop_dev: module loaded\n");
 	return 0;
 
+out_err2:
+	err = -ENOMEM;
+	blk_unregister_region(MKDEV(ploop_major, 0), ploop_max);
+	unregister_blkdev(PLOOP_DEVICE_MAJOR, "ploop");
 out_err:
 	ploop_map_exit();
 	return err;
@@ -4534,6 +4611,7 @@ static void __exit ploop_mod_exit(void)
 {
 	struct rb_node * n;
 
+	remove_proc_entry("ploop_minor", proc_vz_dir);
 	while ((n = rb_first(&ploop_devices_tree)) != NULL)
 		ploop_dev_del(rb_entry(n, struct ploop_device, link));
 	blk_unregister_region(MKDEV(ploop_major, 0), ploop_max);

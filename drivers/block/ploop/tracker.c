@@ -96,7 +96,7 @@ int ploop_tracker_init(struct ploop_device * plo, unsigned long arg)
 {
 	struct ploop_track_extent e;
 
-	if (plo->maintainance_type != PLOOP_MNTN_OFF)
+	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
@@ -108,7 +108,7 @@ int ploop_tracker_init(struct ploop_device * plo, unsigned long arg)
 
 	ploop_quiesce(plo);
 	set_bit(PLOOP_S_TRACK, &plo->state);
-	plo->maintainance_type = PLOOP_MNTN_TRACK;
+	plo->maintenance_type = PLOOP_MNTN_TRACK;
 	plo->track_end = 0;
 	plo->track_ptr = 0;
 	ploop_relax(plo);
@@ -249,7 +249,7 @@ int ploop_tracker_stop(struct ploop_device * plo, int force)
 	err = ploop_tracker_destroy(plo, force);
 	if (!err) {
 		clear_bit(PLOOP_S_TRACK, &plo->state);
-		plo->maintainance_type = PLOOP_MNTN_OFF;
+		plo->maintenance_type = PLOOP_MNTN_OFF;
 	}
 	ploop_relax(plo);
 	if (test_bit(PLOOP_S_TRACK_ABORT, &plo->state))

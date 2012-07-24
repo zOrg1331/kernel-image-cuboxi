@@ -211,70 +211,6 @@ static inline void nf_bridge_save_header(struct sk_buff *skb)
 					 skb->nf_bridge->data, header_size);
 }
 
-/* When handing a packet over to the IP layer
- * check whether we have a skb that is in the
- * expected format
- */
-
-int br_parse_ip_options(struct sk_buff *skb)
-{
-	struct ip_options *opt;
-	struct iphdr *iph;
-	struct net_device *dev = skb->dev;
-	u32 len;
-
-	iph = ip_hdr(skb);
-	opt = &(IPCB(skb)->opt);
-
-	/* Basic sanity checks */
-	if (iph->ihl < 5 || iph->version != 4)
-		goto inhdr_error;
-
-	if (!pskb_may_pull(skb, iph->ihl*4))
-		goto inhdr_error;
-
-	iph = ip_hdr(skb);
-	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
-		goto inhdr_error;
-
-	len = ntohs(iph->tot_len);
-	if (skb->len < len) {
-		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INTRUNCATEDPKTS);
-		goto drop;
-	} else if (len < (iph->ihl*4))
-		goto inhdr_error;
-
-	if (pskb_trim_rcsum(skb, len)) {
-		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INDISCARDS);
-		goto drop;
-	}
-
-	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
-	if (iph->ihl == 5)
-		return 0;
-
-	opt->optlen = iph->ihl*4 - sizeof(struct iphdr);
-	if (ip_options_compile(dev_net(dev), opt, skb))
-		goto inhdr_error;
-
-	/* Check correct handling of SRR option */
-	if (unlikely(opt->srr)) {
-		struct in_device *in_dev = __in_dev_get_rcu(dev);
-		if (in_dev && !IN_DEV_SOURCE_ROUTE(in_dev))
-			goto drop;
-
-		if (ip_options_rcv_srr(skb))
-			goto drop;
-	}
-
-	return 0;
-
-inhdr_error:
-	IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INHDRERRORS);
-drop:
-	return -1;
-}
-
 /*
  * When forwarding bridge frames, we save a copy of the original
  * header before processing.
@@ -626,6 +562,7 @@ static unsigned int br_nf_pre_routing(unsigned int hook, struct sk_buff *skb,
 				      const struct net_device *out,
 				      int (*okfn)(struct sk_buff *))
 {
+	struct iphdr *iph;
 	__u32 len = nf_bridge_encap_header_len(skb);
 
 	if (unlikely(!pskb_may_pull(skb, len)))
@@ -651,9 +588,28 @@ static unsigned int br_nf_pre_routing(unsigned int hook, struct sk_buff *skb,
 
 	nf_bridge_pull_encap_header_rcsum(skb);
 
-	if (br_parse_ip_options(skb))
-		/* Drop invalid packet */
-		goto out;
+	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+		goto inhdr_error;
+
+	iph = ip_hdr(skb);
+	if (iph->ihl < 5 || iph->version != 4)
+		goto inhdr_error;
+
+	if (!pskb_may_pull(skb, 4 * iph->ihl))
+		goto inhdr_error;
+
+	iph = ip_hdr(skb);
+	if (ip_fast_csum((__u8 *) iph, iph->ihl) != 0)
+		goto inhdr_error;
+
+	len = ntohs(iph->tot_len);
+	if (skb->len < len || len < 4 * iph->ihl)
+		goto inhdr_error;
+
+	pskb_trim_rcsum(skb, len);
+
+	/* BUG: Should really parse the IP options here. */
+	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
 
 	nf_bridge_put(skb->nf_bridge);
 	if (!nf_bridge_alloc(skb))
@@ -667,6 +623,8 @@ static unsigned int br_nf_pre_routing(unsigned int hook, struct sk_buff *skb,
 
 	return NF_STOLEN;
 
+inhdr_error:
+//      IP_INC_STATS_BH(IpInHdrErrors);
 out:
 	return NF_DROP;
 }
@@ -756,8 +714,8 @@ static unsigned int br_nf_forward_ip(unsigned int hook, struct sk_buff *skb,
 		nf_bridge->mask |= BRNF_PKT_TYPE;
 	}
 
-	if (pf == PF_INET && br_parse_ip_options(skb))
-		return NF_DROP;
+	/* BUG: Should really parse the IP options here. */
+	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
 
 	/* The physdev module checks on this */
 	nf_bridge->mask |= BRNF_BRIDGED;
@@ -842,6 +800,9 @@ static unsigned int br_nf_local_out(unsigned int hook, struct sk_buff *skb,
 	}
 	nf_bridge_push_encap_header(skb);
 
+	/* BUG: Should really parse the IP options here. */
+	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
+
 	NF_HOOK(PF_BRIDGE, NF_BR_FORWARD, skb, realindev, skb->dev,
 		br_forward_finish);
 	return NF_STOLEN;
@@ -850,21 +811,16 @@ static unsigned int br_nf_local_out(unsigned int hook, struct sk_buff *skb,
 #if defined(CONFIG_NF_CONNTRACK_IPV4) || defined(CONFIG_NF_CONNTRACK_IPV4_MODULE)
 static int br_nf_dev_queue_xmit(struct sk_buff *skb)
 {
-	int ret;
-
 	if (skb->nfct != NULL &&
 	    (skb->protocol == htons(ETH_P_IP) || IS_VLAN_IP(skb)) &&
 	    !(skb->dev->features & NETIF_F_VENET) &&
 	    skb->len > skb->dev->mtu &&
 	    !skb_is_gso(skb)) {
-		if (br_parse_ip_options(skb))
-			/* Drop invalid packet */
-			return NF_DROP;
-		ret = ip_fragment(skb, br_dev_queue_push_xmit);
+		/* BUG: Should really parse the IP options here. */
+		memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
+		return ip_fragment(skb, br_dev_queue_push_xmit);
 	} else
-		ret = br_dev_queue_push_xmit(skb);
-
-	return ret;
+		return br_dev_queue_push_xmit(skb);
 }
 #else
 static int br_nf_dev_queue_xmit(struct sk_buff *skb)

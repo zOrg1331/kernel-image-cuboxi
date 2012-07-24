@@ -907,6 +907,9 @@ static int restore_registers(struct task_struct *tsk, struct pt_regs *regs,
 	tsk->thread.sp -= HOOK_RESERVE;
 	memset((void*)tsk->thread.sp, 0, HOOK_RESERVE);
 	*rip = (void*)tsk->thread.sp;
+
+	task_thread_info(tsk)->flags |= _TIF_FORK | _TIF_RESUME;
+
 	return 0;
 }
 
@@ -1171,7 +1174,8 @@ do {									\
 /* Restore task FPU context if needed */
 static int restore_task_fpu(struct task_struct *tsk,
 				const struct cpt_obj_bits *b,
-				const struct cpt_task_image *ti)
+				const struct cpt_task_image *ti,
+				struct cpt_context *ctx)
 {
 	size_t size;
 
@@ -1179,20 +1183,20 @@ static int restore_task_fpu(struct task_struct *tsk,
 	{
 	case CPT_CONTENT_X86_XSAVE:
 		if (b->cpt_size != xstate_size)
-			return -EFAULT;
+			goto fault;
 
 		size = xstate_size;
 		break;
 	case CPT_CONTENT_X86_FPUSTATE:
 		if (!cpu_has_fxsr)
-			return -EFAULT;
+			goto fault;
 
 		size = sizeof(struct i387_fxsave_struct);
 		break;
 #ifndef CONFIG_X86_64
 	case CPT_CONTENT_X86_FPUSTATE_OLD:
 		if (cpu_has_fxsr)
-			return -EFAULT;
+			goto fault;
 
 		size = sizeof(struct i387_fsave_struct);
 		break;
@@ -1215,6 +1219,10 @@ static int restore_task_fpu(struct task_struct *tsk,
 		set_stopped_child_used_math(tsk);
 
 	return 0;
+fault:
+	eprintk_ctx("FPU context can't be restored. "
+			"The processor is incompatible.\n");
+	return -EFAULT;
 }
 #endif
 
@@ -1374,7 +1382,7 @@ int rst_restore_process(struct cpt_context *ctx)
 			switch (b->cpt_object) {
 #ifdef CONFIG_X86
 			case CPT_OBJ_BITS: {
-				int err = restore_task_fpu(tsk, (struct cpt_obj_bits *)b, ti);
+				int err = restore_task_fpu(tsk, (struct cpt_obj_bits *)b, ti, ctx);
 				if (err)
 					return err;
 				}
@@ -1445,7 +1453,7 @@ int rst_restore_process(struct cpt_context *ctx)
 		/*
 		 * TIF_IA32 thread flag was restored early
 		 */
-		task_thread_info(tsk)->flags &= _TIF_IA32;
+		task_thread_info(tsk)->flags &= _TIF_IA32 | _TIF_FORK | _TIF_RESUME;
 		task_thread_info(tsk)->flags |= ti->cpt_thrflags;
 
 		/*
@@ -1453,10 +1461,6 @@ int rst_restore_process(struct cpt_context *ctx)
 		 * The int_ret_from_sys_call gets confused by one.
 		 */
 		task_thread_info(tsk)->flags &= ~(1 << 9);
-
-#ifdef CONFIG_X86_64
-		task_thread_info(tsk)->flags |= _TIF_FORK | _TIF_RESUME;
-#endif
 
 #ifdef CONFIG_X86_32
 		do {

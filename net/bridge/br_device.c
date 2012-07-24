@@ -203,51 +203,6 @@ static int br_set_tx_csum(struct net_device *dev, u32 data)
 	return 0;
 }
 
-#ifdef CONFIG_NET_POLL_CONTROLLER
-bool br_devices_support_netpoll(struct net_bridge *br)
-{
-	struct net_bridge_port *p;
-	bool ret = true;
-	int count = 0;
-	unsigned long flags;
-
-	spin_lock_irqsave(&br->lock, flags);
-	list_for_each_entry(p, &br->port_list, list) {
-		count++;
-		if ((p->dev->priv_flags & IFF_DISABLE_NETPOLL) ||
-		    !p->dev->netdev_ops->ndo_poll_controller)
-			ret = false;
-	}
-	spin_unlock_irqrestore(&br->lock, flags);
-	return count != 0 && ret;
-}
-
-void br_netpoll_cleanup(struct net_device *br_dev)
-{
-	struct net_bridge *br = netdev_priv(br_dev);
-	struct net_bridge_port *p, *n;
-	const struct net_device_ops *ops;
-
-	br->dev->npinfo = NULL;
-	list_for_each_entry_safe(p, n, &br->port_list, list) {
-		if (p->dev) {
-			ops = p->dev->netdev_ops;
-			if (ops->ndo_netpoll_cleanup)
-				ops->ndo_netpoll_cleanup(p->dev);
-			else
-				p->dev->npinfo = NULL;
-		}
-	}
-}
-
-#else
-
-void br_netpoll_cleanup(struct net_device *br_dev)
-{
-}
-
-#endif
-
 static int br_rst_nested_dev(loff_t start, struct cpt_br_image *bri,
 			 struct net_bridge *br, struct rst_ops *ops,
 			 struct cpt_context *ctx)
@@ -415,9 +370,6 @@ static const struct net_device_ops br_netdev_ops = {
 	.ndo_set_multicast_list	 = br_dev_set_multicast_list,
 	.ndo_change_mtu		 = br_change_mtu,
 	.ndo_do_ioctl		 = br_dev_ioctl,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_netpoll_cleanup	 = br_netpoll_cleanup,
-#endif
 	.ndo_cpt		 = br_cpt,
 };
 
@@ -431,6 +383,7 @@ void br_dev_setup(struct net_device *dev)
 	SET_ETHTOOL_OPS(dev, &br_ethtool_ops);
 	dev->tx_queue_len = 0;
 	dev->priv_flags = IFF_EBRIDGE;
+	netdev_extended(dev)->ext_priv_flags &= ~IFF_TX_SKB_SHARING;
 
 	dev->features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA |
 			NETIF_F_GSO_MASK | NETIF_F_NO_CSUM | NETIF_F_LLTX |

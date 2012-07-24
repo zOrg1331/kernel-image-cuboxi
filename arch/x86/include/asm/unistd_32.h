@@ -351,7 +351,10 @@
 /* #define __NR_clock_adjtime		343 */
 #define __NR_syncfs             344
 #define __NR_sendmmsg		345
-#define __NR_fairsched_mknod	500     /* FairScheduler syscalls */
+/* #define __NR_set_ns		346 */
+#define __NR_process_vm_readv  347
+#define __NR_process_vm_writev 348
+#define __NR_fairsched_mknod	500	/* FairScheduler syscalls */
 #define __NR_fairsched_rmnod	501
 #define __NR_fairsched_chwt	502
 #define __NR_fairsched_mvpr	503

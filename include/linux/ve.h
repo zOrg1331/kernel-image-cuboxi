@@ -293,6 +293,7 @@ struct ve_struct {
 
 enum {
 	VE_REBOOT,
+	VE_RESTORE,
 };
 
 extern int nr_ve;
@@ -335,12 +336,15 @@ extern struct tty_driver *vtty_driver;
 static inline int vtty_open_master(int veid, int idx) { return -ENODEV; }
 #endif
 
+#define restoring_ve(ve)	test_bit(VE_RESTORE, &(ve)->flags)
+
 #else	/* CONFIG_VE */
 #define ve_utsname	system_utsname
 #define get_ve(ve)	(NULL)
 #define put_ve(ve)	do { } while (0)
 #define pget_ve(ve)	do { } while (0)
 #define pput_ve(ve)	do { } while (0)
+#define restoring_ve(ve) (0)
 #endif	/* CONFIG_VE */
 
 #endif /* _LINUX_VE_H */

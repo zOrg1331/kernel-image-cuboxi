@@ -139,6 +139,7 @@ static inline struct shmid_kernel *shm_lock(struct ipc_namespace *ns, int id)
 #ifdef CONFIG_SYSVIPC
 long do_shmat(int shmid, char __user *shmaddr, int shmflg, unsigned long *addr);
 extern int is_file_shm_hugepages(struct file *file);
+extern void exit_shm(struct task_struct *task);
 #else
 static inline long do_shmat(int shmid, char __user *shmaddr,
 				int shmflg, unsigned long *addr)
@@ -148,6 +149,9 @@ static inline long do_shmat(int shmid, char __user *shmaddr,
 static inline int is_file_shm_hugepages(struct file *file)
 {
 	return 0;
+}
+static inline void exit_shm(struct task_struct *task)
+{
 }
 #endif
 

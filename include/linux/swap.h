@@ -296,6 +296,7 @@ extern unsigned long shrink_all_memory(unsigned long nr_pages);
 extern int vm_swappiness;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern long vm_total_pages;
+extern int vm_sync_reclaim;
 
 #ifdef CONFIG_NUMA
 extern int zone_reclaim_mode;
@@ -392,6 +393,7 @@ extern int add_swap_count_continuation(swp_entry_t, gfp_t);
 extern void swap_shmem_alloc(swp_entry_t);
 extern int swap_duplicate(swp_entry_t);
 extern int __swap_duplicate(swp_entry_t, unsigned char);
+extern int swap_convert_to_shmem(swp_entry_t entry);
 extern int swapcache_prepare(swp_entry_t);
 extern void swap_free(swp_entry_t);
 extern void swapcache_free(swp_entry_t, struct page *page);
@@ -483,6 +485,11 @@ static inline void swap_shmem_alloc(swp_entry_t swp)
 }
 
 static inline int swap_duplicate(swp_entry_t swp)
+{
+	return 0;
+}
+
+static inline int swap_convert_to_shmem(swp_entry_t entry)
 {
 	return 0;
 }

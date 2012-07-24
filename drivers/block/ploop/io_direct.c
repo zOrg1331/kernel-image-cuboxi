@@ -19,6 +19,9 @@
 #define CREATE_TRACE_POINTS
 #include "io_direct_events.h"
 
+/* from fs/ext4/ext4.h */
+#define EXT4_EXTENTS_FL			0x00080000
+
 #define MIN(a, b) (a < b ? a : b)
 
 #define PLOOP_MAX_PREALLOC(plo) (128 * 1024 * 1024) /* 128MB */
@@ -322,11 +325,11 @@ static void bcopy_from_blist(struct page *page, int dst_off, /* dst */
 
 static inline void bzero_page(struct page *page)
 {
-        void *kaddr = kmap_atomic(page, KM_USER0);
+	void *kaddr = kmap_atomic(page, KM_USER0);
 
 	memset(kaddr, 0, PAGE_SIZE);
 
-        kunmap_atomic(kaddr, KM_USER0);
+	kunmap_atomic(kaddr, KM_USER0);
 }
 
 
@@ -870,20 +873,6 @@ static int dio_open(struct ploop_io * io)
 	io->files.mapping = file->f_mapping;
 	io->files.inode = io->files.mapping->host;
 	io->files.bdev = io->files.inode->i_sb->s_bdev;
-
-	if (io->files.bdev == NULL) {
-		printk("File on FS without backing device\n");
-		return -EINVAL;
-	}
-
-	if (io->files.inode->i_sb->s_magic != EXT4_SUPER_MAGIC ||
-	    !io->files.inode->i_op->fallocate) {		
-		printk("Unsupported fs: magic=%lx fallocate=%p (%s)\n",
-		       io->files.inode->i_sb->s_magic,
-		       io->files.inode->i_op->fallocate,
-		       io->files.inode->i_sb->s_id);
-		return -EOPNOTSUPP;
-	}
 
 	dio_fsync(file);
 
@@ -1747,6 +1736,54 @@ static int dio_dump(struct ploop_io * io)
 	return -1;
 }
 
+static int dio_autodetect(struct ploop_io * io)
+{
+	struct file  * file  = io->files.file;
+	struct inode * inode = file->f_mapping->host;
+	char         * s_id  = inode->i_sb->s_id;
+
+	int err;
+	mm_segment_t fs;
+	unsigned int flags;
+	
+	if (inode->i_sb->s_magic != EXT4_SUPER_MAGIC)
+		return -1; /* not mine */
+
+	if (inode->i_sb->s_bdev == NULL) {
+		printk("File on FS EXT(%s) without backing device\n", s_id);
+		return -1;
+	}
+
+	if (!inode->i_op->fallocate) {
+		printk("Unsupported fs EXT3(%s): no fallocate\n", s_id);
+		return -1;
+	}
+
+	if (!file->f_op->unlocked_ioctl) {
+		printk("Cannot run on EXT4(%s): no unlocked_ioctl\n", s_id);
+		return -1;
+	}
+
+	fs = get_fs();
+	set_fs(KERNEL_DS);
+	flags = 0;
+	err = file->f_op->unlocked_ioctl(file, FS_IOC_GETFLAGS, (long)&flags);
+	set_fs(fs);
+
+	if (err != 0) {
+		printk("Cannot run on EXT4(%s): failed FS_IOC_GETFLAGS (%d)\n",
+		       s_id, err);
+		return -1;
+	}
+
+	if (!(flags & EXT4_EXTENTS_FL)) {
+		ploop_io_report_fn(file, "File w/o extents");
+		return -1;
+	}
+
+	return 0;
+}
+
 static struct ploop_io_ops ploop_io_ops_direct =
 {
 	.id		=	PLOOP_IO_DIRECT,
@@ -1786,6 +1823,8 @@ static struct ploop_io_ops ploop_io_ops_direct =
 
 	.i_size_read	=	generic_i_size_read,
 	.f_mode		=	generic_f_mode,
+
+	.autodetect     =       dio_autodetect,
 };
 
 static int __init pio_direct_mod_init(void)

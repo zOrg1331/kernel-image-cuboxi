@@ -3,11 +3,11 @@
 
 #include <linux/ioctl.h>
 
-/* This interface it mixes data relevant to delta layer and io layer
+/* This interface mixes data relevant to delta layer and io layer
  * to one request. It is too simplistic.
  *
  * But this allows to create the whole delta atomically and does
- * not require maintanace of incomplete composition state inside device.
+ * not require maintenance of incomplete composition state inside device.
  */
 
 /* Formats of deltas. */
@@ -25,6 +25,7 @@
 
 /* IO types. */
 
+#define PLOOP_IO_AUTO		0
 #define PLOOP_IO_DIRECT		1
 #define PLOOP_IO_NFS		2
 #define PLOOP_IO_RESERVED	3	/* reserved, do not use */
@@ -37,7 +38,7 @@
  * 1) sizeof(map_index_t) == sizeof(u32)
  * 2) PLOOP_MAP_OFFSET == sizeof(struct ploop_pvd_header) / sizeof(u32)
  */
-#define PLOOP_MAP_OFFSET        16
+#define PLOOP_MAP_OFFSET	16
 
 /*
  * in-kernel ploop implementation assumes that L2[index] can never be
@@ -95,7 +96,7 @@ struct ploop_truncate_ctl
 /*
  * Before relocation l2[req_cluster] == old_iblk.
  * Then user-space decided to relocate old_iblk to new_iblk.
- * After relocation done, we need kernel help to update map_node
+ * After relocation is done, we need kernel help to update map_node
  * structure for req_cluster (if present). When kernel
  * accomplished this, user-space may safely nullify old_iblk.
  */
@@ -125,7 +126,7 @@ struct ploop_freeblks_ctl_extent
 	__u32 clu;
 	__u32 iblk;
 	__u32 len;
-	
+
 } __attribute__ ((aligned (8)));
 
 struct ploop_freeblks_ctl
@@ -173,9 +174,9 @@ struct ploop_getdevice_ctl
 	__u32	__mbz1;
 } __attribute__ ((aligned (8)));
 
-/* maintainance types */
+/* maintenance types */
 enum {
-	PLOOP_MNTN_OFF = 0,  /* no maintainance is in progress */
+	PLOOP_MNTN_OFF = 0,  /* no maintenance is in progress */
 	PLOOP_MNTN_BALLOON,  /* user-space started ballooning */
 	PLOOP_MNTN_FBLOADED, /* list of free-blocks loaded */
 	PLOOP_MNTN_SNAPSHOT, /* bdev is freezed due to snapshot */
@@ -206,7 +207,7 @@ enum {
 /* Close images, free all data, return the device to initial state  */
 #define PLOOP_IOC_CLEAR		_IO(PLOOPCTLTYPE, 1)
 
-/* Stop/start device. */ 
+/* Stop/start device. */
 #define PLOOP_IOC_STOP		_IO(PLOOPCTLTYPE, 2)
 #define PLOOP_IOC_START		_IO(PLOOPCTLTYPE, 3)
 
@@ -225,7 +226,7 @@ struct ploop_track_extent
 /* Start tracking of top delta image. */
 #define PLOOP_IOC_TRACK_INIT	_IOR(PLOOPCTLTYPE, 6, struct ploop_track_extent)
 
-/* Stop of top delta image. It is respnonsibility of caller
+/* Stop of top delta image. It is responsibility of caller
  * to quiesce the device before stopping tracking. The ioctl
  * will fail if tracking was aborted or if not all dirty bits are read.
  */
@@ -261,7 +262,7 @@ struct ploop_track_extent
 /* Inquire current state of free block extents */
 #define PLOOP_IOC_FBGET		_IOW(PLOOPCTLTYPE, 18, struct ploop_freeblks_ctl)
 
-/* Start balloning or inquire maintainance_type or flush stale BALLON state */
+/* Start balloning or inquire maintenance_type or flush stale BALLON state */
 #define PLOOP_IOC_BALLOON	_IOW(PLOOPCTLTYPE, 19, struct ploop_balloon_ctl)
 
 /* Load free blocks to ploop */

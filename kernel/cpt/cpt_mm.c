@@ -36,6 +36,15 @@
 #include "cpt_fsmagic.h"
 #include "cpt_ubc.h"
 
+/*
+ * Locking order between mmap_sem and i_mutex
+ *
+ * vfs_write() -> get_user_pages()	: i_mutex    -> mmap_sem
+ * dup_mmap()				: mmap_sem   -> mmap_sem/1
+ * cpt_dump_vm() -> file_write()	: mmap_sem/2 -> i_mutex
+ */
+#define MMAP_SEM_CPT_DUMP	2
+
 static int collect_one_aio_ctx(struct mm_struct *mm, struct kioctx *aio_ctx,
 			       cpt_context_t *ctx)
 {
@@ -839,7 +848,7 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 	struct hlist_node *n;
 	int err;
 
-	down_write_nested(&mm->mmap_sem, SINGLE_DEPTH_NESTING);
+	down_write_nested(&mm->mmap_sem, MMAP_SEM_CPT_DUMP);
 
 	cpt_open_object(obj, ctx);
 

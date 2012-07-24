@@ -40,6 +40,13 @@ struct swp_node
 	struct anon_vma		*anon;
 	u64			pfn;
 	struct rb_node		rb_hash;
+	/*
+	 * This value signal not to clean swap entry
+	 * when rst_drop_iter_rbtree is executed.
+	 * It is faster than check every swap entry
+	 * for belongings to shared memory
+	 */
+	int			keep;
 };
 
 static inline struct swp_node * rb_lookup_pfn(u64 pfn, cpt_context_t *ctx)
@@ -226,6 +233,7 @@ rst_iter_chunk(struct file *file, loff_t pos,
 			eprintk_ctx("rst_iter_shmem: failed to insert?\n");
 			return err;
 		}
+		swn->keep = 1;
 		ptr += PAGE_SIZE;
 	}
 	if (i_size_read(file->f_dentry->d_inode) < ptr)
@@ -484,7 +492,7 @@ void rst_drop_iter_rbtree(cpt_context_t *ctx)
 
 	while ((node = ctx->iter_rb_root.rb_node) != NULL) {
 		pd = rb_entry(node, struct swp_node, rb_hash);
-		if (pd->ent.val)
+		if (pd->ent.val && !pd->keep)
 			free_swap_and_cache(pd->ent);
 		rb_erase(node, &ctx->iter_rb_root);
 		kfree(pd);

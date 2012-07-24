@@ -1474,6 +1474,17 @@ static struct ctl_table vm_table[] = {
 		.extra1		= &zero,
 		.extra2		= &two_hundred,
 	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "sync_reclaim",
+		.data		= &vm_sync_reclaim,
+		.maxlen		= sizeof(vm_sync_reclaim),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{
 		.procname	= "nr_hugepages",
@@ -1846,7 +1857,7 @@ static struct ctl_table fs_table[] = {
 	{
 		.procname	= "file-nr",
 		.data		= &files_stat,
-		.maxlen		= 3*sizeof(int),
+		.maxlen		= sizeof(files_stat),
 		.mode		= 0444,
 		.proc_handler	= &proc_nr_files,
 	},
@@ -1854,9 +1865,10 @@ static struct ctl_table fs_table[] = {
 		.ctl_name	= FS_MAXFILE,
 		.procname	= "file-max",
 		.data		= &files_stat.max_files,
-		.maxlen		= sizeof(int),
+		.maxlen		= sizeof(files_stat.max_files),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &proc_doulongvec_minmax,
+		.strategy	= &sysctl_data,
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,

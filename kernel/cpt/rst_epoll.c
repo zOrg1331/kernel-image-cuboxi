@@ -38,13 +38,6 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
-/* Those funcations are static in fs/eventpoll.c */
-extern int ep_insert(struct eventpoll *ep, struct epoll_event *event,
-		     struct file *tfile, int fd);
-extern struct epitem *ep_find(struct eventpoll *ep, struct file *file, int fd);
-extern void ep_release_epitem(struct epitem *epi);
-
-
 struct file *cpt_open_epolldev(struct cpt_file_image *fi,
 			       unsigned flags,
 			       struct cpt_context *ctx)
@@ -102,8 +95,10 @@ static int restore_one_epoll(cpt_object_t *obj,
 		}
 		epds.events = efi.cpt_events;
 		epds.data = efi.cpt_data;
+		mutex_lock(&epmutex);
 		mutex_lock(&ep->mtx);
 		err = ep_insert(ep, &epds, tobj->o_obj, efi.cpt_fd);
+		clear_tfile_check_list();
 		if (!err) {
 			struct epitem *epi;
 			epi = ep_find(ep, tobj->o_obj, efi.cpt_fd);
@@ -118,6 +113,7 @@ static int restore_one_epoll(cpt_object_t *obj,
 			}
 		}
 		mutex_unlock(&ep->mtx);
+		mutex_unlock(&epmutex);
 		if (err)
 			break;
 		pos += efi.cpt_next;

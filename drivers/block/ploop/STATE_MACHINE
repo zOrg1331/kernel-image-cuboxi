@@ -32,7 +32,7 @@ States of main process:
 
 - Running. If something is on ready_queue, it is processed.
   If ready_queue is empty, entry_queue is checked.
-  If we see a barrier, we enter Pre-barrier flush. 
+  If we see a barrier, we enter Pre-barrier flush.
 
 
 EVENTS:
@@ -60,4 +60,4 @@ Request states.
 	queue to ready_queue. In any case, processing must be started
 	from the very beginning.
 
-2. 
+2.

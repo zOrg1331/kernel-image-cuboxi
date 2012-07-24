@@ -147,6 +147,7 @@ int cpt_need_vfsmount(struct dentry *dentry, struct vfsmount *vfsmnt)
 		case FSMAGIC_INOTIFY:
 		case FSMAGIC_MQUEUE:
 		case FSMAGIC_ANON:
+		case FSMAGIC_RPCAUTH:
 			return 0;
 		default:
 			eprintk("no vfsmount: ");
@@ -625,6 +626,22 @@ static int dump_content_eventfd(struct file *file, struct cpt_context *ctx)
 	return 0;
 }
 
+int cpt_pipe_fasync(struct file *file, struct cpt_context *ctx)
+{
+	struct pipe_inode_info *pipe = file->f_dentry->d_inode->i_pipe;
+	struct fasync_struct *fa;
+
+	for (fa = pipe->fasync_readers; fa; fa = fa->fa_next) {
+		if (fa->fa_file == file)
+			return fa->fa_fd;
+	}
+	for (fa = pipe->fasync_writers; fa; fa = fa->fa_next) {
+		if (fa->fa_file == file)
+			return fa->fa_fd;
+	}
+	return -1;
+}
+
 static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ctx)
 {
 	int err = 0;
@@ -724,6 +741,10 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 		if (file->f_flags&FASYNC)
 			v->cpt_fown_fd = cpt_socket_fasync(file, ctx);
 	}
+	if (S_ISFIFO(v->cpt_i_mode)) {
+		if (file->f_flags & FASYNC)
+			v->cpt_fown_fd = cpt_pipe_fasync(file, ctx);
+	}
 	if (file->f_op == &eventpoll_fops) {
 		v->cpt_priv = file->f_dentry->d_inode->i_ino;
 		v->cpt_lflags |= CPT_DENTRY_EPOLL;
@@ -774,24 +795,24 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 
 	cpt_close_object(ctx);
 
+	if ((file->f_flags & FASYNC) && (v->cpt_fown_fd == -1)) {
+		eprintk_ctx("No fd for FASYNC %pS\n", file->f_op);
+		return -EINVAL;
+	}
+
 	return err;
 }
 
 int cpt_page_is_zero(struct page * page)
 {
-	int i;
 	int res;
-	char * kaddr;
+	unsigned long *kaddr = kmap_atomic(page, KM_USER0);
 
-	res = 1;
-	kaddr = kmap_atomic(page, KM_USER0);
-
-	for (i=0; i<PAGE_SIZE/sizeof(unsigned long); i++) {
-		if (((unsigned long*)(kaddr))[i] != 0) {
-			res = 0;
-			break;
-		}
-	}
+	if (kaddr[0] ||
+	    memcmp(kaddr, kaddr + 1, PAGE_SIZE - sizeof(unsigned long)))
+		res = 0;
+	else
+		res = 1;
 
 	kunmap_atomic(kaddr, KM_USER0);
 	return res;
@@ -1735,9 +1756,6 @@ static int collect_vfsmount_tree(struct vfsmount *tree, cpt_object_t *ns_obj,
 			err = -EINVAL;
 			break;
 		}
-
-		if (is_sunrpc_pipefs(mnt))
-			continue;
 
 		if (is_autofs_mount(mnt->mnt_parent))
 			continue;

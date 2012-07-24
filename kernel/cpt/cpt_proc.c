@@ -186,6 +186,66 @@ int cpt_context_lookup_veid(unsigned int veid)
 	return 0;
 }
 
+/*
+ * Check capabilities on destination node
+ *
+ * Note: there is no immediately return from inside function even if an error
+ * occured in case administrator should receive detailed information in the
+ * log about missing capabilities and modules.
+ */
+static int cpt_test_vecaps(cpt_context_t *ctx, __u32 dst_flags)
+{
+	int err;
+	__u32 src_flags;
+
+	/* The only immidiately return allowed if capabilities failed to be got */
+	err = cpt_vps_caps(ctx, &src_flags);
+	if (err)
+		return err;
+
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_CMOV, "cmov", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_FXSR, "fxsr", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE, "sse", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE2, "sse2", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_1", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_2", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_MMX, "mmx", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW, "3dnow", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW2, "3dnowext", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4A, "sse4a", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SEP, "sysenter", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_EMT64, "emt64", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_IA64, "ia64", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL, "syscall", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL32, "syscall32", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_XSAVE, "xsave", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AVX, "avx", err);
+	test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AESNI, "aesni", err);
+
+	if (dst_flags & (1 << CPT_SLM_DMPRST)) {
+		eprintk_ctx("SLM is enabled on destination node, but slm_dmprst module is not loaded\n");
+		err = VECAPS_NO_SLM_MODULE;
+	}
+
+	if (src_flags & CPT_UNSUPPORTED_MASK)
+		err = VECAPS_UNSUPPORTED_FEATURE;
+
+	if ((dst_flags & (1 << CPT_NO_IPV6)) &&
+	     !(src_flags & (1 << CPT_NO_IPV6))) {
+		eprintk_ctx("IPv6 not loaded on destination node\n");
+		err = VECAPS_NO_IPV6_MODULE;
+	}
+
+	if ((src_flags & (1 << CPT_NAMESPACES)) &&
+	    !(dst_flags & (1 << CPT_NAMESPACES))) {
+		eprintk_ctx("Mount namespaces migration support is not"
+			    " present on destination node\n");
+		err = VECAPS_NO_MNT_NAMESPACES;
+	}
+
+	return err;
+}
+
 static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
@@ -480,55 +540,8 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 			ctx->ctx_state = CPT_CTX_IDLE;
 		break;
 	case CPT_TEST_VECAPS:
-	{
-		__u32 dst_flags = arg;
-		__u32 src_flags;
-
-		err = cpt_vps_caps(ctx, &src_flags);
-		if (err)
-			break;
-
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_CMOV, "cmov", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_FXSR, "fxsr", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE, "sse", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE2, "sse2", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_1", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4_1, "sse4_2", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_MMX, "mmx", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW, "3dnow", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_3DNOW2, "3dnowext", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SSE4A, "sse4a", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SEP, "sysenter", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_EMT64, "emt64", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_IA64, "ia64", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL, "syscall", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL32, "syscall32", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_XSAVE, "xsave", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AVX, "avx", err);
-		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_AESNI, "aesni", err);
-		if (dst_flags & (1 << CPT_SLM_DMPRST)) {
-			eprintk_ctx("SLM is enabled on destination node, but slm_dmprst module is not loaded\n");
-			err = 1;
-		}
-
-		if (src_flags & CPT_UNSUPPORTED_MASK)
-			err = 2;
-
-		if ((dst_flags & (1 << CPT_NO_IPV6)) &&
-		     !(src_flags & (1 << CPT_NO_IPV6))) {
-			eprintk_ctx("IPv6 not loaded on destination node\n");
-			err = 1;
-		}
-
-		if ((src_flags & (1 << CPT_NAMESPACES)) &&
-		    !(dst_flags & (1 << CPT_NAMESPACES))) {
-			eprintk_ctx("Mount namespaces migration support is not"
-				    " present on destination node\n");
-			err = 2;
-		}
-
+		err = cpt_test_vecaps(ctx, arg);
 		break;
-	}
 	default:
 		err = -EINVAL;
 		break;

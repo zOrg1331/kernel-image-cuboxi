@@ -384,57 +384,6 @@ int gfs2_inode_refresh(struct gfs2_inode *ip, int create)
 	return error;
 }
 
-static void gfs2_dinode_dealloc_early(struct gfs2_sbd *sdp,
-				      struct gfs2_glock *i_gl,
-				      u64 i_no_addr)
-{
-	struct gfs2_alloc *al;
-	struct gfs2_rgrpd *rgd;
-	int error;
-
-	al = kzalloc(sizeof(struct gfs2_alloc), GFP_NOFS);
-	if (!al) {
-		error = -ENOMEM;
-		goto out;
-	}
-
-	error = gfs2_rindex_hold(sdp, &al->al_ri_gh);
-	if (error)
-		goto out;
-
-	rgd = gfs2_blk2rgrpd(sdp, i_no_addr);
-	if (!rgd) {
-		error = -EIO;
-		goto out_rindex_relse;
-	}
-
-	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0,
-				   &al->al_rgd_gh);
-	if (error)
-		goto out_rindex_relse;
-
-	error = gfs2_trans_begin(sdp, RES_RG_BIT + RES_STATFS, 1);
-	if (error)
-		goto out_rg_gunlock;
-
-	set_bit(GLF_DIRTY, &i_gl->gl_flags);
-	set_bit(GLF_LFLUSH, &i_gl->gl_flags);
-
-	gfs2_free_di_early(rgd, sdp, i_gl, i_no_addr);
-
-	gfs2_trans_end(sdp);
-
-out_rg_gunlock:
-	gfs2_glock_dq_uninit(&al->al_rgd_gh);
-out_rindex_relse:
-	gfs2_glock_dq_uninit(&al->al_ri_gh);
-out:
-	if (al)
-		kfree(al);
-	if (error)
-		fs_warn(sdp, "gfs2_dinode_dealloc_early: %d\n", error);
-}
-
 /**
  * gfs2_change_nlink - Change nlink count on inode
  * @ip: The GFS2 inode
@@ -624,12 +573,9 @@ static int alloc_dinode(struct gfs2_inode *dip, u64 *no_addr, u64 *generation)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
 	int error;
+	int dblocks = 1;
 
-	if (gfs2_alloc_get(dip) == NULL)
-		return -ENOMEM;
-
-	dip->i_alloc->al_requested = RES_DINODE;
-	error = gfs2_inplace_reserve(dip);
+	error = gfs2_inplace_reserve(dip, RES_DINODE);
 	if (error)
 		goto out;
 
@@ -637,14 +583,13 @@ static int alloc_dinode(struct gfs2_inode *dip, u64 *no_addr, u64 *generation)
 	if (error)
 		goto out_ipreserv;
 
-	error = gfs2_alloc_di(dip, no_addr, generation);
+	error = gfs2_alloc_blocks(dip, no_addr, &dblocks, 1, generation, 1);
 
 	gfs2_trans_end(sdp);
 
 out_ipreserv:
 	gfs2_inplace_release(dip);
 out:
-	gfs2_alloc_put(dip);
 	return error;
 }
 
@@ -727,7 +672,7 @@ static int make_dinode(struct gfs2_inode *dip, struct gfs2_glock *gl,
 	int error;
 
 	munge_mode_uid_gid(dip, &mode, &uid, &gid);
-	if (!gfs2_alloc_get(dip))
+	if (!gfs2_qadata_get(dip))
 		return -ENOMEM;
 
 	error = gfs2_quota_lock(dip, uid, gid);
@@ -749,7 +694,7 @@ static int make_dinode(struct gfs2_inode *dip, struct gfs2_glock *gl,
 out_quota:
 	gfs2_quota_unlock(dip);
 out:
-	gfs2_alloc_put(dip);
+	gfs2_qadata_put(dip);
 	return error;
 }
 
@@ -757,13 +702,13 @@ static int link_dinode(struct gfs2_inode *dip, const struct qstr *name,
 		       struct gfs2_inode *ip)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
-	struct gfs2_alloc *al;
+	struct gfs2_qadata *qa;
 	int alloc_required;
 	struct buffer_head *dibh;
 	int error;
 
-	al = gfs2_alloc_get(dip);
-	if (!al)
+	qa = gfs2_qadata_get(dip);
+	if (!qa)
 		return -ENOMEM;
 
 	error = gfs2_quota_lock(dip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
@@ -778,14 +723,12 @@ static int link_dinode(struct gfs2_inode *dip, const struct qstr *name,
 		if (error)
 			goto fail_quota_locks;
 
-		al->al_requested = sdp->sd_max_dirres;
-
-		error = gfs2_inplace_reserve(dip);
+		error = gfs2_inplace_reserve(dip, sdp->sd_max_dirres);
 		if (error)
 			goto fail_quota_locks;
 
 		error = gfs2_trans_begin(sdp, sdp->sd_max_dirres +
-					 gfs2_rg_blocks(al) +
+					 gfs2_rg_blocks(dip) +
 					 2 * RES_DINODE +
 					 RES_STATFS + RES_QUOTA, 0);
 		if (error)
@@ -814,14 +757,13 @@ fail_end_trans:
 	gfs2_trans_end(sdp);
 
 fail_ipreserv:
-	if (dip->i_alloc->al_rgd)
-		gfs2_inplace_release(dip);
+	gfs2_inplace_release(dip);
 
 fail_quota_locks:
 	gfs2_quota_unlock(dip);
 
 fail:
-	gfs2_alloc_put(dip);
+	gfs2_qadata_put(dip);
 	return error;
 }
 
@@ -904,12 +846,8 @@ struct inode *gfs2_createi(struct gfs2_holder *ghs, const struct qstr *name,
 
 	inode = gfs2_inode_lookup(dir->i_sb, IF2DT(mode), inum.no_addr,
 				  inum.no_formal_ino, 0, 1);
-	if (IS_ERR(inode)) {
-		error = PTR_ERR(inode);
-		gfs2_dinode_dealloc_early(sdp, ghs[1].gh_gl, inum.no_addr);
-		gfs2_glock_dq(ghs + 1);
-		goto fail_gunlock;
-	}
+	if (IS_ERR(inode))
+		goto fail_gunlock2;
 
 	error = gfs2_inode_refresh(GFS2_I(inode), 1);
 	if (error) {

@@ -266,9 +266,6 @@ int ub_try_to_free_pages(struct user_beancounter *ub, gfp_t gfp_mask)
 	unsigned long progress, flags;
 	int no_swap_left = 0;
 
-	if (test_thread_flag(TIF_MEMDIE))
-		return -ENOMEM;
-
 	if (!(gfp_mask & __GFP_WAIT))
 		goto nowait;
 
@@ -315,7 +312,10 @@ int __ub_phys_charge(struct user_beancounter *ub,
 	ub_oom_start(&ub->oom_ctrl);
 
 	while (charge_beancounter_fast(ub, UB_PHYSPAGES, pages, strict)) {
-		if (ub_try_to_free_pages(ub, gfp_mask))
+		if (test_thread_flag(TIF_MEMDIE) ||
+		    fatal_signal_pending(current))
+			strict = UB_FORCE;
+		else if (ub_try_to_free_pages(ub, gfp_mask))
 			return -ENOMEM;
 	}
 
@@ -331,6 +331,9 @@ int __ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask, int size)
 	ub_oom_start(&ub->oom_ctrl);
 
 	do {
+		if (test_thread_flag(TIF_MEMDIE) ||
+		    fatal_signal_pending(current))
+			return 0;
 		if (ub_try_to_free_pages(ub, gfp_mask))
 			return -ENOMEM;
 	} while (precharge_beancounter(ub, UB_PHYSPAGES, size));
@@ -556,9 +559,10 @@ void __show_ub_mem(struct user_beancounter *ub)
 	__show_one_resource("DCSZ", ub->ub_parms + UB_DCACHESIZE);
 	__show_one_resource("OOMG", ub->ub_parms + UB_OOMGUARPAGES);
 
-	printk("Dirty %lu Wback %lu\n",
+	printk("Dirty %lu Wback %lu Dche %u Prnd %lu\n",
 			ub_stat_get(ub, dirty_pages),
-			ub_stat_get(ub, writeback_pages));
+			ub_stat_get(ub, writeback_pages),
+			ub->ub_dentry_unused, ub->ub_dentry_pruned);
 }
 
 void show_ub_mem(struct user_beancounter *ub)

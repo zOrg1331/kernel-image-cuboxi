@@ -8,6 +8,9 @@
 
 #include <linux/ploop/ploop.h>
 
+/* from fs/inode/fuse.c */
+#define FUSE_SUPER_MAGIC 0x65735546
+
 #define KAIO_PREALLOC (128 * 1024 * 1024) /* 128 MB */
 
 /* This will be used as flag "ploop_kaio_open() succeeded" */
@@ -84,7 +87,8 @@ static void kaio_rw_aio_complete(u64 data, long res)
 }
 
 static int kaio_kernel_submit(struct file *file, struct bio *bio,
-			      struct ploop_request * preq, iblock_t iblk)
+			      struct ploop_request * preq, iblock_t iblk,
+			      unsigned long rw)
 {
 	struct kiocb *iocb;
 	unsigned short op;
@@ -101,7 +105,7 @@ static int kaio_kernel_submit(struct file *file, struct bio *bio,
 	if (!iocb)
 		return -ENOMEM;
 
-	if (bio_rw(bio) & WRITE)
+	if (rw & (1<<BIO_RW))
 		op = IOCB_CMD_WRITE_ITER;
 	else
 		op = IOCB_CMD_READ_ITER;
@@ -144,7 +148,7 @@ kaio_submit(struct ploop_io *io, struct ploop_request * preq,
 		int err;
 
 		atomic_inc(&preq->io_count);
-		err = kaio_kernel_submit(io->files.file, b, preq, iblk);
+		err = kaio_kernel_submit(io->files.file, b, preq, iblk, rw);
 		if (err) {
 			ploop_set_error(preq, err);
 			ploop_complete_io_request(preq);
@@ -187,7 +191,6 @@ static int kaio_fsync_thread(void * data)
 {
 	struct ploop_io * io = data;
 	struct ploop_device * plo = io->plo;
-	struct file *file = io->files.file;
 
 	set_user_nice(current, -20);
 
@@ -226,6 +229,7 @@ static int kaio_fsync_thread(void * data)
 			if (err)
 				ploop_set_error(preq, -EIO);
 		} else {
+			struct file *file = io->files.file;
 			err = vfs_fsync(file, file->f_path.dentry, 1);
 			if (err) {
 				ploop_set_error(preq, -EIO);
@@ -322,7 +326,8 @@ kaio_submit_alloc(struct ploop_io *io, struct ploop_request * preq,
 		int err;
 
 		atomic_inc(&preq->io_count);
-		err = kaio_kernel_submit(io->files.file, b, preq, iblk);
+		err = kaio_kernel_submit(io->files.file, b, preq, iblk,
+					 1<<BIO_RW);
 		if (err) {
 			ploop_set_error(preq, err);
 			ploop_complete_io_request(preq);
@@ -740,6 +745,11 @@ static void kaio_unplug(struct ploop_io * io)
 	blk_run_address_space(io->files.file->f_mapping);
 }
 
+static void kaio_queue_settings(struct ploop_io * io, struct request_queue * q)
+{
+	blk_set_stacking_limits(&q->limits);
+}
+
 static void kaio_issue_flush(struct ploop_io * io, struct ploop_request *preq)
 {
 	preq->eng_state = PLOOP_E_COMPLETE;
@@ -748,6 +758,34 @@ static void kaio_issue_flush(struct ploop_io * io, struct ploop_request *preq)
 	spin_lock_irq(&io->plo->lock);
 	kaio_queue_fsync_req(preq);
 	spin_unlock_irq(&io->plo->lock);
+}
+
+static int kaio_autodetect(struct ploop_io * io)
+{
+	struct file  * file  = io->files.file;
+	struct inode * inode = file->f_mapping->host;
+
+	if (inode->i_sb->s_magic != FUSE_SUPER_MAGIC)
+		return -1; /* not mine */
+
+	if (!(file->f_flags & O_DIRECT)) {
+		ploop_io_report_fn(file, "File opened w/o O_DIRECT");
+		return -1;
+	}
+
+	if (file->f_mapping->a_ops->direct_IO_bvec == NULL) {
+		printk("Cannot run kaio over fs (%s) w/o direct_IO_bvec\n",
+		       file->f_mapping->host->i_sb->s_type->name);
+		return -1;
+	}
+
+	if (file->f_mapping->a_ops->direct_IO_page == NULL) {
+		printk("Cannot run kaio over fs (%s) w/o direct_IO_page\n",
+		       file->f_mapping->host->i_sb->s_type->name);
+		return -1;
+	}
+
+	return 0;
 }
 
 static struct ploop_io_ops ploop_io_ops_kaio =
@@ -779,10 +817,13 @@ static struct ploop_io_ops ploop_io_ops_kaio =
 	.start_merge	=	kaio_start_merge,
 	.truncate	=	kaio_truncate,
 
+	.queue_settings	=	kaio_queue_settings,
 	.issue_flush	=	kaio_issue_flush,
 
 	.i_size_read	=	generic_i_size_read,
 	.f_mode		=	generic_f_mode,
+
+	.autodetect     =       kaio_autodetect,
 };
 
 static int __init pio_kaio_mod_init(void)

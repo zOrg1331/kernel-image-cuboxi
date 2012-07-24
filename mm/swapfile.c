@@ -2744,6 +2744,44 @@ void si_swapinfo(struct sysinfo *val)
 }
 
 /*
+ * Set swap entry in swap map to shared memory forcibly.
+ * Used when injecting shared memory at container migration
+ */
+int swap_convert_to_shmem(swp_entry_t entry)
+{
+	struct swap_info_struct *p;
+	unsigned long offset, type;
+	int err;
+
+	if (non_swap_entry(entry))
+		return -EINVAL;
+
+	type = swp_type(entry);
+	if (type >= nr_swapfiles)
+		return -EINVAL;
+
+	p = swap_info[type];
+	offset = swp_offset(entry);
+
+	spin_lock(&swap_lock);
+
+	err = -EINVAL;
+	if (unlikely(offset >= p->max))
+		goto out;
+
+	if ((p->swap_map[offset] & ~SWAP_HAS_CACHE) != 1)
+		goto out;
+
+	p->swap_map[offset] = SWAP_MAP_SHMEM |
+			      (p->swap_map[offset] & SWAP_HAS_CACHE);
+	err = 0;
+out:
+	spin_unlock(&swap_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(swap_convert_to_shmem);
+
+/*
  * Verify that a swap entry is valid and increment its swap map count.
  *
  * Returns error code in following case.

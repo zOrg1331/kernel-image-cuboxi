@@ -273,6 +273,8 @@ static void nfsd_last_thread(struct svc_serv *serv)
 	nfsd_serv = NULL;
 	nfsd_shutdown();
 
+	svc_rpcb_cleanup(serv);
+
 	nfsd_export_flush();
 
 	nfsd_up = false;

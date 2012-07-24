@@ -120,13 +120,15 @@ notrace noinline int ___vdso_clock_gettime(clockid_t clock, struct timespec *ts)
 				return do_realtime(ts);
 			break;
 		case CLOCK_MONOTONIC:
-			if (likely(gtod->clock.vread))
+			if (likely(gtod->clock.vread &&
+				   gtod->gettime_monotonic_enabled))
 				return do_monotonic(ts);
 			break;
 		case CLOCK_REALTIME_COARSE:
 			return do_realtime_coarse(ts);
 		case CLOCK_MONOTONIC_COARSE:
-			return do_monotonic_coarse(ts);
+			if (likely(gtod->gettime_monotonic_enabled))
+				return do_monotonic_coarse(ts);
 		}
 	return vdso_fallback_gettime(clock, ts);
 }

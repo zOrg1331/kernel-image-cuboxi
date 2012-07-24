@@ -309,6 +309,11 @@ static u32 show_running(struct ploop_device * plo)
 	return test_bit(PLOOP_S_RUNNING, &plo->state);
 }
 
+static u32 show_locked(struct ploop_device * plo)
+{
+	return test_bit(PLOOP_S_LOCKED, &plo->state);
+}
+
 static u32 show_aborted(struct ploop_device * plo)
 {
 	return test_bit(PLOOP_S_ABORT, &plo->state);
@@ -443,6 +448,7 @@ static struct attribute *state_attributes[] = {
 	_A(fsync_reqs),
 	_A(map_pages),
 	_A(running),
+	_A(locked),
 	_A2(aborted),
 	_A(top),
 	_A(event),
