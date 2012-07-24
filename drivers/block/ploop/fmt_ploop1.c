@@ -318,14 +318,14 @@ ploop1_complete_snapshot(struct ploop_delta * delta, struct ploop_snapdata * sd)
 
 	vh->m_DiskInUse = 0;
 
-        /*
-         * NB: we don't call ploop_update_map_hdr() here because top
-         * delta after snapshot completion should bear m_DiskInUse != 0.
-         * Also, we rely on the fact that new top delta (created while
-         * snapshotting) has exactly the same PVD-header as former top
-         * delta. So, first 64 bytes of correspondent map_node page
-         * remain valid.
-         */
+	/*
+	 * NB: we don't call ploop_update_map_hdr() here because top
+	 * delta after snapshot completion should bear m_DiskInUse != 0.
+	 * Also, we rely on the fact that new top delta (created while
+	 * snapshotting) has exactly the same PVD-header as former top
+	 * delta. So, first 64 bytes of correspondent map_node page
+	 * remain valid.
+	 */
 
 	err = delta->io.ops->sync_write(&delta->io, ph->dyn_page, 512, 0, 0);
 	if (err)

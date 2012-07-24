@@ -316,7 +316,7 @@ map_create(struct ploop_map * map, cluster_t block)
 		m->mn_start = ondisk_pageno * INDEX_PER_PAGE - PLOOP_MAP_OFFSET;
 		m->mn_end = m->mn_start + INDEX_PER_PAGE - 1;
 	}
-	
+
 	INIT_LIST_HEAD(&m->io_queue);
 	INIT_LIST_HEAD(&m->lru);
 	m->levels = NULL;
@@ -465,7 +465,7 @@ int map_index_fault(struct ploop_request * preq)
 		if (ndelta->level >= uptodate_level)
 			continue;
 
-	        rc = ndelta->ops->map_index(ndelta, m->mn_start, &pos);
+		rc = ndelta->ops->map_index(ndelta, m->mn_start, &pos);
 		if (rc != 0) {
 			delta = ndelta;
 			break;
@@ -930,7 +930,7 @@ void ploop_index_update(struct ploop_request * preq)
 	copy_index_for_wb(page, m, top_delta->level);
 
 	((map_index_t*)page_address(page))[idx] = preq->iblock << plo->cluster_log;
-	
+
 	preq->eng_state = PLOOP_E_INDEX_WB;
 	get_page(page);
 	preq->sinfo.wi.tpage = page;

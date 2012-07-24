@@ -1146,8 +1146,8 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 
 		/* One very special case... */
 		if (S_ISREG(fi.cpt_i_mode) &&
-		   (!name[0] || (strcmp(name, "/dev/zero (deleted)") == 0))
-			     || (strcmp(name, " (deleted)/dev/zero") == 0)) {
+		   (!name[0] || (strcmp(name, "/dev/zero (deleted)") == 0)
+			     || (strcmp(name, " (deleted)/dev/zero") == 0))) {
 
 			/* MAP_ANON|MAP_SHARED mapping.
 			 * kernel makes this damn ugly way, when file which

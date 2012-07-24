@@ -4,16 +4,16 @@
 /* Definition of PVD (Parallels Virtual Disk) format
  *
  * 1. All the data are in ?little-endian? format.
- * 2. All the data excepting first cluster are aligned and padded
+ * 2. All the data except for the first cluster are aligned and padded
  *    to size of cluster. First cluster is exception - it combines
  *    PVD header (first 64 bytes of the cluster) with L2 index table
  *    (L2 index table is an array of indices of blocks)
  * 3. Image size must be multiple of cluster size. If it is not,
- *    we assume it is the result of image extention failed in the
+ *    we assume it is the result of image extension failed in the
  *    middle of transaction, therefore new allocations start at
  *    size rounded down to cluster size.
  * 4. Update of indices must be done only after data clusters
- *    are commited to reliable storage. If we fail to update index,
+ *    are committed to reliable storage. If we fail to update index,
  *    we can get an unused and, maybe, uninitialized or partially
  *    initialized data cluster. It is lost, forgotten and ignored
  *    until repair or image rebuild.
@@ -160,9 +160,9 @@ ConvertToCHS(__u64 From, struct CHSData *chs)
 	/*
 	 * According to ATA2 specs:
 	 *  - If the device is above 1,032,192 sectors then the value should be 63.
-    *    This value does not exceed 63 (3Fh). But note, that if device size
+	 *    This value does not exceed 63 (3Fh). But note, that if device size
 	 *    above 16,777,216 the HDD reports proper 'magic' number in CHS values,
-    *    so the situation in the middle must be handled separately
+	 *    so the situation in the middle must be handled separately
 	 */
 	if ((From > 1032192) && (From < 16777216))
 	{

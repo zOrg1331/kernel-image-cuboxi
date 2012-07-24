@@ -261,6 +261,8 @@ static int hook(void *arg)
 			goto out;
 		}
 
+		set_bit(VE_RESTORE, &get_exec_env()->flags);
+
 		memcpy(&get_exec_env()->ve_cap_bset, &ti->cpt_ecap, sizeof(kernel_cap_t));
 
 		if (ctx->statusfile) {
@@ -908,6 +910,7 @@ static int rst_unlock_ve(struct cpt_context *ctx)
 	down_write(&env->op_sem);
 	env->is_locked = 0;
 	up_write(&env->op_sem);
+	clear_bit(VE_RESTORE, &env->flags);
 	put_ve(env);
 	return 0;
 }

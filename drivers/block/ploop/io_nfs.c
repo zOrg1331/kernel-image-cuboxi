@@ -1318,17 +1318,6 @@ static int nfsio_open(struct ploop_io * io)
 	if (file == NULL)
 		return -EBADF;
 
-	if (strcmp(file->f_mapping->host->i_sb->s_type->name, "nfs")) {
-		printk("nfsio_open for ploop%d failed: %s is not supported; "
-		       "use '-o vers=3' mounting nfs\n", io->plo->index,
-		       file->f_mapping->host->i_sb->s_type->name);
-		return -EOPNOTSUPP;
-	}
-
-	if (NFS_SERVER(file->f_mapping->host)->wsize < PAGE_SIZE ||
-	    NFS_SERVER(file->f_mapping->host)->rsize < PAGE_SIZE)
-		return -EINVAL;
-
 	err = invalidate_inode_pages2(file->f_mapping);
 	if (err)
 		return err;
@@ -1480,6 +1469,31 @@ static void nfsio_queue_settings(struct ploop_io * io, struct request_queue * q)
 #endif
 }
 
+static int nfsio_autodetect(struct ploop_io * io)
+{
+	struct file * file = io->files.file;
+	struct inode * inode = file->f_mapping->host;
+
+	if (inode->i_sb->s_magic != NFS_SUPER_MAGIC)
+		return -1; /* not mine */
+
+	if (strcmp(file->f_mapping->host->i_sb->s_type->name, "nfs")) {
+		printk("%s is not supported; use '-o vers=3' mounting nfs\n",
+		       file->f_mapping->host->i_sb->s_type->name);
+		return -1;
+	}
+
+	if (NFS_SERVER(file->f_mapping->host)->wsize < PAGE_SIZE ||
+	    NFS_SERVER(file->f_mapping->host)->rsize < PAGE_SIZE) {
+		printk("NFS server wsize/rsize too small: %d/%d\n",
+		       NFS_SERVER(file->f_mapping->host)->wsize,
+		       NFS_SERVER(file->f_mapping->host)->rsize);
+		return -1;
+	}
+
+	return 0;
+}
+
 static struct ploop_io_ops ploop_io_ops_nfs =
 {
 	.id		=	PLOOP_IO_NFS,
@@ -1511,6 +1525,8 @@ static struct ploop_io_ops ploop_io_ops_nfs =
 
 	.i_size_read	=	generic_i_size_read,
 	.f_mode		=	generic_f_mode,
+
+	.autodetect     =       nfsio_autodetect,
 };
 
 union nfsio_bio
@@ -1587,7 +1603,7 @@ void nfsio_rbio_release(void *data)
 
 int verify_bounce(struct nfs_write_data * nreq)
 {
-        int i;
+	int i;
 
 	for (i = 0; i < nreq->npages; i++) {
 		if (PageSlab(nreq->pagevec[i]) || page_count(nreq->pagevec[i]) == 0) {
@@ -1636,9 +1652,9 @@ static int __init pio_nfs_mod_init(void)
 		return -ENOMEM;
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25)
-        nfsio_workqueue = create_singlethread_workqueue("nfsio");
-        if (nfsio_workqueue == NULL)
-                return -ENOMEM;
+	nfsio_workqueue = create_singlethread_workqueue("nfsio");
+	if (nfsio_workqueue == NULL)
+		return -ENOMEM;
 #endif
 
 	return ploop_register_io(&ploop_io_ops_nfs);

@@ -30,7 +30,6 @@ extern void ve_sunrpc_hook_register(void);
 extern void ve_sunrpc_hook_unregister(void);
 extern int ve_ip_map_init(void);
 extern void ve_ip_map_exit(void);
-extern void cleanup_rpcb_clnt(void);
 
 static struct ve_rpc_data ve0_rpcd;
 
@@ -76,7 +75,6 @@ static void __exit
 cleanup_sunrpc(void)
 {
 	ve_sunrpc_hook_unregister();
-	cleanup_rpcb_clnt();
 	rpcauth_remove_module();
 	cleanup_socket_xprt();
 	svc_cleanup_xprt_sock();

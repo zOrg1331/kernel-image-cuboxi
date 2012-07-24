@@ -176,6 +176,7 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	struct user_beancounter *ub;
 	unsigned long dirty_pages;
 	unsigned long long dirtied;
+	unsigned long fuse_requests, fuse_bytes;
 
 	ub = seq_beancounter(f);
 
@@ -184,6 +185,7 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	read = write = cancel = 0;
 	sync = sync_done = fsync = fsync_done =
 		fdsync = fdsync_done = frsync = frsync_done = 0;
+	fuse_requests = fuse_bytes = 0;
 	for_each_online_cpu(i) {
 		struct ub_percpu_struct *ub_percpu;
 		ub_percpu = per_cpu_ptr(ub->ub_percpu, i);
@@ -203,6 +205,9 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 		fsync_done += ub_percpu->fsync_done;
 		fdsync_done += ub_percpu->fdsync_done;
 		frsync_done += ub_percpu->frsync_done;
+
+		fuse_requests += ub_percpu->fuse_requests;
+		fuse_bytes += ub_percpu->fuse_bytes;
 	}
 
 	if ((long)dirty_pages < 0)
@@ -228,6 +233,10 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	seq_printf(f, bc_proc_lu_lfmt, "range_syncs_active", in_flight(frsync));
 
 	seq_printf(f, bc_proc_lu_lfmt, "io_pbs", dirty_pages);
+
+	seq_printf(f, bc_proc_lu_lfmt, "fuse_requests", fuse_requests);
+	seq_printf(f, bc_proc_lu_lfmt, "fuse_bytes", fuse_bytes);
+
 	return 0;
 }
 

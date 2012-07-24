@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -258,11 +258,9 @@ static void aac_aif_callback(void *context, struct fib * fibptr)
 	}
 
 	aac_intr_normal(dev, 0, 1, 0, fibptr->hw_fib_va);
-
 	aac_fib_init(fibctx);
 	cmd = (struct aac_aifcmd *) fib_data(fibctx);
 	cmd->command = cpu_to_le32(AifReqEvent);
-
 	status = aac_fib_send(AifRequest,
 		fibctx,
 		sizeof(struct hw_fib)-sizeof(struct aac_fibhdr),
@@ -270,7 +268,6 @@ static void aac_aif_callback(void *context, struct fib * fibptr)
 		0, 1,
 		(fib_callback)aac_aif_callback, fibctx);
 }
-
 
 /**
  *	aac_intr_normal	-	Handle command replies
@@ -286,7 +283,7 @@ unsigned int aac_intr_normal(struct aac_dev *dev, u32 index,
 {
 	unsigned long mflags;
 	dprintk((KERN_INFO "aac_intr_normal(%p,%x)\n", dev, index));
-	if (isAif == 1) {	/* AIF - common */
+	if (isAif == 1) {       /* AIF - common */
 		struct hw_fib * hw_fib;
 		struct fib * fib;
 		struct aac_queue *q = &dev->queues->queue[HostNormCmdQueue];
@@ -341,6 +338,7 @@ unsigned int aac_intr_normal(struct aac_dev *dev, u32 index,
 			FsaNormal,
 			0, 1,
 			(fib_callback)aac_aif_callback, fibctx);
+
 	} else {
 		struct fib *fib = &dev->fibs[index];
 		struct hw_fib * hwfib = fib->hw_fib_va;
@@ -404,6 +402,7 @@ unsigned int aac_intr_normal(struct aac_dev *dev, u32 index,
 			spin_unlock_irqrestore(&dev->manage_lock, mflags);
 
 			FIB_COUNTER_INCREMENT(aac_config.NormalRecved);
+
 			if (fib->done == 2) {
 				spin_lock_irqsave(&fib->event_lock, flagv);
 				fib->done = 0;

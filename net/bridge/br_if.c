@@ -156,14 +156,6 @@ static void del_nbp(struct net_bridge_port *p)
 	kobject_uevent(&p->kobj, KOBJ_REMOVE);
 	kobject_del(&p->kobj);
 
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	if (br_devices_support_netpoll(br))
-		br->dev->priv_flags &= ~IFF_DISABLE_NETPOLL;
-	if (dev->netdev_ops->ndo_netpoll_cleanup)
-		dev->netdev_ops->ndo_netpoll_cleanup(dev);
-	else
-		dev->npinfo = NULL;
-#endif
 	call_rcu(&p->rcu, destroy_nbp_rcu);
 }
 
@@ -180,8 +172,6 @@ static void del_br(struct net_bridge *br)
 	list_for_each_entry_safe(p, n, &br->port_list, list) {
 		del_nbp(p);
 	}
-
-	br_netpoll_cleanup(br->dev);
 
 	del_timer_sync(&br->gc_timer);
 
@@ -410,8 +400,12 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 		return -ELOOP;
 
 	/* Device is already being bridged */
-	if (dev->br_port || dev->ovs_port)
+	if (dev->br_port != NULL)
 		return -EBUSY;
+
+	/* No bridging devices that dislike that (e.g. wireless) */
+	if (dev->priv_flags & IFF_DONT_BRIDGE)
+		return -EOPNOTSUPP;
 
 	p = new_nbp(br, dev);
 	if (IS_ERR(p))
@@ -420,8 +414,6 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	err = dev_set_promiscuity(dev, 1);
 	if (err)
 		goto put_back;
-
-	call_netdevice_notifiers(NETDEV_JOIN, dev);
 
 	err = kobject_init_and_add(&p->kobj, &brport_ktype, &(dev->dev.kobj),
 				   SYSFS_BRIDGE_PORT_ATTR);
@@ -437,6 +429,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 		goto err2;
 
 	rcu_assign_pointer(dev->br_port, p);
+
 	dev_disable_lro(dev);
 
 	dev->priv_flags |= IFF_BRIDGE_PORT;
@@ -453,7 +446,6 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	if (!(dev->features & NETIF_F_VIRTUAL) && !br->master_dev) {
 		dev_hold(dev);
 		br->master_dev = dev;
-		dev->priv_flags &= ~IFF_BRIDGE_PORT;
 	}
 	spin_unlock_bh(&br->lock);
 
@@ -462,20 +454,6 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	dev_set_mtu(br->dev, br_min_mtu(br));
 
 	kobject_uevent(&p->kobj, KOBJ_ADD);
-
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	if (br_devices_support_netpoll(br)) {
-		br->dev->priv_flags &= ~IFF_DISABLE_NETPOLL;
-		if (br->dev->npinfo)
-			dev->npinfo = br->dev->npinfo;
-	} else if (!(br->dev->priv_flags & IFF_DISABLE_NETPOLL)) {
-		br->dev->priv_flags |= IFF_DISABLE_NETPOLL;
-		printk(KERN_INFO "New device %s does not support netpoll\n",
-			dev->name);
-		printk(KERN_INFO "Disabling netpoll for %s\n",
-			br->dev->name);
-	}
-#endif
 
 	return 0;
 err2:
@@ -511,7 +489,6 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 			if (!(p->dev->features & NETIF_F_VIRTUAL)) {
 				dev_hold(p->dev);
 				br->master_dev = p->dev;
-				p->dev->priv_flags &= ~IFF_BRIDGE_PORT;
 				break;
 			}
 	}

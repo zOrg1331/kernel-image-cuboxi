@@ -935,7 +935,7 @@ xfs_vm_writepage(
 	 * warn about it.
 	 */
 	if (WARN_ON_ONCE((current->flags & (PF_MEMALLOC|PF_KSWAPD)) ==
-			PF_MEMALLOC))
+				PF_MEMALLOC))
 		goto redirty;
 
 	/*

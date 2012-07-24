@@ -100,7 +100,6 @@ int kobject_uevent_env_one(struct kobject *kobj, enum kobject_action action,
 	struct kobject *top_kobj;
 	struct kset *kset;
 	struct kset_uevent_ops *uevent_ops;
-	u64 seq;
 	int i = 0;
 	int retval = 0;
 
@@ -206,8 +205,9 @@ int kobject_uevent_env_one(struct kobject *kobj, enum kobject_action action,
 
 	mutex_lock(&uevent_sock_mutex);
 	/* we will send an event, so request a new sequence number */
-	seq = ++ve_uevent_seqnum;
-	retval = add_uevent_var(env, "SEQNUM=%llu", (unsigned long long)seq);
+	retval = add_uevent_var(env, "SEQNUM=%llu",
+				(unsigned long long)++ve_uevent_seqnum);
+
 	if (retval) {
 		mutex_unlock(&uevent_sock_mutex);
 		goto exit;

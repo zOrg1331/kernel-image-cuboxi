@@ -47,4 +47,12 @@
 
 #define CPT_SET_PRAM	_IOW(CPTCTLTYPE, 28, int)
 
+/* CPT_TEST_VECAPS return codes */
+#define VECAPS_OK			0
+#define VECAPS_NO_CPU_FEATURE		1
+#define VECAPS_UNSUPPORTED_FEATURE	2
+#define VECAPS_NO_IPV6_MODULE		3
+#define VECAPS_NO_SLM_MODULE		4
+#define VECAPS_NO_MNT_NAMESPACES	5
+
 #endif

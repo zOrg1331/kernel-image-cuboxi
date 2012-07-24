@@ -118,7 +118,9 @@ static void destroy_pid_namespace(struct pid_namespace *ns)
 	for (i = 0; i < PIDMAP_ENTRIES; i++)
 		kfree(ns->pidmap[i].page);
 
+#ifdef CONFIG_BSD_PROCESS_ACCT
 	kfree(ns->bacct);
+#endif
 	kmem_cache_free(pid_ns_cachep, ns);
 }
 

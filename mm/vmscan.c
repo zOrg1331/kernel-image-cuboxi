@@ -143,6 +143,7 @@ struct scan_control {
  */
 int vm_swappiness = 60;
 long vm_total_pages;	/* The total number of pages which the VM controls */
+int vm_sync_reclaim = 0;
 
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
@@ -680,8 +681,8 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 					struct gang *gang,
 					struct scan_control *sc,
 					struct zone *zone,
-					int priority,
 					enum pageout_io sync_writeback,
+					int priority,
 					unsigned long *ret_nr_dirty,
 					unsigned long *ret_nr_writeback)
 {
@@ -960,8 +961,8 @@ keep:
 		__pagevec_free(&freed_pvec);
 	count_vm_events(PGACTIVATE, pgactivate);
 	trace_mm_pagereclaim_free(nr_reclaimed);
-	*ret_nr_dirty += nr_dirty;
-	*ret_nr_writeback += nr_writeback;
+        *ret_nr_dirty += nr_dirty;
+        *ret_nr_writeback += nr_writeback;
 	return nr_reclaimed;
 }
 
@@ -1194,7 +1195,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 		locked_gang = relock_page_lru(locked_gang, gang);
 	}
 
-	*scanned = scan;
+	*scanned = max(scan, 1ul);
 
 	trace_mm_vmscan_lru_isolate(order,
 			nr_to_scan, scan,
@@ -1325,7 +1326,7 @@ static int too_many_isolated(struct zone *zone, int file,
 }
 
 /*
- * Returns true if a direct reclaim should wait on pages under writeback.
+ * Returns true if the caller should wait to clean dirty/writeback pages.
  *
  * If we are direct reclaiming for contiguous pages and we do not reclaim
  * everything in the list, try again and wait for writeback IO to complete.
@@ -1338,6 +1339,9 @@ static inline bool should_reclaim_stall(unsigned long nr_taken,
 					struct scan_control *sc)
 {
 	int lumpy_stall_priority;
+
+	if (!vm_sync_reclaim)
+		return false;
 
 	/* Local reclaim never stall */
 	if (!scanning_global_lru(sc))
@@ -1376,11 +1380,10 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 {
 	LIST_HEAD(page_list);
 	struct pagevec pvec;
-	unsigned long nr_total_taken = 0;
 	unsigned long nr_scanned = 0;
 	unsigned long nr_reclaimed = 0;
-	unsigned long nr_dirty = 0;
-	unsigned long nr_writeback = 0;
+        unsigned long nr_dirty = 0;
+        unsigned long nr_writeback = 0;
 	struct zone_reclaim_stat *reclaim_stat = get_reclaim_stat(zone, sc);
 
 	while (unlikely(too_many_isolated(zone, file, sc))) {
@@ -1410,7 +1413,6 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		nr_taken = sc->isolate_pages(SWAP_CLUSTER_MAX,
 			     &page_list, &nr_scan, sc->order, ISOLATE_INACTIVE,
 				gang, sc->mem_cgroup, 0, file);
-		nr_total_taken += nr_taken;
 
 		if (scanning_global_lru(sc)) {
 			spin_lock(&zone->stat_lock);
@@ -1455,12 +1457,13 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		reclaim_stat->recent_scanned[0] += count[LRU_ACTIVE_ANON];
 		reclaim_stat->recent_scanned[1] += count[LRU_INACTIVE_FILE];
 		reclaim_stat->recent_scanned[1] += count[LRU_ACTIVE_FILE];
+
 		spin_unlock_irq(&zone->stat_lock);
 
 		nr_scanned += nr_scan;
-		nr_freed = shrink_page_list(&page_list, gang, sc, zone, priority,
-					    PAGEOUT_IO_ASYNC,
-					    &nr_dirty, &nr_writeback);
+		nr_freed = shrink_page_list(&page_list, gang, sc, zone,
+				PAGEOUT_IO_ASYNC,
+				priority, &nr_dirty, &nr_writeback);
 
 		/* Check if we should syncronously wait for writeback */
 		if (should_reclaim_stall(nr_taken, nr_freed, priority, sc)) {
@@ -1471,8 +1474,9 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 			nr_active = clear_active_flags(&page_list, count);
 			count_vm_events(PGDEACTIVATE, nr_active);
 
-			nr_freed += shrink_page_list(&page_list, gang, sc, zone, priority,
-						     PAGEOUT_IO_SYNC, &nr_dirty, &nr_writeback);
+			nr_freed += shrink_page_list(&page_list, gang, sc, zone,
+					PAGEOUT_IO_SYNC, priority, &nr_dirty,
+					&nr_writeback);
 		}
 
 		nr_reclaimed += nr_freed;
@@ -1528,38 +1532,40 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 		reclaim_stat->recent_rotated[1] += nr_rotated[LRU_ACTIVE_FILE];
 		spin_unlock(&zone->stat_lock);
 
+		/*
+		 * If reclaim is isolating dirty pages under writeback, it implies
+		 * that the long-lived page allocation rate is exceeding the page
+		 * laundering rate. Either the global limits are not being effective
+		 * at throttling processes due to the page distribution throughout
+		 * zones or there is heavy usage of a slow backing device. The
+		 * only option is to throttle from reclaim context which is not ideal
+		 * as there is no guarantee the dirtying process is throttled in the
+		 * same way balance_dirty_pages() manages.
+		 *
+		 * This scales the number of dirty pages that must be under writeback
+		 * before throttling depending on priority. It is a simple backoff
+		 * function that has the most effect in the range DEF_PRIORITY to
+		 * DEF_PRIORITY-2 which is the priority reclaim is considered to be
+		 * in trouble and reclaim is considered to be in trouble.
+		 *
+		 * DEF_PRIORITY   100% isolated pages must be PageWriteback to throttle
+		 * DEF_PRIORITY-1  50% must be PageWriteback
+		 * DEF_PRIORITY-2  25% must be PageWriteback, kswapd in trouble
+		 * ...
+		 * DEF_PRIORITY-6 For SWAP_CLUSTER_MAX isolated pages, throttle if any
+		 *                     isolated page is PageWriteback
+		 */
+		if (nr_writeback && nr_writeback >=
+			(nr_taken >> (DEF_PRIORITY-priority))) {
+			spin_unlock_irq(&gang->lru_lock);
+			wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
+			spin_lock_irq(&gang->lru_lock);
+		}
   	} while (nr_scanned < max_scan);
 
 done:
 	spin_unlock_irq(&gang->lru_lock);
 	pagevec_release(&pvec);
-
-	/*
-	 * If reclaim is isolating dirty pages under writeback, it implies
-	 * that the long-lived page allocation rate is exceeding the page
-	 * laundering rate. Either the global limits are not being effective
-	 * at throttling processes due to the page distribution throughout
-	 * zones or there is heavy usage of a slow backing device. The
-	 * only option is to throttle from reclaim context which is not ideal
-	 * as there is no guarantee the dirtying process is throttled in the
-	 * same way balance_dirty_pages() manages.
-	 *
-	 * This scales the number of dirty pages that must be under writeback
-	 * before throttling depending on priority. It is a simple backoff
-	 * function that has the most effect in the range DEF_PRIORITY to
-	 * DEF_PRIORITY-2 which is the priority reclaim is considered to be
-	 * in trouble and reclaim is considered to be in trouble.
-	 *
-	 * DEF_PRIORITY   100% isolated pages must be PageWriteback to throttle
-	 * DEF_PRIORITY-1  50% must be PageWriteback
-	 * DEF_PRIORITY-2  25% must be PageWriteback, kswapd in trouble
-	 * ...
-	 * DEF_PRIORITY-6 For SWAP_CLUSTER_MAX isolated pages, throttle if any
-	 *                     isolated page is PageWriteback
-	 */
-	if (nr_writeback && nr_writeback >= (nr_total_taken >> (DEF_PRIORITY-priority)))
-		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
-
 	trace_mm_pagereclaim_shrinkinactive(nr_scanned, file, 
 				nr_reclaimed, priority);
 	return nr_reclaimed;
@@ -2088,13 +2094,6 @@ static void shrink_zone(int priority, struct zone *zone,
 			gang->pages_scanned = 0;
 			spin_unlock_irq(&zone->stat_lock);
 		}
-		/* Bump scan progress even if we stuck */
-		if (sc->gs && gangs_rotated) {
-			spin_lock_irq(&zone->stat_lock);
-			gang->pages_scanned++;
-			spin_unlock_irq(&zone->stat_lock);
-			break;
-		}
 		/*
 		 * On large memory systems, scan >> priority can become
 		 * really large. This is fine for the starting priority;
@@ -2169,7 +2168,7 @@ static void shrink_zones(int priority, struct zonelist *zonelist,
 						priority != DEF_PRIORITY)
 				continue;	/* Let kswapd poll it */
 			sc->all_unreclaimable = 0;
-		} if (sc->gs) {
+		} else if (sc->gs) {
 			struct gang *gang = mem_zone_gang(sc->gs, zone);
 			unsigned long reclaimable = gang_reclaimable_pages(gang, sc);
 

@@ -1149,7 +1149,7 @@ static void check_one_process(struct cpt_context *ctx, __u32 *caps,
 		}
 		put_mnt_ns(ns);
 	}
-	if (p->policy != SCHED_NORMAL) {
+	if (p->policy != SCHED_NORMAL && p->policy != SCHED_BATCH && p->policy != SCHED_IDLE) {
 		eprintk_ctx("scheduler policy is not supported %d/%d(%s)\n", task_pid_vnr(p), p->pid, p->comm);
 		*caps |= (1<<CPT_SCHEDULER_POLICY);
 	}

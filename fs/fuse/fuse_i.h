@@ -106,6 +106,9 @@ struct fuse_inode {
 
 	/** List of writepage requestst (pending or sent) */
 	struct list_head writepages;
+
+	/** Mostly to detect very first open */
+	atomic_t num_openers;
 };
 
 struct fuse_conn;
@@ -313,8 +316,16 @@ struct fuse_req {
 		unsigned num_bvecs;
 	};
 
-	/** offset of data on first page */
-	unsigned page_offset;
+	/** If set, it describes layout of user-data in pages[] */
+	const struct iovec *iovec;
+
+	union {
+		/** offset of data on first page */
+		unsigned page_offset;
+
+		/** or in first iovec */
+		unsigned iov_offset;
+	};
 
 	/** File used in the request (or NULL) */
 	struct fuse_file *ff;
@@ -494,6 +505,9 @@ struct fuse_conn {
 	/** Wait for response from daemon on close */
 	unsigned close_wait:1;
 
+	/** Is fallocate not implemented by fs? */
+	unsigned no_fallocate:1;
+
 	/** The number of requests waiting for completion */
 	atomic_t num_waiting;
 
@@ -574,7 +588,7 @@ int fuse_inode_eq(struct inode *inode, void *_nodeidp);
  */
 struct inode *fuse_iget(struct super_block *sb, u64 nodeid,
 			int generation, struct fuse_attr *attr,
-			u64 attr_valid, u64 attr_version);
+			u64 attr_valid, u64 attr_version, int creat);
 
 int fuse_lookup_name(struct super_block *sb, u64 nodeid, struct qstr *name,
 		     struct fuse_entry_out *outarg, struct inode **inode);
@@ -760,6 +774,8 @@ u64 fuse_lock_owner_id(struct fuse_conn *fc, fl_owner_t id);
 
 int fuse_update_attributes(struct inode *inode, struct kstat *stat,
 			   struct file *file, bool *refreshed);
+
+int fuse_getattr_size(struct inode *inode, struct file *file, u64 *size);
 
 void fuse_flush_writepages(struct inode *inode);
 

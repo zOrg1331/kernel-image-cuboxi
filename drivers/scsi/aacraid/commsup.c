@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -94,7 +94,7 @@ void aac_fib_map_free(struct aac_dev *dev)
  *	aac_fib_setup	-	setup the fibs
  *	@dev: Adapter to set up
  *
- *	Allocate the PCI space for the fibs, map it and then initialise the
+ *	Allocate the PCI space for the fibs, map it and then intialise the
  *	fib area, the unmapped fib data and also the free list
  */
 
@@ -121,7 +121,6 @@ int aac_fib_setup(struct aac_dev * dev)
 	memset(dev->hw_fib_va, 0,
 		(dev->max_fib_size + sizeof(struct aac_fib_xporthdr)) *
 		(dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB));
-
 	/* add Xport header */
 	dev->hw_fib_va = (struct hw_fib *)((unsigned char *)dev->hw_fib_va +
 		sizeof(struct aac_fib_xporthdr));
@@ -136,11 +135,12 @@ int aac_fib_setup(struct aac_dev * dev)
 		i < (dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB);
 		i++, fibptr++)
 	{
+		fibptr->flags = 0;
 		fibptr->dev = dev;
 		fibptr->hw_fib_va = hw_fib;
 		fibptr->data = (void *) fibptr->hw_fib_va->data;
 		fibptr->next = fibptr+1;	/* Forward chain the fibs */
-		sema_init(&fibptr->event_wait, 0);
+		init_MUTEX_LOCKED(&fibptr->event_wait);
 		spin_lock_init(&fibptr->event_lock);
 		hw_fib->header.XferState = cpu_to_le32(0xffffffff);
 		hw_fib->header.SenderSize = cpu_to_le16(dev->max_fib_size);
@@ -417,11 +417,10 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 	unsigned long qflags;
 	unsigned long mflags = 0;
 
-
 	if (!(hw_fib->header.XferState & cpu_to_le32(HostOwned)))
 		return -EBUSY;
 	/*
-	 *	There are 5 cases with the wait and response requested flags.
+	 *	There are 5 cases with the wait and reponse requested flags.
 	 *	The only invalid cases are if the caller requests to wait and
 	 *	does not request a response and if the caller does not want a
 	 *	response and the Fib is not allocated from pool. If a response
@@ -522,7 +521,6 @@ int aac_fib_send(u16 command, struct fib *fibptr, unsigned long size,
 		}
 		return -EBUSY;
 	}
-
 
 	/*
 	 *	If the caller wanted us to wait for response wait now.
@@ -989,16 +987,6 @@ static void aac_handle_aif(struct aac_dev * dev, struct fib * fibptr)
 			device_config_needed =
 			  (((__le32 *)aifcmd->data)[0] ==
 			    cpu_to_le32(AifEnAddJBOD)) ? ADD : DELETE;
-			if (device_config_needed == ADD) {
-				device = scsi_device_lookup(dev->scsi_host_ptr,
-					channel,
-					id,
-					lun);
-				if (device) {
-					scsi_remove_device(device);
-					scsi_device_put(device);
-				}
-			}
 			break;
 
 		case AifEnEnclosureManagement:
@@ -1156,9 +1144,6 @@ retry_next:
 	if (device) {
 		switch (device_config_needed) {
 		case DELETE:
-#if (defined(AAC_DEBUG_INSTRUMENT_AIF_DELETE))
-			scsi_remove_device(device);
-#else
 			if (scsi_device_online(device)) {
 				scsi_device_set_state(device, SDEV_OFFLINE);
 				sdev_printk(KERN_INFO, device,
@@ -1167,7 +1152,6 @@ retry_next:
 						"array deleted" :
 						"enclosure services event");
 			}
-#endif
 			break;
 		case ADD:
 			if (!scsi_device_online(device)) {
@@ -1182,16 +1166,12 @@ retry_next:
 		case CHANGE:
 			if ((channel == CONTAINER_CHANNEL)
 			 && (!dev->fsa_dev[container].valid)) {
-#if (defined(AAC_DEBUG_INSTRUMENT_AIF_DELETE))
-				scsi_remove_device(device);
-#else
 				if (!scsi_device_online(device))
 					break;
 				scsi_device_set_state(device, SDEV_OFFLINE);
 				sdev_printk(KERN_INFO, device,
 					"Device offlined - %s\n",
 					"array failed");
-#endif
 				break;
 			}
 			scsi_rescan_device(&device->sdev_gendev);

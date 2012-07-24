@@ -120,7 +120,7 @@ suboptimal. Solutions are:
 	B. dmonakhov's idea. Each cluster is augmented with 8 additional
 	   sectors. Alignment is established by the first write.
 	   1 sector of 8 is not used and can be used f.e. to store some
-           metainformation: checksums, back reference from cluster
+	   metainformation: checksums, back reference from cluster
 	   to location in image, which would allow to recover even
 	   if indices are corrupted. Drawback: severe impact on performance
 	   due to unknown reasons, seems something specific to modern SATA

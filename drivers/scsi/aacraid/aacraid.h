@@ -26,8 +26,6 @@
 #define AAC_MAX_HOSTPHYSMEMPAGES (0xfffff)
 #define AAC_MAX_32BIT_SGBCOUNT	((unsigned short)256)
 
-#define AAC_DEBUG_INSTRUMENT_AIF_DELETE
-
 /*
  * These macros convert from physical channels to virtual channels
  */
@@ -547,10 +545,10 @@ struct aac_driver_ident
 
 /*
  *	The adapter interface specs all queues to be located in the same
- *	physically contiguous block. The host structure that defines the
+ *	physically contigous block. The host structure that defines the
  *	commuication queues will assume they are each a separate physically
- *	contiguous memory region that will support them all being one big
- *	contiguous block.
+ *	contigous memory region that will support them all being one big
+ *	contigous block.
  *	There is a command and response queue for each level and direction of
  *	commuication. These regions are accessed by both the host and adapter.
  */
@@ -750,8 +748,8 @@ struct src_mu_registers {
 	__le32	ODR_C;		/*	a0h | Outbound Doorbell Clear */
 	__le32	reserved3[6];	/*	a4h | Reserved */
 	__le32	OMR;		/*	bch | Outbound Message Register */
-	__le32	IQ_L;		/*  c0h | Inbound Queue (Low address) */
-	__le32	IQ_H;		/*  c4h | Inbound Queue (High address) */
+	__le32	IQ_L;		/*	c0h | Inbound Queue (Low address) */
+	__le32	IQ_H;		/*	c4h | Inbound Queue (High address) */
 };
 
 struct src_registers {
@@ -1042,10 +1040,8 @@ struct aac_dev
 
 	unsigned long		dbg_base;	/* address of UART
 						 * debug buffer */
-
 	unsigned		base_size, dbg_size;	/* Size of
-							 *  mapped in region */
-
+							 * mapped in region */
 	struct aac_init		*init;		/* Holds initialization info to communicate with adapter */
 	dma_addr_t		init_pa;	/* Holds physical address of the init struct */
 
@@ -1116,7 +1112,6 @@ struct aac_dev
 	u8			msi;
 	int			management_fib_count;
 	spinlock_t		manage_lock;
-
 };
 
 #define aac_adapter_interrupt(dev) \
@@ -1259,7 +1254,7 @@ struct aac_dev
 #define CACHE_UNSTABLE		2
 
 /*
- *	Lets the client know at which level the data was committed on
+ *	Lets the client know at which level the data was commited on
  *	a write request
  */
 

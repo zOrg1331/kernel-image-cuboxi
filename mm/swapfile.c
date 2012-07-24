@@ -1511,9 +1511,7 @@ static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 	pmd = pmd_offset(pud, addr);
 	do {
 		next = pmd_addr_end(addr, end);
-		if (unlikely(pmd_trans_huge(*pmd)))
-			continue;
-		if (pmd_none_or_clear_bad(pmd))
+		if (pmd_none_or_trans_huge_or_clear_bad(pmd))
 			continue;
 		ret = unuse_pte_range(vma, pmd, addr, next, entry, page);
 		if (ret)
@@ -2744,6 +2742,44 @@ void si_swapinfo(struct sysinfo *val)
 	val->totalswap = total_swap_pages + nr_to_be_unused;
 	spin_unlock(&swap_lock);
 }
+
+/*
+ * Set swap entry in swap map to shared memory forcibly.
+ * Used when injecting shared memory at container migration
+ */
+int swap_convert_to_shmem(swp_entry_t entry)
+{
+	struct swap_info_struct *p;
+	unsigned long offset, type;
+	int err;
+
+	if (non_swap_entry(entry))
+		return -EINVAL;
+
+	type = swp_type(entry);
+	if (type >= nr_swapfiles)
+		return -EINVAL;
+
+	p = swap_info[type];
+	offset = swp_offset(entry);
+
+	spin_lock(&swap_lock);
+
+	err = -EINVAL;
+	if (unlikely(offset >= p->max))
+		goto out;
+
+	if ((p->swap_map[offset] & ~SWAP_HAS_CACHE) != 1)
+		goto out;
+
+	p->swap_map[offset] = SWAP_MAP_SHMEM |
+			      (p->swap_map[offset] & SWAP_HAS_CACHE);
+	err = 0;
+out:
+	spin_unlock(&swap_lock);
+	return err;
+}
+EXPORT_SYMBOL_GPL(swap_convert_to_shmem);
 
 /*
  * Verify that a swap entry is valid and increment its swap map count.

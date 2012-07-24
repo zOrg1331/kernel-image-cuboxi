@@ -78,6 +78,12 @@
  */
 static LIST_HEAD(dps);
 
+#if defined(CONFIG_OVS_BRCOMPAT) || defined(CONFIG_OVS_BRCOMPAT_MODULE)
+/* Allow brcompat module be loaded and hooked to bridge */
+int (*ovs_dp_ioctl_hook)(struct net_device *dev, struct ifreq *rq, int cmd);
+EXPORT_SYMBOL_GPL(ovs_dp_ioctl_hook);
+#endif
+
 #define REHASH_FLOW_INTERVAL (10 * 60 * HZ)
 static void rehash_flow_table(struct work_struct *work);
 static DECLARE_DELAYED_WORK(rehash_flow_wq, rehash_flow_table);

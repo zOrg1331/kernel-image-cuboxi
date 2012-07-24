@@ -162,6 +162,38 @@ static inline void unlock_timer(struct k_itimer *timr, unsigned long flags)
  	 (posix_clocks[clock].call != NULL \
  	  ? (*posix_clocks[clock].call) arglist : common_##call arglist))
 
+#define clock_is_monotonic(which_clock) \
+	((which_clock) == CLOCK_MONOTONIC || \
+	 (which_clock) == CLOCK_MONOTONIC_RAW || \
+	 (which_clock) == CLOCK_MONOTONIC_COARSE)
+
+#ifdef CONFIG_VE
+static void monotonic_abs_to_ve(clockid_t which_clock, struct timespec *tp)
+{
+	struct ve_struct *ve = get_exec_env();
+
+	if (clock_is_monotonic(which_clock))
+		set_normalized_timespec(tp,
+				tp->tv_sec - ve->start_timespec.tv_sec,
+				tp->tv_nsec - ve->start_timespec.tv_nsec);
+}
+
+static void monotonic_ve_to_abs(clockid_t which_clock, struct timespec *tp)
+{
+	struct ve_struct *ve = get_exec_env();
+
+	if (clock_is_monotonic(which_clock))
+		set_normalized_timespec(tp,
+				tp->tv_sec + ve->start_timespec.tv_sec,
+				tp->tv_nsec + ve->start_timespec.tv_nsec);
+}
+#else
+static inline void monotonic_abs_to_ve(clockid_t which_clock,
+				       struct timespec *tp) { }
+static inline void monotonic_ve_to_abs(clockid_t which_clock,
+				       struct timepsec *tp) { }
+#endif
+
 /*
  * Default clock hook functions when the struct k_clock passed
  * to register_posix_clock leaves a function pointer null.
@@ -839,6 +871,9 @@ retry:
 	if (!timr)
 		return -EINVAL;
 
+	if ((flags & TIMER_ABSTIME) &&
+	    (new_spec.it_value.tv_sec || new_spec.it_value.tv_nsec))
+		monotonic_ve_to_abs(timr->it_clock, &new_spec.it_value);
 	error = CLOCK_DISPATCH(timr->it_clock, timer_set,
 			       (timr, flags, &new_spec, rtn));
 
@@ -979,6 +1014,7 @@ SYSCALL_DEFINE2(clock_gettime, const clockid_t, which_clock,
 		return -EINVAL;
 	error = CLOCK_DISPATCH(which_clock, clock_get,
 			       (which_clock, &kernel_tp));
+	monotonic_abs_to_ve(which_clock, &kernel_tp);
 	if (!error && copy_to_user(tp, &kernel_tp, sizeof (kernel_tp)))
 		error = -EFAULT;
 

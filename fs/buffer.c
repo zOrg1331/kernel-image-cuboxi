@@ -2512,6 +2512,7 @@ int __block_page_mkwrite(struct inode *inode, struct page *page,
 		ret = -EAGAIN;
 		goto out_unlock;
 	}
+	wait_on_page_writeback(page);
 	return 0;
 out_unlock:
 	unlock_page(page);

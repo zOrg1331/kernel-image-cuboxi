@@ -356,11 +356,26 @@ static int do_quotactl(struct super_block *sb, int type, int cmd, qid_t id,
 	return 0;
 }
 
+/* Return 1 if 'cmd' will block on frozen filesystem */
+static int quotactl_cmd_write(int cmd)
+{
+	switch (cmd) {
+	case Q_GETFMT:
+	case Q_GETINFO:
+	case Q_SYNC:
+	case Q_XGETQSTAT:
+	case Q_XGETQUOTA:
+	case Q_XQUOTASYNC:
+		return 0;
+	}
+	return 1;
+}
+
 /*
  * look up a superblock on which quota ops will be performed
  * - use the name of a block device to find the superblock thereon
  */
-static struct super_block *quotactl_block(const char __user *special)
+static struct super_block *quotactl_block(const char __user *special, int cmd)
 {
 #ifdef CONFIG_BLOCK
 	struct block_device *bdev;
@@ -381,7 +396,10 @@ static struct super_block *quotactl_block(const char __user *special)
 		return ERR_PTR(error);
 	}
 
-	sb = get_super(bdev);
+	if (quotactl_cmd_write(cmd))
+		sb = get_super_thawed(bdev);
+	else
+		sb = get_super(bdev);
 	bdput(bdev);
 	if (!sb)
 		return ERR_PTR(-ENODEV);
@@ -484,7 +502,7 @@ static long compat_quotactl(unsigned int cmds, unsigned int type,
 			struct if_dqblk idq;
 			struct compat_dqblk cdq;
 
-			sb = quotactl_block(special);
+			sb = quotactl_block(special, cmds);
 			ret = PTR_ERR(sb);
 			if (IS_ERR(sb))
 				break;
@@ -514,7 +532,7 @@ static long compat_quotactl(unsigned int cmds, unsigned int type,
 			struct if_dqblk idq;
 			struct compat_dqblk cdq;
 
-			sb = quotactl_block(special);
+			sb = quotactl_block(special, cmds);
 			ret = PTR_ERR(sb);
 			if (IS_ERR(sb))
 				break;
@@ -543,7 +561,7 @@ static long compat_quotactl(unsigned int cmds, unsigned int type,
 			struct if_dqinfo iinf;
 			struct compat_dqinfo cinf;
 
-			sb = quotactl_block(special);
+			sb = quotactl_block(special, cmds);
 			ret = PTR_ERR(sb);
 			if (IS_ERR(sb))
 				break;
@@ -573,7 +591,7 @@ static long compat_quotactl(unsigned int cmds, unsigned int type,
 			struct if_dqinfo iinf;
 			struct compat_dqinfo cinf;
 
-			sb = quotactl_block(special);
+			sb = quotactl_block(special, cmds);
 			ret = PTR_ERR(sb);
 			if (IS_ERR(sb))
 				break;
@@ -639,7 +657,7 @@ SYSCALL_DEFINE4(quotactl, unsigned int, cmd, const char __user *, special,
 #endif
 
 	if (cmds != Q_SYNC || special) {
-		sb = quotactl_block(special);
+		sb = quotactl_block(special, cmds);
 		if (IS_ERR(sb))
 			return PTR_ERR(sb);
 	}

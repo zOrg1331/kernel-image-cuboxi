@@ -1209,6 +1209,13 @@ EXPORT_SYMBOL(dev_close);
  */
 void dev_disable_lro(struct net_device *dev)
 {
+	/*
+	 * If we're trying to disable lro on a vlan device
+	 * use the underlying physical device instead
+	 */
+	if (is_vlan_dev(dev))
+		dev = vlan_dev_real_dev(dev);
+
 	if (dev->ethtool_ops && dev->ethtool_ops->get_flags &&
 	    dev->ethtool_ops->set_flags) {
 		u32 flags = dev->ethtool_ops->get_flags(dev);
@@ -2088,6 +2095,21 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 	return rc;
 }
 
+#ifdef CONFIG_NETPRIO_CGROUP
+static void skb_update_prio(struct sk_buff *skb)
+{
+	struct netdev_priomap_info *data = &netdev_extended(skb->dev)->priomap_data;
+	struct netprio_map *map = rcu_dereference(data->priomap);
+
+	if ((!skb->priority) && (skb->sk) && map) {
+		struct sock_extended *ske = sk_extended(skb->sk);
+		skb->priority = map->priomap[ske->__sk_common_extended2.sk_cgrp_prioidx];
+	}
+}
+#else
+#define skb_update_prio(skb)
+#endif
+
 /**
  *	dev_queue_xmit - transmit a buffer
  *	@skb: buffer to transmit
@@ -2153,6 +2175,8 @@ gso:
 	 * stops preemption for RCU.
 	 */
 	rcu_read_lock_bh();
+
+	skb_update_prio(skb);
 
 	txq = dev_pick_tx(dev, skb);
 	q = rcu_dereference(txq->qdisc);
@@ -2368,7 +2392,7 @@ got_hash:
 
 	map = rcu_dereference(rxqueue->rps_map);
 	if (map) {
-		tcpu = map->cpus[((u64) skb->rxhash * map->len) >> 32];
+		tcpu = map->cpus[((u32) (skb->rxhash * map->len)) >> 16];
 
 		if (cpu_online(tcpu)) {
 			cpu = tcpu;
@@ -2570,8 +2594,7 @@ static inline int deliver_skb(struct sk_buff *skb,
 	return pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 }
 
-#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE) ||\
-    defined(CONFIG_OPENVSWITCH) || defined(CONFIG_OPENVSWITCH_MODULE)
+#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
 
 #if defined(CONFIG_ATM_LANE) || defined(CONFIG_ATM_LANE_MODULE)
 /* This hook is defined here for ATM LANE */
@@ -2587,26 +2610,16 @@ EXPORT_SYMBOL_GPL(br_fdb_test_addr_hook);
 struct sk_buff *(*br_handle_frame_hook)(struct net_bridge_port *p,
 					struct sk_buff *skb) __read_mostly;
 EXPORT_SYMBOL_GPL(br_handle_frame_hook);
-/* Open vSwitch hook */
-struct sk_buff *(*ovs_handle_frame_hook)(struct net_bridge_port *p,
-					struct sk_buff *skb) __read_mostly;
-EXPORT_SYMBOL_GPL(ovs_handle_frame_hook);
+
 
 static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
 					    struct packet_type **pt_prev, int *ret,
 					    struct net_device *orig_dev)
 {
 	struct net_bridge_port *port;
-	void *ovs_port;
 
-	if (skb->pkt_type == PACKET_LOOPBACK)
-		return skb;
-
-	port = rcu_dereference(skb->dev->br_port);
-	ovs_port = rcu_dereference(skb->dev->ovs_port);
-
-	/* not our client */
-	if (!port && !ovs_port)
+	if (skb->pkt_type == PACKET_LOOPBACK ||
+	    (port = rcu_dereference(skb->dev->br_port)) == NULL)
 		return skb;
 
 	/* RHEL only: skbs received on inactive slaves
@@ -2619,18 +2632,28 @@ static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
 		*pt_prev = NULL;
 	}
 
-	/*
-	 * The device can't be bound to both bridges, so
-	 * deliver to one and only one
-	 */
-	if (ovs_port)
-		return ovs_handle_frame_hook(ovs_port, skb);
-
 	return br_handle_frame_hook(port, skb);
 }
+
+struct net_device *(*br_get_br_dev_for_port_hook)(struct net_device *);
+EXPORT_SYMBOL_GPL(br_get_br_dev_for_port_hook);
+
+/* You need to hold rcu_lock while calling this */
+struct net_device *br_get_br_dev_for_port_rcu(struct net_device *port_dev)
+{
+	if (!br_get_br_dev_for_port_hook)
+		return NULL;
+	return br_get_br_dev_for_port_hook(port_dev);
+}
+
 #else
 #define handle_bridge(skb, pt_prev, ret, orig_dev)	(skb)
+struct net_device *br_get_br_dev_for_port_rcu(struct net_device *port_dev)
+{
+	return NULL;
+}
 #endif
+EXPORT_SYMBOL_GPL(br_get_br_dev_for_port_rcu);
 
 #if defined(CONFIG_MACVLAN) || defined(CONFIG_MACVLAN_MODULE)
 struct sk_buff *(*macvlan_handle_frame_hook)(struct sk_buff *skb) __read_mostly;
@@ -3082,14 +3105,23 @@ static gro_result_t
 __napi_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 {
 	struct sk_buff *p;
+	unsigned int maclen = skb->dev->hard_header_len;
 
 	if (netpoll_rx_on(skb))
 		return GRO_NORMAL;
 
 	for (p = napi->gro_list; p; p = p->next) {
-		NAPI_GRO_CB(p)->same_flow = (p->dev == skb->dev)
-			&& !compare_ether_header(skb_mac_header(p),
-						 skb_gro_mac_header(skb));
+		unsigned long diffs;
+
+		diffs = (unsigned long)p->dev ^ (unsigned long)skb->dev;
+		if (maclen == ETH_HLEN)
+			diffs |= compare_ether_header(skb_mac_header(p),
+						      skb_gro_mac_header(skb));
+		else if (!diffs)
+			diffs = memcmp(skb_mac_header(p),
+				       skb_gro_mac_header(skb),
+				       maclen);
+		NAPI_GRO_CB(p)->same_flow = !diffs;
 		NAPI_GRO_CB(p)->flush = 0;
 	}
 
@@ -5518,6 +5550,12 @@ int register_netdevice(struct net_device *dev)
 	dev->vlan_features |= NETIF_F_GRO;
 
 	netdev_initialize_kobject(dev);
+
+	ret = call_netdevice_notifiers(NETDEV_POST_INIT, dev);
+	ret = notifier_to_errno(ret);
+	if (ret)
+		goto err_uninit;
+
 	ret = netdev_register_kobject(dev);
 	if (ret)
 		goto err_uninit;

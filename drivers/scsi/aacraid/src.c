@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,6 @@
 #include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
-#include <linux/version.h>
 #include <linux/completion.h>
 #include <linux/time.h>
 #include <linux/interrupt.h>
@@ -420,7 +419,7 @@ static int aac_src_restart_adapter(struct aac_dev *dev, int bled)
 		bled = aac_adapter_sync_cmd(dev, IOP_RESET_ALWAYS,
 			0, 0, 0, 0, 0, 0, &var, &reset_mask, NULL, NULL, NULL);
 			if (bled || (var != 0x00000001))
-				bled = -EINVAL;
+				return -EINVAL;
 		if (dev->supplement_adapter_info.SupportedOptions2 &
 			AAC_OPTION_DOORBELL_RESET) {
 			src_writel(dev, MUnit.IDR, reset_mask);

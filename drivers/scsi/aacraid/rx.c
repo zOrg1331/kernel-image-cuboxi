@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 #include <linux/types.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
@@ -114,6 +115,7 @@ static irqreturn_t aac_rx_intr_message(int irq, void *dev_id)
 						MUnit.ODR,
 						DoorBellAdapterNormRespReady);
 				}
+
 			}
 			Index = rx_readl(dev, MUnit.OutboundQueue);
 		} while (Index != 0xFFFFFFFFL);
@@ -373,8 +375,9 @@ static int aac_rx_check_health(struct aac_dev *dev)
 		pci_free_consistent(dev->pdev, sizeof(struct POSTSTATUS),
 		  post, paddr);
 		if (likely((buffer[0] == '0') && ((buffer[1] == 'x') || (buffer[1] == 'X')))) {
-			ret = (hex_to_bin(buffer[2]) << 4) +
-				hex_to_bin(buffer[3]);
+			ret = (buffer[2] <= '9') ? (buffer[2] - '0') : (buffer[2] - 'A' + 10);
+			ret <<= 4;
+			ret += (buffer[3] <= '9') ? (buffer[3] - '0') : (buffer[3] - 'A' + 10);
 		}
 		pci_free_consistent(dev->pdev, 512, buffer, baddr);
 		return ret;

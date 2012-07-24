@@ -50,6 +50,8 @@ enum {
 	PLOOP_S_DISCARD,	/* ploop is ready to handle discard request */
 	PLOOP_S_DISCARD_LOADED,	/* A discard request was handled and
 				   free blocks loaded */
+	PLOOP_S_LOCKED,	        /* ploop is locked by userspace
+				   (for minor mgmt only) */
 };
 
 struct ploop_snapdata
@@ -99,7 +101,7 @@ struct ploop_io
 	struct list_head	fsync_queue;
 	struct task_struct	*fsync_thread;
 	int			fsync_qlen;
-        wait_queue_head_t       fsync_waitq;
+	wait_queue_head_t	fsync_waitq;
 	struct timer_list	fsync_timer;
 
 	struct ploop_io_ops	*ops;
@@ -178,6 +180,8 @@ struct ploop_io_ops
 
 	loff_t  (*i_size_read)(struct ploop_io*);
 	fmode_t (*f_mode)(struct ploop_io*);
+
+	int     (*autodetect)(struct ploop_io * io);
 };
 
 static inline loff_t generic_i_size_read(struct ploop_io *io)
@@ -293,10 +297,10 @@ struct ploop_tunable
 	int	congestion_low_watermark;
 	int	max_active_requests;
 	unsigned int pass_flushes : 1, pass_fuas : 1,
-	        congestion_detection : 1,
-	        check_zeros : 1,
-	        disable_root_threshold : 1,
-	        disable_user_threshold : 1;
+		     congestion_detection : 1,
+		     check_zeros : 1,
+		     disable_root_threshold : 1,
+		     disable_user_threshold : 1;
 };
 
 #define DEFAULT_PLOOP_MAXRQ 128
@@ -359,10 +363,10 @@ struct ploop_device
 	struct timer_list	mitigation_timer;
 	struct timer_list	freeze_timer;
 
-        wait_queue_head_t       waitq;
-        wait_queue_head_t       req_waitq;
-        wait_queue_head_t       freeze_waitq;
-        wait_queue_head_t       event_waitq;
+	wait_queue_head_t	waitq;
+	wait_queue_head_t	req_waitq;
+	wait_queue_head_t	freeze_waitq;
+	wait_queue_head_t	event_waitq;
 
 	struct ploop_map	map;
 	struct ploop_map	*trans_map;
@@ -403,9 +407,9 @@ struct ploop_device
 
 	u32			merge_ptr;
 
-	atomic_t		maintainance_cnt;
-	struct completion	maintainance_comp;
-	int			maintainance_type;
+	atomic_t		maintenance_cnt;
+	struct completion	maintenance_comp;
+	int			maintenance_type;
 
 	u32			grow_start;
 	u32			grow_end;
@@ -711,6 +715,7 @@ void del_lockout(struct ploop_request *preq);
 int ploop_io_init(struct ploop_delta * delta, int nchunks, struct ploop_ctl_chunk * pc);
 int ploop_io_open(struct ploop_io *);
 void ploop_io_destroy(struct ploop_io * io);
+void ploop_io_report_fn(struct file * file, char * msg);
 
 int ploop_register_format(struct ploop_delta_ops * ops);
 int ploop_register_io(struct ploop_io_ops * ops);
@@ -724,7 +729,7 @@ void ploop_sysfs_uninit(struct ploop_device * plo);
 
 void ploop_queue_zero_request(struct ploop_device *plo, struct ploop_request *orig_preq, cluster_t clu);
 
-int ploop_maintainance_wait(struct ploop_device * plo);
+int ploop_maintenance_wait(struct ploop_device * plo);
 
 extern int max_map_pages;
 

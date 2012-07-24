@@ -5,8 +5,8 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2011 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ *		  2000-2010 Adaptec, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -80,7 +80,6 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
 		dev->host_rrq_pa = phys + fibsize;
 		memset(dev->host_rrq, 0, host_rrq_size);
 	}
-
 	dev->init = (struct aac_init *)(base + fibsize + host_rrq_size);
 	dev->init_pa = phys + fibsize + host_rrq_size;
 
@@ -134,7 +133,6 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
 	init->MaxNumAif = cpu_to_le32(dev->max_num_aif);
 	init->HostRRQ_AddrHigh = (u32)((u64)dev->host_rrq_pa >> 32);
 	init->HostRRQ_AddrLow = (u32)(dev->host_rrq_pa & 0xffffffff);
-
 
 	/*
 	 * Increment the base address by the amount already used
@@ -251,7 +249,7 @@ static int aac_comm_init(struct aac_dev * dev)
 	spin_lock_init(&dev->fib_lock);
 
 	/*
-	 *	Allocate the physically contiguous space for the commuication
+	 *	Allocate the physically contigous space for the commuication
 	 *	queue headers. 
 	 */
 
@@ -338,7 +336,6 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
 			/ sizeof(struct sgentry);
 	dev->comm_interface = AAC_COMM_PRODUCER;
 	dev->raw_io_interface = dev->raw_io_64 = 0;
-
 	if ((!aac_adapter_sync_cmd(dev, GET_ADAPTER_PROPERTIES,
 		0, 0, 0, 0, 0, 0, status+0, status+1, status+2, NULL, NULL)) &&
 	 		(status[0] == 0x00000001)) {

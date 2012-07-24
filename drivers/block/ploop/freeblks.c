@@ -20,7 +20,7 @@ struct ploop_freeblks_extent
 	cluster_t clu;
 	iblock_t  iblk;
 	u32	  len;
-	
+
 };
 
 struct ploop_relocblks_extent
@@ -58,7 +58,7 @@ struct ploop_freeblks_desc {
 	 * 'clu of first block to overwrite' (draining reloc range from end) */
 	struct ploop_fextent_ptr fbd_lfb; /* 'lfb' stands for
 					     'last free block for relocation'*/
-	
+
 	/* fbd_reloc_extents[fbd->fbd_last_reloc_extent].clu +
 	 * fbd_last_reloc_off can be used as 'clu of first block to relocate'
 	 * (draining reloc range from end)
@@ -141,7 +141,7 @@ void ploop_fb_add_reloc_req(struct ploop_freeblks_desc *fbd,
 
 	if (fbd == NULL)
 		return;
-	
+
 	p = &fbd->reloc_tree.rb_node;
 	while (*p) {
 		parent = *p;
@@ -176,7 +176,7 @@ int ploop_fb_check_reloc_req(struct ploop_freeblks_desc *fbd,
 	BUG_ON (fbd == NULL);
 	BUG_ON (preq->iblock == 0);
 	BUG_ON (preq->iblock >= fbd->fbd_first_lost_iblk);
-	
+
 	n = fbd->reloc_tree.rb_node;
 	if (n == NULL)
 		return 0;
@@ -313,7 +313,7 @@ static void advance_ffb_simple(struct ploop_freeblks_desc *fbd)
 	BUG_ON (fbd->fbd_ffb.ext == NULL);
 
 	if (fbd->fbd_ffb.off < fbd->fbd_ffb.ext->len - 1) {
-		fbd->fbd_ffb.off++;		
+		fbd->fbd_ffb.off++;
 	} else {
 		if (fbd->fbd_ffb.ext->list.next == &fbd->fbd_free_list)
 			fbd->fbd_ffb.ext = NULL;
@@ -361,7 +361,7 @@ static void advance_lrb(struct ploop_freeblks_desc *fbd)
 
 	fbd->fbd_first_lost_iblk -= 1 + skip;
 	fbd->fbd_lost_range_len	 += 1 + skip;
-		
+
 	if (fbd->fbd_ffb.ext != NULL &&
 	    ffb_iblk(fbd) >= fbd->fbd_first_lost_iblk) {
 		/* invalidate ffb */
@@ -681,7 +681,7 @@ int ploop_fb_get_free_block(struct ploop_freeblks_desc *fbd,
 	*clu = ffb_clu(fbd);
 	fbd->fbd_n_free--;
 
-	if (fbd->plo->maintainance_type == PLOOP_MNTN_RELOC)
+	if (fbd->plo->maintenance_type == PLOOP_MNTN_RELOC)
 		advance_ffb(fbd);
 	else
 		advance_ffb_simple(fbd);
@@ -827,7 +827,7 @@ void ploop_fb_fini(struct ploop_freeblks_desc *fbd, int err)
 		list_del(&preq->list);
 		kfree(preq);
 	}
-	
+
 	kfree(fbd);
 	plo->fbd = NULL;
 }
@@ -1069,7 +1069,7 @@ int ploop_discard_add_bio(struct ploop_freeblks_desc *fbd, struct bio *bio)
 
 	if (!test_bit(PLOOP_S_DISCARD, &plo->state))
 		return -EOPNOTSUPP;
-	if (fbd->plo->maintainance_type != PLOOP_MNTN_DISCARD)
+	if (fbd->plo->maintenance_type != PLOOP_MNTN_DISCARD)
 		return -EBUSY;
 	/* only one request can be processed simultaneously */
 	if (fbd->fbd_dbl.head)
