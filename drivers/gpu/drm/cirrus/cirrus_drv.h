@@ -74,6 +74,7 @@
 
 #define WREG_HDR(v)						\
 	do {							\
+		WREG8(VGA_DAC_MASK, v);	/* reset counter */		\
 		RREG8(VGA_DAC_MASK);					\
 		RREG8(VGA_DAC_MASK);					\
 		RREG8(VGA_DAC_MASK);					\
