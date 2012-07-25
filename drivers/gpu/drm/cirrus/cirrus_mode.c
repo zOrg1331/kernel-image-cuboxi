@@ -269,13 +269,14 @@ static int cirrus_crtc_mode_set(struct drm_crtc *crtc,
 	sr07 = RREG8(SEQ_DATA);
 	sr07 &= 0xe0;
 	hdr = 0;
+
 	switch (crtc->fb->bits_per_pixel) {
 	case 8:
 		sr07 |= 0x11;
 		break;
 	case 16:
-		sr07 |= 0xc1;
-		hdr = 0xc0;
+		sr07 |= 0x17;
+		hdr = (crtc->fb->depth == 16) ? 0xc1 : 0xc0;
 		break;
 	case 24:
 		sr07 |= 0x15;
