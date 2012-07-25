@@ -109,9 +109,9 @@ static int cirrusfb_create_object(struct cirrus_fbdev *afbdev,
 
 	int ret = 0;
 	drm_fb_get_bpp_depth(mode_cmd->pixel_format, &depth, &bpp);
-
-	if (bpp > 24)
+	if (mode_cmd->pitches[0] >= 4096)
 		return -EINVAL;
+
 	size = mode_cmd->pitches[0] * mode_cmd->height;
 	ret = cirrus_gem_create(dev, size, true, &gobj);
 	if (ret)
@@ -137,7 +137,29 @@ static int cirrusfb_create(struct cirrus_fbdev *gfbdev,
 
 	mode_cmd.width = sizes->surface_width;
 	mode_cmd.height = sizes->surface_height;
-	mode_cmd.pitches[0] = mode_cmd.width * ((sizes->surface_bpp + 7) / 8);
+
+	/* Reduce bpp to fit pitch constraints if necessary */
+	for (;;) {
+		mode_cmd.pitches[0] = mode_cmd.width * ((sizes->surface_bpp + 7) / 8);
+		if (mode_cmd.pitches[0] < 4096)
+			break;
+		switch(sizes->surface_bpp) {
+		case 32:
+			sizes->surface_bpp = 24;
+			break;
+		case 24:
+			sizes->surface_bpp = 16;
+			break;
+		case 16:
+			sizes->surface_bpp = 8;
+			break;
+		default:
+			return -ENOMEM;
+		}
+		DRM_INFO("Selected mode has a too high pitch, reducing to %d bpp\n",
+			 sizes->surface_bpp);
+	}
+
 	mode_cmd.pixel_format = drm_mode_legacy_fb_format(sizes->surface_bpp,
 							  sizes->surface_depth);
 	size = mode_cmd.pitches[0] * mode_cmd.height;

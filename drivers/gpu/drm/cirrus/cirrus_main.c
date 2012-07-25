@@ -64,8 +64,8 @@ cirrus_user_framebuffer_create(struct drm_device *dev,
 	u32 bpp, depth;
 
 	drm_fb_get_bpp_depth(mode_cmd->pixel_format, &depth, &bpp);
-	/* cirrus can't handle > 24bpp framebuffers at all */
-	if (bpp > 24)
+	/* cirrus can't handle pitch >= 4096  */
+	if (mode_cmd->pitches[0] >= 4096)
 		return ERR_PTR(-EINVAL);
 
 	obj = drm_gem_object_lookup(dev, filp, mode_cmd->handles[0]);
