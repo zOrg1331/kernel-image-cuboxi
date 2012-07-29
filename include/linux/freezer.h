@@ -150,7 +150,7 @@ static inline void set_freezable_with_signal(void)
  * if it ends up racing with the freezer. Callers must be able to deal with
  * spurious wakeups.
  */
-#define freezable_schedule()						\
+#define __freezable_schedule()						\
 ({									\
 	freezer_do_not_count();						\
 	if (!try_to_freeze())						\
@@ -239,7 +239,7 @@ static inline int freezer_should_skip(struct task_struct *p) { return 0; }
 static inline void set_freezable(void) {}
 static inline void set_freezable_with_signal(void) {}
 
-#define freezable_schedule()  schedule()
+#define __freezable_schedule()  schedule()
 
 #define freezable_schedule_timeout_killable(timeout)			\
 	schedule_timeout_killable(timeout)

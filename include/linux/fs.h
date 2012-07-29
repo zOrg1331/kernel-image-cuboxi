@@ -92,8 +92,6 @@ struct inodes_stat_t {
 #define FMODE_32BITHASH         ((__force fmode_t)0x200)
 /* 64bit hashes as llseek() offset (for directories) */
 #define FMODE_64BITHASH         ((__force fmode_t)0x400)
-/* Can do sys_quotactl (for devperms) */
-#define FMODE_QUOTACTL		((__force fmode_t)512)
 
 /*
  * Don't update ctime and mtime.
@@ -105,6 +103,9 @@ struct inodes_stat_t {
 
 /* Expect random access pattern */
 #define FMODE_RANDOM		((__force fmode_t)4096)
+
+/* Can do sys_quotactl (for devperms) */
+#define FMODE_QUOTACTL		((__force fmode_t)0x2000)
 
 /*
  * The below are the various read and write types that we support. Some of

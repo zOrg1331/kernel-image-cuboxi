@@ -147,7 +147,6 @@ int cpt_need_vfsmount(struct dentry *dentry, struct vfsmount *vfsmnt)
 		case FSMAGIC_INOTIFY:
 		case FSMAGIC_MQUEUE:
 		case FSMAGIC_ANON:
-		case FSMAGIC_RPCAUTH:
 			return 0;
 		default:
 			eprintk("no vfsmount: ");

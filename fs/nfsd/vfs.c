@@ -796,6 +796,13 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 			(*filp)->f_mode |= FMODE_64BITHASH;
 		else
 			(*filp)->f_mode |= FMODE_32BITHASH;
+
+		/* Update fmode for underlying file */
+		if ((*filp)->f_op->get_host) {
+			struct file *host = (*filp)->f_op->get_host(*filp);
+
+			host->f_mode |= (*filp)->f_mode & (FMODE_32BITHASH | FMODE_64BITHASH);
+		}
 	}
 
 out_nfserr:
