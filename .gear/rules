@@ -98,5 +98,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18.4
-copy: patch-028stab101-core
+copy: patch-028stab102-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

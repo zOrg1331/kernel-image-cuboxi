@@ -11,7 +11,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab101
+%define ovzver 028stab102
 %define ovzrel 1
 
 %if !%{buildup}
@@ -134,7 +134,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 #
 %define sublevel 18
 %define stablerev 4
-%define revision 308.8.2
+%define revision 308.11.1
 %define kversion 2.6.%{sublevel}.%{stablerev}
 %define rpmversion 2.6.%{sublevel}
 %define release %{revision}%{?dist}%{?buildid}
