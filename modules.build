@@ -9,8 +9,8 @@ nvidia
 ndiswrapper
 #rt2860
 #rtl8187se
-rtl8192
-bcmwl
+#rtl8192
+#bcmwl
 #madwifi-hal
 
 #vendor specific  hardware features drives
