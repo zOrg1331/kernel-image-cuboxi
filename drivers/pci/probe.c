@@ -1328,6 +1328,7 @@ void pcie_bus_configure_settings(struct pci_bus *bus, u8 mpss)
 	pcie_bus_configure_set(bus->self, &smpss);
 	pci_walk_bus(bus, pcie_bus_configure_set, &smpss);
 }
+EXPORT_SYMBOL(pcie_bus_configure_settings);
 
 unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
 {

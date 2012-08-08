@@ -28,6 +28,7 @@ u8 rh_get_mpss(struct pci_dev *dev)
 {
 	return ((struct pci_dev_rh1 *) dev->rh_reserved1)->pcie_mpss;
 }
+EXPORT_SYMBOL_GPL(rh_get_mpss);
 
 void rh_set_mpss(struct pci_dev *dev, u8 mpss)
 {
