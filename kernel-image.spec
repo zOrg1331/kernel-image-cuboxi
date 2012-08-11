@@ -381,6 +381,7 @@ mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
+ln -s ../arch/x86/include/asm %buildroot%kbuild_dir/include/asm
 
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
