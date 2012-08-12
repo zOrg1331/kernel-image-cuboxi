@@ -14,6 +14,7 @@
 #include <linux/freezer.h>
 #include <linux/console.h>
 #include <linux/syscore_ops.h>
+#include <linux/ftrace.h>
 #include <asm/suspend.h>
 #include "tuxonice.h"
 #include "tuxonice_storage.h"
