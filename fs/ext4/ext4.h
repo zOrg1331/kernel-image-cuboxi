@@ -2299,6 +2299,8 @@ extern int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block
 				    unsigned long count);
 extern int ext4_secure_delete_pblks(struct inode *inode, ext4_fsblk_t block,
 				    unsigned long count);
+extern int ext4_secure_delete_jblks(struct inode *inode, ext4_lblk_t first_block,
+				    unsigned long count);
 /* move_extent.c */
 extern int ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			     __u64 start_orig, __u64 start_donor,

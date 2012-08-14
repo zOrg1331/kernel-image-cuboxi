@@ -898,6 +898,108 @@ int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block,
 	return err;
 }
 
+/*
+ * ext4_secure_delete_jblks()
+ *
+ * Secure deletes the journal blocks that contain
+ * the specified logical blocks
+ *
+ * @inode: The files inode
+ * @first_block: Starting logical block
+ * @count: The number of blocks to secure delete
+ *         from the journal
+ *
+ * Returns 0 on sucess or negative on error
+ */
+int ext4_secure_delete_jblks(struct inode *inode, ext4_lblk_t first_block,
+			     unsigned long count)
+{
+	unsigned long long jbd2_pblk_start, jbd2_pblk_count;
+	struct list_head *tmp, *cur;
+	journal_t *journal;
+	ext4_lblk_t last_block;
+	int err = ext4_force_commit((inode)->i_sb);
+
+	/*
+	 * Force the journal to finnish up any pending transactions
+	 * before we start secure deleteing journal blocks
+	 */
+	if (err)
+		return err;
+
+	journal = EXT4_JOURNAL(inode);
+	/* Do not allow last_block to wrap */
+	last_block = first_block + count;
+	if (last_block < first_block)
+		last_block = EXT_MAX_BLOCKS;
+
+	spin_lock(&journal->j_pair_lock);
+
+	jbd2_pblk_start = 0;
+	jbd2_pblk_count = 0;
+	/* Loop over the journals blocks looking for our logical blocks */
+	list_for_each_safe(cur, tmp, &journal->blk_pairs) {
+		struct jbd2_blk_pair *b_pair = list_entry(cur, struct jbd2_blk_pair, list);
+
+		if (b_pair->vfs_inode == inode &&
+		    b_pair->vfs_lblk >= first_block &&
+		    b_pair->vfs_lblk < last_block) {
+			/*
+			 * It is likely that the journal blocks will be
+			 * consecutive, so lets try to secure delete them
+			 * in ranges
+			 */
+			if (jbd2_pblk_count == 0) {
+				/*
+				 * If there are no blocks in our range,
+				 * then this one will be the first
+				 */
+				goto restart_range;
+			} else if (b_pair->jbd2_pblk == jbd2_pblk_start + jbd2_pblk_count) {
+				/*
+				 * If this journal block is physically
+				 * consecutive, then just increase the range
+				 */
+				jbd2_pblk_count++;
+			} else if (b_pair->jbd2_pblk == jbd2_pblk_start - 1 &&
+				   jbd2_pblk_start > 0) {
+				/*
+				 * If this journal block is physically
+				 * consecutive (from the start of the
+				 * range), just increase the range from the
+				 * other end.
+				 */
+				jbd2_pblk_count++;
+				jbd2_pblk_start--;
+			} else {
+				/*
+				 * If the block was not consecutive, secure
+				 * delete the range, and restart the current
+				 * range
+				 */
+
+				err = ext4_secure_delete_pblks(journal->j_inode,
+							       jbd2_pblk_start,
+							       jbd2_pblk_count);
+				if (err)
+					goto out;
+restart_range:
+				jbd2_pblk_start = b_pair->jbd2_pblk;
+				jbd2_pblk_count = 1;
+			}
+		}
+	}
+
+	/* Secure delete any blocks still in our range */
+	if (jbd2_pblk_count > 0)
+		err = ext4_secure_delete_pblks(journal->j_inode, jbd2_pblk_start,
+					       jbd2_pblk_count);
+
+out:
+	spin_unlock(&journal->j_pair_lock);
+	return err;
+}
+
 struct buffer_head *ext4_bread(handle_t *handle, struct inode *inode,
 			       ext4_lblk_t block, int create, int *err)
 {
@@ -3605,6 +3707,8 @@ int ext4_punch_hole(struct file *file, loff_t offset, loff_t length)
  */
 void ext4_truncate(struct inode *inode)
 {
+	int is_secrm;
+
 	trace_ext4_truncate_enter(inode);
 
 	if (!ext4_can_truncate(inode))
@@ -3615,7 +3719,8 @@ void ext4_truncate(struct inode *inode)
 	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
 		ext4_set_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
 
-	if ((test_opt2(inode->i_sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL)) &&
+	is_secrm = test_opt2(inode->i_sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL);
+	if (is_secrm &&
 	    ext4_secure_delete_lblks(inode,
 				     (ext4_lblk_t)(inode->i_size + EXT4_BLOCK_SIZE(inode->i_sb) - 1) >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
 				     EXT_MAX_BLOCKS))
@@ -3625,6 +3730,11 @@ void ext4_truncate(struct inode *inode)
 		ext4_ext_truncate(inode);
 	else
 		ext4_ind_truncate(inode);
+
+	if (is_secrm)
+		ext4_secure_delete_jblks(inode,
+					 inode->i_size >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
+					 EXT_MAX_BLOCKS);
 
 	trace_ext4_truncate_exit(inode);
 }

@@ -4883,6 +4883,14 @@ out:
 	inode->i_mtime = inode->i_ctime = ext4_current_time(inode);
 	ext4_mark_inode_dirty(handle, inode);
 	ext4_journal_stop(handle);
+
+	if (!err && is_secrm) {
+		first_block = offset >> EXT4_BLOCK_SIZE_BITS(sb);
+		err = ext4_secure_delete_jblks(inode,
+					       first_block,
+					       ((offset + length + sb->s_blocksize - 1) >> EXT4_BLOCK_SIZE_BITS(sb)) - first_block);
+	}
+
 	return err;
 }
 int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
