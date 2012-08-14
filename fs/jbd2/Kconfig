@@ -16,6 +16,11 @@ config JBD2
 	  called jbd2.  If you are compiling ext4 or OCFS2 into the kernel,
 	  you cannot compile this code as a module.
 
+config JBD2_SECRM
+	bool "JBD2 secure delete journal blocks support"
+	depends on JBD2
+	default n
+
 config JBD2_DEBUG
 	bool "JBD2 (ext4) debugging support"
 	depends on JBD2 && DEBUG_FS

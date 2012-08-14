@@ -613,6 +613,13 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 			jbd2_journal_abort(journal, flags);
 			continue;
 		}
+#ifdef CONFIG_JBD2_SECRM
+		err = jbd2_record_pair(journal, jh2bh(jh), jh2bh(new_jh));
+		if (err) {
+			jbd2_journal_abort(journal, flags);
+			continue;
+		}
+#endif
 		set_bit(BH_JWrite, &jh2bh(new_jh)->b_state);
 		wbuf[bufs++] = jh2bh(new_jh);
 

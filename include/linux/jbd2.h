@@ -939,7 +939,29 @@ struct journal_s
 	 * superblock pointer here
 	 */
 	void *j_private;
+
+#ifdef CONFIG_JBD2_SECRM
+	spinlock_t		j_pair_lock;
+	struct list_head	blk_pairs;
+#endif
 };
+
+#ifdef CONFIG_JBD2_SECRM
+/*
+ * List for keeping track of which vfs
+ * block a journal block contians.
+ */
+struct jbd2_blk_pair {
+	struct inode *vfs_inode;
+	unsigned long long vfs_pblk;
+	unsigned long long vfs_lblk;
+	unsigned long long jbd2_pblk;
+	struct list_head list;
+};
+
+extern int jbd2_record_pair(journal_t *journal, struct buffer_head *vfs_bh,
+			    struct buffer_head *jbd2_bh);
+#endif
 
 /*
  * Journal flag definitions
