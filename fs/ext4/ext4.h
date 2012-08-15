@@ -2294,6 +2294,10 @@ extern int ext4_map_blocks(handle_t *handle, struct inode *inode,
 			   struct ext4_map_blocks *map, int flags);
 extern int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			__u64 start, __u64 len);
+extern int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block,
+				    unsigned long count);
+extern int ext4_secure_delete_pblks(struct inode *inode, ext4_fsblk_t block,
+				    unsigned long count);
 /* move_extent.c */
 extern int ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			     __u64 start_orig, __u64 start_donor,
@@ -2311,6 +2315,11 @@ extern int ext4_bio_write_page(struct ext4_io_submit *io,
 			       struct page *page,
 			       int len,
 			       struct writeback_control *wbc);
+
+/* indirects.c */
+extern int ext4_block_to_path(struct inode *inode,
+			      ext4_lblk_t i_block,
+			      ext4_lblk_t offsets[4], int *boundary);
 
 /* mmp.c */
 extern int ext4_multi_mount_protect(struct super_block *, ext4_fsblk_t);

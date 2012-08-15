@@ -700,6 +700,204 @@ struct buffer_head *ext4_getblk(handle_t *handle, struct inode *inode,
 	return bh;
 }
 
+/*
+ * ext4_in_hole_lookup
+ *
+ * Returns the size of the hole located at the given block up to
+ * the first boundry, or 0 if there is no hole. Returns negative on err.
+ */
+static int ext4_ind_hole_lookup(struct inode *inode, ext4_lblk_t block)
+{
+	ext4_lblk_t offsets[4];
+	int blocks_to_boundary = 0;
+	int depth = ext4_block_to_path(inode, block, offsets, &blocks_to_boundary);
+
+	if (depth) {
+		struct super_block *sb;
+		unsigned int i;
+		int hole_size = 0;
+		__le32 blk = EXT4_I(inode)->i_data[offsets[0]];
+
+		if (blk == 0) {
+			for (i = *offsets; i < EXT4_NDIR_BLOCKS && EXT4_I(inode)->i_data[i] == 0; i++, hole_size++);
+			return hole_size;
+		}
+
+		sb = inode->i_sb;
+		for (i = 1; i < depth; i++) {
+			ext4_lblk_t offset = offsets[i];
+			struct buffer_head *bh = sb_getblk(sb, le32_to_cpu(blk));
+
+			if (unlikely(!bh))
+				return -EIO;
+
+			if (!bh_uptodate_or_lock(bh) &&
+			    (bh_submit_read(bh) < 0 ||
+			     ext4_check_indirect_blockref(inode, bh)) /* validate block references */) {
+				put_bh(bh);
+				return -EIO;
+			}
+
+			blk = ((__le32 *)bh->b_data)[offset];
+			/* Reader: end */
+			if (blk == 0) {
+				unsigned int j;
+				__le32 *children = (__le32 *)(bh->b_data);
+
+				for (j = offset; j < offset + blocks_to_boundary && children[j] == 0; j++, hole_size++);
+				return hole_size;
+			}
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ext4_secure_delete_pblks
+ *
+ * Securely delete physical blocks.
+ * If the devices supports secure discard,
+ * blocks will be discarded.  Otherwise
+ * the blocks will be zeroed.
+ *
+ * inode: The files inode
+ * block: The physical block at which to start deleteing
+ * count: The number of blocks to delete
+ *
+ * Returns 0 on sucess or negative on error
+ */
+int ext4_secure_delete_pblks(struct inode *inode, ext4_fsblk_t block,
+			     unsigned long count)
+{
+	struct super_block *sb = inode->i_sb;
+	struct request_queue *q = bdev_get_queue(sb->s_bdev);
+
+	/*
+	 * Check to see if the device supports secure discard,
+	 * And also that read after discard returns zeros
+	 */
+	if (blk_queue_secdiscard(q) && q->limits.discard_zeroes_data &&
+	    !sb_issue_discard(sb, block, count, GFP_NOFS, BLKDEV_DISCARD_SECURE)) {
+		struct fstrim_range range = {
+			.start = block,
+			.len = count,
+			.minlen = 1
+		};
+
+		if (!ext4_trim_fs(sb, &range))
+			return 0;
+	}
+
+	return sb_issue_zeroout(sb, block, count, GFP_NOFS);
+}
+
+/*
+ * ext4_secure_delete_lblks
+ *
+ * Secure deletes the data blocks of a file
+ * starting at the given logical block
+ *
+ * @inode: The files inode
+ * @first_block: Starting logical block
+ * @count: The number of blocks to secure delete
+ *
+ * Returns 0 on sucess or negative on error
+ */
+int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block,
+			     unsigned long count)
+{
+	ext4_lblk_t last_block, iblock, num_blocks;
+	int err;
+	int credits = ext4_writepage_trans_blocks(inode);
+	handle_t *handle = ext4_journal_start(inode, credits);
+
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+
+	down_write(&EXT4_I(inode)->i_data_sem);
+	ext4_ext_invalidate_cache(inode);
+	ext4_discard_preallocations(inode);
+
+	last_block = first_block + count;
+	/* Do not allow last_block to wrap when caller passes EXT_MAX_BLOCK */
+	if (last_block < first_block)
+		last_block = EXT_MAX_BLOCKS;
+
+	err = 0;
+	for (iblock = first_block; iblock < last_block; iblock += num_blocks) {
+		struct ext4_map_blocks map = {
+			.m_pblk = 0,
+			.m_lblk = 0,
+			.m_lblk = iblock,
+			.m_len = last_block - iblock
+		};
+		int ret = (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS) ? ext4_ext_map_blocks : ext4_ind_map_blocks)(handle, inode, &map, 0);
+
+		num_blocks = 1;
+
+		if (ret > 0) {
+			err = ext4_secure_delete_pblks(inode, map.m_pblk, map.m_len);
+			if (err)
+				break;
+			num_blocks = ret;
+		} else if (ret == 0) {
+			if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)) {
+				struct ext4_ext_cache cache_ex;
+				/*
+				 * If map blocks could not find the block,
+				 * then it is in a hole.  If the hole was
+				 * not already cached, then map blocks should
+				 * put it in the cache.  So we can get the hole
+				 * out of the cache
+				 */
+				memset(&cache_ex, 0, sizeof(cache_ex));
+				if ((ext4_ext_check_cache(inode, iblock, &cache_ex)) && !cache_ex.ec_start)
+					/* The hole is cached */
+					num_blocks = cache_ex.ec_block + cache_ex.ec_len - iblock;
+				else
+					/* reached EOF of extent file */
+					break;
+			} else {
+				int hole_len = ext4_ind_hole_lookup(inode, iblock);
+
+				if (hole_len > 0)
+					/* Skip over the hole */
+					num_blocks = hole_len;
+				else {
+					if (hole_len != 0)
+						/* Hole look up err */
+						err = hole_len;
+					/* No hole, EOF reached */
+					break;
+				}
+			}
+		} else {
+			/* Map blocks error */
+			err = ret;
+			break;
+		}
+
+		if (num_blocks == 0) {
+			/* This condition should never happen */
+			ext_debug("Block lookup failed");
+			err = -EIO;
+			break;
+		}
+	}
+
+	if (IS_SYNC(inode))
+		ext4_handle_sync(handle);
+
+	up_write(&EXT4_I(inode)->i_data_sem);
+
+	inode->i_mtime = inode->i_ctime = ext4_current_time(inode);
+	ext4_mark_inode_dirty(handle, inode);
+	ext4_journal_stop(handle);
+
+	return err;
+}
+
 struct buffer_head *ext4_bread(handle_t *handle, struct inode *inode,
 			       ext4_lblk_t block, int create, int *err)
 {
@@ -3416,6 +3614,12 @@ void ext4_truncate(struct inode *inode)
 
 	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
 		ext4_set_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
+
+	if ((EXT4_I(inode)->i_flags & EXT4_SECRM_FL) &&
+	    ext4_secure_delete_lblks(inode,
+				     (ext4_lblk_t)(inode->i_size + EXT4_BLOCK_SIZE(inode->i_sb) - 1) >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
+				     EXT_MAX_BLOCKS))
+		return;
 
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
 		ext4_ext_truncate(inode);

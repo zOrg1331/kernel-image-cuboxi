@@ -2044,7 +2044,7 @@ ext4_ext_put_gap_in_cache(struct inode *inode, struct ext4_ext_path *path,
  *
  * Return 0 if cache is invalid; 1 if the cache is valid
  */
-static int ext4_ext_check_cache(struct inode *inode, ext4_lblk_t block,
+int ext4_ext_check_cache(struct inode *inode, ext4_lblk_t block,
 	struct ext4_ext_cache *ex){
 	struct ext4_ext_cache *cex;
 	struct ext4_sb_info *sbi;
@@ -4777,6 +4777,17 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 	/* finish any pending end_io work */
 	ext4_flush_completed_IO(inode);
 
+	first_block = (offset + sb->s_blocksize - 1) >>
+		EXT4_BLOCK_SIZE_BITS(sb);
+	stop_block = (offset + length) >> EXT4_BLOCK_SIZE_BITS(sb);
+
+	if ((EXT4_I(inode)->i_flags & EXT4_SECRM_FL)) {
+		err = ext4_secure_delete_lblks(inode, first_block,
+					       stop_block - first_block);
+		if (err)
+			return err;
+	}
+
 	credits = ext4_writepage_trans_blocks(inode);
 	handle = ext4_journal_start(inode, credits);
 	if (IS_ERR(handle))
@@ -4846,10 +4857,6 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 				goto out;
 		}
 	}
-
-	first_block = (offset + sb->s_blocksize - 1) >>
-		EXT4_BLOCK_SIZE_BITS(sb);
-	stop_block = (offset + length) >> EXT4_BLOCK_SIZE_BITS(sb);
 
 	/* If there are no blocks to remove, return now */
 	if (first_block >= stop_block)

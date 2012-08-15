@@ -68,9 +68,9 @@ static inline void add_chain(Indirect *p, struct buffer_head *bh, __le32 *v)
  * get there at all.
  */
 
-static int ext4_block_to_path(struct inode *inode,
-			      ext4_lblk_t i_block,
-			      ext4_lblk_t offsets[4], int *boundary)
+int ext4_block_to_path(struct inode *inode,
+		       ext4_lblk_t i_block,
+		       ext4_lblk_t offsets[4], int *boundary)
 {
 	int ptrs = EXT4_ADDR_PER_BLOCK(inode->i_sb);
 	int ptrs_bits = EXT4_ADDR_PER_BLOCK_BITS(inode->i_sb);

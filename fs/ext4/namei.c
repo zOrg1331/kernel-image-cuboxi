@@ -1646,9 +1646,11 @@ cleanup:
 static int ext4_delete_entry(handle_t *handle,
 			     struct inode *dir,
 			     struct ext4_dir_entry_2 *de_del,
-			     struct buffer_head *bh)
+			     struct buffer_head *bh,
+			     unsigned int iflags)
 {
 	struct ext4_dir_entry_2 *de, *pde;
+	struct ext4_super_block *es = EXT4_SB(dir->i_sb)->s_es;
 	unsigned int blocksize = dir->i_sb->s_blocksize;
 	int i, err;
 
@@ -1676,7 +1678,26 @@ static int ext4_delete_entry(handle_t *handle,
 				de->inode = 0;
 			dir->i_version++;
 			BUFFER_TRACE(bh, "call ext4_handle_dirty_metadata");
-			err = ext4_handle_dirty_metadata(handle, dir, bh);
+
+			/*
+			 * If the secure remove flag is on, zero
+			 * the entry and write it out to the disk
+			 */
+			if (iflags & EXT4_SECRM_FL) {
+				memset(de->name, 0x00, de->name_len);
+				de->file_type = 0;
+				set_buffer_dirty(bh);
+				sync_dirty_buffer(bh);
+				if (buffer_req(bh) && !buffer_uptodate(bh)) {
+					es->s_last_error_block = cpu_to_le64(bh->b_blocknr);
+					ext4_error_inode(dir, __func__, __LINE__,
+							 bh->b_blocknr,
+							 "IO error syncing itable block");
+					err = -EIO;
+				}
+			} else
+				err = ext4_handle_dirty_metadata(handle, dir, bh);
+
 			if (unlikely(err)) {
 				ext4_std_error(dir->i_sb, err);
 				return err;
@@ -2155,7 +2176,7 @@ static int ext4_rmdir(struct inode *dir, struct dentry *dentry)
 	if (!empty_dir(inode))
 		goto end_rmdir;
 
-	retval = ext4_delete_entry(handle, dir, de, bh);
+	retval = ext4_delete_entry(handle, dir, de, bh, 0);
 	if (retval)
 		goto end_rmdir;
 	if (!EXT4_DIR_LINK_EMPTY(inode))
@@ -2219,7 +2240,7 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 			     inode->i_ino, inode->i_nlink);
 		set_nlink(inode, 1);
 	}
-	retval = ext4_delete_entry(handle, dir, de, bh);
+	retval = ext4_delete_entry(handle, dir, de, bh, EXT4_I(inode)->i_flags);
 	if (retval)
 		goto end_unlink;
 	dir->i_ctime = dir->i_mtime = ext4_current_time(dir);
@@ -2502,7 +2523,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	    old_de->name_len != old_dentry->d_name.len ||
 	    strncmp(old_de->name, old_dentry->d_name.name, old_de->name_len) ||
 	    (retval = ext4_delete_entry(handle, old_dir,
-					old_de, old_bh)) == -ENOENT) {
+					old_de, old_bh, EXT4_I(old_inode)->i_flags)) == -ENOENT) {
 		/* old_de could have moved from under us during htree split, so
 		 * make sure that we are deleting the right entry.  We might
 		 * also be pointing to a stale entry in the unused part of
@@ -2512,8 +2533,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 		old_bh2 = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de2);
 		if (old_bh2) {
-			retval = ext4_delete_entry(handle, old_dir,
-						   old_de2, old_bh2);
+			retval = ext4_delete_entry(handle, old_dir, old_de2, old_bh2, EXT4_I(old_inode)->i_flags);
 			brelse(old_bh2);
 		}
 	}

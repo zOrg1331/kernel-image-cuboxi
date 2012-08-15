@@ -4629,6 +4629,13 @@ do_more:
 	if (err)
 		goto error_return;
 
+	if ((flags & EXT4_FREE_BLOCKS_METADATA) &&
+	    (EXT4_I(inode)->i_flags & EXT4_SECRM_FL)) {
+		err = ext4_secure_delete_pblks(inode, block, count);
+		if (err)
+			goto error_return;
+	}
+
 	if ((flags & EXT4_FREE_BLOCKS_METADATA) && ext4_handle_valid(handle)) {
 		struct ext4_free_data *new_entry;
 		/*
