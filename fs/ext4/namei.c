@@ -2202,6 +2202,13 @@ end_rmdir:
 	return retval;
 }
 
+static inline unsigned get_inode_flags(struct inode *inode)
+{
+	return test_opt2(inode->i_sb, SECRM)
+	       ? (EXT4_I(inode)->i_flags | EXT4_SECRM_FL)
+	       : EXT4_I(inode)->i_flags;
+}
+
 static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 {
 	int retval;
@@ -2240,7 +2247,7 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 			     inode->i_ino, inode->i_nlink);
 		set_nlink(inode, 1);
 	}
-	retval = ext4_delete_entry(handle, dir, de, bh, EXT4_I(inode)->i_flags);
+	retval = ext4_delete_entry(handle, dir, de, bh, get_inode_flags(inode));
 	if (retval)
 		goto end_unlink;
 	dir->i_ctime = dir->i_mtime = ext4_current_time(dir);
@@ -2420,6 +2427,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct inode *old_inode, *new_inode;
 	struct buffer_head *old_bh, *new_bh, *dir_bh;
 	struct ext4_dir_entry_2 *old_de, *new_de;
+	unsigned int iflags;
 	int retval, force_da_alloc = 0;
 
 	dquot_initialize(old_dir);
@@ -2514,6 +2522,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	 * rename.
 	 */
 	old_inode->i_ctime = ext4_current_time(old_inode);
+	iflags = get_inode_flags(old_inode);
 	ext4_mark_inode_dirty(handle, old_inode);
 
 	/*
@@ -2523,7 +2532,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	    old_de->name_len != old_dentry->d_name.len ||
 	    strncmp(old_de->name, old_dentry->d_name.name, old_de->name_len) ||
 	    (retval = ext4_delete_entry(handle, old_dir,
-					old_de, old_bh, EXT4_I(old_inode)->i_flags)) == -ENOENT) {
+					old_de, old_bh, iflags)) == -ENOENT) {
 		/* old_de could have moved from under us during htree split, so
 		 * make sure that we are deleting the right entry.  We might
 		 * also be pointing to a stale entry in the unused part of
@@ -2533,7 +2542,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 		old_bh2 = ext4_find_entry(old_dir, &old_dentry->d_name, &old_de2);
 		if (old_bh2) {
-			retval = ext4_delete_entry(handle, old_dir, old_de2, old_bh2, EXT4_I(old_inode)->i_flags);
+			retval = ext4_delete_entry(handle, old_dir, old_de2, old_bh2, iflags);
 			brelse(old_bh2);
 		}
 	}

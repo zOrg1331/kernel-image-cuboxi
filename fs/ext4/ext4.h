@@ -960,6 +960,7 @@ struct ext4_inode_info {
 
 #define EXT4_MOUNT2_EXPLICIT_DELALLOC	0x00000001 /* User explicitly
 						      specified delalloc */
+#define EXT4_MOUNT2_SECRM		0x10000000 /* Secure deletion */
 
 #define clear_opt(sb, opt)		EXT4_SB(sb)->s_mount_opt &= \
 						~EXT4_MOUNT_##opt

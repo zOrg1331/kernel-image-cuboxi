@@ -3615,7 +3615,7 @@ void ext4_truncate(struct inode *inode)
 	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
 		ext4_set_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
 
-	if ((EXT4_I(inode)->i_flags & EXT4_SECRM_FL) &&
+	if ((test_opt2(inode->i_sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL)) &&
 	    ext4_secure_delete_lblks(inode,
 				     (ext4_lblk_t)(inode->i_size + EXT4_BLOCK_SIZE(inode->i_sb) - 1) >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
 				     EXT_MAX_BLOCKS))

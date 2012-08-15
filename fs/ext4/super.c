@@ -1188,6 +1188,7 @@ enum {
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
 	Opt_dioread_nolock, Opt_dioread_lock,
 	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
+	Opt_secrm, Opt_nosecrm,
 };
 
 static const match_table_t tokens = {
@@ -1266,6 +1267,9 @@ static const match_table_t tokens = {
 	{Opt_removed, "reservation"},	/* mount option from ext2/3 */
 	{Opt_removed, "noreservation"}, /* mount option from ext2/3 */
 	{Opt_removed, "journal=%u"},	/* mount option from ext2/3 */
+	{Opt_secrm, "secrm=%u"},
+	{Opt_secrm, "secrm"},
+	{Opt_nosecrm, "nosecrm"},
 	{Opt_err, NULL},
 };
 
@@ -1499,6 +1503,19 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 		if (arg < 0 || arg > 7)
 			return -1;
 		*journal_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, arg);
+		return 1;
+	case Opt_secrm:
+		if (args->from) {
+			if (match_int(args, &arg))
+				return -1;
+		} else
+			arg = 1;	/* No argument, default to 1 */
+		if (arg) {
+			set_opt2(sb, SECRM);
+			return 1;
+		}
+	case Opt_nosecrm:
+		clear_opt2(sb, SECRM);
 		return 1;
 	}
 

@@ -4734,6 +4734,7 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 	handle_t *handle;
 	loff_t first_page, last_page, page_len;
 	loff_t first_page_offset, last_page_offset;
+	int is_secrm;
 	int credits, err = 0;
 
 	/* No need to punch hole beyond i_size */
@@ -4781,7 +4782,8 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 		EXT4_BLOCK_SIZE_BITS(sb);
 	stop_block = (offset + length) >> EXT4_BLOCK_SIZE_BITS(sb);
 
-	if ((EXT4_I(inode)->i_flags & EXT4_SECRM_FL)) {
+	is_secrm = test_opt2(sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL);
+	if (is_secrm) {
 		err = ext4_secure_delete_lblks(inode, first_block,
 					       stop_block - first_block);
 		if (err)
