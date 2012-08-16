@@ -2044,6 +2044,9 @@ ext4_ext_put_gap_in_cache(struct inode *inode, struct ext4_ext_path *path,
  *
  * Return 0 if cache is invalid; 1 if the cache is valid
  */
+#ifndef CONFIG_EXT4_SECRM
+static
+#endif
 int ext4_ext_check_cache(struct inode *inode, ext4_lblk_t block,
 	struct ext4_ext_cache *ex){
 	struct ext4_ext_cache *cex;
@@ -4782,6 +4785,7 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 		EXT4_BLOCK_SIZE_BITS(sb);
 	stop_block = (offset + length) >> EXT4_BLOCK_SIZE_BITS(sb);
 
+#ifdef CONFIG_EXT4_SECRM
 	is_secrm = test_opt2(sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL);
 	if (is_secrm) {
 		err = ext4_secure_delete_lblks(inode, first_block,
@@ -4789,6 +4793,7 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 		if (err)
 			return err;
 	}
+#endif
 
 	credits = ext4_writepage_trans_blocks(inode);
 	handle = ext4_journal_start(inode, credits);
@@ -4884,15 +4889,18 @@ out:
 	ext4_mark_inode_dirty(handle, inode);
 	ext4_journal_stop(handle);
 
+#if defined(CONFIG_EXT4_SECRM) && defined(CONFIG_JBD2_SECRM)
 	if (!err && is_secrm) {
 		first_block = offset >> EXT4_BLOCK_SIZE_BITS(sb);
 		err = ext4_secure_delete_jblks(inode,
 					       first_block,
 					       ((offset + length + sb->s_blocksize - 1) >> EXT4_BLOCK_SIZE_BITS(sb)) - first_block);
 	}
+#endif
 
 	return err;
 }
+
 int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		__u64 start, __u64 len)
 {

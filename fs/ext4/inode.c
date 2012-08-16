@@ -700,6 +700,7 @@ struct buffer_head *ext4_getblk(handle_t *handle, struct inode *inode,
 	return bh;
 }
 
+#ifdef CONFIG_EXT4_SECRM
 /*
  * ext4_in_hole_lookup
  *
@@ -898,6 +899,7 @@ int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block,
 	return err;
 }
 
+#ifdef CONFIG_JBD2_SECRM
 /*
  * ext4_secure_delete_jblks()
  *
@@ -999,6 +1001,8 @@ out:
 	spin_unlock(&journal->j_pair_lock);
 	return err;
 }
+#endif
+#endif
 
 struct buffer_head *ext4_bread(handle_t *handle, struct inode *inode,
 			       ext4_lblk_t block, int create, int *err)
@@ -3707,8 +3711,9 @@ int ext4_punch_hole(struct file *file, loff_t offset, loff_t length)
  */
 void ext4_truncate(struct inode *inode)
 {
+#ifdef CONFIG_EXT4_SECRM
 	int is_secrm;
-
+#endif
 	trace_ext4_truncate_enter(inode);
 
 	if (!ext4_can_truncate(inode))
@@ -3719,22 +3724,26 @@ void ext4_truncate(struct inode *inode)
 	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
 		ext4_set_inode_state(inode, EXT4_STATE_DA_ALLOC_CLOSE);
 
+#ifdef CONFIG_EXT4_SECRM
 	is_secrm = test_opt2(inode->i_sb, SECRM) || (EXT4_I(inode)->i_flags & EXT4_SECRM_FL);
 	if (is_secrm &&
 	    ext4_secure_delete_lblks(inode,
 				     (ext4_lblk_t)(inode->i_size + EXT4_BLOCK_SIZE(inode->i_sb) - 1) >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
 				     EXT_MAX_BLOCKS))
 		return;
+#endif
 
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
 		ext4_ext_truncate(inode);
 	else
 		ext4_ind_truncate(inode);
 
+#if defined(CONFIG_EXT4_SECRM) && defined(CONFIG_JBD2_SECRM)
 	if (is_secrm)
 		ext4_secure_delete_jblks(inode,
 					 inode->i_size >> EXT4_BLOCK_SIZE_BITS(inode->i_sb),
 					 EXT_MAX_BLOCKS);
+#endif
 
 	trace_ext4_truncate_exit(inode);
 }

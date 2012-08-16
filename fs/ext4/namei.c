@@ -1650,7 +1650,9 @@ static int ext4_delete_entry(handle_t *handle,
 			     unsigned int iflags)
 {
 	struct ext4_dir_entry_2 *de, *pde;
+#ifdef CONFIG_EXT4_SECRM
 	struct ext4_super_block *es = EXT4_SB(dir->i_sb)->s_es;
+#endif
 	unsigned int blocksize = dir->i_sb->s_blocksize;
 	int i, err;
 
@@ -1679,6 +1681,7 @@ static int ext4_delete_entry(handle_t *handle,
 			dir->i_version++;
 			BUFFER_TRACE(bh, "call ext4_handle_dirty_metadata");
 
+#ifdef CONFIG_EXT4_SECRM
 			/*
 			 * If the secure remove flag is on, zero
 			 * the entry and write it out to the disk
@@ -1696,6 +1699,7 @@ static int ext4_delete_entry(handle_t *handle,
 					err = -EIO;
 				}
 			} else
+#endif
 				err = ext4_handle_dirty_metadata(handle, dir, bh);
 
 			if (unlikely(err)) {
@@ -2204,9 +2208,13 @@ end_rmdir:
 
 static inline unsigned get_inode_flags(struct inode *inode)
 {
+#ifdef CONFIG_EXT4_SECRM
 	return test_opt2(inode->i_sb, SECRM)
 	       ? (EXT4_I(inode)->i_flags | EXT4_SECRM_FL)
 	       : EXT4_I(inode)->i_flags;
+#else
+	return 0;
+#endif
 }
 
 static int ext4_unlink(struct inode *dir, struct dentry *dentry)

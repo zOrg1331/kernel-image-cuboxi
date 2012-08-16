@@ -292,7 +292,9 @@ extern void ext4_ext_drop_refs(struct ext4_ext_path *);
 extern int ext4_ext_check_inode(struct inode *inode);
 extern int ext4_find_delalloc_cluster(struct inode *inode, ext4_lblk_t lblk,
 				      int search_hint_reverse);
+#ifdef CONFIG_EXT4_SECRM
 extern int ext4_ext_check_cache(struct inode *inode, ext4_lblk_t block,
 				struct ext4_ext_cache *ex);
+#endif
 #endif /* _EXT4_EXTENTS */
 
