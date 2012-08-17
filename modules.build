@@ -1,0 +1,62 @@
+#video drivers
+nvidia
+
+#network card drivers
+# igb
+
+#wireless network card drivers
+# ndiswrapper
+#rt2860
+#rtl8187se
+bcmwl
+#madwifi-hal
+#rtl8192
+# rtl8168
+
+#vendor specific  hardware features drives
+tp_smapi
+omnibook
+
+#virtualization drivers
+virtualbox
+virtualbox-addition
+
+#other drivers
+vhba
+#svgalib_helper
+#etercifs
+
+#telephony drivers
+#wanpipe 
+#cronyx
+
+#network block devices and cluster filesystems
+#drbd83
+#gnbd
+#gfs
+#network additional features
+# ipset
+pf_ring
+# xtables-addons
+
+lsadrv
+
+# Deep Packet Inspection
+# opendpi
+
+acpi_call
+
+# asix
+
+u200
+
+fglrx
+
+# dahdi
+
+# compat-wireless
+emlog
+rt3070
+
+bbswitch
+# r8168
