@@ -1,5 +1,5 @@
-%define original_kernel_version	3.5
-%define kernel_version		3.5
+%define original_kernel_version	3.6
+%define kernel_version		3.6
 %define patch_level		%nil
 
 %define testing			0
@@ -14,11 +14,11 @@
 # 0.0.X -- preX
 # 0.X.0 -- rcX, testX
 # 1.0.0 -- release
-%define patch_level_numeric     1.0.0
+%define patch_level_numeric     0.2.0
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
-Release: alt2
+Release: alt1
 
 Summary: Linux kernel %kernel_fullversion sources
 License: GPL
@@ -41,6 +41,7 @@ pushd kernel-source-%kernel_version
 popd
 %endif
 
+
 %install
 mkdir -p %kernel_srcdir
 tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
@@ -51,6 +52,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Fri Aug 17 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0.2.0-alt1
+- 3.6-rc2
+
 * Wed Aug 01 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1.0.0-alt2
 - right version in gear/rules
 
