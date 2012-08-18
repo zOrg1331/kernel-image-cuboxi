@@ -499,9 +499,8 @@ int cirrus_vga_get_modes(struct drm_connector *connector)
 	drm_add_modes_noedid(connector, 640, 480);
 	drm_add_modes_noedid(connector, 800, 600);
 	drm_add_modes_noedid(connector, 1024, 768);
-	drm_add_modes_noedid(connector, 1280, 1024);
 
-	return 4;
+	return 3;
 }
 
 static int cirrus_vga_mode_valid(struct drm_connector *connector,
