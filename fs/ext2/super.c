@@ -393,6 +393,9 @@ enum {
 	Opt_err_ro, Opt_nouid32, Opt_nocheck, Opt_debug,
 	Opt_oldalloc, Opt_orlov, Opt_nobh, Opt_user_xattr, Opt_nouser_xattr,
 	Opt_acl, Opt_noacl, Opt_xip, Opt_ignore, Opt_err, Opt_quota,
+#ifdef CONFIG_EXT2_SECRM
+	Opt_secrm, Opt_secrmu, Opt_nosecrm,
+#endif
 	Opt_usrquota, Opt_grpquota, Opt_reservation, Opt_noreservation
 };
 
@@ -427,6 +430,11 @@ static const match_table_t tokens = {
 	{Opt_usrquota, "usrquota"},
 	{Opt_reservation, "reservation"},
 	{Opt_noreservation, "noreservation"},
+#ifdef CONFIG_EXT2_SECRM
+	{Opt_secrmu, "secrm=%u"},
+	{Opt_secrm, "secrm"},
+	{Opt_nosecrm, "nosecrm"},
+#endif
 	{Opt_err, NULL}
 };
 
@@ -559,7 +567,21 @@ static int parse_options(char *options, struct super_block *sb)
 				"quota operations not supported");
 			break;
 #endif
-
+#ifdef CONFIG_EXT2_SECRM
+		case Opt_secrm:
+			set_opt(sbi->s_mount_opt, SECRM);
+			break;
+		case Opt_secrmu:
+			if (match_int(&args[0], &option))
+				return 0;
+			else if (option) {
+				set_opt(sbi->s_mount_opt, SECRM);
+				break;
+			}
+		case Opt_nosecrm:
+			clear_opt(sbi->s_mount_opt, SECRM);
+			break;
+#endif
 		case Opt_reservation:
 			set_opt(sbi->s_mount_opt, RESERVATION);
 			ext2_msg(sb, KERN_INFO, "reservations ON");

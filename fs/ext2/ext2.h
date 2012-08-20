@@ -384,7 +384,7 @@ struct ext2_inode {
 #define EXT2_MOUNT_USRQUOTA		0x020000  /* user quota */
 #define EXT2_MOUNT_GRPQUOTA		0x040000  /* group quota */
 #define EXT2_MOUNT_RESERVATION		0x080000  /* Preallocation */
-
+#define EXT2_MOUNT_SECRM		0x80000000 /* Secure deletion */
 
 #define clear_opt(o, opt)		o &= ~EXT2_MOUNT_##opt
 #define set_opt(o, opt)			o |= EXT2_MOUNT_##opt
@@ -718,7 +718,7 @@ extern ext2_fsblk_t ext2_new_block(struct inode *, unsigned long, int *);
 extern ext2_fsblk_t ext2_new_blocks(struct inode *, unsigned long,
 				unsigned long *, int *);
 extern void ext2_free_blocks (struct inode *, unsigned long,
-			      unsigned long);
+			      unsigned long, unsigned is_clear);
 extern unsigned long ext2_count_free_blocks (struct super_block *);
 extern unsigned long ext2_count_dirs (struct super_block *);
 extern void ext2_check_blocks_bitmap (struct super_block *);

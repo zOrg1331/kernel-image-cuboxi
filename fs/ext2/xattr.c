@@ -664,7 +664,7 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 
 			new_bh = sb_getblk(sb, block);
 			if (!new_bh) {
-				ext2_free_blocks(inode, block, 1);
+				ext2_free_blocks(inode, block, 1, 0);
 				mark_inode_dirty(inode);
 				error = -EIO;
 				goto cleanup;
@@ -707,25 +707,26 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 	error = 0;
 	if (old_bh && old_bh != new_bh) {
 		struct mb_cache_entry *ce;
+		unsigned long block = old_bh->b_blocknr;
 
 		/*
 		 * If there was an old block and we are no longer using it,
 		 * release the old block.
 		 */
-		ce = mb_cache_entry_get(ext2_xattr_cache, old_bh->b_bdev,
-					old_bh->b_blocknr);
+		ce = mb_cache_entry_get(ext2_xattr_cache, old_bh->b_bdev, block);
 		lock_buffer(old_bh);
 		if (HDR(old_bh)->h_refcount == cpu_to_le32(1)) {
 			/* Free the old block. */
 			if (ce)
 				mb_cache_entry_free(ce);
 			ea_bdebug(old_bh, "freeing");
-			ext2_free_blocks(inode, old_bh->b_blocknr, 1);
+			unlock_buffer(old_bh);
 			mark_inode_dirty(inode);
 			/* We let our caller release old_bh, so we
 			 * need to duplicate the buffer before. */
 			get_bh(old_bh);
 			bforget(old_bh);
+			ext2_free_blocks(inode, block, 1, 1);
 		} else {
 			/* Decrement the refcount only. */
 			le32_add_cpu(&HDR(old_bh)->h_refcount, -1);
@@ -736,8 +737,8 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			mark_buffer_dirty(old_bh);
 			ea_bdebug(old_bh, "refcount now=%d",
 				le32_to_cpu(HDR(old_bh)->h_refcount));
+			unlock_buffer(old_bh);
 		}
-		unlock_buffer(old_bh);
 	}
 
 cleanup:
@@ -781,10 +782,10 @@ ext2_xattr_delete_inode(struct inode *inode)
 	if (HDR(bh)->h_refcount == cpu_to_le32(1)) {
 		if (ce)
 			mb_cache_entry_free(ce);
-		ext2_free_blocks(inode, EXT2_I(inode)->i_file_acl, 1);
+		unlock_buffer(bh);
 		get_bh(bh);
 		bforget(bh);
-		unlock_buffer(bh);
+		ext2_free_blocks(inode, EXT2_I(inode)->i_file_acl, 1, 1);
 	} else {
 		le32_add_cpu(&HDR(bh)->h_refcount, -1);
 		if (ce)

@@ -433,7 +433,7 @@ static int ext2_alloc_blocks(struct inode *inode,
 	return ret;
 failed_out:
 	for (i = 0; i <index; i++)
-		ext2_free_blocks(inode, new_blocks[i], 1);
+		ext2_free_blocks(inode, new_blocks[i], 1, 0);
 	if (index)
 		mark_inode_dirty(inode);
 	return ret;
@@ -1004,7 +1004,7 @@ static inline void ext2_free_data(struct inode *inode, __le32 *p, __le32 *q)
 			else if (block_to_free == nr - count)
 				count++;
 			else {
-				ext2_free_blocks (inode, block_to_free, count);
+				ext2_free_blocks(inode, block_to_free, count, 1);
 				mark_inode_dirty(inode);
 			free_this:
 				block_to_free = nr;
@@ -1013,7 +1013,7 @@ static inline void ext2_free_data(struct inode *inode, __le32 *p, __le32 *q)
 		}
 	}
 	if (count > 0) {
-		ext2_free_blocks (inode, block_to_free, count);
+		ext2_free_blocks(inode, block_to_free, count, 1);
 		mark_inode_dirty(inode);
 	}
 }
@@ -1057,7 +1057,7 @@ static void ext2_free_branches(struct inode *inode, __le32 *p, __le32 *q, int de
 					   (__le32*)bh->b_data + addr_per_block,
 					   depth);
 			bforget(bh);
-			ext2_free_blocks(inode, nr, 1);
+			ext2_free_blocks(inode, nr, 1, 1);
 			mark_inode_dirty(inode);
 		}
 	} else

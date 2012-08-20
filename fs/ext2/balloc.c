@@ -478,14 +478,45 @@ void ext2_discard_reservation(struct inode *inode)
 	}
 }
 
+#ifdef CONFIG_EXT2_SECRM
+static void ext2_zero_blocks(struct inode *inode, unsigned long block,
+			     unsigned long count, unsigned is_clear)
+{
+	if (is_clear) {
+		struct super_block *sb = inode->i_sb;
+
+		if (test_opt(sb, SECRM) || (EXT2_I(inode)->i_flags & EXT2_SECRM_FL)) {
+			unsigned long stop_block;
+
+			for (stop_block = block + count; block < stop_block; block++) {
+				struct buffer_head *bh = sb_getblk(sb, block);
+
+				if (bh) {
+					lock_buffer(bh);
+					memset(bh->b_data, 0, bh->b_size);
+					set_buffer_uptodate(bh);
+					mark_buffer_dirty(bh);
+					unlock_buffer(bh);
+					sync_dirty_buffer(bh);
+					brelse(bh);
+				}
+			}
+		}
+	}
+}
+#else
+#define ext2_zero_blocks(inode, block, count, is_clear)
+#endif
+
 /**
  * ext2_free_blocks_sb() -- Free given blocks and update quota and i_blocks
  * @inode:		inode
  * @block:		start physcial block to free
  * @count:		number of blocks to free
+ * @is_clear		flag to indicate blocks are to be zeroed
  */
-void ext2_free_blocks (struct inode * inode, unsigned long block,
-		       unsigned long count)
+void ext2_free_blocks(struct inode *inode, unsigned long block,
+		      unsigned long count, unsigned is_clear)
 {
 	struct buffer_head *bitmap_bh = NULL;
 	struct buffer_head * bh2;
@@ -507,6 +538,8 @@ void ext2_free_blocks (struct inode * inode, unsigned long block,
 			    "block = %lu, count = %lu", block, count);
 		goto error_return;
 	}
+
+	ext2_zero_blocks(inode, block, count, is_clear);
 
 	ext2_debug ("freeing block(s) %lu-%lu\n", block, block + count - 1);
 
