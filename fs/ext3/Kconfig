@@ -87,3 +87,8 @@ config EXT3_FS_SECURITY
 
 	  If you are not using a security module that requires using
 	  extended attributes for file security labels, say N.
+
+config EXT3_SECRM
+	bool "EXT3 secure delete blocks support"
+	depends on EXT3_FS
+	default n

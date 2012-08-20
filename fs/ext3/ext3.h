@@ -339,6 +339,7 @@ struct ext3_inode {
 /*
  * Mount flags
  */
+#define EXT3_MOUNT_SECRM		0x80000000 /* Secure deletion */
 #define EXT3_MOUNT_CHECK		0x00001	/* Do mount-time checks */
 /* EXT3_MOUNT_OLDALLOC was there */
 #define EXT3_MOUNT_GRPID		0x00004	/* Create files with directory's group */
@@ -990,8 +991,8 @@ extern ext3_fsblk_t ext3_new_block (handle_t *handle, struct inode *inode,
 			ext3_fsblk_t goal, int *errp);
 extern ext3_fsblk_t ext3_new_blocks (handle_t *handle, struct inode *inode,
 			ext3_fsblk_t goal, unsigned long *count, int *errp);
-extern void ext3_free_blocks (handle_t *handle, struct inode *inode,
-			ext3_fsblk_t block, unsigned long count);
+extern void ext3_free_blocks(handle_t *handle, struct inode *inode, ext3_fsblk_t block,
+			     unsigned long count, unsigned is_clear);
 extern void ext3_free_blocks_sb (handle_t *handle, struct super_block *sb,
 				 ext3_fsblk_t block, unsigned long count,
 				unsigned long *pdquot_freed_blocks);

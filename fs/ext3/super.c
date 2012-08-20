@@ -820,6 +820,9 @@ enum {
 	Opt_usrjquota, Opt_grpjquota, Opt_offusrjquota, Opt_offgrpjquota,
 	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_jqfmt_vfsv1, Opt_quota,
 	Opt_noquota, Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err,
+#ifdef CONFIG_EXT3_SECRM
+	Opt_secrm, Opt_secrmu, Opt_nosecrm,
+#endif
 	Opt_resize, Opt_usrquota, Opt_grpquota
 };
 
@@ -877,6 +880,11 @@ static const match_table_t tokens = {
 	{Opt_barrier, "barrier"},
 	{Opt_nobarrier, "nobarrier"},
 	{Opt_resize, "resize"},
+#ifdef CONFIG_EXT3_SECRM
+	{Opt_secrmu, "secrm=%u"},
+	{Opt_secrm, "secrm"},
+	{Opt_nosecrm, "nosecrm"},
+#endif
 	{Opt_err, NULL},
 };
 
@@ -1227,6 +1235,21 @@ set_qf_format:
 				"supported.");
 			break;
 		case Opt_noquota:
+			break;
+#endif
+#ifdef CONFIG_EXT3_SECRM
+		case Opt_secrm:
+			set_opt(sbi->s_mount_opt, SECRM);
+			break;
+		case Opt_secrmu:
+			if (match_int(&args[0], &option))
+				return 0;
+			else if (option) {
+				set_opt(sbi->s_mount_opt, SECRM);
+				break;
+			}
+		case Opt_nosecrm:
+			clear_opt(sbi->s_mount_opt, SECRM);
 			break;
 #endif
 		case Opt_abort:
