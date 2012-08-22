@@ -771,26 +771,7 @@ static int ext4_ind_hole_lookup(struct inode *inode, ext4_lblk_t block)
 int ext4_secure_delete_pblks(struct inode *inode, ext4_fsblk_t block,
 			     unsigned long count)
 {
-	struct super_block *sb = inode->i_sb;
-	struct request_queue *q = bdev_get_queue(sb->s_bdev);
-
-	/*
-	 * Check to see if the device supports secure discard,
-	 * And also that read after discard returns zeros
-	 */
-	if (blk_queue_secdiscard(q) && q->limits.discard_zeroes_data &&
-	    !sb_issue_discard(sb, block, count, GFP_NOFS, BLKDEV_DISCARD_SECURE)) {
-		struct fstrim_range range = {
-			.start = block,
-			.len = count,
-			.minlen = 1
-		};
-
-		if (!ext4_trim_fs(sb, &range))
-			return 0;
-	}
-
-	return sb_issue_zeroout(sb, block, count, GFP_NOFS);
+	return blkdev_zero_blocks(inode->i_sb, ext4_trim_fs, block, count);
 }
 
 /*
