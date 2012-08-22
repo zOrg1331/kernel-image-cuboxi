@@ -1710,3 +1710,29 @@ int __invalidate_device(struct block_device *bdev, bool kill_dirty)
 	return res;
 }
 EXPORT_SYMBOL(__invalidate_device);
+
+#ifdef CONFIG_FS_SECRM
+int blkdev_zero_blocks(struct super_block *sb,
+		       int (*trim_fs_func)(struct super_block *sb, struct fstrim_range *range),
+		       sector_t block, sector_t count)
+{
+	if (trim_fs_func) {
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
+
+		/*
+		 * Check to see if the device supports secure discard,
+		 * And also that read after discard returns zeros
+		 */
+		if (blk_queue_secdiscard(q) && q->limits.discard_zeroes_data &&
+		    !sb_issue_discard(sb, block, count, GFP_NOFS, BLKDEV_DISCARD_SECURE)) {
+			struct fstrim_range range = {.start = block, .len = count, .minlen = 1};
+
+			if (!trim_fs_func(sb, &range))
+				return 0;
+		}
+	}
+
+	return sb_issue_zeroout(sb, block, count, GFP_NOFS);
+}
+EXPORT_SYMBOL(blkdev_zero_blocks);
+#endif

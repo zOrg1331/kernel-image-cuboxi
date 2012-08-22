@@ -20,6 +20,10 @@ config FS_XIP
 	depends on EXT2_FS_XIP
 	default y
 
+config FS_SECRM
+	bool
+	default n
+
 source "fs/jbd/Kconfig"
 source "fs/jbd2/Kconfig"
 

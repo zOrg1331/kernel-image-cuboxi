@@ -2061,6 +2061,13 @@ extern struct super_block *freeze_bdev(struct block_device *);
 extern void emergency_thaw_all(void);
 extern int thaw_bdev(struct block_device *bdev, struct super_block *sb);
 extern int fsync_bdev(struct block_device *);
+#ifdef CONFIG_FS_SECRM
+extern int blkdev_zero_blocks(struct super_block *sb,
+			      int (*trim_fs_func)(struct super_block *sb, struct fstrim_range *range),
+			      sector_t block, sector_t count);
+#else
+#define blkdev_zero_blocks(sb, block, count) 0
+#endif
 #else
 static inline void bd_forget(struct inode *inode) {}
 static inline int sync_blockdev(struct block_device *bdev) { return 0; }
