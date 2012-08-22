@@ -478,57 +478,11 @@ void ext2_discard_reservation(struct inode *inode)
 	}
 }
 
-#ifdef CONFIG_EXT2_SECRM
-static void ext2_zero_blocks(struct inode *inode, unsigned long block,
-			     unsigned long count, unsigned is_clear)
+static int __ext2_free_blocks_check(struct inode *inode, unsigned long block, unsigned long count)
 {
-	if (is_clear) {
-		struct super_block *sb = inode->i_sb;
-
-		if (test_opt(sb, SECRM) || (EXT2_I(inode)->i_flags & EXT2_SECRM_FL)) {
-			unsigned long stop_block;
-
-			for (stop_block = block + count; block < stop_block; block++) {
-				struct buffer_head *bh = sb_getblk(sb, block);
-
-				if (bh) {
-					lock_buffer(bh);
-					memset(bh->b_data, 0, bh->b_size);
-					set_buffer_uptodate(bh);
-					mark_buffer_dirty(bh);
-					unlock_buffer(bh);
-					sync_dirty_buffer(bh);
-					brelse(bh);
-				}
-			}
-		}
-	}
-}
-#else
-#define ext2_zero_blocks(inode, block, count, is_clear)
-#endif
-
-/**
- * ext2_free_blocks_sb() -- Free given blocks and update quota and i_blocks
- * @inode:		inode
- * @block:		start physcial block to free
- * @count:		number of blocks to free
- * @is_clear		flag to indicate blocks are to be zeroed
- */
-void ext2_free_blocks(struct inode *inode, unsigned long block,
-		      unsigned long count, unsigned is_clear)
-{
-	struct buffer_head *bitmap_bh = NULL;
-	struct buffer_head * bh2;
-	unsigned long block_group;
-	unsigned long bit;
-	unsigned long i;
-	unsigned long overflow;
-	struct super_block * sb = inode->i_sb;
-	struct ext2_sb_info * sbi = EXT2_SB(sb);
-	struct ext2_group_desc * desc;
-	struct ext2_super_block * es = sbi->s_es;
-	unsigned freed = 0, group_freed;
+	struct super_block *sb = inode->i_sb;
+	struct ext2_sb_info *sbi = EXT2_SB(sb);
+	struct ext2_super_block *es = sbi->s_es;
 
 	if (block < le32_to_cpu(es->s_first_data_block) ||
 	    block + count < block ||
@@ -536,76 +490,122 @@ void ext2_free_blocks(struct inode *inode, unsigned long block,
 		ext2_error (sb, "ext2_free_blocks",
 			    "Freeing blocks not in datazone - "
 			    "block = %lu, count = %lu", block, count);
-		goto error_return;
+		return 1;
 	}
+	return 0;
+}
 
-	ext2_zero_blocks(inode, block, count, is_clear);
+static void __ext2_free_blocks(struct inode *inode, unsigned long block, unsigned long count)
+{
+	struct buffer_head *bitmap_bh;
+	struct super_block *sb = inode->i_sb;
+	struct ext2_sb_info *sbi = EXT2_SB(sb);
+	struct ext2_super_block *es = sbi->s_es;
+	unsigned freed;
 
 	ext2_debug ("freeing block(s) %lu-%lu\n", block, block + count - 1);
 
-do_more:
-	overflow = 0;
-	block_group = (block - le32_to_cpu(es->s_first_data_block)) /
-		      EXT2_BLOCKS_PER_GROUP(sb);
-	bit = (block - le32_to_cpu(es->s_first_data_block)) %
-		      EXT2_BLOCKS_PER_GROUP(sb);
-	/*
-	 * Check to see if we are freeing blocks across a group
-	 * boundary.
-	 */
-	if (bit + count > EXT2_BLOCKS_PER_GROUP(sb)) {
-		overflow = bit + count - EXT2_BLOCKS_PER_GROUP(sb);
-		count -= overflow;
-	}
-	brelse(bitmap_bh);
-	bitmap_bh = read_block_bitmap(sb, block_group);
-	if (!bitmap_bh)
-		goto error_return;
+	for (freed = 0, bitmap_bh = NULL; count; block += count) {
+		struct buffer_head *bh2;
+		struct ext2_group_desc *desc;
+		unsigned group_freed;
+		unsigned long overflow = 0;
+		unsigned long i = block - le32_to_cpu(es->s_first_data_block);
+		unsigned long block_group = i / EXT2_BLOCKS_PER_GROUP(sb);
+		unsigned long bit = i % EXT2_BLOCKS_PER_GROUP(sb);
 
-	desc = ext2_get_group_desc (sb, block_group, &bh2);
-	if (!desc)
-		goto error_return;
-
-	if (in_range (le32_to_cpu(desc->bg_block_bitmap), block, count) ||
-	    in_range (le32_to_cpu(desc->bg_inode_bitmap), block, count) ||
-	    in_range (block, le32_to_cpu(desc->bg_inode_table),
-		      sbi->s_itb_per_group) ||
-	    in_range (block + count - 1, le32_to_cpu(desc->bg_inode_table),
-		      sbi->s_itb_per_group)) {
-		ext2_error (sb, "ext2_free_blocks",
-			    "Freeing blocks in system zones - "
-			    "Block = %lu, count = %lu",
-			    block, count);
-		goto error_return;
-	}
-
-	for (i = 0, group_freed = 0; i < count; i++) {
-		if (!ext2_clear_bit_atomic(sb_bgl_lock(sbi, block_group),
-						bit + i, bitmap_bh->b_data)) {
-			ext2_error(sb, __func__,
-				"bit already cleared for block %lu", block + i);
-		} else {
-			group_freed++;
+		/*
+		 * Check to see if we are freeing blocks across a group
+		 * boundary.
+		 */
+		i = bit + count;
+		if (i > EXT2_BLOCKS_PER_GROUP(sb)) {
+			overflow = i - EXT2_BLOCKS_PER_GROUP(sb);
+			count -= overflow;
 		}
-	}
+		brelse(bitmap_bh);
+		bitmap_bh = read_block_bitmap(sb, block_group);
+		if (!bitmap_bh)
+			break;
 
-	mark_buffer_dirty(bitmap_bh);
-	if (sb->s_flags & MS_SYNCHRONOUS)
-		sync_dirty_buffer(bitmap_bh);
+		desc = ext2_get_group_desc (sb, block_group, &bh2);
+		if (!desc)
+			break;
 
-	group_adjust_blocks(sb, block_group, desc, bh2, group_freed);
-	freed += group_freed;
+		if (in_range(le32_to_cpu(desc->bg_block_bitmap), block, count) ||
+		    in_range(le32_to_cpu(desc->bg_inode_bitmap), block, count) ||
+		    in_range(block, le32_to_cpu(desc->bg_inode_table), sbi->s_itb_per_group) ||
+		    in_range(i - 1, le32_to_cpu(desc->bg_inode_table), sbi->s_itb_per_group)) {
+			ext2_error (sb, "ext2_free_blocks",
+				    "Freeing blocks in system zones - "
+				    "Block = %lu, count = %lu",
+				    block, count);
+			break;
+		}
 
-	if (overflow) {
-		block += count;
+		for (i = 0, group_freed = 0; i < count; i++) {
+			if (!ext2_clear_bit_atomic(sb_bgl_lock(sbi, block_group),
+							bit + i, bitmap_bh->b_data))
+				ext2_error(sb, __func__,
+					"bit already cleared for block %lu", block + i);
+			else
+				group_freed++;
+		}
+
+		mark_buffer_dirty(bitmap_bh);
+		if (sb->s_flags & MS_SYNCHRONOUS)
+			sync_dirty_buffer(bitmap_bh);
+
+		group_adjust_blocks(sb, block_group, desc, bh2, group_freed);
+		freed += group_freed;
+
 		count = overflow;
-		goto do_more;
 	}
-error_return:
 	brelse(bitmap_bh);
 	release_blocks(sb, freed);
 	dquot_free_block_nodirty(inode, freed);
 }
+
+#ifdef CONFIG_EXT2_SECRM
+static void ext2_zero_blocks(struct inode *inode, unsigned long block,
+			     unsigned long count)
+{
+	struct super_block * sb = inode->i_sb;
+
+	if (test_opt(sb, SECRM) || (EXT2_I(inode)->i_flags & EXT2_SECRM_FL))
+		blkdev_zero_blocks(sb, NULL, block, count);
+}
+
+/**
+ * ext2_free_data_blocks() -- Free given blocks and update quota and i_blocks
+ * @inode:		inode
+ * @block:		start physcial block to free
+ * @count:		number of blocks to free
+ */
+void ext2_free_data_blocks(struct inode *inode, unsigned long block,
+			   unsigned long count)
+{
+	if (!__ext2_free_blocks_check(inode, block, count)) {
+		ext2_zero_blocks(inode, block, count);
+		__ext2_free_blocks(inode, block, count);
+	}
+}
+#endif
+
+/**
+ * ext2_free_blocks() -- Free given blocks and update quota and i_blocks
+ * @inode:		inode
+ * @block:		start physcial block to free
+ * @count:		number of blocks to free
+ * @is_clear		flag to indicate blocks are to be zeroed
+ */
+void ext2_free_blocks(struct inode *inode, unsigned long block,
+		      unsigned long count)
+{
+	if (!__ext2_free_blocks_check(inode, block, count))
+		__ext2_free_blocks(inode, block, count);
+}
+
 
 /**
  * bitmap_search_next_usable_block()

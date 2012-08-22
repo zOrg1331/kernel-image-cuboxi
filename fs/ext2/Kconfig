@@ -57,4 +57,5 @@ config EXT2_FS_XIP
 config EXT2_SECRM
 	bool "EXT2 secure delete blocks support"
 	depends on EXT2_FS
+	select FS_SECRM
 	default n

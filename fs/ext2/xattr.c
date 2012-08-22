@@ -664,7 +664,7 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 
 			new_bh = sb_getblk(sb, block);
 			if (!new_bh) {
-				ext2_free_blocks(inode, block, 1, 0);
+				ext2_free_blocks(inode, block, 1);
 				mark_inode_dirty(inode);
 				error = -EIO;
 				goto cleanup;
@@ -726,7 +726,7 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			 * need to duplicate the buffer before. */
 			get_bh(old_bh);
 			bforget(old_bh);
-			ext2_free_blocks(inode, block, 1, 1);
+			ext2_free_data_blocks(inode, block, 1);
 		} else {
 			/* Decrement the refcount only. */
 			le32_add_cpu(&HDR(old_bh)->h_refcount, -1);
@@ -785,7 +785,7 @@ ext2_xattr_delete_inode(struct inode *inode)
 		unlock_buffer(bh);
 		get_bh(bh);
 		bforget(bh);
-		ext2_free_blocks(inode, EXT2_I(inode)->i_file_acl, 1, 1);
+		ext2_free_data_blocks(inode, EXT2_I(inode)->i_file_acl, 1);
 	} else {
 		le32_add_cpu(&HDR(bh)->h_refcount, -1);
 		if (ce)
