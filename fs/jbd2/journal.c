@@ -268,9 +268,9 @@ static void journal_kill_thread(journal_t *journal)
  * Returns 0 on sucess or negative on failure
  */
 int jbd2_record_pair(journal_t *journal,
-		struct buffer_head *vfs_bh,
-		struct buffer_head *jbd2_bh){
-
+		     struct buffer_head *vfs_bh,
+		     struct buffer_head *jbd2_bh)
+{
 	unsigned long long vfs_lblk, vfs_pblk;
 	struct list_head *cur;
 	struct inode *vfs_inode;
