@@ -670,34 +670,42 @@ error_return:
 	return;
 }
 
-#ifdef CONFIG_EXT3_SECRM
-static void ext3_zero_blocks(struct inode *inode, unsigned long block,
-			     unsigned long count, unsigned is_clear)
+static void __ext3_free_blocks(handle_t *handle, struct inode *inode,
+			       ext3_fsblk_t block, unsigned long count)
 {
-	if (is_clear) {
-		struct super_block *sb = inode->i_sb;
+	struct super_block *sb = inode->i_sb;
+	unsigned long dquot_freed_blocks;
 
-		if (test_opt(sb, SECRM) || (EXT3_I(inode)->i_flags & EXT3_SECRM_FL)) {
-			unsigned long stop_block;
-
-			for (stop_block = block + count; block < stop_block; block++) {
-				struct buffer_head *bh = sb_getblk(sb, block);
-
-				if (bh) {
-					lock_buffer(bh);
-					memset(bh->b_data, 0, bh->b_size);
-					set_buffer_uptodate(bh);
-					mark_buffer_dirty(bh);
-					unlock_buffer(bh);
-					sync_dirty_buffer(bh);
-					brelse(bh);
-				}
-			}
-		}
-	}
+	ext3_free_blocks_sb(handle, sb, block, count, &dquot_freed_blocks);
+	if (dquot_freed_blocks)
+		dquot_free_block(inode, dquot_freed_blocks);
 }
-#else
-#define ext3_zero_blocks(inode, block, count, is_clear)
+
+#ifdef CONFIG_EXT3_SECRM
+static void ext3_zero_blocks(struct inode *inode, unsigned long block, unsigned long count)
+{
+	struct super_block *sb = inode->i_sb;
+
+	if (test_opt(sb, SECRM) || (EXT3_I(inode)->i_flags & EXT3_SECRM_FL))
+		blkdev_zero_blocks(sb, ext3_trim_fs, block, count);
+}
+
+/**
+ * ext3_free_data_blocks() -- Free and clear given blocks and update quota
+ * @handle:		handle for this transaction
+ * @inode:		inode
+ * @block:		start physical block to free
+ * @count:		number of blocks to count
+ */
+void ext3_free_data_blocks(handle_t *handle, struct inode *inode,
+		           ext3_fsblk_t block, unsigned long count)
+{
+	trace_ext3_free_blocks(inode, block, count);
+
+	ext3_zero_blocks(inode, block, count);
+
+	__ext3_free_blocks(handle, inode, block, count);
+}
 #endif
 
 /**
@@ -706,22 +714,12 @@ static void ext3_zero_blocks(struct inode *inode, unsigned long block,
  * @inode:		inode
  * @block:		start physical block to free
  * @count:		number of blocks to count
- * @is_clear		flag to indicate blocks are to be zeroed
  */
 void ext3_free_blocks(handle_t *handle, struct inode *inode,
-		      ext3_fsblk_t block, unsigned long count, unsigned is_clear)
+		      ext3_fsblk_t block, unsigned long count)
 {
-	struct super_block *sb = inode->i_sb;
-	unsigned long dquot_freed_blocks;
-
 	trace_ext3_free_blocks(inode, block, count);
-
-	ext3_zero_blocks(inode, block, count, is_clear);
-
-	ext3_free_blocks_sb(handle, sb, block, count, &dquot_freed_blocks);
-	if (dquot_freed_blocks)
-		dquot_free_block(inode, dquot_freed_blocks);
-	return;
+	__ext3_free_blocks(handle, inode, block, count);
 }
 
 /**

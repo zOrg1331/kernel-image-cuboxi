@@ -91,4 +91,5 @@ config EXT3_FS_SECURITY
 config EXT3_SECRM
 	bool "EXT3 secure delete blocks support"
 	depends on EXT3_FS
+	select FS_SECRM
 	default n

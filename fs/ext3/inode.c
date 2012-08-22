@@ -617,7 +617,7 @@ static int ext3_alloc_blocks(handle_t *handle, struct inode *inode,
 	return ret;
 failed_out:
 	for (i = 0; i <index; i++)
-		ext3_free_blocks(handle, inode, new_blocks[i], 1, 0);
+		ext3_free_blocks(handle, inode, new_blocks[i], 1);
 	return ret;
 }
 
@@ -718,9 +718,9 @@ failed:
 		ext3_journal_forget(handle, branch[i].bh);
 	}
 	for (i = 0; i <indirect_blks; i++)
-		ext3_free_blocks(handle, inode, new_blocks[i], 1, 0);
+		ext3_free_blocks(handle, inode, new_blocks[i], 1);
 
-	ext3_free_blocks(handle, inode, new_blocks[i], num, 0);
+	ext3_free_blocks(handle, inode, new_blocks[i], num);
 
 	return err;
 }
@@ -822,9 +822,9 @@ err_out:
 	for (i = 1; i <= num; i++) {
 		BUFFER_TRACE(where[i].bh, "call journal_forget");
 		ext3_journal_forget(handle, where[i].bh);
-		ext3_free_blocks(handle, inode, le32_to_cpu(where[i-1].key), 1, 0);
+		ext3_free_blocks(handle, inode, le32_to_cpu(where[i-1].key), 1);
 	}
-	ext3_free_blocks(handle, inode, le32_to_cpu(where[num].key), blks, 0);
+	ext3_free_blocks(handle, inode, le32_to_cpu(where[num].key), blks);
 
 	return err;
 }
@@ -2270,7 +2270,7 @@ static void ext3_clear_blocks(handle_t *handle, struct inode *inode,
 		}
 	}
 
-	ext3_free_blocks(handle, inode, block_to_free, count, 1);
+	ext3_free_data_blocks(handle, inode, block_to_free, count);
 }
 
 /**
@@ -2461,7 +2461,7 @@ static void ext3_free_branches(handle_t *handle, struct inode *inode,
 			 */
 			ext3_forget(handle, 1, inode, bh, bh->b_blocknr);
 
-			ext3_free_blocks(handle, inode, nr, 1, 0);
+			ext3_free_blocks(handle, inode, nr, 1);
 
 			if (parent_bh) {
 				/*
@@ -2496,6 +2496,112 @@ int ext3_can_truncate(struct inode *inode)
 		return !ext3_inode_is_fast_symlink(inode);
 	return 0;
 }
+
+#if defined(CONFIG_EXT3_SECRM) && defined(CONFIG_JBD_SECRM)
+extern void ext3_zero_blocks(struct inode *inode, unsigned long block,
+			     unsigned long count);
+
+#define EXT_MAX_BLOCKS	0xffffffff
+
+/*
+ * ext3_secure_delete_jblks()
+ *
+ * Secure deletes the journal blocks that contain
+ * the specified logical blocks
+ *
+ * @inode: The files inode
+ * @first_block: Starting logical block
+ * @count: The number of blocks to secure delete
+ *         from the journal
+ *
+ * Returns 0 on sucess or negative on error
+ */
+static int ext3_secure_delete_jblks(struct inode *inode, u32 first_block, unsigned long count)
+{
+	unsigned long long jbd_pblk_start, jbd_pblk_count;
+	struct list_head *tmp, *cur;
+	journal_t *journal;
+	struct super_block *sb;
+	u32 last_block;
+	int err = ext3_force_commit((inode)->i_sb);
+
+	/*
+	 * Force the journal to finnish up any pending transactions
+	 * before we start secure deleteing journal blocks
+	 */
+	if (err)
+		return err;
+
+	journal = EXT3_JOURNAL(inode);
+	sb = journal->j_inode->i_sb;
+	/* Do not allow last_block to wrap */
+	last_block = first_block + count;
+	if (last_block < first_block)
+		last_block = EXT_MAX_BLOCKS;
+
+	spin_lock(&journal->j_pair_lock);
+
+	jbd_pblk_start = 0;
+	jbd_pblk_count = 0;
+	/* Loop over the journals blocks looking for our logical blocks */
+	list_for_each_safe(cur, tmp, &journal->blk_pairs) {
+		struct jbd_blk_pair *b_pair = list_entry(cur, struct jbd_blk_pair, list);
+
+		if (b_pair->vfs_inode == inode &&
+		    b_pair->vfs_lblk >= first_block &&
+		    b_pair->vfs_lblk < last_block) {
+			/*
+			 * It is likely that the journal blocks will be
+			 * consecutive, so lets try to secure delete them
+			 * in ranges
+			 */
+			if (jbd_pblk_count == 0) {
+				/*
+				 * If there are no blocks in our range,
+				 * then this one will be the first
+				 */
+				goto restart_range;
+			} else if (b_pair->jbd_pblk == jbd_pblk_start + jbd_pblk_count) {
+				/*
+				 * If this journal block is physically
+				 * consecutive, then just increase the range
+				 */
+				jbd_pblk_count++;
+			} else if (b_pair->jbd_pblk == jbd_pblk_start - 1 && jbd_pblk_start > 0) {
+				/*
+				 * If this journal block is physically
+				 * consecutive (from the start of the
+				 * range), just increase the range from the
+				 * other end.
+				 */
+				jbd_pblk_count++;
+				jbd_pblk_start--;
+			} else {
+				/*
+				 * If the block was not consecutive, secure
+				 * delete the range, and restart the current
+				 * range
+				 */
+
+				err = blkdev_zero_blocks(sb, ext3_trim_fs, jbd_pblk_start, jbd_pblk_count);
+				if (err)
+					goto out;
+restart_range:
+				jbd_pblk_start = b_pair->jbd_pblk;
+				jbd_pblk_count = 1;
+			}
+		}
+	}
+
+	/* Secure delete any blocks still in our range */
+	if (jbd_pblk_count > 0)
+		err = blkdev_zero_blocks(sb, ext3_trim_fs, jbd_pblk_start, jbd_pblk_count);
+
+out:
+	spin_unlock(&journal->j_pair_lock);
+	return err;
+}
+#endif
 
 /*
  * ext3_truncate()
@@ -2667,6 +2773,14 @@ out_stop:
 		ext3_orphan_del(handle, inode);
 
 	ext3_journal_stop(handle);
+
+#if defined(CONFIG_EXT3_SECRM) && defined(CONFIG_JBD_SECRM)
+	if (test_opt(inode->i_sb, SECRM) || (EXT3_I(inode)->i_flags & EXT3_SECRM_FL))
+		ext3_secure_delete_jblks(inode,
+					 inode->i_size >> EXT3_BLOCK_SIZE_BITS(inode->i_sb),
+					 EXT_MAX_BLOCKS);
+#endif
+
 	trace_ext3_truncate_exit(inode);
 	return;
 out_notrans:
