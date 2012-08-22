@@ -607,6 +607,13 @@ void journal_commit_transaction(journal_t *journal)
 		JBUFFER_TRACE(jh, "ph3: write metadata");
 		flags = journal_write_metadata_buffer(commit_transaction,
 						      jh, &new_jh, blocknr);
+#ifdef CONFIG_JBD_SECRM
+		err = jbd_record_pair(journal, jh2bh(jh), jh2bh(new_jh));
+		if (err) {
+			journal_abort(journal, flags);
+			continue;
+		}
+#endif
 		set_buffer_jwrite(jh2bh(new_jh));
 		wbuf[bufs++] = jh2bh(new_jh);
 

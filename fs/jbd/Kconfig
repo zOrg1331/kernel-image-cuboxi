@@ -13,6 +13,11 @@ config JBD
 	  called jbd.  If you are compiling ext3 into the kernel, you
 	  cannot compile this code as a module.
 
+config JBD_SECRM
+	bool "JBD secure delete journal blocks support"
+	depends on JBD
+	default n
+
 config JBD_DEBUG
 	bool "JBD (ext3) debugging support"
 	depends on JBD && DEBUG_FS

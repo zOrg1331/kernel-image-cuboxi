@@ -244,6 +244,99 @@ static void journal_kill_thread(journal_t *journal)
 	spin_unlock(&journal->j_state_lock);
 }
 
+#ifdef CONFIG_JBD_SECRM
+/*
+ * jbd_record_pair()
+ * Updates the journals list of block pairs to contain an new pair of journal
+ * to vfs blocks.  This list is an in memory record of the journals blocks to
+ * help facilitate finding out what vfs blocks the journal blocks contain.
+ * Secure delete uses this list to clear out stale journal blocks that may
+ * still contain file data that needs to be secure deleted. This list is updated
+ * when a vfs data block is written to the journal or when a descriptor block
+ * is written to the journal.
+ *
+ * journal: The journal to update
+ * vfs_bh:  The vfs buffer_head that the jbd_bh is journaling.  This
+ *          may be NULL if jbd_bh does not represent a vfs block.
+ * jbd_bh:  The jbd buffer_head that has just been allocated for some
+ *          use in the journal. jbd_bh may not be NULL.
+ *
+ * Returns 0 on sucess or negative on failure
+ */
+int jbd_record_pair(journal_t *journal,
+		struct buffer_head *vfs_bh,
+		struct buffer_head *jbd_bh){
+
+	unsigned long long vfs_lblk, vfs_pblk;
+	struct list_head *cur;
+	struct inode *vfs_inode;
+	struct jbd_blk_pair *b_pair = NULL;
+	int err = 0;
+
+	/* If we have the vfs bh, figure out the logical block offset */
+	if (vfs_bh) {
+		struct buffer_head *bh, *head;
+		struct page *page = vfs_bh->b_page;
+		pgoff_t index = page->index;
+
+		vfs_inode = page->mapping->host;
+		vfs_pblk = vfs_bh->b_blocknr;
+
+		/* Find the block offset of the page */
+		vfs_lblk = index << (PAGE_CACHE_SHIFT - vfs_inode->i_sb->s_blocksize_bits);
+
+		/* Then add in the block offset of the bh in the page */
+		for (head = bh = page_buffers(page); bh != vfs_bh; vfs_lblk++) {
+			bh = bh->b_this_page;
+			if (bh == head)
+				break;
+		}
+	} else {
+		vfs_lblk = 0;
+		vfs_pblk = 0;
+		vfs_inode = NULL;
+	}
+
+	spin_lock(&journal->j_pair_lock);
+	/*
+	 * Add the pair to the list.  If there is already a pair
+	 * for this journal block, just update it with the new vfs
+	 * block info
+	 */
+	list_for_each(cur, &journal->blk_pairs) {
+		b_pair = list_entry(cur, struct jbd_blk_pair, list);
+		if (b_pair->jbd_pblk == jbd_bh->b_blocknr) {
+			b_pair->vfs_inode = vfs_inode;
+			b_pair->vfs_pblk = vfs_pblk;
+			b_pair->vfs_lblk = vfs_lblk;
+			b_pair->jbd_pblk = jbd_bh->b_blocknr;
+			break;
+		} else
+			b_pair = NULL;
+	}
+
+	/*
+	 * If the journal block was not found in the list,
+	 * add a new pair to the list
+	 */
+	if (!b_pair) {
+		b_pair = kmalloc(sizeof(struct jbd_blk_pair), GFP_NOFS);
+		if (!b_pair)
+			err = -ENOMEM;
+		else {
+			b_pair->jbd_pblk = jbd_bh->b_blocknr;
+			b_pair->vfs_inode = vfs_inode;
+			b_pair->vfs_pblk = vfs_pblk;
+			b_pair->vfs_lblk = vfs_lblk;
+			list_add(&b_pair->list, &journal->blk_pairs);
+		}
+	}
+
+	spin_unlock(&journal->j_pair_lock);
+	return err;
+}
+#endif
+
 /*
  * journal_write_metadata_buffer: write a metadata buffer to the journal.
  *
@@ -694,7 +787,14 @@ struct journal_head *journal_get_descriptor_buffer(journal_t *journal)
 	lock_buffer(bh);
 	memset(bh->b_data, 0, journal->j_blocksize);
 	set_buffer_uptodate(bh);
+#ifdef CONFIG_JBD_SECRM
+	err = jbd_record_pair(journal, NULL, bh);
+#endif
 	unlock_buffer(bh);
+#ifdef CONFIG_JBD_SECRM
+	if (err)
+		return NULL;
+#endif
 	BUFFER_TRACE(bh, "return this buffer");
 	return journal_add_journal_head(bh);
 }
@@ -723,9 +823,15 @@ static journal_t * journal_init_common (void)
 	init_waitqueue_head(&journal->j_wait_checkpoint);
 	init_waitqueue_head(&journal->j_wait_commit);
 	init_waitqueue_head(&journal->j_wait_updates);
+#ifdef CONFIG_JBD_SECRM
+	INIT_LIST_HEAD(&journal->blk_pairs);
+#endif
 	mutex_init(&journal->j_checkpoint_mutex);
 	spin_lock_init(&journal->j_revoke_lock);
 	spin_lock_init(&journal->j_list_lock);
+#ifdef CONFIG_JB2_SECRM
+	spin_lock_init(&journal->j_pair_lock);
+#endif
 	spin_lock_init(&journal->j_state_lock);
 
 	journal->j_commit_interval = (HZ * JBD_DEFAULT_MAX_COMMIT_AGE);
@@ -1239,6 +1345,9 @@ recovery_error:
  */
 int journal_destroy(journal_t *journal)
 {
+#ifdef CONFIG_JBD_SECRM
+	struct list_head *cur;
+#endif
 	int err = 0;
 
 	
@@ -1281,6 +1390,16 @@ int journal_destroy(journal_t *journal)
 		iput(journal->j_inode);
 	if (journal->j_revoke)
 		journal_destroy_revoke(journal);
+
+#ifdef CONFIG_JBD_SECRM
+	spin_lock(&journal->j_pair_lock);
+	list_for_each_prev(cur, &journal->blk_pairs) {
+		struct jbd_blk_pair *b_pair = list_entry(cur, struct jbd_blk_pair, list);
+		kfree(b_pair);
+	}
+	spin_unlock(&journal->j_pair_lock);
+#endif
+
 	kfree(journal->j_wbuf);
 	kfree(journal);
 
