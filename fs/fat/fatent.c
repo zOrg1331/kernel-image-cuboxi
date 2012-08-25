@@ -573,12 +573,14 @@ int fat_free_clusters(struct inode *inode, int cluster)
 			 * into one request
 			 */
 			if (cluster != fatent.entry + 1) {
-				int nr_clus = fatent.entry - first_cl + 1;
+				sector_t block = fat_clus_to_blknr(sbi, first_cl);
+				sector_t count = (fatent.entry - first_cl + 1) * sbi->sec_per_clus;
 
-				sb_issue_discard(sb,
-					fat_clus_to_blknr(sbi, first_cl),
-					nr_clus * sbi->sec_per_clus,
-					GFP_NOFS, 0);
+				sb_issue_discard(sb, block, count, GFP_NOFS, 0);
+#ifdef CONFIG_FAT_SECRM
+				if (sbi->options.secrm)
+					blkdev_zero_blocks(sb, NULL, block, count);
+#endif
 
 				first_cl = cluster;
 			}

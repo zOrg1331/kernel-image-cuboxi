@@ -899,6 +899,9 @@ enum {
 	Opt_uni_xl_no, Opt_uni_xl_yes, Opt_nonumtail_no, Opt_nonumtail_yes,
 	Opt_obsolete, Opt_flush, Opt_tz_utc, Opt_rodir, Opt_err_cont,
 	Opt_err_panic, Opt_err_ro, Opt_discard, Opt_err,
+#ifdef CONFIG_FAT_SECRM
+	Opt_secrm, Opt_secrm1, Opt_nosecrm, Opt_secrm0,
+#endif
 };
 
 static const match_table_t fat_tokens = {
@@ -938,6 +941,12 @@ static const match_table_t fat_tokens = {
 	{Opt_obsolete, "cvf_format=%20s"},
 	{Opt_obsolete, "cvf_options=%100s"},
 	{Opt_obsolete, "posix"},
+#ifdef CONFIG_FAT_SECRM
+	{Opt_secrm1, "secrm=1"},
+	{Opt_secrm0, "secrm=0"},
+	{Opt_secrm, "secrm"},
+	{Opt_nosecrm, "nosecrm"},
+#endif
 	{Opt_err, NULL},
 };
 static const match_table_t msdos_tokens = {
@@ -1173,6 +1182,16 @@ static int parse_options(struct super_block *sb, char *options, int is_vfat,
 			fat_msg(sb, KERN_INFO, "\"%s\" option is obsolete, "
 			       "not supported now", p);
 			break;
+#ifdef CONFIG_FAT_SECRM
+		case Opt_secrm1:
+		case Opt_secrm:
+			opts->secrm = 1;
+			break;
+		case Opt_secrm0:
+		case Opt_nosecrm:
+			opts->secrm = 0;
+			break;
+#endif
 		/* unknown option */
 		default:
 			if (!silent) {

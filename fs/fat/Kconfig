@@ -98,3 +98,9 @@ config FAT_DEFAULT_IOCHARSET
 
 	  Enable any character sets you need in File Systems/Native Language
 	  Support.
+
+config FAT_SECRM
+	bool "FAT secure delete blocks support"
+	depends on FAT_FS
+	select FS_SECRM
+	default n

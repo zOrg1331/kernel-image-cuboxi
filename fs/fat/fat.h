@@ -46,6 +46,9 @@ struct fat_mount_options {
 		 usefree:1,	  /* Use free_clusters for FAT32 */
 		 tz_utc:1,	  /* Filesystem timestamps are in UTC */
 		 rodir:1,	  /* allow ATTR_RO for directory */
+#ifdef CONFIG_FAT_SECRM
+		 secrm:1,	  /* security delete files */
+#endif
 		 discard:1;	  /* Issue discard requests on deletions */
 };
 

@@ -960,6 +960,10 @@ static int __fat_remove_entries(struct inode *dir, loff_t pos, int nr_slots)
 		orig_slots = nr_slots;
 		endp = (struct msdos_dir_entry *)(bh->b_data + sb->s_blocksize);
 		while (nr_slots && de < endp) {
+#ifdef CONFIG_FAT_SECRM
+			if (MSDOS_SB(sb)->options.secrm)
+				memset(de, 0, sizeof(*de));
+#endif
 			de->name[0] = DELETED_FLAG;
 			de++;
 			nr_slots--;
@@ -995,6 +999,10 @@ int fat_remove_entries(struct inode *dir, struct fat_slot_info *sinfo)
 	bh = sinfo->bh;
 	sinfo->bh = NULL;
 	while (nr_slots && de >= (struct msdos_dir_entry *)bh->b_data) {
+#ifdef CONFIG_FAT_SECRM
+		if (MSDOS_SB(dir->i_sb)->options.secrm)
+			memset(de, 0, sizeof(*de));
+#endif
 		de->name[0] = DELETED_FLAG;
 		de--;
 		nr_slots--;
