@@ -2,7 +2,7 @@ Name: kernel-image-un-test
 epoch: 0
 Release: alt0.M60P.1
 %define kernel_base_version	3.5
-%define kernel_sublevel	.2
+%define kernel_sublevel	.3
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Aug 27 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.3-alt0.M60P.1
+- 3.5.3
+
 * Thu Aug 16 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.2-alt0.M60P.1
 - 3.5.2
 
