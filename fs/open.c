@@ -1115,12 +1115,12 @@ restart:
 
 	spin_lock(&peer->i_lock);
 	if (atomic_read(&peer->i_writecount) > 0) {
-		spin_unlock(&inode->i_lock);
+		spin_unlock(&peer->i_lock);
 		fput(file);
 		return -ETXTBSY;
 	}
 	if (peer->i_size != inode->i_size) {
-		spin_unlock(&inode->i_lock);
+		spin_unlock(&peer->i_lock);
 		fput(file);
 		return -EINVAL;
 	}

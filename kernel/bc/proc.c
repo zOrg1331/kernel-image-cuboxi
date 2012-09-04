@@ -107,6 +107,9 @@ static int bc_debug_show(struct seq_file *f, void *v)
 
 	seq_printf(f, "dcache_pruned: %lu\n", ub->ub_dentry_pruned);
 
+	seq_printf(f, "oom_score_adj: %s\n", (ub->ub_flags &
+				UB_OOM_MANUAL_SCORE_ADJ) ? "manual" : "auto");
+
 	return 0;
 }
 

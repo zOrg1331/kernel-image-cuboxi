@@ -1642,6 +1642,7 @@ long posix_cpu_nsleep_restart(struct restart_block *restart_block)
 	return error;
 
 }
+EXPORT_SYMBOL_GPL(posix_cpu_nsleep_restart);
 
 
 #define PROCESS_CLOCK	MAKE_PROCESS_CPUCLOCK(0, CPUCLOCK_SCHED)

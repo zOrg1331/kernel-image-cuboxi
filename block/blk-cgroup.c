@@ -468,7 +468,7 @@ static void blkio_stats_alloc_fn(struct work_struct *work)
 				struct blkio_group, stats_alloc_list);
 		list_del_init(&blkg->stats_alloc_list);
 		blkg->stats_cpu = stats;
-	} while (!list_empty(&stats_alloc_list));
+	}
 	spin_unlock_irq(&stats_alloc_lock);
 }
 

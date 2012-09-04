@@ -336,7 +336,7 @@ static struct throtl_grp * throtl_get_tg(struct throtl_data *td)
 
 	/* Make sure @q is still alive */
 	if (unlikely(blk_queue_dead(q))) {
-		kfree(tg);
+		throtl_free_tg(&tg->rcu_head);
 		return NULL;
 	}
 
@@ -353,7 +353,7 @@ static struct throtl_grp * throtl_get_tg(struct throtl_data *td)
 	__tg = throtl_find_tg(td, blkcg);
 
 	if (__tg) {
-		kfree(tg);
+		throtl_free_tg(&tg->rcu_head);
 		rcu_read_unlock();
 		return __tg;
 	}

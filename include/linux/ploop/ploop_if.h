@@ -23,6 +23,9 @@
 
 #define PLOOP_FMT_PREALLOCATED	2
 
+#define PLOOP_FLAG_COOKIE	4
+#define PLOOP_COOKIE_SIZE	64
+
 /* IO types. */
 
 #define PLOOP_IO_AUTO		0

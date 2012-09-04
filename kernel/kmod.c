@@ -567,5 +567,6 @@ struct ctl_table usermodehelper_table[] = {
 void __init usermodehelper_init(void)
 {
 	khelper_wq = create_singlethread_workqueue("khelper");
+	ve0.khelper_wq = khelper_wq;
 	BUG_ON(!khelper_wq);
 }

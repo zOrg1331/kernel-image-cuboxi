@@ -484,6 +484,88 @@ err:
 	return -ENOMEM;
 }
 
+static int init_ve_ksysfs(struct ve_struct *ve)
+{
+#if defined(CONFIG_HOTPLUG)
+	return ksysfs_init_ve(ve, &ve->kernel_kobj);
+#else
+	return 0;
+#endif
+}
+
+static void fini_ve_ksysfs(struct ve_struct *ve)
+{
+#if defined(CONFIG_HOTPLUG)
+	ksysfs_fini_ve(ve, &ve->kernel_kobj);
+#endif
+}
+
+static void fini_ve_sysfs_cpu(struct ve_struct *ve)
+{
+	struct kobject *kobj, *kobjn;
+
+	if (ve->cpu_kset) {
+		list_for_each_entry_safe(kobj, kobjn,
+				&ve->cpu_kset->list, entry)
+			kobject_put(kobj);
+		kset_put(ve->cpu_kset);
+	}
+}
+
+static int init_ve_sysfs_cpu(struct ve_struct *ve)
+{
+	int i, nr_cpus;
+	struct kobject *kobj;
+
+	ve->cpu_kset = kset_create_and_add("cpu", NULL, ve->_system_dir);
+	if (!ve->cpu_kset)
+		goto out;
+
+	nr_cpus = num_possible_cpus();
+	nr_cpus = max(nr_cpus, 2);
+	for (i = 0; i < nr_cpus; i++) {
+		kobj = kobject_create();
+		if (!kobj)
+			goto out;
+		kobj->kset = ve->cpu_kset;
+		if (kobject_add(kobj, NULL, "cpu%d", i)) {
+			kobject_put(kobj);
+			goto out;
+		}
+	}
+
+	return 0;
+out:
+	fini_ve_sysfs_cpu(ve);
+	return -ENOMEM;
+}
+
+static void fini_ve_sysfs_system(struct ve_struct *ve)
+{
+	fini_ve_sysfs_cpu(ve);
+	kobject_put(ve->_system_dir);
+}
+
+static int init_ve_sysfs_system(struct ve_struct *ve)
+{
+	int err;
+
+	err = -ENOMEM;
+	ve->_system_dir = kobject_create_and_add("system",
+						 &ve->devices_kset->kobj);
+	if (!ve->_system_dir)
+		goto out;
+
+	err = init_ve_sysfs_cpu(ve);
+	if (err)
+		goto out;
+
+	return 0;
+out:
+	fini_ve_sysfs_system(ve);
+	return err;
+}
+
 static int init_ve_devtmpfs(struct ve_struct *ve)
 {
 #ifdef CONFIG_DEVTMPFS
@@ -499,22 +581,6 @@ static void fini_ve_devtmpfs(struct ve_struct *ve)
 #ifdef CONFIG_DEVTMPFS
 	unregister_ve_fs_type(ve->devtmpfs_fstype, ve->devtmpfs_mnt);
 	ve->devtmpfs_mnt = NULL;
-#endif
-}
-
-static int init_ve_ksysfs(struct ve_struct *ve)
-{
-#if defined(CONFIG_HOTPLUG)
-	return ksysfs_init_ve(ve, &ve->kernel_kobj);
-#else
-	return 0;
-#endif
-}
-
-static void fini_ve_ksysfs(struct ve_struct *ve)
-{
-#if defined(CONFIG_HOTPLUG)
-	ksysfs_fini_ve(ve, &ve->kernel_kobj);
 #endif
 }
 
@@ -561,6 +627,10 @@ static int init_ve_sysfs(struct ve_struct *ve)
 	if (err != 0)
 		goto err_fs;
 
+	err = init_ve_sysfs_system(ve);
+	if (err != 0)
+		goto err_sys;
+
 	err = init_ve_ksysfs(ve);
 	if (err !=0)
 		goto err_ksys;
@@ -568,6 +638,8 @@ static int init_ve_sysfs(struct ve_struct *ve)
 	return 0;
 
 err_ksys:
+	fini_ve_sysfs_system(ve);
+err_sys:
 	fini_ve_sysfs_fs(ve);
 err_fs:
 	fini_ve_mem_class();
@@ -594,6 +666,7 @@ out:
 static void fini_ve_sysfs(struct ve_struct *ve)
 {
 	fini_ve_ksysfs(ve);
+	fini_ve_sysfs_system(ve);
 	fini_ve_sysfs_fs(ve);
 	fini_ve_mem_class();
 	fini_ve_tty_class();
@@ -754,7 +827,7 @@ static int init_ve_netns(struct ve_struct *ve, struct nsproxy **old)
 
 	put_nsproxy(ve->ve_ns);
 	ve->ve_ns = get_nsproxy(tsk->nsproxy);
-	ve->ve_netns = get_net(ve->ve_ns->net_ns);
+	get_net(ve->ve_ns->net_ns);
 	*old = cur;
 	return 0;
 }
@@ -1495,6 +1568,9 @@ static void env_cleanup(struct ve_struct *ve)
 	fini_ve_proc(ve);
 	fini_ve_sysfs(ve);
 	fini_ve_devtmpfs(ve);
+
+	ve_hook_iterate_fini(VE_CLEANUP_CHAIN, ve);
+
 	put_ve_root(ve);
 
 	(void)set_exec_env(old_ve);

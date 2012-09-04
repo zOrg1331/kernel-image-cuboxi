@@ -385,7 +385,7 @@ int rst_tty_jobcontrol(struct cpt_context *ctx)
 				stty->pgrp = alloc_pid(current->nsproxy->pid_ns,
 							0);
 				if (!stty->pgrp) {
-					eprintk_ctx("cannot allocate stray tty->pgrp");
+					eprintk_ctx("cannot allocate stray tty->pgr\n");
 					cpt_release_buf(ctx);
 					return -EINVAL;
 				}

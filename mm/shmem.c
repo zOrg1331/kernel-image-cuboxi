@@ -1659,6 +1659,82 @@ static int shmem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	return ret | VM_FAULT_LOCKED;
 }
 
+int install_shmem_page(struct vm_area_struct *vma,
+		       unsigned long addr, struct page *page)
+{
+	unsigned long idx = (((addr & PAGE_MASK)
+			- vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
+	struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
+	struct address_space *mapping = inode->i_mapping;
+	struct shmem_inode_info *info = SHMEM_I(inode);
+	struct shmem_sb_info *sbinfo = SHMEM_SB(inode->i_sb);
+	swp_entry_t *entry;
+	gfp_t gfp;
+	int err;
+
+	err = -ENOMEM;
+	gfp = mapping_gfp_mask(mapping);
+	if (ub_check_ram_limits(get_exec_ub(), gfp))
+		goto out;
+
+	err = radix_tree_preload(gfp & ~__GFP_HIGHMEM);
+	if (err)
+		goto out;
+
+	spin_lock(&info->lock);
+	shmem_recalc_inode(inode, 0);
+
+	err = -ENOSPC;
+	if (sbinfo->max_blocks) {
+		if (percpu_counter_compare(&sbinfo->used_blocks,
+					   sbinfo->max_blocks) >= 0 ||
+		    shmem_acct_block(info->flags))
+			goto out_unlock;
+		percpu_counter_inc(&sbinfo->used_blocks);
+		spin_lock(&inode->i_lock);
+		inode->i_blocks += BLOCKS_PER_PAGE;
+		spin_unlock(&inode->i_lock);
+	} else if (shmem_acct_block(info->flags))
+		goto out_unlock;
+
+	SetPageSwapBacked(page);
+
+	entry = shmem_swp_alloc(info, idx, SGP_READ);
+	if (IS_ERR(entry)) {
+		err = PTR_ERR(entry);
+	} else {
+		err = entry->val ? -EEXIST : 0;
+		shmem_swp_unmap(entry);
+	}
+
+	if (!err)
+		err = add_to_page_cache_lru(page, mapping, idx, GFP_NOWAIT);
+
+	if (err) {
+		shmem_unacct_blocks(info->flags, 1);
+		shmem_free_blocks(inode, 1);
+		goto out_unlock;
+	}
+
+	info->flags |= SHMEM_PAGEIN;
+	info->alloced++;
+
+out_unlock:
+	spin_unlock(&info->lock);
+	radix_tree_preload_end();
+out:
+	if (!err) {
+		flush_dcache_page(page);
+		SetPageUptodate(page);
+		ub_tmpfs_respages_inc(info);
+		set_page_dirty(page);
+		unlock_page(page);
+		put_page(page);
+	}
+	return err;
+}
+EXPORT_SYMBOL(install_shmem_page);
+
 #ifdef CONFIG_NUMA
 static int shmem_set_policy(struct vm_area_struct *vma, struct mempolicy *new)
 {
@@ -2703,6 +2779,13 @@ int is_shmem_mapping(struct address_space *map)
 {
 	return (map != NULL && map->a_ops == &shmem_aops);
 }
+
+int is_shmem_vma(struct vm_area_struct *vma)
+{
+	return (vma->vm_file && is_shmem_mapping(
+			vma->vm_file->f_path.dentry->d_inode->i_mapping));
+}
+EXPORT_SYMBOL(is_shmem_vma);
 
 static int shmem_get_sb(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data, struct vfsmount *mnt)

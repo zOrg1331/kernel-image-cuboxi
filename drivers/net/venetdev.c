@@ -503,6 +503,32 @@ static int venet_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb->pkt_type = PACKET_HOST;
 	skb->dev = rcv;
 
+	/*
+	 * If there is not enough space for header we allocate one.
+	 * Remember the traffic can reach VE from outside world and
+	 * as result we have to cleanup mac address of such packet.
+	 * The same applies to traffic which comes from inside of VE
+	 * but if TUN is used and traffic get fragmented we might reach
+	 * the point where is no L2 header at all and hard_header_len
+	 * is simply ingnored (because this parameter is kind of a hint
+	 * for upper net layers and never a guarantee that header will be
+	 * provided). To unify the way how packets are seen after venet
+	 * we always produce L2 header with zero'ified MAC.
+	 */
+	if (unlikely(skb_headroom(skb) < dev->hard_header_len)) {
+		struct sk_buff *skb2;
+
+		skb2 = skb_realloc_headroom(skb, LL_RESERVED_SPACE(dev));
+		if (!skb2) {
+			dev_put(rcv);
+			goto outf;
+		}
+		if (skb->sk)
+			skb_set_owner_w(skb2, skb->sk);
+		kfree_skb(skb);
+		skb = skb2;
+	}
+
 	skb_reset_mac_header(skb);
 	memset(skb->data - dev->hard_header_len, 0, dev->hard_header_len);
 
@@ -959,18 +985,20 @@ err:
 	return err;
 }
 
-static int venet_start(void *data)
+static __net_init int venet_init_net(struct net *net)
 {
 	struct ve_struct *env;
 	int err;
 
-	env = (struct ve_struct *)data;
+	env = get_exec_env();
 	if (env->veip)
 		return -EEXIST;
 
+	env->ve_netns = net;
+
 	err = veip_start(env);
 	if (err != 0)
-		return err;
+		goto err;
 
 	err = venet_dev_start(env);
 	if (err)
@@ -979,32 +1007,52 @@ static int venet_start(void *data)
 
 err_free:
 	veip_stop(env);
+err:
+	env->ve_netns = NULL;
 	return err;
 }
 
-static void venet_stop(void *data)
+static __net_exit void venet_exit_net(struct list_head *net_exit_list)
 {
+	struct net *net;
 	struct ve_struct *env;
 	struct net_device *dev;
+	LIST_HEAD(netdev_kill_list);
 
-	env = (struct ve_struct *)data;
-	venet_ext_clean(env);
-	veip_stop(env);
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		env = net->owner_ve;
 
-	dev = env->_venet_dev;
-	if (dev == NULL)
-		return;
+		venet_ext_clean(env);
+		veip_stop(env);
 
-	unregister_netdev(dev);
-	env->_venet_dev = NULL;
-	free_netdev(dev);
+		dev = env->_venet_dev;
+		if (dev == NULL)
+			continue;
+
+		rtnl_lock();
+		unregister_netdevice_queue(dev, &netdev_kill_list);
+		rtnl_unlock();
+	}
+
+	rtnl_lock();
+	unregister_netdevice_many(&netdev_kill_list);
+	rtnl_unlock();
+
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		env = net->owner_ve;
+
+		dev = env->_venet_dev;
+		if (dev == NULL)
+			continue;
+
+		env->_venet_dev = NULL;
+		free_netdev(dev);
+	}
 }
 
-static struct ve_hook venet_ve_hook = {
-	.init	  = venet_start,
-	.fini	  = venet_stop,
-	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_NET,
+static struct pernet_operations venet_net_ops = {
+	.init = venet_init_net,
+	.exit_batch = venet_exit_net,
 };
 
 __init int venet_init(void)
@@ -1020,7 +1068,7 @@ __init int venet_init(void)
 	for (i = 0; i < VEIP_HASH_SZ; i++)
 		INIT_HLIST_HEAD(ip_entry_hash_table + i);
 
-	err = venet_start(get_ve0());
+	err = register_pernet_device(&venet_net_ops);
 	if (err)
 		return err;
 
@@ -1031,7 +1079,6 @@ __init int venet_init(void)
 		printk(KERN_WARNING "venet: can't make veip proc entry\n");
 #endif
 
-	ve_hook_register(VE_SS_CHAIN, &venet_ve_hook);
 	vzioctl_register(&venetcalls);
 	vzmon_register_veaddr_print_cb(veaddr_seq_print);
 	return 0;
@@ -1041,12 +1088,11 @@ __exit void venet_exit(void)
 {
 	vzmon_unregister_veaddr_print_cb(veaddr_seq_print);
 	vzioctl_unregister(&venetcalls);
-	ve_hook_unregister(&venet_ve_hook);
+	unregister_pernet_device(&venet_net_ops);
 
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("veip", proc_vz_dir);
 #endif
-	venet_stop(get_ve0());
 	veip_cleanup();
 
 	/* Ensure there are no outstanding rcu callbacks */

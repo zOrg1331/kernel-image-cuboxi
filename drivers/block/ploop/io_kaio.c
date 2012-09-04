@@ -57,7 +57,11 @@ static void kaio_complete_io_state(struct ploop_request * preq)
 	struct ploop_device * plo   = preq->plo;
 	unsigned long flags;
 
-	if (preq->error || !(preq->req_rw & BIO_FUA)) {
+	if (preq->error || !(preq->req_rw & BIO_FUA) ||
+	    preq->eng_state == PLOOP_E_INDEX_READ ||
+	    preq->eng_state == PLOOP_E_TRANS_INDEX_READ ||
+	    preq->eng_state == PLOOP_E_DELTA_READ ||
+	    preq->eng_state == PLOOP_E_TRANS_DELTA_READ) {
 		ploop_complete_io_state(preq);
 		return;
 	}
@@ -179,6 +183,10 @@ static int kaio_resubmit(struct ploop_request * preq)
 				    preq->iblock, preq->req_size);
 		}
 		break;
+	case PLOOP_E_DELTA_READ:
+	case PLOOP_E_TRANS_DELTA_READ:
+		preq->eng_state = PLOOP_E_DELTA_COPIED; /* skip bcopy() */
+		return 0;
 	default:
 		printk("Resubmit bad state %lu\n", preq->eng_state);
 		BUG();

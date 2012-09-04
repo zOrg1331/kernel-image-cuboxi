@@ -190,6 +190,8 @@ struct ve_struct {
 #endif
 #endif
 	struct kobject		*_virtual_dir;
+	struct kobject		*_system_dir;
+	struct kset		*cpu_kset;
 	struct kset		*class_kset;
 	struct kset		*devices_kset;
 	struct kobject		*dev_kobj;

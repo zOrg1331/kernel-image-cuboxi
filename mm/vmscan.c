@@ -1529,7 +1529,9 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
 
 		spin_lock(&zone->stat_lock);
 		reclaim_stat->recent_rotated[0] += nr_rotated[LRU_ACTIVE_ANON];
+		reclaim_stat->recent_rotated[0] += nr_rotated[LRU_INACTIVE_ANON];
 		reclaim_stat->recent_rotated[1] += nr_rotated[LRU_ACTIVE_FILE];
+		reclaim_stat->recent_rotated[1] += nr_rotated[LRU_INACTIVE_FILE];
 		spin_unlock(&zone->stat_lock);
 
 		/*

@@ -2288,6 +2288,10 @@ restart:
 			bio_bcopy(preq->aux_bio, b, plo);
 		}
 
+		/* Fall through ... */
+	}
+	case PLOOP_E_DELTA_COPIED:
+	{
 		if (likely(ploop_reuse_free_block(preq))) {
 			struct bio_list sbl;
 			sbl.head = sbl.tail = preq->aux_bio;
@@ -2763,6 +2767,12 @@ static int ploop_add_delta(struct ploop_device * plo, unsigned long arg)
 			   sizeof(struct ploop_ctl_chunk)))
 		return -EFAULT;
 
+	if ((ctl.pctl_flags & PLOOP_FLAG_COOKIE) && !plo->cookie[0] &&
+	    copy_from_user(plo->cookie, (void*)arg + sizeof(struct ploop_ctl) +
+			   sizeof(struct ploop_ctl_chunk),
+			   PLOOP_COOKIE_SIZE - 1))
+		return -EFAULT;
+
 	if (test_bit(PLOOP_S_RUNNING, &plo->state))
 		return -EBUSY;
 	if (plo->maintenance_type != PLOOP_MNTN_OFF)
@@ -3115,6 +3125,8 @@ static int ploop_del_delta(struct ploop_device * plo, unsigned long arg)
 	ploop_quiesce(plo);
 	next = list_entry(delta->list.next, struct ploop_delta, list);
 	list_del(&delta->list);
+	if (list_empty(&plo->map.delta_list))
+		plo->cookie[0] = 0;
 	if (level != 0)
 		next->ops->refresh(next);
 	if (test_bit(PLOOP_S_RUNNING, &plo->state))
@@ -3363,6 +3375,10 @@ static int ploop_issue_flush_fn(request_queue_t *q, struct gendisk *disk,
 }
 #endif
 
+#define FUSE_SUPER_MAGIC 0x65735546
+#define IS_PSTORAGE(sb) (sb->s_magic == FUSE_SUPER_MAGIC && \
+			 !strcmp(sb->s_subtype, "pstorage"))
+
 static int ploop_bd_full(struct backing_dev_info *bdi, long long nr, int root)
 {
 	struct ploop_device *plo      = bdi->congested_data;
@@ -3392,7 +3408,7 @@ static int ploop_bd_full(struct backing_dev_info *bdi, long long nr, int root)
 		sb	  = F_DENTRY(file)->d_inode->i_sb;
 
 		/* bd_full can be unsupported or not needed */
-		if (sb->s_op->statfs == simple_statfs ||
+		if (IS_PSTORAGE(sb) || sb->s_op->statfs == simple_statfs ||
 		    top_delta->flags & PLOOP_FMT_PREALLOCATED) {
 			mutex_unlock(&plo->ctl_mutex);
 			return 0;
@@ -3463,14 +3479,15 @@ static int ploop_start(struct ploop_device * plo, struct block_device *bdev)
 
 	blk_queue_merge_bvec(plo->queue, ploop_merge_bvec);
 	blk_queue_flush(plo->queue, REQ_FLUSH);
-	blk_queue_max_discard_sectors(plo->queue, INT_MAX);
-	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, plo->queue);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
 	blk_queue_issue_flush_fn(plo->queue, ploop_issue_flush_fn);
 #endif
 
 	if (top_delta->io.ops->queue_settings)
 		top_delta->io.ops->queue_settings(&top_delta->io, plo->queue);
+
+	blk_queue_max_discard_sectors(plo->queue, INT_MAX);
+	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, plo->queue);
 
 	set_capacity(plo->disk, plo->bd_size);
 	bd_set_size(bdev, (loff_t)plo->bd_size << 9);
@@ -3595,6 +3612,8 @@ static void destroy_deltas(struct ploop_device * plo, struct ploop_map * map)
 		delta->ops->destroy(delta);
 		kobject_put(&delta->kobj);
 	}
+
+	plo->cookie[0] = 0;
 }
 
 static int ploop_clear(struct ploop_device * plo, struct block_device * bdev)
@@ -4517,7 +4536,7 @@ static int ploop_minor_open(struct inode *inode, struct file *file)
 		plo = rb_entry(n, struct ploop_device, link);
 		if (plo->index != index ||
 		    (list_empty(&plo->map.delta_list) &&
-		     !test_bit(PLOOP_S_LOCKED, &plo->state)))
+		     !test_bit(PLOOP_S_LOCKED, &plo->locking_state)))
 			break;
 	}
 
@@ -4537,19 +4556,19 @@ static int ploop_minor_open(struct inode *inode, struct file *file)
 		ploop_sysfs_init(plo);
 		ploop_dev_insert(plo);
 	}
-	set_bit(PLOOP_S_LOCKED, &plo->state);
+	set_bit(PLOOP_S_LOCKED, &plo->locking_state);
 	mutex_unlock(&ploop_devices_mutex);
 
 	ret = single_open(file, ploop_minor_show, plo);
 	if (ret)
-		clear_bit(PLOOP_S_LOCKED, &plo->state);
+		clear_bit(PLOOP_S_LOCKED, &plo->locking_state);
 	return ret;
 }
 
 static int ploop_minor_release(struct inode *inode, struct file *filp)
 {
 	struct ploop_device *plo = ((struct seq_file *)filp->private_data)->private;
-	clear_bit(PLOOP_S_LOCKED, &plo->state);
+	clear_bit(PLOOP_S_LOCKED, &plo->locking_state);
 	return single_release(inode, filp);
 }
 

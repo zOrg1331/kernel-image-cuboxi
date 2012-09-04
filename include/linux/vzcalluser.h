@@ -15,8 +15,6 @@
 #include <linux/ioctl.h>
 #include <linux/vziptable_defs.h>
 
-#define KERN_VZ_PRIV_RANGE 51
-
 #ifndef __ENVID_T_DEFINED__
 typedef unsigned envid_t;
 #define __ENVID_T_DEFINED__

@@ -1176,6 +1176,13 @@ static struct cfq_group * cfq_alloc_cfqg(struct cfq_data *cfqd)
 	return cfqg;
 }
 
+static void cfq_free_cfqg(struct cfq_group *cfqg)
+{
+	blkio_free_blkg_stats(&cfqg->blkg);
+	kfree(cfqg->blkg.dev_name);
+	kfree(cfqg);
+}
+
 static struct cfq_group *
 cfq_find_cfqg(struct cfq_data *cfqd, struct blkio_cgroup *blkcg)
 {
@@ -1246,7 +1253,7 @@ static struct cfq_group *cfq_get_cfqg(struct cfq_data *cfqd)
 	__cfqg = cfq_find_cfqg(cfqd, blkcg);
 
 	if (__cfqg) {
-		kfree(cfqg);
+		cfq_free_cfqg(cfqg);
 		rcu_read_unlock();
 		return __cfqg;
 	}
@@ -1287,9 +1294,7 @@ static void cfq_put_cfqg(struct cfq_group *cfqg)
 		return;
 	for_each_cfqg_st(cfqg, i, j, st)
 		BUG_ON(!RB_EMPTY_ROOT(&st->rb) || st->active != NULL);
-	blkio_free_blkg_stats(&cfqg->blkg);
-	kfree(cfqg->blkg.dev_name);
-	kfree(cfqg);
+	cfq_free_cfqg(cfqg);
 }
 
 static void cfq_destroy_cfqg(struct cfq_data *cfqd, struct cfq_group *cfqg)

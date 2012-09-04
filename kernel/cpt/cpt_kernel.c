@@ -99,54 +99,73 @@ int local_kernel_thread(int (*fn)(void *), void * arg, unsigned long flags, pid_
 	return ret;
 }
 
+static void get_cpu_caps(u32 *caps)
+{
+	unsigned int tmp1, tmp2;
+	int i;
+
+	bitmap_zero((unsigned long *)caps, RHNCAPINTS);
+	for (i = 0; i < 32*RHNCAPINTS; i++)
+		if (boot_cpu_has(i))
+			set_bit(i, (unsigned long *)caps);
+
+	cpuid(0x00000001, &tmp1, &tmp2, &caps[4], &caps[0]);
+	cpuid(0x80000001, &tmp1, &tmp2, &caps[6], &caps[1]);
+}
+
 unsigned int test_cpu_caps_and_features(void)
 {
+#define has_cpu_cap(cap) test_bit((cap), (unsigned long *)caps)
+
+	u32 caps[RHNCAPINTS];
 	unsigned int flags = 0;
 
 #ifdef CONFIG_X86
-	if (boot_cpu_has(X86_FEATURE_CMOV))
+	get_cpu_caps(caps);
+
+	if (has_cpu_cap(X86_FEATURE_CMOV))
 		flags |= 1 << CPT_CPU_X86_CMOV;
-	if (cpu_has_fxsr)
+	if (has_cpu_cap(X86_FEATURE_FXSR))
 		flags |= 1 << CPT_CPU_X86_FXSR;
-	if (cpu_has_xmm)
+	if (has_cpu_cap(X86_FEATURE_XMM))
 		flags |= 1 << CPT_CPU_X86_SSE;
 #ifndef CONFIG_X86_64
-	if (cpu_has_xmm2)
+	if (has_cpu_cap(X86_FEATURE_XMM2))
 #endif
 		flags |= 1 << CPT_CPU_X86_SSE2;
-	if (cpu_has_xmm4_1)
+	if (has_cpu_cap(X86_FEATURE_XMM4_1))
 		flags |= 1 << CPT_CPU_X86_SSE4_1;
-	if (cpu_has_xmm4_2)
+	if (has_cpu_cap(X86_FEATURE_XMM4_2))
 		flags |= 1 << CPT_CPU_X86_SSE4_2;
-	if (cpu_has_mmx)
+	if (has_cpu_cap(X86_FEATURE_MMX))
 		flags |= 1 << CPT_CPU_X86_MMX;
-	if (boot_cpu_has(X86_FEATURE_3DNOW))
+	if (has_cpu_cap(X86_FEATURE_3DNOW))
 		flags |= 1 << CPT_CPU_X86_3DNOW;
-	if (boot_cpu_has(X86_FEATURE_3DNOWEXT))
+	if (has_cpu_cap(X86_FEATURE_3DNOWEXT))
 		flags |= 1 << CPT_CPU_X86_3DNOW2;
-	if (boot_cpu_has(X86_FEATURE_SSE4A))
+	if (has_cpu_cap(X86_FEATURE_SSE4A))
 		flags |= 1 << CPT_CPU_X86_SSE4A;
-	if (boot_cpu_has(X86_FEATURE_SYSCALL))
+	if (has_cpu_cap(X86_FEATURE_SYSCALL))
 		flags |= 1 << CPT_CPU_X86_SYSCALL;
 #ifdef CONFIG_X86_64
-	if (boot_cpu_has(X86_FEATURE_SYSCALL) &&
+	if (has_cpu_cap(X86_FEATURE_SYSCALL) &&
 			boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
 		flags |= 1 << CPT_CPU_X86_SYSCALL32;
 #endif
-	if (boot_cpu_has(X86_FEATURE_SEP)
+	if (has_cpu_cap(X86_FEATURE_SEP)
 #ifdef CONFIG_X86_64
 			&& boot_cpu_data.x86_vendor == X86_VENDOR_INTEL
 #endif
 	   )
 		flags |= ((1 << CPT_CPU_X86_SEP) | (1 << CPT_CPU_X86_SEP32));
 
-	if (boot_cpu_has(X86_FEATURE_XSAVE))
+	if (has_cpu_cap(X86_FEATURE_XSAVE))
 		flags |= 1 << CPT_CPU_X86_XSAVE;
 
-	if (boot_cpu_has(X86_FEATURE_AVX))
+	if (has_cpu_cap(X86_FEATURE_AVX))
 		flags |= 1 << CPT_CPU_X86_AVX;
 
-	if (boot_cpu_has(X86_FEATURE_AES))
+	if (has_cpu_cap(X86_FEATURE_AES))
 		flags |= 1 << CPT_CPU_X86_AESNI;
 
 #ifdef CONFIG_X86_64
@@ -163,6 +182,8 @@ unsigned int test_cpu_caps_and_features(void)
 	flags |= 1 << CPT_NAMESPACES;
 
 	return flags;
+
+#undef has_cpu_cap
 }
 
 unsigned int test_kernel_config(void)

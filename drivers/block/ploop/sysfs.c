@@ -311,7 +311,7 @@ static u32 show_running(struct ploop_device * plo)
 
 static u32 show_locked(struct ploop_device * plo)
 {
-	return test_bit(PLOOP_S_LOCKED, &plo->state);
+	return test_bit(PLOOP_S_LOCKED, &plo->locking_state);
 }
 
 static u32 show_aborted(struct ploop_device * plo)
@@ -378,6 +378,11 @@ static u32 show_event(struct ploop_device * plo)
 	return ret;
 }
 
+static ssize_t print_cookie(struct ploop_device * plo, char * page)
+{
+	return sprintf(page, "%s\n", plo->cookie);
+}
+
 #define _TUNE_U32(_name)				\
 static u32 show_##_name(struct ploop_device * plo)	\
 {							\
@@ -426,6 +431,7 @@ struct pattr_sysfs_entry {
 	struct attribute attr;
 	u32 (*show)(struct ploop_device *);
 	int (*store)(struct ploop_device *, __u32 val);
+	ssize_t (*print)(struct ploop_device *, char *page);
 };
 
 #define _A(_name) \
@@ -434,7 +440,8 @@ struct pattr_sysfs_entry {
 #define _A2(_name) \
 &((struct pattr_sysfs_entry){ .attr = { .name = __stringify(_name), .mode = S_IRUGO|S_IWUSR }, .show = show_##_name, .store = store_##_name, }).attr
 
-
+#define _A3(_name)							\
+&((struct pattr_sysfs_entry){ .attr = { .name = __stringify(_name), .mode = S_IRUGO }, .print = print_##_name, }).attr
 
 static struct attribute *state_attributes[] = {
 	_A(block_size),
@@ -452,6 +459,7 @@ static struct attribute *state_attributes[] = {
 	_A2(aborted),
 	_A(top),
 	_A(event),
+	_A3(cookie),
 	NULL
 };
 
@@ -490,6 +498,9 @@ pattr_show(struct kobject *kobj, struct attribute *attr, char *page)
 	struct gendisk *disk = to_disk(kobj->parent);
 	struct ploop_device * plo = disk->private_data;
 	u32 val;
+
+	if (entry->print)
+		return entry->print(plo, page);
 
 	if (!entry->show)
 		return -EIO;

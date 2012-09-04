@@ -350,6 +350,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+		.strategy	= sysctl_intvec,
 	},
 	{
 		.ctl_name	= NET_NF_CONNTRACK_COUNT,
@@ -358,6 +359,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
 		.proc_handler	= proc_dointvec,
+		.strategy	= sysctl_intvec,
 	},
 	{
 		.ctl_name       = NET_NF_CONNTRACK_BUCKETS,
@@ -366,6 +368,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
+		.strategy	= sysctl_intvec,
 	},
 	{
 		.ctl_name	= NET_NF_CONNTRACK_CHECKSUM,
@@ -374,6 +377,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+		.strategy	= sysctl_intvec,
 	},
 	{
 		.ctl_name	= NET_NF_CONNTRACK_LOG_INVALID,
@@ -393,6 +397,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+		.strategy	= sysctl_intvec,
 	},
 	{ .ctl_name = 0 }
 };
@@ -510,16 +515,20 @@ out_init:
 	return ret;
 }
 
-static void nf_conntrack_net_exit(struct net *net)
+static void nf_conntrack_net_exit(struct list_head *net_exit_list)
 {
-	nf_conntrack_standalone_fini_sysctl(net);
-	nf_conntrack_standalone_fini_proc(net);
-	nf_conntrack_cleanup(net);
+	struct net *net;
+
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		nf_conntrack_standalone_fini_sysctl(net);
+		nf_conntrack_standalone_fini_proc(net);
+	}
+	nf_conntrack_cleanup_list(net_exit_list);
 }
 
 static struct pernet_operations nf_conntrack_net_ops = {
 	.init = nf_conntrack_net_init,
-	.exit = nf_conntrack_net_exit,
+	.exit_batch = nf_conntrack_net_exit,
 };
 
 static int __init nf_conntrack_standalone_init(void)
@@ -527,6 +536,9 @@ static int __init nf_conntrack_standalone_init(void)
 	if (ip_conntrack_disable_ve0) {
 		printk("Disabling conntracks and NAT for ve0\n");
 		get_ve0()->ipt_mask &= ~(VE_NF_CONNTRACK_MOD | VE_IP_IPTABLE_NAT_MOD);
+	} else {
+		printk("Enabling conntracks and NAT for ve0\n");
+		get_ve0()->ipt_mask |= VE_NF_CONNTRACK_MOD | VE_IP_IPTABLE_NAT_MOD;
 	}
 
 	return register_pernet_subsys(&nf_conntrack_net_ops);

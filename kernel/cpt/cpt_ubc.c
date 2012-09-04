@@ -123,10 +123,10 @@ int cpt_dump_ubc(struct cpt_context *ctx)
 
 	cpt_close_section(ctx);
 	if (top > 1) {
-		eprintk_ctx("More than one top level ub exist");
+		eprintk_ctx("More than one top level ub exist\n");
 		return -EINVAL;
 	}
-		
+
 	return 0;
 }
 

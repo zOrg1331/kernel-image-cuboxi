@@ -150,7 +150,7 @@ static void vlan_rcu_free(struct rcu_head *rcu)
 	vlan_group_free(container_of(rcu, struct vlan_group, rcu));
 }
 
-void unregister_vlan_dev(struct net_device *dev)
+void unregister_vlan_dev(struct net_device *dev, struct list_head *head)
 {
 	struct vlan_dev_info *vlan = vlan_dev_info(dev);
 	struct net_device *real_dev = vlan->real_dev;
@@ -174,10 +174,11 @@ void unregister_vlan_dev(struct net_device *dev)
 	vlan_group_set_device(grp, vlan_id, NULL);
 	grp->nr_vlans--;
 
-	synchronize_net();
+	if (!head)
+		synchronize_net();
 
 	env = set_exec_env(dev->owner_env);
-	unregister_netdevice(dev);
+	unregister_netdevice_queue(dev, head);
 	set_exec_env(env);
 
 	/* If the group is now empty, kill off the group. */
@@ -443,6 +444,55 @@ static void __vlan_device_event(struct net_device *dev, unsigned long event)
 	}
 }
 
+/*
+ * Since bonding slaves have their own vlan groups now, we need
+ * to make sure that, when we process an event for a device, that its
+ * actually relevant to a particular vid.  If the bond actually owns the vid
+ * and the slave just holds a copy of it, then we need to ignore the event,
+ * because the vlan treats the bond, not the slave as its lower layer device
+ */
+static int ignore_slave_event(struct net_device *dev, int i)
+{
+	struct vlan_group *sgrp, *mgrp;
+	struct net_device *svdev, *mvdev;
+
+	/* process if this isn't a slave */
+	if (!dev->master)
+		return 0;
+
+	/* This is just a check for bonding */
+	if (!(dev->master->priv_flags & IFF_BONDING))
+		return 0;
+
+	sgrp = __vlan_find_group(dev);
+	mgrp = __vlan_find_group(dev->master);
+
+	/* process if either the slave or master doesn't have a vlan group */
+	if (!sgrp || !mgrp)
+		return 0;
+
+	svdev = vlan_group_get_device(sgrp, i);
+	mvdev = vlan_group_get_device(mgrp, i);
+
+	/* process If a vlan isn't found on either the slave or master */
+	if (!svdev || !mvdev)
+		return 0;
+
+	/*
+	 * If, and only if, we have the same vlan device attached to both
+	 * the slave and the master device, then we know for certain that
+	 * this event is coming from a slave, and that the vlan is actually
+	 * attached to the master.  In this case, vlan_device_event should
+	 * ignore the event process and not transfer the operstate, because
+	 * the bonds operstate won't actually change, it will just fail over
+	 * to another slave
+	 */
+	if (svdev == mvdev)
+		return 1;
+
+	return 0;
+}
+
 static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 			     void *ptr)
 {
@@ -450,6 +500,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	struct vlan_group *grp;
 	int i, flgs;
 	struct net_device *vlandev;
+	LIST_HEAD(list);
 
 	if (is_vlan_dev(dev))
 		__vlan_device_event(dev, event);
@@ -474,6 +525,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_CHANGE:
 		/* Propagate real device state to vlan devices */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -485,6 +538,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_CHANGEADDR:
 		/* Adjust unicast filters on underlying device */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -499,6 +554,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 
 	case NETDEV_CHANGEMTU:
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -513,6 +570,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_FEAT_CHANGE:
 		/* Propagate device features to underlying device */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -525,6 +584,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_DOWN:
 		/* Put all VLANs for this dev in the down state too.  */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -541,6 +602,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_UP:
 		/* Put all VLANs for this dev in the up state too.  */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -557,6 +620,8 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	case NETDEV_UNREGISTER:
 		/* Delete all VLANs for this dev. */
 		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			if (ignore_slave_event(dev, i))
+				continue;
 			vlandev = vlan_group_get_device(grp, i);
 			if (!vlandev)
 				continue;
@@ -566,8 +631,9 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 			if (grp->nr_vlans == 1)
 				i = VLAN_GROUP_ARRAY_LEN;
 
-			unregister_vlan_dev(vlandev);
+			unregister_vlan_dev(vlandev, &list);
 		}
+		unregister_netdevice_many(&list);
 		break;
 	}
 
@@ -684,7 +750,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 		err = -EPERM;
 		if (!vlan_check_caps())
 			break;
-		unregister_vlan_dev(dev);
+		unregister_vlan_dev(dev, NULL);
 		err = 0;
 		break;
 
@@ -715,47 +781,28 @@ out:
 
 static int vlan_init_net(struct net *net)
 {
+	struct vlan_net *vn = net_generic(net, vlan_net_id);
 	int err;
-	struct vlan_net *vn;
-
-	err = -ENOMEM;
-	vn = kzalloc(sizeof(struct vlan_net), GFP_KERNEL);
-	if (vn == NULL)
-		goto err_alloc;
-
-	err = net_assign_generic(net, vlan_net_id, vn);
-	if (err < 0)
-		goto err_assign;
 
 	vn->name_type = VLAN_NAME_TYPE_RAW_PLUS_VID_NO_PAD;
 
 	err = vlan_proc_init(net);
-	if (err < 0)
-		goto err_proc;
 
-	return 0;
-
-err_proc:
-	/* nothing */
-err_assign:
-	kfree(vn);
-err_alloc:
 	return err;
 }
 
 static void vlan_exit_net(struct net *net)
 {
-	struct vlan_net *vn;
-
-	vn = net_generic(net, vlan_net_id);
 	rtnl_kill_links(net, &vlan_link_ops);
+
 	vlan_proc_cleanup(net);
-	kfree(vn);
 }
 
 static struct pernet_operations vlan_net_ops = {
 	.init = vlan_init_net,
 	.exit = vlan_exit_net,
+	.id   = &vlan_net_id,
+	.size = sizeof(struct vlan_net),
 };
 
 static int __init vlan_proto_init(void)
@@ -765,7 +812,7 @@ static int __init vlan_proto_init(void)
 	pr_info("%s v%s %s\n", vlan_fullname, vlan_version, vlan_copyright);
 	pr_info("All bugs added by %s\n", vlan_buggyright);
 
-	err = register_pernet_gen_device(&vlan_net_id, &vlan_net_ops);
+	err = register_pernet_device(&vlan_net_ops);
 	if (err < 0)
 		goto err0;
 
@@ -790,7 +837,7 @@ err4:
 err3:
 	unregister_netdevice_notifier(&vlan_notifier_block);
 err2:
-	unregister_pernet_gen_device(vlan_net_id, &vlan_net_ops);
+	unregister_pernet_device(&vlan_net_ops);
 err0:
 	return err;
 }
@@ -810,7 +857,7 @@ static void __exit vlan_cleanup_module(void)
 	for (i = 0; i < VLAN_GRP_HASH_SIZE; i++)
 		BUG_ON(!hlist_empty(&vlan_group_hash[i]));
 
-	unregister_pernet_gen_device(vlan_net_id, &vlan_net_ops);
+	unregister_pernet_device(&vlan_net_ops);
 	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 
 	vlan_gvrp_uninit();

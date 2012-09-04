@@ -288,7 +288,7 @@ out:
 	return err;
 }
 
-static void macvtap_dellink(struct net_device *dev)
+static void macvtap_dellink(struct net_device *dev, struct list_head *head)
 {
 	struct macvlan_dev *vlan;
 
@@ -297,7 +297,7 @@ static void macvtap_dellink(struct net_device *dev)
 		       MKDEV(MAJOR(macvtap_major), vlan->minor));
 
 	macvtap_del_queues(dev);
-	macvlan_dellink(dev);
+	macvlan_dellink(dev, head);
 	macvtap_free_minor(vlan);
 }
 

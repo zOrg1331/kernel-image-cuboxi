@@ -155,7 +155,7 @@ static int fixup_shm_data(struct file *file, loff_t pos, loff_t end,
 				break;
 #endif
 			default:
-				eprintk_ctx("unsupported page type: %d.\n", 
+				eprintk_ctx("unsupported page type: %d.\n",
 							pgb.cpt_object);
 				return -EINVAL;
 		}

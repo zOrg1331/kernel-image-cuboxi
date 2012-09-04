@@ -63,5 +63,8 @@ static inline int shmem_acl_init(struct inode *inode, struct inode *dir)
 
 int shmem_insertpage(struct inode * inode, unsigned long index,
 		     swp_entry_t swap);
+int install_shmem_page(struct vm_area_struct *vma,
+		       unsigned long addr, struct page *page);
+int is_shmem_vma(struct vm_area_struct *vma);
 
 #endif

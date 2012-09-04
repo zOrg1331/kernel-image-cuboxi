@@ -130,7 +130,8 @@ err:
 	return err;
 }
 
-static void veth_pair_del(struct ve_struct *env, struct veth_struct *entry)
+static void veth_pair_del(struct ve_struct *env, struct veth_struct *entry,
+			  struct list_head *head)
 {
 	struct net_device *dev;
 	struct ve_struct *old_env;
@@ -153,9 +154,9 @@ static void veth_pair_del(struct ve_struct *env, struct veth_struct *entry)
 	 * i.e. dev->hard_start_xmit won't be called.
 	 */
 	set_exec_env(env);
-	unregister_netdevice(veth_to_netdev(entry));
+	unregister_netdevice_queue(veth_to_netdev(entry), head);
 	set_exec_env(dev->owner_env);
-	unregister_netdevice(dev);
+	unregister_netdevice_queue(dev, head);
 	set_exec_env(old_env);
 	rtnl_unlock();
 }
@@ -174,7 +175,7 @@ static int veth_entry_del(struct ve_struct *ve, char *name)
 		goto out;
 
 	err = 0;
-	veth_pair_del(ve, found);
+	veth_pair_del(ve, found, NULL);
 
 out:
 	up(&hwaddr_sem);
@@ -670,30 +671,41 @@ err:
 	return ERR_PTR(err);
 }
 
-static void veth_stop(void *data)
+static __net_exit void veth_exit_net(struct list_head *net_exit_list)
 {
-	struct ve_struct *env;
+	struct net *net;
 	struct veth_struct *entry, *tmp;
+	LIST_HEAD(netdev_kill_list);
 
-	env = (struct ve_struct *)data;
 	down(&hwaddr_sem);
-	list_for_each_entry_safe(entry, tmp, &veth_hwaddr_list, hwaddr_list)
-		if (VEID(env) == VEID(veth_to_netdev(entry)->owner_env))
-			veth_pair_del(env, entry);
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		list_for_each_entry_safe(entry, tmp,
+					 &veth_hwaddr_list, hwaddr_list)
+			if (net == veth_to_netdev(entry)->nd_net)
+				veth_pair_del(net->owner_ve, entry,
+					      &netdev_kill_list);
+	}
 	up(&hwaddr_sem);
+
+	rtnl_lock();
+	unregister_netdevice_many(&netdev_kill_list);
+	rtnl_unlock();
 }
 
-static struct ve_hook veth_ve_hook = {
-	.fini	  = veth_stop,
-	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_NET,
+static struct pernet_operations veth_net_ops = {
+	.exit_batch = veth_exit_net,
 };
 
 static __init int veth_init(void)
 {
-#ifdef CONFIG_PROC_FS
+	int err;
 	struct proc_dir_entry *de;
 
+	err = register_pernet_device(&veth_net_ops);
+	if (err)
+		return err;
+
+#ifdef CONFIG_PROC_FS
 	de = proc_create("veth", S_IFREG|S_IRUSR, proc_vz_dir,
 			&proc_vehwaddr_operations);
 	if (de == NULL)
@@ -701,35 +713,19 @@ static __init int veth_init(void)
 #endif
 
 	register_netdev_rst(&veth_netdev_rst);
-	ve_hook_register(VE_SS_CHAIN, &veth_ve_hook);
 	vzioctl_register(&vethcalls);
 	return 0;
 }
 
 static __exit void veth_exit(void)
 {
-	struct veth_struct *entry;
-	struct list_head *tmp, *n;
-	struct ve_struct *ve;
-
 	vzioctl_unregister(&vethcalls);
-	ve_hook_unregister(&veth_ve_hook);
+	unregister_pernet_device(&veth_net_ops);
 	unregister_netdev_rst(&veth_netdev_rst);
 
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("veth", proc_vz_dir);
 #endif
-
-	down(&hwaddr_sem);
-	list_for_each_safe(tmp, n, &veth_hwaddr_list) {
-		entry = list_entry(tmp, struct veth_struct, hwaddr_list);
-		ve = get_ve(veth_to_netdev(entry)->owner_env);
-
-		veth_pair_del(ve, entry);
-
-		put_ve(ve);
-	}
-	up(&hwaddr_sem);
 }
 
 module_init(veth_init);

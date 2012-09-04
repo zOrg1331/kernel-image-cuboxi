@@ -424,8 +424,11 @@ struct ploop_device
 	struct kobject		*ptune_dir;
 
 	struct ploop_stats	st;
+	char                    cookie[PLOOP_COOKIE_SIZE];
 
 	struct ploop_freeblks_desc *fbd;
+
+	unsigned long		locking_state; /* plo locked by userspace */
 };
 
 enum
@@ -452,6 +455,7 @@ enum
 	PLOOP_E_INDEX_READ,	/* Reading an index page */
 	PLOOP_E_TRANS_INDEX_READ,/* Reading a trans index page */
 	PLOOP_E_DELTA_READ,	/* Write request reads data from previos delta */
+	PLOOP_E_DELTA_COPIED,	/* Data from previos delta was bcopy-ied */
 	PLOOP_E_TRANS_DELTA_READ,/* Write request reads data from trans delta */
 	PLOOP_E_RELOC_DATA_READ,/* Read user data to relocate */
 	PLOOP_E_RELOC_NULLIFY,  /* Zeroing relocated block is in progress */
@@ -568,8 +572,8 @@ static inline void ploop_set_error(struct ploop_request * preq, int err)
 		preq->error = err;
 		if (!test_bit(PLOOP_S_ABORT, &preq->plo->state)) {
 			if (err != -ENOSPC) {
-				printk("ploop_set_error=%d\n", err);
-				WARN_ON(1);
+				printk("ploop_set_error=%d on ploop%d\n",
+				       err, preq->plo->index);
 				return;
 			}
 			printk("No space left on device! Either free some "

@@ -223,7 +223,7 @@ static int unix_bind_to_mntref(struct sock *sk, char *name,
 
 	if (strlen(name) < mntobj->o_lock) {
 		eprintk_ctx("%s: unix socket with too short name (%d %s)\n",
-			       	__func__, mntobj->o_lock, name);
+				__func__, mntobj->o_lock, name);
 		return -EINVAL;
 	}
 
@@ -239,7 +239,7 @@ static int unix_bind_to_mntref(struct sock *sk, char *name,
 }
 
 static int can_be_rebound_by_mntref(struct socket *sock,
-	       				struct cpt_sock_image *si,
+					struct cpt_sock_image *si,
 					cpt_context_t *ctx)
 {
 	if (ctx->image_version < CPT_VERSION_18_4)
@@ -1008,7 +1008,7 @@ int rst_sockets(struct cpt_context *ctx)
 			return err;
 		}
 		if (sbuf->cpt_state == TCP_LISTEN) BUG();
-		err = open_socket(obj, sbuf, ctx); 
+		err = open_socket(obj, sbuf, ctx);
 		cpt_release_buf(ctx);
 		if (err) {
 			eprintk_ctx("rst_sockets: open_socket: %d\n", err);

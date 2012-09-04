@@ -117,7 +117,7 @@ void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 	path = d_path(&p, (char *)pg, PAGE_SIZE);
 
 	if (!IS_ERR(path))
-		eprintk("<%s>", path);
+		eprintk("<%s>\n", path);
 	free_page(pg);
 }
 

@@ -266,6 +266,7 @@ static void zap_ve_processes(struct ve_struct *env)
 		__set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(delay);
 		delay = (delay < HZ) ? (delay << 1) : HZ;
+again:
 		read_lock(&tasklist_lock);
 		kthreads = 0;
 		do_each_thread_ve(g, p) {
@@ -283,6 +284,9 @@ static void zap_ve_processes(struct ve_struct *env)
 					show_lost_task(p);
 
 				force_sig_specific(SIGKILL, p);
+
+				if (reap_zombie(p))
+					goto again;
 			}
 		} while_each_thread_ve(g, p);
 		read_unlock(&tasklist_lock);

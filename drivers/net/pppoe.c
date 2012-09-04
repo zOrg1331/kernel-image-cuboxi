@@ -1201,13 +1201,14 @@ static __net_exit void pppoe_exit_net(struct net *net)
 static struct pernet_operations pppoe_net_ops = {
 	.init = pppoe_init_net,
 	.exit = pppoe_exit_net,
+	.id = &pppoe_net_id,
 };
 
 static int __init pppoe_init(void)
 {
 	int err;
 
-	err = register_pernet_gen_device(&pppoe_net_id, &pppoe_net_ops);
+	err = register_pernet_device(&pppoe_net_ops);
 	if (err)
 		goto out;
 
@@ -1228,7 +1229,7 @@ static int __init pppoe_init(void)
 out_unregister_pppoe_proto:
 	proto_unregister(&pppoe_sk_proto);
 out_unregister_net_ops:
-	unregister_pernet_gen_device(pppoe_net_id, &pppoe_net_ops);
+	unregister_pernet_device(&pppoe_net_ops);
 out:
 	return err;
 }
@@ -1240,7 +1241,7 @@ static void __exit pppoe_exit(void)
 	dev_remove_pack(&pppoes_ptype);
 	unregister_pppox_proto(PX_PROTO_OE);
 	proto_unregister(&pppoe_sk_proto);
-	unregister_pernet_gen_device(pppoe_net_id, &pppoe_net_ops);
+	unregister_pernet_device(&pppoe_net_ops);
 }
 
 module_init(pppoe_init);

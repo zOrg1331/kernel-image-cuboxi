@@ -1067,6 +1067,9 @@ SYSCALL_DEFINE4(clock_nanosleep, const clockid_t, which_clock, int, flags,
 	if (!timespec_valid(&t))
 		return -EINVAL;
 
+	if (flags & TIMER_ABSTIME)
+		monotonic_ve_to_abs(which_clock, &t);
+
 	return CLOCK_DISPATCH(which_clock, nsleep,
 			      (which_clock, flags, &t, rmtp));
 }

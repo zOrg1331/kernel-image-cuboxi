@@ -4263,7 +4263,7 @@ static void cgroup_release_agent(struct work_struct *work)
 	spin_lock(&release_list_lock);
 	while (!list_empty(&release_list)) {
 		char *argv[3], *envp[3];
-		int i;
+		int i, err;
 		char *pathbuf = NULL, *agentbuf = NULL;
 		struct cgroup *cgrp = list_entry(release_list.next,
 						    struct cgroup,
@@ -4311,8 +4311,12 @@ static void cgroup_release_agent(struct work_struct *work)
 		 * since the exec could involve hitting disk and hence
 		 * be a slow process */
 		mutex_unlock(&cgroup_mutex);
-		call_usermodehelper_wq(argv[0], argv, envp, UMH_WAIT_EXEC,
+		err = call_usermodehelper_wq(argv[0], argv, envp, UMH_WAIT_EXEC,
 						cgrp->top_cgroup->khelper_wq);
+		if (err < 0)
+			pr_warn_ratelimited("cgroup release_agent "
+					    "%s %s failed: %d\n",
+					    agentbuf, pathbuf, err);
 		mutex_lock(&cgroup_mutex);
  continue_free:
 		kfree(pathbuf);

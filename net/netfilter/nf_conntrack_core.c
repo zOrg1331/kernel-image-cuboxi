@@ -1175,21 +1175,26 @@ static void nf_conntrack_cleanup_net(struct net *net)
 
 /* Mishearing the voices in his head, our hero wonders how he's
    supposed to kill the mall. */
-void nf_conntrack_cleanup(struct net *net)
+void nf_conntrack_cleanup_list(struct list_head *net_exit_list)
 {
-	if (net_eq(net, &init_net))
-		rcu_assign_pointer(ip_ct_attach, NULL);
+	struct net *net;
+
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		if (net_eq(net, &init_net))
+			rcu_assign_pointer(ip_ct_attach, NULL);
+	}
 
 	/* This makes sure all current packets have passed through
 	   netfilter framework.  Roll on, two-stage module
 	   delete... */
 	synchronize_net();
 
-	nf_conntrack_cleanup_net(net);
-
-	if (net_eq(net, &init_net)) {
-		rcu_assign_pointer(nf_ct_destroy, NULL);
-		nf_conntrack_cleanup_init_net();
+	list_for_each_entry(net, net_exit_list, exit_list) {
+		nf_conntrack_cleanup_net(net);
+		if (net_eq(net, &init_net)) {
+			rcu_assign_pointer(nf_ct_destroy, NULL);
+			nf_conntrack_cleanup_init_net();
+		}
 	}
 }
 

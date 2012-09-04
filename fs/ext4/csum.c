@@ -221,6 +221,8 @@ next:
 	return 0;
 }
 
+#define MAX_LOCK_BATCH	256
+
 long ext4_dump_pfcache(struct super_block *sb,
 		      struct pfcache_dump_request __user *user_req)
 {
@@ -230,8 +232,13 @@ long ext4_dump_pfcache(struct super_block *sb,
 	u64 state, *x;
 	void *buffer, *p;
 	long ret, size;
+	int lock_batch = 0;
 
 	if (copy_from_user(&req, user_req, sizeof(req)))
+		return -EFAULT;
+
+	if (!access_ok(VERIFY_WRITE, user_req,
+		       req.header_size + req.buffer_size))
 		return -EFAULT;
 
 	/* check for unknown flags */
@@ -251,14 +258,9 @@ long ext4_dump_pfcache(struct super_block *sb,
 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
 		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE|I_NEW))
 			continue;
-		if (!S_ISREG(inode->i_mode))
-			continue;
-		if (inode == EXT4_SB(sb)->s_balloon_ino)
-			continue;
-		__iget(inode);
-		spin_unlock(&inode_lock);
-		iput(old_inode);
-		old_inode = inode;
+		if (!S_ISREG(inode->i_mode) ||
+		    inode == EXT4_SB(sb)->s_balloon_ino)
+			goto next;
 
 		/* evaluate the inode state */
 		state = 0;
@@ -342,9 +344,22 @@ long ext4_dump_pfcache(struct super_block *sb,
 		if (size > req.buffer_size)
 			goto out;
 
-		if (copy_to_user(user_buffer, buffer, size)) {
-			ret = -EFAULT;
-			goto out;
+		pagefault_disable();
+		if (!__copy_to_user_inatomic(user_buffer, buffer, size)) {
+			pagefault_enable();
+		} else {
+			pagefault_enable();
+			__iget(inode);
+			spin_unlock(&inode_lock);
+			iput(old_inode);
+			old_inode = inode;
+			if (copy_to_user(user_buffer, buffer, size)) {
+				ret = -EFAULT;
+				goto out_nolock;
+			}
+			cond_resched();
+			lock_batch = 0;
+			spin_lock(&inode_lock);
 		}
 
 		ret++;
@@ -356,11 +371,20 @@ next:
 				ret = -EINTR;
 			goto out;
 		}
-		cond_resched();
-		spin_lock(&inode_lock);
+		if (++lock_batch > MAX_LOCK_BATCH || need_resched() ||
+				spin_needbreak(&inode_lock)) {
+			__iget(inode);
+			spin_unlock(&inode_lock);
+			iput(old_inode);
+			old_inode = inode;
+			cond_resched();
+			lock_batch = 0;
+			spin_lock(&inode_lock);
+		}
 	}
-	spin_unlock(&inode_lock);
 out:
+	spin_unlock(&inode_lock);
+out_nolock:
 	iput(old_inode);
 
 	kfree(buffer);
