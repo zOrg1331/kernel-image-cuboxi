@@ -549,6 +549,8 @@ struct transaction_s
  * @j_average_commit_time: the average amount of time in nanoseconds it
  *	takes to commit a transaction to the disk.
  * @j_private: An opaque pointer to fs-private information.
+ * @j_pair_lock: Protect the list of vfs/journal block pairs.
+ * @blk_pairs: list for keep track of which vfs blocks the journal blocks contain.
  */
 
 struct journal_s
