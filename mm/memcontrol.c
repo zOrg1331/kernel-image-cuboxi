@@ -5000,6 +5000,11 @@ mem_cgroup_create(struct cgroup *cont)
 		parent = mem_cgroup_from_cont(cont->parent);
 		memcg->use_hierarchy = parent->use_hierarchy;
 		memcg->oom_kill_disable = parent->oom_kill_disable;
+		WARN_ONCE(!memcg->use_hierarchy && parent != root_mem_cgroup,
+				"Creating hierarchies with use_hierarchy==0 "
+				"(flat hierarchy) is considered deprecated. "
+				"If you believe that your setup is correct, "
+				"we kindly ask you to contact linux-mm@kvack.org and let us know");
 	}
 
 	if (parent && parent->use_hierarchy) {
