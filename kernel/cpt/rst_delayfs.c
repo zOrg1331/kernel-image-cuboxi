@@ -1586,7 +1586,7 @@ int rst_init_delayfs_daemon(cpt_context_t *ctx)
 			CLONE_FS | CLONE_FILES | CLONE_VM | SIGCHLD);
 	if (pid < 0) {
 		eprintk_ctx("%d: Failed to start delayfs daemon (err: %d)\n",
-			       	dctx->ve_id, pid);
+				dctx->ve_id, pid);
 		destroy_delayed_context(dctx);
 		kfree(dctx);
 		ctx->dctx = NULL;
@@ -1663,10 +1663,10 @@ int rst_delay_flock(struct file *f, struct cpt_flock_image *fli,
 
 	priv = f->private_data;
 
- 	dfi->fl = fl;
- 	dfi->svid = fli->cpt_svid;
+	dfi->fl = fl;
+	dfi->svid = fli->cpt_svid;
 	dfi->next = priv->dfi;
- 
+
 	priv->dfi = dfi;
 	return 0;
 

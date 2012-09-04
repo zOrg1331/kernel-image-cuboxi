@@ -195,7 +195,7 @@ static int fixup_pipe_data(struct file *file, struct cpt_file_image *fi,
 		if (ii.cpt_next <= ii.cpt_hdrlen + hdr.cpt_next)
 			return 0;
 
-		pos += hdr.cpt_hdrlen;
+		pos += hdr.cpt_next;
 	}
 
 	err = rst_get_object(CPT_OBJ_BITS, pos, &b, ctx);
@@ -414,7 +414,7 @@ static struct file *open_special(cpt_object_t *mntobj, char *name,
 	if (fi->cpt_lflags & CPT_DENTRY_TUNTAP) {
 		kfree(ii);
 		return NULL;
-	}	
+	}
 
 	file = rst_open_tty(mntobj, name, fi, ii, flags, ctx);
 	kfree(ii);
@@ -1648,7 +1648,7 @@ int rst_restore_fs(struct cpt_context *ctx)
 		while (pos < obj->o_pos + fi.cpt_next && i<3) {
 			err = cpt_get_dentry(d+i, m+i, &pos, ctx);
 			if (err) {
-				eprintk_ctx("cannot get_dir: %d", err);
+				eprintk_ctx("cannot get_dir: %d\n", err);
 				for (--i; i >= 0; i--) {
 					if (d[i])
 						dput(d[i]);

@@ -1271,6 +1271,7 @@ struct cpt_restart_block {
 #define CPT_RBL_COMPAT_NANOSLEEP	2
 #define CPT_RBL_POLL			3
 #define CPT_RBL_FUTEX_WAIT		4
+#define CPT_RBL_POSIX_CPU_NSLEEP	5
 	__u64	arg0;
 	__u64	arg1;
 	__u64	arg2;

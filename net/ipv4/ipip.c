@@ -758,16 +758,19 @@ static struct xfrm_tunnel ipip_handler = {
 static const char banner[] __initconst =
 	KERN_INFO "IPv4 over IPv4 tunneling driver\n";
 
-static void ipip_destroy_tunnels(struct ipip_net *ipn)
+static void ipip_destroy_tunnels(struct ipip_net *ipn, struct list_head *head)
 {
 	int prio;
 
 	for (prio = 1; prio < 4; prio++) {
 		int h;
 		for (h = 0; h < HASH_SIZE; h++) {
-			struct ip_tunnel *t;
-			while ((t = ipn->tunnels[prio][h]) != NULL)
-				unregister_netdevice(t->dev);
+			struct ip_tunnel *t = ipn->tunnels[prio][h];
+
+			while (t != NULL) {
+				unregister_netdevice_queue(t->dev, head);
+				t = t->next;
+			}
 		}
 	}
 }
@@ -925,14 +928,16 @@ err_alloc:
 static void ipip_exit_net(struct net *net)
 {
 	struct ipip_net *ipn;
+	LIST_HEAD(list);
 
 	ipn = net_generic(net, ipip_net_id);
 	if (ipn == NULL) /* no VE_FEATURE_IPIP */
 		return;
 
 	rtnl_lock();
-	ipip_destroy_tunnels(ipn);
-	unregister_netdevice(ipn->fb_tunnel_dev);
+	ipip_destroy_tunnels(ipn, &list);
+	unregister_netdevice_queue(ipn->fb_tunnel_dev, &list);
+	unregister_netdevice_many(&list);
 	rtnl_unlock();
 	kfree(ipn);
 }
@@ -940,6 +945,7 @@ static void ipip_exit_net(struct net *net)
 static struct pernet_operations ipip_net_ops = {
 	.init = ipip_init_net,
 	.exit = ipip_exit_net,
+	.id = &ipip_net_id,
 };
 
 static int __init ipip_init(void)
@@ -948,12 +954,12 @@ static int __init ipip_init(void)
 
 	printk(banner);
 
-	err = register_pernet_gen_device(&ipip_net_id, &ipip_net_ops);
+	err = register_pernet_device(&ipip_net_ops);
 	if (err < 0)
 		return err;
 	err = xfrm4_tunnel_register(&ipip_handler, AF_INET);
 	if (err < 0) {
-		unregister_pernet_gen_device(ipip_net_id, &ipip_net_ops);
+		unregister_pernet_device(&ipip_net_ops);
 		printk(KERN_INFO "ipip init: can't register tunnel\n");
 	} else
 		register_netdev_rst(&ipip_netdev_rst);
@@ -967,7 +973,7 @@ static void __exit ipip_fini(void)
 	if (xfrm4_tunnel_deregister(&ipip_handler, AF_INET))
 		printk(KERN_INFO "ipip close: can't deregister tunnel\n");
 
-	unregister_pernet_gen_device(ipip_net_id, &ipip_net_ops);
+	unregister_pernet_device(&ipip_net_ops);
 }
 
 module_init(ipip_init);

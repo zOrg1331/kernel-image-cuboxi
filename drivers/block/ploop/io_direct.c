@@ -1754,10 +1754,9 @@ static int dio_autodetect(struct ploop_io * io)
 		return -1;
 	}
 
-	if (!inode->i_op->fallocate) {
-		printk("Unsupported fs EXT3(%s): no fallocate\n", s_id);
-		return -1;
-	}
+	if (!inode->i_op->fallocate)
+		ploop_io_report_fn(file, KERN_WARNING
+					"File on FS w/o fallocate");
 
 	if (!file->f_op->unlocked_ioctl) {
 		printk("Cannot run on EXT4(%s): no unlocked_ioctl\n", s_id);
@@ -1776,10 +1775,8 @@ static int dio_autodetect(struct ploop_io * io)
 		return -1;
 	}
 
-	if (!(flags & EXT4_EXTENTS_FL)) {
-		ploop_io_report_fn(file, "File w/o extents");
-		return -1;
-	}
+	if (!(flags & EXT4_EXTENTS_FL))
+		ploop_io_report_fn(file, KERN_WARNING "File w/o extents");
 
 	return 0;
 }

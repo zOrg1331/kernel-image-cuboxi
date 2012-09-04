@@ -246,12 +246,16 @@ static int vps_stop_tasks(struct cpt_context *ctx)
 					goto out;
 				}
 
-				spin_lock_irq(&p->sighand->siglock);
+				task_lock(p);
 				if (!(p->flags & PF_FROZEN)) {
 					set_tsk_thread_flag(p, TIF_FREEZE);
+					task_unlock(p);
+
+					spin_lock_irq(&p->sighand->siglock);
 					signal_wake_up(p, 0);
-				}
-				spin_unlock_irq(&p->sighand->siglock);
+					spin_unlock_irq(&p->sighand->siglock);
+				} else
+					task_unlock(p);
 
 				if (p->flags & PF_FROZEN) {
 					if (p->state != TASK_UNINTERRUPTIBLE)

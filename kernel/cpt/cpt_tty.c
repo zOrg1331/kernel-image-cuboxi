@@ -158,7 +158,7 @@ int cpt_dump_tty(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_ws_prow = tty->winsize.ws_ypixel;
 	v->cpt_ws_pcol = tty->winsize.ws_xpixel;
 	if (tty->termios == NULL) {
-		eprintk_ctx("NULL termios");
+		eprintk_ctx("NULL termios\n");
 		cpt_release_buf(ctx);
 		return -EINVAL;
 	}

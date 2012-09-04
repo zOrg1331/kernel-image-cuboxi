@@ -569,6 +569,8 @@ static void do_tty_hangup(struct work_struct *work)
 	}
 	spin_unlock(&redirect_lock);
 
+	set_bit(TTY_HUPPING, &tty->flags);
+
 	check_tty_count(tty, "do_tty_hangup");
 	spin_lock(&tty_files_lock);
 	/* This breaks for file handles being sent over AF_UNIX sockets ? */
@@ -621,7 +623,6 @@ static void do_tty_hangup(struct work_struct *work)
 	tty->session = NULL;
 	tty->pgrp = NULL;
 	tty->ctrl_status = 0;
-	set_bit(TTY_HUPPED, &tty->flags);
 	spin_unlock_irqrestore(&tty->ctrl_lock, flags);
 
 	/* Account for the p->signal references we killed */
@@ -647,6 +648,7 @@ static void do_tty_hangup(struct work_struct *work)
 	 * can't yet guarantee all that.
 	 */
 	set_bit(TTY_HUPPED, &tty->flags);
+	clear_bit(TTY_HUPPING, &tty->flags);
 	tty_ldisc_enable(tty);
 	unlock_kernel();
 	if (f)
@@ -1298,7 +1300,9 @@ static int tty_reopen(struct tty_struct *tty)
 {
 	struct tty_driver *driver = tty->driver;
 
-	if (test_bit(TTY_CLOSING, &tty->flags))
+	if (test_bit(TTY_CLOSING, &tty->flags) ||
+			test_bit(TTY_HUPPING, &tty->flags) ||
+			test_bit(TTY_LDISC_CHANGING, &tty->flags))
 		return -EIO;
 
 	if (driver->type == TTY_DRIVER_TYPE_PTY &&

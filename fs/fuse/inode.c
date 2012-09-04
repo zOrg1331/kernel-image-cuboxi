@@ -1098,7 +1098,7 @@ static int fuse_get_sb(struct file_system_type *fs_type,
 	 * Seems, this is the only place where we have some variable (dev_name), which
 	 * is not confined by fuse API and already defined.
 	 */
-	if (!error && mnt->mnt_devname && strncmp(mnt->mnt_devname, "pcs://", 6) == 0) {
+	if (!error && mnt->mnt_devname && strncmp(mnt->mnt_devname, "pstorage://", 11) == 0) {
 		struct fuse_conn *fc = mnt->mnt_sb->s_fs_info;
 
 		fc->close_wait = 1;

@@ -342,6 +342,105 @@ static int blkdev_writepage(struct page *page, struct writeback_control *wbc)
 	return block_write_full_page(page, blkdev_get_block, wbc);
 }
 
+struct blkdev_io {
+	struct bio *bio;
+};
+
+static void blkdev_bio_end_io(struct bio *bio, int err)
+{
+	struct bio_vec *bvec;
+	unsigned int idx;
+
+	if (err == -EOPNOTSUPP)
+		set_bit(BIO_EOPNOTSUPP, &bio->bi_flags);
+
+	__bio_for_each_segment(bvec, bio, idx, 0) {
+		struct buffer_head *head, *bh;
+		unsigned int offset = 0;
+
+		if (err)
+			SetPageError(bvec->bv_page);
+
+		bh = head = page_buffers(bvec->bv_page);
+		do {
+			if (offset >= bvec->bv_offset) {
+				if (test_bit(BIO_QUIET, &bio->bi_flags))
+					set_bit(BH_Quiet, &bh->b_state);
+				if (test_bit(BIO_EOPNOTSUPP, &bio->bi_flags))
+					set_bit(BH_Eopnotsupp, &bh->b_state);
+				bh->b_end_io(bh, test_bit(BIO_UPTODATE,
+							&bio->bi_flags));
+			}
+			offset += bh->b_size;
+			bh = bh->b_this_page;
+		} while (bh != head && offset < bvec->bv_offset + bvec->bv_len);
+	}
+	bio_put(bio);
+}
+
+static int blkdev_submit_bh(int rw, struct buffer_head *bh, void *fsdata)
+{
+	sector_t bh_sector = bh->b_blocknr * (bh->b_size >> 9);
+	struct blkdev_io *io = fsdata;
+	struct bio *bio = io->bio;
+
+	/*
+	 * Mask in barrier bit for a write (could be either a WRITE or a
+	 * WRITE_SYNC
+	 */
+	if (buffer_ordered(bh) && (rw & WRITE))
+		rw |= WRITE_BARRIER;
+
+	/*
+	 * Only clear out a write error when rewriting
+	 */
+	if (test_set_buffer_req(bh) && (rw & WRITE))
+		clear_buffer_write_io_error(bh);
+
+	if (!bio) {
+alloc:
+		bio = bio_alloc(GFP_NOIO, bio_get_nr_vecs(bh->b_bdev));
+		io->bio = bio;
+		if (!bio)
+			return submit_bh(rw, bh);
+
+		bio->bi_rw = rw;
+		bio->bi_sector = bh_sector;
+		bio->bi_bdev = bh->b_bdev;
+		bio->bi_end_io = blkdev_bio_end_io;
+	}
+
+	if (rw == bio->bi_rw &&
+	    bio->bi_sector + bio_sectors(bio) == bh_sector &&
+	    bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh)))
+		return 0;
+
+	submit_bio(bio->bi_rw, bio);
+	goto alloc;
+}
+
+static int blkdev_do_writepage(struct page *page,
+		struct writeback_control *wbc, void *data)
+{
+	return generic_block_write_full_page(page, blkdev_get_block, wbc,
+			blkdev_submit_bh, end_buffer_async_write);
+}
+
+static int blkdev_writepages(struct address_space *mapping,
+			     struct writeback_control *wbc)
+{
+	struct blkdev_io io = {
+		.bio = NULL,
+	};
+	int ret;
+
+	wbc->fsdata = &io;
+	ret = write_cache_pages(mapping, wbc, blkdev_do_writepage, NULL);
+	if (io.bio)
+		submit_bio(io.bio->bi_rw, io.bio);
+	return ret;
+}
+
 static int blkdev_readpage(struct file * file, struct page * page)
 {
 	return block_read_full_page(page, blkdev_get_block);
@@ -1482,7 +1581,7 @@ static const struct address_space_operations def_blk_aops = {
 	.sync_page	= block_sync_page,
 	.write_begin	= blkdev_write_begin,
 	.write_end	= blkdev_write_end,
-	.writepages	= generic_writepages,
+	.writepages	= blkdev_writepages,
 	.releasepage	= blkdev_releasepage,
 	.direct_IO	= blkdev_direct_IO,
 };

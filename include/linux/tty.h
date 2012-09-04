@@ -354,6 +354,7 @@ struct tty_file_private {
 #define TTY_FLUSHPENDING	20	/* Queued buffer flush pending */
 #define TTY_CHARGED		21	/* Charged as ub resource */
 #define TTY_EXTRA_REFERENCE	22	/* plus one to ->count */
+#define TTY_HUPPING		23	/* ->hangup() in progress */
 
 #define TTY_WRITE_FLUSH(tty) tty_write_flush((tty))
 

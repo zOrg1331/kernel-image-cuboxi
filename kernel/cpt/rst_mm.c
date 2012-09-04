@@ -381,11 +381,11 @@ static int verify_create_anonvma(struct mm_struct *mm,
 		eprintk_ctx("vma start mismatch\n");
 		return -EINVAL;
 	}
-	if (vma->vm_pgoff != vmai->cpt_pgoff) { 
+	if (vma->vm_pgoff != vmai->cpt_pgoff) {
 		dprintk_ctx("vma pgoff mismatch, fixing\n");
 		if (vma->vm_file || (vma->vm_flags&(VM_SHARED|VM_MAYSHARE))) {
 			eprintk_ctx("cannot fixup vma pgoff\n");
-			up_read(&mm->mmap_sem);	
+			up_read(&mm->mmap_sem);
 			return -EINVAL;
 		}
 		vma->vm_pgoff = vmai->cpt_pgoff;
@@ -1075,7 +1075,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 #ifdef CONFIG_IA64
 				//// Later...
 				if (u.vmai.cpt_start)
-#endif			
+#endif
 				err = do_rst_vma(&u.vmai, offset, ti->cpt_mm, ctx);
 				if (err) {
 					eprintk_ctx("%s: failed to restore vma: %d\n",

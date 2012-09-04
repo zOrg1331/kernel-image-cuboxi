@@ -105,7 +105,8 @@ static inline void nlm_release_reserved(int pid)
 
 int nlmclnt_reserve_pid(int pid)
 {
-	struct nlm_reserved_pid *n;
+	struct nlm_reserved_pid *n, *rp;
+	struct hlist_node *tmp;
 
 	n = kmalloc(sizeof(*n), GFP_KERNEL);
 	if (n == NULL)
@@ -113,6 +114,10 @@ int nlmclnt_reserve_pid(int pid)
 
 	n->pid = pid;
 	spin_lock(&nlm_reserved_lock);
+
+	hlist_for_each_entry(rp, tmp, &nlm_reserved_pids, list)
+		BUG_ON(rp->pid == pid);
+
 	hlist_add_head(&n->list, &nlm_reserved_pids);
 	spin_unlock(&nlm_reserved_lock);
 

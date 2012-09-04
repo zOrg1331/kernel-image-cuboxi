@@ -1071,7 +1071,15 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 			v->cpt_restart.arg3 = rb->futex.flags;
 			goto continue_dump;
 		}
-		eprintk_ctx("unknown restart block %p\n", rb->fn);
+		if (rb->fn == posix_cpu_nsleep_restart) {
+			v->cpt_restart.fn = CPT_RBL_POSIX_CPU_NSLEEP;
+			v->cpt_restart.arg0 = rb->arg0;
+			v->cpt_restart.arg1 = rb->arg1;
+			v->cpt_restart.arg2 = rb->arg2;
+			v->cpt_restart.arg3 = rb->arg3;
+			goto continue_dump;
+		}
+		eprintk_ctx("unknown restart block %pS\n", rb->fn);
 		return -EINVAL;
 	}
 

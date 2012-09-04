@@ -1890,3 +1890,22 @@ SYSCALL_DEFINE3(waitpid, pid_t, pid, int __user *, stat_addr, int, options)
 }
 
 #endif
+
+/**
+ * This reaps non-child zombies. We hold read_lock(&tasklist_lock) on entry.
+ * If we return zero, we still hold the lock and this task is uninteresting.
+ */
+int reap_zombie(struct task_struct *p)
+{
+	struct wait_opts wo = {
+		.wo_flags = WEXITED,
+	};
+	int ret = 0;
+
+	if (p->exit_state == EXIT_ZOMBIE && !delay_group_leader(p)) {
+		p->exit_signal = -1;
+		ret = wait_task_zombie(&wo, p);
+	}
+
+	return ret;
+}

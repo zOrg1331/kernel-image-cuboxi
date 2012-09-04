@@ -151,6 +151,7 @@ int devtmpfs_create_node(struct device *dev)
 	const char *tmp = NULL;
 	const char *nodename;
 	const struct cred *curr_cred;
+	struct user_beancounter *curr_ub;
 	mode_t mode = 0;
 	struct nameidata nd;
 	struct dentry *dentry;
@@ -171,6 +172,7 @@ int devtmpfs_create_node(struct device *dev)
 	else
 		mode |= S_IFCHR;
 
+	curr_ub = set_exec_ub(&ub0);
 	curr_cred = override_creds(&init_cred);
 	err = vfs_path_lookup(dev_mnt->mnt_root, dev_mnt,
 			      nodename, LOOKUP_PARENT, &nd);
@@ -204,6 +206,7 @@ int devtmpfs_create_node(struct device *dev)
 out:
 	kfree(tmp);
 	revert_creds(curr_cred);
+	(void)set_exec_ub(curr_ub);
 	return err;
 }
 

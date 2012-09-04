@@ -450,6 +450,15 @@ static int hook(void *arg)
 			rb->futex.val   = ti->cpt_restart.arg1;
 			rb->futex.time  = e.tv64;
 			rb->futex.flags = ti->cpt_restart.arg3;
+		} else if (ti->cpt_restart.fn == CPT_RBL_POSIX_CPU_NSLEEP) {
+			struct restart_block *rb;
+
+			rb = &task_thread_info(current)->restart_block;
+			rb->fn = posix_cpu_nsleep_restart;
+			rb->arg0 = ti->cpt_restart.arg0;
+			rb->arg1 = ti->cpt_restart.arg1;
+			rb->arg2 = ti->cpt_restart.arg2;
+			rb->arg3 = ti->cpt_restart.arg3;
 		} else
 			eprintk_ctx("unknown restart block (%d)\n", (int)ti->cpt_restart.fn);
 	}

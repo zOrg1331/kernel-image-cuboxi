@@ -507,7 +507,7 @@ void dump_pages(struct vm_area_struct *vma, unsigned long start,
 			for (i=0; i<n; i++)
 				dump_page(pg[i], ctx);
 		} else {
-			eprintk_ctx("get_user_pages fault");
+			eprintk_ctx("get_user_pages fault\n");
 			for ( ; n > 0; n--)
 				page_cache_release(pg[n-1]);
 			return;

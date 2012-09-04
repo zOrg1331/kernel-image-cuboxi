@@ -916,6 +916,7 @@ static __net_exit void ppp_exit_net(struct net *net)
 static struct pernet_operations ppp_net_ops = {
 	.init = ppp_init_net,
 	.exit = ppp_exit_net,
+	.id = &ppp_net_id,
 };
 
 #define PPP_MAJOR	108
@@ -928,7 +929,7 @@ static int __init ppp_init(void)
 
 	printk(KERN_INFO "PPP generic driver version " PPP_VERSION "\n");
 
-	err = register_pernet_gen_device(&ppp_net_id, &ppp_net_ops);
+	err = register_pernet_device(&ppp_net_ops);
 	if (err) {
 		printk(KERN_ERR "failed to register PPP pernet device (%d)\n", err);
 		goto out;
@@ -954,7 +955,7 @@ static int __init ppp_init(void)
 out_chrdev:
 	unregister_chrdev(PPP_MAJOR, "ppp");
 out_net:
-	unregister_pernet_gen_device(ppp_net_id, &ppp_net_ops);
+	unregister_pernet_device(&ppp_net_ops);
 out:
 	return err;
 }
@@ -2846,7 +2847,7 @@ static void __exit ppp_cleanup(void)
 	unregister_chrdev(PPP_MAJOR, "ppp");
 	device_destroy(ppp_class, MKDEV(PPP_MAJOR, 0));
 	class_destroy(ppp_class);
-	unregister_pernet_gen_device(ppp_net_id, &ppp_net_ops);
+	unregister_pernet_device(&ppp_net_ops);
 }
 
 /*

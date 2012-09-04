@@ -2647,6 +2647,11 @@ void __show_free_areas(unsigned int filter)
 		printk("lowmem_reserve[]:");
 		for (i = 0; i < MAX_NR_ZONES; i++)
 			printk(" %lu", zone->lowmem_reserve[i]);
+		printk(" reclaim_stat[]: %lu %lu %lu %lu",
+				zone->reclaim_stat.recent_scanned[0],
+				zone->reclaim_stat.recent_rotated[0],
+				zone->reclaim_stat.recent_scanned[1],
+				zone->reclaim_stat.recent_rotated[1]);
 		printk("\n");
 	}
 

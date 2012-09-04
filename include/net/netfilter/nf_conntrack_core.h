@@ -26,7 +26,15 @@ extern unsigned int nf_conntrack_in(struct net *net,
 				    struct sk_buff *skb);
 
 extern int nf_conntrack_init(struct net *net);
-extern void nf_conntrack_cleanup(struct net *net);
+extern void nf_conntrack_cleanup_list(struct list_head *net_exit_list);
+
+static inline void nf_conntrack_cleanup(struct net *net)
+{
+	LIST_HEAD(single);
+
+	list_add(&net->exit_list, &single);
+	nf_conntrack_cleanup_list(&single);
+}
 
 extern int nf_conntrack_proto_init(void);
 extern void nf_conntrack_proto_fini(void);

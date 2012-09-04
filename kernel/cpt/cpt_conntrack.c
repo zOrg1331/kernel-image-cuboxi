@@ -216,7 +216,7 @@ static int dump_one_ct(struct ct_holder *c, struct ct_holder *list,
 	BUILD_BUG_ON(sizeof(v.cpt_help_data) < sizeof(union nf_conntrack_help));
 
 	if (nfct_help(ct) && !strcmp(nfct_help(ct)->helper->name, "pptp")) {
-		eprintk_ctx("conntrack: PPTP isn't supported");
+		eprintk_ctx("conntrack: PPTP isn't supported\n");
 		return -EBUSY;
 	}
 

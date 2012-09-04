@@ -82,7 +82,7 @@ static int restore_one_epoll(cpt_object_t *obj,
 	while (pos < endpos) {
 		struct cpt_epoll_file_image efi;
 		struct epoll_event epds;
-		
+
 		cpt_object_t *tobj;
 
 		err = rst_get_object(CPT_OBJ_EPOLL_FILE, pos, &efi, ctx);
@@ -159,7 +159,5 @@ int rst_eventpoll(cpt_context_t *ctx)
 			return err;
 		sec += ebuf->cpt_next;
 	}
-
 	return 0;
-	
 }
