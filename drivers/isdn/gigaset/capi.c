@@ -300,6 +300,7 @@ static inline void dump_rawmsg(enum debuglevel level, const char *tag,
 #endif
 }
 
+#ifdef CONFIG_GIGASET_DEBUG
 /*
  * format CAPI IE as string
  */
@@ -329,6 +330,7 @@ static const char *format_ie(const char *ie)
 	*--pout = 0;
 	return result;
 }
+#endif
 
 /*
  * emit DATA_B3_CONF message
