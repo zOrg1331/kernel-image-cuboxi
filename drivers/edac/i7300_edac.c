@@ -778,7 +778,7 @@ static int i7300_init_csrows(struct mem_ctl_info *mci)
 	int rc = -ENODEV;
 	int mtr;
 	int ch, branch, slot, channel;
-	u32 last_page = 0, nr_pages;
+	u32 last_page = 0, uninitialized_var(nr_pages);
 
 	pvt = mci->pvt_info;
 
