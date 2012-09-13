@@ -27,6 +27,7 @@ static int ext4_open_balloon(struct super_block *sb, struct vfsmount *mnt)
 	struct file *filp;
 	struct dentry *de;
 	struct path path;
+	fmode_t mode;
 
 	balloon_ino = EXT4_SB(sb)->s_balloon_ino;
 	err = -ENOENT;
@@ -45,8 +46,15 @@ static int ext4_open_balloon(struct super_block *sb, struct vfsmount *mnt)
 
 	path.dentry = de;
 	path.mnt = mntget(mnt);
-	filp = alloc_file(&path, FMODE_READ | FMODE_WRITE,
+	err = mnt_want_write(path.mnt);
+	if (err)
+		mode = FMODE_READ;
+	else
+		mode = FMODE_READ | FMODE_WRITE;
+	filp = alloc_file(&path, mode,
 			&ext4_file_operations);
+	if (mode & FMODE_WRITE)
+		mnt_drop_write(path.mnt);
 	err = -ENOMEM;
 	if (filp == NULL)
 		goto err_filp;
@@ -281,6 +289,9 @@ group_extend_out:
 		struct move_extent me;
 		struct file *donor_filp;
 		int err;
+
+		/* Ioctl is temproraly disabled due to PCLIN-31215 */
+		return -EOPNOTSUPP;
 
 		if (!(filp->f_mode & FMODE_READ) ||
 		    !(filp->f_mode & FMODE_WRITE))

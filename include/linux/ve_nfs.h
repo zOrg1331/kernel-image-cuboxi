@@ -85,8 +85,7 @@ static inline void ve_rpc_data_put(struct ve_struct *ve)
 	struct ve_struct *curr_ve;
 
 	curr_ve = set_exec_env(ve);
-	if (atomic_dec_return(&ve->rpc_data->_users) == !!ve->rpc_data->_rpcb_local) {
-		rpcb_put_local();
+	if (atomic_dec_and_test(&ve->rpc_data->_users)) {
 		rpciod_stop();
 		kfree(ve->rpc_data);
 		ve->rpc_data = NULL;

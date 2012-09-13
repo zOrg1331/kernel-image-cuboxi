@@ -3550,7 +3550,9 @@ static const struct file_operations proc_task_operations = {
 /* Check whether dentry belongs to a task that already died */
 int proc_dentry_of_dead_task(struct dentry *dentry)
 {
-	if (dentry->d_inode->i_fop == &dummy_proc_pid_file_operations)
+	struct proc_dir_entry *de = PDE(dentry->d_inode);
+
+	if (de && de->data == &dummy_proc_pid_file_operations)
 		return 1;
 
 	return (dentry->d_op == &pid_dentry_operations &&

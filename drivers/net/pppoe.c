@@ -1154,7 +1154,7 @@ static __net_init int pppoe_init_net(struct net *net)
 	int err;
 
 	if (!(get_exec_env()->features & VE_FEATURE_PPP))
-		return 0;
+		return net_assign_generic(net, pppoe_net_id, NULL);;
 
 	pn = kzalloc(sizeof(*pn), GFP_KERNEL);
 	if (!pn)
