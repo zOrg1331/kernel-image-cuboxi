@@ -1227,7 +1227,7 @@ open_file:
 		sprintf(name, "/proc/rst_dead_pid_file_%d", task_pid_vnr(current));
 
 		proc_dead_file = create_proc_entry(name + 6, S_IRUGO|S_IWUGO,
-						   NULL);
+						   get_exec_env()->proc_root);
 		if (!proc_dead_file) {
 			eprintk_ctx("can't create proc entry %s\n", name);
 			err = -ENOMEM;
@@ -1235,13 +1235,15 @@ open_file:
 		}
 #ifdef CONFIG_PROC_FS
 		proc_dead_file->proc_fops = &dummy_proc_pid_file_operations;
+		proc_dead_file->data = &dummy_proc_pid_file_operations;
 #endif
 	}
 
 	file = rst_open_file(mntobj, name, &fi, flags, ctx);
 
 	if (proc_dead_file) {
-		remove_proc_entry(proc_dead_file->name, NULL);
+		remove_proc_entry(proc_dead_file->name,
+				  get_exec_env()->proc_root);
 		if (!IS_ERR(file))
 			d_drop(file->f_dentry);
 	}

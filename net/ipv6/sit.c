@@ -1132,7 +1132,7 @@ static int sit_init_net(struct net *net)
 	struct sit_net *sitn;
 
 	if (!(get_exec_env()->features & VE_FEATURE_SIT))
-		return 0;
+		return net_assign_generic(net, sit_net_id, NULL);
 
 	err = -ENOMEM;
 	sitn = kzalloc(sizeof(struct sit_net), GFP_KERNEL);
@@ -1188,6 +1188,7 @@ static void sit_exit_net(struct net *net)
 	unregister_netdevice_queue(sitn->fb_tunnel_dev, &list);
 	unregister_netdevice_many(&list);
 	rtnl_unlock();
+	net_assign_generic(net, sit_net_id, NULL);
 	kfree(sitn);
 }
 

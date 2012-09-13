@@ -3515,6 +3515,7 @@ static int ploop_stop(struct ploop_device * plo, struct block_device *bdev)
 {
 	int p;
 	struct ploop_delta * delta;
+	int cnt;
 
 	if (!test_bit(PLOOP_S_RUNNING, &plo->state))
 		return -EINVAL;
@@ -3522,12 +3523,22 @@ static int ploop_stop(struct ploop_device * plo, struct block_device *bdev)
 	if (list_empty(&plo->map.delta_list))
 		return -ENOENT;
 
-	if (atomic_read(&plo->open_count) > 1)
+	cnt = atomic_read(&plo->open_count);
+	if (cnt > 1) {
+		if (printk_ratelimit())
+			printk(KERN_INFO "stop ploop%d failed (cnt=%d)\n",
+			       plo->index, cnt);
 		return -EBUSY;
+	}
 
-	if (plo->maintenance_type != PLOOP_MNTN_OFF &&
-	    atomic_read(&plo->maintenance_cnt))
+	cnt = atomic_read(&plo->maintenance_cnt);
+	if (plo->maintenance_type != PLOOP_MNTN_OFF && cnt) {
+		if (printk_ratelimit())
+			printk(KERN_INFO "stop ploop%d failed "
+			       "(type=%d cnt=%d)\n",
+			       plo->index, plo->maintenance_type, cnt);
 		return -EBUSY;
+	}
 
 	for (p = plo->disk->minors - 1; p > 0; p--)
 		invalidate_partition(plo->disk, p);
@@ -3618,13 +3629,28 @@ static void destroy_deltas(struct ploop_device * plo, struct ploop_map * map)
 
 static int ploop_clear(struct ploop_device * plo, struct block_device * bdev)
 {
-	if (test_bit(PLOOP_S_RUNNING, &plo->state))
+	int cnt;
+
+	if (test_bit(PLOOP_S_RUNNING, &plo->state)) {
+		if (printk_ratelimit())
+			printk(KERN_INFO "clear ploop%d failed (RUNNING)\n",
+			       plo->index);
 		return -EBUSY;
-	if (plo->maintenance_type == PLOOP_MNTN_TRACK)
+	}
+	if (plo->maintenance_type == PLOOP_MNTN_TRACK) {
+		if (printk_ratelimit())
+			printk(KERN_INFO "clear ploop%d failed (TRACK)\n",
+			       plo->index);
 		return -EBUSY;
-	if (plo->maintenance_type != PLOOP_MNTN_OFF &&
-	    atomic_read(&plo->maintenance_cnt))
+	}
+	cnt = atomic_read(&plo->maintenance_cnt);
+	if (plo->maintenance_type != PLOOP_MNTN_OFF && cnt) {
+		if (printk_ratelimit())
+			printk(KERN_INFO "clear ploop%d failed "
+			       "(type=%d cnt=%d)\n",
+			       plo->index, plo->maintenance_type, cnt);
 		return -EBUSY;
+	}
 
 	clear_bit(PLOOP_S_DISCARD_LOADED, &plo->state);
 	clear_bit(PLOOP_S_DISCARD, &plo->state);

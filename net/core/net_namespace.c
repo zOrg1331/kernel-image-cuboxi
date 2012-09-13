@@ -29,11 +29,23 @@ EXPORT_SYMBOL(init_net);
 
 #define INITIAL_NET_GEN_PTRS	13 /* +1 for len +2 for rcu_head */
 
-static inline void set_net_context(struct net *net)
+struct net_context {
+	struct ve_struct *ve;
+	struct user_beancounter *ub;
+};
+
+static inline void set_net_context(struct net *net, struct net_context *ctx)
 {
-	set_exec_env(net->owner_ve);
+	ctx->ve = set_exec_env(net->owner_ve);
+	ctx->ub = get_exec_ub();
 	if (net->loopback_dev)
 		set_exec_ub(netdev_bc(net->loopback_dev)->exec_ub);
+}
+
+static inline void restore_net_context(struct net_context *ctx)
+{
+	set_exec_env(ctx->ve);
+	set_exec_ub(ctx->ub);
 }
 
 static int ops_init(const struct pernet_operations *ops, struct net *net)
@@ -70,9 +82,11 @@ static void ops_exit_list(const struct pernet_operations *ops,
 
 	if (ops->exit) {
 		list_for_each_entry(net, net_exit_list, exit_list) {
-			set_net_context(net);
+			struct net_context ctx;
+
+			set_net_context(net, &ctx);
 			ops->exit(net);
-			set_net_context(&init_net);
+			restore_net_context(&ctx);
 		}
 	}
 	if (ops->exit_batch)
@@ -369,9 +383,11 @@ static int __register_pernet_operations(struct list_head *list,
 	list_add_tail(&ops->list, list);
 	if (ops->init || (ops->id && ops->size)) {
 		for_each_net(net) {
-			set_net_context(net);
+			struct net_context ctx;
+
+			set_net_context(net, &ctx);
 			error = ops_init(ops, net);
-			set_net_context(&init_net);
+			restore_net_context(&ctx);
 			if (error)
 				goto out_undo;
 			list_add_tail(&net->exit_list, &net_exit_list);

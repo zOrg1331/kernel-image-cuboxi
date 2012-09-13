@@ -883,7 +883,7 @@ static int ipip_init_net(struct net *net)
 	struct ipip_net *ipn;
 
 	if (!(get_exec_env()->features & VE_FEATURE_IPIP))
-		return 0;
+		return net_assign_generic(net, ipip_net_id, NULL);
 
 	err = -ENOMEM;
 	ipn = kzalloc(sizeof(struct ipip_net), GFP_KERNEL);
@@ -939,6 +939,7 @@ static void ipip_exit_net(struct net *net)
 	unregister_netdevice_queue(ipn->fb_tunnel_dev, &list);
 	unregister_netdevice_many(&list);
 	rtnl_unlock();
+	net_assign_generic(net, ipip_net_id, NULL);
 	kfree(ipn);
 }
 
