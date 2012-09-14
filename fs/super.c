@@ -731,7 +731,7 @@ int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
 	if (sb->s_frozen != SB_UNFROZEN)
 		return -EBUSY;
 
-#ifdef CONFIG_BLOCK
+#if defined(CONFIG_BLOCK) && !defined(CONFIG_SQUASHFS_WRITE)
 	if (!(flags & MS_RDONLY) && bdev_read_only(sb->s_bdev))
 		return -EACCES;
 #endif
