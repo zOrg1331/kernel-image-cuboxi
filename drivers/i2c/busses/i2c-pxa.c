@@ -1250,11 +1250,12 @@ static int __exit i2c_pxa_remove(struct platform_device *dev)
 #ifdef CONFIG_PM
 static int i2c_pxa_suspend_noirq(struct device *dev)
 {
+#ifdef CONFIG_HAVE_CLK
 	struct platform_device *pdev = to_platform_device(dev);
 	struct pxa_i2c *i2c = platform_get_drvdata(pdev);
 
 	clk_disable(i2c->clk);
-
+#endif
 	return 0;
 }
 
