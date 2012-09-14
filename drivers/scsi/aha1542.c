@@ -38,7 +38,9 @@
 #include <linux/isapnp.h>
 #include <linux/blkdev.h>
 #include <linux/mca.h>
+#ifdef CONFIG_MCA_LEGACY
 #include <linux/mca-legacy.h>
+#endif
 #include <linux/slab.h>
 
 #include <asm/dma.h>
