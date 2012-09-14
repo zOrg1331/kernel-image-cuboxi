@@ -99,7 +99,9 @@ static int get_dir_index_using_offset(struct super_block *sb,
 	return length + 3;
 }
 
-
+#ifndef CONFIG_SQUASHFS_WRITE
+static
+#endif
 int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 			    filldir_t filldir, loff_t *pos)
 {
@@ -112,9 +114,11 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 	struct squashfs_dir_header dirh;
 	struct squashfs_dir_entry *dire;
 
+#ifdef CONFIG_SQUASHFS_WRITE
 	/* If the directory only exist in memory we are done already */
 	if (inode->i_private)
 		return 0;
+#endif
 
 	TRACE("Entered squashfs_readdir [%llx:%x]\n", block, offset);
 
@@ -182,9 +186,10 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 			goto failed_read;
 
 		while (dir_count--) {
+#ifdef CONFIG_SQUASHFS_WRITE
 			struct qstr qstr;
 			struct dentry *d;
-
+#endif
 			/*
 			 * Read directory entry.
 			 */
@@ -214,11 +219,13 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 				((short) le16_to_cpu(dire->inode_number));
 			type = le16_to_cpu(dire->type);
 
+#ifdef CONFIG_SQUASHFS_WRITE
 			qstr.len = size;
 			qstr.name = dire->name;
 			d = d_hash_and_lookup(dentry, &qstr);
 
 			if (!d || (d->d_inode)) {
+#endif
 				TRACE("Calling filldir(%p, %s, %d, %lld, %x:%x,"
 				      "%d, %d)\n", dirent, dire->name, size,
 				      *pos,
@@ -233,9 +240,10 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 					TRACE("Filldir returned less than 0\n");
 					goto finish;
 				}
+#ifdef CONFIG_SQUASHFS_WRITE
 			}
-
 			dput(d);
+#endif
 			*pos = length;
 		}
 	}
@@ -250,6 +258,7 @@ failed_read:
 	return 0;
 }
 
+#ifdef CONFIG_SQUASHFS_WRITE
 /* Relationship between i_mode and the DT_xxx types */
 static inline unsigned char dt_type(struct inode *inode)
 {
@@ -295,14 +304,13 @@ static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
 {
 	loff_t offset = file->f_pos;
 	struct dentry *dentry = file->f_path.dentry;
-	int ret;
 
-	ret = 0;
-	if (offset < dentry->d_inode->i_size)
-		ret = squashfs_readdir_ondisk(dentry, dirent,
-					    filldir, &file->f_pos);
-	if (ret)
-		return ret;
+	if (offset < dentry->d_inode->i_size) {
+		int ret = squashfs_readdir_ondisk(dentry, dirent,
+						  filldir, &file->f_pos);
+		if (ret)
+			return ret;
+	}
 
 	return squashfs_readdir_cache(file, dirent, filldir);
 }
@@ -348,12 +356,21 @@ static loff_t squashfs_dir_lseek(struct file *file, loff_t offset, int origin)
 	mutex_unlock(&inode->i_mutex);
 	return offset;
 }
+#else
+static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
+{
+	return squashfs_readdir_ondisk(file->f_path.dentry, dirent, filldir, &file->f_pos);
+}
+#define squashfs_dir_lseek default_llseek
+#endif
 
 const struct file_operations squashfs_dir_ops = {
 	.read = generic_read_dir,
 	.readdir = squashfs_readdir,
 	.llseek = squashfs_dir_lseek,
+#ifdef CONFIG_SQUASHFS_WRITE
 	.open = dcache_dir_open,
 	.release = dcache_dir_close,
 	.fsync = noop_fsync,
+#endif
 };

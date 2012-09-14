@@ -41,7 +41,12 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/xattr.h>
+#ifdef CONFIG_SQUASHFS_WRITE
 #include <linux/ramfs.h>
+#define squashfs_file_operations ramfs_file_operations
+#else
+#define squashfs_file_operations generic_ro_fops
+#endif
 
 #include "squashfs_fs.h"
 #include "squashfs_fs_sb.h"
@@ -49,6 +54,7 @@
 #include "squashfs.h"
 #include "xattr.h"
 
+#ifdef CONFIG_SQUASHFS_WRITE
 static ino_t get_last_ino(struct super_block *sb)
 {
 	struct squashfs_sb_info *msblk = sb->s_fs_info;
@@ -90,6 +96,7 @@ struct inode *get_squashfs_inode(struct super_block *sb, mode_t mode,
 
 	return inode;
 }
+#endif
 
 /*
  * Initialise VFS inode with the base inode information common to all
@@ -205,7 +212,7 @@ int squashfs_read_inode(struct inode *inode, long long ino)
 
 		set_nlink(inode, 1);
 		inode->i_size = le32_to_cpu(sqsh_ino->file_size);
-		inode->i_fop = &ramfs_file_operations;
+		inode->i_fop = &squashfs_file_operations;
 		inode->i_mode |= S_IFREG;
 		inode->i_blocks = ((inode->i_size - 1) >> 9) + 1;
 		squashfs_i(inode)->fragment_block = frag_blk;
@@ -250,7 +257,7 @@ int squashfs_read_inode(struct inode *inode, long long ino)
 		set_nlink(inode, le32_to_cpu(sqsh_ino->nlink));
 		inode->i_size = le64_to_cpu(sqsh_ino->file_size);
 		inode->i_op = &squashfs_inode_ops;
-		inode->i_fop = &ramfs_file_operations;
+		inode->i_fop = &squashfs_file_operations;
 		inode->i_mode |= S_IFREG;
 		inode->i_blocks = (inode->i_size -
 				le64_to_cpu(sqsh_ino->sparse) + 511) >> 9;

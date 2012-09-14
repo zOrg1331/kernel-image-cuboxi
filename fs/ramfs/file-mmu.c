@@ -49,7 +49,9 @@ const struct file_operations ramfs_file_operations = {
 	.splice_write	= generic_file_splice_write,
 	.llseek		= generic_file_llseek,
 };
+#if defined(CONFIG_SQUASHFS_MODULE) && defined(CONFIG_SQUASHFS_WRITE)
 EXPORT_SYMBOL(ramfs_file_operations);
+#endif
 
 const struct inode_operations ramfs_file_inode_operations = {
 	.setattr	= simple_setattr,

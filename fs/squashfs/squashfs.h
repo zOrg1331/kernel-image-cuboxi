@@ -68,10 +68,12 @@ extern __le64 *squashfs_read_id_index_table(struct super_block *, u64, u64,
 extern struct inode *squashfs_iget(struct super_block *, long long,
 				unsigned int);
 extern int squashfs_read_inode(struct inode *, long long);
+#ifdef CONFIG_SQUASHFS_WRITE
 extern struct inode *get_squashfs_inode(struct super_block *, mode_t, dev_t);
 
 /* super.c */
 extern void squashfs_shadow_genocide(struct dentry *);
+#endif
 
 /* xattr.c */
 extern ssize_t squashfs_listxattr(struct dentry *, char *, size_t);
@@ -82,8 +84,10 @@ extern ssize_t squashfs_listxattr(struct dentry *, char *, size_t);
 
 /* dir.c */
 extern const struct file_operations squashfs_dir_ops;
+#ifdef CONFIG_SQUASHFS_WRITE
 extern int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 				   filldir_t filldir, loff_t *pos);
+#endif
 
 /* export.c */
 extern const struct export_operations squashfs_export_ops;

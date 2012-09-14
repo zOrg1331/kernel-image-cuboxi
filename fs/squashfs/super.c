@@ -371,6 +371,9 @@ static int squashfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 static int squashfs_remount(struct super_block *sb, int *flags, char *data)
 {
+#ifndef CONFIG_SQUASHFS_WRITE
+	*flags |= MS_RDONLY;
+#endif
 	return 0;
 }
 
@@ -400,6 +403,7 @@ static struct dentry *squashfs_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, squashfs_fill_super);
 }
 
+#ifdef CONFIG_SQUASHFS_WRITE
 /* Something like d_genocide(sb->s_root) */
 void squashfs_shadow_genocide(struct dentry *root)
 {
@@ -442,6 +446,9 @@ void squashfs_kill_super(struct super_block *sb)
 
 	kill_block_super(sb);
 }
+#else
+#define squashfs_kill_super kill_block_super
+#endif
 
 static struct kmem_cache *squashfs_inode_cachep;
 
@@ -532,7 +539,9 @@ static const struct super_operations squashfs_super_ops = {
 	.statfs = squashfs_statfs,
 	.put_super = squashfs_put_super,
 	.remount_fs = squashfs_remount,
+#ifdef CONFIG_SQUASHFS_WRITE
 	.drop_inode = generic_delete_inode,
+#endif
 };
 
 module_init(init_squashfs_fs);

@@ -1977,7 +1977,9 @@ struct dentry *d_hash_and_lookup(struct dentry *dir, struct qstr *name)
 out:
 	return dentry;
 }
+#if defined(CONFIG_SQUASHFS_MODULE) && defined(CONFIG_SQUASHFS_WRITE)
 EXPORT_SYMBOL(d_hash_and_lookup);
+#endif
 
 /**
  * d_validate - verify dentry provided from insecure source (deprecated)

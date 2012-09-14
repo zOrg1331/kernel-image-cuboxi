@@ -146,8 +146,10 @@ static struct dentry *squashfs_lookup(struct inode *dir, struct dentry *dentry,
 	int offset = squashfs_i(dir)->offset;
 	int err, length, dir_count, size;
 
+#ifdef CONFIG_SQUASHFS_WRITE
 	if (dir->i_private)
 		return simple_lookup(dir, dentry, nd);
+#endif
 
 	TRACE("Entered squashfs_lookup [%llx:%x]\n", block, offset);
 
@@ -243,6 +245,7 @@ failed:
 	return ERR_PTR(err);
 }
 
+#ifdef CONFIG_SQUASHFS_WRITE
 static int squashfs_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *inode = dentry->d_inode;
@@ -440,9 +443,11 @@ int squashfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 	return 0;
 }
+#endif
 
 const struct inode_operations squashfs_dir_inode_ops = {
 	.lookup = squashfs_lookup,
+#ifdef CONFIG_SQUASHFS_WRITE
 	.rmdir = squashfs_rmdir,
 	.unlink = squashfs_unlink,
 	.create = squashfs_create,
@@ -451,6 +456,7 @@ const struct inode_operations squashfs_dir_inode_ops = {
 	.mkdir = squashfs_mkdir,
 	.mknod = squashfs_mknod,
 	.rename = squashfs_rename,
+#endif
 	.getxattr = generic_getxattr,
 	.listxattr = squashfs_listxattr
 };

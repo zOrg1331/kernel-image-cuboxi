@@ -1928,7 +1928,9 @@ int __set_page_dirty_no_writeback(struct page *page)
 		return !TestSetPageDirty(page);
 	return 0;
 }
+#if defined(CONFIG_SQUASHFS_MODULE) && defined(CONFIG_SQUASHFS_WRITE)
 EXPORT_SYMBOL(__set_page_dirty_no_writeback);
+#endif
 
 /*
  * Helper function for set_page_dirty family.
