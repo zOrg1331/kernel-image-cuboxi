@@ -28,8 +28,20 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 
 	if ((from + num <= from) || (from + num > IO_BITMAP_BITS))
 		return -EINVAL;
+#ifdef CONFIG_SCHED_CFS_BOOST
+	if (turn_on) {
+		if (!capable(CAP_SYS_RAWIO))
+			return -EPERM;
+		/*
+		 * Task will be accessing hardware IO ports,
+		 * mark it as special with the scheduler too:
+		 */
+		sched_privileged_task(current);
+	}
+#else
 	if (turn_on && !capable(CAP_SYS_RAWIO))
 		return -EPERM;
+#endif
 
 	/*
 	 * If it's the first ioperm() call in this thread's lifetime, set the
@@ -104,6 +116,9 @@ long sys_iopl(unsigned int level, struct pt_regs *regs)
 	if (level > old) {
 		if (!capable(CAP_SYS_RAWIO))
 			return -EPERM;
+#ifdef CONFIG_SCHED_CFS_BOOST
+		sched_privileged_task(current);
+#endif
 	}
 	regs->flags = (regs->flags & ~X86_EFLAGS_IOPL) | (level << 12);
 	t->iopl = level << 12;

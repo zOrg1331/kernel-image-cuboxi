@@ -524,6 +524,7 @@ static void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 			do_send_sig_info(SIGKILL, SEND_SIG_FORCED, p, true);
 		}
 
+	set_oom_timeslice(p);
 	set_tsk_thread_flag(victim, TIF_MEMDIE);
 	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, true);
 }

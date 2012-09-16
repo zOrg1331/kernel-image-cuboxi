@@ -1625,6 +1625,21 @@ struct task_struct {
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
 #define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)
 
+#ifdef CONFIG_SCHED_CFS_BOOST
+extern void sched_privileged_task(struct task_struct *p);
+extern int sysctl_sched_privileged_nice_level;
+#endif
+
+static inline void set_oom_timeslice(struct task_struct *p)
+{
+#ifdef CONFIG_SCHED_CFS_BOOST
+	if (p->policy == SCHED_NORMAL || p->policy == SCHED_BATCH)
+		sched_privileged_task(p);
+#else
+	p->rt.time_slice = HZ;
+#endif
+}
+
 /*
  * Priority of a process goes from 0..MAX_PRIO-1, valid RT
  * priority is 0..MAX_RT_PRIO-1, and SCHED_NORMAL/SCHED_BATCH

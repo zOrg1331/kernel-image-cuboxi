@@ -29,6 +29,27 @@ config IRQ_WORK
 
 menu "General setup"
 
+config SCHED_CFS_BOOST
+	bool "Boost for Privileged tasks (CFS Boost)"
+	default n
+	---help---
+	  This option instructs the kernel to guarantee more CPU time to
+	  X than to other tasks, which is useful if you want to have a
+	  faster desktop even under high system load.
+
+	  This option works by automatically boosting X's priority via
+	  renicing it to -10. NOTE: CFS does not suffer from "overscheduling"
+	  problems when X is reniced to -10, so this option is safe.           
+
+	  Say Y here if you are building a kernel for a desktop system.
+	  Say N here if you want X to be treated as a normal task.
+
+config SCHED_CFS_BOOST_VALUE
+	int "Nice value for privileged tasks"
+	depends on SCHED_CFS_BOOST
+	range -20 19
+	default -10
+
 config EXPERIMENTAL
 	bool "Prompt for development and/or incomplete code/drivers"
 	---help---
