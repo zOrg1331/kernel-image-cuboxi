@@ -10,8 +10,7 @@
 /* block_size (32bit number, network order)           */
 /* num_blocks (32bit number, network order)           */
 
-struct cloop_head
-{
+struct cloop_head {
 	char preamble[CLOOP_HEADROOM];
 	u_int32_t block_size;
 	u_int32_t num_blocks;

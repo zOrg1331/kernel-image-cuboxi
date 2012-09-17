@@ -54,24 +54,9 @@
 #include <linux/compat.h>
 #include "cloop.h"
 
-/* New License scheme */
-#ifdef MODULE_LICENSE
 MODULE_LICENSE("GPL");
-#endif
-#ifdef MODULE_AUTHOR
 MODULE_AUTHOR("Klaus Knopper (current maintainer), Paul Russel (initial Kernel 2.2 version)");
-#endif
-#ifdef MODULE_DESCRIPTION
 MODULE_DESCRIPTION("Transparently decompressing loopback block device");
-#endif
-
-#ifndef MIN
-#define MIN(x,y) ((x) < (y) ? (x) : (y))
-#endif
-
-#ifndef MAX
-#define MAX(x,y) ((x) > (y) ? (x) : (y))
-#endif
 
 /* Use experimental major for now */
 #define MAJOR_NR 240
@@ -220,9 +205,9 @@ static ssize_t cloop_read_from_file(struct cloop_device *clo, struct file *f, ch
 
    if(size_read <= 0)
     {
-     printk(KERN_ERR "%s: Read error %d at pos %Lu in file %s, "
-                     "%d bytes lost.\n", cloop_name, (int)size_read, pos,
-		     file, (int)size);
+     printk(KERN_ERR "%s: Read error %zu at pos %Lu in file %s, "
+                     "%zu bytes lost.\n", cloop_name, size_read, pos,
+		     file, size);
      memset(buf + buf_len - size, 0, size);
      break;
     }
@@ -435,9 +420,9 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
  clo->backing_inode= inode ;
  if(!isblkdev&&inode->i_size<sizeof(struct cloop_head))
   {
-   printk(KERN_ERR "%s: %lu bytes (must be >= %u bytes)\n",
+   printk(KERN_ERR "%s: %lu bytes (must be >= %zu bytes)\n",
                    cloop_name, (unsigned long)inode->i_size,
-		   (unsigned)sizeof(struct cloop_head));
+		   sizeof(struct cloop_head));
    error=-EBADF; goto error_release;
   }
  /* In suspended mode, we have done all checks necessary - FF */
@@ -473,8 +458,8 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
                                           clo->underlying_blksize);
    if(bytes_read != clo->underlying_blksize)
     {
-     printk(KERN_ERR "%s: Bad file, read() of first %lu bytes returned %d.\n",
-                   cloop_name, (unsigned long)clo->underlying_blksize, (int)bytes_read);
+     printk(KERN_ERR "%s: Bad file, read() of first %u bytes returned %zu.\n",
+                   cloop_name, clo->underlying_blksize, bytes_read);
      error=-EBADF;
      goto error_release;
     }
@@ -519,9 +504,9 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
        error=-ENOMEM; goto error_release;
       }
     }
-   num_readable = MIN(total_offsets - offsets_read,
+   num_readable = min(total_offsets - offsets_read,
                       (clo->underlying_blksize - offset) 
-                      / sizeof(loff_t));
+                      / (unsigned int)sizeof(loff_t));
    memcpy(&clo->offsets[offsets_read], bbuf+offset, num_readable * sizeof(loff_t));
    offsets_read += num_readable;
   }
@@ -530,7 +515,8 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
    for(i=0;i<total_offsets-1;i++)
     {
      loff_t d=be64_to_cpu(clo->offsets[i+1]) - be64_to_cpu(clo->offsets[i]);
-     clo->largest_block=MAX(clo->largest_block,d);
+     if (d > clo->largest_block)
+      clo->largest_block = d;
     }
    printk(KERN_INFO "%s: %s: %u blocks, %u bytes/block, largest block is %lu bytes.\n",
           cloop_name, filename, ntohl(clo->head.num_blocks),
@@ -600,7 +586,7 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
       {
        if((clo->preload_cache[i] = cloop_malloc(ntohl(clo->head.block_size))) == NULL)
         { /* Out of memory */
-         printk(KERN_WARNING "%s: cloop_malloc(%d) failed for preload_cache[%d] (ignored).\n",
+         printk(KERN_WARNING "%s: cloop_malloc(%u) failed for preload_cache[%d] (ignored).\n",
                              cloop_name, ntohl(clo->head.block_size), i);
 	 break;
 	}
@@ -621,16 +607,15 @@ static int cloop_set_file(int cloop_num, struct file *file, char *filename)
 	 memset(clo->preload_cache[i], 0, ntohl(clo->head.block_size));
 	}
       }
-     printk(KERN_INFO "%s: preloaded %d blocks into cache.\n", cloop_name,
-                      (int)clo->preload_size);
+     printk(KERN_INFO "%s: preloaded %zu blocks into cache.\n", cloop_name, clo->preload_size);
     }
    else
     {
      /* It is not a fatal error if cloop_malloc(clo->preload_size)
       * fails, then we just go without cache, but we should at least
       * let the user know. */
-     printk(KERN_WARNING "%s: cloop_malloc(%d) failed, continuing without preloaded buffers.\n",
-            cloop_name, (int)(clo->preload_size * sizeof(char *)));
+     printk(KERN_WARNING "%s: cloop_malloc(%zu) failed, continuing without preloaded buffers.\n",
+            cloop_name, clo->preload_size * sizeof(char*));
      clo->preload_array_size = clo->preload_size = 0;
     }
   }
