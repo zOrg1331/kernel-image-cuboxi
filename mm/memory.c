@@ -2653,8 +2653,10 @@ reuse:
 		/* file_update_time outside page_lock */
 		if (vma->vm_file)
 			file_update_time(vma->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 		if (vma->vm_prfile)
 			file_update_time(vma->vm_prfile);
+#endif
 
 		return ret;
 	}
@@ -3340,8 +3342,10 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		/* file_update_time outside page_lock */
 		if (vma->vm_file)
 			file_update_time(vma->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 		if (vma->vm_prfile)
 			file_update_time(vma->vm_prfile);
+#endif
 	} else {
 		unlock_page(vmf.page);
 		if (anon)

@@ -382,8 +382,10 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 			struct address_space *mapping = file->f_mapping;
 
 			get_file(file);
+#ifdef CONFIG_AUFS_PROC_MAP
 			if (tmp->vm_prfile)
 				get_file(tmp->vm_prfile);
+#endif
 			if (tmp->vm_flags & VM_DENYWRITE)
 				atomic_dec(&inode->i_writecount);
 			mutex_lock(&mapping->i_mmap_mutex);

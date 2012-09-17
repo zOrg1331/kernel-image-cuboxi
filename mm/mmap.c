@@ -232,8 +232,10 @@ static struct vm_area_struct *remove_vma(struct vm_area_struct *vma)
 		vma->vm_ops->close(vma);
 	if (vma->vm_file) {
 		fput(vma->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 		if (vma->vm_prfile)
 			fput(vma->vm_prfile);
+#endif
 		if (vma->vm_flags & VM_EXECUTABLE)
 			removed_exe_file_vma(vma->vm_mm);
 	}
@@ -622,8 +624,10 @@ again:			remove_next = 1 + (end > next->vm_end);
 	if (remove_next) {
 		if (file) {
 			fput(file);
+#ifdef CONFIG_AUFS_PROC_MAP
 			if (vma->vm_prfile)
 				fput(vma->vm_prfile);
+#endif
 			if (next->vm_flags & VM_EXECUTABLE)
 				removed_exe_file_vma(mm);
 		}
@@ -2003,8 +2007,10 @@ static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
 
 	if (new->vm_file) {
 		get_file(new->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 		if (new->vm_prfile)
 			get_file(new->vm_prfile);
+#endif
 		if (vma->vm_flags & VM_EXECUTABLE)
 			added_exe_file_vma(mm);
 	}
@@ -2029,8 +2035,10 @@ static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
 		if (vma->vm_flags & VM_EXECUTABLE)
 			removed_exe_file_vma(mm);
 		fput(new->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 		if (new->vm_prfile)
 			fput(new->vm_prfile);
+#endif
 	}
 	unlink_anon_vmas(new);
  out_free_mpol:
@@ -2429,8 +2437,10 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 			new_vma->vm_pgoff = pgoff;
 			if (new_vma->vm_file) {
 				get_file(new_vma->vm_file);
+#ifdef CONFIG_AUFS_PROC_MAP
 				if (new_vma->vm_prfile)
 					get_file(new_vma->vm_prfile);
+#endif
 				if (vma->vm_flags & VM_EXECUTABLE)
 					added_exe_file_vma(mm);
 			}
