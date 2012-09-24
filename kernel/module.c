@@ -2404,6 +2404,57 @@ static inline void kmemleak_load_module(const struct module *mod,
 }
 #endif
 
+#ifdef CONFIG_BINFMT_FATELF
+/*
+ * See if we're a valid FatELF binary, find the right record, and
+ *  return the offset of that record within the binary. Returns NULL if there's
+ *  a problem, or a pointer to the real ELF header if we're okay.
+ *  If we don't see the FatELF magic number, we assume this is a regular ELF
+ *  binary and let the regular ELF checks handle it.
+ *
+ * This is a simplified version of examine_fatelf in fs/binfmt_elf.c
+ */
+static Elf_Ehdr *examine_fatelf_module(const unsigned char *hdr,
+				       const unsigned long len)
+{
+	Elf_Ehdr elf;
+	int records, i;
+	const fatelf_hdr *fatelf = (const fatelf_hdr*)hdr;
+
+	if (likely(le32_to_cpu(fatelf->magic) != FATELF_MAGIC)) {
+		return (Elf_Ehdr*) hdr;  /* not FatELF; not an error. */
+	} else if (unlikely(le16_to_cpu(fatelf->version) != 1)) {
+		return NULL; /* Unrecognized format version. */
+	}
+
+	memset(&elf, 0, sizeof(elf));
+
+	records = (int)fatelf->num_records;  /* uint8, no byteswap needed */
+	for (i = 0; i < records; i++) {
+		const fatelf_record *record = &fatelf->records[i];
+
+		/* Fill in the data elf_check_arch() might care about. */
+		elf.e_ident[EI_OSABI] = record->osabi;
+		elf.e_ident[EI_CLASS] = record->word_size;
+		elf.e_ident[EI_DATA] = record->byte_order;
+		elf.e_machine = le16_to_cpu(record->machine);
+
+		if (unlikely(elf_check_arch(&elf))) {
+			const __u64 rec_offset = le64_to_cpu(record->offset);
+			const __u64 end_offset = rec_offset + le64_to_cpu(record->size);
+
+			if (likely(end_offset >= rec_offset) &&	/* overflow (corrupt file?)... */
+			    likely(end_offset <= len))		/* past EOF. */
+				return (Elf_Ehdr*)(hdr + (unsigned long)rec_offset);
+			/* past EOF. */
+		}
+		/* Unsupported CPU architecture. */
+	}
+
+	return NULL;  /* no binaries we could use. */
+}
+#endif
+
 /* Sets info->hdr and info->len. */
 static int copy_and_check(struct load_info *info,
 			  const void __user *umod, unsigned long len,
@@ -2411,40 +2462,60 @@ static int copy_and_check(struct load_info *info,
 {
 	int err;
 	Elf_Ehdr *hdr;
+#ifdef CONFIG_BINFMT_FATELF
+	Elf_Ehdr *hdr_alloc;  /* returned from vmalloc */
+#endif
 
 	if (len < sizeof(*hdr))
 		return -ENOEXEC;
 
 	/* Suck in entire file: we'll want most of it. */
-	if ((hdr = vmalloc(len)) == NULL)
+#ifdef CONFIG_BINFMT_FATELF
+	hdr_alloc = vmalloc(len);
+	if (hdr_alloc == NULL)
+#else
+	hdr = vmalloc(len);
+	if (hdr == NULL)
+#endif
 		return -ENOMEM;
 
+#ifdef CONFIG_BINFMT_FATELF
+	if (copy_from_user(hdr_alloc, umod, len) != 0) {
+#else
 	if (copy_from_user(hdr, umod, len) != 0) {
+#endif
 		err = -EFAULT;
 		goto free_hdr;
 	}
+
+#ifdef CONFIG_BINFMT_FATELF
+	hdr = examine_fatelf_module((unsigned char*)hdr_alloc, len);
+	if (hdr == NULL)
+		goto free_noexec;
+#endif
 
 	/* Sanity checks against insmoding binaries or wrong arch,
 	   weird elf version */
 	if (memcmp(hdr->e_ident, ELFMAG, SELFMAG) != 0
 	    || hdr->e_type != ET_REL
 	    || !elf_check_arch(hdr)
-	    || hdr->e_shentsize != sizeof(Elf_Shdr)) {
-		err = -ENOEXEC;
-		goto free_hdr;
+	    || hdr->e_shentsize != sizeof(Elf_Shdr))
+		goto free_noexec;
+
+	if (len >= hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr)) {
+		info->hdr = hdr;
+		info->len = len;
+		return 0;
 	}
 
-	if (len < hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr)) {
-		err = -ENOEXEC;
-		goto free_hdr;
-	}
-
-	info->hdr = hdr;
-	info->len = len;
-	return 0;
-
+free_noexec:
+	err = -ENOEXEC;
 free_hdr:
+#ifdef CONFIG_BINFMT_FATELF
+	vfree(hdr_alloc);
+#else
 	vfree(hdr);
+#endif
 	return err;
 }
 

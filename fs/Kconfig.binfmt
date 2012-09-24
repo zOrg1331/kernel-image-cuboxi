@@ -23,6 +23,16 @@ config BINFMT_ELF
 	  ld.so (check the file <file:Documentation/Changes> for location and
 	  latest version).
 
+config BINFMT_FATELF
+	bool "Kernel support for FatELF binaries"
+	depends on BINFMT_ELF
+	default n
+	---help---
+	  FatELF is a file format that embeds multiple ELF binaries for different
+	  architectures into one file.
+
+	  Information about FatELF available on <http://icculus.org/fatelf>
+
 config COMPAT_BINFMT_ELF
 	bool
 	depends on COMPAT && BINFMT_ELF

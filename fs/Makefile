@@ -38,8 +38,14 @@ obj-$(CONFIG_BINFMT_MISC)	+= binfmt_misc.o
 # binfmt_script is always there
 obj-y				+= binfmt_script.o
 
+ifeq ($(CONFIG_BINFMT_FATELF),y)
+# List compat_* first, so they insert at end of the list, and are tried last.
+obj-$(CONFIG_COMPAT_BINFMT_ELF)	+= compat_binfmt_elf.o
+obj-$(CONFIG_BINFMT_ELF)	+= binfmt_elf.o
+else
 obj-$(CONFIG_BINFMT_ELF)	+= binfmt_elf.o
 obj-$(CONFIG_COMPAT_BINFMT_ELF)	+= compat_binfmt_elf.o
+endif
 obj-$(CONFIG_BINFMT_ELF_FDPIC)	+= binfmt_elf_fdpic.o
 obj-$(CONFIG_BINFMT_SOM)	+= binfmt_som.o
 obj-$(CONFIG_BINFMT_FLAT)	+= binfmt_flat.o

@@ -40,7 +40,11 @@
 static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs);
 static int load_elf_library(struct file *);
 static unsigned long elf_map(struct file *, unsigned long, struct elf_phdr *,
+#ifdef CONFIG_BINFMT_FATELF
+				int, int, unsigned long, unsigned long);
+#else
 				int, int, unsigned long);
+#endif
 
 /*
  * If we don't support core dumping, then supply a NULL so we
@@ -316,7 +320,11 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 
 static unsigned long elf_map(struct file *filep, unsigned long addr,
 		struct elf_phdr *eppnt, int prot, int type,
+#ifdef CONFIG_BINFMT_FATELF
+		unsigned long total_size, unsigned long base_offset)
+#else
 		unsigned long total_size)
+#endif
 {
 	unsigned long map_addr;
 	unsigned long size = eppnt->p_filesz + ELF_PAGEOFFSET(eppnt->p_vaddr);
@@ -340,11 +348,19 @@ static unsigned long elf_map(struct file *filep, unsigned long addr,
 	*/
 	if (total_size) {
 		total_size = ELF_PAGEALIGN(total_size);
+#ifdef CONFIG_BINFMT_FATELF
+		map_addr = do_mmap(filep, addr, total_size, prot, type, off + base_offset);
+#else
 		map_addr = do_mmap(filep, addr, total_size, prot, type, off);
+#endif
 		if (!BAD_ADDR(map_addr))
 			do_munmap(current->mm, map_addr+size, total_size-size);
 	} else
+#ifdef CONFIG_BINFMT_FATELF
+		map_addr = do_mmap(filep, addr, size, prot, type, off + base_offset);
+#else
 		map_addr = do_mmap(filep, addr, size, prot, type, off);
+#endif
 
 	up_write(&current->mm->mmap_sem);
 	return(map_addr);
@@ -376,7 +392,11 @@ static unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
 
 static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 		struct file *interpreter, unsigned long *interp_map_addr,
+#ifdef CONFIG_BINFMT_FATELF
+		unsigned long no_base, unsigned long base_offset)
+#else
 		unsigned long no_base)
+#endif
 {
 	struct elf_phdr *elf_phdata;
 	struct elf_phdr *eppnt;
@@ -414,7 +434,11 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 	if (!elf_phdata)
 		goto out;
 
+#ifdef CONFIG_BINFMT_FATELF
+	retval = kernel_read(interpreter, interp_elf_ex->e_phoff + base_offset,
+#else
 	retval = kernel_read(interpreter, interp_elf_ex->e_phoff,
+#endif
 			     (char *)elf_phdata, size);
 	error = -EIO;
 	if (retval != size) {
@@ -450,7 +474,11 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 				load_addr = -vaddr;
 
 			map_addr = elf_map(interpreter, load_addr + vaddr,
+#ifdef CONFIG_BINFMT_FATELF
+					eppnt, elf_prot, elf_type, total_size, base_offset);
+#else
 					eppnt, elf_prot, elf_type, total_size);
+#endif
 			total_size = 0;
 			if (!*interp_map_addr)
 				*interp_map_addr = map_addr;
@@ -553,6 +581,95 @@ static unsigned long randomize_stack_top(unsigned long stack_top)
 #endif
 }
 
+#ifdef CONFIG_BINFMT_FATELF
+/*
+ * See if we're a valid FatELF binary, find the right record, and
+ *  load (*elf) with the actual ELF header. Sets (*offset) to the
+ *  base offset of the chosen ELF binary. Returns 0 on success or a negative
+ *  error code.
+ * If we're not a FatELF binary, (*elf) is loaded with the existing contents
+ *  of (buf) and 0 is returned.
+ */
+static int examine_fatelf(struct file *file, const char *filename, char *buf,
+		int buflen, unsigned long *offset, struct elfhdr *elf)
+{
+	int records, i, rc;
+	const fatelf_hdr *fatelf = (fatelf_hdr *) buf;
+
+	if (likely(le32_to_cpu(fatelf->magic) != FATELF_MAGIC)) {
+		*elf = *((struct elfhdr *)buf);  /* treat like normal ELF. */
+		return 0;  /* not a FatELF binary; not an error. */
+	} else if (unlikely(le16_to_cpu(fatelf->version) != 1)) {
+		return -ENOEXEC; /* Unrecognized format version. */
+	}
+
+	/*
+	 * In theory, there could be 255 separate records packed into this
+	 *  binary, but for now, bprm->buf (128 bytes) holds exactly 5
+	 *  records with the fatelf header, and that seems reasonable for
+	 *  most uses. We could add the complexity to read more records later
+	 *  if there's a serious need.
+	 */
+	records = (int) fatelf->num_records;  /* uint8, no byteswap needed */
+
+	if (unlikely(records > 5)) {
+		records = 5;  /* clamp, in case we find one we can use. */
+	}
+
+	for (i = 0; i < records; i++) {
+		const fatelf_record *record = &fatelf->records[i];
+		const __u8 osabi = record->osabi;
+		const int abiok = likely( likely(osabi == ELFOSABI_NONE) ||
+		                          unlikely(osabi == ELFOSABI_LINUX) );
+
+		/* Fill in the data elf_check_arch() might care about. */
+		elf->e_ident[EI_OSABI] = record->osabi;
+		elf->e_ident[EI_CLASS] = record->word_size;
+		elf->e_ident[EI_DATA] = record->byte_order;
+		elf->e_machine = le16_to_cpu(record->machine);
+
+		if (likely(!elf_check_arch(elf))) {
+			continue;  /* Unsupported CPU architecture. */
+		} else if (unlikely(!abiok)) {
+			continue;  /* Unsupported OS ABI. */
+		} else if (unlikely(record->osabi_version != 0)) {
+			continue;  /* Unsupported OS ABI version. */
+		} else {
+			/* We can support this ELF arch/abi. */
+			const __u64 rec_offset = le64_to_cpu(record->offset);
+			const __u64 rec_size = le64_to_cpu(record->size);
+			const __u64 end_offset = rec_offset + rec_size;
+			const unsigned long uloff = (unsigned long) rec_offset;
+
+			if (unlikely(end_offset < rec_offset)) {
+				continue;  /* overflow (corrupt file?) */
+			} else if (unlikely(ELF_PAGEOFFSET(uloff) != 0)) {
+				continue;  /* bad alignment. */
+			}
+
+#if BITS_PER_LONG == 32
+			if (unlikely(end_offset > 0xFFFFFFFF)) {
+				continue;
+			}
+#endif
+
+			/* replace the FatELF data with the real ELF header. */
+			rc = kernel_read(file, uloff, (char*) elf, sizeof(*elf));
+			if (unlikely((rc != sizeof(*elf)) && (rc >= 0))) {
+				rc = -EIO;
+			} else if (likely(rc == sizeof(*elf))) {
+				*offset = uloff;
+				rc = 0;
+			}
+
+			return rc;
+		}
+	}
+
+	return -ENOEXEC;  /* no binaries we could use. */
+}
+#endif
+
 static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 {
 	struct file *interpreter = NULL; /* to shut gcc up */
@@ -564,6 +681,10 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	unsigned long elf_bss, elf_brk;
 	int retval, i;
 	unsigned int size;
+#ifdef CONFIG_BINFMT_FATELF
+	unsigned long base_offset = 0;
+	unsigned long interp_base_offset = 0;
+#endif
 	unsigned long elf_entry;
 	unsigned long interp_load_addr = 0;
 	unsigned long start_code, end_code, start_data, end_data;
@@ -580,9 +701,15 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		retval = -ENOMEM;
 		goto out_ret;
 	}
-	
+
+#ifdef CONFIG_BINFMT_FATELF
+	retval = examine_fatelf(bprm->file, bprm->filename, bprm->buf,
+	                        BINPRM_BUF_SIZE, &base_offset, &loc->elf_ex);
+	if (unlikely(retval < 0)) goto out_ret;
+#else
 	/* Get the exec-header */
 	loc->elf_ex = *((struct elfhdr *)bprm->buf);
+#endif
 
 	retval = -ENOEXEC;
 	/* First of all, some simple consistency checks */
@@ -608,7 +735,11 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	if (!elf_phdata)
 		goto out;
 
+#ifdef CONFIG_BINFMT_FATELF
+	retval = kernel_read(bprm->file, loc->elf_ex.e_phoff + base_offset,
+#else
 	retval = kernel_read(bprm->file, loc->elf_ex.e_phoff,
+#endif
 			     (char *)elf_phdata, size);
 	if (retval != size) {
 		if (retval >= 0)
@@ -642,7 +773,12 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 			if (!elf_interpreter)
 				goto out_free_ph;
 
-			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
+			retval = kernel_read(bprm->file,
+#ifdef CONFIG_BINFMT_FATELF
+					     elf_ppnt->p_offset + base_offset,
+#else
+					     elf_ppnt->p_offset,
+#endif
 					     elf_interpreter,
 					     elf_ppnt->p_filesz);
 			if (retval != elf_ppnt->p_filesz) {
@@ -675,8 +811,16 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 				goto out_free_dentry;
 			}
 
+#ifdef CONFIG_BINFMT_FATELF
+			retval = examine_fatelf(interpreter, elf_interpreter,
+			                        bprm->buf, BINPRM_BUF_SIZE,
+			                        &interp_base_offset,
+			                        &loc->interp_elf_ex);
+			if (unlikely(retval < 0)) goto out_free_dentry;
+#else
 			/* Get the exec headers */
 			loc->interp_elf_ex = *((struct elfhdr *)bprm->buf);
+#endif
 			break;
 		}
 		elf_ppnt++;
@@ -807,7 +951,11 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		}
 
 		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+#ifdef CONFIG_BINFMT_FATELF
+				elf_prot, elf_flags, 0, base_offset);
+#else
 				elf_prot, elf_flags, 0);
+#endif
 		if (BAD_ADDR(error)) {
 			send_sig(SIGKILL, current, 0);
 			retval = IS_ERR((void *)error) ?
@@ -888,7 +1036,11 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 		elf_entry = load_elf_interp(&loc->interp_elf_ex,
 					    interpreter,
 					    &interp_map_addr,
+#ifdef CONFIG_BINFMT_FATELF
+					    load_bias, interp_base_offset);
+#else
 					    load_bias);
+#endif
 		if (!IS_ERR((void *)elf_entry)) {
 			/*
 			 * load_elf_interp() returns relocation
@@ -1004,11 +1156,26 @@ static int load_elf_library(struct file *file)
 	unsigned long elf_bss, bss, len;
 	int retval, error, i, j;
 	struct elfhdr elf_ex;
+#ifdef CONFIG_BINFMT_FATELF
+	unsigned long base_offset = 0;
+	char buf[BINPRM_BUF_SIZE];
 
+	retval = kernel_read(file, 0, buf, sizeof(buf));
+	if (unlikely(retval != sizeof(buf))) {
+		error = (retval >= 0) ? -EIO : retval;
+		goto out;
+	}
+	error = examine_fatelf(file, 0, buf, sizeof(buf), &base_offset, &elf_ex);
+	if (unlikely(retval < 0)) {
+		goto out;
+	}
+	error = -ENOEXEC;
+#else
 	error = -ENOEXEC;
 	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
 	if (retval != sizeof(elf_ex))
 		goto out;
+#endif
 
 	if (memcmp(elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
 		goto out;
@@ -1030,7 +1197,11 @@ static int load_elf_library(struct file *file)
 
 	eppnt = elf_phdata;
 	error = -ENOEXEC;
+#ifdef CONFIG_BINFMT_FATELF
+	retval = kernel_read(file, elf_ex.e_phoff + base_offset, (char *)eppnt, j);
+#else
 	retval = kernel_read(file, elf_ex.e_phoff, (char *)eppnt, j);
+#endif
 	if (retval != j)
 		goto out_free_ph;
 
@@ -1051,7 +1222,11 @@ static int load_elf_library(struct file *file)
 			PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
 			(eppnt->p_offset -
+#ifdef CONFIG_BINFMT_FATELF
+			 ELF_PAGEOFFSET(eppnt->p_vaddr)) + base_offset);
+#else
 			 ELF_PAGEOFFSET(eppnt->p_vaddr)));
+#endif
 	if (error != ELF_PAGESTART(eppnt->p_vaddr))
 		goto out_free_ph;
 
