@@ -469,6 +469,16 @@ config SENSORS_IBMPEX
 	  This driver can also be built as a module.  If so, the module
 	  will be called ibmpex.
 
+config SENSORS_IPMI
+	tristate "IPMI Hardware Monitoring Support"
+	depends on HWMON && IPMI_HANDLER && EXPERIMENTAL
+	help
+	  If you say yes here you get support for sensors monitored by
+	  an IPMI baseboard management controller (BMC).
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called ipmisensors.
+
 config SENSORS_IT87
 	tristate "ITE IT87xx and compatibles"
 	depends on !PPC
