@@ -57,6 +57,7 @@ enum _cpt_object_type
 	CPT_OBJ_VFSMOUNT_REF,
 	CPT_OBJ_CGROUP,
 	CPT_OBJ_CGROUPS,
+	CPT_OBJ_POSIX_TIMER_LIST,
 	CPT_OBJ_MAX,
 	/* The objects above are stored in memory while checkpointing */
 
@@ -87,6 +88,7 @@ enum _cpt_object_type
 	CPT_OBJ_BIND_MNT,
 	CPT_OBJ_SYSVMSG,
 	CPT_OBJ_SYSVMSG_MSG,
+	CPT_OBJ_MM_AUXV,
 
 	CPT_OBJ_X86_REGS = 4096,
 	CPT_OBJ_X86_64_REGS,
@@ -114,6 +116,7 @@ enum _cpt_object_type
 	CPT_OBJ_EVENTFD,
 	CPT_OBJ_NET_BR,
 	CPT_OBJ_NET_BR_DEV,
+	CPT_OBJ_POSIX_TIMER,
 
 	/* 2.6.27-specific */
 	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
@@ -145,7 +148,8 @@ struct cpt_major_hdr
 #define CPT_VERSION_27_3	0x703
 #define CPT_VERSION_32		0x800
 #define CPT_VERSION_32_1	0x801
-#define CPT_CURRENT_VERSION	CPT_VERSION_32_1
+#define CPT_VERSION_32_2	0x802
+#define CPT_CURRENT_VERSION	CPT_VERSION_32_2
 	__u16	cpt_os_arch;		/* Architecture */
 #define CPT_OS_ARCH_I386	0
 #define CPT_OS_ARCH_EMT64	1
@@ -257,6 +261,7 @@ enum
 	CPT_SECT_SYSV_MSG,
 	CPT_SECT_SNMP_STATS,
 	CPT_SECT_CGROUPS,
+	CPT_SECT_POSIX_TIMERS,
 	CPT_SECT_MAX
 };
 
@@ -1521,6 +1526,7 @@ struct cpt_task_image {
 	__u64	cpt_exec_ub;
 	__u64	cpt_mm_ub;
 	__u64	cpt_fork_sub;
+	__u64	cpt_posix_timers;
 } __attribute__ ((aligned (8)));
 
 struct cpt_sigaltstack_image {
@@ -1604,6 +1610,22 @@ struct cpt_sighandler_image {
 	__u64	cpt_restorer;
 	__u64	cpt_flags;
 	__u64	cpt_mask;
+} __attribute__ ((aligned (8)));
+
+struct cpt_posix_timer_image {
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u32	cpt_timer_id;
+	__u32	cpt_timer_clock;
+	__u64	cpt_timer_interval;
+	__u64	cpt_timer_value;
+
+	__u64	cpt_sigev_value;
+	__u32	cpt_sigev_signo;
+	__u32	cpt_sigev_notify;
 } __attribute__ ((aligned (8)));
 
 struct cpt_netdev_image {

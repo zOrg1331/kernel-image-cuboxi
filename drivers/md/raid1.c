@@ -808,8 +808,8 @@ static void wait_barrier(struct r1conf *conf)
 		wait_event_lock_irq(conf->wait_barrier,
 				    !conf->barrier ||
 				    (conf->nr_pending &&
-				     current->bio_list &&
-				     current->bio_tail),
+				     current->bio_tail &&
+				     current->bio_list),
 				    conf->resync_lock,
 				    md_raid1_unplug_device(conf));
 		conf->nr_waiting--;

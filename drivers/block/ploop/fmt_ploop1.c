@@ -447,6 +447,9 @@ ploop1_prepare_grow(struct ploop_delta * delta, sector_t *new_size, int *reloc)
 	iblock_t a_h = delta->io.alloc_head;
 	int	 log = delta->io.plo->cluster_log;
 
+	if (*new_size & ((1 << delta->cluster_log) - 1))
+		return -EINVAL;
+
 	vh = (struct ploop_pvd_header *)page_address(ph->dyn_page);
 	n_present  = le32_to_cpu(vh->m_FirstBlockOffset) >> log;
 	BUG_ON (!n_present);

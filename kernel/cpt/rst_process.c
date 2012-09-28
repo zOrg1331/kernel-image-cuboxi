@@ -40,6 +40,7 @@
 #include "cpt_ubc.h"
 #include "cpt_process.h"
 #include "cpt_kernel.h"
+#include "cpt_syscalls.h"
 
 
 #define HOOK_RESERVE	256
@@ -566,6 +567,74 @@ rst_signal_complete(struct cpt_task_image *ti, int * exiting, cpt_context_t *ctx
 		if (err)
 			return err;
 	}
+
+	return 0;
+}
+
+static int restore_posix_timer_list(struct cpt_object_hdr *tli, loff_t pos,
+				    struct cpt_context *ctx)
+{
+	loff_t offset;
+
+	offset = pos + tli->cpt_hdrlen;
+	while (offset < pos + tli->cpt_next) {
+		struct cpt_posix_timer_image timi;
+		struct itimerspec setting;
+		struct sigevent event;
+		clockid_t which_clock;
+		timer_t timer_id;
+		int err;
+
+		err = rst_get_object(CPT_OBJ_POSIX_TIMER, offset, &timi, ctx);
+		if (err)
+			return err;
+
+		timer_id = timi.cpt_timer_id;
+		which_clock = timi.cpt_timer_clock;
+		event.sigev_value.sival_ptr =
+			cpt_ptr_import(timi.cpt_sigev_value);
+		event.sigev_signo = timi.cpt_sigev_signo;
+		event.sigev_notify = timi.cpt_sigev_notify;
+
+		err = timer_create_id(which_clock, &event, &timer_id);
+		if (err) {
+			eprintk_ctx("timer_create_id: %d\n", err);
+			return err;
+		}
+
+		cpt_timespec_import(&setting.it_interval,
+				    timi.cpt_timer_interval);
+		cpt_timespec_import(&setting.it_value,
+				    timi.cpt_timer_value);
+
+		err = sc_timer_settime(timer_id, &setting);
+		if (err) {
+			eprintk_ctx("sc_timer_settime: %d\n", err);
+			return err;
+		}
+
+		offset += timi.cpt_next;
+	}
+	return 0;
+}
+
+int rst_posix_timers(struct cpt_task_image *ti, cpt_context_t *ctx)
+{
+	int err;
+	struct cpt_object_hdr tli;
+
+	if (!cpt_object_has(ti, cpt_posix_timers) ||
+	    ti->cpt_posix_timers == CPT_NULL)
+		return 0;
+
+	err = rst_get_object(CPT_OBJ_POSIX_TIMER_LIST,
+			     ti->cpt_posix_timers, &tli, ctx);
+	if (err)
+		return err;
+
+	err = restore_posix_timer_list(&tli, ti->cpt_posix_timers, ctx);
+	if (err)
+		return err;
 
 	return 0;
 }

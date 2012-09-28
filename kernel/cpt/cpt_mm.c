@@ -839,6 +839,33 @@ static int dump_one_aio_ctx(struct mm_struct *mm, struct kioctx *aio_ctx,
 	return 0;
 }
 
+static void dump_mm_auxv(struct mm_struct *mm, cpt_context_t *ctx)
+{
+	loff_t saved_object;
+	struct cpt_object_hdr hdr;
+	__u64 auxv[AT_VECTOR_SIZE];
+	unsigned nwords = 0;
+
+	while (mm->saved_auxv[nwords]) {
+		auxv[nwords] = mm->saved_auxv[nwords];
+		nwords++;
+		auxv[nwords] = mm->saved_auxv[nwords];
+		nwords++;
+	}
+
+	if (nwords) {
+		hdr.cpt_next = sizeof(hdr) + nwords * sizeof(auxv[0]);
+		hdr.cpt_object = CPT_OBJ_MM_AUXV;
+		hdr.cpt_hdrlen = sizeof(hdr);
+		hdr.cpt_content = CPT_CONTENT_ARRAY;
+
+		cpt_push_object(&saved_object, ctx);
+		ctx->write(&hdr, sizeof(hdr), ctx);
+		ctx->write(&auxv, nwords * sizeof(auxv[0]), ctx);
+		cpt_pop_object(&saved_object, ctx);
+	}
+}
+
 static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 {
 	struct mm_struct *mm = obj->o_obj;
@@ -933,6 +960,8 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 		if ((err = dump_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
 			goto out;
 	}
+
+	dump_mm_auxv(mm, ctx);
 
 	cpt_close_object(ctx);
 

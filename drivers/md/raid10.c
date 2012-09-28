@@ -851,8 +851,8 @@ static void wait_barrier(struct r10conf *conf)
 		wait_event_lock_irq(conf->wait_barrier,
 				    !conf->barrier ||
 				    (conf->nr_pending &&
-				     current->bio_list &&
-				     current->bio_tail),
+				     current->bio_tail &&
+				     current->bio_list),
 				    conf->resync_lock,
 				    raid10_unplug(conf->mddev->queue));
 		conf->nr_waiting--;

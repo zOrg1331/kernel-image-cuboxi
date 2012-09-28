@@ -56,7 +56,9 @@ struct ve_nlm_data {
 	struct hlist_head	_nlm_reserved_pids;
 	spinlock_t		_nlm_reserved_lock;
 
-	atomic_t		_nlm_in_grace;
+	struct delayed_work	_grace_period_end;
+	struct list_head	_grace_list;
+	struct lock_manager	_lockd_manager;
 };
 
 #ifdef CONFIG_VE
@@ -151,7 +153,10 @@ static void ve_nfs_data_put(struct ve_struct *ve)
 
 #define nlm_reserved_pids	NLM_CTX_FIELD(nlm_reserved_pids)
 #define nlm_reserved_lock	NLM_CTX_FIELD(nlm_reserved_lock)
-#define nlm_in_grace		NLM_CTX_FIELD(nlm_in_grace)
+
+#define grace_period_end	NLM_CTX_FIELD(grace_period_end)
+#define grace_list		NLM_CTX_FIELD(grace_list)
+#define lockd_manager		NLM_CTX_FIELD(lockd_manager)
 
 #define nfsiod_workqueue	NFS_CTX_FIELD(nfsiod_workqueue)
 
