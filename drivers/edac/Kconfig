@@ -207,7 +207,7 @@ config EDAC_I5100
 
 config EDAC_I7300
 	tristate "Intel Clarksboro MCH"
-	depends on EDAC_MM_EDAC && X86 && PCI
+	depends on EDAC_MM_EDAC && X86 && CPU_SUP_INTEL && PCI
 	help
 	  Support for error detection and correction the Intel
 	  Clarksboro MCH (Intel 7300 chipset).
