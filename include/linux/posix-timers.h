@@ -92,6 +92,8 @@ int do_posix_clock_nonanosleep(const clockid_t, int flags, struct timespec *,
 			       struct timespec __user *);
 int do_posix_clock_nosettime(const clockid_t, struct timespec *tp);
 
+void posix_timer_gettime(struct k_itimer *timr, struct itimerspec *setting);
+
 /* function to call to trigger timer event */
 int posix_timer_event(struct k_itimer *timr, int si_private);
 
@@ -120,4 +122,6 @@ long clock_nanosleep_restart(struct restart_block *restart_block);
 
 void update_rlimit_cpu(struct task_struct *task, unsigned long rlim_new);
 
+int timer_create_id(const clockid_t which_clock,
+		    struct sigevent *timer_event_spec, timer_t *timer_id);
 #endif

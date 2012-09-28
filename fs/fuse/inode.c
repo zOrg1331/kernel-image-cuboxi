@@ -21,6 +21,7 @@
 #include <linux/sched.h>
 #include <linux/exportfs.h>
 #include <linux/ve_proto.h>
+#include <linux/sysctl.h>
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Filesystem in Userspace");
@@ -31,6 +32,8 @@ static struct kmem_cache *fuse_inode_cachep;
 struct list_head fuse_conn_list;
 #endif
 DEFINE_MUTEX(fuse_mutex);
+
+static int fuse_ve_odirect;
 
 static int set_global_limit(const char *val, struct kernel_param *kp);
 
@@ -507,13 +510,13 @@ static int parse_fuse_opt(char *opt, struct fuse_mount_data *d, int is_bdev)
 			break;
 
 		case OPT_WBCACHE:
-			if (!ve_is_super(get_exec_env()))
+			if (!ve_is_super(get_exec_env()) && !fuse_ve_odirect)
 				return -EPERM;
 			d->flags |= FUSE_WBCACHE;
 			break;
 
 		case OPT_ODIRECT:
-			if (!ve_is_super(get_exec_env()))
+			if (!ve_is_super(get_exec_env()) && !fuse_ve_odirect)
 				return -EPERM;
 			d->flags |= FUSE_ODIRECT;
 			break;
@@ -1287,6 +1290,25 @@ static struct ve_hook fuse_ve_hook = {
 };
 #endif
 
+static ctl_table fuse_table[] = {
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "fuse-ve-odirect",
+		.data		= &fuse_ve_odirect,
+		.maxlen		= sizeof(fuse_ve_odirect),
+		.mode		= 0600,
+		.proc_handler	= &proc_dointvec,
+	},
+	{}
+};
+
+static struct ctl_path fuse_path[] = {
+	{ .procname = "fs", .ctl_name = CTL_FS, },
+	{},
+};
+
+static struct ctl_table_header * fuse_sysctl_header;
+
 static int __init fuse_init(void)
 {
 	int res;
@@ -1315,6 +1337,8 @@ static int __init fuse_init(void)
 	sanitize_global_limit(&max_user_bgreq);
 	sanitize_global_limit(&max_user_congthresh);
 
+	fuse_sysctl_header = register_sysctl_paths(fuse_path, fuse_table);
+
 	return 0;
 
  err_sysfs_cleanup:
@@ -1336,6 +1360,7 @@ static void __exit fuse_exit(void)
 	fuse_sysfs_cleanup();
 	fuse_fs_cleanup();
 	fuse_dev_cleanup();
+	unregister_sysctl_table(fuse_sysctl_header);
 }
 
 module_init(fuse_init);

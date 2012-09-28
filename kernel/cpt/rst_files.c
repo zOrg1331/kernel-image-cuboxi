@@ -783,6 +783,10 @@ static int fixup_file_flags(struct file *file, const struct cred *cred,
 			file->f_flags &= ~O_NONBLOCK;
 			file->f_flags |= fi->cpt_flags&O_NONBLOCK;
 		}
+		if ((file->f_flags ^ fi->cpt_flags) & O_LARGEFILE) {
+			file->f_flags &= ~O_LARGEFILE;
+			file->f_flags |= fi->cpt_flags & O_LARGEFILE;
+		}
 		if (fi->cpt_flags&FASYNC) {
 			if (fi->cpt_fown_fd == -1) {
 				wprintk_ctx("No fd for FASYNC\n");
@@ -1729,15 +1733,30 @@ struct vfsmount *rst_kern_mount(const char *fstype, int flags,
 	return mnt;
 }
 
+struct tar_args
+{
+	int pfd;
+	struct vfsmount *mnt;
+};
+
 static int undumptmpfs(void *arg)
 {
+	struct tar_args *args = arg;
 	int i;
-	int *pfd = arg;
 	int fd1, fd2, err;
 	char *argv[] = { "tar", "x", "-C", "/", "-S", NULL };
+	char *argv_pwd[] = { "tar", "x", "-S", NULL };
 
-	if (pfd[0] != 0)
-		sc_dup2(pfd[0], 0);
+	if (args->pfd != 0)
+		sc_dup2(args->pfd, 0);
+
+	if (args->mnt) {
+		struct path pwd = {
+			.mnt = args->mnt,
+			.dentry = args->mnt->mnt_root,
+		};
+		set_fs_pwd(current->fs, &pwd);
+	}
 
 	set_fs(KERNEL_DS);
 	fd1 = sc_open("/dev/null", O_WRONLY, 0);
@@ -1771,12 +1790,13 @@ try:
 
 	module_put(THIS_MODULE);
 
-	i = kernel_execve("/bin/tar", argv, NULL);
+	i = kernel_execve("/bin/tar", args->mnt ? argv_pwd : argv, NULL);
 	eprintk("failed to exec /bin/tar: %d\n", i);
 	return 255 << 8;
 }
 
-static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
+static int rst_restore_tmpfs(loff_t *pos, struct vfsmount *mnt,
+			     struct cpt_context * ctx)
 {
 	int err;
 	int pfd[2];
@@ -1788,6 +1808,7 @@ static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
 	int status;
 	mm_segment_t oldfs;
 	sigset_t ignore, blocked;
+	struct tar_args args;
 
 	err = rst_get_object(CPT_OBJ_NAME, *pos, &v, ctx);
 	if (err < 0)
@@ -1796,9 +1817,11 @@ static int rst_restore_tmpfs(loff_t *pos, struct cpt_context * ctx)
 	err = sc_pipe(pfd);
 	if (err < 0)
 		return err;
+	args.pfd = pfd[0];
+	args.mnt = mnt;
 	ignore.sig[0] = CPT_SIG_IGNORE_MASK;
 	sigprocmask(SIG_BLOCK, &ignore, &blocked);
-	pid = err = local_kernel_thread(undumptmpfs, (void*)pfd, SIGCHLD, 0);
+	pid = err = local_kernel_thread(undumptmpfs, (void*)&args, SIGCHLD, 0);
 	if (err < 0) {
 		eprintk_ctx("tmpfs local_kernel_thread: %d\n", err);
 		goto out;
@@ -2108,8 +2131,12 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos,
 				up_write(&namespace_sem);
 			}
 
-			if (is_tmpfs)
-				err = rst_restore_tmpfs(&pos, ctx);
+			if (is_tmpfs) {
+				if (ns_obj->o_flags & CPT_NAMESPACE_MAIN)
+					err = rst_restore_tmpfs(&pos, NULL, ctx);
+				else
+					err = rst_restore_tmpfs(&pos, mnt, ctx);
+			}
 		}
 out_err:
 		if (mntdev)
@@ -2212,6 +2239,7 @@ int rst_root_namespace(struct cpt_context *ctx)
 			return -ENOMEM;
 		cpt_obj_setpos(obj, sec, ctx);
 		if (mnt_ns) {
+			obj->o_flags |= CPT_NAMESPACE_MAIN;
 			get_mnt_ns(mnt_ns);
 			mnt_ns = NULL;
 		}

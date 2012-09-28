@@ -97,3 +97,9 @@ static inline int sc_open(char* path, int flags, int mode)
 {
 	WRAP(open, (path, flags, mode));
 }
+
+static inline int sc_timer_settime(timer_t timer_id,
+				   const struct itimerspec *new_setting)
+{
+	WRAP2(timer_settime, (timer_id, 0, new_setting, NULL));
+}

@@ -1780,20 +1780,6 @@ static int collect_vfsmount_tree(struct vfsmount *tree, cpt_object_t *ns_obj,
 				break;
 		}
 
-		if (!(ns_obj->o_flags & CPT_NAMESPACE_MAIN) &&
-		     (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs") ||
-		      !strcmp(mnt->mnt_sb->s_type->name, "devtmpfs"))) {
-			cpt_object_t *bind_obj;
-
-			bind_obj = cpt_lookup_bind_source(mnt, ctx);
-			if (IS_ERR_OR_NULL(bind_obj)) {
-				eprintk_ctx("non-bindmount tmpfs in nested "
-					    "namespace: %s\n", path);
-				err = -EINVAL;
-				break;
-			}
-		}
-
 		obj = cpt_object_add(CPT_OBJ_VFSMOUNT_REF, mnt, ctx);
 		if (!obj) {
 			err = -ENOMEM;
@@ -1942,6 +1928,7 @@ struct args_t
 	int* pfd;
 	char* path;
 	envid_t veid;
+	struct vfsmount *mnt;
 };
 
 static int dumptmpfs(void *arg)
@@ -1958,6 +1945,20 @@ static int dumptmpfs(void *arg)
 		eprintk("cannot enter ve to dump tmpfs\n");
 		module_put(THIS_MODULE);
 		return 255 << 8;
+	}
+
+	if (args->mnt) {
+		struct path pwd;
+
+		pwd.mnt = vfs_bind_mount(args->mnt, args->mnt->mnt_root);
+		if (IS_ERR(pwd.mnt)) {
+			eprintk("cannot create bind mount to dump tmpfs\n");
+			module_put(THIS_MODULE);
+			return 255 << 8;
+		}
+		pwd.dentry = pwd.mnt->mnt_root;
+		set_fs_pwd(current->fs, &pwd);
+		mntput(pwd.mnt);
 	}
 
 	if (pfd[1] != 1)
@@ -1986,7 +1987,8 @@ static int dumptmpfs(void *arg)
 	return 255 << 8;
 }
 
-static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
+static int cpt_dump_tmpfs(char *path, struct vfsmount *mnt,
+			  struct cpt_context *ctx)
 {
 	int err;
 	int pid;
@@ -2009,6 +2011,7 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	args.pfd = pfd;
 	args.path = path;
 	args.veid = VEID(get_exec_env());
+	args.mnt = mnt;
 	ignore.sig[0] = CPT_SIG_IGNORE_MASK;
 	sigprocmask(SIG_BLOCK, &ignore, &blocked);
 	oldenv = set_exec_env(get_ve0());
@@ -2106,7 +2109,8 @@ static cpt_object_t *cpt_lookup_bind_source(struct vfsmount *mnt,
 	return NULL;
 }
 
-static int dump_vfsmount(cpt_object_t *obj, struct cpt_context *ctx)
+static int dump_vfsmount(cpt_object_t *obj, cpt_object_t *ns_obj,
+			 struct cpt_context *ctx)
 {
 	struct vfsmount *mnt = obj->o_obj;
 	int err = 0;
@@ -2222,7 +2226,10 @@ static int dump_vfsmount(cpt_object_t *obj, struct cpt_context *ctx)
 			   !strcmp(mnt->mnt_sb->s_type->name, "devtmpfs")) {
 			mntget(mnt);
 			up_read(&namespace_sem);
-			err = cpt_dump_tmpfs(path, ctx);
+			if (ns_obj->o_flags & CPT_NAMESPACE_MAIN)
+				err = cpt_dump_tmpfs(path, NULL, ctx);
+			else
+				err = cpt_dump_tmpfs(".", mnt, ctx);
 			down_read(&namespace_sem);
 			if (!err && list_empty(&mnt->mnt_list))
 				err = -EBUSY;
@@ -2282,7 +2289,7 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 		if (mnt->mnt_ns != ns)
 			continue;
 
-		err = dump_vfsmount(mnt_obj, ctx);
+		err = dump_vfsmount(mnt_obj, obj, ctx);
 		if (err)
 			break;
 	}

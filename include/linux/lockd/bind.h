@@ -55,6 +55,7 @@ extern int	nlmclnt_proc(struct nlm_host *host, int cmd,
 					struct file_lock *fl);
 extern int	lockd_up(void);
 extern void	lockd_down(void);
+extern void	grace_ender(struct work_struct *work);
 
 extern int	nlmclnt_set_lockowner(struct inode *,
 		struct file_lock *, fl_owner_t, int);

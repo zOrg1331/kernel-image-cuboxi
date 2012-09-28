@@ -971,6 +971,29 @@ out:
 	return err;
 }
 
+static int do_rst_auxv(struct cpt_object_hdr *hdr, loff_t pos,
+		       cpt_context_t *ctx)
+{
+	struct mm_struct *mm = current->mm;
+	__u64 auxv[AT_VECTOR_SIZE];
+	unsigned idx, nwords;
+	int err;
+
+	nwords = (hdr->cpt_next - hdr->cpt_hdrlen) / sizeof(auxv[0]);
+	if (nwords > AT_VECTOR_SIZE - 2)
+		return -E2BIG;
+
+	err = ctx->pread(auxv, nwords * sizeof(auxv[0]), ctx,
+			pos + hdr->cpt_hdrlen);
+	if (!err) {
+		mm->saved_auxv[nwords] = 0;
+		mm->saved_auxv[nwords + 1] = 0;
+		for (idx = 0; idx < nwords; idx++)
+			mm->saved_auxv[idx] = auxv[idx];
+	}
+	return err;
+}
+
 #ifndef CONFIG_IA64
 #define TASK_UNMAP_START	0
 #else
@@ -1064,6 +1087,7 @@ static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 		loff_t offset = ti->cpt_mm + vmi->cpt_hdrlen;
 		do {
 			union {
+				struct cpt_object_hdr hdr;
 				struct cpt_vma_image vmai;
 				struct cpt_aio_ctx_image aioi;
 				struct cpt_obj_bits bits;
@@ -1096,6 +1120,13 @@ static int do_rst_mm(struct cpt_mm_image *vmi, struct cpt_task_image *ti,
 				err = do_rst_aio(&u.aioi, offset, ctx);
 				if (err) {
 					eprintk_ctx("%s: failed to restore aio: %d\n",
+							__func__, err);
+					goto out;
+				}
+			} else if (u.hdr.cpt_object == CPT_OBJ_MM_AUXV) {
+				err = do_rst_auxv(&u.hdr, offset, ctx);
+				if (err) {
+					eprintk_ctx("%s: failed to restore auxv: %d\n",
 							__func__, err);
 					goto out;
 				}

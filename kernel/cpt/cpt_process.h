@@ -1,8 +1,11 @@
 int cpt_collect_signals(cpt_context_t *);
 int cpt_dump_signal(struct cpt_context *);
 int cpt_dump_sighand(struct cpt_context *);
+int cpt_collect_posix_timers(struct cpt_context *);
+int cpt_dump_posix_timers(struct cpt_context *);
 int cpt_dump_tasks(struct cpt_context *);
 
+int rst_posix_timers(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_signal_complete(struct cpt_task_image *ti, int *exiting, struct cpt_context *ctx);
 __u32 rst_signal_flag(struct cpt_task_image *ti, struct cpt_context *ctx);
 

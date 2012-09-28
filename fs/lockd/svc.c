@@ -91,15 +91,16 @@ static unsigned long get_lockd_grace_period(void)
 		return nlm_timeout * 5 * HZ;
 }
 
-static struct lock_manager lockd_manager = {
-};
-
-static void grace_ender(struct work_struct *not_used)
+void grace_ender(struct work_struct *grace)
 {
-	locks_end_grace(&lockd_manager);
-}
+	struct delayed_work *dwork = container_of(grace, struct delayed_work,
+						  work);
+	struct ve_nlm_data *nlm = container_of(dwork, struct ve_nlm_data,
+					       _grace_period_end);
 
-static DECLARE_DELAYED_WORK(grace_period_end, grace_ender);
+	locks_end_grace(&nlm->_lockd_manager);
+}
+EXPORT_SYMBOL_GPL(grace_ender);
 
 static void set_grace_period(void)
 {
@@ -539,6 +540,10 @@ static void ve_nlm_init(struct ve_nlm_data *nlm_data)
 {
 	spin_lock_init(&nlm_data->_nlm_reserved_lock);
 	INIT_HLIST_HEAD(&nlm_data->_nlm_reserved_pids);
+
+	INIT_DELAYED_WORK(&nlm_data->_grace_period_end, grace_ender);
+	INIT_LIST_HEAD(&nlm_data->_grace_list);
+
 	get_exec_env()->nlm_data = nlm_data;
 }
 

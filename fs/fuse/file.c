@@ -458,7 +458,7 @@ static void fuse_wait_on_writeback(struct inode *inode, pgoff_t start, size_t by
 	pgoff_t idx_from, idx_to;
 
 	idx_from = start >> PAGE_CACHE_SHIFT;
-	idx_to = (start + bytes) >> PAGE_CACHE_SHIFT;
+	idx_to = (start + bytes - 1) >> PAGE_CACHE_SHIFT;
 
 	wait_event(fi->page_waitq, !fuse_range_is_writeback(inode, idx_from, idx_to));
 }
@@ -624,8 +624,16 @@ static void fuse_aio_complete(struct fuse_io_priv *io, int err,
 		else {
 			res = io->bytes;
 
-			if (is_sync_kiocb(io->iocb))
-				io->iocb->ki_pos += res;
+			if (!is_sync_kiocb(io->iocb)) {
+				struct file *file = io->iocb->ki_filp;
+				struct inode *inode = file->f_path.dentry->d_inode;
+				struct fuse_conn *fc = get_fuse_conn(inode);
+				struct fuse_inode *fi = get_fuse_inode(inode);
+
+				spin_lock(&fc->lock);
+				fi->attr_version = ++fc->attr_version;
+				spin_unlock(&fc->lock);
+			}
 		}
 
 		aio_complete(io->iocb, res, 0);
@@ -1574,7 +1582,7 @@ static ssize_t __fuse_direct_write(struct file *file, const struct iovec *iov,
 	if (!res) {
 		res = __fuse_direct_io(file, iov, nr_segs, count, ppos, 1,
 				       async);
-		if (res > 0)
+		if (!async && res > 0)
 			fuse_write_update_size(inode, *ppos);
 	}
 
@@ -1719,9 +1727,14 @@ static int fuse_writepage_locked(struct page *page, struct writeback_control *wb
 	struct fuse_file *ff;
 	struct page *tmp_page;
 
-	if (wbc && fuse_page_is_writeback(inode, page->index)) {
-		redirty_page_for_writepage(wbc, page);
-		return 0;
+	if (wbc) {
+		while (fuse_page_is_writeback(inode, page->index)) {
+			if (wbc->sync_mode != WB_SYNC_ALL) {
+				redirty_page_for_writepage(wbc, page);
+				return 0;
+			}
+			fuse_wait_on_page_writeback(inode, page->index);
+		}
 	}
 
 	set_page_writeback(page);
@@ -1846,10 +1859,13 @@ static int fuse_writepages_fill(struct page *page,
 	struct fuse_conn *fc = get_fuse_conn(inode);
 	int check_for_blocked = 0;
 
-	if (fuse_page_is_writeback(inode, page->index)) {
-		redirty_page_for_writepage(wbc, page);
-		unlock_page(page);
-		return 0;
+	while (fuse_page_is_writeback(inode, page->index)) {
+		if (wbc->sync_mode != WB_SYNC_ALL) {
+			redirty_page_for_writepage(wbc, page);
+			unlock_page(page);
+			return 0;
+		}
+		fuse_wait_on_page_writeback(inode, page->index);
 	}
 
 	if (req->num_pages &&
@@ -1859,6 +1875,7 @@ static int fuse_writepages_fill(struct page *page,
 		int err;
 
 		if (wbc->nonblocking && fc->blocked) {
+			BUG_ON(wbc->sync_mode == WB_SYNC_ALL);
 			redirty_page_for_writepage(wbc, page);
 			unlock_page(page);
 			return 0;
@@ -2730,6 +2747,53 @@ static ssize_t fuse_direct_IO_bvec(int rw, struct kiocb *iocb,
 	return -EIOCBQUEUED;
 }
 
+static void fuse_do_truncate(struct file *file)
+{
+	struct fuse_file *ff = file->private_data;
+	struct inode *inode = file->f_mapping->host;
+	struct fuse_conn *fc = get_fuse_conn(inode);
+	struct fuse_req *req;
+	struct fuse_setattr_in inarg;
+	struct fuse_attr_out outarg;
+	int err;
+
+	req = fuse_get_req(fc);
+	if (IS_ERR(req)) {
+		printk("failed to allocate req for truncate (%ld)\n",
+		       PTR_ERR(req));
+		return;
+	}
+
+	memset(&inarg, 0, sizeof(inarg));
+	memset(&outarg, 0, sizeof(outarg));
+
+	inarg.valid |= FATTR_SIZE;
+	inarg.size = i_size_read(inode);
+
+	inarg.valid |= FATTR_FH;
+	inarg.fh = ff->fh;
+
+	req->in.h.opcode = FUSE_SETATTR;
+	req->in.h.nodeid = get_node_id(inode);
+	req->in.numargs = 1;
+	req->in.args[0].size = sizeof(inarg);
+	req->in.args[0].value = &inarg;
+	req->out.numargs = 1;
+	if (fc->minor < 9)
+		req->out.args[0].size = FUSE_COMPAT_ATTR_OUT_SIZE;
+	else
+		req->out.args[0].size = sizeof(outarg);
+	req->out.args[0].value = &outarg;
+
+	fuse_request_send(fc, req);
+	err = req->out.h.error;
+	fuse_put_request(fc, req);
+
+	if (err)
+		printk("failed to truncate to %lld with error %d\n",
+		       i_size_read(inode), err);
+}
+
 static ssize_t
 fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 			loff_t offset, unsigned long nr_segs)
@@ -2745,7 +2809,8 @@ fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	inode = file->f_mapping->host;
 	pos = offset;
 
-	if (offset + count <= i_size_read(inode)) {
+	if (is_sync_kiocb(iocb) || (offset + count <=
+				i_size_read(inode))) {
 		struct fuse_io_priv *io;
 
 		io = kmalloc(sizeof(struct fuse_io_priv), GFP_KERNEL);
@@ -2770,7 +2835,19 @@ fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 
 	if (async_cb) {
 		fuse_aio_complete(async_cb->private, ret == count ? 0 : -EIO, 0);
-		ret = -EIOCBQUEUED;
+
+		/* bump fi->ver on completion; i_size cannot change */
+		if (!is_sync_kiocb(iocb))
+			return -EIOCBQUEUED;
+
+		ret = wait_on_sync_kiocb(iocb);
+
+		if (rw == WRITE) {
+			if (ret > 0)
+				fuse_write_update_size(inode, pos);
+			else if (ret < 0)
+				fuse_do_truncate(file);
+		}
 	}
 
 	return ret;

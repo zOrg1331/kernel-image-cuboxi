@@ -259,17 +259,11 @@ out:
 				file->f_dentry->d_name.name, err);
 }
 
-static void apply_delayed_locks(struct file *fake, struct file *real)
+static void apply_delayed_locks(struct delayed_flock_info *dfi, struct file *real)
 {
-	struct delayed_flock_info *dfi;
-	struct delayfs_file_private *priv;
-
-	priv = fake->private_data;
- 
-	while (priv->dfi != NULL) {
-		dfi = priv->dfi;
-		priv->dfi = dfi->next;
+	while (dfi) {
 		delayed_flock(dfi, real);
+		dfi = dfi->next;
 	}
 }
 
@@ -277,7 +271,7 @@ static void delay_switch_fd(struct files_struct *files, struct super_block *sb)
 {
 	struct fdtable *fdt;
 	int i;
-	struct file *fake, *real, *rel = NULL;
+	struct file *fake, *real;
 	struct delayfs_file_private *priv;
 
 	i = 0;
@@ -285,6 +279,8 @@ restart:
 	spin_lock(&files->file_lock);
 	fdt = files_fdtable(files);
 	for ( ; i < fdt->max_fds ; i++ ) {
+		struct delayed_flock_info *dfi;
+
 		fake = fdt->fd[i];
 		if (!fake || fake->f_vfsmnt->mnt_sb != sb)
 			continue;
@@ -296,25 +292,25 @@ restart:
 
 		get_file(real);
 		rcu_assign_pointer(fdt->fd[i], real);
+
+		/*
+		 * Flock applying have to be done only once per file. That's
+		 * why we drop the link.
+		 * And file can be shared between processes, do file_lock is
+		 * not enough.
+		 */
+		spin_lock(&fake->f_lock);
+		dfi = priv->dfi;
+		priv->dfi = NULL;
+		spin_unlock(&fake->f_lock);
 		spin_unlock(&files->file_lock);
 
-		apply_delayed_locks(fake, real);
+		apply_delayed_locks(dfi, real);
 
-		priv->dfi = (void *)rel;
-		rel = fake;
+		fput(fake);
 		goto restart;
 	}
 	spin_unlock(&files->file_lock);
-
-	synchronize_rcu(); /* wait till fget_light gets the reference */
-
-	while (rel != NULL) {
-		fake = rel;
-		priv = fake->private_data;
-		rel = (struct file *)priv->dfi;
-		priv->dfi = NULL;
-		fput(fake);
-	}
 }
 
 static void delay_switch_fs(struct fs_struct *fs, struct super_block *sb)
@@ -1355,6 +1351,8 @@ static void dctx_release_objects(struct cpt_delayed_context *ctx)
 		kfree(obj->o_image);
 		kfree(obj);
 	}
+
+	synchronize_rcu(); /* wait till fget_light gets the reference */
 
 	for_each_object_safe(obj, nobj, CPT_DOBJ_FILE) {
 		list_del(&obj->o_list);
