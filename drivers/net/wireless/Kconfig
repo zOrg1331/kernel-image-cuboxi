@@ -246,6 +246,8 @@ config ADM8211
 
 	  Thanks to Infineon-ADMtek for their support of this driver.
 
+source "drivers/net/wireless/rtl8192u/Kconfig"
+
 config MAC80211_HWSIM
 	tristate "Simulated radio testing tool for mac80211"
 	depends on MAC80211
