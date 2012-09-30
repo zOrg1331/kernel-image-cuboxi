@@ -135,7 +135,7 @@ config EDAC_I82875P
 
 config EDAC_I82975X
 	tristate "Intel 82975x (D82975x)"
-	depends on EDAC_MM_EDAC && PCI && X86
+	depends on EDAC_MM_EDAC && PCI && X86 && CPU_SUP_INTEL
 	help
 	  Support for error detection and correction on the Intel
 	  DP82975x server chipsets.
