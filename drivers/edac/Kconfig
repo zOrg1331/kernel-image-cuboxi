@@ -149,7 +149,7 @@ config EDAC_I3000
 
 config EDAC_I3200
 	tristate "Intel 3200"
-	depends on EDAC_MM_EDAC && PCI && X86 && EXPERIMENTAL
+	depends on EDAC_MM_EDAC && PCI && X86 && CPU_SUP_INTEL && EXPERIMENTAL
 	help
 	  Support for error detection and correction on the Intel
 	  3200 and 3210 server chipsets.
