@@ -179,7 +179,7 @@ config EDAC_I7CORE
 
 config EDAC_I82860
 	tristate "Intel 82860"
-	depends on EDAC_MM_EDAC && PCI && X86_32
+	depends on EDAC_MM_EDAC && PCI && X86_32 && CPU_SUP_INTEL
 	help
 	  Support for error detection and correction on the Intel
 	  82860 chipset.
