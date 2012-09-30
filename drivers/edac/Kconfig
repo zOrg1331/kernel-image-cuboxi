@@ -128,7 +128,7 @@ config EDAC_I82443BXGX
 
 config EDAC_I82875P
 	tristate "Intel 82875p (D82875P, E7210)"
-	depends on EDAC_MM_EDAC && PCI && X86_32
+	depends on EDAC_MM_EDAC && PCI && X86_32 && CPU_SUP_INTEL
 	help
 	  Support for error detection and correction on the Intel
 	  DP82785P and E7210 server chipsets.
