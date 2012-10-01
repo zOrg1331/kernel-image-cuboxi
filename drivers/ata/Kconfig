@@ -304,6 +304,7 @@ config PATA_ALI
 
 config PATA_AMD
 	tristate "AMD/NVidia PATA support"
+	depends on X86 && CPU_SUP_AMD
 	depends on PCI
 	help
 	  This option enables support for the AMD and NVidia PATA
