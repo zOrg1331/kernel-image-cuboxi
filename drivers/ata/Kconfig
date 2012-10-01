@@ -185,6 +185,7 @@ comment "SATA SFF controllers with BMDMA"
 
 config ATA_PIIX
 	tristate "Intel ESB, ICH, PIIX3, PIIX4 PATA/SATA support"
+	depends on X86 && (X86_32 || CPU_SUP_INTEL)
 	depends on PCI
 	help
 	  This option enables support for ICH5/6/7/8 Serial ATA
