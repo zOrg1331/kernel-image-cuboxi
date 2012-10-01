@@ -433,7 +433,7 @@ config I2C_IMX
 
 config I2C_INTEL_MID
 	tristate "Intel Moorestown/Medfield Platform I2C controller"
-	depends on PCI
+	depends on PCI && X86 && CPU_SUP_INTEL
 	help
 	  Say Y here if you have an Intel Moorestown/Medfield platform I2C
 	  controller.
