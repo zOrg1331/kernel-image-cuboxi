@@ -1347,7 +1347,7 @@ config SENSORS_ULTRA45
 
 config SENSORS_APPLESMC
 	tristate "Apple SMC (Motion sensor, light sensor, keyboard backlight)"
-	depends on INPUT && X86
+	depends on INPUT && X86 && CPU_SUP_INTEL
 	select NEW_LEDS
 	select LEDS_CLASS
 	select INPUT_POLLDEV
