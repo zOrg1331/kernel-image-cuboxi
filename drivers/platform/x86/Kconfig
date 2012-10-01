@@ -454,6 +454,7 @@ config SENSORS_HDAPS
 
 config INTEL_MENLOW
 	tristate "Thermal Management driver for Intel menlow platform"
+	depends on CPU_SUP_INTEL
 	depends on ACPI_THERMAL
 	select THERMAL
 	---help---
