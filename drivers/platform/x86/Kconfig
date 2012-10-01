@@ -741,6 +741,7 @@ config MXM_WMI
 
 config INTEL_OAKTRAIL
 	tristate "Intel Oaktrail Platform Extras"
+	depends on CPU_SUP_INTEL
 	depends on ACPI
 	depends on RFKILL && BACKLIGHT_CLASS_DEVICE && ACPI
 	---help---
