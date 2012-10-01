@@ -326,6 +326,7 @@ config SENSORS_EXYNOS4_TMU
 
 config SENSORS_I5K_AMB
 	tristate "FB-DIMM AMB temperature sensor on Intel 5000 series chipsets"
+	depends on X86 && CPU_SUP_INTEL
 	depends on PCI && EXPERIMENTAL
 	help
 	  If you say yes here you get support for FB-DIMM AMB temperature
