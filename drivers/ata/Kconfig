@@ -636,6 +636,7 @@ config PATA_SCC
 
 config PATA_SCH
 	tristate "Intel SCH PATA support"
+	depends on CPU_SUP_INTEL
 	depends on PCI
 	help
 	  This option enables support for Intel SCH PATA on the Intel
