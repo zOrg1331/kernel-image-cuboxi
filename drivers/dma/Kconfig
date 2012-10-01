@@ -35,7 +35,7 @@ comment "DMA Devices"
 
 config INTEL_MID_DMAC
 	tristate "Intel MID DMA support for Peripheral DMA controllers"
-	depends on PCI && X86
+	depends on PCI && X86 && CPU_SUP_INTEL
 	select DMA_ENGINE
 	default n
 	help
