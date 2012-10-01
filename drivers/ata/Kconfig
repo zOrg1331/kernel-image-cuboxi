@@ -767,6 +767,7 @@ config PATA_IXP4XX_CF
 
 config PATA_MPIIX
 	tristate "Intel PATA MPIIX support"
+	depends on X86 && X86_32
 	depends on PCI
 	help
 	  This option enables support for MPIIX PATA support.
