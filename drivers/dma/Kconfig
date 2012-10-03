@@ -59,7 +59,7 @@ config AMBA_PL08X
 
 config INTEL_IOATDMA
 	tristate "Intel I/OAT DMA support"
-	depends on PCI && X86
+	depends on PCI && X86 && CPU_SUP_INTEL
 	select DMA_ENGINE
 	select DCA
 	select ASYNC_TX_DISABLE_PQ_VAL_DMA
