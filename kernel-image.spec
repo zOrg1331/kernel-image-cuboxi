@@ -1,6 +1,6 @@
-Name: kernel-image-un-def
-Release: alt1
-epoch:1 
+Name: kernel-image-un-test
+epoch: 0
+Release: alt0.M60P.1
 %define kernel_base_version	3.6
 %define kernel_sublevel	.0
 %define kernel_extra_version	%nil
@@ -23,7 +23,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_disable oss
@@ -286,14 +286,14 @@ kernel package %name-%version-%release, install this package
 and specify %kbuild_dir as the kernel source
 directory.
 
-%package -n kernel-doc-%base_flavour
-Summary: Linux kernel %kversion-%base_flavour documentation
+%package -n kernel-doc-%flavour
+Summary: Linux kernel %kversion-%flavour documentation
 Group: System/Kernel and hardware
 
-%description -n kernel-doc-%base_flavour
+%description -n kernel-doc-%flavour
 This package contains documentation files for ALT Linux kernel packages:
- * kernel-image-%base_flavour-up-%kversion-%krelease
- * kernel-image-%base_flavour-smp-%kversion-%krelease
+ * kernel-image-%flavour-up-%kversion-%krelease
+ * kernel-image-%flavour-smp-%kversion-%krelease
 
 The documentation files contained in this package may be different
 from the similar files in upstream kernel distributions, because some
@@ -544,8 +544,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/build
 
 %if_enabled docs
-%files -n kernel-doc-%base_flavour
-%doc %_docdir/kernel-doc-%base_flavour-%version
+%files -n kernel-doc-%flavour
+%doc %_docdir/kernel-doc-%flavour-%version
 %endif
 
 %files -n kernel-modules-drm-%flavour
@@ -578,37 +578,40 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Mon Oct 01 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.0-alt1
-- 3.6
+* Wed Oct 03 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.0-alt0.M60P.1
+- 3.6.0
 
-* Sat Sep 15 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.4-alt1
+* Tue Sep 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.4-alt0.M60P.1
 - 3.5.4
 
-* Sun Aug 26 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.3-alt1
+* Mon Aug 27 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.3-alt0.M60P.1
 - 3.5.3
-- kmod: pass -b option to /sbin/modprobe (by ldv@)
 
-* Wed Aug 15 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.2-alt1
+* Thu Aug 16 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.2-alt0.M60P.1
 - 3.5.2
-- Applyed: fs: push rcu_barrier() from deactivate_locked_super()
 
-* Fri Aug 10 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.1-alt1
-- 3.5.1
+* Thu Jul 26 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt1
+- 3.5 release
 
-* Thu Aug 02 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.0-alt2
-- rebuild with right kernel-source
+* Sun Jul 15 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc7
+- 3.5-rc7
 
-* Thu Jul 26 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.0-alt1
-- 3.5
+* Thu Jul 12 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc6
+- 3.5-rc6
 
-* Fri Jul 20 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.6-alt1
-- 3.4.6
+* Sun Jul 01 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc5
+- 3.5-rc5
 
-* Tue Jul 17 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.5-alt1
-- 3.4.5
+* Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4.1
+- aufs added
+- docs disabled
 
-* Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.4-alt1
-- 3.4.4
+* Mon Jun 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.5.0-alt0rc4
+- 3.5-rc4
+- un-test on base of on-def
+
+* Fri Jun 22 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.0-alt0rc3
+- 3.5-rc3
 
 * Mon Jun 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.3-alt1
 - 3.4.3
