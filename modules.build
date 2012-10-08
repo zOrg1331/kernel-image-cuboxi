@@ -48,7 +48,7 @@ acpi_call
 
 # asix
 
-u200
+# u200
 
 fglrx
 
