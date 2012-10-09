@@ -1,6 +1,6 @@
 Name: kernel-image-un-test
 epoch: 1
-Release: alt1
+Release: alt3
 %define kernel_base_version	3.5
 %define kernel_sublevel	.1
 %define kernel_extra_version	%nil
@@ -578,8 +578,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Tue Oct 09 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.1-alt1
-- bisect start
+* Tue Oct 09 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.5.1-alt3
+- bisect upper
 
 * Mon Oct 08 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.1-alt0.M60P.1
 - 3.6.1
