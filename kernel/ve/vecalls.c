@@ -903,10 +903,7 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 	INIT_LIST_HEAD(&ve->ve_list);
 	init_waitqueue_head(&ve->ve_list_wait);
 	mutex_init(&ve->sync_mutex);
-
-	idr_init(&ve->_posix_timers_id);
-	spin_lock_init(&ve->posix_timers_lock);
-
+ 
 	return 0;
 }
 
@@ -1669,7 +1666,6 @@ static void real_do_env_free(struct ve_struct *ve)
 {
 	VZTRACE("real_do_env_free\n");
 
-	idr_destroy(&ve->_posix_timers_id);
 	fini_ve_cgroups(ve);
 	free_ve_tty_drivers(ve);
 	free_ve_filesystems(ve);
