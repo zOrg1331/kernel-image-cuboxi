@@ -712,9 +712,6 @@ static int cpt_collect(struct cpt_context *ctx)
 	if ((err = cpt_collect_signals(ctx)) != 0)
 		return err;
 
-	if ((err = cpt_collect_posix_timers(ctx)) != 0)
-		return err;
-
 	return 0;
 }
 
@@ -925,8 +922,6 @@ int cpt_dump(struct cpt_context *ctx)
 		err = cpt_dump_ifinfo(ctx);
 	if (!err)
 		err = cpt_dump_sighand(ctx);
-	if (!err)
-		err = cpt_dump_posix_timers(ctx);
 	if (!err)
 		err = cpt_dump_vm(ctx);
 	if (!err)

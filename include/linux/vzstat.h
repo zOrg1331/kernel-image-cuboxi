@@ -125,6 +125,25 @@ static inline void KSTAT_LAT_ADD(struct kstat_lat_struct *p,
 	p->cur.totlat += dur;
 }
 
+/*
+ * Must be called with disabled interrupts to remove any possible
+ * locks and seqcounts under write-lock and avoid this 3-way deadlock:
+ *
+ * timer interrupt:
+ *	write_seqlock(&xtime_lock);
+ *	 spin_lock_irqsave(&kstat_glb_lock);
+ *
+ * update_schedule_latency():
+ *	spin_lock_irq(&kstat_glb_lock);
+ *	 read_seqcount_begin(&cur->lock)
+ *
+ * some-interrupt during KSTAT_LAT_PCPU_ADD()
+ *   KSTAT_LAT_PCPU_ADD()
+ *    write_seqcount_begin(&cur->lock);
+ *     <interrupt>
+ *      ktime_get()
+ *       read_seqcount_begin(&xtime_lock);
+ */
 static inline void KSTAT_LAT_PCPU_ADD(struct kstat_lat_pcpu_struct *p, int cpu,
 		u64 dur)
 {

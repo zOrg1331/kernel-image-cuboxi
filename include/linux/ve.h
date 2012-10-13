@@ -19,8 +19,6 @@
 #include <linux/kobject.h>
 #include <linux/pid.h>
 #include <linux/socket.h>
-#include <linux/idr.h>
-#include <linux/spinlock.h>
 #include <net/inet_frag.h>
 
 #ifdef VZMON_DEBUG
@@ -290,9 +288,6 @@ struct ve_struct {
 	struct task_struct	*_kthreadd_task;
 	struct workqueue_struct	*khelper_wq;
 	struct mutex		sync_mutex;
-
-	struct idr		_posix_timers_id;
-	spinlock_t		posix_timers_lock;
 };
 
 #define VE_MEMINFO_DEFAULT      1       /* default behaviour */
