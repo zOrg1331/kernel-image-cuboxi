@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	3.6
 %define kernel_sublevel	.2
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Oct 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.2-alt2
+- fixed #27862? (led@)
+
 * Sat Oct 13 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.2-alt1
 - 3.6.2
 
