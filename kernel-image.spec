@@ -580,6 +580,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Oct 22 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.3-alt1
 - 3.6.3
+- Borislav Petkovs test fix fo boot crash on nvidia ide
 
 * Sat Oct 13 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.2-alt1
 - 3.6.2
