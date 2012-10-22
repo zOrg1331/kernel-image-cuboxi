@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/i386 3.7.1-un-def-alt2 Kernel Configuration
+# Linux/i386 3.7.2-std-def-alt1 Kernel Configuration
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -120,6 +120,7 @@ CONFIG_TASK_IO_ACCOUNTING=y
 #
 # RCU Subsystem
 #
+# CONFIG_TREE_RCU is not set
 CONFIG_TREE_PREEMPT_RCU=y
 CONFIG_PREEMPT_RCU=y
 CONFIG_RCU_FANOUT=32
