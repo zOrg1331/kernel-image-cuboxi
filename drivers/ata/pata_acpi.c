@@ -144,6 +144,12 @@ static void pacpi_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 
 	/* Now stuff the nS values into the structure */
 	t = ata_timing_find_mode(adev->dma_mode);
+
+	if (!t) {
+		WARN(1, "%s: ata_timing_find_mode gives NULL\n", __func__);
+		return;
+	}
+
 	if (adev->dma_mode >= XFER_UDMA_0) {
 		acpi->gtm.drive[unit].dma = t->udma;
 		acpi->gtm.flags |= (1 << (2 * unit));
