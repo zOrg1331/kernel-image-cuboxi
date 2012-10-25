@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.32
-Release: alt20.M50P.1
+Release: alt60.M50P.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -593,6 +593,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu Oct 25 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt60.M50P.1
+- 2.6.32.60
+
 * Tue Aug 31 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt20.M50P.1
 - build for  p5 
 
