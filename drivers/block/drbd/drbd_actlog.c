@@ -30,9 +30,9 @@
 #include "drbd_tracing.h"
 #include "drbd_wrappers.h"
 
-/* We maintain a trivial check sum in our on disk activity log.
+/* We maintain a trivial checksum in our on disk activity log.
  * With that we can ensure correct operation even when the storage
- * device might do a partial (last) sector write while loosing power.
+ * device might do a partial (last) sector write while losing power.
  */
 struct __packed al_transaction {
 	u32       magic;
@@ -71,51 +71,92 @@ void trace_drbd_resync(struct drbd_conf *mdev, int level, const char *fmt, ...)
 	va_end(ap);
 }
 
+void *drbd_md_get_buffer(struct drbd_conf *mdev)
+{
+	int r;
+
+	wait_event(mdev->misc_wait,
+		   (r = atomic_cmpxchg(&mdev->md_io_in_use, 0, 1)) == 0 ||
+		   mdev->state.disk <= D_FAILED);
+
+	return r ? NULL : page_address(mdev->md_io_page);
+}
+
+void drbd_md_put_buffer(struct drbd_conf *mdev)
+{
+	if (atomic_dec_and_test(&mdev->md_io_in_use))
+		wake_up(&mdev->misc_wait);
+}
+
+static bool md_io_allowed(struct drbd_conf *mdev)
+{
+	enum drbd_disk_state ds = mdev->state.disk;
+	return ds >= D_NEGOTIATING || ds == D_ATTACHING;
+}
+
+void wait_until_done_or_disk_failure(struct drbd_conf *mdev, struct drbd_backing_dev *bdev,
+				     unsigned int *done)
+{
+	long dt = bdev->dc.disk_timeout * HZ / 10;
+	if (dt == 0)
+		dt = MAX_SCHEDULE_TIMEOUT;
+
+	dt = wait_event_timeout(mdev->misc_wait, *done || !md_io_allowed(mdev), dt);
+	if (dt == 0)
+		dev_err(DEV, "meta-data IO operation timed out\n");
+}
+
 STATIC int _drbd_md_sync_page_io(struct drbd_conf *mdev,
 				 struct drbd_backing_dev *bdev,
 				 struct page *page, sector_t sector,
 				 int rw, int size)
 {
 	struct bio *bio;
-	struct drbd_md_io md_io;
 	int ok;
 
-	md_io.mdev = mdev;
-	init_completion(&md_io.event);
-	md_io.error = 0;
-
 	if ((rw & WRITE) && !test_bit(MD_NO_BARRIER, &mdev->flags))
-		rw |= DRBD_REQ_FUA;
+		rw |= DRBD_REQ_FUA | DRBD_REQ_FLUSH;
 	rw |= DRBD_REQ_UNPLUG | DRBD_REQ_SYNC;
 
 #ifndef REQ_FLUSH
 	/* < 2.6.36, "barrier" semantic may fail with EOPNOTSUPP */
  retry:
 #endif
-	bio = bio_alloc(GFP_NOIO, 1);
+	mdev->md_io.done = 0;
+	mdev->md_io.error = -ENODEV;
+
+	bio = bio_alloc_drbd(GFP_NOIO);
 	bio->bi_bdev = bdev->md_bdev;
 	bio->bi_sector = sector;
 	ok = (bio_add_page(bio, page, size, 0) == size);
 	if (!ok)
 		goto out;
-	bio->bi_private = &md_io;
+	bio->bi_private = &mdev->md_io;
 	bio->bi_end_io = drbd_md_io_complete;
 	bio->bi_rw = rw;
 
 	trace_drbd_bio(mdev, "Md", bio, 0, NULL);
 
+	if (!get_ldev_if_state(mdev, D_ATTACHING)) {  /* Corresponding put_ldev in drbd_md_io_complete() */
+		dev_err(DEV, "ASSERT FAILED: get_ldev_if_state() == 1 in _drbd_md_sync_page_io()\n");
+		ok = 0;
+		goto out;
+	}
+
+	bio_get(bio); /* one bio_put() is in the completion handler */
+	atomic_inc(&mdev->md_io_in_use); /* drbd_md_put_buffer() is in the completion handler */
 	if (drbd_insert_fault(mdev, (rw & WRITE) ? DRBD_FAULT_MD_WR : DRBD_FAULT_MD_RD))
 		bio_endio(bio, -EIO);
 	else
 		submit_bio(rw, bio);
-	wait_for_completion(&md_io.event);
-	ok = bio_flagged(bio, BIO_UPTODATE) && md_io.error == 0;
+	wait_until_done_or_disk_failure(mdev, bdev, &mdev->md_io.done);
+	ok = bio_flagged(bio, BIO_UPTODATE) && mdev->md_io.error == 0;
 
 #ifndef REQ_FLUSH
 	/* check for unsupported barrier op.
 	 * would rather check on EOPNOTSUPP, but that is not reliable.
 	 * don't try again for ANY return value != 0 */
-	if (unlikely((bio->bi_rw & DRBD_REQ_HARDBARRIER) && !ok)) {
+	if (mdev->md_io.done && unlikely((bio->bi_rw & DRBD_REQ_HARDBARRIER) && !ok)) {
 		/* Try again with no barrier */
 		dev_warn(DEV, "Barriers not supported on meta data device - disabling\n");
 		set_bit(MD_NO_BARRIER, &mdev->flags);
@@ -136,7 +177,7 @@ int drbd_md_sync_page_io(struct drbd_conf *mdev, struct drbd_backing_dev *bdev,
 	int offset = 0;
 	struct page *iop = mdev->md_io_page;
 
-	D_ASSERT(mutex_is_locked(&mdev->md_io_mutex));
+	D_ASSERT(atomic_read(&mdev->md_io_in_use) == 1);
 
 	if (!bdev->md_bdev) {
 		if (DRBD_ratelimit(5*HZ, 5)) {
@@ -374,8 +415,13 @@ w_al_write_transaction(struct drbd_conf *mdev, struct drbd_work *w, int unused)
 		return 1;
 	}
 
-	mutex_lock(&mdev->md_io_mutex); /* protects md_io_buffer, al_tr_cycle, ... */
-	buffer = (struct al_transaction *)page_address(mdev->md_io_page);
+	buffer = drbd_md_get_buffer(mdev); /* protects md_io_buffer, al_tr_cycle, ... */
+	if (!buffer) {
+		dev_err(DEV, "disk failed while waiting for md_io buffer\n");
+		complete(&((struct update_al_work *)w)->event);
+		put_ldev(mdev);
+		return 1;
+	}
 
 	buffer->magic = __constant_cpu_to_be32(DRBD_MAGIC);
 	buffer->tr_number = cpu_to_be32(mdev->al_tr_number);
@@ -420,7 +466,7 @@ w_al_write_transaction(struct drbd_conf *mdev, struct drbd_work *w, int unused)
 	D_ASSERT(mdev->al_tr_pos < MD_AL_MAX_SIZE);
 	mdev->al_tr_number++;
 
-	mutex_unlock(&mdev->md_io_mutex);
+	drbd_md_put_buffer(mdev);
 
 	complete(&((struct update_al_work *)w)->event);
 	put_ldev(mdev);
@@ -489,8 +535,9 @@ int drbd_al_read_log(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 	/* lock out all other meta data io for now,
 	 * and make sure the page is mapped.
 	 */
-	mutex_lock(&mdev->md_io_mutex);
-	buffer = page_address(mdev->md_io_page);
+	buffer = drbd_md_get_buffer(mdev);
+	if (!buffer)
+		return 0;
 
 	/* Find the valid transaction in the log */
 	for (i = 0; i <= mx; i++) {
@@ -498,7 +545,7 @@ int drbd_al_read_log(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 		if (rv == 0)
 			continue;
 		if (rv == -1) {
-			mutex_unlock(&mdev->md_io_mutex);
+			drbd_md_put_buffer(mdev);
 			return 0;
 		}
 		cnr = be32_to_cpu(buffer->tr_number);
@@ -524,7 +571,7 @@ int drbd_al_read_log(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 
 	if (!found_valid) {
 		dev_warn(DEV, "No usable activity log found.\n");
-		mutex_unlock(&mdev->md_io_mutex);
+		drbd_md_put_buffer(mdev);
 		return 1;
 	}
 
@@ -539,7 +586,7 @@ int drbd_al_read_log(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 		rv = drbd_al_read_tr(mdev, bdev, buffer, i);
 		ERR_IF(rv == 0) goto cancel;
 		if (rv == -1) {
-			mutex_unlock(&mdev->md_io_mutex);
+			drbd_md_put_buffer(mdev);
 			return 0;
 		}
 
@@ -580,7 +627,7 @@ cancel:
 		mdev->al_tr_pos = 0;
 
 	/* ok, we are done with it */
-	mutex_unlock(&mdev->md_io_mutex);
+	drbd_md_put_buffer(mdev);
 
 	dev_info(DEV, "Found %d transactions (%d active extents) in activity log.\n",
 	     transactions, active_extents);
@@ -717,16 +764,20 @@ STATIC void drbd_try_clear_on_disk_bm(struct drbd_conf *mdev, sector_t sector,
 			else
 				ext->rs_failed += count;
 			if (ext->rs_left < ext->rs_failed) {
-				dev_err(DEV, "BAD! sector=%llus enr=%u rs_left=%d "
-				    "rs_failed=%d count=%d\n",
+				dev_warn(DEV, "BAD! sector=%llus enr=%u rs_left=%d "
+				    "rs_failed=%d count=%d cstate=%s\n",
 				     (unsigned long long)sector,
 				     ext->lce.lc_number, ext->rs_left,
-				     ext->rs_failed, count);
-				dump_stack();
+				     ext->rs_failed, count,
+				     drbd_conn_str(mdev->state.conn));
 
-				lc_put(mdev->resync, &ext->lce);
-				drbd_force_state(mdev, NS(conn, C_DISCONNECTING));
-				return;
+				/* We don't expect to be able to clear more bits
+				 * than have been set when we originally counted
+				 * the set bits to cache that value in ext->rs_left.
+				 * Whatever the reason (disconnect during resync,
+				 * delayed local completion of an application write),
+				 * try to fix it up by recounting here. */
+				ext->rs_left = drbd_bm_e_weight(mdev, enr);
 			}
 		} else {
 			/* Normally this element should be in the cache,
@@ -1275,6 +1326,7 @@ int drbd_rs_del_all(struct drbd_conf *mdev)
 		put_ldev(mdev);
 	}
 	spin_unlock_irq(&mdev->al_lock);
+	wake_up(&mdev->al_wait);
 
 	return 0;
 }

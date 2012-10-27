@@ -53,6 +53,7 @@
 #include <linux/perf_event.h>
 #include <linux/kprobes.h>
 #include <linux/kmod.h>
+#include <linux/cpuset.h>
 #include <linux/ve_task.h>
 #include <linux/mmgang.h>
 
@@ -1759,6 +1760,19 @@ static struct ctl_table vm_table[] = {
 		.procname	= "memory_failure_recovery",
 		.data		= &sysctl_memory_failure_recovery,
 		.maxlen		= sizeof(sysctl_memory_failure_recovery),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
+#endif
+#ifdef CONFIG_CPUSETS
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "strict_mem_cpuset",
+		.data		= &sysctl_strict_mem_cpuset,
+		.maxlen		= sizeof(sysctl_strict_mem_cpuset),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec_minmax,
 		.strategy	= &sysctl_intvec,

@@ -64,6 +64,13 @@
 #include <bc/beancounter.h>
 
 /*
+ * If unset, memory allocator will use cpuset constraints only as a hint,
+ * permitting to allocate memory anywhere if there is no free memory in
+ * allowed nodes.
+ */
+int sysctl_strict_mem_cpuset = 0;
+
+/*
  * Tracks how many cpusets are currently defined in system.
  * When there is only one cpuset (the root cpuset) we can
  * short circuit some hooks.

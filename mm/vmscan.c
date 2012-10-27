@@ -785,7 +785,9 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			}
 		}
 
-		if (sc->gs) {
+		if (sc->gs &&
+		    (PageAnon(page) || !test_bit(UB_STRICT_PAGECACHE_RECLAIM,
+					 &get_gangs_ub(sc->gs)->ub_flags))) {
 			struct gang *gang = page_gang(page);
 
 			/* forbid tmpfs internal reclaim */
@@ -824,7 +826,6 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				 * except we already have the page isolated
 				 * and know it's dirty
 				 */
-				inc_zone_page_state(page, NR_VMSCAN_IMMEDIATE);
 				SetPageReclaim(page);
 
 				goto keep_locked;
@@ -2274,8 +2275,9 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 				reclaim_state->reclaimed_slab = 0;
 			}
 		} else if (sc->gs && (sc->gfp_mask & __GFP_FS)) {
-			ub_dcache_reclaim(get_gangs_ub(sc->gs),
-					sc->nr_scanned/4 + 1, lru_pages + 1);
+			if (ub_dcache_reclaim(get_gangs_ub(sc->gs),
+						sc->nr_scanned/4 + 1, lru_pages + 1))
+				sc->all_unreclaimable = 0;
 			if (reclaim_state) {
 				sc->nr_reclaimed += reclaim_state->reclaimed_slab;
 				reclaim_state->reclaimed_slab = 0;

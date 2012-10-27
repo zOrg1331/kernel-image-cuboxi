@@ -212,6 +212,7 @@ extern unsigned long long time_sync_thresh;
 #define TASK_DEAD		64
 #define TASK_WAKEKILL		128
 #define TASK_WAKING		256
+#define TASK_IOTHROTTLED	512
 
 /* Convenience macros for the sake of set_task_state */
 #define TASK_KILLABLE		(TASK_WAKEKILL | TASK_UNINTERRUPTIBLE)
@@ -234,6 +235,7 @@ extern unsigned long long time_sync_thresh;
 #define task_contributes_to_load(task)	\
 				((task->state & TASK_UNINTERRUPTIBLE) != 0 && \
 				 (task->flags & PF_FREEZING) == 0)
+#define task_iothrottled(task)	((task->state & TASK_IOTHROTTLED) != 0)
 
 #define __set_task_state(tsk, state_value)		\
 	do { (tsk)->state = (state_value); } while (0)
@@ -1011,6 +1013,7 @@ struct sched_domain {
 	unsigned long last_balance;	/* init to jiffies. units in jiffies */
 	unsigned int balance_interval;	/* initialise to 1. units in ms. */
 	unsigned int nr_balance_failed; /* initialise to 0 */
+	int balance_pinned;
 
 	u64 last_update;
 
@@ -1123,6 +1126,7 @@ struct sched_domain;
 #define ENQUEUE_WAKEUP		1
 #define ENQUEUE_WAKING		2
 #define ENQUEUE_HEAD		4
+#define ENQUEUE_BOOST		8
 
 #define DEQUEUE_SLEEP		1
 
@@ -1206,6 +1210,8 @@ struct sched_class {
 #ifndef __GENKSYMS__
 	bool (*yield_to_task) (struct rq *rq, struct task_struct *p, bool preempt);
 #endif
+
+	void (*task_scheduled) (struct rq *rq, struct task_struct *p);
 };
 
 struct load_weight {
@@ -1227,6 +1233,11 @@ struct sched_entity {
 	struct rb_node		run_node;
 	struct list_head	group_node;
 	unsigned int		on_rq;
+
+#ifdef CONFIG_CFS_BANDWIDTH
+	unsigned int		boosted;
+	struct list_head	boost_node;
+#endif
 
 	u64			exec_start;
 	u64			sum_exec_runtime;

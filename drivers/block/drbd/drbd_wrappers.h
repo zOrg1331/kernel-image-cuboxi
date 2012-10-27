@@ -98,8 +98,18 @@ static inline void blk_queue_logical_block_size(struct request_queue *q, unsigne
 static inline sector_t drbd_get_capacity(struct block_device *bdev)
 {
 	/* return bdev ? get_capacity(bdev->bd_disk) : 0; */
-	return bdev ? bdev->bd_inode->i_size >> 9 : 0;
+	return bdev ? i_size_read(bdev->bd_inode) >> 9 : 0;
 }
+
+#ifdef COMPAT_HAVE_VOID_MAKE_REQUEST
+/* in Commit 5a7bbad27a410350e64a2d7f5ec18fc73836c14f (between Linux-3.1 and 3.2)
+   make_request() becomes type void. Before it had type int. */
+#define MAKE_REQUEST_TYPE void
+#define MAKE_REQUEST_RETURN return
+#else
+#define MAKE_REQUEST_TYPE int
+#define MAKE_REQUEST_RETURN return 0
+#endif
 
 /* sets the number of 512 byte sectors of our virtual device */
 static inline void drbd_set_my_capacity(struct drbd_conf *mdev,
@@ -276,6 +286,8 @@ static inline void drbd_generic_make_request(struct drbd_conf *mdev,
 		generic_make_request(bio);
 }
 
+/* see 7eaceac block: remove per-queue plugging */
+#ifdef blk_queue_plugged
 static inline void drbd_plug_device(struct drbd_conf *mdev)
 {
 	struct request_queue *q;
@@ -293,6 +305,11 @@ static inline void drbd_plug_device(struct drbd_conf *mdev)
 	}
 	spin_unlock_irq(q->queue_lock);
 }
+#else
+static inline void drbd_plug_device(struct drbd_conf *mdev)
+{
+}
+#endif
 
 static inline int drbd_backing_bdev_events(struct drbd_conf *mdev)
 {
@@ -842,7 +859,6 @@ enum {
 };
 #endif
 
-#if 0
 /* REQ_* and BIO_RW_* flags have been moved around in the tree,
  * and have finally been "merged" with
  * 7b6d91daee5cac6402186ff224c3af39d79f4a0e and
@@ -852,24 +868,24 @@ enum {
  * bi_rw (some kernel version) -> data packet flags -> bi_rw (other kernel version)
  */
 
-#if defined(BIO_RW_SYNC)
-/* see upstream commits
- * 213d9417fec62ef4c3675621b9364a667954d4dd,
- * 93dbb393503d53cd226e5e1f0088fe8f4dbaa2b8
- * later, the defines even became an enum ;-) */
-#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNC)
-#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_SYNC)
-#elif defined(REQ_SYNC)		/* introduced in 2.6.36 */
-#define DRBD_REQ_SYNC		REQ_SYNC
-#define DRBD_REQ_UNPLUG		REQ_UNPLUG
-#else
-/* cannot test on defined(BIO_RW_SYNCIO), it may be an enum */
+/* RHEL 6.1 backported FLUSH/FUA as BIO_RW_FLUSH/FUA
+ * and at that time also introduced the defines BIO_FLUSH/FUA.
+ * There is also REQ_FLUSH/FUA, but these do NOT share
+ * the same value space as the bio rw flags, yet.
+ */
+#ifdef BIO_FLUSH
+
+#define DRBD_REQ_FLUSH		(1UL << BIO_RW_FLUSH)
+#define DRBD_REQ_FUA		(1UL << BIO_RW_FUA)
+#define DRBD_REQ_HARDBARRIER	(1UL << BIO_RW_BARRIER)
+#define DRBD_REQ_DISCARD	(1UL << BIO_RW_DISCARD)
 #define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
 #define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
-#endif
 
+#elif defined(REQ_FLUSH)	/* introduced in 2.6.36,
+				 * now equivalent to bi_rw */
 
-#ifdef REQ_FLUSH	/* introduced in 2.6.36, now equivalent to bi_rw */
+#define DRBD_REQ_SYNC		REQ_SYNC
 #define DRBD_REQ_FLUSH		REQ_FLUSH
 #define DRBD_REQ_FUA		REQ_FUA
 #define DRBD_REQ_DISCARD	REQ_DISCARD
@@ -883,7 +899,30 @@ enum {
 /* ... but REQ_HARDBARRIER was removed again in 02e031c (v2.6.37-rc4). */
 #define DRBD_REQ_HARDBARRIER	0
 #endif
+
+/* again: testing on this _inside_ the ifdef REQ_FLUSH,
+ * see 721a960 block: kill off REQ_UNPLUG */
+#ifdef REQ_UNPLUG
+#define DRBD_REQ_UNPLUG		REQ_UNPLUG
 #else
+#define DRBD_REQ_UNPLUG		0
+#endif
+
+#else				/* "older", and hopefully not
+				 * "partially backported" kernel */
+
+#if defined(BIO_RW_SYNC)
+/* see upstream commits
+ * 213d9417fec62ef4c3675621b9364a667954d4dd,
+ * 93dbb393503d53cd226e5e1f0088fe8f4dbaa2b8
+ * later, the defines even became an enum ;-) */
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNC)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_SYNC)
+#else
+/* cannot test on defined(BIO_RW_SYNCIO), it may be an enum */
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
+#endif
 
 #define DRBD_REQ_FLUSH		(1UL << BIO_RW_BARRIER)
 /* REQ_FUA has been around for a longer time,
@@ -895,22 +934,6 @@ enum {
  * cannot test on defined(BIO_RW_DISCARD), it may be an enum */
 #define DRBD_REQ_DISCARD	0
 #endif
-
-#endif
-
-/*
- * There serious mess between bio->bi_rw and req->cmd_flags in RHEL6,
- * this flags was unified in mainline, but there someone in Red Hat decided
- * to get a double dose of bugs, having double set of incompatible flags.
- *
- * Looks like DRBD always works with bio, thus it must always use BIO_RW flags.
- */
-#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
-#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
-#define DRBD_REQ_FLUSH		(1UL << BIO_RW_FLUSH)
-#define DRBD_REQ_FUA		(1UL << BIO_RW_FUA)
-#define DRBD_REQ_DISCARD	(1UL << BIO_RW_DISCARD)
-#define DRBD_REQ_HARDBARRIER	0
 
 /* this results in:
 	bi_rw   -> dp_flags
@@ -1002,6 +1025,90 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 	typeof(x) __x = (x);			\
 	typeof(y) __y = (y);			\
 	__x == 0 ? __y : ((__y == 0) ? __x : min(__x, __y)); })
+#endif
+
+/* Introduced with 2.6.26. See include/linux/jiffies.h */
+#ifndef time_is_before_eq_jiffies
+#define time_is_before_jiffies(a) time_after(jiffies, a)
+#define time_is_after_jiffies(a) time_before(jiffies, a)
+#define time_is_before_eq_jiffies(a) time_after_eq(jiffies, a)
+#define time_is_after_eq_jiffies(a) time_before_eq(jiffies, a)
+#endif
+
+#ifndef time_in_range
+#define time_in_range(a,b,c) \
+	(time_after_eq(a,b) && \
+	 time_before_eq(a,c))
+#endif
+
+#ifdef COMPAT_HAVE_BIOSET_CREATE
+#ifndef COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD
+/*
+ * upstream commit (included in 2.6.29)
+ * commit bb799ca0202a360fa74d5f17039b9100caebdde7
+ * Author: Jens Axboe <jens.axboe@oracle.com>
+ * Date:   Wed Dec 10 15:35:05 2008 +0100
+ *
+ *     bio: allow individual slabs in the bio_set
+ *
+ * does
+ * -struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size)
+ * +struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
+ *
+ * Note that up until 2.6.21 inclusive, it was
+ * struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size, int scale)
+ * so if we want to support old kernels (RHEL5), we will need an additional compat check.
+ *
+ * This also means that we must not use the front_pad trick as long as we want
+ * to keep compatibility with < 2.6.29.
+ */
+#ifdef COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS
+#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size, 1)
+#else
+#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size)
+#endif
+#endif /* COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD */
+#else /* COMPAT_HAVE_BIOSET_CREATE */
+/* Old kernel, no bioset_create at all!
+ * Just do plain alloc_bio, and forget about the dedicated bioset */
+static inline struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
+{
+	return NULL;
+}
+static inline void bioset_free(struct bio_set *bs)
+{
+	BUG();
+}
+static inline void bio_free(struct bio *bio, struct bio_set *bs)
+{
+	BUG();
+}
+static inline struct bio *bio_alloc_bioset(gfp_t gfp_mask, int nr_iovecs, struct bio_set *bs)
+{
+	BUG();
+	return NULL;
+}
+#endif /* COMPAT_HAVE_BIOSET_CREATE */
+
+/*
+ * In commit c4945b9e (v2.6.39-rc1), the little-endian bit operations have been
+ * renamed to be less weird.
+ */
+#ifndef COMPAT_HAVE_FIND_NEXT_ZERO_BIT_LE
+#define find_next_zero_bit_le(addr, size, offset) \
+	generic_find_next_zero_le_bit(addr, size, offset)
+#define find_next_bit_le(addr, size, offset) \
+	generic_find_next_le_bit(addr, size, offset)
+#define test_bit_le(nr, addr) \
+	generic_test_le_bit(nr, addr)
+#define __test_and_set_bit_le(nr, addr) \
+	generic___test_and_set_le_bit(nr, addr)
+#define __test_and_clear_bit_le(nr, addr) \
+	generic___test_and_clear_le_bit(nr, addr)
+#endif
+
+#ifdef COMPAT_KREF_PUT_HAS_SINGLE_ARG
+#define kref_put(KREF, RELEASE)	({ (KREF)->release=RELEASE; kref_put(KREF); })
 #endif
 
 #endif

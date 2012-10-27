@@ -452,13 +452,8 @@ int cpt_kill(struct cpt_context *ctx)
 			write_lock_irq(&tasklist_lock);
 			tsk->ptrace = 0;
 			if (!list_empty(&tsk->ptrace_entry)) {
+				tsk->parent = tsk->real_parent;
 				list_del_init(&tsk->ptrace_entry);
-				/* 
-				 * This code used to be here:
-				 *  remove_parent(tsk);
-				 *  tsk->parent = tsk->parent;
-				 *  add_parent(tsk);
-				 */
 			}
 			write_unlock_irq(&tasklist_lock);
 		}
@@ -635,8 +630,6 @@ static int vps_collect_tasks(struct cpt_context *ctx)
 		 */
 		read_lock(&tasklist_lock);
 		list_for_each_entry(child, &tsk->children, sibling) {
-			if (child->parent != tsk)
-				continue;
 			if (child->pid != child->tgid)
 				continue;
 			/* skip kernel threads */
@@ -655,22 +648,6 @@ static int vps_collect_tasks(struct cpt_context *ctx)
 			read_lock(&tasklist_lock);
 		}
 
-		list_for_each_entry(child, &tsk->ptraced, ptrace_entry) {
-			if (child->parent != tsk)
-				continue;
-			if (child->pid != child->tgid)
-				continue;
-			get_task_struct(child);
-			read_unlock(&tasklist_lock);
-
-			if ((head = remember_task(child, head, ctx)) == NULL) {
-				eprintk_ctx("task obj allocation failure\n");
-				err = -ENOMEM;
-				goto out;
-			}
-
-			read_lock(&tasklist_lock);
-		}
 		read_unlock(&tasklist_lock);
 	}
 
@@ -710,6 +687,9 @@ static int cpt_collect(struct cpt_context *ctx)
 		return err;
 
 	if ((err = cpt_collect_signals(ctx)) != 0)
+		return err;
+
+	if ((err = cpt_collect_posix_timers(ctx)) != 0)
 		return err;
 
 	return 0;
@@ -922,6 +902,8 @@ int cpt_dump(struct cpt_context *ctx)
 		err = cpt_dump_ifinfo(ctx);
 	if (!err)
 		err = cpt_dump_sighand(ctx);
+	if (!err)
+		err = cpt_dump_posix_timers(ctx);
 	if (!err)
 		err = cpt_dump_vm(ctx);
 	if (!err)
@@ -1225,7 +1207,7 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 		goto out_noenv;
 	}
 
-	*caps = flags & (1<<CPT_CPU_X86_CMOV);
+	*caps = flags & ((1<<CPT_CPU_X86_CMOV) | (1 << CPT_NO_IPV6));
 #ifdef CONFIG_X86_64
 	*caps |= flags & (1<<CPT_CPU_X86_SYSCALL);
 #endif

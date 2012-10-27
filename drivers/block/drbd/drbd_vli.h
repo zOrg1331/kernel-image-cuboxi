@@ -32,7 +32,7 @@
  * the bitmap transfer time can take much too long,
  * if transmitted in plain text.
  *
- * We try to reduce the transfered bitmap information
+ * We try to reduce the transferred bitmap information
  * by encoding runlengths of bit polarity.
  *
  * We never actually need to encode a "zero" (runlengths are positive).
@@ -88,7 +88,7 @@
  * Number of data bits follow fibonacci sequence, with the exception of the
  * last level (+1 data bit, so it makes 64bit total).  The only worse code when
  * encoding bit polarity runlength is 1 plain bits => 2 code bits.
-prefix    data bits                                    max val  NÂº data bits
+prefix    data bits                                    max val  Nº data bits
 0 x                                                         0x2            1
 10 x                                                        0x4            1
 110 xx                                                      0x8            2

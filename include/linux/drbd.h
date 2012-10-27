@@ -37,9 +37,9 @@
 #include <sys/wait.h>
 #include <limits.h>
 
-/* Altough the Linux source code makes a difference between
+/* Although the Linux source code makes a difference between
    generic endianness and the bitfields' endianness, there is no
-   architecture as of Linux-2.6.24-rc4 where the bitfileds' endianness
+   architecture as of Linux-2.6.24-rc4 where the bitfields' endianness
    does not match the generic endianness. */
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -106,8 +106,8 @@ enum drbd_ret_code {
 	ERR_OPEN_MD_DISK	= 105,
 	ERR_DISK_NOT_BDEV	= 107,
 	ERR_MD_NOT_BDEV		= 108,
-	ERR_DISK_TO_SMALL	= 111,
-	ERR_MD_DISK_TO_SMALL	= 112,
+	ERR_DISK_TOO_SMALL	= 111,
+	ERR_MD_DISK_TOO_SMALL	= 112,
 	ERR_BDCLAIM_DISK	= 114,
 	ERR_BDCLAIM_MD_DISK	= 115,
 	ERR_MD_IDX_INVALID	= 116,
@@ -178,7 +178,7 @@ enum drbd_conns {
 	/* These temporal states are all used on the way
 	 * from >= C_CONNECTED to Unconnected.
 	 * The 'disconnect reason' states
-	 * I do not allow to change beween them. */
+	 * I do not allow to change between them. */
 	C_TIMEOUT,
 	C_BROKEN_PIPE,
 	C_NETWORK_FAILURE,
@@ -189,7 +189,7 @@ enum drbd_conns {
 	C_WF_REPORT_PARAMS, /* we have a socket */
 	C_CONNECTED,      /* we have introduced each other */
 	C_STARTING_SYNC_S,  /* starting full sync by admin request. */
-	C_STARTING_SYNC_T,  /* stariing full sync by admin request. */
+	C_STARTING_SYNC_T,  /* starting full sync by admin request. */
 	C_WF_BITMAP_S,
 	C_WF_BITMAP_T,
 	C_WF_SYNC_UUID,
@@ -230,7 +230,7 @@ union drbd_state {
  * pointed out by Maxim Uvarov q<muvarov@ru.mvista.com>
  * even though we transmit as "cpu_to_be32(state)",
  * the offsets of the bitfields still need to be swapped
- * on different endianess.
+ * on different endianness.
  */
 	struct {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -260,7 +260,7 @@ union drbd_state {
 		unsigned peer:2 ;   /* 3/4	 primary/secondary/unknown */
 		unsigned role:2 ;   /* 3/4	 primary/secondary/unknown */
 #else
-# error "this endianess is not supported"
+# error "this endianness is not supported"
 #endif
 #ifndef DRBD_DEBUG_STATE_CHANGES
 # ifdef CONFIG_DYNAMIC_DEBUG

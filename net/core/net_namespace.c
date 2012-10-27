@@ -29,24 +29,21 @@ EXPORT_SYMBOL(init_net);
 
 #define INITIAL_NET_GEN_PTRS	13 /* +1 for len +2 for rcu_head */
 
-struct net_context {
-	struct ve_struct *ve;
-	struct user_beancounter *ub;
-};
-
-static inline void set_net_context(struct net *net, struct net_context *ctx)
+void set_net_context(struct net *net, struct net_context *ctx)
 {
 	ctx->ve = set_exec_env(net->owner_ve);
 	ctx->ub = get_exec_ub();
 	if (net->loopback_dev)
 		set_exec_ub(netdev_bc(net->loopback_dev)->exec_ub);
 }
+EXPORT_SYMBOL(set_net_context);
 
-static inline void restore_net_context(struct net_context *ctx)
+void restore_net_context(struct net_context *ctx)
 {
 	set_exec_env(ctx->ve);
 	set_exec_ub(ctx->ub);
 }
+EXPORT_SYMBOL(restore_net_context);
 
 static int ops_init(const struct pernet_operations *ops, struct net *net)
 {

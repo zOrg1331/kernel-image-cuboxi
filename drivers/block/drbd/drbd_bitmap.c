@@ -29,7 +29,13 @@
 #include <linux/slab.h>
 #include <linux/dynamic_debug.h>
 #include <asm/kmap_types.h>
+#include <linux/kref.h>
+
 #include "drbd_int.h"
+
+/* See the ifdefs and comments inside that header file.
+ * On recent kernels this is not needed. */
+#include "compat/bitops.h"
 
 /* OPAQUE outside this file!
  * interface defined in drbd_int.h
@@ -73,7 +79,7 @@
  *	as we are "attached" to a local disk, which at 32 GiB for 1PiB storage
  *	seems excessive.
  *
- *	We plan to reduce the amount of in-core bitmap pages by pageing them in
+ *	We plan to reduce the amount of in-core bitmap pages by paging them in
  *	and out against their on-disk location as necessary, but need to make
  *	sure we don't cause too much meta data IO, and must not deadlock in
  *	tight memory situations. This needs some more work.
@@ -110,9 +116,6 @@ struct drbd_bitmap {
 	char          *bm_why;
 	struct task_struct *bm_task;
 };
-
-STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
-			       unsigned long e, int val, const enum km_type km);
 
 #define bm_print_lock_info(m) __bm_print_lock_info(m, __func__)
 static void __bm_print_lock_info(struct drbd_conf *mdev, const char *func)
@@ -199,7 +202,7 @@ void drbd_bm_unlock(struct drbd_conf *mdev)
  * we if bits have been cleared since last IO. */
 #define BM_PAGE_LAZY_WRITEOUT	28
 
-/* store_page_idx uses non-atomic assingment. It is only used directly after
+/* store_page_idx uses non-atomic assignment. It is only used directly after
  * allocating the page.  All other bm_set_page_* and bm_clear_page_* need to
  * use atomic bit manipulation, as set_out_of_sync (and therefore bitmap
  * changes) may happen from various contexts, and wait_on_bit/wake_up_bit
@@ -207,7 +210,7 @@ void drbd_bm_unlock(struct drbd_conf *mdev)
 static void bm_store_page_idx(struct page *page, unsigned long idx)
 {
 	BUG_ON(0 != (idx & ~BM_PAGE_IDX_MASK));
-	page_private(page) |= idx;
+	set_page_private(page, idx);
 }
 
 static unsigned long bm_page_to_idx(struct page *page)
@@ -317,7 +320,7 @@ static void bm_unmap(unsigned long *p_addr)
 /* word offset from start of bitmap to word number _in_page_
  * modulo longs per page
 #define MLPP(X) ((X) % (PAGE_SIZE/sizeof(long))
- hm, well, Philipp thinks gcc might not optimze the % into & (... - 1)
+ hm, well, Philipp thinks gcc might not optimize the % into & (... - 1)
  so do it explicitly:
  */
 #define MLPP(X) ((X) & ((PAGE_SIZE/sizeof(long))-1))
@@ -889,11 +892,20 @@ void drbd_bm_clear_all(struct drbd_conf *mdev)
 struct bm_aio_ctx {
 	struct drbd_conf *mdev;
 	atomic_t in_flight;
-	struct completion done;
+	unsigned int done;
 	unsigned flags;
 #define BM_AIO_COPY_PAGES	1
 	int error;
+	struct kref kref;
 };
+
+static void bm_aio_ctx_destroy(struct kref *kref)
+{
+	struct bm_aio_ctx *ctx = container_of(kref, struct bm_aio_ctx, kref);
+
+	put_ldev(ctx->mdev);
+	kfree(ctx);
+}
 
 /* bv_page may be a copy, or may be the original */
 static BIO_ENDIO_TYPE bm_async_io_complete BIO_ENDIO_ARGS(struct bio *bio, int error)
@@ -934,22 +946,23 @@ static BIO_ENDIO_TYPE bm_async_io_complete BIO_ENDIO_ARGS(struct bio *bio, int e
 
 	bm_page_unlock_io(mdev, idx);
 
-	/* FIXME give back to page pool */
 	if (ctx->flags & BM_AIO_COPY_PAGES)
-		put_page(bio->bi_io_vec[0].bv_page);
+		mempool_free(bio->bi_io_vec[0].bv_page, drbd_md_io_page_pool);
 
 	bio_put(bio);
 
-	if (atomic_dec_and_test(&ctx->in_flight))
-		complete(&ctx->done);
+	if (atomic_dec_and_test(&ctx->in_flight)) {
+		ctx->done = 1;
+		wake_up(&mdev->misc_wait);
+		kref_put(&ctx->kref, &bm_aio_ctx_destroy);
+	}
 
 	BIO_ENDIO_FN_RETURN;
 }
 
 STATIC void bm_page_io_async(struct bm_aio_ctx *ctx, int page_nr, int rw) __must_hold(local)
 {
-	/* we are process context. we always get a bio */
-	struct bio *bio = bio_alloc(GFP_KERNEL, 1);
+	struct bio *bio = bio_alloc_drbd(GFP_NOIO);
 	struct drbd_conf *mdev = ctx->mdev;
 	struct drbd_bitmap *b = mdev->bitmap;
 	struct page *page;
@@ -972,10 +985,8 @@ STATIC void bm_page_io_async(struct bm_aio_ctx *ctx, int page_nr, int rw) __must
 	bm_set_page_unchanged(b->bm_pages[page_nr]);
 
 	if (ctx->flags & BM_AIO_COPY_PAGES) {
-		/* FIXME alloc_page is good enough for now, but actually needs
-		 * to use pre-allocated page pool */
 		void *src, *dest;
-		page = alloc_page(__GFP_HIGHMEM|__GFP_WAIT);
+		page = mempool_alloc(drbd_md_io_page_pool, __GFP_HIGHMEM|__GFP_WAIT);
 		dest = kmap_atomic(page, KM_USER0);
 		src = kmap_atomic(b->bm_pages[page_nr], KM_USER1);
 		memcpy(dest, src, PAGE_SIZE);
@@ -987,6 +998,8 @@ STATIC void bm_page_io_async(struct bm_aio_ctx *ctx, int page_nr, int rw) __must
 
 	bio->bi_bdev = mdev->ldev->md_bdev;
 	bio->bi_sector = on_disk_sector;
+	/* bio_add_page of a single page to an empty bio will always succeed,
+	 * according to api.  Do we want to assert that? */
 	bio_add_page(bio, page, len, 0);
 	bio->bi_private = ctx;
 	bio->bi_end_io = bm_async_io_complete;
@@ -996,20 +1009,18 @@ STATIC void bm_page_io_async(struct bm_aio_ctx *ctx, int page_nr, int rw) __must
 		bio_endio(bio, -EIO);
 	} else {
 		submit_bio(rw, bio);
+		/* this should not count as user activity and cause the
+		 * resync to throttle -- see drbd_rs_should_slow_down(). */
+		atomic_add(len >> 9, &mdev->rs_sect_ev);
 	}
 }
 
 /*
  * bm_rw: read/write the whole bitmap from/to its on disk location.
  */
-STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned lazy_writeout_upper_idx) __must_hold(local)
+STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned flags, unsigned lazy_writeout_upper_idx) __must_hold(local)
 {
-	struct bm_aio_ctx ctx = {
-		.mdev = mdev,
-		.in_flight = ATOMIC_INIT(1),
-		.done = COMPLETION_INITIALIZER_ONSTACK(ctx.done),
-		.flags = lazy_writeout_upper_idx ? BM_AIO_COPY_PAGES : 0,
-	};
+	struct bm_aio_ctx *ctx;
 	struct drbd_bitmap *b = mdev->bitmap;
 	int num_pages, i, count = 0;
 	unsigned long now;
@@ -1024,7 +1035,27 @@ STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned lazy_writeout_upper_id
 	 * For lazy writeout, we don't care for ongoing changes to the bitmap,
 	 * as we submit copies of pages anyways.
 	 */
-	if (!ctx.flags)
+
+	ctx = kmalloc(sizeof(struct bm_aio_ctx), GFP_NOIO);
+	if (!ctx)
+		return -ENOMEM;
+
+	*ctx = (struct bm_aio_ctx) {
+		.mdev = mdev,
+		.in_flight = ATOMIC_INIT(1),
+		.done = 0,
+		.flags = flags,
+		.error = 0,
+		.kref = { ATOMIC_INIT(2) },
+	};
+
+	if (!get_ldev_if_state(mdev, D_ATTACHING)) {  /* put is in bm_aio_ctx_destroy() */
+		dev_err(DEV, "ASSERT FAILED: get_ldev_if_state() == 1 in bm_rw()\n");
+		kfree(ctx);
+		return -ENODEV;
+	}
+
+	if (!ctx->flags)
 		WARN_ON(!(BM_LOCKED_MASK & b->bm_flags));
 
 	num_pages = b->bm_number_of_pages;
@@ -1049,30 +1080,38 @@ STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned lazy_writeout_upper_id
 				continue;
 			}
 		}
-		atomic_inc(&ctx.in_flight);
-		bm_page_io_async(&ctx, i, rw);
+		atomic_inc(&ctx->in_flight);
+		bm_page_io_async(ctx, i, rw);
 		++count;
 		cond_resched();
 	}
 
 	/*
-	 * We initialize ctx.in_flight to one to make sure bm_async_io_complete
-	 * will not complete() early, and decrement / test it here.  If there
+	 * We initialize ctx->in_flight to one to make sure bm_async_io_complete
+	 * will not set ctx->done early, and decrement / test it here.  If there
 	 * are still some bios in flight, we need to wait for them here.
+	 * If all IO is done already (or nothing had been submitted), there is
+	 * no need to wait.  Still, we need to put the kref associated with the
+	 * "in_flight reached zero, all done" event.
 	 */
-	if (!atomic_dec_and_test(&ctx.in_flight)) {
+	if (!atomic_dec_and_test(&ctx->in_flight)) {
 		drbd_blk_run_queue(bdev_get_queue(mdev->ldev->md_bdev));
-		wait_for_completion(&ctx.done);
-	}
+		wait_until_done_or_disk_failure(mdev, mdev->ldev, &ctx->done);
+	} else
+		kref_put(&ctx->kref, &bm_aio_ctx_destroy);
+
 	dev_info(DEV, "bitmap %s of %u pages took %lu jiffies\n",
 			rw == WRITE ? "WRITE" : "READ",
 			count, jiffies - now);
 
-	if (ctx.error) {
+	if (ctx->error) {
 		dev_alert(DEV, "we had at least one MD IO ERROR during bitmap IO\n");
 		drbd_chk_io_error(mdev, 1, true);
-		err = -EIO; /* ctx.error ? */
+		err = -EIO; /* ctx->error ? */
 	}
+
+	if (atomic_read(&ctx->in_flight))
+		err = -EIO; /* Disk failed during IO... */
 
 	now = jiffies;
 	if (rw == WRITE) {
@@ -1087,6 +1126,7 @@ STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned lazy_writeout_upper_id
 	dev_info(DEV, "%s (%lu bits) marked out-of-sync by on disk bit-map.\n",
 	     ppsize(ppb, now << (BM_BLOCK_SHIFT-10)), now);
 
+	kref_put(&ctx->kref, &bm_aio_ctx_destroy);
 	return err;
 }
 
@@ -1096,7 +1136,7 @@ STATIC int bm_rw(struct drbd_conf *mdev, int rw, unsigned lazy_writeout_upper_id
  */
 int drbd_bm_read(struct drbd_conf *mdev) __must_hold(local)
 {
-	return bm_rw(mdev, READ, 0);
+	return bm_rw(mdev, READ, 0, 0);
 }
 
 /**
@@ -1107,7 +1147,7 @@ int drbd_bm_read(struct drbd_conf *mdev) __must_hold(local)
  */
 int drbd_bm_write(struct drbd_conf *mdev) __must_hold(local)
 {
-	return bm_rw(mdev, WRITE, 0);
+	return bm_rw(mdev, WRITE, 0, 0);
 }
 
 /**
@@ -1117,7 +1157,23 @@ int drbd_bm_write(struct drbd_conf *mdev) __must_hold(local)
  */
 int drbd_bm_write_lazy(struct drbd_conf *mdev, unsigned upper_idx) __must_hold(local)
 {
-	return bm_rw(mdev, WRITE, upper_idx);
+	return bm_rw(mdev, WRITE, BM_AIO_COPY_PAGES, upper_idx);
+}
+
+/**
+ * drbd_bm_write_copy_pages() - Write the whole bitmap to its on disk location.
+ * @mdev:	DRBD device.
+ *
+ * Will only write pages that have changed since last IO.
+ * In contrast to drbd_bm_write(), this will copy the bitmap pages
+ * to temporary writeout pages. It is intended to trigger a full write-out
+ * while still allowing the bitmap to change, for example if a resync or online
+ * verify is aborted due to a failed peer disk, while local IO continues, or
+ * pending resync acks are still being processed.
+ */
+int drbd_bm_write_copy_pages(struct drbd_conf *mdev) __must_hold(local)
+{
+	return bm_rw(mdev, WRITE, BM_AIO_COPY_PAGES, 0);
 }
 
 
@@ -1135,28 +1191,45 @@ int drbd_bm_write_lazy(struct drbd_conf *mdev, unsigned upper_idx) __must_hold(l
  */
 int drbd_bm_write_page(struct drbd_conf *mdev, unsigned int idx) __must_hold(local)
 {
-	struct bm_aio_ctx ctx = {
-		.mdev = mdev,
-		.in_flight = ATOMIC_INIT(1),
-		.done = COMPLETION_INITIALIZER_ONSTACK(ctx.done),
-		.flags = BM_AIO_COPY_PAGES,
-	};
+	struct bm_aio_ctx *ctx;
+	int err;
 
 	if (bm_test_page_unchanged(mdev->bitmap->bm_pages[idx])) {
 		dynamic_dev_dbg(DEV, "skipped bm page write for idx %u\n", idx);
 		return 0;
 	}
 
-	bm_page_io_async(&ctx, idx, WRITE_SYNC);
-	wait_for_completion(&ctx.done);
+	ctx = kmalloc(sizeof(struct bm_aio_ctx), GFP_NOIO);
+	if (!ctx)
+		return -ENOMEM;
 
-	if (ctx.error)
+	*ctx = (struct bm_aio_ctx) {
+		.mdev = mdev,
+		.in_flight = ATOMIC_INIT(1),
+		.done = 0,
+		.flags = BM_AIO_COPY_PAGES,
+		.error = 0,
+		.kref = { ATOMIC_INIT(2) },
+	};
+
+	if (!get_ldev_if_state(mdev, D_ATTACHING)) {  /* put is in bm_aio_ctx_destroy() */
+		dev_err(DEV, "ASSERT FAILED: get_ldev_if_state() == 1 in drbd_bm_write_page()\n");
+		kfree(ctx);
+		return -ENODEV;
+	}
+
+	bm_page_io_async(ctx, idx, WRITE_SYNC);
+	wait_until_done_or_disk_failure(mdev, mdev->ldev, &ctx->done);
+
+	if (ctx->error)
 		drbd_chk_io_error(mdev, 1, true);
 		/* that should force detach, so the in memory bitmap will be
 		 * gone in a moment as well. */
 
 	mdev->bm_writ_cnt++;
-	return ctx.error;
+	err = atomic_read(&ctx->in_flight) ? -EIO : ctx->error;
+	kref_put(&ctx->kref, &bm_aio_ctx_destroy);
+	return err;
 }
 
 /* NOTE
@@ -1186,10 +1259,10 @@ static unsigned long __bm_find_next(struct drbd_conf *mdev, unsigned long bm_fo,
 			p_addr = __bm_map_pidx(b, bm_bit_to_page_idx(b, bm_fo), km);
 
 			if (find_zero_bit)
-				i = generic_find_next_zero_le_bit(p_addr,
+				i = find_next_zero_bit_le(p_addr,
 						PAGE_SIZE*8, bm_fo & BITS_PER_PAGE_MASK);
 			else
-				i = generic_find_next_le_bit(p_addr,
+				i = find_next_bit_le(p_addr,
 						PAGE_SIZE*8, bm_fo & BITS_PER_PAGE_MASK);
 
 			__bm_unmap(p_addr, km);
@@ -1260,7 +1333,7 @@ unsigned long _drbd_bm_find_next_zero(struct drbd_conf *mdev, unsigned long bm_f
  * expected to be called for only a few bits (e - s about BITS_PER_LONG).
  * Must hold bitmap lock already. */
 STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
-	unsigned long e, int val, const enum km_type km)
+	unsigned long e, int val)
 {
 	struct drbd_bitmap *b = mdev->bitmap;
 	unsigned long *p_addr = NULL;
@@ -1278,23 +1351,23 @@ STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
 		unsigned int page_nr = bm_bit_to_page_idx(b, bitnr);
 		if (page_nr != last_page_nr) {
 			if (p_addr)
-				__bm_unmap(p_addr, km);
+				__bm_unmap(p_addr, KM_IRQ1);
 			if (c < 0)
 				bm_set_page_lazy_writeout(b->bm_pages[last_page_nr]);
 			else if (c > 0)
 				bm_set_page_need_writeout(b->bm_pages[last_page_nr]);
 			changed_total += c;
 			c = 0;
-			p_addr = __bm_map_pidx(b, page_nr, km);
+			p_addr = __bm_map_pidx(b, page_nr, KM_IRQ1);
 			last_page_nr = page_nr;
 		}
 		if (val)
-			c += (0 == generic___test_and_set_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr));
+			c += (0 == __test_and_set_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr));
 		else
-			c -= (0 != generic___test_and_clear_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr));
+			c -= (0 != __test_and_clear_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr));
 	}
 	if (p_addr)
-		__bm_unmap(p_addr, km);
+		__bm_unmap(p_addr, KM_IRQ1);
 	if (c < 0)
 		bm_set_page_lazy_writeout(b->bm_pages[last_page_nr]);
 	else if (c > 0)
@@ -1322,7 +1395,7 @@ STATIC int bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
 	if ((val ? BM_DONT_SET : BM_DONT_CLEAR) & b->bm_flags)
 		bm_print_lock_info(mdev);
 
-	c = __bm_change_bits_to(mdev, s, e, val, KM_IRQ1);
+	c = __bm_change_bits_to(mdev, s, e, val);
 
 	spin_unlock_irqrestore(&b->bm_lock, flags);
 	return c;
@@ -1347,16 +1420,25 @@ static inline void bm_set_full_words_within_one_page(struct drbd_bitmap *b,
 {
 	int i;
 	int bits;
-	unsigned long *paddr = kmap_atomic(b->bm_pages[page_nr], KM_USER0);
+	int changed = 0;
+	unsigned long *paddr = kmap_atomic(b->bm_pages[page_nr], KM_IRQ1);
 	for (i = first_word; i < last_word; i++) {
 		bits = hweight_long(paddr[i]);
 		paddr[i] = ~0UL;
-		b->bm_set += BITS_PER_LONG - bits;
+		changed += BITS_PER_LONG - bits;
 	}
-	kunmap_atomic(paddr, KM_USER0);
+	kunmap_atomic(paddr, KM_IRQ1);
+	if (changed) {
+		/* We only need lazy writeout, the information is still in the
+		 * remote bitmap as well, and is reconstructed during the next
+		 * bitmap exchange, if lost locally due to a crash. */
+		bm_set_page_lazy_writeout(b->bm_pages[page_nr]);
+		b->bm_set += changed;
+	}
 }
 
-/* Same thing as drbd_bm_set_bits, but without taking the spin_lock_irqsave.
+/* Same thing as drbd_bm_set_bits,
+ * but more efficient for a large bit range.
  * You must first drbd_bm_lock().
  * Can be called to set the whole bitmap in one go.
  * Sets bits from s to e _inclusive_. */
@@ -1370,6 +1452,7 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	 * Do not use memset, because we must account for changes,
 	 * so we need to loop over the words with hweight() anyways.
 	 */
+	struct drbd_bitmap *b = mdev->bitmap;
 	unsigned long sl = ALIGN(s,BITS_PER_LONG);
 	unsigned long el = (e+1) & ~((unsigned long)BITS_PER_LONG-1);
 	int first_page;
@@ -1380,15 +1463,19 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 
 	if (e - s <= 3*BITS_PER_LONG) {
 		/* don't bother; el and sl may even be wrong. */
-		__bm_change_bits_to(mdev, s, e, 1, KM_USER0);
+		spin_lock_irq(&b->bm_lock);
+		__bm_change_bits_to(mdev, s, e, 1);
+		spin_unlock_irq(&b->bm_lock);
 		return;
 	}
 
 	/* difference is large enough that we can trust sl and el */
 
+	spin_lock_irq(&b->bm_lock);
+
 	/* bits filling the current long */
 	if (sl)
-		__bm_change_bits_to(mdev, s, sl-1, 1, KM_USER0);
+		__bm_change_bits_to(mdev, s, sl-1, 1);
 
 	first_page = sl >> (3 + PAGE_SHIFT);
 	last_page = el >> (3 + PAGE_SHIFT);
@@ -1401,8 +1488,10 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	/* first and full pages, unless first page == last page */
 	for (page_nr = first_page; page_nr < last_page; page_nr++) {
 		bm_set_full_words_within_one_page(mdev->bitmap, page_nr, first_word, last_word);
+		spin_unlock_irq(&b->bm_lock);
 		cond_resched();
 		first_word = 0;
+		spin_lock_irq(&b->bm_lock);
 	}
 
 	/* last page (respectively only page, for first page == last page) */
@@ -1415,7 +1504,8 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	 * it would trigger an assert in __bm_change_bits_to()
 	 */
 	if (el <= e)
-		__bm_change_bits_to(mdev, el, e, 1, KM_USER0);
+		__bm_change_bits_to(mdev, el, e, 1);
+	spin_unlock_irq(&b->bm_lock);
 }
 
 /* returns bit state
@@ -1440,7 +1530,7 @@ int drbd_bm_test_bit(struct drbd_conf *mdev, const unsigned long bitnr)
 		bm_print_lock_info(mdev);
 	if (bitnr < b->bm_bits) {
 		p_addr = bm_map_pidx(b, bm_bit_to_page_idx(b, bitnr));
-		i = generic_test_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr) ? 1 : 0;
+		i = test_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr) ? 1 : 0;
 		bm_unmap(p_addr);
 	} else if (bitnr == b->bm_bits) {
 		i = -1;
@@ -1484,7 +1574,7 @@ int drbd_bm_count_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 		ERR_IF (bitnr >= b->bm_bits) {
 			dev_err(DEV, "bitnr=%lu bm_bits=%lu\n", bitnr, b->bm_bits);
 		} else {
-			c += (0 != generic_test_le_bit(bitnr - (page_nr << (PAGE_SHIFT+3)), p_addr));
+			c += (0 != test_bit_le(bitnr - (page_nr << (PAGE_SHIFT+3)), p_addr));
 		}
 	}
 	if (p_addr)

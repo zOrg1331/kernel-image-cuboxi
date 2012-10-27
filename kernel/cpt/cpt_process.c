@@ -540,12 +540,6 @@ static int encode_siginfo(struct cpt_siginfo_image *si, siginfo_t *info)
 	si->cpt_code = info->si_code;
 
 	switch(si->cpt_code & __SI_MASK) {
-	case __SI_TIMER:
-		si->cpt_pid = info->si_tid;
-		si->cpt_uid = info->si_overrun;
-		si->cpt_sigval = cpt_ptr_export(info->_sifields._timer._sigval.sival_ptr);
-		si->cpt_utime = info->si_sys_private;
-		break;
 	case __SI_POLL:
 		si->cpt_pid = info->si_band;
 		si->cpt_uid = info->si_fd;
@@ -586,6 +580,10 @@ static int dump_sigqueue(struct sigpending *list, struct cpt_context *ctx)
 	cpt_push_object(&saved_obj, ctx);
 	list_for_each_entry(q, &list->list, list) {
 		struct cpt_siginfo_image si;
+
+		/* posix timers are collected separately */
+		if (q->info.si_code == SI_TIMER)
+			continue;
 
 		si.cpt_next = sizeof(si);
 		si.cpt_object = CPT_OBJ_SIGINFO;
@@ -921,6 +919,15 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_sigrblocked = cpt_sigset_export(&tsk->real_blocked);
 	v->cpt_sigsuspend_blocked = cpt_sigset_export(&tsk->saved_sigmask);
 
+	v->cpt_posix_timers = CPT_NULL;
+	if (thread_group_leader(tsk) && tsk->signal &&
+	    !list_empty(&tsk->signal->posix_timers)) {
+		tobj = lookup_cpt_object(CPT_OBJ_POSIX_TIMER_LIST,
+					 &tsk->signal->posix_timers, ctx);
+		if (!tobj) BUG();
+		v->cpt_posix_timers = tobj->o_pos;
+	}
+
 	v->cpt_pid = task_pid_vnr(tsk);
 	v->cpt_tgid = task_tgid_vnr(tsk);
 	v->cpt_ppid = 0;
@@ -1212,7 +1219,8 @@ continue_dump:
 		cpt_pop_object(&saved_obj, ctx);
 	}
 
-	if (tsk->last_siginfo) {
+	if (tsk->last_siginfo &&
+	    tsk->last_siginfo->si_code != SI_TIMER) {
 		struct cpt_siginfo_image si;
 		cpt_push_object(&saved_obj, ctx);
 
@@ -1339,10 +1347,6 @@ int cpt_collect_signals(cpt_context_t *ctx)
 	/* Collect process fd sets */
 	for_each_object(obj, CPT_OBJ_TASK) {
 		struct task_struct *tsk = obj->o_obj;
-		if (tsk->signal && !list_empty(&tsk->signal->posix_timers)) {
-			eprintk_ctx("task %d/%d(%s) uses posix timers\n", tsk->pid, task_pid_vnr(tsk), tsk->comm);
-			return -EBUSY;
-		}
 		if (tsk->signal && cpt_object_add(CPT_OBJ_SIGNAL_STRUCT, tsk->signal, ctx) == NULL)
 			return -ENOMEM;
 		if (tsk->sighand && cpt_object_add(CPT_OBJ_SIGHAND_STRUCT, tsk->sighand, ctx) == NULL)
@@ -1411,6 +1415,99 @@ int cpt_dump_sighand(struct cpt_context *ctx)
 		int err;
 
 		if ((err = dump_one_sighand_struct(obj, ctx)) != 0)
+			return err;
+	}
+
+	cpt_close_section(ctx);
+	return 0;
+}
+
+int cpt_collect_posix_timers(cpt_context_t *ctx)
+{
+	cpt_object_t *obj;
+
+	for_each_object(obj, CPT_OBJ_TASK) {
+		struct task_struct *tsk = obj->o_obj;
+
+		if (!thread_group_leader(tsk) || !tsk->signal ||
+		    list_empty(&tsk->signal->posix_timers))
+			continue;
+
+		if (!cpt_object_add(CPT_OBJ_POSIX_TIMER_LIST,
+				    &tsk->signal->posix_timers, ctx))
+			return -ENOMEM;
+	}
+	return 0;
+}
+
+static int dump_one_posix_timer_list(cpt_object_t *obj, struct cpt_context *ctx)
+{
+	struct list_head *timer_list = obj->o_obj;
+	struct cpt_object_hdr v;
+	struct k_itimer *timer;
+
+	cpt_open_object(obj, ctx);
+
+	v.cpt_next = CPT_NULL;
+	v.cpt_object = CPT_OBJ_POSIX_TIMER_LIST;
+	v.cpt_hdrlen = sizeof(v);
+	v.cpt_content = CPT_CONTENT_ARRAY;
+
+	ctx->write(&v, sizeof(v), ctx);
+
+	list_for_each_entry(timer, timer_list, list) {
+		loff_t saved_obj;
+		struct itimerspec setting;
+		int overrun, overrun_last;
+		int signal_pending;
+		struct cpt_posix_timer_image o;
+
+		get_timer_setting(timer, &setting,
+				  &overrun, &overrun_last, &signal_pending);
+
+		cpt_push_object(&saved_obj, ctx);
+		cpt_open_object(NULL, ctx);
+
+		o.cpt_next = CPT_NULL;
+		o.cpt_object = CPT_OBJ_POSIX_TIMER;
+		o.cpt_hdrlen = sizeof(o);
+		o.cpt_content = CPT_CONTENT_VOID;
+
+		o.cpt_timer_id = timer->it_id;
+		o.cpt_timer_clock = timer->it_clock;
+		o.cpt_timer_overrun = overrun;
+		o.cpt_timer_overrun_last = overrun_last;
+		o.cpt_timer_signal_pending = signal_pending;
+		o.cpt_timer_interval =
+			cpt_timespec_export(&setting.it_interval);
+		o.cpt_timer_value =
+			cpt_timespec_export(&setting.it_value);
+
+		o.cpt_sigev_value =
+			cpt_ptr_export(timer->sigq->info.si_value.sival_ptr);
+		o.cpt_sigev_signo = timer->sigq->info.si_signo;
+		o.cpt_sigev_notify = timer->it_sigev_notify;
+
+		ctx->write(&o, sizeof(o), ctx);
+		cpt_close_object(ctx);
+		cpt_pop_object(&saved_obj, ctx);
+	}
+
+	cpt_close_object(ctx);
+	return 0;
+}
+
+int cpt_dump_posix_timers(struct cpt_context *ctx)
+{
+	cpt_object_t *obj;
+
+	cpt_open_section(ctx, CPT_SECT_POSIX_TIMERS);
+
+	for_each_object(obj, CPT_OBJ_POSIX_TIMER_LIST) {
+		int err;
+
+		err = dump_one_posix_timer_list(obj, ctx);
+		if (err)
 			return err;
 	}
 

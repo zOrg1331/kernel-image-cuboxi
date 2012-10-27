@@ -250,6 +250,7 @@ enum ub_flags {
 	UB_DIRTY_EXCEEDED,
 	UB_OOM_NOPROC,
 	UB_OOM_MANUAL_SCORE_ADJ,
+	UB_STRICT_PAGECACHE_RECLAIM,
 };
 
 extern int ub_count;

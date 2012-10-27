@@ -434,8 +434,19 @@ static struct sysrq_key_op *sysrq_default_key_table[];
 static struct sysrq_key_op *sysrq_debug_key_table[];
 static struct sysrq_key_op *sysrq_input_key_table[];
 static unsigned long *dump_address;
+static struct kmem_cache *dump_slab_ptr;
 static int orig_console_loglevel;
 static void (*sysrq_input_return)(char *) = NULL;
+
+static unsigned long dump_offset, dump_index, dump_count;
+
+static bool dump_skip(void)
+{
+	if (!dump_count || ++dump_index <= dump_offset)
+		return true;
+	dump_count--;
+	return false;
+}
 
 static void dump_mem(void)
 {
@@ -579,6 +590,69 @@ static struct sysrq_key_op debug_dump_mem = {
 	.action_msg	= "Enter address:",
 };
 
+static void dump_slab_obj(void *obj)
+{
+	struct user_beancounter *ubc = NULL;
+
+	if (dump_skip())
+		return;
+
+	if (dump_slab_ptr->flags & SLAB_UBC)
+		ubc = *ub_slab_ptr(dump_slab_ptr, obj);
+
+	printk(KERN_DEBUG"obj %p idx %lu ubc %p\n", obj, dump_index, ubc);
+	print_hex_dump(KERN_DEBUG, "", DUMP_PREFIX_OFFSET,
+			16, sizeof(long), obj, dump_slab_ptr->buffer_size, false);
+}
+
+static void dump_slab(void)
+{
+	dump_index = 0;
+	dump_count = 100;
+	slab_obj_walk(dump_slab_ptr, dump_slab_obj);
+	dump_offset = dump_index;
+}
+
+static void return_dump_slab(char *str)
+{
+	unsigned long address;
+	char *end;
+
+	address = simple_strtoul(str, &end, 0);
+	if (*end != '\0') {
+		printk("Bad address [%s]\n", str);
+		return;
+	}
+
+	dump_slab_ptr = (struct kmem_cache *)address;
+	if (!virt_addr_valid(dump_slab_ptr) ||
+	    !PageSlab(virt_to_page(dump_slab_ptr))) {
+		printk("Non-slab address [%s]\n", str);
+		dump_slab_ptr = NULL;
+		return;
+	}
+
+	printk(KERN_DEBUG "SLAB %p %s size %d objuse %d\n",
+			dump_slab_ptr, dump_slab_ptr->name,
+			dump_slab_ptr->buffer_size, dump_slab_ptr->objuse);
+
+	dump_address = NULL;
+	dump_offset = 0;
+	dump_slab();
+}
+
+static void handle_dump_slab(int key, struct tty_struct *tty)
+{
+	sysrq_input_return = return_dump_slab;
+	sysrq_key_table = sysrq_input_key_table;
+}
+
+static struct sysrq_key_op debug_dump_slab = {
+	.handler	= handle_dump_slab,
+	.help_msg	= "Slab",
+	.action_msg	= "Enter address:",
+};
+
 static void handle_dump_net(int key, struct tty_struct *tty)
 {
 	dst_cache_dump();
@@ -649,7 +723,10 @@ static struct sysrq_key_op debug_write_mem = {
 
 static void handle_next(int key, struct tty_struct *tty)
 {
-	dump_mem();
+	if (dump_address)
+		dump_mem();
+	else if (dump_slab_ptr)
+		dump_slab();
 }
 
 static struct sysrq_key_op debug_next = {
@@ -675,6 +752,7 @@ static struct sysrq_key_op *sysrq_debug_key_table[SYSRQ_KEY_TABLE_LENGTH] = {
 	[23] = &debug_dump_net,		/* n */
 	[26] = &debug_quit,		/* q */
 	[27] = &debug_resolve,		/* r */
+	[28] = &debug_dump_slab,	/* s */
 	[32] = &debug_write_mem,	/* w */
 	[33] = &debug_next,		/* x */
 };

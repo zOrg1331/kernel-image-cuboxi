@@ -3869,6 +3869,9 @@ static int ploop_balloon_ioc(struct ploop_device *plo, unsigned long arg)
 		break;
 	case PLOOP_MNTN_OFF:
 		if (ctl.inflate) {
+			if (delta->ops->id != PLOOP_FMT_PLOOP1)
+				return -EOPNOTSUPP;
+
 			ploop_quiesce(plo);
 			plo->maintenance_type = PLOOP_MNTN_BALLOON;
 			ploop_relax(plo);

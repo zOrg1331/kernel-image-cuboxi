@@ -28,7 +28,7 @@ static int	nlmclnt_test(struct nlm_rqst *, struct file_lock *);
 static int	nlmclnt_lock(struct nlm_rqst *, struct file_lock *);
 static int	nlmclnt_unlock(struct nlm_rqst *, struct file_lock *);
 static int	nlm_stat_to_errno(__be32 stat);
-static void	nlmclnt_locks_init_private(struct file_lock *fl, struct nlm_host *host);
+static void	nlmclnt_locks_init_private(struct file_lock *fl, struct nlm_host *host, long pid);
 static int	nlmclnt_cancel(struct nlm_host *, int , struct file_lock *);
 
 static const struct rpc_call_ops nlmclnt_unlock_ops;
@@ -155,7 +155,7 @@ static struct nlm_lockowner *__nlm_find_lockowner(struct nlm_host *host, fl_owne
 	return NULL;
 }
 
-static struct nlm_lockowner *nlm_find_lockowner(struct nlm_host *host, fl_owner_t owner)
+static struct nlm_lockowner *nlm_find_lockowner(struct nlm_host *host, fl_owner_t owner, long pid)
 {
 	struct nlm_lockowner *res, *new = NULL;
 
@@ -170,7 +170,7 @@ static struct nlm_lockowner *nlm_find_lockowner(struct nlm_host *host, fl_owner_
 			res = new;
 			atomic_set(&new->count, 1);
 			new->owner = owner;
-			new->pid = __nlm_alloc_pid(host);
+			new->pid = (pid < 0) ? __nlm_alloc_pid(host) : (uint32_t)pid;
 			new->host = nlm_get_host(host);
 			list_add(&new->list, &host->h_lockowners);
 			new = NULL;
@@ -181,11 +181,9 @@ static struct nlm_lockowner *nlm_find_lockowner(struct nlm_host *host, fl_owner_
 	return res;
 }
 
-int nlmclnt_set_lockowner(struct inode *inode,
-		struct file_lock *fl, fl_owner_t owner, int svid)
+int nlmclnt_set_lockowner(struct inode *inode, struct file_lock *fl, int svid)
 {
 	struct nlm_host *host;
-	struct nlm_lockowner *new, *res;
 	struct nfs_server *server = NFS_SERVER(inode);
 	struct nfs_client *clp = server->nfs_client;
 	const char *hostname = clp->cl_hostname;
@@ -208,28 +206,8 @@ int nlmclnt_set_lockowner(struct inode *inode,
 	if (host == NULL)
 		return -ENOLCK;
 
-	new = (struct nlm_lockowner *)kmalloc(sizeof(*new), GFP_KERNEL);
-
-	spin_lock(&host->h_lock);
-	res = __nlm_find_lockowner(host, owner);
-	if (res != NULL) {
-		spin_unlock(&host->h_lock);
-		nlm_put_lockowner(res);
-		nlm_release_host(host);
-		kfree(new);
-		return -EBUSY;
-	}
-
-	atomic_set(&new->count, 1);
-	new->owner = owner;
-	new->pid = svid;
-	new->host = host; /* get-ed by nlmclnt_lookup_host */
-	list_add(&new->list, &host->h_lockowners);
-	spin_unlock(&host->h_lock);
-
-	nlmclnt_locks_init_private(fl, host);
-
-	nlm_put_lockowner(new);
+	nlmclnt_locks_init_private(fl, host, svid);
+	nlm_release_host(host);
 	nlm_release_reserved(svid);
 
 	return 0;
@@ -282,7 +260,7 @@ int nlmclnt_proc(struct nlm_host *host, int cmd, struct file_lock *fl)
 
 	ve = set_exec_env(host->owner_env);
 
-	nlmclnt_locks_init_private(fl, host);
+	nlmclnt_locks_init_private(fl, host, -1);
 	/* Set up the argument struct */
 	nlmclnt_setlockargs(call, fl);
 
@@ -591,11 +569,12 @@ static const struct file_lock_operations nlmclnt_lock_ops = {
 	.fl_owner_id = nlm_get_lockid,
 };
 
-static void nlmclnt_locks_init_private(struct file_lock *fl, struct nlm_host *host)
+static void nlmclnt_locks_init_private(struct file_lock *fl, struct nlm_host *host,
+				       long pid)
 {
 	BUG_ON(fl->fl_ops != NULL);
 	fl->fl_u.nfs_fl.state = 0;
-	fl->fl_u.nfs_fl.owner = nlm_find_lockowner(host, fl->fl_owner);
+	fl->fl_u.nfs_fl.owner = nlm_find_lockowner(host, fl->fl_owner, pid);
 	INIT_LIST_HEAD(&fl->fl_u.nfs_fl.list);
 	fl->fl_ops = &nlmclnt_lock_ops;
 }

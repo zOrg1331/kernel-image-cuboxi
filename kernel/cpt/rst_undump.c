@@ -369,6 +369,11 @@ static int hook(void *arg)
 		goto out;
 	}
 
+	if ((err = rst_posix_timers(ti, ctx)) != 0) {
+		eprintk_ctx("rst_posix_timers: %d\n", err);
+		goto out;
+	}
+
 #ifdef CONFIG_X86_64
 	if (test_thread_flag(TIF_IA32))
 		ti->cpt_personality |= PER_LINUX32;

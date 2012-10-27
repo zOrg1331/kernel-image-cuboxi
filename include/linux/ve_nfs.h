@@ -68,10 +68,14 @@ struct ve_nlm_data {
 #define NLM_CTX_FIELD(arg)	(get_exec_env()->nlm_data->_##arg)
 #define NFS_CTX_FIELD(arg)	(get_exec_env()->nfs_data->_##arg)
 
+
+static void destroy_rpc_data(struct work_struct *work);
+
 static inline void ve_rpc_data_init(void)
 {
 	atomic_set(&get_exec_env()->rpc_data->_users, 1);
 	spin_lock_init(&get_exec_env()->rpc_data->_rpcb_clnt_lock);
+	INIT_WORK(&get_exec_env()->rpc_destroy_work, destroy_rpc_data);
 }
 
 static inline void ve_rpc_data_get(void)
@@ -82,17 +86,40 @@ static inline void ve_rpc_data_get(void)
 extern void rpcb_put_local(void);
 extern void rpciod_stop(void);
 
+static void destroy_rpc_data(struct work_struct *work)
+{
+	struct ve_struct *ve = container_of(work, struct ve_struct, rpc_destroy_work);
+
+	BUG_ON(!ve_is_super(get_exec_env()));
+
+	set_exec_env(ve);
+
+	rpciod_stop();
+	kfree(ve->rpc_data);
+	ve->rpc_data = NULL;
+
+	set_exec_env(&ve0);
+}
+
 static inline void ve_rpc_data_put(struct ve_struct *ve)
 {
-	struct ve_struct *curr_ve;
-
-	curr_ve = set_exec_env(ve);
 	if (atomic_dec_and_test(&ve->rpc_data->_users)) {
-		rpciod_stop();
-		kfree(ve->rpc_data);
-		ve->rpc_data = NULL;
+		/*
+		 * RPC data usage counter have reached zero, and we
+		 * have to stop rpciod queue and release virtualized
+		 * data. But why we release this data in async queue?
+		 * Becuase we can come here from rpciod workqueue:
+		 * rpc_async_schedule -> __rpc_execute ->
+		 * rpc_release_task -> rpc_final_put_task ->
+		 * rpc_free_task -> rpc_release_calldata ->
+		 * rpcb_map_release -> xprt_put -> xprt_destroy ->
+		 * xs_destroy -> xprt_free -> ve_rpc_data_put ->
+		 * rpciod_stop
+		 * The only simple solution here is to schedule the same task
+		 * in another workqueue.
+		 */
+		queue_work(ve0.khelper_wq, &ve->rpc_destroy_work);
 	}
-	(void)set_exec_env(curr_ve);
 }
 
 static inline void ve_nfs_data_init(struct ve_nfs_data *data)

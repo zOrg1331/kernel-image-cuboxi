@@ -86,6 +86,8 @@ unsigned int ub_dcache_threshold __read_mostly = 4 * 1024; /* ~7Mb per container
 
 static int ubc_ioprio = 1;
 
+static int vz_tools_bcid = 2;
+
 /* default maximum perpcu resources precharge */
 int ub_resource_precharge[UB_RESOURCES] = {
 	[UB_KMEMSIZE]	= 32 * PAGE_SIZE,
@@ -223,6 +225,9 @@ static struct user_beancounter *alloc_ub(uid_t uid)
 	init_beancounter_struct(new_ub);
 
 	init_beancounter_precharges(new_ub);
+
+	if (uid == vz_tools_bcid)
+		set_bit(UB_STRICT_PAGECACHE_RECLAIM, &new_ub->ub_flags);
 
 	if (ubc_ioprio) {
 		snprintf(name, sizeof(name), "%u", uid);
@@ -701,7 +706,7 @@ void ub_reclaim_rate_limit(struct user_beancounter *ub, int wait, unsigned count
 	spin_unlock(&ub->rl_lock);
 
 	if (wait && get_exec_ub() == ub && !test_thread_flag(TIF_MEMDIE)) {
-		set_current_state(TASK_KILLABLE);
+		set_current_state(TASK_KILLABLE | TASK_IOTHROTTLED);
 		schedule_hrtimeout(&wall, HRTIMER_MODE_ABS);
 	}
 }
@@ -886,6 +891,14 @@ static ctl_table ub_sysctl_table[] = {
 		.ctl_name	= CTL_UNNUMBERED,
 		.data		= &ub_dirty_background_ratio,
 		.maxlen		= sizeof ub_dirty_background_ratio,
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "tools_bcid",
+		.ctl_name	= CTL_UNNUMBERED,
+		.data		= &vz_tools_bcid,
+		.maxlen		= sizeof vz_tools_bcid,
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},

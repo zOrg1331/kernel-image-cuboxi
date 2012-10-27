@@ -419,6 +419,20 @@ static inline void prep_zero_page(struct page *page, int order, gfp_t gfp_flags)
 		clear_highpage(page + i);
 }
 
+#define PAGE_PCP_MAPCOUNT_VALUE		(-256)
+
+static inline void set_page_pcp(struct page *page)
+{
+	VM_BUG_ON(atomic_read(&page->_mapcount) != -1);
+	atomic_set(&page->_mapcount, PAGE_PCP_MAPCOUNT_VALUE);
+}
+
+static inline void rmv_page_pcp(struct page *page)
+{
+	VM_BUG_ON(atomic_read(&page->_mapcount) != PAGE_PCP_MAPCOUNT_VALUE);
+	atomic_set(&page->_mapcount, -1);
+}
+
 static inline void set_page_order(struct page *page, int order)
 {
 	set_page_private(page, order);
@@ -626,6 +640,7 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 			page = list_entry(list->prev, struct page, lru);
 			/* must delete as __free_one_page list manipulates */
 			list_del(&page->lru);
+			rmv_page_pcp(page);
 			/* MIGRATE_MOVABLE list may include MIGRATE_RESERVEs */
 			__free_one_page(page, zone, 0, page_private(page));
 			trace_mm_page_pcpu_drain(page, 0, page_private(page));
@@ -1040,6 +1055,7 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 			list_add(&page->lru, list);
 		else
 			list_add_tail(&page->lru, list);
+		set_page_pcp(page);
 		set_page_private(page, migratetype);
 		list = &page->lru;
 	}
@@ -1207,6 +1223,7 @@ static void free_hot_cold_page(struct page *page, int cold)
 		list_add_tail(&page->lru, &pcp->lists[migratetype]);
 	else
 		list_add(&page->lru, &pcp->lists[migratetype]);
+	set_page_pcp(page);
 	pcp->count++;
 	if (pcp->count >= pcp->high) {
 		free_pcppages_bulk(zone, pcp->batch, pcp);
@@ -1335,6 +1352,7 @@ again:
 			page = list_entry(list->next, struct page, lru);
 
 		list_del(&page->lru);
+		rmv_page_pcp(page);
 		pcp->count--;
 	} else {
 		if (unlikely(gfp_flags & __GFP_NOFAIL)) {
@@ -2084,6 +2102,8 @@ restart:
 	 * to how we want to proceed.
 	 */
 	alloc_flags = gfp_to_alloc_flags(gfp_mask);
+	if (!sysctl_strict_mem_cpuset)
+		alloc_flags &= ~ALLOC_CPUSET;
 
 	/* This is the last chance, in general, before the goto nopage. */
 	page = get_page_from_freelist(gfp_mask, nodemask, order, zonelist,
