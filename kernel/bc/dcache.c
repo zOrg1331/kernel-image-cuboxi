@@ -206,13 +206,14 @@ void ub_dcache_change_owner(struct dentry *dentry, struct user_beancounter *ub)
 
 #define UB_DCACHE_BATCH 32
 
-void ub_dcache_reclaim(struct user_beancounter *ub,
+int ub_dcache_reclaim(struct user_beancounter *ub,
 		unsigned long numerator, unsigned long denominator)
 {
 	unsigned long flags, batch;
+	int ret = 1;
 
 	if (ub->ub_dentry_unused <= ub_dcache_threshold)
-		return;
+		return 0;
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	batch = ub->ub_dentry_unused * numerator / denominator;
@@ -225,9 +226,10 @@ void ub_dcache_reclaim(struct user_beancounter *ub,
 
 	if (batch) {
 		spin_lock(&dcache_lock);
-		__shrink_dcache_ub(ub, batch);
+		ret = __shrink_dcache_ub(ub, batch);
 		spin_unlock(&dcache_lock);
 	}
+	return ret;
 }
 
 /* under dcache_lock and dentry->d_lock */

@@ -16,6 +16,8 @@
 
 #ifdef CONFIG_CPUSETS
 
+extern int sysctl_strict_mem_cpuset;
+
 extern int number_of_cpusets;	/* How many cpusets are defined in system? */
 
 extern int cpuset_init(void);

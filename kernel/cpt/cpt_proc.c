@@ -232,7 +232,7 @@ static int cpt_test_vecaps(cpt_context_t *ctx, __u32 dst_flags)
 
 	if ((dst_flags & (1 << CPT_NO_IPV6)) &&
 	     !(src_flags & (1 << CPT_NO_IPV6))) {
-		eprintk_ctx("IPv6 not loaded on destination node\n");
+		eprintk_ctx("IPv6 not loaded or disabled on destination node\n");
 		err = VECAPS_NO_IPV6_MODULE;
 	}
 

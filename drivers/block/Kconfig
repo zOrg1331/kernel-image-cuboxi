@@ -288,6 +288,8 @@ config BLK_DEV_PLOOP
 
 	  Most users will answer N here.
 
+source "drivers/block/drbd/Kconfig"
+
 config BLK_DEV_NBD
 	tristate "Network block device support"
 	depends on NET
@@ -502,7 +504,5 @@ config BLK_DEV_HD
 	  It is required for systems with ancient MFM/RLL/ESDI drives.
 
 	  If unsure, say N.
-
-source "drivers/block/drbd/Kconfig"
 
 endif # BLK_DEV

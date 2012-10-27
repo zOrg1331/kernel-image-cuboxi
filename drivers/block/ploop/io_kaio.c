@@ -141,6 +141,9 @@ kaio_submit(struct ploop_io *io, struct ploop_request * preq,
 
 	ploop_prepare_io_request(preq);
 
+	if (iblk == PLOOP_ZERO_INDEX)
+		iblk = 0;
+
 	if (rw & (1<<BIO_RW)) {
 		loff_t off = sbl->head->bi_sector;
 		off = ((loff_t)iblk << preq->plo->cluster_log) |
@@ -760,11 +763,18 @@ static void kaio_queue_settings(struct ploop_io * io, struct request_queue * q)
 
 static void kaio_issue_flush(struct ploop_io * io, struct ploop_request *preq)
 {
+	struct ploop_delta *delta = container_of(io, struct ploop_delta, io);
+
 	preq->eng_state = PLOOP_E_COMPLETE;
 	preq->req_rw &= ~BIO_FLUSH;
 
 	spin_lock_irq(&io->plo->lock);
-	kaio_queue_fsync_req(preq);
+
+	if (delta->flags & PLOOP_FMT_RDONLY)
+		list_add_tail(&preq->list, &io->plo->ready_queue);
+	else
+		kaio_queue_fsync_req(preq);
+
 	spin_unlock_irq(&io->plo->lock);
 }
 

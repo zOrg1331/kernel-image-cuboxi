@@ -104,7 +104,7 @@ static void get_cpu_caps(u32 *caps)
 	unsigned int tmp1, tmp2;
 	int i;
 
-	bitmap_zero((unsigned long *)caps, RHNCAPINTS);
+	bitmap_zero((unsigned long *)caps, 32*RHNCAPINTS);
 	for (i = 0; i < 32*RHNCAPINTS; i++)
 		if (boot_cpu_has(i))
 			set_bit(i, (unsigned long *)caps);

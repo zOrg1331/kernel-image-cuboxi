@@ -275,9 +275,28 @@ static int _try_outdate_peer_async(void *data)
 {
 	struct drbd_conf *mdev = (struct drbd_conf *)data;
 	enum drbd_disk_state nps;
+	union drbd_state ns;
 
 	nps = drbd_try_outdate_peer(mdev);
-	drbd_request_state(mdev, NS(pdsk, nps));
+
+	/* Not using
+	   drbd_request_state(mdev, NS(pdsk, nps));
+	   here, because we might were able to re-establish the connection
+	   in the meantime. This can only partially be solved in the state's
+	   engine is_valid_state() and is_valid_state_transition()
+	   functions.
+
+	   nps can be D_INCONSISTENT, D_OUTDATED or D_UNKNOWN.
+	   pdsk == D_INCONSISTENT while conn >= C_CONNECTED is valid,
+	   therefore we have to have the pre state change check here.
+	*/
+	spin_lock_irq(&mdev->req_lock);
+	ns = mdev->state;
+	if (ns.conn < C_WF_REPORT_PARAMS && !test_bit(STATE_SENT, &mdev->flags)) {
+		ns.pdsk = nps;
+		_drbd_set_state(mdev, ns, CS_VERBOSE, NULL);
+	}
+	spin_unlock_irq(&mdev->req_lock);
 
 	return 0;
 }
@@ -418,7 +437,7 @@ drbd_set_role(struct drbd_conf *mdev, enum drbd_role new_role, int force)
 		/* if this was forced, we should consider sync */
 		if (forced)
 			drbd_send_uuids(mdev);
-		drbd_send_state(mdev);
+		drbd_send_current_state(mdev);
 	}
 
 	drbd_md_sync(mdev);
@@ -582,7 +601,7 @@ void drbd_resume_io(struct drbd_conf *mdev)
  * Returns 0 on success, negative return values indicate errors.
  * You should call drbd_md_sync() after calling this function.
  */
-enum determine_dev_size drbd_determin_dev_size(struct drbd_conf *mdev, enum dds_flags flags) __must_hold(local)
+enum determine_dev_size drbd_determine_dev_size(struct drbd_conf *mdev, enum dds_flags flags) __must_hold(local)
 {
 	sector_t prev_first_sect, prev_size; /* previous meta location */
 	sector_t la_size;
@@ -778,28 +797,77 @@ STATIC int drbd_check_al_size(struct drbd_conf *mdev)
 	return 0;
 }
 
-void drbd_setup_queue_param(struct drbd_conf *mdev, unsigned int max_bio_size) __must_hold(local)
+static void drbd_setup_queue_param(struct drbd_conf *mdev, unsigned int max_bio_size)
 {
 	struct request_queue * const q = mdev->rq_queue;
-	struct request_queue * const b = mdev->ldev->backing_bdev->bd_disk->queue;
-	int max_segments = mdev->ldev->dc.max_bio_bvecs;
-	int max_hw_sectors = min(queue_max_hw_sectors(b), max_bio_size >> 9);
+	int max_hw_sectors = max_bio_size >> 9;
+	int max_segments = 0;
+
+	if (get_ldev_if_state(mdev, D_ATTACHING)) {
+		struct request_queue * const b = mdev->ldev->backing_bdev->bd_disk->queue;
+
+		max_hw_sectors = min(queue_max_hw_sectors(b), max_bio_size >> 9);
+		max_segments = mdev->ldev->dc.max_bio_bvecs;
+		put_ldev(mdev);
+	}
 
 	blk_queue_logical_block_size(q, 512);
 	blk_queue_max_hw_sectors(q, max_hw_sectors);
 	/* This is the workaround for "bio would need to, but cannot, be split" */
 	blk_queue_max_segments(q, max_segments ? max_segments : BLK_MAX_SEGMENTS);
 	blk_queue_segment_boundary(q, PAGE_CACHE_SIZE-1);
-	blk_queue_stack_limits(q, b);
 
-	dev_info(DEV, "max BIO size = %u\n", queue_max_hw_sectors(q) << 9);
+	if (get_ldev_if_state(mdev, D_ATTACHING)) {
+		struct request_queue * const b = mdev->ldev->backing_bdev->bd_disk->queue;
 
-	if (q->backing_dev_info.ra_pages != b->backing_dev_info.ra_pages) {
-		dev_info(DEV, "Adjusting my ra_pages to backing device's (%lu -> %lu)\n",
-		     q->backing_dev_info.ra_pages,
-		     b->backing_dev_info.ra_pages);
-		q->backing_dev_info.ra_pages = b->backing_dev_info.ra_pages;
+		blk_queue_stack_limits(q, b);
+
+		if (q->backing_dev_info.ra_pages != b->backing_dev_info.ra_pages) {
+			dev_info(DEV, "Adjusting my ra_pages to backing device's (%lu -> %lu)\n",
+				 q->backing_dev_info.ra_pages,
+				 b->backing_dev_info.ra_pages);
+			q->backing_dev_info.ra_pages = b->backing_dev_info.ra_pages;
+		}
+		put_ldev(mdev);
 	}
+}
+
+void drbd_reconsider_max_bio_size(struct drbd_conf *mdev)
+{
+	int now, new, local, peer;
+
+	now = queue_max_hw_sectors(mdev->rq_queue) << 9;
+	local = mdev->local_max_bio_size; /* Eventually last known value, from volatile memory */
+	peer = mdev->peer_max_bio_size; /* Eventually last known value, from meta data */
+
+	if (get_ldev_if_state(mdev, D_ATTACHING)) {
+		local = queue_max_hw_sectors(mdev->ldev->backing_bdev->bd_disk->queue) << 9;
+		mdev->local_max_bio_size = local;
+		put_ldev(mdev);
+	}
+
+	/* We may ignore peer limits if the peer is modern enough.
+	   Because new from 8.3.8 onwards the peer can use multiple
+	   BIOs for a single peer_request */
+	if (mdev->state.conn >= C_CONNECTED) {
+		if (mdev->agreed_pro_version < 94) {
+			peer = min_t(int, mdev->peer_max_bio_size, DRBD_MAX_SIZE_H80_PACKET);
+			/* Correct old drbd (up to 8.3.7) if it believes it can do more than 32KiB */
+		} else if (mdev->agreed_pro_version == 94)
+			peer = DRBD_MAX_SIZE_H80_PACKET;
+		else /* drbd 8.3.8 onwards */
+			peer = DRBD_MAX_BIO_SIZE;
+	}
+
+	new = min_t(int, local, peer);
+
+	if (mdev->state.role == R_PRIMARY && new < now)
+		dev_err(DEV, "ASSERT FAILED new < now; (%d < %d)\n", new, now);
+
+	if (new != now)
+		dev_info(DEV, "max BIO size = %u\n", new);
+
+	drbd_setup_queue_param(mdev, new);
 }
 
 /* serialize deconfig (worker exiting, doing cleanup)
@@ -870,7 +938,6 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	struct block_device *bdev;
 	struct lru_cache *resync_lru = NULL;
 	union drbd_state ns, os;
-	unsigned int max_bio_size;
 	enum drbd_state_rv rv;
 	int cp_discovered = 0;
 	int logical_block_size;
@@ -971,7 +1038,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 		dev_err(DEV, "max capacity %llu smaller than disk size %llu\n",
 			(unsigned long long) drbd_get_max_capacity(nbc),
 			(unsigned long long) nbc->dc.disk_size);
-		retcode = ERR_DISK_TO_SMALL;
+		retcode = ERR_DISK_TOO_SMALL;
 		goto fail;
 	}
 
@@ -985,7 +1052,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	}
 
 	if (drbd_get_capacity(nbc->md_bdev) < min_md_device_sectors) {
-		retcode = ERR_MD_DISK_TO_SMALL;
+		retcode = ERR_MD_DISK_TOO_SMALL;
 		dev_warn(DEV, "refusing attach: md-device too small, "
 		     "at least %llu sectors needed for this meta-disk type\n",
 		     (unsigned long long) min_md_device_sectors);
@@ -996,7 +1063,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	 * (we may currently be R_PRIMARY with no local disk...) */
 	if (drbd_get_max_capacity(nbc) <
 	    drbd_get_capacity(mdev->this_bdev)) {
-		retcode = ERR_DISK_TO_SMALL;
+		retcode = ERR_DISK_TOO_SMALL;
 		goto fail;
 	}
 
@@ -1077,7 +1144,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	if (drbd_md_test_flag(nbc, MDF_CONSISTENT) &&
 	    drbd_new_dev_size(mdev, nbc, 0) < nbc->md.la_size_sect) {
 		dev_warn(DEV, "refusing to truncate a consistent device\n");
-		retcode = ERR_DISK_TO_SMALL;
+		retcode = ERR_DISK_TOO_SMALL;
 		goto force_diskless_dec;
 	}
 
@@ -1122,20 +1189,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	mdev->read_cnt = 0;
 	mdev->writ_cnt = 0;
 
-	max_bio_size = DRBD_MAX_BIO_SIZE;
-	if (mdev->state.conn == C_CONNECTED) {
-		/* We are Primary, Connected, and now attach a new local
-		 * backing store. We must not increase the user visible maximum
-		 * bio size on this device to something the peer may not be
-		 * able to handle. */
-		if (mdev->agreed_pro_version < 94)
-			max_bio_size = queue_max_hw_sectors(mdev->rq_queue) << 9;
-		else if (mdev->agreed_pro_version == 94)
-			max_bio_size = DRBD_MAX_SIZE_H80_PACKET;
-		/* else: drbd 8.3.9 and later, stay with default */
-	}
-
-	drbd_setup_queue_param(mdev, max_bio_size);
+	drbd_reconsider_max_bio_size(mdev);
 
 	/* If I am currently not R_PRIMARY,
 	 * but meta data primary indicator is set,
@@ -1157,7 +1211,7 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 	    !drbd_md_test_flag(mdev->ldev, MDF_CONNECTED_IND))
 		set_bit(USE_DEGR_WFC_T, &mdev->flags);
 
-	dd = drbd_determin_dev_size(mdev, 0);
+	dd = drbd_determine_dev_size(mdev, 0);
 	if (dd == dev_size_error) {
 		retcode = ERR_NOMEM_BITMAP;
 		goto force_diskless_dec;
@@ -1287,11 +1341,36 @@ STATIC int drbd_nl_disk_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp
 STATIC int drbd_nl_detach(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
 			  struct drbd_nl_cfg_reply *reply)
 {
+	enum drbd_ret_code retcode;
+	int ret;
+	struct detach dt = {};
+
+	if (!detach_from_tags(mdev, nlp->tag_list, &dt)) {
+		reply->ret_code = ERR_MANDATORY_TAG;
+		goto out;
+	}
+
+	if (dt.detach_force) {
+		drbd_force_state(mdev, NS(disk, D_FAILED));
+		reply->ret_code = SS_SUCCESS;
+		goto out;
+	}
+
 	drbd_suspend_io(mdev); /* so no-one is stuck in drbd_al_begin_io */
-	reply->ret_code = drbd_request_state(mdev, NS(disk, D_DISKLESS));
-	if (mdev->state.disk == D_DISKLESS)
-		wait_event(mdev->misc_wait, !atomic_read(&mdev->local_cnt));
+	drbd_md_get_buffer(mdev); /* make sure there is no in-flight meta-data IO */
+	retcode = drbd_request_state(mdev, NS(disk, D_FAILED));
+	drbd_md_put_buffer(mdev);
+	/* D_FAILED will transition to DISKLESS. */
+	ret = wait_event_interruptible(mdev->misc_wait,
+			mdev->state.disk != D_FAILED);
 	drbd_resume_io(mdev);
+
+	if ((int)retcode == (int)SS_IS_DISKLESS)
+		retcode = SS_NOTHING_TO_DO;
+	if (ret)
+		retcode = ERR_INTR;
+	reply->ret_code = retcode;
+out:
 	return 0;
 }
 
@@ -1681,7 +1760,7 @@ STATIC int drbd_nl_resize(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
 
 	if (rs.no_resync && mdev->agreed_pro_version < 93) {
 		retcode = ERR_NEED_APV_93;
-		goto fail;
+		goto fail_ldev;
 	}
 
 	if (mdev->ldev->known_size != drbd_get_capacity(mdev->ldev->backing_bdev))
@@ -1689,7 +1768,7 @@ STATIC int drbd_nl_resize(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
 
 	mdev->ldev->dc.disk_size = (sector_t)rs.resize_size;
 	ddsf = (rs.resize_force ? DDSF_FORCED : 0) | (rs.no_resync ? DDSF_NO_RESYNC : 0);
-	dd = drbd_determin_dev_size(mdev, ddsf);
+	dd = drbd_determine_dev_size(mdev, ddsf);
 	drbd_md_sync(mdev);
 	put_ldev(mdev);
 	if (dd == dev_size_error) {
@@ -1708,6 +1787,10 @@ STATIC int drbd_nl_resize(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
  fail:
 	reply->ret_code = retcode;
 	return 0;
+
+ fail_ldev:
+	put_ldev(mdev);
+	goto fail;
 }
 
 STATIC int drbd_nl_syncer_conf(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
@@ -1911,6 +1994,7 @@ STATIC int drbd_nl_invalidate(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nl
 
 	/* If there is still bitmap IO pending, probably because of a previous
 	 * resync just being finished, wait for it before requesting a new resync. */
+	drbd_suspend_io(mdev);
 	wait_event(mdev->misc_wait, !test_bit(BITMAP_IO, &mdev->flags));
 
 	retcode = _drbd_request_state(mdev, NS(conn, C_STARTING_SYNC_T), CS_ORDERED);
@@ -1929,6 +2013,7 @@ STATIC int drbd_nl_invalidate(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nl
 
 		retcode = drbd_request_state(mdev, NS(conn, C_STARTING_SYNC_T));
 	}
+	drbd_resume_io(mdev);
 
 	reply->ret_code = retcode;
 	return 0;
@@ -1950,6 +2035,7 @@ STATIC int drbd_nl_invalidate_peer(struct drbd_conf *mdev, struct drbd_nl_cfg_re
 
 	/* If there is still bitmap IO pending, probably because of a previous
 	 * resync just being finished, wait for it before requesting a new resync. */
+	drbd_suspend_io(mdev);
 	wait_event(mdev->misc_wait, !test_bit(BITMAP_IO, &mdev->flags));
 
 	retcode = _drbd_request_state(mdev, NS(conn, C_STARTING_SYNC_S), CS_ORDERED);
@@ -1968,6 +2054,7 @@ STATIC int drbd_nl_invalidate_peer(struct drbd_conf *mdev, struct drbd_nl_cfg_re
 		} else
 			retcode = drbd_request_state(mdev, NS(conn, C_STARTING_SYNC_S));
 	}
+	drbd_resume_io(mdev);
 
 	reply->ret_code = retcode;
 	return 0;
@@ -2140,11 +2227,13 @@ STATIC int drbd_nl_start_ov(struct drbd_conf *mdev, struct drbd_nl_cfg_req *nlp,
 
 	/* If there is still bitmap IO pending, e.g. previous resync or verify
 	 * just being finished, wait for it before requesting a new resync. */
+	drbd_suspend_io(mdev);
 	wait_event(mdev->misc_wait, !test_bit(BITMAP_IO, &mdev->flags));
 
 	/* w_make_ov_request expects position to be aligned */
 	mdev->ov_start_sector = args.start_sector & ~BM_SECT_PER_BIT;
 	reply->ret_code = drbd_request_state(mdev,NS(conn,C_VERIFY_S));
+	drbd_resume_io(mdev);
 	return 0;
 }
 
@@ -2274,10 +2363,17 @@ STATIC void drbd_connector_callback(void *data)
 	}
 
 #ifdef KERNEL_HAS_CN_SKB_PARMS
+# ifdef HAVE_NL_SKB_EFF_CAP
 	if (!cap_raised(nsp->eff_cap, CAP_SYS_ADMIN)) {
 		retcode = ERR_PERM;
 		goto fail;
 	}
+# else
+	if (!cap_raised(current_cap(), CAP_SYS_ADMIN)) {
+		retcode = ERR_PERM;
+		goto fail;
+	}
+# endif
 #endif
 
 	mdev = ensure_mdev(nlp->drbd_minor,
@@ -2584,6 +2680,9 @@ void __exit cn_fini(void);
 
 typedef int (*cn_add_callback_req_nsp_fn)(struct cb_id *, char *,
 	void (*cb)(struct cn_msg *req, struct netlink_skb_parms *nsp));
+typedef int (*cn_add_callback_const_name_req_nsp_fn)(
+		struct cb_id *id, const char *name,
+	void (*callback)(struct cn_msg *, struct netlink_skb_parms *));
 typedef int (*cn_add_callback_req_fn)(struct cb_id *, char *,
 	void (*cb)(struct cn_msg *req));
 typedef int (*cn_add_callback_void_fn)(struct cb_id *, char *,
@@ -2610,7 +2709,9 @@ int __init drbd_nl_init(void)
 		 * otherwise it will just be a compiler _warning_,
 		 * but then BUG at runtime. */
 #ifdef KERNEL_HAS_CN_SKB_PARMS
-		BUILD_BUG_ON(!__same_type(&cn_add_callback, cn_add_callback_req_nsp_fn));
+		BUILD_BUG_ON(!(
+			__same_type(&cn_add_callback, cn_add_callback_req_nsp_fn) ||
+			__same_type(&cn_add_callback, cn_add_callback_const_name_req_nsp_fn)));
 #else
 		BUILD_BUG_ON(!(
 			__same_type(&cn_add_callback, cn_add_callback_req_fn) ||

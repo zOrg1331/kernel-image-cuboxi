@@ -19,6 +19,8 @@
 #include <linux/kobject.h>
 #include <linux/pid.h>
 #include <linux/socket.h>
+#include <linux/idr.h>
+#include <linux/spinlock.h>
 #include <net/inet_frag.h>
 
 #ifdef VZMON_DEBUG
@@ -266,6 +268,7 @@ struct ve_struct {
 #endif
 #if defined(CONFIG_SUNRPC) || defined(CONFIG_SUNRPC_MODULE)
 	struct ve_rpc_data	*rpc_data;
+	struct work_struct	rpc_destroy_work;
 #endif
 #if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
 	struct file_system_type	*bm_fs_type;
@@ -288,6 +291,9 @@ struct ve_struct {
 	struct task_struct	*_kthreadd_task;
 	struct workqueue_struct	*khelper_wq;
 	struct mutex		sync_mutex;
+
+	struct idr		_posix_timers_id;
+	spinlock_t		posix_timers_lock;
 };
 
 #define VE_MEMINFO_DEFAULT      1       /* default behaviour */

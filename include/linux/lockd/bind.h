@@ -58,7 +58,7 @@ extern void	lockd_down(void);
 extern void	grace_ender(struct work_struct *work);
 
 extern int	nlmclnt_set_lockowner(struct inode *,
-		struct file_lock *, fl_owner_t, int);
+		struct file_lock *, int);
 extern int	nlmclnt_reserve_pid(int pid);
 
 struct nlm_reserved_pid {

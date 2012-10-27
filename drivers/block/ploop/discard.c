@@ -13,6 +13,9 @@ int ploop_discard_init_ioc(struct ploop_device *plo)
 	if (delta == NULL)
 		return -EINVAL;
 
+	if (delta->ops->id != PLOOP_FMT_PLOOP1)
+		return -EOPNOTSUPP;
+
 	if (plo->maintenance_type != PLOOP_MNTN_OFF)
 		return -EBUSY;
 

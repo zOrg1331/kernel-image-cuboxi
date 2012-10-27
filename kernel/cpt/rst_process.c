@@ -40,6 +40,7 @@
 #include "cpt_ubc.h"
 #include "cpt_process.h"
 #include "cpt_kernel.h"
+#include "cpt_syscalls.h"
 
 
 #define HOOK_RESERVE	256
@@ -200,9 +201,8 @@ static int restore_sigqueue(struct task_struct *tsk,
 			}
 
 			INIT_LIST_HEAD(&q->list);
-			/* Preallocated elements (posix timers) are not
-			 * supported yet. It is safe to replace them with
-			 * a private one. */
+			/* Preallocated elements (posix timers) are
+			 * handled separately so this is OK */
 			q->flags = 0;
 			q->user = up;
 			atomic_inc(&q->user->sigpending);
@@ -303,6 +303,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 	int err;
 	struct cpt_signal_image *si = cpt_get_buf(ctx);
 
+	tty_kref_put(current->signal->tty);
 	current->signal->tty = NULL;
 
 	err = rst_get_object(CPT_OBJ_SIGNAL_STRUCT, ti->cpt_signal, si, ctx);
@@ -566,6 +567,103 @@ rst_signal_complete(struct cpt_task_image *ti, int * exiting, cpt_context_t *ctx
 		if (err)
 			return err;
 	}
+
+	return 0;
+}
+
+static int restore_posix_timer_list(struct cpt_object_hdr *tli, loff_t pos,
+				    struct cpt_context *ctx)
+{
+	loff_t offset;
+
+	offset = pos + tli->cpt_hdrlen;
+	while (offset < pos + tli->cpt_next) {
+		struct cpt_posix_timer_image timi;
+		struct itimerspec setting;
+		struct sigevent event;
+		int overrun, overrun_last;
+		int signal_pending;
+		clockid_t which_clock;
+		timer_t timer_id;
+		int err;
+
+		err = rst_get_object(CPT_OBJ_POSIX_TIMER, offset, &timi, ctx);
+		if (err)
+			return err;
+
+		timer_id = timi.cpt_timer_id;
+		which_clock = timi.cpt_timer_clock;
+		event.sigev_value.sival_ptr =
+			cpt_ptr_import(timi.cpt_sigev_value);
+		event.sigev_signo = timi.cpt_sigev_signo;
+		event.sigev_notify = timi.cpt_sigev_notify;
+
+		err = timer_create_id(which_clock, &event, &timer_id);
+		if (err) {
+			eprintk_ctx("timer_create_id: %d\n", err);
+			return err;
+		}
+
+		overrun = timi.cpt_timer_overrun;
+		overrun_last = timi.cpt_timer_overrun_last;
+		signal_pending = timi.cpt_timer_signal_pending;
+		cpt_timespec_import(&setting.it_interval,
+				    timi.cpt_timer_interval);
+		cpt_timespec_import(&setting.it_value,
+				    timi.cpt_timer_value);
+
+		if ((setting.it_value.tv_sec || setting.it_value.tv_nsec) &&
+		    (which_clock == CLOCK_REALTIME ||
+		     which_clock == CLOCK_REALTIME_COARSE)) {
+			ktime_t val = timespec_to_ktime(setting.it_value);
+			ktime_t delta = timespec_to_ktime(ctx->delta_time);
+			s64 incr = timespec_to_ns(&setting.it_interval);
+
+			val = ktime_sub(val, delta);
+			if (val.tv64 < 0 && incr > 0) {
+				int overrun_extra = 1 - ktime_divns(val, incr);
+				val = ktime_add_ns(val, incr * overrun_extra);
+				overrun += overrun_extra;
+			}
+
+			if (val.tv64 <= 0)
+				val = ktime_set(0, 1);
+
+			setting.it_value = ktime_to_timespec(val);
+		}
+
+		if (overrun >= 0)
+			signal_pending = 1;
+
+		err = timer_setup(timer_id, &setting,
+				  overrun, overrun_last, signal_pending);
+		if (err) {
+			eprintk_ctx("timer_setup: %d\n", err);
+			return err;
+		}
+
+		offset += timi.cpt_next;
+	}
+	return 0;
+}
+
+int rst_posix_timers(struct cpt_task_image *ti, cpt_context_t *ctx)
+{
+	int err;
+	struct cpt_object_hdr tli;
+
+	if (!cpt_object_has(ti, cpt_posix_timers) ||
+	    ti->cpt_posix_timers == CPT_NULL)
+		return 0;
+
+	err = rst_get_object(CPT_OBJ_POSIX_TIMER_LIST,
+			     ti->cpt_posix_timers, &tli, ctx);
+	if (err)
+		return err;
+
+	err = restore_posix_timer_list(&tli, ti->cpt_posix_timers, ctx);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -1429,22 +1527,24 @@ int rst_restore_process(struct cpt_context *ctx)
 			return -EINVAL;
 		}
 
-		if (ti->cpt_ppid != ti->cpt_rppid) {
-			struct task_struct *parent;
-			struct ve_struct *env = set_exec_env(VE_TASK_INFO(tsk)->owner_env);
+		tsk->ptrace = ti->cpt_ptrace;
+
+		if (tsk->ptrace) {
+			struct ve_struct *env = VE_TASK_INFO(tsk)->owner_env;
+			struct task_struct *tracer;
+
 			write_lock_irq(&tasklist_lock);
-			parent = find_task_by_vpid(ti->cpt_ppid);
-			if (parent && parent != tsk->parent) {
-				list_add(&tsk->ptrace_entry, &tsk->parent->ptraced);
-				/*
-				 * Ptraced kids are no longer in the parent children
-				 *  remove_parent(tsk);
-				 *  tsk->parent = parent;
-				 *  add_parent(tsk);
-				 */
+			tracer = pid_task(find_pid_ns(ti->cpt_ppid,
+					   env->ve_ns->pid_ns), PIDTYPE_PID);
+			if (tracer) {
+				tsk->parent = tracer;
+				list_add(&tsk->ptrace_entry, &tracer->ptraced);
+			} else {
+				eprintk_ctx("Tracer %d not found for %d(%s)\n",
+					ti->cpt_ppid, ti->cpt_pid, ti->cpt_comm);
+				tsk->ptrace = 0;
 			}
 			write_unlock_irq(&tasklist_lock);
-			set_exec_env(env);
 		}
 
 		tsk->ptrace_message = ti->cpt_ptrace_message;
@@ -1560,7 +1660,6 @@ int rst_restore_process(struct cpt_context *ctx)
 				decode_siginfo(tsk->last_siginfo, lsi);
 		}
 
-		tsk->ptrace = ti->cpt_ptrace;
 		tsk->flags = (tsk->flags & PF_USED_MATH) |
 			(ti->cpt_flags & CPT_TASK_FLAGS_MASK);
 		clear_tsk_thread_flag(tsk, TIF_FREEZE);

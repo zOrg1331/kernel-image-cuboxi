@@ -76,7 +76,7 @@ static void init_cpu_flags(void *dummy)
 	unsigned int tmp1, tmp2;
 	int i;
 
-	bitmap_zero((unsigned long *)flags, RHNCAPINTS);
+	bitmap_zero((unsigned long *)flags, 32*RHNCAPINTS);
 	for (i = 0; i < 32*RHNCAPINTS; i++)
 		if (cpu_has(c, i))
 			set_bit(i, (unsigned long *)flags);
@@ -167,10 +167,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	return 0;
 }
 
-static void *c_start(struct seq_file *m, loff_t *pos)
+static void *__c_start(struct seq_file *m, loff_t *pos)
 {
-	smp_call_function(init_cpu_flags, NULL, 1);
-
 	if (*pos == 0)	/* just in case, cpu 0 is not the first */
 		*pos = cpumask_first(cpu_online_mask);
 	else
@@ -180,10 +178,17 @@ static void *c_start(struct seq_file *m, loff_t *pos)
 	return NULL;
 }
 
+static void *c_start(struct seq_file *m, loff_t *pos)
+{
+	init_cpu_flags(NULL);
+	smp_call_function(init_cpu_flags, NULL, 1);
+	return __c_start(m, pos);
+}
+
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	(*pos)++;
-	return c_start(m, pos);
+	return __c_start(m, pos);
 }
 
 static void c_stop(struct seq_file *m, void *v)

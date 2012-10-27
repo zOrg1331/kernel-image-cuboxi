@@ -1003,6 +1003,13 @@ static int fuse_prepare_write(struct fuse_conn *fc, struct file *file,
 	if (PageUptodate(page) || (len == PAGE_CACHE_SIZE))
 		return 0;
 
+	/*
+	 * Page writeback can extend beyond the liftime of the
+	 * page-cache page, so make sure we read a properly synced
+	 * page.
+	 */
+	fuse_wait_on_page_writeback(page->mapping->host, page->index);
+
 	req = fuse_get_req(fc);
 	err = PTR_ERR(req);
 	if (IS_ERR(req))
@@ -1547,7 +1554,7 @@ EXPORT_SYMBOL_GPL(fuse_direct_io);
 
 static ssize_t __fuse_direct_read(struct file *file, const struct iovec *iov,
 				  unsigned long nr_segs, loff_t *ppos,
-				  struct kiocb *async)
+				  struct kiocb *async, size_t count)
 {
 	ssize_t res;
 	struct inode *inode = file->f_path.dentry->d_inode;
@@ -1555,8 +1562,7 @@ static ssize_t __fuse_direct_read(struct file *file, const struct iovec *iov,
 	if (is_bad_inode(inode))
 		return -EIO;
 
-	res = __fuse_direct_io(file, iov, nr_segs, iov_length(iov, nr_segs),
-			       ppos, 0, async);
+	res = __fuse_direct_io(file, iov, nr_segs, count, ppos, 0, async);
 
 	fuse_invalidate_attr(inode);
 
@@ -1567,7 +1573,7 @@ static ssize_t fuse_direct_read(struct file *file, char __user *buf,
 				     size_t count, loff_t *ppos)
 {
 	struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
-	return __fuse_direct_read(file, &iov, 1, ppos, NULL);
+	return __fuse_direct_read(file, &iov, 1, ppos, NULL, count);
 }
 
 static ssize_t __fuse_direct_write(struct file *file, const struct iovec *iov,
@@ -1727,14 +1733,12 @@ static int fuse_writepage_locked(struct page *page, struct writeback_control *wb
 	struct fuse_file *ff;
 	struct page *tmp_page;
 
-	if (wbc) {
-		while (fuse_page_is_writeback(inode, page->index)) {
-			if (wbc->sync_mode != WB_SYNC_ALL) {
-				redirty_page_for_writepage(wbc, page);
-				return 0;
-			}
-			fuse_wait_on_page_writeback(inode, page->index);
+	while (fuse_page_is_writeback(inode, page->index)) {
+		if (wbc->sync_mode != WB_SYNC_ALL) {
+			redirty_page_for_writepage(wbc, page);
+			return 0;
 		}
+		fuse_wait_on_page_writeback(inode, page->index);
 	}
 
 	set_page_writeback(page);
@@ -1766,13 +1770,14 @@ static int fuse_writepage_locked(struct page *page, struct writeback_control *wb
 
 	inc_bdi_stat(mapping->backing_dev_info, BDI_WRITEBACK);
 	inc_zone_page_state(tmp_page, NR_WRITEBACK_TEMP);
-	end_page_writeback(page);
 
 	spin_lock(&fc->lock);
 	list_add(&req->writepages_entry, &fi->writepages);
 	list_add_tail(&req->list, &fi->queued_writes);
 	fuse_flush_writepages(inode);
 	spin_unlock(&fc->lock);
+
+	end_page_writeback(page);
 
 	return 0;
 
@@ -1796,6 +1801,14 @@ static int fuse_writepage(struct page *page, struct writeback_control *wbc)
 	return err;
 }
 
+static void fuse_end_writeback(struct fuse_req *req, struct page ** orig_pages)
+{
+	int i;
+
+	for (i = 0; i < req->num_pages; i++)
+		end_page_writeback(orig_pages[i]);
+}
+
 static int fuse_send_writepages(struct fuse_fill_data *data)
 {
 	int i, all_ok = 1;
@@ -1803,6 +1816,7 @@ static int fuse_send_writepages(struct fuse_fill_data *data)
 	struct fuse_conn *fc = get_fuse_conn(data->inode);
 	struct fuse_inode *fi = get_fuse_inode(data->inode);
 	loff_t off = -1;
+	struct page * orig_pages[req->num_pages];
 
 	if (!data->ff) {
 		printk("FUSE: pages dirtied on dead file\n");
@@ -1821,15 +1835,16 @@ static int fuse_send_writepages(struct fuse_fill_data *data)
 			inc_zone_page_state(tmp_page, NR_WRITEBACK_TEMP);
 		} else
 			all_ok = 0;
+		orig_pages[i] = page;
 		req->pages[i] = tmp_page;
 		if (i == 0)
 			off = page_offset(page);
-
-		end_page_writeback(page);
 	}
 
-	if (!all_ok)
+	if (!all_ok) {
+		fuse_end_writeback(req, orig_pages);
 		return -ENOMEM;
+	}
 
 	req->ff = fuse_file_get(data->ff);
 	fuse_write_fill(req, data->ff, off, 0);
@@ -1846,6 +1861,8 @@ static int fuse_send_writepages(struct fuse_fill_data *data)
 	list_add_tail(&req->list, &fi->queued_writes);
 	fuse_flush_writepages(data->inode);
 	spin_unlock(&fc->lock);
+
+	fuse_end_writeback(req, orig_pages);
 
 	return 0;
 }
@@ -1966,7 +1983,10 @@ static int fuse_launder_page(struct page *page)
 	int err = 0;
 	if (clear_page_dirty_for_io(page)) {
 		struct inode *inode = page->mapping->host;
-		err = fuse_writepage_locked(page, NULL);
+		struct writeback_control wbc = {
+			.sync_mode = WB_SYNC_ALL,
+		};
+		err = fuse_writepage_locked(page, &wbc);
 		if (!err)
 			fuse_wait_on_page_writeback(inode, page->index);
 	}
@@ -2804,13 +2824,28 @@ fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	struct kiocb *async_cb = NULL;
 	loff_t pos = 0;
 	size_t count = iov_length(iov, nr_segs);
+	loff_t i_size;
+	int async_cb_allowed = 1;
 
 	file = iocb->ki_filp;
 	inode = file->f_mapping->host;
+	i_size = i_size_read(inode);
 	pos = offset;
 
-	if (is_sync_kiocb(iocb) || (offset + count <=
-				i_size_read(inode))) {
+	/* precautions for short read */
+	if (rw != WRITE && offset + count > i_size) {
+		struct fuse_conn *fc = get_fuse_conn(inode);
+
+		if (fc->flags & FUSE_WBCACHE) {
+			if (offset >= i_size)
+				return 0;
+			count = i_size - offset;
+		} else
+			async_cb_allowed = 0;
+	}
+
+	if (async_cb_allowed &&
+	    (is_sync_kiocb(iocb) || (offset + count <= i_size))) {
 		struct fuse_io_priv *io;
 
 		io = kmalloc(sizeof(struct fuse_io_priv), GFP_KERNEL);
@@ -2831,7 +2866,8 @@ fuse_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	if (rw == WRITE)
 		ret = __fuse_direct_write(file, iov, nr_segs, &pos, async_cb);
 	else
-		ret = __fuse_direct_read(file, iov, nr_segs, &pos, async_cb);
+		ret = __fuse_direct_read(file, iov, nr_segs, &pos, async_cb,
+					 count);
 
 	if (async_cb) {
 		fuse_aio_complete(async_cb->private, ret == count ? 0 : -EIO, 0);

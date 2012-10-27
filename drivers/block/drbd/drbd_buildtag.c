@@ -2,6 +2,6 @@
 #include <linux/drbd.h>
 const char *drbd_buildtag(void)
 {
-	return "GIT-hash: 5c0b0469666682443d4785d90a2c603378f9017b"
-		" build by phil@fat-tyre, 2011-01-28 12:17:35";
+	return "GIT-hash: 83ca112086600faacab2f157bc5a9324f7bd7f77"
+		" build by root@sighted, 2012-10-09 12:47:51";
 }

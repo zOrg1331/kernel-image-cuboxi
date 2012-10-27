@@ -3020,7 +3020,7 @@ gro_result_t dev_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 	int mac_len;
 	gro_result_t ret;
 
-	if (!(skb->dev->features & NETIF_F_GRO))
+	if (!(skb->dev->features & NETIF_F_GRO) || netpoll_rx_on(skb))
 		goto normal;
 
 	if (skb_is_gso(skb) || skb_has_frags(skb))
@@ -3107,9 +3107,6 @@ __napi_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 {
 	struct sk_buff *p;
 	unsigned int maclen = skb->dev->hard_header_len;
-
-	if (netpoll_rx_on(skb))
-		return GRO_NORMAL;
 
 	for (p = napi->gro_list; p; p = p->next) {
 		unsigned long diffs;
@@ -5380,7 +5377,9 @@ static void rollback_registered_many(struct list_head *head)
 
 	/* Process any work delayed until the end of the batch */
 	dev = list_entry(head->next, struct net_device, unreg_list);
+	old_env = set_exec_env(dev->owner_env);
 	call_netdevice_notifiers(NETDEV_UNREGISTER_BATCH, dev);
+	set_exec_env(old_env);
 
 	synchronize_net();
 
@@ -6668,19 +6667,19 @@ static void __net_exit default_device_exit_batch(struct list_head *net_list)
 	 */
 	struct net_device *dev;
 	struct net *net;
-	struct ve_struct *old_ve;
 	LIST_HEAD(dev_kill_list);
+	struct net_context ctx;
 
 	rtnl_lock();
 	list_for_each_entry(net, net_list, exit_list) {
-		old_ve = set_exec_env(net->owner_ve);
+		set_net_context(net, &ctx);
 		for_each_netdev_reverse(net, dev) {
 			if (dev->rtnl_link_ops)
 				dev->rtnl_link_ops->dellink(dev, &dev_kill_list);
 			else
 				unregister_netdevice_queue(dev, &dev_kill_list);
 		}
-		(void)set_exec_env(old_ve);
+		restore_net_context(&ctx);
 	}
 	unregister_netdevice_many(&dev_kill_list);
 	rtnl_unlock();

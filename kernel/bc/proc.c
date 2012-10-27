@@ -95,6 +95,7 @@ static struct bc_proc_entry bc_resources_entry = {
 static int bc_debug_show(struct seq_file *f, void *v)
 {
 	struct user_beancounter *ub;
+	int oom_manual;
 
 	ub = seq_beancounter(f);
 	seq_printf(f, "uid: %u\n", ub->ub_uid);
@@ -105,10 +106,11 @@ static int bc_debug_show(struct seq_file *f, void *v)
 	seq_printf(f, "sizeof: %lu\n", sizeof(struct user_beancounter));
 	seq_printf(f, "pincount: %d\n", __ub_percpu_sum(ub, pincount));
 
+	seq_printf(f, "dcache_unused: %u\n", ub->ub_dentry_unused);
 	seq_printf(f, "dcache_pruned: %lu\n", ub->ub_dentry_pruned);
 
-	seq_printf(f, "oom_score_adj: %s\n", (ub->ub_flags &
-				UB_OOM_MANUAL_SCORE_ADJ) ? "manual" : "auto");
+	oom_manual = test_bit(UB_OOM_MANUAL_SCORE_ADJ, &ub->ub_flags);
+	seq_printf(f, "oom_score_adj: %s\n", oom_manual ? "manual" : "auto");
 
 	return 0;
 }

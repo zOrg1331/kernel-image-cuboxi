@@ -43,10 +43,15 @@
 
 /* net { */
   /* timeout, unit centi seconds
-   * more than one minute timeout is not usefull */
+   * more than one minute timeout is not useful */
 #define DRBD_TIMEOUT_MIN 1
 #define DRBD_TIMEOUT_MAX 600
 #define DRBD_TIMEOUT_DEF 60       /* 6 seconds */
+
+ /* If backing disk takes longer than disk_timeout, mark the disk as failed */
+#define DRBD_DISK_TIMEOUT_MIN 0    /* 0 = disabled */
+#define DRBD_DISK_TIMEOUT_MAX 6000 /* 10 Minutes */
+#define DRBD_DISK_TIMEOUT_DEF 0    /* disabled */
 
   /* active connection retries when C_WF_CONNECTION */
 #define DRBD_CONNECT_INT_MIN 1
@@ -60,7 +65,7 @@
 
  /* timeout for the ping packets.*/
 #define DRBD_PING_TIMEO_MIN  1
-#define DRBD_PING_TIMEO_MAX  100
+#define DRBD_PING_TIMEO_MAX  300
 #define DRBD_PING_TIMEO_DEF  5
 
   /* max number of write requests between write barriers */
@@ -68,7 +73,7 @@
 #define DRBD_MAX_EPOCH_SIZE_MAX 20000
 #define DRBD_MAX_EPOCH_SIZE_DEF 2048
 
-  /* I don't think that a tcp send buffer of more than 10M is usefull */
+  /* I don't think that a tcp send buffer of more than 10M is useful */
 #define DRBD_SNDBUF_SIZE_MIN  0
 #define DRBD_SNDBUF_SIZE_MAX  (10<<20)
 #define DRBD_SNDBUF_SIZE_DEF  0
@@ -101,7 +106,7 @@
 #define DRBD_RATE_MAX (4 << 20)
 #define DRBD_RATE_DEF 250  /* kb/second */
 
-  /* less than 7 would hit performance unneccessarily.
+  /* less than 7 would hit performance unnecessarily.
    * 3833 is the largest prime that still does fit
    * into 64 sectors of activity log */
 #define DRBD_AL_EXTENTS_MIN  7
@@ -117,10 +122,10 @@
 /* drbdsetup XY resize -d Z
  * you are free to reduce the device size to nothing, if you want to.
  * the upper limit with 64bit kernel, enough ram and flexible meta data
- * is 16 TB, currently. */
+ * is 1 PiB, currently. */
 /* DRBD_MAX_SECTORS */
 #define DRBD_DISK_SIZE_SECT_MIN  0
-#define DRBD_DISK_SIZE_SECT_MAX  (16 * (2LLU << 30))
+#define DRBD_DISK_SIZE_SECT_MAX  (1 * (2LLU << 40))
 #define DRBD_DISK_SIZE_SECT_DEF  0 /* = disabled = no user size... */
 
 #define DRBD_ON_IO_ERROR_DEF EP_PASS_ON

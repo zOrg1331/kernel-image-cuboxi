@@ -216,6 +216,11 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 		   atomic_read(&tg->load_weight));
 #endif
 
+#ifdef CONFIG_CFS_CPULIMIT
+	SEQ_printf(m, "  .%-30s: %d\n", "nr_cpus_active",
+		   atomic_read(&tg->nr_cpus_active));
+#endif
+
 	print_cfs_group_stats(m, cpu, cfs_rq->tg);
 #endif
 }

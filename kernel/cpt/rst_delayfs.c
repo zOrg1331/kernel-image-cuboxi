@@ -25,6 +25,7 @@
 #include <linux/fs_struct.h>
 #include <linux/fdtable.h>
 #include <linux/pipe_fs_i.h>
+#include <linux/seq_file.h>
 #include <net/af_unix.h>
 
 #include <linux/cpt_obj.h>
@@ -235,8 +236,7 @@ static void delayed_flock(struct delayed_flock_info *dfi, struct file *file)
 	int err;
 	struct file_lock *fl = dfi->fl;
 
-	err = nlmclnt_set_lockowner(file->f_dentry->d_inode, fl,
-			(fl_owner_t)file, dfi->svid);
+	err = nlmclnt_set_lockowner(file->f_dentry->d_inode, fl, dfi->svid);
 	if (err)
 		goto out;
 
@@ -817,7 +817,15 @@ static struct dentry_operations delay_dir_dops = {
        .d_release = delayfs_release_dentry,
 };
 
+static void delayfs_show_type(struct seq_file *seq, struct super_block *sb)
+{
+	struct delay_sb_info *si = sb->s_fs_info;
+
+	seq_escape(seq, si->hidden_type->name, " \t\n\\");
+}
+
 static struct super_operations delay_super_ops = {
+	.show_type = delayfs_show_type,
 };
 
 static int delay_fill_sb(struct super_block *sb, void *data, int silent)
@@ -900,7 +908,7 @@ struct file_system_type delayfs_type = {
 	.name		= "delayfs",
 	.get_sb		= delay_get_sb,
 	.kill_sb	= delay_kill_sb,
-	.fs_flags	= FS_MANGLE_PROC | FS_VIRTUALIZED,
+	.fs_flags	= FS_VIRTUALIZED,
 };
 
 static int create_delayed_context(cpt_context_t *ctx)

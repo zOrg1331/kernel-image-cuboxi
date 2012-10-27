@@ -37,7 +37,6 @@
 #include <linux/memcontrol.h>
 #include <linux/mm_inline.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/pkt_sched.h>
 #define __KERNEL_SYSCALLS__
 #include <linux/unistd.h>
@@ -373,7 +372,7 @@ struct drbd_epoch_entry *drbd_alloc_ee(struct drbd_conf *mdev,
 	if (!page)
 		goto fail;
 
-	INIT_HLIST_NODE(&e->colision);
+	INIT_HLIST_NODE(&e->collision);
 	e->epoch = NULL;
 	e->mdev = mdev;
 	e->pages = page;
@@ -398,7 +397,7 @@ void drbd_free_some_ee(struct drbd_conf *mdev, struct drbd_epoch_entry *e, int i
 		kfree(e->digest);
 	drbd_pp_free(mdev, e->pages, is_net);
 	D_ASSERT(atomic_read(&e->pending_bios) == 0);
-	D_ASSERT(hlist_unhashed(&e->colision));
+	D_ASSERT(hlist_unhashed(&e->collision));
 	mempool_free(e, drbd_ee_mempool);
 }
 
@@ -529,6 +528,7 @@ STATIC int drbd_accept(struct drbd_conf *mdev, const char **what,
 		goto out;
 	}
 	(*newsock)->ops  = sock->ops;
+	__module_get((*newsock)->ops->owner);
 
 out:
 	return err;
@@ -813,6 +813,7 @@ STATIC int drbd_connect(struct drbd_conf *mdev)
 {
 	struct socket *s, *sock, *msock;
 	int try, h, ok;
+	enum drbd_state_rv rv;
 
 	D_ASSERT(!mdev->data.socket);
 
@@ -850,7 +851,7 @@ STATIC int drbd_connect(struct drbd_conf *mdev)
 		}
 
 		if (sock && msock) {
-			schedule_timeout_interruptible(HZ / 10);
+			schedule_timeout_interruptible(mdev->net_conf->ping_timeo*HZ/10);
 			ok = drbd_socket_okay(mdev, &sock);
 			ok = drbd_socket_okay(mdev, &msock) && ok;
 			if (ok)
@@ -925,7 +926,7 @@ retry:
 	msock->sk->sk_rcvtimeo = mdev->net_conf->ping_int*HZ;
 
 	/* we don't want delays.
-	 * we use TCP_CORK where apropriate, though */
+	 * we use TCP_CORK where appropriate, though */
 	drbd_tcp_nodelay(sock);
 	drbd_tcp_nodelay(msock);
 
@@ -951,30 +952,33 @@ retry:
 		}
 	}
 
-	if (drbd_request_state(mdev, NS(conn, C_WF_REPORT_PARAMS)) < SS_SUCCESS)
-		return 0;
-
 	sock->sk->sk_sndtimeo = mdev->net_conf->timeout*HZ/10;
 	sock->sk->sk_rcvtimeo = MAX_SCHEDULE_TIMEOUT;
 
 	atomic_set(&mdev->packet_seq, 0);
 	mdev->peer_seq = 0;
 
-	drbd_thread_start(&mdev->asender);
-
-	if (mdev->agreed_pro_version < 95 && get_ldev(mdev)) {
-		drbd_setup_queue_param(mdev, DRBD_MAX_SIZE_H80_PACKET);
-		put_ldev(mdev);
-	}
-
 	if (drbd_send_protocol(mdev) == -1)
 		return -1;
+	set_bit(STATE_SENT, &mdev->flags);
 	drbd_send_sync_param(mdev, &mdev->sync_conf);
 	drbd_send_sizes(mdev, 0, 0);
 	drbd_send_uuids(mdev);
-	drbd_send_state(mdev);
+	drbd_send_current_state(mdev);
 	clear_bit(USE_DEGR_WFC_T, &mdev->flags);
 	clear_bit(RESIZE_PENDING, &mdev->flags);
+
+	spin_lock_irq(&mdev->req_lock);
+	rv = _drbd_set_state(_NS(mdev, conn, C_WF_REPORT_PARAMS), CS_VERBOSE, NULL);
+	if (mdev->state.conn != C_WF_REPORT_PARAMS)
+		clear_bit(STATE_SENT, &mdev->flags);
+	spin_unlock_irq(&mdev->req_lock);
+
+	if (rv < SS_SUCCESS)
+		return 0;
+
+	drbd_thread_start(&mdev->asender);
+	mod_timer(&mdev->request_timer, jiffies + HZ); /* just start it here. */
 
 	return 1;
 
@@ -1024,7 +1028,7 @@ STATIC enum finish_epoch drbd_flush_after_epoch(struct drbd_conf *mdev, struct d
 		rv = blkdev_issue_flush(mdev->ldev->backing_bdev, GFP_KERNEL,
 					NULL);
 		if (rv) {
-			dev_err(DEV, "local disk flush failed with status %d\n", rv);
+			dev_info(DEV, "local disk flush failed with status %d\n", rv);
 			/* would rather check on EOPNOTSUPP, but that is not reliable.
 			 * don't try again for ANY return value != 0
 			 * if (rv == -EOPNOTSUPP) */
@@ -1100,7 +1104,7 @@ STATIC enum finish_epoch drbd_may_finish_epoch(struct drbd_conf *mdev,
 
 		if (epoch_size != 0 &&
 		    atomic_read(&epoch->active) == 0 &&
-		    test_bit(DE_HAVE_BARRIER_NUMBER, &epoch->flags) &&
+		    (test_bit(DE_HAVE_BARRIER_NUMBER, &epoch->flags) || ev & EV_CLEANUP) &&
 		    epoch->list.prev == &mdev->current_epoch->list &&
 		    !test_bit(DE_IS_FINISHING, &epoch->flags)) {
 			/* Nearly all conditions are met to finish that epoch... */
@@ -1122,7 +1126,8 @@ STATIC enum finish_epoch drbd_may_finish_epoch(struct drbd_conf *mdev,
 				drbd_send_b_ack(mdev, epoch->barrier_nr, epoch_size);
 				spin_lock(&mdev->epoch_lock);
 			}
-			dec_unacked(mdev);
+			if (test_bit(DE_HAVE_BARRIER_NUMBER, &epoch->flags))
+				dec_unacked(mdev);
 
 			if (mdev->current_epoch != epoch) {
 				next_epoch = list_entry(epoch->list.next, struct drbd_epoch, list);
@@ -1231,7 +1236,11 @@ int drbd_submit_ee(struct drbd_conf *mdev, struct drbd_epoch_entry *e,
 	/* In most cases, we will only need one bio.  But in case the lower
 	 * level restrictions happen to be different at this offset on this
 	 * side than those of the sending peer, we may need to submit the
-	 * request in more than one bio. */
+	 * request in more than one bio.
+	 *
+	 * Plain bio_alloc is good enough here, this is no DRBD internally
+	 * generated bio, but a bio allocated on behalf of the peer.
+	 */
 next_bio:
 	bio = bio_alloc(GFP_NOIO, nr_pages);
 	if (!bio) {
@@ -1348,7 +1357,7 @@ int w_e_reissue(struct drbd_conf *mdev, struct drbd_work *w, int cancel) __relea
 		 * and cause a "Network failure" */
 		spin_lock_irq(&mdev->req_lock);
 		list_del(&e->w.list);
-		hlist_del_init(&e->colision);
+		hlist_del_init(&e->collision);
 		spin_unlock_irq(&mdev->req_lock);
 		if (e->flags & EE_CALL_AL_COMPLETE_IO)
 			drbd_al_complete_io(mdev, e->sector);
@@ -1624,7 +1633,7 @@ STATIC int e_end_resync_block(struct drbd_conf *mdev, struct drbd_work *w, int u
 	sector_t sector = e->sector;
 	int ok;
 
-	D_ASSERT(hlist_unhashed(&e->colision));
+	D_ASSERT(hlist_unhashed(&e->collision));
 
 	if (likely((e->flags & EE_WAS_ERROR) == 0)) {
 		drbd_set_in_sync(mdev, sector, e->size);
@@ -1693,7 +1702,7 @@ STATIC int receive_DataReply(struct drbd_conf *mdev, enum drbd_packets cmd, unsi
 		return false;
 	}
 
-	/* hlist_del(&req->colision) is done in _req_may_be_done, to avoid
+	/* hlist_del(&req->collision) is done in _req_may_be_done, to avoid
 	 * special casing it there for the various failure cases.
 	 * still no race with drbd_fail_pending_reads */
 	ok = recv_dless_read(mdev, req, sector, data_size);
@@ -1771,11 +1780,11 @@ STATIC int e_end_block(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 	 * P_WRITE_ACK / P_NEG_ACK, to get the sequence number right.  */
 	if (mdev->net_conf->two_primaries) {
 		spin_lock_irq(&mdev->req_lock);
-		D_ASSERT(!hlist_unhashed(&e->colision));
-		hlist_del_init(&e->colision);
+		D_ASSERT(!hlist_unhashed(&e->collision));
+		hlist_del_init(&e->collision);
 		spin_unlock_irq(&mdev->req_lock);
 	} else {
-		D_ASSERT(hlist_unhashed(&e->colision));
+		D_ASSERT(hlist_unhashed(&e->collision));
 	}
 
 	drbd_may_finish_epoch(mdev, e->epoch, EV_PUT + (cancel ? EV_CLEANUP : 0));
@@ -1792,13 +1801,31 @@ STATIC int e_send_discard_ack(struct drbd_conf *mdev, struct drbd_work *w, int u
 	ok = drbd_send_ack(mdev, P_DISCARD_ACK, e);
 
 	spin_lock_irq(&mdev->req_lock);
-	D_ASSERT(!hlist_unhashed(&e->colision));
-	hlist_del_init(&e->colision);
+	D_ASSERT(!hlist_unhashed(&e->collision));
+	hlist_del_init(&e->collision);
 	spin_unlock_irq(&mdev->req_lock);
 
 	dec_unacked(mdev);
 
 	return ok;
+}
+
+static bool overlapping_resync_write(struct drbd_conf *mdev, struct drbd_epoch_entry *data_e)
+{
+
+	struct drbd_epoch_entry *rs_e;
+	bool rv = 0;
+
+	spin_lock_irq(&mdev->req_lock);
+	list_for_each_entry(rs_e, &mdev->sync_ee, w.list) {
+		if (overlaps(data_e->sector, data_e->size, rs_e->sector, rs_e->size)) {
+			rv = 1;
+			break;
+		}
+	}
+	spin_unlock_irq(&mdev->req_lock);
+
+	return rv;
 }
 
 /* Called from receive_Data.
@@ -2007,7 +2034,7 @@ STATIC int receive_Data(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned 
 
 		spin_lock_irq(&mdev->req_lock);
 
-		hlist_add_head(&e->colision, ee_hash_slot(mdev, sector));
+		hlist_add_head(&e->collision, ee_hash_slot(mdev, sector));
 
 #define OVERLAPS overlaps(i->sector, i->size, sector, size)
 		slot = tl_hash_slot(mdev, sector);
@@ -2017,7 +2044,7 @@ STATIC int receive_Data(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned 
 			int have_conflict = 0;
 			prepare_to_wait(&mdev->misc_wait, &wait,
 				TASK_INTERRUPTIBLE);
-			hlist_for_each_entry(i, n, slot, colision) {
+			hlist_for_each_entry(i, n, slot, collision) {
 				if (OVERLAPS) {
 					/* only ALERT on first iteration,
 					 * we may be woken up early... */
@@ -2056,7 +2083,7 @@ STATIC int receive_Data(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned 
 			}
 
 			if (signal_pending(current)) {
-				hlist_del_init(&e->colision);
+				hlist_del_init(&e->collision);
 
 				spin_unlock_irq(&mdev->req_lock);
 
@@ -2082,6 +2109,9 @@ STATIC int receive_Data(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned 
 
 	list_add(&e->w.list, &mdev->active_ee);
 	spin_unlock_irq(&mdev->req_lock);
+
+	if (mdev->state.conn == C_SYNC_TARGET)
+		wait_event(mdev->ee_wait, !overlapping_resync_write(mdev, e));
 
 	switch (mdev->net_conf->wire_protocol) {
 	case DRBD_PROT_C:
@@ -2114,7 +2144,7 @@ STATIC int receive_Data(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned 
 	dev_err(DEV, "submit failed, triggering re-connect\n");
 	spin_lock_irq(&mdev->req_lock);
 	list_del(&e->w.list);
-	hlist_del_init(&e->colision);
+	hlist_del_init(&e->collision);
 	spin_unlock_irq(&mdev->req_lock);
 	if (e->flags & EE_CALL_AL_COMPLETE_IO)
 		drbd_al_complete_io(mdev, e->sector);
@@ -2675,7 +2705,7 @@ STATIC int drbd_uuid_compare(struct drbd_conf *mdev, int *rule_nr) __must_hold(l
 			mdev->p_uuid[UI_BITMAP] = mdev->p_uuid[UI_HISTORY_START];
 			mdev->p_uuid[UI_HISTORY_START] = mdev->p_uuid[UI_HISTORY_START + 1];
 
-			dev_info(DEV, "Did not got last syncUUID packet, corrected:\n");
+			dev_info(DEV, "Lost last syncUUID packet, corrected:\n");
 			drbd_uuid_dump(mdev, "peer", mdev->p_uuid, mdev->p_uuid[UI_SIZE], mdev->p_uuid[UI_FLAGS]);
 
 			return -1;
@@ -3061,10 +3091,10 @@ STATIC int receive_SyncParam(struct drbd_conf *mdev, enum drbd_packets cmd, unsi
 
 	if (apv >= 88) {
 		if (apv == 88) {
-			if (data_size > SHARED_SECRET_MAX) {
-				dev_err(DEV, "verify-alg too long, "
-				    "peer wants %u, accepting only %u byte\n",
-						data_size, SHARED_SECRET_MAX);
+			if (data_size > SHARED_SECRET_MAX || data_size == 0) {
+				dev_err(DEV, "verify-alg of wrong size, "
+					"peer wants %u, accepting only up to %u byte\n",
+					data_size, SHARED_SECRET_MAX);
 				return false;
 			}
 
@@ -3189,7 +3219,6 @@ STATIC int receive_sizes(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned
 {
 	struct p_sizes *p = &mdev->data.rbuf.sizes;
 	enum determine_dev_size dd = unchanged;
-	unsigned int max_bio_size;
 	sector_t p_size, p_usize, my_usize;
 	int ldsc = 0; /* local disk size changed */
 	enum dds_flags ddsf;
@@ -3244,7 +3273,7 @@ STATIC int receive_sizes(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned
 
 	ddsf = be16_to_cpu(p->dds_flags);
 	if (get_ldev(mdev)) {
-		dd = drbd_determin_dev_size(mdev, ddsf);
+		dd = drbd_determine_dev_size(mdev, ddsf);
 		put_ldev(mdev);
 		if (dd == dev_size_error)
 			return false;
@@ -3254,23 +3283,15 @@ STATIC int receive_sizes(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned
 		drbd_set_my_capacity(mdev, p_size);
 	}
 
+	mdev->peer_max_bio_size = be32_to_cpu(p->max_bio_size);
+	drbd_reconsider_max_bio_size(mdev);
+
 	if (get_ldev(mdev)) {
 		if (mdev->ldev->known_size != drbd_get_capacity(mdev->ldev->backing_bdev)) {
 			mdev->ldev->known_size = drbd_get_capacity(mdev->ldev->backing_bdev);
 			ldsc = 1;
 		}
 
-		if (mdev->agreed_pro_version < 94)
-			max_bio_size = be32_to_cpu(p->max_bio_size);
-		else if (mdev->agreed_pro_version == 94)
-			max_bio_size = DRBD_MAX_SIZE_H80_PACKET;
-		else /* drbd 8.3.8 onwards */
-			max_bio_size = DRBD_MAX_BIO_SIZE;
-
-		if (max_bio_size != queue_max_hw_sectors(mdev->rq_queue) << 9)
-			drbd_setup_queue_param(mdev, max_bio_size);
-
-		drbd_setup_order_type(mdev, be16_to_cpu(p->queue_order_type));
 		put_ldev(mdev);
 	}
 
@@ -3443,9 +3464,20 @@ STATIC int receive_state(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned
 	os = ns = mdev->state;
 	spin_unlock_irq(&mdev->req_lock);
 
-	/* peer says his disk is uptodate, while we think it is inconsistent,
-	 * and this happens while we think we have a sync going on. */
-	if (os.pdsk == D_INCONSISTENT && real_peer_disk == D_UP_TO_DATE &&
+	/* If some other part of the code (asender thread, timeout)
+	 * already decided to close the connection again,
+	 * we must not "re-establish" it here. */
+	if (os.conn <= C_TEAR_DOWN)
+		return false;
+
+	/* If this is the "end of sync" confirmation, usually the peer disk
+	 * transitions from D_INCONSISTENT to D_UP_TO_DATE. For empty (0 bits
+	 * set) resync started in PausedSyncT, or if the timing of pause-/
+	 * unpause-sync events has been "just right", the peer disk may
+	 * transition from D_CONSISTENT to D_UP_TO_DATE as well.
+	 */
+	if ((os.pdsk == D_INCONSISTENT || os.pdsk == D_CONSISTENT) &&
+	    real_peer_disk == D_UP_TO_DATE &&
 	    os.conn > C_CONNECTED && os.disk == D_UP_TO_DATE) {
 		/* If we are (becoming) SyncSource, but peer is still in sync
 		 * preparation, ignore its uptodate-ness to avoid flapping, it
@@ -3564,7 +3596,7 @@ STATIC int receive_state(struct drbd_conf *mdev, enum drbd_packets cmd, unsigned
 			/* Nowadays only used when forcing a node into primary role and
 			   setting its disk to UpToDate with that */
 			drbd_send_uuids(mdev);
-			drbd_send_state(mdev);
+			drbd_send_current_state(mdev);
 		}
 	}
 
@@ -4058,6 +4090,13 @@ STATIC void drbd_disconnect(struct drbd_conf *mdev)
 	if (mdev->state.conn == C_STANDALONE)
 		return;
 
+	/* We are about to start the cleanup after connection loss.
+	 * Make sure drbd_make_request knows about that.
+	 * Usually we should be in some network failure state already,
+	 * but just in case we are not, we fix it up here.
+	 */
+	drbd_force_state(mdev, NS(conn, C_NETWORK_FAILURE));
+
 	/* asender does not clean up anything. it must not interfere, either */
 	drbd_thread_stop(&mdev->asender);
 	drbd_free_sock(mdev);
@@ -4539,7 +4578,7 @@ static struct drbd_request *_ack_id_to_req(struct drbd_conf *mdev,
 	struct hlist_node *n;
 	struct drbd_request *req;
 
-	hlist_for_each_entry(req, n, slot, colision) {
+	hlist_for_each_entry(req, n, slot, collision) {
 		if ((unsigned long)req == (unsigned long)id) {
 			if (req->sector != sector) {
 				dev_err(DEV, "_ack_id_to_req: found req %p but it has "
@@ -4717,7 +4756,7 @@ STATIC int got_BarrierAck(struct drbd_conf *mdev, struct p_header80 *h)
 
 	if (mdev->state.conn == C_AHEAD &&
 	    atomic_read(&mdev->ap_in_flight) == 0 &&
-	    !test_and_set_bit(AHEAD_TO_SYNC_SOURCE, &mdev->current_epoch->flags)) {
+	    !test_and_set_bit(AHEAD_TO_SYNC_SOURCE, &mdev->flags)) {
 		mdev->start_resync_timer.expires = jiffies + HZ;
 		add_timer(&mdev->start_resync_timer);
 	}
@@ -4818,6 +4857,7 @@ int drbd_asender(struct drbd_thread *thi)
 	int received = 0;
 	int expect   = sizeof(struct p_header80);
 	int empty;
+	int ping_timeout_active = 0;
 
 	sprintf(current->comm, "drbd%d_asender", mdev_to_minor(mdev));
 
@@ -4830,6 +4870,7 @@ int drbd_asender(struct drbd_thread *thi)
 			ERR_IF(!drbd_send_ping(mdev)) goto reconnect;
 			mdev->meta.socket->sk->sk_rcvtimeo =
 				mdev->net_conf->ping_timeo*HZ/10;
+			ping_timeout_active = 1;
 		}
 
 		/* conditionally cork;
@@ -4884,8 +4925,12 @@ int drbd_asender(struct drbd_thread *thi)
 			dev_err(DEV, "meta connection shut down by peer.\n");
 			goto reconnect;
 		} else if (rv == -EAGAIN) {
-			if (mdev->meta.socket->sk->sk_rcvtimeo ==
-			    mdev->net_conf->ping_timeo*HZ/10) {
+			/* If the data socket received something meanwhile,
+			 * that is good enough: peer is still alive. */
+			if (time_after(mdev->last_received,
+				jiffies - mdev->meta.socket->sk->sk_rcvtimeo))
+				continue;
+			if (ping_timeout_active) {
 				dev_err(DEV, "PingAck did not arrive in time.\n");
 				goto reconnect;
 			}
@@ -4923,10 +4968,16 @@ int drbd_asender(struct drbd_thread *thi)
 			}
 		}
 		if (received == expect) {
+			mdev->last_received = jiffies;
 			D_ASSERT(cmd != NULL);
 			trace_drbd_packet(mdev, mdev->meta.socket, 1, (void *)h, __FILE__, __LINE__);
 			if (!cmd->process(mdev, h))
 				goto reconnect;
+
+			/* the idle_timeout (ping-int)
+			 * has been restored in got_PingAck() */
+			if (cmd == get_asender_cmd(P_PING_ACK))
+				ping_timeout_active = 0;
 
 			buf	 = h;
 			received = 0;
