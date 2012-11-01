@@ -2,7 +2,7 @@ Name:    kernel-image-std-pae
 Release: alt0.M60P.1
 Epoch:   1
 %define kernel_base_version	3.0
-%define kernel_sublevel	.48
+%define kernel_sublevel	.50
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -17,6 +17,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define base_flavour	%( s='%flavour'; printf %%s "${s%%%%-*}" )
 %define sub_flavour	%( s='%flavour'; printf %%s "${s#*-}" )
 
+%define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
 %define kgcc_version	4.5
@@ -347,6 +348,7 @@ find . -name "*.orig" -delete -or -name "*~" -delete
 
 %build
 export ARCH=%base_arch
+export NPROCS=%nprocs
 KernelVer=%kversion-%flavour-%krelease
 
 echo "Building Kernel $KernelVer"
@@ -621,6 +623,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Nov 01 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.50-alt0.M60P.1
+- 3.0.50
+
 * Tue Oct 23 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.0.48-alt0.M60P.1
 - 3.0.48
 
