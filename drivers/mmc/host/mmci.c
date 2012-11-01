@@ -1356,6 +1356,10 @@ static int __devinit mmci_probe(struct amba_device *dev,
 	writel(0, host->base + MMCIMASK1);
 	writel(0xfff, host->base + MMCICLEAR);
 
+#ifdef CONFIG_ARCH_VEXPRESS
+	plat->gpio_wp = -ENOSYS;
+	plat->gpio_cd = -ENOSYS;
+#endif
 	if (gpio_is_valid(plat->gpio_cd)) {
 		ret = gpio_request(plat->gpio_cd, DRIVER_NAME " (cd)");
 		if (ret == 0)
