@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	3.6
 %define kernel_sublevel	.6
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Nov 15 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.6-alt2
+- some cirrus-related patches applied, 32 bpp mode enabled
+
 * Tue Nov 06 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.6-alt1
 - 3.6.6
 
