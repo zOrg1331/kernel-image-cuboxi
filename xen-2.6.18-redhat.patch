@@ -4709,19 +4709,21 @@
  #include <asm/io.h>
  #include <asm/msr.h>
  #include <asm/processor.h>
-@@ -26,6 +27,11 @@ static void flush_filter(char *s)
+@@ -26,6 +27,13 @@ static void flush_filter(char *s)
  }
  custom_param("amd_flush_filter", flush_filter);
  
 +#ifdef __x86_64__
++/* 1 = allow, 0 = don't allow guest creation */
 +static int opt_allow_unsafe;
 +boolean_param("allow_unsafe", opt_allow_unsafe);
++int amd_erratum_121 = 0;
 +#endif
 +
  #define num_physpages 0
  
  /*
-@@ -66,19 +72,6 @@ static int c1_ramping_may_cause_clock_dr
+@@ -66,19 +74,6 @@ static int c1_ramping_may_cause_clock_dr
  	return 1;
  }
  
@@ -4741,7 +4743,7 @@
  /*
   * Disable C1-Clock ramping if enabled in PMM7.CpuLowPwrEnh on 8th-generation
   * cores only. Assume BIOS has setup all Northbridges equivalently.
-@@ -86,18 +79,20 @@ static void pci_write_byte(u32 bus, u32
+@@ -86,18 +81,20 @@ static void pci_write_byte(u32 bus, u32
  static void disable_c1_ramping(void) 
  {
  	u8 pmm7;
@@ -4773,7 +4775,7 @@
  }
  
  static void __init init_amd(struct cpuinfo_x86 *c)
-@@ -278,7 +273,7 @@ static void __init init_amd(struct cpuin
+@@ -278,7 +275,7 @@ static void __init init_amd(struct cpuin
  	}
  
  	switch (c->x86) {
@@ -4782,24 +4784,27 @@
  		set_bit(X86_FEATURE_K8, c->x86_capability);
  		break;
  	case 6:
-@@ -287,6 +282,16 @@ static void __init init_amd(struct cpuin
+@@ -287,6 +284,19 @@ static void __init init_amd(struct cpuin
  	}
  
  	if (c->x86 == 15) {
 +#ifdef __x86_64__
 +		/* erratum 121 */
-+		if (c->x86_model <= 0x3f && !opt_allow_unsafe) {
-+			panic("Xen will not boot on this CPU for security "
-+			      "reasons.\n"
-+			      "Pass \"allow_unsafe\" if you're trusting all "
-+			      "your (PV) guest kernels.\n");
++		if (c->x86_model <= 0x3f && !opt_allow_unsafe && c == &boot_cpu_data) {
++			printk(KERN_WARNING
++			       "*** Xen will not allow creation of DomU-s on"
++			       " this CPU for security reasons. ***\n"
++			       KERN_WARNING
++			       "*** Pass \"allow_unsafe\" if you're trusting"
++			       " all your (PV) guest kernels. ***\n");
++			amd_erratum_121 = 1;
 +		}
 +#endif
 +
  		rdmsr(MSR_K7_HWCR, l, h);
  		printk(KERN_INFO "CPU%d: AMD Flush Filter %sabled",
  		       smp_processor_id(), (l & (1<<6)) ? "dis" : "en");
-@@ -303,11 +308,8 @@ static void __init init_amd(struct cpuin
+@@ -303,11 +313,8 @@ static void __init init_amd(struct cpuin
  
  	display_cacheinfo(c);
  
@@ -4812,7 +4817,7 @@
  
  	if (cpuid_eax(0x80000000) >= 0x80000007) {
  		c->x86_power = cpuid_edx(0x80000007);
-@@ -317,15 +319,18 @@ static void __init init_amd(struct cpuin
+@@ -317,15 +324,18 @@ static void __init init_amd(struct cpuin
  
  #ifdef CONFIG_X86_HT
  	/*
@@ -5136,8 +5141,8 @@
 +#define bit(x) (1U<<((x) % 32))
 +#define F(x) bit(X86_FEATURE_##x)
 +
-+void cpuid_whitelist(uint32_t input, uint32_t *eax, uint32_t *ebx,
-+                                     uint32_t *ecx, uint32_t *edx)
++void cpuid_whitelist(int is_priv, uint32_t input, uint32_t *eax, uint32_t *ebx,
++                     uint32_t *ecx, uint32_t *edx)
 +{
 +#if defined(__x86_64__)
 +    const uint32_t f_lm = F(LM);
@@ -5170,7 +5175,7 @@
 +    /* cpuid 1.ecx */
 +    const uint32_t supported_word4_x86_features =
 +        F(XMM3) | F(PCLMULQDQ) | 0 /* DTES64, MONITOR */ |
-+        0 /* DS-CPL */ | F(VMXE) | 0 /* SMX, EST */ |
++        0 /* DS-CPL */ | F(VMXE) | 0 /* SMXE */ | (is_priv ? F(EST) : 0) |
 +        0 /* TM2 */ | F(SSSE3) | 0 /* CNXT-ID */ | 0 /* Reserved */ |
 +        0 /* Reserved */ | F(CX16) | 0 /* xTPR Update, PDCM */ |
 +        0 /* Reserved, DCA */ | F(XMM4_1) | F(XMM4_2) | 0 /* X2APIC */ |
@@ -5656,7 +5661,7 @@
  #include <asm/regs.h>
  #include <asm/mc146818rtc.h>
  #include <asm/system.h>
-@@ -43,14 +44,14 @@
+@@ -43,14 +44,18 @@
  #include <asm/hvm/hvm.h>
  #include <asm/hvm/support.h>
  #include <asm/msr.h>
@@ -5667,14 +5672,17 @@
  
  DEFINE_PER_CPU(struct vcpu *, curr_vcpu);
 -DEFINE_PER_CPU(__u64, efer);
--
--static void unmap_vcpu_info(struct vcpu *v);
 +DEFINE_PER_CPU(u64, efer);
 +DEFINE_PER_CPU(unsigned long, cr4);
  
+-static void unmap_vcpu_info(struct vcpu *v);
++#ifdef __x86_64__
++extern int amd_erratum_121;
++#endif
+ 
  static void paravirt_ctxt_switch_from(struct vcpu *v);
  static void paravirt_ctxt_switch_to(struct vcpu *v);
-@@ -80,7 +81,6 @@ void idle_loop(void)
+@@ -80,7 +85,6 @@ void idle_loop(void)
  {
      for ( ; ; )
      {
@@ -5682,7 +5690,7 @@
          default_idle();
          do_softirq();
      }
-@@ -266,6 +266,18 @@ static void release_compat_l4(struct vcp
+@@ -266,6 +270,18 @@ static void release_compat_l4(struct vcp
      v->arch.guest_table_user = pagetable_null();
  }
  
@@ -5701,7 +5709,7 @@
  static inline int may_switch_mode(struct domain *d)
  {
      return (!is_hvm_domain(d) && (d->tot_pages == 0));
-@@ -273,7 +285,6 @@ static inline int may_switch_mode(struct
+@@ -273,7 +289,6 @@ static inline int may_switch_mode(struct
  
  int switch_native(struct domain *d)
  {
@@ -5709,7 +5717,7 @@
      unsigned int vcpuid;
  
      if ( d == NULL )
-@@ -286,24 +297,17 @@ int switch_native(struct domain *d)
+@@ -286,24 +301,17 @@ int switch_native(struct domain *d)
      d->arch.is_32bit_pv = d->arch.has_32bit_shinfo = 0;
      release_arg_xlat_area(d);
  
@@ -5734,7 +5742,7 @@
      unsigned int vcpuid;
  
      if ( d == NULL )
-@@ -315,33 +319,23 @@ int switch_compat(struct domain *d)
+@@ -315,33 +323,23 @@ int switch_compat(struct domain *d)
  
      d->arch.is_32bit_pv = d->arch.has_32bit_shinfo = 1;
  
@@ -5769,7 +5777,7 @@
      }
      return -ENOMEM;
  }
-@@ -388,6 +382,9 @@ int vcpu_initialise(struct vcpu *v)
+@@ -388,6 +386,9 @@ int vcpu_initialise(struct vcpu *v)
              v->arch.schedule_tail = continue_idle_domain;
              v->arch.cr3           = __pa(idle_pg_table);
          }
@@ -5779,7 +5787,7 @@
      }
  
      v->arch.perdomain_ptes =
-@@ -401,8 +398,6 @@ void vcpu_destroy(struct vcpu *v)
+@@ -401,8 +402,6 @@ void vcpu_destroy(struct vcpu *v)
      if ( is_pv_32on64_vcpu(v) )
          release_compat_l4(v);
  
@@ -5788,7 +5796,7 @@
      if ( is_hvm_vcpu(v) )
          hvm_vcpu_destroy(v);
  }
-@@ -413,35 +408,28 @@ int arch_domain_create(struct domain *d)
+@@ -413,35 +412,35 @@ int arch_domain_create(struct domain *d)
      struct page_info *pg;
      int i;
  #endif
@@ -5827,12 +5835,19 @@
  #else /* __x86_64__ */
  
 -    if ( (pg = alloc_domheap_page(NULL)) == NULL )
++    if ( d->domain_id && !is_idle_domain(d) && amd_erratum_121)
++    {
++        printk(XENLOG_G_ERR "Xen does not allow DomU creation on this CPU"
++               " for security reasons.\n");
++        return -EPERM;
++    }
++
 +    pg = alloc_domheap_page(NULL);
 +    if (pg == NULL)
          goto fail;
      d->arch.mm_perdomain_l2 = page_to_virt(pg);
      clear_page(d->arch.mm_perdomain_l2);
-@@ -450,7 +438,8 @@ int arch_domain_create(struct domain *d)
+@@ -450,7 +449,8 @@ int arch_domain_create(struct domain *d)
              l2e_from_page(virt_to_page(d->arch.mm_perdomain_pt)+i,
                            __PAGE_HYPERVISOR);
  
@@ -5842,7 +5857,7 @@
          goto fail;
      d->arch.mm_perdomain_l3 = page_to_virt(pg);
      clear_page(d->arch.mm_perdomain_l3);
-@@ -470,6 +459,7 @@ int arch_domain_create(struct domain *d)
+@@ -470,6 +470,7 @@ int arch_domain_create(struct domain *d)
      {
          d->arch.ioport_caps = 
              rangeset_new(d, "I/O Ports", RANGESETF_prettyprint_hex);
@@ -5850,7 +5865,7 @@
          if ( d->arch.ioport_caps == NULL )
              goto fail;
  
-@@ -479,12 +469,18 @@ int arch_domain_create(struct domain *d)
+@@ -479,12 +480,18 @@ int arch_domain_create(struct domain *d)
          clear_page(d->shared_info);
          share_xen_page_with_guest(
              virt_to_page(d->shared_info), d, XENSHARE_writable);
@@ -5869,7 +5884,7 @@
      }
      else
      {
-@@ -492,7 +488,6 @@ int arch_domain_create(struct domain *d)
+@@ -492,7 +499,6 @@ int arch_domain_create(struct domain *d)
          d->arch.is_32bit_pv = d->arch.has_32bit_shinfo =
              (CONFIG_PAGING_LEVELS != 4);
      }
@@ -5877,7 +5892,7 @@
  
      return 0;
  
-@@ -513,6 +508,11 @@ void arch_domain_destroy(struct domain *
+@@ -513,6 +519,11 @@ void arch_domain_destroy(struct domain *
      if ( is_hvm_domain(d) )
          hvm_domain_destroy(d);
  
@@ -5889,7 +5904,7 @@
      paging_final_teardown(d);
  
      free_xenheap_pages(
-@@ -530,13 +530,29 @@ void arch_domain_destroy(struct domain *
+@@ -530,13 +541,29 @@ void arch_domain_destroy(struct domain *
      free_xenheap_page(d->shared_info);
  }
  
@@ -5920,7 +5935,7 @@
      int i, rc = 0, compat;
  
      /* The context is a compat-mode one if the target domain is compat-mode;
-@@ -625,10 +641,28 @@ int arch_set_info_guest(
+@@ -625,10 +652,28 @@ int arch_set_info_guest(
  
          /* Ensure real hardware interrupts are enabled. */
          v->arch.guest_context.user_regs.eflags |= EF_IE;
@@ -5949,7 +5964,7 @@
      }
  
      memset(v->arch.guest_context.debugreg, 0,
-@@ -701,6 +735,11 @@ int arch_set_info_guest(
+@@ -701,6 +746,11 @@ int arch_set_info_guest(
  
                  v->arch.guest_table_user = pagetable_from_pfn(cr3_pfn);
              }
@@ -5961,7 +5976,7 @@
  #endif
          }
  #ifdef CONFIG_COMPAT
-@@ -827,7 +866,7 @@ map_vcpu_info(struct vcpu *v, unsigned l
+@@ -827,7 +877,7 @@ map_vcpu_info(struct vcpu *v, unsigned l
       * lost.  The domain will get a spurious event, but it can cope.
       */
      vcpu_info(v, evtchn_upcall_pending) = 1;
@@ -5970,7 +5985,7 @@
          set_bit(i, vcpu_info_addr(v, evtchn_pending_sel));
  
      /*
-@@ -893,6 +932,25 @@ arch_do_vcpu_op(
+@@ -893,6 +943,25 @@ arch_do_vcpu_op(
          break;
      }
  
@@ -5996,7 +6011,7 @@
      default:
          rc = -ENOSYS;
          break;
-@@ -1169,9 +1227,15 @@ static void paravirt_ctxt_switch_from(st
+@@ -1169,9 +1238,15 @@ static void paravirt_ctxt_switch_from(st
  
  static void paravirt_ctxt_switch_to(struct vcpu *v)
  {
@@ -6012,7 +6027,7 @@
      if ( unlikely(v->arch.guest_context.debugreg[7]) )
      {
          write_debugreg(0, v->arch.guest_context.debugreg[0]);
-@@ -1183,12 +1247,19 @@ static void paravirt_ctxt_switch_to(stru
+@@ -1183,12 +1258,19 @@ static void paravirt_ctxt_switch_to(stru
      }
  }
  
@@ -6032,7 +6047,7 @@
  
      ASSERT(p != n);
      ASSERT(cpus_empty(n->vcpu_dirty_cpumask));
-@@ -1214,14 +1285,35 @@ static void __context_switch(void)
+@@ -1214,14 +1296,35 @@ static void __context_switch(void)
          cpu_set(cpu, n->domain->domain_dirty_cpumask);
      cpu_set(cpu, n->vcpu_dirty_cpumask);
  
@@ -6073,7 +6088,7 @@
      }
  
      if ( p->domain != n->domain )
-@@ -1251,7 +1343,7 @@ void context_switch(struct vcpu *prev, s
+@@ -1251,7 +1354,7 @@ void context_switch(struct vcpu *prev, s
      local_irq_disable();
  
      if ( is_hvm_vcpu(prev) && !list_empty(&prev->arch.hvm_vcpu.tm_list) )
@@ -6082,7 +6097,7 @@
  
      set_current(next);
  
-@@ -1271,9 +1363,6 @@ void context_switch(struct vcpu *prev, s
+@@ -1271,9 +1374,6 @@ void context_switch(struct vcpu *prev, s
          {
              uint64_t efer = read_efer();
  
@@ -6092,7 +6107,7 @@
              if ( !is_pv_32on64_vcpu(next) == !(efer & EFER_SCE) )
                  write_efer(efer ^ EFER_SCE);
          }
-@@ -1346,6 +1435,65 @@ void sync_vcpu_execstate(struct vcpu *v)
+@@ -1346,6 +1446,65 @@ void sync_vcpu_execstate(struct vcpu *v)
      flush_tlb_mask(v->vcpu_dirty_cpumask);
  }
  
@@ -6158,7 +6173,7 @@
  #define next_arg(fmt, args) ({                                              \
      unsigned long __arg;                                                    \
      switch ( *(fmt)++ )                                                     \
-@@ -1529,12 +1677,13 @@ int hypercall_xlat_continuation(unsigned
+@@ -1529,12 +1688,13 @@ int hypercall_xlat_continuation(unsigned
  }
  #endif
  
@@ -6173,7 +6188,7 @@
  
      /* Use a recursive lock, as we may enter 'free_domheap_page'. */
      spin_lock_recursive(&d->page_alloc_lock);
-@@ -1549,44 +1698,98 @@ static void relinquish_memory(struct dom
+@@ -1549,44 +1709,98 @@ static void relinquish_memory(struct dom
          {
              /* Couldn't get a reference -- someone is freeing this page. */
              ent = ent->next;
@@ -6282,7 +6297,7 @@
  }
  
  static void vcpu_destroy_pagetables(struct vcpu *v)
-@@ -1624,10 +1827,6 @@ static void vcpu_destroy_pagetables(stru
+@@ -1624,10 +1838,6 @@ static void vcpu_destroy_pagetables(stru
              put_page(mfn_to_page(pfn));
          else
              put_page_and_type(mfn_to_page(pfn));
@@ -6293,7 +6308,7 @@
          v->arch.guest_table = pagetable_null();
      }
  
-@@ -1636,10 +1835,13 @@ static void vcpu_destroy_pagetables(stru
+@@ -1636,10 +1846,13 @@ static void vcpu_destroy_pagetables(stru
      pfn = pagetable_get_pfn(v->arch.guest_table_user);
      if ( pfn != 0 )
      {
@@ -6311,7 +6326,7 @@
          v->arch.guest_table_user = pagetable_null();
      }
  #endif
-@@ -1647,43 +1849,83 @@ static void vcpu_destroy_pagetables(stru
+@@ -1647,43 +1860,83 @@ static void vcpu_destroy_pagetables(stru
      v->arch.cr3 = 0;
  }
  
@@ -9564,7 +9579,7 @@
 +        return;
 +
      hvm_cpuid(input, &eax, &ebx, &ecx, &edx);
-+    cpuid_whitelist(input, &eax, &ebx, &ecx, &edx);
++    cpuid_whitelist(0, input, &eax, &ebx, &ecx, &edx);
  
      if ( input == 0x00000001 )
      {
@@ -12415,7 +12430,7 @@
          edx = (u32)(value >> 32);
      } else {
          hvm_cpuid(input, &eax, &ebx, &ecx, &edx);
-+        cpuid_whitelist(input, &eax, &ebx, &ecx, &edx);
++        cpuid_whitelist(0, input, &eax, &ebx, &ecx, &edx);
 +
 +	/* don't support features > 0xa */
 +	if (unlikely(input == 0x0) && eax > 0xa)
@@ -21279,7 +21294,7 @@
          : "0" (a), "1" (b), "2" (c), "3" (d) );
  
 -    if ( regs->eax == 1 )
-+    cpuid_whitelist(regs->eax, &a, &b, &c, &d);
++    cpuid_whitelist(IS_PRIV(current->domain), regs->eax, &a, &b, &c, &d);
 +
 +    if ( (regs->eax & 0x7fffffff) == 1 )
      {
@@ -41870,8 +41885,8 @@
 +/*
 + * whitelist cpuid features before passing to the guests
 + */
-+void cpuid_whitelist(uint32_t input, uint32_t *eax, uint32_t *ebx,
-+                                     uint32_t *ecx, uint32_t *edx);
++void cpuid_whitelist(int is_priv, uint32_t input, uint32_t *eax, uint32_t *ebx,
++                     uint32_t *ecx, uint32_t *edx);
 +
  #endif /* __X86_EMULATE_H__ */
 --- xen/include/Makefile
