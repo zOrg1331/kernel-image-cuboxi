@@ -329,7 +329,7 @@ echo "Building Kernel $KernelVer"
 cp -vf config-%_target_cpu .config
 
 %make_build oldconfig
-%make_build include/linux/version.h
+#%make_build include/linux/version.h
 %make_build bzImage
 %make_build modules
 
@@ -569,13 +569,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 %modules_dir/kernel/drivers/staging/media/lirc/
-%exclude %modules_dir/kernel/drivers/media/dvb/ngene/
-%exclude %modules_dir/kernel/drivers/media/video/cx23885/
 
 %files -n kernel-modules-staging-%flavour
 %modules_dir/kernel/drivers/staging/
-%modules_dir/kernel/drivers/media/dvb/ngene/
-%modules_dir/kernel/drivers/media/video/cx23885/
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
