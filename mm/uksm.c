@@ -562,7 +562,11 @@ static unsigned long long uksm_sleep_times;
 
 #define UKSM_RUN_STOP	0
 #define UKSM_RUN_MERGE	1
+#ifdef UKSM_DEFAULT_ENABLE
 static unsigned int uksm_run = 1;
+#else
+static unsigned int uksm_run = 0;
+#endif
 
 static DECLARE_WAIT_QUEUE_HEAD(uksm_thread_wait);
 static DEFINE_MUTEX(uksm_thread_mutex);
