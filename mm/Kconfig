@@ -275,6 +275,7 @@ endchoice
 config UKSM_DEFAULT_ENABLE
 	bool "Enable by default Ultra-KSM for page merging"
 	depends on UKSM
+	default y
 
 config DEFAULT_MMAP_MIN_ADDR
         int "Low address space to protect from user allocation"
