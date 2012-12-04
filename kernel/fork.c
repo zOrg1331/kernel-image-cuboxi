@@ -362,7 +362,11 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 				goto fail_nomem;
 			charge = len;
 		}
+#ifdef CONFIG_UKSM
 		tmp = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
+#else
+		tmp = kmem_cache_alloc(vm_area_cachep, GFP_KERNEL);
+#endif
 		if (!tmp)
 			goto fail_nomem;
 		*tmp = *mpnt;
