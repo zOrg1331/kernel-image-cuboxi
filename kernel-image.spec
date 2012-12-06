@@ -2,7 +2,7 @@ Name:    kernel-image-std-pae
 Release: alt0.M60P.1
 Epoch:   1
 %define kernel_base_version	3.0
-%define kernel_sublevel	.53
+%define kernel_sublevel	.55
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -623,6 +623,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Dec 06 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.55-alt0.M60P.1
+- 3.0.55
+
 * Thu Nov 29 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.53-alt0.M60P.1
 - 3.0.53
 
