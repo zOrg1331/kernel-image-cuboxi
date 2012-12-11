@@ -2,7 +2,7 @@ Name: kernel-image-un-test
 epoch: 0
 Release: alt0.M60P.1
 %define kernel_base_version	3.6
-%define kernel_sublevel	.9
+%define kernel_sublevel	.10
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -97,7 +97,7 @@ in separate packages (kernel-modules-*-%flavour).
 
 The "un" variant of kernel packages is a low latency desktop oriented
 2.6.x kernel which should support wide range of hardware,
-but it is not 'official' ALT Linux kernel and you can use it for you
+ut it is not 'official' ALT Linux kernel and you can use it for you
 own risk.
 
 %package -n kernel-image-domU-%flavour
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Dec 11 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.10-alt0.M60P.1
+- 3.6.10
+
 * Fri Dec 07 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.9-alt0.M60P.1
 - 3.6.9
 
