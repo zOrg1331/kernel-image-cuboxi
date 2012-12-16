@@ -52,12 +52,15 @@ static struct mem_cgroup *swap_token_memcg_from_mm(struct mm_struct *mm)
 void grab_swap_token(struct mm_struct *mm)
 {
 	int current_interval;
-	unsigned int old_prio = mm->token_priority;
+	unsigned int old_prio;
 	static unsigned int global_faults;
 	static unsigned int last_aging;
 
 	global_faults++;
+	if (mm == NULL)
+		return;
 
+	old_prio = mm->token_priority;
 	current_interval = global_faults - mm->faultstamp;
 
 	if (!spin_trylock(&swap_token_lock))
