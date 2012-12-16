@@ -104,12 +104,12 @@ drivers-$(CONFIG_OPROFILE)	+= arch/s390/oprofile/
 
 boot		:= arch/s390/boot
 
-all: image bzImage
+all: image bzImage kerntypes.o
 
 install: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $@
 
-image bzImage: vmlinux
+image bzImage kerntypes.o: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 zfcpdump:
