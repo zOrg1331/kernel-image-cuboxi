@@ -491,7 +491,7 @@ SYSCALL_DEFINE3(syslog, int, type, char __user *, buf, int, len)
 	return do_syslog(type, buf, len, SYSLOG_FROM_CALL);
 }
 
-#ifdef	CONFIG_KGDB_KDB
+#if defined(CONFIG_KGDB_KDB) || defined(CONFIG_DEBUG_KERNEL)
 /* kdb dmesg command needs access to the syslog buffer.  do_syslog()
  * uses locks so it cannot be used during debugging.  Just tell kdb
  * where the start and end of the physical and logical logs are.  This
