@@ -879,6 +879,39 @@ extern const char *dev_driver_string(const struct device *dev);
 extern int __dev_printk(const char *level, const struct device *dev,
 			struct va_format *vaf);
 extern __printf(3, 4)
+
+#if defined(KMSG_COMPONENT) && (defined(CONFIG_KMSG_IDS) || defined(__KMSG_CHECKER))
+/* dev_printk_hash for message documentation */
+#if defined(__KMSG_CHECKER) && defined(KMSG_COMPONENT)
+
+/* generate magic string for scripts/kmsg-doc to parse */
+#define dev_printk_hash(level, dev, format, arg...) \
+	__KMSG_DEV(level _FMT_ format _ARGS_ dev, ## arg _END_)
+
+#elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
+
+int printk_dev_hash(const char *, const char *, const char *, ...);
+#define dev_printk_hash(level, dev, format, arg...) \
+	printk_dev_hash(level "%s.%06x: ", dev_driver_string(dev), \
+			"%s: " format, dev_name(dev), ## arg)
+
+#endif
+
+#define dev_emerg(dev, format, arg...)		\
+	dev_printk_hash(KERN_EMERG , dev , format , ## arg)
+#define dev_alert(dev, format, arg...)		\
+	dev_printk_hash(KERN_ALERT , dev , format , ## arg)
+#define dev_crit(dev, format, arg...)		\
+	dev_printk_hash(KERN_CRIT , dev , format , ## arg)
+#define dev_err(dev, format, arg...)		\
+	dev_printk_hash(KERN_ERR , dev , format , ## arg)
+#define dev_warn(dev, format, arg...)		\
+	dev_printk_hash(KERN_WARNING , dev , format , ## arg)
+#define dev_notice(dev, format, arg...)		\
+	dev_printk_hash(KERN_NOTICE , dev , format , ## arg)
+#define _dev_info(dev, format, arg...)		\
+	dev_printk_hash(KERN_INFO , dev , format , ## arg)
+#else
 int dev_printk(const char *level, const struct device *dev,
 	       const char *fmt, ...)
 	;
@@ -896,7 +929,7 @@ extern __printf(2, 3)
 int dev_notice(const struct device *dev, const char *fmt, ...);
 extern __printf(2, 3)
 int _dev_info(const struct device *dev, const char *fmt, ...);
-
+#endif
 #else
 
 static inline int __dev_printk(const char *level, const struct device *dev,
