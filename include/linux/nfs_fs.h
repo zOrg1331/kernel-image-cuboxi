@@ -233,6 +233,10 @@ struct nfs_inode {
 #define NFS_INO_PNFS_COMMIT	(8)		/* use pnfs code for commit */
 #define NFS_INO_LAYOUTCOMMIT	(9)		/* layoutcommit required */
 #define NFS_INO_LAYOUTCOMMITTING (10)		/* layoutcommit inflight */
+#define NFS_INO_SEEN_GETATTR	(11)		/* flag to track if app is calling
+						 * getattr in a directory during
+						 * readdir
+						 */
 
 static inline struct nfs_inode *NFS_I(const struct inode *inode)
 {
