@@ -452,6 +452,18 @@ config SENSORS_HDAPS
 	  Say Y here if you have an applicable laptop and want to experience
 	  the awesome power of hdaps.
 
+config TP_SMAPI
+	tristate "ThinkPad SMAPI Support"
+	depends on X86
+	select THINKPAD_EC
+	default n
+	help
+	  This adds SMAPI support on Lenovo/IBM ThinkPads, for features such
+	  as battery charging control. For more information about this driver
+	  see <http://www.thinkwiki.org/wiki/tp_smapi>.
+
+	  If you have a Lenovo/IBM ThinkPad laptop, say Y or M here.
+
 config INTEL_MENLOW
 	tristate "Thermal Management driver for Intel menlow platform"
 	depends on ACPI_THERMAL
