@@ -4,7 +4,7 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <linux/slab.h> 
+#include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/file.h>
@@ -159,12 +159,11 @@ loff_t no_llseek(struct file *file, loff_t offset, int origin)
 }
 EXPORT_SYMBOL(no_llseek);
 
-loff_t default_llseek(struct file *file, loff_t offset, int origin)
+loff_t default_llseek_unlocked(struct file *file, loff_t offset, int origin)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	loff_t retval;
 
-	mutex_lock(&inode->i_mutex);
 	switch (origin) {
 		case SEEK_END:
 			offset += i_size_read(inode);
@@ -209,7 +208,17 @@ loff_t default_llseek(struct file *file, loff_t offset, int origin)
 		retval = offset;
 	}
 out:
-	mutex_unlock(&inode->i_mutex);
+	return retval;
+}
+EXPORT_SYMBOL(default_llseek_unlocked);
+
+loff_t default_llseek(struct file *file, loff_t offset, int origin)
+{
+	loff_t retval;
+
+	mutex_lock(&file->f_dentry->d_inode->i_mutex);
+	retval = default_llseek_unlocked(file, offset, origin);
+	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
 	return retval;
 }
 EXPORT_SYMBOL(default_llseek);
@@ -534,7 +543,7 @@ SYSCALL_DEFINE(pwrite64)(unsigned int fd, const char __user *buf,
 	file = fget_light(fd, &fput_needed);
 	if (file) {
 		ret = -ESPIPE;
-		if (file->f_mode & FMODE_PWRITE)  
+		if (file->f_mode & FMODE_PWRITE)
 			ret = vfs_write(file, buf, count, &pos);
 		fput_light(file, fput_needed);
 	}
