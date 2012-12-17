@@ -1582,6 +1582,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data)
 	case MSR_VM_HSAVE_PA:
 	case MSR_AMD64_PATCH_LOADER:
 		break;
+	case MSR_NHM_SNB_PKG_CST_CFG_CTL: /* 0xe2 */
 	case 0x200 ... 0x2ff:
 		return set_msr_mtrr(vcpu, msr, data);
 	case MSR_IA32_APICBASE:
@@ -1904,6 +1905,7 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
 	case MSR_K8_INT_PENDING_MSG:
 	case MSR_AMD64_NB_CFG:
 	case MSR_FAM10H_MMIO_CONF_BASE:
+	case MSR_NHM_SNB_PKG_CST_CFG_CTL: /* 0xe2 */
 		data = 0;
 		break;
 	case MSR_P6_PERFCTR0:
