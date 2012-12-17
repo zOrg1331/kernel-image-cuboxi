@@ -1,3 +1,9 @@
+config KERNEL_DESKTOP
+	bool "Kernel to suit desktop workloads"
+	help
+	  This is an option used to tune kernel parameters to better suit
+	  desktop workloads.
+
 config ARCH
 	string
 	option env="ARCH"
@@ -579,6 +585,7 @@ config HAVE_UNSTABLE_SCHED_CLOCK
 menuconfig CGROUPS
 	boolean "Control Group support"
 	depends on EVENTFD
+	default !KERNEL_DESKTOP
 	help
 	  This option adds support for grouping sets of processes together, for
 	  use with process control subsystems such as Cpusets, CFS, memory
@@ -718,7 +725,7 @@ config CGROUP_PERF
 
 menuconfig CGROUP_SCHED
 	bool "Group CPU scheduler"
-	default n
+	default !KERNEL_DESKTOP
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
 	  bandwidth allocation to such task groups. It uses cgroups to group
