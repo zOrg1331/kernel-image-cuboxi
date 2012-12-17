@@ -102,6 +102,9 @@ static struct scsi_transport_template *ibmvscsi_transport_template;
 
 static struct ibmvscsi_ops *ibmvscsi_ops;
 
+#define IBMVSCSI_PROC_NAME "ibmvscsi"
+/* The driver is named ibmvscsic, map ibmvscsi to module name */
+MODULE_ALIAS(IBMVSCSI_PROC_NAME);
 MODULE_DESCRIPTION("IBM Virtual SCSI");
 MODULE_AUTHOR("Dave Boutcher");
 MODULE_LICENSE("GPL");
@@ -1801,7 +1804,7 @@ static struct device_attribute *ibmvscsi_attrs[] = {
 static struct scsi_host_template driver_template = {
 	.module = THIS_MODULE,
 	.name = "IBM POWER Virtual SCSI Adapter " IBMVSCSI_VERSION,
-	.proc_name = "ibmvscsi",
+	.proc_name = IBMVSCSI_PROC_NAME,
 	.queuecommand = ibmvscsi_queuecommand,
 	.eh_abort_handler = ibmvscsi_eh_abort_handler,
 	.eh_device_reset_handler = ibmvscsi_eh_device_reset_handler,
@@ -2066,7 +2069,7 @@ static struct vio_driver ibmvscsi_driver = {
 	.probe = ibmvscsi_probe,
 	.remove = ibmvscsi_remove,
 	.get_desired_dma = ibmvscsi_get_desired_dma,
-	.name = "ibmvscsi",
+	.name = IBMVSCSI_PROC_NAME,
 	.pm = &ibmvscsi_pm_ops,
 };
 
