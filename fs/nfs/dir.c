@@ -1241,7 +1241,7 @@ static void nfs_dentry_iput(struct dentry *dentry, struct inode *inode)
 		NFS_I(inode)->cache_validity |= NFS_INO_INVALID_DATA;
 
 	if (dentry->d_flags & DCACHE_NFSFS_RENAMED) {
-		drop_nlink(inode);
+		nfs_drop_nlink(inode);
 		nfs_complete_unlink(dentry, inode);
 	}
 	iput(inode);
