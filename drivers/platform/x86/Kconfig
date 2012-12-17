@@ -436,6 +436,7 @@ config SENSORS_HDAPS
 	tristate "Thinkpad Hard Drive Active Protection System (hdaps)"
 	depends on INPUT && X86
 	select INPUT_POLLDEV
+	select THINKPAD_EC
 	default n
 	help
 	  This driver provides support for the IBM Hard Drive Active Protection
