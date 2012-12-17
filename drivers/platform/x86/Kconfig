@@ -432,6 +432,14 @@ config THINKPAD_ACPI_HOTKEY_POLL
 	  If you are not sure, say Y here.  The driver enables polling only if
 	  it is strictly necessary to do so.
 
+config THINKPAD_EC
+	tristate
+	depends on X86
+	  ---help---
+	  This is a low-level driver for accessing the ThinkPad H8S embedded
+	  controller over the LPC bus (not to be confused with the ACPI Embedded
+	  Controller interface).
+
 config SENSORS_HDAPS
 	tristate "Thinkpad Hard Drive Active Protection System (hdaps)"
 	depends on INPUT && X86
