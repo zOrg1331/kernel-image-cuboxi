@@ -1,4 +1,4 @@
-Name:    kernel-image-std-def
+Name:    kernel-image-std-pae
 Release: alt1
 Epoch:   1
 %define kernel_base_version	3.6
@@ -22,7 +22,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_disable oss
@@ -46,7 +46,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: i586 x86_64
+ExclusiveArch: i586
 
 ExclusiveOS: Linux
 
@@ -102,6 +102,9 @@ which are useful only for some special applications (and may have
 undesirable side effects in other cases).  This is the default 2.6.x
 kernel variant for ALT Linux distributions.
 
+This kernel build for PAE systems. If you have more then 3Gb of memory,
+hen use this kernel.
+
 %package -n kernel-image-domU-%flavour
 Summary: Uncompressed linux kernel for XEN domU boot 
 Group: System/Kernel and hardware
@@ -113,7 +116,7 @@ Most XEN virtualization system versions can not boot lzma-compressed
 kernel images. This is an optional package with uncompressed linux
 kernel image for this special case. If you do not know what is it XEN
 it seems that you do not need this package.
- 
+
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -494,54 +497,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
-%post -n kernel-modules-oss-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-oss-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-ide-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-ide-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-nouveau-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-nouveau-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-radeon-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-radeon-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-kvm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-kvm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-v4l-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-v4l-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-staging-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-staging-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -625,31 +580,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Tue Dec 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.11-alt1
-- 3.6.11
-
-* Tue Dec 11 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.10-alt1
-- 3.6.10
-
-* Tue Dec 04 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.9-alt1
-- 3.6.9
-- ANDROID disabled RTC_LIB & RTC_CLASS and drivers enabled
-
-* Tue Nov 27 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.8-alt1
-- Update to 3.6.8
-- CONFIG_DRM_LOAD_EDID_FIRMWARE=y
-
-* Fri Nov 23 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.7-alt3
-- CONFIG_RELOCATABLE set to y
-
-* Wed Nov 21 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.7-alt2
-- CONFIG_RTC changed from m to y (see https://bugzilla.altlinux.org/28014)
-
-* Sun Nov 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.7-alt1
-- Update to 3.6.7
-
-* Tue Nov 06 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.6-alt1
-- Update to 3.6.6
+* Thu Dec 20 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.6.11-alt1
+- 3.6.11 (closes: 28138)
+- Build using std-def config with config diff from 3.5.7.
 
 * Sat Oct 13 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.5.7-alt1
 - Update to 3.5.7
