@@ -2188,10 +2188,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 		if (!aclsupport)
 			word0 &= ~FATTR4_WORD0_ACL;
 #ifdef CONFIG_NFSD_V4_SECURITY_LABEL
-		if (exp->ex_flags & NFSEXP_SECURITY_LABEL)
-			word2 |= FATTR4_WORD2_SECURITY_LABEL;
-		else
-			word2 &= ~FATTR4_WORD2_SECURITY_LABEL;
+		word2 |= FATTR4_WORD2_SECURITY_LABEL;
 #else
 		word2 &= ~FATTR4_WORD2_SECURITY_LABEL;
 #endif
