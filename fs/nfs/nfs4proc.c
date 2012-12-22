@@ -923,8 +923,8 @@ err_free_label:
 		nfs4_label_free(p->f_label);
 		nfs4_label_free(p->dir_label);
 	}
-#endif
 err_free_p:
+#endif
 	kfree(p);
 err:
 	dput(parent);
@@ -2280,9 +2280,10 @@ static struct inode *
 nfs4_atomic_open(struct inode *dir, struct nfs_open_context *ctx, int open_flags, struct iattr *attr)
 {
 	struct nfs4_state *state;
-	struct nfs4_label l, *label = NULL;
-
+	struct nfs4_label *label = NULL;
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	struct nfs4_label l;
+
 	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
 		struct dentry *dentry = ctx->dentry;
 		int error;
@@ -2827,8 +2828,8 @@ static int _nfs4_proc_access(struct inode *inode, struct nfs_access_entry *entry
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
 	if (server->caps & NFS_CAP_SECURITY_LABEL)
 		nfs4_label_free(res.label);
-#endif
 out:
+#endif
 	nfs_free_fattr(res.fattr);
 	return status;
 }
@@ -2920,7 +2921,7 @@ static int
 nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
                  int flags, struct nfs_open_context *ctx)
 {
-	struct nfs4_label l, *ilabel = NULL;
+	struct nfs4_label *ilabel = NULL;
 	struct dentry *de = dentry;
 	struct nfs4_state *state;
 	struct rpc_cred *cred = NULL;
@@ -2934,6 +2935,8 @@ nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 	}
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
 	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
+		struct nfs4_label l;
+
 		status = security_dentry_init_security(de, sattr->ia_mode,
 							&de->d_name, &l.label, &l.len);
 		if (status == 0)
@@ -3304,7 +3307,9 @@ static struct nfs4_createdata *nfs4_alloc_createdata(struct inode *dir,
 		nfs_fattr_init(data->res.dir_fattr);
 	}
 	return data;
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
 out_free:
+#endif
 	kfree(data);
 	return NULL;
 }
@@ -3363,11 +3368,11 @@ static int nfs4_proc_symlink(struct inode *dir, struct dentry *dentry,
 		struct page *page, unsigned int len, struct iattr *sattr)
 {
 	struct nfs4_exception exception = { };
-	struct nfs4_label l, *label = NULL;
 	int err;
-
-
+	struct nfs4_label *label = NULL;
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	struct nfs4_label l;
+
 	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
 		err = security_dentry_init_security(dentry, sattr->ia_mode,
 						&dentry->d_name, &l.label, &l.len);
@@ -3411,7 +3416,10 @@ static int nfs4_proc_mkdir(struct inode *dir, struct dentry *dentry,
 		struct iattr *sattr)
 {
 	struct nfs4_exception exception = { };
-	struct nfs4_label l, *label = NULL;
+	struct nfs4_label *label = NULL;
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	struct nfs4_label l;
+#endif
 	int err;
 
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
@@ -3527,10 +3535,12 @@ out:
 static int nfs4_proc_mknod(struct inode *dir, struct dentry *dentry,
 		struct iattr *sattr, dev_t rdev)
 {
-	struct nfs4_exception exception = { };
-	struct nfs4_label l, *label = NULL;
 	int err;
-
+	struct nfs4_exception exception = { };
+	struct nfs4_label *label = NULL;
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+	struct nfs4_label l;
+#endif
 
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
 	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL)) {
