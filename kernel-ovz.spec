@@ -36,7 +36,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.36
+%define krelease alt13.M51.37
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -843,6 +843,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Mon Dec 31 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 2.6.18-alt13.M51.37
+- Release of 2.6.18-308.20.1.el5 028stab104.2
+
 * Wed Mar 14 2012 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.36
 - Release of 2.6.18-308.el5 028stab099.3
 
