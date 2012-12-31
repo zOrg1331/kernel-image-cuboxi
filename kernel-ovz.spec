@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab099
-%define ovzrel 3
+%define ovzver 028stab104
+%define ovzrel 2
 
 %define includeovz 1
 
@@ -261,11 +261,8 @@ Patch100020: linux-2.6.18-128.1.1.el5.028stab062.3-build-fixes.diff
 Patch100024: diff-make-sysrq-mask-affect-proc-sysrq-trigger-20090826
 Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
-Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
-
-Patch100039: diff-cpt-remove-div_long_long_rem.patch
 
 Patch100041: diff-cpt-set-TIF_IA32-after-unmapping-old-maps-compilation
 
@@ -462,11 +459,8 @@ echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
 %patch100024 -p1
 %patch100025 -p1
 %patch100026 -p1
-%patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
-
-%patch100039 -p1
 
 %patch100041 -p1
 
