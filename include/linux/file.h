@@ -8,6 +8,7 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/posix_types.h>
+#include <linux/lglock.h>
 
 struct file;
 
@@ -19,6 +20,8 @@ struct dentry;
 struct path;
 extern struct file *alloc_file(struct path *, fmode_t mode,
 	const struct file_operations *fop);
+extern void file_sb_list_del(struct file *f);
+DECLARE_LGLOCK(files_lglock);
 
 static inline void fput_light(struct file *file, int fput_needed)
 {

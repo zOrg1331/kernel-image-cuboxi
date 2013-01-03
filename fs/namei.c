@@ -370,6 +370,7 @@ int inode_permission(struct inode *inode, int mask)
 
 	return security_inode_permission(inode, mask);
 }
+EXPORT_SYMBOL_GPL(deny_write_access);
 
 /**
  * path_get - get a reference to a path
@@ -1835,6 +1836,7 @@ struct dentry *lookup_hash(struct nameidata *nd)
 {
 	return __lookup_hash(&nd->last, nd->path.dentry, nd);
 }
+EXPORT_SYMBOL_GPL(lookup_hash);
 
 /**
  * lookup_one_len - filesystem helper to lookup single pathname component
@@ -2143,7 +2145,7 @@ static int handle_truncate(struct file *filp)
 	if (!error)
 		error = security_path_truncate(path);
 	if (!error) {
-		error = do_truncate(path->dentry, 0,
+		error = vfs_truncate(path->dentry, 0,
 				    ATTR_MTIME|ATTR_CTIME|ATTR_OPEN,
 				    filp);
 	}

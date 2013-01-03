@@ -617,7 +617,7 @@ int vfsub_trunc(struct path *h_path, loff_t length, unsigned int attr,
 		err = security_path_truncate(h_path);
 	if (!err) {
 		lockdep_off();
-		err = do_truncate(h_path->dentry, length, attr, h_file);
+		err = vfs_truncate(h_path->dentry, length, attr, h_file);
 		lockdep_on();
 	}
 

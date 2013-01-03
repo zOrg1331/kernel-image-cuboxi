@@ -68,7 +68,6 @@ extern void chroot_fs_refs(struct path *, struct path *);
  * file_table.c
  */
 extern void file_sb_list_add(struct file *f, struct super_block *sb);
-extern void file_sb_list_del(struct file *f);
 extern void mark_files_ro(struct super_block *);
 extern struct file *get_empty_filp(void);
 
@@ -100,11 +99,6 @@ extern struct file *do_file_open_root(struct dentry *, struct vfsmount *,
 
 extern long do_handle_open(int mountdirfd,
 			   struct file_handle __user *ufh, int open_flag);
-
-/*
- * inode.c
- */
-extern spinlock_t inode_sb_list_lock;
 
 /*
  * fs-writeback.c

@@ -2226,7 +2226,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 			goto close_fail;
 		if (!cprm.file->f_op || !cprm.file->f_op->write)
 			goto close_fail;
-		if (do_truncate(cprm.file->f_path.dentry, 0, 0, cprm.file))
+		if (vfs_truncate(cprm.file->f_path.dentry, 0, 0, cprm.file))
 			goto close_fail;
 	}
 

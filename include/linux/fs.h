@@ -629,6 +629,7 @@ struct address_space_operations {
 };
 
 extern const struct address_space_operations empty_aops;
+extern spinlock_t inode_sb_list_lock;
 
 /*
  * pagecache_write_begin/pagecache_write_end must be used by general code
@@ -2012,7 +2013,7 @@ static inline int break_lease(struct inode *inode, unsigned int mode)
 
 /* fs/open.c */
 
-extern int do_truncate(struct dentry *, loff_t start, unsigned int time_attrs,
+extern int vfs_truncate(struct dentry *, loff_t start, unsigned int time_attrs,
 		       struct file *filp);
 extern int do_fallocate(struct file *file, int mode, loff_t offset,
 			loff_t len);

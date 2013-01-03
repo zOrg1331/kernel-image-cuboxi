@@ -34,7 +34,6 @@ struct files_stat_struct files_stat = {
 	.max_files = NR_FILE
 };
 
-DECLARE_LGLOCK(files_lglock);
 DEFINE_LGLOCK(files_lglock);
 
 /* SLAB cache for file structures */
@@ -441,6 +440,7 @@ void file_sb_list_del(struct file *file)
 		lg_local_unlock_cpu(files_lglock, file_list_cpu(file));
 	}
 }
+EXPORT_SYMBOL_GPL(file_sb_list_del);
 
 #ifdef CONFIG_SMP
 

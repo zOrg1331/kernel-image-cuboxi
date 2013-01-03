@@ -1504,6 +1504,7 @@ static void unlock_mount(struct path *path)
 	up_write(&namespace_sem);
 	mutex_unlock(&path->dentry->d_inode->i_mutex);
 }
+EXPORT_SYMBOL_GPL(iterate_mounts);
 
 static int graft_tree(struct mount *mnt, struct path *path)
 {

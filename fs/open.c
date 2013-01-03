@@ -33,7 +33,7 @@
 
 #include "internal.h"
 
-int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+int vfs_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	struct file *filp)
 {
 	int ret;
@@ -60,6 +60,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	mutex_unlock(&dentry->d_inode->i_mutex);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(vfs_truncate);
 
 static long do_sys_truncate(const char __user *pathname, loff_t length)
 {
@@ -113,7 +114,7 @@ static long do_sys_truncate(const char __user *pathname, loff_t length)
 	if (!error)
 		error = security_path_truncate(&path);
 	if (!error)
-		error = do_truncate(path.dentry, length, 0, NULL);
+		error = vfs_truncate(path.dentry, length, 0, NULL);
 
 put_write_and_out:
 	put_write_access(inode);
@@ -168,7 +169,7 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	if (!error)
 		error = security_path_truncate(&file->f_path);
 	if (!error)
-		error = do_truncate(dentry, length, ATTR_MTIME|ATTR_CTIME, file);
+		error = vfs_truncate(dentry, length, ATTR_MTIME|ATTR_CTIME, file);
 out_putf:
 	fput(file);
 out:
