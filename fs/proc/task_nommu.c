@@ -149,8 +149,12 @@ static int nommu_vma_show(struct seq_file *m, struct vm_area_struct *vma,
 	file = vma->vm_file;
 
 	if (file) {
-		struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
-
+		struct inode *inode;
+#ifdef CONFIG_AUFS_MAP_PROC
+		if (vma->vm_prfile)
+			file = vma->vm_prfile;
+#endif
+		inode = file->f_path.dentry->d_inode;
 		if (inode->i_sb->s_magic == BTRFS_SUPER_MAGIC) {
 			struct kstat stat;
 
