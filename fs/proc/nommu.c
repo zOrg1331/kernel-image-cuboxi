@@ -45,13 +45,12 @@ static int nommu_region_show(struct seq_file *m, struct vm_region *region)
 	file = region->vm_file;
 
 	if (file) {
-		struct inode *inode = region->vm_file->f_path.dentry->d_inode;
+		struct inode *inode;
 #ifdef CONFIG_AUFS_PROC_MAP
-		if (region->vm_prfile) {
+		if (region->vm_prfile)
 			file = region->vm_prfile;
-			inode = file->f_path.dentry->d_inode;
-		}
 #endif
+		inode = file->f_path.dentry->d_inode;
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 	}
