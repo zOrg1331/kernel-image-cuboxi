@@ -1,0 +1,6 @@
+config NETATOP
+	tristate "module for gather statistics about the TCP and UDP packets"
+	default n
+	help
+	  Module netatop for gather statistics about the TCP and UDP packets that
+	  have been transmitted/received per process and per thread.
