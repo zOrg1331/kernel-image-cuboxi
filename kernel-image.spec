@@ -1,5 +1,5 @@
 Name:    kernel-image-std-def
-Release: alt0.M60P.2
+Release: alt0.M60P.3
 Epoch:   1
 %define kernel_base_version	3.0
 %define kernel_sublevel	.57
@@ -572,6 +572,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Thu Jan 03 2013 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.57-alt0.M60P.3
+- Applied patch for AR3012 (closes: 27955).
+
 * Fri Dec 21 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.57-alt0.M60P.2
 - restore {post,postun}_kernel_headers execution in {post,postun}
 
