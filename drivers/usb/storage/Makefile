@@ -32,6 +32,7 @@ obj-$(CONFIG_USB_STORAGE_JUMPSHOT)	+= ums-jumpshot.o
 obj-$(CONFIG_USB_STORAGE_KARMA)		+= ums-karma.o
 obj-$(CONFIG_USB_STORAGE_ONETOUCH)	+= ums-onetouch.o
 obj-$(CONFIG_USB_STORAGE_REALTEK)	+= ums-realtek.o
+obj-$(CONFIG_RTS5139)			+= rts5139/
 obj-$(CONFIG_USB_STORAGE_SDDR09)	+= ums-sddr09.o
 obj-$(CONFIG_USB_STORAGE_SDDR55)	+= ums-sddr55.o
 obj-$(CONFIG_USB_STORAGE_USBAT)		+= ums-usbat.o

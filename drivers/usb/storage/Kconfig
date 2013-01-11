@@ -45,6 +45,8 @@ config REALTEK_AUTOPM
 	depends on USB_STORAGE_REALTEK && PM_RUNTIME
 	default y
 
+source "drivers/usb/storage/rts5139/Kconfig"
+
 config USB_STORAGE_DATAFAB
 	tristate "Datafab Compact Flash Reader support"
 	depends on USB_STORAGE
