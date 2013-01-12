@@ -561,13 +561,13 @@ long generic_writeback_sb_inodes(struct super_block *sb,
 		wbc->nr_to_write = write_chunk;
 		wbc->pages_skipped = 0;
 
-		writeback_single_inode(inode, wb, &wbc);
+		writeback_single_inode(inode, wb, wbc);
 
 		work->nr_pages -= write_chunk - wbc->nr_to_write;
 		wrote += write_chunk - wbc->nr_to_write;
 		if (!(inode->i_state & I_DIRTY))
 			wrote++;
-		if (wbc.pages_skipped) {
+		if (wbc->pages_skipped) {
 			/*
 			 * writeback is not making progress due to locked
 			 * buffers.  Skip this inode for now.
