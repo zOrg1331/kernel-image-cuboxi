@@ -2776,12 +2776,6 @@ static int mwait_interception(struct vcpu_svm *svm)
 	return kvm_emulate_halt(&svm->vcpu);
 }
 
-static int invalid_op_interception(struct vcpu_svm *svm)
-{
-	kvm_queue_exception(&svm->vcpu, UD_VECTOR);
-	return 1;
-}
-
 static int task_switch_interception(struct vcpu_svm *svm)
 {
 	u16 tss_selector;
