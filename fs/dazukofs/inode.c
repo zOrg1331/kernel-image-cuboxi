@@ -149,13 +149,8 @@ int dazukofs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
  * pointer to a struct "dentry_operations". This method is called with
  * the directory inode semaphore held.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
-static struct dentry* dazukofs_lookup(struct inode *dir, struct dentry *dentry,
- unsigned int flags)
-#else
 static struct dentry *dazukofs_lookup(struct inode *dir, struct dentry *dentry,
 				      struct nameidata *nd)
-#endif
 {
 	struct dentry *lower_dentry;
 	struct dentry *lower_dentry_parent;
@@ -231,13 +226,7 @@ out:
  * you want to support creating these types of inodes. You will probably
  * need to call d_instantiate() just as you would in the create() method.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
-static int dazukofs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
-						  dev_t dev)
-#else
-static int dazukofs_mknod(struct inode *dir, struct dentry *dentry, int mode,
-			  dev_t dev)
-#endif
+static int dazukofs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	struct dentry *lower_dentry_parent = dget(lower_dentry->d_parent);
@@ -268,11 +257,7 @@ out:
  * want to support creating subdirectories. You will probably need to call
  * d_instantiate() just as you would in the create() method.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 static int dazukofs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
-#else
-static int dazukofs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
-#endif
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	struct dentry *lower_dentry_parent = dget(lower_dentry->d_parent);
@@ -292,11 +277,7 @@ static int dazukofs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 
 	fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
 	fsstack_copy_inode_size(dir, lower_dentry_parent_inode);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
 	set_nlink(dir, lower_dentry_parent_inode->i_nlink);
-#else
-	dir->nlink = lower_dentry_parent_inode->i_nlink;
-#endif
 out:
 	mutex_unlock(&(lower_dentry_parent_inode->i_mutex));
 	dput(lower_dentry_parent);
@@ -310,14 +291,11 @@ out:
  * you will probably call d_instantiate() with the dentry and the newly
  * created inode.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
 static int dazukofs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
- bool excl)
-#else
-static int dazukofs_create(struct inode *dir, struct dentry *dentry, int mode,
 			   struct nameidata *nd)
-#endif
 {
+	struct vfsmount *vfsmount_save;
+	struct dentry *dentry_save;
 	struct vfsmount *lower_mnt = get_lower_mnt(dentry);
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	struct dentry *lower_dentry_parent = dget(lower_dentry->d_parent);
@@ -327,10 +305,6 @@ static int dazukofs_create(struct inode *dir, struct dentry *dentry, int mode,
 	mutex_lock_nested(&(lower_dentry_parent_inode->i_mutex),
 			  I_MUTEX_PARENT);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)
-	struct vfsmount *vfsmount_save;
-	struct dentry *dentry_save;
-	
 	vfsmount_save = nd->path.mnt;
 	dentry_save = nd->path.dentry;
 
@@ -338,17 +312,12 @@ static int dazukofs_create(struct inode *dir, struct dentry *dentry, int mode,
 	nd->path.dentry = dget(lower_dentry);
 	
 	err = vfs_create(lower_dentry_parent_inode, lower_dentry, mode, nd);
-#else
-	err = vfs_create(lower_dentry_parent_inode, lower_dentry, mode, excl);
-#endif
 
 	mntput(lower_mnt);
 	dput(lower_dentry);
-	
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)
+
 	nd->path.mnt = vfsmount_save;
 	nd->path.dentry = dentry_save;
-#endif
 
 	if (err)
 		goto out;
@@ -718,11 +687,7 @@ static int dazukofs_unlink(struct inode *dir, struct dentry *dentry)
 		goto out;
 
 	fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
 	set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
-#else
-	dentry->d_inode->n_link = get_lower_inode(dentry->d_inode)->i_nlink;
-#endif
 	fsstack_copy_attr_times(dentry->d_inode, dir);
 out:
 	mutex_unlock(&(lower_dentry_parent_inode->i_mutex));
@@ -749,13 +714,8 @@ static int dazukofs_rmdir(struct inode *dir, struct dentry *dentry)
 		goto out;
 
 	fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
 	set_nlink(dir, lower_dentry_parent_inode->i_nlink);
 	set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
-#else
-	dir->i_nlink = lower_dentry_parent_inode->i_nlink;
-	dentry->d_inode->i_nlink = get_lower_inode(dentry->d_inode)->i_nlink;
-#endif
 out:
 	mutex_unlock(&(lower_dentry_parent_inode->i_mutex));
 	dput(lower_dentry_parent);

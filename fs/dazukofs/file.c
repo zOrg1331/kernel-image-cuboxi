@@ -223,45 +223,30 @@ static int dazukofs_open(struct inode *inode, struct file *file)
 	struct dentry *lower_dentry = dget(get_lower_dentry(dentry));
 	struct vfsmount *lower_mnt = mntget(get_lower_mnt(dentry));
 	struct file *lower_file;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-	struct path path;
-#endif
-	int err;
+	int err = dazukofs_check_access(file->f_dentry, file->f_vfsmnt);
 
-	err = dazukofs_check_access(file->f_dentry, file->f_vfsmnt);
 	if (err)
-		goto error_out1;
+		goto error_out;
 
 	set_file_private(file, kmem_cache_zalloc(dazukofs_file_info_cachep,
 						 GFP_KERNEL));
 	if (!get_file_private(file)) {
 		err = -ENOMEM;
-		goto error_out1;
+		goto error_out;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-	path.dentry = lower_dentry;
-	path.mnt = lower_mnt;
-	
-	lower_file = dentry_open(&path, file->f_flags, current_cred());
-#else
 	lower_file = dentry_open (lower_dentry, lower_mnt, file->f_flags,
 				 current_cred());
-#endif
-	if (IS_ERR(lower_file)) {
-		err = PTR_ERR(lower_file);
-		/* dentry_open() already did dput() and mntput() */
-		goto error_out2;
-	}
+	if (IS_ERR(lower_file))
+		return PTR_ERR(lower_file);
 
 	set_lower_file(file, lower_file);
 
 	return err;
 
-error_out1:
+error_out:
 	dput(lower_dentry);
 	mntput(lower_mnt);
-error_out2:
 	return err;
 }
 
@@ -295,7 +280,6 @@ static int dazukofs_release(struct inode *inode, struct file *file)
 /**
  * Description: Called by the fsync(2) system call.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 static int dazukofs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct file *lower_file = get_lower_file(file);
@@ -305,17 +289,6 @@ static int dazukofs_fsync(struct file *file, loff_t start, loff_t end, int datas
 
 	return vfs_fsync_range(lower_file, start, end, datasync);
 }
-#else
-static int dazukofs_fsync(struct file *file, int datasync)
-{
-	struct file *lower_file = get_lower_file(file);
-
-	if (!lower_file->f_op || !lower_file->f_op->fsync)
-		return -EINVAL;
-
-	return vfs_fsync(lower_file, datasync);
-}
-#endif
 
 /**
  * Description: .called by the fcntl(2) system call when asynchronous

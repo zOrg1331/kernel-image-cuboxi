@@ -22,7 +22,6 @@
 */
 
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/fs.h>
 #include <linux/namei.h>
 #include <linux/mount.h>
@@ -71,11 +70,7 @@ static int dazukofs_statfs(struct dentry *dentry, struct kstatfs *buf)
 static void dazukofs_evict_inode(struct inode *inode)
 {
 	truncate_inode_pages(&inode->i_data, 0);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
-	clear_inode(inode);
-#else
 	end_writeback(inode);
-#endif
 	iput(get_lower_inode(inode));
 }
 
@@ -112,12 +107,10 @@ static struct super_operations dazukofs_sops = {
 	.evict_inode	= dazukofs_evict_inode,
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 39)
 static int dazukofs_parse_mount_options(char *options, struct super_block *sb)
 {
 	return 0;
 }
-#endif
 
 static int dazukofs_fill_super(struct super_block *sb, void *data, int silent)
 {
@@ -166,11 +159,7 @@ static int dazukofs_read_super(struct super_block *sb, const char *dev_name)
 	int err;
 
 	memset(&nd, 0, sizeof(struct nameidata));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
 	err = kern_path(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd.path);
-#else
-	err = path_lookup(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
-#endif
 	if (err)
 		return err;
 
@@ -197,9 +186,8 @@ static int dazukofs_read_super(struct super_block *sb, const char *dev_name)
 	set_lower_dentry(sb->s_root, lower_root, lower_mnt);
 
 	err = dazukofs_interpose(lower_root, sb->s_root, sb, 0);
-	if (err)
-		goto out_put;
-	goto out;
+	if (!err)
+		goto out;
 
 out_put:
 	dput(lower_root);
@@ -209,47 +197,26 @@ out:
 	return err;
 }
 
-// FIXME!
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
-
 static struct dentry* dazukofs_get_sb(struct file_system_type *fs_type, int flags,
 						   const char *dev_name, void *data)
 {
-	return mount_nodev(fs_type, flags, data, dazukofs_fill_super);
+	struct dentry *dentry = mount_nodev(fs_type, flags, data,
+					    dazukofs_fill_super);
+
+	if (!IS_ERR(dentry)) {
+		struct super_block *sb = dentry->d_sb;
+
+		if (dazukofs_parse_mount_options(data, sb) ||
+		    dazukofs_read_super(sb, dev_name)) {
+			dput(sb->s_root);
+			up_write(&sb->s_umount);
+			deactivate_super(sb);
+			return NULL;
+		}
+	}
+
+	return dentry;
 }
-#else
-static int dazukofs_get_sb(struct file_system_type *fs_type, int flags,
-			   const char *dev_name, void *data,
-			   struct vfsmount *mnt)
-{
-	struct super_block *sb;
-	int err;
-
-	err = get_sb_nodev(fs_type, flags, data, dazukofs_fill_super, mnt);
-
-	if (err)
-		goto out;
-	
-	sb = mnt->mnt_sb;
-
-	err = dazukofs_parse_mount_options(data, sb);
-	if (err)
-		goto out_abort;
-
-	err = dazukofs_read_super(sb, dev_name);
-	if (err)
-		goto out_abort;
-
-	goto out;
-
-out_abort:
-	dput(sb->s_root);
-	up_write(&sb->s_umount);
-	deactivate_super(sb);
-out:
-	return err;
-}
-#endif
 
 static void init_once(void *data)
 {

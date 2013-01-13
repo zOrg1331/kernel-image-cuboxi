@@ -994,31 +994,18 @@ static int open_file(struct dazukofs_event_container *ec)
 {
 	struct dazukofs_event *evt = ec->event;
 	struct dazukofs_proc proc;
-	int ret;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-	struct path path;
-#endif
 
 	/* open the file read-only */
 
 	ec->fd = get_unused_fd();
-	if (ec->fd < 0) {
-		ret = ec->fd;
-		goto error_out1;
-	}
+	if (ec->fd < 0)
+		return ec->fd;
 
 	/* add self to be ignored on file open (to avoid recursion) */
 	mask_proc(&proc);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-	path.dentry = dget(evt->dentry);
-	path.mnt = mntget(evt->mnt);
-	
-	ec->file = dentry_open(&path, O_RDONLY | O_LARGEFILE, current_cred());
-#else
 	ec->file = dentry_open(dget(evt->dentry), mntget(evt->mnt),
 			       O_RDONLY | O_LARGEFILE, current_cred());
-#endif
 
 	/* If dentry_open() was successful, it should have removed us from
 	 * proc_list. If it didn't do this, we do it now ourselves. */
@@ -1026,18 +1013,13 @@ static int open_file(struct dazukofs_event_container *ec)
 		check_recursion();
 
 	if (IS_ERR(ec->file)) {
-		ret = PTR_ERR(ec->file);
-		goto error_out2;
+		put_unused_fd(ec->fd);
+		return PTR_ERR(ec->file);
 	}
 
 	fd_install(ec->fd, ec->file);
 
 	return 0;
-
-error_out2:
-	put_unused_fd(ec->fd);
-error_out1:
-	return ret;
 }
 
 /**

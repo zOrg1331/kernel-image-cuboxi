@@ -34,7 +34,6 @@
 #include <linux/mount.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/version.h>
 
 extern struct kmem_cache *dazukofs_dentry_info_cachep;
 extern struct kmem_cache *dazukofs_file_info_cachep;
@@ -112,8 +111,7 @@ static inline void set_lower_inode(struct inode *upper_inode,
 	dii->lower_inode = lower_inode;
 }
 
-static inline struct dazukofs_dentry_info *get_dentry_private(
-						struct dentry *upper_dentry)
+static inline struct dazukofs_dentry_info *get_dentry_private(const struct dentry *upper_dentry)
 {
 	return upper_dentry->d_fsdata;
 }
@@ -124,7 +122,7 @@ static inline void set_dentry_private(struct dentry *upper_dentry,
 	upper_dentry->d_fsdata = dentryi;
 }
 
-static inline struct dentry *get_lower_dentry(struct dentry *upper_dentry)
+static inline struct dentry *get_lower_dentry(const struct dentry *upper_dentry)
 {
 	return get_dentry_private(upper_dentry)->lower_dentry;
 }

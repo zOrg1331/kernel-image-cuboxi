@@ -35,12 +35,11 @@ static int dev_minor_end;
 
 int dazukofs_dev_init(void)
 {
-	int err;
 	dev_t devt;
+	int err = dazukofs_init_events();
 
-	err = dazukofs_init_events();
 	if (err)
-		goto error_out1;
+		return err;
 
 	err = alloc_chrdev_region(&devt, 0, 2 + GROUP_COUNT, DEVICE_NAME);
 	if (err)
@@ -86,7 +85,6 @@ error_out3:
 				 2 + GROUP_COUNT);
 error_out2:
 	dazukofs_destroy_events();
-error_out1:
 	return err;
 }
 

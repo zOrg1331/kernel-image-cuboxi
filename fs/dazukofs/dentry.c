@@ -48,8 +48,7 @@
  *
  * Returns 1 if dentry is valid, otherwise 0.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-static int dazukofs_d_revalidate(struct dentry *dentry, unsigned int flags)
+static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *data)
 {
 	struct vfsmount *lower_mnt_parent;
 	struct dentry *lower_dentry_parent, *lower_dentry;
@@ -78,58 +77,6 @@ static int dazukofs_d_revalidate(struct dentry *dentry, unsigned int flags)
 	}
 	return valid;
 }
-#else
-static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
-{
-	struct dentry *lower_dentry = get_lower_dentry(dentry);
-	int valid;
-
-	if (!lower_dentry->d_op || !lower_dentry->d_op->d_revalidate)
-		return 1;
-
-	if (!nd) {
-		/* No nameidata provided. We are probably
-		 * in a lookup_one_len() calling stack.
-		 * Setup new nameidata ourselves. */
-		struct nameidata new_nd;
-		struct vfsmount *lower_mnt_parent =
-					get_lower_mnt(dentry->d_parent);
-		struct dentry *lower_dentry_parent =
-					get_lower_dentry(dentry->d_parent);
-		int err = vfs_path_lookup(lower_dentry_parent,
-					  lower_mnt_parent,
-					  dentry->d_name.name, 0, &new_nd);
-		if (err)
-			return -EINVAL;
-
-		valid = lower_dentry->d_op->d_revalidate(lower_dentry,
-				&new_nd);
-		path_put(&new_nd.path);
-	} else {
-		struct vfsmount *lower_mnt = get_lower_mnt(dentry);
-		struct vfsmount *vfsmount_save = nd->path.mnt;
-		struct dentry *dentry_save = nd->path.dentry;
-
-		nd->path.mnt = mntget(lower_mnt);
-		nd->path.dentry = dget(lower_dentry);
-
-		valid = lower_dentry->d_op->d_revalidate(lower_dentry, nd);
-
-		mntput(lower_mnt);
-		dput(lower_dentry);
-
-		nd->path.mnt = vfsmount_save;
-		nd->path.dentry = dentry_save;
-	}
-
-	/* update the inode, even if d_revalidate() != 1 */
-	if (dentry->d_inode) {
-		struct inode *lower_inode = get_lower_inode(dentry->d_inode);
-		fsstack_copy_attr_all(dentry->d_inode, lower_inode);
-	}
-	return valid;
-}
-#endif
 
 /**
  * dazukofs_d_hash - hash the given name
@@ -145,9 +92,8 @@ static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
  * Returns 0 on success.
  */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
 static int dazukofs_d_hash(const struct dentry *dentry, 
-						   const struct inode *inode, struct qstr *name)
+			   const struct inode *inode, struct qstr *name)
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	
@@ -156,17 +102,6 @@ static int dazukofs_d_hash(const struct dentry *dentry,
 	
 	return lower_dentry->d_op->d_hash(lower_dentry, inode, name);
 }
-#else
-static int dazukofs_d_hash(struct dentry *dentry, struct qstr *name)
-{
-	struct dentry *lower_dentry = get_lower_dentry(dentry);
-
-	if (!lower_dentry->d_op || !lower_dentry->d_op->d_hash)
-		return 0;
-
-	return lower_dentry->d_op->d_hash(lower_dentry, name);
-}
-#endif
 
 /**
  * dazukofs_d_release - clean up dentry
@@ -188,11 +123,8 @@ static void dazukofs_d_release(struct dentry *dentry)
 	}
 }
 
-/**
+/*
  * dazukofs_d_compare - used to compare dentry's
- * @dentry: the parent dentry
- * @a: qstr of an existing dentry
- * @b: qstr of a second dentry (dentry may not be valid)
  *
  * Description: Called when a dentry should be compared with another.
  *
@@ -201,32 +133,18 @@ static void dazukofs_d_release(struct dentry *dentry)
  *
  * Returns 0 if they are the same, otherwise 1.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
 static int dazukofs_d_compare(const struct dentry *parent,
-							  const struct inode *pinode,
-							  const struct dentry *dentry, const struct inode *inode,
-							  unsigned int len, const char *str, const struct qstr *name)
-{
-	if (len != name->len || memcmp(str, name->name, len))
-		return 1;
-	return 0;
-}
-#else
-static int dazukofs_d_compare(struct dentry *dentry, struct qstr *a,
-							  struct qstr *b)
+			      const struct inode *pinode,
+			      const struct dentry *dentry, const struct inode *inode,
+			      unsigned int len, const char *str, const struct qstr *name)
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 
 	if (lower_dentry->d_op && lower_dentry->d_op->d_compare)
-		return lower_dentry->d_op->d_compare(lower_dentry, a, b);
+		return lower_dentry->d_op->d_compare(parent, pinode, lower_dentry, inode, len, str, name);
 
-	if (a->len != b->len)
-		return 1;
-	if (memcmp(a->name, b->name, a->len))
-		return 1;
-	return 0;
+	return len != name->len || memcmp(str, name->name, len);
 }
-#endif
 
 /**
  * Unused operations:
