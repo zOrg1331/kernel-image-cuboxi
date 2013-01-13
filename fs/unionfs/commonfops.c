@@ -781,14 +781,14 @@ static int unionfs_ioctl_queryfile(struct file *file, struct dentry *parent,
 	bstart = dbstart(dentry);
 	bend = dbend(dentry);
 
-	FD_ZERO(&branchlist);
+	memset(&branchlist, 0, sizeof(branchlist));
 
 	for (bindex = bstart; bindex <= bend; bindex++) {
 		lower_dentry = unionfs_lower_dentry_idx(dentry, bindex);
 		if (!lower_dentry)
 			continue;
 		if (likely(lower_dentry->d_inode))
-			FD_SET(bindex, &branchlist);
+			branchlist.fds_bits[bindex / (8 * sizeof(unsigned long))] |= (1UL << bindex % (8 * sizeof(unsigned long)));
 		/* purge any lower objects after partial_lookup */
 		if (bindex < orig_bstart || bindex > orig_bend) {
 			dput(lower_dentry);
