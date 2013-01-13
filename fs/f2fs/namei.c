@@ -141,7 +141,7 @@ static inline void set_cold_file(struct inode *inode, const unsigned char *name)
 }
 
 static int f2fs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-						bool excl)
+		       struct nameidata *nameidata)
 {
 	struct super_block *sb = dir->i_sb;
 	struct f2fs_sb_info *sbi = F2FS_SB(sb);
@@ -216,7 +216,7 @@ out:
 }
 
 static struct dentry *f2fs_lookup(struct inode *dir, struct dentry *dentry,
-		unsigned int flags)
+				  struct nameidata *nameidata)
 {
 	struct inode *inode = NULL;
 	struct f2fs_dir_entry *de;
