@@ -85,7 +85,7 @@ static u64 prefetch_jiffies;                      /* time of prefetch, or: */
 static DEFINE_SEMAPHORE(thinkpad_ec_mutex);
 
 /* Kludge in case the ACPI DSDT reserves the ports we need. */
-static int force_io;    /* Willing to do IO to ports we couldn't reserve? */
+static bool force_io;   /* Willing to do IO to ports we couldn't reserve? */
 static int reserved_io; /* Successfully reserved the ports? */
 module_param_named(force_io, force_io, bool, 0600);
 MODULE_PARM_DESC(force_io, "Force IO even if region already reserved (0=off, 1=on)");
