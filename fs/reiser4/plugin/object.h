@@ -10,10 +10,10 @@
 
 /* common implementations of inode operations */
 int reiser4_create_common(struct inode *parent, struct dentry *dentry,
-			  umode_t mode, bool);
+			  umode_t mode, struct nameidata *);
 struct dentry *reiser4_lookup_common(struct inode *parent,
-				      struct dentry *dentry,
-				      unsigned int);
+				     struct dentry *dentry,
+				     struct nameidata *);
 int reiser4_link_common(struct dentry *existing, struct inode *parent,
 			struct dentry *newname);
 int reiser4_unlink_common(struct inode *parent, struct dentry *victim);

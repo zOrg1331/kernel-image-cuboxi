@@ -194,25 +194,28 @@ static char *encode_inode(struct inode *inode, char *start)
  *
  */
 static int
-reiser4_encode_fh(struct inode *inode, __u32 *fh, int *lenp,
-		  struct inode *parent)
+reiser4_encode_fh(struct dentry *dentry, __u32 *fh, int *lenp,
+		  int need_parent)
 {
+	struct inode *inode;
+	struct inode *parent;
 	char *addr;
 	int need;
 	int delta;
 	int result;
-	bool need_parent;
 	reiser4_context *ctx;
 
 	/*
-	 * knfsd asks as to serialize @inode, and, optionally its
-	 * parent @parent (if it is non-NULL).
+	 * knfsd asks as to serialize object in @dentry, and, optionally its
+	 * parent (if need_parent != 0).
 	 *
 	 * encode_inode() and encode_inode_size() is used to build
 	 * representation of object and its parent. All hard work is done by
 	 * object plugins.
 	 */
-	need_parent = (parent != NULL);
+	inode = dentry->d_inode;
+	parent = dentry->d_parent->d_inode;
+
 	addr = (char *)fh;
 
 	need = encode_inode_size(inode);
@@ -225,7 +228,7 @@ reiser4_encode_fh(struct inode *inode, __u32 *fh, int *lenp,
 		need += delta;
 	}
 
-	ctx = reiser4_init_context(inode->i_sb);
+	ctx = reiser4_init_context(dentry->d_inode->i_sb);
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
 
