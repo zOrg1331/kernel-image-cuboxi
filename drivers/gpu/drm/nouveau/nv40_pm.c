@@ -143,7 +143,9 @@ nv40_pm_clocks_pre(struct drm_device *dev, struct nouveau_pm_level *perflvl)
 {
 	struct nv40_pm_state *info;
 	struct pll_lims pll;
-	int N1, N2, M1, M2, log2P;
+	int uninitialized_var(N1), uninitialized_var(N2);
+	int uninitialized_var(M1), uninitialized_var(M2);
+	int uninitialized_var(log2P);
 	int ret;
 
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
