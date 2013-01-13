@@ -1919,7 +1919,7 @@ static int amb_reset (amb_dev * dev, int diags) {
 /********** transfer and start the microcode **********/
 
 static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
-  const struct firmware *fw;
+  const struct firmware *uninitialized_var(fw);
   unsigned long start_address;
   const struct ihex_binrec *rec;
   const char *errmsg = 0;
