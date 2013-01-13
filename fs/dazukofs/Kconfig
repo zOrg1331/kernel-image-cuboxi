@@ -1,0 +1,7 @@
+config DAZUKOFS
+	tristate "Dazuko stackable filesystem support"
+	help
+	  DazukoFS is a stackable filesystem to allow userspace applications to
+	  perform online file access control. It was originally developed to
+	  support online virus scanners, but could be useful for any application
+	  that wishes to perform online file access control.
