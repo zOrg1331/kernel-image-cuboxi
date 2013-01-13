@@ -216,7 +216,7 @@ static void reiser4_evict_inode(struct inode *inode)
 
 	truncate_inode_pages(&inode->i_data, 0);
 	inode->i_blocks = 0;
-	clear_inode(inode);
+	end_writeback(inode);
 	reiser4_exit_context(ctx);
 }
 
