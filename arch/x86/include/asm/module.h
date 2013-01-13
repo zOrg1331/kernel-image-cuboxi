@@ -19,6 +19,8 @@
 #define MODULE_PROC_FAMILY "CORE2 "
 #elif defined CONFIG_MATOM
 #define MODULE_PROC_FAMILY "ATOM "
+#elif defined CONFIG_MCOREI7
+#define MODULE_PROC_FAMILY "COREI7 "
 #elif defined CONFIG_M686
 #define MODULE_PROC_FAMILY "686 "
 #elif defined CONFIG_MPENTIUMII
