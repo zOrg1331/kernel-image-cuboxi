@@ -570,7 +570,7 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
 {
 	int r;
 	struct pgpath *p;
-	char *path;
+	const char *path;
 	struct multipath *m = ti->private;
 
 	/* we need at least a path arg */
