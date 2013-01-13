@@ -65,7 +65,7 @@ static int tda8261_get_bandwidth(struct dvb_frontend *fe, u32 *bandwidth)
 {
 	struct dvb_frontend_ops	*frontend_ops = &fe->ops;
 	struct dvb_tuner_ops	*tuner_ops = &frontend_ops->tuner_ops;
-	struct tuner_state	t_state;
+	struct tuner_state	uninitialized_var(t_state);
 	int err = 0;
 
 	if (&fe->ops)
