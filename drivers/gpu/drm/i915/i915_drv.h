@@ -1141,7 +1141,7 @@ i915_disable_pipestat(drm_i915_private_t *dev_priv, int pipe, u32 mask);
 
 void intel_enable_asle(struct drm_device *dev);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_DRM_I915_DEBUG
 extern void i915_destroy_error_state(struct drm_device *dev);
 #else
 #define i915_destroy_error_state(x)
@@ -1410,7 +1410,7 @@ extern void __gen6_gt_force_wake_put(struct drm_i915_private *dev_priv);
 extern void __gen6_gt_force_wake_mt_put(struct drm_i915_private *dev_priv);
 
 /* overlay */
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_DRM_I915_DEBUG
 extern struct intel_overlay_error_state *intel_overlay_capture_error_state(struct drm_device *dev);
 extern void intel_overlay_print_error_state(struct seq_file *m, struct intel_overlay_error_state *error);
 
