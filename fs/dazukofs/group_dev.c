@@ -31,10 +31,8 @@
 static int dazukofs_group_open(int group_id, struct inode *inode,
 			       struct file *file)
 {
-	if (dazukofs_group_open_tracking(group_id))
-		file->private_data = file;
-	else
-		file->private_data = NULL;
+	file->private_data = dazukofs_group_open_tracking(group_id)
+			     ? file : NULL;
 	return 0;
 }
 
@@ -126,18 +124,14 @@ static ssize_t dazukofs_group_write(int group_id, struct file *file,
 	p = strstr(p2, "r=");
 	if (!p)
 		return -EINVAL;
-	if ((*(p + 2)) - '0' != 0)
-		response = DENY;
-	else
-		response = ALLOW;
+	response = ((*(p + 2)) - '0' != 0) ? DENY : ALLOW;
 
 	ret = dazukofs_return_event(group_id, event_id, response);
 	if (ret == 0) {
 		*pos += length;
-		ret = length;
-	} else if (ret == -ERESTARTSYS) {
-		ret = -EINTR;
-	}
+		return length;
+	} else if (ret == -ERESTARTSYS)
+		return -EINTR;
 
 	return ret;
 }

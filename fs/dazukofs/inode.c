@@ -38,12 +38,7 @@ static struct inode_operations dazukofs_main_iops;
 static int dazukofs_inode_test(struct inode *inode,
 			       void *candidate_lower_inode)
 {
-	if (get_lower_inode(inode) ==
-	    (struct inode *)candidate_lower_inode) {
-		return 1;
-	}
-
-	return 0;
+	return (get_lower_inode(inode) == (struct inode *)candidate_lower_inode);
 }
 
 static void dazukofs_init_inode(struct inode *inode, struct inode *lower_inode)
@@ -97,18 +92,17 @@ int dazukofs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
 		return -EACCES;
 	}
 
-	if (inode->i_state & I_NEW) {
+	if (inode->i_state & I_NEW)
 		unlock_new_inode(inode);
 		/*
 		 * This is a new node so we leave the lower_node "in use"
 		 * and do not call iput().
 		 */
-	} else {
+	else
 		/*
 		 * This is not a new node so we decrement the usage count.
 		 */
 		iput(lower_inode);
-	}
 
 	if (S_ISLNK(lower_inode->i_mode))
 		inode->i_op = &dazukofs_symlink_iops;
@@ -118,17 +112,13 @@ int dazukofs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
 	if (S_ISDIR(lower_inode->i_mode))
 		inode->i_fop = &dazukofs_dir_fops;
 
-	if (special_file(lower_inode->i_mode)) {
+	if (special_file(lower_inode->i_mode))
 		init_special_inode(inode, lower_inode->i_mode,
 				   lower_inode->i_rdev);
-	}
 
 	dentry->d_op = &dazukofs_dops;
 
-	if (already_hashed)
-		d_add(dentry, inode);
-	else
-		d_instantiate(dentry, inode);
+	(already_hashed ? d_add : d_instantiate)(dentry, inode);
 
 	fsstack_copy_attr_all(inode, lower_inode);
 	fsstack_copy_inode_size(inode, lower_inode);
@@ -159,16 +149,12 @@ static struct dentry *dazukofs_lookup(struct inode *dir, struct dentry *dentry,
 
 	/* check for "." or ".." (they are not relevant here) */
 	if (dentry->d_name.len == 1) {
-		if (dentry->d_name.name[0] == '.') {
-			d_drop(dentry);
-			goto out;
-		}
+		if (dentry->d_name.name[0] == '.')
+			goto out_drop;
 	} else if (dentry->d_name.len == 2) {
 		if (dentry->d_name.name[0] == '.' &&
-		    dentry->d_name.name[1] == '.') {
-			d_drop(dentry);
-			goto out;
-		}
+		    dentry->d_name.name[1] == '.')
+			goto out_drop;
 	}
 
 	dentry->d_op = &dazukofs_dops;
@@ -181,8 +167,7 @@ static struct dentry *dazukofs_lookup(struct inode *dir, struct dentry *dentry,
 	mutex_unlock(&lower_dentry_parent->d_inode->i_mutex);
 	if (IS_ERR(lower_dentry)) {
 		err = PTR_ERR(lower_dentry);
-		d_drop(dentry);
-		goto out;
+		goto out_drop;
 	}
 
 	BUG_ON(!lower_dentry->d_count);
@@ -205,18 +190,17 @@ static struct dentry *dazukofs_lookup(struct inode *dir, struct dentry *dentry,
 		 * We want to add because we could not find in lower.
 		 */
 		d_add(dentry, NULL);
-		goto out;
+		return ERR_PTR(0);
 	}
 
 	err = dazukofs_interpose(lower_dentry, dentry, dir->i_sb, 1);
-	if (err)
-		goto out_dput;
-	goto out;
+	if (!err)
+		return ERR_PTR(0);
 
 out_dput:
 	dput(lower_dentry);
+out_drop:
 	d_drop(dentry);
-out:
 	return ERR_PTR(err);
 }
 
@@ -378,22 +362,17 @@ static int dazukofs_readlink(struct dentry *dentry, char __user *buf,
 	int err;
 
 	if (!lower_dentry_inode) {
-		err = -ENOENT;
 		d_drop(dentry);
-		goto out;
+		return -ENOENT;
 	}
 
-	if (!lower_dentry_inode->i_op->readlink) {
-		err = -EINVAL;
-		goto out;
-	}
+	if (!lower_dentry_inode->i_op->readlink)
+		return -EINVAL;
 
 	err = lower_dentry_inode->i_op->readlink(lower_dentry, buf, bufsiz);
-	if (err)
-		goto out;
+	if (!err)
+		fsstack_copy_attr_times(dentry->d_inode, lower_dentry_inode);
 
-	fsstack_copy_attr_times(dentry->d_inode, lower_dentry_inode);
-out:
 	return err;
 }
 
@@ -406,18 +385,14 @@ static void *dazukofs_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
 	mm_segment_t fs_save;
 	int rc;
-	char *buf;
 	int len = PAGE_SIZE;
-	int err = 0;
+	char *buf = kmalloc(len, GFP_KERNEL);
 
 	/*
 	 * Released in dazukofs_put_link(). Only release here on error.
 	 */
-	buf = kmalloc(len, GFP_KERNEL);
-	if (!buf) {
-		err = -ENOMEM;
-		goto out;
-	}
+	if (!buf)
+		return ERR_PTR(-ENOMEM);
 
 	fs_save = get_fs();
 	set_fs(get_ds());
@@ -425,18 +400,14 @@ static void *dazukofs_follow_link(struct dentry *dentry, struct nameidata *nd)
 	set_fs(fs_save);
 
 	if (rc < 0) {
-		err = rc;
-		goto out_free;
+		kfree(buf);
+		return ERR_PTR(rc);
+	} else {
+		buf[rc] = 0;
+		nd_set_link(nd, buf);
 	}
-	buf[rc] = 0;
 
-	nd_set_link(nd, buf);
-	goto out;
-
-out_free:
-	kfree(buf);
-out:
-	return ERR_PTR(err);
+	return ERR_PTR(0);
 }
 
 /**
@@ -530,15 +501,12 @@ static int dazukofs_setxattr(struct dentry *dentry, const char *name,
 	int err;
 
 	if (!lower_dentry_inode) {
-		err = -ENOENT;
 		d_drop(dentry);
-		goto out;
+		return -ENOENT;
 	}
 
-	if (!lower_dentry_inode->i_op->setxattr) {
-		err = -EOPNOTSUPP;
-		goto out;
-	}
+	if (!lower_dentry_inode->i_op->setxattr)
+		return -EOPNOTSUPP;
 
 	mutex_lock(&lower_dentry_inode->i_mutex);
 	err = lower_dentry_inode->i_op->setxattr(lower_dentry, name, value,
@@ -547,7 +515,7 @@ static int dazukofs_setxattr(struct dentry *dentry, const char *name,
 
 	fsstack_copy_attr_all(dentry->d_inode, lower_dentry_inode);
 	fsstack_copy_inode_size(dentry->d_inode, lower_dentry_inode);
-out:
+
 	return err;
 }
 
@@ -560,23 +528,16 @@ static ssize_t dazukofs_getxattr(struct dentry *dentry, const char *name,
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	struct inode *lower_dentry_inode = lower_dentry->d_inode;
-	ssize_t err;
 
 	if (!lower_dentry_inode) {
-		err = -ENOENT;
 		d_drop(dentry);
-		goto out;
+		return -ENOENT;
 	}
 
-	if (!lower_dentry_inode->i_op->getxattr) {
-		err = -EOPNOTSUPP;
-		goto out;
-	}
+	if (!lower_dentry_inode->i_op->getxattr)
+		return -EOPNOTSUPP;
 
-	err = lower_dentry_inode->i_op->getxattr(lower_dentry, name,
-						 value, size);
-out:
-	return err;
+	return lower_dentry_inode->i_op->getxattr(lower_dentry, name, value, size);
 }
 
 /**
@@ -588,22 +549,16 @@ static ssize_t dazukofs_listxattr(struct dentry *dentry, char *list,
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	struct inode *lower_dentry_inode = lower_dentry->d_inode;
-	int err;
 
 	if (!lower_dentry_inode) {
-		err = -ENOENT;
 		d_drop(dentry);
-		goto out;
+		return -ENOENT;
 	}
 
-	if (!lower_dentry_inode->i_op->listxattr) {
-		err = -EOPNOTSUPP;
-		goto out;
-	}
+	if (!lower_dentry_inode->i_op->listxattr)
+		return -EOPNOTSUPP;
 
-	err = lower_dentry_inode->i_op->listxattr(lower_dentry, list, size);
-out:
-	return err;
+	return lower_dentry_inode->i_op->listxattr(lower_dentry, list, size);
 }
 
 /**
@@ -617,20 +572,17 @@ static int dazukofs_removexattr(struct dentry *dentry, const char *name)
 	int err;
 
 	if (!lower_dentry_inode) {
-		err = -ENOENT;
 		d_drop(dentry);
-		goto out;
+		return -ENOENT;
 	}
 
-	if (!lower_dentry_inode->i_op->removexattr) {
-		err = -EOPNOTSUPP;
-		goto out;
-	}
+	if (!lower_dentry_inode->i_op->removexattr)
+		return -EOPNOTSUPP;
 
 	mutex_lock(&lower_dentry_inode->i_mutex);
 	err = lower_dentry_inode->i_op->removexattr(lower_dentry, name);
 	mutex_unlock(&lower_dentry_inode->i_mutex);
-out:
+
 	return err;
 }
 
@@ -683,13 +635,12 @@ static int dazukofs_unlink(struct inode *dir, struct dentry *dentry)
 			  I_MUTEX_PARENT);
 
 	err = vfs_unlink(lower_dentry_parent_inode, lower_dentry);
-	if (err)
-		goto out;
+	if (!err) {
+		fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
+		set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
+		fsstack_copy_attr_times(dentry->d_inode, dir);
+	}
 
-	fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
-	set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
-	fsstack_copy_attr_times(dentry->d_inode, dir);
-out:
 	mutex_unlock(&(lower_dentry_parent_inode->i_mutex));
 	dput(lower_dentry_parent);
 	return err;
@@ -710,13 +661,12 @@ static int dazukofs_rmdir(struct inode *dir, struct dentry *dentry)
 			  I_MUTEX_PARENT);
 
 	err = vfs_rmdir(lower_dentry_parent_inode, lower_dentry);
-	if (err)
-		goto out;
+	if (!err) {
+		fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
+		set_nlink(dir, lower_dentry_parent_inode->i_nlink);
+		set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
+	}
 
-	fsstack_copy_attr_times(dir, lower_dentry_parent_inode);
-	set_nlink(dir, lower_dentry_parent_inode->i_nlink);
-	set_nlink(dentry->d_inode, get_lower_inode(dentry->d_inode)->i_nlink);
-out:
 	mutex_unlock(&(lower_dentry_parent_inode->i_mutex));
 	dput(lower_dentry_parent);
 

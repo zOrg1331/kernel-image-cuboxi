@@ -50,12 +50,12 @@
  */
 static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *data)
 {
-	struct vfsmount *lower_mnt_parent;
-	struct dentry *lower_dentry_parent, *lower_dentry;
+	struct dentry *lower_dentry_parent;
 	int valid, err;
 	struct nameidata new_nd;
-		
-	lower_dentry = get_lower_dentry(dentry);
+	struct vfsmount *lower_mnt_parent;
+	struct dentry *lower_dentry = get_lower_dentry(dentry);
+
 	if (!lower_dentry->d_op || !lower_dentry->d_op->d_revalidate)
 		return 1;
 	
@@ -73,6 +73,7 @@ static int dazukofs_d_revalidate(struct dentry *dentry, struct nameidata *data)
 	/* update the inode, even if d_revalidate() != 1 */
 	if (dentry->d_inode) {
 		struct inode *lower_inode = get_lower_inode(dentry->d_inode);
+
 		fsstack_copy_attr_all(dentry->d_inode, lower_inode);
 	}
 	return valid;
@@ -97,10 +98,8 @@ static int dazukofs_d_hash(const struct dentry *dentry,
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 	
-	if (!lower_dentry->d_op || !lower_dentry->d_op->d_hash)
-		return 0;
-	
-	return lower_dentry->d_op->d_hash(lower_dentry, inode, name);
+	return (lower_dentry->d_op && lower_dentry->d_op->d_hash)
+	       ? lower_dentry->d_op->d_hash(lower_dentry, inode, name) : 0;
 }
 
 /**
@@ -118,8 +117,7 @@ static void dazukofs_d_release(struct dentry *dentry)
 		dput(get_lower_dentry(dentry));
 		mntput(get_lower_mnt(dentry));
 
-		kmem_cache_free(dazukofs_dentry_info_cachep,
-				get_dentry_private(dentry));
+		kmem_cache_free(dazukofs_dentry_info_cachep, get_dentry_private(dentry));
 	}
 }
 
@@ -140,10 +138,9 @@ static int dazukofs_d_compare(const struct dentry *parent,
 {
 	struct dentry *lower_dentry = get_lower_dentry(dentry);
 
-	if (lower_dentry->d_op && lower_dentry->d_op->d_compare)
-		return lower_dentry->d_op->d_compare(parent, pinode, lower_dentry, inode, len, str, name);
-
-	return len != name->len || memcmp(str, name->name, len);
+	return (lower_dentry->d_op && lower_dentry->d_op->d_compare)
+	       ? lower_dentry->d_op->d_compare(parent, pinode, lower_dentry, inode, len, str, name)
+	       : (len != name->len || memcmp(str, name->name, len));
 }
 
 /**

@@ -89,14 +89,14 @@ static inline void set_lower_sb(struct super_block *upper_sb,
 				struct super_block *lower_sb)
 {
 	struct dazukofs_sb_info *sbi = get_sb_private(upper_sb);
+
 	sbi->lower_sb = lower_sb;
 }
 
 static inline struct dazukofs_inode_info *get_inode_private(
 						struct inode *upper_inode)
 {
-	return container_of(upper_inode, struct dazukofs_inode_info,
-			    vfs_inode);
+	return container_of(upper_inode, struct dazukofs_inode_info, vfs_inode);
 }
 
 static inline struct inode *get_lower_inode(struct inode *upper_inode)
@@ -108,6 +108,7 @@ static inline void set_lower_inode(struct inode *upper_inode,
 				   struct inode *lower_inode)
 {
 	struct dazukofs_inode_info *dii = get_inode_private(upper_inode);
+
 	dii->lower_inode = lower_inode;
 }
 
@@ -137,6 +138,7 @@ static inline void set_lower_dentry(struct dentry *upper_dentry,
 				    struct vfsmount *lower_mnt)
 {
 	struct dazukofs_dentry_info *dii = get_dentry_private(upper_dentry);
+
 	dii->lower_dentry = lower_dentry;
 	dii->lower_mnt = lower_mnt;
 }
@@ -162,6 +164,7 @@ static inline void set_lower_file(struct file *upper_file,
 				  struct file *lower_file)
 {
 	struct dazukofs_file_info *dfi = get_file_private(upper_file);
+
 	dfi->lower_file = lower_file;
 }
 

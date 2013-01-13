@@ -39,14 +39,13 @@ static struct kmem_cache *dazukofs_ign_cachep;
 
 int dazukofs_check_ignore_process(void)
 {
-	struct dazukofs_proc *proc;
 	struct list_head *pos;
 	int found = 0;
 	struct pid *cur_proc_id = find_get_pid(task_pid_nr(current));
 
 	mutex_lock(&ign_list_mutex);
 	list_for_each(pos, &ign_list.list) {
-		proc = list_entry(pos, struct dazukofs_proc, list);
+		struct dazukofs_proc *proc = list_entry(pos, struct dazukofs_proc, list);
 		if (proc->proc_id == cur_proc_id) {
 			found = 1;
 			break;
@@ -61,8 +60,8 @@ int dazukofs_check_ignore_process(void)
 
 static int dazukofs_add_ign(struct file *file)
 {
-	struct dazukofs_proc *proc =
-		kmem_cache_zalloc(dazukofs_ign_cachep, GFP_KERNEL);
+	struct dazukofs_proc *proc = kmem_cache_zalloc(dazukofs_ign_cachep, GFP_KERNEL);
+
 	if (!proc) {
 		file->private_data = NULL;
 		return -ENOMEM;
@@ -80,29 +79,28 @@ static int dazukofs_add_ign(struct file *file)
 
 static void dazukofs_remove_ign(struct file *file)
 {
-	struct list_head *pos;
-	struct dazukofs_proc *proc = NULL;
 	struct dazukofs_proc *check_proc = file->private_data;
-	int found = 0;
 
-	if (!check_proc)
-		return;
+	if (check_proc) {
+		struct list_head *pos;
+		struct dazukofs_proc *proc = NULL;
+		int found = 0;
 
-	mutex_lock(&ign_list_mutex);
-	list_for_each(pos, &ign_list.list) {
-		proc = list_entry(pos, struct dazukofs_proc, list);
-		if (proc->proc_id == check_proc->proc_id) {
-			found = 1;
-			put_pid(proc->proc_id);
-			list_del(pos);
-			break;
+		mutex_lock(&ign_list_mutex);
+		list_for_each(pos, &ign_list.list) {
+			proc = list_entry(pos, struct dazukofs_proc, list);
+			if (proc->proc_id == check_proc->proc_id) {
+				found = 1;
+				put_pid(proc->proc_id);
+				list_del(pos);
+				break;
+			}
 		}
-	}
-	mutex_unlock(&ign_list_mutex);
-
-	if (found) {
-		file->private_data = NULL;
-		kmem_cache_free(dazukofs_ign_cachep, proc);
+		mutex_unlock(&ign_list_mutex);
+		if (found) {
+			file->private_data = NULL;
+			kmem_cache_free(dazukofs_ign_cachep, proc);
+		}
 	}
 }
 
@@ -121,10 +119,10 @@ static void dazukofs_destroy_ignlist(void)
 {
 	struct list_head *pos;
 	struct list_head *q;
-	struct dazukofs_proc *proc;
 
 	list_for_each_safe(pos, q, &ign_list.list) {
-		proc = list_entry(pos, struct dazukofs_proc, list);
+		struct dazukofs_proc *proc = list_entry(pos, struct dazukofs_proc, list);
+
 		list_del(pos);
 		kmem_cache_free(dazukofs_ign_cachep, proc);
 	}
@@ -151,10 +149,8 @@ int dazukofs_ign_dev_init(int dev_major, int dev_minor,
 		kmem_cache_create("dazukofs_ign_cache",
 				  sizeof(struct dazukofs_proc), 0,
 				  SLAB_HWCACHE_ALIGN, NULL);
-	if (!dazukofs_ign_cachep) {
-		err = -ENOMEM;
-		goto error_out1;
-	}
+	if (!dazukofs_ign_cachep)
+		return -ENOMEM;
 
 	/* setup cdev for ignore */
 	cdev_init(&ign_cdev, &ign_fops);
@@ -178,7 +174,6 @@ error_out3:
 error_out2:
 	dazukofs_destroy_ignlist();
 	kmem_cache_destroy(dazukofs_ign_cachep);
-error_out1:
 	return err;
 }
 

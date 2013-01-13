@@ -51,12 +51,12 @@ static int dazukofs_ctrl_release(struct inode *inode, struct file *file)
 static ssize_t dazukofs_ctrl_read(struct file *file, char __user *buffer,
 				  size_t length, loff_t *pos)
 {
-	char *buf = file->private_data;
 	size_t buflen;
-	int err;
+	char *buf = file->private_data;
 
 	if (!file->private_data) {
-		err = dazukofs_get_groups(&buf);
+		int err = dazukofs_get_groups(&buf);
+
 		if (err)
 			return err;
 		file->private_data = buf;
@@ -81,34 +81,24 @@ static ssize_t dazukofs_ctrl_read(struct file *file, char __user *buffer,
 	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
 static int is_valid_char(char c)
 {
-	if (strchr(DAZUKOFS_ALLOWED_GROUPCHARS, c) != NULL)
-		return 1;
-	return 0;
+	return strchr(DAZUKOFS_ALLOWED_GROUPCHARS, c) != NULL;
 }
 
 static int process_command(char *buf, const char *key,
 			   int (*func)(const char *, int), int arg2,
 			   int *retcode)
 {
-	char *p;
 	char *p2;
+	char *p = strstr(buf, key);
 
-	p = strstr(buf, key);
 	if (!p)
 		return -1;
 
 	p += strlen(key);
 
-	for (p2 = p; is_valid_char(*p2); p2++)
-		;
+	for (p2 = p; is_valid_char(*p2); p2++);
 
-	if (p == p2) {
-		*retcode = -EINVAL;
-	} else {
-		*p2 = 0;
-		*retcode = func(p, arg2);
-		*p2 = ' ';
-	}
+	*retcode = (p == p2) ? -EINVAL : func(p, arg2);
 
 	return 0;
 }
@@ -121,39 +111,27 @@ static ssize_t dazukofs_ctrl_write(struct file *file,
 	char tmp[DAZUKOFS_MAX_WRITE_BUFFER];
 	int match = 0;
 	int ret = -EINVAL;
-	int cp_len = length;
+	int cp_len = length >= DAZUKOFS_MAX_WRITE_BUFFER ? (DAZUKOFS_MAX_WRITE_BUFFER - 1) : length;
 
-	cp_len = (length >= DAZUKOFS_MAX_WRITE_BUFFER) ?
-				(DAZUKOFS_MAX_WRITE_BUFFER - 1) : length;
 	if (copy_from_user(tmp, buffer, cp_len))
 		return -EFAULT;
 
 	tmp[cp_len] = 0;
 
-	if (!match || (match && ret >= 0)) {
-		if (process_command(tmp, "del=",
-				    dazukofs_remove_group, 0, &ret) == 0) {
-			match = 1;
-		}
-	}
+	if (process_command(tmp, "del=", dazukofs_remove_group, 0, &ret) == 0)
+		match = 1;
 
-	if (!match || (match && ret >= 0)) {
-		if (process_command(tmp, "add=",
-				    dazukofs_add_group, 0, &ret) == 0) {
-			match = 1;
-		}
-	}
+	if ((!match || (match && ret >= 0)) &&
+	    process_command(tmp, "add=", dazukofs_add_group, 0, &ret) == 0)
+		match = 1;
 
-	if (!match || (match && ret >= 0)) {
-		if (process_command(tmp, "addtrack=",
-				    dazukofs_add_group, 1, &ret) == 0) {
-			match = 1;
-		}
-	}
+	if ((!match || (match && ret >= 0)) &&
+	    process_command(tmp, "addtrack=", dazukofs_add_group, 1, &ret) == 0)
+		match = 1;
 
 	if (ret >= 0) {
 		*pos += length;
-		ret = length;
+		return length;
 	}
 
 	return ret;
@@ -172,7 +150,7 @@ static const struct file_operations ctrl_fops = {
 int dazukofs_ctrl_dev_init(int dev_major, int dev_minor,
 			   struct class *dazukofs_class)
 {
-	int err = 0;
+	int err;
 	struct device *dev;
 
 	/* setup cdev for control */
@@ -180,26 +158,20 @@ int dazukofs_ctrl_dev_init(int dev_major, int dev_minor,
 	ctrl_cdev.owner = THIS_MODULE;
 	err = cdev_add(&ctrl_cdev, MKDEV(dev_major, dev_minor), 1);
 	if (err)
-		goto error_out1;
+		return err;
 
 	/* create control device */
 	dev = device_create(dazukofs_class, NULL, MKDEV(dev_major, dev_minor),
 			    NULL, "%s.ctrl", DEVICE_NAME);
 	if (IS_ERR(dev)) {
-		err = PTR_ERR(dev);
-		goto error_out2;
+		cdev_del(&ctrl_cdev);
+		return PTR_ERR(dev);
 	}
 
 	return 0;
-
-error_out2:
-	cdev_del(&ctrl_cdev);
-error_out1:
-	return err;
 }
 
-void dazukofs_ctrl_dev_destroy(int dev_major, int dev_minor,
-			       struct class *dazukofs_class)
+void dazukofs_ctrl_dev_destroy(int dev_major, int dev_minor, struct class *dazukofs_class)
 {
 	device_destroy(dazukofs_class, MKDEV(dev_major, dev_minor));
 	cdev_del(&ctrl_cdev);

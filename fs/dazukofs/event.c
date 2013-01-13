@@ -130,10 +130,8 @@ int dazukofs_init_events(void)
 		kmem_cache_create("dazukofs_event_cache",
 				  sizeof(struct dazukofs_event), 0,
 				  SLAB_HWCACHE_ALIGN, NULL);
-	if (!dazukofs_event_cachep)
-		goto error_out;
-
-	return 0;
+	if (dazukofs_event_cachep)
+		return 0;
 
 error_out:
 	if (dazukofs_group_cachep)
@@ -219,16 +217,14 @@ static void release_event(struct dazukofs_event *evt, int decrement_assigned,
  */
 static void __clear_group_event_list(struct list_head *event_list)
 {
-	struct dazukofs_event_container *ec;
 	struct list_head *pos;
 	struct list_head *q;
 
 	list_for_each_safe(pos, q, event_list) {
-		ec = list_entry(pos, struct dazukofs_event_container, list);
+		struct dazukofs_event_container *ec = list_entry(pos, struct dazukofs_event_container, list);
+
 		list_del(pos);
-
 		release_event(ec->event, 1, 0);
-
 		kmem_cache_free(dazukofs_event_container_cachep, ec);
 	}
 }
@@ -266,7 +262,6 @@ static void __remove_group(struct dazukofs_group *grp)
  */
 void dazukofs_destroy_events(void)
 {
-	struct dazukofs_group *grp;
 	struct list_head *pos;
 	struct list_head *q;
 
@@ -278,14 +273,12 @@ void dazukofs_destroy_events(void)
 
 	/* free the groups */
 	list_for_each_safe(pos, q, &group_list.list) {
-		grp = list_entry(pos, struct dazukofs_group, list);
+		struct dazukofs_group *grp = list_entry(pos, struct dazukofs_group, list);
+
 		list_del(pos);
-
 		__remove_group(grp);
-
 		/* free group name */
 		kfree(grp->name);
-
 		/* free group */
 		kmem_cache_free(dazukofs_group_cachep, grp);
 	}
@@ -323,7 +316,6 @@ void dazukofs_destroy_events(void)
 static int __check_for_group(const char *name, int id, int track,
 			     int *already_exists)
 {
-	struct dazukofs_group *grp;
 	struct list_head *pos;
 	struct list_head *q;
 	int id_available = 1;
@@ -331,7 +323,8 @@ static int __check_for_group(const char *name, int id, int track,
 	*already_exists = 0;
 
 	list_for_each_safe(pos, q, &group_list.list) {
-		grp = list_entry(pos, struct dazukofs_group, list);
+		struct dazukofs_group *grp = list_entry(pos, struct dazukofs_group, list);
+
 		if (grp->deprecated) {
 			/* cleanup deprecated groups */
 			if (atomic_read(&grp->use_count) == 0) {
@@ -352,15 +345,7 @@ static int __check_for_group(const char *name, int id, int track,
 		}
 	}
 
-	if (*already_exists)
-		return 0;
-
-	if (id_available) {
-		/* we have found a free id */
-		return 0;
-	}
-
-	return -1;
+	return (*already_exists || id_available) ? 0 : -1;
 }
 
 /**
@@ -379,26 +364,24 @@ static int __check_for_group(const char *name, int id, int track,
 static struct dazukofs_group *__create_group(const char *name, int id,
 					     int track)
 {
-	struct dazukofs_group *grp;
+	struct dazukofs_group *grp = kmem_cache_zalloc(dazukofs_group_cachep, GFP_KERNEL);
 
-	grp = kmem_cache_zalloc(dazukofs_group_cachep, GFP_KERNEL);
-	if (!grp)
-		return NULL;
-
-	atomic_set(&grp->use_count, 0);
-	grp->group_id = id;
-	grp->name = kstrdup(name, GFP_KERNEL);
-	if (!grp->name) {
-		kmem_cache_free(dazukofs_group_cachep, grp);
-		return NULL;
+	if (grp) {
+		atomic_set(&grp->use_count, 0);
+		grp->group_id = id;
+		grp->name = kstrdup(name, GFP_KERNEL);
+		if (!grp->name) {
+			kmem_cache_free(dazukofs_group_cachep, grp);
+			return NULL;
+		}
+		grp->name_length = strlen(name);
+		init_waitqueue_head(&grp->queue);
+		init_waitqueue_head(&grp->poll_queue);
+		INIT_LIST_HEAD(&grp->todo_list.list);
+		INIT_LIST_HEAD(&grp->working_list.list);
+		if (track)
+			grp->tracking = 1;
 	}
-	grp->name_length = strlen(name);
-	init_waitqueue_head(&grp->queue);
-	init_waitqueue_head(&grp->poll_queue);
-	INIT_LIST_HEAD(&grp->todo_list.list);
-	INIT_LIST_HEAD(&grp->working_list.list);
-	if (track)
-		grp->tracking = 1;
 	return grp;
 }
 
@@ -427,11 +410,9 @@ int dazukofs_add_group(const char *name, int track)
 	down_write(&group_count_sem);
 
 	mutex_lock(&work_mutex);
-	while (__check_for_group(name, available_id, track,
-				 &already_exists) != 0) {
+	while (__check_for_group(name, available_id, track, &already_exists) != 0)
 		/* try again with the next id */
 		available_id++;
-	}
 	mutex_unlock(&work_mutex);
 
 	if (already_exists)
@@ -571,14 +552,14 @@ tryagain:
  */
 static int check_recursion(void)
 {
-	struct dazukofs_proc *proc;
 	struct list_head *pos;
 	int found = 0;
 	struct pid *cur_proc_id = get_pid(task_pid(current));
 
 	mutex_lock(&proc_mutex);
 	list_for_each(pos, &proc_list.list) {
-		proc = list_entry(pos, struct dazukofs_proc, list);
+		struct dazukofs_proc *proc = list_entry(pos, struct dazukofs_proc, list);
+
 		if (proc->proc_id == cur_proc_id) {
 			found = 1;
 			list_del(pos);
@@ -608,6 +589,7 @@ static int check_recursion(void)
 static int event_assigned(struct dazukofs_event *event)
 {
 	int val;
+
 	mutex_lock(&event->assigned_mutex);
 	val = event->assigned;
 	mutex_unlock(&event->assigned_mutex);
@@ -654,7 +636,6 @@ static void
 assign_event_to_groups(struct dazukofs_event *evt,
 		       struct dazukofs_event_container *ec_array[])
 {
-	struct dazukofs_group *grp;
 	struct list_head *pos;
 	int i;
 
@@ -669,7 +650,8 @@ assign_event_to_groups(struct dazukofs_event *evt,
 	/* assign the event to each group */
 	i = 0;
 	list_for_each(pos, &group_list.list) {
-		grp = list_entry(pos, struct dazukofs_group, list);
+		struct dazukofs_group *grp = list_entry(pos, struct dazukofs_group, list);
+
 		if (!grp->deprecated) {
 			ec_array[i]->event = evt;
 
@@ -747,7 +729,7 @@ int dazukofs_check_access(struct dentry *dentry, struct vfsmount *mnt)
 {
 	struct dazukofs_event_container *ec_array[GROUP_COUNT];
 	struct dazukofs_event *evt;
-	int err = 0;
+	int err;
 
 	down_read(&group_count_sem);
 
@@ -760,8 +742,7 @@ int dazukofs_check_access(struct dentry *dentry, struct vfsmount *mnt)
 
 	if (allocate_event_and_containers(&evt, ec_array, group_count)) {
 		up_read(&group_count_sem);
-		err = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 
 	evt->dentry = dget(dentry);
@@ -775,11 +756,10 @@ int dazukofs_check_access(struct dentry *dentry, struct vfsmount *mnt)
 	/* wait (uninterruptible) until event completely processed */
 	wait_event(evt->queue, event_assigned(evt) == 0);
 
-	if (evt->deny)
-		err = -EPERM;
+	err = evt->deny ? -EPERM : 0;
 
 	release_event(evt, 0, 0);
-out:
+
 	return err;
 }
 
@@ -799,13 +779,13 @@ out:
  */
 int dazukofs_group_open_tracking(unsigned long group_id)
 {
-	struct dazukofs_group *grp;
 	struct list_head *pos;
 	int tracking = 0;
 
 	mutex_lock(&work_mutex);
 	list_for_each(pos, &group_list.list) {
-		grp = list_entry(pos, struct dazukofs_group, list);
+		struct dazukofs_group *grp = list_entry(pos, struct dazukofs_group, list);
+
 		if (!grp->deprecated && grp->group_id == group_id) {
 			if (grp->tracking) {
 				atomic_inc(&grp->use_count);
@@ -829,12 +809,12 @@ int dazukofs_group_open_tracking(unsigned long group_id)
  */
 void dazukofs_group_release_tracking(unsigned long group_id)
 {
-	struct dazukofs_group *grp;
 	struct list_head *pos;
 
 	mutex_lock(&work_mutex);
 	list_for_each(pos, &group_list.list) {
-		grp = list_entry(pos, struct dazukofs_group, list);
+		struct dazukofs_group *grp = list_entry(pos, struct dazukofs_group, list);
+
 		if (!grp->deprecated && grp->group_id == group_id) {
 			if (grp->tracking) {
 				atomic_dec(&grp->use_count);
@@ -928,9 +908,8 @@ int dazukofs_return_event(unsigned long group_id, unsigned long event_id,
 			unclaim_event(grp, ec);
 		else
 			release_event(evt, 1, response == DENY);
-	} else {
+	} else
 		ret = -EINVAL;
-	}
 	atomic_dec(&grp->use_count);
 
 	return ret;
@@ -1104,7 +1083,6 @@ int dazukofs_get_event(unsigned long group_id, unsigned long *event_id,
 		       int *fd, pid_t *pid)
 {
 	struct dazukofs_group *grp = NULL;
-	struct dazukofs_event_container *ec;
 	struct list_head *pos;
 	int found = 0;
 	int ret = 0;
@@ -1123,7 +1101,9 @@ int dazukofs_get_event(unsigned long group_id, unsigned long *event_id,
 	if (!found)
 		return -EINVAL;
 
-	while (1) {
+	for (;;) {
+		struct dazukofs_event_container *ec;
+
 		ret = wait_event_freezable(grp->queue,
 					   is_event_available(grp) ||
 					   grp->deprecated);

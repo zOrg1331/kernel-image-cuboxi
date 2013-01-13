@@ -102,12 +102,10 @@ static int dazukofs_writepage(struct page *page, struct writeback_control *wbc)
 {
 	struct inode *inode = page->mapping->host;
 	struct inode *lower_inode = get_lower_inode(inode);
-	struct page *lower_page;
 	char *page_data;
 	char *lower_page_data;
 	int err = 0;
-
-	lower_page = grab_cache_page(lower_inode->i_mapping, page->index);
+	struct page *lower_page = grab_cache_page(lower_inode->i_mapping, page->index);
 
 	if (!lower_page) {
 		printk(KERN_ERR "dazukofs: Error getting lower page.\n");

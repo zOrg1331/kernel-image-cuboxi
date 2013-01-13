@@ -39,6 +39,7 @@ static struct inode *dazukofs_alloc_inode(struct super_block *sb)
 {
 	struct dazukofs_inode_info *inodei =
 		kmem_cache_alloc(dazukofs_inode_info_cachep, GFP_KERNEL);
+
 	if (!inodei)
 		return NULL;
 
@@ -61,10 +62,9 @@ static int dazukofs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct dentry *lower_dentry = dget(get_lower_dentry(dentry));
 
-	if (!lower_dentry->d_sb->s_op->statfs)
-		return -ENOSYS;
-
-	return lower_dentry->d_sb->s_op->statfs(lower_dentry, buf);
+	return lower_dentry->d_sb->s_op->statfs
+	       ? lower_dentry->d_sb->s_op->statfs(lower_dentry, buf)
+	       : -ENOSYS;
 }
 
 static void dazukofs_evict_inode(struct inode *inode)
@@ -77,6 +77,7 @@ static void dazukofs_evict_inode(struct inode *inode)
 static void dazukofs_put_super(struct super_block *sb)
 {
 	struct dazukofs_sb_info *sbi = get_sb_private(sb);
+
 	if (sbi)
 		kmem_cache_free(dazukofs_sb_info_cachep, sbi);
 }
@@ -114,12 +115,11 @@ static int dazukofs_parse_mount_options(char *options, struct super_block *sb)
 
 static int dazukofs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct dazukofs_sb_info *sbi;
 	struct dentry *root;
 	static const struct qstr name = { .name = "/", .len = 1 };
 	struct dazukofs_dentry_info *di;
+	struct dazukofs_sb_info *sbi =  kmem_cache_zalloc(dazukofs_sb_info_cachep, GFP_KERNEL);
 
-	sbi =  kmem_cache_zalloc(dazukofs_sb_info_cachep, GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
 
@@ -198,10 +198,9 @@ out:
 }
 
 static struct dentry* dazukofs_get_sb(struct file_system_type *fs_type, int flags,
-						   const char *dev_name, void *data)
+				      const char *dev_name, void *data)
 {
-	struct dentry *dentry = mount_nodev(fs_type, flags, data,
-					    dazukofs_fill_super);
+	struct dentry *dentry = mount_nodev(fs_type, flags, data, dazukofs_fill_super);
 
 	if (!IS_ERR(dentry)) {
 		struct super_block *sb = dentry->d_sb;
@@ -220,8 +219,7 @@ static struct dentry* dazukofs_get_sb(struct file_system_type *fs_type, int flag
 
 static void init_once(void *data)
 {
-	struct dazukofs_inode_info *inode_info =
-		(struct dazukofs_inode_info *)data;
+	struct dazukofs_inode_info *inode_info = (struct dazukofs_inode_info *)data;
 
 	memset(inode_info, 0, sizeof(struct dazukofs_inode_info));
 	inode_init_once(&(inode_info->vfs_inode));
@@ -281,10 +279,8 @@ static int init_caches(void)
 				  sizeof(struct dazukofs_file_info), 0,
 				  SLAB_HWCACHE_ALIGN,
 				  NULL);
-	if (!dazukofs_file_info_cachep)
-		goto out_nomem;
-
-	return 0;
+	if (dazukofs_file_info_cachep)
+		return 0;
 
 out_nomem:
 	destroy_caches();
@@ -305,11 +301,10 @@ static struct file_system_type dazukofs_fs_type = {
 
 static int __init init_dazukofs_fs(void)
 {
-	int err;
+	int err = dazukofs_dev_init();
 
-	err = dazukofs_dev_init();
 	if (err)
-		goto error_out1;
+		return err;
 
 	err = init_caches();
 	if (err)
@@ -319,14 +314,13 @@ static int __init init_dazukofs_fs(void)
 	if (err)
 		goto error_out3;
 
-	printk(KERN_INFO "dazukofs: loaded, version=%s\n", DAZUKOFS_VERSION);
+	printk(KERN_INFO "dazukofs: loaded, version=" DAZUKOFS_VERSION "\n");
 	return 0;
 
 error_out3:
 	destroy_caches();
 error_out2:
 	dazukofs_dev_destroy();
-error_out1:
 	return err;
 }
 
@@ -335,7 +329,7 @@ static void __exit exit_dazukofs_fs(void)
 	unregister_filesystem(&dazukofs_fs_type);
 	destroy_caches();
 	dazukofs_dev_destroy();
-	printk(KERN_INFO "dazukofs: unloaded, version=%s\n", DAZUKOFS_VERSION);
+	printk(KERN_INFO "dazukofs: unloaded, version=" DAZUKOFS_VERSION "\n");
 }
 
 MODULE_AUTHOR("John Ogness");

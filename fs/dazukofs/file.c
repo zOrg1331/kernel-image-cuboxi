@@ -43,13 +43,11 @@ static loff_t dazukofs_llseek(struct file *file, loff_t offset, int origin)
 
 	lower_file->f_pos = file->f_pos;
 
-	memcpy(&(lower_file->f_ra), &(file->f_ra),
-	       sizeof(struct file_ra_state));
+	memcpy(&(lower_file->f_ra), &(file->f_ra), sizeof(struct file_ra_state));
 
-	if (lower_file->f_op && lower_file->f_op->llseek)
-		retval = lower_file->f_op->llseek(lower_file, offset, origin);
-	else
-		retval = generic_file_llseek(lower_file, offset, origin);
+	retval = (lower_file->f_op && lower_file->f_op->llseek)
+		 ? lower_file->f_op->llseek(lower_file, offset, origin)
+		 : generic_file_llseek(lower_file, offset, origin);
 
 	if (retval >= 0) {
 		file->f_pos = lower_file->f_pos;
@@ -76,13 +74,10 @@ static ssize_t dazukofs_read(struct file *file, char *buf, size_t count,
 	lower_file->f_pos = pos_copy;
 	*ppos = pos_copy;
 
-	if (err >= 0) {
-		fsstack_copy_attr_atime(file->f_dentry->d_inode,
-					lower_file->f_dentry->d_inode);
-	}
+	if (err >= 0)
+		fsstack_copy_attr_atime(file->f_dentry->d_inode, lower_file->f_dentry->d_inode);
 
-	memcpy(&(file->f_ra), &(lower_file->f_ra),
-	       sizeof(struct file_ra_state));
+	memcpy(&(file->f_ra), &(lower_file->f_ra), sizeof(struct file_ra_state));
 	return err;
 }
 
@@ -93,25 +88,21 @@ static ssize_t dazukofs_read(struct file *file, char *buf, size_t count,
  */ 
 static void mark_pages_outdated(struct file *file, size_t count, loff_t pos)
 {
-	struct page *page;
-	pgoff_t start;
 	pgoff_t end;
 	pgoff_t i;
 
 	if (unlikely(!count))
 		return;
 
-	start = pos >> PAGE_SHIFT;
 	end = (pos + count) >> PAGE_SHIFT;
 
-	for (i = start; i <= end; i++) {
-		page = find_lock_page(file->f_mapping, i);
-		if (!page) {
-			/* not yet accessed, get next one */
-			continue;
+	for (i = pos >> PAGE_SHIFT; i <= end; i++) {
+		struct page *page = find_lock_page(file->f_mapping, i);
+
+		if (page) {
+			ClearPageUptodate(page);
+			unlock_page(page);
 		}
-		ClearPageUptodate(page);
-		unlock_page(page);
 	}
 }
 
@@ -150,8 +141,7 @@ static ssize_t dazukofs_write(struct file *file, const char *buf,
 	}
 
 	*ppos = pos_copy;
-	memcpy(&(file->f_ra), &(lower_file->f_ra),
-	       sizeof(struct file_ra_state));
+	memcpy(&(file->f_ra), &(lower_file->f_ra), sizeof(struct file_ra_state));
 
 	i_size_write(inode, i_size_read(lower_inode));
 	mutex_unlock(&inode->i_mutex);
@@ -188,10 +178,9 @@ static long dazukofs_unlocked_ioctl(struct file *file, unsigned int cmd,
 {
 	struct file *lower_file = get_lower_file(file);
 
-	if (!lower_file->f_op || !lower_file->f_op->unlocked_ioctl)
-		return -ENOTTY;
-
-	return lower_file->f_op->unlocked_ioctl(lower_file, cmd, arg);
+	return (lower_file->f_op && lower_file->f_op->unlocked_ioctl)
+	       ? lower_file->f_op->unlocked_ioctl(lower_file, cmd, arg)
+	       : -ENOTTY;
 }
 
 #ifdef CONFIG_COMPAT
@@ -200,10 +189,9 @@ static long dazukofs_compat_ioctl(struct file *file, unsigned int cmd,
 {
 	struct file *lower_file = get_lower_file(file);
 
-	if (!lower_file->f_op || !lower_file->f_op->compat_ioctl)
-		return -ENOIOCTLCMD;
-
-	return lower_file->f_op->compat_ioctl(lower_file, cmd, arg);
+	return (lower_file->f_op && lower_file->f_op->compat_ioctl)
+	       ? lower_file->f_op->compat_ioctl(lower_file, cmd, arg)
+	       : -ENOIOCTLCMD;
 }
 #endif
 
@@ -235,7 +223,7 @@ static int dazukofs_open(struct inode *inode, struct file *file)
 		goto error_out;
 	}
 
-	lower_file = dentry_open (lower_dentry, lower_mnt, file->f_flags,
+	lower_file = dentry_open(lower_dentry, lower_mnt, file->f_flags,
 				 current_cred());
 	if (IS_ERR(lower_file))
 		return PTR_ERR(lower_file);
@@ -257,10 +245,8 @@ static int dazukofs_flush(struct file *file, fl_owner_t td)
 {
 	struct file *lower_file = get_lower_file(file);
 
-	if (!lower_file->f_op || !lower_file->f_op->flush)
-		return 0;
-
-	return lower_file->f_op->flush(lower_file, td);
+	return (lower_file->f_op && lower_file->f_op->flush)
+	       ? lower_file->f_op->flush(lower_file, td) : 0;
 }
 
 /**
@@ -284,10 +270,9 @@ static int dazukofs_fsync(struct file *file, loff_t start, loff_t end, int datas
 {
 	struct file *lower_file = get_lower_file(file);
 
-	if (!lower_file->f_op || !lower_file->f_op->fsync)
-		return -EINVAL;
-
-	return vfs_fsync_range(lower_file, start, end, datasync);
+	return (lower_file->f_op && lower_file->f_op->fsync)
+	       ? vfs_fsync_range(lower_file, start, end, datasync)
+	       : -EINVAL;
 }
 
 /**
@@ -298,10 +283,8 @@ static int dazukofs_fasync(int fd, struct file *file, int flag)
 {
 	struct file *lower_file = get_lower_file(file);
 
-	if (!lower_file->f_op || !lower_file->f_op->fasync)
-		return 0;
-
-	return lower_file->f_op->fasync(fd, lower_file, flag);
+	return (lower_file->f_op && lower_file->f_op->fasync)
+	       ? lower_file->f_op->fasync(fd, lower_file, flag) : 0;
 }
 
 static int dazukofs_mmap(struct file *file, struct vm_area_struct *vm)
@@ -311,10 +294,8 @@ static int dazukofs_mmap(struct file *file, struct vm_area_struct *vm)
 	/* If lower fs does not support mmap, we dont call generic_mmap(), since
 	 * this would result in calling lower readpage(), which might not be defined
 	 * by lower fs, since mmap is not supported. */
-	if (!lower_file->f_op || !lower_file->f_op->mmap)
-		return -ENODEV;
-
-	return generic_file_mmap(file, vm);
+	return (lower_file->f_op && lower_file->f_op->mmap)
+	       ? generic_file_mmap(file, vm) : -ENODEV;
 }
 
 /**
