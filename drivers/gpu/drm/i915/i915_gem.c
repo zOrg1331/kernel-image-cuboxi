@@ -794,7 +794,7 @@ i915_gem_shmem_pwrite_slow(struct drm_device *dev,
 	ssize_t remain;
 	loff_t offset;
 	char __user *user_data;
-	int shmem_page_offset, page_length, ret;
+	int shmem_page_offset, page_length, ret = 0;
 	int obj_do_bit17_swizzling, page_do_bit17_swizzling;
 
 	user_data = (char __user *) (uintptr_t) args->data_ptr;
