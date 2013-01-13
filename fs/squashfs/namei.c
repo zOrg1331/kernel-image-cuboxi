@@ -323,7 +323,7 @@ static int squashfs_rmdir(struct inode *dir, struct dentry *dentry)
 /*
  * File creation. Allocate an inode, and we're done..
  */
-static int squashfs_mknod(struct inode *dir, struct dentry *dentry, int mode,
+static int squashfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 			  dev_t dev)
 {
 	struct inode * inode = get_squashfs_inode(dir->i_sb, mode, dev);
@@ -345,12 +345,12 @@ static int squashfs_mknod(struct inode *dir, struct dentry *dentry, int mode,
 	return error;
 }
 
-static int squashfs_mkdir(struct inode * dir, struct dentry * dentry, int mode)
+static int squashfs_mkdir(struct inode * dir, struct dentry * dentry, umode_t mode)
 {
 	return squashfs_mknod(dir, dentry, mode | S_IFDIR, 0);
 }
 
-static int squashfs_create(struct inode *dir, struct dentry *dentry, int mode,
+static int squashfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 			   struct nameidata *nd)
 {
 	return squashfs_mknod(dir, dentry, mode | S_IFREG, 0);
