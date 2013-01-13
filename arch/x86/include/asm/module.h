@@ -35,6 +35,10 @@
 #define MODULE_PROC_FAMILY "K7 "
 #elif defined CONFIG_MK8
 #define MODULE_PROC_FAMILY "K8 "
+#elif defined CONFIG_MK9
+#define MODULE_PROC_FAMILY "K9 "
+#elif defined CONFIG_MK10
+#define MODULE_PROC_FAMILY "K10 "
 #elif defined CONFIG_MELAN
 #define MODULE_PROC_FAMILY "ELAN "
 #elif defined CONFIG_MCRUSOE
