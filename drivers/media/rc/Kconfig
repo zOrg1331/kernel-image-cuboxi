@@ -13,9 +13,9 @@ menuconfig RC_CORE
 
 if RC_CORE
 
-config LIRC
+config LIRC_DEV
 	tristate
-	default y
+	default n
 
 	---help---
 	   Enable this option to build the Linux Infrared Remote
@@ -111,7 +111,7 @@ config IR_MCE_KBD_DECODER
 config IR_LIRC_CODEC
 	tristate "Enable IR to LIRC bridge"
 	depends on RC_CORE
-	depends on LIRC
+	select LIRC_DEV
 	default y
 
 	---help---
