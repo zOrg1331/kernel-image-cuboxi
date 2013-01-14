@@ -603,6 +603,7 @@ struct device_dma_parameters {
  * 		segment limitations.
  * @dma_pools:	Dma pools (if dma'ble device).
  * @dma_mem:	Internal for coherent mem override.
+ * @cma_area:	Contiguous memory area for dma allocations.
  * @archdata:	For arch-specific additions.
  * @of_node:	Associated device tree node.
  * @devt:	For creating the sysfs "dev".
