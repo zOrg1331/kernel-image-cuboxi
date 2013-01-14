@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	3.7
 %define kernel_sublevel	.2
@@ -49,7 +49,7 @@ Patch0: %name-%version-%release.patch
 Patch1: nonpreemptive-kernel.patch
 Patch2: pae-kernel.patch
 
-%if %sub_flavour == "pae"
+%if "%sub_flavour" == "pae"
 ExclusiveArch: i586
 %else
 ExclusiveArch: i586 x86_64
@@ -314,11 +314,11 @@ tar -jxf %kernel_src/kernel-source-%kernel_base_version.tar.bz2
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
 
-%if %base_flavour == "std"
+%if "%base_flavour" == "std"
 %patch1 -p1
 %endif
 
-%if %sub_flavour == "pae"
+%if "%sub_flavour" == "pae"
 %patch2 -p1
 %endif
 
@@ -590,6 +590,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jan 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1.1
+- changelog entries for std-def and std-pae added (hackaround)
+
 * Mon Jan 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1
 - std-def, std-pae and un-def from one tree via specsubst
 - 3.7.2
@@ -601,8 +604,15 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Fri Dec 28 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.1-alt2
 - make sha256 module on i586
 
+* Thu Dec 20 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.6.11-alt1
+- 3.6.11 (closes: 28138)
+- Build using std-def config with config diff from 3.5.7.
+
 * Tue Dec 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.1-alt1
 - 3.7.1
+
+* Tue Dec 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.6.11-alt1
+- 3.6.11
 
 * Tue Dec 11 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.0-alt1
 - 3.7 release
