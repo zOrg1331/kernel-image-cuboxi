@@ -1832,7 +1832,7 @@ EXPORT_SYMBOL(printk_hash);
 /**
  * printk_dev_hash - print a kernel message include a hash over the message
  * @prefix: message prefix including the ".%06x" for the hash
- * @dev: device this printk is all about
+ * @driver_name: driver this printk is all about
  * @fmt: format string
  */
 asmlinkage int printk_dev_hash(const char *prefix, const char *driver_name,
