@@ -38,7 +38,9 @@
 #include <linux/errno.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#ifdef CONFIG_MCA_LEGACY
 #include <linux/mca-legacy.h>
+#endif
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
