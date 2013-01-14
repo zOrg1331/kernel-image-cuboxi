@@ -121,7 +121,7 @@ static inline int hsi_register_board_info(struct hsi_board_info const *info,
  * @device: Driver model representation of the device
  * @tx_cfg: HSI TX configuration
  * @rx_cfg: HSI RX configuration
- * @e_handler: Callback for handling port events (RX Wake High/Low)
+ * @ehandler: Callback for handling port events (RX Wake High/Low)
  * @pclaimed: Keeps tracks if the clients claimed its associated HSI port
  * @nb: Notifier block for port events
  */
@@ -129,7 +129,6 @@ struct hsi_client {
 	struct device		device;
 	struct hsi_config	tx_cfg;
 	struct hsi_config	rx_cfg;
-	/* private: */
 	void			(*ehandler)(struct hsi_client *, unsigned long);
 	unsigned int		pclaimed:1;
 	struct notifier_block	nb;
