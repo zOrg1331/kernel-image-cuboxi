@@ -987,6 +987,11 @@ config SYSCTL_SYSCALL
 
 	  If unsure say N here.
 
+config SCHED_SYSCTL
+	bool "Sysctl scheduler support"
+	default n
+	select SYSCTL
+
 config KALLSYMS
 	 bool "Load all symbols for debugging/ksymoops" if EXPERT
 	 default y
