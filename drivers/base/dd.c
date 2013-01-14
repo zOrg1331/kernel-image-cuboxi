@@ -54,6 +54,7 @@ static struct workqueue_struct *deferred_wq;
 
 /**
  * deferred_probe_work_func() - Retry probing devices in the active list.
+ * @work: Work structure used for scheduling the execution of this function.
  */
 static void deferred_probe_work_func(struct work_struct *work)
 {
