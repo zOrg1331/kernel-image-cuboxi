@@ -3064,9 +3064,6 @@ static void ext4_end_io_dio(struct kiocb *iocb, loff_t offset,
 {
 	struct inode *inode = iocb->ki_filp->f_path.dentry->d_inode;
         ext4_io_end_t *io_end = iocb->private;
-	struct workqueue_struct *wq;
-	unsigned long flags;
-	struct ext4_inode_info *ei;
 
 	/* if not async direct IO or dio with 0 bytes write, just return */
 	if (!io_end || !size)
@@ -3095,24 +3092,14 @@ out:
 		io_end->iocb = iocb;
 		io_end->result = ret;
 	}
-	wq = EXT4_SB(io_end->inode->i_sb)->dio_unwritten_wq;
 
-	/* Add the io_end to per-inode completed aio dio list*/
-	ei = EXT4_I(io_end->inode);
-	spin_lock_irqsave(&ei->i_completed_io_lock, flags);
-	list_add_tail(&io_end->list, &ei->i_completed_io_list);
-	spin_unlock_irqrestore(&ei->i_completed_io_lock, flags);
-
-	/* queue the work to convert unwritten extents to written */
-	queue_work(wq, &io_end->work);
+	ext4_add_complete_io(io_end);
 }
 
 static void ext4_end_io_buffer_write(struct buffer_head *bh, int uptodate)
 {
 	ext4_io_end_t *io_end = bh->b_private;
-	struct workqueue_struct *wq;
 	struct inode *inode;
-	unsigned long flags;
 
 	if (!test_clear_buffer_uninit(bh) || !io_end)
 		goto out;
@@ -3131,15 +3118,7 @@ static void ext4_end_io_buffer_write(struct buffer_head *bh, int uptodate)
 	 */
 	inode = io_end->inode;
 	ext4_set_io_unwritten_flag(inode, io_end);
-
-	/* Add the io_end to per-inode completed io list*/
-	spin_lock_irqsave(&EXT4_I(inode)->i_completed_io_lock, flags);
-	list_add_tail(&io_end->list, &EXT4_I(inode)->i_completed_io_list);
-	spin_unlock_irqrestore(&EXT4_I(inode)->i_completed_io_lock, flags);
-
-	wq = EXT4_SB(inode->i_sb)->dio_unwritten_wq;
-	/* queue the work to convert unwritten extents to written */
-	queue_work(wq, &io_end->work);
+	ext4_add_complete_io(io_end);
 out:
 	bh->b_private = NULL;
 	bh->b_end_io = NULL;
@@ -3227,7 +3206,7 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 		 * hook to the iocb.
  		 */
 		iocb->private = NULL;
-		EXT4_I(inode)->cur_aio_dio = NULL;
+		ext4_inode_aio_set(inode, NULL);
 		if (!is_sync_kiocb(iocb)) {
 			ext4_io_end_t *io_end =
 				ext4_init_io_end(inode, GFP_NOFS);
@@ -3242,7 +3221,7 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 			 * is a unwritten extents needs to be converted
 			 * when IO is completed.
 			 */
-			EXT4_I(inode)->cur_aio_dio = iocb->private;
+			ext4_inode_aio_set(inode, io_end);
 		}
 
 		ret = __blockdev_direct_IO(rw, iocb, inode,
@@ -3253,7 +3232,7 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 					 NULL,
 					 DIO_LOCKING);
 		if (iocb->private)
-			EXT4_I(inode)->cur_aio_dio = NULL;
+			ext4_inode_aio_set(inode, NULL);
 		/*
 		 * The io_end structure takes a reference to the inode,
 		 * that structure needs to be destroyed and the
@@ -4442,7 +4421,6 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 	}
 
 	if (attr->ia_valid & ATTR_SIZE) {
-		inode_dio_wait(inode);
 
 		if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))) {
 			struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
@@ -4491,8 +4469,17 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 	}
 
 	if (attr->ia_valid & ATTR_SIZE) {
-		if (attr->ia_size != i_size_read(inode))
+		if (attr->ia_size != i_size_read(inode)) {
 			truncate_setsize(inode, attr->ia_size);
+			/* Inode size will be reduced, wait for dio in flight.
+			 * Temporarily disable dioread_nolock to prevent
+			 * livelock. */
+			if (orphan) {
+				ext4_inode_block_unlocked_dio(inode);
+				inode_dio_wait(inode);
+				ext4_inode_resume_unlocked_dio(inode);
+			}
+		}
 		ext4_truncate(inode);
 	}
 
@@ -4878,6 +4865,10 @@ int ext4_change_inode_journal_flag(struct inode *inode, int val)
 			return err;
 	}
 
+	/* Wait for all existing dio workers */
+	ext4_inode_block_unlocked_dio(inode);
+	inode_dio_wait(inode);
+
 	jbd2_journal_lock_updates(journal);
 
 	/*
@@ -4897,6 +4888,7 @@ int ext4_change_inode_journal_flag(struct inode *inode, int val)
 	ext4_set_aops(inode);
 
 	jbd2_journal_unlock_updates(journal);
+	ext4_inode_resume_unlocked_dio(inode);
 
 	/* Finally we can mark the inode as dirty. */
 

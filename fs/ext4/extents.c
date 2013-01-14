@@ -2512,7 +2512,7 @@ static int ext4_ext_remove_space(struct inode *inode, ext4_lblk_t start,
 	struct ext4_ext_path *path = NULL;
 	ext4_fsblk_t partial_cluster = 0;
 	handle_t *handle;
-	int i = 0, err;
+	int i = 0, err = 0;
 
 	ext_debug("truncate since %u to %u\n", start, end);
 
@@ -2544,12 +2544,16 @@ again:
 			return PTR_ERR(path);
 		}
 		depth = ext_depth(inode);
+		/* Leaf not may not exist only if inode has no blocks at all */
 		ex = path[depth].p_ext;
 		if (!ex) {
-			ext4_ext_drop_refs(path);
-			kfree(path);
-			path = NULL;
-			goto cont;
+			if (depth) {
+				EXT4_ERROR_INODE(inode,
+						 "path[%d].p_hdr == NULL",
+						 depth);
+				err = -EIO;
+			}
+			goto out;
 		}
 
 		ee_block = le32_to_cpu(ex->ee_block);
@@ -2581,8 +2585,6 @@ again:
 				goto out;
 		}
 	}
-cont:
-
 	/*
 	 * We start scanning from right side, freeing all the blocks
 	 * after i_size and walking into the tree depth-wise.
@@ -3572,7 +3574,7 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 {
 	int ret = 0;
 	int err = 0;
-	ext4_io_end_t *io = EXT4_I(inode)->cur_aio_dio;
+	ext4_io_end_t *io = ext4_inode_aio(inode);
 
 	ext_debug("ext4_ext_handle_uninitialized_extents: inode %lu, logical "
 		  "block %llu, max_blocks %u, flags %x, allocated %u\n",
@@ -3587,6 +3589,8 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 	if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 		ret = ext4_split_unwritten_extents(handle, inode, map,
 						   path, flags);
+		if (ret <= 0)
+			goto out;
 		/*
 		 * Flag the inode(non aio case) or end_io struct (aio case)
 		 * that this IO needs to conversion to written when IO is
@@ -3830,8 +3834,9 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	unsigned int allocated = 0, offset = 0;
 	unsigned int allocated_clusters = 0;
 	struct ext4_allocation_request ar;
-	ext4_io_end_t *io = EXT4_I(inode)->cur_aio_dio;
+	ext4_io_end_t *io = ext4_inode_aio(inode);
 	ext4_lblk_t cluster_offset;
+	int set_unwritten = 0;
 
 	ext_debug("blocks %u/%u requested for inode %lu\n",
 		  map->m_lblk, map->m_len, inode->i_ino);
@@ -4054,13 +4059,8 @@ got_allocated_blocks:
 		 * For non asycn direct IO case, flag the inode state
 		 * that we need to perform conversion when IO is done.
 		 */
-		if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
-			if (io)
-				ext4_set_io_unwritten_flag(inode, io);
-			else
-				ext4_set_inode_state(inode,
-						     EXT4_STATE_DIO_UNWRITTEN);
-		}
+		if ((flags & EXT4_GET_BLOCKS_PRE_IO))
+			set_unwritten = 1;
 		if (ext4_should_dioread_nolock(inode))
 			map->m_flags |= EXT4_MAP_UNINIT;
 	}
@@ -4072,6 +4072,15 @@ got_allocated_blocks:
 	if (!err)
 		err = ext4_ext_insert_extent(handle, inode, path,
 					     &newex, flags);
+
+	if (!err && set_unwritten) {
+		if (io)
+			ext4_set_io_unwritten_flag(inode, io);
+		else
+			ext4_set_inode_state(inode,
+					     EXT4_STATE_DIO_UNWRITTEN);
+	}
+
 	if (err && free_on_err) {
 		int fb_flags = flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE ?
 			EXT4_FREE_BLOCKS_NO_QUOT_UPDATE : 0;
@@ -4213,7 +4222,7 @@ void ext4_ext_truncate(struct inode *inode)
 	 * finish any pending end_io work so we won't run the risk of
 	 * converting any truncated blocks to initialized later
 	 */
-	ext4_flush_completed_IO(inode);
+	ext4_flush_unwritten_io(inode);
 
 	/*
 	 * probably first extent we're gonna free will be last in block
@@ -4373,6 +4382,9 @@ long ext4_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	 */
 	if (len <= EXT_UNINIT_MAX_LEN << blkbits)
 		flags |= EXT4_GET_BLOCKS_NO_NORMALIZE;
+
+	/* Prevent race condition between unwritten */
+	ext4_flush_unwritten_io(inode);
 retry:
 	while (ret >= 0 && ret < max_blocks) {
 		map.m_lblk = map.m_lblk + ret;
@@ -4740,9 +4752,32 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 	int is_secrm;
 	int credits, err = 0;
 
+	/*
+	 * Write out all dirty pages to avoid race conditions
+	 * Then release them.
+	 */
+	if (mapping->nrpages && mapping_tagged(mapping, PAGECACHE_TAG_DIRTY)) {
+		err = filemap_write_and_wait_range(mapping,
+			offset, offset + length - 1);
+
+		if (err)
+			return err;
+	}
+
+	mutex_lock(&inode->i_mutex);
+	/* It's not possible punch hole on append only file */
+	if (IS_APPEND(inode) || IS_IMMUTABLE(inode)) {
+		err = -EPERM;
+		goto out_mutex;
+	}
+	if (IS_SWAPFILE(inode)) {
+		err = -ETXTBSY;
+		goto out_mutex;
+	}
+
 	/* No need to punch hole beyond i_size */
 	if (offset >= inode->i_size)
-		return 0;
+		goto out_mutex;
 
 	/*
 	 * If the hole extends beyond i_size, set the hole
@@ -4760,26 +4795,18 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 	first_page_offset = first_page << PAGE_CACHE_SHIFT;
 	last_page_offset = last_page << PAGE_CACHE_SHIFT;
 
-	/*
-	 * Write out all dirty pages to avoid race conditions
-	 * Then release them.
-	 */
-	if (mapping->nrpages && mapping_tagged(mapping, PAGECACHE_TAG_DIRTY)) {
-		err = filemap_write_and_wait_range(mapping,
-			offset, offset + length - 1);
-
-		if (err)
-			return err;
-	}
-
 	/* Now release the pages */
 	if (last_page_offset > first_page_offset) {
 		truncate_inode_pages_range(mapping, first_page_offset,
 					   last_page_offset-1);
 	}
 
-	/* finish any pending end_io work */
-	ext4_flush_completed_IO(inode);
+	/* Wait all existing dio workers, newcomers will block on i_mutex */
+	ext4_inode_block_unlocked_dio(inode);
+	err = ext4_flush_unwritten_io(inode);
+	if (err)
+		goto out_dio;
+	inode_dio_wait(inode);
 
 	first_block = (offset + sb->s_blocksize - 1) >>
 		EXT4_BLOCK_SIZE_BITS(sb);
@@ -4797,8 +4824,10 @@ int ext4_ext_punch_hole(struct file *file, loff_t offset, loff_t length)
 
 	credits = ext4_writepage_trans_blocks(inode);
 	handle = ext4_journal_start(inode, credits);
-	if (IS_ERR(handle))
-		return PTR_ERR(handle);
+	if (IS_ERR(handle)) {
+		err = PTR_ERR(handle);
+		goto out_dio;
+	}
 
 	err = ext4_orphan_add(handle, inode);
 	if (err)
@@ -4898,6 +4927,10 @@ out:
 	}
 #endif
 
+out_dio:
+	ext4_inode_resume_unlocked_dio(inode);
+out_mutex:
+	mutex_unlock(&inode->i_mutex);
 	return err;
 }
 
