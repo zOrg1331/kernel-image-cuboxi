@@ -3,7 +3,7 @@
 #
 menuconfig LIRC_STAGING
 	bool "Linux Infrared Remote Control IR receiver/transmitter drivers"
-	depends on LIRC
+	select LIRC_DEV
 	help
 	  Say Y here, and all supported Linux Infrared Remote Control IR and
 	  RF receiver and transmitter drivers will be displayed. When paired
