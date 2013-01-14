@@ -128,13 +128,6 @@ crc32_body(u32 crc, unsigned char const *buf, size_t len, const u32 (*tab)[256])
 }
 #endif
 
-/**
- * crc32_le() - Calculate bitwise little-endian Ethernet AUTODIN II CRC32
- * @crc: seed value for computation.  ~0 for Ethernet, sometimes 0 for
- *	other uses, or the previous crc32 value if computing incrementally.
- * @p: pointer to buffer over which CRC is run
- * @len: length of buffer @p
- */
 static inline u32 __pure crc32_le_generic(u32 crc, unsigned char const *p,
 					  size_t len, const u32 (*tab)[256],
 					  u32 polynomial)
@@ -175,6 +168,13 @@ static inline u32 __pure crc32_le_generic(u32 crc, unsigned char const *p,
 }
 
 #if CRC_LE_BITS == 1
+/**
+ * crc32_le() - Calculate bitwise little-endian Ethernet AUTODIN II CRC32
+ * @crc: seed value for computation.  ~0 for Ethernet, sometimes 0 for
+ *	other uses, or the previous crc32 value if computing incrementally.
+ * @p: pointer to buffer over which CRC is run
+ * @len: length of buffer @p
+ */
 u32 __pure crc32_le(u32 crc, unsigned char const *p, size_t len)
 {
 	return crc32_le_generic(crc, p, len, NULL, CRCPOLY_LE);
@@ -196,13 +196,6 @@ u32 __pure __crc32c_le(u32 crc, unsigned char const *p, size_t len)
 EXPORT_SYMBOL(crc32_le);
 EXPORT_SYMBOL(__crc32c_le);
 
-/**
- * crc32_be() - Calculate bitwise big-endian Ethernet AUTODIN II CRC32
- * @crc: seed value for computation.  ~0 for Ethernet, sometimes 0 for
- *	other uses, or the previous crc32 value if computing incrementally.
- * @p: pointer to buffer over which CRC is run
- * @len: length of buffer @p
- */
 static inline u32 __pure crc32_be_generic(u32 crc, unsigned char const *p,
 					  size_t len, const u32 (*tab)[256],
 					  u32 polynomial)
@@ -244,6 +237,13 @@ static inline u32 __pure crc32_be_generic(u32 crc, unsigned char const *p,
 }
 
 #if CRC_LE_BITS == 1
+/**
+ * crc32_be() - Calculate bitwise big-endian Ethernet AUTODIN II CRC32
+ * @crc: seed value for computation.  ~0 for Ethernet, sometimes 0 for
+ *	other uses, or the previous crc32 value if computing incrementally.
+ * @p: pointer to buffer over which CRC is run
+ * @len: length of buffer @p
+ */
 u32 __pure crc32_be(u32 crc, unsigned char const *p, size_t len)
 {
 	return crc32_be_generic(crc, p, len, NULL, CRCPOLY_BE);
