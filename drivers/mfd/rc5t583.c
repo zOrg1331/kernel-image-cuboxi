@@ -84,7 +84,7 @@ static int __rc5t583_set_ext_pwrreq1_control(struct device *dev,
 	int id, int ext_pwr, int slots)
 {
 	int ret;
-	uint8_t sleepseq_val;
+	uint8_t uninitialized_var(sleepseq_val);
 	unsigned int en_bit;
 	unsigned int slot_bit;
 
