@@ -1,7 +1,7 @@
 #
 # LIRC driver(s) configuration
 #
-menuconfig LIRC_STAGING
+menuconfig LIRC
 	bool "Linux Infrared Remote Control IR receiver/transmitter drivers"
 	depends on LIRC
 	help
@@ -10,7 +10,7 @@ menuconfig LIRC_STAGING
 	  with a remote control and the lirc daemon, the receiver drivers
 	  allow control of your Linux system via remote control.
 
-if LIRC_STAGING
+if LIRC
 
 config LIRC_BT829
         tristate "BT829 based hardware"

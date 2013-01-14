@@ -275,4 +275,7 @@ config IR_GPIO_CIR
 	   To compile this driver as a module, choose M here: the module will
 	   be called gpio-ir-recv.
 
+# Keep LIRC at the end, as it has sub-menus
+source "drivers/media/rc/lirc/Kconfig"
+
 endif #RC_CORE
