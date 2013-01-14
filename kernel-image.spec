@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.1
+Release: alt1.2
 epoch:1 
 %define kernel_base_version	3.7
 %define kernel_sublevel	.2
@@ -23,7 +23,11 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define kgcc_version	4.7
 
 # Enable/disable SGML docs formatting
+%if "%sub_flavour" == "def"
 %def_enable docs
+%else
+%def_disable docs
+%endif
 
 #Remove oss
 %def_disable oss
@@ -590,6 +594,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jan 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1.2
+- conditional docs building
+
 * Mon Jan 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1.1
 - changelog entries for std-def and std-pae added (hackaround)
 
