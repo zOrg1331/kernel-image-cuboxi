@@ -331,7 +331,7 @@ static struct {
                          "DE422",\
                          ""}
 
-static char* __initdata depca_signature[] = DEPCA_SIGNATURE;
+static char* __devinitdata depca_signature[] = DEPCA_SIGNATURE;
 
 enum depca_type {
 	DEPCA, de100, de101, de200, de201, de202, de210, de212, de422, unknown
@@ -541,9 +541,9 @@ static void SetMulticastFilter(struct net_device *dev);
 static int load_packet(struct net_device *dev, struct sk_buff *skb);
 static void depca_dbg_open(struct net_device *dev);
 
-static u_char de1xx_irq[] __initdata = { 2, 3, 4, 5, 7, 9, 0 };
-static u_char de2xx_irq[] __initdata = { 5, 9, 10, 11, 15, 0 };
-static u_char de422_irq[] __initdata = { 5, 9, 10, 11, 0 };
+static u_char de1xx_irq[] __devinitdata = { 2, 3, 4, 5, 7, 9, 0 };
+static u_char de2xx_irq[] __devinitdata = { 5, 9, 10, 11, 15, 0 };
+static u_char de422_irq[] __devinitdata = { 5, 9, 10, 11, 0 };
 static u_char *depca_irq;
 
 static int irq;
@@ -580,7 +580,7 @@ static const struct net_device_ops depca_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
-static int __init depca_hw_init (struct net_device *dev, struct device *device)
+static int __devinit depca_hw_init (struct net_device *dev, struct device *device)
 {
 	struct depca_private *lp;
 	int i, j, offset, netRAM, mem_len, status = 0;
@@ -1297,7 +1297,7 @@ static void SetMulticastFilter(struct net_device *dev)
 	}
 }
 
-static int __init depca_common_init (u_long ioaddr, struct net_device **devp)
+static int __devinit depca_common_init (u_long ioaddr, struct net_device **devp)
 {
 	int status = 0;
 
@@ -1328,7 +1328,7 @@ static int __init depca_common_init (u_long ioaddr, struct net_device **devp)
 /*
 ** Microchannel bus I/O device probe
 */
-static int __init depca_mca_probe(struct device *device)
+static int __devinit depca_mca_probe(struct device *device)
 {
 	unsigned char pos[2];
 	unsigned char where;
@@ -1492,7 +1492,7 @@ static void __init depca_platform_probe (void)
 	}
 }
 
-static enum depca_type __init depca_shmem_probe (ulong *mem_start)
+static enum depca_type __devinit depca_shmem_probe (ulong *mem_start)
 {
 	u_long mem_base[] = DEPCA_RAM_BASE_ADDRESSES;
 	enum depca_type adapter = unknown;
@@ -1553,7 +1553,7 @@ static int __devinit depca_isa_probe (struct platform_device *device)
 */
 
 #ifdef CONFIG_EISA
-static int __init depca_eisa_probe (struct device *device)
+static int __devinit depca_eisa_probe (struct device *device)
 {
 	enum depca_type adapter = unknown;
 	struct eisa_device *edev;
@@ -1624,7 +1624,7 @@ static int __devexit depca_device_remove (struct device *device)
 ** and Boot (readb) ROM. This will also give us a clue to the network RAM
 ** base address.
 */
-static int __init DepcaSignature(char *name, u_long base_addr)
+static int __devinit DepcaSignature(char *name, u_long base_addr)
 {
 	u_int i, j, k;
 	void __iomem *ptr;
@@ -1746,7 +1746,7 @@ static int __init DevicePresent(u_long ioaddr)
 ** reason: access the upper half of the PROM with x=0; access the lower half
 ** with x=1.
 */
-static int __init get_hw_addr(struct net_device *dev)
+static int __devinit get_hw_addr(struct net_device *dev)
 {
 	u_long ioaddr = dev->base_addr;
 	struct depca_private *lp = netdev_priv(dev);
