@@ -799,8 +799,7 @@ struct file *nameidata_to_filp(struct nameidata *nd)
 	/* Has the filesystem initialised the file for us? */
 	if (filp->f_path.dentry == NULL) {
 		path_get(&nd->path);
-		filp = __dentry_open(nd->path.dentry, nd->path.mnt, filp,
-				     NULL, cred);
+		filp = vfs_open(nd->path.dentry, nd->path.mnt, filp, cred);
 	}
 	return filp;
 }
@@ -829,9 +828,29 @@ struct file *dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags,
 	}
 
 	f->f_flags = flags;
-	return __dentry_open(dentry, mnt, f, NULL, cred);
+	return vfs_open(dentry, mnt, f, cred);
 }
 EXPORT_SYMBOL(dentry_open);
+
+/**
+ * vfs_open - open the file at the given path
+ * @path: path to open
+ * @filp: newly allocated file with f_flag initialized
+ * @cred: credentials to use
+ *
+ * Open the file.  If successful, the returned file will have acquired
+ * an additional reference for path.
+ */
+struct file *vfs_open(struct dentry *dentry, struct vfsmount *mnt,
+		      struct file *filp, const struct cred *cred)
+{
+	struct inode *inode = dentry->d_inode;
+
+	return inode->i_op->dentry_open
+	       ? inode->i_op->dentry_open(dentry, filp, cred)
+	       : __dentry_open(dentry, mnt, filp, NULL, cred);
+}
+EXPORT_SYMBOL(vfs_open);
 
 static void __put_unused_fd(struct files_struct *files, unsigned int fd)
 {

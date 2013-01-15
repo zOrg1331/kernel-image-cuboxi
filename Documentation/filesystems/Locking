@@ -21,6 +21,7 @@ prototypes:
 	char *(*d_dname)((struct dentry *dentry, char *buffer, int buflen);
 	struct vfsmount *(*d_automount)(struct path *path);
 	int (*d_manage)(struct dentry *, bool);
+	int (*dentry_open)(struct dentry *, struct file *, const struct cred *);
 
 locking rules:
 		rename_lock	->d_lock	may block	rcu-walk
@@ -89,6 +90,7 @@ listxattr:	no
 removexattr:	yes
 truncate_range:	yes
 fiemap:		no
+dentry_open:	no
 	Additionally, ->rmdir(), ->unlink() and ->rename() have ->i_mutex on
 victim.
 	cross-directory ->rename() has (per-superblock) ->s_vfs_rename_sem.
