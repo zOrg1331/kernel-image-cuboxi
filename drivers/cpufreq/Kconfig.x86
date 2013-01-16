@@ -172,6 +172,7 @@ config X86_SPEEDSTEP_SMI
 
 config X86_P4_CLOCKMOD
 	tristate "Intel Pentium 4 clock modulation"
+	depends on CPU_SUP_INTEL && !MCORE2 && !MATOM && !MCOREI7
 	select CPU_FREQ_TABLE
 	help
 	  This adds the CPUFreq driver for Intel Pentium 4 / XEON
