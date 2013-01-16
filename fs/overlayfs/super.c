@@ -358,20 +358,15 @@ out:
 }
 
 struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
-			  unsigned int flags)
+			  struct nameidata *nd)
 {
-	int err = ovl_do_lookup(dentry);
-
-	if (err)
-		return ERR_PTR(err);
-
-	return NULL;
+	return ERR_PTR(ovl_do_lookup(dentry));
 }
 
 struct file *ovl_path_open(struct path *path, int flags)
 {
 	path_get(path);
-	return dentry_open(path, flags, current_cred());
+	return dentry_open(path->dentry, path->mnt, flags, current_cred());
 }
 
 static void ovl_put_super(struct super_block *sb)
