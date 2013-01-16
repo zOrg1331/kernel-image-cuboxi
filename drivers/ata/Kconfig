@@ -564,6 +564,7 @@ config PATA_NS87415
 
 config PATA_OLDPIIX
 	tristate "Intel PATA old PIIX support"
+	depends on X86_32
 	depends on PCI
 	help
 	  This option enables support for early PIIX PATA support.
