@@ -40,6 +40,7 @@
 /* A few user-configurable values.
    These may be modified when a driver module is loaded. */
 static int debug = 0;
+static int max_interrupt_work = 0;
 #define RHINE_MSG_DEFAULT \
         (0x0000)
 
@@ -127,9 +128,11 @@ MODULE_AUTHOR("Donald Becker <becker@scyld.com>");
 MODULE_DESCRIPTION("VIA Rhine PCI Fast Ethernet driver");
 MODULE_LICENSE("GPL");
 
+module_param(max_interrupt_work, int, 0);
 module_param(debug, int, 0);
 module_param(rx_copybreak, int, 0);
 module_param(avoid_D3, bool, 0);
+MODULE_PARM_DESC(max_interrupt_work, "Unused, for compatibility only");
 MODULE_PARM_DESC(debug, "VIA Rhine debug message flags");
 MODULE_PARM_DESC(rx_copybreak, "VIA Rhine copy breakpoint for copy-only-tiny-frames");
 MODULE_PARM_DESC(avoid_D3, "Avoid power state D3 (work-around for broken BIOSes)");
