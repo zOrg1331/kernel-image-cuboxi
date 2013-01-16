@@ -1,0 +1,56 @@
+extmoddir = $(wildcard external/$@-*)
+
+ifdef INSTALL_MOD_PATH
+
+INSTALL = install
+MOD_INSTALL = $(INSTALL) -p -m 0644
+DIR_INSTALL = $(INSTALL) -d -m 0755
+STRIP = strip
+
+GPU_MODDIR = gpu
+MISC_MODDIR = misc
+nvidia_MODDIR = $(GPU_MODDIR)
+fglrx_MODDIR = $(GPU_MODDIR)
+netatop_MODDIR = net
+kvm_MODDIR = kernel/arch/x86/kvm
+drbd_MODDIR = kernel/drivers/block/drbd
+vboxhost_MODDIR = $(MISC_MODDIR)
+vboxguest_MODDIR = $(MISC_MODDIR)
+
+vboxguest vboxhost kvm drbd nvidia fglrx netatop:
+	$(DIR_INSTALL) $(DESTDIR)$(INSTALL_MOD_PATH)/$($@_MODDIR)
+	echo "%dir $(INSTALL_MOD_PATH)/$($@_MODDIR)" > external/$@.rpmmodlist
+	find $(extmoddir) -type f -name '*.ko' | \
+	while read m; do \
+		echo "$(INSTALL_MOD_PATH)/$($@_MODDIR)/$$(basename $$m)" >> external/$@.rpmmodlist; \
+		$(MOD_INSTALL) $$m $(DESTDIR)$(INSTALL_MOD_PATH)/$($@_MODDIR)/; \
+	done
+ifdef INSTALL_MOD_STRIP
+	$(STRIP) $(INSTALL_MOD_STRIP) $(DESTDIR)$(INSTALL_MOD_PATH)/$($@_MODDIR)/*.ko
+endif
+
+else
+
+submake = $(MAKE) SUBDIRS=$(extmoddir)
+
+vboxguest vboxhost:
+	$(submake) modules
+
+kvm:
+	[ -e $(extmoddir)/config.mak ] || (cd $(extmoddir) && ./configure --kerneldir=$(CURDIR))
+	$(MAKE) -C $(extmoddir)
+
+fglrx:
+	$(submake) modules
+
+netatop:
+	$(submake) modules
+
+drbd:
+	$(MAKE) -C $(extmoddir)/$@ KDIR=$(CURDIR) kbuild
+
+nvidia:
+	[ -e $(extmoddir)/Makefile ] || ln -s Makefile.kbuild $(extmoddir)/Makefile
+	rm -f $(extmoddir)/conftest.h
+	$(submake) SYSSRC=$(CURDIR) modules
+endif
