@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.25
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -158,10 +158,11 @@ Patch0019: linux-%kernel_branch.20-fix-arch-s390.patch
 Patch0020: linux-%kernel_branch.20-fix-arch-x86.patch
 Patch0021: linux-%kernel_branch.20-fix-arch-x86--apic.patch
 Patch0022: linux-%kernel_branch.20-fix-arch-x86--apm.patch
-Patch0023: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
-Patch0024: linux-%kernel_branch.20-fix-arch-x86--hpet.patch
-Patch0025: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
-Patch0026: linux-%kernel_branch.25-fix-arch-x86--mcheck.patch
+Patch0023: linux-%kernel_branch.25-fix-arch-x86-cpu.patch
+Patch0024: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
+Patch0025: linux-%kernel_branch.20-fix-arch-x86--hpet.patch
+Patch0026: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
+Patch0027: linux-%kernel_branch.25-fix-arch-x86--mcheck.patch
 
 Patch0030: linux-%kernel_branch.20-fix-block.patch
 Patch0031: linux-%kernel_branch.20-fix-block-partitions--efi.patch
@@ -291,6 +292,7 @@ Patch0334: linux-%kernel_branch.20-fix-drivers-net-ethernet-dec-tulip--tulip.pat
 Patch0335: linux-%kernel_branch.25-fix-drivers-net-ethernet-fujitsu--at1700.patch
 Patch0336: linux-%kernel_branch.25-fix-drivers-net-ethernet-i825xx--znet.patch
 Patch0337: linux-%kernel_branch.20-fix-drivers-net-ethernet-ibm--ehea.patch
+Patch0338: linux-%kernel_branch.25-fix-drivers-net-ethernet-via--via-rhine.patch
 
 Patch0341: linux-%kernel_branch.20-fix-drivers-net-hyperv.patch
 
@@ -1159,6 +1161,7 @@ cd linux-%version
 %patch0024 -p1
 %patch0025 -p1
 %patch0026 -p1
+%patch0027 -p1
 
 %patch0030 -p1
 %patch0031 -p1
@@ -1313,6 +1316,7 @@ cd linux-%version
 %patch0335 -p1
 %patch0336 -p1
 %patch0337 -p1
+%patch0338 -p1
 
 # fix-drivers-net-hyperv-*
 %patch0341 -p1
@@ -2348,5 +2352,10 @@ done)
 
 
 %changelog
+* Thu Jan 17 2013 Led <led@altlinux.ru> 3.4.25-alt2
+- added:
+  + fix-arch-x86-cpu
+  + fix-drivers-net-ethernet-via--via-rhine
+
 * Wed Jan 16 2013 Led <led@altlinux.ru> 3.4.25-alt1
 - initial build based on kernel-image-led-ws-3.0.57-alt11 spec

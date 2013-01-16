@@ -226,3 +226,5 @@ eb2e4d2ca56738dc7b5633e44502cfe711344b78 fix-drivers-idle--i7300_idle
 8d0f867317ead50c5097163b0c1cf068620dbe92 fix-drivers-platform--intel_menlow
 5971bce01ab00297ff869629e1442036ca86929a fix-drivers-platform--intel_oaktrail
 d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
+ddfb7da1606aef0874e109435803b60dd544d8b7 fix-arch-x86-cpu
+8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
