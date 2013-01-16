@@ -641,15 +641,18 @@ static void rhine_chip_reset(struct net_device *dev)
 #ifdef USE_MMIO
 static void enable_mmio(long pioaddr, u32 quirks)
 {
-	int n;
+	enum register_offsets conf;
+	unsigned mask;
+
 	if (quirks & rqRhineI) {
+		conf = ConfigA;
 		/* More recent docs say that this bit is reserved ... */
-		n = inb(pioaddr + ConfigA) | 0x20;
-		outb(n, pioaddr + ConfigA);
+		mask = 0x20;
 	} else {
-		n = inb(pioaddr + ConfigD) | 0x80;
-		outb(n, pioaddr + ConfigD);
+		conf = ConfigD;
+		mask = 0x80;
 	}
+	outb(inb(pioaddr + conf) | mask, pioaddr + conf);
 }
 #endif
 
