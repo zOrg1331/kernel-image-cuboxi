@@ -1232,17 +1232,19 @@ static void free_tbufs(struct net_device* dev)
 
 static void rhine_check_media(struct net_device *dev, unsigned int init_media)
 {
+	u32 i;
 	struct rhine_private *rp = netdev_priv(dev);
 	void __iomem *ioaddr = rp->base;
 
 	mii_check_media(&rp->mii_if, netif_msg_link(rp), init_media);
 
+	ioaddr += ChipCmd1;
+	i = ioread8(ioaddr);
 	if (rp->mii_if.full_duplex)
-	    iowrite8(ioread8(ioaddr + ChipCmd1) | Cmd1FDuplex,
-		   ioaddr + ChipCmd1);
+		i |= Cmd1FDuplex;
 	else
-	    iowrite8(ioread8(ioaddr + ChipCmd1) & ~Cmd1FDuplex,
-		   ioaddr + ChipCmd1);
+		i &= ~Cmd1FDuplex;
+	iowrite8(i, ioaddr);
 
 	netif_info(rp, link, dev, "force_media %d, carrier %d\n",
 		   rp->mii_if.force_media, netif_carrier_ok(dev));
