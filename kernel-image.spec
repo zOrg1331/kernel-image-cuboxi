@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.25
-Release: alt2
+Version: 3.4.26
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 25
+%define kernel_stable_version 26
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -46,6 +46,7 @@ Release: alt2
 %def_enable docs
 %def_enable htmldocs
 %def_enable man
+%def_disable compat
 %def_enable x32
 %def_disable debugfs
 %def_disable numa
@@ -281,7 +282,6 @@ Patch0302: linux-%kernel_branch.25-fix-drivers-mfd--rc5t583-irq.patch
 Patch0303: linux-%kernel_branch.25-fix-drivers-mfd--wm8994-core.patch
 
 Patch0311: linux-%kernel_branch.20-fix-drivers-misc--pti.patch
-Patch0312: linux-%kernel_branch.20-fix-drivers-misc--zcache.patch
 
 Patch0321: linux-%kernel_branch.20-fix-drivers-mmc-host--mmci.patch
 
@@ -346,16 +346,15 @@ Patch0460: linux-%kernel_branch.20-fix-init.patch
 Patch0470: linux-%kernel_branch.20-fix-kernel.patch
 
 Patch0481: linux-%kernel_branch.25-fix-lib--crc32.patch
-Patch0482: linux-%kernel_branch.20-fix-lib--zsmalloc.patch
 
 Patch0490: linux-%kernel_branch.20-fix-mm.patch
 Patch0491: linux-%kernel_branch.20-fix-mm--compaction.patch
-Patch0492: linux-%kernel_branch.20-fix-mm--huge_memory.patch
-Patch0493: linux-%kernel_branch.20-fix-mm--memcontrol.patch
-Patch0494: linux-%kernel_branch.20-fix-mm--memory-failure.patch
-Patch0495: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0496: linux-%kernel_branch.20-fix-mm--mmu.patch
-Patch0497: linux-%kernel_branch.20-fix-mm--swap.patch
+Patch0492: linux-%kernel_branch.20-fix-mm--memcontrol.patch
+Patch0493: linux-%kernel_branch.20-fix-mm--memory-failure.patch
+Patch0494: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
+Patch0495: linux-%kernel_branch.20-fix-mm--swap.patch
+Patch0496: linux-%kernel_branch.20-fix-mm--zcache.patch
+Patch0497: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0501: linux-%kernel_branch.20-fix-net-bridge--bridge.patch
 Patch0502: linux-%kernel_branch.25-fix-net-mac80211.patch
@@ -384,6 +383,7 @@ Patch1011: linux-%kernel_branch-feat-block--bfq-iosched.patch
 Patch1012: linux-%kernel_branch-feat-block--sio-iosched.patch
 
 Patch1021: linux-%kernel_branch.20-feat-drivers-block--cloop.patch
+Patch1022: linux-%kernel_branch.25-feat-drivers-block--zram.patch
 
 Patch1031: linux-%kernel_branch.20-feat-drivers-char--crasher.patch
 
@@ -409,6 +409,7 @@ Patch1112: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
 Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 
 Patch1131: linux-%kernel_branch.20-feat-drivers-video--bootsplash.patch
+Patch1132: linux-%kernel_branch.25-feat-drivers-video--xgifb.patch
 
 Patch1141: linux-%kernel_branch.25-feat-fs--lnfs.patch
 Patch1142: linux-%kernel_branch.20-feat-fs--richacl.patch
@@ -418,7 +419,7 @@ Patch1145: linux-%kernel_branch.20-feat-fs-binfmt_elf--fatelf.patch
 Patch1146: linux-%kernel_branch.20-feat-fs-dazukofs.patch
 Patch1147: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
 Patch1148: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
-Patch1149: linux-%kernel_branch.20-feat-fs-ext4--richacl.patch
+Patch1149: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
 Patch1150: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
 Patch1151: linux-%kernel_branch.20-feat-fs-f2fs.patch
 Patch1152: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
@@ -430,12 +431,16 @@ Patch1157: linux-%kernel_branch.20-feat-fs-reiser4.patch
 Patch1158: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
 Patch1159: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
-Patch1161: linux-%kernel_branch.23-feat-kernel-power-tuxonice.patch
+Patch1161: linux-%kernel_branch.24-feat-kernel-power-tuxonice.patch
+Patch1162: linux-%kernel_branch.24-feat-kernel-power-tuxonice--frontswap.patch
 
 Patch1171: linux-%kernel_branch.20-feat-lib--unwind.patch
 
-Patch1181: linux-%kernel_branch.14-feat-mm--uksm.patch
+Patch1181: linux-%kernel_branch.25-feat-mm--frontswap.patch
 Patch1182: linux-%kernel_branch.20-feat-mm--slqb.patch
+Patch1183: linux-%kernel_branch.14-feat-mm--uksm.patch
+Patch1184: linux-%kernel_branch.20-feat-mm--zcache.patch
+Patch1185: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
 
 Patch1191: linux-%kernel_branch.20-feat-net--netatop.patch
 Patch1192: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
@@ -1304,7 +1309,6 @@ cd linux-%version
 
 # fix-drivers-misc--*
 %patch0311 -p1
-%patch0312 -p1
 
 %patch0321 -p1
 
@@ -1384,7 +1388,6 @@ cd linux-%version
 
 # fix-lib--*
 %patch0481 -p1
-%patch0482 -p1
 
 # fix-mm*
 %patch0490 -p1
@@ -1425,7 +1428,9 @@ cd linux-%version
 %patch1011 -p1
 %patch1012 -p1
 
+# feat-drivers-block--*
 %patch1021 -p1
+%patch1022 -p1
 
 %patch1031 -p1
 
@@ -1450,7 +1455,9 @@ cd linux-%version
 
 %patch1121 -p1
 
+# feat-drivers-video--*
 %patch1131 -p1
+%patch1132 -p1
 
 %{?_with_lnfs:%patch1141 -p1}
 %patch1142 -p1
@@ -1472,13 +1479,18 @@ cd linux-%version
 %patch1158 -p1
 %patch1159 -p1
 
+# feat-kernel-power-*
 %patch1161 -p1
+%patch1162 -p1
 
 %patch1171 -p1
 
 # feat-mm--*
 %patch1181 -p1
 %patch1182 -p1
+%patch1183 -p1
+%patch1184 -p1
+%patch1185 -p1
 
 # feat-net--*
 %patch1191 -p1
@@ -1579,6 +1591,7 @@ config_disable \
 config_disable \
 	%{?_disable_smp:SMP} \
 	%{?_disable_modversions:MODVERSIONS} \
+	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT} \
 	%{?_disable_numa:NUMA} \
 	%{?_disable_video:FB DISPLAY_SUPPORT VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
@@ -2352,6 +2365,27 @@ done)
 
 
 %changelog
+* Fri Jan 18 2013 Led <led@altlinux.ru> 3.4.26-alt1
+- 3.4.26
+- removed:
+  + fix-drivers-misc--zcache
+  + fix-lib--zsmalloc
+  + fix-mm--huge_memory
+  + fix-mm--mmu
+- updated:
+  + feat-fs-ext4--richacl
+  + feat-kernel-power-tuxonice
+- added:
+  + fix-mm--zcache
+  + fix-mm--zsmalloc
+  + feat-drivers-block--zram
+  + feat-drivers-video--xgifb
+  + feat-kernel-power-tuxonice--frontswap
+  + feat-mm--frontswap
+  + feat-mm--zcache
+  + feat-mm--zsmalloc
+- disabled compat (turn off some COMPAT options in .config)
+
 * Thu Jan 17 2013 Led <led@altlinux.ru> 3.4.25-alt2
 - added:
   + fix-arch-x86-cpu
