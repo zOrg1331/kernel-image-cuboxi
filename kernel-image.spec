@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.2
+Release: alt1
 epoch:1 
 %define kernel_base_version	3.7
 %define kernel_sublevel	.2
@@ -594,6 +594,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Jan 17 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1
+- 3.7.3
+
 * Mon Jan 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.2-alt1.2
 - conditional docs building
 
