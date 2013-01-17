@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M60P.1
 epoch:1 
 %define kernel_base_version	3.7
 %define kernel_sublevel	.3
@@ -594,6 +594,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Jan 17 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.3-alt0.M60P.1
+- backport to p6
+
 * Thu Jan 17 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.3-alt1
 - 3.7.3
 
@@ -617,6 +620,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Thu Dec 20 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.6.11-alt1
 - 3.6.11 (closes: 28138)
 - Build using std-def config with config diff from 3.5.7.
+
+* Wed Dec 19 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.11-alt0.M60P.1
+- 3.6.11
 
 * Tue Dec 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.1-alt1
 - 3.7.1
