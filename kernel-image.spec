@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.26
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2365,6 +2365,12 @@ done)
 
 
 %changelog
+* Fri Jan 18 2013 Led <led@altlinux.ru> 3.4.26-alt2
+- updated:
+  + fix-mm--zcache
+  + feat-mm--zcache
+- disable CRYPTO_FIPS
+
 * Fri Jan 18 2013 Led <led@altlinux.ru> 3.4.26-alt1
 - 3.4.26
 - removed:
