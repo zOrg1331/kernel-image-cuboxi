@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.7
+%define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
