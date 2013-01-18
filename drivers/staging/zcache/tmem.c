@@ -673,20 +673,20 @@ out:
  * there was a page to replace, else returns -1.
  */
 int tmem_replace(struct tmem_pool *pool, struct tmem_oid *oidp,
-			uint32_t index, void *new_pampd)
+		 uint32_t index, void *new_pampd)
 {
 	struct tmem_obj *obj;
-	int ret = -1;
-	struct tmem_hashbucket *hb;
+	int ret;
+	struct tmem_hashbucket *hb = &pool->hashbucket[tmem_oid_hash(oidp)];
 
-	hb = &pool->hashbucket[tmem_oid_hash(oidp)];
 	spin_lock(&hb->lock);
 	obj = tmem_obj_find(hb, oidp);
-	if (obj == NULL)
-		goto out;
-	new_pampd = tmem_pampd_replace_in_obj(obj, index, new_pampd);
-	ret = (*tmem_pamops.replace_in_obj)(new_pampd, obj);
-out:
+	if (obj != NULL) {
+		new_pampd = tmem_pampd_replace_in_obj(obj, index, new_pampd);
+		ret = (*tmem_pamops.replace_in_obj)(new_pampd, obj);
+	} else
+		ret = -1;
+
 	spin_unlock(&hb->lock);
 	return ret;
 }
