@@ -459,25 +459,25 @@ out:
 
 /* recursively walk the objnode_tree destroying pampds and objnodes */
 static void tmem_objnode_node_destroy(struct tmem_obj *obj,
-					struct tmem_objnode *objnode,
-					unsigned int ht)
+				      struct tmem_objnode *objnode,
+				      unsigned int ht)
 {
-	int i;
+	if (ht) {
+		int i;
 
-	if (ht == 0)
-		return;
-	for (i = 0; i < OBJNODE_TREE_MAP_SIZE; i++) {
-		if (objnode->slots[i]) {
-			if (ht == 1) {
-				obj->pampd_count--;
-				(*tmem_pamops.free)(objnode->slots[i],
-						obj->pool, NULL, 0);
+		for (i = 0; i < OBJNODE_TREE_MAP_SIZE; i++) {
+			if (objnode->slots[i]) {
+				if (ht == 1) {
+					obj->pampd_count--;
+					(*tmem_pamops.free)(objnode->slots[i],
+							obj->pool, NULL, 0);
+					objnode->slots[i] = NULL;
+					continue;
+				}
+				tmem_objnode_node_destroy(obj, objnode->slots[i], ht-1);
+				tmem_objnode_free(objnode->slots[i]);
 				objnode->slots[i] = NULL;
-				continue;
 			}
-			tmem_objnode_node_destroy(obj, objnode->slots[i], ht-1);
-			tmem_objnode_free(objnode->slots[i]);
-			objnode->slots[i] = NULL;
 		}
 	}
 }
