@@ -484,19 +484,19 @@ static void tmem_objnode_node_destroy(struct tmem_obj *obj,
 
 static void tmem_pampd_destroy_all_in_obj(struct tmem_obj *obj)
 {
-	if (obj->objnode_tree_root == NULL)
-		return;
-	if (obj->objnode_tree_height == 0) {
-		obj->pampd_count--;
-		(*tmem_pamops.free)(obj->objnode_tree_root, obj->pool, NULL, 0);
-	} else {
-		tmem_objnode_node_destroy(obj, obj->objnode_tree_root,
-					obj->objnode_tree_height);
-		tmem_objnode_free(obj->objnode_tree_root);
-		obj->objnode_tree_height = 0;
+	if (obj->objnode_tree_root != NULL) {
+		if (obj->objnode_tree_height == 0) {
+			obj->pampd_count--;
+			(*tmem_pamops.free)(obj->objnode_tree_root, obj->pool, NULL, 0);
+		} else {
+			tmem_objnode_node_destroy(obj, obj->objnode_tree_root,
+						obj->objnode_tree_height);
+			tmem_objnode_free(obj->objnode_tree_root);
+			obj->objnode_tree_height = 0;
+		}
+		obj->objnode_tree_root = NULL;
+		(*tmem_pamops.free_obj)(obj->pool, obj);
 	}
-	obj->objnode_tree_root = NULL;
-	(*tmem_pamops.free_obj)(obj->pool, obj);
 }
 
 /*
