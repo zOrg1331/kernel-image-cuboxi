@@ -1975,31 +1975,21 @@ __setup("zcache=", enable_zcache_compressor);
 
 static int __init zcache_comp_init(void)
 {
-	int ret = 0;
-
 	/* check crypto algorithm */
-	if (*zcache_comp_name != '\0') {
-		ret = crypto_has_comp(zcache_comp_name, 0, 0);
-		if (!ret)
-			pr_info("zcache: %s not supported\n",
-					zcache_comp_name);
-	}
-	if (!ret)
+	if (!*zcache_comp_name)
 		strcpy(zcache_comp_name, "lzo");
-	ret = crypto_has_comp(zcache_comp_name, 0, 0);
-	if (!ret) {
-		ret = 1;
-		goto out;
+	if (!crypto_has_comp(zcache_comp_name, 0, 0)) {
+		pr_info("zcache: %s not supported\n", zcache_comp_name);
+		return 1;
 	}
 	pr_info("zcache: using %s compressor\n", zcache_comp_name);
 
 	/* alloc percpu transforms */
-	ret = 0;
 	zcache_comp_pcpu_tfms = alloc_percpu(struct crypto_comp *);
 	if (!zcache_comp_pcpu_tfms)
-		ret = 1;
-out:
-	return ret;
+		return 1;
+
+	return 0;
 }
 
 static int __init zcache_init(void)
@@ -2073,4 +2063,4 @@ out:
 	return ret;
 }
 
-module_init(zcache_init)
+late_initcall(zcache_init);
