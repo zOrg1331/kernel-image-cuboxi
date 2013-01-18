@@ -241,14 +241,14 @@ static struct tmem_objnode *tmem_objnode_alloc(struct tmem_obj *obj)
 	BUG_ON(obj->pool == NULL);
 	ASSERT_SENTINEL(obj->pool, POOL);
 	objnode = (*tmem_hostops.objnode_alloc)(obj->pool);
-	if (unlikely(objnode == NULL))
-		goto out;
-	objnode->obj = obj;
-	SET_SENTINEL(objnode, OBJNODE);
-	memset(&objnode->slots, 0, sizeof(objnode->slots));
-	objnode->slots_in_use = 0;
-	obj->objnode_count++;
-out:
+	if (likely(objnode != NULL)) {
+		objnode->obj = obj;
+		SET_SENTINEL(objnode, OBJNODE);
+		memset(&objnode->slots, 0, sizeof(objnode->slots));
+		objnode->slots_in_use = 0;
+		obj->objnode_count++;
+	}
+
 	return objnode;
 }
 
