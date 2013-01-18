@@ -71,23 +71,24 @@ void tmem_register_pamops(struct tmem_pamops *m)
  * The following routines manage tmem_objs.  When any tmem_obj is accessed,
  * the hashbucket lock must be held.
  */
-
-static struct tmem_obj
-*__tmem_obj_find(struct tmem_hashbucket*hb, struct tmem_oid *oidp,
-		 struct rb_node **parent, struct rb_node ***link)
+static struct tmem_obj *__tmem_obj_find(struct tmem_hashbucket*hb,
+					struct tmem_oid *oidp,
+					struct rb_node **parent,
+					struct rb_node ***link)
 {
-	struct rb_node *_parent = NULL, **rbnode;
-	struct tmem_obj *obj = NULL;
+	struct rb_node *_parent = NULL;
+	struct rb_node **rbnode = &hb->obj_rb_root.rb_node;
 
-	rbnode = &hb->obj_rb_root.rb_node;
 	while (*rbnode) {
+		struct tmem_obj *obj;
+
 		BUG_ON(RB_EMPTY_NODE(*rbnode));
 		_parent = *rbnode;
 		obj = rb_entry(*rbnode, struct tmem_obj,
 			       rb_tree_node);
 		switch (tmem_oid_compare(oidp, &obj->oid)) {
 		case 0: /* equal */
-			goto out;
+			return obj;
 		case -1:
 			rbnode = &(*rbnode)->rb_left;
 			break;
@@ -102,11 +103,8 @@ static struct tmem_obj
 	if (link)
 		*link = rbnode;
 
-	obj = NULL;
-out:
-	return obj;
+	return NULL;
 }
-
 
 /* searches for object==oid in pool, returns locked object if found */
 static struct tmem_obj *tmem_obj_find(struct tmem_hashbucket *hb,
