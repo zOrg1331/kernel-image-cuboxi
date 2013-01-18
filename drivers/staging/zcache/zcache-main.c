@@ -2074,4 +2074,4 @@ out:
 	return ret;
 }
 
-module_init(zcache_init)
+late_initcall(zcache_init);
