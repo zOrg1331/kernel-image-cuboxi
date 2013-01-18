@@ -222,15 +222,14 @@ static unsigned long tmem_objnode_tree_h2max[OBJNODE_TREE_MAX_PATH + 1];
 
 static void tmem_objnode_tree_init(void)
 {
-	unsigned int ht, tmp;
+	unsigned int ht;
 
 	for (ht = 0; ht < ARRAY_SIZE(tmem_objnode_tree_h2max); ht++) {
-		tmp = ht * OBJNODE_TREE_MAP_SHIFT;
-		if (tmp >= OBJNODE_TREE_INDEX_BITS)
-			tmem_objnode_tree_h2max[ht] = ~0UL;
-		else
-			tmem_objnode_tree_h2max[ht] =
-			    (~0UL >> (OBJNODE_TREE_INDEX_BITS - tmp - 1)) >> 1;
+		unsigned int tmp = ht * OBJNODE_TREE_MAP_SHIFT;
+
+		tmem_objnode_tree_h2max[ht] = tmp >= OBJNODE_TREE_INDEX_BITS
+		                              ? ~0UL
+		                              : (~0UL >> (OBJNODE_TREE_INDEX_BITS - tmp - 1)) >> 1;
 	}
 }
 
