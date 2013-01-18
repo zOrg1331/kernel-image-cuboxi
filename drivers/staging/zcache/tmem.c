@@ -519,14 +519,13 @@ static void tmem_pampd_destroy_all_in_obj(struct tmem_obj *obj)
  * always flushes for simplicity.
  */
 int tmem_put(struct tmem_pool *pool, struct tmem_oid *oidp, uint32_t index,
-		char *data, size_t size, bool raw, bool ephemeral)
+	     char *data, size_t size, bool raw, bool ephemeral)
 {
 	struct tmem_obj *obj = NULL, *objfound = NULL, *objnew = NULL;
 	void *pampd = NULL, *pampd_del = NULL;
 	int ret = -ENOMEM;
-	struct tmem_hashbucket *hb;
+	struct tmem_hashbucket *hb = &pool->hashbucket[tmem_oid_hash(oidp)];
 
-	hb = &pool->hashbucket[tmem_oid_hash(oidp)];
 	spin_lock(&hb->lock);
 	obj = objfound = tmem_obj_find(hb, oidp);
 	if (obj != NULL) {
@@ -557,13 +556,11 @@ int tmem_put(struct tmem_pool *pool, struct tmem_oid *oidp, uint32_t index,
 	if (unlikely(pampd == NULL))
 		goto free;
 	ret = tmem_pampd_add_to_obj(obj, index, pampd);
-	if (unlikely(ret == -ENOMEM))
-		/* may have partially built objnode tree ("stump") */
-		goto delete_and_free;
-	goto out;
+	if (likely(ret != -ENOMEM))
+		goto out;
+	/* may have partially built objnode tree ("stump") */
 
-delete_and_free:
-	(void)tmem_pampd_delete_from_obj(obj, index);
+	tmem_pampd_delete_from_obj(obj, index);
 free:
 	if (pampd)
 		(*tmem_pamops.free)(pampd, pool, NULL, 0);
