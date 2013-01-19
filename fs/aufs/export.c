@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -379,7 +379,8 @@ static struct dentry *au_lkup_by_ino(struct path *path, ino_t ino,
 	dentry = ERR_PTR(err);
 	if (unlikely(err))
 		goto out_name;
-	dentry = ERR_PTR(-ENOENT);
+	/* instead of ENOENT */
+	dentry = ERR_PTR(-ESTALE);
 	if (!arg.found)
 		goto out_name;
 

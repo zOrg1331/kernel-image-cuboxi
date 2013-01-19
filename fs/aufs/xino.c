@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 Junjiro R. Okajima
+ * Copyright (C) 2005-2013 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -316,7 +316,8 @@ static void xino_do_trunc(void *_args)
 
 	ii_read_unlock(dir);
 	if (unlikely(err))
-		pr_warn("err b%d, (%d)\n", bindex, err);
+		pr_warn("err b%d, upper %llu, (%d)\n",
+			bindex, (unsigned long long)br->br_xino_upper, err);
 	atomic_dec(&br->br_xino_running);
 	atomic_dec(&br->br_count);
 	si_write_unlock(sb);
