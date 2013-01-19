@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.26
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -119,7 +119,7 @@ Release: alt2
 
 %Extra_modules vboxhost 4.1.24
 #Extra_modules vboxguest 4.1.22
-%Extra_modules fglrx 8.97.100.3
+#Extra_modules fglrx 8.97.100.3
 #Extra_modules netatop 0.1.1
 
 %define strip_mod_opts --strip-unneeded -R .comment
@@ -356,7 +356,7 @@ Patch0495: linux-%kernel_branch.20-fix-mm--swap.patch
 Patch0496: linux-%kernel_branch.20-fix-mm--zcache.patch
 Patch0497: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
-Patch0501: linux-%kernel_branch.20-fix-net-bridge--bridge.patch
+Patch0501: linux-%kernel_branch.25-fix-net-bridge--bridge.patch
 Patch0502: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0503: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
 Patch0504: linux-%kernel_branch.20-fix-net-sunrpc.patch
@@ -2365,6 +2365,13 @@ done)
 
 
 %changelog
+* Sat Jan 19 2013 Led <led@altlinux.ru> 3.4.26-alt3
+- updated:
+  + fix-net-bridge--bridge
+  + feat-fs-aufs
+- removed external modules:
+  + fglrx
+
 * Fri Jan 18 2013 Led <led@altlinux.ru> 3.4.26-alt2
 - updated:
   + fix-mm--zcache

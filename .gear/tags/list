@@ -71,7 +71,7 @@ ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
 17422550ef2500f8ce750bc9e15697198b0204e0 fix-mm--memory_hotplug
 d436755c70bb42cfc4355da5434630d5ed8b1554 fix-mm--swap
-1d30f663b1218996b7a8e8dee74e08978062b3fb fix-net-bridge--bridge
+289c32a6d68de83e57b5d1f0a927e75470ed42ea fix-net-bridge--bridge
 454aa942f4fdb12d6ba881ccc2d6eea34c2f0120 fix-net-netfilter--nf_conntrack_ftp
 7bf4ae9595207799c75060cc4b9a24c06fffb6b9 fix-net-sunrpc
 3eddd20373839fa65b7bc37ece814c25ad903371 fix-scripts--kconfig
@@ -103,7 +103,7 @@ d8f019162a42a07a00511dc3119bb74b81beae42 feat-drivers-video--bootsplash
 d64946abb5a197aa5880e525369c21cbf4f54b93 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
-64154362ac0ea42ed0e37c9ca71b9e3130c6f416 feat-fs-aufs
+d18b675e01abb508a7b39f357a8411609c7c50dd feat-fs-aufs
 a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 26db2a4d3617346871dddb25859ef1678daf640f feat-fs-dazukofs
 2e3cc49c92f1af921b8a6a00937795aa12d0d1fc feat-fs-ext2--secrm
