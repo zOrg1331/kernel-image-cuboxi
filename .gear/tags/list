@@ -233,3 +233,4 @@ f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
 13314afe87b830ced34eb006ef6e51630ba49e17 v3.4.24
 eecb8267ed8f1fa5affa6233964d677ef824af52 feat-kernel-power-tuxonice--frontswap
+e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib

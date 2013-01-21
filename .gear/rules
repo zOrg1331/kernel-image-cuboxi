@@ -157,6 +157,7 @@ diff: v3.4.20:.				fix-fs-proc:. name=linux-3.4.20-fix-fs-proc.patch
 diff: v3.4.20:.				fix-fs-reiserfs:. name=linux-3.4.20-fix-fs-reiserfs.patch
 diff: v3.4.20:.				fix-init:. name=linux-3.4.20-fix-init.patch
 diff: v3.4.20:.				fix-kernel:. name=linux-3.4.20-fix-kernel.patch
+diff: v3.4.25:.				fix-lib:. name=linux-3.4.25-fix-lib.patch
 diff: v3.4.25:.				fix-lib--crc32:. name=linux-3.4.25-fix-lib--crc32.patch
 diff: v3.4.20:.				fix-mm:. name=linux-3.4.20-fix-mm.patch
 diff: v3.4.20:.				fix-mm--compaction:. name=linux-3.4.20-fix-mm--compaction.patch

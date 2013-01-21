@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.26
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -345,6 +345,7 @@ Patch0460: linux-%kernel_branch.20-fix-init.patch
 
 Patch0470: linux-%kernel_branch.20-fix-kernel.patch
 
+Patch0480: linux-%kernel_branch.25-fix-lib.patch
 Patch0481: linux-%kernel_branch.25-fix-lib--crc32.patch
 
 Patch0490: linux-%kernel_branch.20-fix-mm.patch
@@ -520,6 +521,9 @@ ExclusiveArch: %x86_64 %ix86
 %ifarch core2
 %define kernel_cpu	CORE2
 %endif
+%ifarch corei7
+%define kernel_cpu	COREI7
+%endif
 %endif
 
 %ifarch %ix86
@@ -551,8 +555,14 @@ ExclusiveArch: %x86_64 %ix86
 %ifarch k10_32
 %define kernel_cpu	K10
 %endif
-%ifarch core2_32 atom
+%ifarch core2_32
 %define kernel_cpu	CORE2
+%endif
+%ifarch atom
+%define kernel_cpu	ATOM
+%endif
+%ifarch corei7_32
+%define kernel_cpu	COREI7
 %endif
 %endif
 
@@ -1386,7 +1396,8 @@ cd linux-%version
 # fix-kernel*
 %patch0470 -p1
 
-# fix-lib--*
+# fix-lib*
+%patch0480 -p1
 %patch0481 -p1
 
 # fix-mm*
@@ -1757,7 +1768,7 @@ make -f Makefile.external DESTDIR=%buildroot \
 %{?_enable_oprofile:install -m 0644 vmlinux %buildroot%modules_dir/}
 
 install -d -m 0755 %buildroot%kbuild_dir
-cp -a include %buildroot%kbuild_dir/
+cp -aL include %buildroot%kbuild_dir/
 find %buildroot%kbuild_dir/include/config -type f -empty -delete
 find %buildroot%kbuild_dir/include/config -type d -empty -delete
 for d in arch/%kernel_arch/include; do
@@ -2365,6 +2376,11 @@ done)
 
 
 %changelog
+* Mon Jan 21 2013 Led <led@altlinux.ru> 3.4.26-alt4
+- added:
+  + fix-lib
+- spec: support build for corei7 CPU
+
 * Sat Jan 19 2013 Led <led@altlinux.ru> 3.4.26-alt3
 - updated:
   + fix-net-bridge--bridge
