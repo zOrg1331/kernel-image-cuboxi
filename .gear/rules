@@ -202,6 +202,7 @@ diff: v3.4.20:.				feat-drivers-platform--tp_smapi:. name=linux-3.4.20-feat-driv
 diff: v3.4.20:.				feat-drivers-usb-usbip:. name=linux-3.4.20-feat-drivers-usb-usbip.patch
 diff: v3.4.20:.				feat-drivers-video--bootsplash:. name=linux-3.4.20-feat-drivers-video--bootsplash.patch
 diff: v3.4.25:.				feat-drivers-video--xgifb:. name=linux-3.4.25-feat-drivers-video--xgifb.patch
+diff: v3.4:.				feat-firmware-rtl_nic:. name=linux-3.4-feat-firmware-rtl_nic.patch
 diff: v3.4.25:.				feat-fs--lnfs:. name=linux-3.4.25-feat-fs--lnfs.patch
 diff: v3.4.20:.				feat-fs--richacl:. name=linux-3.4.20-feat-fs--richacl.patch
 diff: v3.4.18:.				feat-fs--secrm:. name=linux-3.4.18-feat-fs--secrm.patch

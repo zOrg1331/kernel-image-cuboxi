@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.26
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -412,39 +412,41 @@ Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 Patch1131: linux-%kernel_branch.20-feat-drivers-video--bootsplash.patch
 Patch1132: linux-%kernel_branch.25-feat-drivers-video--xgifb.patch
 
-Patch1141: linux-%kernel_branch.25-feat-fs--lnfs.patch
-Patch1142: linux-%kernel_branch.20-feat-fs--richacl.patch
-Patch1143: linux-%kernel_branch.18-feat-fs--secrm.patch
-Patch1144: linux-%kernel_branch-feat-fs-aufs.patch
-Patch1145: linux-%kernel_branch.20-feat-fs-binfmt_elf--fatelf.patch
-Patch1146: linux-%kernel_branch.20-feat-fs-dazukofs.patch
-Patch1147: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
-Patch1148: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
-Patch1149: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
-Patch1150: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
-Patch1151: linux-%kernel_branch.20-feat-fs-f2fs.patch
-Patch1152: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
-Patch1153: linux-%kernel_branch.20-feat-fs-hfs.patch
-Patch1154: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
-Patch1155: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
-Patch1156: linux-%kernel_branch.25-feat-fs-overlayfs.patch
-Patch1157: linux-%kernel_branch.20-feat-fs-reiser4.patch
-Patch1158: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
-Patch1159: linux-%kernel_branch.20-feat-fs-unionfs.patch
+Patch1141: linux-%kernel_branch-feat-firmware-rtl_nic.patch
 
-Patch1161: linux-%kernel_branch.24-feat-kernel-power-tuxonice.patch
-Patch1162: linux-%kernel_branch.24-feat-kernel-power-tuxonice--frontswap.patch
+Patch1151: linux-%kernel_branch.25-feat-fs--lnfs.patch
+Patch1152: linux-%kernel_branch.20-feat-fs--richacl.patch
+Patch1153: linux-%kernel_branch.18-feat-fs--secrm.patch
+Patch1154: linux-%kernel_branch-feat-fs-aufs.patch
+Patch1155: linux-%kernel_branch.20-feat-fs-binfmt_elf--fatelf.patch
+Patch1156: linux-%kernel_branch.20-feat-fs-dazukofs.patch
+Patch1157: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
+Patch1158: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
+Patch1159: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
+Patch1160: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
+Patch1161: linux-%kernel_branch.20-feat-fs-f2fs.patch
+Patch1162: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
+Patch1163: linux-%kernel_branch.20-feat-fs-hfs.patch
+Patch1164: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
+Patch1165: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
+Patch1166: linux-%kernel_branch.25-feat-fs-overlayfs.patch
+Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
+Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
+Patch1169: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
-Patch1171: linux-%kernel_branch.20-feat-lib--unwind.patch
+Patch1171: linux-%kernel_branch.24-feat-kernel-power-tuxonice.patch
+Patch1172: linux-%kernel_branch.24-feat-kernel-power-tuxonice--frontswap.patch
 
-Patch1181: linux-%kernel_branch.25-feat-mm--frontswap.patch
-Patch1182: linux-%kernel_branch.20-feat-mm--slqb.patch
-Patch1183: linux-%kernel_branch.14-feat-mm--uksm.patch
-Patch1184: linux-%kernel_branch.20-feat-mm--zcache.patch
-Patch1185: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+Patch1181: linux-%kernel_branch.20-feat-lib--unwind.patch
 
-Patch1191: linux-%kernel_branch.20-feat-net--netatop.patch
-Patch1192: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
+Patch1191: linux-%kernel_branch.25-feat-mm--frontswap.patch
+Patch1192: linux-%kernel_branch.20-feat-mm--slqb.patch
+Patch1193: linux-%kernel_branch.14-feat-mm--uksm.patch
+Patch1194: linux-%kernel_branch.20-feat-mm--zcache.patch
+Patch1195: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+
+Patch1201: linux-%kernel_branch.20-feat-net--netatop.patch
+Patch1202: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
 
 
 ExclusiveOS: Linux
@@ -1470,17 +1472,11 @@ cd linux-%version
 %patch1131 -p1
 %patch1132 -p1
 
-%{?_with_lnfs:%patch1141 -p1}
-%patch1142 -p1
-%patch1143 -p1
-%patch1144 -p1
-%patch1145 -p1
-%patch1146 -p1
-%patch1147 -p1
-%patch1148 -p1
-%patch1149 -p1
-%patch1150 -p1
-%patch1151 -p1
+# feat-firmware-*
+%patch1141 -p1
+
+# feat-fs-*
+%{?_with_lnfs:%patch1151 -p1}
 %patch1152 -p1
 %patch1153 -p1
 %patch1154 -p1
@@ -1489,23 +1485,33 @@ cd linux-%version
 %patch1157 -p1
 %patch1158 -p1
 %patch1159 -p1
-
-# feat-kernel-power-*
+%patch1160 -p1
 %patch1161 -p1
 %patch1162 -p1
+%patch1163 -p1
+%patch1164 -p1
+%patch1165 -p1
+%patch1166 -p1
+%patch1167 -p1
+%patch1168 -p1
+%patch1169 -p1
 
+# feat-kernel-power-*
 %patch1171 -p1
+%patch1172 -p1
+
+%patch1181 -p1
 
 # feat-mm--*
-%patch1181 -p1
-%patch1182 -p1
-%patch1183 -p1
-%patch1184 -p1
-%patch1185 -p1
-
-# feat-net--*
 %patch1191 -p1
 %patch1192 -p1
+%patch1193 -p1
+%patch1194 -p1
+%patch1195 -p1
+
+# feat-net--*
+%patch1201 -p1
+%patch1202 -p1
 
 
 # get rid of unwanted files resulting from patch fuzz
@@ -1678,7 +1684,9 @@ config_enable \
 %ifarch k10
 config_disable SENSORS_K8TEMP
 %endif
-
+%ifarch corei7 nehalem
+config_disable CRYPTO_CRC32C
+%endif
 %ifarch i386 i486
 config_enable CRYPTO_TWOFISH=m CRYPTO_SALSA20=m
 %endif
@@ -2288,6 +2296,7 @@ done)
 %firmware_dir/mts_*
 %{?_enable_pcmcia:%firmware_dir/ositech}
 %firmware_dir/qlogic
+%firmware_dir/rtl_nic
 %firmware_dir/sun
 %firmware_dir/tehuti
 %firmware_dir/ti_*
@@ -2376,6 +2385,10 @@ done)
 
 
 %changelog
+* Mon Jan 21 2013 Led <led@altlinux.ru> 3.4.26-alt5
+- added:
+  + feat-firmware-rtl_nic
+
 * Mon Jan 21 2013 Led <led@altlinux.ru> 3.4.26-alt4
 - added:
   + fix-lib
