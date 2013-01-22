@@ -491,6 +491,8 @@ ExclusiveArch: %x86_64 %ix86
 
 %{?_disable_pci:%set_disable drm}
 
+%{?_disable_media:%set_disable lirc}
+
 %if_disabled sound
 %set_disable oss
 %set_disable alsa
@@ -742,18 +744,6 @@ package %name-%version-%release.
 %endif
 
 
-%if_enabled lirc
-%package -n kernel-modules-lirc-%flavour
-Summary: Linux Infrared Remote Control IR receiver/transmitter driver modules
-%kernel_modules_package_std_body lirc
-
-%description -n kernel-modules-lirc-%flavour
-This package contains Linux Infrared Remote Control IR
-receiver/transmitter driver modules for the kernel package
-%name-%version-%release.
-%endif
-
-
 %if_enabled usb_gadget
 %package -n kernel-modules-usb-gadget-%flavour
 Summary: Linux USB Gadget driver modules
@@ -916,6 +906,7 @@ These are DRM modules for your Linux system.
 %if_enabled media
 %package -n kernel-modules-media-%flavour
 Summary: Linux media driver modules
+Provides: kernel-modules-lirc-%flavour = %version-%release
 %kernel_modules_package_std_body media
 
 %description -n kernel-modules-media-%flavour
@@ -1916,7 +1907,7 @@ gen_rpmmodfile ipmi %buildroot%modules_dir/kernel/drivers/{acpi/acpi_ipmi,char/i
 for i in %{?_enable_ide:ide} %{?_enable_media:media} %{?_enable_mtd:mtd} %{?_enable_w1:w1}; do
 	gen_rpmmodfile $i %buildroot%modules_dir/kernel/drivers/$i
 done
-for i in %{?_enable_joystick:joystick} %{?_enable_lirc:lirc} %{?_enable_tablet:tablet} %{?_enable_touchscreen:touchscreen}; do
+for i in %{?_enable_joystick:joystick} %{?_enable_tablet:tablet} %{?_enable_touchscreen:touchscreen}; do
 	gen_rpmmodfile $i %buildroot%modules_dir/kernel/drivers/input/$i
 done
 %if "%sub_flavour" != "guest"
@@ -1954,8 +1945,6 @@ sed 's/^/%%exclude &/' *.rpmmodlist > exclude-drivers.rpmmodlist
 %{?_enable_tablet:%kernel_modules_package_post tablet}
 
 %{?_enable_touchscreen:%kernel_modules_package_post touchscreen}
-
-%{?_enable_lirc:%kernel_modules_package_post lirc}
 
 %{?_enable_usb_gadget:%kernel_modules_package_post usb-gadget}
 
@@ -2127,8 +2116,6 @@ done)
 %{?_enable_tablet:%kernel_modules_package_files tablet}
 
 %{?_enable_touchscreen:%kernel_modules_package_files touchscreen}
-
-%{?_enable_lirc:%kernel_modules_package_files lirc}
 
 %{?_enable_usb_gadget:%kernel_modules_package_files usb-gadget}
 
