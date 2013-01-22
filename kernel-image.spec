@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.26
-Release: alt5
+Version: 3.4.27
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 26
+%define kernel_stable_version 27
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -2385,6 +2385,9 @@ done)
 
 
 %changelog
+* Tue Jan 22 2013 Led <led@altlinux.ru> 3.4.27-alt1
+- 3.4.27
+
 * Mon Jan 21 2013 Led <led@altlinux.ru> 3.4.26-alt5
 - added:
   + feat-firmware-rtl_nic

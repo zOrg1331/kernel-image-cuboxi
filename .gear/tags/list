@@ -235,3 +235,4 @@ f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
 eecb8267ed8f1fa5affa6233964d677ef824af52 feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
 b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
+ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27
