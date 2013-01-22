@@ -3,7 +3,7 @@
 %define set_with() %{expand:%%force_with %{1}} %{expand:%%undefine _without_%{1}}
 %define set_without() %{expand:%%force_without %{1}} %{expand:%%undefine _with_%{1}}
 
-%define intel_64 nocona core2 corei7
+%define intel_64 nocona core2 corei7 nehalem
 %define intel_32 pentium pentiumpro pentium_mmx pentium2 pentium3 pentium_m pentium4 prescott atom
 %define amd_32 5x86 k5 k6 k6_2 k6_3 geode k7 athlon athlon_xp
 %define amd_64 opteron k8 k9 k10 barcelona phenom
@@ -523,7 +523,7 @@ ExclusiveArch: %x86_64 %ix86
 %ifarch core2
 %define kernel_cpu	CORE2
 %endif
-%ifarch corei7
+%ifarch corei7 nehalem
 %define kernel_cpu	COREI7
 %endif
 %endif
@@ -563,7 +563,7 @@ ExclusiveArch: %x86_64 %ix86
 %ifarch atom
 %define kernel_cpu	ATOM
 %endif
-%ifarch corei7_32
+%ifarch corei7_32 nehalem_32
 %define kernel_cpu	COREI7
 %endif
 %endif
