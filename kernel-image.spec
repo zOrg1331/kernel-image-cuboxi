@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.27
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -321,9 +321,10 @@ Patch0389: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patc
 Patch0390: linux-%kernel_branch.20-fix-drivers-scsi-ibmvscsi--ibmvscsic.patch
 Patch0391: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patch
 
-Patch0401: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
+Patch0401: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 
-Patch0411: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
+Patch0411: linux-%kernel_branch.27-fix-drivers-tty--pty.patch
+Patch0412: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
 
 Patch0421: linux-%kernel_branch.25-fix-drivers-usb-gadget--g_audio.patch
 
@@ -446,7 +447,8 @@ Patch1194: linux-%kernel_branch.20-feat-mm--zcache.patch
 Patch1195: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
 
 Patch1201: linux-%kernel_branch.20-feat-net--netatop.patch
-Patch1202: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
+Patch1202: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
+Patch1203: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
 
 
 ExclusiveOS: Linux
@@ -1362,6 +1364,7 @@ cd linux-%version
 
 # fix-drivers-tty-*
 %patch0411 -p1
+%patch0412 -p1
 
 # fix-drivers-usb-*
 %patch0421 -p1
@@ -1503,6 +1506,7 @@ cd linux-%version
 # feat-net--*
 %patch1201 -p1
 %patch1202 -p1
+%patch1203 -p1
 
 
 # get rid of unwanted files resulting from patch fuzz
@@ -2062,7 +2066,7 @@ done)
 %exclude %modules_dir/kernel/fs/ncpfs
 %exclude %modules_dir/kernel/fs/ocfs2
 %exclude %modules_dir/kernel/fs/omfs
-%exclude %modules_dir/kernel/fs/qnx4
+%exclude %modules_dir/kernel/fs/qnx?
 %exclude %modules_dir/kernel/fs/sysv
 %if_enabled mtd
 %exclude %modules_dir/kernel/fs/jffs2
@@ -2149,7 +2153,7 @@ done)
 %modules_dir/kernel/fs/ncpfs
 %modules_dir/kernel/fs/ocfs2
 %modules_dir/kernel/fs/omfs
-%modules_dir/kernel/fs/qnx4
+%modules_dir/kernel/fs/qnx?
 %modules_dir/kernel/fs/sysv
 %if_enabled mtd
 %modules_dir/kernel/fs/jffs2
@@ -2372,6 +2376,15 @@ done)
 
 
 %changelog
+* Wed Jan 23 2013 Led <led@altlinux.ru> 3.4.27-alt2
+- added:
+  + fix-drivers-tty--pty
+  + feat-net-ipv4-netfilter--ipt_NETFLOW
+- moved content of kernel-modules-lirc-* subpackage to kernel-modules-media-*
+  subpackage.
+- removed kernel-modules-lirc-* subpackage
+- moved qnx6 to kernel-modules-fs-extra-* subpackage
+
 * Tue Jan 22 2013 Led <led@altlinux.ru> 3.4.27-alt1
 - 3.4.27
 

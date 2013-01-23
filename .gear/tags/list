@@ -236,3 +236,5 @@ eecb8267ed8f1fa5affa6233964d677ef824af52 feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
 b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
 ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27
+102d3fe0b34c81f8405d717f4a5a76ddc21dbcb9 fix-drivers-tty--pty
+aa4d6f18e974adb965bfc77b2c1a23b34a29a3f5 feat-net-ipv4-netfilter--ipt_NETFLOW
