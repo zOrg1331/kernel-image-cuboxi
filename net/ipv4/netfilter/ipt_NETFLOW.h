@@ -172,10 +172,4 @@ struct ipt_netflow_stat {
 	u64 traf_out;			// traffic out of the memory
 };
 
-#ifndef list_first_entry
-#define list_first_entry(ptr, type, member) \
-	list_entry((ptr)->next, type, member)
 #endif
-
-#endif
-/* vim: set sw=8: */
