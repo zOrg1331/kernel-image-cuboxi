@@ -142,6 +142,13 @@ config IP_NF_TARGET_ULOG
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
+config IP_NF_TARGET_NETFLOW
+	tristate "NETFLOW target support"
+	default n
+	---help---
+	  Ipt-netflow is very fast and effective Netflow exporting module. Designed
+	  for router with heavy network load.
+
 # NAT + specific targets: nf_conntrack
 config NF_NAT
 	tristate "Full NAT"
