@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.27
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -285,14 +285,15 @@ Patch0311: linux-%kernel_branch.20-fix-drivers-misc--pti.patch
 
 Patch0321: linux-%kernel_branch.20-fix-drivers-mmc-host--mmci.patch
 
-Patch0331: linux-%kernel_branch.25-fix-drivers-net-ethernet-amd--depca.patch
-Patch0332: linux-%kernel_branch.25-fix-drivers-net-ethernet-amd--nmclan_cs.patch
-Patch0333: linux-%kernel_branch.25-fix-drivers-net-ethernet-dec--ewrk3.patch
-Patch0334: linux-%kernel_branch.20-fix-drivers-net-ethernet-dec-tulip--tulip.patch
-Patch0335: linux-%kernel_branch.25-fix-drivers-net-ethernet-fujitsu--at1700.patch
-Patch0336: linux-%kernel_branch.25-fix-drivers-net-ethernet-i825xx--znet.patch
-Patch0337: linux-%kernel_branch.20-fix-drivers-net-ethernet-ibm--ehea.patch
-Patch0338: linux-%kernel_branch.25-fix-drivers-net-ethernet-via--via-rhine.patch
+Patch0331: linux-%kernel_branch.27-fix-drivers-net-ethernet-alacritech--slicoss.patch
+Patch0332: linux-%kernel_branch.25-fix-drivers-net-ethernet-amd--depca.patch
+Patch0333: linux-%kernel_branch.25-fix-drivers-net-ethernet-amd--nmclan_cs.patch
+Patch0334: linux-%kernel_branch.25-fix-drivers-net-ethernet-dec--ewrk3.patch
+Patch0335: linux-%kernel_branch.20-fix-drivers-net-ethernet-dec-tulip--tulip.patch
+Patch0336: linux-%kernel_branch.25-fix-drivers-net-ethernet-fujitsu--at1700.patch
+Patch0337: linux-%kernel_branch.25-fix-drivers-net-ethernet-i825xx--znet.patch
+Patch0338: linux-%kernel_branch.20-fix-drivers-net-ethernet-ibm--ehea.patch
+Patch0339: linux-%kernel_branch.25-fix-drivers-net-ethernet-via--via-rhine.patch
 
 Patch0341: linux-%kernel_branch.20-fix-drivers-net-hyperv.patch
 
@@ -302,10 +303,11 @@ Patch0353: linux-%kernel_branch.20-fix-drivers-net-wireless-brcm80211--brcmsmac.
 Patch0354: linux-%kernel_branch.25-fix-drivers-net-wireless-ipw2x00--libipw.patch
 Patch0355: linux-%kernel_branch.20-fix-drivers-net-wireless-rt2x00--rt2800lib.patch
 
-Patch0361: linux-%kernel_branch.20-fix-drivers-platform--hdaps.patch
-Patch0362: linux-%kernel_branch.25-fix-drivers-platform--intel_ips.patch
-Patch0363: linux-%kernel_branch.25-fix-drivers-platform--intel_menlow.patch
-Patch0364: linux-%kernel_branch.25-fix-drivers-platform--intel_oaktrail.patch
+Patch0361: linux-%kernel_branch.27-fix-drivers-platform--asus_oled.patch
+Patch0362: linux-%kernel_branch.20-fix-drivers-platform--hdaps.patch
+Patch0363: linux-%kernel_branch.25-fix-drivers-platform--intel_ips.patch
+Patch0364: linux-%kernel_branch.25-fix-drivers-platform--intel_menlow.patch
+Patch0365: linux-%kernel_branch.25-fix-drivers-platform--intel_oaktrail.patch
 
 Patch0371: linux-%kernel_branch.25-fix-drivers-rtc--rtc-m41t80.patch
 
@@ -400,13 +402,17 @@ Patch1071: linux-%kernel_branch.20-feat-drivers-md--dm-raid45.patch
 Patch1081: linux-%kernel_branch.20-feat-drivers-media-rc-lirc.patch
 
 Patch1091: linux-%kernel_branch.20-feat-drivers-misc--rts_pstor.patch
-Patch1101: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8187se.patch
-Patch1102: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192e.patch
-Patch1103: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192u.patch
-Patch1104: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8712.patch
 
-Patch1111: linux-%kernel_branch.20-feat-drivers-platform--thinkpad_ec.patch
-Patch1112: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
+Patch1101: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech.patch
+Patch1102: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech--slicoss.patch
+Patch1103: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8187se.patch
+Patch1104: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192e.patch
+Patch1105: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192u.patch
+Patch1106: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8712.patch
+
+Patch1111: linux-%kernel_branch.27-feat-drivers-platform--asus_oled.patch
+Patch1112: linux-%kernel_branch.20-feat-drivers-platform--thinkpad_ec.patch
+Patch1113: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
 
 Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 
@@ -1326,6 +1332,7 @@ cd linux-%version
 %patch0336 -p1
 %patch0337 -p1
 %patch0338 -p1
+%patch0339 -p1
 
 # fix-drivers-net-hyperv-*
 %patch0341 -p1
@@ -1342,6 +1349,7 @@ cd linux-%version
 %patch0362 -p1
 %patch0363 -p1
 %patch0364 -p1
+%patch0365 -p1
 
 # fix-drivers-rtc--*
 %patch0371 -p1
@@ -1451,14 +1459,19 @@ cd linux-%version
 
 %patch1081 -p1
 
+# feat-drivers-net-*
 %patch1091 -p1
 %patch1101 -p1
 %patch1102 -p1
 %patch1103 -p1
 %patch1104 -p1
+%patch1105 -p1
+%patch1106 -p1
 
+# feat-drivers-platform--*
 %patch1111 -p1
 %patch1112 -p1
+%patch1113 -p1
 
 %patch1121 -p1
 
@@ -2376,6 +2389,14 @@ done)
 
 
 %changelog
+* Thu Jan 24 2013 Led <led@altlinux.ru> 3.4.27-alt3
+- added:
+  + fix-drivers-net-ethernet-alacritech--slicoss
+  + fix-drivers-platform--asus_oled
+  + feat-drivers-net-ethernet-alacritech
+  + feat-drivers-net-ethernet-alacritech--slicoss
+  + feat-drivers-platform--asus_oled
+
 * Wed Jan 23 2013 Led <led@altlinux.ru> 3.4.27-alt2
 - added:
   + fix-drivers-tty--pty

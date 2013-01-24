@@ -238,3 +238,8 @@ b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
 ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27
 102d3fe0b34c81f8405d717f4a5a76ddc21dbcb9 fix-drivers-tty--pty
 aa4d6f18e974adb965bfc77b2c1a23b34a29a3f5 feat-net-ipv4-netfilter--ipt_NETFLOW
+60b95c17490f82aba699d95394c2af72f7157088 fix-drivers-net-ethernet-alacritech--slicoss
+f28fcb75ff569b05d06f6929f218831b72f0928a fix-drivers-platform--asus_oled
+ff4dc1913f5bd02a86d2264ac22508fa399e3642 feat-drivers-net-ethernet-alacritech
+6ea2bd9af14bf3886e10b6c8facccd608d47594d feat-drivers-net-ethernet-alacritech--slicoss
+3a80c96c9dafaae53f187d60cefe7c5f9bdf2266 feat-drivers-platform--asus_oled
