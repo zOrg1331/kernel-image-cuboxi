@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	3.7
 %define kernel_sublevel	.4
@@ -150,7 +150,7 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-drm-nouveau-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Requires: kernel-modules-drm-%flavour-%krelease = %epoch:%version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
@@ -171,7 +171,7 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-drm-radeon-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Requires: kernel-modules-drm-%flavour-%krelease = %epoch:%version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
@@ -248,8 +248,8 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
-Requires: kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
+Requires: kernel-modules-drm-%flavour-%krelease = %epoch:%version-%release
+Requires: kernel-modules-v4l-%flavour-%krelease = %epoch:%version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
@@ -594,6 +594,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Jan 24 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.4-alt1.1
+- CONFIG_MMC_RICOH_MMC and CONFIG_FANOTIFY enabled
+- non strict dependences fixed
+
 * Tue Jan 22 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.4-alt1
 - 3.7.4
 
