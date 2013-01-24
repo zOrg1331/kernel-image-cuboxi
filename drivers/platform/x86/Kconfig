@@ -514,6 +514,8 @@ config ASUS_NB_WMI
 	  If you have an ACPI-WMI compatible Asus Notebook, say Y or M
 	  here.
 
+source "drivers/platform/x86/asus_oled/Kconfig"
+
 config EEEPC_WMI
 	tristate "Eee PC WMI Driver"
 	depends on ASUS_WMI
