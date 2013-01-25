@@ -278,7 +278,7 @@ static void tmem_objnode_free(struct tmem_objnode *objnode)
 static void **__tmem_pampd_lookup_in_obj(struct tmem_obj *obj, uint32_t index)
 {
 	unsigned int height, shift;
-	struct tmem_objnode **slot;
+	struct tmem_objnode **slot = NULL;
 
 	BUG_ON(obj == NULL);
 	ASSERT_SENTINEL(obj, OBJ);
@@ -287,19 +287,23 @@ static void **__tmem_pampd_lookup_in_obj(struct tmem_obj *obj, uint32_t index)
 
 	height = obj->objnode_tree_height;
 	if (index > tmem_objnode_tree_h2max[obj->objnode_tree_height])
-		return NULL;
-	if (height == 0 && obj->objnode_tree_root)
+		goto out;
+	if (height == 0 && obj->objnode_tree_root) {
 		slot = &obj->objnode_tree_root;
-	else {
-		shift = (height - 1) * OBJNODE_TREE_MAP_SHIFT;
-		for (slot = &obj->objnode_tree_root; height > 0 && *slot != NULL; height--) {
-			slot = (struct tmem_objnode **)
-				((*slot)->slots +
-				 ((index >> shift) & OBJNODE_TREE_MAP_MASK));
-			shift -= OBJNODE_TREE_MAP_SHIFT;
-		}
+		goto out;
 	}
-
+	shift = (height-1) * OBJNODE_TREE_MAP_SHIFT;
+	slot = &obj->objnode_tree_root;
+	while (height > 0) {
+		if (*slot == NULL)
+			goto out;
+		slot = (struct tmem_objnode **)
+			((*slot)->slots +
+			 ((index >> shift) & OBJNODE_TREE_MAP_MASK));
+		shift -= OBJNODE_TREE_MAP_SHIFT;
+		height--;
+	}
+out:
 	return slot != NULL ? (void **)slot : NULL;
 }
 
