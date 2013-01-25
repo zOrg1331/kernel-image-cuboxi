@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.27
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -915,6 +915,8 @@ These are DRM modules for your Linux system.
 %package -n kernel-modules-media-%flavour
 Summary: Linux media driver modules
 Provides: kernel-modules-lirc-%flavour = %version-%release
+# Needed for webcams
+Requires: kernel-modules-sound-ext-%flavour = %kversion-%release
 %kernel_modules_package_std_body media
 
 %description -n kernel-modules-media-%flavour
@@ -1041,26 +1043,10 @@ This package contains performance analysis tools for Linux
 %endif
 
 
-%package -n kernel-headers-asm-%flavour-%kernel_branch
-Summary: Header files (asm part) for the Linux kernel
-Group: Development/Kernel
-Requires: kernel-headers-%flavour-%kernel_branch = %version-%release
-Provides: kernel-headers-asm = %version
-%{?base_flavour:Provides: kernel-headers-asm-%base_flavour = %version}
-Provides: kernel-headers-asm-%flavour = %version-%release
-Provides: %kheaders_dir/include/asm
-AutoProv: no
-
-%description -n kernel-headers-asm-%flavour-%kernel_branch
-This package contains arch depended part (asm) of Linux kernel headers.
-
-
 %package -n kernel-headers-%flavour-%kernel_branch
 Summary: Header files for the Linux kernel
 Group: Development/Kernel
-BuildArch: noarch
 Requires: kernel-headers-common >= 1.1.5
-Requires: kernel-headers-asm-%flavour-%kernel_branch = %version-%release
 Provides: kernel-headers = %version
 %{?base_flavour:Provides: kernel-headers-%base_flavour = %version}
 Provides: kernel-headers-%flavour = %version-%release
@@ -2261,7 +2247,6 @@ done)
 
 %files -n kernel-headers-%flavour-%kernel_branch
 %kheaders_dir
-%exclude %kheaders_dir/include/asm
 
 
 %{?_enable_ide:%kernel_modules_package_files ide}
@@ -2351,10 +2336,6 @@ done)
 %endif
 
 
-%files -n kernel-headers-asm-%flavour-%kernel_branch
-%kheaders_dir/include/asm
-
-
 %files -n kernel-headers-modules-%flavour-%kernel_branch
 %kbuild_dir
 %old_kbuild_dir
@@ -2389,6 +2370,13 @@ done)
 
 
 %changelog
+* Fri Jan 25 2013 Led <led@altlinux.ru> 3.4.27-alt4
+- updated:
+  + fix-mm--zcache
+- merged kernel-headers-asm-* to kernel-headers-* subpackage
+- set kernel-headers-* as no noarch
+- kernel-modules-media-* requires kernel-modules-sound-ext-* (for webcams)
+
 * Thu Jan 24 2013 Led <led@altlinux.ru> 3.4.27-alt3
 - added:
   + fix-drivers-net-ethernet-alacritech--slicoss

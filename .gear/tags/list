@@ -223,10 +223,10 @@ eb2e4d2ca56738dc7b5633e44502cfe711344b78 fix-drivers-idle--i7300_idle
 d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
 ddfb7da1606aef0874e109435803b60dd544d8b7 fix-arch-x86-cpu
 8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
-c9a58a2465a0d8b7c1442b588345345761492882 fix-mm--zcache
+b70bccc9d3030a75394997a3d5ed590ac276b185 fix-mm--zcache
 0ff0d99fb61f9a739baa0e1781f6f08709fc7f4e fix-mm--zsmalloc
 bf1027015d3c7500114ba71a5bc39aa5c8d4a678 feat-drivers-block--zram
-3ebe9cc8afa37e87184294f665d08dfe0c6745bf feat-mm--zcache
+3bd89e81c9eeb61f351880e1176696d06f74e395 feat-mm--zcache
 437ce378145f8bd81cda404c2ab9ff2bcaac42d4 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
 4a59bfb3e065859d071288e70b03cda462ebac33 feat-mm--frontswap
