@@ -330,6 +330,7 @@ static void *tmem_pampd_replace_in_obj(struct tmem_obj *obj, uint32_t index,
 static int tmem_pampd_add_to_obj(struct tmem_obj *obj, uint32_t index,
 					void *pampd)
 {
+	int ret = 0;
 	struct tmem_objnode *objnode = NULL, *newnode, *slot;
 	unsigned int height, shift;
 	int offset = 0;
@@ -346,8 +347,10 @@ static int tmem_pampd_add_to_obj(struct tmem_obj *obj, uint32_t index,
 		}
 		do {
 			newnode = tmem_objnode_alloc(obj);
-			if (!newnode)
-				return -ENOMEM;
+			if (!newnode) {
+				ret = -ENOMEM;
+				goto out;
+			}
 			newnode->slots[0] = obj->objnode_tree_root;
 			newnode->slots_in_use = 1;
 			obj->objnode_tree_root = newnode;
@@ -357,13 +360,15 @@ static int tmem_pampd_add_to_obj(struct tmem_obj *obj, uint32_t index,
 insert:
 	slot = obj->objnode_tree_root;
 	height = obj->objnode_tree_height;
-	shift = (height - 1) * OBJNODE_TREE_MAP_SHIFT;
-	for (; height > 0; height--) {
+	shift = (height-1) * OBJNODE_TREE_MAP_SHIFT;
+	while (height > 0) {
 		if (slot == NULL) {
 			/* add a child objnode.  */
 			slot = tmem_objnode_alloc(obj);
-			if (!slot)
-				return -ENOMEM;
+			if (!slot) {
+				ret = -ENOMEM;
+				goto out;
+			}
 			if (objnode) {
 
 				objnode->slots[offset] = slot;
@@ -376,6 +381,7 @@ insert:
 		objnode = slot;
 		slot = objnode->slots[offset];
 		shift -= OBJNODE_TREE_MAP_SHIFT;
+		height--;
 	}
 	BUG_ON(slot != NULL);
 	if (objnode) {
@@ -384,8 +390,8 @@ insert:
 	} else
 		obj->objnode_tree_root = pampd;
 	obj->pampd_count++;
-
-	return 0;
+out:
+	return ret;
 }
 
 static void *tmem_pampd_delete_from_obj(struct tmem_obj *obj, uint32_t index)
