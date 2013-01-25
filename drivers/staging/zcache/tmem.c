@@ -713,19 +713,20 @@ out:
 int tmem_flush_object(struct tmem_pool *pool, struct tmem_oid *oidp)
 {
 	struct tmem_obj *obj;
-	int ret;
-	struct tmem_hashbucket *hb = &pool->hashbucket[tmem_oid_hash(oidp)];
+	struct tmem_hashbucket *hb;
+	int ret = -1;
 
+	hb = &pool->hashbucket[tmem_oid_hash(oidp)];
 	spin_lock(&hb->lock);
 	obj = tmem_obj_find(hb, oidp);
-	if (obj != NULL) {
-		tmem_pampd_destroy_all_in_obj(obj);
-		tmem_obj_free(obj, hb);
-		(*tmem_hostops.obj_free)(obj, pool);
-		ret = 0;
-	} else
-		ret = -1;
+	if (obj == NULL)
+		goto out;
+	tmem_pampd_destroy_all_in_obj(obj);
+	tmem_obj_free(obj, hb);
+	(*tmem_hostops.obj_free)(obj, pool);
+	ret = 0;
 
+out:
 	spin_unlock(&hb->lock);
 	return ret;
 }
