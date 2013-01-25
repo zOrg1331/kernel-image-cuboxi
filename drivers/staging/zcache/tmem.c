@@ -737,10 +737,14 @@ out:
  */
 int tmem_destroy_pool(struct tmem_pool *pool)
 {
+	int ret = -1;
+
 	if (pool == NULL)
-		return -1;
+		goto out;
 	tmem_pool_flush(pool, 1);
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
 static LIST_HEAD(tmem_global_pool_list);
