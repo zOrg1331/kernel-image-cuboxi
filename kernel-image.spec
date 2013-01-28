@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.27
-Release: alt4
+Version: 3.4.28
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 27
+%define kernel_stable_version 28
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -115,7 +115,7 @@ Release: alt4
 
 %def_disable debug_section_mismatch
 
-%define allocator SLQB
+%define allocator SLAB
 
 %Extra_modules vboxhost 4.1.24
 #Extra_modules vboxguest 4.1.22
@@ -2370,6 +2370,10 @@ done)
 
 
 %changelog
+* Mon Jan 28 2013 Led <led@altlinux.ru> 3.4.28-alt1
+- 3.4.28
+- build with SLAB allocator
+
 * Fri Jan 25 2013 Led <led@altlinux.ru> 3.4.27-alt4
 - updated:
   + fix-mm--zcache
