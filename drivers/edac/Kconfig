@@ -163,7 +163,8 @@ config EDAC_X38
 
 config EDAC_I5400
 	tristate "Intel 5400 (Seaburg) chipsets"
-	depends on EDAC_MM_EDAC && PCI && X86 && CPU_SUP_INTEL
+	depends on EDAC_MM_EDAC && PCI && X86
+	depends on CPU_SUP_INTEL && !MCOREI7
 	help
 	  Support for error detection and correction the Intel
 	  i5400 MCH chipset (Seaburg).
