@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2370,6 +2370,19 @@ done)
 
 
 %changelog
+* Tue Jan 29 2013 Led <led@altlinux.ru> 3.4.28-alt2
+- updated:
+  + fix-drivers-edac--e752x_edac
+  + fix-drivers-edac--i3000_edac
+  + fix-drivers-edac--i5000_edac
+  + fix-drivers-edac--i5100_edac
+  + fix-drivers-edac--i5400_edac
+  + fix-drivers-edac--i7300_edac
+  + fix-drivers-edac--i82975x_edac
+  + fix-drivers-edac--x38_edac
+  + fix-mm--zcache
+  + feat-mm--zcache
+
 * Mon Jan 28 2013 Led <led@altlinux.ru> 3.4.28-alt1
 - 3.4.28
 - build with SLAB allocator
