@@ -142,7 +142,8 @@ config EDAC_I82975X
 
 config EDAC_I3000
 	tristate "Intel 3000/3010"
-	depends on EDAC_MM_EDAC && PCI && X86 && CPU_SUP_INTEL
+	depends on EDAC_MM_EDAC && PCI && X86
+	depends on CPU_SUP_INTEL && !MCORE2 && !MCOREI7
 	help
 	  Support for error detection and correction on the Intel
 	  3000 and 3010 server chipsets.
