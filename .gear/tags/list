@@ -15,7 +15,7 @@ c1a5be3926dc02959b4b7031428beb36fdc70d35 fix-arch-x86--hpet
 aa240b12ce55ca25b32708b1ed0ef9a3286a17ec fix-arch-x86--kexec
 a7ae8b77f5e106b96b309918e3fd92a5d6aeebb6 fix-block
 9058eb412ac17ce53d9bcb21b0e0d5fb3846331d fix-block-partitions--efi
-22fb479395a6773cfc6161c4be30aa1ff711c8bc fix-drivers-acpi
+d8dd2d7c4ccb5ef0bc823b79c1b263585542861c fix-drivers-acpi
 0e145d2a6c395c282d90be6f08b5ecf3a4ec2e6f fix-drivers-acpi--ec_sys
 2740c820e309c0a5657dd511293d406ab4b6d05a fix-drivers-acpi--thermal
 9ec966102d04a8ff0debbeae410f6f8e8b48a320 fix-drivers-acpi-acpica
@@ -57,7 +57,7 @@ b8bb3e49f4f503e30679702da6caf593e625fc0a fix-drivers-scsi-megaraid--megaraid_mbo
 4636b0c1ea7f1d42fea21a2990efb952e4443ed0 fix-drivers-video-console--vgacon
 827382e1f1d11541729ef21b1100ab7a9df0d9ff fix-drivers-video-geode
 c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
-cbd7e091fd4682cd06618edfa5d6fde1e3ac623f fix-fs
+e8feadd30f82900d3e27b7253ad2319d7e0b640a fix-fs
 e38ef0beb3e8c33bcdcdfe6df3b94685574d99ff fix-fs-btrfs
 3723f8a06b88d4d715b9d013c1f55202d03181eb fix-fs-ext4
 7762689f4b43fba5da3cb5e831b52ebdff96cb25 fix-fs-nfs
@@ -178,7 +178,7 @@ abbe677e492847c4e9c30d544b10210d9b65a91c fix-drivers-net-ethernet-fujitsu--at170
 d1dd99489bee525dc905cfa3fc2e251e4f914b38 fix-drivers-net-ethernet-amd--depca
 0ed2abd3e04bab619635da7e07991a9431524623 fix-drivers-spi--spi
 495cd236c0e773f1437c1a11e4cd18c999232b05 feat-fs-overlayfs
-62bf58544454f1c2e87c36f592a4f4cc3366ec30 fix-arch-x86--mcheck
+97fff6333316c45e27206bb5fae1fab5e5b6c4d2 fix-arch-x86--mcheck
 3b0e73c0732714a84a8a2f100d753d9caf58951e fix-arch-x86-cpu--rdrand
 922661216de6472f07e448ac945c7410c9b58e65 fix-drivers-ata--ata_piix
 a1851a687a8bfe5f51caa1e92b6caaa31d09149d fix-drivers-ata--pata_amd
@@ -244,3 +244,4 @@ ff4dc1913f5bd02a86d2264ac22508fa399e3642 feat-drivers-net-ethernet-alacritech
 6ea2bd9af14bf3886e10b6c8facccd608d47594d feat-drivers-net-ethernet-alacritech--slicoss
 3a80c96c9dafaae53f187d60cefe7c5f9bdf2266 feat-drivers-platform--asus_oled
 4b9fe536e8c8aee825cb492b4d938585c639f5bf v3.4.28
+e6daee7669163cc2c8334551adac65e4ef2e97fe fix-net-rds--rds_rdma

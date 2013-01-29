@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -159,16 +159,16 @@ Patch0019: linux-%kernel_branch.20-fix-arch-s390.patch
 Patch0020: linux-%kernel_branch.20-fix-arch-x86.patch
 Patch0021: linux-%kernel_branch.20-fix-arch-x86--apic.patch
 Patch0022: linux-%kernel_branch.20-fix-arch-x86--apm.patch
-Patch0023: linux-%kernel_branch.25-fix-arch-x86-cpu.patch
-Patch0024: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
-Patch0025: linux-%kernel_branch.20-fix-arch-x86--hpet.patch
-Patch0026: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
-Patch0027: linux-%kernel_branch.25-fix-arch-x86--mcheck.patch
+Patch0023: linux-%kernel_branch.20-fix-arch-x86--hpet.patch
+Patch0024: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
+Patch0025: linux-%kernel_branch.28-fix-arch-x86--mcheck.patch
+Patch0026: linux-%kernel_branch.25-fix-arch-x86-cpu.patch
+Patch0027: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
 
 Patch0030: linux-%kernel_branch.20-fix-block.patch
 Patch0031: linux-%kernel_branch.20-fix-block-partitions--efi.patch
 
-Patch0040: linux-%kernel_branch.20-fix-drivers-acpi.patch
+Patch0040: linux-%kernel_branch.28-fix-drivers-acpi.patch
 Patch0041: linux-%kernel_branch.20-fix-drivers-acpi--ec_sys.patch
 Patch0042: linux-%kernel_branch.20-fix-drivers-acpi--thermal.patch
 Patch0043: linux-%kernel_branch.20-fix-drivers-acpi-acpica.patch
@@ -337,7 +337,7 @@ Patch0434: linux-%kernel_branch.20-fix-drivers-video-omap2-dss.patch
 
 Patch0441: linux-%kernel_branch.25-fix-firmware--vicam.patch
 
-Patch0450: linux-%kernel_branch.20-fix-fs.patch
+Patch0450: linux-%kernel_branch.28-fix-fs.patch
 Patch0451: linux-%kernel_branch.20-fix-fs-btrfs.patch
 Patch0452: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0453: linux-%kernel_branch.25-fix-fs-nfs.patch
@@ -363,7 +363,8 @@ Patch0497: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 Patch0501: linux-%kernel_branch.25-fix-net-bridge--bridge.patch
 Patch0502: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0503: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0504: linux-%kernel_branch.20-fix-net-sunrpc.patch
+Patch0504: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0505: linux-%kernel_branch.20-fix-net-sunrpc.patch
 
 Patch0511: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1405,6 +1406,7 @@ cd linux-%version
 %patch0502 -p1
 %patch0503 -p1
 %patch0504 -p1
+%patch0505 -p1
 
 %patch0511 -p1
 
@@ -2370,6 +2372,14 @@ done)
 
 
 %changelog
+* Tue Jan 29 2013 Led <led@altlinux.ru> 3.4.28-alt3
+- updated:
+  + fix-arch-x86--mcheck
+  + fix-drivers-acpi
+  + fix-fs
+- added:
+  + fix-net-rds--rds_rdma
+
 * Tue Jan 29 2013 Led <led@altlinux.ru> 3.4.28-alt2
 - updated:
   + fix-drivers-edac--e752x_edac
