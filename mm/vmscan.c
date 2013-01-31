@@ -1872,7 +1872,7 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 	int file = is_file_lru(lru);
 
 	if (is_active_lru(lru)) {
-		if (sc->hibernation_mode || inactive_list_is_low(mz, file))
+		if (inactive_list_is_low(mz, file))
 			shrink_active_list(nr_to_scan, mz, sc, priority, file);
 		return 0;
 	}
@@ -1999,7 +1999,9 @@ out:
 		unsigned long scan;
 
 		scan = zone_nr_lru_pages(mz, lru);
-		if ((priority || noswap || !vmscan_swappiness(mz, sc)) && !sc->hibernation_mode) {
+		if (sc->hibernation_mode)
+			scan = SWAP_CLUSTER_MAX;
+		else if ((priority || noswap || !vmscan_swappiness(mz, sc))) {
 			scan >>= priority;
 			if (!scan && force_scan)
 				scan = SWAP_CLUSTER_MAX;
@@ -2024,7 +2026,7 @@ static inline bool should_continue_reclaim(struct mem_cgroup_zone *mz,
 	unsigned long pages_for_compaction;
 	unsigned long inactive_lru_pages;
 
-	if (sc->hibernation_mode && nr_reclaimed && nr_scanned && sc->nr_to_reclaim >= sc->nr_reclaimed)
+	if (nr_reclaimed && nr_scanned && sc->nr_to_reclaim >= sc->nr_reclaimed)
 		return true;
 
 	/* If not in reclaim/compaction mode, stop */
