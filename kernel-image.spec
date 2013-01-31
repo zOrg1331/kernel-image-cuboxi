@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -442,8 +442,8 @@ Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
 Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
 Patch1169: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
-Patch1171: linux-%kernel_branch.24-feat-kernel-power-tuxonice.patch
-Patch1172: linux-%kernel_branch.24-feat-kernel-power-tuxonice--frontswap.patch
+Patch1171: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
+Patch1172: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
 
 Patch1181: linux-%kernel_branch.20-feat-lib--unwind.patch
 
@@ -2372,6 +2372,12 @@ done)
 
 
 %changelog
+* Thu Jan 31 2013 Led <led@altlinux.ru> 3.4.28-alt4
+- updated:
+  + fix-mm--zcache
+  + feat-kernel-power-tuxonice
+  + feat-mm--zsmalloc
+
 * Tue Jan 29 2013 Led <led@altlinux.ru> 3.4.28-alt3
 - updated:
   + fix-arch-x86--mcheck
@@ -2391,7 +2397,6 @@ done)
   + fix-drivers-edac--i82975x_edac
   + fix-drivers-edac--x38_edac
   + fix-mm--zcache
-  + feat-mm--zcache
 
 * Mon Jan 28 2013 Led <led@altlinux.ru> 3.4.28-alt1
 - 3.4.28
