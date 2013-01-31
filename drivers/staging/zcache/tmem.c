@@ -294,7 +294,7 @@ static void **__tmem_pampd_lookup_in_obj(struct tmem_obj *obj, uint32_t index)
 		for (slot = &obj->objnode_tree_root;
 		     height > 0 && *slot != NULL;
 		     height--, shift -= OBJNODE_TREE_MAP_SHIFT)
-			slot = (*slot)->slots + ((index >> shift) & OBJNODE_TREE_MAP_MASK);
+			slot = (struct tmem_objnode**)(*slot)->slots + ((index >> shift) & OBJNODE_TREE_MAP_MASK);
 	}
 
 	return slot != NULL ? (void **)slot : NULL;
