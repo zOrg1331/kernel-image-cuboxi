@@ -54,6 +54,11 @@ extern void *squashfs_decompressor_init(struct super_block *, unsigned short);
 extern __le64 *squashfs_read_inode_lookup_table(struct super_block *, u64, u64,
 				unsigned int);
 
+/* file.c */
+#ifdef CONFIG_SQUASHFS_WRITE
+extern int squashfs_set_page_dirty(struct page *page);
+#endif
+
 /* fragment.c */
 extern int squashfs_frag_lookup(struct super_block *, unsigned int, u64 *);
 extern __le64 *squashfs_read_fragment_index_table(struct super_block *,

@@ -125,7 +125,7 @@ const struct address_space_operations squashfs_symlink_aops = {
 #ifdef CONFIG_SQUASHFS_WRITE
 	.write_begin = simple_write_begin,
 	.write_end = simple_write_end,
-	.set_page_dirty = __set_page_dirty_no_writeback,
+	.set_page_dirty = squashfs_set_page_dirty,
 #endif
 };
 
