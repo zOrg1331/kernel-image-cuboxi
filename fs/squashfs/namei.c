@@ -278,22 +278,21 @@ static int squashfs_test_filldir(void * __buf, const char * name, int namlen,
 	switch(namlen) {
 	case 2:
 		if (name[1] != '.')
-			*buf = 0;
+			goto notempty;
 	case 1:
-		if (name[0] != '.')
-			*buf = 0;
-		break;
+		if (name[0] == '.')
+			return 0;
 	default:
+notempty:
 		*buf = 0;
+		return -ENOTEMPTY;
 	}
-
-	return (*buf == 0 ? -ENOTEMPTY : 0);
 }
 
 static int squashfs_empty(struct dentry *dentry)
 {
-	loff_t pos = 0;
-	int empty = 1;
+	loff_t pos;
+	int empty;
 	int ret;
 
 	if (!dentry->d_inode || !S_ISDIR(dentry->d_inode->i_mode))
@@ -302,12 +301,11 @@ static int squashfs_empty(struct dentry *dentry)
 	if (!simple_empty(dentry))
 		return 0;
 
-	ret = squashfs_readdir_ondisk(dentry, &empty, squashfs_test_filldir,
-				      &pos);
-	if (ret)
-		return ret;
+	pos = 0;
+	empty = 1;
+	ret = squashfs_readdir_ondisk(dentry, &empty, squashfs_test_filldir, &pos);
 
-	return empty;
+	return ret ? ret : empty;
 }
 
 static int squashfs_rmdir(struct inode *dir, struct dentry *dentry)
@@ -326,8 +324,7 @@ static int squashfs_rmdir(struct inode *dir, struct dentry *dentry)
 static int squashfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 			  dev_t dev)
 {
-	struct inode * inode = get_squashfs_inode(dir->i_sb, mode, dev);
-	int error = -ENOSPC;
+	struct inode *inode = get_squashfs_inode(dir->i_sb, mode, dev);
 
 	if (inode) {
 		if (dir->i_mode & S_ISGID) {
@@ -338,11 +335,11 @@ static int squashfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode
 		d_instantiate(dentry, inode);
 		dget(dentry);   /* Extra count - pin the dentry in core */
 		dentry->d_fsdata = (void *) 0xdeadbeef;
-		error = 0;
 		dir->i_mtime = dir->i_ctime = CURRENT_TIME;
 		unlock_new_inode(inode);
+		return 0;
 	}
-	return error;
+	return -ENOSPC;
 }
 
 static int squashfs_mkdir(struct inode * dir, struct dentry * dentry, umode_t mode)
@@ -359,7 +356,7 @@ static int squashfs_create(struct inode *dir, struct dentry *dentry, umode_t mod
 static int squashfs_link(struct dentry *old_dentry, struct inode *dir,
 			 struct dentry *dentry)
 {
-	(void) simple_link(old_dentry, dir, dentry);
+	simple_link(old_dentry, dir, dentry);
 	dentry->d_fsdata = (void *) 0xdeadbeef;
 	return 0;
 }
@@ -367,13 +364,12 @@ static int squashfs_link(struct dentry *old_dentry, struct inode *dir,
 static int squashfs_symlink(struct inode * dir, struct dentry *dentry,
 			    const char * symname)
 {
-	struct inode *inode;
-	int error = -ENOSPC;
+	struct inode *inode = get_squashfs_inode(dir->i_sb, S_IFLNK|S_IRWXUGO, 0);
 
-	inode = get_squashfs_inode(dir->i_sb, S_IFLNK|S_IRWXUGO, 0);
 	if (inode) {
-		int l = strlen(symname)+1;
-		error = page_symlink(inode, symname, l);
+		int l = strlen(symname) + 1;
+		int error = page_symlink(inode, symname, l);
+
 		if (!error) {
 			if (dir->i_mode & S_ISGID)
 				inode->i_gid = dir->i_gid;
@@ -386,8 +382,9 @@ static int squashfs_symlink(struct inode * dir, struct dentry *dentry,
 			unlock_new_inode(inode);
 			iput(inode);
 		}
+		return error;
 	}
-	return error;
+	return -ENOSPC;
 }
 
 /* TODO: Fix rename from disk->dcache */

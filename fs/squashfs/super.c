@@ -417,6 +417,7 @@ resume:
 	while (next != &this_parent->d_subdirs) {
 		struct list_head *tmp = next;
 		struct dentry *dentry = list_entry(tmp, struct dentry, d_u.d_child);
+
 		next = tmp->next;
 		if (d_unhashed(dentry))
 			continue;

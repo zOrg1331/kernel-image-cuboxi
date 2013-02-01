@@ -280,9 +280,9 @@ static int squashfs_readdir_cache(struct file *file, void *dirent,
 	if (file->f_pos == 2)
 		list_move(q, &dentry->d_subdirs);
 
-	for (p=q->next; p != &dentry->d_subdirs; p=p->next) {
-		struct dentry *next;
-		next = list_entry(p, struct dentry, d_u.d_child);
+	for (p = q->next; p != &dentry->d_subdirs; p = p->next) {
+		struct dentry *next = list_entry(p, struct dentry, d_u.d_child);
+
 		if (d_unhashed(next) || !next->d_inode || !next->d_fsdata)
 			continue;
 
@@ -304,12 +304,12 @@ static int squashfs_readdir_cache(struct file *file, void *dirent,
 
 static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
 {
-	loff_t offset = file->f_pos;
 	struct dentry *dentry = file->f_path.dentry;
 
-	if (offset < dentry->d_inode->i_size) {
+	if (file->f_pos < dentry->d_inode->i_size) {
 		int ret = squashfs_readdir_ondisk(dentry, dirent,
 						  filldir, &file->f_pos);
+
 		if (ret)
 			return ret;
 	}
@@ -320,6 +320,7 @@ static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
 static loff_t squashfs_dir_lseek(struct file *file, loff_t offset, int origin)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
+
 	mutex_lock(&inode->i_mutex);
 	switch (origin) {
 	case 1:
@@ -328,8 +329,8 @@ static loff_t squashfs_dir_lseek(struct file *file, loff_t offset, int origin)
 		if (offset >= 0)
 			break;
 	default:
-		mutex_unlock(&inode->i_mutex);
-		return -EINVAL;
+		offset = -EINVAL;
+		goto out;
 	}
 
 	if (offset != file->f_pos) {
@@ -341,20 +342,19 @@ static loff_t squashfs_dir_lseek(struct file *file, loff_t offset, int origin)
 
 			spin_lock(&inode->i_lock);
 			list_del(&cursor->d_u.d_child);
-			p = file->f_path.dentry->d_subdirs.next;
-			while (n && p != &file->f_path.dentry->d_subdirs) {
-				struct dentry *next;
-				next = list_entry(p, struct dentry, d_u.d_child);
+			for (p = file->f_path.dentry->d_subdirs.next;
+			     n && p != &file->f_path.dentry->d_subdirs;
+			     p = p->next) {
+				struct dentry *next = list_entry(p, struct dentry, d_u.d_child);
 
-				if (!d_unhashed(next) && next->d_inode &&
-				    next->d_fsdata)
+				if (!d_unhashed(next) && next->d_inode && next->d_fsdata)
 					n--;
-				p = p->next;
 			}
 			list_add_tail(&cursor->d_u.d_child, p);
 			spin_unlock(&inode->i_lock);
 		}
 	}
+out:
 	mutex_unlock(&inode->i_mutex);
 	return offset;
 }
