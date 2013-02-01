@@ -222,7 +222,9 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 #ifdef CONFIG_SQUASHFS_WRITE
 			qstr.len = size;
 			qstr.name = dire->name;
-			d = d_hash_and_lookup(dentry, &qstr);
+			qstr.hash = full_name_hash(qstr.name, size);
+			d = ((dentry->d_flags & DCACHE_OP_HASH) && dentry->d_op->d_hash(dentry, dentry->d_inode, &qstr) < 0)
+			    ? NULL : d_lookup(dentry, &qstr);
 
 			if (!d || (d->d_inode)) {
 #endif
