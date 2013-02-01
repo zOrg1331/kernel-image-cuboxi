@@ -41,12 +41,6 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/xattr.h>
-#ifdef CONFIG_SQUASHFS_WRITE
-#include <linux/ramfs.h>
-#define squashfs_file_operations ramfs_file_operations
-#else
-#define squashfs_file_operations generic_ro_fops
-#endif
 
 #include "squashfs_fs.h"
 #include "squashfs_fs_sb.h"
@@ -55,6 +49,18 @@
 #include "xattr.h"
 
 #ifdef CONFIG_SQUASHFS_WRITE
+const struct file_operations squashfs_file_operations = {
+	.read		= do_sync_read,
+	.aio_read	= generic_file_aio_read,
+	.write		= do_sync_write,
+	.aio_write	= generic_file_aio_write,
+	.mmap		= generic_file_mmap,
+	.fsync		= noop_fsync,
+	.splice_read	= generic_file_splice_read,
+	.splice_write	= generic_file_splice_write,
+	.llseek		= generic_file_llseek,
+};
+
 static ino_t get_last_ino(struct super_block *sb)
 {
 	struct squashfs_sb_info *msblk = sb->s_fs_info;
@@ -80,7 +86,7 @@ struct inode *get_squashfs_inode(struct super_block *sb, mode_t mode,
 	inode->i_private = (void *) 0xdeadbeef;
 
 	if (S_ISREG(mode)) {
-		inode->i_fop = &ramfs_file_operations;
+		inode->i_fop = &squashfs_file_operations;
 		inode->i_data.a_ops = &squashfs_aops;
 	} else if (S_ISDIR(mode)) {
 		inode->i_op = &squashfs_dir_inode_ops;
@@ -96,6 +102,8 @@ struct inode *get_squashfs_inode(struct super_block *sb, mode_t mode,
 
 	return inode;
 }
+#else
+#define squashfs_file_operations generic_ro_fops
 #endif
 
 /*
