@@ -434,7 +434,7 @@ resume:
 		this_parent = this_parent->d_parent;
 		goto resume;
 	}
-	spin_lock(&this_parent->d_lock);
+	spin_unlock(&this_parent->d_lock);
 }
 
 void squashfs_kill_super(struct super_block *sb)
