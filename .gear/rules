@@ -227,7 +227,6 @@ diff: v3.4.18:.				feat-fs-jbd--secrm:. name=linux-3.4.18-feat-fs-jbd--secrm.pat
 diff: v3.4.18:.				feat-fs-jbd2--secrm:. name=linux-3.4.18-feat-fs-jbd2--secrm.patch
 diff: v3.4.25:.				feat-fs-overlayfs:. name=linux-3.4.25-feat-fs-overlayfs.patch
 diff: v3.4.20:.				feat-fs-reiser4:. name=linux-3.4.20-feat-fs-reiser4.patch
-diff: v3.4.20:.				feat-fs-squashfs--write:. name=linux-3.4.20-feat-fs-squashfs--write.patch
 diff: v3.4.20:.				feat-fs-unionfs:. name=linux-3.4.20-feat-fs-unionfs.patch
 diff: v3.4.27:.				feat-kernel-power-tuxonice:. name=linux-3.4.27-feat-kernel-power-tuxonice.patch
 diff: feat-kernel-power-tuxonice:.	feat-kernel-power-tuxonice--frontswap:. name=linux-3.4.27-feat-kernel-power-tuxonice--frontswap.patch

@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -439,8 +439,7 @@ Patch1164: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
 Patch1165: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
 Patch1166: linux-%kernel_branch.25-feat-fs-overlayfs.patch
 Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
-Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
-Patch1169: linux-%kernel_branch.20-feat-fs-unionfs.patch
+Patch1168: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
 Patch1171: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
 Patch1172: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
@@ -1489,7 +1488,6 @@ cd linux-%version
 %patch1166 -p1
 %patch1167 -p1
 %patch1168 -p1
-%patch1169 -p1
 
 # feat-kernel-power-*
 %patch1171 -p1
@@ -2372,6 +2370,10 @@ done)
 
 
 %changelog
+* Fri Feb 01 2013 Led <led@altlinux.ru> 3.4.28-alt5
+- removed:
+  + feat-fs-squashfs--write
+
 * Thu Jan 31 2013 Led <led@altlinux.ru> 3.4.28-alt4
 - updated:
   + fix-mm--zcache

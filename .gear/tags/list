@@ -116,7 +116,6 @@ d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
 5108e99066b3e548e3ac8e3be9a5d5a734805a45 feat-fs-jbd--secrm
 c0d8e7b2106d8dd5fd0636a8c00e781d29ab9aa7 feat-fs-jbd2--secrm
 33f35b5032dc105f84e26289ea08fd4542c146fd feat-fs-reiser4
-0c23a769ca6c0cb88d91e55f3ccf0dc59c431211 feat-fs-squashfs--write
 ed0a3f9b1c403e4f5d7cd250c30e30fd7514fbd4 feat-fs-unionfs
 bdec68ea41d272a3b5505fe4e8bf610c7e69dcf3 feat-kernel-power-tuxonice
 2ce26cf80304e310037b3fcaf4efdb8de3bd6023 feat-lib--unwind
