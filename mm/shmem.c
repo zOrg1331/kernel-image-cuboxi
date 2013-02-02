@@ -2338,6 +2338,9 @@ static void shmem_init_inode(void *foo)
 
 static int shmem_init_inodecache(void)
 {
+#ifdef CONFIG_TMPFS_ROOT
+	if (!shmem_inode_cachep)
+#endif
 	shmem_inode_cachep = kmem_cache_create("shmem_inode_cache",
 				sizeof(struct shmem_inode_info),
 				0, SLAB_PANIC, shmem_init_inode);
@@ -2614,6 +2617,27 @@ put_memory:
 	return ERR_PTR(error);
 }
 EXPORT_SYMBOL_GPL(shmem_file_setup);
+
+#ifdef CONFIG_TMPFS_ROOT
+static struct dentry *rootfs_mount(struct file_system_type *fs_type, int flags,
+				   const char *dev_name, void *data)
+{
+	return mount_nodev(fs_type, flags|MS_NOUSER, data, shmem_fill_super);
+}
+
+static struct file_system_type rootfs_fs_type = {
+	.name		= "rootfs",
+	.mount		= rootfs_mount,
+	.kill_sb	= kill_litter_super,
+};
+
+int __init init_rootfs(void)
+{
+	if (init_inodecache())
+		panic("Can't initialize shm inode cache");
+	return register_filesystem(&rootfs_fs_type);
+}
+#endif
 
 /**
  * shmem_zero_setup - setup a shared anonymous mapping

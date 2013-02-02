@@ -162,6 +162,16 @@ config TMPFS_XATTR
 
 	  If unsure, say N.
 
+config TMPFS_ROOT
+	bool "Use tmpfs instrad of ramfs for initramfs"
+	depends on TMPFS && SHMEM
+	default n
+	help
+	  This replaces the ramfs used for unpacking the cpio images
+	  with tmpfs.
+
+	  If unsure, say N
+
 config HUGETLBFS
 	bool "HugeTLB file system support"
 	depends on X86 || IA64 || SPARC64 || (S390 && 64BIT) || \
