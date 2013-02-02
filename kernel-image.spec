@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt6
+Release: alt7
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2372,6 +2372,11 @@ done)
 
 
 %changelog
+* Sun Feb 03 2013 Led <led@altlinux.ru> 3.4.28-alt7
+- added:
+  + fix-fs-ramfs
+  + feat-fs-tmpfs--root
+
 * Sat Feb 02 2013 Led <led@altlinux.ru> 3.4.28-alt6
 - updated:
   + fix-drivers-scsi--hv_storvsc
