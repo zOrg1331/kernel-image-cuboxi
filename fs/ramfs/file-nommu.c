@@ -28,11 +28,16 @@
 
 static int ramfs_nommu_setattr(struct dentry *, struct iattr *);
 
+static int ramfs_set_page_dirty(struct page *page)
+{
+	return PageDirty(page) ? 0 : !TestSetPageDirty(page);
+}
+
 const struct address_space_operations ramfs_aops = {
 	.readpage		= simple_readpage,
 	.write_begin		= simple_write_begin,
 	.write_end		= simple_write_end,
-	.set_page_dirty		= __set_page_dirty_no_writeback,
+	.set_page_dirty		= ramfs_set_page_dirty,
 };
 
 const struct file_operations ramfs_file_operations = {

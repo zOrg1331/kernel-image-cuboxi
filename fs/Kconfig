@@ -177,7 +177,7 @@ config HUGETLB_PAGE
 	def_bool HUGETLBFS
 
 config RAMFS
-	bool "Ramfs file system support" if TMPFS_ROOT
+	tristate "Ramfs file system support" if TMPFS_ROOT
 	default y
 	---help---
 	  Ramfs is a file system which keeps all files in RAM. Unlike tmpfs,
