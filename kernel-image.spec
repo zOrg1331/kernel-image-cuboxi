@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.28
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -313,7 +313,7 @@ Patch0371: linux-%kernel_branch.25-fix-drivers-rtc--rtc-m41t80.patch
 
 Patch0381: linux-%kernel_branch.25-fix-drivers-scsi--aha1542.patch
 Patch0382: linux-%kernel_branch.25-fix-drivers-scsi--aic94xx.patch
-Patch0383: linux-%kernel_branch.20-fix-drivers-scsi--hv_storvsc.patch
+Patch0383: linux-%kernel_branch.28-fix-drivers-scsi--hv_storvsc.patch
 Patch0384: linux-%kernel_branch.25-fix-drivers-scsi--mpt2sas.patch
 Patch0385: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
 Patch0386: linux-%kernel_branch.20-fix-drivers-scsi--scsi_mod.patch
@@ -439,7 +439,8 @@ Patch1164: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
 Patch1165: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
 Patch1166: linux-%kernel_branch.25-feat-fs-overlayfs.patch
 Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
-Patch1168: linux-%kernel_branch.20-feat-fs-unionfs.patch
+Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
+Patch1169: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
 Patch1171: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
 Patch1172: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
@@ -1488,6 +1489,7 @@ cd linux-%version
 %patch1166 -p1
 %patch1167 -p1
 %patch1168 -p1
+%patch1169 -p1
 
 # feat-kernel-power-*
 %patch1171 -p1
@@ -2370,6 +2372,12 @@ done)
 
 
 %changelog
+* Sat Feb 02 2013 Led <led@altlinux.ru> 3.4.28-alt6
+- updated:
+  + fix-drivers-scsi--hv_storvsc
+- added:
+  + feat-fs-squashfs--write
+
 * Fri Feb 01 2013 Led <led@altlinux.ru> 3.4.28-alt5
 - removed:
   + feat-fs-squashfs--write
