@@ -150,7 +150,7 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-drm-nouveau-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%flavour = %epoch:%version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
@@ -171,7 +171,7 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-drm-radeon-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%flavour = %epoch:%version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
@@ -248,8 +248,8 @@ Group: System/Kernel and hardware
 Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
-Requires: kernel-modules-drm-%flavour = %epoch:%version-%release
-Requires: kernel-modules-v4l-%flavour = %epoch:%version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Requires: kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %epoch:%version-%release
