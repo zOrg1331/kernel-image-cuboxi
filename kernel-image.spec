@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.29
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -342,7 +342,9 @@ Patch0451: linux-%kernel_branch.20-fix-fs-btrfs.patch
 Patch0452: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0453: linux-%kernel_branch.25-fix-fs-nfs.patch
 Patch0454: linux-%kernel_branch.20-fix-fs-proc.patch
-Patch0455: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0455: linux-%kernel_branch.29-fix-fs-quota.patch
+Patch0456: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0457: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
 Patch0460: linux-%kernel_branch.20-fix-init.patch
 
@@ -1380,6 +1382,8 @@ cd linux-%version
 %patch0453 -p1
 %patch0454 -p1
 %patch0455 -p1
+%patch0456 -p1
+%patch0457 -p1
 
 # fix-init
 %patch0460 -p1
@@ -2372,6 +2376,11 @@ done)
 
 
 %changelog
+* Tue Feb 05 2013 Led <led@altlinux.ru> 3.4.29-alt3
+- added:
+  + fix-fs-quota
+- add missed fix-fs-ramfs
+
 * Mon Feb 04 2013 Led <led@altlinux.ru> 3.4.29-alt2
 - updated:
   + feat-fs-aufs

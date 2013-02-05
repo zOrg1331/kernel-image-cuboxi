@@ -157,6 +157,7 @@ diff: v3.4.20:.				fix-fs-btrfs:. name=linux-3.4.20-fix-fs-btrfs.patch
 diff: v3.4.20:.				fix-fs-ext4:. name=linux-3.4.20-fix-fs-ext4.patch
 diff: v3.4.25:.				fix-fs-nfs:. name=linux-3.4.25-fix-fs-nfs.patch
 diff: v3.4.20:.				fix-fs-proc:. name=linux-3.4.20-fix-fs-proc.patch
+diff: v3.4.29:.				fix-fs-quota:. name=linux-3.4.29-fix-fs-quota.patch
 diff: v3.4.28:.				fix-fs-ramfs:. name=linux-3.4.28-fix-fs-ramfs.patch
 diff: v3.4.20:.				fix-fs-reiserfs:. name=linux-3.4.20-fix-fs-reiserfs.patch
 diff: v3.4.20:.				fix-init:. name=linux-3.4.20-fix-init.patch
