@@ -2633,7 +2633,7 @@ static struct file_system_type rootfs_fs_type = {
 
 int __init init_rootfs(void)
 {
-	if (init_inodecache())
+	if (shmem_init_inodecache())
 		panic("Can't initialize shm inode cache");
 	return register_filesystem(&rootfs_fs_type);
 }
