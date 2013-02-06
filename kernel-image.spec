@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.29
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -67,6 +67,7 @@ Release: alt4
 %def_enable fusion
 %def_enable drm
 %def_enable ipv6
+%def_disable apei
 %def_enable edac
 %def_enable ide
 %def_enable pata
@@ -1615,6 +1616,7 @@ config_disable \
 	%{?_disable_video:FB DISPLAY_SUPPORT VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
 	%{?_disable_ipv6:IPV6} \
+	%{?_disable_apei:ACPI_APEI} \
 	%{?_disable_edac:EDAC} \
 	%{?_disable_can:CAN} \
 	%{?_disable_fusion:FUSION} \
@@ -1670,7 +1672,7 @@ config_enable \
 %endif
 	%{?_enable_debug_section_mismatch:DEBUG_SECTION_MISMATCH} \
 	%{?_enable_modversions:MODVERSIONS} \
-	%{?_enable_x32:X86_EXTENDED_PLATFORM} \
+	%{?_enable_x32:X86_X32} \
 	%{?_enable_x86_extended_platform:X86_EXTENDED_PLATFORM} \
 	%{?_enable_ext4_for_ext23:EXT4_USE_FOR_EXT23} \
 	%{?_enable_mca:MCA} \
@@ -2378,6 +2380,11 @@ done)
 
 
 %changelog
+* Wed Feb 06 2013 Led <led@altlinux.ru> 3.4.29-alt5
+- disabled apei (ACPI_APEI)
+- RTC_DRV_CMOS=y
+- updated configs
+
 * Wed Feb 06 2013 Led <led@altlinux.ru> 3.4.29-alt4
 - updated:
   + feat-fs-tmpfs--root
