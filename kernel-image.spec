@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.29
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -442,22 +442,23 @@ Patch1165: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
 Patch1166: linux-%kernel_branch.25-feat-fs-overlayfs.patch
 Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
 Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
-Patch1169: linux-%kernel_branch.20-feat-fs-unionfs.patch
+Patch1169: linux-%kernel_branch.28-feat-fs-tmpfs--root.patch
+Patch1170: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
-Patch1171: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
-Patch1172: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
+Patch1181: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
+Patch1182: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
 
-Patch1181: linux-%kernel_branch.20-feat-lib--unwind.patch
+Patch1191: linux-%kernel_branch.20-feat-lib--unwind.patch
 
-Patch1191: linux-%kernel_branch.25-feat-mm--frontswap.patch
-Patch1192: linux-%kernel_branch.20-feat-mm--slqb.patch
-Patch1193: linux-%kernel_branch.14-feat-mm--uksm.patch
-Patch1194: linux-%kernel_branch.20-feat-mm--zcache.patch
-Patch1195: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+Patch1201: linux-%kernel_branch.25-feat-mm--frontswap.patch
+Patch1202: linux-%kernel_branch.20-feat-mm--slqb.patch
+Patch1203: linux-%kernel_branch.14-feat-mm--uksm.patch
+Patch1204: linux-%kernel_branch.20-feat-mm--zcache.patch
+Patch1205: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
 
-Patch1201: linux-%kernel_branch.20-feat-net--netatop.patch
-Patch1202: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
-Patch1203: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
+Patch1211: linux-%kernel_branch.20-feat-net--netatop.patch
+Patch1212: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
+Patch1213: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
 
 
 ExclusiveOS: Linux
@@ -1494,24 +1495,25 @@ cd linux-%version
 %patch1167 -p1
 %patch1168 -p1
 %patch1169 -p1
+%patch1170 -p1
 
 # feat-kernel-power-*
-%patch1171 -p1
-%patch1172 -p1
-
 %patch1181 -p1
+%patch1182 -p1
+
+%patch1191 -p1
 
 # feat-mm--*
-%patch1191 -p1
-%patch1192 -p1
-%patch1193 -p1
-%patch1194 -p1
-%patch1195 -p1
-
-# feat-net--*
 %patch1201 -p1
 %patch1202 -p1
 %patch1203 -p1
+%patch1204 -p1
+%patch1205 -p1
+
+# feat-net--*
+%patch1211 -p1
+%patch1212 -p1
+%patch1213 -p1
 
 
 # get rid of unwanted files resulting from patch fuzz
@@ -2376,6 +2378,12 @@ done)
 
 
 %changelog
+* Wed Feb 06 2013 Led <led@altlinux.ru> 3.4.29-alt4
+- updated:
+  + feat-fs-tmpfs--root
+- fixed led-ws-3.4.x86_64.config
+- add missed feat-fs-tmpfs--root
+
 * Tue Feb 05 2013 Led <led@altlinux.ru> 3.4.29-alt3
 - added:
   + fix-fs-quota

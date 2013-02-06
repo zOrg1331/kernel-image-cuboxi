@@ -245,6 +245,6 @@ ff4dc1913f5bd02a86d2264ac22508fa399e3642 feat-drivers-net-ethernet-alacritech
 e6daee7669163cc2c8334551adac65e4ef2e97fe fix-net-rds--rds_rdma
 fe3248a2a93084bb5641d1ea379cce3478e9fcd2 feat-fs-squashfs--write
 797763366a3a2dc998a668399600067a3273e967 fix-fs-ramfs
-a4fb9c8654d1d0a00c17c6de63ba8624b7a25ff2 feat-fs-tmpfs--root
+74096a041ecba5f283ec8dde59e41b6106efe6de feat-fs-tmpfs--root
 843446baab77ebd8f7aa37cd2a44cc133a460485 v3.4.29
 8c03aaae1046bd5fc0d72c46f83a210689504bea fix-fs-quota
