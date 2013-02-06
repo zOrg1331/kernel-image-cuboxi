@@ -271,15 +271,6 @@ static void __init xfrm4_policy_init(void)
 	xfrm_policy_register_afinfo(&xfrm4_policy_afinfo);
 }
 
-static void __exit xfrm4_policy_fini(void)
-{
-#ifdef CONFIG_SYSCTL
-	if (sysctl_hdr)
-		unregister_net_sysctl_table(sysctl_hdr);
-#endif
-	xfrm_policy_unregister_afinfo(&xfrm4_policy_afinfo);
-}
-
 void __init xfrm4_init(int rt_max_size)
 {
 	/*
