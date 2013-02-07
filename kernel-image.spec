@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.29
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -320,9 +320,10 @@ Patch0385: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
 Patch0386: linux-%kernel_branch.20-fix-drivers-scsi--scsi_mod.patch
 Patch0387: linux-%kernel_branch.20-fix-drivers-scsi--scsi_netlink.patch
 Patch0388: linux-%kernel_branch.20-fix-drivers-scsi--sd_mod.patch
-Patch0389: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patch
-Patch0390: linux-%kernel_branch.20-fix-drivers-scsi-ibmvscsi--ibmvscsic.patch
-Patch0391: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patch
+Patch0389: linux-%kernel_branch.29-fix-drivers-scsi--st.patch
+Patch0390: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patch
+Patch0391: linux-%kernel_branch.20-fix-drivers-scsi-ibmvscsi--ibmvscsic.patch
+Patch0392: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patch
 
 Patch0401: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 
@@ -352,7 +353,8 @@ Patch0460: linux-%kernel_branch.20-fix-init.patch
 Patch0470: linux-%kernel_branch.20-fix-kernel.patch
 
 Patch0480: linux-%kernel_branch.25-fix-lib.patch
-Patch0481: linux-%kernel_branch.25-fix-lib--crc32.patch
+Patch0481: linux-%kernel_branch.29-fix-lib--btree.patch
+Patch0482: linux-%kernel_branch.25-fix-lib--crc32.patch
 
 Patch0490: linux-%kernel_branch.20-fix-mm.patch
 Patch0491: linux-%kernel_branch.20-fix-mm--compaction.patch
@@ -1357,6 +1359,7 @@ cd linux-%version
 %patch0389 -p1
 %patch0390 -p1
 %patch0391 -p1
+%patch0392 -p1
 
 # fix-drivers-spi--*
 %patch0401 -p1
@@ -1396,6 +1399,7 @@ cd linux-%version
 # fix-lib*
 %patch0480 -p1
 %patch0481 -p1
+%patch0482 -p1
 
 # fix-mm*
 %patch0490 -p1
@@ -2380,6 +2384,13 @@ done)
 
 
 %changelog
+* Fri Feb 08 2013 Led <led@altlinux.ru> 3.4.29-alt6
+- added:
+  + fix-drivers-scsi--st
+  + fix-lib--btree
+- updated configs
+- BTREE=m
+
 * Wed Feb 06 2013 Led <led@altlinux.ru> 3.4.29-alt5
 - disabled apei (ACPI_APEI)
 - RTC_DRV_CMOS=y

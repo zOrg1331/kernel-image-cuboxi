@@ -248,3 +248,5 @@ fe3248a2a93084bb5641d1ea379cce3478e9fcd2 feat-fs-squashfs--write
 74096a041ecba5f283ec8dde59e41b6106efe6de feat-fs-tmpfs--root
 843446baab77ebd8f7aa37cd2a44cc133a460485 v3.4.29
 8c03aaae1046bd5fc0d72c46f83a210689504bea fix-fs-quota
+7167fb4443c0022df89cfbd3aeee8ab36789d00b fix-drivers-scsi--st
+6de8681d961c46b08b5a55e9fdf3a2e4f5666309 fix-lib--btree
