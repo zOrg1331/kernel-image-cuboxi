@@ -280,7 +280,7 @@ config TEXTSEARCH_FSM
 	tristate
 
 config BTREE
-	boolean
+	tristate
 
 config HAS_IOMEM
 	boolean
