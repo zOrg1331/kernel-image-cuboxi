@@ -65,7 +65,7 @@ e38ef0beb3e8c33bcdcdfe6df3b94685574d99ff fix-fs-btrfs
 666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 ee26a02dcbbc18ea8c1de0a8cd8fe67795d1f382 fix-kernel
-40f1ea224ffc95499fc6311d1275f8f576b90765 fix-mm
+b8c0df19ef990886f5a647c1ad7ddd1a26cc7e88 fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -250,3 +250,4 @@ fe3248a2a93084bb5641d1ea379cce3478e9fcd2 feat-fs-squashfs--write
 8c03aaae1046bd5fc0d72c46f83a210689504bea fix-fs-quota
 7167fb4443c0022df89cfbd3aeee8ab36789d00b fix-drivers-scsi--st
 6de8681d961c46b08b5a55e9fdf3a2e4f5666309 fix-lib--btree
+e73a2a41e33f4ca347c23ce60ef8969fe11c91b3 fix-fs-logfs
