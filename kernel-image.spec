@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.29
-Release: alt7
+Version: 3.4.30
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 29
+%define kernel_stable_version 30
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -2386,6 +2386,9 @@ done)
 
 
 %changelog
+* Tue Feb 12 2013 Led <led@altlinux.ru> 3.4.30-alt1
+- 3.4.30
+
 * Mon Feb 11 2013 Led <led@altlinux.ru> 3.4.29-alt7
 - updated:
   + fix-mm
