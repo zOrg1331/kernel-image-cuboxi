@@ -142,7 +142,7 @@ config NFS_USE_LEGACY_DNS
 config NFS_USE_KERNEL_DNS
 	bool
 	depends on NFS_V4 && !NFS_USE_LEGACY_DNS
-	select DNS_RESOLVER
+	depends on DNS_RESOLVER
 	default y
 
 config NFS_DEBUG
