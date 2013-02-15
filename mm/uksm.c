@@ -2905,7 +2905,7 @@ struct rmap_list_entry *get_rmap_list_entry(struct vma_slot *slot,
 		if (!need_alloc)
 			return NULL;
 
-		page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+		page = alloc_page(GFP_KERNEL | __GFP_ZERO | __GFP_NOWARN);
 		if (!page)
 			return NULL;
 
@@ -4394,6 +4394,8 @@ static inline int hash_round_finished(void)
 }
 
 #define UKSM_MMSEM_BATCH	5
+#define BUSY_RETRY		100
+
 /**
  * uksm_do_scan()  - the main worker function.
  */
@@ -4420,6 +4422,7 @@ static noinline void uksm_do_scan(void)
 	for (i = 0; i < SCAN_LADDER_SIZE;) {
 		struct scan_rung *rung = &uksm_scan_ladder[i];
 		unsigned long ratio;
+		int busy_retry;
 
 		if (!rung->pages_to_scan) {
 			i++;
@@ -4436,6 +4439,7 @@ static noinline void uksm_do_scan(void)
 		if (ratio > max_cpu_ratio)
 			max_cpu_ratio = ratio;
 
+		busy_retry = BUSY_RETRY;
 		/*
 		 * Do not consider rung_round_finished() here, just used up the
 		 * rung->pages_to_scan quota.
@@ -4467,9 +4471,11 @@ rm_slot:
 				do {
 					reset = advance_current_scan(rung);
 					iter = rung->current_scan;
-					if (iter->vma->vm_mm != busy_mm)
+					busy_retry--;
+					if (iter->vma->vm_mm != busy_mm ||
+					    !busy_retry || reset)
 						break;
-				} while (!reset);
+				} while (1);
 
 				if (iter->vma->vm_mm != busy_mm) {
 					continue;
@@ -4507,6 +4513,7 @@ rm_slot:
 					up_read(&slot->vma->vm_mm->mmap_sem);
 			}
 
+			busy_retry = BUSY_RETRY;
 			cond_resched();
 		}
 
