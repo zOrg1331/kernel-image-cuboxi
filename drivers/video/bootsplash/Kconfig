@@ -6,7 +6,8 @@ menu "Bootsplash configuration"
 
 config BOOTSPLASH
 	bool "Bootup splash screen"
-	depends on FRAMEBUFFER_CONSOLE && FB_VESA
+	depends on FB_VESA
+	select FRAMEBUFFER_CONSOLE
 	default n
         ---help---
           This option enables the Linux bootsplash screen. For more
