@@ -1,14 +1,3 @@
-
-emlog -- the EMbedded-system LOG-device
-
-Version 0.40, 13 August 2001
-
-Author:   Jeremy Elson <jelson@circlemud.org>
-Web page: http://www.circlemud.org/~jelson/software/emlog
-
---------------------------------------------------------------------------
-
-
 What is emlog?
 ==============
 
@@ -30,40 +19,20 @@ see new text as it's written, similar to monitoring a log file using
 to get the current contents of the log without blocking to wait for
 new data.)
 
-The current version of emlog should work under just about any Linux
-kernel in the 2.x series, including 2.4.
-
-emlog is free software, distributed under the GNU General Public
-License (GPL); see the file COPYING (in the distribution) for details.
+emlog is free software, distributed under the GNU General Public License (GPL).
 
 
 How is emlog used?
 ==================
 
-1: Configure, compile, and install emlog
+1: Load emlog
 
-   First, decide which major number you would like to use for emlog.
-   This is configured in emlog.h using the constant
-   EMLOG_MAJOR_NUMBER.  The default is 241, which is in the
-   "local/experimental use" range according to the kernel
-   documentation (similar to the 10/8 or 192.168/16 IP networks).
-   Setting the major number to 0 will cause the kernel to dynamically
-   assign a major number to emlog.
-
-   Next, if your kernel source tree is not rooted in the default
-   directory of /usr/src/linux, modify the Makefile constant
-   KERNEL_HOME to reflect its actual location.
-
-   After configuration, compile by typing 'make'.  Two files should be
-   generated: the kernel module itself (emlog.o), and the nbcat
-   utility that will be described later.
-
-   Finally, insert the module into the kernel using the 'insmod'
-   command; e.g. 'insmod emlog.o'.  If successful, a message similar
-   to "emlog: version 0.40 running, using major number 241" should
-   show up in your kernel log (type 'dmesg' or 'cat /proc/kmsg' to see
-   it).  You can also verify that the module has been inserted by
-   typing 'cat /proc/modules'.
+   Load the module into the kernel using the 'modprobe' command; e.g.
+   'modprobe emlog'. If successful, a message similar to
+   "emlog: version 0.40 running, using major number 241" should show up
+   in your kernel log (type 'dmesg' or 'cat /proc/kmsg' to see it).
+   You can also verify that the module has been inserted by typing
+   'cat /proc/modules'.
 
 
 2: Create device files for emlog
@@ -149,33 +118,8 @@ device without blocking to wait for more input.  For example:
 in /tmp.
 
 
-Emlog and devfs
-===============
-
-I love devfs and use it extensively, but I don't think it makes much
-sense to use emlog with devfs.  emlog lets you create as many log
-devices as you like, anywhere on the filesystem -- the module tells
-them apart based on their inode number.  Having a single log device
-always exist in a single place (/dev) is much less useful.  So, I have
-intentionally continued using the old register_chrdev interface
-instead of using the new devfs_register_chrdev interface.
-
- 
 Troubleshooting
 ===============
-
-Q:  When I try to compile emlog, I get hundreds of errors related
-to header files.
-
-A: If your kernel sources are rooted anywhere other than
-/usr/src/linux, make sure you change the KERNEL_HOME variable in the
-Makefile to reflect their location.  If you've recently installed new
-kernel sources, make sure that you've run "make config" or "make
-menuconfig" in the kernel's root (e.g. /usr/src/linux).  You don't
-actually have to go through the entire configuration; just make sure
-that you have a /usr/include/asm and a /usr/include/linux that are
-symbolic links into your kernel source tree.
-
 
 Q:  When I try to insert the module using 'insmod', I get 'I/O error'.
 
@@ -241,42 +185,6 @@ Q:  You've made my computer crash.
 A:  Sorry.  If you can reproduce the problem I'll try to fix it.
 
 
-Known Bugs
-==========
-
-None as of version 0.40.
-
-Bug reports, patches, complaints, praise, and submissions of Central
-Services Form 27B/6, are welcomed by the author (Jeremy Elson,
-<jelson@circlemud.org>.
-
-
-Version History
-===============
-
-Version 0.40 (August 13, 2001)
- - Concurrent readers and writers are now supported correctly (data is
-   not consumed when it is first read, as it was in previous
-   versions).
- - emlog's ring buffers now allocated using vmalloc instead of kmalloc
-   to avoid locking large blocks of contiguous physical memory.
- - Added MODVERSIONS support
- - Added the 'nbcat' utility - similar to cat, but does not block at
-   the end of the data.
- - Bug fix: both device number and inode number are now stored
-   internally (instead of only the inode number).  This prevents the
-   (unlikely) possibility that emlogs on different filesystems might
-   share a single buffer.
-
-Version 0.30 (March 1, 2001)
- - Now compiles correctly for 2.4 series kernels.
- - select() and poll() now work correctly on emlog devices.
- - Bug fix: all instances should not share one wait queue!
-
-Version 0.20 (June 14, 2000)
- - Initial public release.
-
-
 Who wrote emlog, and why?
 =========================
 
@@ -296,5 +204,3 @@ a debug console and see what went wrong.
 This work was supported by DARPA under grant No. DABT63-99-1-0011 as
 part of the SCADDS project, and was also made possible in part due to
 support from Cisco Systems.
-
-$Id: README,v 1.18 2001/08/13 23:22:35 jelson Exp $
