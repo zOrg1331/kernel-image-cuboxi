@@ -61,7 +61,7 @@ e8feadd30f82900d3e27b7253ad2319d7e0b640a fix-fs
 e38ef0beb3e8c33bcdcdfe6df3b94685574d99ff fix-fs-btrfs
 3723f8a06b88d4d715b9d013c1f55202d03181eb fix-fs-ext4
 df7a65978af8ee26f14934a168f599fa37eb32d2 fix-fs-nfs
-73e732452a8d91efb8d57d15ccbf515aad37d567 fix-fs-proc
+0727a33db1c14e5884b8b3c46ca00c1b4084ce29 fix-fs-proc
 666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 ee26a02dcbbc18ea8c1de0a8cd8fe67795d1f382 fix-kernel
@@ -99,7 +99,7 @@ e73f4e80fd30f8efcd2cdb1f3bd26ff25c00fb37 feat-drivers-net-wireless-rtl8192u
 0417ddc54db39d88c24715e870fa843cd65ef9cb feat-drivers-platform--thinkpad_ec
 eaf4527915d3fbc3d86d1f04c3755516afa729cf feat-drivers-platform--tp_smapi
 f060c5190b04e66bc2770629e19baeb5bc42b997 feat-drivers-usb-usbip
-d8f019162a42a07a00511dc3119bb74b81beae42 feat-drivers-video--bootsplash
+c0ca232974ab1030a5809fc12bbc0325dcdae5a8 feat-drivers-video--bootsplash
 d64946abb5a197aa5880e525369c21cbf4f54b93 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm

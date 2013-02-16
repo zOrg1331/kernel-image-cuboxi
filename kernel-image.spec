@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.31
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -83,8 +83,9 @@ Release: alt1
 %def_enable watchdog
 %def_enable regulator
 %def_enable mfd
-%def_disable spi
+%def_enable spi
 %def_enable mtd
+%def_disable ezx_pcap
 %def_enable mmc
 %def_enable media
 %def_enable sound
@@ -349,7 +350,7 @@ Patch0472: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0473: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0474: linux-%kernel_branch.29-fix-fs-logfs.patch
 Patch0475: linux-%kernel_branch.30-fix-fs-nfs.patch
-Patch0476: linux-%kernel_branch.20-fix-fs-proc.patch
+Patch0476: linux-%kernel_branch.31-fix-fs-proc.patch
 Patch0477: linux-%kernel_branch.29-fix-fs-quota.patch
 Patch0478: linux-%kernel_branch.28-fix-fs-ramfs.patch
 Patch0479: linux-%kernel_branch.20-fix-fs-reiserfs.patch
@@ -1660,6 +1661,7 @@ config_disable \
 	%{?_disable_mfd:MFD_\.*} \
 	%{?_disable_regulator:REGULATOR} \
 	%{?_disable_mtd:MTD} \
+	%{?_disable_ezx_pcap:EZX_PCAP} \
 	%{?_disable_media:MEDIA_SUPPORT} \
 	%{?_disable_mmc:MMC} \
 	%{?_disable_wireless:WLAN WIRELESS CFG80211 WIMAX} \
@@ -2401,6 +2403,14 @@ done)
 
 
 %changelog
+* Sat Feb 16 2013 Led <led@altlinux.ru> 3.4.31-alt2
+- updated:
+  + feat-drivers-video--bootsplash
+  + fix-fs-proc
+- disabled USB_LIBUSUAL
+- enabled spi
+- I2C=y
+
 * Sat Feb 16 2013 Led <led@altlinux.ru> 3.4.31-alt1
 - 3.4.31
 - updated:
@@ -2425,6 +2435,8 @@ done)
   + CIFS_UPCALL
   + CIFS_DFS_UPCALL
 - disabled spi
+- USB_COMMON=y
+- USB=y
 
 * Tue Feb 12 2013 Led <led@altlinux.ru> 3.4.30-alt1
 - 3.4.30
