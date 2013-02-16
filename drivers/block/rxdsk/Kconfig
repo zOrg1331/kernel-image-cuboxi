@@ -1,0 +1,27 @@
+config BLK_DEV_RXDSK
+	tristate "RapidDisk RAM disk support"
+	default n
+	help
+	  RapidDisk or rxdsk was designed to be used in high performing
+	  environments and has been designed with simplicity in mind.
+	  Utilizing a user land binary, the system administrator is capable
+	  of dynamically adding new RAM based block devices of varying sizes,
+	  removing existing ones to even listing all existing RAM block devices.
+	  The rxdsk module has been designed to allocate from the system's memory
+	  pages and is capable of addressing memory to support Gigabytes if not
+	  a Terabyte of available Random Access Memory.
+
+	  If unsure, say N.
+
+config BLK_DEV_RXCACHE
+	tristate "RapidCache support"
+	default n
+	help
+	  RapidCache or rxcache is designed to leverage the high speed performing
+	  technologies of the RapidDisk RAM disk and utilizing the Device Mapper
+	  framework, map an rxdsk volume to act as a block device's
+	  Write/Read-through cache. This can significantly boost the performance
+	  of a local or remote disk device.
+
+	  If unsure, say N.
+

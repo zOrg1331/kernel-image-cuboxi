@@ -538,6 +538,8 @@ config BLK_DEV_HD
 
 	  If unsure, say N.
 
+source "drivers/block/rxdsk/Kconfig"
+
 config BLK_DEV_RBD
 	tristate "Rados block device (RBD)"
 	depends on INET && EXPERIMENTAL && BLOCK
