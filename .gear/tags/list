@@ -223,7 +223,7 @@ ddfb7da1606aef0874e109435803b60dd544d8b7 fix-arch-x86-cpu
 8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
 c2c45c75b77bb7a51ebb242f7b012a4abb40800f fix-mm--zcache
 0ff0d99fb61f9a739baa0e1781f6f08709fc7f4e fix-mm--zsmalloc
-bf1027015d3c7500114ba71a5bc39aa5c8d4a678 feat-drivers-block--zram
+5b0fa06636eedcf8dfa5108dfd7fba01beb4ffb6 feat-drivers-block--zram
 8507b0b8254c8b3196460f313b5a993053ca168e feat-mm--zcache
 d9bc5956afc693aaa425b6f8fa7f9ab39f5254f1 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
@@ -256,3 +256,5 @@ e73a2a41e33f4ca347c23ce60ef8969fe11c91b3 fix-fs-logfs
 feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 13314afe87b830ced34eb006ef6e51630ba49e17 v3.4.24
 8592c27c058bf949c52b3d79af87ebda7ccf7779 fix-drivers-media-radio--radio-rtrack2
+635fe7ac1afd980683778c9fb816267bb56dd13f feat-drivers-block--rxdsk
+45b4f7524d351098ede61c2bf5166bb10b4e005f feat-drivers-misc--emlog

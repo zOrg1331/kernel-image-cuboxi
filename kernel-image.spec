@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.31
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -401,7 +401,8 @@ Patch1011: linux-%kernel_branch-feat-block--bfq-iosched.patch
 Patch1012: linux-%kernel_branch-feat-block--sio-iosched.patch
 
 Patch1021: linux-%kernel_branch.20-feat-drivers-block--cloop.patch
-Patch1022: linux-%kernel_branch.25-feat-drivers-block--zram.patch
+Patch1022: linux-%kernel_branch.31-feat-drivers-block--rxdsk.patch
+Patch1023: linux-%kernel_branch.25-feat-drivers-block--zram.patch
 
 Patch1031: linux-%kernel_branch.20-feat-drivers-char--crasher.patch
 
@@ -415,7 +416,8 @@ Patch1071: linux-%kernel_branch.20-feat-drivers-md--dm-raid45.patch
 
 Patch1081: linux-%kernel_branch.20-feat-drivers-media-rc-lirc.patch
 
-Patch1091: linux-%kernel_branch.20-feat-drivers-misc--rts_pstor.patch
+Patch1091: linux-%kernel_branch.31-feat-drivers-misc--emlog.patch
+Patch1092: linux-%kernel_branch.20-feat-drivers-misc--rts_pstor.patch
 
 Patch1101: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech.patch
 Patch1102: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech--slicoss.patch
@@ -1460,6 +1462,7 @@ cd linux-%version
 # feat-drivers-block--*
 %patch1021 -p1
 %patch1022 -p1
+%patch1023 -p1
 
 %patch1031 -p1
 
@@ -1473,8 +1476,11 @@ cd linux-%version
 
 %patch1081 -p1
 
-# feat-drivers-net-*
+# feat-drivers-misc--*
 %patch1091 -p1
+%patch1092 -p1
+
+# feat-drivers-net-*
 %patch1101 -p1
 %patch1102 -p1
 %patch1103 -p1
@@ -2403,6 +2409,13 @@ done)
 
 
 %changelog
+* Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.31-alt3
+- updated:
+  + feat-drivers-block--zram
+- added:
+  + feat-drivers-block--rxdsk
+  + feat-drivers-misc--emlog
+
 * Sat Feb 16 2013 Led <led@altlinux.ru> 3.4.31-alt2
 - updated:
   + feat-drivers-video--bootsplash
