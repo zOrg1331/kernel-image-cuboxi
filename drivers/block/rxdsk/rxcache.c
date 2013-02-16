@@ -47,7 +47,6 @@
 #include <linux/workqueue.h>
 #include <linux/pagemap.h>
 #include <linux/random.h>
-#include <linux/version.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/hardirq.h>
@@ -96,10 +95,6 @@
 #endif
 
 #define WT_MIN_JOBS 1024
-/* Number of pages for I/O */
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,39)
-#define COPY_PAGES (1024)
-#endif
 
 /* Cache context */
 struct cache_c {
@@ -745,25 +740,10 @@ cache_write(struct cache_c *dmc, struct bio* bio){
     return;
 } // cache_write //
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
-#define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
-#else
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
-#define bio_barrier(bio)        ((bio)->bi_rw & REQ_HARDBARRIER)
-#else
 #define bio_barrier(bio)        ((bio)->bi_rw & REQ_FLUSH)
-#endif
-#endif
-#endif
 
 /* Decide the mapping and perform necessary cache operations for a bio request. */
-int 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0)
-rxc_map(struct dm_target *ti, struct bio *bio){
-#else
-rxc_map(struct dm_target *ti, struct bio *bio, union map_info *map_context){
-#endif
+int rxc_map(struct dm_target *ti, struct bio *bio, union map_info *map_context){
     struct cache_c *dmc = (struct cache_c *) ti->private;
     int sectors = to_sector(bio->bi_size);
 
@@ -773,7 +753,7 @@ rxc_map(struct dm_target *ti, struct bio *bio, union map_info *map_context){
     DPRINTK("%s: Got a %s for %llu %u bytes)", RxPREFIX, bio_rw(bio) == WRITE ? "WRITE" : (bio_rw(bio) == READ ?
                 "READ":"READA"), bio->bi_sector, bio->bi_size);
 
-    if (bio_barrier(bio))
+    if (bio->bi_rw & REQ_FLUSH)
         return -EOPNOTSUPP;
 
     VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
@@ -840,15 +820,7 @@ rxc_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
 		      char *dmc_dname, sector_t tilen){
     int rc;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
     rc = dm_get_device(ti, pth, dm_table_get_mode(ti->table), dmd);
-#else
-#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
-    rc = dm_get_device(ti, pth, dm_table_get_mode(ti->table), dmd);
-#else 
-    rc = dm_get_device(ti, pth, 0, tilen, dm_table_get_mode(ti->table), dmd);
-#endif
-#endif
     if (!rc)
         strncpy(dmc_dname, pth, DEV_PATHLEN);
     return rc;
@@ -896,18 +868,12 @@ cache_ctr(struct dm_target *ti, unsigned int argc, char **argv){
         goto bad2;
     }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,39)
     dmc->io_client = dm_io_client_create();
-#else
-    dmc->io_client = dm_io_client_create(COPY_PAGES);
-#endif
     if (IS_ERR(dmc->io_client)) {
         r = PTR_ERR(dmc->io_client);
         ti->error = "Failed to create io client\n";
         goto bad2;
     }
-#endif
 
     r = kcached_init(dmc);
     if (r) {
@@ -1037,13 +1003,7 @@ cache_ctr(struct dm_target *ti, unsigned int argc, char **argv){
     dmc->cached_blocks = 0;
     dmc->cache_wr_replace = 0;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
     ti->split_io = dmc->block_size;
-#else
-    r = dm_set_target_max_io_len(ti, dmc->block_size);
-    if(r)
-        goto bad4;
-#endif
     ti->private = dmc;
 
     return 0;
@@ -1051,9 +1011,7 @@ cache_ctr(struct dm_target *ti, unsigned int argc, char **argv){
 bad4:
     kcached_client_destroy(dmc);
 bad3:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
     dm_io_client_destroy(dmc->io_client);
-#endif
     dm_put_device(ti, dmc->cache_dev);
 bad2:
     dm_put_device(ti, dmc->disk_dev);
@@ -1082,9 +1040,7 @@ cache_dtr(struct dm_target *ti){
                 (unsigned long)dmc->size, dmc->cached_blocks);
     }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
     dm_io_client_destroy(dmc->io_client);
-#endif
     vfree((void *)dmc->cache);
     vfree((void *)dmc->cache_state);
     vfree((void *)dmc->set_lru_next);
@@ -1135,12 +1091,7 @@ rxc_status_table(struct cache_c *dmc, status_type_t type, char *result, unsigned
  *  Output cache stats upon request of device status;
  *  Output cache configuration upon request of table status. */
 static int 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
 cache_status(struct dm_target *ti, status_type_t type, char *result, unsigned int maxlen){
-#else
-cache_status(struct dm_target *ti, status_type_t type, unsigned status_flags, char *result,
-    unsigned int maxlen){
-#endif
     struct cache_c *dmc = (struct cache_c *) ti->private;
 	
     DPRINTK("%s: debug: entering %s\n", RxPREFIX, __func__);
