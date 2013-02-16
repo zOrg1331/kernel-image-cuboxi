@@ -1,0 +1,13 @@
+config EMLOG
+	tristate "EMbedded-system LOG-device support"
+	default n
+	help
+	  emlog is a module that makes it easy to access the most recent
+	  (and *only* the most recent) output from a process. It works just like
+	  "tail -f" on a log file, except that the storage required never grows.
+	  This can be useful in embedded systems where there isn't enough memory
+	  or disk space for keeping complete log files, but the most recent
+	  debugging messages are sometimes needed (e.g., after an error is
+	  observed).
+
+	  If unsure, say N.
