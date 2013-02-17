@@ -1,0 +1,47 @@
+config OMNIBOOK
+       tristate "HP Omnibook and Toshiba laptop support"
+       depends on PCI && X86 && EXPERIMENTAL
+       ---help---
+          This adds a driver to support some features of laptops such as 
+	  HP OmniBook, Pavilion, Compal ACL00 ,Toshiba Satellite which have 
+	  a Phoenix BIOS and are not supported by other Toshiba drivers
+          and some Acer Aspire series laptops.
+
+	  Most of these are manufactured by Compal Electronics, Inc as ODM
+          
+	  See  <http://www.sf.net/projects/omnibook/>.
+
+          Say Y if you intend to run this kernel on a supported portable.
+          Say N otherwise.
+
+          This driver is also available as a module ( = code which can be
+          inserted in and removed from the running kernel whenever you want).
+          If you want to compile it as a module, say M here and read
+          Documentation/modules.txt.
+          
+	  The module is called omnibook.ko due to historical reasons.
+
+config OMNIBOOK_LEGACY
+       bool "HP omnibook legacy features"
+       depends on OMNIBOOK
+       default y if !ACPI
+       ---help---
+	 This option enable support for some legacy features of the omnibook
+         driver, including:
+         * /proc/apm emulation.
+	 * non-ACPI support code.
+	 * AC adapter and Battery monitoring default enabling.
+	 This is mainly for laptops with no or broken ACPI support.
+
+	 If you are unsure, say N.
+
+config OMNIBOOK_BACKLIGHT
+       bool "HP omnibook backlight support"
+       depends on OMNIBOOK
+       select BACKLIGHT_CLASS_DEVICE
+       default y
+       ---help---
+         Enable registration of the omnibook module as a backlight device.
+         This allow query and control of the LCD brightness via sysfs.
+	 
+	 If you are unsure, say Y.

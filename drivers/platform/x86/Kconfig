@@ -766,4 +766,6 @@ config APPLE_GMUX
 	  graphics as well as the backlight. Currently only backlight
 	  control is supported by the driver.
 
+source "drivers/platform/x86/omnibook/Kconfig"
+
 endif # X86_PLATFORM_DEVICES
