@@ -23,7 +23,7 @@ EXTRA_LDFLAGS += $(src)/sections.lds
 obj-$(CONFIG_OMNIBOOK) += omnibook.o
 
 omnibook-objs := init.o ec.o compal.o acpi.o nbsmi.o \
-ac.o apmemu.o battery.o blank.o bluetooth.o display.o dock.o dump.o \
+ac.o kbc.o lib.o pio.o battery.o blank.o bluetooth.o display.o dock.o dump.o \
 fan.o fan_policy.o hotkeys.o info.o lcd.o muteled.o temperature.o \
 touchpad.o wireless.o
 
