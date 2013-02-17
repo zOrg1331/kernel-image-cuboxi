@@ -32,7 +32,7 @@ static int omnibook_temperature_read(char *buffer, struct omnibook_operation *io
 	return len;
 }
 
-static struct omnibook_tbl temp_table[] __initdata = {
+static struct omnibook_tbl temp_table[] = {
 	{XE3GF | TSP10 | TSM70 | TSM30X | TSX205, SIMPLE_BYTE(EC, XE3GF_CTMP, 0)},
 	{XE3GC | AMILOD, SIMPLE_BYTE(EC, XE3GC_CTMP, 0)},
 	{OB500 | OB510 | OB6000 | OB6100 | XE4500 | XE2, SIMPLE_BYTE(EC, OB500_CTMP, 0)},

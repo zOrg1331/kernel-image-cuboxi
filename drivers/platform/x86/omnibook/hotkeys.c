@@ -149,7 +149,7 @@ static int omnibook_hotkeys_write(char *buffer, struct omnibook_operation *io_op
 	return 0;
 }
 
-static int __init omnibook_hotkeys_init(struct omnibook_operation *io_op)
+static int omnibook_hotkeys_init(struct omnibook_operation *io_op)
 {
 	int retval;
 
@@ -164,7 +164,7 @@ static void __exit omnibook_hotkeys_cleanup(struct omnibook_operation *io_op)
 	hotkeys_set_save(io_op, HKEY_OFF);
 }
 
-static struct omnibook_tbl hotkeys_table[] __initdata = {
+static struct omnibook_tbl hotkeys_table[] = {
 	{XE3GF | XE3GC | OB500 | OB510 | OB6000 | OB6100 | XE4500 | AMILOD | TSP10 | TSM30X, 
 	COMMAND(KBC,OMNIBOOK_KBC_CMD_ONETOUCH_ENABLE,OMNIBOOK_KBC_CMD_ONETOUCH_DISABLE)},
 	{TSM70, {CDI,}},

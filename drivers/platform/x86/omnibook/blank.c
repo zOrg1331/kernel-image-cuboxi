@@ -20,7 +20,7 @@
 #include <asm/io.h>
 #include "hardware.h"
 
-static struct omnibook_feature blank_driver;
+static struct omnibook_feature __initdata blank_driver;
 
 /* 
  * console_blank_hook pointer manipulation is lock protected
@@ -102,7 +102,7 @@ static int omnibook_console_blank_write(char *buffer, struct omnibook_operation 
 	return retval;
 }
 
-static int __init omnibook_console_blank_init(struct omnibook_operation *io_op)
+static int omnibook_console_blank_init(struct omnibook_operation *io_op)
 {	
 	return console_blank_register_hook();
 }
@@ -112,7 +112,7 @@ static void __exit omnibook_console_blank_cleanup(struct omnibook_operation *io_
 	console_blank_unregister_hook();
 }
 
-static struct omnibook_tbl blank_table[] __initdata = {
+static struct omnibook_tbl blank_table[] = {
 	{TSM70 | TSX205, {CDI, 0, TSM100_BLANK_INDEX, 0, TSM100_LCD_OFF, TSM100_LCD_ON}},
 	{XE3GF | XE3GC | AMILOD | TSP10 | TSM70 | TSM30X,
 	 COMMAND(KBC, OMNIBOOK_KBC_CMD_LCD_OFF, OMNIBOOK_KBC_CMD_LCD_ON)},

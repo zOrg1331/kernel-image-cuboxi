@@ -142,7 +142,7 @@ static int omnibook_fan_write(char *buffer, struct omnibook_operation *io_op)
 
 static struct omnibook_feature fan_driver;
 
-static int __init omnibook_fan_init(struct omnibook_operation *io_op)
+static int omnibook_fan_init(struct omnibook_operation *io_op)
 {
 	/*
 	 * OB4150
@@ -155,7 +155,7 @@ static int __init omnibook_fan_init(struct omnibook_operation *io_op)
 	return 0;
 }
 
-static struct omnibook_tbl fan_table[] __initdata = {
+static struct omnibook_tbl fan_table[] = {
 	{XE3GF | TSP10 | TSM70 | TSX205, {EC, XE3GF_FSRD, XE3GF_FSRD, 0, XE3GF_FAN_ON_MASK, 0}},
 	{OB500,
 	 {PIO, OB500_GPO1, OB500_GPO1, OB500_FAN_OFF_MASK, -OB500_FAN_ON_MASK, OB500_FAN_OFF_MASK}},

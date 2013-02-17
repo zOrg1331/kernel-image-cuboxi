@@ -89,7 +89,7 @@ static int ecdump_write(char *buffer, struct omnibook_operation *io_op)
 	return 0;
 }
 
-static struct omnibook_tbl dump_table[] __initdata = {
+static struct omnibook_tbl dump_table[] = {
 	{ALL_ECTYPES, {EC,}},
 	{0,}
 };

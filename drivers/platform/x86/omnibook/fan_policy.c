@@ -169,7 +169,7 @@ static int omnibook_fan_policy_write(char *buffer, struct omnibook_operation *io
 	return retval;
 }
 
-static struct omnibook_tbl fan_policy_table[] __initdata = {
+static struct omnibook_tbl fan_policy_table[] = {
 	{XE3GF, {EC,}},
 	{0,}
 };

@@ -66,7 +66,7 @@ static int omnibook_bt_write(char *buffer, struct omnibook_operation *io_op)
 
 static struct omnibook_feature bt_driver;
 
-static int __init omnibook_bt_init(struct omnibook_operation *io_op)
+static int omnibook_bt_init(struct omnibook_operation *io_op)
 {
 	int retval = 0;
 	unsigned int state;
@@ -84,7 +84,7 @@ static int __init omnibook_bt_init(struct omnibook_operation *io_op)
 	return retval;
 }
 
-static struct omnibook_tbl wireless_table[] __initdata = {
+static struct omnibook_tbl wireless_table[] = {
 	{TSM70 | TSA105 | TSX205, {ACPI,}},	/* stubs to select backend */
 	{TSM40, {SMI,}},			/* stubs to select backend */
 	{0,}

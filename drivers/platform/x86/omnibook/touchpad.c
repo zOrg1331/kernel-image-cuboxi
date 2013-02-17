@@ -83,7 +83,7 @@ static int omnibook_touchpad_write(char *buffer, struct omnibook_operation *io_o
 }
 
 
-static int __init omnibook_touchpad_init(struct omnibook_operation *io_op)
+static int omnibook_touchpad_init(struct omnibook_operation *io_op)
 {
 	mutex_lock(&io_op->backend->mutex);
 	/* Touchpad is assumed to be enabled by default */
@@ -101,7 +101,7 @@ static void __exit omnibook_touchpad_cleanup(struct omnibook_operation *io_op)
 	printk(O_INFO "Enabling touchpad.\n");
 }
 
-static struct omnibook_tbl touchpad_table[] __initdata = {
+static struct omnibook_tbl touchpad_table[] = {
 	{XE3GF | XE3GC | TSP10,
 	 COMMAND(KBC, OMNIBOOK_KBC_CMD_TOUCHPAD_ENABLE, OMNIBOOK_KBC_CMD_TOUCHPAD_DISABLE)},
 	{TSM70, {CDI, 0, TSM70_FN_INDEX, 0, TSM70_TOUCHPAD_ON, TSM70_TOUCHPAD_OFF}},

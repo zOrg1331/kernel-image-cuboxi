@@ -535,7 +535,7 @@ static int omnibook_battery_read(char *buffer, struct omnibook_operation *io_op)
 	return len;
 }
 
-static struct omnibook_tbl battery_table[] __initdata = {
+static struct omnibook_tbl battery_table[] = {
 	{XE3GF | XE3GC | AMILOD | TSP10 | TSM70 | TSM30X, {EC,}},
 	{0,}
 };

@@ -89,7 +89,7 @@ static void __exit omnibook_muteled_cleanup(struct omnibook_operation *io_op)
 	omnibook_muteled_set(io_op, 0);
 }
 
-static struct omnibook_tbl muteled_table[] __initdata = {
+static struct omnibook_tbl muteled_table[] = {
 	{XE4500, COMMAND(KBC, OMNIBOOK_KBC_CMD_MUTELED_ON, OMNIBOOK_KBC_CMD_MUTELED_OFF)},
 	{0,}
 };

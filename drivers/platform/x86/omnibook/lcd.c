@@ -100,7 +100,7 @@ static int omnibook_brightness_write(char *buffer, struct omnibook_operation *io
 	return 0;
 }
 
-static int __init omnibook_brightness_init(struct omnibook_operation *io_op)
+static int omnibook_brightness_init(struct omnibook_operation *io_op)
 {
 	/*
 	 * FIXME: What is exactly the max value for each model ?
@@ -146,7 +146,7 @@ static void __exit omnibook_brightness_cleanup(struct omnibook_operation *io_op)
 #endif
 }
 
-static struct omnibook_tbl lcd_table[] __initdata = {
+static struct omnibook_tbl lcd_table[] = {
 	{TSM70 | TSX205, {CDI, TSM70_LCD_READ, TSM70_LCD_WRITE, 0, 0, 0}},
 	{TSM40, {SMI, SMI_GET_LCD_BRIGHTNESS, SMI_SET_LCD_BRIGHTNESS, 0, 0, 0}},
 	{XE3GF | TSP10 | TSM70 | TSM30X, SIMPLE_BYTE(EC, XE3GF_BRTS, XE3GF_BRTS_MASK)},

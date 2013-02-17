@@ -26,8 +26,8 @@
 
 #include <linux/platform_device.h>
 
-static int __init omnibook_probe(struct platform_device *dev);
-static int __exit omnibook_remove(struct platform_device *dev);
+static int omnibook_probe(struct platform_device *dev);
+static int omnibook_remove(struct platform_device *dev);
 static int omnibook_suspend(struct platform_device *dev, pm_message_t state);
 static int omnibook_resume(struct platform_device *dev);
 
@@ -58,8 +58,8 @@ static struct platform_driver omnibook_driver = {
 static struct omnibook_feature *omnibook_available_feature;
 
 /* Delimiters of the .features section wich holds all the omnibook_feature structs */
-extern struct omnibook_feature _start_features_driver[];
-extern struct omnibook_feature _end_features_driver[];
+extern struct omnibook_feature __initdata _start_features_driver[];
+extern struct omnibook_feature __initdata _end_features_driver[];
 
 static int __init dmi_matched(const struct dmi_system_id *dmi)
 {
@@ -233,7 +233,7 @@ static int __init omnibook_init(struct omnibook_feature *feature)
  * Callback function for driver registering :
  * Initialize the linked list of enabled features and call omnibook_init to populate it
  */
-static int __init omnibook_probe(struct platform_device *dev)
+static int omnibook_probe(struct platform_device *dev)
 {
 	int i;
 	struct omnibook_feature *feature;

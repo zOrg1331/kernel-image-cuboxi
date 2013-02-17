@@ -71,7 +71,7 @@ static int omnibook_display_write(char *buffer, struct omnibook_operation *io_op
 
 static struct omnibook_feature display_driver;
 
-static int __init omnibook_display_init(struct omnibook_operation *io_op)
+static int omnibook_display_init(struct omnibook_operation *io_op)
 {
 	int retval;
 	unsigned int state;
@@ -87,7 +87,7 @@ static int __init omnibook_display_init(struct omnibook_operation *io_op)
 		return 0;
 }
 
-static struct omnibook_tbl display_table[] __initdata = {
+static struct omnibook_tbl display_table[] = {
 	{TSM70 | TSX205, {ACPI,}},
 	{TSM40, {SMI, SMI_GET_DISPLAY_STATE, SMI_SET_DISPLAY_STATE, 0, 0, 0}},
 	{XE3GF | TSP10 | TSM70 | TSM30X | TSM40, SIMPLE_BYTE(EC, XE3GF_STA1, XE3GF_SHDD_MASK)},

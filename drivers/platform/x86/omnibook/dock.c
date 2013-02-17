@@ -69,7 +69,8 @@ static struct omnibook_tbl dock_table[] __initdata = {
 	{0,}
 };
 
-static struct omnibook_feature __declared_feature dock_driver = {
+//static struct omnibook_feature __initdata dock_driver = {
+static struct omnibook_feature __initdata dock_driver = {
 	.name = "dock",
 	.enabled = 0,
 	.init = omnibook_dock_init,

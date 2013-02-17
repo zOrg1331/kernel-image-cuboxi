@@ -33,7 +33,7 @@ static int omnibook_ac_read(char *buffer, struct omnibook_operation *io_op)
 	return len;
 }
 
-static struct omnibook_tbl ac_table[] __initdata = {
+static struct omnibook_tbl ac_table[] = {
 	{XE3GF | TSP10 | TSM30X | TSM70, SIMPLE_BYTE(EC, XE3GF_ADP, XE3GF_ADP_MASK)},
 	{XE3GC | AMILOD, SIMPLE_BYTE(EC, XE3GC_STA1, XE3GC_ADP_MASK)},
 	{OB500 | OB510 | OB6000 | OB6100 | XE4500, SIMPLE_BYTE(EC, OB500_STA2, OB500_ADP_MASK)},
