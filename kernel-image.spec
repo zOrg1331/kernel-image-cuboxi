@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.31
-Release: alt4
+Version: 3.4.32
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 31
+%define kernel_stable_version 32
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -80,6 +80,7 @@ Release: alt4
 %def_enable tablet
 %def_enable touchscreen
 %def_enable lirc
+%def_disable ub
 %def_enable watchdog
 %def_enable regulator
 %def_enable mfd
@@ -1664,6 +1665,7 @@ config_disable \
 	%{?_disable_fddi:FDDI} \
 	%{?_disable_hamradio:HAMRADIO} \
 	%{?_disable_w1:W1} \
+	%{?_disable_ub:BLK_DEV_UB USB_LIBUSUAL} \
 	%{?_disable_watchdog:WATCHDOG} \
 	%{?_disable_spi:SPI} \
 	%{?_disable_mfd:MFD_\.*} \
@@ -2411,6 +2413,10 @@ done)
 
 
 %changelog
+* Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.32-alt1
+- 3.4.32
+- disabled ub (BLK_DEV_UB)
+
 * Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.31-alt4
 - added:
   + feat-drivers-platform--omnibook
