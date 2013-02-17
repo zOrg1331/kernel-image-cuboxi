@@ -105,7 +105,6 @@ static int omnibook_acpi_bt_add(struct acpi_device *device);
 static int omnibook_acpi_bt_remove(struct acpi_device *device, int type);
 
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,23)
 static const struct acpi_device_id omnibook_bt_ids[] = {
 	{"TOS6205", 0},
 	{"", 0},
@@ -120,18 +119,6 @@ static struct acpi_driver omnibook_bt_driver = {
 			.remove	=  omnibook_acpi_bt_remove,
 		  },
 };
-#else /* 2.6.23 */
-static struct acpi_driver omnibook_bt_driver = {
-	.name	= OMNIBOOK_MODULE_NAME,
-	.class	= TOSHIBA_ACPI_BT_CLASS,
-	.ids	= "TOS6205",
-	.ops	= {
-			.add	=  omnibook_acpi_bt_add,
-			.remove	=  omnibook_acpi_bt_remove,
-		  },
-};
-#endif /* 2.6.23 */
-
 
 /*
  * ACPI backend private data structure
@@ -163,19 +150,9 @@ struct acpi_backend_data {
  * XXX: Scancode 0x6e won't be detected if the keyboard has already been
  * grabbed (the Xorg event input driver do that)
  */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 static int hook_connect(struct input_handler *handler,
 					 struct input_dev *dev,
 					 const struct input_device_id *id)
-#elif (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
-static struct input_handle *hook_connect(struct input_handler *handler,
-					 struct input_dev *dev,
-					 const struct input_device_id *id)
-#else
-static struct input_handle *hook_connect(struct input_handler *handler,
-					 struct input_dev *dev,
-					 struct input_device_id *id)
-#endif
 {
 	struct input_handle *handle;
 	int error;
@@ -195,18 +172,13 @@ static struct input_handle *hook_connect(struct input_handler *handler,
 
 	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
 	if (!handle)
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 		return -ENOMEM;
-#else
-		return NULL;
-#endif
 
 	handle->dev = dev;
 	handle->handler = handler;
 	handle->name = "omnibook_scancode_hook";
 	handle->private = handler->private;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	error = input_register_handle(handle);
 	if (error) {
 		dprintk("register_handle failed\n");
@@ -218,38 +190,19 @@ static struct input_handle *hook_connect(struct input_handler *handler,
 		input_unregister_handle(handle);
 		goto out_nobind_free;
 	} 
-	
-#else
-	status=input_open_device(handle);
-	if (error==0) dprintk("Input device opened\n");
-	else { 
-		dprintk("opening input device failed\n");
-		goto out_nobind_free;
-	}
-#endif
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	return 0;
 out_nobind_free:
 	kfree(handle);
 out_nobind:
 	return -ENODEV;
-#else
-	return handle;
-out_nobind_free:
-	kfree(handle);
-out_nobind:
-	return NULL;
-#endif	
 }
 
 static void hook_disconnect(struct input_handle *handle)
 {
 	dprintk("hook_disconnect.\n");
 	input_close_device(handle);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	input_unregister_handle(handle);
-#endif
 	kfree(handle);
 }
 
@@ -263,11 +216,7 @@ static void hook_event(struct input_handle *handle, unsigned int event_type,
 		schedule_work(&((struct acpi_backend_data *)handle->private)->fnkey_work);
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
 static const struct input_device_id hook_ids[] = {
-#else
-static struct input_device_id hook_ids[] = {
-#endif
 	{
                 .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
                 .evbit = { BIT(EV_KEY) },
@@ -308,25 +257,19 @@ static const struct {
 	{ 0, 0},
 };
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 static void omnibook_handle_fnkey(struct work_struct *work);
-#else
-static void omnibook_handle_fnkey(void* data);
-#endif
 
 /*
  * Register the input handler and the input device in the input subsystem
  */
 static int register_input_subsystem(struct acpi_backend_data *priv_data)
 {
-	int i, retval = 0;
+	int i, retval;
 	struct input_dev *acpi_input_dev;
 
 	acpi_input_dev = input_allocate_device();
-	if (!acpi_input_dev) {
-		retval = -ENOMEM;
-		goto out;
-	}
+	if (!acpi_input_dev)
+		return -ENOMEM;
 
 	acpi_input_dev->name = "Omnibook ACPI scancode generator";
 	acpi_input_dev->phys = "omnibook/input0";
@@ -340,28 +283,16 @@ static int register_input_subsystem(struct acpi_backend_data *priv_data)
 	retval = input_register_device(acpi_input_dev);
 	if (retval) {
 		input_free_device(acpi_input_dev);
-		goto out;
+		return retval;
 	}
 
 	priv_data->acpi_input_dev = acpi_input_dev;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 	INIT_WORK(&priv_data->fnkey_work, *omnibook_handle_fnkey);
-#else
-	INIT_WORK(&priv_data->fnkey_work, *omnibook_handle_fnkey, priv_data);
-#endif
-
 
 	hook_handler.private = priv_data;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
-	retval = input_register_handler(&hook_handler);	
-#else
-	input_register_handler(&hook_handler);
-#endif
-
-	out:	
-	return retval;
+	return input_register_handler(&hook_handler);
 }
 
 /*
@@ -1089,11 +1020,7 @@ static int adjust_brighness(int delta)
 /*
  * Workqueue handler for Fn hotkeys
  */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 static void omnibook_handle_fnkey(struct work_struct *work)
-#else
-static void omnibook_handle_fnkey(void* data)
-#endif
 {
 	int i;
 	u32 gen_scan;
@@ -1117,11 +1044,7 @@ static void omnibook_handle_fnkey(void* data)
 	for (i = 0 ; i < ARRAY_SIZE(acpi_scan_table); i++) {
 		if (gen_scan == acpi_scan_table[i].scancode) {
 			dprintk("generating keycode %i.\n", acpi_scan_table[i].keycode);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 			input_dev = container_of(work, struct acpi_backend_data, fnkey_work)->acpi_input_dev;
-#else
-			input_dev = ((struct acpi_backend_data *) data)->acpi_input_dev;
-#endif
 			omnibook_report_key(input_dev, acpi_scan_table[i].keycode);
 			break;
 		}

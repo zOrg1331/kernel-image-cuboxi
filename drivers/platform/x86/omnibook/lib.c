@@ -18,7 +18,6 @@
 #include "omnibook.h"
 
 #include "hardware.h"
-#include "compat.h"
 #include <linux/input.h>
 
 /*

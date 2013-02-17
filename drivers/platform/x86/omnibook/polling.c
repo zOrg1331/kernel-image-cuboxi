@@ -35,22 +35,13 @@ static struct workqueue_struct *omnibook_wq;
 static int key_polling_enabled;
 static DEFINE_MUTEX(poll_mutex);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 static void omnibook_key_poller(struct work_struct *work);
 DECLARE_DELAYED_WORK(omnibook_poll_work, *omnibook_key_poller);
-#else
-static void omnibook_key_poller(void *data);
-DECLARE_WORK(omnibook_poll_work, *omnibook_key_poller, NULL);
-#endif
 
 static struct omnibook_feature key_polling_driver;
 static struct input_dev *poll_input_dev;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
-	static void omnibook_key_poller(struct work_struct *work)
-#else
-	static void omnibook_key_poller(void *data)
-#endif
+static void omnibook_key_poller(struct work_struct *work)
 {
 	u8 q0a;
 	int retval;

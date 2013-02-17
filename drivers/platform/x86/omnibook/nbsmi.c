@@ -322,19 +322,9 @@ static inline void nbsmi_ec_write_command(u8 index, u8 data)
  * XXX: Scancode 0x6d won't be detected if the keyboard has already been
  * grabbed (the Xorg event input driver do that)
  */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 static int hook_connect(struct input_handler *handler,
 					 struct input_dev *dev,
 					 const struct input_device_id *id)
-#elif (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
-static struct input_handle *hook_connect(struct input_handler *handler,
-					 struct input_dev *dev,
-					 const struct input_device_id *id)
-#else
-static struct input_handle *hook_connect(struct input_handler *handler,
-					 struct input_dev *dev,
-					 struct input_device_id *id)
-#endif
 {
 	struct input_handle *handle;
 	int error;
@@ -354,18 +344,13 @@ static struct input_handle *hook_connect(struct input_handler *handler,
 
 	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
 	if (!handle)
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 		return -ENOMEM;
-#else
-		return NULL;
-#endif
 
 	handle->dev = dev;
 	handle->handler = handler;
 	handle->name = "omnibook_scancode_hook";
 	handle->private = handler->private;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	error = input_register_handle(handle);
 	if (error) {
 		dprintk("register_handle failed\n");
@@ -377,38 +362,19 @@ static struct input_handle *hook_connect(struct input_handler *handler,
 		input_unregister_handle(handle);
 		goto out_nobind_free;
 	} 
-	
-#else
-	error = input_open_device(handle);
-	if (error==0) dprintk("Input device opened\n");
-	else { 
-		dprintk("opening input device failed\n");
-		goto out_nobind_free;
-	}
-#endif
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	return 0;
 out_nobind_free:
 	kfree(handle);
 out_nobind:
 	return -ENODEV;
-#else
-	return handle;
-out_nobind_free:
-	kfree(handle);
-out_nobind:
-	return NULL;
-#endif	
 }
 
 static void hook_disconnect(struct input_handle *handle)
 {
 	dprintk("hook_disconnect.\n");
 	input_close_device(handle);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21))
 	input_unregister_handle(handle);
-#endif
 	kfree(handle);
 }
 
@@ -424,11 +390,7 @@ static void hook_event(struct input_handle *handle, unsigned int event_type,
 		schedule_work(&((struct nbsmi_backend_data *)handle->private)->fnkey_work);
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
 static const struct input_device_id hook_ids[] = {
-#else
-static struct input_device_id hook_ids[] = {
-#endif
 	{
                 .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
                 .evbit = { BIT(EV_KEY) },
@@ -472,11 +434,7 @@ static const struct {
 	{ 0,0},
 };
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 static void omnibook_handle_fnkey(struct work_struct *work);
-#else
-static void omnibook_handle_fnkey(void* data);
-#endif
 
 /*
  * Register the input handler and the input device in the input subsystem
@@ -487,10 +445,8 @@ static int register_input_subsystem(struct nbsmi_backend_data *priv_data)
 	struct input_dev *nbsmi_input_dev;
 
 	nbsmi_input_dev = input_allocate_device();
-	if (!nbsmi_input_dev) {
-		retval = -ENOMEM;
-		goto out;
-	}
+	if (!nbsmi_input_dev)
+		return -ENOMEM;
 
 	nbsmi_input_dev->name = "Omnibook NbSMI scancode generator";
 	nbsmi_input_dev->phys = "omnibook/input0";
@@ -504,28 +460,16 @@ static int register_input_subsystem(struct nbsmi_backend_data *priv_data)
 	retval = input_register_device(nbsmi_input_dev);
 	if(retval) {
 		input_free_device(nbsmi_input_dev);
-		goto out;
+		return retval;
 	}
 
 	priv_data->nbsmi_input_dev = nbsmi_input_dev;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 	INIT_WORK(&priv_data->fnkey_work, *omnibook_handle_fnkey);
-#else
-	INIT_WORK(&priv_data->fnkey_work, *omnibook_handle_fnkey, priv_data);
-#endif
-
 
 	hook_handler.private = priv_data;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18))
-	retval = input_register_handler(&hook_handler);	
-#else
-	input_register_handler(&hook_handler);
-#endif
-
-	out:	
-	return retval;
+	return input_register_handler(&hook_handler);
 }
 
 /*
@@ -738,11 +682,7 @@ static const struct omnibook_operation last_scan_op = SIMPLE_BYTE(SMI,SMI_GET_FN
 /*
  * Workqueue handler for Fn hotkeys
  */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 static void omnibook_handle_fnkey(struct work_struct *work)
-#else
-static void omnibook_handle_fnkey(void* data)
-#endif
 {
 	int i;
 	u8 gen_scan;
@@ -764,11 +704,7 @@ static void omnibook_handle_fnkey(void* data)
 	for(i = 0 ; i < ARRAY_SIZE(nbsmi_scan_table); i++) {
 		if( gen_scan == nbsmi_scan_table[i].scancode) {
 			dprintk("generating keycode %i.\n", nbsmi_scan_table[i].keycode);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19))
 			input_dev = container_of(work, struct nbsmi_backend_data, fnkey_work)->nbsmi_input_dev;
-#else
-			input_dev = ((struct nbsmi_backend_data *) data)->nbsmi_input_dev;
-#endif
 			omnibook_report_key(input_dev, nbsmi_scan_table[i].keycode);
 			break;
 		}

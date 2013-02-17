@@ -33,15 +33,8 @@ static struct backlight_device *omnibook_backlight_device;
 static int omnibook_get_backlight(struct backlight_device *bd);
 static int omnibook_set_backlight(struct backlight_device *bd);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
 static struct backlight_properties props;
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
 static struct backlight_ops omnibookbl_ops = {
-#else /* 2.6.21 */
-static struct backlight_properties omnibookbl_data = {
-	.owner = THIS_MODULE,
-#endif /* 2.6.21 */
 	.get_brightness = omnibook_get_backlight,
 	.update_status = omnibook_set_backlight,
 };
@@ -52,11 +45,7 @@ static int omnibook_get_backlight(struct backlight_device *bd)
 	struct omnibook_operation *io_op;
 	u8 brgt;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,23)
 	io_op = bl_get_data(bd);
-#else /* 2.6.23 */	
-	io_op = class_get_devdata(&bd->class_dev);
-#endif /* 2.6.23 */
 	retval = backend_byte_read(io_op, &brgt);
 	if (!retval)
 		retval = brgt;
@@ -66,18 +55,10 @@ static int omnibook_get_backlight(struct backlight_device *bd)
 
 static int omnibook_set_backlight(struct backlight_device *bd)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
 	u8 intensity = bd->props.brightness;
-#else /* 2.6.21 */
-	u8 intensity = bd->props->brightness;
-#endif /* 2.6.21 */	
 	struct omnibook_operation *io_op;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,23)
 	io_op = bl_get_data(bd);
-#else /* 2.6.23 */	
-	io_op = class_get_devdata(&bd->class_dev);
-#endif /* 2.6.23 */
 	return backend_byte_write(io_op, intensity);
 }
 #endif /* CONFIG_OMNIBOOK_BACKLIGHT */
@@ -112,11 +93,7 @@ static int omnibook_brightness_write(char *buffer, struct omnibook_operation *io
 		else {
 			backend_byte_write(io_op, brgt);
 #ifdef CONFIG_OMNIBOOK_BACKLIGHT
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
 			omnibook_backlight_device->props.brightness = brgt;
-#else /* 2.6.21 */
-			omnibookbl_data.brightness = brgt;
-#endif
 #endif	
 		}
 	}
@@ -149,36 +126,16 @@ static int __init omnibook_brightness_init(struct omnibook_operation *io_op)
 	}
 
 #ifdef CONFIG_OMNIBOOK_BACKLIGHT
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
 	memset (&props, 0, sizeof(struct backlight_properties));
 	props.max_brightness = omnibook_max_brightness;
 	omnibook_backlight_device =
 	    backlight_device_register(OMNIBOOK_MODULE_NAME, NULL, (void *)io_op, 
 	                              &omnibookbl_ops, &props);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
-	omnibook_backlight_device =
-	    backlight_device_register(OMNIBOOK_MODULE_NAME, NULL, (void *)io_op, &omnibookbl_ops);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
-	omnibook_backlight_device =
-	    backlight_device_register(OMNIBOOK_MODULE_NAME, NULL, (void *)io_op, &omnibookbl_data);
-#else /*  < 2.6.20 */
-	omnibook_backlight_device =
-	    backlight_device_register(OMNIBOOK_MODULE_NAME, (void *)io_op, &omnibookbl_data);
-#endif
 	if (IS_ERR(omnibook_backlight_device)) {
 		printk(O_ERR "Unable to register as backlight device.\n");
 		return -ENODEV;
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
 	backend_byte_read(io_op, (u8*) &omnibook_backlight_device->props.brightness);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
-	omnibook_backlight_device->props.max_brightness = omnibook_max_brightness;
-	backend_byte_read(io_op, (u8*) &omnibook_backlight_device->props.brightness);
-#else /* < 2.6.21 */
-	omnibookbl_data.max_brightness = omnibook_max_brightness;
-	backend_byte_read(io_op, (u8*) &omnibookbl_data.brightness);
-#endif
- 
 #endif /* CONFIG_OMNIBOOK_BACKLIGHT */
 	return 0;
 }

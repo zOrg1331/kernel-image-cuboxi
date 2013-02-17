@@ -16,7 +16,6 @@
  */
 
 #include <linux/acpi.h>
-#include "compat.h"
 
 /*
  * Quite ugly:
