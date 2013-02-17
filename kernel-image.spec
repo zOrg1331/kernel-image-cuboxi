@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.31
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -427,8 +427,9 @@ Patch1105: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192u.patch
 Patch1106: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8712.patch
 
 Patch1111: linux-%kernel_branch.27-feat-drivers-platform--asus_oled.patch
-Patch1112: linux-%kernel_branch.20-feat-drivers-platform--thinkpad_ec.patch
-Patch1113: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
+Patch1112: linux-%kernel_branch.31-feat-drivers-platform--omnibook.patch
+Patch1113: linux-%kernel_branch.20-feat-drivers-platform--thinkpad_ec.patch
+Patch1114: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
 
 Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 
@@ -1492,6 +1493,7 @@ cd linux-%version
 %patch1111 -p1
 %patch1112 -p1
 %patch1113 -p1
+%patch1114 -p1
 
 %patch1121 -p1
 
@@ -2409,6 +2411,10 @@ done)
 
 
 %changelog
+* Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.31-alt4
+- added:
+  + feat-drivers-platform--omnibook
+
 * Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.31-alt3
 - updated:
   + feat-drivers-block--zram
