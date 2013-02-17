@@ -21,6 +21,9 @@
 #include <linux/input.h>
 #include <linux/version.h>
 
+#define OMNIBOOK_MODULE_NAME "omnibook"
+#define OMNIBOOK_MODULE_VERSION "2.20110911"
+
 /*
  * EC types
  */
