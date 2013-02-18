@@ -260,3 +260,7 @@ feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 45b4f7524d351098ede61c2bf5166bb10b4e005f feat-drivers-misc--emlog
 52adb46f2c3636dfdef86fda9cae23377314d570 feat-drivers-platform--omnibook
 2b73e3cb2731d0b9a89ceee45a66c168af6d25d1 v3.4.32
+060f8a65ea8cb21d60e092580f22551e0b2a29c7 fix-net-ipv6
+d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
+007fe7013273a7d6bc0499e8ad23f727da186bad fix-drivers-scsi--lpfc
+3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart

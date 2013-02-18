@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.32
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -123,9 +123,9 @@ Release: alt1
 
 %define allocator SLAB
 
-%Extra_modules vboxhost 4.1.24
-#Extra_modules vboxguest 4.1.22
-#Extra_modules fglrx 8.97.100.3
+%Extra_modules vboxhost 4.2.6
+#Extra_modules vboxguest 4.2.6
+#Extra_modules fglrx 8.97.100.7
 #Extra_modules netatop 0.1.1
 
 %define strip_mod_opts --strip-unneeded -R .comment
@@ -286,7 +286,8 @@ Patch0302: linux-%kernel_branch.25-fix-drivers-media-video-gspca--pac7302.patch
 
 Patch0311: linux-%kernel_branch.25-fix-drivers-mfd--rc5t583.patch
 Patch0312: linux-%kernel_branch.25-fix-drivers-mfd--rc5t583-irq.patch
-Patch0313: linux-%kernel_branch.25-fix-drivers-mfd--wm8994-core.patch
+Patch0313: linux-%kernel_branch.32-fix-drivers-mfd--twl4030-core.patch
+Patch0314: linux-%kernel_branch.25-fix-drivers-mfd--wm8994-core.patch
 
 Patch0321: linux-%kernel_branch.20-fix-drivers-misc--pti.patch
 
@@ -321,20 +322,22 @@ Patch0391: linux-%kernel_branch.25-fix-drivers-rtc--rtc-m41t80.patch
 Patch0401: linux-%kernel_branch.25-fix-drivers-scsi--aha1542.patch
 Patch0402: linux-%kernel_branch.25-fix-drivers-scsi--aic94xx.patch
 Patch0403: linux-%kernel_branch.28-fix-drivers-scsi--hv_storvsc.patch
-Patch0404: linux-%kernel_branch.25-fix-drivers-scsi--mpt2sas.patch
-Patch0405: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
-Patch0406: linux-%kernel_branch.20-fix-drivers-scsi--scsi_mod.patch
-Patch0407: linux-%kernel_branch.20-fix-drivers-scsi--scsi_netlink.patch
-Patch0408: linux-%kernel_branch.20-fix-drivers-scsi--sd_mod.patch
-Patch0409: linux-%kernel_branch.29-fix-drivers-scsi--st.patch
-Patch0410: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patch
-Patch0411: linux-%kernel_branch.20-fix-drivers-scsi-ibmvscsi--ibmvscsic.patch
-Patch0412: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patch
+Patch0404: linux-%kernel_branch.32-fix-drivers-scsi--lpfc.patch
+Patch0405: linux-%kernel_branch.25-fix-drivers-scsi--mpt2sas.patch
+Patch0406: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
+Patch0407: linux-%kernel_branch.20-fix-drivers-scsi--scsi_mod.patch
+Patch0408: linux-%kernel_branch.20-fix-drivers-scsi--scsi_netlink.patch
+Patch0409: linux-%kernel_branch.20-fix-drivers-scsi--sd_mod.patch
+Patch0410: linux-%kernel_branch.29-fix-drivers-scsi--st.patch
+Patch0411: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patch
+Patch0412: linux-%kernel_branch.20-fix-drivers-scsi-ibmvscsi--ibmvscsic.patch
+Patch0413: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patch
 
 Patch0421: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 
 Patch0431: linux-%kernel_branch.27-fix-drivers-tty--pty.patch
 Patch0432: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
+Patch0433: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
 
 Patch0441: linux-%kernel_branch.25-fix-drivers-usb-gadget--g_audio.patch
 
@@ -375,10 +378,11 @@ Patch0517: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0521: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0522: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0523: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0524: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0525: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0526: linux-%kernel_branch.20-fix-net-sunrpc.patch
+Patch0523: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0524: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0525: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0526: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0527: linux-%kernel_branch.20-fix-net-sunrpc.patch
 
 Patch0531: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1325,6 +1329,7 @@ cd linux-%version
 %patch0311 -p1
 %patch0312 -p1
 %patch0313 -p1
+%patch0314 -p1
 
 # fix-drivers-misc--*
 %patch0321 -p1
@@ -1377,6 +1382,7 @@ cd linux-%version
 %patch0410 -p1
 %patch0411 -p1
 %patch0412 -p1
+%patch0413 -p1
 
 # fix-drivers-spi--*
 %patch0421 -p1
@@ -1384,6 +1390,7 @@ cd linux-%version
 # fix-drivers-tty-*
 %patch0431 -p1
 %patch0432 -p1
+%patch0433 -p1
 
 # fix-drivers-usb-*
 %patch0441 -p1
@@ -1437,6 +1444,7 @@ cd linux-%version
 %patch0524 -p1
 %patch0525 -p1
 %patch0526 -p1
+%patch0527 -p1
 
 %patch0531 -p1
 
@@ -1617,12 +1625,19 @@ sed -i '/^CONFIG_LOCALVERSION=/s/=.*$/="-%flavour-%krelease"/' .config
 sed -i '/^CONFIG_NR_CPUS=/s/^\(.*=\).*$/\14/' .config
 %endif
 
-%ifarch %intel_64
-config_disable CPU_SUP_AMD
+%ifarch %intel_64 %intel_32
+config_disable CPU_SUP_\.*
+config_enable CPU_SUP_INTEL
 %endif
 
-%ifarch %amd_64
-config_disable CPU_SUP_INTEL
+%ifarch %amd_64 %amd_32
+config_disable CPU_SUP_\.*
+config_enable CPU_SUP_AMD
+%endif
+
+%ifarch %via_64 %via_32
+config_disable CPU_SUP_\.*
+config_enable CPU_SUP_CENTAUR
 %endif
 
 %ifarch %ix86
@@ -2413,6 +2428,15 @@ done)
 
 
 %changelog
+* Tue Feb 19 2013 Led <led@altlinux.ru> 3.4.32-alt2
+- added:
+  + fix-drivers-mfd--twl4030-core
+  + fix-drivers-scsi--lpfc
+  + fix-drivers-tty-serial--pch_uart
+  + fix-net-ipv6
+- enabled CPU_SUP_CENTAUR
+- vboxhost 4.2.6
+
 * Sun Feb 17 2013 Led <led@altlinux.ru> 3.4.32-alt1
 - 3.4.32
 - disabled ub (BLK_DEV_UB)
