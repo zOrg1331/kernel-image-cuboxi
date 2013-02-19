@@ -471,6 +471,7 @@ make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
 pushd %buildroot%old_kbuild_dir/include/linux
 ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
+ln -s ../generated/uapi/linux/version.h
 popd
 
 # remove *.bin files
