@@ -252,8 +252,7 @@ void nfs_setsecurity(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_l
 
 	/*	BUG_ON(!mutex_is_locked(&inode->i_mutex)); */
 
-	if ((fattr->valid & NFS_ATTR_FATTR_V4_SECURITY_LABEL) &&
-			label && inode->i_security) {
+	if (label && (fattr->valid & NFS_ATTR_FATTR_V4_SECURITY_LABEL) && inode->i_security) {
 		error = security_inode_notifysecctx(inode, label->label,
 				label->len);
 		if (error)
@@ -262,10 +261,6 @@ void nfs_setsecurity(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_l
 					__func__,
 					(char *)label->label, label->len, error);
 	}
-}
-#else
-void nfs_setsecurity(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label)
-{
 }
 #endif
 
@@ -407,9 +402,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr, st
 			 */
 			inode->i_blocks = nfs_calc_block_size(fattr->du.nfs3.used);
 		}
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
 		nfs_setsecurity(inode, fattr, label);
-#endif
 		nfsi->attrtimeo = NFS_MINATTRTIMEO(inode);
 		nfsi->attrtimeo_timestamp = now;
 		nfsi->access_cache = RB_ROOT;
@@ -856,10 +849,7 @@ __nfs_revalidate_inode(struct nfs_server *server, struct inode *inode)
 		(long long)NFS_FILEID(inode));
 
  out:
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	if (nfs_server_capable(inode, NFS_CAP_SECURITY_LABEL))
-		nfs4_label_free(label);
-#endif
+	nfs4_label_free_cap(inode, label);
 	nfs_free_fattr(fattr);
 	return status;
 }
@@ -1468,11 +1458,8 @@ static int nfs_update_inode(struct inode *inode, struct nfs_fattr *fattr, struct
 				| NFS_INO_INVALID_ACL
 				| NFS_INO_REVAL_FORCED);
 
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	if (label)
-		nfs_setsecurity(inode, fattr, label);
-#endif
-	
+	nfs_setsecurity(inode, fattr, label);
+
 	if (fattr->valid & NFS_ATTR_FATTR_NLINK) {
 		if (inode->i_nlink != fattr->nlink) {
 			invalid |= NFS_INO_INVALID_ATTR;

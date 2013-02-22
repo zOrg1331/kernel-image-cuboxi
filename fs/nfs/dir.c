@@ -1163,10 +1163,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, struct nameidata *nd)
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
 
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL))
-		nfs4_label_free(label);
-#endif
+	nfs4_label_free_cap(dir,  label);
 
 out_set_verifier:
 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
@@ -1349,10 +1346,7 @@ no_entry:
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	if (nfs_server_capable(dir, NFS_CAP_SECURITY_LABEL))
-		nfs4_label_free(label);
-#endif
+	nfs4_label_free_cap(dir, label);
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
 	return res;

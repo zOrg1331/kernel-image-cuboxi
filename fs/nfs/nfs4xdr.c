@@ -4018,6 +4018,7 @@ static int decode_attr_time_delta(struct xdr_stream *xdr, uint32_t *bitmap,
 	return status;
 }
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
 static int decode_attr_security_label(struct xdr_stream *xdr, uint32_t *bitmap, struct nfs4_label *label)
 {
 	uint32_t pi = 0;
@@ -4075,6 +4076,12 @@ out_overflow:
 	print_overflow_msg(__func__, xdr);
 	return -EIO;
 }
+#else
+static inline int decode_attr_security_label(struct xdr_stream *xdr, uint32_t *bitmap, struct nfs4_label *label)
+{
+	return 0;
+}
+#endif
 
 static int decode_attr_time_modify(struct xdr_stream *xdr, uint32_t *bitmap, struct timespec *time)
 {

@@ -269,10 +269,7 @@ struct dentry *nfs4_get_root(struct super_block *sb, struct nfs_fh *mntfh,
 out:
 	if (name)
 		kfree(name);
-#ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	if (server->caps & NFS_CAP_SECURITY_LABEL)
-		nfs4_label_free(label);
-#endif
+	_nfs4_label_free_cap(server, label);
 	nfs_free_fattr(fattr);
 	dprintk("<-- nfs4_get_root()\n");
 	return ret;

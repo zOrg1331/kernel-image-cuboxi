@@ -369,7 +369,11 @@ extern int __nfs_revalidate_inode(struct nfs_server *, struct inode *);
 extern int nfs_revalidate_mapping(struct inode *inode, struct address_space *mapping);
 extern int nfs_setattr(struct dentry *, struct iattr *);
 extern void nfs_setattr_update_inode(struct inode *inode, struct iattr *attr);
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
 extern void nfs_setsecurity(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label);
+#else
+static inline void nfs_setsecurity(struct inode *inode, struct nfs_fattr *fattr, struct nfs4_label *label) {}
+#endif
 extern struct nfs_open_context *get_nfs_open_context(struct nfs_open_context *ctx);
 extern void put_nfs_open_context(struct nfs_open_context *ctx);
 extern struct nfs_open_context *nfs_find_open_context(struct inode *inode, struct rpc_cred *cred, fmode_t mode);
