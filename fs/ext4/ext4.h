@@ -2303,8 +2303,6 @@ extern int ext4_convert_unwritten_extents(struct inode *inode, loff_t offset,
 			  ssize_t len);
 extern int ext4_map_blocks(handle_t *handle, struct inode *inode,
 			   struct ext4_map_blocks *map, int flags);
-extern int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
-			__u64 start, __u64 len);
 #ifdef CONFIG_EXT4_SECRM
 extern int ext4_secure_delete_lblks(struct inode *inode, ext4_lblk_t first_block,
 				    unsigned long count);
@@ -2315,6 +2313,8 @@ extern int ext4_secure_delete_jblks(struct inode *inode, ext4_lblk_t first_block
 				    unsigned long count);
 #endif
 #endif
+extern int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
+			__u64 start, __u64 len);
 /* move_extent.c */
 extern int ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			     __u64 start_orig, __u64 start_donor,

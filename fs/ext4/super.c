@@ -1186,10 +1186,10 @@ enum {
 	Opt_nomblk_io_submit, Opt_block_validity, Opt_noblock_validity,
 	Opt_inode_readahead_blks, Opt_journal_ioprio,
 	Opt_dioread_nolock, Opt_dioread_lock,
-	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
 #ifdef CONFIG_EXT4_SECRM
 	Opt_secrm, Opt_nosecrm,
 #endif
+	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
 };
 
 static const match_table_t tokens = {
@@ -1267,12 +1267,12 @@ static const match_table_t tokens = {
 	{Opt_removed, "nocheck"},	/* mount option from ext2/3 */
 	{Opt_removed, "reservation"},	/* mount option from ext2/3 */
 	{Opt_removed, "noreservation"}, /* mount option from ext2/3 */
-	{Opt_removed, "journal=%u"},	/* mount option from ext2/3 */
 #ifdef CONFIG_EXT4_SECRM
 	{Opt_secrm, "secrm=%u"},
 	{Opt_secrm, "secrm"},
 	{Opt_nosecrm, "nosecrm"},
 #endif
+	{Opt_removed, "journal=%u"},	/* mount option from ext2/3 */
 	{Opt_err, NULL},
 };
 
