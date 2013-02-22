@@ -467,3 +467,10 @@ unsigned int nfs_page_array_len(unsigned int base, size_t len)
 		PAGE_SIZE - 1) >> PAGE_SHIFT;
 }
 
+#ifdef CONFIG_NFS_V4_SECURITY_LABEL
+extern void _nfs4_label_free_cap(struct nfs_server *server, struct nfs4_label *label);
+extern void nfs4_label_free_cap(struct inode *dir, struct nfs4_label *label);
+#else
+static inline void _nfs4_label_free_cap(struct nfs_server *server, struct nfs4_label *label) {}
+static inline void nfs4_label_free_cap(struct inode *dir, struct nfs4_label *label) {}
+#endif
