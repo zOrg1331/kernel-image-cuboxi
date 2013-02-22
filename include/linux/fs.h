@@ -198,8 +198,8 @@ struct inodes_stat_t {
 #define MS_REMOUNT	32	/* Alter flags of a mounted FS */
 #define MS_MANDLOCK	64	/* Allow mandatory locks on an FS */
 #define MS_DIRSYNC	128	/* Directory modifications are synchronous */
-#define MS_FROZEN	512	/* Frozen by freeze_filesystems() */
 #define MS_NOATIME	1024	/* Do not update access times. */
+#define MS_FROZEN	512	/* Frozen by freeze_filesystems() */
 #define MS_NODIRATIME	2048	/* Do not update directory access times */
 #define MS_BIND		4096
 #define MS_MOVE		8192
@@ -246,9 +246,9 @@ struct inodes_stat_t {
 #define S_PRIVATE	512	/* Inode is fs-internal */
 #define S_IMA		1024	/* Inode has an associated IMA struct */
 #define S_AUTOMOUNT	2048	/* Automount/referral quasi-directory */
-#define S_NOSEC		4096	/* no suid or xattr security attributes */
 #define S_ATOMIC_COPY	8192	/* Pages mapped with this inode need to be
 				   atomically copied (gem) */
+#define S_NOSEC		4096	/* no suid or xattr security attributes */
 
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
