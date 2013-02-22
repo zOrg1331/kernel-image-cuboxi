@@ -2023,7 +2023,7 @@ nfsd4_encode_aclname(struct svc_rqst *rqstp, int whotype, uid_t id, int group,
 #define WORD1_ABSENT_FS_ATTRS FATTR4_WORD1_MOUNTED_ON_FILEID
 
 #ifdef CONFIG_NFSD_V4_SECURITY_LABEL
-	static inline __be32
+static inline __be32
 nfsd4_encode_security_label(struct svc_rqst *rqstp, struct dentry *dentry, __be32 **pp, int *buflen)
 {
 	void *context;
