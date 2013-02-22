@@ -392,10 +392,10 @@ enum {
 	Opt_resgid, Opt_resuid, Opt_sb, Opt_err_cont, Opt_err_panic,
 	Opt_err_ro, Opt_nouid32, Opt_nocheck, Opt_debug,
 	Opt_oldalloc, Opt_orlov, Opt_nobh, Opt_user_xattr, Opt_nouser_xattr,
-	Opt_acl, Opt_noacl, Opt_xip, Opt_ignore, Opt_err, Opt_quota,
 #ifdef CONFIG_EXT2_SECRM
 	Opt_secrm, Opt_secrmu, Opt_nosecrm,
 #endif
+	Opt_acl, Opt_noacl, Opt_xip, Opt_ignore, Opt_err, Opt_quota,
 	Opt_usrquota, Opt_grpquota, Opt_reservation, Opt_noreservation
 };
 
@@ -428,13 +428,13 @@ static const match_table_t tokens = {
 	{Opt_ignore, "noquota"},
 	{Opt_quota, "quota"},
 	{Opt_usrquota, "usrquota"},
-	{Opt_reservation, "reservation"},
-	{Opt_noreservation, "noreservation"},
 #ifdef CONFIG_EXT2_SECRM
 	{Opt_secrmu, "secrm=%u"},
 	{Opt_secrm, "secrm"},
 	{Opt_nosecrm, "nosecrm"},
 #endif
+	{Opt_reservation, "reservation"},
+	{Opt_noreservation, "noreservation"},
 	{Opt_err, NULL}
 };
 
