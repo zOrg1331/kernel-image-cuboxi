@@ -818,11 +818,11 @@ enum {
 	Opt_abort, Opt_data_journal, Opt_data_ordered, Opt_data_writeback,
 	Opt_data_err_abort, Opt_data_err_ignore,
 	Opt_usrjquota, Opt_grpjquota, Opt_offusrjquota, Opt_offgrpjquota,
-	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_jqfmt_vfsv1, Opt_quota,
-	Opt_noquota, Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err,
 #ifdef CONFIG_EXT3_SECRM
 	Opt_secrm, Opt_secrmu, Opt_nosecrm,
 #endif
+	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_jqfmt_vfsv1, Opt_quota,
+	Opt_noquota, Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err,
 	Opt_resize, Opt_usrquota, Opt_grpquota
 };
 
@@ -879,12 +879,12 @@ static const match_table_t tokens = {
 	{Opt_barrier, "barrier=%u"},
 	{Opt_barrier, "barrier"},
 	{Opt_nobarrier, "nobarrier"},
-	{Opt_resize, "resize"},
 #ifdef CONFIG_EXT3_SECRM
 	{Opt_secrmu, "secrm=%u"},
 	{Opt_secrm, "secrm"},
 	{Opt_nosecrm, "nosecrm"},
 #endif
+	{Opt_resize, "resize"},
 	{Opt_err, NULL},
 };
 
