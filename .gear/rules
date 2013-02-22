@@ -84,6 +84,7 @@ diff: v3.4.25:.				fix-drivers-i2c--i2c-boardinfo:. name=linux-3.4.25-fix-driver
 diff: v3.4.25:.				fix-drivers-i2c--i2c-pxa:. name=linux-3.4.25-fix-drivers-i2c--i2c-pxa.patch
 diff: v3.4.25:.				fix-drivers-i2c-busses--i2c-intel-mid:. name=linux-3.4.25-fix-drivers-i2c-busses--i2c-intel-mid.patch
 diff: v3.4.25:.				fix-drivers-idle--i7300_idle:. name=linux-3.4.25-fix-drivers-idle--i7300_idle.patch
+diff: v3.4.32:.				fix-drivers-idle--intel_idle:. name=linux-3.4.32-fix-drivers-idle--intel_idle.patch
 diff: v3.4.25:.				fix-drivers-infiniband-hw--mlx4:. name=linux-3.4.25-fix-drivers-infiniband-hw--mlx4.patch
 diff: v3.4.25:.				fix-drivers-input:. name=linux-3.4.25-fix-drivers-input.patch
 diff: v3.4.20:.				fix-drivers-input-keyboard--omap4-keypad:. name=linux-3.4.20-fix-drivers-input-keyboard--omap4-keypad.patch

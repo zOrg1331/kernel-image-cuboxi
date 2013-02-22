@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.32
-Release: alt2
+Version: 3.4.33
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 32
+%define kernel_stable_version 33
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -254,6 +254,7 @@ Patch0222: linux-%kernel_branch.25-fix-drivers-i2c--i2c-pxa.patch
 Patch0223: linux-%kernel_branch.25-fix-drivers-i2c-busses--i2c-intel-mid.patch
 
 Patch0231: linux-%kernel_branch.25-fix-drivers-idle--i7300_idle.patch
+Patch0232: linux-%kernel_branch.32-fix-drivers-idle--intel_idle.patch
 
 Patch0241: linux-%kernel_branch.25-fix-drivers-infiniband-hw--mlx4.patch
 
@@ -1291,6 +1292,7 @@ cd linux-%version
 
 # fix-drivers-idle--*
 %patch0231 -p1
+%patch0232 -p1
 
 # fix-drivers-infiniband-*
 %patch0241 -p1
@@ -2428,6 +2430,12 @@ done)
 
 
 %changelog
+* Fri Feb 22 2013 Led <led@altlinux.ru> 3.4.33-alt1
+- 3.4.33
+- added:
+  + fix-drivers-idle--intel_idle
+- USB_EHCI_HCD=y (x86_64)
+
 * Tue Feb 19 2013 Led <led@altlinux.ru> 3.4.32-alt2
 - added:
   + fix-drivers-mfd--twl4030-core

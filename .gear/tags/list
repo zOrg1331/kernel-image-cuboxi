@@ -264,3 +264,5 @@ feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 007fe7013273a7d6bc0499e8ad23f727da186bad fix-drivers-scsi--lpfc
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
+8d0153279baebdac4785926e801eca932156fc1f v3.4.33
+ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
