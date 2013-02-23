@@ -13,7 +13,7 @@ f890334b859f8c9bacdc3d856dbe43556196c729 fix-arch-x86--apic
 fc89a5eff7006e0fcef05f9331646540138280d0 fix-arch-x86--apm
 c1a5be3926dc02959b4b7031428beb36fdc70d35 fix-arch-x86--hpet
 aa240b12ce55ca25b32708b1ed0ef9a3286a17ec fix-arch-x86--kexec
-a7ae8b77f5e106b96b309918e3fd92a5d6aeebb6 fix-block
+fa3033c345a81ebabd3776d8f8360c265a0cbb83 fix-block
 9058eb412ac17ce53d9bcb21b0e0d5fb3846331d fix-block-partitions--efi
 d8dd2d7c4ccb5ef0bc823b79c1b263585542861c fix-drivers-acpi
 0e145d2a6c395c282d90be6f08b5ecf3a4ec2e6f fix-drivers-acpi--ec_sys
@@ -58,7 +58,7 @@ b8bb3e49f4f503e30679702da6caf593e625fc0a fix-drivers-scsi-megaraid--megaraid_mbo
 827382e1f1d11541729ef21b1100ab7a9df0d9ff fix-drivers-video-geode
 c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 e8feadd30f82900d3e27b7253ad2319d7e0b640a fix-fs
-e38ef0beb3e8c33bcdcdfe6df3b94685574d99ff fix-fs-btrfs
+5f9f12d885281e659175e2d964d125cb244b07a6 fix-fs-btrfs
 3723f8a06b88d4d715b9d013c1f55202d03181eb fix-fs-ext4
 df7a65978af8ee26f14934a168f599fa37eb32d2 fix-fs-nfs
 0727a33db1c14e5884b8b3c46ca00c1b4084ce29 fix-fs-proc
@@ -87,7 +87,7 @@ b05378daca44ba9d28b8aff9c5d5c24e5a9645b3 fix-tools-hv
 1ce6dac6b101fce9f4af15c35cf3e62e9e83eaee feat-block--bfq-iosched
 9e9e404d98dd49625c1647f0b00bd53a8349df53 feat-drivers-block--cloop
 f37e8c4d9fe2093f67273b10f9ec3cdd82d593d4 feat-drivers-char--crasher
-5f08027a9342c2b64305564b10055983eb4a123d feat-drivers-gpu-drm--cirrus
+06f06e2eaf3262383330ae0db8b7cd746d333b98 feat-drivers-gpu-drm--cirrus
 b88e5f6731e3ab255a04e44f211c124c0645df20 feat-drivers-hwmon--ipmisensors
 b86f282e2ad4d33548bcba07c57975db4c614d47 feat-drivers-input-touchscreen--elousb
 c02fe11dba409007d1f80bf3cb22d9cbb76d5b42 feat-drivers-md--dm-raid45
@@ -100,16 +100,16 @@ e73f4e80fd30f8efcd2cdb1f3bd26ff25c00fb37 feat-drivers-net-wireless-rtl8192u
 eaf4527915d3fbc3d86d1f04c3755516afa729cf feat-drivers-platform--tp_smapi
 f060c5190b04e66bc2770629e19baeb5bc42b997 feat-drivers-usb-usbip
 c0ca232974ab1030a5809fc12bbc0325dcdae5a8 feat-drivers-video--bootsplash
-d64946abb5a197aa5880e525369c21cbf4f54b93 feat-fs--lnfs
+2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
 9202dcd00376ebcc27c4e7e442e80707f6f695bb feat-fs-aufs
 a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 26db2a4d3617346871dddb25859ef1678daf640f feat-fs-dazukofs
-2e3cc49c92f1af921b8a6a00937795aa12d0d1fc feat-fs-ext2--secrm
-99f61dad8e45e18f3793df4d6ca36d226206ee48 feat-fs-ext3--secrm
+6643f0400d047f119caf11b5c0f7527b3a229d29 feat-fs-ext2--secrm
+1624007a5778cbca8b097c24d63b94156ae91ca3 feat-fs-ext3--secrm
 758a4bd4b12f66526015a2360d84b825964a0ce6 feat-fs-ext4--richacl
-62af79172866838ebe4ce7f51356fe6dd4fefce7 feat-fs-ext4--secrm
+281e7468228baac3b34de38f3886e6f4a6160666 feat-fs-ext4--secrm
 e9ae39f2df4ece236af5388b0f8e1db934eb73bd feat-fs-f2fs
 8779cad40d63fc520b39421103b89d81b13e5e65 feat-fs-fat--secrm
 d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
@@ -117,7 +117,7 @@ d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
 c0d8e7b2106d8dd5fd0636a8c00e781d29ab9aa7 feat-fs-jbd2--secrm
 33f35b5032dc105f84e26289ea08fd4542c146fd feat-fs-reiser4
 ed0a3f9b1c403e4f5d7cd250c30e30fd7514fbd4 feat-fs-unionfs
-bdec68ea41d272a3b5505fe4e8bf610c7e69dcf3 feat-kernel-power-tuxonice
+982498dccc00a67ba6c7415f07da09bfa7117984 feat-kernel-power-tuxonice
 2ce26cf80304e310037b3fcaf4efdb8de3bd6023 feat-lib--unwind
 9857aa808dfa2887f524838623d8439728b2191d feat-mm--uksm
 aece48dcfc3fa18f1a89073ba3c2a7b97e0415e9 feat-net-netfilter--nf_conntrack_slp
@@ -229,7 +229,7 @@ d9bc5956afc693aaa425b6f8fa7f9ab39f5254f1 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
 4a59bfb3e065859d071288e70b03cda462ebac33 feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
-5986d423066efa5c34db3f90c685748f54aec17f feat-kernel-power-tuxonice--frontswap
+242997377677127a7701091fa39bc76b52daec90 feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
 b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
 ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27

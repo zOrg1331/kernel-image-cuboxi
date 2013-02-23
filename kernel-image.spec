@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.33
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -171,7 +171,7 @@ Patch0025: linux-%kernel_branch.28-fix-arch-x86--mcheck.patch
 Patch0026: linux-%kernel_branch.25-fix-arch-x86-cpu.patch
 Patch0027: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
 
-Patch0030: linux-%kernel_branch.20-fix-block.patch
+Patch0030: linux-%kernel_branch.32-fix-block.patch
 Patch0031: linux-%kernel_branch.20-fix-block-partitions--efi.patch
 
 Patch0040: linux-%kernel_branch.28-fix-drivers-acpi.patch
@@ -350,7 +350,7 @@ Patch0454: linux-%kernel_branch.20-fix-drivers-video-omap2-dss.patch
 Patch0461: linux-%kernel_branch.25-fix-firmware--vicam.patch
 
 Patch0470: linux-%kernel_branch.28-fix-fs.patch
-Patch0471: linux-%kernel_branch.20-fix-fs-btrfs.patch
+Patch0471: linux-%kernel_branch.32-fix-fs-btrfs.patch
 Patch0472: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0473: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0474: linux-%kernel_branch.29-fix-fs-logfs.patch
@@ -2430,6 +2430,16 @@ done)
 
 
 %changelog
+* Sat Feb 23 2013 Led <led@altlinux.ru> 3.4.33-alt2
+- updated:
+  + fix-fs-btrfs
+  + feat-drivers-gpu-drm--cirrus
+  + feat-fs--lnfs
+  + feat-fs-ext2--secrm
+  + feat-fs-ext3--secrm
+  + feat-fs-ext4--secrm
+  + feat-kernel-power-tuxonice
+
 * Fri Feb 22 2013 Led <led@altlinux.ru> 3.4.33-alt1
 - 3.4.33
 - added:
