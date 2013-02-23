@@ -102,21 +102,6 @@ void sock_diag_unregister(struct sock_diag_handler *hnld)
 }
 EXPORT_SYMBOL_GPL(sock_diag_unregister);
 
-static inline struct sock_diag_handler *sock_diag_lock_handler(int family)
-{
-	if (sock_diag_handlers[family] == NULL)
-		request_module("net-pf-%d-proto-%d-type-%d", PF_NETLINK,
-				NETLINK_SOCK_DIAG, family);
-
-	mutex_lock(&sock_diag_table_mutex);
-	return sock_diag_handlers[family];
-}
-
-static inline void sock_diag_unlock_handler(struct sock_diag_handler *h)
-{
-	mutex_unlock(&sock_diag_table_mutex);
-}
-
 static int __sock_diag_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	int err;
@@ -129,12 +114,17 @@ static int __sock_diag_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 	if (req->sdiag_family >= AF_MAX)
 		return -EINVAL;
 
-	hndl = sock_diag_lock_handler(req->sdiag_family);
+	if (sock_diag_handlers[req->sdiag_family] == NULL)
+		request_module("net-pf-%d-proto-%d-type-%d", PF_NETLINK,
+				NETLINK_SOCK_DIAG, req->sdiag_family);
+
+	mutex_lock(&sock_diag_table_mutex);
+	hndl = sock_diag_handlers[req->sdiag_family];
 	if (hndl == NULL)
 		err = -ENOENT;
 	else
 		err = hndl->dump(skb, nlh);
-	sock_diag_unlock_handler(hndl);
+	mutex_unlock(&sock_diag_table_mutex);
 
 	return err;
 }
