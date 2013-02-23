@@ -339,11 +339,13 @@ int inode_only_permission(struct inode *inode, int mask)
 {
 	int retval;
 
-	/*
-	 * Nobody gets write access to an immutable file.
-	 */
-	if (unlikely(mask & MAY_WRITE) && IS_IMMUTABLE(inode))
-		return -EACCES;
+	if (unlikely(mask & MAY_WRITE)) {
+		/*
+		 * Nobody gets write access to an immutable file.
+		 */
+		if (IS_IMMUTABLE(inode))
+			return -EACCES;
+	}
 
 	retval = do_inode_permission(inode, mask);
 	if (retval)
