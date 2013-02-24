@@ -1494,19 +1494,6 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 	case Opt_i_version:
 		sb->s_flags |= MS_I_VERSION;
 		return 1;
-	case Opt_journal_dev:
-		if (is_remount) {
-			ext4_msg(sb, KERN_ERR,
-				 "Cannot specify journal on remount");
-			return -1;
-		}
-		*journal_devnum = arg;
-		return 1;
-	case Opt_journal_ioprio:
-		if (arg < 0 || arg > 7)
-			return -1;
-		*journal_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, arg);
-		return 1;
 #ifdef CONFIG_EXT4_SECRM
 	case Opt_secrm:
 		if (args->from) {
@@ -1522,6 +1509,19 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 		clear_opt2(sb, SECRM);
 		return 1;
 #endif
+	case Opt_journal_dev:
+		if (is_remount) {
+			ext4_msg(sb, KERN_ERR,
+				 "Cannot specify journal on remount");
+			return -1;
+		}
+		*journal_devnum = arg;
+		return 1;
+	case Opt_journal_ioprio:
+		if (arg < 0 || arg > 7)
+			return -1;
+		*journal_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, arg);
+		return 1;
 	}
 
 	for (m = ext4_mount_opts; m->token != Opt_err; m++) {
