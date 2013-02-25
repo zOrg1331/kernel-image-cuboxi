@@ -109,7 +109,7 @@ a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 6643f0400d047f119caf11b5c0f7527b3a229d29 feat-fs-ext2--secrm
 1624007a5778cbca8b097c24d63b94156ae91ca3 feat-fs-ext3--secrm
 758a4bd4b12f66526015a2360d84b825964a0ce6 feat-fs-ext4--richacl
-281e7468228baac3b34de38f3886e6f4a6160666 feat-fs-ext4--secrm
+0ac1324c2ff3cc0bf2adb96da718e95e589617e1 feat-fs-ext4--secrm
 e9ae39f2df4ece236af5388b0f8e1db934eb73bd feat-fs-f2fs
 8779cad40d63fc520b39421103b89d81b13e5e65 feat-fs-fat--secrm
 d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
@@ -175,7 +175,7 @@ abbe677e492847c4e9c30d544b10210d9b65a91c fix-drivers-net-ethernet-fujitsu--at170
 7bbd167f89f297c7f0d320cfc256415da105c970 fix-drivers-i2c--i2c-boardinfo
 d1dd99489bee525dc905cfa3fc2e251e4f914b38 fix-drivers-net-ethernet-amd--depca
 0ed2abd3e04bab619635da7e07991a9431524623 fix-drivers-spi--spi
-495cd236c0e773f1437c1a11e4cd18c999232b05 feat-fs-overlayfs
+9a62f5853a7a19ad659a20d15a5decd94fdf590a feat-fs-overlayfs
 97fff6333316c45e27206bb5fae1fab5e5b6c4d2 fix-arch-x86--mcheck
 3b0e73c0732714a84a8a2f100d753d9caf58951e fix-arch-x86-cpu--rdrand
 922661216de6472f07e448ac945c7410c9b58e65 fix-drivers-ata--ata_piix
@@ -266,3 +266,5 @@ d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
 8d0153279baebdac4785926e801eca932156fc1f v3.4.33
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
+287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
+088c065c21695f1b09df3d8247767d08f1436dde fix-net-core

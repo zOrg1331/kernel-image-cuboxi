@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.33
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -336,6 +336,7 @@ Patch0413: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patc
 
 Patch0421: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 
+Patch0430: linux-%kernel_branch.32-fix-drivers-tty.patch
 Patch0431: linux-%kernel_branch.27-fix-drivers-tty--pty.patch
 Patch0432: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
 Patch0433: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
@@ -379,11 +380,12 @@ Patch0517: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0521: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0522: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0523: linux-%kernel_branch.31-fix-net-ipv6.patch
-Patch0524: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0525: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0526: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0527: linux-%kernel_branch.20-fix-net-sunrpc.patch
+Patch0523: linux-%kernel_branch.33-fix-net-core.patch
+Patch0524: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0525: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0526: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0527: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0528: linux-%kernel_branch.20-fix-net-sunrpc.patch
 
 Patch0531: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1389,7 +1391,8 @@ cd linux-%version
 # fix-drivers-spi--*
 %patch0421 -p1
 
-# fix-drivers-tty-*
+# fix-drivers-tty*
+%patch0430 -p1
 %patch0431 -p1
 %patch0432 -p1
 %patch0433 -p1
@@ -1447,6 +1450,7 @@ cd linux-%version
 %patch0525 -p1
 %patch0526 -p1
 %patch0527 -p1
+%patch0528 -p1
 
 %patch0531 -p1
 
@@ -2430,6 +2434,14 @@ done)
 
 
 %changelog
+* Mon Feb 25 2013 Led <led@altlinux.ru> 3.4.33-alt3
+- updated:
+  + feat-fs-ext4--secrm
+  + feat-fs-overlayfs
+- added:
+  + fix-drivers-tty
+  + fix-net-core (CVE-2013-1763)
+
 * Sat Feb 23 2013 Led <led@altlinux.ru> 3.4.33-alt2
 - updated:
   + fix-fs-btrfs
