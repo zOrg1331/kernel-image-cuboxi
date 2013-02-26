@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.33
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -97,6 +97,7 @@ Release: alt3
 %def_enable guest
 %def_enable ext4_for_ext23
 %def_enable bootsplash
+%def_enable logo
 %def_enable zcache
 %def_enable security
 %def_enable audit
@@ -147,7 +148,7 @@ Url: http://www.kernel.org/
 
 Source0: linux-%version.tar
 Source1: %flavour-%kernel_branch.x86_64.config
-Source2: %flavour-%kernel_branch.i386.config
+Source2: %flavour-%kernel_branch.x86.config
 Source10: Makefile.external
 
 #Patch0000: patch-%kernel_branch.%kernel_stable_version
@@ -496,7 +497,7 @@ ExclusiveArch: %x86_64 %ix86
 %define base_arch x86_64
 %endif
 %ifarch %ix86
-%define base_arch i386
+%define base_arch x86
 %endif
 
 %ifnarch x86_64 i486 i586
@@ -1663,7 +1664,7 @@ config_disable \
 	%{?_disable_modversions:MODVERSIONS} \
 	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT} \
 	%{?_disable_numa:NUMA} \
-	%{?_disable_video:FB DISPLAY_SUPPORT VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
+	%{?_disable_video:FB VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
 	%{?_disable_ipv6:IPV6} \
 	%{?_disable_apei:ACPI_APEI} \
@@ -1712,6 +1713,7 @@ config_disable \
 	%{?_disable_paravirt_guest:PARAVIRT_GUEST} \
 	%{?_disable_kvm_guest:KVM_GUEST} \
 	%{?_disable_bootsplash:BOOTSPLASH} \
+	%{?_disable_logo:LOGO} \
 	%{?_disable_zcache:ZCACHE} \
 	%{?_disable_pci:PCI} \
 	%{?_disable_acpi:ACPI} \
@@ -2434,6 +2436,18 @@ done)
 
 
 %changelog
+* Tue Feb 26 2013 Led <led@altlinux.ru> 3.4.33-alt4
+- updated:
+  + fix-net-core
+- disabled:
+  + FB_ASILIANT
+  + FB_IMSTT
+  + EXYNOS_VIDEO
+  + LOGO
+- enabled:
+  + FB_S3
+  + FONT_SUN12x22
+
 * Mon Feb 25 2013 Led <led@altlinux.ru> 3.4.33-alt3
 - updated:
   + feat-fs-ext4--secrm
