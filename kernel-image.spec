@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.33
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -370,7 +370,7 @@ Patch0500: linux-%kernel_branch.25-fix-lib.patch
 Patch0501: linux-%kernel_branch.29-fix-lib--btree.patch
 Patch0502: linux-%kernel_branch.25-fix-lib--crc32.patch
 
-Patch0510: linux-%kernel_branch.31-fix-mm.patch
+Patch0510: linux-%kernel_branch.33-fix-mm.patch
 Patch0511: linux-%kernel_branch.20-fix-mm--compaction.patch
 Patch0512: linux-%kernel_branch.20-fix-mm--memcontrol.patch
 Patch0513: linux-%kernel_branch.20-fix-mm--memory-failure.patch
@@ -2444,6 +2444,10 @@ done)
 
 
 %changelog
+* Wed Feb 27 2013 Led <led@altlinux.ru> 3.4.33-alt6
+- updated:
+  + fix-mm (CVE-2013-1767)
+
 * Wed Feb 27 2013 Led <led@altlinux.ru> 3.4.33-alt5
 - disabled:
   + LOGO
