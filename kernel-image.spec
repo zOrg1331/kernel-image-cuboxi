@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.33
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -97,7 +97,7 @@ Release: alt4
 %def_enable guest
 %def_enable ext4_for_ext23
 %def_enable bootsplash
-%def_enable logo
+%def_disable logo
 %def_enable zcache
 %def_enable security
 %def_enable audit
@@ -1778,11 +1778,17 @@ config_enable \
 sed -i '/^CONFIG_USB_UHCI_HCD=/s/=m/=y/' .config
 %else
 %ifarch %amd_64 %amd_32
-config_disable USB_UHCI_HCD
+config_disable USB_UHCI_HCD SCHED_SMT
 %endif
 %ifarch %amd_64
 sed -i '/^CONFIG_USB_OHCI_HCD=/s/=m/=y/' .config
 %endif
+%endif
+%ifarch %amd_64 %amd_32 %via_64 %via_32
+config_disable SCHED_SMT
+%endif
+%ifarch %ix86
+config_disable SCHED_MC
 %endif
 
 echo "Building kernel %kversion-%flavour-%krelease"
@@ -1877,16 +1883,18 @@ for f in \
 	scripts/makelst \
 	scripts/mk{compile_h,makefile,version} \
 	scripts/module-common.lds \
-	%{?_enable_video:scripts/pnmtologo} \
+	scripts/pnmtologo \
 	scripts/recordmcount.pl \
 	scripts/basic/fixdep \
-	%{?_enable_modversions:scripts/genksyms/genksyms} \
+	scripts/genksyms/genksyms \
 	scripts/kconfig/conf \
 	scripts/mod/{modpost,mk_elfconfig} \
 	gcc_version.inc
 do
-	[ -x "$f" ] && mode=0755 || mode=0644
-	install -Dp -m $mode {,%buildroot%kbuild_dir/}$f
+	if [ -f "$f" ]; then
+		[ -x "$f" ] && mode=0755 || mode=0644
+		install -Dp -m $mode {,%buildroot%kbuild_dir/}$f
+	fi
 done
 
 # Provide kbuild directory with old name (without %%krelease)
@@ -2436,6 +2444,18 @@ done)
 
 
 %changelog
+* Wed Feb 27 2013 Led <led@altlinux.ru> 3.4.33-alt5
+- disabled:
+  + LOGO
+  + FONT_MINI_4x6
+  + FRAMEBUFFER_CONSOLE_DETECT_PRIMARY
+  + PROC_PAGE_MONITOR
+  + PM_DEVFREQ
+  + SGI_PARTITION
+  + ULTRIX_PARTITION
+  + SUN_PARTITION
+  + VM_EVENT_COUNTERS
+
 * Tue Feb 26 2013 Led <led@altlinux.ru> 3.4.33-alt4
 - updated:
   + fix-net-core
@@ -2443,7 +2463,6 @@ done)
   + FB_ASILIANT
   + FB_IMSTT
   + EXYNOS_VIDEO
-  + LOGO
 - enabled:
   + FB_S3
   + FONT_SUN12x22
