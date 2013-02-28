@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M60P.1
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.1
@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.7
+%define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
@@ -471,7 +471,6 @@ make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
 pushd %buildroot%old_kbuild_dir/include/linux
 ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
-ln -s ../generated/uapi/linux/version.h
 popd
 
 # remove *.bin files
@@ -595,40 +594,29 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Thu Feb 28 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.1-alt1
+* Thu Feb 28 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.1-alt0.M60P.1
 - 3.8.1
 
-* Mon Feb 25 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.0-alt2
+* Mon Feb 25 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.9-alt0.M60P.2
 - CVE-2013-1763 fixed
 
-* Tue Feb 19 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.0-alt1
-- 3.8.0
-
-* Mon Feb 18 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.9-alt1
+* Mon Feb 18 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.9-alt0.M60P.1
 - 3.7.9
-- patches for correct /proc permissions from ldv@ applied
 
-* Fri Feb 15 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.8-alt1
+* Fri Feb 15 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.8-alt0.M60P.1
 - 3.7.8
 
-* Wed Feb 13 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.7-alt1.1
-- REGULATOR_DUMMY disabled (closes #27798)
-
-* Mon Feb 11 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.7-alt1
+* Mon Feb 11 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.7-alt0.M60P.1
 - 3.7.7
 
-* Wed Feb 06 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.6-alt1.1
-- no OSS and some other config changes (closes: #28358) (closes: #28359)
-
-* Mon Feb 04 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.6-alt1
+* Wed Feb 06 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.6-alt0.M60P.1
 - 3.7.6
 
-* Tue Jan 29 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.5-alt1
-- 3.7.5
-- FANOTIFY and MMC_RICOH_MMC enabled
-
-* Tue Jan 22 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.4-alt1
+* Tue Jan 22 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.4-alt0.M60P.1
 - 3.7.4
+
+* Thu Jan 17 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.3-alt0.M60P.1
+- backport to p6
 
 * Thu Jan 17 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.3-alt1
 - 3.7.3
@@ -653,6 +641,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Thu Dec 20 2012 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.6.11-alt1
 - 3.6.11 (closes: 28138)
 - Build using std-def config with config diff from 3.5.7.
+
+* Wed Dec 19 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 0:3.6.11-alt0.M60P.1
+- 3.6.11
 
 * Tue Dec 18 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.7.1-alt1
 - 3.7.1
