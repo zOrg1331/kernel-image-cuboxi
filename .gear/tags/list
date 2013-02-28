@@ -64,8 +64,8 @@ df7a65978af8ee26f14934a168f599fa37eb32d2 fix-fs-nfs
 0727a33db1c14e5884b8b3c46ca00c1b4084ce29 fix-fs-proc
 666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
-ee26a02dcbbc18ea8c1de0a8cd8fe67795d1f382 fix-kernel
-ccf8a164c30edf78e9b51c2c29084d205f8a8780 fix-mm
+efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
+7b3f452755ed13e2550f27641d0e3101278d884c fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -219,7 +219,6 @@ eb2e4d2ca56738dc7b5633e44502cfe711344b78 fix-drivers-idle--i7300_idle
 8d0f867317ead50c5097163b0c1cf068620dbe92 fix-drivers-platform--intel_menlow
 5971bce01ab00297ff869629e1442036ca86929a fix-drivers-platform--intel_oaktrail
 d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
-ddfb7da1606aef0874e109435803b60dd544d8b7 fix-arch-x86-cpu
 8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
 c2c45c75b77bb7a51ebb242f7b012a4abb40800f fix-mm--zcache
 0ff0d99fb61f9a739baa0e1781f6f08709fc7f4e fix-mm--zsmalloc
@@ -264,7 +263,7 @@ feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 007fe7013273a7d6bc0499e8ad23f727da186bad fix-drivers-scsi--lpfc
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
-8d0153279baebdac4785926e801eca932156fc1f v3.4.33
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
-0c9226b43b3af7e46ca1f9cc17aa9757897e8d10 fix-net-core
+b4e4d02c209b9be09512de2c013e0481a273172f fix-net-core
+e433868d9a56637374ffca868cd9541628cf2549 v3.4.34

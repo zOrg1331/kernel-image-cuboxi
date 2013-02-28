@@ -1,0 +1,23 @@
+object 048b6fe6dccb105512147eb47accbb1431b4e54b
+type commit
+tag v3.4.34
+tagger Greg Kroah-Hartman <gregkh@linuxfoundation.org> 1362063702 -0800
+
+This is the 3.4.34 stable release
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v2.0.19 (GNU/Linux)
+
+iQIcBAABAgAGBQJRL3FWAAoJEDjbvchgkmk+JnUP/25Cq4FR8KT02XcTLSd1+ZxU
+5Y+iPXoS7keHAdUy5ChdoO1EvxkabFI1c3vcpxVxNJcplgF1LOkHUebTC4HcKU6E
+XdN4z0p849ugE8Q3fu7xEfgfsQupAxmWcLYO1JLwRdwkOFS2ri4qUptVArP9SzdC
+5psQL3t+gdctbDr5ZJXNIi3AtN5E7AQj4AxOn8K/4/ypWuUZg3gjWFHZFHYs06GM
+N0qMuiZU3GRXqKfwbzCEi7+U9/koRkJ5jxBkdPiUQ+hLhNb+QuZnf9n+QOJlYm4w
+5qoULnwFQhsdP7C4MorJAzuRbwSt6QD2cnQ40GcZJ/m3/JWP0NLo0lpbdvtlZXEe
+O3Cfm5XuEOzZpxViV6gqrudUOLWuBG1qvw+5ze7532SGv/PsNMyJsDj9bootITbG
+JUuZ1oNAXyBAOHCuAqeYN08bFzTXW1OJ7EHzSZ3Cc3vwp81eYIVKFVfiuRQrGmme
+Q1Mqo0xJJbc5epGy62PG8JjCQp+YWkZMGMWCZ7t1e4TgyLsYv0YYcv1m16sxJfNx
+5yLdXCr5YReIstE2br+WRj/giUwdCtJ9xBIk8EwaYj9RpqCx6eqswolcKGW+zERw
+BSHpzwUDKW41DsCE10EX7K4XfmshdVjhAGPnHmmNKove/69LkS4jxuXyW4l9TB84
+urpu8IWEeRHvVsSNn4Id
+=ZajC
+-----END PGP SIGNATURE-----

@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.33
-Release: alt6
+Version: 3.4.34
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 33
+%define kernel_stable_version 34
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -169,8 +169,7 @@ Patch0022: linux-%kernel_branch.20-fix-arch-x86--apm.patch
 Patch0023: linux-%kernel_branch.20-fix-arch-x86--hpet.patch
 Patch0024: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
 Patch0025: linux-%kernel_branch.28-fix-arch-x86--mcheck.patch
-Patch0026: linux-%kernel_branch.25-fix-arch-x86-cpu.patch
-Patch0027: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
+Patch0026: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
 
 Patch0030: linux-%kernel_branch.32-fix-block.patch
 Patch0031: linux-%kernel_branch.20-fix-block-partitions--efi.patch
@@ -364,13 +363,13 @@ Patch0479: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
 Patch0480: linux-%kernel_branch.20-fix-init.patch
 
-Patch0490: linux-%kernel_branch.20-fix-kernel.patch
+Patch0490: linux-%kernel_branch.34-fix-kernel.patch
 
 Patch0500: linux-%kernel_branch.25-fix-lib.patch
 Patch0501: linux-%kernel_branch.29-fix-lib--btree.patch
 Patch0502: linux-%kernel_branch.25-fix-lib--crc32.patch
 
-Patch0510: linux-%kernel_branch.33-fix-mm.patch
+Patch0510: linux-%kernel_branch.34-fix-mm.patch
 Patch0511: linux-%kernel_branch.20-fix-mm--compaction.patch
 Patch0512: linux-%kernel_branch.20-fix-mm--memcontrol.patch
 Patch0513: linux-%kernel_branch.20-fix-mm--memory-failure.patch
@@ -381,7 +380,7 @@ Patch0517: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0521: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0522: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0523: linux-%kernel_branch.33-fix-net-core.patch
+Patch0523: linux-%kernel_branch.34-fix-net-core.patch
 Patch0524: linux-%kernel_branch.31-fix-net-ipv6.patch
 Patch0525: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0526: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
@@ -1190,7 +1189,6 @@ cd linux-%version
 %patch0024 -p1
 %patch0025 -p1
 %patch0026 -p1
-%patch0027 -p1
 
 %patch0030 -p1
 %patch0031 -p1
@@ -1662,7 +1660,7 @@ config_disable \
 config_disable \
 	%{?_disable_smp:SMP} \
 	%{?_disable_modversions:MODVERSIONS} \
-	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT} \
+	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT PROC_PID_CPUSET SYSFS_DEPRECATED} \
 	%{?_disable_numa:NUMA} \
 	%{?_disable_video:FB VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
@@ -2444,6 +2442,19 @@ done)
 
 
 %changelog
+* Thu Feb 28 2013 Led <led@altlinux.ru> 3.4.34-alt1
+- 3.4.34
+- removed:
+  + fix-arch-x86-cpu
+- updated:
+  + fix-kernel
+  + fix-mm
+  + fix-net-core
+- decreased RCU_FANOUT
+- disabled:
+  + PROC_PID_CPUSET
+  + CGROUP_PERF
+
 * Wed Feb 27 2013 Led <led@altlinux.ru> 3.4.33-alt6
 - updated:
   + fix-mm (CVE-2013-1767)
