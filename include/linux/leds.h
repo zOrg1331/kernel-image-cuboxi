@@ -66,7 +66,7 @@ struct led_classdev {
 	struct timer_list	 blink_timer;
 	int			 blink_brightness;
 
-#ifdef CONFIG_LEDS_TRIGGERS
+#if defined(CONFIG_LEDS_TRIGGERS) || defined(CONFIG_LEDS_TRIGGERS_MODULE)
 	/* Protects the trigger data below */
 	struct rw_semaphore	 trigger_lock;
 
@@ -115,7 +115,7 @@ extern void led_brightness_set(struct led_classdev *led_cdev,
 /*
  * LED Triggers
  */
-#ifdef CONFIG_LEDS_TRIGGERS
+#if defined(CONFIG_LEDS_TRIGGERS) || defined(CONFIG_LEDS_TRIGGERS_MODULE)
 
 #define TRIG_NAME_MAX 50
 
