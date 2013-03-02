@@ -161,7 +161,7 @@ extern void led_trigger_blink(struct led_trigger *trigger,
 #endif
 
 /* Trigger specific functions */
-#ifdef CONFIG_LEDS_TRIGGER_IDE_DISK
+#if defined(CONFIG_LEDS_TRIGGER_IDE_DISK) || defined(CONFIG_LEDS_TRIGGER_IDE_DISK_MODULE)
 extern void ledtrig_ide_activity(void);
 #else
 #define ledtrig_ide_activity() do {} while(0)
