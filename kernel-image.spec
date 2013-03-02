@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.34
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -122,7 +122,7 @@ Release: alt1
 
 %def_disable debug_section_mismatch
 
-%define allocator SLAB
+#define allocator SLAB
 
 %Extra_modules vboxhost 4.2.6
 #Extra_modules vboxguest 4.2.6
@@ -191,8 +191,9 @@ Patch0070: linux-%kernel_branch.25-fix-drivers-base.patch
 Patch0071: linux-%kernel_branch.20-fix-drivers-base--dma-contiguous.patch
 Patch0072: linux-%kernel_branch.25-fix-drivers-base--dma-buf.patch
 
-Patch0081: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
-Patch0082: linux-%kernel_branch.20-fix-drivers-block--zram.patch
+Patch0081: linux-%kernel_branch.34-fix-drivers-block--aoe.patch
+Patch0082: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
+Patch0083: linux-%kernel_branch.20-fix-drivers-block--zram.patch
 
 Patch0091: linux-%kernel_branch.20-fix-drivers-char--lp.patch
 Patch0092: linux-%kernel_branch.25-fix-drivers-char-agp--intel-agp.patch
@@ -341,6 +342,7 @@ Patch0431: linux-%kernel_branch.27-fix-drivers-tty--pty.patch
 Patch0432: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
 Patch0433: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
 
+Patch0440: linux-%kernel_branch.34-fix-drivers-usb.patch
 Patch0441: linux-%kernel_branch.25-fix-drivers-usb-gadget--g_audio.patch
 
 Patch0451: linux-%kernel_branch.20-fix-drivers-video-aty--radeonfb.patch
@@ -361,46 +363,48 @@ Patch0477: linux-%kernel_branch.29-fix-fs-quota.patch
 Patch0478: linux-%kernel_branch.28-fix-fs-ramfs.patch
 Patch0479: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
-Patch0480: linux-%kernel_branch.20-fix-init.patch
+Patch0481: linux-%kernel_branch.34-fix-include-linux.patch
 
-Patch0490: linux-%kernel_branch.34-fix-kernel.patch
+Patch0490: linux-%kernel_branch.20-fix-init.patch
 
-Patch0500: linux-%kernel_branch.25-fix-lib.patch
-Patch0501: linux-%kernel_branch.29-fix-lib--btree.patch
-Patch0502: linux-%kernel_branch.25-fix-lib--crc32.patch
+Patch0500: linux-%kernel_branch.34-fix-kernel.patch
 
-Patch0510: linux-%kernel_branch.34-fix-mm.patch
-Patch0511: linux-%kernel_branch.20-fix-mm--compaction.patch
-Patch0512: linux-%kernel_branch.20-fix-mm--memcontrol.patch
-Patch0513: linux-%kernel_branch.20-fix-mm--memory-failure.patch
-Patch0514: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0515: linux-%kernel_branch.20-fix-mm--swap.patch
-Patch0516: linux-%kernel_branch.20-fix-mm--zcache.patch
-Patch0517: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
+Patch0510: linux-%kernel_branch.25-fix-lib.patch
+Patch0511: linux-%kernel_branch.29-fix-lib--btree.patch
+Patch0512: linux-%kernel_branch.25-fix-lib--crc32.patch
 
-Patch0521: linux-%kernel_branch.30-fix-net--dns_resolver.patch
-Patch0522: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0523: linux-%kernel_branch.34-fix-net-core.patch
-Patch0524: linux-%kernel_branch.31-fix-net-ipv6.patch
-Patch0525: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0526: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0527: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0528: linux-%kernel_branch.20-fix-net-sunrpc.patch
+Patch0520: linux-%kernel_branch.34-fix-mm.patch
+Patch0521: linux-%kernel_branch.20-fix-mm--compaction.patch
+Patch0522: linux-%kernel_branch.20-fix-mm--memcontrol.patch
+Patch0523: linux-%kernel_branch.20-fix-mm--memory-failure.patch
+Patch0524: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
+Patch0525: linux-%kernel_branch.20-fix-mm--swap.patch
+Patch0526: linux-%kernel_branch.20-fix-mm--zcache.patch
+Patch0527: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
-Patch0531: linux-%kernel_branch.20-fix-scripts--kconfig.patch
+Patch0531: linux-%kernel_branch.30-fix-net--dns_resolver.patch
+Patch0532: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
+Patch0533: linux-%kernel_branch.34-fix-net-core.patch
+Patch0534: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0535: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0536: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0537: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0538: linux-%kernel_branch.20-fix-net-sunrpc.patch
 
-Patch0541: linux-%kernel_branch.20-fix-security--apparmor.patch
-Patch0542: linux-%kernel_branch.20-fix-security--security.patch
+Patch0541: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
-Patch0551: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
-Patch0552: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
-Patch0553: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
+Patch0551: linux-%kernel_branch.20-fix-security--apparmor.patch
+Patch0552: linux-%kernel_branch.20-fix-security--security.patch
 
-Patch0561: linux-%kernel_branch.20-fix-tools--perf.patch
-Patch0562: linux-%kernel_branch.20-fix-tools-hv.patch
+Patch0561: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
+Patch0562: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
+Patch0563: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
 
-Patch0570: linux-%kernel_branch.20-fix-virt-kvm.patch
-Patch0571: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
+Patch0571: linux-%kernel_branch.20-fix-tools--perf.patch
+Patch0572: linux-%kernel_branch.20-fix-tools-hv.patch
+
+Patch0580: linux-%kernel_branch.20-fix-virt-kvm.patch
+Patch0581: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
 
 
 Patch1001: linux-%kernel_branch.20-feat-arch-arm-mach-omap2--drm.patch
@@ -441,7 +445,7 @@ Patch1114: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
 
 Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 
-Patch1131: linux-%kernel_branch.20-feat-drivers-video--bootsplash.patch
+Patch1131: linux-%kernel_branch.34-feat-drivers-video--bootsplash.patch
 Patch1132: linux-%kernel_branch.25-feat-drivers-video--xgifb.patch
 
 Patch1141: linux-%kernel_branch-feat-firmware-rtl_nic.patch
@@ -540,7 +544,7 @@ ExclusiveArch: %x86_64 %ix86
 
 %{?_enable_debug:%set_enable debugfs}
 
-%{!?allocator:%define allocator SLAB}
+%{!?allocator:#define allocator SLAB}
 
 %ifarch %x86_64
 %define kernel_base_cpu	GENERIC_CPU
@@ -1217,6 +1221,7 @@ cd linux-%version
 # fix-drivers-block--*
 %patch0081 -p1
 %patch0082 -p1
+%patch0083 -p1
 
 # fix-drivers-char-*
 %patch0091 -p1
@@ -1396,7 +1401,8 @@ cd linux-%version
 %patch0432 -p1
 %patch0433 -p1
 
-# fix-drivers-usb-*
+# fix-drivers-usb*
+%patch0440 -p1
 %patch0441 -p1
 
 # fix-drivers-video-*
@@ -1420,28 +1426,22 @@ cd linux-%version
 %patch0478 -p1
 %patch0479 -p1
 
-# fix-init
-%patch0480 -p1
+# fix-include-*
+%patch0481 -p1
 
-# fix-kernel*
+# fix-init
 %patch0490 -p1
 
-# fix-lib*
+# fix-kernel*
 %patch0500 -p1
-%patch0501 -p1
-%patch0502 -p1
 
-# fix-mm*
+# fix-lib*
 %patch0510 -p1
 %patch0511 -p1
 %patch0512 -p1
-%patch0513 -p1
-%patch0514 -p1
-%patch0515 -p1
-%patch0516 -p1
-%patch0517 -p1
 
-# fix-net-*
+# fix-mm*
+%patch0520 -p1
 %patch0521 -p1
 %patch0522 -p1
 %patch0523 -p1
@@ -1449,23 +1449,32 @@ cd linux-%version
 %patch0525 -p1
 %patch0526 -p1
 %patch0527 -p1
-%patch0528 -p1
 
+# fix-net-*
 %patch0531 -p1
+%patch0532 -p1
+%patch0533 -p1
+%patch0534 -p1
+%patch0535 -p1
+%patch0536 -p1
+%patch0537 -p1
+%patch0538 -p1
 
 %patch0541 -p1
-%patch0542 -p1
 
 %patch0551 -p1
 %patch0552 -p1
-%patch0553 -p1
 
 %patch0561 -p1
 %patch0562 -p1
+%patch0563 -p1
+
+%patch0571 -p1
+%patch0572 -p1
 
 # fix-virt-kvm*
-%patch0570 -p1
-%patch0571 -p1
+%patch0580 -p1
+%patch0581 -p1
 
 
 %patch1001 -p1
@@ -1737,7 +1746,7 @@ config_enable \
 	%{?_enable_nfs_swap:NFS_SWAP} \
 	%{?_enable_lnfs:NFS_V4_SECURITY_LABEL NFSD_V4_SECURITY_LABEL} \
 	%{?_enable_kallsyms:KALLSYMS} \
-	%allocator
+	%{?allocator:%allocator}
 
 # arch-specific
 %ifarch corei7 nehalem
@@ -2442,6 +2451,15 @@ done)
 
 
 %changelog
+* Fri Mar 01 2013 Led <led@altlinux.ru> 3.4.34-alt2
+- updated:
+  + feat-drivers-video--bootsplash
+- added:
+  + fix-drivers-block--aoe
+  + fix-drivers-usb
+  + fix-include-linux
+- build with default (SLUB) allocator
+
 * Thu Feb 28 2013 Led <led@altlinux.ru> 3.4.34-alt1
 - 3.4.34
 - removed:
@@ -2463,7 +2481,6 @@ done)
 - disabled:
   + LOGO
   + FONT_MINI_4x6
-  + FRAMEBUFFER_CONSOLE_DETECT_PRIMARY
   + PROC_PAGE_MONITOR
   + PM_DEVFREQ
   + SGI_PARTITION

@@ -99,7 +99,7 @@ e73f4e80fd30f8efcd2cdb1f3bd26ff25c00fb37 feat-drivers-net-wireless-rtl8192u
 0417ddc54db39d88c24715e870fa843cd65ef9cb feat-drivers-platform--thinkpad_ec
 eaf4527915d3fbc3d86d1f04c3755516afa729cf feat-drivers-platform--tp_smapi
 f060c5190b04e66bc2770629e19baeb5bc42b997 feat-drivers-usb-usbip
-c0ca232974ab1030a5809fc12bbc0325dcdae5a8 feat-drivers-video--bootsplash
+0523539e65d1d73557ae5ffe443716e5e8609998 feat-drivers-video--bootsplash
 2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
@@ -123,7 +123,7 @@ ed0a3f9b1c403e4f5d7cd250c30e30fd7514fbd4 feat-fs-unionfs
 aece48dcfc3fa18f1a89073ba3c2a7b97e0415e9 feat-net-netfilter--nf_conntrack_slp
 27406e978f596a646b87941cba5247eb0ccc8916 v3.4
 437d07d0c19b9533778b46a2b98a2d477a8784c9 v3.4.18
-0963fb546fa0bb2154d0e53a784ce2cbea1c66c1 feat-mm--slqb
+80991ac9eb699bfe2fc1c5719dcaf1e2eaad4549 feat-mm--slqb
 4548f27b1700cc7272b96d561101c782c7a334e3 feat-net--netatop
 5616d0817d5d94745747d5cc68610d5bdefc98c9 v3.4.25
 c9b6fce2047a90561125b08b015143406f224c78 feat-block--sio-iosched
@@ -267,3 +267,6 @@ ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
 b4e4d02c209b9be09512de2c013e0481a273172f fix-net-core
 e433868d9a56637374ffca868cd9541628cf2549 v3.4.34
+f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
+1873780825f3f8a13eaed9d603c1c4b8355a4149 fix-drivers-block--aoe
+3ca60ad52fba93bc21bf0a707e3736a2f98ad410 fix-include-linux
