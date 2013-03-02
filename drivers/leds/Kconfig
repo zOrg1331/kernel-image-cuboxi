@@ -6,7 +6,7 @@ config LEDS_GPIO_REGISTER
 	  module.
 
 menuconfig NEW_LEDS
-	bool "LED Support"
+	tristate "LED Support"
 	help
 	  Say Y to enable Linux LED support.  This allows control of supported
 	  LEDs from both userspace and optionally, by kernel events (triggers).
