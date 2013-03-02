@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.34
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -443,48 +443,50 @@ Patch1112: linux-%kernel_branch.31-feat-drivers-platform--omnibook.patch
 Patch1113: linux-%kernel_branch.20-feat-drivers-platform--thinkpad_ec.patch
 Patch1114: linux-%kernel_branch.20-feat-drivers-platform--tp_smapi.patch
 
-Patch1121: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
+Patch1121: linux-%kernel_branch.34-feat-drivers-scsi--vhba.patch
 
-Patch1131: linux-%kernel_branch.34-feat-drivers-video--bootsplash.patch
-Patch1132: linux-%kernel_branch.25-feat-drivers-video--xgifb.patch
+Patch1131: linux-%kernel_branch.20-feat-drivers-usb-usbip.patch
 
-Patch1141: linux-%kernel_branch-feat-firmware-rtl_nic.patch
+Patch1141: linux-%kernel_branch.34-feat-drivers-video--bootsplash.patch
+Patch1142: linux-%kernel_branch.25-feat-drivers-video--xgifb.patch
 
-Patch1151: linux-%kernel_branch.25-feat-fs--lnfs.patch
-Patch1152: linux-%kernel_branch.20-feat-fs--richacl.patch
-Patch1153: linux-%kernel_branch.18-feat-fs--secrm.patch
-Patch1154: linux-%kernel_branch-feat-fs-aufs.patch
-Patch1155: linux-%kernel_branch.20-feat-fs-binfmt_elf--fatelf.patch
-Patch1156: linux-%kernel_branch.20-feat-fs-dazukofs.patch
-Patch1157: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
-Patch1158: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
-Patch1159: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
-Patch1160: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
-Patch1161: linux-%kernel_branch.20-feat-fs-f2fs.patch
-Patch1162: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
-Patch1163: linux-%kernel_branch.20-feat-fs-hfs.patch
-Patch1164: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
-Patch1165: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
-Patch1166: linux-%kernel_branch.25-feat-fs-overlayfs.patch
-Patch1167: linux-%kernel_branch.20-feat-fs-reiser4.patch
-Patch1168: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
-Patch1169: linux-%kernel_branch.28-feat-fs-tmpfs--root.patch
-Patch1170: linux-%kernel_branch.20-feat-fs-unionfs.patch
+Patch1151: linux-%kernel_branch-feat-firmware-rtl_nic.patch
 
-Patch1181: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
-Patch1182: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
+Patch1161: linux-%kernel_branch.25-feat-fs--lnfs.patch
+Patch1162: linux-%kernel_branch.20-feat-fs--richacl.patch
+Patch1163: linux-%kernel_branch.18-feat-fs--secrm.patch
+Patch1164: linux-%kernel_branch-feat-fs-aufs.patch
+Patch1165: linux-%kernel_branch.20-feat-fs-binfmt_elf--fatelf.patch
+Patch1166: linux-%kernel_branch.20-feat-fs-dazukofs.patch
+Patch1167: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
+Patch1168: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
+Patch1169: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
+Patch1170: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
+Patch1171: linux-%kernel_branch.20-feat-fs-f2fs.patch
+Patch1172: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
+Patch1173: linux-%kernel_branch.20-feat-fs-hfs.patch
+Patch1174: linux-%kernel_branch.18-feat-fs-jbd--secrm.patch
+Patch1175: linux-%kernel_branch.18-feat-fs-jbd2--secrm.patch
+Patch1176: linux-%kernel_branch.25-feat-fs-overlayfs.patch
+Patch1177: linux-%kernel_branch.20-feat-fs-reiser4.patch
+Patch1178: linux-%kernel_branch.20-feat-fs-squashfs--write.patch
+Patch1179: linux-%kernel_branch.28-feat-fs-tmpfs--root.patch
+Patch1180: linux-%kernel_branch.20-feat-fs-unionfs.patch
 
-Patch1191: linux-%kernel_branch.20-feat-lib--unwind.patch
+Patch1191: linux-%kernel_branch.27-feat-kernel-power-tuxonice.patch
+Patch1192: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
 
-Patch1201: linux-%kernel_branch.25-feat-mm--frontswap.patch
-Patch1202: linux-%kernel_branch.20-feat-mm--slqb.patch
-Patch1203: linux-%kernel_branch.24-feat-mm--uksm.patch
-Patch1204: linux-%kernel_branch.20-feat-mm--zcache.patch
-Patch1205: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+Patch1201: linux-%kernel_branch.20-feat-lib--unwind.patch
 
-Patch1211: linux-%kernel_branch.20-feat-net--netatop.patch
-Patch1212: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
-Patch1213: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
+Patch1211: linux-%kernel_branch.25-feat-mm--frontswap.patch
+Patch1212: linux-%kernel_branch.20-feat-mm--slqb.patch
+Patch1213: linux-%kernel_branch.24-feat-mm--uksm.patch
+Patch1214: linux-%kernel_branch.20-feat-mm--zcache.patch
+Patch1215: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+
+Patch1221: linux-%kernel_branch.20-feat-net--netatop.patch
+Patch1222: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
+Patch1223: linux-%kernel_branch.20-feat-net-netfilter--nf_conntrack_slp.patch
 
 
 ExclusiveOS: Linux
@@ -1518,27 +1520,21 @@ cd linux-%version
 %patch1113 -p1
 %patch1114 -p1
 
+# feat-drivers-scsi--*
 %patch1121 -p1
 
-# feat-drivers-video--*
+# feat-drivers-usb-*
 %patch1131 -p1
-%patch1132 -p1
+
+# feat-drivers-video--*
+%patch1141 -p1
+%patch1142 -p1
 
 # feat-firmware-*
-%patch1141 -p1
+%patch1151 -p1
 
 # feat-fs-*
-%{?_with_lnfs:%patch1151 -p1}
-%patch1152 -p1
-%patch1153 -p1
-%patch1154 -p1
-%patch1155 -p1
-%patch1156 -p1
-%patch1157 -p1
-%patch1158 -p1
-%patch1159 -p1
-%patch1160 -p1
-%patch1161 -p1
+%{?_with_lnfs:%patch1161 -p1}
 %patch1162 -p1
 %patch1163 -p1
 %patch1164 -p1
@@ -1548,24 +1544,34 @@ cd linux-%version
 %patch1168 -p1
 %patch1169 -p1
 %patch1170 -p1
+%patch1171 -p1
+%patch1172 -p1
+%patch1173 -p1
+%patch1174 -p1
+%patch1175 -p1
+%patch1176 -p1
+%patch1177 -p1
+%patch1178 -p1
+%patch1179 -p1
+%patch1180 -p1
 
 # feat-kernel-power-*
-%patch1181 -p1
-%patch1182 -p1
-
 %patch1191 -p1
+%patch1192 -p1
+
+%patch1201 -p1
 
 # feat-mm--*
-%patch1201 -p1
-%patch1202 -p1
-%patch1203 -p1
-%patch1204 -p1
-%patch1205 -p1
-
-# feat-net--*
 %patch1211 -p1
 %patch1212 -p1
 %patch1213 -p1
+%patch1214 -p1
+%patch1215 -p1
+
+# feat-net--*
+%patch1221 -p1
+%patch1222 -p1
+%patch1223 -p1
 
 
 # get rid of unwanted files resulting from patch fuzz
@@ -1973,7 +1979,7 @@ gen_rpmmodfile scsi-base \
 %if "%sub_flavour" == "guest"
 	%buildroot%modules_dir/kernel/drivers/scsi/{{,lib}iscsi*,scsi_transport_iscsi.ko} \
 %endif
-	%buildroot%modules_dir/kernel/drivers/scsi/{{*_mod,scsi_{tgt,transport_srp}}.ko,osd,device_handler{,/scsi_dh.ko}}
+	%buildroot%modules_dir/kernel/drivers/scsi/{{*_mod,scsi_{tgt,transport_srp},vhba}.ko,osd,device_handler{,/scsi_dh.ko}}
 gen_rpmmodlist %buildroot%modules_dir/kernel/drivers/{message/fusion,scsi{,/device_handler}/*,target} | grep -Fxv -f scsi-base.rpmmodlist > scsi.rpmmodlist
 mv scsi-base.rpmmodlist scsi-base.rpmmodlist~
 gen_rpmmodfile infiniband %buildroot%modules_dir/kernel/{drivers/{infiniband,scsi/scsi_transport_srp.ko},net/{9p/9pnet_rdma.ko,rds,sunrpc/xprtrdma}}
@@ -2451,6 +2457,10 @@ done)
 
 
 %changelog
+* Sat Mar 02 2013 Led <led@altlinux.ru> 3.4.34-alt3
+- added:
+  + feat-drivers-scsi--vhba
+
 * Fri Mar 01 2013 Led <led@altlinux.ru> 3.4.34-alt2
 - updated:
   + feat-drivers-video--bootsplash
