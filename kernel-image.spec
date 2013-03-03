@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.34
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -226,46 +226,50 @@ Patch0151: linux-%kernel_branch.25-fix-drivers-edac--i82875p_edac.patch
 Patch0152: linux-%kernel_branch.25-fix-drivers-edac--i82975x_edac.patch
 Patch0153: linux-%kernel_branch.25-fix-drivers-edac--x38_edac.patch
 
-Patch0171: linux-%kernel_branch.25-fix-drivers-gpu-drm--exynosdrm.patch
-Patch0172: linux-%kernel_branch.25-fix-drivers-gpu-drm--gma500_gfx.patch
-Patch0173: linux-%kernel_branch.25-fix-drivers-gpu-drm--i915.patch
-Patch0174: linux-%kernel_branch.20-fix-drivers-gpu-drm--nouveau.patch
+Patch0161: linux-%kernel_branch.25-fix-drivers-gpu-drm--exynosdrm.patch
+Patch0162: linux-%kernel_branch.25-fix-drivers-gpu-drm--gma500_gfx.patch
+Patch0163: linux-%kernel_branch.25-fix-drivers-gpu-drm--i915.patch
+Patch0164: linux-%kernel_branch.20-fix-drivers-gpu-drm--nouveau.patch
 
-Patch0181: linux-%kernel_branch.20-fix-drivers-hid--hid-apple.patch
-Patch0182: linux-%kernel_branch.20-fix-drivers-hid--hid-hyperv.patch
+Patch0171: linux-%kernel_branch.20-fix-drivers-hid--hid-apple.patch
+Patch0172: linux-%kernel_branch.20-fix-drivers-hid--hid-hyperv.patch
 
-Patch0191: linux-%kernel_branch.25-fix-drivers-hsi.patch
-Patch0192: linux-%kernel_branch.25-fix-drivers-hsi--hsi.patch
+Patch0181: linux-%kernel_branch.25-fix-drivers-hsi.patch
+Patch0182: linux-%kernel_branch.25-fix-drivers-hsi--hsi.patch
 
-Patch0200: linux-%kernel_branch.20-fix-drivers-hv.patch
-Patch0201: linux-%kernel_branch.20-fix-drivers-hv--hv_utils.patch
-Patch0202: linux-%kernel_branch.20-fix-drivers-hv--hv_vmbus.patch
+Patch0190: linux-%kernel_branch.20-fix-drivers-hv.patch
+Patch0191: linux-%kernel_branch.20-fix-drivers-hv--hv_utils.patch
+Patch0192: linux-%kernel_branch.20-fix-drivers-hv--hv_vmbus.patch
 
-Patch0211: linux-%kernel_branch.25-fix-drivers-hwmon--applesmc.patch
-Patch0212: linux-%kernel_branch.25-fix-drivers-hwmon--asc7621.patch
-Patch0213: linux-%kernel_branch.25-fix-drivers-hwmon--coretemp.patch
-Patch0214: linux-%kernel_branch.25-fix-drivers-hwmon--fam15h_power.patch
-Patch0215: linux-%kernel_branch.25-fix-drivers-hwmon--i5k_amb.patch
-Patch0216: linux-%kernel_branch.25-fix-drivers-hwmon--k10temp.patch
-Patch0217: linux-%kernel_branch.25-fix-drivers-hwmon--k8temp.patch
-Patch0218: linux-%kernel_branch.25-fix-drivers-hwmon--via-cputemp.patch
+Patch0201: linux-%kernel_branch.25-fix-drivers-hwmon--applesmc.patch
+Patch0202: linux-%kernel_branch.25-fix-drivers-hwmon--asc7621.patch
+Patch0203: linux-%kernel_branch.25-fix-drivers-hwmon--coretemp.patch
+Patch0204: linux-%kernel_branch.25-fix-drivers-hwmon--fam15h_power.patch
+Patch0205: linux-%kernel_branch.25-fix-drivers-hwmon--i5k_amb.patch
+Patch0206: linux-%kernel_branch.25-fix-drivers-hwmon--k10temp.patch
+Patch0207: linux-%kernel_branch.25-fix-drivers-hwmon--k8temp.patch
+Patch0208: linux-%kernel_branch.25-fix-drivers-hwmon--via-cputemp.patch
 
-Patch0221: linux-%kernel_branch.25-fix-drivers-i2c--i2c-boardinfo.patch
-Patch0222: linux-%kernel_branch.25-fix-drivers-i2c--i2c-pxa.patch
-Patch0223: linux-%kernel_branch.25-fix-drivers-i2c-busses--i2c-intel-mid.patch
+Patch0211: linux-%kernel_branch.25-fix-drivers-i2c--i2c-boardinfo.patch
+Patch0212: linux-%kernel_branch.25-fix-drivers-i2c--i2c-pxa.patch
+Patch0213: linux-%kernel_branch.25-fix-drivers-i2c-busses--i2c-intel-mid.patch
 
-Patch0231: linux-%kernel_branch.25-fix-drivers-idle--i7300_idle.patch
-Patch0232: linux-%kernel_branch.32-fix-drivers-idle--intel_idle.patch
+Patch0221: linux-%kernel_branch.25-fix-drivers-idle--i7300_idle.patch
+Patch0222: linux-%kernel_branch.32-fix-drivers-idle--intel_idle.patch
 
-Patch0241: linux-%kernel_branch.25-fix-drivers-infiniband-hw--mlx4.patch
+Patch0231: linux-%kernel_branch.25-fix-drivers-infiniband-hw--mlx4.patch
 
-Patch0250: linux-%kernel_branch.25-fix-drivers-input.patch
-Patch0251: linux-%kernel_branch.20-fix-drivers-input-keyboard--omap4-keypad.patch
-Patch0252: linux-%kernel_branch.20-fix-drivers-input-serio--i8042.patch
+Patch0240: linux-%kernel_branch.25-fix-drivers-input.patch
+Patch0241: linux-%kernel_branch.20-fix-drivers-input-keyboard--omap4-keypad.patch
+Patch0242: linux-%kernel_branch.20-fix-drivers-input-serio--i8042.patch
 
-Patch0261: linux-%kernel_branch.25-fix-drivers-isdn--sc.patch
-Patch0262: linux-%kernel_branch.25-fix-drivers-isdn-gigaset--gigaset.patch
-Patch0263: linux-%kernel_branch.20-fix-drivers-isdn-mISDN--mISDN_core.patch
+Patch0251: linux-%kernel_branch.25-fix-drivers-isdn--sc.patch
+Patch0252: linux-%kernel_branch.25-fix-drivers-isdn-gigaset--gigaset.patch
+Patch0253: linux-%kernel_branch.20-fix-drivers-isdn-mISDN--mISDN_core.patch
+
+Patch0261: linux-%kernel_branch.34-fix-drivers-leds--led-core.patch
+Patch0262: linux-%kernel_branch.34-fix-drivers-leds--led-triggers.patch
+Patch0263: linux-%kernel_branch.34-fix-drivers-leds--ledtrig-ide-disk.patch
 
 Patch0271: linux-%kernel_branch.20-fix-drivers-macintosh--adb.patch
 Patch0272: linux-%kernel_branch.20-fix-drivers-macintosh--adbhid.patch
@@ -1262,59 +1266,63 @@ cd linux-%version
 %patch0152 -p1
 %patch0153 -p1
 
-# fix-drivers-gpio--*
-
 # fix-drivers-gpu-drm--*
-%patch0171 -p1
-%patch0172 -p1
-%patch0173 -p1
-%patch0174 -p1
+%patch0161 -p1
+%patch0162 -p1
+%patch0163 -p1
+%patch0164 -p1
 
 # fix-drivers-hid--*
+%patch0171 -p1
+%patch0172 -p1
+
+# fix-drivers-hsi*
 %patch0181 -p1
 %patch0182 -p1
 
-# fix-drivers-hsi*
+# fix-drivers-hv*
+%patch0190 -p1
 %patch0191 -p1
 %patch0192 -p1
 
-# fix-drivers-hv*
-%patch0200 -p1
+# fix-drivers-hwmon--*
 %patch0201 -p1
 %patch0202 -p1
+%patch0203 -p1
+%patch0204 -p1
+%patch0205 -p1
+%patch0206 -p1
+%patch0207 -p1
+%patch0208 -p1
 
-# fix-drivers-hwmon--*
+# fix-drivers-i2c--*
 %patch0211 -p1
 %patch0212 -p1
 %patch0213 -p1
-%patch0214 -p1
-%patch0215 -p1
-%patch0216 -p1
-%patch0217 -p1
-%patch0218 -p1
-
-# fix-drivers-i2c--*
-%patch0221 -p1
-%patch0222 -p1
-%patch0223 -p1
 
 # fix-drivers-idle--*
-%patch0231 -p1
-%patch0232 -p1
+%patch0221 -p1
+%patch0222 -p1
 
 # fix-drivers-infiniband-*
-%patch0241 -p1
+%patch0231 -p1
 
 # fix-drivers-input*
-%patch0250 -p1
-%patch0251 -p1
-%patch0252 -p1
+%patch0240 -p1
+%patch0241 -p1
+%patch0242 -p1
 
 # fix-drivers-isdn-*
+%patch0251 -p1
+%patch0252 -p1
+%patch0253 -p1
+
+# fix-drivers-leds--*
 %patch0261 -p1
 %patch0262 -p1
 %patch0263 -p1
 
+# fix-drivers-macintosh--*
 %patch0271 -p1
 %patch0272 -p1
 
@@ -1762,6 +1770,26 @@ config_disable CRYPTO_CRC32C
 config_enable CRYPTO_TWOFISH=m CRYPTO_SALSA20=m
 %endif
 
+%ifarch %intel_64 %via_64
+sed -i '/^CONFIG_USB_UHCI_HCD=/s/=m/=y/' .config
+%else
+%ifarch %amd_64 %amd_32
+config_disable USB_UHCI_HCD SCHED_SMT
+%endif
+%ifarch %amd_64
+sed -i '/^CONFIG_USB_OHCI_HCD=/s/=m/=y/' .config
+%endif
+%endif
+%ifarch %amd_64 %amd_32 %via_64 %via_32
+config_disable SCHED_SMT INTEL_IOMMU NET_DMA
+%endif
+%ifarch %intel_64 %intel_32 %via_64 %via_32
+config_disable AMD_IOMMU
+%endif
+%ifarch %ix86
+config_disable SCHED_MC
+%endif
+
 %if_enabled debug
 config_enable \
 	KALLSYMS_ALL \
@@ -1785,23 +1813,6 @@ config_enable \
 	DEBUG_INFO \
 	DEBUG_WRITECOUNT \
 	FRAME_POINTER
-%endif
-
-%ifarch %intel_64 %via_64
-sed -i '/^CONFIG_USB_UHCI_HCD=/s/=m/=y/' .config
-%else
-%ifarch %amd_64 %amd_32
-config_disable USB_UHCI_HCD SCHED_SMT
-%endif
-%ifarch %amd_64
-sed -i '/^CONFIG_USB_OHCI_HCD=/s/=m/=y/' .config
-%endif
-%endif
-%ifarch %amd_64 %amd_32 %via_64 %via_32
-config_disable SCHED_SMT
-%endif
-%ifarch %ix86
-config_disable SCHED_MC
 %endif
 
 echo "Building kernel %kversion-%flavour-%krelease"
@@ -2457,6 +2468,42 @@ done)
 
 
 %changelog
+* Sat Mar 02 2013 Led <led@altlinux.ru> 3.4.34-alt4
+- added:
+  + fix-drivers-leds--led-core
+  + fix-drivers-leds--led-triggers
+  + fix-drivers-leds--ledtrig-ide-disk
+- disabled:
+  + KEYS_DEBUG_PROC_KEYS
+  + ASYNC_RAID6_TEST
+  + CPU_NOTIFIER_ERROR_INJECT
+  + BACKTRACE_SELF_TEST
+  + LKDTM
+  + RCU_TORTURE_TEST
+  + TIMER_STATS
+  + DEBUG_KERNEL
+  + PROC_KCORE
+  + QFMT_V1
+  + QUOTA_NETLINK_INTERFACE
+  + DMATEST
+  + RTC_DRV_TEST
+  + ACCESSIBILITY
+  + USB_G_DBGP
+  + USB_DEVICEFS
+  + FB_FOREIGN_ENDIAN
+- enabled:
+  + IO_DELAY_0XED (x86)
+  + IO_DELAY_NONE (x86_64)
+  + FRAME_WARN=2560
+  + MMC_CLKGATE
+  + USB_HWA_HCD
+  + USB_ANNOUNCE_NEW_DEVICES
+  + SND_VXPOCKET
+  + SND_PDAUDIOCF
+  + SND_HRTIMER
+  + SND_SEQ_HRTIMER_DEFAULT
+  + VIDEO_MEYE
+
 * Sat Mar 02 2013 Led <led@altlinux.ru> 3.4.34-alt3
 - added:
   + feat-drivers-scsi--vhba

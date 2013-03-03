@@ -271,3 +271,6 @@ f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
 1873780825f3f8a13eaed9d603c1c4b8355a4149 fix-drivers-block--aoe
 3ca60ad52fba93bc21bf0a707e3736a2f98ad410 fix-include-linux
 a7d9a1384378c8e10c08eec1dff5601663b5c859 feat-drivers-scsi--vhba
+954f56b7a8883ea2f69cfcb7acdf54fa90d6536e fix-drivers-leds--led-core
+009d92dd2b48e7ce75cdc6432644e611dc4f9068 fix-drivers-leds--led-triggers
+3afc09e99951391cd76266001ecf48d033df15fb fix-drivers-leds--ledtrig-ide-disk
