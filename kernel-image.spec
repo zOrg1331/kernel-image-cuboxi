@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.34
-Release: alt4
+Version: 3.4.35
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 34
+%define kernel_stable_version 35
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -363,9 +363,8 @@ Patch0473: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0474: linux-%kernel_branch.29-fix-fs-logfs.patch
 Patch0475: linux-%kernel_branch.30-fix-fs-nfs.patch
 Patch0476: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0477: linux-%kernel_branch.29-fix-fs-quota.patch
-Patch0478: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0479: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0477: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0478: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
 Patch0481: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -1434,7 +1433,6 @@ cd linux-%version
 %patch0476 -p1
 %patch0477 -p1
 %patch0478 -p1
-%patch0479 -p1
 
 # fix-include-*
 %patch0481 -p1
@@ -2005,7 +2003,8 @@ gen_rpmmodfile ipmi %buildroot%modules_dir/kernel/drivers/{acpi/acpi_ipmi,char/i
 %{?_enable_usb_gadget:gen_rpmmodfile usb-gadget %buildroot%modules_dir/kernel/drivers/usb/gadget}
 %{?_enable_video:gen_rpmmodlist %buildroot%modules_dir/kernel/drivers/video/* | grep -xv '%modules_dir/kernel/drivers/video/uvesafb.ko' > video.rpmmodlist}
 %{?_enable_watchdog:gen_rpmmodlist %buildroot%modules_dir/kernel/drivers/watchdog/* | grep -xv '%modules_dir/kernel/drivers/watchdog/softdog.ko' > watchdog.rpmmodlist}
-for i in %{?_enable_edac:edac} %{?_enable_ide:ide} %{?_enable_media:media} %{?_enable_mtd:mtd} %{?_enable_w1:w1}; do
+%{?_enable_ide:gen_rpmmodfile ide %buildroot%modules_dir/kernel/drivers/{ide,leds/ledtrig-ide-disk.ko}}
+for i in %{?_enable_edac:edac} %{?_enable_media:media} %{?_enable_mtd:mtd} %{?_enable_w1:w1}; do
 	gen_rpmmodfile $i %buildroot%modules_dir/kernel/drivers/$i
 done
 for i in %{?_enable_joystick:joystick} %{?_enable_tablet:tablet} %{?_enable_touchscreen:touchscreen}; do
@@ -2468,6 +2467,12 @@ done)
 
 
 %changelog
+* Mon Mar 04 2013 Led <led@altlinux.ru> 3.4.35-alt1
+- 3.4.35
+- removed:
+  + fix-fs-quota
+- moved ledtrig-ide-disk.ko to kernel-image-ide-* subpackage
+
 * Sat Mar 02 2013 Led <led@altlinux.ru> 3.4.34-alt4
 - added:
   + fix-drivers-leds--led-core
