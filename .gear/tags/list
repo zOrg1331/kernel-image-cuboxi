@@ -99,7 +99,7 @@ e73f4e80fd30f8efcd2cdb1f3bd26ff25c00fb37 feat-drivers-net-wireless-rtl8192u
 0417ddc54db39d88c24715e870fa843cd65ef9cb feat-drivers-platform--thinkpad_ec
 eaf4527915d3fbc3d86d1f04c3755516afa729cf feat-drivers-platform--tp_smapi
 f060c5190b04e66bc2770629e19baeb5bc42b997 feat-drivers-usb-usbip
-0523539e65d1d73557ae5ffe443716e5e8609998 feat-drivers-video--bootsplash
+a459089077414932015806db8a50d69305be75e6 feat-drivers-video--bootsplash
 2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
@@ -274,3 +274,5 @@ a7d9a1384378c8e10c08eec1dff5601663b5c859 feat-drivers-scsi--vhba
 009d92dd2b48e7ce75cdc6432644e611dc4f9068 fix-drivers-leds--led-triggers
 3afc09e99951391cd76266001ecf48d033df15fb fix-drivers-leds--ledtrig-ide-disk
 578d30a44a46bcd75ba87b50c7e5c39d909e478d v3.4.35
+221d94e5e5f2271957e143bd1ea89acdfbc8b766 fix-crypto--cryptomgr
+152ce3b93923ee716a96c12fb5683c72ffdca2fc fix-lib-lzo
