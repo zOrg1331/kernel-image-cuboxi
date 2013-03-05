@@ -355,10 +355,10 @@ extern unsigned int count_swap_pages(int, int);
 extern sector_t map_swap_entry(swp_entry_t entry, struct block_device **);
 extern sector_t map_swap_page(struct page *, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
-extern struct swap_info_struct *get_swap_info_struct(unsigned);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
+extern struct swap_info_struct *get_swap_info_struct(unsigned);
 extern void get_swap_range_of_type(int type, swp_entry_t *start,
 		swp_entry_t *end, unsigned int limit);
 
