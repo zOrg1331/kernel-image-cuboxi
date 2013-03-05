@@ -557,8 +557,8 @@ static unsigned char swap_entry_free(struct swap_info_struct *p,
 		    p->prio > swap_info[swap_list.next]->prio)
 			swap_list.next = p->type;
 		nr_swap_pages++;
-		p->inuse_pages--;
 		frontswap_invalidate_page(p->type, offset);
+		p->inuse_pages--;
 		if ((p->flags & SWP_BLKDEV) &&
 				disk->fops->swap_slot_free_notify)
 			disk->fops->swap_slot_free_notify(p->bdev, offset);
