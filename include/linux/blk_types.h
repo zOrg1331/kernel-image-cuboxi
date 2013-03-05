@@ -149,8 +149,8 @@ enum rq_flag_bits {
 	__REQ_COPY_USER,	/* contains copies of user pages */
 	__REQ_FLUSH_SEQ,	/* request for flush sequence */
 	__REQ_IO_STAT,		/* account I/O stat */
-	__REQ_MIXED_MERGE,	/* merge of different types, fail separately */
 	__REQ_TOI,		/* TuxOnIce I/O */
+	__REQ_MIXED_MERGE,	/* merge of different types, fail separately */
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -190,9 +190,8 @@ enum rq_flag_bits {
 #define REQ_FLUSH		(1 << __REQ_FLUSH)
 #define REQ_FLUSH_SEQ		(1 << __REQ_FLUSH_SEQ)
 #define REQ_IO_STAT		(1 << __REQ_IO_STAT)
+#define REQ_TOI			(1 << __REQ_TOI)
 #define REQ_MIXED_MERGE		(1 << __REQ_MIXED_MERGE)
 #define REQ_SECURE		(1 << __REQ_SECURE)
-#define REQ_TOI			(1 << __REQ_TOI)
-#define REQ_ON_PLUG		(1 << __REQ_ON_PLUG)
 
 #endif /* __LINUX_BLK_TYPES_H */
