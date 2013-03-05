@@ -30,9 +30,9 @@
 #include <linux/syscalls.h>
 #include <linux/memcontrol.h>
 #include <linux/poll.h>
-#include <linux/oom.h>
 #include <linux/frontswap.h>
 #include <linux/swapfile.h>
+#include <linux/oom.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
