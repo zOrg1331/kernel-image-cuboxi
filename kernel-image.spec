@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt2
+Release: alt3
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -195,7 +195,8 @@ Patch0082: linux-%kernel_branch.25-fix-drivers-base--dma-buf.patch
 
 Patch0091: linux-%kernel_branch.34-fix-drivers-block--aoe.patch
 Patch0092: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
-Patch0093: linux-%kernel_branch.20-fix-drivers-block--zram.patch
+Patch0093: linux-%kernel_branch.35-fix-drivers-block--nbd.patch
+Patch0094: linux-%kernel_branch.20-fix-drivers-block--zram.patch
 
 Patch0101: linux-%kernel_branch.20-fix-drivers-char--lp.patch
 Patch0102: linux-%kernel_branch.25-fix-drivers-char-agp--intel-agp.patch
@@ -379,18 +380,21 @@ Patch0511: linux-%kernel_branch.29-fix-lib--btree.patch
 Patch0512: linux-%kernel_branch.25-fix-lib--crc32.patch
 Patch0513: linux-%kernel_branch.35-fix-lib-lzo.patch
 
-Patch0520: linux-%kernel_branch.34-fix-mm.patch
+Patch0520: linux-%kernel_branch.35-fix-mm.patch
 Patch0521: linux-%kernel_branch.20-fix-mm--compaction.patch
 Patch0522: linux-%kernel_branch.20-fix-mm--memcontrol.patch
 Patch0523: linux-%kernel_branch.20-fix-mm--memory-failure.patch
 Patch0524: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0525: linux-%kernel_branch.20-fix-mm--swap.patch
-Patch0526: linux-%kernel_branch.20-fix-mm--zcache.patch
-Patch0527: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
+Patch0525: linux-%kernel_branch.35-fix-mm--mmu.patch
+Patch0526: linux-%kernel_branch.35-fix-mm--slab.patch
+Patch0527: linux-%kernel_branch.35-fix-mm--slub.patch
+Patch0528: linux-%kernel_branch.20-fix-mm--swap.patch
+Patch0529: linux-%kernel_branch.20-fix-mm--zcache.patch
+Patch0530: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0531: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0532: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0533: linux-%kernel_branch.34-fix-net-core.patch
+Patch0533: linux-%kernel_branch.35-fix-net-core.patch
 Patch0534: linux-%kernel_branch.31-fix-net-ipv6.patch
 Patch0535: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0536: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
@@ -1233,6 +1237,7 @@ cd linux-%version
 %patch0091 -p1
 %patch0092 -p1
 %patch0093 -p1
+%patch0094 -p1
 
 # fix-drivers-char-*
 %patch0101 -p1
@@ -1462,6 +1467,9 @@ cd linux-%version
 %patch0525 -p1
 %patch0526 -p1
 %patch0527 -p1
+%patch0528 -p1
+%patch0529 -p1
+%patch0530 -p1
 
 # fix-net-*
 %patch0531 -p1
@@ -2472,6 +2480,18 @@ done)
 
 
 %changelog
+* Wed Mar 06 2013 Led <led@altlinux.ru> 3.4.35-alt3
+- updated:
+  + fix-mm
+  + fix-mm--mmu
+  + fix-net-core
+  + feat-kernel-power-tuxonice
+  + feat-mm--frontswap
+- added:
+  + fix-drivers-block--nbd
+  + fix-mm--slab
+  + fix-mm--slub
+
 * Mon Mar 04 2013 Led <led@altlinux.ru> 3.4.35-alt2
 - added:
   + fix-crypto--cryptomgr

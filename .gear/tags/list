@@ -65,7 +65,7 @@ df7a65978af8ee26f14934a168f599fa37eb32d2 fix-fs-nfs
 666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
-7b3f452755ed13e2550f27641d0e3101278d884c fix-mm
+eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -117,7 +117,7 @@ d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
 c0d8e7b2106d8dd5fd0636a8c00e781d29ab9aa7 feat-fs-jbd2--secrm
 33f35b5032dc105f84e26289ea08fd4542c146fd feat-fs-reiser4
 ed0a3f9b1c403e4f5d7cd250c30e30fd7514fbd4 feat-fs-unionfs
-982498dccc00a67ba6c7415f07da09bfa7117984 feat-kernel-power-tuxonice
+dc2cd1e698cfb2a74c211be2a808282387712954 feat-kernel-power-tuxonice
 2ce26cf80304e310037b3fcaf4efdb8de3bd6023 feat-lib--unwind
 9857aa808dfa2887f524838623d8439728b2191d feat-mm--uksm
 aece48dcfc3fa18f1a89073ba3c2a7b97e0415e9 feat-net-netfilter--nf_conntrack_slp
@@ -226,9 +226,9 @@ c2c45c75b77bb7a51ebb242f7b012a4abb40800f fix-mm--zcache
 8507b0b8254c8b3196460f313b5a993053ca168e feat-mm--zcache
 d9bc5956afc693aaa425b6f8fa7f9ab39f5254f1 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-4a59bfb3e065859d071288e70b03cda462ebac33 feat-mm--frontswap
+f72272a387efd1a1f65944fc191f72cbc9439a4c feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
-242997377677127a7701091fa39bc76b52daec90 feat-kernel-power-tuxonice--frontswap
+99405ee21b3d83e94ea6f8e19d2a0190b3b2e9f9 feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
 b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
 ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27
@@ -264,7 +264,7 @@ d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
-b4e4d02c209b9be09512de2c013e0481a273172f fix-net-core
+9f5e7bc2c312cce60cd436ce54ed34d1de6efd0b fix-net-core
 e433868d9a56637374ffca868cd9541628cf2549 v3.4.34
 f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
 1873780825f3f8a13eaed9d603c1c4b8355a4149 fix-drivers-block--aoe
@@ -276,3 +276,7 @@ a7d9a1384378c8e10c08eec1dff5601663b5c859 feat-drivers-scsi--vhba
 578d30a44a46bcd75ba87b50c7e5c39d909e478d v3.4.35
 221d94e5e5f2271957e143bd1ea89acdfbc8b766 fix-crypto--cryptomgr
 152ce3b93923ee716a96c12fb5683c72ffdca2fc fix-lib-lzo
+62ab57107049b9e7f28d1012091705768fc7bc34 fix-drivers-block--nbd
+57d72c3505ce155f474b2c3cc0caca27ae75424d fix-mm--mmu
+f5da60bc672d89dda80d5f98c06b60ac2b0dfa8f fix-mm--slab
+19a7279fe7f36ac72f5d44d5347f998a8c1778e4 fix-mm--slub
