@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt0.M60P.1
+Release: alt0.M60P.2
 epoch:1 
 %define kernel_base_version	3.4
 %define kernel_sublevel	.35
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Sat Mar 09 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.35-alt0.M60P.2
+- lost rtl8192ce on i586 enabled
+
 * Mon Mar 04 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.35-alt0.M60P.1
 - 3.4.35
 
