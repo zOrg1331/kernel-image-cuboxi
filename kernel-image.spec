@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -364,7 +364,7 @@ Patch0471: linux-%kernel_branch.32-fix-fs-btrfs.patch
 Patch0472: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0473: linux-%kernel_branch.20-fix-fs-ext4.patch
 Patch0474: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0475: linux-%kernel_branch.30-fix-fs-nfs.patch
+Patch0475: linux-%kernel_branch.35-fix-fs-nfs.patch
 Patch0476: linux-%kernel_branch.31-fix-fs-proc.patch
 Patch0477: linux-%kernel_branch.28-fix-fs-ramfs.patch
 Patch0478: linux-%kernel_branch.20-fix-fs-reiserfs.patch
@@ -388,7 +388,7 @@ Patch0524: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
 Patch0525: linux-%kernel_branch.35-fix-mm--mmu.patch
 Patch0526: linux-%kernel_branch.35-fix-mm--slab.patch
 Patch0527: linux-%kernel_branch.35-fix-mm--slub.patch
-Patch0528: linux-%kernel_branch.20-fix-mm--swap.patch
+Patch0528: linux-%kernel_branch.35-fix-mm--swap.patch
 Patch0529: linux-%kernel_branch.20-fix-mm--zcache.patch
 Patch0530: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
@@ -399,12 +399,13 @@ Patch0534: linux-%kernel_branch.31-fix-net-ipv6.patch
 Patch0535: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0536: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
 Patch0537: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0538: linux-%kernel_branch.20-fix-net-sunrpc.patch
+Patch0538: linux-%kernel_branch.35-fix-net-sunrpc.patch
 
 Patch0541: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
 Patch0551: linux-%kernel_branch.20-fix-security--apparmor.patch
 Patch0552: linux-%kernel_branch.20-fix-security--security.patch
+Patch0553: linux-%kernel_branch.35-fix-security--selinux.patch
 
 Patch0561: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
 Patch0562: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
@@ -413,7 +414,7 @@ Patch0563: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
 Patch0571: linux-%kernel_branch.20-fix-tools--perf.patch
 Patch0572: linux-%kernel_branch.20-fix-tools-hv.patch
 
-Patch0580: linux-%kernel_branch.20-fix-virt-kvm.patch
+Patch0580: linux-%kernel_branch.35-fix-virt-kvm.patch
 Patch0581: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
 
 
@@ -488,7 +489,7 @@ Patch1192: linux-%kernel_branch.27-feat-kernel-power-tuxonice--frontswap.patch
 
 Patch1201: linux-%kernel_branch.20-feat-lib--unwind.patch
 
-Patch1211: linux-%kernel_branch.25-feat-mm--frontswap.patch
+Patch1211: linux-%kernel_branch.35-feat-mm--frontswap.patch
 Patch1212: linux-%kernel_branch.20-feat-mm--slqb.patch
 Patch1213: linux-%kernel_branch.24-feat-mm--uksm.patch
 Patch1214: linux-%kernel_branch.20-feat-mm--zcache.patch
@@ -1483,8 +1484,10 @@ cd linux-%version
 
 %patch0541 -p1
 
+# fix-security--*
 %patch0551 -p1
 %patch0552 -p1
+%patch0553 -p1
 
 %patch0561 -p1
 %patch0562 -p1
@@ -2480,6 +2483,18 @@ done)
 
 
 %changelog
+* Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt4
+- updated:
+  + fix-fs-nfs
+  + fix-mm--swap
+  + fix-net-core
+  + fix-net-sunrpc
+  + fix-virt-kvm
+  + feat-kernel-power-tuxonice
+  + feat-mm--frontswap
+- added:
+  + fix-security--selinux
+
 * Wed Mar 06 2013 Led <led@altlinux.ru> 3.4.35-alt3
 - updated:
   + fix-mm

@@ -60,7 +60,7 @@ c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 e8feadd30f82900d3e27b7253ad2319d7e0b640a fix-fs
 5f9f12d885281e659175e2d964d125cb244b07a6 fix-fs-btrfs
 3723f8a06b88d4d715b9d013c1f55202d03181eb fix-fs-ext4
-df7a65978af8ee26f14934a168f599fa37eb32d2 fix-fs-nfs
+92fb23f9f6bd607e7c40b0d818a04abf3be552d2 fix-fs-nfs
 0727a33db1c14e5884b8b3c46ca00c1b4084ce29 fix-fs-proc
 666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
@@ -70,10 +70,10 @@ eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
 17422550ef2500f8ce750bc9e15697198b0204e0 fix-mm--memory_hotplug
-d436755c70bb42cfc4355da5434630d5ed8b1554 fix-mm--swap
+b7f3ccbd0a2b1ff52bbdaadf33ecf0ab9f12ae7e fix-mm--swap
 dec483b0840f3ab6a49e12787567ee18e809304d fix-net-bridge--bridge
 454aa942f4fdb12d6ba881ccc2d6eea34c2f0120 fix-net-netfilter--nf_conntrack_ftp
-7bf4ae9595207799c75060cc4b9a24c06fffb6b9 fix-net-sunrpc
+aced068d8bd148f0646d12abdf70643232f51206 fix-net-sunrpc
 3eddd20373839fa65b7bc37ece814c25ad903371 fix-scripts--kconfig
 2286fa847a23d7a57aea0e8c3169e8a3b47bd2e9 fix-security--apparmor
 21e679ee33d2a15ee24e7e78684731fdef219008 fix-security--security
@@ -82,7 +82,7 @@ b216e5da21b32cabfa72ce370a22dd72152d507b fix-sound-soc-omap--snd-soc-omap
 aa2ca76e859c3bf850ac9c7431f6b42320333813 fix-sound-soc-omap--snd-soc-omap-mcbsp
 8abb6f792ec0fb424c5511ae31da8cddd495f323 fix-tools--perf
 b05378daca44ba9d28b8aff9c5d5c24e5a9645b3 fix-tools-hv
-9631022fe280e586c5f3999c1b639f044b79d492 fix-virt-kvm
+ad939cb67caaa47d5f6ac7671d56ceece1477b62 fix-virt-kvm
 47cd2c321a712f4e43c9b6d9324a9a815e04eacf feat-arch-arm-mach-omap2--drm
 1ce6dac6b101fce9f4af15c35cf3e62e9e83eaee feat-block--bfq-iosched
 9e9e404d98dd49625c1647f0b00bd53a8349df53 feat-drivers-block--cloop
@@ -117,7 +117,7 @@ d7460307ee1fa2af4990cbef7fdbe9c09dd29ba5 feat-fs-hfs
 c0d8e7b2106d8dd5fd0636a8c00e781d29ab9aa7 feat-fs-jbd2--secrm
 33f35b5032dc105f84e26289ea08fd4542c146fd feat-fs-reiser4
 ed0a3f9b1c403e4f5d7cd250c30e30fd7514fbd4 feat-fs-unionfs
-dc2cd1e698cfb2a74c211be2a808282387712954 feat-kernel-power-tuxonice
+28a60f93beae024aa1ea2631505ad2d4b5759d2a feat-kernel-power-tuxonice
 2ce26cf80304e310037b3fcaf4efdb8de3bd6023 feat-lib--unwind
 9857aa808dfa2887f524838623d8439728b2191d feat-mm--uksm
 aece48dcfc3fa18f1a89073ba3c2a7b97e0415e9 feat-net-netfilter--nf_conntrack_slp
@@ -226,9 +226,9 @@ c2c45c75b77bb7a51ebb242f7b012a4abb40800f fix-mm--zcache
 8507b0b8254c8b3196460f313b5a993053ca168e feat-mm--zcache
 d9bc5956afc693aaa425b6f8fa7f9ab39f5254f1 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-f72272a387efd1a1f65944fc191f72cbc9439a4c feat-mm--frontswap
+619d908741b6b3e1971f7b982ad8ee79417f3457 feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
-99405ee21b3d83e94ea6f8e19d2a0190b3b2e9f9 feat-kernel-power-tuxonice--frontswap
+9c1e19b2a261e0a6805357dd488166b46aaa15dd feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
 b122e77c1e16c9a9189a44db745fbe7176c80bdf feat-firmware-rtl_nic
 ac8097d0ca45eec81c1cc65b17f23350adc519be v3.4.27
@@ -264,7 +264,7 @@ d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
-9f5e7bc2c312cce60cd436ce54ed34d1de6efd0b fix-net-core
+77e59bfae75965b85e1bab7bc0107110600a2c40 fix-net-core
 e433868d9a56637374ffca868cd9541628cf2549 v3.4.34
 f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
 1873780825f3f8a13eaed9d603c1c4b8355a4149 fix-drivers-block--aoe
@@ -280,3 +280,4 @@ a7d9a1384378c8e10c08eec1dff5601663b5c859 feat-drivers-scsi--vhba
 57d72c3505ce155f474b2c3cc0caca27ae75424d fix-mm--mmu
 f5da60bc672d89dda80d5f98c06b60ac2b0dfa8f fix-mm--slab
 19a7279fe7f36ac72f5d44d5347f998a8c1778e4 fix-mm--slub
+f386289eff06cd07018d03f8ebbb3b723a60b547 fix-security--selinux
