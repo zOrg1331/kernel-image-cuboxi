@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -124,8 +124,8 @@ Release: alt4
 
 #define allocator SLAB
 
-%Extra_modules vboxhost 4.2.6
-#Extra_modules vboxguest 4.2.6
+%Extra_modules vboxhost 4.2.8
+#Extra_modules vboxguest 4.2.8
 #Extra_modules fglrx 8.97.100.7
 #Extra_modules netatop 0.1.1
 
@@ -909,21 +909,11 @@ Install this package only if you really need it.
 Summary: The Advanced Linux Sound Architecture modules
 %kernel_modules_package_std_body sound
 %kernel_modules_package_add_provides alsa
+%kernel_modules_package_add_provides sound-ext
 
 %description -n kernel-modules-sound-%flavour
 The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
 functionality to the Linux operating system.
-
-
-%package -n kernel-modules-sound-ext-%flavour
-Summary: The Advanced Linux Sound Architecture modules for external adapters
-%kernel_modules_package_std_body sound-ext
-%kernel_modules_package_add_provides alsa-ext
-
-%description -n kernel-modules-sound-ext-%flavour
-The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
-functionality to the Linux operating system.
-This package contains modules for extarnal (FireWire, USB) adapters.
 %endif
 
 
@@ -1697,7 +1687,7 @@ config_disable \
 config_disable \
 	%{?_disable_smp:SMP} \
 	%{?_disable_modversions:MODVERSIONS} \
-	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT PROC_PID_CPUSET SYSFS_DEPRECATED} \
+	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT PROC_PID_CPUSET SYSFS_DEPRECATED USB_DEVICEFS} \
 	%{?_disable_numa:NUMA} \
 	%{?_disable_video:FB VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
@@ -2086,11 +2076,7 @@ sed 's/^/%%exclude &/' *.rpmmodlist > exclude-drivers.rpmmodlist
 
 %{?_enable_media:%kernel_modules_package_post media}
 
-%if_enabled alsa
-%kernel_modules_package_post sound
-
-%kernel_modules_package_post sound-ext
-%endif
+%{?_enable_alsa:%kernel_modules_package_post sound}
 
 %{?_enable_isdn:%kernel_modules_package_post isdn}
 
@@ -2324,16 +2310,9 @@ done)
 %if_enabled alsa
 %files -n kernel-modules-sound-%flavour
 %modules_dir/kernel/sound
+%modules_dir/kernel/drivers/usb/misc/emi*
 %{?_enable_oss:%exclude %modules_dir/kernel/sound/oss}
 %exclude %modules_dir/kernel/sound/*.ko
-%exclude %modules_dir/kernel/sound/firewire
-%exclude %modules_dir/kernel/sound/usb
-
-
-%files -n kernel-modules-sound-ext-%flavour
-%modules_dir/kernel/sound/firewire
-%modules_dir/kernel/sound/usb
-%modules_dir/kernel/drivers/usb/misc/emi*
 %endif
 
 
@@ -2483,6 +2462,13 @@ done)
 
 
 %changelog
+* Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt5
+- set DEFAULT_HOSTNAME to default value
+- moved content of kernel-modules-sount-ext-* subpackage to
+  kernel-modules-sount-* subpackage
+- removed kernel-modules-sount-ext-* subpackage
+- vboxhost 4.2.8
+
 * Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt4
 - updated:
   + fix-fs-nfs
