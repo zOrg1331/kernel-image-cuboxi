@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2462,6 +2462,12 @@ done)
 
 
 %changelog
+* Tue Mar 12 2013 Led <led@altlinux.ru> 3.4.35-alt6
+- enabled:
+  + BLK_DEV_INTEGRITY
+- SCSI=y
+- BLK_DEV_SD=y
+
 * Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt5
 - set DEFAULT_HOSTNAME to default value
 - moved content of kernel-modules-sount-ext-* subpackage to
