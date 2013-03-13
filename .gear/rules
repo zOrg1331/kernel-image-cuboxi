@@ -227,6 +227,7 @@ diff: v3.4.31:.				feat-drivers-misc--emlog:. name=linux-3.4.31-feat-drivers-mis
 diff: v3.4.20:.				feat-drivers-misc--rts_pstor:. name=linux-3.4.20-feat-drivers-misc--rts_pstor.patch
 diff: v3.4.27:.				feat-drivers-net-ethernet-alacritech:. name=linux-3.4.27-feat-drivers-net-ethernet-alacritech.patch
 diff: v3.4.27:.				feat-drivers-net-ethernet-alacritech--slicoss:. name=linux-3.4.27-feat-drivers-net-ethernet-alacritech--slicoss.patch
+diff: v3.4.35:.				feat-drivers-net-ethernet-atheros--alx:. name=linux-3.4.35-feat-drivers-net-ethernet-atheros--alx.patch
 diff: v3.4.20:.				feat-drivers-net-wireless-rtl8187se:. name=linux-3.4.20-feat-drivers-net-wireless-rtl8187se.patch
 diff: v3.4.20:.				feat-drivers-net-wireless-rtl8192e:. name=linux-3.4.20-feat-drivers-net-wireless-rtl8192e.patch
 diff: v3.4.20:.				feat-drivers-net-wireless-rtl8192u:. name=linux-3.4.20-feat-drivers-net-wireless-rtl8192u.patch

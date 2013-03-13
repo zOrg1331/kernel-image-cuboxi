@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt6
+Release: alt7
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -444,10 +444,11 @@ Patch1092: linux-%kernel_branch.20-feat-drivers-misc--rts_pstor.patch
 
 Patch1101: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech.patch
 Patch1102: linux-%kernel_branch.27-feat-drivers-net-ethernet-alacritech--slicoss.patch
-Patch1103: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8187se.patch
-Patch1104: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192e.patch
-Patch1105: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192u.patch
-Patch1106: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8712.patch
+Patch1103: linux-%kernel_branch.35-feat-drivers-net-ethernet-atheros--alx.patch
+Patch1104: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8187se.patch
+Patch1105: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192e.patch
+Patch1106: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8192u.patch
+Patch1107: linux-%kernel_branch.20-feat-drivers-net-wireless-rtl8712.patch
 
 Patch1111: linux-%kernel_branch.27-feat-drivers-platform--asus_oled.patch
 Patch1112: linux-%kernel_branch.31-feat-drivers-platform--omnibook.patch
@@ -1525,6 +1526,7 @@ cd linux-%version
 %patch1104 -p1
 %patch1105 -p1
 %patch1106 -p1
+%patch1107 -p1
 
 # feat-drivers-platform--*
 %patch1111 -p1
@@ -2462,6 +2464,10 @@ done)
 
 
 %changelog
+* Wed Mar 13 2013 Led <led@altlinux.ru> 3.4.35-alt7
+- added:
+  + feat-drivers-net-ethernet-atheros--alx
+
 * Tue Mar 12 2013 Led <led@altlinux.ru> 3.4.35-alt6
 - enabled:
   + BLK_DEV_INTEGRITY
@@ -2470,9 +2476,9 @@ done)
 
 * Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt5
 - set DEFAULT_HOSTNAME to default value
-- moved content of kernel-modules-sount-ext-* subpackage to
-  kernel-modules-sount-* subpackage
-- removed kernel-modules-sount-ext-* subpackage
+- moved content of kernel-modules-sound-ext-* subpackage to
+  kernel-modules-sound-* subpackage
+- removed kernel-modules-sound-ext-* subpackage
 - vboxhost 4.2.8
 
 * Mon Mar 11 2013 Led <led@altlinux.ru> 3.4.35-alt4
