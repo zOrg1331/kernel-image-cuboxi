@@ -67,4 +67,24 @@ config ATL1C
 	  To compile this driver as a module, choose M here.  The module
 	  will be called atl1c.
 
+config ALX
+	tristate "Atheros ALX Gigabit Ethernet support"
+	depends on PCI
+	select CRC32
+	select NET_CORE
+	select MII
+	select MDIO
+	---help---
+	  This driver supports the Atheros L1F gigabit ethernet
+	  adapter.
+	  alx supports the following chipsets:
+
+	  1969:1091 - AR8161
+	  1969:1090 - AR8162
+	  1969:10A1 - AR8171
+	  1969:10A0 - AR8172
+
+	  To compile this driver as a module, choose M here.  The module
+	  will be called alx.
+
 endif # NET_VENDOR_ATHEROS
