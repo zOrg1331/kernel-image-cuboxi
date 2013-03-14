@@ -596,7 +596,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Thu Mar 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.2-alt3
--  Don't allow CLONE_NEWUSER | CLONE_FS (local root fixed)
+- Don't allow CLONE_NEWUSER | CLONE_FS (local root fixed)
+- CVE-2013-1828 fixed
 
 * Wed Mar 13 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.2-alt2
 - lost rtl8192ce enabled on i586
