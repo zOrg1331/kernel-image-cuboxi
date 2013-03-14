@@ -60,7 +60,6 @@ static u64 zswap_flushed_pages;
 static u64 zswap_reject_compress_poor;
 static u64 zswap_flush_attempted;
 static u64 zswap_reject_tmppage_fail;
-static u64 zswap_reject_flush_fail;
 static u64 zswap_reject_zsmalloc_fail;
 static u64 zswap_reject_kmemcache_fail;
 static u64 zswap_saved_by_flush;
@@ -959,6 +958,7 @@ static struct frontswap_ops zswap_frontswap_ops = {
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 
+static u64 zswap_reject_flush_fail;
 static struct dentry *zswap_debugfs_root;
 
 static int __init zswap_debugfs_init(void)
