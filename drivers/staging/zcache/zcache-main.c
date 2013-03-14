@@ -2046,7 +2046,7 @@ static int __init zcache_init(void)
 		pr_info("zcache: cleancache enabled using kernel "
 			"transcendent memory and compression buddies\n");
 		if (old_ops.init_fs != NULL)
-			pr_warning("zcache: cleancache_ops overridden");
+			pr_warning("zcache: cleancache_ops overridden\n");
 	}
 #endif
 #ifdef CONFIG_FRONTSWAP
@@ -2057,7 +2057,7 @@ static int __init zcache_init(void)
 		pr_info("zcache: frontswap enabled using kernel "
 			"transcendent memory and zsmalloc\n");
 		if (old_ops.init != NULL)
-			pr_warning("zcache: frontswap_ops overridden");
+			pr_warning("zcache: frontswap_ops overridden\n");
 	}
 #endif
 out:
