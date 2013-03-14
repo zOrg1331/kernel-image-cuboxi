@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt8
+Release: alt9
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -48,7 +48,7 @@ Release: alt8
 %def_enable man
 %def_disable compat
 %def_enable x32
-%def_disable debugfs
+%def_enable debugfs
 %def_disable numa
 %def_enable acpi
 %def_enable pci
@@ -231,7 +231,7 @@ Patch0163: linux-%kernel_branch.25-fix-drivers-edac--x38_edac.patch
 
 Patch0171: linux-%kernel_branch.25-fix-drivers-gpu-drm--exynosdrm.patch
 Patch0172: linux-%kernel_branch.25-fix-drivers-gpu-drm--gma500_gfx.patch
-Patch0173: linux-%kernel_branch.25-fix-drivers-gpu-drm--i915.patch
+Patch0173: linux-%kernel_branch.35-fix-drivers-gpu-drm--i915.patch
 Patch0174: linux-%kernel_branch.20-fix-drivers-gpu-drm--nouveau.patch
 
 Patch0181: linux-%kernel_branch.20-fix-drivers-hid--hid-apple.patch
@@ -2470,6 +2470,14 @@ done)
 
 
 %changelog
+* Thu Mar 14 2013 Led <led@altlinux.ru> 3.4.35-alt9
+- updated:
+  + fix-drivers-gpu-drm--i915
+  + fix-mm--swap
+  + fix-mm--zcache
+  + feat-mm--frontswap
+- enabled debugfs
+
 * Thu Mar 14 2013 Led <led@altlinux.ru> 3.4.35-alt8
 - updated:
   + fix-drivers-block--zram

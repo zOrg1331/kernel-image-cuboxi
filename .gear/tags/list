@@ -70,7 +70,7 @@ eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
 17422550ef2500f8ce750bc9e15697198b0204e0 fix-mm--memory_hotplug
-19edb99a2ea11e99dc2739a52c99a87c3b276cc1 fix-mm--swap
+088b4d1e9cec7239c6f8fadd8b9b558f4d59fd54 fix-mm--swap
 dec483b0840f3ab6a49e12787567ee18e809304d fix-net-bridge--bridge
 454aa942f4fdb12d6ba881ccc2d6eea34c2f0120 fix-net-netfilter--nf_conntrack_ftp
 aced068d8bd148f0646d12abdf70643232f51206 fix-net-sunrpc
@@ -134,7 +134,7 @@ d610bdcba91c551b15150212528f0f6d17e5f3e1 fix-drivers-base
 741f662042dc9d700e4d997d52f9e133183c4c2c fix-drivers-block--drbd
 4ae98a79e9dae3fa3592a71be4f0cf2649416c6b fix-drivers-edac--i7300_edac
 1fd024aaa3f86faf1e7fd0f6c715263ad8f5897d fix-drivers-gpu-drm--exynosdrm
-7319c58bb06d977f7b8373f206df8419b28a8ce9 fix-drivers-gpu-drm--i915
+848932d7b06f2b0e1a820e06cf75d54f276c0b30 fix-drivers-gpu-drm--i915
 34349143b0249fa2b38771660b7184065dbd5050 fix-drivers-hsi
 b5451f09863b071e348ac79802797659bf977ef5 fix-drivers-hsi--hsi
 d20f19c7f1f4731f38774b9d851a2b498046e0e0 fix-drivers-infiniband-hw--mlx4
@@ -220,13 +220,13 @@ eb2e4d2ca56738dc7b5633e44502cfe711344b78 fix-drivers-idle--i7300_idle
 5971bce01ab00297ff869629e1442036ca86929a fix-drivers-platform--intel_oaktrail
 d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
 8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
-d24a0799c45ec7e9d2307269dc83f267d6d3bfe7 fix-mm--zcache
+3966783bf4e864396f78ab01a624b16e909836b3 fix-mm--zcache
 14310f48be226c1bf90b731be8361508ad62902d fix-mm--zsmalloc
 5b0fa06636eedcf8dfa5108dfd7fba01beb4ffb6 feat-drivers-block--zram
-58e155d26221fb8c6c2592a8facf8688ffab1990 feat-mm--zcache
+48c191bffa914fb5a938fdceba4538a3194b4177 feat-mm--zcache
 7f575529ed28aa6aaabc6d5c6e478aca7b471b64 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-10e394a3a98d01a6716e61b13748cba601eca689 feat-mm--frontswap
+8d12e051f030acd0539a62814bde9b39e764ec2a feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
 9c1e19b2a261e0a6805357dd488166b46aaa15dd feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
