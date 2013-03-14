@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.35
-Release: alt7
+Release: alt8
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -362,12 +362,14 @@ Patch0461: linux-%kernel_branch.25-fix-firmware--vicam.patch
 Patch0470: linux-%kernel_branch.28-fix-fs.patch
 Patch0471: linux-%kernel_branch.32-fix-fs-btrfs.patch
 Patch0472: linux-%kernel_branch.30-fix-fs-cifs.patch
-Patch0473: linux-%kernel_branch.20-fix-fs-ext4.patch
-Patch0474: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0475: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0476: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0477: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0478: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0473: linux-%kernel_branch.35-fix-fs-debugfs.patch
+Patch0474: linux-%kernel_branch.35-fix-fs-ext3.patch
+Patch0475: linux-%kernel_branch.20-fix-fs-ext4.patch
+Patch0476: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0477: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0478: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0479: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0480: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
 Patch0481: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -495,6 +497,7 @@ Patch1212: linux-%kernel_branch.20-feat-mm--slqb.patch
 Patch1213: linux-%kernel_branch.24-feat-mm--uksm.patch
 Patch1214: linux-%kernel_branch.20-feat-mm--zcache.patch
 Patch1215: linux-%kernel_branch.20-feat-mm--zsmalloc.patch
+Patch1216: linux-%kernel_branch.35-feat-mm--zswap.patch
 
 Patch1221: linux-%kernel_branch.20-feat-net--netatop.patch
 Patch1222: linux-%kernel_branch.27-feat-net-ipv4-netfilter--ipt_NETFLOW.patch
@@ -1434,6 +1437,8 @@ cd linux-%version
 %patch0476 -p1
 %patch0477 -p1
 %patch0478 -p1
+%patch0479 -p1
+%patch0480 -p1
 
 # fix-include-*
 %patch0481 -p1
@@ -1581,6 +1586,7 @@ cd linux-%version
 %patch1213 -p1
 %patch1214 -p1
 %patch1215 -p1
+%patch1216 -p1
 
 # feat-net--*
 %patch1221 -p1
@@ -2464,6 +2470,19 @@ done)
 
 
 %changelog
+* Thu Mar 14 2013 Led <led@altlinux.ru> 3.4.35-alt8
+- updated:
+  + fix-drivers-block--zram
+  + fix-mm--swap
+  + fix-mm--zcache
+  + fix-mm--zsmalloc
+  + feat-block--bfq-iosched
+  + feat-fs-aufs
+- added:
+  + fix-fs-debugfs
+  + fix-fs-ext3
+  + feat-mm--zswap
+
 * Wed Mar 13 2013 Led <led@altlinux.ru> 3.4.35-alt7
 - added:
   + feat-drivers-net-ethernet-atheros--alx

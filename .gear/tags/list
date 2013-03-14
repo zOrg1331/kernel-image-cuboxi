@@ -20,7 +20,7 @@ d8dd2d7c4ccb5ef0bc823b79c1b263585542861c fix-drivers-acpi
 2740c820e309c0a5657dd511293d406ab4b6d05a fix-drivers-acpi--thermal
 9ec966102d04a8ff0debbeae410f6f8e8b48a320 fix-drivers-acpi-acpica
 aa9ce12f490e18fe9a3ee3e2c1cc956b3ac64234 fix-drivers-base--dma-contiguous
-cb25c29d31a216c4213c39ed2da2b11ecbd03cfe fix-drivers-block--zram
+73a06a2547cef89763b193738e063825b9092f38 fix-drivers-block--zram
 5bf7f15474665d3fd5db5a8e64b79cf03c42862d fix-drivers-char--lp
 cb66c9a4cff1a9a1133d820d76af89d54c36f1cc fix-drivers-connector--cn_proc
 f3e5ebe4cb015afdde245029d2fda763d0f07b2f fix-drivers-cpufreq--cpufreq_ondemand
@@ -70,7 +70,7 @@ eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
 17422550ef2500f8ce750bc9e15697198b0204e0 fix-mm--memory_hotplug
-b7f3ccbd0a2b1ff52bbdaadf33ecf0ab9f12ae7e fix-mm--swap
+19edb99a2ea11e99dc2739a52c99a87c3b276cc1 fix-mm--swap
 dec483b0840f3ab6a49e12787567ee18e809304d fix-net-bridge--bridge
 454aa942f4fdb12d6ba881ccc2d6eea34c2f0120 fix-net-netfilter--nf_conntrack_ftp
 aced068d8bd148f0646d12abdf70643232f51206 fix-net-sunrpc
@@ -84,7 +84,7 @@ aa2ca76e859c3bf850ac9c7431f6b42320333813 fix-sound-soc-omap--snd-soc-omap-mcbsp
 b05378daca44ba9d28b8aff9c5d5c24e5a9645b3 fix-tools-hv
 ad939cb67caaa47d5f6ac7671d56ceece1477b62 fix-virt-kvm
 47cd2c321a712f4e43c9b6d9324a9a815e04eacf feat-arch-arm-mach-omap2--drm
-1ce6dac6b101fce9f4af15c35cf3e62e9e83eaee feat-block--bfq-iosched
+975bb74bfcf1c022ea49198dcd74efe14fe58d34 feat-block--bfq-iosched
 9e9e404d98dd49625c1647f0b00bd53a8349df53 feat-drivers-block--cloop
 f37e8c4d9fe2093f67273b10f9ec3cdd82d593d4 feat-drivers-char--crasher
 06f06e2eaf3262383330ae0db8b7cd746d333b98 feat-drivers-gpu-drm--cirrus
@@ -103,7 +103,7 @@ a459089077414932015806db8a50d69305be75e6 feat-drivers-video--bootsplash
 2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
-9202dcd00376ebcc27c4e7e442e80707f6f695bb feat-fs-aufs
+31b367768b39e4562b8ed8ea38c8a66e93c25da9 feat-fs-aufs
 a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 26db2a4d3617346871dddb25859ef1678daf640f feat-fs-dazukofs
 6643f0400d047f119caf11b5c0f7527b3a229d29 feat-fs-ext2--secrm
@@ -220,13 +220,13 @@ eb2e4d2ca56738dc7b5633e44502cfe711344b78 fix-drivers-idle--i7300_idle
 5971bce01ab00297ff869629e1442036ca86929a fix-drivers-platform--intel_oaktrail
 d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
 8f3b2681b81637e5e28037bb06e8c897cb3cfd88 fix-drivers-net-ethernet-via--via-rhine
-c2c45c75b77bb7a51ebb242f7b012a4abb40800f fix-mm--zcache
-0ff0d99fb61f9a739baa0e1781f6f08709fc7f4e fix-mm--zsmalloc
+d24a0799c45ec7e9d2307269dc83f267d6d3bfe7 fix-mm--zcache
+14310f48be226c1bf90b731be8361508ad62902d fix-mm--zsmalloc
 5b0fa06636eedcf8dfa5108dfd7fba01beb4ffb6 feat-drivers-block--zram
-8507b0b8254c8b3196460f313b5a993053ca168e feat-mm--zcache
-d9bc5956afc693aaa425b6f8fa7f9ab39f5254f1 feat-mm--zsmalloc
+58e155d26221fb8c6c2592a8facf8688ffab1990 feat-mm--zcache
+7f575529ed28aa6aaabc6d5c6e478aca7b471b64 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-619d908741b6b3e1971f7b982ad8ee79417f3457 feat-mm--frontswap
+10e394a3a98d01a6716e61b13748cba601eca689 feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
 9c1e19b2a261e0a6805357dd488166b46aaa15dd feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
@@ -282,3 +282,6 @@ f5da60bc672d89dda80d5f98c06b60ac2b0dfa8f fix-mm--slab
 19a7279fe7f36ac72f5d44d5347f998a8c1778e4 fix-mm--slub
 f386289eff06cd07018d03f8ebbb3b723a60b547 fix-security--selinux
 781cc1ca620bcab21b9074a0a93a035a51c88d3e feat-drivers-net-ethernet-atheros--alx
+90c1a139695f5053f154119be1f9bd4d686bc2b3 fix-fs-ext3
+a1649cbaedde9b70effe9e887e4d32cbe30ada98 fix-fs-debugfs
+ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
