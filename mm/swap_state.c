@@ -17,6 +17,7 @@
 #include <linux/pagevec.h>
 #include <linux/migrate.h>
 #include <linux/page_cgroup.h>
+#include <linux/frontswap.h>
 
 #include <asm/pgtable.h>
 
@@ -348,6 +349,85 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 	if (new_page)
 		page_cache_release(new_page);
 	return found_page;
+}
+
+/*
+ * Similar to read_swap_cache_async except we know the page is in frontswap
+ * and we are trying to place it in swapcache so we can remove it from
+ * frontswap. Success means the data in frontswap can be thrown away,
+ * ENOMEM means it cannot, and -EEXIST means a (possibly dirty) copy
+ * already exists in the swapcache.
+ */
+int read_frontswap_async(int type, pgoff_t offset, struct page *new_page,
+				gfp_t gfp_mask)
+{
+	struct page *found_page;
+	swp_entry_t entry;
+	int ret = 0;
+
+	entry = swp_entry(type, offset);
+	do {
+		/*
+		 * First check the swap cache.  Since this is normally
+		 * called after lookup_swap_cache() failed, re-calling
+		 * that would confuse statistics.
+		 */
+		found_page = find_get_page(&swapper_space, entry.val);
+		if (found_page) {
+			/* its already in the swap cache */
+			ret = -EEXIST;
+			break;
+		}
+
+
+		/*
+		 * call radix_tree_preload() while we can wait.
+		 */
+		ret = radix_tree_preload(gfp_mask);
+		if (ret)
+			break;
+
+		/*
+		 * Swap entry may have been freed since our caller observed it.
+		 */
+		ret = swapcache_prepare(entry);
+		if (ret == -EEXIST) {	/* seems racy */
+			radix_tree_preload_end();
+			continue;
+		}
+		if (ret) {		/* swp entry is obsolete ? */
+			radix_tree_preload_end();
+			break;
+		}
+
+		/* May fail (-ENOMEM) if radix-tree node allocation failed. */
+		__set_page_locked(new_page);
+		SetPageSwapBacked(new_page);
+		ret = __add_to_swap_cache(new_page, entry);
+		if (likely(!ret)) {
+			radix_tree_preload_end();
+			/* FIXME: how do I add this at tail of lru? */
+			SetPageDirty(new_page);
+			lru_cache_add_anon_tail(new_page);
+			/* Get page (from frontswap) and return */
+			if (frontswap_load(new_page) == 0)
+				SetPageUptodate(new_page);
+			unlock_page(new_page);
+			ret = 0;
+			goto out;
+		}
+		radix_tree_preload_end();
+		ClearPageSwapBacked(new_page);
+		__clear_page_locked(new_page);
+		/*
+		 * add_to_swap_cache() doesn't return -EEXIST, so we can safely
+		 * clear SWAP_HAS_CACHE flag.
+		 */
+		swapcache_free(entry, NULL);
+	} while (ret != -ENOMEM);
+
+out:
+	return ret;
 }
 
 /**
