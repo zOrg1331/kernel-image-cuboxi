@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M60P.1
+Release: alt0.M60P.2
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.2
@@ -594,6 +594,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Mar 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.2-alt0.M60P.2
+- Don't allow CLONE_NEWUSER | CLONE_FS (local root fixed)
+- CVE-2013-1828 fixed
+
 * Tue Mar 05 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.2-alt0.M60P.1
 - 3.8.2
 
