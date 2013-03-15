@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M60P.2
+Release: alt0.M60P.1
 epoch:1 
 %define kernel_base_version	3.8
-%define kernel_sublevel	.2
+%define kernel_sublevel	.3
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -594,6 +594,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Mar 15 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.3-alt0.M60P.1
+- 3.8.3
+
 * Thu Mar 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.2-alt0.M60P.2
 - Don't allow CLONE_NEWUSER | CLONE_FS (local root fixed)
 - CVE-2013-1828 fixed
