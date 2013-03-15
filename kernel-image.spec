@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.35
-Release: alt9
+Version: 3.4.36
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 35
+%define kernel_stable_version 36
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -330,7 +330,7 @@ Patch0391: linux-%kernel_branch.25-fix-drivers-rtc--rtc-m41t80.patch
 
 Patch0401: linux-%kernel_branch.25-fix-drivers-scsi--aha1542.patch
 Patch0402: linux-%kernel_branch.25-fix-drivers-scsi--aic94xx.patch
-Patch0403: linux-%kernel_branch.28-fix-drivers-scsi--hv_storvsc.patch
+Patch0403: linux-%kernel_branch.36-fix-drivers-scsi--hv_storvsc.patch
 Patch0404: linux-%kernel_branch.32-fix-drivers-scsi--lpfc.patch
 Patch0405: linux-%kernel_branch.25-fix-drivers-scsi--mpt2sas.patch
 Patch0406: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
@@ -2470,6 +2470,11 @@ done)
 
 
 %changelog
+* Fri Mar 15 2013 Led <led@altlinux.ru> 3.4.36-alt1
+- 3.4.36
+- updated:
+  + fix-drivers-scsi--hv_storvsc
+
 * Thu Mar 14 2013 Led <led@altlinux.ru> 3.4.35-alt9
 - updated:
   + fix-drivers-gpu-drm--i915

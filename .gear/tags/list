@@ -45,7 +45,7 @@ b95259a2c6454cec10d0c5753a3ce812402a9b07 fix-drivers-net-ethernet-ibm--ehea
 fb3a06385bfdf41df921c03b837094936c1bf43d fix-drivers-net-wireless-brcm80211--brcmsmac
 689ec373adadcc683419de0d46c077b606046795 fix-drivers-net-wireless-rt2x00--rt2800lib
 bb0ae3e4170069640686232b7d269a670630d019 fix-drivers-platform--hdaps
-c007f7cc2e40a8f7f6a514f8aeca68adccbb389d fix-drivers-scsi--hv_storvsc
+97d2783ce1901fb017586fa40b6b62ea4a31207a fix-drivers-scsi--hv_storvsc
 2c587d279d6cdf3729a6c789daf0622a38112017 fix-drivers-scsi--scsi_mod
 3a4c5c855a3751c7073392af887f581ae4d5c71a fix-drivers-scsi--scsi_netlink
 661f6c5e05ee25bced279721b4a115a0283bb4df fix-drivers-scsi--sd_mod
@@ -285,3 +285,4 @@ f386289eff06cd07018d03f8ebbb3b723a60b547 fix-security--selinux
 90c1a139695f5053f154119be1f9bd4d686bc2b3 fix-fs-ext3
 a1649cbaedde9b70effe9e887e4d32cbe30ada98 fix-fs-debugfs
 ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
+78bf5350e5f2ddbd5b7b9415a07ff0a5da888c05 v3.4.36
