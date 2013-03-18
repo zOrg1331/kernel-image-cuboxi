@@ -1477,8 +1477,7 @@ static int setup_swap_extents(struct swap_info_struct *sis, sector_t *span)
 
 static void enable_swap_info(struct swap_info_struct *p, int prio,
 				unsigned char *swap_map,
-				unsigned long *frontswap_map,
-				unsigned long *frontswap_denial_map)
+				unsigned long *frontswap_map)
 {
 	int i, prev;
 
@@ -1489,7 +1488,6 @@ static void enable_swap_info(struct swap_info_struct *p, int prio,
 		p->prio = --least_priority;
 	p->swap_map = swap_map;
 	frontswap_map_set(p, frontswap_map);
-	frontswap_denial_map_set(p, frontswap_denial_map);
 	p->flags |= SWP_WRITEOK;
 	nr_swap_pages += p->pages;
 	total_swap_pages += p->pages;
@@ -1591,8 +1589,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 		 * sys_swapoff for this swap_info_struct at this point.
 		 */
 		/* re-insert swap space back into swap_list */
-		enable_swap_info(p, p->prio, p->swap_map,
-			frontswap_map_get(p), frontswap_denial_map_get(p));
+		enable_swap_info(p, p->prio, p->swap_map, frontswap_map_get(p));
 		goto out_dput;
 	}
 
@@ -1623,7 +1620,6 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	mutex_unlock(&swapon_mutex);
 	vfree(swap_map);
 	vfree(frontswap_map_get(p));
-	vfree(frontswap_denial_map_get(p));
 	/* Destroy swap account informatin */
 	swap_cgroup_swapoff(type);
 
@@ -1984,7 +1980,6 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	unsigned long maxpages;
 	unsigned char *swap_map = NULL;
 	unsigned long *frontswap_map = NULL;
-	unsigned long *frontswap_denial_map = NULL;
 	struct page *page = NULL;
 	struct inode *inode = NULL;
 
@@ -2069,10 +2064,8 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		goto bad_swap;
 	}
 	/* frontswap enabled? set up bit-per-page map for frontswap */
-	if (frontswap_enabled) {
- 		frontswap_map = vzalloc(maxpages / sizeof(long));
-		frontswap_denial_map = vzalloc(maxpages / sizeof(long));
-	}
+	if (frontswap_enabled)
+		frontswap_map = vzalloc(maxpages / sizeof(long));
 
 	if (p->bdev) {
 		if (blk_queue_nonrot(bdev_get_queue(p->bdev))) {
@@ -2088,8 +2081,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	if (swap_flags & SWAP_FLAG_PREFER)
 		prio =
 		  (swap_flags & SWAP_FLAG_PRIO_MASK) >> SWAP_FLAG_PRIO_SHIFT;
-	enable_swap_info(p, prio, swap_map,
-				frontswap_map, frontswap_denial_map);
+	enable_swap_info(p, prio, swap_map, frontswap_map);
 
 	printk(KERN_INFO "Adding %uk swap on %s.  "
 			"Priority:%d extents:%d across:%lluk %s%s%s\n",

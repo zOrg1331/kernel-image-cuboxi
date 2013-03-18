@@ -19,8 +19,6 @@ extern struct frontswap_ops
 extern void frontswap_shrink(unsigned long);
 extern unsigned long frontswap_curr_pages(void);
 extern void frontswap_writethrough(bool);
-#define FRONTSWAP_HAS_UNUSE
-extern int frontswap_unuse(int, pgoff_t, struct page *, gfp_t);
 
 extern void __frontswap_init(unsigned type);
 extern int __frontswap_store(struct page *page);
@@ -61,38 +59,6 @@ static inline unsigned long *frontswap_map_get(struct swap_info_struct *p)
 {
 	return p->frontswap_map;
 }
-
-static inline int frontswap_test_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-	int ret = 0;
-
-	if (frontswap_enabled && sis->frontswap_denial_map)
-		ret = test_bit(offset, sis->frontswap_denial_map);
-	return ret;
-}
-
-static inline void frontswap_set_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-	if (frontswap_enabled && sis->frontswap_denial_map)
-		set_bit(offset, sis->frontswap_denial_map);
-}
-
-static inline void frontswap_clear_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-	if (frontswap_enabled && sis->frontswap_denial_map)
-		clear_bit(offset, sis->frontswap_denial_map);
-}
-
-static inline void frontswap_denial_map_set(struct swap_info_struct *p,
-				     unsigned long *map)
-{
-	p->frontswap_denial_map = map;
-}
-
-static inline unsigned long *frontswap_denial_map_get(struct swap_info_struct *p)
-{
-	return p->frontswap_denial_map;
-}
 #else
 /* all inline routines become no-ops and all externs are ignored */
 
@@ -117,29 +83,6 @@ static inline void frontswap_map_set(struct swap_info_struct *p,
 }
 
 static inline unsigned long *frontswap_map_get(struct swap_info_struct *p)
-{
-	return NULL;
-}
-
-static inline int frontswap_test_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-	return 0;
-}
-
-static inline void frontswap_set_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-}
-
-static inline void frontswap_clear_denial(struct swap_info_struct *sis, pgoff_t offset)
-{
-}
-
-static inline void frontswap_map_set_denial(struct swap_info_struct *p,
-				     unsigned long *map)
-{
-}
-
-static inline unsigned long *frontswap_map_get_denial(struct swap_info_struct *p)
 {
 	return NULL;
 }

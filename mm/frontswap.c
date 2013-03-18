@@ -58,8 +58,6 @@ static u64 frontswap_loads;
 static u64 frontswap_succ_stores;
 static u64 frontswap_failed_stores;
 static u64 frontswap_invalidates;
-static u64 frontswap_unuses;
-static u64 frontswap_denials;
 
 static inline void inc_frontswap_loads(void) {
 	frontswap_loads++;
@@ -136,11 +134,6 @@ int __frontswap_store(struct page *page)
 	BUG_ON(sis == NULL);
 	if (frontswap_test(sis, offset))
 		dup = 1;
-	if (frontswap_test_denial(sis, offset) && (dup == 0)) {
-		frontswap_clear_denial(sis, offset);
-		frontswap_denials++;
-		goto out;
-	}
 	ret = (*frontswap_ops.store)(type, offset, page);
 	if (ret == 0) {
 		frontswap_set(sis, offset);
@@ -160,7 +153,6 @@ int __frontswap_store(struct page *page)
 	if (frontswap_writethrough_enabled)
 		/* report failure so swap also writes to swap device */
 		ret = -1;
-out:
 	return ret;
 }
 EXPORT_SYMBOL(__frontswap_store);
@@ -201,7 +193,6 @@ void __frontswap_invalidate_page(unsigned type, pgoff_t offset)
 		(*frontswap_ops.invalidate_page)(type, offset);
 		atomic_dec(&sis->frontswap_pages);
 		frontswap_clear(sis, offset);
-		frontswap_clear_denial(sis, offset);
 		inc_frontswap_invalidates();
 	}
 }
@@ -304,24 +295,6 @@ unsigned long frontswap_curr_pages(void)
 }
 EXPORT_SYMBOL(frontswap_curr_pages);
 
-int frontswap_unuse(int type, pgoff_t offset,
-			struct page *newpage, gfp_t gfp_mask)
-{
-	struct swap_info_struct *sis = swap_info[type];
-	int ret = 0;
-
-	frontswap_set_denial(sis, offset);
-	ret = read_frontswap_async(type, offset, newpage, gfp_mask);
-	if (ret == 0 || ret == -EEXIST) {
-		(*frontswap_ops.invalidate_page)(type, offset);
-		atomic_dec(&sis->frontswap_pages);
-		frontswap_clear(sis, offset);
-		frontswap_unuses++;
-	}
-	return ret;
-}
-EXPORT_SYMBOL(frontswap_unuse);
-
 static int __init init_frontswap(void)
 {
 #ifdef CONFIG_DEBUG_FS
@@ -334,8 +307,6 @@ static int __init init_frontswap(void)
 				&frontswap_failed_stores);
 	debugfs_create_u64("invalidates", S_IRUGO,
 				root, &frontswap_invalidates);
-	debugfs_create_u64("unuses", S_IRUGO, root, &frontswap_unuses);
-	debugfs_create_u64("denials", S_IRUGO, root, &frontswap_denials);
 #endif
 	return 0;
 }
