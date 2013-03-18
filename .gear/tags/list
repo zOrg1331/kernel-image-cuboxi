@@ -62,7 +62,7 @@ e8feadd30f82900d3e27b7253ad2319d7e0b640a fix-fs
 3723f8a06b88d4d715b9d013c1f55202d03181eb fix-fs-ext4
 92fb23f9f6bd607e7c40b0d818a04abf3be552d2 fix-fs-nfs
 0727a33db1c14e5884b8b3c46ca00c1b4084ce29 fix-fs-proc
-666bb67eb23aabdc09a0f1973bfaf658b960070c fix-fs-reiserfs
+89d10a4ee6228003a64a8344c5844d5863844d18 fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
 eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
@@ -103,7 +103,7 @@ a459089077414932015806db8a50d69305be75e6 feat-drivers-video--bootsplash
 2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
-31b367768b39e4562b8ed8ea38c8a66e93c25da9 feat-fs-aufs
+d476cb1d2ea5eb671c61ccb3489fb20d43cd1de5 feat-fs-aufs
 a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 26db2a4d3617346871dddb25859ef1678daf640f feat-fs-dazukofs
 6643f0400d047f119caf11b5c0f7527b3a229d29 feat-fs-ext2--secrm
