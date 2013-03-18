@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -48,7 +48,7 @@ Release: alt1
 %def_enable man
 %def_disable compat
 %def_enable x32
-%def_enable debugfs
+%def_disable debugfs
 %def_disable numa
 %def_enable acpi
 %def_enable pci
@@ -124,7 +124,7 @@ Release: alt1
 
 #define allocator SLAB
 
-%Extra_modules vboxhost 4.2.8
+%Extra_modules vboxhost 4.2.10
 #Extra_modules vboxguest 4.2.8
 #Extra_modules fglrx 8.97.100.7
 #Extra_modules netatop 0.1.1
@@ -195,8 +195,9 @@ Patch0082: linux-%kernel_branch.25-fix-drivers-base--dma-buf.patch
 
 Patch0091: linux-%kernel_branch.34-fix-drivers-block--aoe.patch
 Patch0092: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
-Patch0093: linux-%kernel_branch.35-fix-drivers-block--nbd.patch
-Patch0094: linux-%kernel_branch.20-fix-drivers-block--zram.patch
+Patch0093: linux-%kernel_branch.35-fix-drivers-block--loop.patch
+Patch0094: linux-%kernel_branch.35-fix-drivers-block--nbd.patch
+Patch0095: linux-%kernel_branch.20-fix-drivers-block--zram.patch
 
 Patch0101: linux-%kernel_branch.20-fix-drivers-char--lp.patch
 Patch0102: linux-%kernel_branch.25-fix-drivers-char-agp--intel-agp.patch
@@ -360,64 +361,65 @@ Patch0454: linux-%kernel_branch.20-fix-drivers-video-omap2-dss.patch
 Patch0461: linux-%kernel_branch.25-fix-firmware--vicam.patch
 
 Patch0470: linux-%kernel_branch.28-fix-fs.patch
-Patch0471: linux-%kernel_branch.32-fix-fs-btrfs.patch
-Patch0472: linux-%kernel_branch.30-fix-fs-cifs.patch
-Patch0473: linux-%kernel_branch.35-fix-fs-debugfs.patch
-Patch0474: linux-%kernel_branch.35-fix-fs-ext3.patch
-Patch0475: linux-%kernel_branch.20-fix-fs-ext4.patch
-Patch0476: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0477: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0478: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0479: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0480: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0471: linux-%kernel_branch.35-fix-fs--block.patch
+Patch0472: linux-%kernel_branch.32-fix-fs-btrfs.patch
+Patch0473: linux-%kernel_branch.30-fix-fs-cifs.patch
+Patch0474: linux-%kernel_branch.35-fix-fs-debugfs.patch
+Patch0475: linux-%kernel_branch.35-fix-fs-ext3.patch
+Patch0476: linux-%kernel_branch.20-fix-fs-ext4.patch
+Patch0477: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0478: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0479: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0480: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0481: linux-%kernel_branch.20-fix-fs-reiserfs.patch
 
-Patch0481: linux-%kernel_branch.34-fix-include-linux.patch
+Patch0491: linux-%kernel_branch.34-fix-include-linux.patch
 
-Patch0490: linux-%kernel_branch.20-fix-init.patch
+Patch0500: linux-%kernel_branch.20-fix-init.patch
 
-Patch0500: linux-%kernel_branch.34-fix-kernel.patch
+Patch0510: linux-%kernel_branch.34-fix-kernel.patch
 
-Patch0510: linux-%kernel_branch.25-fix-lib.patch
-Patch0511: linux-%kernel_branch.29-fix-lib--btree.patch
-Patch0512: linux-%kernel_branch.25-fix-lib--crc32.patch
-Patch0513: linux-%kernel_branch.35-fix-lib-lzo.patch
+Patch0520: linux-%kernel_branch.25-fix-lib.patch
+Patch0521: linux-%kernel_branch.29-fix-lib--btree.patch
+Patch0522: linux-%kernel_branch.25-fix-lib--crc32.patch
+Patch0523: linux-%kernel_branch.35-fix-lib-lzo.patch
 
-Patch0520: linux-%kernel_branch.35-fix-mm.patch
-Patch0521: linux-%kernel_branch.20-fix-mm--compaction.patch
-Patch0522: linux-%kernel_branch.20-fix-mm--memcontrol.patch
-Patch0523: linux-%kernel_branch.20-fix-mm--memory-failure.patch
-Patch0524: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0525: linux-%kernel_branch.35-fix-mm--mmu.patch
-Patch0526: linux-%kernel_branch.35-fix-mm--slab.patch
-Patch0527: linux-%kernel_branch.35-fix-mm--slub.patch
-Patch0528: linux-%kernel_branch.35-fix-mm--swap.patch
-Patch0529: linux-%kernel_branch.20-fix-mm--zcache.patch
-Patch0530: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
+Patch0530: linux-%kernel_branch.35-fix-mm.patch
+Patch0531: linux-%kernel_branch.20-fix-mm--compaction.patch
+Patch0532: linux-%kernel_branch.20-fix-mm--memcontrol.patch
+Patch0533: linux-%kernel_branch.20-fix-mm--memory-failure.patch
+Patch0534: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
+Patch0535: linux-%kernel_branch.35-fix-mm--mmu.patch
+Patch0536: linux-%kernel_branch.35-fix-mm--slab.patch
+Patch0537: linux-%kernel_branch.35-fix-mm--slub.patch
+Patch0538: linux-%kernel_branch.35-fix-mm--swap.patch
+Patch0539: linux-%kernel_branch.20-fix-mm--zcache.patch
+Patch0540: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
-Patch0531: linux-%kernel_branch.30-fix-net--dns_resolver.patch
-Patch0532: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0533: linux-%kernel_branch.35-fix-net-core.patch
-Patch0534: linux-%kernel_branch.31-fix-net-ipv6.patch
-Patch0535: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0536: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0537: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0538: linux-%kernel_branch.35-fix-net-sunrpc.patch
+Patch0551: linux-%kernel_branch.30-fix-net--dns_resolver.patch
+Patch0552: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
+Patch0553: linux-%kernel_branch.35-fix-net-core.patch
+Patch0554: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0555: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0556: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0557: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0558: linux-%kernel_branch.35-fix-net-sunrpc.patch
 
-Patch0541: linux-%kernel_branch.20-fix-scripts--kconfig.patch
+Patch0561: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
-Patch0551: linux-%kernel_branch.20-fix-security--apparmor.patch
-Patch0552: linux-%kernel_branch.20-fix-security--security.patch
-Patch0553: linux-%kernel_branch.35-fix-security--selinux.patch
+Patch0571: linux-%kernel_branch.20-fix-security--apparmor.patch
+Patch0572: linux-%kernel_branch.20-fix-security--security.patch
+Patch0573: linux-%kernel_branch.35-fix-security--selinux.patch
 
-Patch0561: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
-Patch0562: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
-Patch0563: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
+Patch0581: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
+Patch0582: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
+Patch0583: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
 
-Patch0571: linux-%kernel_branch.20-fix-tools--perf.patch
-Patch0572: linux-%kernel_branch.20-fix-tools-hv.patch
+Patch0591: linux-%kernel_branch.20-fix-tools--perf.patch
+Patch0592: linux-%kernel_branch.20-fix-tools-hv.patch
 
-Patch0580: linux-%kernel_branch.35-fix-virt-kvm.patch
-Patch0581: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
+Patch0600: linux-%kernel_branch.35-fix-virt-kvm.patch
+Patch0601: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
 
 
 Patch1001: linux-%kernel_branch.20-feat-arch-arm-mach-omap2--drm.patch
@@ -1233,6 +1235,7 @@ cd linux-%version
 %patch0092 -p1
 %patch0093 -p1
 %patch0094 -p1
+%patch0095 -p1
 
 # fix-drivers-char-*
 %patch0101 -p1
@@ -1439,36 +1442,25 @@ cd linux-%version
 %patch0478 -p1
 %patch0479 -p1
 %patch0480 -p1
-
-# fix-include-*
 %patch0481 -p1
 
-# fix-init
-%patch0490 -p1
+# fix-include-*
+%patch0491 -p1
 
-# fix-kernel*
+# fix-init
 %patch0500 -p1
 
-# fix-lib*
+# fix-kernel*
 %patch0510 -p1
-%patch0511 -p1
-%patch0512 -p1
-%patch0513 -p1
 
-# fix-mm*
+# fix-lib*
 %patch0520 -p1
 %patch0521 -p1
 %patch0522 -p1
 %patch0523 -p1
-%patch0524 -p1
-%patch0525 -p1
-%patch0526 -p1
-%patch0527 -p1
-%patch0528 -p1
-%patch0529 -p1
-%patch0530 -p1
 
-# fix-net-*
+# fix-mm*
+%patch0530 -p1
 %patch0531 -p1
 %patch0532 -p1
 %patch0533 -p1
@@ -1477,26 +1469,39 @@ cd linux-%version
 %patch0536 -p1
 %patch0537 -p1
 %patch0538 -p1
+%patch0539 -p1
+%patch0540 -p1
 
-%patch0541 -p1
-
-# fix-security--*
+# fix-net-*
 %patch0551 -p1
 %patch0552 -p1
 %patch0553 -p1
+%patch0554 -p1
+%patch0555 -p1
+%patch0556 -p1
+%patch0557 -p1
+%patch0558 -p1
 
 %patch0561 -p1
-%patch0562 -p1
-%patch0563 -p1
 
+# fix-security--*
 %patch0571 -p1
 %patch0572 -p1
+%patch0573 -p1
+
+%patch0581 -p1
+%patch0582 -p1
+%patch0583 -p1
+
+%patch0591 -p1
+%patch0592 -p1
 
 # fix-virt-kvm*
-%patch0580 -p1
-%patch0581 -p1
+%patch0600 -p1
+%patch0601 -p1
 
 
+# feat-arch-*
 %patch1001 -p1
 
 # feat-block--*
@@ -2470,6 +2475,16 @@ done)
 
 
 %changelog
+* Mon Mar 18 2013 Led <led@altlinux.ru> 3.4.36-alt2
+- updated:
+  + fix-mm--swap
+  + feat-mm--frontswap
+- added:
+  + fix-drivers-block--loop
+  + fix-fs--block
+- disabled debugfs
+- vboxhost 4.2.10
+
 * Fri Mar 15 2013 Led <led@altlinux.ru> 3.4.36-alt1
 - 3.4.36
 - updated:

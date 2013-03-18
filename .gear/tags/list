@@ -70,7 +70,7 @@ eb6aedb863b41aa7d04e48f5aa7b664669a4c279 fix-mm
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
 17422550ef2500f8ce750bc9e15697198b0204e0 fix-mm--memory_hotplug
-088b4d1e9cec7239c6f8fadd8b9b558f4d59fd54 fix-mm--swap
+e26acd1f659e3e1238232f3cde67c7256668ee04 fix-mm--swap
 dec483b0840f3ab6a49e12787567ee18e809304d fix-net-bridge--bridge
 454aa942f4fdb12d6ba881ccc2d6eea34c2f0120 fix-net-netfilter--nf_conntrack_ftp
 aced068d8bd148f0646d12abdf70643232f51206 fix-net-sunrpc
@@ -226,7 +226,7 @@ d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
 48c191bffa914fb5a938fdceba4538a3194b4177 feat-mm--zcache
 7f575529ed28aa6aaabc6d5c6e478aca7b471b64 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-8d12e051f030acd0539a62814bde9b39e764ec2a feat-mm--frontswap
+ba9b9e346c75d5b317a484c970fba39f0c5a1bd1 feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
 9c1e19b2a261e0a6805357dd488166b46aaa15dd feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
@@ -286,3 +286,5 @@ f386289eff06cd07018d03f8ebbb3b723a60b547 fix-security--selinux
 a1649cbaedde9b70effe9e887e4d32cbe30ada98 fix-fs-debugfs
 ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
 78bf5350e5f2ddbd5b7b9415a07ff0a5da888c05 v3.4.36
+467c8878fde1acae8f32048469739899b7dfb854 fix-drivers-block--loop
+5cf9464b2e459e29a7a974be7c867279da279474 fix-fs--block
