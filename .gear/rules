@@ -204,6 +204,7 @@ diff: v3.4.25:.				fix-net-mac80211:. name=linux-3.4.25-fix-net-mac80211.patch
 diff: v3.4.20:.				fix-net-netfilter--nf_conntrack_ftp:. name=linux-3.4.20-fix-net-netfilter--nf_conntrack_ftp.patch
 diff: v3.4.28:.				fix-net-rds--rds_rdma:. name=linux-3.4.28-fix-net-rds--rds_rdma.patch
 diff: v3.4.35:.				fix-net-sunrpc:. name=linux-3.4.35-fix-net-sunrpc.patch
+diff: v3.4.35:.				fix-net-wireless--cfg80211:. name=linux-3.4.35-fix-net-wireless--cfg80211.patch
 diff: v3.4.20:.				fix-scripts--kconfig:. name=linux-3.4.20-fix-scripts--kconfig.patch
 diff: v3.4.20:.				fix-security--apparmor:. name=linux-3.4.20-fix-security--apparmor.patch
 diff: v3.4.20:.				fix-security--security:. name=linux-3.4.20-fix-security--security.patch

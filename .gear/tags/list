@@ -288,3 +288,4 @@ ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
 78bf5350e5f2ddbd5b7b9415a07ff0a5da888c05 v3.4.36
 467c8878fde1acae8f32048469739899b7dfb854 fix-drivers-block--loop
 5cf9464b2e459e29a7a974be7c867279da279474 fix-fs--block
+ab850b2489496234d8d5c2aa091e231f08fcacc4 fix-net-wireless--cfg80211

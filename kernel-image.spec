@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -48,7 +48,7 @@ Release: alt3
 %def_enable man
 %def_disable compat
 %def_enable x32
-%def_enable debugfs
+%def_disable debugfs
 %def_disable numa
 %def_enable acpi
 %def_enable pci
@@ -404,6 +404,7 @@ Patch0555: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0556: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
 Patch0557: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
 Patch0558: linux-%kernel_branch.35-fix-net-sunrpc.patch
+Patch0559: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
 
 Patch0561: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1481,6 +1482,7 @@ cd linux-%version
 %patch0556 -p1
 %patch0557 -p1
 %patch0558 -p1
+%patch0559 -p1
 
 %patch0561 -p1
 
@@ -2475,6 +2477,11 @@ done)
 
 
 %changelog
+* Mon Mar 18 2013 Led <led@altlinux.ru> 3.4.36-alt4
+- added:
+  + fix-net-wireless--cfg80211
+- disabled debugfs
+
 * Mon Mar 18 2013 Led <led@altlinux.ru> 3.4.36-alt3
 - updated:
   + fix-fs-reiserfs
