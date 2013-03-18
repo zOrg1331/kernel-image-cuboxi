@@ -225,7 +225,6 @@ extern unsigned int nr_free_pagecache_pages(void);
 
 /* linux/mm/swap.c */
 extern void __lru_cache_add(struct page *, enum lru_list lru);
-extern void __lru_cache_add_tail(struct page *, enum lru_list lru);
 extern void lru_cache_add_lru(struct page *, enum lru_list lru);
 extern void lru_add_page_tail(struct zone* zone,
 			      struct page *page, struct page *page_tail);
@@ -247,15 +246,6 @@ extern void add_page_to_unevictable_list(struct page *page);
 static inline void lru_cache_add_anon(struct page *page)
 {
 	__lru_cache_add(page, LRU_INACTIVE_ANON);
-}
- 
-/**
- * lru_cache_add_tail: add a page to the tail of the page lists
- * @page: the page to add
- */
-static inline void lru_cache_add_anon_tail(struct page *page)
-{
-	__lru_cache_add_tail(page, LRU_INACTIVE_ANON);
 }
 
 static inline void lru_cache_add_file(struct page *page)
@@ -356,7 +346,6 @@ extern void free_pages_and_swap_cache(struct page **, int);
 extern struct page *lookup_swap_cache(swp_entry_t);
 extern struct page *read_swap_cache_async(swp_entry_t, gfp_t,
 			struct vm_area_struct *vma, unsigned long addr);
-extern int read_frontswap_async(int, pgoff_t, struct page *, gfp_t);
 extern struct page *swapin_readahead(swp_entry_t, gfp_t,
 			struct vm_area_struct *vma, unsigned long addr);
 
