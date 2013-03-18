@@ -82,7 +82,7 @@ b216e5da21b32cabfa72ce370a22dd72152d507b fix-sound-soc-omap--snd-soc-omap
 aa2ca76e859c3bf850ac9c7431f6b42320333813 fix-sound-soc-omap--snd-soc-omap-mcbsp
 8abb6f792ec0fb424c5511ae31da8cddd495f323 fix-tools--perf
 b05378daca44ba9d28b8aff9c5d5c24e5a9645b3 fix-tools-hv
-ad939cb67caaa47d5f6ac7671d56ceece1477b62 fix-virt-kvm
+102d5f3e43cf02ed3f6e7e41a78ad55d2acdbe7e fix-virt-kvm
 47cd2c321a712f4e43c9b6d9324a9a815e04eacf feat-arch-arm-mach-omap2--drm
 975bb74bfcf1c022ea49198dcd74efe14fe58d34 feat-block--bfq-iosched
 9e9e404d98dd49625c1647f0b00bd53a8349df53 feat-drivers-block--cloop
@@ -289,3 +289,4 @@ ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
 467c8878fde1acae8f32048469739899b7dfb854 fix-drivers-block--loop
 5cf9464b2e459e29a7a974be7c867279da279474 fix-fs--block
 ab850b2489496234d8d5c2aa091e231f08fcacc4 fix-net-wireless--cfg80211
+88184301e67dde1c629da81bf1de1dd008e87ad5 fix-fs-xfs

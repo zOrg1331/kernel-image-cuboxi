@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -372,6 +372,7 @@ Patch0478: linux-%kernel_branch.35-fix-fs-nfs.patch
 Patch0479: linux-%kernel_branch.31-fix-fs-proc.patch
 Patch0480: linux-%kernel_branch.28-fix-fs-ramfs.patch
 Patch0481: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0482: linux-%kernel_branch.35-fix-fs-xfs.patch
 
 Patch0491: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -1444,6 +1445,7 @@ cd linux-%version
 %patch0479 -p1
 %patch0480 -p1
 %patch0481 -p1
+%patch0482 -p1
 
 # fix-include-*
 %patch0491 -p1
@@ -2477,6 +2479,12 @@ done)
 
 
 %changelog
+* Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt5
+- updated:
+  + fix-virt-kvm
+- added:
+  + fix-fs-xfs
+
 * Mon Mar 18 2013 Led <led@altlinux.ru> 3.4.36-alt4
 - added:
   + fix-net-wireless--cfg80211

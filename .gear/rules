@@ -178,6 +178,7 @@ diff: v3.4.35:.				fix-fs-nfs:. name=linux-3.4.35-fix-fs-nfs.patch
 diff: v3.4.31:.				fix-fs-proc:. name=linux-3.4.31-fix-fs-proc.patch
 diff: v3.4.28:.				fix-fs-ramfs:. name=linux-3.4.28-fix-fs-ramfs.patch
 diff: v3.4.20:.				fix-fs-reiserfs:. name=linux-3.4.20-fix-fs-reiserfs.patch
+diff: v3.4.35:.				fix-fs-xfs:. name=linux-3.4.35-fix-fs-xfs.patch
 diff: v3.4.34:.				fix-include-linux:. name=linux-3.4.34-fix-include-linux.patch
 diff: v3.4.20:.				fix-init:. name=linux-3.4.20-fix-init.patch
 diff: v3.4.34:.				fix-kernel:. name=linux-3.4.34-fix-kernel.patch
