@@ -433,22 +433,6 @@ void __lru_cache_add(struct page *page, enum lru_list lru)
 	put_cpu_var(lru_add_pvecs);
 }
 EXPORT_SYMBOL(__lru_cache_add);
- 
-void __lru_cache_add_tail(struct page *page, enum lru_list lru)
-{
-	struct pagevec *pvec = &get_cpu_var(lru_add_pvecs)[lru];
-	unsigned long flags;
-
-	page_cache_get(page);
-	if (!pagevec_add(pvec, page)) {
-		__pagevec_lru_add(pvec, lru);
-		local_irq_save(flags);
-		pagevec_move_tail(pvec);
-		local_irq_restore(flags);
-	}
-	put_cpu_var(lru_add_pvecs);
-}
-EXPORT_SYMBOL(__lru_cache_add_tail);
 
 /**
  * lru_cache_add_lru - add a page to a page list
