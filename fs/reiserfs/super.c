@@ -29,6 +29,7 @@
 #include <linux/namei.h>
 #include <linux/crc32.h>
 #include <linux/seq_file.h>
+#include <linux/cleancache.h>
 
 struct file_system_type reiserfs_fs_type;
 
@@ -1420,6 +1421,7 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 		reiserfs_write_lock(s);
 		finish_unfinished(s);
 		reiserfs_xattr_init(s, *mount_flags);
+		cleancache_init_fs(s);
 	}
 
 out_ok:
@@ -2002,6 +2004,8 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 
 	init_waitqueue_head(&(sbi->s_wait));
 	spin_lock_init(&sbi->bitmap_lock);
+
+	cleancache_init_fs(s);
 
 	reiserfs_write_unlock(s);
 
