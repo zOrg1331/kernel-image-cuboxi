@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2479,6 +2479,10 @@ done)
 
 
 %changelog
+* Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt6
+- enabled:
+  + VM_EVENT_COUNTERS
+
 * Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt5
 - updated:
   + fix-virt-kvm
