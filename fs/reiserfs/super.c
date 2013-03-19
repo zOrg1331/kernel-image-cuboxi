@@ -1421,7 +1421,6 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 		reiserfs_write_lock(s);
 		finish_unfinished(s);
 		reiserfs_xattr_init(s, *mount_flags);
-		cleancache_init_fs(s);
 	}
 
 out_ok:
