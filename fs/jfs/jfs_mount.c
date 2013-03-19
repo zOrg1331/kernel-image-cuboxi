@@ -49,6 +49,7 @@
 
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
+#include <linux/cleancache.h>
 
 #include "jfs_incore.h"
 #include "jfs_filsys.h"
@@ -226,6 +227,8 @@ int jfs_mount(struct super_block *sb)
 
 	if (rc)
 		jfs_err("Mount JFS Failure: %d", rc);
+	else
+		cleancache_init_fs(sb);
 
 	return rc;
 }
