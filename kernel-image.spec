@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt6
+Release: alt7
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -367,12 +367,13 @@ Patch0473: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0474: linux-%kernel_branch.35-fix-fs-debugfs.patch
 Patch0475: linux-%kernel_branch.35-fix-fs-ext3.patch
 Patch0476: linux-%kernel_branch.20-fix-fs-ext4.patch
-Patch0477: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0478: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0479: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0480: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0481: linux-%kernel_branch.20-fix-fs-reiserfs.patch
-Patch0482: linux-%kernel_branch.35-fix-fs-xfs.patch
+Patch0477: linux-%kernel_branch.35-fix-fs-jfs.patch
+Patch0478: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0479: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0480: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0481: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0482: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0483: linux-%kernel_branch.35-fix-fs-xfs.patch
 
 Patch0491: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -400,28 +401,30 @@ Patch0540: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 Patch0551: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0552: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
 Patch0553: linux-%kernel_branch.35-fix-net-core.patch
-Patch0554: linux-%kernel_branch.31-fix-net-ipv6.patch
-Patch0555: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0556: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0557: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0558: linux-%kernel_branch.35-fix-net-sunrpc.patch
-Patch0559: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
+Patch0554: linux-%kernel_branch.35-fix-net-ipv4--xfrm.patch
+Patch0555: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0556: linux-%kernel_branch.35-fix-net-ipv6--xfrm.patch
+Patch0557: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0558: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0559: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0560: linux-%kernel_branch.35-fix-net-sunrpc.patch
+Patch0561: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
 
-Patch0561: linux-%kernel_branch.20-fix-scripts--kconfig.patch
+Patch0571: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
-Patch0571: linux-%kernel_branch.20-fix-security--apparmor.patch
-Patch0572: linux-%kernel_branch.20-fix-security--security.patch
-Patch0573: linux-%kernel_branch.35-fix-security--selinux.patch
+Patch0581: linux-%kernel_branch.20-fix-security--apparmor.patch
+Patch0582: linux-%kernel_branch.20-fix-security--security.patch
+Patch0583: linux-%kernel_branch.35-fix-security--selinux.patch
 
-Patch0581: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
-Patch0582: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
-Patch0583: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
+Patch0591: linux-%kernel_branch.20-fix-sound-pci-hda--snd-hda-codec-realtek.patch
+Patch0592: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap.patch
+Patch0593: linux-%kernel_branch.20-fix-sound-soc-omap--snd-soc-omap-mcbsp.patch
 
-Patch0591: linux-%kernel_branch.20-fix-tools--perf.patch
-Patch0592: linux-%kernel_branch.20-fix-tools-hv.patch
+Patch0601: linux-%kernel_branch.20-fix-tools--perf.patch
+Patch0602: linux-%kernel_branch.20-fix-tools-hv.patch
 
-Patch0600: linux-%kernel_branch.35-fix-virt-kvm.patch
-Patch0601: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
+Patch0610: linux-%kernel_branch.35-fix-virt-kvm.patch
+Patch0611: linux-%kernel_branch.25-fix-virt-kvm--kvm-amd.patch
 
 
 Patch1001: linux-%kernel_branch.20-feat-arch-arm-mach-omap2--drm.patch
@@ -1446,6 +1449,7 @@ cd linux-%version
 %patch0480 -p1
 %patch0481 -p1
 %patch0482 -p1
+%patch0483 -p1
 
 # fix-include-*
 %patch0491 -p1
@@ -1485,24 +1489,27 @@ cd linux-%version
 %patch0557 -p1
 %patch0558 -p1
 %patch0559 -p1
-
+%patch0560 -p1
 %patch0561 -p1
 
-# fix-security--*
+# fix-scripts--*
 %patch0571 -p1
-%patch0572 -p1
-%patch0573 -p1
 
+# fix-security--*
 %patch0581 -p1
 %patch0582 -p1
 %patch0583 -p1
 
 %patch0591 -p1
 %patch0592 -p1
+%patch0593 -p1
+
+%patch0601 -p1
+%patch0602 -p1
 
 # fix-virt-kvm*
-%patch0600 -p1
-%patch0601 -p1
+%patch0610 -p1
+%patch0611 -p1
 
 
 # feat-arch-*
@@ -2479,6 +2486,14 @@ done)
 
 
 %changelog
+* Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt7
+- updated:
+  + fix-fs-reiserfs
+- added:
+  + fix-fs-jfs
+  + fix-net-ipv4--xfrm
+  + fix-net-ipv6--xfrm
+
 * Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt6
 - enabled:
   + VM_EVENT_COUNTERS
