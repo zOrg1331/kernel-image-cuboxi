@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.36
-Release: alt7
+Release: alt8
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -171,8 +171,9 @@ Patch0024: linux-%kernel_branch.20-fix-arch-x86--kexec.patch
 Patch0025: linux-%kernel_branch.28-fix-arch-x86--mcheck.patch
 Patch0026: linux-%kernel_branch.25-fix-arch-x86-cpu--rdrand.patch
 
-Patch0030: linux-%kernel_branch.32-fix-block.patch
-Patch0031: linux-%kernel_branch.20-fix-block-partitions--efi.patch
+Patch0030: linux-%kernel_branch.35-fix-block.patch
+Patch0031: linux-%kernel_branch.35-fix-block--blk-integrity.patch
+Patch0032: linux-%kernel_branch.20-fix-block-partitions--efi.patch
 
 Patch0041: linux-%kernel_branch.35-fix-crypto--cryptomgr.patch
 
@@ -360,20 +361,25 @@ Patch0454: linux-%kernel_branch.20-fix-drivers-video-omap2-dss.patch
 
 Patch0461: linux-%kernel_branch.25-fix-firmware--vicam.patch
 
-Patch0470: linux-%kernel_branch.28-fix-fs.patch
+Patch0470: linux-%kernel_branch.35-fix-fs.patch
 Patch0471: linux-%kernel_branch.35-fix-fs--block.patch
-Patch0472: linux-%kernel_branch.32-fix-fs-btrfs.patch
-Patch0473: linux-%kernel_branch.30-fix-fs-cifs.patch
-Patch0474: linux-%kernel_branch.35-fix-fs-debugfs.patch
-Patch0475: linux-%kernel_branch.35-fix-fs-ext3.patch
-Patch0476: linux-%kernel_branch.20-fix-fs-ext4.patch
-Patch0477: linux-%kernel_branch.35-fix-fs-jfs.patch
-Patch0478: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0479: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0480: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0481: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0482: linux-%kernel_branch.20-fix-fs-reiserfs.patch
-Patch0483: linux-%kernel_branch.35-fix-fs-xfs.patch
+Patch0472: linux-%kernel_branch.35-fix-fs-9p.patch
+Patch0473: linux-%kernel_branch.32-fix-fs-btrfs.patch
+Patch0474: linux-%kernel_branch.30-fix-fs-cifs.patch
+Patch0475: linux-%kernel_branch.35-fix-fs-debugfs.patch
+Patch0476: linux-%kernel_branch.35-fix-fs-ext3.patch
+Patch0477: linux-%kernel_branch.35-fix-fs-ext4.patch
+Patch0478: linux-%kernel_branch.35-fix-fs-gfs2.patch
+Patch0479: linux-%kernel_branch.35-fix-fs-jfs.patch
+Patch0480: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0481: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0482: linux-%kernel_branch.35-fix-fs-nilfs2.patch
+Patch0483: linux-%kernel_branch.35-fix-fs-ocfs2.patch
+Patch0484: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0485: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0486: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0487: linux-%kernel_branch.35-fix-fs-ubifs.patch
+Patch0488: linux-%kernel_branch.35-fix-fs-xfs.patch
 
 Patch0491: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -387,16 +393,17 @@ Patch0522: linux-%kernel_branch.25-fix-lib--crc32.patch
 Patch0523: linux-%kernel_branch.35-fix-lib-lzo.patch
 
 Patch0530: linux-%kernel_branch.35-fix-mm.patch
-Patch0531: linux-%kernel_branch.20-fix-mm--compaction.patch
-Patch0532: linux-%kernel_branch.20-fix-mm--memcontrol.patch
-Patch0533: linux-%kernel_branch.20-fix-mm--memory-failure.patch
-Patch0534: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0535: linux-%kernel_branch.35-fix-mm--mmu.patch
-Patch0536: linux-%kernel_branch.35-fix-mm--slab.patch
-Patch0537: linux-%kernel_branch.35-fix-mm--slub.patch
-Patch0538: linux-%kernel_branch.35-fix-mm--swap.patch
-Patch0539: linux-%kernel_branch.20-fix-mm--zcache.patch
-Patch0540: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
+Patch0531: linux-%kernel_branch.35-fix-mm--bounce.patch
+Patch0532: linux-%kernel_branch.20-fix-mm--compaction.patch
+Patch0533: linux-%kernel_branch.20-fix-mm--memcontrol.patch
+Patch0534: linux-%kernel_branch.20-fix-mm--memory-failure.patch
+Patch0535: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
+Patch0536: linux-%kernel_branch.35-fix-mm--mmu.patch
+Patch0537: linux-%kernel_branch.35-fix-mm--slab.patch
+Patch0538: linux-%kernel_branch.35-fix-mm--slub.patch
+Patch0539: linux-%kernel_branch.35-fix-mm--swap.patch
+Patch0540: linux-%kernel_branch.20-fix-mm--zcache.patch
+Patch0541: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0551: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0552: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
@@ -482,7 +489,7 @@ Patch1166: linux-%kernel_branch.20-feat-fs-dazukofs.patch
 Patch1167: linux-%kernel_branch.18-feat-fs-ext2--secrm.patch
 Patch1168: linux-%kernel_branch.18-feat-fs-ext3--secrm.patch
 Patch1169: linux-%kernel_branch.26-feat-fs-ext4--richacl.patch
-Patch1170: linux-%kernel_branch.20-feat-fs-ext4--secrm.patch
+Patch1170: linux-%kernel_branch.35-feat-fs-ext4--secrm.patch
 Patch1171: linux-%kernel_branch.20-feat-fs-f2fs.patch
 Patch1172: linux-%kernel_branch.18-feat-fs-fat--secrm.patch
 Patch1173: linux-%kernel_branch.20-feat-fs-hfs.patch
@@ -1208,8 +1215,10 @@ cd linux-%version
 %patch0025 -p1
 %patch0026 -p1
 
+# fix-block*
 %patch0030 -p1
 %patch0031 -p1
+%patch0032 -p1
 
 # fix-crypto--*
 %patch0041 -p1
@@ -1450,6 +1459,11 @@ cd linux-%version
 %patch0481 -p1
 %patch0482 -p1
 %patch0483 -p1
+%patch0484 -p1
+%patch0485 -p1
+%patch0486 -p1
+%patch0487 -p1
+%patch0488 -p1
 
 # fix-include-*
 %patch0491 -p1
@@ -1478,6 +1492,7 @@ cd linux-%version
 %patch0538 -p1
 %patch0539 -p1
 %patch0540 -p1
+%patch0541 -p1
 
 # fix-net-*
 %patch0551 -p1
@@ -2486,6 +2501,23 @@ done)
 
 
 %changelog
+* Wed Mar 20 2013 Led <led@altlinux.ru> 3.4.36-alt8
+- updated:
+  + fix-block
+  + fix-fs
+  + fix-fs--block
+  + fix-fs-ext3
+  + fix-fs-ext4
+  + fix-mm
+- added:
+  + fix-block--blk-integrity
+  + fix-fs-9p
+  + fix-fs-gfs2
+  + fix-fs-nilfs2
+  + fix-fs-ocfs2
+  + fix-fs-ubifs
+  + fix-mm--bounce
+
 * Tue Mar 19 2013 Led <led@altlinux.ru> 3.4.36-alt7
 - updated:
   + fix-fs-reiserfs
