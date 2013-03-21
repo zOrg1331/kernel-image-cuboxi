@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.36
-Release: alt8
+Version: 3.4.37
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 36
+%define kernel_stable_version 37
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -115,7 +115,7 @@ Release: alt8
 %def_enable fatelf
 %def_with lnfs
 %def_enable lnfs
-%def_without perf
+%def_with perf
 %def_enable oprofile
 %def_enable secrm
 %def_with firmware
@@ -196,9 +196,8 @@ Patch0082: linux-%kernel_branch.25-fix-drivers-base--dma-buf.patch
 
 Patch0091: linux-%kernel_branch.34-fix-drivers-block--aoe.patch
 Patch0092: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
-Patch0093: linux-%kernel_branch.35-fix-drivers-block--loop.patch
-Patch0094: linux-%kernel_branch.35-fix-drivers-block--nbd.patch
-Patch0095: linux-%kernel_branch.20-fix-drivers-block--zram.patch
+Patch0093: linux-%kernel_branch.35-fix-drivers-block--nbd.patch
+Patch0094: linux-%kernel_branch.20-fix-drivers-block--zram.patch
 
 Patch0101: linux-%kernel_branch.20-fix-drivers-char--lp.patch
 Patch0102: linux-%kernel_branch.25-fix-drivers-char-agp--intel-agp.patch
@@ -347,9 +346,8 @@ Patch0413: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patc
 Patch0421: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 
 Patch0430: linux-%kernel_branch.32-fix-drivers-tty.patch
-Patch0431: linux-%kernel_branch.27-fix-drivers-tty--pty.patch
-Patch0432: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
-Patch0433: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
+Patch0431: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
+Patch0432: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
 
 Patch0440: linux-%kernel_branch.34-fix-drivers-usb.patch
 Patch0441: linux-%kernel_branch.25-fix-drivers-usb-gadget--g_audio.patch
@@ -362,12 +360,12 @@ Patch0454: linux-%kernel_branch.20-fix-drivers-video-omap2-dss.patch
 Patch0461: linux-%kernel_branch.25-fix-firmware--vicam.patch
 
 Patch0470: linux-%kernel_branch.35-fix-fs.patch
-Patch0471: linux-%kernel_branch.35-fix-fs--block.patch
+Patch0471: linux-%kernel_branch.37-fix-fs--block.patch
 Patch0472: linux-%kernel_branch.35-fix-fs-9p.patch
 Patch0473: linux-%kernel_branch.32-fix-fs-btrfs.patch
 Patch0474: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0475: linux-%kernel_branch.35-fix-fs-debugfs.patch
-Patch0476: linux-%kernel_branch.35-fix-fs-ext3.patch
+Patch0476: linux-%kernel_branch.37-fix-fs-ext3.patch
 Patch0477: linux-%kernel_branch.35-fix-fs-ext4.patch
 Patch0478: linux-%kernel_branch.35-fix-fs-gfs2.patch
 Patch0479: linux-%kernel_branch.35-fix-fs-jfs.patch
@@ -407,7 +405,7 @@ Patch0541: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0551: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0552: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0553: linux-%kernel_branch.35-fix-net-core.patch
+Patch0553: linux-%kernel_branch.37-fix-net-core.patch
 Patch0554: linux-%kernel_branch.35-fix-net-ipv4--xfrm.patch
 Patch0555: linux-%kernel_branch.31-fix-net-ipv6.patch
 Patch0556: linux-%kernel_branch.35-fix-net-ipv6--xfrm.patch
@@ -653,7 +651,7 @@ BuildRequires: patch >= 2.6.1-alt1
 
 %{?_enable_htmldocs:BuildRequires: xmlto transfig ghostscript}
 %{?_enable_man:BuildRequires: xmlto}
-%{?_with_perf:BuildRequires: binutils-devel libelf-devel asciidoc elfutils-devel >= 0.138}
+%{?_with_perf:BuildRequires: binutils-devel libelf-devel asciidoc elfutils-devel >= 0.138 pkgconfig(gtk+-2.0)}
 
 Requires: bootloader-utils >= 0.4.17
 Requires: module-init-tools >= 3.1
@@ -1249,7 +1247,6 @@ cd linux-%version
 %patch0092 -p1
 %patch0093 -p1
 %patch0094 -p1
-%patch0095 -p1
 
 # fix-drivers-char-*
 %patch0101 -p1
@@ -1429,7 +1426,6 @@ cd linux-%version
 %patch0430 -p1
 %patch0431 -p1
 %patch0432 -p1
-%patch0433 -p1
 
 # fix-drivers-usb*
 %patch0440 -p1
@@ -1976,7 +1972,9 @@ rm -f %buildroot%modules_dir/{build,source}
 ln -s %kbuild_dir %buildroot%modules_dir/build
 
 %if_with perf
-%makeinstall_std -C tools/perf prefix=%_prefix perfexecdir=%_libexecdir/perf install install-man
+%makeinstall_std -C tools/perf %{?_enable_verbose:V=1} \
+	prefix=%_prefix perfexecdir=%_libexecdir/perf \
+	EXTRA_CFLAGS="%optflags %{?_disable_debug:-g0}" install-man
 install -d -m 0755 %buildroot%_docdir/perf-%version
 install -m 0644 tools/perf/{CREDITS,design.txt,Documentation/examples.txt} %buildroot%_docdir/perf-%version/
 %endif
@@ -2501,6 +2499,19 @@ done)
 
 
 %changelog
+* Thu Mar 21 2013 Led <led@altlinux.ru> 3.4.37-alt1
+- 3.4.37
+- removed:
+  + fix-drivers-block--loop
+  + fix-drivers-tty--pty
+- updated:
+  + fix-fs--block
+  + fix-fs-ext3
+  + fix-net-core
+  + fix-virt-kvm
+- with perf
+- updated BuildRequires for perf
+
 * Wed Mar 20 2013 Led <led@altlinux.ru> 3.4.36-alt8
 - updated:
   + fix-block
