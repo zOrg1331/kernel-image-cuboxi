@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.37
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -437,9 +437,10 @@ Patch1001: linux-%kernel_branch.20-feat-arch-arm-mach-omap2--drm.patch
 Patch1011: linux-%kernel_branch-feat-block--bfq-iosched.patch
 Patch1012: linux-%kernel_branch-feat-block--sio-iosched.patch
 
-Patch1021: linux-%kernel_branch.20-feat-drivers-block--cloop.patch
-Patch1022: linux-%kernel_branch.31-feat-drivers-block--rxdsk.patch
-Patch1023: linux-%kernel_branch.25-feat-drivers-block--zram.patch
+Patch1021: linux-%kernel_branch.35-feat-drivers-block--btier.patch
+Patch1022: linux-%kernel_branch.20-feat-drivers-block--cloop.patch
+Patch1023: linux-%kernel_branch.31-feat-drivers-block--rxdsk.patch
+Patch1024: linux-%kernel_branch.25-feat-drivers-block--zram.patch
 
 Patch1031: linux-%kernel_branch.20-feat-drivers-char--crasher.patch
 
@@ -1534,6 +1535,7 @@ cd linux-%version
 %patch1021 -p1
 %patch1022 -p1
 %patch1023 -p1
+%patch1024 -p1
 
 %patch1031 -p1
 
@@ -2499,6 +2501,10 @@ done)
 
 
 %changelog
+* Thu Mar 21 2013 Led <led@altlinux.ru> 3.4.37-alt2
+- added:
+  + feat-drivers-block--btier
+
 * Thu Mar 21 2013 Led <led@altlinux.ru> 3.4.37-alt1
 - 3.4.37
 - removed:

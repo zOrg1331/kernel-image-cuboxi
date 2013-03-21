@@ -228,6 +228,7 @@ diff: v3.4.25:.				fix-virt-kvm--kvm-amd:. name=linux-3.4.25-fix-virt-kvm--kvm-a
 diff: v3.4.20:.				feat-arch-arm-mach-omap2--drm:. name=linux-3.4.20-feat-arch-arm-mach-omap2--drm.patch
 diff: v3.4:.				feat-block--bfq-iosched:. name=linux-3.4-feat-block--bfq-iosched.patch
 diff: v3.4:.				feat-block--sio-iosched:. name=linux-3.4-feat-block--sio-iosched.patch
+diff: v3.4.35:.				feat-drivers-block--btier:. name=linux-3.4.35-feat-drivers-block--btier.patch
 diff: v3.4.20:.				feat-drivers-block--cloop:. name=linux-3.4.20-feat-drivers-block--cloop.patch
 diff: v3.4.31:.				feat-drivers-block--rxdsk:. name=linux-3.4.31-feat-drivers-block--rxdsk.patch
 diff: v3.4.25:.				feat-drivers-block--zram:. name=linux-3.4.25-feat-drivers-block--zram.patch
