@@ -1,6 +1,3 @@
-#
-# Makefile for btier.
-#
 obj-$(CONFIG_BTIER)	+= btier.o
 btier-y	+= \
 	btier_main.o \

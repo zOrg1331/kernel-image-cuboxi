@@ -1,4 +1,6 @@
-#ifdef __KERNEL__
+#ifndef _BTIER_H
+#define _BTIER_H
+
 #define pr_fmt(fmt) "btier: " fmt
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -25,7 +27,6 @@
 #include <linux/delay.h>
 #include <linux/falloc.h>
 #include <linux/kthread.h>
-#include <linux/version.h>
 #include <linux/sysfs.h>
 #include <linux/device.h>
 #include <linux/socket.h>
@@ -33,11 +34,6 @@
 #include <linux/net.h>
 #include <linux/inet.h>
 #include <asm/div64.h>
-#else
-typedef unsigned long long u64;
-typedef unsigned long u32;
-#include <time.h>
-#endif
 
 #define BLKSIZE 1048576		/*Moving smaller blocks then 4M around
 				   will lead to fragmentation */
@@ -141,8 +137,6 @@ struct devicemagic {
 struct fd_s {
 	int fd;
 };
-
-#ifdef __KERNEL__
 
 typedef struct {
 	struct file *fp;

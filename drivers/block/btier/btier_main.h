@@ -1,3 +1,5 @@
+#ifndef _BTIER_MAIN_H
+#define _BTIER_MAIN_H
 static loff_t tier_get_size(struct file *);
 static int tier_file_write(struct tier_device *, unsigned int, void *,
 			   const int, loff_t);
@@ -14,16 +16,4 @@ static void free_blocklist(struct tier_device *);
 static void reset_counters_on_migration(struct tier_device *,
 					struct blockinfo *);
 static void tiererror(struct tier_device *, char *);
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(3,0,0)
-#define vzalloc xzalloc
-void *xzalloc(size_t size)
-{
-	void *retval;
-
-	retval = vmalloc(size);
-	if (retval)
-		memset(retval, 0, size);
-	return retval;
-}
 #endif
