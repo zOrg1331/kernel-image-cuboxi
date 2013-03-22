@@ -452,9 +452,9 @@ static ssize_t tier_attr_device_usage_show(struct tier_device *dev, char *buf)
 		allocated >>= BLKBITS;
 		devblocks = dev->backdev[i]->devicesize >> BLKBITS;
 		dev->backdev[i]->devmagic->average_reads =
-		    dev->backdev[i]->devmagic->total_reads / devblocks;
+		    div64_u64(dev->backdev[i]->devmagic->total_reads, devblocks);
 		dev->backdev[i]->devmagic->average_writes =
-		    dev->backdev[i]->devmagic->total_writes / devblocks;
+		    div64_u64(dev->backdev[i]->devmagic->total_writes, devblocks);
 		line =
 		    as_sprintf
 		    ("%7u %20s %15llu %15llu %15u %15u %15llu %15llu\n", i,

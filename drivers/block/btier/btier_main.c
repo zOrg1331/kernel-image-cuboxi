@@ -649,12 +649,12 @@ static void discard_on_real_device(struct tier_device *dev,
 	sector_size = bdev_logical_block_size(bdev);
 	devsectors = get_capacity(bdev->bd_disk);
 
-	sector = binfo->offset / sector_size;
+	sector = div64_u64(binfo->offset, sector_size);
 	if (sector * sector_size < binfo->offset)
 		sector++;
 
 	endoffset = binfo->offset + BLKSIZE;
-	endsector = endoffset / sector_size;
+	endsector = div64_u64(endoffset, sector_size);
 	nr_sects = endsector - sector;
 	ret = blkdev_issue_discard(bdev, sector, nr_sects, GFP_KERNEL, flags);
 	if (0 == ret)
@@ -866,8 +866,8 @@ static void reset_counters_on_migration(struct tier_device *dev,
 	}
 	devmagic->total_reads -= binfo->readcount;
 	devmagic->total_writes -= binfo->writecount;
-	devmagic->average_writes = devmagic->total_writes / devblocks;
-	devmagic->average_reads = devmagic->total_reads / devblocks;
+	devmagic->average_writes = div64_u64(devmagic->total_writes, devblocks);
+	devmagic->average_reads = div64_u64(devmagic->total_reads, devblocks);
 	if (dev->migrate_verbose) {
 		pr_info("devmagic->total_writes is now %llu\n",
 			devmagic->total_writes);
@@ -954,7 +954,7 @@ static int migrate_up_ifneeded(struct tier_device *dev, struct blockinfo *binfo,
 	hitcount = binfo->readcount + binfo->writecount;
 	dmagic = dev->backdev[binfo->device - 1]->devmagic;
 	avghitcount = dmagic->average_reads + dmagic->average_writes;
-	if (hitcount > avghitcount + (avghitcount / dev->attached_devices)) {
+	if (hitcount > avghitcount + div64_u64(avghitcount, dev->attached_devices)) {
 		if (binfo->device > 1) {
 			dmagic = dev->backdev[binfo->device - 2]->devmagic;
 			avghitcountnexttier =
@@ -965,7 +965,7 @@ static int migrate_up_ifneeded(struct tier_device *dev, struct blockinfo *binfo,
  * the chunks of the higher tier - hysteresis 
  */
 			hysteresis =
-			    avghitcountnexttier / dev->attached_devices;
+			    div64_u64(avghitcountnexttier, dev->attached_devices);
 			if (hitcount > avghitcountnexttier - hysteresis)
 				binfo->device--;
 		}
@@ -1009,7 +1009,7 @@ static int migrate_down_ifneeded(struct tier_device *dev,
 	/* Check if the block has been unused long enough that it may
 	 * be moved to a lower tier
 	 */
-	hysteresis = avghitcount / dev->attached_devices;
+	hysteresis = div64_u64(avghitcount, dev->attached_devices);
 	if (curseconds - binfo->lastused > backdev->devmagic->dtapolicy.max_age)
 		binfo->device++;
 	else if (hitcount < avghitcount - hysteresis
@@ -1075,7 +1075,7 @@ static int load_blocklist(struct tier_device *dev)
 	int alloc_failed = 0;
 	u64 curblock;
 	u64 blocks = dev->size >> BLKBITS;
-	u64 listentries = dev->blocklistsize / sizeof(struct blockinfo);
+	u64 listentries = div64_u64(dev->blocklistsize, sizeof(struct blockinfo));
 	struct backing_device *backdev = dev->backdev[0];
 	int res = 0;
 
@@ -1147,9 +1147,9 @@ static void walk_blocklist(struct tier_device *dev)
 			backdev = dev->backdev[binfo->device - 1];
 			devblocks = backdev->devicesize >> BLKBITS;
 			backdev->devmagic->average_reads =
-			    backdev->devmagic->total_reads / devblocks;
+			    div64_u64(backdev->devmagic->total_reads, devblocks);
 			backdev->devmagic->average_writes =
-			    backdev->devmagic->total_writes / devblocks;
+			    div64_u64(backdev->devmagic->total_writes, devblocks);
 			res = migrate_down_ifneeded(dev, binfo, curblock);
 			if (!res)
 				res = migrate_up_ifneeded(dev, binfo, curblock);
@@ -1562,7 +1562,7 @@ end_error:
 static void register_new_device_size(struct tier_device *dev)
 {
 
-	dev->nsectors = dev->size / dev->logical_block_size;
+	dev->nsectors = div64_u64(dev->size, dev->logical_block_size);
 	dev->size = dev->nsectors * dev->logical_block_size;
 	set_capacity(dev->gd, dev->nsectors * (dev->logical_block_size / 512));
 	revalidate_disk(dev->gd);
