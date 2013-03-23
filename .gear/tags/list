@@ -65,7 +65,7 @@ c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 5606af024c9372231097dfe260c6eb7011e73d0e fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
-56daffaf41dd171654109a45518ec14c6dc014c8 fix-mm
+3ff566711bdaf64d8a52692d74b043d99069bbf4 fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -299,4 +299,4 @@ a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 13afb7199f8b0b06918f7369a0887096de1c5526 fix-fs-ubifs
 739d1a67cbe6a5f5335bf7e423823f3d18c33c52 fix-mm--bounce
 3977b766d2c387b47907788b568521f5671c2bda v3.4.37
-c7eb066522c8211be4d3ae34a0bce8290ca0f6a7 feat-drivers-block--btier
+ab0ef48fe7d39f7eca11e4ce31feb0e3468053e7 feat-drivers-block--btier
