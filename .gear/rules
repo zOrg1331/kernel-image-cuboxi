@@ -251,6 +251,7 @@ diff: v3.4.31:.				feat-drivers-platform--omnibook:. name=linux-3.4.31-feat-driv
 diff: v3.4.20:.				feat-drivers-platform--thinkpad_ec:. name=linux-3.4.20-feat-drivers-platform--thinkpad_ec.patch
 diff: v3.4.20:.				feat-drivers-platform--tp_smapi:. name=linux-3.4.20-feat-drivers-platform--tp_smapi.patch
 diff: v3.4.34:.				feat-drivers-scsi--vhba:. name=linux-3.4.34-feat-drivers-scsi--vhba.patch
+diff: v3.4.35:.				feat-drivers-usb-storage--rts5139:. name=linux-3.4.35-feat-drivers-usb-storage--rts5139.patch
 diff: v3.4.20:.				feat-drivers-usb-usbip:. name=linux-3.4.20-feat-drivers-usb-usbip.patch
 diff: v3.4.35:.				feat-drivers-video--bootsplash:. name=linux-3.4.35-feat-drivers-video--bootsplash.patch
 diff: v3.4.25:.				feat-drivers-video--xgifb:. name=linux-3.4.25-feat-drivers-video--xgifb.patch
