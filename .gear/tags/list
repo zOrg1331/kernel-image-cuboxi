@@ -41,7 +41,6 @@ e4feef3a37fb7e573e1fba2049356b73ce9711ae fix-drivers-misc--pti
 6404ddf4e8178f54004c442ec83a00362df3ce05 fix-drivers-net-ethernet-dec-tulip--tulip
 b95259a2c6454cec10d0c5753a3ce812402a9b07 fix-drivers-net-ethernet-ibm--ehea
 2228cd405e4678baa31dc8972fa4e4098d3af759 fix-drivers-net-hyperv
-86d5cb37bfa0cec224651292af63c3fe9c52b896 fix-drivers-net-wireless--b43
 fb3a06385bfdf41df921c03b837094936c1bf43d fix-drivers-net-wireless-brcm80211--brcmsmac
 689ec373adadcc683419de0d46c077b606046795 fix-drivers-net-wireless-rt2x00--rt2800lib
 bb0ae3e4170069640686232b7d269a670630d019 fix-drivers-platform--hdaps

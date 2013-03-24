@@ -130,7 +130,6 @@ diff: v3.4.25:.				fix-drivers-net-ethernet-i825xx--znet:. name=linux-3.4.25-fix
 diff: v3.4.20:.				fix-drivers-net-ethernet-ibm--ehea:. name=linux-3.4.20-fix-drivers-net-ethernet-ibm--ehea.patch
 diff: v3.4.25:.				fix-drivers-net-ethernet-via--via-rhine:. name=linux-3.4.25-fix-drivers-net-ethernet-via--via-rhine.patch
 diff: v3.4.20:.				fix-drivers-net-hyperv:. name=linux-3.4.20-fix-drivers-net-hyperv.patch
-diff: v3.4.20:.				fix-drivers-net-wireless--b43:. name=linux-3.4.20-fix-drivers-net-wireless--b43.patch
 diff: v3.4.25:.				fix-drivers-net-wireless--iwlwifi:. name=linux-3.4.25-fix-drivers-net-wireless--iwlwifi.patch
 diff: v3.4.20:.				fix-drivers-net-wireless-brcm80211--brcmsmac:. name=linux-3.4.20-fix-drivers-net-wireless-brcm80211--brcmsmac.patch
 diff: v3.4.25:.				fix-drivers-net-wireless-ipw2x00--libipw:. name=linux-3.4.25-fix-drivers-net-wireless-ipw2x00--libipw.patch
