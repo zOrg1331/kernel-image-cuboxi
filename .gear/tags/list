@@ -300,3 +300,4 @@ a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 3977b766d2c387b47907788b568521f5671c2bda v3.4.37
 ab0ef48fe7d39f7eca11e4ce31feb0e3468053e7 feat-drivers-block--btier
 8784bb4f0771e75d053fc95724265208501ac29e feat-drivers-usb-storage--rts5139
+5a437b52cdc197030a3b862fa72f263432bd7b5d fix-drivers-usb-serial--io_ti

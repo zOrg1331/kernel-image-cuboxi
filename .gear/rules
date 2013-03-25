@@ -159,6 +159,7 @@ diff: v3.4.20:.				fix-drivers-tty-serial-8250--8250:. name=linux-3.4.20-fix-dri
 diff: v3.4.32:.				fix-drivers-tty-serial--pch_uart:. name=linux-3.4.32-fix-drivers-tty-serial--pch_uart.patch
 diff: v3.4.34:.				fix-drivers-usb:. name=linux-3.4.34-fix-drivers-usb.patch
 diff: v3.4.25:.				fix-drivers-usb-gadget--g_audio:. name=linux-3.4.25-fix-drivers-usb-gadget--g_audio.patch
+diff: v3.4.37:.				fix-drivers-usb-serial--io_ti:. name=linux-3.4.37-fix-drivers-usb-serial--io_ti.patch
 diff: v3.4.20:.				fix-drivers-video-aty--radeonfb:. name=linux-3.4.20-fix-drivers-video-aty--radeonfb.patch
 diff: v3.4.20:.				fix-drivers-video-console--vgacon:. name=linux-3.4.20-fix-drivers-video-console--vgacon.patch
 diff: v3.4.20:.				fix-drivers-video-geode:. name=linux-3.4.20-fix-drivers-video-geode.patch
