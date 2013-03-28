@@ -133,7 +133,7 @@ d610bdcba91c551b15150212528f0f6d17e5f3e1 fix-drivers-base
 741f662042dc9d700e4d997d52f9e133183c4c2c fix-drivers-block--drbd
 4ae98a79e9dae3fa3592a71be4f0cf2649416c6b fix-drivers-edac--i7300_edac
 1fd024aaa3f86faf1e7fd0f6c715263ad8f5897d fix-drivers-gpu-drm--exynosdrm
-848932d7b06f2b0e1a820e06cf75d54f276c0b30 fix-drivers-gpu-drm--i915
+10ead452f1c6da912089734fb1981171bbb0569b fix-drivers-gpu-drm--i915
 34349143b0249fa2b38771660b7184065dbd5050 fix-drivers-hsi
 b5451f09863b071e348ac79802797659bf977ef5 fix-drivers-hsi--hsi
 d20f19c7f1f4731f38774b9d851a2b498046e0e0 fix-drivers-infiniband-hw--mlx4
@@ -301,3 +301,4 @@ a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 ab0ef48fe7d39f7eca11e4ce31feb0e3468053e7 feat-drivers-block--btier
 8784bb4f0771e75d053fc95724265208501ac29e feat-drivers-usb-storage--rts5139
 5a437b52cdc197030a3b862fa72f263432bd7b5d fix-drivers-usb-serial--io_ti
+eb7173676c686365752d514db8e3dae4621d9e48 v3.4.38
