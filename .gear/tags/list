@@ -64,7 +64,7 @@ c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 5606af024c9372231097dfe260c6eb7011e73d0e fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
-3ff566711bdaf64d8a52692d74b043d99069bbf4 fix-mm
+e89903bc258d112d0f4cad0d8e8af27e06ed740a fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
