@@ -16,3 +16,7 @@ config CEPH_FS
 
 	  If unsure, say N.
 
+config CEPH_DEBUG_FS
+	bool "CEPH debug info over debugfs"
+	depends on CEPH_FS && DEBUG_FS
+	default y

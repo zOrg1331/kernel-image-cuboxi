@@ -14,7 +14,7 @@
 
 #include "super.h"
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CEPH_DEBUG_FS
 
 #include "mds_client.h"
 
@@ -260,7 +260,7 @@ out:
 }
 
 
-#else  /* CONFIG_DEBUG_FS */
+#else  /* CONFIG_CEPH_DEBUG_FS */
 
 int ceph_fs_debugfs_init(struct ceph_fs_client *fsc)
 {
@@ -271,4 +271,4 @@ void ceph_fs_debugfs_cleanup(struct ceph_fs_client *fsc)
 {
 }
 
-#endif  /* CONFIG_DEBUG_FS */
+#endif  /* CONFIG_CEPH_DEBUG_FS */

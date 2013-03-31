@@ -84,7 +84,7 @@ struct ceph_fs_client {
 
 	struct backing_dev_info backing_dev_info;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CEPH_DEBUG_FS
 	struct dentry *debugfs_dentry_lru, *debugfs_caps;
 	struct dentry *debugfs_congestion_kb;
 	struct dentry *debugfs_bdi;
