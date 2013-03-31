@@ -52,6 +52,11 @@ config BONDING
 	  To compile this driver as a module, choose M here: the module
 	  will be called bonding.
 
+config BONDING_DEBUG_FS
+	bool "Debugfs support for bonding"
+	depends on BONDING && DEBUG_FS
+	default y
+
 config DUMMY
 	tristate "Dummy net driver support"
 	---help---
