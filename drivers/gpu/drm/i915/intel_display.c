@@ -9393,7 +9393,7 @@ int intel_modeset_vga_set_state(struct drm_device *dev, bool state)
 	return 0;
 }
 
-#ifdef CONFIG_DRM_I915_DEBUG
+#ifdef CONFIG_DEBUG_FS
 #include <linux/seq_file.h>
 
 struct intel_display_error_state {

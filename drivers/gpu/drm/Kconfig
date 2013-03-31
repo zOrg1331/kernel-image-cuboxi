@@ -147,11 +147,6 @@ config DRM_I915_KMS
 	  the driver to bind to PCI devices, which precludes loading things
 	  like intelfb.
 
-config DRM_I915_DEBUG
-	bool "Intel 8xx/9xx/G3x/G4x/HD Graphics debug info in debugfs"
-	depends on DRM && DEBUG_FS
-	default y
-
 config DRM_MGA
 	tristate "Matrox g200/g400"
 	depends on DRM && PCI

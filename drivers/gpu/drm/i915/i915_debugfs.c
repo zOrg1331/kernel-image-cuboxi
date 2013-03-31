@@ -40,7 +40,7 @@
 #define DRM_I915_RING_DEBUG 1
 
 
-#if defined(CONFIG_DRM_I915_DEBUG)
+#if defined(CONFIG_DEBUG_FS)
 
 enum {
 	ACTIVE_LIST,
@@ -1887,4 +1887,4 @@ void i915_debugfs_cleanup(struct drm_minor *minor)
 				 1, minor);
 }
 
-#endif /* CONFIG_DRM_I915_DEBUG */
+#endif /* CONFIG_DEBUG_FS */

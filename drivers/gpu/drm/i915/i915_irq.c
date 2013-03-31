@@ -695,7 +695,7 @@ static void i915_error_work_func(struct work_struct *work)
 	}
 }
 
-#ifdef CONFIG_DRM_I915_DEBUG
+#ifdef CONFIG_DEBUG_FS
 static struct drm_i915_error_object *
 i915_error_object_create(struct drm_i915_private *dev_priv,
 			 struct drm_i915_gem_object *src)

@@ -1497,7 +1497,7 @@ void intel_cleanup_overlay(struct drm_device *dev)
 	kfree(dev_priv->overlay);
 }
 
-#ifdef CONFIG_DRM_I915_DEBUG
+#ifdef CONFIG_DEBUG_FS
 #include <linux/seq_file.h>
 
 struct intel_overlay_error_state {
