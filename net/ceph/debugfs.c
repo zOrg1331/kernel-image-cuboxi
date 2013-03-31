@@ -12,7 +12,7 @@
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CEPH_LIB_DEBUG_FS
 
 /*
  * Implement /sys/kernel/debug/ceph fun
@@ -245,7 +245,7 @@ void ceph_debugfs_client_cleanup(struct ceph_client *client)
 	debugfs_remove(client->debugfs_dir);
 }
 
-#else  /* CONFIG_DEBUG_FS */
+#else  /* CONFIG_CEPH_LIB_DEBUG_FS */
 
 int ceph_debugfs_init(void)
 {
@@ -265,7 +265,7 @@ void ceph_debugfs_client_cleanup(struct ceph_client *client)
 {
 }
 
-#endif  /* CONFIG_DEBUG_FS */
+#endif  /* CONFIG_CEPH_LIB_DEBUG_FS */
 
 EXPORT_SYMBOL(ceph_debugfs_init);
 EXPORT_SYMBOL(ceph_debugfs_cleanup);

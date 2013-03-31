@@ -134,7 +134,7 @@ struct ceph_client {
 	struct ceph_mon_client monc;
 	struct ceph_osd_client osdc;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CEPH_LIB_DEBUG_FS
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_monmap;
 	struct dentry *debugfs_osdmap;

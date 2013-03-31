@@ -15,6 +15,11 @@ config CEPH_LIB
 
 	  If unsure, say N.
 
+config CEPH_LIB_DEBUG_FS
+	bool "Debugfs support for libceph"
+	depends on CEPH_LIB && DEBUG_FS
+	default y
+
 config CEPH_LIB_PRETTYDEBUG
 	bool "Include file:line in ceph debug output"
 	depends on CEPH_LIB
