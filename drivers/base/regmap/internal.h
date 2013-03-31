@@ -39,7 +39,7 @@ struct regmap {
 	struct regmap_format format;  /* Buffer format */
 	const struct regmap_bus *bus;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_REGMAP_DEBUG_FS
 	struct dentry *debugfs;
 #endif
 
@@ -99,7 +99,7 @@ bool regmap_precious(struct regmap *map, unsigned int reg);
 int _regmap_write(struct regmap *map, unsigned int reg,
 		  unsigned int val);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_REGMAP_DEBUG_FS
 extern void regmap_debugfs_initcall(void);
 extern void regmap_debugfs_init(struct regmap *map);
 extern void regmap_debugfs_exit(struct regmap *map);

@@ -16,3 +16,8 @@ config REGMAP_SPI
 
 config REGMAP_IRQ
 	bool
+
+config REGMAP_DEBUG_FS
+	bool "Debugfs support for Generic register map"
+	depends on REGMAP && DEBUG_FS
+	default y
