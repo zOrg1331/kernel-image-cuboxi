@@ -102,7 +102,7 @@ a459089077414932015806db8a50d69305be75e6 feat-drivers-video--bootsplash
 2b33841689dfe936ae48effbffb63980cf378b90 feat-fs--lnfs
 77920fdffd19cbb6df6990dd303f20cae8445a45 feat-fs--richacl
 b54f1e62b69fba0e74e8c2b2e10ef10199f23040 feat-fs--secrm
-d476cb1d2ea5eb671c61ccb3489fb20d43cd1de5 feat-fs-aufs
+b3345c6416c1573286ed3c40fdb35659738b6d0c feat-fs-aufs
 a82a54ddaad6653c70a298a504fa8e2c81bedcef feat-fs-binfmt_elf--fatelf
 26db2a4d3617346871dddb25859ef1678daf640f feat-fs-dazukofs
 6643f0400d047f119caf11b5c0f7527b3a229d29 feat-fs-ext2--secrm
@@ -133,7 +133,7 @@ d610bdcba91c551b15150212528f0f6d17e5f3e1 fix-drivers-base
 741f662042dc9d700e4d997d52f9e133183c4c2c fix-drivers-block--drbd
 4ae98a79e9dae3fa3592a71be4f0cf2649416c6b fix-drivers-edac--i7300_edac
 1fd024aaa3f86faf1e7fd0f6c715263ad8f5897d fix-drivers-gpu-drm--exynosdrm
-10ead452f1c6da912089734fb1981171bbb0569b fix-drivers-gpu-drm--i915
+f42e6f602e7c35e78dadbc01c5eedee46fd52c51 fix-drivers-gpu-drm--i915
 34349143b0249fa2b38771660b7184065dbd5050 fix-drivers-hsi
 b5451f09863b071e348ac79802797659bf977ef5 fix-drivers-hsi--hsi
 d20f19c7f1f4731f38774b9d851a2b498046e0e0 fix-drivers-infiniband-hw--mlx4
@@ -302,3 +302,9 @@ ab0ef48fe7d39f7eca11e4ce31feb0e3468053e7 feat-drivers-block--btier
 8784bb4f0771e75d053fc95724265208501ac29e feat-drivers-usb-storage--rts5139
 5a437b52cdc197030a3b862fa72f263432bd7b5d fix-drivers-usb-serial--io_ti
 eb7173676c686365752d514db8e3dae4621d9e48 v3.4.38
+2a2035fa36fe7f364576c50aac2be688558d287b fix-drivers-base-regmap
+c897f368308304ee580bb4fbc9e92bb0775ed208 fix-drivers-gpu-drm
+341db8560dcb36eaae8341f64e2dfd678b64860e fix-drivers-gpu-drm--radeon
+c075ef7c33015eca27c886b719105f2ea89bd621 fix-drivers-net--bonding
+a5ad8c56eab88cf0dcfd51554f431a83f35c70ec fix-fs-ceph
+123240db11d044798cd62a13c73faeccce9e43c7 fix-net-ceph

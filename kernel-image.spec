@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.38
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -194,6 +194,7 @@ Patch0071: linux-%kernel_branch.25-fix-drivers-atm--ambassador.patch
 Patch0080: linux-%kernel_branch.25-fix-drivers-base.patch
 Patch0081: linux-%kernel_branch.20-fix-drivers-base--dma-contiguous.patch
 Patch0082: linux-%kernel_branch.25-fix-drivers-base--dma-buf.patch
+Patch0083: linux-%kernel_branch.38-fix-drivers-base-regmap.patch
 
 Patch0091: linux-%kernel_branch.34-fix-drivers-block--aoe.patch
 Patch0092: linux-%kernel_branch.25-fix-drivers-block--drbd.patch
@@ -231,10 +232,12 @@ Patch0161: linux-%kernel_branch.25-fix-drivers-edac--i82875p_edac.patch
 Patch0162: linux-%kernel_branch.25-fix-drivers-edac--i82975x_edac.patch
 Patch0163: linux-%kernel_branch.25-fix-drivers-edac--x38_edac.patch
 
+Patch0170: linux-%kernel_branch.38-fix-drivers-gpu-drm.patch
 Patch0171: linux-%kernel_branch.25-fix-drivers-gpu-drm--exynosdrm.patch
 Patch0172: linux-%kernel_branch.25-fix-drivers-gpu-drm--gma500_gfx.patch
 Patch0173: linux-%kernel_branch.38-fix-drivers-gpu-drm--i915.patch
 Patch0174: linux-%kernel_branch.20-fix-drivers-gpu-drm--nouveau.patch
+Patch0175: linux-%kernel_branch.38-fix-drivers-gpu-drm--radeon.patch
 
 Patch0181: linux-%kernel_branch.20-fix-drivers-hid--hid-apple.patch
 Patch0182: linux-%kernel_branch.20-fix-drivers-hid--hid-hyperv.patch
@@ -314,7 +317,8 @@ Patch0357: linux-%kernel_branch.25-fix-drivers-net-ethernet-i825xx--znet.patch
 Patch0358: linux-%kernel_branch.20-fix-drivers-net-ethernet-ibm--ehea.patch
 Patch0359: linux-%kernel_branch.25-fix-drivers-net-ethernet-via--via-rhine.patch
 
-Patch0361: linux-%kernel_branch.20-fix-drivers-net-hyperv.patch
+Patch0361: linux-%kernel_branch.38-fix-drivers-net--bonding.patch
+Patch0362: linux-%kernel_branch.20-fix-drivers-net-hyperv.patch
 
 Patch0371: linux-%kernel_branch.25-fix-drivers-net-wireless--iwlwifi.patch
 Patch0372: linux-%kernel_branch.20-fix-drivers-net-wireless-brcm80211--brcmsmac.patch
@@ -364,21 +368,22 @@ Patch0470: linux-%kernel_branch.35-fix-fs.patch
 Patch0471: linux-%kernel_branch.37-fix-fs--block.patch
 Patch0472: linux-%kernel_branch.35-fix-fs-9p.patch
 Patch0473: linux-%kernel_branch.32-fix-fs-btrfs.patch
-Patch0474: linux-%kernel_branch.30-fix-fs-cifs.patch
-Patch0475: linux-%kernel_branch.35-fix-fs-debugfs.patch
-Patch0476: linux-%kernel_branch.37-fix-fs-ext3.patch
-Patch0477: linux-%kernel_branch.35-fix-fs-ext4.patch
-Patch0478: linux-%kernel_branch.35-fix-fs-gfs2.patch
-Patch0479: linux-%kernel_branch.35-fix-fs-jfs.patch
-Patch0480: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0481: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0482: linux-%kernel_branch.35-fix-fs-nilfs2.patch
-Patch0483: linux-%kernel_branch.35-fix-fs-ocfs2.patch
-Patch0484: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0485: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0486: linux-%kernel_branch.20-fix-fs-reiserfs.patch
-Patch0487: linux-%kernel_branch.35-fix-fs-ubifs.patch
-Patch0488: linux-%kernel_branch.35-fix-fs-xfs.patch
+Patch0474: linux-%kernel_branch.38-fix-fs-ceph.patch
+Patch0475: linux-%kernel_branch.30-fix-fs-cifs.patch
+Patch0476: linux-%kernel_branch.35-fix-fs-debugfs.patch
+Patch0477: linux-%kernel_branch.37-fix-fs-ext3.patch
+Patch0478: linux-%kernel_branch.35-fix-fs-ext4.patch
+Patch0479: linux-%kernel_branch.35-fix-fs-gfs2.patch
+Patch0480: linux-%kernel_branch.35-fix-fs-jfs.patch
+Patch0481: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0482: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0483: linux-%kernel_branch.35-fix-fs-nilfs2.patch
+Patch0484: linux-%kernel_branch.35-fix-fs-ocfs2.patch
+Patch0485: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0486: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0487: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0488: linux-%kernel_branch.35-fix-fs-ubifs.patch
+Patch0489: linux-%kernel_branch.35-fix-fs-xfs.patch
 
 Patch0491: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -406,15 +411,16 @@ Patch0541: linux-%kernel_branch.20-fix-mm--zsmalloc.patch
 
 Patch0551: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0552: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
-Patch0553: linux-%kernel_branch.37-fix-net-core.patch
-Patch0554: linux-%kernel_branch.35-fix-net-ipv4--xfrm.patch
-Patch0555: linux-%kernel_branch.31-fix-net-ipv6.patch
-Patch0556: linux-%kernel_branch.35-fix-net-ipv6--xfrm.patch
-Patch0557: linux-%kernel_branch.25-fix-net-mac80211.patch
-Patch0558: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
-Patch0559: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
-Patch0560: linux-%kernel_branch.35-fix-net-sunrpc.patch
-Patch0561: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
+Patch0553: linux-%kernel_branch.38-fix-net-ceph.patch
+Patch0554: linux-%kernel_branch.37-fix-net-core.patch
+Patch0555: linux-%kernel_branch.35-fix-net-ipv4--xfrm.patch
+Patch0556: linux-%kernel_branch.31-fix-net-ipv6.patch
+Patch0557: linux-%kernel_branch.35-fix-net-ipv6--xfrm.patch
+Patch0558: linux-%kernel_branch.25-fix-net-mac80211.patch
+Patch0559: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
+Patch0560: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
+Patch0561: linux-%kernel_branch.35-fix-net-sunrpc.patch
+Patch0562: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
 
 Patch0571: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1245,6 +1251,7 @@ cd linux-%version
 %patch0080 -p1
 %patch0081 -p1
 %patch0082 -p1
+%patch0083 -p1
 
 # fix-drivers-block--*
 %patch0091 -p1
@@ -1289,11 +1296,13 @@ cd linux-%version
 %patch0162 -p1
 %patch0163 -p1
 
-# fix-drivers-gpu-drm--*
+# fix-drivers-gpu-drm*
+%patch0170 -p1
 %patch0171 -p1
 %patch0172 -p1
 %patch0173 -p1
 %patch0174 -p1
+%patch0175 -p1
 
 # fix-drivers-hid--*
 %patch0181 -p1
@@ -1388,8 +1397,9 @@ cd linux-%version
 %patch0358 -p1
 %patch0359 -p1
 
-# fix-drivers-net-hyperv-*
+# fix-drivers-net-*
 %patch0361 -p1
+%patch0362 -p1
 
 # fix-drivers-net-wireless-*
 %patch0371 -p1
@@ -1464,6 +1474,7 @@ cd linux-%version
 %patch0486 -p1
 %patch0487 -p1
 %patch0488 -p1
+%patch0489 -p1
 
 # fix-include-*
 %patch0491 -p1
@@ -1506,6 +1517,7 @@ cd linux-%version
 %patch0559 -p1
 %patch0560 -p1
 %patch0561 -p1
+%patch0562 -p1
 
 # fix-scripts--*
 %patch0571 -p1
@@ -1773,7 +1785,7 @@ config_disable \
 	%{?_disable_smack:SECURITY_SMACK} \
 	%{?_disable_yama:SECURITY_YAMA} \
 	%{?_disable_thp:TRANSPARENT_HUGEPAGE} \
-	%{?_disable_guest:VIRTIO DRM_KVM_CIRRUS DRM_VMWGFX} \
+	%{?_disable_guest:VIRTIO DRM_KVM_CIRRUS DRM_VMWGFX VMWARE_BALLOON} \
 	%{?_disable_kvm:KVM} \
 	%{?_disable_hyperv:HYPERV} \
 	%{?_disable_paravirt_guest:PARAVIRT_GUEST} \
@@ -2061,7 +2073,7 @@ for i in %{?_enable_joystick:joystick} %{?_enable_tablet:tablet} %{?_enable_touc
 	gen_rpmmodfile $i %buildroot%modules_dir/kernel/drivers/input/$i
 done
 %if "%sub_flavour" != "guest"
-%{?_enable_guest:gen_rpmmodfile guest %buildroot%modules_dir/kernel/{drivers/{virtio,{char{,/hw_random},net,block}/virtio*%{?_enable_drm:,gpu/drm/{cirrus,vmwgfx}}},net/9p/*_virtio.ko}}
+%{?_enable_guest:gen_rpmmodfile guest %buildroot%modules_dir/kernel/{drivers/{virtio,{char{,/hw_random},net,block}/virtio*%{?_enable_drm:,gpu/drm/{cirrus,vmwgfx}},misc/vmw_balloon.ko},net/9p/*_virtio.ko}}
 %{?_enable_drm:grep -F -f drm.rpmmodlist guest.rpmmodlist | sed 's/^/%%exclude &/' >> drm.rpmmodlist}
 %endif
 sed 's/^/%%exclude &/' *.rpmmodlist > exclude-drivers.rpmmodlist
@@ -2241,6 +2253,7 @@ done)
 %exclude %modules_dir/kernel/drivers/tty/synclink*
 %{?_enable_pcmcia:%exclude %modules_dir/kernel/drivers/char/pcmcia/synclink*}
 %exclude %modules_dir/kernel/net/x25
+%exclude %modules_dir/kernel/drivers/net/caif
 
 
 %kernel_modules_package_files scsi
@@ -2342,6 +2355,7 @@ done)
 %modules_dir/kernel/drivers/tty/synclink*
 %{?_enable_pcmcia:%modules_dir/kernel/drivers/char/pcmcia/synclink*}
 %modules_dir/kernel/net/x25
+%modules_dir/kernel/drivers/net/caif
 
 
 %if_enabled oss
@@ -2506,6 +2520,23 @@ done)
 
 
 %changelog
+* Sun Mar 31 2013 Led <led@altlinux.ru> 3.4.38-alt4
+- updated:
+  + fix-drivers-gpu-drm--i915
+  + feat-fs-aufs
+- added:
+  + fix-drivers-base-regmap
+  + fix-drivers-gpu-drm
+  + fix-drivers-gpu-drm--radeon
+  + fix-drivers-net--bonding
+  + fix-fs-ceph
+  + fix-net-ceph
+- moved vmw_balloon.ko to kernel-modules-guest-* subpackage
+- moved caif drivers to kernel-modules-net-extra-* subpackage
+- disabled:
+  + ACPI_APEI_EINJ
+  + ACPI_CUSTOM_METHOD
+
 * Sat Mar 30 2013 Led <led@altlinux.ru> 3.4.38-alt3
 - enabled:
   + TIMER_STATS
