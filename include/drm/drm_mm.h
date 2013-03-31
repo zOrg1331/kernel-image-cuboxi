@@ -37,7 +37,7 @@
  * Generic range manager structs
  */
 #include <linux/list.h>
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_DRM_DEBUG_FS
 #include <linux/seq_file.h>
 #endif
 
@@ -181,7 +181,7 @@ int drm_mm_scan_add_block(struct drm_mm_node *node);
 int drm_mm_scan_remove_block(struct drm_mm_node *node);
 
 extern void drm_mm_debug_table(struct drm_mm *mm, const char *prefix);
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_DRM_DEBUG_FS
 int drm_mm_dump_table(struct seq_file *m, struct drm_mm *mm);
 #endif
 

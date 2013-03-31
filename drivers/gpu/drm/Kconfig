@@ -19,6 +19,11 @@ menuconfig DRM
 	  details.  You should also select and configure AGP
 	  (/dev/agpgart) support if it is available for your platform.
 
+config DRM_DEBUG_FS
+	bool "Debugfs support for DRM and DRM modules"
+	depends on DRM && DEBUG_FS
+	default y
+
 config DRM_USB
 	tristate
 	depends on DRM

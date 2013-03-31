@@ -36,8 +36,6 @@
 #include <linux/export.h>
 #include "drmP.h"
 
-#if defined(CONFIG_DEBUG_FS)
-
 /***************************************************
  * Initialization, etc.
  **************************************************/
@@ -237,6 +235,3 @@ int drm_debugfs_cleanup(struct drm_minor *minor)
 
 	return 0;
 }
-
-#endif /* CONFIG_DEBUG_FS */
-

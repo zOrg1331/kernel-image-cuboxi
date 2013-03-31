@@ -679,7 +679,7 @@ void drm_mm_debug_table(struct drm_mm *mm, const char *prefix)
 }
 EXPORT_SYMBOL(drm_mm_debug_table);
 
-#if defined(CONFIG_DEBUG_FS)
+#if defined(CONFIG_DRM_DEBUG_FS)
 int drm_mm_dump_table(struct seq_file *m, struct drm_mm *mm)
 {
 	struct drm_mm_node *entry;

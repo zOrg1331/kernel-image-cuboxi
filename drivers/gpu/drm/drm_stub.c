@@ -368,7 +368,7 @@ int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type)
 	} else
 		new_minor->proc_root = NULL;
 
-#if defined(CONFIG_DEBUG_FS)
+#if defined(CONFIG_DRM_DEBUG_FS)
 	ret = drm_debugfs_init(new_minor, minor_id, drm_debugfs_root);
 	if (ret) {
 		DRM_ERROR("DRM: Failed to initialize /sys/kernel/debug/dri.\n");
@@ -418,7 +418,7 @@ int drm_put_minor(struct drm_minor **minor_p)
 
 	if (minor->type == DRM_MINOR_LEGACY)
 		drm_proc_cleanup(minor, drm_proc_root);
-#if defined(CONFIG_DEBUG_FS)
+#if defined(CONFIG_DRM_DEBUG_FS)
 	drm_debugfs_cleanup(minor);
 #endif
 
