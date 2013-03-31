@@ -851,9 +851,9 @@ int radeon_mmap(struct file *filp, struct vm_area_struct *vma)
 }
 
 
+#ifdef CONFIG_DRM_DEBUG_FS
 #define RADEON_DEBUGFS_MEM_TYPES 2
 
-#if defined(CONFIG_DEBUG_FS)
 static int radeon_mm_dump_table(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *)m->private;
@@ -872,7 +872,7 @@ static int radeon_mm_dump_table(struct seq_file *m, void *data)
 
 static int radeon_ttm_debugfs_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	static struct drm_info_list radeon_mem_types_list[RADEON_DEBUGFS_MEM_TYPES+2];
 	static char radeon_mem_types_names[RADEON_DEBUGFS_MEM_TYPES+2][32];
 	unsigned i;

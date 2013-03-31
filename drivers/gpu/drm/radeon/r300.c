@@ -576,7 +576,7 @@ int rv370_get_pcie_lanes(struct radeon_device *rdev)
 	}
 }
 
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 static int rv370_debugfs_pcie_gart_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
@@ -608,7 +608,7 @@ static struct drm_info_list rv370_pcie_gart_info_list[] = {
 
 static int rv370_debugfs_pcie_gart_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, rv370_pcie_gart_info_list, 1);
 #else
 	return 0;

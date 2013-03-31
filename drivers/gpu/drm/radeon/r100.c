@@ -2604,10 +2604,10 @@ void r100_set_safe_registers(struct radeon_device *rdev)
 	}
 }
 
+#ifdef CONFIG_DRM_DEBUG_FS
 /*
  * Debugfs info
  */
-#if defined(CONFIG_DEBUG_FS)
 static int r100_debugfs_rbbm_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
@@ -2751,7 +2751,7 @@ static struct drm_info_list r100_debugfs_mc_info_list[] = {
 
 int r100_debugfs_rbbm_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, r100_debugfs_rbbm_list, 1);
 #else
 	return 0;
@@ -2760,7 +2760,7 @@ int r100_debugfs_rbbm_init(struct radeon_device *rdev)
 
 int r100_debugfs_cp_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, r100_debugfs_cp_list, 2);
 #else
 	return 0;
@@ -2769,7 +2769,7 @@ int r100_debugfs_cp_init(struct radeon_device *rdev)
 
 int r100_debugfs_mc_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, r100_debugfs_mc_info_list, 1);
 #else
 	return 0;

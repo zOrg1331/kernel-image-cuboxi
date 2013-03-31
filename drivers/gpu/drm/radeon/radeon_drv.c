@@ -107,7 +107,7 @@ int radeon_mode_dumb_destroy(struct drm_file *file_priv,
 			     struct drm_device *dev,
 			     uint32_t handle);
 
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 int radeon_debugfs_init(struct drm_minor *minor);
 void radeon_debugfs_cleanup(struct drm_minor *minor);
 #endif
@@ -346,7 +346,7 @@ static struct drm_driver kms_driver = {
 	.disable_vblank = radeon_disable_vblank_kms,
 	.get_vblank_timestamp = radeon_get_vblank_timestamp_kms,
 	.get_scanout_position = radeon_get_crtc_scanoutpos,
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	.debugfs_init = radeon_debugfs_init,
 	.debugfs_cleanup = radeon_debugfs_cleanup,
 #endif

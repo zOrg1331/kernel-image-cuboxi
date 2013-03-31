@@ -3521,10 +3521,10 @@ restart_ih:
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_DRM_DEBUG_FS
 /*
  * Debugfs info
  */
-#if defined(CONFIG_DEBUG_FS)
 
 static int r600_debugfs_mc_info(struct seq_file *m, void *data)
 {
@@ -3544,7 +3544,7 @@ static struct drm_info_list r600_mc_info_list[] = {
 
 int r600_debugfs_mc_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, r600_mc_info_list, ARRAY_SIZE(r600_mc_info_list));
 #else
 	return 0;

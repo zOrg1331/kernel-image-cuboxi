@@ -1043,7 +1043,7 @@ int radeon_debugfs_add_files(struct radeon_device *rdev,
 	rdev->debugfs[rdev->debugfs_count].files = files;
 	rdev->debugfs[rdev->debugfs_count].num_files = nfiles;
 	rdev->debugfs_count = i;
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	drm_debugfs_create_files(files, nfiles,
 				 rdev->ddev->control->debugfs_root,
 				 rdev->ddev->control);
@@ -1056,7 +1056,7 @@ int radeon_debugfs_add_files(struct radeon_device *rdev,
 
 static void radeon_debugfs_remove_files(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	unsigned i;
 
 	for (i = 0; i < rdev->debugfs_count; i++) {
@@ -1070,7 +1070,7 @@ static void radeon_debugfs_remove_files(struct radeon_device *rdev)
 #endif
 }
 
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 int radeon_debugfs_init(struct drm_minor *minor)
 {
 	return 0;

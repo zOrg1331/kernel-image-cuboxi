@@ -860,10 +860,10 @@ static void radeon_dynpm_idle_work_handler(struct work_struct *work)
 	ttm_bo_unlock_delayed_workqueue(&rdev->mman.bdev, resched);
 }
 
+#ifdef CONFIG_DRM_DEBUG_FS
 /*
  * Debugfs info
  */
-#if defined(CONFIG_DEBUG_FS)
 
 static int radeon_debugfs_pm_info(struct seq_file *m, void *data)
 {
@@ -891,7 +891,7 @@ static struct drm_info_list radeon_pm_info_list[] = {
 
 static int radeon_debugfs_pm_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, radeon_pm_info_list, ARRAY_SIZE(radeon_pm_info_list));
 #else
 	return 0;

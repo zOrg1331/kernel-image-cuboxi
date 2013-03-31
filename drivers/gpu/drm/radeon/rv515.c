@@ -218,7 +218,7 @@ void rv515_mc_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v)
 	WREG32(MC_IND_INDEX, 0);
 }
 
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 static int rv515_debugfs_pipes_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
@@ -263,7 +263,7 @@ static struct drm_info_list rv515_ga_info_list[] = {
 
 int rv515_debugfs_pipes_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, rv515_pipes_info_list, 1);
 #else
 	return 0;
@@ -272,7 +272,7 @@ int rv515_debugfs_pipes_info_init(struct radeon_device *rdev)
 
 int rv515_debugfs_ga_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, rv515_ga_info_list, 1);
 #else
 	return 0;

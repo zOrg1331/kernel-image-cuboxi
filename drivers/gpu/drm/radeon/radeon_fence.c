@@ -463,7 +463,7 @@ void radeon_fence_driver_fini(struct radeon_device *rdev)
 /*
  * Fence debugfs
  */
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 static int radeon_debugfs_fence_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *)m->private;
@@ -496,7 +496,7 @@ static struct drm_info_list radeon_debugfs_fence_list[] = {
 
 int radeon_debugfs_fence_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, radeon_debugfs_fence_list, 1);
 #else
 	return 0;

@@ -439,10 +439,10 @@ void radeon_ring_fini(struct radeon_device *rdev, struct radeon_ring *ring)
 	}
 }
 
+#ifdef CONFIG_DRM_DEBUG_FS
 /*
  * Debugfs info
  */
-#if defined(CONFIG_DEBUG_FS)
 
 static int radeon_debugfs_ring_info(struct seq_file *m, void *data)
 {
@@ -506,7 +506,7 @@ static unsigned radeon_debugfs_ib_idx[RADEON_IB_POOL_SIZE];
 
 int radeon_debugfs_ring_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	if (rdev->family >= CHIP_CAYMAN)
 		return radeon_debugfs_add_files(rdev, radeon_debugfs_ring_info_list,
 						ARRAY_SIZE(radeon_debugfs_ring_info_list));
@@ -519,7 +519,7 @@ int radeon_debugfs_ring_init(struct radeon_device *rdev)
 
 int radeon_debugfs_ib_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	unsigned i;
 
 	for (i = 0; i < RADEON_IB_POOL_SIZE; i++) {

@@ -466,10 +466,10 @@ int r420_init(struct radeon_device *rdev)
 	return 0;
 }
 
+#ifdef CONFIG_DRM_DEBUG_FS
 /*
  * Debugfs info
  */
-#if defined(CONFIG_DEBUG_FS)
 static int r420_debugfs_pipes_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
@@ -493,7 +493,7 @@ static struct drm_info_list r420_pipes_info_list[] = {
 
 int r420_debugfs_pipes_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, r420_pipes_info_list, 1);
 #else
 	return 0;

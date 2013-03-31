@@ -286,7 +286,7 @@ void rs400_mc_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v)
 	WREG32(RS480_NB_MC_INDEX, 0xff);
 }
 
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 static int rs400_debugfs_gart_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
@@ -363,7 +363,7 @@ static struct drm_info_list rs400_gart_info_list[] = {
 
 static int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev)
 {
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	return radeon_debugfs_add_files(rdev, rs400_gart_info_list, 1);
 #else
 	return 0;
