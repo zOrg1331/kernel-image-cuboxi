@@ -20,6 +20,7 @@
  * debugfs interface
  */
 
+#ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 #include "aufs.h"
 
@@ -330,3 +331,4 @@ int __init dbgaufs_init(void)
 		err = 0;
 	return err;
 }
+#endif

@@ -157,7 +157,7 @@ struct au_sbinfo {
 	 * but using sysfs is majority.
 	 */
 	struct kobject		si_kobj;
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_AUFS_DEBUG) && defined(CONFIG_DEBUG_FS)
 	struct dentry		 *si_dbgaufs, *si_dbgaufs_xib;
 #ifdef CONFIG_AUFS_EXPORT
 	struct dentry		 *si_dbgaufs_xigen;
@@ -347,7 +347,7 @@ static inline void dbgaufs_si_null(struct au_sbinfo *sbinfo)
 	 * so the tiny check for si_rwsem is unnecessary.
 	 */
 	/* AuRwMustWriteLock(&sbinfo->si_rwsem); */
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_AUFS_DEBUG) && defined(CONFIG_DEBUG_FS)
 	sbinfo->si_dbgaufs = NULL;
 	sbinfo->si_dbgaufs_xib = NULL;
 #ifdef CONFIG_AUFS_EXPORT

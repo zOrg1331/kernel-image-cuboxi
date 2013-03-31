@@ -293,7 +293,7 @@ static inline int au_test_xenfs(struct super_block *sb __maybe_unused)
 
 static inline int au_test_debugfs(struct super_block *sb __maybe_unused)
 {
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_AUFS_DEBUG) && defined(CONFIG_DEBUG_FS)
 	return sb->s_magic == DEBUGFS_MAGIC;
 #else
 	return 0;

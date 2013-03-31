@@ -39,7 +39,7 @@ struct au_xino_file {
 
 	/* todo: make xino files an array to support huge inode number */
 
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_AUFS_DEBUG) && defined(CONFIG_DEBUG_FS)
 	struct dentry		 *xi_dbgaufs;
 #endif
 };

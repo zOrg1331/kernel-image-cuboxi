@@ -28,7 +28,7 @@
 struct super_block;
 struct au_sbinfo;
 
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_AUFS_DEBUG) && defined(CONFIG_DEBUG_FS)
 /* dbgaufs.c */
 void dbgaufs_brs_del(struct super_block *sb, aufs_bindex_t bindex);
 void dbgaufs_brs_add(struct super_block *sb, aufs_bindex_t bindex);
