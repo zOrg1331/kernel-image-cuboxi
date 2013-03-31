@@ -39,9 +39,6 @@
 
 #define DRM_I915_RING_DEBUG 1
 
-
-#if defined(CONFIG_DEBUG_FS)
-
 enum {
 	ACTIVE_LIST,
 	FLUSHING_LIST,
@@ -1886,5 +1883,3 @@ void i915_debugfs_cleanup(struct drm_minor *minor)
 	drm_debugfs_remove_files((struct drm_info_list *) &i915_cache_sharing_fops,
 				 1, minor);
 }
-
-#endif /* CONFIG_DEBUG_FS */

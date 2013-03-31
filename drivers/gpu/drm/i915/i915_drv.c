@@ -921,7 +921,7 @@ static struct drm_driver driver = {
 	.reclaim_buffers = drm_core_reclaim_buffers,
 	.master_create = i915_master_create,
 	.master_destroy = i915_master_destroy,
-#if defined(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DRM_DEBUG_FS
 	.debugfs_init = i915_debugfs_init,
 	.debugfs_cleanup = i915_debugfs_cleanup,
 #endif
