@@ -258,7 +258,7 @@ feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 2b73e3cb2731d0b9a89ceee45a66c168af6d25d1 v3.4.32
 060f8a65ea8cb21d60e092580f22551e0b2a29c7 fix-net-ipv6
 d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
-007fe7013273a7d6bc0499e8ad23f727da186bad fix-drivers-scsi--lpfc
+f30f0c69aceb97956fc62a4fcbe68c4cb44947f6 fix-drivers-scsi--lpfc
 3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
@@ -294,7 +294,7 @@ a1bd639aca55778bf032d809c28cf9840169e423 fix-net-ipv6--xfrm
 adc66b2976d07117b9f628b7f99fd639bf84f5d4 fix-fs-9p
 a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 0d72d600491011d72b956291a06355aa3c927f1e fix-fs-nilfs2
-2df598f877bb3a483ce80deda549cb374a81fc07 fix-fs-ocfs2
+9ed204ff66eb64555a9737a8464a8272e35b3a66 fix-fs-ocfs2
 13afb7199f8b0b06918f7369a0887096de1c5526 fix-fs-ubifs
 739d1a67cbe6a5f5335bf7e423823f3d18c33c52 fix-mm--bounce
 3977b766d2c387b47907788b568521f5671c2bda v3.4.37
@@ -308,3 +308,13 @@ c897f368308304ee580bb4fbc9e92bb0775ed208 fix-drivers-gpu-drm
 c075ef7c33015eca27c886b719105f2ea89bd621 fix-drivers-net--bonding
 a5ad8c56eab88cf0dcfd51554f431a83f35c70ec fix-fs-ceph
 123240db11d044798cd62a13c73faeccce9e43c7 fix-net-ceph
+3675a7437ddde60c6a928b5380e946328b8c8f0a fix-drivers-hid--hid
+59f3f76a98e7a7f8787cbf8c29df6344e391120b fix-drivers-hid--hid-picolcd
+a62021758ec3da13519239f8a4a8af00548723a4 fix-drivers-hid--hid-wiimote
+1f3a56e7709b00ad7356bd05aeb035e2359a93f9 fix-drivers-spi--spi-dw
+0b4a8053168d885a5dd621205990f19ece992c73 fix-drivers-hwmon--asus_atk0110
+bacff5f94659c369fa9753fad1e5c50fbaeb9322 fix-drivers-misc--vmw_balloon
+87cf39056b68dfe76fd1c541ab03d340423e040c fix-drivers-regulator
+9ea5dec5033e279631a9bde98a3ac7e4336744a7 fix-drivers-iommu--amd_iommu
+32e1dea07de360371a5de3566440756425a362b5 fix-drivers-iommu--intel-iommu
+be51d33df05aae47a1e112df4e1e7812e7d87f40 fix-drivers-net--sb1000
