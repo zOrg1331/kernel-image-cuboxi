@@ -39,6 +39,7 @@ config AMD_IOMMU
 	select PCI_PASID
 	select IOMMU_API
 	depends on X86_64 && PCI && ACPI
+	depends on CPU_SUP_AMD
 	---help---
 	  With this option you can enable support for AMD IOMMU hardware in
 	  your system. An IOMMU is a hardware component which provides
