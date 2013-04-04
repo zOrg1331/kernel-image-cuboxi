@@ -27,6 +27,11 @@ config REGULATOR_DEBUG
 	help
 	  Say yes here to enable debugging support.
 
+config REGULATOR_DEBUG_FS
+	bool "Regulator debugfs support"
+	help
+	  Say yes here to enable debugfs support for regulator.
+
 config REGULATOR_DUMMY
 	bool "Provide a dummy regulator if regulator lookups fail"
 	help

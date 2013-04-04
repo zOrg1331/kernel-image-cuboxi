@@ -3178,7 +3178,7 @@ void *regulator_get_init_drvdata(struct regulator_init_data *reg_init_data)
 }
 EXPORT_SYMBOL_GPL(regulator_get_init_drvdata);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_REGULATOR_DEBUG_FS
 static ssize_t supply_map_read_file(struct file *file, char __user *user_buf,
 				    size_t count, loff_t *ppos)
 {
@@ -3211,7 +3211,7 @@ static ssize_t supply_map_read_file(struct file *file, char __user *user_buf,
 #endif
 
 static const struct file_operations supply_map_fops = {
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_REGULATOR_DEBUG_FS
 	.read = supply_map_read_file,
 	.llseek = default_llseek,
 #endif
