@@ -147,7 +147,7 @@ static inline void wiiext_handle(void *u, const __u8 *p) { }
 
 #endif
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_HID_DEBUG
 
 extern int wiidebug_init(struct wiimote_data *wdata);
 extern void wiidebug_deinit(struct wiimote_data *wdata);

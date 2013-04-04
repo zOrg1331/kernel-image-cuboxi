@@ -29,7 +29,7 @@ hid-wiimote-y		:= hid-wiimote-core.o
 ifdef CONFIG_HID_WIIMOTE_EXT
 	hid-wiimote-y	+= hid-wiimote-ext.o
 endif
-ifdef CONFIG_DEBUG_FS
+ifdef CONFIG_HID_DEBUG
 	hid-wiimote-y	+= hid-wiimote-debug.o
 endif
 
