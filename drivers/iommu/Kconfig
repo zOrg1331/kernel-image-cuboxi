@@ -75,7 +75,7 @@ config DMAR_TABLE
 
 config INTEL_IOMMU
 	bool "Support for Intel IOMMU using DMA Remapping Devices"
-	depends on PCI_MSI && ACPI && (X86 || IA64_GENERIC)
+	depends on PCI_MSI && ACPI && (CPU_SUP_INTEL || IA64_GENERIC)
 	select IOMMU_API
 	select DMAR_TABLE
 	help
