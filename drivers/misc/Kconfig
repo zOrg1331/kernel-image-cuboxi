@@ -441,6 +441,11 @@ config VMWARE_BALLOON
 	  To compile this driver as a module, choose M here: the
 	  module will be called vmw_balloon.
 
+config VMWARE_BALLOON_DEBUG
+	bool "VMware Balloon Driver debug via debugfs"
+	depends on VMWARE_BALLOON_DEBUG && DEBUG_FS
+	default y
+
 config ARM_CHARLCD
 	bool "ARM Ltd. Character LCD Driver"
 	depends on PLAT_VERSATILE

@@ -147,7 +147,7 @@ MODULE_LICENSE("GPL");
 	__stat & -1UL;					\
 })
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_VMWARE_BALLOON_DEBUG
 struct vmballoon_stats {
 	unsigned int timer;
 
@@ -201,7 +201,7 @@ struct vmballoon {
 	/* slowdown page allocations for next few cycles */
 	unsigned int slow_allocation_cycles;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_VMWARE_BALLOON_DEBUG
 	/* statistics */
 	struct vmballoon_stats stats;
 
@@ -684,7 +684,7 @@ static void vmballoon_work(struct work_struct *work)
 /*
  * DEBUGFS Interface
  */
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_VMWARE_BALLOON_DEBUG
 
 static int vmballoon_debug_show(struct seq_file *f, void *offset)
 {
@@ -776,7 +776,7 @@ static inline void vmballoon_debugfs_exit(struct vmballoon *b)
 {
 }
 
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_VMWARE_BALLOON_DEBUG */
 
 static int __init vmballoon_init(void)
 {
