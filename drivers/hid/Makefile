@@ -3,7 +3,7 @@
 #
 hid-y			:= hid-core.o hid-input.o
 
-ifdef CONFIG_DEBUG_FS
+ifdef CONFIG_HID_DEBUG
 	hid-objs		+= hid-debug.o
 endif
 

@@ -31,6 +31,11 @@ config HID
 
 	  If unsure, say Y.
 
+config HID_DEBUG
+	bool "Generic HID debug support"
+	depends on HID && DEBUG_FS
+	default y
+
 config HID_BATTERY_STRENGTH
 	bool "Battery level reporting for HID devices"
 	depends on HID && POWER_SUPPLY && HID = POWER_SUPPLY
