@@ -412,6 +412,11 @@ config SPI_DESIGNWARE
 	help
 	  general driver for SPI controller core from DesignWare
 
+config SPI_DW_DEBUG
+	bool "DesignWare SPI controller debug support"
+	depends on SPI_DESIGNWARE && DEBUG_FS
+	default y
+
 config SPI_DW_PCI
 	tristate "PCI interface driver for DW SPI core"
 	depends on SPI_DESIGNWARE && PCI
