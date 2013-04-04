@@ -66,7 +66,7 @@ config OCFS2_DEBUG_MASKLOG
 	  This option will enlarge your kernel, but it allows debugging of
 	  ocfs2 filesystem issues.
 
-config OCFS2_DEBUG_FS
+config OCFS2_DEBUG
 	bool "OCFS2 expensive checks"
 	depends on OCFS2_FS
 	default n

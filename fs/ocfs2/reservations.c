@@ -35,7 +35,7 @@
 #include "ocfs2.h"
 #include "ocfs2_trace.h"
 
-#ifdef CONFIG_OCFS2_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG
 #define OCFS2_CHECK_RESERVATIONS
 #endif
 

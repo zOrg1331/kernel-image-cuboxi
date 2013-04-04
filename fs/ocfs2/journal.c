@@ -425,7 +425,7 @@ int ocfs2_extend_trans(handle_t *handle, int nblocks)
 
 	trace_ocfs2_extend_trans(old_nblocks, nblocks);
 
-#ifdef CONFIG_OCFS2_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG
 	status = 1;
 #else
 	status = jbd2_journal_extend(handle, nblocks);
