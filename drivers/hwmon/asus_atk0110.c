@@ -660,7 +660,7 @@ static int atk_read_value(struct atk_sensor_data *sensor, u64 *value)
 	return err;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SENSORS_ATK0110_DEBUG
 static int atk_debugfs_gitm_get(void *p, u64 *val)
 {
 	struct atk_data *data = p;
@@ -832,7 +832,7 @@ static void atk_debugfs_cleanup(struct atk_data *data)
 	debugfs_remove_recursive(data->debugfs.root);
 }
 
-#else /* CONFIG_DEBUG_FS */
+#else /* CONFIG_SENSORS_ATK0110_DEBUG */
 
 static void atk_debugfs_init(struct atk_data *data)
 {

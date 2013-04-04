@@ -1402,6 +1402,11 @@ config SENSORS_ATK0110
 	  This driver can also be built as a module. If so, the module
 	  will be called asus_atk0110.
 
+config SENSORS_ATK0110_DEBUG
+	bool "ASUS ATK0110 debug via debugfs support"
+	depends on SENSORS_ATK0110 && DEBUG_FS
+	default y
+
 endif # ACPI
 
 endif # HWMON
