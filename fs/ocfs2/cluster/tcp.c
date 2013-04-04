@@ -143,7 +143,7 @@ static void o2net_idle_timer(unsigned long data);
 static void o2net_sc_postpone_idle(struct o2net_sock_container *sc);
 static void o2net_sc_reset_idle_timer(struct o2net_sock_container *sc);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 static void o2net_init_nst(struct o2net_send_tracking *nst, u32 msgtype,
 			   u32 msgkey, struct task_struct *task, u8 node)
 {
@@ -211,7 +211,7 @@ static inline void o2net_set_func_stop_time(struct o2net_sock_container *sc)
 	sc->sc_tv_func_stop = ktime_get();
 }
 
-#else  /* CONFIG_DEBUG_FS */
+#else  /* CONFIG_OCFS2_DEBUG_FS */
 # define o2net_init_nst(a, b, c, d, e)
 # define o2net_set_nst_sock_time(a)
 # define o2net_set_nst_send_time(a)
@@ -224,7 +224,7 @@ static inline void o2net_set_func_stop_time(struct o2net_sock_container *sc)
 # define o2net_set_advance_stop_time(a)
 # define o2net_set_func_start_time(a)
 # define o2net_set_func_stop_time(a)
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_OCFS2_DEBUG_FS */
 
 #ifdef CONFIG_OCFS2_FS_STATS
 static ktime_t o2net_get_func_run_time(struct o2net_sock_container *sc)
@@ -1559,7 +1559,7 @@ static void o2net_idle_timer(unsigned long data)
 {
 	struct o2net_sock_container *sc = (struct o2net_sock_container *)data;
 	struct o2net_node *nn = o2net_nn_from_num(sc->sc_node->nd_num);
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 	unsigned long msecs = ktime_to_ms(ktime_get()) -
 		ktime_to_ms(sc->sc_tv_timer);
 #else

@@ -24,7 +24,7 @@
  *
  */
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -576,4 +576,4 @@ int o2net_debugfs_init(void)
 	return -ENOMEM;
 }
 
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_OCFS2_DEBUG_FS */

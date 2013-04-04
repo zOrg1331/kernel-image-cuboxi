@@ -230,7 +230,7 @@ void ocfs2_hamming_fix_block(void *data, unsigned int blocksize,
  * Debugfs handling.
  */
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 
 static int blockcheck_u64_get(void *data, u64 *val)
 {
@@ -306,7 +306,7 @@ static inline int ocfs2_blockcheck_debug_install(struct ocfs2_blockcheck_stats *
 static inline void ocfs2_blockcheck_debug_remove(struct ocfs2_blockcheck_stats *stats)
 {
 }
-#endif  /* CONFIG_DEBUG_FS */
+#endif  /* CONFIG_OCFS2_DEBUG_FS */
 
 /* Always-called wrappers for starting and stopping the debugfs files */
 int ocfs2_blockcheck_stats_debugfs_install(struct ocfs2_blockcheck_stats *stats,

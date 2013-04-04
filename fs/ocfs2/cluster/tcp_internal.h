@@ -170,7 +170,7 @@ struct o2net_sock_container {
 	u32			sc_msg_key;
 	u16			sc_msg_type;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 	struct list_head        sc_net_debug_item;
 	ktime_t			sc_tv_timer;
 	ktime_t			sc_tv_data_ready;
@@ -219,7 +219,7 @@ struct o2net_status_wait {
 	struct list_head	ns_node_item;
 };
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 /* just for state dumps */
 struct o2net_send_tracking {
 	struct list_head		st_net_debug_item;
@@ -237,6 +237,6 @@ struct o2net_send_tracking {
 struct o2net_send_tracking {
 	u32	dummy;
 };
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_OCFS2_DEBUG_FS */
 
 #endif /* O2CLUSTER_TCP_INTERNAL_H */

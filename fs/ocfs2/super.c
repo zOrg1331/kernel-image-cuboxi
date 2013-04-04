@@ -219,7 +219,7 @@ static const match_table_t tokens = {
 	{Opt_err, NULL}
 };
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 static int ocfs2_osb_dump(struct ocfs2_super *osb, char *buf, int len)
 {
 	struct ocfs2_cluster_connection *cconn = osb->cconn;
@@ -391,7 +391,7 @@ static ssize_t ocfs2_debug_read(struct file *file, char __user *buf,
 {
 	return 0;
 }
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_OCFS2_DEBUG_FS */
 
 static const struct file_operations ocfs2_osb_debug_fops = {
 	.open =		ocfs2_osb_debug_open,

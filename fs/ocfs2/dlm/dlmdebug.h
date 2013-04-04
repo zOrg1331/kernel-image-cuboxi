@@ -27,7 +27,7 @@
 
 void dlm_print_one_mle(struct dlm_master_list_entry *mle);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 
 struct dlm_debug_ctxt {
 	struct kref debug_refcnt;
@@ -77,5 +77,5 @@ static inline void dlm_destroy_debugfs_root(void)
 {
 }
 
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_OCFS2_DEBUG_FS */
 #endif	/* DLMDEBUG_H */

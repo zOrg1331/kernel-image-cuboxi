@@ -340,7 +340,7 @@ void dlm_print_one_mle(struct dlm_master_list_entry *mle)
 	}
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 
 static struct dentry *dlm_debugfs_root = NULL;
 
@@ -1015,4 +1015,4 @@ void dlm_destroy_debugfs_root(void)
 {
 	debugfs_remove(dlm_debugfs_root);
 }
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_OCFS2_DEBUG_FS */

@@ -1192,7 +1192,7 @@ static int o2hb_thread(void *data)
 	return 0;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_OCFS2_DEBUG_FS
 static int o2hb_debug_open(struct inode *inode, struct file *file)
 {
 	struct o2hb_debug_buf *db = inode->i_private;
@@ -1292,7 +1292,7 @@ static ssize_t o2hb_debug_read(struct file *file, char __user *buf,
 {
 	return 0;
 }
-#endif  /* CONFIG_DEBUG_FS */
+#endif  /* CONFIG_OCFS2_DEBUG_FS */
 
 static const struct file_operations o2hb_debug_fops = {
 	.open =		o2hb_debug_open,

@@ -74,3 +74,8 @@ config OCFS2_DEBUG
 	  This option will enable expensive consistency checks. Enable
 	  this option for debugging only as it is likely to decrease
 	  performance of the filesystem.
+
+config OCFS2_DEBUG_FS
+	bool "OCFS2 debugfs support"
+	depends on OCFS2_FS && DEBUG_FS
+	default y
