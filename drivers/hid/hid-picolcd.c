@@ -190,7 +190,7 @@ struct picolcd_pending {
 /* Per device data structure */
 struct picolcd_data {
 	struct hid_device *hdev;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_HID_DEBUG
 	struct dentry *debug_reset;
 	struct dentry *debug_eeprom;
 	struct dentry *debug_flash;
@@ -258,7 +258,7 @@ static struct hid_report *picolcd_report(int id, struct hid_device *hdev, int di
 	return NULL;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_HID_DEBUG
 static void picolcd_debug_out_report(struct picolcd_data *data,
 		struct hid_device *hdev, struct hid_report *report);
 #define usbhid_submit_report(a, b, c) \
@@ -1472,7 +1472,7 @@ static DEVICE_ATTR(operation_mode_delay, 0644, picolcd_operation_mode_delay_show
 		picolcd_operation_mode_delay_store);
 
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_HID_DEBUG
 /*
  * The "reset" file
  */
@@ -2355,7 +2355,7 @@ static inline void picolcd_init_devfs(struct picolcd_data *data,
 static inline void picolcd_exit_devfs(struct picolcd_data *data)
 {
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_HID_DEBUG */
 
 /*
  * Handle raw report as sent by device
