@@ -420,6 +420,11 @@ config SERIAL_MFD_HSU
 	depends on PCI
 	select SERIAL_CORE
 
+config SERIAL_MFD_HSU_DEBUG_FS
+	bool "Medfield High Speed UART debugfs support"
+	depends on SERIAL_MFD_HSU && DEBUG_FS
+	default y
+
 config SERIAL_MFD_HSU_CONSOLE
 	boolean "Medfile HSU serial console support"
 	depends on SERIAL_MFD_HSU=y

@@ -123,7 +123,7 @@ static inline void serial_out(struct uart_hsu_port *up, int offset, int value)
 	}
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SERIAL_MFD_HSU_DEBUG_FS
 
 #define HSU_REGS_BUFSIZE	1024
 
@@ -277,7 +277,7 @@ static inline int hsu_debugfs_init(struct hsu_port *hsu)
 static inline void hsu_debugfs_remove(struct hsu_port *hsu)
 {
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_SERIAL_MFD_HSU_DEBUG_FS */
 
 static void serial_hsu_enable_ms(struct uart_port *port)
 {
