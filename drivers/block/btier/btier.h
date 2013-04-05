@@ -65,6 +65,9 @@
 /* Tier reserves 2 MB per device for playing data migration games. */
 #define TIER_DEVICE_PLAYGROUND BLKSIZE*2
 
+#define NORMAL_IO 1
+#define MIGRATION_IO 2
+
 #define CLEAN 1
 #define DIRTY 2
 #define MASTER 0
@@ -169,6 +172,12 @@ struct tier_stats {
 	u64 rand_writes;
 };
 
+struct migrate_direct {
+        u64 blocknr;
+        int newdevice;
+	atomic_t direct;
+};
+
 struct tier_device {
 	struct list_head list;
 	int major_num;
@@ -216,10 +225,13 @@ struct tier_device {
 	wait_queue_head_t aio_event;
 	struct timer_list migrate_timer;
 	struct tier_stats stats;
+        struct migrate_direct mgdirect;
 	int migrate_verbose;
 	int ptsync;
 /* Where do we initially store sequential IO */
 	int inerror;
+/* The blocknr that the user can retrieve info for via sysfs*/
+        u64 user_selected_blockinfo;
 };
 
 typedef struct {
@@ -242,4 +254,7 @@ void resize_tier(struct tier_device *);
 int load_bitlists(struct tier_device *);
 void *as_sprintf(const char *, ...);
 u64 allocated_on_device(struct tier_device *, int);
+void btier_clear_statistics(struct tier_device *dev);
+struct blockinfo *get_blockinfo(struct tier_device *, u64, int);
+int migrate_direct(struct tier_device *, u64 ,int );
 #endif

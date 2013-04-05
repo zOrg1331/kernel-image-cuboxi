@@ -6,7 +6,6 @@ static int tier_file_write(struct tier_device *, unsigned int, void *,
 static int tier_sync(struct tier_device *);
 static int tier_file_read(struct tier_device *, unsigned int, void *, const int,
 			  loff_t);
-static struct blockinfo *get_blockinfo(struct tier_device *, u64, int);
 static int write_blocklist(struct tier_device *, u64, struct blockinfo *, int);
 struct file *get_dev_file(struct tier_device *, unsigned int);
 static void sync_device(struct tier_device *, int);

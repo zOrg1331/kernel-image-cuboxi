@@ -80,7 +80,7 @@ static ssize_t tier_attr_do_store_##_name(struct device *d,                     
         return tier_attr_store(d, b, s, tier_attr_##_name##_store);              \
 }                                                                                \
 static struct device_attribute tier_attr_##_name =                               \
-        __ATTR(_name, S_IRUGU, NULL, tier_attr_do_store_##_name);
+        __ATTR(_name, S_IWUSR, NULL, tier_attr_do_store_##_name);
 
 #define TIER_ATTR_RW(_name) \
 static ssize_t tier_attr_##_name##_store(struct tier_device *, const char *, size_t);  \
@@ -144,6 +144,14 @@ static ssize_t tier_attr_barriers_store(struct tier_device *dev,
 	return s;
 }
 
+static ssize_t tier_attr_clear_statistics_store(struct tier_device *dev,
+                                        const char *buf, size_t s)
+{
+        if ( buf[0] != '1' ) return -ENOMSG;
+        btier_clear_statistics(dev);
+        return s;
+}
+
 static ssize_t tier_attr_ptsync_store(struct tier_device *dev,
 				      const char *buf, size_t s)
 {
@@ -189,6 +197,27 @@ static char *null_term_buf(const char *buf, size_t s)
 	return cpybuf;
 }
 
+static ssize_t tier_attr_show_blockinfo_store(struct tier_device *dev,
+                                        const char *buf, size_t s)
+{
+        int res;
+        char *cpybuf;
+        u64 maxblocks = dev->size / BLKSIZE;
+        u64 selected;
+
+        cpybuf = null_term_buf(buf, s);
+        if (!cpybuf)
+                return -ENOMEM;
+        res = sscanf(cpybuf, "%llu", &selected);
+        kfree(cpybuf);
+        if (res != 1)
+                return -ENOMSG;
+        if ( maxblocks > selected ) 
+             dev->user_selected_blockinfo = selected;
+        else return -EOVERFLOW;
+        return s;
+}
+
 static ssize_t tier_attr_sequential_landing_store(struct tier_device *dev,
 						  const char *buf, size_t s)
 {
@@ -197,7 +226,7 @@ static ssize_t tier_attr_sequential_landing_store(struct tier_device *dev,
 	char *cpybuf;
 
 	cpybuf = null_term_buf(buf, s);
-	if (NULL == cpybuf)
+	if (!cpybuf)
 		return -ENOMEM;
 	res = sscanf(cpybuf, "%i", &landdev);
 	if (res != 1)
@@ -209,6 +238,38 @@ static ssize_t tier_attr_sequential_landing_store(struct tier_device *dev,
 	dev->backdev[0]->devmagic->dtapolicy.sequential_landing = landdev;
 	kfree(cpybuf);
 	return s;
+}
+
+static ssize_t tier_attr_migrate_block_store(struct tier_device *dev,
+                                                  const char *buf, size_t s)
+{
+        u64 blocknr;
+        int device;
+        int res=0;
+        size_t m=s;
+        char *cpybuf;
+        u64 maxblocks = dev->size / BLKSIZE;
+
+        cpybuf = null_term_buf(buf, s);
+        if (!cpybuf)
+                return -ENOMEM;
+        s=-ENOMSG;
+        res = sscanf(cpybuf, "%llu/%u", &blocknr,&device);
+        if (res != 2)
+                goto end_error;
+        if (device >= dev->attached_devices)
+                goto end_error;
+        if (device < 0)
+                goto end_error;
+        if ( blocknr < maxblocks ) {
+             res=migrate_direct(dev,blocknr,device);
+             if ( res < 0 ) 
+                  s=res;
+             else s=m;
+        } 
+end_error:
+        kfree(cpybuf);
+        return s;
 }
 
 static ssize_t tier_attr_migrate_verbose_store(struct tier_device *dev,
@@ -242,11 +303,11 @@ static ssize_t tier_attr_migration_policy_store(struct tier_device *dev,
 	char *cpybuf;
 
 	cpybuf = null_term_buf(buf, s);
-	if (NULL == cpybuf)
+	if (!cpybuf)
 		return -ENOMEM;
 
 	p = strchr(cpybuf, ' ');
-	if (NULL == p)
+	if (!p)
 		goto end_error;
 	a = kzalloc(p - cpybuf + 1, GFP_KERNEL);
 	memcpy(a, cpybuf, p - cpybuf);
@@ -261,7 +322,7 @@ static ssize_t tier_attr_migration_policy_store(struct tier_device *dev,
 	while (a[0] == ' ')
 		a++;
 	p = strchr(a, ' ');
-	if (NULL == p)
+	if (!p)
 		goto end_error;
 	devicename = kzalloc(p - cpybuf + 1, GFP_KERNEL);
 	memcpy(devicename, a, p - a);
@@ -311,7 +372,7 @@ static ssize_t tier_attr_migration_interval_store(struct tier_device *dev,
 	char *cpybuf;
 	struct data_policy *dtapolicy = &dev->backdev[0]->devmagic->dtapolicy;
 	cpybuf = null_term_buf(buf, s);
-	if (NULL == cpybuf)
+	if (!cpybuf)
 		return -ENOMEM;
 	res = sscanf(cpybuf, "%llu", &interval);
 	if (res == 1) {
@@ -335,6 +396,29 @@ static ssize_t tier_attr_migration_enable_show(struct tier_device *dev,
 {
 	struct data_policy *dtapolicy = &dev->backdev[0]->devmagic->dtapolicy;
 	return sprintf(buf, "%i\n", !dtapolicy->migration_disabled);
+}
+
+
+static ssize_t tier_attr_show_blockinfo_show(struct tier_device *dev,
+                                               char *buf)
+{
+        struct blockinfo *binfo;
+        int res=0;
+
+        binfo = get_blockinfo(dev, dev->user_selected_blockinfo, 0);
+        if (!binfo) return res;
+        res=sprintf(buf, "%i,%llu,%lu,%u,%u\n", 
+                    binfo->device-1, binfo->offset,
+                    binfo->lastused,binfo->readcount,binfo->writecount);
+        kfree(binfo);
+        return res;
+}
+
+
+static ssize_t tier_attr_size_in_blocks_show(struct tier_device *dev,
+                                               char *buf)
+{
+        return sprintf(buf, "%llu\n",dev->size/BLKSIZE);
 }
 
 static ssize_t tier_attr_barriers_show(struct tier_device *dev, char *buf)
@@ -374,7 +458,7 @@ static ssize_t tier_attr_migration_policy_show(struct tier_device *dev,
 	int res;
 
 	for (i = 0; i < dev->attached_devices; i++) {
-		if (NULL == msg) {
+		if (!msg) {
 			msg2 =
 			    as_sprintf
 			    ("%7s %20s %15s %15s\n%7u %20s %15u %15u\n", "tier",
@@ -450,7 +534,7 @@ static ssize_t tier_attr_device_usage_show(struct tier_device *dev, char *buf)
 		if (dev->inerror)
 			goto end_error;
 		allocated >>= BLKBITS;
-		devblocks = dev->backdev[i]->devicesize >> BLKBITS;
+		devblocks = ( dev->backdev[i]->endofdata - dev->backdev[i]->startofdata ) >> BLKBITS;
 		dev->backdev[i]->devmagic->average_reads =
 		    div64_u64(dev->backdev[i]->devmagic->total_reads, devblocks);
 		dev->backdev[i]->devmagic->average_writes =
@@ -459,7 +543,7 @@ static ssize_t tier_attr_device_usage_show(struct tier_device *dev, char *buf)
 		    as_sprintf
 		    ("%7u %20s %15llu %15llu %15u %15u %15llu %15llu\n", i,
 		     dev->backdev[i]->fds->f_dentry->d_name.name,
-		     dev->backdev[i]->devicesize >> BLKBITS, allocated,
+		     devblocks, allocated,
 		     dev->backdev[i]->devmagic->average_reads,
 		     dev->backdev[i]->devmagic->average_writes,
 		     dev->backdev[i]->devmagic->total_reads,
@@ -490,10 +574,14 @@ TIER_ATTR_RW(migration_interval);
 TIER_ATTR_RW(migration_enable);
 TIER_ATTR_RW(migration_policy);
 TIER_ATTR_RW(resize);
+TIER_ATTR_RO(size_in_blocks);
 TIER_ATTR_RO(attacheddevices);
 TIER_ATTR_RO(numreads);
 TIER_ATTR_RO(numwrites);
 TIER_ATTR_RO(device_usage);
+TIER_ATTR_RW(show_blockinfo);
+TIER_ATTR_WO(clear_statistics);
+TIER_ATTR_WO(migrate_block);
 
 struct attribute *tier_attrs[] = {
 	&tier_attr_sequential_landing.attr,
@@ -508,5 +596,9 @@ struct attribute *tier_attrs[] = {
 	&tier_attr_numwrites.attr,
 	&tier_attr_device_usage.attr,
 	&tier_attr_resize.attr,
+        &tier_attr_clear_statistics.attr,
+        &tier_attr_size_in_blocks.attr,
+        &tier_attr_show_blockinfo.attr,
+        &tier_attr_migrate_block.attr,
 	NULL,
 };
