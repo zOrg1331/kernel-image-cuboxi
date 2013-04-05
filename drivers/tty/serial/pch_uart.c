@@ -305,7 +305,7 @@ static const int trigger_level_64[4] = { 1, 16, 32, 56 };
 static const int trigger_level_16[4] = { 1, 4, 8, 14 };
 static const int trigger_level_1[4] = { 1, 1, 1, 1 };
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SERIAL_PCH_UART_DEBUG_FS
 
 #define PCH_REGS_BUFSIZE	1024
 
@@ -366,7 +366,7 @@ static const struct file_operations port_regs_ops = {
 	.read		= port_show_regs,
 	.llseek		= default_llseek,
 };
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_SERIAL_PCH_UART_DEBUG_FS */
 
 /* Return UART clock, checking for board specific clocks. */
 static int pch_uart_get_uartclk(void)
@@ -1653,7 +1653,7 @@ static struct eg20t_port *pch_uart_init_port(struct pci_dev *pdev,
 	int fifosize;
 	int port_type;
 	struct pch_uart_driver_data *board;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SERIAL_PCH_UART_DEBUG_FS
 	char name[32];	/* for debugfs file name */
 #endif
 
@@ -1722,7 +1722,7 @@ static struct eg20t_port *pch_uart_init_port(struct pci_dev *pdev,
 	if (ret < 0)
 		goto init_port_hal_free;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SERIAL_PCH_UART_DEBUG_FS
 	snprintf(name, sizeof(name), "uart%d_regs", board->line_no);
 	priv->debugfs = debugfs_create_file(name, S_IFREG | S_IRUGO,
 				NULL, priv, &port_regs_ops);
@@ -1745,7 +1745,7 @@ init_port_alloc_err:
 static void pch_uart_exit_port(struct eg20t_port *priv)
 {
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SERIAL_PCH_UART_DEBUG_FS
 	if (priv->debugfs)
 		debugfs_remove(priv->debugfs);
 #endif
