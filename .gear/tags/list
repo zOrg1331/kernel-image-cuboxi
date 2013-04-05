@@ -259,7 +259,7 @@ feaf7f4a3229a836d7bc231a689d60bb1add6625 fix-net--dns_resolver
 060f8a65ea8cb21d60e092580f22551e0b2a29c7 fix-net-ipv6
 d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 f30f0c69aceb97956fc62a4fcbe68c4cb44947f6 fix-drivers-scsi--lpfc
-3baf1a8f8307ed952e55cafc2cfb3b24d41c38a7 fix-drivers-tty-serial--pch_uart
+cd7a8837a9ca6935c835b0a655982db220e941e7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
 287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
 740d9688474a7959d2dc07c6123754dff28494b1 fix-net-core
@@ -298,7 +298,7 @@ a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 13afb7199f8b0b06918f7369a0887096de1c5526 fix-fs-ubifs
 739d1a67cbe6a5f5335bf7e423823f3d18c33c52 fix-mm--bounce
 3977b766d2c387b47907788b568521f5671c2bda v3.4.37
-ab0ef48fe7d39f7eca11e4ce31feb0e3468053e7 feat-drivers-block--btier
+017707833663d7cb3d80ed646ef11a6817815cff feat-drivers-block--btier
 8784bb4f0771e75d053fc95724265208501ac29e feat-drivers-usb-storage--rts5139
 5a437b52cdc197030a3b862fa72f263432bd7b5d fix-drivers-usb-serial--io_ti
 eb7173676c686365752d514db8e3dae4621d9e48 v3.4.38
@@ -318,3 +318,6 @@ bacff5f94659c369fa9753fad1e5c50fbaeb9322 fix-drivers-misc--vmw_balloon
 9ea5dec5033e279631a9bde98a3ac7e4336744a7 fix-drivers-iommu--amd_iommu
 32e1dea07de360371a5de3566440756425a362b5 fix-drivers-iommu--intel-iommu
 be51d33df05aae47a1e112df4e1e7812e7d87f40 fix-drivers-net--sb1000
+eea7c39dd1b13e1ce899c33c7b57abd68a2d65ff fix-drivers-tty-serial--ifx6x60
+cd3b5d42f0cdc389e80327d8a31c88e071caf8cb fix-drivers-tty-serial--mfd
+dfd38b0310df6317ece65bb489114314afc9874e fix-drivers-tty-serial--mrst_max3110

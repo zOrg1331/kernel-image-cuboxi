@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.38
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -365,8 +365,11 @@ Patch0441: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 Patch0442: linux-%kernel_branch.38-fix-drivers-spi--spi-dw.patch
 
 Patch0450: linux-%kernel_branch.32-fix-drivers-tty.patch
-Patch0451: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
-Patch0452: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
+Patch0451: linux-%kernel_branch.38-fix-drivers-tty-serial--ifx6x60.patch
+Patch0452: linux-%kernel_branch.38-fix-drivers-tty-serial--mfd.patch
+Patch0453: linux-%kernel_branch.38-fix-drivers-tty-serial--mrst_max3110.patch
+Patch0454: linux-%kernel_branch.32-fix-drivers-tty-serial--pch_uart.patch
+Patch0455: linux-%kernel_branch.20-fix-drivers-tty-serial-8250--8250.patch
 
 Patch0460: linux-%kernel_branch.34-fix-drivers-usb.patch
 Patch0461: linux-%kernel_branch.25-fix-drivers-usb-gadget--g_audio.patch
@@ -1468,6 +1471,9 @@ cd linux-%version
 %patch0450 -p1
 %patch0451 -p1
 %patch0452 -p1
+%patch0453 -p1
+%patch0454 -p1
+%patch0455 -p1
 
 # fix-drivers-usb*
 %patch0460 -p1
@@ -2557,6 +2563,15 @@ done)
 
 
 %changelog
+* Fri Apr 05 2013 Led <led@altlinux.ru> 3.4.38-alt6
+- updated:
+  + fix-drivers-tty-serial--pch_uart
+  + feat-drivers-block--btier
+- added:
+  + fix-drivers-tty-serial--ifx6x60
+  + fix-drivers-tty-serial--mfd
+  + fix-drivers-tty-serial--mrst_max3110
+
 * Fri Apr 05 2013 Led <led@altlinux.ru> 3.4.38-alt5
 - updated:
   + fix-drivers-scsi--lpfc
