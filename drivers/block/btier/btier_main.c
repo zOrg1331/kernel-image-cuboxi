@@ -2416,7 +2416,7 @@ static long tier_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			if (0 != (err = order_devices(dev)))
 				break;
 			if (0 == (err = determine_device_size(dev))) {
-                                pr_err("dev->users at %llu\n",(u64)&dev->users);
+				pr_err("dev->users at %lu\n",(uintptr_t)&dev->users);
 				err = tier_register(dev);
 			}
 		}
