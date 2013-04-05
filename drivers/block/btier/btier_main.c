@@ -15,7 +15,7 @@
 
 #define TRUE 1
 #define FALSE 0
-#define TIER_VERSION "0.9.9.9-5"
+#define TIER_VERSION "0.9.9.9-6"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mark Ruijter");
@@ -29,11 +29,51 @@ DEFINE_MUTEX(tier_devices_mutex);
 static struct tier_device *device = NULL;
 static char *devicenames;
 static struct mutex ioctl_mutex;
+static DEFINE_SPINLOCK(uselock);
+
+static int tier_device_count(void)
+{
+        struct list_head *pos;
+        int count = 0;
+
+        list_for_each(pos, &device_list) {
+                count++;
+        }
+        return count;
+}
+
+/*
+ * Open and close.
+ */
+static int tier_open(struct block_device *bdev, fmode_t mode)
+
+{
+	struct tier_device *dev;
+
+        dev = bdev->bd_inode->i_bdev->bd_disk->private_data;
+	spin_lock(&uselock);
+	dev->users++;
+	spin_unlock(&uselock);
+	return 0;
+}
+
+static int tier_release(struct gendisk *gd, fmode_t mode)
+{
+	struct tier_device *dev;
+
+        dev = gd->private_data;
+	spin_lock (&uselock);
+	dev->users--;
+	spin_unlock(&uselock);
+	return 0;
+}
 
 /*
  * The device operations structure.
  */
 static struct block_device_operations tier_ops = {
+      	.open 	         = tier_open,
+	.release 	 = tier_release,
 	.owner = THIS_MODULE,
 };
 
@@ -187,7 +227,9 @@ static int allocate_dev(struct tier_device *dev, u64 blocknr,
 				binfo->offset += backdev->startofdata;
 				if (binfo->offset + BLKSIZE >
 				    backdev->endofdata) {
-                                        pr_err("Giving up at offset : %llu - %llu, endofdata %llu\n",binfo->offset + BLKSIZE, backdev->startofdata, backdev->endofdata);
+                                        //pr_err("Giving up at offset : %llu - %llu, endofdata %llu\n",
+                                        //        binfo->offset + BLKSIZE, backdev->startofdata,
+                                        //        backdev->endofdata);
 					/* We are at the end of this device, no space available */
 					goto end_exit;
 				} else {
@@ -1086,10 +1128,10 @@ static int migrate_down_ifneeded(struct tier_device *dev,
 
 int migrate_direct(struct tier_device *dev, u64 blocknr,int device)
 {
-       if ( 0 != atomic_read(&dev->mgdirect.direct)) return -EAGAIN;
+       if ( 0 == atomic_add_unless(&dev->mgdirect.direct, 1, 1)) 
+           return -EAGAIN;
        dev->mgdirect.blocknr=blocknr;
        dev->mgdirect.newdevice=device;
-       atomic_set(&dev->mgdirect.direct,1);
        wake_up(&dev->migrate_event);  
        return 0;
 }
@@ -1346,7 +1388,6 @@ static void data_migrator(struct work_struct *work)
 		mutex_unlock(&dev->qlock);
 		if (dev->migrate_verbose)
 			pr_info("data_migrator goes back to sleep\n");
-		atomic_inc(&dev->wqlock);
 	}
 	kfree(work);
 	pr_info("data_migrator halted\n");
@@ -1736,7 +1777,7 @@ static int tier_register(struct tier_device *dev)
 	dev->iotype = RANDOM;
 	atomic_set(&dev->migrate, 0);
 	atomic_set(&dev->commit, 0);
-	atomic_set(&dev->wqlock, 1);
+	atomic_set(&dev->wqlock, 0);
 	atomic_set(&dev->aio_pending, 0);
 	atomic_set(&dev->curfd, 2);
         atomic_set(&dev->mgdirect.direct,0);
@@ -1779,7 +1820,7 @@ static int tier_register(struct tier_device *dev)
 	dev->gd->major = dev->major_num;
 	dev->gd->first_minor = 0;
 	dev->gd->fops = &tier_ops;
-	dev->gd->private_data = &dev;
+	dev->gd->private_data = dev;
 	strcpy(dev->gd->disk_name, dev->devname);
 	set_capacity(dev->gd, dev->nsectors * (dev->logical_block_size / 512));
 	dev->gd->queue = dev->rqueue;
@@ -1812,8 +1853,6 @@ static int tier_register(struct tier_device *dev)
 	blk_queue_max_discard_sectors(dev->rqueue, get_capacity(dev->gd));
 	dev->rqueue->limits.discard_granularity = BLKSIZE;
 	dev->rqueue->limits.discard_alignment = BLKSIZE;
-
-        pr_err("max stat count = %u\n",MAX_STAT_COUNT);
 	tier_sysfs_init(dev);
 	/* let user-space know about the new size */
 	kobject_uevent(&disk_to_dev(dev->gd)->kobj, KOBJ_CHANGE);
@@ -1876,17 +1915,6 @@ static struct tier_device *device_nr(int *nr)
 	return ret;
 }
 
-static int tier_device_count(void)
-{
-	struct list_head *pos;
-	int count = 0;
-
-	list_for_each(pos, &device_list) {
-		count++;
-	}
-	return count;
-}
-
 static void tier_deregister(struct tier_device *dev)
 {
 	int i;
@@ -1925,17 +1953,22 @@ static void tier_deregister(struct tier_device *dev)
 	}
 }
 
-static void del_tier_device(char *devicename)
+static int del_tier_device(char *devicename)
 {
 	struct tier_device *tier, *next;
+        int res=0;
 
 	list_for_each_entry_safe(tier, next, &device_list, list) {
 		if (tier->devname) {
 			if (strstr(devicename, tier->devname)) {
-				tier_deregister(tier);
+                                if ( tier->users > 0 ) 
+                                   res=-EBUSY;
+                                else
+				   tier_deregister(tier);
 			}
 		}
 	}
+        return res;
 }
 
 static int determine_device_size(struct tier_device *dev)
@@ -2383,6 +2416,7 @@ static long tier_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			if (0 != (err = order_devices(dev)))
 				break;
 			if (0 == (err = determine_device_size(dev))) {
+                                pr_err("dev->users at %llu\n",(u64)&dev->users);
 				err = tier_register(dev);
 			}
 		}
@@ -2398,11 +2432,10 @@ static long tier_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 		err = tier_device_count();
-		del_tier_device((char *)arg);
+		err = del_tier_device(dname);
 		kfree(dname);
-		if (1 == err)
+		if (0 == err)
 			device = NULL;
-		err = 0;
 		break;
 	default:
 		err = dev->ioctl ? dev->ioctl(dev, cmd, arg) : -EINVAL;
@@ -2430,7 +2463,6 @@ static int __init tier_init(void)
 {
 	int r;
 	/* First register out control device */
-
 	pr_info("version    : %s\n", TIER_VERSION);
 	r = misc_register(&_tier_misc);
 	if (r) {

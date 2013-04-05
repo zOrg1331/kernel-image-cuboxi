@@ -194,6 +194,7 @@ struct tier_device {
 	u64 blocklistsize;
 	spinlock_t lock;
 	spinlock_t statlock;
+        spinlock_t usage_lock;
 	struct gendisk *gd;
 	struct workqueue_struct *migration_queue;	/* Data migration */
 	struct workqueue_struct *aio_queue;	/* Async IO */
@@ -232,6 +233,7 @@ struct tier_device {
 	int inerror;
 /* The blocknr that the user can retrieve info for via sysfs*/
         u64 user_selected_blockinfo;
+        unsigned int users;
 };
 
 typedef struct {
