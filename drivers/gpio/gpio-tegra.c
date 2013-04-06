@@ -504,7 +504,7 @@ void tegra_gpio_config(struct tegra_gpio_table *table, int num)
 	}
 }
 
-#ifdef	CONFIG_DEBUG_FS
+#ifdef	CONFIG_GPIO_DEBUG_FS
 
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
