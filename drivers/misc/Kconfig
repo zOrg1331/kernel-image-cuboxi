@@ -443,7 +443,7 @@ config VMWARE_BALLOON
 
 config VMWARE_BALLOON_DEBUG
 	bool "VMware Balloon Driver debug via debugfs"
-	depends on VMWARE_BALLOON_DEBUG && DEBUG_FS
+	depends on VMWARE_BALLOON && DEBUG_FS
 	default y
 
 config ARM_CHARLCD
