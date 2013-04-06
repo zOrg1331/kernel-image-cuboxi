@@ -65,7 +65,7 @@ void __wimax_state_set(struct wimax_dev *wimax_dev, enum wimax_st state)
 }
 extern void __wimax_state_change(struct wimax_dev *, enum wimax_st);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_WIMAX_DEBUG_FS
 extern int wimax_debugfs_add(struct wimax_dev *);
 extern void wimax_debugfs_rm(struct wimax_dev *);
 #else

@@ -37,3 +37,8 @@ config WIMAX_DEBUG_LEVEL
 	  If set at zero, this will compile out all the debug code.
 
 	  It is recommended that it is left at 8.
+
+config WIMAX_DEBUG_FS
+	bool "WiMAX Wireless Broadband debugfs support"
+	depends on WIMAX && DEBUG_FS
+	default y
