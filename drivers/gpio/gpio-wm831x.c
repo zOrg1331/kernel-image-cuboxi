@@ -139,7 +139,7 @@ static int wm831x_gpio_set_debounce(struct gpio_chip *chip, unsigned offset,
 	return wm831x_set_bits(wm831x, reg, WM831X_GPN_FN_MASK, fn);
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 static void wm831x_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 {
 	struct wm831x_gpio *wm831x_gpio = to_wm831x_gpio(chip);
