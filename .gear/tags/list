@@ -308,10 +308,10 @@ c897f368308304ee580bb4fbc9e92bb0775ed208 fix-drivers-gpu-drm
 c075ef7c33015eca27c886b719105f2ea89bd621 fix-drivers-net--bonding
 a5ad8c56eab88cf0dcfd51554f431a83f35c70ec fix-fs-ceph
 123240db11d044798cd62a13c73faeccce9e43c7 fix-net-ceph
-3675a7437ddde60c6a928b5380e946328b8c8f0a fix-drivers-hid--hid
+c456ccff6414945cd6fa6cfa4344ed33c10c171b fix-drivers-hid--hid
 59f3f76a98e7a7f8787cbf8c29df6344e391120b fix-drivers-hid--hid-picolcd
 a62021758ec3da13519239f8a4a8af00548723a4 fix-drivers-hid--hid-wiimote
-1f3a56e7709b00ad7356bd05aeb035e2359a93f9 fix-drivers-spi--spi-dw
+93317ef75460745a46a3b0c54747771df1c39e99 fix-drivers-spi--spi-dw
 0b4a8053168d885a5dd621205990f19ece992c73 fix-drivers-hwmon--asus_atk0110
 e8dbcd5d0ca635e66e77287a825634037fa1b99a fix-drivers-misc--vmw_balloon
 87cf39056b68dfe76fd1c541ab03d340423e040c fix-drivers-regulator
@@ -323,7 +323,7 @@ cd3b5d42f0cdc389e80327d8a31c88e071caf8cb fix-drivers-tty-serial--mfd
 dfd38b0310df6317ece65bb489114314afc9874e fix-drivers-tty-serial--mrst_max3110
 df06da0b16521f1886e0d65446cc74beef3adc43 v3.4.39
 6986ef821bbedde5f36403f906fe027ce2a0b5dc fix-drivers-net-caif--caif_serial
-f09d08a7065bb985fb9ca90157fac799aab6c37f fix-drivers-net-caif--cfspi_slave
+1e63f79c5bb4f784743911fc45f12b6ee9371879 fix-drivers-net-caif--cfspi_slave
 c556b954413360d6066a0dddf941d69bd9b55d12 fix-drivers-bluetooth--btmrvl
 e4faf3f983d1744cddd5c5af19aa9544cdbfa7e2 fix-drivers-gpio--gpio-ks8695
 7f7eb32012b43a02945f8897cdd9a47404ba9444 fix-drivers-gpio--gpio-mcp23s08
@@ -340,3 +340,5 @@ cffb3e1ed1cda1e3942712be51e0a3fd29746a89 fix-drivers-power--da9030_battery
 2e314668a0a25728c5daa902e9fbf0ec7159d03b fix-drivers-usb-host--isp116x-hcd
 440828233eecb520182cd529560ef9ed0717f714 fix-drivers-usb-musb--musb_hdrc
 82545763b6ee2c37ded47133fbb1207dcdada9b6 fix-drivers-usb-host--uhci-hcd
+6293093ac1bbc288daeb14fde04470f7f530363b fix-net-l2tp--l2tp_core
+436f0335fd4ffea1e0c478bff2fd2f668c7ac2c8 fix-net-wimax
