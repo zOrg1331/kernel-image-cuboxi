@@ -7,7 +7,7 @@ dwc3-y					:= core.o
 dwc3-y					+= host.o
 dwc3-y					+= gadget.o ep0.o
 
-ifneq ($(CONFIG_DEBUG_FS),)
+ifneq ($(CONFIG_USB_DWC3_DEBUG_FS),)
 	dwc3-y				+= debugfs.o
 endif
 

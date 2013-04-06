@@ -38,7 +38,7 @@
 
 #include "core.h"
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_USB_DWC3_DEBUG_FS
 extern int dwc3_debugfs_init(struct dwc3 *);
 extern void dwc3_debugfs_exit(struct dwc3 *);
 #else
