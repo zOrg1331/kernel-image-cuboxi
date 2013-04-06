@@ -134,7 +134,7 @@ static inline int da9030_reg_to_mA(int reg)
 	return ((reg * 24000) >> 8) / 15;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_BATTERY_DA9030_DEBUG_FS
 static int bat_debug_show(struct seq_file *s, void *data)
 {
 	struct da9030_charger *charger = s->private;
