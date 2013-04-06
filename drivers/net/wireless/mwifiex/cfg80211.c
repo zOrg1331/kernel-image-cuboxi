@@ -1287,7 +1287,7 @@ struct net_device *mwifiex_add_virtual_intf(struct wiphy *wiphy,
 
 	dev_dbg(adapter->dev, "info: %s: Marvell 802.11 Adapter\n", dev->name);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 	mwifiex_dev_debugfs_init(priv);
 #endif
 	return dev;
@@ -1301,7 +1301,7 @@ int mwifiex_del_virtual_intf(struct wiphy *wiphy, struct net_device *dev)
 {
 	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 	mwifiex_dev_debugfs_remove(priv);
 #endif
 

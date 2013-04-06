@@ -850,7 +850,7 @@ EXPORT_SYMBOL_GPL(mwifiex_remove_card);
 static int
 mwifiex_init_module(void)
 {
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 	mwifiex_debugfs_init();
 #endif
 	return 0;
@@ -864,7 +864,7 @@ mwifiex_init_module(void)
 static void
 mwifiex_cleanup_module(void)
 {
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 	mwifiex_debugfs_remove();
 #endif
 }

@@ -444,7 +444,7 @@ struct mwifiex_private {
 	struct wireless_dev *wdev;
 	struct mwifiex_chan_freq_power cfp;
 	char version_str[128];
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 	struct dentry *dfs_dev_dir;
 #endif
 	u8 nick_name[16];
@@ -966,7 +966,7 @@ struct net_device *mwifiex_add_virtual_intf(struct wiphy *wiphy,
 int mwifiex_del_virtual_intf(struct wiphy *wiphy, struct net_device *dev);
 
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MWIFIEX_DEBUG_FS
 void mwifiex_debugfs_init(void);
 void mwifiex_debugfs_remove(void);
 

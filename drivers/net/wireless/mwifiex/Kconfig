@@ -9,6 +9,11 @@ config MWIFIEX
 	  If you choose to build it as a module, it will be called
 	  mwifiex.
 
+config MWIFIEX_DEBUG_FS
+	bool "Marvell WiFi-Ex debugfs support"
+	depends on MWIFIEX && DEBUG_FS
+	default y
+
 config MWIFIEX_SDIO
 	tristate "Marvell WiFi-Ex Driver for SD8787/SD8797"
 	depends on MWIFIEX && MMC
