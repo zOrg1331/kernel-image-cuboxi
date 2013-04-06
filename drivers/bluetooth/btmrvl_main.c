@@ -562,7 +562,7 @@ int btmrvl_register_hdev(struct btmrvl_private *priv)
 		goto err_hci_register_dev;
 	}
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_BT_DEBUG_FS
 	btmrvl_debugfs_init(hdev);
 #endif
 
@@ -631,7 +631,7 @@ int btmrvl_remove_card(struct btmrvl_private *priv)
 
 	kthread_stop(priv->main_thread.task);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_BT_DEBUG_FS
 	btmrvl_debugfs_remove(hdev);
 #endif
 

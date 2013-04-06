@@ -13,6 +13,11 @@ config BT_HCIBTUSB
 	  Say Y here to compile support for Bluetooth USB devices into the
 	  kernel or say M to compile it as module (btusb).
 
+config BT_DEBUG_FS
+	bool "Bluetooth debugfs support"
+	depends on DEBUG_FS
+	default y
+
 config BT_HCIBTSDIO
 	tristate "HCI SDIO driver"
 	depends on MMC
