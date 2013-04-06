@@ -104,7 +104,7 @@ static inline void dma_free(void *cpu_addr, dma_addr_t handle)
 }
 #endif	/* CONFIG_UML */
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CAIF_SPI_SLAVE_DEBUG_FS
 
 #define DEBUGFS_BUF_SIZE	4096
 
@@ -284,7 +284,7 @@ static inline void dev_debugfs_rem(struct cfspi *cfspi)
 inline void cfspi_dbg_state(struct cfspi *cfspi, int state)
 {
 }
-#endif				/* CONFIG_DEBUG_FS */
+#endif				/* CONFIG_CAIF_SPI_SLAVE_DEBUG_FS */
 
 static LIST_HEAD(cfspi_list);
 static spinlock_t cfspi_list_lock;

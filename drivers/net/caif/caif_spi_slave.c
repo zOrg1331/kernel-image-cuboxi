@@ -45,7 +45,7 @@ int spi_up_tail_align   = 1 << 0;
 int spi_down_head_align = 1 << 2;
 int spi_down_tail_align = 1 << 1;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CAIF_SPI_SLAVE_DEBUG_FS
 static inline void debugfs_store_prev(struct cfspi *cfspi)
 {
 	/* Store previous command for debugging reasons.*/

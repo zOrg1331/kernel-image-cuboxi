@@ -23,6 +23,11 @@ config CAIF_SPI_SLAVE
 	platform specific SPI device. A sample CAIF SPI Platform device is
 	provided in Documentation/networking/caif/spi_porting.txt
 
+config CAIF_SPI_SLAVE_DEBUG_FS
+	bool "CAIF SPI transport driver for slave interface debugfs support"
+	depends on CAIF_SPI_SLAVE && DEBUG_FS
+	default y
+
 config CAIF_SPI_SYNC
 	bool "Next command and length in start of frame"
 	depends on CAIF_SPI_SLAVE
