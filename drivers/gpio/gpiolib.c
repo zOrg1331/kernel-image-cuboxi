@@ -66,7 +66,7 @@ struct gpio_desc {
 #define GPIO_FLAGS_MASK		((1 << ID_SHIFT) - 1)
 #define GPIO_TRIGGER_MASK	(BIT(FLAG_TRIG_FALL) | BIT(FLAG_TRIG_RISE))
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 	const char		*label;
 #endif
 };
@@ -78,7 +78,7 @@ static DEFINE_IDR(dirent_idr);
 
 static inline void desc_set_label(struct gpio_desc *d, const char *label)
 {
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 	d->label = label;
 #endif
 }
@@ -1368,7 +1368,7 @@ const char *gpiochip_is_requested(struct gpio_chip *chip, unsigned offset)
 		return NULL;
 	if (test_bit(FLAG_REQUESTED, &gpio_desc[gpio].flags) == 0)
 		return NULL;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 	return gpio_desc[gpio].label;
 #else
 	return "?";
@@ -1743,7 +1743,7 @@ void gpio_set_value_cansleep(unsigned gpio, int value)
 EXPORT_SYMBOL_GPL(gpio_set_value_cansleep);
 
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 
 static void gpiolib_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 {
@@ -1828,4 +1828,4 @@ static int __init gpiolib_debugfs_init(void)
 }
 subsys_initcall(gpiolib_debugfs_init);
 
-#endif	/* DEBUG_FS */
+#endif	/* GPIO_DEBUG_FS */

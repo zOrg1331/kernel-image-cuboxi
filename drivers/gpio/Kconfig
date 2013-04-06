@@ -48,6 +48,11 @@ config DEBUG_GPIO
 	  slower.  The diagnostics help catch the type of setup errors
 	  that are most common when setting up new platforms or boards.
 
+config GPIO_DEBUG_FS
+	bool "GPIO debugfs support"
+	depends on DEBUG_FS
+	default y
+
 config GPIO_SYSFS
 	bool "/sys/class/gpio/... (sysfs interface)"
 	depends on SYSFS && EXPERIMENTAL
