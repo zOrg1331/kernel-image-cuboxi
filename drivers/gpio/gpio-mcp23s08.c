@@ -315,7 +315,7 @@ mcp23s08_direction_output(struct gpio_chip *chip, unsigned offset, int value)
 
 /*----------------------------------------------------------------------*/
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 
 #include <linux/seq_file.h>
 
