@@ -13,6 +13,11 @@ config CAIF_TTY
 	identified as N_CAIF. When this ldisc is opened from user space
 	it will redirect the TTY's traffic into the CAIF stack.
 
+config CAIF_TTY_DEBUG_FS
+	bool "CAIF TTY debugfs support"
+	depends on CAIF_TTY && DEBUG_FS
+	default y
+
 config CAIF_SPI_SLAVE
 	tristate "CAIF SPI transport driver for slave interface"
 	depends on CAIF && HAS_DMA

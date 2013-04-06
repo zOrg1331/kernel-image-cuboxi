@@ -70,7 +70,7 @@ struct ser_device {
 	bool tx_started;
 	unsigned long state;
 	char *tty_name;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CAIF_TTY_DEBUG_FS
 	struct dentry *debugfs_tty_dir;
 	struct debugfs_blob_wrapper tx_blob;
 	struct debugfs_blob_wrapper rx_blob;
@@ -83,7 +83,7 @@ struct ser_device {
 
 static void caifdev_setup(struct net_device *dev);
 static void ldisc_tx_wakeup(struct tty_struct *tty);
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_CAIF_TTY_DEBUG_FS
 static inline void update_tty_status(struct ser_device *ser)
 {
 	ser->tty_status =
