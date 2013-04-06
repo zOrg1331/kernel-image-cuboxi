@@ -875,7 +875,7 @@ static int nmk_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 	return NOMADIK_GPIO_TO_IRQ(nmk_chip->chip.base) + offset;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 
 #include <linux/seq_file.h>
 
