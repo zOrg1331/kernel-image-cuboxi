@@ -259,6 +259,11 @@ config USB_ISP116X_HCD
 	  To compile this driver as a module, choose M here: the
 	  module will be called isp116x-hcd.
 
+config USB_ISP116X_HCD_DEBUG_FS
+	bool "ISP116X HCD debugfs support"
+	depends on USB_ISP116X_HCD && DEBUG_FS
+	default y
+
 config USB_ISP1760_HCD
 	tristate "ISP 1760 HCD support"
 	depends on USB && EXPERIMENTAL

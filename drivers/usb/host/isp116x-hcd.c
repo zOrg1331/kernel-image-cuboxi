@@ -1139,7 +1139,7 @@ static int isp116x_hub_control(struct usb_hcd *hcd,
 
 /*-----------------------------------------------------------------*/
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_USB_ISP116X_HCD_DEBUG_FS
 
 static void dump_irq(struct seq_file *s, char *label, u16 mask)
 {
@@ -1224,7 +1224,7 @@ static void remove_debug_file(struct isp116x *isp116x)
 #define	create_debug_file(d)	0
 #define	remove_debug_file(d)	do{}while(0)
 
-#endif				/* CONFIG_DEBUG_FS */
+#endif				/* CONFIG_USB_ISP116X_HCD_DEBUG_FS */
 
 /*-----------------------------------------------------------------*/
 
