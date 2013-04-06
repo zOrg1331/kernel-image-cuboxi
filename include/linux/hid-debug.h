@@ -24,7 +24,7 @@
 
 #define HID_DEBUG_BUFSIZE 512
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_HID_DEBUG
 
 void hid_dump_input(struct hid_device *, struct hid_usage *, __s32);
 void hid_dump_device(struct hid_device *, struct seq_file *);
