@@ -240,7 +240,7 @@ void ks8695_register_gpios(void)
 
 /* .... Debug interface ..................................................... */
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_GPIO_DEBUG_FS
 
 static int ks8695_gpio_show(struct seq_file *s, void *unused)
 {
