@@ -813,7 +813,7 @@ extern void i2400m_net_wake_stop(struct i2400m *);
 enum i2400m_pt;
 extern int i2400m_tx(struct i2400m *, const void *, size_t, enum i2400m_pt);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_WIMAX_I2400M_DEBUG_FS
 extern int i2400m_debugfs_add(struct i2400m *);
 extern void i2400m_debugfs_rm(struct i2400m *);
 #else
