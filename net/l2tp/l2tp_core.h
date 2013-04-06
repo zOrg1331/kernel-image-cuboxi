@@ -176,7 +176,7 @@ struct l2tp_tunnel {
 	struct net		*l2tp_net;	/* the net we belong to */
 
 	atomic_t		ref_count;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_L2TP_DEBUGFS
 	void (*show)(struct seq_file *m, void *arg);
 #endif
 	int (*recv_payload_hook)(struct sk_buff *skb);
