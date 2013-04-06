@@ -19,6 +19,11 @@ config MMC_DEBUG
 	  This is an option for use by developers; most people should
 	  say N here.  This enables MMC core and driver debugging.
 
+config MMC_DEBUG_FS
+	bool "MMC debugfs support"
+	depends on MMC && DEBUG_FS
+	default y
+
 if MMC
 
 source "drivers/mmc/core/Kconfig"
