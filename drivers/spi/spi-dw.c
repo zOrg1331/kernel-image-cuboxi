@@ -27,7 +27,7 @@
 
 #include "spi-dw.h"
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SPI_DW_DEBUG
 #include <linux/debugfs.h>
 #endif
 
@@ -62,7 +62,7 @@ struct chip_data {
 	void (*cs_control)(u32 command);
 };
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_SPI_DW_DEBUG
 #define SPI_REGS_BUFSIZE	1024
 static ssize_t  spi_show_regs(struct file *file, char __user *user_buf,
 				size_t count, loff_t *ppos)
@@ -153,7 +153,7 @@ static inline int mrst_spi_debugfs_init(struct dw_spi *dws)
 static inline void mrst_spi_debugfs_remove(struct dw_spi *dws)
 {
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_SPI_DW_DEBUG */
 
 /* Return the max entries we can fill into tx fifo */
 static inline u32 tx_max(struct dw_spi *dws)
