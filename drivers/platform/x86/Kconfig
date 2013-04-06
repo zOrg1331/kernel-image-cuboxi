@@ -681,6 +681,11 @@ config INTEL_IPS
 	  functionality.  If in doubt, say Y here; it will only load on
 	  supported platforms.
 
+config INTEL_IPS_DEBUG_FS
+	bool "Intel Intelligent Power Sharing debugfs support"
+	depends on INTEL_IPS && DEBUG_FS
+	default y
+
 config IBM_RTL
 	tristate "Device driver to enable PRTL support"
 	depends on X86 && PCI

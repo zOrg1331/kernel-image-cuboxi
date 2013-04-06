@@ -1221,7 +1221,7 @@ static irqreturn_t ips_irq_handler(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
-#ifndef CONFIG_DEBUG_FS
+#ifndef CONFIG_INTEL_IPS_DEBUG_FS
 static void ips_debugfs_init(struct ips_driver *ips) { return; }
 static void ips_debugfs_cleanup(struct ips_driver *ips) { return; }
 #else
@@ -1357,7 +1357,7 @@ err_cleanup:
 	ips_debugfs_cleanup(ips);
 	return;
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_INTEL_IPS_DEBUG_FS */
 
 /**
  * ips_detect_cpu - detect whether CPU supports IPS
