@@ -32,6 +32,11 @@ config USB_MUSB_HDRC
 
 if USB_MUSB_HDRC
 
+config USB_MUSB_HDRC_DEBUG_FS
+	bool "Inventra Highspeed Dual Role Controller debugfs support"
+	depends on DEBUG_FS
+	default y
+
 choice
 	prompt "Platform Glue Layer"
 
