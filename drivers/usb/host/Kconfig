@@ -458,6 +458,11 @@ config USB_UHCI_HCD
 	  To compile this driver as a module, choose M here: the
 	  module will be called uhci-hcd.
 
+config USB_UHCI_HCD_DEBUG_FS
+	bool "UHCI HCD debugfs support"
+	depends on USB_UHCI_HCD && DEBUG_FS
+	default y
+
 config USB_UHCI_SUPPORT_NON_PCI_HC
 	bool
 	depends on USB_UHCI_HCD

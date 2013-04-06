@@ -486,7 +486,7 @@ check_qh_link:
 	return out - buf;
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_USB_UHCI_HCD_DEBUG_FS
 
 #define MAX_OUTPUT	(64 * 1024)
 
@@ -571,7 +571,7 @@ static const struct file_operations uhci_debug_operations = {
 };
 #define UHCI_DEBUG_OPS
 
-#endif	/* CONFIG_DEBUG_FS */
+#endif	/* CONFIG_USB_UHCI_HCD_DEBUG_FS */
 
 #else	/* DEBUG */
 
