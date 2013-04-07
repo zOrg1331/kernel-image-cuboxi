@@ -48,7 +48,7 @@ EXPORT_SYMBOL(frontswap_enabled);
  */
 static bool frontswap_writethrough_enabled __read_mostly;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MEMORY_DEBUG_FS
 /*
  * Counters available via /sys/kernel/debug/frontswap (if debugfs is
  * properly configured).  These are for information only so are not protected
@@ -297,7 +297,7 @@ EXPORT_SYMBOL(frontswap_curr_pages);
 
 static int __init init_frontswap(void)
 {
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MEMORY_DEBUG_FS
 	struct dentry *root = debugfs_create_dir("frontswap", NULL);
 	if (root == NULL)
 		return -ENXIO;
