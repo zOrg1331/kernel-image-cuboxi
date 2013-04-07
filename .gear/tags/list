@@ -15,7 +15,7 @@ c1a5be3926dc02959b4b7031428beb36fdc70d35 fix-arch-x86--hpet
 aa240b12ce55ca25b32708b1ed0ef9a3286a17ec fix-arch-x86--kexec
 63397a5b97b93125cd828b32f75a823376baf58f fix-block
 9058eb412ac17ce53d9bcb21b0e0d5fb3846331d fix-block-partitions--efi
-d8dd2d7c4ccb5ef0bc823b79c1b263585542861c fix-drivers-acpi
+75dc6784427287af55925a8363380a8cc96cd251 fix-drivers-acpi
 0e145d2a6c395c282d90be6f08b5ecf3a4ec2e6f fix-drivers-acpi--ec_sys
 2740c820e309c0a5657dd511293d406ab4b6d05a fix-drivers-acpi--thermal
 9ec966102d04a8ff0debbeae410f6f8e8b48a320 fix-drivers-acpi-acpica
@@ -64,7 +64,7 @@ c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 5606af024c9372231097dfe260c6eb7011e73d0e fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
-e89903bc258d112d0f4cad0d8e8af27e06ed740a fix-mm
+db2e905dda398c92d28bb7dfb0631cbd64aa9b39 fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -175,7 +175,7 @@ abbe677e492847c4e9c30d544b10210d9b65a91c fix-drivers-net-ethernet-fujitsu--at170
 d1dd99489bee525dc905cfa3fc2e251e4f914b38 fix-drivers-net-ethernet-amd--depca
 0ed2abd3e04bab619635da7e07991a9431524623 fix-drivers-spi--spi
 9a62f5853a7a19ad659a20d15a5decd94fdf590a feat-fs-overlayfs
-97fff6333316c45e27206bb5fae1fab5e5b6c4d2 fix-arch-x86--mcheck
+17f461e09e92756f5d73166153bdd8dba6e706a8 fix-arch-x86--mcheck
 3b0e73c0732714a84a8a2f100d753d9caf58951e fix-arch-x86-cpu--rdrand
 922661216de6472f07e448ac945c7410c9b58e65 fix-drivers-ata--ata_piix
 a1851a687a8bfe5f51caa1e92b6caaa31d09149d fix-drivers-ata--pata_amd
@@ -225,7 +225,7 @@ d3b9c2918e609624d271e9a03c0564004ce2687b fix-virt-kvm--kvm-amd
 48c191bffa914fb5a938fdceba4538a3194b4177 feat-mm--zcache
 7f575529ed28aa6aaabc6d5c6e478aca7b471b64 feat-mm--zsmalloc
 f88ca03b21202105d7ddf91ae91997d3a93825cd feat-drivers-video--xgifb
-ba9b9e346c75d5b317a484c970fba39f0c5a1bd1 feat-mm--frontswap
+e834e05db409e60d0d2c32ca214e59c2687e280d feat-mm--frontswap
 6449469d1816973da6e673f30acfb6c1748c775e v3.4.26
 9c1e19b2a261e0a6805357dd488166b46aaa15dd feat-kernel-power-tuxonice--frontswap
 e236185f9457ae1bb6d3f672e518fb9badfd0823 fix-lib
@@ -342,3 +342,6 @@ cffb3e1ed1cda1e3942712be51e0a3fd29746a89 fix-drivers-power--da9030_battery
 82545763b6ee2c37ded47133fbb1207dcdada9b6 fix-drivers-usb-host--uhci-hcd
 6293093ac1bbc288daeb14fde04470f7f530363b fix-net-l2tp--l2tp_core
 436f0335fd4ffea1e0c478bff2fd2f668c7ac2c8 fix-net-wimax
+3db289c81e6f6e571759bcde4925e64f20924bcb fix-kernel-power
+23e980718859ecf1115967878c89396bccebecc6 fix-mm--cleancache
+5a977989cb6260a4a373c7c7d24b83b6dcc8515b fix-mm--memblock
