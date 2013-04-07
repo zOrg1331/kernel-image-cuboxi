@@ -56,7 +56,7 @@ void bdi_lock_two(struct bdi_writeback *wb1, struct bdi_writeback *wb2)
 	}
 }
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_MEMORY_DEBUG_FS
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
