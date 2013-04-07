@@ -985,7 +985,7 @@ static int __init early_memblock(char *p)
 }
 early_param("memblock", early_memblock);
 
-#if defined(CONFIG_DEBUG_FS) && !defined(CONFIG_ARCH_DISCARD_MEMBLOCK)
+#if defined(CONFIG_MEMORY_DEBUG_FS) && !defined(CONFIG_ARCH_DISCARD_MEMBLOCK)
 
 static int memblock_debug_show(struct seq_file *m, void *private)
 {
@@ -1033,4 +1033,4 @@ static int __init memblock_init_debugfs(void)
 }
 __initcall(memblock_init_debugfs);
 
-#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_MEMORY_DEBUG_FS */
