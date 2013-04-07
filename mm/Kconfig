@@ -140,6 +140,11 @@ config ARCH_DISCARD_MEMBLOCK
 config NO_BOOTMEM
 	boolean
 
+config MEMORY_DEBUG_FS
+	bool "Support debugfs in memory subsystems"
+	depends on DEBUG_FS
+	default y
+
 # eventually, we can have this option just 'select SPARSEMEM'
 config MEMORY_HOTPLUG
 	bool "Allow for memory hot-add"
