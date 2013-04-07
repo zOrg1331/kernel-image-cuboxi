@@ -741,7 +741,7 @@ pgprot_t pgprot_writecombine(pgprot_t prot)
 }
 EXPORT_SYMBOL_GPL(pgprot_writecombine);
 
-#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_X86_PAT)
+#if defined(CONFIG_MEMORY_DEBUG_FS) && defined(CONFIG_X86_PAT)
 
 static struct memtype *memtype_get_idx(loff_t pos)
 {
@@ -825,4 +825,4 @@ static int __init pat_memtype_list_init(void)
 
 late_initcall(pat_memtype_list_init);
 
-#endif /* CONFIG_DEBUG_FS && CONFIG_X86_PAT */
+#endif /* CONFIG_MEMORY_DEBUG_FS && CONFIG_X86_PAT */
