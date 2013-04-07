@@ -2349,7 +2349,7 @@ static int __init mcheck_disable(char *str)
 }
 __setup("nomce", mcheck_disable);
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_X86_MCE_DEBUG_FS
 struct dentry *mce_get_debugfs_dir(void)
 {
 	static struct dentry *dmce;

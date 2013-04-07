@@ -870,6 +870,11 @@ config X86_MCE
 	  The action the kernel takes depends on the severity of the problem,
 	  ranging from warning messages to halting the machine.
 
+config X86_MCE_DEBUG_FS
+	bool "Machine Check / overheating reporting debugfs support"
+	depends on X86_MCE && DEBUG_FS
+	default y
+
 config X86_MCE_INTEL
 	def_bool y
 	prompt "Intel MCE features"
