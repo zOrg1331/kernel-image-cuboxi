@@ -137,6 +137,11 @@ config PM_ADVANCED_DEBUG
 	fields of device objects from user space.  If you are not a kernel
 	developer interested in debugging/testing Power Management, say "no".
 
+config PM_DEBUG_FS
+	bool "Power Management Debugfs Support"
+	depends on PM && DEBUG_FS
+	default y
+
 config PM_TEST_SUSPEND
 	bool "Test suspend/resume and wakealarm during bootup"
 	depends on SUSPEND && PM_DEBUG && RTC_CLASS=y
