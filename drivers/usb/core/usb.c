@@ -978,6 +978,7 @@ static struct dentry *usb_debug_devices;
 
 static int usb_debugfs_init(void)
 {
+#ifdef CONFIG_USB_DEBUG_FS
 	usb_debug_root = debugfs_create_dir("usb", NULL);
 	if (!usb_debug_root)
 		return -ENOENT;
@@ -990,14 +991,16 @@ static int usb_debugfs_init(void)
 		usb_debug_root = NULL;
 		return -ENOENT;
 	}
-
+#endif
 	return 0;
 }
 
 static void usb_debugfs_cleanup(void)
 {
+#ifdef CONFIG_USB_DEBUG_FS
 	debugfs_remove(usb_debug_devices);
 	debugfs_remove(usb_debug_root);
+#endif
 }
 
 /*
