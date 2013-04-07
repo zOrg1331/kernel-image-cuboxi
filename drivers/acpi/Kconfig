@@ -73,6 +73,11 @@ config ACPI_PROCFS_POWER
 
 	  Say N to delete power /proc/acpi/ directories that have moved to /sys/
 
+config ACPI_DEBUG_FS
+	bool "ACPI debugfs support"
+	depends on DEBUG_FS
+	default y
+
 config ACPI_EC_DEBUGFS
 	tristate "EC read/write access through /sys/kernel/debug/ec"
 	default n
