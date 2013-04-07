@@ -1221,7 +1221,7 @@ static int __init setup_vmstat(void)
 }
 module_init(setup_vmstat)
 
-#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_COMPACTION)
+#if defined(CONFIG_MEMORY_DEBUG_FS) && defined(CONFIG_COMPACTION)
 #include <linux/debugfs.h>
 
 static struct dentry *extfrag_debug_root;
