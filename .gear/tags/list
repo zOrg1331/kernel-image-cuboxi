@@ -64,7 +64,7 @@ c019cc9aaf3a3ca8608c59b7de63b47ba848bce3 fix-drivers-video-omap2-dss
 5606af024c9372231097dfe260c6eb7011e73d0e fix-fs-reiserfs
 32cac9bea0ca3fc8ec21b719612681a326575725 fix-init
 efcbe05e98d03a86ccb9637150e1a230c161a75c fix-kernel
-db2e905dda398c92d28bb7dfb0631cbd64aa9b39 fix-mm
+e24735ff01b21361b95a2535087ffe341055a9ec fix-mm
 2ddef8ccdd23b0407d8b2b88d1dd590f90a3031f fix-mm--compaction
 ce27caa31ec7b7d44544929f8f82a9d189f9a9ed fix-mm--memcontrol
 b55159a1ff627267e92107504b6643d30fed3397 fix-mm--memory-failure
@@ -314,7 +314,7 @@ a62021758ec3da13519239f8a4a8af00548723a4 fix-drivers-hid--hid-wiimote
 93317ef75460745a46a3b0c54747771df1c39e99 fix-drivers-spi--spi-dw
 0b4a8053168d885a5dd621205990f19ece992c73 fix-drivers-hwmon--asus_atk0110
 e8dbcd5d0ca635e66e77287a825634037fa1b99a fix-drivers-misc--vmw_balloon
-87cf39056b68dfe76fd1c541ab03d340423e040c fix-drivers-regulator
+74db072429305849b518bc7246dc3b2aec11ff62 fix-drivers-regulator
 9ea5dec5033e279631a9bde98a3ac7e4336744a7 fix-drivers-iommu--amd_iommu
 32e1dea07de360371a5de3566440756425a362b5 fix-drivers-iommu--intel-iommu
 be51d33df05aae47a1e112df4e1e7812e7d87f40 fix-drivers-net--sb1000
@@ -345,3 +345,4 @@ cffb3e1ed1cda1e3942712be51e0a3fd29746a89 fix-drivers-power--da9030_battery
 3db289c81e6f6e571759bcde4925e64f20924bcb fix-kernel-power
 23e980718859ecf1115967878c89396bccebecc6 fix-mm--cleancache
 5a977989cb6260a4a373c7c7d24b83b6dcc8515b fix-mm--memblock
+9cea46962e32a846592fee67c4893689bd4d154a fix-drivers-usb-core
