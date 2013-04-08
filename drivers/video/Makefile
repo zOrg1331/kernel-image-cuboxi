@@ -14,7 +14,6 @@ fb-objs                           := $(fb-y)
 obj-$(CONFIG_VT)		  += console/
 obj-$(CONFIG_LOGO)		  += logo/
 obj-y				  += backlight/
-obj-$(CONFIG_BOOTSPLASH)	  += bootsplash/
 
 obj-$(CONFIG_EXYNOS_VIDEO)     += exynos/
 
