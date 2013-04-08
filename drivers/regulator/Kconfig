@@ -1,5 +1,5 @@
 menuconfig REGULATOR
-	bool "Voltage and Current Regulator Support"
+	tristate "Voltage and Current Regulator Support"
 	help
 	  Generic Voltage and Current Regulator support.
 

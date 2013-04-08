@@ -3235,8 +3235,10 @@ static int __init regulator_init(void)
 	return ret;
 }
 
+#ifndef MODULE
 /* init early to allow our consumers to complete system booting */
 core_initcall(regulator_init);
+#endif
 
 static int __init regulator_init_complete(void)
 {
@@ -3244,6 +3246,12 @@ static int __init regulator_init_complete(void)
 	struct regulator_ops *ops;
 	struct regulation_constraints *c;
 	int enabled, ret;
+
+#ifdef MODULE
+	ret = regulator_init();
+	if (ret)
+		return ret;
+#endif
 
 	mutex_lock(&regulator_list_mutex);
 
@@ -3297,4 +3305,12 @@ unlock:
 
 	return 0;
 }
+#ifndef MODULE
 late_initcall(regulator_init_complete);
+#else
+module_init(regulator_init_complete);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Liam Girdwood <lrg@slimlogic.co.uk>");
+MODULE_DESCRIPTION("Voltage/Current Regulator framework driver");
+#endif

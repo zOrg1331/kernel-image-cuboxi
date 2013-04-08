@@ -185,7 +185,7 @@ struct regulator_init_data {
 int regulator_suspend_prepare(suspend_state_t state);
 int regulator_suspend_finish(void);
 
-#ifdef CONFIG_REGULATOR
+#if IS_ENABLED(CONFIG_REGULATOR)
 void regulator_has_full_constraints(void);
 void regulator_use_dummy_regulator(void);
 #else

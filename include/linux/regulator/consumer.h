@@ -128,7 +128,7 @@ struct regulator_bulk_data {
 	int ret;
 };
 
-#if defined(CONFIG_REGULATOR)
+#if IS_ENABLED(CONFIG_REGULATOR)
 
 /* regulator get and put */
 struct regulator *__must_check regulator_get(struct device *dev,

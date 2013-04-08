@@ -3,8 +3,9 @@
 #
 
 
-obj-$(CONFIG_REGULATOR) += core.o dummy.o fixed-helper.o
-obj-$(CONFIG_OF) += of_regulator.o
+regulator-y := core.o dummy.o fixed-helper.o
+regulator-$(CONFIG_OF) += of_regulator.o
+obj-$(CONFIG_REGULATOR) += regulator.o
 obj-$(CONFIG_REGULATOR_FIXED_VOLTAGE) += fixed.o
 obj-$(CONFIG_REGULATOR_VIRTUAL_CONSUMER) += virtual.o
 obj-$(CONFIG_REGULATOR_USERSPACE_CONSUMER) += userspace-consumer.o
