@@ -695,7 +695,7 @@ config AB8500_DEBUG
          filesystem, debugfs.
 
 config AB8500_GPADC
-	bool "AB8500 GPADC driver"
+	tristate "AB8500 GPADC driver"
 	depends on AB8500_CORE && REGULATOR_AB8500
 	default y
 	help

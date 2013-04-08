@@ -667,7 +667,11 @@ static void __exit ab8500_gpadc_exit(void)
 	platform_driver_unregister(&ab8500_gpadc_driver);
 }
 
+#ifdef MODULE
+module_init(ab8500_gpadc_init);
+#else
 subsys_initcall_sync(ab8500_gpadc_init);
+#endif
 module_exit(ab8500_gpadc_exit);
 
 MODULE_LICENSE("GPL v2");
