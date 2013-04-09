@@ -241,7 +241,7 @@ config REGULATOR_AB3100
 	 for the system.
 
 config REGULATOR_AB8500
-	bool "ST-Ericsson AB8500 Power Regulators"
+	tristate "ST-Ericsson AB8500 Power Regulators"
 	depends on AB8500_CORE
 	help
 	  This driver supports the regulators found on the ST-Ericsson mixed

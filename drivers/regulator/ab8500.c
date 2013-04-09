@@ -876,7 +876,11 @@ static int __init ab8500_regulator_init(void)
 
 	return ret;
 }
+#ifdef MODULE
+module_init(ab8500_regulator_init);
+#else
 subsys_initcall(ab8500_regulator_init);
+#endif
 
 static void __exit ab8500_regulator_exit(void)
 {
