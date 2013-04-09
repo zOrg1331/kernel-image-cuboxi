@@ -437,7 +437,7 @@ config GPIO_SODAVILLE
 	  Say Y here to support Intel Sodaville GPIO.
 
 config GPIO_TIMBERDALE
-	bool "Support for timberdale GPIO IP"
+	tristate "Support for timberdale GPIO IP"
 	depends on MFD_TIMBERDALE && HAS_IOMEM
 	---help---
 	Add support for the GPIO IP in the timberdale FPGA.
