@@ -1950,7 +1950,7 @@ sed -i '/^CONFIG_USB_OHCI_HCD=/s/=m/=y/' .config
 %endif
 %endif
 %ifarch %amd_64 %amd_32 %via_64 %via_32
-config_disable SCHED_SMT NET_DMA
+config_disable SCHED_SMT NET_DMA PCH_DMA MFD_TIMBERDALE
 %endif
 %ifarch %ix86
 config_disable SCHED_MC
