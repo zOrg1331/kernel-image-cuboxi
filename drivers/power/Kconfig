@@ -265,7 +265,7 @@ config CHARGER_GPIO
 	  called gpio-charger.
 
 config CHARGER_MANAGER
-	bool "Battery charger manager for multiple chargers"
+	tristate "Battery charger manager for multiple chargers"
 	depends on REGULATOR && RTC_CLASS
 	help
           Say Y to enable charger-manager support, which allows multiple

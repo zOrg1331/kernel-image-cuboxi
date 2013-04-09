@@ -1050,7 +1050,11 @@ static int __init charger_manager_init(void)
 {
 	return platform_driver_register(&charger_manager_driver);
 }
+#ifdef MODULE
+module_init(charger_manager_init);
+#else
 late_initcall(charger_manager_init);
+#endif
 
 static void __exit charger_manager_cleanup(void)
 {

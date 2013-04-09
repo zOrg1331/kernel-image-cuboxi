@@ -131,7 +131,7 @@ struct charger_manager {
 	bool status_save_batt;
 };
 
-#ifdef CONFIG_CHARGER_MANAGER
+#if IS_ENABLED(CONFIG_CHARGER_MANAGER)
 extern int setup_charger_manager(struct charger_global_desc *gd);
 extern bool cm_suspend_again(void);
 #else
