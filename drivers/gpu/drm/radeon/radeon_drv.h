@@ -464,7 +464,7 @@ extern void r600_blit_swap(struct drm_device *dev,
 			   int w, int h, int src_pitch, int dst_pitch, int cpp);
 
 /* atpx handler */
-#if defined(CONFIG_VGA_SWITCHEROO)
+#if IS_ENABLED(CONFIG_VGA_SWITCHEROO)
 void radeon_register_atpx_handler(void);
 void radeon_unregister_atpx_handler(void);
 #else

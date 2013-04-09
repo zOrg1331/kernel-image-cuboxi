@@ -74,7 +74,7 @@ radeon-y += radeon_device.o radeon_asic.o radeon_kms.o \
 	radeon_semaphore.o radeon_sa.o atombios_i2c.o si.o si_blit_shaders.o
 
 radeon-$(CONFIG_COMPAT) += radeon_ioc32.o
-radeon-$(CONFIG_VGA_SWITCHEROO) += radeon_atpx_handler.o
+radeon-$(subst m,y,$(CONFIG_VGA_SWITCHEROO)) += radeon_atpx_handler.o
 radeon-$(CONFIG_ACPI) += radeon_acpi.o
 
 obj-$(CONFIG_DRM_RADEON)+= radeon.o
