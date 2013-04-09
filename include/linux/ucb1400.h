@@ -162,7 +162,7 @@ static inline void ucb1400_adc_disable(struct snd_ac97 *ac97)
 unsigned int ucb1400_adc_read(struct snd_ac97 *ac97, u16 adc_channel,
 			      int adcsync);
 
-#ifdef CONFIG_GPIO_UCB1400
+#if IS_ENABLED(CONFIG_GPIO_UCB1400)
 void __init ucb1400_gpio_set_data(struct ucb1400_gpio_data *data);
 #else
 static inline void ucb1400_gpio_set_data(struct ucb1400_gpio_data *data) {}
