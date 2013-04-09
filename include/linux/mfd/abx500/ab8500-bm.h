@@ -422,7 +422,7 @@ struct ab8500_chargalg_platform_data {
 struct ab8500_btemp;
 struct ab8500_gpadc;
 struct ab8500_fg;
-#ifdef CONFIG_AB8500_BM
+#if IS_ENABLED(CONFIG_AB8500_BM)
 void ab8500_fg_reinit(void);
 void ab8500_charger_usb_state_changed(u8 bm_usb_state, u16 mA);
 struct ab8500_btemp *ab8500_btemp_get(void);

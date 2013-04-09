@@ -241,6 +241,7 @@ struct ab8500_fg *ab8500_fg_get(void)
 	fg = list_first_entry(&ab8500_fg_list, struct ab8500_fg, node);
 	return fg;
 }
+EXPORT_SYMBOL_GPL(ab8500_fg_get);
 
 /* Main battery properties */
 static enum power_supply_property ab8500_fg_props[] = {
@@ -567,6 +568,7 @@ fail:
 	mutex_unlock(&di->cc_lock);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(ab8500_fg_inst_curr_start);
 
 /**
  * ab8500_fg_inst_curr_done() - check if fg conversion is done
@@ -578,6 +580,7 @@ int ab8500_fg_inst_curr_done(struct ab8500_fg *di)
 {
 	return completion_done(&di->ab8500_fg_complete);
 }
+EXPORT_SYMBOL_GPL(ab8500_fg_inst_curr_done);
 
 /**
  * ab8500_fg_inst_curr_finalize() - battery instantaneous current
@@ -673,6 +676,7 @@ fail:
 	mutex_unlock(&di->cc_lock);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(ab8500_fg_inst_curr_finalize);
 
 /**
  * ab8500_fg_inst_curr_blocking() - battery instantaneous current
@@ -2628,7 +2632,11 @@ static void __exit ab8500_fg_exit(void)
 	platform_driver_unregister(&ab8500_fg_driver);
 }
 
+#ifdef MODULE
+module_init(ab8500_fg_init);
+#else
 subsys_initcall_sync(ab8500_fg_init);
+#endif
 module_exit(ab8500_fg_exit);
 
 MODULE_LICENSE("GPL v2");

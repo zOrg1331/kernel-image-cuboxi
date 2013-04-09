@@ -2780,7 +2780,11 @@ static void __exit ab8500_charger_exit(void)
 	platform_driver_unregister(&ab8500_charger_driver);
 }
 
+#ifdef MODULE
+module_init(ab8500_charger_init);
+#else
 subsys_initcall_sync(ab8500_charger_init);
+#endif
 module_exit(ab8500_charger_exit);
 
 MODULE_LICENSE("GPL v2");
