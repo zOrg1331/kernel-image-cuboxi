@@ -460,7 +460,11 @@ static int __init pm8607_regulator_init(void)
 {
 	return platform_driver_register(&pm8607_regulator_driver);
 }
+#ifdef MODULE
+module_init(pm8607_regulator_init);
+#else
 subsys_initcall(pm8607_regulator_init);
+#endif
 
 static void __exit pm8607_regulator_exit(void)
 {
