@@ -48,7 +48,7 @@
 #include <linux/ethtool.h>
 #include <net/net_namespace.h>
 #include <net/dsa.h>
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 #include <net/dcbnl.h>
 #endif
 #include <net/netprio_cgroup.h>
@@ -1282,7 +1282,7 @@ struct net_device {
 #define GSO_MAX_SEGS		65535
 	u16			gso_max_segs;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	/* Data Center Bridging netlink ops */
 	const struct dcbnl_rtnl_ops *dcbnl_ops;
 #endif
