@@ -29,7 +29,7 @@ struct vga_switcheroo_handler {
 };
 
 
-#if defined(CONFIG_VGA_SWITCHEROO)
+#if IS_ENABLED(CONFIG_VGA_SWITCHEROO)
 void vga_switcheroo_unregister_client(struct pci_dev *dev);
 int vga_switcheroo_register_client(struct pci_dev *dev,
 				   void (*set_gpu_state)(struct pci_dev *dev, enum vga_switcheroo_state),

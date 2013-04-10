@@ -18,7 +18,7 @@ config VGA_ARB_MAX_GPUS
 	  multiple GPUS.  The overhead for each GPU is very small.
 
 config VGA_SWITCHEROO
-	bool "Laptop Hybrid Graphics - GPU switching support"
+	tristate "Laptop Hybrid Graphics - GPU switching support"
 	depends on X86
 	depends on ACPI
 	help
