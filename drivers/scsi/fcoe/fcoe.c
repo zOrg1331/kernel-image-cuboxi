@@ -2102,7 +2102,7 @@ static bool fcoe_match(struct net_device *netdev)
  */
 static void fcoe_dcb_create(struct fcoe_interface *fcoe)
 {
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	int dcbx;
 	u8 fup, up;
 	struct net_device *netdev = fcoe->realdev;
