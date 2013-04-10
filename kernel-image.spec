@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.39
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -241,9 +241,11 @@ Patch0181: linux-%kernel_branch.39-fix-drivers-gpio--gpio-ks8695.patch
 Patch0182: linux-%kernel_branch.39-fix-drivers-gpio--gpio-mcp23s08.patch
 Patch0183: linux-%kernel_branch.39-fix-drivers-gpio--gpio-nomadik.patch
 Patch0184: linux-%kernel_branch.39-fix-drivers-gpio--gpio-tegra.patch
-Patch0185: linux-%kernel_branch.39-fix-drivers-gpio--gpio-wm831x.patch
-Patch0186: linux-%kernel_branch.39-fix-drivers-gpio--gpio-wm8994.patch
-Patch0187: linux-%kernel_branch.39-fix-drivers-gpio--gpiolib.patch
+Patch0185: linux-%kernel_branch.39-fix-drivers-gpio--gpio-timberdale.patch
+Patch0186: linux-%kernel_branch.39-fix-drivers-gpio--gpio-ucb1400.patch
+Patch0187: linux-%kernel_branch.39-fix-drivers-gpio--gpio-wm831x.patch
+Patch0188: linux-%kernel_branch.39-fix-drivers-gpio--gpio-wm8994.patch
+Patch0189: linux-%kernel_branch.39-fix-drivers-gpio--gpiolib.patch
 
 Patch0190: linux-%kernel_branch.38-fix-drivers-gpu-drm.patch
 Patch0191: linux-%kernel_branch.25-fix-drivers-gpu-drm--exynosdrm.patch
@@ -251,6 +253,7 @@ Patch0192: linux-%kernel_branch.25-fix-drivers-gpu-drm--gma500_gfx.patch
 Patch0193: linux-%kernel_branch.38-fix-drivers-gpu-drm--i915.patch
 Patch0194: linux-%kernel_branch.20-fix-drivers-gpu-drm--nouveau.patch
 Patch0195: linux-%kernel_branch.38-fix-drivers-gpu-drm--radeon.patch
+Patch0196: linux-%kernel_branch.39-fix-drivers-gpu-vga--vga_switcheroo.patch
 
 Patch0201: linux-%kernel_branch.38-fix-drivers-hid--hid.patch
 Patch0202: linux-%kernel_branch.20-fix-drivers-hid--hid-apple.patch
@@ -438,7 +441,8 @@ Patch0551: linux-%kernel_branch.34-fix-include-linux.patch
 Patch0560: linux-%kernel_branch.20-fix-init.patch
 
 Patch0570: linux-%kernel_branch.34-fix-kernel.patch
-Patch0571: linux-%kernel_branch.39-fix-kernel-power.patch
+Patch0571: linux-%kernel_branch.39-fix-kernel-irq.patch
+Patch0572: linux-%kernel_branch.39-fix-kernel-power.patch
 
 Patch0580: linux-%kernel_branch.25-fix-lib.patch
 Patch0581: linux-%kernel_branch.29-fix-lib--btree.patch
@@ -1360,6 +1364,8 @@ cd linux-%version
 %patch0185 -p1
 %patch0186 -p1
 %patch0187 -p1
+%patch0188 -p1
+%patch0189 -p1
 
 # fix-drivers-gpu-drm*
 %patch0190 -p1
@@ -1368,6 +1374,7 @@ cd linux-%version
 %patch0193 -p1
 %patch0194 -p1
 %patch0195 -p1
+%patch0196 -p1
 
 # fix-drivers-hid--*
 %patch0201 -p1
@@ -1590,6 +1597,7 @@ cd linux-%version
 # fix-kernel*
 %patch0570 -p1
 %patch0571 -p1
+%patch0572 -p1
 
 # fix-lib*
 %patch0580 -p1
@@ -1955,6 +1963,9 @@ config_disable SCHED_SMT NET_DMA PCH_DMA MFD_TIMBERDALE
 %ifarch %ix86
 config_disable SCHED_MC
 %endif
+
+# FIXME
+config_disable ISCSI_IBFT_FIND FIRMWARE_MEMMAP GPIO_SX150X MFD_STMPE MFD_TPS65910
 
 %if_enabled debug
 config_enable \
@@ -2640,6 +2651,16 @@ done)
 
 
 %changelog
+* Wed Apr 10 2013 Led <led@altlinux.ru> 3.4.39-alt6
+- updated:
+  + fix-drivers-gpu-drm--nouveau
+  + fix-drivers-gpu-drm--radeon
+- added:
+  + fix-drivers-gpio--gpio-timberdale
+  + fix-drivers-gpio--gpio-ucb1400
+  + fix-drivers-vga--vga_switcheroo
+  + fix-kernel-irq
+
 * Tue Apr 09 2013 Led <led@altlinux.ru> 3.4.39-alt5
 - removed:
   + fix-drivers-mfd--wm8994-core

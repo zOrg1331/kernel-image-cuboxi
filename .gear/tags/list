@@ -24,7 +24,7 @@ aa9ce12f490e18fe9a3ee3e2c1cc956b3ac64234 fix-drivers-base--dma-contiguous
 5bf7f15474665d3fd5db5a8e64b79cf03c42862d fix-drivers-char--lp
 cb66c9a4cff1a9a1133d820d76af89d54c36f1cc fix-drivers-connector--cn_proc
 f3e5ebe4cb015afdde245029d2fda763d0f07b2f fix-drivers-cpufreq--cpufreq_ondemand
-ae1321cd2a539a6dcc4d9386f8c3a8dd057c9ea7 fix-drivers-gpu-drm--nouveau
+1ac927fadb91195b53d65080b416e349a8dd382a fix-drivers-gpu-drm--nouveau
 c4fdd42df9c092efaf98f5a34b02191d9064437a fix-drivers-hid--hid-apple
 f353b541812127fbfd274da129a00e9759e0ff6d fix-drivers-hid--hid-hyperv
 65175964c183d9f33f9e15571d978443abb86240 fix-drivers-hv
@@ -303,7 +303,7 @@ f42d9255ae6bbcfee14b0eed201ee83024d76b39 feat-drivers-block--btier
 eb7173676c686365752d514db8e3dae4621d9e48 v3.4.38
 7aad5d79384bd575709353950c380e5f5d78fba7 fix-drivers-base-regmap
 c897f368308304ee580bb4fbc9e92bb0775ed208 fix-drivers-gpu-drm
-341db8560dcb36eaae8341f64e2dfd678b64860e fix-drivers-gpu-drm--radeon
+f045def507ffd639401c4470da9e58fb05954d9c fix-drivers-gpu-drm--radeon
 c075ef7c33015eca27c886b719105f2ea89bd621 fix-drivers-net--bonding
 a5ad8c56eab88cf0dcfd51554f431a83f35c70ec fix-fs-ceph
 123240db11d044798cd62a13c73faeccce9e43c7 fix-net-ceph
@@ -353,3 +353,7 @@ f4d1bb007dc1bb705349f275780a0e02ea8bff00 fix-drivers-power--charger-manager
 b34eee18ef94b3d43deb611a0a4e8114e676835a fix-drivers-regulator--88pm8607
 5b168f9f877fb50e86575fc48957ea74add75f7f fix-drivers-regulator--ab8500
 d60b52f86f3a4a1a658c2b8fbb4661da122ff819 fix-drivers-watchdog--watchdog
+d1696a1b3f5ff5a089df0b51c41065fabdd29a67 fix-drivers-gpio--gpio-timberdale
+fdffd16c6b12d31f77d7db83c23b6567e0df8a8b fix-drivers-gpio--gpio-ucb1400
+ac5e99a187ce5f2c420541ff0a86e9595930bac3 fix-drivers-gpu-vga--vga_switcheroo
+a792c328988f29b2d5d98d5f19d4d4b9ae81f21f fix-kernel-irq
