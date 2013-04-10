@@ -28,6 +28,7 @@
 #include <linux/init.h>
 #include <linux/export.h>
 #include <net/arp.h>
+#include <linux/module.h>
 
 /*
  *	Put the headers on a Fibre Channel packet.
@@ -129,3 +130,5 @@ struct net_device *alloc_fcdev(int sizeof_priv)
 	return alloc_netdev(sizeof_priv, "fc%d", fc_setup);
 }
 EXPORT_SYMBOL(alloc_fcdev);
+
+MODULE_LICENSE("GPL");
