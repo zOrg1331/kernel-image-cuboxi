@@ -399,8 +399,8 @@ config MFD_DA9052_I2C
 	  order to use the functionality of the device.
 
 config PMIC_ADP5520
-	bool "Analog Devices ADP5520/01 MFD PMIC Core Support"
-	depends on I2C=y
+	tristate "Analog Devices ADP5520/01 MFD PMIC Core Support"
+	depends on I2C
 	help
 	  Say yes here to add support for Analog Devices AD5520 and ADP5501,
 	  Multifunction Power Management IC. This includes
