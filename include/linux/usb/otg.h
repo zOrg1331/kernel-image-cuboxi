@@ -171,7 +171,7 @@ usb_phy_shutdown(struct usb_phy *x)
 }
 
 /* for usb host and peripheral controller drivers */
-#ifdef CONFIG_USB_OTG_UTILS
+#if IS_ENABLED(CONFIG_USB_OTG_UTILS)
 extern struct usb_phy *usb_get_transceiver(void);
 extern void usb_put_transceiver(struct usb_phy *);
 extern const char *otg_state_string(enum usb_otg_state state);
