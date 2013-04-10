@@ -360,7 +360,7 @@ static s32 ixgbe_fc_enable_82598(struct ixgbe_hw *hw, s32 packetbuf_num)
 	u32 link_speed = 0;
 	bool link_up;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	if (hw->fc.requested_mode == ixgbe_fc_pfc)
 		goto out;
 
@@ -405,7 +405,7 @@ static s32 ixgbe_fc_enable_82598(struct ixgbe_hw *hw, s32 packetbuf_num)
 	 * 2: Tx flow control is enabled (we can send pause frames but
 	 *     we do not support receiving pause frames).
 	 * 3: Both Rx and Tx flow control (symmetric) are enabled.
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	 * 4: Priority Flow Control is enabled.
 #endif
 	 * other: Invalid.
@@ -440,7 +440,7 @@ static s32 ixgbe_fc_enable_82598(struct ixgbe_hw *hw, s32 packetbuf_num)
 		fctrl_reg |= IXGBE_FCTRL_RFCE;
 		rmcs_reg |= IXGBE_RMCS_TFCE_802_3X;
 		break;
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	case ixgbe_fc_pfc:
 		goto out;
 		break;

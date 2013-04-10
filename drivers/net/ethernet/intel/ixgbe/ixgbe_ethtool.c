@@ -391,7 +391,7 @@ static void ixgbe_get_pauseparam(struct net_device *netdev,
 	} else if (hw->fc.current_mode == ixgbe_fc_full) {
 		pause->rx_pause = 1;
 		pause->tx_pause = 1;
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	} else if (hw->fc.current_mode == ixgbe_fc_pfc) {
 		pause->rx_pause = 0;
 		pause->tx_pause = 0;
@@ -406,7 +406,7 @@ static int ixgbe_set_pauseparam(struct net_device *netdev,
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct ixgbe_fc_info fc;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	if (adapter->dcb_cfg.pfc_mode_enable ||
 		((hw->mac.type == ixgbe_mac_82598EB) &&
 		(adapter->flags & IXGBE_FLAG_DCB_ENABLED)))
@@ -431,7 +431,7 @@ static int ixgbe_set_pauseparam(struct net_device *netdev,
 	else
 		return -EINVAL;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	adapter->last_lfc_mode = fc.requested_mode;
 #endif
 

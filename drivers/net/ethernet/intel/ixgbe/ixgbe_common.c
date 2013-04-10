@@ -1934,7 +1934,7 @@ s32 ixgbe_fc_enable_generic(struct ixgbe_hw *hw, s32 packetbuf_num)
 	u32 reg;
 	u32 fcrtl, fcrth;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	if (hw->fc.requested_mode == ixgbe_fc_pfc)
 		goto out;
 
@@ -1959,7 +1959,7 @@ s32 ixgbe_fc_enable_generic(struct ixgbe_hw *hw, s32 packetbuf_num)
 	 * 2: Tx flow control is enabled (we can send pause frames but
 	 *    we do not support receiving pause frames).
 	 * 3: Both Rx and Tx flow control (symmetric) are enabled.
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	 * 4: Priority Flow Control is enabled.
 #endif
 	 * other: Invalid.
@@ -1994,7 +1994,7 @@ s32 ixgbe_fc_enable_generic(struct ixgbe_hw *hw, s32 packetbuf_num)
 		mflcn_reg |= IXGBE_MFLCN_RFCE;
 		fccfg_reg |= IXGBE_FCCFG_TFCE_802_3X;
 		break;
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	case ixgbe_fc_pfc:
 		goto out;
 		break;
@@ -2277,7 +2277,7 @@ static s32 ixgbe_setup_fc(struct ixgbe_hw *hw, s32 packetbuf_num)
 	u32 reg = 0, reg_bp = 0;
 	u16 reg_cu = 0;
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	if (hw->fc.requested_mode == ixgbe_fc_pfc) {
 		hw->fc.current_mode = hw->fc.requested_mode;
 		goto out;
@@ -2352,7 +2352,7 @@ static s32 ixgbe_setup_fc(struct ixgbe_hw *hw, s32 packetbuf_num)
 	 * 2: Tx flow control is enabled (we can send pause frames but
 	 *    we do not support receiving pause frames).
 	 * 3: Both Rx and Tx flow control (symmetric) are enabled.
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	 * 4: Priority Flow Control is enabled.
 #endif
 	 * other: Invalid.
@@ -2407,7 +2407,7 @@ static s32 ixgbe_setup_fc(struct ixgbe_hw *hw, s32 packetbuf_num)
 		else if (hw->phy.media_type == ixgbe_media_type_copper)
 			reg_cu |= (IXGBE_TAF_SYM_PAUSE | IXGBE_TAF_ASM_PAUSE);
 		break;
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	case ixgbe_fc_pfc:
 		goto out;
 		break;

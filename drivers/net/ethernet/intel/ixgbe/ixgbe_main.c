@@ -4433,7 +4433,7 @@ static int __devinit ixgbe_sw_init(struct ixgbe_adapter *adapter)
 	/* default flow control settings */
 	hw->fc.requested_mode = ixgbe_fc_full;
 	hw->fc.current_mode = ixgbe_fc_full;	/* init for ethtool output */
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	adapter->last_lfc_mode = hw->fc.current_mode;
 #endif
 	ixgbe_pbthresh_setup(adapter);
@@ -6615,7 +6615,7 @@ static netdev_features_t ixgbe_fix_features(struct net_device *netdev,
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	if (adapter->flags & IXGBE_FLAG_DCB_ENABLED)
 		features &= ~NETIF_F_HW_VLAN_RX;
 #endif
@@ -7230,7 +7230,7 @@ static void __devexit ixgbe_remove(struct pci_dev *pdev)
 
 	ixgbe_release_hw_control(adapter);
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 	kfree(adapter->ixgbe_ieee_pfc);
 	kfree(adapter->ixgbe_ieee_ets);
 
