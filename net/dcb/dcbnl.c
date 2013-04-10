@@ -2264,3 +2264,5 @@ static void __exit dcbnl_exit(void)
 	dcb_flushapp();
 }
 module_exit(dcbnl_exit);
+
+MODULE_LICENSE("GPL");

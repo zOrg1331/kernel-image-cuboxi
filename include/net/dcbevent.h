@@ -24,7 +24,7 @@ enum dcbevent_notif_type {
 	DCB_APP_EVENT = 1,
 };
 
-#ifdef CONFIG_DCB
+#if IS_ENABLED(CONFIG_DCB)
 extern int register_dcbevent_notifier(struct notifier_block *nb);
 extern int unregister_dcbevent_notifier(struct notifier_block *nb);
 extern int call_dcbevent_notifiers(unsigned long val, void *v);

@@ -1,5 +1,5 @@
 config DCB
-	bool "Data Center Bridging support"
+	tristate "Data Center Bridging support"
 	default n
 	---help---
 	  This enables support for configuring Data Center Bridging (DCB)

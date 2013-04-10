@@ -1,1 +1,2 @@
-obj-$(CONFIG_DCB) += dcbnl.o dcbevent.o
+obj-$(CONFIG_DCB) += dcb.o
+dcb-y := dcbnl.o dcbevent.o
