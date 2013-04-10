@@ -1,5 +1,5 @@
 config HVC_DRIVER
-	bool
+	tristate
 	help
 	  Generic "hypervisor virtual console" infrastructure for various
 	  hypervisors (pSeries, iSeries, Xen, lguest).

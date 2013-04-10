@@ -226,7 +226,6 @@ static int __init hvc_console_init(void)
 	register_console(&hvc_console);
 	return 0;
 }
-console_initcall(hvc_console_init);
 
 /* callback when the kboject ref count reaches zero. */
 static void destroy_hvc_struct(struct kref *kref)
@@ -973,3 +972,10 @@ static void __exit hvc_exit(void)
 	}
 }
 module_exit(hvc_exit);
+
+#ifndef MODULE
+console_initcall(hvc_console_init);
+#else
+module_init(hvc_console_init);
+MODULE_LICENSE("GPL");
+#endif
