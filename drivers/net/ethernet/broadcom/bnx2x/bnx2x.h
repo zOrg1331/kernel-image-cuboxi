@@ -27,7 +27,7 @@
 #define DRV_MODULE_RELDATE      "2012/02/20"
 #define BNX2X_BC_VER            0x040200
 
-#if defined(CONFIG_DCB)
+#if IS_ENABLED(CONFIG_DCB)
 #define BCM_DCBNL
 #endif
 #if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
