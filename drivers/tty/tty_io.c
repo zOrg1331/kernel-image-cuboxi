@@ -2181,6 +2181,7 @@ done:
 	mutex_unlock(&tty->termios_mutex);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(tty_do_resize);
 
 /**
  *	tiocswinsz		-	implement window size set ioctl
