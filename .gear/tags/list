@@ -260,8 +260,8 @@ d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 f30f0c69aceb97956fc62a4fcbe68c4cb44947f6 fix-drivers-scsi--lpfc
 cd7a8837a9ca6935c835b0a655982db220e941e7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
-287328f1c93615795895ef795219eb6e862a73c1 fix-drivers-tty
-740d9688474a7959d2dc07c6123754dff28494b1 fix-net-core
+b51e69ae0de2bdf093514387b43a0aaa68946a7a fix-drivers-tty
+212f93696cb1543620fc5999e1b7e5547b90b50d fix-net-core
 e433868d9a56637374ffca868cd9541628cf2549 v3.4.34
 f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
 1873780825f3f8a13eaed9d603c1c4b8355a4149 fix-drivers-block--aoe
@@ -297,7 +297,7 @@ a785d2f8446a2393af8a4761bc98f24a74d83731 fix-fs-gfs2
 13afb7199f8b0b06918f7369a0887096de1c5526 fix-fs-ubifs
 739d1a67cbe6a5f5335bf7e423823f3d18c33c52 fix-mm--bounce
 3977b766d2c387b47907788b568521f5671c2bda v3.4.37
-f42d9255ae6bbcfee14b0eed201ee83024d76b39 feat-drivers-block--btier
+684f3f764706dc19c14938a38d9d25639a692328 feat-drivers-block--btier
 8784bb4f0771e75d053fc95724265208501ac29e feat-drivers-usb-storage--rts5139
 5a437b52cdc197030a3b862fa72f263432bd7b5d fix-drivers-usb-serial--io_ti
 eb7173676c686365752d514db8e3dae4621d9e48 v3.4.38
@@ -357,3 +357,13 @@ d1696a1b3f5ff5a089df0b51c41065fabdd29a67 fix-drivers-gpio--gpio-timberdale
 fdffd16c6b12d31f77d7db83c23b6567e0df8a8b fix-drivers-gpio--gpio-ucb1400
 ac5e99a187ce5f2c420541ff0a86e9595930bac3 fix-drivers-gpu-vga--vga_switcheroo
 a792c328988f29b2d5d98d5f19d4d4b9ae81f21f fix-kernel-irq
+37e33c317ccd1a5c72c8adfd78ebd2224c755481 fix-drivers-mfd--adp5520
+41674044d434d54511c43101de5b8c7a1a1b5cbc fix-drivers-mmc-host--sdhci-pci
+dc8597072761d3adb7ed5b20c5e4835b534d7271 fix-drivers-net-ethernet-broadcom--bnx2x
+55c85f5319cf858564ddc65f26aef31318178a16 fix-drivers-net-ethernet-intel--ixgbe
+9f1ff641176447c5d0d7292d9df3d78df269df8f fix-drivers-net-wireless-wl12xx
+0439730ea32c2a9c3c848ef2f00551a6082505f5 fix-drivers-scsi-fcoe--fcoe
+813ae605b1e6e7c93e7904ee160aae59c2e9af3e fix-drivers-tty-hvc--hvc_console
+5c16964fdadc08167279cd39182232cfcc6b8dd6 fix-drivers-usb-otg--otg
+445f59433276f2ff06e93410ba30e7ef73fb41d5 fix-net-802--fc
+30cd9ebb0a86315a14c350488e4c35c3b1c9af4b fix-net-dcb
