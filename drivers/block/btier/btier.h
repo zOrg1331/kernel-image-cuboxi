@@ -77,6 +77,7 @@
 
 #define ALLOCATED 0xff
 #define UNALLOCATED 0x00
+#define MAXPAGESHOW 20
 
 #define TIERREAD 1
 #define TIERWRITE 2
@@ -173,8 +174,8 @@ struct tier_stats {
 };
 
 struct migrate_direct {
-        u64 blocknr;
-        int newdevice;
+	u64 blocknr;
+	int newdevice;
 	atomic_t direct;
 };
 
@@ -194,7 +195,7 @@ struct tier_device {
 	u64 blocklistsize;
 	spinlock_t lock;
 	spinlock_t statlock;
-        spinlock_t usage_lock;
+	spinlock_t usage_lock;
 	struct gendisk *gd;
 	struct workqueue_struct *migration_queue;	/* Data migration */
 	struct workqueue_struct *aio_queue;	/* Async IO */
@@ -226,14 +227,15 @@ struct tier_device {
 	wait_queue_head_t aio_event;
 	struct timer_list migrate_timer;
 	struct tier_stats stats;
-        struct migrate_direct mgdirect;
+	struct migrate_direct mgdirect;
 	int migrate_verbose;
 	int ptsync;
 /* Where do we initially store sequential IO */
 	int inerror;
 /* The blocknr that the user can retrieve info for via sysfs*/
-        u64 user_selected_blockinfo;
-        unsigned int users;
+	u64 user_selected_blockinfo;
+	int user_selected_ispaged;
+	unsigned int users;
 };
 
 typedef struct {
@@ -258,5 +260,5 @@ void *as_sprintf(const char *, ...);
 u64 allocated_on_device(struct tier_device *, int);
 void btier_clear_statistics(struct tier_device *dev);
 struct blockinfo *get_blockinfo(struct tier_device *, u64, int);
-int migrate_direct(struct tier_device *, u64 ,int );
+int migrate_direct(struct tier_device *, u64, int);
 #endif

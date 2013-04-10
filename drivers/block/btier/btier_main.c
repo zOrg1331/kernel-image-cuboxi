@@ -15,7 +15,7 @@
 
 #define TRUE 1
 #define FALSE 0
-#define TIER_VERSION "0.9.9.9-6"
+#define TIER_VERSION "0.9.9.9-7"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mark Ruijter");
@@ -33,24 +33,23 @@ static DEFINE_SPINLOCK(uselock);
 
 static int tier_device_count(void)
 {
-        struct list_head *pos;
-        int count = 0;
+	struct list_head *pos;
+	int count = 0;
 
-        list_for_each(pos, &device_list) {
-                count++;
-        }
-        return count;
+	list_for_each(pos, &device_list) {
+		count++;
+	}
+	return count;
 }
 
 /*
  * Open and close.
  */
 static int tier_open(struct block_device *bdev, fmode_t mode)
-
 {
 	struct tier_device *dev;
 
-        dev = bdev->bd_inode->i_bdev->bd_disk->private_data;
+	dev = bdev->bd_inode->i_bdev->bd_disk->private_data;
 	spin_lock(&uselock);
 	dev->users++;
 	spin_unlock(&uselock);
@@ -61,8 +60,8 @@ static int tier_release(struct gendisk *gd, fmode_t mode)
 {
 	struct tier_device *dev;
 
-        dev = gd->private_data;
-	spin_lock (&uselock);
+	dev = gd->private_data;
+	spin_lock(&uselock);
 	dev->users--;
 	spin_unlock(&uselock);
 	return 0;
@@ -72,8 +71,8 @@ static int tier_release(struct gendisk *gd, fmode_t mode)
  * The device operations structure.
  */
 static struct block_device_operations tier_ops = {
-      	.open 	         = tier_open,
-	.release 	 = tier_release,
+	.open = tier_open,
+	.release = tier_release,
 	.owner = THIS_MODULE,
 };
 
@@ -92,48 +91,48 @@ static int tier_sysfs_init(struct tier_device *dev)
 
 static void btier_lock(struct tier_device *dev)
 {
-        mutex_lock(&dev->qlock);
-        atomic_set(&dev->migrate, MIGRATION_IO);
-        if ( 0 != atomic_read(&dev->aio_pending))
-             wait_event(dev->aio_event, 0 == atomic_read(&dev->aio_pending));
+	mutex_lock(&dev->qlock);
+	atomic_set(&dev->migrate, MIGRATION_IO);
+	if (0 != atomic_read(&dev->aio_pending))
+		wait_event(dev->aio_event, 0 == atomic_read(&dev->aio_pending));
 }
 
 static void btier_unlock(struct tier_device *dev)
 {
-       atomic_set(&dev->migrate, 0);
-       mutex_unlock(&dev->qlock);
+	atomic_set(&dev->migrate, 0);
+	mutex_unlock(&dev->qlock);
 }
 
 void btier_clear_statistics(struct tier_device *dev)
 {
-        u64 curblock;
-        u64 blocks = dev->size >> BLKBITS;
-        struct devicemagic *dmagic;
-        int i;
-        struct blockinfo *binfo;
+	u64 curblock;
+	u64 blocks = dev->size >> BLKBITS;
+	struct devicemagic *dmagic;
+	int i;
+	struct blockinfo *binfo;
 
-        btier_lock(dev);
+	btier_lock(dev);
 
-        for (curblock = 0; curblock < blocks; curblock++) {
-                binfo = get_blockinfo(dev, curblock, 0);
-                if (dev->inerror)
-                        break;
-                if (binfo->device != 0) {
-                        binfo->readcount=0;
-                        binfo->writecount=0;
-                        (void)write_blocklist(dev, curblock, binfo, WC);
-                }
-                kfree(binfo);
+	for (curblock = 0; curblock < blocks; curblock++) {
+		binfo = get_blockinfo(dev, curblock, 0);
+		if (dev->inerror)
+			break;
+		if (binfo->device != 0) {
+			binfo->readcount = 0;
+			binfo->writecount = 0;
+			(void)write_blocklist(dev, curblock, binfo, WC);
+		}
+		kfree(binfo);
 
-        }
-        for (i = 0; i < dev->attached_devices; i++) {
-                     dmagic=dev->backdev[i]->devmagic;
-                     dmagic->average_reads=0;
-                     dmagic->average_writes=0;
-                     dmagic->total_reads=0;
-                     dmagic->total_writes=0;
-        }
-        btier_unlock(dev);
+	}
+	for (i = 0; i < dev->attached_devices; i++) {
+		dmagic = dev->backdev[i]->devmagic;
+		dmagic->average_reads = 0;
+		dmagic->average_writes = 0;
+		dmagic->total_reads = 0;
+		dmagic->total_writes = 0;
+	}
+	btier_unlock(dev);
 }
 
 static void tier_sysfs_exit(struct tier_device *dev)
@@ -227,9 +226,9 @@ static int allocate_dev(struct tier_device *dev, u64 blocknr,
 				binfo->offset += backdev->startofdata;
 				if (binfo->offset + BLKSIZE >
 				    backdev->endofdata) {
-                                        //pr_err("Giving up at offset : %llu - %llu, endofdata %llu\n",
-                                        //        binfo->offset + BLKSIZE, backdev->startofdata,
-                                        //        backdev->endofdata);
+					//pr_err("Giving up at offset : %llu - %llu, endofdata %llu\n",
+					//        binfo->offset + BLKSIZE, backdev->startofdata,
+					//        backdev->endofdata);
 					/* We are at the end of this device, no space available */
 					goto end_exit;
 				} else {
@@ -542,7 +541,7 @@ static int binfo_sanity(struct tier_device *dev, struct blockinfo *binfo)
  *  TIERREAD or TIERWRITE (updatemeta != 0 )
  */
 struct blockinfo *get_blockinfo(struct tier_device *dev, u64 blocknr,
-				       int updatemeta)
+				int updatemeta)
 {
 /* The blocklist starts at the end of the bitlist on device1 */
 	struct blockinfo *binfo;
@@ -842,12 +841,11 @@ static int tier_do_bio(struct tier_device *dev, struct bio *bio)
 	int keep = 0;
 	const u64 do_sync = (bio->bi_rw & REQ_SYNC);
 
-        if ( MIGRATION_IO == atomic_read(&dev->wqlock)) {
-             mutex_lock(&dev->qlock);
-             locked=1;
-        }
-        atomic_set(&dev->wqlock, NORMAL_IO);
-
+	if (MIGRATION_IO == atomic_read(&dev->wqlock)) {
+		mutex_lock(&dev->qlock);
+		locked = 1;
+	}
+	atomic_set(&dev->wqlock, NORMAL_IO);
 
 	offset = ((loff_t) bio->bi_sector << 9);
 	blocknr = offset >> BLKBITS;
@@ -996,14 +994,15 @@ static int copyblock(struct tier_device *dev, struct blockinfo *newdevice,
 	newdevice->readcount = 0;
 	newdevice->writecount = 0;
 	newdevice->lastused = get_seconds();
-        if ( newdevice->device == olddevice->device ) {
-            pr_err("copyblock : refuse to migrate block to current device %u -> %u\n",
-                    newdevice->device, olddevice->device);
-            return 0;
-        }
+	if (newdevice->device == olddevice->device) {
+		pr_err
+		    ("copyblock : refuse to migrate block to current device %u -> %u\n",
+		     newdevice->device, olddevice->device);
+		return 0;
+	}
 	allocate_dev(dev, curblock, newdevice, devicenr);
 /* No space on the device to copy to is not an error */
-	if (0 == newdevice->device) 
+	if (0 == newdevice->device)
 		return 0;
 	buffer = vzalloc(BLKSIZE);
 	tier_file_read(dev, olddevice->device - 1,
@@ -1126,14 +1125,14 @@ static int migrate_down_ifneeded(struct tier_device *dev,
 	return res;
 }
 
-int migrate_direct(struct tier_device *dev, u64 blocknr,int device)
+int migrate_direct(struct tier_device *dev, u64 blocknr, int device)
 {
-       if ( 0 == atomic_add_unless(&dev->mgdirect.direct, 1, 1)) 
-           return -EAGAIN;
-       dev->mgdirect.blocknr=blocknr;
-       dev->mgdirect.newdevice=device;
-       wake_up(&dev->migrate_event);  
-       return 0;
+	if (0 == atomic_add_unless(&dev->mgdirect.direct, 1, 1))
+		return -EAGAIN;
+	dev->mgdirect.blocknr = blocknr;
+	dev->mgdirect.newdevice = device;
+	wake_up(&dev->migrate_event);
+	return 0;
 }
 
 int load_bitlists(struct tier_device *dev)
@@ -1277,14 +1276,14 @@ static void walk_blocklist(struct tier_device *dev)
 			}
 		}
 		kfree(binfo);
-                if (NORMAL_IO == atomic_read(&dev->wqlock)) {
-                        mincount++;
-                        if (mincount > 5 || res) {
-                                dev->resumeblockwalk = curblock;
-                                interrupted = 1;
-                                break;
-                        }
-                }
+		if (NORMAL_IO == atomic_read(&dev->wqlock)) {
+			mincount++;
+			if (mincount > 5 || res) {
+				dev->resumeblockwalk = curblock;
+				interrupted = 1;
+				break;
+			}
+		}
 	}
 	if (dev->inerror)
 		return;
@@ -1303,48 +1302,54 @@ static void walk_blocklist(struct tier_device *dev)
 
 void do_migrate_direct(struct tier_device *dev)
 {
-       struct data_policy *dtapolicy = &dev->backdev[0]->devmagic->dtapolicy;
-       u64 blocknr=dev->mgdirect.blocknr;
-       int newdevice=dev->mgdirect.newdevice;
-       int res;
-       struct blockinfo *binfo, *orgbinfo;
+	struct data_policy *dtapolicy = &dev->backdev[0]->devmagic->dtapolicy;
+	u64 blocknr = dev->mgdirect.blocknr;
+	int newdevice = dev->mgdirect.newdevice;
+	int res;
+	struct blockinfo *binfo, *orgbinfo;
 
-       btier_lock(dev);
-       if (!dtapolicy->migration_disabled) {
-            dtapolicy->migration_disabled = 1;
-            del_timer_sync(&dev->migrate_timer);
-            pr_info("migration is disabled for %s due to user controlled data migration\n", dev->devname);
-       }
-       if ( dev->migrate_verbose )
-            pr_info("sysfs request migrate blocknr %llu to %i\n",blocknr,newdevice);
-       binfo=get_blockinfo(dev,blocknr,0);
-       if (!binfo) goto end_error;
+	btier_lock(dev);
+	if (!dtapolicy->migration_disabled) {
+		dtapolicy->migration_disabled = 1;
+		del_timer_sync(&dev->migrate_timer);
+		pr_info
+		    ("migration is disabled for %s due to user controlled data migration\n",
+		     dev->devname);
+	}
+	if (dev->migrate_verbose)
+		pr_info("sysfs request migrate blocknr %llu to %i\n", blocknr,
+			newdevice);
+	binfo = get_blockinfo(dev, blocknr, 0);
+	if (!binfo)
+		goto end_error;
 
-       if ( binfo->device == newdevice + 1 ) {
-           res=-EEXIST;
-           pr_err("Failed to migrate block %llu, already on device %i\n",blocknr, newdevice);
-           goto end_error_free;
-       }
-       orgbinfo = kzalloc(sizeof(struct blockinfo), GFP_KERNEL);
-       if (!orgbinfo) {
-                tiererror(dev, "alloc failed");
-                res=-ENOMEM;
-                goto end_error_free;
-       }
-       memcpy(orgbinfo, binfo, sizeof(*binfo));
-       binfo->device=newdevice+1;
+	if (binfo->device == newdevice + 1) {
+		res = -EEXIST;
+		pr_err("Failed to migrate block %llu, already on device %i\n",
+		       blocknr, newdevice);
+		goto end_error_free;
+	}
+	orgbinfo = kzalloc(sizeof(struct blockinfo), GFP_KERNEL);
+	if (!orgbinfo) {
+		tiererror(dev, "alloc failed");
+		res = -ENOMEM;
+		goto end_error_free;
+	}
+	memcpy(orgbinfo, binfo, sizeof(*binfo));
+	binfo->device = newdevice + 1;
 
-       res = copyblock(dev, binfo, orgbinfo, blocknr);
-       if (res) {
-              reset_counters_on_migration(dev, orgbinfo);
-              clear_dev_list(dev, orgbinfo);
-              discard_on_real_device(dev, orgbinfo);
-       } else pr_err("copyblock failed\n");
-       kfree(orgbinfo);
+	res = copyblock(dev, binfo, orgbinfo, blocknr);
+	if (res) {
+		reset_counters_on_migration(dev, orgbinfo);
+		clear_dev_list(dev, orgbinfo);
+		discard_on_real_device(dev, orgbinfo);
+	} else
+		pr_err("copyblock failed\n");
+	kfree(orgbinfo);
 end_error_free:
-       kfree(binfo);
+	kfree(binfo);
 end_error:
-       btier_unlock(dev);
+	btier_unlock(dev);
 }
 
 static void data_migrator(struct work_struct *work)
@@ -1358,27 +1363,31 @@ static void data_migrator(struct work_struct *work)
 	while (!dev->stop) {
 		wait_event_interruptible(dev->migrate_event,
 					 1 == atomic_read(&dev->migrate)
-					 || dev->stop 
-                                         || 1 == atomic_read(&dev->mgdirect.direct));
+					 || dev->stop
+					 || 1 ==
+					 atomic_read(&dev->mgdirect.direct));
 		if (dev->migrate_verbose)
 			pr_info("data_migrator woke up\n");
 		if (dev->stop)
 			break;
 
-                if ( 1 == atomic_read(&dev->mgdirect.direct)) {
-                        do_migrate_direct(dev);
-                        atomic_set(&dev->mgdirect.direct,0); 
-                        continue;
-                }
+		if (1 == atomic_read(&dev->mgdirect.direct)) {
+			do_migrate_direct(dev);
+			atomic_set(&dev->mgdirect.direct, 0);
+			continue;
+		}
 
-                if (NORMAL_IO == atomic_read(&dev->wqlock)) {
-                    if ( dev->migrate_verbose) pr_info("NORMAL_IO pending: backoff\n");
-                    dev->migrate_timer.expires = jiffies + msecs_to_jiffies(3000);
-                    if (!dev->stop && !dtapolicy->migration_disabled)
-                               mod_timer_pinned(&dev->migrate_timer,dev->migrate_timer.expires);
-                    atomic_set(&dev->migrate, 0);
-                    continue;
-                }
+		if (NORMAL_IO == atomic_read(&dev->wqlock)) {
+			if (dev->migrate_verbose)
+				pr_info("NORMAL_IO pending: backoff\n");
+			dev->migrate_timer.expires =
+			    jiffies + msecs_to_jiffies(3000);
+			if (!dev->stop && !dtapolicy->migration_disabled)
+				mod_timer_pinned(&dev->migrate_timer,
+						 dev->migrate_timer.expires);
+			atomic_set(&dev->migrate, 0);
+			continue;
+		}
 		mutex_lock(&dev->qlock);
 
 		wait_event(dev->aio_event, 0 == atomic_read(&dev->aio_pending));
@@ -1780,7 +1789,7 @@ static int tier_register(struct tier_device *dev)
 	atomic_set(&dev->wqlock, 0);
 	atomic_set(&dev->aio_pending, 0);
 	atomic_set(&dev->curfd, 2);
-        atomic_set(&dev->mgdirect.direct,0);
+	atomic_set(&dev->mgdirect.direct, 0);
 	/*
 	 * Get a request queue.
 	 */
@@ -1956,19 +1965,19 @@ static void tier_deregister(struct tier_device *dev)
 static int del_tier_device(char *devicename)
 {
 	struct tier_device *tier, *next;
-        int res=0;
+	int res = 0;
 
 	list_for_each_entry_safe(tier, next, &device_list, list) {
 		if (tier->devname) {
 			if (strstr(devicename, tier->devname)) {
-                                if ( tier->users > 0 ) 
-                                   res=-EBUSY;
-                                else
-				   tier_deregister(tier);
+				if (tier->users > 0)
+					res = -EBUSY;
+				else
+					tier_deregister(tier);
 			}
 		}
 	}
-        return res;
+	return res;
 }
 
 static int determine_device_size(struct tier_device *dev)
@@ -2415,10 +2424,8 @@ static long tier_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			dev->tier_device_number = current_device_nr;
 			if (0 != (err = order_devices(dev)))
 				break;
-			if (0 == (err = determine_device_size(dev))) {
-				pr_err("dev->users at %lu\n",(uintptr_t)&dev->users);
+			if (0 == (err = determine_device_size(dev)))
 				err = tier_register(dev);
-			}
 		}
 		break;
 	case TIER_DEREGISTER:
