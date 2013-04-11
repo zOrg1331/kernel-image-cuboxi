@@ -340,7 +340,7 @@ cffb3e1ed1cda1e3942712be51e0a3fd29746a89 fix-drivers-power--da9030_battery
 440828233eecb520182cd529560ef9ed0717f714 fix-drivers-usb-musb--musb_hdrc
 82545763b6ee2c37ded47133fbb1207dcdada9b6 fix-drivers-usb-host--uhci-hcd
 6293093ac1bbc288daeb14fde04470f7f530363b fix-net-l2tp--l2tp_core
-436f0335fd4ffea1e0c478bff2fd2f668c7ac2c8 fix-net-wimax
+a8c49a45e811428fb1087c01bb935764e223c364 fix-net-wimax
 3db289c81e6f6e571759bcde4925e64f20924bcb fix-kernel-power
 23e980718859ecf1115967878c89396bccebecc6 fix-mm--cleancache
 5a977989cb6260a4a373c7c7d24b83b6dcc8515b fix-mm--memblock
