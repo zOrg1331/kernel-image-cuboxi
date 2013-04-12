@@ -367,3 +367,4 @@ dc8597072761d3adb7ed5b20c5e4835b534d7271 fix-drivers-net-ethernet-broadcom--bnx2
 5c16964fdadc08167279cd39182232cfcc6b8dd6 fix-drivers-usb-otg--otg
 445f59433276f2ff06e93410ba30e7ef73fb41d5 fix-net-802--fc
 30cd9ebb0a86315a14c350488e4c35c3b1c9af4b fix-net-dcb
+ad80b5d7322f4620c321e7abfa975ea99f5d2c13 v3.4.40
