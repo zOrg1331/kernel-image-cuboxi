@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.7
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Apr 15 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.7-alt1.1
+- revert efivars to 3.8.2
+
 * Fri Apr 12 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.7-alt1
 - 3.8.7
 
