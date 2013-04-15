@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.40
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -129,7 +129,7 @@ Release: alt1
 
 #define allocator SLAB
 
-%Extra_modules vboxhost 4.2.10
+%Extra_modules vboxhost 4.2.12
 #Extra_modules vboxguest 4.2.8
 #Extra_modules fglrx 8.97.100.7
 #Extra_modules netatop 0.1.1
@@ -2674,6 +2674,9 @@ done)
 
 
 %changelog
+* Mon Apr 15 2013 Led <led@altlinux.ru> 3.4.40-alt2
+- vboxhost 4.2.12
+
 * Fri Apr 12 2013 Led <led@altlinux.ru> 3.4.40-alt1
 - 3.4.40
 
