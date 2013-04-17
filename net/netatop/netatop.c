@@ -49,7 +49,8 @@
 **
 ** A garbage collector cycle can be triggered by issueing a getsockopt
 ** call from an analysis program (e.g. atop). Apart from that, a time-based
-** garbage collector cycle is issued anyhow every 15 seconds.
+** garbage collector cycle is issued anyhow every 15 seconds by the
+** knetatop kernel thread.
 **
 ** Interface with user mode
 ** ------------------------
@@ -88,6 +89,7 @@
 #include <linux/skbuff.h>
 #include <linux/types.h>
 #include <linux/file.h>
+#include <linux/kthread.h>
 #include <net/sock.h>
 #include <linux/ip.h>
 #include <linux/tcp.h>
@@ -109,8 +111,8 @@ MODULE_VERSION(NETATOPVERSION);
 #define	GCMAXTCP	(HZ*1800)	// max inactivity for TCP     (jiffies)
 #define	GCMAXUNREF	(HZ*60)		// max time without taskref   (jiffies)
 
-#define	SILIMIT		(2048*1024)	// maximum memory for sockinfo structs
-#define	TILIMIT		(1024*1024)	// maximum memory for taskinfo structs
+#define	SILIMIT		(4096*1024)	// maximum memory for sockinfo structs
+#define	TILIMIT		(2048*1024)	// maximum memory for taskinfo structs
 
 #define NF_IP_PRE_ROUTING       0
 #define NF_IP_LOCAL_IN          1
@@ -142,6 +144,8 @@ struct taskinfo {
 
 	struct taskcount	tc;
 };
+
+static struct kmem_cache	*ticache;	// taskinfo cache
 
 // state values above
 #define	CHECKED		1	// verified that task still exists
@@ -212,13 +216,15 @@ struct sockinfo {
 	short			tgh;		// hash number of thread group
 	short			thh;		// hash number of thread
 
-        unsigned long      	sndpacks;	// temporary counters in case 
+        unsigned int      	sndpacks;	// temporary counters in case 
+        unsigned int      	rcvpacks; 	// known yet
         unsigned long      	sndbytes;	// no relation to process is
-        unsigned long      	rcvpacks; 	// known yet
         unsigned long      	rcvbytes;
 
 	unsigned long long	lastact;	// last updated (jiffies)
 };
+
+static struct kmem_cache	*sicache;	// sockinfo cache
 
 /*
 ** hash table to find a socket reference
@@ -255,9 +261,10 @@ static unsigned long	unidenttcprcvpacks;
 
 static unsigned long	unknownproto;
 
-static struct timer_list timer;
-static DEFINE_SPINLOCK(gclock);
+static DEFINE_MUTEX(gclock);
 static unsigned long long	gclast;	// last garbage collection (jiffies)
+
+static struct task_struct	*knetatop_task;
 
 static struct timespec	boottime;
 
@@ -304,7 +311,6 @@ static void __exit	wipetaskinfo(void);
 static void __exit	wipetaskexit(void);
 
 static void		garbage_collector(void);
-static void		gcperiodic(unsigned long unused);
 static void		gctaskexit(void);
 static void		gcsockinfo(void);
 static void		gctaskinfo(void);
@@ -840,7 +846,7 @@ make_sockinfo(int proto, union keydef *identp, int identsz, int hash)
 		return NULL;
 	}
 
-	if ( (sip = kzalloc(sizeof *sip, GFP_ATOMIC)) == NULL)
+	if ( (sip = kmem_cache_alloc(sicache, GFP_ATOMIC)) == NULL)
 		return NULL;
 
 	spin_lock_irqsave(&nrslock, flags);
@@ -850,6 +856,8 @@ make_sockinfo(int proto, union keydef *identp, int identsz, int hash)
 	/*
 	** insert new struct in doubly linked list
 	*/
+	memset(sip, '\0', sizeof *sip);
+
 	sip->ch.next 		= &shash[hash].ch;
 	sip->ch.prev 		=  shash[hash].ch.prev;
 	((struct sockinfo *)shash[hash].ch.prev)->ch.next = sip;
@@ -899,7 +907,7 @@ get_taskinfo(pid_t id, char type)
 	** id not known yet
 	** add new entry to hash list
 	*/
-	if ( (tip = kzalloc(sizeof *tip, GFP_ATOMIC)) == NULL)
+	if ( (tip = kmem_cache_alloc(ticache, GFP_ATOMIC)) == NULL)
 		return NULL;
 
 	spin_lock_irqsave(&nrtlock, tflags);
@@ -910,6 +918,8 @@ get_taskinfo(pid_t id, char type)
 	** insert new struct in doubly linked list
 	** and fill values
 	*/
+	memset(tip, '\0', sizeof *tip);
+
 	tip->ch.next 		= &thash[bt].ch;
 	tip->ch.prev 		=  thash[bt].ch.prev;
 	((struct taskinfo *)thash[bt].ch.prev)->ch.next = tip;
@@ -929,41 +939,22 @@ get_taskinfo(pid_t id, char type)
 }
 
 /*
-** function that runs every second to see if a 
-** time-based garbage collection cycle has to be
-** forced (i.e. if no process forces it)
-*/
-static void
-gcperiodic(unsigned long unused)
-{
-	if (jiffies_64 >= gclast + GCINTERVAL)
-		garbage_collector();
-
-	/*
-	** set timer for next second
-	*/
-	timer.expires  = jiffies_64 + HZ;
-	timer.function = gcperiodic;
-	add_timer(&timer);
-}
-
-/*
 ** garbage collector that removes:
 ** - exited tasks that are not by user mode programs
 ** - sockinfo's that are not used any more
 ** - taskinfo's that do not exist any more
 **
-** a lock avoids that the garbage collector runs several times in parallel
+** a mutex avoids that the garbage collector runs several times in parallel
+**
+** this function may only be called in process context!
 */
 static void
 garbage_collector(void)
 {
-	unsigned long	flags;
-
-	spin_lock_irqsave(&gclock, flags);
+	mutex_lock(&gclock);
 
 	if (jiffies_64 < gclast + (HZ/2)) { // maximum 2 GC cycles per second
-		spin_unlock_irqrestore(&gclock, flags);
+		mutex_unlock(&gclock);
 		return;
 	}
 
@@ -975,7 +966,7 @@ garbage_collector(void)
 
 	gclast = jiffies_64;
 
-	spin_unlock_irqrestore(&gclock, flags);
+	mutex_unlock(&gclock);
 }
 
 /*
@@ -999,7 +990,7 @@ gctaskexit()
 
 		// remove taskinfo from exitlist
 		exithead = tip->ch.next;
-		kfree(tip);
+		kmem_cache_free(ticache, tip);
 		nre--;
 		tip = exithead;
 	} 
@@ -1025,6 +1016,7 @@ gcsockinfo()
 	int		i;
 	struct sockinfo	*sip, *sipsave;
 	unsigned long	sflags, tflags;
+	struct pid	*pid;
 
 	/*
 	** go through all sockinfo hash buckets 
@@ -1113,7 +1105,11 @@ gcsockinfo()
 				** if the thread group exists, just mark
 				** it  as 'checked' for this cycle
 				*/
-				if (find_vpid(sip->tgp->id) == NULL) {
+				rcu_read_lock();
+				pid = find_vpid(sip->tgp->id);
+				rcu_read_unlock();
+
+				if (pid == NULL) {
 					sip->tgp->state = INDELETE;
 					spin_unlock_irqrestore(
 						&thash[sip->tgh].lock, tflags);
@@ -1170,7 +1166,11 @@ gcsockinfo()
 			** if not, mark it as 'indelete' and break connection
 			** if thread exists, mark it 'checked'
 			*/
-			if (find_vpid(sip->thp->id) == NULL) {
+			rcu_read_lock();
+			pid = find_vpid(sip->thp->id);
+			rcu_read_unlock();
+
+			if (pid == NULL) {
 				sip->thp->state = INDELETE;
 				sip->thp = NULL;
 			} else {
@@ -1226,6 +1226,7 @@ gctaskinfo()
 	int		i;
 	struct taskinfo	*tip, *tipsave;
 	unsigned long	tflags;
+	struct pid	*pid;
 
 	/*
 	** go through all taskinfo hash buckets 
@@ -1244,7 +1245,11 @@ gctaskinfo()
 		while (tip != (void *)&thash[i].ch) {
 			switch (tip->state) {
 			   default:	// not checked yet
-				if (find_vpid(tip->id) != NULL) {
+				rcu_read_lock();
+				pid = find_vpid(tip->id);
+				rcu_read_unlock();
+
+				if (pid != NULL) {
 					tip = tip->ch.next;
 					break;
 				}
@@ -1397,7 +1402,7 @@ delete_taskinfo(struct taskinfo *tip)
 {
 	dec_nrt(tip);
 
-	kfree(tip);
+	kmem_cache_free(ticache, tip);
 }
 
 /*
@@ -1411,7 +1416,7 @@ delete_sockinfo(struct sockinfo *sip)
 	((struct sockinfo *)sip->ch.next)->ch.prev = sip->ch.prev;
 	((struct sockinfo *)sip->ch.prev)->ch.next = sip->ch.next;
 
-	kfree(sip);
+	kmem_cache_free(sicache, sip);
 
 	spin_lock_irqsave(&nrslock, flags);
 	nrs--;
@@ -1425,15 +1430,16 @@ static int
 netatop_read_proc(char *buf, char **start, off_t offset,
              	   int count, int *eof, void *data)
 {
-	return sprintf(buf, "tcpsndpacks:  %9lu (unident: %9lu)\n"
-	                    "tcprcvpacks:  %9lu (unident: %9lu)\n"
-	                    "udpsndpacks:  %9lu (unident: %9lu)\n"
-	                    "udprcvpacks:  %9lu (unident: %9lu)\n\n"
-	                    "icmpsndpacks: %9lu\n"
-	                    "icmprcvpacks: %9lu\n\n"
-	                    "#sockinfo:    %9lu (overflow: %8lu)\n"
-	                    "#taskinfo:    %9lu (overflow: %8lu)\n"
-	                    "#taskexit:    %9lu\n",
+	return sprintf(buf, "tcpsndpacks:  %12lu (unident: %9lu)\n"
+	                    "tcprcvpacks:  %12lu (unident: %9lu)\n"
+	                    "udpsndpacks:  %12lu (unident: %9lu)\n"
+	                    "udprcvpacks:  %12lu (unident: %9lu)\n\n"
+	                    "icmpsndpacks: %12lu\n"
+	                    "icmprcvpacks: %12lu\n\n"
+	                    "#sockinfo:    %12lu (overflow: %8lu)\n"
+	                    "#taskinfo:    %12lu (overflow: %8lu)\n"
+	                    "#taskexit:    %12lu\n\n"
+	                    "modversion: %14s\n",
 				tcpsndpacks,  unidenttcpsndpacks,
 				tcprcvpacks,  unidenttcprcvpacks,
 				udpsndpacks,  unidentudpsndpacks,
@@ -1441,7 +1447,7 @@ netatop_read_proc(char *buf, char **start, off_t offset,
 				icmpsndpacks, icmprcvpacks,
  				nrs,          nrs_ovf,
 				nrt,          nrt_ovf,
-				nre);
+				nre,          NETATOPVERSION);
 }
 
 /*
@@ -1529,7 +1535,7 @@ getsockopt(struct sock *sk, int cmd, void __user *user, int *len)
 		if (copy_to_user(user, &npt, *len) != 0)
 			return -EFAULT;
 
-		kfree(tip);
+		kmem_cache_free(ticache, tip);
 
 		return 0;
 
@@ -1591,6 +1597,26 @@ getsockopt(struct sock *sk, int cmd, void __user *user, int *len)
 }
 
 /*
+** kernel mode thread: initiate garbage collection every N seconds
+*/
+static int netatop_thread(void *dummy)
+{
+	while (!kthread_should_stop()) {
+		/*
+ 		** do garbage collection
+		*/
+		garbage_collector();
+
+		/*
+		** wait a while
+		*/
+		(void) schedule_timeout_interruptible(GCINTERVAL);
+	}
+
+	return 0;
+}
+
+/*
 ** called when module loaded
 */
 int __init
@@ -1599,7 +1625,22 @@ init_module()
 	int i;
 
 	/*
-	** initialize various admi
+	** initialize caches for taskinfo and sockinfo
+	*/
+	ticache = kmem_cache_create("Netatop_taskinfo",
+					sizeof (struct taskinfo), 0, 0, NULL);
+	if (!ticache)
+		return -EFAULT;
+
+	sicache = kmem_cache_create("Netatop_sockinfo",
+					sizeof (struct sockinfo), 0, 0, NULL);
+	if (!sicache) {
+		kmem_cache_destroy(ticache);
+		return -EFAULT;
+	}
+
+	/*
+	** initialize hash table for taskinfo and sockinfo
 	*/
 	for (i=0; i < TBUCKS; i++) {
 		thash[i].ch.next = &thash[i].ch;
@@ -1618,8 +1659,24 @@ init_module()
 	/*
 	** register getsockopt for user space communication
 	*/
-	if (nf_register_sockopt(&sockopts) < 0)
+	if (nf_register_sockopt(&sockopts) < 0) {
+		kmem_cache_destroy(ticache);
+		kmem_cache_destroy(sicache);
 		return -1;
+	}
+
+	/*
+ 	** create a new kernel mode thread for time-driven garbage collection
+	** after creation, the thread waits until it is woken up
+	*/
+	knetatop_task = kthread_create(netatop_thread, NULL, "knetatop");
+
+	if (IS_ERR(knetatop_task)) {
+		nf_unregister_sockopt(&sockopts);
+		kmem_cache_destroy(ticache);
+		kmem_cache_destroy(sicache);
+		return -1;
+	}
 
 	/*
 	** prepare hooks and register
@@ -1643,13 +1700,9 @@ init_module()
 	create_proc_read_entry("netatop", 0444, NULL, netatop_read_proc, NULL);
 
 	/*
-	** activate timer for periodic call of garbage collector
+ 	** all admi prepared; kick off kernel mode thread
 	*/
-	init_timer(&timer);
-
-	timer.expires  = jiffies_64 + HZ;
-	timer.function = gcperiodic;
-	add_timer(&timer);
+	wake_up_process(knetatop_task);
 
 	return 0;		// return success
 }
@@ -1660,12 +1713,18 @@ init_module()
 void __exit
 cleanup_module()
 {
+	/*
+ 	** tell kernel daemon to stop
+	*/
+	kthread_stop(knetatop_task);
+
+	/*
+ 	** unregister netfilter hooks and other miscellaneous stuff
+	*/
 	nf_unregister_hook(&hookin_ipv4);
 	nf_unregister_hook(&hookout_ipv4);
 
 	remove_proc_entry("netatop", NULL);
-
-	del_timer(&timer);
 
 	nf_unregister_sockopt(&sockopts);
 
@@ -1675,4 +1734,10 @@ cleanup_module()
 	wipesockinfo();
 	wipetaskinfo();	
 	wipetaskexit();	
+
+	/*
+ 	** destroy caches
+	*/
+	kmem_cache_destroy(ticache);
+	kmem_cache_destroy(sicache);
 }
