@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.40
-Release: alt2
+Version: 3.4.41
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 40
+%define kernel_stable_version 41
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -2674,6 +2674,9 @@ done)
 
 
 %changelog
+* Wed Apr 17 2013 Led <led@altlinux.ru> 3.4.41-alt1
+- 3.4.41
+
 * Mon Apr 15 2013 Led <led@altlinux.ru> 3.4.40-alt2
 - vboxhost 4.2.12
 
