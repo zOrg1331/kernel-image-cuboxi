@@ -1007,6 +1007,16 @@ gctaskexit()
 	spin_unlock_irqrestore(&exitlock, flags);
 }
 
+static struct pid *find_vpid_lock(struct taskinfo *ti)
+{
+	struct pid *pid;
+
+	rcu_read_lock();
+	pid = find_vpid(ti->id);
+	rcu_read_unlock();
+	return pid;
+}
+
 /*
 ** cleanup sockinfo structures that are connected to finished processes
 */
@@ -1016,7 +1026,6 @@ gcsockinfo()
 	int		i;
 	struct sockinfo	*sip, *sipsave;
 	unsigned long	sflags, tflags;
-	struct pid	*pid;
 
 	/*
 	** go through all sockinfo hash buckets 
@@ -1105,11 +1114,7 @@ gcsockinfo()
 				** if the thread group exists, just mark
 				** it  as 'checked' for this cycle
 				*/
-				rcu_read_lock();
-				pid = find_vpid(sip->tgp->id);
-				rcu_read_unlock();
-
-				if (pid == NULL) {
+				if (find_vpid_lock(sip->tgp) == NULL) {
 					sip->tgp->state = INDELETE;
 					spin_unlock_irqrestore(
 						&thash[sip->tgh].lock, tflags);
@@ -1166,11 +1171,7 @@ gcsockinfo()
 			** if not, mark it as 'indelete' and break connection
 			** if thread exists, mark it 'checked'
 			*/
-			rcu_read_lock();
-			pid = find_vpid(sip->thp->id);
-			rcu_read_unlock();
-
-			if (pid == NULL) {
+			if (find_vpid_lock(sip->thp) == NULL) {
 				sip->thp->state = INDELETE;
 				sip->thp = NULL;
 			} else {
@@ -1226,7 +1227,6 @@ gctaskinfo()
 	int		i;
 	struct taskinfo	*tip, *tipsave;
 	unsigned long	tflags;
-	struct pid	*pid;
 
 	/*
 	** go through all taskinfo hash buckets 
@@ -1245,11 +1245,7 @@ gctaskinfo()
 		while (tip != (void *)&thash[i].ch) {
 			switch (tip->state) {
 			   default:	// not checked yet
-				rcu_read_lock();
-				pid = find_vpid(tip->id);
-				rcu_read_unlock();
-
-				if (pid != NULL) {
+				if (find_vpid_lock(tip) != NULL) {
 					tip = tip->ch.next;
 					break;
 				}
@@ -1603,7 +1599,7 @@ static int netatop_thread(void *dummy)
 {
 	while (!kthread_should_stop()) {
 		/*
- 		** do garbage collection
+		** do garbage collection
 		*/
 		garbage_collector();
 
@@ -1614,6 +1610,12 @@ static int netatop_thread(void *dummy)
 	}
 
 	return 0;
+}
+
+static void kmem_cache_destroy2(void)
+{
+	kmem_cache_destroy(ticache);
+	kmem_cache_destroy(sicache);
 }
 
 /*
@@ -1660,8 +1662,7 @@ init_module()
 	** register getsockopt for user space communication
 	*/
 	if (nf_register_sockopt(&sockopts) < 0) {
-		kmem_cache_destroy(ticache);
-		kmem_cache_destroy(sicache);
+		kmem_cache_destroy2();
 		return -1;
 	}
 
@@ -1673,8 +1674,7 @@ init_module()
 
 	if (IS_ERR(knetatop_task)) {
 		nf_unregister_sockopt(&sockopts);
-		kmem_cache_destroy(ticache);
-		kmem_cache_destroy(sicache);
+		kmem_cache_destroy2();
 		return -1;
 	}
 
@@ -1736,8 +1736,7 @@ cleanup_module()
 	wipetaskexit();	
 
 	/*
- 	** destroy caches
+	** destroy caches
 	*/
-	kmem_cache_destroy(ticache);
-	kmem_cache_destroy(sicache);
+	kmem_cache_destroy2();
 }
