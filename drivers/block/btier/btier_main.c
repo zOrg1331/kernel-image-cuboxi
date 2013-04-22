@@ -15,7 +15,7 @@
 
 #define TRUE 1
 #define FALSE 0
-#define TIER_VERSION "0.9.9.9-7"
+#define TIER_VERSION "0.9.9.9-8"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mark Ruijter");
@@ -194,13 +194,13 @@ static void clear_dev_list(struct tier_device *dev, struct blockinfo *binfo)
 	struct backing_device *backdev = dev->backdev[binfo->device - 1];
 
 	offset = binfo->offset - backdev->startofdata;
-
 	boffset = offset >> BLKBITS;
 	tier_file_write(dev, binfo->device - 1,
 			&unallocated, 1, backdev->startofbitlist + boffset);
 	if (backdev->free_offset > boffset)
 		backdev->free_offset = boffset;
-	backdev->bitlist[boffset] = unallocated;
+        if ( backdev->bitlist )
+	     backdev->bitlist[boffset] = unallocated;
 }
 
 static int allocate_dev(struct tier_device *dev, u64 blocknr,
@@ -1567,45 +1567,59 @@ u64 allocated_on_device(struct tier_device *dev, int device)
 	u64 offset = 0;
 	int i;
 	u64 allocated = 0;
+        int hascache=0;
 
-	if (!dev->backdev[device]->bitlist) {
-		buffer = kzalloc(PAGE_SIZE, GFP_KERNEL);
-		if (!buffer) {
-			tiererror(dev, "allocated_on_device : alloc failed");
-			return 0 - 1;
-		}
-	}
-	while (offset < dev->backdev[device]->bitlistsize) {
-		if (!dev->backdev[device]->bitlist) {
-			tier_file_read(dev, device,
-				       buffer, PAGE_SIZE,
-				       dev->backdev[device]->startofbitlist +
-				       offset);
-		} else
-			buffer = &dev->backdev[device]->bitlist[offset];
-		offset += PAGE_SIZE;
-		for (i = 0; i < PAGE_SIZE; i++) {
-			if (buffer[i] == 0xff)
-				allocated += BLKSIZE;
-		}
-	}
-	if (offset < dev->backdev[device]->bitlistsize) {
-		if (!dev->backdev[device]->bitlist) {
-			tier_file_read(dev, device,
-				       buffer,
-				       dev->backdev[device]->bitlistsize -
-				       offset,
-				       dev->backdev[device]->startofbitlist +
-				       offset);
-		} else
-			buffer = &dev->backdev[device]->bitlist[offset];
-	}
+
+        if ( dev->backdev[device]->bitlist ) hascache=1;
+        buffer = kzalloc(PAGE_SIZE, GFP_KERNEL);
+        if (!buffer) {
+             tiererror(dev, "allocated_on_device : alloc failed");
+             return 0 - 1;
+        }
+
+        if ( !hascache ) {
+	        while (offset < dev->backdev[device]->bitlistsize) {
+        		tier_file_read(dev, device,
+        			       buffer, PAGE_SIZE,
+        			       dev->backdev[device]->startofbitlist +
+        			       offset);
+        		offset += PAGE_SIZE;
+        		for (i = 0; i < PAGE_SIZE; i++) {
+        			if (buffer[i] == 0xff)
+        				allocated += BLKSIZE;
+        		}
+        	}
+        	if (offset < dev->backdev[device]->bitlistsize) {
+        		tier_file_read(dev, device,
+        			       buffer,
+        			       dev->backdev[device]->bitlistsize -
+        			       offset,
+        			       dev->backdev[device]->startofbitlist +
+        			       offset);
+        	}
+        } else {
+                while (offset < dev->backdev[device]->bitlistsize) {
+                        memcpy(buffer,&dev->backdev[device]->bitlist[offset],PAGE_SIZE);
+                        offset += PAGE_SIZE;
+                        for (i = 0; i < PAGE_SIZE; i++) {
+                                if (buffer[i] == 0xff)
+                                        allocated += BLKSIZE;
+                        }
+                }
+                if (offset < dev->backdev[device]->bitlistsize) {
+                     memset(buffer,0,PAGE_SIZE);
+                     memcpy(buffer,&dev->backdev[device]->bitlist[offset],dev->backdev[device]->bitlistsize-offset);
+                }       
+        }
 	for (i = 0; i < dev->backdev[device]->bitlistsize - offset; i++) {
+                if ( i >= PAGE_SIZE ) {
+                   pr_err("allocated_on_device : buffer overflow, should never happen\n");
+                   break;
+                }
 		if (buffer[i] == 0xff)
 			allocated += BLKSIZE;
 	}
-	if (!dev->backdev[device]->bitlist)
-		kfree(buffer);
+	kfree(buffer);
 	return allocated;
 }
 
