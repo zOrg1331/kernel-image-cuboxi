@@ -278,7 +278,7 @@ a7d9a1384378c8e10c08eec1dff5601663b5c859 feat-drivers-scsi--vhba
 f5da60bc672d89dda80d5f98c06b60ac2b0dfa8f fix-mm--slab
 19a7279fe7f36ac72f5d44d5347f998a8c1778e4 fix-mm--slub
 f386289eff06cd07018d03f8ebbb3b723a60b547 fix-security--selinux
-781cc1ca620bcab21b9074a0a93a035a51c88d3e feat-drivers-net-ethernet-atheros--alx
+1fb1fc3cabf0d6d9c3565b04ee8b9ab8ad54c270 feat-drivers-net-ethernet-atheros--alx
 83e9a3265dad94d5ccbb79769219e988ba0adb7f fix-fs-ext3
 a1649cbaedde9b70effe9e887e4d32cbe30ada98 fix-fs-debugfs
 ba6ca6ea6a8dc8bd25f0cab4120333ee0c8d4ed3 feat-mm--zswap
