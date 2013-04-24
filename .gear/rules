@@ -242,6 +242,7 @@ diff: v3.4.35:.				fix-fs-xfs:. name=linux-3.4.35-fix-fs-xfs.patch
 diff: v3.4.34:.				fix-include-linux:. name=linux-3.4.34-fix-include-linux.patch
 diff: v3.4.20:.				fix-init:. name=linux-3.4.20-fix-init.patch
 diff: v3.4.34:.				fix-kernel:. name=linux-3.4.34-fix-kernel.patch
+diff: v3.4.41:.				fix-kernel--rcutree:. name=linux-3.4.41-fix-kernel--rcutree.patch
 diff: v3.4.39:.				fix-kernel-irq:. name=linux-3.4.39-fix-kernel-irq.patch
 diff: v3.4.39:.				fix-kernel-power:. name=linux-3.4.39-fix-kernel-power.patch
 diff: v3.4.25:.				fix-lib:. name=linux-3.4.25-fix-lib.patch
