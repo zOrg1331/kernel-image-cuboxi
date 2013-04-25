@@ -51,6 +51,5 @@ drbd:
 
 nvidia:
 	[ -e $(extmoddir)/Makefile ] || ln -s Makefile.kbuild $(extmoddir)/Makefile
-	rm -f $(extmoddir)/conftest.h
-	$(submake) SYSSRC=$(CURDIR) modules
+	$(MAKE) -C $(extmoddir) -f Makefile.kbuild SYSSRC=$(CURDIR) module
 endif

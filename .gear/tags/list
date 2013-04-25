@@ -369,3 +369,4 @@ dc8597072761d3adb7ed5b20c5e4835b534d7271 fix-drivers-net-ethernet-broadcom--bnx2
 30cd9ebb0a86315a14c350488e4c35c3b1c9af4b fix-net-dcb
 f3e1d32a0b618ea6c4bc32f06ef9dc6cf6bbd4b3 v3.4.41
 0cddcae2f7e9700268d3b9445881504654dc3241 fix-kernel--rcutree
+95090175747a04586ffcb2a42d84acc53c8554ef feat-drivers-acpi--bbswitch
