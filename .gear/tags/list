@@ -81,7 +81,7 @@ b216e5da21b32cabfa72ce370a22dd72152d507b fix-sound-soc-omap--snd-soc-omap
 aa2ca76e859c3bf850ac9c7431f6b42320333813 fix-sound-soc-omap--snd-soc-omap-mcbsp
 8abb6f792ec0fb424c5511ae31da8cddd495f323 fix-tools--perf
 b05378daca44ba9d28b8aff9c5d5c24e5a9645b3 fix-tools-hv
-f2a53e8c97996db3a293d1dabc92f3d08a6c7bf3 fix-virt-kvm
+ae9168ce2078601bfffee0395a372efa581b9253 fix-virt-kvm
 47cd2c321a712f4e43c9b6d9324a9a815e04eacf feat-arch-arm-mach-omap2--drm
 975bb74bfcf1c022ea49198dcd74efe14fe58d34 feat-block--bfq-iosched
 9e9e404d98dd49625c1647f0b00bd53a8349df53 feat-drivers-block--cloop
@@ -370,3 +370,4 @@ dc8597072761d3adb7ed5b20c5e4835b534d7271 fix-drivers-net-ethernet-broadcom--bnx2
 f3e1d32a0b618ea6c4bc32f06ef9dc6cf6bbd4b3 v3.4.41
 0cddcae2f7e9700268d3b9445881504654dc3241 fix-kernel--rcutree
 95090175747a04586ffcb2a42d84acc53c8554ef feat-drivers-acpi--bbswitch
+41a1b6ad4c9a74d60c214f8b42bf3c22aad5a20d v3.4.42
