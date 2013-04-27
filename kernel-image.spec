@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.42
-Release: alt1
+Release: alt2
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -388,7 +388,7 @@ Patch0465: linux-%kernel_branch.25-fix-drivers-scsi--mpt2sas.patch
 Patch0466: linux-%kernel_branch.25-fix-drivers-scsi--mvsas.patch
 Patch0467: linux-%kernel_branch.20-fix-drivers-scsi--scsi_mod.patch
 Patch0468: linux-%kernel_branch.20-fix-drivers-scsi--scsi_netlink.patch
-Patch0469: linux-%kernel_branch.20-fix-drivers-scsi--sd_mod.patch
+Patch0469: linux-%kernel_branch.42-fix-drivers-scsi--sd_mod.patch
 Patch0470: linux-%kernel_branch.29-fix-drivers-scsi--st.patch
 Patch0471: linux-%kernel_branch.20-fix-drivers-scsi-device_handler--scsi_dh.patch
 Patch0472: linux-%kernel_branch.39-fix-drivers-scsi-fcoe--fcoe.patch
@@ -2688,6 +2688,10 @@ done)
 
 
 %changelog
+* Sat Apr 27 2013 Led <led@altlinux.ru> 3.4.42-alt2
+- updated:
+  + fix-drivers-scsi--sd_mod
+
 * Fri Apr 26 2013 Led <led@altlinux.ru> 3.4.42-alt1
 - 3.4.42
 - updated:

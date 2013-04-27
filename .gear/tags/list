@@ -47,7 +47,7 @@ bb0ae3e4170069640686232b7d269a670630d019 fix-drivers-platform--hdaps
 97d2783ce1901fb017586fa40b6b62ea4a31207a fix-drivers-scsi--hv_storvsc
 2c587d279d6cdf3729a6c789daf0622a38112017 fix-drivers-scsi--scsi_mod
 3a4c5c855a3751c7073392af887f581ae4d5c71a fix-drivers-scsi--scsi_netlink
-661f6c5e05ee25bced279721b4a115a0283bb4df fix-drivers-scsi--sd_mod
+8fbcd30337986306d8b5f8a8eda4a37820344825 fix-drivers-scsi--sd_mod
 68d6a9b15c0c3c15a2671825a696838525233147 fix-drivers-scsi-device_handler--scsi_dh
 ef75d7aaa3bea71db8e6d53ad7a1361968795de2 fix-drivers-scsi-ibmvscsi--ibmvscsic
 b8bb3e49f4f503e30679702da6caf593e625fc0a fix-drivers-scsi-megaraid--megaraid_mbox
