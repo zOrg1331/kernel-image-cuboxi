@@ -31,25 +31,25 @@ endif
 
 else
 
-submake = $(MAKE) SUBDIRS=$(extmoddir)
+submake = $(MAKE) SUBDIRS=$(extmoddir) modules
 
 vboxguest vboxhost:
-	$(submake) modules
+	$(submake)
 
 kvm:
 	[ -e $(extmoddir)/config.mak ] || (cd $(extmoddir) && ./configure --kerneldir=$(CURDIR))
 	$(MAKE) -C $(extmoddir)
 
 fglrx:
-	$(submake) modules
+	$(submake)
 
 netatop:
-	$(submake) modules
+	$(submake)
 
 drbd:
 	$(MAKE) -C $(extmoddir)/$@ KDIR=$(CURDIR) kbuild
 
 nvidia:
 	[ -e $(extmoddir)/Makefile ] || ln -s Makefile.kbuild $(extmoddir)/Makefile
-	$(MAKE) -C $(extmoddir) -f Makefile.kbuild SYSSRC=$(CURDIR) module
+	$(submake) SYSSRC=$(CURDIR)
 endif
