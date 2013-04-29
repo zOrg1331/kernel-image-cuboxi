@@ -8,7 +8,7 @@ bff83072e047d7a2e2d4f562f35afefa5bb1bde2 fix-arch-powerpc--prom_init
 0a70532bed377f6903b9a9a843bd06d00df222c3 fix-arch-powerpc-platforms-chrp
 0d396a49e8c4d61f62c1faebd28f998dce5fabdf fix-arch-powerpc-xmon
 01c74b0ad24cde18a13927a773b0b6648492e862 fix-arch-s390
-c9466060dc4fe0df05d2818f114a9d616e906c7d fix-arch-x86
+6876d9218df79cd334b07db692e094571e3d8f48 fix-arch-x86
 f890334b859f8c9bacdc3d856dbe43556196c729 fix-arch-x86--apic
 fc89a5eff7006e0fcef05f9331646540138280d0 fix-arch-x86--apm
 c1a5be3926dc02959b4b7031428beb36fdc70d35 fix-arch-x86--hpet

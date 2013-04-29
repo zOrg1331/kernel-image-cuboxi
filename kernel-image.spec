@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.42
-Release: alt4
+Release: alt5
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -2689,6 +2689,10 @@ done)
 
 
 %changelog
+* Mon Apr 29 2013 Led <led@altlinux.ru> 3.4.42-alt5
+- updated:
+  + fix-arch-x86
+
 * Mon Apr 29 2013 Led <led@altlinux.ru> 3.4.42-alt4
 - updated:
   + fix-drivers-tty
