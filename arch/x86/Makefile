@@ -60,7 +60,7 @@ else
 	cflags-$(CONFIG_MATOM) += \
 		$(call cc-option,-march=atom,$(call cc-option,-march=core2,-march=nocona -msahf) -mtune=generic)
 	cflags-$(CONFIG_MCOREI7) += \
-		$(call cc-option,-march=corei7,$(call cc-option,-march=core2,-march=nocona $(align)-msahf) -mtune=generic)
+		$(call cc-option,-march=corei7,$(call cc-option,-march=core2,-march=nocona -msahf) -mtune=generic)
         cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
         KBUILD_CFLAGS += $(cflags-y)
 
