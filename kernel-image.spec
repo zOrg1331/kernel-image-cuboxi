@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.42
-Release: alt3
+Release: alt4
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -398,7 +398,7 @@ Patch0474: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patc
 Patch0481: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 Patch0482: linux-%kernel_branch.38-fix-drivers-spi--spi-dw.patch
 
-Patch0490: linux-%kernel_branch.32-fix-drivers-tty.patch
+Patch0490: linux-%kernel_branch.42-fix-drivers-tty.patch
 Patch0491: linux-%kernel_branch.39-fix-drivers-tty-hvc--hvc_console.patch
 Patch0492: linux-%kernel_branch.38-fix-drivers-tty-serial--ifx6x60.patch
 Patch0493: linux-%kernel_branch.38-fix-drivers-tty-serial--mfd.patch
@@ -1255,15 +1255,18 @@ l="$(rpmquery --qf '%%{LICENSE}\n' kernel-source-$m-$v 2>/dev/null)"
 [ -n "$l" -a "$l" != "(none)" ] && l="License: $l" || l=
 cat <<__PACKAGE__
 %%package -n kernel-modules-$m-%flavour
+Version: ${v}_%kversion
 Summary: $m kernel modules v$v
 $l
 %kernel_modules_package_std_body $m
+Provides: kernel-modules-$m-%flavour = %kversion-%release
 
 %%description -n kernel-modules-$m-%flavour
 $m kernel modules version $v.
 
 __PACKAGE__
 done)
+%define version %kversion
 %endif
 
 
@@ -2686,6 +2689,11 @@ done)
 
 
 %changelog
+* Mon Apr 29 2013 Led <led@altlinux.ru> 3.4.42-alt4
+- updated:
+  + fix-drivers-tty
+- changed versioning for external modules
+
 * Mon Apr 29 2013 Led <led@altlinux.ru> 3.4.42-alt3
 - removed:
   + feat-fs-hfs

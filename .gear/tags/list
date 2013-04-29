@@ -259,7 +259,7 @@ d61a32094e0b40976f83799b294de1c8e8163843 fix-drivers-mfd--twl4030-core
 f30f0c69aceb97956fc62a4fcbe68c4cb44947f6 fix-drivers-scsi--lpfc
 cd7a8837a9ca6935c835b0a655982db220e941e7 fix-drivers-tty-serial--pch_uart
 ea6e5cf913a3b61078a35837bb6472b545dbffe1 fix-drivers-idle--intel_idle
-b51e69ae0de2bdf093514387b43a0aaa68946a7a fix-drivers-tty
+118176cd28c90f055160de642cec4b8c18fc335f fix-drivers-tty
 212f93696cb1543620fc5999e1b7e5547b90b50d fix-net-core
 e433868d9a56637374ffca868cd9541628cf2549 v3.4.34
 f5c13fe75c6a55096ea1d4a0d97dca5b56ace8ee fix-drivers-usb
