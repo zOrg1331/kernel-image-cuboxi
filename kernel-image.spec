@@ -21,7 +21,7 @@
 
 Name: kernel-image-%flavour
 Version: 3.4.42
-Release: alt5
+Release: alt6
 
 %define kernel_req %nil
 %define kernel_prov %nil
@@ -59,7 +59,6 @@ Release: alt5
 %def_enable isdn
 %def_enable telephony
 %def_enable atm
-%def_disable tokenring
 %def_enable fddi
 %def_enable w1
 %def_enable hamradio
@@ -273,7 +272,7 @@ Patch0222: linux-%kernel_branch.20-fix-drivers-hv--hv_vmbus.patch
 Patch0231: linux-%kernel_branch.25-fix-drivers-hwmon--applesmc.patch
 Patch0232: linux-%kernel_branch.25-fix-drivers-hwmon--asc7621.patch
 Patch0233: linux-%kernel_branch.38-fix-drivers-hwmon--asus_atk0110.patch
-Patch0234: linux-%kernel_branch.25-fix-drivers-hwmon--coretemp.patch
+Patch0234: linux-%kernel_branch.42-fix-drivers-hwmon--coretemp.patch
 Patch0235: linux-%kernel_branch.25-fix-drivers-hwmon--fam15h_power.patch
 Patch0236: linux-%kernel_branch.25-fix-drivers-hwmon--i5k_amb.patch
 Patch0237: linux-%kernel_branch.25-fix-drivers-hwmon--k10temp.patch
@@ -434,18 +433,19 @@ Patch0545: linux-%kernel_branch.30-fix-fs-cifs.patch
 Patch0546: linux-%kernel_branch.35-fix-fs-debugfs.patch
 Patch0547: linux-%kernel_branch.37-fix-fs-ext3.patch
 Patch0548: linux-%kernel_branch.35-fix-fs-ext4.patch
-Patch0549: linux-%kernel_branch.35-fix-fs-gfs2.patch
-Patch0550: linux-%kernel_branch.20-fix-fs-hfs.patch
-Patch0551: linux-%kernel_branch.35-fix-fs-jfs.patch
-Patch0552: linux-%kernel_branch.29-fix-fs-logfs.patch
-Patch0553: linux-%kernel_branch.35-fix-fs-nfs.patch
-Patch0554: linux-%kernel_branch.35-fix-fs-nilfs2.patch
-Patch0555: linux-%kernel_branch.35-fix-fs-ocfs2.patch
-Patch0556: linux-%kernel_branch.31-fix-fs-proc.patch
-Patch0557: linux-%kernel_branch.28-fix-fs-ramfs.patch
-Patch0558: linux-%kernel_branch.20-fix-fs-reiserfs.patch
-Patch0559: linux-%kernel_branch.35-fix-fs-ubifs.patch
-Patch0560: linux-%kernel_branch.35-fix-fs-xfs.patch
+Patch0549: linux-%kernel_branch.42-fix-fs-fuse.patch
+Patch0550: linux-%kernel_branch.35-fix-fs-gfs2.patch
+Patch0551: linux-%kernel_branch.20-fix-fs-hfs.patch
+Patch0552: linux-%kernel_branch.35-fix-fs-jfs.patch
+Patch0553: linux-%kernel_branch.29-fix-fs-logfs.patch
+Patch0554: linux-%kernel_branch.35-fix-fs-nfs.patch
+Patch0555: linux-%kernel_branch.35-fix-fs-nilfs2.patch
+Patch0556: linux-%kernel_branch.35-fix-fs-ocfs2.patch
+Patch0557: linux-%kernel_branch.31-fix-fs-proc.patch
+Patch0558: linux-%kernel_branch.28-fix-fs-ramfs.patch
+Patch0559: linux-%kernel_branch.20-fix-fs-reiserfs.patch
+Patch0560: linux-%kernel_branch.35-fix-fs-ubifs.patch
+Patch0561: linux-%kernel_branch.35-fix-fs-xfs.patch
 
 Patch0571: linux-%kernel_branch.34-fix-include-linux.patch
 
@@ -1611,6 +1611,7 @@ cd linux-%version
 %patch0558 -p1
 %patch0559 -p1
 %patch0560 -p1
+%patch0561 -p1
 
 # fix-include-*
 %patch0571 -p1
@@ -1886,7 +1887,7 @@ config_disable \
 config_disable \
 	%{?_disable_smp:SMP} \
 	%{?_disable_modversions:MODVERSIONS} \
-	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT PROC_PID_CPUSET SYSFS_DEPRECATED USB_DEVICEFS} \
+	%{?_disable_compat:SYSCTL_SYSCALL ACPI_PROC_EVENT COMPAT_VDSO I2C_COMPAT PROC_PID_CPUSET SYSFS_DEPRECATED USB_DEVICEFS USB_DEVICE_CLASS} \
 	%{?_disable_numa:NUMA} \
 	%{?_disable_video:FB VIDEO_OUTPUT_CONTROL BACKLIGHT_LCD_SUPPORT} \
 	%{?_disable_drm:DRM} \
@@ -1910,7 +1911,6 @@ config_disable \
 	%{?_disable_usb_gadget:USB_GADGET} \
 	%{?_disable_pcmcia:PCCARD PCMCIA} \
 	%{?_disable_atm:ATM} \
-	%{?_disable_tokenring:TR} \
 	%{?_disable_fddi:FDDI} \
 	%{?_disable_hamradio:HAMRADIO} \
 	%{?_disable_w1:W1} \
@@ -2215,7 +2215,6 @@ gen_rpmmodfile ipmi %buildroot%modules_dir/kernel/drivers/{acpi/acpi_ipmi,char/i
 %{?_enable_hamradio:gen_rpmmodfile hamradio %buildroot%modules_dir/kernel/{drivers/net/hamradio,net/{netrom,rose,ax25}}}
 %{?_enable_irda:gen_rpmmodfile irda %buildroot%modules_dir/kernel/{,drivers/}net/irda}
 %{?_enable_isdn:gen_rpmmodfile isdn %buildroot%modules_dir/kernel/{drivers/isdn,net/bluetooth/cmtp}}
-%{?_enable_tokenring:gen_rpmmodfile tokenring %buildroot%modules_dir/kernel/{drivers/net/{tokenring,pcmcia/ibmtr_cs.ko},net/802/tr.ko}}
 %{?_enable_usb_gadget:gen_rpmmodlist %buildroot%modules_dir/kernel/drivers/usb/gadget/* | grep -xv '%modules_dir/kernel/drivers/usb/gadget/udc-core.ko' > usb-gadget.rpmmodlist}
 %if_enabled video
 gen_rpmmodlist %buildroot%modules_dir/kernel/drivers/video/* | grep -xv '%modules_dir/kernel/drivers/video/uvesafb.ko' | grep -xv '%modules_dir/kernel/drivers/video/sis' | grep -xv '%modules_dir/kernel/drivers/video/backlight' | grep -v '^%modules_dir/kernel/drivers/video/.*sys.*\.ko$' > video.rpmmodlist
@@ -2401,7 +2400,6 @@ done)
 %exclude %modules_dir/kernel/drivers/net/slip/slip.ko
 %exclude %modules_dir/kernel/net/dccp
 %exclude %modules_dir/kernel/net/decnet
-%exclude %modules_dir/kernel/net/econet
 %exclude %modules_dir/kernel/net/ieee802154
 %exclude %modules_dir/kernel/drivers/ieee802154
 %exclude %modules_dir/kernel/net/ipx
@@ -2491,11 +2489,6 @@ done)
 %modules_dir/kernel/net/can
 %modules_dir/kernel/drivers/net/can
 %endif
-%if_enabled tokenring
-%{?_enable_pcmcia:%modules_dir/kernel/drivers/net/pcmcia/ibmtr_cs.ko}
-%modules_dir/kernel/drivers/net/tokenring
-%modules_dir/kernel/net/802/tr.ko
-%endif
 %if_enabled fddi
 %modules_dir/kernel/drivers/net/fddi
 %modules_dir/kernel/net/802/fddi.ko
@@ -2509,7 +2502,6 @@ done)
 #modules_dir/kernel/net/ceph
 %modules_dir/kernel/net/dccp
 %modules_dir/kernel/net/decnet
-%modules_dir/kernel/net/econet
 %modules_dir/kernel/net/ieee802154
 %modules_dir/kernel/drivers/ieee802154
 %modules_dir/kernel/net/ipx
@@ -2610,9 +2602,6 @@ done)
 %firmware_dir/ti_*
 %firmware_dir/tigon
 %{?_enable_hamradio:%firmware_dir/yam}
-%ifarch %ix86
-%{?_enable_tokenring:%firmware_dir/tr_smctr.*}
-%endif
 %firmware_dir/whiteheat*
 %if_enabled alsa
 %{?_enable_pci:%firmware_dir/ess}
@@ -2689,6 +2678,17 @@ done)
 
 
 %changelog
+* Tue Apr 30 2013 Led <led@altlinux.ru> 3.4.42-alt6
+- updated:
+  + fix-drivers-hwmon--coretemp
+- added:
+  + fix-fs-fuse
+- disabled:
+  + IP6_NF_QUEUE
+  + ECONET
+  + USB_DEVICE_CLASS
+- cleaned up spec
+
 * Mon Apr 29 2013 Led <led@altlinux.ru> 3.4.42-alt5
 - updated:
   + fix-arch-x86
