@@ -20,13 +20,13 @@
 %define flavour %base_flavour-%sub_flavour
 
 Name: kernel-image-%flavour
-Version: 3.4.42
-Release: alt6
+Version: 3.4.43
+Release: alt1
 
 %define kernel_req %nil
 %define kernel_prov %nil
 %define kernel_branch 3.4
-%define kernel_stable_version 42
+%define kernel_stable_version 43
 %define kernel_extra_version .%kernel_stable_version
 #define kernel_extra_version %nil
 
@@ -397,7 +397,7 @@ Patch0474: linux-%kernel_branch.20-fix-drivers-scsi-megaraid--megaraid_mbox.patc
 Patch0481: linux-%kernel_branch.25-fix-drivers-spi--spi.patch
 Patch0482: linux-%kernel_branch.38-fix-drivers-spi--spi-dw.patch
 
-Patch0490: linux-%kernel_branch.42-fix-drivers-tty.patch
+Patch0490: linux-%kernel_branch.43-fix-drivers-tty.patch
 Patch0491: linux-%kernel_branch.39-fix-drivers-tty-hvc--hvc_console.patch
 Patch0492: linux-%kernel_branch.38-fix-drivers-tty-serial--ifx6x60.patch
 Patch0493: linux-%kernel_branch.38-fix-drivers-tty-serial--mfd.patch
@@ -469,7 +469,7 @@ Patch0614: linux-%kernel_branch.39-fix-mm--memblock.patch
 Patch0615: linux-%kernel_branch.20-fix-mm--memcontrol.patch
 Patch0616: linux-%kernel_branch.20-fix-mm--memory-failure.patch
 Patch0617: linux-%kernel_branch.20-fix-mm--memory_hotplug.patch
-Patch0618: linux-%kernel_branch.35-fix-mm--mmu.patch
+Patch0618: linux-%kernel_branch.43-fix-mm--mmu.patch
 Patch0619: linux-%kernel_branch.35-fix-mm--slab.patch
 Patch0620: linux-%kernel_branch.35-fix-mm--slub.patch
 Patch0621: linux-%kernel_branch.35-fix-mm--swap.patch
@@ -480,7 +480,7 @@ Patch0631: linux-%kernel_branch.30-fix-net--dns_resolver.patch
 Patch0632: linux-%kernel_branch.39-fix-net-802--fc.patch
 Patch0633: linux-%kernel_branch.31-fix-net-bridge--bridge.patch
 Patch0634: linux-%kernel_branch.38-fix-net-ceph.patch
-Patch0635: linux-%kernel_branch.37-fix-net-core.patch
+Patch0635: linux-%kernel_branch.42-fix-net-core.patch
 Patch0636: linux-%kernel_branch.39-fix-net-dcb.patch
 Patch0637: linux-%kernel_branch.35-fix-net-ipv4--xfrm.patch
 Patch0638: linux-%kernel_branch.31-fix-net-ipv6.patch
@@ -490,8 +490,9 @@ Patch0641: linux-%kernel_branch.25-fix-net-mac80211.patch
 Patch0642: linux-%kernel_branch.20-fix-net-netfilter--nf_conntrack_ftp.patch
 Patch0643: linux-%kernel_branch.28-fix-net-rds--rds_rdma.patch
 Patch0644: linux-%kernel_branch.35-fix-net-sunrpc.patch
-Patch0645: linux-%kernel_branch.39-fix-net-wimax.patch
-Patch0646: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
+Patch0645: linux-%kernel_branch.42-fix-net-unix--unix.patch
+Patch0646: linux-%kernel_branch.39-fix-net-wimax.patch
+Patch0647: linux-%kernel_branch.35-fix-net-wireless--cfg80211.patch
 
 Patch0651: linux-%kernel_branch.20-fix-scripts--kconfig.patch
 
@@ -1664,6 +1665,7 @@ cd linux-%version
 %patch0644 -p1
 %patch0645 -p1
 %patch0646 -p1
+%patch0647 -p1
 
 # fix-scripts--*
 %patch0651 -p1
@@ -2678,6 +2680,19 @@ done)
 
 
 %changelog
+* Tue May 07 2013 Led <led@altlinux.ru> 3.4.43-alt1
+- 3.4.43
+- updated:
+  + fix-drivers-tty
+  + fix-mm--mmu
+  + fix-net-core (CVE-2013-0290)
+- added:
+  + fix-net-unix--unix (CVE-2013-0290)
+- disabled:
+  + UCB1400_CORE
+  + GPIO_UCB1400
+  + TOUCHSCREEN_UCB1400
+
 * Tue Apr 30 2013 Led <led@altlinux.ru> 3.4.42-alt6
 - updated:
   + fix-drivers-hwmon--coretemp
