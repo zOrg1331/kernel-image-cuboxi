@@ -2,7 +2,7 @@ Name:    kernel-image-std-def
 Release: alt0.M60P.1
 Epoch:   1
 %define kernel_base_version	3.0
-%define kernel_sublevel	.78
+%define kernel_sublevel	.79
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -572,6 +572,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Mon May 20 2013 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.79-alt0.M60P.1
+- 3.0.79
+
 * Mon May 13 2013 Gleb F-Malinovskiy <glebfm@altlinux.org> 1:3.0.78-alt0.M60P.1
 - 3.0.78
 
