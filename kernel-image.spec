@@ -1,5 +1,5 @@
 Name: kernel-image-un-def
-Release: alt0.M60P.1
+Release: alt0.M60P.2
 epoch:1 
 %define kernel_base_version	3.4
 %define kernel_sublevel	.45
@@ -578,6 +578,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed May 15 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.45-alt0.M60P.2
+- PERF_EVENTS disabled (workaround for CVE-2013-2094)
+
 * Sun May 12 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.45-alt0.M60P.1
 - 3.4.45
 
