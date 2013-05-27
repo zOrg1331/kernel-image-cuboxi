@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.M70P.1
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon May 27 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13-alt1.M70P.1
+- WRITE_SAME usage in hyperv disabled
+
 * Sun May 12 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13-alt1
 - 3.8.13
 
