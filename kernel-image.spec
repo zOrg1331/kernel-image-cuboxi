@@ -3,7 +3,7 @@ Release: alt1.M70P.1
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
-%define kernel_extra_version	%nil
+%define kernel_extra_version	.1
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed May 29 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.1-alt1.M70P.1
+- 3.8.13.1
+
 * Mon May 27 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13-alt1.M70P.1
 - WRITE_SAME usage in hyperv disabled
 
