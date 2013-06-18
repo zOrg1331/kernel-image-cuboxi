@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70P.1
+Release: alt1.M70P.2
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Jun 18 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.2
+- r8169 fixed?
+
 * Fri Jun 07 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.1
 - 3.8.13.2
 
