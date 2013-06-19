@@ -548,7 +548,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Tue Jun 18 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.2
-- r8169 fixed?
+- NETWORK_PHY_TIMESTAMPING disabled, r8169 fixed?
 
 * Fri Jun 07 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.1
 - 3.8.13.2
