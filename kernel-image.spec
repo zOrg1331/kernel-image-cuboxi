@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70P.2
+Release: alt1.M70P.4
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
@@ -24,7 +24,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
-%def_enable docs
+%def_disable docs
 %else
 %def_disable docs
 %endif
@@ -318,10 +318,6 @@ tar -jxf %kernel_src/kernel-source-%kernel_base_version.tar.bz2
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
 
-%if "%base_flavour" == "std"
-%patch1 -p1
-%endif
-
 %if "%sub_flavour" == "pae"
 %patch2 -p1
 %endif
@@ -496,7 +492,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
-%exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 /lib/firmware/*
 %ghost %modules_dir/modules.alias.bin
@@ -533,7 +528,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/gpu/drm/radeon
 
 %files -n kernel-modules-ide-%flavour
-%modules_dir/kernel/drivers/ide/
 
 %files -n kernel-modules-kvm-%flavour
 %modules_dir/kernel/arch/x86/kvm
@@ -547,6 +541,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Jun 20 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.4
+- test version with ubuntu config
+
 * Tue Jun 18 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.2-alt1.M70P.2
 - NETWORK_PHY_TIMESTAMPING disabled, r8169 fixed?
 
