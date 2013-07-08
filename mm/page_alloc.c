@@ -688,6 +688,160 @@ static void free_one_page(struct zone *zone, struct page *page, int order,
 	spin_unlock(&zone->lock);
 }
 
+#ifdef CONFIG_MEMORY_SANITIZE
+#include <linux/random.h>
+
+static bool sanitize_memory __read_mostly = false;
+static unsigned int sanitize_memory_level __read_mostly = 0;
+
+#ifdef CONFIG_SYSFS
+#include <linux/ctype.h>
+#include <linux/sysfs.h>
+
+static unsigned long sanitize_memory_count;
+
+static ssize_t sanitize_memory_count_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%lu\n", sanitize_memory_count);
+}
+
+static ssize_t sanitize_memory_level_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	buf[0] = sanitize_memory_level + '0';
+	buf[1] = '\n';
+	buf[2] = '\0';
+	return 2;
+}
+
+static struct kobj_attribute sanitize_memory_count_attr = {
+	.attr = {.name = "count", .mode = 0444},
+	.show = sanitize_memory_count_show,
+};
+
+static struct kobj_attribute sanitize_memory_level_attr = {
+	.attr = {.name = "level", .mode = 0444},
+	.show = sanitize_memory_level_show,
+};
+
+static struct attribute *sanitize_memory_attrs[] = {
+	&sanitize_memory_count_attr.attr,
+	&sanitize_memory_level_attr.attr,
+	NULL,
+};
+
+static struct attribute_group sanitize_memory_attr_group = {
+	.attrs = sanitize_memory_attrs,
+	.name = "sanitize_memory",
+};
+
+static int __init sanitize_memory_sysfs_init(void)
+{
+	if (sanitize_memory_count && sysfs_create_group(mm_kobj, &sanitize_memory_attr_group)) {
+		pr_err("Sanitize memory: can't create sysfs\n");
+		return 1;
+	}
+	return 0;
+}
+
+late_initcall(sanitize_memory_sysfs_init);
+
+static inline void inc_sanitize_memory_count(unsigned long i)
+{
+	sanitize_memory_count += i;
+};
+#else
+static inline void inc_sanitize_memory_count(unsigned long i) {};
+#endif
+
+static int __init sanitize_memory_setup(char *s)
+{
+	sanitize_memory_level = *s -'0';
+	if (sanitize_memory_level > 2)
+		sanitize_memory_level = 0;
+	sanitize_memory = true;
+	pr_info("Sanitize memory: enabled, level=%u\n", sanitize_memory_level);
+	return 1;
+}
+
+__setup("smem", sanitize_memory_setup);
+__setup_param("smem=", sanitize_memory_setup_eq, sanitize_memory_setup, 0);
+
+static inline unsigned long get_random_long(void)
+{
+	unsigned long pattern;
+
+	get_random_bytes(&pattern, sizeof(pattern));
+	return pattern;
+}
+
+static void fill_highmem_zero(struct page *page, unsigned int order)
+{
+	struct page *p;
+	unsigned long index = 1UL << order;
+
+	inc_sanitize_memory_count(index);
+	for (p = page + index - 1; index; index--, p--) {
+		unsigned long flags;
+
+		local_irq_save(flags);
+		clear_highpage(p);
+		local_irq_restore(flags);
+	}
+}
+
+static inline void fill_page_pattern(unsigned long *p, unsigned long pattern)
+{
+#ifdef CONFIG_X86
+			asm volatile(
+				"cld			\n"
+				"rep stos %0,%%es:(%1)	\n"
+				:
+				:"a" (pattern), "D" (p), "c" (PAGE_SIZE / sizeof(pattern))
+			);
+#else
+			int i;
+
+			for (i = PAGE_SIZE / sizeof(pattern); i; i--, p++)
+				*p = pattern;
+#endif
+}
+
+static void fill_highmem_pattern(struct page *page, unsigned int order)
+{
+	struct page *p;
+	unsigned long pattern[sanitize_memory_level];
+	unsigned long index = 1UL << order;
+
+	get_random_bytes(&pattern, sizeof(pattern));;
+	inc_sanitize_memory_count(index);
+	for (p = page + index - 1; index; index--, p--) {
+		void *kaddr;
+		unsigned long flags;
+		unsigned int i;
+
+		local_irq_save(flags);
+		kaddr = kmap_atomic(p);
+		for (i = 0; i < sanitize_memory_level; i++)
+			fill_page_pattern(kaddr, pattern[i]);
+		kunmap_atomic(kaddr);
+		local_irq_restore(flags);
+	}
+}
+
+static void fill_highmem(struct page *page, unsigned int order)
+{
+	if (sanitize_memory) {
+		if (sanitize_memory_level)
+			fill_highmem_pattern(page, order);
+		else
+			fill_highmem_zero(page, order);
+	}
+}
+#else
+static inline void fill_highmem(struct page *page, unsigned long order){};
+#endif
+
+
 static bool free_pages_prepare(struct page *page, unsigned int order)
 {
 	int i;
@@ -708,6 +862,9 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 		debug_check_no_obj_freed(page_address(page),
 					   PAGE_SIZE << order);
 	}
+
+	fill_highmem(page, order);
+
 	arch_free_page(page, order);
 	kernel_map_pages(page, 1 << order, 0);
 
