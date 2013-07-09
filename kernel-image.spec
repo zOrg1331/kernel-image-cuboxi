@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70P.1
+Release: alt1.M70P.2
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Jul 09 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.4-alt1.M70P.2
+- memory sanitizing patch added
+
 * Thu Jul 04 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.4-alt1.M70P.1
 - 3.8.13.4
 
