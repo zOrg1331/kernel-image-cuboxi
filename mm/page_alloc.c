@@ -691,11 +691,12 @@ static void free_one_page(struct zone *zone, struct page *page, int order,
 #ifdef CONFIG_MEMORY_SANITIZE
 #include <linux/random.h>
 
+#define SANITIZE_MEMORY_MAX_PASSES 2
+
 static bool sanitize_memory __read_mostly = false;
 static unsigned int sanitize_memory_level __read_mostly = 0;
 
 #ifdef CONFIG_SYSFS
-#include <linux/ctype.h>
 #include <linux/sysfs.h>
 
 static unsigned long sanitize_memory_count;
@@ -756,7 +757,7 @@ static inline void inc_sanitize_memory_count(unsigned long i) {};
 static int __init sanitize_memory_setup(char *s)
 {
 	sanitize_memory_level = *s -'0';
-	if (sanitize_memory_level > 2)
+	if (sanitize_memory_level > SANITIZE_MEMORY_MAX_PASSES)
 		sanitize_memory_level = 0;
 	sanitize_memory = true;
 	pr_info("Sanitize memory: enabled, level=%u\n", sanitize_memory_level);
@@ -765,14 +766,6 @@ static int __init sanitize_memory_setup(char *s)
 
 __setup("smem", sanitize_memory_setup);
 __setup_param("smem=", sanitize_memory_setup_eq, sanitize_memory_setup, 0);
-
-static inline unsigned long get_random_long(void)
-{
-	unsigned long pattern;
-
-	get_random_bytes(&pattern, sizeof(pattern));
-	return pattern;
-}
 
 static void fill_highmem_zero(struct page *page, unsigned int order)
 {
@@ -789,35 +782,40 @@ static void fill_highmem_zero(struct page *page, unsigned int order)
 	}
 }
 
-static inline void fill_page_pattern(unsigned long *p, unsigned long pattern)
+static inline void fill_page_pattern(unsigned long *p, unsigned int pattern)
 {
 #ifdef CONFIG_X86
-			asm volatile(
-				"cld			\n"
-				"rep stos %0,%%es:(%1)	\n"
-				:
-				:"a" (pattern), "D" (p), "c" (PAGE_SIZE / sizeof(pattern))
-			);
+	unsigned long pl = pattern;
+#ifdef CONFIG_X86_64
+	pl |= (unsigned long)pattern << 32;
+#endif
+	asm volatile(
+		"cld		\n"
+		"rep stos %0,%%es:(%1)	\n"
+		:
+		:"a" (pattern), "D" (p), "c" (PAGE_SIZE / sizeof(pl))
+	);
 #else
-			int i;
+	int i;
 
-			for (i = PAGE_SIZE / sizeof(pattern); i; i--, p++)
-				*p = pattern;
+	for (i = PAGE_SIZE / sizeof(pattern); i; i--, p++)
+		*p = pattern;
 #endif
 }
 
 static void fill_highmem_pattern(struct page *page, unsigned int order)
 {
 	struct page *p;
-	unsigned long pattern[sanitize_memory_level];
+	int i;
 	unsigned long index = 1UL << order;
+	unsigned int pattern[sanitize_memory_level];
 
-	get_random_bytes(&pattern, sizeof(pattern));;
+	for (i = 0; i < sanitize_memory_level; i++)
+		pattern[i] = get_random_int();
 	inc_sanitize_memory_count(index);
 	for (p = page + index - 1; index; index--, p--) {
 		void *kaddr;
 		unsigned long flags;
-		unsigned int i;
 
 		local_irq_save(flags);
 		kaddr = kmap_atomic(p);
