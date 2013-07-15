@@ -784,22 +784,24 @@ static void fill_highmem_zero(struct page *page, unsigned int order)
 
 static inline void fill_page_pattern(unsigned long *p, unsigned int pattern)
 {
-#ifdef CONFIG_X86
+#if BITS_PER_LONG == 32
 	unsigned long pl = pattern;
-#ifdef CONFIG_X86_64
-	pl |= (unsigned long)pattern << 32;
+#else
+	unsigned long pl = ((unsigned long)pattern << 32) | pattern;
 #endif
+#ifdef CONFIG_X86
+	unsigned long d;
+
 	asm volatile(
-		"cld		\n"
-		"rep stos %0,%%es:(%1)	\n"
-		:
-		:"a" (pattern), "D" (p), "c" (PAGE_SIZE / sizeof(pl))
-	);
+		"rep stos %0,%%es:(%1)"
+		: "=&a" (d), "=&D" (d), "=&c" (d)
+		: "0" (pattern), "1" (p), "2" (PAGE_SIZE / sizeof(pl))
+		: "memory");
 #else
 	int i;
 
-	for (i = PAGE_SIZE / sizeof(pattern); i; i--, p++)
-		*p = pattern;
+	for (i = PAGE_SIZE / sizeof(pl); i; i--, p++)
+		*p = pl;
 #endif
 }
 
