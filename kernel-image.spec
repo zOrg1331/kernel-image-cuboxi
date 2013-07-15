@@ -466,54 +466,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # if_enabled docs
 
 
-%post -n kernel-modules-drm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-nouveau-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-nouveau-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-radeon-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-radeon-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-ide-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-ide-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-kvm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-kvm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-v4l-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-v4l-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-staging-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-staging-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-headers-%flavour
-%post_kernel_headers %kversion-%flavour-%krelease
-
-%postun -n kernel-headers-%flavour
-%postun_kernel_headers %kversion-%flavour-%krelease
-
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
@@ -580,6 +532,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Sun Jul 14 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.53-alt0.M60P.1
 - 3.4.53
+- post scripts removed
 
 * Thu Jul 04 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.52-alt0.M60P.1
 - 3.4.52
