@@ -1,9 +1,9 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70P.2
+Release: alt1.M70P.1
 epoch:1 
 %define kernel_base_version	3.8
 %define kernel_sublevel	.13
-%define kernel_extra_version	.4
+%define kernel_extra_version	.5
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Jul 23 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.5-alt1.M70P.1
+- 3.8.13.5
+
 * Tue Jul 09 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.8.13.4-alt1.M70P.2
 - memory sanitizing patch added
 
