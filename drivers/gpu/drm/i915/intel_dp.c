@@ -154,6 +154,34 @@ intel_dp_max_data_rate(int max_link_clock, int max_lanes)
 	return (max_link_clock * max_lanes * 8) / 10;
 }
 
+static bool
+intel_dp_adjust_dithering(struct intel_dp *intel_dp,
+			  struct drm_display_mode *mode,
+			  bool adjust_mode)
+{
+	int max_link_clock =
+		drm_dp_bw_code_to_link_rate(intel_dp_max_link_bw(intel_dp));
+	int max_lanes = drm_dp_max_lane_count(intel_dp->dpcd);
+	int max_rate, mode_rate;
+
+	mode_rate = intel_dp_link_required(mode->clock, 24);
+	max_rate = intel_dp_max_data_rate(max_link_clock, max_lanes);
+
+	if (mode_rate > max_rate) {
+		mode_rate = intel_dp_link_required(mode->clock, 18);
+		if (mode_rate > max_rate)
+			return false;
+
+		if (adjust_mode)
+			mode->private_flags
+				|= INTEL_MODE_DP_FORCE_6BPC;
+
+		return true;
+	}
+
+	return true;
+}
+
 static int
 intel_dp_mode_valid(struct drm_connector *connector,
 		    struct drm_display_mode *mode)
@@ -161,8 +189,6 @@ intel_dp_mode_valid(struct drm_connector *connector,
 	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	struct intel_connector *intel_connector = to_intel_connector(connector);
 	struct drm_display_mode *fixed_mode = intel_connector->panel.fixed_mode;
-	int target_clock = mode->clock;
-	int max_rate, mode_rate, max_lanes, max_link_clock;
 
 	if (is_edp(intel_dp) && fixed_mode) {
 		if (mode->hdisplay > fixed_mode->hdisplay)
@@ -174,13 +200,7 @@ intel_dp_mode_valid(struct drm_connector *connector,
 		target_clock = fixed_mode->clock;
 	}
 
-	max_link_clock = drm_dp_bw_code_to_link_rate(intel_dp_max_link_bw(intel_dp));
-	max_lanes = drm_dp_max_lane_count(intel_dp->dpcd);
-
-	max_rate = intel_dp_max_data_rate(max_link_clock, max_lanes);
-	mode_rate = intel_dp_link_required(target_clock, 18);
-
-	if (mode_rate > max_rate)
+	if (!intel_dp_adjust_dithering(intel_dp, mode, false))
 		return MODE_CLOCK_HIGH;
 
 	if (mode->clock < 10000)
@@ -665,7 +685,6 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 			struct intel_crtc_config *pipe_config)
 {
 	struct drm_device *dev = encoder->base.dev;
-	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_display_mode *adjusted_mode = &pipe_config->adjusted_mode;
 	struct drm_display_mode *mode = &pipe_config->requested_mode;
 	struct intel_dp *intel_dp = enc_to_intel_dp(&encoder->base);
@@ -675,7 +694,6 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 	int max_clock = intel_dp_max_link_bw(intel_dp) == DP_LINK_BW_2_7 ? 1 : 0;
 	int bpp, mode_rate;
 	static int bws[2] = { DP_LINK_BW_1_62, DP_LINK_BW_2_7 };
-	int target_clock, link_avail, link_clock;
 
 	if (HAS_PCH_SPLIT(dev) && !HAS_DDI(dev) && !is_cpu_edp(intel_dp))
 		pipe_config->has_pch_encoder = true;
@@ -689,8 +707,6 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 					intel_connector->panel.fitting_mode,
 					mode, adjusted_mode);
 	}
-	/* We need to take the panel's fixed mode into account. */
-	target_clock = adjusted_mode->clock;
 
 	if (adjusted_mode->flags & DRM_MODE_FLAG_DBLCLK)
 		return false;
@@ -699,31 +715,11 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 		      "max bw %02x pixel clock %iKHz\n",
 		      max_lane_count, bws[max_clock], adjusted_mode->clock);
 
-	/* Walk through all bpp values. Luckily they're all nicely spaced with 2
-	 * bpc in between. */
-	bpp = min_t(int, 8*3, pipe_config->pipe_bpp);
-	if (is_edp(intel_dp) && dev_priv->edp.bpp)
-		bpp = min_t(int, bpp, dev_priv->edp.bpp);
+	if (!intel_dp_adjust_dithering(intel_dp, adjusted_mode, true))
+		return false;
 
-	for (; bpp >= 6*3; bpp -= 2*3) {
-		mode_rate = intel_dp_link_required(target_clock, bpp);
+	bpp = adjusted_mode->private_flags & INTEL_MODE_DP_FORCE_6BPC ? 18 : 24;
 
-		for (clock = 0; clock <= max_clock; clock++) {
-			for (lane_count = 1; lane_count <= max_lane_count; lane_count <<= 1) {
-				link_clock = drm_dp_bw_code_to_link_rate(bws[clock]);
-				link_avail = intel_dp_max_data_rate(link_clock,
-								    lane_count);
-
-				if (mode_rate <= link_avail) {
-					goto found;
-				}
-			}
-		}
-	}
-
-	return false;
-
-found:
 	if (intel_dp->color_range_auto) {
 		/*
 		 * See:
@@ -739,23 +735,31 @@ found:
 	if (intel_dp->color_range)
 		pipe_config->limited_color_range = true;
 
-	intel_dp->link_bw = bws[clock];
-	intel_dp->lane_count = lane_count;
-	adjusted_mode->clock = drm_dp_bw_code_to_link_rate(intel_dp->link_bw);
-	pipe_config->pipe_bpp = bpp;
-	pipe_config->pixel_target_clock = target_clock;
+	mode_rate = intel_dp_link_required(adjusted_mode->clock, bpp);
 
-	DRM_DEBUG_KMS("DP link bw %02x lane count %d clock %d bpp %d\n",
-		      intel_dp->link_bw, intel_dp->lane_count,
-		      adjusted_mode->clock, bpp);
-	DRM_DEBUG_KMS("DP link bw required %i available %i\n",
-		      mode_rate, link_avail);
+	for (clock = 0; clock <= max_clock; clock++) {
+		for (lane_count = 1; lane_count <= max_lane_count; lane_count <<= 1) {
+			int link_bw_clock =
+				drm_dp_bw_code_to_link_rate(bws[clock]);
+			int link_avail = intel_dp_max_data_rate(link_bw_clock,
+								lane_count);
 
-	intel_link_compute_m_n(bpp, lane_count,
-			       target_clock, adjusted_mode->clock,
-			       &pipe_config->dp_m_n);
+			if (mode_rate <= link_avail) {
+				intel_dp->link_bw = bws[clock];
+				intel_dp->lane_count = lane_count;
+				adjusted_mode->clock = link_bw_clock;
+				DRM_DEBUG_KMS("DP link bw %02x lane "
+						"count %d clock %d bpp %d\n",
+				       intel_dp->link_bw, intel_dp->lane_count,
+				       adjusted_mode->clock, bpp);
+				DRM_DEBUG_KMS("DP link bw required %i available %i\n",
+					      mode_rate, link_avail);
+				return true;
+			}
+		}
+	}
 
-	return true;
+	return false;
 }
 
 void intel_dp_init_link_config(struct intel_dp *intel_dp)
