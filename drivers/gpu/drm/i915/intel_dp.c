@@ -704,7 +704,7 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 	bpp = min_t(int, 8*3, pipe_config->pipe_bpp);
 	if (is_edp(intel_dp) && dev_priv->edp.bpp) {
 //		bpp = min_t(int, bpp, dev_priv->edp.bpp);
-		DRM_DEBUG_KMS("BPPHACK - pipe_config->pipe_bpp: %d, dev_priv->vbt.edp_bpp: %d\n", pipe_config->pipe_bpp, dev_priv->vbt.edp_bpp);
+		DRM_DEBUG_KMS("BPPHACK - pipe_config->pipe_bpp: %d, dev_priv->edp.bpp: %d\n", pipe_config->pipe_bpp, dev_priv->edp.bpp);
 	}
 
 	for (; bpp >= 6*3; bpp -= 2*3) {
