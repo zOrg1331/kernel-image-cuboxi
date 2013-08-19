@@ -46,6 +46,7 @@
  */
 
 #include <linux/version.h>
+#include <linux/aio.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/time.h>
@@ -1407,7 +1408,7 @@ static struct inode *exfat_iget(struct super_block *sb, loff_t i_pos) {
 	struct inode *inode = NULL;
 
 	spin_lock(&sbi->inode_hash_lock);
-	hlist_for_each_entry(info, node, head, i_hash_fat) {
+	hlist_for_each_entry(info, head, i_hash_fat) {
 		CHECK_ERR(info->vfs_inode.i_sb != sb);
 
 		if (i_pos != info->i_pos)
