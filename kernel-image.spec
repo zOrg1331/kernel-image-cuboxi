@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	3.10
 %define kernel_sublevel	.8
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Aug 26 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.10.8-alt1.1
+- test build with 2e6efddd203c15ca5c4700511f717c0e9a3ea31a
+
 * Tue Aug 20 2013 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.10.8-alt1
 - 3.10.8
 
