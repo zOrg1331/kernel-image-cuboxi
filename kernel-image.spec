@@ -420,12 +420,7 @@ KbuildFiles="
 	scripts/kconfig/conf
 	scripts/mkcompile_h
 	scripts/makelst
-	scripts/Makefile.modpost
-	scripts/Makefile.modinst
-	scripts/Makefile.lib
-	scripts/Makefile.host
-	scripts/Makefile.clean
-	scripts/Makefile.build
+	scripts/Makefile.*
 	scripts/Makefile
 	scripts/Kbuild.include
 	scripts/kallsyms
