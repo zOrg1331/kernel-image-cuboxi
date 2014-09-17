@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel	.18
@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Sep 17 2014 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.18-alt2
+- try to fix tc
+
 * Sun Sep 07 2014 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.18-alt1
 - 3.14.18
 
