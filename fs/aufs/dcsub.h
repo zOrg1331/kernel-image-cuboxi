@@ -51,9 +51,23 @@ static inline int au_d_hashed_positive(struct dentry *d)
 {
 	int err;
 	struct inode *inode = d->d_inode;
+
 	err = 0;
 	if (unlikely(d_unhashed(d) || !inode || !inode->i_nlink))
 		err = -ENOENT;
+	return err;
+}
+
+static inline int au_d_linkable(struct dentry *d)
+{
+	int err;
+	struct inode *inode = d->d_inode;
+
+	err = au_d_hashed_positive(d);
+	if (err
+	    && inode
+	    && (inode->i_state & I_LINKABLE))
+		err = 0;
 	return err;
 }
 
@@ -61,6 +75,7 @@ static inline int au_d_alive(struct dentry *d)
 {
 	int err;
 	struct inode *inode;
+
 	err = 0;
 	if (!IS_ROOT(d))
 		err = au_d_hashed_positive(d);
@@ -75,10 +90,17 @@ static inline int au_d_alive(struct dentry *d)
 static inline int au_alive_dir(struct dentry *d)
 {
 	int err;
+
 	err = au_d_alive(d);
 	if (unlikely(err || IS_DEADDIR(d->d_inode)))
 		err = -ENOENT;
 	return err;
+}
+
+static inline int au_qstreq(struct qstr *a, struct qstr *b)
+{
+	return a->len == b->len
+		&& !memcmp(a->name, b->name, a->len);
 }
 
 #endif /* __KERNEL__ */

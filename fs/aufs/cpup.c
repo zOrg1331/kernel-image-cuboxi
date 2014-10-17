@@ -48,8 +48,11 @@ void au_cpup_attr_nlink(struct inode *inode, int force)
 
 	/*
 	 * 0 can happen in revalidating.
-	 * h_inode->i_mutex is not held, but it is harmless since once i_nlink
-	 * reaches 0, it will never become positive.
+	 * h_inode->i_mutex may not be held here, but it is harmless since once
+	 * i_nlink reaches 0, it will never become positive except O_TMPFILE
+	 * case.
+	 * todo: O_TMPFILE+linkat(AT_SYMLINK_FOLLOW) bypassing aufs may cause
+	 *	 the incorrect link count.
 	 */
 	set_nlink(inode, h_inode->i_nlink);
 
@@ -399,7 +402,7 @@ static int au_do_cpup_regular(struct au_cp_generic *cpg,
 	int err, rerr;
 	loff_t l;
 	struct path h_path;
-	struct inode *h_src_inode;
+	struct inode *h_src_inode, *h_dst_inode;
 
 	err = 0;
 	h_src_inode = au_h_iptr(cpg->dentry->d_inode, cpg->bsrc);
@@ -425,6 +428,13 @@ static int au_do_cpup_regular(struct au_cp_generic *cpg,
 		rerr = au_pin_hdir_relock(cpg->pin);
 		if (!err && rerr)
 			err = rerr;
+	}
+	if (!err && (h_src_inode->i_state & I_LINKABLE)) {
+		h_path.dentry = au_h_dptr(cpg->dentry, cpg->bdst);
+		h_dst_inode = h_path.dentry->d_inode;
+		spin_lock(&h_dst_inode->i_lock);
+		h_dst_inode->i_state |= I_LINKABLE;
+		spin_unlock(&h_dst_inode->i_lock);
 	}
 
 out:
@@ -474,7 +484,7 @@ int cpup_entry(struct au_cp_generic *cpg, struct dentry *dst_parent,
 	int err;
 	umode_t mode;
 	unsigned int mnt_flags;
-	unsigned char isdir;
+	unsigned char isdir, isreg, force;
 	const unsigned char do_dt = !!au_ftest_cpup(cpg->flags, DTIME);
 	struct au_dtime dt;
 	struct path h_path;
@@ -505,10 +515,12 @@ int cpup_entry(struct au_cp_generic *cpg, struct dentry *dst_parent,
 	}
 	h_path.dentry = h_dst;
 
+	isreg = 0;
 	isdir = 0;
 	mode = h_inode->i_mode;
 	switch (mode & S_IFMT) {
 	case S_IFREG:
+		isreg = 1;
 		err = vfsub_create(h_dir, &h_path, mode | S_IWUSR,
 				   /*want_excl*/true);
 		if (!err)
@@ -548,13 +560,24 @@ int cpup_entry(struct au_cp_generic *cpg, struct dentry *dst_parent,
 	if (!au_opt_test(mnt_flags, UDBA_NONE)
 	    && !isdir
 	    && au_opt_test(mnt_flags, XINO)
-	    && h_inode->i_nlink == 1
+	    && (h_inode->i_nlink == 1
+		|| (h_inode->i_state & I_LINKABLE))
 	    /* todo: unnecessary? */
 	    /* && cpg->dentry->d_inode->i_nlink == 1 */
 	    && cpg->bdst < cpg->bsrc
 	    && !au_ftest_cpup(cpg->flags, KEEPLINO))
 		au_xino_write(sb, cpg->bsrc, h_inode->i_ino, /*ino*/0);
 		/* ignore this error */
+
+	if (!err) {
+		force = 0;
+		if (isreg) {
+			force = !!cpg->len;
+			if (cpg->len == -1)
+				force = !!i_size_read(h_inode);
+		}
+		au_fhsm_wrote(sb, cpg->bdst, force);
+	}
 
 	if (do_dt)
 		au_dtime_revert(&dt);
@@ -740,7 +763,8 @@ static int au_cpup_single(struct au_cp_generic *cpg, struct dentry *dst_parent)
 		goto out_rev;
 
 	if (!isdir
-	    && h_src->d_inode->i_nlink > 1
+	    && (h_src->d_inode->i_nlink > 1
+		|| h_src->d_inode->i_state & I_LINKABLE)
 	    && plink)
 		au_plink_append(inode, cpg->bdst, h_dst);
 

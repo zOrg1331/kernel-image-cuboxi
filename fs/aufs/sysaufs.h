@@ -56,6 +56,10 @@ extern struct attribute_group *sysaufs_attr_group;
 int sysaufs_si_xi_path(struct seq_file *seq, struct super_block *sb);
 ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 			 char *buf);
+long au_brinfo_ioctl(struct file *file, unsigned long arg);
+#ifdef CONFIG_COMPAT
+long au_brinfo_compat_ioctl(struct file *file, unsigned long arg);
+#endif
 
 void sysaufs_br_init(struct au_branch *br);
 void sysaufs_brs_add(struct super_block *sb, aufs_bindex_t bindex);
@@ -67,14 +71,8 @@ void sysaufs_brs_del(struct super_block *sb, aufs_bindex_t bindex);
 #define sysaufs_attr_group	NULL
 
 AuStubInt0(sysaufs_si_xi_path, struct seq_file *seq, struct super_block *sb)
-
-static inline
-ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
-			 char *buf)
-{
-	return 0;
-}
-
+AuStub(ssize_t, sysaufs_si_show, return 0, struct kobject *kobj,
+       struct attribute *attr, char *buf)
 AuStubVoid(sysaufs_br_init, struct au_branch *br)
 AuStubVoid(sysaufs_brs_add, struct super_block *sb, aufs_bindex_t bindex)
 AuStubVoid(sysaufs_brs_del, struct super_block *sb, aufs_bindex_t bindex)

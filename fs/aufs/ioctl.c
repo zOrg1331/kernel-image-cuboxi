@@ -7,6 +7,7 @@
  * plink-management and readdir in userspace.
  * assist the pathconf(3) wrapper library.
  * move-down
+ * File-based Hierarchical Storage Management.
  */
 
 #include <linux/compat.h>
@@ -108,6 +109,7 @@ out:
 long aufs_ioctl_dir(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long err;
+	struct dentry *dentry;
 
 	switch (cmd) {
 	case AUFS_CTL_RDU:
@@ -121,6 +123,18 @@ long aufs_ioctl_dir(struct file *file, unsigned int cmd, unsigned long arg)
 
 	case AUFS_CTL_IBUSY:
 		err = au_ibusy_ioctl(file, arg);
+		break;
+
+	case AUFS_CTL_BRINFO:
+		err = au_brinfo_ioctl(file, arg);
+		break;
+
+	case AUFS_CTL_FHSM_FD:
+		dentry = file->f_dentry;
+		if (IS_ROOT(dentry))
+			err = au_fhsm_fd(dentry->d_sb, arg);
+		else
+			err = -ENOTTY;
 		break;
 
 	default:
@@ -170,6 +184,10 @@ long aufs_compat_ioctl_dir(struct file *file, unsigned int cmd,
 
 	case AUFS_CTL_IBUSY:
 		err = au_ibusy_compat_ioctl(file, arg);
+		break;
+
+	case AUFS_CTL_BRINFO:
+		err = au_brinfo_compat_ioctl(file, arg);
 		break;
 
 	default:
