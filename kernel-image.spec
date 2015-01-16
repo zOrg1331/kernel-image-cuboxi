@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70P.1
+Release: alt1.M70C.1
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .59
@@ -579,6 +579,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Mon Aug 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt1
 - 3.14.51
 
+* Mon Aug 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt0.M70C.1
+- 3.14.51
+
 * Tue Aug 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.50-alt1
 - 3.14.50
 
@@ -649,6 +652,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 * Sat Jan 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.29-alt1
 - 3.14.29
+
+* Fri Jan 16 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.1
+- unused files deleted
 
 * Fri Jan 09 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1
 - 3.14.28
