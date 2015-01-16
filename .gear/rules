@@ -1,0 +1,3 @@
+diff: v3.14:. .
+copy: *.patch
+specsubst: kflavour
