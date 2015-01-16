@@ -65,6 +65,7 @@ BuildRequires(pre): rpm-build-kernel
 BuildRequires: dev86 flex
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
+BuildRequires: gcc%kgcc_version-plugin-devel
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
