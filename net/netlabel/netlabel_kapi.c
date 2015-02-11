@@ -854,10 +854,6 @@ int netlbl_req_setattr(struct request_sock *req,
 		}
 		switch (entry->type) {
 		case NETLBL_NLTYPE_CIPSOV4:
-<<<<<<< HEAD
-			ret_val = cipso_v4_req_setattr(req,
-						       entry->cipso, secattr);
-=======
 			/* Our target is skipping marking packets with s0.
 			 * If 'map' command doesn't have specified 'address' and 'domain'
 			 * than netlabel takes 'default' rule.
@@ -875,8 +871,8 @@ int netlbl_req_setattr(struct request_sock *req,
 				ret_val = 0;
 				break;
 			}
-			ret_val = cipso_v4_req_setattr(req, proto_cv4, secattr);
->>>>>>> 8640613... Add mark s0 flag for NetLabel subsystem.
+			ret_val = cipso_v4_req_setattr(req,
+						       entry->cipso, secattr);
 			break;
 		case NETLBL_NLTYPE_UNLABELED:
 			/* just delete the protocols we support for right now
