@@ -546,6 +546,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.18.7-alt1
 - 3.18.7
 - adjtimex on 32-bit fixed
+- in-kernel ipset excluded
+- netlabel patch updated
 
 * Sat Feb 07 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.18.6-alt1
 - 3.18.6
