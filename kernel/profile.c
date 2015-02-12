@@ -331,7 +331,7 @@ out:
 	put_cpu();
 }
 
-static int __cpuinit profile_cpu_callback(struct notifier_block *info,
+static int profile_cpu_callback(struct notifier_block *info,
 					unsigned long action, void *__cpu)
 {
 	int node, cpu = (unsigned long)__cpu;
@@ -462,10 +462,10 @@ static const struct file_operations prof_cpu_mask_proc_fops = {
 	.write		= prof_cpu_mask_proc_write,
 };
 
-void create_prof_cpu_mask(struct proc_dir_entry *root_irq_dir)
+void create_prof_cpu_mask(void)
 {
 	/* create /proc/irq/prof_cpu_mask */
-	proc_create("prof_cpu_mask", 0600, root_irq_dir, &prof_cpu_mask_proc_fops);
+	proc_create("irq/prof_cpu_mask", 0600, NULL, &prof_cpu_mask_proc_fops);
 }
 
 /*
@@ -549,14 +549,14 @@ static int create_hash_tables(void)
 		struct page *page;
 
 		page = alloc_pages_exact_node(node,
-				GFP_KERNEL | __GFP_ZERO | GFP_THISNODE,
+				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE,
 				0);
 		if (!page)
 			goto out_cleanup;
 		per_cpu(cpu_profile_hits, cpu)[1]
 				= (struct profile_hit *)page_address(page);
 		page = alloc_pages_exact_node(node,
-				GFP_KERNEL | __GFP_ZERO | GFP_THISNODE,
+				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE,
 				0);
 		if (!page)
 			goto out_cleanup;
@@ -600,7 +600,7 @@ int __ref create_proc_profile(void) /* false positive from hotcpu_notifier */
 			    NULL, &proc_profile_operations);
 	if (!entry)
 		return 0;
-	entry->size = (1+prof_len) * sizeof(atomic_t);
+	proc_set_size(entry, (1 + prof_len) * sizeof(atomic_t));
 	hotcpu_notifier(profile_cpu_callback, 0);
 	return 0;
 }

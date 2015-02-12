@@ -61,9 +61,6 @@
 #include <linux/workqueue.h>
 #include <linux/acpi.h>
 #include <linux/slab.h>
-#include <acpi/acpi_drivers.h>
-#include <acpi/acpi_bus.h>
-#include <asm/uaccess.h>
 #include <linux/sonypi.h>
 #include <linux/sony-laptop.h>
 #include <linux/rfkill.h>
@@ -71,6 +68,7 @@
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
 #endif
+#include <asm/uaccess.h>
 
 #define dprintk(fmt, ...)			\
 do {						\
@@ -127,26 +125,25 @@ MODULE_PARM_DESC(minor,
 		 "default is -1 (automatic)");
 #endif
 
-static int kbd_backlight = 1;
+static int kbd_backlight = -1;
 module_param(kbd_backlight, int, 0444);
 MODULE_PARM_DESC(kbd_backlight,
 		 "set this to 0 to disable keyboard backlight, "
-		 "1 to enable it (default: 0)");
+		 "1 to enable it (default: no change from current value)");
 
-static int kbd_backlight_timeout;	/* = 0 */
+static int kbd_backlight_timeout = -1;
 module_param(kbd_backlight_timeout, int, 0444);
 MODULE_PARM_DESC(kbd_backlight_timeout,
-		 "set this to 0 to set the default 10 seconds timeout, "
-		 "1 for 30 seconds, 2 for 60 seconds and 3 to disable timeout "
-		 "(default: 0)");
+		 "meaningful values vary from 0 to 3 and their meaning depends "
+		 "on the model (default: no change from current value)");
 
 #ifdef CONFIG_PM_SLEEP
-static void sony_nc_kbd_backlight_resume(void);
 static void sony_nc_thermal_resume(void);
 #endif
 static int sony_nc_kbd_backlight_setup(struct platform_device *pd,
 		unsigned int handle);
-static void sony_nc_kbd_backlight_cleanup(struct platform_device *pd);
+static void sony_nc_kbd_backlight_cleanup(struct platform_device *pd,
+		unsigned int handle);
 
 static int sony_nc_battery_care_setup(struct platform_device *pd,
 		unsigned int handle);
@@ -305,8 +302,8 @@ static int sony_laptop_input_keycode_map[] = {
 	KEY_FN_F10,	/* 14 SONYPI_EVENT_FNKEY_F10 */
 	KEY_FN_F11,	/* 15 SONYPI_EVENT_FNKEY_F11 */
 	KEY_FN_F12,	/* 16 SONYPI_EVENT_FNKEY_F12 */
-	KEY_FN_F1,	/* 17 SONYPI_EVENT_FNKEY_1 */
-	KEY_FN_F2,	/* 18 SONYPI_EVENT_FNKEY_2 */
+	KEY_FN_1,	/* 17 SONYPI_EVENT_FNKEY_1 */
+	KEY_FN_2,	/* 18 SONYPI_EVENT_FNKEY_2 */
 	KEY_FN_D,	/* 19 SONYPI_EVENT_FNKEY_D */
 	KEY_FN_E,	/* 20 SONYPI_EVENT_FNKEY_E */
 	KEY_FN_F,	/* 21 SONYPI_EVENT_FNKEY_F */
@@ -792,7 +789,7 @@ static int sony_nc_buffer_call(acpi_handle handle, char *name, u64 *value,
 		void *buffer, size_t buflen)
 {
 	int ret = 0;
-	size_t len = len;
+	size_t len;
 	union acpi_object *object = __call_snc_method(handle, name, value);
 
 	if (!object)
@@ -1255,6 +1252,11 @@ static void sony_nc_notify(struct acpi_device *device, u32 event)
 			real_ev = __sony_nc_gfx_switch_status_get();
 			break;
 
+		case 0x015B:
+			/* Hybrid GFX switching SVS151290S */
+			ev_type = GFX_SWITCH;
+			real_ev = __sony_nc_gfx_switch_status_get();
+			break;
 		default:
 			dprintk("Unknown event 0x%x for handle 0x%x\n",
 					event, handle);
@@ -1270,9 +1272,6 @@ static void sony_nc_notify(struct acpi_device *device, u32 event)
 		ev_type = HOTKEY;
 		sony_laptop_report_input_event(real_ev);
 	}
-
-	acpi_bus_generate_proc_event(sony_nc_acpi_device, ev_type, real_ev);
-
 	acpi_bus_generate_netlink_event(sony_nc_acpi_device->pnp.device_class,
 			dev_name(&sony_nc_acpi_device->dev), ev_type, real_ev);
 }
@@ -1353,6 +1352,7 @@ static void sony_nc_function_setup(struct acpi_device *device,
 			break;
 		case 0x0128:
 		case 0x0146:
+		case 0x015B:
 			result = sony_nc_gfx_switch_setup(pf_device, handle);
 			if (result)
 				pr_err("couldn't set up GFX Switch status (%d)\n",
@@ -1375,6 +1375,7 @@ static void sony_nc_function_setup(struct acpi_device *device,
 		case 0x0143:
 		case 0x014b:
 		case 0x014c:
+		case 0x0163:
 			result = sony_nc_kbd_backlight_setup(pf_device, handle);
 			if (result)
 				pr_err("couldn't set up keyboard backlight function (%d)\n",
@@ -1426,6 +1427,7 @@ static void sony_nc_function_cleanup(struct platform_device *pd)
 			break;
 		case 0x0128:
 		case 0x0146:
+		case 0x015B:
 			sony_nc_gfx_switch_cleanup(pd);
 			break;
 		case 0x0131:
@@ -1439,7 +1441,8 @@ static void sony_nc_function_cleanup(struct platform_device *pd)
 		case 0x0143:
 		case 0x014b:
 		case 0x014c:
-			sony_nc_kbd_backlight_cleanup(pd);
+		case 0x0163:
+			sony_nc_kbd_backlight_cleanup(pd, handle);
 			break;
 		default:
 			continue;
@@ -1481,12 +1484,6 @@ static void sony_nc_function_resume(void)
 		case 0x0135:
 			sony_nc_rfkill_update();
 			break;
-		case 0x0137:
-		case 0x0143:
-		case 0x014b:
-		case 0x014c:
-			sony_nc_kbd_backlight_resume();
-			break;
 		default:
 			continue;
 		}
@@ -1502,7 +1499,6 @@ static void sony_nc_function_resume(void)
 static int sony_nc_resume(struct device *dev)
 {
 	struct sony_nc_value *item;
-	acpi_handle handle;
 
 	for (item = sony_nc_values; item->name; item++) {
 		int ret;
@@ -1517,15 +1513,13 @@ static int sony_nc_resume(struct device *dev)
 		}
 	}
 
-	if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle, "ECON",
-					 &handle))) {
+	if (acpi_has_method(sony_nc_acpi_handle, "ECON")) {
 		int arg = 1;
 		if (sony_nc_int_call(sony_nc_acpi_handle, "ECON", &arg, NULL))
 			dprintk("ECON Method failed\n");
 	}
 
-	if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle, "SN00",
-					 &handle)))
+	if (acpi_has_method(sony_nc_acpi_handle, "SN00"))
 		sony_nc_function_resume();
 
 	return 0;
@@ -1819,6 +1813,12 @@ static int sony_nc_kbd_backlight_setup(struct platform_device *pd,
 	int result;
 	int ret = 0;
 
+	if (kbdbl_ctl) {
+		pr_warn("handle 0x%.4x: keyboard backlight setup already done for 0x%.4x\n",
+				handle, kbdbl_ctl->handle);
+		return -EBUSY;
+	}
+
 	/* verify the kbd backlight presence, these handles are not used for
 	 * keyboard backlight only
 	 */
@@ -1837,6 +1837,8 @@ static int sony_nc_kbd_backlight_setup(struct platform_device *pd,
 	if (!kbdbl_ctl)
 		return -ENOMEM;
 
+	kbdbl_ctl->mode = kbd_backlight;
+	kbdbl_ctl->timeout = kbd_backlight_timeout;
 	kbdbl_ctl->handle = handle;
 	if (handle == 0x0137)
 		kbdbl_ctl->base = 0x0C00;
@@ -1863,8 +1865,8 @@ static int sony_nc_kbd_backlight_setup(struct platform_device *pd,
 	if (ret)
 		goto outmode;
 
-	__sony_nc_kbd_backlight_mode_set(kbd_backlight);
-	__sony_nc_kbd_backlight_timeout_set(kbd_backlight_timeout);
+	__sony_nc_kbd_backlight_mode_set(kbdbl_ctl->mode);
+	__sony_nc_kbd_backlight_timeout_set(kbdbl_ctl->timeout);
 
 	return 0;
 
@@ -1876,43 +1878,16 @@ outkzalloc:
 	return ret;
 }
 
-static void sony_nc_kbd_backlight_cleanup(struct platform_device *pd)
+static void sony_nc_kbd_backlight_cleanup(struct platform_device *pd,
+		unsigned int handle)
 {
-	if (kbdbl_ctl) {
-		int result;
-
+	if (kbdbl_ctl && handle == kbdbl_ctl->handle) {
 		device_remove_file(&pd->dev, &kbdbl_ctl->mode_attr);
 		device_remove_file(&pd->dev, &kbdbl_ctl->timeout_attr);
-
-		/* restore the default hw behaviour */
-		sony_call_snc_handle(kbdbl_ctl->handle,
-				kbdbl_ctl->base | 0x10000, &result);
-		sony_call_snc_handle(kbdbl_ctl->handle,
-				kbdbl_ctl->base + 0x200, &result);
-
 		kfree(kbdbl_ctl);
 		kbdbl_ctl = NULL;
 	}
 }
-
-#ifdef CONFIG_PM_SLEEP
-static void sony_nc_kbd_backlight_resume(void)
-{
-	int ignore = 0;
-
-	if (!kbdbl_ctl)
-		return;
-
-	if (kbdbl_ctl->mode == 0)
-		sony_call_snc_handle(kbdbl_ctl->handle, kbdbl_ctl->base,
-				&ignore);
-
-	if (kbdbl_ctl->timeout != 0)
-		sony_call_snc_handle(kbdbl_ctl->handle,
-				(kbdbl_ctl->base + 0x200) |
-				(kbdbl_ctl->timeout << 0x10), &ignore);
-}
-#endif
 
 struct battery_care_control {
 	struct device_attribute attrs[2];
@@ -2390,7 +2365,9 @@ static int __sony_nc_gfx_switch_status_get(void)
 {
 	unsigned int result;
 
-	if (sony_call_snc_handle(gfxs_ctl->handle, 0x0100, &result))
+	if (sony_call_snc_handle(gfxs_ctl->handle,
+				gfxs_ctl->handle == 0x015B ? 0x0000 : 0x0100,
+				&result))
 		return -EIO;
 
 	switch (gfxs_ctl->handle) {
@@ -2399,6 +2376,12 @@ static int __sony_nc_gfx_switch_status_get(void)
 		 * 0: integrated GFX (stamina)
 		 */
 		return result & 0x1 ? SPEED : STAMINA;
+		break;
+	case 0x015B:
+		/* 0: discrete GFX (speed)
+		 * 1: integrated GFX (stamina)
+		 */
+		return result & 0x1 ? STAMINA : SPEED;
 		break;
 	case 0x0128:
 		/* it's a more elaborated bitmask, for now:
@@ -2422,7 +2405,10 @@ static ssize_t sony_nc_gfx_switch_status_show(struct device *dev,
 	if (pos < 0)
 		return pos;
 
-	return snprintf(buffer, PAGE_SIZE, "%s\n", pos ? "speed" : "stamina");
+	return snprintf(buffer, PAGE_SIZE, "%s\n",
+					pos == SPEED ? "speed" :
+					pos == STAMINA ? "stamina" :
+					pos == AUTO ? "auto" : "unknown");
 }
 
 static int sony_nc_gfx_switch_setup(struct platform_device *pd,
@@ -2672,7 +2658,6 @@ static void sony_nc_backlight_ng_read_limits(int handle,
 
 static void sony_nc_backlight_setup(void)
 {
-	acpi_handle unused;
 	int max_brightness = 0;
 	const struct backlight_ops *ops = NULL;
 	struct backlight_properties props;
@@ -2707,8 +2692,7 @@ static void sony_nc_backlight_setup(void)
 		sony_nc_backlight_ng_read_limits(0x14c, &sony_bl_props);
 		max_brightness = sony_bl_props.maxlvl - sony_bl_props.offset;
 
-	} else if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle, "GBRT",
-						&unused))) {
+	} else if (acpi_has_method(sony_nc_acpi_handle, "GBRT")) {
 		ops = &sony_backlight_ops;
 		max_brightness = SONY_MAX_BRIGHTNESS - 1;
 
@@ -2740,7 +2724,6 @@ static int sony_nc_add(struct acpi_device *device)
 {
 	acpi_status status;
 	int result = 0;
-	acpi_handle handle;
 	struct sony_nc_value *item;
 
 	pr_info("%s v%s\n", SONY_NC_DRIVER_NAME, SONY_LAPTOP_DRIVER_VERSION);
@@ -2780,15 +2763,13 @@ static int sony_nc_add(struct acpi_device *device)
 		goto outplatform;
 	}
 
-	if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle, "ECON",
-					 &handle))) {
+	if (acpi_has_method(sony_nc_acpi_handle, "ECON")) {
 		int arg = 1;
 		if (sony_nc_int_call(sony_nc_acpi_handle, "ECON", &arg, NULL))
 			dprintk("ECON Method failed\n");
 	}
 
-	if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle, "SN00",
-					 &handle))) {
+	if (acpi_has_method(sony_nc_acpi_handle, "SN00")) {
 		dprintk("Doing SNC setup\n");
 		/* retrieve the available handles */
 		result = sony_nc_handles_setup(sony_pf_device);
@@ -2811,9 +2792,8 @@ static int sony_nc_add(struct acpi_device *device)
 
 		/* find the available acpiget as described in the DSDT */
 		for (; item->acpiget && *item->acpiget; ++item->acpiget) {
-			if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle,
-							 *item->acpiget,
-							 &handle))) {
+			if (acpi_has_method(sony_nc_acpi_handle,
+							*item->acpiget)) {
 				dprintk("Found %s getter: %s\n",
 						item->name, *item->acpiget);
 				item->devattr.attr.mode |= S_IRUGO;
@@ -2823,9 +2803,8 @@ static int sony_nc_add(struct acpi_device *device)
 
 		/* find the available acpiset as described in the DSDT */
 		for (; item->acpiset && *item->acpiset; ++item->acpiset) {
-			if (ACPI_SUCCESS(acpi_get_handle(sony_nc_acpi_handle,
-							 *item->acpiset,
-							 &handle))) {
+			if (acpi_has_method(sony_nc_acpi_handle,
+							*item->acpiset)) {
 				dprintk("Found %s setter: %s\n",
 						item->name, *item->acpiset);
 				item->devattr.attr.mode |= S_IWUSR;
@@ -4121,7 +4100,7 @@ static int sony_pic_enable(struct acpi_device *device,
 		resource->res3.data.irq.sharable = ACPI_SHARED;
 
 		resource->res4.type = ACPI_RESOURCE_TYPE_END_TAG;
-
+		resource->res4.length = sizeof(struct acpi_resource);
 	}
 	/* setup Type 2/3 resources */
 	else {
@@ -4140,6 +4119,7 @@ static int sony_pic_enable(struct acpi_device *device,
 		resource->res2.data.irq.sharable = ACPI_SHARED;
 
 		resource->res3.type = ACPI_RESOURCE_TYPE_END_TAG;
+		resource->res3.length = sizeof(struct acpi_resource);
 	}
 
 	/* Attempt to set the resource */
@@ -4224,7 +4204,6 @@ static irqreturn_t sony_pic_irq(int irq, void *dev_id)
 
 found:
 	sony_laptop_report_input_event(device_event);
-	acpi_bus_generate_proc_event(dev->acpi_dev, 1, device_event);
 	sonypi_compat_report_event(device_event);
 	return IRQ_HANDLED;
 }
@@ -4301,7 +4280,8 @@ static int sony_pic_add(struct acpi_device *device)
 		goto err_free_resources;
 	}
 
-	if (sonypi_compat_init())
+	result = sonypi_compat_init();
+	if (result)
 		goto err_remove_input;
 
 	/* request io port */

@@ -291,6 +291,7 @@ static int dgram_recvmsg(struct kiocb *iocb, struct sock *sk,
 	size_t copied = 0;
 	int err = -EOPNOTSUPP;
 	struct sk_buff *skb;
+	DECLARE_SOCKADDR(struct sockaddr_ieee802154 *, saddr, msg->msg_name);
 
 	skb = skb_recv_datagram(sk, flags, noblock, &err);
 	if (!skb)
@@ -308,6 +309,12 @@ static int dgram_recvmsg(struct kiocb *iocb, struct sock *sk,
 		goto done;
 
 	sock_recv_ts_and_drops(msg, sk, skb);
+
+	if (saddr) {
+		saddr->family = AF_IEEE802154;
+		saddr->addr = mac_cb(skb)->sa;
+		*addr_len = sizeof(*saddr);
+	}
 
 	if (flags & MSG_TRUNC)
 		copied = skb->len;

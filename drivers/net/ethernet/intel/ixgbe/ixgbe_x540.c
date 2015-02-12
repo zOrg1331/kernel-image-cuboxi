@@ -32,12 +32,12 @@
 #include "ixgbe.h"
 #include "ixgbe_phy.h"
 
-#define IXGBE_X540_MAX_TX_QUEUES 128
-#define IXGBE_X540_MAX_RX_QUEUES 128
-#define IXGBE_X540_RAR_ENTRIES   128
-#define IXGBE_X540_MC_TBL_SIZE   128
-#define IXGBE_X540_VFT_TBL_SIZE  128
-#define IXGBE_X540_RX_PB_SIZE	 384
+#define IXGBE_X540_MAX_TX_QUEUES	128
+#define IXGBE_X540_MAX_RX_QUEUES	128
+#define IXGBE_X540_RAR_ENTRIES		128
+#define IXGBE_X540_MC_TBL_SIZE		128
+#define IXGBE_X540_VFT_TBL_SIZE		128
+#define IXGBE_X540_RX_PB_SIZE		384
 
 static s32 ixgbe_update_flash_X540(struct ixgbe_hw *hw);
 static s32 ixgbe_poll_flash_update_done_X540(struct ixgbe_hw *hw);
@@ -854,6 +854,7 @@ static struct ixgbe_mac_operations mac_ops_X540 = {
 	.enable_rx_buff		= &ixgbe_enable_rx_buff_generic,
 	.get_thermal_sensor_data = NULL,
 	.init_thermal_sensor_thresh = NULL,
+	.mng_fw_enabled		= NULL,
 };
 
 static struct ixgbe_eeprom_operations eeprom_ops_X540 = {

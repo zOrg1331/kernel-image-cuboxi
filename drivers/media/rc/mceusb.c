@@ -199,6 +199,7 @@ static bool debug;
 #define VENDOR_TIVO		0x105a
 #define VENDOR_CONEXANT		0x0572
 #define VENDOR_TWISTEDMELON	0x2596
+#define VENDOR_HAUPPAUGE	0x2040
 
 enum mceusb_model_type {
 	MCE_GEN2 = 0,		/* Most boards */
@@ -210,6 +211,7 @@ enum mceusb_model_type {
 	MULTIFUNCTION,
 	TIVO_KIT,
 	MCE_GEN2_NO_TX,
+	HAUPPAUGE_CX_HYBRID_TV,
 };
 
 struct mceusb_model {
@@ -257,6 +259,11 @@ static const struct mceusb_model mceusb_model[] = {
 	[CX_HYBRID_TV] = {
 		.no_tx = 1, /* tx isn't wired up at all */
 		.name = "Conexant Hybrid TV (cx231xx) MCE IR",
+	},
+	[HAUPPAUGE_CX_HYBRID_TV] = {
+		.rc_map = RC_MAP_HAUPPAUGE,
+		.no_tx = 1, /* eeprom says it has no tx */
+		.name = "Conexant Hybrid TV (cx231xx) MCE IR no TX",
 	},
 	[MULTIFUNCTION] = {
 		.mce_gen2 = 1,
@@ -399,6 +406,9 @@ static struct usb_device_id mceusb_dev_table[] = {
 	{ USB_DEVICE(VENDOR_TWISTEDMELON, 0x8016) },
 	/* Twisted Melon Inc. - Manta Transceiver */
 	{ USB_DEVICE(VENDOR_TWISTEDMELON, 0x8042) },
+	/* Hauppauge WINTV-HVR-HVR 930C-HD - based on cx231xx */
+	{ USB_DEVICE(VENDOR_HAUPPAUGE, 0xb130),
+	  .driver_info = HAUPPAUGE_CX_HYBRID_TV },
 	/* Terminating entry */
 	{ }
 };
@@ -482,7 +492,7 @@ static char SET_RX_SENSOR[]	= {MCE_CMD_PORT_IR,
 				   MCE_RSP_EQIRRXPORTEN, 0x00};
 */
 
-static int mceusb_cmdsize(u8 cmd, u8 subcmd)
+static int mceusb_cmd_datasize(u8 cmd, u8 subcmd)
 {
 	int datasize = 0;
 
@@ -493,6 +503,9 @@ static int mceusb_cmdsize(u8 cmd, u8 subcmd)
 		break;
 	case MCE_CMD_PORT_SYS:
 		switch (subcmd) {
+		case MCE_RSP_GETPORTSTATUS:
+			datasize = 5;
+			break;
 		case MCE_RSP_EQWAKEVERSION:
 			datasize = 4;
 			break;
@@ -500,6 +513,9 @@ static int mceusb_cmdsize(u8 cmd, u8 subcmd)
 			datasize = 2;
 			break;
 		case MCE_RSP_EQWAKESUPPORT:
+		case MCE_RSP_GETWAKESOURCE:
+		case MCE_RSP_EQDEVDETAILS:
+		case MCE_RSP_EQEMVER:
 			datasize = 1;
 			break;
 		}
@@ -509,6 +525,7 @@ static int mceusb_cmdsize(u8 cmd, u8 subcmd)
 		case MCE_RSP_EQIRCFS:
 		case MCE_RSP_EQIRTIMEOUT:
 		case MCE_RSP_EQIRRXCFCNT:
+		case MCE_RSP_EQIRNUMPORTS:
 			datasize = 2;
 			break;
 		case MCE_CMD_SIG_END:
@@ -968,7 +985,7 @@ static void mceusb_process_ir_data(struct mceusb_dev *ir, int buf_len)
 	for (; i < buf_len; i++) {
 		switch (ir->parser_state) {
 		case SUBCMD:
-			ir->rem = mceusb_cmdsize(ir->cmd, ir->buf_in[i]);
+			ir->rem = mceusb_cmd_datasize(ir->cmd, ir->buf_in[i]);
 			mceusb_dev_printdata(ir, ir->buf_in, i - 1,
 					     ir->rem + 2, false);
 			mceusb_handle_command(ir, i);

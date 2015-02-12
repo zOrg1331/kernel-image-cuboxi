@@ -45,21 +45,21 @@ static struct i2c_board_info i350_sensor_info = {
 
 /* hwmon callback functions */
 static ssize_t igb_hwmon_show_location(struct device *dev,
-					 struct device_attribute *attr,
-					 char *buf)
+				       struct device_attribute *attr,
+				       char *buf)
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
-						     dev_attr);
+						   dev_attr);
 	return sprintf(buf, "loc%u\n",
 		       igb_attr->sensor->location);
 }
 
 static ssize_t igb_hwmon_show_temp(struct device *dev,
-				     struct device_attribute *attr,
-				     char *buf)
+				   struct device_attribute *attr,
+				   char *buf)
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
-						     dev_attr);
+						   dev_attr);
 	unsigned int value;
 
 	/* reset the temp field */
@@ -74,11 +74,11 @@ static ssize_t igb_hwmon_show_temp(struct device *dev,
 }
 
 static ssize_t igb_hwmon_show_cautionthresh(struct device *dev,
-				     struct device_attribute *attr,
-				     char *buf)
+					    struct device_attribute *attr,
+					    char *buf)
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
-						     dev_attr);
+						   dev_attr);
 	unsigned int value = igb_attr->sensor->caution_thresh;
 
 	/* display millidegree */
@@ -88,11 +88,11 @@ static ssize_t igb_hwmon_show_cautionthresh(struct device *dev,
 }
 
 static ssize_t igb_hwmon_show_maxopthresh(struct device *dev,
-				     struct device_attribute *attr,
-				     char *buf)
+					  struct device_attribute *attr,
+					  char *buf)
 {
 	struct hwmon_attr *igb_attr = container_of(attr, struct hwmon_attr,
-						     dev_attr);
+						   dev_attr);
 	unsigned int value = igb_attr->sensor->max_op_thresh;
 
 	/* display millidegree */
@@ -111,34 +111,35 @@ static ssize_t igb_hwmon_show_maxopthresh(struct device *dev,
  * the data structures we need to get the data to display.
  */
 static int igb_add_hwmon_attr(struct igb_adapter *adapter,
-				unsigned int offset, int type) {
+			      unsigned int offset, int type)
+{
 	int rc;
 	unsigned int n_attr;
 	struct hwmon_attr *igb_attr;
 
-	n_attr = adapter->igb_hwmon_buff.n_hwmon;
-	igb_attr = &adapter->igb_hwmon_buff.hwmon_list[n_attr];
+	n_attr = adapter->igb_hwmon_buff->n_hwmon;
+	igb_attr = &adapter->igb_hwmon_buff->hwmon_list[n_attr];
 
 	switch (type) {
 	case IGB_HWMON_TYPE_LOC:
 		igb_attr->dev_attr.show = igb_hwmon_show_location;
 		snprintf(igb_attr->name, sizeof(igb_attr->name),
-			 "temp%u_label", offset);
+			 "temp%u_label", offset + 1);
 		break;
 	case IGB_HWMON_TYPE_TEMP:
 		igb_attr->dev_attr.show = igb_hwmon_show_temp;
 		snprintf(igb_attr->name, sizeof(igb_attr->name),
-			 "temp%u_input", offset);
+			 "temp%u_input", offset + 1);
 		break;
 	case IGB_HWMON_TYPE_CAUTION:
 		igb_attr->dev_attr.show = igb_hwmon_show_cautionthresh;
 		snprintf(igb_attr->name, sizeof(igb_attr->name),
-			 "temp%u_max", offset);
+			 "temp%u_max", offset + 1);
 		break;
 	case IGB_HWMON_TYPE_MAX:
 		igb_attr->dev_attr.show = igb_hwmon_show_maxopthresh;
 		snprintf(igb_attr->name, sizeof(igb_attr->name),
-			 "temp%u_crit", offset);
+			 "temp%u_crit", offset + 1);
 		break;
 	default:
 		rc = -EPERM;
@@ -153,30 +154,16 @@ static int igb_add_hwmon_attr(struct igb_adapter *adapter,
 	igb_attr->dev_attr.attr.mode = S_IRUGO;
 	igb_attr->dev_attr.attr.name = igb_attr->name;
 	sysfs_attr_init(&igb_attr->dev_attr.attr);
-	rc = device_create_file(&adapter->pdev->dev,
-				&igb_attr->dev_attr);
-	if (rc == 0)
-		++adapter->igb_hwmon_buff.n_hwmon;
 
-	return rc;
+	adapter->igb_hwmon_buff->attrs[n_attr] = &igb_attr->dev_attr.attr;
+
+	++adapter->igb_hwmon_buff->n_hwmon;
+
+	return 0;
 }
 
 static void igb_sysfs_del_adapter(struct igb_adapter *adapter)
 {
-	int i;
-
-	if (adapter == NULL)
-		return;
-
-	for (i = 0; i < adapter->igb_hwmon_buff.n_hwmon; i++) {
-		device_remove_file(&adapter->pdev->dev,
-			   &adapter->igb_hwmon_buff.hwmon_list[i].dev_attr);
-	}
-
-	kfree(adapter->igb_hwmon_buff.hwmon_list);
-
-	if (adapter->igb_hwmon_buff.device)
-		hwmon_device_unregister(adapter->igb_hwmon_buff.device);
 }
 
 /* called from igb_main.c */
@@ -188,11 +175,11 @@ void igb_sysfs_exit(struct igb_adapter *adapter)
 /* called from igb_main.c */
 int igb_sysfs_init(struct igb_adapter *adapter)
 {
-	struct hwmon_buff *igb_hwmon = &adapter->igb_hwmon_buff;
+	struct hwmon_buff *igb_hwmon;
+	struct i2c_client *client;
+	struct device *hwmon_dev;
 	unsigned int i;
-	int n_attrs;
 	int rc = 0;
-	struct i2c_client *client = NULL;
 
 	/* If this method isn't defined we don't support thermals */
 	if (adapter->hw.mac.ops.init_thermal_sensor_thresh == NULL)
@@ -200,34 +187,16 @@ int igb_sysfs_init(struct igb_adapter *adapter)
 
 	/* Don't create thermal hwmon interface if no sensors present */
 	rc = (adapter->hw.mac.ops.init_thermal_sensor_thresh(&adapter->hw));
-		if (rc)
-			goto exit;
+	if (rc)
+		goto exit;
 
-	/* init i2c_client */
-	client = i2c_new_device(&adapter->i2c_adap, &i350_sensor_info);
-	if (client == NULL) {
-		dev_info(&adapter->pdev->dev,
-			"Failed to create new i2c device..\n");
+	igb_hwmon = devm_kzalloc(&adapter->pdev->dev, sizeof(*igb_hwmon),
+				 GFP_KERNEL);
+	if (!igb_hwmon) {
+		rc = -ENOMEM;
 		goto exit;
 	}
-	adapter->i2c_client = client;
-
-	/* Allocation space for max attributes
-	 * max num sensors * values (loc, temp, max, caution)
-	 */
-	n_attrs = E1000_MAX_SENSORS * 4;
-	igb_hwmon->hwmon_list = kcalloc(n_attrs, sizeof(struct hwmon_attr),
-					  GFP_KERNEL);
-	if (!igb_hwmon->hwmon_list) {
-		rc = -ENOMEM;
-		goto err;
-	}
-
-	igb_hwmon->device = hwmon_device_register(&adapter->pdev->dev);
-	if (IS_ERR(igb_hwmon->device)) {
-		rc = PTR_ERR(igb_hwmon->device);
-		goto err;
-	}
+	adapter->igb_hwmon_buff = igb_hwmon;
 
 	for (i = 0; i < E1000_MAX_SENSORS; i++) {
 
@@ -239,11 +208,39 @@ int igb_sysfs_init(struct igb_adapter *adapter)
 
 		/* Bail if any hwmon attr struct fails to initialize */
 		rc = igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_CAUTION);
-		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_LOC);
-		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_TEMP);
-		rc |= igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_MAX);
 		if (rc)
-			goto err;
+			goto exit;
+		rc = igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_LOC);
+		if (rc)
+			goto exit;
+		rc = igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_TEMP);
+		if (rc)
+			goto exit;
+		rc = igb_add_hwmon_attr(adapter, i, IGB_HWMON_TYPE_MAX);
+		if (rc)
+			goto exit;
+	}
+
+	/* init i2c_client */
+	client = i2c_new_device(&adapter->i2c_adap, &i350_sensor_info);
+	if (client == NULL) {
+		dev_info(&adapter->pdev->dev,
+			 "Failed to create new i2c device.\n");
+		rc = -ENODEV;
+		goto exit;
+	}
+	adapter->i2c_client = client;
+
+	igb_hwmon->groups[0] = &igb_hwmon->group;
+	igb_hwmon->group.attrs = igb_hwmon->attrs;
+
+	hwmon_dev = devm_hwmon_device_register_with_groups(&adapter->pdev->dev,
+							   client->name,
+							   igb_hwmon,
+							   igb_hwmon->groups);
+	if (IS_ERR(hwmon_dev)) {
+		rc = PTR_ERR(hwmon_dev);
+		goto err;
 	}
 
 	goto exit;

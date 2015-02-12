@@ -389,7 +389,7 @@ __SYSCALL(364, sys_perf_event_open)
 __SYSCALL(365, compat_sys_recvmmsg)
 __SYSCALL(366, sys_accept4)
 __SYSCALL(367, sys_fanotify_init)
-__SYSCALL(368, compat_sys_fanotify_mark_wrapper)
+__SYSCALL(368, compat_sys_fanotify_mark)
 __SYSCALL(369, sys_prlimit64)
 __SYSCALL(370, sys_name_to_handle_at)
 __SYSCALL(371, compat_sys_open_by_handle_at)
@@ -399,7 +399,10 @@ __SYSCALL(374, compat_sys_sendmmsg)
 __SYSCALL(375, sys_setns)
 __SYSCALL(376, compat_sys_process_vm_readv)
 __SYSCALL(377, compat_sys_process_vm_writev)
-__SYSCALL(378, sys_ni_syscall)			/* 378 for kcmp */
+__SYSCALL(378, sys_kcmp)
+__SYSCALL(379, sys_finit_module)
+__SYSCALL(380, sys_sched_setattr)
+__SYSCALL(381, sys_sched_getattr)
 
 #define __NR_compat_syscalls		379
 

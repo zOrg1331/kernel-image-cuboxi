@@ -294,6 +294,8 @@ acpi_status(*acpi_internal_method) (struct acpi_walk_state * walk_state);
 #define ACPI_BTYPE_OBJECTS_AND_REFS     0x0001FFFF	/* ARG or LOCAL */
 #define ACPI_BTYPE_ALL_OBJECTS          0x0000FFFF
 
+#pragma pack(1)
+
 /*
  * Information structure for ACPI predefined names.
  * Each entry in the table contains the following items:
@@ -304,7 +306,7 @@ acpi_status(*acpi_internal_method) (struct acpi_walk_state * walk_state);
  */
 struct acpi_name_info {
 	char name[ACPI_NAME_SIZE];
-	u8 param_count;
+	u16 argument_list;
 	u8 expected_btypes;
 };
 
@@ -327,7 +329,7 @@ struct acpi_package_info {
 	u8 count1;
 	u8 object_type2;
 	u8 count2;
-	u8 reserved;
+	u16 reserved;
 };
 
 /* Used for ACPI_PTYPE2_FIXED */
@@ -336,6 +338,7 @@ struct acpi_package_info2 {
 	u8 type;
 	u8 count;
 	u8 object_type[4];
+	u8 reserved;
 };
 
 /* Used for ACPI_PTYPE1_OPTION */
@@ -345,7 +348,7 @@ struct acpi_package_info3 {
 	u8 count;
 	u8 object_type[2];
 	u8 tail_object_type;
-	u8 reserved;
+	u16 reserved;
 };
 
 union acpi_predefined_info {
@@ -355,21 +358,23 @@ union acpi_predefined_info {
 	struct acpi_package_info3 ret_info3;
 };
 
-/* Data block used during object validation */
+/* Reset to default packing */
 
-struct acpi_predefined_data {
-	char *pathname;
-	const union acpi_predefined_info *predefined;
-	union acpi_operand_object *parent_package;
-	struct acpi_namespace_node *node;
-	u32 flags;
-	u8 node_flags;
+#pragma pack()
+
+/* Return object auto-repair info */
+
+typedef acpi_status(*acpi_object_converter) (union acpi_operand_object
+					     *original_object,
+					     union acpi_operand_object
+					     **converted_object);
+
+struct acpi_simple_repair_info {
+	char name[ACPI_NAME_SIZE];
+	u32 unexpected_btypes;
+	u32 package_index;
+	acpi_object_converter object_converter;
 };
-
-/* Defines for Flags field above */
-
-#define ACPI_OBJECT_REPAIRED    1
-#define ACPI_OBJECT_WRAPPED     2
 
 /*
  * Bitmapped return value types
@@ -392,6 +397,14 @@ struct acpi_predefined_data {
  * Event typedefs and structs
  *
  ****************************************************************************/
+
+/* Dispatch info for each host-installed SCI handler */
+
+struct acpi_sci_handler_info {
+	struct acpi_sci_handler_info *next;
+	acpi_sci_handler address;	/* Address of handler */
+	void *context;		/* Context to be passed to handler */
+};
 
 /* Dispatch info for each GPE -- either a method or handler, cannot be both */
 
@@ -926,19 +939,6 @@ struct acpi_bit_register_info {
 
 /* Structs and definitions for _OSI support and I/O port validation */
 
-#define ACPI_OSI_WIN_2000               0x01
-#define ACPI_OSI_WIN_XP                 0x02
-#define ACPI_OSI_WIN_XP_SP1             0x03
-#define ACPI_OSI_WINSRV_2003            0x04
-#define ACPI_OSI_WIN_XP_SP2             0x05
-#define ACPI_OSI_WINSRV_2003_SP1        0x06
-#define ACPI_OSI_WIN_VISTA              0x07
-#define ACPI_OSI_WINSRV_2008            0x08
-#define ACPI_OSI_WIN_VISTA_SP1          0x09
-#define ACPI_OSI_WIN_VISTA_SP2          0x0A
-#define ACPI_OSI_WIN_7                  0x0B
-#define ACPI_OSI_WIN_8                  0x0C
-
 #define ACPI_ALWAYS_ILLEGAL             0x00
 
 struct acpi_interface_info {
@@ -950,6 +950,9 @@ struct acpi_interface_info {
 
 #define ACPI_OSI_INVALID                0x01
 #define ACPI_OSI_DYNAMIC                0x02
+#define ACPI_OSI_FEATURE                0x04
+#define ACPI_OSI_DEFAULT_INVALID        0x08
+#define ACPI_OSI_OPTIONAL_FEATURE       (ACPI_OSI_FEATURE | ACPI_OSI_DEFAULT_INVALID | ACPI_OSI_INVALID)
 
 struct acpi_port_info {
 	char *name;
@@ -1035,13 +1038,16 @@ struct acpi_external_list {
 	struct acpi_external_list *next;
 	u32 value;
 	u16 length;
+	u16 flags;
 	u8 type;
-	u8 flags;
 };
 
 /* Values for Flags field above */
 
-#define ACPI_IPATH_ALLOCATED    0x01
+#define ACPI_EXT_RESOLVED_REFERENCE         0x01	/* Object was resolved during cross ref */
+#define ACPI_EXT_ORIGIN_FROM_FILE           0x02	/* External came from a file */
+#define ACPI_EXT_INTERNAL_PATH_ALLOCATED    0x04	/* Deallocate internal path on completion */
+#define ACPI_EXT_EXTERNAL_EMITTED           0x08	/* External() statement has been emitted */
 
 struct acpi_external_file {
 	char *path;
@@ -1067,7 +1073,7 @@ struct acpi_db_method_info {
 	char *name;
 	u32 flags;
 	u32 num_loops;
-	char pathname[128];
+	char pathname[ACPI_DB_LINE_BUFFER_SIZE];
 	char **args;
 	acpi_object_type *types;
 
@@ -1089,6 +1095,7 @@ struct acpi_integrity_info {
 	u32 objects;
 };
 
+#define ACPI_DB_DISABLE_OUTPUT          0x00
 #define ACPI_DB_REDIRECTABLE_OUTPUT     0x01
 #define ACPI_DB_CONSOLE_OUTPUT          0x02
 #define ACPI_DB_DUPLICATE_OUTPUT        0x03

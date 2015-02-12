@@ -14,15 +14,13 @@
 #include <linux/module.h>
 #include <linux/cpu.h>
 #include <linux/of_fdt.h>
+#include <linux/cache.h>
 #include <asm/sections.h>
 #include <asm/arcregs.h>
 #include <asm/tlb.h>
-#include <asm/cache.h>
 #include <asm/setup.h>
 #include <asm/page.h>
 #include <asm/irq.h>
-#include <asm/arcregs.h>
-#include <asm/prom.h>
 #include <asm/unwind.h>
 #include <asm/clk.h>
 #include <asm/mach_desc.h>
@@ -31,15 +29,17 @@
 
 int running_on_hw = 1;	/* vs. on ISS */
 
-char __initdata command_line[COMMAND_LINE_SIZE];
-struct machine_desc *machine_desc __initdata;
+/* Part of U-boot ABI: see head.S */
+int __initdata uboot_tag;
+char __initdata *uboot_arg;
+
+const struct machine_desc *machine_desc;
 
 struct task_struct *_current_task[NR_CPUS];	/* For stack switching */
 
 struct cpuinfo_arc cpuinfo_arc700[NR_CPUS];
 
-
-void __init read_arc_build_cfg_regs(void)
+static void read_arc_build_cfg_regs(void)
 {
 	struct bcr_perip uncached_space;
 	struct cpuinfo_arc *cpu = &cpuinfo_arc700[smp_processor_id()];
@@ -48,10 +48,7 @@ void __init read_arc_build_cfg_regs(void)
 	READ_BCR(AUX_IDENTITY, cpu->core);
 
 	cpu->timers = read_aux_reg(ARC_REG_TIMERS_BCR);
-
 	cpu->vec_base = read_aux_reg(AUX_INTR_VEC_BASE);
-	if (cpu->vec_base == 0)
-		cpu->vec_base = (unsigned int)_int_vec_base_lds;
 
 	READ_BCR(ARC_REG_D_UNCACH_BCR, uncached_space);
 	cpu->uncached_base = uncached_space.start << 24;
@@ -110,7 +107,7 @@ static const struct cpuinfo_data arc_cpu_tbl[] = {
 	{ {0x00, NULL		} }
 };
 
-char *arc_cpu_mumbojumbo(int cpu_id, char *buf, int len)
+static char *arc_cpu_mumbojumbo(int cpu_id, char *buf, int len)
 {
 	int n = 0;
 	struct cpuinfo_arc *cpu = &cpuinfo_arc700[cpu_id];
@@ -175,7 +172,7 @@ static const struct id_to_str mac_mul_nm[] = {
 	{0x6, "Dual 16x16 and 32x16"}
 };
 
-char *arc_extn_mumbojumbo(int cpu_id, char *buf, int len)
+static char *arc_extn_mumbojumbo(int cpu_id, char *buf, int len)
 {
 	int n = 0;
 	struct cpuinfo_arc *cpu = &cpuinfo_arc700[cpu_id];
@@ -183,7 +180,7 @@ char *arc_extn_mumbojumbo(int cpu_id, char *buf, int len)
 	FIX_PTR(cpu);
 #define IS_AVAIL1(var, str)	((var) ? str : "")
 #define IS_AVAIL2(var, str)	((var == 0x2) ? str : "")
-#define IS_USED(var)		((var) ? "(in-use)" : "(not used)")
+#define IS_USED(cfg)		(IS_ENABLED(cfg) ? "(in-use)" : "(not used)")
 
 	n += scnprintf(buf + n, len - n,
 		       "Extn [700-Base]\t: %s %s %s %s %s %s\n",
@@ -203,9 +200,9 @@ char *arc_extn_mumbojumbo(int cpu_id, char *buf, int len)
 	if (cpu->core.family == 0x34) {
 		n += scnprintf(buf + n, len - n,
 		"Extn [700-4.10]\t: LLOCK/SCOND %s, SWAPE %s, RTSC %s\n",
-			       IS_USED(__CONFIG_ARC_HAS_LLSC_VAL),
-			       IS_USED(__CONFIG_ARC_HAS_SWAPE_VAL),
-			       IS_USED(__CONFIG_ARC_HAS_RTSC_VAL));
+			       IS_USED(CONFIG_ARC_HAS_LLSC),
+			       IS_USED(CONFIG_ARC_HAS_SWAPE),
+			       IS_USED(CONFIG_ARC_HAS_RTSC));
 	}
 
 	n += scnprintf(buf + n, len - n, "Extn [CCM]\t: %s",
@@ -238,7 +235,7 @@ char *arc_extn_mumbojumbo(int cpu_id, char *buf, int len)
 	return buf;
 }
 
-void __init arc_chk_ccms(void)
+static void arc_chk_ccms(void)
 {
 #if defined(CONFIG_ARC_HAS_DCCM) || defined(CONFIG_ARC_HAS_ICCM)
 	struct cpuinfo_arc *cpu = &cpuinfo_arc700[smp_processor_id()];
@@ -273,7 +270,7 @@ void __init arc_chk_ccms(void)
  * hardware has dedicated regs which need to be saved/restored on ctx-sw
  * (Single Precision uses core regs), thus kernel is kind of oblivious to it
  */
-void __init arc_chk_fpu(void)
+static void arc_chk_fpu(void)
 {
 	struct cpuinfo_arc *cpu = &cpuinfo_arc700[smp_processor_id()];
 
@@ -294,7 +291,7 @@ void __init arc_chk_fpu(void)
  *    such as only for boot CPU etc
  */
 
-void __init setup_processor(void)
+void setup_processor(void)
 {
 	char str[512];
 	int cpu_id = smp_processor_id();
@@ -317,25 +314,43 @@ void __init setup_processor(void)
 	arc_chk_fpu();
 }
 
+static inline int is_kernel(unsigned long addr)
+{
+	if (addr >= (unsigned long)_stext && addr <= (unsigned long)_end)
+		return 1;
+	return 0;
+}
+
 void __init setup_arch(char **cmdline_p)
 {
-#ifdef CONFIG_CMDLINE_UBOOT
-	/* Make sure that a whitespace is inserted before */
-	strlcat(command_line, " ", sizeof(command_line));
-#endif
-	/*
-	 * Append .config cmdline to base command line, which might already
-	 * contain u-boot "bootargs" (handled by head.S, if so configured)
-	 */
-	strlcat(command_line, CONFIG_CMDLINE, sizeof(command_line));
+	/* make sure that uboot passed pointer to cmdline/dtb is valid */
+	if (uboot_tag && is_kernel((unsigned long)uboot_arg))
+		panic("Invalid uboot arg\n");
+
+	/* See if u-boot passed an external Device Tree blob */
+	machine_desc = setup_machine_fdt(uboot_arg);	/* uboot_tag == 2 */
+	if (!machine_desc) {
+		/* No, so try the embedded one */
+		machine_desc = setup_machine_fdt(__dtb_start);
+		if (!machine_desc)
+			panic("Embedded DT invalid\n");
+
+		/*
+		 * If we are here, it is established that @uboot_arg didn't
+		 * point to DT blob. Instead if u-boot says it is cmdline,
+		 * Appent to embedded DT cmdline.
+		 * setup_machine_fdt() would have populated @boot_command_line
+		 */
+		if (uboot_tag == 1) {
+			/* Ensure a whitespace between the 2 cmdlines */
+			strlcat(boot_command_line, " ", COMMAND_LINE_SIZE);
+			strlcat(boot_command_line, uboot_arg,
+				COMMAND_LINE_SIZE);
+		}
+	}
 
 	/* Save unparsed command line copy for /proc/cmdline */
-	strlcpy(boot_command_line, command_line, COMMAND_LINE_SIZE);
-	*cmdline_p = command_line;
-
-	machine_desc = setup_machine_fdt(__dtb_start);
-	if (!machine_desc)
-		panic("Embedded DT invalid\n");
+	*cmdline_p = boot_command_line;
 
 	/* To force early parsing of things like mem=xxx */
 	parse_early_param();
@@ -353,15 +368,12 @@ void __init setup_arch(char **cmdline_p)
 	setup_arch_memory();
 
 	/* copy flat DT out of .init and then unflatten it */
-	copy_devtree();
-	unflatten_device_tree();
+	unflatten_and_copy_device_tree();
 
 	/* Can be issue if someone passes cmd line arg "ro"
 	 * But that is unlikely so keeping it as it is
 	 */
 	root_mountflags &= ~MS_RDONLY;
-
-	console_verbose();
 
 #if defined(CONFIG_VT) && defined(CONFIG_DUMMY_CONSOLE)
 	conswitchp = &dummy_con;

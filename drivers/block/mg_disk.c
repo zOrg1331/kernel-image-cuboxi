@@ -636,7 +636,7 @@ ok_to_write:
 		mg_request(host->breq);
 }
 
-void mg_times_out(unsigned long data)
+static void mg_times_out(unsigned long data)
 {
 	struct mg_host *host = (struct mg_host *)data;
 	char *name;
@@ -780,6 +780,7 @@ static const struct block_device_operations mg_disk_ops = {
 	.getgeo = mg_getgeo
 };
 
+#ifdef CONFIG_PM_SLEEP
 static int mg_suspend(struct device *dev)
 {
 	struct mg_drv_data *prv_data = dev->platform_data;
@@ -824,6 +825,7 @@ static int mg_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static SIMPLE_DEV_PM_OPS(mg_pm, mg_suspend, mg_resume);
 
@@ -913,7 +915,7 @@ static int mg_probe(struct platform_device *plat_dev)
 
 	/* disk reset */
 	if (prv_data->dev_attr == MG_STORAGE_DEV) {
-		/* If POR seq. not yet finised, wait */
+		/* If POR seq. not yet finished, wait */
 		err = mg_wait_rstout(host->rstout, MG_TMAX_RSTOUT);
 		if (err)
 			goto probe_err_3b;
@@ -934,7 +936,7 @@ static int mg_probe(struct platform_device *plat_dev)
 			goto probe_err_3b;
 		}
 		err = request_irq(host->irq, mg_irq,
-				IRQF_DISABLED | IRQF_TRIGGER_RISING,
+				IRQF_TRIGGER_RISING,
 				MG_DEV_NAME, host);
 		if (err) {
 			printk(KERN_ERR "%s:%d fail (request_irq err=%d)\n",

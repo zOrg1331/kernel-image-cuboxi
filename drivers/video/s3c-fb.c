@@ -24,10 +24,9 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/pm_runtime.h>
+#include <linux/platform_data/video_s3c.h>
 
 #include <video/samsung_fimd.h>
-#include <mach/map.h>
-#include <plat/fb.h>
 
 /* This driver will export a number of framebuffer interfaces depending
  * on the configuration passed in via the platform data. Each fb instance
@@ -1379,7 +1378,7 @@ static int s3c_fb_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	pd = pdev->dev.platform_data;
+	pd = dev_get_platdata(&pdev->dev);
 	if (!pd) {
 		dev_err(dev, "no platform data specified\n");
 		return -EINVAL;

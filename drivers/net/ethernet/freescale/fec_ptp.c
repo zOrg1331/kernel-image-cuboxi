@@ -17,6 +17,8 @@
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -26,7 +28,6 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -128,7 +129,6 @@ void fec_ptp_start_cyclecounter(struct net_device *ndev)
 
 	spin_unlock_irqrestore(&fep->tmreg_lock, flags);
 }
-EXPORT_SYMBOL(fec_ptp_start_cyclecounter);
 
 /**
  * fec_ptp_adjfreq - adjust ptp cycle frequency
@@ -273,7 +273,7 @@ static int fec_ptp_enable(struct ptp_clock_info *ptp,
  * @ifreq: ioctl data
  * @cmd: particular ioctl requested
  */
-int fec_ptp_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
+int fec_ptp_set(struct net_device *ndev, struct ifreq *ifr)
 {
 	struct fec_enet_private *fep = netdev_priv(ndev);
 
@@ -319,7 +319,20 @@ int fec_ptp_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
 	return copy_to_user(ifr->ifr_data, &config, sizeof(config)) ?
 	    -EFAULT : 0;
 }
-EXPORT_SYMBOL(fec_ptp_ioctl);
+
+int fec_ptp_get(struct net_device *ndev, struct ifreq *ifr)
+{
+	struct fec_enet_private *fep = netdev_priv(ndev);
+	struct hwtstamp_config config;
+
+	config.flags = 0;
+	config.tx_type = fep->hwts_tx_en ? HWTSTAMP_TX_ON : HWTSTAMP_TX_OFF;
+	config.rx_filter = (fep->hwts_rx_en ?
+			    HWTSTAMP_FILTER_ALL : HWTSTAMP_FILTER_NONE);
+
+	return copy_to_user(ifr->ifr_data, &config, sizeof(config)) ?
+		-EFAULT : 0;
+}
 
 /**
  * fec_time_keep - call timecounter_read every second to avoid timer overrun
@@ -347,8 +360,9 @@ static void fec_time_keep(unsigned long _data)
  * cyclecounter init routine and exits.
  */
 
-void fec_ptp_init(struct net_device *ndev, struct platform_device *pdev)
+void fec_ptp_init(struct platform_device *pdev)
 {
+	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
 
 	fep->ptp_caps.owner = THIS_MODULE;
@@ -381,8 +395,5 @@ void fec_ptp_init(struct net_device *ndev, struct platform_device *pdev)
 	if (IS_ERR(fep->ptp_clock)) {
 		fep->ptp_clock = NULL;
 		pr_err("ptp_clock_register failed\n");
-	} else {
-		pr_info("registered PHC device on %s\n", ndev->name);
 	}
 }
-EXPORT_SYMBOL(fec_ptp_init);

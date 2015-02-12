@@ -33,7 +33,6 @@
 
 #include "common.h"
 #include "devices-imx51.h"
-#include "cpu_op-mx51.h"
 #include "eukrea-baseboards.h"
 #include "hardware.h"
 #include "iomux-mx51.h"
@@ -122,7 +121,7 @@ static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
 
-static int tsc2007_get_pendown_state(void)
+static int tsc2007_get_pendown_state(struct device *dev)
 {
 	if (mx51_revision() < IMX_CHIP_REVISION_3_0)
 		return !gpio_get_value(TSC2007_IRQGPIO_REV2);
@@ -284,10 +283,6 @@ static void __init eukrea_cpuimx51sd_init(void)
 
 	mxc_iomux_v3_setup_multiple_pads(eukrea_cpuimx51sd_pads,
 					ARRAY_SIZE(eukrea_cpuimx51sd_pads));
-
-#if defined(CONFIG_CPU_FREQ_IMX)
-	get_cpu_op = mx51_get_cpu_op;
-#endif
 
 	imx51_add_imx_uart(0, &uart_pdata);
 	imx51_add_mxc_nand(&eukrea_cpuimx51sd_nand_board_info);

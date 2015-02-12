@@ -13,7 +13,7 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/err.h>
-#include <linux/opp.h>
+#include <linux/pm_opp.h>
 #include <linux/export.h>
 #include <linux/suspend.h>
 #include <linux/cpu.h>
@@ -131,7 +131,7 @@ static int __init omap2_set_init_voltage(char *vdd_name, char *clk_name,
 {
 	struct voltagedomain *voltdm;
 	struct clk *clk;
-	struct opp *opp;
+	struct dev_pm_opp *opp;
 	unsigned long freq, bootup_volt;
 	struct device *dev;
 
@@ -172,7 +172,7 @@ static int __init omap2_set_init_voltage(char *vdd_name, char *clk_name,
 	clk_put(clk);
 
 	rcu_read_lock();
-	opp = opp_find_freq_ceil(dev, &freq);
+	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
 	if (IS_ERR(opp)) {
 		rcu_read_unlock();
 		pr_err("%s: unable to find boot up OPP for vdd_%s\n",
@@ -180,7 +180,7 @@ static int __init omap2_set_init_voltage(char *vdd_name, char *clk_name,
 		goto exit;
 	}
 
-	bootup_volt = opp_get_voltage(opp);
+	bootup_volt = dev_pm_opp_get_voltage(opp);
 	rcu_read_unlock();
 	if (!bootup_volt) {
 		pr_err("%s: unable to find voltage corresponding to the bootup OPP for vdd_%s\n",
@@ -218,7 +218,7 @@ static int omap_pm_enter(suspend_state_t suspend_state)
 
 static int omap_pm_begin(suspend_state_t state)
 {
-	disable_hlt();
+	cpu_idle_poll_ctrl(true);
 	if (cpu_is_omap34xx())
 		omap_prcm_irq_prepare();
 	return 0;
@@ -226,8 +226,7 @@ static int omap_pm_begin(suspend_state_t state)
 
 static void omap_pm_end(void)
 {
-	enable_hlt();
-	return;
+	cpu_idle_poll_ctrl(false);
 }
 
 static void omap_pm_finish(void)
@@ -265,6 +264,17 @@ static void __init omap4_init_voltages(void)
 	omap2_set_init_voltage("iva", "dpll_iva_m5x2_ck", "iva");
 }
 
+static inline void omap_init_cpufreq(void)
+{
+	struct platform_device_info devinfo = { };
+
+	if (!of_have_populated_dt())
+		devinfo.name = "omap-cpufreq";
+	else
+		devinfo.name = "cpufreq-cpu0";
+	platform_device_register_full(&devinfo);
+}
+
 static int __init omap2_common_pm_init(void)
 {
 	if (!of_have_populated_dt())
@@ -294,7 +304,11 @@ int __init omap2_common_pm_late_init(void)
 
 		/* Smartreflex device init */
 		omap_devinit_smartreflex();
+
 	}
+
+	/* cpufreq dummy device instantiation */
+	omap_init_cpufreq();
 
 #ifdef CONFIG_SUSPEND
 	suspend_set_ops(&omap_pm_ops);

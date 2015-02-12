@@ -255,6 +255,7 @@ enum wl12xx_vif_flags {
 	WLVIF_FLAG_CS_PROGRESS,
 	WLVIF_FLAG_AP_PROBE_RESP_SET,
 	WLVIF_FLAG_IN_USE,
+	WLVIF_FLAG_ACTIVE,
 };
 
 struct wl12xx_vif;
@@ -274,6 +275,13 @@ struct wl1271_link {
 
 	/* The wlvif this link belongs to. Might be null for global links */
 	struct wl12xx_vif *wlvif;
+
+	/*
+	 * total freed FW packets on the link - used for tracking the
+	 * AES/TKIP PN across recoveries. Re-initialized each time
+	 * from the wl1271_station structure.
+	 */
+	u64 total_freed_pkts;
 };
 
 #define WL1271_MAX_RX_FILTERS 5
@@ -300,6 +308,7 @@ enum plt_mode {
 	PLT_OFF = 0,
 	PLT_ON = 1,
 	PLT_FEM_DETECT = 2,
+	PLT_CHIP_AWAKE = 3
 };
 
 struct wl12xx_rx_filter_field {
@@ -318,6 +327,13 @@ struct wl12xx_rx_filter {
 struct wl1271_station {
 	u8 hlid;
 	bool in_connection;
+
+	/*
+	 * total freed FW packets on the link to the STA - used for tracking the
+	 * AES/TKIP PN across recoveries. Re-initialized each time from the
+	 * wl1271_station structure.
+	 */
+	u64 total_freed_pkts;
 };
 
 struct wl12xx_vif {
@@ -442,6 +458,15 @@ struct wl12xx_vif {
 	 */
 	int hw_queue_base;
 
+	/* do we have a pending auth reply? (and ROC) */
+	bool ap_pending_auth_reply;
+
+	/* time when we sent the pending auth reply */
+	unsigned long pending_auth_reply_time;
+
+	/* work for canceling ROC after pending auth reply */
+	struct delayed_work pending_auth_complete_work;
+
 	/*
 	 * This struct must be last!
 	 * data that has to be saved acrossed reconfigs (e.g. recovery)
@@ -449,16 +474,15 @@ struct wl12xx_vif {
 	 */
 	struct {
 		u8 persistent[0];
-		/*
-		 * Security sequence number
-		 *     bits 0-15: lower 16 bits part of sequence number
-		 *     bits 16-47: higher 32 bits part of sequence number
-		 *     bits 48-63: not in use
-		 */
-		u64 tx_security_seq;
 
-		/* 8 bits of the last sequence number in use */
-		u8 tx_security_last_seq_lsb;
+		/*
+		 * total freed FW packets on the link - used for
+		 * storing the AES/TKIP PN during recovery, as this
+		 * structure is not zeroed out.
+		 * For STA this holds the PN of the link to the AP.
+		 * For AP this holds the PN of the broadcast link.
+		 */
+		u64 total_freed_pkts;
 	};
 };
 
@@ -525,7 +549,5 @@ void wl1271_rx_filter_flatten_fields(struct wl12xx_rx_filter *filter,
 #define HW_BG_RATES_MASK	0xffff
 #define HW_HT_RATES_OFFSET	16
 #define HW_MIMO_RATES_OFFSET	24
-
-#define WL12XX_HW_BLOCK_SIZE	256
 
 #endif /* __WLCORE_I_H__ */

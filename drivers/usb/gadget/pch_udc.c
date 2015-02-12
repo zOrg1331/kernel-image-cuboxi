@@ -358,7 +358,6 @@ struct pch_udc_dev {
 			prot_stall:1,
 			irq_registered:1,
 			mem_region:1,
-			registered:1,
 			suspended:1,
 			connected:1,
 			vbus_session:1,
@@ -1441,6 +1440,8 @@ static void pch_vbus_gpio_free(struct pch_udc_dev *dev)
  */
 static void complete_req(struct pch_udc_ep *ep, struct pch_udc_request *req,
 								 int status)
+	__releases(&dev->lock)
+	__acquires(&dev->lock)
 {
 	struct pch_udc_dev	*dev;
 	unsigned halted = ep->halted;
@@ -2382,6 +2383,8 @@ static void pch_udc_svc_control_in(struct pch_udc_dev *dev)
  * @dev:	Reference to the device structure
  */
 static void pch_udc_svc_control_out(struct pch_udc_dev *dev)
+	__releases(&dev->lock)
+	__acquires(&dev->lock)
 {
 	u32	stat;
 	int setup_supported;
@@ -2893,12 +2896,12 @@ static void pch_udc_pcd_reinit(struct pch_udc_dev *dev)
 			ep->offset_addr = (UDC_EPINT_OUT_SHIFT + ep->num) *
 					  UDC_EP_REG_SHIFT;
 		/* need to set ep->ep.maxpacket and set Default Configuration?*/
-		ep->ep.maxpacket = UDC_BULK_MAX_PKT_SIZE;
+		usb_ep_set_maxpacket_limit(&ep->ep, UDC_BULK_MAX_PKT_SIZE);
 		list_add_tail(&ep->ep.ep_list, &dev->gadget.ep_list);
 		INIT_LIST_HEAD(&ep->queue);
 	}
-	dev->ep[UDC_EP0IN_IDX].ep.maxpacket = UDC_EP0IN_MAX_PKT_SIZE;
-	dev->ep[UDC_EP0OUT_IDX].ep.maxpacket = UDC_EP0OUT_MAX_PKT_SIZE;
+	usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0IN_IDX].ep, UDC_EP0IN_MAX_PKT_SIZE);
+	usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0OUT_IDX].ep, UDC_EP0OUT_MAX_PKT_SIZE);
 
 	/* remove ep0 in and out from the list.  They have own pointer */
 	list_del_init(&dev->ep[UDC_EP0IN_IDX].ep.ep_list);
@@ -2989,7 +2992,6 @@ static int pch_udc_start(struct usb_gadget *g,
 
 	driver->driver.bus = NULL;
 	dev->driver = driver;
-	dev->gadget.dev.driver = &driver->driver;
 
 	/* get ready for ep0 traffic */
 	pch_udc_setup_ep0(dev);
@@ -3010,7 +3012,6 @@ static int pch_udc_stop(struct usb_gadget *g,
 	pch_udc_disable_interrupts(dev, UDC_DEVINT_MSK);
 
 	/* Assures that there are no pending requests with this driver */
-	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
 	dev->connected = 0;
 
@@ -3078,10 +3079,7 @@ static void pch_udc_remove(struct pci_dev *pdev)
 				   pci_resource_len(pdev, PCH_UDC_PCI_BAR));
 	if (dev->active)
 		pci_disable_device(pdev);
-	if (dev->registered)
-		device_unregister(&dev->gadget.dev);
 	kfree(dev);
-	pci_set_drvdata(pdev, NULL);
 }
 
 #ifdef CONFIG_PM
@@ -3196,21 +3194,13 @@ static int pch_udc_probe(struct pci_dev *pdev,
 	if (retval)
 		goto finished;
 
-	dev_set_name(&dev->gadget.dev, "gadget");
-	dev->gadget.dev.parent = &pdev->dev;
-	dev->gadget.dev.dma_mask = pdev->dev.dma_mask;
-	dev->gadget.dev.release = gadget_release;
 	dev->gadget.name = KBUILD_MODNAME;
 	dev->gadget.max_speed = USB_SPEED_HIGH;
 
-	retval = device_register(&dev->gadget.dev);
-	if (retval)
-		goto finished;
-	dev->registered = 1;
-
 	/* Put the device in disconnected state till a driver is bound */
 	pch_udc_set_disconnect(dev);
-	retval = usb_add_gadget_udc(&pdev->dev, &dev->gadget);
+	retval = usb_add_gadget_udc_release(&pdev->dev, &dev->gadget,
+			gadget_release);
 	if (retval)
 		goto finished;
 	return 0;
@@ -3220,7 +3210,7 @@ finished:
 	return retval;
 }
 
-static DEFINE_PCI_DEVICE_TABLE(pch_udc_pcidev_id) = {
+static const struct pci_device_id pch_udc_pcidev_id[] = {
 	{
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_EG20T_UDC),
 		.class = (PCI_CLASS_SERIAL_USB << 8) | 0xfe,

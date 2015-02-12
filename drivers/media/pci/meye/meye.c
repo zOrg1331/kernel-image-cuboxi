@@ -1410,7 +1410,7 @@ static int vidioc_streamoff(struct file *file, void *fh, enum v4l2_buf_type i)
 }
 
 static long vidioc_default(struct file *file, void *fh, bool valid_prio,
-						int cmd, void *arg)
+			   unsigned int cmd, void *arg)
 {
 	switch (cmd) {
 	case MEYEIOC_G_PARAMS:
@@ -1698,7 +1698,7 @@ static int meye_probe(struct pci_dev *pcidev, const struct pci_device_id *ent)
 
 	meye.mchip_irq = pcidev->irq;
 	if (request_irq(meye.mchip_irq, meye_irq,
-			IRQF_DISABLED | IRQF_SHARED, "meye", meye_irq)) {
+			IRQF_SHARED, "meye", meye_irq)) {
 		v4l2_err(v4l2_dev, "request_irq failed\n");
 		goto outreqirq;
 	}

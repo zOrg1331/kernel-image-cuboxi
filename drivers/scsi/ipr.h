@@ -100,6 +100,13 @@
 #define IPR_SUBS_DEV_ID_57D6    0x03FC
 #define IPR_SUBS_DEV_ID_57D7    0x03FF
 #define IPR_SUBS_DEV_ID_57D8    0x03FE
+#define IPR_SUBS_DEV_ID_57D9    0x046D
+#define IPR_SUBS_DEV_ID_57EB    0x0474
+#define IPR_SUBS_DEV_ID_57EC    0x0475
+#define IPR_SUBS_DEV_ID_57ED    0x0499
+#define IPR_SUBS_DEV_ID_57EE    0x049A
+#define IPR_SUBS_DEV_ID_57EF    0x049B
+#define IPR_SUBS_DEV_ID_57F0    0x049C
 #define IPR_NAME				"ipr"
 
 /*
@@ -294,7 +301,7 @@ IPR_PCII_NO_HOST_RRQ | IPR_PCII_IOARRIN_LOST | IPR_PCII_MMIO_ERROR)
  * Dump literals
  */
 #define IPR_FMT2_MAX_IOA_DUMP_SIZE			(4 * 1024 * 1024)
-#define IPR_FMT3_MAX_IOA_DUMP_SIZE			(32 * 1024 * 1024)
+#define IPR_FMT3_MAX_IOA_DUMP_SIZE			(80 * 1024 * 1024)
 #define IPR_FMT2_NUM_SDT_ENTRIES			511
 #define IPR_FMT3_NUM_SDT_ENTRIES			0xFFF
 #define IPR_FMT2_MAX_NUM_DUMP_PAGES	((IPR_FMT2_MAX_IOA_DUMP_SIZE / PAGE_SIZE) + 1)
@@ -304,7 +311,7 @@ IPR_PCII_NO_HOST_RRQ | IPR_PCII_IOARRIN_LOST | IPR_PCII_MMIO_ERROR)
  * Misc literals
  */
 #define IPR_NUM_IOADL_ENTRIES			IPR_MAX_SGLIST
-#define IPR_MAX_MSIX_VECTORS		0x5
+#define IPR_MAX_MSIX_VECTORS		0x10
 #define IPR_MAX_HRRQ_NUM		0x10
 #define IPR_INIT_HRRQ			0x0
 
@@ -552,7 +559,7 @@ struct ipr_ioarcb_ata_regs {	/* 22 bytes */
 	u8 hob_lbam;
 	u8 hob_lbah;
 	u8 ctl;
-}__attribute__ ((packed, aligned(4)));
+}__attribute__ ((packed, aligned(2)));
 
 struct ipr_ioadl_desc {
 	__be32 flags_and_data_len;
@@ -1440,9 +1447,9 @@ struct ipr_ioa_cfg {
 	/*
 	 * Bitmaps for SIS64 generated target values
 	 */
-	unsigned long *target_ids;
-	unsigned long *array_ids;
-	unsigned long *vset_ids;
+	unsigned long target_ids[BITS_TO_LONGS(IPR_MAX_SIS64_DEVS)];
+	unsigned long array_ids[BITS_TO_LONGS(IPR_MAX_SIS64_DEVS)];
+	unsigned long vset_ids[BITS_TO_LONGS(IPR_MAX_SIS64_DEVS)];
 
 	u16 type; /* CCIN of the card */
 

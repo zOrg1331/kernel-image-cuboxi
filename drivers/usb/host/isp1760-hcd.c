@@ -1739,7 +1739,7 @@ static int isp1760_hub_status_data(struct usb_hcd *hcd, char *buf)
 	int retval = 1;
 	unsigned long flags;
 
-	/* if !USB_SUSPEND, root hub timers won't get shut down ... */
+	/* if !PM_RUNTIME, root hub timers won't get shut down ... */
 	if (!HC_IS_RUNNING(hcd->state))
 		return 0;
 
@@ -2250,6 +2250,7 @@ struct usb_hcd *isp1760_register(phys_addr_t res_start, resource_size_t res_len,
 	ret = usb_add_hcd(hcd, irq, irqflags);
 	if (ret)
 		goto err_unmap;
+	device_wakeup_enable(hcd->self.controller);
 
 	return hcd;
 

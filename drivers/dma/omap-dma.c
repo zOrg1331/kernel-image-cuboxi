@@ -16,6 +16,8 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/of_dma.h>
+#include <linux/of_device.h>
 
 #include "virt-dma.h"
 
@@ -65,6 +67,10 @@ static const unsigned es_bytes[] = {
 	[OMAP_DMA_DATA_TYPE_S8] = 1,
 	[OMAP_DMA_DATA_TYPE_S16] = 2,
 	[OMAP_DMA_DATA_TYPE_S32] = 4,
+};
+
+static struct of_dma_filter_info omap_dma_info = {
+	.filter_fn = omap_dma_filter_fn,
 };
 
 static inline struct omap_dmadev *to_omap_dma_dev(struct dma_device *d)
@@ -184,7 +190,7 @@ static int omap_dma_alloc_chan_resources(struct dma_chan *chan)
 {
 	struct omap_chan *c = to_omap_dma_chan(chan);
 
-	dev_info(c->vc.chan.device->dev, "allocating channel for %u\n", c->dma_sig);
+	dev_dbg(c->vc.chan.device->dev, "allocating channel for %u\n", c->dma_sig);
 
 	return omap_request_dma(c->dma_sig, "DMA engine",
 		omap_dma_callback, c, &c->dma_ch);
@@ -197,7 +203,7 @@ static void omap_dma_free_chan_resources(struct dma_chan *chan)
 	vchan_free_chan_resources(&c->vc);
 	omap_free_dma(c->dma_ch);
 
-	dev_info(c->vc.chan.device->dev, "freeing channel for %u\n", c->dma_sig);
+	dev_dbg(c->vc.chan.device->dev, "freeing channel for %u\n", c->dma_sig);
 }
 
 static size_t omap_dma_sg_size(struct omap_sg *sg)
@@ -242,7 +248,7 @@ static enum dma_status omap_dma_tx_status(struct dma_chan *chan,
 	unsigned long flags;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret == DMA_SUCCESS || !txstate)
+	if (ret == DMA_COMPLETE || !txstate)
 		return ret;
 
 	spin_lock_irqsave(&c->vc.lock, flags);
@@ -629,8 +635,22 @@ static int omap_dma_probe(struct platform_device *pdev)
 		pr_warn("OMAP-DMA: failed to register slave DMA engine device: %d\n",
 			rc);
 		omap_dma_free(od);
-	} else {
-		platform_set_drvdata(pdev, od);
+		return rc;
+	}
+
+	platform_set_drvdata(pdev, od);
+
+	if (pdev->dev.of_node) {
+		omap_dma_info.dma_cap = od->ddev.cap_mask;
+
+		/* Device-tree DMA controller registration */
+		rc = of_dma_controller_register(pdev->dev.of_node,
+				of_dma_simple_xlate, &omap_dma_info);
+		if (rc) {
+			pr_warn("OMAP-DMA: failed to register DMA controller\n");
+			dma_async_device_unregister(&od->ddev);
+			omap_dma_free(od);
+		}
 	}
 
 	dev_info(&pdev->dev, "OMAP DMA engine driver\n");
@@ -642,11 +662,24 @@ static int omap_dma_remove(struct platform_device *pdev)
 {
 	struct omap_dmadev *od = platform_get_drvdata(pdev);
 
+	if (pdev->dev.of_node)
+		of_dma_controller_free(pdev->dev.of_node);
+
 	dma_async_device_unregister(&od->ddev);
 	omap_dma_free(od);
 
 	return 0;
 }
+
+static const struct of_device_id omap_dma_match[] = {
+	{ .compatible = "ti,omap2420-sdma", },
+	{ .compatible = "ti,omap2430-sdma", },
+	{ .compatible = "ti,omap3430-sdma", },
+	{ .compatible = "ti,omap3630-sdma", },
+	{ .compatible = "ti,omap4430-sdma", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, omap_dma_match);
 
 static struct platform_driver omap_dma_driver = {
 	.probe	= omap_dma_probe,
@@ -654,6 +687,7 @@ static struct platform_driver omap_dma_driver = {
 	.driver = {
 		.name = "omap-dma-engine",
 		.owner = THIS_MODULE,
+		.of_match_table = of_match_ptr(omap_dma_match),
 	},
 };
 

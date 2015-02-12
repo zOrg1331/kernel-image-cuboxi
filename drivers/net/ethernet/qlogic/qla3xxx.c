@@ -8,7 +8,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kernel.h>
-#include <linux/init.h>
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/list.h>
@@ -312,7 +311,6 @@ static void ql_release_to_lrg_buf_free_list(struct ql3_adapter *qdev,
 		lrg_buf_cb->skb = netdev_alloc_skb(qdev->ndev,
 						   qdev->lrg_buffer_len);
 		if (unlikely(!lrg_buf_cb->skb)) {
-			netdev_err(qdev->ndev, "failed netdev_alloc_skb()\n");
 			qdev->lrg_buf_skb_check++;
 		} else {
 			/*
@@ -3917,7 +3915,6 @@ err_out_free_regions:
 	pci_release_regions(pdev);
 err_out_disable_pdev:
 	pci_disable_device(pdev);
-	pci_set_drvdata(pdev, NULL);
 err_out:
 	return err;
 }
@@ -3940,7 +3937,6 @@ static void ql3xxx_remove(struct pci_dev *pdev)
 
 	iounmap(qdev->mem_map_registers);
 	pci_release_regions(pdev);
-	pci_set_drvdata(pdev, NULL);
 	free_netdev(ndev);
 }
 

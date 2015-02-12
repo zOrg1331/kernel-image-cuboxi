@@ -46,6 +46,7 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/ptp_classify.h>
 #include <linux/mii.h>
+#include <linux/mdio.h>
 #include "hw.h"
 
 struct e1000_info;
@@ -60,7 +61,6 @@ struct e1000_info;
 	netdev_warn(adapter->netdev, format, ## arg)
 #define e_notice(format, arg...) \
 	netdev_notice(adapter->netdev, format, ## arg)
-
 
 /* Interrupt modes, as used by the IntMode parameter */
 #define E1000E_INT_MODE_LEGACY		0
@@ -89,9 +89,6 @@ struct e1000_info;
 #define E1000_EEPROM_APME		0x0400
 
 #define E1000_MNG_VLAN_NONE		(-1)
-
-/* Number of packet split data buffers (not including the header buffer) */
-#define PS_PAGE_BUFFERS			(MAX_PS_BUFFERS - 1)
 
 #define DEFAULT_JUMBO			9234
 
@@ -239,9 +236,8 @@ struct e1000_adapter {
 	u16 tx_itr;
 	u16 rx_itr;
 
-	/* Tx */
-	struct e1000_ring *tx_ring /* One per active queue */
-						____cacheline_aligned_in_smp;
+	/* Tx - one ring per active queue */
+	struct e1000_ring *tx_ring ____cacheline_aligned_in_smp;
 	u32 tx_fifo_limit;
 
 	struct napi_struct napi;
@@ -352,6 +348,8 @@ struct e1000_adapter {
 	struct timecounter tc;
 	struct ptp_clock *ptp_clock;
 	struct ptp_clock_info ptp_clock_info;
+
+	u16 eee_advert;
 };
 
 struct e1000_info {
@@ -474,26 +472,25 @@ enum latency_range {
 extern char e1000e_driver_name[];
 extern const char e1000e_driver_version[];
 
-extern void e1000e_check_options(struct e1000_adapter *adapter);
-extern void e1000e_set_ethtool_ops(struct net_device *netdev);
+void e1000e_check_options(struct e1000_adapter *adapter);
+void e1000e_set_ethtool_ops(struct net_device *netdev);
 
-extern int e1000e_up(struct e1000_adapter *adapter);
-extern void e1000e_down(struct e1000_adapter *adapter);
-extern void e1000e_reinit_locked(struct e1000_adapter *adapter);
-extern void e1000e_reset(struct e1000_adapter *adapter);
-extern void e1000e_power_up_phy(struct e1000_adapter *adapter);
-extern int e1000e_setup_rx_resources(struct e1000_ring *ring);
-extern int e1000e_setup_tx_resources(struct e1000_ring *ring);
-extern void e1000e_free_rx_resources(struct e1000_ring *ring);
-extern void e1000e_free_tx_resources(struct e1000_ring *ring);
-extern struct rtnl_link_stats64 *e1000e_get_stats64(struct net_device *netdev,
-                                                    struct rtnl_link_stats64
-                                                    *stats);
-extern void e1000e_set_interrupt_capability(struct e1000_adapter *adapter);
-extern void e1000e_reset_interrupt_capability(struct e1000_adapter *adapter);
-extern void e1000e_get_hw_control(struct e1000_adapter *adapter);
-extern void e1000e_release_hw_control(struct e1000_adapter *adapter);
-extern void e1000e_write_itr(struct e1000_adapter *adapter, u32 itr);
+int e1000e_up(struct e1000_adapter *adapter);
+void e1000e_down(struct e1000_adapter *adapter);
+void e1000e_reinit_locked(struct e1000_adapter *adapter);
+void e1000e_reset(struct e1000_adapter *adapter);
+void e1000e_power_up_phy(struct e1000_adapter *adapter);
+int e1000e_setup_rx_resources(struct e1000_ring *ring);
+int e1000e_setup_tx_resources(struct e1000_ring *ring);
+void e1000e_free_rx_resources(struct e1000_ring *ring);
+void e1000e_free_tx_resources(struct e1000_ring *ring);
+struct rtnl_link_stats64 *e1000e_get_stats64(struct net_device *netdev,
+					     struct rtnl_link_stats64 *stats);
+void e1000e_set_interrupt_capability(struct e1000_adapter *adapter);
+void e1000e_reset_interrupt_capability(struct e1000_adapter *adapter);
+void e1000e_get_hw_control(struct e1000_adapter *adapter);
+void e1000e_release_hw_control(struct e1000_adapter *adapter);
+void e1000e_write_itr(struct e1000_adapter *adapter, u32 itr);
 
 extern unsigned int copybreak;
 
@@ -510,8 +507,8 @@ extern const struct e1000_info e1000_pch2_info;
 extern const struct e1000_info e1000_pch_lpt_info;
 extern const struct e1000_info e1000_es2_info;
 
-extern void e1000e_ptp_init(struct e1000_adapter *adapter);
-extern void e1000e_ptp_remove(struct e1000_adapter *adapter);
+void e1000e_ptp_init(struct e1000_adapter *adapter);
+void e1000e_ptp_remove(struct e1000_adapter *adapter);
 
 static inline s32 e1000_phy_hw_reset(struct e1000_hw *hw)
 {
@@ -538,7 +535,7 @@ static inline s32 e1e_wphy_locked(struct e1000_hw *hw, u32 offset, u16 data)
 	return hw->phy.ops.write_reg_locked(hw, offset, data);
 }
 
-extern void e1000e_reload_nvm_generic(struct e1000_hw *hw);
+void e1000e_reload_nvm_generic(struct e1000_hw *hw);
 
 static inline s32 e1000e_read_mac_addr(struct e1000_hw *hw)
 {
@@ -558,12 +555,14 @@ static inline s32 e1000e_update_nvm_checksum(struct e1000_hw *hw)
 	return hw->nvm.ops.update(hw);
 }
 
-static inline s32 e1000_read_nvm(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
+static inline s32 e1000_read_nvm(struct e1000_hw *hw, u16 offset, u16 words,
+				 u16 *data)
 {
 	return hw->nvm.ops.read(hw, offset, words, data);
 }
 
-static inline s32 e1000_write_nvm(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
+static inline s32 e1000_write_nvm(struct e1000_hw *hw, u16 offset, u16 words,
+				  u16 *data)
 {
 	return hw->nvm.ops.write(hw, offset, words, data);
 }

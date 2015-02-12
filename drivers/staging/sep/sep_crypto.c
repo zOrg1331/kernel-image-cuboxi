@@ -32,7 +32,6 @@
  */
 
 /* #define DEBUG */
-#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
@@ -1134,7 +1133,7 @@ static int sep_crypto_block_data(struct ablkcipher_request *req)
 
 	if (int_error < 0) {
 		dev_warn(&ta_ctx->sep_used->pdev->dev, "oddball page error\n");
-		return -ENOMEM;
+		return int_error;
 	} else if (int_error == 1) {
 		ta_ctx->src_sg = new_sg;
 		ta_ctx->src_sg_hold = new_sg;
@@ -1149,7 +1148,7 @@ static int sep_crypto_block_data(struct ablkcipher_request *req)
 	if (int_error < 0) {
 		dev_warn(&ta_ctx->sep_used->pdev->dev, "walk phys error %x\n",
 			int_error);
-		return -ENOMEM;
+		return int_error;
 	} else if (int_error == 1) {
 		ta_ctx->dst_sg = new_sg;
 		ta_ctx->dst_sg_hold = new_sg;
@@ -1206,7 +1205,7 @@ static int sep_crypto_block_data(struct ablkcipher_request *req)
 
 		if (copy_result != crypto_ablkcipher_blocksize(tfm)) {
 			dev_warn(&ta_ctx->sep_used->pdev->dev,
-				"des block copy faild\n");
+				"des block copy failed\n");
 			return -ENOMEM;
 		}
 
@@ -1637,7 +1636,7 @@ static u32 crypto_post_op(struct sep_device *sep)
 					crypto_ablkcipher_blocksize(tfm)) {
 
 					dev_warn(&ta_ctx->sep_used->pdev->dev,
-						"des block copy faild\n");
+						"des block copy failed\n");
 					sep_crypto_release(sctx, ta_ctx,
 						-ENOMEM);
 					return -ENOMEM;
@@ -3927,6 +3926,7 @@ int sep_crypto_setup(void)
 err_algs:
 	for (k = 0; k < i; k++)
 		crypto_unregister_ahash(&hash_algs[k]);
+	destroy_workqueue(sep_dev->workqueue);
 	return err;
 
 err_crypto_algs:
@@ -3945,6 +3945,7 @@ void sep_crypto_takedown(void)
 	for (i = 0; i < ARRAY_SIZE(crypto_algs); i++)
 		crypto_unregister_alg(&crypto_algs[i]);
 
+	destroy_workqueue(sep_dev->workqueue);
 	tasklet_kill(&sep_dev->finish_tasklet);
 }
 

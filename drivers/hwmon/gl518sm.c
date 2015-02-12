@@ -4,7 +4,7 @@
  * Copyright (C) 1998, 1999 Frodo Looijaard <frodol@dds.nl> and
  * Kyosti Malkki <kmalkki@cc.hut.fi>
  * Copyright (C) 2004 Hong-Gunn Chew <hglinux@gunnet.org> and
- * Jean Delvare <khali@linux-fr.org>
+ * Jean Delvare <jdelvare@suse.de>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -344,8 +344,9 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
 		val = 3;
 		break;
 	default:
-		dev_err(dev, "Invalid fan clock divider %lu, choose one "
-			"of 1, 2, 4 or 8\n", val);
+		dev_err(dev,
+			"Invalid fan clock divider %lu, choose one of 1, 2, 4 or 8\n",
+			val);
 		return -EINVAL;
 	}
 

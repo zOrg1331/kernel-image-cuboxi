@@ -356,6 +356,7 @@ static struct regulator_ops tps6507x_pmic_ops = {
 	.get_voltage_sel = tps6507x_pmic_get_voltage_sel,
 	.set_voltage_sel = tps6507x_pmic_set_voltage_sel,
 	.list_voltage = regulator_list_voltage_table,
+	.map_voltage = regulator_map_voltage_ascend,
 };
 
 #ifdef CONFIG_OF
@@ -507,13 +508,13 @@ static int tps6507x_pmic_probe(struct platform_device *pdev)
 			config.of_node = tps6507x_reg_matches[i].of_node;
 		}
 
-		rdev = regulator_register(&tps->desc[i], &config);
+		rdev = devm_regulator_register(&pdev->dev, &tps->desc[i],
+					       &config);
 		if (IS_ERR(rdev)) {
 			dev_err(tps6507x_dev->dev,
 				"failed to register %s regulator\n",
 				pdev->name);
-			error = PTR_ERR(rdev);
-			goto fail;
+			return PTR_ERR(rdev);
 		}
 
 		/* Save regulator for cleanup */
@@ -524,22 +525,6 @@ static int tps6507x_pmic_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, tps6507x_dev);
 
 	return 0;
-
-fail:
-	while (--i >= 0)
-		regulator_unregister(tps->rdev[i]);
-	return error;
-}
-
-static int tps6507x_pmic_remove(struct platform_device *pdev)
-{
-	struct tps6507x_dev *tps6507x_dev = platform_get_drvdata(pdev);
-	struct tps6507x_pmic *tps = tps6507x_dev->pmic;
-	int i;
-
-	for (i = 0; i < TPS6507X_NUM_REGULATOR; i++)
-		regulator_unregister(tps->rdev[i]);
-	return 0;
 }
 
 static struct platform_driver tps6507x_pmic_driver = {
@@ -548,7 +533,6 @@ static struct platform_driver tps6507x_pmic_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = tps6507x_pmic_probe,
-	.remove = tps6507x_pmic_remove,
 };
 
 static int __init tps6507x_pmic_init(void)

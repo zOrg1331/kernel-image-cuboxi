@@ -23,12 +23,16 @@
 #include <linux/pwm.h>
 #include <linux/leds_pwm.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 
 struct led_pwm_data {
 	struct led_classdev	cdev;
 	struct pwm_device	*pwm;
+	struct work_struct	work;
 	unsigned int		active_low;
 	unsigned int		period;
+	int			duty;
+	bool			can_sleep;
 };
 
 struct led_pwm_priv {
@@ -36,21 +40,42 @@ struct led_pwm_priv {
 	struct led_pwm_data leds[0];
 };
 
+static void __led_pwm_set(struct led_pwm_data *led_dat)
+{
+	int new_duty = led_dat->duty;
+
+	pwm_config(led_dat->pwm, new_duty, led_dat->period);
+
+	if (new_duty == 0)
+		pwm_disable(led_dat->pwm);
+	else
+		pwm_enable(led_dat->pwm);
+}
+
+static void led_pwm_work(struct work_struct *work)
+{
+	struct led_pwm_data *led_dat =
+		container_of(work, struct led_pwm_data, work);
+
+	__led_pwm_set(led_dat);
+}
+
 static void led_pwm_set(struct led_classdev *led_cdev,
 	enum led_brightness brightness)
 {
 	struct led_pwm_data *led_dat =
 		container_of(led_cdev, struct led_pwm_data, cdev);
 	unsigned int max = led_dat->cdev.max_brightness;
-	unsigned int period =  led_dat->period;
+	unsigned long long duty =  led_dat->period;
 
-	if (brightness == 0) {
-		pwm_config(led_dat->pwm, 0, period);
-		pwm_disable(led_dat->pwm);
-	} else {
-		pwm_config(led_dat->pwm, brightness * period / max, period);
-		pwm_enable(led_dat->pwm);
-	}
+	duty *= brightness;
+	do_div(duty, max);
+	led_dat->duty = duty;
+
+	if (led_dat->can_sleep)
+		schedule_work(&led_dat->work);
+	else
+		__led_pwm_set(led_dat);
 }
 
 static inline size_t sizeof_pwm_leds_priv(int num_leds)
@@ -59,24 +84,13 @@ static inline size_t sizeof_pwm_leds_priv(int num_leds)
 		      (sizeof(struct led_pwm_data) * num_leds);
 }
 
-static struct led_pwm_priv *led_pwm_create_of(struct platform_device *pdev)
+static int led_pwm_create_of(struct platform_device *pdev,
+			     struct led_pwm_priv *priv)
 {
-	struct device_node *node = pdev->dev.of_node;
 	struct device_node *child;
-	struct led_pwm_priv *priv;
-	int count, ret;
+	int ret;
 
-	/* count LEDs in this device, so we know how much to allocate */
-	count = of_get_child_count(node);
-	if (!count)
-		return NULL;
-
-	priv = devm_kzalloc(&pdev->dev, sizeof_pwm_leds_priv(count),
-			    GFP_KERNEL);
-	if (!priv)
-		return NULL;
-
-	for_each_child_of_node(node, child) {
+	for_each_child_of_node(pdev->dev.of_node, child) {
 		struct led_pwm_data *led_dat = &priv->leds[priv->num_leds];
 
 		led_dat->cdev.name = of_get_property(child, "label",
@@ -86,6 +100,7 @@ static struct led_pwm_priv *led_pwm_create_of(struct platform_device *pdev)
 		if (IS_ERR(led_dat->pwm)) {
 			dev_err(&pdev->dev, "unable to request PWM for %s\n",
 				led_dat->cdev.name);
+			ret = PTR_ERR(led_dat->pwm);
 			goto err;
 		}
 		/* Get the period from PWM core when n*/
@@ -100,6 +115,10 @@ static struct led_pwm_priv *led_pwm_create_of(struct platform_device *pdev)
 		led_dat->cdev.brightness = LED_OFF;
 		led_dat->cdev.flags |= LED_CORE_SUSPENDRESUME;
 
+		led_dat->can_sleep = pwm_can_sleep(led_dat->pwm);
+		if (led_dat->can_sleep)
+			INIT_WORK(&led_dat->work, led_pwm_work);
+
 		ret = led_classdev_register(&pdev->dev, &led_dat->cdev);
 		if (ret < 0) {
 			dev_err(&pdev->dev, "failed to register for %s\n",
@@ -110,28 +129,36 @@ static struct led_pwm_priv *led_pwm_create_of(struct platform_device *pdev)
 		priv->num_leds++;
 	}
 
-	return priv;
+	return 0;
 err:
 	while (priv->num_leds--)
 		led_classdev_unregister(&priv->leds[priv->num_leds].cdev);
 
-	return NULL;
+	return ret;
 }
 
 static int led_pwm_probe(struct platform_device *pdev)
 {
-	struct led_pwm_platform_data *pdata = pdev->dev.platform_data;
+	struct led_pwm_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct led_pwm_priv *priv;
-	int i, ret = 0;
+	int count, i;
+	int ret = 0;
 
-	if (pdata && pdata->num_leds) {
-		priv = devm_kzalloc(&pdev->dev,
-				    sizeof_pwm_leds_priv(pdata->num_leds),
-				    GFP_KERNEL);
-		if (!priv)
-			return -ENOMEM;
+	if (pdata)
+		count = pdata->num_leds;
+	else
+		count = of_get_child_count(pdev->dev.of_node);
 
-		for (i = 0; i < pdata->num_leds; i++) {
+	if (!count)
+		return -EINVAL;
+
+	priv = devm_kzalloc(&pdev->dev, sizeof_pwm_leds_priv(count),
+			    GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	if (pdata) {
+		for (i = 0; i < count; i++) {
 			struct led_pwm *cur_led = &pdata->leds[i];
 			struct led_pwm_data *led_dat = &priv->leds[i];
 
@@ -153,15 +180,19 @@ static int led_pwm_probe(struct platform_device *pdev)
 			led_dat->cdev.max_brightness = cur_led->max_brightness;
 			led_dat->cdev.flags |= LED_CORE_SUSPENDRESUME;
 
+			led_dat->can_sleep = pwm_can_sleep(led_dat->pwm);
+			if (led_dat->can_sleep)
+				INIT_WORK(&led_dat->work, led_pwm_work);
+
 			ret = led_classdev_register(&pdev->dev, &led_dat->cdev);
 			if (ret < 0)
 				goto err;
 		}
-		priv->num_leds = pdata->num_leds;
+		priv->num_leds = count;
 	} else {
-		priv = led_pwm_create_of(pdev);
-		if (!priv)
-			return -ENODEV;
+		ret = led_pwm_create_of(pdev, priv);
+		if (ret)
+			return ret;
 	}
 
 	platform_set_drvdata(pdev, priv);
@@ -180,8 +211,11 @@ static int led_pwm_remove(struct platform_device *pdev)
 	struct led_pwm_priv *priv = platform_get_drvdata(pdev);
 	int i;
 
-	for (i = 0; i < priv->num_leds; i++)
+	for (i = 0; i < priv->num_leds; i++) {
 		led_classdev_unregister(&priv->leds[i].cdev);
+		if (priv->leds[i].can_sleep)
+			cancel_work_sync(&priv->leds[i].work);
+	}
 
 	return 0;
 }
@@ -198,7 +232,7 @@ static struct platform_driver led_pwm_driver = {
 	.driver		= {
 		.name	= "leds_pwm",
 		.owner	= THIS_MODULE,
-		.of_match_table = of_match_ptr(of_pwm_leds_match),
+		.of_match_table = of_pwm_leds_match,
 	},
 };
 

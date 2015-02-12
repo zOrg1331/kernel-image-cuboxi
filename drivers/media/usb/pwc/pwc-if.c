@@ -1001,6 +1001,7 @@ static int usb_pwc_probe(struct usb_interface *intf, const struct usb_device_id 
 	pdev->vb_queue.buf_struct_size = sizeof(struct pwc_frame_buf);
 	pdev->vb_queue.ops = &pwc_vb_queue_ops;
 	pdev->vb_queue.mem_ops = &vb2_vmalloc_memops;
+	pdev->vb_queue.timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	rc = vb2_queue_init(&pdev->vb_queue);
 	if (rc < 0) {
 		PWC_ERROR("Oops, could not initialize vb2 queue.\n");
@@ -1038,7 +1039,7 @@ static int usb_pwc_probe(struct usb_interface *intf, const struct usb_device_id 
 	/* Set the leds off */
 	pwc_set_leds(pdev, 0, 0);
 
-	/* Setup intial videomode */
+	/* Setup initial videomode */
 	rc = pwc_set_video_mode(pdev, MAX_WIDTH, MAX_HEIGHT,
 				V4L2_PIX_FMT_YUV420, 30, &compression, 1);
 	if (rc)
@@ -1077,7 +1078,6 @@ static int usb_pwc_probe(struct usb_interface *intf, const struct usb_device_id 
 	/* register webcam snapshot button input device */
 	pdev->button_dev = input_allocate_device();
 	if (!pdev->button_dev) {
-		PWC_ERROR("Err, insufficient memory for webcam snapshot button device.");
 		rc = -ENOMEM;
 		goto err_video_unreg;
 	}

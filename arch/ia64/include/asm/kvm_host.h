@@ -26,6 +26,7 @@
 #define KVM_USER_MEM_SLOTS 32
 
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
+#define KVM_IRQCHIP_NUM_PINS  KVM_IOAPIC_NUM_PINS
 
 /* define exit reasons from vmm to kvm*/
 #define EXIT_REASON_VM_PANIC		0
@@ -232,10 +233,6 @@ struct kvm_vm_data {
  */
 #define KVM_REQ_PTC_G		32
 #define KVM_REQ_RESUME		33
-
-#define KVM_HPAGE_GFN_SHIFT(x)	0
-#define KVM_NR_PAGE_SIZES	1
-#define KVM_PAGES_PER_HPAGE(x)	1
 
 struct kvm;
 struct kvm_vcpu;
@@ -479,7 +476,7 @@ struct kvm_arch {
 
 	struct list_head assigned_dev_head;
 	struct iommu_domain *iommu_domain;
-	int iommu_flags;
+	bool iommu_noncoherent;
 
 	unsigned long irq_sources_bitmap;
 	unsigned long irq_states[KVM_IOAPIC_NUM_PINS];

@@ -14,7 +14,6 @@
  * raised, the LCR needs to be rewritten and the uart status register read.
  */
 #include <linux/device.h>
-#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/serial_8250.h>
@@ -26,6 +25,10 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
+#include <linux/clk.h>
+#include <linux/pm_runtime.h>
+
+#include <asm/byteorder.h>
 
 #include "8250.h"
 
@@ -33,9 +36,6 @@
 #define DW_UART_USR	0x1f /* UART Status Register */
 #define DW_UART_CPR	0xf4 /* Component Parameter Register */
 #define DW_UART_UCV	0xf8 /* UART Component Version */
-
-/* Intel Low Power Subsystem specific */
-#define LPSS_PRV_CLOCK_PARAMS 0x800
 
 /* Component Parameter Register bits */
 #define DW_UART_CPR_ABP_DATA_WIDTH	(3 << 0)
@@ -55,44 +55,98 @@
 
 
 struct dw8250_data {
-	int	last_lcr;
-	int	line;
+	u8			usr_reg;
+	int			last_mcr;
+	int			line;
+	struct clk		*clk;
+	struct uart_8250_dma	dma;
 };
+
+static inline int dw8250_modify_msr(struct uart_port *p, int offset, int value)
+{
+	struct dw8250_data *d = p->private_data;
+
+	/* If reading MSR, report CTS asserted when auto-CTS/RTS enabled */
+	if (offset == UART_MSR && d->last_mcr & UART_MCR_AFE) {
+		value |= UART_MSR_CTS;
+		value &= ~UART_MSR_DCTS;
+	}
+
+	return value;
+}
+
+static void dw8250_force_idle(struct uart_port *p)
+{
+	serial8250_clear_and_reinit_fifos(container_of
+					  (p, struct uart_8250_port, port));
+	(void)p->serial_in(p, UART_RX);
+}
 
 static void dw8250_serial_out(struct uart_port *p, int offset, int value)
 {
 	struct dw8250_data *d = p->private_data;
 
-	if (offset == UART_LCR)
-		d->last_lcr = value;
+	if (offset == UART_MCR)
+		d->last_mcr = value;
 
-	offset <<= p->regshift;
-	writeb(value, p->membase + offset);
+	writeb(value, p->membase + (offset << p->regshift));
+
+	/* Make sure LCR write wasn't ignored */
+	if (offset == UART_LCR) {
+		int tries = 1000;
+		while (tries--) {
+			unsigned int lcr = p->serial_in(p, UART_LCR);
+			if ((value & ~UART_LCR_SPAR) == (lcr & ~UART_LCR_SPAR))
+				return;
+			dw8250_force_idle(p);
+			writeb(value, p->membase + (UART_LCR << p->regshift));
+		}
+		dev_err(p->dev, "Couldn't set LCR to %d\n", value);
+	}
 }
 
 static unsigned int dw8250_serial_in(struct uart_port *p, int offset)
 {
-	offset <<= p->regshift;
+	unsigned int value = readb(p->membase + (offset << p->regshift));
 
-	return readb(p->membase + offset);
+	return dw8250_modify_msr(p, offset, value);
+}
+
+/* Read Back (rb) version to ensure register access ording. */
+static void dw8250_serial_out_rb(struct uart_port *p, int offset, int value)
+{
+	dw8250_serial_out(p, offset, value);
+	dw8250_serial_in(p, UART_LCR);
 }
 
 static void dw8250_serial_out32(struct uart_port *p, int offset, int value)
 {
 	struct dw8250_data *d = p->private_data;
 
-	if (offset == UART_LCR)
-		d->last_lcr = value;
+	if (offset == UART_MCR)
+		d->last_mcr = value;
 
-	offset <<= p->regshift;
-	writel(value, p->membase + offset);
+	writel(value, p->membase + (offset << p->regshift));
+
+	/* Make sure LCR write wasn't ignored */
+	if (offset == UART_LCR) {
+		int tries = 1000;
+		while (tries--) {
+			unsigned int lcr = p->serial_in(p, UART_LCR);
+			if ((value & ~UART_LCR_SPAR) == (lcr & ~UART_LCR_SPAR))
+				return;
+			dw8250_force_idle(p);
+			writel(value, p->membase + (UART_LCR << p->regshift));
+		}
+		dev_err(p->dev, "Couldn't set LCR to %d\n", value);
+	}
 }
 
 static unsigned int dw8250_serial_in32(struct uart_port *p, int offset)
 {
-	offset <<= p->regshift;
+	unsigned int value = readl(p->membase + (offset << p->regshift));
 
-	return readl(p->membase + offset);
+	return dw8250_modify_msr(p, offset, value);
 }
 
 static int dw8250_handle_irq(struct uart_port *p)
@@ -103,9 +157,8 @@ static int dw8250_handle_irq(struct uart_port *p)
 	if (serial8250_handle_irq(p, iir)) {
 		return 1;
 	} else if ((iir & UART_IIR_BUSY) == UART_IIR_BUSY) {
-		/* Clear the USR and write the LCR again. */
-		(void)p->serial_in(p, DW_UART_USR);
-		p->serial_out(p, UART_LCR, d->last_lcr);
+		/* Clear the USR */
+		(void)p->serial_in(p, d->usr_reg);
 
 		return 1;
 	}
@@ -113,133 +166,25 @@ static int dw8250_handle_irq(struct uart_port *p)
 	return 0;
 }
 
-static int dw8250_probe_of(struct uart_port *p)
+static void
+dw8250_do_pm(struct uart_port *port, unsigned int state, unsigned int old)
 {
-	struct device_node	*np = p->dev->of_node;
-	u32			val;
+	if (!state)
+		pm_runtime_get_sync(port->dev);
 
-	if (!of_property_read_u32(np, "reg-io-width", &val)) {
-		switch (val) {
-		case 1:
-			break;
-		case 4:
-			p->iotype = UPIO_MEM32;
-			p->serial_in = dw8250_serial_in32;
-			p->serial_out = dw8250_serial_out32;
-			break;
-		default:
-			dev_err(p->dev, "unsupported reg-io-width (%u)\n", val);
-			return -EINVAL;
-		}
-	}
+	serial8250_do_pm(port, state, old);
 
-	if (!of_property_read_u32(np, "reg-shift", &val))
-		p->regshift = val;
-
-	if (of_property_read_u32(np, "clock-frequency", &val)) {
-		dev_err(p->dev, "no clock-frequency property set\n");
-		return -EINVAL;
-	}
-	p->uartclk = val;
-
-	return 0;
+	if (state)
+		pm_runtime_put_sync_suspend(port->dev);
 }
 
-#ifdef CONFIG_ACPI
-static bool dw8250_acpi_dma_filter(struct dma_chan *chan, void *parm)
+static bool dw8250_dma_filter(struct dma_chan *chan, void *param)
 {
-	return chan->chan_id == *(int *)parm;
+	struct dw8250_data *data = param;
+
+	return chan->chan_id == data->dma.tx_chan_id ||
+	       chan->chan_id == data->dma.rx_chan_id;
 }
-
-static acpi_status
-dw8250_acpi_walk_resource(struct acpi_resource *res, void *data)
-{
-	struct uart_port		*p = data;
-	struct uart_8250_port		*port;
-	struct uart_8250_dma		*dma;
-	struct acpi_resource_fixed_dma	*fixed_dma;
-	struct dma_slave_config		*slave;
-
-	port = container_of(p, struct uart_8250_port, port);
-
-	switch (res->type) {
-	case ACPI_RESOURCE_TYPE_FIXED_DMA:
-		fixed_dma = &res->data.fixed_dma;
-
-		/* TX comes first */
-		if (!port->dma) {
-			dma = devm_kzalloc(p->dev, sizeof(*dma), GFP_KERNEL);
-			if (!dma)
-				return AE_NO_MEMORY;
-
-			port->dma = dma;
-			slave = &dma->txconf;
-
-			slave->direction	= DMA_MEM_TO_DEV;
-			slave->dst_addr_width	= DMA_SLAVE_BUSWIDTH_1_BYTE;
-			slave->slave_id		= fixed_dma->request_lines;
-			slave->dst_maxburst	= port->tx_loadsz / 4;
-
-			dma->tx_chan_id		= fixed_dma->channels;
-			dma->tx_param		= &dma->tx_chan_id;
-			dma->fn			= dw8250_acpi_dma_filter;
-		} else {
-			dma = port->dma;
-			slave = &dma->rxconf;
-
-			slave->direction	= DMA_DEV_TO_MEM;
-			slave->src_addr_width	= DMA_SLAVE_BUSWIDTH_1_BYTE;
-			slave->slave_id		= fixed_dma->request_lines;
-			slave->src_maxburst	= p->fifosize / 4;
-
-			dma->rx_chan_id		= fixed_dma->channels;
-			dma->rx_param		= &dma->rx_chan_id;
-		}
-
-		break;
-	}
-
-	return AE_OK;
-}
-
-static int dw8250_probe_acpi(struct uart_port *p)
-{
-	const struct acpi_device_id *id;
-	acpi_status status;
-	u32 reg;
-
-	id = acpi_match_device(p->dev->driver->acpi_match_table, p->dev);
-	if (!id)
-		return -ENODEV;
-
-	p->iotype = UPIO_MEM32;
-	p->serial_in = dw8250_serial_in32;
-	p->serial_out = dw8250_serial_out32;
-	p->regshift = 2;
-	p->uartclk = (unsigned int)id->driver_data;
-
-	status = acpi_walk_resources(ACPI_HANDLE(p->dev), METHOD_NAME__CRS,
-				     dw8250_acpi_walk_resource, p);
-	if (ACPI_FAILURE(status)) {
-		dev_err_ratelimited(p->dev, "%s failed \"%s\"\n", __func__,
-				    acpi_format_exception(status));
-		return -ENODEV;
-	}
-
-	/* Fix Haswell issue where the clocks do not get enabled */
-	if (!strcmp(id->id, "INT33C4") || !strcmp(id->id, "INT33C5")) {
-		reg = readl(p->membase + LPSS_PRV_CLOCK_PARAMS);
-		writel(reg | 1, p->membase + LPSS_PRV_CLOCK_PARAMS);
-	}
-
-	return 0;
-}
-#else
-static inline int dw8250_probe_acpi(struct uart_port *p)
-{
-	return -ENODEV;
-}
-#endif /* CONFIG_ACPI */
 
 static void dw8250_setup_port(struct uart_8250_port *up)
 {
@@ -266,7 +211,94 @@ static void dw8250_setup_port(struct uart_8250_port *up)
 		p->flags |= UPF_FIXED_TYPE;
 		p->fifosize = DW_UART_CPR_FIFO_SIZE(reg);
 		up->tx_loadsz = p->fifosize;
+		up->capabilities = UART_CAP_FIFO;
 	}
+
+	if (reg & DW_UART_CPR_AFCE_MODE)
+		up->capabilities |= UART_CAP_AFE;
+}
+
+static int dw8250_probe_of(struct uart_port *p,
+			   struct dw8250_data *data)
+{
+	struct device_node	*np = p->dev->of_node;
+	u32			val;
+	bool has_ucv = true;
+
+	if (of_device_is_compatible(np, "cavium,octeon-3860-uart")) {
+#ifdef __BIG_ENDIAN
+		/*
+		 * Low order bits of these 64-bit registers, when
+		 * accessed as a byte, are 7 bytes further down in the
+		 * address space in big endian mode.
+		 */
+		p->membase += 7;
+#endif
+		p->serial_out = dw8250_serial_out_rb;
+		p->flags = ASYNC_SKIP_TEST | UPF_SHARE_IRQ | UPF_FIXED_TYPE;
+		p->type = PORT_OCTEON;
+		data->usr_reg = 0x27;
+		has_ucv = false;
+	} else if (!of_property_read_u32(np, "reg-io-width", &val)) {
+		switch (val) {
+		case 1:
+			break;
+		case 4:
+			p->iotype = UPIO_MEM32;
+			p->serial_in = dw8250_serial_in32;
+			p->serial_out = dw8250_serial_out32;
+			break;
+		default:
+			dev_err(p->dev, "unsupported reg-io-width (%u)\n", val);
+			return -EINVAL;
+		}
+	}
+	if (has_ucv)
+		dw8250_setup_port(container_of(p, struct uart_8250_port, port));
+
+	if (!of_property_read_u32(np, "reg-shift", &val))
+		p->regshift = val;
+
+	/* clock got configured through clk api, all done */
+	if (p->uartclk)
+		return 0;
+
+	/* try to find out clock frequency from DT as fallback */
+	if (of_property_read_u32(np, "clock-frequency", &val)) {
+		dev_err(p->dev, "clk or clock-frequency not defined\n");
+		return -EINVAL;
+	}
+	p->uartclk = val;
+
+	return 0;
+}
+
+static int dw8250_probe_acpi(struct uart_8250_port *up,
+			     struct dw8250_data *data)
+{
+	const struct acpi_device_id *id;
+	struct uart_port *p = &up->port;
+
+	dw8250_setup_port(up);
+
+	id = acpi_match_device(p->dev->driver->acpi_match_table, p->dev);
+	if (!id)
+		return -ENODEV;
+
+	p->iotype = UPIO_MEM32;
+	p->serial_in = dw8250_serial_in32;
+	p->serial_out = dw8250_serial_out32;
+	p->regshift = 2;
+
+	if (!p->uartclk)
+		p->uartclk = (unsigned int)id->driver_data;
+
+	up->dma = &data->dma;
+
+	up->dma->rxconf.src_maxburst = p->fifosize / 4;
+	up->dma->txconf.dst_maxburst = p->fifosize / 4;
+
+	return 0;
 }
 
 static int dw8250_probe(struct platform_device *pdev)
@@ -286,43 +318,58 @@ static int dw8250_probe(struct platform_device *pdev)
 	uart.port.mapbase = regs->start;
 	uart.port.irq = irq->start;
 	uart.port.handle_irq = dw8250_handle_irq;
+	uart.port.pm = dw8250_do_pm;
 	uart.port.type = PORT_8250;
 	uart.port.flags = UPF_SHARE_IRQ | UPF_BOOT_AUTOCONF | UPF_FIXED_PORT;
 	uart.port.dev = &pdev->dev;
 
-	uart.port.membase = ioremap(regs->start, resource_size(regs));
+	uart.port.membase = devm_ioremap(&pdev->dev, regs->start,
+					 resource_size(regs));
 	if (!uart.port.membase)
 		return -ENOMEM;
+
+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	data->usr_reg = DW_UART_USR;
+	data->clk = devm_clk_get(&pdev->dev, NULL);
+	if (!IS_ERR(data->clk)) {
+		clk_prepare_enable(data->clk);
+		uart.port.uartclk = clk_get_rate(data->clk);
+	}
+
+	data->dma.rx_chan_id = -1;
+	data->dma.tx_chan_id = -1;
+	data->dma.rx_param = data;
+	data->dma.tx_param = data;
+	data->dma.fn = dw8250_dma_filter;
 
 	uart.port.iotype = UPIO_MEM;
 	uart.port.serial_in = dw8250_serial_in;
 	uart.port.serial_out = dw8250_serial_out;
-
-	dw8250_setup_port(&uart);
+	uart.port.private_data = data;
 
 	if (pdev->dev.of_node) {
-		err = dw8250_probe_of(&uart.port);
+		err = dw8250_probe_of(&uart.port, data);
 		if (err)
 			return err;
 	} else if (ACPI_HANDLE(&pdev->dev)) {
-		err = dw8250_probe_acpi(&uart.port);
+		err = dw8250_probe_acpi(&uart, data);
 		if (err)
 			return err;
 	} else {
 		return -ENODEV;
 	}
 
-	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
-	uart.port.private_data = data;
-
 	data->line = serial8250_register_8250_port(&uart);
 	if (data->line < 0)
 		return data->line;
 
 	platform_set_drvdata(pdev, data);
+
+	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
 
 	return 0;
 }
@@ -331,43 +378,79 @@ static int dw8250_remove(struct platform_device *pdev)
 {
 	struct dw8250_data *data = platform_get_drvdata(pdev);
 
+	pm_runtime_get_sync(&pdev->dev);
+
 	serial8250_unregister_port(data->line);
+
+	if (!IS_ERR(data->clk))
+		clk_disable_unprepare(data->clk);
+
+	pm_runtime_disable(&pdev->dev);
+	pm_runtime_put_noidle(&pdev->dev);
 
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int dw8250_suspend(struct platform_device *pdev, pm_message_t state)
+#ifdef CONFIG_PM_SLEEP
+static int dw8250_suspend(struct device *dev)
 {
-	struct dw8250_data *data = platform_get_drvdata(pdev);
+	struct dw8250_data *data = dev_get_drvdata(dev);
 
 	serial8250_suspend_port(data->line);
 
 	return 0;
 }
 
-static int dw8250_resume(struct platform_device *pdev)
+static int dw8250_resume(struct device *dev)
 {
-	struct dw8250_data *data = platform_get_drvdata(pdev);
+	struct dw8250_data *data = dev_get_drvdata(dev);
 
 	serial8250_resume_port(data->line);
 
 	return 0;
 }
-#else
-#define dw8250_suspend NULL
-#define dw8250_resume NULL
-#endif /* CONFIG_PM */
+#endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_PM_RUNTIME
+static int dw8250_runtime_suspend(struct device *dev)
+{
+	struct dw8250_data *data = dev_get_drvdata(dev);
+
+	if (!IS_ERR(data->clk))
+		clk_disable_unprepare(data->clk);
+
+	return 0;
+}
+
+static int dw8250_runtime_resume(struct device *dev)
+{
+	struct dw8250_data *data = dev_get_drvdata(dev);
+
+	if (!IS_ERR(data->clk))
+		clk_prepare_enable(data->clk);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops dw8250_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(dw8250_suspend, dw8250_resume)
+	SET_RUNTIME_PM_OPS(dw8250_runtime_suspend, dw8250_runtime_resume, NULL)
+};
 
 static const struct of_device_id dw8250_of_match[] = {
 	{ .compatible = "snps,dw-apb-uart" },
+	{ .compatible = "cavium,octeon-3860-uart" },
 	{ /* Sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, dw8250_of_match);
 
 static const struct acpi_device_id dw8250_acpi_match[] = {
-	{ "INT33C4", 100000000 },
-	{ "INT33C5", 100000000 },
+	{ "INT33C4", 0 },
+	{ "INT33C5", 0 },
+	{ "INT3434", 0 },
+	{ "INT3435", 0 },
+	{ "80860F0A", 0 },
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, dw8250_acpi_match);
@@ -376,13 +459,12 @@ static struct platform_driver dw8250_platform_driver = {
 	.driver = {
 		.name		= "dw-apb-uart",
 		.owner		= THIS_MODULE,
+		.pm		= &dw8250_pm_ops,
 		.of_match_table	= dw8250_of_match,
 		.acpi_match_table = ACPI_PTR(dw8250_acpi_match),
 	},
 	.probe			= dw8250_probe,
 	.remove			= dw8250_remove,
-	.suspend		= dw8250_suspend,
-	.resume			= dw8250_resume,
 };
 
 module_platform_driver(dw8250_platform_driver);

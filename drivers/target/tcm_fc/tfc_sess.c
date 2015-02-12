@@ -210,7 +210,8 @@ static struct ft_sess *ft_sess_create(struct ft_tport *tport, u32 port_id,
 	if (!sess)
 		return NULL;
 
-	sess->se_sess = transport_init_session();
+	sess->se_sess = transport_init_session_tags(TCM_FC_DEFAULT_TAGS,
+						    sizeof(struct ft_cmd));
 	if (IS_ERR(sess->se_sess)) {
 		kfree(sess);
 		return NULL;
@@ -428,19 +429,12 @@ static int ft_prli(struct fc_rport_priv *rdata, u32 spp_len,
 	return ret;
 }
 
-static void ft_sess_rcu_free(struct rcu_head *rcu)
-{
-	struct ft_sess *sess = container_of(rcu, struct ft_sess, rcu);
-
-	kfree(sess);
-}
-
 static void ft_sess_free(struct kref *kref)
 {
 	struct ft_sess *sess = container_of(kref, struct ft_sess, kref);
 
 	transport_deregister_session(sess->se_sess);
-	call_rcu(&sess->rcu, ft_sess_rcu_free);
+	kfree_rcu(sess, rcu);
 }
 
 void ft_sess_put(struct ft_sess *sess)

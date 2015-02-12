@@ -53,7 +53,7 @@ NESTED(handle_sys, PT_SIZE, sp)
 	sll	a3, a3, 0
 
 	dsll	t0, v0, 3		# offset into table
-	ld	t2, (sys_call_table - (__NR_O32_Linux * 8))(t0)
+	ld	t2, (sys32_call_table - (__NR_O32_Linux * 8))(t0)
 
 	sd	a3, PT_R26(sp)		# save a3 for syscall restarting
 
@@ -81,7 +81,7 @@ NESTED(handle_sys, PT_SIZE, sp)
 	PTR	4b, bad_stack
 	.previous
 
-	li	t1, _TIF_SYSCALL_TRACE | _TIF_SYSCALL_AUDIT
+	li	t1, _TIF_WORK_SYSCALL_ENTRY
 	LONG_L	t0, TI_FLAGS($28)	# syscall tracing enabled?
 	and	t0, t1, t0
 	bnez	t0, trace_a_syscall
@@ -168,7 +168,7 @@ LEAF(sys32_syscall)
 	beqz	t0, einval		# do not recurse
 	dsll	t1, t0, 3
 	beqz	v0, einval
-	ld	t2, sys_call_table(t1)		# syscall routine
+	ld	t2, sys32_call_table(t1)		# syscall routine
 
 	move	a0, a1			# shift argument registers
 	move	a1, a2
@@ -190,8 +190,8 @@ einval: li	v0, -ENOSYS
 	END(sys32_syscall)
 
 	.align	3
-	.type	sys_call_table,@object
-sys_call_table:
+	.type	sys32_call_table,@object
+EXPORT(sys32_call_table)
 	PTR	sys32_syscall			/* 4000 */
 	PTR	sys_exit
 	PTR	__sys_fork
@@ -309,7 +309,7 @@ sys_call_table:
 	PTR	compat_sys_wait4
 	PTR	sys_swapoff			/* 4115 */
 	PTR	compat_sys_sysinfo
-	PTR	sys_32_ipc
+	PTR	compat_sys_ipc
 	PTR	sys_fsync
 	PTR	sys32_sigreturn
 	PTR	__sys_clone			/* 4120 */
@@ -399,7 +399,7 @@ sys_call_table:
 	PTR	sys_capget
 	PTR	sys_capset			/* 4205 */
 	PTR	compat_sys_sigaltstack
-	PTR	sys_32_sendfile
+	PTR	compat_sys_sendfile
 	PTR	sys_ni_syscall
 	PTR	sys_ni_syscall
 	PTR	sys_mips_mmap2			/* 4210 */
@@ -439,7 +439,7 @@ sys_call_table:
 	PTR	compat_sys_io_submit
 	PTR	sys_io_cancel			/* 4245 */
 	PTR	sys_exit_group
-	PTR	sys32_lookup_dcookie
+	PTR	compat_sys_lookup_dcookie
 	PTR	sys_epoll_create
 	PTR	sys_epoll_ctl
 	PTR	sys_epoll_wait			/* 4250 */
@@ -529,7 +529,7 @@ sys_call_table:
 	PTR	sys_accept4
 	PTR	compat_sys_recvmmsg		/* 4335 */
 	PTR	sys_fanotify_init
-	PTR	sys_32_fanotify_mark
+	PTR	compat_sys_fanotify_mark
 	PTR	sys_prlimit64
 	PTR	sys_name_to_handle_at
 	PTR	compat_sys_open_by_handle_at	/* 4340 */
@@ -541,4 +541,6 @@ sys_call_table:
 	PTR	compat_sys_process_vm_writev
 	PTR	sys_kcmp
 	PTR	sys_finit_module
-	.size	sys_call_table,.-sys_call_table
+	PTR	sys_sched_setattr
+	PTR	sys_sched_getattr		/* 4350 */
+	.size	sys32_call_table,.-sys32_call_table

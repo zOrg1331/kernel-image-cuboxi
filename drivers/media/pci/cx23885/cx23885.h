@@ -93,6 +93,9 @@
 #define CX23885_BOARD_PROF_8000                37
 #define CX23885_BOARD_HAUPPAUGE_HVR4400        38
 #define CX23885_BOARD_AVERMEDIA_HC81R          39
+#define CX23885_BOARD_TBS_6981                 40
+#define CX23885_BOARD_TBS_6980                 41
+#define CX23885_BOARD_LEADTEK_WINFAST_PXPVR2200 42
 
 #define GPIO_0 0x00000001
 #define GPIO_1 0x00000002
@@ -320,6 +323,8 @@ struct cx23885_tsport {
 
 	/* Workaround for a temp dvb_frontend that the tuner can attached to */
 	struct dvb_frontend analog_fe;
+
+	int (*set_frontend)(struct dvb_frontend *fe);
 };
 
 struct cx23885_kernel_ir {
@@ -587,7 +592,7 @@ extern void cx23885_video_wakeup(struct cx23885_dev *dev,
 int cx23885_enum_input(struct cx23885_dev *dev, struct v4l2_input *i);
 int cx23885_set_input(struct file *file, void *priv, unsigned int i);
 int cx23885_get_input(struct file *file, void *priv, unsigned int *i);
-int cx23885_set_frequency(struct file *file, void *priv, struct v4l2_frequency *f);
+int cx23885_set_frequency(struct file *file, void *priv, const struct v4l2_frequency *f);
 int cx23885_set_control(struct cx23885_dev *dev, struct v4l2_control *ctl);
 int cx23885_get_control(struct cx23885_dev *dev, struct v4l2_control *ctl);
 int cx23885_set_tvnorm(struct cx23885_dev *dev, v4l2_std_id norm);

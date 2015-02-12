@@ -5,7 +5,7 @@
  * Copyright (c) 2002, 2003  Philip Pokorny <ppokorny@penguincomputing.com>
  * Copyright (c) 2003        Margit Schubert-While <margitsw@t-online.de>
  * Copyright (c) 2004        Justin Thiessen <jthiessen@penguincomputing.com>
- * Copyright (C) 2007--2009  Jean Delvare <khali@linux-fr.org>
+ * Copyright (C) 2007--2009  Jean Delvare <jdelvare@suse.de>
  *
  * Chip details at	      <http://www.national.com/ds/LM/LM85.pdf>
  *
@@ -1293,8 +1293,8 @@ static int lm85_detect(struct i2c_client *client, struct i2c_board_info *info)
 	company = lm85_read_value(client, LM85_REG_COMPANY);
 	verstep = lm85_read_value(client, LM85_REG_VERSTEP);
 
-	dev_dbg(&adapter->dev, "Detecting device at 0x%02x with "
-		"COMPANY: 0x%02x and VERSTEP: 0x%02x\n",
+	dev_dbg(&adapter->dev,
+		"Detecting device at 0x%02x with COMPANY: 0x%02x and VERSTEP: 0x%02x\n",
 		address, company, verstep);
 
 	/* All supported chips have the version in common */

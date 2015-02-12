@@ -145,6 +145,8 @@ static int mac802154_header_create(struct sk_buff *skb,
 
 	head[pos++] = mac_cb(skb)->seq; /* DSN/BSN */
 	fc = mac_cb_type(skb);
+	if (mac_cb_is_ackreq(skb))
+		fc |= IEEE802154_FC_ACK_REQ;
 
 	if (!saddr) {
 		spin_lock_bh(&priv->mib_lock);
@@ -206,6 +208,8 @@ static int mac802154_header_create(struct sk_buff *skb,
 	head[1] = fc >> 8;
 
 	memcpy(skb_push(skb, pos), head, pos);
+	skb_reset_mac_header(skb);
+	skb->mac_len = pos;
 
 	return pos;
 }
@@ -358,7 +362,7 @@ void mac802154_wpan_setup(struct net_device *dev)
 	dev->header_ops		= &mac802154_header_ops;
 	dev->needed_tailroom	= 2; /* FCS */
 	dev->mtu		= IEEE802154_MTU;
-	dev->tx_queue_len	= 10;
+	dev->tx_queue_len	= 300;
 	dev->type		= ARPHRD_IEEE802154;
 	dev->flags		= IFF_NOARP | IFF_BROADCAST;
 	dev->watchdog_timeo	= 0;
@@ -440,8 +444,8 @@ mac802154_subif_frame(struct mac802154_sub_if_data *sdata, struct sk_buff *skb)
 	case IEEE802154_FC_TYPE_DATA:
 		return mac802154_process_data(sdata->dev, skb);
 	default:
-		pr_warning("ieee802154: bad frame received (type = %d)\n",
-			   mac_cb_type(skb));
+		pr_warn("ieee802154: bad frame received (type = %d)\n",
+			mac_cb_type(skb));
 		kfree_skb(skb);
 		return NET_RX_DROP;
 	}

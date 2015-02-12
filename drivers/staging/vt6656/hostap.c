@@ -133,7 +133,8 @@ static int hostap_disable_hostapd(struct vnt_private *pDevice, int rtnl_locked)
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "%s: Netdevice %s unregistered\n",
 		       pDevice->dev->name, pDevice->apdev->name);
 	}
-	kfree(pDevice->apdev);
+	if (pDevice->apdev)
+		free_netdev(pDevice->apdev);
 	pDevice->apdev = NULL;
     pDevice->bEnable8021x = false;
     pDevice->bEnableHostWEP = false;
@@ -141,7 +142,6 @@ static int hostap_disable_hostapd(struct vnt_private *pDevice, int rtnl_locked)
 
 	return 0;
 }
-
 
 /*
  * Description:
@@ -174,7 +174,6 @@ int vt6656_hostap_set_hostapd(struct vnt_private *pDevice,
 		return hostap_disable_hostapd(pDevice, rtnl_locked);
 }
 
-
 /*
  * Description:
  *      remove station function supported for hostap daemon
@@ -192,7 +191,6 @@ static int hostap_remove_sta(struct vnt_private *pDevice,
 	struct viawget_hostapd_param *param)
 {
 	unsigned int uNodeIndex;
-
 
     if (BSSbIsSTAInNodeDB(pDevice, param->sta_addr, &uNodeIndex)) {
         BSSvRemoveOneNode(pDevice, uNodeIndex);
@@ -242,7 +240,7 @@ static int hostap_add_sta(struct vnt_private *pDevice,
     pMgmt->sNodeDBTable[uNodeIndex].bShortPreamble =
             WLAN_GET_CAP_INFO_SHORTPREAMBLE(pMgmt->sNodeDBTable[uNodeIndex].wCapInfo);
 
-    pMgmt->sNodeDBTable[uNodeIndex].wAID = (WORD)param->u.add_sta.aid;
+    pMgmt->sNodeDBTable[uNodeIndex].wAID = (u16)param->u.add_sta.aid;
 
     pMgmt->sNodeDBTable[uNodeIndex].ulLastRxJiffer = jiffies;
 
@@ -294,7 +292,6 @@ static int hostap_get_info_sta(struct vnt_private *pDevice,
 	return 0;
 }
 
-
 /*
  * Description:
  *      set station flag
@@ -327,8 +324,6 @@ static int hostap_set_flags_sta(struct vnt_private *pDevice,
 	return 0;
 }
 
-
-
 /*
  * Description:
  *      set generic element (wpa ie)
@@ -346,8 +341,6 @@ static int hostap_set_generic_element(struct vnt_private *pDevice,
 					struct viawget_hostapd_param *param)
 {
 	struct vnt_manager *pMgmt = &pDevice->vnt_mgmt;
-
-
 
     memcpy( pMgmt->abyWPAIE,
             param->u.generic_elem.data,
@@ -422,15 +415,13 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
 	int ret = 0;
 	s32 iNodeIndex = -1;
 	int ii;
-	int bKeyTableFull = false;
+	bool bKeyTableFull = false;
 	u16 wKeyCtl = 0;
-
 
 	param->u.crypt.err = 0;
 
 	if (param->u.crypt.alg > WPA_ALG_CCMP)
 		return -EINVAL;
-
 
 	if ((param->u.crypt.idx > 3) || (param->u.crypt.key_len > MAX_KEY_LEN)) {
 		param->u.crypt.err = HOSTAP_CRYPT_ERR_KEY_SET_FAILED;
@@ -489,9 +480,9 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
             param->u.crypt.key_len
            );
 
-    dwKeyIndex = (DWORD)(param->u.crypt.idx);
+    dwKeyIndex = (u32)(param->u.crypt.idx);
     if (param->u.crypt.flags & HOSTAP_CRYPT_FLAG_SET_TX_KEY) {
-        pDevice->byKeyIndex = (BYTE)dwKeyIndex;
+        pDevice->byKeyIndex = (u8)dwKeyIndex;
         pDevice->bTransmitKey = true;
         dwKeyIndex |= (1 << 31);
     }
@@ -515,10 +506,9 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
 			&param->sta_addr[0],
 			dwKeyIndex & ~(USE_KEYRSC),
 			param->u.crypt.key_len,
-			&KeyRSC, (PBYTE)abyKey,
+			&KeyRSC, (u8 *)abyKey,
 			KEY_CTL_WEP
                            ) == true) {
-
 
                 pMgmt->sNodeDBTable[iNodeIndex].bOnFly = true;
 
@@ -565,7 +555,6 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
         pMgmt->byCSSGK = KEY_CTL_CCMP;
     }
 
-
     if (iNodeIndex == 0) {
        KeybSetDefaultKey(  pDevice,
                            &(pDevice->sKey),
@@ -585,7 +574,7 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
                        dwKeyIndex,
                        param->u.crypt.key_len,
 			&KeyRSC,
-                       (PBYTE)abyKey,
+                       (u8 *)abyKey,
                         byKeyDecMode
                        ) == true) {
 
@@ -631,8 +620,6 @@ static int hostap_set_encryption(struct vnt_private *pDevice,
 	return ret;
 }
 
-
-
 /*
  * Description:
  *      get each stations encryption key
@@ -655,7 +642,6 @@ static int hostap_get_encryption(struct vnt_private *pDevice,
 	int ii;
 	s32 iNodeIndex = 0;
 
-
 	param->u.crypt.err = 0;
 
 	if (is_broadcast_ether_addr(param->sta_addr)) {
@@ -670,12 +656,11 @@ static int hostap_get_encryption(struct vnt_private *pDevice,
 	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "hostap_get_encryption: %d\n", iNodeIndex);
     memset(param->u.crypt.seq, 0, 8);
     for (ii = 0 ; ii < 8 ; ii++) {
-        param->u.crypt.seq[ii] = (BYTE)pMgmt->sNodeDBTable[iNodeIndex].KeyRSC >> (ii * 8);
+        param->u.crypt.seq[ii] = (u8)pMgmt->sNodeDBTable[iNodeIndex].KeyRSC >> (ii * 8);
     }
 
 	return ret;
 }
-
 
 /*
  * Description:
@@ -701,7 +686,7 @@ int vt6656_hostap_ioctl(struct vnt_private *pDevice, struct iw_point *p)
 	    p->length > VIAWGET_HOSTAPD_MAX_BUF_SIZE || !p->pointer)
 		return -EINVAL;
 
-	param = kmalloc((int)p->length, (int)GFP_KERNEL);
+	param = kmalloc((int)p->length, GFP_KERNEL);
 	if (param == NULL)
 		return -ENOMEM;
 
@@ -778,7 +763,6 @@ int vt6656_hostap_ioctl(struct vnt_private *pDevice, struct iw_point *p)
 		ret = -EOPNOTSUPP;
 		goto out;
 	}
-
 
 	if ((ret == 0) && ap_ioctl) {
 		if (copy_to_user(p->pointer, param, p->length)) {

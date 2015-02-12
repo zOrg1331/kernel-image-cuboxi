@@ -52,7 +52,6 @@
 #include <linux/signal.h>
 #include <linux/errno.h>
 #include <linux/poll.h>
-#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/fcntl.h>
 #include <linux/spinlock.h>
@@ -881,7 +880,8 @@ static int ezusb_access_ltv(struct ezusb_priv *upriv,
 
 	if (!upriv->udev) {
 		dbg("Device disconnected");
-		return -ENODEV;
+		retval = -ENODEV;
+		goto exit;
 	}
 
 	if (upriv->read_urb->status != -EINPROGRESS)
@@ -1584,7 +1584,7 @@ static int ezusb_probe(struct usb_interface *interface,
 	struct ezusb_priv *upriv = NULL;
 	struct usb_interface_descriptor *iface_desc;
 	struct usb_endpoint_descriptor *ep;
-	const struct firmware *fw_entry;
+	const struct firmware *fw_entry = NULL;
 	int retval = 0;
 	int i;
 

@@ -14,13 +14,14 @@
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/cpu.h>
 #include <asm/system_misc.h>
 #include <asm/mach/arch.h>
 #include <mach/orion5x.h>
 #include <plat/irq.h>
 #include "common.h"
 
-struct of_dev_auxdata orion5x_auxdata_lookup[] __initdata = {
+static struct of_dev_auxdata orion5x_auxdata_lookup[] __initdata = {
 	OF_DEV_AUXDATA("marvell,orion-spi", 0xf1010600, "orion_spi.0", NULL),
 	OF_DEV_AUXDATA("marvell,mv64xxx-i2c", 0xf1011000, "mv64xxx_i2c.0",
 		       NULL),
@@ -41,7 +42,7 @@ static void __init orion5x_dt_init(void)
 	/*
 	 * Setup Orion address map
 	 */
-	orion5x_setup_cpu_mbus_bridge();
+	orion5x_setup_wins();
 
 	/* Setup root of clk tree */
 	clk_init();
@@ -52,7 +53,7 @@ static void __init orion5x_dt_init(void)
 	 */
 	if (dev == MV88F5281_DEV_ID && rev == MV88F5281_REV_D0) {
 		printk(KERN_INFO "Orion: Applying 5281 D0 WFI workaround.\n");
-		disable_hlt();
+		cpu_idle_poll_ctrl(true);
 	}
 
 	if (of_machine_is_compatible("lacie,ethernet-disk-mini-v2"))

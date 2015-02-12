@@ -24,20 +24,21 @@
 #endif /* SMTC */
 #include <asm-generic/mm_hooks.h>
 
+#define TLBMISS_HANDLER_SETUP_PGD(pgd)					\
+do {									\
+	extern void tlbmiss_handler_setup_pgd(unsigned long);		\
+	tlbmiss_handler_setup_pgd((unsigned long)(pgd));		\
+} while (0)
+
 #ifdef CONFIG_MIPS_PGD_C0_CONTEXT
-
-#define TLBMISS_HANDLER_SETUP_PGD(pgd)				\
-	tlbmiss_handler_setup_pgd((unsigned long)(pgd))
-
-extern void tlbmiss_handler_setup_pgd(unsigned long pgd);
-
 #define TLBMISS_HANDLER_SETUP()						\
 	do {								\
 		TLBMISS_HANDLER_SETUP_PGD(swapper_pg_dir);		\
-		write_c0_xcontext((unsigned long) smp_processor_id() << 51); \
+		write_c0_xcontext((unsigned long) smp_processor_id() <<	\
+						SMP_CPUID_REGSHIFT);	\
 	} while (0)
 
-#else /* CONFIG_MIPS_PGD_C0_CONTEXT: using  pgd_current*/
+#else /* !CONFIG_MIPS_PGD_C0_CONTEXT: using  pgd_current*/
 
 /*
  * For the fast tlb miss handlers, we keep a per cpu array of pointers
@@ -46,21 +47,11 @@ extern void tlbmiss_handler_setup_pgd(unsigned long pgd);
  */
 extern unsigned long pgd_current[];
 
-#define TLBMISS_HANDLER_SETUP_PGD(pgd) \
-	pgd_current[smp_processor_id()] = (unsigned long)(pgd)
-
-#ifdef CONFIG_32BIT
 #define TLBMISS_HANDLER_SETUP()						\
-	write_c0_context((unsigned long) smp_processor_id() << 25);	\
+	write_c0_context((unsigned long) smp_processor_id() <<		\
+						SMP_CPUID_REGSHIFT);	\
 	back_to_back_c0_hazard();					\
 	TLBMISS_HANDLER_SETUP_PGD(swapper_pg_dir)
-#endif
-#ifdef CONFIG_64BIT
-#define TLBMISS_HANDLER_SETUP()						\
-	write_c0_context((unsigned long) smp_processor_id() << 26);	\
-	back_to_back_c0_hazard();					\
-	TLBMISS_HANDLER_SETUP_PGD(swapper_pg_dir)
-#endif
 #endif /* CONFIG_MIPS_PGD_C0_CONTEXT*/
 #if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
 
@@ -106,15 +97,21 @@ static inline void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
 static inline void
 get_new_mmu_context(struct mm_struct *mm, unsigned long cpu)
 {
+	extern void kvm_local_flush_tlb_all(void);
 	unsigned long asid = asid_cache(cpu);
 
 	if (! ((asid += ASID_INC) & ASID_MASK) ) {
 		if (cpu_has_vtag_icache)
 			flush_icache_all();
+#ifdef CONFIG_KVM
+		kvm_local_flush_tlb_all();      /* start new asid cycle */
+#else
 		local_flush_tlb_all();	/* start new asid cycle */
+#endif
 		if (!asid)		/* fix version if needed */
 			asid = ASID_FIRST_VERSION;
 	}
+
 	cpu_context(cpu, mm) = asid_cache(cpu) = asid;
 }
 
@@ -133,7 +130,7 @@ init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 {
 	int i;
 
-	for_each_online_cpu(i)
+	for_each_possible_cpu(i)
 		cpu_context(i, mm) = 0;
 
 	return 0;

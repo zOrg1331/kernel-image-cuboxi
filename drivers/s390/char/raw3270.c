@@ -615,10 +615,10 @@ raw3270_reset_device_cb(struct raw3270_request *rq, void *data)
 
 	if (rp->state != RAW3270_STATE_RESET)
 		return;
-	if (rq && rq->rc) {
+	if (rq->rc) {
 		/* Reset command failed. */
 		rp->state = RAW3270_STATE_INIT;
-	} else if (0 && MACHINE_IS_VM) {
+	} else if (MACHINE_IS_VM) {
 		raw3270_size_device_vm(rp);
 		raw3270_size_device_done(rp);
 	} else
@@ -796,7 +796,7 @@ struct raw3270 __init *raw3270_setup_console(struct ccw_device *cdev)
 	do {
 		__raw3270_reset_device(rp);
 		while (!raw3270_state_final(rp)) {
-			wait_cons_dev();
+			ccw_device_wait_idle(rp->cdev);
 			barrier();
 		}
 	} while (rp->state != RAW3270_STATE_READY);
@@ -810,7 +810,7 @@ raw3270_wait_cons_dev(struct raw3270 *rp)
 	unsigned long flags;
 
 	spin_lock_irqsave(get_ccwdev_lock(rp->cdev), flags);
-	wait_cons_dev();
+	ccw_device_wait_idle(rp->cdev);
 	spin_unlock_irqrestore(get_ccwdev_lock(rp->cdev), flags);
 }
 
@@ -1274,7 +1274,7 @@ void raw3270_pm_unfreeze(struct raw3270_view *view)
 
 	rp = view->dev;
 	if (rp && test_bit(RAW3270_FLAGS_FROZEN, &rp->flags))
-		ccw_device_force_console();
+		ccw_device_force_console(rp->cdev);
 #endif
 }
 

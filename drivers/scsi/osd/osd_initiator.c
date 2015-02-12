@@ -731,7 +731,7 @@ static int _osd_req_list_objects(struct osd_request *or,
 
 	bio->bi_rw &= ~REQ_WRITE;
 	or->in.bio = bio;
-	or->in.total_bytes = bio->bi_size;
+	or->in.total_bytes = bio->bi_iter.bi_size;
 	return 0;
 }
 
@@ -1049,7 +1049,7 @@ static struct bio *_create_sg_bios(struct osd_request *or,
 
 	bio = bio_kmalloc(GFP_KERNEL, numentries);
 	if (unlikely(!bio)) {
-		OSD_DEBUG("Faild to allocate BIO size=%u\n", numentries);
+		OSD_DEBUG("Failed to allocate BIO size=%u\n", numentries);
 		return ERR_PTR(-ENOMEM);
 	}
 

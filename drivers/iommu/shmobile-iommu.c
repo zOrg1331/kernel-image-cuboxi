@@ -296,7 +296,7 @@ done:
 }
 
 static phys_addr_t shmobile_iommu_iova_to_phys(struct iommu_domain *domain,
-					       unsigned long iova)
+					       dma_addr_t iova)
 {
 	struct shmobile_iommu_domain *sh_domain = domain->priv;
 	uint32_t l1entry = 0, l2entry = 0;
@@ -380,14 +380,13 @@ int ipmmu_iommu_init(struct shmobile_ipmmu *ipmmu)
 		kmem_cache_destroy(l1cache);
 		return -ENOMEM;
 	}
-	archdata = kmalloc(sizeof(*archdata), GFP_KERNEL);
+	archdata = kzalloc(sizeof(*archdata), GFP_KERNEL);
 	if (!archdata) {
 		kmem_cache_destroy(l1cache);
 		kmem_cache_destroy(l2cache);
 		return -ENOMEM;
 	}
 	spin_lock_init(&archdata->attach_lock);
-	archdata->attached = NULL;
 	archdata->ipmmu = ipmmu;
 	ipmmu_archdata = archdata;
 	bus_set_iommu(&platform_bus_type, &shmobile_iommu_ops);

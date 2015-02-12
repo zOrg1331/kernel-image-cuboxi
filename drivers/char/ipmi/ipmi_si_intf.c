@@ -71,6 +71,11 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 
+#ifdef CONFIG_PARISC
+#include <asm/hardware.h>	/* for register_parisc_driver() stuff */
+#include <asm/parisc-device.h>
+#endif
+
 #define PFX "ipmi_si: "
 
 /* Measure times between events in the driver. */
@@ -297,6 +302,9 @@ static int pci_registered;
 #endif
 #ifdef CONFIG_ACPI
 static int pnp_registered;
+#endif
+#ifdef CONFIG_PARISC
+static int parisc_registered;
 #endif
 
 static unsigned int kipmid_max_busy_us[SI_MAX_PARMS];
@@ -663,8 +671,10 @@ static void handle_transaction_done(struct smi_info *smi_info)
 		/* We got the flags from the SMI, now handle them. */
 		smi_info->handlers->get_result(smi_info->si_sm, msg, 4);
 		if (msg[2] != 0) {
-			dev_warn(smi_info->dev, "Could not enable interrupts"
-				 ", failed get, using polled mode.\n");
+			dev_warn(smi_info->dev,
+				 "Couldn't get irq info: %x.\n", msg[2]);
+			dev_warn(smi_info->dev,
+				 "Maybe ok, but ipmi might run very slowly.\n");
 			smi_info->si_state = SI_NORMAL;
 		} else {
 			msg[0] = (IPMI_NETFN_APP_REQUEST << 2);
@@ -685,10 +695,12 @@ static void handle_transaction_done(struct smi_info *smi_info)
 
 		/* We got the flags from the SMI, now handle them. */
 		smi_info->handlers->get_result(smi_info->si_sm, msg, 4);
-		if (msg[2] != 0)
-			dev_warn(smi_info->dev, "Could not enable interrupts"
-				 ", failed set, using polled mode.\n");
-		else
+		if (msg[2] != 0) {
+			dev_warn(smi_info->dev,
+				 "Couldn't set irq info: %x.\n", msg[2]);
+			dev_warn(smi_info->dev,
+				 "Maybe ok, but ipmi might run very slowly.\n");
+		} else
 			smi_info->interrupt_disabled = 0;
 		smi_info->si_state = SI_NORMAL;
 		break;
@@ -1346,7 +1358,7 @@ static int std_irq_setup(struct smi_info *info)
 	if (info->si_type == SI_BT) {
 		rv = request_irq(info->irq,
 				 si_bt_irq_handler,
-				 IRQF_SHARED | IRQF_DISABLED,
+				 IRQF_SHARED,
 				 DEVICE_NAME,
 				 info);
 		if (!rv)
@@ -1356,7 +1368,7 @@ static int std_irq_setup(struct smi_info *info)
 	} else
 		rv = request_irq(info->irq,
 				 si_irq_handler,
-				 IRQF_SHARED | IRQF_DISABLED,
+				 IRQF_SHARED,
 				 DEVICE_NAME,
 				 info);
 	if (rv) {
@@ -1837,11 +1849,15 @@ static int hotmod_handler(const char *val, struct kernel_param *kp)
 				info->irq_setup = std_irq_setup;
 			info->slave_addr = ipmb;
 
-			if (!add_smi(info)) {
-				if (try_smi_init(info))
-					cleanup_one_si(info);
-			} else {
+			rv = add_smi(info);
+			if (rv) {
 				kfree(info);
+				goto out;
+			}
+			rv = try_smi_init(info);
+			if (rv) {
+				cleanup_one_si(info);
+				goto out;
 			}
 		} else {
 			/* remove */
@@ -2055,6 +2071,7 @@ struct SPMITable {
 static int try_init_spmi(struct SPMITable *spmi)
 {
 	struct smi_info  *info;
+	int rv;
 
 	if (spmi->IPMIlegacy != 1) {
 		printk(KERN_INFO PFX "Bad SPMI legacy %d\n", spmi->IPMIlegacy);
@@ -2129,10 +2146,11 @@ static int try_init_spmi(struct SPMITable *spmi)
 		 info->io.addr_data, info->io.regsize, info->io.regspacing,
 		 info->irq);
 
-	if (add_smi(info))
+	rv = add_smi(info);
+	if (rv)
 		kfree(info);
 
-	return 0;
+	return rv;
 }
 
 static void spmi_find_bmc(void)
@@ -2166,6 +2184,7 @@ static int ipmi_pnp_probe(struct pnp_dev *dev,
 	acpi_handle handle;
 	acpi_status status;
 	unsigned long long tmp;
+	int rv;
 
 	acpi_dev = pnp_acpi_device(dev);
 	if (!acpi_dev)
@@ -2247,10 +2266,11 @@ static int ipmi_pnp_probe(struct pnp_dev *dev,
 		 res, info->io.regsize, info->io.regspacing,
 		 info->irq);
 
-	if (add_smi(info))
-		goto err_free;
+	rv = add_smi(info);
+	if (rv)
+		kfree(info);
 
-	return 0;
+	return rv;
 
 err_free:
 	kfree(info);
@@ -2275,6 +2295,8 @@ static struct pnp_driver ipmi_pnp_driver = {
 	.remove		= ipmi_pnp_remove,
 	.id_table	= pnp_dev_table,
 };
+
+MODULE_DEVICE_TABLE(pnp, pnp_dev_table);
 #endif
 
 #ifdef CONFIG_DMI
@@ -2552,16 +2574,20 @@ static int ipmi_pci_probe(struct pci_dev *pdev,
 		&pdev->resource[0], info->io.regsize, info->io.regspacing,
 		info->irq);
 
-	if (add_smi(info))
+	rv = add_smi(info);
+	if (rv) {
 		kfree(info);
+		pci_disable_device(pdev);
+	}
 
-	return 0;
+	return rv;
 }
 
 static void ipmi_pci_remove(struct pci_dev *pdev)
 {
 	struct smi_info *info = pci_get_drvdata(pdev);
 	cleanup_one_si(info);
+	pci_disable_device(pdev);
 }
 
 static struct pci_device_id ipmi_pci_devices[] = {
@@ -2656,9 +2682,10 @@ static int ipmi_probe(struct platform_device *dev)
 
 	dev_set_drvdata(&dev->dev, info);
 
-	if (add_smi(info)) {
+	ret = add_smi(info);
+	if (ret) {
 		kfree(info);
-		return -EBUSY;
+		return ret;
 	}
 #endif
 	return 0;
@@ -2693,6 +2720,64 @@ static struct platform_driver ipmi_driver = {
 	.remove		= ipmi_remove,
 };
 
+#ifdef CONFIG_PARISC
+static int ipmi_parisc_probe(struct parisc_device *dev)
+{
+	struct smi_info *info;
+	int rv;
+
+	info = smi_info_alloc();
+
+	if (!info) {
+		dev_err(&dev->dev,
+			"could not allocate memory for PARISC probe\n");
+		return -ENOMEM;
+	}
+
+	info->si_type		= SI_KCS;
+	info->addr_source	= SI_DEVICETREE;
+	info->io_setup		= mem_setup;
+	info->io.addr_type	= IPMI_MEM_ADDR_SPACE;
+	info->io.addr_data	= dev->hpa.start;
+	info->io.regsize	= 1;
+	info->io.regspacing	= 1;
+	info->io.regshift	= 0;
+	info->irq		= 0; /* no interrupt */
+	info->irq_setup		= NULL;
+	info->dev		= &dev->dev;
+
+	dev_dbg(&dev->dev, "addr 0x%lx\n", info->io.addr_data);
+
+	dev_set_drvdata(&dev->dev, info);
+
+	rv = add_smi(info);
+	if (rv) {
+		kfree(info);
+		return rv;
+	}
+
+	return 0;
+}
+
+static int ipmi_parisc_remove(struct parisc_device *dev)
+{
+	cleanup_one_si(dev_get_drvdata(&dev->dev));
+	return 0;
+}
+
+static struct parisc_device_id ipmi_parisc_tbl[] = {
+	{ HPHW_MC, HVERSION_REV_ANY_ID, 0x004, 0xC0 },
+	{ 0, }
+};
+
+static struct parisc_driver ipmi_parisc_driver = {
+	.name =		"ipmi",
+	.id_table =	ipmi_parisc_tbl,
+	.probe =	ipmi_parisc_probe,
+	.remove =	ipmi_parisc_remove,
+};
+#endif /* CONFIG_PARISC */
+
 static int wait_for_msg_done(struct smi_info *smi_info)
 {
 	enum si_sm_result     smi_result;
@@ -2703,7 +2788,7 @@ static int wait_for_msg_done(struct smi_info *smi_info)
 		    smi_result == SI_SM_CALL_WITH_TICK_DELAY) {
 			schedule_timeout_uninterruptible(1);
 			smi_result = smi_info->handlers->event(
-				smi_info->si_sm, 100);
+				smi_info->si_sm, jiffies_to_usecs(1));
 		} else if (smi_result == SI_SM_CALL_WITHOUT_DELAY) {
 			smi_result = smi_info->handlers->event(
 				smi_info->si_sm, 0);
@@ -2839,7 +2924,7 @@ static int smi_type_proc_show(struct seq_file *m, void *v)
 
 static int smi_type_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, smi_type_proc_show, PDE(inode)->data);
+	return single_open(file, smi_type_proc_show, PDE_DATA(inode));
 }
 
 static const struct file_operations smi_type_proc_ops = {
@@ -2882,7 +2967,7 @@ static int smi_si_stats_proc_show(struct seq_file *m, void *v)
 
 static int smi_si_stats_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, smi_si_stats_proc_show, PDE(inode)->data);
+	return single_open(file, smi_si_stats_proc_show, PDE_DATA(inode));
 }
 
 static const struct file_operations smi_si_stats_proc_ops = {
@@ -2910,7 +2995,7 @@ static int smi_params_proc_show(struct seq_file *m, void *v)
 
 static int smi_params_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, smi_params_proc_show, PDE(inode)->data);
+	return single_open(file, smi_params_proc_show, PDE_DATA(inode));
 }
 
 static const struct file_operations smi_params_proc_ops = {
@@ -3458,6 +3543,13 @@ static int init_ipmi_si(void)
 		spmi_find_bmc();
 #endif
 
+#ifdef CONFIG_PARISC
+	register_parisc_driver(&ipmi_parisc_driver);
+	parisc_registered = 1;
+	/* poking PC IO addresses will crash machine, don't do it */
+	si_trydefaults = 0;
+#endif
+
 	/* We prefer devices with interrupts, but in the case of a machine
 	   with multiple BMCs we assume that there will be several instances
 	   of a given type so if we succeed in registering a type then also
@@ -3603,6 +3695,10 @@ static void cleanup_ipmi_si(void)
 #ifdef CONFIG_ACPI
 	if (pnp_registered)
 		pnp_unregister_driver(&ipmi_pnp_driver);
+#endif
+#ifdef CONFIG_PARISC
+	if (parisc_registered)
+		unregister_parisc_driver(&ipmi_parisc_driver);
 #endif
 
 	platform_driver_unregister(&ipmi_driver);

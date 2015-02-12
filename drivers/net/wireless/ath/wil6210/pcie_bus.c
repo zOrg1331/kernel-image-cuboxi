@@ -14,10 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/netdevice.h>
 #include <linux/debugfs.h>
 #include <linux/pci.h>
 #include <linux/moduleparam.h>
@@ -200,7 +197,6 @@ static void wil_pcie_remove(struct pci_dev *pdev)
 	pci_iounmap(pdev, wil->csr);
 	pci_release_region(pdev, 0);
 	pci_disable_device(pdev);
-	pci_set_drvdata(pdev, NULL);
 }
 
 static DEFINE_PCI_DEVICE_TABLE(wil6210_pcie_ids) = {

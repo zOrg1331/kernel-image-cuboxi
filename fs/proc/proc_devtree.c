@@ -12,18 +12,15 @@
 #include <linux/stat.h>
 #include <linux/string.h>
 #include <linux/of.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/slab.h>
-#include <asm/prom.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
 static inline void set_node_proc_entry(struct device_node *np,
 				       struct proc_dir_entry *de)
 {
-#ifdef HAVE_ARCH_DEVTREE_FIXUPS
 	np->pde = de;
-#endif
 }
 
 static struct proc_dir_entry *proc_device_tree;
@@ -41,7 +38,7 @@ static int property_proc_show(struct seq_file *m, void *v)
 
 static int property_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, property_proc_show, PDE(inode)->data);
+	return single_open(file, property_proc_show, __PDE_DATA(inode));
 }
 
 static const struct file_operations property_proc_fops = {
@@ -77,9 +74,9 @@ __proc_device_tree_add_prop(struct proc_dir_entry *de, struct property *pp,
 		return NULL;
 
 	if (!strncmp(name, "security-", 9))
-		ent->size = 0; /* don't leak number of password chars */
+		proc_set_size(ent, 0); /* don't leak number of password chars */
 	else
-		ent->size = pp->length;
+		proc_set_size(ent, pp->length);
 
 	return ent;
 }
@@ -235,6 +232,7 @@ void __init proc_device_tree_init(void)
 		return;
 	root = of_find_node_by_path("/");
 	if (root == NULL) {
+		remove_proc_entry("device-tree", NULL);
 		pr_debug("/proc/device-tree: can't find root\n");
 		return;
 	}

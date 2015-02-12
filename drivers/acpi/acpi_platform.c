@@ -22,9 +22,6 @@
 
 ACPI_MODULE_NAME("platform");
 
-/* Flags for acpi_create_platform_device */
-#define ACPI_PLATFORM_CLK	BIT(0)
-
 /*
  * The following ACPI IDs are known to be suitable for representing as
  * platform devices.
@@ -32,33 +29,16 @@ ACPI_MODULE_NAME("platform");
 static const struct acpi_device_id acpi_platform_device_ids[] = {
 
 	{ "PNP0D40" },
+	{ "ACPI0003" },
+	{ "VPC2004" },
+	{ "BCM4752" },
 
-	/* Haswell LPSS devices */
-	{ "INT33C0", ACPI_PLATFORM_CLK },
-	{ "INT33C1", ACPI_PLATFORM_CLK },
-	{ "INT33C2", ACPI_PLATFORM_CLK },
-	{ "INT33C3", ACPI_PLATFORM_CLK },
-	{ "INT33C4", ACPI_PLATFORM_CLK },
-	{ "INT33C5", ACPI_PLATFORM_CLK },
-	{ "INT33C6", ACPI_PLATFORM_CLK },
-	{ "INT33C7", ACPI_PLATFORM_CLK },
+	/* Intel Smart Sound Technology */
+	{ "INT33C8" },
+	{ "80860F28" },
 
 	{ }
 };
-
-static int acpi_create_platform_clks(struct acpi_device *adev)
-{
-	static struct platform_device *pdev;
-
-	/* Create Lynxpoint LPSS clocks */
-	if (!pdev && !strncmp(acpi_device_hid(adev), "INT33C", 6)) {
-		pdev = platform_device_register_simple("clk-lpt", -1, NULL, 0);
-		if (IS_ERR(pdev))
-			return PTR_ERR(pdev);
-	}
-
-	return 0;
-}
 
 /**
  * acpi_create_platform_device - Create platform device for ACPI device node
@@ -71,25 +51,16 @@ static int acpi_create_platform_clks(struct acpi_device *adev)
  *
  * Name of the platform device will be the same as @adev's.
  */
-static int acpi_create_platform_device(struct acpi_device *adev,
-				       const struct acpi_device_id *id)
+int acpi_create_platform_device(struct acpi_device *adev,
+				const struct acpi_device_id *id)
 {
-	unsigned long flags = id->driver_data;
 	struct platform_device *pdev = NULL;
 	struct acpi_device *acpi_parent;
 	struct platform_device_info pdevinfo;
 	struct resource_list_entry *rentry;
 	struct list_head resource_list;
-	struct resource *resources;
+	struct resource *resources = NULL;
 	int count;
-
-	if (flags & ACPI_PLATFORM_CLK) {
-		int ret = acpi_create_platform_clks(adev);
-		if (ret) {
-			dev_err(&adev->dev, "failed to create clocks\n");
-			return ret;
-		}
-	}
 
 	/* If the ACPI node already has a physical device attached, skip it. */
 	if (adev->physical_node_count)
@@ -97,20 +68,22 @@ static int acpi_create_platform_device(struct acpi_device *adev,
 
 	INIT_LIST_HEAD(&resource_list);
 	count = acpi_dev_get_resources(adev, &resource_list, NULL, NULL);
-	if (count <= 0)
+	if (count < 0) {
 		return 0;
+	} else if (count > 0) {
+		resources = kmalloc(count * sizeof(struct resource),
+				    GFP_KERNEL);
+		if (!resources) {
+			dev_err(&adev->dev, "No memory for resources\n");
+			acpi_dev_free_resource_list(&resource_list);
+			return -ENOMEM;
+		}
+		count = 0;
+		list_for_each_entry(rentry, &resource_list, node)
+			resources[count++] = rentry->res;
 
-	resources = kmalloc(count * sizeof(struct resource), GFP_KERNEL);
-	if (!resources) {
-		dev_err(&adev->dev, "No memory for resources\n");
 		acpi_dev_free_resource_list(&resource_list);
-		return -ENOMEM;
 	}
-	count = 0;
-	list_for_each_entry(rentry, &resource_list, node)
-		resources[count++] = rentry->res;
-
-	acpi_dev_free_resource_list(&resource_list);
 
 	memset(&pdevinfo, 0, sizeof(pdevinfo));
 	/*
@@ -138,7 +111,7 @@ static int acpi_create_platform_device(struct acpi_device *adev,
 	pdevinfo.id = -1;
 	pdevinfo.res = resources;
 	pdevinfo.num_res = count;
-	pdevinfo.acpi_node.handle = adev->handle;
+	pdevinfo.acpi_node.companion = adev;
 	pdev = platform_device_register_full(&pdevinfo);
 	if (IS_ERR(pdev)) {
 		dev_err(&adev->dev, "platform device creation failed: %ld\n",

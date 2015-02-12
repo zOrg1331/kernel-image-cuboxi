@@ -3,6 +3,7 @@
  *	separately for each hashbucket (sourceip/sourceport/dstip/dstport)
  *
  *	(C) 2003-2004 by Harald Welte <laforge@netfilter.org>
+ *	(C) 2006-2012 Patrick McHardy <kaber@trash.net>
  *	Copyright © CC Computer Consultants GmbH, 2007 - 2008
  *
  * Development of this code was funded by Astaro AG, http://www.astaro.com/
@@ -107,6 +108,7 @@ struct xt_hashlimit_htable {
 
 	/* seq_file stuff */
 	struct proc_dir_entry *pde;
+	const char *name;
 	struct net *net;
 
 	struct hlist_head hash[0];	/* hashtable itself */
@@ -253,6 +255,11 @@ static int htable_create(struct net *net, struct xt_hashlimit_mtinfo1 *minfo,
 	hinfo->count = 0;
 	hinfo->family = family;
 	hinfo->rnd_initialized = false;
+	hinfo->name = kstrdup(minfo->name, GFP_KERNEL);
+	if (!hinfo->name) {
+		vfree(hinfo);
+		return -ENOMEM;
+	}
 	spin_lock_init(&hinfo->lock);
 
 	hinfo->pde = proc_create_data(minfo->name, 0,
@@ -260,6 +267,7 @@ static int htable_create(struct net *net, struct xt_hashlimit_mtinfo1 *minfo,
 		hashlimit_net->ipt_hashlimit : hashlimit_net->ip6t_hashlimit,
 		&dl_file_ops, hinfo);
 	if (hinfo->pde == NULL) {
+		kfree(hinfo->name);
 		vfree(hinfo);
 		return -ENOMEM;
 	}
@@ -317,22 +325,26 @@ static void htable_gc(unsigned long htlong)
 	add_timer(&ht->timer);
 }
 
-static void htable_destroy(struct xt_hashlimit_htable *hinfo)
+static void htable_remove_proc_entry(struct xt_hashlimit_htable *hinfo)
 {
 	struct hashlimit_net *hashlimit_net = hashlimit_pernet(hinfo->net);
 	struct proc_dir_entry *parent;
-
-	del_timer_sync(&hinfo->timer);
 
 	if (hinfo->family == NFPROTO_IPV4)
 		parent = hashlimit_net->ipt_hashlimit;
 	else
 		parent = hashlimit_net->ip6t_hashlimit;
 
-	if(parent != NULL)
-		remove_proc_entry(hinfo->pde->name, parent);
+	if (parent != NULL)
+		remove_proc_entry(hinfo->name, parent);
+}
 
+static void htable_destroy(struct xt_hashlimit_htable *hinfo)
+{
+	del_timer_sync(&hinfo->timer);
+	htable_remove_proc_entry(hinfo);
 	htable_selective_cleanup(hinfo, select_all);
+	kfree(hinfo->name);
 	vfree(hinfo);
 }
 
@@ -344,7 +356,7 @@ static struct xt_hashlimit_htable *htable_find_get(struct net *net,
 	struct xt_hashlimit_htable *hinfo;
 
 	hlist_for_each_entry(hinfo, &hashlimit_net->htables, node) {
-		if (!strcmp(name, hinfo->pde->name) &&
+		if (!strcmp(name, hinfo->name) &&
 		    hinfo->family == family) {
 			hinfo->use++;
 			return hinfo;
@@ -841,7 +853,7 @@ static int dl_proc_open(struct inode *inode, struct file *file)
 
 	if (!ret) {
 		struct seq_file *sf = file->private_data;
-		sf->private = PDE(inode)->data;
+		sf->private = PDE_DATA(inode);
 	}
 	return ret;
 }
@@ -874,21 +886,15 @@ static int __net_init hashlimit_proc_net_init(struct net *net)
 static void __net_exit hashlimit_proc_net_exit(struct net *net)
 {
 	struct xt_hashlimit_htable *hinfo;
-	struct proc_dir_entry *pde;
 	struct hashlimit_net *hashlimit_net = hashlimit_pernet(net);
 
-	/* recent_net_exit() is called before recent_mt_destroy(). Make sure
-	 * that the parent xt_recent proc entry is is empty before trying to
-	 * remove it.
+	/* hashlimit_net_exit() is called before hashlimit_mt_destroy().
+	 * Make sure that the parent ipt_hashlimit and ip6t_hashlimit proc
+	 * entries is empty before trying to remove it.
 	 */
 	mutex_lock(&hashlimit_mutex);
-	pde = hashlimit_net->ipt_hashlimit;
-	if (pde == NULL)
-		pde = hashlimit_net->ip6t_hashlimit;
-
 	hlist_for_each_entry(hinfo, &hashlimit_net->htables, node)
-		remove_proc_entry(hinfo->pde->name, pde);
-
+		htable_remove_proc_entry(hinfo);
 	hashlimit_net->ipt_hashlimit = NULL;
 	hashlimit_net->ip6t_hashlimit = NULL;
 	mutex_unlock(&hashlimit_mutex);

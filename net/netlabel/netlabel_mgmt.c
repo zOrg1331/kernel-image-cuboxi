@@ -23,8 +23,7 @@
  * the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program;  if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ * along with this program;  if not, see <http://www.gnu.org/licenses/>.
  *
  */
 
@@ -144,7 +143,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		ret_val = -ENOMEM;
 		goto add_failure;
 	}
-	entry->type = nla_get_u32(info->attrs[NLBL_MGMT_A_PROTOCOL]);
+	entry->def.type = nla_get_u32(info->attrs[NLBL_MGMT_A_PROTOCOL]);
 	if (info->attrs[NLBL_MGMT_A_DOMAIN]) {
 		size_t tmp_size = nla_len(info->attrs[NLBL_MGMT_A_DOMAIN]);
 		entry->domain = kmalloc(tmp_size, GFP_KERNEL);
@@ -156,12 +155,12 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 			    info->attrs[NLBL_MGMT_A_DOMAIN], tmp_size);
 	}
 
-	/* NOTE: internally we allow/use a entry->type value of
+	/* NOTE: internally we allow/use a entry->def.type value of
 	 *       NETLBL_NLTYPE_ADDRSELECT but we don't currently allow users
 	 *       to pass that as a protocol value because we need to know the
 	 *       "real" protocol */
 
-	switch (entry->type) {
+	switch (entry->def.type) {
 	case NETLBL_NLTYPE_UNLABELED:
 		break;
 	case NETLBL_NLTYPE_CIPSOV4:
@@ -172,7 +171,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		cipsov4 = cipso_v4_doi_getdef(tmp_val);
 		if (cipsov4 == NULL)
 			goto add_failure;
-		entry->type_def.cipsov4 = cipsov4;
+		entry->def.cipso = cipsov4;
 		break;
 	default:
 		goto add_failure;
@@ -212,9 +211,9 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		map->list.addr = addr->s_addr & mask->s_addr;
 		map->list.mask = mask->s_addr;
 		map->list.valid = 1;
-		map->type = entry->type;
+		map->def.type = entry->def.type;
 		if (cipsov4)
-			map->type_def.cipsov4 = cipsov4;
+			map->def.cipso = cipsov4;
 
 		ret_val = netlbl_af4list_add(&map->list, &addrmap->list4);
 		if (ret_val != 0) {
@@ -222,8 +221,8 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 			goto add_failure;
 		}
 
-		entry->type = NETLBL_NLTYPE_ADDRSELECT;
-		entry->type_def.addrsel = addrmap;
+		entry->def.type = NETLBL_NLTYPE_ADDRSELECT;
+		entry->def.addrsel = addrmap;
 #if IS_ENABLED(CONFIG_IPV6)
 	} else if (info->attrs[NLBL_MGMT_A_IPV6ADDR]) {
 		struct in6_addr *addr;
@@ -263,7 +262,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		map->list.addr.s6_addr32[3] &= mask->s6_addr32[3];
 		map->list.mask = *mask;
 		map->list.valid = 1;
-		map->type = entry->type;
+		map->def.type = entry->def.type;
 
 		ret_val = netlbl_af6list_add(&map->list, &addrmap->list6);
 		if (ret_val != 0) {
@@ -271,8 +270,8 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 			goto add_failure;
 		}
 
-		entry->type = NETLBL_NLTYPE_ADDRSELECT;
-		entry->type_def.addrsel = addrmap;
+		entry->def.type = NETLBL_NLTYPE_ADDRSELECT;
+		entry->def.addrsel = addrmap;
 #endif /* IPv6 */
 	}
 
@@ -321,14 +320,13 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 			return ret_val;
 	}
 
-	switch (entry->type) {
+	switch (entry->def.type) {
 	case NETLBL_NLTYPE_ADDRSELECT:
 		nla_a = nla_nest_start(skb, NLBL_MGMT_A_SELECTORLIST);
 		if (nla_a == NULL)
 			return -ENOMEM;
 
-		netlbl_af4list_foreach_rcu(iter4,
-					   &entry->type_def.addrsel->list4) {
+		netlbl_af4list_foreach_rcu(iter4, &entry->def.addrsel->list4) {
 			struct netlbl_domaddr4_map *map4;
 			struct in_addr addr_struct;
 
@@ -350,13 +348,13 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 				return ret_val;
 			map4 = netlbl_domhsh_addr4_entry(iter4);
 			ret_val = nla_put_u32(skb, NLBL_MGMT_A_PROTOCOL,
-					      map4->type);
+					      map4->def.type);
 			if (ret_val != 0)
 				return ret_val;
-			switch (map4->type) {
+			switch (map4->def.type) {
 			case NETLBL_NLTYPE_CIPSOV4:
 				ret_val = nla_put_u32(skb, NLBL_MGMT_A_CV4DOI,
-						  map4->type_def.cipsov4->doi);
+						      map4->def.cipso->doi);
 				if (ret_val != 0)
 					return ret_val;
 				break;
@@ -365,8 +363,7 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 			nla_nest_end(skb, nla_b);
 		}
 #if IS_ENABLED(CONFIG_IPV6)
-		netlbl_af6list_foreach_rcu(iter6,
-					   &entry->type_def.addrsel->list6) {
+		netlbl_af6list_foreach_rcu(iter6, &entry->def.addrsel->list6) {
 			struct netlbl_domaddr6_map *map6;
 
 			nla_b = nla_nest_start(skb, NLBL_MGMT_A_ADDRSELECTOR);
@@ -385,7 +382,7 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 				return ret_val;
 			map6 = netlbl_domhsh_addr6_entry(iter6);
 			ret_val = nla_put_u32(skb, NLBL_MGMT_A_PROTOCOL,
-					      map6->type);
+					      map6->def.type);
 			if (ret_val != 0)
 				return ret_val;
 
@@ -396,14 +393,14 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 		nla_nest_end(skb, nla_a);
 		break;
 	case NETLBL_NLTYPE_UNLABELED:
-		ret_val = nla_put_u32(skb, NLBL_MGMT_A_PROTOCOL, entry->type);
+		ret_val = nla_put_u32(skb,NLBL_MGMT_A_PROTOCOL,entry->def.type);
 		break;
 	case NETLBL_NLTYPE_CIPSOV4:
-		ret_val = nla_put_u32(skb, NLBL_MGMT_A_PROTOCOL, entry->type);
+		ret_val = nla_put_u32(skb,NLBL_MGMT_A_PROTOCOL,entry->def.type);
 		if (ret_val != 0)
 			return ret_val;
 		ret_val = nla_put_u32(skb, NLBL_MGMT_A_CV4DOI,
-				      entry->type_def.cipsov4->doi);
+				      entry->def.cipso->doi);
 		break;
 	}
 
@@ -814,7 +811,7 @@ version_failure:
  * NetLabel Generic NETLINK Command Definitions
  */
 
-static struct genl_ops netlbl_mgmt_genl_ops[] = {
+static const struct genl_ops netlbl_mgmt_genl_ops[] = {
 	{
 	.cmd = NLBL_MGMT_C_ADD,
 	.flags = GENL_ADMIN_PERM,
@@ -907,5 +904,5 @@ int __init netlbl_mgmt_genl_init(void)
 	netlbl_mgmt_s0_update(1, &audit_info);
 
 	return genl_register_family_with_ops(&netlbl_mgmt_gnl_family,
-		netlbl_mgmt_genl_ops, ARRAY_SIZE(netlbl_mgmt_genl_ops));
+					     netlbl_mgmt_genl_ops);
 }

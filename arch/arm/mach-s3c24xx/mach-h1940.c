@@ -54,6 +54,7 @@
 #include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
 #include <mach/regs-lcd.h>
+#include <mach/gpio-samsung.h>
 
 #include <plat/clock.h>
 #include <plat/cpu.h>
@@ -62,7 +63,7 @@
 #include <plat/pll.h>
 #include <plat/pm.h>
 #include <plat/regs-serial.h>
-
+#include <plat/samsung-time.h>
 
 #include "common.h"
 #include "h1940.h"
@@ -504,6 +505,7 @@ static struct platform_pwm_backlight_data backlight_data = {
 	.dft_brightness = 50,
 	/* tcnt = 0x31 */
 	.pwm_period_ns  = 36296,
+	.enable_gpio    = -1,
 	.init           = h1940_backlight_init,
 	.notify		= h1940_backlight_notify,
 	.exit           = h1940_backlight_exit,
@@ -512,7 +514,7 @@ static struct platform_pwm_backlight_data backlight_data = {
 static struct platform_device h1940_backlight = {
 	.name = "pwm-backlight",
 	.dev  = {
-		.parent = &s3c_device_timer[0].dev,
+		.parent = &samsung_device_pwm.dev,
 		.platform_data = &backlight_data,
 	},
 	.id   = -1,
@@ -632,7 +634,7 @@ static struct platform_device *h1940_devices[] __initdata = {
 	&h1940_device_bluetooth,
 	&s3c_device_sdi,
 	&s3c_device_rtc,
-	&s3c_device_timer[0],
+	&samsung_device_pwm,
 	&h1940_backlight,
 	&h1940_lcd_powerdev,
 	&s3c_device_adc,
@@ -646,6 +648,7 @@ static void __init h1940_map_io(void)
 	s3c24xx_init_io(h1940_iodesc, ARRAY_SIZE(h1940_iodesc));
 	s3c24xx_init_clocks(0);
 	s3c24xx_init_uarts(h1940_uartcfgs, ARRAY_SIZE(h1940_uartcfgs));
+	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 
 	/* setup PM */
 
@@ -664,11 +667,6 @@ static void __init h1940_reserve(void)
 {
 	memblock_reserve(0x30003000, 0x1000);
 	memblock_reserve(0x30081000, 0x1000);
-}
-
-static void __init h1940_init_irq(void)
-{
-	s3c24xx_init_irq();
 }
 
 static void __init h1940_init(void)
@@ -739,8 +737,8 @@ MACHINE_START(H1940, "IPAQ-H1940")
 	.atag_offset	= 0x100,
 	.map_io		= h1940_map_io,
 	.reserve	= h1940_reserve,
-	.init_irq	= h1940_init_irq,
+	.init_irq	= s3c2410_init_irq,
 	.init_machine	= h1940_init,
-	.init_time	= s3c24xx_timer_init,
+	.init_time	= samsung_timer_init,
 	.restart	= s3c2410_restart,
 MACHINE_END

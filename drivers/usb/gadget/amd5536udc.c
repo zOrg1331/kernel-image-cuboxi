@@ -40,7 +40,6 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
-#include <linux/init.h>
 #include <linux/timer.h>
 #include <linux/list.h>
 #include <linux/interrupt.h>
@@ -446,7 +445,7 @@ static void ep_init(struct udc_regs __iomem *regs, struct udc_ep *ep)
 	ep->ep.ops = &udc_ep_ops;
 	INIT_LIST_HEAD(&ep->queue);
 
-	ep->ep.maxpacket = (u16) ~0;
+	usb_ep_set_maxpacket_limit(&ep->ep,(u16) ~0);
 	/* set NAK */
 	tmp = readl(&ep->regs->ctl);
 	tmp |= AMD_BIT(UDC_EPCTL_SNAK);
@@ -1122,7 +1121,7 @@ udc_queue(struct usb_ep *usbep, struct usb_request *usbreq, gfp_t gfp)
 			goto finished;
 		}
 		if (ep->dma) {
-			retval = prep_dma(ep, req, gfp);
+			retval = prep_dma(ep, req, GFP_ATOMIC);
 			if (retval != 0)
 				goto finished;
 			/* write desc pointer to enable DMA */
@@ -1190,7 +1189,7 @@ udc_queue(struct usb_ep *usbep, struct usb_request *usbreq, gfp_t gfp)
 		 * for PPB modes, because of chain creation reasons
 		 */
 		if (ep->in) {
-			retval = prep_dma(ep, req, gfp);
+			retval = prep_dma(ep, req, GFP_ATOMIC);
 			if (retval != 0)
 				goto finished;
 		}
@@ -1564,12 +1563,15 @@ static void udc_setup_endpoints(struct udc *dev)
 	}
 	/* EP0 max packet */
 	if (dev->gadget.speed == USB_SPEED_FULL) {
-		dev->ep[UDC_EP0IN_IX].ep.maxpacket = UDC_FS_EP0IN_MAX_PKT_SIZE;
-		dev->ep[UDC_EP0OUT_IX].ep.maxpacket =
-						UDC_FS_EP0OUT_MAX_PKT_SIZE;
+		usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0IN_IX].ep,
+					   UDC_FS_EP0IN_MAX_PKT_SIZE);
+		usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0OUT_IX].ep,
+					   UDC_FS_EP0OUT_MAX_PKT_SIZE);
 	} else if (dev->gadget.speed == USB_SPEED_HIGH) {
-		dev->ep[UDC_EP0IN_IX].ep.maxpacket = UDC_EP0IN_MAX_PKT_SIZE;
-		dev->ep[UDC_EP0OUT_IX].ep.maxpacket = UDC_EP0OUT_MAX_PKT_SIZE;
+		usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0IN_IX].ep,
+					   UDC_EP0IN_MAX_PKT_SIZE);
+		usb_ep_set_maxpacket_limit(&dev->ep[UDC_EP0OUT_IX].ep,
+					   UDC_EP0OUT_MAX_PKT_SIZE);
 	}
 
 	/*
@@ -1922,7 +1924,6 @@ static int amd5536_udc_start(struct usb_gadget *g,
 
 	driver->driver.bus = NULL;
 	dev->driver = driver;
-	dev->gadget.dev.driver = &driver->driver;
 
 	/* Some gadget drivers use both ep0 directions.
 	 * NOTE: to gadget driver, ep0 is just one endpoint...
@@ -1973,7 +1974,6 @@ static int amd5536_udc_stop(struct usb_gadget *g,
 	shutdown(dev, driver);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
 
 	/* set SD */
@@ -3080,9 +3080,6 @@ static void udc_pci_remove(struct pci_dev *pdev)
 	if (dev->active)
 		pci_disable_device(pdev);
 
-	device_unregister(&dev->gadget.dev);
-	pci_set_drvdata(pdev, NULL);
-
 	udc_remove(dev);
 }
 
@@ -3245,8 +3242,6 @@ static int udc_pci_probe(
 	dev->phys_addr = resource;
 	dev->irq = pdev->irq;
 	dev->pdev = pdev;
-	dev->gadget.dev.parent = &pdev->dev;
-	dev->gadget.dev.dma_mask = pdev->dev.dma_mask;
 
 	/* general probing */
 	if (udc_probe(dev) == 0)
@@ -3273,7 +3268,6 @@ static int udc_probe(struct udc *dev)
 	dev->gadget.ops = &udc_ops;
 
 	dev_set_name(&dev->gadget.dev, "gadget");
-	dev->gadget.dev.release = gadget_release;
 	dev->gadget.name = name;
 	dev->gadget.max_speed = USB_SPEED_HIGH;
 
@@ -3297,16 +3291,10 @@ static int udc_probe(struct udc *dev)
 		"driver version: %s(for Geode5536 B1)\n", tmp);
 	udc = dev;
 
-	retval = usb_add_gadget_udc(&udc->pdev->dev, &dev->gadget);
+	retval = usb_add_gadget_udc_release(&udc->pdev->dev, &dev->gadget,
+			gadget_release);
 	if (retval)
 		goto finished;
-
-	retval = device_register(&dev->gadget.dev);
-	if (retval) {
-		usb_del_gadget_udc(&dev->gadget);
-		put_device(&dev->gadget.dev);
-		goto finished;
-	}
 
 	/* timer init */
 	init_timer(&udc_timer);
@@ -3352,7 +3340,7 @@ static int udc_remote_wakeup(struct udc *dev)
 }
 
 /* PCI device parameters */
-static DEFINE_PCI_DEVICE_TABLE(pci_id) = {
+static const struct pci_device_id pci_id[] = {
 	{
 		PCI_DEVICE(PCI_VENDOR_ID_AMD, 0x2096),
 		.class =	(PCI_CLASS_SERIAL_USB << 8) | 0xfe,

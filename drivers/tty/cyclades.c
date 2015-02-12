@@ -1124,14 +1124,8 @@ static void cyz_handle_cmd(struct cyclades_card *cinfo)
 					readl(&info->u.cyz.ch_ctrl->rs_status);
 				if (dcd & C_RS_DCD)
 					wake_up_interruptible(&info->port.open_wait);
-				else {
-					struct tty_struct *tty;
-					tty = tty_port_tty_get(&info->port);
-					if (tty) {
-						tty_hangup(tty);
-						tty_kref_put(tty);
-					}
-				}
+				else
+					tty_port_tty_hangup(&info->port, false);
 			}
 			break;
 		case C_CM_MCTS:
@@ -2715,6 +2709,8 @@ cy_ioctl(struct tty_struct *tty,
 		break;
 #ifndef CONFIG_CYZ_INTR
 	case CYZSETPOLLCYCLE:
+		if (arg > LONG_MAX / HZ)
+			return -ENODEV;
 		cyz_polling_cycle = (arg * HZ) / 1000;
 		break;
 	case CYZGETPOLLCYCLE:

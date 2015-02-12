@@ -27,8 +27,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  *
  * ALTERNATIVELY, this driver may be distributed under the terms of
@@ -1041,7 +1040,6 @@ xirc2ps_interrupt(int irq, void *dev_id)
 	    /* 1 extra so we can use insw */
 	    skb = netdev_alloc_skb(dev, pktlen + 3);
 	    if (!skb) {
-		pr_notice("low memory, packet dropped (size=%u)\n", pktlen);
 		dev->stats.rx_dropped++;
 	    } else { /* okay get the packet */
 		skb_reserve(skb, 2);
@@ -1775,21 +1773,7 @@ static struct pcmcia_driver xirc2ps_cs_driver = {
 	.suspend	= xirc2ps_suspend,
 	.resume		= xirc2ps_resume,
 };
-
-static int __init
-init_xirc2ps_cs(void)
-{
-	return pcmcia_register_driver(&xirc2ps_cs_driver);
-}
-
-static void __exit
-exit_xirc2ps_cs(void)
-{
-	pcmcia_unregister_driver(&xirc2ps_cs_driver);
-}
-
-module_init(init_xirc2ps_cs);
-module_exit(exit_xirc2ps_cs);
+module_pcmcia_driver(xirc2ps_cs_driver);
 
 #ifndef MODULE
 static int __init setup_xirc2ps_cs(char *str)

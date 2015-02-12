@@ -47,7 +47,7 @@ static int wl1271_get_scan_channels(struct wl1271 *wl,
 		     * In active scans, we only scan channels not
 		     * marked as passive.
 		     */
-		    (passive || !(flags & IEEE80211_CHAN_PASSIVE_SCAN))) {
+		    (passive || !(flags & IEEE80211_CHAN_NO_IR))) {
 			wl1271_debug(DEBUG_SCAN, "band %d, center_freq %d ",
 				     req->channels[i]->band,
 				     req->channels[i]->center_freq);
@@ -310,7 +310,7 @@ static void wl12xx_adjust_channels(struct wl1271_cmd_sched_scan_config *cmd,
 	memcpy(cmd->channels_2, cmd_channels->channels_2,
 	       sizeof(cmd->channels_2));
 	memcpy(cmd->channels_5, cmd_channels->channels_5,
-	       sizeof(cmd->channels_2));
+	       sizeof(cmd->channels_5));
 	/* channels_4 are not supported, so no need to copy them */
 }
 

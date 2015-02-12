@@ -5,7 +5,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2012 - 2013 Intel Corporation. All rights reserved.
+ * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -22,7 +22,7 @@
  * USA
  *
  * The full GNU General Public License is included in this distribution
- * in the file called LICENSE.GPL.
+ * in the file called COPYING.
  *
  * Contact Information:
  *  Intel Linux Wireless <ilw@linux.intel.com>
@@ -30,7 +30,7 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2012 - 2013 Intel Corporation. All rights reserved.
+ * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -123,6 +123,7 @@
  * @duration: the duration of the session in TU.
  * @min_duration: will start a new session if the current session will end
  *	in less than min_duration.
+ * @max_delay: maximum delay before starting the time event (in TU)
  *
  * This function can be used to start a session protection which means that the
  * fw will stay on the channel for %duration_ms milliseconds. This function
@@ -133,7 +134,8 @@
  */
 void iwl_mvm_protect_session(struct iwl_mvm *mvm,
 			     struct ieee80211_vif *vif,
-			     u32 duration, u32 min_duration);
+			     u32 duration, u32 min_duration,
+			     u32 max_delay);
 
 /**
  * iwl_mvm_stop_session_protection - cancel the session protection.
@@ -162,6 +164,7 @@ int iwl_mvm_rx_time_event_notif(struct iwl_mvm *mvm,
  * that the vif type is NL80211_IFTYPE_P2P_DEVICE
  * @duration: the requested duration in millisecond for the fw to be on the
  * channel that is bound to the vif.
+ * @type: the remain on channel request type
  *
  * This function can be used to issue a remain on channel session,
  * which means that the fw will stay in the channel for the request %duration
@@ -172,7 +175,7 @@ int iwl_mvm_rx_time_event_notif(struct iwl_mvm *mvm,
  * another notification to the driver.
  */
 int iwl_mvm_start_p2p_roc(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
-			  int duration);
+			  int duration, enum ieee80211_roc_type type);
 
 /**
  * iwl_mvm_stop_p2p_roc - stop remain on channel for p2p device functionlity

@@ -15,8 +15,9 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/onenand.h>
 #include <linux/interrupt.h>
-#include <linux/i2c/pca953x.h>
+#include <linux/platform_data/pca953x.h>
 #include <linux/gpio.h>
+#include <linux/gpio-pxa.h>
 #include <linux/mfd/88pm860x.h>
 #include <linux/platform_data/mv_usb.h>
 #include <linux/spi/spi.h>
@@ -73,6 +74,10 @@ static unsigned long ttc_dkb_pin_config[] __initdata = {
 	DF_WEn_DF_WEn,
 	DF_REn_DF_REn,
 	DF_RDY0_DF_RDY0,
+};
+
+static struct pxa_gpio_platform_data pxa910_gpio_pdata = {
+	.irq_base	= MMP_GPIO_TO_IRQ(0),
 };
 
 static struct mtd_partition ttc_dkb_onenand_partitions[] = {
@@ -162,13 +167,7 @@ static struct i2c_board_info ttc_dkb_i2c_info[] = {
 #ifdef CONFIG_USB_SUPPORT
 #if defined(CONFIG_USB_MV_UDC) || defined(CONFIG_USB_EHCI_MV_U2O)
 
-static char *pxa910_usb_clock_name[] = {
-	[0] = "U2OCLK",
-};
-
 static struct mv_usb_platform_data ttc_usb_pdata = {
-	.clknum		= 1,
-	.clkname	= pxa910_usb_clock_name,
 	.vbus		= NULL,
 	.mode		= MV_USB_MODE_OTG,
 	.otg_force_a_bus_req = 1,
@@ -192,7 +191,6 @@ static struct pxa3xx_nand_platform_data dkb_nand_info = {
 #define SCLK_SOURCE_SELECT(x)  (x << 30) /* 0x0 ~ 0x3 */
 /* link config */
 #define CFG_DUMBMODE(mode)     (mode << 28) /* 0x0 ~ 0x6*/
-#define CFG_GRA_SWAPRB(x)      (x << 0) /* 1: rbswap enabled */
 static struct mmp_mach_path_config dkb_disp_config[] = {
 	[0] = {
 		.name = "mmp-parallel",
@@ -200,8 +198,7 @@ static struct mmp_mach_path_config dkb_disp_config[] = {
 		.output_type = PATH_OUT_PARALLEL,
 		.path_config = CFG_IOPADMODE(0x1)
 			| SCLK_SOURCE_SELECT(0x1),
-		.link_config = CFG_DUMBMODE(0x2)
-			| CFG_GRA_SWAPRB(0x1),
+		.link_config = CFG_DUMBMODE(0x2),
 	},
 };
 
@@ -284,6 +281,8 @@ static void __init ttc_dkb_init(void)
 
 	/* off-chip devices */
 	pxa910_add_twsi(0, NULL, ARRAY_AND_SIZE(ttc_dkb_i2c_info));
+	platform_device_add_data(&pxa910_device_gpio, &pxa910_gpio_pdata,
+				 sizeof(struct pxa_gpio_platform_data));
 	platform_add_devices(ARRAY_AND_SIZE(ttc_dkb_devices));
 
 #ifdef CONFIG_USB_MV_UDC

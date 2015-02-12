@@ -580,12 +580,9 @@ alloc_list (struct net_device *dev)
 
 		skb = netdev_alloc_skb_ip_align(dev, np->rx_buf_sz);
 		np->rx_skbuff[i] = skb;
-		if (skb == NULL) {
-			printk (KERN_ERR
-				"%s: alloc_list: allocate Rx buffer error! ",
-				dev->name);
+		if (skb == NULL)
 			break;
-		}
+
 		/* Rubicon now supports 40 bits of addressing space. */
 		np->rx_ring[i].fraginfo =
 		    cpu_to_le64 ( pci_map_single (
@@ -1749,7 +1746,6 @@ rio_remove1 (struct pci_dev *pdev)
 		pci_release_regions (pdev);
 		pci_disable_device (pdev);
 	}
-	pci_set_drvdata (pdev, NULL);
 }
 
 static struct pci_driver rio_driver = {

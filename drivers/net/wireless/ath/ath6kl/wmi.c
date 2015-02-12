@@ -20,6 +20,7 @@
 #include "core.h"
 #include "debug.h"
 #include "testmode.h"
+#include "trace.h"
 #include "../regd.h"
 #include "../regd_common.h"
 
@@ -567,8 +568,8 @@ static int ath6kl_wmi_rx_probe_req_event_rx(struct wmi *wmi, u8 *datap, int len,
 		   dlen, freq, vif->probe_req_report);
 
 	if (vif->probe_req_report || vif->nw_type == AP_NETWORK)
-		cfg80211_rx_mgmt(&vif->wdev, freq, 0,
-				 ev->data, dlen, GFP_ATOMIC);
+		cfg80211_rx_mgmt(&vif->wdev, freq, 0, ev->data, dlen, 0,
+				 GFP_ATOMIC);
 
 	return 0;
 }
@@ -607,8 +608,7 @@ static int ath6kl_wmi_rx_action_event_rx(struct wmi *wmi, u8 *datap, int len,
 		return -EINVAL;
 	}
 	ath6kl_dbg(ATH6KL_DBG_WMI, "rx_action: len=%u freq=%u\n", dlen, freq);
-	cfg80211_rx_mgmt(&vif->wdev, freq, 0,
-			 ev->data, dlen, GFP_ATOMIC);
+	cfg80211_rx_mgmt(&vif->wdev, freq, 0, ev->data, dlen, 0, GFP_ATOMIC);
 
 	return 0;
 }
@@ -2028,6 +2028,9 @@ int ath6kl_wmi_beginscan_cmd(struct wmi *wmi, u8 if_idx,
 		if (!sband)
 			continue;
 
+		if (WARN_ON(band >= ATH6KL_NUM_BANDS))
+			break;
+
 		ratemask = rates[band];
 		supp_rates = sc->supp_rates[band].rates;
 		num_rates = 0;
@@ -2751,9 +2754,9 @@ static int ath6kl_set_bitrate_mask64(struct wmi *wmi, u8 if_idx,
 				mask->control[band].legacy << 4;
 
 		/* copy mcs rate mask */
-		mcsrate = mask->control[band].mcs[1];
+		mcsrate = mask->control[band].ht_mcs[1];
 		mcsrate <<= 8;
-		mcsrate |= mask->control[band].mcs[0];
+		mcsrate |= mask->control[band].ht_mcs[0];
 		ratemask[band] |= mcsrate << 12;
 		ratemask[band] |= mcsrate << 28;
 	}
@@ -2803,7 +2806,7 @@ static int ath6kl_set_bitrate_mask32(struct wmi *wmi, u8 if_idx,
 				mask->control[band].legacy << 4;
 
 		/* copy mcs rate mask */
-		mcsrate = mask->control[band].mcs[0];
+		mcsrate = mask->control[band].ht_mcs[0];
 		ratemask[band] |= mcsrate << 12;
 		ratemask[band] |= mcsrate << 20;
 	}
@@ -4085,6 +4088,8 @@ int ath6kl_wmi_control_rx(struct wmi *wmi, struct sk_buff *skb)
 		dev_kfree_skb(skb);
 		return -EINVAL;
 	}
+
+	trace_ath6kl_wmi_event(skb->data, skb->len);
 
 	return ath6kl_wmi_proc_events(wmi, skb);
 }

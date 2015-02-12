@@ -3,7 +3,7 @@
  * cnic modules to create FCoE instances, send/receive non-offloaded
  * FIP/FCoE packets, listen to link events etc.
  *
- * Copyright (c) 2008 - 2011 Broadcom Corporation
+ * Copyright (c) 2008 - 2013 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@ DEFINE_PER_CPU(struct bnx2fc_percpu_s, bnx2fc_percpu);
 
 #define DRV_MODULE_NAME		"bnx2fc"
 #define DRV_MODULE_VERSION	BNX2FC_VERSION
-#define DRV_MODULE_RELDATE	"Dec 21, 2012"
+#define DRV_MODULE_RELDATE	"Sep 17, 2013"
 
 
 static char version[] =
@@ -71,7 +71,7 @@ static void bnx2fc_recv_frame(struct sk_buff *skb);
 static void bnx2fc_start_disc(struct bnx2fc_interface *interface);
 static int bnx2fc_shost_config(struct fc_lport *lport, struct device *dev);
 static int bnx2fc_lport_config(struct fc_lport *lport);
-static int bnx2fc_em_config(struct fc_lport *lport);
+static int bnx2fc_em_config(struct fc_lport *lport, struct bnx2fc_hba *hba);
 static int bnx2fc_bind_adapter_devices(struct bnx2fc_hba *hba);
 static void bnx2fc_unbind_adapter_devices(struct bnx2fc_hba *hba);
 static int bnx2fc_bind_pcidev(struct bnx2fc_hba *hba);
@@ -542,8 +542,7 @@ static void bnx2fc_recv_frame(struct sk_buff *skb)
 	vn_port = fc_vport_id_lookup(lport, ntoh24(fh->fh_d_id));
 	if (vn_port) {
 		port = lport_priv(vn_port);
-		if (compare_ether_addr(port->data_src_addr, dest_mac)
-		    != 0) {
+		if (!ether_addr_equal(port->data_src_addr, dest_mac)) {
 			BNX2FC_HBA_DBG(lport, "fpma mismatch\n");
 			put_cpu();
 			kfree_skb(skb);
@@ -679,6 +678,7 @@ static int bnx2fc_shost_config(struct fc_lport *lport, struct device *dev)
 {
 	struct fcoe_port *port = lport_priv(lport);
 	struct bnx2fc_interface *interface = port->priv;
+	struct bnx2fc_hba *hba = interface->hba;
 	struct Scsi_Host *shost = lport->host;
 	int rc = 0;
 
@@ -699,8 +699,9 @@ static int bnx2fc_shost_config(struct fc_lport *lport, struct device *dev)
 	}
 	if (!lport->vport)
 		fc_host_max_npiv_vports(lport->host) = USHRT_MAX;
-	sprintf(fc_host_symbolic_name(lport->host), "%s v%s over %s",
-		BNX2FC_NAME, BNX2FC_VERSION,
+	snprintf(fc_host_symbolic_name(lport->host), 256,
+		 "%s (Broadcom %s) v%s over %s",
+		BNX2FC_NAME, hba->chip_num, BNX2FC_VERSION,
 		interface->netdev->name);
 
 	return 0;
@@ -944,16 +945,17 @@ static int bnx2fc_libfc_config(struct fc_lport *lport)
 	return 0;
 }
 
-static int bnx2fc_em_config(struct fc_lport *lport)
+static int bnx2fc_em_config(struct fc_lport *lport, struct bnx2fc_hba *hba)
 {
-	int max_xid;
+	int fcoe_min_xid, fcoe_max_xid;
 
+	fcoe_min_xid = hba->max_xid + 1;
 	if (nr_cpu_ids <= 2)
-		max_xid = FCOE_XIDS_PER_CPU;
+		fcoe_max_xid = hba->max_xid + FCOE_XIDS_PER_CPU_OFFSET;
 	else
-		max_xid = FCOE_MAX_XID;
-	if (!fc_exch_mgr_alloc(lport, FC_CLASS_3, FCOE_MIN_XID,
-				max_xid, NULL)) {
+		fcoe_max_xid = hba->max_xid + FCOE_MAX_XID_OFFSET;
+	if (!fc_exch_mgr_alloc(lport, FC_CLASS_3, fcoe_min_xid,
+			       fcoe_max_xid, NULL)) {
 		printk(KERN_ERR PFX "em_config:fc_exch_mgr_alloc failed\n");
 		return -ENOMEM;
 	}
@@ -1300,6 +1302,12 @@ static struct bnx2fc_hba *bnx2fc_hba_create(struct cnic_dev *cnic)
 	mutex_init(&hba->hba_mutex);
 
 	hba->cnic = cnic;
+
+	hba->max_tasks = cnic->max_fcoe_exchanges;
+	hba->elstm_xids = (hba->max_tasks / 2);
+	hba->max_outstanding_cmds = hba->elstm_xids;
+	hba->max_xid = (hba->max_tasks - 1);
+
 	rc = bnx2fc_bind_pcidev(hba);
 	if (rc) {
 		printk(KERN_ERR PFX "create_adapter:  bind error\n");
@@ -1318,8 +1326,7 @@ static struct bnx2fc_hba *bnx2fc_hba_create(struct cnic_dev *cnic)
 
 	hba->num_ofld_sess = 0;
 
-	hba->cmd_mgr = bnx2fc_cmd_mgr_alloc(hba, BNX2FC_MIN_XID,
-						BNX2FC_MAX_XID);
+	hba->cmd_mgr = bnx2fc_cmd_mgr_alloc(hba);
 	if (!hba->cmd_mgr) {
 		printk(KERN_ERR PFX "em_config:bnx2fc_cmd_mgr_alloc failed\n");
 		goto cmgr_err;
@@ -1330,13 +1337,13 @@ static struct bnx2fc_hba *bnx2fc_hba_create(struct cnic_dev *cnic)
 					FCOE_IOS_PER_CONNECTION_SHIFT;
 	fcoe_cap->capability1 |= BNX2FC_NUM_MAX_SESS <<
 					FCOE_LOGINS_PER_PORT_SHIFT;
-	fcoe_cap->capability2 = BNX2FC_MAX_OUTSTANDING_CMNDS <<
+	fcoe_cap->capability2 = hba->max_outstanding_cmds <<
 					FCOE_NUMBER_OF_EXCHANGES_SHIFT;
 	fcoe_cap->capability2 |= BNX2FC_MAX_NPIV <<
 					FCOE_NPIV_WWN_PER_PORT_SHIFT;
 	fcoe_cap->capability3 = BNX2FC_NUM_MAX_SESS <<
 					FCOE_TARGETS_SUPPORTED_SHIFT;
-	fcoe_cap->capability3 |= BNX2FC_MAX_OUTSTANDING_CMNDS <<
+	fcoe_cap->capability3 |= hba->max_outstanding_cmds <<
 					FCOE_OUTSTANDING_COMMANDS_SHIFT;
 	fcoe_cap->capability4 = FCOE_CAPABILITY4_STATEFUL;
 
@@ -1373,6 +1380,7 @@ struct bnx2fc_interface *bnx2fc_interface_create(struct bnx2fc_hba *hba,
 		return NULL;
 	}
 	ctlr = fcoe_ctlr_device_priv(ctlr_dev);
+	ctlr->cdev = ctlr_dev;
 	interface = fcoe_ctlr_priv(ctlr);
 	dev_hold(netdev);
 	kref_init(&interface->kref);
@@ -1416,7 +1424,7 @@ static struct fc_lport *bnx2fc_if_create(struct bnx2fc_interface *interface,
 	struct Scsi_Host	*shost;
 	struct fc_vport		*vport = dev_to_vport(parent);
 	struct bnx2fc_lport	*blport;
-	struct bnx2fc_hba	*hba;
+	struct bnx2fc_hba	*hba = interface->hba;
 	int			rc = 0;
 
 	blport = kzalloc(sizeof(struct bnx2fc_lport), GFP_KERNEL);
@@ -1426,6 +1434,7 @@ static struct fc_lport *bnx2fc_if_create(struct bnx2fc_interface *interface,
 	}
 
 	/* Allocate Scsi_Host structure */
+	bnx2fc_shost_template.can_queue = hba->max_outstanding_cmds;
 	if (!npiv)
 		lport = libfc_host_alloc(&bnx2fc_shost_template, sizeof(*port));
 	else
@@ -1477,7 +1486,7 @@ static struct fc_lport *bnx2fc_if_create(struct bnx2fc_interface *interface,
 
 	/* Allocate exchange manager */
 	if (!npiv)
-		rc = bnx2fc_em_config(lport);
+		rc = bnx2fc_em_config(lport, hba);
 	else {
 		shost = vport_to_shost(vport);
 		n_port = shost_priv(shost);
@@ -1491,7 +1500,6 @@ static struct fc_lport *bnx2fc_if_create(struct bnx2fc_interface *interface,
 
 	bnx2fc_interface_get(interface);
 
-	hba = interface->hba;
 	spin_lock_bh(&hba->hba_lock);
 	blport->lport = lport;
 	list_add_tail(&blport->list, &hba->vports);
@@ -1650,23 +1658,60 @@ mem_err:
 static int bnx2fc_bind_pcidev(struct bnx2fc_hba *hba)
 {
 	struct cnic_dev *cnic;
+	struct pci_dev *pdev;
 
 	if (!hba->cnic) {
 		printk(KERN_ERR PFX "cnic is NULL\n");
 		return -ENODEV;
 	}
 	cnic = hba->cnic;
-	hba->pcidev = cnic->pcidev;
-	if (hba->pcidev)
-		pci_dev_get(hba->pcidev);
+	pdev = hba->pcidev = cnic->pcidev;
+	if (!hba->pcidev)
+		return -ENODEV;
 
+	switch (pdev->device) {
+	case PCI_DEVICE_ID_NX2_57710:
+		strncpy(hba->chip_num, "BCM57710", BCM_CHIP_LEN);
+		break;
+	case PCI_DEVICE_ID_NX2_57711:
+		strncpy(hba->chip_num, "BCM57711", BCM_CHIP_LEN);
+		break;
+	case PCI_DEVICE_ID_NX2_57712:
+	case PCI_DEVICE_ID_NX2_57712_MF:
+	case PCI_DEVICE_ID_NX2_57712_VF:
+		strncpy(hba->chip_num, "BCM57712", BCM_CHIP_LEN);
+		break;
+	case PCI_DEVICE_ID_NX2_57800:
+	case PCI_DEVICE_ID_NX2_57800_MF:
+	case PCI_DEVICE_ID_NX2_57800_VF:
+		strncpy(hba->chip_num, "BCM57800", BCM_CHIP_LEN);
+		break;
+	case PCI_DEVICE_ID_NX2_57810:
+	case PCI_DEVICE_ID_NX2_57810_MF:
+	case PCI_DEVICE_ID_NX2_57810_VF:
+		strncpy(hba->chip_num, "BCM57810", BCM_CHIP_LEN);
+		break;
+	case PCI_DEVICE_ID_NX2_57840:
+	case PCI_DEVICE_ID_NX2_57840_MF:
+	case PCI_DEVICE_ID_NX2_57840_VF:
+	case PCI_DEVICE_ID_NX2_57840_2_20:
+	case PCI_DEVICE_ID_NX2_57840_4_10:
+		strncpy(hba->chip_num, "BCM57840", BCM_CHIP_LEN);
+		break;
+	default:
+		pr_err(PFX "Unknown device id 0x%x\n", pdev->device);
+		break;
+	}
+	pci_dev_get(hba->pcidev);
 	return 0;
 }
 
 static void bnx2fc_unbind_pcidev(struct bnx2fc_hba *hba)
 {
-	if (hba->pcidev)
+	if (hba->pcidev) {
+		hba->chip_num[0] = '\0';
 		pci_dev_put(hba->pcidev);
+	}
 	hba->pcidev = NULL;
 }
 
@@ -1959,6 +2004,24 @@ static void bnx2fc_ulp_init(struct cnic_dev *dev)
 		set_bit(BNX2FC_CNIC_REGISTERED, &hba->reg_with_cnic);
 }
 
+/* Assumes rtnl_lock and the bnx2fc_dev_lock are already taken */
+static int __bnx2fc_disable(struct fcoe_ctlr *ctlr)
+{
+	struct bnx2fc_interface *interface = fcoe_ctlr_priv(ctlr);
+
+	if (interface->enabled == true) {
+		if (!ctlr->lp) {
+			pr_err(PFX "__bnx2fc_disable: lport not found\n");
+			return -ENODEV;
+		} else {
+			interface->enabled = false;
+			fcoe_ctlr_link_down(ctlr);
+			fcoe_clean_pending_queue(ctlr->lp);
+		}
+	}
+	return 0;
+}
+
 /**
  * Deperecated: Use bnx2fc_enabled()
  */
@@ -1973,18 +2036,32 @@ static int bnx2fc_disable(struct net_device *netdev)
 
 	interface = bnx2fc_interface_lookup(netdev);
 	ctlr = bnx2fc_to_ctlr(interface);
-	if (!interface || !ctlr->lp) {
-		rc = -ENODEV;
-		printk(KERN_ERR PFX "bnx2fc_disable: interface or lport not found\n");
-	} else {
-		interface->enabled = false;
-		fcoe_ctlr_link_down(ctlr);
-		fcoe_clean_pending_queue(ctlr->lp);
-	}
 
+	if (!interface) {
+		rc = -ENODEV;
+		pr_err(PFX "bnx2fc_disable: interface not found\n");
+	} else {
+		rc = __bnx2fc_disable(ctlr);
+	}
 	mutex_unlock(&bnx2fc_dev_lock);
 	rtnl_unlock();
 	return rc;
+}
+
+static int __bnx2fc_enable(struct fcoe_ctlr *ctlr)
+{
+	struct bnx2fc_interface *interface = fcoe_ctlr_priv(ctlr);
+
+	if (interface->enabled == false) {
+		if (!ctlr->lp) {
+			pr_err(PFX "__bnx2fc_enable: lport not found\n");
+			return -ENODEV;
+		} else if (!bnx2fc_link_ok(ctlr->lp)) {
+			fcoe_ctlr_link_up(ctlr);
+			interface->enabled = true;
+		}
+	}
+	return 0;
 }
 
 /**
@@ -2001,12 +2078,11 @@ static int bnx2fc_enable(struct net_device *netdev)
 
 	interface = bnx2fc_interface_lookup(netdev);
 	ctlr = bnx2fc_to_ctlr(interface);
-	if (!interface || !ctlr->lp) {
+	if (!interface) {
 		rc = -ENODEV;
-		printk(KERN_ERR PFX "bnx2fc_enable: interface or lport not found\n");
-	} else if (!bnx2fc_link_ok(ctlr->lp)) {
-		fcoe_ctlr_link_up(ctlr);
-		interface->enabled = true;
+		pr_err(PFX "bnx2fc_enable: interface not found\n");
+	} else {
+		rc = __bnx2fc_enable(ctlr);
 	}
 
 	mutex_unlock(&bnx2fc_dev_lock);
@@ -2027,14 +2103,12 @@ static int bnx2fc_enable(struct net_device *netdev)
 static int bnx2fc_ctlr_enabled(struct fcoe_ctlr_device *cdev)
 {
 	struct fcoe_ctlr *ctlr = fcoe_ctlr_device_priv(cdev);
-	struct fc_lport *lport = ctlr->lp;
-	struct net_device *netdev = bnx2fc_netdev(lport);
 
 	switch (cdev->enabled) {
 	case FCOE_CTLR_ENABLED:
-		return bnx2fc_enable(netdev);
+		return __bnx2fc_enable(ctlr);
 	case FCOE_CTLR_DISABLED:
-		return bnx2fc_disable(netdev);
+		return __bnx2fc_disable(ctlr);
 	case FCOE_CTLR_UNUSED:
 	default:
 		return -ENOTSUPP;
@@ -2706,7 +2780,6 @@ static struct scsi_host_template bnx2fc_shost_template = {
 	.change_queue_type	= fc_change_queue_type,
 	.this_id		= -1,
 	.cmd_per_lun		= 3,
-	.can_queue		= BNX2FC_CAN_QUEUE,
 	.use_clustering		= ENABLE_CLUSTERING,
 	.sg_tablesize		= BNX2FC_MAX_BDS_PER_CMD,
 	.max_sectors		= 1024,

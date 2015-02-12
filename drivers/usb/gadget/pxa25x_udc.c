@@ -24,7 +24,6 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/init.h>
 #include <linux/timer.h>
 #include <linux/list.h>
 #include <linux/interrupt.h>
@@ -54,6 +53,7 @@
  */
 #ifdef CONFIG_ARCH_PXA
 #include <mach/pxa25x-udc.h>
+#include <mach/hardware.h>
 #endif
 
 #ifdef CONFIG_ARCH_LUBBOCK
@@ -1193,6 +1193,7 @@ static void udc_reinit(struct pxa25x_udc *dev)
 		ep->stopped = 0;
 		INIT_LIST_HEAD (&ep->queue);
 		ep->pio_irqs = 0;
+		usb_ep_set_maxpacket_limit(&ep->ep, ep->ep.maxpacket);
 	}
 
 	/* the rest was statically initialized, and is read-only */
@@ -1263,7 +1264,6 @@ static int pxa25x_udc_start(struct usb_gadget *g,
 
 	/* first hook up the driver ... */
 	dev->driver = driver;
-	dev->gadget.dev.driver = &driver->driver;
 	dev->pullup = 1;
 
 	/* ... then enable host detection and ep0; and we're ready
@@ -1325,7 +1325,6 @@ static int pxa25x_udc_stop(struct usb_gadget*g,
 	if (!IS_ERR_OR_NULL(dev->transceiver))
 		(void) otg_set_peripheral(dev->transceiver->otg, NULL);
 
-	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
 
 	dump_state(dev);
@@ -2056,7 +2055,7 @@ static struct pxa25x_udc memory = {
 /*
  *	probe - binds to the platform device
  */
-static int __init pxa25x_udc_probe(struct platform_device *pdev)
+static int pxa25x_udc_probe(struct platform_device *pdev)
 {
 	struct pxa25x_udc *dev = &memory;
 	int retval, irq;
@@ -2119,7 +2118,7 @@ static int __init pxa25x_udc_probe(struct platform_device *pdev)
 
 	/* other non-static parts of init */
 	dev->dev = &pdev->dev;
-	dev->mach = pdev->dev.platform_data;
+	dev->mach = dev_get_platdata(&pdev->dev);
 
 	dev->transceiver = usb_get_phy(USB_PHY_TYPE_USB2);
 
@@ -2137,17 +2136,6 @@ static int __init pxa25x_udc_probe(struct platform_device *pdev)
 	init_timer(&dev->timer);
 	dev->timer.function = udc_watchdog;
 	dev->timer.data = (unsigned long) dev;
-
-	device_initialize(&dev->gadget.dev);
-	dev->gadget.dev.parent = &pdev->dev;
-	dev->gadget.dev.dma_mask = pdev->dev.dma_mask;
-
-	retval = device_add(&dev->gadget.dev);
-	if (retval) {
-		dev->driver = NULL;
-		dev->gadget.dev.driver = NULL;
-		goto err_device_add;
-	}
 
 	the_controller = dev;
 	platform_set_drvdata(pdev, dev);
@@ -2199,8 +2187,6 @@ lubbock_fail0:
 	free_irq(irq, dev);
 #endif
  err_irq1:
-	device_unregister(&dev->gadget.dev);
- err_device_add:
 	if (gpio_is_valid(dev->mach->gpio_pullup))
 		gpio_free(dev->mach->gpio_pullup);
  err_gpio_pullup:
@@ -2218,7 +2204,7 @@ static void pxa25x_udc_shutdown(struct platform_device *_dev)
 	pullup_off();
 }
 
-static int __exit pxa25x_udc_remove(struct platform_device *pdev)
+static int pxa25x_udc_remove(struct platform_device *pdev)
 {
 	struct pxa25x_udc *dev = platform_get_drvdata(pdev);
 
@@ -2226,7 +2212,6 @@ static int __exit pxa25x_udc_remove(struct platform_device *pdev)
 		return -EBUSY;
 
 	usb_del_gadget_udc(&dev->gadget);
-	device_unregister(&dev->gadget.dev);
 	dev->pullup = 0;
 	pullup(dev);
 
@@ -2252,7 +2237,6 @@ static int __exit pxa25x_udc_remove(struct platform_device *pdev)
 		dev->transceiver = NULL;
 	}
 
-	platform_set_drvdata(pdev, NULL);
 	the_controller = NULL;
 	return 0;
 }
@@ -2311,7 +2295,8 @@ static int pxa25x_udc_resume(struct platform_device *dev)
 
 static struct platform_driver udc_driver = {
 	.shutdown	= pxa25x_udc_shutdown,
-	.remove		= __exit_p(pxa25x_udc_remove),
+	.probe		= pxa25x_udc_probe,
+	.remove		= pxa25x_udc_remove,
 	.suspend	= pxa25x_udc_suspend,
 	.resume		= pxa25x_udc_resume,
 	.driver		= {
@@ -2320,7 +2305,7 @@ static struct platform_driver udc_driver = {
 	},
 };
 
-module_platform_driver_probe(udc_driver, pxa25x_udc_probe);
+module_platform_driver(udc_driver);
 
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR("Frank Becker, Robert Schwebel, David Brownell");
