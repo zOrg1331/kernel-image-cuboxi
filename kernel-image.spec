@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.2
+Release: alt1.M70C.3
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel	.28
@@ -548,6 +548,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Feb 12 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.3
+- in-kernel ipset excluded
+
 * Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.2
 - new version of netlabel patch applied
 
