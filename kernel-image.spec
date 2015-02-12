@@ -550,6 +550,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.33-alt1
 - 3.14.33
+- in-kernel ipset excluded
+- updated netlabel patch
 
 * Tue Feb 10 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.32-alt2
 - closes: #30712
