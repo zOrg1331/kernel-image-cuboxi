@@ -967,6 +967,7 @@ vhost_add_used_n_10760 vhost_add_used_n 3 10760 NULL
 rd_build_prot_space_10761 rd_build_prot_space 2-3 10761 NULL
 kvm_read_guest_atomic_10765 kvm_read_guest_atomic 4 10765 NULL
 __qp_memcpy_to_queue_10779 __qp_memcpy_to_queue 2-4 10779 NULL
+ttm_dma_page_pool_free_10796 ttm_dma_page_pool_free 2-0 10796 NULL
 diva_set_trace_filter_10820 diva_set_trace_filter 0-1 10820 NULL
 lbs_sleepparams_read_10840 lbs_sleepparams_read 3 10840 NULL
 ida_get_new_above_10853 ida_get_new_above 0 10853 NULL
@@ -2078,6 +2079,7 @@ ext4_ext_direct_IO_22679 ext4_ext_direct_IO 4 22679 NULL
 l2tp_ip_recvmsg_22681 l2tp_ip_recvmsg 4 22681 NULL
 bch_dump_read_22685 bch_dump_read 3 22685 NULL
 reg_umr_22686 reg_umr 5 22686 NULL
+nr_cpusets_22705 nr_cpusets 0 22705 NULL
 alloc_libipw_22708 alloc_libipw 1 22708 NULL
 cx18_copy_buf_to_user_22735 cx18_copy_buf_to_user 4-0 22735 NULL
 ceph_decode_32_22738 ceph_decode_32 0 22738 NULL nohasharray
@@ -2274,6 +2276,7 @@ rtw_set_wps_assoc_resp_24440 rtw_set_wps_assoc_resp 3 24440 &smk_user_access_244
 evdev_do_ioctl_24459 evdev_do_ioctl 2 24459 NULL
 lbs_highsnr_write_24460 lbs_highsnr_write 3 24460 NULL
 skb_copy_and_csum_datagram_iovec_24466 skb_copy_and_csum_datagram_iovec 2 24466 NULL
+ttm_page_pool_free_24486 ttm_page_pool_free 2-0 24486 NULL
 dut_mode_read_24489 dut_mode_read 3 24489 NULL
 read_file_spec_scan_ctl_24491 read_file_spec_scan_ctl 3 24491 NULL
 pd_video_read_24510 pd_video_read 3 24510 NULL
@@ -2730,6 +2733,7 @@ probes_write_29711 probes_write 3 29711 NULL
 read_cis_cache_29735 read_cis_cache 4 29735 NULL
 xfs_new_eof_29737 xfs_new_eof 2 29737 NULL
 std_nic_write_29752 std_nic_write 3 29752 NULL
+static_key_count_29771 static_key_count 0 29771 NULL
 dbAlloc_29794 dbAlloc 0 29794 NULL
 tcp_sendpage_29829 tcp_sendpage 4 29829 NULL
 __probe_kernel_write_29842 __probe_kernel_write 3 29842 NULL
