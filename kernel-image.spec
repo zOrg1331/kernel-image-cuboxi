@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt1
 epoch:1 
 %define kernel_base_version	3.14
-%define kernel_sublevel	.33
+%define kernel_sublevel	.34
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -540,6 +540,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Mar 02 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.34-alt1
+- 3.14.34
+
 * Thu Feb 19 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.33-alt1
 - 3.14.33
 
