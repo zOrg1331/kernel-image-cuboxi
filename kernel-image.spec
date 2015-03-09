@@ -550,7 +550,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Sun Mar 08 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.35-alt1
-- 3.14.34
+- 3.14.35
+- SECCOMP_FILTER_FLAG_TSYNC backported
 
 * Fri Feb 27 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.34-alt1
 - 3.14.34
