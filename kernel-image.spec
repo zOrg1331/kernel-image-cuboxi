@@ -314,7 +314,7 @@ in the kernel and update the documentation to reflect these changes.
 %prep
 %setup -cT -n kernel-image-%flavour-%kversion-%krelease
 rm -rf kernel-source-%kernel_base_version
-tar -jxf %kernel_src/kernel-source-%kernel_base_version.tar.bz2
+tar -xf %kernel_src/kernel-source-%kernel_base_version.tar
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
 
