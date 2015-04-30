@@ -1,12 +1,11 @@
 /*
- * Copyright (C) 2005-2014 Junjiro R. Okajima
+ * Copyright (C) 2005-2015 Junjiro R. Okajima
  */
 
 /*
  * sub-routines for VFS
  */
 
-#include <linux/ima.h>
 #include <linux/namei.h>
 #include <linux/security.h>
 #include <linux/splice.h>
@@ -719,7 +718,7 @@ static void call_unlink(void *args)
 	struct dentry *d = a->path->dentry;
 	struct inode *h_inode;
 	const int stop_sillyrename = (au_test_nfs(d->d_sb)
-				      && d_count(d) == 1);
+				      && au_dcount(d) == 1);
 
 	IMustLock(a->dir);
 

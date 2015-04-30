@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2014 Junjiro R. Okajima
+ * Copyright (C) 2005-2015 Junjiro R. Okajima
  */
 
 /*
@@ -250,8 +250,7 @@ static void epilog(struct inode *dir, struct dentry *dentry,
 	d_drop(dentry);
 	inode->i_ctime = dir->i_ctime;
 
-	if (au_ibstart(dir) == bindex)
-		au_cpup_attr_timesizes(dir);
+	au_dir_ts(dir, bindex);
 	dir->i_version++;
 }
 
@@ -310,7 +309,7 @@ int aufs_unlink(struct inode *dir, struct dentry *dentry)
 	inode = dentry->d_inode;
 	IMustLock(inode);
 	err = -EISDIR;
-	if (unlikely(S_ISDIR(inode->i_mode)))
+	if (unlikely(d_is_dir(dentry)))
 		goto out_unlock; /* possible? */
 
 	bstart = au_dbstart(dentry);
@@ -411,7 +410,7 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 	inode = dentry->d_inode;
 	IMustLock(inode);
 	err = -ENOTDIR;
-	if (unlikely(!S_ISDIR(inode->i_mode)))
+	if (unlikely(!d_is_dir(dentry)))
 		goto out_unlock; /* possible? */
 
 	err = -ENOMEM;

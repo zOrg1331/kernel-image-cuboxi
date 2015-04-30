@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2014 Junjiro R. Okajima
+ * Copyright (C) 2005-2015 Junjiro R. Okajima
  */
 
 /*
@@ -44,8 +44,7 @@ static int epilog(struct inode *dir, aufs_bindex_t bindex,
 		d_instantiate(dentry, inode);
 		dir = dentry->d_parent->d_inode; /* dir inode is locked */
 		IMustLock(dir);
-		if (au_ibstart(dir) == au_dbstart(dentry))
-			au_cpup_attr_timesizes(dir);
+		au_dir_ts(dir, bindex);
 		dir->i_version++;
 		au_fhsm_wrote(sb, bindex, /*force*/0);
 		return 0; /* success */
@@ -188,6 +187,11 @@ lock_hdir_lkup_wh(struct dentry *dentry, struct au_dtime *dt,
 	if (bcpup != au_dbwh(dentry))
 		goto out; /* success */
 
+	/*
+	 * ENAMETOOLONG here means that if we allowed create such name, then it
+	 * would not be able to removed in the future. So we don't allow such
+	 * name here and we don't handle ENAMETOOLONG differently here.
+	 */
 	wh_dentry = au_wh_lkup(h_parent, &dentry->d_name, br);
 
 out_unpin:
@@ -727,9 +731,8 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 			goto out_revert;
 	}
 
+	au_dir_ts(dir, a->bdst);
 	dir->i_version++;
-	if (au_ibstart(dir) == au_dbstart(dentry))
-		au_cpup_attr_timesizes(dir);
 	inc_nlink(inode);
 	inode->i_ctime = dir->i_ctime;
 	d_instantiate(dentry, au_igrab(inode));
