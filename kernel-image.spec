@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.3
+Release: alt0.M70C.3
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .51
@@ -606,6 +606,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 3.14.34
 - more in-kernel ipset excluded
 
+* Thu Feb 12 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.3
+- in-kernel ipset excluded
+
+* Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.2
+- new version of netlabel patch applied
+
 * Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.33-alt1
 - 3.14.33
 - in-kernel ipset excluded
@@ -625,12 +631,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 * Sat Jan 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.29-alt1
 - 3.14.29
-
-* Thu Feb 12 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.3
-- in-kernel ipset excluded
-
-* Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.2
-- new version of netlabel patch applied
 
 * Fri Jan 16 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.1
 - unused files deleted
