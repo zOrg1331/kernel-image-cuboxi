@@ -1,5 +1,5 @@
-%define original_kernel_version 4.1	
-%define kernel_version		4.1
+%define original_kernel_version 4.2
+%define kernel_version		4.2
 %define patch_level		%nil
 
 %define testing			0
@@ -52,6 +52,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cf \
 %kernel_src/kernel-source-%kernel_version.tar
 
 %changelog
+* Wed Sep 02 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1.0.0-alt1
+- 4.2
+
 * Thu Jun 25 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1.0.0-alt1
 - 4.1 
 
