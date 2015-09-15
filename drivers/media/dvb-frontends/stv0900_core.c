@@ -1486,7 +1486,7 @@ static enum fe_stv0900_error stv0900_init_internal(struct dvb_frontend *fe,
 
 	stv0900_write_bits(intp, F0900_P1_TUN_IQSWAP, p_init->tun1_iq_inv);
 	stv0900_write_bits(intp, F0900_P2_TUN_IQSWAP, p_init->tun2_iq_inv);
-	stv0900_set_mclk(intp, 135000000);
+	stv0900_set_mclk(intp, 180000000);
 	msleep(3);
 
 	switch (intp->clkmode) {
