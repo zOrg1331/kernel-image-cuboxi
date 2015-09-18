@@ -634,8 +634,8 @@ int ntp_validate_timex(struct timex *txc)
 		return -EPERM;
 
 	/*
-	 * Check for potential mult overflows that can
-	 * only happen on 64bit systems.
+	 * Check for potential multiplication overflows that can
+	 * only happen on 64-bit systems:
 	 */
 	if ((txc->modes & ADJ_FREQUENCY) && (BITS_PER_LONG == 64)) {
 		if (LLONG_MIN / PPM_SCALE > txc->freq)
