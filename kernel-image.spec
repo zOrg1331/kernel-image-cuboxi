@@ -547,6 +547,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Wed Oct 07 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:4.1.10-alt1
 - 4.1.10
 
+* Mon Oct 05 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.18.22-alt1
+- 3.18.22
+
 * Tue Sep 22 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:4.1.8-alt1
 - 4.1.8
 
