@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70C.4
+Release: alt0.M70C.5
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .51
@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Oct 27 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt0.M70C.5
+- applied: bridge: change BR_GROUPFWD_RESTRICTED to allow forwarding of LLDP frames
+
 * Thu Oct 01 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt0.M70C.4
 - CVE-2014-3215 fixed
 
