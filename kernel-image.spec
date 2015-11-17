@@ -545,8 +545,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Tue Nov 03 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.3.0-alt1
+* Tue Nov 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.3.0-alt1
 - 4.3.0
+
+* Tue Nov 10 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.2.6-alt1
+- 4.2.6
 
 * Tue Oct 27 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:4.2.5-alt1
 - 4.2.5
