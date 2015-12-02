@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M70P.1
 epoch:1 
 %define kernel_base_version	4.1
 %define kernel_sublevel	.13
@@ -544,6 +544,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Dec 02 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.1.13-alt0.M70P.1
+- backport to p7
+
 * Tue Nov 10 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.1.13-alt1
 - 4.1.13
 
