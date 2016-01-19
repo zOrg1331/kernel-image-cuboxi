@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70P.1
+Release: alt0.M70P.2
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .58
@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Jan 19 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.58-alt0.M70P.2
+- CVE-2016-0728 fixed
+
 * Thu Dec 10 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.58-alt0.M70P.1
 - 3.14.58
 
