@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70P.2
+Release: alt0.M70P.1
 epoch:1 
 %define kernel_base_version	3.14
-%define kernel_sublevel .58
+%define kernel_sublevel .59
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jan 25 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt0.M70P.1
+- 3.14.59
+
 * Tue Jan 19 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.58-alt0.M70P.2
 - CVE-2016-0728 fixed
 
