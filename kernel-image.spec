@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.2
+Release: alt1.M70C.3
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .59
@@ -552,6 +552,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+<<<<<<< 2ffd5507ec74625511df67a746251db6d7969d7f
 <<<<<<< 83fd64885a2602a93c7c1b1c692562973189dc93
 * Mon Jan 25 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt0.M70P.1
 - 3.14.59
@@ -584,6 +585,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 3.14.51
 
 * Mon Aug 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt0.M70C.2
+- 3.14.51
+
+* Mon Aug 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.51-alt0.M70C.3
 - 3.14.51
 
 * Tue Aug 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.50-alt1
@@ -656,6 +660,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 * Sat Jan 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.29-alt1
 - 3.14.29
+
+* Thu Feb 12 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.3
+- in-kernel ipset excluded
 
 * Wed Feb 11 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.14.28-alt1.M70C.2
 - new version of netlabel patch applied
