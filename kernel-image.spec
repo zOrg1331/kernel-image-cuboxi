@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Mar 10 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.64-alt0.M70P.1
+- 3.14.64
+
 * Fri Mar 04 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.63-alt0.M70P.1
 - 3.14.63
 
