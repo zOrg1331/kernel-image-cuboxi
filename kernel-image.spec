@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 4.4.8
 - 4.4 as std-def
 
+* Wed Apr 13 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.1.21-alt1
+- 4.1.21
+
 * Thu Mar 10 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.5-alt1
 - 4.4.5
 
