@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel	.10
@@ -545,6 +545,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu May 12 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.10-alt0.M80P.1
+- backport to p8
+
 * Thu May 12 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.10-alt1
 - 4.4.10
 
