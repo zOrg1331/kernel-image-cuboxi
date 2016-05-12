@@ -2,7 +2,7 @@ Name: kernel-image-un-def
 Release: alt0.M60P.1
 epoch:1 
 %define kernel_base_version	3.4
-%define kernel_sublevel	.89
+%define kernel_sublevel .112
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -530,6 +530,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu May 12 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.4.112-alt0.M60P.1
+- 3.4.112
+
 * Wed May 07 2014 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.4.89-alt0.M60P.1
 - 3.4.89
 
