@@ -170,6 +170,8 @@ enum {
 	NLBL_MGMT_C_LISTDEF,
 	NLBL_MGMT_C_PROTOCOLS,
 	NLBL_MGMT_C_VERSION,
+	NLBL_MGMT_C_S0_SET,
+	NLBL_MGMT_C_S0_GET,
 	__NLBL_MGMT_C_MAX,
 };
 
@@ -209,6 +211,9 @@ enum {
 	/* (NLA_NESTED)
 	 * the selector list, there must be at least one
 	 * NLBL_MGMT_A_ADDRSELECTOR attribute */
+	NLBL_MGMT_A_S0,
+	/* (NLA_U8)
+	 * if true then S0 packets are not marked, else marked */
 	__NLBL_MGMT_A_MAX,
 };
 #define NLBL_MGMT_A_MAX (__NLBL_MGMT_A_MAX - 1)
@@ -218,5 +223,8 @@ int netlbl_mgmt_genl_init(void);
 
 /* NetLabel configured protocol reference counter */
 extern atomic_t netlabel_mgmt_protocount;
+
+/* Status of markup s0 packets flag. */
+int netlbl_mgmt_s0_flg(void);
 
 #endif
