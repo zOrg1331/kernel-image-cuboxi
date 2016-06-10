@@ -287,6 +287,7 @@ If possible, try to use glibc-kernheaders instead of this package.
 Summary: Headers and other files needed for building kernel modules
 Group: Development/Kernel 
 Requires: gcc%kgcc_version
+Requires: libelf-devel
 
 %description -n kernel-headers-modules-%flavour
 This package contains header files, Makefiles and other parts of the
