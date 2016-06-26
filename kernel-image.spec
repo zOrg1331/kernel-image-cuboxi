@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.4
+Release: alt1.M70C.5
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .59
@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Sun Jun 26 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt1.M70C.5
+- CONFIG_USER_NS unset due to CVE-2016-4997
+
 * Tue Jun 14 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt1.M70C.4
 - drivers/media/dvb-frontends/ds3000.c: off by one fixed
 
