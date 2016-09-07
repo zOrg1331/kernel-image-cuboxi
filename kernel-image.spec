@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70C.1
+Release: alt0.M70C.2
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .19
@@ -319,9 +319,7 @@ tar -xf %kernel_src/kernel-source-%kernel_base_version.tar
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
 
-%if "%base_flavour" == "std"
 %patch1 -p1
-%endif
 
 %if "%sub_flavour" == "pae"
 %patch2 -p1
@@ -545,6 +543,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Sep 07 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.19-alt0.M70C.2
+- preemption disabled
+
 * Wed Aug 24 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.19-alt0.M70C.1
 - backport to c7
 
