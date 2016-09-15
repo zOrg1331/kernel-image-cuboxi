@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .20
+%define kernel_sublevel .21
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -545,6 +545,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Sep 15 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.21-alt0.M80P.1
+- v4.4.21
+
 * Tue Sep 13 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.20-alt0.M80P.2
 - build for #32485 testing
 
