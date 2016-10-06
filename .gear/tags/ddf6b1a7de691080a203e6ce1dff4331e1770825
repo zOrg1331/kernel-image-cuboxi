@@ -1,0 +1,16 @@
+object c8d2bc9bc39ebea8437fd974fdbc21847bb897a3
+type commit
+tag v4.8
+tagger Linus Torvalds <torvalds@linux-foundation.org> 1475450680 -0700
+
+Linux 4.8
+-----BEGIN PGP SIGNATURE-----
+
+iQEcBAABAgAGBQJX8Zc4AAoJEHm+PkMAQRiGQG8H/2Hd4IwJh75snGY5LAiWt6ra
+kGM/SobvLAMtcoxXCeHqf2bZrxa2Zz9tnEzhuLMGaf9a3l79xHa8YumK5KS1JPGV
+6lZBvuPi8BIyT0cpYH000e5ehHfhP6pSGJKZ2EuLv43HcBeVZEGAf3/8jSAlNA15
+bwFy2ZEkwJGThbnT6au0Y3s9h8LcNjtllu9hjfb+/9oNGvp8r4QhdVodIqIQ4cv6
+SeUfv7Pn2LZDMCSaTP9bh2KaR4dwYZHFsVe75x2wND5Sfq7DVBBfFkAoV/RwJDTM
+gBc3PNnmzb/tix6ohOrSQnSiGsXv1uASxvHH3RD2zG6g7Aj9Eq/+Z7ZdPu2+o+U=
+=U+ef
+-----END PGP SIGNATURE-----
