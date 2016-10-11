@@ -442,6 +442,7 @@ KbuildFiles="
 	scripts/gcc-x86_*-has-stack-protector.sh
 	scripts/module-common.lds
 	scripts/depmod.sh
+	scripts/gcc-plugins/cyc_complexity_plugin.so
 
 
 	.config
