@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M60C.1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .24
@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.7
+%define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
@@ -88,7 +88,7 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.4.24-alt1
+Requires: bootloader-utils
 Requires: module-init-tools >= 3.1
 Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
@@ -519,6 +519,50 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %doc %_docdir/kernel-doc-%base_flavour-%version
 %endif
 
+
+
+%post -n kernel-modules-drm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-nouveau-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-nouveau-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-radeon-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-radeon-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-kvm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-kvm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-v4l-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-v4l-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-staging-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-staging-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-headers-%flavour
+%post_kernel_headers %kversion-%flavour-%krelease
+
+%postun -n kernel-headers-%flavour
+%postun_kernel_headers %kversion-%flavour-%krelease
+
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
@@ -545,6 +589,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Oct 13 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.24-alt0.M60C.1
+- backport to c6 :-\
+
 * Sun Oct 09 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.24-alt0.M80P.1
 - v4.4.24
 
@@ -1253,6 +1300,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 * Tue Apr 03 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.3.1-alt1
 - 3.3.1
+
+* Tue Mar 27 2012 Anton Protopopov <aspsk@altlinux.org> 1:3.0.26-alt0.M60P.1
+- 3.0.26
 
 * Tue Mar 20 2012 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:3.3.0-alt1
 - 3.3
