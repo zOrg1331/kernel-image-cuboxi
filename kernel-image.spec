@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt1
 epoch:1 
 %define kernel_base_version	4.8
-%define kernel_sublevel .4
+%define kernel_sublevel .5
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -548,8 +548,15 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Oct 28 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.8.5-alt1
+- v4.8.5
+- secured /proc/interrupts
+
 * Tue Oct 25 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.8.4-alt1
 - v4.8.4
+
+* Sat Oct 22 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.7.10-alt1
+- v4.7.10
 
 * Mon Oct 10 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.8.1-alt1
 - v4.8.1
