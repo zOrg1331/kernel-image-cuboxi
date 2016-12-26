@@ -1,5 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
+CONFIG_MEMORY_SANITIZE=y
 CONFIG_64BIT=y
 CONFIG_X86_64=y
 CONFIG_X86=y
