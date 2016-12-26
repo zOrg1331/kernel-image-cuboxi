@@ -1,6 +1,7 @@
 #
 # Automatically generated file; DO NOT EDIT.
 # CONFIG_64BIT is not set
+CONFIG_MEMORY_SANITIZE=y
 CONFIG_X86_32=y
 CONFIG_X86=y
 CONFIG_INSTRUCTION_DECODER=y

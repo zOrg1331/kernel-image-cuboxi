@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80P.2
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .39
@@ -545,6 +545,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Dec 23 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.39-alt0.M80P.2
+- memory sanitize patch added
+
 * Fri Dec 16 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.4.39-alt0.M80P.1
 - v4.4.39
 
