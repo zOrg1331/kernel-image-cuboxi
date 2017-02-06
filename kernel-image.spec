@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.1
+Release: alt1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .47
