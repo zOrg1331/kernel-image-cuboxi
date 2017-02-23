@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80C.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .11
