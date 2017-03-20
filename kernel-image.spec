@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.6
+Release: alt1.M70C.7
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .59
@@ -552,6 +552,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Mar 20 2017 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt1.M70C.7
+- (Fixes: CVE-2017-2636) by disabling hdlc
+
 * Mon Oct 24 2016 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:3.14.59-alt1.M70C.6
 - CVE-2016-5195 fixed
 
