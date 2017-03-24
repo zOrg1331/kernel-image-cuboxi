@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70P.1
+Release: alt0.M70P.2
 epoch:1 
 %define kernel_base_version	4.1
 %define kernel_sublevel .39
@@ -544,6 +544,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Mar 24 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.1.39-alt0.M70P.2
+- user ns restriction by default like p8
+
 * Wed Mar 15 2017 Anton V. Boyarshinov <boyarsh@altlinux.org> 1:4.1.39-alt0.M70P.1
 - v4.1.39
 
