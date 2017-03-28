@@ -497,7 +497,7 @@ int main()
 {
         write( STDERR_FILENO, "Boot successfull!\n", 18);
         reboot( RB_POWER_OFF  );
-        sleep(10);
+        pause();
 }
 EOF
 echo "init" | cpio -H newc -o | gzip > initrd.img
