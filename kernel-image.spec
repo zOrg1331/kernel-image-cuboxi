@@ -69,6 +69,7 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 BuildRequires: bc
+BuildRequires: qemu-system glibc-devel-static
 BuildRequires: openssl-devel 
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
@@ -480,6 +481,23 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
+%check
+KernelVer=%kversion-%flavour-%krelease
+mkdir test
+cd test
+gcc -static -xc -o init - <<EOF
+#include <unistd.h>
+#include <sys/reboot.h>
+int main()
+{
+        write( STDERR_FILENO, "Boot successfull!\n", 18);
+        reboot( RB_POWER_OFF  );
+        sleep(10);
+}
+EOF
+echo "init" | cpio -H newc -o | gzip > initrd.img
+timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img &> boot.log
+grep -q 'reboot: Power down' boot.log || echo "Hasn't boot!"
 
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
