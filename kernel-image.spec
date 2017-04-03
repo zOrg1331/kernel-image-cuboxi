@@ -501,8 +501,8 @@ int main()
 }
 EOF
 echo "init" | cpio -H newc -o | gzip > initrd.img
-timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img &> boot.log
-grep -q 'reboot: Power down' boot.log || echo "Hasn't boot!"
+timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img > boot.log
+grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
