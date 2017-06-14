@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .31
@@ -548,6 +548,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Jun 14 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.31-alt2
+- CPU accounting fixed
+
 * Thu Jun 08 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.31-alt1
 - v4.9.31
 
