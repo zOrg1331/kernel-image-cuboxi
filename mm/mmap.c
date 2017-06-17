@@ -2302,7 +2302,12 @@ unsigned long expandable_stack_area(struct vm_area_struct *vma,
 	unsigned long guard_gap = stack_guard_gap;
 	unsigned long guard_addr;
 
-	address = ALIGN(address, PAGE_SIZE);;
+	/* don't exceed address space */
+	if (address >= TASK_SIZE)
+		return -ENOMEM;
+
+	address = PAGE_ALIGN(address);
+
 	if (!next)
 		goto out;
 
