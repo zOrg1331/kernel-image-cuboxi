@@ -265,8 +265,7 @@ static int do_maps_open(struct inode *inode, struct file *file,
  * Indicate if the VMA is a stack for the given task; for
  * /proc/PID/maps that is the stack of the main task.
  */
-static int is_stack(struct proc_maps_private *priv,
-		    struct vm_area_struct *vma)
+static int is_stack(struct vm_area_struct *vma)
 {
 	/*
 	 * We make no effort to guess what a given thread considers to be
@@ -278,11 +277,10 @@ static int is_stack(struct proc_maps_private *priv,
 }
 
 static void
-show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
+show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid, bool *has_gap)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct file *file = vma->vm_file;
-	struct proc_maps_private *priv = m->private;
 	vm_flags_t flags = vma->vm_flags;
 	unsigned long ino = 0;
 	unsigned long long pgoff = 0;
@@ -302,11 +300,20 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 
 	/* We don't show the stack guard page in /proc/maps */
 	start = vma->vm_start;
-	if (stack_guard_page_start(vma, start))
-		start += PAGE_SIZE;
 	end = vma->vm_end;
-	if (stack_guard_page_end(vma, end))
-		end -= PAGE_SIZE;
+	if (vma->vm_flags & VM_GROWSDOWN) {
+		if (stack_guard_area(vma, start)) {
+			start = min(end, start + stack_guard_gap);
+			if (has_gap)
+				*has_gap = true;
+		}
+	} else if (vma->vm_flags & VM_GROWSUP) {
+		if (stack_guard_area(vma, end)) {
+			end = max(start, end - stack_guard_gap);
+			if (has_gap)
+				*has_gap = true;
+		}
+	}
 
 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
@@ -348,7 +355,7 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 			goto done;
 		}
 
-		if (is_stack(priv, vma))
+		if (is_stack(vma))
 			name = "[stack]";
 	}
 
@@ -362,7 +369,7 @@ done:
 
 static int show_map(struct seq_file *m, void *v, int is_pid)
 {
-	show_map_vma(m, v, is_pid);
+	show_map_vma(m, v, is_pid, NULL);
 	m_cache_vma(m, v);
 	return 0;
 }
@@ -731,6 +738,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		.mm = vma->vm_mm,
 		.private = &mss,
 	};
+	bool has_gap = false;
 
 	memset(&mss, 0, sizeof mss);
 
@@ -761,7 +769,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 	/* mmap_sem is held in m_start */
 	walk_page_vma(vma, &smaps_walk);
 
-	show_map_vma(m, vma, is_pid);
+	show_map_vma(m, vma, is_pid, &has_gap);
 
 	seq_printf(m,
 		   "Size:           %8lu kB\n"
@@ -801,6 +809,9 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		   vma_mmu_pagesize(vma) >> 10,
 		   (vma->vm_flags & VM_LOCKED) ?
 			(unsigned long)(mss.pss >> (10 + PSS_SHIFT)) : 0);
+
+	if (has_gap)
+		seq_printf(m, "Stack_Gap:      %8lu kB\n", stack_guard_gap >>10);
 
 	arch_show_smap(m, vma);
 	show_smap_vma_flags(m, vma);
@@ -1670,7 +1681,7 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
 		seq_file_path(m, file, "\n\t= ");
 	} else if (vma->vm_start <= mm->brk && vma->vm_end >= mm->start_brk) {
 		seq_puts(m, " heap");
-	} else if (is_stack(proc_priv, vma)) {
+	} else if (is_stack(vma)) {
 		seq_puts(m, " stack");
 	}
 
