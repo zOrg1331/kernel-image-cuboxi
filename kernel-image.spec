@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.M70C.8
+Release: alt1.M70C.9
 epoch:1 
 %define kernel_base_version	3.14
 %define kernel_sublevel .59
@@ -571,6 +571,9 @@ grep -q 'reboot: Power down' boot.log || echo "Hasn't boot!"
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Jun 19 2017 Kernel Bot <kernelbot@altlinux.org> 1:3.14.59-alt1.M70C.9
+- (Fixes: CVE-2017-1000364)
+
 * Thu May 11 2017 Kernel Bot <kernelbot@altlinux.org> 1:3.14.59-alt1.M70C.8
 - (Fixes: CVE-2017-7895)
 
