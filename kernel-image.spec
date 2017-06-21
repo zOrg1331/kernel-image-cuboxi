@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80C.1
+Release: alt0.M80C.2
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .73
@@ -563,6 +563,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Jun 21 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.73-alt0.M80C.2
+- (Fixes: CVE-2017-1000364)
+
 * Sat Jun 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.73-alt0.M80C.1
 - v4.4.73
 
