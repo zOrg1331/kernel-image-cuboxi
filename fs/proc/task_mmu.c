@@ -303,10 +303,10 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 	end = vma->vm_end;
 	if (vma->vm_flags & VM_GROWSDOWN) {
 		if (stack_guard_area(vma, start))
-			start = min(end, start + stack_guard_gap);
+			start += stack_guard_gap;
 	} else if (vma->vm_flags & VM_GROWSUP) {
 		if (stack_guard_area(vma, end))
-			end = max(start, end - stack_guard_gap);
+			end -= stack_guard_gap;
 	}
 
 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
