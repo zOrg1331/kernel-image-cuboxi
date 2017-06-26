@@ -278,7 +278,7 @@ static int is_stack(struct proc_maps_private *priv,
 }
 
 static void
-show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid, bool *has_gap)
+show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct file *file = vma->vm_file;
@@ -304,17 +304,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid, bool *h
 	start = vma->vm_start;
 	end = vma->vm_end;
 	if (vma->vm_flags & VM_GROWSDOWN) {
-		if (stack_guard_area(vma, start)) {
+		if (stack_guard_area(vma, start))
 			start = min(end, start + stack_guard_gap);
-			if (has_gap)
-				*has_gap = true;
-		}
 	} else if (vma->vm_flags & VM_GROWSUP) {
-		if (stack_guard_area(vma, end)) {
+		if (stack_guard_area(vma, end))
 			end = max(start, end - stack_guard_gap);
-			if (has_gap)
-				*has_gap = true;
-		}
 	}
 
 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
@@ -371,7 +365,7 @@ done:
 
 static int show_map(struct seq_file *m, void *v, int is_pid)
 {
-	show_map_vma(m, v, is_pid, NULL);
+	show_map_vma(m, v, is_pid);
 	m_cache_vma(m, v);
 	return 0;
 }
@@ -740,7 +734,6 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		.mm = vma->vm_mm,
 		.private = &mss,
 	};
-	bool has_gap = false;
 
 	memset(&mss, 0, sizeof mss);
 
@@ -771,7 +764,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 	/* mmap_sem is held in m_start */
 	walk_page_vma(vma, &smaps_walk);
 
-	show_map_vma(m, vma, is_pid, &has_gap);
+	show_map_vma(m, vma, is_pid);
 
 	seq_printf(m,
 		   "Size:           %8lu kB\n"
@@ -811,9 +804,6 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		   vma_mmu_pagesize(vma) >> 10,
 		   (vma->vm_flags & VM_LOCKED) ?
 			(unsigned long)(mss.pss >> (10 + PSS_SHIFT)) : 0);
-
-	if (has_gap)
-		seq_printf(m, "Stack_Gap:      %8lu kB\n", stack_guard_gap >>10);
 
 	arch_show_smap(m, vma);
 	show_smap_vma_flags(m, vma);
