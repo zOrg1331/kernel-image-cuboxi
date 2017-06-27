@@ -2685,7 +2685,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	/* Check if we need to add a guard page to the stack */
 	if ((vma->vm_flags & (VM_GROWSDOWN|VM_GROWSUP)) &&
-			expand_stack(vma, address) < 0)
+			expand_stack(vma, fe->address) < 0)
 		return VM_FAULT_SIGSEGV;
 
 	/* Use the zero-page for reads */
