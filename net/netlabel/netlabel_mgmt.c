@@ -978,6 +978,6 @@ int __init netlbl_mgmt_genl_init(void)
 	/* set default s0 mark flag */
 	netlbl_mgmt_s0_update(1, &audit_info);
 
-	netlbl_mgmt_gnl_family.genl_ops = netlbl_mgmt_genl_ops;
+	netlbl_mgmt_gnl_family.ops = netlbl_mgmt_genl_ops;
 	return genl_register_family(&netlbl_mgmt_gnl_family);
 }
