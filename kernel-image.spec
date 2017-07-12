@@ -576,6 +576,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 * Mon May 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.11.1-alt1
 - v4.11.1
 
+* Mon May 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.10.17-alt1
+- v4.10.17
+
 * Mon May 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.10.16-alt1
 - v4.10.16
 
