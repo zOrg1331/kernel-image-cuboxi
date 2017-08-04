@@ -548,8 +548,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Fri Aug 04 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.40-alt1
-- v4.9.40
+* Thu Jul 27 2017 Dmitry V. Levin <ldv@altlinux.org> 1:4.9.40-alt1
+- v4.9.38 -> v4.9.40.
 
 * Sat Jul 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.38-alt1
 - v4.9.38
