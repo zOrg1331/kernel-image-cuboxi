@@ -564,8 +564,8 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Fri Aug 04 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.12.4-alt1
-- v4.12.4
+* Thu Jul 27 2017 Dmitry V. Levin <ldv@altlinux.org> 1:4.12.4-alt1
+- v4.12.2 -> v4.12.4.
 
 * Sat Jul 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.12.2-alt1
 - v4.12.2
