@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.2
+Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .79
+%define kernel_sublevel .80
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -563,6 +563,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Aug 07 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.80-alt0.M80P.1
+- v4.4.80
+
 * Fri Aug 04 2017 Anton Farygin <rider@altlinux.ru> 1:4.4.79-alt0.M80P.2
 - updated ixgbe (5.2.1) and ixgbevf (4.2.1) 
 
