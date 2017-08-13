@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M70C.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .81
+%define kernel_sublevel .82
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -561,6 +561,9 @@ grep -q 'reboot: Power down' boot.log || echo "Hasn't boot!"
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Sun Aug 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.82-alt0.M70C.1
+- v4.4.82
+
 * Sat Aug 12 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.81-alt0.M70C.1
 - v4.4.81
 
