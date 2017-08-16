@@ -302,6 +302,7 @@ directory.
 %package -n kernel-doc-%base_flavour
 Summary: Linux kernel %kversion-%base_flavour documentation
 Group: System/Kernel and hardware
+BuildArch: noarch
 
 %description -n kernel-doc-%base_flavour
 This package contains documentation files for ALT Linux kernel packages:
