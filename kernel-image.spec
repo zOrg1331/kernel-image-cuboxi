@@ -519,7 +519,10 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 /boot/vmlinuz-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
-%modules_dir
+/lib/firmware/*
+%dir %modules_dir/
+%defattr(0600,root,root,0700)
+%modules_dir/*
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/staging/
@@ -528,7 +531,6 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/arch/x86/kvm
 %exclude %modules_dir/kernel/net/netfilter/ipset
 %exclude %modules_dir/kernel/net/netfilter/xt_set.ko
-/lib/firmware/*
 %ghost %modules_dir/modules.alias.bin
 %ghost %modules_dir/modules.dep.bin
 %ghost %modules_dir/modules.symbols.bin
@@ -543,7 +545,7 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %files -n kernel-headers-modules-%flavour
 %kbuild_dir
 %old_kbuild_dir
-%dir %modules_dir
+%dir %modules_dir/
 %modules_dir/build
 
 %if_enabled docs
