@@ -71,6 +71,8 @@ BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 BuildRequires: bc
 BuildRequires: openssl-devel 
+# for check
+BuildRequires: qemu-system glibc-devel-static
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
 Provides: kernel-modules-igb-%flavour = %version-%release
@@ -485,6 +487,32 @@ cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
+
+
+%check
+KernelVer=%kversion-%flavour-%krelease
+mkdir -p test
+cd test
+msg='Booted successfully'
+%__cc %optflags -s -static -xc -o init - <<__EOF__
+#include <unistd.h>
+#include <sys/reboot.h>
+int main()
+{
+	static const char msg[] = "$msg\n";
+	write(2, msg, sizeof(msg) - 1);
+	reboot(RB_POWER_OFF);
+	pause();
+}
+__EOF__
+echo init | cpio -H newc -o | gzip -9n > initrd.img
+timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img > boot.log
+grep -q "^$msg" boot.log &&
+grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
+	cat >&2 boot.log
+	echo >&2 'Marker not found'
+	exit 1
+}
 
 
 %files
