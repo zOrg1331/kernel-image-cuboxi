@@ -70,8 +70,9 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 BuildRequires: bc
-BuildRequires: qemu-system glibc-devel-static
 BuildRequires: openssl-devel 
+# for check
+BuildRequires: qemu-system glibc-devel-static
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
 Provides: kernel-modules-igb-%flavour = %version-%release
@@ -487,23 +488,32 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
+
 %check
 KernelVer=%kversion-%flavour-%krelease
-mkdir test
+mkdir -p test
 cd test
-gcc -static -xc -o init - <<EOF
+msg='Booted successfully'
+%__cc %optflags -s -static -xc -o init - <<__EOF__
 #include <unistd.h>
 #include <sys/reboot.h>
 int main()
 {
-        write( STDERR_FILENO, "Boot successfull!\n", 18);
-        reboot( RB_POWER_OFF  );
-        pause();
+	static const char msg[] = "$msg\n";
+	write(2, msg, sizeof(msg) - 1);
+	reboot(RB_POWER_OFF);
+	pause();
 }
-EOF
-echo "init" | cpio -H newc -o | gzip > initrd.img
+__EOF__
+echo init | cpio -H newc -o | gzip -9n > initrd.img
 timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img > boot.log
-grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
+grep -q "^$msg" boot.log &&
+grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
+	cat >&2 boot.log
+	echo >&2 'Marker not found'
+	exit 1
+}
+
 
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
