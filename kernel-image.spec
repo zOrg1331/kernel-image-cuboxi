@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
 Release: alt1
 epoch:1 
-%define kernel_base_version	4.12
-%define kernel_sublevel .10
+%define kernel_base_version	4.13
+%define kernel_sublevel .0
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -80,7 +80,7 @@ Provides:  kernel-modules-alsa = %version-%release
 
 
 %if_enabled docs
-BuildRequires: xmlto transfig ghostscript
+BuildRequires: sphinx 
 %endif
 
 %if_enabled ccache
