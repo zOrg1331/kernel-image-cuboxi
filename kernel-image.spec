@@ -80,7 +80,7 @@ Provides:  kernel-modules-alsa = %version-%release
 
 
 %if_enabled docs
-BuildRequires: sphinx 
+BuildRequires: python-module-sphinx perl-Pod-Usage 
 %endif
 
 %if_enabled ccache
@@ -484,8 +484,6 @@ touch %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
 %if_enabled docs
 install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
-find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
-	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
 
