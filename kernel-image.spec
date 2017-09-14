@@ -575,8 +575,11 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Wed Sep 06 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.13.0-alt1
+* Thu Sep 14 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.13.0-alt1
 - v4.13.0
+
+* Tue Sep 12 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.12.12-alt1
+- v4.12.12
 
 * Wed Aug 30 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.12.10-alt1
 - v4.12.10
