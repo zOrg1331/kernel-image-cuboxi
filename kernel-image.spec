@@ -22,12 +22,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # You can change compiler version by editing this line:
 %define kgcc_version	5
 
-# Enable/disable SGML docs formatting
-%if "%sub_flavour" == "def"
-%def_enable docs
-%else
 %def_disable docs
-%endif
 
 #Remove oss
 %def_disable oss
