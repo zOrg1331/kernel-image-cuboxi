@@ -31,8 +31,9 @@
 
 obj-$(CONFIG_IXGBEVF) += ixgbevf.o
 
-ixgbevf-objs := vf.o \
-                mbx.o \
-                ethtool.o \
-                ixgbevf_main.o
-
+ixgbevf-objs := ixgbe_vf.o \
+                ixgbe_mbx.o \
+                ixgbevf_ethtool.o \
+                ixgbevf_main.o \
+		kcompat.o
+ixgbevf-${CONFIG_PCI_HYPERV:m=y} += ixgbe_hv_vf.o
