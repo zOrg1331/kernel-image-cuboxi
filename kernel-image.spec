@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80P.1.1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .92
@@ -563,6 +563,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.92-alt0.M80P.1.1
+- Local root in alsa fixed (Fixes: CVE-2017-15265)
+
 * Fri Oct 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.92-alt0.M80P.1
 - v4.4.92
 
