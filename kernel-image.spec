@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.13
-%define kernel_sublevel .3
+%define kernel_sublevel .7
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -570,8 +570,11 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Thu Sep 21 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.13.3-alt0.M80P.1
+* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.13.7-alt0.M80P.1
 - backport to p8
+
+* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.56-alt0.M80P.1.1
+- Local root in alsa fixed (Fixes: CVE-2017-15265)
 
 * Wed Sep 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.13.3-alt1
 - v4.13.3
