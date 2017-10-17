@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70C.1
+Release: alt0.M70C.1.1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .92
@@ -561,6 +561,9 @@ grep -q 'reboot: Power down' boot.log || echo "Hasn't boot!"
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.92-alt0.M70C.1.1
+- Local root in alsa fixed (Fixes: CVE-2017-15265)
+
 * Fri Oct 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.92-alt0.M70C.1
 - v4.4.92
 
