@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80C.1.1
+Release: alt0.M80C.2
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .58
@@ -566,6 +566,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Oct 26 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt0.M80C.2
+- memory sanitize patch added
+
 * Sun Oct 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt0.M80C.1.1
 - v4.9.58
 
