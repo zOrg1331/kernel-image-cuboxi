@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	5
+%define kgcc_version	4.7
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
@@ -568,6 +568,7 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %changelog
 * Thu Oct 26 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt0.M70C.1
 - backport to c7
+- set gcc to 4.7
 
 * Thu Oct 26 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt0.M80C.2
 - memory sanitize patch added
