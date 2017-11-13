@@ -375,7 +375,7 @@ install -Dp -m644 arch/%base_arch/boot/bzImage \
 install -Dp -m644 vmlinux %buildroot/boot/vmlinux-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
-make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
+make modules_install INSTALL_MOD_PATH=%buildroot
 
 mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
@@ -517,7 +517,6 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 /boot/vmlinuz-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
-/lib/firmware/*
 %dir %modules_dir/
 %defattr(0600,root,root,0700)
 %modules_dir/*
