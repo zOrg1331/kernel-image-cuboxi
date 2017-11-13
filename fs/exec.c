@@ -260,6 +260,21 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		limit = min(limit, rlimit(RLIMIT_STACK) / 4);
 		if (size > limit)
 			goto fail;
+
+		/*
+		 * In case of suid/sgid binaries, limit the stack size for
+		 * the argv+env strings to 512KB, preventing from clashing
+		 * the stack with other memory allocations through megabytes
+		 * of command-line arguments and environment variables.
+		 * Unfortunately, AT_SECURE binaries other than suid/sgid ones
+		 * are not covered by this limit, but security_bprm_secureexec
+		 * is not available at this point yet, so this is all we can do.
+		 */
+		if (size > (512UL << 10) &&
+		    (!uid_eq(bprm->cred->euid, current_euid()) ||
+		     !gid_eq(bprm->cred->egid, current_egid()))) {
+			goto fail;
+		}
 	}
 
 	return page;
