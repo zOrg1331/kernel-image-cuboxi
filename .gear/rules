@@ -1,3 +1,2 @@
 diff: v4.4:. .
-copy: *.patch
 specsubst: kflavour
