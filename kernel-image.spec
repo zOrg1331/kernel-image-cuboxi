@@ -50,9 +50,6 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-Patch1: nonpreemptive-kernel.patch
-Patch2: pae-kernel.patch
-
 %if "%sub_flavour" == "pae"
 ExclusiveArch: i586
 %else
@@ -319,14 +316,6 @@ rm -rf kernel-source-%kernel_base_version
 tar -xf %kernel_src/kernel-source-%kernel_base_version.tar
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
-
-%if "%base_flavour" == "std"
-%patch1 -p1
-%endif
-
-%if "%sub_flavour" == "pae"
-%patch2 -p1
-%endif
 
 # this file should be usable both with make and sh (for broken modules
 # which do not use the kernel makefile system)
