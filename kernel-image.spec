@@ -49,6 +49,7 @@ Url: http://www.kernel.org/
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
+Patch1: nonpreempt-kernel.patch
 
 %if "%sub_flavour" == "pae"
 ExclusiveArch: i586
@@ -316,6 +317,10 @@ rm -rf kernel-source-%kernel_base_version
 tar -xf %kernel_src/kernel-source-%kernel_base_version.tar
 %setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
+
+%if "%base_flavour" == "srv"
+%patch1 -p1
+%endif
 
 # this file should be usable both with make and sh (for broken modules
 # which do not use the kernel makefile system)
