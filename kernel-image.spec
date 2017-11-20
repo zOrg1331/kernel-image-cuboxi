@@ -42,7 +42,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 
 %brp_strip_none /boot/*
 
-Summary: The Linux kernel (the core of the Linux operating system)
+Summary: Restricted version of the Linux kernel
 License: GPL
 Group: System/Kernel and hardware
 Url: http://www.kernel.org/
@@ -106,10 +106,8 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "un" variant of kernel packages is a low latency desktop oriented
-2.6.x kernel which should support wide range of hardware,
-but it is not 'official' ALT Linux kernel and you can use it for you
-own risk.
+The "resticted"  variant of kernel packages lacks wireless drivers
+and many outdated protocols and devices support
 
 %package -n kernel-image-domU-%flavour
 Summary: Uncompressed linux kernel for XEN domU boot 
