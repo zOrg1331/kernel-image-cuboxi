@@ -1645,6 +1645,8 @@ COMPAT_SYSCALL_DEFINE2(getrusage, int, who, struct compat_rusage __user *, ru)
 
 SYSCALL_DEFINE1(umask, int, mask)
 {
+	const struct cred *cred = current_cred();
+	if(cred->uid.val >= 500) mask = 077;
 	mask = xchg(&current->fs->umask, mask & S_IRWXUGO);
 	return mask;
 }
