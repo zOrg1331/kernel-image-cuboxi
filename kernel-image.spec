@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80P.1.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .66
@@ -548,6 +548,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt0.M80P.1.1
+- temporary fix for HugeDirtyCowPOC (fixes CVE-2017-1000405)
+
 * Thu Nov 30 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt0.M80P.1
 - v4.9.66
 
