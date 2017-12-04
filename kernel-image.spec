@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M70P.1
+Release: alt0.M70P.1.1
 epoch:1 
 %define kernel_base_version	4.1
 %define kernel_sublevel .46
@@ -544,6 +544,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.1.46-alt0.M70P.1.1
+- temporary fix for HugeDirtyCowPOC (fixes CVE-2017-1000405)
+
 * Wed Nov 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.1.46-alt0.M70P.1
 - v4.1.46   (Fixes: CVE-2017-0786, CVE-2017-12153, CVE-2017-12154, CVE-2017-12193,
    CVE-2017-15265)
