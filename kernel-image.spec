@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1.1
+Release: alt1.1.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .66
@@ -612,6 +612,10 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt1.1.1
+- separate drm modules for old cards into subpackage
+- package modules_dir/kernel/drivers/staging/media
+
 * Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt1.1
 - temporary fix for HugeDirtyCowPOC (fixes CVE-2017-1000405)
 
