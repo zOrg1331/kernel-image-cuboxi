@@ -145,6 +145,22 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
+%package -n kernel-modules-drm-ancient-%flavour
+Summary: The Direct Rendering modules for ancient cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-ancient-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-ancient-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-ancient-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: %name = %epoch:%version-%release
+Requires(postun): %name = %epoch:%version-%release
+
+%description -n kernel-modules-drm-ancient-%flavour
+The Direct Rendering Modules for ancient cards: mgag200.ko,
+sis.ko, tdfx.ko, savage.ko, r128.ko, mga.ko, via.ko
+
+These are modules for your ALT Linux system
+
 %package -n kernel-modules-drm-nouveau-%flavour
 Summary: The Direct Rendering Infrastructure modules for NVIDIA cards
 Group: System/Kernel and hardware
@@ -567,6 +583,22 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
 %exclude %modules_dir/kernel/drivers/gpu/drm/radeon
+%exclude %modules_dir/kernel/drivers/gpu/drm/mgag200
+%exclude %modules_dir/kernel/drivers/gpu/drm/sis
+%exclude %modules_dir/kernel/drivers/gpu/drm/savage
+%exclude %modules_dir/kernel/drivers/gpu/drm/tdfx
+%exclude %modules_dir/kernel/drivers/gpu/drm/r128
+%exclude %modules_dir/kernel/drivers/gpu/drm/mga
+%exclude %modules_dir/kernel/drivers/gpu/drm/via
+
+%files -n kernel-modules-drm-ancient-%flavour
+%modules_dir/kernel/drivers/gpu/drm/mgag200
+%modules_dir/kernel/drivers/gpu/drm/sis
+%modules_dir/kernel/drivers/gpu/drm/savage
+%modules_dir/kernel/drivers/gpu/drm/tdfx
+%modules_dir/kernel/drivers/gpu/drm/r128
+%modules_dir/kernel/drivers/gpu/drm/mga
+%modules_dir/kernel/drivers/gpu/drm/via
 
 %files -n kernel-modules-drm-nouveau-%flavour
 %modules_dir/kernel/drivers/gpu/drm/nouveau
