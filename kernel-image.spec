@@ -569,6 +569,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
+%dir %modules_dir/kernel/drivers/staging/media
 %modules_dir/kernel/drivers/staging/media/lirc/
 
 %files -n kernel-modules-staging-%flavour
