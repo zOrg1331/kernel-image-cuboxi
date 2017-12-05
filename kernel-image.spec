@@ -588,6 +588,7 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
+%dir %modules_dir/kernel/drivers/staging/media
 %modules_dir/kernel/drivers/staging/media/lirc/
 
 %files -n kernel-modules-staging-%flavour
