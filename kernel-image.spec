@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80C.1.1.1
+Release: alt0.M80C.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .103
+%define kernel_sublevel .104
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -596,6 +596,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Dec 06 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.104-alt0.M80C.1
+- v4.4.104   (Fixes: CVE-2017-8824)
+
 * Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.103-alt0.M80C.1.1.1
 - separate drm modules for old cards into subpackage
 - package modules_dir/kernel/drivers/staging/media
