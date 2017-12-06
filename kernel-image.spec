@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt1
 epoch:1 
 %define kernel_base_version	4.14
-%define kernel_sublevel .0
+%define kernel_sublevel .4
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -607,6 +607,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Dec 06 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.4-alt1
+- v4.14.4   (Fixes: CVE-2011-1161, CVE-2017-8824)
+
 * Mon Nov 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.0-alt1
 - v4.14.0
 
