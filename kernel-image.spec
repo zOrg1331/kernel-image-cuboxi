@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	4.4
 %define kernel_sublevel .107
@@ -609,6 +609,10 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.107-alt1.1
+- SMACK enabled
+- kernel.unprivileged_bpf_disabled set by default
+
 * Wed Dec 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.107-alt1
 - v4.4.107
 
