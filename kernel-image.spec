@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80P.1.1
 epoch:1 
 %define kernel_base_version	4.14
 %define kernel_sublevel .6
@@ -607,6 +607,10 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.6-alt0.M80P.1.1
+- SMACK enabled
+- kernel.unprivileged_bpf_disabled set by default  (Fixes: CVE-2017-16995, CVE-2017-16996)
+
 * Fri Dec 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.6-alt0.M80P.1
 - backport to c8
 
