@@ -1061,6 +1061,11 @@ static int check_ptr_alignment(struct bpf_verifier_env *env,
 		break;
 	case PTR_TO_STACK:
 		pointer_desc = "stack ";
+		/* The stack spill tracking logic in check_stack_write()
+		 * and check_stack_read() relies on stack accesses being
+		 * aligned.
+		 */
+		strict = true;
 		break;
 	default:
 		break;
@@ -1303,6 +1308,7 @@ static int check_stack_boundary(struct bpf_verifier_env *env, int regno,
 		tnum_strn(tn_buf, sizeof(tn_buf), regs[regno].var_off);
 		verbose("invalid variable stack read R%d var_off=%s\n",
 			regno, tn_buf);
+		return -EACCES;
 	}
 	off = regs[regno].off + regs[regno].var_off.value;
 	if (off >= 0 || off < -MAX_BPF_STACK || off + access_size > 0 ||
@@ -1783,6 +1789,41 @@ static bool signed_sub_overflows(s64 a, s64 b)
 	return res > a;
 }
 
+static bool check_reg_sane_offset(struct bpf_verifier_env *env,
+				  const struct bpf_reg_state *reg,
+				  enum bpf_reg_type type)
+{
+	bool known = tnum_is_const(reg->var_off);
+	s64 val = reg->var_off.value;
+	s64 smin = reg->smin_value;
+
+	if (known && (val >= BPF_MAX_VAR_OFF || val <= -BPF_MAX_VAR_OFF)) {
+		verbose("math between %s pointer and %lld is not allowed\n",
+			reg_type_str[type], val);
+		return false;
+	}
+
+	if (reg->off >= BPF_MAX_VAR_OFF || reg->off <= -BPF_MAX_VAR_OFF) {
+		verbose("%s pointer offset %d is not allowed\n",
+			reg_type_str[type], reg->off);
+		return false;
+	}
+
+	if (smin == S64_MIN) {
+		verbose("math between %s pointer and register with unbounded min value is not allowed\n",
+			reg_type_str[type]);
+		return false;
+	}
+
+	if (smin >= BPF_MAX_VAR_OFF || smin <= -BPF_MAX_VAR_OFF) {
+		verbose("value %lld makes %s pointer be out of bounds\n",
+			smin, reg_type_str[type]);
+		return false;
+	}
+
+	return true;
+}
+
 /* Handles arithmetic on a pointer and a scalar: computes new min/max and var_off.
  * Caller should also handle BPF_MOV case separately.
  * If we return -EACCES, caller may want to try again treating pointer as a
@@ -1847,6 +1888,10 @@ static int adjust_ptr_min_max_vals(struct bpf_verifier_env *env,
 	 */
 	dst_reg->type = ptr_reg->type;
 	dst_reg->id = ptr_reg->id;
+
+	if (!check_reg_sane_offset(env, off_reg, ptr_reg->type) ||
+	    !check_reg_sane_offset(env, ptr_reg, ptr_reg->type))
+		return -EINVAL;
 
 	switch (opcode) {
 	case BPF_ADD:
@@ -1978,12 +2023,19 @@ static int adjust_ptr_min_max_vals(struct bpf_verifier_env *env,
 		return -EACCES;
 	}
 
+	if (!check_reg_sane_offset(env, dst_reg, ptr_reg->type))
+		return -EINVAL;
+
 	__update_reg_bounds(dst_reg);
 	__reg_deduce_bounds(dst_reg);
 	__reg_bound_offset(dst_reg);
 	return 0;
 }
 
+/* WARNING: This function does calculations on 64-bit values, but the actual
+ * execution may occur on 32-bit values. Therefore, things like bitshifts
+ * need extra checks in the 32-bit case.
+ */
 static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 				      struct bpf_insn *insn,
 				      struct bpf_reg_state *dst_reg,
@@ -1994,18 +2046,20 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 	bool src_known, dst_known;
 	s64 smin_val, smax_val;
 	u64 umin_val, umax_val;
+	u64 insn_bitness = (BPF_CLASS(insn->code) == BPF_ALU64) ? 64 : 32;
 
-	if (BPF_CLASS(insn->code) != BPF_ALU64) {
-		/* 32-bit ALU ops are (32,32)->64 */
-		coerce_reg_to_size(dst_reg, 4);
-		coerce_reg_to_size(&src_reg, 4);
-	}
 	smin_val = src_reg.smin_value;
 	smax_val = src_reg.smax_value;
 	umin_val = src_reg.umin_value;
 	umax_val = src_reg.umax_value;
 	src_known = tnum_is_const(src_reg.var_off);
 	dst_known = tnum_is_const(dst_reg->var_off);
+
+	if (!src_known &&
+	    opcode != BPF_ADD && opcode != BPF_SUB && opcode != BPF_AND) {
+		__mark_reg_unknown(dst_reg);
+		return 0;
+	}
 
 	switch (opcode) {
 	case BPF_ADD:
@@ -2135,9 +2189,9 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 		__update_reg_bounds(dst_reg);
 		break;
 	case BPF_LSH:
-		if (umax_val > 63) {
-			/* Shifts greater than 63 are undefined.  This includes
-			 * shifts by a negative number.
+		if (umax_val >= insn_bitness) {
+			/* Shifts greater than 31 or 63 are undefined.
+			 * This includes shifts by a negative number.
 			 */
 			mark_reg_unknown(regs, insn->dst_reg);
 			break;
@@ -2163,9 +2217,9 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 		__update_reg_bounds(dst_reg);
 		break;
 	case BPF_RSH:
-		if (umax_val > 63) {
-			/* Shifts greater than 63 are undefined.  This includes
-			 * shifts by a negative number.
+		if (umax_val >= insn_bitness) {
+			/* Shifts greater than 31 or 63 are undefined.
+			 * This includes shifts by a negative number.
 			 */
 			mark_reg_unknown(regs, insn->dst_reg);
 			break;
@@ -2199,6 +2253,12 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 	default:
 		mark_reg_unknown(regs, insn->dst_reg);
 		break;
+	}
+
+	if (BPF_CLASS(insn->code) != BPF_ALU64) {
+		/* 32-bit ALU ops are (32,32)->32 */
+		coerce_reg_to_size(dst_reg, 4);
+		coerce_reg_to_size(&src_reg, 4);
 	}
 
 	__reg_deduce_bounds(dst_reg);
@@ -3325,15 +3385,14 @@ static bool regsafe(struct bpf_reg_state *rold, struct bpf_reg_state *rcur,
 			return range_within(rold, rcur) &&
 			       tnum_in(rold->var_off, rcur->var_off);
 		} else {
-			/* if we knew anything about the old value, we're not
-			 * equal, because we can't know anything about the
-			 * scalar value of the pointer in the new value.
+			/* We're trying to use a pointer in place of a scalar.
+			 * Even if the scalar was unbounded, this could lead to
+			 * pointer leaks because scalars are allowed to leak
+			 * while pointers are not. We could make this safe in
+			 * special cases if root is calling us, but it's
+			 * probably not worth the hassle.
 			 */
-			return rold->umin_value == 0 &&
-			       rold->umax_value == U64_MAX &&
-			       rold->smin_value == S64_MIN &&
-			       rold->smax_value == S64_MAX &&
-			       tnum_is_unknown(rold->var_off);
+			return false;
 		}
 	case PTR_TO_MAP_VALUE:
 		/* If the new min/max/var_off satisfy the old ones and
@@ -3683,6 +3742,7 @@ static int do_check(struct bpf_verifier_env *env)
 		if (err)
 			return err;
 
+		env->insn_aux_data[insn_idx].seen = true;
 		if (class == BPF_ALU || class == BPF_ALU64) {
 			err = check_alu_op(env, insn);
 			if (err)
@@ -3873,6 +3933,7 @@ process_bpf_exit:
 					return err;
 
 				insn_idx++;
+				env->insn_aux_data[insn_idx].seen = true;
 			} else {
 				verbose("invalid BPF_LD mode\n");
 				return -EINVAL;
@@ -4053,6 +4114,7 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env, u32 prog_len,
 				u32 off, u32 cnt)
 {
 	struct bpf_insn_aux_data *new_data, *old_data = env->insn_aux_data;
+	int i;
 
 	if (cnt == 1)
 		return 0;
@@ -4062,6 +4124,8 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env, u32 prog_len,
 	memcpy(new_data, old_data, sizeof(struct bpf_insn_aux_data) * off);
 	memcpy(new_data + off + cnt - 1, old_data + off,
 	       sizeof(struct bpf_insn_aux_data) * (prog_len - off - cnt + 1));
+	for (i = off; i < off + cnt - 1; i++)
+		new_data[i].seen = true;
 	env->insn_aux_data = new_data;
 	vfree(old_data);
 	return 0;
@@ -4078,6 +4142,25 @@ static struct bpf_prog *bpf_patch_insn_data(struct bpf_verifier_env *env, u32 of
 	if (adjust_insn_aux_data(env, new_prog->len, off, len))
 		return NULL;
 	return new_prog;
+}
+
+/* The verifier does more data flow analysis than llvm and will not explore
+ * branches that are dead at run time. Malicious programs can have dead code
+ * too. Therefore replace all dead at-run-time code with nops.
+ */
+static void sanitize_dead_code(struct bpf_verifier_env *env)
+{
+	struct bpf_insn_aux_data *aux_data = env->insn_aux_data;
+	struct bpf_insn nop = BPF_MOV64_REG(BPF_REG_0, BPF_REG_0);
+	struct bpf_insn *insn = env->prog->insnsi;
+	const int insn_cnt = env->prog->len;
+	int i;
+
+	for (i = 0; i < insn_cnt; i++) {
+		if (aux_data[i].seen)
+			continue;
+		memcpy(insn + i, &nop, sizeof(nop));
+	}
 }
 
 /* convert load instructions that access fields of 'struct __sk_buff'
@@ -4395,6 +4478,9 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr)
 skip_full_check:
 	while (pop_stack(env, NULL) >= 0);
 	free_states(env);
+
+	if (ret == 0)
+		sanitize_dead_code(env);
 
 	if (ret == 0)
 		/* program is valid, convert *(u32*)(ctx + off) accesses */
