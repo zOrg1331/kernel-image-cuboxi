@@ -69,6 +69,7 @@ BuildRequires: gcc%kgcc_version-plugin-devel libgmp-devel libmpc-devel
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
+BuildRequires: libelf-devel
 BuildRequires: bc
 BuildRequires: openssl-devel 
 # for check
