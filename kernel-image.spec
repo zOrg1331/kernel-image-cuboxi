@@ -359,6 +359,8 @@ subst 's/CC.*$(CROSS_COMPILE)gcc/CC         := $(shell echo $${GCC_USE_CCACHE:+c
 # get rid of unwanted files resulting from patch fuzz
 find . -name "*.orig" -delete -or -name "*~" -delete
 
+chmod +x tools/objtool/sync-check.sh
+
 %build
 export ARCH=%base_arch
 export NPROCS=%nprocs
