@@ -465,6 +465,7 @@ KbuildFiles="
 	scripts/module-common.lds
 	scripts/depmod.sh
 	scripts/gcc-plugins/*.so
+	tools/objtool/objtool
 
 
 	.config
