@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M70P.1
 epoch:1 
 %define kernel_base_version	4.1
-%define kernel_sublevel .48
+%define kernel_sublevel .49
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -577,6 +577,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed Jan 24 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.1.49-alt0.M70P.1
+- v4.1.49  (Fixes: CVE-2017-0861, CVE-2017-1000407, CVE-2017-7184)
+
 * Sun Dec 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.1.48-alt0.M70P.1
 - v4.1.48
 
