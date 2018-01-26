@@ -388,6 +388,7 @@ install -Dp -m644 vmlinux %buildroot/boot/vmlinux-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
+find %buildroot -name '*.ko' | xargs gzip
 
 mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
@@ -529,8 +530,8 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 %exclude %modules_dir/kernel/net/netfilter/ipset
-%exclude %modules_dir/kernel/net/netfilter/xt_set.ko
 /lib/firmware/*
+%exclude %modules_dir/kernel/net/netfilter/xt_set.ko*
 %ghost %modules_dir/modules.alias.bin
 %ghost %modules_dir/modules.dep.bin
 %ghost %modules_dir/modules.symbols.bin
