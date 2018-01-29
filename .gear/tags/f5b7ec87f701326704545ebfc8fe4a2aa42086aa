@@ -1,0 +1,16 @@
+object d8a5b80568a9cb66810e75b182018e9edb68e8ff
+type commit
+tag v4.15
+tagger Linus Torvalds <torvalds@linux-foundation.org> 1517174441 -0800
+
+Linux 4.15
+-----BEGIN PGP SIGNATURE-----
+
+iQEcBAABAgAGBQJabj6pAAoJEHm+PkMAQRiGs8cIAJQFkCWnbz86e3vG4DuWhyA8
+CMGHCQdUOxxFGa/ixhIiuetbC0x+JVHAjV2FwVYbAQfaZB3pfw2iR1ncQxpAP1AI
+oLU9vBEqTmwKMPc9CM5rRfnLFWpGcGwUNzgPdxD5yYqGDtcM8K840mF6NdkYe5AN
+xU8rv1wlcFPF4A5pvHCH0pvVmK4VxlVFk/2H67TFdxBs4PyJOnSBnf+bcGWgsKO6
+hC8XIVtcKCH2GfFxt5d0Vgc5QXJEpX1zn2mtCa1MwYRjN2plgYfD84ha0xE7J0B0
+oqV/wnjKXDsmrgVpncr3txd4+zKJFNkdNRE4eLAIupHo2XHTG4HvDJ5dBY2NhGU=
+=sOml
+-----END PGP SIGNATURE-----
