@@ -600,7 +600,7 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Fri Feb 16 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.81-alt0.M80C.1
+* Wed Feb 14 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.81-alt0.M80C.1
 - v4.9.81
 
 * Mon Feb 05 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.80-alt0.M80C.1
