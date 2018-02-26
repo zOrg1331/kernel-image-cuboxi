@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.14
 %define kernel_sublevel .21
@@ -20,14 +20,9 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	6
+%define kgcc_version	5
 
-# Enable/disable SGML docs formatting
-%if "%sub_flavour" == "def"
-%def_enable docs
-%else
 %def_disable docs
-%endif
 
 #Remove oss
 %def_disable oss
@@ -612,46 +607,43 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Mon Feb 26 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.21-alt1
+* Fri Feb 23 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.21-alt0.M80P.1
 - v4.14.21
 
-* Mon Feb 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.20-alt1
+* Mon Feb 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.20-alt0.M80P.1
 - v4.14.20  (Fixes: CVE-2017-16995, CVE-2017-16996, CVE-2017-5715, CVE-2017-5754,
   CVE-2017-8824)
 
-* Mon Feb 05 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.17-alt1
+* Mon Feb 05 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.17-alt0.M80P.1
 - v4.14.17
 
-* Wed Jan 31 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.16-alt1
+* Wed Jan 31 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.16-alt0.M80P.1
 - v4.14.16  (Fixes: CVE-2017-5715)
 
-* Wed Jan 24 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.15-alt1
+* Wed Jan 24 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.15-alt0.M80P.1
 - v4.14.15
 
-* Wed Jan 17 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.14-alt1
+* Wed Jan 17 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.14-alt0.M80P.1
 - v4.14.14  (Fixes: CVE-2017-1000410, CVE-2017-17741, CVE-2017-5753)
 
-* Wed Jan 10 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.13-alt1
+* Wed Jan 10 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.13-alt0.M80P.1
 - v4.14.13
 
-* Tue Jan 09 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.12-alt1
+* Tue Jan 09 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.12-alt0.M80P.1
 - v4.14.12
 
-* Fri Dec 29 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.10-alt1
+* Fri Dec 29 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.10-alt0.M80P.1
 - v4.14.10
 
-* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.9-alt1
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.9-alt0.M80P.1
 - v4.14.9  (Fixes: CVE-2017-16995, CVE-2017-16996)
 
-* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.8-alt1.1
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.6-alt0.M80P.1.1
 - SMACK enabled
 - kernel.unprivileged_bpf_disabled set by default  (Fixes: CVE-2017-16995, CVE-2017-16996)
 
-* Wed Dec 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.8-alt1
-- v4.14.8
-
-* Sun Dec 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.7-alt1
-- v4.14.7
+* Fri Dec 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.6-alt0.M80P.1
+- backport to c8
 
 * Fri Dec 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.14.6-alt1
 - v4.14.6   (Fixes: CVE-2017-0861, CVE-2017-1000407)
