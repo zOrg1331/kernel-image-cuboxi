@@ -16,6 +16,7 @@
 #include <uapi/linux/audit.h>
 #include <linux/sched.h>
 #include <linux/err.h>
+#include <linux/jump_label.h>
 #include <asm/asm-offsets.h>	/* For NR_syscalls */
 #include <asm/thread_info.h>	/* for TS_COMPAT */
 #include <asm/unistd.h>
@@ -33,6 +34,18 @@ extern const sys_call_ptr_t sys_call_table[];
 
 #if defined(CONFIG_IA32_EMULATION)
 extern const sys_call_ptr_t ia32_sys_call_table[];
+#endif
+
+#if defined(CONFIG_X86_X32_ABI)
+#if defined(CONFIG_X86_X32_DISABLED)
+DECLARE_STATIC_KEY_FALSE(x32_enabled_skey);
+#define x32_enabled static_branch_unlikely(&x32_enabled_skey)
+#else
+DECLARE_STATIC_KEY_TRUE(x32_enabled_skey);
+#define x32_enabled static_branch_likely(&x32_enabled_skey)
+#endif
+#else
+#define x32_enabled 0
 #endif
 
 /*
@@ -60,7 +73,7 @@ static inline long syscall_get_error(struct task_struct *task,
 	 * TS_COMPAT is set for 32-bit syscall entries and then
 	 * remains set until we return to user mode.
 	 */
-	if (task->thread.status & (TS_COMPAT|TS_I386_REGS_POKED))
+	if (task->thread_info.status & (TS_COMPAT|TS_I386_REGS_POKED))
 		/*
 		 * Sign-extend the value so (int)-EFOO becomes (long)-EFOO
 		 * and will match correctly in comparisons.
@@ -116,7 +129,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
 					 unsigned long *args)
 {
 # ifdef CONFIG_IA32_EMULATION
-	if (task->thread.status & TS_COMPAT)
+	if (task->thread_info.status & TS_COMPAT)
 		switch (i) {
 		case 0:
 			if (!n--) break;
@@ -177,7 +190,7 @@ static inline void syscall_set_arguments(struct task_struct *task,
 					 const unsigned long *args)
 {
 # ifdef CONFIG_IA32_EMULATION
-	if (task->thread.status & TS_COMPAT)
+	if (task->thread_info.status & TS_COMPAT)
 		switch (i) {
 		case 0:
 			if (!n--) break;
