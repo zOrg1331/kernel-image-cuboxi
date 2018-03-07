@@ -1057,7 +1057,7 @@ config X86_MCE_THRESHOLD
 	def_bool y
 
 config X86_MCE_INJECT
-	depends on X86_MCE
+	depends on X86_MCE && X86_LOCAL_APIC
 	tristate "Machine check injector support"
 	---help---
 	  Provide support for injecting machine checks for testing purposes.
@@ -2734,6 +2734,15 @@ config X86_X32
 	  You will need a recent binutils (2.22 or later) with
 	  elf32_x86_64 support enabled to compile a kernel with this
 	  option set.
+
+
+config X86_X32_DISABLED
+	bool "x32 ABI disabled by default"
+	depends on X86_X32
+	default n
+	help
+	  Disable the x32 ABI unless explicitly enabled using the
+	  kernel paramter "syscall.x32=y".
 
 config COMPAT
 	def_bool y
