@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .86
@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	6
+%define kgcc_version	5
 
 # Enable/disable SGML docs formatting
 %if "%sub_flavour" == "def"
@@ -71,8 +71,6 @@ BuildRequires: module-init-tools >= 3.16
 BuildRequires: lzma-utils
 BuildRequires: bc
 BuildRequires: openssl-devel 
-# for check
-BuildRequires: qemu-system glibc-devel-static
 Provides: kernel-modules-eeepc-%flavour = %version-%release
 Provides: kernel-modules-drbd83-%flavour = %version-%release
 Provides: kernel-modules-igb-%flavour = %version-%release
@@ -321,7 +319,6 @@ directory.
 %package -n kernel-doc-%base_flavour
 Summary: Linux kernel %kversion-%base_flavour documentation
 Group: System/Kernel and hardware
-BuildArch: noarch
 
 %description -n kernel-doc-%base_flavour
 This package contains documentation files for ALT Linux kernel packages:
@@ -506,40 +503,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # if_enabled docs
 
 
-%check
-KernelVer=%kversion-%flavour-%krelease
-mkdir -p test
-cd test
-msg='Booted successfully'
-%__cc %optflags -s -static -xc -o init - <<__EOF__
-#include <unistd.h>
-#include <sys/reboot.h>
-int main()
-{
-	static const char msg[] = "$msg\n";
-	write(2, msg, sizeof(msg) - 1);
-	reboot(RB_POWER_OFF);
-	pause();
-}
-__EOF__
-echo init | cpio -H newc -o | gzip -9n > initrd.img
-timeout 600 qemu -no-kvm -kernel %buildroot/boot/vmlinuz-$KernelVer -nographic -append console=ttyS0 -initrd initrd.img > boot.log
-grep -q "^$msg" boot.log &&
-grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
-	cat >&2 boot.log
-	echo >&2 'Marker not found'
-	exit 1
-}
-
-
 %files
 /boot/vmlinuz-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
-/lib/firmware/*
-%dir %modules_dir/
-%defattr(0600,root,root,0700)
-%modules_dir/*
+%modules_dir
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/staging/
@@ -547,6 +515,7 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
 %exclude %modules_dir/kernel/net/netfilter/ipset
+/lib/firmware/*
 %exclude %modules_dir/kernel/net/netfilter/xt_set.ko*
 %ghost %modules_dir/modules.alias.bin
 %ghost %modules_dir/modules.dep.bin
@@ -562,7 +531,7 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %files -n kernel-headers-modules-%flavour
 %kbuild_dir
 %old_kbuild_dir
-%dir %modules_dir/
+%dir %modules_dir
 %modules_dir/build
 
 %if_enabled docs
@@ -613,149 +582,127 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
-* Tue Mar 06 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.86-alt1
+* Tue Mar 06 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.86-alt0.M80P.1
 - v4.9.86
-- new x32-conditional patch
 
-* Wed Feb 28 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.85-alt1
+* Wed Feb 28 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.85-alt0.M80P.1
 - v4.9.85
 
-* Tue Feb 27 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.84-alt1
+* Tue Feb 27 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.84-alt0.M80P.1
 - v4.9.84
 
-* Fri Feb 23 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.83-alt1
+* Fri Feb 23 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.83-alt0.M80P.1
 - v4.9.83
 
-* Mon Feb 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.82-alt1
+* Mon Feb 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.82-alt0.M80P.1
 - v4.9.82  (Fixes: CVE-2017-8824)
 
-* Thu Feb 15 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.81-alt1
+* Thu Feb 15 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.81-alt0.M80P.1
 - v4.9.81
 
-* Mon Feb 05 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.80-alt1
+* Mon Feb 05 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.80-alt0.M80P.1
 - v4.9.80
 
-* Wed Jan 31 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.79-alt1
+* Wed Jan 31 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.79-alt0.M80P.1
 - v4.9.79  (Fixes: CVE-2017-5715)
 
-* Wed Jan 24 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.78-alt1
+* Wed Jan 24 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.78-alt0.M80P.1
 - v4.9.78
 
-* Wed Jan 17 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.77-alt1
+* Wed Jan 17 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.77-alt0.M80P.1
 - v4.9.77  (Fixes: CVE-2017-1000410, CVE-2017-17741, CVE-2017-5753)
 
-* Wed Jan 10 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.76-alt1
+* Wed Jan 10 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.76-alt0.M80P.1
 - v4.9.76
 
-* Tue Jan 09 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.75-alt1
+* Tue Jan 09 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.75-alt0.M80P.1
 - v4.9.75
 
-* Fri Dec 29 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.73-alt1
+* Fri Dec 29 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.73-alt0.M80P.1
 - v4.9.73
 
-* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.72-alt1
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.72-alt0.M80P.1
 - v4.9.72  (Fixes: CVE-2017-16995)
 
-* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.71-alt1.1
+* Mon Dec 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.71-alt0.M80P.1.1
 - SMACK enabled
 - kernel.unprivileged_bpf_disabled set by default  (Fixes: CVE-2017-16995)
 
-* Wed Dec 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.71-alt1
+* Wed Dec 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.71-alt0.M80P.1
 - v4.9.71
 
-* Sun Dec 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.70-alt1
+* Sun Dec 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.70-alt0.M80P.1
 - v4.9.70
 
-* Fri Dec 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.69-alt1
+* Fri Dec 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.69-alt0.M80P.1
 - v4.9.69   (Fixes: CVE-2017-0861, CVE-2017-1000407)
 
-* Mon Dec 11 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.68-alt1
+* Mon Dec 11 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.68-alt0.M80P.1
 - v4.9.68
 
-* Wed Dec 06 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.67-alt1
+* Wed Dec 06 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.67-alt0.M80P.1
 - v4.9.67   (Fixes: CVE-2017-8824)
 
-* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt1.1.1
+* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt0.M80P.1.1.1
 - separate drm modules for old cards into subpackage
 - package modules_dir/kernel/drivers/staging/media
 
-* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt1.1
+* Tue Dec 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt0.M80P.1.1
 - temporary fix for HugeDirtyCowPOC (fixes CVE-2017-1000405)
 
-* Thu Nov 30 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt1
+* Thu Nov 30 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.66-alt0.M80P.1
 - v4.9.66
 
-* Fri Nov 24 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.65-alt1
-- v4.9.65
+* Fri Nov 24 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.65-alt0.M80P.1
+- v4.9.65   (Fixes: CVE-2017-15265)
 
-* Wed Nov 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.64-alt1
+* Wed Nov 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.64-alt0.M80P.1
 - v4.9.64
 
-* Sat Nov 18 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.63-alt1
+* Sat Nov 18 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.63-alt0.M80P.1
 - v4.9.63   (Fixes: CVE-2017-13080)
 
-* Wed Nov 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.62-alt1
+* Wed Nov 15 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.62-alt0.M80P.1
 - v4.9.62
 
-* Wed Nov 08 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.61-alt1
+* Wed Nov 08 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.61-alt0.M80P.1
 - v4.9.61
 
 * Thu Nov 02 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.60-alt2
 - some ID's for Lenovo Ideapads rfkill added
 
-* Thu Nov 02 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.60-alt1
+* Thu Nov 02 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.60-alt0.M80P.1
 - v4.9.60   (Fixes: CVE-2017-12193)
 
-* Fri Oct 27 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.59-alt1.1
+* Fri Oct 27 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.59-alt0.M80P.1
 - v4.9.59
 
-* Sun Oct 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt1.1
+* Sun Oct 22 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.58-alt0.M80P.1.1
 - v4.9.58
 
-* Wed Oct 18 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.57-alt1.1
+* Wed Oct 18 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.57-alt0.M80P.1.1
 - v4.9.57   (Fixes: CVE-2017-12188, CVE-2017-15265)
 
-* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.56-alt1.1
+* Tue Oct 17 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.56-alt0.M80P.1.1
 - Local root in alsa fixed (Fixes: CVE-2017-15265)
 
-* Fri Oct 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.56-alt1
+* Fri Oct 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.56-alt0.M80P.1
 - v4.9.56   (Fixes: CVE-2017-0786, CVE-2017-1000255, CVE-2017-7518)
 
-* Sun Oct 08 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.54-alt1
+* Sun Oct 08 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.54-alt0.M80P.1
 - v4.9.54
 
-* Thu Oct 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.53-alt1
+* Thu Oct 05 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.53-alt0.M80P.1
 - v4.9.53   (Fixes: CVE-2017-1000252, CVE-2017-12153, CVE-2017-12154)
 
-* Wed Sep 27 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.52-alt1
-- v4.9.52 
+* Thu Sep 28 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.52-alt0.M80P.1
+- v4.9.52
 
-* Wed Sep 20 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.51-alt1
+* Thu Sep 21 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.51-alt0.M80P.1
 - v4.9.51
 
-* Thu Sep 14 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.50-alt1
-- v4.9.50
-
-* Tue Sep 12 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.49-alt1
-- v4.9.49
-
-* Thu Sep 07 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.48-alt1
-- v4.9.48
-
-* Mon Sep 04 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.47-alt1
-- v4.9.47
-
-* Wed Aug 30 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.46-alt1
-- v4.9.46
-
-* Fri Aug 25 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.45-alt1
-- v4.9.45
-
-* Wed Aug 16 2017 Dmitry V. Levin <ldv@altlinux.org> 1:4.9.44-alt1
-- v4.9.43 -> v4.9.44.
-- Added %%check like one found in un-def kernels.
-- Changed kernel-doc to a noarch subpackage.
-- Restricted access to %%modules_dir/ (see #5969).
+* Thu Sep 14 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.4.88-alt0.M80P.1
+- v4.4.88
 
 * Sun Aug 13 2017 Kernel Bot <kernelbot@altlinux.org> 1:4.9.43-alt1
 - v4.9.43
