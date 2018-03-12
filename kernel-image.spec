@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M70C.1
 epoch:1 
 %define kernel_base_version	4.14
 %define kernel_sublevel .26
@@ -20,7 +20,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 12
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	5
+%define kgcc_version	4.7
 
 %def_disable docs
 
@@ -607,6 +607,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon Mar 12 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.26-alt0.M70C.1
+- backport to c7
+
 * Mon Mar 12 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.26-alt0.M80P.1
 - v4.14.26
 
