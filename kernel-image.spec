@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt0.M80P.1
+Release: alt0.M80C.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .87
@@ -582,6 +582,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Mar 15 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.87-alt0.M80C.1
+- backport to c8
+
 * Mon Mar 12 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.87-alt0.M80P.1
 - v4.9.87  (Fixes: CVE-2011-1161)
 
