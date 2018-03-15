@@ -1,8 +1,8 @@
 Name: kernel-image-@kflavour@
 Release: alt0.M80C.1
 epoch:1 
-%define kernel_base_version	4.4
-%define kernel_sublevel .120
+%define kernel_base_version	4.9
+%define kernel_sublevel .87
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -49,7 +49,7 @@ Url: http://www.kernel.org/
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
-Patch1: nonpreempt-kernel.patch
+Patch1: nonpreemptive-kernel.patch
 
 %if "%sub_flavour" == "pae"
 ExclusiveArch: i586
@@ -139,22 +139,6 @@ for allowing direct access to graphics hardware in a safe and efficient
 manner.  It includes changes to the X server, to several client libraries,
 and to the kernel.  The first major use for the DRI is to create fast
 OpenGL implementations.
-
-These are modules for your ALT Linux system
-
-%package -n kernel-modules-drm-ancient-%flavour
-Summary: The Direct Rendering modules for ancient cards
-Group: System/Kernel and hardware
-Provides:  kernel-modules-drm-ancient-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-drm-ancient-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-drm-ancient-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: %name = %epoch:%version-%release
-Requires(postun): %name = %epoch:%version-%release
-
-%description -n kernel-modules-drm-ancient-%flavour
-The Direct Rendering Modules for ancient cards: mgag200.ko,
-sis.ko, tdfx.ko, savage.ko, r128.ko, mga.ko, via.ko
 
 These are modules for your ALT Linux system
 
@@ -551,21 +535,6 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
 %exclude %modules_dir/kernel/drivers/gpu/drm/radeon
 %exclude %modules_dir/kernel/drivers/gpu/drm/mgag200
-%exclude %modules_dir/kernel/drivers/gpu/drm/sis
-%exclude %modules_dir/kernel/drivers/gpu/drm/savage
-%exclude %modules_dir/kernel/drivers/gpu/drm/tdfx
-%exclude %modules_dir/kernel/drivers/gpu/drm/r128
-%exclude %modules_dir/kernel/drivers/gpu/drm/mga
-%exclude %modules_dir/kernel/drivers/gpu/drm/via
-
-%files -n kernel-modules-drm-ancient-%flavour
-%modules_dir/kernel/drivers/gpu/drm/mgag200
-%modules_dir/kernel/drivers/gpu/drm/sis
-%modules_dir/kernel/drivers/gpu/drm/savage
-%modules_dir/kernel/drivers/gpu/drm/tdfx
-%modules_dir/kernel/drivers/gpu/drm/r128
-%modules_dir/kernel/drivers/gpu/drm/mga
-%modules_dir/kernel/drivers/gpu/drm/via
 
 %files -n kernel-modules-drm-nouveau-%flavour
 %modules_dir/kernel/drivers/gpu/drm/nouveau
@@ -589,6 +558,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Thu Mar 15 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.87-alt0.M80C.1
+- v4.9.87
+
 * Tue Mar 06 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.4.120-alt0.M80C.1
 - v4.4.120
 
