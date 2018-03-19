@@ -48,7 +48,7 @@ static const struct file_operations proc_interrupts_operations = {
 
 static int __init proc_interrupts_init(void)
 {
-	proc_create("interrupts", 0, NULL, &proc_interrupts_operations);
+	proc_create("interrupts", S_IRUSR, NULL, &proc_interrupts_operations);
 	return 0;
 }
 fs_initcall(proc_interrupts_init);
