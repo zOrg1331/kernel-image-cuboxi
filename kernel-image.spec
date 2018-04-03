@@ -605,11 +605,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 %dir %modules_dir/kernel/drivers/staging/media
-%modules_dir/kernel/drivers/staging/media/lirc/
 
 %files -n kernel-modules-staging-%flavour
 %modules_dir/kernel/drivers/staging/
-%exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
 * Tue Apr 03 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.0-alt1
