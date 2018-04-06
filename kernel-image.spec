@@ -613,6 +613,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 * Tue Apr 03 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.0-alt1
 - v4.16.0
 
+* Sun Apr 01 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.14.32-alt1
+- v4.14.32  (Fixes: CVE-2017-8824)
+
 * Mon Feb 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.15.4-alt1
 - v4.15.4
 
