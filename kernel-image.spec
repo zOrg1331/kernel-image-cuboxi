@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt1.1
 epoch:1 
 %define kernel_base_version	4.9
 %define kernel_sublevel .99
@@ -613,6 +613,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Mon May 14 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.99-alt1.1
+- expiremental AltHa LSM module added
+
 * Wed May 09 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.9.99-alt1
 - v4.9.99
 
