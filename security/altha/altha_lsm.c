@@ -10,6 +10,7 @@
  */
 
 #include <linux/lsm_hooks.h>
+#include <linux/cred.h>
 #include <linux/sysctl.h>
 #include <linux/binfmts.h>
 #include <linux/file.h>
@@ -269,7 +270,7 @@ static int altha_bprm_set_creds(struct linux_binprm *bprm)
 {
 	struct altha_list_struct *node;
 	/* when it's not a shebang issued script interpreter */
-	if (rstrscript_enabled && !bprm->cred_prepared) {
+	if (rstrscript_enabled && !bprm->called_set_creds) {
 		down_read(&interpreters_sem);
 		list_for_each_entry(node, &interpreters_list, list) {
 			if (path_equal(&bprm->file->f_path, &node->path)) {
@@ -334,7 +335,7 @@ void __init altha_add_hooks(void)
 {
 	if (altha_enabled) {
 		pr_info("AltHa enabled.\n");
-		security_add_hooks(altha_hooks, ARRAY_SIZE(altha_hooks));
+		security_add_hooks(altha_hooks, ARRAY_SIZE(altha_hooks),"altha");
 
 		if (!register_sysctl_paths
 		    (nosuid_sysctl_path, nosuid_sysctl_table))
