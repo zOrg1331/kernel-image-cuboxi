@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M60C.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .131
+%define kernel_sublevel .132
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -623,6 +623,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Wed May 16 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.4.132-alt0.M60C.1
+- v4.4.132
+
 * Sun May 06 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.4.131-alt0.M60C.1
 - v4.4.131  (Fixes: CVE-2018-1093)
 
