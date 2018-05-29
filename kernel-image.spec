@@ -459,6 +459,9 @@ KbuildFiles="
 	scripts/gcc-version.sh
 	scripts/gcc-goto.sh
 	scripts/recordmcount.pl
+	scripts/recordmcount.h
+	scripts/recordmcount.c
+	scripts/recordmcount
 	scripts/gcc-x86_*-has-stack-protector.sh
 	scripts/module-common.lds
 	scripts/depmod.sh
