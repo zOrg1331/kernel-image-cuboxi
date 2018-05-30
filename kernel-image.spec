@@ -615,6 +615,8 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %changelog
 * Mon May 28 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.12-alt1
 - v4.16.12
+- external modules build fixed
+- experimantal AltHa LSM added
 
 * Wed May 23 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.11-alt1
 - v4.16.11
