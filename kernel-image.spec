@@ -17,7 +17,7 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define base_flavour	%( s='%flavour'; printf %%s "${s%%%%-*}" )
 %define sub_flavour	%( s='%flavour'; printf %%s "${s#*-}" )
 
-%define nprocs 12
+%define nprocs 8 
 # Build options
 # You can change compiler version by editing this line:
 %define kgcc_version	7
