@@ -411,7 +411,7 @@ install -d %buildroot%kbuild_dir/drivers/net/wireless
 install -d %buildroot%kbuild_dir/net/mac80211
 install -d %buildroot%kbuild_dir/kernel
 install -d %buildroot%kbuild_dir/lib
-cp -a drivers/scsi/{{scsi,scsi_typedefs}.h,scsi_module.c} \
+cp -a drivers/scsi/{scsi,scsi_typedefs}.h \
 	%buildroot%kbuild_dir/drivers/scsi/
 cp -a drivers/md/dm*.h \
 	%buildroot%kbuild_dir/drivers/md/
