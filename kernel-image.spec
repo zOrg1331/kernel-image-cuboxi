@@ -2,7 +2,7 @@ Name: kernel-image-@kflavour@
 Release: alt0.M80P.1
 epoch:1 
 %define kernel_base_version	4.4
-%define kernel_sublevel .135
+%define kernel_sublevel .136
 %define kernel_extra_version	%nil
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -597,6 +597,9 @@ grep -q 'reboot: Power down' boot.log || ( cat boot.log && false )
 %exclude %modules_dir/kernel/drivers/staging/media/lirc/
 
 %changelog
+* Fri Jun 08 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.4.136-alt0.M80P.1
+- v4.4.136
+
 * Thu May 31 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.4.135-alt0.M80P.1
 - v4.4.135
 
