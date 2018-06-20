@@ -1,5 +1,5 @@
 Name: kernel-image-@kflavour@
-Release: alt1
+Release: alt0.M80C.1
 epoch:1 
 %define kernel_base_version	4.16
 %define kernel_sublevel .16
@@ -20,14 +20,9 @@ Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
 %define nprocs 8 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	7
+%define kgcc_version	5
 
-# Enable/disable SGML docs formatting
-%if "%sub_flavour" == "def"
-%def_enable docs
-%else
 %def_disable docs
-%endif
 
 #Remove oss
 %def_disable oss
@@ -613,6 +608,9 @@ grep -qE '^(\[ *[0-9]+\.[0-9]+\] *)?reboot: Power down' boot.log || {
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Wed Jun 20 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.16-alt0.M80C.1
+- backport to c8
+
 * Tue Jun 19 2018 Kernel Bot <kernelbot@altlinux.org> 1:4.16.16-alt1
 - v4.16.16  (Fixes: CVE-2018-10853)
 
