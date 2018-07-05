@@ -2,10 +2,7 @@ diff --git a/config-x86_64 b/config-x86_64
 index 00324a1..3362c2e 100644
 --- a/config-x86_64
 +++ b/config-x86_64
-@@ -375,9 +380,9 @@ CONFIG_IOMMU_HELPER=y
- CONFIG_NR_CPUS=64
- CONFIG_SCHED_SMT=y
- CONFIG_SCHED_MC=y
+@@ -375,6 +380,6 @@ CONFIG_IOMMU_HELPER=y
 -# CONFIG_PREEMPT_NONE is not set
 +CONFIG_PREEMPT_NONE=y
  # CONFIG_PREEMPT_VOLUNTARY is not set
@@ -18,10 +15,7 @@ diff --git a/config-i586 b/config-i586
 index 00324a1..3362c2e 100644
 --- a/config-i586
 +++ b/config-i586
-@@ -375,9 +380,9 @@ CONFIG_IOMMU_HELPER=y
- CONFIG_NR_CPUS=64
- CONFIG_SCHED_SMT=y
- CONFIG_SCHED_MC=y
+@@ -375,6 +380,6 @@ CONFIG_IOMMU_HELPER=y
 -# CONFIG_PREEMPT_NONE is not set
 +CONFIG_PREEMPT_NONE=y
  # CONFIG_PREEMPT_VOLUNTARY is not set
